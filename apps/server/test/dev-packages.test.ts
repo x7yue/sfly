@@ -100,8 +100,9 @@ describe("开发模式", () => {
 			edges: [{ from: "entry", to: "a", kind: "chain" }],
 			packages: { "demo-dev": "dev" },
 		});
-		const runId = await api.triggerOk(id);
+		// 触发预检要求 Agent 已注册；dev 版本跳过“包版本未发布”检查。
 		const agent = await connect({ name: "agent-dev", devPackages: [devPackage("/src")] });
+		const runId = await api.triggerOk(id);
 
 		const task = await agent.nextAssign();
 		expect(task).toMatchObject({
@@ -129,8 +130,8 @@ describe("开发模式", () => {
 			],
 			packages: { "demo-checks": "1.2.0", "demo-dev": "dev" },
 		});
-		const runId = await api.triggerOk(id);
 		const agent = await connect({ name: "agent-plain" });
+		const runId = await api.triggerOk(id);
 
 		const published = await agent.nextAssign();
 		expect(published.packageVersion).toBe("1.2.0");
