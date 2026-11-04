@@ -94,6 +94,16 @@ export type RunStatus = "running" | "success" | "failed";
 export type ChainStatus = RunStatus;
 /** 任务状态（docs/SEMANTICS.md §3.1）；本阶段用到 queued/running/success/failed。 */
 export type TaskStatus = "queued" | "running" | "success" | "failed";
+/** 任务的最新进度（ctx.progress）。 */
+export interface TaskProgress {
+	current: number;
+	/** 总数；未知时为 null。 */
+	total: number | null;
+	message: string;
+	/** SDK 记录这次进度的时间（ISO）。 */
+	time: string;
+}
+
 export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
 
 /** 运行：绑定一个编排版本。params 是填充默认值并覆盖后的入口参数。 */
@@ -163,6 +173,14 @@ export const tasks = pgTable(
 		seq: bigserial("seq", { mode: "number" }).notNull(),
 		startedAt: timestamptz("started_at"),
 		endedAt: timestamptz("ended_at"),
+		/** 最新进度（#10），只保留最后一次上报的值。 */
+		progress: jsonb("progress").$type<TaskProgress>(),
+		/** 日志文件（#10）：相对数据目录的路径，第一次收到日志时设置；格式见 src/logs/task-logs.ts。 */
+		logPath: text("log_path"),
+		/** 日志文件已写入的字节数。 */
+		logBytes: bigint("log_bytes", { mode: "number" }).notNull().default(0),
+		/** 已写入的最大日志序号（序号不大于它的行视为重复）。 */
+		logSeq: bigint("log_seq", { mode: "number" }).notNull().default(0),
 	},
 	(t) => [
 		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),

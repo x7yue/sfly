@@ -92,6 +92,7 @@ export interface AttemptView {
 	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
+	progress: { current: number; total: number | null; message: string; time: string } | null;
 }
 
 export interface NodeView {

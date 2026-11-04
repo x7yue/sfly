@@ -11,6 +11,7 @@
 pub mod dev;
 pub mod executor;
 pub mod install;
+pub mod logs;
 pub mod venv;
 
 use std::collections::BTreeMap;
@@ -212,6 +213,8 @@ struct Runtime {
     gate: RwLock<()>,
     results: mpsc::UnboundedSender<TaskResult>,
     installs: mpsc::UnboundedSender<InstallStatus>,
+    /// 任务的日志与进度（[`logs`]）。
+    telemetry: logs::Telemetry,
 }
 
 impl Runtime {
@@ -263,7 +266,14 @@ impl Runtime {
     }
 
     async fn start(&self, task: &AssignTask, entry: &str) -> Result<executor::Running, TaskResult> {
-        executor::start(&self.inventory.venv, &self.work_dir, task, entry).await
+        executor::start(
+            &self.inventory.venv,
+            &self.work_dir,
+            task,
+            entry,
+            &self.telemetry,
+        )
+        .await
     }
 
     fn install_status(
@@ -412,6 +422,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let scratch = work_dir.join(".install");
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
+    let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel();
     let runtime = Arc::new(Runtime {
         name: config.name.clone(),
         dev: DevRegistry::new(work_dir.join(".dev")),
@@ -430,6 +441,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         gate: RwLock::new(()),
         results: results_tx,
         installs: installs_tx,
+        telemetry: telemetry_tx,
     });
     let dev_socket = config
         .dev_socket
@@ -455,6 +467,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                 let channels = Channels {
                     results: &mut results_rx,
                     installs: &mut installs_rx,
+                    telemetry: &mut telemetry_rx,
                 };
                 match serve(connection, &runtime, channels, &mut unacked).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
@@ -485,6 +498,8 @@ fn result_message(result: TaskResult) -> AgentMessage {
 struct Channels<'a> {
     results: &'a mut mpsc::UnboundedReceiver<TaskResult>,
     installs: &'a mut mpsc::UnboundedReceiver<InstallStatus>,
+    /// 日志与进度；先于结果处理，任务的日志总在它的结果之前发出。
+    telemetry: &'a mut mpsc::UnboundedReceiver<AgentMessage>,
 }
 
 /// 在一条连接上收发消息，直到连接结束。
@@ -494,7 +509,11 @@ async fn serve(
     channels: Channels<'_>,
     unacked: &mut BTreeMap<(String, u32), TaskResult>,
 ) -> anyhow::Result<()> {
-    let Channels { results, installs } = channels;
+    let Channels {
+        results,
+        installs,
+        telemetry,
+    } = channels;
     for result in unacked.values() {
         connection
             .outbound
@@ -503,6 +522,7 @@ async fn serve(
     }
     loop {
         tokio::select! {
+            biased;
             message = connection.inbound.message() => {
                 let Some(message) = message? else { return Ok(()) };
                 match message.body {
@@ -515,6 +535,9 @@ async fn serve(
                     }
                     other => eprintln!("ignored message from control plane: {other:?}"),
                 }
+            }
+            Some(message) = telemetry.recv() => {
+                connection.outbound.send(message).await?;
             }
             Some(result) = results.recv() => {
                 unacked.insert((result.task_id.clone(), result.attempt), result.clone());

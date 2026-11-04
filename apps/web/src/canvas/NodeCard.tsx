@@ -3,6 +3,7 @@ import { Handle, type NodeProps, Position, type ReactFlowState, useStore } from 
 import { createContext, useContext } from "react";
 import type { NodeRunView } from "#/runs/api";
 import { durationBetween, statusLabel, statusTone } from "#/runs/format";
+import { progressLong, progressPercent, progressShort } from "#/runs/logs";
 import type { DocNode, SfNode } from "./flow";
 import { Icon, type IconName } from "./icons";
 
@@ -92,6 +93,9 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const run = info.run ? (info.run.get(id) ?? PENDING) : undefined;
 	const metrics = run ? runMetrics(node, info, run) : nodeMetrics(node, info);
 	const tone = run ? statusTone(run.status) : undefined;
+	// 执行中的任务上报过进度时（#10），卡片底部显示进度细条。
+	const progress = tone === "current" ? run?.attempts.at(-1)?.progress : undefined;
+	const percent = progress ? progressPercent(progress) : null;
 
 	const hasChainIn = node.kind !== "entry" && node.kind !== "subflow_entry";
 	return (
@@ -101,7 +105,10 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			data-lod={zoom < LOD_THRESHOLD}
 			data-run={tone}
 			style={{ "--sf-zs": zoom } as React.CSSProperties}
-			title={warnings.map((w) => w.message).join("\n") || undefined}
+			title={
+				warnings.map((w) => w.message).join("\n") ||
+				(progress ? `进度 ${progressLong(progress)}` : undefined)
+			}
 		>
 			{hasChainIn && (
 				<Handle
@@ -159,6 +166,11 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					</div>
 				))}
 			</div>
+			{percent !== null && (
+				<div className="sf-node__progress" aria-hidden>
+					<i style={{ width: `${percent}%` }} />
+				</div>
+			)}
 			<Handle
 				type="source"
 				position={Position.Right}
@@ -199,6 +211,10 @@ function runMetrics(node: DocNode, info: CanvasInfo, run: NodeRunView): [string,
 			: "—",
 	];
 	if (node.kind !== "package") return [...nodeMetrics(node, info).slice(0, 1), time];
+	// 执行中并上报过进度：进度是首要指标（语义缩放时保留第一个指标）。
+	if (last?.progress && statusTone(last.status) === "current") {
+		return [["进度", progressShort(last.progress)], time];
+	}
 	return [
 		["Agent", run.agent ?? "—"],
 		run.attempts.length > 1 ? ["尝试", `${run.attempts.length} 次 · ${time[1]}`] : time,

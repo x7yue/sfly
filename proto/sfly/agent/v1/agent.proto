@@ -17,6 +17,8 @@ service AgentGateway {
 message AgentMessage {
   oneof body {
     Hello hello = 1;
+    LogBatch logs = 4;
+    Progress progress = 5;
     TaskResult result = 6;
     InstallStatus install = 7;
   }
@@ -120,6 +122,57 @@ enum InstallState {
   INSTALL_STATE_INSTALLED = 2;
   // 下载、校验或安装失败（包括依赖冲突）。
   INSTALL_STATE_FAILED = 3;
+}
+
+// 一个任务新增的日志行（Agent 批量转发）。执行器的标准输出、标准错误和 SDK 日志合并成同一条日志流。
+message LogBatch {
+  string task_id = 1;
+  uint32 attempt = 2;
+  // 按序号递增。
+  repeated LogLine lines = 3;
+}
+
+message LogLine {
+  // 任务内从 1 开始递增的序号；控制面和画布按它去重。
+  uint64 seq = 1;
+  // 时间（Unix 毫秒）：SDK 日志取 SDK 记录的时间，标准输出 / 标准错误取 Agent 读到这一行的时间。
+  int64 time_unix_ms = 2;
+  LogSource source = 3;
+  LogLevel level = 4;
+  // 一行文本（不含换行符）；SDK 日志的一条消息可以有多行。
+  string text = 5;
+}
+
+// 日志来源。
+enum LogSource {
+  LOG_SOURCE_UNSPECIFIED = 0;
+  // 执行器的标准输出（print、子进程继承的标准输出）。
+  LOG_SOURCE_STDOUT = 1;
+  // 执行器的标准错误。
+  LOG_SOURCE_STDERR = 2;
+  // SDK 的 ctx.log。
+  LOG_SOURCE_SDK = 3;
+}
+
+// 日志级别。标准输出为 INFO，标准错误为 ERROR，SDK 日志按调用的级别。
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_WARN = 3;
+  LOG_LEVEL_ERROR = 4;
+}
+
+// 任务的最新进度（ctx.progress）；Agent 端合并，每个任务每秒最多上报一次，任务结束前补发最后一次。
+message Progress {
+  string task_id = 1;
+  uint32 attempt = 2;
+  double current = 3;
+  // 总数；未设置表示未知。
+  optional double total = 4;
+  string message = 5;
+  // SDK 记录这次进度的时间（Unix 毫秒）。
+  int64 time_unix_ms = 6;
 }
 
 // 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。

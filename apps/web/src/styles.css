@@ -4,6 +4,7 @@
 @import "./canvas/canvas.css";
 @import "./versions/versions.css";
 @import "./runs/runs.css";
+@import "./runs/logs.css";
 
 * {
 	box-sizing: border-box;

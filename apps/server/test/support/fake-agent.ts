@@ -9,6 +9,9 @@ import {
 	type AssignTask,
 	ErrorKind,
 	type HelloSchema,
+	LogLevel,
+	type LogLineSchema,
+	LogSource,
 	type ServerMessage,
 	TaskStatus,
 } from "@sfly/proto";
@@ -57,6 +60,8 @@ export type TaskResultInit = Extract<
 	{ case: "result" }
 >["value"];
 export type TaskRef = { taskId: string; attempt: number };
+export type LogLineInit = MessageInitShape<typeof LogLineSchema>;
+export { LogLevel, LogSource };
 /** 派发的任务；`inputs` 是解析后的 inputs_json。 */
 export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
 export { ErrorKind, TaskStatus };
@@ -210,6 +215,43 @@ export class FakeAgent {
 			attempt: task.attempt,
 			status: TaskStatus.FAILED,
 			error: { kind, message },
+		});
+	}
+
+	/** 发送一批日志（#10）：每行 `[seq, text]` 或完整的 LogLine 字段；控制面不回 Ack。 */
+	logs(task: TaskRef, lines: Array<[number, string] | LogLineInit>): void {
+		this.send({
+			case: "logs",
+			value: {
+				taskId: task.taskId,
+				attempt: task.attempt,
+				lines: lines.map((line) =>
+					Array.isArray(line)
+						? {
+								seq: BigInt(line[0]),
+								timeUnixMs: BigInt(Date.UTC(2026, 0, 1)),
+								source: LogSource.STDOUT,
+								level: LogLevel.INFO,
+								text: line[1],
+							}
+						: line,
+				),
+			},
+		});
+	}
+
+	/** 上报任务进度（#10）；控制面不回 Ack。 */
+	progress(task: TaskRef, current: number, total?: number, message = ""): void {
+		this.send({
+			case: "progress",
+			value: {
+				taskId: task.taskId,
+				attempt: task.attempt,
+				current,
+				total,
+				message,
+				timeUnixMs: BigInt(Date.UTC(2026, 0, 1, 0, 0, 1)),
+			},
 		});
 	}
 

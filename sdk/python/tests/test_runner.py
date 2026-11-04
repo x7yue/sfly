@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import textwrap
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -160,3 +161,136 @@ def test_missing_entry_is_a_failure(tmp_path: Path, code_dir: Path) -> None:
     assert run.returncode == 1
     assert run.output is not None
     assert run.output["error"]["type"] == "ModuleNotFoundError"
+
+
+# ---- ctx.log / ctx.progress：按本地协议追加写入事件文件 SFLY_EVENTS ----
+#
+# 事件文件是 JSONL，每行一个事件：
+# - 日志 {"type": "log", "ts": <毫秒时间戳>, "level": "debug|info|warn|error", "message": "..."}
+# - 进度 {"type": "progress", "ts": ..., "current": 1, "total": 3, "message": "..."}
+#   （total 可以是 null）
+
+
+def events_of(tmp_path: Path) -> list[dict[str, Any]]:
+    path = tmp_path / "work" / "events.jsonl"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_ctx_log_writes_leveled_log_events(tmp_path: Path, code_dir: Path) -> None:
+    write_module(
+        code_dir,
+        "logs",
+        """
+        from sfly import Context
+
+        def work(ctx: Context, url: str) -> dict:
+            ctx.log.debug("准备")
+            ctx.log.info("checking %s", url)
+            ctx.log.warning("慢：%d ms", 1500)
+            ctx.log.error("失败\\n第二行")
+            ctx.log("默认级别")
+            ctx.log("显式级别", level="warn")
+            return {}
+        """,
+    )
+    before = int(time.time() * 1000)
+
+    run = execute(tmp_path, code_dir, "logs:work", {"url": "http://x"})
+
+    assert run.returncode == 0, run.stderr
+    events = events_of(tmp_path)
+    assert [(e["type"], e["level"], e["message"]) for e in events] == [
+        ("log", "debug", "准备"),
+        ("log", "info", "checking http://x"),
+        ("log", "warn", "慢：1500 ms"),
+        ("log", "error", "失败\n第二行"),
+        ("log", "info", "默认级别"),
+        ("log", "warn", "显式级别"),
+    ]
+    after = int(time.time() * 1000)
+    assert all(before <= e["ts"] <= after for e in events)
+
+
+def test_ctx_log_exception_includes_traceback(tmp_path: Path, code_dir: Path) -> None:
+    write_module(
+        code_dir,
+        "exc",
+        """
+        from sfly import Context
+
+        def work(ctx: Context) -> dict:
+            try:
+                raise KeyError("k")
+            except KeyError:
+                ctx.log.exception("处理失败")
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "exc:work")
+
+    assert run.returncode == 0, run.stderr
+    [event] = events_of(tmp_path)
+    assert event["level"] == "error"
+    assert event["message"].startswith("处理失败\nTraceback")
+    assert "KeyError: 'k'" in event["message"]
+
+
+def test_ctx_progress_writes_progress_events(tmp_path: Path, code_dir: Path) -> None:
+    write_module(
+        code_dir,
+        "prog",
+        """
+        from sfly import Context
+
+        def work(ctx: Context) -> dict:
+            ctx.progress(1, 3, "建立连接")
+            ctx.progress(2.5, 3)
+            ctx.progress(7)
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "prog:work")
+
+    assert run.returncode == 0, run.stderr
+    assert [(e["type"], e["current"], e["total"], e["message"]) for e in events_of(tmp_path)] == [
+        ("progress", 1, 3, "建立连接"),
+        ("progress", 2.5, 3, ""),
+        ("progress", 7, None, ""),
+    ]
+
+
+def test_events_from_threads_are_whole_lines(tmp_path: Path, code_dir: Path) -> None:
+    write_module(
+        code_dir,
+        "threads",
+        """
+        import threading
+        from sfly import Context
+
+        def work(ctx: Context) -> dict:
+            def spam(n):
+                for i in range(200):
+                    ctx.log.info("线程 %d 第 %d 条 " + "x" * 500, n, i)
+            threads = [threading.Thread(target=spam, args=(n,)) for n in range(4)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "threads:work")
+
+    assert run.returncode == 0, run.stderr
+    assert len(events_of(tmp_path)) == 800
+
+
+def test_context_without_events_file_does_not_fail(tmp_path: Path) -> None:
+    from sfly import Context
+
+    ctx = Context(events_path=None)
+    ctx.log.info("丢弃")
+    ctx.progress(1, 2)

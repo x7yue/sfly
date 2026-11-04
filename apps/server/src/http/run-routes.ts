@@ -3,9 +3,11 @@ import { z } from "zod";
 import type { Db } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import { getRunView, listRuns } from "../engine/run-queries.js";
+import type { ProgressEvent } from "../logs/task-logs.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { Sse } from "../sse/sse.js";
+import type { Topics } from "../sse/topics.js";
 import { isUuid, sendError } from "./errors.js";
 import { nicknameOf } from "./nickname.js";
 
@@ -20,6 +22,8 @@ export function registerRunRoutes(
 		orchestrations: OrchestrationStore;
 		preflight: Preflight;
 		sse: Sse;
+		/** 任务进度（#10），在运行的 SSE 上以 `progress` 事件推送。 */
+		progress: Topics<ProgressEvent>;
 	},
 ): void {
 	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）。
@@ -76,7 +80,8 @@ export function registerRunRoutes(
 		return reply.code(201).send(run);
 	});
 
-	// 运行状态的实时推送：连上时先发一条完整的运行视图，之后运行或任何节点的状态变化时再发一条（事件 run）。
+	// 运行状态的实时推送：连上时先发一条完整的运行视图，之后运行或任何节点的状态变化时再发一条（事件 run）；
+	// 任务进度更新时发 progress 事件（ProgressEvent，只含这一个任务的最新进度）。
 	app.get<{ Params: { id: string } }>("/runs/:id/events", async (request, reply) => {
 		const runId = request.params.id;
 		if (!isUuid(runId) || !(await getRunView(deps.db, runId))) {
@@ -105,8 +110,14 @@ export function registerRunRoutes(
 				}
 			};
 			const unsubscribe = deps.engine.runChanges.subscribe(runId, () => void push());
+			const unsubscribeProgress = deps.progress.subscribe(runId, (event) =>
+				stream.send({ event: "progress", data: event }),
+			);
 			void push();
-			return unsubscribe;
+			return () => {
+				unsubscribe();
+				unsubscribeProgress();
+			};
 		});
 	});
 

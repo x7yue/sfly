@@ -1,7 +1,13 @@
 import type { OrchestrationNode } from "@sfly/schema";
 import { asc, desc, eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
-import { chainInstances, orchestrationVersions, runs, tasks } from "../db/schema.js";
+import {
+	chainInstances,
+	orchestrationVersions,
+	runs,
+	type TaskProgress,
+	tasks,
+} from "../db/schema.js";
 import { agentFor, planMainChain } from "./chain.js";
 
 export interface AttemptView {
@@ -15,6 +21,8 @@ export interface AttemptView {
 	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
+	/** 最新进度（#10）；没有上报过时为 null。 */
+	progress: TaskProgress | null;
 }
 
 export interface NodeView {
@@ -112,6 +120,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						queued_at: t.queuedAt.toISOString(),
 						started_at: iso(t.startedAt),
 						ended_at: iso(t.endedAt),
+						progress: t.progress ?? null,
 					}));
 				const last = attempts.at(-1);
 				return {

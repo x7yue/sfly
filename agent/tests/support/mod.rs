@@ -31,6 +31,8 @@ pub const WAIT: Duration = Duration::from_secs(20);
 pub struct Received {
     pub session: usize,
     pub message: AgentMessage,
+    /// 假控制面收到这条消息的时间。
+    pub at: tokio::time::Instant,
 }
 
 #[derive(Default)]
@@ -259,11 +261,11 @@ impl AgentGateway for Gateway {
                     }
                     _ => None,
                 };
-                state
-                    .received
-                    .lock()
-                    .unwrap()
-                    .push(Received { session, message });
+                state.received.lock().unwrap().push(Received {
+                    session,
+                    message,
+                    at: tokio::time::Instant::now(),
+                });
                 if let (Some(body), Some(tx)) = (reply, tx.upgrade()) {
                     let _ = tx.send(Ok(ServerMessage { body: Some(body) })).await;
                 }

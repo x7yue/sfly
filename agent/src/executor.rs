@@ -10,7 +10,8 @@
 //! | `SFLY_EVENTS` | `events.jsonl`：结构化日志与进度 |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
 //!
-//! 执行器的标准输出 / 标准错误写到工作目录下的 `stdout.log` / `stderr.log`。
+//! 执行器的标准输出 / 标准错误和事件文件由 [`crate::logs`] 合并转发给控制面，
+//! 原始的标准输出 / 标准错误同时写到工作目录下的 `stdout.log` / `stderr.log`。
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -18,6 +19,7 @@ use std::process::Stdio;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::logs::{Pump, Telemetry};
 use crate::proto::{AssignTask, ErrorKind, TaskError, TaskResult, TaskStatus};
 use crate::venv::SharedVenv;
 
@@ -78,6 +80,7 @@ pub async fn start(
     work_root: &Path,
     task: &AssignTask,
     entry: &str,
+    telemetry: &Telemetry,
 ) -> Result<Running, TaskResult> {
     if !valid_task_id(&task.task_id) {
         return Err(failure(
@@ -104,7 +107,7 @@ pub async fn start(
             format!("准备工作目录 {} 失败：{error}", dir.display()),
         ));
     }
-    spawn_process(venv, &dir, task)
+    spawn_process(venv, &dir, task, telemetry)
 }
 
 async fn prepare_dir(
@@ -142,30 +145,25 @@ pub struct Running {
     child: tokio::process::Child,
     paths: Paths,
     task: AssignTask,
+    /// 日志与进度转发。
+    pump: Pump,
 }
 
-fn spawn_process(venv: &SharedVenv, dir: &Path, task: &AssignTask) -> Result<Running, TaskResult> {
+fn spawn_process(
+    venv: &SharedVenv,
+    dir: &Path,
+    task: &AssignTask,
+    telemetry: &Telemetry,
+) -> Result<Running, TaskResult> {
     let paths = Paths {
         output: dir.join("output.json"),
         stderr: dir.join("stderr.log"),
     };
-    let (stdout, stderr) = match (
-        std::fs::File::create(dir.join("stdout.log")),
-        std::fs::File::create(&paths.stderr),
-    ) {
-        (Ok(out), Ok(err)) => (out, err),
-        (Err(e), _) | (_, Err(e)) => {
-            return Err(failure(
-                task,
-                ErrorKind::EnvError,
-                format!("创建日志文件失败：{e}"),
-            ));
-        }
-    };
 
     let mut command = venv.python_command();
     command
-        .args(["-m", "sfly.runner"])
+        // -u：标准输出 / 标准错误不缓冲，日志实时到达。
+        .args(["-u", "-m", "sfly.runner"])
         .current_dir(dir)
         .env("SFLY_TASK", dir.join("task.json"))
         .env("SFLY_OUTPUT", &paths.output)
@@ -173,18 +171,25 @@ fn spawn_process(venv: &SharedVenv, dir: &Path, task: &AssignTask) -> Result<Run
         .env("SFLY_EVENTS", dir.join("events.jsonl"))
         .env("SFLY_CANCEL", dir.join("cancel"))
         .stdin(Stdio::null())
-        .stdout(stdout)
-        .stderr(stderr);
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     // 每个任务自成一个进程组，便于之后整组终止（超时、取消）。
     #[cfg(unix)]
     command.process_group(0);
 
     match command.spawn() {
-        Ok(child) => Ok(Running {
-            child,
-            paths,
-            task: task.clone(),
-        }),
+        Ok(mut child) => {
+            let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+                unreachable!("stdout and stderr are piped");
+            };
+            let pump = Pump::start(task, stdout, stderr, dir.to_path_buf(), telemetry.clone());
+            Ok(Running {
+                child,
+                paths,
+                task: task.clone(),
+                pump,
+            })
+        }
         Err(error) => Err(failure(
             task,
             ErrorKind::EnvError,
@@ -199,9 +204,11 @@ fn spawn_process(venv: &SharedVenv, dir: &Path, task: &AssignTask) -> Result<Run
 impl Running {
     /// 等待执行器退出并读取结果。
     pub async fn wait(mut self) -> TaskResult {
+        let status = self.child.wait().await;
+        // 日志和最后一次进度先于结果发出；之后 stderr.log 也已完整。
+        self.pump.finish().await;
         let task = &self.task;
         let paths = &self.paths;
-        let status = self.child.wait().await;
         let status = match status {
             Ok(status) => status,
             Err(error) => {
