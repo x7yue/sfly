@@ -39,6 +39,8 @@ export type SaveOutcome =
  *
  * - 名称是产物目录内的相对路径（`/` 分隔），每段非空、不是 `.` / `..`、不含 `\` 和控制字符。
  * - 只接受状态为 running 的任务（Agent 先上传、再上报结果）；同名覆盖。
+ *   例外：因取消（#12）终止、且已经派发给 Agent 开始执行（started_at 非空）的任务也接受——强制取消时控制面先把任务记为
+ *   cancelled，Agent 杀掉进程后才上传产物、报结果。运行已被保留期清理时不再接受。
  * - 单个任务的产物总大小不超过 `limitBytes`（默认 1 GB），超出时整个文件被拒绝。
  * - 文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`，按运行分目录，保留期清理整目录删除（src/retention）。
  */
@@ -66,16 +68,28 @@ export class ArtifactStore {
 		const invalid = ArtifactStore.invalidName(name);
 		if (invalid) return { ok: false, status: 400, code: "invalid_artifact_name", message: invalid };
 		const [task] = await this.deps.db
-			.select({ runId: tasks.runId, status: tasks.status, agentName: tasks.agentName })
+			.select({
+				runId: tasks.runId,
+				status: tasks.status,
+				agentName: tasks.agentName,
+				startedAt: tasks.startedAt,
+				purgedAt: runs.purgedAt,
+			})
 			.from(tasks)
+			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(eq(tasks.id, taskId));
 		if (!task) return { ok: false, status: 404, code: "not_found", message: "task not found" };
-		if (task.status !== "running" || task.agentName === null) {
+		const accepting =
+			task.agentName !== null &&
+			task.purgedAt === null &&
+			(task.status === "running" || (task.status === "cancelled" && task.startedAt !== null));
+		if (!accepting) {
 			return {
 				ok: false,
 				status: 409,
 				code: "task_not_running",
-				message: "artifacts can only be uploaded while the task is running",
+				message:
+					"artifacts can only be uploaded while the task is running (or after it was cancelled)",
 			};
 		}
 		const [others] = await this.deps.db

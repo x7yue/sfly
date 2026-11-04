@@ -139,6 +139,38 @@ describe("产物", () => {
 		expect(await (await fetch(artifacts[0]?.url ?? "")).text()).toBe("second!");
 	});
 
+	// #12 × #18：Agent 先上传产物再报结果，被取消的任务也一样。
+	it("优雅取消中的任务仍能上传产物，之后上报取消结果", async () => {
+		const { agent, task, runId, api } = await setup();
+		await api.cancelOk(runId);
+		expect(await agent.nextCancel()).toMatchObject({ taskId: task.taskId, force: false });
+
+		expect((await upload(task, "partial.txt", "half")).status).toBe(201);
+		await agent.cancelled(task);
+		expect((await api.run(runId)).status).toBe("cancelled");
+		const { artifacts } = await list(task.taskId);
+		expect(artifacts.map((a) => [a.name, a.size])).toEqual([["partial.txt", 4]]);
+		expect(await (await fetch(artifacts[0]?.url ?? "")).text()).toBe("half");
+	});
+
+	it("强制取消后控制面先把任务记为 cancelled，Agent 稍后上传的产物仍被接受", async () => {
+		const { agent, task, runId, api } = await setup();
+		await api.cancelOk(runId);
+		await agent.nextCancel();
+		// 运行没结束时第二次取消 = 强制取消：任务立即 cancelled，运行立即结束。
+		await api.cancelOk(runId);
+		expect(await agent.nextCancel()).toMatchObject({ taskId: task.taskId, force: true });
+		const run = await api.run(runId);
+		expect(run.status).toBe("cancelled");
+		expect((await api.node(runId, "a")).attempts.map((t) => t.status)).toEqual(["cancelled"]);
+
+		expect((await upload(task, "dump/state.bin", Buffer.alloc(10))).status).toBe(201);
+		await agent.cancelled(task);
+		expect((await list(task.taskId)).artifacts.map((a) => [a.name, a.size])).toEqual([
+			["dump/state.bin", 10],
+		]);
+	});
+
 	it("非法的产物名称被拒绝", async () => {
 		const { task } = await setup();
 		// fetch 会按 URL 规范折叠 `..` 段，这里用 node:http 原样发送路径。
