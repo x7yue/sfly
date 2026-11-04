@@ -10,7 +10,8 @@
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
 宽限期（默认 10 秒）过后整棵进程树被强制杀掉。在后台线程里可以轮询 `ctx.cancelled()`。
 
-日志和进度都追加写入本地协议的事件文件 `SFLY_EVENTS`（JSONL，每行一个事件，Agent 持续读取新增内容）：
+日志和进度都追加写入本地协议的事件文件 `SFLY_EVENTS`
+（JSONL，每行一个事件，Agent 持续读取新增内容）：
 
 - 日志 `{"type": "log", "ts": <Unix 毫秒>, "level": "debug|info|warn|error", "message": "..."}`
 - 进度 `{"type": "progress", "ts": ..., "current": 1, "total": 3, "message": "..."}`
