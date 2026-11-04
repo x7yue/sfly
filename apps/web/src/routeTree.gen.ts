@@ -14,6 +14,7 @@ import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as PackagesRouteImport } from './routes/packages'
 import { Route as OrchestrationsIndexRouteImport } from './routes/orchestrations/index'
 import { Route as OrchestrationsIdRouteImport } from './routes/orchestrations/$id'
+import { Route as OrchestrationsIdVersionsRouteImport } from './routes/orchestrations/$id_.versions'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -40,6 +41,12 @@ const OrchestrationsIdRoute = OrchestrationsIdRouteImport.update({
   path: '/orchestrations/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const OrchestrationsIdVersionsRoute =
+  OrchestrationsIdVersionsRouteImport.update({
+    id: '/orchestrations/$id_/versions',
+    path: '/orchestrations/$id/versions',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -47,6 +54,7 @@ export interface FileRoutesByFullPath {
   '/packages': typeof PackagesRoute
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/orchestrations/': typeof OrchestrationsIndexRoute
+  '/orchestrations/$id/versions': typeof OrchestrationsIdVersionsRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -54,6 +62,7 @@ export interface FileRoutesByTo {
   '/packages': typeof PackagesRoute
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/orchestrations': typeof OrchestrationsIndexRoute
+  '/orchestrations/$id/versions': typeof OrchestrationsIdVersionsRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -62,13 +71,25 @@ export interface FileRoutesById {
   '/packages': typeof PackagesRoute
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/orchestrations/': typeof OrchestrationsIndexRoute
+  '/orchestrations/$id_/versions': typeof OrchestrationsIdVersionsRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/agents' | '/packages' | '/orchestrations/$id' | '/orchestrations/'
+    | '/'
+    | '/agents'
+    | '/packages'
+    | '/orchestrations/$id'
+    | '/orchestrations/'
+    | '/orchestrations/$id/versions'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/agents' | '/packages' | '/orchestrations/$id' | '/orchestrations'
+  to:
+    | '/'
+    | '/agents'
+    | '/packages'
+    | '/orchestrations/$id'
+    | '/orchestrations'
+    | '/orchestrations/$id/versions'
   id:
     | '__root__'
     | '/'
@@ -76,6 +97,7 @@ export interface FileRouteTypes {
     | '/packages'
     | '/orchestrations/$id'
     | '/orchestrations/'
+    | '/orchestrations/$id_/versions'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -84,6 +106,7 @@ export interface RootRouteChildren {
   PackagesRoute: typeof PackagesRoute
   OrchestrationsIdRoute: typeof OrchestrationsIdRoute
   OrchestrationsIndexRoute: typeof OrchestrationsIndexRoute
+  OrchestrationsIdVersionsRoute: typeof OrchestrationsIdVersionsRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -123,6 +146,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrchestrationsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/orchestrations/$id_/versions': {
+      id: '/orchestrations/$id_/versions'
+      path: '/orchestrations/$id/versions'
+      fullPath: '/orchestrations/$id/versions'
+      preLoaderRoute: typeof OrchestrationsIdVersionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -132,6 +162,7 @@ const rootRouteChildren: RootRouteChildren = {
   PackagesRoute: PackagesRoute,
   OrchestrationsIdRoute: OrchestrationsIdRoute,
   OrchestrationsIndexRoute: OrchestrationsIndexRoute,
+  OrchestrationsIdVersionsRoute: OrchestrationsIdVersionsRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

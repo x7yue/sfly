@@ -1,5 +1,5 @@
 import { checkConnection, documentWarnings, type OrchestrationWarning } from "@sfly/orchestration";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
 	Background,
 	type Connection,
@@ -14,14 +14,9 @@ import {
 	useReactFlow,
 } from "@xyflow/react";
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-	listAgents,
-	listPackages,
-	type Orchestration,
-	type OrchestrationHead,
-	type SavedVersion,
-	saveVersion,
-} from "#/lib/api";
+import { listAgents, listPackages, type Orchestration, type OrchestrationHead } from "#/lib/api";
+import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
+import { StaleDraftBanner, VersionControls } from "#/versions/VersionControls";
 import { usePackageCatalog } from "./catalog";
 import { edgeTypes } from "./edges";
 import {
@@ -40,13 +35,22 @@ import { CanvasContext, type CanvasInfo, nodeTitle, nodeTypes } from "./NodeCard
 import { NodePalette, PALETTE_MIME, type PaletteItem } from "./NodePalette";
 import { PackageVersions } from "./PackageVersions";
 
-export function OrchestrationEditor(props: {
+export function OrchestrationEditor({
+	orchestration,
+	head,
+}: {
 	orchestration: Orchestration;
 	head: OrchestrationHead;
 }) {
+	// 编辑起点：本地草稿（刷新不丢失）或最新版本；放弃本地修改后用最新版本重建画布。
+	const [start, setStart] = useState(() => startEditing(orchestration.id, head));
 	return (
-		<ReactFlowProvider>
-			<Editor {...props} />
+		<ReactFlowProvider key={start.nonce}>
+			<Editor
+				orchestration={orchestration}
+				start={start}
+				onReload={(latest) => setStart(startEditing(orchestration.id, latest, start.nonce + 1))}
+			/>
 		</ReactFlowProvider>
 	);
 }
@@ -56,24 +60,23 @@ const edgeKindOf = (c: Connection | Edge): EdgeKind =>
 
 function Editor({
 	orchestration,
-	head,
+	start,
+	onReload,
 }: {
 	orchestration: Orchestration;
-	head: OrchestrationHead;
+	start: EditStart;
+	onReload: (head: OrchestrationHead) => void;
 }) {
-	const queryClient = useQueryClient();
 	const flow = useReactFlow<SfNode, SfEdge>();
 
-	const initial = useMemo(() => toFlow(head.document), [head.document]);
+	const initial = useMemo(() => toFlow(start.document), [start.document]);
 	const [nodes, setNodes, onNodesChange] = useNodesState<SfNode>(initial.nodes);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<SfEdge>(initial.edges);
 	const [meta, setMeta] = useState<DocMeta>({
-		default_agent: head.document.default_agent,
-		packages: head.document.packages,
+		default_agent: start.document.default_agent,
+		packages: start.document.packages,
 	});
-	const [version, setVersion] = useState({ number: head.number, author: head.author });
 	const [notice, setNotice] = useState<string | null>(null);
-	const [savedWarnings, setSavedWarnings] = useState<OrchestrationWarning[] | null>(null);
 
 	const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
 	const agents = useQuery({
@@ -87,6 +90,7 @@ function Editor({
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages);
 	const warnings = useMemo(() => documentWarnings(doc, catalog), [doc, catalog]);
+	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	const warningsByNode = useMemo(() => {
 		const map = new Map<string, OrchestrationWarning[]>();
 		for (const w of warnings) {
@@ -231,24 +235,6 @@ function Editor({
 	const updateNode = (id: string, node: DocNode) =>
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
 
-	// —— 保存：生成新的编排版本；结构警告不阻止保存 ——
-	const save = useMutation({
-		mutationFn: () => saveVersion(orchestration.id, doc),
-		onSuccess: (saved: SavedVersion) => {
-			setVersion({ number: saved.number, author: saved.author });
-			setSavedWarnings(saved.warnings);
-			setNotice(null);
-			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
-			queryClient.setQueryData(["orchestration", orchestration.id, "head"], {
-				orchestration_id: orchestration.id,
-				number: saved.number,
-				author: saved.author,
-				created_at: saved.created_at,
-				document: saved.document,
-			});
-		},
-	});
-
 	const selected = nodes.filter((n) => n.selected);
 	const only = selected.length === 1 ? selected[0] : undefined;
 
@@ -257,35 +243,23 @@ function Editor({
 			<div className="sf-editor flex h-[calc(100vh-49px)] flex-col">
 				<header className="sf-topbar">
 					<h1>{orchestration.name}</h1>
-					<span className="sf-tag">
-						{version.number === 0
-							? "还没有保存过版本"
-							: `版本 ${version.number}${version.author ? ` · ${version.author}` : ""}`}
-					</span>
 					<span className={`sf-tag ${warnings.length > 0 ? "sf-tag--warn" : ""}`}>
 						<i />
 						{warnings.length > 0 ? `${warnings.length} 条警告` : "检查通过"}
 					</span>
-					<div className="ml-auto flex items-center gap-3">
-						{save.isSuccess && savedWarnings && (
-							<span className="sf-tag">
-								已保存为版本 {version.number}
-								{savedWarnings.length > 0 ? `（${savedWarnings.length} 条警告）` : ""}
-							</span>
-						)}
-						{save.error && (
-							<span className="sf-tag sf-tag--danger">保存失败：{save.error.message}</span>
-						)}
-						<button
-							type="button"
-							onClick={() => save.mutate()}
-							disabled={save.isPending}
-							className="sf-btn sf-btn--primary"
-						>
-							{save.isPending ? "保存中…" : "保存"}
-						</button>
-					</div>
+					<VersionControls
+						orchestration={orchestration}
+						doc={doc}
+						versioning={versioning}
+						onReload={onReload}
+					/>
 				</header>
+				<StaleDraftBanner
+					orchestration={orchestration}
+					doc={doc}
+					versioning={versioning}
+					onReload={onReload}
+				/>
 				<div className="flex min-h-0 flex-1">
 					<aside className="sf-panel w-60 shrink-0 overflow-y-auto border-r">
 						<h2 className="sf-panel-title">节点类型</h2>
