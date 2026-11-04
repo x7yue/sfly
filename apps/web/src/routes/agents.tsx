@@ -80,6 +80,16 @@ function AgentRow({ agent }: { agent: AgentView }) {
 						))}
 					</ul>
 				)}
+				{agent.install?.state === "installing" && (
+					<div className="text-xs text-amber-700">
+						正在安装 {agent.install.package}@{agent.install.version}
+					</div>
+				)}
+				{agent.install?.state === "failed" && (
+					<div className="text-xs text-red-700">
+						安装 {agent.install.package}@{agent.install.version} 失败
+					</div>
+				)}
 			</td>
 			<td className="py-2">
 				{agent.running_tasks.length === 0 ? (

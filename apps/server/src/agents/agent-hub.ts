@@ -2,7 +2,15 @@ import type { ServerMessage } from "@sfly/proto";
 import { and, asc, eq, isNotNull } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { type AgentInfo, type AgentStatus, agents, runs, tasks } from "../db/schema.js";
+import {
+	type AgentInfo,
+	type AgentStatus,
+	agents,
+	type InstalledPackage,
+	type InstallProgress,
+	runs,
+	tasks,
+} from "../db/schema.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
 
@@ -13,7 +21,7 @@ export const DEFAULT_SLOTS = 4;
 export class AgentConnection {
 	constructor(
 		readonly name: string,
-		readonly info: AgentInfo,
+		public info: AgentInfo,
 		readonly outbox: AsyncQueue<ServerMessage>,
 	) {}
 
@@ -39,6 +47,8 @@ export interface AgentView {
 	last_seen_at: string;
 	/** Agent 共享 venv 中已安装的节点包（Agent 在 Hello 中上报）。 */
 	installed_packages: { name: string; version: string }[];
+	/** 最近一次上报的节点包安装状态；本次连接还没有安装过时为 null。 */
+	install: InstallProgress | null;
 	/** 正在这个 Agent 上运行的任务，按开始时间排序。 */
 	running_tasks: RunningTaskView[];
 }
@@ -90,6 +100,22 @@ export class AgentHub {
 		});
 	}
 
+	/** Agent 上报安装状态（InstallStatus）：更新安装进度和已安装的节点包列表。旧连接的上报忽略。 */
+	recordInstall(
+		conn: AgentConnection,
+		install: InstallProgress,
+		installed: InstalledPackage[],
+	): Promise<void> {
+		return this.deps.mutex.run(async () => {
+			if (this.#connections.get(conn.name) !== conn) return;
+			conn.info = { ...conn.info, installed_packages: installed, install };
+			await this.deps.db
+				.update(agents)
+				.set({ info: conn.info, lastSeenAt: this.deps.clock.now() })
+				.where(eq(agents.name, conn.name));
+		});
+	}
+
 	/** 连接结束：如果它仍是该名称的当前连接，记录为离线。 */
 	detach(conn: AgentConnection): Promise<void> {
 		return this.deps.mutex.run(async () => {
@@ -119,13 +145,14 @@ export class AgentHub {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(and(eq(tasks.status, "running"), isNotNull(tasks.agentName)))
 			.orderBy(asc(tasks.startedAt), asc(tasks.seq));
-		return rows.map((row) => ({
+		return rows.map(({ info: { install, ...info }, ...row }) => ({
 			name: row.name,
 			status: row.status,
 			// 早于 #5 注册的记录没有 installed_packages。
-			info: { ...row.info, installed_packages: row.info.installed_packages ?? [] },
+			info: { ...info, installed_packages: info.installed_packages ?? [] },
 			last_seen_at: row.lastSeenAt.toISOString(),
-			installed_packages: row.info.installed_packages ?? [],
+			installed_packages: info.installed_packages ?? [],
+			install: install ?? null,
 			running_tasks: running
 				.filter((t) => t.agent === row.name)
 				.map((t) => ({

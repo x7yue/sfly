@@ -1,4 +1,5 @@
 import type { AddressInfo } from "node:net";
+import { hostname } from "node:os";
 import { AgentHub } from "./agents/agent-hub.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
@@ -25,6 +26,11 @@ export interface ControlPlaneOptions {
 	logger?: boolean;
 	/** Agent 共享注册令牌；未设置时不校验。 */
 	agentToken?: string;
+	/**
+	 * HTTP API 对 Agent 可见的地址（Agent 从这里下载节点包），例如 `http://sfly.internal:8080`。
+	 * 默认取实际监听地址；监听在 0.0.0.0 / :: 时用本机主机名。
+	 */
+	publicHttpUrl?: string;
 }
 
 export interface ControlPlane {
@@ -52,12 +58,25 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const hub = new AgentHub({ db: database.db, clock, mutex });
 	await hub.markAllOffline();
 	const orchestrations = new OrchestrationStore({ db: database.db, clock });
-	const engine = new Engine({ db: database.db, clock, mutex, hub });
+	let publicHttpUrl = "";
+	const engine = new Engine({
+		db: database.db,
+		clock,
+		mutex,
+		hub,
+		packageArchiveUrl: (name, version) =>
+			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
+	});
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const api = buildHttpApi({ database, clock, logger, hub, orchestrations, engine, packages });
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
 	const httpPort = (api.server.address() as AddressInfo).port;
+	const httpUrl = `http://${formatHost(httpHost)}:${httpPort}`;
+	publicHttpUrl = (
+		options.publicHttpUrl ??
+		(httpHost === "0.0.0.0" || httpHost === "::" ? `http://${hostname()}:${httpPort}` : httpUrl)
+	).replace(/\/+$/, "");
 
 	let gateway: Awaited<ReturnType<typeof startAgentGateway>>;
 	try {
@@ -78,7 +97,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	}
 
 	return {
-		httpUrl: `http://${httpHost.includes(":") ? `[${httpHost}]` : httpHost}:${httpPort}`,
+		httpUrl,
 		grpcUrl: gateway.url,
 		async close() {
 			hub.closeAll();
@@ -89,4 +108,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			await database.close();
 		},
 	};
+}
+
+function formatHost(host: string): string {
+	return host.includes(":") ? `[${host}]` : host;
 }

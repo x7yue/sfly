@@ -72,10 +72,16 @@ export async function startRealAgent(options: {
 	return { child, workDir, events, close };
 }
 
-/** 装好 SDK 运行时和桩节点包 sfly-stub@0.1.0（testdata/stub-package）的共享 venv。 */
-export async function createStubVenv(): Promise<{ path: string; remove(): Promise<void> }> {
+/**
+ * 装好 SDK 运行时和桩节点包 sfly-stub@0.1.0（testdata/stub-package）的共享 venv；
+ * `sdkOnly` 时只装 SDK 运行时（节点包由 Agent 从控制面下载安装）。
+ */
+export async function createStubVenv(
+	options: { sdkOnly?: boolean } = {},
+): Promise<{ path: string; remove(): Promise<void> }> {
 	const dir = await mkdtemp(join(tmpdir(), "sfly-stub-venv-"));
 	const path = join(dir, "venv");
-	await promisify(execFile)(join(repoRoot, "scripts", "stub-venv.sh"), [path], { cwd: repoRoot });
+	const args = options.sdkOnly ? [path, "--sdk-only"] : [path];
+	await promisify(execFile)(join(repoRoot, "scripts", "stub-venv.sh"), args, { cwd: repoRoot });
 	return { path, remove: () => rm(dir, { recursive: true, force: true }) };
 }

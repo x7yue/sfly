@@ -1,8 +1,13 @@
 // 全栈冒烟：真实的控制面、真实的 Rust Agent、真实的 SDK 执行器，
 // 在装好桩节点包的共享 venv 中跑通一条两个节点的链，后一个节点引用前一个节点的输出。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary } from "./support/agent-binary.js";
+import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
@@ -100,4 +105,79 @@ describe("全栈冒烟：两个节点的链", () => {
 		expect(node.error?.kind).toBe("node_error");
 		expect(node.error?.message).toMatch(/^RuntimeError: 桩节点失败/);
 	}, 60_000);
+});
+
+describe("全栈冒烟：Agent 从控制面下载并安装节点包", () => {
+	let cp: TestControlPlane;
+	let venv: Awaited<ReturnType<typeof createStubVenv>>;
+	let agent: RealAgent;
+
+	beforeAll(async () => {
+		const bin = agentBinary();
+		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv({ sdkOnly: true })]);
+		// 用真实的 sfly CLI 构建桩节点包，经 HTTP API 发布。
+		const out = await mkdtemp(join(tmpdir(), "sfly-stub-pkg-"));
+		try {
+			await promisify(execFile)(
+				"uv",
+				["run", "--locked", "--quiet", "sfly", "build", "testdata/stub-package", "--out", out],
+				{ cwd: repoRoot },
+			);
+			const archive = await readFile(join(out, "sfly-stub-0.1.0.sflypkg"));
+			const res = await cp.fetch("/packages", {
+				method: "POST",
+				headers: { "content-type": "application/octet-stream" },
+				body: archive,
+			});
+			expect(res.status).toBe(201);
+		} finally {
+			await rm(out, { recursive: true, force: true });
+		}
+		agent = await startRealAgent({
+			grpcUrl: cp.grpcUrl,
+			name: "install-agent",
+			venv: venv.path,
+			// 桩节点包没有第三方依赖；镜像地址指向一个不可用的本地端口，确保安装不访问外网。
+			args: ["--index-url", "http://127.0.0.1:9/simple/"],
+			bin,
+		});
+	}, 600_000);
+
+	afterAll(async () => {
+		await agent?.close();
+		await cp?.close();
+		await venv?.remove();
+	});
+
+	it("共享 venv 里没有节点包时，Agent 下载安装后执行任务，已安装列表随之更新", async () => {
+		const api = new ApiClient(cp);
+		const before = await api.getJson<{
+			agents: Array<{ installed_packages: unknown }>;
+		}>("/agents");
+		expect(before.agents[0]?.installed_packages).toEqual([]);
+
+		const id = await api.orchestrationWith({
+			default_agent: "install-agent",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "a", kind: "package", package: "sfly-stub", node: "about", inputs: {} },
+			],
+			edges: [{ from: "entry", to: "a", kind: "chain" }],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+		const runId = await api.triggerOk(id);
+
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 60_000);
+		expect((await api.node(runId, "a")).outputs).toEqual({
+			package: "sfly-stub",
+			version: "0.1.0",
+		});
+		const after = await api.getJson<{
+			agents: Array<{ installed_packages: unknown; install: unknown }>;
+		}>("/agents");
+		expect(after.agents[0]).toMatchObject({
+			installed_packages: [{ name: "sfly-stub", version: "0.1.0" }],
+			install: { package: "sfly-stub", version: "0.1.0", state: "installed" },
+		});
+	}, 90_000);
 });

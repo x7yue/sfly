@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import {
 	type AgentMessage,
+	InstallState,
 	ErrorKind as ProtoErrorKind,
 	TaskStatus as ProtoTaskStatus,
 	ServerMessageSchema,
@@ -15,6 +16,7 @@ import type { Db } from "../db/database.js";
 import {
 	chainInstances,
 	type ErrorKind,
+	nodePackages,
 	orchestrations,
 	orchestrationVersions,
 	runs,
@@ -48,6 +50,12 @@ const ERROR_KINDS: Record<ProtoErrorKind, ErrorKind> = {
 	[ProtoErrorKind.CONFIG_ERROR]: "config_error",
 };
 
+const INSTALL_STATES: Partial<Record<InstallState, "installing" | "installed" | "failed">> = {
+	[InstallState.INSTALLING]: "installing",
+	[InstallState.INSTALLED]: "installed",
+	[InstallState.FAILED]: "failed",
+};
+
 /** 一次状态迁移的上下文：同一事务里推进链，并记下需要重新尝试派发的 Agent。 */
 interface Step {
 	tx: Tx;
@@ -71,6 +79,8 @@ export class Engine implements AgentSessionHandler {
 			clock: Clock;
 			mutex: Mutex;
 			hub: AgentHub;
+			/** 节点包归档的下载地址（Agent 通过 HTTP 下载）。 */
+			packageArchiveUrl: (name: string, version: string) => string;
 		},
 	) {}
 
@@ -170,6 +180,15 @@ export class Engine implements AgentSessionHandler {
 				create(ServerMessageSchema, {
 					body: { case: "ack", value: { taskId: result.taskId, attempt: result.attempt } },
 				}),
+			);
+		} else if (message.body.case === "install") {
+			const status = message.body.value;
+			const state = INSTALL_STATES[status.state];
+			if (!state) return;
+			await this.deps.hub.recordInstall(
+				conn,
+				{ package: status.package, version: status.version, state, task_id: status.taskId },
+				status.installedPackages.map((p) => ({ name: p.name, version: p.version })),
 			);
 		}
 	}
@@ -399,6 +418,12 @@ export class Engine implements AgentSessionHandler {
 			.update(tasks)
 			.set({ status: "running", inputs, startedAt: step.now })
 			.where(eq(tasks.id, task.id));
+		const packageVersion = document.packages[node.package] ?? "";
+		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
+		const [archive] = await step.tx
+			.select({ sha256: nodePackages.sha256 })
+			.from(nodePackages)
+			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, packageVersion)));
 		return create(ServerMessageSchema, {
 			body: {
 				case: "assign",
@@ -406,12 +431,14 @@ export class Engine implements AgentSessionHandler {
 					taskId: task.id,
 					attempt: task.attempt,
 					package: node.package,
-					packageVersion: document.packages[node.package] ?? "",
+					packageVersion,
 					node: node.node,
 					inputsJson: JSON.stringify(inputs),
 					timeoutSeconds: node.timeout ?? DEFAULT_TIMEOUT_SECONDS,
 					runId: run.id,
 					nodeId: node.id,
+					packageSha256: archive?.sha256 ?? "",
+					packageUrl: archive ? this.deps.packageArchiveUrl(node.package, packageVersion) : "",
 				},
 			},
 		});

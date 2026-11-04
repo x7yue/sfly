@@ -16,6 +16,7 @@ interface AgentView {
 	};
 	last_seen_at: string;
 	installed_packages: { name: string; version: string }[];
+	install: { package: string; version: string; state: string; task_id: string } | null;
 	running_tasks: {
 		task_id: string;
 		run_id: string;
@@ -66,6 +67,7 @@ describe("Agent 注册", () => {
 				},
 				last_seen_at: "2026-01-01T00:00:00.000Z",
 				installed_packages: [],
+				install: null,
 				running_tasks: [],
 			},
 		]);

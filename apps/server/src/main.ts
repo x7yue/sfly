@@ -6,6 +6,8 @@
 //   SFLY_GRPC_HOST   Agent 网关监听地址（默认 0.0.0.0）
 //   SFLY_GRPC_PORT   Agent 网关端口（默认 50051）
 //   SFLY_AGENT_TOKEN Agent 共享注册令牌（可选；设置后令牌不对的 Agent 被拒绝）
+//   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包
+//                    （可选；默认取监听地址，监听 0.0.0.0 时用本机主机名）
 import { startControlPlane } from "./control-plane.js";
 
 const env = process.env;
@@ -16,6 +18,7 @@ const controlPlane = await startControlPlane({
 	grpc: { host: env.SFLY_GRPC_HOST ?? "0.0.0.0", port: Number(env.SFLY_GRPC_PORT ?? 50051) },
 	logger: true,
 	agentToken: env.SFLY_AGENT_TOKEN || undefined,
+	publicHttpUrl: env.SFLY_PUBLIC_URL || undefined,
 });
 console.log(`sfly control plane: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`);
 
