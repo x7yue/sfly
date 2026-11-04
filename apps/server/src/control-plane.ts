@@ -10,6 +10,7 @@ import { TaskLogs } from "./logs/task-logs.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
+import { Retention } from "./retention/retention.js";
 import { createPreflight } from "./runs/preflight.js";
 import { Mutex } from "./util/mutex.js";
 
@@ -36,6 +37,14 @@ export interface ControlPlaneOptions {
 	publicHttpUrl?: string;
 	/** 周期扫描（目前只有在线编辑者超时）的间隔，默认 250 毫秒（在线编辑者最多晚这么久被移除）；测试里调小，配合手动时钟推进。 */
 	sweepIntervalMs?: number;
+	/** 单个任务日志的上限（字节），默认 200 MB；超出部分截断（#18）。 */
+	logLimitBytes?: number;
+	/** 单个任务产物的总大小上限（字节），默认 1 GB（#18）。 */
+	artifactLimitBytes?: number;
+	/** 日志和产物的保留天数，默认 30 天；运行结束超过这么久后清理（#18）。 */
+	retentionDays?: number;
+	/** 保留期清理的扫描间隔，默认 1 分钟；是否到期只按注入的时钟判断。 */
+	retentionSweepIntervalMs?: number;
 }
 
 export interface ControlPlane {
@@ -75,7 +84,18 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 		preflight,
 	});
-	const logs = new TaskLogs({ db: database.db, clock, dataDir: options.dataDir });
+	const logs = new TaskLogs({
+		db: database.db,
+		clock,
+		dataDir: options.dataDir,
+		limitBytes: options.logLimitBytes,
+	});
+	const retention = new Retention({
+		db: database.db,
+		clock,
+		dataDir: options.dataDir,
+		retentionDays: options.retentionDays,
+	});
 	const presence = new PresenceRegistry({ clock });
 	const api = buildHttpApi({
 		database,
@@ -88,6 +108,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		presence,
 		preflight,
 		logs,
+		retention,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
@@ -123,12 +144,20 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 
 	const sweep = setInterval(() => presence.sweep(), options.sweepIntervalMs ?? 250);
 	sweep.unref();
+	const retentionSweep = setInterval(() => {
+		retention.sweep().catch((error) => {
+			if (logger) console.error("retention sweep failed:", error);
+		});
+	}, options.retentionSweepIntervalMs ?? 60_000);
+	retentionSweep.unref();
 
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
 		async close() {
 			clearInterval(sweep);
+			clearInterval(retentionSweep);
+			await retention.idle();
 			hub.closeAll();
 			await gateway.close();
 			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。

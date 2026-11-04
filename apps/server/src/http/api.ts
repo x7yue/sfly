@@ -7,6 +7,7 @@ import type { TaskLogs } from "../logs/task-logs.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import type { PresenceRegistry } from "../presence/presence-registry.js";
+import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import { registerSse } from "../sse/sse.js";
 import { sendError } from "./errors.js";
@@ -27,6 +28,7 @@ export interface HttpApiDeps {
 	presence: PresenceRegistry;
 	preflight: Preflight;
 	logs: TaskLogs;
+	retention: Retention;
 }
 
 const errorCode = (status: number): string =>
@@ -49,6 +51,7 @@ export function buildHttpApi({
 	presence,
 	preflight,
 	logs,
+	retention,
 }: HttpApiDeps): FastifyInstance {
 	const app = Fastify({ logger });
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
@@ -86,7 +89,7 @@ export function buildHttpApi({
 		sse,
 		progress: logs.progress,
 	});
-	registerLogRoutes(app, { logs, sse });
+	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
 	registerPackageRoutes(app, packages);
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 
