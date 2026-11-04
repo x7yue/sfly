@@ -44,3 +44,32 @@ def about(ctx: Context) -> dict[str, Any]:
     """报告当前生效的节点包名与版本（安装与版本切换测试用；同一份源码可换包名和版本构建）。"""
     dist = metadata.distribution(__name__)
     return {"package": dist.metadata["Name"], "version": dist.version}
+
+
+@node(title="多路日志", outputs=[])
+def chatter(
+    ctx: Context, steps: int = 0, interval: float = 0.0, secret: str = ""
+) -> dict[str, Any]:
+    """日志与进度测试用：print、标准错误、子进程输出、各级别 SDK 日志，然后按步上报进度。"""
+    import subprocess
+
+    print("来自 print")
+    print("来自标准错误", file=sys.stderr)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('来自子进程'); print('子进程错误', file=sys.stderr)",
+        ],
+        check=True,
+    )
+    ctx.log.debug("sdk 调试")
+    ctx.log.info("sdk 信息 %d", 1)
+    ctx.log.warning("sdk 警告")
+    ctx.log.error("sdk 错误")
+    if secret:
+        print(f"token={secret}; again {secret}")
+    for i in range(steps):
+        ctx.progress(i + 1, steps, f"第 {i + 1} 步")
+        time.sleep(interval)
+    return {}
