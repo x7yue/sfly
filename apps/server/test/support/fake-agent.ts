@@ -14,7 +14,9 @@ import {
 	type LogLineSchema,
 	LogSource,
 	type ServerMessage,
+	TaskAction,
 	TaskStatus,
+	type Welcome,
 } from "@sfly/proto";
 
 /** 可推送的异步队列，作为双向流的请求流。 */
@@ -181,6 +183,43 @@ export class FakeAgent {
 			this.#dispatch();
 		});
 	}
+
+	/** 握手时收到的 Welcome（#15：含对 Hello.running_tasks 的处置）。 */
+	get welcome(): Welcome {
+		const message = this.received.find((m) => m.body.case === "welcome");
+		if (!message) throw new Error(`agent ${this.name}: no welcome`);
+		return message.body.value as Welcome;
+	}
+
+	/** Welcome 中对各任务的处置：task_id → "continue" | "abandon"。 */
+	get dispositions(): Record<string, "continue" | "abandon"> {
+		return Object.fromEntries(
+			this.welcome.dispositions.map((d) => [
+				d.taskId,
+				d.action === TaskAction.ABANDON ? "abandon" : "continue",
+			]),
+		);
+	}
+
+	/** 发送心跳（续约本 Agent 上全部运行中任务的租约），并等到控制面处理完它。 */
+	async heartbeat(): Promise<void> {
+		this.send({ case: "heartbeat", value: {} });
+		await this.sync();
+	}
+
+	/**
+	 * 等到控制面处理完此前发出的全部消息：入站消息按顺序处理，
+	 * 这里发一条不存在任务的结果（控制面忽略但仍回 Ack）并等它的 Ack。
+	 */
+	async sync(): Promise<void> {
+		await this.report({
+			taskId: "00000000-0000-4000-8000-000000000000",
+			attempt: ++this.#syncs,
+			status: TaskStatus.SUCCESS,
+		});
+	}
+
+	#syncs = 0;
 
 	/** 等待下一个派发给本 Agent 的任务。 */
 	async nextAssign(options: { timeoutMs?: number } = {}): Promise<AssignedTask> {

@@ -209,9 +209,17 @@ export const tasks = pgTable(
 		 * 定时器的全部状态都在这一行里（status + wake_at），控制面重启后照常扫描。
 		 */
 		wakeAt: timestamptz("wake_at"),
+		/**
+		 * 运行中任务的租约到期时间（#15）：派发时设置，Agent 心跳续约；过期后任务以 agent_lost 失败。
+		 */
+		leaseExpiresAt: timestamptz("lease_expires_at"),
+		/** 排队中任务的排队超时时间（#15）：进入 queued 时按节点的 queue_timeout 设置；过期后以 env_error 失败。 */
+		queueExpiresAt: timestamptz("queue_expires_at"),
 	},
 	(t) => [
 		index("tasks_waiting").on(t.wakeAt).where(sql`${t.status} = 'waiting'`),
+		index("tasks_lease").on(t.leaseExpiresAt).where(sql`${t.status} = 'running'`),
+		index("tasks_queue_timeout").on(t.queueExpiresAt).where(sql`${t.status} = 'queued'`),
 		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),
 		index("tasks_agent_status").on(t.agentName, t.status),
 		index("tasks_chain_instance").on(t.chainInstanceId),

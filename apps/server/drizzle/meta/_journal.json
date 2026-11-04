@@ -50,6 +50,13 @@
       "when": 1793807551604,
       "tag": "0006_timers",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793808764512,
+      "tag": "0007_recovery",
+      "breakpoints": true
     }
   ]
 }

@@ -40,6 +40,19 @@ export class AgentConnection {
 		readonly outbox: AsyncQueue<ServerMessage>,
 	) {}
 
+	/** 已推送 Welcome（#15：Welcome 带着对重连前任务的处置，之前不能向它派发或取消）。 */
+	#welcomed = false;
+
+	get welcomed(): boolean {
+		return this.#welcomed;
+	}
+
+	/** 推送 Welcome，之后连接才可用于派发。 */
+	welcome(message: ServerMessage): void {
+		this.send(message);
+		this.#welcomed = true;
+	}
+
 	/** 推送一条消息；连接已关闭时返回 false。 */
 	send(message: ServerMessage): boolean {
 		return this.outbox.push(message);
@@ -88,10 +101,10 @@ export class AgentHub {
 
 	constructor(private readonly deps: { db: Db; clock: Clock; mutex: Mutex }) {}
 
-	/** 当前在线的连接。 */
+	/** 当前在线（已收到 Welcome）的连接。 */
 	connection(name: string): AgentConnection | undefined {
 		const conn = this.#connections.get(name);
-		return conn && !conn.closed ? conn : undefined;
+		return conn && !conn.closed && conn.welcomed ? conn : undefined;
 	}
 
 	/** 注册一个新连接：替换同名旧连接，记录为在线。 */
