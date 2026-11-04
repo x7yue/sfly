@@ -9,7 +9,7 @@ dependencies = []
 
 [project.optional-dependencies]
 # CLI 在开发者机器上运行，可以有依赖；不会被装进共享 venv。
-cli = ["jsonschema>=4.23"]
+cli = ["jsonschema>=4.23", "tomli>=2; python_version < '3.11'"]
 
 [project.scripts]
 sfly = "sfly.cli:main"
