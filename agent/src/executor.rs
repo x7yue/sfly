@@ -6,7 +6,8 @@
 //! |---|---|
 //! | `SFLY_TASK` | `task.json`：入口、已解析的输入等 |
 //! | `SFLY_OUTPUT` | `output.json`：执行器写入的结果 |
-//! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录 |
+//! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录（任务结束后由 [`crate::artifacts`] 上传） |
+//! | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀（`AssignTask.artifact_upload_url`，为空时不设置） |
 //! | `SFLY_EVENTS` | `events.jsonl`：结构化日志与进度 |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
 //!
@@ -142,6 +143,7 @@ async fn prepare_dir(
 struct Paths {
     output: PathBuf,
     stderr: PathBuf,
+    artifacts: PathBuf,
 }
 
 /// 正在运行的执行器子进程。
@@ -164,6 +166,7 @@ fn spawn_process(
     let paths = Paths {
         output: dir.join("output.json"),
         stderr: dir.join("stderr.log"),
+        artifacts: dir.join("artifacts"),
     };
 
     let mut command = venv.python_command();
@@ -173,12 +176,15 @@ fn spawn_process(
         .current_dir(dir)
         .env("SFLY_TASK", dir.join("task.json"))
         .env("SFLY_OUTPUT", &paths.output)
-        .env("SFLY_ARTIFACTS", dir.join("artifacts"))
+        .env("SFLY_ARTIFACTS", &paths.artifacts)
         .env("SFLY_EVENTS", dir.join("events.jsonl"))
         .env("SFLY_CANCEL", dir.join("cancel"))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if !task.artifact_upload_url.is_empty() {
+        command.env("SFLY_ARTIFACTS_URL", &task.artifact_upload_url);
+    }
 
     // 每个任务是一棵进程树，超时、取消时整体终止。
     match ProcessTree::spawn(&mut command) {
@@ -207,6 +213,11 @@ fn spawn_process(
 }
 
 impl Running {
+    /// 任务的产物目录。
+    pub fn artifacts_dir(&self) -> PathBuf {
+        self.paths.artifacts.clone()
+    }
+
     /// 等待执行器退出并读取结果。超过 `timeout_seconds`（0 表示不限制）时终止进程树，以 timeout 失败。
     pub async fn wait(mut self) -> TaskResult {
         let status = match self.task.timeout_seconds {

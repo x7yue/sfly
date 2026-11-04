@@ -8,6 +8,7 @@
 //!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
+pub mod artifacts;
 pub mod dev;
 pub mod executor;
 pub mod install;
@@ -223,12 +224,19 @@ struct Runtime {
     installs: mpsc::UnboundedSender<InstallStatus>,
     /// 任务的日志与进度（[`logs`]）。
     telemetry: logs::Telemetry,
+    /// 任务结束后上传产物（[`artifacts`]）。
+    uploader: artifacts::Uploader,
 }
 
 impl Runtime {
     async fn run_task(&self, task: AssignTask) {
         let result = match self.start_task(&task).await {
-            Ok(running) => running.wait().await,
+            Ok(running) => {
+                let dir = running.artifacts_dir();
+                let result = running.wait().await;
+                // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。
+                self.uploader.finish(&task, &dir, result).await
+            }
             Err(result) => result,
         };
         let _ = self.results.send(result);
@@ -432,6 +440,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel();
+    let http = reqwest::Client::new();
     let runtime = Arc::new(Runtime {
         name: config.name.clone(),
         dev: DevRegistry::new(work_dir.join(".dev")),
@@ -444,7 +453,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             scratch,
             index_url: config.index_url.clone(),
             uv: config.uv.clone(),
-            http: reqwest::Client::new(),
+            http: http.clone(),
         },
         work_dir: work_dir.clone(),
         terminate_grace: config.terminate_grace,
@@ -452,6 +461,10 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         results: results_tx,
         installs: installs_tx,
         telemetry: telemetry_tx,
+        uploader: artifacts::Uploader {
+            http,
+            token: config.token.clone(),
+        },
     });
     let dev_socket = config
         .dev_socket

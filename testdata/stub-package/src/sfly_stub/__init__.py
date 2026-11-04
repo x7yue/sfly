@@ -97,3 +97,14 @@ def chatter(
         ctx.progress(i + 1, steps, f"第 {i + 1} 步")
         time.sleep(interval)
     return {}
+
+
+@node(title="产物", outputs=["refs"])
+def artifacts(
+    ctx: Context, files: dict[str, str] | None = None, fail: bool = False
+) -> dict[str, Any]:
+    """产物测试用：把 files（名称 → 文本内容）保存为产物，返回产物引用；fail 时保存后抛出异常。"""
+    refs = {name: ctx.artifacts.save(name, content) for name, content in (files or {}).items()}
+    if fail:
+        raise RuntimeError("保存产物后失败")
+    return {"refs": refs}
