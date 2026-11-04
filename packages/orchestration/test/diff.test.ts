@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { describe, expect, it } from "vitest";
 import { diffDocuments, isEmptyDiff } from "../src/index.js";
 
