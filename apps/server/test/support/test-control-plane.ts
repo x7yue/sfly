@@ -39,6 +39,8 @@ export async function startTestControlPlane(
 			dataDir,
 			clock,
 			agentToken: options.agentToken,
+			// 周期扫描调快：测试推进手动时钟后很快就能观察到效果，不用真实等待。
+			sweepIntervalMs: 20,
 			http: { host: "127.0.0.1", port: 0 },
 			grpc: { host: "127.0.0.1", port: 0 },
 		});
