@@ -99,10 +99,28 @@ export class FakeAgent {
 		hello: HelloInit,
 		options: { timeoutMs?: number } = {},
 	): Promise<FakeAgent> {
+		return FakeAgent.connectRaw(
+			grpcUrl,
+			(agent) => agent.send({ case: "hello", value: { agentVersion: "fake", ...hello } }),
+			{ ...options, name: hello.name },
+		);
+	}
+
+	/** 建立双向流后由 `handshake` 自行发送消息（例如不合规的首条消息），然后等待 Welcome。 */
+	static async connectRaw(
+		grpcUrl: string,
+		handshake: (agent: FakeAgent) => void,
+		options: { timeoutMs?: number; name?: string } = {},
+	): Promise<FakeAgent> {
 		const transport = createGrpcTransport({ baseUrl: grpcUrl });
-		const agent = new FakeAgent(hello.name, createClient(AgentGateway, transport));
-		agent.send({ case: "hello", value: { agentVersion: "fake", ...hello } });
-		await agent.next("welcome", options);
+		const agent = new FakeAgent(options.name ?? "raw", createClient(AgentGateway, transport));
+		handshake(agent);
+		try {
+			await agent.next("welcome", options);
+		} catch (error) {
+			agent.#abort.abort();
+			throw error;
+		}
 		return agent;
 	}
 

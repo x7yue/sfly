@@ -1,8 +1,10 @@
 import type { AddressInfo } from "node:net";
+import { AgentHub } from "./agents/agent-hub.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
+import { Mutex } from "./util/mutex.js";
 
 export interface ListenOptions {
 	host?: string;
@@ -16,6 +18,8 @@ export interface ControlPlaneOptions {
 	http?: ListenOptions;
 	grpc?: ListenOptions;
 	logger?: boolean;
+	/** Agent 共享注册令牌；未设置时不校验。 */
+	agentToken?: string;
 }
 
 export interface ControlPlane {
@@ -39,7 +43,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 
-	const api = buildHttpApi({ database, clock, logger });
+	const mutex = new Mutex();
+	const hub = new AgentHub({ db: database.db, clock, mutex });
+	await hub.markAllOffline();
+	const api = buildHttpApi({ database, clock, logger, hub });
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
 	const httpPort = (api.server.address() as AddressInfo).port;
@@ -49,6 +56,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		gateway = await startAgentGateway({
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
+			hub,
+			agentToken: options.agentToken,
+			onError: (error) => {
+				if (logger) console.error("agent session error:", error);
+			},
 		});
 	} catch (error) {
 		await api.close();
@@ -60,7 +72,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		httpUrl: `http://${httpHost.includes(":") ? `[${httpHost}]` : httpHost}:${httpPort}`,
 		grpcUrl: gateway.url,
 		async close() {
+			hub.closeAll();
 			await gateway.close();
+			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
+			await mutex.run(async () => {});
 			await api.close();
 			await database.close();
 		},

@@ -20,10 +20,10 @@ export interface TestControlPlane {
 
 /**
  * 在独立的临时数据库上启动一个真实的控制面，HTTP 与 gRPC 都监听随机端口。
- * 默认注入 ManualClock，可以传入自己的时钟。
+ * 默认注入 ManualClock，可以传入自己的时钟；agentToken 为共享注册令牌（默认不校验）。
  */
 export async function startTestControlPlane(
-	options: { clock?: Clock } = {},
+	options: { clock?: Clock; agentToken?: string } = {},
 ): Promise<TestControlPlane> {
 	const clock = options.clock ?? new ManualClock();
 	const database = await createTestDatabase();
@@ -31,6 +31,7 @@ export async function startTestControlPlane(
 		startControlPlane({
 			databaseUrl: database.url,
 			clock,
+			agentToken: options.agentToken,
 			http: { host: "127.0.0.1", port: 0 },
 			grpc: { host: "127.0.0.1", port: 0 },
 		});
