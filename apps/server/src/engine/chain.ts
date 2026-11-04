@@ -2,27 +2,73 @@ import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 
 export type PackageNode = Extract<OrchestrationNode, { kind: "package" }>;
 export type EntryNode = Extract<OrchestrationNode, { kind: "entry" }>;
+export type SubflowEntryNode = Extract<OrchestrationNode, { kind: "subflow_entry" }>;
+export type AsyncTaskNode = Extract<OrchestrationNode, { kind: "async" }>;
 
-/** 执行用的链：从起点开始按顺序排列的节点。 */
+/** 执行用的链：从起点（入口节点或子流程入口节点）开始按顺序排列的节点。 */
 export interface ChainPlan {
-	entry: EntryNode;
+	entry: EntryNode | SubflowEntryNode;
 	nodes: OrchestrationNode[];
 }
 
+/** 整个编排的执行计划：主链和每个子流程（按起点节点 ID）。 */
+export interface RunPlan {
+	main: ChainPlan;
+	chains: ReadonlyMap<string, ChainPlan>;
+	/** 异步任务节点 ID → 它的调度连线连到的子流程入口节点 ID。 */
+	dispatch: ReadonlyMap<string, string>;
+}
+
 /** 本阶段引擎支持执行的节点种类；其余种类由后续票据加入。 */
-const SUPPORTED_KINDS = new Set<OrchestrationNode["kind"]>(["entry", "package"]);
+const SUPPORTED_KINDS = new Set<OrchestrationNode["kind"]>([
+	"entry",
+	"subflow_entry",
+	"async",
+	"package",
+]);
 
 /**
- * 从入口节点沿 chain 连线排出主链，并做触发前必须满足的检查
- * （单入单出、无环、节点种类受支持、包节点有 Agent 和锁定版本）。返回错误列表或执行计划。
+ * 排出主链和全部子流程，并做触发前必须满足的检查（单入单出、无环、节点种类受支持、
+ * 包节点有 Agent 和锁定版本、异步任务节点连到一个子流程入口节点）。返回错误列表或执行计划。
  */
-export function planMainChain(document: OrchestrationDocument): ChainPlan | { errors: string[] } {
-	const errors: string[] = [];
+export function planRun(document: OrchestrationDocument): RunPlan | { errors: string[] } {
 	const entries = document.nodes.filter((n): n is EntryNode => n.kind === "entry");
 	if (entries.length !== 1) {
 		return { errors: [`orchestration must have exactly one entry node, found ${entries.length}`] };
 	}
-	const entry = entries[0] as EntryNode;
+	const errors: string[] = [];
+	const chains = new Map<string, ChainPlan>();
+	const starts = document.nodes.filter(
+		(n): n is EntryNode | SubflowEntryNode => n.kind === "entry" || n.kind === "subflow_entry",
+	);
+	for (const start of starts) {
+		const plan = planChain(document, start);
+		if ("errors" in plan) errors.push(...plan.errors);
+		else chains.set(start.id, plan);
+	}
+	const dispatch = new Map<string, string>();
+	for (const edge of document.edges) {
+		if (edge.kind !== "dispatch") continue;
+		if (dispatch.has(edge.from)) errors.push(`node ${edge.from} has more than one dispatch edge`);
+		dispatch.set(edge.from, edge.to);
+	}
+	for (const node of document.nodes) {
+		if (node.kind !== "async") continue;
+		const target = dispatch.get(node.id);
+		if (!target || document.nodes.find((n) => n.id === target)?.kind !== "subflow_entry") {
+			errors.push(`node ${node.id}: async task node must dispatch to a subflow entry node`);
+		}
+	}
+	if (errors.length > 0) return { errors };
+	return { main: chains.get((entries[0] as EntryNode).id) as ChainPlan, chains, dispatch };
+}
+
+/** 从起点沿 chain 连线排出一条链。 */
+export function planChain(
+	document: OrchestrationDocument,
+	entry: EntryNode | SubflowEntryNode,
+): ChainPlan | { errors: string[] } {
+	const errors: string[] = [];
 	const byId = new Map(document.nodes.map((n) => [n.id, n]));
 	const outgoing = new Map<string, string[]>();
 	const incoming = new Map<string, number>();

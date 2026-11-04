@@ -27,7 +27,7 @@ import type { AgentSessionHandler } from "../gateway/agent-gateway.js";
 import type { Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
-import { agentFor, type ChainPlan, planMainChain } from "./chain.js";
+import { type AsyncTaskNode, agentFor, type ChainPlan, planRun, type RunPlan } from "./chain.js";
 import { hasFinalFailure, isAlways, shouldRetry } from "./failures.js";
 import { chainInstanceId, taskId } from "./ids.js";
 import { fillParams } from "./params.js";
@@ -73,11 +73,13 @@ interface Step {
  * 引擎：PostgreSQL 之上的链状态机（docs/SEMANTICS.md §3）。
  *
  * 每个事件（触发、任务结果、Agent 上线）在进程内互斥锁下处理，状态迁移在一个数据库事务里完成，
- * 提交后再向 Agent 推送派发消息。当前支持主链上的入口节点和包节点。
+ * 提交后再向 Agent 推送派发消息。当前支持入口节点、子流程入口节点、异步任务节点和包节点；
+ * 子流程实例由异步任务节点在同一个事务里创建（#spawn）。
  */
 export class Engine implements AgentSessionHandler {
 	#documents = new Map<string, OrchestrationDocument>();
-	#plans = new Map<string, ChainPlan>();
+	/** 编排版本 ID → 执行计划。 */
+	#plans = new Map<string, RunPlan>();
 
 	constructor(
 		private readonly deps: {
@@ -127,7 +129,7 @@ export class Engine implements AgentSessionHandler {
 				};
 			}
 			const problems = await this.deps.preflight(version.document);
-			const plan = planMainChain(version.document);
+			const plan = planRun(version.document);
 			if (problems.length > 0 || "errors" in plan) {
 				const details =
 					problems.length > 0 || !("errors" in plan)
@@ -141,7 +143,7 @@ export class Engine implements AgentSessionHandler {
 					details,
 				};
 			}
-			const filled = fillParams(plan.entry.params, provided);
+			const filled = fillParams(plan.main.entry.params, provided);
 			if ("errors" in filled) {
 				return {
 					ok: false,
@@ -153,7 +155,7 @@ export class Engine implements AgentSessionHandler {
 			}
 
 			this.#documents.set(version.id, version.document);
-			this.#plans.set(`${version.id}:${plan.entry.id}`, plan);
+			this.#plans.set(version.id, plan);
 			const runId = randomUUID();
 			const [run] = await step.tx
 				.insert(runs)
@@ -172,7 +174,7 @@ export class Engine implements AgentSessionHandler {
 				.values({
 					id: chainInstanceId(runId),
 					runId,
-					chainId: plan.entry.id,
+					chainId: plan.main.entry.id,
 					depth: 0,
 					params: filled.params,
 					status: "running",
@@ -240,15 +242,21 @@ export class Engine implements AgentSessionHandler {
 		return version.document;
 	}
 
-	/** 链实例的执行计划；编排版本不可变，计划可以缓存。 */
-	async #plan(tx: Tx, run: RunRow, chain: ChainRow): Promise<ChainPlan> {
-		const key = `${run.orchestrationVersionId}:${chain.chainId}`;
-		const cached = this.#plans.get(key);
+	/** 运行的执行计划；编排版本不可变，计划可以缓存。 */
+	async #runPlan(tx: Tx, run: RunRow): Promise<RunPlan> {
+		const cached = this.#plans.get(run.orchestrationVersionId);
 		if (cached) return cached;
-		const plan = planMainChain(await this.#document(tx, run.orchestrationVersionId));
+		const plan = planRun(await this.#document(tx, run.orchestrationVersionId));
 		if ("errors" in plan)
-			throw new Error(`run ${run.id}: invalid chain: ${plan.errors.join("; ")}`);
-		this.#plans.set(key, plan);
+			throw new Error(`run ${run.id}: invalid orchestration: ${plan.errors.join("; ")}`);
+		this.#plans.set(run.orchestrationVersionId, plan);
+		return plan;
+	}
+
+	/** 链实例（主链或某个子流程的实例）的执行计划。 */
+	async #plan(tx: Tx, run: RunRow, chain: ChainRow): Promise<ChainPlan> {
+		const plan = (await this.#runPlan(tx, run)).chains.get(chain.chainId);
+		if (!plan) throw new Error(`run ${run.id}: chain ${chain.chainId} not in plan`);
 		return plan;
 	}
 
@@ -279,6 +287,11 @@ export class Engine implements AgentSessionHandler {
 					.onConflictDoNothing();
 				continue;
 			}
+			if (node.kind === "async") {
+				// 失败时 #failTask 已经推进了这条链的剩余部分。
+				if (!(await this.#spawn(step, run, chain, plan, i, node))) return;
+				continue;
+			}
 			if (node.kind === "package") {
 				const agentName = agentFor(document, node);
 				await step.tx
@@ -288,13 +301,116 @@ export class Engine implements AgentSessionHandler {
 				step.touchedAgents.add(agentName);
 				return;
 			}
-			// 入口节点：运行开始时立即完成。
+			// 入口节点 / 子流程入口节点：链实例创建时立即完成。
 			await step.tx
 				.insert(tasks)
 				.values({ ...base, status: "success", outputs: {}, startedAt: step.now, endedAt: step.now })
 				.onConflictDoNothing();
 		}
 		await this.#finishChain(step, run, chain, failed ? "failed" : "success");
+	}
+
+	/**
+	 * 异步任务节点（§4）：按参数映射创建一个子流程实例后立即成功，输出子流程实例 ID。
+	 * 子流程实例 ID 由运行、父链实例、异步任务节点确定性生成，重放不会重复创建。
+	 * 映射里的引用无效、或映射的值不符合子流程入口的参数声明时，以 config_error 失败并返回 false。
+	 */
+	async #spawn(
+		step: Step,
+		run: RunRow,
+		chain: ChainRow,
+		plan: ChainPlan,
+		index: number,
+		node: AsyncTaskNode,
+	): Promise<boolean> {
+		const runPlan = await this.#runPlan(step.tx, run);
+		const subflow = runPlan.chains.get(runPlan.dispatch.get(node.id) ?? "");
+		if (!subflow) throw new Error(`run ${run.id}: async node ${node.id} has no subflow`);
+		const base = {
+			id: taskId(chain.id, node.id, 1),
+			runId: run.id,
+			chainInstanceId: chain.id,
+			nodeId: node.id,
+			attempt: 1,
+			queuedAt: step.now,
+			startedAt: step.now,
+		};
+
+		let problem: string | undefined;
+		let params: Record<string, unknown> = {};
+		try {
+			const mapped = resolveInputs(node.params, {
+				params: chain.params,
+				earlierOutputs: await this.#earlierOutputs(step.tx, chain, plan, index),
+			});
+			const filled = fillParams(subflow.entry.params, mapped);
+			if ("errors" in filled) problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}`;
+			else params = filled.params;
+		} catch (error) {
+			if (!(error instanceof InvalidReferenceError)) throw error;
+			problem = error.message;
+		}
+		if (problem !== undefined) {
+			const [task] = await step.tx
+				.insert(tasks)
+				.values({ ...base, status: "running" })
+				.onConflictDoNothing()
+				.returning();
+			if (task) await this.#failTask(step, task, "config_error", problem);
+			return false;
+		}
+
+		const childId = chainInstanceId(run.id, chain.id, node.id);
+		const [child] = await step.tx
+			.insert(chainInstances)
+			.values({
+				id: childId,
+				runId: run.id,
+				chainId: subflow.entry.id,
+				parentChainInstanceId: chain.id,
+				asyncNodeId: node.id,
+				depth: chain.depth + 1,
+				params,
+				status: "running",
+				startedAt: step.now,
+			})
+			.onConflictDoNothing()
+			.returning();
+		await step.tx
+			.insert(tasks)
+			.values({
+				...base,
+				status: "success",
+				inputs: params,
+				outputs: { chain_instance_id: childId },
+				endedAt: step.now,
+			})
+			.onConflictDoNothing();
+		if (child) await this.#advance(step, run, child, 0);
+		return true;
+	}
+
+	/** 本链上第 index 个节点之前、已成功的节点的输出。 */
+	async #earlierOutputs(
+		tx: Tx,
+		chain: ChainRow,
+		plan: ChainPlan,
+		index: number,
+	): Promise<Map<string, Record<string, unknown>>> {
+		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
+		const done = earlierIds.length
+			? await tx
+					.select({ nodeId: tasks.nodeId, outputs: tasks.outputs })
+					.from(tasks)
+					.where(
+						and(
+							eq(tasks.chainInstanceId, chain.id),
+							inArray(tasks.nodeId, earlierIds),
+							eq(tasks.status, "success"),
+						),
+					)
+			: [];
+		return new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
 	}
 
 	/** 链上是否已有节点最终失败（含 always 节点）。 */
@@ -476,19 +592,7 @@ export class Engine implements AgentSessionHandler {
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
 
 		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
-		const done = earlierIds.length
-			? await step.tx
-					.select({ nodeId: tasks.nodeId, outputs: tasks.outputs })
-					.from(tasks)
-					.where(
-						and(
-							eq(tasks.chainInstanceId, chain.id),
-							inArray(tasks.nodeId, earlierIds),
-							eq(tasks.status, "success"),
-						),
-					)
-			: [];
-		const earlierOutputs = new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
+		const earlierOutputs = await this.#earlierOutputs(step.tx, chain, plan, index);
 		// always 节点：前面失败或被跳过的节点没有输出，引用缺失的输出得到 null（§2.4）。
 		const missingAsNull = isAlways(node);
 		if (missingAsNull) {

@@ -8,7 +8,7 @@ import {
 	type TaskProgress,
 	tasks,
 } from "../db/schema.js";
-import { agentFor, planMainChain } from "./chain.js";
+import { agentFor, planRun } from "./chain.js";
 
 export interface AttemptView {
 	task_id: string;
@@ -84,8 +84,10 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		.from(tasks)
 		.where(eq(tasks.runId, runId))
 		.orderBy(asc(tasks.attempt));
-	const plan = planMainChain(document);
-	const chainNodes = "errors" in plan ? document.nodes : plan.nodes;
+	const plan = planRun(document);
+	// 每个链实例只列出它那条链（主链或子流程）上的节点。
+	const chainNodes = (chainId: string) =>
+		("errors" in plan ? undefined : plan.chains.get(chainId)?.nodes) ?? [];
 
 	return {
 		id: run.id,
@@ -106,7 +108,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			params: chain.params,
 			started_at: chain.startedAt.toISOString(),
 			ended_at: iso(chain.endedAt),
-			nodes: chainNodes.map((node) => {
+			nodes: chainNodes(chain.chainId).map((node) => {
 				const rows = allTasks.filter((t) => t.chainInstanceId === chain.id && t.nodeId === node.id);
 				// 被跳过的节点只有一行占位，不算尝试。
 				const skipped = rows.some((t) => t.status === "skipped");

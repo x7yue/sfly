@@ -140,8 +140,10 @@ export type ReferenceWarningCode =
 	| "reference_not_earlier"
 	| "reference_unknown_output";
 
+export type SubflowParamWarningCode = "subflow_param_unknown" | "subflow_param_missing";
+
 export interface ReferenceWarning {
-	code: PackageWarningCode | ReferenceWarningCode;
+	code: PackageWarningCode | ReferenceWarningCode | SubflowParamWarningCode;
 	message: string;
 	node_id: string;
 	/** 引用所在的输入名（包节点的输入、异步任务节点的子流程参数、Sleep 节点的 duration）。 */
@@ -268,6 +270,53 @@ export function packageWarnings(
 				code: "unknown_node_type",
 				message: `节点包 ${node.package}@${version} 中没有节点类型 ${node.node}`,
 				node_id: node.id,
+			});
+		}
+	}
+	return warnings;
+}
+
+/** 异步任务节点的调度连线连到的子流程入口节点。 */
+export function dispatchTarget(
+	doc: OrchestrationDocument,
+	asyncNodeId: string,
+): Extract<OrchestrationNode, { kind: "subflow_entry" }> | undefined {
+	for (const edge of doc.edges) {
+		if (edge.kind !== "dispatch" || edge.from !== asyncNodeId) continue;
+		const target = doc.nodes.find((n) => n.id === edge.to);
+		if (target?.kind === "subflow_entry") return target;
+	}
+	return undefined;
+}
+
+/**
+ * 参数映射检查（§4.2）：异步任务节点只能映射它触发的子流程入口声明的参数，
+ * 没有默认值的必填参数必须映射。没有连到子流程入口节点时不检查（结构警告会指出）。
+ */
+export function subflowParamWarnings(doc: OrchestrationDocument): ReferenceWarning[] {
+	const warnings: ReferenceWarning[] = [];
+	for (const node of doc.nodes) {
+		if (node.kind !== "async") continue;
+		const subflow = dispatchTarget(doc, node.id);
+		if (!subflow) continue;
+		const declared = new Set(subflow.params.map((p) => p.name));
+		for (const name of Object.keys(node.params)) {
+			if (declared.has(name)) continue;
+			warnings.push({
+				code: "subflow_param_unknown",
+				message: `节点 ${node.id} 映射的参数 ${name} 不是子流程 ${subflow.id} 声明的参数`,
+				node_id: node.id,
+				input: name,
+			});
+		}
+		for (const param of subflow.params) {
+			if (!param.required || param.default !== undefined || Object.hasOwn(node.params, param.name))
+				continue;
+			warnings.push({
+				code: "subflow_param_missing",
+				message: `节点 ${node.id} 没有映射子流程 ${subflow.id} 的必填参数 ${param.name}`,
+				node_id: node.id,
+				input: param.name,
 			});
 		}
 	}
