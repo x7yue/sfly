@@ -8,7 +8,7 @@
     },
     "version": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^[0-9][0-9A-Za-z.+_!-]*$"
     },
     "requires_python": {
       "type": "string",
