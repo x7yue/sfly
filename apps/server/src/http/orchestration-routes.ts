@@ -1,8 +1,9 @@
-import { structureWarnings } from "@sfly/orchestration";
 import { OrchestrationDocument } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { checkDocument } from "../orchestrations/document-checks.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
+import type { PackageRepository } from "../packages/package-repository.js";
 import { isUuid, sendError } from "./errors.js";
 import { nicknameOf } from "./nickname.js";
 
@@ -13,7 +14,7 @@ const SaveVersionBody = z.object({ document: OrchestrationDocument });
 /** 编排与编排版本：新建编排、保存（追加）版本、查询。版本不可修改。 */
 export function registerOrchestrationRoutes(
 	app: FastifyInstance,
-	{ orchestrations }: { orchestrations: OrchestrationStore },
+	{ orchestrations, packages }: { orchestrations: OrchestrationStore; packages: PackageRepository },
 ): void {
 	app.post("/orchestrations", async (request, reply) => {
 		const body = CreateBody.safeParse(request.body);
@@ -86,8 +87,10 @@ export function registerOrchestrationRoutes(
 			? await orchestrations.saveVersion(request.params.id, body.data.document, author)
 			: undefined;
 		if (!saved) return sendError(reply, 404, "not_found", "orchestration not found");
-		// 结构问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2）。
-		return reply.code(201).send({ ...saved, warnings: structureWarnings(saved.document) });
+		// 结构、包版本锁定和引用的问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2、§2.4）。
+		return reply
+			.code(201)
+			.send({ ...saved, warnings: await checkDocument(saved.document, packages) });
 	});
 
 	app.get<{ Params: { id: string; number: string } }>(

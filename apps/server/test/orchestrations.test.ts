@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const docV1 = {
@@ -231,9 +232,23 @@ describe("编排版本", () => {
 				node_id: "a",
 				message: "节点 a 没有选择 Agent，编排也没有默认 Agent",
 			},
+			{ code: "package_not_locked", node_id: "a", message: "节点 a 的节点包 http 没有锁定版本" },
 		]);
 		expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ head_version: 1 });
 
+		const published = await cp.fetch(
+			"/packages",
+			publishInit(
+				packageArchive(
+					packageMetadata({
+						name: "http",
+						version: "1.0.0",
+						nodes: [{ ...(packageMetadata().nodes as object[])[0], name: "check" }],
+					}),
+				),
+			),
+		);
+		expect(published.status).toBe(201);
 		const ok = await api.post(`/orchestrations/${id}/versions`, { document: docV1 }, "alice");
 		expect(((await ok.json()) as { warnings: unknown }).warnings).toEqual([]);
 	});

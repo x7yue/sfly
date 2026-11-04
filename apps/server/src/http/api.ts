@@ -63,7 +63,7 @@ export function buildHttpApi({
 	});
 
 	app.get("/agents", async () => ({ agents: await hub.list() }));
-	registerOrchestrationRoutes(app, { orchestrations });
+	registerOrchestrationRoutes(app, { orchestrations, packages });
 	registerRunRoutes(app, { db: database.db, engine });
 	registerPackageRoutes(app, packages);
 
