@@ -22,13 +22,16 @@ export interface TestControlPlane {
 	/** 对 HTTP API 发请求，path 以 / 开头。 */
 	fetch(path: string, init?: RequestInit): Promise<Response>;
 	/**
-	 * 停掉当前实例，在同一个数据库上重新启动（模拟控制面重启）；
+	 * 停掉当前实例，在同一个数据库、同样的 HTTP / gRPC 端口上重新启动（模拟控制面重启；
+	 * 端口不变，真实 Agent 才能按原地址重连、继续下载和上传）；
 	 * `whileDown` 在停机期间执行（例如推进手动时钟模拟停机时长）。
 	 */
 	restart(whileDown?: () => void | Promise<void>): Promise<void>;
 	/** 停掉实例并删除临时数据库。 */
 	close(): Promise<void>;
 }
+
+const portOf = (url: string) => Number(new URL(url).port);
 
 /**
  * 在独立的临时数据库和临时数据目录上启动一个真实的控制面，HTTP 与 gRPC 都监听随机端口。
@@ -44,7 +47,7 @@ export async function startTestControlPlane(
 	const clock = options.clock ?? new ManualClock();
 	const database = await createTestDatabase();
 	const dataDir = await mkdtemp(join(tmpdir(), "sfly-test-"));
-	const start = () =>
+	const start = (ports = { http: 0, grpc: 0 }) =>
 		startControlPlane({
 			databaseUrl: database.url,
 			dataDir,
@@ -60,8 +63,8 @@ export async function startTestControlPlane(
 			timerSweepIntervalMs: 20,
 			// 周期扫描调快：测试推进手动时钟后很快就能观察到效果，不用真实等待。
 			sweepIntervalMs: 20,
-			http: { host: "127.0.0.1", port: 0 },
-			grpc: { host: "127.0.0.1", port: 0 },
+			http: { host: "127.0.0.1", port: ports.http },
+			grpc: { host: "127.0.0.1", port: ports.grpc },
 		});
 
 	let current: ControlPlane;
@@ -88,9 +91,10 @@ export async function startTestControlPlane(
 		dataDir,
 		fetch: (path, init) => fetch(`${current.httpUrl}${path}`, init),
 		async restart(whileDown) {
+			const ports = { http: portOf(current.httpUrl), grpc: portOf(current.grpcUrl) };
 			await current.close();
 			await whileDown?.();
-			current = await start();
+			current = await start(ports);
 		},
 		async close() {
 			await current.close();

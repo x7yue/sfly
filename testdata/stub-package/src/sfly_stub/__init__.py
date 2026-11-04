@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import subprocess
@@ -21,6 +22,82 @@ def echo(ctx: Context, text: str) -> dict[str, Any]:
 @node(title="失败", outputs=[])
 def fail(ctx: Context, message: str = "stub failure") -> dict[str, Any]:
     raise RuntimeError(message)
+
+
+@node(title="按参数成功或失败", outputs=["ok"])
+def outcome(ctx: Context, succeed: bool = True, message: str = "stub failure") -> dict[str, Any]:
+    """succeed 为 False 时抛出 RuntimeError(message)，否则成功。"""
+    if not succeed:
+        raise RuntimeError(message)
+    return {"ok": True}
+
+
+@node(title="启动常驻进程", outputs=["pid"])
+def start_process(ctx: Context, seconds: float = 3600) -> dict[str, Any]:
+    """启动一个脱离任务进程树（新会话、不继承标准输入输出）的常驻进程，节点结束后它继续运行。"""
+    child = subprocess.Popen(
+        [sys.executable, "-c", f"import time; time.sleep({seconds})"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {"pid": child.pid}
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@node(title="停止常驻进程", outputs=["was_running"])
+def stop_process(ctx: Context, pid: int | None = None, wait: float = 10) -> dict[str, Any]:
+    """终止 start_process 启动的进程并等它退出；pid 为空（上游没有产出）时什么也不做。"""
+    if pid is None or not _alive(pid):
+        return {"was_running": False}
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + wait
+    while _alive(pid):
+        if time.monotonic() > deadline:
+            os.kill(pid, signal.SIGKILL)
+            break
+        time.sleep(0.05)
+    return {"was_running": True}
+
+
+@node(title="下载", outputs=["texts"])
+def download(ctx: Context, urls: dict[str, str]) -> dict[str, Any]:
+    """按引用地址下载文本（读取上游节点的产物，urls 即 artifacts 节点输出的 refs）。"""
+    import urllib.request
+
+    texts = {}
+    for name, url in urls.items():
+        with urllib.request.urlopen(url, timeout=30) as response:
+            texts[name] = response.read().decode("utf-8")
+    return {"texts": texts}
+
+
+@node(title="闸门", outputs=["attempt"])
+def gate(ctx: Context, ready_file: str, release_file: str, seconds: float = 120) -> dict[str, Any]:
+    """写出 ready_file（追加一行本次尝试序号）后等待 release_file 出现再成功；超过 seconds 则失败。
+
+    让测试在任务执行中途制造故障（Agent 断线、控制面重启）。
+    """
+    with open(os.environ["SFLY_TASK"]) as f:
+        attempt = int(json.load(f)["attempt"])
+    with open(ready_file, "a") as f:
+        f.write(f"{attempt}\n")
+    deadline = time.monotonic() + seconds
+    while not os.path.exists(release_file):
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"{release_file} 没有出现")
+        time.sleep(0.05)
+    return {"attempt": attempt}
 
 
 @node(title="等待", outputs=["slept"])
