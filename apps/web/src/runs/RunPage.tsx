@@ -172,7 +172,13 @@ export function RunPage({ runId }: { runId: string }) {
 			</header>
 			<div className="flex min-h-0 flex-1">
 				<div className="relative min-w-0 flex-1">
-					<RunCanvas document={doc} states={states} selected={current} onSelect={setSelected} />
+					<RunCanvas
+						document={doc}
+						states={states}
+						now={now}
+						selected={current}
+						onSelect={setSelected}
+					/>
 				</div>
 				<aside className="sf-panel w-[392px] shrink-0 overflow-y-auto border-l">
 					{node ? (
