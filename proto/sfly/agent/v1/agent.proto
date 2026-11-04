@@ -47,6 +47,19 @@ message Hello {
   uint32 slots = 6;
   // 共享 venv 中已安装的节点包。
   repeated InstalledPackage installed_packages = 7;
+  // 以本地开发模式（sfly dev）加载在这个 Agent 上的节点包，版本为 `dev`。
+  repeated DevPackage dev_packages = 8;
+}
+
+// 以本地开发模式（sfly dev）加载的节点包：本地源码目录以可编辑方式安装进共享 venv，注册为 `包名@dev`。
+// 只有加载了它的 Agent 能执行 `包名@dev` 的任务。
+message DevPackage {
+  // 节点包名。
+  string name = 1;
+  // 本地源码目录（Agent 所在机器上的绝对路径）。
+  string source = 2;
+  // 加载时扫描得到的节点包元信息（sfly-package.json 的内容，version 为 `dev`），JSON 对象。
+  string metadata_json = 3;
 }
 
 // 安装在 Agent 共享 venv 中的一个节点包版本。
@@ -95,6 +108,8 @@ message InstallStatus {
   string output = 5;
   // 发送这条消息时共享 venv 中已安装的全部节点包。
   repeated InstalledPackage installed_packages = 6;
+  // 发送这条消息时以开发模式加载的全部节点包（sfly dev 加载开发版本时，version 为 `dev`、task_id 为空）。
+  repeated DevPackage dev_packages = 7;
 }
 
 enum InstallState {

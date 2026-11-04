@@ -93,7 +93,7 @@ function Editor({
 
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
-	const catalog = usePackageCatalog(meta.packages);
+	const catalog = usePackageCatalog(meta.packages, agentList);
 	const warnings = useMemo(() => documentWarnings(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	const warningsByNode = useMemo(() => {
@@ -391,6 +391,7 @@ function Editor({
 									<PackageVersions
 										doc={doc}
 										packages={packages.data?.packages}
+										agents={agentList}
 										onLock={lockPackage}
 									/>
 								</Section>

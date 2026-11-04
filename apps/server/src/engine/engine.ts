@@ -11,7 +11,7 @@ import {
 } from "@sfly/proto";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { and, asc, count, eq, inArray } from "drizzle-orm";
-import type { AgentConnection, AgentHub } from "../agents/agent-hub.js";
+import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -204,6 +204,7 @@ export class Engine implements AgentSessionHandler {
 				conn,
 				{ package: status.package, version: status.version, state, task_id: status.taskId },
 				status.installedPackages.map((p) => ({ name: p.name, version: p.version })),
+				status.devPackages.map(devPackageInfo),
 			);
 		}
 	}

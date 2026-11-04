@@ -586,6 +586,11 @@ select.sf-inp {
 	background-repeat: no-repeat;
 	padding-right: 26px;
 }
+/* 节点包版本选择（名称在左，版本下拉固定宽度） */
+.sf-inp.sf-ver-select {
+	width: 136px;
+	flex: none;
+}
 select.sf-inp option {
 	background: var(--sf-surface);
 }

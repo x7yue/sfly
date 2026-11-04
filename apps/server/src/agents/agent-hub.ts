@@ -6,6 +6,7 @@ import {
 	type AgentInfo,
 	type AgentStatus,
 	agents,
+	type DevPackageInfo,
 	type InstalledPackage,
 	type InstallProgress,
 	runs,
@@ -13,6 +14,20 @@ import {
 } from "../db/schema.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
+
+/** proto 的 DevPackage 转成存储形式：metadata_json 解析为对象（不是 JSON 对象时为 null）。 */
+export function devPackageInfo(p: { name: string; source: string; metadataJson: string }) {
+	let metadata: Record<string, unknown> | null = null;
+	try {
+		const parsed: unknown = JSON.parse(p.metadataJson);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			metadata = parsed as Record<string, unknown>;
+		}
+	} catch {
+		// 保持 null
+	}
+	return { name: p.name, source: p.source, metadata } satisfies DevPackageInfo;
+}
 
 /** 每个 Agent 默认的并发槽位数（docs/SEMANTICS.md 默认值）。 */
 export const DEFAULT_SLOTS = 4;
@@ -49,6 +64,8 @@ export interface AgentView {
 	installed_packages: { name: string; version: string }[];
 	/** 最近一次上报的节点包安装状态；本次连接还没有安装过时为 null。 */
 	install: InstallProgress | null;
+	/** 以开发模式（sfly dev）加载在这个 Agent 上的节点包；画布据此提供 dev 版本。 */
+	dev_packages: DevPackageInfo[];
 	/** 正在这个 Agent 上运行的任务，按开始时间排序。 */
 	running_tasks: RunningTaskView[];
 }
@@ -105,10 +122,16 @@ export class AgentHub {
 		conn: AgentConnection,
 		install: InstallProgress,
 		installed: InstalledPackage[],
+		devPackages: DevPackageInfo[],
 	): Promise<void> {
 		return this.deps.mutex.run(async () => {
 			if (this.#connections.get(conn.name) !== conn) return;
-			conn.info = { ...conn.info, installed_packages: installed, install };
+			conn.info = {
+				...conn.info,
+				installed_packages: installed,
+				install,
+				dev_packages: devPackages,
+			};
 			await this.deps.db
 				.update(agents)
 				.set({ info: conn.info, lastSeenAt: this.deps.clock.now() })
@@ -145,7 +168,7 @@ export class AgentHub {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(and(eq(tasks.status, "running"), isNotNull(tasks.agentName)))
 			.orderBy(asc(tasks.startedAt), asc(tasks.seq));
-		return rows.map(({ info: { install, ...info }, ...row }) => ({
+		return rows.map(({ info: { install, dev_packages, ...info }, ...row }) => ({
 			name: row.name,
 			status: row.status,
 			// 早于 #5 注册的记录没有 installed_packages。
@@ -153,6 +176,7 @@ export class AgentHub {
 			last_seen_at: row.lastSeenAt.toISOString(),
 			installed_packages: info.installed_packages ?? [],
 			install: install ?? null,
+			dev_packages: dev_packages ?? [],
 			running_tasks: running
 				.filter((t) => t.agent === row.name)
 				.map((t) => ({

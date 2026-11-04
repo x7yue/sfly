@@ -90,6 +90,15 @@ function AgentRow({ agent }: { agent: AgentView }) {
 						安装 {agent.install.package}@{agent.install.version} 失败
 					</div>
 				)}
+				{agent.dev_packages?.length > 0 && (
+					<ul className="mt-1 font-mono text-xs text-sky-800">
+						{agent.dev_packages.map((p) => (
+							<li key={p.name} className="truncate" title={p.source}>
+								开发版本 {p.name}（{p.source}）
+							</li>
+						))}
+					</ul>
+				)}
 			</td>
 			<td className="py-2">
 				{agent.running_tasks.length === 0 ? (

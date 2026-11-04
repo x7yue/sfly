@@ -12,7 +12,9 @@ async fn agent_sends_hello_and_receives_welcome() {
         token: Some("secret".into()),
         ..Config::new(control_plane.url.clone(), "agent-a")
     };
-    let connection = connect(&config, Vec::new()).await.expect("handshake");
+    let connection = connect(&config, Vec::new(), Vec::new())
+        .await
+        .expect("handshake");
     drop(connection);
 
     let received = control_plane.received();
@@ -28,5 +30,5 @@ async fn agent_sends_hello_and_receives_welcome() {
 #[tokio::test]
 async fn connect_fails_when_control_plane_is_unreachable() {
     let config = Config::new("http://127.0.0.1:1", "agent-b");
-    assert!(connect(&config, Vec::new()).await.is_err());
+    assert!(connect(&config, Vec::new(), Vec::new()).await.is_err());
 }

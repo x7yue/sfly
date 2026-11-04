@@ -48,8 +48,13 @@ def build_wheel(
     source: Path,
     out_dir: Path,
     extra_metadata: Mapping[str, bytes] | None = None,
+    editable_root: Path | None = None,
 ) -> Path:
-    """构建 wheel。`extra_metadata` 是额外写入 dist-info 目录的文件（文件名 → 内容）。"""
+    """构建 wheel。`extra_metadata` 是额外写入 dist-info 目录的文件（文件名 → 内容）。
+
+    给出 `editable_root` 时构建可编辑 wheel：不包含源文件，只有一个把该目录加入 sys.path 的 `.pth`，
+    安装后直接导入源码目录里的代码（修改源码后新进程即生效）。
+    """
     dist = dist_name(name)
     file_version = version.replace("-", "_")
     info = f"{dist}-{file_version}.dist-info"
@@ -66,9 +71,12 @@ def build_wheel(
         "Root-Is-Purelib: true",
         "Tag: py3-none-any",
     ]
-    entries: list[tuple[str, bytes]] = [
-        (arc, path.read_bytes()) for arc, path in _source_files(source)
-    ]
+    entries: list[tuple[str, bytes]]
+    if editable_root is None:
+        entries = [(arc, path.read_bytes()) for arc, path in _source_files(source)]
+    else:
+        pth = str(editable_root.resolve()) + "\n"
+        entries = [(f"__editable__.{dist}.pth", pth.encode("utf-8"))]
     entries.append((f"{info}/METADATA", ("\n".join(metadata) + "\n").encode("utf-8")))
     entries.append((f"{info}/WHEEL", ("\n".join(wheel_info) + "\n").encode("utf-8")))
     for file_name, data in sorted((extra_metadata or {}).items()):

@@ -34,6 +34,9 @@ struct Args {
     /// uv 可执行文件（安装节点包用）。
     #[arg(long, env = "SFLY_UV", default_value = "uv")]
     uv: PathBuf,
+    /// `sfly dev` 连接的本地 socket（Unix domain socket，只有本机同一用户可以连接）；默认 `<work_dir>/agent.sock`。
+    #[arg(long, env = "SFLY_DEV_SOCKET")]
+    dev_socket: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -48,6 +51,7 @@ async fn main() -> anyhow::Result<()> {
         work_dir: args.work_dir,
         index_url: args.index_url,
         uv: args.uv,
+        dev_socket: args.dev_socket,
     };
 
     tokio::select! {
