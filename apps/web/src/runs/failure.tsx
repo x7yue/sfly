@@ -60,16 +60,25 @@ export function FailureSummary({
 	const failed = [...attempts].reverse().find((a) => a.error);
 	const note = retryNote(node, status, attempts, failed);
 	const always = isAlways(node);
-	if (!failed && !note && status !== "skipped" && !always) return null;
+	const cancelled = status === "cancelled";
+	if (!failed && !note && status !== "skipped" && !cancelled && !always) return null;
 	return (
 		<div className="sf-failure">
 			{always && (
 				<p className="sf-failure__always">
-					<b>always</b> 前面的节点失败时照常执行；缺失的上游输出解析为 null。
+					<b>always</b> 前面的节点失败或运行被取消时照常执行（强制终止除外）；缺失的上游输出解析为
+					null。
 				</p>
 			)}
 			{status === "skipped" && (
 				<p className="sf-hint">前面的节点失败，本节点不是 always，已跳过，没有执行。</p>
+			)}
+			{cancelled && (
+				<p className="sf-hint">
+					{attempts.at(-1)?.status === "cancelled"
+						? "运行被取消，执行中的任务已被终止。"
+						: "运行被取消，本节点没有执行。"}
+				</p>
 			)}
 			{failed?.error && (
 				<div className="sf-failure__error" data-final={status === "failed"}>

@@ -69,10 +69,12 @@ export interface RunView {
 	params: Record<string, unknown>;
 	started_at: string;
 	ended_at: string | null;
+	/** 取消请求（#12）；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。 */
+	cancel: { requested_by: string; requested_at: string; forced_at: string | null } | null;
 	chains: ChainRunView[];
 }
 
-export type RunSummary = Omit<RunView, "params" | "chains">;
+export type RunSummary = Omit<RunView, "params" | "chains" | "cancel">;
 
 export const getPreflight = (orchestrationId: string) =>
 	apiGet<Preflight>(`/orchestrations/${orchestrationId}/preflight`);
@@ -85,6 +87,9 @@ export const listRuns = (orchestrationId: string) =>
 	apiGet<{ runs: RunSummary[] }>(`/orchestrations/${orchestrationId}/runs`);
 
 export const getRun = (runId: string) => apiGet<RunView>(`/runs/${runId}`);
+
+/** 取消整个运行（#12）；运行还没结束时再次调用即强制取消。已结束时 409 `run_not_running`。 */
+export const cancelRun = (runId: string) => apiPost<RunView>(`/runs/${runId}/cancel`, {});
 
 /** 运行的 SSE 流：连上时和每次状态变化时推送完整的运行视图（事件 `run`），任务进度更新时推送 `progress`（logs.ts）。 */
 export const runEventsPath = (runId: string) => `/runs/${runId}/events`;
