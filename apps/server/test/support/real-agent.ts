@@ -24,6 +24,8 @@ export async function startRealAgent(options: {
 	venv?: string;
 	args?: string[];
 	bin?: string;
+	/** 追加的环境变量（例如独立的 UV_CACHE_DIR）。 */
+	env?: Record<string, string>;
 }): Promise<RealAgent> {
 	const bin = options.bin ?? agentBinary();
 	const workDir = await mkdtemp(join(tmpdir(), "sfly-agent-work-"));
@@ -40,7 +42,7 @@ export async function startRealAgent(options: {
 			join(workDir, "tasks"),
 			...(options.args ?? []),
 		],
-		{ stdio: ["ignore", "pipe", "inherit"] },
+		{ stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, ...options.env } },
 	);
 	const events: Array<Record<string, unknown>> = [];
 	const lines = createInterface({ input: child.stdout as NodeJS.ReadableStream });
