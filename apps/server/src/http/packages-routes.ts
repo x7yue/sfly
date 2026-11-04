@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { PackageError, type PackageRepository } from "../packages/package-repository.js";
+import { sendError } from "./errors.js";
 
 /** 节点包归档上传上限。 */
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
@@ -11,7 +12,7 @@ interface VersionParams {
 }
 
 const notFound = (reply: FastifyReply, message: string) =>
-	reply.code(404).send({ error: "not_found", message });
+	sendError(reply, 404, "not_found", message);
 
 /**
  * 节点包 API：
@@ -32,19 +33,19 @@ export function registerPackageRoutes(app: FastifyInstance, packages: PackageRep
 
 		scope.post("/packages", async (req, reply) => {
 			if (!(req.body instanceof Buffer)) {
-				return reply.code(415).send({
-					error: "unsupported_media_type",
-					message: "请求体必须是 application/octet-stream 的节点包归档",
-				});
+				return sendError(
+					reply,
+					415,
+					"unsupported_media_type",
+					"请求体必须是 application/octet-stream 的节点包归档",
+				);
 			}
 			try {
 				const published = await packages.publish(new Uint8Array(req.body));
 				return reply.code(201).send(published);
 			} catch (error) {
 				if (error instanceof PackageError) {
-					return reply
-						.code(error.kind === "conflict" ? 409 : 400)
-						.send({ error: error.kind, message: error.message });
+					return sendError(reply, error.kind === "conflict" ? 409 : 400, error.kind, error.message);
 				}
 				throw error;
 			}

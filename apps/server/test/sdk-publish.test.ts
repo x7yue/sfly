@@ -95,7 +95,10 @@ describe("sfly publish → 控制面", () => {
 			cp.httpUrl,
 		]);
 		expect(conflict.code).toBe(1);
-		expect(conflict.stderr).toContain("HTTP 409");
-		expect(conflict.stderr).toContain("demo-e2e@0.1.0 已存在");
+		// 控制面的错误体 { error: { code, message } } 被解析成一行可读的错误。
+		expect(conflict.stderr.trim()).toBe(
+			"发布失败：控制面拒绝发布（HTTP 409 conflict）：" +
+				"节点包 demo-e2e@0.1.0 已存在，不能覆盖已发布的版本",
+		);
 	}, 120_000);
 });
