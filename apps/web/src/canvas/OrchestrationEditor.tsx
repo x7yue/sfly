@@ -1,5 +1,6 @@
 import { checkConnection, documentWarnings, type OrchestrationWarning } from "@sfly/orchestration";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import {
 	Background,
 	type Connection,
@@ -15,6 +16,8 @@ import {
 } from "@xyflow/react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { listAgents, listPackages, type Orchestration, type OrchestrationHead } from "#/lib/api";
+import { TriggerDialog } from "#/runs/TriggerDialog";
+import { hasDraft } from "#/versions/draft";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
 import { StaleDraftBanner, VersionControls } from "#/versions/VersionControls";
 import { usePackageCatalog } from "./catalog";
@@ -78,6 +81,7 @@ function Editor({
 		packages: start.document.packages,
 	});
 	const [notice, setNotice] = useState<string | null>(null);
+	const [triggering, setTriggering] = useState(false);
 
 	const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
 	const agents = useQuery({
@@ -236,6 +240,18 @@ function Editor({
 	const updateNode = (id: string, node: DocNode) =>
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
 
+	/** 选中并定位到某个节点（触发预检里的「前往」）。 */
+	const locateNode = (id: string) => {
+		const target = flow.getNode(id);
+		setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === id })));
+		if (target) {
+			flow.setCenter(target.position.x + 104, target.position.y + 64, {
+				zoom: Math.max(flow.getZoom(), 1),
+				duration: 200,
+			});
+		}
+	};
+
 	const selected = nodes.filter((n) => n.selected);
 	const only = selected.length === 1 ? selected[0] : undefined;
 
@@ -256,7 +272,30 @@ function Editor({
 							versioning={versioning}
 							onReload={onReload}
 						/>
+						<Link
+							to="/orchestrations/$id/runs"
+							params={{ id: orchestration.id }}
+							className="sf-link text-xs"
+						>
+							运行记录
+						</Link>
+						<button
+							type="button"
+							className={`sf-btn ${versioning.dirty || versioning.base.version === 0 ? "sf-btn--ghost" : "sf-btn--primary"}`}
+							onClick={() => setTriggering(true)}
+						>
+							触发运行
+						</button>
 					</div>
+					{triggering && (
+						<TriggerDialog
+							orchestrationId={orchestration.id}
+							dirty={versioning.dirty || hasDraft(orchestration.id)}
+							baseVersion={versioning.base.version}
+							onLocate={locateNode}
+							onClose={() => setTriggering(false)}
+						/>
+					)}
 				</header>
 				<StaleDraftBanner
 					orchestration={orchestration}

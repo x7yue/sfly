@@ -53,6 +53,7 @@
 	--sf-edge: #4a4a4a;
 	--sf-edge-width: 1.5px;
 	--sf-port: #5a5a5a;
+	--sf-edge-done: #6a6a6a; /* 运行模式：已完成的连线；待执行节点的状态圆环 */
 
 	/* 字体：界面用无衬线；数值、ID、变量名、引用用等宽 */
 	--sf-sans:

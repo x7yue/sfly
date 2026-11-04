@@ -1,5 +1,8 @@
 import { EdgeLabelRenderer, type EdgeProps, useStore } from "@xyflow/react";
+import { useContext } from "react";
+import { statusTone } from "#/runs/format";
 import type { SfEdge } from "./flow";
+import { CanvasContext } from "./NodeCard";
 
 type Point = [number, number];
 
@@ -71,6 +74,18 @@ export function SfEdgeView({
 	data,
 }: EdgeProps<SfEdge>) {
 	const kind = data?.kind ?? "chain";
+	// 运行模式（原型 canvas.css 的 .run .edge.done / .live）：已完成 → 已完成为灰色实线，已完成 → 执行中（或失败）为青色实线。
+	const run = useContext(CanvasContext).run;
+	const from = run ? statusTone(run.get(source)?.status ?? "pending") : undefined;
+	const to = run ? statusTone(run.get(target)?.status ?? "pending") : undefined;
+	const runState =
+		from !== "done"
+			? undefined
+			: to === "done"
+				? "done"
+				: to === "current" || to === "failed"
+					? "live"
+					: undefined;
 	const endSelected = useStore(
 		(s) => !!(s.nodeLookup.get(source)?.selected || s.nodeLookup.get(target)?.selected),
 	);
@@ -84,7 +99,11 @@ export function SfEdgeView({
 	);
 	return (
 		<>
-			<g className={`sf-edge sf-edge--${kind}`} data-on={selected || endSelected}>
+			<g
+				className={`sf-edge sf-edge--${kind}`}
+				data-on={selected || endSelected}
+				data-run={runState}
+			>
 				<path className="sf-edge__base" d={d} />
 				<path className="sf-edge__flow" d={d} />
 				{/* 加宽的透明路径，便于点选连线 */}
