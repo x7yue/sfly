@@ -155,3 +155,47 @@ async fn a_silent_node_sends_no_empty_log_batches() {
     // echo 不产生输出：没有日志批次。
     assert!(log_lines(&cp.received_with_session(), "task-long").is_empty());
 }
+
+#[tokio::test]
+async fn logs_and_last_progress_of_a_timed_out_task_are_forwarded_before_the_timeout_result() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-timeout-logs"));
+    cp.hello(0).await;
+
+    // 每 0.05 秒一步，远超 2 秒的超时：被杀时最新的进度还没到上报间隔，只能由 finish 补发。
+    let mut task = stub_task(
+        "task-timeout-logs",
+        "chatter",
+        json!({ "steps": 1000, "interval": 0.05 }),
+    );
+    task.timeout_seconds = 2;
+    cp.assign(task).await;
+
+    let (result, result_at) = cp.result_at("task-timeout-logs").await;
+    assert_eq!(
+        result.error.as_ref().map(|e| e.kind()),
+        Some(sfly_agent::proto::ErrorKind::Timeout),
+        "{result:?}"
+    );
+    // 给晚到的消息一点时间：结果之后不应该再有这个任务的日志或进度。
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let all = cp.received_with_session();
+
+    let lines = log_lines(&all, "task-timeout-logs");
+    let texts: Vec<&str> = lines.iter().map(|(_, l)| l.text.as_str()).collect();
+    for want in ["来自 print", "来自标准错误", "来自子进程", "sdk 错误"] {
+        assert!(texts.contains(&want), "缺少日志 {want:?}：{texts:?}");
+    }
+    assert!(
+        lines.iter().all(|(i, _)| *i < result_at),
+        "超时任务的日志都在结果之前到达"
+    );
+
+    let progress = progress_of(&all, "task-timeout-logs");
+    assert!(!progress.is_empty());
+    // 包括被杀前最新的那次（由 finish 补发）在内，进度都在结果之前到达。
+    assert!(
+        progress.iter().all(|(i, _, _)| *i < result_at),
+        "超时任务的进度都在结果之前到达：{progress:#?}"
+    );
+}
