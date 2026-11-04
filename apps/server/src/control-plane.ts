@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import { AgentHub } from "./agents/agent-hub.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
+import { Engine } from "./engine/engine.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
@@ -48,7 +49,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const hub = new AgentHub({ db: database.db, clock, mutex });
 	await hub.markAllOffline();
 	const orchestrations = new OrchestrationStore({ db: database.db, clock });
-	const api = buildHttpApi({ database, clock, logger, hub, orchestrations });
+	const engine = new Engine({ db: database.db, clock, mutex, hub });
+	const api = buildHttpApi({ database, clock, logger, hub, orchestrations, engine });
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
 	const httpPort = (api.server.address() as AddressInfo).port;
@@ -59,6 +61,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
 			hub,
+			handler: engine,
 			agentToken: options.agentToken,
 			onError: (error) => {
 				if (logger) console.error("agent session error:", error);

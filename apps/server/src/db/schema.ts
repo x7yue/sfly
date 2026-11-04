@@ -1,7 +1,17 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
 import type { OrchestrationDocument } from "@sfly/schema";
-import { integer, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import {
+	bigserial,
+	index,
+	integer,
+	jsonb,
+	pgTable,
+	text,
+	timestamp,
+	unique,
+	uuid,
+} from "drizzle-orm/pg-core";
 
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 
@@ -46,4 +56,85 @@ export const orchestrationVersions = pgTable(
 		createdAt: timestamptz("created_at").notNull(),
 	},
 	(t) => [unique("orchestration_versions_number").on(t.orchestrationId, t.number)],
+);
+
+export type RunStatus = "running" | "success" | "failed";
+export type ChainStatus = RunStatus;
+/** 任务状态（docs/SEMANTICS.md §3.1）；本阶段用到 queued/running/success/failed。 */
+export type TaskStatus = "queued" | "running" | "success" | "failed";
+export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
+
+/** 运行：绑定一个编排版本。params 是填充默认值并覆盖后的入口参数。 */
+export const runs = pgTable(
+	"runs",
+	{
+		id: uuid("id").primaryKey(),
+		orchestrationId: uuid("orchestration_id")
+			.notNull()
+			.references(() => orchestrations.id),
+		orchestrationVersionId: uuid("orchestration_version_id")
+			.notNull()
+			.references(() => orchestrationVersions.id),
+		triggeredBy: text("triggered_by").notNull(),
+		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
+		status: text("status").$type<RunStatus>().notNull(),
+		startedAt: timestamptz("started_at").notNull(),
+		endedAt: timestamptz("ended_at"),
+	},
+	(t) => [index("runs_orchestration").on(t.orchestrationId)],
+);
+
+/** 链实例：主链（depth 0）或子流程实例；ID 由运行、父链实例、异步任务节点确定性生成。 */
+export const chainInstances = pgTable(
+	"chain_instances",
+	{
+		id: uuid("id").primaryKey(),
+		runId: uuid("run_id")
+			.notNull()
+			.references(() => runs.id),
+		/** 链起点（入口节点 / 子流程入口节点）的节点 ID。 */
+		chainId: text("chain_id").notNull(),
+		parentChainInstanceId: uuid("parent_chain_instance_id"),
+		asyncNodeId: text("async_node_id"),
+		depth: integer("depth").notNull(),
+		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
+		status: text("status").$type<ChainStatus>().notNull(),
+		startedAt: timestamptz("started_at").notNull(),
+		endedAt: timestamptz("ended_at"),
+	},
+	(t) => [index("chain_instances_run").on(t.runId)],
+);
+
+/** 任务：节点在运行中的一次尝试（内置节点也记一条，agent_name 为空）。ID 由链实例、节点、attempt 确定性生成。 */
+export const tasks = pgTable(
+	"tasks",
+	{
+		id: uuid("id").primaryKey(),
+		runId: uuid("run_id")
+			.notNull()
+			.references(() => runs.id),
+		chainInstanceId: uuid("chain_instance_id")
+			.notNull()
+			.references(() => chainInstances.id),
+		nodeId: text("node_id").notNull(),
+		attempt: integer("attempt").notNull(),
+		agentName: text("agent_name"),
+		status: text("status").$type<TaskStatus>().notNull(),
+		/** 派发时解析过引用的输入；排队时为空。 */
+		inputs: jsonb("inputs").$type<Record<string, unknown>>(),
+		outputs: jsonb("outputs").$type<Record<string, unknown>>(),
+		errorKind: text("error_kind").$type<ErrorKind>(),
+		errorMessage: text("error_message"),
+		/** 进入 queued 的时间，派发按它排序。 */
+		queuedAt: timestamptz("queued_at").notNull(),
+		/** 用于同一时刻排队的任务保持创建顺序。 */
+		seq: bigserial("seq", { mode: "number" }).notNull(),
+		startedAt: timestamptz("started_at"),
+		endedAt: timestamptz("ended_at"),
+	},
+	(t) => [
+		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),
+		index("tasks_agent_status").on(t.agentName, t.status),
+		index("tasks_chain_instance").on(t.chainInstanceId),
+	],
 );
