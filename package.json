@@ -1,0 +1,35 @@
+{
+	"name": "sfly",
+	"private": true,
+	"type": "module",
+	"packageManager": "pnpm@10.34.9",
+	"engines": {
+		"node": ">=24"
+	},
+	"scripts": {
+		"bootstrap": "pnpm install && cargo fetch --locked && uv sync --locked --all-packages",
+		"gen": "pnpm gen:proto && pnpm gen:schema",
+		"gen:proto": "buf generate",
+		"gen:schema": "pnpm --filter @sfly/schema export",
+		"gen:check": "pnpm gen && bash scripts/check-clean.sh packages/proto/src/gen sdk/python/src/sfly/schemas",
+		"lint": "pnpm lint:ts && pnpm lint:proto && pnpm lint:rust && pnpm lint:py",
+		"lint:ts": "biome check .",
+		"lint:proto": "buf lint && buf format --diff --exit-code",
+		"lint:rust": "cargo fmt --all --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
+		"lint:py": "uv run --locked ruff check && uv run --locked ruff format --check",
+		"format": "biome check --write . && buf format -w && cargo fmt --all && uv run ruff format && uv run ruff check --fix",
+		"typecheck": "pnpm -r typecheck && uv run --locked mypy",
+		"test": "pnpm test:rust && pnpm test:ts && pnpm test:py",
+		"test:ts": "pnpm -r test",
+		"test:rust": "cargo test --workspace --locked",
+		"test:py": "uv run --locked pytest",
+		"proto:breaking": "bash scripts/proto-breaking.sh",
+		"build": "pnpm -r build && cargo build --workspace --locked",
+		"check": "pnpm gen:check && pnpm lint && pnpm typecheck && pnpm proto:breaking && pnpm test && pnpm build"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.4.5",
+		"@bufbuild/buf": "1.75.0",
+		"@bufbuild/protoc-gen-es": "2.16.0"
+	}
+}

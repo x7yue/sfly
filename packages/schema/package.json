@@ -1,0 +1,22 @@
+{
+	"name": "@sfly/schema",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "编排文档与节点包元信息的 schema（zod，唯一来源）；导出 JSON Schema 给 Python CLI",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"export": "tsx scripts/export-json-schema.ts",
+		"typecheck": "tsc -p ."
+	},
+	"dependencies": {
+		"zod": "4.6.7"
+	},
+	"devDependencies": {
+		"@types/node": "^26.0.0",
+		"tsx": "^4.23.15",
+		"typescript": "^6.0.2"
+	}
+}

@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package sfly.agent.v1;
+
+// Agent 网关：Agent 主动发起一条 gRPC 双向流，控制面在同一条流上推送指令（ADR 0003）。
+// 当前只有最小的握手（Hello → Welcome）；其余消息按 docs/ARCHITECTURE.md §5.2 的
+// 字段编号逐步加入，加入后受 buf breaking 检查保护。
+//
+// RPC 名用 Session 而不是草图里的 Connect：tonic 生成的客户端已有构造函数 connect()，同名会冲突。
+service AgentGateway {
+  rpc Session(stream AgentMessage) returns (stream ServerMessage);
+}
+
+// Agent → 控制面。
+message AgentMessage {
+  oneof body {
+    Hello hello = 1;
+  }
+}
+
+// 控制面 → Agent。
+message ServerMessage {
+  oneof body {
+    Welcome welcome = 1;
+  }
+}
+
+// 连接建立后 Agent 发送的第一条消息。
+message Hello {
+  // Agent 名称，全局唯一。
+  string name = 1;
+  // 可选的共享注册令牌。
+  string token = 2;
+  // Agent 程序版本。
+  string agent_version = 3;
+}
+
+// 控制面对 Hello 的回应，表示连接已被接受。
+message Welcome {}

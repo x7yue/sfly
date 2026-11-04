@@ -1,0 +1,40 @@
+"""SDK 运行时只能依赖标准库（ADR 0002）：导入后不应出现任何第三方模块。"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+
+RUNTIME_MODULES = ["sfly", "sfly.schemas"]
+
+PROBE = """
+import json, sys
+before = set(sys.modules)
+for name in {modules!r}:
+    __import__(name)
+loaded = {{m.split(".")[0] for m in set(sys.modules) - before}}
+print(json.dumps(sorted(loaded)))
+"""
+
+
+def test_runtime_imports_only_stdlib() -> None:
+    out = subprocess.run(
+        [sys.executable, "-I", "-c", PROBE.format(modules=RUNTIME_MODULES)],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    loaded = set(json.loads(out))
+    third_party = loaded - set(sys.stdlib_module_names) - {"sfly"}
+    assert third_party == set()
+
+
+def test_cli_reports_version() -> None:
+    out = subprocess.run(
+        [sys.executable, "-c", "import sfly.cli; sfly.cli.main(['--version'])"],
+        capture_output=True,
+        text=True,
+    )
+    assert out.returncode == 0
+    assert out.stdout.strip() == "sfly 0.1.0"

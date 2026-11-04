@@ -1,0 +1,10 @@
+version: v2
+inputs:
+  - directory: proto
+clean: true
+plugins:
+  # TS：protobuf-es v2（消息 + 服务描述，Connect 直接使用）。Rust 侧由 agent/build.rs 用 tonic-prost-build 生成。
+  - local: ["pnpm", "exec", "protoc-gen-es"]
+    out: packages/proto/src/gen
+    opt:
+      - target=ts

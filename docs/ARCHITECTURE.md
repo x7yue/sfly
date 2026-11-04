@@ -160,11 +160,12 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 - 启动后主动建立 gRPC 双向流；同名 Agent 重新连接时替换旧连接。
 - 画布上按名称选择 Agent。
 
-### 5.2 协议（`proto/agent.proto` 草图）
+### 5.2 协议（`proto/sfly/agent/v1/agent.proto` 草图）
 
 ```proto
 service AgentGateway {
-  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+  // RPC 名用 Session：tonic 生成的客户端已有构造函数 connect()，同名会冲突
+  rpc Session(stream AgentMessage) returns (stream ServerMessage);
 }
 
 message AgentMessage {
