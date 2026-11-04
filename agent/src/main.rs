@@ -1,7 +1,8 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::Parser;
-use sfly_agent::{Config, DEFAULT_SLOTS, run};
+use sfly_agent::{Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
 
 /// sfly Agent。
 ///
@@ -37,6 +38,9 @@ struct Args {
     /// `sfly dev` 连接的本地 socket（Unix domain socket，只有本机同一用户可以连接）；默认 `<work_dir>/agent.sock`。
     #[arg(long, env = "SFLY_DEV_SOCKET")]
     dev_socket: Option<PathBuf>,
+    /// 任务超时或被取消时，从优雅终止（SIGTERM）到强制杀掉进程树的宽限秒数。
+    #[arg(long, env = "SFLY_TERMINATE_GRACE", default_value_t = DEFAULT_TERMINATE_GRACE.as_secs())]
+    terminate_grace: u64,
 }
 
 #[tokio::main]
@@ -52,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
         index_url: args.index_url,
         uv: args.uv,
         dev_socket: args.dev_socket,
+        terminate_grace: Duration::from_secs(args.terminate_grace),
     };
 
     tokio::select! {

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import signal
+import subprocess
 import sys
 import time
 from importlib import metadata
@@ -25,6 +27,28 @@ def fail(ctx: Context, message: str = "stub failure") -> dict[str, Any]:
 def sleep(ctx: Context, seconds: float) -> dict[str, Any]:
     time.sleep(seconds)
     return {"slept": seconds}
+
+
+@node(title="进程树", outputs=["pids"])
+def process_tree(
+    ctx: Context, pid_file: str, seconds: float = 3600, ignore_term: bool = False
+) -> dict[str, Any]:
+    """启动一个子进程后一起等待，把自己和子进程的 PID 写到 pid_file（超时、取消杀进程树的测试用）。
+
+    ignore_term 时两个进程都忽略 SIGTERM，只能被强制杀掉。
+    """
+    prelude = "import signal, time\n"
+    if ignore_term:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        prelude += "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    child = subprocess.Popen([sys.executable, "-c", f"{prelude}time.sleep({seconds})"])
+    pids = [os.getpid(), child.pid]
+    tmp = f"{pid_file}.tmp"
+    with open(tmp, "w") as f:
+        f.write(" ".join(map(str, pids)))
+    os.replace(tmp, pid_file)
+    child.wait()
+    return {"pids": pids}
 
 
 @node(title="环境探针", outputs=["prefix", "cwd", "env"])

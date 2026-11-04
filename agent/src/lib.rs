@@ -11,6 +11,7 @@
 pub mod dev;
 pub mod executor;
 pub mod install;
+pub mod process_tree;
 pub mod venv;
 
 use std::collections::BTreeMap;
@@ -43,6 +44,9 @@ pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 默认并发槽位数。
 pub const DEFAULT_SLOTS: u32 = 4;
 
+/// 终止任务时从优雅终止到强制杀掉进程树的默认宽限期（docs/SEMANTICS.md §3.4）。
+pub const DEFAULT_TERMINATE_GRACE: Duration = Duration::from_secs(10);
+
 /// 重连等待：从 MIN 开始翻倍，最多 MAX；成功连上后重置。
 const RECONNECT_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_MAX: Duration = Duration::from_secs(10);
@@ -68,6 +72,8 @@ pub struct Config {
     pub uv: PathBuf,
     /// `sfly dev` 连接的本地 socket；未设置时为 `<work_dir>/agent.sock`。
     pub dev_socket: Option<PathBuf>,
+    /// 超时（以及之后的取消）时从优雅终止到强制杀掉进程树的宽限期。
+    pub terminate_grace: Duration,
 }
 
 impl Config {
@@ -82,6 +88,7 @@ impl Config {
             index_url: None,
             uv: PathBuf::from("uv"),
             dev_socket: None,
+            terminate_grace: DEFAULT_TERMINATE_GRACE,
         }
     }
 }
@@ -207,6 +214,7 @@ struct Runtime {
     dev: DevRegistry,
     installer: Installer,
     work_dir: PathBuf,
+    terminate_grace: Duration,
     /// 安装与启动新任务互斥：启动任务（查找入口到子进程启动）持有读锁，安装持有写锁。
     /// 已经在运行的任务不持有锁，安装期间照常运行。
     gate: RwLock<()>,
@@ -263,7 +271,14 @@ impl Runtime {
     }
 
     async fn start(&self, task: &AssignTask, entry: &str) -> Result<executor::Running, TaskResult> {
-        executor::start(&self.inventory.venv, &self.work_dir, task, entry).await
+        executor::start(
+            &self.inventory.venv,
+            &self.work_dir,
+            task,
+            entry,
+            self.terminate_grace,
+        )
+        .await
     }
 
     fn install_status(
@@ -427,6 +442,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             http: reqwest::Client::new(),
         },
         work_dir: work_dir.clone(),
+        terminate_grace: config.terminate_grace,
         gate: RwLock::new(()),
         results: results_tx,
         installs: installs_tx,
