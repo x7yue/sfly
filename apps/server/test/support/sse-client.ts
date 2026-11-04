@@ -25,11 +25,15 @@ export class SseClient {
 		void this.#read(body);
 	}
 
-	/** 打开 SSE 流；断言响应为 200 + text/event-stream。 */
-	static async open(cp: TestControlPlane, path: string): Promise<SseClient> {
+	/** 打开 SSE 流；断言响应为 200 + text/event-stream。headers 可带 `last-event-id` 模拟浏览器重连。 */
+	static async open(
+		cp: TestControlPlane,
+		path: string,
+		headers: Record<string, string> = {},
+	): Promise<SseClient> {
 		const abort = new AbortController();
 		const res = await cp.fetch(path, {
-			headers: { accept: "text/event-stream" },
+			headers: { accept: "text/event-stream", ...headers },
 			signal: abort.signal,
 		});
 		expect(res.status, `GET ${path}`).toBe(200);

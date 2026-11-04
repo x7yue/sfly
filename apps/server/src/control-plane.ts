@@ -6,6 +6,7 @@ import { openDatabase } from "./db/database.js";
 import { Engine } from "./engine/engine.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
+import { TaskLogs } from "./logs/task-logs.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
@@ -74,6 +75,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 		preflight,
 	});
+	const logs = new TaskLogs({ db: database.db, clock, dataDir: options.dataDir });
 	const presence = new PresenceRegistry({ clock });
 	const api = buildHttpApi({
 		database,
@@ -85,6 +87,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		packages,
 		presence,
 		preflight,
+		logs,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
@@ -101,7 +104,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
 			hub,
-			handler: engine,
+			// 日志和进度不改变运行状态，不经过引擎（src/logs/task-logs.ts）。
+			handler: {
+				onOnline: (conn) => engine.onOnline(conn),
+				onMessage: (conn, message) =>
+					logs.handles(message) ? logs.onMessage(conn, message) : engine.onMessage(conn, message),
+			},
 			agentToken: options.agentToken,
 			onError: (error) => {
 				if (logger) console.error("agent session error:", error);

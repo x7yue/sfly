@@ -3,12 +3,14 @@ import type { AgentHub } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
+import type { TaskLogs } from "../logs/task-logs.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import type { PresenceRegistry } from "../presence/presence-registry.js";
 import type { Preflight } from "../runs/preflight.js";
 import { registerSse } from "../sse/sse.js";
 import { sendError } from "./errors.js";
+import { registerLogRoutes } from "./log-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
@@ -24,6 +26,7 @@ export interface HttpApiDeps {
 	packages: PackageRepository;
 	presence: PresenceRegistry;
 	preflight: Preflight;
+	logs: TaskLogs;
 }
 
 const errorCode = (status: number): string =>
@@ -45,6 +48,7 @@ export function buildHttpApi({
 	packages,
 	presence,
 	preflight,
+	logs,
 }: HttpApiDeps): FastifyInstance {
 	const app = Fastify({ logger });
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
@@ -74,7 +78,15 @@ export function buildHttpApi({
 
 	app.get("/agents", async () => ({ agents: await hub.list() }));
 	registerOrchestrationRoutes(app, { orchestrations, packages });
-	registerRunRoutes(app, { db: database.db, engine, orchestrations, preflight, sse });
+	registerRunRoutes(app, {
+		db: database.db,
+		engine,
+		orchestrations,
+		preflight,
+		sse,
+		progress: logs.progress,
+	});
+	registerLogRoutes(app, { logs, sse });
 	registerPackageRoutes(app, packages);
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 
