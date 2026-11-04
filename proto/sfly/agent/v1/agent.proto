@@ -18,6 +18,7 @@ message AgentMessage {
   oneof body {
     Hello hello = 1;
     TaskResult result = 6;
+    InstallStatus install = 7;
   }
 }
 
@@ -75,6 +76,35 @@ message AssignTask {
   string run_id = 8;
   // 节点在编排中的 ID。
   string node_id = 9;
+  // 节点包归档（.sflypkg）的 sha256（hex）；Agent 下载后据此校验。开发版本或控制面没有该版本时为空。
+  string package_sha256 = 10;
+  // 节点包归档的 HTTP 下载地址；包版本没有安装在 Agent 上时，Agent 从这里下载并安装。
+  string package_url = 11;
+}
+
+// Agent 安装或切换节点包的状态（安装期间 Agent 不启动新任务）。
+message InstallStatus {
+  // 节点包名。
+  string package = 1;
+  // 要安装的版本。
+  string version = 2;
+  InstallState state = 3;
+  // 触发这次安装的任务。
+  string task_id = 4;
+  // 完整的安装输出（uv 的标准输出和标准错误）；INSTALLING 时为空。
+  string output = 5;
+  // 发送这条消息时共享 venv 中已安装的全部节点包。
+  repeated InstalledPackage installed_packages = 6;
+}
+
+enum InstallState {
+  INSTALL_STATE_UNSPECIFIED = 0;
+  // 开始下载并安装。
+  INSTALL_STATE_INSTALLING = 1;
+  // 安装成功。
+  INSTALL_STATE_INSTALLED = 2;
+  // 下载、校验或安装失败（包括依赖冲突）。
+  INSTALL_STATE_FAILED = 3;
 }
 
 // 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。

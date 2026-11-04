@@ -1,12 +1,21 @@
 #!/usr/bin/env bash
 # 测试用：创建一个"已经装好桩节点包"的共享 venv。
-#   scripts/stub-venv.sh <venv 目录>
-# venv 中装有 SDK 运行时（sdk/python，只用标准库）和 testdata/stub-package 构建出的 wheel。
+#   scripts/stub-venv.sh <venv 目录> [--sdk-only]
+# venv 中装有 SDK 运行时（sdk/python，只用标准库）和 testdata/stub-package 构建出的 wheel；
+# --sdk-only 时只装 SDK 运行时（节点包留给 Agent 下载安装）。
 # 节点包的下载与安装由 Agent 负责（#6）；这里只为执行测试预先准备环境。
 set -euo pipefail
 venv="$(realpath -m "$1")"
+sdk_only="${2:-}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
+
+if [[ "$sdk_only" == "--sdk-only" ]]; then
+  rm -rf "$venv"
+  uv venv --quiet --python "$(cat .python-version)" "$venv"
+  uv pip install --quiet --python "$venv" --refresh-package sfly ./sdk/python
+  exit 0
+fi
 
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
