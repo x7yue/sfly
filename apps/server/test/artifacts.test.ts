@@ -1,5 +1,6 @@
 // 切入点 A：产物与节点输出上限（#18）。假 Agent 收到 AssignTask 里的产物上传地址，经 HTTP 上传产物，
 // 通过 HTTP 列出、下载产物；节点输出超过 1 MB 时任务以 node_error 失败。
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
