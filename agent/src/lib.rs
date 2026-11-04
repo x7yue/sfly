@@ -231,8 +231,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.work_dir)
         .with_context(|| format!("create work dir {}", config.work_dir.display()))?;
     let work_dir = std::fs::canonicalize(&config.work_dir)?;
-    let venv = std::fs::canonicalize(&config.venv)
-        .with_context(|| format!("shared venv {} not found", config.venv.display()))?;
+    // 共享 venv 不存在时照常连接：已安装的包为空，任务以 env_error 失败。
+    let venv =
+        std::fs::canonicalize(&config.venv).or_else(|_| std::path::absolute(&config.venv))?;
 
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let runtime = Arc::new(Runtime {
