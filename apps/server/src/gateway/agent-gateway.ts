@@ -9,7 +9,12 @@ import {
 	type ServerMessage,
 	ServerMessageSchema,
 } from "@sfly/proto";
-import { type AgentConnection, type AgentHub, DEFAULT_SLOTS } from "../agents/agent-hub.js";
+import {
+	type AgentConnection,
+	type AgentHub,
+	DEFAULT_SLOTS,
+	devPackageInfo,
+} from "../agents/agent-hub.js";
 import { AsyncQueue } from "../util/async-queue.js";
 
 export interface AgentGatewayServer {
@@ -70,6 +75,7 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 						name: p.name,
 						version: p.version,
 					})),
+					dev_packages: hello.devPackages.map(devPackageInfo),
 				},
 				outbox,
 			);

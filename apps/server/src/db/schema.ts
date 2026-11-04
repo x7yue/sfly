@@ -30,6 +30,17 @@ export interface AgentInfo {
 	installed_packages?: InstalledPackage[];
 	/** 最近一次 InstallStatus 上报的安装状态（#6）；每次连接（Hello）时清空。 */
 	install?: InstallProgress;
+	/** 以开发模式（sfly dev）加载在这个 Agent 上的节点包（#19）；Hello 和 InstallStatus 中上报。 */
+	dev_packages?: DevPackageInfo[];
+}
+
+/** Agent 上以开发模式加载的节点包 `包名@dev`。 */
+export interface DevPackageInfo {
+	name: string;
+	/** Agent 所在机器上的源码目录。 */
+	source: string;
+	/** 加载时扫描出的节点包元信息（version 为 dev）；Agent 上报的内容不是 JSON 对象时为 null。 */
+	metadata: Record<string, unknown> | null;
 }
 
 export interface InstallProgress {

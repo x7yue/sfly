@@ -2,7 +2,7 @@
 // 在装好桩节点包的共享 venv 中跑通一条两个节点的链，后一个节点引用前一个节点的输出。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -180,4 +180,94 @@ describe("全栈冒烟：Agent 从控制面下载并安装节点包", () => {
 			install: { package: "sfly-stub", version: "0.1.0", state: "installed" },
 		});
 	}, 90_000);
+});
+
+describe("全栈冒烟：开发模式 sfly dev", () => {
+	let cp: TestControlPlane;
+	let venv: Awaited<ReturnType<typeof createStubVenv>>;
+	let devAgent: RealAgent;
+	let otherAgent: RealAgent;
+	let project: string;
+	const writeNode = (marker: string) =>
+		writeFile(
+			join(project, "src", "smoke_dev", "__init__.py"),
+			`from sfly import node\n\n\n@node\ndef about() -> dict:\n    return {"source": ${JSON.stringify(marker)}}\n`,
+		);
+
+	beforeAll(async () => {
+		const bin = agentBinary();
+		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv({ sdkOnly: true })]);
+		project = await mkdtemp(join(tmpdir(), "sfly-dev-project-"));
+		await mkdir(join(project, "src", "smoke_dev"), { recursive: true });
+		await writeFile(
+			join(project, "pyproject.toml"),
+			'[project]\nname = "smoke-dev"\nversion = "0.1.0"\ndependencies = []\n',
+		);
+		await writeNode("v1");
+		const index = ["--index-url", "http://127.0.0.1:9/simple/"];
+		[devAgent, otherAgent] = await Promise.all([
+			startRealAgent({ grpcUrl: cp.grpcUrl, name: "dev-agent", venv: venv.path, args: index, bin }),
+			startRealAgent({ grpcUrl: cp.grpcUrl, name: "other-agent", args: index, bin }),
+		]);
+	}, 600_000);
+
+	afterAll(async () => {
+		await devAgent?.close();
+		await otherAgent?.close();
+		await cp?.close();
+		await venv?.remove();
+		if (project) await rm(project, { recursive: true, force: true });
+	});
+
+	const runOn = async (api: ApiClient, agent: string) => {
+		const id = await api.orchestrationWith({
+			default_agent: agent,
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "a", kind: "package", package: "smoke-dev", node: "about", inputs: {} },
+			],
+			edges: [{ from: "entry", to: "a", kind: "chain" }],
+			packages: { "smoke-dev": "dev" },
+		});
+		const runId = await api.triggerOk(id);
+		await eventually(
+			async () => expect(["success", "failed"]).toContain((await api.run(runId)).status),
+			60_000,
+		);
+		return api.node(runId, "a");
+	};
+
+	it("sfly dev 加载本地源码后可以在画布上选用 @dev 运行，修改源码后下一次运行生效；其他 Agent 以 env_error 失败", async () => {
+		const api = new ApiClient(cp);
+		const socket = join(devAgent.workDir, "tasks", "agent.sock");
+		const { stdout } = await promisify(execFile)(
+			"uv",
+			["run", "--locked", "--quiet", "sfly", "dev", project, "--socket", socket],
+			{ cwd: repoRoot },
+		);
+		expect(stdout).toContain("smoke-dev@dev");
+		await eventually(async () => {
+			const { agents } = await api.getJson<{
+				agents: Array<{ name: string; dev_packages: Array<{ name: string }> }>;
+			}>("/agents");
+			expect(agents.find((a) => a.name === "dev-agent")?.dev_packages).toMatchObject([
+				{ name: "smoke-dev" },
+			]);
+		});
+
+		expect(await runOn(api, "dev-agent")).toMatchObject({
+			status: "success",
+			outputs: { source: "v1" },
+		});
+		await writeNode("v2-edited");
+		expect(await runOn(api, "dev-agent")).toMatchObject({
+			status: "success",
+			outputs: { source: "v2-edited" },
+		});
+
+		const other = await runOn(api, "other-agent");
+		expect(other.status).toBe("failed");
+		expect(other.error?.kind).toBe("env_error");
+		expect(other.error?.message).toContain("smoke-dev@dev");
+	}, 120_000);
 });
