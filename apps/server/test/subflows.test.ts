@@ -318,6 +318,71 @@ describe("异步任务节点与子流程", () => {
 		expect(run.status).toBe("failed");
 	});
 
+	it("取消运行时主链和子流程一起取消：各链的 always 节点照常执行，未到达的异步任务节点不再触发子流程", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[
+						{ id: "entry", kind: "entry", params: [] },
+						spawn("spawn"),
+						echo("b"),
+						{ ...echo("b2"), always: true },
+					],
+					[
+						{ id: "sub", kind: "subflow_entry", params: [] },
+						echo("c"),
+						spawn("spawn2"),
+						{ ...echo("c2"), always: true },
+						echo("c3"),
+					],
+					[{ id: "sub2", kind: "subflow_entry", params: [] }, echo("d")],
+				],
+				[
+					["spawn", "sub"],
+					["spawn2", "sub2"],
+				],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(2);
+
+		await api.cancelOk(runId);
+		const cancels = [await agent.nextCancel(), await agent.nextCancel()];
+		expect(new Set(cancels.map((c) => c.taskId))).toEqual(
+			new Set([first.b?.taskId, first.c?.taskId]),
+		);
+		await agent.cancelled(first.b as AssignedTask);
+		await agent.cancelled(first.c as AssignedTask);
+
+		const cleanup = await assigns(2);
+		expect(Object.keys(cleanup).sort()).toEqual(["b2", "c2"]);
+		let run = await api.run(runId);
+		expect(run.status).toBe("running");
+		await agent.succeed(cleanup.b2 as AssignedTask);
+		await agent.succeed(cleanup.c2 as AssignedTask);
+		await agent.expectNoAssign();
+
+		run = await api.run(runId);
+		expect(run.status).toBe("cancelled");
+		expect(run.chains.map((c) => [c.chain_id, c.status])).toEqual([
+			["entry", "cancelled"],
+			["sub", "cancelled"],
+		]);
+		expect(statuses(chainOf(run, "entry"))).toEqual({
+			entry: "success",
+			spawn: "success",
+			b: "cancelled",
+			b2: "success",
+		});
+		expect(statuses(chainOf(run, "sub"))).toEqual({
+			sub: "success",
+			c: "cancelled",
+			spawn2: "cancelled",
+			c2: "success",
+			c3: "cancelled",
+		});
+	});
+
 	it("运行的 SSE 推送包含子流程实例的状态变化", async () => {
 		const id = await api.orchestrationWith(
 			orchestration(
