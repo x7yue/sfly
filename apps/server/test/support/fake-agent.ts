@@ -2,11 +2,15 @@ import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { type Client, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
+	type Ack,
 	AgentGateway,
 	type AgentMessage,
 	AgentMessageSchema,
+	type AssignTask,
+	ErrorKind,
 	type HelloSchema,
 	type ServerMessage,
+	TaskStatus,
 } from "@sfly/proto";
 
 /** 可推送的异步队列，作为双向流的请求流。 */
@@ -48,6 +52,15 @@ type Waiter = {
 	reject: (e: unknown) => void;
 };
 
+export type TaskResultInit = Extract<
+	MessageInitShape<typeof AgentMessageSchema>["body"],
+	{ case: "result" }
+>["value"];
+export type TaskRef = { taskId: string; attempt: number };
+/** 派发的任务；`inputs` 是解析后的 inputs_json。 */
+export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
+export { ErrorKind, TaskStatus };
+
 export type ServerMessageCase = NonNullable<ServerMessage["body"]["case"]>;
 export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
 
@@ -59,7 +72,10 @@ export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
  * - `next()` / `received` 观察控制面推送的消息；
  * - `close()` 正常结束请求流，`disconnect()` 模拟断线（直接中断连接）。
  *
- * 后续票据在这里加上自动应答任务的行为（成功/失败/延迟等）。
+ * - `nextAssign()` 等待下一个派发的任务（输入已解析为 `inputs`）；
+ * - `succeed()` / `fail()` / `report()` 上报任务结果并等待控制面的 Ack。
+ *
+ * 后续票据在这里继续加可编程行为（延迟、断线重连等）。
  */
 export class FakeAgent {
 	readonly received: ServerMessage[] = [];
@@ -99,10 +115,28 @@ export class FakeAgent {
 		hello: HelloInit,
 		options: { timeoutMs?: number } = {},
 	): Promise<FakeAgent> {
+		return FakeAgent.connectRaw(
+			grpcUrl,
+			(agent) => agent.send({ case: "hello", value: { agentVersion: "fake", ...hello } }),
+			{ ...options, name: hello.name },
+		);
+	}
+
+	/** 建立双向流后由 `handshake` 自行发送消息（例如不合规的首条消息），然后等待 Welcome。 */
+	static async connectRaw(
+		grpcUrl: string,
+		handshake: (agent: FakeAgent) => void,
+		options: { timeoutMs?: number; name?: string } = {},
+	): Promise<FakeAgent> {
 		const transport = createGrpcTransport({ baseUrl: grpcUrl });
-		const agent = new FakeAgent(hello.name, createClient(AgentGateway, transport));
-		agent.send({ case: "hello", value: { agentVersion: "fake", ...hello } });
-		await agent.next("welcome", options);
+		const agent = new FakeAgent(options.name ?? "raw", createClient(AgentGateway, transport));
+		handshake(agent);
+		try {
+			await agent.next("welcome", options);
+		} catch (error) {
+			agent.#abort.abort();
+			throw error;
+		}
 		return agent;
 	}
 
@@ -113,13 +147,18 @@ export class FakeAgent {
 	/** 等待下一条（尚未被 next 消费过的）指定类型的消息。 */
 	next(kind?: ServerMessageCase, options: { timeoutMs?: number } = {}): Promise<ServerMessage> {
 		const predicate = (m: ServerMessage) => kind === undefined || m.body.case === kind;
-		const timeoutMs = options.timeoutMs ?? 5000;
+		return this.#nextMatching(predicate, `'${kind ?? "any"}' message`, options.timeoutMs ?? 5000);
+	}
+
+	#nextMatching(
+		predicate: (m: ServerMessage) => boolean,
+		what: string,
+		timeoutMs: number,
+	): Promise<ServerMessage> {
 		return new Promise<ServerMessage>((resolve, reject) => {
 			const timer = setTimeout(() => {
 				this.#waiters = this.#waiters.filter((w) => w !== waiter);
-				reject(
-					new Error(`agent ${this.name}: no '${kind ?? "any"}' message within ${timeoutMs}ms`),
-				);
+				reject(new Error(`agent ${this.name}: no ${what} within ${timeoutMs}ms`));
 			}, timeoutMs);
 			const waiter: Waiter = {
 				predicate,
@@ -135,6 +174,54 @@ export class FakeAgent {
 			this.#waiters.push(waiter);
 			this.#dispatch();
 		});
+	}
+
+	/** 等待下一个派发给本 Agent 的任务。 */
+	async nextAssign(options: { timeoutMs?: number } = {}): Promise<AssignedTask> {
+		const message = await this.next("assign", options);
+		const assign = message.body.value as AssignTask;
+		return { ...assign, inputs: JSON.parse(assign.inputsJson) as Record<string, unknown> };
+	}
+
+	/** 断言在一段时间内没有收到新的任务派发。 */
+	async expectNoAssign(withinMs = 200): Promise<void> {
+		const assign = await this.nextAssign({ timeoutMs: withinMs }).catch(() => undefined);
+		if (assign) {
+			throw new Error(
+				`agent ${this.name}: unexpected assign of ${assign.package}/${assign.node} (${assign.nodeId})`,
+			);
+		}
+	}
+
+	/** 上报任务成功，等待 Ack。 */
+	succeed(task: TaskRef, outputs: Record<string, unknown> = {}): Promise<Ack> {
+		return this.report({
+			taskId: task.taskId,
+			attempt: task.attempt,
+			status: TaskStatus.SUCCESS,
+			outputsJson: JSON.stringify(outputs),
+		});
+	}
+
+	/** 上报任务失败，等待 Ack。 */
+	fail(task: TaskRef, message = "boom", kind: ErrorKind = ErrorKind.NODE_ERROR): Promise<Ack> {
+		return this.report({
+			taskId: task.taskId,
+			attempt: task.attempt,
+			status: TaskStatus.FAILED,
+			error: { kind, message },
+		});
+	}
+
+	/** 上报任意 TaskResult，等待对应的 Ack（task_id + attempt 相同）。 */
+	async report(result: TaskResultInit): Promise<Ack> {
+		this.send({ case: "result", value: result });
+		const ackFor = (m: ServerMessage) =>
+			m.body.case === "ack" &&
+			m.body.value.taskId === result.taskId &&
+			m.body.value.attempt === result.attempt;
+		const message = await this.#nextMatching(ackFor, `ack for ${result.taskId}`, 5000);
+		return message.body.value as Ack;
 	}
 
 	/** 流是否已结束（被控制面关闭或断开）。 */
@@ -154,9 +241,10 @@ export class FakeAgent {
 		await this.#closed;
 	}
 
+	/** 按等待顺序给每个等待者分配第一条匹配且未被消费的消息；流结束时拒绝剩下的等待者。 */
 	#dispatch(): void {
-		while (this.#waiters.length > 0) {
-			const waiter = this.#waiters[0] as Waiter;
+		const pending: Waiter[] = [];
+		for (const waiter of this.#waiters) {
 			let found = -1;
 			for (let i = 0; i < this.received.length; i++) {
 				if (!this.#consumed.has(i) && waiter.predicate(this.received[i] as ServerMessage)) {
@@ -164,14 +252,15 @@ export class FakeAgent {
 					break;
 				}
 			}
-			if (found < 0) {
-				if (this.#ended) waiter.reject(this.#error ?? new Error("stream ended"));
-				else return;
-			} else {
+			if (found >= 0) {
 				this.#consumed.add(found);
 				waiter.resolve(this.received[found] as ServerMessage);
+			} else if (this.#ended) {
+				waiter.reject(this.#error ?? new Error("stream ended"));
+			} else {
+				pending.push(waiter);
 			}
-			this.#waiters.shift();
 		}
+		this.#waiters = pending;
 	}
 }

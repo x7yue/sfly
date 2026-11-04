@@ -51,6 +51,9 @@ pub async fn connect(config: &Config) -> anyhow::Result<Connection> {
                 name: config.name.clone(),
                 token: config.token.clone().unwrap_or_default(),
                 agent_version: AGENT_VERSION.to_string(),
+                os: std::env::consts::OS.to_string(),
+                arch: std::env::consts::ARCH.to_string(),
+                ..Default::default()
             })),
         })
         .await

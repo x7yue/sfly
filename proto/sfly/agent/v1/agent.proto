@@ -3,10 +3,12 @@ syntax = "proto3";
 package sfly.agent.v1;
 
 // Agent 网关：Agent 主动发起一条 gRPC 双向流，控制面在同一条流上推送指令（ADR 0003）。
-// 当前只有最小的握手（Hello → Welcome）；其余消息按 docs/ARCHITECTURE.md §5.2 的
-// 字段编号逐步加入，加入后受 buf breaking 检查保护。
+// 消息按 docs/ARCHITECTURE.md §5.2 的字段编号逐步加入，加入后受 buf breaking 检查保护。
 //
 // RPC 名用 Session 而不是草图里的 Connect：tonic 生成的客户端已有构造函数 connect()，同名会冲突。
+//
+// 握手：Agent 发送的第一条消息必须是 Hello。令牌不对时控制面以 UNAUTHENTICATED 结束流；
+// 同名 Agent 重新连接时，旧连接的流被控制面正常结束。
 service AgentGateway {
   rpc Session(stream AgentMessage) returns (stream ServerMessage);
 }
@@ -15,6 +17,7 @@ service AgentGateway {
 message AgentMessage {
   oneof body {
     Hello hello = 1;
+    TaskResult result = 6;
   }
 }
 
@@ -22,6 +25,8 @@ message AgentMessage {
 message ServerMessage {
   oneof body {
     Welcome welcome = 1;
+    AssignTask assign = 2;
+    Ack ack = 4;
   }
 }
 
@@ -33,7 +38,71 @@ message Hello {
   string token = 2;
   // Agent 程序版本。
   string agent_version = 3;
+  // 操作系统，例如 linux、windows。
+  string os = 4;
+  // CPU 架构，例如 x86_64、aarch64。
+  string arch = 5;
+  // 并发槽位数：同时运行的任务上限；0 表示使用默认值 4。
+  uint32 slots = 6;
 }
 
 // 控制面对 Hello 的回应，表示连接已被接受。
 message Welcome {}
+
+// 控制面派发给 Agent 的一个任务（节点的一次尝试）。输入中的引用已经解析。
+message AssignTask {
+  string task_id = 1;
+  // 从 1 开始；重试时加 1。
+  uint32 attempt = 2;
+  // 节点包名。
+  string package = 3;
+  // 锁定的节点包版本（`dev` 表示开发版本）。
+  string package_version = 4;
+  // 节点包内的节点名。
+  string node = 5;
+  // 已解析的输入，JSON 对象。
+  string inputs_json = 6;
+  // 执行超时（秒）。
+  uint32 timeout_seconds = 7;
+  string run_id = 8;
+  // 节点在编排中的 ID。
+  string node_id = 9;
+}
+
+// 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
+message TaskResult {
+  string task_id = 1;
+  uint32 attempt = 2;
+  TaskStatus status = 3;
+  // 成功时的输出，JSON 对象。
+  string outputs_json = 4;
+  // 失败时的错误。
+  TaskError error = 5;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_SUCCESS = 1;
+  TASK_STATUS_FAILED = 2;
+}
+
+message TaskError {
+  ErrorKind kind = 1;
+  string message = 2;
+}
+
+// 失败类型（docs/SEMANTICS.md §3.3）。
+enum ErrorKind {
+  ERROR_KIND_UNSPECIFIED = 0;
+  ERROR_KIND_NODE_ERROR = 1;
+  ERROR_KIND_TIMEOUT = 2;
+  ERROR_KIND_AGENT_LOST = 3;
+  ERROR_KIND_ENV_ERROR = 4;
+  ERROR_KIND_CONFIG_ERROR = 5;
+}
+
+// 控制面确认已处理 Agent 的某条上报（目前是 TaskResult，重复上报同样会收到 Ack）。
+message Ack {
+  string task_id = 1;
+  uint32 attempt = 2;
+}

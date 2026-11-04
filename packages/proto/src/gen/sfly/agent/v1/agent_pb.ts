@@ -2,15 +2,15 @@
 // @generated from file sfly/agent/v1/agent.proto (package sfly.agent.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
-import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file sfly/agent/v1/agent.proto.
  */
 export const file_sfly_agent_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIj0KDEFnZW50TWVzc2FnZRIlCgVoZWxsbxgBIAEoCzIULnNmbHkuYWdlbnQudjEuSGVsbG9IAEIGCgRib2R5IkIKDVNlcnZlck1lc3NhZ2USKQoHd2VsY29tZRgBIAEoCzIWLnNmbHkuYWdlbnQudjEuV2VsY29tZUgAQgYKBGJvZHkiOwoFSGVsbG8SDAoEbmFtZRgBIAEoCRINCgV0b2tlbhgCIAEoCRIVCg1hZ2VudF92ZXJzaW9uGAMgASgJIgkKB1dlbGNvbWUyWAoMQWdlbnRHYXRld2F5EkgKB1Nlc3Npb24SGy5zZmx5LmFnZW50LnYxLkFnZW50TWVzc2FnZRocLnNmbHkuYWdlbnQudjEuU2VydmVyTWVzc2FnZSgBMAFiBnByb3RvMw");
+  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxImoKDEFnZW50TWVzc2FnZRIlCgVoZWxsbxgBIAEoCzIULnNmbHkuYWdlbnQudjEuSGVsbG9IABIrCgZyZXN1bHQYBiABKAsyGS5zZmx5LmFnZW50LnYxLlRhc2tSZXN1bHRIAEIGCgRib2R5IpIBCg1TZXJ2ZXJNZXNzYWdlEikKB3dlbGNvbWUYASABKAsyFi5zZmx5LmFnZW50LnYxLldlbGNvbWVIABIrCgZhc3NpZ24YAiABKAsyGS5zZmx5LmFnZW50LnYxLkFzc2lnblRhc2tIABIhCgNhY2sYBCABKAsyEi5zZmx5LmFnZW50LnYxLkFja0gAQgYKBGJvZHkiZAoFSGVsbG8SDAoEbmFtZRgBIAEoCRINCgV0b2tlbhgCIAEoCRIVCg1hZ2VudF92ZXJzaW9uGAMgASgJEgoKAm9zGAQgASgJEgwKBGFyY2gYBSABKAkSDQoFc2xvdHMYBiABKA0iCQoHV2VsY29tZSK1AQoKQXNzaWduVGFzaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDwoHcGFja2FnZRgDIAEoCRIXCg9wYWNrYWdlX3ZlcnNpb24YBCABKAkSDAoEbm9kZRgFIAEoCRITCgtpbnB1dHNfanNvbhgGIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYByABKA0SDgoGcnVuX2lkGAggASgJEg8KB25vZGVfaWQYCSABKAkimAEKClRhc2tSZXN1bHQSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEikKBnN0YXR1cxgDIAEoDjIZLnNmbHkuYWdlbnQudjEuVGFza1N0YXR1cxIUCgxvdXRwdXRzX2pzb24YBCABKAkSJwoFZXJyb3IYBSABKAsyGC5zZmx5LmFnZW50LnYxLlRhc2tFcnJvciJECglUYXNrRXJyb3ISJgoEa2luZBgBIAEoDjIYLnNmbHkuYWdlbnQudjEuRXJyb3JLaW5kEg8KB21lc3NhZ2UYAiABKAkiJwoDQWNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDSpaCgpUYXNrU3RhdHVzEhsKF1RBU0tfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTVEFTS19TVEFUVVNfU1VDQ0VTUxABEhYKElRBU0tfU1RBVFVTX0ZBSUxFRBACKqwBCglFcnJvcktpbmQSGgoWRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUVSUk9SX0tJTkRfTk9ERV9FUlJPUhABEhYKEkVSUk9SX0tJTkRfVElNRU9VVBACEhkKFUVSUk9SX0tJTkRfQUdFTlRfTE9TVBADEhgKFEVSUk9SX0tJTkRfRU5WX0VSUk9SEAQSGwoXRVJST1JfS0lORF9DT05GSUdfRVJST1IQBTJYCgxBZ2VudEdhdGV3YXkSSAoHU2Vzc2lvbhIbLnNmbHkuYWdlbnQudjEuQWdlbnRNZXNzYWdlGhwuc2ZseS5hZ2VudC52MS5TZXJ2ZXJNZXNzYWdlKAEwAWIGcHJvdG8z");
 
 /**
  * Agent → 控制面。
@@ -27,6 +27,12 @@ export type AgentMessage = Message<"sfly.agent.v1.AgentMessage"> & {
      */
     value: Hello;
     case: "hello";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.TaskResult result = 6;
+     */
+    value: TaskResult;
+    case: "result";
   } | { case: undefined; value?: undefined };
 };
 
@@ -52,6 +58,18 @@ export type ServerMessage = Message<"sfly.agent.v1.ServerMessage"> & {
      */
     value: Welcome;
     case: "welcome";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.AssignTask assign = 2;
+     */
+    value: AssignTask;
+    case: "assign";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.Ack ack = 4;
+     */
+    value: Ack;
+    case: "ack";
   } | { case: undefined; value?: undefined };
 };
 
@@ -88,6 +106,27 @@ export type Hello = Message<"sfly.agent.v1.Hello"> & {
    * @generated from field: string agent_version = 3;
    */
   agentVersion: string;
+
+  /**
+   * 操作系统，例如 linux、windows。
+   *
+   * @generated from field: string os = 4;
+   */
+  os: string;
+
+  /**
+   * CPU 架构，例如 x86_64、aarch64。
+   *
+   * @generated from field: string arch = 5;
+   */
+  arch: string;
+
+  /**
+   * 并发槽位数：同时运行的任务上限；0 表示使用默认值 4。
+   *
+   * @generated from field: uint32 slots = 6;
+   */
+  slots: number;
 };
 
 /**
@@ -113,11 +152,244 @@ export const WelcomeSchema: GenMessage<Welcome> = /*@__PURE__*/
   messageDesc(file_sfly_agent_v1_agent, 3);
 
 /**
+ * 控制面派发给 Agent 的一个任务（节点的一次尝试）。输入中的引用已经解析。
+ *
+ * @generated from message sfly.agent.v1.AssignTask
+ */
+export type AssignTask = Message<"sfly.agent.v1.AssignTask"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * 从 1 开始；重试时加 1。
+   *
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * 节点包名。
+   *
+   * @generated from field: string package = 3;
+   */
+  package: string;
+
+  /**
+   * 锁定的节点包版本（`dev` 表示开发版本）。
+   *
+   * @generated from field: string package_version = 4;
+   */
+  packageVersion: string;
+
+  /**
+   * 节点包内的节点名。
+   *
+   * @generated from field: string node = 5;
+   */
+  node: string;
+
+  /**
+   * 已解析的输入，JSON 对象。
+   *
+   * @generated from field: string inputs_json = 6;
+   */
+  inputsJson: string;
+
+  /**
+   * 执行超时（秒）。
+   *
+   * @generated from field: uint32 timeout_seconds = 7;
+   */
+  timeoutSeconds: number;
+
+  /**
+   * @generated from field: string run_id = 8;
+   */
+  runId: string;
+
+  /**
+   * 节点在编排中的 ID。
+   *
+   * @generated from field: string node_id = 9;
+   */
+  nodeId: string;
+};
+
+/**
+ * Describes the message sfly.agent.v1.AssignTask.
+ * Use `create(AssignTaskSchema)` to create a new message.
+ */
+export const AssignTaskSchema: GenMessage<AssignTask> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 4);
+
+/**
+ * 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
+ *
+ * @generated from message sfly.agent.v1.TaskResult
+ */
+export type TaskResult = Message<"sfly.agent.v1.TaskResult"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * @generated from field: sfly.agent.v1.TaskStatus status = 3;
+   */
+  status: TaskStatus;
+
+  /**
+   * 成功时的输出，JSON 对象。
+   *
+   * @generated from field: string outputs_json = 4;
+   */
+  outputsJson: string;
+
+  /**
+   * 失败时的错误。
+   *
+   * @generated from field: sfly.agent.v1.TaskError error = 5;
+   */
+  error?: TaskError | undefined;
+};
+
+/**
+ * Describes the message sfly.agent.v1.TaskResult.
+ * Use `create(TaskResultSchema)` to create a new message.
+ */
+export const TaskResultSchema: GenMessage<TaskResult> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 5);
+
+/**
+ * @generated from message sfly.agent.v1.TaskError
+ */
+export type TaskError = Message<"sfly.agent.v1.TaskError"> & {
+  /**
+   * @generated from field: sfly.agent.v1.ErrorKind kind = 1;
+   */
+  kind: ErrorKind;
+
+  /**
+   * @generated from field: string message = 2;
+   */
+  message: string;
+};
+
+/**
+ * Describes the message sfly.agent.v1.TaskError.
+ * Use `create(TaskErrorSchema)` to create a new message.
+ */
+export const TaskErrorSchema: GenMessage<TaskError> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 6);
+
+/**
+ * 控制面确认已处理 Agent 的某条上报（目前是 TaskResult，重复上报同样会收到 Ack）。
+ *
+ * @generated from message sfly.agent.v1.Ack
+ */
+export type Ack = Message<"sfly.agent.v1.Ack"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+};
+
+/**
+ * Describes the message sfly.agent.v1.Ack.
+ * Use `create(AckSchema)` to create a new message.
+ */
+export const AckSchema: GenMessage<Ack> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 7);
+
+/**
+ * @generated from enum sfly.agent.v1.TaskStatus
+ */
+export enum TaskStatus {
+  /**
+   * @generated from enum value: TASK_STATUS_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: TASK_STATUS_SUCCESS = 1;
+   */
+  SUCCESS = 1,
+
+  /**
+   * @generated from enum value: TASK_STATUS_FAILED = 2;
+   */
+  FAILED = 2,
+}
+
+/**
+ * Describes the enum sfly.agent.v1.TaskStatus.
+ */
+export const TaskStatusSchema: GenEnum<TaskStatus> = /*@__PURE__*/
+  enumDesc(file_sfly_agent_v1_agent, 0);
+
+/**
+ * 失败类型（docs/SEMANTICS.md §3.3）。
+ *
+ * @generated from enum sfly.agent.v1.ErrorKind
+ */
+export enum ErrorKind {
+  /**
+   * @generated from enum value: ERROR_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ERROR_KIND_NODE_ERROR = 1;
+   */
+  NODE_ERROR = 1,
+
+  /**
+   * @generated from enum value: ERROR_KIND_TIMEOUT = 2;
+   */
+  TIMEOUT = 2,
+
+  /**
+   * @generated from enum value: ERROR_KIND_AGENT_LOST = 3;
+   */
+  AGENT_LOST = 3,
+
+  /**
+   * @generated from enum value: ERROR_KIND_ENV_ERROR = 4;
+   */
+  ENV_ERROR = 4,
+
+  /**
+   * @generated from enum value: ERROR_KIND_CONFIG_ERROR = 5;
+   */
+  CONFIG_ERROR = 5,
+}
+
+/**
+ * Describes the enum sfly.agent.v1.ErrorKind.
+ */
+export const ErrorKindSchema: GenEnum<ErrorKind> = /*@__PURE__*/
+  enumDesc(file_sfly_agent_v1_agent, 1);
+
+/**
  * Agent 网关：Agent 主动发起一条 gRPC 双向流，控制面在同一条流上推送指令（ADR 0003）。
- * 当前只有最小的握手（Hello → Welcome）；其余消息按 docs/ARCHITECTURE.md §5.2 的
- * 字段编号逐步加入，加入后受 buf breaking 检查保护。
+ * 消息按 docs/ARCHITECTURE.md §5.2 的字段编号逐步加入，加入后受 buf breaking 检查保护。
  *
  * RPC 名用 Session 而不是草图里的 Connect：tonic 生成的客户端已有构造函数 connect()，同名会冲突。
+ *
+ * 握手：Agent 发送的第一条消息必须是 Hello。令牌不对时控制面以 UNAUTHENTICATED 结束流；
+ * 同名 Agent 重新连接时，旧连接的流被控制面正常结束。
  *
  * @generated from service sfly.agent.v1.AgentGateway
  */
