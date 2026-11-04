@@ -54,6 +54,18 @@ export class ApiClient {
 		return id;
 	}
 
+	/** 取消运行（#12）；清理期间再次调用即强制取消。 */
+	cancel(runId: string, nickname = "tester"): Promise<Response> {
+		return this.post(`/runs/${runId}/cancel`, {}, nickname);
+	}
+
+	/** 取消并断言成功，返回运行视图。 */
+	async cancelOk(runId: string): Promise<RunView> {
+		const res = await this.cancel(runId);
+		expect(res.status, await res.clone().text()).toBe(200);
+		return (await res.json()) as RunView;
+	}
+
 	run(runId: string): Promise<RunView> {
 		return this.getJson<RunView>(`/runs/${runId}`);
 	}
@@ -127,5 +139,6 @@ export interface RunView {
 	params: Record<string, unknown>;
 	started_at: string;
 	ended_at: string | null;
+	cancel: { requested_by: string; requested_at: string; forced_at: string | null } | null;
 	chains: ChainView[];
 }

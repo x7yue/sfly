@@ -15,6 +15,7 @@ import {
 	type RunView,
 	runEventsPath,
 } from "./api";
+import { CancelRunButton } from "./cancel";
 import { ErrorKindTag, FailureSummary } from "./failure";
 import {
 	durationBetween,
@@ -167,6 +168,7 @@ export function RunPage({ runId }: { runId: string }) {
 					耗时 <b>{durationBetween(data.started_at, data.ended_at, now)}</b>
 				</span>
 				<div className="ml-auto flex items-center gap-3">
+					<CancelRunButton run={data} />
 					<Link
 						to="/orchestrations/$id"
 						params={{ id: data.orchestration_id }}
@@ -237,6 +239,15 @@ function RunSummary({
 					<dd className="sf-mono">{formatTime(run.started_at)}</dd>
 					<dt>结束</dt>
 					<dd className="sf-mono">{formatTime(run.ended_at)}</dd>
+					{run.cancel && (
+						<>
+							<dt>取消</dt>
+							<dd>
+								{run.cancel.requested_by} · {formatTime(run.cancel.requested_at)}
+								{run.cancel.forced_at && `（强制终止于 ${formatTime(run.cancel.forced_at)}）`}
+							</dd>
+						</>
+					)}
 				</dl>
 			</Section>
 			<Section title="入口参数" aside={`${decls.length} 个`}>
@@ -308,7 +319,7 @@ function NodeDetail({
 			</section>
 			<TaskTelemetry attempts={state?.attempts ?? []} />
 			<Section title="尝试" aside={`${attempts.length} 次`}>
-				{attempts.length === 0 && status !== "skipped" && (
+				{attempts.length === 0 && status !== "skipped" && status !== "cancelled" && (
 					<p className="sf-hint">还没有开始执行。</p>
 				)}
 				<div className="space-y-3">

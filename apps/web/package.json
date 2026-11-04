@@ -22,6 +22,7 @@
 		"@tanstack/react-router-devtools": "1.167.2",
 		"@tanstack/react-router-ssr-query": "1.167.3",
 		"@tanstack/react-start": "1.169.4",
+		"@tanstack/react-virtual": "^3.14.26",
 		"@xyflow/react": "^12.12.1",
 		"react": "^19.2.0",
 		"react-dom": "^19.2.0",

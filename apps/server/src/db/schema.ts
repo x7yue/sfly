@@ -4,6 +4,7 @@ import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
 import {
 	bigint,
 	bigserial,
+	boolean,
 	index,
 	integer,
 	jsonb,
@@ -90,13 +91,14 @@ export const orchestrationVersions = pgTable(
 	(t) => [unique("orchestration_versions_number").on(t.orchestrationId, t.number)],
 );
 
-export type RunStatus = "running" | "success" | "failed";
+export type RunStatus = "running" | "success" | "failed" | "cancelled";
 export type ChainStatus = RunStatus;
 /**
  * 任务状态（docs/SEMANTICS.md §3.1）。skipped（#11）：前面的节点失败、本节点不是 always，
  * 记一行 attempt 1 的占位（没有派发，不算一次尝试）。
+ * cancelled（#12）：运行被取消；没有开始执行（started_at 为空）的行是占位，不算一次尝试。
  */
-export type TaskStatus = "queued" | "running" | "success" | "failed" | "skipped";
+export type TaskStatus = "queued" | "running" | "success" | "failed" | "skipped" | "cancelled";
 /** 任务的最新进度（ctx.progress）。 */
 export interface TaskProgress {
 	current: number;
@@ -125,8 +127,15 @@ export const runs = pgTable(
 		status: text("status").$type<RunStatus>().notNull(),
 		startedAt: timestamptz("started_at").notNull(),
 		endedAt: timestamptz("ended_at"),
+		/** 第一次取消（#12）的时间和昵称；之后运行在所有链结束时标记为 cancelled。 */
+		cancelRequestedAt: timestamptz("cancel_requested_at"),
+		cancelRequestedBy: text("cancel_requested_by"),
+		/** 清理期间再次取消（强制取消）的时间：always 节点也立即终止。 */
+		cancelForcedAt: timestamptz("cancel_forced_at"),
+		/** 日志和产物超过保留期被清理的时间（#18，src/retention/retention.ts）；未清理时为空。 */
+		purgedAt: timestamptz("purged_at"),
 	},
-	(t) => [index("runs_orchestration").on(t.orchestrationId)],
+	(t) => [index("runs_orchestration").on(t.orchestrationId), index("runs_ended_at").on(t.endedAt)],
 );
 
 /** 链实例：主链（depth 0）或子流程实例；ID 由运行、父链实例、异步任务节点确定性生成。 */
@@ -184,12 +193,37 @@ export const tasks = pgTable(
 		logBytes: bigint("log_bytes", { mode: "number" }).notNull().default(0),
 		/** 已写入的最大日志序号（序号不大于它的行视为重复）。 */
 		logSeq: bigint("log_seq", { mode: "number" }).notNull().default(0),
+		/** 日志超过上限已被截断（#18）：写入了截断标记，之后的行都被丢弃。 */
+		logTruncated: boolean("log_truncated").notNull().default(false),
 	},
 	(t) => [
 		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),
 		index("tasks_agent_status").on(t.agentName, t.status),
 		index("tasks_chain_instance").on(t.chainInstanceId),
 	],
+);
+
+/**
+ * 产物（#18）：任务结束后 Agent 通过 HTTP 上传的文件。同一任务内按名称（产物目录内的相对路径）唯一，
+ * 重复上传覆盖。文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`（path 相对数据目录）。
+ */
+export const artifacts = pgTable(
+	"artifacts",
+	{
+		id: uuid("id").primaryKey(),
+		taskId: uuid("task_id")
+			.notNull()
+			.references(() => tasks.id),
+		runId: uuid("run_id")
+			.notNull()
+			.references(() => runs.id),
+		name: text("name").notNull(),
+		path: text("path").notNull(),
+		size: bigint("size", { mode: "number" }).notNull(),
+		sha256: text("sha256").notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+	},
+	(t) => [unique("artifacts_task_name").on(t.taskId, t.name), index("artifacts_run").on(t.runId)],
 );
 
 /** 已发布的节点包版本；`包名@版本` 唯一，发布后不可变。 */

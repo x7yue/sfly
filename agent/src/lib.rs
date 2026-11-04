@@ -8,6 +8,7 @@
 //!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
+pub mod artifacts;
 pub mod dev;
 pub mod executor;
 pub mod install;
@@ -15,13 +16,13 @@ pub mod logs;
 pub mod process_tree;
 pub mod venv;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc, watch};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Streaming;
 
@@ -34,8 +35,9 @@ use dev::{DEV_VERSION, DevRegistry, DevReply, DevRequest};
 use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AssignTask, DevPackage, ErrorKind, Hello, InstallState, InstallStatus,
-    InstalledPackage, ServerMessage, TaskResult, Welcome, agent_message, server_message,
+    AgentMessage, AssignTask, CancelTask, DevPackage, ErrorKind, Hello, InstallState,
+    InstallStatus, InstalledPackage, ServerMessage, TaskResult, Welcome, agent_message,
+    server_message,
 };
 use venv::{Installed, SharedVenv};
 
@@ -73,7 +75,7 @@ pub struct Config {
     pub uv: PathBuf,
     /// `sfly dev` 连接的本地 socket；未设置时为 `<work_dir>/agent.sock`。
     pub dev_socket: Option<PathBuf>,
-    /// 超时（以及之后的取消）时从优雅终止到强制杀掉进程树的宽限期。
+    /// 超时和取消时从优雅终止到强制杀掉进程树的宽限期。
     pub terminate_grace: Duration,
 }
 
@@ -223,15 +225,51 @@ struct Runtime {
     installs: mpsc::UnboundedSender<InstallStatus>,
     /// 任务的日志与进度（[`logs`]）。
     telemetry: logs::Telemetry,
+    /// 正在执行（含安装中）的任务的取消信号，键为 (task_id, attempt)。
+    cancels: std::sync::Mutex<HashMap<(String, u32), CancelSender>>,
+    /// 任务结束后上传产物（[`artifacts`]）。
+    uploader: artifacts::Uploader,
 }
+
+/// 发送任务的取消请求（见 [`executor::CancelSignal`]）。
+type CancelSender = watch::Sender<Option<bool>>;
 
 impl Runtime {
     async fn run_task(&self, task: AssignTask) {
+        let key = (task.task_id.clone(), task.attempt);
+        let (cancel_tx, cancel) = watch::channel(None);
+        self.cancels.lock().unwrap().insert(key.clone(), cancel_tx);
         let result = match self.start_task(&task).await {
-            Ok(running) => running.wait().await,
+            // 安装期间收到的取消在子进程启动后立即生效。
+            Ok(running) => {
+                let dir = running.artifacts_dir();
+                let result = running.wait(cancel).await;
+                // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。
+                self.uploader.finish(&task, &dir, result).await
+            }
             Err(result) => result,
         };
+        self.cancels.lock().unwrap().remove(&key);
         let _ = self.results.send(result);
+    }
+
+    /// 处理控制面的取消指令；任务不在这个 Agent 上执行（或已经结束）时忽略。
+    /// 优雅取消之后再收到强制取消会升级为立即杀掉。
+    fn cancel_task(&self, cancel: &CancelTask) {
+        let cancels = self.cancels.lock().unwrap();
+        let Some(tx) = cancels.get(&(cancel.task_id.clone(), cancel.attempt)) else {
+            eprintln!(
+                "ignored cancel for task {} attempt {}: not running here",
+                cancel.task_id, cancel.attempt
+            );
+            return;
+        };
+        tx.send_if_modified(|current| {
+            let next = Some(current.unwrap_or(false) || cancel.force);
+            let changed = *current != next;
+            *current = next;
+            changed
+        });
     }
 
     async fn start_task(&self, task: &AssignTask) -> Result<executor::Running, TaskResult> {
@@ -432,6 +470,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel();
+    let http = reqwest::Client::new();
     let runtime = Arc::new(Runtime {
         name: config.name.clone(),
         dev: DevRegistry::new(work_dir.join(".dev")),
@@ -444,7 +483,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             scratch,
             index_url: config.index_url.clone(),
             uv: config.uv.clone(),
-            http: reqwest::Client::new(),
+            http: http.clone(),
         },
         work_dir: work_dir.clone(),
         terminate_grace: config.terminate_grace,
@@ -452,6 +491,11 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         results: results_tx,
         installs: installs_tx,
         telemetry: telemetry_tx,
+        cancels: std::sync::Mutex::new(HashMap::new()),
+        uploader: artifacts::Uploader {
+            http,
+            token: config.token.clone(),
+        },
     });
     let dev_socket = config
         .dev_socket
@@ -540,6 +584,7 @@ async fn serve(
                         let runtime = runtime.clone();
                         tokio::spawn(async move { runtime.run_task(task).await });
                     }
+                    Some(server_message::Body::Cancel(cancel)) => runtime.cancel_task(&cancel),
                     Some(server_message::Body::Ack(ack)) => {
                         unacked.remove(&(ack.task_id, ack.attempt));
                     }

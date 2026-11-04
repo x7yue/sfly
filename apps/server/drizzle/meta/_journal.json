@@ -29,6 +29,20 @@
       "when": 1793803922388,
       "tag": "0003_task_logs_progress",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793805249860,
+      "tag": "0004_run_cancel",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793806949400,
+      "tag": "0005_logs_artifacts_retention",
+      "breakpoints": true
     }
   ]
 }

@@ -2,7 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Clock } from "../../src/clock.js";
-import { type ControlPlane, startControlPlane } from "../../src/control-plane.js";
+import {
+	type ControlPlane,
+	type ControlPlaneOptions,
+	startControlPlane,
+} from "../../src/control-plane.js";
 import { ManualClock } from "./manual-clock.js";
 import { createTestDatabase, type TestDatabase } from "./test-database.js";
 
@@ -26,9 +30,13 @@ export interface TestControlPlane {
 /**
  * 在独立的临时数据库和临时数据目录上启动一个真实的控制面，HTTP 与 gRPC 都监听随机端口。
  * 默认注入 ManualClock，可以传入自己的时钟；agentToken 为共享注册令牌（默认不校验）。
+ * 日志上限、产物上限、保留期等（#18）可以按需覆盖。
  */
 export async function startTestControlPlane(
-	options: { clock?: Clock; agentToken?: string } = {},
+	options: { clock?: Clock; agentToken?: string } & Pick<
+		ControlPlaneOptions,
+		"logLimitBytes" | "artifactLimitBytes" | "retentionDays"
+	> = {},
 ): Promise<TestControlPlane> {
 	const clock = options.clock ?? new ManualClock();
 	const database = await createTestDatabase();
@@ -39,6 +47,11 @@ export async function startTestControlPlane(
 			dataDir,
 			clock,
 			agentToken: options.agentToken,
+			logLimitBytes: options.logLimitBytes,
+			artifactLimitBytes: options.artifactLimitBytes,
+			retentionDays: options.retentionDays,
+			// 保留期清理也调快（只按注入的时钟判断是否到期）。
+			retentionSweepIntervalMs: 20,
 			// 周期扫描调快：测试推进手动时钟后很快就能观察到效果，不用真实等待。
 			sweepIntervalMs: 20,
 			http: { host: "127.0.0.1", port: 0 },

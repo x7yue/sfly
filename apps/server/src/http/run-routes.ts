@@ -121,6 +121,18 @@ export function registerRunRoutes(
 		});
 	});
 
+	// 取消整个运行（#12）；运行还没结束时再次调用即强制取消。返回取消后的运行视图。
+	app.post<{ Params: { id: string } }>("/runs/:id/cancel", async (request, reply) => {
+		const requestedBy = nicknameOf(request);
+		if (!requestedBy) {
+			return sendError(reply, 400, "nickname_required", "x-sfly-nickname header is required");
+		}
+		if (!isUuid(request.params.id)) return sendError(reply, 404, "not_found", "run not found");
+		const outcome = await deps.engine.cancel(request.params.id, requestedBy);
+		if (!outcome.ok) return sendError(reply, outcome.status, outcome.code, outcome.message);
+		return getRunView(deps.db, request.params.id);
+	});
+
 	app.get<{ Params: { id: string } }>("/runs/:id", async (request, reply) => {
 		const run = isUuid(request.params.id)
 			? await getRunView(deps.db, request.params.id)

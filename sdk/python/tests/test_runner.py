@@ -41,7 +41,11 @@ def write_module(code_dir: Path, name: str, source: str) -> None:
 
 
 def execute(
-    tmp_path: Path, code_dir: Path, entry: str, inputs: dict[str, Any] | None = None
+    tmp_path: Path,
+    code_dir: Path,
+    entry: str,
+    inputs: dict[str, Any] | None = None,
+    env: dict[str, str] | None = None,
 ) -> Execution:
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
@@ -53,6 +57,7 @@ def execute(
     output = work / "output.json"
     env = {
         **os.environ,
+        **(env or {}),
         "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(code_dir)]),
         "SFLY_TASK": str(task),
         "SFLY_OUTPUT": str(output),
@@ -294,3 +299,156 @@ def test_context_without_events_file_does_not_fail(tmp_path: Path) -> None:
     ctx = Context(events_path=None)
     ctx.log.info("丢弃")
     ctx.progress(1, 2)
+
+
+def test_ctx_cancelled_reflects_the_cancel_marker(tmp_path: Path) -> None:
+    from sfly import Context
+
+    marker = tmp_path / "cancel"
+    ctx = Context(events_path=None, cancel_path=marker)
+    assert ctx.cancelled() is False
+    marker.write_text("")
+    assert ctx.cancelled() is True
+    assert Context(events_path=None, cancel_path=None).cancelled() is False
+
+
+def test_sigterm_raises_cancelled_in_the_node_so_cleanup_runs(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """Agent 取消任务时先写取消标记再发 SIGTERM。
+
+    节点里抛出 sfly.Cancelled，finally 能看到 ctx.cancelled()。
+    """
+    ready = tmp_path / "ready"
+    report = tmp_path / "report"
+    write_module(
+        code_dir,
+        "slow",
+        f"""
+        import time
+        from sfly import Context
+
+        def wait(ctx: Context) -> None:
+            open({str(ready)!r}, "w").close()
+            try:
+                time.sleep(60)
+            except Exception:
+                # Cancelled 不是 Exception 的子类，不会被宽泛的 except 吞掉。
+                open({str(report)!r}, "w").write("swallowed ")
+                raise
+            finally:
+                with open({str(report)!r}, "a") as f:
+                    f.write(f"cancelled={{ctx.cancelled()}}")
+        """,
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "task.json").write_text(json.dumps({"entry": "slow:wait", "inputs": {}}))
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(code_dir)]),
+        "SFLY_TASK": str(work / "task.json"),
+        "SFLY_OUTPUT": str(work / "output.json"),
+        "SFLY_EVENTS": str(work / "events.jsonl"),
+        "SFLY_CANCEL": str(work / "cancel"),
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "sfly.runner"], cwd=work, env=env, stderr=subprocess.PIPE
+    )
+    deadline = time.monotonic() + 30
+    while not ready.exists():
+        assert time.monotonic() < deadline, "node never started"
+        time.sleep(0.02)
+    (work / "cancel").write_text("")
+    proc.terminate()
+    _, stderr = proc.communicate(timeout=10)
+
+    assert report.read_text() == "cancelled=True", stderr
+    assert proc.returncode == 1
+    output = json.loads((work / "output.json").read_text())
+    assert output["status"] == "failed"
+    assert output["error"]["type"] == "Cancelled"
+
+
+# ---- ctx.artifacts：保存到产物目录 SFLY_ARTIFACTS，返回产物引用（下载地址） ----
+#
+# Agent 通过 SFLY_ARTIFACTS_URL 告诉执行器产物的下载地址前缀；save 返回的引用就是
+# 前缀 + 按路径段百分号编码的名称，节点把它写进输出，后续节点或界面据此下载。
+
+
+def test_ctx_artifacts_save_writes_files_and_returns_download_urls(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "arts",
+        """
+        from pathlib import Path
+        from sfly import Context
+
+        def work(ctx: Context) -> dict:
+            report = ctx.artifacts.save("report.json", '{"ok": true}')
+            shot = ctx.artifacts.save("截图/第 1 张.png", b"\\x89PNG\\x00")
+            src = Path("local.txt")
+            src.write_text("copied", encoding="utf-8")
+            copied = ctx.artifacts.save("logs/copy.txt", src)
+            direct = ctx.artifacts.path("direct/out.csv")
+            direct.write_text("a,b\\n", encoding="utf-8")
+            return {
+                "report": report,
+                "shot": shot,
+                "copied": copied,
+                "direct": ctx.artifacts.ref("direct/out.csv"),
+            }
+        """,
+    )
+
+    run = execute(
+        tmp_path,
+        code_dir,
+        "arts:work",
+        env={"SFLY_ARTIFACTS_URL": "http://cp:8080/tasks/t-1/artifacts/"},
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert run.output is not None
+    assert run.output["outputs"] == {
+        "report": "http://cp:8080/tasks/t-1/artifacts/report.json",
+        "shot": "http://cp:8080/tasks/t-1/artifacts/%E6%88%AA%E5%9B%BE/%E7%AC%AC%201%20%E5%BC%A0.png",
+        "copied": "http://cp:8080/tasks/t-1/artifacts/logs/copy.txt",
+        "direct": "http://cp:8080/tasks/t-1/artifacts/direct/out.csv",
+    }
+    artifacts = tmp_path / "work" / "artifacts"
+    assert (artifacts / "report.json").read_text(encoding="utf-8") == '{"ok": true}'
+    assert (artifacts / "截图" / "第 1 张.png").read_bytes() == b"\x89PNG\x00"
+    assert (artifacts / "logs" / "copy.txt").read_text(encoding="utf-8") == "copied"
+    assert (artifacts / "direct" / "out.csv").read_text(encoding="utf-8") == "a,b\n"
+
+
+def test_ctx_artifacts_without_url_returns_local_paths(tmp_path: Path, code_dir: Path) -> None:
+    write_module(
+        code_dir,
+        "local",
+        """
+        from sfly import Context
+
+        def work(ctx: Context) -> dict:
+            return {"path": ctx.artifacts.save("a.txt", "x")}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "local:work")
+
+    assert run.returncode == 0, run.stderr
+    assert run.output is not None
+    assert run.output["outputs"]["path"] == str(tmp_path / "work" / "artifacts" / "a.txt")
+
+
+@pytest.mark.parametrize("name", ["", "../x", "a/../b", "/abs", "a//b", "a\\b", ".", "a/./b"])
+def test_ctx_artifacts_rejects_names_outside_the_artifacts_dir(tmp_path: Path, name: str) -> None:
+    from sfly import Context
+
+    ctx = Context(events_path=None, artifacts_dir=tmp_path / "artifacts")
+    with pytest.raises(ValueError, match="产物名称"):
+        ctx.artifacts.save(name, "x")
+    assert not (tmp_path / "x").exists()

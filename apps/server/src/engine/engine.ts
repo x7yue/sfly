@@ -9,8 +9,8 @@ import {
 	ServerMessageSchema,
 	type TaskResult,
 } from "@sfly/proto";
-import type { OrchestrationDocument } from "@sfly/schema";
-import { and, asc, count, eq, inArray } from "drizzle-orm";
+import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
 import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -45,6 +45,10 @@ export type TriggerOutcome =
 	| { ok: true; runId: string }
 	| { ok: false; status: 400 | 404; code: string; message: string; details?: unknown };
 
+export type CancelOutcome =
+	| { ok: true; force: boolean }
+	| { ok: false; status: 404 | 409; code: string; message: string };
+
 const ERROR_KINDS: Record<ProtoErrorKind, ErrorKind> = {
 	[ProtoErrorKind.UNSPECIFIED]: "node_error",
 	[ProtoErrorKind.NODE_ERROR]: "node_error",
@@ -67,7 +71,23 @@ interface Step {
 	touchedAgents: Set<string>;
 	/** 状态有变化的运行；提交后通知订阅者（SSE）。 */
 	touchedRuns: Set<string>;
+	/** 提交后发给 Agent 的取消指令（#12）。 */
+	cancels: CancelOrder[];
 }
+
+interface CancelOrder {
+	agentName: string;
+	taskId: string;
+	attempt: number;
+	force: boolean;
+}
+
+/** 运行是否已被取消；强制取消时 always 节点也不再执行（§3.4）。 */
+const cancelling = (run: RunRow) => run.cancelRequestedAt !== null;
+const forced = (run: RunRow) => run.cancelForcedAt !== null;
+/** 运行取消后这个节点还能不能执行：普通取消时只有 always 节点照常执行。 */
+const cancelledFor = (run: RunRow, node: OrchestrationNode | undefined) =>
+	cancelling(run) && (forced(run) || !node || !isAlways(node));
 
 /**
  * 引擎：PostgreSQL 之上的链状态机（docs/SEMANTICS.md §3）。
@@ -89,6 +109,8 @@ export class Engine implements AgentSessionHandler {
 			hub: AgentHub;
 			/** 节点包归档的下载地址（Agent 通过 HTTP 下载）。 */
 			packageArchiveUrl: (name: string, version: string) => string;
+			/** 任务产物的上传地址（#18，Agent 任务结束后通过 HTTP 上传）。 */
+			artifactUploadUrl: (taskId: string) => string;
 			/** 触发前的预检（src/runs/preflight.ts）。 */
 			preflight: Preflight;
 		},
@@ -186,8 +208,126 @@ export class Engine implements AgentSessionHandler {
 		});
 	}
 
+	/**
+	 * 取消整个运行（§3.4），作用于运行的所有链实例。第一次：正在运行的普通任务收到优雅取消、
+	 * 等 Agent 上报结果；排队中的普通任务和未开始的普通节点立即 cancelled；always 节点照常执行。
+	 * 运行还没结束时再次取消即强制取消：所有任务（含 always）立即 cancelled 并通知 Agent 杀掉进程树。
+	 */
+	cancel(runId: string, requestedBy: string): Promise<CancelOutcome> {
+		return this.#event(async (step) => {
+			const [run] = await step.tx.select().from(runs).where(eq(runs.id, runId)).for("update");
+			if (!run) return { ok: false, status: 404, code: "not_found", message: "run not found" };
+			if (run.status !== "running") {
+				return {
+					ok: false,
+					status: 409,
+					code: "run_not_running",
+					message: `run is already ${run.status}`,
+				};
+			}
+			const force = cancelling(run);
+			const [updated] = await step.tx
+				.update(runs)
+				.set(
+					force
+						? { cancelForcedAt: step.now }
+						: { cancelRequestedAt: step.now, cancelRequestedBy: requestedBy },
+				)
+				.where(eq(runs.id, runId))
+				.returning();
+			step.touchedRuns.add(runId);
+			const chains = await step.tx
+				.select()
+				.from(chainInstances)
+				.where(and(eq(chainInstances.runId, runId), eq(chainInstances.status, "running")))
+				.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt));
+			for (const chain of chains) await this.#cancelChain(step, updated as RunRow, chain);
+			return { ok: true, force };
+		});
+	}
+
+	/** 取消一个链实例上正在排队 / 运行的任务；任务立即结束时从它后面继续推进链。 */
+	async #cancelChain(step: Step, run: RunRow, chain: ChainRow): Promise<void> {
+		const plan = await this.#plan(step.tx, run, chain);
+		const active = await step.tx
+			.select()
+			.from(tasks)
+			.where(and(eq(tasks.chainInstanceId, chain.id), inArray(tasks.status, ["queued", "running"])))
+			.orderBy(asc(tasks.seq))
+			.for("update");
+		let resumeAt: number | undefined;
+		for (const task of active) {
+			const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
+			if (!cancelledFor(run, plan.nodes[index])) continue;
+			if (task.status === "running" && task.agentName) {
+				const force = forced(run);
+				step.cancels.push({
+					agentName: task.agentName,
+					taskId: task.id,
+					attempt: task.attempt,
+					force,
+				});
+				// 优雅取消：等 Agent 终止进程树后上报结果，再执行后面的 always 节点。
+				if (!force) continue;
+			}
+			await step.tx
+				.update(tasks)
+				.set({ status: "cancelled", endedAt: step.now })
+				.where(eq(tasks.id, task.id));
+			if (task.agentName) step.touchedAgents.add(task.agentName);
+			resumeAt = Math.max(resumeAt ?? 0, index + 1);
+		}
+		if (resumeAt !== undefined) await this.#advance(step, run, chain, resumeAt);
+	}
+
 	onOnline(conn: AgentConnection): Promise<void> {
-		return this.deps.mutex.run(() => this.#dispatch(conn.name));
+		return this.deps.mutex.run(async () => {
+			await this.#resendCancels(conn);
+			await this.#dispatch(conn.name);
+		});
+	}
+
+	/** Agent 重新连上时，对它上面仍在运行、但所属运行已被取消的任务重发取消指令（断线期间可能没收到）。 */
+	async #resendCancels(conn: AgentConnection): Promise<void> {
+		const rows = await this.deps.db
+			.select({ task: tasks, run: runs, chain: chainInstances })
+			.from(tasks)
+			.innerJoin(runs, eq(runs.id, tasks.runId))
+			.innerJoin(chainInstances, eq(chainInstances.id, tasks.chainInstanceId))
+			.where(
+				and(
+					eq(tasks.agentName, conn.name),
+					eq(tasks.status, "running"),
+					isNotNull(runs.cancelRequestedAt),
+				),
+			);
+		for (const { task, run, chain } of rows) {
+			const plan = await this.deps.db.transaction((tx) => this.#plan(tx, run, chain));
+			if (
+				!cancelledFor(
+					run,
+					plan.nodes.find((n) => n.id === task.nodeId),
+				)
+			)
+				continue;
+			this.#sendCancel({
+				agentName: conn.name,
+				taskId: task.id,
+				attempt: task.attempt,
+				force: forced(run),
+			});
+		}
+	}
+
+	#sendCancel(order: CancelOrder): void {
+		this.deps.hub.connection(order.agentName)?.send(
+			create(ServerMessageSchema, {
+				body: {
+					case: "cancel",
+					value: { taskId: order.taskId, attempt: order.attempt, force: order.force },
+				},
+			}),
+		);
 	}
 
 	async onMessage(conn: AgentConnection, message: AgentMessage): Promise<void> {
@@ -217,10 +357,12 @@ export class Engine implements AgentSessionHandler {
 		return this.deps.mutex.run(async () => {
 			const touchedAgents = new Set<string>();
 			const touchedRuns = new Set<string>();
+			const cancels: CancelOrder[] = [];
 			const result = await this.deps.db.transaction((tx) =>
-				handle({ tx, now: this.deps.clock.now(), touchedAgents, touchedRuns }),
+				handle({ tx, now: this.deps.clock.now(), touchedAgents, touchedRuns, cancels }),
 			);
 			this.#publish(touchedRuns);
+			for (const order of cancels) this.#sendCancel(order);
 			for (const agent of touchedAgents) await this.#dispatch(agent);
 			return result;
 		});
@@ -263,6 +405,7 @@ export class Engine implements AgentSessionHandler {
 	/**
 	 * 从链上第 index 个节点开始推进：内置节点立即完成，遇到包节点就排队等待派发。
 	 * 链上已有节点最终失败时，普通节点标记为 skipped，always 节点照常执行（§3.2）。
+	 * 运行已被取消时，普通节点标记为 cancelled（强制取消时 always 节点也是），链以 cancelled 结束（§3.4）。
 	 */
 	async #advance(step: Step, run: RunRow, chain: ChainRow, index: number): Promise<void> {
 		const plan = await this.#plan(step.tx, run, chain);
@@ -280,6 +423,13 @@ export class Engine implements AgentSessionHandler {
 				attempt: 1,
 				queuedAt: step.now,
 			};
+			if (cancelledFor(run, node)) {
+				await step.tx
+					.insert(tasks)
+					.values({ ...base, status: "cancelled", endedAt: step.now })
+					.onConflictDoNothing();
+				continue;
+			}
 			if (failed && !isAlways(node)) {
 				await step.tx
 					.insert(tasks)
@@ -307,7 +457,12 @@ export class Engine implements AgentSessionHandler {
 				.values({ ...base, status: "success", outputs: {}, startedAt: step.now, endedAt: step.now })
 				.onConflictDoNothing();
 		}
-		await this.#finishChain(step, run, chain, failed ? "failed" : "success");
+		await this.#finishChain(
+			step,
+			run,
+			chain,
+			cancelling(run) ? "cancelled" : failed ? "failed" : "success",
+		);
 	}
 
 	/**
@@ -422,12 +577,14 @@ export class Engine implements AgentSessionHandler {
 		return hasFinalFailure(rows);
 	}
 
-	/** 链结束；运行的所有链都结束后运行才结束，任一条链失败则运行失败（§6.4）。 */
+	/**
+	 * 链结束；运行的所有链都结束后运行才结束：被取消的运行为 cancelled，否则任一条链失败则运行失败（§6.4）。
+	 */
 	async #finishChain(
 		step: Step,
 		run: RunRow,
 		chain: ChainRow,
-		status: "success" | "failed",
+		status: "success" | "failed" | "cancelled",
 	): Promise<void> {
 		step.touchedRuns.add(run.id);
 		await step.tx
@@ -439,7 +596,11 @@ export class Engine implements AgentSessionHandler {
 			.from(chainInstances)
 			.where(eq(chainInstances.runId, run.id));
 		if (chains.some((c) => c.status === "running")) return;
-		const runStatus = chains.some((c) => c.status === "failed") ? "failed" : "success";
+		const runStatus = cancelling(run)
+			? "cancelled"
+			: chains.some((c) => c.status === "failed")
+				? "failed"
+				: "success";
 		await step.tx
 			.update(runs)
 			.set({ status: runStatus, endedAt: step.now })
@@ -449,6 +610,7 @@ export class Engine implements AgentSessionHandler {
 	/**
 	 * 任务失败：可重试的错误且还有重试次数时，在同一个 Agent 上排队下一次尝试（attempt + 1）；
 	 * 否则节点最终失败，链继续往后推进（普通节点跳过、always 节点照常执行）。
+	 * 运行已被取消时（普通节点，或强制取消时的任何节点），任务记为 cancelled、不再重试（§3.4）。
 	 */
 	async #failTask(
 		step: Step,
@@ -457,6 +619,19 @@ export class Engine implements AgentSessionHandler {
 		message: string,
 		extra: Partial<TaskRow> = {},
 	): Promise<void> {
+		const { run, chain } = await this.#context(step.tx, task);
+		step.touchedRuns.add(run.id);
+		const plan = await this.#plan(step.tx, run, chain);
+		const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
+		const node = plan.nodes[index];
+		if (cancelledFor(run, node)) {
+			await step.tx
+				.update(tasks)
+				.set({ ...extra, status: "cancelled", errorMessage: message, endedAt: step.now })
+				.where(eq(tasks.id, task.id));
+			await this.#advance(step, run, chain, index + 1);
+			return;
+		}
 		await step.tx
 			.update(tasks)
 			.set({
@@ -467,11 +642,6 @@ export class Engine implements AgentSessionHandler {
 				endedAt: step.now,
 			})
 			.where(eq(tasks.id, task.id));
-		const { run, chain } = await this.#context(step.tx, task);
-		step.touchedRuns.add(run.id);
-		const plan = await this.#plan(step.tx, run, chain);
-		const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
-		const node = plan.nodes[index];
 		if (node && task.agentName && shouldRetry(node, kind, task.attempt)) {
 			const attempt = task.attempt + 1;
 			await step.tx
@@ -552,8 +722,9 @@ export class Engine implements AgentSessionHandler {
 		if (!conn) return;
 		const touchedRuns = new Set<string>();
 		const touchedAgents = new Set<string>();
+		const cancels: CancelOrder[] = [];
 		const assigns = await this.deps.db.transaction(async (tx) => {
-			const step: Step = { tx, now: this.deps.clock.now(), touchedAgents, touchedRuns };
+			const step: Step = { tx, now: this.deps.clock.now(), touchedAgents, touchedRuns, cancels };
 			const [running] = await tx
 				.select({ n: count() })
 				.from(tasks)
@@ -577,6 +748,7 @@ export class Engine implements AgentSessionHandler {
 			return out;
 		});
 		this.#publish(touchedRuns);
+		for (const order of cancels) this.#sendCancel(order);
 		for (const assign of assigns) conn.send(assign);
 		// 派发时失败（config_error）的任务会推进链，可能排队了新的（always）任务。
 		for (const agent of touchedAgents) await this.#dispatch(agent);
@@ -638,6 +810,7 @@ export class Engine implements AgentSessionHandler {
 					nodeId: node.id,
 					packageSha256: archive?.sha256 ?? "",
 					packageUrl: archive ? this.deps.packageArchiveUrl(node.package, packageVersion) : "",
+					artifactUploadUrl: this.deps.artifactUploadUrl(task.id),
 				},
 			},
 		});

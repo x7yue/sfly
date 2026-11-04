@@ -30,6 +30,10 @@ import { maskSecrets, secretValues } from "./secrets.js";
  * ## 进度
  * 只在 `tasks.progress` 保留最新值，不写文件。
  *
+ * ## 上限（#18）
+ * 单个任务的日志文件不超过 `limitBytes`（默认 200 MB）：放不下的第一行换成一行截断标记
+ * （source `system`、level `warn`，序号沿用被丢弃的那一行），之后的行全部丢弃，`tasks.log_truncated` 置为 true。
+ *
  * 日志和进度都不经过引擎的互斥锁（不改变运行状态）；同一个任务的追加按到达顺序串行执行。
  */
 
@@ -37,7 +41,8 @@ import { maskSecrets, secretValues } from "./secrets.js";
 export interface LogLineView {
 	seq: number;
 	time: string;
-	source: "stdout" | "stderr" | "sdk";
+	/** system：控制面自己写入的行（截断标记，#18）。 */
+	source: "stdout" | "stderr" | "sdk" | "system";
 	level: "debug" | "info" | "warn" | "error";
 	text: string;
 }
@@ -76,6 +81,9 @@ const LEVELS: Record<LogLevel, LogLineView["level"]> = {
 /** 订阅时最多从文件尾部读多少字节、多少行。 */
 const TAIL_BYTES = 256 * 1024;
 const TAIL_LINES = 500;
+/** 单个任务日志的默认上限：200 MB。 */
+export const DEFAULT_LOG_LIMIT_BYTES = 200 * 1024 * 1024;
+
 /** 缓存的任务状态数上限。 */
 const CACHE_LIMIT = 1000;
 
@@ -83,12 +91,26 @@ interface TaskState {
 	runId: string;
 	chainInstanceId: string;
 	nodeId: string;
+	attempt: number;
 	agentName: string | null;
 	/** 相对数据目录。 */
 	path: string;
 	bytes: number;
 	seq: number;
+	truncated: boolean;
 	secrets: string[];
+}
+
+/** 一个任务的日志文件概况（分页读取、下载用）。 */
+export interface TaskLogInfo {
+	runId: string;
+	nodeId: string;
+	attempt: number;
+	/** 日志文件的绝对路径（还没有日志时文件可能不存在）。 */
+	file: string;
+	/** 已写入的最大序号。 */
+	seq: number;
+	truncated: boolean;
 }
 
 export class TaskLogs {
@@ -100,7 +122,19 @@ export class TaskLogs {
 	#states = new Map<string, Promise<TaskState | undefined>>();
 	#queues = new Map<string, Promise<void>>();
 
-	constructor(private readonly deps: { db: Db; clock: Clock; dataDir: string }) {}
+	constructor(
+		private readonly deps: {
+			db: Db;
+			clock: Clock;
+			dataDir: string;
+			/** 单个任务日志的上限（字节），默认 {@link DEFAULT_LOG_LIMIT_BYTES}。 */
+			limitBytes?: number;
+		},
+	) {}
+
+	get #limit(): number {
+		return this.deps.limitBytes ?? DEFAULT_LOG_LIMIT_BYTES;
+	}
 
 	/** 这条 Agent 消息是否由这里处理（日志、进度）。 */
 	handles(message: AgentMessage): boolean {
@@ -118,36 +152,71 @@ export class TaskLogs {
 		return (await this.#state(taskId)) !== undefined;
 	}
 
+	/** 任务日志文件的概况；任务不存在时为 undefined。 */
+	async describe(taskId: string): Promise<TaskLogInfo | undefined> {
+		const state = await this.#state(taskId);
+		if (!state) return undefined;
+		return {
+			runId: state.runId,
+			nodeId: state.nodeId,
+			attempt: state.attempt,
+			file: join(this.deps.dataDir, state.path),
+			seq: state.seq,
+			truncated: state.truncated,
+		};
+	}
+
 	/** 追加一批日志（只接受任务所在 Agent 上报的）；同一任务的追加串行执行。 */
 	append(agentName: string, batch: LogBatch): Promise<void> {
 		return this.#serial(batch.taskId, async () => {
 			const state = await this.#stateFor(batch.taskId, agentName);
-			if (!state) return;
+			if (!state || state.truncated) return;
 			const lines: LogLineView[] = [];
+			let text = "";
+			let bytes = state.bytes;
 			let seq = state.seq;
+			let truncated = false;
 			for (const line of batch.lines) {
 				const n = Number(line.seq);
 				if (n <= seq) continue;
 				seq = n;
-				lines.push({
+				const view: LogLineView = {
 					seq: n,
 					time: this.#time(line.timeUnixMs),
 					source: SOURCES[line.source] ?? "stdout",
 					level: LEVELS[line.level] ?? "info",
 					text: maskSecrets(line.text, state.secrets),
-				});
+				};
+				let row = `${JSON.stringify(view)}\n`;
+				if (bytes + Buffer.byteLength(row) > this.#limit) {
+					// 放不下：这一行换成截断标记，之后的行全部丢弃。
+					view.source = "system";
+					view.level = "warn";
+					view.text = `日志超过 ${formatBytes(this.#limit)} 上限，之后的内容已被截断`;
+					row = `${JSON.stringify(view)}\n`;
+					truncated = true;
+				}
+				lines.push(view);
+				text += row;
+				bytes += Buffer.byteLength(row);
+				if (truncated) break;
 			}
 			if (lines.length === 0) return;
-			const text = lines.map((l) => `${JSON.stringify(l)}\n`).join("");
 			const file = join(this.deps.dataDir, state.path);
 			await mkdir(dirname(file), { recursive: true });
 			await appendFile(file, text);
 			const offset = state.bytes;
-			state.bytes += Buffer.byteLength(text);
+			state.bytes = bytes;
 			state.seq = seq;
+			state.truncated = truncated;
 			await this.deps.db
 				.update(tasks)
-				.set({ logPath: state.path, logBytes: state.bytes, logSeq: state.seq })
+				.set({
+					logPath: state.path,
+					logBytes: state.bytes,
+					logSeq: state.seq,
+					logTruncated: truncated,
+				})
 				.where(eq(tasks.id, batch.taskId));
 			this.lines.publish(batch.taskId, { task_id: batch.taskId, lines, offset });
 		});
@@ -286,11 +355,20 @@ export class TaskLogs {
 			runId: task.runId,
 			chainInstanceId: task.chainInstanceId,
 			nodeId: task.nodeId,
+			attempt: task.attempt,
 			agentName: task.agentName,
 			path,
 			bytes,
 			seq: task.logSeq,
+			// 写完截断标记、数据库还没更新时控制面可能退出过：文件已到上限也算截断。
+			truncated: task.logTruncated || bytes >= this.#limit,
 			secrets: secretValues(document, chains),
 		};
 	}
+}
+
+function formatBytes(n: number): string {
+	if (n >= 1024 * 1024 && n % (1024 * 1024) === 0) return `${n / (1024 * 1024)} MB`;
+	if (n >= 1024 && n % 1024 === 0) return `${n / 1024} KB`;
+	return `${n} 字节`;
 }

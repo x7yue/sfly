@@ -6,7 +6,8 @@
 //! |---|---|
 //! | `SFLY_TASK` | `task.json`：入口、已解析的输入等 |
 //! | `SFLY_OUTPUT` | `output.json`：执行器写入的结果 |
-//! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录 |
+//! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录（任务结束后由 [`crate::artifacts`] 上传） |
+//! | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀（`AssignTask.artifact_upload_url`，为空时不设置） |
 //! | `SFLY_EVENTS` | `events.jsonl`：结构化日志与进度 |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
 //!
@@ -19,6 +20,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::sync::watch;
 
 use crate::logs::{Pump, Telemetry};
 use crate::process_tree::ProcessTree;
@@ -142,7 +144,13 @@ async fn prepare_dir(
 struct Paths {
     output: PathBuf,
     stderr: PathBuf,
+    /// 取消标记文件（`SFLY_CANCEL`）：存在时 `ctx.cancelled()` 为 true。
+    cancel: PathBuf,
+    artifacts: PathBuf,
 }
+
+/// 任务的取消请求：None 表示没有取消，`Some(false)` 优雅取消，`Some(true)` 强制取消。
+pub type CancelSignal = watch::Receiver<Option<bool>>;
 
 /// 正在运行的执行器子进程。
 pub struct Running {
@@ -164,6 +172,8 @@ fn spawn_process(
     let paths = Paths {
         output: dir.join("output.json"),
         stderr: dir.join("stderr.log"),
+        cancel: dir.join("cancel"),
+        artifacts: dir.join("artifacts"),
     };
 
     let mut command = venv.python_command();
@@ -173,12 +183,15 @@ fn spawn_process(
         .current_dir(dir)
         .env("SFLY_TASK", dir.join("task.json"))
         .env("SFLY_OUTPUT", &paths.output)
-        .env("SFLY_ARTIFACTS", dir.join("artifacts"))
+        .env("SFLY_ARTIFACTS", &paths.artifacts)
         .env("SFLY_EVENTS", dir.join("events.jsonl"))
-        .env("SFLY_CANCEL", dir.join("cancel"))
+        .env("SFLY_CANCEL", &paths.cancel)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    if !task.artifact_upload_url.is_empty() {
+        command.env("SFLY_ARTIFACTS_URL", &task.artifact_upload_url);
+    }
 
     // 每个任务是一棵进程树，超时、取消时整体终止。
     match ProcessTree::spawn(&mut command) {
@@ -207,16 +220,27 @@ fn spawn_process(
 }
 
 impl Running {
-    /// 等待执行器退出并读取结果。超过 `timeout_seconds`（0 表示不限制）时终止进程树，以 timeout 失败。
-    pub async fn wait(mut self) -> TaskResult {
-        let status = match self.task.timeout_seconds {
-            0 => self.process.wait().await,
-            seconds => {
-                let limit = Duration::from_secs(seconds.into());
-                match tokio::time::timeout(limit, self.process.wait()).await {
-                    Ok(status) => status,
-                    Err(_) => return self.time_out(seconds).await,
-                }
+    /// 任务的产物目录。
+    pub fn artifacts_dir(&self) -> PathBuf {
+        self.paths.artifacts.clone()
+    }
+
+    /// 等待执行器退出并读取结果。超过 `timeout_seconds`（0 表示不限制）时终止进程树，以 timeout 失败；
+    /// 收到取消请求时先写取消标记再终止进程树，以 cancelled 上报（[`Running::cancel`]）。
+    pub async fn wait(mut self, mut cancel: CancelSignal) -> TaskResult {
+        let seconds = self.task.timeout_seconds;
+        let deadline = (seconds > 0)
+            .then(|| tokio::time::Instant::now() + Duration::from_secs(seconds.into()));
+        let mut cancellable = true;
+        let status = loop {
+            let requested = *cancel.borrow_and_update();
+            if let Some(force) = requested {
+                return self.cancel(force, cancel).await;
+            }
+            tokio::select! {
+                status = self.process.wait() => break status,
+                () = sleep_until(deadline) => return self.time_out(seconds).await,
+                changed = cancel.changed(), if cancellable => cancellable = changed.is_ok(),
             }
         };
         // 日志和最后一次进度先于结果发出；之后 stderr.log 也已完整。
@@ -260,7 +284,63 @@ impl Running {
     }
 }
 
+/// 到 deadline 为止；没有 deadline 时永远不返回。
+async fn sleep_until(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(deadline) => tokio::time::sleep_until(deadline).await,
+        None => std::future::pending().await,
+    }
+}
+
 impl Running {
+    /// 取消任务（docs/SEMANTICS.md §3.4）：先写取消标记，再优雅终止进程树，宽限期过后强制杀掉；
+    /// 强制取消（或优雅终止期间又收到强制取消）时立即杀掉。
+    async fn cancel(mut self, force: bool, mut cancel: CancelSignal) -> TaskResult {
+        if let Err(error) = tokio::fs::write(&self.paths.cancel, b"").await {
+            eprintln!(
+                "cannot write cancel marker {}: {error}",
+                self.paths.cancel.display()
+            );
+        }
+        let graceful = if force {
+            None
+        } else {
+            let escalate = async {
+                if cancel.wait_for(|c| *c == Some(true)).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            };
+            tokio::select! {
+                status = self.process.terminate(self.grace) => Some(status),
+                () = escalate => None,
+            }
+        };
+        let terminated = graceful.is_some();
+        let status = match graceful {
+            Some(status) => status,
+            None => {
+                self.process.kill();
+                self.process.wait().await
+            }
+        };
+        let how = match (terminated, status) {
+            (_, Err(error)) => format!("终止进程树时出错：{error}"),
+            (true, Ok(_)) => "已终止进程树".to_string(),
+            (false, Ok(_)) => "已强制杀掉进程树".to_string(),
+        };
+        self.pump.finish().await;
+        TaskResult {
+            task_id: self.task.task_id.clone(),
+            attempt: self.task.attempt,
+            status: TaskStatus::Cancelled.into(),
+            outputs_json: String::new(),
+            error: Some(TaskError {
+                kind: ErrorKind::Unspecified.into(),
+                message: format!("任务已取消，{how}"),
+            }),
+        }
+    }
+
     async fn time_out(mut self, seconds: u32) -> TaskResult {
         let killed = match self.process.terminate(self.grace).await {
             Ok(_) => "已终止进程树".to_string(),

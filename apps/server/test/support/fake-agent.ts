@@ -7,6 +7,7 @@ import {
 	type AgentMessage,
 	AgentMessageSchema,
 	type AssignTask,
+	type CancelTask,
 	ErrorKind,
 	type HelloSchema,
 	LogLevel,
@@ -196,6 +197,32 @@ export class FakeAgent {
 				`agent ${this.name}: unexpected assign of ${assign.package}/${assign.node} (${assign.nodeId})`,
 			);
 		}
+	}
+
+	/** 等待下一条取消指令（#12）。 */
+	async nextCancel(options: { timeoutMs?: number } = {}): Promise<CancelTask> {
+		const message = await this.next("cancel", options);
+		return message.body.value as CancelTask;
+	}
+
+	/** 断言在一段时间内没有收到新的取消指令。 */
+	async expectNoCancel(withinMs = 200): Promise<void> {
+		const cancel = await this.nextCancel({ timeoutMs: withinMs }).catch(() => undefined);
+		if (cancel) {
+			throw new Error(
+				`agent ${this.name}: unexpected cancel of ${cancel.taskId} (force=${cancel.force})`,
+			);
+		}
+	}
+
+	/** 上报任务已被取消（收到 CancelTask 后终止），等待 Ack。 */
+	cancelled(task: TaskRef, message = "任务已取消"): Promise<Ack> {
+		return this.report({
+			taskId: task.taskId,
+			attempt: task.attempt,
+			status: TaskStatus.CANCELLED,
+			error: { kind: ErrorKind.UNSPECIFIED, message },
+		});
 	}
 
 	/** 上报任务成功，等待 Ack。 */
