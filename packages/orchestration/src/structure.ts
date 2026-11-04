@@ -250,3 +250,23 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	}
 	return warnings;
 }
+
+/**
+ * 每条链（主链和各个子流程）上的节点：起点节点 ID → 从起点沿链上的出线走到的节点 ID（按链上顺序，含起点）。
+ * 画布按它画子流程区域，运行视图按它把节点对应到链实例。
+ */
+export function chainMembers(doc: StructureDocument): Map<string, string[]> {
+	const { out } = indexEdges(doc);
+	const members = new Map<string, string[]>();
+	for (const start of doc.nodes.filter(isStart)) {
+		const ids: string[] = [];
+		const seen = new Set<string>();
+		for (let id: string | undefined = start.id; id !== undefined && !seen.has(id); ) {
+			seen.add(id);
+			ids.push(id);
+			id = (out.chain.get(id) ?? [])[0];
+		}
+		members.set(start.id, ids);
+	}
+	return members;
+}

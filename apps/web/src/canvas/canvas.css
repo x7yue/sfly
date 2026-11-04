@@ -436,6 +436,55 @@
 	pointer-events: none;
 }
 
+/* 子流程区域（原型 canvas.css 的 .region / .region-h）：虚线边框 + 半透明紫青背景，画在节点和连线下面 */
+.react-flow__viewport-portal:has(.sf-region) {
+	pointer-events: none;
+}
+.sf-region {
+	position: absolute;
+	z-index: -1;
+	border: 1px dashed rgb(180 163 248 / 0.45);
+	border-radius: 14px;
+	background: linear-gradient(135deg, rgb(180 163 248 / 0.07), rgb(44 196 240 / 0.045));
+	pointer-events: none;
+}
+.sf-region__head {
+	position: absolute;
+	left: 16px;
+	top: 12px;
+	right: 16px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	white-space: nowrap;
+	font-size: 12.5px;
+}
+.sf-region__t {
+	font-weight: 600;
+	color: #dcd3fd;
+}
+.sf-region__id {
+	font: 500 11px var(--sf-mono);
+	color: var(--sf-violet);
+}
+.sf-region__meta {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 11.5px;
+	color: var(--sf-text-2);
+	pointer-events: auto;
+}
+.sf-region__pick {
+	font: 500 11px var(--sf-mono);
+	color: var(--sf-text);
+	background: var(--sf-sunk);
+	border: 1px solid var(--sf-border);
+	border-radius: 6px;
+	padding: 1px 4px;
+}
+
 /* 轻提示（连线被拒绝等） */
 .sf-toast {
 	position: absolute;

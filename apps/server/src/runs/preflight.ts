@@ -2,7 +2,7 @@ import type { OrchestrationDocument } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { agents } from "../db/schema.js";
-import { agentFor, planMainChain } from "../engine/chain.js";
+import { agentFor, planRun } from "../engine/chain.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 
@@ -54,9 +54,9 @@ export function createPreflight(deps: { db: Db; packages: PackageRepository }): 
 			});
 		}
 
-		// 引擎目前只能执行主链上的入口节点和包节点；其余种类由后续票据支持。
+		// 引擎还不支持的节点种类（定时、Sleep）由后续票据支持。
 		if (problems.length === 0) {
-			const plan = planMainChain(doc);
+			const plan = planRun(doc);
 			if ("errors" in plan) {
 				for (const message of plan.errors) problems.push({ code: "not_supported", message });
 			}

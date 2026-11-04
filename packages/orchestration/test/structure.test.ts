@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { checkConnection, type StructureDocument, structureWarnings } from "../src/index.js";
+import {
+	chainMembers,
+	checkConnection,
+	type StructureDocument,
+	structureWarnings,
+} from "../src/index.js";
 
 type Node = StructureDocument["nodes"][number];
 type Edge = StructureDocument["edges"][number];
@@ -187,5 +192,30 @@ describe("结构警告", () => {
 			start = `s${depth}`;
 		}
 		expect(codes(doc(nodes, edges))).toEqual([["nesting_too_deep", "s4"]]);
+	});
+});
+
+describe("链的成员", () => {
+	it("主链和每个子流程各自列出从起点沿链走到的节点，调度连线不算链", () => {
+		const doc: StructureDocument = {
+			nodes: [
+				{ id: "e", kind: "entry" },
+				{ id: "a", kind: "async" },
+				{ id: "b", kind: "package" },
+				{ id: "s", kind: "subflow_entry" },
+				{ id: "c", kind: "package" },
+				{ id: "lost", kind: "package" },
+			],
+			edges: [
+				{ from: "e", to: "a", kind: "chain" },
+				{ from: "a", to: "b", kind: "chain" },
+				{ from: "a", to: "s", kind: "dispatch" },
+				{ from: "s", to: "c", kind: "chain" },
+			],
+		};
+		expect([...chainMembers(doc)]).toEqual([
+			["e", ["e", "a", "b"]],
+			["s", ["s", "c"]],
+		]);
 	});
 });

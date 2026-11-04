@@ -120,8 +120,12 @@ export interface NodeView {
 export interface ChainView {
 	id: string;
 	chain_id: string;
+	parent_chain_instance_id: string | null;
+	async_node_id: string | null;
 	status: string;
 	depth: number;
+	started_at: string;
+	ended_at: string | null;
 	params: Record<string, unknown>;
 	nodes: NodeView[];
 }

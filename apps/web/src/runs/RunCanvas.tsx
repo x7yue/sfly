@@ -5,6 +5,7 @@ import { useMemo } from "react";
 import { edgeTypes } from "#/canvas/edges";
 import { type SfEdge, type SfNode, toFlow } from "#/canvas/flow";
 import { CanvasContext, type CanvasInfo, nodeTypes } from "#/canvas/NodeCard";
+import { type RegionRunInfo, SubflowRegions } from "#/canvas/SubflowRegions";
 import { listPackages } from "#/lib/api";
 import type { NodeRunView } from "./api";
 
@@ -35,6 +36,7 @@ export function RunCanvas({
 	now,
 	selected,
 	onSelect,
+	regions,
 }: {
 	document: OrchestrationDocument;
 	states: Map<string, NodeRunView>;
@@ -42,6 +44,8 @@ export function RunCanvas({
 	now: number;
 	selected: string | null;
 	onSelect: (nodeId: string | null) => void;
+	/** 子流程区域上显示的实例状态（主链和每个子流程实例分别显示）。 */
+	regions: RegionRunInfo;
 }) {
 	const titles = usePackageTitles();
 	const base = useMemo(() => toFlow(document), [document]);
@@ -80,6 +84,7 @@ export function RunCanvas({
 						fitViewOptions={{ maxZoom: 1 }}
 						minZoom={0.1}
 					>
+						<SubflowRegions run={regions} />
 						<Background gap={22} size={1.3} />
 						<Controls showInteractive={false} />
 						<MiniMap pannable zoomable />
