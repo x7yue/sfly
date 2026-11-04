@@ -28,7 +28,10 @@ export interface AttemptView {
 export interface NodeView {
 	node_id: string;
 	kind: OrchestrationNode["kind"];
-	/** 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped（没有尝试）。 */
+	/**
+	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
+	 * （这两种都没有尝试记录）。
+	 */
 	status: string;
 	/** 包节点派发到的 Agent；内置节点为 null。 */
 	agent: string | null;
@@ -59,6 +62,8 @@ export interface RunView {
 	params: Record<string, unknown>;
 	started_at: string;
 	ended_at: string | null;
+	/** 取消请求（#12）；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。 */
+	cancel: { requested_by: string; requested_at: string; forced_at: string | null } | null;
 	chains: ChainView[];
 }
 
@@ -96,6 +101,13 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		params: run.params,
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
+		cancel: run.cancelRequestedAt
+			? {
+					requested_by: run.cancelRequestedBy ?? "",
+					requested_at: run.cancelRequestedAt.toISOString(),
+					forced_at: iso(run.cancelForcedAt),
+				}
+			: null,
 		chains: chains.map((chain) => ({
 			id: chain.id,
 			chain_id: chain.chainId,
@@ -108,10 +120,12 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			ended_at: iso(chain.endedAt),
 			nodes: chainNodes.map((node) => {
 				const rows = allTasks.filter((t) => t.chainInstanceId === chain.id && t.nodeId === node.id);
-				// 被跳过的节点只有一行占位，不算尝试。
-				const skipped = rows.some((t) => t.status === "skipped");
+				// 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试；节点状态取最后一行。
+				const placeholder = (t: (typeof rows)[number]) =>
+					t.status === "skipped" || (t.status === "cancelled" && t.startedAt === null);
+				const latest = rows.at(-1);
 				const attempts: AttemptView[] = rows
-					.filter((t) => t.status !== "skipped")
+					.filter((t) => !placeholder(t))
 					.map((t) => ({
 						task_id: t.id,
 						attempt: t.attempt,
@@ -129,7 +143,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 				return {
 					node_id: node.id,
 					kind: node.kind,
-					status: skipped ? "skipped" : (last?.status ?? "pending"),
+					status: latest?.status ?? "pending",
 					agent: node.kind === "package" ? agentFor(document, node) : null,
 					outputs: last?.outputs ?? null,
 					error: last?.error ?? null,

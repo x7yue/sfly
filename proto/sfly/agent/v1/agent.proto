@@ -29,6 +29,7 @@ message ServerMessage {
   oneof body {
     Welcome welcome = 1;
     AssignTask assign = 2;
+    CancelTask cancel = 3;
     Ack ack = 4;
   }
 }
@@ -95,6 +96,16 @@ message AssignTask {
   string package_sha256 = 10;
   // 节点包归档的 HTTP 下载地址；包版本没有安装在 Agent 上时，Agent 从这里下载并安装。
   string package_url = 11;
+}
+
+// 取消一个正在执行的任务（docs/SEMANTICS.md §3.4）。Agent 先写入取消标记文件（SFLY_CANCEL），
+// 再终止进程树，最后以 TASK_STATUS_CANCELLED 上报结果；任务已经结束或不在这个 Agent 上时忽略。
+message CancelTask {
+  string task_id = 1;
+  uint32 attempt = 2;
+  // false：优雅终止（SIGTERM），宽限期过后强制杀掉进程树；
+  // true：强制取消，立即杀掉进程树（也用于加速一次正在进行的优雅终止）。
+  bool force = 3;
 }
 
 // Agent 安装或切换节点包的状态（安装期间 Agent 不启动新任务）。
@@ -190,6 +201,8 @@ enum TaskStatus {
   TASK_STATUS_UNSPECIFIED = 0;
   TASK_STATUS_SUCCESS = 1;
   TASK_STATUS_FAILED = 2;
+  // 收到 CancelTask 后被终止。
+  TASK_STATUS_CANCELLED = 3;
 }
 
 message TaskError {
