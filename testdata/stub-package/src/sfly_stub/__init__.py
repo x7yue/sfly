@@ -108,3 +108,9 @@ def artifacts(
     if fail:
         raise RuntimeError("保存产物后失败")
     return {"refs": refs}
+
+
+@node(title="大输出", outputs=["text"])
+def big(ctx: Context, size: int) -> dict[str, Any]:
+    """节点输出上限测试用：返回 size 个字符的文本。"""
+    return {"text": "x" * size}
