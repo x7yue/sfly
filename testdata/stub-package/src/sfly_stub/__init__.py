@@ -51,6 +51,21 @@ def process_tree(
     return {"pids": pids}
 
 
+@node(title="等待取消", outputs=[])
+def wait_cancel(ctx: Context, ready_file: str, report_file: str, seconds: float = 3600) -> None:
+    """写出 ready_file 后等待；被终止时（finally）把 ctx.cancelled() 写到 report_file。
+
+    取消测试用。
+    """
+    with open(ready_file, "w") as f:
+        f.write(str(os.getpid()))
+    try:
+        time.sleep(seconds)
+    finally:
+        with open(report_file, "w") as f:
+            f.write("cancelled" if ctx.cancelled() else "not cancelled")
+
+
 @node(title="环境探针", outputs=["prefix", "cwd", "env"])
 def probe(ctx: Context) -> dict[str, Any]:
     """报告执行环境：解释器所在 venv、工作目录、相关环境变量。"""

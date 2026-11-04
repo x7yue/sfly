@@ -294,3 +294,72 @@ def test_context_without_events_file_does_not_fail(tmp_path: Path) -> None:
     ctx = Context(events_path=None)
     ctx.log.info("丢弃")
     ctx.progress(1, 2)
+
+
+def test_ctx_cancelled_reflects_the_cancel_marker(tmp_path: Path) -> None:
+    from sfly import Context
+
+    marker = tmp_path / "cancel"
+    ctx = Context(events_path=None, cancel_path=marker)
+    assert ctx.cancelled() is False
+    marker.write_text("")
+    assert ctx.cancelled() is True
+    assert Context(events_path=None, cancel_path=None).cancelled() is False
+
+
+def test_sigterm_raises_cancelled_in_the_node_so_cleanup_runs(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    """Agent 取消任务时先写取消标记再发 SIGTERM。
+
+    节点里抛出 sfly.Cancelled，finally 能看到 ctx.cancelled()。
+    """
+    ready = tmp_path / "ready"
+    report = tmp_path / "report"
+    write_module(
+        code_dir,
+        "slow",
+        f"""
+        import time
+        from sfly import Context
+
+        def wait(ctx: Context) -> None:
+            open({str(ready)!r}, "w").close()
+            try:
+                time.sleep(60)
+            except Exception:
+                # Cancelled 不是 Exception 的子类，不会被宽泛的 except 吞掉。
+                open({str(report)!r}, "w").write("swallowed ")
+                raise
+            finally:
+                with open({str(report)!r}, "a") as f:
+                    f.write(f"cancelled={{ctx.cancelled()}}")
+        """,
+    )
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "task.json").write_text(json.dumps({"entry": "slow:wait", "inputs": {}}))
+    env = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(code_dir)]),
+        "SFLY_TASK": str(work / "task.json"),
+        "SFLY_OUTPUT": str(work / "output.json"),
+        "SFLY_EVENTS": str(work / "events.jsonl"),
+        "SFLY_CANCEL": str(work / "cancel"),
+    }
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "sfly.runner"], cwd=work, env=env, stderr=subprocess.PIPE
+    )
+    deadline = time.monotonic() + 30
+    while not ready.exists():
+        assert time.monotonic() < deadline, "node never started"
+        time.sleep(0.02)
+    (work / "cancel").write_text("")
+    proc.terminate()
+    _, stderr = proc.communicate(timeout=10)
+
+    assert report.read_text() == "cancelled=True", stderr
+    assert proc.returncode == 1
+    output = json.loads((work / "output.json").read_text())
+    assert output["status"] == "failed"
+    assert output["error"]["type"] == "Cancelled"
