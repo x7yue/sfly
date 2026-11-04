@@ -35,9 +35,17 @@ import {
 } from "./flow";
 import { AgentSelect, NodeInspector, Section, WarningList } from "./Inspector";
 import { CanvasContext, type CanvasInfo, nodeTitle, nodeTypes } from "./NodeCard";
-import { NodePalette, PALETTE_MIME, type PaletteItem } from "./NodePalette";
+import {
+	BUILTIN_MIME,
+	type BuiltinKind,
+	BuiltinPalette,
+	NodePalette,
+	PALETTE_MIME,
+	type PaletteItem,
+} from "./NodePalette";
 import { PackageVersions } from "./PackageVersions";
 import { PresenceIndicator } from "./PresenceIndicator";
+import { SubflowRegions } from "./SubflowRegions";
 
 export function OrchestrationEditor({
 	orchestration,
@@ -210,27 +218,63 @@ function Editor({
 		[meta.packages, setNodes],
 	);
 
-	/** 点击添加：放在最右侧节点的右边（链自然延伸的方向），并把视口移过去。 */
-	const addAfterRightmost = (item: PaletteItem) => {
-		const rightmost = nodes.reduce<SfNode | undefined>(
-			(best, n) => (!best || n.position.x > best.position.x ? n : best),
-			undefined,
-		);
-		const position = rightmost
-			? { x: rightmost.position.x + 280, y: rightmost.position.y }
-			: { x: 0, y: 0 };
-		addPackageNode(item, position);
+	// —— 放置内置节点（异步任务、子流程入口） ——
+	const addBuiltinNode = useCallback(
+		(kind: BuiltinKind, position: { x: number; y: number }) => {
+			setNodes((ns) => {
+				const id = uniqueNodeId(
+					kind === "async" ? "async" : "subflow",
+					ns.map((n) => n.id),
+				);
+				const node: DocNode =
+					kind === "async" ? { id, kind, params: {} } : { id, kind, params: [] };
+				return [
+					...ns.map((n) => ({ ...n, selected: false })),
+					{ id, type: kind, position, data: { node }, selected: true },
+				];
+			});
+		},
+		[setNodes],
+	);
+
+	/**
+	 * 点击添加的位置：子流程入口放在所有节点下方（开一个新的子流程区域），
+	 * 其余放在最右侧节点的右边（链自然延伸的方向）；并把视口移过去。
+	 */
+	const placeNext = (below: boolean, add: (position: { x: number; y: number }) => void) => {
+		const pick = (better: (a: SfNode, b: SfNode) => boolean) =>
+			nodes.reduce<SfNode | undefined>(
+				(best, n) => (!best || better(n, best) ? n : best),
+				undefined,
+			);
+		const lowest = pick((a, b) => a.position.y > b.position.y);
+		const leftmost = pick((a, b) => a.position.x < b.position.x);
+		const rightmost = pick((a, b) => a.position.x > b.position.x);
+		const position = below
+			? lowest
+				? { x: leftmost?.position.x ?? 0, y: lowest.position.y + 240 }
+				: { x: 0, y: 0 }
+			: rightmost
+				? { x: rightmost.position.x + 280, y: rightmost.position.y }
+				: { x: 0, y: 0 };
+		add(position);
 		const zoom = flow.getZoom();
 		flow.setCenter(position.x + 100, position.y + 40, { zoom, duration: 200 });
 	};
+	const addAfterRightmost = (item: PaletteItem) =>
+		placeNext(false, (position) => addPackageNode(item, position));
+	const addBuiltin = (kind: BuiltinKind) =>
+		placeNext(kind === "subflow_entry", (position) => addBuiltinNode(kind, position));
 
 	const onDrop = (event: React.DragEvent) => {
 		const raw = event.dataTransfer.getData(PALETTE_MIME);
-		if (!raw) return;
+		const builtin = event.dataTransfer.getData(BUILTIN_MIME) as BuiltinKind | "";
+		if (!raw && !builtin) return;
 		event.preventDefault();
-		const item = JSON.parse(raw) as PaletteItem;
 		const position = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
-		addPackageNode(item, { x: position.x - 100, y: position.y - 20 });
+		const at = { x: position.x - 100, y: position.y - 20 };
+		if (builtin) addBuiltinNode(builtin, at);
+		else addPackageNode(JSON.parse(raw) as PaletteItem, at);
 	};
 
 	/** 把节点包锁定（升级）到某个版本；同一个包的所有节点一起切换。 */
@@ -305,6 +349,8 @@ function Editor({
 				/>
 				<div className="flex min-h-0 flex-1">
 					<aside className="sf-panel w-60 shrink-0 overflow-y-auto border-r">
+						<h2 className="sf-panel-title">内置节点</h2>
+						<BuiltinPalette onAdd={addBuiltin} />
 						<h2 className="sf-panel-title">节点类型</h2>
 						<NodePalette
 							packages={packages.data?.packages}
@@ -324,7 +370,10 @@ function Editor({
 							onConnectEnd={onConnectEnd}
 							isValidConnection={isValidConnection}
 							onDragOver={(e) => {
-								if (e.dataTransfer.types.includes(PALETTE_MIME)) {
+								if (
+									e.dataTransfer.types.includes(PALETTE_MIME) ||
+									e.dataTransfer.types.includes(BUILTIN_MIME)
+								) {
 									e.preventDefault();
 									e.dataTransfer.dropEffect = "copy";
 								}
@@ -335,6 +384,7 @@ function Editor({
 							minZoom={0.1}
 							deleteKeyCode={["Backspace", "Delete"]}
 						>
+							<SubflowRegions />
 							<Background gap={22} size={1.3} />
 							<Controls />
 							<MiniMap pannable zoomable />
@@ -360,6 +410,7 @@ function Editor({
 								catalog={catalog}
 								packages={packages.data?.packages}
 								onLock={lockPackage}
+								onLocate={locateNode}
 								defaultAgent={meta.default_agent}
 								agents={agentList}
 								warnings={warningsByNode.get(only.id) ?? []}

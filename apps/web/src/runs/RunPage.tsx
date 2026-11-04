@@ -9,6 +9,7 @@ import { useEventSource } from "#/lib/sse";
 import { getVersion } from "#/versions/api";
 import {
 	type AttemptView,
+	type ChainRunView,
 	getRun,
 	type NodeRunView,
 	type ParamDecl,
@@ -16,6 +17,7 @@ import {
 	runEventsPath,
 } from "./api";
 import { CancelRunButton } from "./cancel";
+import { chainOfNode, instancesByChain, nodeStates, pickedInstance } from "./chains";
 import { ErrorKindTag, FailureSummary } from "./failure";
 import {
 	durationBetween,
@@ -52,15 +54,6 @@ export function RunPill({ status }: { status: string }) {
 	);
 }
 
-/** 节点 ID → 运行中的状态。子流程实例的节点（#13）以第一次出现的为准。 */
-function nodeStates(run: RunView): Map<string, NodeRunView> {
-	const map = new Map<string, NodeRunView>();
-	for (const chain of run.chains) {
-		for (const node of chain.nodes) if (!map.has(node.node_id)) map.set(node.node_id, node);
-	}
-	return map;
-}
-
 /** 打开运行时默认选中的节点：失败的节点，其次是执行中的节点。 */
 function focusNode(run: RunView): string | null {
 	const nodes = run.chains.flatMap((c) => c.nodes);
@@ -73,19 +66,22 @@ function focusNode(run: RunView): string | null {
 
 const MASK = "••••••";
 
-/** 入口参数中标记为敏感的参数名。 */
+/** 入口节点和子流程入口节点中标记为敏感的参数名。 */
 const secretParams = (doc: OrchestrationDocument) =>
 	new Set(
 		doc.nodes
-			.flatMap((n) => (n.kind === "entry" ? n.params.filter((p) => p.secret) : []))
+			.flatMap((n) =>
+				n.kind === "entry" || n.kind === "subflow_entry" ? n.params.filter((p) => p.secret) : [],
+			)
 			.map((p) => p.name),
 	);
 
-/** 输入里引用了敏感参数的键（这些输入在界面中打码）。 */
+/** 输入里引用了敏感参数的键（这些输入在界面中打码）；异步任务节点是参数映射。 */
 function secretInputs(node: OrchestrationNode | undefined, secrets: Set<string>): Set<string> {
-	if (node?.kind !== "package" || secrets.size === 0) return new Set();
+	const values = node?.kind === "package" ? node.inputs : node?.kind === "async" ? node.params : {};
+	if (secrets.size === 0) return new Set();
 	return new Set(
-		Object.entries(node.inputs)
+		Object.entries(values)
 			.filter(([, v]) =>
 				[...secrets].some((s) => new RegExp(`params\\.${s}\\b`).test(JSON.stringify(v))),
 			)
@@ -129,7 +125,18 @@ export function RunPage({ runId }: { runId: string }) {
 
 	const [selected, setSelected] = useState<string | null | undefined>(undefined);
 	const now = useNow(running);
-	const states = useMemo(() => (run.data ? nodeStates(run.data) : new Map()), [run.data]);
+	// 子流程入口节点 ID → 画布上显示的实例（同一个子流程有多个实例时由区域标题切换）。
+	const [picked, setPicked] = useState<Record<string, string>>({});
+	const doc0 = version.data?.document;
+	const states = useMemo(
+		() => (run.data && doc0 ? nodeStates(run.data, doc0, picked) : new Map<string, NodeRunView>()),
+		[run.data, doc0, picked],
+	);
+	const instances = useMemo(
+		() => (run.data ? instancesByChain(run.data) : new Map<string, ChainRunView[]>()),
+		[run.data],
+	);
+	const nodeChains = useMemo(() => (doc0 ? chainOfNode(doc0) : new Map<string, string>()), [doc0]);
 
 	const error = run.error ?? version.error;
 	if (error) return <p className="p-8 text-red-600">加载失败：{error.message}</p>;
@@ -139,6 +146,8 @@ export function RunPage({ runId }: { runId: string }) {
 	const current = selected === undefined ? focusNode(data) : selected;
 	const node = current ? doc.nodes.find((n) => n.id === current) : undefined;
 	const secrets = secretParams(doc);
+	const chainId = current ? nodeChains.get(current) : undefined;
+	const instance = chainId ? pickedInstance(instances, picked, chainId) : undefined;
 
 	return (
 		<div className="sf-editor flex h-[calc(100vh-49px)] flex-col">
@@ -186,6 +195,11 @@ export function RunPage({ runId }: { runId: string }) {
 						now={now}
 						selected={current}
 						onSelect={setSelected}
+						regions={{
+							instances,
+							picked,
+							onPick: (chain, id) => setPicked((p) => ({ ...p, [chain]: id })),
+						}}
 					/>
 				</div>
 				<aside className="sf-panel w-[392px] shrink-0 overflow-y-auto border-l">
@@ -196,6 +210,10 @@ export function RunPage({ runId }: { runId: string }) {
 							state={states.get(node.id)}
 							secretKeys={secretInputs(node, secrets)}
 							now={now}
+							chain={chainId}
+							instance={instance}
+							count={chainId ? (instances.get(chainId)?.length ?? 0) : 0}
+							secrets={secrets}
 						/>
 					) : (
 						<RunSummary run={data} doc={doc} secrets={secrets} />
@@ -269,8 +287,16 @@ function RunSummary({
 			<Section title="链" aside={`${run.chains.length} 条`}>
 				<ul className="space-y-1">
 					{run.chains.map((c) => (
-						<li key={c.id} className="flex items-center justify-between gap-2">
-							<span className="sf-mono">{c.depth === 0 ? `主链 · ${c.chain_id}` : c.chain_id}</span>
+						<li
+							key={c.id}
+							className="flex items-center justify-between gap-2"
+							style={{ paddingLeft: c.depth * 14 }}
+						>
+							<span className="sf-mono" title={c.id}>
+								{c.depth === 0
+									? `主链 · ${c.chain_id}`
+									: `子流程 ${c.chain_id} · ${shortId(c.id)}（由 ${c.async_node_id} 触发）`}
+							</span>
 							<span className={`sf-status sf-status--${statusTone(c.status)}`}>
 								<i />
 								{runStatusLabel(c.status)}
@@ -289,11 +315,22 @@ function NodeDetail({
 	state,
 	secretKeys,
 	now,
+	chain,
+	instance,
+	count,
+	secrets,
 }: {
 	node: OrchestrationNode;
 	state: NodeRunView | undefined;
 	secretKeys: Set<string>;
 	now: number;
+	/** 节点所在链的起点节点 ID。 */
+	chain: string | undefined;
+	/** 画布上显示的该链实例；子流程还没有被触发时为空。 */
+	instance: ChainRunView | undefined;
+	/** 这条链在运行中的实例数。 */
+	count: number;
+	secrets: Set<string>;
 }) {
 	const titles = usePackageTitles();
 	const title =
@@ -317,6 +354,7 @@ function NodeDetail({
 				<h2>{title}</h2>
 				<FailureSummary node={node} state={state} />
 			</section>
+			{chain && <ChainInstance chain={chain} instance={instance} count={count} secrets={secrets} />}
 			<TaskTelemetry attempts={state?.attempts ?? []} />
 			<Section title="尝试" aside={`${attempts.length} 次`}>
 				{attempts.length === 0 && status !== "skipped" && status !== "cancelled" && (
@@ -380,5 +418,65 @@ function Attempt({
 			<h4>输出</h4>
 			{attempt.outputs ? <JsonBlock value={attempt.outputs} /> : <p className="sf-hint">—</p>}
 		</article>
+	);
+}
+
+/** 节点所在的链实例：主链或某个子流程实例的状态、参数和触发它的异步任务节点。 */
+function ChainInstance({
+	chain,
+	instance,
+	count,
+	secrets,
+}: {
+	chain: string;
+	instance: ChainRunView | undefined;
+	count: number;
+	secrets: Set<string>;
+}) {
+	if (!instance) {
+		return (
+			<Section title="子流程实例">
+				<p className="sf-hint">子流程 {chain} 在这次运行中还没有被触发。</p>
+			</Section>
+		);
+	}
+	const main = instance.depth === 0;
+	return (
+		<Section
+			title={main ? "主链" : "子流程实例"}
+			aside={count > 1 ? `共 ${count} 个实例，在区域标题切换` : undefined}
+		>
+			<dl className="sf-kv">
+				<dt>{main ? "链" : "子流程"}</dt>
+				<dd className="sf-mono">{chain}</dd>
+				<dt>实例 ID</dt>
+				<dd className="sf-mono" title={instance.id}>
+					{shortId(instance.id)}
+				</dd>
+				<dt>状态</dt>
+				<dd>
+					<span className={`sf-status sf-status--${statusTone(instance.status)}`}>
+						<i />
+						{runStatusLabel(instance.status)}
+					</span>
+				</dd>
+				{!main && (
+					<>
+						<dt>触发</dt>
+						<dd className="sf-mono">
+							{instance.async_node_id}（第 {instance.depth} 层）
+						</dd>
+						<dt>参数</dt>
+						<dd>
+							<JsonBlock
+								value={Object.fromEntries(
+									Object.entries(instance.params).map(([k, v]) => [k, secrets.has(k) ? MASK : v]),
+								)}
+							/>
+						</dd>
+					</>
+				)}
+			</dl>
+		</Section>
 	);
 }

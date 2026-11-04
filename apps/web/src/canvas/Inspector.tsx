@@ -1,5 +1,6 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import {
+	dispatchTarget,
 	nodeTypeOf,
 	type OrchestrationWarning,
 	type PackageCatalog,
@@ -13,6 +14,7 @@ import { InputsForm } from "./InputsForm";
 import { KIND_LABEL, KindChip } from "./NodeCard";
 import { AlwaysToggle, ExecutionSettings } from "./NodeSettings";
 import { PackageVersionRow } from "./PackageVersions";
+import { AsyncSettings, SubflowTrigger } from "./SubflowSettings";
 
 type Param = Extract<OrchestrationNode, { kind: "entry" }>["params"][number];
 type ParamType = Param["type"];
@@ -288,6 +290,7 @@ export function NodeInspector({
 	warnings,
 	onChange,
 	onLock,
+	onLocate,
 	onDelete,
 }: {
 	node: DocNode;
@@ -303,12 +306,22 @@ export function NodeInspector({
 	onChange(node: DocNode): void;
 	/** 把某个节点包锁定（升级）到指定版本。 */
 	onLock(name: string, version: string): void;
+	/** 选中并定位到另一个节点（异步任务节点 ↔ 子流程入口节点）。 */
+	onLocate?: (id: string) => void;
 	onDelete?: () => void;
 }) {
 	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
 	// 包节点表单里有对应字段的输入警告显示在字段下面，其余显示在警告区。
+	const subflowParams = new Set(
+		node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : [],
+	);
 	const general = warnings.filter(
-		(w) => !("input" in w && w.input !== undefined && type?.inputs.properties[w.input]),
+		(w) =>
+			!(
+				"input" in w &&
+				w.input !== undefined &&
+				(type?.inputs.properties[w.input] || subflowParams.has(w.input))
+			),
 	);
 	return (
 		<>
@@ -342,6 +355,24 @@ export function NodeInspector({
 			{general.length > 0 && (
 				<Section title="警告" aside={`${general.length} 条`}>
 					<WarningList warnings={general} />
+				</Section>
+			)}
+			{node.kind === "subflow_entry" && (
+				<Section title="触发">
+					<SubflowTrigger id={id} doc={doc} onLocate={onLocate} />
+				</Section>
+			)}
+			{node.kind === "async" && (
+				<Section title="子流程参数映射" aside="主链 → 子流程">
+					<AsyncSettings
+						id={id}
+						node={node}
+						doc={doc}
+						catalog={catalog}
+						warnings={warnings}
+						onChange={onChange}
+						onLocate={onLocate}
+					/>
 				</Section>
 			)}
 			{(node.kind === "entry" || node.kind === "subflow_entry") && (

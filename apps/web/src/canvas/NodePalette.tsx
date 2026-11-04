@@ -85,3 +85,43 @@ export function NodePalette({
 		</ul>
 	);
 }
+
+/** 从内置节点面板拖到画布上时携带的数据：节点种类。 */
+export const BUILTIN_MIME = "application/x-sfly-builtin-node";
+
+/** 可以从面板放到画布上的内置节点（入口节点每份编排只有一个，不在这里）。 */
+export type BuiltinKind = "async" | "subflow_entry";
+
+const BUILTINS: { kind: BuiltinKind; title: string; hint: string }[] = [
+	{ kind: "async", title: "异步任务", hint: "触发一个子流程，主链继续" },
+	{ kind: "subflow_entry", title: "子流程入口", hint: "子流程的起点，声明参数" },
+];
+
+/** 内置节点面板。 */
+export function BuiltinPalette({ onAdd }: { onAdd(kind: BuiltinKind): void }) {
+	return (
+		<ul className="space-y-1.5 px-3.5 pb-3.5">
+			{BUILTINS.map((b) => (
+				<li key={b.kind}>
+					<button
+						type="button"
+						draggable
+						onDragStart={(e) => {
+							e.dataTransfer.setData(BUILTIN_MIME, b.kind);
+							e.dataTransfer.effectAllowed = "copy";
+						}}
+						onClick={() => onAdd(b.kind)}
+						title="拖到画布上，或点击添加"
+						className="sf-palette-item"
+					>
+						<KindChip kind={b.kind} />
+						<span className="min-w-0">
+							<span className="block truncate text-[13px] font-medium">{b.title}</span>
+							<span className="block truncate text-[11.5px] text-[var(--sf-text-3)]">{b.hint}</span>
+						</span>
+					</button>
+				</li>
+			))}
+		</ul>
+	);
+}
