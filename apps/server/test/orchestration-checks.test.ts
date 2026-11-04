@@ -4,7 +4,12 @@ import { strToU8 } from "fflate";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
-import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
+import {
+	packageArchive,
+	packageMetadata,
+	publishInit,
+	publishPackage,
+} from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 发布 checks@<version>：节点 fetch（输入 url，输出 outputs 里的键）和 verify。 */
@@ -168,6 +173,7 @@ describe("节点执行配置", () => {
 	beforeAll(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
+		await publishPackage(cp, "stub", "1.0.0", { echo: [] });
 	});
 	afterAll(async () => {
 		await cp.close();

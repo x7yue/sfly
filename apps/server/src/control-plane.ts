@@ -9,6 +9,7 @@ import { buildHttpApi } from "./http/api.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
+import { createPreflight } from "./runs/preflight.js";
 import { Mutex } from "./util/mutex.js";
 
 export interface ListenOptions {
@@ -62,6 +63,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	await hub.markAllOffline();
 	const orchestrations = new OrchestrationStore({ db: database.db, clock });
 	let publicHttpUrl = "";
+	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
+	const preflight = createPreflight({ db: database.db, packages });
 	const engine = new Engine({
 		db: database.db,
 		clock,
@@ -69,8 +72,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		hub,
 		packageArchiveUrl: (name, version) =>
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
+		preflight,
 	});
-	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const presence = new PresenceRegistry({ clock });
 	const api = buildHttpApi({
 		database,
@@ -81,6 +84,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		engine,
 		packages,
 		presence,
+		preflight,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });

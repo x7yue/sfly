@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { ErrorKind, FakeAgent, type HelloInit } from "./support/fake-agent.js";
-import { packageArchive, publishInit } from "./support/package-archive.js";
+import { packageArchive, publishInit, publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 入口节点 + 一个包节点。 */
@@ -53,6 +53,7 @@ describe("节点包安装", () => {
 	it("派发的任务带上节点包归档的下载地址和 sha256，Agent 可以据此下载并校验", async () => {
 		const archive = packageArchive();
 		expect((await cp.fetch("/packages", publishInit(archive))).status).toBe(201);
+		await (await connect({ name: "agent-a" })).disconnect();
 		const id = await api.orchestrationWith(singleNode("demo-checks", "1.2.0", "ping"));
 		await api.triggerOk(id);
 
@@ -67,8 +68,9 @@ describe("节点包安装", () => {
 		expect(createHash("sha256").update(downloaded).digest("hex")).toBe(expected);
 	});
 
-	it("控制面没有这个包版本时，派发的任务没有下载地址", async () => {
-		const id = await api.orchestrationWith(singleNode("not-published", "1.0.0", "x"));
+	it("控制面没有这个包版本（开发版本）时，派发的任务没有下载地址", async () => {
+		await (await connect({ name: "agent-a" })).disconnect();
+		const id = await api.orchestrationWith(singleNode("not-published", "dev", "x"));
 		await api.triggerOk(id);
 
 		const agent = await connect({ name: "agent-a" });
@@ -129,6 +131,8 @@ describe("节点包安装", () => {
 	});
 
 	it("安装失败（依赖冲突）时任务以 env_error 失败、不重试，任务详情里有完整的 uv 输出", async () => {
+		await publishPackage(cp, "sfly-b", "1.0.0", { about: [] });
+		await (await connect({ name: "agent-a" })).disconnect();
 		const id = await api.orchestrationWith(singleNode("sfly-b", "1.0.0", "about"));
 		const runId = await api.triggerOk(id);
 		const agent = await connect({ name: "agent-a" });

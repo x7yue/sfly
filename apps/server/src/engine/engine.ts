@@ -24,6 +24,7 @@ import {
 	tasks,
 } from "../db/schema.js";
 import type { AgentSessionHandler } from "../gateway/agent-gateway.js";
+import type { Preflight } from "../runs/preflight.js";
 import type { Mutex } from "../util/mutex.js";
 import { agentFor, type ChainPlan, planMainChain } from "./chain.js";
 import { chainInstanceId, taskId } from "./ids.js";
@@ -40,7 +41,7 @@ type TaskRow = typeof tasks.$inferSelect;
 
 export type TriggerOutcome =
 	| { ok: true; runId: string }
-	| { ok: false; status: 400 | 404; code: string; message: string; details?: string[] };
+	| { ok: false; status: 400 | 404; code: string; message: string; details?: unknown };
 
 const ERROR_KINDS: Record<ProtoErrorKind, ErrorKind> = {
 	[ProtoErrorKind.UNSPECIFIED]: "node_error",
@@ -82,6 +83,8 @@ export class Engine implements AgentSessionHandler {
 			hub: AgentHub;
 			/** 节点包归档的下载地址（Agent 通过 HTTP 下载）。 */
 			packageArchiveUrl: (name: string, version: string) => string;
+			/** 触发前的预检（src/runs/preflight.ts）。 */
+			preflight: Preflight;
 		},
 	) {}
 
@@ -116,14 +119,19 @@ export class Engine implements AgentSessionHandler {
 					message: "orchestration has no saved version",
 				};
 			}
+			const problems = await this.deps.preflight(version.document);
 			const plan = planMainChain(version.document);
-			if ("errors" in plan) {
+			if (problems.length > 0 || "errors" in plan) {
+				const details =
+					problems.length > 0 || !("errors" in plan)
+						? problems
+						: plan.errors.map((message) => ({ code: "not_supported", message }));
 				return {
 					ok: false,
 					status: 400,
 					code: "invalid_orchestration",
-					message: plan.errors.join("; "),
-					details: plan.errors,
+					message: details.map((p) => p.message).join("; "),
+					details,
 				};
 			}
 			const filled = fillParams(plan.entry.params, provided);

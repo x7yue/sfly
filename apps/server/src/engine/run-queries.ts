@@ -1,5 +1,5 @@
 import type { OrchestrationNode } from "@sfly/schema";
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { chainInstances, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { agentFor, planMainChain } from "./chain.js";
@@ -124,4 +124,39 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			}),
 		})),
 	};
+}
+
+/** 运行列表里的一项。 */
+export interface RunSummary {
+	id: string;
+	orchestration_id: string;
+	orchestration_version: number;
+	status: string;
+	triggered_by: string;
+	started_at: string;
+	ended_at: string | null;
+}
+
+/** 一份编排的运行，按开始时间从新到旧（最多 limit 条）。 */
+export async function listRuns(
+	db: Db,
+	orchestrationId: string,
+	limit = 200,
+): Promise<RunSummary[]> {
+	const rows = await db
+		.select({ run: runs, number: orchestrationVersions.number })
+		.from(runs)
+		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
+		.where(eq(runs.orchestrationId, orchestrationId))
+		.orderBy(desc(runs.startedAt), desc(runs.id))
+		.limit(limit);
+	return rows.map(({ run, number }) => ({
+		id: run.id,
+		orchestration_id: run.orchestrationId,
+		orchestration_version: number,
+		status: run.status,
+		triggered_by: run.triggeredBy,
+		started_at: run.startedAt.toISOString(),
+		ended_at: iso(run.endedAt),
+	}));
 }

@@ -50,3 +50,31 @@ export function publishInit(archive: Uint8Array): RequestInit {
 		body: archive,
 	};
 }
+
+/**
+ * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限）。
+ * 触发运行前的预检要求编排锁定的包版本已经发布、引用的输出键已经声明。
+ */
+export async function publishPackage(
+	cp: { fetch(path: string, init?: RequestInit): Promise<Response> },
+	name: string,
+	version: string,
+	nodes: Record<string, readonly string[]>,
+): Promise<void> {
+	const archive = packageArchive(
+		packageMetadata({
+			name,
+			version,
+			nodes: Object.entries(nodes).map(([node, outputs]) => ({
+				name: node,
+				title: node,
+				entry: `${name.replace(/-/g, "_")}.nodes:${node}`,
+				inputs: { type: "object", properties: {} },
+				outputs: { type: "object", properties: Object.fromEntries(outputs.map((k) => [k, {}])) },
+			})),
+		}),
+		{ [`${name.replace(/-/g, "_")}-${version}-py3-none-any.whl`]: strToU8("wheel") },
+	);
+	const res = await cp.fetch("/packages", publishInit(archive));
+	if (res.status !== 201) throw new Error(`publish ${name}@${version}: ${await res.text()}`);
+}
