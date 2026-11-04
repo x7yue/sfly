@@ -1,5 +1,6 @@
 import type { OrchestrationNode } from "@sfly/schema";
 import { apiGet, apiPost } from "#/lib/api";
+import type { TaskProgress } from "./logs";
 
 /** 运行相关的控制面 API（#9）。字段与 apps/server/src/engine/run-queries.ts 一致。 */
 
@@ -31,6 +32,8 @@ export interface AttemptView {
 	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
+	/** 最新进度（#10）；没有上报过时为 null。 */
+	progress: TaskProgress | null;
 }
 
 export interface NodeRunView {
@@ -83,5 +86,5 @@ export const listRuns = (orchestrationId: string) =>
 
 export const getRun = (runId: string) => apiGet<RunView>(`/runs/${runId}`);
 
-/** 运行的 SSE 流：连上时和每次状态变化时推送完整的运行视图（事件 `run`）。 */
+/** 运行的 SSE 流：连上时和每次状态变化时推送完整的运行视图（事件 `run`），任务进度更新时推送 `progress`（logs.ts）。 */
 export const runEventsPath = (runId: string) => `/runs/${runId}/events`;

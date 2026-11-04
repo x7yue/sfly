@@ -24,7 +24,9 @@ import {
 	statusLabel,
 	statusTone,
 } from "./format";
+import { applyProgress, type ProgressEvent } from "./logs";
 import { RunCanvas, usePackageTitles } from "./RunCanvas";
+import { TaskTelemetry } from "./TaskTelemetry";
 
 /** 每秒刷新一次的当前时间（只在 active 时计时），用于运行中的耗时。 */
 export function useNow(active: boolean): number {
@@ -104,6 +106,10 @@ export function RunPage({ runId }: { runId: string }) {
 	// 运行结束后不再需要实时流（最后一条推送就是最终状态）。
 	useEventSource(running ? runEventsPath(runId) : null, {
 		run: (data) => queryClient.setQueryData(["run", runId], data as RunView),
+		progress: (data) =>
+			queryClient.setQueryData(["run", runId], (old: RunView | undefined) =>
+				applyProgress(old, data as ProgressEvent),
+			),
 	});
 
 	const orchestrationId = run.data?.orchestration_id;
@@ -183,6 +189,7 @@ export function RunPage({ runId }: { runId: string }) {
 				<aside className="sf-panel w-[392px] shrink-0 overflow-y-auto border-l">
 					{node ? (
 						<NodeDetail
+							key={node.id}
 							node={node}
 							state={states.get(node.id)}
 							secretKeys={secretInputs(node, secrets)}
@@ -303,6 +310,7 @@ function NodeDetail({
 					</p>
 				)}
 			</section>
+			<TaskTelemetry attempts={state?.attempts ?? []} />
 			<Section title="尝试" aside={`${attempts.length} 次`}>
 				{attempts.length === 0 && <p className="sf-hint">还没有开始执行。</p>}
 				<div className="space-y-3">
