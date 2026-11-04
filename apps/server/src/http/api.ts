@@ -2,16 +2,25 @@ import Fastify, { type FastifyInstance } from "fastify";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
+import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
+import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 
 export interface HttpApiDeps {
 	database: Database;
 	clock: Clock;
 	logger: boolean;
 	hub: AgentHub;
+	orchestrations: OrchestrationStore;
 }
 
 /** HTTP API（Fastify，HTTP/1.1）。路由按模块注册在这里。 */
-export function buildHttpApi({ database, clock, logger, hub }: HttpApiDeps): FastifyInstance {
+export function buildHttpApi({
+	database,
+	clock,
+	logger,
+	hub,
+	orchestrations,
+}: HttpApiDeps): FastifyInstance {
 	const app = Fastify({ logger });
 
 	app.get("/health", async (_req, reply) => {
@@ -24,6 +33,7 @@ export function buildHttpApi({ database, clock, logger, hub }: HttpApiDeps): Fas
 	});
 
 	app.get("/agents", async () => ({ agents: await hub.list() }));
+	registerOrchestrationRoutes(app, { orchestrations });
 
 	return app;
 }

@@ -4,6 +4,7 @@ import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
+import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { Mutex } from "./util/mutex.js";
 
 export interface ListenOptions {
@@ -46,7 +47,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex });
 	await hub.markAllOffline();
-	const api = buildHttpApi({ database, clock, logger, hub });
+	const orchestrations = new OrchestrationStore({ db: database.db, clock });
+	const api = buildHttpApi({ database, clock, logger, hub, orchestrations });
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
 	const httpPort = (api.server.address() as AddressInfo).port;
