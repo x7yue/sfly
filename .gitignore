@@ -25,6 +25,7 @@ Thumbs.db
 # 日志与临时文件
 *.log
 logs/
+!/apps/server/src/logs/
 tmp/
 # 控制面默认数据目录（SFLY_DATA_DIR）
 data/
