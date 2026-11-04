@@ -20,4 +20,4 @@ if ! git cat-file -e "${sha}:proto" 2>/dev/null; then
 fi
 
 echo "proto:breaking: 与 $ref ($sha) 比较" >&2
-exec buf breaking --against ".git#ref=${sha},depth=0"
+exec buf breaking --against ".git#ref=${sha},depth=10000"
