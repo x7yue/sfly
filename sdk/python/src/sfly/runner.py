@@ -6,7 +6,8 @@
 - `SFLY_OUTPUT`：执行器写入结果的 output.json：
   - 成功：`{"status": "success", "outputs": {...}}`，退出码 0；
   - 失败：`{"status": "failed", "error": {"type", "message", "traceback"}}`，退出码 1。
-- `SFLY_ARTIFACTS`、`SFLY_EVENTS`、`SFLY_CANCEL`：产物目录、事件文件、取消标记（由 Context 使用）。
+- `SFLY_ARTIFACTS`、`SFLY_ARTIFACTS_URL`、`SFLY_EVENTS`、`SFLY_CANCEL`：产物目录、产物下载地址前缀、
+  事件文件、取消标记（由 Context 使用）。
 
 节点按关键字参数接收输入；首个参数是任务上下文时传入 `Context`。
 返回值必须是 JSON 对象（返回 None 视为空对象），序列化后不超过 1 MB。
