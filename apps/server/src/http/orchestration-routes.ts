@@ -8,7 +8,11 @@ import { nicknameOf } from "./nickname.js";
 
 const CreateBody = z.strictObject({ name: z.string().trim().min(1) });
 const CopyBody = CreateBody;
-const SaveVersionBody = z.object({ document: OrchestrationDocument });
+const SaveVersionBody = z.object({
+	document: OrchestrationDocument,
+	/** 编辑起点的版本号（0 = 还没有版本）。不是最新版本时返回 409。画布总是携带；省略时不做冲突检查。 */
+	base_version: z.number().int().nonnegative().optional(),
+});
 
 /** 编排与编排版本：新建编排、保存（追加）版本、查询。版本不可修改。 */
 export function registerOrchestrationRoutes(
@@ -82,13 +86,56 @@ export function registerOrchestrationRoutes(
 				z.treeifyError(body.error),
 			);
 		}
-		const saved = isUuid(request.params.id)
-			? await orchestrations.saveVersion(request.params.id, body.data.document, author)
-			: undefined;
-		if (!saved) return sendError(reply, 404, "not_found", "orchestration not found");
+		const result = isUuid(request.params.id)
+			? await orchestrations.saveVersion(
+					request.params.id,
+					body.data.document,
+					author,
+					body.data.base_version,
+				)
+			: ({ kind: "not_found" } as const);
+		if (result.kind === "not_found")
+			return sendError(reply, 404, "not_found", "orchestration not found");
+		if (result.kind === "conflict") {
+			return sendError(
+				reply,
+				409,
+				"version_conflict",
+				result.head
+					? `version ${result.head.number} was saved by ${result.head.author} after version ${body.data.base_version}`
+					: `orchestration has no version ${body.data.base_version}`,
+				{ base_version: body.data.base_version, head: result.head },
+			);
+		}
+		const saved = result.version;
 		// 结构问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2）。
 		return reply.code(201).send({ ...saved, warnings: structureWarnings(saved.document) });
 	});
+
+	app.get<{ Params: { id: string } }>("/orchestrations/:id/versions", async (request, reply) => {
+		const versions = isUuid(request.params.id)
+			? await orchestrations.listVersions(request.params.id)
+			: undefined;
+		if (!versions) return sendError(reply, 404, "not_found", "orchestration not found");
+		return { versions };
+	});
+
+	// 恢复历史版本 = 用旧内容追加一个新版本（docs/ARCHITECTURE.md §6.4）。
+	app.post<{ Params: { id: string; number: string } }>(
+		"/orchestrations/:id/versions/:number/restore",
+		async (request, reply) => {
+			const author = nicknameOf(request);
+			if (!author)
+				return sendError(reply, 400, "nickname_required", "x-sfly-nickname header is required");
+			const number = Number(request.params.number);
+			const restored =
+				isUuid(request.params.id) && Number.isInteger(number)
+					? await orchestrations.restoreVersion(request.params.id, number, author)
+					: undefined;
+			if (!restored) return sendError(reply, 404, "not_found", "orchestration version not found");
+			return reply.code(201).send({ ...restored, warnings: structureWarnings(restored.document) });
+		},
+	);
 
 	app.get<{ Params: { id: string; number: string } }>(
 		"/orchestrations/:id/versions/:number",
