@@ -23,8 +23,11 @@ export interface AgentInfo {
 	os: string;
 	arch: string;
 	slots: number;
-	/** 共享 venv 中已安装的节点包（#5）。 */
-	installed_packages: InstalledPackage[];
+	/**
+	 * 共享 venv 中已安装的节点包；由 Agent 在 Hello 中上报（#5）。
+	 * 早于 #5 注册的记录没有这个字段，读取时按空列表处理。
+	 */
+	installed_packages?: InstalledPackage[];
 }
 
 export interface InstalledPackage {

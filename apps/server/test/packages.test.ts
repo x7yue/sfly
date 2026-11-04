@@ -103,9 +103,8 @@ describe("节点包仓库", () => {
 		const second = packageArchive(packageMetadata({ requires_python: ">=3.12" }));
 		const res = await cp.fetch("/packages", publishInit(second));
 		expect(res.status).toBe(409);
-		expect(await res.json()).toMatchObject({
-			error: "conflict",
-			message: expect.stringContaining("demo-checks@1.2.0"),
+		expect(await res.json()).toEqual({
+			error: { code: "conflict", message: expect.stringContaining("demo-checks@1.2.0") },
 		});
 
 		const download = await cp.fetch("/packages/demo-checks/versions/1.2.0/archive");
@@ -143,7 +142,9 @@ describe("节点包仓库", () => {
 		cp = await startTestControlPlane();
 		const res = await cp.fetch("/packages", publishInit(archive));
 		expect(res.status).toBe(400);
-		expect(await res.json()).toMatchObject({ error: "invalid_package" });
+		expect(await res.json()).toMatchObject({
+			error: { code: "invalid_package", message: expect.any(String) },
+		});
 		expect(await (await cp.fetch("/packages")).json()).toEqual({ packages: [] });
 	});
 
@@ -171,7 +172,34 @@ describe("节点包仓库", () => {
 		]) {
 			const res = await cp.fetch(path);
 			expect(res.status, path).toBe(404);
-			expect(await res.json(), path).toMatchObject({ error: "not_found" });
+			expect(await res.json(), path).toEqual({
+				error: { code: "not_found", message: expect.any(String) },
+			});
 		}
+	});
+
+	it.each([
+		["application/json", JSON.stringify({ name: "x" })],
+		["text/plain", "not a package"],
+	])("请求体是 %s 时返回 415", async (contentType, body) => {
+		cp = await startTestControlPlane();
+		const res = await cp.fetch("/packages", {
+			method: "POST",
+			headers: { "content-type": contentType },
+			body,
+		});
+		expect(res.status).toBe(415);
+		expect(await res.json()).toEqual({
+			error: { code: "unsupported_media_type", message: expect.any(String) },
+		});
+	});
+
+	it("未知路由也返回统一的错误格式", async () => {
+		cp = await startTestControlPlane();
+		const res = await cp.fetch("/packages/demo/unknown/path");
+		expect(res.status).toBe(404);
+		expect(await res.json()).toEqual({
+			error: { code: "not_found", message: expect.any(String) },
+		});
 	});
 });
