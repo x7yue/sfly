@@ -1,0 +1,19 @@
+{
+	"name": "@sfly/proto",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "Agent ↔ 控制面 protobuf 契约的 TS 生成代码（来源：仓库根目录 proto/，由 `pnpm gen:proto` 生成）",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc -p ."
+	},
+	"dependencies": {
+		"@bufbuild/protobuf": "2.16.0"
+	},
+	"devDependencies": {
+		"typescript": "^6.0.2"
+	}
+}
