@@ -74,7 +74,7 @@ export function buildHttpApi({
 
 	app.get("/agents", async () => ({ agents: await hub.list() }));
 	registerOrchestrationRoutes(app, { orchestrations, packages });
-	registerRunRoutes(app, { db: database.db, engine, orchestrations, preflight });
+	registerRunRoutes(app, { db: database.db, engine, orchestrations, preflight, sse });
 	registerPackageRoutes(app, packages);
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 

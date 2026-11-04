@@ -12,6 +12,7 @@ export interface AttemptView {
 	inputs: Record<string, unknown> | null;
 	outputs: Record<string, unknown> | null;
 	error: { kind: string; message: string } | null;
+	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
 }
@@ -108,6 +109,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						inputs: t.inputs,
 						outputs: t.outputs,
 						error: t.errorKind ? { kind: t.errorKind, message: t.errorMessage ?? "" } : null,
+						queued_at: t.queuedAt.toISOString(),
 						started_at: iso(t.startedAt),
 						ended_at: iso(t.endedAt),
 					}));
