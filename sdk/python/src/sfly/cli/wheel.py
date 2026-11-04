@@ -9,7 +9,7 @@ import base64
 import hashlib
 import re
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from sfly import __version__
@@ -47,7 +47,9 @@ def build_wheel(
     dependencies: Sequence[str],
     source: Path,
     out_dir: Path,
+    extra_metadata: Mapping[str, bytes] | None = None,
 ) -> Path:
+    """构建 wheel。`extra_metadata` 是额外写入 dist-info 目录的文件（文件名 → 内容）。"""
     dist = dist_name(name)
     file_version = version.replace("-", "_")
     info = f"{dist}-{file_version}.dist-info"
@@ -69,6 +71,8 @@ def build_wheel(
     ]
     entries.append((f"{info}/METADATA", ("\n".join(metadata) + "\n").encode("utf-8")))
     entries.append((f"{info}/WHEEL", ("\n".join(wheel_info) + "\n").encode("utf-8")))
+    for file_name, data in sorted((extra_metadata or {}).items()):
+        entries.append((f"{info}/{file_name}", data))
     record = [f"{arc},{_record_hash(data)},{len(data)}" for arc, data in entries]
     record.append(f"{info}/RECORD,,")
     entries.append((f"{info}/RECORD", ("\n".join(record) + "\n").encode("utf-8")))

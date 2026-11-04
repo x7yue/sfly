@@ -19,8 +19,7 @@ import typing
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from sfly.context import Context
-from sfly.nodes import NODE_ATTR, NodeDeclaration
+from sfly.nodes import NODE_ATTR, NodeDeclaration, is_context_param
 
 
 class ScanError(Exception):
@@ -98,12 +97,6 @@ def _typeddict_schema(tp: Any) -> JsonSchema:
     return schema
 
 
-def _is_context_param(param: inspect.Parameter, hint: Any) -> bool:
-    if hint is Context:
-        return True
-    return param.name == "ctx" and param.annotation is inspect.Parameter.empty
-
-
 def _json_default(value: Any, where: str) -> Any:
     if isinstance(value, enum.Enum):
         value = value.value
@@ -117,7 +110,7 @@ def _json_default(value: Any, where: str) -> Any:
 def input_schema(fn: Any, label: str) -> JsonSchema:
     hints = typing.get_type_hints(fn, include_extras=True)
     params = list(inspect.signature(fn).parameters.values())
-    if params and _is_context_param(params[0], hints.get(params[0].name)):
+    if params and is_context_param(params[0], hints.get(params[0].name)):
         params = params[1:]
 
     properties: dict[str, JsonSchema] = {}

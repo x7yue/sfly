@@ -135,6 +135,7 @@ def build(root: Path, out_dir: Path | None = None) -> Path:
     validate_metadata(metadata)
 
     out_dir = out_dir or root / "dist"
+    text = json.dumps(metadata, ensure_ascii=False, indent=2) + "\n"
     with tempfile.TemporaryDirectory() as tmp:
         wheel = build_wheel(
             name=project.name,
@@ -143,11 +144,12 @@ def build(root: Path, out_dir: Path | None = None) -> Path:
             dependencies=project.dependencies,
             source=project.source,
             out_dir=Path(tmp),
+            # 元信息也放进 wheel 的 dist-info：安装到共享 venv 后，执行器据此找到节点入口。
+            extra_metadata={METADATA_FILE: text.encode("utf-8")},
         )
         out_dir.mkdir(parents=True, exist_ok=True)
         archive = out_dir / f"{project.name}-{project.version}{ARCHIVE_SUFFIX}"
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            text = json.dumps(metadata, ensure_ascii=False, indent=2) + "\n"
             for arc, data in (
                 (METADATA_FILE, text.encode("utf-8")),
                 (wheel.name, wheel.read_bytes()),
