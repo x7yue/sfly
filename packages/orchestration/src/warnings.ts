@@ -6,11 +6,12 @@ import {
 	referenceWarnings,
 } from "./references.js";
 import { type StructureWarning, structureWarnings } from "./structure.js";
+import { type TimingWarning, timingWarnings } from "./timing.js";
 
-export type OrchestrationWarning = StructureWarning | ReferenceWarning;
+export type OrchestrationWarning = StructureWarning | ReferenceWarning | TimingWarning;
 
 /**
- * 编排文档的全部静态检查（docs/SEMANTICS.md §1.2、§2.4、§7）：结构、包版本锁定、引用。
+ * 编排文档的全部静态检查（docs/SEMANTICS.md §1.2、§2.4、§5、§7）：结构、包版本锁定、引用、定时 / Sleep 配置。
  * 保存时作为警告返回；触发时必须全部通过。控制面和画布都调用这个函数。
  */
 export function documentWarnings(
@@ -21,5 +22,6 @@ export function documentWarnings(
 		...structureWarnings(doc),
 		...packageWarnings(doc, catalog),
 		...referenceWarnings(doc, catalog),
+		...timingWarnings(doc),
 	];
 }

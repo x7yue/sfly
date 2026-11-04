@@ -10,7 +10,7 @@ export interface ChainPlan {
 }
 
 /** 本阶段引擎支持执行的节点种类；其余种类由后续票据加入。 */
-const SUPPORTED_KINDS = new Set<OrchestrationNode["kind"]>(["entry", "package"]);
+const SUPPORTED_KINDS = new Set<OrchestrationNode["kind"]>(["entry", "package", "timer", "sleep"]);
 
 /**
  * 从入口节点沿 chain 连线排出主链，并做触发前必须满足的检查

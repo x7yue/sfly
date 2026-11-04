@@ -54,7 +54,7 @@ export function createPreflight(deps: { db: Db; packages: PackageRepository }): 
 			});
 		}
 
-		// 引擎目前只能执行主链上的入口节点和包节点；其余种类由后续票据支持。
+		// 引擎目前只能执行主链上的入口、包、定时和 Sleep 节点；其余种类由后续票据支持。
 		if (problems.length === 0) {
 			const plan = planMainChain(doc);
 			if ("errors" in plan) {

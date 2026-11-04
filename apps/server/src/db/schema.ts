@@ -1,6 +1,7 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
 import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
+import { sql } from "drizzle-orm";
 import {
 	bigint,
 	bigserial,
@@ -98,7 +99,15 @@ export type ChainStatus = RunStatus;
  * 记一行 attempt 1 的占位（没有派发，不算一次尝试）。
  * cancelled（#12）：运行被取消；没有开始执行（started_at 为空）的行是占位，不算一次尝试。
  */
-export type TaskStatus = "queued" | "running" | "success" | "failed" | "skipped" | "cancelled";
+/** waiting：定时 / Sleep 节点正在等待唤醒时间（#14），不占用 Agent。 */
+export type TaskStatus =
+	| "queued"
+	| "running"
+	| "waiting"
+	| "success"
+	| "failed"
+	| "skipped"
+	| "cancelled";
 /** 任务的最新进度（ctx.progress）。 */
 export interface TaskProgress {
 	current: number;
@@ -195,8 +204,14 @@ export const tasks = pgTable(
 		logSeq: bigint("log_seq", { mode: "number" }).notNull().default(0),
 		/** 日志超过上限已被截断（#18）：写入了截断标记，之后的行都被丢弃。 */
 		logTruncated: boolean("log_truncated").notNull().default(false),
+		/**
+		 * 定时 / Sleep 节点的唤醒时间（#14）：waiting 期间由控制面周期扫描，到期后节点成功。
+		 * 定时器的全部状态都在这一行里（status + wake_at），控制面重启后照常扫描。
+		 */
+		wakeAt: timestamptz("wake_at"),
 	},
 	(t) => [
+		index("tasks_waiting").on(t.wakeAt).where(sql`${t.status} = 'waiting'`),
 		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),
 		index("tasks_agent_status").on(t.agentName, t.status),
 		index("tasks_chain_instance").on(t.chainInstanceId),

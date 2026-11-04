@@ -10,7 +10,7 @@ import {
 	type TaskResult,
 } from "@sfly/proto";
 import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
-import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, lte } from "drizzle-orm";
 import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -32,6 +32,7 @@ import { hasFinalFailure, isAlways, shouldRetry } from "./failures.js";
 import { chainInstanceId, taskId } from "./ids.js";
 import { fillParams } from "./params.js";
 import { InvalidReferenceError, resolveInputs } from "./references.js";
+import { earlierOutputs, isWaitNode, planWait, type WaitNode, waitOutputs } from "./waits.js";
 
 /** 包节点默认超时：1 小时（docs/SEMANTICS.md §3.3）。 */
 export const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
@@ -250,7 +251,12 @@ export class Engine implements AgentSessionHandler {
 		const active = await step.tx
 			.select()
 			.from(tasks)
-			.where(and(eq(tasks.chainInstanceId, chain.id), inArray(tasks.status, ["queued", "running"])))
+			.where(
+				and(
+					eq(tasks.chainInstanceId, chain.id),
+					inArray(tasks.status, ["queued", "running", "waiting"]),
+				),
+			)
 			.orderBy(asc(tasks.seq))
 			.for("update");
 		let resumeAt: number | undefined;
@@ -427,6 +433,11 @@ export class Engine implements AgentSessionHandler {
 					.insert(tasks)
 					.values({ ...base, status: "skipped", endedAt: step.now })
 					.onConflictDoNothing();
+				continue;
+			}
+			if (isWaitNode(node)) {
+				// 没到唤醒时间（或配置无效、已由 #failTask 推进）时停在这里。
+				if (!(await this.#wait(step, run, chain, plan, i, node))) return;
 				continue;
 			}
 			if (node.kind === "package") {
@@ -709,6 +720,100 @@ export class Engine implements AgentSessionHandler {
 					artifactUploadUrl: this.deps.artifactUploadUrl(task.id),
 				},
 			},
+		});
+	}
+
+	/**
+	 * 定时 / Sleep 节点开始执行（§5）：唤醒时间已到就立即成功并返回 true；否则任务记为 waiting、
+	 * 唤醒时间写进 PG，由 wakeTimers 唤醒。配置无效时以 config_error 失败（不重试）并返回 false。
+	 */
+	async #wait(
+		step: Step,
+		run: RunRow,
+		chain: ChainRow,
+		plan: ChainPlan,
+		index: number,
+		node: WaitNode,
+	): Promise<boolean> {
+		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
+		const outputs = await earlierOutputs(step.tx, chain.id, earlierIds);
+		const missingAsNull = isAlways(node);
+		if (missingAsNull) for (const id of earlierIds) if (!outputs.has(id)) outputs.set(id, {});
+		const wait = planWait(
+			node,
+			{ params: chain.params, earlierOutputs: outputs, missingAsNull },
+			step.now,
+		);
+		const base = {
+			id: taskId(chain.id, node.id, 1),
+			runId: run.id,
+			chainInstanceId: chain.id,
+			nodeId: node.id,
+			attempt: 1,
+			queuedAt: step.now,
+			startedAt: step.now,
+		};
+		if (!wait.ok) {
+			const [task] = await step.tx
+				.insert(tasks)
+				.values({ ...base, status: "running" })
+				.onConflictDoNothing()
+				.returning();
+			if (task) await this.#failTask(step, task, "config_error", wait.message);
+			return false;
+		}
+		const due = wait.wakeAt.getTime() <= step.now.getTime();
+		await step.tx
+			.insert(tasks)
+			.values(
+				due
+					? {
+							...base,
+							status: "success",
+							inputs: wait.inputs,
+							outputs: waitOutputs(node, step.now, wait.wakeAt < step.now),
+							wakeAt: wait.wakeAt,
+							endedAt: step.now,
+						}
+					: { ...base, status: "waiting", inputs: wait.inputs, wakeAt: wait.wakeAt },
+			)
+			.onConflictDoNothing();
+		return due;
+	}
+
+	/**
+	 * 周期扫描（control-plane.ts，默认每秒一次）：唤醒时间已到的 waiting 任务成功，链继续推进。
+	 * 是否到期只看注入的时钟；返回唤醒的任务数。
+	 */
+	async wakeTimers(): Promise<number> {
+		const now = this.deps.clock.now();
+		// 先在锁外看一眼，没有到期的定时器时不占用引擎的锁。
+		const [any] = await this.deps.db
+			.select({ id: tasks.id })
+			.from(tasks)
+			.where(and(eq(tasks.status, "waiting"), lte(tasks.wakeAt, now)))
+			.limit(1);
+		if (!any) return 0;
+		return this.#event(async (step) => {
+			const due = await step.tx
+				.select()
+				.from(tasks)
+				.where(and(eq(tasks.status, "waiting"), lte(tasks.wakeAt, step.now)))
+				.orderBy(asc(tasks.wakeAt), asc(tasks.seq))
+				.for("update");
+			for (const task of due) {
+				const { run, chain } = await this.#context(step.tx, task);
+				const plan = await this.#plan(step.tx, run, chain);
+				const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
+				const node = plan.nodes[index];
+				if (!node || !isWaitNode(node)) throw new Error(`task ${task.id} is not a wait node`);
+				await step.tx
+					.update(tasks)
+					.set({ status: "success", outputs: waitOutputs(node, step.now), endedAt: step.now })
+					.where(eq(tasks.id, task.id));
+				await this.#advance(step, run, chain, index + 1);
+			}
+			return due.length;
 		});
 	}
 }

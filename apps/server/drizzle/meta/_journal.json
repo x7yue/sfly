@@ -43,6 +43,13 @@
       "when": 1793806949400,
       "tag": "0005_logs_artifacts_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793807551604,
+      "tag": "0006_timers",
+      "breakpoints": true
     }
   ]
 }

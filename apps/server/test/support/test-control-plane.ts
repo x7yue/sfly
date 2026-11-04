@@ -52,6 +52,8 @@ export async function startTestControlPlane(
 			retentionDays: options.retentionDays,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
+			// 定时 / Sleep 节点的定时器扫描（#14）同样调快。
+			timerSweepIntervalMs: 20,
 			// 周期扫描调快：测试推进手动时钟后很快就能观察到效果，不用真实等待。
 			sweepIntervalMs: 20,
 			http: { host: "127.0.0.1", port: 0 },

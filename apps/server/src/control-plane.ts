@@ -47,6 +47,8 @@ export interface ControlPlaneOptions {
 	retentionDays?: number;
 	/** 保留期清理的扫描间隔，默认 1 分钟；是否到期只按注入的时钟判断。 */
 	retentionSweepIntervalMs?: number;
+	/** 定时 / Sleep 节点的定时器扫描间隔（#14），默认 1 秒；是否到期只按注入的时钟判断。 */
+	timerSweepIntervalMs?: number;
 }
 
 export interface ControlPlane {
@@ -164,6 +166,20 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		});
 	}, options.retentionSweepIntervalMs ?? 60_000);
 	retentionSweep.unref();
+	// 定时器的状态全在 PG（tasks.wake_at），扫描本身无状态；上一次没结束时跳过本次。
+	let waking: Promise<unknown> | undefined;
+	const timerSweep = setInterval(() => {
+		if (waking) return;
+		waking = engine
+			.wakeTimers()
+			.catch((error) => {
+				if (logger) console.error("timer sweep failed:", error);
+			})
+			.finally(() => {
+				waking = undefined;
+			});
+	}, options.timerSweepIntervalMs ?? 1000);
+	timerSweep.unref();
 
 	return {
 		httpUrl,
@@ -171,6 +187,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		async close() {
 			clearInterval(sweep);
 			clearInterval(retentionSweep);
+			clearInterval(timerSweep);
+			await waking;
 			await retention.idle();
 			hub.closeAll();
 			await gateway.close();
