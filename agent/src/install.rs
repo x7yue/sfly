@@ -110,18 +110,58 @@ impl Installer {
         let (wheel_name, wheel) = extract_wheel(archive)
             .map_err(|e| InstallError::new(format!("节点包 {label} 的归档无效：{e}")))?;
         let wheel_path = dir.join(&wheel_name);
+        tokio::fs::write(&wheel_path, wheel)
+            .await
+            .map_err(|e| InstallError::new(format!("写入 {} 失败：{e}", dir.display())))?;
+        self.uv_install(dir, label, &task.package, &wheel_path, others, false)
+            .await
+    }
+
+    /// 安装 `sfly dev` 构建的可编辑 wheel（开发版本 `包名@dev`）。即使 venv 里已经是同一个 wheel，
+    /// 也强制重新安装，让重新运行 `sfly dev` 时元信息和依赖得到更新。成功时返回 uv 输出。
+    pub async fn install_dev(
+        &self,
+        package: &str,
+        wheel: &Path,
+        others: &BTreeMap<String, Vec<String>>,
+    ) -> Result<String, InstallError> {
+        let label = format!("{package}@{}", crate::dev::DEV_VERSION);
+        let dir = self
+            .scratch
+            .join(format!("{package}-dev-{}", std::process::id()));
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        let result = match tokio::fs::create_dir_all(&dir).await {
+            Ok(()) => {
+                self.uv_install(&dir, &label, package, wheel, others, true)
+                    .await
+            }
+            Err(e) => Err(InstallError::new(format!(
+                "创建目录 {} 失败：{e}",
+                dir.display()
+            ))),
+        };
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+        result
+    }
+
+    /// 用 uv 把 wheel 装进共享 venv；共享 venv 中其他节点包的依赖一起交给 uv 解析。
+    async fn uv_install(
+        &self,
+        dir: &Path,
+        label: &str,
+        package: &str,
+        wheel_path: &Path,
+        others: &BTreeMap<String, Vec<String>>,
+        reinstall: bool,
+    ) -> Result<String, InstallError> {
         let mut requirements = vec![wheel_path.to_string_lossy().into_owned()];
         for (name, requires) in others {
-            if !same_name(name, &task.package) {
+            if !same_name(name, package) {
                 requirements.extend(requires.iter().cloned());
             }
         }
         let requirements_path = dir.join("requirements.txt");
-        let written = async {
-            tokio::fs::write(&wheel_path, wheel).await?;
-            tokio::fs::write(&requirements_path, requirements.join("\n") + "\n").await
-        };
-        written
+        tokio::fs::write(&requirements_path, requirements.join("\n") + "\n")
             .await
             .map_err(|e| InstallError::new(format!("写入 {} 失败：{e}", dir.display())))?;
 
@@ -132,6 +172,11 @@ impl Installer {
             .arg(self.venv.python());
         if let Some(index) = &self.index_url {
             command.args(["--index-url", index]);
+        }
+        if reinstall {
+            command
+                .args(["--reinstall-package", package])
+                .args(["--refresh-package", package]);
         }
         command
             .arg("-r")

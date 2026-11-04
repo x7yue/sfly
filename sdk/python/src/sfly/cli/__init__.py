@@ -1,4 +1,4 @@
-"""sfly 命令行入口：build / publish（dev 由后续票据加入）。
+"""sfly 命令行入口：build / publish / dev。
 
 CLI 在开发者机器上运行，可以使用 `sfly[cli]` extra 中的第三方依赖；
 这些依赖只在子命令执行时才导入，`import sfly.cli` 本身只用标准库。
@@ -15,6 +15,8 @@ from pathlib import Path
 from sfly import __version__
 
 DEFAULT_SERVER = "http://127.0.0.1:8080"
+# Agent 的默认本地 socket：与 Agent 默认工作目录 ./work 一致。
+DEFAULT_SOCKET = "work/agent.sock"
 
 
 def _build(args: argparse.Namespace) -> int:
@@ -49,6 +51,25 @@ def _publish(args: argparse.Namespace) -> int:
     return 0
 
 
+def _dev(args: argparse.Namespace) -> int:
+    from sfly.cli.build import BuildError
+    from sfly.cli.dev import DevError, dev
+
+    try:
+        reply = dev(Path(args.project).resolve(), Path(args.socket))
+    except BuildError as error:
+        print(f"构建失败：{error}", file=sys.stderr)
+        return 1
+    except (DevError, OSError) as error:
+        output = getattr(error, "output", "")
+        if output:
+            print(output.rstrip(), file=sys.stderr)
+        print(f"加载开发版本失败：{error}", file=sys.stderr)
+        return 1
+    print(reply.get("message", "已加载开发版本"))
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sfly", description="sfly 节点包开发工具")
     parser.add_argument("--version", action="version", version=f"sfly {__version__}")
@@ -72,6 +93,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"控制面 HTTP 地址（默认 $SFLY_SERVER 或 {DEFAULT_SERVER}）",
     )
     p_publish.set_defaults(func=_publish)
+
+    p_dev = sub.add_parser("dev", help="让本机 Agent 以可编辑方式加载本地源码目录，注册为 包名@dev")
+    p_dev.add_argument("project", nargs="?", default=".", help="项目目录（默认当前目录）")
+    p_dev.add_argument(
+        "--socket",
+        default=os.environ.get("SFLY_DEV_SOCKET", DEFAULT_SOCKET),
+        help=f"本机 Agent 的本地 socket（默认 $SFLY_DEV_SOCKET 或 {DEFAULT_SOCKET}）",
+    )
+    p_dev.set_defaults(func=_dev)
 
     args = parser.parse_args(argv)
     if args.command is None:

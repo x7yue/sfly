@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file sfly/agent/v1/agent.proto.
  */
 export const file_sfly_agent_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIpsBCgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAQgYKBGJvZHkikgEKDVNlcnZlck1lc3NhZ2USKQoHd2VsY29tZRgBIAEoCzIWLnNmbHkuYWdlbnQudjEuV2VsY29tZUgAEisKBmFzc2lnbhgCIAEoCzIZLnNmbHkuYWdlbnQudjEuQXNzaWduVGFza0gAEiEKA2FjaxgEIAEoCzISLnNmbHkuYWdlbnQudjEuQWNrSABCBgoEYm9keSKhAQoFSGVsbG8SDAoEbmFtZRgBIAEoCRINCgV0b2tlbhgCIAEoCRIVCg1hZ2VudF92ZXJzaW9uGAMgASgJEgoKAm9zGAQgASgJEgwKBGFyY2gYBSABKAkSDQoFc2xvdHMYBiABKA0SOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAcgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlIjEKEEluc3RhbGxlZFBhY2thZ2USDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIgkKB1dlbGNvbWUi4gEKCkFzc2lnblRhc2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB3BhY2thZ2UYAyABKAkSFwoPcGFja2FnZV92ZXJzaW9uGAQgASgJEgwKBG5vZGUYBSABKAkSEwoLaW5wdXRzX2pzb24YBiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAcgASgNEg4KBnJ1bl9pZBgIIAEoCRIPCgdub2RlX2lkGAkgASgJEhYKDnBhY2thZ2Vfc2hhMjU2GAogASgJEhMKC3BhY2thZ2VfdXJsGAsgASgJIrsBCg1JbnN0YWxsU3RhdHVzEg8KB3BhY2thZ2UYASABKAkSDwoHdmVyc2lvbhgCIAEoCRIqCgVzdGF0ZRgDIAEoDjIbLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXRlEg8KB3Rhc2tfaWQYBCABKAkSDgoGb3V0cHV0GAUgASgJEjsKEmluc3RhbGxlZF9wYWNrYWdlcxgGIAMoCzIfLnNmbHkuYWdlbnQudjEuSW5zdGFsbGVkUGFja2FnZSKYAQoKVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKQoGc3RhdHVzGAMgASgOMhkuc2ZseS5hZ2VudC52MS5UYXNrU3RhdHVzEhQKDG91dHB1dHNfanNvbhgEIAEoCRInCgVlcnJvchgFIAEoCzIYLnNmbHkuYWdlbnQudjEuVGFza0Vycm9yIkQKCVRhc2tFcnJvchImCgRraW5kGAEgASgOMhguc2ZseS5hZ2VudC52MS5FcnJvcktpbmQSDwoHbWVzc2FnZRgCIAEoCSInCgNBY2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNKoIBCgxJbnN0YWxsU3RhdGUSHQoZSU5TVEFMTF9TVEFURV9VTlNQRUNJRklFRBAAEhwKGElOU1RBTExfU1RBVEVfSU5TVEFMTElORxABEhsKF0lOU1RBTExfU1RBVEVfSU5TVEFMTEVEEAISGAoUSU5TVEFMTF9TVEFURV9GQUlMRUQQAypaCgpUYXNrU3RhdHVzEhsKF1RBU0tfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTVEFTS19TVEFUVVNfU1VDQ0VTUxABEhYKElRBU0tfU1RBVFVTX0ZBSUxFRBACKqwBCglFcnJvcktpbmQSGgoWRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUVSUk9SX0tJTkRfTk9ERV9FUlJPUhABEhYKEkVSUk9SX0tJTkRfVElNRU9VVBACEhkKFUVSUk9SX0tJTkRfQUdFTlRfTE9TVBADEhgKFEVSUk9SX0tJTkRfRU5WX0VSUk9SEAQSGwoXRVJST1JfS0lORF9DT05GSUdfRVJST1IQBTJYCgxBZ2VudEdhdGV3YXkSSAoHU2Vzc2lvbhIbLnNmbHkuYWdlbnQudjEuQWdlbnRNZXNzYWdlGhwuc2ZseS5hZ2VudC52MS5TZXJ2ZXJNZXNzYWdlKAEwAWIGcHJvdG8z");
+  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIpsBCgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAQgYKBGJvZHkikgEKDVNlcnZlck1lc3NhZ2USKQoHd2VsY29tZRgBIAEoCzIWLnNmbHkuYWdlbnQudjEuV2VsY29tZUgAEisKBmFzc2lnbhgCIAEoCzIZLnNmbHkuYWdlbnQudjEuQXNzaWduVGFza0gAEiEKA2FjaxgEIAEoCzISLnNmbHkuYWdlbnQudjEuQWNrSABCBgoEYm9keSLSAQoFSGVsbG8SDAoEbmFtZRgBIAEoCRINCgV0b2tlbhgCIAEoCRIVCg1hZ2VudF92ZXJzaW9uGAMgASgJEgoKAm9zGAQgASgJEgwKBGFyY2gYBSABKAkSDQoFc2xvdHMYBiABKA0SOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAcgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlEi8KDGRldl9wYWNrYWdlcxgIIAMoCzIZLnNmbHkuYWdlbnQudjEuRGV2UGFja2FnZSJBCgpEZXZQYWNrYWdlEgwKBG5hbWUYASABKAkSDgoGc291cmNlGAIgASgJEhUKDW1ldGFkYXRhX2pzb24YAyABKAkiMQoQSW5zdGFsbGVkUGFja2FnZRIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkiCQoHV2VsY29tZSLiAQoKQXNzaWduVGFzaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDwoHcGFja2FnZRgDIAEoCRIXCg9wYWNrYWdlX3ZlcnNpb24YBCABKAkSDAoEbm9kZRgFIAEoCRITCgtpbnB1dHNfanNvbhgGIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYByABKA0SDgoGcnVuX2lkGAggASgJEg8KB25vZGVfaWQYCSABKAkSFgoOcGFja2FnZV9zaGEyNTYYCiABKAkSEwoLcGFja2FnZV91cmwYCyABKAki7AEKDUluc3RhbGxTdGF0dXMSDwoHcGFja2FnZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEioKBXN0YXRlGAMgASgOMhsuc2ZseS5hZ2VudC52MS5JbnN0YWxsU3RhdGUSDwoHdGFza19pZBgEIAEoCRIOCgZvdXRwdXQYBSABKAkSOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAYgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlEi8KDGRldl9wYWNrYWdlcxgHIAMoCzIZLnNmbHkuYWdlbnQudjEuRGV2UGFja2FnZSKYAQoKVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKQoGc3RhdHVzGAMgASgOMhkuc2ZseS5hZ2VudC52MS5UYXNrU3RhdHVzEhQKDG91dHB1dHNfanNvbhgEIAEoCRInCgVlcnJvchgFIAEoCzIYLnNmbHkuYWdlbnQudjEuVGFza0Vycm9yIkQKCVRhc2tFcnJvchImCgRraW5kGAEgASgOMhguc2ZseS5hZ2VudC52MS5FcnJvcktpbmQSDwoHbWVzc2FnZRgCIAEoCSInCgNBY2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNKoIBCgxJbnN0YWxsU3RhdGUSHQoZSU5TVEFMTF9TVEFURV9VTlNQRUNJRklFRBAAEhwKGElOU1RBTExfU1RBVEVfSU5TVEFMTElORxABEhsKF0lOU1RBTExfU1RBVEVfSU5TVEFMTEVEEAISGAoUSU5TVEFMTF9TVEFURV9GQUlMRUQQAypaCgpUYXNrU3RhdHVzEhsKF1RBU0tfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTVEFTS19TVEFUVVNfU1VDQ0VTUxABEhYKElRBU0tfU1RBVFVTX0ZBSUxFRBACKqwBCglFcnJvcktpbmQSGgoWRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUVSUk9SX0tJTkRfTk9ERV9FUlJPUhABEhYKEkVSUk9SX0tJTkRfVElNRU9VVBACEhkKFUVSUk9SX0tJTkRfQUdFTlRfTE9TVBADEhgKFEVSUk9SX0tJTkRfRU5WX0VSUk9SEAQSGwoXRVJST1JfS0lORF9DT05GSUdfRVJST1IQBTJYCgxBZ2VudEdhdGV3YXkSSAoHU2Vzc2lvbhIbLnNmbHkuYWdlbnQudjEuQWdlbnRNZXNzYWdlGhwuc2ZseS5hZ2VudC52MS5TZXJ2ZXJNZXNzYWdlKAEwAWIGcHJvdG8z");
 
 /**
  * Agent → 控制面。
@@ -140,6 +140,13 @@ export type Hello = Message<"sfly.agent.v1.Hello"> & {
    * @generated from field: repeated sfly.agent.v1.InstalledPackage installed_packages = 7;
    */
   installedPackages: InstalledPackage[];
+
+  /**
+   * 以本地开发模式（sfly dev）加载在这个 Agent 上的节点包，版本为 `dev`。
+   *
+   * @generated from field: repeated sfly.agent.v1.DevPackage dev_packages = 8;
+   */
+  devPackages: DevPackage[];
 };
 
 /**
@@ -148,6 +155,42 @@ export type Hello = Message<"sfly.agent.v1.Hello"> & {
  */
 export const HelloSchema: GenMessage<Hello> = /*@__PURE__*/
   messageDesc(file_sfly_agent_v1_agent, 2);
+
+/**
+ * 以本地开发模式（sfly dev）加载的节点包：本地源码目录以可编辑方式安装进共享 venv，注册为 `包名@dev`。
+ * 只有加载了它的 Agent 能执行 `包名@dev` 的任务。
+ *
+ * @generated from message sfly.agent.v1.DevPackage
+ */
+export type DevPackage = Message<"sfly.agent.v1.DevPackage"> & {
+  /**
+   * 节点包名。
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * 本地源码目录（Agent 所在机器上的绝对路径）。
+   *
+   * @generated from field: string source = 2;
+   */
+  source: string;
+
+  /**
+   * 加载时扫描得到的节点包元信息（sfly-package.json 的内容，version 为 `dev`），JSON 对象。
+   *
+   * @generated from field: string metadata_json = 3;
+   */
+  metadataJson: string;
+};
+
+/**
+ * Describes the message sfly.agent.v1.DevPackage.
+ * Use `create(DevPackageSchema)` to create a new message.
+ */
+export const DevPackageSchema: GenMessage<DevPackage> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 3);
 
 /**
  * 安装在 Agent 共享 venv 中的一个节点包版本。
@@ -171,7 +214,7 @@ export type InstalledPackage = Message<"sfly.agent.v1.InstalledPackage"> & {
  * Use `create(InstalledPackageSchema)` to create a new message.
  */
 export const InstalledPackageSchema: GenMessage<InstalledPackage> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 3);
+  messageDesc(file_sfly_agent_v1_agent, 4);
 
 /**
  * 控制面对 Hello 的回应，表示连接已被接受。
@@ -186,7 +229,7 @@ export type Welcome = Message<"sfly.agent.v1.Welcome"> & {
  * Use `create(WelcomeSchema)` to create a new message.
  */
 export const WelcomeSchema: GenMessage<Welcome> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 4);
+  messageDesc(file_sfly_agent_v1_agent, 5);
 
 /**
  * 控制面派发给 Agent 的一个任务（节点的一次尝试）。输入中的引用已经解析。
@@ -273,7 +316,7 @@ export type AssignTask = Message<"sfly.agent.v1.AssignTask"> & {
  * Use `create(AssignTaskSchema)` to create a new message.
  */
 export const AssignTaskSchema: GenMessage<AssignTask> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 5);
+  messageDesc(file_sfly_agent_v1_agent, 6);
 
 /**
  * Agent 安装或切换节点包的状态（安装期间 Agent 不启动新任务）。
@@ -320,6 +363,13 @@ export type InstallStatus = Message<"sfly.agent.v1.InstallStatus"> & {
    * @generated from field: repeated sfly.agent.v1.InstalledPackage installed_packages = 6;
    */
   installedPackages: InstalledPackage[];
+
+  /**
+   * 发送这条消息时以开发模式加载的全部节点包（sfly dev 加载开发版本时，version 为 `dev`、task_id 为空）。
+   *
+   * @generated from field: repeated sfly.agent.v1.DevPackage dev_packages = 7;
+   */
+  devPackages: DevPackage[];
 };
 
 /**
@@ -327,7 +377,7 @@ export type InstallStatus = Message<"sfly.agent.v1.InstallStatus"> & {
  * Use `create(InstallStatusSchema)` to create a new message.
  */
 export const InstallStatusSchema: GenMessage<InstallStatus> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 6);
+  messageDesc(file_sfly_agent_v1_agent, 7);
 
 /**
  * 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
@@ -370,7 +420,7 @@ export type TaskResult = Message<"sfly.agent.v1.TaskResult"> & {
  * Use `create(TaskResultSchema)` to create a new message.
  */
 export const TaskResultSchema: GenMessage<TaskResult> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 7);
+  messageDesc(file_sfly_agent_v1_agent, 8);
 
 /**
  * @generated from message sfly.agent.v1.TaskError
@@ -392,7 +442,7 @@ export type TaskError = Message<"sfly.agent.v1.TaskError"> & {
  * Use `create(TaskErrorSchema)` to create a new message.
  */
 export const TaskErrorSchema: GenMessage<TaskError> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 8);
+  messageDesc(file_sfly_agent_v1_agent, 9);
 
 /**
  * 控制面确认已处理 Agent 的某条上报（目前是 TaskResult，重复上报同样会收到 Ack）。
@@ -416,7 +466,7 @@ export type Ack = Message<"sfly.agent.v1.Ack"> & {
  * Use `create(AckSchema)` to create a new message.
  */
 export const AckSchema: GenMessage<Ack> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 9);
+  messageDesc(file_sfly_agent_v1_agent, 10);
 
 /**
  * @generated from enum sfly.agent.v1.InstallState

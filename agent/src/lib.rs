@@ -4,9 +4,11 @@
 //! - [`run`] 是 Agent 主循环：连接、接收任务、上报结果，断线后自动重连。
 //!
 //! 任务需要的节点包版本没有安装时，先下载并安装（[`install`]）；安装与启动新任务互斥。
+//! `sfly dev` 通过本地 socket 让 Agent 加载开发版本 `包名@dev`（[`dev`]）。
 //!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
+pub mod dev;
 pub mod executor;
 pub mod install;
 pub mod venv;
@@ -26,11 +28,12 @@ pub mod proto {
     tonic::include_proto!("sfly.agent.v1");
 }
 
+use dev::{DEV_VERSION, DevRegistry, DevReply, DevRequest};
 use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AssignTask, ErrorKind, Hello, InstallState, InstallStatus, InstalledPackage,
-    ServerMessage, TaskResult, Welcome, agent_message, server_message,
+    AgentMessage, AssignTask, DevPackage, ErrorKind, Hello, InstallState, InstallStatus,
+    InstalledPackage, ServerMessage, TaskResult, Welcome, agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
@@ -63,6 +66,8 @@ pub struct Config {
     pub index_url: Option<String>,
     /// uv 可执行文件。
     pub uv: PathBuf,
+    /// `sfly dev` 连接的本地 socket；未设置时为 `<work_dir>/agent.sock`。
+    pub dev_socket: Option<PathBuf>,
 }
 
 impl Config {
@@ -76,6 +81,7 @@ impl Config {
             work_dir: PathBuf::from("work"),
             index_url: None,
             uv: PathBuf::from("uv"),
+            dev_socket: None,
         }
     }
 }
@@ -89,10 +95,11 @@ pub struct Connection {
     pub inbound: Streaming<ServerMessage>,
 }
 
-/// 连接控制面，发送 Hello（带上已安装的节点包）并等待 Welcome。
+/// 连接控制面，发送 Hello（带上已安装的节点包和开发版本）并等待 Welcome。
 pub async fn connect(
     config: &Config,
     installed_packages: Vec<InstalledPackage>,
+    dev_packages: Vec<DevPackage>,
 ) -> anyhow::Result<Connection> {
     let mut client = AgentGatewayClient::connect(config.server.clone())
         .await
@@ -109,6 +116,7 @@ pub async fn connect(
                 arch: std::env::consts::ARCH.to_string(),
                 slots: config.slots,
                 installed_packages,
+                dev_packages,
             })),
         })
         .await
@@ -193,7 +201,10 @@ impl Inventory {
 }
 
 struct Runtime {
+    /// Agent 名称（用于错误消息）。
+    name: String,
     inventory: Inventory,
+    dev: DevRegistry,
     installer: Installer,
     work_dir: PathBuf,
     /// 安装与启动新任务互斥：启动任务（查找入口到子进程启动）持有读锁，安装持有写锁。
@@ -213,6 +224,16 @@ impl Runtime {
     }
 
     async fn start_task(&self, task: &AssignTask) -> Result<executor::Running, TaskResult> {
+        if task.package_version == DEV_VERSION && self.dev.get(&task.package).is_none() {
+            return Err(executor::failure(
+                task,
+                ErrorKind::EnvError,
+                format!(
+                    "开发版本 {}@{DEV_VERSION} 没有在 Agent {} 上加载：开发版本只能在用 sfly dev 加载了它的 Agent 上执行",
+                    task.package, self.name
+                ),
+            ));
+        }
         {
             let _starting = self.gate.read().await;
             if let Some(entry) = self.inventory.find(task).await {
@@ -245,15 +266,38 @@ impl Runtime {
         executor::start(&self.inventory.venv, &self.work_dir, task, entry).await
     }
 
-    /// 下载并安装任务需要的包版本（调用方持有写锁），通过 InstallStatus 上报状态。
-    async fn install(&self, task: &AssignTask) -> Result<(), TaskResult> {
-        let status = |state: InstallState, output: String, installed_packages| InstallStatus {
-            package: task.package.clone(),
-            version: task.package_version.clone(),
+    fn install_status(
+        &self,
+        package: &str,
+        version: &str,
+        task_id: &str,
+        state: InstallState,
+        output: String,
+        installed_packages: Vec<InstalledPackage>,
+    ) -> InstallStatus {
+        InstallStatus {
+            package: package.to_string(),
+            version: version.to_string(),
             state: state.into(),
-            task_id: task.task_id.clone(),
+            task_id: task_id.to_string(),
             output,
             installed_packages,
+            dev_packages: self.dev.list().iter().map(|e| e.to_proto()).collect(),
+        }
+    }
+
+    /// 下载并安装任务需要的包版本（调用方持有写锁），通过 InstallStatus 上报状态。
+    /// 开发版本用登记的可编辑 wheel 重新安装（它可能被已发布版本替换掉了）。
+    async fn install(&self, task: &AssignTask) -> Result<(), TaskResult> {
+        let status = |state: InstallState, output: String, installed_packages| {
+            self.install_status(
+                &task.package,
+                &task.package_version,
+                &task.task_id,
+                state,
+                output,
+                installed_packages,
+            )
         };
         let _ = self.installs.send(status(
             InstallState::Installing,
@@ -261,7 +305,14 @@ impl Runtime {
             self.inventory.summary().await,
         ));
         let requires = self.inventory.installed.lock().await.requires.clone();
-        let outcome = self.installer.install(task, &requires).await;
+        let outcome = match self.dev.get(&task.package) {
+            Some((_, wheel)) if task.package_version == DEV_VERSION => {
+                self.installer
+                    .install_dev(&task.package, &wheel, &requires)
+                    .await
+            }
+            _ => self.installer.install(task, &requires).await,
+        };
         let installed = self.inventory.refresh().await;
         match outcome {
             Ok(output) => {
@@ -286,6 +337,66 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    /// 处理 `sfly dev`：登记开发版本，以可编辑方式装进共享 venv（与启动新任务互斥），上报控制面。
+    async fn load_dev(&self, request: DevRequest) -> DevReply {
+        let _installing = self.gate.write().await;
+        let (entry, wheel) = match self.dev.register(&request) {
+            Ok(registered) => registered,
+            Err(error) => return DevReply::error(format!("登记开发版本失败：{error:#}")),
+        };
+        let package = entry.package.as_str();
+        let _ = self.installs.send(self.install_status(
+            package,
+            DEV_VERSION,
+            "",
+            InstallState::Installing,
+            String::new(),
+            self.inventory.summary().await,
+        ));
+        let requires = self.inventory.installed.lock().await.requires.clone();
+        let outcome = self.installer.install_dev(package, &wheel, &requires).await;
+        if outcome.is_err() {
+            // 没装上的开发版本不算加载成功。
+            self.dev.remove(package);
+        }
+        let installed = self.inventory.refresh().await;
+        let (state, reply) = match outcome {
+            Ok(output) => (
+                InstallState::Installed,
+                DevReply {
+                    ok: true,
+                    message: format!(
+                        "已在 Agent {} 上加载开发版本 {package}@{DEV_VERSION}（源码 {}）",
+                        self.name, entry.source
+                    ),
+                    output,
+                },
+            ),
+            Err(error) => {
+                eprintln!("{}", error.message);
+                (
+                    InstallState::Failed,
+                    DevReply {
+                        ok: false,
+                        output: error.output,
+                        message: error.message,
+                    },
+                )
+            }
+        };
+        let _ = self.installs.send(self.install_status(
+            package,
+            DEV_VERSION,
+            "",
+            state,
+            reply.output.clone(),
+            installed,
+        ));
+        reply
+    }
+}
+
 /// Agent 主循环：连接控制面并执行任务；连接失败或断开后按退避时间自动重连。
 /// 只有不可恢复的错误（例如令牌被拒绝）才会返回。
 ///
@@ -302,6 +413,8 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let runtime = Arc::new(Runtime {
+        name: config.name.clone(),
+        dev: DevRegistry::new(work_dir.join(".dev")),
         inventory: Inventory {
             venv: SharedVenv::new(venv.clone()),
             installed: Mutex::new(Installed::default()),
@@ -313,11 +426,20 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             uv: config.uv.clone(),
             http: reqwest::Client::new(),
         },
-        work_dir,
+        work_dir: work_dir.clone(),
         gate: RwLock::new(()),
         results: results_tx,
         installs: installs_tx,
     });
+    let dev_socket = config
+        .dev_socket
+        .clone()
+        .unwrap_or_else(|| work_dir.join("agent.sock"));
+    // 本地 socket 不可用时照常运行，只是不能用 sfly dev。
+    match dev::serve(&dev_socket, runtime.clone()) {
+        Ok(_) => eprintln!("sfly dev socket: {}", dev_socket.display()),
+        Err(error) => eprintln!("sfly dev is unavailable: {error:#}"),
+    }
     let mut unacked: BTreeMap<(String, u32), TaskResult> = BTreeMap::new();
     let mut delay = RECONNECT_MIN;
 
@@ -325,7 +447,8 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         // 断线期间的安装状态已经过时：重新连接时 Hello 带上最新的已安装列表。
         while installs_rx.try_recv().is_ok() {}
         let installed = runtime.inventory.refresh().await;
-        match connect(&config, installed).await {
+        let dev_packages = runtime.dev.list().iter().map(|e| e.to_proto()).collect();
+        match connect(&config, installed, dev_packages).await {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
                 emit(serde_json::json!({ "event": "welcome", "name": config.name }));
