@@ -115,6 +115,13 @@ export interface AgentView {
 	info: { agent_version: string; os: string; arch: string; slots: number };
 	last_seen_at: string;
 	installed_packages: { name: string; version: string }[];
+	/** 最近一次节点包安装状态（Agent 上报 InstallStatus）。 */
+	install: {
+		package: string;
+		version: string;
+		state: "installing" | "installed" | "failed";
+		task_id: string;
+	} | null;
 	running_tasks: {
 		task_id: string;
 		run_id: string;

@@ -71,36 +71,40 @@ fn valid_task_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
-/// 运行一个任务并给出结果（不会返回错误：所有失败都转成 TaskResult）。
-pub async fn execute(
+/// 准备工作目录并启动执行器子进程；启动失败时直接给出结果。
+/// 返回的 [`Running`] 用 [`Running::wait`] 等待结果（不会返回错误：所有失败都转成 TaskResult）。
+pub async fn start(
     venv: &SharedVenv,
     work_root: &Path,
     task: &AssignTask,
     entry: &str,
-) -> TaskResult {
+) -> Result<Running, TaskResult> {
     if !valid_task_id(&task.task_id) {
-        return failure(
+        return Err(failure(
             task,
             ErrorKind::ConfigError,
             format!("非法的任务 ID：{:?}", task.task_id),
-        );
+        ));
     }
     let inputs: Value = match serde_json::from_str(&task.inputs_json) {
         Ok(value @ Value::Object(_)) => value,
-        _ => return failure(task, ErrorKind::ConfigError, "任务输入不是 JSON 对象"),
+        _ => {
+            return Err(failure(
+                task,
+                ErrorKind::ConfigError,
+                "任务输入不是 JSON 对象",
+            ));
+        }
     };
     let dir = work_root.join(&task.task_id);
-    match prepare_dir(&dir, task, entry, inputs).await {
-        Ok(()) => {}
-        Err(error) => {
-            return failure(
-                task,
-                ErrorKind::EnvError,
-                format!("准备工作目录 {} 失败：{error}", dir.display()),
-            );
-        }
+    if let Err(error) = prepare_dir(&dir, task, entry, inputs).await {
+        return Err(failure(
+            task,
+            ErrorKind::EnvError,
+            format!("准备工作目录 {} 失败：{error}", dir.display()),
+        ));
     }
-    run_process(venv, &dir, task).await
+    spawn_process(venv, &dir, task)
 }
 
 async fn prepare_dir(
@@ -133,7 +137,14 @@ struct Paths {
     stderr: PathBuf,
 }
 
-async fn run_process(venv: &SharedVenv, dir: &Path, task: &AssignTask) -> TaskResult {
+/// 正在运行的执行器子进程。
+pub struct Running {
+    child: tokio::process::Child,
+    paths: Paths,
+    task: AssignTask,
+}
+
+fn spawn_process(venv: &SharedVenv, dir: &Path, task: &AssignTask) -> Result<Running, TaskResult> {
     let paths = Paths {
         output: dir.join("output.json"),
         stderr: dir.join("stderr.log"),
@@ -144,7 +155,11 @@ async fn run_process(venv: &SharedVenv, dir: &Path, task: &AssignTask) -> TaskRe
     ) {
         (Ok(out), Ok(err)) => (out, err),
         (Err(e), _) | (_, Err(e)) => {
-            return failure(task, ErrorKind::EnvError, format!("创建日志文件失败：{e}"));
+            return Err(failure(
+                task,
+                ErrorKind::EnvError,
+                format!("创建日志文件失败：{e}"),
+            ));
         }
     };
 
@@ -164,52 +179,63 @@ async fn run_process(venv: &SharedVenv, dir: &Path, task: &AssignTask) -> TaskRe
     #[cfg(unix)]
     command.process_group(0);
 
-    let status = match command.spawn() {
-        Ok(mut child) => child.wait().await,
-        Err(error) => {
-            return failure(
-                task,
-                ErrorKind::EnvError,
-                format!(
-                    "无法启动共享 venv 中的 Python（{}）：{error}",
-                    venv.python().display()
-                ),
-            );
-        }
-    };
-    let status = match status {
-        Ok(status) => status,
-        Err(error) => {
-            return failure(
+    match command.spawn() {
+        Ok(child) => Ok(Running {
+            child,
+            paths,
+            task: task.clone(),
+        }),
+        Err(error) => Err(failure(
+            task,
+            ErrorKind::EnvError,
+            format!(
+                "无法启动共享 venv 中的 Python（{}）：{error}",
+                venv.python().display()
+            ),
+        )),
+    }
+}
+
+impl Running {
+    /// 等待执行器退出并读取结果。
+    pub async fn wait(mut self) -> TaskResult {
+        let task = &self.task;
+        let paths = &self.paths;
+        let status = self.child.wait().await;
+        let status = match status {
+            Ok(status) => status,
+            Err(error) => {
+                return failure(
+                    task,
+                    ErrorKind::NodeError,
+                    format!("等待执行器失败：{error}"),
+                );
+            }
+        };
+
+        let output = tokio::fs::read(&paths.output)
+            .await
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Output>(&bytes).ok());
+        match output {
+            Some(Output::Success { outputs }) if status.success() => success(task, &outputs),
+            Some(Output::Failed { error }) => {
+                let message = if error.traceback.is_empty() {
+                    error.message
+                } else {
+                    format!("{}\n\n{}", error.message, error.traceback.trim_end())
+                };
+                failure(task, ErrorKind::NodeError, message)
+            }
+            _ => failure(
                 task,
                 ErrorKind::NodeError,
-                format!("等待执行器失败：{error}"),
-            );
-        }
-    };
-
-    let output = tokio::fs::read(&paths.output)
-        .await
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<Output>(&bytes).ok());
-    match output {
-        Some(Output::Success { outputs }) if status.success() => success(task, &outputs),
-        Some(Output::Failed { error }) => {
-            let message = if error.traceback.is_empty() {
-                error.message
-            } else {
-                format!("{}\n\n{}", error.message, error.traceback.trim_end())
-            };
-            failure(task, ErrorKind::NodeError, message)
-        }
-        _ => failure(
-            task,
-            ErrorKind::NodeError,
-            format!(
-                "执行器异常退出（{status}），没有写出结果\n\n{}",
-                stderr_tail(&paths.stderr).await
+                format!(
+                    "执行器异常退出（{status}），没有写出结果\n\n{}",
+                    stderr_tail(&paths.stderr).await
+                ),
             ),
-        ),
+        }
     }
 }
 

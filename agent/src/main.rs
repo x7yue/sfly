@@ -31,6 +31,9 @@ struct Args {
     /// 安装节点包依赖用的 PyPI 镜像地址。
     #[arg(long, env = "SFLY_INDEX_URL")]
     index_url: Option<String>,
+    /// uv 可执行文件（安装节点包用）。
+    #[arg(long, env = "SFLY_UV", default_value = "uv")]
+    uv: PathBuf,
 }
 
 #[tokio::main]
@@ -44,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
         venv: args.venv,
         work_dir: args.work_dir,
         index_url: args.index_url,
+        uv: args.uv,
     };
 
     tokio::select! {

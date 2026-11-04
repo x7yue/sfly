@@ -28,6 +28,15 @@ export interface AgentInfo {
 	 * 早于 #5 注册的记录没有这个字段，读取时按空列表处理。
 	 */
 	installed_packages?: InstalledPackage[];
+	/** 最近一次 InstallStatus 上报的安装状态（#6）；每次连接（Hello）时清空。 */
+	install?: InstallProgress;
+}
+
+export interface InstallProgress {
+	package: string;
+	version: string;
+	state: "installing" | "installed" | "failed";
+	task_id: string;
 }
 
 export interface InstalledPackage {

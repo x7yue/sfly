@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file sfly/agent/v1/agent.proto.
  */
 export const file_sfly_agent_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxImoKDEFnZW50TWVzc2FnZRIlCgVoZWxsbxgBIAEoCzIULnNmbHkuYWdlbnQudjEuSGVsbG9IABIrCgZyZXN1bHQYBiABKAsyGS5zZmx5LmFnZW50LnYxLlRhc2tSZXN1bHRIAEIGCgRib2R5IpIBCg1TZXJ2ZXJNZXNzYWdlEikKB3dlbGNvbWUYASABKAsyFi5zZmx5LmFnZW50LnYxLldlbGNvbWVIABIrCgZhc3NpZ24YAiABKAsyGS5zZmx5LmFnZW50LnYxLkFzc2lnblRhc2tIABIhCgNhY2sYBCABKAsyEi5zZmx5LmFnZW50LnYxLkFja0gAQgYKBGJvZHkioQEKBUhlbGxvEgwKBG5hbWUYASABKAkSDQoFdG9rZW4YAiABKAkSFQoNYWdlbnRfdmVyc2lvbhgDIAEoCRIKCgJvcxgEIAEoCRIMCgRhcmNoGAUgASgJEg0KBXNsb3RzGAYgASgNEjsKEmluc3RhbGxlZF9wYWNrYWdlcxgHIAMoCzIfLnNmbHkuYWdlbnQudjEuSW5zdGFsbGVkUGFja2FnZSIxChBJbnN0YWxsZWRQYWNrYWdlEgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCSIJCgdXZWxjb21lIrUBCgpBc3NpZ25UYXNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdwYWNrYWdlGAMgASgJEhcKD3BhY2thZ2VfdmVyc2lvbhgEIAEoCRIMCgRub2RlGAUgASgJEhMKC2lucHV0c19qc29uGAYgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgHIAEoDRIOCgZydW5faWQYCCABKAkSDwoHbm9kZV9pZBgJIAEoCSKYAQoKVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKQoGc3RhdHVzGAMgASgOMhkuc2ZseS5hZ2VudC52MS5UYXNrU3RhdHVzEhQKDG91dHB1dHNfanNvbhgEIAEoCRInCgVlcnJvchgFIAEoCzIYLnNmbHkuYWdlbnQudjEuVGFza0Vycm9yIkQKCVRhc2tFcnJvchImCgRraW5kGAEgASgOMhguc2ZseS5hZ2VudC52MS5FcnJvcktpbmQSDwoHbWVzc2FnZRgCIAEoCSInCgNBY2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNKloKClRhc2tTdGF0dXMSGwoXVEFTS19TVEFUVVNfVU5TUEVDSUZJRUQQABIXChNUQVNLX1NUQVRVU19TVUNDRVNTEAESFgoSVEFTS19TVEFUVVNfRkFJTEVEEAIqrAEKCUVycm9yS2luZBIaChZFUlJPUl9LSU5EX1VOU1BFQ0lGSUVEEAASGQoVRVJST1JfS0lORF9OT0RFX0VSUk9SEAESFgoSRVJST1JfS0lORF9USU1FT1VUEAISGQoVRVJST1JfS0lORF9BR0VOVF9MT1NUEAMSGAoURVJST1JfS0lORF9FTlZfRVJST1IQBBIbChdFUlJPUl9LSU5EX0NPTkZJR19FUlJPUhAFMlgKDEFnZW50R2F0ZXdheRJICgdTZXNzaW9uEhsuc2ZseS5hZ2VudC52MS5BZ2VudE1lc3NhZ2UaHC5zZmx5LmFnZW50LnYxLlNlcnZlck1lc3NhZ2UoATABYgZwcm90bzM");
+  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIpsBCgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAQgYKBGJvZHkikgEKDVNlcnZlck1lc3NhZ2USKQoHd2VsY29tZRgBIAEoCzIWLnNmbHkuYWdlbnQudjEuV2VsY29tZUgAEisKBmFzc2lnbhgCIAEoCzIZLnNmbHkuYWdlbnQudjEuQXNzaWduVGFza0gAEiEKA2FjaxgEIAEoCzISLnNmbHkuYWdlbnQudjEuQWNrSABCBgoEYm9keSKhAQoFSGVsbG8SDAoEbmFtZRgBIAEoCRINCgV0b2tlbhgCIAEoCRIVCg1hZ2VudF92ZXJzaW9uGAMgASgJEgoKAm9zGAQgASgJEgwKBGFyY2gYBSABKAkSDQoFc2xvdHMYBiABKA0SOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAcgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlIjEKEEluc3RhbGxlZFBhY2thZ2USDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIgkKB1dlbGNvbWUi4gEKCkFzc2lnblRhc2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB3BhY2thZ2UYAyABKAkSFwoPcGFja2FnZV92ZXJzaW9uGAQgASgJEgwKBG5vZGUYBSABKAkSEwoLaW5wdXRzX2pzb24YBiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAcgASgNEg4KBnJ1bl9pZBgIIAEoCRIPCgdub2RlX2lkGAkgASgJEhYKDnBhY2thZ2Vfc2hhMjU2GAogASgJEhMKC3BhY2thZ2VfdXJsGAsgASgJIrsBCg1JbnN0YWxsU3RhdHVzEg8KB3BhY2thZ2UYASABKAkSDwoHdmVyc2lvbhgCIAEoCRIqCgVzdGF0ZRgDIAEoDjIbLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXRlEg8KB3Rhc2tfaWQYBCABKAkSDgoGb3V0cHV0GAUgASgJEjsKEmluc3RhbGxlZF9wYWNrYWdlcxgGIAMoCzIfLnNmbHkuYWdlbnQudjEuSW5zdGFsbGVkUGFja2FnZSKYAQoKVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKQoGc3RhdHVzGAMgASgOMhkuc2ZseS5hZ2VudC52MS5UYXNrU3RhdHVzEhQKDG91dHB1dHNfanNvbhgEIAEoCRInCgVlcnJvchgFIAEoCzIYLnNmbHkuYWdlbnQudjEuVGFza0Vycm9yIkQKCVRhc2tFcnJvchImCgRraW5kGAEgASgOMhguc2ZseS5hZ2VudC52MS5FcnJvcktpbmQSDwoHbWVzc2FnZRgCIAEoCSInCgNBY2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNKoIBCgxJbnN0YWxsU3RhdGUSHQoZSU5TVEFMTF9TVEFURV9VTlNQRUNJRklFRBAAEhwKGElOU1RBTExfU1RBVEVfSU5TVEFMTElORxABEhsKF0lOU1RBTExfU1RBVEVfSU5TVEFMTEVEEAISGAoUSU5TVEFMTF9TVEFURV9GQUlMRUQQAypaCgpUYXNrU3RhdHVzEhsKF1RBU0tfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTVEFTS19TVEFUVVNfU1VDQ0VTUxABEhYKElRBU0tfU1RBVFVTX0ZBSUxFRBACKqwBCglFcnJvcktpbmQSGgoWRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUVSUk9SX0tJTkRfTk9ERV9FUlJPUhABEhYKEkVSUk9SX0tJTkRfVElNRU9VVBACEhkKFUVSUk9SX0tJTkRfQUdFTlRfTE9TVBADEhgKFEVSUk9SX0tJTkRfRU5WX0VSUk9SEAQSGwoXRVJST1JfS0lORF9DT05GSUdfRVJST1IQBTJYCgxBZ2VudEdhdGV3YXkSSAoHU2Vzc2lvbhIbLnNmbHkuYWdlbnQudjEuQWdlbnRNZXNzYWdlGhwuc2ZseS5hZ2VudC52MS5TZXJ2ZXJNZXNzYWdlKAEwAWIGcHJvdG8z");
 
 /**
  * Agent → 控制面。
@@ -33,6 +33,12 @@ export type AgentMessage = Message<"sfly.agent.v1.AgentMessage"> & {
      */
     value: TaskResult;
     case: "result";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.InstallStatus install = 7;
+     */
+    value: InstallStatus;
+    case: "install";
   } | { case: undefined; value?: undefined };
 };
 
@@ -246,6 +252,20 @@ export type AssignTask = Message<"sfly.agent.v1.AssignTask"> & {
    * @generated from field: string node_id = 9;
    */
   nodeId: string;
+
+  /**
+   * 节点包归档（.sflypkg）的 sha256（hex）；Agent 下载后据此校验。开发版本或控制面没有该版本时为空。
+   *
+   * @generated from field: string package_sha256 = 10;
+   */
+  packageSha256: string;
+
+  /**
+   * 节点包归档的 HTTP 下载地址；包版本没有安装在 Agent 上时，Agent 从这里下载并安装。
+   *
+   * @generated from field: string package_url = 11;
+   */
+  packageUrl: string;
 };
 
 /**
@@ -254,6 +274,60 @@ export type AssignTask = Message<"sfly.agent.v1.AssignTask"> & {
  */
 export const AssignTaskSchema: GenMessage<AssignTask> = /*@__PURE__*/
   messageDesc(file_sfly_agent_v1_agent, 5);
+
+/**
+ * Agent 安装或切换节点包的状态（安装期间 Agent 不启动新任务）。
+ *
+ * @generated from message sfly.agent.v1.InstallStatus
+ */
+export type InstallStatus = Message<"sfly.agent.v1.InstallStatus"> & {
+  /**
+   * 节点包名。
+   *
+   * @generated from field: string package = 1;
+   */
+  package: string;
+
+  /**
+   * 要安装的版本。
+   *
+   * @generated from field: string version = 2;
+   */
+  version: string;
+
+  /**
+   * @generated from field: sfly.agent.v1.InstallState state = 3;
+   */
+  state: InstallState;
+
+  /**
+   * 触发这次安装的任务。
+   *
+   * @generated from field: string task_id = 4;
+   */
+  taskId: string;
+
+  /**
+   * 完整的安装输出（uv 的标准输出和标准错误）；INSTALLING 时为空。
+   *
+   * @generated from field: string output = 5;
+   */
+  output: string;
+
+  /**
+   * 发送这条消息时共享 venv 中已安装的全部节点包。
+   *
+   * @generated from field: repeated sfly.agent.v1.InstalledPackage installed_packages = 6;
+   */
+  installedPackages: InstalledPackage[];
+};
+
+/**
+ * Describes the message sfly.agent.v1.InstallStatus.
+ * Use `create(InstallStatusSchema)` to create a new message.
+ */
+export const InstallStatusSchema: GenMessage<InstallStatus> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 6);
 
 /**
  * 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
@@ -296,7 +370,7 @@ export type TaskResult = Message<"sfly.agent.v1.TaskResult"> & {
  * Use `create(TaskResultSchema)` to create a new message.
  */
 export const TaskResultSchema: GenMessage<TaskResult> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 6);
+  messageDesc(file_sfly_agent_v1_agent, 7);
 
 /**
  * @generated from message sfly.agent.v1.TaskError
@@ -318,7 +392,7 @@ export type TaskError = Message<"sfly.agent.v1.TaskError"> & {
  * Use `create(TaskErrorSchema)` to create a new message.
  */
 export const TaskErrorSchema: GenMessage<TaskError> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 7);
+  messageDesc(file_sfly_agent_v1_agent, 8);
 
 /**
  * 控制面确认已处理 Agent 的某条上报（目前是 TaskResult，重复上报同样会收到 Ack）。
@@ -342,7 +416,44 @@ export type Ack = Message<"sfly.agent.v1.Ack"> & {
  * Use `create(AckSchema)` to create a new message.
  */
 export const AckSchema: GenMessage<Ack> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 8);
+  messageDesc(file_sfly_agent_v1_agent, 9);
+
+/**
+ * @generated from enum sfly.agent.v1.InstallState
+ */
+export enum InstallState {
+  /**
+   * @generated from enum value: INSTALL_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 开始下载并安装。
+   *
+   * @generated from enum value: INSTALL_STATE_INSTALLING = 1;
+   */
+  INSTALLING = 1,
+
+  /**
+   * 安装成功。
+   *
+   * @generated from enum value: INSTALL_STATE_INSTALLED = 2;
+   */
+  INSTALLED = 2,
+
+  /**
+   * 下载、校验或安装失败（包括依赖冲突）。
+   *
+   * @generated from enum value: INSTALL_STATE_FAILED = 3;
+   */
+  FAILED = 3,
+}
+
+/**
+ * Describes the enum sfly.agent.v1.InstallState.
+ */
+export const InstallStateSchema: GenEnum<InstallState> = /*@__PURE__*/
+  enumDesc(file_sfly_agent_v1_agent, 0);
 
 /**
  * @generated from enum sfly.agent.v1.TaskStatus
@@ -368,7 +479,7 @@ export enum TaskStatus {
  * Describes the enum sfly.agent.v1.TaskStatus.
  */
 export const TaskStatusSchema: GenEnum<TaskStatus> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 0);
+  enumDesc(file_sfly_agent_v1_agent, 1);
 
 /**
  * 失败类型（docs/SEMANTICS.md §3.3）。
@@ -411,7 +522,7 @@ export enum ErrorKind {
  * Describes the enum sfly.agent.v1.ErrorKind.
  */
 export const ErrorKindSchema: GenEnum<ErrorKind> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 1);
+  enumDesc(file_sfly_agent_v1_agent, 2);
 
 /**
  * Agent 网关：Agent 主动发起一条 gRPC 双向流，控制面在同一条流上推送指令（ADR 0003）。

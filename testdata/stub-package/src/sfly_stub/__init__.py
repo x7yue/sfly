@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from importlib import metadata
 from typing import Any
 
 from sfly import Context, node
@@ -36,3 +37,10 @@ def probe(ctx: Context) -> dict[str, Any]:
         "cwd": os.getcwd(),
         "env": {name: os.environ.get(name) for name in names},
     }
+
+
+@node(title="版本", outputs=["package", "version"])
+def about(ctx: Context) -> dict[str, Any]:
+    """报告当前生效的节点包名与版本（安装与版本切换测试用；同一份源码可换包名和版本构建）。"""
+    dist = metadata.distribution(__name__)
+    return {"package": dist.metadata["Name"], "version": dist.version}
