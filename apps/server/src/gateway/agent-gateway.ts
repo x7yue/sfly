@@ -66,6 +66,10 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 					os: hello.os,
 					arch: hello.arch,
 					slots: hello.slots > 0 ? hello.slots : DEFAULT_SLOTS,
+					installed_packages: hello.installedPackages.map((p) => ({
+						name: p.name,
+						version: p.version,
+					})),
 				},
 				outbox,
 			);

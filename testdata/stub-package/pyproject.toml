@@ -1,0 +1,5 @@
+# 通用桩节点包：Agent（切入点 B）与全栈冒烟测试用。用 `sfly build testdata/stub-package` 构建。
+[project]
+name = "sfly-stub"
+version = "0.1.0"
+dependencies = []

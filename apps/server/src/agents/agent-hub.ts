@@ -95,7 +95,8 @@ export class AgentHub {
 		return rows.map((row) => ({
 			name: row.name,
 			status: row.status,
-			info: row.info,
+			// 早于 #5 注册的记录没有 installed_packages。
+			info: { ...row.info, installed_packages: row.info.installed_packages ?? [] },
 			last_seen_at: row.lastSeenAt.toISOString(),
 		}));
 	}

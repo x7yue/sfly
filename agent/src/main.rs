@@ -1,9 +1,12 @@
+use std::path::PathBuf;
+
 use clap::Parser;
-use sfly_agent::{Config, connect};
+use sfly_agent::{Config, DEFAULT_SLOTS, run};
 
 /// sfly Agent。
 ///
-/// 标准输出每行一个 JSON 事件（例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
+/// 标准输出每行一个 JSON 事件（例如每次连上控制面时的 `{"event":"welcome","name":"..."}`），
+/// 日志写到标准错误。
 #[derive(Debug, Parser)]
 #[command(version)]
 struct Args {
@@ -16,6 +19,18 @@ struct Args {
     /// 共享注册令牌。
     #[arg(long, env = "SFLY_TOKEN")]
     token: Option<String>,
+    /// 并发槽位数：同时执行的任务上限。
+    #[arg(long, env = "SFLY_SLOTS", default_value_t = DEFAULT_SLOTS, value_parser = clap::value_parser!(u32).range(1..))]
+    slots: u32,
+    /// 共享 venv 路径（节点包和 SDK 运行时都装在这里，与 Agent 自身隔离）。
+    #[arg(long, env = "SFLY_VENV", default_value = "venv")]
+    venv: PathBuf,
+    /// 任务工作目录的根目录（每个任务一个子目录）。
+    #[arg(long, env = "SFLY_WORK_DIR", default_value = "work")]
+    work_dir: PathBuf,
+    /// 安装节点包依赖用的 PyPI 镜像地址。
+    #[arg(long, env = "SFLY_INDEX_URL")]
+    index_url: Option<String>,
 }
 
 #[tokio::main]
@@ -25,24 +40,14 @@ async fn main() -> anyhow::Result<()> {
         server: args.server,
         name: args.name,
         token: args.token,
+        slots: args.slots,
+        venv: args.venv,
+        work_dir: args.work_dir,
+        index_url: args.index_url,
     };
 
-    let mut connection = connect(&config).await?;
-    println!(
-        "{}",
-        serde_json::json!({ "event": "welcome", "name": config.name })
-    );
-
-    loop {
-        tokio::select! {
-            message = connection.inbound.message() => match message? {
-                Some(message) => eprintln!("received: {message:?}"),
-                None => {
-                    eprintln!("control plane closed the stream");
-                    return Ok(());
-                }
-            },
-            _ = tokio::signal::ctrl_c() => return Ok(()),
-        }
+    tokio::select! {
+        result = run(config) => result,
+        _ = tokio::signal::ctrl_c() => Ok(()),
     }
 }

@@ -6,7 +6,14 @@ import json
 import subprocess
 import sys
 
-RUNTIME_MODULES = ["sfly", "sfly.context", "sfly.nodes", "sfly.schemas"]
+RUNTIME_MODULES = [
+    "sfly",
+    "sfly.context",
+    "sfly.installed",
+    "sfly.nodes",
+    "sfly.runner",
+    "sfly.schemas",
+]
 
 PROBE = """
 import json, sys

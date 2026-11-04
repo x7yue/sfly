@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, TypeVar, overload
+
+from sfly.context import Context
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -58,3 +61,10 @@ def node(
     if fn is not None:
         return decorate(fn)
     return decorate
+
+
+def is_context_param(param: inspect.Parameter, hint: Any) -> bool:
+    """节点函数的首个参数是否为任务上下文：注解为 `Context`，或名为 `ctx` 且没有注解。"""
+    if hint is Context:
+        return True
+    return param.name == "ctx" and param.annotation is inspect.Parameter.empty
