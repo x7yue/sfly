@@ -4,7 +4,9 @@ import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
+import type { PackageRepository } from "../packages/package-repository.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
+import { registerPackageRoutes } from "./packages-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 
 export interface HttpApiDeps {
@@ -14,6 +16,7 @@ export interface HttpApiDeps {
 	hub: AgentHub;
 	orchestrations: OrchestrationStore;
 	engine: Engine;
+	packages: PackageRepository;
 }
 
 /** HTTP API（Fastify，HTTP/1.1）。路由按模块注册在这里。 */
@@ -24,6 +27,7 @@ export function buildHttpApi({
 	hub,
 	orchestrations,
 	engine,
+	packages,
 }: HttpApiDeps): FastifyInstance {
 	const app = Fastify({ logger });
 
@@ -39,6 +43,7 @@ export function buildHttpApi({
 	app.get("/agents", async () => ({ agents: await hub.list() }));
 	registerOrchestrationRoutes(app, { orchestrations });
 	registerRunRoutes(app, { db: database.db, engine });
+	registerPackageRoutes(app, packages);
 
 	return app;
 }

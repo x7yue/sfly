@@ -26,4 +26,6 @@ Thumbs.db
 *.log
 logs/
 tmp/
+# 控制面默认数据目录（SFLY_DATA_DIR）
+data/
 .cache/

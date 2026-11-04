@@ -52,6 +52,8 @@ def test_valid_package_metadata_passes() -> None:
         {"name": "Demo Checks"},
         {"nodes": []},
         {"version": ""},
+        {"version": "dev"},
+        {"version": "../1.0"},
         {"unexpected": True},
     ],
 )

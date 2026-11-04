@@ -18,6 +18,7 @@ dev = [
     { name = "mypy", specifier = ">=1.15" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "ruff", specifier = ">=0.11" },
+    { name = "tomli", specifier = ">=2" },
     { name = "types-jsonschema", specifier = ">=4.23" },
 ]
 
@@ -724,10 +725,14 @@ source = { editable = "sdk/python" }
 [package.optional-dependencies]
 cli = [
     { name = "jsonschema" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "jsonschema", marker = "extra == 'cli'", specifier = ">=4.23" }]
+requires-dist = [
+    { name = "jsonschema", marker = "extra == 'cli'", specifier = ">=4.23" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'cli'", specifier = ">=2" },
+]
 provides-extras = ["cli"]
 
 [[package]]

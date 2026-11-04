@@ -6,6 +6,7 @@ import { Engine } from "./engine/engine.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
+import { createPackageRepository } from "./packages/package-repository.js";
 import { Mutex } from "./util/mutex.js";
 
 export interface ListenOptions {
@@ -16,6 +17,8 @@ export interface ListenOptions {
 
 export interface ControlPlaneOptions {
 	databaseUrl: string;
+	/** 数据目录：节点包文件等存放在这里。 */
+	dataDir: string;
 	clock?: Clock;
 	http?: ListenOptions;
 	grpc?: ListenOptions;
@@ -50,7 +53,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	await hub.markAllOffline();
 	const orchestrations = new OrchestrationStore({ db: database.db, clock });
 	const engine = new Engine({ db: database.db, clock, mutex, hub });
-	const api = buildHttpApi({ database, clock, logger, hub, orchestrations, engine });
+	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
+	const api = buildHttpApi({ database, clock, logger, hub, orchestrations, engine, packages });
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
 	const httpPort = (api.server.address() as AddressInfo).port;

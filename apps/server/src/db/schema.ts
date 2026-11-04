@@ -1,12 +1,14 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
 import {
+	bigint,
 	bigserial,
 	index,
 	integer,
 	jsonb,
 	pgTable,
+	primaryKey,
 	text,
 	timestamp,
 	unique,
@@ -137,4 +139,20 @@ export const tasks = pgTable(
 		index("tasks_agent_status").on(t.agentName, t.status),
 		index("tasks_chain_instance").on(t.chainInstanceId),
 	],
+);
+
+/** 已发布的节点包版本；`包名@版本` 唯一，发布后不可变。 */
+export const nodePackages = pgTable(
+	"node_packages",
+	{
+		name: text("name").notNull(),
+		version: text("version").notNull(),
+		metadata: jsonb("metadata").$type<PackageMetadata>().notNull(),
+		/** 相对控制面数据目录的路径。 */
+		filePath: text("file_path").notNull(),
+		sha256: text("sha256").notNull(),
+		size: bigint("size", { mode: "number" }).notNull(),
+		publishedAt: timestamptz("published_at").notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.name, t.version] })],
 );

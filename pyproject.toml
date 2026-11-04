@@ -8,6 +8,8 @@ dev = [
     "mypy>=1.15",
     "pytest>=8.3",
     "ruff>=0.11",
+    # sfly.cli.build 在 Python 3.10 上用 tomli；mypy 以 3.10 为目标检查时需要它的类型。
+    "tomli>=2",
     "types-jsonschema>=4.23",
 ]
 
