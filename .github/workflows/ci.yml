@@ -2,8 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, "spec/**"]
+    branches: [main, "spec/**", "impl/**"]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -62,6 +63,7 @@ jobs:
         run: pnpm proto:breaking
         env:
           PROTO_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+      # 含验收场景 S1–S3（apps/server/test/acceptance-s*.test.ts，真实控制面 + Agent + SDK）。
       - name: Test
         run: pnpm test
       - name: Build
