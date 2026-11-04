@@ -2,7 +2,12 @@
 
 - `ctx.log`：带级别的结构化日志，`ctx.log.info("checking %s", url)`，
   也可以 `ctx.log("...", level="warn")`；
-- `ctx.progress(当前值, 总数, 说明)`：上报进度，总数未知时省略。
+- `ctx.progress(当前值, 总数, 说明)`：上报进度，总数未知时省略；
+- `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）。
+
+取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
+（`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
+宽限期（默认 10 秒）过后整棵进程树被强制杀掉。在后台线程里可以轮询 `ctx.cancelled()`。
 
 两者都追加写入本地协议的事件文件 `SFLY_EVENTS`（JSONL，每行一个事件，Agent 持续读取新增内容）：
 
@@ -12,7 +17,7 @@
 
 `print` 和子进程的输出不经过这里：Agent 直接读取执行器的标准输出 / 标准错误，
 与事件文件合并成同一条日志流。
-产物、取消检查由后续票据实现。
+产物由后续票据实现。
 """
 
 from __future__ import annotations
@@ -28,6 +33,10 @@ from typing import Any
 LEVELS = ("debug", "info", "warn", "error")
 
 _FROM_ENV: Any = object()
+
+
+class Cancelled(BaseException):
+    """任务被取消（或超时）时，执行器收到 SIGTERM 后在节点代码里抛出。"""
 
 
 class _EventWriter:
@@ -92,13 +101,25 @@ class Context:
     """节点执行时由执行器传入的任务上下文。
 
     `events_path` 默认取环境变量 `SFLY_EVENTS`；为 None（或环境变量未设置）时日志和进度被丢弃。
+    `cancel_path` 默认取 `SFLY_CANCEL`；为 None 时 `cancelled()` 总是 False。
     """
 
-    def __init__(self, events_path: str | os.PathLike[str] | None = _FROM_ENV) -> None:
+    def __init__(
+        self,
+        events_path: str | os.PathLike[str] | None = _FROM_ENV,
+        cancel_path: str | os.PathLike[str] | None = _FROM_ENV,
+    ) -> None:
         if events_path is _FROM_ENV:
             events_path = os.environ.get("SFLY_EVENTS")
+        if cancel_path is _FROM_ENV:
+            cancel_path = os.environ.get("SFLY_CANCEL")
         self._events = _EventWriter(events_path)
+        self._cancel = cancel_path
         self.log = Log(self._events)
+
+    def cancelled(self) -> bool:
+        """任务是否已被取消（Agent 已写入取消标记）。"""
+        return self._cancel is not None and os.path.exists(self._cancel)
 
     def progress(self, current: float, total: float | None = None, message: str = "") -> None:
         """上报进度：当前值、总数（未知时省略）和说明。Agent 端合并，每秒最多上报一次。"""

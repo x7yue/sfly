@@ -134,3 +134,13 @@
 .sf-required {
 	color: var(--sf-danger-text);
 }
+
+/* 取消运行（#12）：危险操作用状态红，不用白色主按钮 */
+.sf-btn--danger {
+	color: var(--sf-danger-text);
+	background: var(--sf-danger-soft);
+	border: 1px solid rgb(239 83 80 / 0.35);
+}
+.sf-btn--danger:hover {
+	background: rgb(239 83 80 / 0.2);
+}

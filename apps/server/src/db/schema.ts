@@ -90,13 +90,14 @@ export const orchestrationVersions = pgTable(
 	(t) => [unique("orchestration_versions_number").on(t.orchestrationId, t.number)],
 );
 
-export type RunStatus = "running" | "success" | "failed";
+export type RunStatus = "running" | "success" | "failed" | "cancelled";
 export type ChainStatus = RunStatus;
 /**
  * 任务状态（docs/SEMANTICS.md §3.1）。skipped（#11）：前面的节点失败、本节点不是 always，
  * 记一行 attempt 1 的占位（没有派发，不算一次尝试）。
+ * cancelled（#12）：运行被取消；没有开始执行（started_at 为空）的行是占位，不算一次尝试。
  */
-export type TaskStatus = "queued" | "running" | "success" | "failed" | "skipped";
+export type TaskStatus = "queued" | "running" | "success" | "failed" | "skipped" | "cancelled";
 /** 任务的最新进度（ctx.progress）。 */
 export interface TaskProgress {
 	current: number;
@@ -125,6 +126,11 @@ export const runs = pgTable(
 		status: text("status").$type<RunStatus>().notNull(),
 		startedAt: timestamptz("started_at").notNull(),
 		endedAt: timestamptz("ended_at"),
+		/** 第一次取消（#12）的时间和昵称；之后运行在所有链结束时标记为 cancelled。 */
+		cancelRequestedAt: timestamptz("cancel_requested_at"),
+		cancelRequestedBy: text("cancel_requested_by"),
+		/** 清理期间再次取消（强制取消）的时间：always 节点也立即终止。 */
+		cancelForcedAt: timestamptz("cancel_forced_at"),
 	},
 	(t) => [index("runs_orchestration").on(t.orchestrationId)],
 );

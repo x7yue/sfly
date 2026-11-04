@@ -174,6 +174,58 @@ describe("全栈冒烟：两个节点的链", () => {
 		expect(cleanup.status).toBe("success");
 		expect(cleanup.outputs).toEqual({ text: "slept=null" });
 	}, 60_000);
+
+	it("取消运行：正在运行的节点感知到 ctx.cancelled() 并被终止，普通节点 cancelled，always 节点照常执行", async () => {
+		const api = new ApiClient(cp);
+		const dir = await mkdtemp(join(tmpdir(), "sfly-cancel-"));
+		const ready = join(dir, "ready");
+		const report = join(dir, "report");
+		const id = await api.orchestrationWith({
+			default_agent: "smoke-agent",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{
+					id: "wait",
+					kind: "package",
+					package: "sfly-stub",
+					node: "wait_cancel",
+					inputs: { ready_file: ready, report_file: report },
+				},
+				{ id: "next", kind: "package", package: "sfly-stub", node: "echo", inputs: { text: "x" } },
+				{
+					id: "cleanup",
+					kind: "package",
+					package: "sfly-stub",
+					node: "echo",
+					always: true,
+					inputs: { text: "cleaned" },
+				},
+			],
+			edges: [
+				{ from: "entry", to: "wait", kind: "chain" },
+				{ from: "wait", to: "next", kind: "chain" },
+				{ from: "next", to: "cleanup", kind: "chain" },
+			],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+		try {
+			const runId = await api.triggerOk(id);
+			await eventually(async () => expect(await readFile(ready, "utf8")).not.toBe(""), 30_000);
+			await api.cancelOk(runId);
+
+			await eventually(async () => expect((await api.run(runId)).status).toBe("cancelled"), 30_000);
+			expect(await readFile(report, "utf8")).toBe("cancelled");
+			const wait = await api.node(runId, "wait");
+			expect(wait.status).toBe("cancelled");
+			expect(wait.attempts).toHaveLength(1);
+			expect((await api.node(runId, "next")).status).toBe("cancelled");
+			const cleanup = await api.node(runId, "cleanup");
+			expect(cleanup.status).toBe("success");
+			expect(cleanup.outputs).toEqual({ text: "cleaned" });
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	}, 60_000);
 });
 
 describe("全栈冒烟：Agent 从控制面下载并安装节点包", () => {
