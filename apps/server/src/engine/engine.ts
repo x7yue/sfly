@@ -32,7 +32,7 @@ import { hasFinalFailure, isAlways, shouldRetry } from "./failures.js";
 import { chainInstanceId, taskId } from "./ids.js";
 import { fillParams } from "./params.js";
 import { InvalidReferenceError, resolveInputs } from "./references.js";
-import { earlierOutputs, isWaitNode, planWait, type WaitNode, waitOutputs } from "./waits.js";
+import { isWaitNode, planWait, type WaitNode, waitOutputs } from "./waits.js";
 
 /** 包节点默认超时：1 小时（docs/SEMANTICS.md §3.3）。 */
 export const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
@@ -556,7 +556,7 @@ export class Engine implements AgentSessionHandler {
 		return true;
 	}
 
-	/** 本链上第 index 个节点之前、已成功的节点的输出。 */
+	/** 本链上第 index 个节点之前、已成功的节点的输出（包节点派发、异步任务节点、等待节点共用）。 */
 	async #earlierOutputs(
 		tx: Tx,
 		chain: ChainRow,
@@ -840,7 +840,7 @@ export class Engine implements AgentSessionHandler {
 		node: WaitNode,
 	): Promise<boolean> {
 		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
-		const outputs = await earlierOutputs(step.tx, chain.id, earlierIds);
+		const outputs = await this.#earlierOutputs(step.tx, chain, plan, index);
 		const missingAsNull = isAlways(node);
 		if (missingAsNull) for (const id of earlierIds) if (!outputs.has(id)) outputs.set(id, {});
 		const wait = planWait(

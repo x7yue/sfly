@@ -1,8 +1,5 @@
 import { parseDuration, timerTarget } from "@sfly/orchestration";
 import type { OrchestrationNode } from "@sfly/schema";
-import { and, eq, inArray } from "drizzle-orm";
-import type { Db } from "../db/database.js";
-import { tasks } from "../db/schema.js";
 import { InvalidReferenceError, type ReferenceScope, resolveInputs } from "./references.js";
 
 /**
@@ -14,8 +11,6 @@ import { InvalidReferenceError, type ReferenceScope, resolveInputs } from "./ref
  */
 
 export type WaitNode = Extract<OrchestrationNode, { kind: "timer" | "sleep" }>;
-
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 export const isWaitNode = (node: OrchestrationNode): node is WaitNode =>
 	node.kind === "timer" || node.kind === "sleep";
@@ -65,24 +60,4 @@ export function planWait(node: WaitNode, scope: ReferenceScope, now: Date): Wait
 export function waitOutputs(node: WaitNode, at: Date, late = false): Record<string, unknown> {
 	const triggered_at = at.toISOString();
 	return node.kind === "timer" ? { triggered_at, late } : { triggered_at };
-}
-
-/** 本链上已成功的前面节点的输出（Sleep 时长可以引用它们）。 */
-export async function earlierOutputs(
-	tx: Tx,
-	chainInstanceId: string,
-	nodeIds: string[],
-): Promise<Map<string, Record<string, unknown>>> {
-	if (nodeIds.length === 0) return new Map();
-	const done = await tx
-		.select({ nodeId: tasks.nodeId, outputs: tasks.outputs })
-		.from(tasks)
-		.where(
-			and(
-				eq(tasks.chainInstanceId, chainInstanceId),
-				inArray(tasks.nodeId, nodeIds),
-				eq(tasks.status, "success"),
-			),
-		);
-	return new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
 }
