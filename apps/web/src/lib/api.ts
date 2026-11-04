@@ -104,8 +104,7 @@ export const createOrchestration = (name: string) =>
 	apiPost<Orchestration>("/orchestrations", { name });
 export const copyOrchestration = (id: string, name: string) =>
 	apiPost<Orchestration>(`/orchestrations/${id}/copy`, { name });
-export const saveVersion = (id: string, document: OrchestrationDocument) =>
-	apiPost<SavedVersion>(`/orchestrations/${id}/versions`, { document });
+// 保存版本、版本历史与恢复见 src/versions/api.ts（保存必须带 base_version，#16）。
 
 // —— Agent ——
 
