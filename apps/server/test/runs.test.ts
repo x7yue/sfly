@@ -4,9 +4,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent, type HelloInit } from "./support/fake-agent.js";
+import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 type Doc = Record<string, unknown>;
+
+/** 测试用节点包 stub@1.0.0 的节点类型和它们声明的输出键（触发前的预检要求引用的输出键已声明）。 */
+const STUB_OUTPUTS = ["n", "v", "port", "config", "tags", "ok", "obj", "token", "missing"];
+const STUB_NODES = Object.fromEntries(
+	["echo", "first", "second", "third"].map((node) => [node, STUB_OUTPUTS]),
+);
 
 /** 入口节点 + 若干包节点串成的单链。 */
 function chain(
@@ -34,10 +41,13 @@ describe("单链运行", () => {
 		agents.push(agent);
 		return agent;
 	};
+	/** 让 Agent 注册过但不在线（触发前的预检只要求 Agent 已注册）。 */
+	const registerOffline = async (name: string) => (await connect({ name })).disconnect();
 
 	beforeEach(async () => {
 		cp = await startTestControlPlane();
 		api = new ApiClient(cp);
+		await publishPackage(cp, "stub", "1.0.0", STUB_NODES);
 	});
 	afterEach(async () => {
 		await Promise.all(agents.splice(0).map((a) => a.disconnect()));
@@ -46,6 +56,7 @@ describe("单链运行", () => {
 
 	describe("触发", () => {
 		it("手动触发创建运行，绑定到最新的编排版本并记录触发人", async () => {
+			await registerOffline("agent-a");
 			const id = await api.orchestrationWith(chain([{ id: "a", inputs: { v: 1 } }]));
 			await api.saveVersion(id, chain([{ id: "a", inputs: { v: 2 } }]));
 
@@ -68,6 +79,7 @@ describe("单链运行", () => {
 		});
 
 		it("入口参数先按默认值填充，再用触发时传入的值覆盖", async () => {
+			await registerOffline("agent-a");
 			const id = await api.orchestrationWith(
 				chain(
 					[
@@ -105,6 +117,7 @@ describe("单链运行", () => {
 		});
 
 		it("缺少必填参数时拒绝触发，不创建运行", async () => {
+			await registerOffline("agent-a");
 			const id = await api.orchestrationWith(
 				chain([{ id: "a" }], {
 					params: [
@@ -124,6 +137,7 @@ describe("单链运行", () => {
 		});
 
 		it("参数类型不符或参数未声明时拒绝触发", async () => {
+			await registerOffline("agent-a");
 			const id = await api.orchestrationWith(
 				chain([{ id: "a" }], { params: [{ name: "n", type: "number" }] }),
 			);
@@ -230,6 +244,7 @@ describe("单链运行", () => {
 		});
 
 		it("目标 Agent 不在线时任务排队，Agent 上线后再派发", async () => {
+			await registerOffline("agent-a");
 			const id = await api.orchestrationWith(chain([{ id: "a" }]));
 			const runId = await api.triggerOk(id);
 			expect((await api.node(runId, "a")).status).toBe("queued");
@@ -317,12 +332,26 @@ describe("单链运行", () => {
 		});
 
 		it.each([
+			["引用了本链后面的节点", { v: "${{ nodes.c.outputs.v }}" }, "reference_not_earlier"],
+			["引用了不存在的节点", { v: "${{ nodes.zzz.outputs.v }}" }, "reference_unknown_node"],
+			["引用了未声明的参数", { v: "${{ params.nope }}" }, "reference_unknown_param"],
+			["引用写法不合法", { v: "${{ env.HOME }}" }, "reference_invalid"],
+			["引用了未声明的输出键", { v: "${{ nodes.a.outputs.nope }}" }, "reference_unknown_output"],
+		])("%s时拒绝触发（静态检查）", async (_name, inputs, code) => {
+			await registerOffline("agent-a");
+			const id = await api.orchestrationWith(
+				chain([{ id: "a" }, { id: "b", inputs }, { id: "c" }]),
+			);
+			const res = await api.trigger(id);
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as { error: { code: string; details: unknown } };
+			expect(body.error.code).toBe("invalid_orchestration");
+			expect(body.error.details).toEqual([expect.objectContaining({ code, node_id: "b" })]);
+		});
+
+		it.each([
 			["内嵌引用了非标量", { url: "x-${{ nodes.a.outputs.obj }}" }, "scalar"],
-			["引用了本链后面的节点", { v: "${{ nodes.c.outputs.v }}" }, "nodes.c"],
-			["引用了不存在的节点", { v: "${{ nodes.zzz.outputs.v }}" }, "nodes.zzz"],
 			["引用的输出键在运行时缺失", { v: "${{ nodes.a.outputs.missing }}" }, "missing"],
-			["引用了未声明的参数", { v: "${{ params.nope }}" }, "params.nope"],
-			["引用写法不合法", { v: "${{ env.HOME }}" }, "env.HOME"],
 		])("%s时任务以 config_error 失败，不派发", async (_name, inputs, mention) => {
 			const agent = await connect({ name: "agent-a" });
 			const id = await api.orchestrationWith(
@@ -361,6 +390,7 @@ describe("单链运行", () => {
 		});
 
 		it("排队的任务按触发顺序派发", async () => {
+			await registerOffline("agent-a");
 			const id = await api.orchestrationWith(chain([{ id: "a" }]));
 			const runs = [await api.triggerOk(id), await api.triggerOk(id), await api.triggerOk(id)];
 			const agent = await connect({ name: "agent-a", slots: 1 });

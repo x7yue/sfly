@@ -3,6 +3,7 @@
 @import "./canvas/tokens.css";
 @import "./canvas/canvas.css";
 @import "./versions/versions.css";
+@import "./runs/runs.css";
 
 * {
 	box-sizing: border-box;

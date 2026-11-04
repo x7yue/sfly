@@ -24,6 +24,8 @@ import {
 	tasks,
 } from "../db/schema.js";
 import type { AgentSessionHandler } from "../gateway/agent-gateway.js";
+import type { Preflight } from "../runs/preflight.js";
+import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { agentFor, type ChainPlan, planMainChain } from "./chain.js";
 import { chainInstanceId, taskId } from "./ids.js";
@@ -40,7 +42,7 @@ type TaskRow = typeof tasks.$inferSelect;
 
 export type TriggerOutcome =
 	| { ok: true; runId: string }
-	| { ok: false; status: 400 | 404; code: string; message: string; details?: string[] };
+	| { ok: false; status: 400 | 404; code: string; message: string; details?: unknown };
 
 const ERROR_KINDS: Record<ProtoErrorKind, ErrorKind> = {
 	[ProtoErrorKind.UNSPECIFIED]: "node_error",
@@ -62,6 +64,8 @@ interface Step {
 	tx: Tx;
 	now: Date;
 	touchedAgents: Set<string>;
+	/** 状态有变化的运行；提交后通知订阅者（SSE）。 */
+	touchedRuns: Set<string>;
 }
 
 /**
@@ -82,8 +86,13 @@ export class Engine implements AgentSessionHandler {
 			hub: AgentHub;
 			/** 节点包归档的下载地址（Agent 通过 HTTP 下载）。 */
 			packageArchiveUrl: (name: string, version: string) => string;
+			/** 触发前的预检（src/runs/preflight.ts）。 */
+			preflight: Preflight;
 		},
 	) {}
+
+	/** 运行状态变化的通知（主题 = 运行 ID），在状态变更的事务提交之后发布。 */
+	readonly runChanges = new Topics<string>();
 
 	/** 手动触发编排的最新版本。 */
 	trigger(
@@ -116,14 +125,19 @@ export class Engine implements AgentSessionHandler {
 					message: "orchestration has no saved version",
 				};
 			}
+			const problems = await this.deps.preflight(version.document);
 			const plan = planMainChain(version.document);
-			if ("errors" in plan) {
+			if (problems.length > 0 || "errors" in plan) {
+				const details =
+					problems.length > 0 || !("errors" in plan)
+						? problems
+						: plan.errors.map((message) => ({ code: "not_supported", message }));
 				return {
 					ok: false,
 					status: 400,
 					code: "invalid_orchestration",
-					message: plan.errors.join("; "),
-					details: plan.errors,
+					message: details.map((p) => p.message).join("; "),
+					details,
 				};
 			}
 			const filled = fillParams(plan.entry.params, provided);
@@ -198,12 +212,18 @@ export class Engine implements AgentSessionHandler {
 	#event<T>(handle: (step: Step) => Promise<T>): Promise<T> {
 		return this.deps.mutex.run(async () => {
 			const touchedAgents = new Set<string>();
+			const touchedRuns = new Set<string>();
 			const result = await this.deps.db.transaction((tx) =>
-				handle({ tx, now: this.deps.clock.now(), touchedAgents }),
+				handle({ tx, now: this.deps.clock.now(), touchedAgents, touchedRuns }),
 			);
+			this.#publish(touchedRuns);
 			for (const agent of touchedAgents) await this.#dispatch(agent);
 			return result;
 		});
+	}
+
+	#publish(runIds: Iterable<string>): void {
+		for (const runId of runIds) this.runChanges.publish(runId, runId);
 	}
 
 	async #document(tx: Tx, versionId: string): Promise<OrchestrationDocument> {
@@ -234,6 +254,7 @@ export class Engine implements AgentSessionHandler {
 	async #advance(step: Step, run: RunRow, chain: ChainRow, index: number): Promise<void> {
 		const plan = await this.#plan(step.tx, run, chain);
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
+		step.touchedRuns.add(run.id);
 		for (let i = index; i < plan.nodes.length; i++) {
 			const node = plan.nodes[i];
 			if (!node) break;
@@ -269,6 +290,7 @@ export class Engine implements AgentSessionHandler {
 		chain: ChainRow,
 		status: "success" | "failed",
 	): Promise<void> {
+		step.touchedRuns.add(run.id);
 		await step.tx
 			.update(chainInstances)
 			.set({ status, endedAt: step.now })
@@ -355,8 +377,14 @@ export class Engine implements AgentSessionHandler {
 	async #dispatch(agentName: string): Promise<void> {
 		const conn = this.deps.hub.connection(agentName);
 		if (!conn) return;
+		const touchedRuns = new Set<string>();
 		const assigns = await this.deps.db.transaction(async (tx) => {
-			const step: Step = { tx, now: this.deps.clock.now(), touchedAgents: new Set() };
+			const step: Step = {
+				tx,
+				now: this.deps.clock.now(),
+				touchedAgents: new Set(),
+				touchedRuns,
+			};
 			const [running] = await tx
 				.select({ n: count() })
 				.from(tasks)
@@ -379,6 +407,7 @@ export class Engine implements AgentSessionHandler {
 			}
 			return out;
 		});
+		this.#publish(touchedRuns);
 		for (const assign of assigns) conn.send(assign);
 	}
 
@@ -419,6 +448,7 @@ export class Engine implements AgentSessionHandler {
 			.update(tasks)
 			.set({ status: "running", inputs, startedAt: step.now })
 			.where(eq(tasks.id, task.id));
+		step.touchedRuns.add(run.id);
 		const packageVersion = document.packages[node.package] ?? "";
 		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
 		const [archive] = await step.tx

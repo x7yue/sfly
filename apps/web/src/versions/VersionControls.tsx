@@ -77,7 +77,8 @@ export function VersionControls({
 				type="button"
 				onClick={() => save.mutate(doc)}
 				disabled={save.isPending || (!dirty && base.version > 0)}
-				className="sf-btn sf-btn--primary"
+				// 白色是唯一主操作：有未保存的修改时是保存，否则是触发运行（#9）。
+				className={`sf-btn ${dirty || base.version === 0 ? "sf-btn--primary" : "sf-btn--ghost"}`}
 			>
 				{save.isPending ? "保存中…" : "保存"}
 			</button>

@@ -198,7 +198,8 @@
 	font-family: var(--sf-sans);
 	transition:
 		border-color 0.15s,
-		box-shadow 0.2s var(--sf-ease);
+		box-shadow 0.2s var(--sf-ease),
+		opacity 0.2s;
 }
 .sf-node:hover {
 	border-color: var(--sf-border-strong);
@@ -744,7 +745,69 @@ select.sf-inp option {
 	background: var(--sf-raised-2);
 }
 
+/*
+ * 运行模式（运行视图）：对齐原型 node.css 的 r-done / r-current / r-failed / r-pending 与
+ * canvas.css 的 .run .edge.done / .live。已完成弱化，执行中青色脉冲，失败红描边。
+ */
+.sf-status .sf-icon {
+	stroke-width: 2.4;
+}
+.sf-status--done {
+	color: var(--sf-text-3);
+}
+.sf-status--done .sf-icon {
+	color: var(--sf-ok);
+}
+.sf-status--current {
+	color: var(--sf-accent-hi);
+}
+.sf-status--current i {
+	background: var(--sf-accent);
+	box-shadow: none;
+	animation: sf-pulse 1.6s var(--sf-ease) infinite;
+}
+.sf-status--pending {
+	color: var(--sf-text-3);
+}
+.sf-status--pending i {
+	box-shadow: inset 0 0 0 1.5px var(--sf-edge-done);
+}
+.sf-status--failed {
+	color: var(--sf-danger-text);
+}
+.sf-status--failed .sf-icon {
+	color: var(--sf-danger);
+}
+@keyframes sf-pulse {
+	0% {
+		box-shadow: 0 0 0 0 rgb(44 196 240 / 0.55);
+	}
+	100% {
+		box-shadow: 0 0 0 7px rgb(44 196 240 / 0);
+	}
+}
+.sf-node[data-run="done"] {
+	opacity: 0.72;
+}
+.sf-node[data-run="failed"] {
+	border-color: rgb(239 83 80 / 0.6);
+}
+.sf-node[data-run="current"]:not([data-selected="true"]) {
+	border-color: var(--sf-accent-line);
+}
+.sf-edge[data-run="done"] .sf-edge__base {
+	stroke: var(--sf-edge-done);
+	stroke-dasharray: none;
+}
+.sf-edge[data-run="live"] .sf-edge__base {
+	stroke: var(--sf-accent);
+	stroke-dasharray: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
+	.sf-status--current i {
+		animation: none;
+	}
 	.sf-node,
 	.sf-edge__flow,
 	.sf-sw,

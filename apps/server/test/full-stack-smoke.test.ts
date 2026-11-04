@@ -13,6 +13,27 @@ import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
+/** 用真实的 sfly CLI 构建桩节点包，经 HTTP API 发布（触发前的预检要求锁定的包版本已发布）。 */
+async function publishStubPackage(cp: TestControlPlane): Promise<void> {
+	const out = await mkdtemp(join(tmpdir(), "sfly-stub-pkg-"));
+	try {
+		await promisify(execFile)(
+			"uv",
+			["run", "--locked", "--quiet", "sfly", "build", "testdata/stub-package", "--out", out],
+			{ cwd: repoRoot },
+		);
+		const archive = await readFile(join(out, "sfly-stub-0.1.0.sflypkg"));
+		const res = await cp.fetch("/packages", {
+			method: "POST",
+			headers: { "content-type": "application/octet-stream" },
+			body: archive,
+		});
+		expect(res.status).toBe(201);
+	} finally {
+		await rm(out, { recursive: true, force: true });
+	}
+}
+
 describe("全栈冒烟：两个节点的链", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
@@ -21,6 +42,7 @@ describe("全栈冒烟：两个节点的链", () => {
 	beforeAll(async () => {
 		const bin = agentBinary();
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv()]);
+		await publishStubPackage(cp);
 		agent = await startRealAgent({
 			grpcUrl: cp.grpcUrl,
 			name: "smoke-agent",
@@ -115,24 +137,7 @@ describe("全栈冒烟：Agent 从控制面下载并安装节点包", () => {
 	beforeAll(async () => {
 		const bin = agentBinary();
 		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv({ sdkOnly: true })]);
-		// 用真实的 sfly CLI 构建桩节点包，经 HTTP API 发布。
-		const out = await mkdtemp(join(tmpdir(), "sfly-stub-pkg-"));
-		try {
-			await promisify(execFile)(
-				"uv",
-				["run", "--locked", "--quiet", "sfly", "build", "testdata/stub-package", "--out", out],
-				{ cwd: repoRoot },
-			);
-			const archive = await readFile(join(out, "sfly-stub-0.1.0.sflypkg"));
-			const res = await cp.fetch("/packages", {
-				method: "POST",
-				headers: { "content-type": "application/octet-stream" },
-				body: archive,
-			});
-			expect(res.status).toBe(201);
-		} finally {
-			await rm(out, { recursive: true, force: true });
-		}
+		await publishStubPackage(cp);
 		agent = await startRealAgent({
 			grpcUrl: cp.grpcUrl,
 			name: "install-agent",

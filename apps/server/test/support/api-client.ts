@@ -89,6 +89,7 @@ export interface AttemptView {
 	inputs: Record<string, unknown> | null;
 	outputs: Record<string, unknown> | null;
 	error: { kind: string; message: string } | null;
+	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
 }

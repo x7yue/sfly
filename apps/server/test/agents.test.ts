@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
+import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 interface AgentView {
@@ -108,6 +109,7 @@ describe("Agent 注册", () => {
 		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
 		agents.push(agent);
 		agents.push(await FakeAgent.connect(cp.grpcUrl, { name: "agent-b" }));
+		await publishPackage(cp, "stub", "1.0.0", { echo: [] });
 		const orchestrationId = await api.orchestrationWith({
 			default_agent: "agent-a",
 			nodes: [

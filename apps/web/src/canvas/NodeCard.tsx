@@ -1,6 +1,8 @@
 import type { OrchestrationWarning } from "@sfly/orchestration";
 import { Handle, type NodeProps, Position, type ReactFlowState, useStore } from "@xyflow/react";
 import { createContext, useContext } from "react";
+import type { NodeRunView } from "#/runs/api";
+import { durationBetween, statusLabel, statusTone } from "#/runs/format";
 import type { DocNode, SfNode } from "./flow";
 import { Icon, type IconName } from "./icons";
 
@@ -12,6 +14,10 @@ export interface CanvasInfo {
 	/** 包名 → 锁定的版本。 */
 	packages: Record<string, string>;
 	warnings: Map<string, OrchestrationWarning[]>;
+	/** 运行模式：节点 ID → 该节点在运行中的状态（运行视图，#9）。编辑模式下没有。 */
+	run?: Map<string, NodeRunView>;
+	/** 运行模式下的当前时间（毫秒），用于执行中节点的耗时。 */
+	now?: number;
 }
 
 export const CanvasContext = createContext<CanvasInfo>({
@@ -83,7 +89,9 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const { node } = data;
 	const warnings = info.warnings.get(id) ?? [];
 	const title = nodeTitle(node, info);
-	const metrics = nodeMetrics(node, info);
+	const run = info.run ? (info.run.get(id) ?? PENDING) : undefined;
+	const metrics = run ? runMetrics(node, info, run) : nodeMetrics(node, info);
+	const tone = run ? statusTone(run.status) : undefined;
 
 	const hasChainIn = node.kind !== "entry" && node.kind !== "subflow_entry";
 	return (
@@ -91,6 +99,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			className="sf-node"
 			data-selected={selected}
 			data-lod={zoom < LOD_THRESHOLD}
+			data-run={tone}
 			style={{ "--sf-zs": zoom } as React.CSSProperties}
 			title={warnings.map((w) => w.message).join("\n") || undefined}
 		>
@@ -117,7 +126,18 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				<KindChip kind={node.kind} />
 				<span className="sf-node__id">{id}</span>
 				<span className="sf-node__type">{KIND_LABEL[node.kind]}</span>
-				{warnings.length > 0 ? (
+				{run ? (
+					<span className={`sf-status sf-status--${tone}`}>
+						{tone === "done" ? (
+							<Icon name="check" />
+						) : tone === "failed" ? (
+							<Icon name="x" />
+						) : (
+							<i />
+						)}
+						{statusLabel(run.status)}
+					</span>
+				) : warnings.length > 0 ? (
 					<span className="sf-status sf-status--warn">
 						<i />
 						{warnings.length} 警告
@@ -157,6 +177,32 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			)}
 		</div>
 	);
+}
+
+const PENDING: NodeRunView = {
+	node_id: "",
+	kind: "package",
+	status: "pending",
+	agent: null,
+	outputs: null,
+	error: null,
+	attempts: [],
+};
+
+/** 运行模式的指标槽：所在 Agent、尝试次数和耗时。 */
+function runMetrics(node: DocNode, info: CanvasInfo, run: NodeRunView): [string, string][] {
+	const last = run.attempts.at(-1);
+	const time: [string, string] = [
+		"耗时",
+		last?.started_at
+			? durationBetween(last.started_at, last.ended_at, info.now ?? Date.now())
+			: "—",
+	];
+	if (node.kind !== "package") return [...nodeMetrics(node, info).slice(0, 1), time];
+	return [
+		["Agent", run.agent ?? "—"],
+		run.attempts.length > 1 ? ["尝试", `${run.attempts.length} 次 · ${time[1]}`] : time,
+	];
 }
 
 function nodeSubtitle(node: DocNode): string {
