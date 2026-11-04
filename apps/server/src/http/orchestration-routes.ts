@@ -1,3 +1,4 @@
+import { structureWarnings } from "@sfly/orchestration";
 import { OrchestrationDocument } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -6,6 +7,7 @@ import { isUuid, sendError } from "./errors.js";
 import { nicknameOf } from "./nickname.js";
 
 const CreateBody = z.strictObject({ name: z.string().trim().min(1) });
+const CopyBody = CreateBody;
 const SaveVersionBody = z.object({ document: OrchestrationDocument });
 
 /** 编排与编排版本：新建编排、保存（追加）版本、查询。版本不可修改。 */
@@ -25,6 +27,37 @@ export function registerOrchestrationRoutes(
 			);
 		}
 		return reply.code(201).send(await orchestrations.create(body.data.name));
+	});
+
+	app.get("/orchestrations", async () => ({ orchestrations: await orchestrations.list() }));
+
+	app.get<{ Params: { id: string } }>("/orchestrations/:id/head", async (request, reply) => {
+		const head = isUuid(request.params.id)
+			? await orchestrations.head(request.params.id)
+			: undefined;
+		if (!head) return sendError(reply, 404, "not_found", "orchestration not found");
+		return head;
+	});
+
+	app.post<{ Params: { id: string } }>("/orchestrations/:id/copy", async (request, reply) => {
+		const author = nicknameOf(request);
+		if (!author)
+			return sendError(reply, 400, "nickname_required", "x-sfly-nickname header is required");
+		const body = CopyBody.safeParse(request.body);
+		if (!body.success) {
+			return sendError(
+				reply,
+				400,
+				"invalid_request",
+				"name is required",
+				z.treeifyError(body.error),
+			);
+		}
+		const copied = isUuid(request.params.id)
+			? await orchestrations.copy(request.params.id, body.data.name, author)
+			: undefined;
+		if (!copied) return sendError(reply, 404, "not_found", "orchestration not found");
+		return reply.code(201).send(copied);
 	});
 
 	app.get<{ Params: { id: string } }>("/orchestrations/:id", async (request, reply) => {
@@ -53,7 +86,8 @@ export function registerOrchestrationRoutes(
 			? await orchestrations.saveVersion(request.params.id, body.data.document, author)
 			: undefined;
 		if (!saved) return sendError(reply, 404, "not_found", "orchestration not found");
-		return reply.code(201).send(saved);
+		// 结构问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2）。
+		return reply.code(201).send({ ...saved, warnings: structureWarnings(saved.document) });
 	});
 
 	app.get<{ Params: { id: string; number: string } }>(
