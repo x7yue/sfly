@@ -23,6 +23,8 @@ export interface AgentInfo {
 	os: string;
 	arch: string;
 	slots: number;
+	/** 共享 venv 中已安装的节点包；由 Agent 在 Hello 中上报（#5 接入，未上报时为空）。 */
+	installed_packages?: { name: string; version: string }[];
 }
 
 export type AgentStatus = "online" | "offline";

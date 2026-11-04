@@ -1,8 +1,8 @@
 import type { ServerMessage } from "@sfly/proto";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { type AgentInfo, type AgentStatus, agents } from "../db/schema.js";
+import { type AgentInfo, type AgentStatus, agents, runs, tasks } from "../db/schema.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
 
@@ -37,6 +37,19 @@ export interface AgentView {
 	status: AgentStatus;
 	info: AgentInfo;
 	last_seen_at: string;
+	/** Agent 共享 venv 中已安装的节点包（Agent 在 Hello 中上报）。 */
+	installed_packages: { name: string; version: string }[];
+	/** 正在这个 Agent 上运行的任务，按开始时间排序。 */
+	running_tasks: RunningTaskView[];
+}
+
+export interface RunningTaskView {
+	task_id: string;
+	run_id: string;
+	orchestration_id: string;
+	node_id: string;
+	attempt: number;
+	started_at: string;
 }
 
 /**
@@ -92,11 +105,36 @@ export class AgentHub {
 
 	async list(): Promise<AgentView[]> {
 		const rows = await this.deps.db.select().from(agents).orderBy(asc(agents.name));
+		const running = await this.deps.db
+			.select({
+				agent: tasks.agentName,
+				taskId: tasks.id,
+				runId: tasks.runId,
+				orchestrationId: runs.orchestrationId,
+				nodeId: tasks.nodeId,
+				attempt: tasks.attempt,
+				startedAt: tasks.startedAt,
+			})
+			.from(tasks)
+			.innerJoin(runs, eq(runs.id, tasks.runId))
+			.where(and(eq(tasks.status, "running"), isNotNull(tasks.agentName)))
+			.orderBy(asc(tasks.startedAt), asc(tasks.seq));
 		return rows.map((row) => ({
 			name: row.name,
 			status: row.status,
 			info: row.info,
 			last_seen_at: row.lastSeenAt.toISOString(),
+			installed_packages: row.info.installed_packages ?? [],
+			running_tasks: running
+				.filter((t) => t.agent === row.name)
+				.map((t) => ({
+					task_id: t.taskId,
+					run_id: t.runId,
+					orchestration_id: t.orchestrationId,
+					node_id: t.nodeId,
+					attempt: t.attempt,
+					started_at: (t.startedAt as Date).toISOString(),
+				})),
 		}));
 	}
 

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -8,6 +9,15 @@ interface AgentView {
 	status: string;
 	info: { agent_version: string; os: string; arch: string; slots: number };
 	last_seen_at: string;
+	installed_packages: { name: string; version: string }[];
+	running_tasks: {
+		task_id: string;
+		run_id: string;
+		orchestration_id: string;
+		node_id: string;
+		attempt: number;
+		started_at: string;
+	}[];
 }
 
 async function listAgents(cp: TestControlPlane): Promise<AgentView[]> {
@@ -43,8 +53,45 @@ describe("Agent 注册", () => {
 				status: "online",
 				info: { agent_version: "1.2.3", os: "linux", arch: "x86_64", slots: 2 },
 				last_seen_at: "2026-01-01T00:00:00.000Z",
+				installed_packages: [],
+				running_tasks: [],
 			},
 		]);
+	});
+
+	it("Agent 列表显示正在它上面运行的任务，任务结束后消失", async () => {
+		cp = await startTestControlPlane();
+		const api = new ApiClient(cp);
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agents.push(agent);
+		agents.push(await FakeAgent.connect(cp.grpcUrl, { name: "agent-b" }));
+		const orchestrationId = await api.orchestrationWith({
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "a", kind: "package", package: "stub", node: "echo" },
+			],
+			edges: [{ from: "entry", to: "a", kind: "chain" }],
+			packages: { stub: "1.0.0" },
+		});
+		const runId = await api.triggerOk(orchestrationId);
+		const task = await agent.nextAssign();
+
+		const [a, b] = await listAgents(cp);
+		expect(a?.running_tasks).toEqual([
+			{
+				task_id: task.taskId,
+				run_id: runId,
+				orchestration_id: orchestrationId,
+				node_id: "a",
+				attempt: 1,
+				started_at: "2026-01-01T00:00:00.000Z",
+			},
+		]);
+		expect(b?.running_tasks).toEqual([]);
+
+		await agent.succeed(task, {});
+		expect((await listAgents(cp))[0]?.running_tasks).toEqual([]);
 	});
 
 	it("未上报槽位数时使用默认的 4 个槽位", async () => {
