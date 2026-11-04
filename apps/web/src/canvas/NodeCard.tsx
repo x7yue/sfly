@@ -6,6 +6,7 @@ import { durationBetween, statusLabel, statusTone } from "#/runs/format";
 import { progressLong, progressPercent, progressShort } from "#/runs/logs";
 import type { DocNode, SfNode } from "./flow";
 import { Icon, type IconName } from "./icons";
+import { waitRunMetrics } from "./WaitNodes";
 
 /** 节点卡片需要的画布级信息。 */
 export interface CanvasInfo {
@@ -210,6 +211,8 @@ function runMetrics(node: DocNode, info: CanvasInfo, run: NodeRunView): [string,
 			? durationBetween(last.started_at, last.ended_at, info.now ?? Date.now())
 			: "—",
 	];
+	const wait = waitRunMetrics(node, run, info.now ?? Date.now());
+	if (wait) return wait;
 	if (node.kind !== "package") return [...nodeMetrics(node, info).slice(0, 1), time];
 	// 执行中并上报过进度：进度是首要指标（语义缩放时保留第一个指标）。
 	if (last?.progress && statusTone(last.status) === "current") {

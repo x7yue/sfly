@@ -396,6 +396,12 @@ function Attempt({
 				<dd className="sf-mono">{formatTime(attempt.queued_at)}</dd>
 				<dt>开始</dt>
 				<dd className="sf-mono">{formatTime(attempt.started_at)}</dd>
+				{attempt.wake_at && (
+					<>
+						<dt>唤醒</dt>
+						<dd className="sf-mono">{formatTime(attempt.wake_at)}</dd>
+					</>
+				)}
 				<dt>结束</dt>
 				<dd className="sf-mono">{formatTime(attempt.ended_at)}</dd>
 				<dt>耗时</dt>

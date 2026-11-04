@@ -54,7 +54,7 @@ export function createPreflight(deps: { db: Db; packages: PackageRepository }): 
 			});
 		}
 
-		// 引擎还不支持的节点种类（定时、Sleep）由后续票据支持。
+		// 执行计划的检查（单链、节点种类受支持、调度目标等）。
 		if (problems.length === 0) {
 			const plan = planRun(doc);
 			if ("errors" in plan) {

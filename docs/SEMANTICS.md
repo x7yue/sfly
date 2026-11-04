@@ -154,6 +154,7 @@ pending ──▶ queued ──▶ running ──▶ success
 | `at` | `HH:MM:SS`（节点开始执行当天的这个时刻），或完整的 ISO 8601 日期时间 |
 | `tz` | 时区，默认 `Asia/Shanghai` |
 
+- 完整日期时间带偏移（`Z`、`+08:00`）时按偏移，不带偏移时按 `tz`。
 - 节点开始执行时，如果目标时刻**已经过去**，立即成功，输出 `late: true`。
 - 输出：`triggered_at`（实际完成时间）、`late`。
 
@@ -161,7 +162,7 @@ pending ──▶ queued ──▶ running ──▶ success
 
 | 配置 | 说明 |
 |---|---|
-| `duration` | 例如 `30s`、`10m`、`1h`；可以引用参数 |
+| `duration` | 例如 `30s`、`10m`、`1h`（单位 `ms`/`s`/`m`/`h`/`d`，可组合如 `1h30m`）；可以引用参数，引用解析出数字时按秒 |
 
 - 输出：`triggered_at`。
 

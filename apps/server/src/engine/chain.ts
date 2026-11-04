@@ -25,6 +25,8 @@ const SUPPORTED_KINDS = new Set<OrchestrationNode["kind"]>([
 	"subflow_entry",
 	"async",
 	"package",
+	"timer",
+	"sleep",
 ]);
 
 /**

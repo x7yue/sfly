@@ -90,11 +90,13 @@ export function NodePalette({
 export const BUILTIN_MIME = "application/x-sfly-builtin-node";
 
 /** 可以从面板放到画布上的内置节点（入口节点每份编排只有一个，不在这里）。 */
-export type BuiltinKind = "async" | "subflow_entry";
+export type BuiltinKind = "async" | "subflow_entry" | "timer" | "sleep";
 
 const BUILTINS: { kind: BuiltinKind; title: string; hint: string }[] = [
 	{ kind: "async", title: "异步任务", hint: "触发一个子流程，主链继续" },
 	{ kind: "subflow_entry", title: "子流程入口", hint: "子流程的起点，声明参数" },
+	{ kind: "timer", title: "定时", hint: "等到某个时刻 · 控制面执行" },
+	{ kind: "sleep", title: "Sleep", hint: "等待一段时长 · 控制面执行" },
 ];
 
 /** 内置节点面板。 */

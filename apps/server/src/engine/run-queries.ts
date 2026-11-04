@@ -21,6 +21,8 @@ export interface AttemptView {
 	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
+	/** 定时 / Sleep 节点的唤醒时间（#14）；其他节点为 null。 */
+	wake_at: string | null;
 	/** 最新进度（#10）；没有上报过时为 null。 */
 	progress: TaskProgress | null;
 }
@@ -139,6 +141,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						queued_at: t.queuedAt.toISOString(),
 						started_at: iso(t.startedAt),
 						ended_at: iso(t.endedAt),
+						wake_at: iso(t.wakeAt),
 						progress: t.progress ?? null,
 					}));
 				const last = attempts.at(-1);

@@ -233,6 +233,7 @@ describe("运行视图", () => {
 					queued_at: "2026-01-01T00:00:00.000Z",
 					started_at: "2026-01-01T00:00:05.000Z",
 					ended_at: "2026-01-01T00:00:07.000Z",
+					wake_at: null,
 					progress: null,
 				},
 			]);

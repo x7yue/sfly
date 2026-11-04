@@ -2,6 +2,7 @@
 @import "@xyflow/react/dist/style.css";
 @import "./canvas/tokens.css";
 @import "./canvas/canvas.css";
+@import "./canvas/wait-nodes.css";
 @import "./versions/versions.css";
 @import "./runs/runs.css";
 @import "./runs/logs.css";

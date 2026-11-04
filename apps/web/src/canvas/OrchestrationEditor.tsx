@@ -46,6 +46,7 @@ import {
 import { PackageVersions } from "./PackageVersions";
 import { PresenceIndicator } from "./PresenceIndicator";
 import { SubflowRegions } from "./SubflowRegions";
+import { isWaitKind, newWaitNode } from "./WaitNodes";
 
 export function OrchestrationEditor({
 	orchestration,
@@ -218,16 +219,19 @@ function Editor({
 		[meta.packages, setNodes],
 	);
 
-	// —— 放置内置节点（异步任务、子流程入口） ——
+	// —— 放置内置节点（异步任务、子流程入口、定时、Sleep） ——
 	const addBuiltinNode = useCallback(
 		(kind: BuiltinKind, position: { x: number; y: number }) => {
 			setNodes((ns) => {
 				const id = uniqueNodeId(
-					kind === "async" ? "async" : "subflow",
+					kind === "subflow_entry" ? "subflow" : kind,
 					ns.map((n) => n.id),
 				);
-				const node: DocNode =
-					kind === "async" ? { id, kind, params: {} } : { id, kind, params: [] };
+				const node: DocNode = isWaitKind(kind)
+					? newWaitNode(kind, id)
+					: kind === "async"
+						? { id, kind, params: {} }
+						: { id, kind, params: [] };
 				return [
 					...ns.map((n) => ({ ...n, selected: false })),
 					{ id, type: kind, position, data: { node }, selected: true },
