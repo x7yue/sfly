@@ -6,7 +6,8 @@
 - `SFLY_OUTPUT`：执行器写入结果的 output.json：
   - 成功：`{"status": "success", "outputs": {...}}`，退出码 0；
   - 失败：`{"status": "failed", "error": {"type", "message", "traceback"}}`，退出码 1。
-- `SFLY_ARTIFACTS`、`SFLY_EVENTS`、`SFLY_CANCEL`：产物目录、事件文件、取消标记（由 Context 使用）。
+- `SFLY_ARTIFACTS`、`SFLY_ARTIFACTS_URL`、`SFLY_EVENTS`、`SFLY_CANCEL`：产物目录、产物下载地址前缀、
+  事件文件、取消标记（由 Context 使用）。
 
 收到 SIGTERM（Agent 取消或超时时的优雅终止）时，在节点代码里抛出 `sfly.Cancelled`，
 让清理代码有机会执行。

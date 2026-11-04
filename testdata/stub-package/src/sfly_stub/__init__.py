@@ -112,3 +112,37 @@ def chatter(
         ctx.progress(i + 1, steps, f"第 {i + 1} 步")
         time.sleep(interval)
     return {}
+
+
+@node(title="产物", outputs=["refs"])
+def artifacts(
+    ctx: Context, files: dict[str, str] | None = None, fail: bool = False
+) -> dict[str, Any]:
+    """产物测试用：把 files（名称 → 文本内容）保存为产物，返回产物引用；fail 时保存后抛出异常。"""
+    refs = {name: ctx.artifacts.save(name, content) for name, content in (files or {}).items()}
+    if fail:
+        raise RuntimeError("保存产物后失败")
+    return {"refs": refs}
+
+
+@node(title="大输出", outputs=["text"])
+def big(ctx: Context, size: int) -> dict[str, Any]:
+    """节点输出上限测试用：返回 size 个字符的文本。"""
+    return {"text": "x" * size}
+
+
+@node(title="大量日志", outputs=["lines"])
+def flood(ctx: Context, lines: int = 1000, interval: float = 0.0) -> dict[str, Any]:
+    """完整日志测试用：输出 lines 行日志，来源（print / 标准错误 / SDK）和 SDK 级别轮换。"""
+    levels = [ctx.log.debug, ctx.log.info, ctx.log.warning, ctx.log.error]
+    for i in range(1, lines + 1):
+        kind = i % 3
+        if kind == 1:
+            print(f"第 {i} 行 stdout")
+        elif kind == 2:
+            print(f"第 {i} 行 stderr", file=sys.stderr)
+        else:
+            levels[(i // 3) % 4]("第 %d 行 sdk", i)
+        if interval:
+            time.sleep(interval)
+    return {"lines": lines}

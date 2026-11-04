@@ -96,6 +96,10 @@ message AssignTask {
   string package_sha256 = 10;
   // 节点包归档的 HTTP 下载地址；包版本没有安装在 Agent 上时，Agent 从这里下载并安装。
   string package_url = 11;
+  // 产物上传地址（以 / 结尾）：任务结束后、上报结果之前，Agent 把产物目录里的每个文件
+  // `PUT <artifact_upload_url><按路径段百分号编码的相对路径>`（配置了注册令牌时带 `Authorization: Bearer <token>`）。
+  // 同一地址也是产物的下载地址：SDK 把它作为产物引用返回给节点。为空时不上传。
+  string artifact_upload_url = 12;
 }
 
 // 取消一个正在执行的任务（docs/SEMANTICS.md §3.4）。Agent 先写入取消标记文件（SFLY_CANCEL），

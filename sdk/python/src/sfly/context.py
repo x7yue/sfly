@@ -3,13 +3,14 @@
 - `ctx.log`：带级别的结构化日志，`ctx.log.info("checking %s", url)`，
   也可以 `ctx.log("...", level="warn")`；
 - `ctx.progress(当前值, 总数, 说明)`：上报进度，总数未知时省略；
+- `ctx.artifacts`：保存产物，返回可以写进输出的产物引用（见 `Artifacts`）；
 - `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）。
 
 取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
 宽限期（默认 10 秒）过后整棵进程树被强制杀掉。在后台线程里可以轮询 `ctx.cancelled()`。
 
-两者都追加写入本地协议的事件文件 `SFLY_EVENTS`（JSONL，每行一个事件，Agent 持续读取新增内容）：
+日志和进度都追加写入本地协议的事件文件 `SFLY_EVENTS`（JSONL，每行一个事件，Agent 持续读取新增内容）：
 
 - 日志 `{"type": "log", "ts": <Unix 毫秒>, "level": "debug|info|warn|error", "message": "..."}`
 - 进度 `{"type": "progress", "ts": ..., "current": 1, "total": 3, "message": "..."}`
@@ -17,17 +18,19 @@
 
 `print` 和子进程的输出不经过这里：Agent 直接读取执行器的标准输出 / 标准错误，
 与事件文件合并成同一条日志流。
-产物由后续票据实现。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 #: 日志级别（与控制面、画布一致）。
 LEVELS = ("debug", "info", "warn", "error")
@@ -97,25 +100,98 @@ class Log:
         self(text + "\n" + traceback.format_exc().rstrip(), level="error")
 
 
+class Artifacts:
+    """`ctx.artifacts`：把文件保存为产物。
+
+    产物写在本地协议的产物目录 `SFLY_ARTIFACTS` 里，任务结束后由 Agent 上传到控制面，
+    运行视图里可以下载。名称是产物目录内的相对路径（可以有子目录，用 `/` 分隔）。
+
+    保存后得到**产物引用**：Agent 提供了下载地址前缀 `SFLY_ARTIFACTS_URL` 时，
+    是这个产物的下载地址（前缀 + 按路径段百分号编码的名称），可以写进节点输出交给后续节点
+    （例如 `urllib.request.urlopen(ref)`）；没有前缀时（本地调试）是本地文件路径。
+    """
+
+    def __init__(self, directory: str | os.PathLike[str] | None, url: str | None) -> None:
+        self._dir = Path(directory) if directory is not None else None
+        self._url = url or None
+
+    def save(self, name: str, data: bytes | str | os.PathLike[str]) -> str:
+        """保存一个产物并返回产物引用。
+
+        `data` 为 bytes / str（按 UTF-8）时写入内容，为路径时复制该文件。
+        """
+        target = self.path(name)
+        if isinstance(data, bytes):
+            target.write_bytes(data)
+        elif isinstance(data, str):
+            target.write_text(data, encoding="utf-8")
+        else:
+            shutil.copyfile(data, target)
+        return self.ref(name)
+
+    def path(self, name: str) -> Path:
+        """产物在本地的文件路径（父目录已创建），节点可以直接写入；写完用 `ref(name)` 得到引用。"""
+        parts = _artifact_parts(name)
+        if self._dir is None:
+            raise RuntimeError("没有产物目录：执行器没有设置 SFLY_ARTIFACTS")
+        target = self._dir.joinpath(*parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def ref(self, name: str) -> str:
+        """产物引用：下载地址（没有 SFLY_ARTIFACTS_URL 时为本地文件路径）。"""
+        parts = _artifact_parts(name)
+        if self._url is not None:
+            return self._url + "/".join(quote(p, safe="") for p in parts)
+        if self._dir is None:
+            raise RuntimeError("没有产物目录：执行器没有设置 SFLY_ARTIFACTS")
+        return str(self._dir.joinpath(*parts))
+
+
+def _artifact_parts(name: str) -> list[str]:
+    """校验产物名称（与控制面一致），返回路径段。"""
+    parts = name.split("/")
+    bad = (
+        not name
+        or len(name) > 1024
+        or any(c == "\\" or ord(c) < 0x20 or ord(c) == 0x7F for c in name)
+        or any(p in ("", ".", "..") for p in parts)
+    )
+    if bad:
+        raise ValueError(
+            "产物名称必须是产物目录内的相对路径（用 / 分隔，不含空段、. 或 ..、反斜杠），"
+            f"实际为 {name!r}"
+        )
+    return parts
+
+
 class Context:
     """节点执行时由执行器传入的任务上下文。
 
     `events_path` 默认取环境变量 `SFLY_EVENTS`；为 None（或环境变量未设置）时日志和进度被丢弃。
     `cancel_path` 默认取 `SFLY_CANCEL`；为 None 时 `cancelled()` 总是 False。
+    `artifacts_dir` / `artifacts_url` 默认取 `SFLY_ARTIFACTS` / `SFLY_ARTIFACTS_URL`。
     """
 
     def __init__(
         self,
         events_path: str | os.PathLike[str] | None = _FROM_ENV,
         cancel_path: str | os.PathLike[str] | None = _FROM_ENV,
+        artifacts_dir: str | os.PathLike[str] | None = _FROM_ENV,
+        artifacts_url: str | None = _FROM_ENV,
     ) -> None:
         if events_path is _FROM_ENV:
             events_path = os.environ.get("SFLY_EVENTS")
         if cancel_path is _FROM_ENV:
             cancel_path = os.environ.get("SFLY_CANCEL")
+        if artifacts_dir is _FROM_ENV:
+            artifacts_dir = os.environ.get("SFLY_ARTIFACTS")
+        if artifacts_url is _FROM_ENV:
+            artifacts_url = os.environ.get("SFLY_ARTIFACTS_URL")
         self._events = _EventWriter(events_path)
         self._cancel = cancel_path
         self.log = Log(self._events)
+        self.artifacts = Artifacts(artifacts_dir, artifacts_url)
 
     def cancelled(self) -> bool:
         """任务是否已被取消（Agent 已写入取消标记）。"""

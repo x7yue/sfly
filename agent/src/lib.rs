@@ -8,6 +8,7 @@
 //!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
+pub mod artifacts;
 pub mod dev;
 pub mod executor;
 pub mod install;
@@ -226,6 +227,8 @@ struct Runtime {
     telemetry: logs::Telemetry,
     /// 正在执行（含安装中）的任务的取消信号，键为 (task_id, attempt)。
     cancels: std::sync::Mutex<HashMap<(String, u32), CancelSender>>,
+    /// 任务结束后上传产物（[`artifacts`]）。
+    uploader: artifacts::Uploader,
 }
 
 /// 发送任务的取消请求（见 [`executor::CancelSignal`]）。
@@ -238,7 +241,12 @@ impl Runtime {
         self.cancels.lock().unwrap().insert(key.clone(), cancel_tx);
         let result = match self.start_task(&task).await {
             // 安装期间收到的取消在子进程启动后立即生效。
-            Ok(running) => running.wait(cancel).await,
+            Ok(running) => {
+                let dir = running.artifacts_dir();
+                let result = running.wait(cancel).await;
+                // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。
+                self.uploader.finish(&task, &dir, result).await
+            }
             Err(result) => result,
         };
         self.cancels.lock().unwrap().remove(&key);
@@ -462,6 +470,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel();
+    let http = reqwest::Client::new();
     let runtime = Arc::new(Runtime {
         name: config.name.clone(),
         dev: DevRegistry::new(work_dir.join(".dev")),
@@ -474,7 +483,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             scratch,
             index_url: config.index_url.clone(),
             uv: config.uv.clone(),
-            http: reqwest::Client::new(),
+            http: http.clone(),
         },
         work_dir: work_dir.clone(),
         terminate_grace: config.terminate_grace,
@@ -483,6 +492,10 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         installs: installs_tx,
         telemetry: telemetry_tx,
         cancels: std::sync::Mutex::new(HashMap::new()),
+        uploader: artifacts::Uploader {
+            http,
+            token: config.token.clone(),
+        },
     });
     let dev_socket = config
         .dev_socket

@@ -107,6 +107,8 @@ export class Engine implements AgentSessionHandler {
 			hub: AgentHub;
 			/** 节点包归档的下载地址（Agent 通过 HTTP 下载）。 */
 			packageArchiveUrl: (name: string, version: string) => string;
+			/** 任务产物的上传地址（#18，Agent 任务结束后通过 HTTP 上传）。 */
+			artifactUploadUrl: (taskId: string) => string;
 			/** 触发前的预检（src/runs/preflight.ts）。 */
 			preflight: Preflight;
 		},
@@ -704,6 +706,7 @@ export class Engine implements AgentSessionHandler {
 					nodeId: node.id,
 					packageSha256: archive?.sha256 ?? "",
 					packageUrl: archive ? this.deps.packageArchiveUrl(node.package, packageVersion) : "",
+					artifactUploadUrl: this.deps.artifactUploadUrl(task.id),
 				},
 			},
 		});

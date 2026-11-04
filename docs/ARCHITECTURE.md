@@ -224,6 +224,7 @@ flowchart TD
 | `SFLY_OUTPUT` | 执行器写入返回值 `output.json` 的路径 |
 | `SFLY_EVENTS` | SDK 追加写入结构化日志和进度的 JSONL 文件；Agent 持续读取新增内容 |
 | `SFLY_ARTIFACTS` | 产物目录，任务结束后由 Agent 上传 |
+| `SFLY_ARTIFACTS_URL` | 产物下载地址前缀；`ctx.artifacts.save()` 返回的产物引用 = 前缀 + 按路径段编码的名称 |
 | `SFLY_CANCEL` | 取消标记文件；出现时 `ctx.cancelled()` 返回 true |
 
 进程树终止方式：Linux 使用进程组，Windows 使用 Job Object。
