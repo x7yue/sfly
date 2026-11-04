@@ -1,5 +1,5 @@
 import { checkConnection, type StructureWarning, structureWarnings } from "@sfly/orchestration";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
 	Background,
 	type Connection,
@@ -14,14 +14,9 @@ import {
 	useReactFlow,
 } from "@xyflow/react";
 import { useCallback, useMemo, useRef, useState } from "react";
-import {
-	listAgents,
-	listPackages,
-	type Orchestration,
-	type OrchestrationHead,
-	type SavedVersion,
-	saveVersion,
-} from "#/lib/api";
+import { listAgents, listPackages, type Orchestration, type OrchestrationHead } from "#/lib/api";
+import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
+import { StaleDraftBanner, VersionControls } from "#/versions/VersionControls";
 import {
 	type DocMeta,
 	type DocNode,
@@ -37,13 +32,22 @@ import { AgentSelect, NodeInspector, Section, WarningList } from "./Inspector";
 import { CanvasContext, type CanvasInfo, nodeTitle, nodeTypes } from "./NodeCard";
 import { NodePalette, PALETTE_MIME, type PaletteItem } from "./NodePalette";
 
-export function OrchestrationEditor(props: {
+export function OrchestrationEditor({
+	orchestration,
+	head,
+}: {
 	orchestration: Orchestration;
 	head: OrchestrationHead;
 }) {
+	// 编辑起点：本地草稿（刷新不丢失）或最新版本；放弃本地修改后用最新版本重建画布。
+	const [start, setStart] = useState(() => startEditing(orchestration.id, head));
 	return (
-		<ReactFlowProvider>
-			<Editor {...props} />
+		<ReactFlowProvider key={start.nonce}>
+			<Editor
+				orchestration={orchestration}
+				start={start}
+				onReload={(latest) => setStart(startEditing(orchestration.id, latest, start.nonce + 1))}
+			/>
 		</ReactFlowProvider>
 	);
 }
@@ -53,24 +57,23 @@ const edgeKindOf = (c: Connection | Edge): EdgeKind =>
 
 function Editor({
 	orchestration,
-	head,
+	start,
+	onReload,
 }: {
 	orchestration: Orchestration;
-	head: OrchestrationHead;
+	start: EditStart;
+	onReload: (head: OrchestrationHead) => void;
 }) {
-	const queryClient = useQueryClient();
 	const flow = useReactFlow<SfNode, SfEdge>();
 
-	const initial = useMemo(() => toFlow(head.document), [head.document]);
+	const initial = useMemo(() => toFlow(start.document), [start.document]);
 	const [nodes, setNodes, onNodesChange] = useNodesState<SfNode>(initial.nodes);
 	const [edges, setEdges, onEdgesChange] = useEdgesState<SfEdge>(initial.edges);
 	const [meta, setMeta] = useState<DocMeta>({
-		default_agent: head.document.default_agent,
-		packages: head.document.packages,
+		default_agent: start.document.default_agent,
+		packages: start.document.packages,
 	});
-	const [version, setVersion] = useState({ number: head.number, author: head.author });
 	const [notice, setNotice] = useState<string | null>(null);
-	const [savedWarnings, setSavedWarnings] = useState<StructureWarning[] | null>(null);
 
 	const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
 	const agents = useQuery({
@@ -82,6 +85,7 @@ function Editor({
 
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
 	const warnings = useMemo(() => structureWarnings(doc), [doc]);
+	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	const warningsByNode = useMemo(() => {
 		const map = new Map<string, StructureWarning[]>();
 		for (const w of warnings) {
@@ -222,24 +226,6 @@ function Editor({
 	const updateNode = (id: string, node: DocNode) =>
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
 
-	// —— 保存：生成新的编排版本；结构警告不阻止保存 ——
-	const save = useMutation({
-		mutationFn: () => saveVersion(orchestration.id, doc),
-		onSuccess: (saved: SavedVersion) => {
-			setVersion({ number: saved.number, author: saved.author });
-			setSavedWarnings(saved.warnings);
-			setNotice(null);
-			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
-			queryClient.setQueryData(["orchestration", orchestration.id, "head"], {
-				orchestration_id: orchestration.id,
-				number: saved.number,
-				author: saved.author,
-				created_at: saved.created_at,
-				document: saved.document,
-			});
-		},
-	});
-
 	const selected = nodes.filter((n) => n.selected);
 	const only = selected.length === 1 ? selected[0] : undefined;
 
@@ -248,38 +234,24 @@ function Editor({
 			<div className="flex h-[calc(100vh-49px)] flex-col">
 				<header className="flex items-center gap-3 border-b border-[var(--sf-border)] bg-white px-4 py-2">
 					<h1 className="text-base font-semibold">{orchestration.name}</h1>
-					<span className="text-sm text-[var(--sf-text-muted)]">
-						{version.number === 0
-							? "还没有保存过版本"
-							: `版本 ${version.number}${version.author ? ` · ${version.author}` : ""}`}
-					</span>
 					<span
 						className={`text-sm ${warnings.length > 0 ? "text-[var(--sf-warning)]" : "text-[var(--sf-success)]"}`}
 					>
 						{warnings.length > 0 ? `${warnings.length} 条结构警告` : "结构检查通过"}
 					</span>
-					<div className="ml-auto flex items-center gap-3">
-						{save.isSuccess && savedWarnings && (
-							<span className="text-sm text-[var(--sf-text-muted)]">
-								已保存为版本 {version.number}
-								{savedWarnings.length > 0 ? `（${savedWarnings.length} 条警告）` : ""}
-							</span>
-						)}
-						{save.error && (
-							<span className="text-sm text-[var(--sf-danger)]">
-								保存失败：{save.error.message}
-							</span>
-						)}
-						<button
-							type="button"
-							onClick={() => save.mutate()}
-							disabled={save.isPending}
-							className="rounded bg-[var(--sf-accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-60"
-						>
-							{save.isPending ? "保存中…" : "保存"}
-						</button>
-					</div>
+					<VersionControls
+						orchestration={orchestration}
+						doc={doc}
+						versioning={versioning}
+						onReload={onReload}
+					/>
 				</header>
+				<StaleDraftBanner
+					orchestration={orchestration}
+					doc={doc}
+					versioning={versioning}
+					onReload={onReload}
+				/>
 				<div className="flex min-h-0 flex-1">
 					<aside className="w-60 shrink-0 overflow-y-auto border-r border-[var(--sf-border)] bg-[var(--sf-surface-muted)]">
 						<h2 className="px-3 pt-3 text-xs font-semibold tracking-wide text-[var(--sf-text-muted)] uppercase">
