@@ -15,9 +15,9 @@ import {
 	type RunView,
 	runEventsPath,
 } from "./api";
+import { ErrorKindTag, FailureSummary } from "./failure";
 import {
 	durationBetween,
-	ERROR_KIND_LABEL,
 	formatTime,
 	runStatusLabel,
 	shortId,
@@ -297,14 +297,12 @@ function NodeDetail({
 					</span>
 				</div>
 				<h2>{title}</h2>
-				{state?.error && (
-					<p className="sf-err">
-						{ERROR_KIND_LABEL[state.error.kind] ?? state.error.kind}：{state.error.message}
-					</p>
-				)}
+				<FailureSummary node={node} state={state} />
 			</section>
 			<Section title="尝试" aside={`${attempts.length} 次`}>
-				{attempts.length === 0 && <p className="sf-hint">还没有开始执行。</p>}
+				{attempts.length === 0 && status !== "skipped" && (
+					<p className="sf-hint">还没有开始执行。</p>
+				)}
 				<div className="space-y-3">
 					{attempts.map((a) => (
 						<Attempt key={a.task_id} attempt={a} secretKeys={secretKeys} now={now} />
@@ -328,6 +326,7 @@ function Attempt({
 		<article className="sf-card sf-attempt" data-run={statusTone(attempt.status)}>
 			<header>
 				<b>第 {attempt.attempt} 次</b>
+				{attempt.attempt > 1 && <span className="sf-hint">重试</span>}
 				<span className={`sf-status sf-status--${statusTone(attempt.status)}`}>
 					<i />
 					{statusLabel(attempt.status)}
@@ -348,9 +347,10 @@ function Attempt({
 				</dd>
 			</dl>
 			{attempt.error && (
-				<p className="sf-err">
-					{ERROR_KIND_LABEL[attempt.error.kind] ?? attempt.error.kind}：{attempt.error.message}
-				</p>
+				<>
+					<ErrorKindTag kind={attempt.error.kind} />
+					<p className="sf-err">{attempt.error.message}</p>
+				</>
 			)}
 			<h4>输入</h4>
 			{attempt.inputs ? (
