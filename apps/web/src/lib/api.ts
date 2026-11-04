@@ -121,6 +121,8 @@ export interface AgentView {
 		state: "installing" | "installed" | "failed";
 		task_id: string;
 	} | null;
+	/** 以开发模式（sfly dev）加载在这个 Agent 上的节点包，版本为 dev。 */
+	dev_packages: DevPackageView[];
 	running_tasks: {
 		task_id: string;
 		run_id: string;
@@ -130,5 +132,18 @@ export interface AgentView {
 		started_at: string;
 	}[];
 }
+
+/** Agent 上以开发模式加载的节点包；metadata 是加载时扫描出的元信息（节点及其输入输出 schema）。 */
+export interface DevPackageView {
+	name: string;
+	source: string;
+	metadata: { nodes?: unknown } | null;
+}
+
+/** 加载了某个包开发版本的 Agent（在线的排在前面）。 */
+export const agentsWithDev = (agents: AgentView[], name: string) =>
+	agents
+		.filter((a) => a.dev_packages?.some((d) => d.name === name))
+		.sort((a, b) => Number(b.status === "online") - Number(a.status === "online"));
 
 export const listAgents = () => apiGet<{ agents: AgentView[] }>("/agents");

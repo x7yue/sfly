@@ -332,6 +332,8 @@ export function NodeInspector({
 							name={node.package}
 							locked={doc.packages[node.package]}
 							packages={packages}
+							agents={agents}
+							nodeAgent={node.agent ?? defaultAgent}
 							onLock={onLock}
 						/>
 					</div>
