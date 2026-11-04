@@ -1,5 +1,6 @@
 //! 共享 venv（ADR 0002）：节点包和 SDK 运行时都装在里面，与 Agent 自身的运行环境完全隔离。
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -23,9 +24,13 @@ pub struct NodeMetadata {
     pub entry: String,
 }
 
-#[derive(Deserialize)]
-struct Installed {
-    packages: Vec<PackageMetadata>,
+/// `python -m sfly.installed` 的输出。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Installed {
+    pub packages: Vec<PackageMetadata>,
+    /// 每个节点包声明的依赖（包名 → Requires-Dist）。
+    #[serde(default)]
+    pub requires: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,8 +90,8 @@ impl SharedVenv {
         command
     }
 
-    /// 共享 venv 中已安装的节点包（`python -m sfly.installed`）。
-    pub async fn installed(&self) -> anyhow::Result<Vec<PackageMetadata>> {
+    /// 共享 venv 中已安装的节点包及其依赖（`python -m sfly.installed`）。
+    pub async fn installed(&self) -> anyhow::Result<Installed> {
         let output = self
             .python_command()
             .args(["-m", "sfly.installed"])
@@ -101,8 +106,6 @@ impl SharedVenv {
                 String::from_utf8_lossy(&output.stderr).trim()
             );
         }
-        let installed: Installed =
-            serde_json::from_slice(&output.stdout).context("parse sfly.installed output")?;
-        Ok(installed.packages)
+        serde_json::from_slice(&output.stdout).context("parse sfly.installed output")
     }
 }

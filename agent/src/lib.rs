@@ -3,9 +3,12 @@
 //! - [`connect`] 完成一次 Hello → Welcome 握手；
 //! - [`run`] 是 Agent 主循环：连接、接收任务、上报结果，断线后自动重连。
 //!
+//! 任务需要的节点包版本没有安装时，先下载并安装（[`install`]）；安装与启动新任务互斥。
+//!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
 pub mod executor;
+pub mod install;
 pub mod venv;
 
 use std::collections::BTreeMap;
@@ -14,7 +17,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context as _, bail};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::Streaming;
 
@@ -23,12 +26,13 @@ pub mod proto {
     tonic::include_proto!("sfly.agent.v1");
 }
 
+use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AssignTask, ErrorKind, Hello, InstalledPackage, ServerMessage, TaskResult,
-    Welcome, agent_message, server_message,
+    AgentMessage, AssignTask, ErrorKind, Hello, InstallState, InstallStatus, InstalledPackage,
+    ServerMessage, TaskResult, Welcome, agent_message, server_message,
 };
-use venv::{PackageMetadata, SharedVenv};
+use venv::{Installed, SharedVenv};
 
 /// Agent 程序版本（随 Hello 上报）。
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -55,8 +59,10 @@ pub struct Config {
     pub venv: PathBuf,
     /// 任务工作目录的根目录。
     pub work_dir: PathBuf,
-    /// 安装节点包依赖用的 PyPI 镜像地址（#6 使用）。
+    /// 安装节点包依赖用的 PyPI 镜像地址；未设置时使用 uv 自己的配置。
     pub index_url: Option<String>,
+    /// uv 可执行文件。
+    pub uv: PathBuf,
 }
 
 impl Config {
@@ -69,6 +75,7 @@ impl Config {
             venv: PathBuf::from("venv"),
             work_dir: PathBuf::from("work"),
             index_url: None,
+            uv: PathBuf::from("uv"),
         }
     }
 }
@@ -134,33 +141,40 @@ fn emit(event: serde_json::Value) {
 /// 共享 venv 中已安装节点包的缓存。
 struct Inventory {
     venv: SharedVenv,
-    packages: Mutex<Vec<PackageMetadata>>,
+    installed: Mutex<Installed>,
 }
 
 impl Inventory {
     /// 重新读取已安装的节点包；失败时记录日志并视为没有安装任何包。
     async fn refresh(&self) -> Vec<InstalledPackage> {
-        let packages = match self.venv.installed().await {
-            Ok(packages) => packages,
+        let installed = match self.venv.installed().await {
+            Ok(installed) => installed,
             Err(error) => {
                 eprintln!("cannot list packages in shared venv: {error:#}");
-                Vec::new()
+                Installed::default()
             }
         };
-        let summary = packages
+        *self.installed.lock().await = installed;
+        self.summary().await
+    }
+
+    async fn summary(&self) -> Vec<InstalledPackage> {
+        self.installed
+            .lock()
+            .await
+            .packages
             .iter()
             .map(|p| InstalledPackage {
                 name: p.name.clone(),
                 version: p.version.clone(),
             })
-            .collect();
-        *self.packages.lock().await = packages;
-        summary
+            .collect()
     }
 
+    /// 任务需要的包版本已安装时给出节点入口（包里没有该节点时是 config_error 结果）。
     async fn find(&self, task: &AssignTask) -> Option<Result<String, TaskResult>> {
-        let packages = self.packages.lock().await;
-        let package = packages.iter().find(|p| p.name == task.package)?;
+        let installed = self.installed.lock().await;
+        let package = installed.packages.iter().find(|p| p.name == task.package)?;
         if package.version != task.package_version {
             return None;
         }
@@ -176,50 +190,99 @@ impl Inventory {
             )),
         })
     }
-
-    /// 节点入口；缓存中没有该包版本时重新读取一次。
-    async fn entry(&self, task: &AssignTask) -> Result<String, TaskResult> {
-        if let Some(found) = self.find(task).await {
-            return found;
-        }
-        self.refresh().await;
-        if let Some(found) = self.find(task).await {
-            return found;
-        }
-        let installed = self
-            .packages
-            .lock()
-            .await
-            .iter()
-            .find(|p| p.name == task.package)
-            .map(|p| format!("（已安装 {}@{}）", p.name, p.version))
-            .unwrap_or_default();
-        Err(executor::failure(
-            task,
-            ErrorKind::EnvError,
-            format!(
-                "节点包 {}@{} 没有安装在共享 venv 中{installed}",
-                task.package, task.package_version
-            ),
-        ))
-    }
 }
 
 struct Runtime {
     inventory: Inventory,
+    installer: Installer,
     work_dir: PathBuf,
+    /// 安装与启动新任务互斥：启动任务（查找入口到子进程启动）持有读锁，安装持有写锁。
+    /// 已经在运行的任务不持有锁，安装期间照常运行。
+    gate: RwLock<()>,
     results: mpsc::UnboundedSender<TaskResult>,
+    installs: mpsc::UnboundedSender<InstallStatus>,
 }
 
 impl Runtime {
     async fn run_task(&self, task: AssignTask) {
-        let result = match self.inventory.entry(&task).await {
-            Ok(entry) => {
-                executor::execute(&self.inventory.venv, &self.work_dir, &task, &entry).await
-            }
+        let result = match self.start_task(&task).await {
+            Ok(running) => running.wait().await,
             Err(result) => result,
         };
         let _ = self.results.send(result);
+    }
+
+    async fn start_task(&self, task: &AssignTask) -> Result<executor::Running, TaskResult> {
+        {
+            let _starting = self.gate.read().await;
+            if let Some(entry) = self.inventory.find(task).await {
+                return self.start(task, &entry?).await;
+            }
+        }
+        let installing = self.gate.write().await;
+        // 等锁期间可能已被其他任务装好；缓存也可能过期，重新读取一次。
+        if self.inventory.find(task).await.is_none() {
+            self.inventory.refresh().await;
+        }
+        if self.inventory.find(task).await.is_none() {
+            self.install(task).await?;
+        }
+        let _starting = installing.downgrade();
+        match self.inventory.find(task).await {
+            Some(entry) => self.start(task, &entry?).await,
+            None => Err(executor::failure(
+                task,
+                ErrorKind::EnvError,
+                format!(
+                    "节点包 {}@{} 安装后仍不在共享 venv 中",
+                    task.package, task.package_version
+                ),
+            )),
+        }
+    }
+
+    async fn start(&self, task: &AssignTask, entry: &str) -> Result<executor::Running, TaskResult> {
+        executor::start(&self.inventory.venv, &self.work_dir, task, entry).await
+    }
+
+    /// 下载并安装任务需要的包版本（调用方持有写锁），通过 InstallStatus 上报状态。
+    async fn install(&self, task: &AssignTask) -> Result<(), TaskResult> {
+        let status = |state: InstallState, output: String, installed_packages| InstallStatus {
+            package: task.package.clone(),
+            version: task.package_version.clone(),
+            state: state.into(),
+            task_id: task.task_id.clone(),
+            output,
+            installed_packages,
+        };
+        let _ = self.installs.send(status(
+            InstallState::Installing,
+            String::new(),
+            self.inventory.summary().await,
+        ));
+        let requires = self.inventory.installed.lock().await.requires.clone();
+        let outcome = self.installer.install(task, &requires).await;
+        let installed = self.inventory.refresh().await;
+        match outcome {
+            Ok(output) => {
+                let _ = self
+                    .installs
+                    .send(status(InstallState::Installed, output, installed));
+                Ok(())
+            }
+            Err(error) => {
+                eprintln!("{}", error.message);
+                let output = if error.output.is_empty() {
+                    error.message.clone()
+                } else {
+                    error.output
+                };
+                let _ = self
+                    .installs
+                    .send(status(InstallState::Failed, output, installed));
+                Err(executor::failure(task, ErrorKind::EnvError, error.message))
+            }
+        }
     }
 }
 
@@ -235,25 +298,42 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let venv =
         std::fs::canonicalize(&config.venv).or_else(|_| std::path::absolute(&config.venv))?;
 
+    let scratch = work_dir.join(".install");
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
+    let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let runtime = Arc::new(Runtime {
         inventory: Inventory {
+            venv: SharedVenv::new(venv.clone()),
+            installed: Mutex::new(Installed::default()),
+        },
+        installer: Installer {
             venv: SharedVenv::new(venv),
-            packages: Mutex::new(Vec::new()),
+            scratch,
+            index_url: config.index_url.clone(),
+            uv: config.uv.clone(),
+            http: reqwest::Client::new(),
         },
         work_dir,
+        gate: RwLock::new(()),
         results: results_tx,
+        installs: installs_tx,
     });
     let mut unacked: BTreeMap<(String, u32), TaskResult> = BTreeMap::new();
     let mut delay = RECONNECT_MIN;
 
     loop {
+        // 断线期间的安装状态已经过时：重新连接时 Hello 带上最新的已安装列表。
+        while installs_rx.try_recv().is_ok() {}
         let installed = runtime.inventory.refresh().await;
         match connect(&config, installed).await {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
                 emit(serde_json::json!({ "event": "welcome", "name": config.name }));
-                match serve(connection, &runtime, &mut results_rx, &mut unacked).await {
+                let channels = Channels {
+                    results: &mut results_rx,
+                    installs: &mut installs_rx,
+                };
+                match serve(connection, &runtime, channels, &mut unacked).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
                     Err(error) => eprintln!("connection lost: {error:#}"),
                 }
@@ -278,13 +358,20 @@ fn result_message(result: TaskResult) -> AgentMessage {
     }
 }
 
+/// 任务执行方发往控制面的消息。
+struct Channels<'a> {
+    results: &'a mut mpsc::UnboundedReceiver<TaskResult>,
+    installs: &'a mut mpsc::UnboundedReceiver<InstallStatus>,
+}
+
 /// 在一条连接上收发消息，直到连接结束。
 async fn serve(
     mut connection: Connection,
     runtime: &Arc<Runtime>,
-    results: &mut mpsc::UnboundedReceiver<TaskResult>,
+    channels: Channels<'_>,
     unacked: &mut BTreeMap<(String, u32), TaskResult>,
 ) -> anyhow::Result<()> {
+    let Channels { results, installs } = channels;
     for result in unacked.values() {
         connection
             .outbound
@@ -309,6 +396,12 @@ async fn serve(
             Some(result) = results.recv() => {
                 unacked.insert((result.task_id.clone(), result.attempt), result.clone());
                 connection.outbound.send(result_message(result)).await?;
+            }
+            Some(status) = installs.recv() => {
+                connection
+                    .outbound
+                    .send(AgentMessage { body: Some(agent_message::Body::Install(status)) })
+                    .await?;
             }
         }
     }

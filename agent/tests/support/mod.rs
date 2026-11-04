@@ -2,6 +2,8 @@
 //! 启动真实 Agent 二进制、准备装好桩节点包的共享 venv。
 #![allow(dead_code)] // 各测试文件只用到其中一部分。
 
+pub mod packages;
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -12,8 +14,8 @@ use std::time::Duration;
 
 use sfly_agent::proto::agent_gateway_server::{AgentGateway, AgentGatewayServer};
 use sfly_agent::proto::{
-    Ack, AgentMessage, AssignTask, Hello, ServerMessage, TaskResult, Welcome, agent_message,
-    server_message,
+    Ack, AgentMessage, AssignTask, Hello, InstallState, InstallStatus, ServerMessage, TaskResult,
+    Welcome, agent_message, server_message,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -131,6 +133,54 @@ impl FakeControlPlane {
                 }
                 _ => None,
             })
+        })
+        .await
+    }
+
+    /// 某个任务的第一条 TaskResult，以及它在全部已收消息中的位置（用于判断先后）。
+    pub async fn result_at(&self, task_id: &str) -> (TaskResult, usize) {
+        self.wait_for(&format!("result of {task_id}"), |all| {
+            all.iter()
+                .enumerate()
+                .find_map(|(i, r)| match &r.message.body {
+                    Some(agent_message::Body::Result(res)) if res.task_id == task_id => {
+                        Some((res.clone(), i))
+                    }
+                    _ => None,
+                })
+        })
+        .await
+    }
+
+    /// 已收到的全部 InstallStatus（按到达顺序）。
+    pub fn installs(&self) -> Vec<InstallStatus> {
+        self.received()
+            .into_iter()
+            .filter_map(|m| match m.body {
+                Some(agent_message::Body::Install(s)) => Some(s),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 等到某个包版本的某个安装状态，返回它和它在全部已收消息中的位置。
+    pub async fn install_status(
+        &self,
+        package: &str,
+        version: &str,
+        state: InstallState,
+    ) -> (InstallStatus, usize) {
+        self.wait_for(&format!("install {package}@{version} {state:?}"), |all| {
+            all.iter()
+                .enumerate()
+                .find_map(|(i, r)| match &r.message.body {
+                    Some(agent_message::Body::Install(s))
+                        if s.package == package && s.version == version && s.state() == state =>
+                    {
+                        Some((s.clone(), i))
+                    }
+                    _ => None,
+                })
         })
         .await
     }
@@ -324,5 +374,6 @@ pub fn stub_task(task_id: &str, node: &str, inputs: serde_json::Value) -> Assign
         timeout_seconds: 3600,
         run_id: "run-1".into(),
         node_id: format!("node-{node}"),
+        ..Default::default()
     }
 }
