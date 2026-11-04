@@ -1,21 +1,13 @@
 # sfly
 
-sfly 项目仓库。
+面向内网测试的自动化任务编排平台：在画布上把用户用 Python SDK 开发的节点编排成链，派发到指定的 Agent 上执行。
 
-## 结构
+## 文档
 
-```
-.
-├── README.md
-├── .gitignore
-└── .gitattributes
-```
-
-## 开始使用
-
-```bash
-git status
-```
+- [GLOSSARY.md](./GLOSSARY.md)：统一术语
+- [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)：架构设计
+- [docs/SEMANTICS.md](./docs/SEMANTICS.md)：编排执行语义规范
+- [docs/adr/](./docs/adr/)：架构决策记录
 
 ## 约定
 
