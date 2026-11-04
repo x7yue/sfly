@@ -8,9 +8,25 @@
 //   SFLY_AGENT_TOKEN Agent 共享注册令牌（可选；设置后令牌不对的 Agent 被拒绝）
 //   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包
 //                    （可选；默认取监听地址，监听 0.0.0.0 时用本机主机名）
+//   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30），运行结束超过这么久后自动清理
+//   SFLY_LOG_LIMIT_MB     单个任务日志的上限（默认 200），超出部分截断
+//   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024）
 import { startControlPlane } from "./control-plane.js";
 
 const env = process.env;
+const MB = 1024 * 1024;
+/** 可选的正数环境变量；未设置时为 undefined（用默认值），非法值直接报错退出。 */
+const positive = (name: string): number | undefined => {
+	const raw = env[name];
+	if (raw === undefined || raw === "") return undefined;
+	const n = Number(raw);
+	if (!(n > 0)) throw new Error(`${name} must be a positive number, got ${JSON.stringify(raw)}`);
+	return n;
+};
+const mb = (name: string) => {
+	const n = positive(name);
+	return n === undefined ? undefined : Math.floor(n * MB);
+};
 const controlPlane = await startControlPlane({
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
@@ -19,6 +35,9 @@ const controlPlane = await startControlPlane({
 	logger: true,
 	agentToken: env.SFLY_AGENT_TOKEN || undefined,
 	publicHttpUrl: env.SFLY_PUBLIC_URL || undefined,
+	retentionDays: positive("SFLY_RETENTION_DAYS"),
+	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),
+	artifactLimitBytes: mb("SFLY_ARTIFACT_LIMIT_MB"),
 });
 console.log(`sfly control plane: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`);
 
