@@ -1,9 +1,11 @@
 import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { AgentHub } from "./agents/agent-hub.js";
+import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { Engine } from "./engine/engine.js";
+import { limitOutputs } from "./engine/output-limit.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { TaskLogs } from "./logs/task-logs.js";
@@ -82,6 +84,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		hub,
 		packageArchiveUrl: (name, version) =>
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
+		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 		preflight,
 	});
 	const logs = new TaskLogs({
@@ -89,6 +92,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		dataDir: options.dataDir,
 		limitBytes: options.logLimitBytes,
+	});
+	const artifacts = new ArtifactStore({
+		db: database.db,
+		clock,
+		dataDir: options.dataDir,
+		limitBytes: options.artifactLimitBytes,
 	});
 	const retention = new Retention({
 		db: database.db,
@@ -109,6 +118,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		preflight,
 		logs,
 		retention,
+		artifacts,
+		agentToken: options.agentToken,
+		publicHttpUrl: () => publicHttpUrl,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
@@ -129,7 +141,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			handler: {
 				onOnline: (conn) => engine.onOnline(conn),
 				onMessage: (conn, message) =>
-					logs.handles(message) ? logs.onMessage(conn, message) : engine.onMessage(conn, message),
+					logs.handles(message)
+						? logs.onMessage(conn, message)
+						: engine.onMessage(conn, limitOutputs(message)),
 			},
 			agentToken: options.agentToken,
 			onError: (error) => {

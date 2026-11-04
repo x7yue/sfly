@@ -1,5 +1,6 @@
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { AgentHub } from "../agents/agent-hub.js";
+import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
@@ -10,6 +11,7 @@ import type { PresenceRegistry } from "../presence/presence-registry.js";
 import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import { registerSse } from "../sse/sse.js";
+import { registerArtifactRoutes } from "./artifact-routes.js";
 import { sendError } from "./errors.js";
 import { registerLogRoutes } from "./log-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
@@ -29,6 +31,11 @@ export interface HttpApiDeps {
 	preflight: Preflight;
 	logs: TaskLogs;
 	retention: Retention;
+	artifacts: ArtifactStore;
+	/** Agent 共享注册令牌：设置后上传产物要带上它。 */
+	agentToken?: string;
+	/** HTTP API 对 Agent 可见的地址（产物引用用它拼下载地址）；监听之后才确定。 */
+	publicHttpUrl: () => string;
 }
 
 const errorCode = (status: number): string =>
@@ -52,6 +59,9 @@ export function buildHttpApi({
 	preflight,
 	logs,
 	retention,
+	artifacts,
+	agentToken,
+	publicHttpUrl,
 }: HttpApiDeps): FastifyInstance {
 	const app = Fastify({ logger });
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
@@ -90,6 +100,7 @@ export function buildHttpApi({
 		progress: logs.progress,
 	});
 	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
+	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
 	registerPackageRoutes(app, packages);
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 
