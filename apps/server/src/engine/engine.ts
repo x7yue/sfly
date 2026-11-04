@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
+import { NODE_DEFAULTS } from "@sfly/orchestration";
 import {
 	type AgentMessage,
 	InstallState,
@@ -30,7 +31,7 @@ import { fillParams } from "./params.js";
 import { InvalidReferenceError, resolveInputs } from "./references.js";
 
 /** 包节点默认超时：1 小时（docs/SEMANTICS.md §3.3）。 */
-export const DEFAULT_TIMEOUT_SECONDS = 3600;
+export const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type RunRow = typeof runs.$inferSelect;

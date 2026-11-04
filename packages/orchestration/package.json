@@ -3,7 +3,7 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
-	"description": "编排的纯逻辑（结构规则：单入单出连线、结构警告），控制面与画布共用",
+	"description": "编排的纯逻辑（结构规则、包版本锁定、引用补全与检查、节点执行配置默认值），控制面与画布共用",
 	"exports": {
 		".": "./src/index.ts"
 	},
