@@ -117,7 +117,8 @@ describe("编排版本：冲突、历史与恢复", () => {
 			number: 3,
 			author: "carol",
 			created_at: "2026-04-02T00:00:00.000Z",
-			warnings: [],
+			// 恢复与保存返回同一套静态检查（#8）：这里引用的节点包没有发布过。
+			warnings: [expect.objectContaining({ code: "package_version_missing", node_id: "check" })],
 		});
 		expect(restored.document).toEqual(v1.document);
 
