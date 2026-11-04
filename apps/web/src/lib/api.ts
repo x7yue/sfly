@@ -1,4 +1,4 @@
-import type { StructureWarning } from "@sfly/orchestration";
+import type { OrchestrationWarning } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { getNickname, NICKNAME_HEADER } from "./nickname";
 
@@ -92,7 +92,7 @@ export interface SavedVersion {
 	author: string;
 	created_at: string;
 	document: OrchestrationDocument;
-	warnings: StructureWarning[];
+	warnings: OrchestrationWarning[];
 }
 
 export const listOrchestrations = () =>

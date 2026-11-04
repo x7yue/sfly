@@ -25,7 +25,7 @@ export function toFlowEdge(edge: DocEdge): SfEdge {
 		target: edge.to,
 		sourceHandle: edge.kind,
 		targetHandle: edge.kind,
-		className: `sf-edge--${edge.kind}`,
+		type: "sf",
 		data: { kind: edge.kind },
 	};
 }

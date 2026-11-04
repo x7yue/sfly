@@ -1,22 +1,39 @@
-import type { StructureWarning } from "@sfly/orchestration";
-import type { OrchestrationNode } from "@sfly/schema";
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
+import {
+	nodeTypeOf,
+	type OrchestrationWarning,
+	type PackageCatalog,
+	referenceOptions,
+} from "@sfly/orchestration";
+import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import { useState } from "react";
-import type { AgentView } from "#/lib/api";
+import type { AgentView, PackageSummary } from "#/lib/api";
 import type { DocNode } from "./flow";
-import { KIND_LABEL } from "./NodeCard";
+import { InputsForm } from "./InputsForm";
+import { KIND_LABEL, KindChip } from "./NodeCard";
+import { AlwaysToggle, ExecutionSettings } from "./NodeSettings";
+import { PackageVersionRow } from "./PackageVersions";
 
 type Param = Extract<OrchestrationNode, { kind: "entry" }>["params"][number];
 type ParamType = Param["type"];
 
 const PARAM_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const inputClass =
-	"w-full rounded border border-[var(--sf-border)] bg-white px-2 py-1 text-sm outline-none focus:border-[var(--sf-accent)]";
+const inputClass = "sf-inp";
 
-export function Section({ title, children }: { title: string; children: React.ReactNode }) {
+export function Section({
+	title,
+	aside,
+	children,
+}: {
+	title: string;
+	aside?: React.ReactNode;
+	children: React.ReactNode;
+}) {
 	return (
-		<section className="border-b border-[var(--sf-border)] p-3">
-			<h3 className="mb-2 text-xs font-semibold tracking-wide text-[var(--sf-text-muted)] uppercase">
+		<section className="sf-sec">
+			<h3>
 				{title}
+				{aside !== undefined && <span className="sf-r">{aside}</span>}
 			</h3>
 			{children}
 		</section>
@@ -56,17 +73,14 @@ export function AgentSelect({
 	);
 }
 
-export function WarningList({ warnings }: { warnings: StructureWarning[] }) {
+export function WarningList({ warnings }: { warnings: OrchestrationWarning[] }) {
 	if (warnings.length === 0) {
-		return <p className="text-sm text-[var(--sf-success)]">结构检查通过。</p>;
+		return <p className="text-[12.5px] text-[var(--sf-ok)]">结构、包版本和引用检查都通过了。</p>;
 	}
 	return (
 		<ul className="space-y-1">
 			{warnings.map((w) => (
-				<li
-					key={`${w.code}:${w.node_id ?? ""}:${w.message}`}
-					className="rounded bg-[var(--sf-warning-soft)] px-2 py-1 text-xs text-[var(--sf-warning)]"
-				>
+				<li key={`${w.code}:${w.node_id ?? ""}:${w.message}`} className="sf-warn-item">
 					{w.message}
 				</li>
 			))}
@@ -88,7 +102,7 @@ export function ParamsEditor({
 
 	return (
 		<div className="space-y-3">
-			{params.length === 0 && <p className="text-sm text-[var(--sf-text-muted)]">还没有参数。</p>}
+			{params.length === 0 && <p className="sf-hint">还没有参数。</p>}
 			{params.map((param, index) => {
 				const nameError = !PARAM_NAME.test(param.name)
 					? "名称只能包含字母、数字和下划线，不能以数字开头"
@@ -97,18 +111,18 @@ export function ParamsEditor({
 						: null;
 				return (
 					// biome-ignore lint/suspicious/noArrayIndexKey: 参数名可以编辑，没有稳定的键
-					<div key={index} className="space-y-2 rounded border border-[var(--sf-border)] p-2">
+					<div key={index} className="sf-card space-y-2">
 						<div className="flex gap-2">
 							<input
 								aria-label="参数名称"
-								className={`${inputClass} font-mono`}
+								className={`${inputClass} sf-inp--mono`}
 								value={param.name}
 								placeholder="名称"
 								onChange={(e) => update(index, { name: e.target.value })}
 							/>
 							<select
 								aria-label="参数类型"
-								className={`${inputClass} w-28`}
+								className={`${inputClass} w-28 shrink-0`}
 								value={param.type}
 								onChange={(e) =>
 									update(index, { type: e.target.value as ParamType, default: undefined })
@@ -120,13 +134,13 @@ export function ParamsEditor({
 								<option value="json">json</option>
 							</select>
 						</div>
-						{nameError && <p className="text-xs text-[var(--sf-danger)]">{nameError}</p>}
+						{nameError && <p className="sf-err">{nameError}</p>}
 						<DefaultInput
 							type={param.type}
 							value={param.default}
 							onChange={(value) => update(index, { default: value })}
 						/>
-						<div className="flex items-center gap-4 text-sm">
+						<div className="flex items-center gap-4 text-[12.5px] text-[var(--sf-text-2)]">
 							<label className="flex items-center gap-1">
 								<input
 									type="checkbox"
@@ -145,7 +159,7 @@ export function ParamsEditor({
 							</label>
 							<button
 								type="button"
-								className="ml-auto text-xs text-[var(--sf-danger)] hover:underline"
+								className="sf-link sf-link--danger ml-auto text-xs"
 								onClick={() => onChange(params.filter((_, i) => i !== index))}
 							>
 								删除
@@ -156,7 +170,7 @@ export function ParamsEditor({
 			})}
 			<button
 				type="button"
-				className="text-sm text-[var(--sf-accent)] hover:underline"
+				className="sf-addrow"
 				onClick={() =>
 					onChange([
 						...params,
@@ -237,7 +251,7 @@ function DefaultInput({
 				<div>
 					<textarea
 						aria-label="默认值"
-						className={`${inputClass} h-16 font-mono`}
+						className={`${inputClass} sf-inp--mono`}
 						placeholder="默认值（JSON，可选）"
 						value={jsonText}
 						onChange={(e) => {
@@ -255,7 +269,7 @@ function DefaultInput({
 							}
 						}}
 					/>
-					{jsonError && <p className="text-xs text-[var(--sf-danger)]">{jsonError}</p>}
+					{jsonError && <p className="sf-err">{jsonError}</p>}
 				</div>
 			);
 	}
@@ -266,37 +280,66 @@ export function NodeInspector({
 	node,
 	id,
 	title,
-	version,
+	doc,
+	catalog,
+	packages,
 	defaultAgent,
 	agents,
 	warnings,
 	onChange,
+	onLock,
 	onDelete,
 }: {
 	node: DocNode;
 	id: string;
 	title: string;
-	version: string | undefined;
+	/** 当前画布内容（用于引用补全和查找节点类型）。 */
+	doc: OrchestrationDocument;
+	catalog: PackageCatalog;
+	packages: PackageSummary[] | undefined;
 	defaultAgent: string | undefined;
 	agents: AgentView[];
-	warnings: StructureWarning[];
+	warnings: OrchestrationWarning[];
 	onChange(node: DocNode): void;
+	/** 把某个节点包锁定（升级）到指定版本。 */
+	onLock(name: string, version: string): void;
 	onDelete?: () => void;
 }) {
+	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
+	// 包节点表单里有对应字段的输入警告显示在字段下面，其余显示在警告区。
+	const general = warnings.filter(
+		(w) => !("input" in w && w.input !== undefined && type?.inputs.properties[w.input]),
+	);
 	return (
 		<>
-			<Section title={KIND_LABEL[node.kind]}>
-				<p className="font-semibold">{title}</p>
-				<p className="font-mono text-xs text-[var(--sf-text-muted)]">{id}</p>
+			<section className="sf-sec sf-ins-head">
+				<div className="flex items-center gap-2.5">
+					<KindChip kind={node.kind} />
+					<div className="min-w-0">
+						<div className="flex gap-2 text-xs text-[var(--sf-text-3)]">
+							<code className="text-[var(--sf-text-2)]">{id}</code>
+							<span>{KIND_LABEL[node.kind]}</span>
+						</div>
+						<h2 className="truncate">{title}</h2>
+					</div>
+				</div>
 				{node.kind === "package" && (
-					<p className="mt-1 font-mono text-xs text-[var(--sf-text-muted)]">
-						{node.package}/{node.node} · {node.package}@{version ?? "?"}
-					</p>
+					<div className="mt-3">
+						<p className="mb-1 font-mono text-xs text-[var(--sf-text-3)]">
+							{node.package}/{node.node}
+						</p>
+						<PackageVersionRow
+							name={node.package}
+							locked={doc.packages[node.package]}
+							packages={packages}
+							onLock={onLock}
+						/>
+					</div>
 				)}
-			</Section>
-			{warnings.length > 0 && (
-				<Section title="警告">
-					<WarningList warnings={warnings} />
+			</section>
+			{general.length > 0 && (
+				<Section title="警告" aside={`${general.length} 条`}>
+					<WarningList warnings={general} />
 				</Section>
 			)}
 			{(node.kind === "entry" || node.kind === "subflow_entry") && (
@@ -305,26 +348,46 @@ export function NodeInspector({
 				</Section>
 			)}
 			{node.kind === "package" && (
-				<Section title="Agent">
-					<AgentSelect
-						label="节点 Agent"
-						value={node.agent}
-						agents={agents}
-						emptyLabel={`使用默认 Agent（${defaultAgent ?? "未设置"}）`}
-						onChange={(agent) => {
-							const { agent: _old, ...rest } = node;
-							onChange(agent ? { ...rest, agent } : rest);
-						}}
-					/>
+				<>
+					<Section title="输入" aside="常量或引用">
+						<InputsForm
+							type={type}
+							inputs={node.inputs}
+							options={referenceOptions(doc, id, catalog)}
+							warnings={warnings}
+							onChange={(inputs) => onChange({ ...node, inputs })}
+						/>
+						<p className="sf-hint">
+							输入 <code>{"${{"}</code> 或点 <code>{"${}"}</code>{" "}
+							插入引用：只能引用本链的入口参数和本链上前面节点的输出。
+						</p>
+					</Section>
+					<Section title="Agent">
+						<AgentSelect
+							label="节点 Agent"
+							value={node.agent}
+							agents={agents}
+							emptyLabel={`使用默认 Agent（${defaultAgent ?? "未设置"}）`}
+							onChange={(agent) => {
+								const { agent: _old, ...rest } = node;
+								onChange(agent ? { ...rest, agent } : rest);
+							}}
+						/>
+					</Section>
+					<Section title="执行">
+						<ExecutionSettings node={node} onChange={onChange} />
+						<AlwaysToggle node={node} onChange={onChange} />
+					</Section>
+				</>
+			)}
+			{(node.kind === "timer" || node.kind === "sleep") && (
+				<Section title="执行">
+					<AlwaysToggle node={node} onChange={onChange} />
 				</Section>
 			)}
 			{onDelete && (
 				<Section title="操作">
-					<button
-						type="button"
-						className="text-sm text-[var(--sf-danger)] hover:underline"
-						onClick={onDelete}
-					>
+					<button type="button" className="sf-btn sf-btn--ghost sf-btn--sm" onClick={onDelete}>
 						删除节点
 					</button>
 				</Section>

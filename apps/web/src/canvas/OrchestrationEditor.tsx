@@ -1,4 +1,4 @@
-import { checkConnection, type StructureWarning, structureWarnings } from "@sfly/orchestration";
+import { checkConnection, documentWarnings, type OrchestrationWarning } from "@sfly/orchestration";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Background,
@@ -22,6 +22,8 @@ import {
 	type SavedVersion,
 	saveVersion,
 } from "#/lib/api";
+import { usePackageCatalog } from "./catalog";
+import { edgeTypes } from "./edges";
 import {
 	type DocMeta,
 	type DocNode,
@@ -36,6 +38,7 @@ import {
 import { AgentSelect, NodeInspector, Section, WarningList } from "./Inspector";
 import { CanvasContext, type CanvasInfo, nodeTitle, nodeTypes } from "./NodeCard";
 import { NodePalette, PALETTE_MIME, type PaletteItem } from "./NodePalette";
+import { PackageVersions } from "./PackageVersions";
 
 export function OrchestrationEditor(props: {
 	orchestration: Orchestration;
@@ -70,7 +73,7 @@ function Editor({
 	});
 	const [version, setVersion] = useState({ number: head.number, author: head.author });
 	const [notice, setNotice] = useState<string | null>(null);
-	const [savedWarnings, setSavedWarnings] = useState<StructureWarning[] | null>(null);
+	const [savedWarnings, setSavedWarnings] = useState<OrchestrationWarning[] | null>(null);
 
 	const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
 	const agents = useQuery({
@@ -81,9 +84,11 @@ function Editor({
 	const agentList = agents.data?.agents ?? [];
 
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
-	const warnings = useMemo(() => structureWarnings(doc), [doc]);
+	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
+	const catalog = usePackageCatalog(meta.packages);
+	const warnings = useMemo(() => documentWarnings(doc, catalog), [doc, catalog]);
 	const warningsByNode = useMemo(() => {
-		const map = new Map<string, StructureWarning[]>();
+		const map = new Map<string, OrchestrationWarning[]>();
 		for (const w of warnings) {
 			if (w.node_id) map.set(w.node_id, [...(map.get(w.node_id) ?? []), w]);
 		}
@@ -219,6 +224,10 @@ function Editor({
 		addPackageNode(item, { x: position.x - 100, y: position.y - 20 });
 	};
 
+	/** 把节点包锁定（升级）到某个版本；同一个包的所有节点一起切换。 */
+	const lockPackage = (name: string, version: string) =>
+		setMeta((m) => ({ ...m, packages: { ...m.packages, [name]: version } }));
+
 	const updateNode = (id: string, node: DocNode) =>
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
 
@@ -245,46 +254,41 @@ function Editor({
 
 	return (
 		<CanvasContext.Provider value={canvasInfo}>
-			<div className="flex h-[calc(100vh-49px)] flex-col">
-				<header className="flex items-center gap-3 border-b border-[var(--sf-border)] bg-white px-4 py-2">
-					<h1 className="text-base font-semibold">{orchestration.name}</h1>
-					<span className="text-sm text-[var(--sf-text-muted)]">
+			<div className="sf-editor flex h-[calc(100vh-49px)] flex-col">
+				<header className="sf-topbar">
+					<h1>{orchestration.name}</h1>
+					<span className="sf-tag">
 						{version.number === 0
 							? "还没有保存过版本"
 							: `版本 ${version.number}${version.author ? ` · ${version.author}` : ""}`}
 					</span>
-					<span
-						className={`text-sm ${warnings.length > 0 ? "text-[var(--sf-warning)]" : "text-[var(--sf-success)]"}`}
-					>
-						{warnings.length > 0 ? `${warnings.length} 条结构警告` : "结构检查通过"}
+					<span className={`sf-tag ${warnings.length > 0 ? "sf-tag--warn" : ""}`}>
+						<i />
+						{warnings.length > 0 ? `${warnings.length} 条警告` : "检查通过"}
 					</span>
 					<div className="ml-auto flex items-center gap-3">
 						{save.isSuccess && savedWarnings && (
-							<span className="text-sm text-[var(--sf-text-muted)]">
+							<span className="sf-tag">
 								已保存为版本 {version.number}
 								{savedWarnings.length > 0 ? `（${savedWarnings.length} 条警告）` : ""}
 							</span>
 						)}
 						{save.error && (
-							<span className="text-sm text-[var(--sf-danger)]">
-								保存失败：{save.error.message}
-							</span>
+							<span className="sf-tag sf-tag--danger">保存失败：{save.error.message}</span>
 						)}
 						<button
 							type="button"
 							onClick={() => save.mutate()}
 							disabled={save.isPending}
-							className="rounded bg-[var(--sf-accent)] px-3 py-1 text-sm font-medium text-white disabled:opacity-60"
+							className="sf-btn sf-btn--primary"
 						>
 							{save.isPending ? "保存中…" : "保存"}
 						</button>
 					</div>
 				</header>
 				<div className="flex min-h-0 flex-1">
-					<aside className="w-60 shrink-0 overflow-y-auto border-r border-[var(--sf-border)] bg-[var(--sf-surface-muted)]">
-						<h2 className="px-3 pt-3 text-xs font-semibold tracking-wide text-[var(--sf-text-muted)] uppercase">
-							节点类型
-						</h2>
+					<aside className="sf-panel w-60 shrink-0 overflow-y-auto border-r">
+						<h2 className="sf-panel-title">节点类型</h2>
 						<NodePalette
 							packages={packages.data?.packages}
 							locked={meta.packages}
@@ -296,6 +300,7 @@ function Editor({
 							nodes={nodes}
 							edges={edges}
 							nodeTypes={nodeTypes}
+							edgeTypes={edgeTypes}
 							onNodesChange={onNodesChange}
 							onEdgesChange={onEdgesChange}
 							onConnect={onConnect}
@@ -313,35 +318,31 @@ function Editor({
 							minZoom={0.1}
 							deleteKeyCode={["Backspace", "Delete"]}
 						>
-							<Background gap={16} />
+							<Background gap={22} size={1.3} />
 							<Controls />
 							<MiniMap pannable zoomable />
 						</ReactFlow>
 						{notice && (
-							<div className="absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded bg-[var(--sf-warning-soft)] px-3 py-1 text-sm text-[var(--sf-warning)] shadow">
+							<output className="sf-toast" aria-live="polite">
+								<i />
 								{notice}
-								<button
-									type="button"
-									className="ml-2 text-xs underline"
-									onClick={() => setNotice(null)}
-								>
+								<button type="button" className="sf-link text-xs" onClick={() => setNotice(null)}>
 									知道了
 								</button>
-							</div>
+							</output>
 						)}
 					</div>
-					<aside className="w-80 shrink-0 overflow-y-auto border-l border-[var(--sf-border)] bg-white">
+					<aside className="sf-panel w-[392px] shrink-0 overflow-y-auto border-l">
 						{only ? (
 							<NodeInspector
 								key={only.id}
 								id={only.id}
 								node={only.data.node}
 								title={nodeTitle(only.data.node, canvasInfo)}
-								version={
-									only.data.node.kind === "package"
-										? meta.packages[only.data.node.package]
-										: undefined
-								}
+								doc={doc}
+								catalog={catalog}
+								packages={packages.data?.packages}
+								onLock={lockPackage}
 								defaultAgent={meta.default_agent}
 								agents={agentList}
 								warnings={warningsByNode.get(only.id) ?? []}
@@ -355,8 +356,8 @@ function Editor({
 						) : (
 							<>
 								<Section title="编排">
-									<div className="text-sm">
-										<span className="mb-1 block text-[var(--sf-text-muted)]">默认 Agent</span>
+									<div>
+										<span className="sf-label mb-1 block">默认 Agent</span>
 										<AgentSelect
 											label="默认 Agent"
 											value={meta.default_agent}
@@ -365,15 +366,20 @@ function Editor({
 											onChange={(agent) => setMeta((m) => ({ ...m, default_agent: agent }))}
 										/>
 									</div>
-									<p className="mt-2 text-xs text-[var(--sf-text-muted)]">
+									<p className="sf-hint">
 										未单独选择 Agent 的包节点都派发到默认 Agent。选中节点可以为它另选 Agent。
 									</p>
 								</Section>
-								<Section title="结构检查">
+								<Section title="节点包版本">
+									<PackageVersions
+										doc={doc}
+										packages={packages.data?.packages}
+										onLock={lockPackage}
+									/>
+								</Section>
+								<Section title="检查" aside={`${warnings.length} 条警告`}>
 									<WarningList warnings={warnings} />
-									<p className="mt-2 text-xs text-[var(--sf-text-muted)]">
-										警告不阻止保存；触发运行时必须全部通过。
-									</p>
+									<p className="sf-hint">警告不阻止保存；触发运行时必须全部通过。</p>
 								</Section>
 							</>
 						)}
