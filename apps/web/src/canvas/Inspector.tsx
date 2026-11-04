@@ -13,6 +13,7 @@ import { InputsForm } from "./InputsForm";
 import { KIND_LABEL, KindChip } from "./NodeCard";
 import { AlwaysToggle, ExecutionSettings } from "./NodeSettings";
 import { PackageVersionRow } from "./PackageVersions";
+import { SleepSettings, TimerSettings, WAIT_INPUTS } from "./WaitNodes";
 
 type Param = Extract<OrchestrationNode, { kind: "entry" }>["params"][number];
 type ParamType = Param["type"];
@@ -306,9 +307,15 @@ export function NodeInspector({
 	onDelete?: () => void;
 }) {
 	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
-	// 包节点表单里有对应字段的输入警告显示在字段下面，其余显示在警告区。
+	// 包节点表单里有对应字段的输入警告显示在字段下面（定时 / Sleep 节点的配置项也是），其余显示在警告区。
+	const waitNode = node.kind === "timer" || node.kind === "sleep";
 	const general = warnings.filter(
-		(w) => !("input" in w && w.input !== undefined && type?.inputs.properties[w.input]),
+		(w) =>
+			!(
+				"input" in w &&
+				w.input !== undefined &&
+				(type?.inputs.properties[w.input] || (waitNode && WAIT_INPUTS.has(w.input)))
+			),
 	);
 	return (
 		<>
@@ -382,8 +389,19 @@ export function NodeInspector({
 					</Section>
 				</>
 			)}
+			{node.kind === "timer" && (
+				<TimerSettings node={node} warnings={warnings} onChange={onChange} />
+			)}
+			{node.kind === "sleep" && (
+				<SleepSettings
+					node={node}
+					options={referenceOptions(doc, id, catalog)}
+					warnings={warnings}
+					onChange={onChange}
+				/>
+			)}
 			{(node.kind === "timer" || node.kind === "sleep") && (
-				<Section title="执行">
+				<Section title="执行" aside="控制面执行 · 不占用 Agent">
 					<AlwaysToggle node={node} onChange={onChange} />
 				</Section>
 			)}

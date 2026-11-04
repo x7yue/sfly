@@ -38,6 +38,13 @@ import { CanvasContext, type CanvasInfo, nodeTitle, nodeTypes } from "./NodeCard
 import { NodePalette, PALETTE_MIME, type PaletteItem } from "./NodePalette";
 import { PackageVersions } from "./PackageVersions";
 import { PresenceIndicator } from "./PresenceIndicator";
+import {
+	isWaitKind,
+	newWaitNode,
+	WAIT_PALETTE_MIME,
+	type WaitKind,
+	WaitNodePalette,
+} from "./WaitNodes";
 
 export function OrchestrationEditor({
 	orchestration,
@@ -210,8 +217,21 @@ function Editor({
 		[meta.packages, setNodes],
 	);
 
+	// —— 放置定时 / Sleep 节点（#14） ——
+	const addWaitNode = (kind: WaitKind, position: { x: number; y: number }) =>
+		setNodes((ns) => {
+			const id = uniqueNodeId(
+				kind,
+				ns.map((n) => n.id),
+			);
+			return [
+				...ns.map((n) => ({ ...n, selected: false })),
+				{ id, type: kind, position, data: { node: newWaitNode(kind, id) }, selected: true },
+			];
+		});
+
 	/** 点击添加：放在最右侧节点的右边（链自然延伸的方向），并把视口移过去。 */
-	const addAfterRightmost = (item: PaletteItem) => {
+	const addAfterRightmost = (item: PaletteItem | WaitKind) => {
 		const rightmost = nodes.reduce<SfNode | undefined>(
 			(best, n) => (!best || n.position.x > best.position.x ? n : best),
 			undefined,
@@ -219,12 +239,20 @@ function Editor({
 		const position = rightmost
 			? { x: rightmost.position.x + 280, y: rightmost.position.y }
 			: { x: 0, y: 0 };
-		addPackageNode(item, position);
+		if (typeof item === "string") addWaitNode(item, position);
+		else addPackageNode(item, position);
 		const zoom = flow.getZoom();
 		flow.setCenter(position.x + 100, position.y + 40, { zoom, duration: 200 });
 	};
 
 	const onDrop = (event: React.DragEvent) => {
+		const wait = event.dataTransfer.getData(WAIT_PALETTE_MIME);
+		if (isWaitKind(wait)) {
+			event.preventDefault();
+			const position = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+			addWaitNode(wait, { x: position.x - 100, y: position.y - 20 });
+			return;
+		}
 		const raw = event.dataTransfer.getData(PALETTE_MIME);
 		if (!raw) return;
 		event.preventDefault();
@@ -305,6 +333,8 @@ function Editor({
 				/>
 				<div className="flex min-h-0 flex-1">
 					<aside className="sf-panel w-60 shrink-0 overflow-y-auto border-r">
+						<h2 className="sf-panel-title">内置节点</h2>
+						<WaitNodePalette onAdd={addAfterRightmost} />
 						<h2 className="sf-panel-title">节点类型</h2>
 						<NodePalette
 							packages={packages.data?.packages}
@@ -324,7 +354,10 @@ function Editor({
 							onConnectEnd={onConnectEnd}
 							isValidConnection={isValidConnection}
 							onDragOver={(e) => {
-								if (e.dataTransfer.types.includes(PALETTE_MIME)) {
+								if (
+									e.dataTransfer.types.includes(PALETTE_MIME) ||
+									e.dataTransfer.types.includes(WAIT_PALETTE_MIME)
+								) {
 									e.preventDefault();
 									e.dataTransfer.dropEffect = "copy";
 								}
