@@ -23,6 +23,13 @@ export interface AgentInfo {
 	os: string;
 	arch: string;
 	slots: number;
+	/** 共享 venv 中已安装的节点包（#5）。 */
+	installed_packages: InstalledPackage[];
+}
+
+export interface InstalledPackage {
+	name: string;
+	version: string;
 }
 
 export type AgentStatus = "online" | "offline";

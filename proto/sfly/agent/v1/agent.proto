@@ -44,6 +44,14 @@ message Hello {
   string arch = 5;
   // 并发槽位数：同时运行的任务上限；0 表示使用默认值 4。
   uint32 slots = 6;
+  // 共享 venv 中已安装的节点包。
+  repeated InstalledPackage installed_packages = 7;
+}
+
+// 安装在 Agent 共享 venv 中的一个节点包版本。
+message InstalledPackage {
+  string name = 1;
+  string version = 2;
 }
 
 // 控制面对 Hello 的回应，表示连接已被接受。

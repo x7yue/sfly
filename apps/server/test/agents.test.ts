@@ -6,7 +6,13 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 interface AgentView {
 	name: string;
 	status: string;
-	info: { agent_version: string; os: string; arch: string; slots: number };
+	info: {
+		agent_version: string;
+		os: string;
+		arch: string;
+		slots: number;
+		installed_packages: Array<{ name: string; version: string }>;
+	};
 	last_seen_at: string;
 }
 
@@ -41,9 +47,41 @@ describe("Agent 注册", () => {
 			{
 				name: "agent-a",
 				status: "online",
-				info: { agent_version: "1.2.3", os: "linux", arch: "x86_64", slots: 2 },
+				info: {
+					agent_version: "1.2.3",
+					os: "linux",
+					arch: "x86_64",
+					slots: 2,
+					installed_packages: [],
+				},
 				last_seen_at: "2026-01-01T00:00:00.000Z",
 			},
+		]);
+	});
+
+	it("Hello 上报的已安装节点包可以通过 API 查到，重新连接时更新", async () => {
+		cp = await startTestControlPlane();
+		const first = await FakeAgent.connect(cp.grpcUrl, {
+			name: "agent-a",
+			installedPackages: [
+				{ name: "sfly-stub", version: "0.1.0" },
+				{ name: "demo", version: "2.0.0" },
+			],
+		});
+		agents.push(first);
+		expect((await listAgents(cp))[0]?.info.installed_packages).toEqual([
+			{ name: "sfly-stub", version: "0.1.0" },
+			{ name: "demo", version: "2.0.0" },
+		]);
+
+		agents.push(
+			await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-a",
+				installedPackages: [{ name: "sfly-stub", version: "0.2.0" }],
+			}),
+		);
+		expect((await listAgents(cp))[0]?.info.installed_packages).toEqual([
+			{ name: "sfly-stub", version: "0.2.0" },
 		]);
 	});
 
