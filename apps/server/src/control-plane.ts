@@ -8,6 +8,7 @@ import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
+import { PresenceRegistry } from "./presence/presence-registry.js";
 import { Mutex } from "./util/mutex.js";
 
 export interface ListenOptions {
@@ -31,6 +32,8 @@ export interface ControlPlaneOptions {
 	 * 默认取实际监听地址；监听在 0.0.0.0 / :: 时用本机主机名。
 	 */
 	publicHttpUrl?: string;
+	/** 周期扫描（目前只有在线编辑者超时）的间隔，默认 250 毫秒（在线编辑者最多晚这么久被移除）；测试里调小，配合手动时钟推进。 */
+	sweepIntervalMs?: number;
 }
 
 export interface ControlPlane {
@@ -68,7 +71,17 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 	});
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
-	const api = buildHttpApi({ database, clock, logger, hub, orchestrations, engine, packages });
+	const presence = new PresenceRegistry({ clock });
+	const api = buildHttpApi({
+		database,
+		clock,
+		logger,
+		hub,
+		orchestrations,
+		engine,
+		packages,
+		presence,
+	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });
 	const httpPort = (api.server.address() as AddressInfo).port;
@@ -96,10 +109,14 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 
+	const sweep = setInterval(() => presence.sweep(), options.sweepIntervalMs ?? 250);
+	sweep.unref();
+
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
 		async close() {
+			clearInterval(sweep);
 			hub.closeAll();
 			await gateway.close();
 			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。

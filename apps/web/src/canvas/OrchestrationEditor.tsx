@@ -34,6 +34,7 @@ import { AgentSelect, NodeInspector, Section, WarningList } from "./Inspector";
 import { CanvasContext, type CanvasInfo, nodeTitle, nodeTypes } from "./NodeCard";
 import { NodePalette, PALETTE_MIME, type PaletteItem } from "./NodePalette";
 import { PackageVersions } from "./PackageVersions";
+import { PresenceIndicator } from "./PresenceIndicator";
 
 export function OrchestrationEditor({
 	orchestration,
@@ -247,12 +248,15 @@ function Editor({
 						<i />
 						{warnings.length > 0 ? `${warnings.length} 条警告` : "检查通过"}
 					</span>
-					<VersionControls
-						orchestration={orchestration}
-						doc={doc}
-						versioning={versioning}
-						onReload={onReload}
-					/>
+					<div className="ml-auto flex items-center gap-3">
+						<PresenceIndicator orchestrationId={orchestration.id} />
+						<VersionControls
+							orchestration={orchestration}
+							doc={doc}
+							versioning={versioning}
+							onReload={onReload}
+						/>
+					</div>
 				</header>
 				<StaleDraftBanner
 					orchestration={orchestration}

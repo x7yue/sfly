@@ -5,9 +5,12 @@ import type { Database } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
+import type { PresenceRegistry } from "../presence/presence-registry.js";
+import { registerSse } from "../sse/sse.js";
 import { sendError } from "./errors.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
+import { registerPresenceRoutes } from "./presence-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 
 export interface HttpApiDeps {
@@ -18,6 +21,7 @@ export interface HttpApiDeps {
 	orchestrations: OrchestrationStore;
 	engine: Engine;
 	packages: PackageRepository;
+	presence: PresenceRegistry;
 }
 
 const errorCode = (status: number): string =>
@@ -37,8 +41,11 @@ export function buildHttpApi({
 	orchestrations,
 	engine,
 	packages,
+	presence,
 }: HttpApiDeps): FastifyInstance {
 	const app = Fastify({ logger });
+	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
+	const sse = registerSse(app);
 
 	// Fastify 自身产生的错误（未知路由、请求体过大、JSON 解析失败等）也用统一的错误格式。
 	app.setNotFoundHandler((request, reply) =>
@@ -66,6 +73,7 @@ export function buildHttpApi({
 	registerOrchestrationRoutes(app, { orchestrations, packages });
 	registerRunRoutes(app, { db: database.db, engine });
 	registerPackageRoutes(app, packages);
+	registerPresenceRoutes(app, { orchestrations, presence, sse });
 
 	return app;
 }
