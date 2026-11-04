@@ -25,10 +25,19 @@ export interface AgentGatewayServer {
 
 /** 网关把握手之后的事件交给它处理（引擎）。 */
 export interface AgentSessionHandler {
-	/** Welcome 已推送，可以开始派发任务。 */
-	onOnline(conn: AgentConnection): Promise<void>;
+	/**
+	 * 握手完成：处置 Agent 手上的任务（Hello.running_tasks）并推送 Welcome（`conn.welcome()`），
+	 * 然后开始派发任务。
+	 */
+	onOnline(conn: AgentConnection, runningTasks: RunningTaskRef[]): Promise<void>;
 	/** 握手之后 Agent 发来的消息。 */
 	onMessage(conn: AgentConnection, message: AgentMessage): Promise<void>;
+}
+
+/** Agent 在 Hello 中上报的、手上的任务。 */
+export interface RunningTaskRef {
+	taskId: string;
+	attempt: number;
 }
 
 export interface AgentGatewayOptions {
@@ -63,7 +72,6 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			}
 
 			const outbox = new AsyncQueue<ServerMessage>();
-			outbox.push(create(ServerMessageSchema, { body: { case: "welcome", value: {} } }));
 			const conn = await options.hub.attach(
 				hello.name,
 				{
@@ -84,7 +92,9 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			// 入站消息在后台逐条处理；请求流结束或断线时注销连接。
 			void (async () => {
 				try {
-					await options.handler?.onOnline(conn);
+					const running = hello.runningTasks.map((t) => ({ taskId: t.taskId, attempt: t.attempt }));
+					if (options.handler) await options.handler.onOnline(conn, running);
+					else conn.welcome(create(ServerMessageSchema, { body: { case: "welcome", value: {} } }));
 					for (;;) {
 						const next = await inbound.next();
 						if (next.done || conn.closed) break;

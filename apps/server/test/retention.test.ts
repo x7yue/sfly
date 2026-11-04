@@ -32,7 +32,8 @@ describe("日志和产物的保留期", () => {
 	});
 
 	const setup = async (options: { retentionDays?: number } = {}) => {
-		cp = await startTestControlPlane(options);
+		// 时钟一次推进几十天：任务租约（#15）设得比这更长，免得假 Agent 没心跳导致还在运行的任务以 agent_lost 结束。
+		cp = await startTestControlPlane({ leaseMs: 400 * DAY, ...options });
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
 		return new ApiClient(cp);

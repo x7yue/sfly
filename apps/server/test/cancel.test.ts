@@ -215,7 +215,12 @@ describe("取消运行", () => {
 		await agent.disconnect();
 		await api.cancelOk(runId);
 
-		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
+		// 重连时在 Hello 中上报手上的任务（#15），控制面继续等它并重发取消指令。
+		agent = await FakeAgent.connect(cp.grpcUrl, {
+			name: "agent-a",
+			slots: 4,
+			runningTasks: [{ taskId: a.taskId, attempt: a.attempt }],
+		});
 		expect(await agent.nextCancel()).toMatchObject({ taskId: a.taskId, force: false });
 		await agent.cancelled(a);
 		expect((await api.run(runId)).status).toBe("cancelled");

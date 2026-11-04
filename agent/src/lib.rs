@@ -16,7 +16,7 @@ pub mod logs;
 pub mod process_tree;
 pub mod venv;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,9 +35,9 @@ use dev::{DEV_VERSION, DevRegistry, DevReply, DevRequest};
 use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AssignTask, CancelTask, DevPackage, ErrorKind, Hello, InstallState,
-    InstallStatus, InstalledPackage, ServerMessage, TaskResult, Welcome, agent_message,
-    server_message,
+    AgentMessage, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat, Hello, InstallState,
+    InstallStatus, InstalledPackage, RunningTask, ServerMessage, TaskAction, TaskResult, Welcome,
+    agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
@@ -53,6 +53,9 @@ pub const DEFAULT_TERMINATE_GRACE: Duration = Duration::from_secs(10);
 /// 重连等待：从 MIN 开始翻倍，最多 MAX；成功连上后重置。
 const RECONNECT_MIN: Duration = Duration::from_millis(500);
 const RECONNECT_MAX: Duration = Duration::from_secs(10);
+
+/// Welcome 没有给出心跳间隔时的默认值（控制面默认租约 30 秒的三分之一）。
+pub const DEFAULT_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Agent 配置。
 #[derive(Debug, Clone)]
@@ -105,11 +108,12 @@ pub struct Connection {
     pub inbound: Streaming<ServerMessage>,
 }
 
-/// 连接控制面，发送 Hello（带上已安装的节点包和开发版本）并等待 Welcome。
+/// 连接控制面，发送 Hello（带上已安装的节点包、开发版本和手上的任务）并等待 Welcome。
 pub async fn connect(
     config: &Config,
     installed_packages: Vec<InstalledPackage>,
     dev_packages: Vec<DevPackage>,
+    running_tasks: Vec<RunningTask>,
 ) -> anyhow::Result<Connection> {
     let mut client = AgentGatewayClient::connect(config.server.clone())
         .await
@@ -127,6 +131,7 @@ pub async fn connect(
                 slots: config.slots,
                 installed_packages,
                 dev_packages,
+                running_tasks,
             })),
         })
         .await
@@ -251,6 +256,11 @@ impl Runtime {
         };
         self.cancels.lock().unwrap().remove(&key);
         let _ = self.results.send(result);
+    }
+
+    /// 正在执行（含安装中）的任务。
+    fn running(&self) -> Vec<(String, u32)> {
+        self.cancels.lock().unwrap().keys().cloned().collect()
     }
 
     /// 处理控制面的取消指令；任务不在这个 Agent 上执行（或已经结束）时忽略。
@@ -507,6 +517,8 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         Err(error) => eprintln!("sfly dev is unavailable: {error:#}"),
     }
     let mut unacked: BTreeMap<(String, u32), TaskResult> = BTreeMap::new();
+    // 控制面在 Welcome 中放弃的任务：之后结束时不再上报结果。
+    let mut abandoned: HashSet<(String, u32)> = HashSet::new();
     let mut delay = RECONNECT_MIN;
 
     loop {
@@ -514,14 +526,44 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         while installs_rx.try_recv().is_ok() {}
         let installed = runtime.inventory.refresh().await;
         let dev_packages = runtime.dev.list().iter().map(|e| e.to_proto()).collect();
-        match connect(&config, installed, dev_packages).await {
+        // 手上的任务：正在执行的，加上已经结束、结果还没收到 Ack 的（断线期间结束的也算）。
+        while let Ok(result) = results_rx.try_recv() {
+            let key = (result.task_id.clone(), result.attempt);
+            if !abandoned.remove(&key) {
+                unacked.insert(key, result);
+            }
+        }
+        let mut held: Vec<(String, u32)> = runtime.running();
+        held.extend(unacked.keys().cloned());
+        let running_tasks = held
+            .into_iter()
+            .map(|(task_id, attempt)| RunningTask { task_id, attempt })
+            .collect();
+        match connect(&config, installed, dev_packages, running_tasks).await {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
                 emit(serde_json::json!({ "event": "welcome", "name": config.name }));
+                for disposition in &connection.welcome.dispositions {
+                    if disposition.action() != TaskAction::Abandon {
+                        continue;
+                    }
+                    let key = (disposition.task_id.clone(), disposition.attempt);
+                    eprintln!("control plane abandoned task {} attempt {}", key.0, key.1);
+                    if unacked.remove(&key).is_none() && runtime.running().contains(&key) {
+                        // 还在执行：立即杀掉进程树，结果不再上报。
+                        runtime.cancel_task(&CancelTask {
+                            task_id: key.0.clone(),
+                            attempt: key.1,
+                            force: true,
+                        });
+                        abandoned.insert(key);
+                    }
+                }
                 let channels = Channels {
                     results: &mut results_rx,
                     installs: &mut installs_rx,
                     telemetry: &mut telemetry_rx,
+                    abandoned: &mut abandoned,
                 };
                 match serve(connection, &runtime, channels, &mut unacked).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
@@ -554,6 +596,8 @@ struct Channels<'a> {
     installs: &'a mut mpsc::UnboundedReceiver<InstallStatus>,
     /// 日志与进度；先于结果处理，任务的日志总在它的结果之前发出。
     telemetry: &'a mut mpsc::UnboundedReceiver<AgentMessage>,
+    /// 控制面放弃的任务，结束时丢弃结果。
+    abandoned: &'a mut HashSet<(String, u32)>,
 }
 
 /// 在一条连接上收发消息，直到连接结束。
@@ -567,7 +611,14 @@ async fn serve(
         results,
         installs,
         telemetry,
+        abandoned,
     } = channels;
+    let interval = match connection.welcome.heartbeat_interval_ms {
+        0 => DEFAULT_HEARTBEAT_INTERVAL,
+        ms => Duration::from_millis(ms.into()),
+    };
+    let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+    heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     for result in unacked.values() {
         connection
             .outbound
@@ -594,7 +645,16 @@ async fn serve(
             Some(message) = telemetry.recv() => {
                 connection.outbound.send(message).await?;
             }
+            _ = heartbeat.tick() => {
+                connection
+                    .outbound
+                    .send(AgentMessage { body: Some(agent_message::Body::Heartbeat(Heartbeat {})) })
+                    .await?;
+            }
             Some(result) = results.recv() => {
+                if abandoned.remove(&(result.task_id.clone(), result.attempt)) {
+                    continue;
+                }
                 unacked.insert((result.task_id.clone(), result.attempt), result.clone());
                 connection.outbound.send(result_message(result)).await?;
             }

@@ -4,18 +4,19 @@
 
 pub mod packages;
 
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use sfly_agent::proto::agent_gateway_server::{AgentGateway, AgentGatewayServer};
 use sfly_agent::proto::{
-    Ack, AgentMessage, AssignTask, Hello, InstallState, InstallStatus, ServerMessage, TaskResult,
-    Welcome, agent_message, server_message,
+    Ack, AgentMessage, AssignTask, Hello, InstallState, InstallStatus, ServerMessage, TaskAction,
+    TaskDisposition, TaskResult, Welcome, agent_message, server_message,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -43,6 +44,10 @@ struct State {
     current: Mutex<Option<mpsc::Sender<Result<ServerMessage, Status>>>>,
     /// 是否对 TaskResult 回 Ack（默认是）。
     no_ack: AtomicBool,
+    /// Welcome 中要放弃的任务（其余 Hello.running_tasks 一律继续）。
+    abandon: Mutex<HashSet<String>>,
+    /// Welcome 中的心跳间隔（毫秒，0 = Agent 默认值）。
+    heartbeat_interval_ms: AtomicU32,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -210,6 +215,30 @@ impl FakeControlPlane {
         self.state.current.lock().unwrap().take();
     }
 
+    /// 之后的 Welcome 让 Agent 放弃这个任务。
+    pub fn abandon(&self, task_id: &str) {
+        self.state
+            .abandon
+            .lock()
+            .unwrap()
+            .insert(task_id.to_string());
+    }
+
+    /// 之后的 Welcome 要求的心跳间隔。
+    pub fn set_heartbeat_interval(&self, interval: Duration) {
+        self.state
+            .heartbeat_interval_ms
+            .store(interval.as_millis() as u32, Ordering::SeqCst);
+    }
+
+    /// 已收到的 Heartbeat（会话序号与到达时间）。
+    pub fn heartbeats(&self) -> Vec<Received> {
+        self.received_with_session()
+            .into_iter()
+            .filter(|r| matches!(r.message.body, Some(agent_message::Body::Heartbeat(_))))
+            .collect()
+    }
+
     /// 之后收到的 TaskResult 不再回 Ack。
     pub fn stop_acking(&self) {
         self.state.no_ack.store(true, Ordering::SeqCst);
@@ -248,8 +277,27 @@ impl AgentGateway for Gateway {
         tokio::spawn(async move {
             while let Some(Ok(message)) = inbound.next().await {
                 let reply = match &message.body {
-                    Some(agent_message::Body::Hello(_)) => {
-                        Some(server_message::Body::Welcome(Welcome {}))
+                    Some(agent_message::Body::Hello(hello)) => {
+                        let abandon = state.abandon.lock().unwrap().clone();
+                        Some(server_message::Body::Welcome(Welcome {
+                            dispositions: hello
+                                .running_tasks
+                                .iter()
+                                .map(|t| TaskDisposition {
+                                    task_id: t.task_id.clone(),
+                                    attempt: t.attempt,
+                                    action: if abandon.contains(&t.task_id) {
+                                        TaskAction::Abandon
+                                    } else {
+                                        TaskAction::Continue
+                                    }
+                                    .into(),
+                                })
+                                .collect(),
+                            heartbeat_interval_ms: state
+                                .heartbeat_interval_ms
+                                .load(Ordering::SeqCst),
+                        }))
                     }
                     Some(agent_message::Body::Result(r))
                         if !state.no_ack.load(Ordering::SeqCst) =>

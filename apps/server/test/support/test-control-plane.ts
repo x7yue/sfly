@@ -21,8 +21,11 @@ export interface TestControlPlane {
 	readonly dataDir: string;
 	/** 对 HTTP API 发请求，path 以 / 开头。 */
 	fetch(path: string, init?: RequestInit): Promise<Response>;
-	/** 停掉当前实例，在同一个数据库上重新启动（模拟控制面重启）。 */
-	restart(): Promise<void>;
+	/**
+	 * 停掉当前实例，在同一个数据库上重新启动（模拟控制面重启）；
+	 * `whileDown` 在停机期间执行（例如推进手动时钟模拟停机时长）。
+	 */
+	restart(whileDown?: () => void | Promise<void>): Promise<void>;
 	/** 停掉实例并删除临时数据库。 */
 	close(): Promise<void>;
 }
@@ -35,7 +38,7 @@ export interface TestControlPlane {
 export async function startTestControlPlane(
 	options: { clock?: Clock; agentToken?: string } & Pick<
 		ControlPlaneOptions,
-		"logLimitBytes" | "artifactLimitBytes" | "retentionDays"
+		"logLimitBytes" | "artifactLimitBytes" | "retentionDays" | "leaseMs"
 	> = {},
 ): Promise<TestControlPlane> {
 	const clock = options.clock ?? new ManualClock();
@@ -50,6 +53,7 @@ export async function startTestControlPlane(
 			logLimitBytes: options.logLimitBytes,
 			artifactLimitBytes: options.artifactLimitBytes,
 			retentionDays: options.retentionDays,
+			leaseMs: options.leaseMs,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 定时 / Sleep 节点的定时器扫描（#14）同样调快。
@@ -83,8 +87,9 @@ export async function startTestControlPlane(
 		database,
 		dataDir,
 		fetch: (path, init) => fetch(`${current.httpUrl}${path}`, init),
-		async restart() {
+		async restart(whileDown) {
 			await current.close();
+			await whileDown?.();
 			current = await start();
 		},
 		async close() {

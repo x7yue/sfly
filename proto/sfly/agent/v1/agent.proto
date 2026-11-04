@@ -17,6 +17,7 @@ service AgentGateway {
 message AgentMessage {
   oneof body {
     Hello hello = 1;
+    Heartbeat heartbeat = 2;
     LogBatch logs = 4;
     Progress progress = 5;
     TaskResult result = 6;
@@ -52,7 +53,21 @@ message Hello {
   repeated InstalledPackage installed_packages = 7;
   // 以本地开发模式（sfly dev）加载在这个 Agent 上的节点包，版本为 `dev`。
   repeated DevPackage dev_packages = 8;
+  // Agent 手上的任务：正在执行（含安装中）的，以及已经结束、结果还没收到 Ack 的。
+  // 控制面在 Welcome 中逐个告诉 Agent 继续还是放弃；控制面认为在这个 Agent 上运行、
+  // 但不在这个列表里的任务立即以 agent_lost 失败（docs/SEMANTICS.md §3.3）。
+  repeated RunningTask running_tasks = 9;
 }
+
+// Agent 手上的一个任务（节点的一次尝试）。
+message RunningTask {
+  string task_id = 1;
+  uint32 attempt = 2;
+}
+
+// Agent 周期发送，为控制面认为在这个 Agent 上运行的全部任务续约租约；
+// 租约过期的任务以 agent_lost 失败（按重试配置派回同一个 Agent）。
+message Heartbeat {}
 
 // 以本地开发模式（sfly dev）加载的节点包：本地源码目录以可编辑方式安装进共享 venv，注册为 `包名@dev`。
 // 只有加载了它的 Agent 能执行 `包名@dev` 的任务。
@@ -72,7 +87,28 @@ message InstalledPackage {
 }
 
 // 控制面对 Hello 的回应，表示连接已被接受。
-message Welcome {}
+message Welcome {
+  // 对 Hello.running_tasks 的逐个处置；没有列出的任务按继续处理。
+  repeated TaskDisposition dispositions = 1;
+  // Agent 发送 Heartbeat 的间隔（毫秒）；0 表示使用 Agent 的默认值（10 秒）。
+  uint32 heartbeat_interval_ms = 2;
+}
+
+// 控制面对 Agent 手上一个任务的处置。
+message TaskDisposition {
+  string task_id = 1;
+  uint32 attempt = 2;
+  TaskAction action = 3;
+}
+
+enum TaskAction {
+  TASK_ACTION_UNSPECIFIED = 0;
+  // 继续执行，结束后照常上报结果（已结束的任务：重新上报结果）。
+  TASK_ACTION_CONTINUE = 1;
+  // 放弃：控制面已不再等待这个任务（例如租约已过期并重试、运行已被强制取消）。
+  // 正在执行的立即杀掉进程树，已结束的丢弃未确认的结果。
+  TASK_ACTION_ABANDON = 2;
+}
 
 // 控制面派发给 Agent 的一个任务（节点的一次尝试）。输入中的引用已经解析。
 message AssignTask {

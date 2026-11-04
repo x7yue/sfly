@@ -49,6 +49,8 @@ export interface ControlPlaneOptions {
 	retentionSweepIntervalMs?: number;
 	/** 定时 / Sleep 节点的定时器扫描间隔（#14），默认 1 秒；是否到期只按注入的时钟判断。 */
 	timerSweepIntervalMs?: number;
+	/** 运行中任务的租约（毫秒），默认 30 秒；Agent 按它的三分之一发送心跳（#15）。 */
+	leaseMs?: number;
 }
 
 export interface ControlPlane {
@@ -88,7 +90,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 		preflight,
+		leaseMs: options.leaseMs,
 	});
+	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
+	await engine.recover();
 	const logs = new TaskLogs({
 		db: database.db,
 		clock,
@@ -141,7 +146,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			hub,
 			// 日志和进度不改变运行状态，不经过引擎（src/logs/task-logs.ts）。
 			handler: {
-				onOnline: (conn) => engine.onOnline(conn),
+				onOnline: (conn, running) => engine.onOnline(conn, running),
 				onMessage: (conn, message) =>
 					logs.handles(message)
 						? logs.onMessage(conn, message)
@@ -158,7 +163,20 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 
-	const sweep = setInterval(() => presence.sweep(), options.sweepIntervalMs ?? 250);
+	// 租约过期与排队超时（#15）挂在同一个周期扫描上；上一次没结束时跳过。
+	let expiring: Promise<unknown> | undefined;
+	const sweep = setInterval(() => {
+		presence.sweep();
+		if (expiring) return;
+		expiring = engine
+			.expireTasks()
+			.catch((error) => {
+				if (logger) console.error("task expiry sweep failed:", error);
+			})
+			.finally(() => {
+				expiring = undefined;
+			});
+	}, options.sweepIntervalMs ?? 250);
 	sweep.unref();
 	const retentionSweep = setInterval(() => {
 		retention.sweep().catch((error) => {
@@ -189,6 +207,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			clearInterval(retentionSweep);
 			clearInterval(timerSweep);
 			await waking;
+			await expiring;
 			await retention.idle();
 			hub.closeAll();
 			await gateway.close();
