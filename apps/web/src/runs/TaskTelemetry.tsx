@@ -1,28 +1,10 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Section } from "#/canvas/Inspector";
+import { TaskArtifacts } from "./Artifacts";
 import type { AttemptView } from "./api";
 import { statusTone } from "./format";
-import {
-	type LogLine,
-	progressLong,
-	progressPercent,
-	TAIL_LIMIT,
-	type TaskProgress,
-	useTaskLogs,
-} from "./logs";
-
-const LEVEL_LABEL: Record<LogLine["level"], string> = {
-	debug: "DEBUG",
-	info: "INFO ",
-	warn: "WARN ",
-	error: "ERR  ",
-};
-
-const time = (iso: string) => {
-	const d = new Date(iso);
-	const p = (n: number, w = 2) => String(n).padStart(w, "0");
-	return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
-};
+import { LogViewer } from "./LogViewer";
+import { progressLong, progressPercent, type TaskProgress } from "./logs";
 
 /** 进度条 + 文字（节点详情）。 */
 export function ProgressBar({ progress, live }: { progress: TaskProgress; live: boolean }) {
@@ -48,8 +30,8 @@ export function ProgressBar({ progress, live }: { progress: TaskProgress; live: 
 }
 
 /**
- * 节点详情里的进度与实时日志（#10）：默认看最近一次尝试，有多次尝试时可以切换。
- * 日志尾部通过 SSE 实时追加；滚动条在底部时自动跟随新行。
+ * 节点详情里的进度、日志与产物（#10、#18）：默认看最近一次尝试，有多次尝试时可以切换。
+ * 日志先加载最后一页历史再接上实时流，虚拟滚动，可以往前翻页、筛选、下载（LogViewer）。
  */
 export function TaskTelemetry({ attempts }: { attempts: AttemptView[] }) {
 	// 内置节点没有 Agent，也没有日志。
@@ -82,50 +64,8 @@ export function TaskTelemetry({ attempts }: { attempts: AttemptView[] }) {
 					<ProgressBar progress={attempt.progress} live={live} />
 				</Section>
 			)}
-			<LogTail key={attempt.task_id} taskId={attempt.task_id} live={live} />
+			<LogViewer key={attempt.task_id} taskId={attempt.task_id} live={live} />
+			<TaskArtifacts taskId={attempt.task_id} status={attempt.status} />
 		</>
-	);
-}
-
-function LogTail({ taskId, live }: { taskId: string; live: boolean }) {
-	const { lines, loaded } = useTaskLogs(taskId);
-	const box = useRef<HTMLDivElement>(null);
-	const follow = useRef(true);
-
-	// 新行到达时：之前停在底部就继续跟随，否则保持用户的滚动位置。
-	useLayoutEffect(() => {
-		const el = box.current;
-		if (el && follow.current && lines.length > 0) el.scrollTop = el.scrollHeight;
-	}, [lines]);
-
-	const aside = !loaded
-		? "加载中…"
-		: `${lines.length >= TAIL_LIMIT ? `最近 ${TAIL_LIMIT}` : lines.length} 行${live ? " · 实时" : ""}`;
-	return (
-		<Section title="日志" aside={aside}>
-			{loaded && lines.length === 0 ? (
-				<p className="sf-hint">{live ? "还没有日志输出。" : "这次尝试没有日志输出。"}</p>
-			) : (
-				<div
-					ref={box}
-					className="sf-log"
-					role="log"
-					aria-live="off"
-					onScroll={(e) => {
-						const el = e.currentTarget;
-						follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
-					}}
-				>
-					{lines.map((line) => (
-						<div key={line.seq} data-level={line.level} data-source={line.source}>
-							<span className="sf-log__t">{time(line.time)}</span>{" "}
-							<span className="sf-log__lv">{LEVEL_LABEL[line.level]}</span>{" "}
-							{line.source !== "stdout" && <span className="sf-log__src">{line.source}</span>}
-							<span className="sf-log__msg">{line.text}</span>
-						</div>
-					))}
-				</div>
-			)}
-		</Section>
 	);
 }

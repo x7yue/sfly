@@ -1,5 +1,5 @@
 /*
- * 任务日志与进度（#10）。只使用 canvas/tokens.css 中的 --sf-* 变量；
+ * 任务日志、进度与产物（#10、#18）。只使用 canvas/tokens.css 中的 --sf-* 变量；
  * 日志框参照原型 inspector.css 的 .log（时间弱化、级别着色），进度条用执行中的青色信号色。
  */
 
@@ -46,6 +46,129 @@
 	background: var(--sf-raised);
 	color: var(--sf-text-3);
 	font-size: 10.5px;
+}
+
+/* —— 完整日志（#18）：虚拟滚动、筛选、展开 —— */
+.sf-log--virtual {
+	position: relative;
+	padding: 0 11px;
+	height: 320px;
+	max-height: none;
+	overscroll-behavior: contain;
+}
+.sf-log--virtual .sf-log__row {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+}
+.sf-log [data-source="system"] .sf-log__msg {
+	color: var(--sf-warn);
+}
+.sf-log__more {
+	position: sticky;
+	top: 0;
+	height: 0;
+	z-index: 1;
+	text-align: center;
+}
+.sf-log__more span {
+	display: inline-block;
+	margin-top: 6px;
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: var(--sf-raised);
+	color: var(--sf-text-3);
+	font: 400 10.5px / 18px var(--sf-sans);
+}
+.sf-logview__aside {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+.sf-logview__aside > span {
+	margin-right: 2px;
+}
+.sf-logview__filters {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-bottom: 8px;
+}
+.sf-logview__filters .sf-seg button {
+	font-family: var(--sf-mono);
+	font-size: 10.5px;
+	padding: 0 6px;
+}
+.sf-logview__note {
+	margin-bottom: 8px;
+}
+/* 展开：浮在页面上方的大窗口，背后是半透明遮罩。 */
+.sf-logview[data-expanded="true"] .sf-logview__panel {
+	position: fixed;
+	inset: 48px 64px;
+	z-index: 50;
+	display: flex;
+	flex-direction: column;
+	border: 1px solid var(--sf-border);
+	border-radius: 14px;
+	background: var(--sf-surface);
+	box-shadow: 0 24px 64px rgb(0 0 0 / 0.5);
+	overflow: hidden;
+}
+.sf-logview[data-expanded="true"] .sf-sec {
+	display: flex;
+	flex-direction: column;
+	flex: 1;
+	min-height: 0;
+	border-bottom: 0;
+}
+.sf-logview[data-expanded="true"] .sf-log--virtual {
+	flex: 1;
+	height: auto;
+	min-height: 0;
+}
+.sf-logview__backdrop {
+	position: fixed;
+	inset: 0;
+	z-index: 49;
+	background: rgb(0 0 0 / 0.55);
+	border: 0;
+	cursor: default;
+}
+
+/* —— 产物（#18） —— */
+.sf-artifacts {
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	display: grid;
+	gap: 4px;
+}
+.sf-artifacts li {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 6px 6px 10px;
+	border-radius: 8px;
+	background: var(--sf-raised);
+}
+.sf-artifacts__name {
+	flex: 1;
+	min-width: 0;
+	font: 400 12px var(--sf-mono);
+	color: var(--sf-text);
+	overflow-wrap: anywhere;
+	text-decoration: none;
+}
+.sf-artifacts__name:hover {
+	text-decoration: underline;
+}
+.sf-artifacts__size {
+	font: 400 11.5px var(--sf-mono);
+	font-variant-numeric: tabular-nums;
+	color: var(--sf-text-3);
+	white-space: nowrap;
 }
 
 /* —— 进度条（节点详情） —— */
