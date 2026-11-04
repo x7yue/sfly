@@ -28,6 +28,7 @@ import type { Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { agentFor, type ChainPlan, planMainChain } from "./chain.js";
+import { hasFinalFailure, isAlways, shouldRetry } from "./failures.js";
 import { chainInstanceId, taskId } from "./ids.js";
 import { fillParams } from "./params.js";
 import { InvalidReferenceError, resolveInputs } from "./references.js";
@@ -251,11 +252,15 @@ export class Engine implements AgentSessionHandler {
 		return plan;
 	}
 
-	/** 从链上第 index 个节点开始推进：内置节点立即完成，遇到包节点就排队等待派发。 */
+	/**
+	 * 从链上第 index 个节点开始推进：内置节点立即完成，遇到包节点就排队等待派发。
+	 * 链上已有节点最终失败时，普通节点标记为 skipped，always 节点照常执行（§3.2）。
+	 */
 	async #advance(step: Step, run: RunRow, chain: ChainRow, index: number): Promise<void> {
 		const plan = await this.#plan(step.tx, run, chain);
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
 		step.touchedRuns.add(run.id);
+		const failed = await this.#chainFailed(step.tx, chain);
 		for (let i = index; i < plan.nodes.length; i++) {
 			const node = plan.nodes[i];
 			if (!node) break;
@@ -267,6 +272,13 @@ export class Engine implements AgentSessionHandler {
 				attempt: 1,
 				queuedAt: step.now,
 			};
+			if (failed && !isAlways(node)) {
+				await step.tx
+					.insert(tasks)
+					.values({ ...base, status: "skipped", endedAt: step.now })
+					.onConflictDoNothing();
+				continue;
+			}
 			if (node.kind === "package") {
 				const agentName = agentFor(document, node);
 				await step.tx
@@ -282,9 +294,19 @@ export class Engine implements AgentSessionHandler {
 				.values({ ...base, status: "success", outputs: {}, startedAt: step.now, endedAt: step.now })
 				.onConflictDoNothing();
 		}
-		await this.#finishChain(step, run, chain, "success");
+		await this.#finishChain(step, run, chain, failed ? "failed" : "success");
 	}
 
+	/** 链上是否已有节点最终失败（含 always 节点）。 */
+	async #chainFailed(tx: Tx, chain: ChainRow): Promise<boolean> {
+		const rows = await tx
+			.select({ nodeId: tasks.nodeId, attempt: tasks.attempt, status: tasks.status })
+			.from(tasks)
+			.where(eq(tasks.chainInstanceId, chain.id));
+		return hasFinalFailure(rows);
+	}
+
+	/** 链结束；运行的所有链都结束后运行才结束，任一条链失败则运行失败（§6.4）。 */
 	async #finishChain(
 		step: Step,
 		run: RunRow,
@@ -296,10 +318,22 @@ export class Engine implements AgentSessionHandler {
 			.update(chainInstances)
 			.set({ status, endedAt: step.now })
 			.where(eq(chainInstances.id, chain.id));
-		// 目前每个运行只有主链：主链结束即运行结束。
-		await step.tx.update(runs).set({ status, endedAt: step.now }).where(eq(runs.id, run.id));
+		const chains = await step.tx
+			.select({ status: chainInstances.status })
+			.from(chainInstances)
+			.where(eq(chainInstances.runId, run.id));
+		if (chains.some((c) => c.status === "running")) return;
+		const runStatus = chains.some((c) => c.status === "failed") ? "failed" : "success";
+		await step.tx
+			.update(runs)
+			.set({ status: runStatus, endedAt: step.now })
+			.where(eq(runs.id, run.id));
 	}
 
+	/**
+	 * 任务失败：可重试的错误且还有重试次数时，在同一个 Agent 上排队下一次尝试（attempt + 1）；
+	 * 否则节点最终失败，链继续往后推进（普通节点跳过、always 节点照常执行）。
+	 */
 	async #failTask(
 		step: Step,
 		task: TaskRow,
@@ -318,7 +352,29 @@ export class Engine implements AgentSessionHandler {
 			})
 			.where(eq(tasks.id, task.id));
 		const { run, chain } = await this.#context(step.tx, task);
-		await this.#finishChain(step, run, chain, "failed");
+		step.touchedRuns.add(run.id);
+		const plan = await this.#plan(step.tx, run, chain);
+		const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
+		const node = plan.nodes[index];
+		if (node && task.agentName && shouldRetry(node, kind, task.attempt)) {
+			const attempt = task.attempt + 1;
+			await step.tx
+				.insert(tasks)
+				.values({
+					id: taskId(chain.id, task.nodeId, attempt),
+					runId: run.id,
+					chainInstanceId: chain.id,
+					nodeId: task.nodeId,
+					attempt,
+					agentName: task.agentName,
+					status: "queued",
+					queuedAt: step.now,
+				})
+				.onConflictDoNothing();
+			step.touchedAgents.add(task.agentName);
+			return;
+		}
+		await this.#advance(step, run, chain, index + 1);
 	}
 
 	async #context(tx: Tx, task: TaskRow): Promise<{ run: RunRow; chain: ChainRow }> {
@@ -379,13 +435,9 @@ export class Engine implements AgentSessionHandler {
 		const conn = this.deps.hub.connection(agentName);
 		if (!conn) return;
 		const touchedRuns = new Set<string>();
+		const touchedAgents = new Set<string>();
 		const assigns = await this.deps.db.transaction(async (tx) => {
-			const step: Step = {
-				tx,
-				now: this.deps.clock.now(),
-				touchedAgents: new Set(),
-				touchedRuns,
-			};
+			const step: Step = { tx, now: this.deps.clock.now(), touchedAgents, touchedRuns };
 			const [running] = await tx
 				.select({ n: count() })
 				.from(tasks)
@@ -410,6 +462,8 @@ export class Engine implements AgentSessionHandler {
 		});
 		this.#publish(touchedRuns);
 		for (const assign of assigns) conn.send(assign);
+		// 派发时失败（config_error）的任务会推进链，可能排队了新的（always）任务。
+		for (const agent of touchedAgents) await this.#dispatch(agent);
 	}
 
 	/** 解析输入并把任务标记为 running；引用无效时任务以 config_error 失败并返回 undefined。 */
@@ -435,10 +489,19 @@ export class Engine implements AgentSessionHandler {
 					)
 			: [];
 		const earlierOutputs = new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
+		// always 节点：前面失败或被跳过的节点没有输出，引用缺失的输出得到 null（§2.4）。
+		const missingAsNull = isAlways(node);
+		if (missingAsNull) {
+			for (const id of earlierIds) if (!earlierOutputs.has(id)) earlierOutputs.set(id, {});
+		}
 
 		let inputs: Record<string, unknown>;
 		try {
-			inputs = resolveInputs(node.inputs, { params: chain.params, earlierOutputs });
+			inputs = resolveInputs(node.inputs, {
+				params: chain.params,
+				earlierOutputs,
+				missingAsNull,
+			});
 		} catch (error) {
 			if (!(error instanceof InvalidReferenceError)) throw error;
 			await this.#failTask(step, task, "config_error", error.message);

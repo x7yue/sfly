@@ -92,8 +92,11 @@ export const orchestrationVersions = pgTable(
 
 export type RunStatus = "running" | "success" | "failed";
 export type ChainStatus = RunStatus;
-/** 任务状态（docs/SEMANTICS.md §3.1）；本阶段用到 queued/running/success/failed。 */
-export type TaskStatus = "queued" | "running" | "success" | "failed";
+/**
+ * 任务状态（docs/SEMANTICS.md §3.1）。skipped（#11）：前面的节点失败、本节点不是 always，
+ * 记一行 attempt 1 的占位（没有派发，不算一次尝试）。
+ */
+export type TaskStatus = "queued" | "running" | "success" | "failed" | "skipped";
 export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
 
 /** 运行：绑定一个编排版本。params 是填充默认值并覆盖后的入口参数。 */

@@ -20,7 +20,7 @@ export interface AttemptView {
 export interface NodeView {
 	node_id: string;
 	kind: OrchestrationNode["kind"];
-	/** 最近一次尝试的状态；还没有尝试时为 pending。 */
+	/** 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped（没有尝试）。 */
 	status: string;
 	/** 包节点派发到的 Agent；内置节点为 null。 */
 	agent: string | null;
@@ -99,8 +99,11 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			started_at: chain.startedAt.toISOString(),
 			ended_at: iso(chain.endedAt),
 			nodes: chainNodes.map((node) => {
-				const attempts: AttemptView[] = allTasks
-					.filter((t) => t.chainInstanceId === chain.id && t.nodeId === node.id)
+				const rows = allTasks.filter((t) => t.chainInstanceId === chain.id && t.nodeId === node.id);
+				// 被跳过的节点只有一行占位，不算尝试。
+				const skipped = rows.some((t) => t.status === "skipped");
+				const attempts: AttemptView[] = rows
+					.filter((t) => t.status !== "skipped")
 					.map((t) => ({
 						task_id: t.id,
 						attempt: t.attempt,
@@ -117,7 +120,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 				return {
 					node_id: node.id,
 					kind: node.kind,
-					status: last?.status ?? "pending",
+					status: skipped ? "skipped" : (last?.status ?? "pending"),
 					agent: node.kind === "package" ? agentFor(document, node) : null,
 					outputs: last?.outputs ?? null,
 					error: last?.error ?? null,

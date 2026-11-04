@@ -13,6 +13,11 @@ export interface ReferenceScope {
 	params: Record<string, unknown>;
 	/** 本链上当前节点之前的节点 ID → 输出；只能引用这里面的节点。 */
 	earlierOutputs: ReadonlyMap<string, Record<string, unknown>>;
+	/**
+	 * always 节点（§2.4）：前面的节点可能失败或被跳过，缺失的输出解析为 null 而不是报错。
+	 * 前面的节点都要放进 earlierOutputs（没有输出的放空对象）。
+	 */
+	missingAsNull?: boolean;
 }
 
 export class InvalidReferenceError extends Error {}
@@ -43,6 +48,7 @@ function lookup(path: string, scope: ReferenceScope): unknown {
 			);
 		}
 		if (!Object.hasOwn(outputs, key)) {
+			if (scope.missingAsNull) return null;
 			throw new InvalidReferenceError(
 				`\${{ ${path} }}: output '${key}' of nodes.${nodeId} is missing`,
 			);
