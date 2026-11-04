@@ -127,6 +127,53 @@ describe("全栈冒烟：两个节点的链", () => {
 		expect(node.error?.kind).toBe("node_error");
 		expect(node.error?.message).toMatch(/^RuntimeError: 桩节点失败/);
 	}, 60_000);
+
+	it("超时的任务以 timeout 失败并按 retries 重试；最终失败后普通节点跳过、always 节点照常执行", async () => {
+		const api = new ApiClient(cp);
+		const id = await api.orchestrationWith({
+			default_agent: "smoke-agent",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{
+					id: "slow",
+					kind: "package",
+					package: "sfly-stub",
+					node: "sleep",
+					inputs: { seconds: 60 },
+					timeout: 1,
+					retries: 1,
+				},
+				{ id: "next", kind: "package", package: "sfly-stub", node: "echo", inputs: { text: "x" } },
+				{
+					id: "cleanup",
+					kind: "package",
+					package: "sfly-stub",
+					node: "echo",
+					always: true,
+					inputs: { text: "slept=${{ nodes.slow.outputs.slept }}" },
+				},
+			],
+			edges: [
+				{ from: "entry", to: "slow", kind: "chain" },
+				{ from: "slow", to: "next", kind: "chain" },
+				{ from: "next", to: "cleanup", kind: "chain" },
+			],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+
+		const runId = await api.triggerOk(id);
+
+		await eventually(async () => expect((await api.run(runId)).status).toBe("failed"), 30_000);
+		const slow = await api.node(runId, "slow");
+		expect(slow.attempts.map((a) => [a.attempt, a.status, a.error?.kind])).toEqual([
+			[1, "failed", "timeout"],
+			[2, "failed", "timeout"],
+		]);
+		expect((await api.node(runId, "next")).status).toBe("skipped");
+		const cleanup = await api.node(runId, "cleanup");
+		expect(cleanup.status).toBe("success");
+		expect(cleanup.outputs).toEqual({ text: "slept=null" });
+	}, 60_000);
 });
 
 describe("全栈冒烟：Agent 从控制面下载并安装节点包", () => {

@@ -5,6 +5,7 @@
 @import "./versions/versions.css";
 @import "./runs/runs.css";
 @import "./runs/logs.css";
+@import "./runs/failure.css";
 
 * {
 	box-sizing: border-box;

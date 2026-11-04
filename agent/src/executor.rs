@@ -15,11 +15,13 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::logs::{Pump, Telemetry};
+use crate::process_tree::ProcessTree;
 use crate::proto::{AssignTask, ErrorKind, TaskError, TaskResult, TaskStatus};
 use crate::venv::SharedVenv;
 
@@ -75,12 +77,14 @@ fn valid_task_id(id: &str) -> bool {
 
 /// 准备工作目录并启动执行器子进程；启动失败时直接给出结果。
 /// 返回的 [`Running`] 用 [`Running::wait`] 等待结果（不会返回错误：所有失败都转成 TaskResult）。
+/// `grace`：超时后从优雅终止到强制杀掉进程树的宽限期。
 pub async fn start(
     venv: &SharedVenv,
     work_root: &Path,
     task: &AssignTask,
     entry: &str,
     telemetry: &Telemetry,
+    grace: Duration,
 ) -> Result<Running, TaskResult> {
     if !valid_task_id(&task.task_id) {
         return Err(failure(
@@ -107,7 +111,7 @@ pub async fn start(
             format!("准备工作目录 {} 失败：{error}", dir.display()),
         ));
     }
-    spawn_process(venv, &dir, task, telemetry)
+    spawn_process(venv, &dir, task, telemetry, grace)
 }
 
 async fn prepare_dir(
@@ -142,11 +146,12 @@ struct Paths {
 
 /// 正在运行的执行器子进程。
 pub struct Running {
-    child: tokio::process::Child,
+    process: ProcessTree,
     paths: Paths,
     task: AssignTask,
     /// 日志与进度转发。
     pump: Pump,
+    grace: Duration,
 }
 
 fn spawn_process(
@@ -154,6 +159,7 @@ fn spawn_process(
     dir: &Path,
     task: &AssignTask,
     telemetry: &Telemetry,
+    grace: Duration,
 ) -> Result<Running, TaskResult> {
     let paths = Paths {
         output: dir.join("output.json"),
@@ -173,21 +179,20 @@ fn spawn_process(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    // 每个任务自成一个进程组，便于之后整组终止（超时、取消）。
-    #[cfg(unix)]
-    command.process_group(0);
 
-    match command.spawn() {
-        Ok(mut child) => {
-            let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+    // 每个任务是一棵进程树，超时、取消时整体终止。
+    match ProcessTree::spawn(&mut command) {
+        Ok(mut process) => {
+            let (Some(stdout), Some(stderr)) = process.take_output_pipes() else {
                 unreachable!("stdout and stderr are piped");
             };
             let pump = Pump::start(task, stdout, stderr, dir.to_path_buf(), telemetry.clone());
             Ok(Running {
-                child,
+                process,
                 paths,
                 task: task.clone(),
                 pump,
+                grace,
             })
         }
         Err(error) => Err(failure(
@@ -202,9 +207,18 @@ fn spawn_process(
 }
 
 impl Running {
-    /// 等待执行器退出并读取结果。
+    /// 等待执行器退出并读取结果。超过 `timeout_seconds`（0 表示不限制）时终止进程树，以 timeout 失败。
     pub async fn wait(mut self) -> TaskResult {
-        let status = self.child.wait().await;
+        let status = match self.task.timeout_seconds {
+            0 => self.process.wait().await,
+            seconds => {
+                let limit = Duration::from_secs(seconds.into());
+                match tokio::time::timeout(limit, self.process.wait()).await {
+                    Ok(status) => status,
+                    Err(_) => return self.time_out(seconds).await,
+                }
+            }
+        };
         // 日志和最后一次进度先于结果发出；之后 stderr.log 也已完整。
         self.pump.finish().await;
         let task = &self.task;
@@ -243,6 +257,22 @@ impl Running {
                 ),
             ),
         }
+    }
+}
+
+impl Running {
+    async fn time_out(mut self, seconds: u32) -> TaskResult {
+        let killed = match self.process.terminate(self.grace).await {
+            Ok(_) => "已终止进程树".to_string(),
+            Err(error) => format!("终止进程树时出错：{error}"),
+        };
+        // 进程树被杀后管道关闭：把已经产生的日志和最后一次进度发完再报告超时。
+        self.pump.finish().await;
+        failure(
+            &self.task,
+            ErrorKind::Timeout,
+            format!("任务执行超过 {seconds} 秒，{killed}"),
+        )
     }
 }
 
