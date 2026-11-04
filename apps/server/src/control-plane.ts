@@ -26,7 +26,7 @@ export interface ControlPlaneOptions {
 	logger?: boolean;
 	/** Agent 共享注册令牌；未设置时不校验。 */
 	agentToken?: string;
-	/** 周期扫描（目前只有在线编辑者超时）的间隔，默认 1000 毫秒；测试里调小，配合手动时钟推进。 */
+	/** 周期扫描（目前只有在线编辑者超时）的间隔，默认 250 毫秒（在线编辑者最多晚这么久被移除）；测试里调小，配合手动时钟推进。 */
 	sweepIntervalMs?: number;
 }
 
@@ -90,7 +90,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 
-	const sweep = setInterval(() => presence.sweep(), options.sweepIntervalMs ?? 1000);
+	const sweep = setInterval(() => presence.sweep(), options.sweepIntervalMs ?? 250);
 	sweep.unref();
 
 	return {

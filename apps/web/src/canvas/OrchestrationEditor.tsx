@@ -36,6 +36,7 @@ import {
 import { AgentSelect, NodeInspector, Section, WarningList } from "./Inspector";
 import { CanvasContext, type CanvasInfo, nodeTitle, nodeTypes } from "./NodeCard";
 import { NodePalette, PALETTE_MIME, type PaletteItem } from "./NodePalette";
+import { PresenceIndicator } from "./PresenceIndicator";
 
 export function OrchestrationEditor(props: {
 	orchestration: Orchestration;
@@ -259,6 +260,7 @@ function Editor({
 						{warnings.length > 0 ? `${warnings.length} 条结构警告` : "结构检查通过"}
 					</span>
 					<div className="ml-auto flex items-center gap-3">
+						<PresenceIndicator orchestrationId={orchestration.id} />
 						{save.isSuccess && savedWarnings && (
 							<span className="text-sm text-[var(--sf-text-muted)]">
 								已保存为版本 {version.number}
