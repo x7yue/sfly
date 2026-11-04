@@ -1,7 +1,8 @@
 import { TanStackDevtools } from "@tanstack/react-devtools";
 import type { QueryClient } from "@tanstack/react-query";
-import { createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import { createRootRouteWithContext, HeadContent, Link, Scripts } from "@tanstack/react-router";
 import { TanStackRouterDevtoolsPanel } from "@tanstack/react-router-devtools";
+import { NicknameBadge, NicknameGate } from "../components/NicknameGate";
 import TanStackQueryDevtools from "../integrations/tanstack-query/devtools";
 import appCss from "../styles.css?url";
 
@@ -20,7 +21,7 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 				content: "width=device-width, initial-scale=1",
 			},
 			{
-				title: "TanStack Start Starter",
+				title: "sfly",
 			},
 		],
 		links: [
@@ -35,12 +36,24 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
 
 function RootDocument({ children }: { children: React.ReactNode }) {
 	return (
-		<html lang="en">
+		<html lang="zh-CN">
 			<head>
 				<HeadContent />
 			</head>
 			<body>
+				<nav className="flex h-[49px] items-center gap-5 border-b border-gray-200 bg-white px-4">
+					<Link to="/" className="font-bold">
+						sfly
+					</Link>
+					<NavLink to="/orchestrations">编排</NavLink>
+					<NavLink to="/agents">Agent</NavLink>
+					<NavLink to="/packages">节点包</NavLink>
+					<span className="ml-auto">
+						<NicknameBadge />
+					</span>
+				</nav>
 				{children}
+				<NicknameGate />
 				<TanStackDevtools
 					config={{
 						position: "bottom-right",
@@ -56,5 +69,23 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<Scripts />
 			</body>
 		</html>
+	);
+}
+
+function NavLink({
+	to,
+	children,
+}: {
+	to: "/orchestrations" | "/agents" | "/packages";
+	children: string;
+}) {
+	return (
+		<Link
+			to={to}
+			className="text-sm text-gray-600 hover:text-gray-900"
+			activeProps={{ className: "font-semibold text-gray-900" }}
+		>
+			{children}
+		</Link>
 	);
 }

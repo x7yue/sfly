@@ -1,0 +1,188 @@
+/*
+ * 画布视觉规范（配色变量）。原型的 tokens.css 不在仓库中，这里按规格描述重新设计：
+ * 配色变量、节点卡片、端口、语义缩放、链连线与调度连线的样式都只从这些变量取值。
+ */
+:root {
+	/* 画布 */
+	--sf-canvas-bg: #f6f7f9;
+	--sf-canvas-grid: #d9dde3;
+
+	/* 面板与卡片 */
+	--sf-surface: #ffffff;
+	--sf-surface-muted: #f1f3f6;
+	--sf-border: #d5dae1;
+	--sf-border-strong: #9aa4b2;
+	--sf-text: #1d2430;
+	--sf-text-muted: #5f6b7a;
+	--sf-shadow: 0 1px 2px rgb(16 24 40 / 0.08), 0 1px 3px rgb(16 24 40 / 0.06);
+	--sf-shadow-selected: 0 0 0 2px var(--sf-accent), 0 4px 12px rgb(16 24 40 / 0.12);
+	--sf-radius: 8px;
+
+	/* 强调色：选中、链连线 */
+	--sf-accent: #2f6fed;
+	--sf-accent-soft: #e6eefd;
+
+	/* 节点种类色（卡片顶部色条与语义缩放时的色块） */
+	--sf-kind-entry: #1a9b6c;
+	--sf-kind-subflow-entry: #0f8a9c;
+	--sf-kind-async: #7a4fd6;
+	--sf-kind-timer: #c7801a;
+	--sf-kind-sleep: #c7801a;
+	--sf-kind-package: #2f6fed;
+
+	/* 端口 */
+	--sf-port-size: 10px;
+	--sf-port-bg: var(--sf-surface);
+	--sf-port-border: var(--sf-border-strong);
+	--sf-port-chain: var(--sf-accent);
+	--sf-port-dispatch: var(--sf-kind-async);
+
+	/* 连线 */
+	--sf-edge-chain: #6b7a90;
+	--sf-edge-chain-width: 2px;
+	--sf-edge-dispatch: var(--sf-kind-async);
+	--sf-edge-dispatch-width: 2px;
+	--sf-edge-dispatch-dash: 6 4;
+	--sf-edge-selected: var(--sf-accent);
+
+	/* 状态 */
+	--sf-warning: #b86e00;
+	--sf-warning-soft: #fff4e0;
+	--sf-danger: #c93636;
+	--sf-success: #1a9b6c;
+	--sf-offline: #8a94a3;
+}
+
+/* —— React Flow 外观对齐到变量 —— */
+.sf-canvas .react-flow {
+	--xy-background-color: var(--sf-canvas-bg);
+	--xy-background-pattern-color: var(--sf-canvas-grid);
+	--xy-edge-stroke: var(--sf-edge-chain);
+	--xy-edge-stroke-width: var(--sf-edge-chain-width);
+	--xy-edge-stroke-selected: var(--sf-edge-selected);
+	--xy-connectionline-stroke: var(--sf-accent);
+	--xy-connectionline-stroke-width: 2;
+	--xy-node-border-radius: var(--sf-radius);
+	--xy-controls-button-background-color: var(--sf-surface);
+	--xy-minimap-background-color: var(--sf-surface);
+}
+
+/* 节点卡片 */
+.sf-node {
+	position: relative;
+	min-width: 200px;
+	max-width: 260px;
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-border);
+	border-radius: var(--sf-radius);
+	box-shadow: var(--sf-shadow);
+	color: var(--sf-text);
+	font-size: 12px;
+	overflow: visible;
+}
+.sf-node[data-selected="true"] {
+	box-shadow: var(--sf-shadow-selected);
+	border-color: var(--sf-accent);
+}
+.sf-node__bar {
+	height: 4px;
+	border-radius: var(--sf-radius) var(--sf-radius) 0 0;
+	background: var(--sf-kind-color);
+}
+.sf-node__body {
+	padding: 8px 10px 10px;
+}
+.sf-node__kind {
+	font-size: 10px;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--sf-kind-color);
+	font-weight: 600;
+}
+.sf-node__title {
+	margin-top: 2px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1.3;
+	overflow-wrap: anywhere;
+}
+.sf-node__meta {
+	margin-top: 6px;
+	display: grid;
+	gap: 2px;
+	color: var(--sf-text-muted);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 11px;
+}
+.sf-node__warning {
+	position: absolute;
+	top: -8px;
+	right: -8px;
+	width: 18px;
+	height: 18px;
+	border-radius: 9px;
+	background: var(--sf-warning);
+	color: #fff;
+	font-size: 11px;
+	font-weight: 700;
+	display: grid;
+	place-items: center;
+}
+
+/*
+ * 语义缩放：缩小时卡片逐级简化。
+ *   detail  ≥ 0.75：完整卡片（种类、标题、包版本、Agent）
+ *   compact ≥ 0.4 ：只显示种类色条和标题
+ *   overview < 0.4：只剩带种类色的色块，标题放大以便远看
+ */
+.sf-node[data-zoom="compact"] .sf-node__meta,
+.sf-node[data-zoom="compact"] .sf-node__kind {
+	display: none;
+}
+.sf-node[data-zoom="overview"] {
+	background: var(--sf-kind-color);
+	border-color: transparent;
+	color: #fff;
+}
+.sf-node[data-zoom="overview"] .sf-node__bar,
+.sf-node[data-zoom="overview"] .sf-node__meta,
+.sf-node[data-zoom="overview"] .sf-node__kind {
+	display: none;
+}
+.sf-node[data-zoom="overview"] .sf-node__title {
+	font-size: 26px;
+	text-align: center;
+}
+
+/* 端口：链端口在左右（单入单出），调度端口在异步任务节点底部 / 子流程入口节点顶部 */
+.sf-canvas .react-flow__handle.sf-port {
+	width: var(--sf-port-size);
+	height: var(--sf-port-size);
+	background: var(--sf-port-bg);
+	border: 2px solid var(--sf-port-chain);
+}
+.sf-canvas .react-flow__handle.sf-port--dispatch {
+	border-color: var(--sf-port-dispatch);
+	border-radius: 2px;
+	transform: translate(-50%, 50%) rotate(45deg);
+}
+.sf-canvas .react-flow__handle.sf-port--dispatch.react-flow__handle-top {
+	transform: translate(-50%, -50%) rotate(45deg);
+}
+.sf-canvas .react-flow__handle.sf-port.connectingto.valid,
+.sf-canvas .react-flow__handle.sf-port:hover {
+	background: var(--sf-accent-soft);
+}
+.sf-canvas .react-flow__handle.sf-port.connectingto:not(.valid) {
+	border-color: var(--sf-danger);
+}
+
+/* 调度连线：虚线、异步任务节点的颜色 */
+.sf-canvas .react-flow__edge.sf-edge--dispatch .react-flow__edge-path {
+	stroke: var(--sf-edge-dispatch);
+	stroke-width: var(--sf-edge-dispatch-width);
+	stroke-dasharray: var(--sf-edge-dispatch-dash);
+}
+.sf-canvas .react-flow__edge.selected .react-flow__edge-path {
+	stroke: var(--sf-edge-selected);
+}
