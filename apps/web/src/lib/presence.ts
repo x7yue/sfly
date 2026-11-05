@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { apiPost } from "./api";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { API_BASE, apiPost } from "./api";
 import { useNickname } from "./nickname";
 import { useEventSource } from "./sse";
 
@@ -13,6 +13,9 @@ interface EditorsEvent {
 	orchestration_id: string;
 	editors: OnlineEditor[];
 }
+
+/** 自己在其他标签页打开着同一份编排时显示的名字。 */
+export const OWN_OTHER_TAB = "你（其他标签页）";
 
 /** 心跳间隔；控制面 30 秒没收到心跳就移除。 */
 export const PRESENCE_HEARTBEAT_MS = 10_000;
@@ -30,9 +33,22 @@ const sendHeartbeat = (orchestrationId: string, sessionId: string) =>
 		// 心跳失败（控制面重启等）不打扰用户，下一次心跳或 SSE 重连后自动恢复。
 	});
 
+/** 关闭页面或离开编辑页面时主动离开（keepalive：页面卸载后请求仍会发出）。 */
+const sendLeave = (orchestrationId: string, sessionId: string) => {
+	void fetch(`${API_BASE}/orchestrations/${orchestrationId}/presence/leave`, {
+		method: "POST",
+		keepalive: true,
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ session_id: sessionId }),
+	}).catch(() => {
+		// 离开失败时控制面 30 秒无心跳后自动移除。
+	});
+};
+
 /**
  * 编辑页面的在线状态：每 10 秒发送一次带昵称的心跳，并通过 SSE 接收在线编辑者名单。
- * 返回**除自己这个标签页以外**的其他在线编辑者（按昵称去重，保持加入顺序）。
+ * 返回**除自己这个标签页以外**的其他在线编辑者（按昵称去重，保持加入顺序）；
+ * 自己的其他标签页显示为 {@link OWN_OTHER_TAB}。
  */
 export function useOtherEditors(orchestrationId: string): string[] {
 	const nickname = useNickname();
@@ -58,6 +74,24 @@ export function useOtherEditors(orchestrationId: string): string[] {
 		};
 	}, [beat]);
 
+	// 关闭标签页（pagehide）或离开编辑页面（卸载）时主动离开，别人立即看不到自己。
+	// 从往返缓存恢复（pageshow persisted）时重新发心跳。
+	const beatRef = useRef(beat);
+	beatRef.current = beat;
+	useEffect(() => {
+		const leave = () => sendLeave(orchestrationId, sessionId);
+		const onShow = (e: PageTransitionEvent) => {
+			if (e.persisted) beatRef.current();
+		};
+		window.addEventListener("pagehide", leave);
+		window.addEventListener("pageshow", onShow);
+		return () => {
+			window.removeEventListener("pagehide", leave);
+			window.removeEventListener("pageshow", onShow);
+			leave();
+		};
+	}, [orchestrationId, sessionId]);
+
 	useEventSource(
 		`/orchestrations/${orchestrationId}/presence/events`,
 		{
@@ -73,10 +107,11 @@ export function useOtherEditors(orchestrationId: string): string[] {
 	return useMemo(() => {
 		const names: string[] = [];
 		for (const editor of editors) {
-			if (editor.session_id !== sessionId && !names.includes(editor.nickname)) {
-				names.push(editor.nickname);
-			}
+			if (editor.session_id === sessionId) continue;
+			// 同一昵称的其他标签页：提示是自己（草稿共用同一份 localStorage，后保存的会覆盖）。
+			const name = editor.nickname === nickname ? OWN_OTHER_TAB : editor.nickname;
+			if (!names.includes(name)) names.push(name);
 		}
 		return names;
-	}, [editors, sessionId]);
+	}, [editors, sessionId, nickname]);
 }

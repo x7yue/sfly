@@ -14,6 +14,7 @@ pub mod executor;
 pub mod install;
 pub mod logs;
 pub mod process_tree;
+pub mod sdk;
 pub mod venv;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -80,6 +81,10 @@ pub struct Config {
     pub dev_socket: Option<PathBuf>,
     /// 超时和取消时从优雅终止到强制杀掉进程树的宽限期。
     pub terminate_grace: Duration,
+    /// 共享 venv 不存在时，`uv venv --python` 用的解释器（版本号或路径）；未设置时由 uv 选择。
+    pub python: Option<String>,
+    /// 与控制面断开期间最多排队多少字节的日志；超出后丢弃新的日志批次（控制面看到序号缺口）。
+    pub telemetry_queue_bytes: usize,
 }
 
 impl Config {
@@ -95,6 +100,8 @@ impl Config {
             uv: PathBuf::from("uv"),
             dev_socket: None,
             terminate_grace: DEFAULT_TERMINATE_GRACE,
+            python: None,
+            telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
         }
     }
 }
@@ -108,13 +115,24 @@ pub struct Connection {
     pub inbound: Streaming<ServerMessage>,
 }
 
+/// Hello 里随 Agent 当前状态变化的内容（名称、令牌、版本等其余字段来自 [`Config`]）。
+#[derive(Debug, Clone, Default)]
+pub struct HelloContent {
+    /// 共享 venv 中已安装的节点包。
+    pub installed_packages: Vec<InstalledPackage>,
+    /// 以开发模式加载的节点包。
+    pub dev_packages: Vec<DevPackage>,
+    /// 手上的任务：正在执行（含安装中）的，以及已经结束、结果还没收到 Ack 的。
+    pub running_tasks: Vec<RunningTask>,
+}
+
 /// 连接控制面，发送 Hello（带上已安装的节点包、开发版本和手上的任务）并等待 Welcome。
-pub async fn connect(
-    config: &Config,
-    installed_packages: Vec<InstalledPackage>,
-    dev_packages: Vec<DevPackage>,
-    running_tasks: Vec<RunningTask>,
-) -> anyhow::Result<Connection> {
+pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<Connection> {
+    let HelloContent {
+        installed_packages,
+        dev_packages,
+        running_tasks,
+    } = content;
     let mut client = AgentGatewayClient::connect(config.server.clone())
         .await
         .with_context(|| format!("connect to control plane at {}", config.server))?;
@@ -230,23 +248,48 @@ struct Runtime {
     installs: mpsc::UnboundedSender<InstallStatus>,
     /// 任务的日志与进度（[`logs`]）。
     telemetry: logs::Telemetry,
-    /// 正在执行（含安装中）的任务的取消信号，键为 (task_id, attempt)。
-    cancels: std::sync::Mutex<HashMap<(String, u32), CancelSender>>,
+    /// 正在执行（含安装中）的任务，键为 (task_id, attempt)。
+    cancels: std::sync::Mutex<HashMap<(String, u32), HeldTask>>,
     /// 任务结束后上传产物（[`artifacts`]）。
     uploader: artifacts::Uploader,
+    /// 下载 SDK 运行时用。
+    http: reqwest::Client,
+    uv: PathBuf,
+    scratch: PathBuf,
 }
 
 /// 发送任务的取消请求（见 [`executor::CancelSignal`]）。
 type CancelSender = watch::Sender<Option<bool>>;
 
+/// Agent 手上一个正在执行（含安装中）的任务。
+struct HeldTask {
+    cancel: CancelSender,
+    /// 执行器子进程已经启动（已发出 TaskStarted）。
+    started: bool,
+}
+
 impl Runtime {
-    async fn run_task(&self, task: AssignTask) {
-        let key = (task.task_id.clone(), task.attempt);
+    /// 收下派发的任务（在收到 AssignTask 时同步调用：之后的心跳一定带上它），返回它的取消信号。
+    fn accept(&self, task: &AssignTask) -> executor::CancelSignal {
         let (cancel_tx, cancel) = watch::channel(None);
-        self.cancels.lock().unwrap().insert(key.clone(), cancel_tx);
+        self.cancels.lock().unwrap().insert(
+            (task.task_id.clone(), task.attempt),
+            HeldTask {
+                cancel: cancel_tx,
+                started: false,
+            },
+        );
+        cancel
+    }
+
+    async fn run_task(&self, task: AssignTask, cancel: executor::CancelSignal) {
+        let key = (task.task_id.clone(), task.attempt);
         let result = match self.start_task(&task).await {
             // 安装期间收到的取消在子进程启动后立即生效。
             Ok(running) => {
+                if let Some(held) = self.cancels.lock().unwrap().get_mut(&key) {
+                    held.started = true;
+                }
                 let dir = running.artifacts_dir();
                 let result = running.wait(cancel).await;
                 // 产物先于结果上传：结果上报后控制面不再接受这个任务的产物。
@@ -263,11 +306,37 @@ impl Runtime {
         self.cancels.lock().unwrap().keys().cloned().collect()
     }
 
+    /// 手上的任务（Hello / Heartbeat 的 running_tasks）：正在执行（含安装中）的，
+    /// 加上已经结束、结果还没收到 Ack 的。
+    fn held(&self, unacked: &BTreeMap<(String, u32), TaskResult>) -> Vec<RunningTask> {
+        let mut held: Vec<RunningTask> = self
+            .cancels
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|((task_id, attempt), task)| RunningTask {
+                task_id: task_id.clone(),
+                attempt: *attempt,
+                started: task.started,
+            })
+            .collect();
+        held.extend(unacked.keys().map(|(task_id, attempt)| RunningTask {
+            task_id: task_id.clone(),
+            attempt: *attempt,
+            started: true,
+        }));
+        held.sort_by(|a, b| (&a.task_id, a.attempt).cmp(&(&b.task_id, b.attempt)));
+        held.dedup_by(|a, b| a.task_id == b.task_id && a.attempt == b.attempt);
+        held
+    }
+
     /// 处理控制面的取消指令；任务不在这个 Agent 上执行（或已经结束）时忽略。
     /// 优雅取消之后再收到强制取消会升级为立即杀掉。
     fn cancel_task(&self, cancel: &CancelTask) {
         let cancels = self.cancels.lock().unwrap();
-        let Some(tx) = cancels.get(&(cancel.task_id.clone(), cancel.attempt)) else {
+        let Some(HeldTask { cancel: tx, .. }) =
+            cancels.get(&(cancel.task_id.clone(), cancel.attempt))
+        else {
             eprintln!(
                 "ignored cancel for task {} attempt {}: not running here",
                 cancel.task_id, cancel.attempt
@@ -405,6 +474,40 @@ impl Runtime {
 }
 
 impl Runtime {
+    /// 共享 venv 里的 SDK 运行时与 Agent 版本不一致（或没有安装）时，按 Welcome 给出的地址下载安装
+    /// （[`sdk`]；与启动新任务互斥）。版本一致时不重装；控制面没有提供地址时只记日志，任务照常尝试执行。
+    async fn ensure_sdk(&self, welcome: &Welcome) {
+        let venv = &self.inventory.venv;
+        let installed = sdk::installed_version(venv).await;
+        if installed.as_deref() == Some(AGENT_VERSION) {
+            return;
+        }
+        if welcome.sdk_wheel_url.is_empty() {
+            eprintln!(
+                "shared venv has SDK {} but the agent is {AGENT_VERSION}, and the control plane offers no SDK wheel for it",
+                installed.as_deref().unwrap_or("(none)")
+            );
+            return;
+        }
+        let _installing = self.gate.write().await;
+        match sdk::install(
+            &self.http,
+            &self.uv,
+            venv,
+            &self.scratch,
+            &welcome.sdk_wheel_url,
+            &welcome.sdk_wheel_sha256,
+        )
+        .await
+        {
+            Ok(_) => {
+                emit(serde_json::json!({ "event": "sdk_installed", "version": AGENT_VERSION }));
+                self.inventory.refresh().await;
+            }
+            Err(error) => eprintln!("cannot install SDK runtime {AGENT_VERSION}: {error:#}"),
+        }
+    }
+
     /// 处理 `sfly dev`：登记开发版本，以可编辑方式装进共享 venv（与启动新任务互斥），上报控制面。
     async fn load_dev(&self, request: DevRequest) -> DevReply {
         let _installing = self.gate.write().await;
@@ -472,14 +575,25 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.work_dir)
         .with_context(|| format!("create work dir {}", config.work_dir.display()))?;
     let work_dir = std::fs::canonicalize(&config.work_dir)?;
-    // 共享 venv 不存在时照常连接：已安装的包为空，任务以 env_error 失败。
     let venv =
         std::fs::canonicalize(&config.venv).or_else(|_| std::path::absolute(&config.venv))?;
+    // 共享 venv 不存在时用 uv 创建（SDK 运行时在连上控制面后安装）；创建失败时照常连接，任务以 env_error 失败。
+    match sdk::create_venv(
+        &config.uv,
+        &SharedVenv::new(venv.clone()),
+        config.python.as_deref(),
+    )
+    .await
+    {
+        Ok(true) => emit(serde_json::json!({ "event": "venv_created", "path": venv })),
+        Ok(false) => {}
+        Err(error) => eprintln!("cannot create shared venv: {error:#}"),
+    }
 
     let scratch = work_dir.join(".install");
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
-    let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel();
+    let (telemetry_tx, mut telemetry_rx) = logs::telemetry(config.telemetry_queue_bytes);
     let http = reqwest::Client::new();
     let runtime = Arc::new(Runtime {
         name: config.name.clone(),
@@ -490,7 +604,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         },
         installer: Installer {
             venv: SharedVenv::new(venv),
-            scratch,
+            scratch: scratch.clone(),
             index_url: config.index_url.clone(),
             uv: config.uv.clone(),
             http: http.clone(),
@@ -503,9 +617,12 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         telemetry: telemetry_tx,
         cancels: std::sync::Mutex::new(HashMap::new()),
         uploader: artifacts::Uploader {
-            http,
+            http: http.clone(),
             token: config.token.clone(),
         },
+        http,
+        uv: config.uv.clone(),
+        scratch,
     });
     let dev_socket = config
         .dev_socket
@@ -524,8 +641,6 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     loop {
         // 断线期间的安装状态已经过时：重新连接时 Hello 带上最新的已安装列表。
         while installs_rx.try_recv().is_ok() {}
-        let installed = runtime.inventory.refresh().await;
-        let dev_packages = runtime.dev.list().iter().map(|e| e.to_proto()).collect();
         // 手上的任务：正在执行的，加上已经结束、结果还没收到 Ack 的（断线期间结束的也算）。
         while let Ok(result) = results_rx.try_recv() {
             let key = (result.task_id.clone(), result.attempt);
@@ -533,15 +648,16 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                 unacked.insert(key, result);
             }
         }
-        let mut held: Vec<(String, u32)> = runtime.running();
-        held.extend(unacked.keys().cloned());
-        let running_tasks = held
-            .into_iter()
-            .map(|(task_id, attempt)| RunningTask { task_id, attempt })
-            .collect();
-        match connect(&config, installed, dev_packages, running_tasks).await {
+        let hello = HelloContent {
+            installed_packages: runtime.inventory.refresh().await,
+            dev_packages: runtime.dev.list().iter().map(|e| e.to_proto()).collect(),
+            running_tasks: runtime.held(&unacked),
+        };
+        match connect(&config, hello).await {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
+                // SDK 运行时与 Agent 版本不一致（或还没装）时，先从控制面下载安装，再开始接收任务。
+                runtime.ensure_sdk(&connection.welcome).await;
                 emit(serde_json::json!({ "event": "welcome", "name": config.name }));
                 for disposition in &connection.welcome.dispositions {
                     if disposition.action() != TaskAction::Abandon {
@@ -595,7 +711,7 @@ struct Channels<'a> {
     results: &'a mut mpsc::UnboundedReceiver<TaskResult>,
     installs: &'a mut mpsc::UnboundedReceiver<InstallStatus>,
     /// 日志与进度；先于结果处理，任务的日志总在它的结果之前发出。
-    telemetry: &'a mut mpsc::UnboundedReceiver<AgentMessage>,
+    telemetry: &'a mut logs::TelemetryReceiver,
     /// 控制面放弃的任务，结束时丢弃结果。
     abandoned: &'a mut HashSet<(String, u32)>,
 }
@@ -632,8 +748,9 @@ async fn serve(
                 let Some(message) = message? else { return Ok(()) };
                 match message.body {
                     Some(server_message::Body::Assign(task)) => {
+                        let cancel = runtime.accept(&task);
                         let runtime = runtime.clone();
-                        tokio::spawn(async move { runtime.run_task(task).await });
+                        tokio::spawn(async move { runtime.run_task(task, cancel).await });
                     }
                     Some(server_message::Body::Cancel(cancel)) => runtime.cancel_task(&cancel),
                     Some(server_message::Body::Ack(ack)) => {
@@ -646,9 +763,13 @@ async fn serve(
                 connection.outbound.send(message).await?;
             }
             _ = heartbeat.tick() => {
+                // 只为手上的任务续约；控制面据此发现 Agent 已经丢失的任务。
+                let running_tasks = runtime.held(unacked);
                 connection
                     .outbound
-                    .send(AgentMessage { body: Some(agent_message::Body::Heartbeat(Heartbeat {})) })
+                    .send(AgentMessage {
+                        body: Some(agent_message::Body::Heartbeat(Heartbeat { running_tasks })),
+                    })
                     .await?;
             }
             Some(result) = results.recv() => {

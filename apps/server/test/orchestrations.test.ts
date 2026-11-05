@@ -39,7 +39,11 @@ describe("编排版本", () => {
 	it("每次保存生成编号递增、带作者昵称的新版本，旧版本内容不变", async () => {
 		const id = await api.createOrchestration("版本测试");
 
-		const v1 = await api.post(`/orchestrations/${id}/versions`, { document: docV1 }, "alice");
+		const v1 = await api.post(
+			`/orchestrations/${id}/versions`,
+			{ base_version: 0, document: docV1 },
+			"alice",
+		);
 		expect(v1.status).toBe(201);
 		expect(await v1.json()).toMatchObject({
 			orchestration_id: id,
@@ -49,7 +53,11 @@ describe("编排版本", () => {
 		});
 
 		const docV2 = { ...docV1, default_agent: "agent-b" };
-		const v2 = await api.post(`/orchestrations/${id}/versions`, { document: docV2 }, "小明");
+		const v2 = await api.post(
+			`/orchestrations/${id}/versions`,
+			{ base_version: 1, document: docV2 },
+			"小明",
+		);
 		expect(await v2.json()).toMatchObject({ number: 2, author: "小明" });
 
 		const head = (await (await api.get(`/orchestrations/${id}`)).json()) as {
@@ -78,7 +86,7 @@ describe("编排版本", () => {
 			const res = await cp.fetch(`/orchestrations/${id}/versions/1`, {
 				method,
 				headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
-				body: JSON.stringify({ document: docV1 }),
+				body: JSON.stringify({ base_version: 0, document: docV1 }),
 			});
 			expect(res.status).toBe(404);
 		}
@@ -90,7 +98,7 @@ describe("编排版本", () => {
 		const id = await api.createOrchestration("坏文档");
 		const res = await api.post(
 			`/orchestrations/${id}/versions`,
-			{ document: { nodes: [{ id: "x", kind: "nope" }] } },
+			{ base_version: 0, document: { nodes: [{ id: "x", kind: "nope" }] } },
 			"alice",
 		);
 		expect(res.status).toBe(400);
@@ -105,7 +113,7 @@ describe("编排版本", () => {
 		const res = await cp.fetch(`/orchestrations/${id}/versions`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ document: docV1 }),
+			body: JSON.stringify({ base_version: 0, document: docV1 }),
 		});
 		expect(res.status).toBe(400);
 	});
@@ -187,6 +195,16 @@ describe("编排版本", () => {
 		});
 	});
 
+	it("新建编排需要昵称", async () => {
+		const res = await cp.fetch("/orchestrations", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ name: "无昵称" }),
+		});
+		expect(res.status).toBe(400);
+		expect(await res.json()).toMatchObject({ error: { code: "nickname_required" } });
+	});
+
 	it("复制还没有版本的编排得到同样没有版本的新编排", async () => {
 		const source = await api.createOrchestration("空源");
 		const res = await api.post(`/orchestrations/${source}/copy`, { name: "空副本" });
@@ -223,7 +241,11 @@ describe("编排版本", () => {
 			],
 			edges: [],
 		};
-		const res = await api.post(`/orchestrations/${id}/versions`, { document: half }, "alice");
+		const res = await api.post(
+			`/orchestrations/${id}/versions`,
+			{ base_version: 0, document: half },
+			"alice",
+		);
 		expect(res.status).toBe(201);
 		expect(((await res.json()) as { warnings: unknown }).warnings).toEqual([
 			{ code: "orphan_node", node_id: "a", message: "节点 a 不在任何链上" },
@@ -249,7 +271,11 @@ describe("编排版本", () => {
 			),
 		);
 		expect(published.status).toBe(201);
-		const ok = await api.post(`/orchestrations/${id}/versions`, { document: docV1 }, "alice");
+		const ok = await api.post(
+			`/orchestrations/${id}/versions`,
+			{ base_version: 1, document: docV1 },
+			"alice",
+		);
 		expect(((await ok.json()) as { warnings: unknown }).warnings).toEqual([]);
 	});
 
@@ -261,7 +287,7 @@ describe("编排版本", () => {
 		expect((await api.get(`/orchestrations/${id}/versions/1`)).status).toBe(404);
 		const res = await api.post(
 			"/orchestrations/00000000-0000-0000-0000-000000000000/versions",
-			{ document: docV1 },
+			{ base_version: 0, document: docV1 },
 			"alice",
 		);
 		expect(res.status).toBe(404);

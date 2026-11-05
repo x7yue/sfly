@@ -4,7 +4,7 @@ import { TaskAction } from "@sfly/proto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
-import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
+import { type AssignedTask, ErrorKind, FakeAgent } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -461,6 +461,92 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			clock.advance(5 * SECOND);
 			await eventually(async () => expect((await api.run(retryRun)).status).toBe("failed"));
 			expect((await api.node(retryRun, "r")).error?.kind).toBe("env_error");
+		});
+	});
+
+	describe("派发阶段（TaskStarted）与心跳上报的任务", () => {
+		it("派发后处于 dispatched，Agent 上报 TaskStarted 后才是 running，耗时从这时起算", async () => {
+			const agent = await connect("agent-a");
+			const runId = await api.triggerOk(await api.orchestrationWith(chain([{ id: "a" }])));
+			const task = await agent.nextAssign({ start: false });
+			let a = await api.node(runId, "a");
+			expect(a.status).toBe("dispatched");
+			expect(a.attempts[0]?.started_at).toBeNull();
+
+			// 下载、安装节点包花了 40 秒：期间心跳照常续约，不算执行时间。
+			clock.advance(20 * SECOND);
+			await agent.heartbeat();
+			clock.advance(20 * SECOND);
+			await agent.heartbeat();
+			await agent.started(task);
+			a = await api.node(runId, "a");
+			expect(a.status).toBe("running");
+			expect(a.attempts[0]?.started_at).toBe("2026-01-01T00:00:40.000Z");
+
+			// 别的 Agent、别的尝试上报的 TaskStarted 被忽略。
+			const other = await connect("agent-b");
+			await other.started(task);
+			await agent.started({ taskId: task.taskId, attempt: 2 });
+			expect((await api.node(runId, "a")).attempts[0]?.started_at).toBe("2026-01-01T00:00:40.000Z");
+
+			await agent.succeed(task, { v: 1 });
+			expect((await api.run(runId)).status).toBe("success");
+		});
+
+		it("派发阶段失败（安装失败）的任务没有开始时间", async () => {
+			const agent = await connect("agent-a");
+			const runId = await api.triggerOk(await api.orchestrationWith(chain([{ id: "a" }])));
+			const task = await agent.nextAssign({ start: false });
+			await agent.fail(task, "安装失败", ErrorKind.ENV_ERROR);
+			const a = await api.node(runId, "a");
+			expect(a).toMatchObject({ status: "failed", error: { kind: "env_error" } });
+			expect(a.attempts[0]?.started_at).toBeNull();
+		});
+
+		it("心跳只为上报的任务续约：连续两次心跳都没有上报的任务以 agent_lost 失败", async () => {
+			const agent = await connect("agent-a");
+			const id = await api.orchestrationWith(chain([{ id: "a", retries: 1 }]));
+			const kept = await api.triggerOk(id);
+			const lost = await api.triggerOk(id);
+			const first = await agent.nextAssign();
+			const second = await agent.nextAssign();
+			const keptTask = first.runId === kept ? first : second;
+
+			// 第一次没上报可能是心跳与派发消息在路上交错，先不处理。
+			await agent.heartbeat([keptTask]);
+			expect((await api.node(lost, "a")).status).toBe("running");
+			await agent.heartbeat([keptTask]);
+			const failed = await api.node(lost, "a");
+			expect(failed.attempts[0]).toMatchObject({ status: "failed", error: { kind: "agent_lost" } });
+			expect(failed.attempts[0]?.error?.message).toContain("连续两次心跳都没有上报这个任务");
+			// 按重试配置派回同一个 Agent。
+			expect(await agent.nextAssign()).toMatchObject({ taskId: expect.any(String), attempt: 2 });
+			expect((await api.node(kept, "a")).status).toBe("running");
+		});
+
+		it("没有上报的任务不续约，租约照常过期", async () => {
+			const agent = await connect("agent-a");
+			const runId = await api.triggerOk(await api.orchestrationWith(chain([{ id: "a" }])));
+			await agent.nextAssign();
+			clock.advance(LEASE - SECOND);
+			await agent.heartbeat([]);
+			clock.advance(2 * SECOND);
+			await eventually(async () => expect((await api.node(runId, "a")).status).toBe("failed"));
+			expect((await api.node(runId, "a")).error?.kind).toBe("agent_lost");
+		});
+
+		it("TaskStarted 随断开的连接丢失时，重连的 Hello 里标记已启动的任务补记为 running", async () => {
+			const agent = await connect("agent-a");
+			const runId = await api.triggerOk(await api.orchestrationWith(chain([{ id: "a" }])));
+			const task = await agent.nextAssign({ start: false });
+			await disconnect(agent);
+			const again = await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-a",
+				runningTasks: [{ taskId: task.taskId, attempt: task.attempt, started: true }],
+			});
+			agents.push(again);
+			expect(again.dispositions).toEqual({ [task.taskId]: "continue" });
+			await eventually(async () => expect((await api.node(runId, "a")).status).toBe("running"));
 		});
 	});
 });

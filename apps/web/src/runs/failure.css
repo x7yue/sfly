@@ -57,7 +57,7 @@
 	background: var(--sf-sunk);
 }
 .sf-failure__error[data-final="true"] {
-	border-color: rgb(239 83 80 / 0.45);
+	border-color: var(--sf-danger-line);
 }
 .sf-failure__error header {
 	display: flex;

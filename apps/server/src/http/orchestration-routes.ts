@@ -4,15 +4,16 @@ import { z } from "zod";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
-import { isUuid, sendError } from "./errors.js";
-import { nicknameOf } from "./nickname.js";
+import { isUuid } from "../util/uuid.js";
+import { sendError } from "./errors.js";
+import { requireNickname } from "./nickname.js";
 
 const CreateBody = z.strictObject({ name: z.string().trim().min(1) });
 const CopyBody = CreateBody;
 const SaveVersionBody = z.object({
 	document: OrchestrationDocument,
-	/** 编辑起点的版本号（0 = 还没有版本）。不是最新版本时返回 409。画布总是携带；省略时不做冲突检查。 */
-	base_version: z.number().int().nonnegative().optional(),
+	/** 编辑起点的版本号（新编排的第一个版本为 0）。必填；不是最新版本时返回 409。 */
+	base_version: z.number().int().nonnegative(),
 });
 
 /** 编排与编排版本：新建编排、保存（追加）版本、查询。版本不可修改。 */
@@ -21,6 +22,7 @@ export function registerOrchestrationRoutes(
 	{ orchestrations, packages }: { orchestrations: OrchestrationStore; packages: PackageRepository },
 ): void {
 	app.post("/orchestrations", async (request, reply) => {
+		if (!requireNickname(request, reply)) return reply;
 		const body = CreateBody.safeParse(request.body);
 		if (!body.success) {
 			return sendError(
@@ -45,9 +47,8 @@ export function registerOrchestrationRoutes(
 	});
 
 	app.post<{ Params: { id: string } }>("/orchestrations/:id/copy", async (request, reply) => {
-		const author = nicknameOf(request);
-		if (!author)
-			return sendError(reply, 400, "nickname_required", "x-sfly-nickname header is required");
+		const author = requireNickname(request, reply);
+		if (!author) return reply;
 		const body = CopyBody.safeParse(request.body);
 		if (!body.success) {
 			return sendError(
@@ -74,10 +75,18 @@ export function registerOrchestrationRoutes(
 	});
 
 	app.post<{ Params: { id: string } }>("/orchestrations/:id/versions", async (request, reply) => {
-		const author = nicknameOf(request);
-		if (!author)
-			return sendError(reply, 400, "nickname_required", "x-sfly-nickname header is required");
-		const body = SaveVersionBody.safeParse(request.body);
+		const author = requireNickname(request, reply);
+		if (!author) return reply;
+		const raw = request.body;
+		if (raw === null || typeof raw !== "object" || !Object.hasOwn(raw, "base_version")) {
+			return sendError(
+				reply,
+				400,
+				"base_version_required",
+				"base_version is required (use 0 for the first version)",
+			);
+		}
+		const body = SaveVersionBody.safeParse(raw);
 		if (!body.success) {
 			return sendError(
 				reply,
@@ -127,9 +136,8 @@ export function registerOrchestrationRoutes(
 	app.post<{ Params: { id: string; number: string } }>(
 		"/orchestrations/:id/versions/:number/restore",
 		async (request, reply) => {
-			const author = nicknameOf(request);
-			if (!author)
-				return sendError(reply, 400, "nickname_required", "x-sfly-nickname header is required");
+			const author = requireNickname(request, reply);
+			if (!author) return reply;
 			const number = Number(request.params.number);
 			const restored =
 				isUuid(request.params.id) && Number.isInteger(number)

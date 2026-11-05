@@ -171,6 +171,8 @@ export class TaskLogs {
 		return this.#serial(batch.taskId, async () => {
 			const state = await this.#stateFor(batch.taskId, agentName);
 			if (!state || state.truncated) return;
+			// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。
+			state.secrets = await this.#currentSecrets(state.runId);
 			const lines: LogLineView[] = [];
 			let text = "";
 			let bytes = state.bytes;
@@ -227,6 +229,7 @@ export class TaskLogs {
 		return this.#serial(progress.taskId, async () => {
 			const state = await this.#stateFor(progress.taskId, agentName);
 			if (!state) return;
+			state.secrets = await this.#currentSecrets(state.runId);
 			const value: TaskProgress = {
 				current: progress.current,
 				total: progress.total ?? null,
@@ -332,19 +335,28 @@ export class TaskLogs {
 		return state;
 	}
 
-	async #load(taskId: string): Promise<TaskState | undefined> {
+	/** 一次运行当前的全部 secret 值（链实例可能在运行期间新增，每次现查）。 */
+	async #currentSecrets(runId: string): Promise<string[]> {
 		const [row] = await this.deps.db
-			.select({ task: tasks, document: orchestrationVersions.document })
-			.from(tasks)
-			.innerJoin(runs, eq(runs.id, tasks.runId))
+			.select({ document: orchestrationVersions.document })
+			.from(runs)
 			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
-			.where(eq(tasks.id, taskId));
-		if (!row) return undefined;
-		const { task, document } = row;
+			.where(eq(runs.id, runId));
+		if (!row) return [];
 		const chains = await this.deps.db
 			.select({ chainId: chainInstances.chainId, params: chainInstances.params })
 			.from(chainInstances)
-			.where(eq(chainInstances.runId, task.runId));
+			.where(eq(chainInstances.runId, runId));
+		return secretValues(row.document, chains);
+	}
+
+	async #load(taskId: string): Promise<TaskState | undefined> {
+		const [row] = await this.deps.db
+			.select({ task: tasks })
+			.from(tasks)
+			.where(eq(tasks.id, taskId));
+		if (!row) return undefined;
+		const { task } = row;
 		const path = task.logPath ?? join("logs", task.runId, `${task.id}.jsonl`);
 		// 文件大小是已写入字节数的准绳（数据库更新之前控制面可能退出过）。
 		const bytes = await stat(join(this.deps.dataDir, path)).then(
@@ -362,7 +374,8 @@ export class TaskLogs {
 			seq: task.logSeq,
 			// 写完截断标记、数据库还没更新时控制面可能退出过：文件已到上限也算截断。
 			truncated: task.logTruncated || bytes >= this.#limit,
-			secrets: secretValues(document, chains),
+			// 占位：写入前总会先经 #currentSecrets 刷新。
+			secrets: [],
 		};
 	}
 }

@@ -163,6 +163,14 @@ describe("编排版本：冲突、历史与恢复", () => {
 		expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ head_version: 1 });
 	});
 
+	it("缺少 base_version 时拒绝保存（400），不生成版本", async () => {
+		const id = await api.createOrchestration("无基线");
+		const res = await save(id, { document: doc("a") });
+		expect(res.status).toBe(400);
+		expect(await res.json()).toMatchObject({ error: { code: "base_version_required" } });
+		expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ head_version: 0 });
+	});
+
 	it("base_version 不是非负整数时拒绝保存", async () => {
 		const id = await api.createOrchestration("坏基线");
 		const res = await save(id, { base_version: -1, document: doc("a") });

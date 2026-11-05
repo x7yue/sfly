@@ -5,6 +5,8 @@ export type RunTone = "done" | "current" | "failed" | "pending";
 const STATUS: Record<string, { label: string; tone: RunTone }> = {
 	pending: { label: "待执行", tone: "pending" },
 	queued: { label: "排队中", tone: "pending" },
+	// 已派发给 Agent，还在下载/安装节点包或启动执行器；Agent 上报 TaskStarted 后才是“执行中”。
+	dispatched: { label: "准备中", tone: "current" },
 	waiting: { label: "等待中", tone: "current" },
 	running: { label: "执行中", tone: "current" },
 	success: { label: "成功", tone: "done" },

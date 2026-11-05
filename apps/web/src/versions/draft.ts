@@ -13,6 +13,8 @@ export interface Draft {
 	document: OrchestrationDocument;
 	/** 最后一次写入草稿的时间（ISO）。 */
 	updated_at: string;
+	/** 写入草稿的标签页（每次打开编辑页面随机生成），用来发现其他标签页改写了同一份草稿。 */
+	writer?: string;
 }
 
 const keyOf = (orchestrationId: string) => `sfly.draft.${orchestrationId}`;
@@ -49,4 +51,27 @@ export function writeDraft(orchestrationId: string, draft: Draft): void {
 
 export function clearDraft(orchestrationId: string): void {
 	window.localStorage.removeItem(keyOf(orchestrationId));
+}
+
+/**
+ * 其他标签页改写或清除了这份编排的本地草稿时回调（`storage` 事件只在其他标签页写入时触发）。
+ * 返回取消监听的函数。
+ */
+export function onDraftChangedElsewhere(
+	orchestrationId: string,
+	tabId: string,
+	callback: () => void,
+): () => void {
+	const onStorage = (e: StorageEvent) => {
+		if (e.storageArea !== window.localStorage || e.key !== keyOf(orchestrationId)) return;
+		let writer: string | undefined;
+		try {
+			writer = e.newValue ? (JSON.parse(e.newValue) as Draft).writer : undefined;
+		} catch {
+			writer = undefined;
+		}
+		if (writer !== tabId) callback();
+	};
+	window.addEventListener("storage", onStorage);
+	return () => window.removeEventListener("storage", onStorage);
 }

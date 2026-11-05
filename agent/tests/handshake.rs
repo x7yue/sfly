@@ -1,7 +1,7 @@
 mod support;
 
 use sfly_agent::proto::agent_message;
-use sfly_agent::{Config, connect};
+use sfly_agent::{Config, HelloContent, connect};
 use support::FakeControlPlane;
 
 #[tokio::test]
@@ -12,7 +12,7 @@ async fn agent_sends_hello_and_receives_welcome() {
         token: Some("secret".into()),
         ..Config::new(control_plane.url.clone(), "agent-a")
     };
-    let connection = connect(&config, Vec::new(), Vec::new(), Vec::new())
+    let connection = connect(&config, HelloContent::default())
         .await
         .expect("handshake");
     drop(connection);
@@ -30,9 +30,5 @@ async fn agent_sends_hello_and_receives_welcome() {
 #[tokio::test]
 async fn connect_fails_when_control_plane_is_unreachable() {
     let config = Config::new("http://127.0.0.1:1", "agent-b");
-    assert!(
-        connect(&config, Vec::new(), Vec::new(), Vec::new())
-            .await
-            .is_err()
-    );
+    assert!(connect(&config, HelloContent::default()).await.is_err());
 }

@@ -1,5 +1,10 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
-import type { NodeTypeIo, OrchestrationWarning, ReferenceOption } from "@sfly/orchestration";
+import {
+	type NodeTypeIo,
+	type OrchestrationWarning,
+	orderedInputs,
+	type ReferenceOption,
+} from "@sfly/orchestration";
 import { useState } from "react";
 import { ReferenceInput } from "./ReferenceInput";
 
@@ -55,7 +60,8 @@ export function InputsForm({
 		const { [name]: _old, ...rest } = inputs;
 		onChange(value === undefined ? rest : { ...rest, [name]: value });
 	};
-	const properties = type ? Object.entries(type.inputs.properties) : [];
+	// 按函数参数顺序（元信息的 order），JSONB 存储后对象键顺序不可靠。
+	const properties = type ? orderedInputs(type.inputs) : [];
 	const required = new Set(type?.inputs.required ?? []);
 	const undeclared = Object.keys(inputs).filter((k) => !type?.inputs.properties[k]);
 

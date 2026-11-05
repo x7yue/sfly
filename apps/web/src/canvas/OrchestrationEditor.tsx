@@ -358,6 +358,7 @@ function Editor({
 						<h2 className="sf-panel-title">节点类型</h2>
 						<NodePalette
 							packages={packages.data?.packages}
+							agents={agentList}
 							locked={meta.packages}
 							onAdd={addAfterRightmost}
 						/>

@@ -1,12 +1,13 @@
 import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { Section } from "#/canvas/Inspector";
 import { KIND_LABEL, KindChip } from "#/canvas/NodeCard";
 import { getOrchestration } from "#/lib/api";
 import { useEventSource } from "#/lib/sse";
 import { getVersion } from "#/versions/api";
+import { artifactRefPath } from "./Artifacts";
 import {
 	type AttemptView,
 	type ChainRunView,
@@ -139,8 +140,8 @@ export function RunPage({ runId }: { runId: string }) {
 	const nodeChains = useMemo(() => (doc0 ? chainOfNode(doc0) : new Map<string, string>()), [doc0]);
 
 	const error = run.error ?? version.error;
-	if (error) return <p className="p-8 text-red-600">加载失败：{error.message}</p>;
-	if (!run.data || !version.data) return <p className="p-8 text-gray-500">加载中…</p>;
+	if (error) return <p className="sf-err p-8">加载失败：{error.message}</p>;
+	if (!run.data || !version.data) return <p className="sf-hint p-8">加载中…</p>;
 	const data = run.data;
 	const doc = version.data.document;
 	const current = selected === undefined ? focusNode(data) : selected;
@@ -224,8 +225,25 @@ export function RunPage({ runId }: { runId: string }) {
 	);
 }
 
+/** JSON 展示；字符串值是产物引用时显示为下载链接（#18）。 */
 function JsonBlock({ value }: { value: unknown }) {
-	return <pre className="sf-json">{JSON.stringify(value, null, 2)}</pre>;
+	const text = JSON.stringify(value, null, 2) ?? "";
+	const parts: ReactNode[] = [];
+	let last = 0;
+	// JSON 字符串字面量（含转义）；只有能还原成产物引用的才替换成链接。
+	for (const m of text.matchAll(/"(?:[^"\\]|\\.)*"/g)) {
+		const path = artifactRefPath(JSON.parse(m[0]) as string);
+		if (!path) continue;
+		parts.push(text.slice(last, m.index));
+		parts.push(
+			<a key={m.index} href={path} download className="sf-link" title="下载产物">
+				{m[0]}
+			</a>,
+		);
+		last = m.index + m[0].length;
+	}
+	parts.push(text.slice(last));
+	return <pre className="sf-json">{parts}</pre>;
 }
 
 function RunSummary({

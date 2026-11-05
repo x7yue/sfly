@@ -41,6 +41,8 @@ fn held(task_id: &str) -> RunningTask {
     RunningTask {
         task_id: task_id.into(),
         attempt: 1,
+        // 两个任务的执行器都已启动（一个还在运行，一个已结束、结果没收到 Ack）。
+        started: true,
     }
 }
 
@@ -134,5 +136,42 @@ async fn sends_heartbeats_at_the_interval_given_in_welcome() {
         (5..=15).contains(&beats.len()),
         "{} heartbeats in 1s",
         beats.len()
+    );
+}
+
+#[tokio::test]
+async fn heartbeats_list_the_tasks_the_agent_holds() {
+    let cp = FakeControlPlane::start().await;
+    cp.set_heartbeat_interval(Duration::from_millis(100));
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-held-beats"));
+    cp.hello(0).await;
+    cp.stop_acking();
+    let dir = tempfile::tempdir().unwrap();
+    let ready = dir.path().join("ready");
+    cp.assign(stub_task(
+        "task-running",
+        "wait_cancel",
+        json!({ "ready_file": ready, "report_file": dir.path().join("report") }),
+    ))
+    .await;
+    cp.assign(stub_task("task-done", "echo", json!({ "text": "x" })))
+        .await;
+    wait_for_file(&ready).await;
+    cp.result("task-done").await;
+
+    // 心跳带上正在执行的任务和结果还没收到 Ack 的任务（控制面只为它们续约）。
+    let beat = cp
+        .wait_for("heartbeat listing both tasks", |all| {
+            all.iter().rev().find_map(|r| match &r.message.body {
+                Some(agent_message::Body::Heartbeat(h)) if h.running_tasks.len() == 2 => {
+                    Some(h.clone())
+                }
+                _ => None,
+            })
+        })
+        .await;
+    assert_eq!(
+        sorted(beat.running_tasks),
+        vec![held("task-done"), held("task-running")]
     );
 }

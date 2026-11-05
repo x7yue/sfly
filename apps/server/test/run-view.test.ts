@@ -170,10 +170,13 @@ describe("运行视图", () => {
 			await until(sse, (run) => statusOf(run, "a") === "running");
 
 			await agent.succeed(a, { n: 1 });
-			const afterA = await until(sse, (run) => statusOf(run, "b") === "running");
+			// b 派发出去后先处于派发阶段，Agent 上报 TaskStarted 后才是 running。
+			const afterA = await until(sse, (run) => statusOf(run, "b") === "dispatched");
 			expect(statusOf(afterA, "a")).toBe("success");
+			const b = await agent.nextAssign();
+			await until(sse, (run) => statusOf(run, "b") === "running");
 
-			await agent.fail(await agent.nextAssign(), "boom");
+			await agent.fail(b, "boom");
 			const ended = await until(sse, (run) => run.status !== "running");
 			expect(ended).toMatchObject({ status: "failed", ended_at: "2026-01-01T00:00:00.000Z" });
 			expect(ended.chains[0]?.nodes.find((n) => n.node_id === "b")?.error).toEqual({
@@ -190,6 +193,7 @@ describe("运行视图", () => {
 			const sse = await subscribe(watched);
 			await sse.next("run");
 			const first = await agent.nextAssign();
+			await until(sse, (run) => statusOf(run, "a") === "running");
 
 			await api.triggerOk(id);
 			await agent.succeed(await agent.nextAssign());

@@ -10,7 +10,7 @@
 	z-index: 60;
 	display: grid;
 	place-items: center;
-	background: rgb(8 8 8 / 0.6);
+	background: var(--sf-overlay-strong);
 }
 .sf-modal {
 	width: min(640px, calc(100vw - 32px));
@@ -21,7 +21,7 @@
 	background: var(--sf-surface);
 	border: 1px solid var(--sf-border);
 	color: var(--sf-text);
-	box-shadow: 0 30px 80px -20px rgb(0 0 0 / 0.6);
+	box-shadow: var(--sf-shadow-popup);
 }
 .sf-modal__h {
 	padding: 18px 20px 0;
@@ -206,7 +206,7 @@
 .sf-pick button[aria-pressed="true"] {
 	border-color: var(--sf-accent);
 	background: var(--sf-accent);
-	color: #fff;
+	color: var(--sf-white);
 }
 .sf-versions__main {
 	display: flex;

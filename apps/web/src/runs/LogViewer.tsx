@@ -238,7 +238,9 @@ function LogLines({
 		>
 			{hasOlder && (
 				<div className="sf-log__more">
-					<span>{loadingOlder ? "正在加载更早的日志…" : "向上滚动加载更早的日志"}</span>
+					<button type="button" disabled={loadingOlder} onClick={loadOlder}>
+						{loadingOlder ? "正在加载更早的日志…" : "向上滚动或点击加载更早的日志"}
+					</button>
 				</div>
 			)}
 			<div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>

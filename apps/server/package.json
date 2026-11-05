@@ -7,6 +7,7 @@
 	"scripts": {
 		"dev": "tsx watch src/main.ts",
 		"start": "tsx src/main.ts",
+		"build": "rm -rf dist/sdk && uv build --wheel --quiet --out-dir dist/sdk ../../sdk/python",
 		"db:generate": "drizzle-kit generate",
 		"typecheck": "tsc -p .",
 		"test": "vitest run"

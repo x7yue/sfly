@@ -34,7 +34,7 @@ function retryNote(
 ): string | null {
 	const retries = retriesOf(node);
 	const retried = Math.max(0, attempts.length - 1);
-	if ((status === "queued" || status === "running") && retried > 0) {
+	if ((status === "queued" || status === "dispatched" || status === "running") && retried > 0) {
 		return `正在进行第 ${retried} 次重试（最多重试 ${retries} 次）`;
 	}
 	if (status === "success") return retried > 0 ? `重试 ${retried} 次后成功` : null;

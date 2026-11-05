@@ -131,6 +131,7 @@ describe("Agent 注册", () => {
 				orchestration_id: orchestrationId,
 				node_id: "a",
 				attempt: 1,
+				status: "running",
 				started_at: "2026-01-01T00:00:00.000Z",
 			},
 		]);

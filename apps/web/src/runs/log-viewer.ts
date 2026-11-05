@@ -27,6 +27,26 @@ export interface LogPage {
 
 /** 每页行数。 */
 const PAGE = 300;
+/** 浏览器里最多保留的行数：实时追加超过时丢掉最早的行（仍可向上滚动重新加载）。 */
+export const MAX_LOADED_LINES = 5000;
+
+/** 已加载的一行及其在日志文件中的字节偏移（用于翻页和补缺口）。 */
+type LoadedLine = LogLine & { offset: number };
+
+const encoder = new TextEncoder();
+/** 一行在日志文件中占的字节数（文件是 JSONL，与服务端 log-routes.ts 的计算一致）。 */
+const lineBytes = (line: LogLine) => encoder.encode(`${JSON.stringify(line)}\n`).length;
+
+/** 实时推送的一批行加上偏移，并算出这批行之后的偏移。 */
+function withOffsets(chunk: LogChunk): { lines: LoadedLine[]; end: number } {
+	let offset = chunk.offset;
+	const lines = chunk.lines.map((line) => {
+		const loaded = { ...line, offset };
+		offset += lineBytes(line);
+		return loaded;
+	});
+	return { lines, end: offset };
+}
 
 export const taskLogDownloadPath = (taskId: string) => `/api/tasks/${taskId}/logs/download`;
 
@@ -43,22 +63,22 @@ export const matchesFilter = (line: LogLine, filter: LogFilter) =>
 	(filter.sources.size === 0 || filter.sources.has(line.source));
 
 /** 按序号合并两组行（去重，结果按序号排序）。 */
-export function mergeLines(a: LogLine[], b: LogLine[]): LogLine[] {
+export function mergeLines<L extends LogLine>(a: L[], b: L[]): L[] {
 	if (b.length === 0) return a;
 	const lastA = a.at(-1)?.seq ?? 0;
 	const firstB = b[0]?.seq ?? 0;
 	// 常见情况：新行都在已有行之后，或者更早的一页都在已有行之前。
 	if (firstB > lastA) return [...a, ...b];
 	if ((b.at(-1)?.seq ?? 0) < (a[0]?.seq ?? Number.POSITIVE_INFINITY)) return [...b, ...a];
-	const bySeq = new Map<number, LogLine>();
+	const bySeq = new Map<number, L>();
 	for (const line of a) bySeq.set(line.seq, line);
 	for (const line of b) bySeq.set(line.seq, line);
 	return [...bySeq.values()].sort((x, y) => x.seq - y.seq);
 }
 
 export interface LogViewState {
-	/** 已加载、符合筛选条件的行（按序号）。 */
-	lines: LogLine[];
+	/** 已加载、符合筛选条件的行（按序号），最多 {@link MAX_LOADED_LINES} 行。 */
+	lines: LoadedLine[];
 	loaded: boolean;
 	/** 还有更早的行可以加载。 */
 	hasOlder: boolean;
@@ -83,8 +103,10 @@ export function useLogView(taskId: string, filter: LogFilter) {
 		expired: false,
 		error: null,
 	});
-	/** 往前翻页的位置（字节偏移），以及实时流从哪个序号之后开始。 */
-	const cursor = useRef({ start: 0, generation: 0, loadingOlder: false });
+	/**
+	 * start：往前翻页的位置（字节偏移）；end：已加载的行在文件里的结束位置（之前的行都已加载或可往前翻到）。
+	 */
+	const cursor = useRef({ start: 0, end: 0, generation: 0, loadingOlder: false });
 	const [stream, setStream] = useState<string | null>(null);
 	const filterRef = useRef(filter);
 	filterRef.current = filter;
@@ -100,9 +122,10 @@ export function useLogView(taskId: string, filter: LogFilter) {
 			.then((page) => {
 				if (cursor.current.generation !== generation) return;
 				cursor.current.start = page.start;
+				cursor.current.end = page.end;
 				setState((s) => ({
 					...s,
-					lines: mergeLines(s.lines, page.lines.map(stripOffset)),
+					lines: mergeLines(s.lines, page.lines),
 					loaded: true,
 					hasOlder: page.start > 0,
 					truncated: page.truncated,
@@ -116,17 +139,36 @@ export function useLogView(taskId: string, filter: LogFilter) {
 			});
 	}, [taskId, filterKey]);
 
-	const onLogs = useCallback((data: unknown) => {
-		const chunk = data as LogChunk;
-		const fresh = chunk.lines.filter((l) => matchesFilter(l, filterRef.current));
-		const truncated = chunk.lines.some((l) => l.source === "system");
-		if (fresh.length === 0 && !truncated) return;
-		setState((s) => ({
-			...s,
-			lines: mergeLines(s.lines, fresh),
-			truncated: s.truncated || truncated,
-		}));
+	/** 追加行；超过上限时丢掉最早的行，并从第一条保留的行往前翻页。 */
+	const append = useCallback((fresh: LoadedLine[]) => {
+		if (fresh.length === 0) return;
+		setState((s) => {
+			const merged = mergeLines(s.lines, fresh);
+			if (merged.length <= MAX_LOADED_LINES) return { ...s, lines: merged };
+			const kept = merged.slice(-MAX_LOADED_LINES);
+			// 重复调用时结果相同（StrictMode 下更新函数可能执行两次）。
+			cursor.current.start = kept[0]?.offset ?? cursor.current.start;
+			return { ...s, lines: kept, hasOlder: true };
+		});
 	}, []);
+
+	const onLogs = useCallback(
+		(data: unknown) => {
+			const chunk = data as LogChunk;
+			const { lines: all, end } = withOffsets(chunk);
+			if (all.length > 0 && chunk.offset > cursor.current.end) {
+				// 历史页读完到实时流连上（或断线重连）期间写入太多，实时流的第一批没有从缺口处开始：
+				// 丢掉已加载的行，从这一批往前翻页，保证已加载的行在文件里是连续的。
+				cursor.current.start = chunk.offset;
+				setState((s) => ({ ...s, lines: [], hasOlder: true }));
+			}
+			if (all.length > 0) cursor.current.end = Math.max(cursor.current.end, end);
+			const truncated = chunk.lines.some((l) => l.source === "system");
+			append(all.filter((l) => matchesFilter(l, filterRef.current)));
+			if (truncated) setState((s) => ({ ...s, truncated: true }));
+		},
+		[append],
+	);
 	useEventSource(stream, { logs: onLogs });
 
 	const loadOlder = useCallback(() => {
@@ -143,7 +185,7 @@ export function useLogView(taskId: string, filter: LogFilter) {
 				cursor.current.start = page.start;
 				setState((s) => ({
 					...s,
-					lines: mergeLines(s.lines, page.lines.map(stripOffset)),
+					lines: mergeLines(page.lines, s.lines),
 					hasOlder: page.start > 0,
 					loadingOlder: false,
 				}));
@@ -155,8 +197,4 @@ export function useLogView(taskId: string, filter: LogFilter) {
 	}, [taskId]);
 
 	return { ...state, loadOlder };
-}
-
-function stripOffset({ offset: _, ...line }: LogLine & { offset: number }): LogLine {
-	return line;
 }

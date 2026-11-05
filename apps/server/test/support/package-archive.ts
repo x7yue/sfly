@@ -51,27 +51,38 @@ export function publishInit(archive: Uint8Array): RequestInit {
 	};
 }
 
+/** 节点类型的输入 schema（JSON Schema，type=object）。 */
+export type InputsSchema = {
+	properties: Record<string, Record<string, unknown>>;
+	required?: string[];
+};
+
 /**
- * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限）。
+ * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限），
+ * 或 `{ outputs, inputs }`（inputs 是输入 schema，派发前按它校验已解析的输入）。
  * 触发运行前的预检要求编排锁定的包版本已经发布、引用的输出键已经声明。
  */
 export async function publishPackage(
 	cp: { fetch(path: string, init?: RequestInit): Promise<Response> },
 	name: string,
 	version: string,
-	nodes: Record<string, readonly string[]>,
+	nodes: Record<string, readonly string[] | { outputs: readonly string[]; inputs: InputsSchema }>,
 ): Promise<void> {
 	const archive = packageArchive(
 		packageMetadata({
 			name,
 			version,
-			nodes: Object.entries(nodes).map(([node, outputs]) => ({
-				name: node,
-				title: node,
-				entry: `${name.replace(/-/g, "_")}.nodes:${node}`,
-				inputs: { type: "object", properties: {} },
-				outputs: { type: "object", properties: Object.fromEntries(outputs.map((k) => [k, {}])) },
-			})),
+			nodes: Object.entries(nodes).map(([node, spec]) => {
+				const outputs = "outputs" in spec ? spec.outputs : spec;
+				const inputs = "inputs" in spec ? spec.inputs : { properties: {} };
+				return {
+					name: node,
+					title: node,
+					entry: `${name.replace(/-/g, "_")}.nodes:${node}`,
+					inputs: { type: "object", ...inputs },
+					outputs: { type: "object", properties: Object.fromEntries(outputs.map((k) => [k, {}])) },
+				};
+			}),
 		}),
 		{ [`${name.replace(/-/g, "_")}-${version}-py3-none-any.whl`]: strToU8("wheel") },
 	);

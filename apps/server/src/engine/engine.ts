@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
-import { NODE_DEFAULTS } from "@sfly/orchestration";
+import {
+	InvalidReferenceError,
+	inputProblems,
+	NODE_DEFAULTS,
+	type ResolveScope,
+	resolveInputs,
+} from "@sfly/orchestration";
 import {
 	type AgentMessage,
 	InstallState,
@@ -10,8 +16,8 @@ import {
 	TaskAction,
 	type TaskResult,
 } from "@sfly/proto";
-import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
-import { and, asc, count, eq, inArray, isNotNull, isNull, lt, lte, or } from "drizzle-orm";
+import type { OrchestrationDocument, OrchestrationNode, PackageMetadata } from "@sfly/schema";
+import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
 import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -19,15 +25,21 @@ import {
 	chainInstances,
 	type ErrorKind,
 	nodePackages,
+	ON_AGENT,
 	orchestrations,
 	orchestrationVersions,
 	runs,
 	tasks,
 } from "../db/schema.js";
-import type { AgentSessionHandler, RunningTaskRef } from "../gateway/agent-gateway.js";
+import {
+	type AgentSessionHandler,
+	type RunningTaskRef,
+	runningTaskRef,
+} from "../gateway/agent-gateway.js";
 import type { Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
+import { isUuid } from "../util/uuid.js";
 import {
 	type AsyncTaskNode,
 	agentFor,
@@ -38,24 +50,39 @@ import {
 } from "./chain.js";
 import { hasFinalFailure, isAlways, shouldRetry } from "./failures.js";
 import { chainInstanceId, taskId } from "./ids.js";
+import {
+	DEFAULT_LEASE_MS,
+	expireTasks,
+	extendForRecovery,
+	MissedHeartbeats,
+	queueTimedOut,
+	renewHeld,
+} from "./leases.js";
 import { fillParams } from "./params.js";
-import { InvalidReferenceError, resolveInputs } from "./references.js";
-import { isWaitNode, planWait, type WaitNode, waitOutputs } from "./waits.js";
+import {
+	type CancelOrder,
+	type ChainDriver,
+	type ChainRow,
+	firstAttempt,
+	type Located,
+	type RunRow,
+	type Step,
+	type TaskRow,
+	type Tx,
+} from "./step.js";
+import { isWaitNode, startWait, wakeTimers } from "./waits.js";
 
 /** 包节点默认超时：1 小时（docs/SEMANTICS.md §3.3）。 */
 export const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
 
-/** 运行中任务的默认租约：30 秒；Agent 按它的三分之一（10 秒）发送心跳（#15）。 */
-export const DEFAULT_LEASE_MS = 30_000;
+export { DEFAULT_LEASE_MS } from "./leases.js";
+
+/** 开发版本（docs/SEMANTICS.md §7）。 */
+const DEV_VERSION = "dev";
 
 /** 节点进入 queued 后最多排队多久（§3.3 queue_timeout，默认 10 分钟）。 */
 const queueTimeoutMs = (node: PackageNode) =>
 	(node.queue_timeout ?? NODE_DEFAULTS.queue_timeout) * 1000;
-
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
-type RunRow = typeof runs.$inferSelect;
-type ChainRow = typeof chainInstances.$inferSelect;
-type TaskRow = typeof tasks.$inferSelect;
 
 export type TriggerOutcome =
 	| { ok: true; runId: string }
@@ -80,23 +107,8 @@ const INSTALL_STATES: Partial<Record<InstallState, "installing" | "installed" | 
 	[InstallState.FAILED]: "failed",
 };
 
-/** 一次状态迁移的上下文：同一事务里推进链，并记下需要重新尝试派发的 Agent。 */
-interface Step {
-	tx: Tx;
-	now: Date;
-	touchedAgents: Set<string>;
-	/** 状态有变化的运行；提交后通知订阅者（SSE）。 */
-	touchedRuns: Set<string>;
-	/** 提交后发给 Agent 的取消指令（#12）。 */
-	cancels: CancelOrder[];
-}
-
-interface CancelOrder {
-	agentName: string;
-	taskId: string;
-	attempt: number;
-	force: boolean;
-}
+/** 任务由 Agent 负责（派发阶段或执行阶段）。 */
+const onAgent = (task: TaskRow) => (ON_AGENT as readonly string[]).includes(task.status);
 
 /** 运行是否已被取消；强制取消时 always 节点也不再执行（§3.4）。 */
 const cancelling = (run: RunRow) => run.cancelRequestedAt !== null;
@@ -109,8 +121,9 @@ const cancelledFor = (run: RunRow, node: OrchestrationNode | undefined) =>
  * 引擎：PostgreSQL 之上的链状态机（docs/SEMANTICS.md §3）。
  *
  * 每个事件（触发、任务结果、Agent 上线）在进程内互斥锁下处理，状态迁移在一个数据库事务里完成，
- * 提交后再向 Agent 推送派发消息。当前支持入口节点、子流程入口节点、异步任务节点和包节点；
- * 子流程实例由异步任务节点在同一个事务里创建（#spawn）。
+ * 提交后再向 Agent 推送派发消息。支持全部节点种类：入口节点、子流程入口节点、异步任务节点
+ * （子流程实例在同一个事务里创建，#spawn）、定时 / Sleep 节点（持久化定时器，waits.ts）和包节点。
+ * 租约、排队超时与重启恢复在 leases.ts；辅助模块经 {@link ChainDriver} 回到引擎推进链，仍在同一把锁、同一个事务里。
  */
 export class Engine implements AgentSessionHandler {
 	#documents = new Map<string, OrchestrationDocument>();
@@ -131,6 +144,8 @@ export class Engine implements AgentSessionHandler {
 			preflight: Preflight;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
+			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
+			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
 		},
 	) {}
 
@@ -144,6 +159,17 @@ export class Engine implements AgentSessionHandler {
 
 	/** 运行状态变化的通知（主题 = 运行 ID），在状态变更的事务提交之后发布。 */
 	readonly runChanges = new Topics<string>();
+
+	/** 上一次心跳没有上报的任务（leases.ts 的 renewHeld）。 */
+	readonly #heartbeats = new MissedHeartbeats();
+
+	/** 给辅助模块（waits.ts、leases.ts）用的链推进操作。 */
+	readonly #driver: ChainDriver = {
+		event: (handle) => this.#event(handle),
+		locate: (tx, task) => this.#locate(tx, task),
+		advance: (step, run, chain, index) => this.#advance(step, run, chain, index),
+		failTask: (step, task, kind, message) => this.#failTask(step, task, kind, message),
+	};
 
 	/** 手动触发编排的最新版本。 */
 	trigger(
@@ -281,7 +307,7 @@ export class Engine implements AgentSessionHandler {
 			.where(
 				and(
 					eq(tasks.chainInstanceId, chain.id),
-					inArray(tasks.status, ["queued", "running", "waiting"]),
+					inArray(tasks.status, ["queued", ...ON_AGENT, "waiting"]),
 				),
 			)
 			.orderBy(asc(tasks.seq))
@@ -290,7 +316,7 @@ export class Engine implements AgentSessionHandler {
 		for (const task of active) {
 			const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
 			if (!cancelledFor(run, plan.nodes[index])) continue;
-			if (task.status === "running" && task.agentName) {
+			if (onAgent(task) && task.agentName) {
 				const force = forced(run);
 				step.cancels.push({
 					agentName: task.agentName,
@@ -322,7 +348,7 @@ export class Engine implements AgentSessionHandler {
 				const running = await step.tx
 					.select()
 					.from(tasks)
-					.where(and(eq(tasks.agentName, conn.name), eq(tasks.status, "running")))
+					.where(and(eq(tasks.agentName, conn.name), inArray(tasks.status, ON_AGENT)))
 					.orderBy(asc(tasks.seq))
 					.for("update");
 				const kept = (t: RunningTaskRef) =>
@@ -332,16 +358,16 @@ export class Engine implements AgentSessionHandler {
 					attempt: t.attempt,
 					action: kept(t) ? TaskAction.CONTINUE : TaskAction.ABANDON,
 				}));
-				const lease = this.#leaseFrom(step.now);
-				for (const task of running) {
-					if (held.some((t) => t.taskId === task.id && t.attempt === task.attempt)) {
-						await step.tx.update(tasks).set({ leaseExpiresAt: lease }).where(eq(tasks.id, task.id));
-					} else {
-						await this.#agentLost(step, task, "重新连接时没有上报这个任务");
-					}
-				}
+				this.#heartbeats.reset(conn.name);
+				await renewHeld(this.#driver, step, conn.name, running, held, {
+					lease: this.#leaseFrom(step.now),
+					missing: "重新连接时没有上报这个任务",
+				});
+				// TaskStarted 可能随断开的连接丢失：Hello 里标记已启动的任务补记为 running。
+				for (const t of held) if (t.started) await this.#started(step, conn.name, t);
 				return out;
 			});
+			const sdk = this.deps.sdkWheel?.(conn.info.agent_version);
 			conn.welcome(
 				create(ServerMessageSchema, {
 					body: {
@@ -349,6 +375,8 @@ export class Engine implements AgentSessionHandler {
 						value: {
 							dispositions,
 							heartbeatIntervalMs: Math.min(Math.round(this.leaseMs / 3), 0xffff_ffff),
+							sdkWheelUrl: sdk?.url ?? "",
+							sdkWheelSha256: sdk?.sha256 ?? "",
 						},
 					},
 				}),
@@ -368,7 +396,7 @@ export class Engine implements AgentSessionHandler {
 			.where(
 				and(
 					eq(tasks.agentName, conn.name),
-					eq(tasks.status, "running"),
+					inArray(tasks.status, ON_AGENT),
 					isNotNull(runs.cancelRequestedAt),
 				),
 			);
@@ -410,8 +438,12 @@ export class Engine implements AgentSessionHandler {
 					body: { case: "ack", value: { taskId: result.taskId, attempt: result.attempt } },
 				}),
 			);
+		} else if (message.body.case === "started") {
+			const started = message.body.value;
+			await this.#event((step) => this.#started(step, conn.name, started));
 		} else if (message.body.case === "heartbeat") {
-			await this.#renewLeases(conn.name);
+			const held = message.body.value.runningTasks.map(runningTaskRef);
+			await this.#event((step) => this.#heartbeat(step, conn.name, held));
 		} else if (message.body.case === "install") {
 			const status = message.body.value;
 			const state = INSTALL_STATES[status.state];
@@ -432,15 +464,19 @@ export class Engine implements AgentSessionHandler {
 
 	/** 同 #event，但调用方已持有锁。 */
 	async #step<T>(handle: (step: Step) => Promise<T>): Promise<T> {
-		const touchedAgents = new Set<string>();
-		const touchedRuns = new Set<string>();
-		const cancels: CancelOrder[] = [];
-		const result = await this.deps.db.transaction((tx) =>
-			handle({ tx, now: this.deps.clock.now(), touchedAgents, touchedRuns, cancels }),
-		);
-		this.#publish(touchedRuns);
-		for (const order of cancels) this.#sendCancel(order);
-		for (const agent of touchedAgents) await this.#dispatch(agent);
+		const step: Omit<Step, "tx"> = {
+			now: this.deps.clock.now(),
+			touchedAgents: new Set(),
+			touchedRuns: new Set(),
+			cancels: [],
+			assigns: [],
+		};
+		const result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
+		this.#publish(step.touchedRuns);
+		for (const order of step.cancels) this.#sendCancel(order);
+		for (const { conn, message } of step.assigns) conn.send(message);
+		// 派发、失败等迁移可能让 Agent 有了新的排队任务或空出槽位。
+		for (const agent of step.touchedAgents) await this.#dispatch(agent);
 		return result;
 	}
 
@@ -478,6 +514,21 @@ export class Engine implements AgentSessionHandler {
 		return plan;
 	}
 
+	/** 任务所在的运行、链实例，以及节点在链上的位置。 */
+	async #locate(tx: Tx, task: TaskRow): Promise<Located> {
+		const [row] = await tx
+			.select({ run: runs, chain: chainInstances })
+			.from(chainInstances)
+			.innerJoin(runs, eq(runs.id, chainInstances.runId))
+			.where(eq(chainInstances.id, task.chainInstanceId));
+		if (!row) throw new Error(`chain instance ${task.chainInstanceId} not found`);
+		const plan = await this.#plan(tx, row.run, row.chain);
+		const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
+		const node = plan.nodes[index];
+		if (!node) throw new Error(`task ${task.id}: node ${task.nodeId} not in plan`);
+		return { ...row, plan, index, node };
+	}
+
 	/**
 	 * 从链上第 index 个节点开始推进：内置节点立即完成，遇到包节点就排队等待派发。
 	 * 链上已有节点最终失败时，普通节点标记为 skipped，always 节点照常执行（§3.2）。
@@ -491,14 +542,7 @@ export class Engine implements AgentSessionHandler {
 		for (let i = index; i < plan.nodes.length; i++) {
 			const node = plan.nodes[i];
 			if (!node) break;
-			const base = {
-				id: taskId(chain.id, node.id, 1),
-				runId: run.id,
-				chainInstanceId: chain.id,
-				nodeId: node.id,
-				attempt: 1,
-				queuedAt: step.now,
-			};
+			const base = firstAttempt(run, chain, node.id, step.now);
 			if (cancelledFor(run, node)) {
 				await step.tx
 					.insert(tasks)
@@ -520,7 +564,8 @@ export class Engine implements AgentSessionHandler {
 			}
 			if (isWaitNode(node)) {
 				// 没到唤醒时间（或配置无效、已由 #failTask 推进）时停在这里。
-				if (!(await this.#wait(step, run, chain, plan, i, node))) return;
+				const scope = await this.#scope(step.tx, chain, plan, i);
+				if (!(await startWait(this.#driver, step, run, chain, node, scope))) return;
 				continue;
 			}
 			if (node.kind === "package") {
@@ -567,23 +612,12 @@ export class Engine implements AgentSessionHandler {
 		const runPlan = await this.#runPlan(step.tx, run);
 		const subflow = runPlan.chains.get(runPlan.dispatch.get(node.id) ?? "");
 		if (!subflow) throw new Error(`run ${run.id}: async node ${node.id} has no subflow`);
-		const base = {
-			id: taskId(chain.id, node.id, 1),
-			runId: run.id,
-			chainInstanceId: chain.id,
-			nodeId: node.id,
-			attempt: 1,
-			queuedAt: step.now,
-			startedAt: step.now,
-		};
+		const base = { ...firstAttempt(run, chain, node.id, step.now), startedAt: step.now };
 
 		let problem: string | undefined;
 		let params: Record<string, unknown> = {};
 		try {
-			const mapped = resolveInputs(node.params, {
-				params: chain.params,
-				earlierOutputs: await this.#earlierOutputs(step.tx, chain, plan, index),
-			});
+			const mapped = resolveInputs(node.params, await this.#scope(step.tx, chain, plan, index));
 			const filled = fillParams(subflow.entry.params, mapped);
 			if ("errors" in filled) problem = `subflow ${subflow.entry.id}: ${filled.errors.join("; ")}`;
 			else params = filled.params;
@@ -631,13 +665,12 @@ export class Engine implements AgentSessionHandler {
 		return true;
 	}
 
-	/** 本链上第 index 个节点之前、已成功的节点的输出（包节点派发、异步任务节点、等待节点共用）。 */
-	async #earlierOutputs(
-		tx: Tx,
-		chain: ChainRow,
-		plan: ChainPlan,
-		index: number,
-	): Promise<Map<string, Record<string, unknown>>> {
+	/**
+	 * 链上第 index 个节点解析引用时的作用域（包节点派发、异步任务节点、等待节点共用）：
+	 * 本链的入口参数和前面已成功节点的输出。always 节点前面的节点可能失败或被跳过，
+	 * 引用缺失的输出得到 null（§2.4）。
+	 */
+	async #scope(tx: Tx, chain: ChainRow, plan: ChainPlan, index: number): Promise<ResolveScope> {
 		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
 		const done = earlierIds.length
 			? await tx
@@ -651,7 +684,13 @@ export class Engine implements AgentSessionHandler {
 						),
 					)
 			: [];
-		return new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
+		const earlierOutputs = new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
+		const node = plan.nodes[index];
+		const missingAsNull = node !== undefined && isAlways(node);
+		if (missingAsNull) {
+			for (const id of earlierIds) if (!earlierOutputs.has(id)) earlierOutputs.set(id, {});
+		}
+		return { params: chain.params, earlierOutputs, missingAsNull };
 	}
 
 	/** 链上是否已有节点最终失败（含 always 节点）。 */
@@ -705,11 +744,8 @@ export class Engine implements AgentSessionHandler {
 		message: string,
 		extra: Partial<TaskRow> = {},
 	): Promise<void> {
-		const { run, chain } = await this.#context(step.tx, task);
+		const { run, chain, index, node } = await this.#locate(step.tx, task);
 		step.touchedRuns.add(run.id);
-		const plan = await this.#plan(step.tx, run, chain);
-		const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
-		const node = plan.nodes[index];
 		if (cancelledFor(run, node)) {
 			await step.tx
 				.update(tasks)
@@ -728,7 +764,7 @@ export class Engine implements AgentSessionHandler {
 				endedAt: step.now,
 			})
 			.where(eq(tasks.id, task.id));
-		if (node && task.agentName && shouldRetry(node, kind, task.attempt)) {
+		if (task.agentName && shouldRetry(node, kind, task.attempt)) {
 			const attempt = task.attempt + 1;
 			await step.tx
 				.insert(tasks)
@@ -751,19 +787,9 @@ export class Engine implements AgentSessionHandler {
 		await this.#advance(step, run, chain, index + 1);
 	}
 
-	async #context(tx: Tx, task: TaskRow): Promise<{ run: RunRow; chain: ChainRow }> {
-		const [row] = await tx
-			.select({ run: runs, chain: chainInstances })
-			.from(chainInstances)
-			.innerJoin(runs, eq(runs.id, chainInstances.runId))
-			.where(eq(chainInstances.id, task.chainInstanceId));
-		if (!row) throw new Error(`chain instance ${task.chainInstanceId} not found`);
-		return row;
-	}
-
 	/** 处理任务结果；按 task_id + attempt 幂等：只接受当前正在运行、且派发给该 Agent 的那次尝试。 */
 	async #applyResult(step: Step, agentName: string, result: TaskResult): Promise<void> {
-		if (!/^[0-9a-f-]{36}$/i.test(result.taskId)) return;
+		if (!isUuid(result.taskId)) return;
 		const [task] = await step.tx
 			.select()
 			.from(tasks)
@@ -772,7 +798,7 @@ export class Engine implements AgentSessionHandler {
 		if (
 			!task ||
 			task.attempt !== result.attempt ||
-			task.status !== "running" ||
+			!onAgent(task) ||
 			task.agentName !== agentName
 		) {
 			return;
@@ -798,101 +824,131 @@ export class Engine implements AgentSessionHandler {
 			.update(tasks)
 			.set({ status: "success", outputs: outputs as Record<string, unknown>, endedAt: step.now })
 			.where(eq(tasks.id, task.id));
-		const { run, chain } = await this.#context(step.tx, task);
-		const plan = await this.#plan(step.tx, run, chain);
-		const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
+		const { run, chain, index } = await this.#locate(step.tx, task);
 		await this.#advance(step, run, chain, index + 1);
+	}
+
+	/**
+	 * TaskStarted（#1 评审）：执行器子进程已经启动，任务从派发阶段进入 running；
+	 * 耗时从这里开始（Agent 也从这时开始计算超时）。只接受派发给该 Agent 的当前尝试。
+	 */
+	async #started(step: Step, agentName: string, ref: { taskId: string; attempt: number }) {
+		if (!isUuid(ref.taskId)) return;
+		const [task] = await step.tx
+			.update(tasks)
+			.set({ status: "running", startedAt: step.now, leaseExpiresAt: this.#leaseFrom(step.now) })
+			.where(
+				and(
+					eq(tasks.id, ref.taskId),
+					eq(tasks.attempt, ref.attempt),
+					eq(tasks.agentName, agentName),
+					eq(tasks.status, "dispatched"),
+				),
+			)
+			.returning({ runId: tasks.runId });
+		if (task) step.touchedRuns.add(task.runId);
+	}
+
+	/**
+	 * Agent 心跳（#15，#1 评审）：只为 Agent 上报的手上任务续约；控制面认为派发给它、
+	 * 但连续两次心跳都没有上报的任务以 agent_lost 失败（第一次可能是心跳与派发消息在路上交错）。
+	 */
+	async #heartbeat(step: Step, agentName: string, held: RunningTaskRef[]): Promise<void> {
+		const mine = await step.tx
+			.select()
+			.from(tasks)
+			.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
+			.orderBy(asc(tasks.seq))
+			.for("update");
+		await renewHeld(this.#driver, step, agentName, mine, held, {
+			lease: this.#leaseFrom(step.now),
+			missing: "连续两次心跳都没有上报这个任务",
+			suspects: this.#heartbeats,
+		});
+		for (const t of held) {
+			if (t.started) await this.#started(step, agentName, t);
+		}
 	}
 
 	/** 把排队中的任务派发给在线的 Agent，直到槽位用满。调用方需持有锁。 */
 	async #dispatch(agentName: string): Promise<void> {
 		const conn = this.deps.hub.connection(agentName);
 		if (!conn) return;
-		const touchedRuns = new Set<string>();
-		const touchedAgents = new Set<string>();
-		const cancels: CancelOrder[] = [];
-		const assigns = await this.deps.db.transaction(async (tx) => {
-			const step: Step = { tx, now: this.deps.clock.now(), touchedAgents, touchedRuns, cancels };
-			const [running] = await tx
+		await this.#step(async (step) => {
+			const [running] = await step.tx
 				.select({ n: count() })
 				.from(tasks)
-				.where(and(eq(tasks.agentName, agentName), eq(tasks.status, "running")));
+				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)));
 			let free = conn.info.slots - (running?.n ?? 0);
-			if (free <= 0) return [];
-			const queued = await tx
+			if (free <= 0) return;
+			const queued = await step.tx
 				.select()
 				.from(tasks)
 				.where(and(eq(tasks.agentName, agentName), eq(tasks.status, "queued")))
 				.orderBy(asc(tasks.queuedAt), asc(tasks.seq))
 				.for("update");
-			const out: Array<ReturnType<typeof create<typeof ServerMessageSchema>>> = [];
 			for (const task of queued) {
 				if (free <= 0) break;
 				// 周期扫描还没来得及处理的排队超时任务不再派发。
 				if (task.queueExpiresAt && task.queueExpiresAt <= step.now) {
-					await this.#queueTimedOut(step, task);
+					await queueTimedOut(this.#driver, step, task);
 					continue;
 				}
-				const assign = await this.#prepareAssign(step, task);
-				if (!assign) continue;
-				out.push(assign);
+				const message = await this.#prepareAssign(step, conn, task);
+				if (!message) continue;
+				step.assigns.push({ conn, message });
 				free--;
 			}
-			return out;
 		});
-		this.#publish(touchedRuns);
-		for (const order of cancels) this.#sendCancel(order);
-		for (const assign of assigns) conn.send(assign);
-		// 派发时失败（config_error）的任务会推进链，可能排队了新的（always）任务。
-		for (const agent of touchedAgents) await this.#dispatch(agent);
 	}
 
-	/** 解析输入并把任务标记为 running；引用无效时任务以 config_error 失败并返回 undefined。 */
-	async #prepareAssign(step: Step, task: TaskRow) {
-		const { run, chain } = await this.#context(step.tx, task);
-		const plan = await this.#plan(step.tx, run, chain);
-		const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
-		const node = plan.nodes[index];
-		if (!node || node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
+	/**
+	 * 解析输入、按节点类型的输入 schema 校验，并把任务标记为 dispatched；
+	 * 引用无效或输入校验失败时任务以 config_error 失败（不重试）并返回 undefined。
+	 */
+	async #prepareAssign(step: Step, conn: AgentConnection, task: TaskRow) {
+		const { run, chain, plan, index, node } = await this.#locate(step.tx, task);
+		if (node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
-
-		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
-		const earlierOutputs = await this.#earlierOutputs(step.tx, chain, plan, index);
-		// always 节点：前面失败或被跳过的节点没有输出，引用缺失的输出得到 null（§2.4）。
-		const missingAsNull = isAlways(node);
-		if (missingAsNull) {
-			for (const id of earlierIds) if (!earlierOutputs.has(id)) earlierOutputs.set(id, {});
-		}
 
 		let inputs: Record<string, unknown>;
 		try {
-			inputs = resolveInputs(node.inputs, {
-				params: chain.params,
-				earlierOutputs,
-				missingAsNull,
-			});
+			inputs = resolveInputs(node.inputs, await this.#scope(step.tx, chain, plan, index));
 		} catch (error) {
 			if (!(error instanceof InvalidReferenceError)) throw error;
 			await this.#failTask(step, task, "config_error", error.message);
 			return undefined;
 		}
 
-		await step.tx
-			.update(tasks)
-			.set({
-				status: "running",
-				inputs,
-				startedAt: step.now,
-				leaseExpiresAt: this.#leaseFrom(step.now),
-			})
-			.where(eq(tasks.id, task.id));
-		step.touchedRuns.add(run.id);
 		const packageVersion = document.packages[node.package] ?? "";
 		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
 		const [archive] = await step.tx
-			.select({ sha256: nodePackages.sha256 })
+			.select({ sha256: nodePackages.sha256, metadata: nodePackages.metadata })
 			.from(nodePackages)
 			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, packageVersion)));
+		// 开发版本的元信息由加载它的 Agent 上报；不知道节点类型时不校验（Agent 会以 env_error 失败）。
+		const metadata =
+			archive?.metadata ??
+			(packageVersion === DEV_VERSION
+				? (conn.info.dev_packages?.find((p) => p.name === node.package)?.metadata as
+						| PackageMetadata
+						| null
+						| undefined)
+				: undefined);
+		const type = metadata?.nodes?.find((n) => n.name === node.node);
+		const problems = type ? inputProblems(type.inputs, inputs, { allowNull: isAlways(node) }) : [];
+		if (problems.length > 0) {
+			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
+			await this.#failTask(step, task, "config_error", problems.join("; "));
+			return undefined;
+		}
+
+		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
+		await step.tx
+			.update(tasks)
+			.set({ status: "dispatched", inputs, leaseExpiresAt: this.#leaseFrom(step.now) })
+			.where(eq(tasks.id, task.id));
+		step.touchedRuns.add(run.id);
 		return create(ServerMessageSchema, {
 			body: {
 				case: "assign",
@@ -914,187 +970,19 @@ export class Engine implements AgentSessionHandler {
 		});
 	}
 
-	/**
-	 * 定时 / Sleep 节点开始执行（§5）：唤醒时间已到就立即成功并返回 true；否则任务记为 waiting、
-	 * 唤醒时间写进 PG，由 wakeTimers 唤醒。配置无效时以 config_error 失败（不重试）并返回 false。
-	 */
-	async #wait(
-		step: Step,
-		run: RunRow,
-		chain: ChainRow,
-		plan: ChainPlan,
-		index: number,
-		node: WaitNode,
-	): Promise<boolean> {
-		const earlierIds = plan.nodes.slice(0, index).map((n) => n.id);
-		const outputs = await this.#earlierOutputs(step.tx, chain, plan, index);
-		const missingAsNull = isAlways(node);
-		if (missingAsNull) for (const id of earlierIds) if (!outputs.has(id)) outputs.set(id, {});
-		const wait = planWait(
-			node,
-			{ params: chain.params, earlierOutputs: outputs, missingAsNull },
-			step.now,
-		);
-		const base = {
-			id: taskId(chain.id, node.id, 1),
-			runId: run.id,
-			chainInstanceId: chain.id,
-			nodeId: node.id,
-			attempt: 1,
-			queuedAt: step.now,
-			startedAt: step.now,
-		};
-		if (!wait.ok) {
-			const [task] = await step.tx
-				.insert(tasks)
-				.values({ ...base, status: "running" })
-				.onConflictDoNothing()
-				.returning();
-			if (task) await this.#failTask(step, task, "config_error", wait.message);
-			return false;
-		}
-		const due = wait.wakeAt.getTime() <= step.now.getTime();
-		await step.tx
-			.insert(tasks)
-			.values(
-				due
-					? {
-							...base,
-							status: "success",
-							inputs: wait.inputs,
-							outputs: waitOutputs(node, step.now, wait.wakeAt < step.now),
-							wakeAt: wait.wakeAt,
-							endedAt: step.now,
-						}
-					: { ...base, status: "waiting", inputs: wait.inputs, wakeAt: wait.wakeAt },
-			)
-			.onConflictDoNothing();
-		return due;
+	/** 周期扫描：唤醒到期的定时 / Sleep 节点（waits.ts），返回唤醒的任务数。 */
+	wakeTimers(): Promise<number> {
+		return wakeTimers(this.#driver, this.deps.db, this.deps.clock.now());
 	}
 
-	/**
-	 * 周期扫描（control-plane.ts，默认每秒一次）：唤醒时间已到的 waiting 任务成功，链继续推进。
-	 * 是否到期只看注入的时钟；返回唤醒的任务数。
-	 */
-	async wakeTimers(): Promise<number> {
-		const now = this.deps.clock.now();
-		// 先在锁外看一眼，没有到期的定时器时不占用引擎的锁。
-		const [any] = await this.deps.db
-			.select({ id: tasks.id })
-			.from(tasks)
-			.where(and(eq(tasks.status, "waiting"), lte(tasks.wakeAt, now)))
-			.limit(1);
-		if (!any) return 0;
-		return this.#event(async (step) => {
-			const due = await step.tx
-				.select()
-				.from(tasks)
-				.where(and(eq(tasks.status, "waiting"), lte(tasks.wakeAt, step.now)))
-				.orderBy(asc(tasks.wakeAt), asc(tasks.seq))
-				.for("update");
-			for (const task of due) {
-				const { run, chain } = await this.#context(step.tx, task);
-				const plan = await this.#plan(step.tx, run, chain);
-				const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
-				const node = plan.nodes[index];
-				if (!node || !isWaitNode(node)) throw new Error(`task ${task.id} is not a wait node`);
-				await step.tx
-					.update(tasks)
-					.set({ status: "success", outputs: waitOutputs(node, step.now), endedAt: step.now })
-					.where(eq(tasks.id, task.id));
-				await this.#advance(step, run, chain, index + 1);
-			}
-			return due.length;
-		});
-	}
-
-	/**
-	 * 控制面启动时（#15）：运行、链实例、任务和定时器的状态都在 PG 里，不需要重放；
-	 * 只是停机期间 Agent 无法心跳、也无法被派发，所以把已经（或即将）到期的租约和排队超时
-	 * 顺延到至少一个租约之后，给 Agent 重新连接、在 Hello 里上报手上任务的时间。
-	 */
-	async recover(): Promise<void> {
+	/** 控制面启动时顺延租约和排队超时，给 Agent 重连的时间（leases.ts）。 */
+	recover(): Promise<void> {
 		const grace = this.#leaseFrom(this.deps.clock.now());
-		await this.deps.mutex.run(() =>
-			this.deps.db.transaction(async (tx) => {
-				await tx
-					.update(tasks)
-					.set({ leaseExpiresAt: grace })
-					.where(
-						and(
-							eq(tasks.status, "running"),
-							isNotNull(tasks.agentName),
-							or(isNull(tasks.leaseExpiresAt), lt(tasks.leaseExpiresAt, grace)),
-						),
-					);
-				await tx
-					.update(tasks)
-					.set({ queueExpiresAt: grace })
-					.where(and(eq(tasks.status, "queued"), lt(tasks.queueExpiresAt, grace)));
-			}),
-		);
+		return this.deps.mutex.run(() => extendForRecovery(this.deps.db, grace));
 	}
 
-	/** Agent 心跳：为控制面认为在它上面运行的全部任务续约（#15）。 */
-	#renewLeases(agentName: string): Promise<void> {
-		return this.deps.mutex.run(async () => {
-			await this.deps.db
-				.update(tasks)
-				.set({ leaseExpiresAt: this.#leaseFrom(this.deps.clock.now()) })
-				.where(and(eq(tasks.agentName, agentName), eq(tasks.status, "running")));
-		});
-	}
-
-	/**
-	 * 周期扫描（control-plane.ts）：租约过期的运行中任务以 agent_lost 失败（按重试配置派回同一个 Agent），
-	 * 排队超时的任务以 env_error 失败（不重试）。是否到期只看注入的时钟；返回失败的任务数。
-	 */
-	async expireTasks(): Promise<number> {
-		const now = this.deps.clock.now();
-		const expired = (n: Date) =>
-			or(
-				and(eq(tasks.status, "running"), lte(tasks.leaseExpiresAt, n)),
-				and(eq(tasks.status, "queued"), lte(tasks.queueExpiresAt, n)),
-			);
-		// 先在锁外看一眼，没有到期的任务时不占用引擎的锁。
-		const [any] = await this.deps.db
-			.select({ id: tasks.id })
-			.from(tasks)
-			.where(expired(now))
-			.limit(1);
-		if (!any) return 0;
-		return this.#event(async (step) => {
-			const due = await step.tx
-				.select()
-				.from(tasks)
-				.where(expired(step.now))
-				.orderBy(asc(tasks.seq))
-				.for("update");
-			for (const task of due) {
-				if (task.status === "queued") await this.#queueTimedOut(step, task);
-				else await this.#agentLost(step, task, "任务租约已过期");
-			}
-			return due.length;
-		});
-	}
-
-	/** 任务所在的 Agent 失联：agent_lost，按重试配置派回同一个 Agent。 */
-	async #agentLost(step: Step, task: TaskRow, reason: string): Promise<void> {
-		// 槽位释放了：Agent 在线时可以派发它的其他排队任务。
-		if (task.agentName) step.touchedAgents.add(task.agentName);
-		await this.#failTask(step, task, "agent_lost", `Agent ${task.agentName} 失联：${reason}`);
-	}
-
-	/** 排队超时：env_error，不重试（§3.3）。 */
-	async #queueTimedOut(step: Step, task: TaskRow): Promise<void> {
-		const seconds = Math.round(
-			((task.queueExpiresAt?.getTime() ?? 0) - task.queuedAt.getTime()) / 1000,
-		);
-		await this.#failTask(
-			step,
-			task,
-			"env_error",
-			`排队超过 ${seconds} 秒仍未派发：Agent ${task.agentName} 不在线或没有空闲槽位`,
-		);
+	/** 周期扫描：租约过期（agent_lost）与排队超时（env_error），返回失败的任务数（leases.ts）。 */
+	expireTasks(): Promise<number> {
+		return expireTasks(this.#driver, this.deps.db, this.deps.clock.now());
 	}
 }

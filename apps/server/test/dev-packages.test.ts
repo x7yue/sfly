@@ -121,7 +121,13 @@ describe("开发模式", () => {
 			default_agent: "agent-plain",
 			nodes: [
 				{ id: "entry", kind: "entry", params: [] },
-				{ id: "p", kind: "package", package: "demo-checks", node: "ping", inputs: {} },
+				{
+					id: "p",
+					kind: "package",
+					package: "demo-checks",
+					node: "ping",
+					inputs: { host: "example.com" },
+				},
 				{ id: "a", kind: "package", package: "demo-dev", node: "ping", inputs: {} },
 			],
 			edges: [

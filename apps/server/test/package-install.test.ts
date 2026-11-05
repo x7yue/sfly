@@ -9,12 +9,17 @@ import { packageArchive, publishInit, publishPackage } from "./support/package-a
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 入口节点 + 一个包节点。 */
-function singleNode(pkg: string, version: string, node: string) {
+function singleNode(
+	pkg: string,
+	version: string,
+	node: string,
+	inputs: Record<string, unknown> = {},
+) {
 	return {
 		default_agent: "agent-a",
 		nodes: [
 			{ id: "entry", kind: "entry", params: [] },
-			{ id: "a", kind: "package", package: pkg, node, inputs: {} },
+			{ id: "a", kind: "package", package: pkg, node, inputs },
 		],
 		edges: [{ from: "entry", to: "a", kind: "chain" }],
 		packages: { [pkg]: version },
@@ -54,7 +59,9 @@ describe("节点包安装", () => {
 		const archive = packageArchive();
 		expect((await cp.fetch("/packages", publishInit(archive))).status).toBe(201);
 		await (await connect({ name: "agent-a" })).disconnect();
-		const id = await api.orchestrationWith(singleNode("demo-checks", "1.2.0", "ping"));
+		const id = await api.orchestrationWith(
+			singleNode("demo-checks", "1.2.0", "ping", { host: "h" }),
+		);
 		await api.triggerOk(id);
 
 		const agent = await connect({ name: "agent-a" });

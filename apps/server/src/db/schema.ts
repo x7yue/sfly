@@ -100,14 +100,22 @@ export type ChainStatus = RunStatus;
  * cancelled（#12）：运行被取消；没有开始执行（started_at 为空）的行是占位，不算一次尝试。
  */
 /** waiting：定时 / Sleep 节点正在等待唤醒时间（#14），不占用 Agent。 */
+/**
+ * dispatched：已派发给 Agent，Agent 还在下载、安装节点包或启动执行器；Agent 上报 TaskStarted 后才是 running，
+ * 超时和耗时都从 running 开始计算（docs/SEMANTICS.md §3.3）。
+ */
 export type TaskStatus =
 	| "queued"
+	| "dispatched"
 	| "running"
 	| "waiting"
 	| "success"
 	| "failed"
 	| "skipped"
 	| "cancelled";
+/** 占用 Agent 槽位、由 Agent 负责的任务状态：派发阶段和执行阶段（有租约，心跳续约）。 */
+export const ON_AGENT = ["dispatched", "running"] as const satisfies readonly TaskStatus[];
+
 /** 任务的最新进度（ctx.progress）。 */
 export interface TaskProgress {
 	current: number;

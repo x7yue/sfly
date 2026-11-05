@@ -23,6 +23,7 @@
 
 	/* 主操作：白色按钮 */
 	--sf-white: #f2f2f2;
+	--sf-white-hover: #fff; /* 主按钮悬停 */
 	--sf-on-white: #161616;
 
 	/* 青色只用于：选中、焦点环、选中节点的连线流动、执行中节点、调度连线 */
@@ -30,6 +31,11 @@
 	--sf-accent-hi: #8fdcf6;
 	--sf-accent-soft: rgb(44 196 240 / 0.13);
 	--sf-accent-line: rgb(44 196 240 / 0.55);
+	--sf-accent-glow: rgb(44 196 240 / 0.32); /* 选区 */
+	--sf-accent-ring: rgb(44 196 240 / 0.16); /* 选中节点的光圈 */
+	--sf-accent-dim: rgb(44 196 240 / 0.22); /* 运行中连线的流动底色 */
+	--sf-accent-faint: rgb(44 196 240 / 0.045); /* 子流程区域渐变 */
+	--sf-accent-clear: rgb(44 196 240 / 0); /* 脉冲动画终点 */
 
 	/* 状态 */
 	--sf-ok: #5bd69a;
@@ -38,8 +44,15 @@
 	--sf-warn-soft: rgb(240 168 58 / 0.12);
 	--sf-danger: #ef5350;
 	--sf-danger-soft: rgb(239 83 80 / 0.12);
+	--sf-danger-dim: rgb(239 83 80 / 0.2); /* 危险按钮悬停 */
+	--sf-danger-border: rgb(239 83 80 / 0.35); /* 危险按钮边框 */
+	--sf-danger-line: rgb(239 83 80 / 0.45); /* 失败尝试卡片、失败区域边框 */
+	--sf-danger-strong: rgb(239 83 80 / 0.6); /* 失败节点边框 */
 	--sf-danger-text: #ffb4b2;
 	--sf-violet: #b4a3f8; /* 子流程 */
+	--sf-violet-line: rgb(180 163 248 / 0.45); /* 子流程区域虚线 */
+	--sf-violet-soft: rgb(180 163 248 / 0.07); /* 子流程区域渐变 */
+	--sf-violet-text: #dcd3fd; /* 子流程区域标题 */
 
 	/* 节点种类色：只用于卡片首行的种类标签（12–15% 透明度底） */
 	--sf-kind-entry: #b4a3f8;
@@ -62,6 +75,15 @@
 	--sf-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
 
 	--sf-shadow-float: 0 18px 40px -14px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.5);
+	--sf-shadow-node: 0 14px 30px -16px rgb(0 0 0 / 0.8); /* 选中节点 */
+	--sf-shadow-popup: 0 30px 80px -20px rgb(0 0 0 / 0.6); /* 模态弹窗 */
+	--sf-shadow-panel: 0 24px 64px rgb(0 0 0 / 0.5); /* 浮出面版 */
+	--sf-overlay-soft: rgb(0 0 0 / 0.45); /* 小地图遮罩 */
+	--sf-overlay: rgb(0 0 0 / 0.55); /* 浮出遮罩 */
+	--sf-overlay-strong: rgb(8 8 8 / 0.6); /* 模态遮罩 */
+	--sf-raised-3: #3a3a3a; /* 滚动条、开关槽 */
+	--sf-border-hover: #666; /* 悬停边框（addrow 等） */
+	--sf-text-bright: #bdbdbd; /* 开关钮（未开） */
 	--sf-ease: cubic-bezier(0.16, 1, 0.3, 1);
 
 	/* 节点卡片尺寸（与原型一致） */

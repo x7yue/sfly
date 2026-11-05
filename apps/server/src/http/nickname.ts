@@ -1,4 +1,5 @@
-import type { FastifyRequest } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
+import { sendError } from "./errors.js";
 
 /**
  * 浏览器昵称请求头（ADR 0004：只用于显示，不做鉴权）。
@@ -17,4 +18,15 @@ export function nicknameOf(request: FastifyRequest): string | undefined {
 		nickname = raw.trim();
 	}
 	return nickname === "" ? undefined : nickname;
+}
+
+/**
+ * 写操作的昵称守卫：返回昵称；没有昵称时已回复 400 `nickname_required`，返回 undefined，
+ * 路由应直接 `return reply`。
+ */
+export function requireNickname(request: FastifyRequest, reply: FastifyReply): string | undefined {
+	const nickname = nicknameOf(request);
+	if (!nickname)
+		sendError(reply, 400, "nickname_required", `${NICKNAME_HEADER} header is required`);
+	return nickname;
 }

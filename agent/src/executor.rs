@@ -24,7 +24,10 @@ use tokio::sync::watch;
 
 use crate::logs::{Pump, Telemetry};
 use crate::process_tree::ProcessTree;
-use crate::proto::{AssignTask, ErrorKind, TaskError, TaskResult, TaskStatus};
+use crate::proto::{
+    AgentMessage, AssignTask, ErrorKind, TaskError, TaskResult, TaskStarted, TaskStatus,
+    agent_message,
+};
 use crate::venv::SharedVenv;
 
 /// 失败时附带的标准错误尾部的最大字节数。
@@ -199,6 +202,14 @@ fn spawn_process(
             let (Some(stdout), Some(stderr)) = process.take_output_pipes() else {
                 unreachable!("stdout and stderr are piped");
             };
+            // 执行器已启动：控制面收到 TaskStarted 后把任务记为 running（超时也从这时开始算，见 wait）。
+            // 先于日志进入同一个通道，控制面总是先看到 TaskStarted。
+            telemetry.send(AgentMessage {
+                body: Some(agent_message::Body::Started(TaskStarted {
+                    task_id: task.task_id.clone(),
+                    attempt: task.attempt,
+                })),
+            });
             let pump = Pump::start(task, stdout, stderr, dir.to_path_buf(), telemetry.clone());
             Ok(Running {
                 process,

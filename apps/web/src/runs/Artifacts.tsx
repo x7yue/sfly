@@ -23,6 +23,18 @@ interface ArtifactList {
 export const artifactDownloadPath = (taskId: string, name: string) =>
 	`/api/tasks/${taskId}/artifacts/${name.split("/").map(encodeURIComponent).join("/")}`;
 
+const ARTIFACT_REF =
+	/^https?:\/\/[^\s"]*\/tasks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifacts\/([^\s"?#]+)$/i;
+
+/**
+ * 产物引用（`ctx.artifacts.save()` 的返回值，对 Agent 可见的完整地址）对应的浏览器下载地址；
+ * 不是产物引用时为 null。名称部分已经按路径段编码，原样使用。
+ */
+export function artifactRefPath(value: string): string | null {
+	const m = ARTIFACT_REF.exec(value);
+	return m ? `/api/tasks/${m[1]}/artifacts/${m[2]}` : null;
+}
+
 export function formatBytes(n: number): string {
 	if (n < 1024) return `${n} B`;
 	const units = ["KB", "MB", "GB"];

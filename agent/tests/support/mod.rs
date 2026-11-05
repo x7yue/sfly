@@ -48,6 +48,8 @@ struct State {
     abandon: Mutex<HashSet<String>>,
     /// Welcome 中的心跳间隔（毫秒，0 = Agent 默认值）。
     heartbeat_interval_ms: AtomicU32,
+    /// Welcome 中的 SDK 运行时 wheel（下载地址, sha256）。
+    sdk_wheel: Mutex<(String, String)>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -231,6 +233,11 @@ impl FakeControlPlane {
             .store(interval.as_millis() as u32, Ordering::SeqCst);
     }
 
+    /// 之后的 Welcome 给出的 SDK 运行时 wheel（下载地址, sha256）。
+    pub fn set_sdk_wheel(&self, url: &str, sha256: &str) {
+        *self.state.sdk_wheel.lock().unwrap() = (url.to_string(), sha256.to_string());
+    }
+
     /// 已收到的 Heartbeat（会话序号与到达时间）。
     pub fn heartbeats(&self) -> Vec<Received> {
         self.received_with_session()
@@ -279,6 +286,8 @@ impl AgentGateway for Gateway {
                 let reply = match &message.body {
                     Some(agent_message::Body::Hello(hello)) => {
                         let abandon = state.abandon.lock().unwrap().clone();
+                        let (sdk_wheel_url, sdk_wheel_sha256) =
+                            state.sdk_wheel.lock().unwrap().clone();
                         Some(server_message::Body::Welcome(Welcome {
                             dispositions: hello
                                 .running_tasks
@@ -297,6 +306,8 @@ impl AgentGateway for Gateway {
                             heartbeat_interval_ms: state
                                 .heartbeat_interval_ms
                                 .load(Ordering::SeqCst),
+                            sdk_wheel_url,
+                            sdk_wheel_sha256,
                         }))
                     }
                     Some(agent_message::Body::Result(r))

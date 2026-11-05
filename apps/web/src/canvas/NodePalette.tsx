@@ -1,4 +1,5 @@
-import type { PackageSummary } from "#/lib/api";
+import type { AgentView, PackageSummary } from "#/lib/api";
+import { devNodes, latestVersion } from "./catalog";
 import { KindChip } from "./NodeCard";
 
 /** 从节点类型面板拖到画布上时携带的数据。 */
@@ -12,20 +13,27 @@ export interface PaletteItem {
 export const PALETTE_MIME = "application/x-sfly-node-type";
 
 /**
- * 节点类型面板：列出已发布节点包里的节点类型。
- * 编排已锁定某个包的版本时，显示该版本的节点类型；否则显示最新版本。
+ * 节点类型面板：列出已发布节点包里的节点类型，以及只有 dev 版本（从未发布）的包（故事 16 / 21）。
+ * 编排已锁定某个包的版本时，显示该版本的节点类型；否则显示最新版本（按版本号，故事 39）。
  */
 export function NodePalette({
 	packages,
+	agents,
 	locked,
 	onAdd,
 }: {
 	packages: PackageSummary[] | undefined;
+	agents: AgentView[];
 	locked: Record<string, string>;
 	onAdd(item: PaletteItem): void;
 }) {
 	if (!packages) return <p className="sf-hint px-3.5">加载节点类型…</p>;
-	if (packages.length === 0) {
+	const published = new Set(packages.map((p) => p.name));
+	// 只有 dev 版本的包：从未发布，但某个 Agent 以开发模式加载了它。
+	const devOnly = [...new Set(agents.flatMap((a) => a.dev_packages?.map((d) => d.name) ?? []))]
+		.filter((name) => !published.has(name))
+		.sort();
+	if (packages.length === 0 && devOnly.length === 0) {
 		return (
 			<p className="sf-hint px-3.5">
 				还没有发布任何节点包。用 <code>sfly publish</code> 发布后，节点类型会出现在这里。
@@ -35,7 +43,10 @@ export function NodePalette({
 	return (
 		<ul className="space-y-4 p-3.5">
 			{packages.map((pkg) => {
-				const version = pkg.versions.find((v) => v.version === locked[pkg.name]) ?? pkg.versions[0];
+				const latest = latestVersion(packages, pkg.name);
+				const version =
+					pkg.versions.find((v) => v.version === locked[pkg.name]) ??
+					pkg.versions.find((v) => v.version === latest);
 				if (!version) return null;
 				return (
 					<li key={pkg.name}>
@@ -72,6 +83,51 @@ export function NodePalette({
 												<span className="block truncate text-[13px] font-medium">{n.title}</span>
 												<span className="block truncate font-mono text-[11.5px] text-[var(--sf-text-3)]">
 													{pkg.name}/{n.name}
+												</span>
+											</span>
+										</button>
+									</li>
+								);
+							})}
+						</ul>
+					</li>
+				);
+			})}
+			{devOnly.map((name) => {
+				const nodes = devNodes(agents, name) ?? [];
+				if (nodes.length === 0) return null;
+				return (
+					<li key={name}>
+						<div className="flex items-baseline justify-between text-xs text-[var(--sf-text-3)]">
+							<span className="font-mono font-semibold text-[var(--sf-text-2)]">{name}</span>
+							<span className="font-mono">@dev{locked[name] === "dev" ? "（已锁定）" : ""}</span>
+						</div>
+						<ul className="mt-1.5 space-y-1.5">
+							{nodes.map((n) => {
+								const item: PaletteItem = {
+									package: name,
+									version: "dev",
+									node: n.name,
+									title: n.name,
+								};
+								return (
+									<li key={n.name}>
+										<button
+											type="button"
+											draggable
+											onDragStart={(e) => {
+												e.dataTransfer.setData(PALETTE_MIME, JSON.stringify(item));
+												e.dataTransfer.effectAllowed = "copy";
+											}}
+											onClick={() => onAdd(item)}
+											title="拖到画布上，或点击添加到画布中央"
+											className="sf-palette-item"
+										>
+											<KindChip kind="package" />
+											<span className="min-w-0">
+												<span className="block truncate text-[13px] font-medium">{n.name}</span>
+												<span className="block truncate font-mono text-[11.5px] text-[var(--sf-text-3)]">
+													{name}/{n.name}
 												</span>
 											</span>
 										</button>

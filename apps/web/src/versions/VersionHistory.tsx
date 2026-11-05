@@ -72,8 +72,8 @@ export function VersionHistory({
 	const [restoring, setRestoring] = useState<VersionSummary | null>(null);
 	const [restored, setRestored] = useState<{ from: number; to: number } | null>(null);
 
-	if (versions.error) return <p className="p-8 text-red-600">加载失败：{versions.error.message}</p>;
-	if (!versions.data) return <p className="p-8 text-gray-500">加载中…</p>;
+	if (versions.error) return <p className="sf-err p-8">加载失败：{versions.error.message}</p>;
+	if (!versions.data) return <p className="sf-hint p-8">加载中…</p>;
 
 	const panes = [
 		pickedA !== undefined && pickedA !== pickedB

@@ -148,6 +148,69 @@ describe("失败处理", () => {
 		});
 	});
 
+	describe("派发前的输入校验", () => {
+		/** typed@1.0.0 的 need 节点：url 必填（string），n 可选（integer）。 */
+		const typedChain = (nodes: Array<Record<string, unknown>>) => ({
+			...chain(nodes),
+			packages: { stub: "1.0.0", typed: "1.0.0" },
+		});
+		const need = (id: string, inputs: Record<string, unknown>, extra = {}) => ({
+			id,
+			package: "typed",
+			node: "need",
+			inputs,
+			...extra,
+		});
+		beforeEach(async () => {
+			await publishPackage(cp, "typed", "1.0.0", {
+				need: {
+					outputs: [],
+					inputs: {
+						properties: { url: { type: "string" }, n: { type: "integer" } },
+						required: ["url"],
+					},
+				},
+			});
+		});
+
+		it("已解析的输入类型不符时以 config_error 失败、不重试、不派发", async () => {
+			const id = await api.orchestrationWith(
+				typedChain([
+					{ id: "a", inputs: { v: 1 } },
+					need("b", { url: "${{ nodes.a.outputs.v }}" }, { retries: 2 }),
+				]),
+			);
+			const runId = await api.triggerOk(id);
+			await agent.succeed(await agent.nextAssign(), { v: 42 });
+			await agent.expectNoAssign();
+			const b = await api.node(runId, "b");
+			expect(b.status).toBe("failed");
+			expect(b.error).toEqual({ kind: "config_error", message: "输入 url 应为 string，实际是 42" });
+			expect(b.attempts).toHaveLength(1);
+			expect((await api.run(runId)).status).toBe("failed");
+		});
+
+		it("缺少必填输入的编排不能触发（静态检查）", async () => {
+			const id = await api.orchestrationWith(typedChain([need("b", { n: 1 })]));
+			const res = await api.trigger(id);
+			expect(res.status).toBe(400);
+			expect(await res.json()).toMatchObject({
+				error: { details: [{ code: "input_required", node_id: "b" }] },
+			});
+		});
+
+		it("always 节点引用缺失的输出得到 null，不算类型不符", async () => {
+			const id = await api.orchestrationWith(
+				typedChain([{ id: "a" }, need("b", { url: "${{ nodes.a.outputs.v }}" }, { always: true })]),
+			);
+			await api.triggerOk(id);
+			await agent.fail(await agent.nextAssign(), "boom", ErrorKind.NODE_ERROR);
+			const b = await agent.nextAssign();
+			expect(b).toMatchObject({ nodeId: "b" });
+			expect(b.inputs).toEqual({ url: null });
+		});
+	});
+
 	describe("跳过与 always", () => {
 		it("节点最终失败后普通节点标记为 skipped，always 节点照常执行，运行在所有节点结束后标记为 failed", async () => {
 			const id = await api.orchestrationWith(

@@ -104,7 +104,7 @@
 	font-size: 12.5px;
 }
 .sf-attempt[data-run="failed"] {
-	border-color: rgb(239 83 80 / 0.45);
+	border-color: var(--sf-danger-line);
 }
 .sf-attempt h4 {
 	margin: 4px 0 0;
@@ -139,8 +139,8 @@
 .sf-btn--danger {
 	color: var(--sf-danger-text);
 	background: var(--sf-danger-soft);
-	border: 1px solid rgb(239 83 80 / 0.35);
+	border: 1px solid var(--sf-danger-border);
 }
 .sf-btn--danger:hover {
-	background: rgb(239 83 80 / 0.2);
+	background: var(--sf-danger-dim);
 }

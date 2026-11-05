@@ -19,6 +19,8 @@ import {
 	type Welcome,
 } from "@sfly/proto";
 
+const keyOf = (t: TaskRef) => `${t.taskId}:${t.attempt}`;
+
 /** 可推送的异步队列，作为双向流的请求流。 */
 class Outbox<T> implements AsyncIterable<T> {
 	#items: T[] = [];
@@ -201,9 +203,36 @@ export class FakeAgent {
 		);
 	}
 
-	/** 发送心跳（续约本 Agent 上全部运行中任务的租约），并等到控制面处理完它。 */
-	async heartbeat(): Promise<void> {
-		this.send({ case: "heartbeat", value: {} });
+	/**
+	 * 发送心跳并等到控制面处理完它。心跳带上手上的任务（默认 {@link held}：派发给本 Agent、还没上报结果的），
+	 * 控制面只为它们续约；连续两次心跳都没有上报的任务以 agent_lost 失败。
+	 */
+	async heartbeat(tasks: TaskRef[] = this.held): Promise<void> {
+		this.send({
+			case: "heartbeat",
+			value: {
+				runningTasks: tasks.map((t) => ({
+					taskId: t.taskId,
+					attempt: t.attempt,
+					started: this.#started.has(keyOf(t)),
+				})),
+			},
+		});
+		await this.sync();
+	}
+
+	/** 手上的任务：派发给本 Agent、还没上报结果的。 */
+	get held(): TaskRef[] {
+		return [...this.#held.values()];
+	}
+
+	#held = new Map<string, TaskRef>();
+	#started = new Set<string>();
+
+	/** 上报 TaskStarted（执行器已启动：任务从派发阶段进入 running），并等到控制面处理完它。 */
+	async started(task: TaskRef): Promise<void> {
+		this.#started.add(keyOf(task));
+		this.send({ case: "started", value: { taskId: task.taskId, attempt: task.attempt } });
 		await this.sync();
 	}
 
@@ -221,10 +250,15 @@ export class FakeAgent {
 
 	#syncs = 0;
 
-	/** 等待下一个派发给本 Agent 的任务。 */
-	async nextAssign(options: { timeoutMs?: number } = {}): Promise<AssignedTask> {
+	/**
+	 * 等待下一个派发给本 Agent 的任务。默认像真实 Agent 一样立即上报 TaskStarted（任务进入 running）；
+	 * `start: false` 时停在派发阶段（下载、安装中），之后可以自己调用 {@link started}。
+	 */
+	async nextAssign(options: { timeoutMs?: number; start?: boolean } = {}): Promise<AssignedTask> {
 		const message = await this.next("assign", options);
 		const assign = message.body.value as AssignTask;
+		this.#held.set(keyOf(assign), { taskId: assign.taskId, attempt: assign.attempt });
+		if (options.start ?? true) await this.started(assign);
 		return { ...assign, inputs: JSON.parse(assign.inputsJson) as Record<string, unknown> };
 	}
 
@@ -329,6 +363,7 @@ export class FakeAgent {
 			m.body.value.taskId === result.taskId &&
 			m.body.value.attempt === result.attempt;
 		const message = await this.#nextMatching(ackFor, `ack for ${result.taskId}`, 5000);
+		this.#held.delete(keyOf({ taskId: result.taskId ?? "", attempt: result.attempt ?? 0 }));
 		return message.body.value as Ack;
 	}
 

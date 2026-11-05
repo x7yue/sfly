@@ -57,6 +57,12 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "order": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -86,6 +92,12 @@
                 }
               },
               "required": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "order": {
                 "type": "array",
                 "items": {
                   "type": "string"

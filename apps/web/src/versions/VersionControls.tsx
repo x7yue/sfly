@@ -96,7 +96,10 @@ export function VersionControls({
 	);
 }
 
-/** 本地草稿基于的版本已经不是最新版本时，在顶栏下方提示。 */
+/**
+ * 本地草稿基于的版本已经不是最新版本时，在顶栏下方提示；
+ * 另一个标签页改写了同一份草稿时，提示这个标签页已停止写草稿。
+ */
 export function StaleDraftBanner({
 	orchestration,
 	doc,
@@ -110,6 +113,27 @@ export function StaleDraftBanner({
 }) {
 	const [open, setOpen] = useState(false);
 	const head = versioning.staleHead;
+	if (versioning.draftTakenOver) {
+		return (
+			<div className="sf-banner">
+				<span>
+					另一个标签页修改了这份编排的本地草稿，这个标签页的修改不再写入本地草稿（仍可直接保存）。
+				</span>
+				<button
+					type="button"
+					className="underline"
+					onClick={() =>
+						// 那个标签页可能已经保存（草稿随之清除）：按控制面上的最新版本重新载入。
+						getOrchestrationHead(orchestration.id).then(onReload, () =>
+							onReload(versioning.startHead),
+						)
+					}
+				>
+					载入那份草稿
+				</button>
+			</div>
+		);
+	}
 	if (!head || head.number === 0 || versioning.conflict) return null;
 	return (
 		<div className="sf-banner">

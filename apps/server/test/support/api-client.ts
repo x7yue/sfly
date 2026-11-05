@@ -78,6 +78,13 @@ export class ApiClient {
 		return node;
 	}
 
+	/** 编排当前的最新版本号（0 = 还没有版本），保存时作为 base_version。 */
+	async headVersion(orchestrationId: string): Promise<number> {
+		return (await this.getJson<{ head_version: number }>(`/orchestrations/${orchestrationId}`))
+			.head_version;
+	}
+
+	/** 以当前最新版本为基线保存新版本，返回版本号。 */
 	async saveVersion(
 		orchestrationId: string,
 		document: unknown,
@@ -85,7 +92,7 @@ export class ApiClient {
 	): Promise<number> {
 		const res = await this.post(
 			`/orchestrations/${orchestrationId}/versions`,
-			{ document },
+			{ base_version: await this.headVersion(orchestrationId), document },
 			nickname,
 		);
 		expect(res.status, await res.clone().text()).toBe(201);

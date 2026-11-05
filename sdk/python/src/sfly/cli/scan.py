@@ -134,6 +134,8 @@ def input_schema(fn: Any, label: str) -> JsonSchema:
     schema: JsonSchema = {"type": "object", "properties": properties}
     if required:
         schema["required"] = required
+    # 控制面把元信息存进 PostgreSQL JSONB，对象键顺序会丢失；参数表单按 order 排列。
+    schema["order"] = list(properties)
     return schema
 
 

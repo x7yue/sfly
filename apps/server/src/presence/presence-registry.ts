@@ -55,6 +55,14 @@ export class PresenceRegistry {
 		);
 	}
 
+	/** 标签页关闭时主动离开：立即移除；不在名单里时什么也不做。 */
+	leave(orchestrationId: string, sessionId: string): void {
+		const sessions = this.#byOrchestration.get(orchestrationId);
+		if (!sessions?.delete(sessionId)) return;
+		if (sessions.size === 0) this.#byOrchestration.delete(orchestrationId);
+		this.#changed(orchestrationId);
+	}
+
 	/** 移除超时没有心跳的编辑者；由控制面的周期扫描调用。 */
 	sweep(): void {
 		const now = this.#clock.now().getTime();

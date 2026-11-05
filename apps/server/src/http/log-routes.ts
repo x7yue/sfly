@@ -4,8 +4,9 @@ import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
 import type { LogChunk, LogLineView, TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
+import { isUuid } from "../util/uuid.js";
 import { attachment } from "./content-disposition.js";
-import { isUuid, sendError } from "./errors.js";
+import { sendError } from "./errors.js";
 
 const LEVELS: ReadonlyArray<LogLineView["level"]> = ["debug", "info", "warn", "error"];
 const SOURCES: ReadonlyArray<LogLineView["source"]> = ["stdout", "stderr", "sdk", "system"];

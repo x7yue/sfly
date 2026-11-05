@@ -24,7 +24,7 @@ function EditorPage() {
 	});
 
 	const error = orchestration.error ?? head.error;
-	if (error) return <p className="p-8 text-red-600">加载失败：{error.message}</p>;
-	if (!orchestration.data || !head.data) return <p className="p-8 text-gray-500">加载中…</p>;
+	if (error) return <p className="sf-err p-8">加载失败：{error.message}</p>;
+	if (!orchestration.data || !head.data) return <p className="sf-hint p-8">加载中…</p>;
 	return <OrchestrationEditor key={id} orchestration={orchestration.data} head={head.data} />;
 }

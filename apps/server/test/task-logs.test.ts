@@ -1,7 +1,9 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：任务日志与进度（#10）。假 Agent 经 gRPC 上报 LogBatch / Progress，
 // 通过 HTTP（运行视图）和 SSE（/tasks/:id/logs/events、/runs/:id/events）观察。
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type RunView } from "./support/api-client.js";
+import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
@@ -272,6 +274,101 @@ describe("任务日志与进度", () => {
 			const files = await readAllLogFiles(cp.dataDir);
 			expect(files).not.toContain("s3cr3t-value");
 			expect(files).toContain(MASK);
+		});
+	});
+	describe("secret 值在运行视图里打码", () => {
+		it("输入、输出、错误信息、参数里出现的 secret 值都被打码（按值匹配）", async () => {
+			const agent = await connect();
+			const { runId, task } = await start(
+				agent,
+				[{ name: "token", type: "string", secret: true }],
+				{ token: "s3cr3t-value" },
+			);
+			await agent.succeed(task, { text: "got s3cr3t-value", nested: ["s3cr3t-value"] });
+			await agent.fail(await agent.nextAssign(), "auth failed for s3cr3t-value");
+
+			const run = await api.run(runId);
+			expect(JSON.stringify(run)).not.toContain("s3cr3t-value");
+			expect(run.params).toEqual({ token: MASK });
+			const [a, b] = run.chains[0]?.nodes.slice(1) ?? [];
+			expect(a?.outputs).toEqual({ text: `got ${MASK}`, nested: [MASK] });
+			expect(b?.error).toEqual({ kind: "node_error", message: `auth failed for ${MASK}` });
+		});
+
+		it("secret 值经参数映射传进子流程（子流程参数没有声明 secret）时，子流程一侧同样打码", async () => {
+			const agent = await connect();
+			const id = await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{
+						id: "entry",
+						kind: "entry",
+						params: [{ name: "token", type: "string", secret: true }],
+					},
+					{ id: "x", kind: "async", params: { t: "${{ params.token }}" } },
+					{ id: "sub", kind: "subflow_entry", params: [{ name: "t", type: "string" }] },
+					{ id: "s1", kind: "package", package: "stub", node: "echo" },
+				],
+				edges: [
+					{ from: "entry", to: "x", kind: "chain" },
+					{ from: "x", to: "sub", kind: "dispatch" },
+					{ from: "sub", to: "s1", kind: "chain" },
+				],
+				packages: { stub: "1.0.0" },
+			});
+			const runId = await api.triggerOk(id, { token: "hunter2" });
+			const task = await agent.nextAssign();
+			agent.logs(task, [[1, "t is hunter2"]]);
+			const [line] = await waitForLines(await logStream(task.taskId), 1);
+			expect(line?.text).toBe(`t is ${MASK}`);
+			const run = await api.run(runId);
+			expect(run.chains[1]?.params).toEqual({ t: MASK });
+		});
+
+		it("之后才创建的子流程实例声明的 secret 参数，也用于此前已经在写日志的任务", async () => {
+			const agent = await connect();
+			const id = await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry", params: [{ name: "user", type: "string" }] },
+					{ id: "x1", kind: "async", params: {} },
+					{ id: "subA", kind: "subflow_entry", params: [] },
+					{ id: "sa", kind: "package", package: "stub", node: "echo" },
+					{ id: "b", kind: "package", package: "stub", node: "echo" },
+					{ id: "x2", kind: "async", params: { k: "${{ params.user }}" } },
+					{
+						id: "subB",
+						kind: "subflow_entry",
+						params: [{ name: "k", type: "string", secret: true }],
+					},
+				],
+				edges: [
+					{ from: "entry", to: "x1", kind: "chain" },
+					{ from: "x1", to: "b", kind: "chain" },
+					{ from: "b", to: "x2", kind: "chain" },
+					{ from: "x1", to: "subA", kind: "dispatch" },
+					{ from: "subA", to: "sa", kind: "chain" },
+					{ from: "x2", to: "subB", kind: "dispatch" },
+				],
+				packages: { stub: "1.0.0" },
+			});
+			const runId = await api.triggerOk(id, { user: "alice" });
+			const first = await agent.nextAssign();
+			const second = await agent.nextAssign();
+			const [sa, b] = first.nodeId === "sa" ? [first, second] : [second, first];
+			agent.logs(sa, [[1, "user alice"]]);
+			const sse = await logStream(sa.taskId);
+			await waitForLines(sse, 1);
+			// b 结束后 x2 创建 subB：alice 从此是 secret 值。
+			await agent.succeed(b);
+			await eventually(async () =>
+				expect((await api.run(runId)).chains.map((c) => c.chain_id)).toContain("subB"),
+			);
+			agent.logs(sa, [[2, "user alice again"]]);
+			// waitForLines 每次从空开始收集，这里只等新增的第 2 行。
+			const [again] = await waitForLines(sse, 1);
+			expect(again?.seq).toBe(2);
+			expect(again?.text).toBe(`user ${MASK} again`);
 		});
 	});
 });

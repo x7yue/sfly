@@ -5,7 +5,7 @@ import { listRuns } from "./api";
 import { durationBetween, formatTime, shortId } from "./format";
 import { RunPill, useNow } from "./RunPage";
 
-/** 运行记录（原型的执行记录表）：触发人、开始时间、耗时、状态；点击一行打开运行视图。 */
+/** 运行记录（原型的 runs 表）：触发人、开始时间、耗时、状态；点击一行打开运行视图。 */
 export function RunList({ orchestrationId }: { orchestrationId: string }) {
 	const navigate = useNavigate();
 	const orchestration = useQuery({

@@ -15,6 +15,7 @@ import {
 	DEFAULT_SLOTS,
 	devPackageInfo,
 } from "../agents/agent-hub.js";
+import { agentTokenMatches } from "../agents/agent-token.js";
 import { AsyncQueue } from "../util/async-queue.js";
 
 export interface AgentGatewayServer {
@@ -38,6 +39,8 @@ export interface AgentSessionHandler {
 export interface RunningTaskRef {
 	taskId: string;
 	attempt: number;
+	/** 执行器子进程已经启动（TaskStarted 可能随断开的连接丢失）。 */
+	started: boolean;
 }
 
 export interface AgentGatewayOptions {
@@ -45,10 +48,17 @@ export interface AgentGatewayOptions {
 	port: number;
 	hub: AgentHub;
 	handler?: AgentSessionHandler;
-	/** 共享注册令牌；未设置时不校验。 */
+	/** 共享注册令牌；未设置（或为空串）时不校验。 */
 	agentToken?: string;
 	onError?: (error: unknown) => void;
 }
+
+/** proto 的 RunningTask（Hello、Heartbeat 里 Agent 手上的任务）。 */
+export const runningTaskRef = (t: { taskId: string; attempt: number; started: boolean }) => ({
+	taskId: t.taskId,
+	attempt: t.attempt,
+	started: t.started,
+});
 
 /**
  * Agent 网关服务实现：每个 Session 调用是一个 Agent 的双向流。
@@ -67,7 +77,7 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			}
 			const hello = first.value.body.value;
 			if (!hello.name) throw new ConnectError("Hello.name is required", Code.InvalidArgument);
-			if (options.agentToken !== undefined && hello.token !== options.agentToken) {
+			if (!agentTokenMatches(options.agentToken, hello.token)) {
 				throw new ConnectError("invalid agent token", Code.Unauthenticated);
 			}
 
@@ -92,7 +102,7 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			// 入站消息在后台逐条处理；请求流结束或断线时注销连接。
 			void (async () => {
 				try {
-					const running = hello.runningTasks.map((t) => ({ taskId: t.taskId, attempt: t.attempt }));
+					const running = hello.runningTasks.map(runningTaskRef);
 					if (options.handler) await options.handler.onOnline(conn, running);
 					else conn.welcome(create(ServerMessageSchema, { body: { case: "welcome", value: {} } }));
 					for (;;) {

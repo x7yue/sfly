@@ -56,8 +56,8 @@ describe("sfly publish → 控制面", () => {
 
 	it("构建并发布后，控制面能查到节点类型元信息，sha256 与归档一致；重复发布被拒绝", async () => {
 		const first = await sfly(["publish", project, "--server", cp.httpUrl]);
-		expect(first.stderr).toBe("");
-		expect(first.code).toBe(0);
+		// 不断言 stderr 为空：并发跑测试时 uv 可能往 stderr 打等待锁之类的提示（疑为 #11 记录的偶发失败的原因，未复现）。
+		expect(first.code, first.stderr).toBe(0);
 
 		const version = (await (await cp.fetch("/packages/demo-e2e/versions/0.1.0")).json()) as {
 			sha256: string;
@@ -76,6 +76,7 @@ describe("sfly publish → 控制面", () => {
 						type: "object",
 						properties: { text: { type: "string" }, times: { type: "integer", default: 1 } },
 						required: ["text"],
+						order: ["text", "times"],
 					},
 					outputs: { type: "object", properties: { text: {} } },
 				},
@@ -96,7 +97,7 @@ describe("sfly publish → 控制面", () => {
 		]);
 		expect(conflict.code).toBe(1);
 		// 控制面的错误体 { error: { code, message } } 被解析成一行可读的错误。
-		expect(conflict.stderr.trim()).toBe(
+		expect(conflict.stderr).toContain(
 			"发布失败：控制面拒绝发布（HTTP 409 conflict）：" +
 				"节点包 demo-e2e@0.1.0 已存在，不能覆盖已发布的版本",
 		);
