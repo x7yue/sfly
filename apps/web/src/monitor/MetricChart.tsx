@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { memo, useMemo } from "react";
 import { formatClock, formatMetric } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
-import { valueAt } from "./charts";
+import { bucketAt, envelopePoints, formatReading, hasSpread, valueExtent } from "./charts";
 import { useMonitor, useMonitorActions } from "./monitor-state";
 import type { TimeRange } from "./timeline";
 
@@ -161,7 +161,7 @@ export function MetricChart({
 	);
 }
 
-/** 悬停时刻与第一条序列在那一刻的值。 */
+/** 悬停时刻与第一条序列在那一刻的值（桶里有范围时带最小–最大值）。 */
 function HoverReading({
 	lines,
 	window,
@@ -173,11 +173,11 @@ function HoverReading({
 }) {
 	const hoverAt = useMonitor((s) => s.hoverAt);
 	if (hoverAt === null || hoverAt < window.start || hoverAt > window.end) return null;
-	const value = valueAt(lines[0]?.buckets ?? [], hoverAt, bucketSeconds);
+	const bucket = bucketAt(lines[0]?.buckets ?? [], hoverAt, bucketSeconds);
 	return (
 		<span className="font-mono text-2xs text-fg-3" data-hover-reading>
 			{formatClock(hoverAt)}
-			{value === null ? "" : `  ${formatMetric(value)}`}
+			{bucket === null ? "" : `  ${formatReading(bucket)}`}
 		</span>
 	);
 }
@@ -193,15 +193,9 @@ interface PlotProps {
 	color?: string;
 }
 
-/** 纵轴范围：柱状、面积与迷你趋势从 0 起；上方留 12%。 */
-function yScale(type: PlotProps["type"], lines: readonly ChartLine[], mini?: boolean) {
-	const values = lines.flatMap((l) => l.buckets.map((b) => b.last));
-	let min = Math.min(...values);
-	let max = Math.max(...values);
-	if (type !== "line" || mini) min = Math.min(0, min);
-	if (max - min < 1e-9) max = min + 1;
-	return { min, max, top: max + (max - min) * 0.12 };
-}
+/** 纵轴范围（含每个桶的最小、最大值）：柱状、面积与迷你趋势从 0 起；上方留 12%。 */
+const yScale = (type: PlotProps["type"], lines: readonly ChartLine[], mini?: boolean) =>
+	valueExtent(lines, type !== "line" || !!mini);
 
 /** SVG 绘图区：viewBox 宽 300，按容器宽度拉伸（线宽不随之缩放）。 */
 export function Plot(props: PlotProps) {
@@ -274,16 +268,30 @@ const Paths = memo(function Paths({
 				if (line.buckets.length === 0) return null;
 				if (type === "bar" && !mini) {
 					const bw = Math.max(1, (span / (window.end - window.start)) * W * 0.7);
+					// 柱高是最新值；桶里有范围时叠一条最小–最大的细线（尖峰不被合并掉）。
 					return (
-						<g key={line.name} fill={stroke} opacity={0.75} data-series={line.name}>
+						<g key={line.name} fill={stroke} data-series={line.name}>
 							{line.buckets.map((b) => (
-								<rect
-									key={b.time}
-									x={X(b) - bw / 2}
-									y={Y(b.last)}
-									width={bw}
-									height={Math.max(0, H - 2 - Y(b.last))}
-								/>
+								<g key={b.time}>
+									<rect
+										x={X(b) - bw / 2}
+										y={Y(b.last)}
+										width={bw}
+										height={Math.max(0, H - 2 - Y(b.last))}
+										opacity={0.75}
+									/>
+									{b.min < b.max && (
+										<line
+											data-range
+											x1={X(b)}
+											x2={X(b)}
+											y1={Y(b.max)}
+											y2={Y(b.min)}
+											stroke={stroke}
+											vectorEffect="non-scaling-stroke"
+										/>
+									)}
+								</g>
 							))}
 						</g>
 					);
@@ -299,8 +307,20 @@ const Paths = memo(function Paths({
 				const d = `M${pts.map(([x, y]) => `${x?.toFixed(1)} ${y?.toFixed(1)}`).join(" L")}`;
 				const first = line.buckets[0] as MetricBucket;
 				const last = line.buckets.at(-1) as MetricBucket;
+				const band = !mini && hasSpread(line.buckets) && line.buckets.length > 1;
 				return (
 					<g key={line.name} data-series={line.name}>
+						{band && (
+							// 最小–最大包络：降采样合并掉的短时尖峰仍然看得到（故事 14）。
+							<path
+								data-envelope
+								d={`M${envelopePoints(line.buckets, X, Y)
+									.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`)
+									.join(" L")}Z`}
+								fill={stroke}
+								opacity={0.18}
+							/>
+						)}
 						{(type === "area" || mini) && (
 							<path
 								d={`${d} L${X(last).toFixed(1)} ${H} L${X(first).toFixed(1)} ${H}Z`}

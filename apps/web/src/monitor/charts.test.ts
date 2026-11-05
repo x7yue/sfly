@@ -1,6 +1,15 @@
-import type { MetricIncrement, MetricSeries } from "@sfly/schema";
+import type { MetricBucket, MetricIncrement, MetricSeries } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { appendIncrement, balancedColumns, chartWindow, valueAt } from "./charts";
+import {
+	appendIncrement,
+	balancedColumns,
+	bucketAt,
+	chartWindow,
+	envelopePoints,
+	formatReading,
+	hasSpread,
+	valueExtent,
+} from "./charts";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 const s = (seconds: number) => T0 + seconds * 1000;
@@ -157,9 +166,52 @@ describe("悬停读数", () => {
 	).series[0]?.buckets;
 
 	it("取悬停时刻所在桶的最新值；不在任何桶里时没有读数", () => {
-		expect(valueAt(buckets ?? [], s(4), 10)).toBe(1);
-		expect(valueAt(buckets ?? [], s(19.5), 10)).toBe(2);
-		expect(valueAt(buckets ?? [], s(25), 10)).toBeNull();
-		expect(valueAt(buckets ?? [], s(-1), 10)).toBeNull();
+		expect(bucketAt(buckets ?? [], s(4), 10)?.last).toBe(1);
+		expect(bucketAt(buckets ?? [], s(19.5), 10)?.last).toBe(2);
+		expect(bucketAt(buckets ?? [], s(25), 10)).toBeNull();
+		expect(bucketAt(buckets ?? [], s(-1), 10)).toBeNull();
+	});
+});
+
+describe("降采样后的尖峰（故事 14）", () => {
+	const bucket = (sec: number, last: number, min: number, max: number) => ({
+		time: at(sec),
+		points: 10,
+		min,
+		max,
+		avg: last,
+		last,
+	});
+	const spiky = [bucket(0, 10, 9, 10), bucket(10, 11, 2, 95), bucket(20, 12, 11, 12)];
+
+	it("纵轴范围包含每个桶的最小值与最大值，不只看最新值", () => {
+		expect(valueExtent([{ buckets: spiky }], false)).toMatchObject({ min: 2, max: 95 });
+		expect(valueExtent([{ buckets: spiky }], true).min).toBe(0);
+	});
+
+	it("包络：沿最大值向前、沿最小值返回的闭合多边形", () => {
+		const pts = envelopePoints(
+			spiky,
+			(b) => Date.parse(b.time),
+			(v) => v,
+		);
+		expect(pts).toEqual([
+			[s(0), 10],
+			[s(10), 95],
+			[s(20), 12],
+			[s(20), 11],
+			[s(10), 2],
+			[s(0), 9],
+		]);
+		// 每个桶都没有范围（每秒一个点、最小值等于最大值）时不画包络。
+		expect(hasSpread([bucket(0, 1, 1, 1)])).toBe(false);
+		expect(hasSpread(spiky)).toBe(true);
+	});
+
+	it("悬停读数给出所在桶的最新值与最小–最大值", () => {
+		expect(bucketAt(spiky, s(15), 10)).toBe(spiky[1]);
+		expect(formatReading(spiky[1] as MetricBucket)).toBe("11（2–95）");
+		expect(formatReading(bucket(0, 3, 3, 3))).toBe("3");
+		expect(bucketAt(spiky, s(35), 10)).toBeNull();
 	});
 });
