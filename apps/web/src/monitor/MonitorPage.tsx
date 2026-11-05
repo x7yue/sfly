@@ -84,7 +84,7 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 	return (
 		<MonitorProvider store={store} axis={axis}>
 			<div className="fixed inset-0 flex min-w-[1280px] flex-col bg-bg">
-				<MonitorTopBar run={run} name={orchestration.data?.name} doc={doc} />
+				<MonitorTopBar run={run} name={orchestration.data?.name} />
 				<main className="flex min-h-0 flex-1 flex-col">
 					<Timeline run={run} doc={doc} />
 					<ChartWorkspace run={run} />

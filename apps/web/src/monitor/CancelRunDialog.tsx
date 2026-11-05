@@ -1,8 +1,15 @@
-import { type OrchestrationDocument, queryKey, type RunView, runsApi } from "@sfly/schema";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+	domainKey,
+	type OrchestrationDocument,
+	queryKey,
+	type RunView,
+	runsApi,
+} from "@sfly/schema";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
-import { callApi } from "#/lib/api";
+import { apiQuery, callApi } from "#/lib/api";
+import { versionQuery } from "#/versions/queries";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -47,6 +54,8 @@ export function CancelRunDialog({
 		mutationFn: () => callApi(runsApi.cancel, { params: { id: run.id } }),
 		onSuccess: (view) => {
 			queryClient.setQueryData(queryKey(runsApi.get, { params: { id: run.id } }), view);
+			// 运行列表、控制台等其他显示这个运行的地方随之刷新（进入「取消中」）。
+			void queryClient.invalidateQueries({ queryKey: domainKey(runsApi.get) });
 			notify.info(force ? "已强制终止运行" : "已请求取消运行", {
 				description: force ? undefined : "正在等待执行中的任务结束与 always 节点清理。",
 			});
@@ -134,6 +143,48 @@ export function CancelRunDialog({
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+/**
+ * 运行进行中的「取消运行」（清理期间为「强制终止」）按钮与确认弹窗：监控页顶栏、运行抽屉、运行记录卡片共用。
+ * 按钮是中性样式，危险强调留在确认弹窗里；运行视图与绑定版本的文档（列出 always 节点）在打开时读取，
+ * 与监控页同一份缓存。
+ */
+export function CancelRunButton({
+	runId,
+	orchestrationId,
+	orchestrationVersion,
+	cancelling,
+	size,
+}: {
+	runId: string;
+	orchestrationId: string;
+	orchestrationVersion: number;
+	/** 已请求取消、运行还没结束（按钮变成「强制终止」）。 */
+	cancelling: boolean;
+	size?: "sm";
+}) {
+	const [open, setOpen] = useState(false);
+	const run = useQuery({ ...apiQuery(runsApi.get, { params: { id: runId } }), enabled: open });
+	const version = useQuery({
+		...versionQuery(orchestrationId, orchestrationVersion),
+		enabled: open && orchestrationVersion > 0,
+	});
+	return (
+		<>
+			<Button size={size} onClick={() => setOpen(true)}>
+				{cancelling ? "强制终止" : "取消运行"}
+			</Button>
+			{run.data && (
+				<CancelRunDialog
+					run={run.data}
+					doc={version.data?.document}
+					open={open}
+					onOpenChange={setOpen}
+				/>
+			)}
+		</>
 	);
 }
 

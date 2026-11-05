@@ -5,11 +5,11 @@ import { formatDateTime, formatDuration } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
+import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { nodeStatus, shortId } from "#/monitor/run-model";
 import { useMetricCatalog } from "#/monitor/use-run-metrics";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { CancelRunButton } from "./CancelRunDialog";
 import { ChainBar, chainDone, chainLabel } from "./ChainProgress";
 
 /** 卡片上最多列出的当前节点数。 */
@@ -132,7 +132,15 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 				<Link to="/runs/$id" params={{ id: run.id }} className={buttonVariants({ size: "sm" })}>
 					打开运行详情
 				</Link>
-				{run.status === "running" && <CancelRunButton run={run} />}
+				{run.status === "running" && (
+					<CancelRunButton
+						size="sm"
+						runId={run.id}
+						orchestrationId={run.orchestration_id}
+						orchestrationVersion={run.orchestration_version}
+						cancelling={run.cancelling}
+					/>
+				)}
 			</div>
 		</article>
 	);

@@ -1,4 +1,4 @@
-import { type OrchestrationDocument, type RunView, runsApi } from "@sfly/schema";
+import { type RunView, runsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronDownIcon, PlayIcon, WorkflowIcon } from "lucide-react";
@@ -17,7 +17,7 @@ import {
 	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { CancelRunDialog } from "./CancelRunDialog";
+import { CancelRunButton } from "./CancelRunDialog";
 import { useTimeAxis } from "./monitor-state";
 import { chainLabel, chainRunStatus, orderedChains, runStatus, shortId } from "./run-model";
 
@@ -28,18 +28,9 @@ const MAX_CHAIN_BADGES = 4;
  * 运行监控页顶栏（原型 monitorHTML 的 `.mon-top`）：返回、场景名与版本、触发人 / 开始时间 / 已运行时长、
  * 运行切换（同场景的其他运行）、各链状态、在画布中查看、取消（运行中）或再次运行（已结束，主操作）。
  */
-export function MonitorTopBar({
-	run,
-	name,
-	doc,
-}: {
-	run: RunView;
-	name: string | undefined;
-	doc: OrchestrationDocument | undefined;
-}) {
+export function MonitorTopBar({ run, name }: { run: RunView; name: string | undefined }) {
 	const { now, live } = useTimeAxis();
 	const navigate = useNavigate();
-	const [cancelOpen, setCancelOpen] = useState(false);
 	const [rerunOpen, setRerunOpen] = useState(false);
 	const chains = orderedChains(run);
 	const status = runStatus(run);
@@ -110,17 +101,17 @@ export function MonitorTopBar({
 				在画布中查看
 			</Link>
 			{run.status === "running" ? (
-				<Button variant="danger" onClick={() => setCancelOpen(true)}>
-					{run.cancel ? "强制终止" : "取消运行"}
-				</Button>
+				<CancelRunButton
+					runId={run.id}
+					orchestrationId={run.orchestration_id}
+					orchestrationVersion={run.orchestration_version}
+					cancelling={run.cancel !== null}
+				/>
 			) : (
 				<Button variant="primary" onClick={() => setRerunOpen(true)}>
 					<PlayIcon />
 					再次运行
 				</Button>
-			)}
-			{run.status === "running" && (
-				<CancelRunDialog run={run} doc={doc} open={cancelOpen} onOpenChange={setCancelOpen} />
 			)}
 			<RunDrawer
 				open={rerunOpen}

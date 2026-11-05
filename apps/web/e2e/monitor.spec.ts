@@ -25,6 +25,11 @@ test("顶栏：场景名、版本、触发人、已运行时长、各链状态�
 	await expect(header.getByTestId("run-elapsed")).toHaveText("已运行 14.0s");
 	await expect(header.getByRole("list", { name: "各链状态" }).getByRole("listitem")).toHaveCount(2);
 	await expect(header.getByRole("button", { name: "取消运行" })).toBeVisible();
+	// 运行进行中的取消按钮是中性样式，危险强调留在确认弹窗里。
+	await expect(header.getByRole("button", { name: "取消运行" })).toHaveAttribute(
+		"data-variant",
+		"default",
+	);
 	await expect(header.getByRole("button", { name: "再次运行" })).toHaveCount(0);
 	await expect(header.getByRole("link", { name: "在画布中查看" })).toHaveAttribute(
 		"href",

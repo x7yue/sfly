@@ -128,6 +128,10 @@ test("摘要里可以取消运行", async ({ page, controlPlane, connectAgent })
 	const task = await agent.nextAssign();
 	await expect(drawer.getByTestId("summary-status")).toHaveText("运行中");
 
+	await expect(drawer.getByRole("button", { name: "取消运行" })).toHaveAttribute(
+		"data-variant",
+		"default",
+	);
 	await drawer.getByRole("button", { name: "取消运行" }).click();
 	const confirm = page.getByRole("dialog", { name: /取消运行/ });
 	const runId = (await (await controlPlane.fetch("/runs?limit=1")).json()).runs[0].id as string;
