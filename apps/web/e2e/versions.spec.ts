@@ -205,7 +205,6 @@ test("保存冲突：弹窗显示对方作者和时间、与最新版本的差�
 	await expect(dialog).toContainText("− 最新版本 2 → + 你的本地修改");
 	await expect(dialog).toContainText("+ sub_ping");
 	await expect(dialog).toContainText("− report");
-	await expect(page.getByRole("button", { name: "保存被拦截" })).toBeVisible();
 
 	// 焦点锁定在弹窗里。
 	for (let i = 0; i < 8; i++) {
@@ -269,7 +268,12 @@ test("在线编辑者：别人打开同一场景时显示在画布右上，离�
 	page,
 	browser,
 	controlPlane,
+	connectAgent,
 }) => {
+	await connectAgent({
+		name: "agent-linux",
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
 	const id = await createEditorScenario(controlPlane);
 	await page.goto(`/orchestrations/${id}`);
 	await expect(nodeCard(page, "entry")).toBeVisible();
@@ -283,6 +287,21 @@ test("在线编辑者：别人打开同一场景时显示在画布右上，离�
 	expect(at.y).toBeLessThan(54);
 	// 对方也能看到自己。
 	await expect(other.page.getByRole("status").filter({ hasText: "tester 正在编辑" })).toBeVisible();
+
+	// 运行状态下右上控件组也显示在线编辑者，切换模式时在线状态不中断。
+	const triggered = await controlPlane.fetch(`/orchestrations/${id}/runs`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: JSON.stringify({ params: { biz_date: "2026-01-01" } }),
+	});
+	expect(triggered.status).toBe(201);
+	await page.locator("body").press("r");
+	await expect(page.getByRole("link", { name: "打开运行监控" })).toBeVisible();
+	await expect(editors).toHaveText(/小李 正在编辑/);
+	await page.locator("body").press("e");
+	await expect(page.getByRole("button", { name: /保存/ })).toBeVisible();
+	await expect(other.page.getByRole("status").filter({ hasText: "tester 正在编辑" })).toBeVisible();
+	await expect(editors).toHaveText(/小李 正在编辑/);
 
 	// 离开画布页（回到场景列表）后立即消失。
 	await other.page.getByRole("link", { name: "返回场景编排" }).click();

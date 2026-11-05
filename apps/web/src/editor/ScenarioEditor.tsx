@@ -27,11 +27,12 @@ import { FlowCanvas } from "#/components/canvas/FlowCanvas";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery, type Orchestration, type OrchestrationHead } from "#/lib/api";
+import { useOtherEditors } from "#/lib/presence";
 import { TriggerDialog } from "#/runs/TriggerDialog";
 import { versionConflictOf } from "#/versions/api";
+import { DraftBanner } from "#/versions/DraftBanner";
 import { hasDraft } from "#/versions/draft";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
-import { StaleDraftBanner } from "#/versions/VersionControls";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
@@ -134,6 +135,8 @@ function Editor({
 	const catalog = usePackageCatalog(meta.packages, agentList);
 	const warnings = useMemo(() => documentWarnings(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
+	// 在线编辑者：整个画布页一份在线状态，编辑 / 运行状态切换时不中断。
+	const editors = useOtherEditors(orchestration.id);
 	const warningsByNode = useMemo(() => {
 		const map = new Map<string, OrchestrationWarning[]>();
 		for (const w of warnings) {
@@ -348,11 +351,12 @@ function Editor({
 						runState={<RunStateBadge state={runState} />}
 					/>
 					{running ? (
-						<RunTopRight run={readyRun?.run} />
+						<RunTopRight run={readyRun?.run} editors={editors} />
 					) : (
 						<>
 							<EditorTopRight
 								orchestration={orchestration}
+								editors={editors}
 								doc={doc}
 								versioning={versioning}
 								fieldErrors={fieldErrors.length}
@@ -361,7 +365,7 @@ function Editor({
 								onReload={onReload}
 							/>
 							<div className="absolute top-15.5 left-3 z-10 max-w-[560px]">
-								<StaleDraftBanner
+								<DraftBanner
 									orchestration={orchestration}
 									doc={doc}
 									versioning={versioning}
