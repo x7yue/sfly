@@ -90,8 +90,5 @@ export const listRuns = (orchestrationId: string) =>
 
 export const getRun = (runId: string) => apiGet<RunView>(`/runs/${runId}`);
 
-/** 取消整个运行（#12）；运行还没结束时再次调用即强制取消。已结束时 409 `run_not_running`。 */
-export const cancelRun = (runId: string) => apiPost<RunView>(`/runs/${runId}/cancel`, {});
-
 /** 运行的 SSE 流：连上时和每次状态变化时推送完整的运行视图（事件 `run`），任务进度更新时推送 `progress`（logs.ts）。 */
 export const runEventsPath = (runId: string) => `/runs/${runId}/events`;

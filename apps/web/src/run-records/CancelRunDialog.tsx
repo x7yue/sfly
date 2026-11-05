@@ -1,8 +1,8 @@
-import type { RunListItem } from "@sfly/schema";
+import { type RunListItem, runsApi } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { notify } from "#/components/feedback/notify";
-import { cancelRun } from "#/runs/api";
+import { callApi } from "#/lib/api";
 import { shortId } from "#/runs/format";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,7 +25,7 @@ export function CancelRunButton({ run }: { run: RunListItem }) {
 	const queryClient = useQueryClient();
 	const force = run.cancelling;
 	const cancel = useMutation({
-		mutationFn: () => cancelRun(run.id),
+		mutationFn: () => callApi(runsApi.cancel, { params: { id: run.id } }),
 		onSuccess: () => {
 			setOpen(false);
 			notify.success(force ? "已强制终止运行" : "已请求取消运行", {
