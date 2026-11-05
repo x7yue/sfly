@@ -1,0 +1,36 @@
+{
+	"name": "@sfly/server",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "sfly 控制面：HTTP API、SSE、引擎、Agent 网关、节点包仓库",
+	"scripts": {
+		"dev": "tsx watch src/main.ts",
+		"start": "tsx src/main.ts",
+		"build": "rm -rf dist/sdk && uv build --wheel --quiet --out-dir dist/sdk ../../sdk/python",
+		"db:generate": "drizzle-kit generate",
+		"typecheck": "tsc -p .",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@bufbuild/protobuf": "2.16.0",
+		"@connectrpc/connect": "2.3.0",
+		"@connectrpc/connect-node": "2.3.0",
+		"@sfly/orchestration": "workspace:*",
+		"@sfly/proto": "workspace:*",
+		"@sfly/schema": "workspace:*",
+		"drizzle-orm": "^0.45.4",
+		"fastify": "^5.12.8",
+		"fflate": "^0.8.3",
+		"pg": "^8.23.1",
+		"tsx": "^4.23.15",
+		"zod": "4.6.7"
+	},
+	"devDependencies": {
+		"@types/node": "^26.0.0",
+		"@types/pg": "^8.23.1",
+		"drizzle-kit": "^0.31.11",
+		"typescript": "^6.0.2",
+		"vitest": "^5.1.0"
+	}
+}

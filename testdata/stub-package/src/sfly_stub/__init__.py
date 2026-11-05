@@ -1,0 +1,226 @@
+"""通用桩节点（docs/SEMANTICS.md §8）。"""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+import time
+from importlib import metadata
+from typing import Any
+
+from sfly import Context, node
+
+
+@node(title="回显", outputs=["text"])
+def echo(ctx: Context, text: Any) -> dict[str, Any]:
+    """原样返回 text（任意 JSON 值，例如上游输出的产物引用表）。"""
+    return {"text": text}
+
+
+@node(title="失败", outputs=[])
+def fail(ctx: Context, message: str = "stub failure") -> dict[str, Any]:
+    raise RuntimeError(message)
+
+
+@node(title="按参数成功或失败", outputs=["ok"])
+def outcome(ctx: Context, succeed: bool = True, message: str = "stub failure") -> dict[str, Any]:
+    """succeed 为 False 时抛出 RuntimeError(message)，否则成功。"""
+    if not succeed:
+        raise RuntimeError(message)
+    return {"ok": True}
+
+
+@node(title="启动常驻进程", outputs=["pid"])
+def start_process(ctx: Context, seconds: float = 3600) -> dict[str, Any]:
+    """启动一个脱离任务进程树（新会话、不继承标准输入输出）的常驻进程，节点结束后它继续运行。"""
+    child = subprocess.Popen(
+        [sys.executable, "-c", f"import time; time.sleep({seconds})"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return {"pid": child.pid}
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@node(title="停止常驻进程", outputs=["was_running"])
+def stop_process(ctx: Context, pid: int | None = None, wait: float = 10) -> dict[str, Any]:
+    """终止 start_process 启动的进程并等它退出；pid 为空（上游没有产出）时什么也不做。"""
+    if pid is None or not _alive(pid):
+        return {"was_running": False}
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + wait
+    while _alive(pid):
+        if time.monotonic() > deadline:
+            os.kill(pid, signal.SIGKILL)
+            break
+        time.sleep(0.05)
+    return {"was_running": True}
+
+
+@node(title="下载", outputs=["texts"])
+def download(ctx: Context, urls: dict[str, str]) -> dict[str, Any]:
+    """按引用地址下载文本（读取上游节点的产物，urls 即 artifacts 节点输出的 refs）。"""
+    import urllib.request
+
+    texts = {}
+    for name, url in urls.items():
+        with urllib.request.urlopen(url, timeout=30) as response:
+            texts[name] = response.read().decode("utf-8")
+    return {"texts": texts}
+
+
+@node(title="闸门", outputs=["attempt"])
+def gate(ctx: Context, ready_file: str, release_file: str, seconds: float = 120) -> dict[str, Any]:
+    """写出 ready_file（追加一行本次尝试序号）后等待 release_file 出现再成功；超过 seconds 则失败。
+
+    让测试在任务执行中途制造故障（Agent 断线、控制面重启）。
+    """
+    with open(os.environ["SFLY_TASK"]) as f:
+        attempt = int(json.load(f)["attempt"])
+    with open(ready_file, "a") as f:
+        f.write(f"{attempt}\n")
+    deadline = time.monotonic() + seconds
+    while not os.path.exists(release_file):
+        if time.monotonic() > deadline:
+            raise TimeoutError(f"{release_file} 没有出现")
+        time.sleep(0.05)
+    return {"attempt": attempt}
+
+
+@node(title="等待", outputs=["slept"])
+def sleep(ctx: Context, seconds: float) -> dict[str, Any]:
+    time.sleep(seconds)
+    return {"slept": seconds}
+
+
+@node(title="进程树", outputs=["pids"])
+def process_tree(
+    ctx: Context, pid_file: str, seconds: float = 3600, ignore_term: bool = False
+) -> dict[str, Any]:
+    """启动一个子进程后一起等待，把自己和子进程的 PID 写到 pid_file（超时、取消杀进程树的测试用）。
+
+    ignore_term 时两个进程都忽略 SIGTERM，只能被强制杀掉。
+    """
+    prelude = "import signal, time\n"
+    if ignore_term:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        prelude += "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+    child = subprocess.Popen([sys.executable, "-c", f"{prelude}time.sleep({seconds})"])
+    pids = [os.getpid(), child.pid]
+    tmp = f"{pid_file}.tmp"
+    with open(tmp, "w") as f:
+        f.write(" ".join(map(str, pids)))
+    os.replace(tmp, pid_file)
+    child.wait()
+    return {"pids": pids}
+
+
+@node(title="等待取消", outputs=[])
+def wait_cancel(ctx: Context, ready_file: str, report_file: str, seconds: float = 3600) -> None:
+    """写出 ready_file 后等待；被终止时（finally）把 ctx.cancelled() 写到 report_file。
+
+    取消测试用。
+    """
+    with open(ready_file, "w") as f:
+        f.write(str(os.getpid()))
+    try:
+        time.sleep(seconds)
+    finally:
+        with open(report_file, "w") as f:
+            f.write("cancelled" if ctx.cancelled() else "not cancelled")
+
+
+@node(title="环境探针", outputs=["prefix", "cwd", "env"])
+def probe(ctx: Context) -> dict[str, Any]:
+    """报告执行环境：解释器所在 venv、工作目录、相关环境变量。"""
+    names = ["SFLY_TASK", "SFLY_OUTPUT", "SFLY_ARTIFACTS", "SFLY_EVENTS", "SFLY_CANCEL"]
+    names += ["PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"]
+    return {
+        "prefix": sys.prefix,
+        "cwd": os.getcwd(),
+        "env": {name: os.environ.get(name) for name in names},
+    }
+
+
+@node(title="版本", outputs=["package", "version"])
+def about(ctx: Context) -> dict[str, Any]:
+    """报告当前生效的节点包名与版本（安装与版本切换测试用；同一份源码可换包名和版本构建）。"""
+    dist = metadata.distribution(__name__)
+    return {"package": dist.metadata["Name"], "version": dist.version}
+
+
+@node(title="多路日志", outputs=[])
+def chatter(
+    ctx: Context, steps: int = 0, interval: float = 0.0, secret: str = ""
+) -> dict[str, Any]:
+    """日志与进度测试用：print、标准错误、子进程输出、各级别 SDK 日志，然后按步上报进度。"""
+    import subprocess
+
+    print("来自 print")
+    print("来自标准错误", file=sys.stderr)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('来自子进程'); print('子进程错误', file=sys.stderr)",
+        ],
+        check=True,
+    )
+    ctx.log.debug("sdk 调试")
+    ctx.log.info("sdk 信息 %d", 1)
+    ctx.log.warning("sdk 警告")
+    ctx.log.error("sdk 错误")
+    if secret:
+        print(f"token={secret}; again {secret}")
+    for i in range(steps):
+        ctx.progress(i + 1, steps, f"第 {i + 1} 步")
+        time.sleep(interval)
+    return {}
+
+
+@node(title="产物", outputs=["refs"])
+def artifacts(
+    ctx: Context, files: dict[str, str] | None = None, fail: bool = False
+) -> dict[str, Any]:
+    """产物测试用：把 files（名称 → 文本内容）保存为产物，返回产物引用；fail 时保存后抛出异常。"""
+    refs = {name: ctx.artifacts.save(name, content) for name, content in (files or {}).items()}
+    if fail:
+        raise RuntimeError("保存产物后失败")
+    return {"refs": refs}
+
+
+@node(title="大输出", outputs=["text"])
+def big(ctx: Context, size: int) -> dict[str, Any]:
+    """节点输出上限测试用：返回 size 个字符的文本。"""
+    return {"text": "x" * size}
+
+
+@node(title="大量日志", outputs=["lines"])
+def flood(ctx: Context, lines: int = 1000, interval: float = 0.0) -> dict[str, Any]:
+    """完整日志测试用：输出 lines 行日志，来源（print / 标准错误 / SDK）和 SDK 级别轮换。"""
+    levels = [ctx.log.debug, ctx.log.info, ctx.log.warning, ctx.log.error]
+    for i in range(1, lines + 1):
+        kind = i % 3
+        if kind == 1:
+            print(f"第 {i} 行 stdout")
+        elif kind == 2:
+            print(f"第 {i} 行 stderr", file=sys.stderr)
+        else:
+            levels[(i // 3) % 4]("第 %d 行 sdk", i)
+        if interval:
+            time.sleep(interval)
+    return {"lines": lines}

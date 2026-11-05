@@ -1,0 +1,287 @@
+syntax = "proto3";
+
+package sfly.agent.v1;
+
+// Agent 网关：Agent 主动发起一条 gRPC 双向流，控制面在同一条流上推送指令（ADR 0003）。
+// 消息按 docs/ARCHITECTURE.md §5.2 的字段编号逐步加入，加入后受 buf breaking 检查保护。
+//
+// RPC 名用 Session 而不是草图里的 Connect：tonic 生成的客户端已有构造函数 connect()，同名会冲突。
+//
+// 握手：Agent 发送的第一条消息必须是 Hello。令牌不对时控制面以 UNAUTHENTICATED 结束流；
+// 同名 Agent 重新连接时，旧连接的流被控制面正常结束。
+service AgentGateway {
+  rpc Session(stream AgentMessage) returns (stream ServerMessage);
+}
+
+// Agent → 控制面。
+message AgentMessage {
+  oneof body {
+    Hello hello = 1;
+    Heartbeat heartbeat = 2;
+    TaskStarted started = 3;
+    LogBatch logs = 4;
+    Progress progress = 5;
+    TaskResult result = 6;
+    InstallStatus install = 7;
+  }
+}
+
+// 控制面 → Agent。
+message ServerMessage {
+  oneof body {
+    Welcome welcome = 1;
+    AssignTask assign = 2;
+    CancelTask cancel = 3;
+    Ack ack = 4;
+  }
+}
+
+// 连接建立后 Agent 发送的第一条消息。
+message Hello {
+  // Agent 名称，全局唯一。
+  string name = 1;
+  // 可选的共享注册令牌。
+  string token = 2;
+  // Agent 程序版本。
+  string agent_version = 3;
+  // 操作系统，例如 linux、windows。
+  string os = 4;
+  // CPU 架构，例如 x86_64、aarch64。
+  string arch = 5;
+  // 并发槽位数：同时运行的任务上限；0 表示使用默认值 4。
+  uint32 slots = 6;
+  // 共享 venv 中已安装的节点包。
+  repeated InstalledPackage installed_packages = 7;
+  // 以本地开发模式（sfly dev）加载在这个 Agent 上的节点包，版本为 `dev`。
+  repeated DevPackage dev_packages = 8;
+  // Agent 手上的任务：正在执行（含安装中）的，以及已经结束、结果还没收到 Ack 的。
+  // 控制面在 Welcome 中逐个告诉 Agent 继续还是放弃；控制面认为在这个 Agent 上运行、
+  // 但不在这个列表里的任务立即以 agent_lost 失败（docs/SEMANTICS.md §3.3）。
+  repeated RunningTask running_tasks = 9;
+}
+
+// Agent 手上的一个任务（节点的一次尝试）。
+message RunningTask {
+  string task_id = 1;
+  uint32 attempt = 2;
+  // 执行器子进程已经启动（已发送或应当发送过 TaskStarted）。TaskStarted 可能随断开的连接丢失，
+  // 控制面据此把仍处于派发阶段的任务记为 running。
+  bool started = 3;
+}
+
+// Agent 周期发送，为它手上的任务续约租约；租约过期的任务以 agent_lost 失败（按重试配置派回同一个 Agent）。
+message Heartbeat {
+  // Agent 手上的任务（含义同 Hello.running_tasks）：只为这些任务续约。控制面认为派发给这个 Agent、
+  // 但连续两次心跳都不在列表里的任务以 agent_lost 失败（第一次可能是心跳与派发消息在路上交错）。
+  repeated RunningTask running_tasks = 1;
+}
+
+// 任务的执行器子进程已经启动（节点包下载、安装完成之后）。控制面收到后才把任务记为 running，
+// 并以收到的时刻作为耗时起点；Agent 也从这一刻开始计算超时（docs/SEMANTICS.md §3.3）。
+// 在此之前任务处于派发阶段（dispatched：下载、安装、启动中）。
+message TaskStarted {
+  string task_id = 1;
+  uint32 attempt = 2;
+}
+
+// 以本地开发模式（sfly dev）加载的节点包：本地源码目录以可编辑方式安装进共享 venv，注册为 `包名@dev`。
+// 只有加载了它的 Agent 能执行 `包名@dev` 的任务。
+message DevPackage {
+  // 节点包名。
+  string name = 1;
+  // 本地源码目录（Agent 所在机器上的绝对路径）。
+  string source = 2;
+  // 加载时扫描得到的节点包元信息（sfly-package.json 的内容，version 为 `dev`），JSON 对象。
+  string metadata_json = 3;
+}
+
+// 安装在 Agent 共享 venv 中的一个节点包版本。
+message InstalledPackage {
+  string name = 1;
+  string version = 2;
+}
+
+// 控制面对 Hello 的回应，表示连接已被接受。
+message Welcome {
+  // 对 Hello.running_tasks 的逐个处置；没有列出的任务按继续处理。
+  repeated TaskDisposition dispositions = 1;
+  // Agent 发送 Heartbeat 的间隔（毫秒）；0 表示使用 Agent 的默认值（10 秒）。
+  uint32 heartbeat_interval_ms = 2;
+  // 与 Hello.agent_version 匹配的 SDK 运行时 wheel 的下载地址（HTTP）；控制面没有这个版本时为空。
+  // 共享 venv 里没有这个版本的 SDK 时，Agent 下载、校验 sdk_wheel_sha256 后用 uv 装进共享 venv。
+  string sdk_wheel_url = 3;
+  // SDK 运行时 wheel 的 sha256（hex）。
+  string sdk_wheel_sha256 = 4;
+}
+
+// 控制面对 Agent 手上一个任务的处置。
+message TaskDisposition {
+  string task_id = 1;
+  uint32 attempt = 2;
+  TaskAction action = 3;
+}
+
+enum TaskAction {
+  TASK_ACTION_UNSPECIFIED = 0;
+  // 继续执行，结束后照常上报结果（已结束的任务：重新上报结果）。
+  TASK_ACTION_CONTINUE = 1;
+  // 放弃：控制面已不再等待这个任务（例如租约已过期并重试、运行已被强制取消）。
+  // 正在执行的立即杀掉进程树，已结束的丢弃未确认的结果。
+  TASK_ACTION_ABANDON = 2;
+}
+
+// 控制面派发给 Agent 的一个任务（节点的一次尝试）。输入中的引用已经解析。
+message AssignTask {
+  string task_id = 1;
+  // 从 1 开始；重试时加 1。
+  uint32 attempt = 2;
+  // 节点包名。
+  string package = 3;
+  // 锁定的节点包版本（`dev` 表示开发版本）。
+  string package_version = 4;
+  // 节点包内的节点名。
+  string node = 5;
+  // 已解析的输入，JSON 对象。
+  string inputs_json = 6;
+  // 执行超时（秒）。
+  uint32 timeout_seconds = 7;
+  string run_id = 8;
+  // 节点在编排中的 ID。
+  string node_id = 9;
+  // 节点包归档（.sflypkg）的 sha256（hex）；Agent 下载后据此校验。开发版本或控制面没有该版本时为空。
+  string package_sha256 = 10;
+  // 节点包归档的 HTTP 下载地址；包版本没有安装在 Agent 上时，Agent 从这里下载并安装。
+  string package_url = 11;
+  // 产物上传地址（以 / 结尾）：任务结束后、上报结果之前，Agent 把产物目录里的每个文件
+  // `PUT <artifact_upload_url><按路径段百分号编码的相对路径>`（配置了注册令牌时带 `Authorization: Bearer <token>`）。
+  // 同一地址也是产物的下载地址：SDK 把它作为产物引用返回给节点。为空时不上传。
+  string artifact_upload_url = 12;
+}
+
+// 取消一个正在执行的任务（docs/SEMANTICS.md §3.4）。Agent 先写入取消标记文件（SFLY_CANCEL），
+// 再终止进程树，最后以 TASK_STATUS_CANCELLED 上报结果；任务已经结束或不在这个 Agent 上时忽略。
+message CancelTask {
+  string task_id = 1;
+  uint32 attempt = 2;
+  // false：优雅终止（SIGTERM），宽限期过后强制杀掉进程树；
+  // true：强制取消，立即杀掉进程树（也用于加速一次正在进行的优雅终止）。
+  bool force = 3;
+}
+
+// Agent 安装或切换节点包的状态（安装期间 Agent 不启动新任务）。
+message InstallStatus {
+  // 节点包名。
+  string package = 1;
+  // 要安装的版本。
+  string version = 2;
+  InstallState state = 3;
+  // 触发这次安装的任务。
+  string task_id = 4;
+  // 完整的安装输出（uv 的标准输出和标准错误）；INSTALLING 时为空。
+  string output = 5;
+  // 发送这条消息时共享 venv 中已安装的全部节点包。
+  repeated InstalledPackage installed_packages = 6;
+  // 发送这条消息时以开发模式加载的全部节点包（sfly dev 加载开发版本时，version 为 `dev`、task_id 为空）。
+  repeated DevPackage dev_packages = 7;
+}
+
+enum InstallState {
+  INSTALL_STATE_UNSPECIFIED = 0;
+  // 开始下载并安装。
+  INSTALL_STATE_INSTALLING = 1;
+  // 安装成功。
+  INSTALL_STATE_INSTALLED = 2;
+  // 下载、校验或安装失败（包括依赖冲突）。
+  INSTALL_STATE_FAILED = 3;
+}
+
+// 一个任务新增的日志行（Agent 批量转发）。执行器的标准输出、标准错误和 SDK 日志合并成同一条日志流。
+message LogBatch {
+  string task_id = 1;
+  uint32 attempt = 2;
+  // 按序号递增。
+  repeated LogLine lines = 3;
+}
+
+message LogLine {
+  // 任务内从 1 开始递增的序号；控制面和画布按它去重。
+  uint64 seq = 1;
+  // 时间（Unix 毫秒）：SDK 日志取 SDK 记录的时间，标准输出 / 标准错误取 Agent 读到这一行的时间。
+  int64 time_unix_ms = 2;
+  LogSource source = 3;
+  LogLevel level = 4;
+  // 一行文本（不含换行符）；SDK 日志的一条消息可以有多行。
+  string text = 5;
+}
+
+// 日志来源。
+enum LogSource {
+  LOG_SOURCE_UNSPECIFIED = 0;
+  // 执行器的标准输出（print、子进程继承的标准输出）。
+  LOG_SOURCE_STDOUT = 1;
+  // 执行器的标准错误。
+  LOG_SOURCE_STDERR = 2;
+  // SDK 的 ctx.log。
+  LOG_SOURCE_SDK = 3;
+}
+
+// 日志级别。标准输出为 INFO，标准错误为 ERROR，SDK 日志按调用的级别。
+enum LogLevel {
+  LOG_LEVEL_UNSPECIFIED = 0;
+  LOG_LEVEL_DEBUG = 1;
+  LOG_LEVEL_INFO = 2;
+  LOG_LEVEL_WARN = 3;
+  LOG_LEVEL_ERROR = 4;
+}
+
+// 任务的最新进度（ctx.progress）；Agent 端合并，每个任务每秒最多上报一次，任务结束前补发最后一次。
+message Progress {
+  string task_id = 1;
+  uint32 attempt = 2;
+  double current = 3;
+  // 总数；未设置表示未知。
+  optional double total = 4;
+  string message = 5;
+  // SDK 记录这次进度的时间（Unix 毫秒）。
+  int64 time_unix_ms = 6;
+}
+
+// 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
+message TaskResult {
+  string task_id = 1;
+  uint32 attempt = 2;
+  TaskStatus status = 3;
+  // 成功时的输出，JSON 对象。
+  string outputs_json = 4;
+  // 失败时的错误。
+  TaskError error = 5;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_SUCCESS = 1;
+  TASK_STATUS_FAILED = 2;
+  // 收到 CancelTask 后被终止。
+  TASK_STATUS_CANCELLED = 3;
+}
+
+message TaskError {
+  ErrorKind kind = 1;
+  string message = 2;
+}
+
+// 失败类型（docs/SEMANTICS.md §3.3）。
+enum ErrorKind {
+  ERROR_KIND_UNSPECIFIED = 0;
+  ERROR_KIND_NODE_ERROR = 1;
+  ERROR_KIND_TIMEOUT = 2;
+  ERROR_KIND_AGENT_LOST = 3;
+  ERROR_KIND_ENV_ERROR = 4;
+  ERROR_KIND_CONFIG_ERROR = 5;
+}
+
+// 控制面确认已处理 Agent 的某条上报（目前是 TaskResult，重复上报同样会收到 Ack）。
+message Ack {
+  string task_id = 1;
+  uint32 attempt = 2;
+}

@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "spec/**", "impl/**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# 每一步都只调用仓库根目录的统一命令（与本地完全一致，见 package.json scripts）。
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: sfly
+          POSTGRES_PASSWORD: sfly
+          POSTGRES_DB: sfly
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sfly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://sfly:sfly@127.0.0.1:5432/sfly
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # buf breaking 需要基线提交
+
+      - uses: pnpm/action-setup@v4 # 版本取自 package.json 的 packageManager
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: astral-sh/setup-uv@v6 # Python 版本取自 .python-version
+
+      - name: Install
+        run: pnpm bootstrap
+      - name: Generated code is up to date
+        run: pnpm gen:check
+      - name: Lint
+        run: pnpm lint
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Protobuf breaking check
+        run: pnpm proto:breaking
+        env:
+          PROTO_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
+      # 含验收场景 S1–S3（apps/server/test/acceptance-s*.test.ts，真实控制面 + Agent + SDK）。
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build

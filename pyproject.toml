@@ -1,0 +1,37 @@
+# uv 虚拟工作区根（不是可发布的包）。成员见 [tool.uv.workspace]。
+[tool.uv.workspace]
+members = ["sdk/python"]
+
+[dependency-groups]
+dev = [
+    "jsonschema>=4.23",
+    "mypy>=1.15",
+    "pytest>=8.3",
+    "ruff>=0.11",
+    # sfly.cli.build 在 Python 3.10 上用 tomli；mypy 以 3.10 为目标检查时需要它的类型。
+    "tomli>=2",
+    "types-jsonschema>=4.23",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["node_modules", "apps", "packages", "*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sfly"]
+
+[tool.mypy]
+strict = true
+files = ["sdk/python/src", "sdk/python/tests"]
+python_version = "3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["sdk/python/tests"]
+addopts = "--import-mode=importlib"

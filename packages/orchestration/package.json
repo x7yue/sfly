@@ -1,0 +1,21 @@
+{
+	"name": "@sfly/orchestration",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"description": "编排的纯逻辑（结构规则、包版本锁定、引用补全与检查、节点执行配置默认值、文档差异），控制面与画布共用",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc -p .",
+		"test": "vitest run"
+	},
+	"dependencies": {
+		"@sfly/schema": "workspace:*"
+	},
+	"devDependencies": {
+		"typescript": "^6.0.2",
+		"vitest": "^5.1.0"
+	}
+}

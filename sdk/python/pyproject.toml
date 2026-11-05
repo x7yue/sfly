@@ -1,0 +1,19 @@
+[project]
+name = "sfly"
+version = "0.1.0"
+description = "sfly 节点 SDK：运行时（只用标准库）与 CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+# 运行时安装在 Agent 的共享 venv 中，不能有任何第三方依赖（ADR 0002）。
+dependencies = []
+
+[project.optional-dependencies]
+# CLI 在开发者机器上运行，可以有依赖；不会被装进共享 venv。
+cli = ["jsonschema>=4.23", "tomli>=2; python_version < '3.11'"]
+
+[project.scripts]
+sfly = "sfly.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.8,<0.14"]
+build-backend = "uv_build"

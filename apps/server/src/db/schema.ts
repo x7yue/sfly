@@ -1,0 +1,274 @@
+// Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
+// 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
+import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
+import { sql } from "drizzle-orm";
+import {
+	bigint,
+	bigserial,
+	boolean,
+	index,
+	integer,
+	jsonb,
+	pgTable,
+	primaryKey,
+	text,
+	timestamp,
+	unique,
+	uuid,
+} from "drizzle-orm/pg-core";
+
+const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
+
+/** Agent 上报的信息（Hello）。 */
+export interface AgentInfo {
+	agent_version: string;
+	os: string;
+	arch: string;
+	slots: number;
+	/**
+	 * 共享 venv 中已安装的节点包；由 Agent 在 Hello 中上报（#5）。
+	 * 早于 #5 注册的记录没有这个字段，读取时按空列表处理。
+	 */
+	installed_packages?: InstalledPackage[];
+	/** 最近一次 InstallStatus 上报的安装状态（#6）；每次连接（Hello）时清空。 */
+	install?: InstallProgress;
+	/** 以开发模式（sfly dev）加载在这个 Agent 上的节点包（#19）；Hello 和 InstallStatus 中上报。 */
+	dev_packages?: DevPackageInfo[];
+}
+
+/** Agent 上以开发模式加载的节点包 `包名@dev`。 */
+export interface DevPackageInfo {
+	name: string;
+	/** Agent 所在机器上的源码目录。 */
+	source: string;
+	/** 加载时扫描出的节点包元信息（version 为 dev）；Agent 上报的内容不是 JSON 对象时为 null。 */
+	metadata: Record<string, unknown> | null;
+}
+
+export interface InstallProgress {
+	package: string;
+	version: string;
+	state: "installing" | "installed" | "failed";
+	task_id: string;
+}
+
+export interface InstalledPackage {
+	name: string;
+	version: string;
+}
+
+export type AgentStatus = "online" | "offline";
+
+/** Agent：按名称唯一；第一次 Hello 时注册，之后每次连接更新信息。 */
+export const agents = pgTable("agents", {
+	name: text("name").primaryKey(),
+	info: jsonb("info").$type<AgentInfo>().notNull(),
+	status: text("status").$type<AgentStatus>().notNull(),
+	registeredAt: timestamptz("registered_at").notNull(),
+	lastSeenAt: timestamptz("last_seen_at").notNull(),
+});
+
+/** 编排：记录当前最新版本号（0 表示还没有保存过版本）。 */
+export const orchestrations = pgTable("orchestrations", {
+	id: uuid("id").primaryKey(),
+	name: text("name").notNull(),
+	headVersion: integer("head_version").notNull().default(0),
+	createdAt: timestamptz("created_at").notNull(),
+});
+
+/** 编排版本：不可变，同一编排内编号唯一、递增。 */
+export const orchestrationVersions = pgTable(
+	"orchestration_versions",
+	{
+		id: uuid("id").primaryKey(),
+		orchestrationId: uuid("orchestration_id")
+			.notNull()
+			.references(() => orchestrations.id),
+		number: integer("number").notNull(),
+		document: jsonb("document").$type<OrchestrationDocument>().notNull(),
+		author: text("author").notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+	},
+	(t) => [unique("orchestration_versions_number").on(t.orchestrationId, t.number)],
+);
+
+export type RunStatus = "running" | "success" | "failed" | "cancelled";
+export type ChainStatus = RunStatus;
+/**
+ * 任务状态（docs/SEMANTICS.md §3.1）。skipped（#11）：前面的节点失败、本节点不是 always，
+ * 记一行 attempt 1 的占位（没有派发，不算一次尝试）。
+ * cancelled（#12）：运行被取消；没有开始执行（started_at 为空）的行是占位，不算一次尝试。
+ */
+/** waiting：定时 / Sleep 节点正在等待唤醒时间（#14），不占用 Agent。 */
+/**
+ * dispatched：已派发给 Agent，Agent 还在下载、安装节点包或启动执行器；Agent 上报 TaskStarted 后才是 running，
+ * 超时和耗时都从 running 开始计算（docs/SEMANTICS.md §3.3）。
+ */
+export type TaskStatus =
+	| "queued"
+	| "dispatched"
+	| "running"
+	| "waiting"
+	| "success"
+	| "failed"
+	| "skipped"
+	| "cancelled";
+/** 占用 Agent 槽位、由 Agent 负责的任务状态：派发阶段和执行阶段（有租约，心跳续约）。 */
+export const ON_AGENT = ["dispatched", "running"] as const satisfies readonly TaskStatus[];
+
+/** 任务的最新进度（ctx.progress）。 */
+export interface TaskProgress {
+	current: number;
+	/** 总数；未知时为 null。 */
+	total: number | null;
+	message: string;
+	/** SDK 记录这次进度的时间（ISO）。 */
+	time: string;
+}
+
+export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
+
+/** 运行：绑定一个编排版本。params 是填充默认值并覆盖后的入口参数。 */
+export const runs = pgTable(
+	"runs",
+	{
+		id: uuid("id").primaryKey(),
+		orchestrationId: uuid("orchestration_id")
+			.notNull()
+			.references(() => orchestrations.id),
+		orchestrationVersionId: uuid("orchestration_version_id")
+			.notNull()
+			.references(() => orchestrationVersions.id),
+		triggeredBy: text("triggered_by").notNull(),
+		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
+		status: text("status").$type<RunStatus>().notNull(),
+		startedAt: timestamptz("started_at").notNull(),
+		endedAt: timestamptz("ended_at"),
+		/** 第一次取消（#12）的时间和昵称；之后运行在所有链结束时标记为 cancelled。 */
+		cancelRequestedAt: timestamptz("cancel_requested_at"),
+		cancelRequestedBy: text("cancel_requested_by"),
+		/** 清理期间再次取消（强制取消）的时间：always 节点也立即终止。 */
+		cancelForcedAt: timestamptz("cancel_forced_at"),
+		/** 日志和产物超过保留期被清理的时间（#18，src/retention/retention.ts）；未清理时为空。 */
+		purgedAt: timestamptz("purged_at"),
+	},
+	(t) => [index("runs_orchestration").on(t.orchestrationId), index("runs_ended_at").on(t.endedAt)],
+);
+
+/** 链实例：主链（depth 0）或子流程实例；ID 由运行、父链实例、异步任务节点确定性生成。 */
+export const chainInstances = pgTable(
+	"chain_instances",
+	{
+		id: uuid("id").primaryKey(),
+		runId: uuid("run_id")
+			.notNull()
+			.references(() => runs.id),
+		/** 链起点（入口节点 / 子流程入口节点）的节点 ID。 */
+		chainId: text("chain_id").notNull(),
+		parentChainInstanceId: uuid("parent_chain_instance_id"),
+		asyncNodeId: text("async_node_id"),
+		depth: integer("depth").notNull(),
+		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
+		status: text("status").$type<ChainStatus>().notNull(),
+		startedAt: timestamptz("started_at").notNull(),
+		endedAt: timestamptz("ended_at"),
+	},
+	(t) => [index("chain_instances_run").on(t.runId)],
+);
+
+/** 任务：节点在运行中的一次尝试（内置节点也记一条，agent_name 为空）。ID 由链实例、节点、attempt 确定性生成。 */
+export const tasks = pgTable(
+	"tasks",
+	{
+		id: uuid("id").primaryKey(),
+		runId: uuid("run_id")
+			.notNull()
+			.references(() => runs.id),
+		chainInstanceId: uuid("chain_instance_id")
+			.notNull()
+			.references(() => chainInstances.id),
+		nodeId: text("node_id").notNull(),
+		attempt: integer("attempt").notNull(),
+		agentName: text("agent_name"),
+		status: text("status").$type<TaskStatus>().notNull(),
+		/** 派发时解析过引用的输入；排队时为空。 */
+		inputs: jsonb("inputs").$type<Record<string, unknown>>(),
+		outputs: jsonb("outputs").$type<Record<string, unknown>>(),
+		errorKind: text("error_kind").$type<ErrorKind>(),
+		errorMessage: text("error_message"),
+		/** 进入 queued 的时间，派发按它排序。 */
+		queuedAt: timestamptz("queued_at").notNull(),
+		/** 用于同一时刻排队的任务保持创建顺序。 */
+		seq: bigserial("seq", { mode: "number" }).notNull(),
+		startedAt: timestamptz("started_at"),
+		endedAt: timestamptz("ended_at"),
+		/** 最新进度（#10），只保留最后一次上报的值。 */
+		progress: jsonb("progress").$type<TaskProgress>(),
+		/** 日志文件（#10）：相对数据目录的路径，第一次收到日志时设置；格式见 src/logs/task-logs.ts。 */
+		logPath: text("log_path"),
+		/** 日志文件已写入的字节数。 */
+		logBytes: bigint("log_bytes", { mode: "number" }).notNull().default(0),
+		/** 已写入的最大日志序号（序号不大于它的行视为重复）。 */
+		logSeq: bigint("log_seq", { mode: "number" }).notNull().default(0),
+		/** 日志超过上限已被截断（#18）：写入了截断标记，之后的行都被丢弃。 */
+		logTruncated: boolean("log_truncated").notNull().default(false),
+		/**
+		 * 定时 / Sleep 节点的唤醒时间（#14）：waiting 期间由控制面周期扫描，到期后节点成功。
+		 * 定时器的全部状态都在这一行里（status + wake_at），控制面重启后照常扫描。
+		 */
+		wakeAt: timestamptz("wake_at"),
+		/**
+		 * 运行中任务的租约到期时间（#15）：派发时设置，Agent 心跳续约；过期后任务以 agent_lost 失败。
+		 */
+		leaseExpiresAt: timestamptz("lease_expires_at"),
+		/** 排队中任务的排队超时时间（#15）：进入 queued 时按节点的 queue_timeout 设置；过期后以 env_error 失败。 */
+		queueExpiresAt: timestamptz("queue_expires_at"),
+	},
+	(t) => [
+		index("tasks_waiting").on(t.wakeAt).where(sql`${t.status} = 'waiting'`),
+		index("tasks_lease").on(t.leaseExpiresAt).where(sql`${t.status} = 'running'`),
+		index("tasks_queue_timeout").on(t.queueExpiresAt).where(sql`${t.status} = 'queued'`),
+		unique("tasks_attempt").on(t.chainInstanceId, t.nodeId, t.attempt),
+		index("tasks_agent_status").on(t.agentName, t.status),
+		index("tasks_chain_instance").on(t.chainInstanceId),
+	],
+);
+
+/**
+ * 产物（#18）：任务结束后 Agent 通过 HTTP 上传的文件。同一任务内按名称（产物目录内的相对路径）唯一，
+ * 重复上传覆盖。文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`（path 相对数据目录）。
+ */
+export const artifacts = pgTable(
+	"artifacts",
+	{
+		id: uuid("id").primaryKey(),
+		taskId: uuid("task_id")
+			.notNull()
+			.references(() => tasks.id),
+		runId: uuid("run_id")
+			.notNull()
+			.references(() => runs.id),
+		name: text("name").notNull(),
+		path: text("path").notNull(),
+		size: bigint("size", { mode: "number" }).notNull(),
+		sha256: text("sha256").notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+	},
+	(t) => [unique("artifacts_task_name").on(t.taskId, t.name), index("artifacts_run").on(t.runId)],
+);
+
+/** 已发布的节点包版本；`包名@版本` 唯一，发布后不可变。 */
+export const nodePackages = pgTable(
+	"node_packages",
+	{
+		name: text("name").notNull(),
+		version: text("version").notNull(),
+		metadata: jsonb("metadata").$type<PackageMetadata>().notNull(),
+		/** 相对控制面数据目录的路径。 */
+		filePath: text("file_path").notNull(),
+		sha256: text("sha256").notNull(),
+		size: bigint("size", { mode: "number" }).notNull(),
+		publishedAt: timestamptz("published_at").notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.name, t.version] })],
+);

@@ -143,9 +143,12 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | `sfly publish` | 上传到控制面；控制面校验元信息，`包名@版本` 已存在时拒绝 |
 | `sfly dev <path>` | 让本机 Agent 以可编辑方式安装本地源码目录，注册为 `包名@dev` |
 
+`sfly dev` 通过 Agent 的本地 Unix socket（`--dev-socket`，只在本机可访问）通知 Agent；这是 CLI 与本机 Agent 之间的本地接口，不经过控制面。
+
 ### 4.4 Agent 上的安装（共享 venv）
 
 - 每个 Agent 有**一个**共享 venv（与 Agent 自身完全隔离），节点包和 SDK 运行时都装在里面。
+- venv 不存在时 Agent 启动时用 `uv venv` 创建；SDK 运行时由控制面提供（构建时打包 `sdk/python` 的 wheel，`GET /sdk/python/<版本>/<wheel>`），Welcome 给出与 Agent 版本相同的 wheel 地址和 sha256，venv 里的 SDK 版本不一致时 Agent 下载、校验并安装，一致时不重装。
 - 任务需要的 `包名@版本` 与已安装的版本不一致时，Agent 用 `uv pip install` 安装或切换版本。
 - **安装与启动新任务互斥**：安装期间不启动新任务，已经在运行的任务继续执行。
 - 安装失败（包括依赖冲突）时，任务以 `env_error` 失败，不重试，并展示完整的 uv 输出。
@@ -160,19 +163,20 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 - 启动后主动建立 gRPC 双向流；同名 Agent 重新连接时替换旧连接。
 - 画布上按名称选择 Agent。
 
-### 5.2 协议（`proto/agent.proto` 草图）
+### 5.2 协议（`proto/sfly/agent/v1/agent.proto` 草图）
 
 ```proto
 service AgentGateway {
-  rpc Connect(stream AgentMessage) returns (stream ServerMessage);
+  // RPC 名用 Session：tonic 生成的客户端已有构造函数 connect()，同名会冲突
+  rpc Session(stream AgentMessage) returns (stream ServerMessage);
 }
 
 message AgentMessage {
   oneof body {
     Hello         hello      = 1;  // name, token, agent_version, os, arch, slots,
                                    // installed_packages, dev_packages, running_tasks
-    Heartbeat     heartbeat  = 2;  // 续约全部 running 任务的租约
-    TaskStarted   started    = 3;
+    Heartbeat     heartbeat  = 2;  // running_tasks：Agent 实际持有的任务，只续约这些
+    TaskStarted   started    = 3;  // 执行器子进程真正启动：任务从派发阶段进入 running
     LogBatch      logs       = 4;  // task_id, [seq, ts, stream, level, text]
     Progress      progress   = 5;  // task_id, current, total, message（合并为每秒最多一次）
     TaskResult    result     = 6;  // task_id, attempt, status, outputs_json, error{kind, message}
@@ -223,6 +227,7 @@ flowchart TD
 | `SFLY_OUTPUT` | 执行器写入返回值 `output.json` 的路径 |
 | `SFLY_EVENTS` | SDK 追加写入结构化日志和进度的 JSONL 文件；Agent 持续读取新增内容 |
 | `SFLY_ARTIFACTS` | 产物目录，任务结束后由 Agent 上传 |
+| `SFLY_ARTIFACTS_URL` | 产物下载地址前缀；`ctx.artifacts.save()` 返回的产物引用 = 前缀 + 按路径段编码的名称 |
 | `SFLY_CANCEL` | 取消标记文件；出现时 `ctx.cancelled()` 返回 true |
 
 进程树终止方式：Linux 使用进程组，Windows 使用 Job Object。
@@ -236,7 +241,10 @@ flowchart TD
 - **状态全部落库**，引擎是 PostgreSQL 之上的状态机；每次状态迁移在一个事务内完成。
 - 推进由事件驱动：任务结果、定时器到期、Agent 上下线、用户取消。
 - 定时器：等待中节点的到期时间存在库里，按秒扫描；控制面重启后从库中恢复。
-- 租约：Agent 心跳续约正在运行的任务；租约过期视为 `agent_lost`，按节点的 `retries` 决定是否重新派发。
+- 派发阶段：任务推送给 Agent 后先处于 `dispatched`（Agent 在下载、安装节点包或启动执行器），Agent 上报 `TaskStarted` 后才是 `running`；超时和耗时都从 `running` 开始计算，与 Agent 的计时起点一致。
+- 租约：心跳携带 Agent 实际持有的任务（`Heartbeat.running_tasks`），控制面只续约这些；控制面认为在这个 Agent 上、但连续两次心跳都没上报的任务以 `agent_lost` 失败。租约过期同样视为 `agent_lost`，按节点的 `retries` 决定是否重新派发。租约默认 30 秒，Welcome 告诉 Agent 每 10 秒（租约的三分之一，`Welcome.heartbeat_interval_ms`）心跳一次。
+- 重连：Agent 在 Hello 中上报手上的任务（正在执行的，以及结果还没收到 Ack 的），控制面在 Welcome 中逐个答复继续或放弃（放弃的任务被立即杀掉、结果丢弃）；控制面认为在这个 Agent 上运行、但 Hello 里没有的任务立即以 `agent_lost` 失败。
+- 重启：运行、链实例、任务、定时器都在库里，启动时不重放；只把已经（或即将）到期的租约和排队超时顺延到一个租约之后，给 Agent 重新连接的时间。
 - 派发：任务 `queued` 后，目标 Agent 在线且有空闲槽位时推送；超过 `queue_timeout` 仍未派发则 `env_error`。
 - ID 确定性生成：子流程实例 ID 和任务 ID 都由运行、链实例、节点、attempt 推导，崩溃恢复时不会重复创建。
 
@@ -259,20 +267,20 @@ flowchart TD
 
 | 数据 | 存储 | 读取 |
 |---|---|---|
-| 日志 | 每个任务一个文件（磁盘），元数据在 PG；单个任务上限 200 MB，超出后截断并写入截断标记 | 按偏移量分页读取 + 下载原始文件；SSE 推送新增行；前端先加载历史再接实时流，按 `seq` 去重 |
+| 日志 | 每个任务一个文件（磁盘），元数据在 PG；单个任务上限 200 MB，超出后截断并写入截断标记（来源 `system`） | 按偏移量分页读取 + 下载原始文件；SSE 推送新增行（`after_seq` 从分页读到的位置接上）；前端先加载历史再接实时流，按 `seq` 去重；实时流与历史之间有缺口时从实时流处往前翻页；浏览器最多保留 5000 行，更早的向上滚动重新加载 |
 | 进度 | `tasks.progress` 只保留最新值 | 通过 SSE 推送，显示在节点卡片上 |
-| 产物 | 磁盘 | 通过输出中的引用下载 |
+| 产物 | 磁盘；单个任务的产物总大小默认上限 1 GB（`SFLY_ARTIFACT_LIMIT_MB`），超出时上传返回 413 | 通过输出中的引用下载（运行视图里显示为下载链接） |
 
 日志和产物默认保留 30 天，可以配置。
 
 ### 6.4 编排编辑、版本与并发
 
-1. 编辑中的内容是浏览器本地草稿（localStorage），刷新不丢失。
+1. 编辑中的内容是浏览器本地草稿（localStorage），刷新不丢失。同一浏览器的多个标签页共用一份草稿：另一个标签页改写了草稿时，当前标签页停止写草稿并提示，由用户选择载入那份草稿或直接保存。
 2. 点击"保存"时提交 `base_version`；如果服务器上的最新版本已经不同，返回 **409**。
 3. 发生冲突时可以：查看差异（节点、参数、连线）、放弃本地修改并载入最新版本、另存为新编排。不做自动合并。
 4. 布局属于版本内容；只有点击保存才生成新版本。校验错误不阻止保存，只显示警告；触发运行时必须全部通过。
 5. 历史版本只读，可以查看和对比；"恢复"会用旧内容生成一个新版本。
-6. **在线编辑者提示**：打开编辑页面的浏览器每 10 秒发送一次心跳（带昵称），控制面在内存中维护每份编排的在线编辑者（30 秒无心跳即移除），通过 SSE 推送；画布上显示"Bob 正在编辑"。
+6. **在线编辑者提示**：打开编辑页面的浏览器每 10 秒发送一次心跳（带昵称），控制面在内存中维护每份编排的在线编辑者（30 秒无心跳即移除），通过 SSE 推送；画布上显示"Bob 正在编辑"（自己的其他标签页显示为"你（其他标签页）"）。关闭页面时浏览器主动离开（`POST /orchestrations/:id/presence/leave`），立即从名单移除。
 7. 身份：首次打开页面时填写昵称，保存在浏览器中，每个请求通过请求头携带；只用于显示，不做鉴权。
 
 ---

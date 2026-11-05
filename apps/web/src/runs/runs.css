@@ -1,0 +1,146 @@
+/*
+ * 运行视图与运行记录（#9）。只使用 canvas/tokens.css 中的 --sf-* 变量，
+ * 视觉参照原型 runs.css（执行记录表、.pill）与 inspector.css。节点卡片和连线的运行状态在 canvas/canvas.css。
+ */
+
+/* —— 运行状态标签（原型 .pill） —— */
+.sf-pill {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	white-space: nowrap;
+}
+.sf-pill i {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: currentColor;
+}
+.sf-pill--run {
+	color: var(--sf-accent-hi);
+}
+.sf-pill--ok {
+	color: var(--sf-ok);
+}
+.sf-pill--fail {
+	color: var(--sf-danger-text);
+}
+.sf-pill--fail i {
+	background: var(--sf-danger);
+}
+.sf-pill--skip {
+	color: var(--sf-text-3);
+}
+
+/* —— 运行记录表（原型 .runs table） —— */
+.sf-runs {
+	max-width: 960px;
+	margin: 0 auto;
+	border-radius: 18px;
+	overflow: hidden;
+	background: var(--sf-surface);
+	border: 1px solid var(--sf-border-soft);
+	box-shadow: var(--sf-shadow-float);
+}
+.sf-runs table {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 12.5px;
+}
+.sf-runs th {
+	text-align: left;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--sf-text-3);
+	padding: 10px 16px;
+	border-bottom: 1px solid var(--sf-border-soft);
+	position: sticky;
+	top: 0;
+	background: var(--sf-surface);
+}
+.sf-runs td {
+	padding: 11px 16px;
+	border-bottom: 1px solid var(--sf-border-soft);
+	white-space: nowrap;
+}
+.sf-runs tbody tr {
+	cursor: pointer;
+}
+.sf-runs tbody tr:hover td,
+.sf-runs tbody tr:focus-visible td {
+	background: var(--sf-raised);
+}
+.sf-runs tbody tr:focus-visible {
+	outline: 2px solid var(--sf-accent);
+	outline-offset: -2px;
+}
+
+/* —— 检查器：键值列表、尝试卡片、JSON —— */
+.sf-kv {
+	display: grid;
+	grid-template-columns: 76px minmax(0, 1fr);
+	gap: 6px 10px;
+	margin: 0;
+	font-size: 12.5px;
+}
+.sf-kv dt {
+	color: var(--sf-text-3);
+}
+.sf-kv dd {
+	margin: 0;
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+.sf-attempt {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+.sf-attempt > header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 12.5px;
+}
+.sf-attempt[data-run="failed"] {
+	border-color: var(--sf-danger-line);
+}
+.sf-attempt h4 {
+	margin: 4px 0 0;
+	font-size: 12px;
+	font-weight: 500;
+	color: var(--sf-text-3);
+}
+.sf-attempt .sf-err {
+	white-space: pre-wrap;
+	max-height: 180px;
+	overflow: auto;
+	font-family: var(--sf-mono);
+	font-size: 11.5px;
+}
+.sf-json {
+	margin: 0;
+	padding: 8px 10px;
+	max-height: 220px;
+	overflow: auto;
+	border-radius: 7px;
+	background: var(--sf-sunk);
+	font: 400 11.5px / 1.5 var(--sf-mono);
+	color: var(--sf-text);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+.sf-required {
+	color: var(--sf-danger-text);
+}
+
+/* 取消运行（#12）：危险操作用状态红，不用白色主按钮 */
+.sf-btn--danger {
+	color: var(--sf-danger-text);
+	background: var(--sf-danger-soft);
+	border: 1px solid var(--sf-danger-border);
+}
+.sf-btn--danger:hover {
+	background: var(--sf-danger-dim);
+}
