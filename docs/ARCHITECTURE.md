@@ -121,7 +121,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> dict:
 - 输出：函数的返回值（JSON 对象，上限 1 MB）；返回值的键在装饰器或返回类型注解中声明，用于画布补全和保存时的引用检查。
 - 指标与图表：`@node(metrics=[Metric("tps", unit="笔/s"), Metric("rejected", kind="counter")], charts=[Chart("TPS", type="line", metrics=["tps"])], primary_metric="tps")`。`sfly build` 校验：每个节点类型最多 50 个指标、20 张图表，指标名不重复，图表引用和主指标必须是已声明的指标。没被任何图表引用的指标由节点包查询 API 补上默认图表（`default: true`；gauge → 折线，counter → 数值卡）。
 - 失败：抛出异常。
-- `ctx`：日志、进度、产物、取消检查（`ctx.cancelled()`）。
+- `ctx`：日志、进度、指标（`ctx.metric(name, value)`：未声明的指标名和非有限数值被丢弃并写警告日志）、产物、取消检查（`ctx.cancelled()`）。
 
 ### 4.2 节点包格式
 
@@ -183,6 +183,8 @@ message AgentMessage {
     Progress      progress   = 5;  // task_id, current, total, message（合并为每秒最多一次）
     TaskResult    result     = 6;  // task_id, attempt, status, outputs_json, error{kind, message}
     InstallStatus install    = 7;
+    MetricBatch   metrics    = 8;  // task_id, attempt, [name, 秒, value, min, max], dropped_points
+                                   // （按「任务 × 指标 × 秒」合并，每秒最多一批；断线排队有上限，丢弃最早的点）
   }
 }
 
@@ -271,6 +273,7 @@ flowchart TD
 |---|---|---|
 | 日志 | 每个任务一个文件（磁盘），元数据在 PG；单个任务上限 200 MB，超出后截断并写入截断标记（来源 `system`） | 按偏移量分页读取 + 下载原始文件；SSE 推送新增行（`after_seq` 从分页读到的位置接上）；前端先加载历史再接实时流，按 `seq` 去重；实时流与历史之间有缺口时从实时流处往前翻页；浏览器最多保留 5000 行，更早的向上滚动重新加载 |
 | 进度 | `tasks.progress` 只保留最新值 | 通过 SSE 推送，显示在节点卡片上 |
+| 指标 | PG 按天分区的分段表 `metric_segments`（ADR 0009；一段最多 120 点、行内压缩，当前段约每 10 秒重写一次，任务结束立即写入）+ 摘要表 `metric_series`；单个任务上限约 50 MB（`SFLY_METRIC_LIMIT_MB`，按每点 28 字节折算），超出后截断 | `GET /runs/:id/metrics/summary`：每个任务每个指标的点数、最小、最大、平均、最新值、首尾时间和截断标记 |
 | 产物 | 磁盘；单个任务的产物总大小默认上限 1 GB（`SFLY_ARTIFACT_LIMIT_MB`），超出时上传返回 413 | 通过输出中的引用下载（运行视图里显示为下载链接） |
 
 日志和产物默认保留 30 天，可以配置。
