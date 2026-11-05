@@ -1,4 +1,5 @@
 import { type DocumentDiff, diffDocuments } from "@sfly/orchestration";
+import { orchestrationsApi, queryKey } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -226,7 +227,9 @@ function RestoreDialog({
 		onSuccess: (saved) => {
 			// 本地草稿基于旧的最新版本；恢复后从新版本开始编辑。
 			clearDraft(orchestrationId);
-			queryClient.removeQueries({ queryKey: ["orchestration", orchestrationId, "head"] });
+			queryClient.removeQueries({
+				queryKey: queryKey(orchestrationsApi.head, { params: { id: orchestrationId } }),
+			});
 			queryClient.invalidateQueries({ queryKey: ["orchestration", orchestrationId] });
 			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
 			onRestored(saved.number);

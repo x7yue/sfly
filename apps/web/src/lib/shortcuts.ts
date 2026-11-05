@@ -42,6 +42,29 @@ export const SHORTCUTS = [
 	{ id: "go-agents", group: "全局", label: "Agent 管理", keys: "G A" },
 	{ id: "go-packages", group: "全局", label: "节点包管理", keys: "G P" },
 	{ id: "toggle-sidebar", group: "全局", label: "折叠 / 展开侧边栏", keys: "Ctrl+B" },
+	// 编排画布（全屏页）：方向键、Enter、Esc 由画布组件自己处理（components/canvas/FlowCanvas.tsx）。
+	{
+		id: "canvas-save",
+		group: "编排画布",
+		label: "保存",
+		keys: "Ctrl+S",
+		inInputs: true,
+	},
+	{ id: "canvas-fit", group: "编排画布", label: "适配视图", keys: "0" },
+	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
+	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },
+	{ id: "canvas-minimap", group: "编排画布", label: "小地图", keys: "M" },
+	{ id: "canvas-inspector", group: "编排画布", label: "检查器", keys: "I" },
+	{ id: "canvas-chain", group: "编排画布", label: "沿链切换节点", keys: "← →", displayOnly: true },
+	{ id: "canvas-subflow", group: "编排画布", label: "进出子流程", keys: "↓ ↑", displayOnly: true },
+	{
+		id: "canvas-to-inspector",
+		group: "编排画布",
+		label: "焦点移到检查器",
+		keys: "Enter",
+		displayOnly: true,
+	},
+	{ id: "canvas-deselect", group: "编排画布", label: "取消选中", keys: "Esc", displayOnly: true },
 	{ id: "monitor-toggle-timeline", group: "运行监控", label: "时间线汇总 / 展开节点", keys: "T" },
 ] as const satisfies readonly ShortcutDef[];
 

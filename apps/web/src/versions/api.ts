@@ -1,6 +1,7 @@
 import type { OrchestrationWarning } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
-import { ApiError, apiGet, apiPost, type SavedVersion } from "#/lib/api";
+import { orchestrationsApi } from "@sfly/schema";
+import { ApiError, apiGet, apiPost, callApi } from "#/lib/api";
 
 /** 编排版本历史与冲突相关的控制面 API（#16）。 */
 
@@ -34,9 +35,9 @@ export const saveVersionFrom = (
 	baseVersion: number,
 	document: OrchestrationDocument,
 ) =>
-	apiPost<SavedVersion>(`/orchestrations/${orchestrationId}/versions`, {
-		base_version: baseVersion,
-		document,
+	callApi(orchestrationsApi.saveVersion, {
+		params: { id: orchestrationId },
+		body: { base_version: baseVersion, document },
 	});
 
 export const listVersions = (orchestrationId: string) =>

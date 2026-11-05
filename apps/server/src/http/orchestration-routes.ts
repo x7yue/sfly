@@ -1,4 +1,4 @@
-import { OrchestrationDocument, orchestrationsApi } from "@sfly/schema";
+import { type EndpointResponse, orchestrationsApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db/database.js";
@@ -11,11 +11,8 @@ import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 import { requireNickname } from "./nickname.js";
 
-const SaveVersionBody = z.object({
-	document: OrchestrationDocument,
-	/** 编辑起点的版本号（新编排的第一个版本为 0）。必填；不是最新版本时返回 409。 */
-	base_version: z.number().int().nonnegative(),
-});
+/** 编辑起点的版本号（新编排的第一个版本为 0）必填；不是最新版本时返回 409。 */
+const SaveVersionBody = orchestrationsApi.saveVersion.body;
 
 const notFound = (reply: FastifyReply) =>
 	sendError(reply, 404, "not_found", "orchestration not found");
@@ -39,12 +36,9 @@ export function registerOrchestrationRoutes(
 
 	contractRoute(app, orchestrationsApi.list, ({ query }) => listOrchestrationSummaries(db, query));
 
-	app.get<{ Params: { id: string } }>("/orchestrations/:id/head", async (request, reply) => {
-		const head = isUuid(request.params.id)
-			? await orchestrations.head(request.params.id)
-			: undefined;
-		if (!head) return notFound(reply);
-		return head;
+	contractRoute(app, orchestrationsApi.head, async ({ params }, reply) => {
+		const head = isUuid(params.id) ? await orchestrations.head(params.id) : undefined;
+		return head ?? notFound(reply);
 	});
 
 	contractRoute(app, orchestrationsApi.copy, async ({ params, body }, reply, raw) => {
@@ -136,9 +130,11 @@ export function registerOrchestrationRoutes(
 		}
 		const saved = result.version;
 		// 结构、包版本锁定和引用的问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2、§2.4）。
+		const response = { ...saved, warnings: await checkDocument(saved.document, packages) };
+		// 响应在类型上受契约约束（orchestrationsApi.saveVersion）。
 		return reply
 			.code(201)
-			.send({ ...saved, warnings: await checkDocument(saved.document, packages) });
+			.send(response satisfies EndpointResponse<typeof orchestrationsApi.saveVersion>);
 	});
 
 	app.get<{ Params: { id: string } }>("/orchestrations/:id/versions", async (request, reply) => {

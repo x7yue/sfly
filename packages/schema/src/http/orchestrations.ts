@@ -1,9 +1,14 @@
 import { z } from "zod";
+import { OrchestrationDocument } from "../orchestration-document.js";
 import { endpoint, Timestamp } from "./contract.js";
 
 /**
  * 场景（代码与路径里沿用 orchestration）相关接口的契约（约定见 ./contract.ts）。
  * 名称和说明不属于场景版本，可以随时修改；归档的场景不出现在默认列表、不能触发运行，可以恢复，不提供物理删除。
+ * 版本历史、恢复等接口随各自页面迁入。
+ *
+ * 响应里的 `document` 用 OrchestrationDocument：控制面保存时已按它解析（默认值都已补齐），
+ * 存储的文档再解析一次不会改变，满足「响应解析前后相同」的约定。
  */
 
 export const OrchestrationView = z.object({
@@ -15,6 +20,45 @@ export const OrchestrationView = z.object({
 	created_at: Timestamp,
 	/** 归档时间；没有归档时为 null。 */
 	archived_at: Timestamp.nullable(),
+});
+
+/** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */
+export const OrchestrationHeadView = z.object({
+	orchestration_id: z.string(),
+	number: z.number().int(),
+	author: z.string().nullable(),
+	created_at: Timestamp.nullable(),
+	document: OrchestrationDocument,
+});
+
+export const VersionSummaryView = z.object({
+	number: z.number().int(),
+	author: z.string(),
+	created_at: Timestamp,
+});
+
+/** 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。 */
+export const DocumentWarningView = z.object({
+	code: z.string(),
+	message: z.string(),
+	node_id: z.string().optional(),
+	input: z.string().optional(),
+});
+
+export const SavedVersionView = z.object({
+	id: z.string(),
+	orchestration_id: z.string(),
+	number: z.number().int(),
+	author: z.string(),
+	created_at: Timestamp,
+	document: OrchestrationDocument,
+	warnings: z.array(DocumentWarningView),
+});
+
+/** 409 `version_conflict` 的 details：别人在 base_version 之后先保存了新版本（还没有版本时 head 为 null）。 */
+export const VersionConflictDetails = z.object({
+	base_version: z.number().int(),
+	head: VersionSummaryView.nullable(),
 });
 
 const RunStatus = z.enum(["running", "success", "failed", "cancelled"]);
@@ -85,7 +129,7 @@ export const OrchestrationSummary = z.object({
 	last_run: LastRun.nullable(),
 });
 
-const IdParams = z.object({ id: z.string() });
+const IdParams = z.object({ id: z.string().min(1) });
 const Name = z.string().trim().min(1);
 
 export const ListOrchestrationsQuery = z.object({
@@ -111,12 +155,39 @@ export const orchestrationsApi = {
 			archived_count: z.number().int(),
 		}),
 	}),
+	/** 单个场景（名称、说明、最新版本号、归档时间）。 */
 	get: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id",
 		key: ["orchestrations", "detail"],
 		params: IdParams,
 		response: OrchestrationView,
+	}),
+	/** 编辑起点：最新版本的内容。 */
+	head: endpoint({
+		method: "GET",
+		path: "/orchestrations/:id/head",
+		key: ["orchestrations", "head"],
+		params: IdParams,
+		response: OrchestrationHeadView,
+	}),
+	/**
+	 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
+	 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
+	 * 缺 base_version 返回 400 `base_version_required`、文档不合法返回 400 `invalid_document`
+	 * （比通用的 `invalid_request` 更具体，测试与文档依赖），所以控制面没有用 contractRoute 注册这个接口，
+	 * 而是用这里的 body schema 解析、响应在类型上受契约约束。
+	 */
+	saveVersion: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/versions",
+		key: ["orchestrations", "save-version"],
+		params: IdParams,
+		body: z.object({
+			document: OrchestrationDocument,
+			base_version: z.number().int().nonnegative(),
+		}),
+		response: SavedVersionView,
 	}),
 	/** 新建场景（自带入口节点：还没有版本时编辑起点是只含入口节点的初始文档）。 */
 	create: endpoint({
@@ -170,3 +241,8 @@ export type OrchestrationStructure = z.infer<typeof OrchestrationStructure>;
 export type ReferencedAgent = z.infer<typeof ReferencedAgent>;
 export type LastRun = z.infer<typeof LastRun>;
 export type LastRunNodeStatus = z.infer<typeof NodeRunStatus>;
+export type OrchestrationHeadView = z.infer<typeof OrchestrationHeadView>;
+export type VersionSummaryView = z.infer<typeof VersionSummaryView>;
+export type DocumentWarningView = z.infer<typeof DocumentWarningView>;
+export type SavedVersionView = z.infer<typeof SavedVersionView>;
+export type VersionConflictDetails = z.infer<typeof VersionConflictDetails>;

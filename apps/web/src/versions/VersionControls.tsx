@@ -1,5 +1,5 @@
 import { diffDocuments } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import { type OrchestrationDocument, orchestrationsApi, queryKey } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useMemo, useState } from "react";
@@ -167,7 +167,7 @@ export function StaleDraftBanner({
  * 冲突对话框：对比最新版本与本地修改（节点、参数、连线），然后选择放弃本地修改并载入最新版本，
  * 或者把本地修改另存为新场景。不做自动合并。
  */
-function ConflictDialog({
+export function ConflictDialog({
 	orchestration,
 	doc,
 	head,
@@ -200,7 +200,10 @@ function ConflictDialog({
 	const discard = () => {
 		if (!latest.data) return;
 		versioning.dropDraft();
-		queryClient.setQueryData(["orchestration", orchestration.id, "head"], latest.data);
+		queryClient.setQueryData(
+			queryKey(orchestrationsApi.head, { params: { id: orchestration.id } }),
+			latest.data,
+		);
 		onReload(latest.data);
 	};
 
