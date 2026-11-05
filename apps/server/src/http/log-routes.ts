@@ -1,38 +1,14 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { logsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
-import type { LogChunk, LogLineView, TaskLogs } from "../logs/task-logs.js";
+import type { LogChunk, TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
 import { isUuid } from "../util/uuid.js";
 import { attachment } from "./content-disposition.js";
+import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
-
-const LEVELS: ReadonlyArray<LogLineView["level"]> = ["debug", "info", "warn", "error"];
-const SOURCES: ReadonlyArray<LogLineView["source"]> = ["stdout", "stderr", "sdk", "system"];
-const DEFAULT_PAGE_LINES = 200;
-const MAX_PAGE_LINES = 1000;
-
-interface PageQuery {
-	before?: string;
-	after?: string;
-	limit?: string;
-	level?: string;
-	source?: string;
-}
-
-const offsetOf = (value: string | undefined): number | undefined | null => {
-	if (value === undefined || value === "") return undefined;
-	const n = Number(value);
-	return Number.isSafeInteger(n) && n >= 0 ? n : null;
-};
-
-function setOf<T extends string>(value: string | undefined, all: ReadonlyArray<T>) {
-	if (value === undefined || value === "") return undefined;
-	const items = value.split(",").map((v) => v.trim());
-	if (!items.every((v) => (all as ReadonlyArray<string>).includes(v))) return null;
-	return new Set(items as T[]);
-}
 
 /**
  * 任务日志的实时推送（#10）：`GET /tasks/:id/logs/events`，事件 `logs`，data 为 {@link LogChunk}，id 为最后一行的序号。
@@ -42,7 +18,8 @@ function setOf<T extends string>(value: string | undefined, all: ReadonlyArray<T
  *
  * #18：
  * - `?after_seq=<n>`：已经用分页接口读到了第 n 行，连上时只发之后的行（与 `Last-Event-ID` 取较大者）。
- * - `GET /tasks/:id/logs`：按字节偏移分页读取（`before` / `after`、`limit`、`level`、`source`），见 log-pages.ts。
+ * - `GET /tasks/:id/logs`：按字节偏移分页读取（`before` / `after`、`limit`、`level`、`source`），见 log-pages.ts；
+ *   契约见 @sfly/schema 的 logsApi.page，查询参数不合法时 400 `invalid_request`。
  * - `GET /tasks/:id/logs/download`：下载原始日志文件（JSONL）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
  */
@@ -50,51 +27,26 @@ export function registerLogRoutes(
 	app: FastifyInstance,
 	deps: { logs: TaskLogs; sse: Sse; isPurged: (runId: string) => Promise<boolean> },
 ): void {
-	app.get<{ Params: { id: string }; Querystring: PageQuery }>(
-		"/tasks/:id/logs",
-		async (request, reply) => {
-			const taskId = request.params.id;
-			const info = isUuid(taskId) ? await deps.logs.describe(taskId) : undefined;
-			if (!info) return sendError(reply, 404, "not_found", "task not found");
-			const q = request.query;
-			const before = offsetOf(q.before);
-			const after = offsetOf(q.after);
-			const limit = q.limit === undefined ? DEFAULT_PAGE_LINES : Number(q.limit);
-			const levels = setOf(q.level, LEVELS);
-			const sources = setOf(q.source, SOURCES);
-			if (
-				before === null ||
-				after === null ||
-				(before !== undefined && after !== undefined) ||
-				!Number.isSafeInteger(limit) ||
-				limit < 1 ||
-				limit > MAX_PAGE_LINES ||
-				levels === null ||
-				sources === null
-			) {
-				return sendError(
-					reply,
-					400,
-					"invalid_query",
-					`before / after must be byte offsets (not both), limit 1-${MAX_PAGE_LINES}, level in ${LEVELS.join(",")}, source in ${SOURCES.join(",")}`,
-				);
-			}
-			const filter: LogFilter = { levels, sources };
-			const page = await readLogPage(
-				info.file,
-				after !== undefined
-					? { direction: "forward", after, limit, filter }
-					: { direction: "backward", before, limit, filter },
-			);
-			return {
-				task_id: taskId,
-				...page,
-				last_seq: info.seq,
-				truncated: info.truncated,
-				expired: await deps.isPurged(info.runId),
-			};
-		},
-	);
+	contractRoute(app, logsApi.page, async ({ params, query }, reply) => {
+		const info = isUuid(params.id) ? await deps.logs.describe(params.id) : undefined;
+		if (!info) return sendError(reply, 404, "not_found", "task not found");
+		const setOf = <T>(values: T[] | undefined) => (values ? new Set(values) : undefined);
+		const filter: LogFilter = { levels: setOf(query.level), sources: setOf(query.source) };
+		const { after, before, limit } = query;
+		const page = await readLogPage(
+			info.file,
+			after !== undefined
+				? { direction: "forward", after, limit, filter }
+				: { direction: "backward", before, limit, filter },
+		);
+		return {
+			task_id: params.id,
+			...page,
+			last_seq: info.seq,
+			truncated: info.truncated,
+			expired: await deps.isPurged(info.runId),
+		};
+	});
 
 	app.get<{ Params: { id: string } }>("/tasks/:id/logs/download", async (request, reply) => {
 		const taskId = request.params.id;

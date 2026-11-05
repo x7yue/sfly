@@ -1,5 +1,6 @@
 // 切入点 A：完整日志（#18）。假 Agent 经 gRPC 上报日志，通过 HTTP 按偏移量分页读取、筛选、下载原始文件，
 // 以及单个任务的日志上限（超出截断并写入截断标记）。
+import { logsApi } from "@sfly/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -77,7 +78,7 @@ describe("完整日志", () => {
 	const page = async (taskId: string, query = ""): Promise<LogPage> => {
 		const res = await cp.fetch(`/tasks/${taskId}/logs${query ? `?${query}` : ""}`);
 		expect(res.status).toBe(200);
-		return (await res.json()) as LogPage;
+		return logsApi.page.response.parse(await res.json());
 	};
 
 	/** 发送 1..n 行，等它们都写进日志文件。 */
@@ -155,7 +156,7 @@ describe("完整日志", () => {
 
 		const bad = await cp.fetch(`/tasks/${task.taskId}/logs?level=fatal`);
 		expect(bad.status).toBe(400);
-		expect(((await bad.json()) as { error: { code: string } }).error.code).toBe("invalid_query");
+		expect(((await bad.json()) as { error: { code: string } }).error.code).toBe("invalid_request");
 	});
 
 	it("先读历史再用 after_seq 接上实时流：不重复也不遗漏", async () => {

@@ -1,11 +1,13 @@
 import { createReadStream } from "node:fs";
 import { posix } from "node:path";
 import type { Readable } from "node:stream";
+import { artifactsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { agentTokenMatches, bearerToken } from "../agents/agent-token.js";
 import { type ArtifactRow, type ArtifactStore, artifactUrl } from "../artifacts/artifact-store.js";
 import { isUuid } from "../util/uuid.js";
 import { attachment } from "./content-disposition.js";
+import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
 /**
@@ -14,7 +16,7 @@ import { sendError } from "./errors.js";
  * | 方法 | 路径 | 说明 |
  * |---|---|---|
  * | PUT | `/tasks/:id/artifacts/<name>` | Agent 上传（请求体是文件内容）；配置了注册令牌时需要 `Authorization: Bearer <token>`。201 → 产物 |
- * | GET | `/tasks/:id/artifacts` | `{ task_id, artifacts: [{name, size, sha256, created_at, url}], expired }` |
+ * | GET | `/tasks/:id/artifacts` | `{ task_id, artifacts: [{name, size, sha256, created_at, url}], expired }`（契约：artifactsApi.list） |
  * | GET | `/tasks/:id/artifacts/<name>` | 下载（attachment）；运行已过保留期被清理时 410 `expired` |
  *
  * `<name>` 是产物目录内的相对路径，每个路径段单独百分号编码。`url` 是对 Agent 可见的完整下载地址，
@@ -60,11 +62,10 @@ export function registerArtifactRoutes(
 		);
 	});
 
-	app.get<{ Params: { id: string } }>("/tasks/:id/artifacts", async (request, reply) => {
-		const taskId = request.params.id;
-		const found = isUuid(taskId) ? await deps.artifacts.list(taskId) : undefined;
+	contractRoute(app, artifactsApi.list, async ({ params }, reply) => {
+		const found = isUuid(params.id) ? await deps.artifacts.list(params.id) : undefined;
 		if (!found) return sendError(reply, 404, "not_found", "task not found");
-		return { task_id: taskId, artifacts: found.artifacts.map(view), expired: found.expired };
+		return { task_id: params.id, artifacts: found.artifacts.map(view), expired: found.expired };
 	});
 
 	app.get<{ Params: { id: string; "*": string } }>(
