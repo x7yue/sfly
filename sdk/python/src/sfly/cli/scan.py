@@ -12,6 +12,7 @@ import importlib
 import inspect
 import json
 import pkgutil
+import re
 import sys
 import traceback
 import types
@@ -19,7 +20,7 @@ import typing
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from sfly.nodes import NODE_ATTR, NodeDeclaration, is_context_param
+from sfly.nodes import NODE_ATTR, Chart, Metric, NodeDeclaration, is_context_param
 
 
 class ScanError(Exception):
@@ -157,18 +158,84 @@ def output_schema(fn: Any, decl: NodeDeclaration, label: str) -> JsonSchema:
     return {"type": "object", "properties": {}}
 
 
+#: 每个节点类型最多声明的指标数和图表数（与 packages/schema 一致）。
+MAX_METRICS = 50
+MAX_CHARTS = 20
+METRIC_KINDS = ("gauge", "counter")
+CHART_TYPES = ("line", "area", "bar", "stat")
+_METRIC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def metric_declarations(decl: NodeDeclaration) -> dict[str, Any]:
+    """校验并生成指标、图表、主指标的元信息；不满足约束时抛出 ScanError 说明原因。"""
+    if len(decl.metrics) > MAX_METRICS:
+        raise ScanError(f"每个节点类型最多 {MAX_METRICS} 个指标，声明了 {len(decl.metrics)} 个")
+    if len(decl.charts) > MAX_CHARTS:
+        raise ScanError(f"每个节点类型最多 {MAX_CHARTS} 张图表，声明了 {len(decl.charts)} 张")
+
+    metrics: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for metric in decl.metrics:
+        if not isinstance(metric, Metric):
+            raise ScanError(f"metrics 的元素必须是 sfly.Metric：{metric!r}")
+        if not isinstance(metric.name, str) or not _METRIC_NAME.match(metric.name):
+            raise ScanError(
+                f"指标名 {metric.name!r} 必须是标识符（字母、数字、下划线，不以数字开头）"
+            )
+        if metric.name in names:
+            raise ScanError(f"指标名 {metric.name} 重复")
+        if metric.kind not in METRIC_KINDS:
+            raise ScanError(f"指标 {metric.name} 的类型 {metric.kind!r} 必须是 gauge 或 counter")
+        if not isinstance(metric.unit, str):
+            raise ScanError(f"指标 {metric.name} 的单位必须是字符串")
+        names.add(metric.name)
+        item: dict[str, Any] = {"name": metric.name, "unit": metric.unit, "kind": metric.kind}
+        if metric.description is not None:
+            item["description"] = metric.description
+        metrics.append(item)
+
+    charts: list[dict[str, Any]] = []
+    for chart in decl.charts:
+        if not isinstance(chart, Chart):
+            raise ScanError(f"charts 的元素必须是 sfly.Chart：{chart!r}")
+        if not isinstance(chart.title, str) or not chart.title:
+            raise ScanError("图表标题不能为空")
+        if chart.type not in CHART_TYPES:
+            raise ScanError(
+                f"图表 {chart.title} 的类型 {chart.type!r} 必须是 line、area、bar 或 stat"
+            )
+        if isinstance(chart.metrics, str) or not chart.metrics:
+            raise ScanError(f"图表 {chart.title} 必须用指标名列表列出至少一个指标")
+        for ref in chart.metrics:
+            if ref not in names:
+                raise ScanError(f"图表 {chart.title} 引用了未声明的指标 {ref}")
+        charts.append({"title": chart.title, "type": chart.type, "metrics": list(chart.metrics)})
+
+    result: dict[str, Any] = {"metrics": metrics, "charts": charts}
+    if decl.primary_metric is not None:
+        if decl.primary_metric not in names:
+            raise ScanError(f"主指标 {decl.primary_metric} 未声明")
+        result["primary_metric"] = decl.primary_metric
+    return result
+
+
 def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
     qualname: str = fn.__qualname__
     label = f"节点 {fn.__module__}.{qualname}"
     if "." in qualname:
         raise ScanError(f"{label}：@node 只能用于模块顶层函数")
     name = decl.name or fn.__name__
+    try:
+        declarations = metric_declarations(decl)
+    except ScanError as error:
+        raise ScanError(f"{label}：{error}") from None
     return {
         "name": name,
         "title": decl.title or name,
         "entry": f"{fn.__module__}:{qualname}",
         "inputs": input_schema(fn, label),
         "outputs": output_schema(fn, decl, label),
+        **declarations,
     }
 
 

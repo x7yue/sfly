@@ -7,6 +7,7 @@ import { strFromU8, unzipSync } from "fflate";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { nodePackages } from "../db/schema.js";
+import { type NodeTypeView, packageWithDefaultCharts } from "./default-charts.js";
 
 /** 节点包归档内的元信息文件名（与 sfly CLI 一致）。 */
 export const METADATA_FILE = "sfly-package.json";
@@ -28,7 +29,8 @@ export interface PackageVersion {
 	sha256: string;
 	size: number;
 	published_at: string;
-	metadata: PackageMetadata;
+	/** 元信息；节点类型的图表含为未被引用的指标生成的默认图表。 */
+	metadata: Omit<PackageMetadata, "nodes"> & { nodes: NodeTypeView[] };
 }
 
 export interface PackageVersionSummary {
@@ -59,7 +61,7 @@ const toVersion = (row: Row): PackageVersion => ({
 	sha256: row.sha256,
 	size: row.size,
 	published_at: row.publishedAt.toISOString(),
-	metadata: row.metadata,
+	metadata: packageWithDefaultCharts(row.metadata),
 });
 
 const toSummary = (row: Row): PackageVersionSummary => ({

@@ -67,6 +67,40 @@ def test_node_entry_must_be_module_function() -> None:
     assert not validator("package-metadata").is_valid(meta)
 
 
+def with_node(**fields: Any) -> dict[str, Any]:
+    meta = package_metadata()
+    meta["nodes"][0].update(fields)
+    return meta
+
+
+def test_node_type_can_declare_metrics_charts_and_primary_metric() -> None:
+    meta = with_node(
+        metrics=[
+            {"name": "tps", "unit": "笔/s", "kind": "gauge", "description": "每秒成交"},
+            {"name": "rejected", "unit": "", "kind": "counter"},
+        ],
+        charts=[{"title": "TPS", "type": "stat", "metrics": ["tps", "rejected"]}],
+        primary_metric="tps",
+    )
+    assert list(validator("package-metadata").iter_errors(meta)) == []
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"metrics": [{"name": f"m{i}", "unit": "", "kind": "gauge"} for i in range(51)]},
+        {"charts": [{"title": f"c{i}", "type": "line", "metrics": ["m"]} for i in range(21)]},
+        {"metrics": [{"name": "m", "unit": "", "kind": "histogram"}]},
+        {"metrics": [{"name": "m", "kind": "gauge"}]},
+        {"charts": [{"title": "c", "type": "pie", "metrics": ["m"]}]},
+        {"charts": [{"title": "c", "type": "line", "metrics": []}]},
+        {"primary_metric": "9lives"},
+    ],
+)
+def test_invalid_metric_declarations_are_rejected(fields: dict[str, Any]) -> None:
+    assert not validator("package-metadata").is_valid(with_node(**fields))
+
+
 def test_orchestration_document_with_defaults_omitted_passes() -> None:
     doc = {
         "default_agent": "lab-01",
