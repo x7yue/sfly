@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { create } from "@bufbuild/protobuf";
 import {
 	InvalidReferenceError,
+	inputProblems,
 	NODE_DEFAULTS,
 	type ResolveScope,
 	resolveInputs,
@@ -15,7 +16,7 @@ import {
 	TaskAction,
 	type TaskResult,
 } from "@sfly/proto";
-import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import type { OrchestrationDocument, OrchestrationNode, PackageMetadata } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
 import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
@@ -70,6 +71,9 @@ import { isWaitNode, startWait, wakeTimers } from "./waits.js";
 export const DEFAULT_TIMEOUT_SECONDS = NODE_DEFAULTS.timeout;
 
 export { DEFAULT_LEASE_MS } from "./leases.js";
+
+/** 开发版本（docs/SEMANTICS.md §7）。 */
+const DEV_VERSION = "dev";
 
 /** 节点进入 queued 后最多排队多久（§3.3 queue_timeout，默认 10 分钟）。 */
 const queueTimeoutMs = (node: PackageNode) =>
@@ -831,7 +835,7 @@ export class Engine implements AgentSessionHandler {
 					await queueTimedOut(this.#driver, step, task);
 					continue;
 				}
-				const message = await this.#prepareAssign(step, task);
+				const message = await this.#prepareAssign(step, conn, task);
 				if (!message) continue;
 				step.assigns.push({ conn, message });
 				free--;
@@ -839,8 +843,11 @@ export class Engine implements AgentSessionHandler {
 		});
 	}
 
-	/** 解析输入并把任务标记为 running；引用无效时任务以 config_error 失败并返回 undefined。 */
-	async #prepareAssign(step: Step, task: TaskRow) {
+	/**
+	 * 解析输入、按节点类型的输入 schema 校验，并把任务标记为 running；
+	 * 引用无效或输入校验失败时任务以 config_error 失败（不重试）并返回 undefined。
+	 */
+	async #prepareAssign(step: Step, conn: AgentConnection, task: TaskRow) {
 		const { run, chain, plan, index, node } = await this.#locate(step.tx, task);
 		if (node.kind !== "package") throw new Error(`task ${task.id} is not a package node`);
 		const document = await this.#document(step.tx, run.orchestrationVersionId);
@@ -854,6 +861,29 @@ export class Engine implements AgentSessionHandler {
 			return undefined;
 		}
 
+		const packageVersion = document.packages[node.package] ?? "";
+		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
+		const [archive] = await step.tx
+			.select({ sha256: nodePackages.sha256, metadata: nodePackages.metadata })
+			.from(nodePackages)
+			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, packageVersion)));
+		// 开发版本的元信息由加载它的 Agent 上报；不知道节点类型时不校验（Agent 会以 env_error 失败）。
+		const metadata =
+			archive?.metadata ??
+			(packageVersion === DEV_VERSION
+				? (conn.info.dev_packages?.find((p) => p.name === node.package)?.metadata as
+						| PackageMetadata
+						| null
+						| undefined)
+				: undefined);
+		const type = metadata?.nodes?.find((n) => n.name === node.node);
+		const problems = type ? inputProblems(type.inputs, inputs, { allowNull: isAlways(node) }) : [];
+		if (problems.length > 0) {
+			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
+			await this.#failTask(step, task, "config_error", problems.join("; "));
+			return undefined;
+		}
+
 		await step.tx
 			.update(tasks)
 			.set({
@@ -864,12 +894,6 @@ export class Engine implements AgentSessionHandler {
 			})
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
-		const packageVersion = document.packages[node.package] ?? "";
-		// 包版本没有安装在 Agent 上时，Agent 按这里的地址下载并校验 sha256；控制面没有该版本时留空。
-		const [archive] = await step.tx
-			.select({ sha256: nodePackages.sha256 })
-			.from(nodePackages)
-			.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, packageVersion)));
 		return create(ServerMessageSchema, {
 			body: {
 				case: "assign",

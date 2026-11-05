@@ -145,6 +145,18 @@ def test_build_generates_metadata_from_type_annotations(
             "extra": {"type": "object", "default": {}},
         },
         "required": ["url"],
+        # JSONB 不保留对象键顺序：参数表单按 order（函数参数顺序）排列。
+        "order": [
+            "url",
+            "expect",
+            "ratio",
+            "verbose",
+            "headers",
+            "tags",
+            "method",
+            "body",
+            "extra",
+        ],
     }
     # 返回类型注解为 TypedDict 时，输出键和类型从中读取。
     assert http["outputs"] == {
@@ -170,6 +182,7 @@ def test_package_can_contain_multiple_node_types_with_declared_outputs(
         "type": "object",
         "properties": {"host": {"type": "string"}},
         "required": ["host"],
+        "order": ["host"],
     }
     assert ping["outputs"] == {"type": "object", "properties": {"latency_ms": {}, "alive": {}}}
 

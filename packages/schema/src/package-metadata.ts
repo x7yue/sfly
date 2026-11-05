@@ -15,6 +15,11 @@ export const IoSchema = z.looseObject({
 	type: z.literal("object"),
 	properties: z.record(z.string(), z.record(z.string(), z.unknown())),
 	required: z.array(z.string()).optional(),
+	/**
+	 * properties 的键顺序（输入为函数参数顺序）。PostgreSQL JSONB 不保留对象键顺序，
+	 * 参数表单按这里排列；没有时按 properties 的键顺序（#1 评审）。
+	 */
+	order: z.array(z.string()).optional(),
 });
 
 export const NodeTypeMetadata = z.strictObject({

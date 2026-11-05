@@ -76,6 +76,7 @@ describe("sfly publish → 控制面", () => {
 						type: "object",
 						properties: { text: { type: "string" }, times: { type: "integer", default: 1 } },
 						required: ["text"],
+						order: ["text", "times"],
 					},
 					outputs: { type: "object", properties: { text: {} } },
 				},

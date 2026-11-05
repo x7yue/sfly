@@ -221,7 +221,7 @@ describe("节点包版本锁定", () => {
 	const lockDoc = (packages: Record<string, string>, node = "fetch") =>
 		doc({
 			packages,
-			nodes: [{ id: "entry", kind: "entry" }, pkg("a", node)],
+			nodes: [{ id: "entry", kind: "entry" }, pkg("a", node, { url: "https://example.com" })],
 			edges: chain("entry", "a"),
 		});
 	const codesOf = (d: OrchestrationDocument, c: PackageCatalog = catalog) =>

@@ -15,7 +15,8 @@ from sfly import Context, node
 
 
 @node(title="回显", outputs=["text"])
-def echo(ctx: Context, text: str) -> dict[str, Any]:
+def echo(ctx: Context, text: Any) -> dict[str, Any]:
+    """原样返回 text（任意 JSON 值，例如上游输出的产物引用表）。"""
     return {"text": text}
 
 
