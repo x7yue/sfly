@@ -151,7 +151,7 @@ export function RunPage({ runId }: { runId: string }) {
 	const instance = chainId ? pickedInstance(instances, picked, chainId) : undefined;
 
 	return (
-		<div className="sf-editor flex h-[calc(100vh-49px)] flex-col">
+		<div className="sf-editor flex h-[calc(100vh-var(--topbar-height))] flex-col">
 			<header className="sf-topbar">
 				<Link
 					to="/orchestrations/$id/runs"

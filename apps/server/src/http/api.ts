@@ -14,6 +14,7 @@ import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
+import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
 import { sendError } from "./errors.js";
 import { registerLogRoutes } from "./log-routes.js";
@@ -107,7 +108,7 @@ export function buildHttpApi({
 		});
 	});
 
-	app.get("/agents", async () => ({ agents: await hub.list() }));
+	registerAgentRoutes(app, { hub, orchestrations });
 	registerOrchestrationRoutes(app, { orchestrations, packages });
 	registerRunRoutes(app, {
 		db: database.db,
@@ -121,7 +122,7 @@ export function buildHttpApi({
 	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
-	registerPackageRoutes(app, packages);
+	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicHttpUrl });
 

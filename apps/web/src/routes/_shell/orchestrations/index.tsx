@@ -8,7 +8,10 @@ import {
 	type Orchestration,
 } from "#/lib/api";
 
-export const Route = createFileRoute("/orchestrations/")({ component: OrchestrationsPage });
+export const Route = createFileRoute("/_shell/orchestrations/")({
+	staticData: { crumb: "场景编排" },
+	component: OrchestrationsPage,
+});
 
 function OrchestrationsPage() {
 	const navigate = useNavigate();

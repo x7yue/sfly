@@ -1,11 +1,12 @@
 import type { OrchestrationDocument } from "@sfly/schema";
+import { packagesApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Background, Controls, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import { useMemo } from "react";
 import { edgeTypes } from "#/canvas/edges";
 import { type SfEdge, type SfNode, toFlow } from "#/canvas/flow";
 import { CanvasContext, type CanvasInfo, nodeTypes } from "#/canvas/NodeCard";
-import { listPackages } from "#/lib/api";
+import { apiQuery } from "#/lib/api";
 
 export type NodeMark = "added" | "removed" | "changed";
 
@@ -17,7 +18,7 @@ export function ReadOnlyCanvas({
 	document: OrchestrationDocument;
 	marks?: Map<string, NodeMark>;
 }) {
-	const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
+	const packages = useQuery(apiQuery(packagesApi.list));
 	const flow = useMemo(() => {
 		const { nodes, edges } = toFlow(document);
 		return {

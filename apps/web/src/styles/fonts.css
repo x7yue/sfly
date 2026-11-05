@@ -1,0 +1,13 @@
+/*
+ * 字体随前端打包（@fontsource，构建时复制进 dist），离线的内网环境也能用；只取拉丁字符子集，
+ * 中文回退到系统字体（见 app.css 的 --font-sans）。只用 400 / 500 / 600 三个字重。
+ */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-sans/latin-ext-400.css";
+@import "@fontsource/ibm-plex-sans/latin-ext-500.css";
+@import "@fontsource/ibm-plex-sans/latin-ext-600.css";
+@import "@fontsource/jetbrains-mono/latin-400.css";
+@import "@fontsource/jetbrains-mono/latin-500.css";
+@import "@fontsource/jetbrains-mono/latin-600.css";

@@ -1,0 +1,157 @@
+/*
+ * 设计 token（docs/DESIGN-SYSTEM.md）。三层，组件只引用第 2、3 层：
+ *
+ *   1. 基础色阶 --base-*：原始色值，只在本文件里被第 2、3 层引用；不生成 Tailwind 工具类。
+ *   2. 语义 token：表面、描边、文字三级、主操作、信号色、状态色、选中……
+ *      以 CSS 变量定义在这里，经 app.css 的 @theme inline 暴露为工具类（bg-surface、text-fg-2…），
+ *      shadcn/ui 组件用的 --background / --primary / --ring… 也映射到这一层。
+ *   3. 画布专用 --canvas-*：节点、端口、连线、区域、运行状态（#35 起画布组件使用）。
+ *
+ * 以后加浅色主题时只需要在 [data-theme="light"] 下重新给第 2、3 层赋值。
+ * 本文件位于 theme 层（app.css 中 @import … layer(theme)）。
+ */
+
+:root {
+	/* ── 1. 基础色阶（炭灰，无色偏） ── */
+	--base-gray-950: #141414;
+	--base-gray-925: #161616;
+	--base-gray-900: #1a1a1a;
+	--base-gray-875: #1f1f1f;
+	--base-gray-850: #262626;
+	--base-gray-825: #2b2b2b;
+	--base-gray-800: #2e2e2e;
+	--base-gray-775: #333333;
+	--base-gray-750: #3a3a3a;
+	--base-gray-700: #444444;
+	--base-gray-650: #4a4a4a;
+	--base-gray-600: #5a5a5a;
+	--base-gray-500: #7a7a7a;
+	--base-gray-450: #8e8e8e;
+	--base-gray-425: #9a9a9a;
+	--base-gray-350: #a8a8a8;
+	--base-gray-200: #d4d4d4;
+	--base-gray-100: #ececec;
+	--base-gray-50: #f2f2f2;
+	--base-white: #ffffff;
+	--base-black: #000000;
+	--base-cyan-300: #7fdcf7;
+	--base-cyan-400: #2cc4f0;
+	--base-green-400: #5bd69a;
+	--base-amber-200: #f3c27a;
+	--base-amber-400: #f0a83a;
+	--base-red-300: #ff8f8c;
+	--base-red-400: #ef5350;
+	--base-violet-200: #dcd3fd;
+	--base-violet-400: #b4a3f8;
+
+	/* ── 2. 语义 ── */
+	color-scheme: dark;
+
+	/* 表面：从低到高 */
+	--sunk: var(--base-gray-925); /* 输入框、代码块、凹陷区 */
+	--bg: var(--base-gray-900); /* 页面底色 */
+	--surface: var(--base-gray-875); /* 面板、侧边栏、卡片、弹窗 */
+	--raised: var(--base-gray-850); /* 按钮、菜单、面板内分组 */
+	--raised-2: var(--base-gray-800); /* 悬停、选中的段与行 */
+	--track: var(--base-gray-750); /* 槽位条、进度条、开关的空槽 */
+	--scrim: rgb(0 0 0 / 0.55); /* 弹窗与抽屉背后的遮罩 */
+
+	/* 描边 */
+	--border: var(--base-gray-775);
+	--border-soft: var(--base-gray-825);
+	--border-strong: var(--base-gray-700);
+
+	/* 文字三级（对 --bg / --surface / --raised 的对比度均 ≥ 4.5:1） */
+	--fg-1: var(--base-gray-100);
+	--fg-2: var(--base-gray-350);
+	--fg-3: var(--base-gray-450);
+
+	/* 主操作：白色，每屏只有一个 */
+	--primary: var(--base-gray-50);
+	--primary-hover: var(--base-white);
+	--primary-foreground: var(--base-gray-950);
+
+	/* 信号色（青）：只用于执行中、键盘焦点环、调度连线 */
+	--signal: var(--base-cyan-400);
+	--signal-fg: var(--base-cyan-300); /* 青色文字（执行中的计数等） */
+	--signal-line: rgb(44 196 240 / 0.55);
+	--signal-soft: rgb(44 196 240 / 0.14);
+
+	/* 选中：中性高亮（不用青色） */
+	--selected: var(--base-gray-200);
+	--selected-bg: var(--base-gray-800);
+	--selected-ring: rgb(255 255 255 / 0.08);
+
+	/* 状态色：绿=成功，红=失败，琥珀=等待与警告，青=执行中，灰=待执行/跳过，灰虚线=已取消 */
+	--ok: var(--base-green-400);
+	--ok-soft: rgb(91 214 154 / 0.08);
+	--ok-line: rgb(91 214 154 / 0.3);
+	--warn: var(--base-amber-400);
+	--warn-fg: var(--base-amber-200);
+	--warn-soft: rgb(240 168 58 / 0.08);
+	--warn-line: rgb(240 168 58 / 0.38);
+	--danger: var(--base-red-400);
+	--danger-fg: var(--base-red-300); /* 红色文字（深底上可读） */
+	--danger-soft: rgb(239 83 80 / 0.07);
+	--danger-line: rgb(239 83 80 / 0.4);
+	--pending: var(--base-gray-450);
+	--skipped: var(--base-gray-500);
+	--cancelled: var(--base-gray-425);
+
+	/* 日志级别：INFO 不上色 */
+	--log-debug: var(--fg-3);
+	--log-info: var(--fg-1);
+	--log-warn: var(--warn-fg);
+	--log-error: var(--danger-fg);
+
+	/* 阴影：带偏移和模糊，不用零偏移彩色发光 */
+	--elevation-float: 0 10px 30px -10px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.4);
+	--elevation-pop: 0 30px 80px -20px rgb(0 0 0 / 0.85);
+
+	/* 动效 */
+	--motion-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+
+	/* 外壳尺寸 */
+	--sidebar-width: 208px;
+	--sidebar-width-collapsed: 56px;
+	--topbar-height: 48px;
+
+	/* shadcn/ui 组件使用的变量名 → 语义层（注意：shadcn 的 accent 是中性悬停色，不是青色） */
+	--background: var(--bg);
+	--foreground: var(--fg-1);
+	--card: var(--surface);
+	--card-foreground: var(--fg-1);
+	--popover: var(--raised);
+	--popover-foreground: var(--fg-1);
+	--secondary: var(--raised);
+	--secondary-foreground: var(--fg-1);
+	--muted: var(--raised-2);
+	--muted-foreground: var(--fg-3);
+	--accent: var(--raised-2);
+	--accent-foreground: var(--fg-1);
+	--destructive: var(--danger);
+	--input: var(--border);
+	--ring: var(--signal);
+	--radius: 8px;
+
+	/* ── 3. 画布专用 ── */
+	--canvas-bg: var(--bg);
+	--canvas-grid: rgb(255 255 255 / 0.06);
+	--canvas-node-bg: var(--raised);
+	--canvas-node-border: var(--border);
+	--canvas-node-selected: var(--selected);
+	--canvas-node-selected-ring: var(--selected-ring);
+	--canvas-port: var(--base-gray-600);
+	--canvas-edge: var(--base-gray-650);
+	--canvas-edge-selected: var(--selected); /* 选中节点相关连线：灰色虚线流动 */
+	--canvas-edge-live: var(--signal); /* 进入执行中节点的连线 */
+	--canvas-edge-dispatch: var(--signal); /* 调度连线（虚线） */
+	--canvas-subflow: var(--base-violet-400); /* 紫色只用于子流程区域 */
+	--canvas-subflow-fg: var(--base-violet-200);
+	--canvas-subflow-line: rgb(180 163 248 / 0.45);
+	--canvas-subflow-soft: rgb(180 163 248 / 0.07);
+	--canvas-run-running: var(--signal);
+	--canvas-run-failed: var(--danger);
+	--canvas-run-cancelled: var(--cancelled); /* 虚线 */
+	--canvas-run-done-opacity: 0.6;
+}

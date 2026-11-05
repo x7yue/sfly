@@ -2,7 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { VersionHistory } from "#/versions/VersionHistory";
 
 /** 版本历史：只读查看任意两个版本并对比差异，把旧版本恢复为新版本。 */
-export const Route = createFileRoute("/orchestrations/$id_/versions")({
+export const Route = createFileRoute("/_shell/orchestrations/$id_/versions")({
+	staticData: { crumb: ["场景编排", "版本历史"] },
 	validateSearch: (search: Record<string, unknown>): { a?: number; b?: number } => {
 		const num = (v: unknown) => {
 			const n = Number(v);

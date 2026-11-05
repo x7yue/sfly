@@ -1,4 +1,5 @@
 import type { OrchestrationDocument } from "@sfly/schema";
+import { packagesApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import { useMemo } from "react";
@@ -6,12 +7,12 @@ import { edgeTypes } from "#/canvas/edges";
 import { type SfEdge, type SfNode, toFlow } from "#/canvas/flow";
 import { CanvasContext, type CanvasInfo, nodeTypes } from "#/canvas/NodeCard";
 import { type RegionRunInfo, SubflowRegions } from "#/canvas/SubflowRegions";
-import { listPackages } from "#/lib/api";
+import { apiQuery } from "#/lib/api";
 import type { NodeRunView } from "./api";
 
 /** 包节点类型的标题（来自节点包元信息）。 */
 export function usePackageTitles() {
-	const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
+	const packages = useQuery(apiQuery(packagesApi.list));
 	return useMemo(() => {
 		const titles = new Map<string, string>();
 		for (const pkg of packages.data?.packages ?? []) {

@@ -173,6 +173,21 @@ export class OrchestrationStore {
 		});
 	}
 
+	/** 每个已保存过版本的编排的最新版本文档（统计引用与锁定用）。 */
+	async headDocuments(): Promise<OrchestrationDocument[]> {
+		const rows = await this.deps.db
+			.select({ document: orchestrationVersions.document })
+			.from(orchestrations)
+			.innerJoin(
+				orchestrationVersions,
+				and(
+					eq(orchestrationVersions.orchestrationId, orchestrations.id),
+					eq(orchestrationVersions.number, orchestrations.headVersion),
+				),
+			);
+		return rows.map((r) => r.document);
+	}
+
 	async get(id: string): Promise<OrchestrationView | undefined> {
 		const [row] = await this.deps.db.select().from(orchestrations).where(eq(orchestrations.id, id));
 		return row && toView(row);
