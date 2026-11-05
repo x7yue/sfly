@@ -41,7 +41,7 @@ import {
 	RunTopRight,
 	useRunDecorations,
 } from "./run-state/RunState";
-import { useCanvasRun } from "./run-state/use-canvas-run";
+import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { documentFieldErrors, type FieldError } from "./validation";
 
 /** 检查器（宽 372 + 右边距 12）占住的宽度。 */
@@ -164,10 +164,7 @@ function Editor({
 	const runState = useCanvasRun(orchestration.id, initialRun, mode === "run");
 	const readyRun = runState.status === "ready" ? runState : undefined;
 	const decorations = useRunDecorations(readyRun?.run, readyRun?.overlay);
-	const runFlow = useMemo(
-		() => (readyRun?.doc ? toFlow(readyRun.doc) : undefined),
-		[readyRun?.doc],
-	);
+	const runFlow = useRunFlow(readyRun?.doc);
 	const runInfo: CanvasInfo = useMemo(
 		() =>
 			readyRun?.doc
@@ -322,7 +319,7 @@ function Editor({
 					{...(running ? decorations : {})}
 					selectedId={selectedNode ? selectedId : null}
 					onSelect={select}
-					onNodesChange={running ? undefined : onNodesChange}
+					onNodesChange={running ? runFlow?.onNodesChange : onNodesChange}
 					onEdgesChange={running ? undefined : onEdgesChange}
 					onConnect={running ? undefined : onConnect}
 					onConnectEnd={running ? undefined : onConnectEnd}

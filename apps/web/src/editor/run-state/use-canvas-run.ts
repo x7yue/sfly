@@ -1,6 +1,8 @@
 import { type OrchestrationDocument, queryKey, type RunView, runsApi } from "@sfly/schema";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { applyNodeChanges, type NodeChange } from "@xyflow/react";
+import { useCallback, useMemo, useState } from "react";
+import { type SfNode, toFlow } from "#/canvas/flow";
 import { apiQuery } from "#/lib/api";
 import { useEventSource } from "#/lib/sse";
 import { getVersion } from "#/versions/api";
@@ -64,4 +66,23 @@ export function useCanvasRun(
 	if (error) return { status: "error", error };
 	if (!runId && latest.data && latest.data.runs.length === 0) return { status: "none" };
 	return { status: "loading" };
+}
+
+/**
+ * 运行状态下画布显示的节点与连线（运行绑定的版本文档）。节点由 React Flow 测量尺寸（小地图需要），
+ * 所以放在本地状态里接收尺寸变化；文档变化时重建。doc 为 undefined（还在加载）时返回 undefined。
+ */
+export function useRunFlow(doc: OrchestrationDocument | undefined) {
+	const initial = useMemo(() => (doc ? toFlow(doc) : undefined), [doc]);
+	const [from, setFrom] = useState(initial);
+	const [nodes, setNodes] = useState(initial?.nodes);
+	if (from !== initial) {
+		setFrom(initial);
+		setNodes(initial?.nodes);
+	}
+	const onNodesChange = useCallback(
+		(changes: NodeChange<SfNode>[]) => setNodes((ns) => ns && applyNodeChanges(changes, ns)),
+		[],
+	);
+	return initial && nodes ? { nodes, edges: initial.edges, onNodesChange } : undefined;
 }
