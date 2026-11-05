@@ -127,7 +127,7 @@ export function PackageVersions({
 				/>
 			))}
 			<p className="sf-hint">
-				保存时每个包都锁定到这里的版本；别人发布新版本不会改变这份编排。选 dev 使用本机{" "}
+				保存时每个包都锁定到这里的版本；别人发布新版本不会改变这个场景。选 dev 使用本机{" "}
 				<code>sfly dev</code> 加载的源码，不需要发布。
 			</p>
 		</div>

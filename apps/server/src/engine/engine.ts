@@ -86,7 +86,7 @@ const queueTimeoutMs = (node: PackageNode) =>
 
 export type TriggerOutcome =
 	| { ok: true; runId: string }
-	| { ok: false; status: 400 | 404; code: string; message: string; details?: unknown };
+	| { ok: false; status: 400 | 404 | 409; code: string; message: string; details?: unknown };
 
 export type CancelOutcome =
 	| { ok: true; force: boolean }
@@ -181,9 +181,19 @@ export class Engine implements AgentSessionHandler {
 			const [orchestration] = await step.tx
 				.select()
 				.from(orchestrations)
-				.where(eq(orchestrations.id, orchestrationId));
+				.where(eq(orchestrations.id, orchestrationId))
+				// 与归档（OrchestrationStore.archive 加排他锁后检查运行中的运行）互斥。
+				.for("share");
 			if (!orchestration) {
 				return { ok: false, status: 404, code: "not_found", message: "orchestration not found" };
+			}
+			if (orchestration.archivedAt) {
+				return {
+					ok: false,
+					status: 409,
+					code: "archived",
+					message: "orchestration is archived; restore it before triggering",
+				};
 			}
 			const [version] = await step.tx
 				.select()

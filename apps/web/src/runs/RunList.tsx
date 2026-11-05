@@ -29,7 +29,7 @@ export function RunList({ orchestrationId }: { orchestrationId: string }) {
 				<Link to="/orchestrations/$id" params={{ id: orchestrationId }} className="sf-link text-xs">
 					← 编辑
 				</Link>
-				<h1>{orchestration.data?.name ?? "编排"} · 运行记录</h1>
+				<h1>{orchestration.data?.name ?? "场景"} · 运行记录</h1>
 				<span className="sf-tag">
 					<b>{list.length}</b> 次
 				</span>

@@ -109,7 +109,7 @@ export function buildHttpApi({
 	});
 
 	registerAgentRoutes(app, { hub, orchestrations });
-	registerOrchestrationRoutes(app, { orchestrations, packages });
+	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerRunRoutes(app, {
 		db: database.db,
 		engine,

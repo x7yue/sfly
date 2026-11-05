@@ -21,7 +21,7 @@ export function DocumentDiffView({
 				<del>{beforeLabel}</del> → <ins>{afterLabel}</ins>
 			</p>
 			{diff.settings.length > 0 && (
-				<DiffSection title="编排设置">
+				<DiffSection title="场景设置">
 					{diff.settings.map((c) => (
 						<ChangeRow key={c.path} change={c} />
 					))}

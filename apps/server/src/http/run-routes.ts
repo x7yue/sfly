@@ -36,11 +36,19 @@ export function registerRunRoutes(
 			? await deps.orchestrations.head(request.params.id)
 			: undefined;
 		if (!head) return sendError(reply, 404, "not_found", "orchestration not found");
+		const orchestration = await deps.orchestrations.get(request.params.id);
+		if (orchestration?.archived_at) {
+			return {
+				version: head.number,
+				params: [],
+				problems: [{ code: "archived", message: "场景已归档，恢复后才能运行" }],
+			};
+		}
 		if (head.number === 0) {
 			return {
 				version: 0,
 				params: [],
-				problems: [{ code: "no_version", message: "编排还没有保存过版本" }],
+				problems: [{ code: "no_version", message: "场景还没有保存过版本" }],
 			};
 		}
 		const entry = head.document.nodes.find((n) => n.kind === "entry");

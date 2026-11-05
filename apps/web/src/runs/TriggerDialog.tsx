@@ -118,7 +118,7 @@ export function TriggerDialog({
 			description={
 				data && data.version > 0
 					? `运行绑定到最新版本 ${data.version}。`
-					: "运行绑定到编排的最新版本。"
+					: "运行绑定到场景的最新版本。"
 			}
 			onClose={onClose}
 			footer={

@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
 import { createContext, useContext, useMemo, useState } from "react";
 import { ShortcutListener, ShortcutsDialog, useShortcut } from "#/components/shortcuts";
+import { NewScenarioDialog } from "#/scenarios/dialogs";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CommandPalette } from "./CommandPalette";
@@ -9,11 +10,11 @@ import { NAV_ITEMS, type NavItem } from "./navigation";
 import { toggleSidebar } from "./sidebar-state";
 
 /**
- * 全局浮层：命令面板、快捷键面板、昵称弹窗与通知容器，挂在根路由，外壳页和全屏页都能用。
+ * 全局浮层：命令面板、快捷键面板、昵称弹窗、新建场景弹窗与通知容器，挂在根路由，外壳页和全屏页都能用。
  * 同一时间只打开一个；任何组件用 `useOverlays().open("shortcuts")` 打开。
  * 弹窗（Base UI Dialog）负责锁定焦点、Esc 关闭，并在关闭后把焦点还给打开前的元素。
  */
-export type Overlay = "command-palette" | "shortcuts" | "nickname";
+export type Overlay = "command-palette" | "shortcuts" | "nickname" | "new-scenario";
 
 interface OverlayApi {
 	current: Overlay | null;
@@ -57,6 +58,10 @@ export function GlobalOverlays({ children }: { children: React.ReactNode }) {
 				/>
 				<ShortcutsDialog open={current === "shortcuts"} onOpenChange={setOpen("shortcuts")} />
 				<NicknameDialog open={current === "nickname"} onOpenChange={setOpen("nickname")} />
+				<NewScenarioDialog
+					open={current === "new-scenario"}
+					onOpenChange={setOpen("new-scenario")}
+				/>
 				<Toaster />
 			</TooltipProvider>
 		</OverlayContext.Provider>

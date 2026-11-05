@@ -256,7 +256,7 @@ flowchart TD
 
 | 表 | 主要字段 |
 |---|---|
-| `orchestrations` | id, name, head_version, created_at |
+| `orchestrations` | id, name, description, head_version, created_at, archived_at（名称和说明不属于版本内容；归档后不出现在默认列表、不能触发，不物理删除） |
 | `orchestration_versions` | id, orchestration_id, number, document（JSONB：节点、连线、参数、布局、锁定的包版本）, author, created_at；`unique(orchestration_id, number)` |
 | `node_packages` | name, version, metadata（JSONB）, file_path, sha256, published_at；`unique(name, version)` |
 | `agents` | name, info（JSONB）, status, last_seen_at |
