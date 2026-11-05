@@ -167,7 +167,7 @@ export function StaleDraftBanner({
  * 冲突对话框：对比最新版本与本地修改（节点、参数、连线），然后选择放弃本地修改并载入最新版本，
  * 或者把本地修改另存为新编排。不做自动合并。
  */
-function ConflictDialog({
+export function ConflictDialog({
 	orchestration,
 	doc,
 	head,
