@@ -1,7 +1,8 @@
+import { orchestrationsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { OrchestrationEditor } from "#/canvas/OrchestrationEditor";
-import { getOrchestration, getOrchestrationHead } from "#/lib/api";
+import { apiQuery } from "#/lib/api";
 
 export const Route = createFileRoute("/_shell/orchestrations/$id")({
 	staticData: { crumb: ["场景编排", "编排画布"] },
@@ -10,14 +11,10 @@ export const Route = createFileRoute("/_shell/orchestrations/$id")({
 
 function EditorPage() {
 	const { id } = Route.useParams();
-	const orchestration = useQuery({
-		queryKey: ["orchestration", id],
-		queryFn: () => getOrchestration(id),
-	});
+	const orchestration = useQuery(apiQuery(orchestrationsApi.get, { params: { id } }));
 	// 编辑起点只在进入页面时读取一次，避免后台刷新覆盖正在编辑的内容。
 	const head = useQuery({
-		queryKey: ["orchestration", id, "head"],
-		queryFn: () => getOrchestrationHead(id),
+		...apiQuery(orchestrationsApi.head, { params: { id } }),
 		staleTime: Number.POSITIVE_INFINITY,
 		refetchOnWindowFocus: false,
 	});

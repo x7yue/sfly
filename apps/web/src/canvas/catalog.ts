@@ -1,15 +1,13 @@
 import { type NodeTypeIo, type PackageCatalog, packageKey } from "@sfly/orchestration";
-import type { PackageMetadata } from "@sfly/schema";
+import { packagesApi } from "@sfly/schema";
 import { useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
-import { type AgentView, ApiError, agentsWithDev, apiGet, type PackageSummary } from "#/lib/api";
+import { type AgentView, ApiError, agentsWithDev, callApi, type PackageSummary } from "#/lib/api";
 
 /** `GET /packages/:name/versions/:version`；版本不存在时为 null。 */
 async function fetchVersionNodes(name: string, version: string): Promise<NodeTypeIo[] | null> {
 	try {
-		const found = await apiGet<{ metadata: PackageMetadata }>(
-			`/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}`,
-		);
+		const found = await callApi(packagesApi.version, { params: { name, version } });
 		return found.metadata.nodes;
 	} catch (error) {
 		if (error instanceof ApiError && error.status === 404) return null;
@@ -46,7 +44,8 @@ export function usePackageCatalog(
 	const entries = Object.entries(locked).filter(([, version]) => version !== "dev");
 	const results = useQueries({
 		queries: entries.map(([name, version]) => ({
-			queryKey: ["package-version", name, version],
+			// 与 apiQuery(packagesApi.version) 的缓存分开：这里只取节点类型，版本不存在时为 null。
+			queryKey: ["packages", "version-nodes", { params: { name, version } }],
 			queryFn: () => fetchVersionNodes(name, version),
 			staleTime: Number.POSITIVE_INFINITY, // 已发布的版本不可变
 		})),

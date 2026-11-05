@@ -1,5 +1,5 @@
 import { diffDocuments, isEmptyDiff } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import { type OrchestrationDocument, orchestrationsApi, queryKey } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { fromFlow, toFlow } from "#/canvas/flow";
@@ -138,13 +138,16 @@ export function useVersionedDraft(
 			setBase({ version: saved.number, author: saved.author, document });
 			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
 			queryClient.invalidateQueries({ queryKey: ["orchestration", orchestrationId, "versions"] });
-			queryClient.setQueryData(["orchestration", orchestrationId, "head"], {
-				orchestration_id: orchestrationId,
-				number: saved.number,
-				author: saved.author,
-				created_at: saved.created_at,
-				document: saved.document,
-			} satisfies OrchestrationHead);
+			queryClient.setQueryData(
+				queryKey(orchestrationsApi.head, { params: { id: orchestrationId } }),
+				{
+					orchestration_id: orchestrationId,
+					number: saved.number,
+					author: saved.author,
+					created_at: saved.created_at,
+					document: saved.document,
+				} satisfies OrchestrationHead,
+			);
 		},
 	});
 

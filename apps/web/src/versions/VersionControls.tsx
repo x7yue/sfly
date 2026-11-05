@@ -1,5 +1,5 @@
 import { diffDocuments } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import { type OrchestrationDocument, orchestrationsApi, queryKey } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useMemo, useState } from "react";
@@ -200,7 +200,10 @@ function ConflictDialog({
 	const discard = () => {
 		if (!latest.data) return;
 		versioning.dropDraft();
-		queryClient.setQueryData(["orchestration", orchestration.id, "head"], latest.data);
+		queryClient.setQueryData(
+			queryKey(orchestrationsApi.head, { params: { id: orchestration.id } }),
+			latest.data,
+		);
 		onReload(latest.data);
 	};
 

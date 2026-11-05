@@ -1,11 +1,11 @@
-import type { OrchestrationWarning } from "@sfly/orchestration";
 import {
 	type AgentView,
 	agentsApi,
 	type EndpointDef,
 	type EndpointInput,
 	type EndpointResponse,
-	type OrchestrationDocument,
+	type OrchestrationView as Orchestration,
+	orchestrationsApi,
 	packagesApi,
 	pathFor,
 	queryKey,
@@ -144,39 +144,19 @@ export type { PackageSummary, PackageVersionSummary } from "@sfly/schema";
 
 export const listPackages = () => callApi(packagesApi.list);
 
-// —— 编排 ——
+// —— 编排（契约：orchestrationsApi，画布用到的接口；列表、新建、复制尚未迁移） ——
 
-export interface Orchestration {
-	id: string;
-	name: string;
-	head_version: number;
-	created_at: string;
-}
-
-export interface OrchestrationHead {
-	orchestration_id: string;
-	/** 0 表示还没有保存过版本（document 是只含入口节点的初始文档）。 */
-	number: number;
-	author: string | null;
-	created_at: string | null;
-	document: OrchestrationDocument;
-}
-
-export interface SavedVersion {
-	id: string;
-	orchestration_id: string;
-	number: number;
-	author: string;
-	created_at: string;
-	document: OrchestrationDocument;
-	warnings: OrchestrationWarning[];
-}
+export type {
+	OrchestrationHeadView as OrchestrationHead,
+	OrchestrationView as Orchestration,
+	SavedVersionView as SavedVersion,
+} from "@sfly/schema";
 
 export const listOrchestrations = () =>
 	apiGet<{ orchestrations: Orchestration[] }>("/orchestrations");
-export const getOrchestration = (id: string) => apiGet<Orchestration>(`/orchestrations/${id}`);
+export const getOrchestration = (id: string) => callApi(orchestrationsApi.get, { params: { id } });
 export const getOrchestrationHead = (id: string) =>
-	apiGet<OrchestrationHead>(`/orchestrations/${id}/head`);
+	callApi(orchestrationsApi.head, { params: { id } });
 export const createOrchestration = (name: string) =>
 	apiPost<Orchestration>("/orchestrations", { name });
 export const copyOrchestration = (id: string, name: string) =>

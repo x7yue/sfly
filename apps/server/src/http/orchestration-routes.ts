@@ -1,20 +1,18 @@
-import { OrchestrationDocument } from "@sfly/schema";
+import { type EndpointResponse, orchestrationsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import { isUuid } from "../util/uuid.js";
+import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 import { requireNickname } from "./nickname.js";
 
 const CreateBody = z.strictObject({ name: z.string().trim().min(1) });
 const CopyBody = CreateBody;
-const SaveVersionBody = z.object({
-	document: OrchestrationDocument,
-	/** 编辑起点的版本号（新编排的第一个版本为 0）。必填；不是最新版本时返回 409。 */
-	base_version: z.number().int().nonnegative(),
-});
+/** 编辑起点的版本号（新编排的第一个版本为 0）必填；不是最新版本时返回 409。 */
+const SaveVersionBody = orchestrationsApi.saveVersion.body;
 
 /** 编排与编排版本：新建编排、保存（追加）版本、查询。版本不可修改。 */
 export function registerOrchestrationRoutes(
@@ -38,12 +36,9 @@ export function registerOrchestrationRoutes(
 
 	app.get("/orchestrations", async () => ({ orchestrations: await orchestrations.list() }));
 
-	app.get<{ Params: { id: string } }>("/orchestrations/:id/head", async (request, reply) => {
-		const head = isUuid(request.params.id)
-			? await orchestrations.head(request.params.id)
-			: undefined;
-		if (!head) return sendError(reply, 404, "not_found", "orchestration not found");
-		return head;
+	contractRoute(app, orchestrationsApi.head, async ({ params }, reply) => {
+		const head = isUuid(params.id) ? await orchestrations.head(params.id) : undefined;
+		return head ?? sendError(reply, 404, "not_found", "orchestration not found");
 	});
 
 	app.post<{ Params: { id: string } }>("/orchestrations/:id/copy", async (request, reply) => {
@@ -66,12 +61,9 @@ export function registerOrchestrationRoutes(
 		return reply.code(201).send(copied);
 	});
 
-	app.get<{ Params: { id: string } }>("/orchestrations/:id", async (request, reply) => {
-		const found = isUuid(request.params.id)
-			? await orchestrations.get(request.params.id)
-			: undefined;
-		if (!found) return sendError(reply, 404, "not_found", "orchestration not found");
-		return found;
+	contractRoute(app, orchestrationsApi.get, async ({ params }, reply) => {
+		const found = isUuid(params.id) ? await orchestrations.get(params.id) : undefined;
+		return found ?? sendError(reply, 404, "not_found", "orchestration not found");
 	});
 
 	app.post<{ Params: { id: string } }>("/orchestrations/:id/versions", async (request, reply) => {
@@ -119,9 +111,11 @@ export function registerOrchestrationRoutes(
 		}
 		const saved = result.version;
 		// 结构、包版本锁定和引用的问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2、§2.4）。
+		const response = { ...saved, warnings: await checkDocument(saved.document, packages) };
+		// 响应在类型上受契约约束（orchestrationsApi.saveVersion）。
 		return reply
 			.code(201)
-			.send({ ...saved, warnings: await checkDocument(saved.document, packages) });
+			.send(response satisfies EndpointResponse<typeof orchestrationsApi.saveVersion>);
 	});
 
 	app.get<{ Params: { id: string } }>("/orchestrations/:id/versions", async (request, reply) => {
