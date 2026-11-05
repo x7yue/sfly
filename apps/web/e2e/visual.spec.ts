@@ -13,6 +13,7 @@ import {
 	seedDashboard,
 	triggerRun,
 } from "./support";
+import { saveSecondVersion, twoVersions } from "./versions-support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
 // 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）。
@@ -358,4 +359,32 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 			page.getByTestId("run-summary").locator("dd").first(),
 		],
 	});
+});
+
+test("版本历史：并排对比两个版本", async ({ page, controlPlane, connectAgent, clock }) => {
+	await twoAgents(connectAgent);
+	const id = await twoVersions(controlPlane, clock);
+	await page.goto(`/orchestrations/${id}/versions`);
+	await expect(page.getByRole("region", { name: "版本 1（只读）" })).toBeVisible();
+	await expect(
+		page.getByRole("region", { name: "版本 2（只读）" }).locator('[data-node-id="report"]'),
+	).toHaveAttribute("data-mark", "added");
+	await page.mouse.move(700, 880);
+	await expect(page).toHaveScreenshot("versions.png");
+});
+
+test("保存冲突弹窗", async ({ page, controlPlane, connectAgent, clock }) => {
+	await twoAgents(connectAgent);
+	const id = await createEditorScenario(controlPlane);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "sub_ping").click();
+	await page.getByRole("tab", { name: "执行" }).click();
+	await page.getByRole("switch", { name: "always" }).click();
+	clock.advance(5 * 60_000);
+	await saveSecondVersion(controlPlane, id, "bob");
+	await page.keyboard.press("Control+s");
+	const dialog = page.getByRole("dialog", { name: "保存被拦截：场景已有更新的版本" });
+	await expect(dialog).toContainText("− report");
+	await page.mouse.move(700, 880);
+	await expect(page).toHaveScreenshot("editor-conflict.png");
 });
