@@ -23,6 +23,8 @@
 		"test:ts": "pnpm -r test",
 		"test:rust": "cargo test --workspace --locked",
 		"test:py": "uv run --locked pytest",
+		"test:e2e": "pnpm --filter @sfly/web test:e2e",
+		"test:e2e:docker": "bash scripts/e2e-docker.sh",
 		"proto:breaking": "bash scripts/proto-breaking.sh",
 		"build": "pnpm -r build && cargo build --workspace --locked",
 		"check": "pnpm gen:check && pnpm lint && pnpm typecheck && pnpm proto:breaking && pnpm test && pnpm build"

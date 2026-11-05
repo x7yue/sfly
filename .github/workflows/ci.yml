@@ -68,3 +68,47 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
+
+  # 前端端到端测试与视觉回归（apps/web/e2e）：在 Playwright 官方镜像中运行，与本机
+  # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
+  # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致。
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
+      options: --ipc=host
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: sfly
+          POSTGRES_PASSWORD: sfly
+          POSTGRES_DB: sfly
+        options: >-
+          --health-cmd "pg_isready -U sfly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://sfly:sfly@postgres:5432/sfly
+      HOME: /root
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: End-to-end tests
+        run: pnpm test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 7
