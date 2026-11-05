@@ -12,10 +12,10 @@ import {
 	SquarePenIcon,
 	WorkflowIcon,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { createContext, type ReactNode, useContext, useRef, useState } from "react";
 import { StatusDot, type StatusKind, StatusPill } from "#/components/status";
 import { formatDateTime } from "#/lib/format";
-import { TriggerDialog } from "#/runs/TriggerDialog";
+import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -122,9 +122,46 @@ function LastRunInfo({ run, className }: { run: LastRun | null; className?: stri
 	);
 }
 
+type OpenRunDrawer = (scenario: OrchestrationSummary, from: HTMLElement | null) => void;
+const RunDrawerContext = createContext<OpenRunDrawer>(() => {});
+
+/**
+ * 场景列表页的运行抽屉：放在页面一级，列表刷新、筛选让卡片消失时抽屉照常显示；离开页面时随页面关闭。
+ * 预检问题的「前往」进入编排画布并选中该节点。
+ */
+export function ScenarioRunDrawer({ children }: { children: ReactNode }) {
+	const navigate = useNavigate();
+	const [target, setTarget] = useState<OrchestrationSummary | null>(null);
+	const [open, setOpen] = useState(false);
+	const returnFocus = useRef<HTMLElement | null>(null);
+	const openDrawer: OpenRunDrawer = (scenario, from) => {
+		returnFocus.current = from;
+		setTarget(scenario);
+		setOpen(true);
+	};
+	return (
+		<RunDrawerContext.Provider value={openDrawer}>
+			{children}
+			{target && (
+				<RunDrawer
+					open={open}
+					onOpenChange={setOpen}
+					finalFocus={returnFocus}
+					orchestrationId={target.id}
+					name={target.name}
+					description={target.description}
+					onLocate={(node) =>
+						navigate({ to: "/orchestrations/$id", params: { id: target.id }, search: { node } })
+					}
+				/>
+			)}
+		</RunDrawerContext.Provider>
+	);
+}
+
 /**
  * 卡片和表格行共用的操作：「编排」「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、归档；
- * 已归档的场景只能恢复。运行沿用触发弹窗（运行抽屉见 #38）。
+ * 已归档的场景只能恢复。「运行」打开运行抽屉（ScenarioRunDrawer）。
  */
 function ScenarioActions({
 	scenario,
@@ -136,7 +173,8 @@ function ScenarioActions({
 }) {
 	const navigate = useNavigate();
 	const more = useRef<HTMLButtonElement>(null);
-	const [dialog, setDialog] = useState<"copy" | "edit" | "archive" | "run" | null>(null);
+	const [dialog, setDialog] = useState<"copy" | "edit" | "archive" | null>(null);
+	const openRunDrawer = useContext(RunDrawerContext);
 	const unarchive = useUnarchiveScenario();
 	const close = (open: boolean) => {
 		if (!open) setDialog(null);
@@ -163,7 +201,7 @@ function ScenarioActions({
 					编排
 				</Button>
 			)}
-			<Button size="sm" onClick={() => setDialog("run")}>
+			<Button size="sm" onClick={(e) => openRunDrawer(scenario, e.currentTarget)}>
 				<PlayIcon />
 				运行
 			</Button>
@@ -221,15 +259,6 @@ function ScenarioActions({
 				onOpenChange={close}
 				returnFocus={more}
 			/>
-			{dialog === "run" && (
-				<TriggerDialog
-					orchestrationId={scenario.id}
-					dirty={false}
-					baseVersion={scenario.head_version}
-					onLocate={() => navigate({ to: "/orchestrations/$id", params: { id: scenario.id } })}
-					onClose={() => setDialog(null)}
-				/>
-			)}
 		</>
 	);
 }

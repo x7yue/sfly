@@ -14,7 +14,7 @@ import { useOverlays } from "#/components/app-shell/overlays";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { ScenarioCards, ScenarioTable } from "#/scenarios/ScenarioList";
+import { ScenarioCards, ScenarioRunDrawer, ScenarioTable } from "#/scenarios/ScenarioList";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -135,65 +135,67 @@ function ScenariosPage() {
 					]}
 				/>
 			</div>
-			<QueryView
-				query={scenarios}
-				loading={
-					<Panel>
-						<TableSkeleton columns={6} />
-					</Panel>
-				}
-				errorTitle="无法加载场景"
-				isEmpty={(d) => d.orchestrations.length === 0}
-				empty={
-					<Panel>
-						{filtered ? (
-							<EmptyState
-								icon={<SearchIcon />}
-								title="没有匹配的场景"
-								description="换个关键词，或清除筛选条件。"
-							>
-								<Button
-									onClick={() => setSearch({ q: undefined, status: undefined, agent: undefined })}
-								>
-									清除筛选
-								</Button>
-							</EmptyState>
-						) : search.archived ? (
-							<EmptyState
-								icon={<ArchiveIcon />}
-								title="没有已归档的场景"
-								description="归档的场景不出现在列表里、不能运行，可以在这里恢复。"
-							/>
-						) : (
-							<EmptyState
-								icon={<WorkflowIcon />}
-								title="还没有场景"
-								description="场景把节点串成一条测试链路。新建后自带一个入口节点；需要先发布至少一个节点包。"
-							>
-								<div className="flex justify-center gap-2">
-									<Button onClick={() => overlays.open("new-scenario")}>
-										<PlusIcon />
-										新建场景
-									</Button>
-									<Button variant="ghost" render={<Link to="/packages" />} nativeButton={false}>
-										查看节点包
-									</Button>
-								</div>
-							</EmptyState>
-						)}
-					</Panel>
-				}
-			>
-				{(data) =>
-					view === "table" ? (
+			<ScenarioRunDrawer>
+				<QueryView
+					query={scenarios}
+					loading={
 						<Panel>
-							<ScenarioTable scenarios={data.orchestrations} />
+							<TableSkeleton columns={6} />
 						</Panel>
-					) : (
-						<ScenarioCards scenarios={data.orchestrations} />
-					)
-				}
-			</QueryView>
+					}
+					errorTitle="无法加载场景"
+					isEmpty={(d) => d.orchestrations.length === 0}
+					empty={
+						<Panel>
+							{filtered ? (
+								<EmptyState
+									icon={<SearchIcon />}
+									title="没有匹配的场景"
+									description="换个关键词，或清除筛选条件。"
+								>
+									<Button
+										onClick={() => setSearch({ q: undefined, status: undefined, agent: undefined })}
+									>
+										清除筛选
+									</Button>
+								</EmptyState>
+							) : search.archived ? (
+								<EmptyState
+									icon={<ArchiveIcon />}
+									title="没有已归档的场景"
+									description="归档的场景不出现在列表里、不能运行，可以在这里恢复。"
+								/>
+							) : (
+								<EmptyState
+									icon={<WorkflowIcon />}
+									title="还没有场景"
+									description="场景把节点串成一条测试链路。新建后自带一个入口节点；需要先发布至少一个节点包。"
+								>
+									<div className="flex justify-center gap-2">
+										<Button onClick={() => overlays.open("new-scenario")}>
+											<PlusIcon />
+											新建场景
+										</Button>
+										<Button variant="ghost" render={<Link to="/packages" />} nativeButton={false}>
+											查看节点包
+										</Button>
+									</div>
+								</EmptyState>
+							)}
+						</Panel>
+					}
+				>
+					{(data) =>
+						view === "table" ? (
+							<Panel>
+								<ScenarioTable scenarios={data.orchestrations} />
+							</Panel>
+						) : (
+							<ScenarioCards scenarios={data.orchestrations} />
+						)
+					}
+				</QueryView>
+			</ScenarioRunDrawer>
 		</Page>
 	);
 }

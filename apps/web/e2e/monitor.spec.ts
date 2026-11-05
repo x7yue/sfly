@@ -367,11 +367,12 @@ test("失败的运行：默认选中失败的节点；再次运行沿用上次�
 	await expect(timeline(page).getByText("实时跟随")).toHaveCount(0);
 
 	await header.getByRole("button", { name: "再次运行" }).click();
-	const rerun = page.getByRole("dialog", { name: "再次运行" });
-	await expect(rerun.getByLabel("region")).toHaveValue("cn-east");
-	await expect(rerun.getByLabel("token")).toHaveValue("s3cr3t-token");
-	await rerun.getByRole("button", { name: "触发" }).click();
+	const rerun = page.getByRole("dialog", { name: "再次运行 · 日终数据处理" });
+	await expect(rerun.getByRole("textbox", { name: /^region/ })).toHaveValue("cn-east");
+	await expect(rerun.getByRole("textbox", { name: /^token/ })).toHaveValue("s3cr3t-token");
+	await rerun.getByRole("button", { name: "触发运行" }).click();
 	await expect(page).not.toHaveURL(new RegExp(runId));
+	await expect(rerun).toHaveCount(0);
 	await expect(header.getByRole("button", { name: "取消运行" })).toBeVisible();
 
 	await header.getByRole("button", { name: /切换运行/ }).click();

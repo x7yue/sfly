@@ -6,7 +6,7 @@ import { useState } from "react";
 import { StatusDot, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { formatDateTime, formatDuration } from "#/lib/format";
-import { TriggerDialog } from "#/runs/TriggerDialog";
+import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -38,6 +38,7 @@ export function MonitorTopBar({
 	doc: OrchestrationDocument | undefined;
 }) {
 	const { now, live } = useTimeAxis();
+	const navigate = useNavigate();
 	const [cancelOpen, setCancelOpen] = useState(false);
 	const [rerunOpen, setRerunOpen] = useState(false);
 	const chains = orderedChains(run);
@@ -121,14 +122,15 @@ export function MonitorTopBar({
 			{run.status === "running" && (
 				<CancelRunDialog run={run} doc={doc} open={cancelOpen} onOpenChange={setCancelOpen} />
 			)}
-			{rerunOpen && (
-				<TriggerDialog
-					title="再次运行"
-					orchestrationId={run.orchestration_id}
-					initialParams={run.params}
-					onClose={() => setRerunOpen(false)}
-				/>
-			)}
+			<RunDrawer
+				open={rerunOpen}
+				onOpenChange={setRerunOpen}
+				title="再次运行"
+				orchestrationId={run.orchestration_id}
+				name={name ?? "场景"}
+				initialParams={run.params}
+				onTriggered={(next) => navigate({ to: "/runs/$id", params: { id: next.id } })}
+			/>
 		</header>
 	);
 }

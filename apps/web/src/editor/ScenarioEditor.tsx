@@ -38,7 +38,7 @@ import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery, type Orchestration, type OrchestrationHead } from "#/lib/api";
-import { TriggerDialog } from "#/runs/TriggerDialog";
+import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { versionConflictOf } from "#/versions/api";
 import { hasDraft } from "#/versions/draft";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
@@ -82,10 +82,13 @@ export function ScenarioEditor({
 	orchestration,
 	head,
 	initialRun,
+	initialNode,
 }: {
 	orchestration: Orchestration;
 	head: OrchestrationHead;
 	initialRun?: string;
+	/** 打开时选中的节点（运行抽屉里预检问题的「前往」）。 */
+	initialNode?: string;
 }) {
 	// 编辑起点：本地草稿（刷新不丢失）或最新版本；放弃本地修改后用最新版本重建画布。
 	const [start, setStart] = useState(() => startEditing(orchestration.id, head));
@@ -95,6 +98,7 @@ export function ScenarioEditor({
 				orchestration={orchestration}
 				start={start}
 				initialRun={initialRun}
+				initialNode={initialNode}
 				onReload={(latest) => setStart(startEditing(orchestration.id, latest, start.nonce + 1))}
 			/>
 		</ReactFlowProvider>
@@ -124,11 +128,13 @@ function Editor({
 	orchestration,
 	start,
 	initialRun,
+	initialNode,
 	onReload,
 }: {
 	orchestration: Orchestration;
 	start: EditStart;
 	initialRun?: string;
+	initialNode?: string;
 	onReload: (head: OrchestrationHead) => void;
 }) {
 	const flow = useReactFlow<SfNode, SfEdge>();
@@ -139,7 +145,7 @@ function Editor({
 		default_agent: start.document.default_agent,
 		packages: start.document.packages,
 	});
-	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [selectedId, setSelectedId] = useState<string | null>(initialNode ?? null);
 	const [inspectorOpen, setInspectorOpen] = useState(true);
 	const [triggering, setTriggering] = useState(false);
 	const inspectorRef = useRef<HTMLElement>(null);
@@ -574,15 +580,16 @@ function Editor({
 						/>
 					)}
 				</FlowCanvas>
-				{triggering && (
-					<TriggerDialog
-						orchestrationId={orchestration.id}
-						dirty={versioning.dirty || hasDraft(orchestration.id)}
-						baseVersion={versioning.base.version}
-						onLocate={locate}
-						onClose={() => setTriggering(false)}
-					/>
-				)}
+				<RunDrawer
+					open={triggering}
+					onOpenChange={setTriggering}
+					orchestrationId={orchestration.id}
+					name={orchestration.name}
+					description={orchestration.description}
+					dirty={versioning.dirty || hasDraft(orchestration.id)}
+					baseVersion={versioning.base.version}
+					onLocate={locate}
+				/>
 			</div>
 		</FieldDraftsProvider>
 	);
