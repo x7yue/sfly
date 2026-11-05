@@ -62,7 +62,7 @@ test("卡片显示缩略图、名称、说明、版本与节点数、Agent 在�
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
 });
 
-test("「编排」进入编排画布，「运行」打开触发弹窗", async ({ page, controlPlane, connectAgent }) => {
+test("「编排」进入编排画布，「运行」打开运行抽屉", async ({ page, controlPlane, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);
 	const id = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
@@ -70,7 +70,7 @@ test("「编排」进入编排画布，「运行」打开触发弹窗", async ({
 	await page.goto("/orchestrations");
 	const card = page.getByRole("article", { name: "巡检" });
 	await card.getByRole("button", { name: "运行" }).click();
-	await expect(page.getByRole("dialog", { name: "触发运行" })).toBeVisible();
+	await expect(page.getByRole("dialog", { name: "运行 · 巡检" })).toBeVisible();
 	await page.keyboard.press("Escape");
 
 	await card.getByRole("button", { name: "编排" }).click();

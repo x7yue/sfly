@@ -48,9 +48,12 @@ const INSPECTOR_SPACE = 384;
 export function ScenarioEditor({
 	orchestration,
 	head,
+	initialNode,
 }: {
 	orchestration: Orchestration;
 	head: OrchestrationHead;
+	/** 打开时选中的节点（运行抽屉里预检问题的「前往」）。 */
+	initialNode?: string;
 }) {
 	// 编辑起点：本地草稿（刷新不丢失）或最新版本；放弃本地修改后用最新版本重建画布。
 	const [start, setStart] = useState(() => startEditing(orchestration.id, head));
@@ -59,6 +62,7 @@ export function ScenarioEditor({
 			<Editor
 				orchestration={orchestration}
 				start={start}
+				initialNode={initialNode}
 				onReload={(latest) => setStart(startEditing(orchestration.id, latest, start.nonce + 1))}
 			/>
 		</ReactFlowProvider>
@@ -87,10 +91,12 @@ function usePackageTitles(): (pkg: string, node: string) => string | undefined {
 function Editor({
 	orchestration,
 	start,
+	initialNode,
 	onReload,
 }: {
 	orchestration: Orchestration;
 	start: EditStart;
+	initialNode?: string;
 	onReload: (head: OrchestrationHead) => void;
 }) {
 	const flow = useReactFlow<SfNode, SfEdge>();
@@ -101,7 +107,7 @@ function Editor({
 		default_agent: start.document.default_agent,
 		packages: start.document.packages,
 	});
-	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [selectedId, setSelectedId] = useState<string | null>(initialNode ?? null);
 	const [inspectorOpen, setInspectorOpen] = useState(true);
 	const [triggering, setTriggering] = useState(false);
 	const inspectorRef = useRef<HTMLElement>(null);

@@ -37,7 +37,7 @@ const isJson = (text: string) => {
 	}
 };
 
-function fieldSchema(p: ParamDeclView): z.ZodType<FieldValue> {
+function fieldSchema(p: ParamDeclView): z.ZodType<FieldValue, FieldValue> {
 	if (p.type === "boolean") return z.boolean();
 	return z.string().superRefine((raw, ctx) => {
 		const text = raw.trim();
@@ -54,7 +54,7 @@ function fieldSchema(p: ParamDeclView): z.ZodType<FieldValue> {
 }
 
 /** 表单值的校验规则：错误信息挂在对应参数名上（TanStack Form 按 path 分发到字段）。 */
-export function paramsSchema(decls: ParamDeclView[]) {
+export function paramsSchema(decls: ParamDeclView[]): z.ZodType<FormValues, FormValues> {
 	return z.object(Object.fromEntries(decls.map((p) => [p.name, fieldSchema(p)])));
 }
 
