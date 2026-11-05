@@ -44,7 +44,12 @@ export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: numbe
 						}}
 					>
 						<TableCell className="font-mono">
-							<Link to="/runs/$id" params={{ id: run.id }} className="text-fg-1 hover:underline">
+							<Link
+								to="/runs/$id"
+								params={{ id: run.id }}
+								data-slot="run-id"
+								className="text-fg-1 hover:underline"
+							>
 								{shortId(run.id)}
 							</Link>
 						</TableCell>

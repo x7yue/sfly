@@ -11,7 +11,14 @@ import { ChainBar, chainDone, chainLabel } from "./ChainProgress";
 /** 卡片上最多列出的当前节点数。 */
 const MAX_ACTIVE = 3;
 
-const ACTIVE_KIND = { queued: "pending", waiting: "warn" } as const;
+/** 当前节点的状态点：排队为空心灰圈，等待唤醒为琥珀，其余（派发中、执行中）为青色。 */
+const ACTIVE_DOT = {
+	queued: { kind: "pending", color: "text-pending" },
+	waiting: { kind: "warn", color: "text-warn" },
+	running: { kind: "running", color: "text-signal" },
+} as const;
+const activeDot = (status: string) =>
+	ACTIVE_DOT[status as keyof typeof ACTIVE_DOT] ?? ACTIVE_DOT.running;
 
 /**
  * 进行中的运行（原型 runCard）：场景、版本、已运行时长、各链进度、失败的子流程、
@@ -41,7 +48,9 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 				)}
 				<b className="truncate font-medium">{run.orchestration_name}</b>
 				<Badge className="font-mono">v{run.orchestration_version}</Badge>
-				<span className="font-mono text-xs text-fg-3">{shortId(run.id)}</span>
+				<span data-slot="run-id" className="font-mono text-xs text-fg-3">
+					{shortId(run.id)}
+				</span>
 				<span className="flex-1" />
 				<span className="font-mono text-sm" title="已运行">
 					{formatDuration(now - Date.parse(run.started_at))}
@@ -80,7 +89,10 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 							key={`${node.chain_instance_id}/${node.node_id}`}
 							className="flex items-center gap-2 text-sm whitespace-nowrap"
 						>
-							<StatusDot kind={ACTIVE_KIND[node.status as keyof typeof ACTIVE_KIND] ?? "running"} />
+							<StatusDot
+								kind={activeDot(node.status).kind}
+								className={activeDot(node.status).color}
+							/>
 							<span className="font-mono">{node.node_id}</span>
 							<span className="text-xs text-fg-3">{statusLabel(node.status)}</span>
 							{node.progress && (

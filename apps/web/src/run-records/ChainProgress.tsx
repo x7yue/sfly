@@ -32,18 +32,14 @@ const SEGMENT: Record<string, string> = {
 };
 
 /** 一条链的进度条：每个节点一段，读屏读出「主链 2/3」。 */
-export function ChainBar({ chain, compact }: { chain: RunListChain; compact?: boolean }) {
+export function ChainBar({ chain }: { chain: RunListChain }) {
 	const label = `${chainLabel(chain)} ${chainDone(chain)}/${chain.nodes.length}`;
 	return (
 		<span role="img" aria-label={label} title={label} className="inline-flex flex-none gap-0.5">
 			{chain.nodes.map((node) => (
 				<b
 					key={node.node_id}
-					className={cn(
-						"w-1.5 flex-none rounded-[2px]",
-						compact ? "h-1.5" : "h-3",
-						SEGMENT[node.status] ?? "bg-track",
-					)}
+					className={cn("h-3 w-1.5 flex-none rounded-[2px]", SEGMENT[node.status] ?? "bg-track")}
 				/>
 			))}
 		</span>
@@ -51,9 +47,9 @@ export function ChainBar({ chain, compact }: { chain: RunListChain; compact?: bo
 }
 
 /** 表格里最多画几条链，其余只计数，保证行高一致。 */
-const MAX_TABLE_CHAINS = 3;
+const MAX_TABLE_CHAINS = 2;
 
-/** 各链一行的紧凑进度条（表格里用）。 */
+/** 各链一行进度条（表格里用）。 */
 export function ChainBars({ chains }: { chains: RunListChain[] }) {
 	const shown = chains.filter((c) => c.nodes.length > 0);
 	const rest = shown.length - MAX_TABLE_CHAINS;
@@ -61,7 +57,7 @@ export function ChainBars({ chains }: { chains: RunListChain[] }) {
 		<span className="flex items-center gap-2">
 			<span className="flex flex-col gap-0.75">
 				{shown.slice(0, MAX_TABLE_CHAINS).map((chain) => (
-					<ChainBar key={chain.id} chain={chain} compact />
+					<ChainBar key={chain.id} chain={chain} />
 				))}
 			</span>
 			{rest > 0 && <span className="text-2xs text-fg-3">+{rest} 条子流程</span>}

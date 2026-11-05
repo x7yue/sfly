@@ -1,38 +1,8 @@
 import { expect, START_TIME, test } from "./fixtures";
+import { advance, runDocument as document } from "./run-records";
 import { createScenario, holdApi, publishPackage, triggerRun } from "./support";
 
 // 运行记录页（原型 #/runs）：进行中的运行是卡片，历史运行是表格。
-
-const ping = (id: string) => ({
-	id,
-	kind: "package",
-	package: "demo-checks",
-	node: "ping",
-	inputs: { host: "h" },
-});
-
-/** 主链 entry → check → verify；带 subflow 时主链在 check 之后派发子流程 sub（entry → probe）。 */
-function document(options: { subflow?: boolean } = {}) {
-	const main = [
-		{ id: "entry", kind: "entry" },
-		ping("check"),
-		...(options.subflow ? [{ id: "spawn", kind: "async", params: {} }] : []),
-		ping("verify"),
-	];
-	const sub = options.subflow ? [{ id: "sub", kind: "subflow_entry" }, ping("probe")] : [];
-	const edges = (chain: { id: string }[]) =>
-		chain.slice(1).map((n, i) => ({ from: chain[i]?.id, to: n.id, kind: "chain" }));
-	return {
-		default_agent: "agent",
-		nodes: [...main, ...sub],
-		edges: [
-			...edges(main),
-			...edges(sub),
-			...(options.subflow ? [{ from: "spawn", to: "sub", kind: "dispatch" }] : []),
-		],
-		packages: { "demo-checks": "1.2.0" },
-	};
-}
 
 const MINUTE = 60_000;
 
@@ -81,8 +51,9 @@ test("历史运行显示为表格：编号、场景、状态与失败节点、�
 	const scenario = await createScenario(controlPlane, "撮合压测", document());
 	const ok = await triggerRun(controlPlane, scenario);
 	await agent.succeed(await agent.nextAssign());
-	clock.advance(90_000);
-	await agent.succeed(await agent.nextAssign());
+	const verify = await agent.nextAssign();
+	await advance(clock, agent, 90_000);
+	await agent.succeed(verify);
 	clock.advance(MINUTE);
 	const failed = await triggerRun(controlPlane, scenario);
 	await agent.fail(await agent.nextAssign());
@@ -141,7 +112,8 @@ test("按状态、场景、编号或触发人筛选，筛选条件放在地址�
 	await page.getByRole("searchbox", { name: "搜索运行编号或触发人" }).fill(running.slice(0, 6));
 	await expect(cards).toHaveCount(1);
 	await expect(cards.first()).toContainText(running.slice(0, 8));
-	await expect(page).toHaveURL(new RegExp(`q=${running.slice(0, 6)}`));
+	// 全是数字的关键字在地址里按 JSON 字符串编码（带引号），所以只检查包含。
+	await expect.poll(() => new URL(page.url()).searchParams.get("q")).toContain(running.slice(0, 6));
 
 	await page.reload();
 	await expect(cards).toHaveCount(1);
