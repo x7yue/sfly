@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ensureLayout } from "@sfly/orchestration";
 import type { OrchestrationDocument, OrchestrationView } from "@sfly/schema";
 import { and, count, desc, eq } from "drizzle-orm";
 import type { Clock } from "../clock.js";
@@ -47,12 +48,9 @@ export type ArchiveResult =
 	| { kind: "not_found" }
 	| { kind: "running"; count: number };
 
-/** 新建编排的初始文档：只有一个入口节点。 */
-export const initialDocument = (): OrchestrationDocument => ({
-	nodes: [{ id: "entry", kind: "entry", params: [], position: { x: 0, y: 0 } }],
-	edges: [],
-	packages: {},
-});
+/** 新建编排的初始文档：只有一个入口节点，位置由整理布局算法给出（与画布的「整理布局」相同）。 */
+export const initialDocument = (): OrchestrationDocument =>
+	ensureLayout({ nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} });
 
 type OrchestrationRow = typeof orchestrations.$inferSelect;
 type VersionRow = typeof orchestrationVersions.$inferSelect;

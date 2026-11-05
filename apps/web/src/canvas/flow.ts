@@ -1,6 +1,6 @@
+import { ensureLayout } from "@sfly/orchestration";
 import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import type { Edge, Node } from "@xyflow/react";
-import { DEFAULT_NODE_SPACING } from "#/components/canvas/geometry";
 
 /** 画布节点上携带的编排节点（不含布局，布局在 React Flow 节点的 position 上）。 */
 export type DocNode = OrchestrationNode extends infer N
@@ -31,14 +31,17 @@ export function toFlowEdge(edge: DocEdge): SfEdge {
 	};
 }
 
-/** 编排文档 → 画布。没有布局的节点按顺序横向排开。 */
+/**
+ * 编排文档 → 画布。缺少布局的文档（例如通过 API 创建）用整理布局算法得到初始布局
+ * （@sfly/orchestration 的 ensureLayout，与画布的「整理布局」、新建场景相同）。
+ */
 export function toFlow(doc: OrchestrationDocument): { nodes: SfNode[]; edges: SfEdge[] } {
-	const nodes = doc.nodes.map((n, i): SfNode => {
+	const nodes = ensureLayout(doc).nodes.map((n): SfNode => {
 		const { position, ...node } = n;
 		return {
 			id: n.id,
 			type: n.kind,
-			position: position ?? { x: i * DEFAULT_NODE_SPACING, y: 0 },
+			position: position ?? { x: 0, y: 0 },
 			data: { node },
 			// 入口节点是主链的唯一起点，不能删除。
 			deletable: n.kind !== "entry",

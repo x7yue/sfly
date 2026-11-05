@@ -66,7 +66,11 @@ export function NodeFilter({
 				</span>
 				<ChevronDownIcon aria-hidden />
 			</PopoverTrigger>
-			<PopoverContent aria-label="按节点筛选图表" className="w-90 gap-2">
+			<PopoverContent
+				aria-label="按节点筛选图表"
+				align="start"
+				className="flex w-90 flex-col gap-2 p-2.5"
+			>
 				<Input
 					aria-label="搜索节点 ID 或名称"
 					placeholder="搜索节点 ID 或名称"

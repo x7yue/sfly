@@ -1,5 +1,6 @@
 export * from "./diff.js";
 export * from "./inputs.js";
+export * from "./layout.js";
 export * from "./node-config.js";
 export * from "./reference-syntax.js";
 export * from "./references.js";
