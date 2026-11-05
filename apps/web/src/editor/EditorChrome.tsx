@@ -69,7 +69,7 @@ export function EditorTopLeft({
 			<GroupDivider />
 			<fieldset
 				aria-label="模式"
-				className="m-0 inline-flex h-7.5 gap-0.5 rounded-[7px] border border-border-soft bg-sunk p-0.5"
+				className="m-0 inline-flex h-7.5 gap-0.5 rounded-lg border border-border-soft bg-sunk p-0.5"
 			>
 				{(
 					[
@@ -84,7 +84,7 @@ export function EditorTopLeft({
 						title={value === "run" ? "在画布上查看最近一次运行的状态" : undefined}
 						onClick={() => onMode(value)}
 						className={cn(
-							"flex cursor-pointer items-center gap-1.5 rounded-[5px] px-2.5 text-xs text-fg-2 hover:text-fg-1",
+							"flex cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs text-fg-2 hover:text-fg-1",
 							mode === value && "bg-raised-2 text-fg-1",
 						)}
 					>

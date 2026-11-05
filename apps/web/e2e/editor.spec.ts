@@ -2,6 +2,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { createEditorScenario, headOf, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
+import { expectFocusVisible } from "./support";
 
 // 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布与检查器。
 
@@ -195,9 +196,11 @@ test("键盘浏览：方向键沿链切换，↓ / ↑ 进出子流程，Enter �
 	await page.keyboard.press("Enter");
 	await expect(inspector(page).getByRole("combobox", { name: "输入 url" })).toBeFocused();
 	await page.keyboard.press("Escape");
-	await expect(nodeCard(page, "fetch")).toBeFocused();
+	await expectFocusVisible(nodeCard(page, "fetch"));
 	await page.keyboard.press("Escape");
 	await expect(selected).toHaveCount(0);
+	// 取消选中后焦点留在画布上，焦点环可见。
+	await expectFocusVisible(page.getByRole("region", { name: /^编排画布/ }));
 	await expect(inspector(page).getByRole("heading", { name: "场景设置" })).toBeVisible();
 	expect(await box(nodeCard(page, "fetch"))).toEqual(before);
 });

@@ -3,6 +3,7 @@ import { describeSchema } from "@sfly/orchestration";
 import { useId, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Textarea } from "@/components/ui/textarea";
 import { draftKey, useFieldDraftError, useParsedField } from "../field-drafts";
 import {
 	Field,
@@ -215,12 +216,12 @@ function ParsedConstant({
 	const bad = invalid || field.error !== undefined;
 	if (kind === "json") {
 		return (
-			<textarea
+			<Textarea
 				id={id}
 				aria-label={label}
 				aria-invalid={bad || undefined}
 				spellCheck={false}
-				className="min-h-16 w-full rounded-md border border-border bg-sunk px-2.25 py-1.5 font-mono text-xs text-fg-1 outline-none placeholder:text-fg-3 focus:border-signal focus:shadow-[0_0_0_3px_var(--signal-soft)] aria-invalid:border-danger"
+				className="font-mono text-xs"
 				placeholder={`${placeholder}（JSON）`}
 				value={field.text}
 				onChange={(e) => field.change(e.target.value)}

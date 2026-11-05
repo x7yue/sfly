@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { ErrorKind } from "../../server/test/support/fake-agent.js";
 import {
 	packageArchive,
@@ -166,4 +166,20 @@ export async function seedDashboard({
 	clock.advance(15_000);
 	await page.clock.setFixedTime(clock.now());
 	return { linux, running, failed };
+}
+
+/**
+ * 断言焦点在 locator 上，并且焦点环可见（DESIGN-SYSTEM §7：`:focus-visible` 时 2px 青色外框，
+ * 容器不能用 outline-none 去掉它）。
+ */
+export async function expectFocusVisible(locator: Locator): Promise<void> {
+	await expect(locator).toBeFocused();
+	const ring = await locator.evaluate((el) => {
+		const style = getComputedStyle(el);
+		return {
+			focusVisible: el.matches(":focus-visible"),
+			outline: `${style.outlineStyle} ${style.outlineWidth}`,
+		};
+	});
+	expect(ring).toEqual({ focusVisible: true, outline: "solid 2px" });
 }

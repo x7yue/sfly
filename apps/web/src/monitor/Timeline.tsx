@@ -564,13 +564,13 @@ function SegmentBar({
 			data-node={node.nodeId}
 			title={`${node.nodeId} · 第 ${seg.attempt} 次 · ${SEGMENT_LABEL[seg.kind]} · ${formatDuration(seg.end - seg.start)}`}
 			className={cn(
-				"absolute h-3 min-w-0.5 cursor-pointer rounded-[3px]",
+				"absolute h-3 min-w-0.5 cursor-pointer rounded-[2px]",
 				chainRow ? "top-2.25" : "top-1.75",
 				SEGMENT_STYLE[seg.kind],
 				selected && "outline-[1.5px] outline-offset-1 outline-selected",
 				seg.live &&
 					seg.kind === "run" &&
-					"after:absolute after:-top-0.5 after:-right-0.75 after:h-4 after:w-1.5 after:animate-status-pulse after:rounded-[3px] after:bg-signal",
+					"after:absolute after:-top-0.5 after:-right-0.75 after:h-4 after:w-1.5 after:animate-status-pulse after:rounded-[2px] after:bg-signal",
 			)}
 			style={{ left: `${left}%`, width: `max(${Math.max(0.25, right - left)}%, 2px)` }}
 		/>

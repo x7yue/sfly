@@ -191,7 +191,7 @@ export const RunStateInspector = forwardRef<
 					onEscape();
 				}
 			}}
-			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex w-93 flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float outline-none"
+			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex w-93 flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
 		>
 			{state.status === "ready" && selected ? (
 				<NodeRunInspector

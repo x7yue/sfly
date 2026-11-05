@@ -40,13 +40,13 @@
 | 状态 | `ok`、`warn`(`-fg`)、`danger`(`-fg`)，各带 `-soft` / `-line`；`pending`、`skipped`、`cancelled` | 见第 5 节 |
 | 日志 | `log-debug`、`log-info`、`log-warn`、`log-error` | INFO 不上色 |
 | 图表 | `chart-1` … `chart-4`、`chart-grid` | 多序列线色（中性灰与灰蓝，按序使用）、网格线；状态色只用于节点状态 |
-| 阴影 | `shadow-float`、`shadow-pop` | 悬浮控件 / 弹窗、菜单 |
+| 阴影 | `shadow-float`、`shadow-pop`、`shadow-inset-top` | 悬浮控件 / 弹窗、菜单 / 可滚动区域顶部的内阴影 |
 
 shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`、`destructive`、`input`、`ring` 等名称映射到语义层；**注意 shadcn 的 `accent` 是中性悬停色，不是青色**，新代码直接用我们的名字。
 
 ### 2.3 画布专用 `--canvas-*`
 
-`canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-run-running` / `-failed` / `-cancelled`、`--canvas-run-done-opacity`。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
+`canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-run-running` / `-failed` / `-cancelled`、`--canvas-run-done-opacity`、`--canvas-minimap-mask`（小地图视口外遮罩）。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
 
 ### 2.4 配色规则
 
@@ -75,7 +75,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `text-2xl` | 22 / 28 | 统计数字（控制台） |
 
   原型里的非整档字号归并：12.5 → 13（正文、菜单、面包屑）、11.5 → 11（徽标、提示）或 12（字段说明）、10 → 11；15（弹窗标题）→ 14。
-- 圆角只有 `rounded-sm` 4、`rounded-md` 6、`rounded-lg` 8、`rounded-xl` 12（另有 `rounded-full`）。小于 12px 的指示元素（槽位格、进度段）用 2px。
+- 圆角只有 `rounded-sm` 4、`rounded-md` 6、`rounded-lg` 8、`rounded-xl` 12（另有 `rounded-full`）。小于 12px 的指示元素（槽位格、进度段）用 2px。组件里不写色值、不用其他圆角任意值（`src/styles/design-rules.test.ts` 检查）。
 - 控件高度：按钮 / 输入框 30（`h-7.5`），小号 26（`h-6.5`）；顶栏 48（`--topbar-height`）；侧栏 208 / 折叠 56；kbd 18。
 - 系统开启「减少动效」时所有动画与过渡停止（`app.css` base 层）。
 

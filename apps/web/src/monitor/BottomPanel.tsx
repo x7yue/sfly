@@ -188,7 +188,7 @@ export function BottomPanel({
 					id="bp-panel"
 					role="tabpanel"
 					aria-labelledby={`bp-tab-${tab}`}
-					className="min-h-0 flex-1 overflow-hidden shadow-[inset_0_8px_8px_-8px_rgb(0_0_0_/_0.8)]"
+					className="min-h-0 flex-1 overflow-hidden shadow-inset-top"
 				>
 					{tab === "logs" &&
 						(attempt ? (

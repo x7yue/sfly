@@ -116,6 +116,8 @@
 	/* 阴影：带偏移和模糊，不用零偏移彩色发光 */
 	--elevation-float: 0 10px 30px -10px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.4);
 	--elevation-pop: 0 30px 80px -20px rgb(0 0 0 / 0.85);
+	/* 可滚动区域顶部的内阴影（内容从上沿下面滚过） */
+	--elevation-inset-top: inset 0 8px 8px -8px rgb(0 0 0 / 0.8);
 
 	/* 动效 */
 	--motion-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
@@ -163,4 +165,5 @@
 	--canvas-run-failed: var(--danger);
 	--canvas-run-cancelled: var(--cancelled); /* 虚线 */
 	--canvas-run-done-opacity: 0.6;
+	--canvas-minimap-mask: rgb(0 0 0 / 0.35); /* 小地图上视口以外的遮罩 */
 }

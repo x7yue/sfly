@@ -76,7 +76,7 @@ export function Segmented<T extends string>({
 	return (
 		<fieldset
 			aria-label={label}
-			className="m-0 inline-flex h-7.5 flex-none gap-0.5 rounded-[7px] border border-border-soft bg-sunk p-0.5"
+			className="m-0 inline-flex h-7.5 flex-none gap-0.5 rounded-lg border border-border-soft bg-sunk p-0.5"
 		>
 			{options.map(([v, text]) => (
 				<button
@@ -85,7 +85,7 @@ export function Segmented<T extends string>({
 					aria-pressed={value === v}
 					onClick={() => onChange(v)}
 					className={cn(
-						"cursor-pointer rounded-[5px] px-2.5 text-xs whitespace-nowrap text-fg-2 hover:text-fg-1",
+						"cursor-pointer rounded-md px-2.5 text-xs whitespace-nowrap text-fg-2 hover:text-fg-1",
 						value === v && "bg-raised-2 text-fg-1",
 					)}
 				>
@@ -243,7 +243,7 @@ export function ReferenceTextInput({
 													tabIndex={-1}
 													aria-selected={index === active}
 													className={cn(
-														"flex cursor-pointer items-center gap-2 rounded-[5px] px-2 py-1.5 text-xs hover:bg-raised-2",
+														"flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-raised-2",
 														index === active && "bg-raised-2",
 													)}
 													onMouseDown={(e) => e.preventDefault()}
