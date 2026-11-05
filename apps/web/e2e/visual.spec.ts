@@ -96,7 +96,7 @@ test("命令面板", async ({ page, controlPlane }) => {
 	await page.goto("/agents");
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 	await page.keyboard.press("Control+k");
-	await expect(page.getByRole("group", { name: "场景" })).toBeVisible();
+	await expect(page.getByRole("group", { name: "运行场景" })).toBeVisible();
 	await expect(page).toHaveScreenshot("command-palette.png");
 });
 
