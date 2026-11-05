@@ -1,17 +1,23 @@
 import { orchestrationsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { z } from "zod";
 import { ErrorState } from "#/components/feedback/states";
 import { ScenarioEditor } from "#/editor/ScenarioEditor";
 import { apiQuery } from "#/lib/api";
 
-/** 编排画布：全屏页，不带侧边栏和顶栏（原型 #/editor/:id）。 */
+/**
+ * 编排画布：全屏页，不带侧边栏和顶栏（原型 #/editor/:id）。
+ * `?run=<运行 ID>` 打开时进入「运行状态」模式并叠加该运行（监控页「在画布中查看」）。
+ */
 export const Route = createFileRoute("/orchestrations/$id")({
+	validateSearch: z.object({ run: z.string().optional() }),
 	component: EditorPage,
 });
 
 function EditorPage() {
 	const { id } = Route.useParams();
+	const { run } = Route.useSearch();
 	const orchestration = useQuery(apiQuery(orchestrationsApi.get, { params: { id } }));
 	// 编辑起点只在进入页面时读取一次，避免后台刷新覆盖正在编辑的内容。
 	const head = useQuery({
@@ -45,5 +51,12 @@ function EditorPage() {
 			</output>
 		);
 	}
-	return <ScenarioEditor key={id} orchestration={orchestration.data} head={head.data} />;
+	return (
+		<ScenarioEditor
+			key={`${id}:${run ?? ""}`}
+			orchestration={orchestration.data}
+			head={head.data}
+			initialRun={run}
+		/>
+	);
 }
