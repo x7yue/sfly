@@ -1,8 +1,11 @@
 import type { DocumentDiff, FieldChange } from "@sfly/orchestration";
 import { isEmptyDiff } from "@sfly/orchestration";
-import { KIND_LABEL } from "#/canvas/NodeCard";
+import { KIND_META } from "#/components/canvas/node-display";
 
-/** 两份编排文档的差异列表：节点、参数、连线、编排设置、布局。删除的值划线，新值高亮。 */
+/**
+ * 两份场景文档的差异列表：场景设置、节点（新增 / 删除 / 修改的字段）、连线、布局。
+ * 旧值划线（红），新值绿色；版本对比与保存冲突弹窗共用。
+ */
 export function DocumentDiffView({
 	diff,
 	beforeLabel,
@@ -13,12 +16,14 @@ export function DocumentDiffView({
 	afterLabel: string;
 }) {
 	if (isEmptyDiff(diff)) {
-		return <p className="sf-diff__empty">两边内容相同。</p>;
+		return <p className="m-0 text-sm text-fg-3">两边内容相同。</p>;
 	}
+	const nodes = diff.nodes;
 	return (
-		<div className="sf-diff">
-			<p className="sf-diff__legend">
-				<del>{beforeLabel}</del> → <ins>{afterLabel}</ins>
+		<div className="flex flex-col gap-3 text-sm">
+			<p className="m-0 text-xs text-fg-3">
+				<span className="text-danger-fg">− {beforeLabel}</span> →{" "}
+				<span className="text-ok">+ {afterLabel}</span>
 			</p>
 			{diff.settings.length > 0 && (
 				<DiffSection title="场景设置">
@@ -27,29 +32,28 @@ export function DocumentDiffView({
 					))}
 				</DiffSection>
 			)}
-			{(diff.nodes.added.length > 0 ||
-				diff.nodes.removed.length > 0 ||
-				diff.nodes.changed.length > 0) && (
+			{nodes.added.length + nodes.removed.length + nodes.changed.length > 0 && (
 				<DiffSection title="节点">
-					{diff.nodes.added.map((n) => (
-						<div key={`+${n.id}`} className="sf-diff__row">
-							<ins>
+					{nodes.added.map((n) => (
+						<Row key={`+${n.id}`}>
+							<Ins>
 								+ {n.id}（{kindLabel(n.kind)}）
-							</ins>
-						</div>
+							</Ins>
+						</Row>
 					))}
-					{diff.nodes.removed.map((n) => (
-						<div key={`-${n.id}`} className="sf-diff__row">
-							<del>
+					{nodes.removed.map((n) => (
+						<Row key={`-${n.id}`}>
+							<Del>
 								− {n.id}（{kindLabel(n.kind)}）
-							</del>
-						</div>
+							</Del>
+						</Row>
 					))}
-					{diff.nodes.changed.map((n) => (
-						<div key={`~${n.id}`} className="sf-diff__node">
-							<div className="sf-diff__k">
-								{n.id}（{kindLabel(n.kind)}）
-							</div>
+					{nodes.changed.map((n) => (
+						<div key={`~${n.id}`}>
+							<Row>
+								<span className="font-mono text-fg-1">{n.id}</span>
+								<span className="text-fg-3">（{kindLabel(n.kind)}）</span>
+							</Row>
 							{n.changes.map((c) => (
 								<ChangeRow key={c.path} change={c} indent />
 							))}
@@ -57,29 +61,32 @@ export function DocumentDiffView({
 					))}
 				</DiffSection>
 			)}
-			{(diff.edges.added.length > 0 || diff.edges.removed.length > 0) && (
+			{diff.edges.added.length + diff.edges.removed.length > 0 && (
 				<DiffSection title="连线">
 					{diff.edges.added.map((e) => (
-						<div key={`+${e.kind}${e.from}${e.to}`} className="sf-diff__row">
-							<ins>
+						<Row key={`+${e.kind}${e.from}${e.to}`}>
+							<Ins>
 								+ {e.from} → {e.to}
 								{e.kind === "dispatch" ? "（调度）" : ""}
-							</ins>
-						</div>
+							</Ins>
+						</Row>
 					))}
 					{diff.edges.removed.map((e) => (
-						<div key={`-${e.kind}${e.from}${e.to}`} className="sf-diff__row">
-							<del>
+						<Row key={`-${e.kind}${e.from}${e.to}`}>
+							<Del>
 								− {e.from} → {e.to}
 								{e.kind === "dispatch" ? "（调度）" : ""}
-							</del>
-						</div>
+							</Del>
+						</Row>
 					))}
 				</DiffSection>
 			)}
 			{diff.moved.length > 0 && (
 				<DiffSection title="布局">
-					<div className="sf-diff__row">移动了：{diff.moved.join(", ")}</div>
+					<Row>
+						<span className="text-fg-2">移动了：</span>
+						<span className="font-mono">{diff.moved.join(", ")}</span>
+					</Row>
 				</DiffSection>
 			)}
 		</div>
@@ -88,27 +95,38 @@ export function DocumentDiffView({
 
 function DiffSection({ title, children }: { title: string; children: React.ReactNode }) {
 	return (
-		<section className="sf-diff__section">
-			<h4>{title}</h4>
+		<section aria-label={title}>
+			<h4 className="m-0 mb-1 text-xs font-medium text-fg-3">{title}</h4>
 			{children}
 		</section>
 	);
 }
 
+function Row({ indent = false, children }: { indent?: boolean; children: React.ReactNode }) {
+	return <div className={indent ? "py-0.5 pl-4 break-all" : "py-0.5 break-all"}>{children}</div>;
+}
+
+const Ins = ({ children }: { children: React.ReactNode }) => (
+	<ins className="font-mono text-ok no-underline">{children}</ins>
+);
+const Del = ({ children }: { children: React.ReactNode }) => (
+	<del className="font-mono text-danger-fg">{children}</del>
+);
+
 function ChangeRow({ change, indent = false }: { change: FieldChange; indent?: boolean }) {
 	return (
-		<div className={`sf-diff__row${indent ? " sf-diff__row--indent" : ""}`}>
-			<span className="sf-diff__k">{fieldLabel(change.path)}</span>{" "}
-			{change.before !== undefined && <del>{formatValue(change.before)}</del>}
+		<Row indent={indent}>
+			<span className="text-fg-2">{fieldLabel(change.path)}</span>{" "}
+			{change.before !== undefined && <Del>{formatValue(change.before)}</Del>}
 			{change.before !== undefined && change.after !== undefined && " → "}
-			{change.after !== undefined && <ins>{formatValue(change.after)}</ins>}
-			{change.after === undefined && <span className="sf-diff__note">（删除）</span>}
-			{change.before === undefined && <span className="sf-diff__note">（新增）</span>}
-		</div>
+			{change.after !== undefined && <Ins>{formatValue(change.after)}</Ins>}
+			{change.after === undefined && <span className="text-fg-3">（删除）</span>}
+			{change.before === undefined && <span className="text-fg-3">（新增）</span>}
+		</Row>
 	);
 }
 
-const kindLabel = (kind: string) => KIND_LABEL[kind as keyof typeof KIND_LABEL] ?? kind;
+const kindLabel = (kind: string) => KIND_META[kind as keyof typeof KIND_META]?.label ?? kind;
 
 const FIELD_LABEL: Record<string, string> = {
 	default_agent: "默认 Agent",
@@ -129,8 +147,7 @@ function fieldLabel(path: string): string {
 	const [head, ...rest] = path.split(".");
 	const tail = rest.join(".");
 	if (head === "packages") return `包 ${tail} 的锁定版本`;
-	if (head === "inputs") return `参数 ${tail}`;
-	if (head === "params") return `参数 ${tail}`;
+	if (head === "inputs" || head === "params") return `参数 ${tail}`;
 	return FIELD_LABEL[path] ?? path;
 }
 
@@ -144,12 +161,7 @@ function formatValue(value: unknown): string {
 		!Array.isArray(value)
 	) {
 		// 入口参数声明
-		const p = value as {
-			type: string;
-			required?: boolean;
-			secret?: boolean;
-			default?: unknown;
-		};
+		const p = value as { type: string; required?: boolean; secret?: boolean; default?: unknown };
 		const flags = [p.type, p.required ? "必填" : "可选", ...(p.secret ? ["敏感"] : [])];
 		if (p.default !== undefined) flags.push(`默认 ${JSON.stringify(p.default)}`);
 		return flags.join(" · ");

@@ -39,6 +39,3 @@ export const restoreVersion = (orchestrationId: string, number: number) =>
 	callApi(orchestrationsApi.restoreVersion, {
 		params: { id: orchestrationId, number: String(number) },
 	});
-
-export const listVersions = (orchestrationId: string) =>
-	callApi(orchestrationsApi.versions, { params: { id: orchestrationId } });

@@ -80,6 +80,8 @@ export interface FlowCanvasProps {
 	onEnter?(id: string): void;
 	/** 检查器开关（工具条按钮与 I 键）；检查器本身由使用方渲染。 */
 	inspector?: { open: boolean; onToggle(): void };
+	/** 打开时是否显示小地图（默认显示；版本对比的窄画布默认收起）。 */
+	initialMinimap?: boolean;
 	dockStart?: ReactNode;
 	dockTools?: ReactNode;
 	/** 悬浮在画布上的控件（左上、右上的控件组、检查器……）。 */
@@ -113,6 +115,7 @@ export function FlowCanvas({
 	regionMeta,
 	onEnter,
 	inspector,
+	initialMinimap = true,
 	dockStart,
 	dockTools,
 	children,
@@ -120,7 +123,7 @@ export function FlowCanvas({
 	const flow = useReactFlow<SfNode, SfEdge>();
 	const wrapper = useRef<HTMLDivElement>(null);
 	const [tool, setTool] = useState<CanvasTool>("pointer");
-	const [minimap, setMinimap] = useState(true);
+	const [minimap, setMinimap] = useState(initialMinimap);
 
 	const ports = useMemo(() => {
 		const map = new Map<string, PortState>();
