@@ -22,6 +22,7 @@ import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
+import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
 import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
@@ -119,6 +120,7 @@ export function buildHttpApi({
 		progress: logs.progress,
 		metrics: metrics.increments,
 	});
+	registerRunListRoutes(app, { db: database.db });
 	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
