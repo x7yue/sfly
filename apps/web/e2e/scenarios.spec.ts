@@ -120,7 +120,12 @@ test("按名称、说明或 Agent 搜索，按最近运行状态和 Agent 筛选
 	await expect(cards).toHaveText([/撮合压测/]);
 	await search.fill("没有这个");
 	await expect(page.getByRole("region", { name: "没有匹配的场景" })).toBeVisible();
+	await expect(page).toHaveURL(/q=/);
 	await page.getByRole("button", { name: "清除筛选" }).click();
+	await expect(cards).toHaveCount(3);
+	// 搜索框随地址清空（与运行记录页同一种防抖 + 写地址方式），不会把旧关键字写回。
+	await expect(search).toHaveValue("");
+	await page.waitForTimeout(600);
 	await expect(cards).toHaveCount(3);
 
 	const status = page.getByRole("group", { name: "最近运行" });

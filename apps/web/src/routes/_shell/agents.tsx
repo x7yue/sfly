@@ -7,6 +7,7 @@ import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { SlotBar, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
+import { STATUS_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -42,7 +43,7 @@ const connectCommand = () =>
 	].join("\n");
 
 function AgentsPage() {
-	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: 5_000 });
+	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
 	return (
 		<Page>
 			<PageHeader

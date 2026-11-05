@@ -17,6 +17,7 @@ import { SlotBar, StatusDot, StatusPill } from "#/components/status";
 import { ChainBars, Sparkline, TrendChart, TrendLegend } from "#/dashboard/charts";
 import { apiQuery } from "#/lib/api";
 import { formatDateTime, formatDuration } from "#/lib/format";
+import { LIVE_POLL_MS } from "#/lib/polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -27,14 +28,11 @@ export const Route = createFileRoute("/_shell/")({
 	component: Dashboard,
 });
 
-/** 控制台轮询间隔：运行与 Agent 的变化几秒内反映到页面上。 */
-const REFRESH_MS = 2_000;
-
 const shortId = (id: string) => id.slice(0, 8);
 
 /** 控制台（原型 #/dashboard）：模块固定——统计卡、正在运行、运行趋势、最近失败、Agent 状态、最近发布的节点包。 */
 function Dashboard() {
-	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: REFRESH_MS });
+	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: LIVE_POLL_MS });
 	return (
 		<Page>
 			<PageHeader

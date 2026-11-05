@@ -126,6 +126,23 @@ test("按状态、场景、编号或触发人筛选，筛选条件放在地址�
 	expect(other).not.toBe(running);
 });
 
+test("地址里的关键字被清掉时搜索框跟着清空，不会把旧关键字写回地址", async ({ page }) => {
+	await page.goto("/runs");
+	const box = page.getByRole("searchbox", { name: "搜索运行编号或触发人" });
+	await box.fill("nobody");
+	await expect(page).toHaveURL(/q=nobody/);
+
+	await page
+		.getByRole("navigation", { name: "主导航" })
+		.getByRole("link", { name: /运行记录/ })
+		.click();
+	await expect(box).toHaveValue("");
+	// 等过防抖时间：地址里不会再出现旧关键字。
+	await page.waitForTimeout(600);
+	expect(new URL(page.url()).searchParams.get("q")).toBeNull();
+	await expect(box).toHaveValue("");
+});
+
 test("实时更新：运行结束后从卡片移到历史表格", async ({ page, controlPlane, connectAgent }) => {
 	const agent = await connectAgent({ name: "agent", slots: 4 });
 	await publishPackage(controlPlane);

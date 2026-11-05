@@ -2,6 +2,7 @@ import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { StatusDot, StatusPill } from "#/components/status";
 import { formatDateTime, formatDuration } from "#/lib/format";
+import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { nodeStatus, shortId } from "#/monitor/run-model";
@@ -13,8 +14,6 @@ import { ChainBar, chainDone, chainLabel } from "./ChainProgress";
 
 /** 卡片上最多列出的当前节点数。 */
 const MAX_ACTIVE = 3;
-/** 当前节点的主指标多久重新查询一次（与列表的刷新间隔相同；运行记录页没有运行事件流）。 */
-const METRIC_POLL_MS = 2_000;
 
 /** 当前节点的状态点：排队为空心灰圈，等待唤醒为琥珀，其余（派发中、执行中）为青色。 */
 const ACTIVE_DOT = {
@@ -108,7 +107,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 								runId={run.id}
 								entry={catalogEntry(catalog.data, node.chain_instance_id, node.node_id)}
 								status={node.status}
-								poll={METRIC_POLL_MS}
+								poll={LIVE_POLL_MS}
 								variant="inline"
 								className="ml-auto max-w-[60%] flex-none text-xs"
 								fallback={
