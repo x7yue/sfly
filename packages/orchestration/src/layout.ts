@@ -25,7 +25,7 @@ export const LAYOUT_COLUMN = NODE_SIZE.width + 44;
 /** 主链两行之间的行距（卡片高 + 102，留出折返连线的位置）。 */
 const MAIN_ROW = NODE_SIZE.height + 102;
 /** 主链底边到第一个子流程节点顶边的距离（区域标题行之上再留 100）。 */
-const SUBFLOW_TOP_GAP = REGION_PADDING.top + 100;
+export const SUBFLOW_TOP_GAP = REGION_PADDING.top + 100;
 /** 子流程相邻两行的行距：区域之间留 40。 */
 const SUBFLOW_ROW = NODE_SIZE.height + REGION_PADDING.bottom + 40 + REGION_PADDING.top;
 /** 子流程入口节点相对触发它的异步任务节点的水平偏移。 */
