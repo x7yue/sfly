@@ -42,6 +42,7 @@ export const SHORTCUTS = [
 	{ id: "go-agents", group: "全局", label: "Agent 管理", keys: "G A" },
 	{ id: "go-packages", group: "全局", label: "节点包管理", keys: "G P" },
 	{ id: "toggle-sidebar", group: "全局", label: "折叠 / 展开侧边栏", keys: "Ctrl+B" },
+	{ id: "monitor-toggle-timeline", group: "运行监控", label: "时间线汇总 / 展开节点", keys: "T" },
 ] as const satisfies readonly ShortcutDef[];
 
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];

@@ -1,74 +1,12 @@
-import type { OrchestrationNode } from "@sfly/schema";
+import type { AttemptView, ChainRunView, NodeRunView, RunSummary, RunView } from "@sfly/schema";
 import { asc, desc, eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
-import {
-	chainInstances,
-	orchestrationVersions,
-	runs,
-	type TaskProgress,
-	tasks,
-} from "../db/schema.js";
+import { chainInstances, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { agentFor, planRun } from "./chain.js";
 
-export interface AttemptView {
-	task_id: string;
-	attempt: number;
-	status: string;
-	agent: string | null;
-	inputs: Record<string, unknown> | null;
-	outputs: Record<string, unknown> | null;
-	error: { kind: string; message: string } | null;
-	queued_at: string;
-	started_at: string | null;
-	ended_at: string | null;
-	/** 定时 / Sleep 节点的唤醒时间（#14）；其他节点为 null。 */
-	wake_at: string | null;
-	/** 最新进度（#10）；没有上报过时为 null。 */
-	progress: TaskProgress | null;
-}
-
-export interface NodeView {
-	node_id: string;
-	kind: OrchestrationNode["kind"];
-	/**
-	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
-	 * （这两种都没有尝试记录）。
-	 */
-	status: string;
-	/** 包节点派发到的 Agent；内置节点为 null。 */
-	agent: string | null;
-	outputs: Record<string, unknown> | null;
-	error: { kind: string; message: string } | null;
-	attempts: AttemptView[];
-}
-
-export interface ChainView {
-	id: string;
-	chain_id: string;
-	parent_chain_instance_id: string | null;
-	async_node_id: string | null;
-	depth: number;
-	status: string;
-	params: Record<string, unknown>;
-	started_at: string;
-	ended_at: string | null;
-	nodes: NodeView[];
-}
-
-export interface RunView {
-	id: string;
-	orchestration_id: string;
-	orchestration_version: number;
-	status: string;
-	triggered_by: string;
-	params: Record<string, unknown>;
-	started_at: string;
-	ended_at: string | null;
-	/** 取消请求（#12）；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。 */
-	cancel: { requested_by: string; requested_at: string; forced_at: string | null } | null;
-	chains: ChainView[];
-}
+/** 运行视图的类型来自 HTTP 契约（@sfly/schema 的 runsApi）。 */
+export type { AttemptView, ChainRunView as ChainView, NodeRunView as NodeView, RunView };
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
@@ -171,16 +109,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 	};
 }
 
-/** 运行列表里的一项。 */
-export interface RunSummary {
-	id: string;
-	orchestration_id: string;
-	orchestration_version: number;
-	status: string;
-	triggered_by: string;
-	started_at: string;
-	ended_at: string | null;
-}
+export type { RunSummary };
 
 /** 一份编排的运行，按开始时间从新到旧（最多 limit 条）。 */
 export async function listRuns(

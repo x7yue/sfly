@@ -1,8 +1,10 @@
 // 切入点 A：产物与节点输出上限（#18）。假 Agent 收到 AssignTask 里的产物上传地址，经 HTTP 上传产物，
 // 通过 HTTP 列出、下载产物；节点输出超过 1 MB 时任务以 node_error 失败。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
+
 import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
+import { artifactsApi } from "@sfly/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { type AssignedTask, FakeAgent, TaskStatus } from "./support/fake-agent.js";
@@ -83,7 +85,7 @@ describe("产物", () => {
 	const list = async (taskId: string): Promise<ArtifactList> => {
 		const res = await cp.fetch(`/tasks/${taskId}/artifacts`);
 		expect(res.status).toBe(200);
-		return (await res.json()) as ArtifactList;
+		return artifactsApi.list.response.parse(await res.json()) as ArtifactList;
 	};
 
 	it("派发的任务带产物上传地址；上传后可以列出和下载，下载地址可以写进输出交给后续节点", async () => {

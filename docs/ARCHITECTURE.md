@@ -295,7 +295,7 @@ flowchart TD
 - 纯 SPA（ADR 0006）：TanStack Router + TanStack Query，vite 构建；构建产物由控制面在 HTTP 端口上托管，与 API、SSE 同源同端口。
 - 路径区分：浏览器经 `/api/*` 调用 API 与 SSE（控制面去掉前缀后按原路由处理，`/api` 下未知路由返回 JSON 404）；根路径上的 API 保留给 Agent、CLI 等非浏览器客户端；其余 GET 请求命中构建产物文件就返回文件，浏览器导航（`Accept` 含 `text/html`）回退到入口页 `index.html`，因此前端路由可以与根路径 API 同名。开发时 vite 开发服务器把 `/api/*` 原样代理到控制面。
 - 设计体系（ADR 0008）：shadcn/ui（Base UI 原语）组件归仓库维护，三层设计 token、CSS layer、字号与配色规则、组件清单与各状态样式见 `docs/DESIGN-SYSTEM.md`。页面放在带外壳（侧边栏 + 顶栏）的 `_shell` 布局下，全屏页（编排画布、运行监控）不带外壳；命令面板、快捷键面板与通知是全局浮层，快捷键来自统一的注册表。
-- HTTP 契约（ADR 0007）：接口的请求与响应 schema 在 `@sfly/schema` 的 `http/` 模块中用 zod 定义；控制面用 `contractRoute` 按契约校验请求（不符合时 400 `invalid_request`）、约束响应类型，前端由契约推导类型、生成 query key，开发环境校验响应。已迁移：Agent、节点包；其余接口随各页面的票据迁移。
+- HTTP 契约（ADR 0007）：接口的请求与响应 schema 在 `@sfly/schema` 的 `http/` 模块中用 zod 定义；控制面用 `contractRoute` 按契约校验请求（不符合时 400 `invalid_request`）、约束响应类型，前端由契约推导类型、生成 query key，开发环境校验响应。已迁移：Agent、节点包、运行（预检、触发、列表、视图、取消）、任务日志分页、产物列表；其余接口随各页面的票据迁移。
 - 测试（ADR 0005）：`apps/web/e2e` 的 Playwright 端到端测试与视觉回归，沿用控制面测试基建（真实控制面托管构建产物、假 Agent、每个测试独立数据库、手动时钟）。
 - 画布使用 React Flow（`@xyflow/react`）重写；保留原型的视觉规范（`tokens.css` 配色、语义缩放、端口规则、调度连线的样式）。
 - 主要页面：编排列表、画布编辑（参数面板由节点元信息的 schema 生成）、版本历史与对比、运行列表、运行详情（链状态、日志、进度、产物）、Agent 列表、节点包列表。

@@ -1,6 +1,6 @@
 import type { DashboardChain, DashboardHour } from "@sfly/schema";
 import { cn } from "cn";
-import { formatClock } from "#/lib/format";
+import { formatHourMinute } from "#/lib/format";
 
 /** 控制台的小图：统计卡里的迷你趋势、按小时的堆叠柱、各链进度条（原型 spark / trend / chainBars）。 */
 
@@ -80,7 +80,7 @@ export function TrendChart({ hours }: { hours: DashboardHour[] }) {
 					return (
 						<g key={hour.start}>
 							<title>
-								{`${formatClock(hour.start)} 起 · 成功 ${hour.success} · 失败 ${hour.failed} · 取消 ${hour.cancelled}`}
+								{`${formatHourMinute(hour.start)} 起 · 成功 ${hour.success} · 失败 ${hour.failed} · 取消 ${hour.cancelled}`}
 							</title>
 							{/* 透明底，悬停整列都能看到读数 */}
 							<rect x={i * slot} y={0} width={slot} height={H} className="fill-transparent" />
@@ -108,7 +108,7 @@ export function TrendChart({ hours }: { hours: DashboardHour[] }) {
 				{hours
 					.filter((_, i) => i % 6 === 0)
 					.map((h) => (
-						<span key={h.start}>{formatClock(h.start)}</span>
+						<span key={h.start}>{formatHourMinute(h.start)}</span>
 					))}
 				<span>现在</span>
 			</div>

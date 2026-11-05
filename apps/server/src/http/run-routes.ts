@@ -1,6 +1,5 @@
-import type { MetricIncrement } from "@sfly/schema";
+import { type MetricIncrement, runsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
-import { z } from "zod";
 import type { Db } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import { getRunView, listRuns } from "../engine/run-queries.js";
@@ -10,12 +9,11 @@ import type { Preflight } from "../runs/preflight.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
+import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 import { requireNickname } from "./nickname.js";
 
-const TriggerBody = z.strictObject({ params: z.record(z.string(), z.unknown()).default({}) });
-
-/** 运行：触发前预检、手动触发编排的最新版本、运行列表、查询运行状态。 */
+/** 运行（契约见 @sfly/schema 的 runsApi）：触发前预检、手动触发编排的最新版本、运行列表、查询运行状态。 */
 export function registerRunRoutes(
 	app: FastifyInstance,
 	deps: {
@@ -31,12 +29,10 @@ export function registerRunRoutes(
 	},
 ): void {
 	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）。
-	app.get<{ Params: { id: string } }>("/orchestrations/:id/preflight", async (request, reply) => {
-		const head = isUuid(request.params.id)
-			? await deps.orchestrations.head(request.params.id)
-			: undefined;
+	contractRoute(app, runsApi.preflight, async ({ params }, reply) => {
+		const head = isUuid(params.id) ? await deps.orchestrations.head(params.id) : undefined;
 		if (!head) return sendError(reply, 404, "not_found", "orchestration not found");
-		const orchestration = await deps.orchestrations.get(request.params.id);
+		const orchestration = await deps.orchestrations.get(params.id);
 		if (orchestration?.archived_at) {
 			return {
 				version: head.number,
@@ -59,30 +55,17 @@ export function registerRunRoutes(
 		};
 	});
 
-	app.get<{ Params: { id: string } }>("/orchestrations/:id/runs", async (request, reply) => {
-		const found = isUuid(request.params.id)
-			? await deps.orchestrations.get(request.params.id)
-			: undefined;
+	contractRoute(app, runsApi.listForOrchestration, async ({ params }, reply) => {
+		const found = isUuid(params.id) ? await deps.orchestrations.get(params.id) : undefined;
 		if (!found) return sendError(reply, 404, "not_found", "orchestration not found");
 		return { runs: await listRuns(deps.db, found.id) };
 	});
 
-	app.post<{ Params: { id: string } }>("/orchestrations/:id/runs", async (request, reply) => {
+	contractRoute(app, runsApi.trigger, async ({ params, body }, reply, request) => {
 		const triggeredBy = requireNickname(request, reply);
 		if (!triggeredBy) return reply;
-		const body = TriggerBody.safeParse(request.body ?? {});
-		if (!body.success) {
-			return sendError(
-				reply,
-				400,
-				"invalid_request",
-				"params must be an object",
-				z.treeifyError(body.error),
-			);
-		}
-		if (!isUuid(request.params.id))
-			return sendError(reply, 404, "not_found", "orchestration not found");
-		const outcome = await deps.engine.trigger(request.params.id, body.data.params, triggeredBy);
+		if (!isUuid(params.id)) return sendError(reply, 404, "not_found", "orchestration not found");
+		const outcome = await deps.engine.trigger(params.id, body.params, triggeredBy);
 		if (!outcome.ok) {
 			return sendError(reply, outcome.status, outcome.code, outcome.message, outcome.details);
 		}
@@ -138,20 +121,19 @@ export function registerRunRoutes(
 	});
 
 	// 取消整个运行（#12）；运行还没结束时再次调用即强制取消。返回取消后的运行视图。
-	app.post<{ Params: { id: string } }>("/runs/:id/cancel", async (request, reply) => {
+	contractRoute(app, runsApi.cancel, async ({ params }, reply, request) => {
 		const requestedBy = requireNickname(request, reply);
 		if (!requestedBy) return reply;
-		if (!isUuid(request.params.id)) return sendError(reply, 404, "not_found", "run not found");
-		const outcome = await deps.engine.cancel(request.params.id, requestedBy);
+		if (!isUuid(params.id)) return sendError(reply, 404, "not_found", "run not found");
+		const outcome = await deps.engine.cancel(params.id, requestedBy);
 		if (!outcome.ok) return sendError(reply, outcome.status, outcome.code, outcome.message);
-		return getRunView(deps.db, request.params.id);
+		return (
+			(await getRunView(deps.db, params.id)) ?? sendError(reply, 404, "not_found", "run not found")
+		);
 	});
 
-	app.get<{ Params: { id: string } }>("/runs/:id", async (request, reply) => {
-		const run = isUuid(request.params.id)
-			? await getRunView(deps.db, request.params.id)
-			: undefined;
-		if (!run) return sendError(reply, 404, "not_found", "run not found");
-		return run;
+	contractRoute(app, runsApi.get, async ({ params }, reply) => {
+		const run = isUuid(params.id) ? await getRunView(deps.db, params.id) : undefined;
+		return run ?? sendError(reply, 404, "not_found", "run not found");
 	});
 }

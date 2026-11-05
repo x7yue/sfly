@@ -1,3 +1,4 @@
+import { runsApi } from "@sfly/schema";
 import { expect } from "vitest";
 import type { TestControlPlane } from "./test-control-plane.js";
 
@@ -63,11 +64,12 @@ export class ApiClient {
 	async cancelOk(runId: string): Promise<RunView> {
 		const res = await this.cancel(runId);
 		expect(res.status, await res.clone().text()).toBe(200);
-		return (await res.json()) as RunView;
+		return runsApi.cancel.response.parse(await res.json());
 	}
 
-	run(runId: string): Promise<RunView> {
-		return this.getJson<RunView>(`/runs/${runId}`);
+	/** 运行视图（按 HTTP 契约解析，响应不符合契约时测试失败）。 */
+	async run(runId: string): Promise<RunView> {
+		return runsApi.get.response.parse(await this.getJson(`/runs/${runId}`));
 	}
 
 	/** 主链上某个节点的视图。 */

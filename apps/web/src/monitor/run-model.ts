@@ -1,0 +1,212 @@
+import type {
+	ChainRunView,
+	NodeRunView,
+	OrchestrationDocument,
+	OrchestrationNode,
+	RunView,
+} from "@sfly/schema";
+import type { StatusKind } from "#/components/status";
+import type { NodeRef } from "./monitor-state";
+
+/** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
+
+const NODE_STATUS: Record<string, { kind: StatusKind; label: string }> = {
+	pending: { kind: "pending", label: "待执行" },
+	queued: { kind: "warn", label: "排队中" },
+	// 已派发给 Agent，还在下载、安装节点包或启动执行器。
+	dispatched: { kind: "running", label: "准备中" },
+	running: { kind: "running", label: "执行中" },
+	waiting: { kind: "warn", label: "等待中" },
+	success: { kind: "ok", label: "成功" },
+	failed: { kind: "failed", label: "失败" },
+	skipped: { kind: "skipped", label: "已跳过" },
+	cancelled: { kind: "cancelled", label: "已取消" },
+};
+
+export const nodeStatus = (status: string) =>
+	NODE_STATUS[status] ?? { kind: "pending" as const, label: status };
+
+/** 运行与链的状态；取消后等待清理的运行显示为「取消中」，不是「运行中」。 */
+export function runStatus(run: Pick<RunView, "status" | "cancel">): {
+	kind: StatusKind;
+	label: string;
+} {
+	if (run.status === "running" && run.cancel) {
+		return run.cancel.forced_at
+			? { kind: "cancelled", label: "强制终止中" }
+			: { kind: "cancelled", label: "取消中" };
+	}
+	return chainStatus(run.status);
+}
+
+/** 链实例的状态；运行取消后还没结束的链同样显示为「取消中」。 */
+export const chainRunStatus = (chain: ChainRunView, cancelling: boolean) =>
+	chain.status === "running" && cancelling
+		? { kind: "cancelled" as const, label: "取消中" }
+		: chainStatus(chain.status);
+
+export function chainStatus(status: string): { kind: StatusKind; label: string } {
+	switch (status) {
+		case "running":
+			return { kind: "running", label: "运行中" };
+		case "success":
+			return { kind: "ok", label: "成功" };
+		case "failed":
+			return { kind: "failed", label: "失败" };
+		case "cancelled":
+			return { kind: "cancelled", label: "已取消" };
+		default:
+			return { kind: "pending", label: status };
+	}
+}
+
+/** 链实例按层级排列：主链在前，每个子流程实例紧跟在派发它的链后面（同级按开始时间）。 */
+export function orderedChains(run: RunView): ChainRunView[] {
+	const children = new Map<string | null, ChainRunView[]>();
+	for (const chain of run.chains) {
+		const parent = chain.parent_chain_instance_id;
+		children.set(parent, [...(children.get(parent) ?? []), chain]);
+	}
+	const out: ChainRunView[] = [];
+	const visit = (parent: string | null) => {
+		const list = [...(children.get(parent) ?? [])].sort(
+			(a, b) => Date.parse(a.started_at) - Date.parse(b.started_at),
+		);
+		for (const chain of list) {
+			out.push(chain);
+			visit(chain.id);
+		}
+	};
+	visit(null);
+	// 父链不在视图里的实例（不应出现）放在最后，不丢。
+	for (const chain of run.chains) if (!out.includes(chain)) out.push(chain);
+	return out;
+}
+
+export const shortId = (id: string) => id.slice(0, 8);
+
+/** 链实例的名称：主链，或「子流程 <起点> · <实例短 ID>」。 */
+export const chainLabel = (chain: ChainRunView) =>
+	chain.depth === 0 ? "主链" : `子流程 ${chain.chain_id} · ${shortId(chain.id)}`;
+
+const KIND_TITLE: Record<OrchestrationNode["kind"], string> = {
+	entry: "入口",
+	subflow_entry: "子流程入口",
+	async: "异步任务",
+	timer: "定时",
+	sleep: "Sleep",
+	package: "包节点",
+};
+
+/** 节点 ID → 文档里的节点（标题、always 标记、引用了哪些参数）。 */
+export const documentNodes = (doc: OrchestrationDocument | undefined) =>
+	new Map((doc?.nodes ?? []).map((n) => [n.id, n]));
+
+/** 节点的说明文字：包节点是 `包/节点类型`，内置节点是类型名。 */
+export function nodeTitle(node: NodeRunView, decl: OrchestrationNode | undefined): string {
+	if (decl?.kind === "package") return `${decl.package}/${decl.node}`;
+	return KIND_TITLE[node.kind] ?? node.kind;
+}
+
+export const isAlways = (decl: OrchestrationNode | undefined) =>
+	!!decl && "always" in decl && decl.always === true;
+
+export function findNode(run: RunView, ref: NodeRef | null): NodeRunView | undefined {
+	if (!ref) return undefined;
+	return run.chains
+		.find((c) => c.id === ref.chainInstanceId)
+		?.nodes.find((n) => n.node_id === ref.nodeId);
+}
+
+/** 打开运行时默认选中的节点：失败的节点，其次是执行中的节点；都没有时不选。 */
+export function focusNode(run: RunView, nodeId?: string): NodeRef | null {
+	const all = orderedChains(run).flatMap((c) =>
+		c.nodes.map((n) => ({ chainInstanceId: c.id, nodeId: n.node_id, status: n.status })),
+	);
+	const pick =
+		(nodeId ? all.find((n) => n.nodeId === nodeId) : undefined) ??
+		all.find((n) => n.status === "failed") ??
+		all.find((n) => ["running", "dispatched", "waiting", "queued"].includes(n.status));
+	return pick ? { chainInstanceId: pick.chainInstanceId, nodeId: pick.nodeId } : null;
+}
+
+/** 取消整个运行的影响（docs/SEMANTICS.md §3.4），在取消确认弹窗里列出。 */
+export function cancelImpact(run: RunView, doc: OrchestrationDocument | undefined) {
+	const decls = documentNodes(doc);
+	const nodes = run.chains.flatMap((c) => c.nodes);
+	const notStarted = (n: NodeRunView) => n.status === "pending" || n.status === "queued";
+	return {
+		/** 正在执行（或派发中、等待中）的节点：先优雅终止。 */
+		running: nodes.filter((n) => ["running", "dispatched", "waiting"].includes(n.status)),
+		/** 还没开始的 always 节点：照常执行清理。 */
+		always: nodes.filter((n) => notStarted(n) && isAlways(decls.get(n.node_id))),
+		/** 还没开始的普通节点：标记为已取消。 */
+		cancelled: nodes.filter((n) => notStarted(n) && !isAlways(decls.get(n.node_id))),
+	};
+}
+
+/** 入口参数和子流程入口参数中标记为敏感的参数名。 */
+export function secretParams(doc: OrchestrationDocument | undefined): Set<string> {
+	return new Set(
+		(doc?.nodes ?? [])
+			.flatMap((n) =>
+				n.kind === "entry" || n.kind === "subflow_entry" ? n.params.filter((p) => p.secret) : [],
+			)
+			.map((p) => p.name),
+	);
+}
+
+/**
+ * 输入里引用了敏感参数的键：控制面已把 secret 的值替换成掩码，这里再把整个值打码
+ * （值可能是由敏感参数拼出来的）。
+ */
+export function secretInputKeys(
+	decl: OrchestrationNode | undefined,
+	secrets: ReadonlySet<string>,
+): Set<string> {
+	if (secrets.size === 0 || !decl) return new Set();
+	const values = decl.kind === "package" ? decl.inputs : decl.kind === "async" ? decl.params : {};
+	return new Set(
+		Object.entries(values)
+			.filter(([, v]) =>
+				[...secrets].some((s) => new RegExp(`params\\.${s}\\b`).test(JSON.stringify(v))),
+			)
+			.map(([k]) => k),
+	);
+}
+
+export const MASK = "••••••";
+
+/** 运行 SSE 上的 `progress` 事件（控制面 ProgressEvent）。 */
+export interface ProgressEvent {
+	run_id: string;
+	chain_instance_id: string;
+	node_id: string;
+	task_id: string;
+	progress: NonNullable<RunView["chains"][number]["nodes"][number]["attempts"][number]["progress"]>;
+}
+
+/** 把一条进度推送合并进运行视图（只改对应尝试的 progress）。 */
+export function applyProgress(run: RunView | undefined, event: ProgressEvent): RunView | undefined {
+	if (!run) return run;
+	return {
+		...run,
+		chains: run.chains.map((chain) =>
+			chain.id !== event.chain_instance_id
+				? chain
+				: {
+						...chain,
+						nodes: chain.nodes.map((node) =>
+							node.node_id !== event.node_id
+								? node
+								: {
+										...node,
+										attempts: node.attempts.map((a) =>
+											a.task_id === event.task_id ? { ...a, progress: event.progress } : a,
+										),
+									},
+						),
+					},
+		),
+	};
+}

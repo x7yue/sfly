@@ -28,9 +28,13 @@ const DOT: Record<StatusKind, string> = {
 	cancelled: "size-2 border-[1.5px] border-dashed border-current",
 };
 
+/** 只有圆点（单独使用时自带状态色，例如时间线的行标签）；需要文字时用 StatusPill。 */
 export function StatusDot({ kind, className }: { kind: StatusKind; className?: string }) {
 	return (
-		<i aria-hidden className={cn("inline-block flex-none rounded-full", DOT[kind], className)} />
+		<i
+			aria-hidden
+			className={cn("inline-block flex-none rounded-full", TEXT[kind], DOT[kind], className)}
+		/>
 	);
 }
 

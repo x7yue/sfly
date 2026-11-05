@@ -1,4 +1,7 @@
+import type { Page } from "@playwright/test";
+import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { type E2eFixtures, expect, test } from "./fixtures";
+import { openMonitor, runningScenario } from "./monitor-scenario";
 import { seedRunRecords } from "./run-records";
 import {
 	createScenario,
@@ -236,4 +239,49 @@ test("运行记录为空", async ({ page }) => {
 	await page.goto("/runs");
 	await expect(page.getByRole("region", { name: "没有运行记录" })).toBeVisible();
 	await expect(page).toHaveScreenshot("runs-empty.png");
+});
+
+/** 运行 ID 是随机的：截图时遮住显示运行编号与子流程实例编号的地方。 */
+const runIds = (page: Page) => [
+	// 弹窗打开时页面其余部分对辅助技术隐藏，这里用 CSS 选择器而不是 role。
+	page.locator('button[aria-label^="切换运行"]'),
+	page.locator('ul[aria-label="各链状态"]'),
+	page.locator('[data-chain-row] button:has-text("子流程")'),
+	page.getByRole("dialog").getByRole("heading"),
+	page.getByRole("dialog").locator("label .font-mono"),
+];
+
+test("运行监控：运行中（时间线、选中节点的日志）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId, "fetch");
+	await expect(page.getByRole("log", { name: "日志" })).toContainText("batch committed");
+	await page.mouse.move(700, 870); // 不停在时间线上，避免截到悬停竖线
+	await expect(page).toHaveScreenshot("monitor-running.png", { mask: runIds(page) });
+});
+
+test("运行监控：失败的运行（尝试页签）", async ({ page, controlPlane, connectAgent, clock }) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	await agent.succeed(tasks.probe as AssignedTask);
+	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦");
+	const cleanup = await agent.nextAssign();
+	clock.advance(1000);
+	await agent.succeed(cleanup);
+	await openMonitor(page, clock, runId);
+	await page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }).click();
+	await expect(page.getByRole("article", { name: "verify 第 2 次尝试" })).toBeVisible();
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
+});
+
+test("运行监控：取消确认弹窗", async ({ page, controlPlane, connectAgent, clock }) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	await page.getByRole("banner").getByRole("button", { name: "取消运行" }).click();
+	await expect(page.getByRole("dialog", { name: /取消运行/ })).toBeVisible();
+	await expect(page).toHaveScreenshot("monitor-cancel.png", { mask: runIds(page) });
 });

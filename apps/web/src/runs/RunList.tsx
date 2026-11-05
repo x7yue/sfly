@@ -1,9 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { getOrchestration } from "#/lib/api";
+import { useNow } from "#/lib/use-now";
 import { listRuns } from "./api";
-import { durationBetween, formatTime, shortId } from "./format";
-import { RunPill, useNow } from "./RunPage";
+import { durationBetween, formatTime, runStatusLabel, shortId } from "./format";
+
+/** 运行状态标签（原型 runs.css 的 .pill）。 */
+function RunPill({ status }: { status: string }) {
+	const tone = { running: "run", success: "ok", failed: "fail" }[status] ?? "skip";
+	return (
+		<span className={`sf-pill sf-pill--${tone}`}>
+			<i />
+			{runStatusLabel(status)}
+		</span>
+	);
+}
 
 /** 运行记录（原型的 runs 表）：触发人、开始时间、耗时、状态；点击一行打开运行视图。 */
 export function RunList({ orchestrationId }: { orchestrationId: string }) {

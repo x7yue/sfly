@@ -8,21 +8,24 @@ import { getPreflight, type ParamDecl, type PreflightProblem, triggerRun } from 
 /** 表单里的值：布尔参数用开关，其余都是输入框里的文本。 */
 type FieldValue = string | boolean;
 
-const initialValue = (p: ParamDecl): FieldValue => {
-	if (p.type === "boolean") return p.default === true;
-	if (p.default === undefined || p.default === null) return "";
-	return p.type === "json" ? JSON.stringify(p.default) : String(p.default);
+/** 表单初始值：给了 initial（再次运行时沿用上次的参数，敏感参数除外）时用它，否则用默认值。 */
+const initialValue = (p: ParamDecl, initial?: Record<string, unknown>): FieldValue => {
+	const value = initial && !p.secret && p.name in initial ? initial[p.name] : p.default;
+	if (p.type === "boolean") return value === true;
+	if (value === undefined || value === null) return "";
+	return p.type === "json" ? JSON.stringify(value) : String(value);
 };
 
 /** 表单值 → 触发参数；留空的参数不传（按默认值填充，必填参数由控制面报错）。 */
 function toParams(
 	decls: ParamDecl[],
 	values: Record<string, FieldValue>,
+	initial?: Record<string, unknown>,
 ): { params: Record<string, unknown> } | { errors: Record<string, string> } {
 	const params: Record<string, unknown> = {};
 	const errors: Record<string, string> = {};
 	for (const p of decls) {
-		const value = values[p.name] ?? initialValue(p);
+		const value = values[p.name] ?? initialValue(p, initial);
 		if (typeof value === "boolean") {
 			params[p.name] = value;
 			continue;
@@ -54,19 +57,24 @@ function toParams(
  */
 export function TriggerDialog({
 	orchestrationId,
-	dirty,
+	dirty = false,
 	baseVersion,
 	onLocate,
 	onClose,
+	initialParams,
+	title = "触发运行",
 }: {
 	orchestrationId: string;
 	/** 画布上有未保存的修改（本地草稿）。 */
-	dirty: boolean;
-	/** 画布显示的版本（编辑起点）。 */
-	baseVersion: number;
+	dirty?: boolean;
+	/** 画布显示的版本（编辑起点）；不是从画布打开时不给，不检查版本是否最新。 */
+	baseVersion?: number;
 	/** 在画布上定位到问题所在的节点。 */
-	onLocate: (nodeId: string) => void;
+	onLocate?: (nodeId: string) => void;
 	onClose: () => void;
+	/** 表单初始值（再次运行时为上次运行的参数；敏感参数不沿用，需要重新填写）。 */
+	initialParams?: Record<string, unknown>;
+	title?: string;
 }) {
 	const navigate = useNavigate();
 	const preflight = useQuery({
@@ -90,7 +98,7 @@ export function TriggerDialog({
 			message: "画布上有未保存的修改。触发只会运行已保存的最新版本，请先保存。",
 		});
 	}
-	if (data && data.version > 0 && data.version !== baseVersion) {
+	if (data && baseVersion !== undefined && data.version > 0 && data.version !== baseVersion) {
 		problems.push({
 			code: "stale_version",
 			message: `最新版本是 ${data.version}，画布显示的是版本 ${baseVersion}（别人保存了新版本）。刷新页面看过最新版本后再触发。`,
@@ -102,7 +110,7 @@ export function TriggerDialog({
 	const submit = (event: React.FormEvent) => {
 		event.preventDefault();
 		if (!data || blocked) return;
-		const result = toParams(data.params, values);
+		const result = toParams(data.params, values, initialParams);
 		if ("errors" in result) {
 			setFieldErrors(result.errors);
 			return;
@@ -114,7 +122,7 @@ export function TriggerDialog({
 	const formId = useId();
 	return (
 		<Modal
-			title="触发运行"
+			title={title}
 			description={
 				data && data.version > 0
 					? `运行绑定到最新版本 ${data.version}。`
@@ -147,10 +155,13 @@ export function TriggerDialog({
 					</h3>
 					<ProblemList
 						problems={problems}
-						onLocate={(id) => {
-							onLocate(id);
-							onClose();
-						}}
+						onLocate={
+							onLocate &&
+							((id) => {
+								onLocate(id);
+								onClose();
+							})
+						}
 					/>
 				</section>
 			)}
@@ -165,7 +176,7 @@ export function TriggerDialog({
 						<ParamField
 							key={p.name}
 							param={p}
-							value={values[p.name] ?? initialValue(p)}
+							value={values[p.name] ?? initialValue(p, initialParams)}
 							error={fieldErrors[p.name]}
 							onChange={(v) => setValues((s) => ({ ...s, [p.name]: v }))}
 						/>
