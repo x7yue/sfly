@@ -8,6 +8,7 @@ import {
 	type TaskProgress,
 	tasks,
 } from "../db/schema.js";
+import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { agentFor, planRun } from "./chain.js";
 
 export interface AttemptView {
@@ -71,7 +72,10 @@ export interface RunView {
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
-/** 运行的只读查询：运行、链实例和每个节点的状态、输出与各次尝试。 */
+/**
+ * 运行的只读查询：运行、链实例和每个节点的状态、输出与各次尝试。
+ * 参数、输入、输出和错误信息里出现的 secret 值都已打码（src/logs/secrets.ts）。
+ */
 export async function getRunView(db: Db, runId: string): Promise<RunView | undefined> {
 	const [row] = await db
 		.select({ run: runs, version: orchestrationVersions })
@@ -95,6 +99,12 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 	// 每个链实例只列出它那条链（主链或子流程）上的节点。
 	const chainNodes = (chainId: string) =>
 		("errors" in plan ? undefined : plan.chains.get(chainId)?.nodes) ?? [];
+	const secrets = secretValues(document, chains);
+
+	// 只打码用户内容（参数、输入、输出、错误信息），ID、状态、时间等字段原样返回。
+	const m = <T>(value: T): T => maskDeep(value, secrets);
+	const error = (kind: string | null, message: string | null) =>
+		kind ? { kind, message: m(message ?? "") } : null;
 
 	return {
 		id: run.id,
@@ -102,7 +112,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		orchestration_version: version.number,
 		status: run.status,
 		triggered_by: run.triggeredBy,
-		params: run.params,
+		params: m(run.params),
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
 		cancel: run.cancelRequestedAt
@@ -119,7 +129,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			async_node_id: chain.asyncNodeId,
 			depth: chain.depth,
 			status: chain.status,
-			params: chain.params,
+			params: m(chain.params),
 			started_at: chain.startedAt.toISOString(),
 			ended_at: iso(chain.endedAt),
 			nodes: chainNodes(chain.chainId).map((node) => {
@@ -135,14 +145,14 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						attempt: t.attempt,
 						status: t.status,
 						agent: t.agentName,
-						inputs: t.inputs,
-						outputs: t.outputs,
-						error: t.errorKind ? { kind: t.errorKind, message: t.errorMessage ?? "" } : null,
+						inputs: m(t.inputs),
+						outputs: m(t.outputs),
+						error: error(t.errorKind, t.errorMessage),
 						queued_at: t.queuedAt.toISOString(),
 						started_at: iso(t.startedAt),
 						ended_at: iso(t.endedAt),
 						wake_at: iso(t.wakeAt),
-						progress: t.progress ?? null,
+						progress: t.progress ? { ...t.progress, message: maskSecrets(t.progress.message, secrets) } : null,
 					}));
 				const last = attempts.at(-1);
 				return {
