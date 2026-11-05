@@ -252,7 +252,7 @@ describe("编排版本", () => {
 			{
 				code: "missing_agent",
 				node_id: "a",
-				message: "节点 a 没有选择 Agent，编排也没有默认 Agent",
+				message: "节点 a 没有选择 Agent，场景也没有默认 Agent",
 			},
 			{ code: "package_not_locked", node_id: "a", message: "节点 a 的节点包 http 没有锁定版本" },
 		]);

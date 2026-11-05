@@ -190,7 +190,7 @@ function Editor({
 		(item: PaletteItem, position: { x: number; y: number }) => {
 			const locked = meta.packages[item.package];
 			if (locked && locked !== item.version) {
-				setNotice(`编排已锁定 ${item.package}@${locked}，不能同时使用 ${item.version}`);
+				setNotice(`场景已锁定 ${item.package}@${locked}，不能同时使用 ${item.version}`);
 				return;
 			}
 			setMeta((m) => ({ ...m, packages: { ...m.packages, [item.package]: item.version } }));
@@ -425,7 +425,7 @@ function Editor({
 							/>
 						) : (
 							<>
-								<Section title="编排">
+								<Section title="场景">
 									<div>
 										<span className="sf-label mb-1 block">默认 Agent</span>
 										<AgentSelect

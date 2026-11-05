@@ -160,7 +160,7 @@ export function RunPage({ runId }: { runId: string }) {
 				>
 					← 运行记录
 				</Link>
-				<h1>{orchestration.data?.name ?? "编排"}</h1>
+				<h1>{orchestration.data?.name ?? "场景"}</h1>
 				<span className="sf-tag">
 					运行 <b title={data.id}>{shortId(data.id)}</b>
 				</span>
@@ -184,7 +184,7 @@ export function RunPage({ runId }: { runId: string }) {
 						params={{ id: data.orchestration_id }}
 						className="sf-btn sf-btn--ghost sf-btn--sm"
 					>
-						编辑编排
+						编辑场景
 					</Link>
 				</div>
 			</header>
@@ -267,7 +267,7 @@ function RunSummary({
 					<dd>
 						<RunPill status={run.status} />
 					</dd>
-					<dt>编排版本</dt>
+					<dt>场景版本</dt>
 					<dd className="sf-mono">{run.orchestration_version}</dd>
 					<dt>触发人</dt>
 					<dd>{run.triggered_by}</dd>

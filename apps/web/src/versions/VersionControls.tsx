@@ -117,7 +117,7 @@ export function StaleDraftBanner({
 		return (
 			<div className="sf-banner">
 				<span>
-					另一个标签页修改了这份编排的本地草稿，这个标签页的修改不再写入本地草稿（仍可直接保存）。
+					另一个标签页修改了这个场景的本地草稿，这个标签页的修改不再写入本地草稿（仍可直接保存）。
 				</span>
 				<button
 					type="button"
@@ -165,7 +165,7 @@ export function StaleDraftBanner({
 
 /**
  * 冲突对话框：对比最新版本与本地修改（节点、参数、连线），然后选择放弃本地修改并载入最新版本，
- * 或者把本地修改另存为新编排。不做自动合并。
+ * 或者把本地修改另存为新场景。不做自动合并。
  */
 function ConflictDialog({
 	orchestration,
@@ -220,14 +220,14 @@ function ConflictDialog({
 	const shown = latest.data ?? head;
 	return (
 		<Modal
-			title="保存被拦截：编排已有更新的版本"
+			title="保存被拦截：场景已有更新的版本"
 			description={
 				<>
 					你基于版本 {versioning.base.version} 编辑；
 					{shown && shown.number > 0
 						? `${shown.author ?? "别人"} 于 ${shown.created_at ? formatTime(shown.created_at) : "?"} 保存了版本 ${shown.number}。`
 						: "最新版本已变化。"}
-					不做自动合并：可以放弃本地修改并载入最新版本，或者把本地修改另存为新编排。
+					不做自动合并：可以放弃本地修改并载入最新版本，或者把本地修改另存为新场景。
 				</>
 			}
 			onClose={onClose}
@@ -268,7 +268,7 @@ function ConflictDialog({
 				}}
 			>
 				<label className="text-sm text-[var(--sf-text-muted)]" htmlFor={nameId}>
-					新编排名称
+					新场景名称
 				</label>
 				<input
 					id={nameId}
@@ -281,7 +281,7 @@ function ConflictDialog({
 					className="sf-btn sf-btn--ghost"
 					disabled={!copyName.trim() || saveAsNew.isPending}
 				>
-					{saveAsNew.isPending ? "另存中…" : "另存为新编排"}
+					{saveAsNew.isPending ? "另存中…" : "另存为新场景"}
 				</button>
 			</form>
 			{saveAsNew.error && (

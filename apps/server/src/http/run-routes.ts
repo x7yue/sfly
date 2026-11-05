@@ -48,7 +48,7 @@ export function registerRunRoutes(
 			return {
 				version: 0,
 				params: [],
-				problems: [{ code: "no_version", message: "编排还没有保存过版本" }],
+				problems: [{ code: "no_version", message: "场景还没有保存过版本" }],
 			};
 		}
 		const entry = head.document.nodes.find((n) => n.kind === "entry");

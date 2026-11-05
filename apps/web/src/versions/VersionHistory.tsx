@@ -257,7 +257,7 @@ function RestoreDialog({
 				<>
 					{draftExists && (
 						<p className="text-sm text-[var(--sf-warning)]">
-							本浏览器中有这份编排未保存的修改，恢复后会被放弃。
+							本浏览器中有这个场景未保存的修改，恢复后会被放弃。
 						</p>
 					)}
 					{restore.error && (
