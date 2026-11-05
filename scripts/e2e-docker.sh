@@ -11,7 +11,7 @@ version=$(node -p "require('$root/apps/web/node_modules/@playwright/test/package
 
 pnpm --dir "$root" --filter @sfly/web build
 exec docker run --rm --network host --ipc host \
-	--user "$(id -u):$(id -g)" -e HOME=/tmp \
+	--user "$(id -u):$(id -g)" -e HOME=/tmp -e SFLY_VISUAL=1 \
 	-e DATABASE_URL="${DATABASE_URL:-postgres://sfly:sfly@127.0.0.1:5432/sfly}" \
 	-v "$root:$root" -w "$root/apps/web" \
 	"mcr.microsoft.com/playwright:v$version-noble" \

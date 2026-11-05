@@ -92,6 +92,7 @@ jobs:
           --health-retries 20
     env:
       DATABASE_URL: postgres://sfly:sfly@postgres:5432/sfly
+      SFLY_VISUAL: "1"
       HOME: /root
     steps:
       - uses: actions/checkout@v4

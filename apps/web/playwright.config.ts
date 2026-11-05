@@ -5,10 +5,14 @@ import { defineConfig, devices } from "@playwright/test";
  * 独立的 PostgreSQL 数据库和手动时钟，见 e2e/fixtures.ts。`pnpm test:e2e` 会先构建前端。
  *
  * 视觉基线依赖字体渲染，只在 Playwright 官方镜像里生成和比对（CI 也在同一镜像中运行），
- * 本机用 `pnpm test:e2e:docker`（更新基线加 `--update-snapshots`）。
+ * 本机用 `pnpm test:e2e:docker`（更新基线加 `--update-snapshots`）。两者都设置 SFLY_VISUAL=1；
+ * 未设置时（直接在本机 `pnpm test:e2e`）跳过视觉回归，只跑功能用例。
  */
+const visual = process.env.SFLY_VISUAL === "1";
+
 export default defineConfig({
 	testDir: "e2e",
+	testIgnore: visual ? [] : ["**/visual.spec.ts"],
 	outputDir: "test-results",
 	snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
 	fullyParallel: true,

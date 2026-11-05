@@ -7,4 +7,5 @@ sfly 前端：纯 SPA（TanStack Router + TanStack Query，vite 构建，ADR 000
 - `pnpm test:e2e`：Playwright 端到端测试与视觉回归（`e2e/`，ADR 0005）。每个测试启动自己的真实控制面
   （独立数据库、手动时钟，托管 `dist/`），可连接假 Agent，fixture 见 `e2e/fixtures.ts`。视觉基线
   （`e2e/__screenshots__`）只在 Playwright 官方镜像中生成与比对：在仓库根目录 `pnpm test:e2e:docker`
-  （加 `--update-snapshots` 更新基线），CI 使用同一镜像。
+  （加 `--update-snapshots` 更新基线），CI 使用同一镜像；
+  直接在本机 `pnpm test:e2e` 时跳过视觉回归（`SFLY_VISUAL=1` 才运行）。
