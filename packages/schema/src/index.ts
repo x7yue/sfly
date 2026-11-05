@@ -3,7 +3,6 @@ import { OrchestrationDocument } from "./orchestration-document.js";
 import { PackageMetadata } from "./package-metadata.js";
 
 export * from "./http/index.js";
-export * from "./metrics-api.js";
 export * from "./orchestration-document.js";
 export * from "./package-metadata.js";
 

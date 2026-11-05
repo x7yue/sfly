@@ -1,5 +1,6 @@
 // 切入点 A：指标上报与存储（#29）。假 Agent 经 gRPC 上报 MetricBatch，
 // 通过运行的指标摘要接口 `GET /runs/:id/metrics/summary` 观察。
+import { type MetricSummary, metricsApi, type RunMetricSummary } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -8,33 +9,6 @@ import { type AssignedTask, FakeAgent, type HelloInit } from "./support/fake-age
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
-
-interface MetricSummary {
-	name: string;
-	points: number;
-	min: number;
-	max: number;
-	avg: number;
-	last: number;
-	first_time: string;
-	last_time: string;
-}
-
-interface TaskMetricSummary {
-	task_id: string;
-	chain_instance_id: string;
-	node_id: string;
-	attempt: number;
-	truncated: boolean;
-	dropped_points: number;
-	metrics: MetricSummary[];
-}
-
-interface RunMetricSummary {
-	run_id: string;
-	expired: boolean;
-	tasks: TaskMetricSummary[];
-}
 
 /** 2026-01-01T00:00:00Z 之后第 s 秒（Unix 秒）。 */
 const at = (s: number) => Date.UTC(2026, 0, 1) / 1000 + s;
@@ -71,7 +45,7 @@ describe("指标上报与存储", () => {
 	const summary = async (runId: string): Promise<RunMetricSummary> => {
 		const res = await cp.fetch(`/runs/${runId}/metrics/summary`);
 		expect(res.status).toBe(200);
-		return (await res.json()) as RunMetricSummary;
+		return metricsApi.summary.response.parse(await res.json());
 	};
 
 	const setup = async (options: Parameters<typeof startTestControlPlane>[0] = {}) => {
@@ -386,7 +360,7 @@ describe("指标单任务上限", () => {
 		await agent.succeed(task);
 
 		const res = await cp.fetch(`/runs/${runId}/metrics/summary`);
-		const body = (await res.json()) as RunMetricSummary;
+		const body = metricsApi.summary.response.parse(await res.json());
 		expect(body.tasks[0]).toMatchObject({ truncated: true });
 		expect(body.tasks[0]?.metrics).toEqual([
 			expect.objectContaining({ name: "tps", points: 3, last: 3, last_time: iso(3) }),

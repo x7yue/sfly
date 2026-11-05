@@ -158,7 +158,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 控制面用 `contractRoute(app, agentsApi.list, handler)`（`apps/server/src/http/contract-route.ts`）注册：请求不符合契约返回 400 `invalid_request`，handler 的返回值受响应类型约束；控制面测试用 `xxxApi.yyy.response.parse(body)` 校验实际响应。
 - 前端：`useQuery(apiQuery(agentsApi.list))`、`callApi(packagesApi.version, { params })`。query key 一律由 `queryKey()` 生成（`[...key, { params?, query? }]`），失效按领域前缀：`invalidateQueries({ queryKey: ["packages"] })`。开发环境下响应不符合契约时抛出 `contract_violation`，页面显示为错误状态。
 - 浏览器经 `/api` 前缀访问（docs/ARCHITECTURE.md §7），契约里的 `path` 不含前缀。
-- 指标接口的 schema（`packages/schema/src/metrics-api.ts`，#29 / #31）与本约定同期完成，还没有接口表，响应用的是 `strictObject`；前端使用它们时（#42、#43）先迁成 `http/metrics.ts` 的 `metricsApi`。
+- 指标接口在 `http/metrics.ts` 的 `metricsApi`（摘要、目录、序列、平台自带图表）；实时增量是运行事件流上的 `metrics` 事件（`MetricIncrement`）。
 
 ## 9. 新页面检查清单
 
