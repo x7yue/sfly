@@ -118,6 +118,38 @@ async fn points_are_merged_per_metric_and_second_and_non_finite_values_are_dropp
 }
 
 #[tokio::test]
+async fn an_event_recorded_at_the_end_of_a_second_but_read_late_is_merged_into_that_second() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-metric-late"));
+    cp.hello(0).await;
+
+    // 第 S 秒开始上报 1；过了 S+1 秒 Agent 发过一批后，才读到时间戳为 S.999 的 5。
+    cp.assign(stub_task(
+        "task-late",
+        "metrics",
+        json!({ "steps": [
+            "align", ["level", 1], 1.4, ["late", "level", 5], ["level", 2], 1.5,
+        ] }),
+    ))
+    .await;
+
+    let (result, _) = cp.result("task-late").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    let level = points_of(
+        &batches_of(&cp.received_with_session(), "task-late"),
+        "level",
+    );
+    assert_eq!(level.len(), 2, "每秒一个点：{level:?}");
+    assert_eq!(
+        (level[0].value, level[0].min, level[0].max),
+        (5.0, 1.0, 5.0),
+        "后读到的值并入同一秒：{level:?}"
+    );
+    assert_eq!(level[1].time_unix_s, level[0].time_unix_s + 1);
+    assert_eq!(level[1].value, 2.0);
+}
+
+#[tokio::test]
 async fn metric_batches_are_sent_at_most_once_per_second() {
     let cp = FakeControlPlane::start().await;
     let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-metric-rate"));
