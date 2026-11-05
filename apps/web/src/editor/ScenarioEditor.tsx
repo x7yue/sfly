@@ -52,10 +52,17 @@ import {
 	newDocNode,
 	packageGroups,
 } from "./add-node";
-import { EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
+import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
+import {
+	RunStateBadge,
+	RunStateInspector,
+	RunTopRight,
+	useRunDecorations,
+} from "./run-state/RunState";
+import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { documentFieldErrors, type FieldError } from "./validation";
 
 /** 打开着的弹窗或弹出层（有它们时 Tab 照常切换焦点）。 */
@@ -68,13 +75,17 @@ const INSPECTOR_SPACE = 384;
  * 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布铺满视口，控件悬浮——左上场景名 / 版本 / 检查状态 /
  * 模式切换，右上在线编辑者 / 未保存状态 / 版本历史 / 保存 / 运行，底部工具条，左下小地图，右侧检查器。
  * 本地草稿与显式保存版本沿用 useVersionedDraft（刷新不丢失；保存时以编辑起点为 base_version，冲突不自动合并）。
+ * 「运行状态」模式（#41，`initialRun` 来自 `?run=`，否则取最近一次运行）：画布只读，显示运行绑定的版本并叠加
+ * 节点状态，检查器换成运行摘要；编辑中的草稿保留不动，切回编辑模式即恢复。
  */
 export function ScenarioEditor({
 	orchestration,
 	head,
+	initialRun,
 }: {
 	orchestration: Orchestration;
 	head: OrchestrationHead;
+	initialRun?: string;
 }) {
 	// 编辑起点：本地草稿（刷新不丢失）或最新版本；放弃本地修改后用最新版本重建画布。
 	const [start, setStart] = useState(() => startEditing(orchestration.id, head));
@@ -83,6 +94,7 @@ export function ScenarioEditor({
 			<Editor
 				orchestration={orchestration}
 				start={start}
+				initialRun={initialRun}
 				onReload={(latest) => setStart(startEditing(orchestration.id, latest, start.nonce + 1))}
 			/>
 		</ReactFlowProvider>
@@ -111,10 +123,12 @@ function usePackageTitles(): (pkg: string, node: string) => string | undefined {
 function Editor({
 	orchestration,
 	start,
+	initialRun,
 	onReload,
 }: {
 	orchestration: Orchestration;
 	start: EditStart;
+	initialRun?: string;
 	onReload: (head: OrchestrationHead) => void;
 }) {
 	const flow = useReactFlow<SfNode, SfEdge>();
@@ -130,6 +144,9 @@ function Editor({
 	const [triggering, setTriggering] = useState(false);
 	const inspectorRef = useRef<HTMLElement>(null);
 	const drafts = useFieldDraftStore();
+	const [mode, setMode] = useState<EditorMode>(initialRun ? "run" : "edit");
+	useShortcut("canvas-mode-edit", () => setMode("edit"));
+	useShortcut("canvas-mode-run", () => setMode("run"));
 
 	const packages = useQuery(apiQuery(packagesApi.list));
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: 10_000 });
@@ -142,11 +159,8 @@ function Editor({
 		{ nodes: setNodes, edges: setEdges, meta: setMeta },
 		{ nodes: onNodesChange, edges: onEdgesChange },
 	);
-	useShortcut("canvas-undo", history.undo);
-	useShortcut("canvas-redo", history.redo);
 
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
-	const selectedNode = selectedId ? nodes.find((n) => n.id === selectedId) : undefined;
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages, agentList);
 	const warnings = useMemo(() => documentWarnings(doc, catalog), [doc, catalog]);
@@ -176,6 +190,27 @@ function Editor({
 		}),
 		[meta, titleOf, warningsByNode],
 	);
+
+	// —— 运行状态模式：只读显示运行绑定的版本，叠加节点状态 ——
+	const runState = useCanvasRun(orchestration.id, initialRun, mode === "run");
+	const readyRun = runState.status === "ready" ? runState : undefined;
+	const decorations = useRunDecorations(readyRun?.run, readyRun?.overlay);
+	const runFlow = useRunFlow(readyRun?.doc);
+	const runInfo: CanvasInfo = useMemo(
+		() =>
+			readyRun?.doc
+				? {
+						defaultAgent: readyRun.doc.default_agent,
+						titleOf,
+						packages: readyRun.doc.packages,
+						warnings: new Map(),
+					}
+				: info,
+		[readyRun?.doc, titleOf, info],
+	);
+	const running = mode === "run";
+	const shownNodes = running && runFlow ? runFlow.nodes : nodes;
+	const shownEdges = running && runFlow ? runFlow.edges : edges;
 
 	// —— 连线：只允许单入单出，规则与控制面共用（@sfly/orchestration） ——
 	const docRef = useRef(doc);
@@ -277,7 +312,9 @@ function Editor({
 		[packages.data, agentList, meta.packages],
 	);
 	const menuTail =
-		adding?.via === "drop" ? adding.tail : appendTarget(doc, selectedNode ? selectedId : null);
+		adding?.via === "drop"
+			? adding.tail
+			: appendTarget(doc, nodes.some((n) => n.id === selectedId) ? selectedId : null);
 	const addNode = (item: AddItem) => {
 		const request = adding;
 		setAdding(null);
@@ -318,16 +355,21 @@ function Editor({
 			document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
 		});
 	};
+	if (running && adding) setAdding(null);
 	const openAddMenu = () => setAdding({ via: "menu" });
-	useShortcut("canvas-add", openAddMenu);
+	// 运行状态下画布只读：添加、撤销 / 重做、整理布局都不生效（工具条上也不显示）。
+	useShortcut("canvas-add", openAddMenu, !running);
+	useShortcut("canvas-undo", history.undo, !running);
+	useShortcut("canvas-redo", history.redo, !running);
 	// Tab：焦点在画布上（或页面上没有焦点）时打开添加节点菜单，其他时候照常切换焦点。
-	const openRef = useRef(openAddMenu);
-	openRef.current = openAddMenu;
+	const openRef = useRef<(() => void) | null>(openAddMenu);
+	openRef.current = running ? null : openAddMenu;
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== "Tab" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)
 				return;
-			if (event.defaultPrevented || document.querySelector(OPEN_OVERLAY)) return;
+			const open = openRef.current;
+			if (!open || event.defaultPrevented || document.querySelector(OPEN_OVERLAY)) return;
 			const target = event.target instanceof HTMLElement ? event.target : null;
 			const onCanvas =
 				target === document.body ||
@@ -336,7 +378,7 @@ function Editor({
 				target?.matches('[role="region"][aria-label^="编排画布"]');
 			if (!onCanvas) return;
 			event.preventDefault();
-			openRef.current();
+			open();
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
@@ -349,7 +391,7 @@ function Editor({
 		setNodes((ns) => ns.map((n) => ({ ...n, position: layout.get(n.id) ?? n.position })));
 		notify.success("已整理布局", { description: "可以撤销（Ctrl Z）" });
 	};
-	useShortcut("canvas-tidy", tidy);
+	useShortcut("canvas-tidy", tidy, !running);
 
 	const save = () => {
 		if (fieldErrors.length > 0) {
@@ -372,8 +414,9 @@ function Editor({
 			},
 		});
 	};
-	useShortcut("canvas-save", save);
+	useShortcut("canvas-save", save, !running);
 
+	const selectedNode = selectedId ? shownNodes.find((n) => n.id === selectedId) : undefined;
 	const context: InspectorContext = {
 		doc,
 		catalog,
@@ -417,16 +460,17 @@ function Editor({
 			<div className="fixed inset-0 bg-canvas-bg">
 				<FlowCanvas
 					label={`编排画布：${orchestration.name}`}
-					editable
-					nodes={nodes}
-					edges={edges}
-					info={info}
+					editable={!running}
+					nodes={shownNodes}
+					edges={shownEdges}
+					info={running ? runInfo : info}
+					{...(running ? decorations : {})}
 					selectedId={selectedNode ? selectedId : null}
 					onSelect={select}
-					onNodesChange={history.onNodesChange}
-					onEdgesChange={history.onEdgesChange}
-					onConnect={onConnect}
-					onConnectEnd={onConnectEnd}
+					onNodesChange={running ? runFlow?.onNodesChange : history.onNodesChange}
+					onEdgesChange={running ? undefined : history.onEdgesChange}
+					onConnect={running ? undefined : onConnect}
+					onConnectEnd={running ? undefined : onConnectEnd}
 					isValidConnection={isValidConnection}
 					insets={{
 						top: TOP_GROUP_SPACE,
@@ -437,65 +481,90 @@ function Editor({
 					onEnter={focusInspector}
 					inspector={{ open: inspectorOpen, onToggle: () => setInspectorOpen((o) => !o) }}
 					dockStart={
-						<AddNodeMenu
-							request={adding}
-							tail={menuTail}
-							groups={groups}
-							onOpenChange={(open) => setAdding(open ? { via: "menu" } : null)}
-							onPick={addNode}
-						/>
+						running ? undefined : (
+							<AddNodeMenu
+								request={adding}
+								tail={menuTail}
+								groups={groups}
+								onOpenChange={(open) => setAdding(open ? { via: "menu" } : null)}
+								onPick={addNode}
+							/>
+						)
 					}
 					dockTools={
-						<>
-							<ToolButton
-								label="撤销"
-								keys="Ctrl Z"
-								disabled={!history.canUndo}
-								onClick={history.undo}
-							>
-								<Undo2Icon />
-							</ToolButton>
-							<ToolButton
-								label="重做"
-								keys="Ctrl Shift Z"
-								disabled={!history.canRedo}
-								onClick={history.redo}
-							>
-								<Redo2Icon />
-							</ToolButton>
-							<ToolButton label="整理布局" keys="Alt Shift F" onClick={tidy}>
-								<Wand2Icon />
-							</ToolButton>
-						</>
+						running ? undefined : (
+							<>
+								<ToolButton
+									label="撤销"
+									keys="Ctrl Z"
+									disabled={!history.canUndo}
+									onClick={history.undo}
+								>
+									<Undo2Icon />
+								</ToolButton>
+								<ToolButton
+									label="重做"
+									keys="Ctrl Shift Z"
+									disabled={!history.canRedo}
+									onClick={history.redo}
+								>
+									<Redo2Icon />
+								</ToolButton>
+								<ToolButton label="整理布局" keys="Alt Shift F" onClick={tidy}>
+									<Wand2Icon />
+								</ToolButton>
+							</>
+						)
 					}
 				>
 					<EditorTopLeft
 						orchestration={orchestration}
-						version={versioning.base.version}
+						version={
+							readyRun && running ? readyRun.run.orchestration_version : versioning.base.version
+						}
 						warnings={warnings.length}
 						onShowChecks={() => {
 							setSelectedId(null);
 							setInspectorOpen(true);
 						}}
+						mode={mode}
+						onMode={setMode}
+						runState={<RunStateBadge state={runState} />}
 					/>
-					<EditorTopRight
-						orchestration={orchestration}
-						doc={doc}
-						versioning={versioning}
-						fieldErrors={fieldErrors.length}
-						onSave={save}
-						onRun={() => setTriggering(true)}
-						onReload={onReload}
-					/>
-					<div className="absolute top-15.5 left-3 z-10 max-w-[560px]">
-						<StaleDraftBanner
-							orchestration={orchestration}
-							doc={doc}
-							versioning={versioning}
-							onReload={onReload}
+					{running ? (
+						<RunTopRight run={readyRun?.run} />
+					) : (
+						<>
+							<EditorTopRight
+								orchestration={orchestration}
+								doc={doc}
+								versioning={versioning}
+								fieldErrors={fieldErrors.length}
+								onSave={save}
+								onRun={() => setTriggering(true)}
+								onReload={onReload}
+							/>
+							<div className="absolute top-15.5 left-3 z-10 max-w-[560px]">
+								<StaleDraftBanner
+									orchestration={orchestration}
+									doc={doc}
+									versioning={versioning}
+									onReload={onReload}
+								/>
+							</div>
+						</>
+					)}
+					{inspectorOpen && running && (
+						<RunStateInspector
+							ref={inspectorRef}
+							state={runState}
+							selected={selectedNode ? { id: selectedNode.id, node: selectedNode.data.node } : null}
+							info={runInfo}
+							onCollapse={() => setInspectorOpen(false)}
+							onEscape={focusCanvasNode}
 						/>
-					</div>
-					{inspectorOpen && (
+					)}
+					{inspectorOpen && !running && (
 						<Inspector
 							ref={inspectorRef}
 							selected={selectedNode ? { id: selectedNode.id, node: selectedNode.data.node } : null}

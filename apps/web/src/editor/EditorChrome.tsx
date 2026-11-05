@@ -2,7 +2,7 @@ import type { OrchestrationDocument } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ArrowLeftIcon, HistoryIcon, PlayIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { floatGroupClass, GroupDivider } from "#/components/canvas/CanvasDock";
 import { StatusPill } from "#/components/status";
 import type { Orchestration, OrchestrationHead } from "#/lib/api";
@@ -13,23 +13,32 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
+/** 画布模式：编辑，或叠加一次运行的节点状态（只读，#41）。 */
+export type EditorMode = "edit" | "run";
+
 /** 顶部控件组（上边距 12 + 高 42）占住的高度。 */
 export const TOP_GROUP_SPACE = 54;
 
 /**
- * 左上控件组：返回、场景名、编辑起点的版本、检查状态、模式切换。
- * 「运行状态」模式（节点叠加最近一次运行的状态，E / R 切换）由 #41 接上，现在不可用。
+ * 左上控件组：返回、场景名、版本（编辑起点，或运行绑定的版本）、检查状态、模式切换（E / R）。
+ * 「运行状态」模式（#41）下检查状态换成 `runState`（运行状态、编号、耗时）。
  */
 export function EditorTopLeft({
 	orchestration,
 	version,
 	warnings,
 	onShowChecks,
+	mode,
+	onMode,
+	runState,
 }: {
 	orchestration: Orchestration;
 	version: number;
 	warnings: number;
 	onShowChecks(): void;
+	mode: EditorMode;
+	onMode(mode: EditorMode): void;
+	runState?: ReactNode;
 }) {
 	return (
 		<div className={cn(floatGroupClass, "top-3 left-3")}>
@@ -45,36 +54,45 @@ export function EditorTopLeft({
 				{version === 0 ? "未保存过" : `v${version}`}
 			</span>
 			<GroupDivider />
-			<button
-				type="button"
-				className="cursor-pointer rounded-md px-1.5 py-1 hover:bg-raised"
-				onClick={onShowChecks}
-			>
-				<StatusPill kind={warnings > 0 ? "warn" : "ok"}>
-					{warnings > 0 ? `${warnings} 条警告` : "检查通过"}
-				</StatusPill>
-			</button>
+			{mode === "run" ? (
+				runState
+			) : (
+				<button
+					type="button"
+					className="cursor-pointer rounded-md px-1.5 py-1 hover:bg-raised"
+					onClick={onShowChecks}
+				>
+					<StatusPill kind={warnings > 0 ? "warn" : "ok"}>
+						{warnings > 0 ? `${warnings} 条警告` : "检查通过"}
+					</StatusPill>
+				</button>
+			)}
 			<GroupDivider />
 			<fieldset
 				aria-label="模式"
 				className="m-0 inline-flex h-7.5 gap-0.5 rounded-[7px] border border-border-soft bg-sunk p-0.5"
 			>
-				<button
-					type="button"
-					aria-pressed
-					className="flex items-center gap-1 rounded-[5px] bg-raised-2 px-2.5 text-xs text-fg-1"
-				>
-					编辑
-				</button>
-				<button
-					type="button"
-					aria-pressed={false}
-					disabled
-					title="稍后提供：在画布上查看最近一次运行的状态"
-					className="flex cursor-not-allowed items-center gap-1 rounded-[5px] px-2.5 text-xs text-fg-2 opacity-40"
-				>
-					运行状态
-				</button>
+				{(
+					[
+						["edit", "编辑", "E"],
+						["run", "运行状态", "R"],
+					] as const
+				).map(([value, label, key]) => (
+					<button
+						key={value}
+						type="button"
+						aria-pressed={mode === value}
+						title={value === "run" ? "在画布上查看最近一次运行的状态" : undefined}
+						onClick={() => onMode(value)}
+						className={cn(
+							"flex cursor-pointer items-center gap-1.5 rounded-[5px] px-2.5 text-xs text-fg-2 hover:text-fg-1",
+							mode === value && "bg-raised-2 text-fg-1",
+						)}
+					>
+						{label}
+						<Kbd>{key}</Kbd>
+					</button>
+				))}
 			</fieldset>
 		</div>
 	);

@@ -338,3 +338,24 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-zoomed-out.png");
 	});
 });
+
+test("编排画布：运行状态（选中失败尝试后重试中的节点）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	await nodeCard(page, "verify").click();
+	await expect(page.getByTestId("run-attempts")).toHaveText("2");
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-run-state.png", {
+		mask: [
+			page.getByTestId("canvas-run").locator(".font-mono").first(),
+			page.getByTestId("run-summary").locator("dd").first(),
+		],
+	});
+});

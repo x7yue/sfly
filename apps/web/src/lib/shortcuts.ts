@@ -50,6 +50,8 @@ export const SHORTCUTS = [
 		keys: "Ctrl+S",
 		inInputs: true,
 	},
+	{ id: "canvas-mode-edit", group: "编排画布", label: "编辑模式", keys: "E" },
+	{ id: "canvas-mode-run", group: "编排画布", label: "运行状态模式", keys: "R" },
 	{ id: "canvas-undo", group: "编排画布", label: "撤销", keys: "Ctrl+Z" },
 	{ id: "canvas-redo", group: "编排画布", label: "重做", keys: "Ctrl+Shift+Z" },
 	{ id: "canvas-tidy", group: "编排画布", label: "整理布局", keys: "Alt+Shift+F" },
