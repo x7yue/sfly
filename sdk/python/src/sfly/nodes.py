@@ -1,7 +1,7 @@
 """`@node` 装饰器：把 Python 函数声明为节点类型。只用标准库（ADR 0002）。
 
-装饰器只记录声明（名称、标题、输出键），不改变函数本身；
-输入/输出 schema 由 `sfly build` 根据类型注解生成。
+装饰器只记录声明（名称、标题、输出键、指标、图表、主指标），不改变函数本身；
+输入/输出 schema 由 `sfly build` 根据类型注解生成，声明也由 `sfly build` 校验。
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, TypeVar, overload
+from typing import Any, Literal, TypeVar, overload
 
 from sfly.context import Context
 
@@ -22,11 +22,37 @@ NODE_ATTR = "__sfly_node__"
 Outputs = Sequence[str] | Mapping[str, Any]
 
 
+MetricKind = Literal["gauge", "counter"]
+ChartType = Literal["line", "area", "bar", "stat"]
+
+
+@dataclass(frozen=True)
+class Metric:
+    """指标声明：名称（标识符）、单位、类型（`gauge` 瞬时值 | `counter` 累计值）、可选说明。"""
+
+    name: str
+    unit: str = ""
+    kind: MetricKind = "gauge"
+    description: str | None = None
+
+
+@dataclass(frozen=True)
+class Chart:
+    """图表声明：标题、图表类型（`line` | `area` | `bar` | `stat`）、用到的指标名。"""
+
+    title: str
+    type: ChartType = "line"
+    metrics: Sequence[str] = ()
+
+
 @dataclass(frozen=True)
 class NodeDeclaration:
     name: str | None
     title: str | None
     outputs: Outputs | None
+    metrics: Sequence[Metric] = ()
+    charts: Sequence[Chart] = ()
+    primary_metric: str | None = None
 
 
 @overload
@@ -35,7 +61,13 @@ def node(fn: F, /) -> F: ...
 
 @overload
 def node(
-    *, name: str | None = None, title: str | None = None, outputs: Outputs | None = None
+    *,
+    name: str | None = None,
+    title: str | None = None,
+    outputs: Outputs | None = None,
+    metrics: Sequence[Metric] = (),
+    charts: Sequence[Chart] = (),
+    primary_metric: str | None = None,
 ) -> Callable[[F], F]: ...
 
 
@@ -46,16 +78,29 @@ def node(
     name: str | None = None,
     title: str | None = None,
     outputs: Outputs | None = None,
+    metrics: Sequence[Metric] = (),
+    charts: Sequence[Chart] = (),
+    primary_metric: str | None = None,
 ) -> F | Callable[[F], F]:
     """声明一个节点类型。
 
     - 输入：函数参数（首个参数若名为 `ctx` 或注解为 `Context`，则是任务上下文，不算输入）。
     - 输出：`outputs` 声明的键；未声明时若返回类型注解是 TypedDict，则从中读取。
     - `name` 默认为函数名，`title` 默认为节点名。
+    - `metrics`：节点运行时上报的指标；`charts`：怎么把指标画出来（没被任何图表引用的指标由
+      平台生成默认图表）；`primary_metric`：在紧凑位置显示的主指标，必须是已声明的指标名。
     """
 
     def decorate(f: F) -> F:
-        setattr(f, NODE_ATTR, NodeDeclaration(name=name, title=title, outputs=outputs))
+        decl = NodeDeclaration(
+            name=name,
+            title=title,
+            outputs=outputs,
+            metrics=tuple(metrics),
+            charts=tuple(charts),
+            primary_metric=primary_metric,
+        )
+        setattr(f, NODE_ATTR, decl)
         return f
 
     if fn is not None:
