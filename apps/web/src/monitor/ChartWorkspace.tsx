@@ -17,6 +17,7 @@ import { primaryMetricData } from "#/metrics/use-primary-metric";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
 import { buildGroups, type ChartGroup, groupHasData, isActive, isFailed } from "./chart-groups";
@@ -57,7 +58,12 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 	const signature = useMemo(() => attemptsSignature(run), [run]);
 	const catalog = useMetricCatalog(run.id, signature);
 	const platform = usePlatformMetrics(run.id, signature, live);
-	const groups = useMemo(() => buildGroups(run, catalog.data?.nodes ?? []), [run, catalog.data]);
+	// 重试过的节点要看的尝试（默认最新一次）。
+	const [chosen, setChosen] = useState<Record<string, number>>({});
+	const groups = useMemo(
+		() => buildGroups(run, catalog.data?.nodes ?? [], chosen),
+		[run, catalog.data, chosen],
+	);
 
 	const [search, setSearch] = useState("");
 	const [density, setDensity] = useState<Density>("standard");
@@ -66,7 +72,7 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 	const toolbar = useRef<HTMLDivElement>(null);
 	const width = useWidth(scroller);
 
-	// 每个分组一个序列查询（最新一次尝试）；缩放时按缩放范围查询，得到更细的桶。
+	// 每个分组一个序列查询（显示的那次尝试）；缩放时按缩放范围查询，得到更细的桶。
 	const seriesResults = useQueries({
 		queries: groups.map((g) =>
 			seriesQuery(
@@ -256,6 +262,7 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 							: () => changeFilter(new Set([group.key]), { [group.key]: true })
 					}
 					selected={selectedKey === group.key}
+					onAttempt={(attempt) => setChosen((c) => ({ ...c, [group.key]: attempt }))}
 					columns={balancedColumns(charts.length, width - GROUP_INSET, minColumn)}
 					dense={dense}
 					range={range}
@@ -366,6 +373,7 @@ function NodeGroup({
 	onToggle,
 	onlyThis,
 	selected,
+	onAttempt,
 	columns,
 	dense,
 	range,
@@ -373,6 +381,7 @@ function NodeGroup({
 	now,
 }: {
 	group: ChartGroup;
+	onAttempt: (attempt: number) => void;
 	charts: CatalogNode["charts"];
 	series: MetricSeries | undefined;
 	loading: boolean;
@@ -445,17 +454,34 @@ function NodeGroup({
 				</>
 			}
 			actions={
-				onlyThis && (
-					<Button
-						variant="ghost"
-						size="sm"
-						onClick={onlyThis}
-						aria-label={`只看 ${node.node_id}`}
-						title="只看这个节点的图表"
-					>
-						只看
-					</Button>
-				)
+				<>
+					{entry.attempts.length > 1 && (
+						<NativeSelect
+							aria-label={`${node.node_id} 的尝试`}
+							title="切换查看这个节点的每次尝试"
+							className="w-28 flex-none [&_select]:h-6.5 [&_select]:text-xs"
+							value={String(attempt.attempt)}
+							onChange={(e) => onAttempt(Number(e.target.value))}
+						>
+							{entry.attempts.map((a, i) => (
+								<NativeSelectOption key={a.task_id} value={String(a.attempt)}>
+									第 {a.attempt} 次{i === entry.attempts.length - 1 ? "（最新）" : ""}
+								</NativeSelectOption>
+							))}
+						</NativeSelect>
+					)}
+					{onlyThis && (
+						<Button
+							variant="ghost"
+							size="sm"
+							onClick={onlyThis}
+							aria-label={`只看 ${node.node_id}`}
+							title="只看这个节点的图表"
+						>
+							只看
+						</Button>
+					)}
+				</>
 			}
 		>
 			<div

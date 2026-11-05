@@ -282,3 +282,31 @@ test("时间线拖选的范围作用于图表；日志标记显示在图表上�
 	await line.click();
 	await expect(chart(page, "fetch", "延迟").locator("[data-chart-marker]")).toHaveCount(0);
 });
+
+test("重试过的节点可以切换查看每次尝试的图表，默认看最新一次", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+
+	const verify = group(page, "verify");
+	const attempt = verify.getByRole("combobox", { name: "verify 的尝试" });
+	await expect(attempt).toHaveValue("2");
+	await expect(attempt.getByRole("option")).toHaveText(["第 1 次", "第 2 次（最新）"]);
+	const level = chart(page, "verify", "level");
+	await expect(level.locator("[data-latest]")).toHaveText("11");
+	await expect(level.locator("[data-window]")).toHaveText("08:00:09 – 08:00:14");
+
+	// 第 1 次失败、没有上报指标：显示它自己的状态与时段。
+	await attempt.selectOption("1");
+	await expect(verify.locator("[data-status]").first()).toHaveText("失败");
+	await expect(level).toContainText("这次尝试没有上报数据");
+
+	await attempt.selectOption("2");
+	await expect(level.locator("[data-latest]")).toHaveText("11");
+	// 没有重试的节点没有尝试切换。
+	await expect(group(page, "probe").getByRole("combobox", { name: /的尝试/ })).toHaveCount(0);
+});
