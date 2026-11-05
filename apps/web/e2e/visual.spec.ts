@@ -5,6 +5,7 @@ import {
 	holdApi,
 	publishPackage,
 	scenarioUsing,
+	seedDashboard,
 	triggerRun,
 } from "./support";
 
@@ -193,4 +194,24 @@ test("还没有场景", async ({ page }) => {
 	await page.goto("/orchestrations");
 	await expect(page.getByRole("region", { name: "还没有场景" })).toBeVisible();
 	await expect(page).toHaveScreenshot("scenarios-empty.png");
+});
+
+test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
+	await seedDashboard({ page, controlPlane, connectAgent, clock });
+	await page.goto("/");
+	await expect(
+		page.getByRole("region", { name: "最近失败", exact: true }).getByRole("link"),
+	).toHaveCount(2);
+	// 运行 ID 是随机的，遮住。
+	await expect(page).toHaveScreenshot("dashboard.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("控制台没有数据", async ({ page }) => {
+	await page.goto("/");
+	await expect(page.getByRole("region", { name: "正在运行", exact: true })).toContainText(
+		"没有正在运行的运行",
+	);
+	await expect(page).toHaveScreenshot("dashboard-empty.png");
 });

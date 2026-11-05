@@ -1,10 +1,12 @@
 import type { Page } from "@playwright/test";
+import { ErrorKind } from "../../server/test/support/fake-agent.js";
 import {
 	packageArchive,
 	packageMetadata,
 	publishInit,
 } from "../../server/test/support/package-archive.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
+import type { E2eFixtures } from "./fixtures";
 
 /** 端到端测试里通过 HTTP API 准备数据（根路径 API，与 CLI / Agent 一样不经过 /api 前缀）。 */
 
@@ -94,4 +96,74 @@ export async function failApi(page: Page, path: string, status = 503) {
 		});
 	await page.route(`**/api${path}`, handler);
 	return { restore: () => page.unroute(`**/api${path}`, handler) };
+}
+
+/** 主链 entry → spawn → probe，子流程 sub → verify（都用 demo-checks/ping）。 */
+const withSubflow = (agent: string) => {
+	const ping = (id: string) => ({
+		id,
+		kind: "package",
+		package: "demo-checks",
+		node: "ping",
+		inputs: { host: "h" },
+	});
+	return {
+		default_agent: agent,
+		nodes: [
+			{ id: "entry", kind: "entry" },
+			{ id: "spawn", kind: "async", params: {} },
+			ping("probe"),
+			{ id: "sub", kind: "subflow_entry" },
+			ping("verify"),
+		],
+		edges: [
+			{ from: "entry", to: "spawn", kind: "chain" },
+			{ from: "spawn", to: "probe", kind: "chain" },
+			{ from: "sub", to: "verify", kind: "chain" },
+			{ from: "spawn", to: "sub", kind: "dispatch" },
+		],
+		packages: { "demo-checks": "1.2.0" },
+	};
+};
+
+/**
+ * 固定的一组数据（手动时钟从 2026-01-01T00:00Z，即浏览器里的 08:00 开始）：
+ * 巡检成功一次、超时失败一次；一小时后撮合压测开始运行，子流程的 verify 失败、主链的 probe 仍在执行。
+ * agent-mac 离线。返回撮合压测的运行 ID。
+ */
+export async function seedDashboard({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}: Pick<E2eFixtures, "controlPlane" | "connectAgent" | "clock"> & { page: Page }) {
+	const linux = await connectAgent({
+		name: "agent-linux",
+		agentVersion: "0.1.0",
+		os: "linux",
+		arch: "x86_64",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	const mac = await connectAgent({ name: "agent-mac", slots: 2 });
+	await mac.disconnect();
+	await publishPackage(controlPlane);
+	const inspect = await createScenario(controlPlane, "巡检", scenarioUsing("agent-linux"));
+	const stress = await createScenario(controlPlane, "撮合压测", withSubflow("agent-linux"));
+
+	await triggerRun(controlPlane, inspect);
+	await linux.succeed(await linux.nextAssign());
+	clock.advance(60_000);
+	const failed = await triggerRun(controlPlane, inspect);
+	await linux.fail(await linux.nextAssign(), "等待响应超时", ErrorKind.TIMEOUT);
+
+	clock.advance(3_600_000);
+	const running = await triggerRun(controlPlane, stress);
+	const first = await linux.nextAssign();
+	const second = await linux.nextAssign();
+	await linux.fail(first.nodeId === "verify" ? first : second, "校验失败");
+	// 不超过任务租约（30 秒），probe 保持执行中。
+	clock.advance(15_000);
+	await page.clock.setFixedTime(clock.now());
+	return { linux, running, failed };
 }

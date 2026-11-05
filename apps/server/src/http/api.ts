@@ -16,6 +16,7 @@ import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
+import { registerDashboardRoutes } from "./dashboard-routes.js";
 import { sendError } from "./errors.js";
 import { registerLogRoutes } from "./log-routes.js";
 import { registerMetricRoutes } from "./metric-routes.js";
@@ -109,6 +110,7 @@ export function buildHttpApi({
 	});
 
 	registerAgentRoutes(app, { hub, orchestrations });
+	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerRunRoutes(app, {
 		db: database.db,
