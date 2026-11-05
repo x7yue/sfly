@@ -15,6 +15,7 @@ import { PresenceRegistry } from "./presence/presence-registry.js";
 import { Retention } from "./retention/retention.js";
 import { createPreflight } from "./runs/preflight.js";
 import { Mutex } from "./util/mutex.js";
+import { periodic } from "./util/periodic.js";
 
 export interface ListenOptions {
 	host?: string;
@@ -30,14 +31,17 @@ export interface ControlPlaneOptions {
 	http?: ListenOptions;
 	grpc?: ListenOptions;
 	logger?: boolean;
-	/** Agent 共享注册令牌；未设置时不校验。 */
+	/** Agent 共享注册令牌；未设置（或为空串）时不校验。 */
 	agentToken?: string;
 	/**
 	 * HTTP API 对 Agent 可见的地址（Agent 从这里下载节点包），例如 `http://sfly.internal:8080`。
 	 * 默认取实际监听地址；监听在 0.0.0.0 / :: 时用本机主机名。
 	 */
 	publicHttpUrl?: string;
-	/** 周期扫描（目前只有在线编辑者超时）的间隔，默认 250 毫秒（在线编辑者最多晚这么久被移除）；测试里调小，配合手动时钟推进。 */
+	/**
+	 * 周期扫描（在线编辑者超时、任务租约过期、排队超时）的间隔，默认 250 毫秒；
+	 * 测试里调小，配合手动时钟推进。
+	 */
 	sweepIntervalMs?: number;
 	/** 单个任务日志的上限（字节），默认 200 MB；超出部分截断（#18）。 */
 	logLimitBytes?: number;
@@ -163,51 +167,35 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 
-	// 租约过期与排队超时（#15）挂在同一个周期扫描上；上一次没结束时跳过。
-	let expiring: Promise<unknown> | undefined;
-	const sweep = setInterval(() => {
-		presence.sweep();
-		if (expiring) return;
-		expiring = engine
-			.expireTasks()
-			.catch((error) => {
-				if (logger) console.error("task expiry sweep failed:", error);
-			})
-			.finally(() => {
-				expiring = undefined;
-			});
-	}, options.sweepIntervalMs ?? 250);
-	sweep.unref();
-	const retentionSweep = setInterval(() => {
-		retention.sweep().catch((error) => {
-			if (logger) console.error("retention sweep failed:", error);
-		});
-	}, options.retentionSweepIntervalMs ?? 60_000);
-	retentionSweep.unref();
-	// 定时器的状态全在 PG（tasks.wake_at），扫描本身无状态；上一次没结束时跳过本次。
-	let waking: Promise<unknown> | undefined;
-	const timerSweep = setInterval(() => {
-		if (waking) return;
-		waking = engine
-			.wakeTimers()
-			.catch((error) => {
-				if (logger) console.error("timer sweep failed:", error);
-			})
-			.finally(() => {
-				waking = undefined;
-			});
-	}, options.timerSweepIntervalMs ?? 1000);
-	timerSweep.unref();
+	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
+	const fail = (what: string) => (error: unknown) => {
+		if (logger) console.error(`${what} failed:`, error);
+	};
+	const sweeps = [
+		// 在线编辑者超时（#17）、任务租约过期与排队超时（#15）。
+		periodic(
+			options.sweepIntervalMs ?? 250,
+			async () => {
+				presence.sweep();
+				await engine.expireTasks();
+			},
+			fail("sweep"),
+		),
+		// 日志和产物的保留期清理（#18）。
+		periodic(
+			options.retentionSweepIntervalMs ?? 60_000,
+			() => retention.sweep(),
+			fail("retention sweep"),
+		),
+		// 定时 / Sleep 节点（#14）：定时器的状态全在 PG（tasks.wake_at），扫描本身无状态。
+		periodic(options.timerSweepIntervalMs ?? 1000, () => engine.wakeTimers(), fail("timer sweep")),
+	];
 
 	return {
 		httpUrl,
 		grpcUrl: gateway.url,
 		async close() {
-			clearInterval(sweep);
-			clearInterval(retentionSweep);
-			clearInterval(timerSweep);
-			await waking;
-			await expiring;
+			await Promise.all(sweeps.map((s) => s.stop()));
 			await retention.idle();
 			hub.closeAll();
 			await gateway.close();

@@ -180,14 +180,14 @@ export class OrchestrationStore {
 
 	/**
 	 * 追加一个新版本，编号 = 当前最新版本号 + 1。
-	 * 给出 baseVersion 时（编辑起点的版本号，0 表示还没有版本），它必须等于当前最新版本号，
+	 * baseVersion 是编辑起点的版本号（新编排的第一个版本为 0），它必须等于当前最新版本号，
 	 * 否则不保存并返回 conflict（docs/ARCHITECTURE.md §6.4）。检查与追加在同一个行锁内完成。
 	 */
 	saveVersion(
 		orchestrationId: string,
 		document: OrchestrationDocument,
 		author: string,
-		baseVersion?: number,
+		baseVersion: number,
 	): Promise<SaveVersionResult> {
 		return this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
 			const [orchestration] = await tx
@@ -196,7 +196,7 @@ export class OrchestrationStore {
 				.where(eq(orchestrations.id, orchestrationId))
 				.for("update");
 			if (!orchestration) return { kind: "not_found" };
-			if (baseVersion !== undefined && baseVersion !== orchestration.headVersion) {
+			if (baseVersion !== orchestration.headVersion) {
 				const head = await versionRow(tx, orchestrationId, orchestration.headVersion);
 				return { kind: "conflict", head: head ? toSummary(head) : null };
 			}

@@ -85,7 +85,10 @@ describe("保存时的静态检查", () => {
 
 	const save = async (doc: unknown) => {
 		const id = await api.createOrchestration("检查");
-		const res = await api.post(`/orchestrations/${id}/versions`, { document: doc });
+		const res = await api.post(`/orchestrations/${id}/versions`, {
+			base_version: 0,
+			document: doc,
+		});
 		expect(res.status).toBe(201);
 		return { id, warnings: ((await res.json()) as { warnings: unknown[] }).warnings };
 	};
@@ -145,6 +148,7 @@ describe("保存时的静态检查", () => {
 
 		// 2.0.0 把输出键 body 改名为 content：升级后原来的引用产生警告。
 		const upgraded = await api.post(`/orchestrations/${id}/versions`, {
+			base_version: await api.headVersion(id),
 			document: document("${{ nodes.fetch.outputs.body }}", { checks: "2.0.0" }),
 		});
 		expect(((await upgraded.json()) as { warnings: unknown }).warnings).toMatchObject([
@@ -152,6 +156,7 @@ describe("保存时的静态检查", () => {
 		]);
 
 		const fixed = await api.post(`/orchestrations/${id}/versions`, {
+			base_version: await api.headVersion(id),
 			document: document("${{ nodes.fetch.outputs.content }}", { checks: "2.0.0" }),
 		});
 		expect(((await fixed.json()) as { warnings: unknown }).warnings).toEqual([]);
@@ -218,7 +223,10 @@ describe("节点执行配置", () => {
 	it("超时和排队超时必须是正整数秒，重试次数必须是非负整数", async () => {
 		const id = await api.createOrchestration("坏配置");
 		for (const bad of [{ timeout: 0 }, { timeout: 1.5 }, { queue_timeout: -1 }, { retries: -1 }]) {
-			const res = await api.post(`/orchestrations/${id}/versions`, { document: doc(node(bad)) });
+			const res = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: await api.headVersion(id),
+				document: doc(node(bad)),
+			});
 			expect(res.status, JSON.stringify(bad)).toBe(400);
 		}
 	});
@@ -230,6 +238,7 @@ describe("节点执行配置", () => {
 			edges: [{ from: "entry", to: n.id, kind: "chain" }],
 		});
 		const asyncAlways = await api.post(`/orchestrations/${id}/versions`, {
+			base_version: await api.headVersion(id),
 			document: withNode({ id: "x", kind: "async", always: true }),
 		});
 		expect(asyncAlways.status).toBe(400);
@@ -237,7 +246,10 @@ describe("节点执行配置", () => {
 			{ id: "t", kind: "timer", at: "09:00:00", always: true },
 			{ id: "s", kind: "sleep", duration: "1s", always: true },
 		]) {
-			const res = await api.post(`/orchestrations/${id}/versions`, { document: withNode(n) });
+			const res = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: await api.headVersion(id),
+				document: withNode(n),
+			});
 			expect(res.status).toBe(201);
 		}
 	});

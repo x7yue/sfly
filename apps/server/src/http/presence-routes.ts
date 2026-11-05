@@ -3,8 +3,9 @@ import { z } from "zod";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PresenceRegistry } from "../presence/presence-registry.js";
 import type { Sse } from "../sse/sse.js";
-import { isUuid, sendError } from "./errors.js";
-import { nicknameOf } from "./nickname.js";
+import { isUuid } from "../util/uuid.js";
+import { sendError } from "./errors.js";
+import { requireNickname } from "./nickname.js";
 
 const HeartbeatBody = z.object({ session_id: z.string().trim().min(1).max(200) });
 
@@ -20,9 +21,8 @@ export function registerPresenceRoutes(
 	const exists = async (id: string) => isUuid(id) && (await orchestrations.get(id)) !== undefined;
 
 	app.post<{ Params: { id: string } }>("/orchestrations/:id/presence", async (request, reply) => {
-		const nickname = nicknameOf(request);
-		if (!nickname)
-			return sendError(reply, 400, "nickname_required", "x-sfly-nickname header is required");
+		const nickname = requireNickname(request, reply);
+		if (!nickname) return reply;
 		const body = HeartbeatBody.safeParse(request.body);
 		if (!body.success) {
 			return sendError(

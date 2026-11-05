@@ -1,8 +1,9 @@
 import type { NodeTypeMetadata, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
 
 /**
  * 引用（docs/SEMANTICS.md §2）：`${{ params.<name> }}` 和 `${{ nodes.<id>.outputs.<key> }}`。
- * 这里是静态的部分（补全、保存时的检查），控制面和画布共用；派发时的解析在控制面引擎里。
+ * 这里是静态的部分（补全、保存时的检查），控制面和画布共用；派发时的解析在 resolve.ts。
  */
 
 /** 节点类型中用到的元信息：输入 schema 生成参数表单，输出键用于补全和引用检查。 */
@@ -149,11 +150,6 @@ export interface ReferenceWarning {
 	/** 引用所在的输入名（包节点的输入、异步任务节点的子流程参数、Sleep 节点的 duration）。 */
 	input?: string;
 }
-
-/** 与控制面引擎解析时使用的语法一致（apps/server/src/engine/references.ts）。 */
-const REFERENCE = /\$\{\{\s*(.*?)\s*\}\}/g;
-const PARAM_PATH = /^params\.([A-Za-z_][A-Za-z0-9_]*)$/;
-const OUTPUT_PATH = /^nodes\.([^.\s]+)\.outputs\.([^.\s]+)$/;
 
 /** 值里出现的全部引用路径（递归进入对象和数组）；`${{` 没有闭合时给出 null。 */
 export function referencesIn(value: unknown): (string | null)[] {

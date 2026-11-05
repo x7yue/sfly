@@ -15,6 +15,7 @@ import {
 	DEFAULT_SLOTS,
 	devPackageInfo,
 } from "../agents/agent-hub.js";
+import { agentTokenMatches } from "../agents/agent-token.js";
 import { AsyncQueue } from "../util/async-queue.js";
 
 export interface AgentGatewayServer {
@@ -45,7 +46,7 @@ export interface AgentGatewayOptions {
 	port: number;
 	hub: AgentHub;
 	handler?: AgentSessionHandler;
-	/** 共享注册令牌；未设置时不校验。 */
+	/** 共享注册令牌；未设置（或为空串）时不校验。 */
 	agentToken?: string;
 	onError?: (error: unknown) => void;
 }
@@ -67,7 +68,7 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			}
 			const hello = first.value.body.value;
 			if (!hello.name) throw new ConnectError("Hello.name is required", Code.InvalidArgument);
-			if (options.agentToken !== undefined && hello.token !== options.agentToken) {
+			if (!agentTokenMatches(options.agentToken, hello.token)) {
 				throw new ConnectError("invalid agent token", Code.Unauthenticated);
 			}
 

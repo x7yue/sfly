@@ -1,5 +1,7 @@
+import { OUTPUT_PATH, PARAM_PATH, REFERENCE, WHOLE_REFERENCE } from "./reference-syntax.js";
+
 /**
- * 引用解析（docs/SEMANTICS.md §2）：派发前把节点输入里的 `${{ ... }}` 替换成实际值。
+ * 引用解析（docs/SEMANTICS.md §2）：派发前把节点输入里的 `${{ ... }}` 替换成实际值（控制面引擎调用）。
  *
  * - `${{ params.<name> }}`：本链的入口参数；
  * - `${{ nodes.<id>.outputs.<key> }}`：本链上排在前面的节点的输出；
@@ -8,7 +10,7 @@
  * - 对象和数组里的字符串同样解析。
  */
 
-export interface ReferenceScope {
+export interface ResolveScope {
 	/** 本链的入口参数（已填充默认值）。 */
 	params: Record<string, unknown>;
 	/** 本链上当前节点之前的节点 ID → 输出；只能引用这里面的节点。 */
@@ -22,12 +24,7 @@ export interface ReferenceScope {
 
 export class InvalidReferenceError extends Error {}
 
-const REFERENCE = /\$\{\{\s*(.*?)\s*\}\}/g;
-const WHOLE_REFERENCE = /^\$\{\{\s*(.*?)\s*\}\}$/;
-const PARAM_PATH = /^params\.([A-Za-z_][A-Za-z0-9_]*)$/;
-const OUTPUT_PATH = /^nodes\.([^.\s]+)\.outputs\.([^.\s]+)$/;
-
-function lookup(path: string, scope: ReferenceScope): unknown {
+function lookup(path: string, scope: ResolveScope): unknown {
 	const param = PARAM_PATH.exec(path);
 	if (param) {
 		const name = param[1] as string;
@@ -60,7 +57,7 @@ function lookup(path: string, scope: ReferenceScope): unknown {
 	);
 }
 
-function resolveString(value: string, scope: ReferenceScope): unknown {
+function resolveString(value: string, scope: ResolveScope): unknown {
 	const whole = WHOLE_REFERENCE.exec(value);
 	if (whole && !whole[1]?.includes("}}")) return lookup(whole[1] as string, scope);
 	return value.replace(REFERENCE, (_match, path: string) => {
@@ -74,7 +71,7 @@ function resolveString(value: string, scope: ReferenceScope): unknown {
 	});
 }
 
-function resolveValue(value: unknown, scope: ReferenceScope): unknown {
+function resolveValue(value: unknown, scope: ResolveScope): unknown {
 	if (typeof value === "string") return resolveString(value, scope);
 	if (Array.isArray(value)) return value.map((item) => resolveValue(item, scope));
 	if (value !== null && typeof value === "object") {
@@ -86,7 +83,7 @@ function resolveValue(value: unknown, scope: ReferenceScope): unknown {
 /** 解析一个节点的全部输入；引用无效时抛出 InvalidReferenceError（任务以 config_error 失败）。 */
 export function resolveInputs(
 	inputs: Record<string, unknown>,
-	scope: ReferenceScope,
+	scope: ResolveScope,
 ): Record<string, unknown> {
 	return resolveValue(inputs, scope) as Record<string, unknown>;
 }

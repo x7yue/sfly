@@ -1,11 +1,12 @@
-import { timingSafeEqual } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { posix } from "node:path";
 import type { Readable } from "node:stream";
 import type { FastifyInstance } from "fastify";
+import { agentTokenMatches, bearerToken } from "../agents/agent-token.js";
 import { type ArtifactRow, type ArtifactStore, artifactUrl } from "../artifacts/artifact-store.js";
+import { isUuid } from "../util/uuid.js";
 import { attachment } from "./content-disposition.js";
-import { isUuid, sendError } from "./errors.js";
+import { sendError } from "./errors.js";
 
 /**
  * 产物（#18）：
@@ -30,12 +31,8 @@ export function registerArtifactRoutes(
 		created_at: a.createdAt.toISOString(),
 		url: artifactUrl(deps.publicHttpUrl(), a.taskId, a.name),
 	});
-	const authorized = (header: string | undefined) => {
-		if (!deps.agentToken) return true;
-		const expected = Buffer.from(`Bearer ${deps.agentToken}`);
-		const actual = Buffer.from(header ?? "");
-		return actual.length === expected.length && timingSafeEqual(actual, expected);
-	};
+	const authorized = (header: string | undefined) =>
+		agentTokenMatches(deps.agentToken, bearerToken(header));
 
 	// 上传在独立的作用域里：请求体不解析，按流写到磁盘（不受全局 bodyLimit 限制，大小由 ArtifactStore 控制）。
 	app.register(async (scope) => {
