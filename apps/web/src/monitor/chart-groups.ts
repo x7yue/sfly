@@ -23,6 +23,8 @@ export interface ChartGroup {
 	/** 运行视图里同一次尝试（开始、结束时间）。 */
 	runAttempt: AttemptView | undefined;
 	status: { kind: StatusKind; label: string };
+	/** 子流程实例的简短名称：`子流程 sub`，同一子流程有多个实例时加序号（`#2`）；主链为 null。 */
+	chainName: string | null;
 }
 
 /** 有数据的节点：目录摘要或序列里有点。 */
@@ -39,7 +41,17 @@ export function buildGroups(run: RunView, catalog: readonly CatalogNode[]): Char
 		catalog.map((n) => [nodeKey({ chainInstanceId: n.chain_instance_id, nodeId: n.node_id }), n]),
 	);
 	const out: ChartGroup[] = [];
-	for (const chain of orderedChains(run)) {
+	const chains = orderedChains(run);
+	const instances = new Map<string, string[]>();
+	for (const c of chains) instances.set(c.chain_id, [...(instances.get(c.chain_id) ?? []), c.id]);
+	const chainName = (chain: ChainRunView) => {
+		if (chain.depth === 0) return null;
+		const ids = instances.get(chain.chain_id) ?? [];
+		return ids.length > 1
+			? `子流程 ${chain.chain_id} #${ids.indexOf(chain.id) + 1}`
+			: `子流程 ${chain.chain_id}`;
+	};
+	for (const chain of chains) {
 		for (const node of chain.nodes) {
 			const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
 			const key = nodeKey(ref);
@@ -55,6 +67,7 @@ export function buildGroups(run: RunView, catalog: readonly CatalogNode[]): Char
 				attempt,
 				runAttempt: node.attempts.find((a) => a.task_id === attempt.task_id),
 				status: nodeStatus(node.status),
+				chainName: chainName(chain),
 			});
 		}
 	}

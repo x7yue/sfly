@@ -222,3 +222,107 @@ export async function openMonitor(page: Page, clock: ManualClock, runId: string,
 	await page.goto(`/runs/${runId}${node ? `?node=${node}` : ""}`);
 	await expect(page.getByRole("region", { name: "链路时间线" })).toBeVisible();
 }
+
+/** 推进手动时钟；每 15 秒心跳一次，手上任务的租约（30 秒）不会过期。 */
+async function advance(clock: ManualClock, agent: FakeAgent, ms: number) {
+	for (let left = ms; left > 0; left -= 15_000) {
+		clock.advance(Math.min(left, 15_000));
+		await agent.heartbeat();
+	}
+}
+
+const LARGE_MAIN = 14;
+const LARGE_SUB = 10;
+/** 大型运行里用 http_check 的节点（其余用 ping）。 */
+const usesHttp = (nodeId: string) =>
+	(Number(nodeId.slice(1)) + (nodeId.startsWith("s") ? 1 : 0)) % 3 === 1;
+
+/**
+ * 大型运行（视觉回归）：主链 entry → m01…m14 → spawn → m15，spawn 派发子流程 sub → s01…s10，共 28 个包节点。
+ * 每个节点执行 3 秒、每秒上报一组指标；m07 第 1 次失败后重试成功，s08 失败（之后的 s09、s10 跳过），
+ * m15 执行中。全程顺序执行（子流程开始后只有 m15 并行等待），时间与顺序确定。
+ */
+export async function largeScenario(
+	controlPlane: TestControlPlane,
+	connectAgent: E2eFixtures["connectAgent"],
+	clock: ManualClock,
+): Promise<{ runId: string }> {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane, metricPackage());
+	const pkg = (id: string, extra: Record<string, unknown> = {}) => ({
+		id,
+		kind: "package",
+		package: "demo-checks",
+		...(usesHttp(id)
+			? { node: "http_check", inputs: { url: `https://example.test/${id}` } }
+			: { node: "ping", inputs: { host: id } }),
+		...extra,
+	});
+	const id = (prefix: string, i: number) => `${prefix}${String(i).padStart(2, "0")}`;
+	const main = [
+		{ id: "entry", kind: "entry" },
+		...Array.from({ length: LARGE_MAIN }, (_, k) =>
+			pkg(id("m", k + 1), k + 1 === 7 ? { retries: 1 } : {}),
+		),
+		{ id: "spawn", kind: "async", params: {} },
+		pkg("m15"),
+	];
+	const sub = [
+		{ id: "sub", kind: "subflow_entry", params: [] },
+		...Array.from({ length: LARGE_SUB }, (_, k) => pkg(id("s", k + 1))),
+	];
+	const chain = (nodes: { id: string }[]) =>
+		nodes.slice(1).map((n, i) => ({ from: nodes[i]?.id, to: n.id, kind: "chain" }));
+	const scenarioId = await createScenario(controlPlane, "撮合压测", {
+		default_agent: "agent-a",
+		nodes: [...main, ...sub],
+		edges: [...chain(main), ...chain(sub), { from: "spawn", to: "sub", kind: "dispatch" }],
+		packages: { "demo-checks": "1.2.0" },
+	});
+	const clock0 = clock.now().getTime();
+	const elapsed = () => Math.round((clock.now().getTime() - clock0) / 1000);
+	const runId = await triggerRun(controlPlane, scenarioId);
+
+	/** 第 from 到 to 秒的指标（按节点类型）。 */
+	const points = (nodeId: string, from: number, to: number) =>
+		usesHttp(nodeId)
+			? httpCheckPoints(clock0, from, to)
+			: pingPoints(clock0, from, to, (Number(nodeId.slice(1)) % 5) + 2);
+	/** 执行一个任务 3 秒，每秒一组指标。 */
+	const work = async (task: AssignedTask) => {
+		const from = elapsed();
+		agent.metrics(task, points(task.nodeId, from, from + 2));
+		await advance(clock, agent, 3000);
+	};
+
+	for (let k = 1; k <= LARGE_MAIN; k++) {
+		let task = await agent.nextAssign();
+		await work(task);
+		if (task.nodeId === "m07") {
+			await agent.fail(task, "AssertionError: 撮合结果不一致");
+			task = await agent.nextAssign();
+			await work(task);
+		}
+		await agent.succeed(task);
+	}
+	const parallel = [await agent.nextAssign(), await agent.nextAssign()];
+	const m15 = parallel.find((t) => t.nodeId === "m15") as AssignedTask;
+	let next = parallel.find((t) => t.nodeId === "s01") as AssignedTask;
+	const m15From = elapsed();
+	for (let k = 1; k <= 8; k++) {
+		await work(next);
+		if (k === 8) {
+			await agent.fail(next, "TimeoutError: 撮合引擎无响应");
+			break;
+		}
+		await agent.succeed(next);
+		next = await agent.nextAssign();
+	}
+	agent.metrics(m15, points("m15", m15From, elapsed() - 1));
+	await agent.sync();
+	return { runId };
+}

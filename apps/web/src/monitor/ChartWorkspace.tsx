@@ -416,8 +416,10 @@ function NodeGroup({
 					<StatusPill kind={status.kind}>{status.label}</StatusPill>
 					<span className="flex-none font-mono font-medium">{node.node_id}</span>
 					<span className="min-w-0 truncate text-fg-2">{title}</span>
-					{chain.depth > 0 && (
-						<span className="flex-none text-2xs text-fg-3">{chainLabel(chain)}</span>
+					{group.chainName && (
+						<span className="flex-none text-2xs text-fg-3" title={chainLabel(chain)}>
+							{group.chainName}
+						</span>
 					)}
 					{entry.primary_metric && (
 						<PrimaryMetric
