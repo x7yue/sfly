@@ -116,6 +116,7 @@ export function buildHttpApi({
 		preflight,
 		sse,
 		progress: logs.progress,
+		metrics: metrics.increments,
 	});
 	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
 	registerMetricRoutes(app, { metrics, queries: metricQueries });

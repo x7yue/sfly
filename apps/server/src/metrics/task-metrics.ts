@@ -1,10 +1,17 @@
 import type { AgentMessage, MetricBatch } from "@sfly/proto";
-import type { MetricSummary, OrchestrationDocument, RunMetricSummary } from "@sfly/schema";
+import type {
+	MetricIncrement,
+	MetricPointView,
+	MetricSummary,
+	OrchestrationDocument,
+	RunMetricSummary,
+} from "@sfly/schema";
 import { and, asc, eq, gt, or, sql } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
+import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf } from "./node-types.js";
 
@@ -79,6 +86,8 @@ interface Series {
 interface TaskState {
 	taskId: string;
 	runId: string;
+	chainInstanceId: string;
+	nodeId: string;
 	attempt: number;
 	agentName: string | null;
 	/** 节点类型声明的指标名。 */
@@ -97,6 +106,12 @@ export class TaskMetrics {
 	#states = new Map<string, Promise<TaskState | undefined>>();
 	#queues = new Map<string, Promise<void>>();
 	#partitions = new Map<string, Promise<void>>();
+
+	/**
+	 * 新接受的点（#31），主题 = 运行 ID：运行事件流以 `metrics` 事件推送。每批上报最多一条，
+	 * 被丢弃的点（重复、未声明、非有限、超出上限）不推送。
+	 */
+	readonly increments = new Topics<MetricIncrement>();
 
 	constructor(
 		private readonly deps: {
@@ -133,6 +148,7 @@ export class TaskMetrics {
 				state.countersDirty = true;
 			}
 			const full = new Set<Series>();
+			const accepted: MetricPointView[] = [];
 			for (const p of batch.points) {
 				if (!state.declared.has(p.name)) continue;
 				if (![p.value, p.min, p.max].every(Number.isFinite)) continue;
@@ -149,11 +165,19 @@ export class TaskMetrics {
 					series = emptySeries(p.name);
 					state.series.set(p.name, series);
 				}
-				addPoint(series, {
+				const point = {
 					t,
 					value: p.value,
 					min: Math.min(p.min, p.value),
 					max: Math.max(p.max, p.value),
+				};
+				addPoint(series, point);
+				accepted.push({
+					name: p.name,
+					time: new Date(t * 1000).toISOString(),
+					value: point.value,
+					min: point.min,
+					max: point.max,
 				});
 				series.dirtySince ??= now;
 				state.points++;
@@ -162,6 +186,15 @@ export class TaskMetrics {
 					series.segment = [];
 					full.add(series);
 				}
+			}
+			if (accepted.length > 0) {
+				this.increments.publish(state.runId, {
+					task_id: state.taskId,
+					chain_instance_id: state.chainInstanceId,
+					node_id: state.nodeId,
+					attempt: state.attempt,
+					points: accepted,
+				});
 			}
 			if (full.size > 0 || state.countersDirty) await this.#write(state, [...full]);
 		});
@@ -438,6 +471,8 @@ export class TaskMetrics {
 		return {
 			taskId,
 			runId: task.runId,
+			chainInstanceId: task.chainInstanceId,
+			nodeId: task.nodeId,
 			attempt: task.attempt,
 			agentName: task.agentName,
 			declared,

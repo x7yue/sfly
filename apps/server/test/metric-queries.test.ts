@@ -1,10 +1,11 @@
 // 切入点 A：指标查询、降采样与实时推送（#31）。假 Agent 经 gRPC 上报 MetricBatch，
 // 通过运行的指标目录、序列查询、平台自带图表接口和运行事件流（SSE）观察。
-import type { MetricSeries, RunMetricCatalog } from "@sfly/schema";
+import type { MetricIncrement, MetricSeries, RunMetricCatalog } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { type AssignedTask, FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
+import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 2026-01-01T00:00:00Z（测试时钟的起点）之后第 s 秒（Unix 秒）。 */
@@ -246,6 +247,49 @@ describe("指标查询", () => {
 				node_id: "nope",
 			});
 			expect((await cp.fetch(`/runs/${runId}/metrics/series?${missing}`)).status).toBe(404);
+		});
+	});
+
+	describe("实时增量", () => {
+		it("运行事件流推送执行中任务新收到的点；重复、未声明和非有限的点不推送", async () => {
+			const agent = await connect();
+			const { runId, task } = await start(agent);
+			const sse = await SseClient.open(cp, `/runs/${runId}/events`);
+			try {
+				await sse.next("run");
+				agent.metrics(task, [
+					{ name: "tps", timeUnixS: BigInt(at(1)), value: 10, min: 4, max: 12 },
+					["typo", at(1), 1],
+					["requests", at(1), 3],
+				]);
+				const first = await sse.next<MetricIncrement>("metrics");
+				expect(first.data).toEqual({
+					task_id: task.taskId,
+					chain_instance_id: await mainChain(runId),
+					node_id: "load",
+					attempt: 1,
+					points: [
+						{ name: "tps", time: iso(1), value: 10, min: 4, max: 12 },
+						{ name: "requests", time: iso(1), value: 3, min: 3, max: 3 },
+					],
+				});
+
+				agent.metrics(task, [
+					["tps", at(1), 99],
+					["tps", at(2), Number.NaN],
+					["tps", at(3), 30],
+				]);
+				expect((await sse.next<MetricIncrement>("metrics")).data.points).toEqual([
+					{ name: "tps", time: iso(3), value: 30, min: 30, max: 30 },
+				]);
+
+				// 一批里没有新点时不推送。
+				agent.metrics(task, [["tps", at(3), 30]]);
+				await agent.sync();
+				await sse.expectNone(100);
+			} finally {
+				sse.close();
+			}
 		});
 	});
 
