@@ -1,25 +1,8 @@
 import type { OrchestrationNode } from "@sfly/schema";
-import { apiGet, apiPost } from "#/lib/api";
+import { apiGet } from "#/lib/api";
 import type { TaskProgress } from "./logs";
 
 /** 运行相关的控制面 API（#9）。字段与 apps/server/src/engine/run-queries.ts 一致。 */
-
-export type ParamDecl = Extract<OrchestrationNode, { kind: "entry" }>["params"][number];
-
-/** 不能触发的一个原因。 */
-export interface PreflightProblem {
-	code: string;
-	message: string;
-	node_id?: string;
-}
-
-export interface Preflight {
-	/** 最新版本号（触发运行绑定的版本）；0 表示还没有版本。 */
-	version: number;
-	/** 入口节点的参数声明，用来生成触发表单。 */
-	params: ParamDecl[];
-	problems: PreflightProblem[];
-}
 
 export interface AttemptView {
 	task_id: string;
@@ -77,13 +60,6 @@ export interface RunView {
 }
 
 export type RunSummary = Omit<RunView, "params" | "chains" | "cancel">;
-
-export const getPreflight = (orchestrationId: string) =>
-	apiGet<Preflight>(`/orchestrations/${orchestrationId}/preflight`);
-
-/** 触发编排的最新版本。预检不通过时 400 `invalid_orchestration`（details 是原因列表），参数不对时 400 `invalid_params`。 */
-export const triggerRun = (orchestrationId: string, params: Record<string, unknown>) =>
-	apiPost<RunView>(`/orchestrations/${orchestrationId}/runs`, { params });
 
 export const listRuns = (orchestrationId: string) =>
 	apiGet<{ runs: RunSummary[] }>(`/orchestrations/${orchestrationId}/runs`);

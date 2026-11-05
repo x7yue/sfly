@@ -205,3 +205,32 @@ test("抽屉锁定焦点，Esc 关闭后焦点回到「运行」按钮", async (
 	await expect(drawer).toHaveCount(0);
 	await expect(runButton).toBeFocused();
 });
+
+test("编排画布的「运行」打开同一个抽屉，「前往」在画布上选中问题节点", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const doc = scenarioUsing("agent-a");
+	const id = await createScenario(controlPlane, "巡检", {
+		...doc,
+		nodes: doc.nodes.map((n) => (n.id === "ping" ? { ...n, agent: "ghost" } : n)),
+	});
+
+	await page.goto(`/orchestrations/${id}`);
+	const runButton = page.getByRole("button", { name: "运行", exact: true });
+	await runButton.click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await expect(drawer.getByRole("button", { name: "触发运行" })).toBeDisabled();
+	await drawer.getByRole("button", { name: "前往 ping" }).click();
+	await expect(drawer).toHaveCount(0);
+	await expect(page).toHaveURL(new RegExp(`/orchestrations/${id}$`));
+	await expect(page.locator('[data-node-id="ping"]')).toHaveAttribute("aria-pressed", "true");
+
+	await runButton.click();
+	await page.keyboard.press("Escape");
+	await expect(drawer).toHaveCount(0);
+	await expect(runButton).toBeFocused();
+});

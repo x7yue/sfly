@@ -27,7 +27,7 @@ import { FlowCanvas } from "#/components/canvas/FlowCanvas";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery, type Orchestration, type OrchestrationHead } from "#/lib/api";
-import { TriggerDialog } from "#/runs/TriggerDialog";
+import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { versionConflictOf } from "#/versions/api";
 import { hasDraft } from "#/versions/draft";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
@@ -336,15 +336,16 @@ function Editor({
 						/>
 					)}
 				</FlowCanvas>
-				{triggering && (
-					<TriggerDialog
-						orchestrationId={orchestration.id}
-						dirty={versioning.dirty || hasDraft(orchestration.id)}
-						baseVersion={versioning.base.version}
-						onLocate={locate}
-						onClose={() => setTriggering(false)}
-					/>
-				)}
+				<RunDrawer
+					open={triggering}
+					onOpenChange={setTriggering}
+					orchestrationId={orchestration.id}
+					name={orchestration.name}
+					description={orchestration.description}
+					dirty={versioning.dirty || hasDraft(orchestration.id)}
+					baseVersion={versioning.base.version}
+					onLocate={locate}
+				/>
 			</div>
 		</FieldDraftsProvider>
 	);
