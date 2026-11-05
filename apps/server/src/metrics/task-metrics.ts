@@ -1,23 +1,19 @@
 import type { AgentMessage, MetricBatch } from "@sfly/proto";
 import type {
+	MetricIncrement,
+	MetricPointView,
 	MetricSummary,
 	OrchestrationDocument,
-	PackageMetadata,
 	RunMetricSummary,
 } from "@sfly/schema";
 import { and, asc, eq, gt, or, sql } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import {
-	agents,
-	metricSeries,
-	nodePackages,
-	orchestrationVersions,
-	runs,
-	tasks,
-} from "../db/schema.js";
+import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
+import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
+import { nodeTypeOf } from "./node-types.js";
 
 /**
  * 指标上报与存储（#29，ADR 0009）。
@@ -58,9 +54,9 @@ export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
 /** 没有未写入数据、这么久没收到上报的任务状态从内存中移除。 */
 const IDLE_MS = 5 * 60_000;
 const DAY_MS = 86_400_000;
-const DEV_VERSION = "dev";
 
-interface Point {
+/** 合并后的一个点（一个指标一秒一个）。 */
+export interface Point {
 	/** Unix 秒。 */
 	t: number;
 	value: number;
@@ -90,6 +86,8 @@ interface Series {
 interface TaskState {
 	taskId: string;
 	runId: string;
+	chainInstanceId: string;
+	nodeId: string;
 	attempt: number;
 	agentName: string | null;
 	/** 节点类型声明的指标名。 */
@@ -108,6 +106,12 @@ export class TaskMetrics {
 	#states = new Map<string, Promise<TaskState | undefined>>();
 	#queues = new Map<string, Promise<void>>();
 	#partitions = new Map<string, Promise<void>>();
+
+	/**
+	 * 新接受的点（#31），主题 = 运行 ID：运行事件流以 `metrics` 事件推送。每批上报最多一条，
+	 * 被丢弃的点（重复、未声明、非有限、超出上限）不推送。
+	 */
+	readonly increments = new Topics<MetricIncrement>();
 
 	constructor(
 		private readonly deps: {
@@ -144,6 +148,7 @@ export class TaskMetrics {
 				state.countersDirty = true;
 			}
 			const full = new Set<Series>();
+			const accepted: MetricPointView[] = [];
 			for (const p of batch.points) {
 				if (!state.declared.has(p.name)) continue;
 				if (![p.value, p.min, p.max].every(Number.isFinite)) continue;
@@ -160,11 +165,19 @@ export class TaskMetrics {
 					series = emptySeries(p.name);
 					state.series.set(p.name, series);
 				}
-				addPoint(series, {
+				const point = {
 					t,
 					value: p.value,
 					min: Math.min(p.min, p.value),
 					max: Math.max(p.max, p.value),
+				};
+				addPoint(series, point);
+				accepted.push({
+					name: p.name,
+					time: new Date(t * 1000).toISOString(),
+					value: point.value,
+					min: point.min,
+					max: point.max,
 				});
 				series.dirtySince ??= now;
 				state.points++;
@@ -173,6 +186,15 @@ export class TaskMetrics {
 					series.segment = [];
 					full.add(series);
 				}
+			}
+			if (accepted.length > 0) {
+				this.increments.publish(state.runId, {
+					task_id: state.taskId,
+					chain_instance_id: state.chainInstanceId,
+					node_id: state.nodeId,
+					attempt: state.attempt,
+					points: accepted,
+				});
 			}
 			if (full.size > 0 || state.countersDirty) await this.#write(state, [...full]);
 		});
@@ -212,6 +234,20 @@ export class TaskMetrics {
 	/** 写入全部尚未写入的点（控制面正常关闭时）。 */
 	async close(): Promise<void> {
 		await Promise.all([...this.#states.keys()].map((id) => this.flushTask(id)));
+	}
+
+	/**
+	 * 内存里可能还没写库（或库里只是较早版本）的点：每个指标已攒满还没写入的段和当前段，按时间升序。
+	 * 序列查询用它们覆盖库里同一时间范围的数据。不会为此从库里加载任务状态。
+	 */
+	async unwritten(taskId: string): Promise<Map<string, Point[]>> {
+		const state = await this.#states.get(taskId)?.catch(() => undefined);
+		const points = new Map<string, Point[]>();
+		for (const s of state?.series.values() ?? []) {
+			const list = [...s.closed.flat(), ...s.segment].map((p) => ({ ...p }));
+			if (list.length > 0) points.set(s.name, list);
+		}
+		return points;
 	}
 
 	/** 运行的指标摘要；运行不存在时为 undefined。 */
@@ -435,6 +471,8 @@ export class TaskMetrics {
 		return {
 			taskId,
 			runId: task.runId,
+			chainInstanceId: task.chainInstanceId,
+			nodeId: task.nodeId,
 			attempt: task.attempt,
 			agentName: task.agentName,
 			declared,
@@ -453,29 +491,8 @@ export class TaskMetrics {
 		nodeId: string,
 		agentName: string | null,
 	): Promise<Set<string>> {
-		const node = document.nodes.find((n) => n.id === nodeId);
-		if (node?.kind !== "package") return new Set();
-		const version = document.packages[node.package] ?? "";
-		let metadata: PackageMetadata | undefined;
-		if (version === DEV_VERSION) {
-			if (agentName) {
-				const [agent] = await this.deps.db
-					.select({ info: agents.info })
-					.from(agents)
-					.where(eq(agents.name, agentName));
-				metadata = agent?.info.dev_packages?.find((p) => p.name === node.package)?.metadata as
-					| PackageMetadata
-					| undefined;
-			}
-		} else {
-			const [pkg] = await this.deps.db
-				.select({ metadata: nodePackages.metadata })
-				.from(nodePackages)
-				.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, version)));
-			metadata = pkg?.metadata;
-		}
-		const type = metadata?.nodes?.find((n) => n.name === node.node);
-		return new Set((type?.metrics ?? []).map((m) => m.name));
+		const ref = await nodeTypeOf(this.deps.db, document, nodeId, agentName);
+		return new Set((ref?.type?.metrics ?? []).map((m) => m.name));
 	}
 }
 

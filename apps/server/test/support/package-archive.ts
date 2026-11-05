@@ -59,10 +59,16 @@ export type InputsSchema = {
 
 /** 节点类型声明的指标（#27）。 */
 export type MetricSpec = { name: string; unit: string; kind: "gauge" | "counter" };
+/** 节点类型声明的图表（#27）。 */
+export type ChartSpec = {
+	title: string;
+	type: "line" | "area" | "bar" | "stat";
+	metrics: string[];
+};
 
 /**
  * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限），
- * 或 `{ outputs, inputs }`（inputs 是输入 schema，派发前按它校验已解析的输入）。
+ * 或 `{ outputs, inputs, metrics, charts, primary_metric }`（inputs 是输入 schema，派发前按它校验已解析的输入）。
  * 触发运行前的预检要求编排锁定的包版本已经发布、引用的输出键已经声明。
  */
 export async function publishPackage(
@@ -72,7 +78,13 @@ export async function publishPackage(
 	nodes: Record<
 		string,
 		| readonly string[]
-		| { outputs: readonly string[]; inputs?: InputsSchema; metrics?: MetricSpec[] }
+		| {
+				outputs: readonly string[];
+				inputs?: InputsSchema;
+				metrics?: MetricSpec[];
+				charts?: ChartSpec[];
+				primary_metric?: string;
+		  }
 	>,
 ): Promise<void> {
 	const archive = packageArchive(
@@ -82,14 +94,16 @@ export async function publishPackage(
 			nodes: Object.entries(nodes).map(([node, spec]) => {
 				const outputs = "outputs" in spec ? spec.outputs : spec;
 				const inputs = ("inputs" in spec ? spec.inputs : undefined) ?? { properties: {} };
-				const metrics = "metrics" in spec ? spec.metrics : undefined;
+				const declared = "outputs" in spec ? spec : undefined;
 				return {
 					name: node,
 					title: node,
 					entry: `${name.replace(/-/g, "_")}.nodes:${node}`,
 					inputs: { type: "object", ...inputs },
 					outputs: { type: "object", properties: Object.fromEntries(outputs.map((k) => [k, {}])) },
-					...(metrics && { metrics }),
+					...(declared?.metrics && { metrics: declared.metrics }),
+					...(declared?.charts && { charts: declared.charts }),
+					...(declared?.primary_metric && { primary_metric: declared.primary_metric }),
 				};
 			}),
 		}),

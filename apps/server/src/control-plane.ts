@@ -10,6 +10,7 @@ import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
 import { TaskLogs } from "./logs/task-logs.js";
+import { MetricQueries } from "./metrics/metric-queries.js";
 import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
@@ -157,6 +158,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		preflight,
 		logs,
 		metrics,
+		metricQueries: new MetricQueries({ db: database.db, clock, metrics }),
 		retention,
 		artifacts,
 		agentToken: options.agentToken,
