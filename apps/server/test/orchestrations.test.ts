@@ -80,7 +80,7 @@ describe("编排版本", () => {
 		expect(latest.document.default_agent).toBe("agent-b");
 	});
 
-	it("编排、编辑起点与保存版本的响应符合接口契约", async () => {
+	it("场景、编辑起点与保存版本的响应符合接口契约", async () => {
 		const id = await api.createOrchestration("契约");
 		const initial = orchestrationsApi.head.response.parse(
 			await api.getJson(`/orchestrations/${id}/head`),

@@ -70,7 +70,7 @@ export const agents = pgTable("agents", {
 });
 
 /**
- * 编排（场景）：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
+ * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
  * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
  */
 export const orchestrations = pgTable("orchestrations", {

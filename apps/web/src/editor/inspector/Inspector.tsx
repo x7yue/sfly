@@ -31,7 +31,7 @@ import {
 } from "./node-forms";
 import { ParamsEditor } from "./ParamsEditor";
 
-/** 检查器需要的编排级上下文。 */
+/** 检查器需要的场景级上下文。 */
 export interface InspectorContext {
 	doc: OrchestrationDocument;
 	catalog: PackageCatalog;

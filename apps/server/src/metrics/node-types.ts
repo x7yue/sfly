@@ -9,7 +9,7 @@ const DEV_VERSION = "dev";
 export interface NodeTypeRef {
 	package: string;
 	node: string;
-	/** 编排锁定的版本；`dev` 表示开发版本。 */
+	/** 场景锁定的版本；`dev` 表示开发版本。 */
 	version: string;
 	/**
 	 * 节点类型的元信息：锁定的节点包版本；开发版本取 agentName 这个 Agent 当前加载的源码声明
@@ -18,7 +18,7 @@ export interface NodeTypeRef {
 	type: PackageMetadata["nodes"][number] | undefined;
 }
 
-/** 编排中 nodeId 这个包节点的节点类型；不是包节点时为 undefined。 */
+/** 场景中 nodeId 这个包节点的节点类型；不是包节点时为 undefined。 */
 export async function nodeTypeOf(
 	db: Db,
 	document: OrchestrationDocument,

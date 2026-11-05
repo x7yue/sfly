@@ -132,7 +132,7 @@ const cancelledFor = (run: RunRow, node: OrchestrationNode | undefined) =>
  */
 export class Engine implements AgentSessionHandler {
 	#documents = new Map<string, OrchestrationDocument>();
-	/** 编排版本 ID → 执行计划。 */
+	/** 场景版本 ID → 执行计划。 */
 	#plans = new Map<string, RunPlan>();
 
 	constructor(
@@ -176,7 +176,7 @@ export class Engine implements AgentSessionHandler {
 		failTask: (step, task, kind, message) => this.#failTask(step, task, kind, message),
 	};
 
-	/** 手动触发编排的最新版本。 */
+	/** 手动触发场景的最新版本。 */
 	trigger(
 		orchestrationId: string,
 		provided: Record<string, unknown>,
@@ -506,7 +506,7 @@ export class Engine implements AgentSessionHandler {
 		return version.document;
 	}
 
-	/** 运行的执行计划；编排版本不可变，计划可以缓存。 */
+	/** 运行的执行计划；场景版本不可变，计划可以缓存。 */
 	async #runPlan(tx: Tx, run: RunRow): Promise<RunPlan> {
 		const cached = this.#plans.get(run.orchestrationVersionId);
 		if (cached) return cached;

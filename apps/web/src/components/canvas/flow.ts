@@ -2,7 +2,7 @@ import { ensureLayout } from "@sfly/orchestration";
 import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import type { Edge, Node } from "@xyflow/react";
 
-/** 画布节点上携带的编排节点（不含布局，布局在 React Flow 节点的 position 上）。 */
+/** 画布节点上携带的场景节点（不含布局，布局在 React Flow 节点的 position 上）。 */
 export type DocNode = OrchestrationNode extends infer N
 	? N extends OrchestrationNode
 		? Omit<N, "position">
@@ -14,7 +14,7 @@ export type EdgeKind = DocEdge["kind"];
 export type SfNode = Node<{ node: DocNode }, DocNode["kind"]>;
 export type SfEdge = Edge<{ kind: EdgeKind }>;
 
-/** 文档中编排级（非节点、非连线）的部分。 */
+/** 文档中场景级（非节点、非连线）的部分。 */
 export type DocMeta = Pick<OrchestrationDocument, "default_agent" | "packages">;
 
 export const edgeId = (edge: DocEdge) => `${edge.kind}:${edge.from}->${edge.to}`;
@@ -32,7 +32,7 @@ export function toFlowEdge(edge: DocEdge): SfEdge {
 }
 
 /**
- * 编排文档 → 画布。缺少布局的文档（例如通过 API 创建）用整理布局算法得到初始布局
+ * 场景文档 → 画布。缺少布局的文档（例如通过 API 创建）用整理布局算法得到初始布局
  * （@sfly/orchestration 的 ensureLayout，与画布的「整理布局」、新建场景相同）。
  */
 export function toFlow(doc: OrchestrationDocument): { nodes: SfNode[]; edges: SfEdge[] } {
@@ -50,7 +50,7 @@ export function toFlow(doc: OrchestrationDocument): { nodes: SfNode[]; edges: Sf
 	return { nodes, edges: doc.edges.map(toFlowEdge) };
 }
 
-/** 画布 → 编排文档。布局是版本内容的一部分；只保留仍被包节点使用的包版本锁定。 */
+/** 画布 → 场景文档。布局是版本内容的一部分；只保留仍被包节点使用的包版本锁定。 */
 export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): OrchestrationDocument {
 	const docNodes = nodes.map(
 		(n) =>

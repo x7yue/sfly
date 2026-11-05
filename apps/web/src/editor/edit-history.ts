@@ -3,7 +3,7 @@ import { type Dispatch, type SetStateAction, useCallback, useRef, useState } fro
 import type { DocMeta, SfEdge, SfNode } from "#/components/canvas/flow";
 import { UndoStack } from "./history";
 
-/** 撤销的单位：画布上的节点、连线和编排级设置（默认 Agent、包版本锁定）。 */
+/** 撤销的单位：画布上的节点、连线和场景级设置（默认 Agent、包版本锁定）。 */
 export interface EditSnapshot {
 	nodes: SfNode[];
 	edges: SfEdge[];
@@ -11,7 +11,7 @@ export interface EditSnapshot {
 }
 
 /**
- * 编排画布的撤销 / 重做（#39）：所有修改编排的操作在修改前调用 `checkpoint`，记下修改前的快照。
+ * 编排画布的撤销 / 重做（#39）：所有修改场景的操作在修改前调用 `checkpoint`，记下修改前的快照。
  * 节点拖动、删除节点与连线经 `onNodesChange` / `onEdgesChange` 自动记录（一次拖动、一次删除各算一步）；
  * 同一时刻（同一个任务里）的多次 checkpoint 只记一步，例如删除节点时连带删除的连线。
  */

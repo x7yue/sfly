@@ -4,7 +4,7 @@ import { API_BASE, callApi } from "./api";
 import { useNickname } from "./nickname";
 import { useEventSource } from "./sse";
 
-/** 自己在其他标签页打开着同一份编排时显示的名字。 */
+/** 自己在其他标签页打开着同一个场景时显示的名字。 */
 export const OWN_OTHER_TAB = "你（其他标签页）";
 
 /** 心跳间隔；控制面 30 秒没收到心跳就移除。 */

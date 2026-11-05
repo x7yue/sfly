@@ -165,7 +165,7 @@ function Editor({
 	const agentList = agents.data?.agents ?? [];
 	const titleOf = usePackageTitles();
 
-	// —— 撤销 / 重做：修改编排的操作都先记下修改前的状态（edit-history.ts） ——
+	// —— 撤销 / 重做：修改场景的操作都先记下修改前的状态（edit-history.ts） ——
 	const history = useEditHistory(
 		{ nodes, edges, meta },
 		{ nodes: setNodes, edges: setEdges, meta: setMeta },

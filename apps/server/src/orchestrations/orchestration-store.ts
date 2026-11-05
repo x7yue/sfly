@@ -48,7 +48,7 @@ export type ArchiveResult =
 	| { kind: "not_found" }
 	| { kind: "running"; count: number };
 
-/** 新建编排的初始文档：只有一个入口节点，位置由整理布局算法给出（与画布的「整理布局」相同）。 */
+/** 新建场景的初始文档：只有一个入口节点，位置由整理布局算法给出（与画布的「整理布局」相同）。 */
 export const initialDocument = (): OrchestrationDocument =>
 	ensureLayout({ nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} });
 
@@ -224,7 +224,7 @@ export class OrchestrationStore {
 		});
 	}
 
-	/** 每个已保存过版本的编排的最新版本文档（统计引用与锁定用）。 */
+	/** 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。 */
 	async headDocuments(): Promise<OrchestrationDocument[]> {
 		const rows = await this.deps.db
 			.select({ document: orchestrationVersions.document })
