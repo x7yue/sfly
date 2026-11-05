@@ -1,4 +1,4 @@
-import type { RunView } from "@sfly/schema";
+import type { RunMetricCatalog, RunView } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ActivityIcon, PanelRightCloseIcon } from "lucide-react";
@@ -11,6 +11,8 @@ import { ZOOM_TEXT_11 } from "#/components/canvas/zoom-text";
 import { StatusPill } from "#/components/status";
 import { formatDateTime, formatDuration } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
+import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
+import { catalogEntry } from "#/metrics/use-primary-metric";
 import { chainRunStatus, nodeStatus, runStatus, shortId } from "#/monitor/run-model";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -26,8 +28,15 @@ import type { CanvasRun } from "./use-canvas-run";
 
 type Decorations = Pick<CanvasContextValue, "decorateNode" | "decorateEdge" | "regionMeta">;
 
-/** 节点卡片、连线与子流程区域的运行状态叠加。 */
-export function useRunDecorations(run: RunView | undefined, overlay: RunOverlay | undefined) {
+/**
+ * 节点卡片、连线与子流程区域的运行状态叠加。节点类型有主指标、节点开始执行过时，
+ * 卡片底部的指标槽显示主指标的最新值与迷你趋势（#43），否则沿用配置摘要（关键输入）。
+ */
+export function useRunDecorations(
+	run: RunView | undefined,
+	overlay: RunOverlay | undefined,
+	metrics: RunMetricCatalog | undefined,
+) {
 	return useMemo((): Decorations => {
 		if (!run || !overlay) return {};
 		const ended = run.status !== "running";
@@ -46,9 +55,17 @@ export function useRunDecorations(run: RunView | undefined, overlay: RunOverlay 
 					};
 				}
 				const s = nodeStatus(summary.node.status);
-				// 主指标槽（slot）由 #43 在这里填上，现在沿用卡片底部的配置摘要。
+				const entry = catalogEntry(metrics, summary.chain.id, id);
 				return {
 					run: summary.state,
+					slot: entry?.primary_metric ? (
+						<NodePrimaryMetric
+							runId={run.id}
+							entry={entry}
+							status={summary.node.status}
+							variant="inline"
+						/>
+					) : undefined,
 					status: (
 						<StatusPill kind={s.kind} className={ZOOM_TEXT_11}>
 							{s.label}
@@ -78,7 +95,7 @@ export function useRunDecorations(run: RunView | undefined, overlay: RunOverlay 
 				);
 			},
 		};
-	}, [run, overlay]);
+	}, [run, overlay, metrics]);
 }
 
 /** 左上控件组里替换检查状态的部分：运行状态、运行编号、耗时。 */

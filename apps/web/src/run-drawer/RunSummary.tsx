@@ -1,12 +1,23 @@
-import { type ChainRunView, type NodeRunView, queryKey, type RunView, runsApi } from "@sfly/schema";
+import {
+	type CatalogNode,
+	type ChainRunView,
+	type MetricIncrement,
+	type NodeRunView,
+	queryKey,
+	type RunView,
+	runsApi,
+} from "@sfly/schema";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
+import { useMemo, useRef } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { formatClock, formatDateTime, formatDuration } from "#/lib/format";
 import { useEventSource } from "#/lib/sse";
 import { useNow } from "#/lib/use-now";
+import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
+import { catalogEntry } from "#/metrics/use-primary-metric";
 import {
 	applyProgress,
 	chainLabel,
@@ -18,6 +29,12 @@ import {
 	runStatus,
 	shortId,
 } from "#/monitor/run-model";
+import {
+	applyMetricIncrement,
+	attemptsSignature,
+	refetchSeries,
+	useMetricCatalog,
+} from "#/monitor/use-run-metrics";
 import { useTaskLogs } from "#/monitor/use-task-logs";
 import { ChainBar } from "#/run-records/ChainProgress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,29 +45,48 @@ const LOG_LINES = 6;
 const ACTIVE = new Set(["queued", "dispatched", "running", "waiting"]);
 const isDone = (status: string) => status === "success" || status === "skipped";
 
-/** 运行视图（GET /runs/:id），运行中通过 SSE 实时更新（与监控页共用同一份缓存）。 */
-export function useLiveRun(runId: string) {
+/**
+ * 运行视图（GET /runs/:id），运行中通过 SSE 实时更新（与监控页共用同一份缓存）。
+ * metrics 为 true 时还把指标增量追加进序列缓存（主指标的趋势），重连后重新获取序列；
+ * 同一运行只让一处订阅指标，免得同一个增量被追加多次。
+ */
+export function useLiveRun(runId: string, { metrics = false }: { metrics?: boolean } = {}) {
 	const queryClient = useQueryClient();
 	const key = queryKey(runsApi.get, { params: { id: runId } });
 	const run = useQuery(apiQuery(runsApi.get, { params: { id: runId } }));
 	const running = !run.data || run.data.status === "running";
-	useEventSource(running ? `/runs/${encodeURIComponent(runId)}/events` : null, {
-		run: (data) => queryClient.setQueryData(key, data as RunView),
-		progress: (data) =>
-			queryClient.setQueryData(key, (old: RunView | undefined) =>
-				applyProgress(old, data as ProgressEvent),
-			),
-	});
+	const opened = useRef(false);
+	useEventSource(
+		running ? `/runs/${encodeURIComponent(runId)}/events` : null,
+		{
+			run: (data) => queryClient.setQueryData(key, data as RunView),
+			progress: (data) =>
+				queryClient.setQueryData(key, (old: RunView | undefined) =>
+					applyProgress(old, data as ProgressEvent),
+				),
+			...(metrics && {
+				metrics: (data: unknown) =>
+					applyMetricIncrement(queryClient, runId, data as MetricIncrement),
+			}),
+		},
+		() => {
+			if (metrics && opened.current) refetchSeries(queryClient, runId);
+			opened.current = true;
+		},
+	);
 	return run;
 }
 
 /**
  * 运行抽屉的摘要阶段（原型 drawerHTML 的 summary）：运行状态与时长、各链进度、正在执行的节点（进度）、
- * 最新几行日志，实时更新。节点的主指标值与趋势由 #43 补上。底部按钮由 RunDrawer 渲染。
+ * 最新几行日志，实时更新；节点类型有主指标时，正在执行的节点显示主指标的最新值与趋势（#43）。
+ * 底部按钮由 RunDrawer 渲染。
  */
 export function RunSummary({ runId }: { runId: string }) {
-	const query = useLiveRun(runId);
+	const query = useLiveRun(runId, { metrics: true });
 	const run = query.data;
+	const signature = useMemo(() => (run ? attemptsSignature(run) : ""), [run]);
+	const catalog = useMetricCatalog(runId, signature, !!run);
 	const now = useNow(!run || run.status === "running");
 	if (query.error && !run) {
 		return (
@@ -103,7 +139,14 @@ export function RunSummary({ runId }: { runId: string }) {
 			) : (
 				<ul aria-label="正在执行的节点" className="m-0 flex list-none flex-col gap-2 p-0">
 					{active.map(({ chain, node }) => (
-						<ActiveNode key={`${chain.id}:${node.node_id}`} chain={chain} node={node} now={now} />
+						<ActiveNode
+							key={`${chain.id}:${node.node_id}`}
+							runId={run.id}
+							chain={chain}
+							node={node}
+							metric={catalogEntry(catalog.data, chain.id, node.node_id)}
+							now={now}
+						/>
 					))}
 				</ul>
 			)}
@@ -143,7 +186,20 @@ function ChainRow({ chain }: { chain: ChainRunView }) {
 	);
 }
 
-function ActiveNode({ chain, node, now }: { chain: ChainRunView; node: NodeRunView; now: number }) {
+function ActiveNode({
+	runId,
+	chain,
+	node,
+	metric,
+	now,
+}: {
+	runId: string;
+	chain: ChainRunView;
+	node: NodeRunView;
+	/** 指标目录里的这个节点（主指标）；还没开始执行时为 undefined。 */
+	metric: CatalogNode | undefined;
+	now: number;
+}) {
 	const s = nodeStatus(node.status);
 	const attempt = node.attempts.at(-1);
 	const since = attempt?.started_at ?? attempt?.queued_at;
@@ -163,6 +219,15 @@ function ActiveNode({ chain, node, now }: { chain: ChainRunView; node: NodeRunVi
 						.join(" · ")}
 				</span>
 			</div>
+			{metric?.primary_metric && (
+				<NodePrimaryMetric
+					runId={runId}
+					entry={metric}
+					status={node.status}
+					variant="block"
+					className="mt-2"
+				/>
+			)}
 			{progress && (
 				<div className="mt-2">
 					{ratio !== null && (

@@ -1,6 +1,7 @@
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
+import { metricPackage, pingPoints } from "./monitor-scenario";
 import { createScenario, publishPackage, triggerRun } from "./support";
 
 /** 运行记录页（runs.spec.ts 与视觉回归）共用的数据准备。 */
@@ -46,10 +47,11 @@ export async function advance(clock: ManualClock, agent: FakeAgent, ms: number) 
 
 /**
  * 视觉回归用的一组运行（开始时间各不相同，顺序确定）：两次成功、一次主链失败、一次取消，
- * 两个进行中（其中一个子流程失败、一个节点带进度）。返回最后一个运行开始的时刻。
+ * 两个进行中（其中一个子流程失败、一个节点带进度，另一个的当前节点上报了主指标）。
+ * 返回最后一个运行开始的时刻。
  */
 export async function seedRunRecords(cp: TestControlPlane, clock: ManualClock, agent: FakeAgent) {
-	await publishPackage(cp);
+	await publishPackage(cp, metricPackage());
 	const daily = await createScenario(cp, "日终数据处理", runDocument({ subflow: true }));
 	const stress = await createScenario(cp, "撮合压测", runDocument());
 	const login = await createScenario(cp, "登录巡检", runDocument());
@@ -99,6 +101,7 @@ export async function seedRunRecords(cp: TestControlPlane, clock: ManualClock, a
 
 	await advance(clock, agent, 30_000);
 	await triggerRun(cp, login);
-	await agent.nextAssign();
+	const metered = await agent.nextAssign();
+	agent.metrics(metered, pingPoints(clock.now().getTime(), 0, 20));
 	return clock.now();
 }

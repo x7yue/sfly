@@ -1,8 +1,15 @@
 import type { Page } from "@playwright/test";
 import { type AssignedTask, LogLevel } from "../../server/test/support/fake-agent.js";
-import { createEditorScenario, nodeCard } from "./editor-support";
+import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
-import { largeScenario, logLine, openMonitor, runningScenario } from "./monitor-scenario";
+import {
+	largeScenario,
+	logLine,
+	metricPackage,
+	openMonitor,
+	pingPoints,
+	runningScenario,
+} from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { seedRunRecords } from "./run-records";
 import {
@@ -73,7 +80,8 @@ test("加载失败", async ({ page }) => {
 test("节点包列表与详情", async ({ page, controlPlane, clock }) => {
 	await publishPackage(controlPlane, { version: "1.2.0" });
 	clock.advance(3_600_000);
-	await publishPackage(controlPlane, { version: "1.3.0" });
+	// 1.3.0 的节点类型声明了指标与图表（详情里的「声明的指标」「图表」两列）。
+	await publishPackage(controlPlane, { version: "1.3.0", ...metricPackage() });
 	await publishPackage(controlPlane, { name: "alpha-tools", version: "0.1.0" });
 	await createScenario(controlPlane, "巡检", scenarioUsing("agent-linux", "1.2.0"));
 
@@ -220,7 +228,7 @@ test("运行抽屉：入口参数与触发前检查", async ({ page, controlPlan
 
 test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, clock }) => {
 	const agent = await connectAgent({ name: "agent-a" });
-	await publishPackage(controlPlane);
+	await publishPackage(controlPlane, metricPackage());
 	await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
 	await page.goto("/orchestrations");
 	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
@@ -236,8 +244,10 @@ test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, c
 		logLine(clock, 1, "连接 10.0.0.8"),
 		logLine(clock, 2, "丢包率偏高", LogLevel.WARN, 1000),
 	]);
+	agent.metrics(task, pingPoints(clock.now().getTime(), 0, 20));
 	await expect(drawer.getByRole("list", { name: "最新日志" })).toContainText("丢包率偏高");
 	await expect(drawer).toContainText("40 / 100");
+	await expect(drawer.locator('[data-primary-metric="level"] [data-sparkline]')).toBeVisible();
 	// 只截抽屉（背后的列表与触发通知不在内）；运行 ID 是随机的，遮住。
 	await expect(drawer).toHaveScreenshot("run-drawer-summary.png", {
 		mask: [drawer.locator('[data-slot="run-id"]')],
@@ -272,6 +282,7 @@ test("运行记录", async ({ page, controlPlane, connectAgent, clock }) => {
 	await expect(page.getByRole("article")).toHaveCount(2);
 	await expect(page.getByRole("table", { name: "历史运行" }).getByRole("row")).toHaveCount(5);
 	await expect(page.getByRole("article").nth(1).getByRole("listitem")).toContainText("37 / 120");
+	await expect(page.getByRole("article").first().locator("[data-sparkline]")).toBeVisible();
 	// 运行 ID 是随机的，遮住。
 	await expect(page).toHaveScreenshot("runs.png", {
 		fullPage: true,
@@ -438,6 +449,18 @@ test.describe("编排画布", () => {
 	});
 });
 
+test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, metricPackage());
+	const id = await createScenario(controlPlane, "日终数据处理", editorDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "fetch").click();
+	await page.getByRole("tab", { name: "说明与指标" }).click();
+	await expect(page.getByRole("list", { name: "图表" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-metrics.png");
+});
+
 test("编排画布：运行状态（选中失败尝试后重试中的节点）", async ({
 	page,
 	controlPlane,
@@ -450,6 +473,9 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
 	await nodeCard(page, "verify").click();
 	await expect(page.getByTestId("run-attempts")).toHaveText("2");
+	for (const id of ["fetch", "verify", "probe"]) {
+		await expect(nodeCard(page, id).locator("[data-sparkline]")).toBeVisible();
+	}
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-run-state.png", {
 		mask: [

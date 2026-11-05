@@ -6,6 +6,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { type StatusKind, StatusPill } from "#/components/status";
 import { formatDuration } from "#/lib/format";
+import { PrimaryMetric } from "#/metrics/PrimaryMetric";
+import { primaryMetricData } from "#/metrics/use-primary-metric";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +22,7 @@ import {
 	isFailed,
 } from "./chart-groups";
 import { balancedColumns, chartWindow } from "./charts";
-import { type ChartLine, formatMetric, MetricChart, Plot } from "./MetricChart";
+import { type ChartLine, MetricChart } from "./MetricChart";
 import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
 import { chainLabel } from "./run-model";
@@ -423,12 +425,9 @@ function NodeGroup({
 					)}
 					{entry.primary_metric && (
 						<PrimaryMetric
-							name={entry.primary_metric}
-							unit={units.get(entry.primary_metric) ?? ""}
-							buckets={linesOf([entry.primary_metric])[0]?.buckets ?? []}
-							summaryLast={attempt.metrics.find((m) => m.name === entry.primary_metric)?.last}
-							bucketSeconds={series?.bucket_seconds ?? 1}
-							accent={ACCENT[status.kind]}
+							variant="chip"
+							data={primaryMetricData(entry.primary_metric, entry, attempt, series)}
+							accent={ACCENT[status.kind] ?? "var(--fg-3)"}
 						/>
 					)}
 					<span className="flex-1" />
@@ -486,58 +485,6 @@ function NodeGroup({
 				))}
 			</div>
 		</GroupShell>
-	);
-}
-
-/** 组标题里的主指标：名称、最新值与迷你趋势。 */
-function PrimaryMetric({
-	name,
-	unit,
-	buckets,
-	summaryLast,
-	bucketSeconds,
-	accent,
-}: {
-	name: string;
-	unit: string;
-	buckets: ChartLine["buckets"];
-	summaryLast: number | undefined;
-	bucketSeconds: number;
-	accent: string | undefined;
-}) {
-	const last = buckets.at(-1)?.last ?? summaryLast;
-	const first = buckets[0];
-	const end = buckets.at(-1);
-	const window =
-		first && end
-			? {
-					start: Date.parse(first.time),
-					end: Math.max(Date.parse(end.time) + bucketSeconds * 1000, Date.parse(first.time) + 1000),
-				}
-			: null;
-	return (
-		<span
-			title={`主指标：${name}`}
-			data-primary-metric={name}
-			className="ml-2 inline-flex h-5.5 flex-none items-center gap-1.5 rounded-md bg-sunk px-2 text-xs"
-		>
-			<span className="text-fg-3">{name}</span>
-			<b className="font-mono font-semibold">{last === undefined ? "—" : formatMetric(last)}</b>
-			{unit && <span className="text-fg-3">{unit}</span>}
-			{window && buckets.length > 1 && (
-				<span className="w-14" aria-hidden>
-					<Plot
-						type="area"
-						lines={[{ name, buckets }]}
-						window={window}
-						bucketSeconds={bucketSeconds}
-						height={16}
-						mini
-						color={accent ?? "var(--fg-3)"}
-					/>
-				</span>
-			)}
-		</span>
 	);
 }
 

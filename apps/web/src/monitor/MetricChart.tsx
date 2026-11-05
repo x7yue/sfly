@@ -1,7 +1,7 @@
 import type { MetricBucket } from "@sfly/schema";
 import { cn } from "cn";
 import { memo, useMemo } from "react";
-import { formatClock } from "#/lib/format";
+import { formatClock, formatMetric } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { valueAt } from "./charts";
 import { useMonitor, useMonitorActions } from "./monitor-state";
@@ -28,15 +28,6 @@ export const SERIES_COLORS = [
 	"var(--chart-4)",
 ];
 const seriesColor = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length] as string;
-
-/** 指标值：`1.2M`、`12.3k`、`812`、`3.14`。 */
-export function formatMetric(value: number): string {
-	const abs = Math.abs(value);
-	if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 1e7 ? 0 : 1)}M`;
-	if (abs >= 1e4) return `${(value / 1e3).toFixed(abs >= 1e5 ? 0 : 1)}k`;
-	if (Number.isInteger(value)) return String(value);
-	return abs >= 100 ? value.toFixed(0) : abs >= 10 ? value.toFixed(1) : value.toFixed(2);
-}
 
 const W = 300;
 

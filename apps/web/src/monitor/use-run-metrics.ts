@@ -38,8 +38,11 @@ function useRefetchOn(signature: string, refetch: () => unknown) {
 	}, [signature, refetch]);
 }
 
-export function useMetricCatalog(runId: string, signature: string) {
-	const query = useQuery(apiQuery(metricsApi.catalog, { params: { id: runId } }));
+export function useMetricCatalog(runId: string, signature: string, enabled = true) {
+	const query = useQuery({
+		...apiQuery(metricsApi.catalog, { params: { id: runId } }),
+		enabled,
+	});
 	useRefetchOn(signature, query.refetch);
 	return query;
 }

@@ -203,7 +203,7 @@ function Editor({
 	// —— 运行状态模式：只读显示运行绑定的版本，叠加节点状态 ——
 	const runState = useCanvasRun(orchestration.id, initialRun, mode === "run");
 	const readyRun = runState.status === "ready" ? runState : undefined;
-	const decorations = useRunDecorations(readyRun?.run, readyRun?.overlay);
+	const decorations = useRunDecorations(readyRun?.run, readyRun?.overlay, readyRun?.metrics);
 	const runFlow = useRunFlow(readyRun?.doc);
 	const runInfo: CanvasInfo = useMemo(
 		() =>
