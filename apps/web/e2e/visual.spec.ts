@@ -1,4 +1,5 @@
 import { type E2eFixtures, expect, test } from "./fixtures";
+import { seedRunRecords } from "./run-records";
 import {
 	createScenario,
 	failApi,
@@ -214,4 +215,25 @@ test("控制台没有数据", async ({ page }) => {
 		"没有正在运行的运行",
 	);
 	await expect(page).toHaveScreenshot("dashboard-empty.png");
+});
+
+test("运行记录", async ({ page, controlPlane, connectAgent, clock }) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	const last = await seedRunRecords(controlPlane, clock, agent);
+	await page.clock.setFixedTime(new Date(last.getTime() + 42_000));
+	await page.goto("/runs");
+	await expect(page.getByRole("article")).toHaveCount(2);
+	await expect(page.getByRole("table", { name: "历史运行" }).getByRole("row")).toHaveCount(5);
+	await expect(page.getByRole("article").nth(1).getByRole("listitem")).toContainText("37 / 120");
+	// 运行 ID 是随机的，遮住。
+	await expect(page).toHaveScreenshot("runs.png", {
+		fullPage: true,
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("运行记录为空", async ({ page }) => {
+	await page.goto("/runs");
+	await expect(page.getByRole("region", { name: "没有运行记录" })).toBeVisible();
+	await expect(page).toHaveScreenshot("runs-empty.png");
 });
