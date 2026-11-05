@@ -289,7 +289,9 @@ flowchart TD
 
 ## 7. 前端
 
-- 使用 `npx @tanstack/cli create` 创建 TanStack Start 项目；数据请求使用 TanStack Query 调用控制面 API。
+- 纯 SPA（ADR 0006）：TanStack Router + TanStack Query，vite 构建；构建产物由控制面在 HTTP 端口上托管，与 API、SSE 同源同端口。
+- 路径区分：浏览器经 `/api/*` 调用 API 与 SSE（控制面去掉前缀后按原路由处理，`/api` 下未知路由返回 JSON 404）；根路径上的 API 保留给 Agent、CLI 等非浏览器客户端；其余 GET 请求命中构建产物文件就返回文件，浏览器导航（`Accept` 含 `text/html`）回退到入口页 `index.html`，因此前端路由可以与根路径 API 同名。开发时 vite 开发服务器把 `/api/*` 原样代理到控制面。
+- 测试（ADR 0005）：`apps/web/e2e` 的 Playwright 端到端测试与视觉回归，沿用控制面测试基建（真实控制面托管构建产物、假 Agent、每个测试独立数据库、手动时钟）。
 - 画布使用 React Flow（`@xyflow/react`）重写；保留原型的视觉规范（`tokens.css` 配色、语义缩放、端口规则、调度连线的样式）。
 - 主要页面：编排列表、画布编辑（参数面板由节点元信息的 schema 生成）、版本历史与对比、运行列表、运行详情（链状态、日志、进度、产物）、Agent 列表、节点包列表。
 

@@ -13,6 +13,9 @@
 //   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024）
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
+//   SFLY_WEB_DIR     前端构建产物目录（默认 apps/web/dist，由 `pnpm --filter @sfly/web build` 生成）；
+//                    控制面在 HTTP 端口上同时提供页面（ADR 0006）。未设置且默认目录不存在时只提供 API
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { startControlPlane } from "./control-plane.js";
 
@@ -30,6 +33,9 @@ const mb = (name: string) => {
 	const n = positive(name);
 	return n === undefined ? undefined : Math.floor(n * MB);
 };
+const defaultWebDir = fileURLToPath(new URL("../../web/dist", import.meta.url));
+const webDir = env.SFLY_WEB_DIR || (existsSync(defaultWebDir) ? defaultWebDir : undefined);
+if (!webDir) console.warn(`sfly: ${defaultWebDir} not found, serving the API only (no web app)`);
 const controlPlane = await startControlPlane({
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
@@ -42,6 +48,7 @@ const controlPlane = await startControlPlane({
 	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),
 	artifactLimitBytes: mb("SFLY_ARTIFACT_LIMIT_MB"),
 	sdkWheelDir: env.SFLY_SDK_DIR || fileURLToPath(new URL("../dist/sdk", import.meta.url)),
+	webDir,
 });
 console.log(`sfly control plane: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`);
 
