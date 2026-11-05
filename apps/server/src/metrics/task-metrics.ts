@@ -37,7 +37,7 @@ import { nodeTypeOf } from "./node-types.js";
  *
  * ## 摘要
  * 每个「任务 × 指标」一行 `metric_series`（点数、最小、最大、总和、最新值、首尾时间），与段在同一个事务里更新；
- * 任务行记录已写入的点数、截断标记和 Agent 丢弃的点数。
+ * 任务行记录已写入的点数（不含内存里还没写库的点，崩溃后与摘要一致）、截断标记和 Agent 丢弃的点数。
  *
  * ## 上限
  * 单任务所有指标合计最多 `limitBytes / 28` 个点（默认约 50 MB）；超出后不再写入，`tasks.metric_truncated` 置为 true。
@@ -69,6 +69,8 @@ interface Series {
 	name: string;
 	/** 摘要（含尚未写入的点）；没有点时 points 为 0。 */
 	points: number;
+	/** 其中已经写库的点数（`tasks.metric_points` 只计这些，与 `metric_series` 一致）。 */
+	written: number;
 	min: number;
 	max: number;
 	sum: number;
@@ -390,7 +392,10 @@ export class TaskMetrics {
 				await tx
 					.update(tasks)
 					.set({
-						metricPoints: [...state.series.values()].reduce((n, s) => n + s.points, 0),
+						metricPoints: [...state.series.values()].reduce(
+							(n, s) => n + (list.includes(s) ? s.points : s.written),
+							0,
+						),
 						metricTruncated: state.truncated,
 						metricDropped: state.dropped,
 					})
@@ -414,6 +419,7 @@ export class TaskMetrics {
 		for (const s of list) {
 			s.dirtySince = undefined;
 			s.closed = [];
+			s.written = s.points;
 		}
 	}
 
@@ -477,6 +483,7 @@ export class TaskMetrics {
 			series.set(r.metric, {
 				name: r.metric,
 				points: r.points,
+				written: r.points,
 				min: r.min,
 				max: r.max,
 				sum: r.sum,
@@ -530,6 +537,7 @@ function emptySeries(name: string): Series {
 	return {
 		name,
 		points: 0,
+		written: 0,
 		min: Number.POSITIVE_INFINITY,
 		max: Number.NEGATIVE_INFINITY,
 		sum: 0,

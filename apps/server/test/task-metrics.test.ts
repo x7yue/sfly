@@ -231,6 +231,32 @@ describe("指标上报与存储", () => {
 		});
 	});
 
+	it("任务记录的点数只计已写库的点，与摘要一致（崩溃后不会偏大）", async () => {
+		const agent = await connect();
+		const { runId, task } = await start(agent);
+		// tps 的 1 个点留在内存里；requests 攒满一段（120 个点）立即写库。
+		agent.metrics(task, [
+			["tps", at(0), 1],
+			...Array.from({ length: 120 }, (_, i): [string, number, number] => ["requests", at(i), i]),
+		]);
+		await eventually(async () => {
+			expect((await metricsOf(runId)).requests?.points).toBe(120);
+		});
+		expect(Object.keys(await metricsOf(runId))).toEqual(["requests"]);
+
+		// 任务记录上的点数是这条验收标准（摘要、上限判断的依据）的可观察结果，直接查数据库。
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			const { rows } = await client.query("select metric_points from tasks where id = $1", [
+				task.taskId,
+			]);
+			expect(rows).toEqual([{ metric_points: "120" }]);
+		} finally {
+			await client.end();
+		}
+	});
+
 	it("Agent 上报的丢弃点数累加在任务的摘要里", async () => {
 		const agent = await connect();
 		const { runId, task } = await start(agent);
