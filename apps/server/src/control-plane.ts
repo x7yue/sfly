@@ -10,6 +10,7 @@ import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
 import { TaskLogs } from "./logs/task-logs.js";
+import { MetricRetention } from "./metrics/metric-retention.js";
 import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
@@ -56,7 +57,9 @@ export interface ControlPlaneOptions {
 	artifactLimitBytes?: number;
 	/** 日志和产物的保留天数，默认 30 天；运行结束超过这么久后清理（#18）。 */
 	retentionDays?: number;
-	/** 保留期清理的扫描间隔，默认 1 分钟；是否到期只按注入的时钟判断。 */
+	/** 指标的保留天数，默认 30 天，与日志和产物分开配置；整天超过保留期的分区被删除（#32）。 */
+	metricRetentionDays?: number;
+	/** 保留期清理（含指标分区维护）的扫描间隔，默认 1 分钟；是否到期只按注入的时钟判断。 */
 	retentionSweepIntervalMs?: number;
 	/** 定时 / Sleep 节点的定时器扫描间隔（#14），默认 1 秒；是否到期只按注入的时钟判断。 */
 	timerSweepIntervalMs?: number;
@@ -127,9 +130,15 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		dataDir: options.dataDir,
 		limitBytes: options.logLimitBytes,
 	});
+	const metricRetention = new MetricRetention({
+		db: database.db,
+		clock,
+		retentionDays: options.metricRetentionDays,
+	});
 	const metrics = new TaskMetrics({
 		db: database.db,
 		clock,
+		retention: metricRetention,
 		limitBytes: options.metricLimitBytes,
 	});
 	const artifacts = new ArtifactStore({
@@ -215,10 +224,13 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			},
 			fail("sweep"),
 		),
-		// 日志和产物的保留期清理（#18）。
+		// 日志和产物的保留期清理（#18）；指标分区的提前创建与到期删除（#32）。
 		periodic(
 			options.retentionSweepIntervalMs ?? 60_000,
-			() => retention.sweep(),
+			async () => {
+				await metricRetention.sweep().catch(fail("metric retention sweep"));
+				await retention.sweep();
+			},
 			fail("retention sweep"),
 		),
 		// 指标：写入攒了约 10 秒的当前段（#29）。
@@ -233,6 +245,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		async close() {
 			await Promise.all(sweeps.map((s) => s.stop()));
 			await retention.idle();
+			await metricRetention.idle();
 			hub.closeAll();
 			await gateway.close();
 			// 正常关闭时写入内存里尚未写库的指标。

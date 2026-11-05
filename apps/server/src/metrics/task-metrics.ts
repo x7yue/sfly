@@ -18,6 +18,7 @@ import {
 	tasks,
 } from "../db/schema.js";
 import { isUuid } from "../util/uuid.js";
+import type { MetricRetention } from "./metric-retention.js";
 
 /**
  * 指标上报与存储（#29，ADR 0009）。
@@ -29,7 +30,7 @@ import { isUuid } from "../util/uuid.js";
  *
  * ## 分段表 `metric_segments`
  * 按天分区（`start_at`），一行 = 一个任务一个指标的一段：时间偏移（秒，相对 start_at）、值、每秒最小 / 最大值的
- * 类型化数组 + 段摘要 + 预留的 ext（jsonb）。分区在第一次写入那一天的数据时创建（之后 #32 提前创建、到期整天删除）。
+ * 类型化数组 + 段摘要 + 预留的 ext（jsonb）。分区的创建与到期删除见 src/metrics/metric-retention.ts（#32）。
  *
  * 段的大小按实测确定：PostgreSQL 只在一行超过约 2 KB（TOAST_TUPLE_THRESHOLD，与 toast_tuple_target 无关）时
  * 才尝试压缩，每点 4 个数组元素约 28 字节，所以一段攒满 {@link SEGMENT_POINTS} 个点（约 3.4 KB）才关闭；
@@ -57,7 +58,6 @@ export const BYTES_PER_POINT = 4 + 3 * 8;
 export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
 /** 没有未写入数据、这么久没收到上报的任务状态从内存中移除。 */
 const IDLE_MS = 5 * 60_000;
-const DAY_MS = 86_400_000;
 const DEV_VERSION = "dev";
 
 interface Point {
@@ -107,12 +107,13 @@ interface TaskState {
 export class TaskMetrics {
 	#states = new Map<string, Promise<TaskState | undefined>>();
 	#queues = new Map<string, Promise<void>>();
-	#partitions = new Map<string, Promise<void>>();
 
 	constructor(
 		private readonly deps: {
 			db: Db;
 			clock: Clock;
+			/** 保留期与分区（#32）：写入前确保分区存在。 */
+			retention: MetricRetention;
 			/** 单个任务指标数据的上限（字节，按每点 28 字节折算成点数），默认 {@link DEFAULT_METRIC_LIMIT_BYTES}。 */
 			limitBytes?: number;
 		},
@@ -286,7 +287,8 @@ export class TaskMetrics {
 				.filter((points) => points.length > 0)
 				.map((points) => ({ s, points })),
 		);
-		for (const { points } of segments) await this.#ensurePartition((points[0] as Point).t);
+		for (const { points } of segments)
+			await this.deps.retention.ensurePartition((points[0] as Point).t);
 		await this.deps.db.transaction(async (tx) => {
 			for (const { s, points: segment } of segments) {
 				const start = segment[0];
@@ -340,28 +342,6 @@ export class TaskMetrics {
 			s.dirtySince = undefined;
 			s.closed = [];
 		}
-	}
-
-	/** 确保 Unix 秒 t 所在那一天（UTC）的分区存在。 */
-	#ensurePartition(t: number): Promise<void> {
-		const from = new Date(Math.floor((t * 1000) / DAY_MS) * DAY_MS);
-		const name = `metric_segments_${from.toISOString().slice(0, 10).replaceAll("-", "")}`;
-		let created = this.#partitions.get(name);
-		if (!created) {
-			const to = new Date(from.getTime() + DAY_MS);
-			created = this.deps.db
-				.execute(
-					sql.raw(
-						`create table if not exists "${name}" partition of metric_segments ` +
-							`for values from ('${from.toISOString()}') to ('${to.toISOString()}') ` +
-							"with (toast_tuple_target = 128)",
-					),
-				)
-				.then(() => {});
-			this.#partitions.set(name, created);
-			created.catch(() => this.#partitions.delete(name));
-		}
-		return created;
 	}
 
 	#serial(taskId: string, work: () => Promise<void>): Promise<void> {
