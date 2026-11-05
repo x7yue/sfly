@@ -20,7 +20,7 @@ export interface RealAgent {
 export async function startRealAgent(options: {
 	grpcUrl: string;
 	name: string;
-	/** 共享 venv；不传时指向一个不存在的目录。 */
+	/** 共享 venv；不传时指向一个不存在的目录（Agent 启动时用 uv 创建一个空 venv）。 */
 	venv?: string;
 	args?: string[];
 	bin?: string;

@@ -11,7 +11,11 @@
 //! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`（失败消息取标准错误尾部）。
 
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use prost::Message as _;
 
 use serde::Deserialize;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
@@ -34,8 +38,68 @@ const MAX_BATCH_LINES: usize = 1000;
 /// 执行器退出后，等待仍持有标准输出的后台子进程关闭管道的最长时间。
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// 发往控制面的日志与进度消息（`LogBatch` / `Progress`）。连接断开期间在通道里排队，重连后发送。
-pub type Telemetry = mpsc::UnboundedSender<AgentMessage>;
+/// 断开期间默认最多排队的日志字节数。
+pub const DEFAULT_TELEMETRY_QUEUE_BYTES: usize = 64 * 1024 * 1024;
+
+/// 发往控制面的任务消息（`TaskStarted` / `LogBatch` / `Progress`）。连接断开期间在通道里排队，重连后发送。
+/// 排队的字节数有上限：超出时丢弃新的日志批次（控制面按序号看到缺口），其他消息照常排队。
+#[derive(Clone)]
+pub struct Telemetry {
+    tx: mpsc::UnboundedSender<(usize, AgentMessage)>,
+    queued: Arc<AtomicUsize>,
+    dropping: Arc<AtomicBool>,
+    limit: usize,
+}
+
+/// [`Telemetry`] 的接收端（Agent 主循环在连接上逐条发出）。
+pub struct TelemetryReceiver {
+    rx: mpsc::UnboundedReceiver<(usize, AgentMessage)>,
+    queued: Arc<AtomicUsize>,
+}
+
+/// 新建一条任务消息通道；`limit` 是最多排队的日志字节数。
+pub fn telemetry(limit: usize) -> (Telemetry, TelemetryReceiver) {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let queued = Arc::new(AtomicUsize::new(0));
+    (
+        Telemetry {
+            tx,
+            queued: queued.clone(),
+            dropping: Arc::new(AtomicBool::new(false)),
+            limit,
+        },
+        TelemetryReceiver { rx, queued },
+    )
+}
+
+impl Telemetry {
+    pub fn send(&self, message: AgentMessage) {
+        let size = message.encoded_len();
+        let is_logs = matches!(message.body, Some(agent_message::Body::Logs(_)));
+        if is_logs && self.queued.load(Ordering::SeqCst) + size > self.limit {
+            if !self.dropping.swap(true, Ordering::SeqCst) {
+                eprintln!(
+                    "log queue is full ({} bytes queued while disconnected): dropping new log lines",
+                    self.queued.load(Ordering::SeqCst)
+                );
+            }
+            return;
+        }
+        self.dropping.store(false, Ordering::SeqCst);
+        self.queued.fetch_add(size, Ordering::SeqCst);
+        if self.tx.send((size, message)).is_err() {
+            self.queued.fetch_sub(size, Ordering::SeqCst);
+        }
+    }
+}
+
+impl TelemetryReceiver {
+    pub async fn recv(&mut self) -> Option<AgentMessage> {
+        let (size, message) = self.rx.recv().await?;
+        self.queued.fetch_sub(size, Ordering::SeqCst);
+        Some(message)
+    }
+}
 
 /// 一个任务的日志转发；执行器退出后调用 [`Pump::finish`] 发完剩余的日志和最后一次进度。
 pub struct Pump {
@@ -387,6 +451,6 @@ impl Forwarder {
     }
 
     fn send(&self, body: agent_message::Body) {
-        let _ = self.telemetry.send(AgentMessage { body: Some(body) });
+        self.telemetry.send(AgentMessage { body: Some(body) });
     }
 }

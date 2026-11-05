@@ -39,6 +39,8 @@ export interface AgentSessionHandler {
 export interface RunningTaskRef {
 	taskId: string;
 	attempt: number;
+	/** 执行器子进程已经启动（TaskStarted 可能随断开的连接丢失）。 */
+	started: boolean;
 }
 
 export interface AgentGatewayOptions {
@@ -50,6 +52,13 @@ export interface AgentGatewayOptions {
 	agentToken?: string;
 	onError?: (error: unknown) => void;
 }
+
+/** proto 的 RunningTask（Hello、Heartbeat 里 Agent 手上的任务）。 */
+export const runningTaskRef = (t: { taskId: string; attempt: number; started: boolean }) => ({
+	taskId: t.taskId,
+	attempt: t.attempt,
+	started: t.started,
+});
 
 /**
  * Agent 网关服务实现：每个 Session 调用是一个 Agent 的双向流。
@@ -93,7 +102,7 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			// 入站消息在后台逐条处理；请求流结束或断线时注销连接。
 			void (async () => {
 				try {
-					const running = hello.runningTasks.map((t) => ({ taskId: t.taskId, attempt: t.attempt }));
+					const running = hello.runningTasks.map(runningTaskRef);
 					if (options.handler) await options.handler.onOnline(conn, running);
 					else conn.welcome(create(ServerMessageSchema, { body: { case: "welcome", value: {} } }));
 					for (;;) {

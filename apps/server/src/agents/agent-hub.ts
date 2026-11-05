@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@sfly/proto";
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -9,6 +9,7 @@ import {
 	type DevPackageInfo,
 	type InstalledPackage,
 	type InstallProgress,
+	ON_AGENT,
 	runs,
 	tasks,
 } from "../db/schema.js";
@@ -79,7 +80,7 @@ export interface AgentView {
 	install: InstallProgress | null;
 	/** 以开发模式（sfly dev）加载在这个 Agent 上的节点包；画布据此提供 dev 版本。 */
 	dev_packages: DevPackageInfo[];
-	/** 正在这个 Agent 上运行的任务，按开始时间排序。 */
+	/** 派发给这个 Agent、还没结束的任务（派发阶段和执行阶段），按派发顺序排列。 */
 	running_tasks: RunningTaskView[];
 }
 
@@ -89,7 +90,10 @@ export interface RunningTaskView {
 	orchestration_id: string;
 	node_id: string;
 	attempt: number;
-	started_at: string;
+	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
+	status: "dispatched" | "running";
+	/** 执行器启动的时间；派发阶段为 null。 */
+	started_at: string | null;
 }
 
 /**
@@ -175,12 +179,13 @@ export class AgentHub {
 				orchestrationId: runs.orchestrationId,
 				nodeId: tasks.nodeId,
 				attempt: tasks.attempt,
+				status: tasks.status,
 				startedAt: tasks.startedAt,
 			})
 			.from(tasks)
 			.innerJoin(runs, eq(runs.id, tasks.runId))
-			.where(and(eq(tasks.status, "running"), isNotNull(tasks.agentName)))
-			.orderBy(asc(tasks.startedAt), asc(tasks.seq));
+			.where(and(inArray(tasks.status, ON_AGENT), isNotNull(tasks.agentName)))
+			.orderBy(asc(tasks.seq));
 		return rows.map(({ info: { install, dev_packages, ...info }, ...row }) => ({
 			name: row.name,
 			status: row.status,
@@ -198,7 +203,8 @@ export class AgentHub {
 					orchestration_id: t.orchestrationId,
 					node_id: t.nodeId,
 					attempt: t.attempt,
-					started_at: (t.startedAt as Date).toISOString(),
+					status: t.status as RunningTaskView["status"],
+					started_at: t.startedAt?.toISOString() ?? null,
 				})),
 		}));
 	}

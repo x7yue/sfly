@@ -18,6 +18,7 @@ message AgentMessage {
   oneof body {
     Hello hello = 1;
     Heartbeat heartbeat = 2;
+    TaskStarted started = 3;
     LogBatch logs = 4;
     Progress progress = 5;
     TaskResult result = 6;
@@ -63,11 +64,25 @@ message Hello {
 message RunningTask {
   string task_id = 1;
   uint32 attempt = 2;
+  // 执行器子进程已经启动（已发送或应当发送过 TaskStarted）。TaskStarted 可能随断开的连接丢失，
+  // 控制面据此把仍处于派发阶段的任务记为 running。
+  bool started = 3;
 }
 
-// Agent 周期发送，为控制面认为在这个 Agent 上运行的全部任务续约租约；
-// 租约过期的任务以 agent_lost 失败（按重试配置派回同一个 Agent）。
-message Heartbeat {}
+// Agent 周期发送，为它手上的任务续约租约；租约过期的任务以 agent_lost 失败（按重试配置派回同一个 Agent）。
+message Heartbeat {
+  // Agent 手上的任务（含义同 Hello.running_tasks）：只为这些任务续约。控制面认为派发给这个 Agent、
+  // 但连续两次心跳都不在列表里的任务以 agent_lost 失败（第一次可能是心跳与派发消息在路上交错）。
+  repeated RunningTask running_tasks = 1;
+}
+
+// 任务的执行器子进程已经启动（节点包下载、安装完成之后）。控制面收到后才把任务记为 running，
+// 并以收到的时刻作为耗时起点；Agent 也从这一刻开始计算超时（docs/SEMANTICS.md §3.3）。
+// 在此之前任务处于派发阶段（dispatched：下载、安装、启动中）。
+message TaskStarted {
+  string task_id = 1;
+  uint32 attempt = 2;
+}
 
 // 以本地开发模式（sfly dev）加载的节点包：本地源码目录以可编辑方式安装进共享 venv，注册为 `包名@dev`。
 // 只有加载了它的 Agent 能执行 `包名@dev` 的任务。
@@ -92,6 +107,11 @@ message Welcome {
   repeated TaskDisposition dispositions = 1;
   // Agent 发送 Heartbeat 的间隔（毫秒）；0 表示使用 Agent 的默认值（10 秒）。
   uint32 heartbeat_interval_ms = 2;
+  // 与 Hello.agent_version 匹配的 SDK 运行时 wheel 的下载地址（HTTP）；控制面没有这个版本时为空。
+  // 共享 venv 里没有这个版本的 SDK 时，Agent 下载、校验 sdk_wheel_sha256 后用 uv 装进共享 venv。
+  string sdk_wheel_url = 3;
+  // SDK 运行时 wheel 的 sha256（hex）。
+  string sdk_wheel_sha256 = 4;
 }
 
 // 控制面对 Agent 手上一个任务的处置。

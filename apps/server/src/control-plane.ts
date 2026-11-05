@@ -14,6 +14,7 @@ import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
 import { Retention } from "./retention/retention.js";
 import { createPreflight } from "./runs/preflight.js";
+import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
 
@@ -55,6 +56,8 @@ export interface ControlPlaneOptions {
 	timerSweepIntervalMs?: number;
 	/** 运行中任务的租约（毫秒），默认 30 秒；Agent 按它的三分之一发送心跳（#15）。 */
 	leaseMs?: number;
+	/** SDK 运行时 wheel 所在目录（src/sdk/sdk-wheels.ts）；不设置时不提供 SDK 下载。 */
+	sdkWheelDir?: string;
 }
 
 export interface ControlPlane {
@@ -78,6 +81,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 
+	const sdkWheels = await loadSdkWheels(options.sdkWheelDir);
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex });
 	await hub.markAllOffline();
@@ -95,6 +99,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 		preflight,
 		leaseMs: options.leaseMs,
+		sdkWheel: (agentVersion) => {
+			const wheel = sdkWheels.find((w) => w.version === agentVersion);
+			return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
+		},
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
 	await engine.recover();
@@ -132,6 +140,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		artifacts,
 		agentToken: options.agentToken,
 		publicHttpUrl: () => publicHttpUrl,
+		sdkWheels,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });

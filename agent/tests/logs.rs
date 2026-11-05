@@ -199,3 +199,70 @@ async fn logs_and_last_progress_of_a_timed_out_task_are_forwarded_before_the_tim
         "超时任务的进度都在结果之前到达：{progress:#?}"
     );
 }
+
+#[tokio::test]
+async fn task_started_is_reported_when_the_executor_starts_before_its_logs_and_result() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-started"));
+    cp.hello(0).await;
+
+    cp.assign(stub_task("task-started", "chatter", json!({})))
+        .await;
+    let (_, result_at) = cp.result_at("task-started").await;
+    let all = cp.received_with_session();
+    let started: Vec<usize> = all
+        .iter()
+        .enumerate()
+        .filter_map(|(i, r)| match &r.message.body {
+            Some(agent_message::Body::Started(s)) if s.task_id == "task-started" => {
+                assert_eq!(s.attempt, 1);
+                Some(i)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(started.len(), 1, "恰好一次 TaskStarted");
+    let lines = log_lines(&all, "task-started");
+    assert!(!lines.is_empty());
+    assert!(
+        lines.iter().all(|(i, _)| *i > started[0]),
+        "日志在 TaskStarted 之后"
+    );
+    assert!(started[0] < result_at);
+}
+
+#[tokio::test]
+async fn logs_queued_while_disconnected_are_capped_and_the_result_still_arrives() {
+    let cp = FakeControlPlane::start().await;
+    let port = cp.port;
+    let mut options = AgentOptions::new(&cp.url, "agent-log-cap");
+    options.args = vec!["--log-queue-bytes".into(), "4096".into()];
+    let _agent = spawn_agent(options);
+    cp.hello(0).await;
+    cp.assign(stub_task(
+        "task-flood",
+        "flood",
+        json!({ "lines": 2000, "interval": 0.0005 }),
+    ))
+    .await;
+    // 控制面下线：执行器继续输出，Agent 只在内存里排队有限的日志。
+    drop(cp);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    let cp = FakeControlPlane::start_on(port).await;
+
+    let (result, _) = cp.result("task-flood").await;
+    assert_eq!(
+        result.status(),
+        sfly_agent::proto::TaskStatus::Success,
+        "{result:?}"
+    );
+    let lines = log_lines(&cp.received_with_session(), "task-flood");
+    assert!(
+        lines.len() < 2000,
+        "断线期间超出上限的日志被丢弃，实际收到 {} 行",
+        lines.len()
+    );
+    // 序号照常递增，控制面能看出缺口。
+    let seqs: Vec<u64> = lines.iter().map(|(_, l)| l.seq).collect();
+    assert!(seqs.windows(2).all(|w| w[0] < w[1]));
+}

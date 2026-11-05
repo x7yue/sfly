@@ -82,7 +82,10 @@ export class ArtifactStore {
 		const accepting =
 			task.agentName !== null &&
 			task.purgedAt === null &&
-			(task.status === "running" || (task.status === "cancelled" && task.startedAt !== null));
+			// dispatched 也接受：TaskStarted（gRPC）可能比产物上传（HTTP）晚到。
+			(task.status === "dispatched" ||
+				task.status === "running" ||
+				(task.status === "cancelled" && task.startedAt !== null));
 		if (!accepting) {
 			return {
 				ok: false,

@@ -21,6 +21,10 @@ describe("Rust Agent 与控制面互通", () => {
 
 	it("Agent 完成 Hello/Welcome 握手", async () => {
 		agent = await startRealAgent({ grpcUrl: cp.grpcUrl, name: "interop-agent", bin });
-		expect(agent.events).toEqual([{ event: "welcome", name: "interop-agent" }]);
+		// 共享 venv 不存在：Agent 先用 uv 创建，再连上控制面。
+		expect(agent.events).toEqual([
+			{ event: "venv_created", path: expect.stringMatching(/no-venv$/) },
+			{ event: "welcome", name: "interop-agent" },
+		]);
 	}, 30_000);
 });

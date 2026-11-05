@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Parser;
+use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
 use sfly_agent::{Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
 
 /// sfly Agent。
@@ -41,6 +42,12 @@ struct Args {
     /// 任务超时或被取消时，从优雅终止（SIGTERM）到强制杀掉进程树的宽限秒数。
     #[arg(long, env = "SFLY_TERMINATE_GRACE", default_value_t = DEFAULT_TERMINATE_GRACE.as_secs())]
     terminate_grace: u64,
+    /// 共享 venv 不存在时用 `uv venv --python <PYTHON>` 创建（版本号如 3.13，或解释器路径）；默认由 uv 选择。
+    #[arg(long, env = "SFLY_PYTHON")]
+    python: Option<String>,
+    /// 与控制面断开期间最多排队的日志字节数，超出后丢弃新的日志。
+    #[arg(long, env = "SFLY_LOG_QUEUE_BYTES", default_value_t = DEFAULT_TELEMETRY_QUEUE_BYTES, hide = true)]
+    log_queue_bytes: usize,
 }
 
 #[tokio::main]
@@ -57,6 +64,8 @@ async fn main() -> anyhow::Result<()> {
         uv: args.uv,
         dev_socket: args.dev_socket,
         terminate_grace: Duration::from_secs(args.terminate_grace),
+        python: args.python,
+        telemetry_queue_bytes: args.log_queue_bytes,
     };
 
     tokio::select! {

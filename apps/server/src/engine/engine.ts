@@ -25,12 +25,17 @@ import {
 	chainInstances,
 	type ErrorKind,
 	nodePackages,
+	ON_AGENT,
 	orchestrations,
 	orchestrationVersions,
 	runs,
 	tasks,
 } from "../db/schema.js";
-import type { AgentSessionHandler, RunningTaskRef } from "../gateway/agent-gateway.js";
+import {
+	type AgentSessionHandler,
+	type RunningTaskRef,
+	runningTaskRef,
+} from "../gateway/agent-gateway.js";
 import type { Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
@@ -46,12 +51,12 @@ import {
 import { hasFinalFailure, isAlways, shouldRetry } from "./failures.js";
 import { chainInstanceId, taskId } from "./ids.js";
 import {
-	agentLost,
 	DEFAULT_LEASE_MS,
 	expireTasks,
 	extendForRecovery,
+	MissedHeartbeats,
 	queueTimedOut,
-	renewLeases,
+	renewHeld,
 } from "./leases.js";
 import { fillParams } from "./params.js";
 import {
@@ -102,6 +107,9 @@ const INSTALL_STATES: Partial<Record<InstallState, "installing" | "installed" | 
 	[InstallState.FAILED]: "failed",
 };
 
+/** 任务由 Agent 负责（派发阶段或执行阶段）。 */
+const onAgent = (task: TaskRow) => (ON_AGENT as readonly string[]).includes(task.status);
+
 /** 运行是否已被取消；强制取消时 always 节点也不再执行（§3.4）。 */
 const cancelling = (run: RunRow) => run.cancelRequestedAt !== null;
 const forced = (run: RunRow) => run.cancelForcedAt !== null;
@@ -136,6 +144,8 @@ export class Engine implements AgentSessionHandler {
 			preflight: Preflight;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
+			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
+			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
 		},
 	) {}
 
@@ -149,6 +159,9 @@ export class Engine implements AgentSessionHandler {
 
 	/** 运行状态变化的通知（主题 = 运行 ID），在状态变更的事务提交之后发布。 */
 	readonly runChanges = new Topics<string>();
+
+	/** 上一次心跳没有上报的任务（leases.ts 的 renewHeld）。 */
+	readonly #heartbeats = new MissedHeartbeats();
 
 	/** 给辅助模块（waits.ts、leases.ts）用的链推进操作。 */
 	readonly #driver: ChainDriver = {
@@ -294,7 +307,7 @@ export class Engine implements AgentSessionHandler {
 			.where(
 				and(
 					eq(tasks.chainInstanceId, chain.id),
-					inArray(tasks.status, ["queued", "running", "waiting"]),
+					inArray(tasks.status, ["queued", ...ON_AGENT, "waiting"]),
 				),
 			)
 			.orderBy(asc(tasks.seq))
@@ -303,7 +316,7 @@ export class Engine implements AgentSessionHandler {
 		for (const task of active) {
 			const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
 			if (!cancelledFor(run, plan.nodes[index])) continue;
-			if (task.status === "running" && task.agentName) {
+			if (onAgent(task) && task.agentName) {
 				const force = forced(run);
 				step.cancels.push({
 					agentName: task.agentName,
@@ -335,7 +348,7 @@ export class Engine implements AgentSessionHandler {
 				const running = await step.tx
 					.select()
 					.from(tasks)
-					.where(and(eq(tasks.agentName, conn.name), eq(tasks.status, "running")))
+					.where(and(eq(tasks.agentName, conn.name), inArray(tasks.status, ON_AGENT)))
 					.orderBy(asc(tasks.seq))
 					.for("update");
 				const kept = (t: RunningTaskRef) =>
@@ -345,16 +358,16 @@ export class Engine implements AgentSessionHandler {
 					attempt: t.attempt,
 					action: kept(t) ? TaskAction.CONTINUE : TaskAction.ABANDON,
 				}));
-				const lease = this.#leaseFrom(step.now);
-				for (const task of running) {
-					if (held.some((t) => t.taskId === task.id && t.attempt === task.attempt)) {
-						await step.tx.update(tasks).set({ leaseExpiresAt: lease }).where(eq(tasks.id, task.id));
-					} else {
-						await agentLost(this.#driver, step, task, "重新连接时没有上报这个任务");
-					}
-				}
+				this.#heartbeats.reset(conn.name);
+				await renewHeld(this.#driver, step, conn.name, running, held, {
+					lease: this.#leaseFrom(step.now),
+					missing: "重新连接时没有上报这个任务",
+				});
+				// TaskStarted 可能随断开的连接丢失：Hello 里标记已启动的任务补记为 running。
+				for (const t of held) if (t.started) await this.#started(step, conn.name, t);
 				return out;
 			});
+			const sdk = this.deps.sdkWheel?.(conn.info.agent_version);
 			conn.welcome(
 				create(ServerMessageSchema, {
 					body: {
@@ -362,6 +375,8 @@ export class Engine implements AgentSessionHandler {
 						value: {
 							dispositions,
 							heartbeatIntervalMs: Math.min(Math.round(this.leaseMs / 3), 0xffff_ffff),
+							sdkWheelUrl: sdk?.url ?? "",
+							sdkWheelSha256: sdk?.sha256 ?? "",
 						},
 					},
 				}),
@@ -381,7 +396,7 @@ export class Engine implements AgentSessionHandler {
 			.where(
 				and(
 					eq(tasks.agentName, conn.name),
-					eq(tasks.status, "running"),
+					inArray(tasks.status, ON_AGENT),
 					isNotNull(runs.cancelRequestedAt),
 				),
 			);
@@ -423,10 +438,12 @@ export class Engine implements AgentSessionHandler {
 					body: { case: "ack", value: { taskId: result.taskId, attempt: result.attempt } },
 				}),
 			);
+		} else if (message.body.case === "started") {
+			const started = message.body.value;
+			await this.#event((step) => this.#started(step, conn.name, started));
 		} else if (message.body.case === "heartbeat") {
-			await this.deps.mutex.run(() =>
-				renewLeases(this.deps.db, conn.name, this.#leaseFrom(this.deps.clock.now())),
-			);
+			const held = message.body.value.runningTasks.map(runningTaskRef);
+			await this.#event((step) => this.#heartbeat(step, conn.name, held));
 		} else if (message.body.case === "install") {
 			const status = message.body.value;
 			const state = INSTALL_STATES[status.state];
@@ -781,7 +798,7 @@ export class Engine implements AgentSessionHandler {
 		if (
 			!task ||
 			task.attempt !== result.attempt ||
-			task.status !== "running" ||
+			!onAgent(task) ||
 			task.agentName !== agentName
 		) {
 			return;
@@ -811,6 +828,48 @@ export class Engine implements AgentSessionHandler {
 		await this.#advance(step, run, chain, index + 1);
 	}
 
+	/**
+	 * TaskStarted（#1 评审）：执行器子进程已经启动，任务从派发阶段进入 running；
+	 * 耗时从这里开始（Agent 也从这时开始计算超时）。只接受派发给该 Agent 的当前尝试。
+	 */
+	async #started(step: Step, agentName: string, ref: { taskId: string; attempt: number }) {
+		if (!isUuid(ref.taskId)) return;
+		const [task] = await step.tx
+			.update(tasks)
+			.set({ status: "running", startedAt: step.now, leaseExpiresAt: this.#leaseFrom(step.now) })
+			.where(
+				and(
+					eq(tasks.id, ref.taskId),
+					eq(tasks.attempt, ref.attempt),
+					eq(tasks.agentName, agentName),
+					eq(tasks.status, "dispatched"),
+				),
+			)
+			.returning({ runId: tasks.runId });
+		if (task) step.touchedRuns.add(task.runId);
+	}
+
+	/**
+	 * Agent 心跳（#15，#1 评审）：只为 Agent 上报的手上任务续约；控制面认为派发给它、
+	 * 但连续两次心跳都没有上报的任务以 agent_lost 失败（第一次可能是心跳与派发消息在路上交错）。
+	 */
+	async #heartbeat(step: Step, agentName: string, held: RunningTaskRef[]): Promise<void> {
+		const mine = await step.tx
+			.select()
+			.from(tasks)
+			.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
+			.orderBy(asc(tasks.seq))
+			.for("update");
+		await renewHeld(this.#driver, step, agentName, mine, held, {
+			lease: this.#leaseFrom(step.now),
+			missing: "连续两次心跳都没有上报这个任务",
+			suspects: this.#heartbeats,
+		});
+		for (const t of held) {
+			if (t.started) await this.#started(step, agentName, t);
+		}
+	}
+
 	/** 把排队中的任务派发给在线的 Agent，直到槽位用满。调用方需持有锁。 */
 	async #dispatch(agentName: string): Promise<void> {
 		const conn = this.deps.hub.connection(agentName);
@@ -819,7 +878,7 @@ export class Engine implements AgentSessionHandler {
 			const [running] = await step.tx
 				.select({ n: count() })
 				.from(tasks)
-				.where(and(eq(tasks.agentName, agentName), eq(tasks.status, "running")));
+				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)));
 			let free = conn.info.slots - (running?.n ?? 0);
 			if (free <= 0) return;
 			const queued = await step.tx
@@ -844,7 +903,7 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 解析输入、按节点类型的输入 schema 校验，并把任务标记为 running；
+	 * 解析输入、按节点类型的输入 schema 校验，并把任务标记为 dispatched；
 	 * 引用无效或输入校验失败时任务以 config_error 失败（不重试）并返回 undefined。
 	 */
 	async #prepareAssign(step: Step, conn: AgentConnection, task: TaskRow) {
@@ -884,14 +943,10 @@ export class Engine implements AgentSessionHandler {
 			return undefined;
 		}
 
+		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
 		await step.tx
 			.update(tasks)
-			.set({
-				status: "running",
-				inputs,
-				startedAt: step.now,
-				leaseExpiresAt: this.#leaseFrom(step.now),
-			})
+			.set({ status: "dispatched", inputs, leaseExpiresAt: this.#leaseFrom(step.now) })
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
 		return create(ServerMessageSchema, {

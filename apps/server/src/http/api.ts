@@ -10,6 +10,7 @@ import type { PackageRepository } from "../packages/package-repository.js";
 import type { PresenceRegistry } from "../presence/presence-registry.js";
 import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
+import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
 import { sendError } from "./errors.js";
@@ -18,6 +19,7 @@ import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
+import { registerSdkRoutes } from "./sdk-routes.js";
 
 export interface HttpApiDeps {
 	database: Database;
@@ -36,6 +38,8 @@ export interface HttpApiDeps {
 	agentToken?: string;
 	/** HTTP API 对 Agent 可见的地址（产物引用用它拼下载地址）；监听之后才确定。 */
 	publicHttpUrl: () => string;
+	/** 可下载的 SDK 运行时 wheel。 */
+	sdkWheels: readonly SdkWheel[];
 }
 
 const errorCode = (status: number): string =>
@@ -62,6 +66,7 @@ export function buildHttpApi({
 	artifacts,
 	agentToken,
 	publicHttpUrl,
+	sdkWheels,
 }: HttpApiDeps): FastifyInstance {
 	const app = Fastify({ logger });
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
@@ -103,6 +108,7 @@ export function buildHttpApi({
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
 	registerPackageRoutes(app, packages);
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
+	registerSdkRoutes(app, { wheels: sdkWheels, publicHttpUrl });
 
 	return app;
 }
