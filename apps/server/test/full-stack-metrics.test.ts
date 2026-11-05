@@ -1,6 +1,6 @@
 // 全栈（#31）：真实的控制面、Rust Agent 和 SDK 执行器。桩节点 metrics 声明并用 ctx.metric 上报指标，
 // 经 Agent 合并转发后，能从运行的指标目录和序列查询端到端查到。
-import type { MetricSeries, RunMetricCatalog } from "@sfly/schema";
+import { metricsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { systemClock } from "../src/clock.js";
 import { agentBinary } from "./support/agent-binary.js";
@@ -67,7 +67,7 @@ describe("全栈：指标", () => {
 		const runId = await api.triggerOk(id);
 		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 30_000);
 
-		const catalog = await api.getJson<RunMetricCatalog>(`/runs/${runId}/metrics`);
+		const catalog = metricsApi.catalog.response.parse(await api.getJson(`/runs/${runId}/metrics`));
 		const [node] = catalog.nodes;
 		expect(node).toMatchObject({
 			node_id: "measure",
@@ -89,7 +89,9 @@ describe("全栈：指标", () => {
 			chain_instance_id: node?.chain_instance_id ?? "",
 			node_id: "measure",
 		});
-		const series = await api.getJson<MetricSeries>(`/runs/${runId}/metrics/series?${params}`);
+		const series = metricsApi.series.response.parse(
+			await api.getJson(`/runs/${runId}/metrics/series?${params}`),
+		);
 		expect(
 			Object.fromEntries(
 				series.series.map((s) => [s.name, s.buckets.map((b) => [b.min, b.max, b.last])]),

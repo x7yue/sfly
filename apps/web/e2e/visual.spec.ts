@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { type AssignedTask, LogLevel } from "../../server/test/support/fake-agent.js";
 import { createEditorScenario, nodeCard } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
-import { logLine, openMonitor, runningScenario } from "./monitor-scenario";
+import { largeScenario, logLine, openMonitor, runningScenario } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { seedRunRecords } from "./run-records";
 import {
@@ -285,6 +285,13 @@ test("运行记录为空", async ({ page }) => {
 	await expect(page).toHaveScreenshot("runs-empty.png");
 });
 
+/** 等图表工作区加载完（目录与各组的序列）。 */
+async function chartsLoaded(page: Page) {
+	const ws = page.getByRole("region", { name: "图表工作区" });
+	await expect(ws.locator("[data-group]").first()).toBeVisible();
+	await expect(ws.getByText("正在加载…")).toHaveCount(0);
+}
+
 /** 运行 ID 是随机的：截图时遮住显示运行编号与子流程实例编号的地方。 */
 const runIds = (page: Page) => [
 	// 弹窗打开时页面其余部分对辅助技术隐藏，这里用 CSS 选择器而不是 role。
@@ -304,6 +311,7 @@ test("运行监控：运行中（时间线、选中节点的日志）", async ({
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId, "fetch");
 	await expect(page.getByRole("log", { name: "日志" })).toContainText("batch committed");
+	await chartsLoaded(page);
 	await page.mouse.move(700, 870); // 不停在时间线上，避免截到悬停竖线
 	await expect(page).toHaveScreenshot("monitor-running.png", { mask: runIds(page) });
 });
@@ -318,13 +326,61 @@ test("运行监控：失败的运行（尝试页签）", async ({ page, controlP
 	await openMonitor(page, clock, runId);
 	await page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }).click();
 	await expect(page.getByRole("article", { name: "verify 第 2 次尝试" })).toBeVisible();
+	await chartsLoaded(page);
 	await page.mouse.move(700, 870);
 	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
+});
+
+test("运行监控：图表工作区（小型运行，全部展开，悬停联动）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const ws = page.getByRole("region", { name: "图表工作区" });
+	await ws.getByRole("button", { name: "全部展开" }).click();
+	await expect(ws.getByRole("figure")).toHaveCount(12);
+	await chartsLoaded(page);
+	// 底部面板收起，图表区高一些。
+	await page
+		.getByRole("region", { name: "底部面板" })
+		.getByRole("button", { name: "收起" })
+		.click();
+	const plot = ws
+		.getByRole("region", { name: "probe 的图表" })
+		.getByRole("figure", { name: "level", exact: true })
+		.locator("svg[data-plot]");
+	await plot.scrollIntoViewIfNeeded();
+	const box = await plot.boundingBox();
+	if (!box) throw new Error("没有绘图区");
+	await page.mouse.move(box.x + box.width * (4.5 / 8), box.y + box.height / 2);
+	await expect(page.locator("[data-hover-reading]").first()).toBeVisible();
+	await expect(page).toHaveScreenshot("monitor-charts.png", { mask: runIds(page) });
+});
+
+test("运行监控：图表工作区（大型运行，定位到失败的组）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	test.setTimeout(90_000);
+	const { runId } = await largeScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const failed = page.getByRole("region", { name: "s08 的图表" });
+	await expect(failed.getByTestId("node-summary")).toBeVisible();
+	await chartsLoaded(page);
+	await expect(failed.getByRole("figure", { name: "level", exact: true })).toContainText("8");
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-charts-large.png", { mask: runIds(page) });
 });
 
 test("运行监控：取消确认弹窗", async ({ page, controlPlane, connectAgent, clock }) => {
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
+	await chartsLoaded(page);
 	await page.getByRole("banner").getByRole("button", { name: "取消运行" }).click();
 	await expect(page.getByRole("dialog", { name: /取消运行/ })).toBeVisible();
 	await expect(page).toHaveScreenshot("monitor-cancel.png", { mask: runIds(page) });

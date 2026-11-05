@@ -15,6 +15,8 @@ import type { TimeRange } from "./timeline";
  *   actions.hover(t)            // 鼠标在图表上移动时（离开时传 null），时间线上同步显示竖线
  *   actions.zoom({ start, end }) // 在图表上拖选缩放；actions.followLive() 回到实时
  *   actions.select({ chainInstanceId, nodeId })  // 点图表分组选中节点，底部面板随之切换
+ *   actions.setFilter(keys)     // 图表工作区的节点筛选（nodeKey / PLATFORM_KEY 的集合，null 为全部）；
+ *                               // 没有选中节点时，底部面板的范围跟随筛选
  *
  * 时间都是毫秒时间戳。hoverAt 更新很频繁，状态放在一个外部 store 里，组件按 selector 订阅，
  * 只有用到的字段变化时才重新渲染；range / extent 每秒随「现在」变化，放在 context 里。
@@ -35,6 +37,8 @@ export interface MonitorState {
 	marker: number | null;
 	/** 选中的节点；底部面板的范围跟随它。 */
 	selected: NodeRef | null;
+	/** 图表工作区的节点筛选：{@link nodeKey} 与 {@link PLATFORM_KEY} 的集合；null 表示全部。 */
+	filter: ReadonlySet<string> | null;
 }
 
 export interface MonitorActions {
@@ -44,6 +48,7 @@ export interface MonitorActions {
 	followLive: () => void;
 	mark: (at: number | null) => void;
 	select: (node: NodeRef | null) => void;
+	setFilter: (filter: ReadonlySet<string> | null) => void;
 }
 
 type Listener = () => void;
@@ -54,7 +59,14 @@ export interface MonitorStore extends MonitorActions {
 }
 
 export function createMonitorStore(initial: Partial<MonitorState> = {}): MonitorStore {
-	let state: MonitorState = { hoverAt: null, zoom: null, marker: null, selected: null, ...initial };
+	let state: MonitorState = {
+		hoverAt: null,
+		zoom: null,
+		marker: null,
+		selected: null,
+		filter: null,
+		...initial,
+	};
 	const listeners = new Set<Listener>();
 	const set = (patch: Partial<MonitorState>) => {
 		state = { ...state, ...patch };
@@ -71,6 +83,7 @@ export function createMonitorStore(initial: Partial<MonitorState> = {}): Monitor
 		followLive: () => set({ zoom: null }),
 		mark: (marker) => set({ marker }),
 		select: (selected) => set({ selected }),
+		setFilter: (filter) => set({ filter }),
 	};
 }
 
@@ -130,6 +143,7 @@ export function useMonitorActions(): MonitorActions {
 			followLive: store.followLive,
 			mark: store.mark,
 			select: store.select,
+			setFilter: store.setFilter,
 		}),
 		[store],
 	);
@@ -143,3 +157,8 @@ export function useTimeAxis(): TimeAxis {
 
 export const sameNode = (a: NodeRef | null, b: NodeRef | null) =>
 	a?.chainInstanceId === b?.chainInstanceId && a?.nodeId === b?.nodeId;
+
+/** 节点在筛选集合里的键。 */
+export const nodeKey = (node: NodeRef) => `${node.chainInstanceId}:${node.nodeId}`;
+/** 筛选集合里代表平台自带图表的键。 */
+export const PLATFORM_KEY = "platform";

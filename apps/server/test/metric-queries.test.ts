@@ -1,11 +1,10 @@
 // 切入点 A：指标查询、降采样与实时推送（#31）。假 Agent 经 gRPC 上报 MetricBatch，
 // 通过运行的指标目录、序列查询、平台自带图表接口和运行事件流（SSE）观察。
-import type {
-	MetricIncrement,
-	MetricSeries,
-	PlatformBucket,
-	PlatformMetrics,
-	RunMetricCatalog,
+import {
+	type MetricIncrement,
+	type MetricSeries,
+	metricsApi,
+	type PlatformBucket,
 } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -58,7 +57,8 @@ describe("指标查询", () => {
 		const runId = await api.triggerOk(await api.orchestrationWith(document));
 		return { runId, task: await agent.nextAssign() };
 	};
-	const catalog = (runId: string) => api.getJson<RunMetricCatalog>(`/runs/${runId}/metrics`);
+	const catalog = async (runId: string) =>
+		metricsApi.catalog.response.parse(await api.getJson(`/runs/${runId}/metrics`));
 	/** 主链实例的 ID。 */
 	const mainChain = async (runId: string) => (await api.run(runId)).chains[0]?.id as string;
 	/** 主链上 load 节点的序列查询；query 是其余的查询参数。 */
@@ -73,7 +73,7 @@ describe("指标查询", () => {
 	const series = async (runId: string, query: Record<string, string | number> = {}) => {
 		const res = await seriesRes(runId, query);
 		expect(res.status, await res.clone().text()).toBe(200);
-		return (await res.json()) as MetricSeries;
+		return metricsApi.series.response.parse(await res.json());
 	};
 	/** 平均值按 6 位小数比较（段摘要只存平均值，按点数加权时有浮点误差）。 */
 	const round = (n: number) => Math.round(n * 1e6) / 1e6;
@@ -337,8 +337,8 @@ describe("指标查询", () => {
 			clock.advance(8000);
 			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
 
-			const platform = await api.getJson<PlatformMetrics>(
-				`/runs/${runId}/metrics/platform?points=10`,
+			const platform = metricsApi.platform.response.parse(
+				await api.getJson(`/runs/${runId}/metrics/platform?points=10`),
 			);
 			expect(platform).toMatchObject({
 				run_id: runId,

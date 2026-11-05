@@ -43,6 +43,8 @@
 	--base-red-400: #ef5350;
 	--base-violet-200: #dcd3fd;
 	--base-violet-400: #b4a3f8;
+	--base-steel-300: #8aa4c0;
+	--base-steel-500: #6f8fae;
 
 	/* ── 2. 语义 ── */
 	color-scheme: dark;
@@ -103,6 +105,13 @@
 	--log-info: var(--fg-1);
 	--log-warn: var(--warn-fg);
 	--log-error: var(--danger-fg);
+
+	/* 图表：多序列的线色（中性灰与灰蓝，不用状态色）、网格线 */
+	--chart-1: var(--base-gray-200);
+	--chart-2: var(--base-steel-300);
+	--chart-3: var(--base-gray-425);
+	--chart-4: var(--base-steel-500);
+	--chart-grid: rgb(255 255 255 / 0.05);
 
 	/* 阴影：带偏移和模糊，不用零偏移彩色发光 */
 	--elevation-float: 0 10px 30px -10px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.4);
