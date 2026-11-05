@@ -4,8 +4,6 @@ import { OrchestrationEditor } from "#/canvas/OrchestrationEditor";
 import { getOrchestration, getOrchestrationHead } from "#/lib/api";
 
 export const Route = createFileRoute("/orchestrations/$id")({
-	// 画布只在浏览器中渲染。
-	ssr: false,
 	component: EditorPage,
 });
 

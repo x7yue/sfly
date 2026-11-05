@@ -8,6 +8,7 @@ import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
+import { loadWebApp } from "./http/web-app.js";
 import { TaskLogs } from "./logs/task-logs.js";
 import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
@@ -63,6 +64,8 @@ export interface ControlPlaneOptions {
 	leaseMs?: number;
 	/** SDK 运行时 wheel 所在目录（src/sdk/sdk-wheels.ts）；不设置时不提供 SDK 下载。 */
 	sdkWheelDir?: string;
+	/** 前端构建产物目录（apps/web 的 vite build 输出）；不设置时只提供 API，不提供页面。 */
+	webDir?: string;
 }
 
 export interface ControlPlane {
@@ -86,6 +89,13 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 
+	let webApp: Awaited<ReturnType<typeof loadWebApp>> | undefined;
+	try {
+		webApp = options.webDir === undefined ? undefined : await loadWebApp(options.webDir);
+	} catch (error) {
+		await database.close();
+		throw error;
+	}
 	const sdkWheels = await loadSdkWheels(options.sdkWheelDir);
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex });
@@ -152,6 +162,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		agentToken: options.agentToken,
 		publicHttpUrl: () => publicHttpUrl,
 		sdkWheels,
+		webApp,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });

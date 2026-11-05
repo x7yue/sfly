@@ -22,6 +22,7 @@ import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
+import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
 
 export interface HttpApiDeps {
 	database: Database;
@@ -43,6 +44,8 @@ export interface HttpApiDeps {
 	publicHttpUrl: () => string;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 前端构建产物（src/http/web-app.ts）；不设置时不提供页面。 */
+	webApp?: WebApp;
 }
 
 const errorCode = (status: number): string =>
@@ -71,8 +74,11 @@ export function buildHttpApi({
 	agentToken,
 	publicHttpUrl,
 	sdkWheels,
+	webApp,
 }: HttpApiDeps): FastifyInstance {
-	const app = Fastify({ logger });
+	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
+	const app = Fastify({ logger, rewriteUrl: (req) => stripApiPrefix(req.url ?? "/") });
+	if (webApp) registerWebApp(app, webApp);
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
 	const sse = registerSse(app);
 

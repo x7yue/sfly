@@ -47,6 +47,7 @@ export async function startTestControlPlane(
 		| "retentionDays"
 		| "leaseMs"
 		| "sdkWheelDir"
+		| "webDir"
 	> = {},
 ): Promise<TestControlPlane> {
 	const clock = options.clock ?? new ManualClock();
@@ -66,6 +67,7 @@ export async function startTestControlPlane(
 			retentionDays: options.retentionDays,
 			leaseMs: options.leaseMs,
 			sdkWheelDir: options.sdkWheelDir,
+			webDir: options.webDir,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 定时 / Sleep 节点的定时器扫描（#14）同样调快。

@@ -3,8 +3,8 @@ import type { OrchestrationDocument } from "@sfly/schema";
 import { getNickname, NICKNAME_HEADER } from "./nickname";
 
 /**
- * 控制面 HTTP API 客户端。浏览器请求同源的 `/api/*`，由 vite（dev / preview）代理到控制面
- * （`SFLY_API_URL`，默认 http://127.0.0.1:8080，见 vite.config.ts）。
+ * 控制面 HTTP API 客户端。浏览器请求同源的 `/api/*`：生产环境由控制面直接处理（去掉前缀后
+ * 按原路由处理，见 apps/server/src/http/web-app.ts），开发时由 vite 原样代理到控制面（vite.config.ts）。
  * 每个请求都带上浏览器昵称请求头。
  */
 export const API_BASE = "/api";
