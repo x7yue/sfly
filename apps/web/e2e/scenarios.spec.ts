@@ -187,6 +187,8 @@ test("归档后从列表消失，在「已归档」里恢复；有运行中的�
 	await expect(page.getByRole("menuitem", { name: /归档/ })).toBeDisabled();
 	await expect(page.getByRole("menuitem", { name: /归档/ })).toContainText("运行中不可归档");
 	await page.keyboard.press("Escape");
+	// 关闭的菜单播完退场动画才卸载，期间仍在无障碍树里；等它消失再打开下一张卡片的菜单。
+	await expect(page.getByRole("menu")).toHaveCount(0);
 
 	await page.getByRole("article", { name: "旧场景" }).getByLabel("更多操作").click();
 	await page.getByRole("menuitem", { name: /归档/ }).click();
