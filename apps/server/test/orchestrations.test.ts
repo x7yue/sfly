@@ -128,7 +128,7 @@ describe("编排版本", () => {
 			clock.advance(1000);
 			const newer = await localApi.createOrchestration("较新");
 
-			expect(await localApi.getJson("/orchestrations")).toEqual({
+			expect(await localApi.getJson("/orchestrations")).toMatchObject({
 				orchestrations: [
 					{ id: newer, name: "较新", head_version: 0, created_at: "2026-01-01T00:00:01.000Z" },
 					{ id: older, name: "较早", head_version: 1, created_at: "2026-01-01T00:00:00.000Z" },

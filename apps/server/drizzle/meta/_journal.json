@@ -71,6 +71,13 @@
       "when": 1793872525404,
       "tag": "0009_metric_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1793875548872,
+      "tag": "0010_scenario_description_archive",
+      "breakpoints": true
     }
   ]
 }

@@ -69,12 +69,17 @@ export const agents = pgTable("agents", {
 	lastSeenAt: timestamptz("last_seen_at").notNull(),
 });
 
-/** 编排：记录当前最新版本号（0 表示还没有保存过版本）。 */
+/**
+ * 编排（场景）：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
+ * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
+ */
 export const orchestrations = pgTable("orchestrations", {
 	id: uuid("id").primaryKey(),
 	name: text("name").notNull(),
+	description: text("description").notNull().default(""),
 	headVersion: integer("head_version").notNull().default(0),
 	createdAt: timestamptz("created_at").notNull(),
+	archivedAt: timestamptz("archived_at"),
 });
 
 /** 编排版本：不可变，同一编排内编号唯一、递增。 */
