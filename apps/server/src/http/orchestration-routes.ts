@@ -137,42 +137,35 @@ export function registerOrchestrationRoutes(
 			.send(response satisfies EndpointResponse<typeof orchestrationsApi.saveVersion>);
 	});
 
-	app.get<{ Params: { id: string } }>("/orchestrations/:id/versions", async (request, reply) => {
-		const versions = isUuid(request.params.id)
-			? await orchestrations.listVersions(request.params.id)
-			: undefined;
-		if (!versions) return sendError(reply, 404, "not_found", "orchestration not found");
-		return { versions };
+	contractRoute(app, orchestrationsApi.versions, async ({ params }, reply) => {
+		const versions = isUuid(params.id) ? await orchestrations.listVersions(params.id) : undefined;
+		return versions ? { versions } : notFound(reply);
 	});
 
-	// 恢复历史版本 = 用旧内容追加一个新版本（docs/ARCHITECTURE.md §6.4）。
-	app.post<{ Params: { id: string; number: string } }>(
-		"/orchestrations/:id/versions/:number/restore",
-		async (request, reply) => {
-			const author = requireNickname(request, reply);
-			if (!author) return reply;
-			const number = Number(request.params.number);
-			const restored =
-				isUuid(request.params.id) && Number.isInteger(number)
-					? await orchestrations.restoreVersion(request.params.id, number, author)
-					: undefined;
-			if (!restored) return sendError(reply, 404, "not_found", "orchestration version not found");
-			return reply
-				.code(201)
-				.send({ ...restored, warnings: await checkDocument(restored.document, packages) });
-		},
-	);
+	const versionNotFound = (reply: FastifyReply) =>
+		sendError(reply, 404, "not_found", "orchestration version not found");
 
-	app.get<{ Params: { id: string; number: string } }>(
-		"/orchestrations/:id/versions/:number",
-		async (request, reply) => {
-			const number = Number(request.params.number);
-			const found =
-				isUuid(request.params.id) && Number.isInteger(number)
-					? await orchestrations.getVersion(request.params.id, number)
-					: undefined;
-			if (!found) return sendError(reply, 404, "not_found", "orchestration version not found");
-			return found;
-		},
-	);
+	// 恢复历史版本 = 用旧内容追加一个新版本（docs/ARCHITECTURE.md §6.4）。
+	contractRoute(app, orchestrationsApi.restoreVersion, async ({ params }, reply, raw) => {
+		const author = requireNickname(raw, reply);
+		if (!author) return reply;
+		const number = Number(params.number);
+		const restored =
+			isUuid(params.id) && Number.isInteger(number)
+				? await orchestrations.restoreVersion(params.id, number, author)
+				: undefined;
+		if (!restored) return versionNotFound(reply);
+		return reply
+			.code(201)
+			.send({ ...restored, warnings: await checkDocument(restored.document, packages) });
+	});
+
+	contractRoute(app, orchestrationsApi.version, async ({ params }, reply) => {
+		const number = Number(params.number);
+		const found =
+			isUuid(params.id) && Number.isInteger(number)
+				? await orchestrations.getVersion(params.id, number)
+				: undefined;
+		return found ?? versionNotFound(reply);
+	});
 }

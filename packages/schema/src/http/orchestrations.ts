@@ -5,7 +5,7 @@ import { endpoint, Timestamp } from "./contract.js";
 /**
  * 场景（代码与路径里沿用 orchestration）相关接口的契约（约定见 ./contract.ts）。
  * 名称和说明不属于场景版本，可以随时修改；归档的场景不出现在默认列表、不能触发运行，可以恢复，不提供物理删除。
- * 版本历史、恢复等接口随各自页面迁入。
+ * 场景版本不可修改：保存、恢复都是追加新版本。
  *
  * 响应里的 `document` 用 OrchestrationDocument：控制面保存时已按它解析（默认值都已补齐），
  * 存储的文档再解析一次不会改变，满足「响应解析前后相同」的约定。
@@ -37,6 +37,16 @@ export const VersionSummaryView = z.object({
 	created_at: Timestamp,
 });
 
+/** 一个场景版本的完整内容。 */
+export const OrchestrationVersionView = z.object({
+	id: z.string(),
+	orchestration_id: z.string(),
+	number: z.number().int(),
+	author: z.string(),
+	created_at: Timestamp,
+	document: OrchestrationDocument,
+});
+
 /** 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。 */
 export const DocumentWarningView = z.object({
 	code: z.string(),
@@ -46,12 +56,7 @@ export const DocumentWarningView = z.object({
 });
 
 export const SavedVersionView = z.object({
-	id: z.string(),
-	orchestration_id: z.string(),
-	number: z.number().int(),
-	author: z.string(),
-	created_at: Timestamp,
-	document: OrchestrationDocument,
+	...OrchestrationVersionView.shape,
 	warnings: z.array(DocumentWarningView),
 });
 
@@ -130,6 +135,8 @@ export const OrchestrationSummary = z.object({
 });
 
 const IdParams = z.object({ id: z.string().min(1) });
+/** 版本号不是整数时与版本不存在一样返回 404（不是 400），所以这里不做数字转换。 */
+const VersionParams = z.object({ id: z.string().min(1), number: z.string().min(1) });
 const Name = z.string().trim().min(1);
 
 export const ListOrchestrationsQuery = z.object({
@@ -189,6 +196,33 @@ export const orchestrationsApi = {
 		}),
 		response: SavedVersionView,
 	}),
+	/** 版本历史：按版本号从新到旧列出版本号、作者和时间。 */
+	versions: endpoint({
+		method: "GET",
+		path: "/orchestrations/:id/versions",
+		key: ["orchestrations", "versions"],
+		params: IdParams,
+		response: z.object({ versions: z.array(VersionSummaryView) }),
+	}),
+	/** 某个版本的完整内容（版本不可变）。 */
+	version: endpoint({
+		method: "GET",
+		path: "/orchestrations/:id/versions/:number",
+		key: ["orchestrations", "version"],
+		params: VersionParams,
+		response: OrchestrationVersionView,
+	}),
+	/**
+	 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。需要昵称请求头。
+	 * 恢复不检查编辑起点：恢复后其他人基于旧版本的保存会得到 409。
+	 */
+	restoreVersion: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/versions/:number/restore",
+		key: ["orchestrations", "restore-version"],
+		params: VersionParams,
+		response: SavedVersionView,
+	}),
 	/** 新建场景（自带入口节点：还没有版本时编辑起点是只含入口节点的初始文档）。 */
 	create: endpoint({
 		method: "POST",
@@ -244,5 +278,6 @@ export type LastRunNodeStatus = z.infer<typeof NodeRunStatus>;
 export type OrchestrationHeadView = z.infer<typeof OrchestrationHeadView>;
 export type VersionSummaryView = z.infer<typeof VersionSummaryView>;
 export type DocumentWarningView = z.infer<typeof DocumentWarningView>;
+export type OrchestrationVersionView = z.infer<typeof OrchestrationVersionView>;
 export type SavedVersionView = z.infer<typeof SavedVersionView>;
 export type VersionConflictDetails = z.infer<typeof VersionConflictDetails>;

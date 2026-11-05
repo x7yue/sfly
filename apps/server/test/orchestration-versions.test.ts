@@ -1,3 +1,4 @@
+import { orchestrationsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
@@ -89,7 +90,9 @@ describe("编排版本：冲突、历史与恢复", () => {
 		clock.set(new Date("2026-03-02T00:00:00Z"));
 		await save(id, { base_version: 1, document: doc("b") }, "小明");
 
-		expect(await api.getJson(`/orchestrations/${id}/versions`)).toEqual({
+		const history = await api.getJson(`/orchestrations/${id}/versions`);
+		expect(orchestrationsApi.versions.response.parse(history)).toEqual(history);
+		expect(history).toEqual({
 			versions: [
 				{ number: 2, author: "小明", created_at: "2026-03-02T00:00:00.000Z" },
 				{ number: 1, author: "alice", created_at: "2026-03-01T00:00:00.000Z" },
@@ -121,6 +124,8 @@ describe("编排版本：冲突、历史与恢复", () => {
 			warnings: [expect.objectContaining({ code: "package_version_missing", node_id: "check" })],
 		});
 		expect(restored.document).toEqual(v1.document);
+		expect(orchestrationsApi.restoreVersion.response.parse(restored)).toEqual(restored);
+		expect(orchestrationsApi.version.response.parse(v1)).toEqual(v1);
 
 		// 历史版本保持原样，最新版本变为恢复出的版本 3。
 		expect(await api.getJson(`/orchestrations/${id}/versions/1`)).toEqual(v1);
