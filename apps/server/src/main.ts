@@ -9,6 +9,7 @@
 //   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包
 //                    （可选；默认取监听地址，监听 0.0.0.0 时用本机主机名）
 //   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30），运行结束超过这么久后自动清理
+//   SFLY_METRIC_RETENTION_DAYS 指标的保留天数（默认 30），整天超过保留期的指标分区自动删除
 //   SFLY_LOG_LIMIT_MB     单个任务日志的上限（默认 200），超出部分截断
 //   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024）
 //   SFLY_METRIC_LIMIT_MB  单个任务指标数据的上限（默认 50，按点数折算），超出后停止写入
@@ -46,6 +47,7 @@ const controlPlane = await startControlPlane({
 	agentToken: env.SFLY_AGENT_TOKEN || undefined,
 	publicHttpUrl: env.SFLY_PUBLIC_URL || undefined,
 	retentionDays: positive("SFLY_RETENTION_DAYS"),
+	metricRetentionDays: positive("SFLY_METRIC_RETENTION_DAYS"),
 	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),
 	artifactLimitBytes: mb("SFLY_ARTIFACT_LIMIT_MB"),
 	metricLimitBytes: mb("SFLY_METRIC_LIMIT_MB"),

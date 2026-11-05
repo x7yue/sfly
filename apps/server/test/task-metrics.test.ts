@@ -32,6 +32,7 @@ interface TaskMetricSummary {
 
 interface RunMetricSummary {
 	run_id: string;
+	expired: boolean;
 	tasks: TaskMetricSummary[];
 }
 
@@ -114,6 +115,7 @@ describe("指标上报与存储", () => {
 
 		expect(await summary(runId)).toEqual({
 			run_id: runId,
+			expired: false,
 			tasks: [
 				{
 					task_id: task.taskId,

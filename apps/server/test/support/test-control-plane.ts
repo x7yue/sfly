@@ -45,6 +45,7 @@ export async function startTestControlPlane(
 		| "metricLimitBytes"
 		| "artifactLimitBytes"
 		| "retentionDays"
+		| "metricRetentionDays"
 		| "leaseMs"
 		| "sdkWheelDir"
 		| "webDir"
@@ -65,6 +66,7 @@ export async function startTestControlPlane(
 			metricFlushIntervalMs: 20,
 			artifactLimitBytes: options.artifactLimitBytes,
 			retentionDays: options.retentionDays,
+			metricRetentionDays: options.metricRetentionDays,
 			leaseMs: options.leaseMs,
 			sdkWheelDir: options.sdkWheelDir,
 			webDir: options.webDir,
