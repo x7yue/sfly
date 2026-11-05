@@ -1,9 +1,17 @@
 // 切入点 A：指标查询、降采样与实时推送（#31）。假 Agent 经 gRPC 上报 MetricBatch，
 // 通过运行的指标目录、序列查询、平台自带图表接口和运行事件流（SSE）观察。
-import type { MetricIncrement, MetricSeries, RunMetricCatalog } from "@sfly/schema";
+import type {
+	MetricIncrement,
+	MetricSeries,
+	PlatformBucket,
+	PlatformMetrics,
+	RunMetricCatalog,
+} from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, type HelloInit } from "./support/fake-agent.js";
+import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -290,6 +298,122 @@ describe("指标查询", () => {
 			} finally {
 				sse.close();
 			}
+		});
+	});
+
+	describe("平台自带图表", () => {
+		/** 桶的 [相对秒, 最大, 平均]。 */
+		const occupancy = (buckets: PlatformBucket[]) =>
+			buckets.map((b) => [(Date.parse(b.time) - Date.UTC(2026, 0, 1)) / 1000, b.max, b.avg]);
+
+		it("节点耗时、重试次数、排队与等待时长由任务记录计算，并发任务数与 Agent 槽位占用由执行区间推导", async () => {
+			const clock = cp.clock as ManualClock;
+			const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
+			agents.push(agent);
+			const document = orchestration({ retries: 1 });
+			document.nodes.push({ id: "pause", kind: "sleep", duration: "10s" } as never);
+			document.edges.push({ from: "load", to: "pause", kind: "chain" });
+			const runId = await api.triggerOk(await api.orchestrationWith(document));
+			const other = await api.orchestrationWith(orchestration());
+
+			// 第 0 秒排队，第 2 秒开始执行，第 5 秒失败；重试第 5 秒排队，第 6 秒开始执行，第 10 秒成功；
+			// 之后 Sleep 节点等待 10 秒。另一个运行的任务在同一个 Agent 上从第 7 秒执行到第 12 秒。
+			const first = await agent.nextAssign({ start: false });
+			clock.advance(2000);
+			await agent.started(first);
+			clock.advance(3000);
+			await agent.fail(first);
+			const retry = await agent.nextAssign({ start: false });
+			clock.advance(1000);
+			await agent.started(retry);
+			clock.advance(1000);
+			await api.triggerOk(other);
+			const parallel = await agent.nextAssign();
+			clock.advance(3000);
+			await agent.succeed(retry);
+			clock.advance(2000);
+			await agent.succeed(parallel);
+			clock.advance(8000);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+
+			const platform = await api.getJson<PlatformMetrics>(
+				`/runs/${runId}/metrics/platform?points=10`,
+			);
+			expect(platform).toMatchObject({
+				run_id: runId,
+				from: iso(0),
+				to: iso(20),
+				bucket_seconds: 2,
+				retries: 1,
+			});
+			const chain = await mainChain(runId);
+			expect(platform.nodes).toEqual([
+				{
+					chain_instance_id: chain,
+					node_id: "entry",
+					kind: "entry",
+					attempts: 1,
+					retries: 0,
+					duration_ms: 0,
+					queue_ms: 0,
+					wait_ms: 0,
+				},
+				{
+					chain_instance_id: chain,
+					node_id: "load",
+					kind: "package",
+					attempts: 2,
+					retries: 1,
+					duration_ms: 10_000,
+					queue_ms: 3000,
+					wait_ms: 0,
+				},
+				{
+					chain_instance_id: chain,
+					node_id: "pause",
+					kind: "sleep",
+					attempts: 1,
+					retries: 0,
+					duration_ms: 10_000,
+					queue_ms: 0,
+					wait_ms: 10_000,
+				},
+			]);
+			expect(occupancy(platform.concurrency)).toEqual([
+				[0, 0, 0],
+				[2, 1, 1],
+				[4, 1, 0.5],
+				[6, 1, 1],
+				[8, 1, 1],
+				[10, 0, 0],
+				[12, 0, 0],
+				[14, 0, 0],
+				[16, 0, 0],
+				[18, 0, 0],
+			]);
+			expect(platform.agents.map((a) => [a.name, a.slots, occupancy(a.occupancy)])).toEqual([
+				[
+					"agent-a",
+					4,
+					[
+						[0, 0, 0],
+						[2, 1, 1],
+						[4, 1, 0.5],
+						[6, 2, 1.5],
+						[8, 2, 2],
+						[10, 1, 1],
+						[12, 0, 0],
+						[14, 0, 0],
+						[16, 0, 0],
+						[18, 0, 0],
+					],
+				],
+			]);
+		});
+
+		it("运行不存在时返回 404", async () => {
+			const res = await cp.fetch("/runs/00000000-0000-4000-8000-000000000000/metrics/platform");
+			expect(res.status).toBe(404);
 		});
 	});
 

@@ -6,12 +6,20 @@ import {
 	type MetricSummary,
 	NodeTypeMetadata,
 	type OrchestrationDocument,
+	type PlatformBucket,
+	type PlatformMetrics,
 	type RunMetricCatalog,
 } from "@sfly/schema";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
+import {
+	agents as agentsTable,
+	metricSeries,
+	orchestrationVersions,
+	runs,
+	tasks,
+} from "../db/schema.js";
 import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf } from "./node-types.js";
@@ -74,7 +82,10 @@ export class MetricQueries {
 	async catalog(runId: string): Promise<RunMetricCatalog | undefined> {
 		const run = await this.#run(runId);
 		if (!run) return undefined;
-		const groups = this.#packageNodes(run.document, await this.#tasks(runId));
+		const packageNodes = new Set(
+			run.document.nodes.filter((n) => n.kind === "package").map((n) => n.id),
+		);
+		const groups = this.#groups(await this.#tasks(runId), (id) => packageNodes.has(id));
 		const summaries = await this.#summaries(runId);
 		const nodes: CatalogNode[] = [];
 		for (const attempts of groups) {
@@ -318,6 +329,92 @@ export class MetricQueries {
 		return buckets;
 	}
 
+	/**
+	 * 平台自带图表（不新增存储）：节点耗时、重试次数、排队与等待时长由任务记录计算；并发任务数与 Agent 槽位占用
+	 * 由任务的执行区间（started_at 到 ended_at，执行中的到现在）推导，按目标点数分桶。
+	 */
+	async platform(runId: string, points: number): Promise<PlatformMetrics | undefined> {
+		const found = await this.#run(runId);
+		if (!found) return undefined;
+		const { run, document } = found;
+		const now = this.deps.clock.now().getTime();
+		const end = (t: TaskRow) => t.endedAt?.getTime() ?? now;
+		const kinds = new Map(document.nodes.map((n) => [n.id, n.kind]));
+		const rows = await this.#tasks(runId);
+
+		const nodes = this.#groups(rows, () => true).map((attempts) => {
+			const first = attempts[0] as TaskRow;
+			const kind = kinds.get(first.nodeId) ?? "unknown";
+			let duration = 0;
+			let queue = 0;
+			let wait = 0;
+			for (const t of attempts) {
+				const queued = t.queuedAt.getTime();
+				duration += end(t) - queued;
+				if (kind === "package") queue += (t.startedAt?.getTime() ?? end(t)) - queued;
+				if (kind === "timer" || kind === "sleep") {
+					wait += end(t) - (t.startedAt?.getTime() ?? queued);
+				}
+			}
+			return {
+				chain_instance_id: first.chainInstanceId,
+				node_id: first.nodeId,
+				kind,
+				attempts: attempts.length,
+				retries: attempts.length - 1,
+				duration_ms: Math.max(0, Math.round(duration)),
+				queue_ms: Math.max(0, Math.round(queue)),
+				wait_ms: Math.max(0, Math.round(wait)),
+			};
+		});
+
+		const from = Math.floor(run.startedAt.getTime() / 1000);
+		const to = Math.max(from, Math.ceil((run.endedAt?.getTime() ?? now) / 1000));
+		const width = Math.max(1, Math.ceil((to - from) / points));
+		const timeline = new Timeline(from, to, width);
+		const executing = (t: TaskRow) => t.agentName !== null && t.startedAt !== null;
+		const intervals = (list: TaskRow[]) =>
+			list.filter(executing).map((t) => [t.startedAt?.getTime() ?? 0, end(t)] as const);
+
+		const agentNames = [
+			...new Set(rows.filter(executing).map((t) => t.agentName as string)),
+		].sort();
+		const agentRows =
+			agentNames.length === 0
+				? []
+				: await this.deps.db
+						.select({ name: agentsTable.name, info: agentsTable.info })
+						.from(agentsTable)
+						.where(inArray(agentsTable.name, agentNames));
+		const onAgents =
+			agentNames.length === 0
+				? []
+				: await this.deps.db
+						.select()
+						.from(tasks)
+						.where(
+							and(
+								inArray(tasks.agentName, agentNames),
+								lt(tasks.startedAt, new Date(to * 1000)),
+								or(isNull(tasks.endedAt), gt(tasks.endedAt, new Date(from * 1000))),
+							),
+						);
+		return {
+			run_id: runId,
+			from: isoOf(from),
+			to: isoOf(to),
+			bucket_seconds: width,
+			retries: nodes.reduce((n, node) => n + node.retries, 0),
+			nodes,
+			concurrency: timeline.occupancy(intervals(rows)),
+			agents: agentNames.map((name) => ({
+				name,
+				slots: agentRows.find((a) => a.name === name)?.info.slots ?? null,
+				occupancy: timeline.occupancy(intervals(onAgents.filter((t) => t.agentName === name))),
+			})),
+		};
+	}
+
 	async #run(
 		runId: string,
 	): Promise<{ document: OrchestrationDocument; run: typeof runs.$inferSelect } | undefined> {
@@ -334,14 +431,11 @@ export class MetricQueries {
 		return this.deps.db.select().from(tasks).where(eq(tasks.runId, runId)).orderBy(asc(tasks.seq));
 	}
 
-	/** 包节点的尝试（不含占位），按「链实例 × 节点」分组，组按第一次尝试的创建顺序。 */
-	#packageNodes(document: OrchestrationDocument, rows: TaskRow[]): TaskRow[][] {
-		const packageNodes = new Set(
-			document.nodes.filter((n) => n.kind === "package").map((n) => n.id),
-		);
+	/** include 的节点的尝试（不含占位），按「链实例 × 节点」分组，组按第一次尝试的创建顺序。 */
+	#groups(rows: TaskRow[], include: (nodeId: string) => boolean): TaskRow[][] {
 		const groups = new Map<string, TaskRow[]>();
 		for (const t of rows) {
-			if (isPlaceholder(t) || !packageNodes.has(t.nodeId)) continue;
+			if (isPlaceholder(t) || !include(t.nodeId)) continue;
 			const key = `${t.chainInstanceId}/${t.nodeId}`;
 			const list = groups.get(key) ?? [];
 			list.push(t);
@@ -373,5 +467,54 @@ export class MetricQueries {
 			byTask.set(row.taskId, list);
 		}
 		return byTask;
+	}
+}
+
+/** 平台自带图表的时间轴：[from, to)（Unix 秒）按 width 秒分桶。 */
+class Timeline {
+	constructor(
+		private readonly from: number,
+		private readonly to: number,
+		private readonly width: number,
+	) {}
+
+	/**
+	 * 一组区间 [start, end)（毫秒）在每个桶内的同时数量：最大值，以及按时间加权的平均值
+	 * （最后一个桶只算到 to 为止）。
+	 */
+	occupancy(intervals: ReadonlyArray<readonly [number, number]>): PlatformBucket[] {
+		// 数量不变的时间段：按断点切开。
+		const deltas = new Map<number, number>();
+		for (const [start, end] of intervals) {
+			if (end <= start) continue;
+			deltas.set(start, (deltas.get(start) ?? 0) + 1);
+			deltas.set(end, (deltas.get(end) ?? 0) - 1);
+		}
+		const times = [...deltas.keys()].sort((a, b) => a - b);
+		const steps: Array<{ start: number; end: number; count: number }> = [];
+		let count = 0;
+		for (const [i, t] of times.entries()) {
+			count += deltas.get(t) ?? 0;
+			const next = times[i + 1];
+			if (next !== undefined && count > 0) steps.push({ start: t, end: next, count });
+		}
+
+		const buckets: PlatformBucket[] = [];
+		const n = Math.max(1, Math.ceil((this.to - this.from) / this.width));
+		for (let k = 0; k < n; k++) {
+			const b0 = (this.from + k * this.width) * 1000;
+			const b1 =
+				Math.min(this.from + (k + 1) * this.width, Math.max(this.to, this.from + 1)) * 1000;
+			let max = 0;
+			let area = 0;
+			for (const step of steps) {
+				const overlap = Math.min(step.end, b1) - Math.max(step.start, b0);
+				if (overlap <= 0) continue;
+				max = Math.max(max, step.count);
+				area += step.count * overlap;
+			}
+			buckets.push({ time: new Date(b0).toISOString(), max, avg: area / (b1 - b0) });
+		}
+		return buckets;
 	}
 }

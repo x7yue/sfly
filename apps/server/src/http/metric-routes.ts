@@ -1,6 +1,8 @@
 import {
 	type MetricSeries,
 	MetricSeriesQuery,
+	type PlatformMetrics,
+	PlatformMetricsQuery,
 	type RunMetricCatalog,
 	type RunMetricSummary,
 } from "@sfly/schema";
@@ -19,6 +21,7 @@ import { sendError } from "./errors.js";
  *   主指标，以及每次尝试的摘要和截断标记。
  * - `GET /runs/:id/metrics/series?chain_instance_id&node_id[&attempt][&metrics][&from][&to][&points]`
  *   → {@link MetricSeries}（#31）：一个节点（默认最新一次尝试）的指标按目标点数降采样，含尚未写库的点。
+ * - `GET /runs/:id/metrics/platform[?points]` → {@link PlatformMetrics}（#31）：平台自带图表，由任务记录推导。
  */
 export function registerMetricRoutes(
 	app: FastifyInstance,
@@ -55,5 +58,24 @@ export function registerMetricRoutes(
 		if (!outcome.ok) return sendError(reply, outcome.status, outcome.code, outcome.message);
 		const series: MetricSeries = outcome.series;
 		return series;
+	});
+
+	app.get<{ Params: { id: string } }>("/runs/:id/metrics/platform", async (request, reply) => {
+		const query = PlatformMetricsQuery.safeParse(request.query);
+		if (!query.success) {
+			return sendError(
+				reply,
+				400,
+				"invalid_request",
+				"invalid platform metrics query",
+				z.treeifyError(query.error),
+			);
+		}
+		const platform: PlatformMetrics | undefined = await deps.queries.platform(
+			request.params.id,
+			query.data.points,
+		);
+		if (!platform) return sendError(reply, 404, "not_found", "run not found");
+		return platform;
 	});
 }
