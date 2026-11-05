@@ -2,6 +2,7 @@
 // 经 Agent 合并转发后，能从运行的指标目录和序列查询端到端查到。
 import type { MetricSeries, RunMetricCatalog } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { systemClock } from "../src/clock.js";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -16,7 +17,11 @@ describe("全栈：指标", () => {
 
 	beforeAll(async () => {
 		const bin = agentBinary();
-		[cp, venv] = await Promise.all([startTestControlPlane(), createStubVenv()]);
+		// 点的时间戳来自真实 Agent 的系统时钟，控制面也用系统时钟：否则会超出保留期的可接收范围（#32）而被丢弃。
+		[cp, venv] = await Promise.all([
+			startTestControlPlane({ clock: systemClock }),
+			createStubVenv(),
+		]);
 		await publishStubPackage(cp);
 		agent = await startRealAgent({
 			grpcUrl: cp.grpcUrl,
