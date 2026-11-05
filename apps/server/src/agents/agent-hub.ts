@@ -13,6 +13,7 @@ import {
 	runs,
 	tasks,
 } from "../db/schema.js";
+import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
 
@@ -194,7 +195,10 @@ export class AgentHub {
 			last_seen_at: row.lastSeenAt.toISOString(),
 			installed_packages: info.installed_packages ?? [],
 			install: install ?? null,
-			dev_packages: dev_packages ?? [],
+			dev_packages: (dev_packages ?? []).map((p) => ({
+				...p,
+				metadata: devMetadataWithDefaultCharts(p.metadata),
+			})),
 			running_tasks: running
 				.filter((t) => t.agent === row.name)
 				.map((t) => ({
