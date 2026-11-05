@@ -41,7 +41,14 @@ const portOf = (url: string) => Number(new URL(url).port);
 export async function startTestControlPlane(
 	options: { clock?: Clock; agentToken?: string } & Pick<
 		ControlPlaneOptions,
-		"logLimitBytes" | "artifactLimitBytes" | "retentionDays" | "leaseMs" | "sdkWheelDir" | "webDir"
+		| "logLimitBytes"
+		| "metricLimitBytes"
+		| "artifactLimitBytes"
+		| "retentionDays"
+		| "metricRetentionDays"
+		| "leaseMs"
+		| "sdkWheelDir"
+		| "webDir"
 	> = {},
 ): Promise<TestControlPlane> {
 	const clock = options.clock ?? new ManualClock();
@@ -54,8 +61,12 @@ export async function startTestControlPlane(
 			clock,
 			agentToken: options.agentToken,
 			logLimitBytes: options.logLimitBytes,
+			metricLimitBytes: options.metricLimitBytes,
+			// 指标写入扫描（#29）同样调快。
+			metricFlushIntervalMs: 20,
 			artifactLimitBytes: options.artifactLimitBytes,
 			retentionDays: options.retentionDays,
+			metricRetentionDays: options.metricRetentionDays,
 			leaseMs: options.leaseMs,
 			sdkWheelDir: options.sdkWheelDir,
 			webDir: options.webDir,

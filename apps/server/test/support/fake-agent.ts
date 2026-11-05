@@ -13,6 +13,7 @@ import {
 	LogLevel,
 	type LogLineSchema,
 	LogSource,
+	type MetricPointSchema,
 	type ServerMessage,
 	TaskAction,
 	TaskStatus,
@@ -66,6 +67,7 @@ export type TaskResultInit = Extract<
 >["value"];
 export type TaskRef = { taskId: string; attempt: number };
 export type LogLineInit = MessageInitShape<typeof LogLineSchema>;
+export type MetricPointInit = MessageInitShape<typeof MetricPointSchema>;
 export { LogLevel, LogSource };
 /** 派发的任务；`inputs` 是解析后的 inputs_json。 */
 export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
@@ -351,6 +353,30 @@ export class FakeAgent {
 				total,
 				message,
 				timeUnixMs: BigInt(Date.UTC(2026, 0, 1, 0, 0, 1)),
+			},
+		});
+	}
+
+	/**
+	 * 上报一批指标点（#29）：每个点 `[指标名, Unix 秒, 值]`（最小值、最大值与值相同）或完整的 MetricPoint 字段；
+	 * `droppedPoints` 是 Agent 断线排队时丢弃的点数。控制面不回 Ack。
+	 */
+	metrics(
+		task: TaskRef,
+		points: Array<[string, number, number] | MetricPointInit>,
+		droppedPoints = 0,
+	): void {
+		this.send({
+			case: "metrics",
+			value: {
+				taskId: task.taskId,
+				attempt: task.attempt,
+				droppedPoints: BigInt(droppedPoints),
+				points: points.map((p) =>
+					Array.isArray(p)
+						? { name: p[0], timeUnixS: BigInt(p[1]), value: p[2], min: p[2], max: p[2] }
+						: p,
+				),
 			},
 		});
 	}

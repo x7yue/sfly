@@ -1,0 +1,526 @@
+import {
+	type CatalogNode,
+	type MetricBucket,
+	type MetricSeries,
+	type MetricSeriesQuery,
+	type MetricSummary,
+	NodeTypeMetadata,
+	type OrchestrationDocument,
+	type PlatformBucket,
+	type PlatformMetrics,
+	type RunMetricCatalog,
+} from "@sfly/schema";
+import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import type { Clock } from "../clock.js";
+import type { Db } from "../db/database.js";
+import {
+	agents as agentsTable,
+	metricSeries,
+	orchestrationVersions,
+	runs,
+	tasks,
+} from "../db/schema.js";
+import { withDefaultCharts } from "../packages/default-charts.js";
+import { isUuid } from "../util/uuid.js";
+import { nodeTypeOf } from "./node-types.js";
+import type { Point, TaskMetrics } from "./task-metrics.js";
+
+type TaskRow = typeof tasks.$inferSelect;
+
+export type SeriesOutcome =
+	| { ok: true; series: MetricSeries }
+	| { ok: false; status: 400 | 404; code: string; message: string };
+
+/** 一个桶的累计量。 */
+interface Acc {
+	points: number;
+	min: number;
+	max: number;
+	sum: number;
+	last: number;
+	/** last 对应的 Unix 秒。 */
+	lastAt: number;
+}
+
+/** metric_segments 的一行；能直接用段摘要时数组为 null（不读取、不解压）。 */
+interface SegmentRow extends Record<string, unknown> {
+	metric: string;
+	start_s: number;
+	end_s: number;
+	points: number;
+	min: number;
+	max: number;
+	avg: number;
+	last: number;
+	offsets: number[] | null;
+	values: number[] | null;
+	mins: number[] | null;
+	maxs: number[] | null;
+}
+
+const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
+
+/** 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试（与运行视图一致）。 */
+const isPlaceholder = (t: TaskRow) =>
+	t.status === "skipped" || (t.status === "cancelled" && t.startedAt === null);
+
+/**
+ * 指标的只读查询（#31）：运行的指标目录、序列查询（降采样）、平台自带图表。
+ * 原始数据见 src/metrics/task-metrics.ts（ADR 0009）。
+ */
+export class MetricQueries {
+	constructor(
+		private readonly deps: {
+			db: Db;
+			clock: Clock;
+			/** 尚未写库的点在这里（序列查询要包括它们，断线重连后才能补齐）。 */
+			metrics: TaskMetrics;
+		},
+	) {}
+
+	/** 运行的指标目录；运行不存在时为 undefined。 */
+	async catalog(runId: string): Promise<RunMetricCatalog | undefined> {
+		const run = await this.#run(runId);
+		if (!run) return undefined;
+		if (run.run.metricsPurgedAt) return { run_id: runId, expired: true, nodes: [] };
+		const packageNodes = new Set(
+			run.document.nodes.filter((n) => n.kind === "package").map((n) => n.id),
+		);
+		const groups = this.#groups(await this.#tasks(runId), (id) => packageNodes.has(id));
+		const summaries = await this.#summaries(runId);
+		const nodes: CatalogNode[] = [];
+		for (const attempts of groups) {
+			const latest = attempts[attempts.length - 1] as TaskRow;
+			const ref = await nodeTypeOf(this.deps.db, run.document, latest.nodeId, latest.agentName);
+			if (!ref) continue;
+			const parsed = NodeTypeMetadata.safeParse(ref.type);
+			const type = parsed.success ? withDefaultCharts(parsed.data) : undefined;
+			nodes.push({
+				chain_instance_id: latest.chainInstanceId,
+				node_id: latest.nodeId,
+				package: ref.package,
+				node: ref.node,
+				version: ref.version,
+				metrics: type?.metrics ?? [],
+				charts: type?.charts ?? [],
+				primary_metric: type?.primary_metric ?? null,
+				attempts: attempts.map((t) => ({
+					task_id: t.id,
+					attempt: t.attempt,
+					truncated: t.metricTruncated,
+					dropped_points: t.metricDropped,
+					metrics: summaries.get(t.id) ?? [],
+				})),
+			});
+		}
+		return { run_id: runId, expired: false, nodes };
+	}
+
+	/**
+	 * 一个节点（默认最新一次尝试）的指标序列，按目标点数降采样：时间范围 [from, to]（秒）分成跨度
+	 * bucket_seconds 的桶，每个桶给出点数、最小（每秒最小值中的最小）、最大（每秒最大值中的最大，尖峰可见）、
+	 * 平均、最新值。整段落在一个桶里时直接用段摘要，不展开数组；内存里尚未写库的点覆盖库里同一范围的数据。
+	 */
+	async series(runId: string, query: MetricSeriesQuery): Promise<SeriesOutcome> {
+		const run = await this.#run(runId);
+		if (!run) return { ok: false, status: 404, code: "not_found", message: "run not found" };
+		const attempts = (
+			await this.deps.db
+				.select()
+				.from(tasks)
+				.where(
+					and(
+						eq(tasks.runId, runId),
+						eq(tasks.chainInstanceId, query.chain_instance_id),
+						eq(tasks.nodeId, query.node_id),
+					),
+				)
+				.orderBy(asc(tasks.attempt))
+		).filter((t) => !isPlaceholder(t));
+		const task =
+			query.attempt === undefined
+				? attempts.at(-1)
+				: attempts.find((t) => t.attempt === query.attempt);
+		if (!task) return { ok: false, status: 404, code: "not_found", message: "attempt not found" };
+
+		let names = query.metrics;
+		if (!names) {
+			const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
+			names = (ref?.type?.metrics ?? []).map((m) => m.name);
+		}
+		// 已过保留期（#32）：数据已清理，不再查询，每个指标都没有桶。
+		const expired = run.run.metricsPurgedAt !== null;
+		const unwritten = expired
+			? new Map<string, Point[]>()
+			: await this.deps.metrics.unwritten(task.id);
+		let from = query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000);
+		let to = query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000);
+		if (!expired && (from === undefined || to === undefined)) {
+			const extent = await this.#extent(task.id, names, unwritten);
+			from ??= extent?.first;
+			to ??= extent?.last;
+		}
+		const base = {
+			run_id: runId,
+			chain_instance_id: task.chainInstanceId,
+			node_id: task.nodeId,
+			task_id: task.id,
+			attempt: task.attempt,
+			truncated: task.metricTruncated,
+			expired,
+		};
+		if (expired || from === undefined || to === undefined || names.length === 0) {
+			return {
+				ok: true,
+				series: {
+					...base,
+					from: from === undefined ? null : isoOf(from),
+					to: to === undefined ? null : isoOf(to),
+					bucket_seconds: 1,
+					series: names.map((name) => ({ name, buckets: [] })),
+				},
+			};
+		}
+		const width = Math.max(1, Math.ceil((to - from + 1) / query.points));
+		const buckets = await this.#bucketize(task.id, names, unwritten, from, to, width);
+		return {
+			ok: true,
+			series: {
+				...base,
+				from: isoOf(from),
+				to: isoOf(to),
+				bucket_seconds: width,
+				series: names.map((name) => ({ name, buckets: buckets.get(name) ?? [] })),
+			},
+		};
+	}
+
+	/** 这些指标的数据的首尾时间（Unix 秒），含尚未写库的点；没有数据时为 undefined。 */
+	async #extent(
+		taskId: string,
+		names: string[],
+		unwritten: Map<string, Point[]>,
+	): Promise<{ first: number; last: number } | undefined> {
+		let first = Number.POSITIVE_INFINITY;
+		let last = Number.NEGATIVE_INFINITY;
+		if (names.length > 0) {
+			const rows = await this.deps.db
+				.select({ firstAt: metricSeries.firstAt, lastAt: metricSeries.lastAt })
+				.from(metricSeries)
+				.where(and(eq(metricSeries.taskId, taskId), inArray(metricSeries.metric, names)));
+			for (const r of rows) {
+				first = Math.min(first, r.firstAt.getTime() / 1000);
+				last = Math.max(last, r.lastAt.getTime() / 1000);
+			}
+		}
+		for (const name of names) {
+			const points = unwritten.get(name) ?? [];
+			const head = points[0];
+			const tail = points[points.length - 1];
+			if (head) first = Math.min(first, head.t);
+			if (tail) last = Math.max(last, tail.t);
+		}
+		return Number.isFinite(first) ? { first, last } : undefined;
+	}
+
+	async #bucketize(
+		taskId: string,
+		names: string[],
+		unwritten: Map<string, Point[]>,
+		from: number,
+		to: number,
+		width: number,
+	): Promise<Map<string, MetricBucket[]>> {
+		// 段落在一个桶内、不和内存里的点重叠时只取段摘要（数组不读取、不解压）。
+		const memFirst = Math.min(
+			...names.map((n) => unwritten.get(n)?.[0]?.t ?? Number.POSITIVE_INFINITY),
+		);
+		const memBound = Number.isFinite(memFirst) ? isoOf(memFirst) : "infinity";
+		const fromIso = isoOf(from);
+		const toIso = isoOf(to);
+		const summarized = sql`(start_at >= ${fromIso}::timestamptz and end_at <= ${toIso}::timestamptz
+			and end_at < ${memBound}::timestamptz
+			and floor((extract(epoch from start_at)::float8 - ${from}::float8) / ${width}::float8)
+				= floor((extract(epoch from end_at)::float8 - ${from}::float8) / ${width}::float8))`;
+		const result = await this.deps.db.execute<SegmentRow>(sql`
+			select metric, extract(epoch from start_at)::float8 as start_s, extract(epoch from end_at)::float8 as end_s,
+				points, min, max, avg, last,
+				case when ${summarized} then null else offsets end as offsets,
+				case when ${summarized} then null else "values" end as "values",
+				case when ${summarized} then null else mins end as mins,
+				case when ${summarized} then null else maxs end as maxs
+			from metric_segments
+			where task_id = ${taskId} and metric in (${sql.join(
+				names.map((n) => sql`${n}`),
+				sql`, `,
+			)})
+				and start_at <= ${toIso}::timestamptz and end_at >= ${fromIso}::timestamptz
+			order by metric, start_at`);
+
+		const accs = new Map<string, Map<number, Acc>>();
+		const add = (name: string, t: number, p: Omit<Acc, "lastAt">) => {
+			const k = Math.floor((t - from) / width);
+			let byBucket = accs.get(name);
+			if (!byBucket) {
+				byBucket = new Map();
+				accs.set(name, byBucket);
+			}
+			const acc = byBucket.get(k);
+			if (!acc) {
+				byBucket.set(k, { ...p, lastAt: t });
+				return;
+			}
+			acc.points += p.points;
+			acc.min = Math.min(acc.min, p.min);
+			acc.max = Math.max(acc.max, p.max);
+			acc.sum += p.sum;
+			if (t >= acc.lastAt) {
+				acc.last = p.last;
+				acc.lastAt = t;
+			}
+		};
+		const inMemory = (name: string, t: number) => {
+			const points = unwritten.get(name);
+			const head = points?.[0];
+			const tail = points?.[points.length - 1];
+			return head !== undefined && tail !== undefined && t >= head.t && t <= tail.t;
+		};
+		for (const row of result.rows) {
+			if (!row.offsets || !row.values || !row.mins || !row.maxs) {
+				add(row.metric, row.end_s, {
+					points: row.points,
+					min: row.min,
+					max: row.max,
+					sum: row.avg * row.points,
+					last: row.last,
+				});
+				continue;
+			}
+			for (const [i, offset] of row.offsets.entries()) {
+				const t = row.start_s + offset;
+				if (t < from || t > to || inMemory(row.metric, t)) continue;
+				const value = row.values[i] as number;
+				add(row.metric, t, {
+					points: 1,
+					min: row.mins[i] as number,
+					max: row.maxs[i] as number,
+					sum: value,
+					last: value,
+				});
+			}
+		}
+		for (const name of names) {
+			for (const p of unwritten.get(name) ?? []) {
+				if (p.t < from || p.t > to) continue;
+				add(name, p.t, { points: 1, min: p.min, max: p.max, sum: p.value, last: p.value });
+			}
+		}
+
+		const buckets = new Map<string, MetricBucket[]>();
+		for (const [name, byBucket] of accs) {
+			buckets.set(
+				name,
+				[...byBucket.entries()]
+					.sort(([a], [b]) => a - b)
+					.map(([k, acc]) => ({
+						time: isoOf(from + k * width),
+						points: acc.points,
+						min: acc.min,
+						max: acc.max,
+						avg: acc.sum / acc.points,
+						last: acc.last,
+					})),
+			);
+		}
+		return buckets;
+	}
+
+	/**
+	 * 平台自带图表（不新增存储）：节点耗时、重试次数、排队与等待时长由任务记录计算；并发任务数与 Agent 槽位占用
+	 * 由任务的执行区间（started_at 到 ended_at，执行中的到现在）推导，按目标点数分桶。
+	 */
+	async platform(runId: string, points: number): Promise<PlatformMetrics | undefined> {
+		const found = await this.#run(runId);
+		if (!found) return undefined;
+		const { run, document } = found;
+		const now = this.deps.clock.now().getTime();
+		const end = (t: TaskRow) => t.endedAt?.getTime() ?? now;
+		const kinds = new Map(document.nodes.map((n) => [n.id, n.kind]));
+		const rows = await this.#tasks(runId);
+
+		const nodes = this.#groups(rows, () => true).map((attempts) => {
+			const first = attempts[0] as TaskRow;
+			const kind = kinds.get(first.nodeId) ?? "unknown";
+			let duration = 0;
+			let queue = 0;
+			let wait = 0;
+			for (const t of attempts) {
+				const queued = t.queuedAt.getTime();
+				duration += end(t) - queued;
+				if (kind === "package") queue += (t.startedAt?.getTime() ?? end(t)) - queued;
+				if (kind === "timer" || kind === "sleep") {
+					wait += end(t) - (t.startedAt?.getTime() ?? queued);
+				}
+			}
+			return {
+				chain_instance_id: first.chainInstanceId,
+				node_id: first.nodeId,
+				kind,
+				attempts: attempts.length,
+				retries: attempts.length - 1,
+				duration_ms: Math.max(0, Math.round(duration)),
+				queue_ms: Math.max(0, Math.round(queue)),
+				wait_ms: Math.max(0, Math.round(wait)),
+			};
+		});
+
+		const from = Math.floor(run.startedAt.getTime() / 1000);
+		const to = Math.max(from, Math.ceil((run.endedAt?.getTime() ?? now) / 1000));
+		const width = Math.max(1, Math.ceil((to - from) / points));
+		const timeline = new Timeline(from, to, width);
+		const executing = (t: TaskRow) => t.agentName !== null && t.startedAt !== null;
+		const intervals = (list: TaskRow[]) =>
+			list.filter(executing).map((t) => [t.startedAt?.getTime() ?? 0, end(t)] as const);
+
+		const agentNames = [
+			...new Set(rows.filter(executing).map((t) => t.agentName as string)),
+		].sort();
+		const agentRows =
+			agentNames.length === 0
+				? []
+				: await this.deps.db
+						.select({ name: agentsTable.name, info: agentsTable.info })
+						.from(agentsTable)
+						.where(inArray(agentsTable.name, agentNames));
+		const onAgents =
+			agentNames.length === 0
+				? []
+				: await this.deps.db
+						.select()
+						.from(tasks)
+						.where(
+							and(
+								inArray(tasks.agentName, agentNames),
+								lt(tasks.startedAt, new Date(to * 1000)),
+								or(isNull(tasks.endedAt), gt(tasks.endedAt, new Date(from * 1000))),
+							),
+						);
+		return {
+			run_id: runId,
+			from: isoOf(from),
+			to: isoOf(to),
+			bucket_seconds: width,
+			retries: nodes.reduce((n, node) => n + node.retries, 0),
+			nodes,
+			concurrency: timeline.occupancy(intervals(rows)),
+			agents: agentNames.map((name) => ({
+				name,
+				slots: agentRows.find((a) => a.name === name)?.info.slots ?? null,
+				occupancy: timeline.occupancy(intervals(onAgents.filter((t) => t.agentName === name))),
+			})),
+		};
+	}
+
+	async #run(
+		runId: string,
+	): Promise<{ document: OrchestrationDocument; run: typeof runs.$inferSelect } | undefined> {
+		if (!isUuid(runId)) return undefined;
+		const [row] = await this.deps.db
+			.select({ run: runs, document: orchestrationVersions.document })
+			.from(runs)
+			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
+			.where(eq(runs.id, runId));
+		return row;
+	}
+
+	#tasks(runId: string): Promise<TaskRow[]> {
+		return this.deps.db.select().from(tasks).where(eq(tasks.runId, runId)).orderBy(asc(tasks.seq));
+	}
+
+	/** include 的节点的尝试（不含占位），按「链实例 × 节点」分组，组按第一次尝试的创建顺序。 */
+	#groups(rows: TaskRow[], include: (nodeId: string) => boolean): TaskRow[][] {
+		const groups = new Map<string, TaskRow[]>();
+		for (const t of rows) {
+			if (isPlaceholder(t) || !include(t.nodeId)) continue;
+			const key = `${t.chainInstanceId}/${t.nodeId}`;
+			const list = groups.get(key) ?? [];
+			list.push(t);
+			groups.set(key, list);
+		}
+		return [...groups.values()].map((list) => list.sort((a, b) => a.attempt - b.attempt));
+	}
+
+	/** 任务 ID → 已写库的指标摘要（按指标名排序）。 */
+	async #summaries(runId: string): Promise<Map<string, MetricSummary[]>> {
+		const rows = await this.deps.db
+			.select()
+			.from(metricSeries)
+			.where(eq(metricSeries.runId, runId))
+			.orderBy(asc(metricSeries.metric));
+		const byTask = new Map<string, MetricSummary[]>();
+		for (const row of rows) {
+			const list = byTask.get(row.taskId) ?? [];
+			list.push({
+				name: row.metric,
+				points: row.points,
+				min: row.min,
+				max: row.max,
+				avg: row.sum / row.points,
+				last: row.last,
+				first_time: row.firstAt.toISOString(),
+				last_time: row.lastAt.toISOString(),
+			});
+			byTask.set(row.taskId, list);
+		}
+		return byTask;
+	}
+}
+
+/** 平台自带图表的时间轴：[from, to)（Unix 秒）按 width 秒分桶。 */
+class Timeline {
+	constructor(
+		private readonly from: number,
+		private readonly to: number,
+		private readonly width: number,
+	) {}
+
+	/**
+	 * 一组区间 [start, end)（毫秒）在每个桶内的同时数量：最大值，以及按时间加权的平均值
+	 * （最后一个桶只算到 to 为止）。
+	 */
+	occupancy(intervals: ReadonlyArray<readonly [number, number]>): PlatformBucket[] {
+		// 数量不变的时间段：按断点切开。
+		const deltas = new Map<number, number>();
+		for (const [start, end] of intervals) {
+			if (end <= start) continue;
+			deltas.set(start, (deltas.get(start) ?? 0) + 1);
+			deltas.set(end, (deltas.get(end) ?? 0) - 1);
+		}
+		const times = [...deltas.keys()].sort((a, b) => a - b);
+		const steps: Array<{ start: number; end: number; count: number }> = [];
+		let count = 0;
+		for (const [i, t] of times.entries()) {
+			count += deltas.get(t) ?? 0;
+			const next = times[i + 1];
+			if (next !== undefined && count > 0) steps.push({ start: t, end: next, count });
+		}
+
+		const buckets: PlatformBucket[] = [];
+		const n = Math.max(1, Math.ceil((this.to - this.from) / this.width));
+		for (let k = 0; k < n; k++) {
+			const b0 = (this.from + k * this.width) * 1000;
+			const b1 =
+				Math.min(this.from + (k + 1) * this.width, Math.max(this.to, this.from + 1)) * 1000;
+			let max = 0;
+			let area = 0;
+			for (const step of steps) {
+				const overlap = Math.min(step.end, b1) - Math.max(step.start, b0);
+				if (overlap <= 0) continue;
+				max = Math.max(max, step.count);
+				area += step.count * overlap;
+			}
+			buckets.push({ time: new Date(b0).toISOString(), max, avg: area / (b1 - b0) });
+		}
+		return buckets;
+	}
+}

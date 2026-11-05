@@ -5,14 +5,16 @@
 //!
 //! - 标准输出 → 来源 stdout、级别 info；标准错误 → 来源 stderr、级别 error；
 //! - 事件文件里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；
-//! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次。
+//! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次；
+//! - `{"type":"metric"}` 按「指标 × 秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
+//!   任务结束前发完。
 //!
 //! 同一批内按时间排序后再编号，所以不同来源的行大致按发生顺序排列；同一来源内保持写入顺序。
 //! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`（失败消息取标准错误尾部）。
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use prost::Message as _;
@@ -23,14 +25,18 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::metrics::{Merger, MetricQueue};
 use crate::proto::{
-    AgentMessage, AssignTask, LogBatch, LogLevel, LogLine, LogSource, Progress, agent_message,
+    AgentMessage, AssignTask, LogBatch, LogLevel, LogLine, LogSource, MetricBatch, Progress,
+    agent_message,
 };
 
 /// 读取事件文件、发送一批日志的间隔。
 const TICK: Duration = Duration::from_millis(100);
 /// 同一任务两次进度上报的最小间隔。
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
+/// 同一任务两批指标的最小间隔。
+const METRIC_INTERVAL: Duration = Duration::from_secs(1);
 /// 一行的最大字节数；更长的行被拆成多行。
 const MAX_LINE_BYTES: usize = 64 * 1024;
 /// 一批最多的行数。
@@ -41,34 +47,52 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// 断开期间默认最多排队的日志字节数。
 pub const DEFAULT_TELEMETRY_QUEUE_BYTES: usize = 64 * 1024 * 1024;
 
-/// 发往控制面的任务消息（`TaskStarted` / `LogBatch` / `Progress`）。连接断开期间在通道里排队，重连后发送。
-/// 排队的字节数有上限：超出时丢弃新的日志批次（控制面按序号看到缺口），其他消息照常排队。
+/// 发往控制面的任务消息（`TaskStarted` / `LogBatch` / `Progress` / `MetricBatch`）。
+/// 连接断开期间在通道里排队，重连后按顺序发送。
+///
+/// - 日志：排队的字节数有上限，超出时丢弃新的日志批次（控制面按序号看到缺口），其他消息照常排队；
+/// - 指标：批次本身放在有界的 [`MetricQueue`] 里（超出时丢弃最早的点），通道里只放一个占位，
+///   轮到它时取出最早的指标批次——指标仍按发出顺序排在同一任务的结果之前。
 #[derive(Clone)]
 pub struct Telemetry {
-    tx: mpsc::UnboundedSender<(usize, AgentMessage)>,
+    tx: mpsc::UnboundedSender<Queued>,
     queued: Arc<AtomicUsize>,
     dropping: Arc<AtomicBool>,
     limit: usize,
+    metrics: Arc<Mutex<MetricQueue>>,
+}
+
+enum Queued {
+    Message(usize, Box<AgentMessage>),
+    /// 从 [`MetricQueue`] 取一批。
+    Metrics,
 }
 
 /// [`Telemetry`] 的接收端（Agent 主循环在连接上逐条发出）。
 pub struct TelemetryReceiver {
-    rx: mpsc::UnboundedReceiver<(usize, AgentMessage)>,
+    rx: mpsc::UnboundedReceiver<Queued>,
     queued: Arc<AtomicUsize>,
+    metrics: Arc<Mutex<MetricQueue>>,
 }
 
-/// 新建一条任务消息通道；`limit` 是最多排队的日志字节数。
-pub fn telemetry(limit: usize) -> (Telemetry, TelemetryReceiver) {
+/// 新建一条任务消息通道；`limit` 是最多排队的日志字节数，`metric_limit` 是最多排队的指标点数。
+pub fn telemetry(limit: usize, metric_limit: usize) -> (Telemetry, TelemetryReceiver) {
     let (tx, rx) = mpsc::unbounded_channel();
     let queued = Arc::new(AtomicUsize::new(0));
+    let metrics = Arc::new(Mutex::new(MetricQueue::new(metric_limit)));
     (
         Telemetry {
             tx,
             queued: queued.clone(),
             dropping: Arc::new(AtomicBool::new(false)),
             limit,
+            metrics: metrics.clone(),
         },
-        TelemetryReceiver { rx, queued },
+        TelemetryReceiver {
+            rx,
+            queued,
+            metrics,
+        },
     )
 }
 
@@ -87,17 +111,43 @@ impl Telemetry {
         }
         self.dropping.store(false, Ordering::SeqCst);
         self.queued.fetch_add(size, Ordering::SeqCst);
-        if self.tx.send((size, message)).is_err() {
+        if self
+            .tx
+            .send(Queued::Message(size, Box::new(message)))
+            .is_err()
+        {
             self.queued.fetch_sub(size, Ordering::SeqCst);
         }
+    }
+
+    /// 排队一批指标（超出上限时丢弃最早的点）。
+    pub fn send_metrics(&self, batch: MetricBatch) {
+        if let Ok(mut queue) = self.metrics.lock() {
+            queue.push(batch);
+        }
+        let _ = self.tx.send(Queued::Metrics);
     }
 }
 
 impl TelemetryReceiver {
     pub async fn recv(&mut self) -> Option<AgentMessage> {
-        let (size, message) = self.rx.recv().await?;
-        self.queued.fetch_sub(size, Ordering::SeqCst);
-        Some(message)
+        loop {
+            match self.rx.recv().await? {
+                Queued::Message(size, message) => {
+                    self.queued.fetch_sub(size, Ordering::SeqCst);
+                    return Some(*message);
+                }
+                // 占位对应的批次可能已经因为超出上限被丢弃，或者被合并进了更早的一批。
+                Queued::Metrics => {
+                    let batch = self.metrics.lock().ok().and_then(|mut q| q.pop());
+                    if let Some(batch) = batch {
+                        return Some(AgentMessage {
+                            body: Some(agent_message::Body::Metrics(batch)),
+                        });
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -141,6 +191,8 @@ impl Pump {
             events: EventsFile::new(dir.join("events.jsonl")),
             progress: None,
             progress_sent_at: None,
+            metrics: Merger::default(),
+            metrics_sent_at: None,
         };
         let handle = tokio::spawn(forwarder.run(lines_rx, exited_rx));
         Pump { exited, handle }
@@ -273,6 +325,15 @@ enum Event {
         #[serde(default)]
         message: String,
     },
+    Metric {
+        #[serde(default)]
+        ts: Option<i64>,
+        name: String,
+        /// `gauge`（默认）| `counter`。
+        #[serde(default)]
+        kind: String,
+        value: f64,
+    },
 }
 
 /// 持续读取事件文件新增的完整行。
@@ -341,6 +402,9 @@ struct Forwarder {
     /// 还没上报的最新进度。
     progress: Option<Progress>,
     progress_sent_at: Option<Instant>,
+    /// 还没发出的指标点。
+    metrics: Merger,
+    metrics_sent_at: Option<Instant>,
 }
 
 impl Forwarder {
@@ -403,6 +467,14 @@ impl Forwarder {
                         time_unix_ms: ts.unwrap_or_else(now_ms),
                     });
                 }
+                Ok(Event::Metric {
+                    ts,
+                    name,
+                    kind,
+                    value,
+                }) => self
+                    .metrics
+                    .add(ts.unwrap_or_else(now_ms), name, &kind, value),
                 // 不认识的内容原样记成一行 SDK 日志。
                 Err(_) => self.pending.push(Pending {
                     time_unix_ms: now_ms(),
@@ -421,6 +493,24 @@ impl Forwarder {
         {
             self.progress_sent_at = Some(Instant::now());
             self.send(agent_message::Body::Progress(progress));
+        }
+        let due = self
+            .metrics_sent_at
+            .is_none_or(|at| at.elapsed() >= METRIC_INTERVAL);
+        if due || last {
+            // 平时只发已经结束的秒（这一秒之后还可能有值），任务结束时发出全部。
+            let points = self
+                .metrics
+                .take((!last).then(|| now_ms().div_euclid(1000)));
+            if !points.is_empty() {
+                self.metrics_sent_at = Some(Instant::now());
+                self.telemetry.send_metrics(MetricBatch {
+                    task_id: self.task_id.clone(),
+                    attempt: self.attempt,
+                    points,
+                    dropped_points: 0,
+                });
+            }
         }
     }
 

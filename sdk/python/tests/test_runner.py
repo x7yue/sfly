@@ -174,6 +174,7 @@ def test_missing_entry_is_a_failure(tmp_path: Path, code_dir: Path) -> None:
 # - 日志 {"type": "log", "ts": <毫秒时间戳>, "level": "debug|info|warn|error", "message": "..."}
 # - 进度 {"type": "progress", "ts": ..., "current": 1, "total": 3, "message": "..."}
 #   （total 可以是 null）
+# - 指标 {"type": "metric", "ts": ..., "name": "tps", "kind": "gauge|counter", "value": 1.5}
 
 
 def events_of(tmp_path: Path) -> list[dict[str, Any]]:
@@ -264,6 +265,46 @@ def test_ctx_progress_writes_progress_events(tmp_path: Path, code_dir: Path) -> 
         ("progress", 2.5, 3, ""),
         ("progress", 7, None, ""),
     ]
+
+
+def test_ctx_metric_writes_declared_metrics_and_drops_the_rest_with_a_warning(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(
+        code_dir,
+        "bench",
+        """
+        from sfly import Context, Metric, node
+
+        @node(metrics=[Metric("tps", "req/s"), Metric("requests", kind="counter")])
+        def work(ctx: Context) -> dict:
+            ctx.metric("tps", 12.5)
+            ctx.metric("requests", 3)
+            ctx.metric("tsp", 1)
+            ctx.metric("tsp", 2)
+            ctx.metric("tps", float("nan"))
+            ctx.metric("tps", float("inf"))
+            ctx.metric("tps", 13)
+            return {}
+        """,
+    )
+
+    run = execute(tmp_path, code_dir, "bench:work")
+
+    assert run.returncode == 0, run.stderr
+    events = events_of(tmp_path)
+    assert [(e["name"], e["kind"], e["value"]) for e in events if e["type"] == "metric"] == [
+        ("tps", "gauge", 12.5),
+        ("requests", "counter", 3),
+        ("tps", "gauge", 13),
+    ]
+    assert all(isinstance(e["ts"], int) for e in events)
+    # 每个指标名、每种原因只警告一次，避免刷屏。
+    warnings = [e["message"] for e in events if e["type"] == "log"]
+    assert all(e["level"] == "warn" for e in events if e["type"] == "log")
+    assert len(warnings) == 2
+    assert "tsp" in warnings[0] and "未声明" in warnings[0]
+    assert "tps" in warnings[1] and "有限" in warnings[1]
 
 
 def test_events_from_threads_are_whole_lines(tmp_path: Path, code_dir: Path) -> None:

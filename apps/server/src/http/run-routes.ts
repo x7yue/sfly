@@ -1,3 +1,4 @@
+import type { MetricIncrement } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db/database.js";
@@ -25,6 +26,8 @@ export function registerRunRoutes(
 		sse: Sse;
 		/** 任务进度（#10），在运行的 SSE 上以 `progress` 事件推送。 */
 		progress: Topics<ProgressEvent>;
+		/** 指标增量（#31），在运行的 SSE 上以 `metrics` 事件推送。 */
+		metrics: Topics<MetricIncrement>;
 	},
 ): void {
 	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）。
@@ -80,7 +83,9 @@ export function registerRunRoutes(
 	});
 
 	// 运行状态的实时推送：连上时先发一条完整的运行视图，之后运行或任何节点的状态变化时再发一条（事件 run）；
-	// 任务进度更新时发 progress 事件（ProgressEvent，只含这一个任务的最新进度）。
+	// 任务进度更新时发 progress 事件（ProgressEvent，只含这一个任务的最新进度）；
+	// 执行中的任务新上报的指标点发 metrics 事件（MetricIncrement，每个任务每秒最多一条），断线期间错过的点
+	// 用序列查询（GET /runs/:id/metrics/series）补齐。
 	app.get<{ Params: { id: string } }>("/runs/:id/events", async (request, reply) => {
 		const runId = request.params.id;
 		if (!isUuid(runId) || !(await getRunView(deps.db, runId))) {
@@ -112,10 +117,14 @@ export function registerRunRoutes(
 			const unsubscribeProgress = deps.progress.subscribe(runId, (event) =>
 				stream.send({ event: "progress", data: event }),
 			);
+			const unsubscribeMetrics = deps.metrics.subscribe(runId, (event) =>
+				stream.send({ event: "metrics", data: event }),
+			);
 			void push();
 			return () => {
 				unsubscribe();
 				unsubscribeProgress();
+				unsubscribeMetrics();
 			};
 		});
 	});

@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from sfly.context import Cancelled, Context
-from sfly.nodes import is_context_param
+from sfly.nodes import NODE_ATTR, NodeDeclaration, is_context_param
 
 #: 节点返回值序列化后的大小上限（docs/ARCHITECTURE.md §4.1）。
 MAX_OUTPUT_BYTES = 1024 * 1024
@@ -64,8 +64,19 @@ def _takes_context(fn: Callable[..., Any]) -> bool:
     return is_context_param(params[0], hint)
 
 
+def _declared_metrics(fn: Callable[..., Any]) -> dict[str, str] | None:
+    """`@node` 声明的指标（指标名 → 类型）；入口没有用 `@node` 声明时为 None（不检查指标名）。"""
+    decl = getattr(fn, NODE_ATTR, None)
+    if not isinstance(decl, NodeDeclaration):
+        return None
+    return {m.name: m.kind for m in decl.metrics}
+
+
 def invoke(fn: Callable[..., Any], inputs: Mapping[str, Any]) -> dict[str, Any]:
-    result = fn(Context(), **inputs) if _takes_context(fn) else fn(**inputs)
+    if _takes_context(fn):
+        result = fn(Context(metrics=_declared_metrics(fn)), **inputs)
+    else:
+        result = fn(**inputs)
     if result is None:
         return {}
     if not isinstance(result, dict):

@@ -3,6 +3,7 @@
 - `ctx.log`：带级别的结构化日志，`ctx.log.info("checking %s", url)`，
   也可以 `ctx.log("...", level="warn")`；
 - `ctx.progress(当前值, 总数, 说明)`：上报进度，总数未知时省略；
+- `ctx.metric(指标名, 数值)`：上报节点类型声明的指标（见 `Context.metric`）；
 - `ctx.artifacts`：保存产物，返回可以写进输出的产物引用（见 `Artifacts`）；
 - `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）。
 
@@ -16,6 +17,7 @@
 - 日志 `{"type": "log", "ts": <Unix 毫秒>, "level": "debug|info|warn|error", "message": "..."}`
 - 进度 `{"type": "progress", "ts": ..., "current": 1, "total": 3, "message": "..."}`
   （`total` 可以是 null）
+- 指标 `{"type": "metric", "ts": ..., "name": "tps", "kind": "gauge|counter", "value": 1.5}`
 
 `print` 和子进程的输出不经过这里：Agent 直接读取执行器的标准输出 / 标准错误，
 与事件文件合并成同一条日志流。
@@ -24,11 +26,13 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import threading
 import time
 import traceback
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -172,6 +176,8 @@ class Context:
     `events_path` 默认取环境变量 `SFLY_EVENTS`；为 None（或环境变量未设置）时日志和进度被丢弃。
     `cancel_path` 默认取 `SFLY_CANCEL`；为 None 时 `cancelled()` 总是 False。
     `artifacts_dir` / `artifacts_url` 默认取 `SFLY_ARTIFACTS` / `SFLY_ARTIFACTS_URL`。
+    `metrics` 是节点类型声明的指标（指标名 → `gauge` | `counter`），执行器从 `@node` 的声明传入；
+    为 None（不知道声明，例如在节点之外直接构造）时不检查指标名，都按 `gauge` 上报。
     """
 
     def __init__(
@@ -180,6 +186,7 @@ class Context:
         cancel_path: str | os.PathLike[str] | None = _FROM_ENV,
         artifacts_dir: str | os.PathLike[str] | None = _FROM_ENV,
         artifacts_url: str | None = _FROM_ENV,
+        metrics: Mapping[str, str] | None = None,
     ) -> None:
         if events_path is _FROM_ENV:
             events_path = os.environ.get("SFLY_EVENTS")
@@ -193,6 +200,8 @@ class Context:
         self._cancel = cancel_path
         self.log = Log(self._events)
         self.artifacts = Artifacts(artifacts_dir, artifacts_url)
+        self._metrics = dict(metrics) if metrics is not None else None
+        self._warned: set[tuple[str, str]] = set()
 
     def cancelled(self) -> bool:
         """任务是否已被取消（Agent 已写入取消标记）。"""
@@ -209,3 +218,39 @@ class Context:
                 "message": str(message),
             }
         )
+
+    def metric(self, name: str, value: float) -> None:
+        """上报一个指标的当前值。可以随意频繁调用：Agent 按「指标 × 秒」合并后每秒最多上报一次
+        （`gauge` 取这一秒最后一个值并带最小 / 最大值，`counter` 取这一秒结束时的值）。
+
+        节点类型没有声明的指标名和非有限数值（NaN、无穷大）被丢弃，并写一条警告日志
+        （每个指标名、每种原因只警告一次）。
+        """
+        kind = "gauge"
+        if self._metrics is not None:
+            if name not in self._metrics:
+                self._warn_once(
+                    "undeclared",
+                    name,
+                    f"指标 {name!r} 未声明，已丢弃（在 @node(metrics=...) 中声明后才能上报）",
+                )
+                return
+            kind = self._metrics[name]
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            number = math.nan
+        if not math.isfinite(number):
+            self._warn_once(
+                "non-finite", name, f"指标 {name!r} 的值必须是有限数值，实际为 {value!r}，已丢弃"
+            )
+            return
+        self._events.write(
+            {"type": "metric", "ts": _now_ms(), "name": name, "kind": kind, "value": number}
+        )
+
+    def _warn_once(self, reason: str, name: str, message: str) -> None:
+        if (reason, name) in self._warned:
+            return
+        self._warned.add((reason, name))
+        self.log.warn(message)

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use clap::Parser;
 use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
+use sfly_agent::metrics::DEFAULT_METRIC_QUEUE_POINTS;
 use sfly_agent::{Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
 
 /// sfly Agent。
@@ -48,6 +49,9 @@ struct Args {
     /// 与控制面断开期间最多排队的日志字节数，超出后丢弃新的日志。
     #[arg(long, env = "SFLY_LOG_QUEUE_BYTES", default_value_t = DEFAULT_TELEMETRY_QUEUE_BYTES, hide = true)]
     log_queue_bytes: usize,
+    /// 与控制面断开期间最多排队的指标点数，超出后丢弃最早的点。
+    #[arg(long, env = "SFLY_METRIC_QUEUE_POINTS", default_value_t = DEFAULT_METRIC_QUEUE_POINTS, hide = true)]
+    metric_queue_points: usize,
 }
 
 #[tokio::main]
@@ -66,6 +70,7 @@ async fn main() -> anyhow::Result<()> {
         terminate_grace: Duration::from_secs(args.terminate_grace),
         python: args.python,
         telemetry_queue_bytes: args.log_queue_bytes,
+        metric_queue_points: args.metric_queue_points,
     };
 
     tokio::select! {

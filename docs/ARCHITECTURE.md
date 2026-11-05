@@ -121,7 +121,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> dict:
 - 输出：函数的返回值（JSON 对象，上限 1 MB）；返回值的键在装饰器或返回类型注解中声明，用于画布补全和保存时的引用检查。
 - 指标与图表：`@node(metrics=[Metric("tps", unit="笔/s"), Metric("rejected", kind="counter")], charts=[Chart("TPS", type="line", metrics=["tps"])], primary_metric="tps")`。`sfly build` 校验：每个节点类型最多 50 个指标、20 张图表，指标名不重复，图表引用和主指标必须是已声明的指标。没被任何图表引用的指标由节点包查询 API 补上默认图表（`default: true`；gauge → 折线，counter → 数值卡）。
 - 失败：抛出异常。
-- `ctx`：日志、进度、产物、取消检查（`ctx.cancelled()`）。
+- `ctx`：日志、进度、指标（`ctx.metric(name, value)`：未声明的指标名和非有限数值被丢弃并写警告日志）、产物、取消检查（`ctx.cancelled()`）。
 
 ### 4.2 节点包格式
 
@@ -183,6 +183,8 @@ message AgentMessage {
     Progress      progress   = 5;  // task_id, current, total, message（合并为每秒最多一次）
     TaskResult    result     = 6;  // task_id, attempt, status, outputs_json, error{kind, message}
     InstallStatus install    = 7;
+    MetricBatch   metrics    = 8;  // task_id, attempt, [name, 秒, value, min, max], dropped_points
+                                   // （按「任务 × 指标 × 秒」合并，每秒最多一批；断线排队有上限，丢弃最早的点）
   }
 }
 
@@ -271,9 +273,10 @@ flowchart TD
 |---|---|---|
 | 日志 | 每个任务一个文件（磁盘），元数据在 PG；单个任务上限 200 MB，超出后截断并写入截断标记（来源 `system`） | 按偏移量分页读取 + 下载原始文件；SSE 推送新增行（`after_seq` 从分页读到的位置接上）；前端先加载历史再接实时流，按 `seq` 去重；实时流与历史之间有缺口时从实时流处往前翻页；浏览器最多保留 5000 行，更早的向上滚动重新加载 |
 | 进度 | `tasks.progress` 只保留最新值 | 通过 SSE 推送，显示在节点卡片上 |
+| 指标 | PG 按天分区的分段表 `metric_segments`（ADR 0009；一段最多 120 点、行内压缩，当前段约每 10 秒重写一次，任务结束立即写入）+ 摘要表 `metric_series`；单个任务上限约 50 MB（`SFLY_METRIC_LIMIT_MB`，按每点 28 字节折算），超出后截断 | `GET /runs/:id/metrics/summary`：每个任务每个指标的点数、最小、最大、平均、最新值、首尾时间和截断标记；`GET /runs/:id/metrics`：运行的指标目录（每个包节点的指标声明、含默认图表的图表定义、主指标，每次尝试的摘要和截断标记；图表定义来自锁定的节点包版本，dev 版本取任务所在 Agent 当前加载的声明）；`GET /runs/:id/metrics/series`：一个节点（默认最新一次尝试）按时间范围和目标点数降采样的序列，每个桶给出最小、最大（尖峰可见）、平均、最新值，整段落在一个桶内时直接用段摘要，内存中尚未写库的点也包括在内；运行事件流的 `metrics` 事件推送执行中任务新收到的点，断线后用序列接口补齐；`GET /runs/:id/metrics/platform`：平台自带图表（节点耗时、重试次数、排队与等待时长，并发任务数与 Agent 槽位占用），全部由任务记录推导，不另存数据；运行结束超过指标保留期后摘要、目录与序列接口返回 `expired: true`（不含数据），平台自带图表不受影响 |
 | 产物 | 磁盘；单个任务的产物总大小默认上限 1 GB（`SFLY_ARTIFACT_LIMIT_MB`），超出时上传返回 413 | 通过输出中的引用下载（运行视图里显示为下载链接） |
 
-日志和产物默认保留 30 天，可以配置。
+日志和产物默认保留 30 天，可以配置。指标的保留期单独配置（`SFLY_METRIC_RETENTION_DAYS`，默认 30 天）：与日志、产物共用保留期扫描，提前创建今天和之后两天的分区，删除整天都超过保留期的分区；运行结束超过保留期后删除它的指标摘要、标记 `runs.metrics_purged_at`，接口返回"已过保留期"，之后迟到的点直接丢弃、不再写回。点的时间戳来自 Agent 时钟，只接受「现在 − 保留期」到最后一个提前创建的分区结束之间的点，其余丢弃。
 
 ### 6.4 编排编辑、版本与并发
 
