@@ -102,6 +102,7 @@ export function MonitorTopBar({
 			<Link
 				to="/orchestrations/$id"
 				params={{ id: run.orchestration_id }}
+				search={{ run: run.id }}
 				className={buttonVariants()}
 			>
 				<WorkflowIcon />

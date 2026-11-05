@@ -50,6 +50,8 @@ export const SHORTCUTS = [
 		keys: "Ctrl+S",
 		inInputs: true,
 	},
+	{ id: "canvas-mode-edit", group: "编排画布", label: "编辑模式", keys: "E" },
+	{ id: "canvas-mode-run", group: "编排画布", label: "运行状态模式", keys: "R" },
 	{ id: "canvas-fit", group: "编排画布", label: "适配视图", keys: "0" },
 	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
 	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },
