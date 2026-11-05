@@ -25,7 +25,6 @@
 @import "../pages.css" layer(legacy);
 @import "../canvas/canvas.css" layer(legacy);
 @import "../canvas/wait-nodes.css" layer(legacy);
-@import "../versions/versions.css" layer(legacy);
 @import "../runs/runs.css" layer(legacy);
 
 /*

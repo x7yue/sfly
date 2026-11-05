@@ -80,7 +80,6 @@
 	--sf-shadow-panel: 0 24px 64px rgb(0 0 0 / 0.5); /* 浮出面版 */
 	--sf-overlay-soft: rgb(0 0 0 / 0.45); /* 小地图遮罩 */
 	--sf-overlay: rgb(0 0 0 / 0.55); /* 浮出遮罩 */
-	--sf-overlay-strong: rgb(8 8 8 / 0.6); /* 模态遮罩 */
 	--sf-raised-3: #3a3a3a; /* 滚动条、开关槽 */
 	--sf-border-hover: #666; /* 悬停边框（addrow 等） */
 	--sf-text-bright: #bdbdbd; /* 开关钮（未开） */
