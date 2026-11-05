@@ -63,9 +63,9 @@ test("命令面板：Ctrl K 打开，搜索并跳转到页面或场景", async (
 	await page.getByRole("button", { name: /搜索页面、场景、命令/ }).click();
 	await expect(palette.getByRole("combobox", { name: "命令" })).toBeFocused();
 	await page.keyboard.type("日终");
-	await expect(palette.getByRole("group", { name: "场景", exact: true }).getByRole("option")).toHaveText([
-		"日终数据处理",
-	]);
+	await expect(
+		palette.getByRole("group", { name: "场景", exact: true }).getByRole("option"),
+	).toHaveText(["日终数据处理"]);
 	await page.keyboard.press("Enter");
 	await expect(page).toHaveURL(new RegExp(`/orchestrations/${scenarioId}$`));
 });

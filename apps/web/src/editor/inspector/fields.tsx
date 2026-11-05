@@ -1,13 +1,18 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-import { type ReferenceOption, referenceText } from "@sfly/orchestration";
+import { referenceText } from "@sfly/orchestration";
 import { cn } from "cn";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 
-/** 一个引用补全项，带上来源说明（类型、所属节点）。 */
-export interface ReferenceChoice extends ReferenceOption {
-	detail: string;
-}
+import {
+	applyCompletion,
+	type CompletionTrigger,
+	completionGroups,
+	completionTrigger,
+	type ReferenceChoice,
+} from "./reference-completion";
+
+export type { ReferenceChoice };
 
 /**
  * 检查器里的一个字段（原型 `.field`）：左列名称（必填星号、类型），右列控件、错误与说明。
@@ -97,7 +102,6 @@ export function Segmented<T extends string>({
 }
 
 /** 光标前正在输入的引用：`${{` 之后、还没有闭合的部分。 */
-const OPEN_REFERENCE = /\$\{\{\s*([\w.-]*)$/;
 /** 整个值就是一个引用时的表达式。 */
 export const wholeReference = (value: unknown): string | undefined =>
 	typeof value === "string" ? /^\$\{\{\s*(.*?)\s*\}\}$/.exec(value)?.[1] : undefined;
@@ -134,41 +138,27 @@ export function ReferenceTextInput({
 	const listId = useId();
 	const text = whole ? (wholeReference(value) ?? value) : value;
 	/** 补全的触发位置：null 表示关闭；start 是要被替换的起点。 */
-	const [open, setOpen] = useState<{ start: number; query: string } | null>(null);
+	const [open, setOpen] = useState<CompletionTrigger | null>(null);
 	const [active, setActive] = useState(0);
 
-	const query = (open?.query ?? "").toLowerCase();
-	const matches = open ? choices.filter((c) => c.expression.toLowerCase().includes(query)) : [];
-	const groups = [
-		["入口参数", matches.filter((c) => c.kind === "param")],
-		["前序节点", matches.filter((c) => c.kind === "output")],
-	] as const;
-	const ordered = [...groups[0][1], ...groups[1][1]];
+	const { groups, ordered } = open
+		? completionGroups(choices, open.query)
+		: { groups: [], ordered: [] };
 
 	const detect = (raw: string, caret: number) => {
-		if (whole) {
-			setOpen({ start: 0, query: raw });
-		} else {
-			const m = OPEN_REFERENCE.exec(raw.slice(0, caret));
-			setOpen(m ? { start: caret - m[0].length, query: m[1] ?? "" } : null);
-		}
+		setOpen(completionTrigger(raw, caret, whole));
 		setActive(0);
 	};
 
 	const choose = (choice: ReferenceChoice) => {
 		setOpen(null);
-		if (whole) {
-			onChange(choice.text);
-			return;
-		}
 		const input = ref.current;
-		const caret = input?.selectionStart ?? value.length;
-		const start = open?.start ?? caret;
-		onChange(value.slice(0, start) + choice.text + value.slice(caret));
+		const next = applyCompletion(value, open, input?.selectionStart ?? value.length, choice, whole);
+		onChange(next.value);
+		if (whole) return;
 		requestAnimationFrame(() => {
-			const pos = start + choice.text.length;
 			input?.focus();
-			input?.setSelectionRange(pos, pos);
+			input?.setSelectionRange(next.caret, next.caret);
 		});
 	};
 
@@ -229,7 +219,7 @@ export function ReferenceTextInput({
 						</p>
 					) : (
 						groups.map(
-							([title, items]) =>
+							({ title, choices: items }) =>
 								items.length > 0 && (
 									// biome-ignore lint/a11y/useSemanticElements: listbox 里的分组用 role=group
 									<div key={title} role="group" aria-label={title}>
