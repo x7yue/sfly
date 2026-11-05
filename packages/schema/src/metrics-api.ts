@@ -34,9 +34,14 @@ export const TaskMetricSummary = z.strictObject({
 	metrics: z.array(MetricSummary),
 });
 
-/** 运行的指标摘要：只列出有指标数据（或被截断、有丢弃）的任务，按任务创建顺序。 */
+/**
+ * 运行的指标摘要：只列出有指标数据（或被截断、有丢弃）的任务，按任务创建顺序。
+ * 运行结束超过指标保留期（#32）后 `expired` 为 true，`tasks` 为空。
+ */
 export const RunMetricSummary = z.strictObject({
 	run_id: z.uuid(),
+	/** 已过保留期：这个运行的指标数据已被清理。 */
+	expired: z.boolean(),
 	tasks: z.array(TaskMetricSummary),
 });
 

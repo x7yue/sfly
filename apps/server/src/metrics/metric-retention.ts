@@ -1,6 +1,7 @@
-import { sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
+import { metricSeries, runs } from "../db/schema.js";
 
 /** 指标的默认保留期：30 天（与日志、产物的保留期分开配置）。 */
 export const DEFAULT_METRIC_RETENTION_DAYS = 30;
@@ -8,6 +9,8 @@ export const DEFAULT_METRIC_RETENTION_DAYS = 30;
 export const PARTITION_DAYS_AHEAD = 2;
 
 const DAY_MS = 86_400_000;
+/** 每次扫描最多判定过期的运行数（剩下的下次扫描继续）。 */
+const BATCH = 100;
 const PARENT = "metric_segments";
 const PARTITION_NAME = /^metric_segments_(\d{4})(\d{2})(\d{2})$/;
 
@@ -19,6 +22,9 @@ const PARTITION_NAME = /^metric_segments_(\d{4})(\d{2})(\d{2})$/;
  * - 接收的点只接受时间戳落在「现在 − 保留期」到最后一个提前创建的分区结束之间的（{@link accepts}）：
  *   点的时间来自 Agent 的时钟，时钟异常时不会按异常的日期建分区。这个范围内、还不存在的过去日期的分区
  *   （例如 Agent 断线期间排队的点）在写入时按需创建（{@link ensurePartition}）。
+ * - 运行结束超过保留期后判定为「已过保留期」：删除它的指标摘要（`metric_series`），记下 `runs.metrics_purged_at`，
+ *   摘要等接口据此返回已过保留期（{@link isExpired}）。它的原始数据随所在的整天分区删除（最晚再过一天），
+ *   在此之前也不再对外提供。
  * - 已知存在的分区缓存在内存里；删除分区时同时移出缓存。分区被别处删除时，写入失败后调用
  *   {@link forgetPartitions} 再重试。
  */
@@ -56,7 +62,16 @@ export class MetricRetention {
 		for (const t of times) this.#partitions.delete(dayOf(t * 1000));
 	}
 
-	/** 提前创建分区、删除过期分区；上一次扫描还没结束时等它结束。 */
+	/** 运行的指标是否已过保留期。 */
+	async isExpired(runId: string): Promise<boolean> {
+		const [row] = await this.deps.db
+			.select({ id: runs.id })
+			.from(runs)
+			.where(and(eq(runs.id, runId), isNotNull(runs.metricsPurgedAt)));
+		return row !== undefined;
+	}
+
+	/** 提前创建分区、删除过期分区、判定过期的运行；上一次扫描还没结束时等它结束。 */
 	sweep(): Promise<void> {
 		this.#sweeping ??= this.#sweep().finally(() => {
 			this.#sweeping = undefined;
@@ -84,6 +99,20 @@ export class MetricRetention {
 			this.#partitions.delete(day);
 			await this.deps.db.execute(sql.raw(`drop table if exists "${name}"`));
 		}
+		const due = await this.deps.db
+			.select({ id: runs.id })
+			.from(runs)
+			.where(and(isNull(runs.metricsPurgedAt), lt(runs.endedAt, new Date(cutoff))))
+			.limit(BATCH);
+		if (due.length === 0) return;
+		const ids = due.map((r) => r.id);
+		await this.deps.db.transaction(async (tx) => {
+			await tx.delete(metricSeries).where(inArray(metricSeries.runId, ids));
+			await tx
+				.update(runs)
+				.set({ metricsPurgedAt: new Date(now) })
+				.where(inArray(runs.id, ids));
+		});
 	}
 
 	#ensure(day: number): Promise<void> {

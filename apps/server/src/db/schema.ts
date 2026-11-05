@@ -152,6 +152,8 @@ export const runs = pgTable(
 		cancelForcedAt: timestamptz("cancel_forced_at"),
 		/** 日志和产物超过保留期被清理的时间（#18，src/retention/retention.ts）；未清理时为空。 */
 		purgedAt: timestamptz("purged_at"),
+		/** 指标超过保留期被判定过期的时间（#32，src/metrics/metric-retention.ts）；之后摘要等接口返回「已过保留期」。 */
+		metricsPurgedAt: timestamptz("metrics_purged_at"),
 	},
 	(t) => [index("runs_orchestration").on(t.orchestrationId), index("runs_ended_at").on(t.endedAt)],
 );

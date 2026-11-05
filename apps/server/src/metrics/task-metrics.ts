@@ -215,11 +215,15 @@ export class TaskMetrics {
 		await Promise.all([...this.#states.keys()].map((id) => this.flushTask(id)));
 	}
 
-	/** 运行的指标摘要；运行不存在时为 undefined。 */
+	/** 运行的指标摘要；运行不存在时为 undefined，已过保留期（#32）时 expired 为 true、没有任务。 */
 	async summary(runId: string): Promise<RunMetricSummary | undefined> {
 		if (!isUuid(runId)) return undefined;
-		const [run] = await this.deps.db.select({ id: runs.id }).from(runs).where(eq(runs.id, runId));
+		const [run] = await this.deps.db
+			.select({ id: runs.id, expiredAt: runs.metricsPurgedAt })
+			.from(runs)
+			.where(eq(runs.id, runId));
 		if (!run) return undefined;
+		if (run.expiredAt) return { run_id: runId, expired: true, tasks: [] };
 		const taskRows = await this.deps.db
 			.select({
 				id: tasks.id,
@@ -263,6 +267,7 @@ export class TaskMetrics {
 		}
 		return {
 			run_id: runId,
+			expired: false,
 			tasks: taskRows.map((t) => ({
 				task_id: t.id,
 				chain_instance_id: t.chainInstanceId,

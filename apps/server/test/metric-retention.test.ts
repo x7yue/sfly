@@ -95,4 +95,70 @@ describe("指标保留期与分区维护", () => {
 		expect(await partitions()).toContain("metric_segments_20260102");
 		expect((await cp.fetch(`/runs/${runId}/metrics/summary`)).status).toBe(200);
 	});
+
+	const summary = async (runId: string) => {
+		const res = await cp.fetch(`/runs/${runId}/metrics/summary`);
+		expect(res.status).toBe(200);
+		return (await res.json()) as { run_id: string; expired: boolean; tasks: unknown[] };
+	};
+	/** 触发一次运行，任务上报一个点；finish 时上报成功（运行结束），否则推进时钟让点写库。 */
+	const runWithMetrics = async (api: ApiClient, finish = true) => {
+		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
+		const task = await agent.nextAssign();
+		agent.metrics(task, [["tps", now(1), 10]]);
+		if (finish) await agent.succeed(task);
+		else {
+			await agent.sync();
+			clock().advance(10_000);
+		}
+		await eventually(async () => expect((await summary(runId)).tasks).toHaveLength(1));
+		return runId;
+	};
+	/** 等几轮扫描（间隔 20ms），用来断言"没有过期"。 */
+	const fewSweeps = () => new Promise((r) => setTimeout(r, 150));
+
+	it("运行结束超过指标保留期后，摘要接口返回“已过保留期”，不报错", async () => {
+		const api = await setup({ metricRetentionDays: 7 });
+		const runId = await runWithMetrics(api);
+		expect(await summary(runId)).toMatchObject({ run_id: runId, expired: false });
+
+		clock().advance(7 * DAY - 1000);
+		await fewSweeps();
+		expect((await summary(runId)).expired).toBe(false);
+
+		clock().advance(2000);
+		await eventually(async () =>
+			expect(await summary(runId)).toEqual({ run_id: runId, expired: true, tasks: [] }),
+		);
+		// 整天过期的分区删除之后依然如此。
+		clock().advance(2 * DAY);
+		await eventually(async () =>
+			expect(await partitions()).not.toContain("metric_segments_20260101"),
+		);
+		expect(await summary(runId)).toEqual({ run_id: runId, expired: true, tasks: [] });
+	});
+
+	it("默认保留 30 天，与日志和产物的保留期分开；还在运行的运行不算过期", async () => {
+		const api = await setup({ retentionDays: 1 });
+		const done = await runWithMetrics(api);
+		const running = await runWithMetrics(api, false);
+
+		clock().advance(30 * DAY - 20_000);
+		await fewSweeps();
+		expect((await summary(done)).expired).toBe(false);
+		expect((await summary(done)).tasks).toHaveLength(1);
+
+		clock().advance(30_000);
+		await eventually(async () => expect((await summary(done)).expired).toBe(true));
+		expect(await summary(running)).toMatchObject({ expired: false, tasks: [expect.anything()] });
+	});
+
+	it("控制面重启后，按数据库里的结束时间照常判断过期", async () => {
+		const api = await setup({ metricRetentionDays: 1 });
+		const runId = await runWithMetrics(api);
+		await agent.disconnect();
+		await cp.restart(() => clock().advance(DAY + 1000));
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		await eventually(async () => expect((await summary(runId)).expired).toBe(true));
+	});
 });
