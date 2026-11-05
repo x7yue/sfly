@@ -4,6 +4,7 @@ import {
 	type DashboardRunningRun,
 	type DashboardView,
 	dashboardApi,
+	isActiveStatus,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -235,9 +236,6 @@ const ROW =
 
 // —— 正在运行 ——
 
-/** 当前节点：已派发、执行中、等待中或排队中的节点。 */
-const CURRENT = new Set(["queued", "dispatched", "running", "waiting"]);
-
 function RunningPanel({ runs, now }: { runs: DashboardRunningRun[]; now: number }) {
 	return (
 		<DashboardPanel title="正在运行" count={runs.length} aside={panelLink("/runs", "全部运行")}>
@@ -253,7 +251,7 @@ function RunningPanel({ runs, now }: { runs: DashboardRunningRun[]; now: number 
 function RunningRow({ run, now }: { run: DashboardRunningRun; now: number }) {
 	const current = run.chains.flatMap((c) =>
 		c.nodes
-			.filter((n) => CURRENT.has(n.status))
+			.filter((n) => isActiveStatus(n.status))
 			.map((n) => ({ ...n, key: `${c.id}:${n.node_id}` })),
 	);
 	return (

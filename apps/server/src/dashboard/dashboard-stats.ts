@@ -1,16 +1,17 @@
-import type { DashboardFailure, DashboardView } from "@sfly/schema";
-import { and, asc, desc, eq, gte, isNotNull, lte } from "drizzle-orm";
+import { type DashboardFailure, type DashboardView, isOnAgentStatus } from "@sfly/schema";
+import { and, asc, count, desc, eq, gt, gte, isNotNull, lte } from "drizzle-orm";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
 	chainInstances,
 	nodePackages,
-	ON_AGENT,
 	orchestrations,
+	orchestrationVersions,
 	runs,
 	type TaskStatus,
 } from "../db/schema.js";
+import { loadRunBoards } from "../engine/run-board.js";
 import { getRunView, type NodeView, type RunView } from "../engine/run-queries.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import { packageLocks } from "../orchestrations/usage.js";
@@ -102,16 +103,15 @@ export async function dashboardView({
 		.orderBy(desc(nodePackages.publishedAt), asc(nodePackages.name), desc(nodePackages.version))
 		.limit(RECENT_PACKAGES);
 	const locks = packageLocks(await store.headDocuments());
-	const chains = running.flatMap((r) => r.view.chains);
+	const chains = running.flatMap((r) => r.chains);
 	const nodes = chains.flatMap((c) => c.nodes);
-	const onAgent = (status: string) => (ON_AGENT as readonly string[]).includes(status);
 
 	return {
 		generated_at: now.toISOString(),
 		runs: {
 			running: running.length,
 			running_chains: chains.filter((c) => c.status === "running").length,
-			running_tasks: nodes.filter((n) => onAgent(n.status)).length,
+			running_tasks: nodes.filter((n) => isOnAgentStatus(n.status)).length,
 			queued_tasks: nodes.filter((n) => n.status === ("queued" satisfies TaskStatus)).length,
 			...current,
 			failed_subflows: failures.subflows,
@@ -119,15 +119,15 @@ export async function dashboardView({
 			previous_success_rate: rate(previous),
 		},
 		hourly,
-		running_runs: running.map(({ view, name }) => ({
-			id: view.id,
-			orchestration_id: view.orchestration_id,
+		running_runs: running.map(({ run, name, version, chains }) => ({
+			id: run.id,
+			orchestration_id: run.orchestrationId,
 			orchestration_name: name,
-			orchestration_version: view.orchestration_version,
-			triggered_by: view.triggered_by,
-			started_at: view.started_at,
-			cancelling: view.cancel !== null,
-			chains: view.chains.map((chain) => ({
+			orchestration_version: version,
+			triggered_by: run.triggeredBy,
+			started_at: run.startedAt.toISOString(),
+			cancelling: run.cancelRequestedAt !== null,
+			chains: chains.map((chain) => ({
 				id: chain.id,
 				chain_id: chain.chain_id,
 				subflow: chain.depth > 0,
@@ -152,19 +152,37 @@ export async function dashboardView({
 	};
 }
 
-/** 正在运行的运行（按开始时间从新到旧）及其场景名称。 */
-async function runningRuns(db: Db): Promise<Array<{ view: RunView; name: string }>> {
+/**
+ * 正在运行的运行（按开始时间从新到旧）及其场景名称、各链节点状态；链与任务整批读取（engine/run-board.ts），
+ * 查询次数与运行数无关。
+ */
+async function runningRuns(db: Db) {
 	const rows = await db
-		.select({ id: runs.id, name: orchestrations.name })
+		.select({
+			run: runs,
+			name: orchestrations.name,
+			version: orchestrationVersions.number,
+			document: orchestrationVersions.document,
+		})
 		.from(runs)
 		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
+		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 		.where(eq(runs.status, "running"))
 		.orderBy(desc(runs.startedAt), desc(runs.id));
-	const views = await Promise.all(rows.map((row) => getRunView(db, row.id)));
-	return rows.flatMap((row, i) => {
-		const view = views[i];
-		return view ? [{ view, name: row.name }] : [];
-	});
+	const boards = await loadRunBoards(
+		db,
+		rows.map(({ run, document }) => ({
+			id: run.id,
+			versionId: run.orchestrationVersionId,
+			document,
+		})),
+	);
+	return rows.map(({ run, name, version }) => ({
+		run,
+		name,
+		version,
+		chains: boards.get(run.id) ?? [],
+	}));
 }
 
 /**
@@ -177,7 +195,17 @@ async function failedChains(
 	from: Date,
 	to: Date,
 ): Promise<{ subflows: number; recent: DashboardFailure[] }> {
-	const chains = await db
+	const inWindow = and(
+		eq(chainInstances.status, "failed"),
+		isNotNull(chainInstances.endedAt),
+		gte(chainInstances.endedAt, from),
+		lte(chainInstances.endedAt, to),
+	);
+	const [subflows] = await db
+		.select({ n: count() })
+		.from(chainInstances)
+		.where(and(inWindow, gt(chainInstances.depth, 0)));
+	const recent = await db
 		.select({
 			chain: chainInstances,
 			orchestrationId: runs.orchestrationId,
@@ -186,22 +214,15 @@ async function failedChains(
 		.from(chainInstances)
 		.innerJoin(runs, eq(runs.id, chainInstances.runId))
 		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
-		.where(
-			and(
-				eq(chainInstances.status, "failed"),
-				isNotNull(chainInstances.endedAt),
-				gte(chainInstances.endedAt, from),
-				lte(chainInstances.endedAt, to),
-			),
-		)
-		.orderBy(desc(chainInstances.endedAt), desc(chainInstances.id));
-	const recent = chains.slice(0, RECENT_FAILURES);
+		.where(inWindow)
+		.orderBy(desc(chainInstances.endedAt), desc(chainInstances.id))
+		.limit(RECENT_FAILURES);
 	const views = new Map<string, RunView | undefined>();
 	for (const { chain } of recent) {
 		if (!views.has(chain.runId)) views.set(chain.runId, await getRunView(db, chain.runId));
 	}
 	return {
-		subflows: chains.filter(({ chain }) => chain.depth > 0).length,
+		subflows: subflows?.n ?? 0,
 		recent: recent.map(({ chain, orchestrationId, name }) => {
 			const view = views.get(chain.runId);
 			const endedAt = (node: NodeView) => node.attempts.at(-1)?.ended_at ?? "";

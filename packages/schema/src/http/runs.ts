@@ -40,6 +40,26 @@ export const TaskStatus = z.enum([
 ]);
 export const NodeStatus = z.enum([...TaskStatus.options, "pending"]);
 
+/**
+ * 状态分组（控制面与前端共用，不要在别处再写一份）：
+ * - ON_AGENT_STATUSES：由 Agent 负责、占用槽位的任务状态（派发阶段和执行阶段，有租约），也是还会上报指标的状态；
+ * - ACTIVE_STATUSES：还没结束、正在推进的节点状态：排队、派发中、执行中、等待唤醒（「正在执行的节点」）。
+ */
+export const ON_AGENT_STATUSES = ["dispatched", "running"] as const satisfies readonly z.infer<
+	typeof TaskStatus
+>[];
+export const ACTIVE_STATUSES = [
+	"queued",
+	...ON_AGENT_STATUSES,
+	"waiting",
+] as const satisfies readonly z.infer<typeof TaskStatus>[];
+export type OnAgentStatus = (typeof ON_AGENT_STATUSES)[number];
+export type ActiveStatus = (typeof ACTIVE_STATUSES)[number];
+export const isOnAgentStatus = (status: string): status is OnAgentStatus =>
+	(ON_AGENT_STATUSES as readonly string[]).includes(status);
+export const isActiveStatus = (status: string): status is ActiveStatus =>
+	(ACTIVE_STATUSES as readonly string[]).includes(status);
+
 /** 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。 */
 export const ErrorView = z.object({ kind: z.string(), message: z.string() });
 

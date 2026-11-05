@@ -1,4 +1,4 @@
-import type { CatalogNode, MetricBucket } from "@sfly/schema";
+import { type CatalogNode, isOnAgentStatus, type MetricBucket } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
 import { formatMetric } from "#/lib/format";
@@ -186,7 +186,7 @@ export function NodePrimaryMetric({
 	fallback?: React.ReactNode;
 	className?: string;
 }) {
-	const finished = !ACTIVE.has(status);
+	const finished = !isOnAgentStatus(status);
 	const data = usePrimaryMetric(runId, entry, { finished, poll });
 	if (!data || (data.last === undefined && fallback !== null)) return fallback;
 	return (
@@ -198,6 +198,3 @@ export function NodePrimaryMetric({
 		/>
 	);
 }
-
-/** 尝试还会继续上报指标的节点状态。 */
-const ACTIVE = new Set(["dispatched", "running"]);

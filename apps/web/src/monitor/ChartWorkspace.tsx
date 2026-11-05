@@ -1,4 +1,10 @@
-import type { CatalogNode, MetricSeries, PlatformMetrics, RunView } from "@sfly/schema";
+import {
+	type CatalogNode,
+	isOnAgentStatus,
+	type MetricSeries,
+	type PlatformMetrics,
+	type RunView,
+} from "@sfly/schema";
 import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
 import { BarChart3Icon, ChevronDownIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
@@ -13,14 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-	ACTIVE,
-	buildGroups,
-	type ChartGroup,
-	groupHasData,
-	isActive,
-	isFailed,
-} from "./chart-groups";
+import { buildGroups, type ChartGroup, groupHasData, isActive, isFailed } from "./chart-groups";
 import { balancedColumns, chartWindow } from "./charts";
 import { type ChartLine, MetricChart } from "./MetricChart";
 import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
@@ -678,7 +677,7 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 									<i
 										className={cn(
 											"absolute inset-y-0 left-0",
-											ACTIVE.has(status)
+											isOnAgentStatus(status)
 												? "bg-signal"
 												: status === "failed"
 													? "bg-danger"

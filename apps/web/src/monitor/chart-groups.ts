@@ -1,11 +1,12 @@
-import type {
-	AttemptView,
-	CatalogAttempt,
-	CatalogNode,
-	ChainRunView,
-	MetricSeries,
-	NodeRunView,
-	RunView,
+import {
+	type AttemptView,
+	type CatalogAttempt,
+	type CatalogNode,
+	type ChainRunView,
+	isOnAgentStatus,
+	type MetricSeries,
+	type NodeRunView,
+	type RunView,
 } from "@sfly/schema";
 import type { StatusKind } from "#/components/status";
 import { type NodeRef, nodeKey } from "./monitor-state";
@@ -31,8 +32,8 @@ export interface ChartGroup {
 export const groupHasData = (g: ChartGroup, series: MetricSeries | undefined) =>
 	g.attempt.metrics.some((m) => m.points > 0) || !!series?.series.some((s) => s.buckets.length > 0);
 
-export const ACTIVE = new Set(["running", "dispatched"]);
-export const isActive = (g: ChartGroup) => ACTIVE.has(g.node.status);
+/** 还会继续上报指标的节点（任务在 Agent 上）。 */
+export const isActive = (g: ChartGroup) => isOnAgentStatus(g.node.status);
 export const isFailed = (g: ChartGroup) => g.node.status === "failed";
 
 /** 分组按链上的执行顺序：链实例按层级（主链、子流程实例跟在派发它的链后面），链内按节点顺序。 */

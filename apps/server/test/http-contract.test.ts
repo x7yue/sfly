@@ -58,7 +58,8 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 		for (const def of httpContract) {
 			if ("response" in def) walk(def.response, `${def.method} ${def.path}`);
 			if ("events" in def) {
-				for (const [name, schema] of Object.entries(def.events)) walk(schema, `${def.path} ${name}`);
+				for (const [name, schema] of Object.entries(def.events))
+					walk(schema, `${def.path} ${name}`);
 			}
 		}
 		expect(plain).toEqual([]);

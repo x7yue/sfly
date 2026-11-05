@@ -1,6 +1,7 @@
 import {
 	type CatalogNode,
 	type ChainRunView,
+	isActiveStatus,
 	type MetricIncrement,
 	type NodeRunView,
 	queryKey,
@@ -41,7 +42,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 /** 摘要里显示的最新日志行数。 */
 const LOG_LINES = 6;
 
-const ACTIVE = new Set(["queued", "dispatched", "running", "waiting"]);
 const isDone = (status: string) => status === "success" || status === "skipped";
 
 /**
@@ -103,7 +103,7 @@ export function RunSummary({ runId }: { runId: string }) {
 	const chains = orderedChains(run);
 	const elapsed = (run.ended_at ? Date.parse(run.ended_at) : now) - Date.parse(run.started_at);
 	const active = chains.flatMap((chain) =>
-		chain.nodes.filter((n) => ACTIVE.has(n.status)).map((node) => ({ chain, node })),
+		chain.nodes.filter((n) => isActiveStatus(n.status)).map((node) => ({ chain, node })),
 	);
 	const focus = findNode(run, focusNode(run));
 	const taskId = focus?.attempts.at(-1)?.task_id;

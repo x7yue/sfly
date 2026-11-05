@@ -16,7 +16,12 @@ import {
 	TaskAction,
 	type TaskResult,
 } from "@sfly/proto";
-import type { OrchestrationDocument, OrchestrationNode, PackageMetadata } from "@sfly/schema";
+import {
+	ACTIVE_STATUSES,
+	type OrchestrationDocument,
+	type OrchestrationNode,
+	type PackageMetadata,
+} from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
 import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
@@ -314,12 +319,7 @@ export class Engine implements AgentSessionHandler {
 		const active = await step.tx
 			.select()
 			.from(tasks)
-			.where(
-				and(
-					eq(tasks.chainInstanceId, chain.id),
-					inArray(tasks.status, ["queued", ...ON_AGENT, "waiting"]),
-				),
-			)
+			.where(and(eq(tasks.chainInstanceId, chain.id), inArray(tasks.status, ACTIVE_STATUSES)))
 			.orderBy(asc(tasks.seq))
 			.for("update");
 		let resumeAt: number | undefined;
