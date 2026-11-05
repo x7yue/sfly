@@ -11,7 +11,8 @@
 			"!**/routeTree.gen.ts",
 			"!packages/proto/src/gen",
 			"!sdk/python/src/sfly/schemas",
-			"!apps/server/drizzle"
+			"!apps/server/drizzle",
+			"!docs/prototype"
 		]
 	},
 	"formatter": {
