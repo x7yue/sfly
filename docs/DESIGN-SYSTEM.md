@@ -113,8 +113,8 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | 组件 | 说明 |
 |---|---|
 | `app-shell/AppShell` | 外壳：侧边栏（导航来自 `navigation.ts`，可折叠，状态存 localStorage）、顶栏（面包屑来自路由 `staticData.crumb`、Ctrl K 搜索入口、昵称） |
-| `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、通知；`useOverlays().open("shortcuts")` |
-| `app-shell/CommandPalette` | 「跳转」「场景」「命令」三组；新命令加在 `commands` 里 |
+| `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、运行抽屉、通知；`useOverlays().open("shortcuts")`、`useOverlays().runScenario(场景)` |
+| `app-shell/CommandPalette` | 「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」五组；新命令加在 `commands` 里 |
 | `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
 | `status`：`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView` | 状态与槽位，见下表；运行 / 链 / 节点状态的颜色与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，不另写映射表 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状，配色只在这里） |
