@@ -152,7 +152,9 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						started_at: iso(t.startedAt),
 						ended_at: iso(t.endedAt),
 						wake_at: iso(t.wakeAt),
-						progress: t.progress ? { ...t.progress, message: maskSecrets(t.progress.message, secrets) } : null,
+						progress: t.progress
+							? { ...t.progress, message: maskSecrets(t.progress.message, secrets) }
+							: null,
 					}));
 				const last = attempts.at(-1);
 				return {

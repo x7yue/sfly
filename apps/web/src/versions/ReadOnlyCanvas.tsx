@@ -2,6 +2,7 @@ import type { OrchestrationDocument } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Background, Controls, ReactFlow, ReactFlowProvider } from "@xyflow/react";
 import { useMemo } from "react";
+import { edgeTypes } from "#/canvas/edges";
 import { type SfEdge, type SfNode, toFlow } from "#/canvas/flow";
 import { CanvasContext, type CanvasInfo, nodeTypes } from "#/canvas/NodeCard";
 import { listPackages } from "#/lib/api";
@@ -54,6 +55,7 @@ export function ReadOnlyCanvas({
 						nodes={flow.nodes}
 						edges={flow.edges}
 						nodeTypes={nodeTypes}
+						edgeTypes={edgeTypes}
 						nodesDraggable={false}
 						nodesConnectable={false}
 						elementsSelectable={false}

@@ -139,8 +139,8 @@ export function RunPage({ runId }: { runId: string }) {
 	const nodeChains = useMemo(() => (doc0 ? chainOfNode(doc0) : new Map<string, string>()), [doc0]);
 
 	const error = run.error ?? version.error;
-	if (error) return <p className="p-8 text-red-600">加载失败：{error.message}</p>;
-	if (!run.data || !version.data) return <p className="p-8 text-gray-500">加载中…</p>;
+	if (error) return <p className="sf-err p-8">加载失败：{error.message}</p>;
+	if (!run.data || !version.data) return <p className="sf-hint p-8">加载中…</p>;
 	const data = run.data;
 	const doc = version.data.document;
 	const current = selected === undefined ? focusNode(data) : selected;

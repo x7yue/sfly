@@ -138,7 +138,7 @@ describe("验收 S3：故障", () => {
 					{ id: "entry", kind: "entry" },
 					stub("work", "wait_cancel", { ready_file: ready, report_file: report }),
 					stub("next", "echo", { text: "x" }),
-					// 清理节点忽略 SIGTERM，只有强制终止（SIGKILL）才能停下它。
+					// 这个 always 节点忽略 SIGTERM，只有强制终止（SIGKILL）才能停下它。
 					stub(
 						"cleanup",
 						"process_tree",

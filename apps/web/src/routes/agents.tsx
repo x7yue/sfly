@@ -12,24 +12,22 @@ function AgentsPage() {
 	});
 
 	return (
-		<div className="mx-auto max-w-6xl p-8">
-			<h1 className="text-2xl font-bold">Agent</h1>
-			<p className="mt-1 text-sm text-gray-500">Agent 启动后主动连接控制面并按名称注册。</p>
-			{isPending && <p className="mt-6 text-gray-500">加载中…</p>}
-			{error && <p className="mt-6 text-red-600">加载失败：{error.message}</p>}
-			{data && data.agents.length === 0 && (
-				<p className="mt-6 text-gray-500">还没有 Agent 注册过。</p>
-			)}
+		<div className="sf-page max-w-6xl!">
+			<h1>Agent</h1>
+			<p className="sf-page__sub">Agent 启动后主动连接控制面并按名称注册。</p>
+			{isPending && <p className="sf-hint mt-6">加载中…</p>}
+			{error && <p className="sf-err mt-6">加载失败：{error.message}</p>}
+			{data && data.agents.length === 0 && <p className="sf-hint mt-6">还没有 Agent 注册过。</p>}
 			{data && data.agents.length > 0 && (
-				<table className="mt-6 w-full text-left text-sm">
-					<thead className="text-gray-500">
+				<table className="sf-table">
+					<thead>
 						<tr>
-							<th className="py-2 font-normal">名称</th>
-							<th className="py-2 font-normal">状态</th>
-							<th className="py-2 font-normal">版本</th>
-							<th className="py-2 font-normal">系统</th>
-							<th className="py-2 font-normal">已安装的包</th>
-							<th className="py-2 font-normal">正在运行的任务</th>
+							<th scope="col">名称</th>
+							<th scope="col">状态</th>
+							<th scope="col">版本</th>
+							<th scope="col">系统</th>
+							<th scope="col">已安装的包</th>
+							<th scope="col">正在运行的任务</th>
 						</tr>
 					</thead>
 					<tbody>
@@ -46,31 +44,30 @@ function AgentsPage() {
 function AgentRow({ agent }: { agent: AgentView }) {
 	const online = agent.status === "online";
 	return (
-		<tr className="border-t border-gray-100 align-top">
-			<td className="py-2 font-mono font-semibold">{agent.name}</td>
-			<td className="py-2">
+		<tr>
+			<td className="font-mono font-semibold">{agent.name}</td>
+			<td>
 				<span
-					className={`inline-flex items-center gap-1 ${online ? "text-emerald-700" : "text-gray-500"}`}
+					className="inline-flex items-center gap-1"
+					style={{ color: online ? "var(--sf-ok)" : "var(--sf-text-3)" }}
 				>
-					<span
-						className={`inline-block h-2 w-2 rounded-full ${online ? "bg-emerald-500" : "bg-gray-400"}`}
-					/>
+					<span className={`sf-dot ${online ? "sf-dot--on" : ""}`} />
 					{online ? "在线" : "离线"}
 				</span>
-				<div className="text-xs text-gray-500">
+				<div className="sf-hint mt-0">
 					{online ? "连接于" : "最后在线"} {new Date(agent.last_seen_at).toLocaleString()}
 				</div>
 			</td>
-			<td className="py-2 font-mono">{agent.info.agent_version || "—"}</td>
-			<td className="py-2">
+			<td className="font-mono">{agent.info.agent_version || "—"}</td>
+			<td>
 				<span className="font-mono">
 					{agent.info.os || "?"}/{agent.info.arch || "?"}
 				</span>
-				<div className="text-xs text-gray-500">{agent.info.slots} 个槽位</div>
+				<div className="sf-hint mt-0">{agent.info.slots} 个槽位</div>
 			</td>
-			<td className="py-2">
+			<td>
 				{agent.installed_packages.length === 0 ? (
-					<span className="text-gray-400">无</span>
+					<span className="text-[var(--sf-text-3)]">无</span>
 				) : (
 					<ul className="font-mono text-xs">
 						{agent.installed_packages.map((p) => (
@@ -81,17 +78,17 @@ function AgentRow({ agent }: { agent: AgentView }) {
 					</ul>
 				)}
 				{agent.install?.state === "installing" && (
-					<div className="text-xs text-amber-700">
+					<div className="text-xs text-[var(--sf-warn)]">
 						正在安装 {agent.install.package}@{agent.install.version}
 					</div>
 				)}
 				{agent.install?.state === "failed" && (
-					<div className="text-xs text-red-700">
+					<div className="text-xs text-[var(--sf-danger-text)]">
 						安装 {agent.install.package}@{agent.install.version} 失败
 					</div>
 				)}
 				{agent.dev_packages?.length > 0 && (
-					<ul className="mt-1 font-mono text-xs text-sky-800">
+					<ul className="mt-1 font-mono text-xs text-[var(--sf-accent-hi)]">
 						{agent.dev_packages.map((p) => (
 							<li key={p.name} className="truncate" title={p.source}>
 								开发版本 {p.name}（{p.source}）
@@ -100,15 +97,15 @@ function AgentRow({ agent }: { agent: AgentView }) {
 					</ul>
 				)}
 			</td>
-			<td className="py-2">
+			<td>
 				{agent.running_tasks.length === 0 ? (
-					<span className="text-gray-400">空闲</span>
+					<span className="text-[var(--sf-text-3)]">空闲</span>
 				) : (
 					<ul className="space-y-1 text-xs">
 						{agent.running_tasks.map((t) => (
 							<li key={t.task_id}>
 								<span className="font-mono">{t.node_id}</span>（第 {t.attempt} 次尝试）
-								<div className="text-gray-500">
+								<div className="text-[var(--sf-text-3)]">
 									运行 <span className="font-mono">{t.run_id.slice(0, 8)}</span> · 开始于{" "}
 									{new Date(t.started_at).toLocaleTimeString()}
 								</div>
@@ -116,7 +113,7 @@ function AgentRow({ agent }: { agent: AgentView }) {
 						))}
 					</ul>
 				)}
-				<div className="text-xs text-gray-500">
+				<div className="sf-hint mt-0">
 					{agent.running_tasks.length}/{agent.info.slots} 槽位占用
 				</div>
 			</td>

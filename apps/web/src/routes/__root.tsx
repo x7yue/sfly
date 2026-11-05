@@ -41,14 +41,14 @@ function RootDocument({ children }: { children: React.ReactNode }) {
 				<HeadContent />
 			</head>
 			<body>
-				<nav className="flex h-[49px] items-center gap-5 border-b border-gray-200 bg-white px-4">
-					<Link to="/" className="font-bold">
+				<nav className="sf-nav">
+					<Link to="/" className="sf-nav__brand">
 						sfly
 					</Link>
 					<NavLink to="/orchestrations">编排</NavLink>
 					<NavLink to="/agents">Agent</NavLink>
 					<NavLink to="/packages">节点包</NavLink>
-					<span className="ml-auto">
+					<span className="sf-nav__nick">
 						<NicknameBadge />
 					</span>
 				</nav>
@@ -80,11 +80,7 @@ function NavLink({
 	children: string;
 }) {
 	return (
-		<Link
-			to={to}
-			className="text-sm text-gray-600 hover:text-gray-900"
-			activeProps={{ className: "font-semibold text-gray-900" }}
-		>
+		<Link to={to} className="sf-nav__link" activeProps={{ className: "sf-nav__link--active" }}>
 			{children}
 		</Link>
 	);

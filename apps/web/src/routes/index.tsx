@@ -4,21 +4,21 @@ export const Route = createFileRoute("/")({ component: Home });
 
 function Home() {
 	return (
-		<div className="p-8">
-			<h1 className="text-4xl font-bold">sfly</h1>
-			<ul className="mt-4 space-y-1 text-lg">
+		<div className="sf-page">
+			<h1>sfly</h1>
+			<ul className="sf-page__links">
 				<li>
-					<Link to="/orchestrations" className="text-blue-600 hover:underline">
+					<Link to="/orchestrations" className="sf-link">
 						编排
 					</Link>
 				</li>
 				<li>
-					<Link to="/agents" className="text-blue-600 hover:underline">
+					<Link to="/agents" className="sf-link">
 						Agent
 					</Link>
 				</li>
 				<li>
-					<Link to="/packages" className="text-blue-600 hover:underline">
+					<Link to="/packages" className="sf-link">
 						节点包
 					</Link>
 				</li>

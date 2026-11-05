@@ -113,7 +113,7 @@
 	border: 1px solid var(--sf-border);
 	border-radius: 14px;
 	background: var(--sf-surface);
-	box-shadow: 0 24px 64px rgb(0 0 0 / 0.5);
+	box-shadow: var(--sf-shadow-panel);
 	overflow: hidden;
 }
 .sf-logview[data-expanded="true"] .sf-sec {
@@ -132,7 +132,7 @@
 	position: fixed;
 	inset: 0;
 	z-index: 49;
-	background: rgb(0 0 0 / 0.55);
+	background: var(--sf-overlay);
 	border: 0;
 	cursor: default;
 }

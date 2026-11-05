@@ -8,23 +8,23 @@ export function NicknameGate() {
 	if (nickname !== null) return null;
 
 	return (
-		<div className="fixed inset-0 z-50 grid place-items-center bg-black/40">
+		<div className="sf-gate">
 			<form
-				className="w-80 rounded-lg bg-white p-5 shadow-xl"
+				className="sf-gate__form"
 				onSubmit={(e) => {
 					e.preventDefault();
 					if (value.trim()) setNickname(value.trim());
 				}}
 			>
 				<h2 className="text-lg font-semibold">欢迎使用 sfly</h2>
-				<p className="mt-1 text-sm text-gray-500">
+				<p className="sf-hint">
 					请填写昵称。它会标记你保存的版本和触发的运行，只保存在这个浏览器里。
 				</p>
 				<input
 					aria-label="昵称"
 					// biome-ignore lint/a11y/noAutofocus: 打开页面后先填写昵称
 					autoFocus
-					className="mt-3 w-full rounded border border-gray-300 px-2 py-1 outline-none focus:border-blue-500"
+					className="sf-inp mt-3"
 					value={value}
 					onChange={(e) => setValue(e.target.value)}
 					placeholder="昵称"
@@ -32,7 +32,7 @@ export function NicknameGate() {
 				<button
 					type="submit"
 					disabled={!value.trim()}
-					className="mt-3 w-full rounded bg-blue-600 py-1 font-medium text-white disabled:opacity-50"
+					className="sf-btn sf-btn--primary mt-3 w-full"
 				>
 					开始使用
 				</button>
@@ -48,7 +48,7 @@ export function NicknameBadge() {
 	return (
 		<button
 			type="button"
-			className="text-sm text-gray-600 hover:underline"
+			className="sf-nav__nick"
 			title="修改昵称"
 			onClick={() => {
 				const next = window.prompt("修改昵称", nickname)?.trim();

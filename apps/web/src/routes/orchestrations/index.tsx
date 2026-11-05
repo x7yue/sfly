@@ -10,9 +10,6 @@ import {
 
 export const Route = createFileRoute("/orchestrations/")({ component: OrchestrationsPage });
 
-const inputClass =
-	"rounded border border-gray-300 px-2 py-1 text-sm outline-none focus:border-blue-500";
-
 function OrchestrationsPage() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
@@ -31,8 +28,8 @@ function OrchestrationsPage() {
 	});
 
 	return (
-		<div className="mx-auto max-w-5xl p-8">
-			<h1 className="text-2xl font-bold">编排</h1>
+		<div className="sf-page">
+			<h1>编排</h1>
 			<form
 				className="mt-4 flex gap-2"
 				onSubmit={(e) => {
@@ -42,7 +39,7 @@ function OrchestrationsPage() {
 			>
 				<input
 					aria-label="新编排名称"
-					className={`${inputClass} w-72`}
+					className="sf-inp w-72"
 					placeholder="新编排名称"
 					value={name}
 					onChange={(e) => setName(e.target.value)}
@@ -50,29 +47,25 @@ function OrchestrationsPage() {
 				<button
 					type="submit"
 					disabled={!name.trim() || create.isPending}
-					className="rounded bg-blue-600 px-3 py-1 text-sm font-medium text-white disabled:opacity-50"
+					className="sf-btn sf-btn--primary"
 				>
 					新建编排
 				</button>
-				{create.error && (
-					<span className="self-center text-sm text-red-600">{create.error.message}</span>
-				)}
+				{create.error && <span className="sf-err self-center">{create.error.message}</span>}
 			</form>
-			<p className="mt-1 text-xs text-gray-500">新建的编排自带一个入口节点。</p>
+			<p className="sf-hint">新建的编排自带一个入口节点。</p>
 
-			{isPending && <p className="mt-6 text-gray-500">加载中…</p>}
-			{error && <p className="mt-6 text-red-600">加载失败：{error.message}</p>}
-			{data && data.orchestrations.length === 0 && (
-				<p className="mt-6 text-gray-500">还没有编排。</p>
-			)}
+			{isPending && <p className="sf-hint mt-6">加载中…</p>}
+			{error && <p className="sf-err mt-6">加载失败：{error.message}</p>}
+			{data && data.orchestrations.length === 0 && <p className="sf-hint mt-6">还没有编排。</p>}
 			{data && data.orchestrations.length > 0 && (
-				<table className="mt-6 w-full text-left text-sm">
-					<thead className="text-gray-500">
+				<table className="sf-table">
+					<thead>
 						<tr>
-							<th className="py-2 font-normal">名称</th>
-							<th className="py-2 font-normal">最新版本</th>
-							<th className="py-2 font-normal">创建时间</th>
-							<th className="py-2 font-normal" />
+							<th scope="col">名称</th>
+							<th scope="col">最新版本</th>
+							<th scope="col">创建时间</th>
+							<th scope="col" />
 						</tr>
 					</thead>
 					<tbody>
@@ -98,25 +91,21 @@ function OrchestrationRow({ orchestration }: { orchestration: Orchestration }) {
 	});
 
 	return (
-		<tr className="border-t border-gray-100 align-top">
-			<td className="py-2">
-				<Link
-					to="/orchestrations/$id"
-					params={{ id: orchestration.id }}
-					className="font-medium text-blue-600 hover:underline"
-				>
+		<tr>
+			<td>
+				<Link to="/orchestrations/$id" params={{ id: orchestration.id }} className="sf-link">
 					{orchestration.name}
 				</Link>
 			</td>
-			<td className="py-2">
-				{orchestration.head_version === 0 ? "未保存" : `v${orchestration.head_version}`}
+			<td>{orchestration.head_version === 0 ? "未保存" : `v${orchestration.head_version}`}</td>
+			<td className="text-[var(--sf-text-3)]">
+				{new Date(orchestration.created_at).toLocaleString()}
 			</td>
-			<td className="py-2 text-gray-500">{new Date(orchestration.created_at).toLocaleString()}</td>
-			<td className="py-2 text-right">
+			<td className="text-right">
 				{copyName === null ? (
 					<button
 						type="button"
-						className="text-sm text-blue-600 hover:underline"
+						className="sf-link border-0 bg-transparent text-[13px]"
 						onClick={() => setCopyName(`${orchestration.name} 副本`)}
 					>
 						复制
@@ -131,7 +120,7 @@ function OrchestrationRow({ orchestration }: { orchestration: Orchestration }) {
 					>
 						<input
 							aria-label="副本名称"
-							className={`${inputClass} w-56`}
+							className="sf-inp w-56"
 							value={copyName}
 							// biome-ignore lint/a11y/noAutofocus: 点击“复制”后直接输入新名字
 							autoFocus
@@ -140,20 +129,20 @@ function OrchestrationRow({ orchestration }: { orchestration: Orchestration }) {
 						<button
 							type="submit"
 							disabled={!copyName.trim() || copy.isPending}
-							className="rounded bg-blue-600 px-2 py-1 text-sm text-white disabled:opacity-50"
+							className="sf-btn sf-btn--primary sf-btn--sm"
 						>
 							复制
 						</button>
 						<button
 							type="button"
-							className="text-sm text-gray-500"
+							className="sf-btn sf-btn--ghost sf-btn--sm"
 							onClick={() => setCopyName(null)}
 						>
 							取消
 						</button>
 					</form>
 				)}
-				{copy.error && <p className="text-xs text-red-600">{copy.error.message}</p>}
+				{copy.error && <p className="sf-err">{copy.error.message}</p>}
 			</td>
 		</tr>
 	);
