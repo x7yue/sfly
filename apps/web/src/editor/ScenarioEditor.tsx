@@ -1,4 +1,11 @@
-import { checkConnection, documentWarnings, type OrchestrationWarning } from "@sfly/orchestration";
+import {
+	checkConnection,
+	documentWarnings,
+	LAYOUT_COLUMN,
+	type OrchestrationWarning,
+	SUBFLOW_TOP_GAP,
+	tidyLayout,
+} from "@sfly/orchestration";
 import { agentsApi, packagesApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -10,7 +17,8 @@ import {
 	useNodesState,
 	useReactFlow,
 } from "@xyflow/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { Redo2Icon, Undo2Icon, Wand2Icon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePackageCatalog } from "#/canvas/catalog";
 import {
 	type DocMeta,
@@ -21,9 +29,12 @@ import {
 	type SfNode,
 	toFlow,
 	toFlowEdge,
+	uniqueNodeId,
 } from "#/canvas/flow";
+import { ToolButton } from "#/components/canvas/CanvasDock";
 import type { CanvasInfo } from "#/components/canvas/context";
 import { FlowCanvas } from "#/components/canvas/FlowCanvas";
+import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery, type Orchestration, type OrchestrationHead } from "#/lib/api";
@@ -32,7 +43,17 @@ import { versionConflictOf } from "#/versions/api";
 import { hasDraft } from "#/versions/draft";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
 import { StaleDraftBanner } from "#/versions/VersionControls";
+import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
+import {
+	type AddItem,
+	appendTarget,
+	idStem,
+	isChainTail,
+	newDocNode,
+	packageGroups,
+} from "./add-node";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
+import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
 import {
@@ -43,6 +64,9 @@ import {
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { documentFieldErrors, type FieldError } from "./validation";
+
+/** 打开着的弹窗或弹出层（有它们时 Tab 照常切换焦点）。 */
+const OPEN_OVERLAY = '[role="dialog"][data-open], [role="alertdialog"][data-open]';
 
 /** 检查器（宽 372 + 右边距 12）占住的宽度。 */
 const INSPECTOR_SPACE = 384;
@@ -135,6 +159,13 @@ function Editor({
 	const agentList = agents.data?.agents ?? [];
 	const titleOf = usePackageTitles();
 
+	// —— 撤销 / 重做：修改编排的操作都先记下修改前的状态（edit-history.ts） ——
+	const history = useEditHistory(
+		{ nodes, edges, meta },
+		{ nodes: setNodes, edges: setEdges, meta: setMeta },
+		{ nodes: onNodesChange, edges: onEdgesChange },
+	);
+
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages, agentList);
@@ -207,14 +238,36 @@ function Editor({
 				notify.warning(problem);
 				return;
 			}
+			history.checkpoint();
 			setEdges((es) => [...es, toFlowEdge({ from: c.source, to: c.target, kind: edgeKindOf(c) })]);
 		},
-		[connectionProblem, setEdges],
+		[connectionProblem, setEdges, history.checkpoint],
 	);
-	/** 拖到某个端口上但连线被拒绝时，提示原因。 */
+	const [adding, setAdding] = useState<AddRequest | null>(null);
+	/**
+	 * 从链尾端口拖线到空白处：弹出可以接上的节点菜单；拖到某个端口上但连线被拒绝时，提示原因。
+	 */
 	const onConnectEnd: OnConnectEnd = useCallback(
-		(_event, state) => {
-			if (state.isValid !== false || !state.fromNode || !state.toNode) return;
+		(event, state) => {
+			if (!state.fromNode) return;
+			if (!state.toNode) {
+				if (state.fromHandle?.type !== "source" || state.fromHandle.id === "dispatch") return;
+				if (!isChainTail(docRef.current, state.fromNode.id)) {
+					notify.warning("只能在主链或子流程的链尾追加节点");
+					return;
+				}
+				const point = "changedTouches" in event ? event.changedTouches[0] : event;
+				if (!point) return;
+				const at = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
+				setAdding({
+					via: "drop",
+					tail: state.fromNode.id,
+					client: { x: point.clientX, y: point.clientY },
+					position: { x: at.x, y: at.y - NODE_HEIGHT / 2 },
+				});
+				return;
+			}
+			if (state.isValid !== false) return;
 			const fromSource = state.fromHandle?.type !== "target";
 			const [source, target] = fromSource
 				? [state.fromNode, state.toNode]
@@ -230,7 +283,7 @@ function Editor({
 			});
 			if (problem) notify.warning(problem);
 		},
-		[connectionProblem],
+		[connectionProblem, flow],
 	);
 
 	const select = useCallback((id: string | null) => setSelectedId(id), []);
@@ -253,8 +306,98 @@ function Editor({
 		setSelectedId(null);
 		void flow.deleteElements({ nodes: [{ id }] });
 	};
-	const updateNode = (id: string, node: DocNode) =>
+	const updateNode = (id: string, node: DocNode) => {
+		// 同一个节点上连续的输入合并为一步撤销。
+		history.checkpoint(`node:${id}`);
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
+	};
+
+	// —— 添加节点：只能接在主链或子流程的链尾；子流程入口在所有节点下方开一个新的子流程区域 ——
+	const groups = useMemo(
+		() => packageGroups(packages.data?.packages, agentList, meta.packages),
+		[packages.data, agentList, meta.packages],
+	);
+	const menuTail =
+		adding?.via === "drop"
+			? adding.tail
+			: appendTarget(doc, nodes.some((n) => n.id === selectedId) ? selectedId : null);
+	const addNode = (item: AddItem) => {
+		const request = adding;
+		setAdding(null);
+		const tail = request?.via === "drop" ? request.tail : menuTail;
+		const id = uniqueNodeId(
+			idStem(item),
+			nodes.map((n) => n.id),
+		);
+		const chained = item.kind !== "subflow_entry" && tail !== undefined;
+		const tailNode = tail ? nodes.find((n) => n.id === tail) : undefined;
+		const bottom = Math.max(0, ...nodes.map((n) => n.position.y + NODE_HEIGHT));
+		const right = Math.max(0, ...nodes.map((n) => n.position.x + LAYOUT_COLUMN));
+		const position =
+			request?.via === "drop"
+				? request.position
+				: item.kind === "subflow_entry"
+					? { x: 0, y: bottom + SUBFLOW_TOP_GAP }
+					: tailNode
+						? { x: tailNode.position.x + LAYOUT_COLUMN, y: tailNode.position.y }
+						: { x: right, y: 0 };
+		history.checkpoint();
+		if (item.kind === "package" && meta.packages[item.package] !== item.version) {
+			setMeta((m) => ({ ...m, packages: { ...m.packages, [item.package]: item.version } }));
+		}
+		setNodes((ns) => [
+			...ns,
+			{ id, type: item.kind, position, data: { node: newDocNode(item, id) }, deletable: true },
+		]);
+		if (chained) setEdges((es) => [...es, toFlowEdge({ from: tail, to: id, kind: "chain" })]);
+		setSelectedId(id);
+		requestAnimationFrame(() => {
+			if (request?.via !== "drop") {
+				void flow.setCenter(position.x + NODE_WIDTH / 2, position.y + NODE_HEIGHT / 2, {
+					zoom: flow.getZoom(),
+					duration: 200,
+				});
+			}
+			document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
+		});
+	};
+	if (running && adding) setAdding(null);
+	const openAddMenu = () => setAdding({ via: "menu" });
+	// 运行状态下画布只读：添加、撤销 / 重做、整理布局都不生效（工具条上也不显示）。
+	useShortcut("canvas-add", openAddMenu, !running);
+	useShortcut("canvas-undo", history.undo, !running);
+	useShortcut("canvas-redo", history.redo, !running);
+	// Tab：焦点在画布上（或页面上没有焦点）时打开添加节点菜单，其他时候照常切换焦点。
+	const openRef = useRef<(() => void) | null>(openAddMenu);
+	openRef.current = running ? null : openAddMenu;
+	useEffect(() => {
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Tab" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)
+				return;
+			const open = openRef.current;
+			if (!open || event.defaultPrevented || document.querySelector(OPEN_OVERLAY)) return;
+			const target = event.target instanceof HTMLElement ? event.target : null;
+			const onCanvas =
+				target === document.body ||
+				target?.closest("[data-node-id]") ||
+				target?.classList.contains("react-flow__pane") ||
+				target?.matches('[role="region"][aria-label^="编排画布"]');
+			if (!onCanvas) return;
+			event.preventDefault();
+			open();
+		};
+		document.addEventListener("keydown", onKeyDown);
+		return () => document.removeEventListener("keydown", onKeyDown);
+	}, []);
+
+	// —— 整理布局：主链两行折返、子流程放在下方区域（@sfly/orchestration，与初始布局同一套算法） ——
+	const tidy = () => {
+		const layout = tidyLayout(doc);
+		history.checkpoint();
+		setNodes((ns) => ns.map((n) => ({ ...n, position: layout.get(n.id) ?? n.position })));
+		notify.success("已整理布局", { description: "可以撤销（Ctrl Z）" });
+	};
+	useShortcut("canvas-tidy", tidy, !running);
 
 	const save = () => {
 		if (fieldErrors.length > 0) {
@@ -289,9 +432,14 @@ function Editor({
 		warnings,
 		fieldErrors,
 		onChangeNode: updateNode,
-		onDefaultAgent: (agent) => setMeta((m) => ({ ...m, default_agent: agent })),
-		onLock: (name, version) =>
-			setMeta((m) => ({ ...m, packages: { ...m.packages, [name]: version } })),
+		onDefaultAgent: (agent) => {
+			history.checkpoint();
+			setMeta((m) => ({ ...m, default_agent: agent }));
+		},
+		onLock: (name, version) => {
+			history.checkpoint();
+			setMeta((m) => ({ ...m, packages: { ...m.packages, [name]: version } }));
+		},
 		onLocate: locate,
 		onDelete: deleteNode,
 	};
@@ -325,8 +473,8 @@ function Editor({
 					{...(running ? decorations : {})}
 					selectedId={selectedNode ? selectedId : null}
 					onSelect={select}
-					onNodesChange={running ? runFlow?.onNodesChange : onNodesChange}
-					onEdgesChange={running ? undefined : onEdgesChange}
+					onNodesChange={running ? runFlow?.onNodesChange : history.onNodesChange}
+					onEdgesChange={running ? undefined : history.onEdgesChange}
 					onConnect={running ? undefined : onConnect}
 					onConnectEnd={running ? undefined : onConnectEnd}
 					isValidConnection={isValidConnection}
@@ -338,6 +486,42 @@ function Editor({
 					}}
 					onEnter={focusInspector}
 					inspector={{ open: inspectorOpen, onToggle: () => setInspectorOpen((o) => !o) }}
+					dockStart={
+						running ? undefined : (
+							<AddNodeMenu
+								request={adding}
+								tail={menuTail}
+								groups={groups}
+								onOpenChange={(open) => setAdding(open ? { via: "menu" } : null)}
+								onPick={addNode}
+							/>
+						)
+					}
+					dockTools={
+						running ? undefined : (
+							<>
+								<ToolButton
+									label="撤销"
+									keys="Ctrl Z"
+									disabled={!history.canUndo}
+									onClick={history.undo}
+								>
+									<Undo2Icon />
+								</ToolButton>
+								<ToolButton
+									label="重做"
+									keys="Ctrl Shift Z"
+									disabled={!history.canRedo}
+									onClick={history.redo}
+								>
+									<Redo2Icon />
+								</ToolButton>
+								<ToolButton label="整理布局" keys="Alt Shift F" onClick={tidy}>
+									<Wand2Icon />
+								</ToolButton>
+							</>
+						)
+					}
 				>
 					<EditorTopLeft
 						orchestration={orchestration}

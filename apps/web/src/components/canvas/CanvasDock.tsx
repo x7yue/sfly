@@ -26,12 +26,14 @@ export function ToolButton({
 	label,
 	keys,
 	pressed,
+	disabled,
 	onClick,
 	children,
 }: {
 	label: string;
 	keys?: string;
 	pressed?: boolean;
+	disabled?: boolean;
 	onClick(): void;
 	children: ReactNode;
 }) {
@@ -43,9 +45,10 @@ export function ToolButton({
 						type="button"
 						aria-label={label}
 						aria-pressed={pressed}
+						disabled={disabled}
 						onClick={onClick}
 						className={cn(
-							"grid size-7.5 cursor-pointer place-items-center rounded-md text-fg-2 hover:bg-raised hover:text-fg-1 [&_svg]:size-4",
+							"grid size-7.5 cursor-pointer place-items-center rounded-md text-fg-2 hover:bg-raised hover:text-fg-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent [&_svg]:size-4",
 							pressed && "bg-raised-2 text-fg-1",
 						)}
 					/>
