@@ -18,7 +18,7 @@ export interface OrchestrationFilter {
 }
 
 /** 场景引用的 Agent 名：默认 Agent 在前，其余（节点另选的）按名称排序。 */
-function referencedAgents(doc: OrchestrationDocument): { name: string; default: boolean }[] {
+export function referencedAgents(doc: OrchestrationDocument): { name: string; default: boolean }[] {
 	const others = new Set<string>();
 	for (const node of doc.nodes) {
 		if (node.kind === "package" && node.agent && node.agent !== doc.default_agent) {
@@ -29,6 +29,29 @@ function referencedAgents(doc: OrchestrationDocument): { name: string; default: 
 		...(doc.default_agent ? [{ name: doc.default_agent, default: true }] : []),
 		...[...others].sort().map((name) => ({ name, default: false })),
 	];
+}
+
+/** 文档引用的 Agent 与在线状态（还没有注册过的为 unknown），顺序同 referencedAgents。 */
+export async function referencedAgentStatus(
+	db: Db,
+	doc: OrchestrationDocument,
+): Promise<ReferencedAgent[]> {
+	const refs = referencedAgents(doc);
+	if (refs.length === 0) return [];
+	const status = new Map(
+		(
+			await db
+				.select({ name: agents.name, status: agents.status })
+				.from(agents)
+				.where(
+					inArray(
+						agents.name,
+						refs.map((a) => a.name),
+					),
+				)
+		).map((a) => [a.name, a.status]),
+	);
+	return refs.map((a) => ({ ...a, status: status.get(a.name) ?? "unknown" }));
 }
 
 /**

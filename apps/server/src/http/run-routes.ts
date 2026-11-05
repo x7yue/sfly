@@ -4,6 +4,7 @@ import type { Db } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import { getRunView, listRuns } from "../engine/run-queries.js";
 import type { ProgressEvent } from "../logs/task-logs.js";
+import { referencedAgentStatus } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { Sse } from "../sse/sse.js";
@@ -28,7 +29,7 @@ export function registerRunRoutes(
 		metrics: Topics<MetricIncrement>;
 	},
 ): void {
-	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）。
+	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、锁定的包版本与引用的 Agent。
 	contractRoute(app, runsApi.preflight, async ({ params }, reply) => {
 		const head = isUuid(params.id) ? await deps.orchestrations.head(params.id) : undefined;
 		if (!head) return sendError(reply, 404, "not_found", "orchestration not found");
@@ -38,6 +39,8 @@ export function registerRunRoutes(
 				version: head.number,
 				params: [],
 				problems: [{ code: "archived", message: "场景已归档，恢复后才能运行" }],
+				packages: {},
+				agents: [],
 			};
 		}
 		if (head.number === 0) {
@@ -45,6 +48,8 @@ export function registerRunRoutes(
 				version: 0,
 				params: [],
 				problems: [{ code: "no_version", message: "场景还没有保存过版本" }],
+				packages: {},
+				agents: [],
 			};
 		}
 		const entry = head.document.nodes.find((n) => n.kind === "entry");
@@ -52,6 +57,8 @@ export function registerRunRoutes(
 			version: head.number,
 			params: entry?.kind === "entry" ? entry.params : [],
 			problems: await deps.preflight(head.document),
+			packages: head.document.packages,
+			agents: await referencedAgentStatus(deps.db, head.document),
 		};
 	});
 
