@@ -253,3 +253,28 @@ test("通过 API 创建、缺少布局的场景打开时用整理布局得到初
 	// 补齐布局不算修改。
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
 });
+
+test("运行状态下画布只读：工具条不显示添加、撤销 / 重做、整理布局，对应的快捷键不生效", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const original = await nodePosition(page, "sub_entry");
+
+	await page.locator("body").press("r");
+	await expect(page.getByRole("button", { name: /保存/ })).toHaveCount(0);
+	for (const tool of ["添加节点", "撤销", "重做", "整理布局"]) {
+		await expect(dock(page).getByRole("button", { name: tool })).toHaveCount(0);
+	}
+	await page.keyboard.press("Tab");
+	await page.keyboard.press("/");
+	await expect(addMenu(page)).toHaveCount(0);
+	await page.keyboard.press("Alt+Shift+F");
+	await expect(page.getByText("已整理布局")).toHaveCount(0);
+	expect(await nodePosition(page, "sub_entry")).toEqual(original);
+
+	await page.locator("body").press("e");
+	await expect(dock(page).getByRole("button", { name: "添加节点" })).toBeVisible();
+	await expect(dock(page).getByRole("button", { name: "整理布局" })).toBeVisible();
+});
