@@ -1,8 +1,10 @@
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
 import { expect, START_TIME, test } from "./fixtures";
-import { metricPackage, runningScenario, unixAt } from "./monitor-scenario";
-import { createScenario, publishPackage } from "./support";
+import { metricPackage, pingPoints, runningScenario, unixAt } from "./monitor-scenario";
+import { PARAM_SCENARIO } from "./run-drawer-scenario";
+import { runDocument } from "./run-records";
+import { createScenario, publishPackage, triggerRun } from "./support";
 
 // 主指标与指标声明在各处的展示（#43）：节点包管理页、检查器「说明与指标」、画布运行状态的节点卡片、
 // 运行抽屉摘要、运行记录的进行中卡片。
@@ -110,4 +112,52 @@ test("画布运行状态：节点卡片的指标槽显示主指标最新值与�
 	await expect(probe).toHaveText("level 3");
 	agent.metrics(tasks.probe as AssignedTask, [["level", unixAt(START, 14), 42]]);
 	await expect(probe).toHaveText("level 42");
+});
+
+test("运行抽屉摘要：正在执行的节点显示主指标的最新值与趋势，实时更新", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane, metricPackage());
+	await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("textbox", { name: /^host/ }).fill("10.0.0.8");
+	await drawer.getByRole("textbox", { name: /^api_token / }).fill("tok-live");
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	const task = await agent.nextAssign();
+	const active = drawer.getByRole("list", { name: "正在执行的节点" });
+	await expect(active).toContainText("执行中");
+
+	agent.metrics(task, pingPoints(START, 0, 3));
+	const metric = active.locator('[data-primary-metric="level"]');
+	await expect(metric).toHaveText("level（主指标）4");
+	await expect(metric.locator("[data-sparkline]")).toHaveCount(1);
+	agent.metrics(task, [["level", unixAt(START, 4), 42]]);
+	await expect(metric).toHaveText("level（主指标）42");
+});
+
+test("运行记录的进行中卡片：当前节点显示主指标的最新值与趋势，随列表刷新更新", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	await publishPackage(controlPlane, metricPackage());
+	const metered = await createScenario(controlPlane, "撮合压测", runDocument());
+	const runId = await triggerRun(controlPlane, metered);
+	const check = await agent.nextAssign();
+	agent.metrics(check, pingPoints(START, 0, 3));
+
+	await page.goto("/runs");
+	const card = page.getByRole("article", { name: `运行 ${runId.slice(0, 8)}` });
+	const metric = card.getByRole("listitem").locator('[data-primary-metric="level"]');
+	await expect(metric).toHaveText("level 4");
+	await expect(metric.locator("[data-sparkline]")).toHaveCount(1);
+	// 列表定时刷新：新上报的点随之更新。
+	agent.metrics(check, [["level", unixAt(START, 4), 42]]);
+	await expect(metric).toHaveText("level 42");
 });

@@ -2,6 +2,9 @@ import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { StatusDot, StatusPill } from "#/components/status";
 import { formatDateTime } from "#/lib/format";
+import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
+import { catalogEntry } from "#/metrics/use-primary-metric";
+import { useMetricCatalog } from "#/monitor/use-run-metrics";
 import { formatDuration, shortId, statusLabel } from "#/runs/format";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
@@ -10,6 +13,8 @@ import { ChainBar, chainDone, chainLabel } from "./ChainProgress";
 
 /** 卡片上最多列出的当前节点数。 */
 const MAX_ACTIVE = 3;
+/** 当前节点的主指标多久重新查询一次（与列表的刷新间隔相同；运行记录页没有运行事件流）。 */
+const METRIC_POLL_MS = 2_000;
 
 /** 当前节点的状态点：排队为空心灰圈，等待唤醒为琥珀，其余（派发中、执行中）为青色。 */
 const ACTIVE_DOT = {
@@ -22,11 +27,15 @@ const activeDot = (status: string) =>
 
 /**
  * 进行中的运行（原型 runCard）：场景、版本、已运行时长、各链进度、失败的子流程、
- * 当前执行的节点与进度，「打开运行详情」「取消运行」。点卡片空白处也进入运行详情。
- * 当前节点的主指标由 #43 补上。
+ * 当前执行的节点与主指标（节点类型有主指标时，#43）或进度，「打开运行详情」「取消运行」。
+ * 点卡片空白处也进入运行详情。
  */
 export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 	const navigate = useNavigate();
+	// 主指标：运行的指标目录在当前节点变化时重新获取，序列由各节点定时查询。
+	const shown = run.active_nodes.slice(0, MAX_ACTIVE);
+	const signature = shown.map((n) => `${n.chain_instance_id}/${n.node_id}:${n.status}`).join(",");
+	const catalog = useMetricCatalog(run.id, signature, shown.length > 0);
 	const failedSubflows = run.failures.filter((f) => f.subflow);
 	const open = () => void navigate({ to: "/runs/$id", params: { id: run.id } });
 	return (
@@ -84,7 +93,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 			</div>
 			{run.active_nodes.length > 0 && (
 				<ul className="m-0 flex list-none flex-col gap-1 border-t border-border-soft p-0 pt-2">
-					{run.active_nodes.slice(0, MAX_ACTIVE).map((node) => (
+					{shown.map((node) => (
 						<li
 							key={`${node.chain_instance_id}/${node.node_id}`}
 							className="flex items-center gap-2 text-sm whitespace-nowrap"
@@ -95,12 +104,22 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 							/>
 							<span className="font-mono">{node.node_id}</span>
 							<span className="text-xs text-fg-3">{statusLabel(node.status)}</span>
-							{node.progress && (
-								<span className="ml-auto font-mono text-xs text-fg-2">
-									{node.progress.current}
-									{node.progress.total !== null && ` / ${node.progress.total}`}
-								</span>
-							)}
+							<NodePrimaryMetric
+								runId={run.id}
+								entry={catalogEntry(catalog.data, node.chain_instance_id, node.node_id)}
+								status={node.status}
+								poll={METRIC_POLL_MS}
+								variant="inline"
+								className="ml-auto max-w-[60%] flex-none text-xs"
+								fallback={
+									node.progress && (
+										<span className="ml-auto font-mono text-xs text-fg-2">
+											{node.progress.current}
+											{node.progress.total !== null && ` / ${node.progress.total}`}
+										</span>
+									)
+								}
+							/>
 						</li>
 					))}
 					{run.active_nodes.length > MAX_ACTIVE && (
