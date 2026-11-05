@@ -92,6 +92,30 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("同一个运行在页面上只开一条事件流（摘要、底部按钮共用；指标增量只追加一次）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	const streams: string[] = [];
+	page.on("request", (request) => {
+		if (/\/api\/runs\/[^/]+\/events/.test(request.url())) streams.push(request.url());
+	});
+
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await agent.nextAssign();
+	await expect(drawer.getByTestId("summary-status")).toHaveText("运行中");
+	await expect(drawer.getByRole("button", { name: "取消运行" })).toBeVisible();
+	await page.waitForTimeout(300);
+	expect(streams).toHaveLength(1);
+});
+
 test("摘要里可以取消运行", async ({ page, controlPlane, connectAgent }) => {
 	const agent = await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);

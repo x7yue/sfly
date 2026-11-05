@@ -35,28 +35,49 @@ export function useEventSource<S extends StreamDef>(
 
 	useEffect(() => {
 		if (url === null) return;
-		const source = new EventSource(url);
-		source.onopen = () => onOpenRef.current?.();
-		for (const event of events.split("\n").filter(Boolean)) {
-			source.addEventListener(event, (message) => {
-				let data: unknown;
-				try {
-					data = JSON.parse((message as MessageEvent<string>).data);
-				} catch {
-					return;
-				}
-				if (import.meta.env.DEV) {
-					const parsed = def.events[event]?.safeParse(data);
-					if (parsed && !parsed.success) {
-						console.error(`SSE 事件不符合接口契约（${def.path} ${event}）`, parsed.error.issues);
-						return;
-					}
-				}
+		return openEventSource(
+			def,
+			url,
+			events.split("\n").filter(Boolean),
+			(event, data) =>
 				(handlersRef.current as Record<string, ((data: unknown) => void) | undefined>)[event]?.(
 					data,
-				);
-			});
-		}
-		return () => source.close();
+				),
+			() => onOpenRef.current?.(),
+		);
 	}, [url, events, def]);
+}
+
+/**
+ * 打开一条 SSE 连接（不依赖组件，useEventSource 与跨组件共用的连接都用它）：按事件名分发已解析的 data
+ * （开发环境下按契约校验，不符合时在控制台报错并丢弃）。返回关闭函数。
+ */
+export function openEventSource<S extends StreamDef>(
+	def: S,
+	url: string,
+	events: readonly string[],
+	dispatch: (event: string, data: unknown) => void,
+	onOpen?: () => void,
+): () => void {
+	const source = new EventSource(url);
+	source.onopen = () => onOpen?.();
+	for (const event of events) {
+		source.addEventListener(event, (message) => {
+			let data: unknown;
+			try {
+				data = JSON.parse((message as MessageEvent<string>).data);
+			} catch {
+				return;
+			}
+			if (import.meta.env.DEV) {
+				const parsed = def.events[event]?.safeParse(data);
+				if (parsed && !parsed.success) {
+					console.error(`SSE 事件不符合接口契约（${def.path} ${event}）`, parsed.error.issues);
+					return;
+				}
+			}
+			dispatch(event, data);
+		});
+	}
+	return () => source.close();
 }

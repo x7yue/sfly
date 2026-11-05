@@ -5,6 +5,7 @@ import { PlayIcon } from "lucide-react";
 import { useCallback, useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { CancelRunDialog } from "#/monitor/CancelRunDialog";
+import { useLiveRun } from "#/monitor/live-run";
 import { shortId } from "#/monitor/run-model";
 import { versionQuery } from "#/versions/queries";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +19,7 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import { RunSummary, useLiveRun } from "./RunSummary";
+import { RunSummary } from "./RunSummary";
 import { TriggerForm, type TriggerOptions } from "./TriggerForm";
 
 export interface RunDrawerProps extends TriggerOptions {

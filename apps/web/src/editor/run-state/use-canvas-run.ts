@@ -1,22 +1,16 @@
 import {
 	type OrchestrationDocument,
-	queryKey,
 	type RunMetricCatalog,
 	type RunView,
 	runsApi,
 } from "@sfly/schema";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { applyNodeChanges, type NodeChange } from "@xyflow/react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { type SfNode, toFlow } from "#/components/canvas/flow";
 import { apiQuery } from "#/lib/api";
-import { useEventSource } from "#/lib/sse";
-import {
-	applyMetricIncrement,
-	attemptsSignature,
-	refetchSeries,
-	useMetricCatalog,
-} from "#/monitor/use-run-metrics";
+import { useLiveRun } from "#/monitor/live-run";
+import { attemptsSignature, useMetricCatalog } from "#/monitor/use-run-metrics";
 import { versionQuery } from "#/versions/queries";
 import { type RunOverlay, runOverlay } from "./run-overlay";
 
@@ -44,32 +38,14 @@ export function useCanvasRun(
 	runId: string | undefined,
 	enabled: boolean,
 ): CanvasRun {
-	const queryClient = useQueryClient();
 	const latest = useQuery({
 		...apiQuery(runsApi.listForOrchestration, { params: { id: orchestrationId } }),
 		enabled: enabled && !runId,
 	});
 	const id = runId ?? latest.data?.runs[0]?.id;
-	const runQuery = useQuery({
-		...apiQuery(runsApi.get, { params: { id: id ?? "" } }),
-		enabled: enabled && !!id,
-	});
+	// 运行中实时更新（运行视图、进度、主指标的序列缓存），与监控页、运行抽屉共用连接（live-run.ts）。
+	const runQuery = useLiveRun(id, { enabled });
 	const run = runQuery.data;
-	// 指标增量追加进主指标的序列缓存；重连后重新获取序列，补齐断线期间错过的点。
-	const opened = useRef(false);
-	useEventSource(
-		runsApi.events,
-		enabled && run?.status === "running" ? { params: { id: run.id } } : null,
-		{
-			run: (view) =>
-				queryClient.setQueryData(queryKey(runsApi.get, { params: { id: view.id } }), view),
-			metrics: (increment) => run && applyMetricIncrement(queryClient, run.id, increment),
-		},
-		() => {
-			if (opened.current && run) refetchSeries(queryClient, run.id);
-			opened.current = true;
-		},
-	);
 	const signature = useMemo(() => (run ? attemptsSignature(run) : ""), [run]);
 	const metrics = useMetricCatalog(run?.id ?? "", signature, enabled && !!run);
 	// 与运行监控页共用同一个缓存键。
