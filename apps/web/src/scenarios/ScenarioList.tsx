@@ -13,6 +13,7 @@ import {
 	WorkflowIcon,
 } from "lucide-react";
 import { createContext, type ReactNode, useContext, useRef, useState } from "react";
+import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration } from "#/lib/format";
@@ -26,14 +27,6 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
 import {
 	ArchiveScenarioDialog,
 	CopyScenarioDialog,
@@ -344,59 +337,72 @@ export function ScenarioCards({ scenarios }: { scenarios: OrchestrationSummary[]
 	);
 }
 
+/** 表格视图的列（TanStack Table）。 */
+const tableColumns = dataColumns<OrchestrationSummary>((col) =>
+	col.columns([
+		col.display({
+			id: "name",
+			header: "场景",
+			meta: { className: "max-w-90" },
+			cell: ({ row: { original: s } }) => (
+				<>
+					<Link
+						to="/orchestrations/$id"
+						params={{ id: s.id }}
+						className="inline-flex items-center gap-1.5 font-medium hover:underline"
+					>
+						<WorkflowIcon className="size-3.5 text-fg-3" />
+						{s.name}
+					</Link>
+					<div className="truncate text-xs text-fg-3">{s.description || "没有说明"}</div>
+				</>
+			),
+		}),
+		col.display({
+			id: "last_run",
+			header: "最近运行",
+			meta: { className: "text-xs whitespace-nowrap text-fg-2" },
+			cell: ({ row }) => <LastRunInfo run={row.original.last_run} className="flex-nowrap" />,
+		}),
+		col.display({
+			id: "agents",
+			header: "Agent",
+			cell: ({ row }) => <AgentChips scenario={row.original} />,
+		}),
+		col.display({
+			id: "version",
+			header: "版本",
+			meta: { className: "font-mono whitespace-nowrap" },
+			cell: ({ row }) => versionLabel(row.original),
+		}),
+		col.display({
+			id: "nodes",
+			header: "节点",
+			meta: { className: "text-xs whitespace-nowrap text-fg-2" },
+			cell: ({ row: { original: s } }) =>
+				`${s.node_count}${s.subflow_count > 0 ? ` · ${s.subflow_count} 子流程` : ""}`,
+		}),
+		col.display({
+			id: "updated",
+			header: "更新",
+			meta: { className: "font-mono text-xs whitespace-nowrap text-fg-3" },
+			cell: ({ row: { original: s } }) => formatDateTime(s.archived_at ?? s.updated_at),
+		}),
+		col.display({
+			id: "actions",
+			header: () => <span className="sr-only">操作</span>,
+			cell: ({ row }) => (
+				<div className="flex items-center justify-end gap-1.5">
+					<ScenarioActions scenario={row.original} compact />
+				</div>
+			),
+		}),
+	]),
+);
+
 /** 表格视图。 */
 export function ScenarioTable({ scenarios }: { scenarios: OrchestrationSummary[] }) {
 	return (
-		<Table aria-label="场景列表">
-			<TableHeader>
-				<TableRow>
-					<TableHead>场景</TableHead>
-					<TableHead>最近运行</TableHead>
-					<TableHead>Agent</TableHead>
-					<TableHead>版本</TableHead>
-					<TableHead>节点</TableHead>
-					<TableHead>更新</TableHead>
-					<TableHead>
-						<span className="sr-only">操作</span>
-					</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{scenarios.map((s) => (
-					<TableRow key={s.id}>
-						<TableCell className="max-w-90">
-							<Link
-								to="/orchestrations/$id"
-								params={{ id: s.id }}
-								className="inline-flex items-center gap-1.5 font-medium hover:underline"
-							>
-								<WorkflowIcon className="size-3.5 text-fg-3" />
-								{s.name}
-							</Link>
-							<div className="truncate text-xs text-fg-3">{s.description || "没有说明"}</div>
-						</TableCell>
-						<TableCell className="text-xs whitespace-nowrap text-fg-2">
-							<LastRunInfo run={s.last_run} className="flex-nowrap" />
-						</TableCell>
-						<TableCell>
-							<AgentChips scenario={s} />
-						</TableCell>
-						<TableCell className="font-mono whitespace-nowrap">{versionLabel(s)}</TableCell>
-						<TableCell className="text-xs whitespace-nowrap text-fg-2">
-							{s.node_count}
-							{s.subflow_count > 0 && ` · ${s.subflow_count} 子流程`}
-						</TableCell>
-						<TableCell className="font-mono text-xs whitespace-nowrap text-fg-3">
-							{formatDateTime(s.archived_at ?? s.updated_at)}
-						</TableCell>
-						<TableCell>
-							<div className="flex items-center justify-end gap-1.5">
-								<ScenarioActions scenario={s} compact />
-							</div>
-						</TableCell>
-					</TableRow>
-				))}
-			</TableBody>
-		</Table>
+		<DataTable aria-label="场景列表" columns={tableColumns} data={scenarios} rowKey={(s) => s.id} />
 	);
 }

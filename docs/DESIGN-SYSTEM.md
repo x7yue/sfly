@@ -119,6 +119,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `status`：`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView` | 状态与槽位，见下表；运行 / 链 / 节点状态的颜色与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，不另写映射表 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状，配色只在这里） |
 | `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |
+| `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它 |
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
 | `feedback/notify` | `notify.success / info / warning / error` |
 | `shortcuts`：`useShortcut`、`ShortcutsDialog` | 见第 7 节 |
