@@ -12,7 +12,7 @@ import { cn } from "cn";
 import { DownloadIcon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { StatusPill } from "#/components/status";
-import { apiQuery } from "#/lib/api";
+import { apiQuery, apiUrl } from "#/lib/api";
 import { formatBytes, formatClock, formatDuration } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -431,14 +431,19 @@ function AttemptsTab({
 const ARTIFACT_REF =
 	/^https?:\/\/[^\s"]*\/tasks\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/artifacts\/([^\s"?#]+)$/i;
 
-/** 产物引用（对 Agent 可见的完整地址）对应的浏览器下载地址；不是产物引用时为 null。 */
+/** 产物引用（对 Agent 可见的完整地址，每个路径段已编码）对应的浏览器下载地址；不是产物引用时为 null。 */
 const artifactRefPath = (value: string) => {
 	const m = ARTIFACT_REF.exec(value);
-	return m ? `/api/tasks/${m[1]}/artifacts/${m[2]}` : null;
+	if (!m?.[1] || !m[2]) return null;
+	try {
+		return artifactDownloadPath(m[1], m[2].split("/").map(decodeURIComponent).join("/"));
+	} catch {
+		return null; // 不是合法的百分号编码
+	}
 };
 
 export const artifactDownloadPath = (taskId: string, name: string) =>
-	`/api/tasks/${taskId}/artifacts/${name.split("/").map(encodeURIComponent).join("/")}`;
+	apiUrl(artifactsApi.download, { params: { id: taskId, "*": name } });
 
 /** JSON 展示；字符串值是产物引用时显示为下载链接。 */
 function JsonBlock({ value }: { value: unknown }) {

@@ -1,14 +1,12 @@
 import {
-	type AgentView,
-	agentsApi,
+	type DownloadDef,
 	type EndpointDef,
 	type EndpointInput,
 	type EndpointResponse,
-	type OrchestrationView as Orchestration,
-	orchestrationsApi,
-	packagesApi,
 	pathFor,
 	queryKey,
+	type RouteDef,
+	type StreamDef,
 } from "@sfly/schema";
 import { queryOptions } from "@tanstack/react-query";
 import { getNickname, NICKNAME_HEADER } from "./nickname";
@@ -18,15 +16,16 @@ import { getNickname, NICKNAME_HEADER } from "./nickname";
  * 按原路由处理，见 apps/server/src/http/web-app.ts），开发时由 vite 原样代理到控制面（vite.config.ts）。
  * 每个请求都带上浏览器昵称请求头。
  *
- * 新代码一律走契约（@sfly/schema 的 http 模块，ADR 0007）：
+ * 所有请求都走契约（@sfly/schema 的 http 模块，ADR 0007），没有手写的接口函数和类型：
  *
- *   const agents = useQuery(apiQuery(agentsApi.list));                       // 查询
- *   await callApi(packagesApi.version, { params: { name, version } });     // 直接调用
- *   queryClient.invalidateQueries({ queryKey: ["packages"] });              // 按领域失效
+ *   const agents = useQuery(apiQuery(agentsApi.list));                           // 查询
+ *   await callApi(packagesApi.version, { params: { name, version } });         // 直接调用
+ *   queryClient.invalidateQueries({ queryKey: domainKey(packagesApi.list) });   // 按领域失效
+ *   <a href={apiUrl(logsApi.download, { params: { id } })}>                     // 下载链接
+ *   useEventSource(runsApi.events, { params: { id } }, { run: (view) => … });  // SSE（./sse.ts）
  *
  * 类型由契约推导，开发环境（vite dev）下响应会按契约解析，不符合时抛出 code 为
  * `contract_violation` 的 ApiError（页面上显示为错误状态，details 是 zod issues）。
- * 下面 `apiGet` / `apiPost` 与手写类型是 MVP 遗留，迁到契约后删除（#44）。
  */
 export const API_BASE = "/api";
 
@@ -73,7 +72,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 			path,
 		);
 	}
-	return (await res.json()) as T;
+	// 204 没有响应体（契约的响应 schema 为 z.undefined()）。
+	return (res.status === 204 ? undefined : await res.json()) as T;
 }
 
 /** 按契约调用接口（约定见 packages/schema/src/http/contract.ts）。 */
@@ -85,9 +85,22 @@ export function callApi<E extends EndpointDef>(
 }
 
 /** 没有 params / query / body 的接口不需要传第二个参数。 */
-type InputArgs<E extends EndpointDef> = keyof EndpointInput<E> extends never
+export type InputArgs<E extends RouteDef> = keyof EndpointInput<E> extends never
 	? []
 	: [EndpointInput<E>];
+
+/** 浏览器访问的完整路径（带 `/api` 前缀与查询参数）：下载链接、EventSource 用。 */
+export function apiUrl<D extends DownloadDef | StreamDef>(
+	def: D,
+	...[input]: InputArgs<D>
+): string {
+	const { params, query } = (input ?? {}) as {
+		params?: Record<string, unknown>;
+		query?: Record<string, unknown>;
+	};
+	const search = query ? `?${new URLSearchParams(toSearch(query))}` : "";
+	return `${API_BASE}${pathFor(def, params)}${search}`.replace(/\?$/, "");
+}
 
 async function send<E extends EndpointDef>(
 	def: E,
@@ -134,43 +147,3 @@ export function apiQuery<E extends EndpointDef>(def: E, ...[input]: InputArgs<E>
 		queryFn: () => send(def, input),
 	});
 }
-
-export const apiGet = <T>(path: string) => request<T>("GET", path);
-export const apiPost = <T>(path: string, body: unknown) => request<T>("POST", path, body);
-
-// —— 节点包（契约：packagesApi） ——
-
-export type { PackageSummary, PackageVersionSummary } from "@sfly/schema";
-
-export const listPackages = () => callApi(packagesApi.list);
-
-// —— 编排（契约：orchestrationsApi，画布用到的接口；列表、新建、复制尚未迁移） ——
-
-export type {
-	OrchestrationHeadView as OrchestrationHead,
-	OrchestrationView as Orchestration,
-	SavedVersionView as SavedVersion,
-} from "@sfly/schema";
-
-export const listOrchestrations = () =>
-	apiGet<{ orchestrations: Orchestration[] }>("/orchestrations");
-export const getOrchestration = (id: string) => callApi(orchestrationsApi.get, { params: { id } });
-export const getOrchestrationHead = (id: string) =>
-	callApi(orchestrationsApi.head, { params: { id } });
-export const createOrchestration = (name: string) =>
-	apiPost<Orchestration>("/orchestrations", { name });
-export const copyOrchestration = (id: string, name: string) =>
-	apiPost<Orchestration>(`/orchestrations/${id}/copy`, { name });
-// 保存版本、版本历史与恢复见 src/versions/api.ts（保存必须带 base_version，#16）。
-
-// —— Agent（契约：agentsApi） ——
-
-export type { AgentView, DevPackageView } from "@sfly/schema";
-
-/** 加载了某个包开发版本的 Agent（在线的排在前面）。 */
-export const agentsWithDev = (agents: AgentView[], name: string) =>
-	agents
-		.filter((a) => a.dev_packages?.some((d) => d.name === name))
-		.sort((a, b) => Number(b.status === "online") - Number(a.status === "online"));
-
-export const listAgents = () => callApi(agentsApi.list);

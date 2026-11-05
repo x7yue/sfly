@@ -1,5 +1,4 @@
 import {
-	type MetricIncrement,
 	type OrchestrationDocument,
 	queryKey,
 	type RunMetricCatalog,
@@ -9,7 +8,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { applyNodeChanges, type NodeChange } from "@xyflow/react";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { type SfNode, toFlow } from "#/canvas/flow";
+import { type SfNode, toFlow } from "#/components/canvas/flow";
 import { apiQuery } from "#/lib/api";
 import { useEventSource } from "#/lib/sse";
 import {
@@ -18,7 +17,7 @@ import {
 	refetchSeries,
 	useMetricCatalog,
 } from "#/monitor/use-run-metrics";
-import { getVersion } from "#/versions/api";
+import { versionQuery } from "#/versions/queries";
 import { type RunOverlay, runOverlay } from "./run-overlay";
 
 export type CanvasRun =
@@ -59,14 +58,12 @@ export function useCanvasRun(
 	// 指标增量追加进主指标的序列缓存；重连后重新获取序列，补齐断线期间错过的点。
 	const opened = useRef(false);
 	useEventSource(
-		enabled && run?.status === "running" ? `/runs/${encodeURIComponent(run.id)}/events` : null,
+		runsApi.events,
+		enabled && run?.status === "running" ? { params: { id: run.id } } : null,
 		{
-			run: (data) =>
-				queryClient.setQueryData(
-					queryKey(runsApi.get, { params: { id: (data as RunView).id } }),
-					data as RunView,
-				),
-			metrics: (data) => run && applyMetricIncrement(queryClient, run.id, data as MetricIncrement),
+			run: (view) =>
+				queryClient.setQueryData(queryKey(runsApi.get, { params: { id: view.id } }), view),
+			metrics: (increment) => run && applyMetricIncrement(queryClient, run.id, increment),
 		},
 		() => {
 			if (opened.current && run) refetchSeries(queryClient, run.id);
@@ -77,10 +74,8 @@ export function useCanvasRun(
 	const metrics = useMetricCatalog(run?.id ?? "", signature, enabled && !!run);
 	// 与运行监控页共用同一个缓存键。
 	const version = useQuery({
-		queryKey: ["orchestration", orchestrationId, "version", run?.orchestration_version],
-		queryFn: () => getVersion(orchestrationId, run?.orchestration_version as number),
+		...versionQuery(orchestrationId, run?.orchestration_version ?? 0),
 		enabled: enabled && !!run,
-		staleTime: Number.POSITIVE_INFINITY,
 	});
 	const overlay = useMemo(() => (run ? runOverlay(run) : undefined), [run]);
 

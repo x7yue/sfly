@@ -9,20 +9,20 @@ import {
 	referencesIn,
 	timerTarget,
 } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { useId } from "react";
-import { latestVersion } from "#/canvas/catalog";
-import type { DocNode } from "#/canvas/flow";
-import { DEFAULT_TZ, describeDuration } from "#/canvas/WaitNodes";
-import { type AgentView, agentsWithDev, type PackageSummary } from "#/lib/api";
+import type { DocNode } from "#/components/canvas/flow";
+import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
+import { agentsWithDev } from "../catalog";
 import { draftKey, useParsedField } from "../field-drafts";
 import { Field, type ReferenceChoice, ReferenceTextInput, SectionTitle } from "./fields";
 import { ValueField } from "./value-fields";
+import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
 
 type PackageNode = Extract<DocNode, { kind: "package" }>;
 type AsyncNode = Extract<DocNode, { kind: "async" }>;

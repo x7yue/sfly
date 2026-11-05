@@ -6,7 +6,7 @@ import { useCallback, useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { CancelRunDialog } from "#/monitor/CancelRunDialog";
 import { shortId } from "#/monitor/run-model";
-import { getVersion } from "#/versions/api";
+import { versionQuery } from "#/versions/queries";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -156,10 +156,8 @@ function SummaryActions({ runId, orchestrationId }: { runId: string; orchestrati
 	const versionNumber = run?.orchestration_version;
 	// 取消确认弹窗按运行绑定的版本列出 always 节点（与监控页同一份缓存）。
 	const version = useQuery({
-		queryKey: ["orchestration", orchestrationId, "version", versionNumber],
-		queryFn: () => getVersion(orchestrationId, versionNumber as number),
+		...versionQuery(orchestrationId, versionNumber ?? 0),
 		enabled: cancelOpen && !!versionNumber,
-		staleTime: Number.POSITIVE_INFINITY,
 	});
 	return (
 		<>

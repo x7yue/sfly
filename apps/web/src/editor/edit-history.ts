@@ -1,6 +1,6 @@
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 import { type Dispatch, type SetStateAction, useCallback, useRef, useState } from "react";
-import type { DocMeta, SfEdge, SfNode } from "#/canvas/flow";
+import type { DocMeta, SfEdge, SfNode } from "#/components/canvas/flow";
 import { UndoStack } from "./history";
 
 /** 撤销的单位：画布上的节点、连线和编排级设置（默认 Agent、包版本锁定）。 */

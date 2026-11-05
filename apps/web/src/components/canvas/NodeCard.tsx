@@ -1,11 +1,11 @@
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
 import type { CSSProperties } from "react";
-import type { SfNode } from "#/canvas/flow";
 import { StatusPill } from "#/components/status";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeader, BaseNodeHeaderTitle } from "@/components/ui/base-node";
 import { useFlowCanvas } from "./context";
+import type { SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
 import { KIND_META, nodeSlot, nodeTags, nodeTitle } from "./node-display";
 import { LOD_HIDDEN, ZOOM_TEXT_11, ZOOM_TEXT_12, ZOOM_TEXT_TITLE } from "./zoom-text";

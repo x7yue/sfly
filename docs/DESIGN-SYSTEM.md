@@ -81,14 +81,13 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ## 4. CSS layer
 
-`app.css` 声明 `@layer theme, base, vendor, legacy, components, utilities;`，所有样式都在这些层里，后面的层优先，与选择器权重无关：
+`app.css` 声明 `@layer theme, base, vendor, components, utilities;`，所有样式都在这些层里，后面的层优先，与选择器权重无关：
 
 - `theme`：Tailwind 主题变量与 `tokens.css`；`base`：preflight、字体、元素基础样式；
 - `vendor`：第三方样式（xyflow；sonner 运行时注入的样式由 `vite.config.ts` 的插件包进这一层）；
-- `legacy`：MVP 时期按页面写的 `.sf-*` 样式，#44 删除，**不要再往里加**；
 - `components`：确实需要的组件级 CSS（尽量不用）；`utilities`：Tailwind 工具类——组件样式都在这里，所以低层的全局规则覆盖不了组件。
 
-端到端测试会检查页面上没有未分层的样式规则（`e2e/shell.spec.ts`）。
+端到端测试会检查页面上没有未分层的样式规则（`e2e/shell.spec.ts`）。不写按页面的全局样式文件（MVP 时期的 `.sf-*` 样式与 `legacy` 层已在 #44 删除）。
 
 ## 5. 组件清单
 
@@ -154,10 +153,11 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 约定的完整说明在 `packages/schema/src/http/contract.ts` 顶部，要点：
 
-- 每个接口在 `@sfly/schema` 的 `http/<领域>.ts` 中用 `endpoint({ method, path, key, params?, query?, body?, response })` 定义；数据 schema 用名词（`AgentView`），接口表用 `<领域>Api`（`agentsApi.list`）。
+- 每个接口在 `@sfly/schema` 的 `http/<领域>.ts` 中用 `endpoint({ method, path, key, params?, query?, body?, response })` 定义；数据 schema 用名词（`AgentView`），接口表用 `<领域>Api`（`agentsApi.list`）。SSE 用 `stream({ path, params?, query?, events })`，字节流下载用 `download({ path, params?, contentType })`。
+- 控制面的**每个** HTTP 路由都在契约里：`httpContract`（`http/index.ts`）列出全部接口表，控制面启动时 `guardHttpContract` 检查注册的路由与它一一对应，多一个少一个都启动失败。
 - 响应 schema 用 `z.object`，不写 transform / default / coerce（生产环境前端不解析响应）；请求部分可以用。字段 snake_case，时间用 `Timestamp`。
-- 控制面用 `contractRoute(app, agentsApi.list, handler)`（`apps/server/src/http/contract-route.ts`）注册：请求不符合契约返回 400 `invalid_request`，handler 的返回值受响应类型约束；控制面测试用 `xxxApi.yyy.response.parse(body)` 校验实际响应。
-- 前端：`useQuery(apiQuery(agentsApi.list))`、`callApi(packagesApi.version, { params })`。query key 一律由 `queryKey()` 生成（`[...key, { params?, query? }]`），失效按领域前缀：`invalidateQueries({ queryKey: ["packages"] })`。开发环境下响应不符合契约时抛出 `contract_violation`，页面显示为错误状态。
+- 控制面用 `contractRoute(app, agentsApi.list, handler)`（`apps/server/src/http/contract-route.ts`）注册，SSE 用 `contractStream`（只能发送契约里声明的事件），下载用 `contractDownload`：请求不符合契约返回 400 `invalid_request`（需要更具体的错误码时在契约里写 `requestError`，例如保存版本的 `base_version_required` / `invalid_document`），handler 的返回值受响应类型约束；控制面测试用 `xxxApi.yyy.response.parse(body)` 校验实际响应。
+- 前端：`useQuery(apiQuery(agentsApi.list))`、`callApi(packagesApi.version, { params })`、`useEventSource(runsApi.events, { params }, handlers)`、`apiUrl(logsApi.download, { params })`（下载链接）。没有手写的接口函数和类型。query key 一律由 `queryKey()` 生成（`[...key, { params?, query? }]`），失效按领域前缀：`invalidateQueries({ queryKey: domainKey(packagesApi.list) })`。开发环境下响应不符合契约时抛出 `contract_violation`，页面显示为错误状态。
 - 浏览器经 `/api` 前缀访问（docs/ARCHITECTURE.md §7），契约里的 `path` 不含前缀。
 - 指标接口在 `http/metrics.ts` 的 `metricsApi`（摘要、目录、序列、平台自带图表）；实时增量是运行事件流上的 `metrics` 事件（`MetricIncrement`）。
 

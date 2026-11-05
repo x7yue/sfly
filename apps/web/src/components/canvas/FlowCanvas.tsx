@@ -14,7 +14,6 @@ import {
 } from "@xyflow/react";
 import { cn } from "cn";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { SfEdge, SfNode } from "#/canvas/flow";
 import { useShortcut } from "#/components/shortcuts";
 import { CanvasDock, type CanvasTool } from "./CanvasDock";
 import {
@@ -25,6 +24,7 @@ import {
 	type PortState,
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
+import type { SfEdge, SfNode } from "./flow";
 import {
 	type CanvasInsets,
 	FIT_MAX_ZOOM,

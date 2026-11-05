@@ -1,5 +1,5 @@
 import { diffDocuments } from "@sfly/orchestration";
-import { orchestrationsApi, queryKey } from "@sfly/schema";
+import { domainKey, orchestrationsApi, queryKey, type VersionSummaryView } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
@@ -8,7 +8,7 @@ import { useMemo, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { EmptyState, ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
-import { apiQuery } from "#/lib/api";
+import { apiQuery, callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -22,20 +22,13 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { restoreVersion, type VersionSummary } from "./api";
 import { DocumentDiffView } from "./DocumentDiffView";
 import { clearDraft, hasDraft } from "./draft";
+import { versionQuery } from "./queries";
 import { marksOf, VersionCanvas } from "./VersionCanvas";
 
 const useVersion = (orchestrationId: string, number: number | undefined) =>
-	useQuery({
-		...apiQuery(orchestrationsApi.version, {
-			params: { id: orchestrationId, number: String(number ?? 0) },
-		}),
-		enabled: number !== undefined,
-		// 版本不可变。
-		staleTime: Number.POSITIVE_INFINITY,
-	});
+	useQuery({ ...versionQuery(orchestrationId, number ?? 0), enabled: number !== undefined });
 
 /**
  * 版本历史：列出版本号、作者和时间；任选 A / B 两个版本并排只读对比（差异节点有标记，下方列出差异）；
@@ -72,7 +65,7 @@ export function VersionHistory({
 				: null,
 		[versionA.data, versionB.data],
 	);
-	const [restoring, setRestoring] = useState<VersionSummary | null>(null);
+	const [restoring, setRestoring] = useState<VersionSummaryView | null>(null);
 
 	const name = orchestration.data?.name ?? "…";
 	const editorLink = (
@@ -253,7 +246,7 @@ function VersionRow({
 	onPickB,
 	onRestore,
 }: {
-	version: VersionSummary;
+	version: VersionSummaryView;
 	latest: boolean;
 	pickedA: boolean;
 	pickedB: boolean;
@@ -312,7 +305,7 @@ function RestoreDialog({
 	onRestored,
 }: {
 	orchestrationId: string;
-	version: VersionSummary | null;
+	version: VersionSummaryView | null;
 	next: number;
 	onClose: () => void;
 	onRestored: (from: number, to: number) => void;
@@ -323,15 +316,17 @@ function RestoreDialog({
 		[version, orchestrationId],
 	);
 	const restore = useMutation({
-		mutationFn: (number: number) => restoreVersion(orchestrationId, number),
+		mutationFn: (number: number) =>
+			callApi(orchestrationsApi.restoreVersion, {
+				params: { id: orchestrationId, number: String(number) },
+			}),
 		onSuccess: (saved, from) => {
 			// 本地草稿基于旧的最新版本；恢复后从新版本开始编辑。
 			clearDraft(orchestrationId);
 			queryClient.removeQueries({
 				queryKey: queryKey(orchestrationsApi.head, { params: { id: orchestrationId } }),
 			});
-			void queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
-			void queryClient.invalidateQueries({ queryKey: ["orchestration", orchestrationId] });
+			void queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.get) });
 			onRestored(from, saved.number);
 		},
 	});

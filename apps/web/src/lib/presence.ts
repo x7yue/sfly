@@ -1,18 +1,8 @@
+import { type EndpointInput, type OnlineEditorView, pathFor, presenceApi } from "@sfly/schema";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { API_BASE, apiPost } from "./api";
+import { API_BASE, callApi } from "./api";
 import { useNickname } from "./nickname";
 import { useEventSource } from "./sse";
-
-/** 一个打开着编辑页面的浏览器标签页（控制面 `GET /orchestrations/:id/presence/events`）。 */
-export interface OnlineEditor {
-	session_id: string;
-	nickname: string;
-}
-
-interface EditorsEvent {
-	orchestration_id: string;
-	editors: OnlineEditor[];
-}
 
 /** 自己在其他标签页打开着同一份编排时显示的名字。 */
 export const OWN_OTHER_TAB = "你（其他标签页）";
@@ -27,19 +17,25 @@ const randomSessionId = (): string =>
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 const sendHeartbeat = (orchestrationId: string, sessionId: string) =>
-	apiPost<{ editors: OnlineEditor[] }>(`/orchestrations/${orchestrationId}/presence`, {
-		session_id: sessionId,
+	callApi(presenceApi.heartbeat, {
+		params: { id: orchestrationId },
+		body: { session_id: sessionId },
 	}).catch(() => {
 		// 心跳失败（控制面重启等）不打扰用户，下一次心跳或 SSE 重连后自动恢复。
 	});
 
-/** 关闭页面或离开编辑页面时主动离开（keepalive：页面卸载后请求仍会发出）。 */
+/**
+ * 关闭页面或离开编辑页面时主动离开（presenceApi.leave）。用 keepalive 的 fetch 而不是 callApi：
+ * 页面卸载后请求仍会发出。
+ */
 const sendLeave = (orchestrationId: string, sessionId: string) => {
-	void fetch(`${API_BASE}/orchestrations/${orchestrationId}/presence/leave`, {
-		method: "POST",
+	const { leave } = presenceApi;
+	const body: EndpointInput<typeof leave>["body"] = { session_id: sessionId };
+	void fetch(`${API_BASE}${pathFor(leave, { id: orchestrationId })}`, {
+		method: leave.method,
 		keepalive: true,
 		headers: { "content-type": "application/json" },
-		body: JSON.stringify({ session_id: sessionId }),
+		body: JSON.stringify(body),
 	}).catch(() => {
 		// 离开失败时控制面 30 秒无心跳后自动移除。
 	});
@@ -55,7 +51,7 @@ export function useOtherEditors(orchestrationId: string): string[] {
 	// 每次打开编辑页面一个会话 ID：同一昵称在多个标签页打开时互不覆盖。
 	// 离开后控制面不再接受这个会话的心跳，从往返缓存恢复页面时换一个新 ID 重新加入。
 	const [sessionId, setSessionId] = useState(randomSessionId);
-	const [editors, setEditors] = useState<OnlineEditor[]>([]);
+	const [editors, setEditors] = useState<OnlineEditorView[]>([]);
 
 	const beat = useCallback(() => {
 		if (nickname) void sendHeartbeat(orchestrationId, sessionId);
@@ -92,10 +88,10 @@ export function useOtherEditors(orchestrationId: string): string[] {
 	}, [orchestrationId, sessionId]);
 
 	useEventSource(
-		`/orchestrations/${orchestrationId}/presence/events`,
+		presenceApi.events,
+		{ params: { id: orchestrationId } },
 		{
-			editors: (data) => {
-				const event = data as EditorsEvent;
+			editors: (event) => {
 				if (event.orchestration_id === orchestrationId) setEditors(event.editors);
 			},
 		},

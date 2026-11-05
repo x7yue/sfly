@@ -1,9 +1,16 @@
 import { diffDocuments } from "@sfly/orchestration";
-import { type OrchestrationDocument, orchestrationsApi, queryKey } from "@sfly/schema";
+import {
+	domainKey,
+	type OrchestrationDocument,
+	type OrchestrationHeadView,
+	type OrchestrationView,
+	orchestrationsApi,
+	queryKey,
+} from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useMemo, useState } from "react";
-import { apiQuery, callApi, type Orchestration, type OrchestrationHead } from "#/lib/api";
+import { apiQuery, callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,16 +22,11 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { saveVersionFrom } from "./api";
 import { DocumentDiffView } from "./DocumentDiffView";
 import type { Versioning } from "./useVersionedDraft";
 
 /** 保存被拦截时对方保存的版本（409 的 details.head，或本地草稿过期时打开页面时的最新版本）。 */
-export interface ConflictHead {
-	number: number;
-	author: string | null;
-	created_at: string | null;
-}
+export type ConflictHead = Pick<OrchestrationHeadView, "number" | "author" | "created_at">;
 
 /**
  * 保存冲突弹窗（锁定焦点）：别人在编辑起点之后保存了新版本。显示对方的作者和时间、最新版本与本地修改的差异，
@@ -41,12 +43,12 @@ export function ConflictDialog({
 }: {
 	open: boolean;
 	onOpenChange(open: boolean): void;
-	orchestration: Orchestration;
+	orchestration: OrchestrationView;
 	doc: OrchestrationDocument;
 	head: ConflictHead | null;
 	versioning: Versioning;
 	/** 用最新版本重新开始编辑（放弃本地修改之后）。 */
-	onReload(head: OrchestrationHead): void;
+	onReload(head: OrchestrationHeadView): void;
 }) {
 	const nameId = useId();
 	const queryClient = useQueryClient();
@@ -79,12 +81,15 @@ export function ConflictDialog({
 	const saveAsNew = useMutation({
 		mutationFn: async (name: string) => {
 			const created = await callApi(orchestrationsApi.create, { body: { name } });
-			await saveVersionFrom(created.id, 0, doc);
+			await callApi(orchestrationsApi.saveVersion, {
+				params: { id: created.id },
+				body: { base_version: 0, document: doc },
+			});
 			return created;
 		},
 		onSuccess: (created) => {
 			versioning.dropDraft();
-			void queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
+			void queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.list) });
 			onOpenChange(false);
 			void navigate({ to: "/orchestrations/$id", params: { id: created.id } });
 		},

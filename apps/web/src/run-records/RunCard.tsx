@@ -1,11 +1,11 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { StatusDot, StatusPill } from "#/components/status";
-import { formatDateTime } from "#/lib/format";
+import { formatDateTime, formatDuration } from "#/lib/format";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
+import { nodeStatus, shortId } from "#/monitor/run-model";
 import { useMetricCatalog } from "#/monitor/use-run-metrics";
-import { formatDuration, shortId, statusLabel } from "#/runs/format";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { CancelRunButton } from "./CancelRunDialog";
@@ -103,7 +103,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 								className={activeDot(node.status).color}
 							/>
 							<span className="font-mono">{node.node_id}</span>
-							<span className="text-xs text-fg-3">{statusLabel(node.status)}</span>
+							<span className="text-xs text-fg-3">{nodeStatus(node.status).label}</span>
 							<NodePrimaryMetric
 								runId={run.id}
 								entry={catalogEntry(catalog.data, node.chain_instance_id, node.node_id)}

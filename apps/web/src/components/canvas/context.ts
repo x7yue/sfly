@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
-import type { DocNode } from "#/canvas/flow";
+import type { DocNode } from "./flow";
 
 /**
  * 画布组件的扩展点（FlowCanvas 的 props 经 context 传给节点卡片、连线和子流程区域）。

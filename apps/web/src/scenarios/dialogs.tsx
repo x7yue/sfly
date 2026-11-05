@@ -1,4 +1,4 @@
-import { type OrchestrationView, orchestrationsApi } from "@sfly/schema";
+import { domainKey, type OrchestrationView, orchestrationsApi } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
@@ -17,18 +17,13 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
 /**
- * 场景的弹窗：新建、复制、编辑名称和说明、归档确认。成功后让场景相关的查询重新获取
- * （契约的 orchestrations 领域，以及编排画布等旧页面用的 orchestration 前缀）。
+ * 场景的弹窗：新建、复制、编辑名称和说明、归档确认。成功后让场景领域（orchestrations）的查询全部重新获取。
  */
 
 /** 场景相关查询全部失效。 */
 export function useInvalidateScenarios() {
 	const queryClient = useQueryClient();
-	return () =>
-		Promise.all([
-			queryClient.invalidateQueries({ queryKey: ["orchestrations"] }),
-			queryClient.invalidateQueries({ queryKey: ["orchestration"] }),
-		]);
+	return () => queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.list) });
 }
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));

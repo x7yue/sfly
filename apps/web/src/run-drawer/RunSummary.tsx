@@ -25,7 +25,6 @@ import {
 	focusNode,
 	nodeStatus,
 	orderedChains,
-	type ProgressEvent,
 	runStatus,
 	shortId,
 } from "#/monitor/run-model";
@@ -57,16 +56,15 @@ export function useLiveRun(runId: string, { metrics = false }: { metrics?: boole
 	const running = !run.data || run.data.status === "running";
 	const opened = useRef(false);
 	useEventSource(
-		running ? `/runs/${encodeURIComponent(runId)}/events` : null,
+		runsApi.events,
+		running ? { params: { id: runId } } : null,
 		{
-			run: (data) => queryClient.setQueryData(key, data as RunView),
-			progress: (data) =>
-				queryClient.setQueryData(key, (old: RunView | undefined) =>
-					applyProgress(old, data as ProgressEvent),
-				),
+			run: (view) => queryClient.setQueryData(key, view),
+			progress: (event) =>
+				queryClient.setQueryData(key, (old: RunView | undefined) => applyProgress(old, event)),
 			...(metrics && {
-				metrics: (data: unknown) =>
-					applyMetricIncrement(queryClient, runId, data as MetricIncrement),
+				metrics: (increment: MetricIncrement) =>
+					applyMetricIncrement(queryClient, runId, increment),
 			}),
 		},
 		() => {

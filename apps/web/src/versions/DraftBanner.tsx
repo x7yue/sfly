@@ -1,7 +1,12 @@
-import type { OrchestrationDocument } from "@sfly/schema";
+import {
+	type OrchestrationDocument,
+	type OrchestrationHeadView,
+	type OrchestrationView,
+	orchestrationsApi,
+} from "@sfly/schema";
 import { TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
-import { getOrchestrationHead, type Orchestration, type OrchestrationHead } from "#/lib/api";
+import { callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import { ConflictDialog } from "./ConflictDialog";
@@ -25,10 +30,10 @@ export function DraftBanner({
 	versioning,
 	onReload,
 }: {
-	orchestration: Orchestration;
+	orchestration: OrchestrationView;
 	doc: OrchestrationDocument;
 	versioning: Versioning;
-	onReload: (head: OrchestrationHead) => void;
+	onReload: (head: OrchestrationHeadView) => void;
 }) {
 	const [open, setOpen] = useState(false);
 	const head = versioning.staleHead;
@@ -44,8 +49,9 @@ export function DraftBanner({
 					variant="ghost"
 					onClick={() =>
 						// 那个标签页可能已经保存（草稿随之清除）：按控制面上的最新版本重新载入。
-						getOrchestrationHead(orchestration.id).then(onReload, () =>
-							onReload(versioning.startHead),
+						callApi(orchestrationsApi.head, { params: { id: orchestration.id } }).then(
+							onReload,
+							() => onReload(versioning.startHead),
 						)
 					}
 				>

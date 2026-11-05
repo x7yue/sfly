@@ -4,13 +4,12 @@
  *   theme      Tailwind 主题变量 + 设计 token（./tokens.css）
  *   base       Tailwind preflight + 本文件的元素基础样式（body、kbd、焦点环、减少动效）
  *   vendor     第三方库自带的样式（xyflow）
- *   legacy     MVP 时期按页面手写的 BEM 样式（--sf-*、.sf-*），#44 删除；新代码不要再往这里加
  *   components 自己写的组件级 CSS（尽量不用；组件样式写在 TSX 的 Tailwind 类里）
  *   utilities  Tailwind 工具类——组件的样式都在这一层，所以低层的全局规则覆盖不了组件
  *
  * 后声明的层优先级更高，与选择器权重无关。
  */
-@layer theme, base, vendor, legacy, components, utilities;
+@layer theme, base, vendor, components, utilities;
 
 @import "tailwindcss";
 /* 以下两个文件只含 @utility / @custom-variant / @keyframes，由 Tailwind 放进 utilities 层 */
@@ -20,12 +19,6 @@
 @import "./fonts.css" layer(base);
 
 @import "@xyflow/react/dist/style.css" layer(vendor);
-
-@import "../canvas/tokens.css" layer(legacy);
-@import "../pages.css" layer(legacy);
-@import "../canvas/canvas.css" layer(legacy);
-@import "../canvas/wait-nodes.css" layer(legacy);
-@import "../runs/runs.css" layer(legacy);
 
 /*
  * 把语义层与画布层暴露为 Tailwind 工具类。默认色板、字号、圆角全部清空，只留设计体系里的值：

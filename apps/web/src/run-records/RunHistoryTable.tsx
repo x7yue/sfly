@@ -1,8 +1,8 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { StatusPill } from "#/components/status";
-import { formatDateTime } from "#/lib/format";
-import { durationBetween, shortId } from "#/runs/format";
+import { formatDateTime, formatDuration } from "#/lib/format";
+import { shortId } from "#/monitor/run-model";
 import {
 	Table,
 	TableBody,
@@ -66,7 +66,9 @@ export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: numbe
 							{formatDateTime(run.started_at)}
 						</TableCell>
 						<TableCell className="text-right font-mono">
-							{durationBetween(run.started_at, run.ended_at, now)}
+							{formatDuration(
+								(run.ended_at ? Date.parse(run.ended_at) : now) - Date.parse(run.started_at),
+							)}
 						</TableCell>
 					</TableRow>
 				))}

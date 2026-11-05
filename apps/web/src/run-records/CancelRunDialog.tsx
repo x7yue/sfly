@@ -1,9 +1,9 @@
-import { type RunListItem, runsApi } from "@sfly/schema";
+import { domainKey, type RunListItem, runsApi } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
-import { shortId } from "#/runs/format";
+import { shortId } from "#/monitor/run-model";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -31,7 +31,7 @@ export function CancelRunButton({ run }: { run: RunListItem }) {
 			notify.success(force ? "已强制终止运行" : "已请求取消运行", {
 				description: force ? undefined : "正在运行的任务终止后，always 节点照常清理。",
 			});
-			void queryClient.invalidateQueries({ queryKey: ["runs"] });
+			void queryClient.invalidateQueries({ queryKey: domainKey(runsApi.get) });
 		},
 		onError: (error) => notify.error("取消运行失败", { description: error.message }),
 	});

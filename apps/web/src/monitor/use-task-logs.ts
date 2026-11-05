@@ -1,6 +1,6 @@
-import { type LogChunk, type LogLineView, logsApi } from "@sfly/schema";
+import { type LogLineView, logsApi } from "@sfly/schema";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { callApi } from "#/lib/api";
+import { apiUrl, callApi } from "#/lib/api";
 import { useEventSource } from "#/lib/sse";
 import { emptyBuffer, fromLatestPage, type LogBuffer, withLive, withOlderPage } from "./log-buffer";
 
@@ -8,7 +8,7 @@ import { emptyBuffer, fromLatestPage, type LogBuffer, withLive, withOlderPage } 
 const PAGE = 300;
 
 export const taskLogDownloadPath = (taskId: string) =>
-	`/api/tasks/${encodeURIComponent(taskId)}/logs/download`;
+	apiUrl(logsApi.download, { params: { id: taskId } });
 
 export interface TaskLogs extends LogBuffer {
 	loadingOlder: boolean;
@@ -22,7 +22,8 @@ export interface TaskLogs extends LogBuffer {
  */
 export function useTaskLogs(taskId: string, levels: readonly LogLineView["level"][]): TaskLogs {
 	const [buffer, setBuffer] = useState<LogBuffer>(emptyBuffer);
-	const [stream, setStream] = useState<string | null>(null);
+	/** 实时流从这个序号之后接上；null 表示还没读到历史，不连接。 */
+	const [afterSeq, setAfterSeq] = useState<number | null>(null);
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const generation = useRef(0);
@@ -35,7 +36,7 @@ export function useTaskLogs(taskId: string, levels: readonly LogLineView["level"
 	useEffect(() => {
 		const current = ++generation.current;
 		setBuffer(emptyBuffer);
-		setStream(null);
+		setAfterSeq(null);
 		setError(null);
 		setLoadingOlder(false);
 		callApi(logsApi.page, {
@@ -45,7 +46,7 @@ export function useTaskLogs(taskId: string, levels: readonly LogLineView["level"
 			.then((page) => {
 				if (generation.current !== current) return;
 				setBuffer(fromLatestPage(page));
-				setStream(`/tasks/${encodeURIComponent(taskId)}/logs/events?after_seq=${page.last_seq}`);
+				setAfterSeq(page.last_seq);
 			})
 			.catch((e: Error) => {
 				if (generation.current !== current) return;
@@ -54,9 +55,11 @@ export function useTaskLogs(taskId: string, levels: readonly LogLineView["level"
 			});
 	}, [taskId, levelKey]);
 
-	useEventSource(stream, {
-		logs: (data) => setBuffer((b) => withLive(b, data as LogChunk, accept.current)),
-	});
+	useEventSource(
+		logsApi.events,
+		afterSeq === null ? null : { params: { id: taskId }, query: { after_seq: String(afterSeq) } },
+		{ logs: (chunk) => setBuffer((b) => withLive(b, chunk, accept.current)) },
+	);
 
 	const loadOlder = useCallback(() => {
 		const { start, hasOlder } = bufferRef.current;

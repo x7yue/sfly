@@ -3,6 +3,7 @@ import type {
 	NodeRunView,
 	OrchestrationDocument,
 	OrchestrationNode,
+	ProgressEvent,
 	RunView,
 } from "@sfly/schema";
 import type { StatusKind } from "#/components/status";
@@ -176,15 +177,6 @@ export function secretInputKeys(
 }
 
 export const MASK = "••••••";
-
-/** 运行 SSE 上的 `progress` 事件（控制面 ProgressEvent）。 */
-export interface ProgressEvent {
-	run_id: string;
-	chain_instance_id: string;
-	node_id: string;
-	task_id: string;
-	progress: NonNullable<RunView["chains"][number]["nodes"][number]["attempts"][number]["progress"]>;
-}
 
 /** 把一条进度推送合并进运行视图（只改对应尝试的 progress）。 */
 export function applyProgress(run: RunView | undefined, event: ProgressEvent): RunView | undefined {

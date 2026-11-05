@@ -1,4 +1,4 @@
-import { type RunListItem, runListApi } from "@sfly/schema";
+import { orchestrationsApi, type RunListItem, runListApi } from "@sfly/schema";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { PlayIcon, SearchIcon } from "lucide-react";
@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { z } from "zod";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
-import { apiQuery, listOrchestrations } from "#/lib/api";
+import { apiQuery } from "#/lib/api";
 import { RunCard } from "#/run-records/RunCard";
 import { RunHistoryTable } from "#/run-records/RunHistoryTable";
 import { useNow } from "#/run-records/use-now";
@@ -132,7 +132,8 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 	const update = (patch: Partial<z.infer<typeof RunsSearch>>) =>
 		void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
 
-	const scenarios = useQuery({ queryKey: ["orchestrations"], queryFn: listOrchestrations });
+	// 与命令面板共用同一个缓存（默认列表：没有归档的场景）。
+	const scenarios = useQuery(apiQuery(orchestrationsApi.list, { query: {} }));
 
 	// 关键字先存在本地，停止输入一会儿再写进地址（并触发查询）。
 	const [q, setQ] = useState(search.q ?? "");
