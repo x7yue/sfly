@@ -30,20 +30,22 @@ const W = 300;
 
 /**
  * 迷你趋势（原型 spark）：面积 + 折线，纵轴从 0 起、上方留 12%，横轴按桶的时间（画在桶覆盖时段的中点）。
- * 宽高由 className 决定（SVG 按容器拉伸，线宽不缩放）；少于两个桶时不画。
+ * 宽度由 className 决定（SVG 横向拉伸，线宽不缩放）；少于两个桶时不画。
  */
 export function Sparkline({
 	buckets,
 	bucketSeconds,
 	color,
+	height: H,
 	className,
 }: {
 	buckets: readonly MetricBucket[];
 	bucketSeconds: number;
 	color: string;
+	/** 高度（px），也是 viewBox 的高度：边距按像素算。 */
+	height: number;
 	className?: string;
 }) {
-	const H = 20;
 	const path = useMemo(() => {
 		const first = buckets[0];
 		const end = buckets.at(-1);
@@ -63,7 +65,7 @@ export function Sparkline({
 			line,
 			area: `${line} L${X(end).toFixed(1)} ${H} L${X(first).toFixed(1)} ${H}Z`,
 		};
-	}, [buckets, bucketSeconds]);
+	}, [buckets, bucketSeconds, H]);
 	if (!path) return null;
 	return (
 		<svg
@@ -72,6 +74,7 @@ export function Sparkline({
 			viewBox={`0 0 ${W} ${H}`}
 			preserveAspectRatio="none"
 			className={cn("block", className)}
+			style={{ height: H }}
 		>
 			<path d={path.area} fill={color} opacity={0.13} />
 			<path
@@ -105,11 +108,12 @@ export function PrimaryMetric({
 	className?: string;
 }) {
 	const { name, unit, last, buckets, bucketSeconds } = data;
-	const spark = (sparkClass: string) => (
+	const spark = (height: number, sparkClass: string) => (
 		<Sparkline
 			buckets={buckets}
 			bucketSeconds={bucketSeconds}
 			color={accent}
+			height={height}
 			className={sparkClass}
 		/>
 	);
@@ -126,7 +130,7 @@ export function PrimaryMetric({
 				<span className="text-fg-3">{name}</span>
 				<b className="font-mono font-semibold">{valueText(last)}</b>
 				{unit && <span className="text-fg-3">{unit}</span>}
-				{spark("h-4 w-14 flex-none")}
+				{spark(16, "w-14 flex-none")}
 			</span>
 		);
 	}
@@ -137,12 +141,13 @@ export function PrimaryMetric({
 				data-primary-metric={name}
 				className={cn("flex min-w-0 flex-1 items-center gap-2", className)}
 			>
-				<span className="min-w-0 truncate">
-					<span className="text-fg-3">{name}</span>{" "}
-					<b className="font-mono font-semibold text-fg-1">{valueText(last)}</b>
-					{unit && <span className="text-fg-3"> {unit}</span>}
+				{/* 位置不够时只截断指标名，数值与单位总是完整显示。 */}
+				<span className="flex min-w-0 items-baseline gap-1">
+					<span className="min-w-0 truncate text-fg-3">{name}</span>{" "}
+					<b className="flex-none font-mono font-semibold text-fg-1">{valueText(last)}</b>
+					{unit && <span className="flex-none text-fg-3"> {unit}</span>}
 				</span>
-				{spark("ml-auto h-3.5 w-13.5 flex-none")}
+				{spark(14, "ml-auto w-13.5 flex-none")}
 			</span>
 		);
 	}
@@ -155,13 +160,13 @@ export function PrimaryMetric({
 					{unit && <small className="ml-1 text-2xs font-normal text-fg-3">{unit}</small>}
 				</div>
 			</div>
-			{spark("h-8.5 min-w-0 flex-1")}
+			{spark(34, "min-w-0 flex-1")}
 		</div>
 	);
 }
 
 /**
- * 运行里一个节点的主指标（自己查询序列）；节点类型没有主指标时渲染 fallback。
+ * 运行里一个节点的主指标（自己查询序列）；节点类型没有主指标、或给了 fallback 且还没有数据时渲染 fallback。
  * status 是节点状态（决定趋势颜色、序列是否还会变化）。
  */
 export function NodePrimaryMetric({
@@ -183,7 +188,7 @@ export function NodePrimaryMetric({
 }) {
 	const finished = !ACTIVE.has(status);
 	const data = usePrimaryMetric(runId, entry, { finished, poll });
-	if (!data) return fallback;
+	if (!data || (data.last === undefined && fallback !== null)) return fallback;
 	return (
 		<PrimaryMetric
 			data={data}
