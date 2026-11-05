@@ -13,7 +13,7 @@ import type { Db } from "../db/database.js";
 import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
-import type { MetricRetention } from "./metric-retention.js";
+import { type MetricRetention, purgeRunMetrics } from "./metric-retention.js";
 import { nodeTypeOf } from "./node-types.js";
 
 /**
@@ -338,15 +338,22 @@ export class TaskMetrics {
 		const starts = segments.map(({ points }) => (points[0] as Point).t);
 		let expired = false;
 		const attempt = async () => {
-			for (const t of starts) await this.deps.retention.ensurePartition(t);
+			// 有段落在已整天过期的日期（分区已经或将被保留期扫描删除，#32）：不重建分区，运行的数据已不完整，
+			// 与删除分区时一样把运行标记为已过保留期。
+			const stale = starts.some((t) => this.deps.retention.dayExpired(t));
+			if (!stale) for (const t of starts) await this.deps.retention.ensurePartition(t);
 			await this.deps.db.transaction(async (tx) => {
 				// 运行已过保留期（#32）就不再写回。锁住运行这一行，与保留期扫描（先标记再删摘要）互斥。
 				const [run] = await tx
 					.select({ purgedAt: runs.metricsPurgedAt })
 					.from(runs)
 					.where(eq(runs.id, state.runId))
-					.for("share");
+					.for(stale ? "update" : "share");
 				expired = !run || run.purgedAt !== null;
+				if (!expired && stale) {
+					await purgeRunMetrics(tx, [state.runId], this.deps.clock.now());
+					expired = true;
+				}
 				if (expired) return;
 				for (const { s, points: segment } of segments) {
 					const start = segment[0];
@@ -406,7 +413,8 @@ export class TaskMetrics {
 			await attempt();
 		} catch (error) {
 			if (!isMissingPartition(error)) throw error;
-			// 分区在别处被删除（内存里「分区已存在」的记录过期了）：忘掉它们，重新创建后再写一次。
+			// 分区在别处被删除（内存里「分区已存在」的记录过期了）：忘掉它们再写一次——还在保留期内的重新创建，
+			// 刚被保留期扫描删除的不再重建（同上）。
 			this.deps.retention.forgetPartitions(starts);
 			await attempt();
 		}
