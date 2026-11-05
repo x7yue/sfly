@@ -18,3 +18,26 @@ export function formatBytes(bytes: number): string {
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
+
+/** 耗时：`850ms`、`12.3s`、`3m 05s`、`1h 02m`。 */
+export function formatDuration(ms: number): string {
+	const d = Math.max(0, ms);
+	if (d < 1000) return `${Math.round(d)}ms`;
+	const s = d / 1000;
+	if (s < 60) return `${s.toFixed(1)}s`;
+	const m = Math.floor(s / 60);
+	if (m < 60) return `${m}m ${pad(Math.floor(s % 60))}s`;
+	return `${Math.floor(m / 60)}h ${pad(m % 60)}m`;
+}
+
+/** `08:00:05`：当天内的时刻（浏览器时区）。 */
+export function formatClock(time: number | string): string {
+	const d = new Date(time);
+	return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** `08:00:05.120`：日志行的时刻（带毫秒）。 */
+export function formatClockMs(time: number | string): string {
+	const d = new Date(time);
+	return `${formatClock(d.getTime())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
+}

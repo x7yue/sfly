@@ -27,8 +27,6 @@
 @import "../canvas/wait-nodes.css" layer(legacy);
 @import "../versions/versions.css" layer(legacy);
 @import "../runs/runs.css" layer(legacy);
-@import "../runs/logs.css" layer(legacy);
-@import "../runs/failure.css" layer(legacy);
 
 /*
  * 把语义层与画布层暴露为 Tailwind 工具类。默认色板、字号、圆角全部清空，只留设计体系里的值：
