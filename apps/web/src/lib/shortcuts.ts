@@ -52,6 +52,13 @@ export const SHORTCUTS = [
 	},
 	{ id: "canvas-mode-edit", group: "编排画布", label: "编辑模式", keys: "E" },
 	{ id: "canvas-mode-run", group: "编排画布", label: "运行状态模式", keys: "R" },
+	{ id: "canvas-undo", group: "编排画布", label: "撤销", keys: "Ctrl+Z" },
+	{ id: "canvas-redo", group: "编排画布", label: "重做", keys: "Ctrl+Shift+Z" },
+	{ id: "canvas-tidy", group: "编排画布", label: "整理布局", keys: "Alt+Shift+F" },
+	// Tab 只在焦点在画布上时打开添加节点菜单（editor/ScenarioEditor.tsx），其他时候照常切换焦点。
+	{ id: "canvas-add-tab", group: "编排画布", label: "添加节点", keys: "Tab", displayOnly: true },
+	{ id: "canvas-add", group: "编排画布", label: "搜索节点类型", keys: "/" },
+	{ id: "canvas-delete", group: "编排画布", label: "删除节点", keys: "Delete", displayOnly: true },
 	{ id: "canvas-fit", group: "编排画布", label: "适配视图", keys: "0" },
 	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
 	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },
