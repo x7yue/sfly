@@ -155,7 +155,7 @@
 /* —— 版本历史 —— */
 .sf-versions {
 	display: flex;
-	height: calc(100vh - 49px);
+	height: calc(100vh - var(--topbar-height)); /* 外壳顶栏的高度 */
 	background: var(--sf-bg);
 	color: var(--sf-text);
 }

@@ -3,7 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { OrchestrationEditor } from "#/canvas/OrchestrationEditor";
 import { getOrchestration, getOrchestrationHead } from "#/lib/api";
 
-export const Route = createFileRoute("/orchestrations/$id")({
+export const Route = createFileRoute("/_shell/orchestrations/$id")({
+	staticData: { crumb: ["场景编排", "编排画布"] },
 	component: EditorPage,
 });
 

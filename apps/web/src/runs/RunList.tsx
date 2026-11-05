@@ -24,7 +24,7 @@ export function RunList({ orchestrationId }: { orchestrationId: string }) {
 	const open = (id: string) => navigate({ to: "/runs/$id", params: { id } });
 
 	return (
-		<div className="sf-editor flex h-[calc(100vh-49px)] flex-col">
+		<div className="sf-editor flex h-[calc(100vh-var(--topbar-height))] flex-col">
 			<header className="sf-topbar">
 				<Link to="/orchestrations/$id" params={{ id: orchestrationId }} className="sf-link text-xs">
 					← 编辑

@@ -1,4 +1,5 @@
 import { checkConnection, documentWarnings, type OrchestrationWarning } from "@sfly/orchestration";
+import { agentsApi, packagesApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -15,7 +16,7 @@ import {
 	useReactFlow,
 } from "@xyflow/react";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { listAgents, listPackages, type Orchestration, type OrchestrationHead } from "#/lib/api";
+import { apiQuery, type Orchestration, type OrchestrationHead } from "#/lib/api";
 import { TriggerDialog } from "#/runs/TriggerDialog";
 import { hasDraft } from "#/versions/draft";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
@@ -92,12 +93,8 @@ function Editor({
 	const [notice, setNotice] = useState<string | null>(null);
 	const [triggering, setTriggering] = useState(false);
 
-	const packages = useQuery({ queryKey: ["packages"], queryFn: listPackages });
-	const agents = useQuery({
-		queryKey: ["agents"],
-		queryFn: listAgents,
-		refetchInterval: 10_000,
-	});
+	const packages = useQuery(apiQuery(packagesApi.list));
+	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: 10_000 });
 	const agentList = agents.data?.agents ?? [];
 
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
@@ -305,7 +302,7 @@ function Editor({
 
 	return (
 		<CanvasContext.Provider value={canvasInfo}>
-			<div className="sf-editor flex h-[calc(100vh-49px)] flex-col">
+			<div className="sf-editor flex h-[calc(100vh-var(--topbar-height))] flex-col">
 				<header className="sf-topbar">
 					<h1>{orchestration.name}</h1>
 					<span className={`sf-tag ${warnings.length > 0 ? "sf-tag--warn" : ""}`}>
