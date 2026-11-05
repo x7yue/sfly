@@ -46,20 +46,23 @@ describe("指标保留期与分区维护", () => {
 	const now = (s = 0) => Math.floor(clock().now().getTime() / 1000) + s;
 
 	/** 分区本身就是这条验收标准的可观察结果，所以直接查数据库：metric_segments 的分区名（按名字排序）。 */
-	const partitions = async (): Promise<string[]> => {
+	const query = async <R extends object>(text: string): Promise<R[]> => {
 		const client = new pg.Client({ connectionString: cp.database.url });
 		await client.connect();
 		try {
-			const { rows } = await client.query<{ name: string }>(
-				`select c.relname as name from pg_inherits i
-					join pg_class c on c.oid = i.inhrelid join pg_class p on p.oid = i.inhparent
-				where p.relname = 'metric_segments' order by 1`,
-			);
-			return rows.map((r) => r.name);
+			return (await client.query<R>(text)).rows;
 		} finally {
 			await client.end();
 		}
 	};
+	const partitions = async (): Promise<string[]> =>
+		(
+			await query<{ name: string }>(
+				`select c.relname as name from pg_inherits i
+					join pg_class c on c.oid = i.inhrelid join pg_class p on p.oid = i.inhparent
+				where p.relname = 'metric_segments' order by 1`,
+			)
+		).map((r) => r.name);
 
 	it("周期扫描提前创建今天和之后两天的分区，随时钟推进继续创建", async () => {
 		await setup();
@@ -160,5 +163,51 @@ describe("指标保留期与分区维护", () => {
 		await cp.restart(() => clock().advance(DAY + 1000));
 		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
 		await eventually(async () => expect((await summary(runId)).expired).toBe(true));
+	});
+
+	const tpsOf = async (runId: string) =>
+		((await summary(runId)).tasks[0] as { metrics: Array<{ points: number; last: number }> })
+			?.metrics[0];
+
+	it("时间戳超出合理范围的点被丢弃，不按异常的日期建分区", async () => {
+		const api = await setup();
+		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
+		const task = await agent.nextAssign();
+		agent.metrics(task, [
+			["tps", 0, 1],
+			["tps", now(-31 * 86_400), 2],
+			// 保留期内、还没有分区的过去日期（例如 Agent 断线期间排队的点）：按需创建。
+			["tps", now(-10 * 86_400), 3],
+			["tps", now(1), 4],
+			// 超出提前创建的分区（2026-01-01 到 01-03）。
+			["tps", now(3 * 86_400), 5],
+			["tps", Date.UTC(2099, 0, 1) / 1000, 6],
+			["tps", now(2), 7],
+		]);
+		await agent.succeed(task);
+
+		expect(await tpsOf(runId)).toMatchObject({ points: 3, last: 7 });
+		expect(await partitions()).toEqual([
+			"metric_segments_20251222",
+			"metric_segments_20260101",
+			"metric_segments_20260102",
+			"metric_segments_20260103",
+		]);
+	});
+
+	it("分区被别处删除后，写入时重新创建", async () => {
+		const api = await setup();
+		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
+		const task = await agent.nextAssign();
+		agent.metrics(task, [["tps", now(1), 1]]);
+		await agent.sync();
+		clock().advance(10_000);
+		await eventually(async () => expect((await tpsOf(runId))?.points).toBe(1));
+
+		await query("drop table metric_segments_20260101");
+		agent.metrics(task, [["tps", now(1), 2]]);
+		await agent.succeed(task);
+		expect(await tpsOf(runId)).toMatchObject({ points: 2, last: 2 });
+		expect(await partitions()).toContain("metric_segments_20260101");
 	});
 });

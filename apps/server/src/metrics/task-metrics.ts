@@ -27,6 +27,7 @@ import type { MetricRetention } from "./metric-retention.js";
  * Agent 按「任务 × 指标 × 秒」合并后以 `MetricBatch` 上报（每个任务每秒最多一批）。只接受任务所在 Agent、
  * attempt 一致的批次；节点类型没有声明的指标名（兜底，SDK 已经丢弃过一次）和非有限数值被丢弃；
  * 同一指标不晚于已收到的最后一秒的点视为重复而忽略（幂等）。
+ * 时间戳超出可接收范围（保留期内到最后一个提前创建的分区为止，见 src/metrics/metric-retention.ts）的点也被丢弃。
  *
  * ## 分段表 `metric_segments`
  * 按天分区（`start_at`），一行 = 一个任务一个指标的一段：时间偏移（秒，相对 start_at）、值、每秒最小 / 最大值的
@@ -149,6 +150,8 @@ export class TaskMetrics {
 				if (!state.declared.has(p.name)) continue;
 				if (![p.value, p.min, p.max].every(Number.isFinite)) continue;
 				const t = Number(p.timeUnixS);
+				// 时间戳来自 Agent 的时钟：超出可接收范围的（时钟异常）丢弃，不按异常的日期建分区（#32）。
+				if (!this.deps.retention.accepts(t)) continue;
 				let series = state.series.get(p.name);
 				if (series && series.points > 0 && t <= series.lastAt) continue;
 				if (state.truncated) continue;
@@ -292,56 +295,69 @@ export class TaskMetrics {
 				.filter((points) => points.length > 0)
 				.map((points) => ({ s, points })),
 		);
-		for (const { points } of segments)
-			await this.deps.retention.ensurePartition((points[0] as Point).t);
-		await this.deps.db.transaction(async (tx) => {
-			for (const { s, points: segment } of segments) {
-				const start = segment[0];
-				const end = segment[segment.length - 1];
-				if (!start || !end) continue;
-				const values = segment.map((p) => p.value);
-				const mins = segment.map((p) => p.min);
-				const maxs = segment.map((p) => p.max);
-				const startAt = new Date(start.t * 1000);
-				await tx.execute(sql`
-					insert into metric_segments
-						(run_id, task_id, metric, start_at, end_at, offsets, "values", mins, maxs, points, min, max, avg, last)
-					values (
-						${state.runId}, ${state.taskId}, ${s.name}, ${startAt.toISOString()}, ${new Date(end.t * 1000).toISOString()},
-						${sql.param(segment.map((p) => p.t - start.t))}::int4[], ${sql.param(values)}::float8[],
-						${sql.param(mins)}::float8[], ${sql.param(maxs)}::float8[],
-						${segment.length}, ${Math.min(...mins)}, ${Math.max(...maxs)},
-						${values.reduce((a, b) => a + b, 0) / values.length}, ${end.value}
-					)
-					on conflict (task_id, metric, start_at) do update set
-						end_at = excluded.end_at, offsets = excluded.offsets, "values" = excluded."values",
-						mins = excluded.mins, maxs = excluded.maxs, points = excluded.points,
-						min = excluded.min, max = excluded.max, avg = excluded.avg, last = excluded.last`);
-			}
-			for (const s of list) {
-				const summary = {
-					points: s.points,
-					min: s.min,
-					max: s.max,
-					sum: s.sum,
-					last: s.last,
-					firstAt: new Date(s.firstAt * 1000),
-					lastAt: new Date(s.lastAt * 1000),
-				};
+		const starts = segments.map(({ points }) => (points[0] as Point).t);
+		const attempt = async () => {
+			for (const t of starts) await this.deps.retention.ensurePartition(t);
+			await this.deps.db.transaction(async (tx) => {
+				for (const { s, points: segment } of segments) {
+					const start = segment[0];
+					const end = segment[segment.length - 1];
+					if (!start || !end) continue;
+					const values = segment.map((p) => p.value);
+					const mins = segment.map((p) => p.min);
+					const maxs = segment.map((p) => p.max);
+					const startAt = new Date(start.t * 1000);
+					await tx.execute(sql`
+						insert into metric_segments
+							(run_id, task_id, metric, start_at, end_at, offsets, "values", mins, maxs, points, min, max, avg, last)
+						values (
+							${state.runId}, ${state.taskId}, ${s.name}, ${startAt.toISOString()}, ${new Date(end.t * 1000).toISOString()},
+							${sql.param(segment.map((p) => p.t - start.t))}::int4[], ${sql.param(values)}::float8[],
+							${sql.param(mins)}::float8[], ${sql.param(maxs)}::float8[],
+							${segment.length}, ${Math.min(...mins)}, ${Math.max(...maxs)},
+							${values.reduce((a, b) => a + b, 0) / values.length}, ${end.value}
+						)
+						on conflict (task_id, metric, start_at) do update set
+							end_at = excluded.end_at, offsets = excluded.offsets, "values" = excluded."values",
+							mins = excluded.mins, maxs = excluded.maxs, points = excluded.points,
+							min = excluded.min, max = excluded.max, avg = excluded.avg, last = excluded.last`);
+				}
+				for (const s of list) {
+					const summary = {
+						points: s.points,
+						min: s.min,
+						max: s.max,
+						sum: s.sum,
+						last: s.last,
+						firstAt: new Date(s.firstAt * 1000),
+						lastAt: new Date(s.lastAt * 1000),
+					};
+					await tx
+						.insert(metricSeries)
+						.values({ taskId: state.taskId, runId: state.runId, metric: s.name, ...summary })
+						.onConflictDoUpdate({
+							target: [metricSeries.taskId, metricSeries.metric],
+							set: summary,
+						});
+				}
 				await tx
-					.insert(metricSeries)
-					.values({ taskId: state.taskId, runId: state.runId, metric: s.name, ...summary })
-					.onConflictDoUpdate({ target: [metricSeries.taskId, metricSeries.metric], set: summary });
-			}
-			await tx
-				.update(tasks)
-				.set({
-					metricPoints: [...state.series.values()].reduce((n, s) => n + s.points, 0),
-					metricTruncated: state.truncated,
-					metricDropped: state.dropped,
-				})
-				.where(eq(tasks.id, state.taskId));
-		});
+					.update(tasks)
+					.set({
+						metricPoints: [...state.series.values()].reduce((n, s) => n + s.points, 0),
+						metricTruncated: state.truncated,
+						metricDropped: state.dropped,
+					})
+					.where(eq(tasks.id, state.taskId));
+			});
+		};
+		try {
+			await attempt();
+		} catch (error) {
+			if (!isMissingPartition(error)) throw error;
+			// 分区在别处被删除（内存里「分区已存在」的记录过期了）：忘掉它们，重新创建后再写一次。
+			this.deps.retention.forgetPartitions(starts);
+			await attempt();
+		}
 		state.countersDirty = false;
 		for (const s of list) {
 			s.dirtySince = undefined;
@@ -462,6 +478,14 @@ export class TaskMetrics {
 		const type = metadata?.nodes?.find((n) => n.name === node.node);
 		return new Set((type?.metrics ?? []).map((m) => m.name));
 	}
+}
+
+/** 写入的行没有对应的分区（PostgreSQL 23514 check_violation：no partition of relation … found for row）。 */
+function isMissingPartition(error: unknown): boolean {
+	for (let e: unknown = error; e instanceof Error; e = e.cause) {
+		if ((e as { code?: unknown }).code === "23514") return true;
+	}
+	return false;
 }
 
 function emptySeries(name: string): Series {
