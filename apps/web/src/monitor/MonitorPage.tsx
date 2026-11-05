@@ -1,17 +1,17 @@
-import { type MetricIncrement, queryKey, type RunView, runsApi } from "@sfly/schema";
+import { orchestrationsApi, queryKey, type RunView, runsApi } from "@sfly/schema";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ErrorState } from "#/components/feedback/states";
-import { apiQuery, getOrchestration } from "#/lib/api";
+import { apiQuery } from "#/lib/api";
 import { useEventSource } from "#/lib/sse";
 import { useNow } from "#/lib/use-now";
-import { getVersion } from "#/versions/api";
+import { versionQuery } from "#/versions/queries";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BottomPanel } from "./BottomPanel";
 import { ChartWorkspace } from "./ChartWorkspace";
 import { MonitorTopBar } from "./MonitorTopBar";
 import { createMonitorStore, MonitorProvider, type TimeAxis } from "./monitor-state";
-import { applyProgress, focusNode, type ProgressEvent } from "./run-model";
+import { applyProgress, focusNode } from "./run-model";
 import { Timeline } from "./Timeline";
 import { runExtent, visibleRange } from "./timeline";
 import { applyMetricIncrement, refetchSeries } from "./use-run-metrics";
@@ -31,14 +31,13 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 	// 运行结束后不再需要实时流（最后一条推送就是最终状态）。
 	const opened = useRef(false);
 	useEventSource(
-		running ? `/runs/${encodeURIComponent(runId)}/events` : null,
+		runsApi.events,
+		running ? { params: { id: runId } } : null,
 		{
-			run: (data) => queryClient.setQueryData(runKey, data as RunView),
-			progress: (data) =>
-				queryClient.setQueryData(runKey, (old: RunView | undefined) =>
-					applyProgress(old, data as ProgressEvent),
-				),
-			metrics: (data) => applyMetricIncrement(queryClient, runId, data as MetricIncrement),
+			run: (view) => queryClient.setQueryData(runKey, view),
+			progress: (event) =>
+				queryClient.setQueryData(runKey, (old: RunView | undefined) => applyProgress(old, event)),
+			metrics: (increment) => applyMetricIncrement(queryClient, runId, increment),
 		},
 		() => {
 			if (opened.current) refetchSeries(queryClient, runId);
@@ -49,16 +48,13 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 	const orchestrationId = run?.orchestration_id;
 	const versionNumber = run?.orchestration_version;
 	const orchestration = useQuery({
-		queryKey: ["orchestration", orchestrationId],
-		queryFn: () => getOrchestration(orchestrationId as string),
+		...apiQuery(orchestrationsApi.get, { params: { id: orchestrationId ?? "" } }),
 		enabled: !!orchestrationId,
 	});
 	// 运行绑定的版本文档：节点的包与类型、always 标记、敏感参数。
 	const version = useQuery({
-		queryKey: ["orchestration", orchestrationId, "version", versionNumber],
-		queryFn: () => getVersion(orchestrationId as string, versionNumber as number),
+		...versionQuery(orchestrationId ?? "", versionNumber ?? 0),
 		enabled: !!orchestrationId && !!versionNumber,
-		staleTime: Number.POSITIVE_INFINITY,
 	});
 
 	const [store] = useState(() => createMonitorStore());

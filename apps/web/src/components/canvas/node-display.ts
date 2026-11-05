@@ -1,6 +1,6 @@
 import { NODE_DEFAULTS } from "@sfly/orchestration";
-import type { DocNode } from "#/canvas/flow";
 import type { CanvasInfo } from "./context";
+import type { DocNode } from "./flow";
 
 /** 节点种类的名称与卡片上的两字母代号（原型 KIND）。 */
 export const KIND_META: Record<DocNode["kind"], { label: string; code: string }> = {

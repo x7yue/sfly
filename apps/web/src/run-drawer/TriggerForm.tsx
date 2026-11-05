@@ -1,4 +1,6 @@
 import {
+	domainKey,
+	orchestrationsApi,
 	type ParamDeclView,
 	type PreflightProblem,
 	queryKey,
@@ -118,8 +120,9 @@ function ParamsForm({
 			callApi(runsApi.trigger, { params: { id: orchestrationId }, body: { params } }),
 		onSuccess: (run) => {
 			queryClient.setQueryData(queryKey(runsApi.get, { params: { id: run.id } }), run);
-			void queryClient.invalidateQueries({ queryKey: ["runs"] });
-			void queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
+			// 运行列表与场景卡片上的最近运行。
+			void queryClient.invalidateQueries({ queryKey: domainKey(runsApi.get) });
+			void queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.list) });
 			onTriggered(run);
 		},
 	});

@@ -6,15 +6,14 @@ import {
 	referenceOptions,
 	referenceScope,
 } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { cn } from "cn";
 import { PanelRightCloseIcon, Trash2Icon } from "lucide-react";
 import { forwardRef, type ReactNode, useMemo, useState } from "react";
-import type { DocNode } from "#/canvas/flow";
 import type { CanvasInfo } from "#/components/canvas/context";
+import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
 import { StatusPill } from "#/components/status";
-import type { AgentView, PackageSummary } from "#/lib/api";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";

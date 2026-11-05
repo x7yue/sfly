@@ -1,18 +1,25 @@
 import { diffDocuments, isEmptyDiff } from "@sfly/orchestration";
-import { type OrchestrationDocument, orchestrationsApi, queryKey } from "@sfly/schema";
+import {
+	domainKey,
+	type OrchestrationDocument,
+	type OrchestrationHeadView,
+	orchestrationsApi,
+	queryKey,
+	type SavedVersionView,
+} from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fromFlow, toFlow } from "#/canvas/flow";
-import type { OrchestrationHead, SavedVersion } from "#/lib/api";
-import { saveVersionFrom, versionConflictOf } from "./api";
+import { fromFlow, toFlow } from "#/components/canvas/flow";
+import { callApi } from "#/lib/api";
 import { clearDraft, loadDraft, onDraftChangedElsewhere, writeDraft } from "./draft";
+import { versionConflictOf } from "./queries";
 
 /** 一次编辑会话的起点：最新版本，或者浏览器里保存的本地草稿。 */
 export interface EditStart {
 	/** 每次重新载入（例如放弃本地修改）递增，用来重建画布状态。 */
 	nonce: number;
 	/** 打开页面（或重新载入）时控制面上的最新版本。 */
-	head: OrchestrationHead;
+	head: OrchestrationHeadView;
 	base: Base;
 	/** 画布的初始内容。 */
 	document: OrchestrationDocument;
@@ -34,7 +41,7 @@ const asCanvasDocument = (doc: OrchestrationDocument): OrchestrationDocument => 
 
 export function startEditing(
 	orchestrationId: string,
-	head: OrchestrationHead,
+	head: OrchestrationHeadView,
 	nonce = 0,
 ): EditStart {
 	const draft = loadDraft(orchestrationId);
@@ -133,11 +140,14 @@ export function useVersionedDraft(
 
 	const save = useMutation({
 		mutationFn: (document: OrchestrationDocument) =>
-			saveVersionFrom(orchestrationId, base.version, document),
-		onSuccess: (saved: SavedVersion, document) => {
+			callApi(orchestrationsApi.saveVersion, {
+				params: { id: orchestrationId },
+				body: { base_version: base.version, document },
+			}),
+		onSuccess: (saved: SavedVersionView, document) => {
 			setBase({ version: saved.number, author: saved.author, document });
-			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
-			queryClient.invalidateQueries({ queryKey: ["orchestration", orchestrationId, "versions"] });
+			// 场景领域全部失效：列表、详情、版本历史（编辑起点由下面直接写入）。
+			queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.get) });
 			queryClient.setQueryData(
 				queryKey(orchestrationsApi.head, { params: { id: orchestrationId } }),
 				{
@@ -146,7 +156,7 @@ export function useVersionedDraft(
 					author: saved.author,
 					created_at: saved.created_at,
 					document: saved.document,
-				} satisfies OrchestrationHead,
+				} satisfies OrchestrationHeadView,
 			);
 		},
 	});

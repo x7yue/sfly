@@ -9,11 +9,11 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { BoxIcon } from "lucide-react";
 import { z } from "zod";
-import { compareVersions } from "#/canvas/catalog";
 import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { formatBytes, formatDateTime } from "#/lib/format";
+import { compareVersions } from "#/lib/package-versions";
 import { ChartsCell, MetricsCell } from "#/metrics/MetricDeclarations";
 import { Badge } from "@/components/ui/badge";
 import {

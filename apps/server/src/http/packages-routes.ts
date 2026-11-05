@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { type EndpointResponse, packagesApi } from "@sfly/schema";
+import { packagesApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import { packageLocks } from "../orchestrations/usage.js";
@@ -8,22 +8,17 @@ import {
 	type PackageRepository,
 	type PackageSummary,
 } from "../packages/package-repository.js";
-import { contractRoute } from "./contract-route.js";
+import { contractDownload, contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
 /** 节点包归档上传上限。 */
 const MAX_ARCHIVE_BYTES = 512 * 1024 * 1024;
 
-interface VersionParams {
-	name: string;
-	version: string;
-}
-
 const notFound = (reply: FastifyReply, message: string) =>
 	sendError(reply, 404, "not_found", message);
 
 /**
- * 节点包 API（JSON 接口的契约见 @sfly/schema 的 packagesApi）：
+ * 节点包 API（契约见 @sfly/schema 的 packagesApi）：
  *   POST /packages                                         发布（请求体为 .sflypkg 原始字节）
  *   GET  /packages                                         包列表（含各版本、节点类型摘要与锁定数）
  *   GET  /packages/:name                                   单个包的版本列表（同上）
@@ -42,7 +37,7 @@ export function registerPackageRoutes(
 			(_req, body, done) => done(null, body),
 		);
 
-		scope.post("/packages", async (req, reply) => {
+		contractRoute(scope, packagesApi.publish, async (_request, reply, req) => {
 			if (!(req.body instanceof Buffer)) {
 				return sendError(
 					reply,
@@ -53,10 +48,8 @@ export function registerPackageRoutes(
 			}
 			try {
 				const published = await packages.publish(new Uint8Array(req.body));
-				// 响应在类型上受契约约束（packagesApi.publish）。
-				return reply
-					.code(201)
-					.send(published satisfies EndpointResponse<typeof packagesApi.publish>);
+				reply.code(201);
+				return published;
 			} catch (error) {
 				if (error instanceof PackageError) {
 					return sendError(reply, error.kind === "conflict" ? 409 : 400, error.kind, error.message);
@@ -100,17 +93,13 @@ export function registerPackageRoutes(
 		return nodeType ?? notFound(reply, `节点类型 ${name}/${node}（${version}）不存在`);
 	});
 
-	app.get<{ Params: VersionParams }>(
-		"/packages/:name/versions/:version/archive",
-		async (req, reply) => {
-			const { name, version } = req.params;
-			const stored = await packages.archive(name, version);
-			if (!stored) return notFound(reply, `节点包 ${name}@${version} 不存在`);
-			return reply
-				.type("application/octet-stream")
-				.header("x-sfly-sha256", stored.sha256)
-				.header("content-disposition", `attachment; filename="${name}-${version}.sflypkg"`)
-				.send(createReadStream(stored.path));
-		},
-	);
+	contractDownload(app, packagesApi.archive, async ({ params: { name, version } }, reply) => {
+		const stored = await packages.archive(name, version);
+		if (!stored) return notFound(reply, `节点包 ${name}@${version} 不存在`);
+		return reply
+			.type(packagesApi.archive.contentType)
+			.header("x-sfly-sha256", stored.sha256)
+			.header("content-disposition", `attachment; filename="${name}-${version}.sflypkg"`)
+			.send(createReadStream(stored.path));
+	});
 }

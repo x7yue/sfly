@@ -1,11 +1,10 @@
-import type { OrchestrationDocument } from "@sfly/schema";
+import type { OrchestrationDocument, OrchestrationHeadView, OrchestrationView } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ArrowLeftIcon, HistoryIcon, PlayIcon } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { floatGroupClass, GroupDivider } from "#/components/canvas/CanvasDock";
 import { StatusPill } from "#/components/status";
-import type { Orchestration, OrchestrationHead } from "#/lib/api";
 import { ConflictDialog } from "#/versions/ConflictDialog";
 import type { Versioning } from "#/versions/useVersionedDraft";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -32,7 +31,7 @@ export function EditorTopLeft({
 	onMode,
 	runState,
 }: {
-	orchestration: Orchestration;
+	orchestration: OrchestrationView;
 	version: number;
 	warnings: number;
 	onShowChecks(): void;
@@ -112,7 +111,7 @@ export function EditorTopRight({
 	onRun,
 	onReload,
 }: {
-	orchestration: Orchestration;
+	orchestration: OrchestrationView;
 	/** 在线编辑者（useOtherEditors）。 */
 	editors: readonly string[];
 	doc: OrchestrationDocument;
@@ -120,7 +119,7 @@ export function EditorTopRight({
 	fieldErrors: number;
 	onSave(): void;
 	onRun(): void;
-	onReload(head: OrchestrationHead): void;
+	onReload(head: OrchestrationHeadView): void;
 }) {
 	const { base, dirty, save, conflict } = versioning;
 	const unsaved = dirty || base.version === 0;

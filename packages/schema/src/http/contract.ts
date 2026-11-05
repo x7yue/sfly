@@ -15,26 +15,89 @@ import { z } from "zod";
  * 4. 请求（params / query / body）可以用 coerce、default；控制面拿到的是解析后的值，
  *    校验失败统一返回 400 `invalid_request`，`details` 为 zod 的 issues。
  * 5. `key` 是 TanStack Query 的 query key 前缀，第一段是领域名；前端一律用 `queryKey()` 生成，
- *    失效时用领域前缀（如 `["packages"]`）让该领域的查询全部重新获取。
- * 6. 错误响应统一为 `ApiErrorBody`。非 JSON 的接口（上传、下载归档）不放进契约或只约束 JSON 部分。
+ *    失效时用 `domainKey(def)`（领域前缀，如 `["packages"]`）让该领域的查询全部重新获取。
+ * 6. 错误响应统一为 `ApiErrorBody`。请求校验失败默认是 400 `invalid_request`；需要更具体的错误码时
+ *    （例如保存版本的 `base_version_required`）用 `requestError` 按原始请求选出错误码，details 仍是 zod issues。
+ * 7. 控制面的每个 HTTP 路由都在契约里（控制面启动时检查，apps/server/src/http/contract-route.ts）：
+ *    JSON 接口用 `endpoint`；SSE 用 `stream`（`events` 是事件名 → data 的 schema）；
+ *    返回字节流的下载用 `download`。请求体是原始字节的上传（发布节点包、上传产物）用 `endpoint`，
+ *    不定义 body，只约束路径参数与 JSON 响应。新增领域模块后加进 ./index.ts 的 `httpContract`。
  */
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-export interface EndpointDef {
-	method: HttpMethod;
-	/** Fastify 风格的路径模板，路径参数写作 `:name`；不含浏览器侧的 `/api` 前缀。 */
+/** 请求校验失败时的错误码与说明。 */
+export interface RequestErrorInfo {
+	code: string;
+	message: string;
+}
+
+/** 未解析的原始请求（控制面收到的 params / query / body）。 */
+export interface RawRequest {
+	params: unknown;
+	query: unknown;
+	body: unknown;
+}
+
+interface RouteDefBase {
+	/**
+	 * Fastify 风格的路径模板，路径参数写作 `:name`，末尾的 `*` 匹配剩余路径（参数名为 `*`）；
+	 * 不含浏览器侧的 `/api` 前缀。
+	 */
 	path: string;
-	/** query key 前缀，第一段是领域名。 */
-	key: readonly string[];
 	params?: z.ZodType;
 	query?: z.ZodType;
+	/**
+	 * 请求不符合契约时用更具体的错误码（默认 400 `invalid_request`）；返回 undefined 用默认值。
+	 * details 总是 zod issues。
+	 */
+	requestError?: (request: RawRequest) => RequestErrorInfo | undefined;
+}
+
+/** JSON 接口。 */
+export interface EndpointDef extends RouteDefBase {
+	method: HttpMethod;
+	/** query key 前缀，第一段是领域名。 */
+	key: readonly string[];
 	body?: z.ZodType;
 	response: z.ZodType;
 }
 
+/** SSE 推送（GET）：每条消息都有事件名，data 是 JSON。 */
+export interface StreamDef extends RouteDefBase {
+	method: "GET";
+	kind: "stream";
+	/** 事件名 → data 的 schema（与响应一样只描述形状，不做转换）。 */
+	events: Record<string, z.ZodType>;
+}
+
+/** 返回字节流的下载（GET）；错误时仍是 JSON 的 ApiErrorBody。 */
+export interface DownloadDef extends RouteDefBase {
+	method: "GET";
+	kind: "download";
+	/** 成功时响应的 content-type。 */
+	contentType: string;
+}
+
+export type RouteDef = EndpointDef | StreamDef | DownloadDef;
+
 /** 定义一个接口（只做类型推断，原样返回）。 */
 export const endpoint = <const E extends EndpointDef>(def: E): E => def;
+
+/** 定义一个 SSE 推送。 */
+export const stream = <const S extends Omit<StreamDef, "method" | "kind">>(
+	def: S,
+): S & { method: "GET"; kind: "stream" } => ({ ...def, method: "GET", kind: "stream" });
+
+/** 定义一个下载。 */
+export const download = <const D extends Omit<DownloadDef, "method" | "kind">>(
+	def: D,
+): D & { method: "GET"; kind: "download" } => ({ ...def, method: "GET", kind: "download" });
+
+/** SSE 推送的事件：事件名 → data 的类型。 */
+export type StreamEvents<S extends StreamDef> = {
+	[K in keyof S["events"] & string]: z.output<S["events"][K]>;
+};
 
 type Part<E, K extends "params" | "query" | "body", IO extends "in" | "out"> = E extends {
 	[P in K]: infer S extends z.ZodType;
@@ -45,14 +108,14 @@ type Part<E, K extends "params" | "query" | "body", IO extends "in" | "out"> = E
 	: undefined;
 
 /** 调用方传入的请求（解析前）：没有定义的部分不需要传。 */
-export type EndpointInput<E extends EndpointDef> = OmitUndefined<{
+export type EndpointInput<E extends RouteDef> = OmitUndefined<{
 	params: Part<E, "params", "in">;
 	query: Part<E, "query", "in">;
 	body: Part<E, "body", "in">;
 }>;
 
 /** 控制面拿到的请求（解析后）。 */
-export type EndpointRequest<E extends EndpointDef> = {
+export type EndpointRequest<E extends RouteDef> = {
 	params: Part<E, "params", "out">;
 	query: Part<E, "query", "out">;
 	body: Part<E, "body", "out">;
@@ -76,15 +139,22 @@ export type ApiErrorBody = z.infer<typeof ApiErrorBody>;
 /** 时间：ISO 8601 字符串（控制面用 `Date#toISOString()` 输出）。 */
 export const Timestamp = z.iso.datetime();
 
-/** 按路径模板拼出路径；路径参数用 encodeURIComponent 编码。 */
-export function pathFor(def: EndpointDef, params?: Record<string, unknown>): string {
-	return def.path.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_, name: string) => {
-		const value = params?.[name];
-		if (value === undefined || value === null)
-			throw new Error(`缺少路径参数 ${name}（${def.path}）`);
-		return encodeURIComponent(String(value));
-	});
+/**
+ * 按路径模板拼出路径；路径参数用 encodeURIComponent 编码，末尾 `*` 的值按 `/` 分段、每段单独编码。
+ */
+export function pathFor(def: Pick<RouteDef, "path">, params?: Record<string, unknown>): string {
+	const value = (name: string) => {
+		const v = params?.[name];
+		if (v === undefined || v === null) throw new Error(`缺少路径参数 ${name}（${def.path}）`);
+		return String(v);
+	};
+	return def.path
+		.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_, name: string) => encodeURIComponent(value(name)))
+		.replace(/\*$/, () => value("*").split("/").map(encodeURIComponent).join("/"));
 }
+
+/** 领域前缀（query key 的第一段）：让这个领域的查询全部失效时用，例如 `domainKey(runsApi.get)` → `["runs"]`。 */
+export const domainKey = (def: EndpointDef) => [def.key[0] as string] as const;
 
 /** 接口的 query key：`[...key, { params?, query? }]`，同一请求总是得到相同的 key。 */
 export function queryKey<E extends EndpointDef>(def: E, input?: EndpointInput<E>) {

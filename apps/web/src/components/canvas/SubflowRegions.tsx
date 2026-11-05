@@ -2,8 +2,8 @@ import { chainMembers } from "@sfly/orchestration";
 import { ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
 import { useMemo } from "react";
-import type { SfEdge, SfNode } from "#/canvas/flow";
 import { useFlowCanvas } from "./context";
+import type { SfEdge, SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_WIDTH, REGION_PADDING } from "./geometry";
 import { ZOOM_TEXT_12 } from "./zoom-text";
 

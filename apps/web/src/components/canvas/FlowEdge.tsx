@@ -1,7 +1,7 @@
 import { EdgeLabelRenderer, type EdgeProps, useInternalNode } from "@xyflow/react";
 import { cn } from "cn";
-import type { SfEdge } from "#/canvas/flow";
 import { useFlowCanvas } from "./context";
+import type { SfEdge } from "./flow";
 import { PORTS } from "./geometry";
 import { ZOOM_TEXT_11 } from "./zoom-text";
 

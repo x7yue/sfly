@@ -6,7 +6,7 @@ import {
 	PackageMetadata,
 	PackageName,
 } from "../package-metadata.js";
-import { endpoint, Timestamp } from "./contract.js";
+import { download, endpoint, Timestamp } from "./contract.js";
 
 /** 节点包管理相关接口的契约（约定见 ./contract.ts）。 */
 
@@ -77,14 +77,20 @@ export const packagesApi = {
 		response: NodeTypeView,
 	}),
 	/**
-	 * 发布：请求体是 .sflypkg 原始字节（application/octet-stream，不在契约里），返回 201。
-	 * 下载归档 `GET /packages/:name/versions/:version/archive` 返回字节流，不在契约里。
+	 * 发布：请求体是 .sflypkg 原始字节（application/octet-stream，不在契约里），返回 201；
+	 * 其他 content-type 返回 415，元信息不合法 400 `invalid_package`，`包名@版本` 已存在 409 `conflict`。
 	 */
 	publish: endpoint({
 		method: "POST",
 		path: "/packages",
 		key: ["packages", "publish"],
 		response: PackageVersionView,
+	}),
+	/** 下载归档（Agent 安装用；`x-sfly-sha256` 响应头是归档的 sha256）。 */
+	archive: download({
+		path: "/packages/:name/versions/:version/archive",
+		params: z.object({ name: z.string(), version: z.string() }),
+		contentType: "application/octet-stream",
 	}),
 };
 

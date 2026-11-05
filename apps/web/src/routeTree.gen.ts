@@ -17,7 +17,6 @@ import { Route as OrchestrationsIdRouteImport } from './routes/orchestrations/$i
 import { Route as RunsIdRouteImport } from './routes/runs/$id'
 import { Route as ShellOrchestrationsIndexRouteImport } from './routes/_shell/orchestrations/index'
 import { Route as ShellRunsIndexRouteImport } from './routes/_shell/runs/index'
-import { Route as ShellOrchestrationsIdRunsRouteImport } from './routes/_shell/orchestrations/$id_.runs'
 import { Route as ShellOrchestrationsIdVersionsRouteImport } from './routes/_shell/orchestrations/$id_.versions'
 
 const ShellRoute = ShellRouteImport.update({
@@ -60,12 +59,6 @@ const ShellRunsIndexRoute = ShellRunsIndexRouteImport.update({
   path: '/runs/',
   getParentRoute: () => ShellRoute,
 } as any)
-const ShellOrchestrationsIdRunsRoute =
-  ShellOrchestrationsIdRunsRouteImport.update({
-    id: '/orchestrations/$id_/runs',
-    path: '/orchestrations/$id/runs',
-    getParentRoute: () => ShellRoute,
-  } as any)
 const ShellOrchestrationsIdVersionsRoute =
   ShellOrchestrationsIdVersionsRouteImport.update({
     id: '/orchestrations/$id_/versions',
@@ -81,7 +74,6 @@ export interface FileRoutesByFullPath {
   '/runs/$id': typeof RunsIdRoute
   '/orchestrations/': typeof ShellOrchestrationsIndexRoute
   '/runs/': typeof ShellRunsIndexRoute
-  '/orchestrations/$id/runs': typeof ShellOrchestrationsIdRunsRoute
   '/orchestrations/$id/versions': typeof ShellOrchestrationsIdVersionsRoute
 }
 export interface FileRoutesByTo {
@@ -92,7 +84,6 @@ export interface FileRoutesByTo {
   '/': typeof ShellIndexRoute
   '/orchestrations': typeof ShellOrchestrationsIndexRoute
   '/runs': typeof ShellRunsIndexRoute
-  '/orchestrations/$id/runs': typeof ShellOrchestrationsIdRunsRoute
   '/orchestrations/$id/versions': typeof ShellOrchestrationsIdVersionsRoute
 }
 export interface FileRoutesById {
@@ -105,7 +96,6 @@ export interface FileRoutesById {
   '/_shell/': typeof ShellIndexRoute
   '/_shell/orchestrations/': typeof ShellOrchestrationsIndexRoute
   '/_shell/runs/': typeof ShellRunsIndexRoute
-  '/_shell/orchestrations/$id_/runs': typeof ShellOrchestrationsIdRunsRoute
   '/_shell/orchestrations/$id_/versions': typeof ShellOrchestrationsIdVersionsRoute
 }
 export interface FileRouteTypes {
@@ -118,7 +108,6 @@ export interface FileRouteTypes {
     | '/runs/$id'
     | '/orchestrations/'
     | '/runs/'
-    | '/orchestrations/$id/runs'
     | '/orchestrations/$id/versions'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -129,7 +118,6 @@ export interface FileRouteTypes {
     | '/'
     | '/orchestrations'
     | '/runs'
-    | '/orchestrations/$id/runs'
     | '/orchestrations/$id/versions'
   id:
     | '__root__'
@@ -141,7 +129,6 @@ export interface FileRouteTypes {
     | '/_shell/'
     | '/_shell/orchestrations/'
     | '/_shell/runs/'
-    | '/_shell/orchestrations/$id_/runs'
     | '/_shell/orchestrations/$id_/versions'
   fileRoutesById: FileRoutesById
 }
@@ -209,13 +196,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ShellRunsIndexRouteImport
       parentRoute: typeof ShellRoute
     }
-    '/_shell/orchestrations/$id_/runs': {
-      id: '/_shell/orchestrations/$id_/runs'
-      path: '/orchestrations/$id/runs'
-      fullPath: '/orchestrations/$id/runs'
-      preLoaderRoute: typeof ShellOrchestrationsIdRunsRouteImport
-      parentRoute: typeof ShellRoute
-    }
     '/_shell/orchestrations/$id_/versions': {
       id: '/_shell/orchestrations/$id_/versions'
       path: '/orchestrations/$id/versions'
@@ -232,7 +212,6 @@ interface ShellRouteChildren {
   ShellIndexRoute: typeof ShellIndexRoute
   ShellOrchestrationsIndexRoute: typeof ShellOrchestrationsIndexRoute
   ShellRunsIndexRoute: typeof ShellRunsIndexRoute
-  ShellOrchestrationsIdRunsRoute: typeof ShellOrchestrationsIdRunsRoute
   ShellOrchestrationsIdVersionsRoute: typeof ShellOrchestrationsIdVersionsRoute
 }
 
@@ -242,7 +221,6 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellIndexRoute: ShellIndexRoute,
   ShellOrchestrationsIndexRoute: ShellOrchestrationsIndexRoute,
   ShellRunsIndexRoute: ShellRunsIndexRoute,
-  ShellOrchestrationsIdRunsRoute: ShellOrchestrationsIdRunsRoute,
   ShellOrchestrationsIdVersionsRoute: ShellOrchestrationsIdVersionsRoute,
 }
 

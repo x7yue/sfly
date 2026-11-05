@@ -181,9 +181,8 @@ export const orchestrationsApi = {
 	/**
 	 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
 	 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
-	 * 缺 base_version 返回 400 `base_version_required`、文档不合法返回 400 `invalid_document`
-	 * （比通用的 `invalid_request` 更具体，测试与文档依赖），所以控制面没有用 contractRoute 注册这个接口，
-	 * 而是用这里的 body schema 解析、响应在类型上受契约约束。
+	 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
+	 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
 	 */
 	saveVersion: endpoint({
 		method: "POST",
@@ -194,6 +193,16 @@ export const orchestrationsApi = {
 			document: OrchestrationDocument,
 			base_version: z.number().int().nonnegative(),
 		}),
+		requestError: ({ body }) =>
+			typeof body === "object" && body !== null && Object.hasOwn(body, "base_version")
+				? {
+						code: "invalid_document",
+						message: "document does not match the orchestration schema",
+					}
+				: {
+						code: "base_version_required",
+						message: "base_version is required (use 0 for the first version)",
+					},
 		response: SavedVersionView,
 	}),
 	/** 版本历史：按版本号从新到旧列出版本号、作者和时间。 */

@@ -6,7 +6,12 @@ import {
 	SUBFLOW_TOP_GAP,
 	tidyLayout,
 } from "@sfly/orchestration";
-import { agentsApi, packagesApi } from "@sfly/schema";
+import {
+	agentsApi,
+	type OrchestrationHeadView,
+	type OrchestrationView,
+	packagesApi,
+} from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import {
 	type Connection,
@@ -19,7 +24,9 @@ import {
 } from "@xyflow/react";
 import { Redo2Icon, Undo2Icon, Wand2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { usePackageCatalog } from "#/canvas/catalog";
+import { ToolButton } from "#/components/canvas/CanvasDock";
+import type { CanvasInfo } from "#/components/canvas/context";
+import { FlowCanvas } from "#/components/canvas/FlowCanvas";
 import {
 	type DocMeta,
 	type DocNode,
@@ -30,19 +37,16 @@ import {
 	toFlow,
 	toFlowEdge,
 	uniqueNodeId,
-} from "#/canvas/flow";
-import { ToolButton } from "#/components/canvas/CanvasDock";
-import type { CanvasInfo } from "#/components/canvas/context";
-import { FlowCanvas } from "#/components/canvas/FlowCanvas";
+} from "#/components/canvas/flow";
 import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
-import { apiQuery, type Orchestration, type OrchestrationHead } from "#/lib/api";
+import { apiQuery } from "#/lib/api";
 import { useOtherEditors } from "#/lib/presence";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
-import { versionConflictOf } from "#/versions/api";
 import { DraftBanner } from "#/versions/DraftBanner";
 import { hasDraft } from "#/versions/draft";
+import { versionConflictOf } from "#/versions/queries";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
 import {
@@ -53,6 +57,7 @@ import {
 	newDocNode,
 	packageGroups,
 } from "./add-node";
+import { usePackageCatalog } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
@@ -85,8 +90,8 @@ export function ScenarioEditor({
 	initialRun,
 	initialNode,
 }: {
-	orchestration: Orchestration;
-	head: OrchestrationHead;
+	orchestration: OrchestrationView;
+	head: OrchestrationHeadView;
 	initialRun?: string;
 	/** 打开时选中的节点（运行抽屉里预检问题的「前往」）。 */
 	initialNode?: string;
@@ -132,11 +137,11 @@ function Editor({
 	initialNode,
 	onReload,
 }: {
-	orchestration: Orchestration;
+	orchestration: OrchestrationView;
 	start: EditStart;
 	initialRun?: string;
 	initialNode?: string;
-	onReload: (head: OrchestrationHead) => void;
+	onReload: (head: OrchestrationHeadView) => void;
 }) {
 	const flow = useReactFlow<SfNode, SfEdge>();
 	const initial = useMemo(() => toFlow(start.document), [start.document]);

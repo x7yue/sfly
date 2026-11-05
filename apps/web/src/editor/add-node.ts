@@ -1,7 +1,9 @@
 import { chainMembers, type StructureDocument } from "@sfly/orchestration";
-import { devNodes, latestVersion } from "#/canvas/catalog";
-import type { DocNode } from "#/canvas/flow";
-import type { AgentView, PackageSummary } from "#/lib/api";
+import type { AgentView, PackageSummary } from "@sfly/schema";
+import type { DocNode } from "#/components/canvas/flow";
+import { latestVersion } from "#/lib/package-versions";
+import { devNodes } from "./catalog";
+import { DEFAULT_TZ } from "./inspector/wait-nodes";
 
 /** 添加节点菜单里的一项：内置节点，或某个节点包版本里的节点类型。 */
 export type AddItem =
@@ -84,7 +86,7 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 		case "subflow_entry":
 			return { id, kind: "subflow_entry", params: [] };
 		case "timer":
-			return { id, kind: "timer", always: false, at: "09:30:00", tz: "Asia/Shanghai" };
+			return { id, kind: "timer", always: false, at: "09:30:00", tz: DEFAULT_TZ };
 		case "sleep":
 			return { id, kind: "sleep", always: false, duration: "30s" };
 	}
