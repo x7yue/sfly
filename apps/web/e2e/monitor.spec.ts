@@ -222,7 +222,8 @@ test("日志：级别筛选、点一行在时间轴上标出该时刻、实时�
 	await expect(logs).not.toContainText("probe line 50\n");
 	const older = logs.getByRole("button", { name: /加载更早的日志/ });
 	await expect(older).toBeVisible();
-	await older.click();
+	// 不用 click()：它会先把按钮滚进视口，滚到顶部本身就会触发加载、按钮随即消失，点击落空。
+	await older.dispatchEvent("click");
 	await expect(older).toHaveCount(0);
 	await logs.evaluate((el) => {
 		el.scrollTop = 0;
