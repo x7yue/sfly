@@ -1,9 +1,11 @@
 # @sfly/web
 
-sfly 前端：纯 SPA（TanStack Router + TanStack Query，vite 构建，ADR 0006）。
+sfly 前端：纯 SPA（TanStack Router + TanStack Query，vite 构建，ADR 0006）。组件、token、样式分层、
+快捷键与 HTTP 契约的约定见 `docs/DESIGN-SYSTEM.md`。
 
 - `pnpm dev`：vite 开发服务器（端口 3000），`/api/*` 代理到控制面（`SFLY_API_URL`，默认 http://127.0.0.1:8080）。
 - `pnpm build`：构建到 `dist/`，由控制面托管（`SFLY_WEB_DIR`，默认 `apps/web/dist`），页面、API、SSE 同源同端口。
+- `pnpm test`：纯逻辑模块的单测（vitest，`src/**/*.test.ts`）。
 - `pnpm test:e2e`：Playwright 端到端测试与视觉回归（`e2e/`，ADR 0005）。每个测试启动自己的真实控制面
   （独立数据库、手动时钟，托管 `dist/`），可连接假 Agent，fixture 见 `e2e/fixtures.ts`。视觉基线
   （`e2e/__screenshots__`）只在 Playwright 官方镜像中生成与比对：在仓库根目录 `pnpm test:e2e:docker`
