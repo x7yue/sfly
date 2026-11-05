@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { API_BASE, apiPost } from "./api";
 import { useNickname } from "./nickname";
 import { useEventSource } from "./sse";
@@ -53,7 +53,8 @@ const sendLeave = (orchestrationId: string, sessionId: string) => {
 export function useOtherEditors(orchestrationId: string): string[] {
 	const nickname = useNickname();
 	// 每次打开编辑页面一个会话 ID：同一昵称在多个标签页打开时互不覆盖。
-	const sessionId = useMemo(randomSessionId, []);
+	// 离开后控制面不再接受这个会话的心跳，从往返缓存恢复页面时换一个新 ID 重新加入。
+	const [sessionId, setSessionId] = useState(randomSessionId);
 	const [editors, setEditors] = useState<OnlineEditor[]>([]);
 
 	const beat = useCallback(() => {
@@ -75,13 +76,11 @@ export function useOtherEditors(orchestrationId: string): string[] {
 	}, [beat]);
 
 	// 关闭标签页（pagehide）或离开编辑页面（卸载）时主动离开，别人立即看不到自己。
-	// 从往返缓存恢复（pageshow persisted）时重新发心跳。
-	const beatRef = useRef(beat);
-	beatRef.current = beat;
+	// 从往返缓存恢复（pageshow persisted）时换新会话 ID，心跳随之重新发出。
 	useEffect(() => {
 		const leave = () => sendLeave(orchestrationId, sessionId);
 		const onShow = (e: PageTransitionEvent) => {
-			if (e.persisted) beatRef.current();
+			if (e.persisted) setSessionId(randomSessionId());
 		};
 		window.addEventListener("pagehide", leave);
 		window.addEventListener("pageshow", onShow);

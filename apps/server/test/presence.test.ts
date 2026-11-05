@@ -126,6 +126,12 @@ describe("在线编辑者", () => {
 		expect((await leave("s-bob")).status).toBe(204);
 		expect((await leave("s-nobody")).status).toBe(204);
 		await sse.expectNone(100);
+
+		// 关闭页面时还在路上的心跳晚于离开到达：忽略，不重新加入名单。
+		const late = await heartbeat(id, "s-bob", "bob");
+		expect(late.status).toBe(200);
+		expect(await late.json()).toEqual({ editors: [{ session_id: "s-alice", nickname: "alice" }] });
+		await sse.expectNone(100);
 	});
 
 	it("心跳需要昵称和 session_id；编排不存在时 404", async () => {
