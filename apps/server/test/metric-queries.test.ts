@@ -125,6 +125,7 @@ describe("指标查询", () => {
 				node_id: "load",
 				task_id: task.taskId,
 				attempt: 1,
+				expired: false,
 				from: iso(0),
 				to: iso(59),
 				bucket_seconds: 10,
@@ -430,6 +431,7 @@ describe("指标查询", () => {
 
 			expect(await catalog(runId)).toEqual({
 				run_id: runId,
+				expired: false,
 				nodes: [
 					{
 						chain_instance_id: await mainChain(runId),

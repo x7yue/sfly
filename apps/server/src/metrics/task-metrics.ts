@@ -101,6 +101,8 @@ interface TaskState {
 	countersDirty: boolean;
 	series: Map<string, Series>;
 	lastSeen: number;
+	/** 运行已过指标保留期（#32）：之后收到的点直接丢弃，不再写库。 */
+	expired: boolean;
 }
 
 export class TaskMetrics {
@@ -142,7 +144,7 @@ export class TaskMetrics {
 		if (!isUuid(batch.taskId)) return Promise.resolve();
 		return this.#serial(batch.taskId, async () => {
 			const state = await this.#stateFor(batch.taskId, agentName);
-			if (!state || state.attempt !== batch.attempt) return;
+			if (!state || state.attempt !== batch.attempt || state.expired) return;
 			const now = this.deps.clock.now().getTime();
 			state.lastSeen = now;
 			if (batch.droppedPoints > 0n) {
@@ -332,9 +334,18 @@ export class TaskMetrics {
 				.map((points) => ({ s, points })),
 		);
 		const starts = segments.map(({ points }) => (points[0] as Point).t);
+		let expired = false;
 		const attempt = async () => {
 			for (const t of starts) await this.deps.retention.ensurePartition(t);
 			await this.deps.db.transaction(async (tx) => {
+				// 运行已过保留期（#32）就不再写回。锁住运行这一行，与保留期扫描（先标记再删摘要）互斥。
+				const [run] = await tx
+					.select({ purgedAt: runs.metricsPurgedAt })
+					.from(runs)
+					.where(eq(runs.id, state.runId))
+					.for("share");
+				expired = !run || run.purgedAt !== null;
+				if (expired) return;
 				for (const { s, points: segment } of segments) {
 					const start = segment[0];
 					const end = segment[segment.length - 1];
@@ -394,6 +405,11 @@ export class TaskMetrics {
 			this.deps.retention.forgetPartitions(starts);
 			await attempt();
 		}
+		if (expired) {
+			// 丢弃内存中的点，之后收到的点也直接丢弃。
+			state.expired = true;
+			state.series = new Map();
+		}
 		state.countersDirty = false;
 		for (const s of list) {
 			s.dirtySince = undefined;
@@ -440,7 +456,11 @@ export class TaskMetrics {
 
 	async #load(taskId: string): Promise<TaskState | undefined> {
 		const [row] = await this.deps.db
-			.select({ task: tasks, document: orchestrationVersions.document })
+			.select({
+				task: tasks,
+				document: orchestrationVersions.document,
+				purgedAt: runs.metricsPurgedAt,
+			})
 			.from(tasks)
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
@@ -483,6 +503,7 @@ export class TaskMetrics {
 			countersDirty: false,
 			series,
 			lastSeen: this.deps.clock.now().getTime(),
+			expired: row.purgedAt !== null,
 		};
 	}
 

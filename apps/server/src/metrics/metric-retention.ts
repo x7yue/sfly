@@ -23,8 +23,8 @@ const PARTITION_NAME = /^metric_segments_(\d{4})(\d{2})(\d{2})$/;
  *   点的时间来自 Agent 的时钟，时钟异常时不会按异常的日期建分区。这个范围内、还不存在的过去日期的分区
  *   （例如 Agent 断线期间排队的点）在写入时按需创建（{@link ensurePartition}）。
  * - 运行结束超过保留期后判定为「已过保留期」：删除它的指标摘要（`metric_series`），记下 `runs.metrics_purged_at`，
- *   摘要等接口据此返回已过保留期（{@link isExpired}）。它的原始数据随所在的整天分区删除（最晚再过一天），
- *   在此之前也不再对外提供。
+ *   摘要、目录、序列接口据此返回已过保留期（{@link isExpired}），之后迟到的点直接丢弃、不再写回。
+ *   它的原始数据随所在的整天分区删除（最晚再过一天），在此之前也不再对外提供。
  * - 已知存在的分区缓存在内存里；删除分区时同时移出缓存。分区被别处删除时，写入失败后调用
  *   {@link forgetPartitions} 再重试。
  */
@@ -106,12 +106,13 @@ export class MetricRetention {
 			.limit(BATCH);
 		if (due.length === 0) return;
 		const ids = due.map((r) => r.id);
+		// 先标记再删摘要：写入指标时会锁住运行这一行并检查标记（见 TaskMetrics），这样不会有迟到的点写回。
 		await this.deps.db.transaction(async (tx) => {
-			await tx.delete(metricSeries).where(inArray(metricSeries.runId, ids));
 			await tx
 				.update(runs)
 				.set({ metricsPurgedAt: new Date(now) })
 				.where(inArray(runs.id, ids));
+			await tx.delete(metricSeries).where(inArray(metricSeries.runId, ids));
 		});
 	}
 

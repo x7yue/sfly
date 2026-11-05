@@ -141,6 +141,95 @@ describe("指标保留期与分区维护", () => {
 		expect(await summary(runId)).toEqual({ run_id: runId, expired: true, tasks: [] });
 	});
 
+	/** 主链上 load 节点的序列查询。 */
+	const seriesOf = async (api: ApiClient, runId: string, query: Record<string, string> = {}) => {
+		const chain = (await api.run(runId)).chains[0]?.id as string;
+		const params = new URLSearchParams({ chain_instance_id: chain, node_id: "load", ...query });
+		return cp.fetch(`/runs/${runId}/metrics/series?${params}`);
+	};
+
+	it("运行过期后，目录与序列接口也返回“已过保留期”，不报错", async () => {
+		const api = await setup({ metricRetentionDays: 7 });
+		const runId = await runWithMetrics(api);
+		const catalog = await cp.fetch(`/runs/${runId}/metrics`);
+		expect(catalog.status).toBe(200);
+		expect(await catalog.json()).toMatchObject({ run_id: runId, expired: false, nodes: [{}] });
+		const fresh = await seriesOf(api, runId);
+		expect(fresh.status).toBe(200);
+		expect(await fresh.json()).toMatchObject({
+			expired: false,
+			series: [{ name: "tps", buckets: [{ points: 1 }] }],
+		});
+
+		clock().advance(7 * DAY + 1000);
+		await eventually(async () => expect((await summary(runId)).expired).toBe(true));
+
+		const expiredCatalog = await cp.fetch(`/runs/${runId}/metrics`);
+		expect(expiredCatalog.status).toBe(200);
+		expect(await expiredCatalog.json()).toEqual({ run_id: runId, expired: true, nodes: [] });
+		const expired = await seriesOf(api, runId);
+		expect(expired.status).toBe(200);
+		expect(await expired.json()).toMatchObject({
+			run_id: runId,
+			node_id: "load",
+			expired: true,
+			from: null,
+			to: null,
+			series: [{ name: "tps", buckets: [] }],
+		});
+		const ranged = await seriesOf(api, runId, {
+			from: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+			to: clock().now().toISOString(),
+		});
+		expect(ranged.status).toBe(200);
+		expect(await ranged.json()).toMatchObject({
+			expired: true,
+			series: [{ name: "tps", buckets: [] }],
+		});
+		// 节点不存在仍是 404。
+		const missing = await cp.fetch(
+			`/runs/${runId}/metrics/series?${new URLSearchParams({
+				chain_instance_id: (await api.run(runId)).chains[0]?.id as string,
+				node_id: "nope",
+			})}`,
+		);
+		expect(missing.status).toBe(404);
+	});
+
+	it("已过保留期的运行再收到迟到的点时直接丢弃，不再写库", async () => {
+		const api = await setup({ metricRetentionDays: 7 });
+		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
+		const task = await agent.nextAssign();
+		agent.metrics(task, [["tps", now(1), 10]]);
+		await agent.succeed(task);
+		await eventually(async () => expect((await summary(runId)).tasks).toHaveLength(1));
+
+		clock().advance(7 * DAY + 1000);
+		await eventually(async () => expect((await summary(runId)).expired).toBe(true));
+
+		// 时间戳在可接收范围内的迟到点：攒满一段、以及当前段到期写库，都不应写回。
+		const lateFrom = new Date(now(1) * 1000).toISOString();
+		agent.metrics(
+			task,
+			Array.from({ length: 130 }, (_, i) => ["tps", now(i + 1), i] as [string, number, number]),
+		);
+		await agent.sync();
+		clock().advance(10_000);
+		await fewSweeps();
+
+		const rows = async () => ({
+			series: await query<{ n: string }>(
+				`select count(*) as n from metric_series where run_id = '${runId}'`,
+			),
+			segments: await query<{ n: string }>(
+				`select count(*) as n from metric_segments
+					where task_id = '${task.taskId}' and start_at >= '${lateFrom}'`,
+			),
+		});
+		expect(await rows()).toEqual({ series: [{ n: "0" }], segments: [{ n: "0" }] });
+		expect(await summary(runId)).toEqual({ run_id: runId, expired: true, tasks: [] });
+	});
+
 	it("默认保留 30 天，与日志和产物的保留期分开；还在运行的运行不算过期", async () => {
 		const api = await setup({ retentionDays: 1 });
 		const done = await runWithMetrics(api);

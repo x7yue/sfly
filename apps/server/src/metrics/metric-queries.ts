@@ -82,6 +82,7 @@ export class MetricQueries {
 	async catalog(runId: string): Promise<RunMetricCatalog | undefined> {
 		const run = await this.#run(runId);
 		if (!run) return undefined;
+		if (run.run.metricsPurgedAt) return { run_id: runId, expired: true, nodes: [] };
 		const packageNodes = new Set(
 			run.document.nodes.filter((n) => n.kind === "package").map((n) => n.id),
 		);
@@ -112,7 +113,7 @@ export class MetricQueries {
 				})),
 			});
 		}
-		return { run_id: runId, nodes };
+		return { run_id: runId, expired: false, nodes };
 	}
 
 	/**
@@ -147,10 +148,14 @@ export class MetricQueries {
 			const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
 			names = (ref?.type?.metrics ?? []).map((m) => m.name);
 		}
-		const unwritten = await this.deps.metrics.unwritten(task.id);
+		// 已过保留期（#32）：数据已清理，不再查询，每个指标都没有桶。
+		const expired = run.run.metricsPurgedAt !== null;
+		const unwritten = expired
+			? new Map<string, Point[]>()
+			: await this.deps.metrics.unwritten(task.id);
 		let from = query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000);
 		let to = query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000);
-		if (from === undefined || to === undefined) {
+		if (!expired && (from === undefined || to === undefined)) {
 			const extent = await this.#extent(task.id, names, unwritten);
 			from ??= extent?.first;
 			to ??= extent?.last;
@@ -162,8 +167,9 @@ export class MetricQueries {
 			task_id: task.id,
 			attempt: task.attempt,
 			truncated: task.metricTruncated,
+			expired,
 		};
-		if (from === undefined || to === undefined || names.length === 0) {
+		if (expired || from === undefined || to === undefined || names.length === 0) {
 			return {
 				ok: true,
 				series: {

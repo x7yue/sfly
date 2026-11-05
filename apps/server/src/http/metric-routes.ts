@@ -22,6 +22,8 @@ import { sendError } from "./errors.js";
  * - `GET /runs/:id/metrics/series?chain_instance_id&node_id[&attempt][&metrics][&from][&to][&points]`
  *   → {@link MetricSeries}（#31）：一个节点（默认最新一次尝试）的指标按目标点数降采样，含尚未写库的点。
  * - `GET /runs/:id/metrics/platform[?points]` → {@link PlatformMetrics}（#31）：平台自带图表，由任务记录推导。
+ *
+ * 运行结束超过指标保留期（#32）后，摘要、目录与序列返回 `expired: true` 且不含数据；平台自带图表不受影响。
  */
 export function registerMetricRoutes(
 	app: FastifyInstance,

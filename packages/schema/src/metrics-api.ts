@@ -78,9 +78,14 @@ export const CatalogNode = z.strictObject({
 	attempts: z.array(CatalogAttempt).min(1),
 });
 
-/** 运行的指标目录 `GET /runs/:id/metrics`：开始过执行的包节点，按任务创建顺序。 */
+/**
+ * 运行的指标目录 `GET /runs/:id/metrics`：开始过执行的包节点，按任务创建顺序。
+ * 运行结束超过指标保留期（#32）后 `expired` 为 true，`nodes` 为空（与摘要一致）。
+ */
 export const RunMetricCatalog = z.strictObject({
 	run_id: z.uuid(),
+	/** 已过保留期：这个运行的指标数据已被清理。 */
+	expired: z.boolean(),
 	nodes: z.array(CatalogNode),
 });
 
@@ -118,9 +123,14 @@ export const MetricBucket = z.strictObject({
 	last: z.number(),
 });
 
-/** 序列查询的结果：每个指标的非空桶，按时间升序。 */
+/**
+ * 序列查询的结果：每个指标的非空桶，按时间升序。
+ * 运行结束超过指标保留期（#32）后 `expired` 为 true，每个指标都没有桶；没有指定时间范围时 from、to 为 null。
+ */
 export const MetricSeries = z.strictObject({
 	run_id: z.uuid(),
+	/** 已过保留期：这个运行的指标数据已被清理。 */
+	expired: z.boolean(),
 	chain_instance_id: z.uuid(),
 	node_id: z.string(),
 	task_id: z.uuid(),
