@@ -1,5 +1,6 @@
 import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import type { Edge, Node } from "@xyflow/react";
+import { DEFAULT_NODE_SPACING } from "#/components/canvas/geometry";
 
 /** 画布节点上携带的编排节点（不含布局，布局在 React Flow 节点的 position 上）。 */
 export type DocNode = OrchestrationNode extends infer N
@@ -37,7 +38,7 @@ export function toFlow(doc: OrchestrationDocument): { nodes: SfNode[]; edges: Sf
 		return {
 			id: n.id,
 			type: n.kind,
-			position: position ?? { x: i * 280, y: 0 },
+			position: position ?? { x: i * DEFAULT_NODE_SPACING, y: 0 },
 			data: { node },
 			// 入口节点是主链的唯一起点，不能删除。
 			deletable: n.kind !== "entry",
