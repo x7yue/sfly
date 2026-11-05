@@ -11,7 +11,8 @@ const HeartbeatBody = z.object({ session_id: z.string().trim().min(1).max(200) }
 
 /**
  * 在线编辑者：编辑页面每 10 秒 `POST /orchestrations/:id/presence` 一次心跳，
- * 通过 SSE `GET /orchestrations/:id/presence/events` 接收名单（事件 `editors`）。
+ * 通过 SSE `GET /orchestrations/:id/presence/events` 接收名单（事件 `editors`）；
+ * 关闭页面时 `POST /orchestrations/:id/presence/leave` 主动离开（否则 30 秒无心跳后移除）。
  */
 export function registerPresenceRoutes(
 	app: FastifyInstance,
@@ -37,6 +38,19 @@ export function registerPresenceRoutes(
 			return sendError(reply, 404, "not_found", "orchestration not found");
 		return { editors: presence.heartbeat(request.params.id, body.data.session_id, nickname) };
 	});
+
+	// 关闭页面时浏览器用 keepalive 请求主动离开（不要求昵称：只移除这个随机会话 ID 自己）。
+	app.post<{ Params: { id: string } }>(
+		"/orchestrations/:id/presence/leave",
+		async (request, reply) => {
+			const body = HeartbeatBody.safeParse(request.body);
+			if (!body.success) {
+				return sendError(reply, 400, "invalid_request", "session_id is required");
+			}
+			if (isUuid(request.params.id)) presence.leave(request.params.id, body.data.session_id);
+			return reply.code(204).send();
+		},
+	);
 
 	app.get<{ Params: { id: string } }>(
 		"/orchestrations/:id/presence/events",

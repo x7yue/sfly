@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { fromFlow, toFlow } from "#/canvas/flow";
 import type { OrchestrationHead, SavedVersion } from "#/lib/api";
 import { saveVersionFrom, versionConflictOf } from "./api";
-import { clearDraft, loadDraft, writeDraft } from "./draft";
+import { clearDraft, loadDraft, onDraftChangedElsewhere, writeDraft } from "./draft";
 
 /** 一次编辑会话的起点：最新版本，或者浏览器里保存的本地草稿。 */
 export interface EditStart {
@@ -63,6 +63,11 @@ export function startEditing(
 
 const DRAFT_DEBOUNCE_MS = 300;
 
+const randomTabId = (): string =>
+	typeof crypto.randomUUID === "function"
+		? crypto.randomUUID()
+		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+
 /**
  * 编排的版本状态：未保存的修改实时写入本地草稿；保存时以编辑起点为 base_version，
  * 别人先保存了新版本时得到冲突（不自动合并）。
@@ -80,6 +85,21 @@ export function useVersionedDraft(
 	const pending = useRef<(() => void) | null>(null);
 	/** 放弃本地修改 / 另存为新编排后不再写草稿（画布随后会重建或离开）。 */
 	const dropped = useRef(false);
+	const tabId = useMemo(randomTabId, []);
+	/**
+	 * 另一个标签页改写（或保存后清除）了同一份编排的本地草稿：这个标签页不再写草稿，
+	 * 免得互相覆盖（草稿存在共用的 localStorage 里）；由用户决定载入那份草稿或直接保存。
+	 */
+	const [takenOver, setTakenOver] = useState(false);
+	useEffect(
+		() =>
+			onDraftChangedElsewhere(orchestrationId, tabId, () => {
+				dropped.current = true;
+				pending.current = null;
+				setTakenOver(true);
+			}),
+		[orchestrationId, tabId],
+	);
 	useEffect(() => {
 		if (dropped.current) return;
 		if (!dirty) {
@@ -95,12 +115,13 @@ export function useVersionedDraft(
 				base_document: base.document,
 				document: doc,
 				updated_at: new Date().toISOString(),
+				writer: tabId,
 			});
 		};
 		pending.current = write;
 		const timer = setTimeout(write, DRAFT_DEBOUNCE_MS);
 		return () => clearTimeout(timer);
-	}, [orchestrationId, dirty, base, doc]);
+	}, [orchestrationId, dirty, base, doc, tabId]);
 	useEffect(() => {
 		const flush = () => pending.current?.();
 		window.addEventListener("pagehide", flush);
@@ -133,6 +154,10 @@ export function useVersionedDraft(
 		save,
 		/** 保存被拦截：别人在编辑起点之后先保存了新版本。 */
 		conflict: versionConflictOf(save.error),
+		/** 另一个标签页改写了这份编排的本地草稿，这个标签页已停止写草稿。 */
+		draftTakenOver: takenOver,
+		/** 打开页面（或重新载入）时的最新版本。 */
+		startHead: start.head,
 		/** 本地草稿的编辑起点已经不是打开页面时的最新版本（保存时一定会冲突）。 */
 		staleHead: start.head.number > base.version ? start.head : null,
 		/** 删除本地草稿，并停止写入。 */

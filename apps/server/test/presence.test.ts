@@ -105,6 +105,29 @@ describe("在线编辑者", () => {
 		await sseB.expectNone(100);
 	});
 
+	it("关闭页面时主动离开：立即从名单移除并推送；未知会话忽略", async () => {
+		const id = await api.createOrchestration("在线-leave");
+		const sse = await subscribe(id);
+		await sse.next("editors");
+		await heartbeat(id, "s-alice", "alice");
+		await heartbeat(id, "s-bob", "bob");
+		await sse.next("editors");
+		expect(nicknames(await sse.next<EditorsEvent>("editors"))).toEqual(["alice", "bob"]);
+
+		const leave = (sessionId: string) =>
+			cp.fetch(`/orchestrations/${id}/presence/leave`, {
+				method: "POST",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ session_id: sessionId }),
+			});
+		expect((await leave("s-bob")).status).toBe(204);
+		expect(nicknames(await sse.next<EditorsEvent>("editors"))).toEqual(["alice"]);
+		// 重复离开、未知会话：不报错，也不推送。
+		expect((await leave("s-bob")).status).toBe(204);
+		expect((await leave("s-nobody")).status).toBe(204);
+		await sse.expectNone(100);
+	});
+
 	it("心跳需要昵称和 session_id；编排不存在时 404", async () => {
 		const id = await api.createOrchestration("在线-4");
 		const noNickname = await cp.fetch(`/orchestrations/${id}/presence`, {
