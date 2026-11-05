@@ -1,5 +1,11 @@
-import type { RunMetricCatalog, RunMetricSummary } from "@sfly/schema";
+import {
+	type MetricSeries,
+	MetricSeriesQuery,
+	type RunMetricCatalog,
+	type RunMetricSummary,
+} from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
 import { sendError } from "./errors.js";
@@ -11,6 +17,8 @@ import { sendError } from "./errors.js";
  *   任务结束时立即写入）。
  * - `GET /runs/:id/metrics` → {@link RunMetricCatalog}（#31）：每个包节点的指标声明、图表定义（含默认图表）、
  *   主指标，以及每次尝试的摘要和截断标记。
+ * - `GET /runs/:id/metrics/series?chain_instance_id&node_id[&attempt][&metrics][&from][&to][&points]`
+ *   → {@link MetricSeries}（#31）：一个节点（默认最新一次尝试）的指标按目标点数降采样，含尚未写库的点。
  */
 export function registerMetricRoutes(
 	app: FastifyInstance,
@@ -26,5 +34,26 @@ export function registerMetricRoutes(
 		const catalog: RunMetricCatalog | undefined = await deps.queries.catalog(request.params.id);
 		if (!catalog) return sendError(reply, 404, "not_found", "run not found");
 		return catalog;
+	});
+
+	app.get<{ Params: { id: string } }>("/runs/:id/metrics/series", async (request, reply) => {
+		const query = MetricSeriesQuery.safeParse(request.query);
+		if (!query.success) {
+			return sendError(
+				reply,
+				400,
+				"invalid_request",
+				"invalid series query",
+				z.treeifyError(query.error),
+			);
+		}
+		const { from, to } = query.data;
+		if (from !== undefined && to !== undefined && Date.parse(from) > Date.parse(to)) {
+			return sendError(reply, 400, "invalid_request", "from must not be later than to");
+		}
+		const outcome = await deps.queries.series(request.params.id, query.data);
+		if (!outcome.ok) return sendError(reply, outcome.status, outcome.code, outcome.message);
+		const series: MetricSeries = outcome.series;
+		return series;
 	});
 }

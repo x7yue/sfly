@@ -48,7 +48,8 @@ export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
 const IDLE_MS = 5 * 60_000;
 const DAY_MS = 86_400_000;
 
-interface Point {
+/** 合并后的一个点（一个指标一秒一个）。 */
+export interface Point {
 	/** Unix 秒。 */
 	t: number;
 	value: number;
@@ -200,6 +201,20 @@ export class TaskMetrics {
 	/** 写入全部尚未写入的点（控制面正常关闭时）。 */
 	async close(): Promise<void> {
 		await Promise.all([...this.#states.keys()].map((id) => this.flushTask(id)));
+	}
+
+	/**
+	 * 内存里可能还没写库（或库里只是较早版本）的点：每个指标已攒满还没写入的段和当前段，按时间升序。
+	 * 序列查询用它们覆盖库里同一时间范围的数据。不会为此从库里加载任务状态。
+	 */
+	async unwritten(taskId: string): Promise<Map<string, Point[]>> {
+		const state = await this.#states.get(taskId)?.catch(() => undefined);
+		const points = new Map<string, Point[]>();
+		for (const s of state?.series.values() ?? []) {
+			const list = [...s.closed.flat(), ...s.segment].map((p) => ({ ...p }));
+			if (list.length > 0) points.set(s.name, list);
+		}
+		return points;
 	}
 
 	/** 运行的指标摘要；运行不存在时为 undefined。 */

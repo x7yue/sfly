@@ -1,20 +1,56 @@
 import {
 	type CatalogNode,
+	type MetricBucket,
+	type MetricSeries,
+	type MetricSeriesQuery,
 	type MetricSummary,
 	NodeTypeMetadata,
 	type OrchestrationDocument,
 	type RunMetricCatalog,
 } from "@sfly/schema";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf } from "./node-types.js";
-import type { TaskMetrics } from "./task-metrics.js";
+import type { Point, TaskMetrics } from "./task-metrics.js";
 
 type TaskRow = typeof tasks.$inferSelect;
+
+export type SeriesOutcome =
+	| { ok: true; series: MetricSeries }
+	| { ok: false; status: 400 | 404; code: string; message: string };
+
+/** 一个桶的累计量。 */
+interface Acc {
+	points: number;
+	min: number;
+	max: number;
+	sum: number;
+	last: number;
+	/** last 对应的 Unix 秒。 */
+	lastAt: number;
+}
+
+/** metric_segments 的一行；能直接用段摘要时数组为 null（不读取、不解压）。 */
+interface SegmentRow extends Record<string, unknown> {
+	metric: string;
+	start_s: number;
+	end_s: number;
+	points: number;
+	min: number;
+	max: number;
+	avg: number;
+	last: number;
+	offsets: number[] | null;
+	values: number[] | null;
+	mins: number[] | null;
+	maxs: number[] | null;
+}
+
+const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 
 /** 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试（与运行视图一致）。 */
 const isPlaceholder = (t: TaskRow) =>
@@ -66,6 +102,220 @@ export class MetricQueries {
 			});
 		}
 		return { run_id: runId, nodes };
+	}
+
+	/**
+	 * 一个节点（默认最新一次尝试）的指标序列，按目标点数降采样：时间范围 [from, to]（秒）分成跨度
+	 * bucket_seconds 的桶，每个桶给出点数、最小（每秒最小值中的最小）、最大（每秒最大值中的最大，尖峰可见）、
+	 * 平均、最新值。整段落在一个桶里时直接用段摘要，不展开数组；内存里尚未写库的点覆盖库里同一范围的数据。
+	 */
+	async series(runId: string, query: MetricSeriesQuery): Promise<SeriesOutcome> {
+		const run = await this.#run(runId);
+		if (!run) return { ok: false, status: 404, code: "not_found", message: "run not found" };
+		const attempts = (
+			await this.deps.db
+				.select()
+				.from(tasks)
+				.where(
+					and(
+						eq(tasks.runId, runId),
+						eq(tasks.chainInstanceId, query.chain_instance_id),
+						eq(tasks.nodeId, query.node_id),
+					),
+				)
+				.orderBy(asc(tasks.attempt))
+		).filter((t) => !isPlaceholder(t));
+		const task =
+			query.attempt === undefined
+				? attempts.at(-1)
+				: attempts.find((t) => t.attempt === query.attempt);
+		if (!task) return { ok: false, status: 404, code: "not_found", message: "attempt not found" };
+
+		let names = query.metrics;
+		if (!names) {
+			const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
+			names = (ref?.type?.metrics ?? []).map((m) => m.name);
+		}
+		const unwritten = await this.deps.metrics.unwritten(task.id);
+		let from = query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000);
+		let to = query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000);
+		if (from === undefined || to === undefined) {
+			const extent = await this.#extent(task.id, names, unwritten);
+			from ??= extent?.first;
+			to ??= extent?.last;
+		}
+		const base = {
+			run_id: runId,
+			chain_instance_id: task.chainInstanceId,
+			node_id: task.nodeId,
+			task_id: task.id,
+			attempt: task.attempt,
+			truncated: task.metricTruncated,
+		};
+		if (from === undefined || to === undefined || names.length === 0) {
+			return {
+				ok: true,
+				series: {
+					...base,
+					from: from === undefined ? null : isoOf(from),
+					to: to === undefined ? null : isoOf(to),
+					bucket_seconds: 1,
+					series: names.map((name) => ({ name, buckets: [] })),
+				},
+			};
+		}
+		const width = Math.max(1, Math.ceil((to - from + 1) / query.points));
+		const buckets = await this.#bucketize(task.id, names, unwritten, from, to, width);
+		return {
+			ok: true,
+			series: {
+				...base,
+				from: isoOf(from),
+				to: isoOf(to),
+				bucket_seconds: width,
+				series: names.map((name) => ({ name, buckets: buckets.get(name) ?? [] })),
+			},
+		};
+	}
+
+	/** 这些指标的数据的首尾时间（Unix 秒），含尚未写库的点；没有数据时为 undefined。 */
+	async #extent(
+		taskId: string,
+		names: string[],
+		unwritten: Map<string, Point[]>,
+	): Promise<{ first: number; last: number } | undefined> {
+		let first = Number.POSITIVE_INFINITY;
+		let last = Number.NEGATIVE_INFINITY;
+		if (names.length > 0) {
+			const rows = await this.deps.db
+				.select({ firstAt: metricSeries.firstAt, lastAt: metricSeries.lastAt })
+				.from(metricSeries)
+				.where(and(eq(metricSeries.taskId, taskId), inArray(metricSeries.metric, names)));
+			for (const r of rows) {
+				first = Math.min(first, r.firstAt.getTime() / 1000);
+				last = Math.max(last, r.lastAt.getTime() / 1000);
+			}
+		}
+		for (const name of names) {
+			const points = unwritten.get(name) ?? [];
+			const head = points[0];
+			const tail = points[points.length - 1];
+			if (head) first = Math.min(first, head.t);
+			if (tail) last = Math.max(last, tail.t);
+		}
+		return Number.isFinite(first) ? { first, last } : undefined;
+	}
+
+	async #bucketize(
+		taskId: string,
+		names: string[],
+		unwritten: Map<string, Point[]>,
+		from: number,
+		to: number,
+		width: number,
+	): Promise<Map<string, MetricBucket[]>> {
+		// 段落在一个桶内、不和内存里的点重叠时只取段摘要（数组不读取、不解压）。
+		const memFirst = Math.min(
+			...names.map((n) => unwritten.get(n)?.[0]?.t ?? Number.POSITIVE_INFINITY),
+		);
+		const memBound = Number.isFinite(memFirst) ? isoOf(memFirst) : "infinity";
+		const fromIso = isoOf(from);
+		const toIso = isoOf(to);
+		const summarized = sql`(start_at >= ${fromIso}::timestamptz and end_at <= ${toIso}::timestamptz
+			and end_at < ${memBound}::timestamptz
+			and floor((extract(epoch from start_at)::float8 - ${from}::float8) / ${width}::float8)
+				= floor((extract(epoch from end_at)::float8 - ${from}::float8) / ${width}::float8))`;
+		const result = await this.deps.db.execute<SegmentRow>(sql`
+			select metric, extract(epoch from start_at)::float8 as start_s, extract(epoch from end_at)::float8 as end_s,
+				points, min, max, avg, last,
+				case when ${summarized} then null else offsets end as offsets,
+				case when ${summarized} then null else "values" end as "values",
+				case when ${summarized} then null else mins end as mins,
+				case when ${summarized} then null else maxs end as maxs
+			from metric_segments
+			where task_id = ${taskId} and metric in (${sql.join(
+				names.map((n) => sql`${n}`),
+				sql`, `,
+			)})
+				and start_at <= ${toIso}::timestamptz and end_at >= ${fromIso}::timestamptz
+			order by metric, start_at`);
+
+		const accs = new Map<string, Map<number, Acc>>();
+		const add = (name: string, t: number, p: Omit<Acc, "lastAt">) => {
+			const k = Math.floor((t - from) / width);
+			let byBucket = accs.get(name);
+			if (!byBucket) {
+				byBucket = new Map();
+				accs.set(name, byBucket);
+			}
+			const acc = byBucket.get(k);
+			if (!acc) {
+				byBucket.set(k, { ...p, lastAt: t });
+				return;
+			}
+			acc.points += p.points;
+			acc.min = Math.min(acc.min, p.min);
+			acc.max = Math.max(acc.max, p.max);
+			acc.sum += p.sum;
+			if (t >= acc.lastAt) {
+				acc.last = p.last;
+				acc.lastAt = t;
+			}
+		};
+		const inMemory = (name: string, t: number) => {
+			const points = unwritten.get(name);
+			const head = points?.[0];
+			const tail = points?.[points.length - 1];
+			return head !== undefined && tail !== undefined && t >= head.t && t <= tail.t;
+		};
+		for (const row of result.rows) {
+			if (!row.offsets || !row.values || !row.mins || !row.maxs) {
+				add(row.metric, row.end_s, {
+					points: row.points,
+					min: row.min,
+					max: row.max,
+					sum: row.avg * row.points,
+					last: row.last,
+				});
+				continue;
+			}
+			for (const [i, offset] of row.offsets.entries()) {
+				const t = row.start_s + offset;
+				if (t < from || t > to || inMemory(row.metric, t)) continue;
+				const value = row.values[i] as number;
+				add(row.metric, t, {
+					points: 1,
+					min: row.mins[i] as number,
+					max: row.maxs[i] as number,
+					sum: value,
+					last: value,
+				});
+			}
+		}
+		for (const name of names) {
+			for (const p of unwritten.get(name) ?? []) {
+				if (p.t < from || p.t > to) continue;
+				add(name, p.t, { points: 1, min: p.min, max: p.max, sum: p.value, last: p.value });
+			}
+		}
+
+		const buckets = new Map<string, MetricBucket[]>();
+		for (const [name, byBucket] of accs) {
+			buckets.set(
+				name,
+				[...byBucket.entries()]
+					.sort(([a], [b]) => a - b)
+					.map(([k, acc]) => ({
+						time: isoOf(from + k * width),
+						points: acc.points,
+						min: acc.min,
+						max: acc.max,
+						avg: acc.sum / acc.points,
+						last: acc.last,
+					})),
+			);
+		}
+		return buckets;
 	}
 
 	async #run(
