@@ -5,6 +5,7 @@ import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import type { TaskLogs } from "../logs/task-logs.js";
+import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
@@ -36,6 +37,7 @@ export interface HttpApiDeps {
 	preflight: Preflight;
 	logs: TaskLogs;
 	metrics: TaskMetrics;
+	metricQueries: MetricQueries;
 	retention: Retention;
 	artifacts: ArtifactStore;
 	/** Agent 共享注册令牌：设置后上传产物要带上它。 */
@@ -69,6 +71,7 @@ export function buildHttpApi({
 	preflight,
 	logs,
 	metrics,
+	metricQueries,
 	retention,
 	artifacts,
 	agentToken,
@@ -115,7 +118,7 @@ export function buildHttpApi({
 		progress: logs.progress,
 	});
 	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
-	registerMetricRoutes(app, { metrics });
+	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
 	registerPackageRoutes(app, packages);
 	registerPresenceRoutes(app, { orchestrations, presence, sse });

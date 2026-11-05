@@ -1,23 +1,12 @@
 import type { AgentMessage, MetricBatch } from "@sfly/proto";
-import type {
-	MetricSummary,
-	OrchestrationDocument,
-	PackageMetadata,
-	RunMetricSummary,
-} from "@sfly/schema";
+import type { MetricSummary, OrchestrationDocument, RunMetricSummary } from "@sfly/schema";
 import { and, asc, eq, gt, or, sql } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import {
-	agents,
-	metricSeries,
-	nodePackages,
-	orchestrationVersions,
-	runs,
-	tasks,
-} from "../db/schema.js";
+import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { isUuid } from "../util/uuid.js";
+import { nodeTypeOf } from "./node-types.js";
 
 /**
  * 指标上报与存储（#29，ADR 0009）。
@@ -58,7 +47,6 @@ export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
 /** 没有未写入数据、这么久没收到上报的任务状态从内存中移除。 */
 const IDLE_MS = 5 * 60_000;
 const DAY_MS = 86_400_000;
-const DEV_VERSION = "dev";
 
 interface Point {
 	/** Unix 秒。 */
@@ -453,29 +441,8 @@ export class TaskMetrics {
 		nodeId: string,
 		agentName: string | null,
 	): Promise<Set<string>> {
-		const node = document.nodes.find((n) => n.id === nodeId);
-		if (node?.kind !== "package") return new Set();
-		const version = document.packages[node.package] ?? "";
-		let metadata: PackageMetadata | undefined;
-		if (version === DEV_VERSION) {
-			if (agentName) {
-				const [agent] = await this.deps.db
-					.select({ info: agents.info })
-					.from(agents)
-					.where(eq(agents.name, agentName));
-				metadata = agent?.info.dev_packages?.find((p) => p.name === node.package)?.metadata as
-					| PackageMetadata
-					| undefined;
-			}
-		} else {
-			const [pkg] = await this.deps.db
-				.select({ metadata: nodePackages.metadata })
-				.from(nodePackages)
-				.where(and(eq(nodePackages.name, node.package), eq(nodePackages.version, version)));
-			metadata = pkg?.metadata;
-		}
-		const type = metadata?.nodes?.find((n) => n.name === node.node);
-		return new Set((type?.metrics ?? []).map((m) => m.name));
+		const ref = await nodeTypeOf(this.deps.db, document, nodeId, agentName);
+		return new Set((ref?.type?.metrics ?? []).map((m) => m.name));
 	}
 }
 
