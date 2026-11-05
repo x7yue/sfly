@@ -1,6 +1,5 @@
-import { queryKey, type RunView, runsApi } from "@sfly/schema";
+import { type MetricIncrement, queryKey, type RunView, runsApi } from "@sfly/schema";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { BarChart3Icon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { apiQuery, getOrchestration } from "#/lib/api";
@@ -9,15 +8,18 @@ import { useNow } from "#/lib/use-now";
 import { getVersion } from "#/versions/api";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BottomPanel } from "./BottomPanel";
+import { ChartWorkspace } from "./ChartWorkspace";
 import { MonitorTopBar } from "./MonitorTopBar";
 import { createMonitorStore, MonitorProvider, type TimeAxis } from "./monitor-state";
 import { applyProgress, focusNode, type ProgressEvent } from "./run-model";
 import { Timeline } from "./Timeline";
 import { runExtent, visibleRange } from "./timeline";
+import { applyMetricIncrement, refetchSeries } from "./use-run-metrics";
 
 /**
  * 运行监控页（原型 #/monitor/:runId，全屏）：顶栏、链路时间线、图表工作区（#42）、底部面板。
- * 运行中通过 SSE 实时更新（事件 run / progress；metrics 事件由 #42 的图表工作区订阅处理）。
+ * 运行中通过一条 SSE 实时更新：run（运行视图）、progress（进度）、metrics（指标增量，追加进图表的序列缓存；
+ * 重连后重新获取序列，补齐断线期间错过的点）。
  * 时间线、图表与底部面板共用一份时间轴状态（monitor-state.tsx）。
  */
 export function MonitorPage({ runId, initialNode }: { runId: string; initialNode?: string }) {
@@ -27,13 +29,22 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 	const run = runQuery.data;
 	const running = !run || run.status === "running";
 	// 运行结束后不再需要实时流（最后一条推送就是最终状态）。
-	useEventSource(running ? `/runs/${encodeURIComponent(runId)}/events` : null, {
-		run: (data) => queryClient.setQueryData(runKey, data as RunView),
-		progress: (data) =>
-			queryClient.setQueryData(runKey, (old: RunView | undefined) =>
-				applyProgress(old, data as ProgressEvent),
-			),
-	});
+	const opened = useRef(false);
+	useEventSource(
+		running ? `/runs/${encodeURIComponent(runId)}/events` : null,
+		{
+			run: (data) => queryClient.setQueryData(runKey, data as RunView),
+			progress: (data) =>
+				queryClient.setQueryData(runKey, (old: RunView | undefined) =>
+					applyProgress(old, data as ProgressEvent),
+				),
+			metrics: (data) => applyMetricIncrement(queryClient, runId, data as MetricIncrement),
+		},
+		() => {
+			if (opened.current) refetchSeries(queryClient, runId);
+			opened.current = true;
+		},
+	);
 
 	const orchestrationId = run?.orchestration_id;
 	const versionNumber = run?.orchestration_version;
@@ -100,30 +111,10 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 				<MonitorTopBar run={run} name={orchestration.data?.name} doc={doc} />
 				<main className="flex min-h-0 flex-1 flex-col">
 					<Timeline run={run} doc={doc} />
-					<ChartWorkspace />
+					<ChartWorkspace run={run} />
 					<BottomPanel run={run} doc={doc} />
 				</main>
 			</div>
 		</MonitorProvider>
-	);
-}
-
-/**
- * 图表工作区（#42）：占据时间线与底部面板之间的剩余高度。#42 在这里渲染按节点分组的指标图表与平台自带图表，
- * 通过 monitor-state.tsx 的 useTimeAxis / useMonitor / useMonitorActions 与时间线共享悬停时刻、缩放范围、
- * 实时跟随、日志标记与选中节点；指标增量从运行 SSE 的 metrics 事件订阅（useEventSource 同一路径会另开连接，
- * 届时把 MonitorPage 里的订阅合并成一处）。
- */
-function ChartWorkspace() {
-	return (
-		<section
-			aria-label="图表工作区"
-			className="grid min-h-60 flex-1 place-items-center overflow-auto px-3 py-2.5"
-		>
-			<div className="flex flex-col items-center gap-2 text-center text-sm text-fg-3">
-				<BarChart3Icon className="size-5" aria-hidden />
-				节点上报的指标图表会显示在这里。
-			</div>
-		</section>
 	);
 }

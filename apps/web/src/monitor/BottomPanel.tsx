@@ -17,7 +17,14 @@ import { formatBytes, formatClock, formatDuration } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { LogList } from "./LogList";
-import { type NodeRef, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
+import {
+	type NodeRef,
+	nodeKey,
+	PLATFORM_KEY,
+	useMonitor,
+	useMonitorActions,
+	useTimeAxis,
+} from "./monitor-state";
 import { ResizeHandle } from "./ResizeHandle";
 import {
 	documentNodes,
@@ -62,7 +69,7 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 
 /**
  * 底部面板（原型 bpBody）：日志、尝试、输入输出、产物四个页签，范围跟随时间线上选中的节点
- * （共享状态 selected）。节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认。
+ * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter）。节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认。
  */
 export function BottomPanel({
 	run,
@@ -73,6 +80,8 @@ export function BottomPanel({
 }) {
 	const selected = useMonitor((s) => s.selected);
 	const zoom = useMonitor((s) => s.zoom);
+	const filter = useMonitor((s) => s.filter);
+	const filtered = filter ? [...filter].filter((k) => k !== PLATFORM_KEY).length : 0;
 	const [tab, setTab] = useState<Tab>("logs");
 	const [height, setHeight] = useState<number | null>(null);
 	const [collapsed, setCollapsed] = useState(false);
@@ -132,7 +141,11 @@ export function BottomPanel({
 				</div>
 				<div className="ml-auto flex items-center gap-1.5 px-2">
 					<span className="text-xs text-fg-3" data-testid="bp-scope">
-						{node ? `范围：${node.node_id}` : "范围：未选中节点"}
+						{node
+							? `范围：${node.node_id}`
+							: filter
+								? `范围：跟随筛选（${filtered} 个节点）`
+								: "范围：未选中节点"}
 						{node && attempt && node.attempts.length > 1 ? `（第 ${attempt.attempt} 次）` : ""}
 						{zoom && tab === "logs" ? " · 已按时间范围过滤" : ""}
 					</span>
@@ -188,7 +201,9 @@ export function BottomPanel({
 						) : (
 							<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的日志。"}</Hint>
 						))}
-					{tab === "attempts" && <AttemptsTab run={run} node={node} selected={selected} />}
+					{tab === "attempts" && (
+						<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
+					)}
 					{tab === "io" && <IoTab node={node} attempt={attempt} doc={doc} />}
 					{tab === "artifacts" &&
 						(attempt ? (
@@ -329,17 +344,23 @@ function AttemptsTab({
 	run,
 	node,
 	selected,
+	filter,
 }: {
 	run: RunView;
 	node: NodeRunView | undefined;
 	selected: NodeRef | null;
+	filter: ReadonlySet<string> | null;
 }) {
 	const { now } = useTimeAxis();
-	// 没选节点时列出有重试或失败的节点。
+	// 没选节点时列出有重试或失败的节点（有节点筛选时只列筛选中的）。
 	const nodes = node
 		? [node]
 		: orderedChains(run)
-				.flatMap((c) => c.nodes)
+				.flatMap((c) =>
+					c.nodes.filter(
+						(n) => !filter || filter.has(nodeKey({ chainInstanceId: c.id, nodeId: n.node_id })),
+					),
+				)
 				.filter((n) => n.attempts.length > 1 || n.attempts.some((a) => a.error));
 	if (nodes.length === 0) {
 		return <Hint>{selected ? noAttempt(node as NodeRunView) : "没有重试或失败的节点。"}</Hint>;

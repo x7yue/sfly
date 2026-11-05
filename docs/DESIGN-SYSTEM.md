@@ -39,6 +39,7 @@
 | 选中 | `selected`、`selected-bg`、`selected-ring` | 中性高亮 |
 | 状态 | `ok`、`warn`(`-fg`)、`danger`(`-fg`)，各带 `-soft` / `-line`；`pending`、`skipped`、`cancelled` | 见第 5 节 |
 | 日志 | `log-debug`、`log-info`、`log-warn`、`log-error` | INFO 不上色 |
+| 图表 | `chart-1` … `chart-4`、`chart-grid` | 多序列线色（中性灰与灰蓝，按序使用）、网格线；状态色只用于节点状态 |
 | 阴影 | `shadow-float`、`shadow-pop` | 悬浮控件 / 弹窗、菜单 |
 
 shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`、`destructive`、`input`、`ring` 等名称映射到语义层；**注意 shadcn 的 `accent` 是中性悬停色，不是青色**，新代码直接用我们的名字。

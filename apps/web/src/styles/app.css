@@ -80,6 +80,11 @@
 	--color-log-info: var(--log-info);
 	--color-log-warn: var(--log-warn);
 	--color-log-error: var(--log-error);
+	--color-chart-1: var(--chart-1);
+	--color-chart-2: var(--chart-2);
+	--color-chart-3: var(--chart-3);
+	--color-chart-4: var(--chart-4);
+	--color-chart-grid: var(--chart-grid);
 
 	/* shadcn/ui 组件用到的颜色名 */
 	--color-background: var(--background);
