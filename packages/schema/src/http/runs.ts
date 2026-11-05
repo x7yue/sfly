@@ -49,7 +49,7 @@ export const TaskProgressView = z.object({
 	/** 总数；未知时为 null。 */
 	total: z.number().nullable(),
 	message: z.string(),
-	time: z.string(),
+	time: Timestamp,
 });
 
 export const AttemptView = z.object({
