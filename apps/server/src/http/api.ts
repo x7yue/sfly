@@ -5,6 +5,7 @@ import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import type { TaskLogs } from "../logs/task-logs.js";
+import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import type { PresenceRegistry } from "../presence/presence-registry.js";
@@ -15,6 +16,7 @@ import { registerSse } from "../sse/sse.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
 import { sendError } from "./errors.js";
 import { registerLogRoutes } from "./log-routes.js";
+import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
@@ -32,6 +34,7 @@ export interface HttpApiDeps {
 	presence: PresenceRegistry;
 	preflight: Preflight;
 	logs: TaskLogs;
+	metrics: TaskMetrics;
 	retention: Retention;
 	artifacts: ArtifactStore;
 	/** Agent 共享注册令牌：设置后上传产物要带上它。 */
@@ -62,6 +65,7 @@ export function buildHttpApi({
 	presence,
 	preflight,
 	logs,
+	metrics,
 	retention,
 	artifacts,
 	agentToken,
@@ -105,6 +109,7 @@ export function buildHttpApi({
 		progress: logs.progress,
 	});
 	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
+	registerMetricRoutes(app, { metrics });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
 	registerPackageRoutes(app, packages);
 	registerPresenceRoutes(app, { orchestrations, presence, sse });

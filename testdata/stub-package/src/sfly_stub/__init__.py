@@ -11,7 +11,7 @@ import time
 from importlib import metadata
 from typing import Any
 
-from sfly import Context, node
+from sfly import Context, Metric, node
 
 
 @node(title="回显", outputs=["text"])
@@ -224,3 +224,29 @@ def flood(ctx: Context, lines: int = 1000, interval: float = 0.0) -> dict[str, A
         if interval:
             time.sleep(interval)
     return {"lines": lines}
+
+
+@node(
+    title="指标",
+    outputs=[],
+    metrics=[
+        Metric("level", "", "gauge", "瞬时值"),
+        Metric("total", "", "counter", "累计值"),
+    ],
+    primary_metric="level",
+)
+def metrics(ctx: Context, steps: list[Any]) -> None:
+    """指标测试用：按顺序执行 steps。
+
+    - `[指标名, 值]`：`ctx.metric(指标名, float(值))`，值可以是 `"nan"`、`"inf"` 这样的字符串；
+    - 数字：等待这么多秒；
+    - `"align"`：等到下一个整秒开始（让随后的几次上报落在同一秒里）。
+    """
+    for step in steps:
+        if step == "align":
+            time.sleep(1 - time.time() % 1)
+        elif isinstance(step, (int, float)):
+            time.sleep(step)
+        else:
+            name, value = step
+            ctx.metric(name, float(value))
