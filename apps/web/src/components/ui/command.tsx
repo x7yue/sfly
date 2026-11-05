@@ -36,14 +36,15 @@ function CommandDialog({
 }) {
 	return (
 		<Dialog {...props}>
-			<DialogHeader className="sr-only">
-				<DialogTitle>{title}</DialogTitle>
-				<DialogDescription>{description}</DialogDescription>
-			</DialogHeader>
 			<DialogContent
 				className={cn("w-[620px] gap-0 p-0", className)}
 				showCloseButton={showCloseButton}
 			>
+				{/* 标题只给读屏器（作为弹窗的名称），放在弹窗内部，关闭时不留在页面上。 */}
+				<DialogHeader className="sr-only">
+					<DialogTitle>{title}</DialogTitle>
+					<DialogDescription>{description}</DialogDescription>
+				</DialogHeader>
 				{children}
 			</DialogContent>
 		</Dialog>

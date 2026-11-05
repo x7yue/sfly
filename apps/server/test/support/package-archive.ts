@@ -33,21 +33,28 @@ export function packageMetadata(overrides: Record<string, unknown> = {}): Record
 	};
 }
 
-/** 按 `sfly build` 的格式打包：zip 内含 sfly-package.json 和一个 wheel。 */
+/**
+ * 按 `sfly build` 的格式打包：zip 内含 sfly-package.json 和一个 wheel。
+ * 文件时间固定，同样的内容总是得到同样的字节（sha256 稳定，前端视觉回归依赖这一点）。
+ */
 export function packageArchive(
 	metadata: unknown = packageMetadata(),
 	files: Record<string, Uint8Array> = {
 		"demo_checks-1.2.0-py3-none-any.whl": strToU8("fake wheel"),
 	},
 ): Uint8Array {
-	return zipSync({ "sfly-package.json": strToU8(JSON.stringify(metadata)), ...files });
+	return zipSync(
+		{ "sfly-package.json": strToU8(JSON.stringify(metadata)), ...files },
+		{ mtime: new Date("2026-01-01T00:00:00Z") },
+	);
 }
 
 export function publishInit(archive: Uint8Array): RequestInit {
 	return {
 		method: "POST",
 		headers: { "content-type": "application/octet-stream" },
-		body: archive,
+		// zipSync 返回的 Uint8Array 总是基于 ArrayBuffer；DOM 的 BodyInit 类型要求写明。
+		body: archive as Uint8Array<ArrayBuffer>,
 	};
 }
 

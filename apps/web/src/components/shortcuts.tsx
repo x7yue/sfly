@@ -36,6 +36,8 @@ const isEditable = (target: EventTarget | null) =>
 	target instanceof HTMLElement &&
 	(target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
 
+const OPEN_DIALOG = '[role="dialog"][data-open], [role="alertdialog"][data-open]';
+
 /** 全局快捷键监听；挂在根路由一次。 */
 export function ShortcutListener() {
 	useEffect(() => {
@@ -50,7 +52,8 @@ export function ShortcutListener() {
 					altKey: event.altKey,
 					shiftKey: event.shiftKey,
 					editable: isEditable(event.target),
-					inDialog: document.querySelector('[role="dialog"], [role="alertdialog"]') !== null,
+					// 正在关闭（退场动画中）的弹窗不算：Base UI 只给打开着的弹窗加 data-open。
+					inDialog: document.querySelector(OPEN_DIALOG) !== null,
 				},
 				performance.now(),
 			);
