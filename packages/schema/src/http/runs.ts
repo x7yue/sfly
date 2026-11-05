@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
-import { endpoint, Timestamp } from "./contract.js";
+import { download, endpoint, stream, Timestamp } from "./contract.js";
+import { MetricIncrement } from "./metrics.js";
 import { ReferencedAgent } from "./orchestrations.js";
 
 /**
@@ -141,6 +142,15 @@ export const ParamDeclView = z.object({
 	secret: z.boolean().optional(),
 });
 
+/** 运行事件流上的 `progress` 事件：一个任务的最新进度。 */
+export const ProgressEvent = z.object({
+	run_id: z.string(),
+	chain_instance_id: z.string(),
+	node_id: z.string(),
+	task_id: z.string(),
+	progress: TaskProgressView,
+});
+
 /** 不能触发的一个原因。 */
 export const PreflightProblem = z.object({
 	code: z.string(),
@@ -192,10 +202,7 @@ export const runsApi = {
 			.default({ params: {} }),
 		response: RunView,
 	}),
-	/**
-	 * 运行视图。实时推送 `GET /runs/:id/events`（SSE）不在契约里：事件 `run`（RunView）、
-	 * `progress`（进度）、`metrics`（MetricIncrement）。
-	 */
+	/** 运行视图；实时更新见 {@link runsApi.events}。 */
 	get: endpoint({
 		method: "GET",
 		path: "/runs/:id",
@@ -213,6 +220,16 @@ export const runsApi = {
 		key: ["runs", "cancel"],
 		params: IdParams,
 		response: RunView,
+	}),
+	/**
+	 * 运行的实时推送（SSE）：连上时和运行或任何节点的状态变化时推送完整的运行视图（`run`），
+	 * 任务进度更新时推送 `progress`（只含这一个任务的最新进度），执行中的任务新上报的指标点推送 `metrics`
+	 * （每个任务每秒最多一条；断线期间错过的点用指标序列查询补齐）。
+	 */
+	events: stream({
+		path: "/runs/:id/events",
+		params: IdParams,
+		events: { run: RunView, progress: ProgressEvent, metrics: MetricIncrement },
 	}),
 };
 
@@ -285,11 +302,7 @@ export const LogChunk = z.object({
 });
 
 export const logsApi = {
-	/**
-	 * 按字节偏移分页读取一个任务的日志（服务端按级别、来源筛选）。
-	 * 下载原始日志 `GET /tasks/:id/logs/download`（JSONL）与实时流 `GET /tasks/:id/logs/events?after_seq=<n>`
-	 * （SSE，事件 `logs` 为 {@link LogChunk}）不在契约里。
-	 */
+	/** 按字节偏移分页读取一个任务的日志（服务端按级别、来源筛选）。 */
 	page: endpoint({
 		method: "GET",
 		path: "/tasks/:id/logs",
@@ -297,6 +310,22 @@ export const logsApi = {
 		params: IdParams,
 		query: LogPageQuery,
 		response: LogPage,
+	}),
+	/**
+	 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
+	 * （从分页的 last_seq 接上，浏览器重连时按 Last-Event-ID 续传）。
+	 */
+	events: stream({
+		path: "/tasks/:id/logs/events",
+		params: IdParams,
+		query: z.object({ after_seq: z.string().optional() }),
+		events: { logs: LogChunk },
+	}),
+	/** 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。 */
+	download: download({
+		path: "/tasks/:id/logs/download",
+		params: IdParams,
+		contentType: "application/x-ndjson",
 	}),
 };
 
@@ -310,11 +339,10 @@ export const ArtifactView = z.object({
 	url: z.string(),
 });
 
+const ArtifactParams = z.object({ id: z.string(), "*": z.string() });
+
 export const artifactsApi = {
-	/**
-	 * 一个任务的产物。上传（Agent，PUT）与下载 `GET /tasks/:id/artifacts/<name>` 不在契约里；
-	 * 运行已超过保留期被清理时 expired 为 true、列表为空。
-	 */
+	/** 一个任务的产物；运行已超过保留期被清理时 expired 为 true、列表为空。 */
 	list: endpoint({
 		method: "GET",
 		path: "/tasks/:id/artifacts",
@@ -325,6 +353,24 @@ export const artifactsApi = {
 			artifacts: z.array(ArtifactView),
 			expired: z.boolean(),
 		}),
+	}),
+	/**
+	 * Agent 上传一个产物（201）：请求体是文件内容（原始字节，不在契约里）；`*` 是产物目录内的相对路径，
+	 * 每个路径段单独百分号编码。配置了注册令牌时需要 `Authorization: Bearer <token>`，否则 401 `unauthorized`；
+	 * 超过单个任务的产物上限时 413。
+	 */
+	upload: endpoint({
+		method: "PUT",
+		path: "/tasks/:id/artifacts/*",
+		key: ["artifacts", "upload"],
+		params: ArtifactParams,
+		response: ArtifactView,
+	}),
+	/** 下载一个产物（attachment）；运行已过保留期被清理时 410 `expired`。 */
+	download: download({
+		path: "/tasks/:id/artifacts/*",
+		params: ArtifactParams,
+		contentType: "application/octet-stream",
 	}),
 };
 
@@ -343,4 +389,5 @@ export type PreflightProblem = z.infer<typeof PreflightProblem>;
 export type LogLineView = z.infer<typeof LogLineView>;
 export type LogPage = z.infer<typeof LogPage>;
 export type LogChunk = z.infer<typeof LogChunk>;
+export type ProgressEvent = z.infer<typeof ProgressEvent>;
 export type ArtifactView = z.infer<typeof ArtifactView>;

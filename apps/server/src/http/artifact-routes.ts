@@ -7,11 +7,11 @@ import { agentTokenMatches, bearerToken } from "../agents/agent-token.js";
 import { type ArtifactRow, type ArtifactStore, artifactUrl } from "../artifacts/artifact-store.js";
 import { isUuid } from "../util/uuid.js";
 import { attachment } from "./content-disposition.js";
-import { contractRoute } from "./contract-route.js";
+import { contractDownload, contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
 /**
- * 产物（#18）：
+ * 产物（#18；契约见 @sfly/schema 的 artifactsApi）：
  *
  * | 方法 | 路径 | 说明 |
  * |---|---|---|
@@ -39,27 +39,25 @@ export function registerArtifactRoutes(
 	// 上传在独立的作用域里：请求体不解析，按流写到磁盘（不受全局 bodyLimit 限制，大小由 ArtifactStore 控制）。
 	app.register(async (scope) => {
 		scope.addContentTypeParser("*", (_request, payload, done) => done(null, payload));
-		scope.put<{ Params: { id: string; "*": string } }>(
-			"/tasks/:id/artifacts/*",
-			async (request, reply) => {
-				if (!authorized(request.headers.authorization)) {
-					request.raw.resume();
-					return sendError(reply, 401, "unauthorized", "invalid agent token");
-				}
-				const taskId = request.params.id;
-				if (!isUuid(taskId)) {
-					request.raw.resume();
-					return sendError(reply, 404, "not_found", "task not found");
-				}
-				const body = (request.body as Readable | undefined) ?? request.raw;
-				const outcome = await deps.artifacts.save(taskId, request.params["*"], body);
-				if (!outcome.ok) {
-					body.resume();
-					return sendError(reply, outcome.status, outcome.code, outcome.message);
-				}
-				return reply.code(201).send(view(outcome.artifact));
-			},
-		);
+		contractRoute(scope, artifactsApi.upload, async ({ params }, reply, request) => {
+			if (!authorized(request.headers.authorization)) {
+				request.raw.resume();
+				return sendError(reply, 401, "unauthorized", "invalid agent token");
+			}
+			const taskId = params.id;
+			if (!isUuid(taskId)) {
+				request.raw.resume();
+				return sendError(reply, 404, "not_found", "task not found");
+			}
+			const body = (request.body as Readable | undefined) ?? request.raw;
+			const outcome = await deps.artifacts.save(taskId, params["*"], body);
+			if (!outcome.ok) {
+				body.resume();
+				return sendError(reply, outcome.status, outcome.code, outcome.message);
+			}
+			reply.code(201);
+			return view(outcome.artifact);
+		});
 	});
 
 	contractRoute(app, artifactsApi.list, async ({ params }, reply) => {
@@ -68,27 +66,17 @@ export function registerArtifactRoutes(
 		return { task_id: params.id, artifacts: found.artifacts.map(view), expired: found.expired };
 	});
 
-	app.get<{ Params: { id: string; "*": string } }>(
-		"/tasks/:id/artifacts/*",
-		async (request, reply) => {
-			const taskId = request.params.id;
-			const found = isUuid(taskId)
-				? await deps.artifacts.get(taskId, request.params["*"])
-				: undefined;
-			if (found === "expired") {
-				return sendError(
-					reply,
-					410,
-					"expired",
-					"artifacts of this run were removed after retention",
-				);
-			}
-			if (!found) return sendError(reply, 404, "not_found", "artifact not found");
-			return reply
-				.header("content-type", "application/octet-stream")
-				.header("content-length", found.size)
-				.header("content-disposition", attachment(posix.basename(found.name)))
-				.send(createReadStream(found.file));
-		},
-	);
+	contractDownload(app, artifactsApi.download, async ({ params }, reply) => {
+		const taskId = params.id;
+		const found = isUuid(taskId) ? await deps.artifacts.get(taskId, params["*"]) : undefined;
+		if (found === "expired") {
+			return sendError(reply, 410, "expired", "artifacts of this run were removed after retention");
+		}
+		if (!found) return sendError(reply, 404, "not_found", "artifact not found");
+		return reply
+			.header("content-type", artifactsApi.download.contentType)
+			.header("content-length", found.size)
+			.header("content-disposition", attachment(posix.basename(found.name)))
+			.send(createReadStream(found.file));
+	});
 }

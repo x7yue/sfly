@@ -181,4 +181,16 @@ describe("编排版本：冲突、历史与恢复", () => {
 		const res = await save(id, { base_version: -1, document: doc("a") });
 		expect(res.status).toBe(400);
 	});
+
+	it("文档不符合场景文档 schema 时返回 400 invalid_document，details 指出出错的字段", async () => {
+		const id = await api.createOrchestration("坏文档");
+		const res = await save(id, { base_version: 0, document: { ...doc("a"), nodes: "x" } });
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as {
+			error: { code: string; details: Array<{ path: Array<string | number> }> };
+		};
+		expect(body.error.code).toBe("invalid_document");
+		expect(body.error.details.map((i) => i.path)).toContainEqual(["body", "document", "nodes"]);
+		expect(await api.getJson(`/orchestrations/${id}`)).toMatchObject({ head_version: 0 });
+	});
 });

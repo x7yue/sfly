@@ -1,6 +1,5 @@
-import { type EndpointResponse, orchestrationsApi } from "@sfly/schema";
+import { orchestrationsApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { z } from "zod";
 import type { Db } from "../db/database.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { listOrchestrationSummaries } from "../orchestrations/orchestration-list.js";
@@ -10,9 +9,6 @@ import { isUuid } from "../util/uuid.js";
 import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 import { requireNickname } from "./nickname.js";
-
-/** 编辑起点的版本号（新编排的第一个版本为 0）必填；不是最新版本时返回 409。 */
-const SaveVersionBody = orchestrationsApi.saveVersion.body;
 
 const notFound = (reply: FastifyReply) =>
 	sendError(reply, 404, "not_found", "orchestration not found");
@@ -85,56 +81,30 @@ export function registerOrchestrationRoutes(
 		return restored ?? notFound(reply);
 	});
 
-	app.post<{ Params: { id: string } }>("/orchestrations/:id/versions", async (request, reply) => {
-		const author = requireNickname(request, reply);
+	// 缺 base_version、文档不合法时的错误码见契约的 requestError（base_version_required / invalid_document）。
+	contractRoute(app, orchestrationsApi.saveVersion, async ({ params, body }, reply, raw) => {
+		const author = requireNickname(raw, reply);
 		if (!author) return reply;
-		const raw = request.body;
-		if (raw === null || typeof raw !== "object" || !Object.hasOwn(raw, "base_version")) {
-			return sendError(
-				reply,
-				400,
-				"base_version_required",
-				"base_version is required (use 0 for the first version)",
-			);
-		}
-		const body = SaveVersionBody.safeParse(raw);
-		if (!body.success) {
-			return sendError(
-				reply,
-				400,
-				"invalid_document",
-				"document does not match the orchestration schema",
-				z.treeifyError(body.error),
-			);
-		}
-		const result = isUuid(request.params.id)
-			? await orchestrations.saveVersion(
-					request.params.id,
-					body.data.document,
-					author,
-					body.data.base_version,
-				)
+		const result = isUuid(params.id)
+			? await orchestrations.saveVersion(params.id, body.document, author, body.base_version)
 			: ({ kind: "not_found" } as const);
-		if (result.kind === "not_found")
-			return sendError(reply, 404, "not_found", "orchestration not found");
+		if (result.kind === "not_found") return notFound(reply);
 		if (result.kind === "conflict") {
 			return sendError(
 				reply,
 				409,
 				"version_conflict",
 				result.head
-					? `version ${result.head.number} was saved by ${result.head.author} after version ${body.data.base_version}`
-					: `orchestration has no version ${body.data.base_version}`,
-				{ base_version: body.data.base_version, head: result.head },
+					? `version ${result.head.number} was saved by ${result.head.author} after version ${body.base_version}`
+					: `orchestration has no version ${body.base_version}`,
+				{ base_version: body.base_version, head: result.head },
 			);
 		}
 		const saved = result.version;
 		// 结构、包版本锁定和引用的问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2、§2.4）。
-		const response = { ...saved, warnings: await checkDocument(saved.document, packages) };
-		// 响应在类型上受契约约束（orchestrationsApi.saveVersion）。
-		return reply
-			.code(201)
-			.send(response satisfies EndpointResponse<typeof orchestrationsApi.saveVersion>);
+		// 先设状态码再返回响应：响应在类型上受契约约束。
+		reply.code(201);
+		return { ...saved, warnings: await checkDocument(saved.document, packages) };
 	});
 
 	contractRoute(app, orchestrationsApi.versions, async ({ params }, reply) => {

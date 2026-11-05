@@ -1,3 +1,4 @@
+import { httpContract, systemApi } from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
@@ -16,6 +17,7 @@ import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
+import { contractRoute, guardHttpContract } from "./contract-route.js";
 import { registerDashboardRoutes } from "./dashboard-routes.js";
 import { sendError } from "./errors.js";
 import { registerLogRoutes } from "./log-routes.js";
@@ -84,6 +86,8 @@ export function buildHttpApi({
 }: HttpApiDeps): FastifyInstance {
 	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
 	const app = Fastify({ logger, rewriteUrl: (req) => stripApiPrefix(req.url ?? "/") });
+	// 所有路由都按 @sfly/schema 的 HTTP 契约注册（ADR 0007）：不在契约里的路由、没注册的接口都让启动失败。
+	guardHttpContract(app, httpContract);
 	if (webApp) registerWebApp(app, webApp);
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
 	const sse = registerSse(app);
@@ -101,13 +105,12 @@ export function buildHttpApi({
 		return sendError(reply, status, errorCode(status), error.message);
 	});
 
-	app.get("/health", async (_req, reply) => {
+	contractRoute(app, systemApi.health, async (_request, reply) => {
 		const ok = await database.ping();
-		return reply.code(ok ? 200 : 503).send({
-			status: ok ? "ok" : "unavailable",
-			database: ok ? "ok" : "unavailable",
-			time: clock.now().toISOString(),
-		});
+		const health = ok ? "ok" : "unavailable";
+		return reply
+			.code(ok ? 200 : 503)
+			.send({ status: health, database: health, time: clock.now().toISOString() });
 	});
 
 	registerAgentRoutes(app, { hub, orchestrations });
