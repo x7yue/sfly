@@ -1,152 +1,199 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { agentsApi, orchestrationsApi } from "@sfly/schema";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
 import {
-	copyOrchestration,
-	createOrchestration,
-	listOrchestrations,
-	type Orchestration,
-} from "#/lib/api";
+	ArchiveIcon,
+	LayoutGridIcon,
+	ListIcon,
+	PlusIcon,
+	SearchIcon,
+	WorkflowIcon,
+} from "lucide-react";
+import { z } from "zod";
+import { useOverlays } from "#/components/app-shell/overlays";
+import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
+import { Page, PageHeader, Panel } from "#/components/page";
+import { apiQuery } from "#/lib/api";
+import { ScenarioCards, ScenarioTable } from "#/scenarios/ScenarioList";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { NativeSelect } from "@/components/ui/native-select";
+import { Segmented } from "@/components/ui/segmented";
+
+/** 搜索、筛选与视图放在查询参数里：刷新和分享链接都保持。 */
+const ScenariosSearch = z.object({
+	q: z.string().optional().catch(undefined),
+	status: z.enum(["running", "failed", "success"]).optional().catch(undefined),
+	agent: z.string().optional().catch(undefined),
+	archived: z.boolean().optional().catch(undefined),
+	view: z.enum(["card", "table"]).optional().catch(undefined),
+});
+type ScenariosSearch = z.infer<typeof ScenariosSearch>;
 
 export const Route = createFileRoute("/_shell/orchestrations/")({
 	staticData: { crumb: "场景编排" },
-	component: OrchestrationsPage,
+	validateSearch: ScenariosSearch,
+	component: ScenariosPage,
 });
 
-function OrchestrationsPage() {
-	const navigate = useNavigate();
-	const queryClient = useQueryClient();
-	const { data, error, isPending } = useQuery({
-		queryKey: ["orchestrations"],
-		queryFn: listOrchestrations,
-	});
-	const [name, setName] = useState("");
+const STATUS_OPTIONS = [
+	{ value: "all", label: "全部" },
+	{ value: "running", label: "运行中" },
+	{ value: "failed", label: "最近失败" },
+	{ value: "success", label: "最近成功" },
+] as const;
 
-	const create = useMutation({
-		mutationFn: (n: string) => createOrchestration(n),
-		onSuccess: (created) => {
-			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
-			navigate({ to: "/orchestrations/$id", params: { id: created.id } });
-		},
+function ScenariosPage() {
+	const search = Route.useSearch();
+	const navigate = useNavigate({ from: Route.fullPath });
+	const overlays = useOverlays();
+	const setSearch = (patch: Partial<ScenariosSearch>) =>
+		navigate({ search: (s) => ({ ...s, ...patch }), replace: true });
+
+	const scenarios = useQuery({
+		...apiQuery(orchestrationsApi.list, {
+			query: {
+				q: search.q || undefined,
+				status: search.status,
+				agent: search.agent,
+				archived: search.archived ? "true" : undefined,
+			},
+		}),
+		// 搜索、切换筛选时保留上一次的结果，不闪骨架；运行状态每 5 秒刷新。
+		placeholderData: keepPreviousData,
+		refetchInterval: 5_000,
 	});
+	const agents = useQuery(apiQuery(agentsApi.list));
+	const filtered = Boolean(search.q || search.status || search.agent);
+	const view = search.view ?? "card";
 
 	return (
-		<div className="sf-page">
-			<h1>编排</h1>
-			<form
-				className="mt-4 flex gap-2"
-				onSubmit={(e) => {
-					e.preventDefault();
-					if (name.trim()) create.mutate(name.trim());
-				}}
-			>
-				<input
-					aria-label="新编排名称"
-					className="sf-inp w-72"
-					placeholder="新编排名称"
-					value={name}
-					onChange={(e) => setName(e.target.value)}
+		<Page>
+			<PageHeader
+				title={search.archived ? "已归档的场景" : "场景编排"}
+				count={scenarios.data?.orchestrations.length}
+				actions={
+					<Button variant="primary" onClick={() => overlays.open("new-scenario")}>
+						<PlusIcon />
+						新建场景
+					</Button>
+				}
+			/>
+			<div className="mb-3.5 flex flex-wrap items-center gap-2">
+				<div className="relative w-65">
+					<SearchIcon
+						aria-hidden
+						className="pointer-events-none absolute top-1/2 left-2.25 size-3.5 -translate-y-1/2 text-fg-3"
+					/>
+					<Input
+						type="search"
+						aria-label="搜索场景"
+						placeholder="按名称、说明或 Agent 搜索"
+						className="pl-7.5"
+						value={search.q ?? ""}
+						onChange={(e) => setSearch({ q: e.target.value || undefined })}
+					/>
+				</div>
+				<Segmented
+					label="最近运行"
+					value={search.status ?? "all"}
+					onChange={(v) => setSearch({ status: v === "all" ? undefined : v })}
+					options={STATUS_OPTIONS}
 				/>
-				<button
-					type="submit"
-					disabled={!name.trim() || create.isPending}
-					className="sf-btn sf-btn--primary"
+				<NativeSelect
+					aria-label="Agent"
+					className="w-40"
+					value={search.agent ?? ""}
+					onChange={(e) => setSearch({ agent: e.target.value || undefined })}
 				>
-					新建编排
-				</button>
-				{create.error && <span className="sf-err self-center">{create.error.message}</span>}
-			</form>
-			<p className="sf-hint">新建的编排自带一个入口节点。</p>
-
-			{isPending && <p className="sf-hint mt-6">加载中…</p>}
-			{error && <p className="sf-err mt-6">加载失败：{error.message}</p>}
-			{data && data.orchestrations.length === 0 && <p className="sf-hint mt-6">还没有编排。</p>}
-			{data && data.orchestrations.length > 0 && (
-				<table className="sf-table">
-					<thead>
-						<tr>
-							<th scope="col">名称</th>
-							<th scope="col">最新版本</th>
-							<th scope="col">创建时间</th>
-							<th scope="col" />
-						</tr>
-					</thead>
-					<tbody>
-						{data.orchestrations.map((o) => (
-							<OrchestrationRow key={o.id} orchestration={o} />
-						))}
-					</tbody>
-				</table>
-			)}
-		</div>
-	);
-}
-
-function OrchestrationRow({ orchestration }: { orchestration: Orchestration }) {
-	const queryClient = useQueryClient();
-	const [copyName, setCopyName] = useState<string | null>(null);
-	const copy = useMutation({
-		mutationFn: (name: string) => copyOrchestration(orchestration.id, name),
-		onSuccess: () => {
-			setCopyName(null);
-			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
-		},
-	});
-
-	return (
-		<tr>
-			<td>
-				<Link to="/orchestrations/$id" params={{ id: orchestration.id }} className="sf-link">
-					{orchestration.name}
-				</Link>
-			</td>
-			<td>{orchestration.head_version === 0 ? "未保存" : `v${orchestration.head_version}`}</td>
-			<td className="text-[var(--sf-text-3)]">
-				{new Date(orchestration.created_at).toLocaleString()}
-			</td>
-			<td className="text-right">
-				{copyName === null ? (
-					<button
-						type="button"
-						className="sf-link border-0 bg-transparent text-[13px]"
-						onClick={() => setCopyName(`${orchestration.name} 副本`)}
-					>
-						复制
-					</button>
-				) : (
-					<form
-						className="flex justify-end gap-2"
-						onSubmit={(e) => {
-							e.preventDefault();
-							if (copyName.trim()) copy.mutate(copyName.trim());
-						}}
-					>
-						<input
-							aria-label="副本名称"
-							className="sf-inp w-56"
-							value={copyName}
-							// biome-ignore lint/a11y/noAutofocus: 点击“复制”后直接输入新名字
-							autoFocus
-							onChange={(e) => setCopyName(e.target.value)}
-						/>
-						<button
-							type="submit"
-							disabled={!copyName.trim() || copy.isPending}
-							className="sf-btn sf-btn--primary sf-btn--sm"
-						>
-							复制
-						</button>
-						<button
-							type="button"
-							className="sf-btn sf-btn--ghost sf-btn--sm"
-							onClick={() => setCopyName(null)}
-						>
-							取消
-						</button>
-					</form>
-				)}
-				{copy.error && <p className="sf-err">{copy.error.message}</p>}
-			</td>
-		</tr>
+					<option value="">全部 Agent</option>
+					{agents.data?.agents.map((a) => (
+						<option key={a.name} value={a.name}>
+							{a.name}
+						</option>
+					))}
+				</NativeSelect>
+				<span className="flex-1" />
+				<Button
+					variant="ghost"
+					size="sm"
+					aria-pressed={Boolean(search.archived)}
+					className="aria-pressed:bg-raised-2 aria-pressed:text-fg-1"
+					onClick={() => setSearch({ archived: search.archived ? undefined : true })}
+				>
+					<ArchiveIcon />
+					已归档
+					<span className="font-mono text-fg-3">{scenarios.data?.archived_count ?? ""}</span>
+				</Button>
+				<Segmented
+					label="视图"
+					value={view}
+					onChange={(v) => setSearch({ view: v === "card" ? undefined : v })}
+					options={[
+						{ value: "card", label: "卡片视图", icon: <LayoutGridIcon /> },
+						{ value: "table", label: "表格视图", icon: <ListIcon /> },
+					]}
+				/>
+			</div>
+			<QueryView
+				query={scenarios}
+				loading={
+					<Panel>
+						<TableSkeleton columns={6} />
+					</Panel>
+				}
+				errorTitle="无法加载场景"
+				isEmpty={(d) => d.orchestrations.length === 0}
+				empty={
+					<Panel>
+						{filtered ? (
+							<EmptyState
+								icon={<SearchIcon />}
+								title="没有匹配的场景"
+								description="换个关键词，或清除筛选条件。"
+							>
+								<Button
+									onClick={() => setSearch({ q: undefined, status: undefined, agent: undefined })}
+								>
+									清除筛选
+								</Button>
+							</EmptyState>
+						) : search.archived ? (
+							<EmptyState
+								icon={<ArchiveIcon />}
+								title="没有已归档的场景"
+								description="归档的场景不出现在列表里、不能运行，可以在这里恢复。"
+							/>
+						) : (
+							<EmptyState
+								icon={<WorkflowIcon />}
+								title="还没有场景"
+								description="场景把节点串成一条测试链路。新建后自带一个入口节点；需要先发布至少一个节点包。"
+							>
+								<div className="flex justify-center gap-2">
+									<Button onClick={() => overlays.open("new-scenario")}>
+										<PlusIcon />
+										新建场景
+									</Button>
+									<Button variant="ghost" render={<Link to="/packages" />} nativeButton={false}>
+										查看节点包
+									</Button>
+								</div>
+							</EmptyState>
+						)}
+					</Panel>
+				}
+			>
+				{(data) =>
+					view === "table" ? (
+						<Panel>
+							<ScenarioTable scenarios={data.orchestrations} />
+						</Panel>
+					) : (
+						<ScenarioCards scenarios={data.orchestrations} />
+					)
+				}
+			</QueryView>
+		</Page>
 	);
 }

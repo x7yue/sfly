@@ -1,8 +1,9 @@
+import { orchestrationsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { KeyboardIcon, PanelLeftIcon, UserPenIcon, WorkflowIcon } from "lucide-react";
+import { KeyboardIcon, PanelLeftIcon, PlusIcon, UserPenIcon, WorkflowIcon } from "lucide-react";
 import { Keys } from "#/components/page";
-import { listOrchestrations } from "#/lib/api";
+import { apiQuery } from "#/lib/api";
 import { shortcutById } from "#/lib/shortcuts";
 import {
 	Command,
@@ -21,7 +22,7 @@ import { toggleSidebar } from "./sidebar-state";
 /**
  * 命令面板（Ctrl K）：跳转页面、跳转场景、执行命令。
  * 分组：「跳转」来自 navigation.ts；「场景」来自场景列表；「命令」在下面的 commands 里登记。
- * 后续页面要加命令（如「新建场景」）时往 commands 里加一项；带快捷键的命令写上 shortcut，
+ * 后续页面要加命令时往 commands 里加一项；带快捷键的命令写上 shortcut，
  * 面板里会显示对应的按键。
  */
 export function CommandPalette({
@@ -34,9 +35,9 @@ export function CommandPalette({
 	openOverlay: (overlay: Overlay) => void;
 }) {
 	const navigate = useNavigate();
+	// 「场景」分组只列出没有归档的场景。
 	const orchestrations = useQuery({
-		queryKey: ["orchestrations"],
-		queryFn: listOrchestrations,
+		...apiQuery(orchestrationsApi.list, { query: {} }),
 		enabled: open,
 	});
 
@@ -46,6 +47,12 @@ export function CommandPalette({
 	};
 
 	const commands = [
+		{
+			id: "new-scenario",
+			label: "新建场景",
+			icon: PlusIcon,
+			perform: () => openOverlay("new-scenario"),
+		},
 		{
 			id: "shortcuts",
 			label: "打开快捷键面板",
