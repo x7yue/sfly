@@ -6,7 +6,7 @@ import { z } from "zod";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE } from "#/lib/copy";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
 import { useSearchInput } from "#/lib/use-search-input";
@@ -130,8 +130,9 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 	const update = (patch: Partial<z.infer<typeof RunsSearch>>) =>
 		void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
 
-	// 与命令面板共用同一个缓存（默认列表：没有归档的场景）。
+	// 与命令面板共用同一个缓存（默认列表：没有归档的场景）；已归档的场景单独列出，历史运行仍可回看。
 	const scenarios = useQuery(apiQuery(orchestrationsApi.list, { query: {} }));
+	const archived = useQuery(apiQuery(orchestrationsApi.list, { query: { archived: "true" } }));
 
 	const searchBox = useSearchInput(search.q, (q) => update({ q }));
 
@@ -162,6 +163,15 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 						{o.name}
 					</option>
 				))}
+				{!!archived.data?.orchestrations.length && (
+					<optgroup label={MESSAGE.archived}>
+						{archived.data.orchestrations.map((o) => (
+							<option key={o.id} value={o.id}>
+								{o.name}（{MESSAGE.archived}）
+							</option>
+						))}
+					</optgroup>
+				)}
 			</NativeSelect>
 			<span className="relative inline-flex w-60">
 				<SearchIcon

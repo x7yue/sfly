@@ -14,10 +14,11 @@ import {
 } from "lucide-react";
 import { createContext, type ReactNode, useContext, useRef, useState } from "react";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration } from "#/lib/format";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -145,7 +146,7 @@ export function ScenarioRunDrawer({ children }: { children: ReactNode }) {
 
 /**
  * 卡片和表格行共用的操作：「编排」「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、归档；
- * 已归档的场景只能恢复。「运行」打开运行抽屉（ScenarioRunDrawer）。
+ * 已归档的场景只能恢复，或者查看它的运行记录。「运行」打开运行抽屉（ScenarioRunDrawer）。
  */
 function ScenarioActions({
 	scenario,
@@ -166,11 +167,22 @@ function ScenarioActions({
 	const running = scenario.last_run?.status === "running";
 
 	if (scenario.archived_at) {
+		// 已归档的场景不能再运行，历史运行仍可回看（故事 26）。
 		return (
-			<Button size="sm" disabled={unarchive.isPending} onClick={() => unarchive.mutate(scenario)}>
-				<ArchiveRestoreIcon />
-				恢复
-			</Button>
+			<>
+				<Button size="sm" disabled={unarchive.isPending} onClick={() => unarchive.mutate(scenario)}>
+					<ArchiveRestoreIcon />
+					恢复
+				</Button>
+				<Link
+					to="/runs"
+					search={{ scenario: scenario.id }}
+					className={buttonVariants({ size: "sm", variant: "ghost" })}
+				>
+					<HistoryIcon />
+					{ACTION.viewRuns}
+				</Link>
+			</>
 		);
 	}
 	return (

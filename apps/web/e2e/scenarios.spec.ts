@@ -243,6 +243,45 @@ test("归档后从列表消失，在「已归档」里恢复；有运行中的�
 	await expect(page.getByRole("article", { name: "旧场景" })).toBeVisible();
 });
 
+test("已归档场景的历史运行仍可回看：卡片与表格行的「查看运行记录」，运行记录的场景筛选里标注「已归档」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "旧场景", scenarioUsing("agent-a"));
+	await createScenario(controlPlane, "新场景", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, id);
+	await agent.succeed(await agent.nextAssign());
+	const res = await controlPlane.fetch(`/orchestrations/${id}/archive`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: "{}",
+	});
+	expect(res.ok).toBe(true);
+
+	await page.goto("/orchestrations?archived=true");
+	const card = page.getByRole("article", { name: "旧场景" });
+	await card.getByRole("link", { name: "查看运行记录" }).click();
+	await expect(page).toHaveURL(new RegExp(`/runs\\?scenario=${id}`));
+	const select = page.getByRole("combobox", { name: "场景" });
+	await expect(select).toHaveValue(id);
+	await expect(select.locator("option:checked")).toHaveText("旧场景（已归档）");
+	await expect(page.getByRole("table", { name: "历史运行" })).toContainText(runId.slice(0, 8));
+
+	// 表格视图里同样有入口；筛选下拉里也能直接选到已归档的场景。
+	await page.goto("/orchestrations?archived=true&view=table");
+	await page
+		.getByRole("row", { name: /旧场景/ })
+		.getByRole("link", { name: "查看运行记录" })
+		.click();
+	await expect(page).toHaveURL(new RegExp(`scenario=${id}`));
+	await select.selectOption({ label: "新场景" });
+	await select.selectOption({ label: "旧场景（已归档）" });
+	await expect(page.getByRole("table", { name: "历史运行" })).toContainText(runId.slice(0, 8));
+});
+
 test("新建场景：自带入口节点，建好后进入编排画布；命令面板里也能新建", async ({ page }) => {
 	await page.goto("/orchestrations");
 	await expect(page.getByRole("region", { name: "还没有场景" })).toBeVisible();
