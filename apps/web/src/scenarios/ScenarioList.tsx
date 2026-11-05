@@ -13,11 +13,13 @@ import {
 	WorkflowIcon,
 } from "lucide-react";
 import { createContext, type ReactNode, useContext, useRef, useState } from "react";
-import { StatusDot, type StatusKind, StatusPill } from "#/components/status";
-import { formatDateTime } from "#/lib/format";
+import { DataTable, dataColumns } from "#/components/data-table";
+import { runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { ACTION } from "#/lib/copy";
+import { formatDateTime, formatDuration } from "#/lib/format";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuContent,
@@ -25,14 +27,6 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
 import {
 	ArchiveScenarioDialog,
 	CopyScenarioDialog,
@@ -42,23 +36,6 @@ import {
 import { ScenarioThumbnail } from "./ScenarioThumbnail";
 
 /** 场景列表的卡片视图与表格视图（原型 #/scenarios：scenarioCard、表格视图、scMenu）。 */
-
-const RUN_STATUS: Record<LastRun["status"], { kind: StatusKind; label: string }> = {
-	running: { kind: "running", label: "运行中" },
-	success: { kind: "ok", label: "成功" },
-	failed: { kind: "failed", label: "失败" },
-	cancelled: { kind: "cancelled", label: "已取消" },
-};
-
-const pad = (n: number) => String(n).padStart(2, "0");
-
-/** 耗时：`42s`、`12m 03s`、`1h 05m`。 */
-export function formatDuration(ms: number): string {
-	const s = Math.max(0, Math.floor(ms / 1000));
-	if (s < 60) return `${s}s`;
-	if (s < 3600) return `${Math.floor(s / 60)}m ${pad(s % 60)}s`;
-	return `${Math.floor(s / 3600)}h ${pad(Math.floor((s % 3600) / 60))}m`;
-}
 
 const versionLabel = (s: OrchestrationSummary) =>
 	s.head_version === 0 ? "未保存" : `v${s.head_version}`;
@@ -103,7 +80,8 @@ function AgentChips({ scenario }: { scenario: OrchestrationSummary }) {
 /** 最近一次运行：状态、开始时间、触发人、耗时；运行中时状态可以直接进入监控页。 */
 function LastRunInfo({ run, className }: { run: LastRun | null; className?: string }) {
 	if (!run) return <span className="text-fg-3">从未运行</span>;
-	const status = RUN_STATUS[run.status];
+	// 取消后等待清理的运行显示为「取消中」（故事 70）。
+	const status = runStatusView(run.status, { cancelling: run.cancelling });
 	const end = run.ended_at ? new Date(run.ended_at).getTime() : Date.now();
 	const pill = <StatusPill kind={status.kind}>{status.label}</StatusPill>;
 	return (
@@ -161,7 +139,7 @@ export function ScenarioRunDrawer({ children }: { children: ReactNode }) {
 
 /**
  * 卡片和表格行共用的操作：「编排」「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、归档；
- * 已归档的场景只能恢复。「运行」打开运行抽屉（ScenarioRunDrawer）。
+ * 已归档的场景只能恢复，或者查看它的运行记录。「运行」打开运行抽屉（ScenarioRunDrawer）。
  */
 function ScenarioActions({
 	scenario,
@@ -182,11 +160,22 @@ function ScenarioActions({
 	const running = scenario.last_run?.status === "running";
 
 	if (scenario.archived_at) {
+		// 已归档的场景不能再运行，历史运行仍可回看（故事 26）。
 		return (
-			<Button size="sm" disabled={unarchive.isPending} onClick={() => unarchive.mutate(scenario)}>
-				<ArchiveRestoreIcon />
-				恢复
-			</Button>
+			<>
+				<Button size="sm" disabled={unarchive.isPending} onClick={() => unarchive.mutate(scenario)}>
+					<ArchiveRestoreIcon />
+					恢复
+				</Button>
+				<Link
+					to="/runs"
+					search={{ scenario: scenario.id }}
+					className={buttonVariants({ size: "sm", variant: "ghost" })}
+				>
+					<HistoryIcon />
+					{ACTION.viewRuns}
+				</Link>
+			</>
 		);
 	}
 	return (
@@ -265,6 +254,8 @@ function ScenarioActions({
 
 function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 	const run = scenario.last_run;
+	const live =
+		run?.status === "running" ? runStatusView(run.status, { cancelling: run.cancelling }) : null;
 	return (
 		<article
 			aria-label={scenario.name}
@@ -287,15 +278,18 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 						{scenario.subflow_count > 0 && ` · ${scenario.subflow_count} 子流程`}
 					</Badge>
 				</div>
-				{run?.status === "running" && (
+				{run && live && (
 					<Link
 						to="/runs/$id"
 						params={{ id: run.id }}
-						className="absolute top-2.25 right-2.5 inline-flex h-5 items-center rounded-md border border-signal-line bg-raised-2 px-1.75"
-						aria-label="运行中，进入运行监控"
+						className={cn(
+							"absolute top-2.25 right-2.5 inline-flex h-5 items-center rounded-md border bg-raised-2 px-1.75",
+							live.kind === "running" ? "border-signal-line" : "border-border",
+						)}
+						aria-label={`${live.label}，进入运行监控`}
 					>
-						<StatusPill kind="running" className="text-2xs">
-							运行中
+						<StatusPill kind={live.kind} className="text-2xs">
+							{live.label}
 						</StatusPill>
 					</Link>
 				)}
@@ -343,59 +337,72 @@ export function ScenarioCards({ scenarios }: { scenarios: OrchestrationSummary[]
 	);
 }
 
+/** 表格视图的列（TanStack Table）。 */
+const tableColumns = dataColumns<OrchestrationSummary>((col) =>
+	col.columns([
+		col.display({
+			id: "name",
+			header: "场景",
+			meta: { className: "max-w-90" },
+			cell: ({ row: { original: s } }) => (
+				<>
+					<Link
+						to="/orchestrations/$id"
+						params={{ id: s.id }}
+						className="inline-flex items-center gap-1.5 font-medium hover:underline"
+					>
+						<WorkflowIcon className="size-3.5 text-fg-3" />
+						{s.name}
+					</Link>
+					<div className="truncate text-xs text-fg-3">{s.description || "没有说明"}</div>
+				</>
+			),
+		}),
+		col.display({
+			id: "last_run",
+			header: "最近运行",
+			meta: { className: "text-xs whitespace-nowrap text-fg-2" },
+			cell: ({ row }) => <LastRunInfo run={row.original.last_run} className="flex-nowrap" />,
+		}),
+		col.display({
+			id: "agents",
+			header: "Agent",
+			cell: ({ row }) => <AgentChips scenario={row.original} />,
+		}),
+		col.display({
+			id: "version",
+			header: "版本",
+			meta: { className: "font-mono whitespace-nowrap" },
+			cell: ({ row }) => versionLabel(row.original),
+		}),
+		col.display({
+			id: "nodes",
+			header: "节点",
+			meta: { className: "text-xs whitespace-nowrap text-fg-2" },
+			cell: ({ row: { original: s } }) =>
+				`${s.node_count}${s.subflow_count > 0 ? ` · ${s.subflow_count} 子流程` : ""}`,
+		}),
+		col.display({
+			id: "updated",
+			header: "更新",
+			meta: { className: "font-mono text-xs whitespace-nowrap text-fg-3" },
+			cell: ({ row: { original: s } }) => formatDateTime(s.archived_at ?? s.updated_at),
+		}),
+		col.display({
+			id: "actions",
+			header: () => <span className="sr-only">操作</span>,
+			cell: ({ row }) => (
+				<div className="flex items-center justify-end gap-1.5">
+					<ScenarioActions scenario={row.original} compact />
+				</div>
+			),
+		}),
+	]),
+);
+
 /** 表格视图。 */
 export function ScenarioTable({ scenarios }: { scenarios: OrchestrationSummary[] }) {
 	return (
-		<Table aria-label="场景列表">
-			<TableHeader>
-				<TableRow>
-					<TableHead>场景</TableHead>
-					<TableHead>最近运行</TableHead>
-					<TableHead>Agent</TableHead>
-					<TableHead>版本</TableHead>
-					<TableHead>节点</TableHead>
-					<TableHead>更新</TableHead>
-					<TableHead>
-						<span className="sr-only">操作</span>
-					</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{scenarios.map((s) => (
-					<TableRow key={s.id}>
-						<TableCell className="max-w-90">
-							<Link
-								to="/orchestrations/$id"
-								params={{ id: s.id }}
-								className="inline-flex items-center gap-1.5 font-medium hover:underline"
-							>
-								<WorkflowIcon className="size-3.5 text-fg-3" />
-								{s.name}
-							</Link>
-							<div className="truncate text-xs text-fg-3">{s.description || "没有说明"}</div>
-						</TableCell>
-						<TableCell className="text-xs whitespace-nowrap text-fg-2">
-							<LastRunInfo run={s.last_run} className="flex-nowrap" />
-						</TableCell>
-						<TableCell>
-							<AgentChips scenario={s} />
-						</TableCell>
-						<TableCell className="font-mono whitespace-nowrap">{versionLabel(s)}</TableCell>
-						<TableCell className="text-xs whitespace-nowrap text-fg-2">
-							{s.node_count}
-							{s.subflow_count > 0 && ` · ${s.subflow_count} 子流程`}
-						</TableCell>
-						<TableCell className="font-mono text-xs whitespace-nowrap text-fg-3">
-							{formatDateTime(s.archived_at ?? s.updated_at)}
-						</TableCell>
-						<TableCell>
-							<div className="flex items-center justify-end gap-1.5">
-								<ScenarioActions scenario={s} compact />
-							</div>
-						</TableCell>
-					</TableRow>
-				))}
-			</TableBody>
-		</Table>
+		<DataTable aria-label="场景列表" columns={tableColumns} data={scenarios} rowKey={(s) => s.id} />
 	);
 }

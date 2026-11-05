@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { createScenario } from "./support";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 应用外壳：侧边栏、面包屑、命令面板、快捷键面板、昵称、焦点管理、样式分层与字体。
 
@@ -63,11 +63,45 @@ test("命令面板：Ctrl K 打开，搜索并跳转到页面或场景", async (
 	await page.getByRole("button", { name: /搜索页面、场景、命令/ }).click();
 	await expect(palette.getByRole("combobox", { name: "命令" })).toBeFocused();
 	await page.keyboard.type("日终");
-	await expect(palette.getByRole("group", { name: "场景" }).getByRole("option")).toHaveText([
-		"日终数据处理",
-	]);
+	await expect(
+		palette.getByRole("group", { name: "场景", exact: true }).getByRole("option"),
+	).toHaveText(["日终数据处理"]);
 	await page.keyboard.press("Enter");
 	await expect(page).toHaveURL(new RegExp(`/orchestrations/${scenarioId}$`));
+});
+
+test("命令面板：「运行」分组跳转到最近的运行；「运行场景」打开运行抽屉", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const scenarioId = await createScenario(controlPlane, "日终数据处理", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, scenarioId);
+	await agent.nextAssign();
+	await page.goto("/agents");
+
+	await page.keyboard.press("Control+k");
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	await page.keyboard.type(runId.slice(0, 6));
+	const runs = palette.getByRole("group", { name: "运行", exact: true });
+	await expect(runs.getByRole("option")).toHaveText([
+		new RegExp(`${runId.slice(0, 8)}.*日终数据处理`),
+	]);
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+
+	await page.goto("/agents");
+	await page.keyboard.press("Control+k");
+	await page.keyboard.type("日终");
+	const start = palette.getByRole("group", { name: "运行场景" }).getByRole("option");
+	await expect(start).toHaveText(["运行「日终数据处理」"]);
+	await start.click();
+	await expect(palette).toBeHidden();
+	const drawer = page.getByRole("dialog", { name: "运行 · 日终数据处理" });
+	await expect(drawer.getByRole("list", { name: "触发前检查" })).toBeVisible();
+	await expect(page).toHaveURL(/\/agents$/);
 });
 
 test("命令面板执行命令：打开快捷键面板", async ({ page }) => {

@@ -37,6 +37,9 @@ const TICK: Duration = Duration::from_millis(100);
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
 /// 同一任务两批指标的最小间隔。
 const METRIC_INTERVAL: Duration = Duration::from_secs(1);
+/// 一秒结束后再等这么多秒才发出它的点：在一秒最后时刻记录、下一秒才读到的事件仍并入那一秒，
+/// 不会变成控制面按重复丢弃的同一秒第二个点。
+const METRIC_GRACE_SECONDS: i64 = 1;
 /// 一行的最大字节数；更长的行被拆成多行。
 const MAX_LINE_BYTES: usize = 64 * 1024;
 /// 一批最多的行数。
@@ -498,10 +501,10 @@ impl Forwarder {
             .metrics_sent_at
             .is_none_or(|at| at.elapsed() >= METRIC_INTERVAL);
         if due || last {
-            // 平时只发已经结束的秒（这一秒之后还可能有值），任务结束时发出全部。
+            // 平时只发结束了至少 METRIC_GRACE_SECONDS 秒的秒（之后还可能读到那一秒的值），任务结束时发出全部。
             let points = self
                 .metrics
-                .take((!last).then(|| now_ms().div_euclid(1000)));
+                .take((!last).then(|| now_ms().div_euclid(1000) - METRIC_GRACE_SECONDS));
             if !points.is_empty() {
                 self.metrics_sent_at = Some(Instant::now());
                 self.telemetry.send_metrics(MetricBatch {

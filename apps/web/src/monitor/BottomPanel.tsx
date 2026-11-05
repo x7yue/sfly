@@ -11,7 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { DownloadIcon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import { StatusPill } from "#/components/status";
+import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
 import { formatBytes, formatClock, formatDuration } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -30,7 +30,6 @@ import {
 	documentNodes,
 	findNode,
 	MASK,
-	nodeStatus,
 	orderedChains,
 	secretInputKeys,
 	secretParams,
@@ -188,7 +187,7 @@ export function BottomPanel({
 					id="bp-panel"
 					role="tabpanel"
 					aria-labelledby={`bp-tab-${tab}`}
-					className="min-h-0 flex-1 overflow-hidden shadow-[inset_0_8px_8px_-8px_rgb(0_0_0_/_0.8)]"
+					className="min-h-0 flex-1 overflow-hidden shadow-inset-top"
 				>
 					{tab === "logs" &&
 						(attempt ? (
@@ -370,7 +369,7 @@ function AttemptsTab({
 	return (
 		<div className="grid h-full auto-rows-min grid-cols-[repeat(auto-fill,minmax(380px,1fr))] gap-2 overflow-auto p-3">
 			{cards.map(({ n, a }) => {
-				const status = nodeStatus(a.status);
+				const status = nodeStatusView(a.status);
 				const error = a.error ? splitError(a.error.message) : null;
 				const end = a.ended_at ? Date.parse(a.ended_at) : now;
 				return (

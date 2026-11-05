@@ -62,6 +62,34 @@ test("卡片显示缩略图、名称、说明、版本与节点数、Agent 在�
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
 });
 
+test("最近一次运行已请求取消、还在等待任务结束时，卡片与表格显示「取消中」而不是「运行中」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "日终数据处理", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, id);
+	await agent.nextAssign();
+	const res = await controlPlane.fetch(`/runs/${runId}/cancel`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: "{}",
+	});
+	expect(res.ok).toBe(true);
+
+	await page.goto("/orchestrations");
+	const card = page.getByRole("article", { name: "日终数据处理" });
+	await expect(card.getByRole("link", { name: "取消中，进入运行监控" })).toBeVisible();
+	await expect(card).not.toContainText("运行中");
+
+	await page.getByRole("button", { name: "表格视图" }).click();
+	const row = page.getByRole("row", { name: /日终数据处理/ });
+	await expect(row).toContainText("取消中");
+	await expect(row).not.toContainText("运行中");
+});
+
 test("「编排」进入编排画布，「运行」打开运行抽屉", async ({ page, controlPlane, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);
@@ -120,7 +148,12 @@ test("按名称、说明或 Agent 搜索，按最近运行状态和 Agent 筛选
 	await expect(cards).toHaveText([/撮合压测/]);
 	await search.fill("没有这个");
 	await expect(page.getByRole("region", { name: "没有匹配的场景" })).toBeVisible();
+	await expect(page).toHaveURL(/q=/);
 	await page.getByRole("button", { name: "清除筛选" }).click();
+	await expect(cards).toHaveCount(3);
+	// 搜索框随地址清空（与运行记录页同一种防抖 + 写地址方式），不会把旧关键字写回。
+	await expect(search).toHaveValue("");
+	await page.waitForTimeout(600);
 	await expect(cards).toHaveCount(3);
 
 	const status = page.getByRole("group", { name: "最近运行" });
@@ -208,6 +241,45 @@ test("归档后从列表消失，在「已归档」里恢复；有运行中的�
 
 	await archived.click();
 	await expect(page.getByRole("article", { name: "旧场景" })).toBeVisible();
+});
+
+test("已归档场景的历史运行仍可回看：卡片与表格行的「查看运行记录」，运行记录的场景筛选里标注「已归档」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "旧场景", scenarioUsing("agent-a"));
+	await createScenario(controlPlane, "新场景", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, id);
+	await agent.succeed(await agent.nextAssign());
+	const res = await controlPlane.fetch(`/orchestrations/${id}/archive`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: "{}",
+	});
+	expect(res.ok).toBe(true);
+
+	await page.goto("/orchestrations?archived=true");
+	const card = page.getByRole("article", { name: "旧场景" });
+	await card.getByRole("link", { name: "查看运行记录" }).click();
+	await expect(page).toHaveURL(new RegExp(`/runs\\?scenario=${id}`));
+	const select = page.getByRole("combobox", { name: "场景" });
+	await expect(select).toHaveValue(id);
+	await expect(select.locator("option:checked")).toHaveText("旧场景（已归档）");
+	await expect(page.getByRole("table", { name: "历史运行" })).toContainText(runId.slice(0, 8));
+
+	// 表格视图里同样有入口；筛选下拉里也能直接选到已归档的场景。
+	await page.goto("/orchestrations?archived=true&view=table");
+	await page
+		.getByRole("row", { name: /旧场景/ })
+		.getByRole("link", { name: "查看运行记录" })
+		.click();
+	await expect(page).toHaveURL(new RegExp(`scenario=${id}`));
+	await select.selectOption({ label: "新场景" });
+	await select.selectOption({ label: "旧场景（已归档）" });
+	await expect(page.getByRole("table", { name: "历史运行" })).toContainText(runId.slice(0, 8));
 });
 
 test("新建场景：自带入口节点，建好后进入编排画布；命令面板里也能新建", async ({ page }) => {

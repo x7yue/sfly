@@ -146,6 +146,7 @@
 	--shadow-*: initial;
 	--shadow-float: var(--elevation-float);
 	--shadow-pop: var(--elevation-pop);
+	--shadow-inset-top: var(--elevation-inset-top);
 
 	--ease-standard: var(--motion-ease);
 

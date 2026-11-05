@@ -6,6 +6,7 @@ import {
 	ServerIcon,
 	WorkflowIcon,
 } from "lucide-react";
+import { PAGE } from "#/lib/copy";
 import type { ShortcutId } from "#/lib/shortcuts";
 
 /**
@@ -20,9 +21,9 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: readonly NavItem[] = [
-	{ to: "/", label: "控制台", icon: LayoutDashboardIcon, shortcut: "go-dashboard" },
-	{ to: "/orchestrations", label: "场景编排", icon: WorkflowIcon, shortcut: "go-scenarios" },
-	{ to: "/runs", label: "运行记录", icon: PlayIcon, shortcut: "go-runs" },
-	{ to: "/agents", label: "Agent 管理", icon: ServerIcon, shortcut: "go-agents" },
-	{ to: "/packages", label: "节点包管理", icon: BoxIcon, shortcut: "go-packages" },
+	{ to: "/", label: PAGE.dashboard, icon: LayoutDashboardIcon, shortcut: "go-dashboard" },
+	{ to: "/orchestrations", label: PAGE.scenarios, icon: WorkflowIcon, shortcut: "go-scenarios" },
+	{ to: "/runs", label: PAGE.runs, icon: PlayIcon, shortcut: "go-runs" },
+	{ to: "/agents", label: PAGE.agents, icon: ServerIcon, shortcut: "go-agents" },
+	{ to: "/packages", label: PAGE.packages, icon: BoxIcon, shortcut: "go-packages" },
 ];

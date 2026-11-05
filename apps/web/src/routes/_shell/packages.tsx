@@ -12,6 +12,7 @@ import { z } from "zod";
 import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
+import { PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
 import { compareVersions } from "#/lib/package-versions";
 import { ChartsCell, MetricsCell } from "#/metrics/MetricDeclarations";
@@ -32,7 +33,7 @@ const PackagesSearch = z.object({
 });
 
 export const Route = createFileRoute("/_shell/packages")({
-	staticData: { crumb: "节点包管理" },
+	staticData: { crumb: PAGE.packages },
 	validateSearch: PackagesSearch,
 	component: PackagesPage,
 });
@@ -45,7 +46,7 @@ function PackagesPage() {
 	const packages = useQuery(apiQuery(packagesApi.list));
 	return (
 		<Page>
-			<PageHeader title="节点包管理" count={packages.data?.packages.length} />
+			<PageHeader title={PAGE.packages} count={packages.data?.packages.length} />
 			<QueryView
 				query={packages}
 				loading={

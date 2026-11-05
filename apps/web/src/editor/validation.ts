@@ -8,7 +8,7 @@ import { OrchestrationDocument } from "@sfly/schema";
  * 输入框里还没生效的值（例如在整数输入里填了 abc）不在文档里，由 field-drafts.tsx 另外记录。
  */
 export interface FieldError {
-	/** 出错的节点；编排级字段为 undefined。 */
+	/** 出错的节点；场景级字段为 undefined。 */
 	nodeId?: string;
 	/** 节点内的字段路径，例如 `params.0.name`、`duration`、`inputs.steps`。 */
 	field: string;

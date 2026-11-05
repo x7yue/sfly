@@ -1,6 +1,6 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
-import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
+import { ON_AGENT_STATUSES, type OrchestrationDocument, type PackageMetadata } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
 	bigint,
@@ -70,7 +70,7 @@ export const agents = pgTable("agents", {
 });
 
 /**
- * 编排（场景）：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
+ * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
  * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
  */
 export const orchestrations = pgTable("orchestrations", {
@@ -119,8 +119,8 @@ export type TaskStatus =
 	| "failed"
 	| "skipped"
 	| "cancelled";
-/** 占用 Agent 槽位、由 Agent 负责的任务状态：派发阶段和执行阶段（有租约，心跳续约）。 */
-export const ON_AGENT = ["dispatched", "running"] as const satisfies readonly TaskStatus[];
+/** 占用 Agent 槽位、由 Agent 负责的任务状态：派发阶段和执行阶段（有租约，心跳续约）。定义在 @sfly/schema。 */
+export const ON_AGENT = ON_AGENT_STATUSES satisfies readonly TaskStatus[];
 
 /** 任务的最新进度（ctx.progress）。 */
 export interface TaskProgress {

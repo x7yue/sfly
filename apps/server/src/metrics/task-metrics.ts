@@ -13,7 +13,7 @@ import type { Db } from "../db/database.js";
 import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
-import type { MetricRetention } from "./metric-retention.js";
+import { type MetricRetention, purgeRunMetrics } from "./metric-retention.js";
 import { nodeTypeOf } from "./node-types.js";
 
 /**
@@ -37,7 +37,7 @@ import { nodeTypeOf } from "./node-types.js";
  *
  * ## 摘要
  * 每个「任务 × 指标」一行 `metric_series`（点数、最小、最大、总和、最新值、首尾时间），与段在同一个事务里更新；
- * 任务行记录已写入的点数、截断标记和 Agent 丢弃的点数。
+ * 任务行记录已写入的点数（不含内存里还没写库的点，崩溃后与摘要一致）、截断标记和 Agent 丢弃的点数。
  *
  * ## 上限
  * 单任务所有指标合计最多 `limitBytes / 28` 个点（默认约 50 MB）；超出后不再写入，`tasks.metric_truncated` 置为 true。
@@ -69,6 +69,8 @@ interface Series {
 	name: string;
 	/** 摘要（含尚未写入的点）；没有点时 points 为 0。 */
 	points: number;
+	/** 其中已经写库的点数（`tasks.metric_points` 只计这些，与 `metric_series` 一致）。 */
+	written: number;
 	min: number;
 	max: number;
 	sum: number;
@@ -336,15 +338,22 @@ export class TaskMetrics {
 		const starts = segments.map(({ points }) => (points[0] as Point).t);
 		let expired = false;
 		const attempt = async () => {
-			for (const t of starts) await this.deps.retention.ensurePartition(t);
+			// 有段落在已整天过期的日期（分区已经或将被保留期扫描删除，#32）：不重建分区，运行的数据已不完整，
+			// 与删除分区时一样把运行标记为已过保留期。
+			const stale = starts.some((t) => this.deps.retention.dayExpired(t));
+			if (!stale) for (const t of starts) await this.deps.retention.ensurePartition(t);
 			await this.deps.db.transaction(async (tx) => {
 				// 运行已过保留期（#32）就不再写回。锁住运行这一行，与保留期扫描（先标记再删摘要）互斥。
 				const [run] = await tx
 					.select({ purgedAt: runs.metricsPurgedAt })
 					.from(runs)
 					.where(eq(runs.id, state.runId))
-					.for("share");
+					.for(stale ? "update" : "share");
 				expired = !run || run.purgedAt !== null;
+				if (!expired && stale) {
+					await purgeRunMetrics(tx, [state.runId], this.deps.clock.now());
+					expired = true;
+				}
 				if (expired) return;
 				for (const { s, points: segment } of segments) {
 					const start = segment[0];
@@ -390,7 +399,10 @@ export class TaskMetrics {
 				await tx
 					.update(tasks)
 					.set({
-						metricPoints: [...state.series.values()].reduce((n, s) => n + s.points, 0),
+						metricPoints: [...state.series.values()].reduce(
+							(n, s) => n + (list.includes(s) ? s.points : s.written),
+							0,
+						),
 						metricTruncated: state.truncated,
 						metricDropped: state.dropped,
 					})
@@ -401,7 +413,8 @@ export class TaskMetrics {
 			await attempt();
 		} catch (error) {
 			if (!isMissingPartition(error)) throw error;
-			// 分区在别处被删除（内存里「分区已存在」的记录过期了）：忘掉它们，重新创建后再写一次。
+			// 分区在别处被删除（内存里「分区已存在」的记录过期了）：忘掉它们再写一次——还在保留期内的重新创建，
+			// 刚被保留期扫描删除的不再重建（同上）。
 			this.deps.retention.forgetPartitions(starts);
 			await attempt();
 		}
@@ -414,6 +427,7 @@ export class TaskMetrics {
 		for (const s of list) {
 			s.dirtySince = undefined;
 			s.closed = [];
+			s.written = s.points;
 		}
 	}
 
@@ -477,6 +491,7 @@ export class TaskMetrics {
 			series.set(r.metric, {
 				name: r.metric,
 				points: r.points,
+				written: r.points,
 				min: r.min,
 				max: r.max,
 				sum: r.sum,
@@ -530,6 +545,7 @@ function emptySeries(name: string): Series {
 	return {
 		name,
 		points: 0,
+		written: 0,
 		min: Number.POSITIVE_INFINITY,
 		max: Number.NEGATIVE_INFINITY,
 		sum: 0,

@@ -4,6 +4,7 @@ import type { Db } from "../db/database.js";
 import { chainInstances, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { agentFor, planRun } from "./chain.js";
+import { groupAttempts, nodeStatus } from "./run-board.js";
 
 /** 运行视图的类型来自 HTTP 契约（@sfly/schema 的 runsApi）。 */
 export type { AttemptView, ChainRunView as ChainView, NodeRunView as NodeView, RunView };
@@ -33,6 +34,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		.from(tasks)
 		.where(eq(tasks.runId, runId))
 		.orderBy(asc(tasks.attempt));
+	const attemptsOf = groupAttempts(allTasks);
 	const plan = planRun(document);
 	// 每个链实例只列出它那条链（主链或子流程）上的节点。
 	const chainNodes = (chainId: string) =>
@@ -71,11 +73,10 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			started_at: chain.startedAt.toISOString(),
 			ended_at: iso(chain.endedAt),
 			nodes: chainNodes(chain.chainId).map((node) => {
-				const rows = allTasks.filter((t) => t.chainInstanceId === chain.id && t.nodeId === node.id);
-				// 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试；节点状态取最后一行。
+				const rows = attemptsOf(chain.id, node.id);
+				// 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试；节点状态取最后一行（含占位）。
 				const placeholder = (t: (typeof rows)[number]) =>
 					t.status === "skipped" || (t.status === "cancelled" && t.startedAt === null);
-				const latest = rows.at(-1);
 				const attempts: AttemptView[] = rows
 					.filter((t) => !placeholder(t))
 					.map((t) => ({
@@ -98,7 +99,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 				return {
 					node_id: node.id,
 					kind: node.kind,
-					status: latest?.status ?? "pending",
+					status: nodeStatus(rows),
 					agent: node.kind === "package" ? agentFor(document, node) : null,
 					outputs: last?.outputs ?? null,
 					error: last?.error ?? null,
@@ -129,6 +130,7 @@ export async function listRuns(
 		orchestration_id: run.orchestrationId,
 		orchestration_version: number,
 		status: run.status,
+		cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 		triggered_by: run.triggeredBy,
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),

@@ -2,14 +2,16 @@ import { orchestrationsApi, type RunListItem, runListApi } from "@sfly/schema";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { PlayIcon, SearchIcon } from "lucide-react";
-import { useEffect, useState } from "react";
 import { z } from "zod";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
+import { MESSAGE, PAGE } from "#/lib/copy";
+import { LIVE_POLL_MS } from "#/lib/polling";
+import { useNow } from "#/lib/use-now";
+import { useSearchInput } from "#/lib/use-search-input";
 import { RunCard } from "#/run-records/RunCard";
 import { RunHistoryTable } from "#/run-records/RunHistoryTable";
-import { useNow } from "#/run-records/use-now";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -26,15 +28,10 @@ const RunsSearch = z.object({
 });
 
 export const Route = createFileRoute("/_shell/runs/")({
-	staticData: { crumb: "运行记录" },
+	staticData: { crumb: PAGE.runs },
 	validateSearch: RunsSearch,
 	component: RunsPage,
 });
-
-/** 列表每隔这么久重新获取一次（实时更新：进度、新运行、运行结束）。 */
-const REFRESH_MS = 2_000;
-/** 输入关键字后多久再查询。 */
-const SEARCH_DEBOUNCE_MS = 250;
 
 /** 运行记录（原型 #/runs）：进行中的运行是卡片，其余是历史表格。 */
 function RunsPage() {
@@ -43,7 +40,8 @@ function RunsPage() {
 		...apiQuery(runListApi.list, {
 			query: { status: search.status, orchestration_id: search.scenario, q: search.q },
 		}),
-		refetchInterval: REFRESH_MS,
+		// 实时更新：进度、新运行、运行结束。
+		refetchInterval: LIVE_POLL_MS,
 		placeholderData: keepPreviousData,
 	});
 	const counts = runs.data?.counts;
@@ -52,7 +50,7 @@ function RunsPage() {
 	return (
 		<Page>
 			<PageHeader
-				title="运行记录"
+				title={PAGE.runs}
 				count={total}
 				actions={<span className="text-xs text-fg-3">实时更新</span>}
 			/>
@@ -132,17 +130,11 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 	const update = (patch: Partial<z.infer<typeof RunsSearch>>) =>
 		void navigate({ search: (prev) => ({ ...prev, ...patch }), replace: true });
 
-	// 与命令面板共用同一个缓存（默认列表：没有归档的场景）。
+	// 与命令面板共用同一个缓存（默认列表：没有归档的场景）；已归档的场景单独列出，历史运行仍可回看。
 	const scenarios = useQuery(apiQuery(orchestrationsApi.list, { query: {} }));
+	const archived = useQuery(apiQuery(orchestrationsApi.list, { query: { archived: "true" } }));
 
-	// 关键字先存在本地，停止输入一会儿再写进地址（并触发查询）。
-	const [q, setQ] = useState(search.q ?? "");
-	useEffect(() => {
-		const value = q.trim() || undefined;
-		if (value === search.q) return;
-		const timer = setTimeout(() => update({ q: value }), SEARCH_DEBOUNCE_MS);
-		return () => clearTimeout(timer);
-	});
+	const searchBox = useSearchInput(search.q, (q) => update({ q }));
 
 	const withCount = (label: string, n: number | undefined) => (n ? `${label} ${n}` : label);
 	return (
@@ -171,6 +163,15 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 						{o.name}
 					</option>
 				))}
+				{!!archived.data?.orchestrations.length && (
+					<optgroup label={MESSAGE.archived}>
+						{archived.data.orchestrations.map((o) => (
+							<option key={o.id} value={o.id}>
+								{o.name}（{MESSAGE.archived}）
+							</option>
+						))}
+					</optgroup>
+				)}
 			</NativeSelect>
 			<span className="relative inline-flex w-60">
 				<SearchIcon
@@ -182,8 +183,8 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 					aria-label="搜索运行编号或触发人"
 					placeholder="运行编号、触发人"
 					className="pl-7.5"
-					value={q}
-					onChange={(event) => setQ(event.target.value)}
+					value={searchBox.value}
+					onChange={(event) => searchBox.onChange(event.target.value)}
 				/>
 			</span>
 		</div>

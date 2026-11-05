@@ -6,60 +6,19 @@ import type {
 	ProgressEvent,
 	RunView,
 } from "@sfly/schema";
-import type { StatusKind } from "#/components/status";
+import { runStatusView } from "#/components/status";
+import { chainLabel as chainName } from "#/lib/copy";
 import type { NodeRef } from "./monitor-state";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
 
-const NODE_STATUS: Record<string, { kind: StatusKind; label: string }> = {
-	pending: { kind: "pending", label: "待执行" },
-	queued: { kind: "warn", label: "排队中" },
-	// 已派发给 Agent，还在下载、安装节点包或启动执行器。
-	dispatched: { kind: "running", label: "准备中" },
-	running: { kind: "running", label: "执行中" },
-	waiting: { kind: "warn", label: "等待中" },
-	success: { kind: "ok", label: "成功" },
-	failed: { kind: "failed", label: "失败" },
-	skipped: { kind: "skipped", label: "已跳过" },
-	cancelled: { kind: "cancelled", label: "已取消" },
-};
-
-export const nodeStatus = (status: string) =>
-	NODE_STATUS[status] ?? { kind: "pending" as const, label: status };
-
-/** 运行与链的状态；取消后等待清理的运行显示为「取消中」，不是「运行中」。 */
-export function runStatus(run: Pick<RunView, "status" | "cancel">): {
-	kind: StatusKind;
-	label: string;
-} {
-	if (run.status === "running" && run.cancel) {
-		return run.cancel.forced_at
-			? { kind: "cancelled", label: "强制终止中" }
-			: { kind: "cancelled", label: "取消中" };
-	}
-	return chainStatus(run.status);
-}
+/** 运行的状态；取消后等待清理的运行显示为「取消中」，不是「运行中」。 */
+export const runStatus = (run: Pick<RunView, "status" | "cancel">) =>
+	runStatusView(run.status, { cancelling: run.cancel !== null, forced: !!run.cancel?.forced_at });
 
 /** 链实例的状态；运行取消后还没结束的链同样显示为「取消中」。 */
 export const chainRunStatus = (chain: ChainRunView, cancelling: boolean) =>
-	chain.status === "running" && cancelling
-		? { kind: "cancelled" as const, label: "取消中" }
-		: chainStatus(chain.status);
-
-export function chainStatus(status: string): { kind: StatusKind; label: string } {
-	switch (status) {
-		case "running":
-			return { kind: "running", label: "运行中" };
-		case "success":
-			return { kind: "ok", label: "成功" };
-		case "failed":
-			return { kind: "failed", label: "失败" };
-		case "cancelled":
-			return { kind: "cancelled", label: "已取消" };
-		default:
-			return { kind: "pending", label: status };
-	}
-}
+	runStatusView(chain.status, { cancelling });
 
 /** 链实例按层级排列：主链在前，每个子流程实例紧跟在派发它的链后面（同级按开始时间）。 */
 export function orderedChains(run: RunView): ChainRunView[] {
@@ -84,11 +43,9 @@ export function orderedChains(run: RunView): ChainRunView[] {
 	return out;
 }
 
-export const shortId = (id: string) => id.slice(0, 8);
-
 /** 链实例的名称：主链，或「子流程 <起点> · <实例短 ID>」。 */
 export const chainLabel = (chain: ChainRunView) =>
-	chain.depth === 0 ? "主链" : `子流程 ${chain.chain_id} · ${shortId(chain.id)}`;
+	chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0 }, chain.id);
 
 const KIND_TITLE: Record<OrchestrationNode["kind"], string> = {
 	entry: "入口",

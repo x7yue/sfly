@@ -3,7 +3,7 @@ import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { MONITOR_SCENARIO, openMonitor, runningScenario } from "./monitor-scenario";
-import { createScenario, publishPackage, triggerRun } from "./support";
+import { createScenario, expectFocusVisible, publishPackage, triggerRun } from "./support";
 
 // 编排画布的「运行状态」模式（原型 #/editor/:id?run=<id>）：节点叠加运行状态，检查器给出运行摘要与监控页入口。
 
@@ -76,6 +76,26 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 	await expect(page.getByRole("button", { name: /保存/ })).toBeVisible();
 	await page.locator("body").press("r");
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "failed");
+});
+
+test("运行状态下 Enter 把焦点移到检查器、Esc 回到画布上的节点，焦点环都可见", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	await page.goto(`/orchestrations/${scenarioId}`);
+	await modes(page)
+		.getByRole("button", { name: /运行状态/ })
+		.click();
+	await expect(nodeCard(page, "fetch")).toHaveAttribute("data-run", "done");
+	await nodeCard(page, "fetch").click();
+
+	await page.keyboard.press("Enter");
+	await expectFocusVisible(inspector(page));
+	await page.keyboard.press("Escape");
+	await expectFocusVisible(nodeCard(page, "fetch"));
 });
 
 test("从监控页「在画布中查看」带入该运行（不是最近一次），「在监控页中打开」跳转后定位到该节点", async ({

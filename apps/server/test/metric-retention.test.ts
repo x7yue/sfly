@@ -230,6 +230,59 @@ describe("指标保留期与分区维护", () => {
 		expect(await summary(runId)).toEqual({ run_id: runId, expired: true, tasks: [] });
 	});
 
+	it("跨天的运行：开头几天的数据随分区删除后，摘要、目录与序列都返回“已过保留期”", async () => {
+		const api = await setup({ metricRetentionDays: 7 });
+		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
+		const task = await agent.nextAssign();
+		agent.metrics(task, [["tps", now(1), 10]]);
+		await agent.sync();
+		clock().advance(10_000);
+		await eventually(async () => expect((await summary(runId)).tasks).toHaveLength(1));
+
+		// 第二天中午再上报一个点并结束：运行结束到 01-09 12:00 才满 7 天。
+		clock().set(new Date(Date.UTC(2026, 0, 2, 12)));
+		agent.metrics(task, [["tps", now(), 20]]);
+		await agent.succeed(task);
+
+		// 01-01 的分区在 01-09 00:00 之后整天过期、被删除：这次运行的数据已经不完整。
+		clock().set(new Date(Date.UTC(2026, 0, 9) + 1000));
+		await eventually(async () =>
+			expect(await partitions()).not.toContain("metric_segments_20260101"),
+		);
+		expect(await summary(runId)).toEqual({ run_id: runId, expired: true, tasks: [] });
+		expect(await (await cp.fetch(`/runs/${runId}/metrics`)).json()).toEqual({
+			run_id: runId,
+			expired: true,
+			nodes: [],
+		});
+		expect(await (await seriesOf(api, runId)).json()).toMatchObject({
+			expired: true,
+			series: [{ name: "tps", buckets: [] }],
+		});
+	});
+
+	it("内存里的点所在的分区刚被保留期扫描删除时，写入不重建过期的分区，运行标为已过保留期", async () => {
+		const api = await setup({ metricRetentionDays: 7 });
+		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
+		const task = await agent.nextAssign();
+		clock().set(new Date(Date.UTC(2026, 0, 9) - 2000));
+		await eventually(async () => expect(await partitions()).toContain("metric_segments_20260110"));
+		// 01-01 23:59:59 的点还在可接收范围内（现在 − 7 天 = 01-01 23:59:58），先留在内存里。
+		agent.metrics(task, [["tps", Date.UTC(2026, 0, 2) / 1000 - 1, 10]]);
+		await agent.sync();
+
+		clock().advance(3000);
+		await eventually(async () =>
+			expect(await partitions()).not.toContain("metric_segments_20260101"),
+		);
+		await agent.succeed(task);
+
+		expect(await partitions()).not.toContain("metric_segments_20260101");
+		expect(await summary(runId)).toEqual({ run_id: runId, expired: true, tasks: [] });
+		await fewSweeps();
+		expect(await partitions()).not.toContain("metric_segments_20260101");
+	});
+
 	it("默认保留 30 天，与日志和产物的保留期分开；还在运行的运行不算过期", async () => {
 		const api = await setup({ retentionDays: 1 });
 		const done = await runWithMetrics(api);

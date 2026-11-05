@@ -42,6 +42,7 @@ import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
+import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { DraftBanner } from "#/versions/DraftBanner";
@@ -161,11 +162,11 @@ function Editor({
 	useShortcut("canvas-mode-run", () => setMode("run"));
 
 	const packages = useQuery(apiQuery(packagesApi.list));
-	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: 10_000 });
+	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
 	const agentList = agents.data?.agents ?? [];
 	const titleOf = usePackageTitles();
 
-	// —— 撤销 / 重做：修改编排的操作都先记下修改前的状态（edit-history.ts） ——
+	// —— 撤销 / 重做：修改场景的操作都先记下修改前的状态（edit-history.ts） ——
 	const history = useEditHistory(
 		{ nodes, edges, meta },
 		{ nodes: setNodes, edges: setEdges, meta: setMeta },

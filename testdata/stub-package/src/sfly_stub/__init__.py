@@ -240,13 +240,21 @@ def metrics(ctx: Context, steps: list[Any]) -> None:
 
     - `[指标名, 值]`：`ctx.metric(指标名, float(值))`，值可以是 `"nan"`、`"inf"` 这样的字符串；
     - 数字：等待这么多秒；
-    - `"align"`：等到下一个整秒开始（让随后的几次上报落在同一秒里）。
+    - `"align"`：等到下一个整秒开始（让随后的几次上报落在同一秒里）；
+    - `["late", 指标名, 值]`：补写一条时间戳为上一秒末（x.999）的 gauge 事件，
+      模拟在一秒的最后时刻记录、Agent 下一秒才读到的事件。
     """
     for step in steps:
         if step == "align":
             time.sleep(1 - time.time() % 1)
         elif isinstance(step, (int, float)):
             time.sleep(step)
+        elif step[0] == "late":
+            _, name, value = step
+            ts = (int(time.time()) - 1) * 1000 + 999
+            ctx._events.write(
+                {"type": "metric", "ts": ts, "name": name, "kind": "gauge", "value": float(value)}
+            )
         else:
             name, value = step
             ctx.metric(name, float(value))

@@ -3,11 +3,13 @@ import {
 	type MetricSeries,
 	type MetricSeriesQuery,
 	metricsApi,
+	queryKey,
 	type RunView,
 } from "@sfly/schema";
 import { keepPreviousData, type QueryClient, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { apiQuery } from "#/lib/api";
+import { STATUS_POLL_MS } from "#/lib/polling";
 import { appendIncrement } from "./charts";
 
 /**
@@ -53,7 +55,7 @@ export function usePlatformMetrics(runId: string, signature: string, live: boole
 	const query = useQuery({
 		...apiQuery(metricsApi.platform, { params: { id: runId }, query: { points: PLATFORM_POINTS } }),
 		// 并发与槽位占用随时间变化（其他运行的任务也占槽位），运行中定时刷新。
-		refetchInterval: live ? 5000 : false,
+		refetchInterval: live ? STATUS_POLL_MS : false,
 		placeholderData: keepPreviousData,
 	});
 	useRefetchOn(signature, query.refetch);
@@ -77,10 +79,12 @@ export function seriesQuery(runId: string, query: SeriesQuery, finished: boolean
 
 type SeriesKeyVars = { params?: { id?: string }; query?: Partial<SeriesQuery> };
 
+/** 这个运行的序列查询（query key 按 `queryKey()` 的前缀匹配，DESIGN-SYSTEM §8），再按查询参数筛选。 */
 const seriesOf = (runId: string, match: (q: Partial<SeriesQuery>) => boolean) => ({
-	queryKey: metricsApi.series.key,
+	// 只给出 params 的 key 是前缀（TanStack Query 按对象部分匹配），不是一次完整的请求，所以不按请求类型检查。
+	queryKey: queryKey(metricsApi.series, { params: { id: runId } } as never),
 	predicate: (q: { queryKey: readonly unknown[] }) => {
-		const vars = q.queryKey[metricsApi.series.key.length] as SeriesKeyVars | undefined;
+		const vars = q.queryKey.at(-1) as SeriesKeyVars | undefined;
 		return vars?.params?.id === runId && !!vars.query && match(vars.query);
 	},
 });

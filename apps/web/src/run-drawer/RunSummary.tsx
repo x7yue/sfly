@@ -1,79 +1,27 @@
 import {
 	type CatalogNode,
 	type ChainRunView,
-	type MetricIncrement,
+	isActiveStatus,
 	type NodeRunView,
-	queryKey,
-	type RunView,
-	runsApi,
 } from "@sfly/schema";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
+import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
-import { StatusPill } from "#/components/status";
-import { apiQuery } from "#/lib/api";
-import { formatClock, formatDateTime, formatDuration } from "#/lib/format";
-import { useEventSource } from "#/lib/sse";
+import { nodeStatusView, StatusPill } from "#/components/status";
+import { chainLabel as chainName } from "#/lib/copy";
+import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
-import {
-	applyProgress,
-	chainLabel,
-	findNode,
-	focusNode,
-	nodeStatus,
-	orderedChains,
-	runStatus,
-	shortId,
-} from "#/monitor/run-model";
-import {
-	applyMetricIncrement,
-	attemptsSignature,
-	refetchSeries,
-	useMetricCatalog,
-} from "#/monitor/use-run-metrics";
+import { useLiveRun } from "#/monitor/live-run";
+import { chainLabel, findNode, focusNode, orderedChains, runStatus } from "#/monitor/run-model";
+import { attemptsSignature, useMetricCatalog } from "#/monitor/use-run-metrics";
 import { useTaskLogs } from "#/monitor/use-task-logs";
-import { ChainBar } from "#/run-records/ChainProgress";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** 摘要里显示的最新日志行数。 */
 const LOG_LINES = 6;
-
-const ACTIVE = new Set(["queued", "dispatched", "running", "waiting"]);
-const isDone = (status: string) => status === "success" || status === "skipped";
-
-/**
- * 运行视图（GET /runs/:id），运行中通过 SSE 实时更新（与监控页共用同一份缓存）。
- * metrics 为 true 时还把指标增量追加进序列缓存（主指标的趋势），重连后重新获取序列；
- * 同一运行只让一处订阅指标，免得同一个增量被追加多次。
- */
-export function useLiveRun(runId: string, { metrics = false }: { metrics?: boolean } = {}) {
-	const queryClient = useQueryClient();
-	const key = queryKey(runsApi.get, { params: { id: runId } });
-	const run = useQuery(apiQuery(runsApi.get, { params: { id: runId } }));
-	const running = !run.data || run.data.status === "running";
-	const opened = useRef(false);
-	useEventSource(
-		runsApi.events,
-		running ? { params: { id: runId } } : null,
-		{
-			run: (view) => queryClient.setQueryData(key, view),
-			progress: (event) =>
-				queryClient.setQueryData(key, (old: RunView | undefined) => applyProgress(old, event)),
-			...(metrics && {
-				metrics: (increment: MetricIncrement) =>
-					applyMetricIncrement(queryClient, runId, increment),
-			}),
-		},
-		() => {
-			if (metrics && opened.current) refetchSeries(queryClient, runId);
-			opened.current = true;
-		},
-	);
-	return run;
-}
 
 /**
  * 运行抽屉的摘要阶段（原型 drawerHTML 的 summary）：运行状态与时长、各链进度、正在执行的节点（进度）、
@@ -81,7 +29,7 @@ export function useLiveRun(runId: string, { metrics = false }: { metrics?: boole
  * 底部按钮由 RunDrawer 渲染。
  */
 export function RunSummary({ runId }: { runId: string }) {
-	const query = useLiveRun(runId, { metrics: true });
+	const query = useLiveRun(runId);
 	const run = query.data;
 	const signature = useMemo(() => (run ? attemptsSignature(run) : ""), [run]);
 	const catalog = useMetricCatalog(runId, signature, !!run);
@@ -103,7 +51,7 @@ export function RunSummary({ runId }: { runId: string }) {
 	const chains = orderedChains(run);
 	const elapsed = (run.ended_at ? Date.parse(run.ended_at) : now) - Date.parse(run.started_at);
 	const active = chains.flatMap((chain) =>
-		chain.nodes.filter((n) => ACTIVE.has(n.status)).map((node) => ({ chain, node })),
+		chain.nodes.filter((n) => isActiveStatus(n.status)).map((node) => ({ chain, node })),
 	);
 	const focus = findNode(run, focusNode(run));
 	const taskId = focus?.attempts.at(-1)?.task_id;
@@ -162,20 +110,15 @@ export function RunSummary({ runId }: { runId: string }) {
 }
 
 function ChainRow({ chain }: { chain: ChainRunView }) {
-	const done = chain.nodes.filter((n) => isDone(n.status)).length;
+	const done = doneCount(chain.nodes);
 	return (
 		<li className="flex items-center gap-2.5 text-xs">
 			<span className="w-36 truncate text-fg-2" title={chainLabel(chain)}>
 				{chainLabel(chain)}
 			</span>
 			<ChainBar
-				chain={{
-					id: chain.id,
-					chain_id: chain.chain_id,
-					subflow: chain.depth > 0,
-					status: chain.status,
-					nodes: chain.nodes.map((n) => ({ node_id: n.node_id, status: n.status })),
-				}}
+				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0 })}
+				nodes={chain.nodes}
 			/>
 			<span className="ml-auto font-mono text-2xs text-fg-3">
 				{done}/{chain.nodes.length}
@@ -198,7 +141,7 @@ function ActiveNode({
 	metric: CatalogNode | undefined;
 	now: number;
 }) {
-	const s = nodeStatus(node.status);
+	const s = nodeStatusView(node.status);
 	const attempt = node.attempts.at(-1);
 	const since = attempt?.started_at ?? attempt?.queued_at;
 	const progress = attempt?.progress;

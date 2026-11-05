@@ -1,8 +1,20 @@
-import { type OrchestrationDocument, queryKey, type RunView, runsApi } from "@sfly/schema";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+	dashboardApi,
+	domainKey,
+	type OrchestrationDocument,
+	orchestrationsApi,
+	queryKey,
+	type RunView,
+	runListApi,
+	runsApi,
+} from "@sfly/schema";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
-import { callApi } from "#/lib/api";
+import { apiQuery, callApi } from "#/lib/api";
+import { ACTION } from "#/lib/copy";
+import { shortId } from "#/lib/format";
+import { versionQuery } from "#/versions/queries";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -13,7 +25,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { cancelImpact, shortId } from "./run-model";
+import { cancelImpact } from "./run-model";
 
 /** 确认时要输入的运行编号前几位。 */
 const CONFIRM_CHARS = 4;
@@ -47,6 +59,16 @@ export function CancelRunDialog({
 		mutationFn: () => callApi(runsApi.cancel, { params: { id: run.id } }),
 		onSuccess: (view) => {
 			queryClient.setQueryData(queryKey(runsApi.get, { params: { id: run.id } }), view);
+			// 列出这个运行的列表（运行记录、场景的运行、场景列表的最近运行、控制台）随之刷新，进入「取消中」。
+			// 运行视图本身不重新获取：上面已经写入，之后由运行事件流更新（重新获取的旧响应可能晚于最终状态到达）。
+			for (const key of [
+				queryKey(runListApi.list),
+				queryKey(runsApi.listForOrchestration),
+				domainKey(orchestrationsApi.list),
+				domainKey(dashboardApi.get),
+			]) {
+				void queryClient.invalidateQueries({ queryKey: key });
+			}
 			notify.info(force ? "已强制终止运行" : "已请求取消运行", {
 				description: force ? undefined : "正在等待执行中的任务结束与 always 节点清理。",
 			});
@@ -121,7 +143,7 @@ export function CancelRunDialog({
 				</form>
 				<DialogFooter>
 					<Button variant="ghost" onClick={() => onOpenChange(false)}>
-						继续运行
+						{ACTION.keepRunning}
 					</Button>
 					<Button
 						type="submit"
@@ -129,11 +151,53 @@ export function CancelRunDialog({
 						variant="danger-solid"
 						disabled={typed !== code || cancel.isPending}
 					>
-						{force ? "强制终止" : "取消运行"}
+						{force ? ACTION.forceCancel : ACTION.cancelRun}
 					</Button>
 				</DialogFooter>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+/**
+ * 运行进行中的「取消运行」（清理期间为「强制终止」）按钮与确认弹窗：监控页顶栏、运行抽屉、运行记录卡片共用。
+ * 按钮是中性样式，危险强调留在确认弹窗里；运行视图与绑定版本的文档（列出 always 节点）在打开时读取，
+ * 与监控页同一份缓存。
+ */
+export function CancelRunButton({
+	runId,
+	orchestrationId,
+	orchestrationVersion,
+	cancelling,
+	size,
+}: {
+	runId: string;
+	orchestrationId: string;
+	orchestrationVersion: number;
+	/** 已请求取消、运行还没结束（按钮变成「强制终止」）。 */
+	cancelling: boolean;
+	size?: "sm";
+}) {
+	const [open, setOpen] = useState(false);
+	const run = useQuery({ ...apiQuery(runsApi.get, { params: { id: runId } }), enabled: open });
+	const version = useQuery({
+		...versionQuery(orchestrationId, orchestrationVersion),
+		enabled: open && orchestrationVersion > 0,
+	});
+	return (
+		<>
+			<Button size={size} onClick={() => setOpen(true)}>
+				{cancelling ? ACTION.forceCancel : ACTION.cancelRun}
+			</Button>
+			{run.data && (
+				<CancelRunDialog
+					run={run.data}
+					doc={version.data?.document}
+					open={open}
+					onOpenChange={setOpen}
+				/>
+			)}
+		</>
 	);
 }
 

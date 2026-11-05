@@ -4,40 +4,40 @@ import {
 	type DashboardRunningRun,
 	type DashboardView,
 	dashboardApi,
+	isActiveStatus,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronRightIcon, WorkflowIcon } from "lucide-react";
 import { useId } from "react";
+import { ChainBars } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
+import { Sparkline } from "#/components/sparkline";
 import { SlotBar, StatusDot, StatusPill } from "#/components/status";
-import { ChainBars, Sparkline, TrendChart, TrendLegend } from "#/dashboard/charts";
+import { TrendChart, TrendLegend } from "#/dashboard/charts";
 import { apiQuery } from "#/lib/api";
-import { formatDateTime, formatDuration } from "#/lib/format";
+import { PAGE } from "#/lib/copy";
+import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { LIVE_POLL_MS } from "#/lib/polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 
 export const Route = createFileRoute("/_shell/")({
-	staticData: { crumb: "控制台" },
+	staticData: { crumb: PAGE.dashboard },
 	component: Dashboard,
 });
 
-/** 控制台轮询间隔：运行与 Agent 的变化几秒内反映到页面上。 */
-const REFRESH_MS = 2_000;
-
-const shortId = (id: string) => id.slice(0, 8);
-
 /** 控制台（原型 #/dashboard）：模块固定——统计卡、正在运行、运行趋势、最近失败、Agent 状态、最近发布的节点包。 */
 function Dashboard() {
-	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: REFRESH_MS });
+	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: LIVE_POLL_MS });
 	return (
 		<Page>
 			<PageHeader
-				title="控制台"
+				title={PAGE.dashboard}
 				description="最近 24 小时 · 实时更新"
 				actions={
 					<Button variant="default" render={<Link to="/orchestrations" />} nativeButton={false}>
@@ -106,14 +106,18 @@ function Stats({ data }: { data: DashboardView }) {
 				name="成功"
 				value={runs.success}
 				valueClassName="text-ok"
-				detail={<Sparkline values={hourly.map((h) => h.success)} className="text-ok" />}
+				detail={
+					<Sparkline values={hourly.map((h) => h.success)} className="mt-1.5 w-full text-ok" />
+				}
 			/>
 			<StatCard
 				name="失败"
 				value={runs.failed}
 				valueClassName="text-danger-fg"
 				unit={runs.failed_subflows > 0 ? `含 ${runs.failed_subflows} 个子流程` : undefined}
-				detail={<Sparkline values={hourly.map((h) => h.failed)} className="text-danger" />}
+				detail={
+					<Sparkline values={hourly.map((h) => h.failed)} className="mt-1.5 w-full text-danger" />
+				}
 			/>
 			<StatCard
 				name="成功率"
@@ -235,9 +239,6 @@ const ROW =
 
 // —— 正在运行 ——
 
-/** 当前节点：已派发、执行中、等待中或排队中的节点。 */
-const CURRENT = new Set(["queued", "dispatched", "running", "waiting"]);
-
 function RunningPanel({ runs, now }: { runs: DashboardRunningRun[]; now: number }) {
 	return (
 		<DashboardPanel title="正在运行" count={runs.length} aside={panelLink("/runs", "全部运行")}>
@@ -253,7 +254,7 @@ function RunningPanel({ runs, now }: { runs: DashboardRunningRun[]; now: number 
 function RunningRow({ run, now }: { run: DashboardRunningRun; now: number }) {
 	const current = run.chains.flatMap((c) =>
 		c.nodes
-			.filter((n) => CURRENT.has(n.status))
+			.filter((n) => isActiveStatus(n.status))
 			.map((n) => ({ ...n, key: `${c.id}:${n.node_id}` })),
 	);
 	return (
@@ -298,7 +299,7 @@ function RunningRow({ run, now }: { run: DashboardRunningRun; now: number }) {
 					)}
 				</div>
 			</div>
-			<ChainBars chains={run.chains} />
+			<ChainBars chains={run.chains} variant="wide" />
 			<ChevronRightIcon aria-hidden className="size-4 text-fg-3" />
 		</Link>
 	);

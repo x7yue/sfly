@@ -14,7 +14,7 @@ import { contractRoute, contractStream } from "./contract-route.js";
 import { sendError } from "./errors.js";
 import { requireNickname } from "./nickname.js";
 
-/** 运行（契约见 @sfly/schema 的 runsApi）：触发前预检、手动触发编排的最新版本、运行列表、查询运行状态。 */
+/** 运行（契约见 @sfly/schema 的 runsApi）：触发前预检、手动触发场景的最新版本、运行列表、查询运行状态。 */
 export function registerRunRoutes(
 	app: FastifyInstance,
 	deps: {

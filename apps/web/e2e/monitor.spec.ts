@@ -25,6 +25,11 @@ test("顶栏：场景名、版本、触发人、已运行时长、各链状态�
 	await expect(header.getByTestId("run-elapsed")).toHaveText("已运行 14.0s");
 	await expect(header.getByRole("list", { name: "各链状态" }).getByRole("listitem")).toHaveCount(2);
 	await expect(header.getByRole("button", { name: "取消运行" })).toBeVisible();
+	// 运行进行中的取消按钮是中性样式，危险强调留在确认弹窗里。
+	await expect(header.getByRole("button", { name: "取消运行" })).toHaveAttribute(
+		"data-variant",
+		"default",
+	);
 	await expect(header.getByRole("button", { name: "再次运行" })).toHaveCount(0);
 	await expect(header.getByRole("link", { name: "在画布中查看" })).toHaveAttribute(
 		"href",
@@ -381,4 +386,29 @@ test("失败的运行：默认选中失败的节点；再次运行沿用上次�
 	await menu.getByRole("menuitem", { name: new RegExp(runId.slice(0, 8)) }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}`));
 	await expect(header.getByTestId("run-status")).toHaveText("失败");
+});
+
+test("运行切换菜单里，已请求取消、还在等待清理的运行显示「取消中」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	const res = await controlPlane.fetch(`/runs/${runId}/cancel`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: "{}",
+	});
+	expect(res.ok).toBe(true);
+	await openMonitor(page, clock, runId);
+
+	const header = page.getByRole("banner");
+	await expect(header.getByTestId("run-status")).toHaveText("取消中");
+	await header.getByRole("button", { name: /切换运行/ }).click();
+	const item = page
+		.getByRole("menu")
+		.getByRole("menuitem", { name: new RegExp(runId.slice(0, 8)) });
+	await expect(item).toContainText("取消中");
+	await expect(item).not.toContainText("运行中");
 });

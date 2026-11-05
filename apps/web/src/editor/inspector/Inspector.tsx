@@ -3,8 +3,6 @@ import {
 	nodeTypeOf,
 	type OrchestrationWarning,
 	type PackageCatalog,
-	referenceOptions,
-	referenceScope,
 } from "@sfly/orchestration";
 import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { cn } from "cn";
@@ -18,7 +16,7 @@ import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclar
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { FieldError } from "../validation";
-import { Field, type ReferenceChoice, SectionTitle } from "./fields";
+import { Field, SectionTitle } from "./fields";
 import {
 	AgentSelect,
 	AsyncMapping,
@@ -30,8 +28,9 @@ import {
 	TimerForm,
 } from "./node-forms";
 import { ParamsEditor } from "./ParamsEditor";
+import { referenceChoices } from "./reference-completion";
 
-/** 检查器需要的编排级上下文。 */
+/** 检查器需要的场景级上下文。 */
 export interface InspectorContext {
 	doc: OrchestrationDocument;
 	catalog: PackageCatalog;
@@ -47,25 +46,6 @@ export interface InspectorContext {
 	/** 选中并定位到另一个节点。 */
 	onLocate(id: string): void;
 	onDelete(id: string): void;
-}
-
-/** 引用补全项的来源说明：参数的类型（敏感参数标出），输出的类型与所属节点。 */
-function referenceChoices(doc: OrchestrationDocument, id: string, catalog: PackageCatalog) {
-	const scope = referenceScope(doc, id);
-	const params = new Map((scope.start?.params ?? []).map((p) => [p.name, p]));
-	return referenceOptions(doc, id, catalog).map((o): ReferenceChoice => {
-		if (o.kind === "param") {
-			const p = params.get(o.key);
-			return { ...o, detail: `${p?.type ?? ""}${p?.secret ? " · 敏感" : ""}` };
-		}
-		const source = doc.nodes.find((n) => n.id === o.node_id);
-		const schema =
-			source?.kind === "package"
-				? nodeTypeOf(doc, source, catalog)?.outputs.properties[o.key]
-				: undefined;
-		const type = typeof schema?.type === "string" ? `${schema.type} · ` : "";
-		return { ...o, detail: `${type}${o.node_id}` };
-	});
 }
 
 /**
@@ -94,7 +74,7 @@ export const Inspector = forwardRef<
 					onEscape();
 				}
 			}}
-			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex w-93 flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float outline-none"
+			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex w-93 flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
 		>
 			{selected ? (
 				<NodeInspector

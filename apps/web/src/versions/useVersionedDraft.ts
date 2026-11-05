@@ -76,7 +76,7 @@ const randomTabId = (): string =>
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 /**
- * 编排的版本状态：未保存的修改实时写入本地草稿；保存时以编辑起点为 base_version，
+ * 场景的版本状态：未保存的修改实时写入本地草稿；保存时以编辑起点为 base_version，
  * 别人先保存了新版本时得到冲突（不自动合并）。
  */
 export function useVersionedDraft(
@@ -90,11 +90,11 @@ export function useVersionedDraft(
 
 	// —— 本地草稿：有修改就写入（防抖），没有修改就清除；离开页面前立即写入 ——
 	const pending = useRef<(() => void) | null>(null);
-	/** 放弃本地修改 / 另存为新编排后不再写草稿（画布随后会重建或离开）。 */
+	/** 放弃本地修改 / 另存为新场景后不再写草稿（画布随后会重建或离开）。 */
 	const dropped = useRef(false);
 	const tabId = useMemo(randomTabId, []);
 	/**
-	 * 另一个标签页改写（或保存后清除）了同一份编排的本地草稿：这个标签页不再写草稿，
+	 * 另一个标签页改写（或保存后清除）了同一个场景的本地草稿：这个标签页不再写草稿，
 	 * 免得互相覆盖（草稿存在共用的 localStorage 里）；由用户决定载入那份草稿或直接保存。
 	 */
 	const [takenOver, setTakenOver] = useState(false);
@@ -167,7 +167,7 @@ export function useVersionedDraft(
 		save,
 		/** 保存被拦截：别人在编辑起点之后先保存了新版本。 */
 		conflict: versionConflictOf(save.error),
-		/** 另一个标签页改写了这份编排的本地草稿，这个标签页已停止写草稿。 */
+		/** 另一个标签页改写了这个场景的本地草稿，这个标签页已停止写草稿。 */
 		draftTakenOver: takenOver,
 		/** 打开页面（或重新载入）时的最新版本。 */
 		startHead: start.head,

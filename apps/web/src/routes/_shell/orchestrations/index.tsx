@@ -14,6 +14,9 @@ import { useOverlays } from "#/components/app-shell/overlays";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
+import { PAGE } from "#/lib/copy";
+import { STATUS_POLL_MS } from "#/lib/polling";
+import { useSearchInput } from "#/lib/use-search-input";
 import { ScenarioCards, ScenarioRunDrawer, ScenarioTable } from "#/scenarios/ScenarioList";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,7 +34,7 @@ const ScenariosSearch = z.object({
 type ScenariosSearch = z.infer<typeof ScenariosSearch>;
 
 export const Route = createFileRoute("/_shell/orchestrations/")({
-	staticData: { crumb: "场景编排" },
+	staticData: { crumb: PAGE.scenarios },
 	validateSearch: ScenariosSearch,
 	component: ScenariosPage,
 });
@@ -61,16 +64,17 @@ function ScenariosPage() {
 		}),
 		// 搜索、切换筛选时保留上一次的结果，不闪骨架；运行状态每 5 秒刷新。
 		placeholderData: keepPreviousData,
-		refetchInterval: 5_000,
+		refetchInterval: STATUS_POLL_MS,
 	});
 	const agents = useQuery(apiQuery(agentsApi.list));
 	const filtered = Boolean(search.q || search.status || search.agent);
+	const searchBox = useSearchInput(search.q, (q) => setSearch({ q }));
 	const view = search.view ?? "card";
 
 	return (
 		<Page>
 			<PageHeader
-				title={search.archived ? "已归档的场景" : "场景编排"}
+				title={search.archived ? PAGE.archivedScenarios : PAGE.scenarios}
 				count={scenarios.data?.orchestrations.length}
 				actions={
 					<Button variant="primary" onClick={() => overlays.open("new-scenario")}>
@@ -90,8 +94,8 @@ function ScenariosPage() {
 						aria-label="搜索场景"
 						placeholder="按名称、说明或 Agent 搜索"
 						className="pl-7.5"
-						value={search.q ?? ""}
-						onChange={(e) => setSearch({ q: e.target.value || undefined })}
+						value={searchBox.value}
+						onChange={(e) => searchBox.onChange(e.target.value)}
 					/>
 				</div>
 				<Segmented

@@ -305,7 +305,8 @@ export function FlowCanvas({
 				data-tool={tool}
 				style={{ "--canvas-zoom": 1 } as React.CSSProperties}
 				className={cn(
-					"absolute inset-0 overflow-hidden bg-canvas-bg outline-none",
+					// 画布铺满视口：焦点环画在内侧（DESIGN-SYSTEM §7）。
+					"absolute inset-0 overflow-hidden bg-canvas-bg -outline-offset-2",
 					"[&_.react-flow__viewport-portal]:pointer-events-none",
 					"data-[tool=hand]:[&_.react-flow__pane]:cursor-grab data-[tool=hand]:[&_.react-flow__node]:cursor-grab",
 				)}
@@ -356,7 +357,7 @@ export function FlowCanvas({
 							className="m-0! mb-3.5! ml-3! overflow-hidden rounded-xl border border-border-soft shadow-float"
 							style={{ width: 188, height: 118 }}
 							bgColor="var(--surface)"
-							maskColor="rgb(0 0 0 / 0.35)"
+							maskColor="var(--canvas-minimap-mask)"
 							maskStrokeColor="var(--fg-3)"
 							maskStrokeWidth={2}
 							nodeBorderRadius={12}

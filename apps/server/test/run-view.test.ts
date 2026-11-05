@@ -280,6 +280,7 @@ describe("运行视图", () => {
 						orchestration_id: id,
 						orchestration_version: 2,
 						status: "running",
+						cancelling: false,
 						triggered_by: "小红",
 						started_at: "2026-01-01T00:01:40.000Z",
 						ended_at: null,
@@ -289,12 +290,23 @@ describe("运行视图", () => {
 						orchestration_id: id,
 						orchestration_version: 1,
 						status: "success",
+						cancelling: false,
 						triggered_by: "tester",
 						started_at: "2026-01-01T00:00:00.000Z",
 						ended_at: "2026-01-01T00:01:30.000Z",
 					},
 				],
 			});
+
+			// 取消后等待任务结束的运行标为取消中。
+			await api.cancelOk(second);
+			expect(
+				(
+					await api.getJson<{ runs: { id: string; cancelling: boolean }[] }>(
+						`/orchestrations/${id}/runs`,
+					)
+				).runs[0],
+			).toMatchObject({ id: second, status: "running", cancelling: true });
 		});
 	});
 });

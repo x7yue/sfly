@@ -1,12 +1,11 @@
 import type { RunView } from "@sfly/schema";
-import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { PlayIcon } from "lucide-react";
 import { useCallback, useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
-import { CancelRunDialog } from "#/monitor/CancelRunDialog";
-import { shortId } from "#/monitor/run-model";
-import { versionQuery } from "#/versions/queries";
+import { shortId } from "#/lib/format";
+import { CancelRunButton } from "#/monitor/CancelRunDialog";
+import { useLiveRun } from "#/monitor/live-run";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -18,7 +17,7 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import { RunSummary, useLiveRun } from "./RunSummary";
+import { RunSummary } from "./RunSummary";
 import { TriggerForm, type TriggerOptions } from "./TriggerForm";
 
 export interface RunDrawerProps extends TriggerOptions {
@@ -152,27 +151,15 @@ function SummaryVersion({ runId }: { runId: string }) {
 /** 摘要阶段的底部：取消运行（运行中）、关闭、打开运行详情。 */
 function SummaryActions({ runId, orchestrationId }: { runId: string; orchestrationId: string }) {
 	const run = useLiveRun(runId).data;
-	const [cancelOpen, setCancelOpen] = useState(false);
-	const versionNumber = run?.orchestration_version;
-	// 取消确认弹窗按运行绑定的版本列出 always 节点（与监控页同一份缓存）。
-	const version = useQuery({
-		...versionQuery(orchestrationId, versionNumber ?? 0),
-		enabled: cancelOpen && !!versionNumber,
-	});
 	return (
 		<>
 			{run?.status === "running" && (
-				<>
-					<Button variant="danger" onClick={() => setCancelOpen(true)}>
-						{run.cancel ? "强制终止" : "取消运行"}
-					</Button>
-					<CancelRunDialog
-						run={run}
-						doc={version.data?.document}
-						open={cancelOpen}
-						onOpenChange={setCancelOpen}
-					/>
-				</>
+				<CancelRunButton
+					runId={run.id}
+					orchestrationId={orchestrationId}
+					orchestrationVersion={run.orchestration_version}
+					cancelling={run.cancel !== null}
+				/>
 			)}
 			<span className="flex-1" />
 			<SheetClose render={<Button />}>关闭</SheetClose>

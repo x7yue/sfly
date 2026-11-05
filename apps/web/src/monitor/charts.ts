@@ -1,4 +1,5 @@
 import type { MetricBucket, MetricIncrement, MetricSeries } from "@sfly/schema";
+import { formatMetric } from "#/lib/format";
 import type { TimeRange } from "./timeline";
 
 /**
@@ -98,12 +99,54 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 }
 
 /** 悬停时刻所在桶的最新值；不在任何桶里时为 null。 */
-export function valueAt(buckets: readonly MetricBucket[], t: number, bucketSeconds: number) {
+/** 悬停时刻所在的桶；不在任何桶里时为 null。 */
+export function bucketAt(
+	buckets: readonly MetricBucket[],
+	t: number,
+	bucketSeconds: number,
+): MetricBucket | null {
 	const span = bucketSeconds * 1000;
 	for (let i = buckets.length - 1; i >= 0; i--) {
 		const b = buckets[i] as MetricBucket;
 		const start = Date.parse(b.time);
-		if (start <= t) return t < start + span ? b.last : null;
+		if (start <= t) return t < start + span ? b : null;
 	}
 	return null;
+}
+
+/** 悬停读数：最新值；桶里有范围时带上最小–最大值（尖峰在读数里也看得到）。 */
+export function formatReading(b: MetricBucket): string {
+	const last = formatMetric(b.last);
+	return b.min < b.max ? `${last}（${formatMetric(b.min)}–${formatMetric(b.max)}）` : last;
+}
+
+/**
+ * 纵轴范围：包含每个桶的最小值与最大值（降采样合并掉的短时尖峰也在范围内，故事 14）；
+ * fromZero 时从 0 起（柱状、面积与迷你趋势）。上方留 12%。
+ */
+export function valueExtent(
+	lines: readonly { buckets: readonly MetricBucket[] }[],
+	fromZero: boolean,
+): { min: number; max: number; top: number } {
+	const buckets = lines.flatMap((l) => l.buckets);
+	let min = Math.min(...buckets.map((b) => Math.min(b.min, b.last)));
+	let max = Math.max(...buckets.map((b) => Math.max(b.max, b.last)));
+	if (fromZero) min = Math.min(0, min);
+	if (max - min < 1e-9) max = min + 1;
+	return { min, max, top: max + (max - min) * 0.12 };
+}
+
+/** 是否有桶带范围（最小值小于最大值）：有时画最小–最大包络。 */
+export const hasSpread = (buckets: readonly MetricBucket[]) => buckets.some((b) => b.min < b.max);
+
+/** 最小–最大包络的多边形顶点：沿各桶最大值向前，再沿最小值返回。 */
+export function envelopePoints(
+	buckets: readonly MetricBucket[],
+	x: (b: MetricBucket) => number,
+	y: (v: number) => number,
+): Array<[number, number]> {
+	return [
+		...buckets.map((b): [number, number] => [x(b), y(b.max)]),
+		...[...buckets].reverse().map((b): [number, number] => [x(b), y(b.min)]),
+	];
 }

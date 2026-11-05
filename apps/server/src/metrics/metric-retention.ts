@@ -25,6 +25,9 @@ const PARTITION_NAME = /^metric_segments_(\d{4})(\d{2})(\d{2})$/;
  * - 运行结束超过保留期后判定为「已过保留期」：删除它的指标摘要（`metric_series`），记下 `runs.metrics_purged_at`，
  *   摘要、目录、序列接口据此返回已过保留期（{@link isExpired}），之后迟到的点直接丢弃、不再写回。
  *   它的原始数据随所在的整天分区删除（最晚再过一天），在此之前也不再对外提供。
+ * - 运行的数据只要有一部分被删除，它就是「已过保留期」：删除分区时，在同一个事务里把在这个分区里有数据的运行
+ *   一并标记（跨天的运行开头几天先到期时，不会出现没有提示的空洞）；内存里还没写库的段若落在已整天过期的日期
+ *   （{@link dayExpired}，与删除分区同一判定），写入时不再重建分区，而是同样把运行标记为已过保留期（见 TaskMetrics）。
  * - 已知存在的分区缓存在内存里；删除分区时同时移出缓存。分区被别处删除时，写入失败后调用
  *   {@link forgetPartitions} 再重试。
  */
@@ -50,6 +53,15 @@ export class MetricRetention {
 		const now = this.deps.clock.now().getTime();
 		const ms = t * 1000;
 		return ms >= now - this.retentionMs && ms < dayOf(now) + (PARTITION_DAYS_AHEAD + 1) * DAY_MS;
+	}
+
+	/** Unix 秒 t 所在那一天（UTC）是否整天早于「现在 − 保留期」：这天的分区已经（或将被）扫描删除。 */
+	dayExpired(t: number): boolean {
+		return this.#dayExpired(dayOf(t * 1000), this.deps.clock.now().getTime());
+	}
+
+	#dayExpired(day: number, now: number): boolean {
+		return day + DAY_MS <= now - this.retentionMs;
 	}
 
 	/** 确保 Unix 秒 t 所在那一天（UTC）的分区存在。 */
@@ -95,9 +107,21 @@ export class MetricRetention {
 			where p.relname = ${PARENT}`);
 		for (const { name } of rows) {
 			const day = parseDay(name);
-			if (day === undefined || day + DAY_MS > cutoff) continue;
+			if (day === undefined || !this.#dayExpired(day, now)) continue;
 			this.#partitions.delete(day);
-			await this.deps.db.execute(sql.raw(`drop table if exists "${name}"`));
+			await this.deps.db.transaction(async (tx) => {
+				// 先锁住分区（之后不会再有写入），把在这里有数据的运行标为已过保留期，再删除分区。
+				await tx.execute(sql.raw(`lock table "${name}" in access exclusive mode`));
+				const { rows: affected } = await tx.execute<{ run_id: string }>(
+					sql.raw(`select distinct run_id from "${name}"`),
+				);
+				await purgeRunMetrics(
+					tx,
+					affected.map((r) => r.run_id),
+					new Date(now),
+				);
+				await tx.execute(sql.raw(`drop table "${name}"`));
+			});
 		}
 		const due = await this.deps.db
 			.select({ id: runs.id })
@@ -106,14 +130,7 @@ export class MetricRetention {
 			.limit(BATCH);
 		if (due.length === 0) return;
 		const ids = due.map((r) => r.id);
-		// 先标记再删摘要：写入指标时会锁住运行这一行并检查标记（见 TaskMetrics），这样不会有迟到的点写回。
-		await this.deps.db.transaction(async (tx) => {
-			await tx
-				.update(runs)
-				.set({ metricsPurgedAt: new Date(now) })
-				.where(inArray(runs.id, ids));
-			await tx.delete(metricSeries).where(inArray(metricSeries.runId, ids));
-		});
+		await this.deps.db.transaction((tx) => purgeRunMetrics(tx, ids, new Date(now)));
 	}
 
 	#ensure(day: number): Promise<void> {
@@ -138,6 +155,21 @@ export class MetricRetention {
 		}
 		return created;
 	}
+}
+
+type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/**
+ * 把这些运行标记为指标已过保留期并删除它们的摘要（已标记的不变）。先标记再删摘要：写入指标时会锁住运行这一行
+ * 并检查标记（见 TaskMetrics），这样不会有迟到的点写回。
+ */
+export async function purgeRunMetrics(tx: Tx, ids: string[], at: Date): Promise<void> {
+	if (ids.length === 0) return;
+	await tx
+		.update(runs)
+		.set({ metricsPurgedAt: at })
+		.where(and(inArray(runs.id, ids), isNull(runs.metricsPurgedAt)));
+	await tx.delete(metricSeries).where(inArray(metricSeries.runId, ids));
 }
 
 /** 毫秒时间戳所在那一天（UTC）的零点。 */

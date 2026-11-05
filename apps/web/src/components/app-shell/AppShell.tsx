@@ -12,6 +12,7 @@ import {
 import { Keys } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { useNickname } from "#/lib/nickname";
+import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { shortcutById } from "#/lib/shortcuts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NAV_ITEMS, type NavItem } from "./navigation";
@@ -45,7 +46,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
 function Sidebar({ collapsed }: { collapsed: boolean }) {
 	const { open } = useOverlays();
-	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: 10_000 });
+	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
 	const online = agents.data?.agents.filter((a) => a.status === "online").length;
 	const counts: Partial<Record<NavItem["to"], string>> = {
 		"/agents":

@@ -46,7 +46,7 @@ describe("保存前的字段校验", () => {
 		]);
 	});
 
-	it("不符合编排文档格式的配置（例如空的 Sleep 时长）是字段错误", () => {
+	it("不符合场景文档格式的配置（例如空的 Sleep 时长）是字段错误", () => {
 		const doc: OrchestrationDocument = {
 			...base,
 			nodes: [

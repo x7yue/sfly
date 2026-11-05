@@ -1,4 +1,11 @@
+import type { NodeStatus, RunStatus } from "@sfly/schema";
 import { cn } from "cn";
+import {
+	CANCELLING_LABEL,
+	FORCE_CANCELLING_LABEL,
+	NODE_STATUS_LABEL,
+	RUN_STATUS_LABEL,
+} from "#/lib/copy";
 
 /**
  * 状态指示（原型 `.st`）：圆点 + 文字。配色规则见 docs/DESIGN-SYSTEM.md：
@@ -7,6 +14,62 @@ import { cn } from "cn";
  * 状态一律用这个组件表达，不要自己拼颜色。
  */
 export type StatusKind = "ok" | "running" | "failed" | "warn" | "pending" | "skipped" | "cancelled";
+
+/** 运行状态与链实例状态的显示（各页面共用这一张表）。 */
+const RUN_STATUS_KIND: Record<RunStatus, StatusKind> = {
+	running: "running",
+	success: "ok",
+	failed: "failed",
+	cancelled: "cancelled",
+};
+
+/** 节点状态的显示。 */
+const NODE_STATUS_KIND: Record<NodeStatus, StatusKind> = {
+	pending: "pending",
+	queued: "warn",
+	dispatched: "running",
+	running: "running",
+	waiting: "warn",
+	success: "ok",
+	failed: "failed",
+	skipped: "skipped",
+	cancelled: "cancelled",
+};
+
+export interface StatusView {
+	kind: StatusKind;
+	label: string;
+}
+
+/**
+ * 运行（或链实例）的状态：已请求取消、还没结束的显示为「取消中」（强制终止后「强制终止中」），
+ * 不显示成「运行中」（故事 70）。
+ */
+export function runStatusView(
+	status: string,
+	cancel?: { cancelling: boolean; forced?: boolean },
+): StatusView {
+	if (status === "running" && cancel?.cancelling) {
+		return {
+			kind: "cancelled",
+			label: cancel.forced ? FORCE_CANCELLING_LABEL : CANCELLING_LABEL,
+		};
+	}
+	const known = status in RUN_STATUS_KIND;
+	return known
+		? { kind: RUN_STATUS_KIND[status as RunStatus], label: RUN_STATUS_LABEL[status as RunStatus] }
+		: { kind: "pending", label: status };
+}
+
+/** 节点（最后一次尝试）的状态。 */
+export function nodeStatusView(status: string): StatusView {
+	return status in NODE_STATUS_KIND
+		? {
+				kind: NODE_STATUS_KIND[status as NodeStatus],
+				label: NODE_STATUS_LABEL[status as NodeStatus],
+			}
+		: { kind: "pending", label: status };
+}
 
 const TEXT: Record<StatusKind, string> = {
 	ok: "text-ok",

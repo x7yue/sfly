@@ -1,49 +1,29 @@
-import { orchestrationsApi, queryKey, type RunView, runsApi } from "@sfly/schema";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { orchestrationsApi } from "@sfly/schema";
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { apiQuery } from "#/lib/api";
-import { useEventSource } from "#/lib/sse";
 import { useNow } from "#/lib/use-now";
 import { versionQuery } from "#/versions/queries";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BottomPanel } from "./BottomPanel";
 import { ChartWorkspace } from "./ChartWorkspace";
+import { useLiveRun } from "./live-run";
 import { MonitorTopBar } from "./MonitorTopBar";
 import { createMonitorStore, MonitorProvider, type TimeAxis } from "./monitor-state";
-import { applyProgress, focusNode } from "./run-model";
+import { focusNode } from "./run-model";
 import { Timeline } from "./Timeline";
 import { runExtent, visibleRange } from "./timeline";
-import { applyMetricIncrement, refetchSeries } from "./use-run-metrics";
 
 /**
  * 运行监控页（原型 #/monitor/:runId，全屏）：顶栏、链路时间线、图表工作区（#42）、底部面板。
- * 运行中通过一条 SSE 实时更新：run（运行视图）、progress（进度）、metrics（指标增量，追加进图表的序列缓存；
- * 重连后重新获取序列，补齐断线期间错过的点）。
+ * 运行中通过运行事件流实时更新（live-run.ts：运行视图、进度、指标增量）。
  * 时间线、图表与底部面板共用一份时间轴状态（monitor-state.tsx）。
  */
 export function MonitorPage({ runId, initialNode }: { runId: string; initialNode?: string }) {
-	const queryClient = useQueryClient();
-	const runKey = queryKey(runsApi.get, { params: { id: runId } });
-	const runQuery = useQuery(apiQuery(runsApi.get, { params: { id: runId } }));
+	const runQuery = useLiveRun(runId);
 	const run = runQuery.data;
 	const running = !run || run.status === "running";
-	// 运行结束后不再需要实时流（最后一条推送就是最终状态）。
-	const opened = useRef(false);
-	useEventSource(
-		runsApi.events,
-		running ? { params: { id: runId } } : null,
-		{
-			run: (view) => queryClient.setQueryData(runKey, view),
-			progress: (event) =>
-				queryClient.setQueryData(runKey, (old: RunView | undefined) => applyProgress(old, event)),
-			metrics: (increment) => applyMetricIncrement(queryClient, runId, increment),
-		},
-		() => {
-			if (opened.current) refetchSeries(queryClient, runId);
-			opened.current = true;
-		},
-	);
 
 	const orchestrationId = run?.orchestration_id;
 	const versionNumber = run?.orchestration_version;
@@ -104,7 +84,7 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 	return (
 		<MonitorProvider store={store} axis={axis}>
 			<div className="fixed inset-0 flex min-w-[1280px] flex-col bg-bg">
-				<MonitorTopBar run={run} name={orchestration.data?.name} doc={doc} />
+				<MonitorTopBar run={run} name={orchestration.data?.name} />
 				<main className="flex min-h-0 flex-1 flex-col">
 					<Timeline run={run} doc={doc} />
 					<ChartWorkspace run={run} />

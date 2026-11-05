@@ -14,7 +14,7 @@ const notFound = (reply: FastifyReply) =>
 	sendError(reply, 404, "not_found", "orchestration not found");
 
 /**
- * 场景（编排）与场景版本：新建、改名称和说明、归档与恢复、复制、场景列表（契约见 @sfly/schema 的
+ * 场景与场景版本：新建、改名称和说明、归档与恢复、复制、场景列表（契约见 @sfly/schema 的
  * orchestrationsApi）；保存（追加）版本、查询版本。版本不可修改，场景不物理删除。
  */
 export function registerOrchestrationRoutes(
