@@ -23,6 +23,7 @@ message AgentMessage {
     Progress progress = 5;
     TaskResult result = 6;
     InstallStatus install = 7;
+    MetricBatch metrics = 8;
   }
 }
 
@@ -244,6 +245,30 @@ message Progress {
   string message = 5;
   // SDK 记录这次进度的时间（Unix 毫秒）。
   int64 time_unix_ms = 6;
+}
+
+// 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 指标 × 秒」合并，每个任务每秒最多发一批，
+// 任务结束前补发剩余的点；控制面不回 Ack，同一指标同一秒的重复点被忽略。
+message MetricBatch {
+  string task_id = 1;
+  uint32 attempt = 2;
+  // 同一指标按时间递增。
+  repeated MetricPoint points = 3;
+  // 自上一批以来，断线排队超过上限而被丢弃的（最早的）点数。
+  uint64 dropped_points = 4;
+}
+
+// 一个指标在一秒内合并后的点。
+message MetricPoint {
+  // 节点类型声明的指标名。
+  string name = 1;
+  // 这一秒（Unix 秒）。
+  int64 time_unix_s = 2;
+  // gauge：这一秒最后一个值；counter：这一秒结束时的值。
+  double value = 3;
+  // 这一秒的最小值、最大值（counter 与 value 相同）。
+  double min = 4;
+  double max = 5;
 }
 
 // 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。

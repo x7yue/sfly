@@ -57,6 +57,9 @@ export type InputsSchema = {
 	required?: string[];
 };
 
+/** 节点类型声明的指标（#27）。 */
+export type MetricSpec = { name: string; unit: string; kind: "gauge" | "counter" };
+
 /**
  * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限），
  * 或 `{ outputs, inputs }`（inputs 是输入 schema，派发前按它校验已解析的输入）。
@@ -66,7 +69,11 @@ export async function publishPackage(
 	cp: { fetch(path: string, init?: RequestInit): Promise<Response> },
 	name: string,
 	version: string,
-	nodes: Record<string, readonly string[] | { outputs: readonly string[]; inputs: InputsSchema }>,
+	nodes: Record<
+		string,
+		| readonly string[]
+		| { outputs: readonly string[]; inputs?: InputsSchema; metrics?: MetricSpec[] }
+	>,
 ): Promise<void> {
 	const archive = packageArchive(
 		packageMetadata({
@@ -74,13 +81,15 @@ export async function publishPackage(
 			version,
 			nodes: Object.entries(nodes).map(([node, spec]) => {
 				const outputs = "outputs" in spec ? spec.outputs : spec;
-				const inputs = "inputs" in spec ? spec.inputs : { properties: {} };
+				const inputs = ("inputs" in spec ? spec.inputs : undefined) ?? { properties: {} };
+				const metrics = "metrics" in spec ? spec.metrics : undefined;
 				return {
 					name: node,
 					title: node,
 					entry: `${name.replace(/-/g, "_")}.nodes:${node}`,
 					inputs: { type: "object", ...inputs },
 					outputs: { type: "object", properties: Object.fromEntries(outputs.map((k) => [k, {}])) },
+					...(metrics && { metrics }),
 				};
 			}),
 		}),

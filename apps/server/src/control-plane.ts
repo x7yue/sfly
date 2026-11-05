@@ -10,6 +10,7 @@ import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
 import { TaskLogs } from "./logs/task-logs.js";
+import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
@@ -47,6 +48,10 @@ export interface ControlPlaneOptions {
 	sweepIntervalMs?: number;
 	/** 单个任务日志的上限（字节），默认 200 MB；超出部分截断（#18）。 */
 	logLimitBytes?: number;
+	/** 单个任务指标数据的上限（字节，按每点 28 字节折算成点数），默认 50 MB；超出后截断（#29）。 */
+	metricLimitBytes?: number;
+	/** 指标写入的扫描间隔，默认 1 秒；当前段攒了多久（约 10 秒）才写只按注入的时钟判断（#29）。 */
+	metricFlushIntervalMs?: number;
 	/** 单个任务产物的总大小上限（字节），默认 1 GB（#18）。 */
 	artifactLimitBytes?: number;
 	/** 日志和产物的保留天数，默认 30 天；运行结束超过这么久后清理（#18）。 */
@@ -122,6 +127,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		dataDir: options.dataDir,
 		limitBytes: options.logLimitBytes,
 	});
+	const metrics = new TaskMetrics({
+		db: database.db,
+		clock,
+		limitBytes: options.metricLimitBytes,
+	});
 	const artifacts = new ArtifactStore({
 		db: database.db,
 		clock,
@@ -146,6 +156,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		presence,
 		preflight,
 		logs,
+		metrics,
 		retention,
 		artifacts,
 		agentToken: options.agentToken,
@@ -168,13 +179,16 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
 			hub,
-			// 日志和进度不改变运行状态，不经过引擎（src/logs/task-logs.ts）。
+			// 日志、进度和指标不改变运行状态，不经过引擎（src/logs/task-logs.ts、src/metrics/task-metrics.ts）。
 			handler: {
 				onOnline: (conn, running) => engine.onOnline(conn, running),
-				onMessage: (conn, message) =>
-					logs.handles(message)
-						? logs.onMessage(conn, message)
-						: engine.onMessage(conn, limitOutputs(message)),
+				async onMessage(conn, message) {
+					if (metrics.handles(message)) return metrics.onMessage(conn, message);
+					if (logs.handles(message)) return logs.onMessage(conn, message);
+					// 任务结束：先写入它的指标（Agent 在结果之前发完最后的点）。
+					if (message.body.case === "result") await metrics.flushTask(message.body.value.taskId);
+					return engine.onMessage(conn, limitOutputs(message));
+				},
 			},
 			agentToken: options.agentToken,
 			onError: (error) => {
@@ -207,6 +221,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			() => retention.sweep(),
 			fail("retention sweep"),
 		),
+		// 指标：写入攒了约 10 秒的当前段（#29）。
+		periodic(options.metricFlushIntervalMs ?? 1000, () => metrics.flushDue(), fail("metric flush")),
 		// 定时 / Sleep 节点（#14）：定时器的状态全在 PG（tasks.wake_at），扫描本身无状态。
 		periodic(options.timerSweepIntervalMs ?? 1000, () => engine.wakeTimers(), fail("timer sweep")),
 	];
@@ -219,6 +235,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			await retention.idle();
 			hub.closeAll();
 			await gateway.close();
+			// 正常关闭时写入内存里尚未写库的指标。
+			await metrics.close().catch(fail("metric flush"));
 			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
 			await mutex.run(async () => {});
 			await api.close();

@@ -11,6 +11,7 @@
 //   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30），运行结束超过这么久后自动清理
 //   SFLY_LOG_LIMIT_MB     单个任务日志的上限（默认 200），超出部分截断
 //   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024）
+//   SFLY_METRIC_LIMIT_MB  单个任务指标数据的上限（默认 50，按点数折算），超出后停止写入
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
 //   SFLY_WEB_DIR     前端构建产物目录（默认 apps/web/dist，由 `pnpm --filter @sfly/web build` 生成）；
@@ -47,6 +48,7 @@ const controlPlane = await startControlPlane({
 	retentionDays: positive("SFLY_RETENTION_DAYS"),
 	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),
 	artifactLimitBytes: mb("SFLY_ARTIFACT_LIMIT_MB"),
+	metricLimitBytes: mb("SFLY_METRIC_LIMIT_MB"),
 	sdkWheelDir: env.SFLY_SDK_DIR || fileURLToPath(new URL("../dist/sdk", import.meta.url)),
 	webDir,
 });
