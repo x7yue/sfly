@@ -1,8 +1,9 @@
 import type { Page } from "@playwright/test";
-import type { AssignedTask } from "../../server/test/support/fake-agent.js";
+import { type AssignedTask, LogLevel } from "../../server/test/support/fake-agent.js";
 import { createEditorScenario, nodeCard } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
-import { openMonitor, runningScenario } from "./monitor-scenario";
+import { logLine, openMonitor, runningScenario } from "./monitor-scenario";
+import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { seedRunRecords } from "./run-records";
 import {
 	createScenario,
@@ -199,6 +200,44 @@ test("还没有场景", async ({ page }) => {
 	await page.goto("/orchestrations");
 	await expect(page.getByRole("region", { name: "还没有场景" })).toBeVisible();
 	await expect(page).toHaveScreenshot("scenarios-empty.png");
+});
+
+test("运行抽屉：入口参数与触发前检查", async ({ page, controlPlane, connectAgent }) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("textbox", { name: /^api_token / }).fill("tok-live");
+	// 必填的 host 留空：显示字段错误。
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await expect(drawer.getByText("必填")).toBeVisible();
+	await expect(page).toHaveScreenshot("run-drawer-form.png");
+});
+
+test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, clock }) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("textbox", { name: /^host/ }).fill("10.0.0.8");
+	await drawer.getByRole("textbox", { name: /^api_token / }).fill("tok-live");
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	const task = await agent.nextAssign();
+	agent.progress(task, 40, 100, "第 40 步");
+	agent.logs(task, [
+		logLine(clock, 1, "连接 10.0.0.8"),
+		logLine(clock, 2, "丢包率偏高", LogLevel.WARN, 1000),
+	]);
+	await expect(drawer.getByRole("list", { name: "最新日志" })).toContainText("丢包率偏高");
+	await expect(drawer).toContainText("40 / 100");
+	// 运行 ID 是随机的，遮住（含触发通知）。
+	await expect(page).toHaveScreenshot("run-drawer-summary.png", {
+		mask: [page.locator('[data-slot="run-id"]'), page.locator("[data-sonner-toast]")],
+	});
 });
 
 test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {

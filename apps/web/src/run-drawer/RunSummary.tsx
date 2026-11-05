@@ -82,7 +82,9 @@ export function RunSummary({ runId }: { runId: string }) {
 						{status.label}
 					</StatusPill>
 				</span>
-				<span className="font-mono">{shortId(run.id)}</span>
+				<span className="font-mono" data-slot="run-id">
+					{shortId(run.id)}
+				</span>
 				<span className="font-mono text-fg-3">{formatDuration(elapsed)}</span>
 				<span className="ml-auto text-xs text-fg-3">
 					{run.triggered_by} 触发 · {formatDateTime(run.started_at)}
