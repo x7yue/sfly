@@ -179,7 +179,10 @@ test.describe("没有昵称时", () => {
 	});
 });
 
-test("样式都在 CSS layer 里，字体随前端打包、不请求外部资源", async ({ page, baseURL }) => {
+test("样式都在设计体系声明的 CSS layer 里（没有按页面的旧样式层），字体随前端打包、不请求外部资源", async ({
+	page,
+	baseURL,
+}) => {
 	const external: string[] = [];
 	page.on("request", (req) => {
 		if (!req.url().startsWith(baseURL ?? "")) external.push(req.url());
@@ -195,6 +198,27 @@ test("样式都在 CSS layer 里，字体随前端打包、不请求外部资源
 		),
 	);
 	expect(unlayered).toEqual([]);
+
+	// 所有层都在 app.css 声明的顺序里（docs/DESIGN-SYSTEM.md「CSS layer」）：MVP 的 legacy 层已删除。
+	// properties 是 Tailwind v4 自己的层（只有 @property 的回退值）。
+	const layers = await page.evaluate(() => {
+		const names = new Set<string>();
+		const visit = (rules: CSSRuleList, prefix: string) => {
+			for (const rule of rules) {
+				if (rule instanceof CSSLayerStatementRule) {
+					for (const n of rule.nameList) names.add(prefix + n);
+				} else if (rule instanceof CSSLayerBlockRule) {
+					names.add(prefix + rule.name);
+					visit(rule.cssRules, `${prefix}${rule.name}.`);
+				} else if (rule instanceof CSSImportRule && rule.layerName !== null) {
+					names.add(prefix + rule.layerName);
+				}
+			}
+		};
+		for (const sheet of document.styleSheets) visit(sheet.cssRules, "");
+		return [...names].filter((n) => !n.includes(".")).sort();
+	});
+	expect(layers).toEqual(["base", "components", "properties", "theme", "utilities", "vendor"]);
 
 	// 页面上用到的两种字体都已从同源加载（字体文件来自构建产物）。
 	const loaded = await page.evaluate(async () => {
