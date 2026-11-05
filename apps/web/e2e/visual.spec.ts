@@ -1,5 +1,12 @@
 import { type E2eFixtures, expect, test } from "./fixtures";
-import { createScenario, failApi, holdApi, publishPackage, scenarioUsing } from "./support";
+import {
+	createScenario,
+	failApi,
+	holdApi,
+	publishPackage,
+	scenarioUsing,
+	seedDashboard,
+} from "./support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
 // 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）。
@@ -92,4 +99,24 @@ test("折叠的侧边栏", async ({ page, connectAgent }) => {
 	await expect(page.getByRole("button", { name: "展开侧边栏" })).toBeVisible();
 	await page.mouse.move(800, 600); // 不停在侧边栏上，避免截到悬浮提示
 	await expect(page).toHaveScreenshot("sidebar-collapsed.png");
+});
+
+test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
+	await seedDashboard({ page, controlPlane, connectAgent, clock });
+	await page.goto("/");
+	await expect(
+		page.getByRole("region", { name: "最近失败", exact: true }).getByRole("link"),
+	).toHaveCount(2);
+	// 运行 ID 是随机的，遮住。
+	await expect(page).toHaveScreenshot("dashboard.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("控制台没有数据", async ({ page }) => {
+	await page.goto("/");
+	await expect(page.getByRole("region", { name: "正在运行", exact: true })).toContainText(
+		"没有正在运行的运行",
+	);
+	await expect(page).toHaveScreenshot("dashboard-empty.png");
 });
