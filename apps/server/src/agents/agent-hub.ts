@@ -73,7 +73,8 @@ export class AgentConnection {
 export interface AgentView {
 	name: string;
 	status: AgentStatus;
-	info: AgentInfo;
+	/** 注册信息（安装状态与开发版本另有字段）。 */
+	info: Omit<AgentInfo, "install" | "dev_packages"> & { installed_packages: InstalledPackage[] };
 	last_seen_at: string;
 	/** Agent 共享 venv 中已安装的节点包（Agent 在 Hello 中上报）。 */
 	installed_packages: { name: string; version: string }[];

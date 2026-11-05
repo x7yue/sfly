@@ -1,3 +1,4 @@
+import { type AgentView, agentsApi } from "@sfly/schema";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -5,33 +6,11 @@ import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-interface AgentView {
-	name: string;
-	status: string;
-	info: {
-		agent_version: string;
-		os: string;
-		arch: string;
-		slots: number;
-		installed_packages: Array<{ name: string; version: string }>;
-	};
-	last_seen_at: string;
-	installed_packages: { name: string; version: string }[];
-	install: { package: string; version: string; state: string; task_id: string } | null;
-	running_tasks: {
-		task_id: string;
-		run_id: string;
-		orchestration_id: string;
-		node_id: string;
-		attempt: number;
-		started_at: string;
-	}[];
-}
-
+/** Agent 列表；响应按契约解析（不符合契约时测试失败）。 */
 async function listAgents(cp: TestControlPlane): Promise<AgentView[]> {
 	const res = await cp.fetch("/agents");
 	expect(res.status).toBe(200);
-	return ((await res.json()) as { agents: AgentView[] }).agents;
+	return agentsApi.list.response.parse(await res.json()).agents;
 }
 
 describe("Agent 注册", () => {
@@ -71,6 +50,7 @@ describe("Agent 注册", () => {
 				install: null,
 				dev_packages: [],
 				running_tasks: [],
+				referencing_orchestrations: 0,
 			},
 		]);
 	});
@@ -139,6 +119,42 @@ describe("Agent 注册", () => {
 
 		await agent.succeed(task, {});
 		expect((await listAgents(cp))[0]?.running_tasks).toEqual([]);
+	});
+
+	it("Agent 列表返回被多少个场景引用：最新版本里的默认 Agent 或节点另选的 Agent", async () => {
+		cp = await startTestControlPlane();
+		const api = new ApiClient(cp);
+		for (const name of ["agent-a", "agent-b", "agent-c"]) {
+			agents.push(await FakeAgent.connect(cp.grpcUrl, { name }));
+		}
+		const doc = (defaultAgent: string | undefined, nodeAgents: string[]) => ({
+			...(defaultAgent ? { default_agent: defaultAgent } : {}),
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				...nodeAgents.map((agent, i) => ({
+					id: `p${i}`,
+					kind: "package",
+					package: "demo-checks",
+					node: "ping",
+					agent,
+				})),
+			],
+			edges: [],
+		});
+		// 旧版本引用 agent-c，最新版本不再引用：只算最新版本。
+		const changed = await api.orchestrationWith(doc("agent-c", []), "changed");
+		await api.saveVersion(changed, doc("agent-a", ["agent-b"]));
+		// 默认 Agent 与节点另选同一个 Agent 时只算一次。
+		await api.orchestrationWith(doc("agent-a", ["agent-a", "agent-a"]), "same");
+		await api.orchestrationWith(doc(undefined, ["agent-b"]), "node-only");
+		await api.createOrchestration("no-version");
+
+		const counts = (await listAgents(cp)).map((a) => [a.name, a.referencing_orchestrations]);
+		expect(counts).toEqual([
+			["agent-a", 2],
+			["agent-b", 2],
+			["agent-c", 0],
+		]);
 	});
 
 	it("未上报槽位数时使用默认的 4 个槽位", async () => {

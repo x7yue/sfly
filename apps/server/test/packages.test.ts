@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { packagesApi } from "@sfly/schema";
 import { strToU8, zipSync } from "fflate";
 import { afterEach, describe, expect, it } from "vitest";
+import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -45,6 +47,7 @@ describe("节点包仓库", () => {
 								{ name: "http_check", title: "HTTP 检查" },
 								{ name: "ping", title: "ping" },
 							],
+							locked_orchestrations: 0,
 						},
 					],
 				},
@@ -93,6 +96,57 @@ describe("节点包仓库", () => {
 			["0.2.0", "2026-01-01T00:00:02.000Z"],
 			["0.1.0", "2026-01-01T00:00:01.000Z"],
 		]);
+	});
+
+	it("版本列表返回被多少个场景锁定：只看各场景的最新版本", async () => {
+		const clock = new ManualClock();
+		cp = await startTestControlPlane({ clock });
+		const api = new ApiClient(cp);
+		for (const version of ["1.2.0", "1.3.0", "1.4.0"]) {
+			const res = await cp.fetch(
+				"/packages",
+				publishInit(packageArchive(packageMetadata({ version }))),
+			);
+			expect(res.status).toBe(201);
+			clock.advance(1000);
+		}
+		const locking = (version: string) => ({
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "check", kind: "package", package: "demo-checks", node: "ping" },
+			],
+			edges: [{ from: "entry", to: "check", kind: "chain" }],
+			packages: { "demo-checks": version },
+		});
+		// 第一个场景先锁定 1.2.0，后来的版本改为 1.3.0：只算最新版本。
+		const moved = await api.orchestrationWith(locking("1.2.0"), "moved");
+		await api.saveVersion(moved, locking("1.3.0"));
+		await api.orchestrationWith(locking("1.3.0"), "second");
+		await api.orchestrationWith(locking("1.2.0"), "third");
+		await api.createOrchestration("no-version");
+
+		const list = packagesApi.list.response.parse(await api.getJson("/packages"));
+		const locked = list.packages[0]?.versions.map((v) => [v.version, v.locked_orchestrations]);
+		expect(locked).toEqual([
+			["1.4.0", 0],
+			["1.3.0", 2],
+			["1.2.0", 1],
+		]);
+		const pkg = packagesApi.get.response.parse(await api.getJson("/packages/demo-checks"));
+		expect(pkg).toEqual(list.packages[0]);
+	});
+
+	it("路径参数不符合契约时返回 400", async () => {
+		cp = await startTestControlPlane();
+		const res = await cp.fetch("/packages/Not%20A%20Name/versions/1.0.0");
+		expect(res.status).toBe(400);
+		expect(await res.json()).toEqual({
+			error: {
+				code: "invalid_request",
+				message: expect.any(String),
+				details: [expect.objectContaining({ path: ["params", "name"] })],
+			},
+		});
 	});
 
 	it("同名同版本已存在时拒绝发布，已发布的文件不被覆盖", async () => {
