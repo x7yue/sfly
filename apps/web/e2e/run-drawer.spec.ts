@@ -59,6 +59,7 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	const active = summary.getByRole("list", { name: "正在执行的节点" });
 	await expect(active).toContainText("ping");
 	await expect(active).toContainText("agent-a");
+	await expect(active).toContainText("执行中");
 
 	// 实时更新：进度与日志。
 	agent.progress(task, 40, 100, "第 40 步");
