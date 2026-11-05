@@ -6,12 +6,12 @@ import { type ReactNode, useEffect, useState } from "react";
 import { floatGroupClass, GroupDivider } from "#/components/canvas/CanvasDock";
 import { StatusPill } from "#/components/status";
 import type { Orchestration, OrchestrationHead } from "#/lib/api";
-import { useOtherEditors } from "#/lib/presence";
+import { ConflictDialog } from "#/versions/ConflictDialog";
 import type { Versioning } from "#/versions/useVersionedDraft";
-import { ConflictDialog } from "#/versions/VersionControls";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { OnlineEditors } from "./OnlineEditors";
 
 /** 画布模式：编辑，或叠加一次运行的节点状态（只读，#41）。 */
 export type EditorMode = "edit" | "run";
@@ -98,54 +98,13 @@ export function EditorTopLeft({
 	);
 }
 
-const initials = (nickname: string): string => {
-	const chars = [...nickname.trim()];
-	const first = chars[0] ?? "?";
-	return /^[a-z0-9]$/i.test(first) ? chars.slice(0, 2).join("").toUpperCase() : first;
-};
-
-/** 在线编辑者：同一份场景还有别人（或自己的其他标签页）打开着画布时显示。 */
-function OnlineEditors({ orchestrationId }: { orchestrationId: string }) {
-	const names = useOtherEditors(orchestrationId);
-	if (names.length === 0) return null;
-	const summary =
-		names.length <= 2
-			? `${names.join("、")} 正在编辑`
-			: `${names[0]} 等 ${names.length} 人正在编辑`;
-	return (
-		<>
-			<output
-				aria-live="polite"
-				title={`正在编辑：${names.join("、")}`}
-				className="flex items-center gap-1.5 px-1.5"
-			>
-				<span className="flex">
-					{names.slice(0, 3).map((name, i) => (
-						<span
-							key={name}
-							aria-hidden
-							className={cn(
-								"grid size-5.5 place-items-center rounded-full border border-surface bg-raised-2 text-2xs font-semibold text-fg-1",
-								i > 0 && "-ml-1.5",
-							)}
-						>
-							{initials(name)}
-						</span>
-					))}
-				</span>
-				<span className="max-w-48 truncate text-xs text-fg-2">{summary}</span>
-			</output>
-			<GroupDivider />
-		</>
-	);
-}
-
 /**
  * 右上控件组：在线编辑者、未保存状态（与字段错误）、版本历史、保存（Ctrl S）、运行。
  * 白色主操作只有一个：有未保存的修改时是保存，否则是运行。保存被拦截（409）时弹出冲突对话框。
  */
 export function EditorTopRight({
 	orchestration,
+	editors,
 	doc,
 	versioning,
 	fieldErrors,
@@ -154,6 +113,8 @@ export function EditorTopRight({
 	onReload,
 }: {
 	orchestration: Orchestration;
+	/** 在线编辑者（useOtherEditors）。 */
+	editors: readonly string[];
 	doc: OrchestrationDocument;
 	versioning: Versioning;
 	fieldErrors: number;
@@ -169,7 +130,7 @@ export function EditorTopRight({
 	}, [conflict]);
 	return (
 		<div className={cn(floatGroupClass, "top-3 right-3")}>
-			<OnlineEditors orchestrationId={orchestration.id} />
+			<OnlineEditors names={editors} />
 			{fieldErrors > 0 ? (
 				<StatusPill kind="failed" className="px-1">
 					{fieldErrors} 处字段错误
@@ -217,16 +178,15 @@ export function EditorTopRight({
 				<PlayIcon />
 				运行
 			</Button>
-			{showConflict && (
-				<ConflictDialog
-					orchestration={orchestration}
-					doc={doc}
-					head={conflict?.head ?? versioning.staleHead}
-					versioning={versioning}
-					onClose={() => setShowConflict(false)}
-					onReload={onReload}
-				/>
-			)}
+			<ConflictDialog
+				open={showConflict}
+				onOpenChange={setShowConflict}
+				orchestration={orchestration}
+				doc={doc}
+				head={conflict?.head ?? versioning.staleHead}
+				versioning={versioning}
+				onReload={onReload}
+			/>
 		</div>
 	);
 }

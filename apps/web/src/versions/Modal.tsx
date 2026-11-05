@@ -1,6 +1,6 @@
 import { useEffect, useId } from "react";
 
-/** 确认弹窗（视觉参照原型 modal.css）：标题、说明、内容、底部操作；Esc 关闭。 */
+/** 旧确认弹窗（只剩 runs/TriggerDialog 在用，#38 换新后删除；新代码用 components/ui/dialog）：标题、说明、内容、底部操作；Esc 关闭。 */
 export function Modal({
 	title,
 	description,
