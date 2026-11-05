@@ -15,6 +15,7 @@ import type { CanvasInfo } from "#/components/canvas/context";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
 import { StatusPill } from "#/components/status";
 import type { AgentView, PackageSummary } from "#/lib/api";
+import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { FieldError } from "../validation";
@@ -71,7 +72,7 @@ function referenceChoices(doc: OrchestrationDocument, id: string, catalog: Packa
 /**
  * 右侧检查器（原型 `.insp`，可收起）。选中节点时：标题区 + 页签（参数 / 执行 / 说明）；
  * 没有选中节点时：场景级设置（默认 Agent、节点包版本、检查结果）。
- * 「说明」页之后由 #43 加上节点类型声明的指标与图表（页签改名为「说明与指标」）。
+ * 包节点的「说明」页叫「说明与指标」，带上节点类型声明的指标与图表（#43）。
  */
 export const Inspector = forwardRef<
 	HTMLElement,
@@ -249,7 +250,7 @@ function NodeInspector({
 						)}
 					</TabsTrigger>
 					{hasExec && <TabsTrigger value="exec">执行</TabsTrigger>}
-					<TabsTrigger value="doc">说明</TabsTrigger>
+					<TabsTrigger value="doc">{node.kind === "package" ? "说明与指标" : "说明"}</TabsTrigger>
 				</TabsList>
 				<TabsContent value="params" className="overflow-auto px-3.5 py-3">
 					{general.length > 0 && <WarningList warnings={general} />}
@@ -363,6 +364,13 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 					</>
 				)}
 			</dl>
+			{node.kind === "package" && (
+				<>
+					<SectionTitle>声明的指标与图表</SectionTitle>
+					{/* 目录里是节点包查询 API 返回的完整节点类型（含默认图表），类型上只声明了输入输出。 */}
+					<MetricDeclarations info={type as NodeMetricsInfo | null | undefined} />
+				</>
+			)}
 		</>
 	);
 }

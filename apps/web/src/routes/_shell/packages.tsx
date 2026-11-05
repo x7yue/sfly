@@ -14,6 +14,7 @@ import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/f
 import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { formatBytes, formatDateTime } from "#/lib/format";
+import { ChartsCell, MetricsCell } from "#/metrics/MetricDeclarations";
 import { Badge } from "@/components/ui/badge";
 import {
 	Table,
@@ -162,7 +163,7 @@ function PackageDetail({ pkg, version }: { pkg: PackageSummary; version: string 
 					className="my-4"
 				/>
 			) : (
-				<TableSkeleton columns={3} rows={Math.max(1, current.nodes.length)} />
+				<TableSkeleton columns={5} rows={Math.max(1, current.nodes.length)} />
 			)}
 
 			<SectionHeading>版本</SectionHeading>
@@ -242,6 +243,8 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 					<TableHead>节点类型</TableHead>
 					<TableHead>输入</TableHead>
 					<TableHead>输出</TableHead>
+					<TableHead>声明的指标</TableHead>
+					<TableHead>图表</TableHead>
 				</TableRow>
 			</TableHeader>
 			<TableBody>
@@ -256,6 +259,12 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 						</TableCell>
 						<TableCell>
 							<IoList schema={node.outputs} />
+						</TableCell>
+						<TableCell>
+							<MetricsCell info={node} />
+						</TableCell>
+						<TableCell>
+							<ChartsCell info={node} />
 						</TableCell>
 					</TableRow>
 				))}

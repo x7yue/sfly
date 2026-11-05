@@ -210,7 +210,7 @@ test("检查器：按输入 schema 生成表单，常量 / 引用切换，引用
 	await openEditor(page, id);
 	await nodeCard(page, "ping").click();
 	const panel = inspector(page);
-	await expect(panel.getByRole("tab")).toHaveText(["参数", "执行", "说明"]);
+	await expect(panel.getByRole("tab")).toHaveText(["参数", "执行", "说明与指标"]);
 
 	// ping.host 是整值引用：打开时就是引用模式。
 	await expect(panel.getByRole("button", { name: "引用", pressed: true })).toBeVisible();
