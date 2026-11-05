@@ -14,6 +14,7 @@ import { useOverlays } from "#/components/app-shell/overlays";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
+import { PAGE } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { useSearchInput } from "#/lib/use-search-input";
 import { ScenarioCards, ScenarioRunDrawer, ScenarioTable } from "#/scenarios/ScenarioList";
@@ -33,7 +34,7 @@ const ScenariosSearch = z.object({
 type ScenariosSearch = z.infer<typeof ScenariosSearch>;
 
 export const Route = createFileRoute("/_shell/orchestrations/")({
-	staticData: { crumb: "场景编排" },
+	staticData: { crumb: PAGE.scenarios },
 	validateSearch: ScenariosSearch,
 	component: ScenariosPage,
 });
@@ -73,7 +74,7 @@ function ScenariosPage() {
 	return (
 		<Page>
 			<PageHeader
-				title={search.archived ? "已归档的场景" : "场景编排"}
+				title={search.archived ? PAGE.archivedScenarios : PAGE.scenarios}
 				count={scenarios.data?.orchestrations.length}
 				actions={
 					<Button variant="primary" onClick={() => overlays.open("new-scenario")}>

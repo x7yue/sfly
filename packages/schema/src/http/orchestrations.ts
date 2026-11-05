@@ -105,6 +105,8 @@ export const ReferencedAgent = z.object({
 export const LastRun = z.object({
 	id: z.string(),
 	status: RunStatus,
+	/** 已请求取消、还在等待任务结束与清理（status 仍是 running，界面显示「取消中」）。 */
+	cancelling: z.boolean(),
 	/** 运行绑定的场景版本号。 */
 	version: z.number().int(),
 	triggered_by: z.string(),

@@ -6,31 +6,22 @@ import {
 } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
+import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
-import { StatusPill } from "#/components/status";
-import { formatClock, formatDateTime, formatDuration } from "#/lib/format";
+import { nodeStatusView, StatusPill } from "#/components/status";
+import { chainLabel as chainName } from "#/lib/copy";
+import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { useLiveRun } from "#/monitor/live-run";
-import {
-	chainLabel,
-	findNode,
-	focusNode,
-	nodeStatus,
-	orderedChains,
-	runStatus,
-	shortId,
-} from "#/monitor/run-model";
+import { chainLabel, findNode, focusNode, orderedChains, runStatus } from "#/monitor/run-model";
 import { attemptsSignature, useMetricCatalog } from "#/monitor/use-run-metrics";
 import { useTaskLogs } from "#/monitor/use-task-logs";
-import { ChainBar } from "#/run-records/ChainProgress";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** 摘要里显示的最新日志行数。 */
 const LOG_LINES = 6;
-
-const isDone = (status: string) => status === "success" || status === "skipped";
 
 /**
  * 运行抽屉的摘要阶段（原型 drawerHTML 的 summary）：运行状态与时长、各链进度、正在执行的节点（进度）、
@@ -119,20 +110,15 @@ export function RunSummary({ runId }: { runId: string }) {
 }
 
 function ChainRow({ chain }: { chain: ChainRunView }) {
-	const done = chain.nodes.filter((n) => isDone(n.status)).length;
+	const done = doneCount(chain.nodes);
 	return (
 		<li className="flex items-center gap-2.5 text-xs">
 			<span className="w-36 truncate text-fg-2" title={chainLabel(chain)}>
 				{chainLabel(chain)}
 			</span>
 			<ChainBar
-				chain={{
-					id: chain.id,
-					chain_id: chain.chain_id,
-					subflow: chain.depth > 0,
-					status: chain.status,
-					nodes: chain.nodes.map((n) => ({ node_id: n.node_id, status: n.status })),
-				}}
+				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0 })}
+				nodes={chain.nodes}
 			/>
 			<span className="ml-auto font-mono text-2xs text-fg-3">
 				{done}/{chain.nodes.length}
@@ -155,7 +141,7 @@ function ActiveNode({
 	metric: CatalogNode | undefined;
 	now: number;
 }) {
-	const s = nodeStatus(node.status);
+	const s = nodeStatusView(node.status);
 	const attempt = node.attempts.at(-1);
 	const since = attempt?.started_at ?? attempt?.queued_at;
 	const progress = attempt?.progress;

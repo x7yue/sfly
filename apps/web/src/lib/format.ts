@@ -56,3 +56,6 @@ export function formatMetric(value: number): string {
 	if (Number.isInteger(value)) return String(value);
 	return abs >= 100 ? value.toFixed(0) : abs >= 10 ? value.toFixed(1) : value.toFixed(2);
 }
+
+/** 运行、链实例等 ID 的短形式（前 8 位）。 */
+export const shortId = (id: string) => id.slice(0, 8);

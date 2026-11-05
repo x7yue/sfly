@@ -8,9 +8,9 @@ import {
 	type NodeRunView,
 	type RunView,
 } from "@sfly/schema";
-import type { StatusKind } from "#/components/status";
+import { nodeStatusView, type StatusKind } from "#/components/status";
 import { type NodeRef, nodeKey } from "./monitor-state";
-import { nodeStatus, orderedChains } from "./run-model";
+import { orderedChains } from "./run-model";
 
 /** 图表工作区里的一个节点分组：目录里的包节点 × 运行视图里的节点。 */
 export interface ChartGroup {
@@ -67,7 +67,7 @@ export function buildGroups(run: RunView, catalog: readonly CatalogNode[]): Char
 				entry,
 				attempt,
 				runAttempt: node.attempts.find((a) => a.task_id === attempt.task_id),
-				status: nodeStatus(node.status),
+				status: nodeStatusView(node.status),
 				chainName: chainName(chain),
 			});
 		}

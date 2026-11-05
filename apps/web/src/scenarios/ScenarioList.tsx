@@ -13,8 +13,8 @@ import {
 	WorkflowIcon,
 } from "lucide-react";
 import { createContext, type ReactNode, useContext, useRef, useState } from "react";
-import { StatusDot, type StatusKind, StatusPill } from "#/components/status";
-import { formatDateTime } from "#/lib/format";
+import { runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { formatDateTime, formatDuration } from "#/lib/format";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,23 +42,6 @@ import {
 import { ScenarioThumbnail } from "./ScenarioThumbnail";
 
 /** 场景列表的卡片视图与表格视图（原型 #/scenarios：scenarioCard、表格视图、scMenu）。 */
-
-const RUN_STATUS: Record<LastRun["status"], { kind: StatusKind; label: string }> = {
-	running: { kind: "running", label: "运行中" },
-	success: { kind: "ok", label: "成功" },
-	failed: { kind: "failed", label: "失败" },
-	cancelled: { kind: "cancelled", label: "已取消" },
-};
-
-const pad = (n: number) => String(n).padStart(2, "0");
-
-/** 耗时：`42s`、`12m 03s`、`1h 05m`。 */
-export function formatDuration(ms: number): string {
-	const s = Math.max(0, Math.floor(ms / 1000));
-	if (s < 60) return `${s}s`;
-	if (s < 3600) return `${Math.floor(s / 60)}m ${pad(s % 60)}s`;
-	return `${Math.floor(s / 3600)}h ${pad(Math.floor((s % 3600) / 60))}m`;
-}
 
 const versionLabel = (s: OrchestrationSummary) =>
 	s.head_version === 0 ? "未保存" : `v${s.head_version}`;
@@ -103,7 +86,8 @@ function AgentChips({ scenario }: { scenario: OrchestrationSummary }) {
 /** 最近一次运行：状态、开始时间、触发人、耗时；运行中时状态可以直接进入监控页。 */
 function LastRunInfo({ run, className }: { run: LastRun | null; className?: string }) {
 	if (!run) return <span className="text-fg-3">从未运行</span>;
-	const status = RUN_STATUS[run.status];
+	// 取消后等待清理的运行显示为「取消中」（故事 70）。
+	const status = runStatusView(run.status, { cancelling: run.cancelling });
 	const end = run.ended_at ? new Date(run.ended_at).getTime() : Date.now();
 	const pill = <StatusPill kind={status.kind}>{status.label}</StatusPill>;
 	return (
@@ -265,6 +249,8 @@ function ScenarioActions({
 
 function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 	const run = scenario.last_run;
+	const live =
+		run?.status === "running" ? runStatusView(run.status, { cancelling: run.cancelling }) : null;
 	return (
 		<article
 			aria-label={scenario.name}
@@ -287,15 +273,18 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 						{scenario.subflow_count > 0 && ` · ${scenario.subflow_count} 子流程`}
 					</Badge>
 				</div>
-				{run?.status === "running" && (
+				{run && live && (
 					<Link
 						to="/runs/$id"
 						params={{ id: run.id }}
-						className="absolute top-2.25 right-2.5 inline-flex h-5 items-center rounded-md border border-signal-line bg-raised-2 px-1.75"
-						aria-label="运行中，进入运行监控"
+						className={cn(
+							"absolute top-2.25 right-2.5 inline-flex h-5 items-center rounded-md border bg-raised-2 px-1.75",
+							live.kind === "running" ? "border-signal-line" : "border-border",
+						)}
+						aria-label={`${live.label}，进入运行监控`}
 					>
-						<StatusPill kind="running" className="text-2xs">
-							运行中
+						<StatusPill kind={live.kind} className="text-2xs">
+							{live.label}
 						</StatusPill>
 					</Link>
 				)}

@@ -1,6 +1,7 @@
 import { type CatalogNode, isOnAgentStatus, type MetricBucket } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
+import { Sparkline } from "#/components/sparkline";
 import { formatMetric } from "#/lib/format";
 import { usePrimaryMetric } from "./use-primary-metric";
 
@@ -26,66 +27,37 @@ export function metricAccent(status: string | undefined): string {
 	return "var(--fg-3)";
 }
 
-const W = 300;
-
 /**
- * 迷你趋势（原型 spark）：面积 + 折线，纵轴从 0 起、上方留 12%，横轴按桶的时间（画在桶覆盖时段的中点）。
- * 宽度由 className 决定（SVG 横向拉伸，线宽不缩放）；少于两个桶时不画。
+ * 主指标的迷你趋势：桶的最新值，横轴按桶的时间（画在桶覆盖时段的中点），带面积（components/sparkline）。
  */
-export function Sparkline({
+function MetricSparkline({
 	buckets,
 	bucketSeconds,
 	color,
-	height: H,
+	height,
 	className,
 }: {
 	buckets: readonly MetricBucket[];
 	bucketSeconds: number;
 	color: string;
-	/** 高度（px），也是 viewBox 的高度：边距按像素算。 */
 	height: number;
 	className?: string;
 }) {
-	const path = useMemo(() => {
+	const shape = useMemo(() => {
 		const first = buckets[0];
 		const end = buckets.at(-1);
-		if (!first || !end || buckets.length < 2) return null;
+		if (!first || !end) return null;
 		const span = bucketSeconds * 1000;
 		const start = Date.parse(first.time);
 		const stop = Math.max(Date.parse(end.time) + span, start + 1000);
-		const values = buckets.map((b) => b.last);
-		const min = Math.min(0, ...values);
-		let max = Math.max(...values);
-		if (max - min < 1e-9) max = min + 1;
-		const top = max + (max - min) * 0.12;
-		const X = (b: MetricBucket) => ((Date.parse(b.time) + span / 2 - start) / (stop - start)) * W;
-		const Y = (v: number) => H - 2 - ((v - min) / (top - min)) * (H - 6);
-		const line = `M${buckets.map((b) => `${X(b).toFixed(1)} ${Y(b.last).toFixed(1)}`).join(" L")}`;
 		return {
-			line,
-			area: `${line} L${X(end).toFixed(1)} ${H} L${X(first).toFixed(1)} ${H}Z`,
+			values: buckets.map((b) => b.last),
+			xs: buckets.map((b) => Date.parse(b.time) + span / 2),
+			domain: [start, stop] as const,
 		};
-	}, [buckets, bucketSeconds, H]);
-	if (!path) return null;
-	return (
-		<svg
-			aria-hidden="true"
-			data-sparkline
-			viewBox={`0 0 ${W} ${H}`}
-			preserveAspectRatio="none"
-			className={cn("block", className)}
-			style={{ height: H }}
-		>
-			<path d={path.area} fill={color} opacity={0.13} />
-			<path
-				d={path.line}
-				fill="none"
-				stroke={color}
-				strokeWidth={1.4}
-				vectorEffect="non-scaling-stroke"
-			/>
-		</svg>
-	);
+	}, [buckets, bucketSeconds]);
+	if (!shape) return null;
+	return <Sparkline {...shape} color={color} area height={height} className={className} />;
 }
 
 const valueText = (last: number | undefined) => (last === undefined ? "—" : formatMetric(last));
@@ -109,7 +81,7 @@ export function PrimaryMetric({
 }) {
 	const { name, unit, last, buckets, bucketSeconds } = data;
 	const spark = (height: number, sparkClass: string) => (
-		<Sparkline
+		<MetricSparkline
 			buckets={buckets}
 			bucketSeconds={bucketSeconds}
 			color={accent}

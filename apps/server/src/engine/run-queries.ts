@@ -130,6 +130,7 @@ export async function listRuns(
 		orchestration_id: run.orchestrationId,
 		orchestration_version: number,
 		status: run.status,
+		cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 		triggered_by: run.triggeredBy,
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),

@@ -1,16 +1,16 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { StatusDot, StatusPill } from "#/components/status";
-import { formatDateTime, formatDuration } from "#/lib/format";
+import { ChainBar, doneCount } from "#/components/chain-progress";
+import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { chainLabel } from "#/lib/copy";
+import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
-import { nodeStatus, shortId } from "#/monitor/run-model";
 import { useMetricCatalog } from "#/monitor/use-run-metrics";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { ChainBar, chainDone, chainLabel } from "./ChainProgress";
 
 /** 卡片上最多列出的当前节点数。 */
 const MAX_ACTIVE = 3;
@@ -37,6 +37,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 	const catalog = useMetricCatalog(run.id, signature, shown.length > 0);
 	const failedSubflows = run.failures.filter((f) => f.subflow);
 	const open = () => void navigate({ to: "/runs/$id", params: { id: run.id } });
+	const status = runStatusView(run.status, { cancelling: run.cancelling });
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: 键盘用户用卡片里的「打开运行详情」链接
 		<article
@@ -49,11 +50,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 			className="flex cursor-pointer flex-col gap-1.5 rounded-xl border border-border-soft bg-surface px-3.5 py-3 transition-colors hover:border-border-strong"
 		>
 			<div className="flex items-center gap-2 whitespace-nowrap">
-				{run.cancelling ? (
-					<StatusPill kind="cancelled">取消中</StatusPill>
-				) : (
-					<StatusPill kind="running">运行中</StatusPill>
-				)}
+				<StatusPill kind={status.kind}>{status.label}</StatusPill>
 				<b className="truncate font-medium">{run.orchestration_name}</b>
 				<Badge className="font-mono">v{run.orchestration_version}</Badge>
 				<span data-slot="run-id" className="font-mono text-xs text-fg-3">
@@ -83,9 +80,9 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 							<span className="max-w-50 min-w-18 flex-none truncate text-fg-2">
 								{chainLabel(chain)}
 							</span>
-							<ChainBar chain={chain} />
+							<ChainBar label={chainLabel(chain)} nodes={chain.nodes} />
 							<span className="font-mono text-2xs text-fg-3">
-								{chainDone(chain)}/{chain.nodes.length}
+								{doneCount(chain.nodes)}/{chain.nodes.length}
 							</span>
 						</div>
 					))}
@@ -102,7 +99,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 								className={activeDot(node.status).color}
 							/>
 							<span className="font-mono">{node.node_id}</span>
-							<span className="text-xs text-fg-3">{nodeStatus(node.status).label}</span>
+							<span className="text-xs text-fg-3">{nodeStatusView(node.status).label}</span>
 							<NodePrimaryMetric
 								runId={run.id}
 								entry={catalogEntry(catalog.data, node.chain_instance_id, node.node_id)}

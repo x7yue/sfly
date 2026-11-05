@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { useShortcut } from "#/components/shortcuts";
-import { StatusDot } from "#/components/status";
+import { nodeStatusView, StatusDot } from "#/components/status";
 import { formatClock, formatDuration } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,7 +20,6 @@ import {
 	chainRunStatus,
 	documentNodes,
 	isAlways,
-	nodeStatus,
 	nodeTitle,
 	orderedChains,
 } from "./run-model";
@@ -493,7 +492,7 @@ function NodeRow({
 }) {
 	const actions = useMonitorActions();
 	const decl = decls.get(node.node_id);
-	const status = nodeStatus(node.status);
+	const status = nodeStatusView(node.status);
 	const span = spanOf(segments);
 	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
 	const title = nodeTitle(node, decl);

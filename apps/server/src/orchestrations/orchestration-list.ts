@@ -123,6 +123,7 @@ export async function listOrchestrationSummaries(
 			{
 				id: run.id,
 				status: run.status,
+				cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 				version,
 				triggered_by: run.triggeredBy,
 				started_at: run.startedAt.toISOString(),

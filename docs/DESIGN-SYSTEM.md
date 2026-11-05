@@ -116,7 +116,9 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、通知；`useOverlays().open("shortcuts")` |
 | `app-shell/CommandPalette` | 「跳转」「场景」「命令」三组；新命令加在 `commands` 里 |
 | `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
-| `status`：`StatusPill`、`StatusDot`、`SlotBar` | 状态与槽位，见下表 |
+| `status`：`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView` | 状态与槽位，见下表；运行 / 链 / 节点状态的颜色与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，不另写映射表 |
+| `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状，配色只在这里） |
+| `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
 | `feedback/notify` | `notify.success / info / warning / error` |
 | `shortcuts`：`useShortcut`、`ShortcutsDialog` | 见第 7 节 |
@@ -162,11 +164,22 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 浏览器经 `/api` 前缀访问（docs/ARCHITECTURE.md §7），契约里的 `path` 不含前缀。
 - 指标接口在 `http/metrics.ts` 的 `metricsApi`（摘要、目录、序列、平台自带图表）；实时增量是运行事件流上的 `metrics` 事件（`MetricIncrement`）。
 
-## 9. 新页面检查清单
+## 9. 文案
+
+界面只用中文，不引入 i18n 框架；多处共用的文字集中在 `src/lib/copy.ts`：
+
+- `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词）；`chainLabel()`：链实例名称（主链 / 子流程 X）。
+- `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）。
+- `RUN_STATUS_LABEL`、`NODE_STATUS_LABEL`、`CANCELLING_LABEL`：状态文字（显示时用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
+- `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字。
+
+规则：两处及以上用到的文字、状态与术语放在这里，新增时先加到这里再引用，不要在组件里另写一份；只在一个页面出现的说明文字（空状态说明、提示语）留在组件里。
+
+## 10. 新页面检查清单
 
 1. 路由放在 `routes/_shell/`（或全屏页放 `routes/`），写 `staticData: { crumb }`；一级页面同时加到 `navigation.ts` 与快捷键注册表。
 2. 数据走契约（先在 `@sfly/schema` 定义接口，再在控制面用 `contractRoute`），查询用 `apiQuery`。
 3. 版式用 `Page` / `PageHeader` / `Panel`；列表用 `QueryView` 接上空 / 加载 / 错误。
-4. 只用语义层与画布层 token、规定的字号与圆角；状态用 `StatusPill`；每屏最多一个 `primary` 按钮。
+4. 只用语义层与画布层 token、规定的字号与圆角；状态用 `StatusPill` + `runStatusView` / `nodeStatusView`；共用文案从 `lib/copy.ts` 取；每屏最多一个 `primary` 按钮。
 5. 弹窗用 `Dialog` / `Sheet`；操作结果用 `notify`。
 6. 端到端测试覆盖用户可见的行为，关键状态加视觉基线（`pnpm test:e2e:docker --update-snapshots`）。

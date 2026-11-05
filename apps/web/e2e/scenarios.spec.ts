@@ -62,6 +62,34 @@ test("卡片显示缩略图、名称、说明、版本与节点数、Agent 在�
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
 });
 
+test("最近一次运行已请求取消、还在等待任务结束时，卡片与表格显示「取消中」而不是「运行中」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "日终数据处理", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, id);
+	await agent.nextAssign();
+	const res = await controlPlane.fetch(`/runs/${runId}/cancel`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: "{}",
+	});
+	expect(res.ok).toBe(true);
+
+	await page.goto("/orchestrations");
+	const card = page.getByRole("article", { name: "日终数据处理" });
+	await expect(card.getByRole("link", { name: "取消中，进入运行监控" })).toBeVisible();
+	await expect(card).not.toContainText("运行中");
+
+	await page.getByRole("button", { name: "表格视图" }).click();
+	const row = page.getByRole("row", { name: /日终数据处理/ });
+	await expect(row).toContainText("取消中");
+	await expect(row).not.toContainText("运行中");
+});
+
 test("「编排」进入编排画布，「运行」打开运行抽屉", async ({ page, controlPlane, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);

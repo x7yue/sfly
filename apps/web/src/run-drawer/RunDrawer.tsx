@@ -3,9 +3,9 @@ import { Link } from "@tanstack/react-router";
 import { PlayIcon } from "lucide-react";
 import { useCallback, useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
+import { shortId } from "#/lib/format";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { useLiveRun } from "#/monitor/live-run";
-import { shortId } from "#/monitor/run-model";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {

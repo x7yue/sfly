@@ -6,11 +6,12 @@ import { z } from "zod";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
+import { PAGE } from "#/lib/copy";
 import { LIVE_POLL_MS } from "#/lib/polling";
+import { useNow } from "#/lib/use-now";
 import { useSearchInput } from "#/lib/use-search-input";
 import { RunCard } from "#/run-records/RunCard";
 import { RunHistoryTable } from "#/run-records/RunHistoryTable";
-import { useNow } from "#/run-records/use-now";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
@@ -27,7 +28,7 @@ const RunsSearch = z.object({
 });
 
 export const Route = createFileRoute("/_shell/runs/")({
-	staticData: { crumb: "运行记录" },
+	staticData: { crumb: PAGE.runs },
 	validateSearch: RunsSearch,
 	component: RunsPage,
 });
@@ -49,7 +50,7 @@ function RunsPage() {
 	return (
 		<Page>
 			<PageHeader
-				title="运行记录"
+				title={PAGE.runs}
 				count={total}
 				actions={<span className="text-xs text-fg-3">实时更新</span>}
 			/>

@@ -2,6 +2,7 @@ import type { UseQueryResult } from "@tanstack/react-query";
 import { cn } from "cn";
 import { CopyIcon, RotateCwIcon } from "lucide-react";
 import { ApiError } from "#/lib/api";
+import { ACTION, MESSAGE } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { notify } from "./notify";
@@ -51,7 +52,7 @@ export function EmptyState({
 export function TableSkeleton({ columns, rows = 5 }: { columns: number; rows?: number }) {
 	const widths = ["70%", "40%", "55%", "30%", "45%", "35%", "50%"];
 	return (
-		<output aria-label="加载中" aria-busy="true" className="block">
+		<output aria-label={MESSAGE.loading} aria-busy="true" className="block">
 			<table className="w-full">
 				<tbody>
 					{Array.from({ length: rows }, (_, r) => (
@@ -123,7 +124,7 @@ export function ErrorState({
 				{onRetry && (
 					<Button onClick={onRetry}>
 						<RotateCwIcon />
-						重试
+						{ACTION.retry}
 					</Button>
 				)}
 				<Button
@@ -136,7 +137,7 @@ export function ErrorState({
 					}}
 				>
 					<CopyIcon />
-					复制错误详情
+					{ACTION.copyErrorDetails}
 				</Button>
 			</div>
 		</div>

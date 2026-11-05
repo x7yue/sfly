@@ -8,12 +8,12 @@ import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/component
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
 import { ZOOM_TEXT_11 } from "#/components/canvas/zoom-text";
-import { StatusPill } from "#/components/status";
-import { formatDateTime, formatDuration } from "#/lib/format";
+import { nodeStatusView, StatusPill } from "#/components/status";
+import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
-import { chainRunStatus, nodeStatus, runStatus, shortId } from "#/monitor/run-model";
+import { chainRunStatus, runStatus } from "#/monitor/run-model";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { OnlineEditors } from "../OnlineEditors";
@@ -54,7 +54,7 @@ export function useRunDecorations(
 						),
 					};
 				}
-				const s = nodeStatus(summary.node.status);
+				const s = nodeStatusView(summary.node.status);
 				const entry = catalogEntry(metrics, summary.chain.id, id);
 				return {
 					run: summary.state,
@@ -256,7 +256,7 @@ function NodeRunInspector({
 	const view = summary?.node;
 	const now = useNow(run.status === "running");
 	const elapsed = view ? nodeElapsed(view, now) : null;
-	const status = view ? nodeStatus(view.status) : null;
+	const status = view ? nodeStatusView(view.status) : null;
 	return (
 		<>
 			<Header

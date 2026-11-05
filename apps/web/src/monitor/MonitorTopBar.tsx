@@ -3,9 +3,9 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronDownIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
-import { StatusDot, StatusPill } from "#/components/status";
+import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
-import { formatDateTime, formatDuration } from "#/lib/format";
+import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CancelRunButton } from "./CancelRunDialog";
 import { useTimeAxis } from "./monitor-state";
-import { chainLabel, chainRunStatus, orderedChains, runStatus, shortId } from "./run-model";
+import { chainLabel, chainRunStatus, orderedChains, runStatus } from "./run-model";
 
 /** 顶栏最多显示几条链的状态，其余收成「+N」。 */
 const MAX_CHAIN_BADGES = 4;
@@ -154,7 +154,7 @@ function RunSwitcher({ run }: { run: RunView }) {
 						<p className="m-0 px-1.5 py-1 text-xs text-danger-fg">无法加载：{runs.error.message}</p>
 					)}
 					{runs.data?.runs.map((r) => {
-						const s = runStatus({ status: r.status, cancel: null });
+						const s = runStatusView(r.status, { cancelling: r.cancelling });
 						return (
 							<DropdownMenuItem
 								key={r.id}

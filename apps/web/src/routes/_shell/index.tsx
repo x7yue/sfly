@@ -11,12 +11,15 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronRightIcon, WorkflowIcon } from "lucide-react";
 import { useId } from "react";
+import { ChainBars } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
+import { Sparkline } from "#/components/sparkline";
 import { SlotBar, StatusDot, StatusPill } from "#/components/status";
-import { ChainBars, Sparkline, TrendChart, TrendLegend } from "#/dashboard/charts";
+import { TrendChart, TrendLegend } from "#/dashboard/charts";
 import { apiQuery } from "#/lib/api";
-import { formatDateTime, formatDuration } from "#/lib/format";
+import { PAGE } from "#/lib/copy";
+import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,11 +27,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 
 export const Route = createFileRoute("/_shell/")({
-	staticData: { crumb: "控制台" },
+	staticData: { crumb: PAGE.dashboard },
 	component: Dashboard,
 });
-
-const shortId = (id: string) => id.slice(0, 8);
 
 /** 控制台（原型 #/dashboard）：模块固定——统计卡、正在运行、运行趋势、最近失败、Agent 状态、最近发布的节点包。 */
 function Dashboard() {
@@ -36,7 +37,7 @@ function Dashboard() {
 	return (
 		<Page>
 			<PageHeader
-				title="控制台"
+				title={PAGE.dashboard}
 				description="最近 24 小时 · 实时更新"
 				actions={
 					<Button variant="default" render={<Link to="/orchestrations" />} nativeButton={false}>
@@ -105,14 +106,18 @@ function Stats({ data }: { data: DashboardView }) {
 				name="成功"
 				value={runs.success}
 				valueClassName="text-ok"
-				detail={<Sparkline values={hourly.map((h) => h.success)} className="text-ok" />}
+				detail={
+					<Sparkline values={hourly.map((h) => h.success)} className="mt-1.5 w-full text-ok" />
+				}
 			/>
 			<StatCard
 				name="失败"
 				value={runs.failed}
 				valueClassName="text-danger-fg"
 				unit={runs.failed_subflows > 0 ? `含 ${runs.failed_subflows} 个子流程` : undefined}
-				detail={<Sparkline values={hourly.map((h) => h.failed)} className="text-danger" />}
+				detail={
+					<Sparkline values={hourly.map((h) => h.failed)} className="mt-1.5 w-full text-danger" />
+				}
 			/>
 			<StatCard
 				name="成功率"
@@ -294,7 +299,7 @@ function RunningRow({ run, now }: { run: DashboardRunningRun; now: number }) {
 					)}
 				</div>
 			</div>
-			<ChainBars chains={run.chains} />
+			<ChainBars chains={run.chains} variant="wide" />
 			<ChevronRightIcon aria-hidden className="size-4 text-fg-3" />
 		</Link>
 	);

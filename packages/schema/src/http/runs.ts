@@ -152,6 +152,9 @@ export const RunSummary = RunView.pick({
 	triggered_by: true,
 	started_at: true,
 	ended_at: true,
+}).extend({
+	/** 已请求取消、还在等待任务结束与清理（status 仍是 running，界面显示「取消中」）。 */
+	cancelling: z.boolean(),
 });
 
 export const ParamDeclView = z.object({

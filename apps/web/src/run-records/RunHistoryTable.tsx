@@ -1,8 +1,9 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { StatusPill } from "#/components/status";
-import { formatDateTime, formatDuration } from "#/lib/format";
-import { shortId } from "#/monitor/run-model";
+import { ChainBars } from "#/components/chain-progress";
+import { runStatusView, StatusPill } from "#/components/status";
+import { chainLabel } from "#/lib/copy";
+import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import {
 	Table,
 	TableBody,
@@ -11,7 +12,9 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
-import { ChainBars, chainLabel, RUN_STATUS } from "./ChainProgress";
+
+/** 表格里最多画几条链，其余只计数，保证行高一致。 */
+const MAX_TABLE_CHAINS = 2;
 
 /**
  * 历史运行（原型 viewRuns 的表格）：编号、场景、状态（与失败节点同一行）、各链进度、版本、
@@ -55,10 +58,10 @@ export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: numbe
 						</TableCell>
 						<TableCell className="max-w-60 truncate">{run.orchestration_name}</TableCell>
 						<TableCell>
-							<StatusPill kind={RUN_STATUS[run.status].kind}>{statusText(run)}</StatusPill>
+							<StatusPill kind={runStatusView(run.status).kind}>{statusText(run)}</StatusPill>
 						</TableCell>
 						<TableCell>
-							<ChainBars chains={run.chains} />
+							<ChainBars chains={run.chains} max={MAX_TABLE_CHAINS} />
 						</TableCell>
 						<TableCell className="font-mono">v{run.orchestration_version}</TableCell>
 						<TableCell className="max-w-40 truncate">{run.triggered_by}</TableCell>
@@ -79,7 +82,7 @@ export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: numbe
 
 /** 状态文字；失败时带上失败节点（子流程里的节点带上子流程名）。 */
 function statusText(run: RunListItem): string {
-	const label = RUN_STATUS[run.status].label;
+	const label = runStatusView(run.status).label;
 	if (run.status !== "failed") return label;
 	const failure = run.failures.find((f) => !f.subflow) ?? run.failures[0];
 	if (!failure?.node_id) return label;

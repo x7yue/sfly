@@ -306,11 +306,19 @@ describe("场景", () => {
 			expect(item?.last_run).toEqual({
 				id: second,
 				status: "running",
+				cancelling: false,
 				version: 1,
 				triggered_by: "tester",
 				started_at: "2026-01-01T00:00:01.000Z",
 				ended_at: null,
 				node_states: { entry: "success", one: "running", two: "pending" },
+			});
+
+			// 取消后等待任务结束的运行标为取消中（不显示成「运行中」）。
+			await api.cancelOk(second);
+			expect((await list()).orchestrations[0]?.last_run).toMatchObject({
+				status: "running",
+				cancelling: true,
 			});
 		});
 

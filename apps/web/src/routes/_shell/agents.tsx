@@ -6,6 +6,7 @@ import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/stat
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { SlotBar, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
+import { PAGE } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/table";
 
 export const Route = createFileRoute("/_shell/agents")({
-	staticData: { crumb: "Agent 管理" },
+	staticData: { crumb: PAGE.agents },
 	component: AgentsPage,
 });
 
@@ -47,7 +48,7 @@ function AgentsPage() {
 	return (
 		<Page>
 			<PageHeader
-				title="Agent 管理"
+				title={PAGE.agents}
 				count={agents.data?.agents.length}
 				actions={agents.data && agents.data.agents.length > 0 && <ConnectHelp />}
 			/>
