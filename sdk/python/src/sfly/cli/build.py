@@ -7,12 +7,14 @@
 项目约定：
 - `pyproject.toml` 的 `[project]` 提供 name、version、requires-python（默认 `>=3.10`）。
 - 依赖取 `[project].dependencies`；pyproject 未声明 dependencies 时读 `requirements.txt`。
+  依赖里不能有 `sfly`：Agent 自带 SDK 运行时，`sfly` 只放在开发依赖组里。
 - 代码位于 `src/<模块>/`、`<模块>/` 或 `<模块>.py`，模块名为包名规范化（`-` → `_`）。
 """
 
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -123,9 +125,26 @@ def validate_metadata(metadata: dict[str, Any]) -> None:
         raise BuildError("元信息未通过 schema 校验：\n" + "\n".join(lines))
 
 
+def _requirement_name(requirement: str) -> str:
+    """依赖说明里的项目名（PEP 503 规范化）。"""
+    match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)
+    return re.sub(r"[-_.]+", "-", match.group(1)).lower() if match else ""
+
+
+def check_dependencies(project: Project) -> None:
+    for requirement in project.dependencies:
+        if _requirement_name(requirement) == "sfly":
+            raise BuildError(
+                f"依赖里不能有 sfly（{requirement!r}）：Agent 自带 SDK 运行时，"
+                "把 sfly 打进节点包会和它冲突。把 sfly 放进开发依赖组"
+                "（[dependency-groups] dev，sfly init 生成的项目已经这样配置）"
+            )
+
+
 def build(root: Path, out_dir: Path | None = None) -> Path:
     """构建节点包，返回归档路径。"""
     project = load_project(root)
+    check_dependencies(project)
     metadata = {
         "name": project.name,
         "version": project.version,
