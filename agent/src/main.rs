@@ -66,6 +66,7 @@ struct Args {
     #[arg(long, env = "SFLY_NO_AUTO_UPDATE")]
     no_auto_update: bool,
     /// 只在测试中使用：覆盖上报给控制面的 Agent 版本号，让同一个二进制扮演不同版本。
+    /// 自更新 execve 新二进制时不传下去（命令行参数和环境变量都去掉），新进程上报真实版本。
     #[arg(long, env = "SFLY_VERSION_OVERRIDE", hide = true)]
     version_override: Option<String>,
 }
