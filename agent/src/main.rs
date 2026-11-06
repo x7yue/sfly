@@ -63,7 +63,8 @@ struct Args {
     #[arg(long, env = "SFLY_METRIC_QUEUE_POINTS", default_value_t = DEFAULT_METRIC_QUEUE_POINTS, hide = true)]
     metric_queue_points: usize,
     /// 不自动更新：版本与控制面不一致时只连接、不接新任务，Agents 页提示需要手动升级。
-    #[arg(long, env = "SFLY_NO_AUTO_UPDATE")]
+    /// 环境变量和 `agent.env` 接受 1/0、true/false、yes/no（大小写不敏感）。
+    #[arg(long, env = "SFLY_NO_AUTO_UPDATE", value_parser = clap::builder::BoolishValueParser::new())]
     no_auto_update: bool,
     /// 只在测试中使用：覆盖上报给控制面的 Agent 版本号，让同一个二进制扮演不同版本。
     /// 自更新 execve 新二进制时不传下去（命令行参数和环境变量都去掉），新进程上报真实版本。
@@ -73,7 +74,12 @@ struct Args {
 
 /// 把 `agent.env` 里的配置转成命令行参数，放在真正的命令行参数之前（`args_override_self`：后出现的生效），
 /// 环境变量里已经有的键跳过：优先级为命令行参数 > 环境变量 > `agent.env`。
-fn env_file_args(entries: Vec<(String, String)>, file: &std::path::Path) -> Vec<OsString> {
+/// 不带值的开关（如 `--no-auto-update`）在 `agent.env` 里的值与环境变量的写法相同：1/0、true/false、yes/no
+/// （以及 y/n、t/f、on/off，大小写不敏感）；为真时注入这个开关，其他值报错。
+fn env_file_args(
+    entries: Vec<(String, String)>,
+    file: &std::path::Path,
+) -> anyhow::Result<Vec<OsString>> {
     let command = Args::command();
     let mut args = Vec::new();
     for (key, value) in entries {
@@ -92,11 +98,18 @@ fn env_file_args(entries: Vec<(String, String)>, file: &std::path::Path) -> Vec<
         let long = arg.get_long().expect("env-backed args have a long flag");
         if arg.get_action().takes_values() {
             args.push(OsString::from(format!("--{long}={value}")));
-        } else if matches!(value.as_str(), "1" | "true" | "yes" | "on") {
-            args.push(OsString::from(format!("--{long}")));
+        } else {
+            match home::boolish(&value) {
+                Some(true) => args.push(OsString::from(format!("--{long}"))),
+                Some(false) => {}
+                None => anyhow::bail!(
+                    "invalid value '{value}' for {key} in {}: use 1/0, true/false or yes/no",
+                    file.display()
+                ),
+            }
         }
     }
-    args
+    Ok(args)
 }
 
 #[tokio::main]
@@ -105,7 +118,7 @@ async fn main() -> anyhow::Result<()> {
     let mut argv = std::env::args_os();
     let program = argv.next();
     let from_file = match &sfly_home {
-        Some(dir) => env_file_args(home::read_env_file(dir)?, &dir.join(home::ENV_FILE)),
+        Some(dir) => env_file_args(home::read_env_file(dir)?, &dir.join(home::ENV_FILE))?,
         None => Vec::new(),
     };
     let args = Args::parse_from(program.into_iter().chain(from_file).chain(argv));

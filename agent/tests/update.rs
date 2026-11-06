@@ -231,6 +231,50 @@ async fn no_auto_update_can_come_from_agent_env() {
 }
 
 #[tokio::test]
+async fn no_auto_update_accepts_boolish_values_from_the_environment_and_agent_env() {
+    let dir = scratch();
+    let home = dir.path().join("home");
+    let exe = install_into(&home);
+    let cp = control_plane("2.0.0").await;
+    for (n, value) in ["1", "YES", "true"].into_iter().enumerate() {
+        let at = cp.received().len();
+        let mut agent = agent(&exe, &home, &cp)
+            .env("SFLY_NO_AUTO_UPDATE", value)
+            .start();
+        let (update, _) = update_after(&cp, "update status", at, |_| true).await;
+        agent.kill().await.unwrap();
+        assert_eq!(
+            update.state(),
+            AgentUpdateState::ManualUpgradeRequired,
+            "SFLY_NO_AUTO_UPDATE={value} ({n}): {update:?}"
+        );
+    }
+    // 0 / no / false 与没有设置一样：照常自更新（这里控制面没有提供二进制，上报「更新失败」）。
+    for (key, value) in [("env", "0"), ("file", "No"), ("env", "false")] {
+        let at = cp.received().len();
+        let mut command = agent(&exe, &home, &cp);
+        if key == "env" {
+            command.env("SFLY_NO_AUTO_UPDATE", value);
+        } else {
+            std::fs::write(
+                home.join("agent.env"),
+                format!("SFLY_NO_AUTO_UPDATE={value}\n"),
+            )
+            .unwrap();
+        }
+        let mut agent = command.start();
+        let (update, _) = update_after(&cp, "update status", at, |_| true).await;
+        agent.kill().await.unwrap();
+        let _ = std::fs::remove_file(home.join("agent.env"));
+        assert_eq!(
+            update.state(),
+            AgentUpdateState::Failed,
+            "SFLY_NO_AUTO_UPDATE={value} ({key}): {update:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn binary_outside_sfly_home_bin_reports_manual_upgrade_required() {
     let dir = scratch();
     let cp = control_plane("2.0.0").await;
