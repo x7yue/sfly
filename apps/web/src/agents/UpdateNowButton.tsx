@@ -24,15 +24,14 @@ import {
 } from "@/components/ui/dialog";
 
 /**
- * 能「立即更新」的 Agent（ADR 0014）：在线、版本与控制面不一致，并且能自更新（不是「需要手动升级」），
- * 也还没开始替换。
+ * 能「立即更新」的 Agent（ADR 0014）：在线、版本与控制面不一致，并且确实在更新流程中（下载中或等待任务结束）。
+ * 更新失败、需要手动升级、正在替换，以及还没有自更新能力的旧 Agent（没有上报更新状态）都不能。
  */
 export function canUpdateNow(agent: AgentView): boolean {
 	return (
 		agent.status === "online" &&
 		agent.version_mismatch &&
-		agent.update.state !== "manual_upgrade_required" &&
-		agent.update.state !== "replacing"
+		(agent.update.state === "downloading" || agent.update.state === "waiting_for_tasks")
 	);
 }
 

@@ -93,6 +93,7 @@ test.describe("版本不一致", () => {
 			reason: "已指定 --no-auto-update，不自动更新",
 		});
 		await report("agent-failed", { state: AgentUpdateState.FAILED, reason: "sha256 不匹配" });
+		await report("agent-downloading", { state: AgentUpdateState.DOWNLOADING });
 
 		await page.goto("/agents");
 		const cells = (name: string) =>
@@ -107,12 +108,14 @@ test.describe("版本不一致", () => {
 		);
 		await expect(cells("agent-failed").nth(1)).toHaveText("更新失败sha256 不匹配");
 		await expect(cells("agent-failed").nth(3)).toHaveText("1.0.0控制面 2.0.0");
-		// 「立即更新」只给版本不一致、能自更新的 Agent。
+		// 「立即更新」只给确实在更新流程中（下载中、等待任务结束）的 Agent：
+		// 更新失败、需要手动升级、没有上报更新状态的旧 Agent 都没有。
 		const updateNow = (name: string) =>
 			page.getByRole("row", { name: new RegExp(name) }).getByRole("button", { name: "立即更新" });
-		await expect(updateNow("agent-old")).toBeVisible();
 		await expect(updateNow("agent-waiting")).toBeVisible();
-		await expect(updateNow("agent-failed")).toBeVisible();
+		await expect(updateNow("agent-downloading")).toBeVisible();
+		await expect(updateNow("agent-old")).toHaveCount(0);
+		await expect(updateNow("agent-failed")).toHaveCount(0);
 		await expect(updateNow("agent-current")).toHaveCount(0);
 		await expect(updateNow("agent-manual")).toHaveCount(0);
 	});
