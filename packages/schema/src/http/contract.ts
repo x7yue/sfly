@@ -52,6 +52,11 @@ interface RouteDefBase {
 	 * details 总是 zod issues。
 	 */
 	requestError?: (request: RawRequest) => RequestErrorInfo | undefined;
+	/**
+	 * 给 curl 等非浏览器客户端的原文与下载（用户文档原文、install.sh、Agent 二进制、sfly 简单索引）：
+	 * 浏览器导航到这个路径时也直接返回它，不回退到前端入口页（apps/server/src/http/web-app.ts）。
+	 */
+	raw?: true;
 }
 
 /** JSON 接口。 */
