@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file sfly/agent/v1/agent.proto.
  */
 export const file_sfly_agent_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIs8CCgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASLQoJaGVhcnRiZWF0GAIgASgLMhguc2ZseS5hZ2VudC52MS5IZWFydGJlYXRIABItCgdzdGFydGVkGAMgASgLMhouc2ZseS5hZ2VudC52MS5UYXNrU3RhcnRlZEgAEicKBGxvZ3MYBCABKAsyFy5zZmx5LmFnZW50LnYxLkxvZ0JhdGNoSAASKwoIcHJvZ3Jlc3MYBSABKAsyFy5zZmx5LmFnZW50LnYxLlByb2dyZXNzSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAQgYKBGJvZHkivwEKDVNlcnZlck1lc3NhZ2USKQoHd2VsY29tZRgBIAEoCzIWLnNmbHkuYWdlbnQudjEuV2VsY29tZUgAEisKBmFzc2lnbhgCIAEoCzIZLnNmbHkuYWdlbnQudjEuQXNzaWduVGFza0gAEisKBmNhbmNlbBgDIAEoCzIZLnNmbHkuYWdlbnQudjEuQ2FuY2VsVGFza0gAEiEKA2FjaxgEIAEoCzISLnNmbHkuYWdlbnQudjEuQWNrSABCBgoEYm9keSKFAgoFSGVsbG8SDAoEbmFtZRgBIAEoCRINCgV0b2tlbhgCIAEoCRIVCg1hZ2VudF92ZXJzaW9uGAMgASgJEgoKAm9zGAQgASgJEgwKBGFyY2gYBSABKAkSDQoFc2xvdHMYBiABKA0SOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAcgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlEi8KDGRldl9wYWNrYWdlcxgIIAMoCzIZLnNmbHkuYWdlbnQudjEuRGV2UGFja2FnZRIxCg1ydW5uaW5nX3Rhc2tzGAkgAygLMhouc2ZseS5hZ2VudC52MS5SdW5uaW5nVGFzayJACgtSdW5uaW5nVGFzaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDwoHc3RhcnRlZBgDIAEoCCI+CglIZWFydGJlYXQSMQoNcnVubmluZ190YXNrcxgBIAMoCzIaLnNmbHkuYWdlbnQudjEuUnVubmluZ1Rhc2siLwoLVGFza1N0YXJ0ZWQSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNIkEKCkRldlBhY2thZ2USDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkSFQoNbWV0YWRhdGFfanNvbhgDIAEoCSIxChBJbnN0YWxsZWRQYWNrYWdlEgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCSKPAQoHV2VsY29tZRI0CgxkaXNwb3NpdGlvbnMYASADKAsyHi5zZmx5LmFnZW50LnYxLlRhc2tEaXNwb3NpdGlvbhIdChVoZWFydGJlYXRfaW50ZXJ2YWxfbXMYAiABKA0SFQoNc2RrX3doZWVsX3VybBgDIAEoCRIYChBzZGtfd2hlZWxfc2hhMjU2GAQgASgJIl4KD1Rhc2tEaXNwb3NpdGlvbhIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKQoGYWN0aW9uGAMgASgOMhkuc2ZseS5hZ2VudC52MS5UYXNrQWN0aW9uIv8BCgpBc3NpZ25UYXNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdwYWNrYWdlGAMgASgJEhcKD3BhY2thZ2VfdmVyc2lvbhgEIAEoCRIMCgRub2RlGAUgASgJEhMKC2lucHV0c19qc29uGAYgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgHIAEoDRIOCgZydW5faWQYCCABKAkSDwoHbm9kZV9pZBgJIAEoCRIWCg5wYWNrYWdlX3NoYTI1NhgKIAEoCRITCgtwYWNrYWdlX3VybBgLIAEoCRIbChNhcnRpZmFjdF91cGxvYWRfdXJsGAwgASgJIj0KCkNhbmNlbFRhc2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg0KBWZvcmNlGAMgASgIIuwBCg1JbnN0YWxsU3RhdHVzEg8KB3BhY2thZ2UYASABKAkSDwoHdmVyc2lvbhgCIAEoCRIqCgVzdGF0ZRgDIAEoDjIbLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXRlEg8KB3Rhc2tfaWQYBCABKAkSDgoGb3V0cHV0GAUgASgJEjsKEmluc3RhbGxlZF9wYWNrYWdlcxgGIAMoCzIfLnNmbHkuYWdlbnQudjEuSW5zdGFsbGVkUGFja2FnZRIvCgxkZXZfcGFja2FnZXMYByADKAsyGS5zZmx5LmFnZW50LnYxLkRldlBhY2thZ2UiUwoITG9nQmF0Y2gSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEiUKBWxpbmVzGAMgAygLMhYuc2ZseS5hZ2VudC52MS5Mb2dMaW5lIowBCgdMb2dMaW5lEgsKA3NlcRgBIAEoBBIUCgx0aW1lX3VuaXhfbXMYAiABKAMSKAoGc291cmNlGAMgASgOMhguc2ZseS5hZ2VudC52MS5Mb2dTb3VyY2USJgoFbGV2ZWwYBCABKA4yFy5zZmx5LmFnZW50LnYxLkxvZ0xldmVsEgwKBHRleHQYBSABKAkiggEKCFByb2dyZXNzEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdjdXJyZW50GAMgASgBEhIKBXRvdGFsGAQgASgBSACIAQESDwoHbWVzc2FnZRgFIAEoCRIUCgx0aW1lX3VuaXhfbXMYBiABKANCCAoGX3RvdGFsIpgBCgpUYXNrUmVzdWx0Eg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIpCgZzdGF0dXMYAyABKA4yGS5zZmx5LmFnZW50LnYxLlRhc2tTdGF0dXMSFAoMb3V0cHV0c19qc29uGAQgASgJEicKBWVycm9yGAUgASgLMhguc2ZseS5hZ2VudC52MS5UYXNrRXJyb3IiRAoJVGFza0Vycm9yEiYKBGtpbmQYASABKA4yGC5zZmx5LmFnZW50LnYxLkVycm9yS2luZBIPCgdtZXNzYWdlGAIgASgJIicKA0FjaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0qXAoKVGFza0FjdGlvbhIbChdUQVNLX0FDVElPTl9VTlNQRUNJRklFRBAAEhgKFFRBU0tfQUNUSU9OX0NPTlRJTlVFEAESFwoTVEFTS19BQ1RJT05fQUJBTkRPThACKoIBCgxJbnN0YWxsU3RhdGUSHQoZSU5TVEFMTF9TVEFURV9VTlNQRUNJRklFRBAAEhwKGElOU1RBTExfU1RBVEVfSU5TVEFMTElORxABEhsKF0lOU1RBTExfU1RBVEVfSU5TVEFMTEVEEAISGAoUSU5TVEFMTF9TVEFURV9GQUlMRUQQAyppCglMb2dTb3VyY2USGgoWTE9HX1NPVVJDRV9VTlNQRUNJRklFRBAAEhUKEUxPR19TT1VSQ0VfU1RET1VUEAESFQoRTE9HX1NPVVJDRV9TVERFUlIQAhISCg5MT0dfU09VUkNFX1NESxADKncKCExvZ0xldmVsEhkKFUxPR19MRVZFTF9VTlNQRUNJRklFRBAAEhMKD0xPR19MRVZFTF9ERUJVRxABEhIKDkxPR19MRVZFTF9JTkZPEAISEgoOTE9HX0xFVkVMX1dBUk4QAxITCg9MT0dfTEVWRUxfRVJST1IQBCp1CgpUYXNrU3RhdHVzEhsKF1RBU0tfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTVEFTS19TVEFUVVNfU1VDQ0VTUxABEhYKElRBU0tfU1RBVFVTX0ZBSUxFRBACEhkKFVRBU0tfU1RBVFVTX0NBTkNFTExFRBADKqwBCglFcnJvcktpbmQSGgoWRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUVSUk9SX0tJTkRfTk9ERV9FUlJPUhABEhYKEkVSUk9SX0tJTkRfVElNRU9VVBACEhkKFUVSUk9SX0tJTkRfQUdFTlRfTE9TVBADEhgKFEVSUk9SX0tJTkRfRU5WX0VSUk9SEAQSGwoXRVJST1JfS0lORF9DT05GSUdfRVJST1IQBTJYCgxBZ2VudEdhdGV3YXkSSAoHU2Vzc2lvbhIbLnNmbHkuYWdlbnQudjEuQWdlbnRNZXNzYWdlGhwuc2ZseS5hZ2VudC52MS5TZXJ2ZXJNZXNzYWdlKAEwAWIGcHJvdG8z");
+  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIv4CCgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASLQoJaGVhcnRiZWF0GAIgASgLMhguc2ZseS5hZ2VudC52MS5IZWFydGJlYXRIABItCgdzdGFydGVkGAMgASgLMhouc2ZseS5hZ2VudC52MS5UYXNrU3RhcnRlZEgAEicKBGxvZ3MYBCABKAsyFy5zZmx5LmFnZW50LnYxLkxvZ0JhdGNoSAASKwoIcHJvZ3Jlc3MYBSABKAsyFy5zZmx5LmFnZW50LnYxLlByb2dyZXNzSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAEi0KB21ldHJpY3MYCCABKAsyGi5zZmx5LmFnZW50LnYxLk1ldHJpY0JhdGNoSABCBgoEYm9keSK/AQoNU2VydmVyTWVzc2FnZRIpCgd3ZWxjb21lGAEgASgLMhYuc2ZseS5hZ2VudC52MS5XZWxjb21lSAASKwoGYXNzaWduGAIgASgLMhkuc2ZseS5hZ2VudC52MS5Bc3NpZ25UYXNrSAASKwoGY2FuY2VsGAMgASgLMhkuc2ZseS5hZ2VudC52MS5DYW5jZWxUYXNrSAASIQoDYWNrGAQgASgLMhIuc2ZseS5hZ2VudC52MS5BY2tIAEIGCgRib2R5IoUCCgVIZWxsbxIMCgRuYW1lGAEgASgJEg0KBXRva2VuGAIgASgJEhUKDWFnZW50X3ZlcnNpb24YAyABKAkSCgoCb3MYBCABKAkSDAoEYXJjaBgFIAEoCRINCgVzbG90cxgGIAEoDRI7ChJpbnN0YWxsZWRfcGFja2FnZXMYByADKAsyHy5zZmx5LmFnZW50LnYxLkluc3RhbGxlZFBhY2thZ2USLwoMZGV2X3BhY2thZ2VzGAggAygLMhkuc2ZseS5hZ2VudC52MS5EZXZQYWNrYWdlEjEKDXJ1bm5pbmdfdGFza3MYCSADKAsyGi5zZmx5LmFnZW50LnYxLlJ1bm5pbmdUYXNrIkAKC1J1bm5pbmdUYXNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdzdGFydGVkGAMgASgIIj4KCUhlYXJ0YmVhdBIxCg1ydW5uaW5nX3Rhc2tzGAEgAygLMhouc2ZseS5hZ2VudC52MS5SdW5uaW5nVGFzayIvCgtUYXNrU3RhcnRlZBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0iQQoKRGV2UGFja2FnZRIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRIVCg1tZXRhZGF0YV9qc29uGAMgASgJIjEKEEluc3RhbGxlZFBhY2thZ2USDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIo8BCgdXZWxjb21lEjQKDGRpc3Bvc2l0aW9ucxgBIAMoCzIeLnNmbHkuYWdlbnQudjEuVGFza0Rpc3Bvc2l0aW9uEh0KFWhlYXJ0YmVhdF9pbnRlcnZhbF9tcxgCIAEoDRIVCg1zZGtfd2hlZWxfdXJsGAMgASgJEhgKEHNka193aGVlbF9zaGEyNTYYBCABKAkiXgoPVGFza0Rpc3Bvc2l0aW9uEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIpCgZhY3Rpb24YAyABKA4yGS5zZmx5LmFnZW50LnYxLlRhc2tBY3Rpb24i/wEKCkFzc2lnblRhc2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB3BhY2thZ2UYAyABKAkSFwoPcGFja2FnZV92ZXJzaW9uGAQgASgJEgwKBG5vZGUYBSABKAkSEwoLaW5wdXRzX2pzb24YBiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAcgASgNEg4KBnJ1bl9pZBgIIAEoCRIPCgdub2RlX2lkGAkgASgJEhYKDnBhY2thZ2Vfc2hhMjU2GAogASgJEhMKC3BhY2thZ2VfdXJsGAsgASgJEhsKE2FydGlmYWN0X3VwbG9hZF91cmwYDCABKAkiPQoKQ2FuY2VsVGFzaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDQoFZm9yY2UYAyABKAgi7AEKDUluc3RhbGxTdGF0dXMSDwoHcGFja2FnZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEioKBXN0YXRlGAMgASgOMhsuc2ZseS5hZ2VudC52MS5JbnN0YWxsU3RhdGUSDwoHdGFza19pZBgEIAEoCRIOCgZvdXRwdXQYBSABKAkSOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAYgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlEi8KDGRldl9wYWNrYWdlcxgHIAMoCzIZLnNmbHkuYWdlbnQudjEuRGV2UGFja2FnZSJTCghMb2dCYXRjaBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SJQoFbGluZXMYAyADKAsyFi5zZmx5LmFnZW50LnYxLkxvZ0xpbmUijAEKB0xvZ0xpbmUSCwoDc2VxGAEgASgEEhQKDHRpbWVfdW5peF9tcxgCIAEoAxIoCgZzb3VyY2UYAyABKA4yGC5zZmx5LmFnZW50LnYxLkxvZ1NvdXJjZRImCgVsZXZlbBgEIAEoDjIXLnNmbHkuYWdlbnQudjEuTG9nTGV2ZWwSDAoEdGV4dBgFIAEoCSKCAQoIUHJvZ3Jlc3MSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB2N1cnJlbnQYAyABKAESEgoFdG90YWwYBCABKAFIAIgBARIPCgdtZXNzYWdlGAUgASgJEhQKDHRpbWVfdW5peF9tcxgGIAEoA0IICgZfdG90YWwicwoLTWV0cmljQmF0Y2gSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEioKBnBvaW50cxgDIAMoCzIaLnNmbHkuYWdlbnQudjEuTWV0cmljUG9pbnQSFgoOZHJvcHBlZF9wb2ludHMYBCABKAQiWQoLTWV0cmljUG9pbnQSDAoEbmFtZRgBIAEoCRITCgt0aW1lX3VuaXhfcxgCIAEoAxINCgV2YWx1ZRgDIAEoARILCgNtaW4YBCABKAESCwoDbWF4GAUgASgBIpgBCgpUYXNrUmVzdWx0Eg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIpCgZzdGF0dXMYAyABKA4yGS5zZmx5LmFnZW50LnYxLlRhc2tTdGF0dXMSFAoMb3V0cHV0c19qc29uGAQgASgJEicKBWVycm9yGAUgASgLMhguc2ZseS5hZ2VudC52MS5UYXNrRXJyb3IiRAoJVGFza0Vycm9yEiYKBGtpbmQYASABKA4yGC5zZmx5LmFnZW50LnYxLkVycm9yS2luZBIPCgdtZXNzYWdlGAIgASgJIicKA0FjaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0qXAoKVGFza0FjdGlvbhIbChdUQVNLX0FDVElPTl9VTlNQRUNJRklFRBAAEhgKFFRBU0tfQUNUSU9OX0NPTlRJTlVFEAESFwoTVEFTS19BQ1RJT05fQUJBTkRPThACKoIBCgxJbnN0YWxsU3RhdGUSHQoZSU5TVEFMTF9TVEFURV9VTlNQRUNJRklFRBAAEhwKGElOU1RBTExfU1RBVEVfSU5TVEFMTElORxABEhsKF0lOU1RBTExfU1RBVEVfSU5TVEFMTEVEEAISGAoUSU5TVEFMTF9TVEFURV9GQUlMRUQQAyppCglMb2dTb3VyY2USGgoWTE9HX1NPVVJDRV9VTlNQRUNJRklFRBAAEhUKEUxPR19TT1VSQ0VfU1RET1VUEAESFQoRTE9HX1NPVVJDRV9TVERFUlIQAhISCg5MT0dfU09VUkNFX1NESxADKncKCExvZ0xldmVsEhkKFUxPR19MRVZFTF9VTlNQRUNJRklFRBAAEhMKD0xPR19MRVZFTF9ERUJVRxABEhIKDkxPR19MRVZFTF9JTkZPEAISEgoOTE9HX0xFVkVMX1dBUk4QAxITCg9MT0dfTEVWRUxfRVJST1IQBCp1CgpUYXNrU3RhdHVzEhsKF1RBU0tfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTVEFTS19TVEFUVVNfU1VDQ0VTUxABEhYKElRBU0tfU1RBVFVTX0ZBSUxFRBACEhkKFVRBU0tfU1RBVFVTX0NBTkNFTExFRBADKqwBCglFcnJvcktpbmQSGgoWRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUVSUk9SX0tJTkRfTk9ERV9FUlJPUhABEhYKEkVSUk9SX0tJTkRfVElNRU9VVBACEhkKFUVSUk9SX0tJTkRfQUdFTlRfTE9TVBADEhgKFEVSUk9SX0tJTkRfRU5WX0VSUk9SEAQSGwoXRVJST1JfS0lORF9DT05GSUdfRVJST1IQBTJYCgxBZ2VudEdhdGV3YXkSSAoHU2Vzc2lvbhIbLnNmbHkuYWdlbnQudjEuQWdlbnRNZXNzYWdlGhwuc2ZseS5hZ2VudC52MS5TZXJ2ZXJNZXNzYWdlKAEwAWIGcHJvdG8z");
 
 /**
  * Agent → 控制面。
@@ -63,6 +63,12 @@ export type AgentMessage = Message<"sfly.agent.v1.AgentMessage"> & {
      */
     value: InstallStatus;
     case: "install";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.MetricBatch metrics = 8;
+     */
+    value: MetricBatch;
+    case: "metrics";
   } | { case: undefined; value?: undefined };
 };
 
@@ -720,6 +726,92 @@ export const ProgressSchema: GenMessage<Progress> = /*@__PURE__*/
   messageDesc(file_sfly_agent_v1_agent, 15);
 
 /**
+ * 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 指标 × 秒」合并，每个任务每秒最多发一批，
+ * 任务结束前补发剩余的点；控制面不回 Ack，同一指标同一秒的重复点被忽略。
+ *
+ * @generated from message sfly.agent.v1.MetricBatch
+ */
+export type MetricBatch = Message<"sfly.agent.v1.MetricBatch"> & {
+  /**
+   * @generated from field: string task_id = 1;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: uint32 attempt = 2;
+   */
+  attempt: number;
+
+  /**
+   * 同一指标按时间递增。
+   *
+   * @generated from field: repeated sfly.agent.v1.MetricPoint points = 3;
+   */
+  points: MetricPoint[];
+
+  /**
+   * 自上一批以来，断线排队超过上限而被丢弃的（最早的）点数。
+   *
+   * @generated from field: uint64 dropped_points = 4;
+   */
+  droppedPoints: bigint;
+};
+
+/**
+ * Describes the message sfly.agent.v1.MetricBatch.
+ * Use `create(MetricBatchSchema)` to create a new message.
+ */
+export const MetricBatchSchema: GenMessage<MetricBatch> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 16);
+
+/**
+ * 一个指标在一秒内合并后的点。
+ *
+ * @generated from message sfly.agent.v1.MetricPoint
+ */
+export type MetricPoint = Message<"sfly.agent.v1.MetricPoint"> & {
+  /**
+   * 节点类型声明的指标名。
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * 这一秒（Unix 秒）。
+   *
+   * @generated from field: int64 time_unix_s = 2;
+   */
+  timeUnixS: bigint;
+
+  /**
+   * gauge：这一秒最后一个值；counter：这一秒结束时的值。
+   *
+   * @generated from field: double value = 3;
+   */
+  value: number;
+
+  /**
+   * 这一秒的最小值、最大值（counter 与 value 相同）。
+   *
+   * @generated from field: double min = 4;
+   */
+  min: number;
+
+  /**
+   * @generated from field: double max = 5;
+   */
+  max: number;
+};
+
+/**
+ * Describes the message sfly.agent.v1.MetricPoint.
+ * Use `create(MetricPointSchema)` to create a new message.
+ */
+export const MetricPointSchema: GenMessage<MetricPoint> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 17);
+
+/**
  * 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
  *
  * @generated from message sfly.agent.v1.TaskResult
@@ -760,7 +852,7 @@ export type TaskResult = Message<"sfly.agent.v1.TaskResult"> & {
  * Use `create(TaskResultSchema)` to create a new message.
  */
 export const TaskResultSchema: GenMessage<TaskResult> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 16);
+  messageDesc(file_sfly_agent_v1_agent, 18);
 
 /**
  * @generated from message sfly.agent.v1.TaskError
@@ -782,7 +874,7 @@ export type TaskError = Message<"sfly.agent.v1.TaskError"> & {
  * Use `create(TaskErrorSchema)` to create a new message.
  */
 export const TaskErrorSchema: GenMessage<TaskError> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 17);
+  messageDesc(file_sfly_agent_v1_agent, 19);
 
 /**
  * 控制面确认已处理 Agent 的某条上报（目前是 TaskResult，重复上报同样会收到 Ack）。
@@ -806,7 +898,7 @@ export type Ack = Message<"sfly.agent.v1.Ack"> & {
  * Use `create(AckSchema)` to create a new message.
  */
 export const AckSchema: GenMessage<Ack> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 18);
+  messageDesc(file_sfly_agent_v1_agent, 20);
 
 /**
  * @generated from enum sfly.agent.v1.TaskAction

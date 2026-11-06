@@ -1,18 +1,25 @@
 import { diffDocuments, isEmptyDiff } from "@sfly/orchestration";
-import type { OrchestrationDocument } from "@sfly/schema";
+import {
+	domainKey,
+	type OrchestrationDocument,
+	type OrchestrationHeadView,
+	orchestrationsApi,
+	queryKey,
+	type SavedVersionView,
+} from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fromFlow, toFlow } from "#/canvas/flow";
-import type { OrchestrationHead, SavedVersion } from "#/lib/api";
-import { saveVersionFrom, versionConflictOf } from "./api";
+import { fromFlow, toFlow } from "#/components/canvas/flow";
+import { callApi } from "#/lib/api";
 import { clearDraft, loadDraft, onDraftChangedElsewhere, writeDraft } from "./draft";
+import { versionConflictOf } from "./queries";
 
 /** 一次编辑会话的起点：最新版本，或者浏览器里保存的本地草稿。 */
 export interface EditStart {
 	/** 每次重新载入（例如放弃本地修改）递增，用来重建画布状态。 */
 	nonce: number;
 	/** 打开页面（或重新载入）时控制面上的最新版本。 */
-	head: OrchestrationHead;
+	head: OrchestrationHeadView;
 	base: Base;
 	/** 画布的初始内容。 */
 	document: OrchestrationDocument;
@@ -34,7 +41,7 @@ const asCanvasDocument = (doc: OrchestrationDocument): OrchestrationDocument => 
 
 export function startEditing(
 	orchestrationId: string,
-	head: OrchestrationHead,
+	head: OrchestrationHeadView,
 	nonce = 0,
 ): EditStart {
 	const draft = loadDraft(orchestrationId);
@@ -69,7 +76,7 @@ const randomTabId = (): string =>
 		: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 /**
- * 编排的版本状态：未保存的修改实时写入本地草稿；保存时以编辑起点为 base_version，
+ * 场景的版本状态：未保存的修改实时写入本地草稿；保存时以编辑起点为 base_version，
  * 别人先保存了新版本时得到冲突（不自动合并）。
  */
 export function useVersionedDraft(
@@ -83,11 +90,11 @@ export function useVersionedDraft(
 
 	// —— 本地草稿：有修改就写入（防抖），没有修改就清除；离开页面前立即写入 ——
 	const pending = useRef<(() => void) | null>(null);
-	/** 放弃本地修改 / 另存为新编排后不再写草稿（画布随后会重建或离开）。 */
+	/** 放弃本地修改 / 另存为新场景后不再写草稿（画布随后会重建或离开）。 */
 	const dropped = useRef(false);
 	const tabId = useMemo(randomTabId, []);
 	/**
-	 * 另一个标签页改写（或保存后清除）了同一份编排的本地草稿：这个标签页不再写草稿，
+	 * 另一个标签页改写（或保存后清除）了同一个场景的本地草稿：这个标签页不再写草稿，
 	 * 免得互相覆盖（草稿存在共用的 localStorage 里）；由用户决定载入那份草稿或直接保存。
 	 */
 	const [takenOver, setTakenOver] = useState(false);
@@ -133,18 +140,24 @@ export function useVersionedDraft(
 
 	const save = useMutation({
 		mutationFn: (document: OrchestrationDocument) =>
-			saveVersionFrom(orchestrationId, base.version, document),
-		onSuccess: (saved: SavedVersion, document) => {
+			callApi(orchestrationsApi.saveVersion, {
+				params: { id: orchestrationId },
+				body: { base_version: base.version, document },
+			}),
+		onSuccess: (saved: SavedVersionView, document) => {
 			setBase({ version: saved.number, author: saved.author, document });
-			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
-			queryClient.invalidateQueries({ queryKey: ["orchestration", orchestrationId, "versions"] });
-			queryClient.setQueryData(["orchestration", orchestrationId, "head"], {
-				orchestration_id: orchestrationId,
-				number: saved.number,
-				author: saved.author,
-				created_at: saved.created_at,
-				document: saved.document,
-			} satisfies OrchestrationHead);
+			// 场景领域全部失效：列表、详情、版本历史（编辑起点由下面直接写入）。
+			queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.get) });
+			queryClient.setQueryData(
+				queryKey(orchestrationsApi.head, { params: { id: orchestrationId } }),
+				{
+					orchestration_id: orchestrationId,
+					number: saved.number,
+					author: saved.author,
+					created_at: saved.created_at,
+					document: saved.document,
+				} satisfies OrchestrationHeadView,
+			);
 		},
 	});
 
@@ -154,7 +167,7 @@ export function useVersionedDraft(
 		save,
 		/** 保存被拦截：别人在编辑起点之后先保存了新版本。 */
 		conflict: versionConflictOf(save.error),
-		/** 另一个标签页改写了这份编排的本地草稿，这个标签页已停止写草稿。 */
+		/** 另一个标签页改写了这个场景的本地草稿，这个标签页已停止写草稿。 */
 		draftTakenOver: takenOver,
 		/** 打开页面（或重新载入）时的最新版本。 */
 		startHead: start.head,

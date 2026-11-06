@@ -1,0 +1,101 @@
+import { describe, expect, it } from "vitest";
+import { type Preflight, preflightChecks } from "./checks";
+
+const passed: Preflight = {
+	version: 3,
+	params: [],
+	problems: [],
+	packages: { "demo-checks": "1.2.0", stub: "0.1.0" },
+	agents: [
+		{ name: "agent-a", default: true, status: "online" },
+		{ name: "agent-b", default: false, status: "online" },
+	],
+};
+
+const summary = (p: Preflight, local?: Parameters<typeof preflightChecks>[1]) =>
+	preflightChecks(p, local).rows.map((r) => [r.key, r.state, r.title, r.detail]);
+
+describe("触发前检查清单", () => {
+	it("全部通过：结构与引用、包版本锁定、Agent 在线各一行", () => {
+		const checks = preflightChecks(passed);
+		expect(checks.blocked).toBe(false);
+		expect(summary(passed)).toEqual([
+			["structure", "ok", "结构、引用与输入检查通过", undefined],
+			["packages", "ok", "节点包版本已锁定", "demo-checks 1.2.0 · stub 0.1.0"],
+			["agents", "ok", "引用的 Agent 都在线", "agent-a · agent-b"],
+		]);
+	});
+
+	it("Agent 不在线只是提醒（任务会排队），不阻止触发", () => {
+		const p: Preflight = {
+			...passed,
+			agents: [
+				{ name: "agent-a", default: true, status: "offline" },
+				{ name: "agent-b", default: false, status: "online" },
+			],
+		};
+		expect(preflightChecks(p).blocked).toBe(false);
+		expect(summary(p)[2]).toEqual([
+			"agents",
+			"warn",
+			"agent-a 当前不在线",
+			"任务会排队，Agent 上线后再执行",
+		]);
+	});
+
+	it("问题按类别归到对应的行，任何一行有问题都不能触发", () => {
+		const p: Preflight = {
+			...passed,
+			problems: [
+				{ code: "orphan_node", message: "节点 lonely 不在任何链上", node_id: "lonely" },
+				{ code: "package_version_missing", message: "stub 0.1.0 不存在", node_id: "c" },
+				{ code: "agent_not_registered", message: "Agent ghost 还没有注册过", node_id: "b" },
+				{ code: "not_supported", message: "只支持一条主链" },
+			],
+			agents: [{ name: "ghost", default: true, status: "unknown" }],
+		};
+		const checks = preflightChecks(p);
+		expect(checks.blocked).toBe(true);
+		expect(checks.rows.map((r) => [r.key, r.state, r.problems.map((x) => x.code)])).toEqual([
+			["structure", "blocked", ["orphan_node", "not_supported"]],
+			["packages", "blocked", ["package_version_missing"]],
+			["agents", "blocked", ["agent_not_registered"]],
+		]);
+		expect(checks.rows.map((r) => r.title)).toEqual([
+			"结构与引用有 2 个问题",
+			"节点包版本有 1 个问题",
+			"Agent 有 1 个问题",
+		]);
+	});
+
+	it("场景还没有版本或已归档时只列出这一条原因", () => {
+		const p: Preflight = {
+			version: 0,
+			params: [],
+			problems: [{ code: "no_version", message: "场景还没有保存过版本" }],
+			packages: {},
+			agents: [],
+		};
+		expect(summary(p)).toEqual([["version", "blocked", "场景还没有保存过版本", undefined]]);
+	});
+
+	it("画布上有未保存的修改或显示的不是最新版本时，额外列出版本一行", () => {
+		const checks = preflightChecks(passed, { dirty: true, baseVersion: 2 });
+		expect(checks.blocked).toBe(true);
+		expect(checks.rows[0]).toMatchObject({
+			key: "version",
+			state: "blocked",
+			title: "触发只会运行已保存的最新版本",
+		});
+		expect(checks.rows[0]?.problems.map((p) => p.code)).toEqual(["unsaved_draft", "stale_version"]);
+		expect(checks.rows).toHaveLength(4);
+	});
+
+	it("没有用到节点包、没有引用 Agent 时也说明", () => {
+		const p: Preflight = { ...passed, packages: {}, agents: [] };
+		expect(summary(p).slice(1)).toEqual([
+			["packages", "ok", "没有用到节点包", undefined],
+			["agents", "ok", "没有引用 Agent", undefined],
+		]);
+	});
+});

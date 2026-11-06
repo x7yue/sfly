@@ -13,6 +13,7 @@ import {
 	runs,
 	tasks,
 } from "../db/schema.js";
+import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
 
@@ -72,7 +73,8 @@ export class AgentConnection {
 export interface AgentView {
 	name: string;
 	status: AgentStatus;
-	info: AgentInfo;
+	/** 注册信息（安装状态与开发版本另有字段）。 */
+	info: Omit<AgentInfo, "install" | "dev_packages"> & { installed_packages: InstalledPackage[] };
 	last_seen_at: string;
 	/** Agent 共享 venv 中已安装的节点包（Agent 在 Hello 中上报）。 */
 	installed_packages: { name: string; version: string }[];
@@ -194,7 +196,10 @@ export class AgentHub {
 			last_seen_at: row.lastSeenAt.toISOString(),
 			installed_packages: info.installed_packages ?? [],
 			install: install ?? null,
-			dev_packages: dev_packages ?? [],
+			dev_packages: (dev_packages ?? []).map((p) => ({
+				...p,
+				metadata: devMetadataWithDefaultCharts(p.metadata),
+			})),
 			running_tasks: running
 				.filter((t) => t.agent === row.name)
 				.map((t) => ({

@@ -9,10 +9,15 @@
 //   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包
 //                    （可选；默认取监听地址，监听 0.0.0.0 时用本机主机名）
 //   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30），运行结束超过这么久后自动清理
+//   SFLY_METRIC_RETENTION_DAYS 指标的保留天数（默认 30），整天超过保留期的指标分区自动删除
 //   SFLY_LOG_LIMIT_MB     单个任务日志的上限（默认 200），超出部分截断
 //   SFLY_ARTIFACT_LIMIT_MB 单个任务产物的总大小上限（默认 1024）
+//   SFLY_METRIC_LIMIT_MB  单个任务指标数据的上限（默认 50，按点数折算），超出后停止写入
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
+//   SFLY_WEB_DIR     前端构建产物目录（默认 apps/web/dist，由 `pnpm --filter @sfly/web build` 生成）；
+//                    控制面在 HTTP 端口上同时提供页面（ADR 0006）。未设置且默认目录不存在时只提供 API
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { startControlPlane } from "./control-plane.js";
 
@@ -30,6 +35,9 @@ const mb = (name: string) => {
 	const n = positive(name);
 	return n === undefined ? undefined : Math.floor(n * MB);
 };
+const defaultWebDir = fileURLToPath(new URL("../../web/dist", import.meta.url));
+const webDir = env.SFLY_WEB_DIR || (existsSync(defaultWebDir) ? defaultWebDir : undefined);
+if (!webDir) console.warn(`sfly: ${defaultWebDir} not found, serving the API only (no web app)`);
 const controlPlane = await startControlPlane({
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
@@ -39,9 +47,12 @@ const controlPlane = await startControlPlane({
 	agentToken: env.SFLY_AGENT_TOKEN || undefined,
 	publicHttpUrl: env.SFLY_PUBLIC_URL || undefined,
 	retentionDays: positive("SFLY_RETENTION_DAYS"),
+	metricRetentionDays: positive("SFLY_METRIC_RETENTION_DAYS"),
 	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),
 	artifactLimitBytes: mb("SFLY_ARTIFACT_LIMIT_MB"),
+	metricLimitBytes: mb("SFLY_METRIC_LIMIT_MB"),
 	sdkWheelDir: env.SFLY_SDK_DIR || fileURLToPath(new URL("../dist/sdk", import.meta.url)),
+	webDir,
 });
 console.log(`sfly control plane: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`);
 

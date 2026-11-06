@@ -1,3 +1,4 @@
+import { orchestrationsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { ManualClock } from "./support/manual-clock.js";
@@ -79,6 +80,35 @@ describe("编排版本", () => {
 		expect(latest.document.default_agent).toBe("agent-b");
 	});
 
+	it("场景、编辑起点与保存版本的响应符合接口契约", async () => {
+		const id = await api.createOrchestration("契约");
+		const initial = orchestrationsApi.head.response.parse(
+			await api.getJson(`/orchestrations/${id}/head`),
+		);
+		expect(initial).toMatchObject({ number: 0, author: null, created_at: null });
+
+		const saved = await api.post(
+			`/orchestrations/${id}/versions`,
+			{ base_version: 0, document: docV1 },
+			"alice",
+		);
+		expect(saved.status).toBe(201);
+		const version = orchestrationsApi.saveVersion.response.parse(await saved.json());
+		// 包 http 没有发布：保存成功，但带上包版本的警告。
+		expect(version.warnings.map((w) => w.code)).toContain("package_version_missing");
+
+		const head = orchestrationsApi.head.response.parse(
+			await api.getJson(`/orchestrations/${id}/head`),
+		);
+		expect(head).toMatchObject({ number: 1, author: "alice" });
+		expect(head.document).toEqual(version.document);
+		const got = orchestrationsApi.get.response.parse(await api.getJson(`/orchestrations/${id}`));
+		expect(got).toMatchObject({ id, name: "契约", head_version: 1 });
+
+		const missing = await api.get("/orchestrations/not-a-uuid/head");
+		expect(missing.status).toBe(404);
+	});
+
 	it("编排版本没有修改接口", async () => {
 		const id = await api.createOrchestration("不可变");
 		await api.saveVersion(id, docV1);
@@ -128,7 +158,7 @@ describe("编排版本", () => {
 			clock.advance(1000);
 			const newer = await localApi.createOrchestration("较新");
 
-			expect(await localApi.getJson("/orchestrations")).toEqual({
+			expect(await localApi.getJson("/orchestrations")).toMatchObject({
 				orchestrations: [
 					{ id: newer, name: "较新", head_version: 0, created_at: "2026-01-01T00:00:01.000Z" },
 					{ id: older, name: "较早", head_version: 1, created_at: "2026-01-01T00:00:00.000Z" },
@@ -252,7 +282,7 @@ describe("编排版本", () => {
 			{
 				code: "missing_agent",
 				node_id: "a",
-				message: "节点 a 没有选择 Agent，编排也没有默认 Agent",
+				message: "节点 a 没有选择 Agent，场景也没有默认 Agent",
 			},
 			{ code: "package_not_locked", node_id: "a", message: "节点 a 的节点包 http 没有锁定版本" },
 		]);

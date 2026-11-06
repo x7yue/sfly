@@ -1,0 +1,212 @@
+/*
+ * 样式入口（docs/DESIGN-SYSTEM.md「CSS layer」）。所有样式都在下面声明的层里，没有未分层的规则：
+ *
+ *   theme      Tailwind 主题变量 + 设计 token（./tokens.css）
+ *   base       Tailwind preflight + 本文件的元素基础样式（body、kbd、焦点环、减少动效）
+ *   vendor     第三方库自带的样式（xyflow）
+ *   components 自己写的组件级 CSS（尽量不用；组件样式写在 TSX 的 Tailwind 类里）
+ *   utilities  Tailwind 工具类——组件的样式都在这一层，所以低层的全局规则覆盖不了组件
+ *
+ * 后声明的层优先级更高，与选择器权重无关。
+ */
+@layer theme, base, vendor, components, utilities;
+
+@import "tailwindcss";
+/* 以下两个文件只含 @utility / @custom-variant / @keyframes，由 Tailwind 放进 utilities 层 */
+@import "tw-animate-css";
+@import "./shadcn-variants.css";
+@import "./tokens.css" layer(theme);
+@import "./fonts.css" layer(base);
+
+@import "@xyflow/react/dist/style.css" layer(vendor);
+
+/*
+ * 把语义层与画布层暴露为 Tailwind 工具类。默认色板、字号、圆角全部清空，只留设计体系里的值：
+ * 写出 bg-red-500、text-base 以外的字号或 rounded-2xl 不会生成样式，评审时一眼可见。
+ */
+@theme inline {
+	--color-*: initial;
+	--color-transparent: transparent;
+	--color-current: currentColor;
+	--color-white: var(--primary);
+	--color-black: var(--base-black);
+
+	--color-sunk: var(--sunk);
+	--color-bg: var(--bg);
+	--color-surface: var(--surface);
+	--color-raised: var(--raised);
+	--color-raised-2: var(--raised-2);
+	--color-track: var(--track);
+	--color-scrim: var(--scrim);
+	--color-border: var(--border);
+	--color-border-soft: var(--border-soft);
+	--color-border-strong: var(--border-strong);
+	--color-fg-1: var(--fg-1);
+	--color-fg-2: var(--fg-2);
+	--color-fg-3: var(--fg-3);
+	--color-primary: var(--primary);
+	--color-primary-hover: var(--primary-hover);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-signal: var(--signal);
+	--color-signal-fg: var(--signal-fg);
+	--color-signal-line: var(--signal-line);
+	--color-signal-soft: var(--signal-soft);
+	--color-selected: var(--selected);
+	--color-selected-bg: var(--selected-bg);
+	--color-selected-ring: var(--selected-ring);
+	--color-ok: var(--ok);
+	--color-ok-soft: var(--ok-soft);
+	--color-ok-line: var(--ok-line);
+	--color-warn: var(--warn);
+	--color-warn-fg: var(--warn-fg);
+	--color-warn-soft: var(--warn-soft);
+	--color-warn-line: var(--warn-line);
+	--color-danger: var(--danger);
+	--color-danger-fg: var(--danger-fg);
+	--color-danger-soft: var(--danger-soft);
+	--color-danger-line: var(--danger-line);
+	--color-pending: var(--pending);
+	--color-skipped: var(--skipped);
+	--color-cancelled: var(--cancelled);
+	--color-log-debug: var(--log-debug);
+	--color-log-info: var(--log-info);
+	--color-log-warn: var(--log-warn);
+	--color-log-error: var(--log-error);
+	--color-chart-1: var(--chart-1);
+	--color-chart-2: var(--chart-2);
+	--color-chart-3: var(--chart-3);
+	--color-chart-4: var(--chart-4);
+	--color-chart-grid: var(--chart-grid);
+
+	/* shadcn/ui 组件用到的颜色名 */
+	--color-background: var(--background);
+	--color-foreground: var(--foreground);
+	--color-card: var(--card);
+	--color-card-foreground: var(--card-foreground);
+	--color-popover: var(--popover);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-secondary: var(--secondary);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-muted: var(--muted);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-accent: var(--accent);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-destructive: var(--destructive);
+	--color-input: var(--input);
+	--color-ring: var(--ring);
+
+	/* 画布专用 */
+	--color-canvas-bg: var(--canvas-bg);
+	--color-canvas-grid: var(--canvas-grid);
+	--color-canvas-node-bg: var(--canvas-node-bg);
+	--color-canvas-node-border: var(--canvas-node-border);
+	--color-canvas-node-selected: var(--canvas-node-selected);
+	--color-canvas-port: var(--canvas-port);
+	--color-canvas-edge: var(--canvas-edge);
+	--color-canvas-edge-selected: var(--canvas-edge-selected);
+	--color-canvas-edge-live: var(--canvas-edge-live);
+	--color-canvas-edge-dispatch: var(--canvas-edge-dispatch);
+	--color-canvas-subflow: var(--canvas-subflow);
+	--color-canvas-subflow-fg: var(--canvas-subflow-fg);
+	--color-canvas-subflow-line: var(--canvas-subflow-line);
+	--color-canvas-subflow-soft: var(--canvas-subflow-soft);
+	--color-canvas-run-running: var(--canvas-run-running);
+	--color-canvas-run-failed: var(--canvas-run-failed);
+	--color-canvas-run-cancelled: var(--canvas-run-cancelled);
+
+	/* 字体：界面无衬线（中文回退系统字体）；数值、ID、命令用等宽 */
+	--font-*: initial;
+	--font-sans:
+		"IBM Plex Sans", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans CJK SC", "Microsoft YaHei",
+		system-ui, sans-serif;
+	--font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+	/* 字号：正文 13、辅助 12、最小 11；标题 14 / 16；统计数字 22 */
+	--text-*: initial;
+	--text-2xs: 11px;
+	--text-2xs--line-height: 16px;
+	--text-xs: 12px;
+	--text-xs--line-height: 18px;
+	--text-sm: 13px;
+	--text-sm--line-height: 20px;
+	--text-base: 14px;
+	--text-base--line-height: 20px;
+	--text-lg: 16px;
+	--text-lg--line-height: 24px;
+	--text-2xl: 22px;
+	--text-2xl--line-height: 28px;
+
+	/* 圆角：4 / 6 / 8 / 12 */
+	--radius-*: initial;
+	--radius-sm: 4px;
+	--radius-md: 6px;
+	--radius-lg: 8px;
+	--radius-xl: 12px;
+
+	--shadow-*: initial;
+	--shadow-float: var(--elevation-float);
+	--shadow-pop: var(--elevation-pop);
+	--shadow-inset-top: var(--elevation-inset-top);
+
+	--ease-standard: var(--motion-ease);
+
+	/* 画布上选中节点相关连线的虚线流动（虚线周期 6 + 5），减少动效时由 base 层停止 */
+	--animate-edge-flow: edge-flow 1s linear infinite;
+	@keyframes edge-flow {
+		to {
+			stroke-dashoffset: -11;
+		}
+	}
+
+	/* 执行中圆点的脉冲（青色），减少动效时由 base 层停止 */
+	--animate-status-pulse: status-pulse 1.6s infinite;
+	@keyframes status-pulse {
+		0% {
+			box-shadow: 0 0 0 0 var(--signal-line);
+		}
+		70%,
+		100% {
+			box-shadow: 0 0 0 6px transparent;
+		}
+	}
+}
+
+@layer base {
+	* {
+		border-color: var(--border);
+	}
+	html,
+	body,
+	#app {
+		height: 100%;
+	}
+	body {
+		margin: 0;
+		background: var(--bg);
+		color: var(--fg-1);
+		font-family: var(--font-sans);
+		font-size: var(--text-sm);
+		line-height: 1.5;
+		/* 数字一律等宽 */
+		font-variant-numeric: tabular-nums;
+		-webkit-font-smoothing: antialiased;
+	}
+	:focus-visible {
+		outline: 2px solid var(--ring);
+		outline-offset: 1px;
+	}
+	::selection {
+		background: var(--signal-soft);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			/* biome-ignore-start lint/complexity/noImportantStyles: 减少动效必须压过组件里的动画与过渡 */
+			animation-duration: 0.001ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.001ms !important;
+			/* biome-ignore-end lint/complexity/noImportantStyles: 同上 */
+		}
+	}
+}

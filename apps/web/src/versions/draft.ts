@@ -1,8 +1,8 @@
 import type { OrchestrationDocument } from "@sfly/schema";
 
 /**
- * 本地草稿：画布上未保存的编辑存在浏览器 localStorage 里（每份编排一份），刷新页面不丢失
- * （docs/ARCHITECTURE.md §6.4）。保存成功、放弃本地修改或另存为新编排后清除。
+ * 本地草稿：画布上未保存的编辑存在浏览器 localStorage 里（每个场景一份），刷新页面不丢失
+ * （docs/ARCHITECTURE.md §6.4）。保存成功、放弃本地修改或另存为新场景后清除。
  */
 export interface Draft {
 	/** 草稿的编辑起点（版本号，0 = 还没有版本）；保存时作为 base_version 提交。 */
@@ -38,7 +38,7 @@ export function loadDraft(orchestrationId: string): Draft | null {
 	}
 }
 
-/** 这份编排在本浏览器里是否有未保存的修改（例如触发运行前检查）。 */
+/** 这个场景在本浏览器里是否有未保存的修改（例如触发运行前检查）。 */
 export const hasDraft = (orchestrationId: string): boolean => loadDraft(orchestrationId) !== null;
 
 export function writeDraft(orchestrationId: string, draft: Draft): void {
@@ -54,7 +54,7 @@ export function clearDraft(orchestrationId: string): void {
 }
 
 /**
- * 其他标签页改写或清除了这份编排的本地草稿时回调（`storage` 事件只在其他标签页写入时触发）。
+ * 其他标签页改写或清除了这个场景的本地草稿时回调（`storage` 事件只在其他标签页写入时触发）。
  * 返回取消监听的函数。
  */
 export function onDraftChangedElsewhere(

@@ -1,16 +1,12 @@
 import { randomUUID } from "node:crypto";
-import type { OrchestrationDocument } from "@sfly/schema";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { ensureLayout } from "@sfly/orchestration";
+import type { OrchestrationDocument, OrchestrationView } from "@sfly/schema";
+import { and, count, desc, eq } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { orchestrations, orchestrationVersions } from "../db/schema.js";
+import { orchestrations, orchestrationVersions, runs } from "../db/schema.js";
 
-export interface OrchestrationView {
-	id: string;
-	name: string;
-	head_version: number;
-	created_at: string;
-}
+export type { OrchestrationView };
 
 export interface OrchestrationVersionView {
 	id: string;
@@ -46,12 +42,15 @@ export type SaveVersionResult =
 	| { kind: "not_found" }
 	| { kind: "conflict"; head: VersionSummary | null };
 
-/** 新建编排的初始文档：只有一个入口节点。 */
-export const initialDocument = (): OrchestrationDocument => ({
-	nodes: [{ id: "entry", kind: "entry", params: [], position: { x: 0, y: 0 } }],
-	edges: [],
-	packages: {},
-});
+/** 归档的结果。`running`：还有 count 个运行中的运行，不能归档。 */
+export type ArchiveResult =
+	| { kind: "archived"; orchestration: OrchestrationView }
+	| { kind: "not_found" }
+	| { kind: "running"; count: number };
+
+/** 新建场景的初始文档：只有一个入口节点，位置由整理布局算法给出（与画布的「整理布局」相同）。 */
+export const initialDocument = (): OrchestrationDocument =>
+	ensureLayout({ nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} });
 
 type OrchestrationRow = typeof orchestrations.$inferSelect;
 type VersionRow = typeof orchestrationVersions.$inferSelect;
@@ -74,11 +73,13 @@ async function versionRow(
 	return row;
 }
 
-const toView = (row: OrchestrationRow): OrchestrationView => ({
+export const toView = (row: OrchestrationRow): OrchestrationView => ({
 	id: row.id,
 	name: row.name,
+	description: row.description,
 	head_version: row.headVersion,
 	created_at: row.createdAt.toISOString(),
+	archived_at: row.archivedAt ? row.archivedAt.toISOString() : null,
 });
 
 const toSummary = (row: Pick<VersionRow, "number" | "author" | "createdAt">): VersionSummary => ({
@@ -100,21 +101,65 @@ export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
 export class OrchestrationStore {
 	constructor(private readonly deps: { db: Db; clock: Clock }) {}
 
-	async create(name: string): Promise<OrchestrationView> {
+	async create(name: string, description = ""): Promise<OrchestrationView> {
 		const [row] = await this.deps.db
 			.insert(orchestrations)
-			.values({ id: randomUUID(), name, createdAt: this.deps.clock.now() })
+			.values({ id: randomUUID(), name, description, createdAt: this.deps.clock.now() })
 			.returning();
 		return toView(row as OrchestrationRow);
 	}
 
-	/** 全部编排，按新建时间从新到旧。 */
-	async list(): Promise<OrchestrationView[]> {
-		const rows = await this.deps.db
-			.select()
-			.from(orchestrations)
-			.orderBy(desc(orchestrations.createdAt), asc(orchestrations.name));
-		return rows.map(toView);
+	/** 修改名称和说明（不属于版本内容，不产生新版本）。场景不存在时返回 undefined。 */
+	async update(
+		id: string,
+		changes: { name?: string | undefined; description?: string | undefined },
+	): Promise<OrchestrationView | undefined> {
+		const [row] = await this.deps.db
+			.update(orchestrations)
+			.set({
+				...(changes.name === undefined ? {} : { name: changes.name }),
+				...(changes.description === undefined ? {} : { description: changes.description }),
+			})
+			.where(eq(orchestrations.id, id))
+			.returning();
+		return row && toView(row);
+	}
+
+	/**
+	 * 归档：有运行中的运行时拒绝。加行锁后检查，与触发（engine.trigger 对同一行加共享锁后检查归档）互斥，
+	 * 不会归档之后又多出一个运行中的运行。已归档的再次归档保持原来的归档时间。
+	 */
+	archive(id: string): Promise<ArchiveResult> {
+		return this.deps.db.transaction(async (tx): Promise<ArchiveResult> => {
+			const [row] = await tx
+				.select()
+				.from(orchestrations)
+				.where(eq(orchestrations.id, id))
+				.for("update");
+			if (!row) return { kind: "not_found" };
+			const [running] = await tx
+				.select({ n: count() })
+				.from(runs)
+				.where(and(eq(runs.orchestrationId, id), eq(runs.status, "running")));
+			if (running && running.n > 0) return { kind: "running", count: running.n };
+			if (row.archivedAt) return { kind: "archived", orchestration: toView(row) };
+			const [updated] = await tx
+				.update(orchestrations)
+				.set({ archivedAt: this.deps.clock.now() })
+				.where(eq(orchestrations.id, id))
+				.returning();
+			return { kind: "archived", orchestration: toView(updated as OrchestrationRow) };
+		});
+	}
+
+	/** 恢复已归档的场景。场景不存在时返回 undefined。 */
+	async unarchive(id: string): Promise<OrchestrationView | undefined> {
+		const [row] = await this.deps.db
+			.update(orchestrations)
+			.set({ archivedAt: null })
+			.where(eq(orchestrations.id, id))
+			.returning();
+		return row && toView(row);
 	}
 
 	async head(id: string): Promise<OrchestrationHeadView | undefined> {
@@ -157,7 +202,13 @@ export class OrchestrationStore {
 			const id = randomUUID();
 			const [row] = await tx
 				.insert(orchestrations)
-				.values({ id, name, headVersion: head ? 1 : 0, createdAt: now })
+				.values({
+					id,
+					name,
+					description: source.description,
+					headVersion: head ? 1 : 0,
+					createdAt: now,
+				})
 				.returning();
 			if (head) {
 				await tx.insert(orchestrationVersions).values({
@@ -171,6 +222,21 @@ export class OrchestrationStore {
 			}
 			return toView(row as OrchestrationRow);
 		});
+	}
+
+	/** 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。 */
+	async headDocuments(): Promise<OrchestrationDocument[]> {
+		const rows = await this.deps.db
+			.select({ document: orchestrationVersions.document })
+			.from(orchestrations)
+			.innerJoin(
+				orchestrationVersions,
+				and(
+					eq(orchestrationVersions.orchestrationId, orchestrations.id),
+					eq(orchestrationVersions.number, orchestrations.headVersion),
+				),
+			);
+		return rows.map((r) => r.document);
 	}
 
 	async get(id: string): Promise<OrchestrationView | undefined> {

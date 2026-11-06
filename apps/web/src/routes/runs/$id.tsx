@@ -1,14 +1,15 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { RunPage } from "#/runs/RunPage";
+import { z } from "zod";
+import { MonitorPage } from "#/monitor/MonitorPage";
 
-/** 运行视图：实时（运行中）或回看（已结束）某次运行。 */
+/** 运行监控页（全屏，不带外壳）：实时或回看某次运行。`?node=<节点 ID>` 打开时选中该节点。 */
 export const Route = createFileRoute("/runs/$id")({
-	// 画布只在浏览器中渲染。
-	ssr: false,
-	component: RunRoute,
+	validateSearch: z.object({ node: z.string().optional() }),
+	component: MonitorRoute,
 });
 
-function RunRoute() {
+function MonitorRoute() {
 	const { id } = Route.useParams();
-	return <RunPage key={id} runId={id} />;
+	const { node } = Route.useSearch();
+	return <MonitorPage key={id} runId={id} initialNode={node} />;
 }

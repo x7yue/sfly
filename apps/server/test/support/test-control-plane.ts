@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Agent } from "undici";
 import type { Clock } from "../../src/clock.js";
 import {
 	type ControlPlane,
@@ -41,7 +42,14 @@ const portOf = (url: string) => Number(new URL(url).port);
 export async function startTestControlPlane(
 	options: { clock?: Clock; agentToken?: string } & Pick<
 		ControlPlaneOptions,
-		"logLimitBytes" | "artifactLimitBytes" | "retentionDays" | "leaseMs" | "sdkWheelDir"
+		| "logLimitBytes"
+		| "metricLimitBytes"
+		| "artifactLimitBytes"
+		| "retentionDays"
+		| "metricRetentionDays"
+		| "leaseMs"
+		| "sdkWheelDir"
+		| "webDir"
 	> = {},
 ): Promise<TestControlPlane> {
 	const clock = options.clock ?? new ManualClock();
@@ -54,10 +62,15 @@ export async function startTestControlPlane(
 			clock,
 			agentToken: options.agentToken,
 			logLimitBytes: options.logLimitBytes,
+			metricLimitBytes: options.metricLimitBytes,
+			// 指标写入扫描（#29）同样调快。
+			metricFlushIntervalMs: 20,
 			artifactLimitBytes: options.artifactLimitBytes,
 			retentionDays: options.retentionDays,
+			metricRetentionDays: options.metricRetentionDays,
 			leaseMs: options.leaseMs,
 			sdkWheelDir: options.sdkWheelDir,
+			webDir: options.webDir,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 定时 / Sleep 节点的定时器扫描（#14）同样调快。
@@ -77,6 +90,10 @@ export async function startTestControlPlane(
 		throw error;
 	}
 
+	// 每个控制面实例一套独立的 HTTP 连接池：重启时销毁旧池，重启后的请求不会复用
+	// 已被旧实例关闭的 keep-alive 连接（全局 fetch 的连接池会复用，偶发 ECONNRESET）。
+	let dispatcher = new Agent();
+
 	return {
 		get current() {
 			return current;
@@ -90,15 +107,20 @@ export async function startTestControlPlane(
 		clock,
 		database,
 		dataDir,
-		fetch: (path, init) => fetch(`${current.httpUrl}${path}`, init),
+		fetch: (path, init) =>
+			fetch(`${current.httpUrl}${path}`, { ...init, dispatcher } as RequestInit),
 		async restart(whileDown) {
 			const ports = { http: portOf(current.httpUrl), grpc: portOf(current.grpcUrl) };
 			await current.close();
+			const old = dispatcher;
+			dispatcher = new Agent();
+			await old.destroy();
 			await whileDown?.();
 			current = await start(ports);
 		},
 		async close() {
 			await current.close();
+			await dispatcher.destroy();
 			await database.drop();
 			await rm(dataDir, { recursive: true, force: true });
 		},

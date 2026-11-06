@@ -79,6 +79,9 @@ describe("sfly publish → 控制面", () => {
 						order: ["text", "times"],
 					},
 					outputs: { type: "object", properties: { text: {} } },
+					// 没有声明指标的节点类型：空的指标和图表，没有默认图表。
+					metrics: [],
+					charts: [],
 				},
 			],
 		});

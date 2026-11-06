@@ -126,7 +126,7 @@ describe("结构警告", () => {
 		]);
 	});
 
-	it("包节点没有 Agent，编排也没有默认 Agent", () => {
+	it("包节点没有 Agent，场景也没有默认 Agent", () => {
 		const d = doc(
 			[entry(), pkg("a"), pkg("b", "agent-b")],
 			[chain("entry", "a"), chain("a", "b")],
@@ -136,7 +136,7 @@ describe("结构警告", () => {
 			{
 				code: "missing_agent",
 				node_id: "a",
-				message: "节点 a 没有选择 Agent，编排也没有默认 Agent",
+				message: "节点 a 没有选择 Agent，场景也没有默认 Agent",
 			},
 		]);
 	});

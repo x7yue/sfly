@@ -13,6 +13,7 @@ pub mod dev;
 pub mod executor;
 pub mod install;
 pub mod logs;
+pub mod metrics;
 pub mod process_tree;
 pub mod sdk;
 pub mod venv;
@@ -85,6 +86,8 @@ pub struct Config {
     pub python: Option<String>,
     /// 与控制面断开期间最多排队多少字节的日志；超出后丢弃新的日志批次（控制面看到序号缺口）。
     pub telemetry_queue_bytes: usize,
+    /// 与控制面断开期间最多排队多少个指标点（所有任务合计）；超出后丢弃最早的点，恢复后上报丢弃计数。
+    pub metric_queue_points: usize,
 }
 
 impl Config {
@@ -102,6 +105,7 @@ impl Config {
             terminate_grace: DEFAULT_TERMINATE_GRACE,
             python: None,
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
+            metric_queue_points: metrics::DEFAULT_METRIC_QUEUE_POINTS,
         }
     }
 }
@@ -593,7 +597,8 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let scratch = work_dir.join(".install");
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
-    let (telemetry_tx, mut telemetry_rx) = logs::telemetry(config.telemetry_queue_bytes);
+    let (telemetry_tx, mut telemetry_rx) =
+        logs::telemetry(config.telemetry_queue_bytes, config.metric_queue_points);
     let http = reqwest::Client::new();
     let runtime = Arc::new(Runtime {
         name: config.name.clone(),
@@ -710,7 +715,7 @@ fn result_message(result: TaskResult) -> AgentMessage {
 struct Channels<'a> {
     results: &'a mut mpsc::UnboundedReceiver<TaskResult>,
     installs: &'a mut mpsc::UnboundedReceiver<InstallStatus>,
-    /// 日志与进度；先于结果处理，任务的日志总在它的结果之前发出。
+    /// 日志、进度与指标；先于结果处理，任务的日志和指标总在它的结果之前发出。
     telemetry: &'a mut logs::TelemetryReceiver,
     /// 控制面放弃的任务，结束时丢弃结果。
     abandoned: &'a mut HashSet<(String, u32)>,

@@ -109,6 +109,78 @@
               "properties"
             ],
             "additionalProperties": {}
+          },
+          "metrics": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                },
+                "unit": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "gauge",
+                    "counter"
+                  ]
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "unit",
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "charts": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "line",
+                    "area",
+                    "bar",
+                    "stat"
+                  ]
+                },
+                "metrics": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                  }
+                }
+              },
+              "required": [
+                "title",
+                "type",
+                "metrics"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "primary_metric": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
           }
         },
         "required": [

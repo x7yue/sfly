@@ -18,6 +18,8 @@ interface Preflight {
 	version: number;
 	params: Array<Record<string, unknown>>;
 	problems: Problem[];
+	packages: Record<string, string>;
+	agents: Array<{ name: string; default: boolean; status: string }>;
 }
 
 /** 入口节点 + 若干 stub 包节点串成的单链。 */
@@ -75,6 +77,8 @@ describe("运行视图", () => {
 					{ name: "retries", type: "number", default: 3, required: false, secret: false },
 				],
 				problems: [],
+				packages: { stub: "1.0.0" },
+				agents: [{ name: "agent-a", default: true, status: "online" }],
 			});
 		});
 
@@ -88,7 +92,13 @@ describe("运行视图", () => {
 			doc.nodes.push({ id: "lonely", kind: "package", package: "stub", node: "echo" });
 			const id = await api.orchestrationWith(doc);
 
-			const { problems } = await api.getJson<Preflight>(`/orchestrations/${id}/preflight`);
+			const { problems, agents: referenced } = await api.getJson<Preflight>(
+				`/orchestrations/${id}/preflight`,
+			);
+			expect(referenced).toEqual([
+				{ name: "agent-a", default: true, status: "online" },
+				{ name: "ghost", default: false, status: "unknown" },
+			]);
 			const found = problems.map((p) => [p.code, p.node_id]);
 			expect(found).toEqual(
 				expect.arrayContaining([
@@ -113,9 +123,10 @@ describe("运行视图", () => {
 			await agent.disconnect();
 			const id = await api.orchestrationWith(chain([{ id: "a" }]));
 
-			expect((await api.getJson<Preflight>(`/orchestrations/${id}/preflight`)).problems).toEqual(
-				[],
-			);
+			expect(await api.getJson<Preflight>(`/orchestrations/${id}/preflight`)).toMatchObject({
+				problems: [],
+				agents: [{ name: "agent-a", default: true, status: "offline" }],
+			});
 			const runId = await api.triggerOk(id);
 			expect((await api.node(runId, "a")).status).toBe("queued");
 		});
@@ -128,6 +139,8 @@ describe("运行视图", () => {
 				version: 0,
 				params: [],
 				problems: [{ code: "no_version" }],
+				packages: {},
+				agents: [],
 			});
 			const missing = "00000000-0000-0000-0000-000000000000";
 			expect((await api.get(`/orchestrations/${missing}/preflight`)).status).toBe(404);
@@ -267,6 +280,7 @@ describe("运行视图", () => {
 						orchestration_id: id,
 						orchestration_version: 2,
 						status: "running",
+						cancelling: false,
 						triggered_by: "小红",
 						started_at: "2026-01-01T00:01:40.000Z",
 						ended_at: null,
@@ -276,12 +290,23 @@ describe("运行视图", () => {
 						orchestration_id: id,
 						orchestration_version: 1,
 						status: "success",
+						cancelling: false,
 						triggered_by: "tester",
 						started_at: "2026-01-01T00:00:00.000Z",
 						ended_at: "2026-01-01T00:01:30.000Z",
 					},
 				],
 			});
+
+			// 取消后等待任务结束的运行标为取消中。
+			await api.cancelOk(second);
+			expect(
+				(
+					await api.getJson<{ runs: { id: string; cancelling: boolean }[] }>(
+						`/orchestrations/${id}/runs`,
+					)
+				).runs[0],
+			).toMatchObject({ id: second, status: "running", cancelling: true });
 		});
 	});
 });

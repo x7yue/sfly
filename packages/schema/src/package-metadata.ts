@@ -22,14 +22,78 @@ export const IoSchema = z.looseObject({
 	order: z.array(z.string()).optional(),
 });
 
-export const NodeTypeMetadata = z.strictObject({
-	name: NodeName,
-	title: z.string().min(1),
-	/** 入口：`module:function`。 */
-	entry: z.string().regex(/^[A-Za-z_][\w.]*:[A-Za-z_]\w*$/, "入口必须形如 module:function"),
-	inputs: IoSchema,
-	outputs: IoSchema,
+/** 每个节点类型最多声明的指标数。 */
+export const MAX_METRICS = 50;
+/** 每个节点类型最多声明的图表数。 */
+export const MAX_CHARTS = 20;
+
+/** 指标名：标识符。 */
+export const MetricName = z
+	.string()
+	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "指标名必须是标识符（字母、数字、下划线，不以数字开头）");
+
+/** 指标声明：`gauge` 瞬时值 | `counter` 累计值。 */
+export const MetricDeclaration = z.strictObject({
+	name: MetricName,
+	unit: z.string(),
+	kind: z.enum(["gauge", "counter"]),
+	description: z.string().optional(),
 });
+
+/** 图表声明：把一个或几个本节点类型声明的指标画出来。 */
+export const ChartDeclaration = z.strictObject({
+	title: z.string().min(1),
+	type: z.enum(["line", "area", "bar", "stat"]),
+	metrics: z.array(MetricName).min(1),
+});
+
+export const NodeTypeMetadata = z
+	.strictObject({
+		name: NodeName,
+		title: z.string().min(1),
+		/** 入口：`module:function`。 */
+		entry: z.string().regex(/^[A-Za-z_][\w.]*:[A-Za-z_]\w*$/, "入口必须形如 module:function"),
+		inputs: IoSchema,
+		outputs: IoSchema,
+		/** 节点运行时上报的指标；早于指标功能构建的节点包没有这个字段。 */
+		metrics: z.array(MetricDeclaration).max(MAX_METRICS).optional(),
+		/** 图表；没被任何图表引用的指标由控制面 API 补上默认图表。 */
+		charts: z.array(ChartDeclaration).max(MAX_CHARTS).optional(),
+		/** 主指标：一个已声明的指标名；没有时紧凑位置不显示。 */
+		primary_metric: MetricName.optional(),
+	})
+	.superRefine((node, ctx) => {
+		// 交叉引用约束 JSON Schema 表达不了：Python CLI 在 sfly build 时做同样的检查。
+		const names = new Set<string>();
+		for (const [i, metric] of (node.metrics ?? []).entries()) {
+			if (names.has(metric.name)) {
+				ctx.addIssue({
+					code: "custom",
+					path: ["metrics", i, "name"],
+					message: `指标名 ${metric.name} 重复`,
+				});
+			}
+			names.add(metric.name);
+		}
+		for (const [i, chart] of (node.charts ?? []).entries()) {
+			for (const ref of chart.metrics) {
+				if (!names.has(ref)) {
+					ctx.addIssue({
+						code: "custom",
+						path: ["charts", i, "metrics"],
+						message: `图表 ${chart.title} 引用了未声明的指标 ${ref}`,
+					});
+				}
+			}
+		}
+		if (node.primary_metric !== undefined && !names.has(node.primary_metric)) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["primary_metric"],
+				message: `主指标 ${node.primary_metric} 未声明`,
+			});
+		}
+	});
 
 /** 节点包元信息：节点包归档中的 `sfly-package.json`。 */
 export const PackageMetadata = z
@@ -48,5 +112,14 @@ export const PackageMetadata = z
 	})
 	.meta({ title: "sfly 节点包元信息" });
 
+/**
+ * 节点包查询 API 返回的图表：声明的图表（default=false）之后，是控制面为没被任何图表引用的
+ * 指标生成的默认图表（default=true）。
+ */
+export const ChartView = ChartDeclaration.extend({ default: z.boolean() });
+
 export type PackageMetadata = z.infer<typeof PackageMetadata>;
+export type ChartView = z.infer<typeof ChartView>;
 export type NodeTypeMetadata = z.infer<typeof NodeTypeMetadata>;
+export type MetricDeclaration = z.infer<typeof MetricDeclaration>;
+export type ChartDeclaration = z.infer<typeof ChartDeclaration>;

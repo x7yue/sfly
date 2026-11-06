@@ -1,38 +1,38 @@
-import { type DocumentDiff, diffDocuments } from "@sfly/orchestration";
+import { diffDocuments } from "@sfly/orchestration";
+import { domainKey, orchestrationsApi, queryKey, type VersionSummaryView } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { cn } from "cn";
+import { HistoryIcon, PencilRulerIcon, RotateCcwIcon } from "lucide-react";
 import { useMemo, useState } from "react";
-import { getOrchestration } from "#/lib/api";
-import { getVersion, listVersions, restoreVersion, type VersionSummary } from "./api";
+import { notify } from "#/components/feedback/notify";
+import { EmptyState, ErrorState } from "#/components/feedback/states";
+import { Page, PageHeader, Panel } from "#/components/page";
+import { apiQuery, callApi } from "#/lib/api";
+import { formatDateTime } from "#/lib/format";
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { DocumentDiffView } from "./DocumentDiffView";
 import { clearDraft, hasDraft } from "./draft";
-import { Modal } from "./Modal";
-import { type NodeMark, ReadOnlyCanvas } from "./ReadOnlyCanvas";
-
-const formatTime = (iso: string) => new Date(iso).toLocaleString();
-
-/** 一侧画布上的差异标记：A 侧标出删除和修改的节点，B 侧标出新增和修改的节点。 */
-function marksOf(diff: DocumentDiff, side: "a" | "b"): Map<string, NodeMark> {
-	const marks = new Map<string, NodeMark>();
-	for (const n of diff.nodes.changed) marks.set(n.id, "changed");
-	for (const n of side === "a" ? diff.nodes.removed : diff.nodes.added) {
-		marks.set(n.id, side === "a" ? "removed" : "added");
-	}
-	return marks;
-}
+import { versionQuery } from "./queries";
+import { marksOf, VersionCanvas } from "./VersionCanvas";
 
 const useVersion = (orchestrationId: string, number: number | undefined) =>
-	useQuery({
-		queryKey: ["orchestration", orchestrationId, "version", number],
-		queryFn: () => getVersion(orchestrationId, number as number),
-		enabled: number !== undefined,
-		// 版本不可变。
-		staleTime: Number.POSITIVE_INFINITY,
-	});
+	useQuery({ ...versionQuery(orchestrationId, number ?? 0), enabled: number !== undefined });
 
 /**
- * 版本历史：列出版本号、作者和时间；选择 A / B 两个版本只读并排查看并对比差异；
- * 恢复 = 用旧版本的内容生成一个新版本（不改写历史）。
+ * 版本历史：列出版本号、作者和时间；任选 A / B 两个版本并排只读对比（差异节点有标记，下方列出差异）；
+ * 恢复 = 用旧版本的内容生成一个新版本（不改写历史）。默认对比最新的两个版本。
  */
 export function VersionHistory({
 	orchestrationId,
@@ -45,18 +45,15 @@ export function VersionHistory({
 	b: number | undefined;
 	onPick: (next: { a?: number; b?: number }) => void;
 }) {
-	const orchestration = useQuery({
-		queryKey: ["orchestration", orchestrationId],
-		queryFn: () => getOrchestration(orchestrationId),
-	});
-	const versions = useQuery({
-		queryKey: ["orchestration", orchestrationId, "versions"],
-		queryFn: () => listVersions(orchestrationId),
-	});
+	const orchestration = useQuery(
+		apiQuery(orchestrationsApi.get, { params: { id: orchestrationId } }),
+	);
+	const versions = useQuery(
+		apiQuery(orchestrationsApi.versions, { params: { id: orchestrationId } }),
+	);
 	const list = versions.data?.versions ?? [];
 	const latest = list[0]?.number;
 
-	// 默认对比最新的两个版本。
 	const pickedB = b ?? latest;
 	const pickedA = a ?? (b === undefined ? list[1]?.number : undefined);
 	const versionA = useVersion(orchestrationId, pickedA);
@@ -68,12 +65,55 @@ export function VersionHistory({
 				: null,
 		[versionA.data, versionB.data],
 	);
+	const [restoring, setRestoring] = useState<VersionSummaryView | null>(null);
 
-	const [restoring, setRestoring] = useState<VersionSummary | null>(null);
-	const [restored, setRestored] = useState<{ from: number; to: number } | null>(null);
+	const name = orchestration.data?.name ?? "…";
+	const editorLink = (
+		<Link
+			to="/orchestrations/$id"
+			params={{ id: orchestrationId }}
+			className={buttonVariants({ variant: "default" })}
+		>
+			<PencilRulerIcon />
+			打开编排画布
+		</Link>
+	);
 
-	if (versions.error) return <p className="sf-err p-8">加载失败：{versions.error.message}</p>;
-	if (!versions.data) return <p className="sf-hint p-8">加载中…</p>;
+	if (versions.data === undefined) {
+		return (
+			<Page>
+				<PageHeader title={name} description="版本历史" actions={editorLink} />
+				{versions.isError ? (
+					<ErrorState
+						title="无法加载版本历史"
+						error={versions.error}
+						onRetry={() => versions.refetch()}
+					/>
+				) : (
+					<output aria-label="加载中" aria-busy="true" className="flex flex-col gap-2">
+						<Skeleton className="h-8 w-72" />
+						<Skeleton className="h-8 w-72" />
+					</output>
+				)}
+			</Page>
+		);
+	}
+	if (list.length === 0) {
+		return (
+			<Page>
+				<PageHeader title={name} description="版本历史" actions={editorLink} />
+				<Panel>
+					<EmptyState
+						icon={<HistoryIcon />}
+						title="还没有保存过版本"
+						description="在编排画布里保存后，这里会列出每个版本的作者和时间。"
+					>
+						{editorLink}
+					</EmptyState>
+				</Panel>
+			</Page>
+		);
+	}
 
 	const panes = [
 		pickedA !== undefined && pickedA !== pickedB
@@ -81,128 +121,179 @@ export function VersionHistory({
 			: null,
 		pickedB !== undefined ? { side: "b" as const, number: pickedB, query: versionB } : null,
 	].filter((p) => p !== null);
+	const comparing = panes.length > 1;
 
 	return (
-		<div className="sf-editor sf-versions">
-			<aside className="sf-versions__list">
-				<div className="flex items-center gap-2 border-b border-[var(--sf-border)] px-3 py-3">
-					<Link
-						to="/orchestrations/$id"
-						params={{ id: orchestrationId }}
-						className="text-sm text-[var(--sf-accent)] hover:underline"
-					>
-						← 返回编辑
-					</Link>
-					<h1 className="truncate text-base font-semibold">
-						{orchestration.data?.name ?? "…"} · 版本历史
-					</h1>
-				</div>
-				{restored && (
-					<p className="border-b border-[var(--sf-border)] px-3 py-2 text-sm text-[var(--sf-success)]">
-						已用版本 {restored.from} 的内容生成版本 {restored.to}。
-					</p>
-				)}
-				{list.length === 0 && (
-					<p className="px-3 py-4 text-sm text-[var(--sf-text-muted)]">还没有保存过版本。</p>
-				)}
-				{list.map((v) => (
-					<div
-						key={v.number}
-						className="sf-version"
-						data-picked={v.number === pickedA || v.number === pickedB}
-					>
-						<span className="sf-version__no">v{v.number}</span>
-						<span className="text-xs text-[var(--sf-text-muted)]">
-							{v.number === latest ? "最新" : ""}
-						</span>
-						<span className="sf-pick">
-							<button
-								type="button"
-								aria-pressed={v.number === pickedA}
-								aria-label={`把版本 ${v.number} 放在左侧（A）`}
-								onClick={() => onPick({ a: v.number, b: pickedB })}
-							>
-								A
-							</button>
-							<button
-								type="button"
-								aria-pressed={v.number === pickedB}
-								aria-label={`把版本 ${v.number} 放在右侧（B）`}
-								onClick={() => onPick({ a: pickedA, b: v.number })}
-							>
-								B
-							</button>
-						</span>
-						<span className="sf-version__meta">
-							{v.author} · {formatTime(v.created_at)}
-							{v.number !== latest && (
-								<button
-									type="button"
-									className="ml-2 text-[var(--sf-accent)] hover:underline"
-									onClick={() => setRestoring(v)}
-								>
-									恢复
-								</button>
-							)}
-						</span>
-					</div>
-				))}
-			</aside>
-			<main className="sf-versions__main">
-				{panes.length > 0 ? (
-					<div className="sf-versions__canvases">
-						{panes.map((pane) => (
-							<div key={pane.side} className="sf-versions__pane">
-								<span className="sf-versions__pane-label">
-									{panes.length > 1 ? `${pane.side.toUpperCase()} · ` : ""}版本 {pane.number}
-									{pane.query.data
-										? ` · ${pane.query.data.author} · ${formatTime(pane.query.data.created_at)}`
-										: ""}
-									（只读）
-								</span>
-								{pane.query.data && (
-									<ReadOnlyCanvas
-										document={pane.query.data.document}
-										marks={diff && panes.length > 1 ? marksOf(diff, pane.side) : undefined}
-									/>
-								)}
-							</div>
-						))}
-					</div>
-				) : (
-					<div className="flex-1" />
-				)}
-				{panes.length > 1 && (
-					<section className="sf-versions__diff">
-						<h2 className="mb-2 text-sm font-semibold">
-							版本 {pickedA} → 版本 {pickedB} 的差异
-						</h2>
-						{diff ? (
-							<DocumentDiffView
-								diff={diff}
-								beforeLabel={`版本 ${pickedA}`}
-								afterLabel={`版本 ${pickedB}`}
+		<Page className="max-w-none">
+			<PageHeader title={name} count={list.length} description="版本历史" actions={editorLink} />
+			<div className="grid grid-cols-[300px_minmax(0,1fr)] gap-3">
+				<Panel className="max-h-60 overflow-y-auto">
+					<ul aria-label="版本" className="m-0 list-none p-1">
+						{list.map((v) => (
+							<VersionRow
+								key={v.number}
+								version={v}
+								latest={v.number === latest}
+								pickedA={v.number === pickedA}
+								pickedB={v.number === pickedB}
+								onPickA={() => onPick({ a: v.number, b: pickedB })}
+								onPickB={() => onPick({ a: pickedA, b: v.number })}
+								onRestore={() => setRestoring(v)}
 							/>
-						) : (
-							<p className="text-sm text-[var(--sf-text-muted)]">加载中…</p>
-						)}
-					</section>
-				)}
-			</main>
-			{restoring && latest !== undefined && (
+						))}
+					</ul>
+				</Panel>
+				<Panel aria-label="差异" className="max-h-60 overflow-y-auto px-4 py-3">
+					{!comparing ? (
+						<p className="m-0 text-sm text-fg-3">
+							用每个版本右侧的 A / B 选择两个版本，并排对比它们的差异。
+						</p>
+					) : diff ? (
+						<DocumentDiffView
+							diff={diff}
+							beforeLabel={`版本 ${pickedA}`}
+							afterLabel={`版本 ${pickedB}`}
+						/>
+					) : (
+						<p className="m-0 text-sm text-fg-3">加载中…</p>
+					)}
+				</Panel>
+			</div>
+			<div className={cn("mt-3 grid gap-3", comparing ? "grid-cols-2" : "grid-cols-1")}>
+				{panes.map((pane) => (
+					<Panel key={pane.side} className="flex flex-col">
+						<div className="flex h-10 items-center gap-2 border-b border-border-soft px-3 text-xs text-fg-2">
+							{comparing && <span className="font-mono text-fg-3">{pane.side.toUpperCase()}</span>}
+							<span className="font-mono text-sm text-fg-1">v{pane.number}</span>
+							{pane.query.data && (
+								<span className="truncate">
+									{pane.query.data.author} · {formatDateTime(pane.query.data.created_at)}
+								</span>
+							)}
+							<span className="ml-auto text-fg-3">只读</span>
+						</div>
+						<div className="relative h-[max(360px,calc(100vh-420px))]">
+							{pane.query.data ? (
+								<VersionCanvas
+									label={`版本 ${pane.number}（只读）`}
+									document={pane.query.data.document}
+									marks={diff && comparing ? marksOf(diff, pane.side) : undefined}
+								/>
+							) : pane.query.isError ? (
+								<ErrorState
+									title={`无法加载版本 ${pane.number}`}
+									error={pane.query.error}
+									onRetry={() => pane.query.refetch()}
+								/>
+							) : (
+								<Skeleton className="absolute inset-3" />
+							)}
+						</div>
+					</Panel>
+				))}
+			</div>
+			{latest !== undefined && (
 				<RestoreDialog
 					orchestrationId={orchestrationId}
 					version={restoring}
 					next={latest + 1}
 					onClose={() => setRestoring(null)}
-					onRestored={(to) => {
+					onRestored={(from, to) => {
 						setRestoring(null);
-						setRestored({ from: restoring.number, to });
-						onPick({ a: restoring.number, b: to });
+						notify.success(`已用版本 ${from} 的内容生成版本 ${to}`);
+						onPick({ a: from, b: to });
 					}}
 				/>
 			)}
-		</div>
+		</Page>
+	);
+}
+
+/** A / B 选择按钮：选中是中性高亮（不用青色）。 */
+function PickButton({
+	side,
+	number,
+	pressed,
+	onClick,
+}: {
+	side: "A" | "B";
+	number: number;
+	pressed: boolean;
+	onClick(): void;
+}) {
+	return (
+		<button
+			type="button"
+			aria-pressed={pressed}
+			aria-label={`把版本 ${number} 放在${side === "A" ? "左侧（A）" : "右侧（B）"}`}
+			onClick={onClick}
+			className={cn(
+				"grid size-6 cursor-pointer place-items-center rounded-sm font-mono text-2xs text-fg-3 hover:bg-raised hover:text-fg-1",
+				pressed && "bg-raised-2 text-fg-1 hover:bg-raised-2",
+			)}
+		>
+			{side}
+		</button>
+	);
+}
+
+function VersionRow({
+	version,
+	latest,
+	pickedA,
+	pickedB,
+	onPickA,
+	onPickB,
+	onRestore,
+}: {
+	version: VersionSummaryView;
+	latest: boolean;
+	pickedA: boolean;
+	pickedB: boolean;
+	onPickA(): void;
+	onPickB(): void;
+	onRestore(): void;
+}) {
+	const picked = pickedA || pickedB;
+	return (
+		<li
+			aria-current={picked || undefined}
+			className={cn(
+				"group flex items-center gap-2 rounded-md px-2 py-1.5",
+				picked ? "bg-raised shadow-[inset_2px_0_0_var(--primary)]" : "hover:bg-raised",
+			)}
+		>
+			<div className="flex min-w-0 flex-1 flex-col">
+				<span className="flex items-center gap-1.5">
+					<span className="font-mono text-sm text-fg-1">v{version.number}</span>
+					{latest && <Badge>最新</Badge>}
+				</span>
+				<span className="truncate text-xs text-fg-3">
+					{version.author} · {formatDateTime(version.created_at)}
+				</span>
+			</div>
+			{!latest && (
+				<Tooltip>
+					<TooltipTrigger
+						render={
+							<Button
+								variant="ghost"
+								size="icon-sm"
+								aria-label={`恢复版本 ${version.number}`}
+								onClick={onRestore}
+							/>
+						}
+					>
+						<RotateCcwIcon />
+					</TooltipTrigger>
+					<TooltipContent>恢复：用这个版本的内容生成新版本</TooltipContent>
+				</Tooltip>
+			)}
+			<span className="flex gap-0.5">
+				<PickButton side="A" number={version.number} pressed={pickedA} onClick={onPickA} />
+				<PickButton side="B" number={version.number} pressed={pickedB} onClick={onPickB} />
+			</span>
+		</li>
 	);
 }
 
@@ -214,57 +305,76 @@ function RestoreDialog({
 	onRestored,
 }: {
 	orchestrationId: string;
-	version: VersionSummary;
+	version: VersionSummaryView | null;
 	next: number;
 	onClose: () => void;
-	onRestored: (number: number) => void;
+	onRestored: (from: number, to: number) => void;
 }) {
 	const queryClient = useQueryClient();
-	const [draftExists] = useState(() => hasDraft(orchestrationId));
+	const draftExists = useMemo(
+		() => version !== null && hasDraft(orchestrationId),
+		[version, orchestrationId],
+	);
 	const restore = useMutation({
-		mutationFn: () => restoreVersion(orchestrationId, version.number),
-		onSuccess: (saved) => {
+		mutationFn: (number: number) =>
+			callApi(orchestrationsApi.restoreVersion, {
+				params: { id: orchestrationId, number: String(number) },
+			}),
+		onSuccess: (saved, from) => {
 			// 本地草稿基于旧的最新版本；恢复后从新版本开始编辑。
 			clearDraft(orchestrationId);
-			queryClient.removeQueries({ queryKey: ["orchestration", orchestrationId, "head"] });
-			queryClient.invalidateQueries({ queryKey: ["orchestration", orchestrationId] });
-			queryClient.invalidateQueries({ queryKey: ["orchestrations"] });
-			onRestored(saved.number);
+			queryClient.removeQueries({
+				queryKey: queryKey(orchestrationsApi.head, { params: { id: orchestrationId } }),
+			});
+			void queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.get) });
+			onRestored(from, saved.number);
 		},
 	});
 	return (
-		<Modal
-			title={`恢复版本 ${version.number}`}
-			description={`用版本 ${version.number}（${version.author} · ${formatTime(version.created_at)}）的内容生成新的版本 ${next}。历史版本保持不变。`}
-			onClose={onClose}
-			footer={
-				<>
-					<button type="button" className="sf-btn sf-btn--ghost" onClick={onClose}>
-						取消
-					</button>
-					<button
-						type="button"
-						className="sf-btn sf-btn--primary"
-						disabled={restore.isPending}
-						onClick={() => restore.mutate()}
-					>
-						{restore.isPending ? "恢复中…" : `恢复为版本 ${next}`}
-					</button>
-				</>
-			}
+		<Dialog
+			open={version !== null}
+			onOpenChange={(open) => {
+				if (!open) {
+					restore.reset();
+					onClose();
+				}
+			}}
 		>
-			{(draftExists || restore.error) && (
-				<>
-					{draftExists && (
-						<p className="text-sm text-[var(--sf-warning)]">
-							本浏览器中有这份编排未保存的修改，恢复后会被放弃。
-						</p>
-					)}
-					{restore.error && (
-						<p className="text-sm text-[var(--sf-danger)]">恢复失败：{restore.error.message}</p>
-					)}
-				</>
-			)}
-		</Modal>
+			<DialogContent>
+				{version && (
+					<>
+						<DialogHeader>
+							<DialogTitle>恢复版本 {version.number}</DialogTitle>
+							<DialogDescription>
+								用版本 {version.number}（{version.author} · {formatDateTime(version.created_at)}
+								）的内容生成新的版本 {next}。历史版本保持不变。
+							</DialogDescription>
+						</DialogHeader>
+						{draftExists && (
+							<p className="m-0 text-sm text-warn">
+								本浏览器中有这个场景未保存的修改，恢复后会被放弃。
+							</p>
+						)}
+						{restore.error && (
+							<p role="alert" className="m-0 text-sm text-danger-fg">
+								恢复失败：{restore.error.message}
+							</p>
+						)}
+						<DialogFooter>
+							<Button variant="ghost" onClick={onClose}>
+								取消
+							</Button>
+							<Button
+								variant="primary"
+								disabled={restore.isPending}
+								onClick={() => restore.mutate(version.number)}
+							>
+								{restore.isPending ? "恢复中…" : `恢复为版本 ${next}`}
+							</Button>
+						</DialogFooter>
+					</>
+				)}
+			</DialogContent>
+		</Dialog>
 	);
 }

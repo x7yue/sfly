@@ -1,0 +1,590 @@
+import type { ChainRunView, NodeRunView, OrchestrationDocument, RunView } from "@sfly/schema";
+import { cn } from "cn";
+import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { useShortcut } from "#/components/shortcuts";
+import { nodeStatusView, StatusDot } from "#/components/status";
+import { formatClock, formatDuration } from "#/lib/format";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+	type NodeRef,
+	sameNode,
+	useMonitor,
+	useMonitorActions,
+	useTimeAxis,
+} from "./monitor-state";
+import { ResizeHandle } from "./ResizeHandle";
+import {
+	chainLabel,
+	chainRunStatus,
+	documentNodes,
+	isAlways,
+	nodeTitle,
+	orderedChains,
+} from "./run-model";
+import {
+	fractionOf,
+	nodeSegments,
+	type Segment,
+	type SegmentKind,
+	type TimeRange,
+	ticks,
+	zoomFromFractions,
+} from "./timeline";
+
+/** 标签列宽度（px）：节点 ID 不截断，说明文字在剩余宽度里截断。 */
+const LABEL_W = 272;
+/** 拖动超过轨道宽度的这个比例才算拖选（否则是点击）。 */
+const BRUSH_MIN = 0.004;
+/** 拖选范围小于轨道宽度的这个比例时不缩放。 */
+const ZOOM_MIN = 0.01;
+
+const SEGMENT_STYLE: Record<SegmentKind, string> = {
+	ok: "bg-ok/50",
+	run: "bg-signal",
+	fail: "bg-danger",
+	cancel:
+		"bg-[repeating-linear-gradient(135deg,var(--cancelled)_0_3px,transparent_3px_6px)] shadow-[inset_0_0_0_1px_var(--cancelled)] opacity-70",
+	queue:
+		"bg-[repeating-linear-gradient(135deg,var(--border-strong)_0_3px,var(--raised-2)_3px_6px)] shadow-[inset_0_0_0_1px_var(--border-strong)]",
+	wait: "bg-[repeating-linear-gradient(135deg,var(--warn-line)_0_3px,var(--warn-soft)_3px_6px)]",
+};
+
+const SEGMENT_LABEL: Record<SegmentKind, string> = {
+	ok: "执行",
+	run: "执行中",
+	fail: "失败的尝试",
+	cancel: "已取消",
+	queue: "排队等待 Agent",
+	wait: "等待节点",
+};
+
+const LEGEND: SegmentKind[] = ["ok", "run", "fail", "wait", "queue", "cancel"];
+const LEGEND_LABEL: Record<SegmentKind, string> = {
+	...SEGMENT_LABEL,
+	ok: "完成",
+	fail: "失败尝试",
+	queue: "排队",
+};
+
+/** 节点的总耗时：第一段开始到最后一段结束（含排队与等待）。 */
+const spanOf = (segments: Segment[]) =>
+	segments.length === 0
+		? null
+		: Math.max(...segments.map((s) => s.end)) - Math.min(...segments.map((s) => s.start));
+
+/**
+ * 链路时间线（原型 timelineHTML）：每条链实例一行汇总，可以展开到每个节点一行；子流程实例缩进排在派发它的链后面，
+ * 起点画一条调度线。轨道上悬停显示竖线、拖选一段缩放；点节点（标签或区段）选中，底部面板切换到它。
+ * 时间范围、悬停、标记与选中都在共享状态里（monitor-state.tsx），图表工作区（#42）同步使用。
+ */
+export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocument | undefined }) {
+	const { range, live, following, now } = useTimeAxis();
+	const zoom = useMonitor((s) => s.zoom);
+	const actions = useMonitorActions();
+	const [mode, setMode] = useState<"summary" | "expanded">("expanded");
+	const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
+	const [height, setHeight] = useState<number | null>(null);
+	const body = useRef<HTMLDivElement>(null);
+	const chains = useMemo(() => orderedChains(run), [run]);
+	const decls = useMemo(() => documentNodes(doc), [doc]);
+	const nodeCount = run.chains.reduce((n, c) => n + c.nodes.length, 0);
+	useShortcut("monitor-toggle-timeline", () =>
+		setMode((m) => (m === "expanded" ? "summary" : "expanded")),
+	);
+
+	const isOpen = (chain: ChainRunView) => mode === "expanded" && !collapsed.has(chain.id);
+	const toggleChain = (chain: ChainRunView) => {
+		if (mode === "summary") {
+			// 汇总模式下点一条链：只展开这一条。
+			setMode("expanded");
+			setCollapsed(new Set(chains.filter((c) => c.id !== chain.id).map((c) => c.id)));
+			return;
+		}
+		setCollapsed((s) => {
+			const next = new Set(s);
+			if (next.has(chain.id)) next.delete(chain.id);
+			else next.add(chain.id);
+			return next;
+		});
+	};
+
+	return (
+		<section
+			aria-label="链路时间线"
+			className="relative flex-none border-b border-border-soft bg-bg"
+		>
+			<div className="flex items-center gap-2 border-b border-border-soft px-3 py-1.5">
+				<h2 className="m-0 text-sm font-semibold">链路时间线</h2>
+				<span className="text-xs text-fg-3">
+					{run.chains.length} 条链 · {nodeCount} 个节点
+				</span>
+				<fieldset
+					aria-label="时间线显示"
+					className="ml-1.5 flex rounded-md border border-border p-px"
+				>
+					{(
+						[
+							["summary", "汇总"],
+							["expanded", "展开节点"],
+						] as const
+					).map(([value, label]) => (
+						<button
+							key={value}
+							type="button"
+							aria-pressed={mode === value}
+							onClick={() => {
+								setMode(value);
+								setCollapsed(new Set());
+							}}
+							className="h-5.5 rounded-sm px-2 text-xs text-fg-2 aria-pressed:bg-raised-2 aria-pressed:text-fg-1"
+						>
+							{label}
+						</button>
+					))}
+				</fieldset>
+				<span className="flex-1" />
+				<ul
+					aria-label="图例"
+					className="m-0 flex list-none items-center gap-3 p-0 text-2xs text-fg-3"
+				>
+					{LEGEND.map((kind) => (
+						<li key={kind} className="inline-flex items-center gap-1.25">
+							<b className={cn("inline-block h-2 w-3.5 rounded-[2px]", SEGMENT_STYLE[kind])} />
+							{LEGEND_LABEL[kind]}
+						</li>
+					))}
+				</ul>
+				<span aria-hidden className="mx-1 h-4.5 w-px bg-border" />
+				{zoom ? (
+					<>
+						<span className="font-mono text-2xs text-fg-3" data-testid="zoom-range">
+							{formatClock(zoom.start)} – {formatClock(zoom.end)}
+						</span>
+						{!live && (
+							<Button size="sm" onClick={actions.followLive}>
+								重置时间范围
+							</Button>
+						)}
+					</>
+				) : (
+					<span className="text-2xs text-fg-3">在轨道上拖选一段时间可缩放</span>
+				)}
+				{live &&
+					(following ? (
+						<span className="inline-flex h-6.5 items-center gap-1.5 rounded-full border border-signal-line px-2.5 text-xs text-signal-fg">
+							<StatusDot kind="running" />
+							实时跟随
+						</span>
+					) : (
+						<Button size="sm" onClick={actions.followLive}>
+							回到实时
+						</Button>
+					))}
+			</div>
+			<div
+				ref={body}
+				className="relative overflow-auto"
+				style={
+					height === null ? { maxHeight: mode === "expanded" ? "30vh" : undefined } : { height }
+				}
+			>
+				<Axis range={range} origin={Date.parse(run.started_at)} />
+				<Rows run={run} range={range} now={now} live={live} onZoom={actions.zoom}>
+					{chains.map((chain) => {
+						const open = isOpen(chain);
+						return (
+							<ChainRows
+								key={chain.id}
+								chain={chain}
+								cancelling={run.cancel !== null}
+								open={open}
+								range={range}
+								now={now}
+								decls={decls}
+								onToggle={() => toggleChain(chain)}
+							/>
+						);
+					})}
+				</Rows>
+			</div>
+			<ResizeHandle
+				label="调整时间线高度"
+				edge="bottom"
+				height={height}
+				measure={() => body.current?.clientHeight ?? 0}
+				min={56}
+				max={() => window.innerHeight * 0.62}
+				onResize={setHeight}
+				onReset={() => setHeight(null)}
+			/>
+		</section>
+	);
+}
+
+/** 时间轴刻度（吸顶）。 */
+function Axis({ range, origin }: { range: TimeRange; origin: number }) {
+	const items = ticks(range, { origin });
+	return (
+		<div
+			className="sticky top-0 z-3 grid h-5.5 border-b border-border-soft bg-bg"
+			style={{ gridTemplateColumns: `${LABEL_W}px 1fr` }}
+		>
+			<div className="px-3 pt-0.75 text-2xs text-fg-3">{formatClock(range.start)} 起</div>
+			<div className="relative mr-3.5" data-axis-track>
+				{items.map((t) => (
+					<span
+						key={t.at}
+						className="absolute top-0.75 -translate-x-1/2 font-mono text-2xs whitespace-nowrap text-fg-3"
+						style={{ left: `${fractionOf(t.at, range) * 100}%` }}
+					>
+						{t.label}
+					</span>
+				))}
+			</div>
+		</div>
+	);
+}
+
+/**
+ * 行容器：在轨道区域上处理悬停（竖线）、拖选（缩放）与点击区段（选中节点），并画网格线、现在、日志标记与悬停竖线。
+ */
+function Rows({
+	run,
+	range,
+	now,
+	live,
+	onZoom,
+	children,
+}: {
+	run: RunView;
+	range: TimeRange;
+	now: number;
+	live: boolean;
+	onZoom: (range: TimeRange) => void;
+	children: React.ReactNode;
+}) {
+	const actions = useMonitorActions();
+	const hoverAt = useMonitor((s) => s.hoverAt);
+	const marker = useMonitor((s) => s.marker);
+	const lines = useRef<HTMLDivElement>(null);
+	const [brush, setBrush] = useState<{ from: number; to: number; moved: boolean } | null>(null);
+	const brushRef = useRef(brush);
+	brushRef.current = brush;
+
+	/** 指针在轨道上的位置（0–1）；在标签列上时为 null。 */
+	const fractionAt = (clientX: number) => {
+		const rect = lines.current?.getBoundingClientRect();
+		if (!rect || rect.width === 0) return null;
+		const f = (clientX - rect.left) / rect.width;
+		return f < 0 ? null : Math.min(1, f);
+	};
+	const timeAt = (f: number) => range.start + f * (range.end - range.start);
+	const show = (t: number | null) => t !== null && t >= range.start && t <= range.end;
+	const at = (t: number) => `${fractionOf(t, range) * 100}%`;
+	const items = ticks(range, { origin: Date.parse(run.started_at) });
+
+	return (
+		// 指针悬停与拖选只是可视化辅助；节点用标签列的按钮选中（键盘可达）。
+		<div
+			className="relative select-none"
+			onPointerMove={(e) => {
+				const f = fractionAt(e.clientX);
+				actions.hover(f === null ? null : timeAt(f));
+				const b = brushRef.current;
+				if (b && f !== null) {
+					setBrush({ ...b, to: f, moved: b.moved || Math.abs(f - b.from) > BRUSH_MIN });
+				}
+			}}
+			onPointerLeave={() => {
+				if (!brushRef.current) actions.hover(null);
+			}}
+			onPointerDown={(e) => {
+				if (e.button !== 0) return;
+				const f = fractionAt(e.clientX);
+				if (f === null) return;
+				e.currentTarget.setPointerCapture(e.pointerId);
+				setBrush({ from: f, to: f, moved: false });
+			}}
+			onPointerUp={(e) => {
+				const b = brushRef.current;
+				setBrush(null);
+				if (!b) return;
+				const f = fractionAt(e.clientX) ?? b.to;
+				if (b.moved) {
+					if (Math.abs(f - b.from) > ZOOM_MIN) onZoom(zoomFromFractions(range, b.from, f));
+					return;
+				}
+				// 没有拖动：点的是区段就选中它的节点（指针捕获后 target 是容器，按坐标找区段）。
+				const hit = document
+					.elementsFromPoint(e.clientX, e.clientY)
+					.find((el) => el instanceof HTMLElement && el.dataset.segment);
+				const ref = hit instanceof HTMLElement ? hit.dataset : undefined;
+				if (ref?.chain && ref.node)
+					actions.select({ chainInstanceId: ref.chain, nodeId: ref.node });
+			}}
+			onPointerCancel={() => setBrush(null)}
+		>
+			{children}
+			<div
+				ref={lines}
+				aria-hidden
+				className="pointer-events-none absolute top-0 right-3.5 bottom-0"
+				style={{ left: LABEL_W }}
+			>
+				{items.map((t) => (
+					<i
+						key={t.at}
+						className="absolute top-0 bottom-0 w-px bg-fg-1/4"
+						style={{ left: at(t.at) }}
+					/>
+				))}
+				{live && show(now) && (
+					<div
+						data-now-line
+						className="absolute top-0 bottom-0 z-2 w-px bg-signal-line"
+						style={{ left: at(now) }}
+					/>
+				)}
+				{marker !== null && show(marker) && (
+					<div
+						data-marker-line
+						className="absolute top-0 bottom-0 z-4 ml-px border-l-[1.5px] border-dashed border-warn"
+						style={{ left: at(marker) }}
+					/>
+				)}
+				{hoverAt !== null && show(hoverAt) && (
+					<div
+						data-hover-line
+						className="absolute top-0 bottom-0 z-4 w-px bg-fg-1/55"
+						style={{ left: at(hoverAt) }}
+					/>
+				)}
+				{brush?.moved && (
+					<div
+						data-brush
+						className="absolute top-0 bottom-0 z-3 border-x border-fg-1/40 bg-fg-1/7"
+						style={{
+							left: `${Math.min(brush.from, brush.to) * 100}%`,
+							width: `${Math.abs(brush.to - brush.from) * 100}%`,
+						}}
+					/>
+				)}
+			</div>
+		</div>
+	);
+}
+
+function ChainRows({
+	chain,
+	cancelling,
+	open,
+	range,
+	now,
+	decls,
+	onToggle,
+}: {
+	chain: ChainRunView;
+	/** 运行已取消、正在等待结束。 */
+	cancelling: boolean;
+	open: boolean;
+	range: TimeRange;
+	now: number;
+	decls: ReturnType<typeof documentNodes>;
+	onToggle: () => void;
+}) {
+	const selected = useMonitor((s) => s.selected);
+	const status = chainRunStatus(chain, cancelling);
+	const segments = chain.nodes.map((n) => nodeSegments(n, now));
+	const end = chain.ended_at ? Date.parse(chain.ended_at) : now;
+	const indent = chain.depth * 14;
+	return (
+		<>
+			<div
+				data-chain-row={chain.id}
+				className="grid h-7.5 items-center border-b border-fg-1/3 bg-fg-1/2"
+				style={{ gridTemplateColumns: `${LABEL_W}px 1fr` }}
+			>
+				<button
+					type="button"
+					aria-expanded={open}
+					onClick={onToggle}
+					title={chain.depth > 0 ? `由 ${chain.async_node_id} 派发` : undefined}
+					className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
+					style={{ paddingLeft: 12 + indent }}
+				>
+					<span className="grid w-3.5 flex-none place-items-center text-fg-3">
+						{chain.nodes.length > 0 &&
+							(open ? (
+								<ChevronDownIcon className="size-3.5" />
+							) : (
+								<ChevronRightIcon className="size-3.5" />
+							))}
+					</span>
+					<StatusDot kind={status.kind} />
+					<span className="sr-only">{status.label}</span>
+					<b className="flex-none font-medium">{chainLabel(chain)}</b>
+					{chain.async_node_id && (
+						<span className="min-w-0 truncate font-mono text-2xs text-fg-3">
+							← {chain.async_node_id}
+						</span>
+					)}
+					<span className="ml-auto min-w-13 flex-none text-right font-mono text-2xs text-fg-3">
+						{formatDuration(end - Date.parse(chain.started_at))}
+					</span>
+				</button>
+				<div className="relative mr-3.5 h-full">
+					{chain.depth > 0 && (
+						<DispatchLine
+							at={Date.parse(chain.started_at)}
+							range={range}
+							from={chain.async_node_id}
+						/>
+					)}
+					{chain.nodes.map((node, i) =>
+						(segments[i] ?? []).map((seg) => (
+							<SegmentBar
+								key={`${node.node_id}:${seg.taskId}:${seg.kind}`}
+								seg={seg}
+								range={range}
+								node={{ chainInstanceId: chain.id, nodeId: node.node_id }}
+								selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
+								chainRow
+							/>
+						)),
+					)}
+				</div>
+			</div>
+			{open &&
+				chain.nodes.map((node, i) => (
+					<NodeRow
+						key={node.node_id}
+						chain={chain}
+						node={node}
+						segments={segments[i] ?? []}
+						range={range}
+						decls={decls}
+						indent={indent}
+						selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
+					/>
+				))}
+		</>
+	);
+}
+
+function NodeRow({
+	chain,
+	node,
+	segments,
+	range,
+	decls,
+	indent,
+	selected,
+}: {
+	chain: ChainRunView;
+	node: NodeRunView;
+	segments: Segment[];
+	range: TimeRange;
+	decls: ReturnType<typeof documentNodes>;
+	indent: number;
+	selected: boolean;
+}) {
+	const actions = useMonitorActions();
+	const decl = decls.get(node.node_id);
+	const status = nodeStatusView(node.status);
+	const span = spanOf(segments);
+	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
+	const title = nodeTitle(node, decl);
+	return (
+		<div
+			data-node-row={node.node_id}
+			data-selected={selected || undefined}
+			className="grid h-6.5 items-center border-b border-fg-1/3 data-selected:bg-fg-1/5"
+			style={{ gridTemplateColumns: `${LABEL_W}px 1fr` }}
+		>
+			<button
+				type="button"
+				aria-pressed={selected}
+				aria-label={`${node.node_id} ${title} ${status.label}`}
+				onClick={() => actions.select(selected ? null : ref)}
+				title={title}
+				className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
+				style={{ paddingLeft: 30 + indent }}
+			>
+				<StatusDot kind={status.kind} />
+				<span className="flex-none font-mono">{node.node_id}</span>
+				<span className="min-w-0 flex-1 truncate text-2xs text-fg-3">{title}</span>
+				{node.attempts.length > 1 && <Badge className="h-4 px-1">×{node.attempts.length}</Badge>}
+				{isAlways(decl) && (
+					<Badge variant="warn" className="h-4 px-1">
+						always
+					</Badge>
+				)}
+				<span className="ml-auto min-w-13 flex-none text-right font-mono text-2xs text-fg-3">
+					{span === null ? (node.status === "skipped" ? "跳过" : "—") : formatDuration(span)}
+				</span>
+			</button>
+			<div className="relative mr-3.5 h-full">
+				{segments.map((seg) => (
+					<SegmentBar
+						key={`${seg.taskId}:${seg.kind}`}
+						seg={seg}
+						range={range}
+						node={ref}
+						selected={selected}
+					/>
+				))}
+			</div>
+		</div>
+	);
+}
+
+function SegmentBar({
+	seg,
+	range,
+	node,
+	selected,
+	chainRow,
+}: {
+	seg: Segment;
+	range: TimeRange;
+	node: NodeRef;
+	selected: boolean;
+	chainRow?: boolean;
+}) {
+	if (seg.end < range.start || seg.start > range.end) return null;
+	const left = Math.max(0, fractionOf(seg.start, range)) * 100;
+	const right = Math.min(1, fractionOf(seg.end, range)) * 100;
+	return (
+		<span
+			data-segment={seg.kind}
+			data-chain={node.chainInstanceId}
+			data-node={node.nodeId}
+			title={`${node.nodeId} · 第 ${seg.attempt} 次 · ${SEGMENT_LABEL[seg.kind]} · ${formatDuration(seg.end - seg.start)}`}
+			className={cn(
+				"absolute h-3 min-w-0.5 cursor-pointer rounded-[2px]",
+				chainRow ? "top-2.25" : "top-1.75",
+				SEGMENT_STYLE[seg.kind],
+				selected && "outline-[1.5px] outline-offset-1 outline-selected",
+				seg.live &&
+					seg.kind === "run" &&
+					"after:absolute after:-top-0.5 after:-right-0.75 after:h-4 after:w-1.5 after:animate-status-pulse after:rounded-[2px] after:bg-signal",
+			)}
+			style={{ left: `${left}%`, width: `max(${Math.max(0.25, right - left)}%, 2px)` }}
+		/>
+	);
+}
+
+/** 子流程实例的起点：派发它的时刻画一条青色虚线（调度连线）。 */
+function DispatchLine({ at, range, from }: { at: number; range: TimeRange; from: string | null }) {
+	if (at < range.start || at > range.end) return null;
+	return (
+		<span
+			data-dispatch-line
+			title={`由 ${from} 派发`}
+			className="absolute top-0.5 bottom-0.5 w-0 border-l border-dashed border-signal-line"
+			style={{ left: `${fractionOf(at, range) * 100}%` }}
+		/>
+	);
+}

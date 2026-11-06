@@ -1,3 +1,4 @@
+import { httpContract, systemApi } from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
@@ -5,6 +6,8 @@ import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import type { TaskLogs } from "../logs/task-logs.js";
+import type { MetricQueries } from "../metrics/metric-queries.js";
+import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import type { PresenceRegistry } from "../presence/presence-registry.js";
@@ -12,14 +15,20 @@ import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
+import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
+import { contractRoute, guardHttpContract } from "./contract-route.js";
+import { registerDashboardRoutes } from "./dashboard-routes.js";
 import { sendError } from "./errors.js";
 import { registerLogRoutes } from "./log-routes.js";
+import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
+import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
+import { registerWebApp, stripApiPrefix, type WebApp } from "./web-app.js";
 
 export interface HttpApiDeps {
 	database: Database;
@@ -32,6 +41,8 @@ export interface HttpApiDeps {
 	presence: PresenceRegistry;
 	preflight: Preflight;
 	logs: TaskLogs;
+	metrics: TaskMetrics;
+	metricQueries: MetricQueries;
 	retention: Retention;
 	artifacts: ArtifactStore;
 	/** Agent 共享注册令牌：设置后上传产物要带上它。 */
@@ -40,6 +51,8 @@ export interface HttpApiDeps {
 	publicHttpUrl: () => string;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 前端构建产物（src/http/web-app.ts）；不设置时不提供页面。 */
+	webApp?: WebApp;
 }
 
 const errorCode = (status: number): string =>
@@ -62,13 +75,20 @@ export function buildHttpApi({
 	presence,
 	preflight,
 	logs,
+	metrics,
+	metricQueries,
 	retention,
 	artifacts,
 	agentToken,
 	publicHttpUrl,
 	sdkWheels,
+	webApp,
 }: HttpApiDeps): FastifyInstance {
-	const app = Fastify({ logger });
+	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
+	const app = Fastify({ logger, rewriteUrl: (req) => stripApiPrefix(req.url ?? "/") });
+	// 所有路由都按 @sfly/schema 的 HTTP 契约注册（ADR 0007）：不在契约里的路由、没注册的接口都让启动失败。
+	guardHttpContract(app, httpContract);
+	if (webApp) registerWebApp(app, webApp);
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
 	const sse = registerSse(app);
 
@@ -85,17 +105,17 @@ export function buildHttpApi({
 		return sendError(reply, status, errorCode(status), error.message);
 	});
 
-	app.get("/health", async (_req, reply) => {
+	contractRoute(app, systemApi.health, async (_request, reply) => {
 		const ok = await database.ping();
-		return reply.code(ok ? 200 : 503).send({
-			status: ok ? "ok" : "unavailable",
-			database: ok ? "ok" : "unavailable",
-			time: clock.now().toISOString(),
-		});
+		const health = ok ? "ok" : "unavailable";
+		return reply
+			.code(ok ? 200 : 503)
+			.send({ status: health, database: health, time: clock.now().toISOString() });
 	});
 
-	app.get("/agents", async () => ({ agents: await hub.list() }));
-	registerOrchestrationRoutes(app, { orchestrations, packages });
+	registerAgentRoutes(app, { hub, orchestrations });
+	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
+	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerRunRoutes(app, {
 		db: database.db,
 		engine,
@@ -103,10 +123,13 @@ export function buildHttpApi({
 		preflight,
 		sse,
 		progress: logs.progress,
+		metrics: metrics.increments,
 	});
+	registerRunListRoutes(app, { db: database.db });
 	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
+	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
-	registerPackageRoutes(app, packages);
+	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicHttpUrl });
 

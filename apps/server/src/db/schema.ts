@@ -1,11 +1,12 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
-import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
+import { ON_AGENT_STATUSES, type OrchestrationDocument, type PackageMetadata } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
 	bigint,
 	bigserial,
 	boolean,
+	doublePrecision,
 	index,
 	integer,
 	jsonb,
@@ -68,12 +69,17 @@ export const agents = pgTable("agents", {
 	lastSeenAt: timestamptz("last_seen_at").notNull(),
 });
 
-/** 编排：记录当前最新版本号（0 表示还没有保存过版本）。 */
+/**
+ * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
+ * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
+ */
 export const orchestrations = pgTable("orchestrations", {
 	id: uuid("id").primaryKey(),
 	name: text("name").notNull(),
+	description: text("description").notNull().default(""),
 	headVersion: integer("head_version").notNull().default(0),
 	createdAt: timestamptz("created_at").notNull(),
+	archivedAt: timestamptz("archived_at"),
 });
 
 /** 编排版本：不可变，同一编排内编号唯一、递增。 */
@@ -113,8 +119,8 @@ export type TaskStatus =
 	| "failed"
 	| "skipped"
 	| "cancelled";
-/** 占用 Agent 槽位、由 Agent 负责的任务状态：派发阶段和执行阶段（有租约，心跳续约）。 */
-export const ON_AGENT = ["dispatched", "running"] as const satisfies readonly TaskStatus[];
+/** 占用 Agent 槽位、由 Agent 负责的任务状态：派发阶段和执行阶段（有租约，心跳续约）。定义在 @sfly/schema。 */
+export const ON_AGENT = ON_AGENT_STATUSES satisfies readonly TaskStatus[];
 
 /** 任务的最新进度（ctx.progress）。 */
 export interface TaskProgress {
@@ -151,6 +157,8 @@ export const runs = pgTable(
 		cancelForcedAt: timestamptz("cancel_forced_at"),
 		/** 日志和产物超过保留期被清理的时间（#18，src/retention/retention.ts）；未清理时为空。 */
 		purgedAt: timestamptz("purged_at"),
+		/** 指标超过保留期被判定过期的时间（#32，src/metrics/metric-retention.ts）；之后摘要等接口返回「已过保留期」。 */
+		metricsPurgedAt: timestamptz("metrics_purged_at"),
 	},
 	(t) => [index("runs_orchestration").on(t.orchestrationId), index("runs_ended_at").on(t.endedAt)],
 );
@@ -223,6 +231,12 @@ export const tasks = pgTable(
 		leaseExpiresAt: timestamptz("lease_expires_at"),
 		/** 排队中任务的排队超时时间（#15）：进入 queued 时按节点的 queue_timeout 设置；过期后以 env_error 失败。 */
 		queueExpiresAt: timestamptz("queue_expires_at"),
+		/** 已写入的指标点数（#29，所有指标合计）；达到上限后不再写入。 */
+		metricPoints: bigint("metric_points", { mode: "number" }).notNull().default(0),
+		/** 指标超过单任务上限已被截断（#29）：之后上报的点都被丢弃。 */
+		metricTruncated: boolean("metric_truncated").notNull().default(false),
+		/** Agent 断线排队超过上限而丢弃的指标点数（#29，Agent 在 MetricBatch 中上报）。 */
+		metricDropped: bigint("metric_dropped", { mode: "number" }).notNull().default(0),
 	},
 	(t) => [
 		index("tasks_waiting").on(t.wakeAt).where(sql`${t.status} = 'waiting'`),
@@ -271,4 +285,30 @@ export const nodePackages = pgTable(
 		publishedAt: timestamptz("published_at").notNull(),
 	},
 	(t) => [primaryKey({ columns: [t.name, t.version] })],
+);
+
+/**
+ * 指标摘要（#29）：每个任务（一次尝试）每个指标一行，写段时一起更新；主指标和列表页直接读它，不扫描原始段。
+ * 原始数据在按天分区的分段表 `metric_segments`（drizzle 不支持声明式分区，迁移里手写，见 src/metrics/task-metrics.ts）。
+ */
+export const metricSeries = pgTable(
+	"metric_series",
+	{
+		taskId: uuid("task_id")
+			.notNull()
+			.references(() => tasks.id),
+		runId: uuid("run_id")
+			.notNull()
+			.references(() => runs.id),
+		metric: text("metric").notNull(),
+		points: integer("points").notNull(),
+		min: doublePrecision("min").notNull(),
+		max: doublePrecision("max").notNull(),
+		/** 值的总和（平均值 = sum / points）。 */
+		sum: doublePrecision("sum").notNull(),
+		last: doublePrecision("last").notNull(),
+		firstAt: timestamptz("first_at").notNull(),
+		lastAt: timestamptz("last_at").notNull(),
+	},
+	(t) => [primaryKey({ columns: [t.taskId, t.metric] }), index("metric_series_run").on(t.runId)],
 );

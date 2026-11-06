@@ -6,7 +6,8 @@
 
 - [GLOSSARY.md](./GLOSSARY.md)：统一术语
 - [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)：架构设计
-- [docs/SEMANTICS.md](./docs/SEMANTICS.md)：编排执行语义规范
+- [docs/SEMANTICS.md](./docs/SEMANTICS.md)：场景执行语义规范
+- [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SYSTEM.md)：前端设计体系（token、组件、状态样式、快捷键、HTTP 契约用法）
 - [docs/adr/](./docs/adr/)：架构决策记录
 
 ## 开发
@@ -20,11 +21,13 @@
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试 |
 | `pnpm proto:breaking` | buf breaking 检查 |
 | `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main`、`spec/**`、`impl/**`，PR，以及手动触发；`impl/**` 与手动触发供实现分支在合并前跑 CI） |
-| `pnpm --filter @sfly/server dev` / `pnpm --filter @sfly/web dev` | 启动控制面 / 前端 |
+| `pnpm test:e2e` | 构建前端并运行 Playwright 端到端测试与视觉回归（`apps/web/e2e`；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
+| `pnpm test:e2e:docker` | 在 Playwright 官方镜像中运行（与 CI 相同，视觉基线以它为准；加 `--update-snapshots` 更新基线） |
+| `pnpm --filter @sfly/server dev` / `pnpm --filter @sfly/web dev` | 启动控制面 / 前端开发服务器（端口 3000，`/api` 代理到控制面） |
 
 ## 部署与运维
 
-控制面：`pnpm --filter @sfly/server build` 会把 `sdk/python` 打成 SDK 运行时 wheel 放进 `apps/server/dist/sdk/`（或用 `SFLY_SDK_DIR` 指定目录），控制面通过 `GET /sdk/python/<版本>/<wheel>` 提供下载；其余配置见 `apps/server/src/main.ts` 顶部注释（`DATABASE_URL`、`SFLY_PUBLIC_URL`、`SFLY_AGENT_TOKEN`、保留天数与大小上限等）。
+控制面：`pnpm --filter @sfly/web build` 生成前端构建产物 `apps/web/dist`，控制面在 HTTP 端口上同时提供页面、API 与 SSE（`SFLY_WEB_DIR` 可指定目录），不需要 vite 或额外的 Web 服务器；`pnpm --filter @sfly/server build` 会把 `sdk/python` 打成 SDK 运行时 wheel 放进 `apps/server/dist/sdk/`（或用 `SFLY_SDK_DIR` 指定目录），控制面通过 `GET /sdk/python/<版本>/<wheel>` 提供下载；其余配置见 `apps/server/src/main.ts` 顶部注释（`DATABASE_URL`、`SFLY_PUBLIC_URL`、`SFLY_AGENT_TOKEN`、保留天数与大小上限等）。
 
 Agent：机器上只需要 [uv](https://docs.astral.sh/uv/)。启动参数见 `sfly-agent --help`（`--server`、`--name`、`--token`、`--slots`、`--venv`、`--index-url`、`--python` 等，均可用 `SFLY_*` 环境变量设置）。
 

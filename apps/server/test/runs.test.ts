@@ -151,7 +151,7 @@ describe("单链运行", () => {
 			expect((await api.trigger(id)).status).toBe(400);
 		});
 
-		it("包节点既没有选 Agent、编排也没有默认 Agent 时拒绝触发", async () => {
+		it("包节点既没有选 Agent、场景也没有默认 Agent 时拒绝触发", async () => {
 			const doc = chain([{ id: "a" }]);
 			delete doc.default_agent;
 			const id = await api.orchestrationWith(doc);

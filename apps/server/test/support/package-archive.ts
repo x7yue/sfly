@@ -33,21 +33,28 @@ export function packageMetadata(overrides: Record<string, unknown> = {}): Record
 	};
 }
 
-/** 按 `sfly build` 的格式打包：zip 内含 sfly-package.json 和一个 wheel。 */
+/**
+ * 按 `sfly build` 的格式打包：zip 内含 sfly-package.json 和一个 wheel。
+ * 文件时间固定，同样的内容总是得到同样的字节（sha256 稳定，前端视觉回归依赖这一点）。
+ */
 export function packageArchive(
 	metadata: unknown = packageMetadata(),
 	files: Record<string, Uint8Array> = {
 		"demo_checks-1.2.0-py3-none-any.whl": strToU8("fake wheel"),
 	},
 ): Uint8Array {
-	return zipSync({ "sfly-package.json": strToU8(JSON.stringify(metadata)), ...files });
+	return zipSync(
+		{ "sfly-package.json": strToU8(JSON.stringify(metadata)), ...files },
+		{ mtime: new Date("2026-01-01T00:00:00Z") },
+	);
 }
 
 export function publishInit(archive: Uint8Array): RequestInit {
 	return {
 		method: "POST",
 		headers: { "content-type": "application/octet-stream" },
-		body: archive,
+		// zipSync 返回的 Uint8Array 总是基于 ArrayBuffer；DOM 的 BodyInit 类型要求写明。
+		body: archive as Uint8Array<ArrayBuffer>,
 	};
 }
 
@@ -57,16 +64,35 @@ export type InputsSchema = {
 	required?: string[];
 };
 
+/** 节点类型声明的指标（#27）。 */
+export type MetricSpec = { name: string; unit: string; kind: "gauge" | "counter" };
+/** 节点类型声明的图表（#27）。 */
+export type ChartSpec = {
+	title: string;
+	type: "line" | "area" | "bar" | "stat";
+	metrics: string[];
+};
+
 /**
  * 发布一个只有元信息的节点包：nodes 是节点类型名 → 声明的输出键（输入不限），
- * 或 `{ outputs, inputs }`（inputs 是输入 schema，派发前按它校验已解析的输入）。
+ * 或 `{ outputs, inputs, metrics, charts, primary_metric }`（inputs 是输入 schema，派发前按它校验已解析的输入）。
  * 触发运行前的预检要求编排锁定的包版本已经发布、引用的输出键已经声明。
  */
 export async function publishPackage(
 	cp: { fetch(path: string, init?: RequestInit): Promise<Response> },
 	name: string,
 	version: string,
-	nodes: Record<string, readonly string[] | { outputs: readonly string[]; inputs: InputsSchema }>,
+	nodes: Record<
+		string,
+		| readonly string[]
+		| {
+				outputs: readonly string[];
+				inputs?: InputsSchema;
+				metrics?: MetricSpec[];
+				charts?: ChartSpec[];
+				primary_metric?: string;
+		  }
+	>,
 ): Promise<void> {
 	const archive = packageArchive(
 		packageMetadata({
@@ -74,13 +100,17 @@ export async function publishPackage(
 			version,
 			nodes: Object.entries(nodes).map(([node, spec]) => {
 				const outputs = "outputs" in spec ? spec.outputs : spec;
-				const inputs = "inputs" in spec ? spec.inputs : { properties: {} };
+				const inputs = ("inputs" in spec ? spec.inputs : undefined) ?? { properties: {} };
+				const declared = "outputs" in spec ? spec : undefined;
 				return {
 					name: node,
 					title: node,
 					entry: `${name.replace(/-/g, "_")}.nodes:${node}`,
 					inputs: { type: "object", ...inputs },
 					outputs: { type: "object", properties: Object.fromEntries(outputs.map((k) => [k, {}])) },
+					...(declared?.metrics && { metrics: declared.metrics }),
+					...(declared?.charts && { charts: declared.charts }),
+					...(declared?.primary_metric && { primary_metric: declared.primary_metric }),
 				};
 			}),
 		}),

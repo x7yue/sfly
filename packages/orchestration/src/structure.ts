@@ -114,7 +114,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 
 	const entries = doc.nodes.filter((n) => n.kind === "entry");
 	if (entries.length !== 1) {
-		warn("entry_count", `编排必须恰好有一个入口节点，当前有 ${entries.length} 个`);
+		warn("entry_count", `场景必须恰好有一个入口节点，当前有 ${entries.length} 个`);
 	}
 
 	for (const edge of doc.edges) {
@@ -245,7 +245,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 
 	for (const node of doc.nodes) {
 		if (node.kind === "package" && !node.agent && !doc.default_agent) {
-			warn("missing_agent", `节点 ${node.id} 没有选择 Agent，编排也没有默认 Agent`, node.id);
+			warn("missing_agent", `节点 ${node.id} 没有选择 Agent，场景也没有默认 Agent`, node.id);
 		}
 	}
 	return warnings;
