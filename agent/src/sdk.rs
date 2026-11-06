@@ -1,6 +1,6 @@
 //! 共享 venv 的准备（ADR 0002，规格“Agent 运行时只依赖 uv”）：
 //!
-//! - Agent 启动时共享 venv 不存在，就用 `uv venv` 创建（`--python` 指定解释器，默认由 uv 选择）；
+//! - 收到控制面的 Welcome 后，共享 venv 不存在就用 `uv venv` 创建（`--python` 指定解释器，默认由 uv 选择）；
 //! - 连上控制面后，共享 venv 里的 SDK 运行时（Python 包 `sfly`）版本与 Agent 版本不一致或还没安装时，
 //!   从 Welcome 给出的地址下载 SDK 运行时 wheel、校验 sha256，用 `uv pip install` 装进共享 venv；
 //!   版本一致时什么也不做。

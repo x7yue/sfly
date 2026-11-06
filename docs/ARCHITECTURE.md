@@ -147,12 +147,12 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | `sfly publish` | 上传到控制面；控制面校验元信息，`包名@版本` 已存在时拒绝 |
 | `sfly dev <path>` | 让本机 Agent 以可编辑方式安装本地源码目录，注册为 `包名@dev` |
 
-`sfly dev` 通过 Agent 的本地 Unix socket（`--dev-socket`，只在本机可访问）通知 Agent；这是 CLI 与本机 Agent 之间的本地接口，不经过控制面。
+`sfly dev` 通过 Agent 的本地 Unix socket（`--dev-socket`，默认 `$SFLY_HOME/work/agent.sock`，只在本机可访问）通知 Agent；这是 CLI 与本机 Agent 之间的本地接口，不经过控制面。`sfly publish` 的控制面地址按 `--server` > `SFLY_SERVER` > `$SFLY_HOME/agent.env` 的 `SFLY_CONTROL_PLANE_URL` 取值。
 
 ### 4.4 Agent 上的安装（共享 venv）
 
 - 每个 Agent 有**一个**共享 venv（与 Agent 自身完全隔离），节点包和 SDK 运行时都装在里面。
-- venv 不存在时 Agent 启动时用 `uv venv` 创建；SDK 运行时由控制面提供（构建时打包 `sdk/python` 的 wheel，`GET /sdk/python/<版本>/<wheel>`），Welcome 给出与 Agent 版本相同的 wheel 地址和 sha256，venv 里的 SDK 版本不一致时 Agent 下载、校验并安装，一致时不重装。
+- venv 不存在时，Agent 在收到控制面的 Welcome 之后用 `uv venv` 创建（为控制面下发镜像配置做准备，ADR 0012；控制面不可达时不创建）；SDK 运行时由控制面提供（构建时打包 `sdk/python` 的 wheel，`GET /sdk/python/<版本>/<wheel>`），Welcome 给出与 Agent 版本相同的 wheel 地址和 sha256，venv 里的 SDK 版本不一致时 Agent 下载、校验并安装，一致时不重装。
 - 任务需要的 `包名@版本` 与已安装的版本不一致时，Agent 用 `uv pip install` 安装或切换版本。
 - **安装与启动新任务互斥**：安装期间不启动新任务，已经在运行的任务继续执行。
 - 安装失败（包括依赖冲突）时，任务以 `env_error` 失败，不重试，并展示完整的 uv 输出。
@@ -164,6 +164,8 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 ### 5.1 身份与连接
 
 - Agent 配置项：`name`（全局唯一）、控制面地址、可选的共享注册令牌、并发槽位数 `slots`（默认 4）、共享 venv 路径、PyPI 镜像地址。
+- Agent 的统一目录 `SFLY_HOME`（默认 `~/.sfly`）：`bin/`、`venv/`（共享 venv 的默认路径）、`work/`（任务工作目录的默认根目录，dev socket 默认是 `work/agent.sock`）、`agent.env`。启动时读取 `agent.env`（每行 `SFLY_*=值`，键与对应参数的环境变量同名），优先级为命令行参数 > 环境变量 > `agent.env` > 默认值；从哪个目录启动都一样。
+- 启动顺序：连接控制面、收到 Welcome → 准备共享 venv → 安装 SDK 运行时 → 开始接任务。
 - 启动后主动建立 gRPC 双向流；同名 Agent 重新连接时替换旧连接。
 - 画布上按名称选择 Agent。
 

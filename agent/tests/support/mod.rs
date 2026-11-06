@@ -401,9 +401,39 @@ impl<'a> AgentOptions<'a> {
     }
 }
 
+/// 真实 Agent 二进制的命令：`SFLY_HOME` 指向 `home`（不读开发者自己的 `~/.sfly/agent.env`），
+/// 标准输出丢弃，测试结束时被杀掉。其余参数由调用方添加。
+pub fn agent_command(home: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_sfly-agent"));
+    command
+        .env("SFLY_HOME", home)
+        .stdout(Stdio::null())
+        .kill_on_drop(true);
+    command
+}
+
+/// 仓库约定的 Python 版本（`.python-version`）。
+pub fn python_version() -> String {
+    std::fs::read_to_string(repo_root().join(".python-version"))
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
+/// 仓库约定版本的 Python 解释器的绝对路径（`uv python find`）：改了 HOME 的测试里 uv 找不到自己管理的 Python。
+pub fn python_interpreter() -> String {
+    let output = std::process::Command::new("uv")
+        .args(["python", "find", "--no-project"])
+        .arg(python_version())
+        .output()
+        .expect("run uv python find");
+    assert!(output.status.success(), "uv python find failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
 pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
     let work_dir = tempfile::tempdir().unwrap();
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_sfly-agent"));
+    let mut command = agent_command(&work_dir.path().join("sfly-home"));
     command
         .arg("--server")
         .arg(&options.server)
@@ -414,9 +444,7 @@ pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
         .arg("--work-dir")
         .arg(work_dir.path())
         .args(&options.args)
-        .envs(options.env.iter().copied())
-        .stdout(Stdio::null())
-        .kill_on_drop(true);
+        .envs(options.env.iter().copied());
     AgentProcess {
         child: command.spawn().expect("spawn sfly-agent"),
         work_dir,

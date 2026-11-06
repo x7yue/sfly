@@ -26,7 +26,7 @@ export async function startRealAgent(options: {
 	bin?: string;
 	/** 追加的环境变量（例如独立的 UV_CACHE_DIR）。 */
 	env?: Record<string, string>;
-	/** 等 welcome 的时间，默认 15 秒；包括创建 venv 和安装 SDK 运行时（它们在 welcome 之前完成）。 */
+	/** 等 welcome 的时间，默认 15 秒；包括创建 venv 和安装 SDK 运行时（它们在连上控制面之后、welcome 事件之前完成）。 */
 	welcomeTimeoutMs?: number;
 }): Promise<RealAgent> {
 	const bin = options.bin ?? agentBinary();
@@ -44,7 +44,11 @@ export async function startRealAgent(options: {
 			join(workDir, "tasks"),
 			...(options.args ?? []),
 		],
-		{ stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, ...options.env } },
+		{
+			stdio: ["ignore", "pipe", "inherit"],
+			// 独立的 SFLY_HOME：不读开发者自己的 ~/.sfly/agent.env。
+			env: { ...process.env, SFLY_HOME: join(workDir, "sfly-home"), ...options.env },
+		},
 	);
 	const events: Array<Record<string, unknown>> = [];
 	const lines = createInterface({ input: child.stdout as NodeJS.ReadableStream });

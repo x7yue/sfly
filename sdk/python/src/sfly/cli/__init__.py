@@ -7,16 +7,14 @@ CLI 在开发者机器上运行，可以使用 `sfly[cli]` extra 中的第三方
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
 from sfly import __version__
+from sfly.cli.home import control_plane_url, dev_socket
 
 DEFAULT_SERVER = "http://127.0.0.1:8080"
-# Agent 的默认本地 socket：与 Agent 默认工作目录 ./work 一致。
-DEFAULT_SOCKET = "work/agent.sock"
 
 
 def _build(args: argparse.Namespace) -> int:
@@ -40,7 +38,7 @@ def _publish(args: argparse.Namespace) -> int:
     path = Path(args.path).resolve()
     try:
         archive = build(path) if path.is_dir() else path
-        result = publish(archive, args.server)
+        result = publish(archive, control_plane_url(args.server, DEFAULT_SERVER))
     except BuildError as error:
         print(f"构建失败：{error}", file=sys.stderr)
         return 1
@@ -56,7 +54,7 @@ def _dev(args: argparse.Namespace) -> int:
     from sfly.cli.dev import DevError, dev
 
     try:
-        reply = dev(Path(args.project).resolve(), Path(args.socket))
+        reply = dev(Path(args.project).resolve(), dev_socket(args.socket))
     except BuildError as error:
         print(f"构建失败：{error}", file=sys.stderr)
         return 1
@@ -89,8 +87,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_publish.add_argument(
         "--server",
-        default=os.environ.get("SFLY_SERVER", DEFAULT_SERVER),
-        help=f"控制面 HTTP 地址（默认 $SFLY_SERVER 或 {DEFAULT_SERVER}）",
+        help="控制面 HTTP 地址（默认 $SFLY_SERVER，其次 $SFLY_HOME/agent.env 的 "
+        f"SFLY_CONTROL_PLANE_URL，都没有时 {DEFAULT_SERVER}）",
     )
     p_publish.set_defaults(func=_publish)
 
@@ -98,8 +96,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_dev.add_argument("project", nargs="?", default=".", help="项目目录（默认当前目录）")
     p_dev.add_argument(
         "--socket",
-        default=os.environ.get("SFLY_DEV_SOCKET", DEFAULT_SOCKET),
-        help=f"本机 Agent 的本地 socket（默认 $SFLY_DEV_SOCKET 或 {DEFAULT_SOCKET}）",
+        help="本机 Agent 的本地 socket（默认 $SFLY_DEV_SOCKET，其次 $SFLY_HOME/agent.env 的 "
+        "SFLY_DEV_SOCKET，都没有时 $SFLY_HOME/work/agent.sock）",
     )
     p_dev.set_defaults(func=_dev)
 
