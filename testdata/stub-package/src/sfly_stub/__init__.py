@@ -243,6 +243,22 @@ def write_failure(ctx: Context, message: str = "OSError: [Errno 122] Disk quota 
 
 
 @node(
+    title="高频指标",
+    outputs=["count"],
+    metrics=[Metric("total", "", "counter", "累计上报次数")],
+    primary_metric="total",
+)
+def metric_burst(ctx: Context, seconds: float = 3.0) -> dict[str, Any]:
+    """事件通道测试用：在 seconds 秒内尽快上报累计计数 total（每次加一），返回上报次数。"""
+    deadline = time.monotonic() + seconds
+    count = 0
+    while time.monotonic() < deadline:
+        count += 1
+        ctx.metric("total", float(count))
+    return {"count": count}
+
+
+@node(
     title="指标",
     outputs=[],
     metrics=[

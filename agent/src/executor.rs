@@ -8,11 +8,12 @@
 //! | `SFLY_OUTPUT` | `output.json`：执行器写入的结果 |
 //! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录（任务结束后由 [`crate::artifacts`] 上传） |
 //! | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀（`AssignTask.artifact_upload_url`，为空时不设置） |
-//! | `SFLY_EVENTS` | `events.jsonl`：结构化日志与进度 |
+//! | `SFLY_EVENTS` | `events.fifo`：结构化日志、进度与指标（命名管道，启动执行器前由 Agent 创建并打开读端，ADR 0015） |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
 //!
-//! 执行器的标准输出 / 标准错误和事件文件由 [`crate::logs`] 合并转发给控制面，
-//! 原始的标准输出 / 标准错误同时写到工作目录下的 `stdout.log` / `stderr.log`。
+//! 执行器的标准输出 / 标准错误和事件管道由 [`crate::logs`] 合并转发给控制面，
+//! 原始的标准输出 / 标准错误同时写到工作目录下的 `stdout.log` / `stderr.log`。失败消息里的标准错误尾部
+//! 取自 Agent 内存，不读这个副本（#70）。
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -22,7 +23,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
-use crate::logs::{Pump, Telemetry};
+use crate::logs::{EventsPipe, Pump, Telemetry};
 use crate::process_tree::ProcessTree;
 use crate::proto::{
     AgentMessage, AssignTask, ErrorKind, TaskError, TaskResult, TaskStarted, TaskStatus,
@@ -174,6 +175,19 @@ fn spawn_process(
         artifacts: dir.join("artifacts"),
     };
 
+    // 事件管道在执行器启动之前就绪（读端已打开）：SDK 按路径打开写端时不会阻塞或失败。
+    let events_path = dir.join("events.fifo");
+    let events = match EventsPipe::create(&events_path) {
+        Ok(events) => events,
+        Err(error) => {
+            return Err(failure(
+                task,
+                ErrorKind::EnvError,
+                format!("创建事件管道 {} 失败：{error}", events_path.display()),
+            ));
+        }
+    };
+
     let mut command = venv.python_command();
     command
         // -u：标准输出 / 标准错误不缓冲，日志实时到达。
@@ -182,7 +196,7 @@ fn spawn_process(
         .env("SFLY_TASK", dir.join("task.json"))
         .env("SFLY_OUTPUT", &paths.output)
         .env("SFLY_ARTIFACTS", &paths.artifacts)
-        .env("SFLY_EVENTS", dir.join("events.jsonl"))
+        .env("SFLY_EVENTS", &events_path)
         .env("SFLY_CANCEL", &paths.cancel)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -205,7 +219,14 @@ fn spawn_process(
                     attempt: task.attempt,
                 })),
             });
-            let pump = Pump::start(task, stdout, stderr, dir.to_path_buf(), telemetry.clone());
+            let pump = Pump::start(
+                task,
+                stdout,
+                stderr,
+                events,
+                dir.to_path_buf(),
+                telemetry.clone(),
+            );
             Ok(Running {
                 process,
                 paths,
