@@ -1,0 +1,13 @@
+# GitHub 自动生成 Release 说明时，按 PR 的标签分组（docs/agents/branching-and-release.md）。
+changelog:
+  exclude:
+    labels: [duplicate, invalid, wontfix]
+  categories:
+    - title: 新功能
+      labels: [enhancement]
+    - title: 修复
+      labels: [bug]
+    - title: 文档
+      labels: [documentation]
+    - title: 其他
+      labels: ["*"]

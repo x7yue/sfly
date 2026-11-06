@@ -34,7 +34,7 @@
 
 推送 `vX.Y.Z` tag 后由 GitHub Actions（`.github/workflows/release.yml`，ADR 0010）发布：
 
-1. 在分支上运行 `pnpm release:version set X.Y.Z`，提交并合入 `main`，等 `main` 上的 CI 通过。
+1. 在 `release/X.Y.Z` 分支上运行 `pnpm release:version set X.Y.Z`，开 PR 合入 `main`，等 `main` 上的 CI 通过。
 2. `git tag vX.Y.Z <main 上的提交> && git push origin vX.Y.Z`。
 3. 工作流检查 tag 与版本号一致、提交在 `main` 上且 CI 已通过，然后构建并发布：
    - 镜像 `ghcr.io/x7yue/sfly-server:X.Y.Z`（另有 `X.Y`、`latest` 标签，linux/amd64 与 linux/arm64）
@@ -78,5 +78,5 @@ Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown
 
 ## 约定
 
-- 主分支：`main`
+- 主分支：`main`，受保护，只能经 PR 以 squash 方式合入；分支命名、PR 与发版规范见 [docs/agents/branching-and-release.md](./docs/agents/branching-and-release.md)
 - 提交信息使用祈使句，简洁说明改动意图
