@@ -74,11 +74,16 @@ jobs:
       - name: Build
         run: pnpm build
       # 发布用的单文件控制面和镜像（ADR 0010、0011）：用打包后的控制面提供的 install.sh 安装 Agent 并跑通一条链，
-      # 镜像能启动、通过健康检查并带着两个架构的 Agent。
+      # 上一个 Release 的 Agent 在它上面跑完任务后自更新，镜像能启动、通过健康检查并带着两个架构的 Agent。
       - name: Pack agents
         run: pnpm pack:agents
       - name: Bundle control plane
         run: pnpm bundle:server
+      # 跨版本自更新（ADR 0014）：上一个 Release 的 Agent 从 Release 附件下载，不用 Actions Artifacts（ADR 0010）。
+      - name: Previous release agent
+        run: pnpm fetch:previous-agent
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Bundle smoke test
         run: pnpm test:bundle
       - name: Image smoke test
