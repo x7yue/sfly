@@ -45,12 +45,28 @@ export function LogList({
 	const follow = useRef(true);
 	/** 加载更早的一页之前，视口顶部那一行：加载后滚回它。 */
 	const anchor = useRef<{ seq: number; offset: number } | null>(null);
-	const pin = () => {
+	/** 上一次贴底后的 scrollTop。 */
+	const pinnedTop = useRef<number | null>(null);
+	/**
+	 * 跟随时贴底。虚拟列表的 onChange（测量、滚动）可能在用户滚动之后、滚动事件还没派发时调用，
+	 * 这时 follow 还是旧值：上次贴底后视口被移开、又不在底部，就是用户在向上滚动，不再跟随，
+	 * 否则会把他拉回底部（#47）。日志行变化后的贴底（force）不做这个判断：列表挂载时虚拟列表会把
+	 * 滚动位置重置为 0，这不是用户移动的。
+	 */
+	const pin = (force = false) => {
 		const el = box.current;
-		if (el && follow.current) el.scrollTop = el.scrollHeight;
+		if (!el || !follow.current) return;
+		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+		const moved = pinnedTop.current !== null && Math.abs(el.scrollTop - pinnedTop.current) > 1;
+		if (!force && moved && !atBottom) {
+			follow.current = false;
+			return;
+		}
+		el.scrollTop = el.scrollHeight;
+		pinnedTop.current = el.scrollTop;
 	};
 	const virtualizer = useVirtualizer({
-		onChange: pin,
+		onChange: () => pin(),
 		count: lines.length,
 		getScrollElement: () => box.current,
 		estimateSize: () => 20,
@@ -72,7 +88,7 @@ export function LogList({
 			}
 			return;
 		}
-		pin();
+		pin(true);
 	}, [lines, virtualizer]);
 
 	const items = virtualizer.getVirtualItems();

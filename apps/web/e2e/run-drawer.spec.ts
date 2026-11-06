@@ -142,6 +142,58 @@ test("摘要里可以取消运行", async ({ page, controlPlane, connectAgent })
 	await expect(drawer.getByTestId("summary-status")).toHaveText("已取消");
 });
 
+test("取消请求的响应晚于运行结束到达：摘要保持「已取消」，不被运行结束前生成的响应覆盖（#47）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	// 取消请求照常到达控制面（响应里是「运行中、取消中」），响应先扣住，等事件流推送了最终状态再交给页面。
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route(/\/api\/runs\/[^/]+\/cancel$/, async (route) => {
+		const response = await route.fetch();
+		await held;
+		await route.fulfill({ response });
+	});
+
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	const task = await agent.nextAssign();
+	await expect(drawer.getByTestId("summary-status")).toHaveText("运行中");
+	await drawer.getByRole("button", { name: "取消运行" }).click();
+	const confirm = page.getByRole("dialog", { name: /取消运行/ });
+	const runId = (await (await controlPlane.fetch("/runs?limit=1")).json()).runs[0].id as string;
+	await confirm.getByLabel(/输入运行编号前 4 位/).fill(runId.slice(0, 4));
+	await confirm.getByRole("button", { name: "取消运行" }).click();
+	expect(await agent.nextCancel()).toMatchObject({ taskId: task.taskId });
+	await agent.cancelled(task);
+	const status = drawer.getByTestId("summary-status");
+	await expect(status).toHaveText("已取消");
+
+	// 记录之后每一次渲染出的状态：旧响应覆盖最终状态时会闪回「取消中」。闪回与事件流推送落在
+	// 同一次渲染里时实时连接不会重连，就永远停在「取消中」（CI 上的偶发失败）。
+	const history = await drawer.evaluateHandle((root) => {
+		const seen: string[] = [];
+		new MutationObserver(() => {
+			const text = root.querySelector('[data-testid="summary-status"]')?.textContent ?? "";
+			if (seen.at(-1) !== text) seen.push(text);
+		}).observe(root, { childList: true, subtree: true, characterData: true });
+		return seen;
+	});
+	release();
+	// 确认弹窗在处理响应时关闭：关闭之后，运行结束前生成的响应已经处理完。
+	await expect(confirm).toBeHidden();
+	await expect(status).toHaveText("已取消");
+	expect(await history.jsonValue()).not.toContain("取消中");
+});
+
 test("预检有阻断项时不能触发，「前往」进入编排画布并选中问题节点", async ({
 	page,
 	controlPlane,

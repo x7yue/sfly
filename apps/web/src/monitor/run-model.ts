@@ -135,6 +135,18 @@ export function secretInputKeys(
 
 export const MASK = "••••••";
 
+/**
+ * 缓存里已有的运行视图和新到的视图之间该保留哪一份（#47）。运行视图有多个来源——事件流推送、
+ * 取消与触发的响应、重新获取——到达顺序不一定是生成顺序：运行结束前生成、结束后才到达的响应会把最终状态
+ * 改回「运行中」，而运行已经结束，事件流不会再推送，界面就停在旧状态。运行结束后不会再回到运行中，
+ * 所以已结束的视图不被「运行中」的视图覆盖。运行中的视图之间谁新谁旧无法判断，但没有关系：
+ * 运行中事件流会继续推送，下一次变化就会纠正。
+ */
+export const latestRunView = (current: RunView | undefined, next: RunView): RunView =>
+	current !== undefined && current.status !== "running" && next.status === "running"
+		? current
+		: next;
+
 /** 把一条进度推送合并进运行视图（只改对应尝试的 progress）。 */
 export function applyProgress(run: RunView | undefined, event: ProgressEvent): RunView | undefined {
 	if (!run) return run;

@@ -11,7 +11,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
-import { apiQuery, callApi } from "#/lib/api";
+import { callApi } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { shortId } from "#/lib/format";
 import { versionQuery } from "#/versions/queries";
@@ -25,6 +25,7 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { runViewQuery, writeRunView } from "./live-run";
 import { cancelImpact } from "./run-model";
 
 /** 确认时要输入的运行编号前几位。 */
@@ -58,9 +59,10 @@ export function CancelRunDialog({
 	const cancel = useMutation({
 		mutationFn: () => callApi(runsApi.cancel, { params: { id: run.id } }),
 		onSuccess: (view) => {
-			queryClient.setQueryData(queryKey(runsApi.get, { params: { id: run.id } }), view);
+			// 响应是在运行结束前生成的，可能晚于事件流推送的最终状态到达；按 latestRunView 合并，不覆盖最终状态（#47）。
+			writeRunView(queryClient, view);
 			// 列出这个运行的列表（运行记录、场景的运行、场景列表的最近运行、控制台）随之刷新，进入「取消中」。
-			// 运行视图本身不重新获取：上面已经写入，之后由运行事件流更新（重新获取的旧响应可能晚于最终状态到达）。
+			// 运行视图本身不重新获取：上面已经写入，之后由运行事件流更新。
 			for (const key of [
 				queryKey(runListApi.list),
 				queryKey(runsApi.listForOrchestration),
@@ -179,7 +181,7 @@ export function CancelRunButton({
 	size?: "sm";
 }) {
 	const [open, setOpen] = useState(false);
-	const run = useQuery({ ...apiQuery(runsApi.get, { params: { id: runId } }), enabled: open });
+	const run = useQuery({ ...runViewQuery(runId), enabled: open });
 	const version = useQuery({
 		...versionQuery(orchestrationId, orchestrationVersion),
 		enabled: open && orchestrationVersion > 0,
