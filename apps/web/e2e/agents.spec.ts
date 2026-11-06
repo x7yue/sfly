@@ -106,6 +106,22 @@ test.describe("版本不一致", () => {
 		await expect(cells("agent-failed").nth(1)).toHaveText("更新失败sha256 不匹配");
 		await expect(cells("agent-failed").nth(3)).toHaveText("1.0.0控制面 2.0.0");
 	});
+
+	test("新版本连续启动失败、恢复旧版本后显示「更新失败」及原因", async ({ page, connectAgent }) => {
+		const reason =
+			"新版本 2.0.0 连续 3 次启动失败（崩溃，或连上控制面后握手失败），已恢复到 1.0.0；控制面换成其他版本之前不再自动尝试";
+		const agent = await connectAgent({ name: "agent-rolled-back", agentVersion: "1.0.0" });
+		agent.send({
+			case: "heartbeat",
+			value: { runningTasks: [], update: { state: AgentUpdateState.FAILED, reason } },
+		});
+		await agent.sync();
+
+		await page.goto("/agents");
+		const cells = page.getByRole("row", { name: /agent-rolled-back/ }).getByRole("cell");
+		await expect(cells.nth(1)).toHaveText(`更新失败${reason}`);
+		await expect(cells.nth(3)).toHaveText("1.0.0控制面 2.0.0");
+	});
 });
 
 test.describe("接入命令", () => {
