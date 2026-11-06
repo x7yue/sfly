@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import time
 from pathlib import Path
 
@@ -88,6 +89,33 @@ def test_declared_metrics_are_returned_and_undeclared_ones_dropped_with_a_warnin
     assert len(warnings) == 2
     assert "nope" in warnings[0] and "未声明" in warnings[0]
     assert "level" in warnings[1] and "有限" in warnings[1]
+
+
+def test_events_go_through_a_fifo_in_the_work_dir_and_none_are_lost(tmp_path: Path) -> None:
+    from sfly_stub import metric_burst
+
+    result = run_node(metric_burst, {"seconds": 0.5}, work_dir=tmp_path / "w")
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    count = result.outputs["count"]
+    assert count > 1000
+    assert [m.value for m in result.metrics] == [float(i) for i in range(1, count + 1)]
+    assert stat.S_ISFIFO(os.stat(tmp_path / "w" / "events.fifo").st_mode)
+    assert not (tmp_path / "w" / "events.jsonl").exists()
+
+
+def test_executor_crash_summary_keeps_the_stderr_tail_without_stderr_log(tmp_path: Path) -> None:
+    from sfly_stub import write_failure
+
+    result = run_node(
+        write_failure, {"message": "OSError: [Errno 122] Disk quota exceeded"}, work_dir=tmp_path
+    )
+
+    assert result.status == "failed"
+    assert result.error is not None
+    assert "没有写出结果" in result.error.message
+    assert "OSError: [Errno 122] Disk quota exceeded" in result.error.message
 
 
 def test_artifacts_are_saved_in_the_work_dir_and_refs_are_local_paths(tmp_path: Path) -> None:

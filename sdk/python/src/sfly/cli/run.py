@@ -2,8 +2,8 @@
 
 和 Agent 用同一个执行器与本地协议（见 `sfly.local`）：节点按 `sfly build` 扫描出的元信息查找，
 参数按元信息里的输入 schema 校验。日志实时打印到标准错误；结束后把输出值、指标汇总和运行目录
-打印到标准输出。每次运行的工作目录（task.json、output.json、events.jsonl、stdout.log、stderr.log、
-artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互不覆盖。
+打印到标准输出。每次运行的工作目录（task.json、output.json、事件管道 events.fifo、stdout.log、
+stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互不覆盖。
 
 Ctrl-C 走和平台相同的取消流程：取消标记 + SIGTERM，宽限期过后强制杀掉；再按一次立即杀掉。
 
