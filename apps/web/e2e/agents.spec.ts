@@ -53,6 +53,7 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、已安装�
 		"demo-checks@1.2.0",
 		"2 个场景",
 		"—",
+		"",
 	]);
 	// 离线时间按浏览器时区（测试固定为 Asia/Shanghai）显示。
 	await expect(page.getByRole("row", { name: /agent-gone/ }).getByRole("cell")).toHaveText([
@@ -64,6 +65,7 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、已安装�
 		"无",
 		"未被引用",
 		"01-01 08:01",
+		"",
 	]);
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 });
@@ -105,6 +107,97 @@ test.describe("版本不一致", () => {
 		);
 		await expect(cells("agent-failed").nth(1)).toHaveText("更新失败sha256 不匹配");
 		await expect(cells("agent-failed").nth(3)).toHaveText("1.0.0控制面 2.0.0");
+		// 「立即更新」只给版本不一致、能自更新的 Agent。
+		const updateNow = (name: string) =>
+			page.getByRole("row", { name: new RegExp(name) }).getByRole("button", { name: "立即更新" });
+		await expect(updateNow("agent-old")).toBeVisible();
+		await expect(updateNow("agent-waiting")).toBeVisible();
+		await expect(updateNow("agent-failed")).toBeVisible();
+		await expect(updateNow("agent-current")).toHaveCount(0);
+		await expect(updateNow("agent-manual")).toHaveCount(0);
+	});
+
+	test("立即更新：确认框列出会被终止的任务；取消不产生影响，确认后状态变为替换中", async ({
+		page,
+		controlPlane,
+		connectAgent,
+	}) => {
+		await publishPackage(controlPlane);
+		const current = await connectAgent({ name: "agent-a", slots: 2 });
+		const first = await triggerRun(
+			controlPlane,
+			await createScenario(controlPlane, "巡检", scenarioUsing("agent-a")),
+		);
+		const second = await triggerRun(
+			controlPlane,
+			await createScenario(controlPlane, "拨测", scenarioUsing("agent-a")),
+		);
+		const held = [await current.nextAssign(), await current.nextAssign()];
+		// 控制面升级后，旧版本的 Agent 带着手上的任务重新连上，等它们结束。
+		await current.disconnect();
+		const old = await connectAgent({
+			name: "agent-a",
+			agentVersion: "1.0.0",
+			slots: 2,
+			runningTasks: held.map((t) => ({ taskId: t.taskId, attempt: t.attempt, started: true })),
+		});
+		old.send({
+			case: "heartbeat",
+			value: {
+				runningTasks: [],
+				update: { state: AgentUpdateState.WAITING_FOR_TASKS, remainingTasks: 2 },
+			},
+		});
+		await old.sync();
+
+		await page.goto("/agents");
+		const row = page.getByRole("row", { name: /agent-a/ });
+		const status = row.getByRole("cell").nth(1);
+		await expect(status).toContainText("等待 2 个任务结束");
+		const open = async () => {
+			await row.getByRole("button", { name: "立即更新" }).click();
+			const dialog = page.getByRole("dialog", { name: "立即更新 agent-a？" });
+			await expect(dialog).toBeVisible();
+			return dialog;
+		};
+
+		// 确认框列出会被终止的任务。
+		let dialog = await open();
+		const terminated = dialog.getByRole("list", { name: "会被终止的任务" }).getByRole("listitem");
+		await expect(terminated).toHaveCount(2);
+		await expect(terminated.nth(0)).toContainText("ping");
+		await expect(terminated.nth(0)).toContainText(first.slice(0, 8));
+		await expect(terminated.nth(1)).toContainText(second.slice(0, 8));
+		await expect(dialog).toContainText("agent_lost");
+		await expect(dialog).toContainText("2.0.0");
+
+		// 取消：任务照常运行，Agent 没有收到指令。
+		await dialog.getByRole("button", { name: "取消" }).click();
+		await expect(dialog).toBeHidden();
+		await old.sync();
+		expect(old.received.some((m) => m.body.case === "updateNow")).toBe(false);
+		const runStatus = async (runId: string) => {
+			const res = await controlPlane.fetch(`/runs/${runId}`);
+			return ((await res.json()) as { status: string }).status;
+		};
+		expect(await runStatus(first)).toBe("running");
+		expect(await runStatus(second)).toBe("running");
+		await expect(status).toContainText("等待 2 个任务结束");
+
+		// 确认：Agent 收到指令，任务以 agent_lost 失败；Agent 上报替换中。
+		dialog = await open();
+		await dialog.getByRole("button", { name: "立即更新" }).click();
+		await expect(dialog).toBeHidden();
+		await old.next("updateNow");
+		// 没有配置重试：节点以 agent_lost 失败，运行失败。
+		await expect.poll(() => runStatus(first)).toBe("failed");
+		old.send({
+			case: "heartbeat",
+			value: { runningTasks: [], update: { state: AgentUpdateState.REPLACING } },
+		});
+		await old.sync();
+		await expect(status).toHaveText("更新中替换并重新启动");
+		await expect(row.getByRole("button", { name: "立即更新" })).toHaveCount(0);
 	});
 });
 

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ServerIcon, TerminalIcon } from "lucide-react";
+import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { SlotBar, type StatusKind, StatusPill } from "#/components/status";
@@ -56,7 +57,7 @@ function AgentsPage() {
 			<Panel>
 				<QueryView
 					query={agents}
-					loading={<TableSkeleton columns={8} />}
+					loading={<TableSkeleton columns={9} />}
 					errorTitle="无法加载 Agent"
 					isEmpty={(d) => d.agents.length === 0}
 					empty={
@@ -128,6 +129,9 @@ function AgentTable({
 					<TableHead>已安装的节点包</TableHead>
 					<TableHead>被场景引用</TableHead>
 					<TableHead>最后在线</TableHead>
+					<TableHead>
+						<span className="sr-only">操作</span>
+					</TableHead>
 				</TableRow>
 			</TableHeader>
 			<TableBody>
@@ -239,6 +243,11 @@ function AgentRow({
 			</TableCell>
 			<TableCell className="font-mono text-xs text-fg-3">
 				{online ? "—" : formatDateTime(agent.last_seen_at)}
+			</TableCell>
+			<TableCell className="text-right">
+				{canUpdateNow(agent) && (
+					<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
+				)}
 			</TableCell>
 		</TableRow>
 	);

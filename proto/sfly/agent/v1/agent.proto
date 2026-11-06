@@ -34,6 +34,7 @@ message ServerMessage {
     AssignTask assign = 2;
     CancelTask cancel = 3;
     Ack ack = 4;
+    UpdateNow update_now = 5;
   }
 }
 
@@ -209,6 +210,11 @@ message CancelTask {
   // true：强制取消，立即杀掉进程树（也用于加速一次正在进行的优雅终止）。
   bool force = 3;
 }
+
+// 立即更新（ADR 0014）：只发给版本与控制面不一致的 Agent。控制面发出前已经让它手上的任务以 agent_lost 失败
+// （按重试配置重新派发）；Agent 不再接新任务，按取消流程（与优雅的 CancelTask 相同）终止手上的全部任务，
+// 结果照常上报（控制面忽略但仍回 Ack），然后立即替换并重新执行。新版本还没下载好时下载好后替换。
+message UpdateNow {}
 
 // Agent 安装或切换节点包的状态（安装期间 Agent 不启动新任务）。
 message InstallStatus {
