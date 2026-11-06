@@ -1,6 +1,6 @@
 [project]
 name = "sfly"
-version = "0.0.2"
+version = "0.0.3"
 description = "sfly 节点 SDK：运行时（只用标准库）与 CLI"
 readme = "README.md"
 requires-python = ">=3.10"
