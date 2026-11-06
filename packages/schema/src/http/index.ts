@@ -1,6 +1,7 @@
 import { agentsApi } from "./agents.js";
 import type { RouteDef } from "./contract.js";
 import { dashboardApi } from "./dashboard.js";
+import { docsApi } from "./docs.js";
 import { metricsApi } from "./metrics.js";
 import { orchestrationsApi } from "./orchestrations.js";
 import { packagesApi } from "./packages.js";
@@ -12,6 +13,7 @@ import { sdkApi, systemApi } from "./system.js";
 export * from "./agents.js";
 export * from "./contract.js";
 export * from "./dashboard.js";
+export * from "./docs.js";
 export * from "./metrics.js";
 export * from "./orchestrations.js";
 export * from "./packages.js";
@@ -28,6 +30,7 @@ export const httpContract: readonly RouteDef[] = [
 	agentsApi,
 	artifactsApi,
 	dashboardApi,
+	docsApi,
 	logsApi,
 	metricsApi,
 	orchestrationsApi,

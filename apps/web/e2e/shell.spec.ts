@@ -8,7 +8,7 @@ const sidebar = (page: import("@playwright/test").Page) =>
 const breadcrumb = (page: import("@playwright/test").Page) =>
 	page.getByRole("navigation", { name: "面包屑" });
 
-test("侧边栏在五个一级页面之间切换，当前页高亮，面包屑跟随", async ({ page }) => {
+test("侧边栏在六个一级页面之间切换，当前页高亮，面包屑跟随", async ({ page }) => {
 	await page.goto("/");
 	await expect(breadcrumb(page)).toHaveText(/控制台/);
 
@@ -17,6 +17,7 @@ test("侧边栏在五个一级页面之间切换，当前页高亮，面包屑�
 		["运行记录", /\/runs$/],
 		["Agent 管理", /\/agents$/],
 		["节点包管理", /\/packages$/],
+		["开发文档", /\/docs$/],
 		["控制台", /\/$/],
 	] as const) {
 		await sidebar(page).getByRole("link", { name: label }).click();
@@ -135,6 +136,7 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		"运行记录",
 		"Agent 管理",
 		"节点包管理",
+		"开发文档",
 		"折叠 / 展开侧边栏",
 	]);
 	await expect(global.getByRole("definition").nth(0)).toHaveText("CtrlK");
@@ -144,6 +146,7 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 	for (const [keys, url] of [
 		["g a", /\/agents$/],
 		["g p", /\/packages$/],
+		["g h", /\/docs$/],
 		["g r", /\/runs$/],
 		["g s", /\/orchestrations$/],
 		["g d", /\/$/],

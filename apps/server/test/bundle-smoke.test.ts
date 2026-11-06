@@ -1,6 +1,6 @@
 // 打包后的控制面冒烟（ADR 0010）：用 node 运行 out/server/main.mjs，不设置目录类环境变量（验证单文件包
 // 自带的 web/、sdk/、drizzle/ 布局）；真实 Agent 从全新的 venv 开始，从控制面下载 SDK 运行时和节点包，跑通一条链。
-// 覆盖打包最容易出问题的地方：迁移、HTTP API 与页面、节点包上传解压、gRPC（HTTP/2）、SDK 与节点包下载。
+// 覆盖打包最容易出问题的地方：迁移、HTTP API 与页面、用户文档、节点包上传解压、gRPC（HTTP/2）、SDK 与节点包下载。
 // 只在设置 SFLY_BUNDLE_DIR 时运行：根目录 `pnpm bundle:server && pnpm test:bundle`。
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -108,6 +108,19 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 
 		const { wheels } = await api.getJson<{ wheels: Array<{ version: string }> }>("/sdk/python");
 		expect(wheels.map((w) => w.version)).toEqual([version]);
+	});
+
+	it("自带的用户文档：原文替换了控制面地址和版本，llms.txt 列出全部页面", async () => {
+		const page = await fetchPath("/docs/quickstart.md");
+		expect(page.status).toBe(200);
+		const text = await page.text();
+		expect(text).toContain(`curl -s ${server.httpUrl}/llms.txt`);
+		expect(text).toContain(version);
+
+		const index = await (await fetchPath("/llms.txt")).text();
+		const { pages } = await api.getJson<{ pages: Array<{ slug: string }> }>("/docs");
+		expect(pages.length).toBeGreaterThan(0);
+		for (const { slug } of pages) expect(index).toContain(`(${server.httpUrl}/docs/${slug}.md)`);
 	});
 
 	it("真实 Agent 从全新 venv 开始安装 SDK 和节点包，跑通一条链", async () => {

@@ -44,8 +44,20 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+	const res = await respond(method, path, body, "application/json");
+	// 204 没有响应体（契约的响应 schema 为 z.undefined()）。
+	return (res.status === 204 ? undefined : await res.json()) as T;
+}
+
+/** 发出请求；失败（网络错误或非 2xx）时抛出 ApiError。 */
+async function respond(
+	method: string,
+	path: string,
+	body: unknown,
+	accept: string,
+): Promise<Response> {
 	let res: Response;
-	const headers: Record<string, string> = { accept: "application/json" };
+	const headers: Record<string, string> = { accept };
 	const nickname = getNickname();
 	if (nickname) headers[NICKNAME_HEADER] = encodeURIComponent(nickname);
 	if (body !== undefined) headers["content-type"] = "application/json";
@@ -72,8 +84,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 			path,
 		);
 	}
-	// 204 没有响应体（契约的响应 schema 为 z.undefined()）。
-	return (res.status === 204 ? undefined : await res.json()) as T;
+	return res;
 }
 
 /** 按契约调用接口（约定见 packages/schema/src/http/contract.ts）。 */
@@ -145,5 +156,19 @@ export function apiQuery<E extends EndpointDef>(def: E, ...[input]: InputArgs<E>
 	return queryOptions({
 		queryKey: queryKey(def, input),
 		queryFn: () => send(def, input),
+	});
+}
+
+/**
+ * 下载接口的文本内容作为查询（例如用户文档的 Markdown 原文，docsApi.page）。
+ * 下载接口没有 query key 前缀，key 是 `["download", 路径模板, { params?, query? }]`。
+ */
+export function apiTextQuery<D extends DownloadDef>(def: D, ...[input]: InputArgs<D>) {
+	const { params, query } = (input ?? {}) as { params?: unknown; query?: unknown };
+	const url = apiUrl(def, ...([input] as InputArgs<D>));
+	return queryOptions({
+		queryKey: ["download", def.path, { params, query }] as const,
+		queryFn: async () =>
+			(await respond("GET", url.slice(API_BASE.length), undefined, def.contentType)).text(),
 	});
 }

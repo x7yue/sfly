@@ -1,9 +1,11 @@
 import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
+import packageJson from "../package.json" with { type: "json" };
 import { AgentHub } from "./agents/agent-hub.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
+import { loadUserDocs } from "./docs/user-docs.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
@@ -68,6 +70,10 @@ export interface ControlPlaneOptions {
 	leaseMs?: number;
 	/** SDK 运行时 wheel 所在目录（src/sdk/sdk-wheels.ts）；不设置时不提供 SDK 下载。 */
 	sdkWheelDir?: string;
+	/** 用户文档目录（仓库的 docs/guide，src/docs/user-docs.ts）；不设置时没有文档。 */
+	docsDir?: string;
+	/** 控制面版本号，默认取 package.json；测试里固定，让文档等输出与发版无关。 */
+	version?: string;
 	/** 前端构建产物目录（apps/web 的 vite build 输出）；不设置时只提供 API，不提供页面。 */
 	webDir?: string;
 	/** 数据库迁移目录；默认取源码中的 apps/server/drizzle，打包后的控制面需要指定。 */
@@ -107,6 +113,14 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 	const sdkWheels = await loadSdkWheels(options.sdkWheelDir);
+	let docs: Awaited<ReturnType<typeof loadUserDocs>>;
+	try {
+		docs = await loadUserDocs(options.docsDir);
+	} catch (error) {
+		await database.close();
+		throw error;
+	}
+	const version = options.version ?? packageJson.version;
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex });
 	await hub.markAllOffline();
@@ -179,6 +193,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		agentToken: options.agentToken,
 		publicHttpUrl: () => publicHttpUrl,
 		sdkWheels,
+		docs,
+		docValues: () => ({ SFLY_URL: publicHttpUrl, SFLY_VERSION: version }),
 		webApp,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";

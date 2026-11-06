@@ -1,0 +1,6 @@
+{
+	"pages": [
+		{ "slug": "quickstart", "title": "快速开始", "description": "从零跑通第一个节点" },
+		{ "slug": "install-agent", "title": "安装 Agent", "description": "在测试机上安装 sfly Agent" }
+	]
+}

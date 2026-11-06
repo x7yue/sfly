@@ -15,6 +15,8 @@ import { Route as ShellAgentsRouteImport } from './routes/_shell/agents'
 import { Route as ShellPackagesRouteImport } from './routes/_shell/packages'
 import { Route as OrchestrationsIdRouteImport } from './routes/orchestrations/$id'
 import { Route as RunsIdRouteImport } from './routes/runs/$id'
+import { Route as ShellDocsIndexRouteImport } from './routes/_shell/docs/index'
+import { Route as ShellDocsPageRouteImport } from './routes/_shell/docs/$page'
 import { Route as ShellOrchestrationsIndexRouteImport } from './routes/_shell/orchestrations/index'
 import { Route as ShellRunsIndexRouteImport } from './routes/_shell/runs/index'
 import { Route as ShellOrchestrationsIdVersionsRouteImport } from './routes/_shell/orchestrations/$id_.versions'
@@ -48,6 +50,16 @@ const RunsIdRoute = RunsIdRouteImport.update({
   path: '/runs/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ShellDocsIndexRoute = ShellDocsIndexRouteImport.update({
+  id: '/docs/',
+  path: '/docs/',
+  getParentRoute: () => ShellRoute,
+} as any)
+const ShellDocsPageRoute = ShellDocsPageRouteImport.update({
+  id: '/docs/$page',
+  path: '/docs/$page',
+  getParentRoute: () => ShellRoute,
+} as any)
 const ShellOrchestrationsIndexRoute =
   ShellOrchestrationsIndexRouteImport.update({
     id: '/orchestrations/',
@@ -72,6 +84,8 @@ export interface FileRoutesByFullPath {
   '/packages': typeof ShellPackagesRoute
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/runs/$id': typeof RunsIdRoute
+  '/docs/$page': typeof ShellDocsPageRoute
+  '/docs/': typeof ShellDocsIndexRoute
   '/orchestrations/': typeof ShellOrchestrationsIndexRoute
   '/runs/': typeof ShellRunsIndexRoute
   '/orchestrations/$id/versions': typeof ShellOrchestrationsIdVersionsRoute
@@ -82,6 +96,8 @@ export interface FileRoutesByTo {
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/runs/$id': typeof RunsIdRoute
   '/': typeof ShellIndexRoute
+  '/docs/$page': typeof ShellDocsPageRoute
+  '/docs': typeof ShellDocsIndexRoute
   '/orchestrations': typeof ShellOrchestrationsIndexRoute
   '/runs': typeof ShellRunsIndexRoute
   '/orchestrations/$id/versions': typeof ShellOrchestrationsIdVersionsRoute
@@ -94,6 +110,8 @@ export interface FileRoutesById {
   '/orchestrations/$id': typeof OrchestrationsIdRoute
   '/runs/$id': typeof RunsIdRoute
   '/_shell/': typeof ShellIndexRoute
+  '/_shell/docs/$page': typeof ShellDocsPageRoute
+  '/_shell/docs/': typeof ShellDocsIndexRoute
   '/_shell/orchestrations/': typeof ShellOrchestrationsIndexRoute
   '/_shell/runs/': typeof ShellRunsIndexRoute
   '/_shell/orchestrations/$id_/versions': typeof ShellOrchestrationsIdVersionsRoute
@@ -106,6 +124,8 @@ export interface FileRouteTypes {
     | '/packages'
     | '/orchestrations/$id'
     | '/runs/$id'
+    | '/docs/$page'
+    | '/docs/'
     | '/orchestrations/'
     | '/runs/'
     | '/orchestrations/$id/versions'
@@ -116,6 +136,8 @@ export interface FileRouteTypes {
     | '/orchestrations/$id'
     | '/runs/$id'
     | '/'
+    | '/docs/$page'
+    | '/docs'
     | '/orchestrations'
     | '/runs'
     | '/orchestrations/$id/versions'
@@ -127,6 +149,8 @@ export interface FileRouteTypes {
     | '/orchestrations/$id'
     | '/runs/$id'
     | '/_shell/'
+    | '/_shell/docs/$page'
+    | '/_shell/docs/'
     | '/_shell/orchestrations/'
     | '/_shell/runs/'
     | '/_shell/orchestrations/$id_/versions'
@@ -182,6 +206,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof RunsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/_shell/docs/': {
+      id: '/_shell/docs/'
+      path: '/docs'
+      fullPath: '/docs/'
+      preLoaderRoute: typeof ShellDocsIndexRouteImport
+      parentRoute: typeof ShellRoute
+    }
+    '/_shell/docs/$page': {
+      id: '/_shell/docs/$page'
+      path: '/docs/$page'
+      fullPath: '/docs/$page'
+      preLoaderRoute: typeof ShellDocsPageRouteImport
+      parentRoute: typeof ShellRoute
+    }
     '/_shell/orchestrations/': {
       id: '/_shell/orchestrations/'
       path: '/orchestrations'
@@ -210,6 +248,8 @@ interface ShellRouteChildren {
   ShellAgentsRoute: typeof ShellAgentsRoute
   ShellPackagesRoute: typeof ShellPackagesRoute
   ShellIndexRoute: typeof ShellIndexRoute
+  ShellDocsPageRoute: typeof ShellDocsPageRoute
+  ShellDocsIndexRoute: typeof ShellDocsIndexRoute
   ShellOrchestrationsIndexRoute: typeof ShellOrchestrationsIndexRoute
   ShellRunsIndexRoute: typeof ShellRunsIndexRoute
   ShellOrchestrationsIdVersionsRoute: typeof ShellOrchestrationsIdVersionsRoute
@@ -219,6 +259,8 @@ const ShellRouteChildren: ShellRouteChildren = {
   ShellAgentsRoute: ShellAgentsRoute,
   ShellPackagesRoute: ShellPackagesRoute,
   ShellIndexRoute: ShellIndexRoute,
+  ShellDocsPageRoute: ShellDocsPageRoute,
+  ShellDocsIndexRoute: ShellDocsIndexRoute,
   ShellOrchestrationsIndexRoute: ShellOrchestrationsIndexRoute,
   ShellRunsIndexRoute: ShellRunsIndexRoute,
   ShellOrchestrationsIdVersionsRoute: ShellOrchestrationsIdVersionsRoute,

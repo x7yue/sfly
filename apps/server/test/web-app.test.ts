@@ -82,6 +82,28 @@ describe("控制面托管前端（SPA）", () => {
 		expect(await missing.json()).toMatchObject({ error: { code: "not_found" } });
 	});
 
+	it("浏览器打开文档原文与 llms.txt 时得到原文，不回退到入口页", async () => {
+		const docsDir = await mkdtemp(join(tmpdir(), "sfly-web-docs-"));
+		try {
+			await writeFile(
+				join(docsDir, "pages.json"),
+				JSON.stringify({ pages: [{ slug: "quickstart", title: "快速开始", description: "d" }] }),
+			);
+			await writeFile(join(docsDir, "quickstart.md"), "# 快速开始\n");
+			cp = await startTestControlPlane({ webDir, docsDir });
+			const page = await cp.fetch("/docs/quickstart.md", { headers: NAVIGATE });
+			expect(await page.text()).toBe("# 快速开始\n");
+			const index = await cp.fetch("/llms.txt", { headers: NAVIGATE });
+			expect(await index.text()).toMatch(/^# sfly 开发文档/);
+			// 前端的文档页仍然回退到入口页。
+			expect(await (await cp.fetch("/docs/quickstart", { headers: NAVIGATE })).text()).toBe(
+				INDEX_HTML,
+			);
+		} finally {
+			await rm(docsDir, { recursive: true, force: true });
+		}
+	});
+
 	it("没有配置前端目录时不提供页面", async () => {
 		cp = await startTestControlPlane();
 		const res = await cp.fetch("/", { headers: NAVIGATE });
