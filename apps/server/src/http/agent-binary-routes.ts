@@ -25,6 +25,7 @@ export function registerAgentBinaryRoutes(
 		version: string;
 		publicHttpUrl: () => string;
 		publicGrpcUrl: () => string;
+		mirrors: { pypi?: string; githubRelease?: string };
 	},
 ): void {
 	contractRoute(app, agentBinariesApi.list, async () => {
@@ -63,6 +64,8 @@ export function registerAgentBinaryRoutes(
 					SFLY_VERSION: deps.version,
 					SHA256_X86_64: sha256("x86_64"),
 					SHA256_AARCH64: sha256("aarch64"),
+					PYPI_MIRROR: deps.mirrors.pypi ?? "",
+					GITHUB_RELEASE_MIRROR: deps.mirrors.githubRelease ?? "",
 				}),
 			);
 	});

@@ -240,6 +240,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		sdkWheels,
 		agentBinaries,
 		installScript,
+		mirrors: { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror },
 		docs,
 		docValues: () => ({ SFLY_URL: publicHttpUrl, SFLY_VERSION: version }),
 		webApp,

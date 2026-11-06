@@ -1,11 +1,12 @@
 #!/bin/sh
 # sfly Agent 一键安装脚本（ADR 0011）。由控制面 {{SFLY_URL}} 生成，地址、版本号和 sha256 已经填好：
 #
-#   curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name <名称> [--token <令牌>] [--slots <槽位数>] [--no-service]
+#   curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name <名称> [--token <令牌>] [--slots <槽位数>] [--dev] [--no-service]
 #
 # 识别 CPU 架构，从控制面下载 sfly Agent {{SFLY_VERSION}} 并校验 sha256，放到 $SFLY_HOME/bin（默认 ~/.sfly/bin），
 # 写入 $SFLY_HOME/agent.env；root 运行时注册系统级 systemd 服务，普通用户运行时注册用户级服务。
-# 重新运行即重新安装（覆盖二进制和 agent.env）。
+# --dev 时再装好开发用的 uv（如果还没有）和 sfly CLI（从控制面的 sfly 索引 {{SFLY_URL}}/simple/）。
+# 重新运行即重新安装（覆盖二进制和 agent.env，--dev 时把 sfly CLI 升级到控制面的版本）。
 set -eu
 
 SFLY_URL='{{SFLY_URL}}'
@@ -13,6 +14,9 @@ SFLY_GRPC_URL='{{SFLY_GRPC_URL}}'
 SFLY_VERSION='{{SFLY_VERSION}}'
 SHA256_X86_64='{{SHA256_X86_64}}'
 SHA256_AARCH64='{{SHA256_AARCH64}}'
+# 控制面配置的镜像（ADR 0012），未配置时为空；只在 --dev 安装 uv 和 sfly CLI 时以环境变量传给这一次的命令。
+PYPI_MIRROR='{{PYPI_MIRROR}}'
+GITHUB_RELEASE_MIRROR='{{GITHUB_RELEASE_MIRROR}}'
 
 usage() {
 	cat <<EOF
@@ -24,6 +28,7 @@ usage() {
   --name <名称>      Agent 名称，全局唯一（必填）
   --token <令牌>     共享注册令牌（控制面配置了 SFLY_AGENT_TOKEN 时必填）
   --slots <槽位数>   同时执行的任务上限（默认 4）
+  --dev              同时安装开发用的 uv（没有时）和 sfly CLI $SFLY_VERSION（uv tool install）
   --no-service       不注册 systemd 服务（测试、容器里用），只打印前台启动命令
   -h, --help         显示本帮助
 
@@ -53,6 +58,7 @@ name=
 token=
 slots=
 service=1
+dev=0
 while [ $# -gt 0 ]; do
 	case $1 in
 	--name | --token | --slots)
@@ -68,6 +74,7 @@ while [ $# -gt 0 ]; do
 	--token=*) token=${1#*=} && shift ;;
 	--slots=*) slots=${1#*=} && shift ;;
 	--no-service) service=0 && shift ;;
+	--dev) dev=1 && shift ;;
 	-h | --help)
 		usage
 		exit 0
@@ -125,7 +132,8 @@ sha256_of() {
 # 下载到同一目录的临时文件，校验通过后 rename 覆盖（正在运行的 Agent 不受影响）。
 mkdir -p "$bin"
 tmp=$bin/.sfly-agent.download.$$
-trap 'rm -f "$tmp"' EXIT
+uv_installer=$bin/.uv-installer.$$.sh
+trap 'rm -f "$tmp" "$uv_installer"' EXIT
 url=$SFLY_URL/agent/binaries/$SFLY_VERSION/$arch
 echo "下载 sfly Agent $SFLY_VERSION（$arch）：$url"
 download "$url" "$tmp" || die "下载失败：$url"
@@ -154,6 +162,60 @@ env_file=$SFLY_HOME/agent.env
 )
 mv -f "$env_file.tmp" "$env_file"
 echo "已安装 $agent，配置写入 $env_file"
+
+# 不在 PATH 上的目录：提示加进 PATH。
+path_hint() {
+	case :${PATH:-}: in
+	*:"$1":*) ;;
+	*) echo "$1 不在 PATH 上，请把它加进 shell 配置：export PATH=$(quote "$1"):\"\$PATH\"" ;;
+	esac
+}
+
+# --dev：开发用的 uv 和 sfly CLI（ADR 0011）。镜像只以环境变量传给这一次的命令，不写进任何 uv 配置。
+if [ "$dev" = 1 ]; then
+	if [ -z "${XDG_BIN_HOME:-}" ] && [ -z "${HOME:-}" ]; then
+		die "--dev 需要 HOME（或 XDG_BIN_HOME）来确定 uv 和 sfly 的安装位置"
+	fi
+	user_bin=${XDG_BIN_HOME:-$HOME/.local/bin}
+	mirror=${GITHUB_RELEASE_MIRROR%/}
+	if command -v uv >/dev/null 2>&1; then
+		uv=$(command -v uv)
+	elif [ -x "$user_bin/uv" ]; then
+		uv=$user_bin/uv
+	else
+		# 与 Agent 安装 uv 的方式相同（ADR 0012）：有 GitHub Release 镜像时用镜像上的安装脚本和发布包。
+		if [ -n "$mirror" ]; then
+			installer_url=$mirror/astral-sh/uv/LatestRelease/uv-installer.sh
+		else
+			installer_url=https://astral.sh/uv/install.sh
+		fi
+		echo "安装 uv 到 $user_bin：$installer_url"
+		download "$installer_url" "$uv_installer" || die "下载 uv 安装脚本失败：$installer_url"
+		(
+			export UV_INSTALL_DIR="$user_bin" UV_NO_MODIFY_PATH=1
+			if [ -n "$mirror" ]; then export UV_DOWNLOAD_URL="$mirror/astral-sh/uv/LatestRelease"; fi
+			sh "$uv_installer"
+		) || die "安装 uv 失败（安装脚本 $installer_url）"
+		uv=$user_bin/uv
+		[ -x "$uv" ] || die "uv 安装脚本没有生成 $uv"
+	fi
+
+	# sfly 只从控制面的 sfly 索引解析（uv 默认只用第一个有这个包的索引），其余依赖走 PyPI 镜像。
+	# 版本锁定为控制面版本：重新运行时要求变了，uv tool install 会换成新版本。
+	echo "安装 sfly CLI $SFLY_VERSION：$SFLY_URL/simple/"
+	(
+		if [ -n "$mirror" ]; then
+			export UV_PYTHON_INSTALL_MIRROR="$mirror/astral-sh/python-build-standalone/"
+		fi
+		set -- tool install --index "sfly=$SFLY_URL/simple/"
+		if [ -n "$PYPI_MIRROR" ]; then set -- "$@" --default-index "$PYPI_MIRROR"; fi
+		"$uv" "$@" "sfly[cli]==$SFLY_VERSION"
+	) || die "安装 sfly CLI 失败"
+	tool_bin=$("$uv" tool dir --bin)
+	echo "已安装 sfly CLI $SFLY_VERSION：$tool_bin/sfly"
+	path_hint "$tool_bin"
+	[ "$(dirname "$uv")" = "$tool_bin" ] || path_hint "$(dirname "$uv")"
+fi
 
 foreground="SFLY_HOME=$(quote "$SFLY_HOME") $(quote "$agent")"
 
