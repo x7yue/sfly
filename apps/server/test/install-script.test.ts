@@ -267,10 +267,7 @@ describe("install.sh", () => {
 		]);
 		expect(run.code, run.stderr).toBe(0);
 		const env = join(home, ".sfly", "agent.env");
-		await writeFile(
-			env,
-			`${await readFile(env, "utf8")}# 自己加的\nSFLY_INDEX_URL=https://pypi.example/simple\n`,
-		);
+		await writeFile(env, `${await readFile(env, "utf8")}# 自己加的\nSFLY_TERMINATE_GRACE=30\n`);
 
 		run = await install(["--name", "lab-09", "--no-service"]);
 		expect(run.code, run.stderr).toBe(0);
@@ -285,7 +282,7 @@ describe("install.sh", () => {
 			"SFLY_SLOTS=2",
 			"SFLY_NO_AUTO_UPDATE=1",
 			"# 自己加的",
-			"SFLY_INDEX_URL=https://pypi.example/simple",
+			"SFLY_TERMINATE_GRACE=30",
 		]);
 		expect((await stat(env)).mode & 0o777).toBe(0o600);
 	});

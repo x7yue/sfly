@@ -14,8 +14,12 @@
 //!   中科大这类只镜像发布文件的镜像站用不了；而 `uv self update` 本身也是下载并运行同一个安装脚本。
 //!   更新失败但旧 uv 仍能运行时只告警。
 //!
+//! 本机可以覆盖控制面下发的镜像（[`Mirrors`]，命令行 > 环境变量 > `agent.env` > 控制面下发）：
+//! `--index-url`（PyPI）、`--github-release-mirror`（安装和更新 uv，也用来推导 Python 下载镜像）、
+//! `--python-install-mirror`（直接作为 `UV_PYTHON_INSTALL_MIRROR`，优先于推导的地址）。
+//!
 //! 失败时返回 [`EnvironmentError`]：Agent 以退出码 [`EXIT_CODE`] 退出，标准错误打印失败的命令、完整输出、
-//! 用到的镜像地址，最后一行提示把输出报告给平台管理员。
+//! 用到的镜像地址及其来源，最后一行提示把输出报告给平台管理员。
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -36,28 +40,68 @@ pub const OFFICIAL_UV_INSTALLER: &str = "https://astral.sh/uv/install.sh";
 /// 「首次启动时更新 uv」的标记文件，放在 Agent 管理的 uv 所在目录（`SFLY_HOME/bin/.uv-update`）。
 pub const UV_UPDATE_MARKER: &str = ".uv-update";
 
-/// 控制面在 Welcome 里下发的镜像（ADR 0012）；未配置的为 None。
+/// 本机对镜像的覆盖（`--index-url`、`--github-release-mirror`、`--python-install-mirror`，
+/// 也可以写在环境变量或 `agent.env` 里）；没有覆盖的为 None。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Mirrors {
+pub struct LocalMirrors {
     /// PyPI 镜像（简单索引地址）。
     pub pypi: Option<String>,
-    /// GitHub Release 镜像，例如 `https://mirrors.ustc.edu.cn/github-release`。
+    /// GitHub Release 镜像。
     pub github_release: Option<String>,
+    /// Python 下载镜像（`UV_PYTHON_INSTALL_MIRROR`）。
+    pub python_install: Option<String>,
+}
+
+/// 镜像地址的来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// 控制面在 Welcome 里下发。
+    ControlPlane,
+    /// 本机覆盖。
+    Local,
+}
+
+/// 准备环境用的镜像（ADR 0012）：控制面在 Welcome 里下发的，加上本机的覆盖（本地优先）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Mirrors {
+    /// 控制面下发的 PyPI 镜像；未配置为 None。
+    pub distributed_pypi: Option<String>,
+    /// 控制面下发的 GitHub Release 镜像，例如 `https://mirrors.ustc.edu.cn/github-release`。
+    pub distributed_github_release: Option<String>,
+    pub local: LocalMirrors,
+}
+
+fn non_empty(s: &str) -> Option<String> {
+    (!s.trim().is_empty()).then(|| s.trim().to_string())
 }
 
 impl Mirrors {
-    pub fn from_welcome(welcome: &Welcome) -> Self {
-        let non_empty = |s: &str| (!s.trim().is_empty()).then(|| s.trim().to_string());
+    pub fn new(welcome: &Welcome, local: &LocalMirrors) -> Self {
+        let clean = |v: &Option<String>| v.as_deref().and_then(non_empty);
         Self {
-            pypi: non_empty(&welcome.pypi_mirror),
-            github_release: non_empty(&welcome.github_release_mirror),
+            distributed_pypi: non_empty(&welcome.pypi_mirror),
+            distributed_github_release: non_empty(&welcome.github_release_mirror),
+            local: LocalMirrors {
+                pypi: clean(&local.pypi),
+                github_release: clean(&local.github_release),
+                python_install: clean(&local.python_install),
+            },
         }
     }
 
+    /// 安装节点包依赖用的 PyPI 镜像：本地覆盖 > 下发。
+    pub fn pypi(&self) -> Option<(&str, Source)> {
+        pick(&self.local.pypi, &self.distributed_pypi)
+    }
+
+    /// GitHub Release 镜像：本地覆盖 > 下发。
+    pub fn github_release(&self) -> Option<(&str, Source)> {
+        pick(&self.local.github_release, &self.distributed_github_release)
+    }
+
     fn github_release_base(&self) -> Option<&str> {
-        self.github_release
-            .as_deref()
-            .map(|url| url.trim_end_matches('/'))
+        self.github_release()
+            .map(|(url, _)| url.trim_end_matches('/'))
     }
 
     /// 镜像上 uv 最新发布的目录（不带末尾 `/`，即安装脚本的 `UV_DOWNLOAD_URL`）。
@@ -74,10 +118,64 @@ impl Mirrors {
         }
     }
 
-    /// Python 下载镜像（`UV_PYTHON_INSTALL_MIRROR`）。
+    /// Python 下载镜像（`UV_PYTHON_INSTALL_MIRROR`）：本地覆盖 > 从 GitHub Release 镜像推导。
     pub fn python_install_mirror(&self) -> Option<String> {
-        self.github_release_base()
-            .map(|base| format!("{base}/astral-sh/python-build-standalone/"))
+        self.local.python_install.clone().or_else(|| {
+            self.github_release_base()
+                .map(|base| format!("{base}/astral-sh/python-build-standalone/"))
+        })
+    }
+
+    /// 失败报告里的镜像一节：每个地址标明来源（覆盖时也列出控制面下发的值）。
+    fn describe(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn line(
+            f: &mut fmt::Formatter<'_>,
+            label: &str,
+            local: &Option<String>,
+            distributed: &Option<String>,
+        ) -> fmt::Result {
+            match (local, distributed) {
+                (Some(local), Some(distributed)) => writeln!(
+                    f,
+                    "  {label}：{local}（本地覆盖；控制面下发的是 {distributed}）"
+                ),
+                (Some(local), None) => writeln!(f, "  {label}：{local}（本地覆盖）"),
+                (None, Some(distributed)) => writeln!(f, "  {label}：{distributed}（控制面下发）"),
+                (None, None) => writeln!(f, "  {label}：未配置"),
+            }
+        }
+        writeln!(f, "用到的镜像：")?;
+        line(
+            f,
+            "GitHub Release 镜像",
+            &self.local.github_release,
+            &self.distributed_github_release,
+        )?;
+        match (&self.local.python_install, self.github_release()) {
+            (Some(local), _) => writeln!(f, "  Python 下载镜像：{local}（本地覆盖）")?,
+            (None, Some((_, source))) => writeln!(
+                f,
+                "  Python 下载镜像：{}（由{} GitHub Release 镜像推导）",
+                self.python_install_mirror().unwrap_or_default(),
+                match source {
+                    Source::ControlPlane => "控制面下发的",
+                    Source::Local => "本地覆盖的",
+                }
+            )?,
+            (None, None) => writeln!(f, "  Python 下载镜像：未配置")?,
+        }
+        line(f, "PyPI 镜像", &self.local.pypi, &self.distributed_pypi)
+    }
+}
+
+fn pick<'a>(
+    local: &'a Option<String>,
+    distributed: &'a Option<String>,
+) -> Option<(&'a str, Source)> {
+    match (local, distributed) {
+        (Some(url), _) => Some((url, Source::Local)),
+        (None, Some(url)) => Some((url, Source::ControlPlane)),
+        (None, None) => None,
     }
 }
 
@@ -92,31 +190,15 @@ pub struct EnvironmentError {
     pub output: String,
     /// 用到的镜像（装箱：让 `Result<_, EnvironmentError>` 保持小巧）。
     pub mirrors: Box<Mirrors>,
-    /// 本地 `--index-url`（覆盖下发的 PyPI 镜像）。
-    pub index_url: Option<String>,
 }
 
 impl fmt::Display for EnvironmentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let or_none = |v: &Option<String>| v.clone().unwrap_or_else(|| "未配置".to_string());
         writeln!(f, "sfly Agent 环境准备失败：{}", self.what)?;
         writeln!(f, "失败的命令：{}", self.command)?;
         writeln!(f, "命令输出：")?;
         writeln!(f, "{}", self.output.trim_end())?;
-        writeln!(f, "镜像（由控制面下发）：")?;
-        writeln!(
-            f,
-            "  GitHub Release 镜像：{}",
-            or_none(&self.mirrors.github_release)
-        )?;
-        match &self.index_url {
-            Some(local) => writeln!(
-                f,
-                "  PyPI 镜像：{}（本地 --index-url 覆盖为 {local}）",
-                or_none(&self.mirrors.pypi)
-            )?,
-            None => writeln!(f, "  PyPI 镜像：{}", or_none(&self.mirrors.pypi))?,
-        }
+        self.mirrors.describe(f)?;
         write!(f, "请把以上输出报告给平台管理员。")
     }
 }
@@ -130,7 +212,6 @@ pub struct Setup<'a> {
     /// uv 由 Agent 管理（没有指定 `--uv`，`uv` 是 `SFLY_HOME/bin/uv`）。
     pub manage_uv: bool,
     pub mirrors: &'a Mirrors,
-    pub index_url: Option<&'a str>,
     /// 下载安装脚本用的临时目录。
     pub scratch: &'a Path,
 }
@@ -142,7 +223,6 @@ impl Setup<'_> {
             command,
             output,
             mirrors: Box::new(self.mirrors.clone()),
-            index_url: self.index_url.map(str::to_string),
         }
     }
 

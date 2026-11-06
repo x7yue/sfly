@@ -38,7 +38,7 @@ demo/
 `pyproject.toml` 里，`sfly init` 在 uv 生成的内容后面追加了：
 
 - 开发依赖组 `dev`：`sfly[cli]`（锁定为控制面版本 {{SFLY_VERSION}}）、pytest、ruff。`sfly` 只能放在这里，不能写进 `[project].dependencies`：Agent 自带 SDK 运行时，`sfly build` 遇到它会报错。
-- `[tool.uv]` 的 Python 下载镜像和 PyPI 镜像（控制面配置了镜像时），以及名为 `sfly` 的显式索引 `{{SFLY_URL}}/simple/`，`[tool.uv.sources]` 把 `sfly` 绑定到它：`sfly` 只从控制面安装，不会装到 PyPI 上同名的其他包。
+- `[tool.uv]` 的 Python 下载镜像和 PyPI 镜像（控制面配置了镜像时；本机覆盖了镜像时用覆盖的值，见 [安装 Agent](install-agent.md) 的「单台机器覆盖镜像」一节），以及名为 `sfly` 的显式索引 `{{SFLY_URL}}/simple/`，`[tool.uv.sources]` 把 `sfly` 绑定到它：`sfly` 只从控制面安装，不会装到 PyPI 上同名的其他包。
 
 这些配置都在项目里，不改用户级的 uv 配置，`uv sync`、`uv run` 直接能用。
 

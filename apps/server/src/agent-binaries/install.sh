@@ -19,11 +19,13 @@ SFLY_VERSION='{{SFLY_VERSION}}'
 SHA256_X86_64='{{SHA256_X86_64}}'
 SHA256_AARCH64='{{SHA256_AARCH64}}'
 # 控制面配置的镜像（ADR 0012），未配置时为空；只在 --dev 安装 uv 和 sfly CLI 时以环境变量传给这一次的命令。
+# 本机可以用环境变量 SFLY_INDEX_URL、SFLY_GITHUB_RELEASE_MIRROR、SFLY_PYTHON_INSTALL_MIRROR 覆盖（与 Agent 相同），
+# 覆盖值写进 agent.env，Agent 和 sfly init 也用它们。
 PYPI_MIRROR='{{PYPI_MIRROR}}'
 GITHUB_RELEASE_MIRROR='{{GITHUB_RELEASE_MIRROR}}'
 
 # agent.env 里由本脚本管理的键（重新运行时改写），其余的行原样保留。
-MANAGED_KEYS='SFLY_SERVER SFLY_CONTROL_PLANE_URL SFLY_AGENT_NAME SFLY_TOKEN SFLY_SLOTS SFLY_NO_AUTO_UPDATE'
+MANAGED_KEYS='SFLY_SERVER SFLY_CONTROL_PLANE_URL SFLY_AGENT_NAME SFLY_TOKEN SFLY_SLOTS SFLY_NO_AUTO_UPDATE SFLY_INDEX_URL SFLY_GITHUB_RELEASE_MIRROR SFLY_PYTHON_INSTALL_MIRROR'
 
 usage() {
 	cat <<EOF
@@ -40,13 +42,23 @@ usage() {
   --no-service       不注册 systemd 服务（测试、容器里用），只打印前台启动命令
   -h, --help         显示本帮助
 
-重新运行时 agent.env 里的其他键保留；没有传 --token、--slots、--no-auto-update 时沿用原来的值。
+重新运行时 agent.env 里的其他键保留；没有传 --token、--slots、--no-auto-update、
+没有设置下面的镜像环境变量时沿用原来的值。
 
 环境变量：
   SFLY_HOME          安装目录（默认 ~/.sfly）
   SFLY_TOKEN         共享注册令牌（--token 优先），令牌不会出现在 shell 历史和进程列表里
   SFLY_SYSTEMD_DIR   systemd 单元的写入目录（默认 root 为 /etc/systemd/system，
                      普通用户为 ~/.config/systemd/user）
+
+本机镜像覆盖（只影响这台机器，写进 agent.env，Agent 和 sfly init 也用它们）：
+  SFLY_INDEX_URL              PyPI 镜像（简单索引地址）
+  SFLY_GITHUB_RELEASE_MIRROR  GitHub Release 镜像（安装和更新 uv）
+  SFLY_PYTHON_INSTALL_MIRROR  Python 下载镜像（UV_PYTHON_INSTALL_MIRROR）
+  优先级：这次设置的环境变量 > agent.env 里原有的值 > 控制面配置的镜像；Python 下载镜像没有设置时
+  从 GitHub Release 镜像推导（<镜像>/astral-sh/python-build-standalone/）。
+  控制面配置的 PyPI 镜像：${PYPI_MIRROR:-未配置}
+  控制面配置的 GitHub Release 镜像：${GITHUB_RELEASE_MIRROR:-未配置}
 EOF
 }
 
@@ -190,10 +202,11 @@ install_agent() {
 	: >"$bin/.uv-update"
 }
 
-# agent.env 里 `key` 的值（最后一次出现的；没有时为空）。
+# agent.env 里 `key` 的值（最后一次出现的；没有时为空）。与 Agent 的读取规则相同：去掉两侧空白和成对的引号。
 env_value() {
 	[ -f "$env_file" ] || return 0
-	sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$env_file" | sed -n '$p'
+	sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$env_file" | sed -n '$p' |
+		sed -e 's/[[:space:]]*$//' -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'$/\1/"
 }
 
 # 原有 agent.env 里不由本脚本管理的行（去掉本脚本写的说明）。
@@ -207,8 +220,8 @@ unmanaged_lines() {
 	done <"$env_file"
 }
 
-# 写入 agent.env：本脚本管理的键按这次的参数写（没有传令牌、槽位数、--no-auto-update 时沿用原来的值），
-# 其他行保留。配置文件里有令牌：只有当前用户可读。
+# 写入 agent.env：本脚本管理的键按这次的参数写（没有传令牌、槽位数、--no-auto-update、没有设置镜像环境变量时
+# 沿用原来的值），其他行保留。配置文件里有令牌：只有当前用户可读。
 write_env_file() {
 	env_file=$SFLY_HOME/agent.env
 	[ -n "$token" ] || token=$(env_value SFLY_TOKEN)
@@ -218,6 +231,13 @@ write_env_file() {
 	else
 		no_auto_update_value=$(env_value SFLY_NO_AUTO_UPDATE)
 	fi
+	# 本机镜像覆盖。
+	local_index_url=${SFLY_INDEX_URL:-$(env_value SFLY_INDEX_URL)}
+	local_release_mirror=${SFLY_GITHUB_RELEASE_MIRROR:-$(env_value SFLY_GITHUB_RELEASE_MIRROR)}
+	local_python_mirror=${SFLY_PYTHON_INSTALL_MIRROR:-$(env_value SFLY_PYTHON_INSTALL_MIRROR)}
+	for value in "$local_index_url" "$local_release_mirror" "$local_python_mirror"; do
+		case $value in *"$newline"*) die "镜像地址不能包含换行" ;; esac
+	done
 	(
 		umask 077
 		{
@@ -229,6 +249,9 @@ write_env_file() {
 			if [ -n "$token" ]; then echo "SFLY_TOKEN=$token"; fi
 			if [ -n "$slots" ]; then echo "SFLY_SLOTS=$slots"; fi
 			if [ -n "$no_auto_update_value" ]; then echo "SFLY_NO_AUTO_UPDATE=$no_auto_update_value"; fi
+			if [ -n "$local_index_url" ]; then echo "SFLY_INDEX_URL=$local_index_url"; fi
+			if [ -n "$local_release_mirror" ]; then echo "SFLY_GITHUB_RELEASE_MIRROR=$local_release_mirror"; fi
+			if [ -n "$local_python_mirror" ]; then echo "SFLY_PYTHON_INSTALL_MIRROR=$local_python_mirror"; fi
 			unmanaged_lines
 		} >"$env_file.tmp"
 	)
@@ -236,13 +259,20 @@ write_env_file() {
 	echo "已安装 $agent，配置写入 $env_file"
 }
 
-# --dev：开发用的 uv 和 sfly CLI（ADR 0011）。镜像只以环境变量传给这一次的命令，不写进任何 uv 配置。
+# --dev：开发用的 uv 和 sfly CLI（ADR 0011）。镜像只以环境变量传给这一次的命令，不写进任何 uv 配置；
+# 本机覆盖（write_env_file 里取得的）优先于控制面配置的镜像。
 install_dev() {
 	if [ -z "${XDG_BIN_HOME:-}" ] && [ -z "${HOME:-}" ]; then
 		die "--dev 需要 HOME（或 XDG_BIN_HOME）来确定 uv 和 sfly 的安装位置"
 	fi
 	user_bin=${XDG_BIN_HOME:-$HOME/.local/bin}
-	mirror=${GITHUB_RELEASE_MIRROR%/}
+	mirror=${local_release_mirror:-$GITHUB_RELEASE_MIRROR}
+	mirror=${mirror%/}
+	pypi_mirror=${local_index_url:-$PYPI_MIRROR}
+	python_mirror=$local_python_mirror
+	if [ -z "$python_mirror" ] && [ -n "$mirror" ]; then
+		python_mirror=$mirror/astral-sh/python-build-standalone/
+	fi
 	if command -v uv >/dev/null 2>&1; then
 		uv=$(command -v uv)
 	elif [ -x "$user_bin/uv" ]; then
@@ -269,11 +299,9 @@ install_dev() {
 	# 版本锁定为控制面版本：重新运行时要求变了，uv tool install 会换成新版本。
 	echo "安装 sfly CLI $SFLY_VERSION：$SFLY_URL/simple/"
 	(
-		if [ -n "$mirror" ]; then
-			export UV_PYTHON_INSTALL_MIRROR="$mirror/astral-sh/python-build-standalone/"
-		fi
+		if [ -n "$python_mirror" ]; then export UV_PYTHON_INSTALL_MIRROR="$python_mirror"; fi
 		set -- tool install --index "sfly=$SFLY_URL/simple/"
-		if [ -n "$PYPI_MIRROR" ]; then set -- "$@" --default-index "$PYPI_MIRROR"; fi
+		if [ -n "$pypi_mirror" ]; then set -- "$@" --default-index "$pypi_mirror"; fi
 		"$uv" "$@" "sfly[cli]==$SFLY_VERSION"
 	) || die "安装 sfly CLI 失败"
 	tool_bin=$("$uv" tool dir --bin)
