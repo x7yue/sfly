@@ -1,6 +1,7 @@
 // 全栈：`install.sh --dev`（跳过 systemd）在开发机上装好 uv 和 `sfly` CLI（ADR 0011）。
 // 测试机 PATH 上没有 uv：从 GitHub Release 镜像桩安装；`sfly` 从控制面的 sfly 索引安装，
 // 依赖（jsonschema 的桩）从控制面配置的 PyPI 镜像桩安装，不访问外网。重新运行即升级到控制面的版本。
+// 环境变量覆盖镜像时（单台机器的本地覆盖），uv 和 sfly CLI 的依赖从覆盖的地址安装，覆盖值写进 agent.env。
 import { execFile } from "node:child_process";
 import { cp as copy, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { arch, tmpdir } from "node:os";
@@ -109,7 +110,10 @@ describe("全栈：install.sh --dev", () => {
 
 	const home = () => join(dir, "home");
 
-	async function installDev(plane: TestControlPlane) {
+	async function installDev(
+		plane: TestControlPlane,
+		options: { home?: string; env?: Record<string, string> } = {},
+	) {
 		const { stdout } = await run(
 			"sh",
 			[
@@ -117,13 +121,21 @@ describe("全栈：install.sh --dev", () => {
 				'curl -fsSL "$0/install.sh" | sh -s -- --name dev-agent --no-service --dev',
 				plane.httpUrl,
 			],
-			{ env: { PATH: tools, HOME: home(), TMPDIR: tmpdir(), UV_PYTHON: python } },
+			{
+				env: {
+					PATH: tools,
+					HOME: options.home ?? home(),
+					TMPDIR: tmpdir(),
+					UV_PYTHON: python,
+					...options.env,
+				},
+			},
 		);
 		return stdout;
 	}
 
-	const sflyVersion = async () =>
-		(await run(join(home(), ".local/bin/sfly"), ["--version"])).stdout.trim();
+	const sflyVersion = async (h = home()) =>
+		(await run(join(h, ".local/bin/sfly"), ["--version"])).stdout.trim();
 
 	it("从镜像装好 uv，从 sfly 索引装好 sfly CLI，版本等于控制面版本", async () => {
 		const [plane] = planes as [TestControlPlane];
@@ -147,5 +159,45 @@ describe("全栈：install.sh --dev", () => {
 		await installDev(plane);
 		expect(mirror.uvInstalls()).toBe(1);
 		expect(await sflyVersion()).toBe(`sfly ${newVersion}`);
+	}, 300_000);
+
+	it("环境变量覆盖镜像：uv 和 sfly CLI 从覆盖的地址安装，覆盖值写进 agent.env，重新运行时保留", async () => {
+		const [plane] = planes as [TestControlPlane];
+		const localMirror = await startReleaseMirror();
+		const localPypi = await startPypiStub([dependencyWheel("jsonschema", "4.23.0")]);
+		const otherHome = join(dir, "home-override");
+		try {
+			const distributedRequests = [mirror.requests.length, pypi.requests.length];
+			const pythonMirror = "https://python-mirror.example/astral-sh/python-build-standalone/";
+			await installDev(plane, {
+				home: otherHome,
+				env: {
+					SFLY_GITHUB_RELEASE_MIRROR: localMirror.url,
+					SFLY_INDEX_URL: localPypi.indexUrl,
+					SFLY_PYTHON_INSTALL_MIRROR: pythonMirror,
+				},
+			});
+			expect(localMirror.uvInstalls()).toBe(1);
+			expect(localPypi.requests).toContain("/simple/jsonschema/");
+			expect(await sflyVersion(otherHome)).toBe(`sfly ${version}`);
+			// 没有访问控制面下发的镜像。
+			expect([mirror.requests.length, pypi.requests.length]).toEqual(distributedRequests);
+			const overrides = [
+				`SFLY_INDEX_URL=${localPypi.indexUrl}`,
+				`SFLY_GITHUB_RELEASE_MIRROR=${localMirror.url}`,
+				`SFLY_PYTHON_INSTALL_MIRROR=${pythonMirror}`,
+			];
+			const envFile = join(otherHome, ".sfly/agent.env");
+			const lines = async () => (await readFile(envFile, "utf8")).split("\n");
+			expect(await lines()).toEqual(expect.arrayContaining(overrides));
+
+			// 重新运行时不带环境变量：覆盖值保留，仍然不访问下发的镜像。
+			await installDev(plane, { home: otherHome });
+			expect(await lines()).toEqual(expect.arrayContaining(overrides));
+			expect([mirror.requests.length, pypi.requests.length]).toEqual(distributedRequests);
+		} finally {
+			await localMirror.close();
+			await localPypi.close();
+		}
 	}, 300_000);
 });
