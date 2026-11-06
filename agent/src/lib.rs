@@ -10,6 +10,7 @@
 
 pub mod artifacts;
 pub mod dev;
+pub mod environment;
 pub mod executor;
 pub mod home;
 pub mod install;
@@ -35,6 +36,7 @@ pub mod proto {
 }
 
 use dev::{DEV_VERSION, DevRegistry, DevReply, DevRequest};
+use environment::{Mirrors, Setup};
 use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
@@ -75,15 +77,18 @@ pub struct Config {
     pub venv: PathBuf,
     /// 任务工作目录的根目录。
     pub work_dir: PathBuf,
-    /// 安装节点包依赖用的 PyPI 镜像地址；未设置时使用 uv 自己的配置。
+    /// 安装节点包依赖用的 PyPI 镜像地址，优先于控制面下发的镜像；都没有时使用 uv 自己的配置。
     pub index_url: Option<String>,
     /// uv 可执行文件。
     pub uv: PathBuf,
+    /// uv 由 Agent 管理（没有指定 `--uv`，`uv` 是 `SFLY_HOME/bin/uv`）：不存在时从镜像安装（[`environment`]）。
+    pub manage_uv: bool,
     /// `sfly dev` 连接的本地 socket；未设置时为 `<work_dir>/agent.sock`。
     pub dev_socket: Option<PathBuf>,
     /// 超时和取消时从优雅终止到强制杀掉进程树的宽限期。
     pub terminate_grace: Duration,
-    /// 共享 venv 不存在时，`uv venv --python` 用的解释器（版本号或路径）；未设置时由 uv 选择。
+    /// 共享 venv 不存在时，`uv venv --python` 用的解释器（版本号或路径）；
+    /// 未设置时为 [`environment::PYTHON_VERSION`]。
     pub python: Option<String>,
     /// 与控制面断开期间最多排队多少字节的日志；超出后丢弃新的日志批次（控制面看到序号缺口）。
     pub telemetry_queue_bytes: usize,
@@ -102,6 +107,7 @@ impl Config {
             work_dir: PathBuf::from("work"),
             index_url: None,
             uv: PathBuf::from("uv"),
+            manage_uv: false,
             dev_socket: None,
             terminate_grace: DEFAULT_TERMINATE_GRACE,
             python: None,
@@ -575,7 +581,7 @@ impl Runtime {
 }
 
 /// Agent 主循环：连接控制面并执行任务；连接失败或断开后按退避时间自动重连。
-/// 只有不可恢复的错误（例如令牌被拒绝）才会返回。
+/// 只有不可恢复的错误（例如令牌被拒绝、环境准备失败 [`environment::EnvironmentError`]）才会返回。
 ///
 /// 任务结果在收到控制面的 Ack 之前一直保留，每次重新连接后再次上报（控制面按 task_id + attempt 幂等处理）。
 pub async fn run(config: Config) -> anyhow::Result<()> {
@@ -601,7 +607,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         installer: Installer {
             venv: SharedVenv::new(venv),
             scratch: scratch.clone(),
-            index_url: config.index_url.clone(),
+            index_url: std::sync::Mutex::new(config.index_url.clone()),
             uv: config.uv.clone(),
             http: http.clone(),
         },
@@ -652,8 +658,12 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         match connect(&config, hello).await {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
-                // 共享 venv 在收到 Welcome 之后才准备：控制面会在 Welcome 里下发镜像配置（ADR 0012）。
-                prepare_venv(&config, &runtime.inventory.venv).await;
+                // uv 和共享 venv 在收到 Welcome 之后才准备：控制面在 Welcome 里下发镜像配置（ADR 0012）。
+                // 准备失败时 Agent 退出，不带着坏环境继续连接。
+                let mirrors = Mirrors::from_welcome(&connection.welcome);
+                *runtime.installer.index_url.lock().unwrap() =
+                    config.index_url.clone().or_else(|| mirrors.pypi.clone());
+                prepare_environment(&config, &runtime, &mirrors).await?;
                 // SDK 运行时与 Agent 版本不一致（或还没装）时，先从控制面下载安装，再开始接收任务。
                 runtime.ensure_sdk(&connection.welcome).await;
                 emit(serde_json::json!({ "event": "welcome", "name": config.name }));
@@ -698,13 +708,27 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     }
 }
 
-/// 共享 venv 不存在时用 uv 创建（已存在时什么也不做）；创建失败时照常运行，任务以 env_error 失败。
-async fn prepare_venv(config: &Config, venv: &SharedVenv) {
-    match sdk::create_venv(&config.uv, venv, config.python.as_deref()).await {
-        Ok(true) => emit(serde_json::json!({ "event": "venv_created", "path": venv.root() })),
-        Ok(false) => {}
-        Err(error) => eprintln!("cannot create shared venv: {error:#}"),
+/// 准备 uv（Agent 管理的 uv 不存在时从镜像安装）和共享 venv（不存在时创建）；已经准备好时只检查 uv 能运行。
+async fn prepare_environment(
+    config: &Config,
+    runtime: &Runtime,
+    mirrors: &Mirrors,
+) -> Result<(), environment::EnvironmentError> {
+    let setup = Setup {
+        uv: &config.uv,
+        manage_uv: config.manage_uv,
+        mirrors,
+        index_url: config.index_url.as_deref(),
+        scratch: &runtime.scratch,
+    };
+    if setup.ensure_uv().await? {
+        emit(serde_json::json!({ "event": "uv_installed", "path": config.uv }));
     }
+    let venv = &runtime.inventory.venv;
+    if setup.ensure_venv(venv, config.python.as_deref()).await? {
+        emit(serde_json::json!({ "event": "venv_created", "path": venv.root() }));
+    }
+    Ok(())
 }
 
 fn result_message(result: TaskResult) -> AgentMessage {

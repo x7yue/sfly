@@ -1,6 +1,5 @@
-//! 共享 venv 的准备（ADR 0002，规格“Agent 运行时只依赖 uv”）：
+//! 共享 venv 里的 SDK 运行时（ADR 0002，规格“Agent 运行时只依赖 uv”；共享 venv 本身的创建见 [`crate::environment`]）：
 //!
-//! - 收到控制面的 Welcome 后，共享 venv 不存在就用 `uv venv` 创建（`--python` 指定解释器，默认由 uv 选择）；
 //! - 连上控制面后，共享 venv 里的 SDK 运行时（Python 包 `sfly`）版本与 Agent 版本不一致或还没安装时，
 //!   从 Welcome 给出的地址下载 SDK 运行时 wheel、校验 sha256，用 `uv pip install` 装进共享 venv；
 //!   版本一致时什么也不做。
@@ -14,38 +13,6 @@ use anyhow::{Context as _, bail};
 use sha2::{Digest, Sha256};
 
 use crate::venv::SharedVenv;
-
-/// 共享 venv 不存在时用 uv 创建；已经存在时什么也不做。返回是否新建了。
-pub async fn create_venv(
-    uv: &Path,
-    venv: &SharedVenv,
-    python: Option<&str>,
-) -> anyhow::Result<bool> {
-    if venv.python().exists() {
-        return Ok(false);
-    }
-    let mut command = tokio::process::Command::new(uv);
-    command.args(["venv", "--quiet", "--no-project"]);
-    if let Some(python) = python {
-        command.args(["--python", python]);
-    }
-    let output = command
-        .arg(venv.root())
-        .env_remove("VIRTUAL_ENV")
-        .stdin(Stdio::null())
-        .output()
-        .await
-        .with_context(|| format!("run {}", uv.display()))?;
-    if !output.status.success() {
-        bail!(
-            "uv venv {} failed ({}): {}",
-            venv.root().display(),
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    Ok(true)
-}
 
 /// 共享 venv 中 SDK 运行时的版本；没有安装（或 venv 不可用）时为 None。
 pub async fn installed_version(venv: &SharedVenv) -> Option<String> {

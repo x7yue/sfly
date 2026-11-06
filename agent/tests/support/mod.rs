@@ -2,6 +2,7 @@
 //! 启动真实 Agent 二进制、准备装好桩节点包的共享 venv。
 #![allow(dead_code)] // 各测试文件只用到其中一部分。
 
+pub mod mirror;
 pub mod packages;
 
 use std::collections::HashSet;
@@ -50,6 +51,8 @@ struct State {
     heartbeat_interval_ms: AtomicU32,
     /// Welcome 中的 SDK 运行时 wheel（下载地址, sha256）。
     sdk_wheel: Mutex<(String, String)>,
+    /// Welcome 中的镜像（PyPI 镜像, GitHub Release 镜像）。
+    mirrors: Mutex<(String, String)>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -238,6 +241,11 @@ impl FakeControlPlane {
         *self.state.sdk_wheel.lock().unwrap() = (url.to_string(), sha256.to_string());
     }
 
+    /// 之后的 Welcome 下发的镜像（PyPI 镜像, GitHub Release 镜像；空串表示未配置）。
+    pub fn set_mirrors(&self, pypi: &str, github_release: &str) {
+        *self.state.mirrors.lock().unwrap() = (pypi.to_string(), github_release.to_string());
+    }
+
     /// 已收到的 Heartbeat（会话序号与到达时间）。
     pub fn heartbeats(&self) -> Vec<Received> {
         self.received_with_session()
@@ -288,6 +296,8 @@ impl AgentGateway for Gateway {
                         let abandon = state.abandon.lock().unwrap().clone();
                         let (sdk_wheel_url, sdk_wheel_sha256) =
                             state.sdk_wheel.lock().unwrap().clone();
+                        let (pypi_mirror, github_release_mirror) =
+                            state.mirrors.lock().unwrap().clone();
                         Some(server_message::Body::Welcome(Welcome {
                             dispositions: hello
                                 .running_tasks
@@ -308,6 +318,8 @@ impl AgentGateway for Gateway {
                                 .load(Ordering::SeqCst),
                             sdk_wheel_url,
                             sdk_wheel_sha256,
+                            pypi_mirror,
+                            github_release_mirror,
                         }))
                     }
                     Some(agent_message::Body::Result(r))
@@ -403,10 +415,14 @@ impl<'a> AgentOptions<'a> {
 
 /// 真实 Agent 二进制的命令：`SFLY_HOME` 指向 `home`（不读开发者自己的 `~/.sfly/agent.env`），
 /// 标准输出丢弃，测试结束时被杀掉。其余参数由调用方添加。
+///
+/// 默认 `SFLY_UV=uv`（用测试机 PATH 上的 uv，不让 Agent 去安装自己管理的 uv）；
+/// 测 Agent 管理 uv 的测试用 `env_remove("SFLY_UV")` 去掉它。
 pub fn agent_command(home: &Path) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_sfly-agent"));
     command
         .env("SFLY_HOME", home)
+        .env("SFLY_UV", "uv")
         .stdout(Stdio::null())
         .kill_on_drop(true);
     command

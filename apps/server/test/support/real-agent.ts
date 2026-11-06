@@ -42,6 +42,9 @@ export async function startRealAgent(options: {
 			options.venv ?? join(workDir, "no-venv"),
 			"--work-dir",
 			join(workDir, "tasks"),
+			// 用测试机 PATH 上的 uv：不让 Agent 去安装自己管理的 uv（会访问外网）；args 里的 --uv 在后面，优先。
+			"--uv",
+			"uv",
 			...(options.args ?? []),
 		],
 		{

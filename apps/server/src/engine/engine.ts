@@ -151,6 +151,8 @@ export class Engine implements AgentSessionHandler {
 			leaseMs?: number;
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
 			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
+			/** 控制面配置的镜像，原样在 Welcome 里下发（ADR 0012）；未配置的为空。 */
+			mirrors?: { pypi?: string; githubRelease?: string };
 		},
 	) {}
 
@@ -387,6 +389,8 @@ export class Engine implements AgentSessionHandler {
 							heartbeatIntervalMs: Math.min(Math.round(this.leaseMs / 3), 0xffff_ffff),
 							sdkWheelUrl: sdk?.url ?? "",
 							sdkWheelSha256: sdk?.sha256 ?? "",
+							pypiMirror: this.deps.mirrors?.pypi ?? "",
+							githubReleaseMirror: this.deps.mirrors?.githubRelease ?? "",
 						},
 					},
 				}),
