@@ -17,6 +17,7 @@ pub mod install;
 pub mod logs;
 pub mod metrics;
 pub mod process_tree;
+pub mod retention;
 pub mod sdk;
 pub mod update;
 pub mod venv;
@@ -78,6 +79,10 @@ pub struct Config {
     pub venv: PathBuf,
     /// 任务工作目录的根目录。
     pub work_dir: PathBuf,
+    /// 任务目录在结果被 Ack 后保留多久（0 表示立即删除，[`retention`]）。
+    pub task_dir_retention: Duration,
+    /// 两次扫描工作目录、删除过期任务目录的间隔（[`retention::SWEEP_INTERVAL`]，测试里改短）。
+    pub task_dir_sweep_interval: Duration,
     /// 本机对镜像的覆盖，优先于控制面下发的镜像（[`environment::Mirrors`]）；
     /// 都没有时使用 uv 自己的配置。
     pub mirrors: environment::LocalMirrors,
@@ -116,6 +121,8 @@ impl Config {
             slots: DEFAULT_SLOTS,
             venv: PathBuf::from("venv"),
             work_dir: PathBuf::from("work"),
+            task_dir_retention: retention::DEFAULT_RETENTION,
+            task_dir_sweep_interval: retention::SWEEP_INTERVAL,
             mirrors: environment::LocalMirrors::default(),
             uv: PathBuf::from("uv"),
             manage_uv: false,
@@ -268,6 +275,8 @@ struct Runtime {
     dev: DevRegistry,
     installer: Installer,
     work_dir: PathBuf,
+    /// 任务目录的保留期（[`Config::task_dir_retention`]）。
+    retention: Duration,
     terminate_grace: Duration,
     /// 安装与启动新任务互斥：启动任务（查找入口到子进程启动）持有读锁，安装持有写锁。
     /// 已经在运行的任务不持有锁，安装期间照常运行。
@@ -335,6 +344,26 @@ impl Runtime {
     /// 正在执行（含安装中）的任务。
     fn running(&self) -> Vec<(String, u32)> {
         self.cancels.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// 任务的结果被 Ack：同一任务没有其他尝试还在手上时，写结束标记或删除任务目录（[`retention::finished`]）。
+    fn acked(&self, task_id: &str, unacked: &BTreeMap<(String, u32), TaskResult>) {
+        if self.held(unacked).iter().any(|t| t.task_id == task_id) {
+            return;
+        }
+        retention::finished(&self.work_dir, task_id, self.retention);
+    }
+
+    /// 在后台扫描工作目录，删除超过保留期的任务目录（[`retention::sweep`]）：结果还没 Ack 的按现在的快照，
+    /// 正在执行的在删除前再查一次（扫描期间可能收到新任务）。
+    fn sweep(self: &Arc<Self>, unacked: &BTreeMap<(String, u32), TaskResult>) {
+        let held: HashSet<String> = self.held(unacked).into_iter().map(|t| t.task_id).collect();
+        let runtime = self.clone();
+        tokio::task::spawn_blocking(move || {
+            retention::sweep(&runtime.work_dir, runtime.retention, |task_id| {
+                held.contains(task_id) || runtime.running().iter().any(|(id, _)| id == task_id)
+            });
+        });
     }
 
     /// 手上的任务（Hello / Heartbeat 的 running_tasks）：正在执行（含安装中）的，
@@ -646,6 +675,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             http: http.clone(),
         },
         work_dir: work_dir.clone(),
+        retention: config.task_dir_retention,
         terminate_grace: config.terminate_grace,
         gate: RwLock::new(()),
         results: results_tx,
@@ -674,6 +704,11 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     // 控制面在 Welcome 中放弃的任务：之后结束时不再上报结果。
     let mut abandoned: HashSet<(String, u32)> = HashSet::new();
     let mut delay = RECONNECT_MIN;
+    // 启动时扫描一次工作目录，之后每隔 task_dir_sweep_interval 一次（断线重连期间也照常进行）。
+    let mut sweep = Sweep {
+        next: tokio::time::Instant::now(),
+        interval: config.task_dir_sweep_interval,
+    };
     if let Some(from) = std::env::var_os(update::UPDATED_FROM_ENV) {
         eprintln!(
             "Agent 已从 {} 自更新到 {}",
@@ -698,6 +733,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             if !abandoned.remove(&key) {
                 unacked.insert(key, result);
             }
+        }
+        if sweep.due() {
+            runtime.sweep(&unacked);
         }
         let hello = HelloContent {
             installed_packages: runtime.inventory.refresh().await,
@@ -759,7 +797,16 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                     telemetry: &mut telemetry_rx,
                     abandoned: &mut abandoned,
                 };
-                match serve(connection, &runtime, channels, &mut unacked, &updater).await {
+                match serve(
+                    connection,
+                    &runtime,
+                    channels,
+                    &mut unacked,
+                    &updater,
+                    &mut sweep,
+                )
+                .await
+                {
                     Ok(()) => eprintln!("control plane closed the stream"),
                     Err(error) => eprintln!("connection lost: {error:#}"),
                 }
@@ -775,6 +822,24 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         }
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RECONNECT_MAX);
+    }
+}
+
+/// 任务目录的定期扫描（[`Runtime::sweep`]）。
+struct Sweep {
+    next: tokio::time::Instant,
+    interval: Duration,
+}
+
+impl Sweep {
+    /// 到了扫描时间：返回 true 并安排下一次。
+    fn due(&mut self) -> bool {
+        let now = tokio::time::Instant::now();
+        if now < self.next {
+            return false;
+        }
+        self.next = now + self.interval;
+        true
     }
 }
 
@@ -857,6 +922,7 @@ async fn serve(
     channels: Channels<'_>,
     unacked: &mut BTreeMap<(String, u32), TaskResult>,
     updater: &Arc<update::Updater>,
+    sweep: &mut Sweep,
 ) -> anyhow::Result<()> {
     let Channels {
         results,
@@ -933,7 +999,9 @@ async fn serve(
                         }
                     }
                     Some(server_message::Body::Ack(ack)) => {
-                        unacked.remove(&(ack.task_id, ack.attempt));
+                        if unacked.remove(&(ack.task_id.clone(), ack.attempt)).is_some() {
+                            runtime.acked(&ack.task_id, unacked);
+                        }
                     }
                     other => eprintln!("ignored message from control plane: {other:?}"),
                 }
@@ -967,6 +1035,11 @@ async fn serve(
                     .outbound
                     .send(AgentMessage { body: Some(agent_message::Body::Install(status)) })
                     .await?;
+            }
+            () = tokio::time::sleep_until(sweep.next) => {
+                if sweep.due() {
+                    runtime.sweep(unacked);
+                }
             }
         }
     }
