@@ -64,24 +64,37 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、已安装�
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 });
 
-test("没有 Agent 时显示空状态和接入命令", async ({ page }) => {
-	await page.goto("/agents");
-	const empty = page.getByRole("region", { name: "还没有 Agent 连接" });
-	await expect(empty).toBeVisible();
-	await expect(empty).toContainText("sfly-agent --name <名称>");
-	await expect(empty).toContainText("--server http://127.0.0.1:50051");
+test.describe("接入命令", () => {
+	// 控制面配置了对外地址：命令里用它，而不是浏览器访问的地址。
+	test.use({ controlPlaneOptions: { publicHttpUrl: "http://sfly.internal:8080" } });
+	const command = "curl -fsSL http://sfly.internal:8080/install.sh | sh -s -- --name <名称>";
+
+	test("没有 Agent 时显示空状态和填好控制面地址的 install.sh 命令", async ({ page }) => {
+		await page.goto("/agents");
+		const empty = page.getByRole("region", { name: "还没有 Agent 连接" });
+		await expect(empty).toBeVisible();
+		await expect(empty.locator('[data-slot="code-block"]')).toHaveText(command);
+	});
+
+	test("「如何接入 Agent」弹窗显示填好控制面地址的 install.sh 命令", async ({
+		page,
+		connectAgent,
+	}) => {
+		await connectAgent({ name: "agent-a" });
+		await page.goto("/agents");
+		await page.getByRole("button", { name: "如何接入 Agent" }).click();
+		const dialog = page.getByRole("dialog", { name: "接入 Agent" });
+		await expect(dialog.locator('[data-slot="code-block"]')).toHaveText(command);
+	});
 });
 
-test("「如何接入 Agent」弹窗显示接入命令，Esc 关闭后焦点回到按钮", async ({
-	page,
-	connectAgent,
-}) => {
+test("「如何接入 Agent」弹窗：Esc 关闭后焦点回到按钮", async ({ page, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
 	await page.goto("/agents");
 	const help = page.getByRole("button", { name: "如何接入 Agent" });
 	await help.click();
 	const dialog = page.getByRole("dialog", { name: "接入 Agent" });
-	await expect(dialog).toContainText("sfly-agent --name <名称>");
+	await expect(dialog).toContainText("install.sh");
 	await expect.poll(() => dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 	await page.keyboard.press("Escape");
 	await expect(dialog).toBeHidden();

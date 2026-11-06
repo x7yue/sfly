@@ -53,6 +53,8 @@ export async function startTestControlPlane(
 		| "docsDir"
 		| "version"
 		| "publicHttpUrl"
+		| "publicGrpcUrl"
+		| "agentBinaries"
 		| "pypiMirror"
 		| "githubReleaseMirror"
 	> = {},
@@ -79,6 +81,8 @@ export async function startTestControlPlane(
 			docsDir: options.docsDir,
 			version: options.version,
 			publicHttpUrl: options.publicHttpUrl,
+			publicGrpcUrl: options.publicGrpcUrl,
+			agentBinaries: options.agentBinaries,
 			pypiMirror: options.pypiMirror,
 			githubReleaseMirror: options.githubReleaseMirror,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。

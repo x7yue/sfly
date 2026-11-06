@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 控制面镜像冒烟：用 out/server（先运行 `pnpm bundle:server`）构建 linux/amd64 镜像，连本机 PostgreSQL 的
-# 临时数据库启动容器，检查健康检查转为 healthy、页面、API、SDK wheel、非 root 运行、数据卷可写。
+# 临时数据库启动容器，检查健康检查转为 healthy、页面、API、SDK wheel、两个架构的 Agent 与 install.sh、
+# 非 root 运行、数据卷可写。
 #   scripts/release/image-smoke.sh [镜像标签，默认 sfly-server:smoke]
 # 需要 docker 和 psql；DATABASE_URL 指向的服务器需要建库权限（与测试相同）。
 set -euo pipefail
@@ -60,6 +61,17 @@ contains "$(curl -fsS "$base/api/health")" '"status":"ok"' || fail "/api/health"
 contains "$(curl -fsS -H 'accept: text/html' "$base/")" -i '<!doctype html>' || fail "页面"
 curl -fsS "$base/api/agents" >/dev/null || fail "/api/agents"
 contains "$(curl -fsS "$base/sdk/python")" "\"version\":\"$version\"" || fail "SDK wheel $version"
+# 镜像里带着两个架构的同版本 Agent（ADR 0011），控制面提供下载和 install.sh。
+binaries=$(curl -fsS "$base/agent/binaries")
+for arch in x86_64 aarch64; do
+	contains "$binaries" "\"arch\":\"$arch\",\"version\":\"$version\"" || fail "/agent/binaries 里没有 $arch 的 Agent $version"
+	expected=$(docker exec "$container" sha256sum "/app/agent/$arch/sfly-agent" | cut -d ' ' -f 1) ||
+		fail "镜像里没有 /app/agent/$arch/sfly-agent"
+	actual=$(curl -fsS "$base/agent/binaries/$version/$arch" | sha256sum | cut -d ' ' -f 1)
+	[[ $actual == "$expected" ]] || fail "下载的 $arch Agent 与镜像里的不同"
+	contains "$(curl -fsS "$base/install.sh")" "SHA256_${arch^^}='$expected'" || fail "install.sh 里 $arch 的 sha256"
+done
+contains "$(curl -fsS "$base/install.sh")" "SFLY_VERSION='$version'" || fail "install.sh 里的版本号"
 [[ $(docker exec "$container" id -u) != 0 ]] || fail "容器以 root 运行"
 docker exec "$container" sh -c 'touch /data/.write-test && rm /data/.write-test' || fail "/data 不可写"
 contains "$(docker logs "$container" 2>&1)" "sfly control plane $version" ||

@@ -8,6 +8,8 @@
 //   SFLY_AGENT_TOKEN Agent 共享注册令牌（可选；设置后令牌不对的 Agent 被拒绝）
 //   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包
 //                    （可选；默认取监听地址，监听 0.0.0.0 时用本机主机名）
+//   SFLY_PUBLIC_GRPC_URL Agent 网关对 Agent 可见的地址，install.sh 写进 agent.env
+//                    （可选；默认取 SFLY_PUBLIC_URL 的主机名加 Agent 网关的端口）
 //   SFLY_PYPI_MIRROR PyPI 镜像（简单索引地址，例如 https://mirrors.ustc.edu.cn/pypi/simple），
 //                    下发给 Agent 安装节点包依赖（可选；未设置时 Agent 用 uv 自己的配置，ADR 0012）
 //   SFLY_GITHUB_RELEASE_MIRROR GitHub Release 镜像（例如 https://mirrors.ustc.edu.cn/github-release），
@@ -23,11 +25,18 @@
 //                    控制面在 HTTP 端口上同时提供页面（ADR 0006）。未设置且默认目录不存在时只提供 API
 //   SFLY_MIGRATIONS_DIR 数据库迁移目录（默认 apps/server/drizzle）
 //   SFLY_DOCS_DIR    用户文档目录（默认仓库的 docs/guide，ADR 0013），控制面提供 /docs/<页>.md 与 /llms.txt
-// 打包成单文件后（scripts/bundle.ts，ADR 0010），上面四个目录的默认值改为 main.mjs 旁边的
-// sdk/、web/、drizzle/、docs/。
+//   SFLY_AGENT_DIR   提供下载的 Agent 二进制目录，布局为 <架构>/sfly-agent（x86_64、aarch64，ADR 0011）；
+//                    默认取仓库的 cargo 构建产物：target/<架构>-unknown-linux-musl/release/sfly-agent，
+//                    本机架构没有 musl 构建时依次用 target/release、target/debug 下的 sfly-agent
+// 打包成单文件后（scripts/bundle.ts，ADR 0010），上面几个目录的默认值改为 main.mjs 旁边的
+// sdk/、web/、drizzle/、docs/、agent/；install.sh 模板是 main.mjs 旁边的 install.sh。
 import { existsSync } from "node:fs";
+import { arch } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { AgentArch } from "@sfly/schema";
 import packageJson from "../package.json" with { type: "json" };
+import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
 import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
 
@@ -41,13 +50,36 @@ const defaults = bundled
 			sdkDir: fromHere("./sdk"),
 			migrationsDir: fromHere("./drizzle"),
 			docsDir: fromHere("./docs"),
+			agentDir: fromHere("./agent"),
+			installScriptFile: fromHere("./install.sh"),
 		}
 	: {
 			webDir: fromHere("../../web/dist"),
 			sdkDir: fromHere("../dist/sdk"),
 			migrationsDir: defaultMigrationsDir,
 			docsDir: fromHere("../../../docs/guide"),
+			agentDir: undefined,
+			installScriptFile: undefined,
 		};
+
+const ARCHES: readonly AgentArch[] = ["x86_64", "aarch64"];
+const hostArch: AgentArch | undefined = (
+	{ x64: "x86_64", arm64: "aarch64" } as Record<string, AgentArch>
+)[arch()];
+/** 提供下载的 Agent 二进制：目录布局为 <架构>/sfly-agent；开发时取仓库的 cargo 构建产物（见文件头）。 */
+const agentBinaries = (dir: string | undefined): AgentBinaryFiles => {
+	if (dir) return Object.fromEntries(ARCHES.map((a) => [a, join(dir, a, "sfly-agent")]));
+	const target = process.env.CARGO_TARGET_DIR || fromHere("../../../target");
+	const files: AgentBinaryFiles = {};
+	for (const a of ARCHES) {
+		const candidates = [join(target, `${a}-unknown-linux-musl`, "release", "sfly-agent")];
+		if (a === hostArch) {
+			candidates.push(join(target, "release", "sfly-agent"), join(target, "debug", "sfly-agent"));
+		}
+		files[a] = candidates.find((file) => existsSync(file)) ?? candidates[0];
+	}
+	return files;
+};
 
 const env = process.env;
 const MB = 1024 * 1024;
@@ -83,6 +115,9 @@ const controlPlane = await startControlPlane({
 	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
 	webDir,
 	docsDir: env.SFLY_DOCS_DIR || defaults.docsDir,
+	agentBinaries: agentBinaries(env.SFLY_AGENT_DIR || defaults.agentDir),
+	installScriptFile: defaults.installScriptFile,
+	publicGrpcUrl: env.SFLY_PUBLIC_GRPC_URL || undefined,
 	migrationsDir: env.SFLY_MIGRATIONS_DIR || defaults.migrationsDir,
 });
 console.log(

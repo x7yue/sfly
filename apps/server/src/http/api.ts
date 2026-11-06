@@ -1,5 +1,6 @@
 import { httpContract, systemApi } from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import type { Clock } from "../clock.js";
@@ -16,6 +17,7 @@ import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
+import { registerAgentBinaryRoutes } from "./agent-binary-routes.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
 import { contractRoute, guardHttpContract } from "./contract-route.js";
@@ -51,8 +53,15 @@ export interface HttpApiDeps {
 	agentToken?: string;
 	/** HTTP API 对 Agent 可见的地址（产物引用用它拼下载地址）；监听之后才确定。 */
 	publicHttpUrl: () => string;
+	/** Agent gRPC 网关对 Agent 可见的地址（install.sh 写进 agent.env）；监听之后才确定。 */
+	publicGrpcUrl: () => string;
+	/** 控制面版本号。 */
+	version: string;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
+	agentBinaries: AgentBinaries;
+	installScript: string;
 	/** 用户文档（src/docs/user-docs.ts）与占位符的取值。 */
 	docs: readonly UserDoc[];
 	docValues: () => DocValues;
@@ -86,7 +95,11 @@ export function buildHttpApi({
 	artifacts,
 	agentToken,
 	publicHttpUrl,
+	publicGrpcUrl,
+	version,
 	sdkWheels,
+	agentBinaries,
+	installScript,
 	docs,
 	docValues,
 	webApp,
@@ -139,6 +152,13 @@ export function buildHttpApi({
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicHttpUrl });
+	registerAgentBinaryRoutes(app, {
+		binaries: agentBinaries,
+		installScript,
+		version,
+		publicHttpUrl,
+		publicGrpcUrl,
+	});
 	registerDocsRoutes(app, { docs, values: docValues });
 
 	return app;

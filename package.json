@@ -33,8 +33,9 @@
 		"test:bundle": "SFLY_BUNDLE_DIR=\"$PWD/out/server\" pnpm --filter @sfly/server exec vitest run test/bundle-smoke.test.ts",
 		"test:image": "bash scripts/release/image-smoke.sh",
 		"pack:agent": "bash scripts/release/pack-agent.sh",
+		"pack:agents": "bash scripts/release/pack-agent.sh x86_64-unknown-linux-musl && bash scripts/release/pack-agent.sh aarch64-unknown-linux-musl",
 		"release:version": "bash scripts/release/version.sh",
-		"check": "pnpm release:version check && pnpm gen:check && pnpm lint && pnpm typecheck && pnpm proto:breaking && pnpm test && pnpm build && pnpm bundle:server && pnpm test:bundle && pnpm test:image"
+		"check": "pnpm release:version check && pnpm gen:check && pnpm lint && pnpm typecheck && pnpm proto:breaking && pnpm test && pnpm build && pnpm pack:agents && pnpm bundle:server && pnpm test:bundle && pnpm test:image"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.4.5",

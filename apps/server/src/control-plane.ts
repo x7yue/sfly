@@ -1,6 +1,9 @@
 import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
+import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
+import { AgentBinaries, type AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
+import { loadInstallScript } from "./agent-binaries/install-script.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
 import { type Clock, systemClock } from "./clock.js";
@@ -46,6 +49,11 @@ export interface ControlPlaneOptions {
 	 */
 	publicHttpUrl?: string;
 	/**
+	 * Agent 网关对 Agent 可见的地址（install.sh 写进 agent.env），例如 `http://sfly.internal:50051`。
+	 * 默认取 HTTP 对外地址的主机名加 Agent 网关的端口。
+	 */
+	publicGrpcUrl?: string;
+	/**
 	 * 周期扫描（在线编辑者超时、任务租约过期、排队超时）的间隔，默认 250 毫秒；
 	 * 测试里调小，配合手动时钟推进。
 	 */
@@ -80,6 +88,10 @@ export interface ControlPlaneOptions {
 	 * 没有默认值：不设置时 Agent 用 uv 的官方来源。
 	 */
 	githubReleaseMirror?: string;
+	/** 提供下载的 Agent 二进制（架构 → 文件，src/agent-binaries/agent-binaries.ts）；不设置时没有 Agent 下载。 */
+	agentBinaries?: AgentBinaryFiles;
+	/** install.sh 模板；默认取源码中的 src/agent-binaries/install.sh，打包后的控制面需要指定。 */
+	installScriptFile?: string;
 	/** 用户文档目录（仓库的 docs/guide，src/docs/user-docs.ts）；不设置时没有文档。 */
 	docsDir?: string;
 	/** 控制面版本号，默认取 package.json；测试里固定，让文档等输出与发版无关。 */
@@ -131,11 +143,23 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 	const version = options.version ?? packageJson.version;
+	let installScript: string;
+	try {
+		installScript = await loadInstallScript(
+			options.installScriptFile ??
+				fileURLToPath(new URL("./agent-binaries/install.sh", import.meta.url)),
+		);
+	} catch (error) {
+		await database.close();
+		throw error;
+	}
+	const agentBinaries = new AgentBinaries(options.agentBinaries ?? {}, version);
 	const mutex = new Mutex();
 	const hub = new AgentHub({ db: database.db, clock, mutex });
 	await hub.markAllOffline();
 	const orchestrations = new OrchestrationStore({ db: database.db, clock });
 	let publicHttpUrl = "";
+	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const preflight = createPreflight({ db: database.db, packages });
 	const engine = new Engine({
@@ -203,7 +227,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		artifacts,
 		agentToken: options.agentToken,
 		publicHttpUrl: () => publicHttpUrl,
+		publicGrpcUrl: () => publicGrpcUrl,
+		version,
 		sdkWheels,
+		agentBinaries,
+		installScript,
 		docs,
 		docValues: () => ({ SFLY_URL: publicHttpUrl, SFLY_VERSION: version }),
 		webApp,
@@ -244,6 +272,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		await database.close();
 		throw error;
 	}
+	publicGrpcUrl = (
+		options.publicGrpcUrl ?? withPort(publicHttpUrl, new URL(gateway.url).port)
+	).replace(/\/+$/, "");
 
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
 	const fail = (what: string) => (error: unknown) => {
@@ -291,6 +322,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			await database.close();
 		},
 	};
+}
+
+/** 同一主机、另一个端口的 http 地址。 */
+function withPort(url: string, port: string): string {
+	const parsed = new URL(url);
+	return `http://${parsed.hostname}:${port}`;
 }
 
 function formatHost(host: string): string {

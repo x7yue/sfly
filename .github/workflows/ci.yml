@@ -46,6 +46,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          # 打包后的控制面带两个架构的 musl Agent（ADR 0011）；aarch64 用 rust-lld 交叉编译。
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
       - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
         with:
@@ -71,7 +73,10 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
-      # 发布用的单文件控制面和镜像（ADR 0010）：真实 Agent 对接打包后的控制面跑通一条链，镜像能启动并通过健康检查。
+      # 发布用的单文件控制面和镜像（ADR 0010、0011）：用打包后的控制面提供的 install.sh 安装 Agent 并跑通一条链，
+      # 镜像能启动、通过健康检查并带着两个架构的 Agent。
+      - name: Pack agents
+        run: pnpm pack:agents
       - name: Bundle control plane
         run: pnpm bundle:server
       - name: Bundle smoke test

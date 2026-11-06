@@ -721,8 +721,33 @@ async fn prepare_environment(
         index_url: config.index_url.as_deref(),
         scratch: &runtime.scratch,
     };
-    if setup.ensure_uv().await? {
+    let installed = setup.ensure_uv().await?;
+    if installed {
         emit(serde_json::json!({ "event": "uv_installed", "path": config.uv }));
+    }
+    // 安装后（自更新后）的首次启动：更新一次 uv，刚装的 uv 已是最新版不再更新；只尝试一次，失败只告警。
+    if config.manage_uv
+        && let Some(marker) = config
+            .uv
+            .parent()
+            .map(|dir| dir.join(environment::UV_UPDATE_MARKER))
+        && marker.exists()
+    {
+        if !installed {
+            match setup.update_uv().await {
+                Ok(()) => emit(serde_json::json!({ "event": "uv_updated", "path": config.uv })),
+                Err(error) => eprintln!(
+                    "warning: 更新 uv 失败，继续使用现有的 uv。失败的命令：{}\n{}",
+                    error.command,
+                    error.output.trim_end()
+                ),
+            }
+            // 更新把 uv 弄坏了时不能继续。
+            setup.check_uv().await?;
+        }
+        if let Err(error) = std::fs::remove_file(&marker) {
+            eprintln!("warning: cannot remove {}: {error}", marker.display());
+        }
     }
     let venv = &runtime.inventory.venv;
     if setup.ensure_venv(venv, config.python.as_deref()).await? {
