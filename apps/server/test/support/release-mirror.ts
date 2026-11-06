@@ -48,7 +48,11 @@ echo "everything's installed!"
 /** 测试机 PATH 上的 uv 打成的发布包：[文件名, 内容]。 */
 async function uvRelease(): Promise<[string, Buffer]> {
 	const run = promisify(execFile);
-	const uv = (await run("sh", ["-c", "command -v uv"])).stdout.trim();
+	// uv run 把自己的可执行文件路径放在 $UV 里；PATH 上的 uv 可能是版本管理器（mise 等）的 shim，
+	// 换了 HOME 或复制到别处就不能用。
+	const uv =
+		(await run("uv", ["run", "--no-project", "--", "sh", "-c", 'printf %s "$UV"'])).stdout.trim() ||
+		(await run("sh", ["-c", "command -v uv"])).stdout.trim();
 	const target = `uv-${arch() === "arm64" ? "aarch64" : "x86_64"}-unknown-linux-gnu`;
 	const dir = await mkdtemp(join(tmpdir(), "sfly-uv-release-"));
 	try {
