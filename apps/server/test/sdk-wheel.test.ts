@@ -60,7 +60,8 @@ describe("SDK 运行时 wheel", () => {
 			sdkWheelSha256: wheel.sha256,
 		});
 
-		const other = await FakeAgent.connect(cp.grpcUrl, { name: "agent-old", agentVersion: "0.0.1" });
+		// 0.0.0 不会是发布版本（首个发布版本是 0.0.1），控制面里不会有这个版本的 wheel。
+		const other = await FakeAgent.connect(cp.grpcUrl, { name: "agent-old", agentVersion: "0.0.0" });
 		agents.push(other);
 		expect(other.welcome).toMatchObject({ sdkWheelUrl: "", sdkWheelSha256: "" });
 	});
