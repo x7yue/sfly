@@ -124,6 +124,11 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 		const { pages } = await api.getJson<{ pages: Array<{ slug: string }> }>("/docs");
 		expect(pages.length).toBeGreaterThan(0);
 		for (const { slug } of pages) expect(index).toContain(`(${server.httpUrl}/docs/${slug}.md)`);
+		// 节点开发 skill 随文档一起打包。
+		for (const file of ["SKILL.md", "reference.md"]) {
+			expect((await fetchPath(`/docs/skills/sfly-node-dev/${file}`)).status, file).toBe(200);
+			expect(index).toContain(`(${server.httpUrl}/docs/skills/sfly-node-dev/${file})`);
+		}
 	});
 
 	it("提供两个架构的同版本 Agent；install.sh 安装本机架构的 Agent", async () => {

@@ -7,6 +7,9 @@ import { z } from "zod";
  *
  * - 页面登记在目录里的 `pages.json`（`{ pages: [{ slug, title, description }] }`，顺序即导航顺序），
  *   每页的源文件是 `<slug>.md`。
+ * - 节点开发 skill（#59）：`skills/sfly-node-dev/SKILL.md`，同目录的 `reference.md` 就是 SDK 参考页
+ *   `sdk-reference.md`（{@link SKILL}）。SDK wheel 里的 skill 是同一份源文件（sdk/python/src/sfly/cli/skills/
+ *   下是指向这里的软链接），原样写进项目，所以这两个文件里不用占位符。
  * - 文档里用 `{{名称}}` 表示控制面返回时才知道的值，可用的名称见 {@link PLACEHOLDERS}。
  *   出现未登记的名称时启动失败，拼错的占位符不会原样漏给用户。
  *
@@ -29,6 +32,19 @@ export interface UserDoc {
 	source: string;
 }
 
+/** 节点开发 skill：名称、SKILL.md 的位置（相对文档目录）、作为 reference.md 的页面。 */
+export const SKILL = {
+	name: "sfly-node-dev",
+	file: "skills/sfly-node-dev/SKILL.md",
+	referencePage: "sdk-reference",
+} as const;
+
+export interface UserDocs {
+	pages: UserDoc[];
+	/** skill 的文件名 → 原文（SKILL.md、reference.md）；文档目录里没有 skill 时为空。 */
+	skill: ReadonlyMap<string, string>;
+}
+
 const PagesFile = z.object({
 	pages: z.array(
 		z.object({
@@ -41,24 +57,51 @@ const PagesFile = z.object({
 
 const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
 
+function checkPlaceholders(file: string, source: string): void {
+	for (const [, name] of source.matchAll(PLACEHOLDER)) {
+		if (!(name && name in PLACEHOLDERS)) {
+			throw new Error(
+				`docs/guide/${file}: 未知的占位符 {{${name}}}（可用：${Object.keys(PLACEHOLDERS).join("、")}）`,
+			);
+		}
+	}
+}
+
+const readIfExists = (path: string) =>
+	readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return undefined;
+		throw error;
+	});
+
 /** 读取文档目录；不设置目录时没有文档。 */
-export async function loadUserDocs(dir: string | undefined): Promise<UserDoc[]> {
-	if (!dir) return [];
+export async function loadUserDocs(dir: string | undefined): Promise<UserDocs> {
+	if (!dir) return { pages: [], skill: new Map() };
 	const manifest = PagesFile.parse(JSON.parse(await readFile(join(dir, "pages.json"), "utf8")));
-	const docs: UserDoc[] = [];
+	const pages: UserDoc[] = [];
 	for (const page of manifest.pages) {
 		const source = await readFile(join(dir, `${page.slug}.md`), "utf8");
-		for (const [, name] of source.matchAll(PLACEHOLDER)) {
-			if (!(name && name in PLACEHOLDERS)) {
-				throw new Error(
-					`docs/guide/${page.slug}.md: 未知的占位符 {{${name}}}（可用：${Object.keys(PLACEHOLDERS).join("、")}）`,
-				);
-			}
-		}
-		docs.push({ ...page, source });
+		checkPlaceholders(`${page.slug}.md`, source);
+		pages.push({ ...page, source });
 	}
-	return docs;
+	const skill = new Map<string, string>();
+	const skillSource = await readIfExists(join(dir, SKILL.file));
+	if (skillSource !== undefined) {
+		checkPlaceholders(SKILL.file, skillSource);
+		const reference = pages.find((p) => p.slug === SKILL.referencePage);
+		if (!reference) {
+			throw new Error(
+				`docs/guide/${SKILL.file}: skill 的 reference.md 是 SDK 参考页 ${SKILL.referencePage}，但 pages.json 里没有登记它`,
+			);
+		}
+		skill.set("SKILL.md", skillSource);
+		skill.set("reference.md", reference.source);
+	}
+	return { pages, skill };
 }
+
+/** skill 文件的原文地址（对开发机可见）。 */
+export const skillFileUrl = (publicHttpUrl: string, file: string) =>
+	`${publicHttpUrl}/docs/skills/${SKILL.name}/${file}`;
 
 /** 把原文里的占位符替换成取值。 */
 export const renderDoc = (source: string, values: DocValues) =>
@@ -69,7 +112,7 @@ export const docUrl = (publicHttpUrl: string, slug: string) =>
 	`${publicHttpUrl}/docs/${encodeURIComponent(slug)}.md`;
 
 /** llms.txt（https://llmstxt.org）：标题、简介和每页原文的完整地址。 */
-export function llmsTxt(docs: readonly UserDoc[], values: DocValues): string {
+export function llmsTxt({ pages, skill }: UserDocs, values: DocValues): string {
 	const lines = [
 		"# sfly 开发文档",
 		"",
@@ -77,7 +120,18 @@ export function llmsTxt(docs: readonly UserDoc[], values: DocValues): string {
 		"",
 		"## 文档",
 		"",
-		...docs.map((d) => `- [${d.title}](${docUrl(values.SFLY_URL, d.slug)}): ${d.description}`),
+		...pages.map((d) => `- [${d.title}](${docUrl(values.SFLY_URL, d.slug)}): ${d.description}`),
 	];
+	if (skill.size > 0) {
+		lines.push(
+			"",
+			"## 节点开发 skill",
+			"",
+			`给 AI 编程助手的 ${SKILL.name} skill（sfly init 已写进项目的 .agents/skills/${SKILL.name}/，两个文件放在同一目录下使用）：`,
+			"",
+			`- [SKILL.md](${skillFileUrl(values.SFLY_URL, "SKILL.md")}): 开发流程与节点代码规范`,
+			`- [reference.md](${skillFileUrl(values.SFLY_URL, "reference.md")}): SDK 参考（与「${pages.find((p) => p.slug === SKILL.referencePage)?.title}」页相同）`,
+		);
+	}
 	return `${lines.join("\n")}\n`;
 }

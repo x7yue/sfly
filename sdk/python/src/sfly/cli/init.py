@@ -4,7 +4,8 @@
 2. 从控制面读取新项目的配置（`GET /sdk/project-settings`：控制面版本、sfly 简单索引、镜像）。
 3. 在目标目录旁的临时目录里 `uv init --lib --python 3.13`（src 布局、`.python-version`、
    `.gitignore`、git 仓库；已在 git 仓库里时 uv 不再建仓库），再依次执行 `STEPS`：
-   写入 pyproject 的 uv 配置与开发依赖、把 uv 的示例代码换成示例节点和它的单元测试。
+   写入 pyproject 的 uv 配置与开发依赖、把 uv 的示例代码换成示例节点和它的单元测试、
+   写入节点开发 skill（sfly/cli/skill.py）。
 4. 全部成功后才移到目标位置；任何一步失败都删掉临时目录，不留下半成品。
 
 不生成 AGENTS.md、CLAUDE.md。模板在 `sfly/cli/templates/init/`（`*.tmpl`，
@@ -147,6 +148,10 @@ def configure_pyproject(project: NewProject) -> None:
         "[tool.uv.sources]",
         'sfly = { index = "sfly" }',
         "",
+        "# 节点开发 skill 由 sfly skill update 管理：ruff 不格式化其中 Markdown 的代码块。",
+        "[tool.ruff]",
+        'extend-exclude = [".agents", ".claude"]',
+        "",
     ]
     path = project.root / "pyproject.toml"
     text = path.read_text(encoding="utf-8").rstrip("\n") + "\n" + "\n".join(lines)
@@ -171,9 +176,15 @@ def write_example(project: NewProject) -> None:
     )
 
 
+def write_skill(project: NewProject) -> None:
+    """写入节点开发 skill（sfly.cli.skill.install）。"""
+    from sfly.cli.skill import install
+
+    install(project.root)
+
+
 #: `uv init` 之后依次执行的步骤，每一步在 `project.root`（临时目录）里写文件。
-#: 需要额外写入文件（例如节点开发 skill，#59）时在这里加一步。
-STEPS: tuple[Callable[[NewProject], None], ...] = (configure_pyproject, write_example)
+STEPS: tuple[Callable[[NewProject], None], ...] = (configure_pyproject, write_example, write_skill)
 
 
 def _uv() -> str:
