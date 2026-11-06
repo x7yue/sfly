@@ -1,0 +1,30 @@
+# sfly 控制面（页面、HTTP API、SSE、Agent 网关在同一个容器里，ADR 0006 / 0010）。
+# 数据库用已有的 PostgreSQL，不在这里部署。用法：
+#
+#   cp .env.example .env    # 填好 DATABASE_URL 等
+#   docker compose up -d
+#
+# 离线环境先加载 Release 附件里的镜像：gunzip -c sfly-server-<版本>-linux-amd64.tar.gz | docker load
+# 控制面是单进程设计：同一个数据库只能运行一个实例，不要扩成多个副本。
+name: sfly
+
+services:
+  sfly:
+    image: ghcr.io/x7yue/sfly-server:${SFLY_VERSION:-latest}
+    restart: unless-stopped
+    # Node 不适合作为 PID 1 运行（Node 官方 Docker 最佳实践），由 Docker 自带的 init 转发信号。
+    init: true
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?在 .env 里设置 DATABASE_URL}
+      # Agent 下载节点包和 SDK 用的地址，必须是 Agent 能访问到的地址。
+      SFLY_PUBLIC_URL: ${SFLY_PUBLIC_URL:?在 .env 里设置 SFLY_PUBLIC_URL}
+      SFLY_AGENT_TOKEN: ${SFLY_AGENT_TOKEN:-}
+    ports:
+      - "${SFLY_HTTP_PORT:-8080}:8080" # 页面、API、SSE、节点包与 SDK 下载
+      - "${SFLY_GRPC_PORT:-50051}:50051" # Agent 网关（gRPC，HTTP/2）
+    volumes:
+      - sfly-data:/data # 节点包文件、任务日志与产物
+    stop_grace_period: 30s
+
+volumes:
+  sfly-data:

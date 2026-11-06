@@ -70,6 +70,8 @@ export interface ControlPlaneOptions {
 	sdkWheelDir?: string;
 	/** 前端构建产物目录（apps/web 的 vite build 输出）；不设置时只提供 API，不提供页面。 */
 	webDir?: string;
+	/** 数据库迁移目录；默认取源码中的 apps/server/drizzle，打包后的控制面需要指定。 */
+	migrationsDir?: string;
 }
 
 export interface ControlPlane {
@@ -82,9 +84,13 @@ export interface ControlPlane {
 export async function startControlPlane(options: ControlPlaneOptions): Promise<ControlPlane> {
 	const clock = options.clock ?? systemClock;
 	const logger = options.logger ?? false;
-	const database = openDatabase(options.databaseUrl, (error) => {
-		if (logger) console.error("postgres pool error:", error.message);
-	});
+	const database = openDatabase(
+		options.databaseUrl,
+		(error) => {
+			if (logger) console.error("postgres pool error:", error.message);
+		},
+		options.migrationsDir,
+	);
 
 	try {
 		await database.migrate();

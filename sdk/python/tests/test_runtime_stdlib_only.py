@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 import subprocess
 import sys
@@ -44,4 +45,5 @@ def test_cli_reports_version() -> None:
         text=True,
     )
     assert out.returncode == 0
-    assert out.stdout.strip() == "sfly 0.1.0"
+    # 与 pyproject.toml 中的版本号一致（发布时由 scripts/release/version.sh 统一修改）。
+    assert out.stdout.strip() == f"sfly {importlib.metadata.version('sfly')}"

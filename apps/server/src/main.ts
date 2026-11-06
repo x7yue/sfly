@@ -17,9 +17,26 @@
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
 //   SFLY_WEB_DIR     前端构建产物目录（默认 apps/web/dist，由 `pnpm --filter @sfly/web build` 生成）；
 //                    控制面在 HTTP 端口上同时提供页面（ADR 0006）。未设置且默认目录不存在时只提供 API
+//   SFLY_MIGRATIONS_DIR 数据库迁移目录（默认 apps/server/drizzle）
+// 打包成单文件后（scripts/bundle.ts，ADR 0010），上面三个目录的默认值改为 main.mjs 旁边的
+// sdk/、web/、drizzle/。
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import packageJson from "../package.json" with { type: "json" };
 import { startControlPlane } from "./control-plane.js";
+import { defaultMigrationsDir } from "./db/database.js";
+
+/** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
+declare const SFLY_BUNDLED: boolean | undefined;
+const bundled = typeof SFLY_BUNDLED !== "undefined" && SFLY_BUNDLED;
+const fromHere = (path: string) => fileURLToPath(new URL(path, import.meta.url));
+const defaults = bundled
+	? { webDir: fromHere("./web"), sdkDir: fromHere("./sdk"), migrationsDir: fromHere("./drizzle") }
+	: {
+			webDir: fromHere("../../web/dist"),
+			sdkDir: fromHere("../dist/sdk"),
+			migrationsDir: defaultMigrationsDir,
+		};
 
 const env = process.env;
 const MB = 1024 * 1024;
@@ -35,9 +52,8 @@ const mb = (name: string) => {
 	const n = positive(name);
 	return n === undefined ? undefined : Math.floor(n * MB);
 };
-const defaultWebDir = fileURLToPath(new URL("../../web/dist", import.meta.url));
-const webDir = env.SFLY_WEB_DIR || (existsSync(defaultWebDir) ? defaultWebDir : undefined);
-if (!webDir) console.warn(`sfly: ${defaultWebDir} not found, serving the API only (no web app)`);
+const webDir = env.SFLY_WEB_DIR || (existsSync(defaults.webDir) ? defaults.webDir : undefined);
+if (!webDir) console.warn(`sfly: ${defaults.webDir} not found, serving the API only (no web app)`);
 const controlPlane = await startControlPlane({
 	databaseUrl: env.DATABASE_URL ?? "postgres://sfly:sfly@127.0.0.1:5432/sfly",
 	dataDir: env.SFLY_DATA_DIR ?? "./data",
@@ -51,10 +67,13 @@ const controlPlane = await startControlPlane({
 	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),
 	artifactLimitBytes: mb("SFLY_ARTIFACT_LIMIT_MB"),
 	metricLimitBytes: mb("SFLY_METRIC_LIMIT_MB"),
-	sdkWheelDir: env.SFLY_SDK_DIR || fileURLToPath(new URL("../dist/sdk", import.meta.url)),
+	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
 	webDir,
+	migrationsDir: env.SFLY_MIGRATIONS_DIR || defaults.migrationsDir,
 });
-console.log(`sfly control plane: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`);
+console.log(
+	`sfly control plane ${packageJson.version}: http ${controlPlane.httpUrl}, grpc ${controlPlane.grpcUrl}`,
+);
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
 	process.once(signal, () => {

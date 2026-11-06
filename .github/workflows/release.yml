@@ -1,0 +1,184 @@
+name: Release
+
+# 推送 vX.Y.Z tag 时发布（ADR 0010；发版步骤见 README「发布」）：
+#   - 控制面：多架构镜像推送到 GHCR；docker save 导出的镜像作为 Release 附件（离线部署用）
+#   - Agent：x86_64 / aarch64 musl 静态二进制，作为 Release 附件
+#   - SDK 运行时 wheel、SHA256SUMS，作为 Release 附件
+# 不使用 Actions Artifacts（私有仓库有额度限制）：各 job 直接上传到草稿 Release，全部成功后再发布。
+# 失败后可以直接重新运行：草稿 Release 会被复用，附件和镜像标签会被覆盖。
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.ref_name }}
+  IMAGE: ghcr.io/${{ github.repository_owner }}/sfly-server
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  # tag 与各处版本号一致、提交在 main 上且 CI 已通过，然后创建（或复用）草稿 Release。
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: version
+        name: Version matches tag
+        run: echo "version=$(bash scripts/release/version.sh check "$TAG")" >> "$GITHUB_OUTPUT"
+      - name: Commit is on main and CI passed
+        run: bash scripts/release/wait-ci.sh "$GITHUB_SHA"
+      - name: Create draft release
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ $draft != true ]]; then
+              echo "$TAG 已经发布，不能重新发布" >&2
+              exit 1
+            fi
+            echo "复用已有的草稿 Release $TAG"
+          else
+            bash scripts/release/notes.sh "$VERSION" "$IMAGE" > notes.md
+            gh release create "$TAG" --draft --verify-tag --title "sfly $VERSION" \
+              --notes-file notes.md --generate-notes
+          fi
+
+  agent:
+    needs: prepare
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and pack
+        run: bash scripts/release/pack-agent.sh ${{ matrix.target }}
+      - name: Upload to release
+        run: gh release upload "$TAG" out/agent/*.tar.gz --clobber
+
+  image:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: astral-sh/setup-uv@v6
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Bundle control plane
+        run: pnpm bundle:server
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=sfly-server
+            org.opencontainers.image.description=sfly 控制面：页面、HTTP API、SSE、Agent 网关
+      # Dockerfile 里没有 RUN，arm64 镜像不需要 QEMU。
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: out/server
+          file: apps/server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      # 离线部署用：导出刚推送的镜像（与 GHCR 上的完全相同，带 IMAGE:VERSION 标签）。
+      - name: Export images for offline use
+        run: |
+          mkdir -p out/release
+          for arch in amd64 arm64; do
+            docker pull --quiet --platform "linux/$arch" "$IMAGE:$VERSION"
+            docker save --platform "linux/$arch" "$IMAGE:$VERSION" \
+              | gzip > "out/release/sfly-server-$VERSION-linux-$arch.tar.gz"
+          done
+          cp out/server/sdk/*.whl out/release/
+          ls -la out/release
+      - name: Upload to release
+        run: gh release upload "$TAG" out/release/* --clobber
+
+  # 汇总校验和，发布 Release。
+  publish:
+    needs: [prepare, agent, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checksums
+        run: |
+          gh release download "$TAG" --dir assets
+          rm -f assets/SHA256SUMS
+          expected=(
+            "sfly-agent-$VERSION-x86_64-unknown-linux-musl.tar.gz"
+            "sfly-agent-$VERSION-aarch64-unknown-linux-musl.tar.gz"
+            "sfly-server-$VERSION-linux-amd64.tar.gz"
+            "sfly-server-$VERSION-linux-arm64.tar.gz"
+            "sfly-$VERSION-py3-none-any.whl"
+          )
+          for file in "${expected[@]}"; do
+            [[ -f assets/$file ]] || { echo "缺少附件 $file" >&2; exit 1; }
+          done
+          (cd assets && sha256sum "${expected[@]}") > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "$TAG" SHA256SUMS --clobber
+      - name: Publish
+        run: gh release edit "$TAG" --draft=false --latest
