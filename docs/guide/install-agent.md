@@ -15,9 +15,17 @@ curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
 安装脚本识别 CPU 架构，从控制面下载 sfly Agent {{SFLY_VERSION}} 并校验 sha256，写好配置，注册并启动 systemd 服务。
 
 - `--name`：Agent 名称，全局唯一，场景按名称选择 Agent。上面的命令用主机名，也可以换成别的名称。
-- `--token '<令牌>'`：控制面配置了注册令牌时必填，向平台管理员索取。令牌不对时 Agent 打印 `invalid agent token` 后退出。
+- `--token '<令牌>'`：控制面配置了注册令牌时必填，向平台管理员索取。令牌不对时 Agent 打印 `invalid agent token` 后退出。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，令牌不会留在 shell 历史和进程列表里（见下面的例子）。
 - `--slots <数量>`：同时执行的任务上限，默认 4。
+- `--no-auto-update`：不自动更新（见「版本与自动更新」）。
 - 完整参数：`curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --help`。
+
+用环境变量传令牌：先读入令牌（粘贴后回车，输入不显示），再运行安装命令：
+
+```text
+read -rs SFLY_TOKEN && export SFLY_TOKEN
+curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
+```
 
 Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动时它会准备运行环境，需要一两分钟：
 
@@ -50,10 +58,10 @@ loginctl enable-linger "$(id -un)"
 
 ## 开发机：`--dev`
 
-在写节点包的机器上加 `--dev`，除了 Agent，再装好 uv（PATH 上没有时，装到 `~/.local/bin`）和 `sfly` 命令行 {{SFLY_VERSION}}（`uv tool install`，从控制面的 sfly 索引 `{{SFLY_URL}}/simple/` 安装）。联调用的 Agent 名称约定为 `dev-<用户名>-<主机名>`，不和测试机上的 Agent 重名：
+在写节点包的机器上加 `--dev`，除了 Agent，再装好 uv（PATH 上没有时，装到 `~/.local/bin`）和 `sfly` 命令行 {{SFLY_VERSION}}（`uv tool install`，从控制面的 sfly 索引 `{{SFLY_URL}}/simple/` 安装）。加 `--dev` 时 `--name` 可以省略，联调用的 Agent 默认叫 `dev-<用户名>-<主机名>`（主机名不带域名），不和测试机上的 Agent 重名：
 
 ```sh
-curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "dev-$(id -un)-$(uname -n)" --dev
+curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --dev
 ```
 
 安装脚本提示 `~/.local/bin` 不在 PATH 上时，把它加进 shell 配置（例如 `~/.bashrc`），当前终端里先执行：
@@ -73,7 +81,7 @@ sfly --version
 |---|---|
 | `bin/sfly-agent` | Agent 二进制 |
 | `bin/uv` | Agent 管理的 uv |
-| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、令牌、槽位数 |
+| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、令牌、槽位数、是否自动更新 |
 | `venv/` | 共享 venv：SDK 运行时和所有节点包都装在这里 |
 | `work/` | 任务工作目录，以及 `sfly dev` 连接的本地 socket `agent.sock` |
 
@@ -83,7 +91,7 @@ sfly --version
 ~/.sfly/bin/sfly-agent --help
 ```
 
-改完 `agent.env` 后重启 Agent（`systemctl --user restart sfly-agent`）。重新运行安装脚本会整个覆盖 `agent.env`：需要的令牌要再传一次 `--token`，自己加的键要再加一次。
+改完 `agent.env` 后重启 Agent（`systemctl --user restart sfly-agent`）。重新运行安装脚本时只改写它管理的键（`SFLY_SERVER`、`SFLY_CONTROL_PLANE_URL`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`、`SFLY_SLOTS`、`SFLY_NO_AUTO_UPDATE`），自己加的键保留；没有再传 `--token`、`--slots`、`--no-auto-update` 时沿用原来的值。
 
 ## 版本与自动更新
 
@@ -101,13 +109,7 @@ Agent 和控制面必须是同一个版本。控制面升级（或回滚）后�
 
 以下情况 Agent 不自动更新，页面上显示「需要手动升级」和原因：
 
-- 配置了不自动更新：
-
-  ```sh
-  echo 'SFLY_NO_AUTO_UPDATE=1' >> ~/.sfly/agent.env
-  ```
-
-  然后重启 Agent。需要严格控制版本的机器这样设置，升级时自己重新运行安装命令。
+- 配置了不自动更新：安装时加 `--no-auto-update`（`agent.env` 里写入 `SFLY_NO_AUTO_UPDATE=1`；也可以自己写这一行再重启 Agent，值可以是 `1`/`true`/`yes`）。需要严格控制版本的机器这样设置，升级时自己重新运行安装命令，这个设置会保留；要恢复自动更新，删掉 `agent.env` 里的这一行再重启 Agent。
 - Agent 二进制不在 `$SFLY_HOME/bin`（默认 `~/.sfly/bin`）下（不是安装脚本安装的），或者这个目录不可写。
 
 手动升级就是重新运行安装命令，名称、令牌和原来一样。

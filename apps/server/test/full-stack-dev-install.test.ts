@@ -23,6 +23,7 @@ const TOOLS = [
 	"curl",
 	"cut",
 	"dirname",
+	"flock",
 	"gzip",
 	"id",
 	"mkdir",

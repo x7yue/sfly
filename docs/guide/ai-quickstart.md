@@ -26,11 +26,11 @@ sfly --version
 ## 2. 安装 Agent 和 sfly 命令行
 
 ```sh
-curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "dev-$(id -un)-$(uname -n)" --dev
+curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --dev
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-这台机器上会装好联调用的 sfly Agent（名称 `dev-<用户名>-<主机名>`）、uv 和 `sfly` 命令行。之后每个新开的终端都先执行上面的 `export`。
+这台机器上会装好联调用的 sfly Agent（名称默认 `dev-<用户名>-<主机名>`，主机名不带域名）、uv 和 `sfly` 命令行。之后每个新开的终端都先执行上面的 `export`。
 
 安装输出里有「前台启动」（这台机器没有 systemd）时，在后台启动 Agent：
 
@@ -49,7 +49,7 @@ curl -s {{SFLY_URL}}/agents
 
 Agent 一直不在线时看它的日志（`~/.sfly/agent.log`，或 `journalctl --user -u sfly-agent`）：
 
-- 有 `invalid agent token`：控制面要求注册令牌。向用户索取令牌，在安装命令末尾加 `--token '<令牌>'` 重新运行。令牌只出现在这条命令里。
+- 有 `invalid agent token`：控制面要求注册令牌。向用户索取令牌，用环境变量传给安装脚本重新运行：`curl -fsSL {{SFLY_URL}}/install.sh | SFLY_TOKEN='<令牌>' sh -s -- --dev`（令牌不出现在进程列表里）。令牌只出现在这条命令里，不要写进项目文件。
 - Agent 以退出码 78 退出：运行环境准备失败，把日志里的报告交给用户，让用户转给平台管理员，然后停下。
 
 ## 3. 创建项目
@@ -91,7 +91,7 @@ uv run pytest
 uv run sfly run countdown --params '{"name": "世界"}'
 ```
 
-完成：输出、日志、指标、产物都符合预期；失败路径（错误参数、节点抛出异常）至少跑过一次。
+完成：输出、日志、指标、产物都符合预期；失败路径（错误参数、节点抛出异常、Ctrl-C 取消）各至少跑过一次。
 
 ## 7. 联调
 
