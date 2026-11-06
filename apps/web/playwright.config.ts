@@ -19,7 +19,15 @@ export default defineConfig({
 	forbidOnly: !!process.env.CI,
 	retries: 0,
 	workers: process.env.CI ? 2 : undefined,
-	reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
+	// GitHub Actions 上的 github 报告器把失败的用例写成 check run 注释：
+	// `gh api repos/{owner}/{repo}/check-runs/<job id>/annotations` 就能列出，不用下载日志。
+	reporter: process.env.CI
+		? [
+				["list"],
+				["html", { open: "never" }],
+				...(process.env.GITHUB_ACTIONS ? [["github"] as [string]] : []),
+			]
+		: "list",
 	timeout: 30_000,
 	expect: { toHaveScreenshot: { animations: "disabled", caret: "hide" } },
 	use: {
