@@ -226,6 +226,22 @@ def flood(ctx: Context, lines: int = 1000, interval: float = 0.0) -> dict[str, A
     return {"lines": lines}
 
 
+@node(title="写盘失败", outputs=[])
+def write_failure(ctx: Context, message: str = "OSError: [Errno 122] Disk quota exceeded") -> None:
+    """错误摘要测试用（#70）：往标准错误打一行 message，然后模拟磁盘写满——
+
+    工作目录里的 stderr.log 读不到（换成同名目录），执行器写 output.json 失败而异常退出
+    （临时文件路径被同名目录占住）。
+    """
+    deadline = time.monotonic() + 10
+    while not os.path.exists("stderr.log") and time.monotonic() < deadline:
+        time.sleep(0.01)
+    print(message, file=sys.stderr, flush=True)
+    os.remove("stderr.log")
+    os.mkdir("stderr.log")
+    os.mkdir(os.environ["SFLY_OUTPUT"] + ".tmp")
+
+
 @node(
     title="指标",
     outputs=[],

@@ -158,6 +158,33 @@ impl TelemetryReceiver {
 pub struct Pump {
     exited: oneshot::Sender<()>,
     handle: JoinHandle<()>,
+    /// 标准错误最后的 [`STDERR_TAIL_BYTES`] 字节。
+    stderr_tail: Arc<Tail>,
+}
+
+/// 失败时附带的标准错误尾部的最大字节数。
+pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
+
+/// 内存里保留的一个管道最后几千字节（错误摘要用，不依赖磁盘上的副本，#70）。
+#[derive(Default)]
+struct Tail(Mutex<Vec<u8>>);
+
+impl Tail {
+    fn push(&self, bytes: &[u8]) {
+        let Ok(mut tail) = self.0.lock() else { return };
+        tail.extend_from_slice(bytes);
+        if tail.len() > 2 * STDERR_TAIL_BYTES {
+            let excess = tail.len() - STDERR_TAIL_BYTES;
+            tail.drain(..excess);
+        }
+    }
+
+    fn get(&self) -> Vec<u8> {
+        let Ok(tail) = self.0.lock() else {
+            return Vec::new();
+        };
+        tail[tail.len().saturating_sub(STDERR_TAIL_BYTES)..].to_vec()
+    }
 }
 
 impl Pump {
@@ -176,13 +203,16 @@ impl Pump {
             LogSource::Stdout,
             LogLevel::Info,
             lines_tx.clone(),
+            None,
         ));
+        let stderr_tail = Arc::new(Tail::default());
         tokio::spawn(read_pipe(
             stderr,
             dir.join("stderr.log"),
             LogSource::Stderr,
             LogLevel::Error,
             lines_tx,
+            Some(stderr_tail.clone()),
         ));
         let (exited, exited_rx) = oneshot::channel();
         let forwarder = Forwarder {
@@ -198,13 +228,19 @@ impl Pump {
             metrics_sent_at: None,
         };
         let handle = tokio::spawn(forwarder.run(lines_rx, exited_rx));
-        Pump { exited, handle }
+        Pump {
+            exited,
+            handle,
+            stderr_tail,
+        }
     }
 
     /// 执行器已退出：读完管道（最多等 [`DRAIN_TIMEOUT`]）和事件文件，发出剩余日志和最后一次进度。
-    pub async fn finish(self) {
+    /// 返回标准错误最后的 [`STDERR_TAIL_BYTES`] 字节。
+    pub async fn finish(self) -> Vec<u8> {
         let _ = self.exited.send(());
         let _ = self.handle.await;
+        self.stderr_tail.get()
     }
 }
 
@@ -223,13 +259,14 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// 逐行读取一个管道，原始内容同时写到 `copy`。
+/// 逐行读取一个管道，原始内容同时写到 `copy`（写失败时忽略），并在 `tail` 里保留最后一段。
 async fn read_pipe(
     mut pipe: impl AsyncRead + Unpin,
     copy: PathBuf,
     source: LogSource,
     level: LogLevel,
     lines: mpsc::UnboundedSender<Pending>,
+    tail: Option<Arc<Tail>>,
 ) {
     let mut file = match tokio::fs::File::create(&copy).await {
         Ok(file) => Some(file),
@@ -253,6 +290,9 @@ async fn read_pipe(
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
+        if let Some(tail) = &tail {
+            tail.push(&buf[..n]);
+        }
         if let Some(file) = file.as_mut() {
             let _ = file.write_all(&buf[..n]).await;
         }

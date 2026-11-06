@@ -30,9 +30,6 @@ use crate::proto::{
 };
 use crate::venv::SharedVenv;
 
-/// 失败时附带的标准错误尾部的最大字节数。
-const STDERR_TAIL_BYTES: usize = 8 * 1024;
-
 #[derive(Deserialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 enum Output {
@@ -146,7 +143,6 @@ async fn prepare_dir(
 
 struct Paths {
     output: PathBuf,
-    stderr: PathBuf,
     /// 取消标记文件（`SFLY_CANCEL`）：存在时 `ctx.cancelled()` 为 true。
     cancel: PathBuf,
     artifacts: PathBuf,
@@ -174,7 +170,6 @@ fn spawn_process(
 ) -> Result<Running, TaskResult> {
     let paths = Paths {
         output: dir.join("output.json"),
-        stderr: dir.join("stderr.log"),
         cancel: dir.join("cancel"),
         artifacts: dir.join("artifacts"),
     };
@@ -254,8 +249,9 @@ impl Running {
                 changed = cancel.changed(), if cancellable => cancellable = changed.is_ok(),
             }
         };
-        // 日志和最后一次进度先于结果发出；之后 stderr.log 也已完整。
-        self.pump.finish().await;
+        // 日志和最后一次进度先于结果发出。标准错误尾部取自 Agent 内存，不读 stderr.log：
+        // 磁盘写满时副本可能是空的（#70）。
+        let stderr = self.pump.finish().await;
         let task = &self.task;
         let paths = &self.paths;
         let status = match status {
@@ -288,7 +284,7 @@ impl Running {
                 ErrorKind::NodeError,
                 format!(
                     "执行器异常退出（{status}），没有写出结果\n\n{}",
-                    stderr_tail(&paths.stderr).await
+                    String::from_utf8_lossy(&stderr).trim_end()
                 ),
             ),
         }
@@ -365,12 +361,4 @@ impl Running {
             format!("任务执行超过 {seconds} 秒，{killed}"),
         )
     }
-}
-
-async fn stderr_tail(path: &Path) -> String {
-    let bytes = tokio::fs::read(path).await.unwrap_or_default();
-    let start = bytes.len().saturating_sub(STDERR_TAIL_BYTES);
-    String::from_utf8_lossy(&bytes[start..])
-        .trim_end()
-        .to_string()
 }
