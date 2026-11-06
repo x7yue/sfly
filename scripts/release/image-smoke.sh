@@ -28,7 +28,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker build --quiet --platform linux/amd64 -f apps/server/Dockerfile -t "$image" out/server >/dev/null
+docker build --quiet --platform linux/amd64 -f apps/server/Dockerfile \
+	--build-arg NODE_MAJOR="$(cat .node-version)" -t "$image" out/server >/dev/null
 psql "$admin_url" -qc "CREATE DATABASE \"$db\""
 db_url=$(node -e 'const u = new URL(process.argv[1]); u.pathname = "/" + process.argv[2]; console.log(u.href)' "$admin_url" "$db")
 
