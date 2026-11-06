@@ -1,6 +1,6 @@
 {
 	"name": "@sfly/server",
-	"version": "0.0.0",
+	"version": "0.1.0",
 	"private": true,
 	"type": "module",
 	"description": "sfly 控制面：HTTP API、SSE、引擎、Agent 网关、节点包仓库",
@@ -8,6 +8,7 @@
 		"dev": "tsx watch src/main.ts",
 		"start": "tsx src/main.ts",
 		"build": "rm -rf dist/sdk && uv build --wheel --quiet --out-dir dist/sdk ../../sdk/python",
+		"bundle": "tsx scripts/bundle.ts",
 		"db:generate": "drizzle-kit generate",
 		"typecheck": "tsc -p .",
 		"test": "vitest run"
@@ -30,6 +31,7 @@
 		"@types/node": "^26.0.0",
 		"@types/pg": "^8.23.1",
 		"drizzle-kit": "^0.31.11",
+		"esbuild": "0.28.2",
 		"typescript": "^6.0.2",
 		"undici": "8.12.2",
 		"vitest": "^5.1.0"

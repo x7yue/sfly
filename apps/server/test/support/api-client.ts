@@ -7,7 +7,7 @@ export const NICKNAME_HEADER = "x-sfly-nickname";
 
 /** 测试里调用控制面 HTTP API 的小封装。 */
 export class ApiClient {
-	constructor(private readonly cp: TestControlPlane) {}
+	constructor(private readonly cp: Pick<TestControlPlane, "fetch">) {}
 
 	get(path: string): Promise<Response> {
 		return this.cp.fetch(path);

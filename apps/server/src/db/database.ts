@@ -16,9 +16,14 @@ export interface Database {
 	close(): Promise<void>;
 }
 
-const migrationsFolder = fileURLToPath(new URL("../../drizzle", import.meta.url));
+/** 源码中的迁移目录；打包后的控制面由调用方指定（SFLY_MIGRATIONS_DIR）。 */
+export const defaultMigrationsDir = fileURLToPath(new URL("../../drizzle", import.meta.url));
 
-export function openDatabase(url: string, onError: (error: Error) => void): Database {
+export function openDatabase(
+	url: string,
+	onError: (error: Error) => void,
+	migrationsFolder: string = defaultMigrationsDir,
+): Database {
 	const pool = new pg.Pool({ connectionString: url, max: 10 });
 	// 空闲连接被服务器断开时 pool 会触发 error；不处理会让进程崩溃。
 	pool.on("error", onError);

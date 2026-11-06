@@ -26,6 +26,8 @@ export async function startRealAgent(options: {
 	bin?: string;
 	/** 追加的环境变量（例如独立的 UV_CACHE_DIR）。 */
 	env?: Record<string, string>;
+	/** 等 welcome 的时间，默认 15 秒；包括创建 venv 和安装 SDK 运行时（它们在 welcome 之前完成）。 */
+	welcomeTimeoutMs?: number;
 }): Promise<RealAgent> {
 	const bin = options.bin ?? agentBinary();
 	const workDir = await mkdtemp(join(tmpdir(), "sfly-agent-work-"));
@@ -56,7 +58,10 @@ export async function startRealAgent(options: {
 	};
 	try {
 		await new Promise<void>((resolve, reject) => {
-			const timer = setTimeout(() => reject(new Error("agent did not report welcome")), 15_000);
+			const timer = setTimeout(
+				() => reject(new Error("agent did not report welcome")),
+				options.welcomeTimeoutMs ?? 15_000,
+			);
 			lines.on("line", (line) => {
 				const event = JSON.parse(line) as Record<string, unknown>;
 				events.push(event);
