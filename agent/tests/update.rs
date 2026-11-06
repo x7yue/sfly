@@ -11,6 +11,8 @@ mod support;
 
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde_json::json;
@@ -21,6 +23,9 @@ use sfly_agent::proto::{
 };
 use support::packages::{HttpFixture, fresh_venv, sha256_hex, venv_of};
 use support::{FakeControlPlane, Received, repo_root, stub_task, stub_venv};
+
+/// 只在测试中使用：上报的版本等于它时，Agent 记下这次启动后立即以非零码退出（模拟启动即崩溃的新版本）。
+const CRASH_ON_START: &str = "SFLY_TEST_CRASH_ON_START";
 
 /// 以 `program`（真实 Agent 二进制或它的副本）启动 Agent，SFLY_HOME 为 `home`，上报版本 1.0.0。
 fn agent(program: &Path, home: &Path, cp: &FakeControlPlane) -> tokio::process::Command {
@@ -34,17 +39,29 @@ fn agent_as(
     cp: &FakeControlPlane,
     version: &str,
 ) -> tokio::process::Command {
+    agent_at(program, home, &cp.url, Some(version))
+}
+
+/// 连接 `server` 的 Agent；`version` 为 None 时上报真实版本（[`AGENT_VERSION`]）。
+fn agent_at(
+    program: &Path,
+    home: &Path,
+    server: &str,
+    version: Option<&str>,
+) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(program);
     command
         .env("SFLY_HOME", home)
-        .args(["--server", &cp.url, "--name", "agent-update", "--uv", "uv"])
+        .args(["--server", server, "--name", "agent-update", "--uv", "uv"])
         .arg("--venv")
         .arg(stub_venv())
         .arg("--work-dir")
         .arg(home.join("work"))
-        .args(["--version-override", version])
         .stdout(std::process::Stdio::null())
         .kill_on_drop(true);
+    if let Some(version) = version {
+        command.args(["--version-override", version]);
+    }
     command
 }
 
@@ -240,13 +257,20 @@ async fn unwritable_bin_directory_reports_manual_upgrade_required() {
     let home = dir.path().join("home");
     let exe = install_into(&home);
     let bin = home.join("bin");
+    /// 测试结束时（包括失败时）恢复写权限，否则临时目录删不掉。
+    struct Writable<'a>(&'a Path);
+    impl Drop for Writable<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let _writable = Writable(&bin);
     let cp = control_plane("2.0.0").await;
     let mut agent = agent(&exe, &home, &cp).start();
 
     let update = manual_upgrade(&cp).await;
     agent.kill().await.unwrap();
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(update.reason.contains("不可写"), "{update:?}");
     assert!(
         update.reason.contains(&bin.display().to_string()),
@@ -339,17 +363,23 @@ async fn self_update_downloads_first_then_drains_until_results_are_acked_then_re
         original_binary(),
         "旧二进制保存为 .prev"
     );
-    // 没有留下下载的临时文件；锁文件留着给下一次替换用。
+    // 新进程处理完 Welcome 后心跳上报「不需要更新」。
+    cp.wait_for("no update needed", |all| {
+        all.iter()
+            .any(|r| {
+                r.session == 3
+                    && matches!(&r.message.body, Some(agent_message::Body::Heartbeat(h))
+                    if h.update.as_ref().is_some_and(|u| u.state() == AgentUpdateState::None))
+            })
+            .then_some(())
+    })
+    .await;
+    // 没有留下下载的临时文件；新版本握手成功后删掉了状态文件；锁文件留着给下一次替换用。
     assert_eq!(
         bin_entries(&home),
         [".sfly-agent.lock", "sfly-agent", "sfly-agent.prev"]
     );
     assert_eq!(http.count(BINARY_PATH), 1, "重连后没有重新下载");
-    let update = update_after(&cp, "no update needed", 0, |u| {
-        u.state() == AgentUpdateState::None
-    })
-    .await;
-    assert_eq!(update.0.state(), AgentUpdateState::None);
 
     let rejected = cp.received().into_iter().any(|m| match m.body {
         Some(agent_message::Body::Result(r)) => r.task_id == "task-rejected",
@@ -691,6 +721,320 @@ async fn after_self_update_uv_is_updated_once_and_dev_packages_are_still_loaded(
     assert_eq!(self_updates(), 1, "自更新后首次启动执行了 uv self update");
     assert!(!home.join("bin/.uv-update").exists(), "标记已清除");
     assert!(home.join("bin/sfly-agent.prev").exists());
+}
+
+/// 模拟 systemd 的 `Restart=on-failure`：Agent 退出后（稍等片刻）重新启动，`start` 给出每次启动的命令。
+struct Supervisor {
+    task: tokio::task::JoinHandle<()>,
+    exits: Arc<AtomicUsize>,
+}
+
+impl Supervisor {
+    fn new(start: impl Fn() -> tokio::process::Command + Send + 'static) -> Self {
+        let exits = Arc::new(AtomicUsize::new(0));
+        let counter = exits.clone();
+        let task = tokio::spawn(async move {
+            loop {
+                let mut child = start().start();
+                let _ = child.wait().await;
+                counter.fetch_add(1, Ordering::SeqCst);
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        Self { task, exits }
+    }
+
+    /// Agent 退出（崩溃）过几次。
+    fn exits(&self) -> usize {
+        self.exits.load(Ordering::SeqCst)
+    }
+}
+
+impl Drop for Supervisor {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+/// 由 systemd 管理、安装在 `home` 下的 Agent：装的是原来的二进制时扮演旧版本 0.0.0，
+/// 装的是新版本时上报真实版本；新版本（[`AGENT_VERSION`]）启动即崩溃。
+fn supervise_crashing_new_version(exe: &Path, home: &Path, cp: &FakeControlPlane) -> Supervisor {
+    let (exe, home, url) = (exe.to_path_buf(), home.to_path_buf(), cp.url.clone());
+    let original = original_binary().len() as u64;
+    Supervisor::new(move || {
+        let old = std::fs::metadata(&exe).unwrap().len() == original;
+        let mut command = agent_at(&exe, &home, &url, old.then_some("0.0.0"));
+        command.env(CRASH_ON_START, AGENT_VERSION);
+        command
+    })
+}
+
+/// 控制面提供一个启动即崩溃的新版本：Agent 更新过去，新版本崩溃 3 次后恢复旧版本。
+/// 返回「更新失败」的状态和它在已收消息中的位置。
+async fn roll_back_a_crashing_new_version(
+    cp: &FakeControlPlane,
+    http: &HttpFixture,
+    home: &Path,
+) -> (Supervisor, AgentUpdate, usize) {
+    let exe = install_into(home);
+    let new = new_binary();
+    offer_binary(cp, http, new.clone(), &sha256_hex(&new), Duration::ZERO);
+    let systemd = supervise_crashing_new_version(&exe, home, cp);
+    assert_eq!(cp.hello(0).await.agent_version, "0.0.0");
+    let (failed, at) = update_after(cp, "update failed", 0, |u| {
+        u.state() == AgentUpdateState::Failed
+    })
+    .await;
+    (systemd, failed, at)
+}
+
+#[tokio::test]
+async fn a_new_version_that_crashes_on_start_is_rolled_back_after_three_failures() {
+    let dir = scratch();
+    let home = dir.path().join("home");
+    let http = HttpFixture::start().await;
+    let cp = control_plane(AGENT_VERSION).await;
+
+    let (systemd, failed, _) = roll_back_a_crashing_new_version(&cp, &http, &home).await;
+
+    assert!(failed.reason.contains(AGENT_VERSION), "{failed:?}");
+    assert!(failed.reason.contains("3 次"), "{failed:?}");
+    assert!(failed.reason.contains("0.0.0"), "{failed:?}");
+    assert_eq!(systemd.exits(), 3, "新版本崩溃了 3 次");
+    assert_eq!(
+        std::fs::read(home.join("bin/sfly-agent")).unwrap(),
+        original_binary(),
+        "恢复了旧版本"
+    );
+    // 恢复后的旧版本连着控制面（版本不一致，控制面不派任务）；新版本从没握手成功。
+    let hellos: Vec<String> = cp
+        .received()
+        .into_iter()
+        .filter_map(|m| match m.body {
+            Some(agent_message::Body::Hello(h)) => Some(h.agent_version),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(hellos, ["0.0.0", "0.0.0"]);
+}
+
+#[tokio::test]
+async fn a_bad_version_is_not_retried_until_the_target_version_changes() {
+    let dir = scratch();
+    let home = dir.path().join("home");
+    let http = HttpFixture::start().await;
+    let cp = control_plane(AGENT_VERSION).await;
+    let (systemd, _, _) = roll_back_a_crashing_new_version(&cp, &http, &home).await;
+
+    // 重连后目标仍是坏版本：只上报「更新失败」，不再下载、不再替换。
+    let sessions = cp.received_with_session().last().unwrap().session;
+    cp.end_session();
+    let after = cp
+        .wait_for("reconnect", |all| {
+            all.iter().position(|r| r.session > sessions)
+        })
+        .await;
+    let (failed, _) = update_after(&cp, "still failed", after, |u| {
+        u.state() == AgentUpdateState::Failed
+    })
+    .await;
+    assert!(failed.reason.contains(AGENT_VERSION), "{failed:?}");
+    assert_eq!(http.count(BINARY_PATH), 1, "没有再下载坏版本");
+    assert_eq!(
+        std::fs::read(home.join("bin/sfly-agent")).unwrap(),
+        original_binary()
+    );
+    assert_eq!(systemd.exits(), 3);
+
+    // 控制面换了目标版本：重新尝试（这个二进制的 sha256 不对，下载校验后失败）。
+    let other = "/agent/binaries/other/sfly-agent";
+    let url = http.put_with(
+        other,
+        new_binary(),
+        "application/octet-stream",
+        Duration::ZERO,
+    );
+    cp.set_agent_binary(&url, &"0".repeat(64));
+    cp.set_target_version("7.7.7");
+    let at = cp.received().len();
+    cp.end_session();
+    let (retried, _) = update_after(&cp, "retry the new target", at, |u| {
+        u.state() == AgentUpdateState::Failed && u.reason.contains("sha256")
+    })
+    .await;
+    assert!(!retried.reason.contains("连续"), "{retried:?}");
+    assert_eq!(http.count(other), 1, "下载了新的目标版本");
+}
+
+#[tokio::test]
+async fn a_new_version_that_connects_but_fails_the_handshake_three_times_is_rolled_back() {
+    let dir = scratch();
+    let home = dir.path().join("home");
+    let exe = install_into(&home);
+    let http = HttpFixture::start().await;
+    let cp = control_plane(AGENT_VERSION).await;
+    cp.reject_hello_from(AGENT_VERSION);
+    let new = new_binary();
+    offer_binary(&cp, &http, new.clone(), &sha256_hex(&new), Duration::ZERO);
+    let mut child = agent_as(&exe, &home, &cp, "0.0.0").start();
+    let pid = child.id();
+
+    // 新版本连得上控制面，但握手失败 3 次后在同一个进程里恢复旧版本。
+    let (failed, _) = update_after(&cp, "update failed", 0, |u| {
+        u.state() == AgentUpdateState::Failed
+    })
+    .await;
+    assert!(failed.reason.contains("3 次"), "{failed:?}");
+    let hellos: Vec<String> = cp
+        .received()
+        .into_iter()
+        .filter_map(|m| match m.body {
+            Some(agent_message::Body::Hello(h)) => Some(h.agent_version),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        hellos,
+        [
+            "0.0.0",
+            AGENT_VERSION,
+            AGENT_VERSION,
+            AGENT_VERSION,
+            "0.0.0"
+        ]
+    );
+    assert!(child.try_wait().unwrap().is_none(), "Agent 没有退出");
+    assert_eq!(child.id(), pid);
+    assert_eq!(std::fs::read(&exe).unwrap(), original_binary());
+}
+
+#[tokio::test]
+async fn when_execve_fails_the_old_version_is_restored_and_the_agent_exits_with_manual_steps() {
+    let dir = scratch();
+    let home = dir.path().join("home");
+    let exe = install_into(&home);
+    let http = HttpFixture::start().await;
+    let cp = control_plane("").await;
+    let mut child = agent_as(&exe, &home, &cp, "0.0.0")
+        .stderr(std::process::Stdio::piped())
+        .start();
+    cp.hello(0).await;
+    let (ready, release) = (dir.path().join("ready"), dir.path().join("release"));
+    cp.assign(stub_task(
+        "task-gate",
+        "gate",
+        json!({ "ready_file": ready, "release_file": release }),
+    ))
+    .await;
+    wait_for_file(&ready).await;
+
+    // 「新版本」是一个脚本：试运行时解释器还在，等任务期间被删掉，于是 execve 失败（ENOENT）。
+    let interpreter = dir.path().join("interpreter");
+    std::fs::copy("/bin/sh", &interpreter).unwrap();
+    let script = format!("#!{}\necho sfly-agent 9.9.9\n", interpreter.display()).into_bytes();
+    offer_binary(
+        &cp,
+        &http,
+        script.clone(),
+        &sha256_hex(&script),
+        Duration::ZERO,
+    );
+    cp.set_target_version(AGENT_VERSION);
+    cp.end_session();
+    update_after(&cp, "waiting for tasks", 0, |u| {
+        u.state() == AgentUpdateState::WaitingForTasks
+    })
+    .await;
+    std::fs::remove_file(&interpreter).unwrap();
+    std::fs::write(&release, "").unwrap();
+
+    // 标准错误不多（放得进管道缓冲区），退出后再读。
+    let (status, stderr) = tokio::time::timeout(support::WAIT, async {
+        let status = child.wait().await.unwrap();
+        let mut stderr = String::new();
+        tokio::io::AsyncReadExt::read_to_string(child.stderr.as_mut().unwrap(), &mut stderr)
+            .await
+            .unwrap();
+        (status, stderr)
+    })
+    .await
+    .expect("Agent 退出");
+    assert!(!status.success(), "{status:?}");
+    assert!(stderr.contains("执行新版本"), "{stderr}");
+    assert!(stderr.contains("手动处理"), "{stderr}");
+    assert_eq!(
+        std::fs::read(&exe).unwrap(),
+        original_binary(),
+        "恢复了旧版本"
+    );
+
+    // systemd 拉起恢复的旧版本：上报「更新失败」，不再尝试这个版本。
+    let at = cp.received().len();
+    let _agent = agent_as(&exe, &home, &cp, "0.0.0").start();
+    let (failed, _) = update_after(&cp, "update failed", at, |u| {
+        u.state() == AgentUpdateState::Failed
+    })
+    .await;
+    assert!(failed.reason.contains("执行新版本"), "{failed:?}");
+    assert_eq!(http.count(BINARY_PATH), 1, "没有再下载");
+}
+
+/// 等 Agent 的标准错误里出现包含 `text` 的一行。
+async fn stderr_line(child: &mut tokio::process::Child, text: &str) {
+    use tokio::io::AsyncBufReadExt as _;
+
+    let mut lines = tokio::io::BufReader::new(child.stderr.take().unwrap()).lines();
+    let found = tokio::time::timeout(support::WAIT, async {
+        while let Some(line) = lines.next_line().await.unwrap() {
+            if line.contains(text) {
+                return;
+            }
+        }
+        panic!("Agent 退出了，没有输出「{text}」");
+    })
+    .await;
+    assert!(found.is_ok(), "等「{text}」超时");
+}
+
+#[tokio::test]
+async fn starts_failing_because_the_control_plane_is_unreachable_are_not_counted() {
+    let dir = scratch();
+    let home = dir.path().join("home");
+    let exe = install_into(&home);
+    let http = HttpFixture::start().await;
+    let cp = control_plane(AGENT_VERSION).await;
+    let new = new_binary();
+    offer_binary(&cp, &http, new.clone(), &sha256_hex(&new), Duration::ZERO);
+
+    // 旧版本更新到新版本，新版本第一次启动就崩溃：计 1 次。
+    let status = agent_as(&exe, &home, &cp, "0.0.0")
+        .env(CRASH_ON_START, AGENT_VERSION)
+        .start()
+        .wait()
+        .await
+        .unwrap();
+    assert!(!status.success(), "{status:?}");
+    assert_eq!(std::fs::read(&exe).unwrap(), new);
+
+    // 控制面不可达：新版本反复启动（每次连接失败后被杀掉、重新启动），都不计入失败次数。
+    let unreachable = {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", probe.local_addr().unwrap())
+    };
+    for _ in 0..4 {
+        let mut child = agent_at(&exe, &home, &unreachable, None)
+            .stderr(std::process::Stdio::piped())
+            .start();
+        stderr_line(&mut child, "cannot connect").await;
+        child.kill().await.unwrap();
+    }
+
+    // 控制面恢复：新版本握手成功，没有回滚。
+    let _agent = agent_at(&exe, &home, &cp.url, None).start();
+    hello_as(&cp, "agent-update", AGENT_VERSION).await;
+    cp.update_status("no update needed", |u| u.state() == AgentUpdateState::None)
+        .await;
+    assert_eq!(std::fs::read(&exe).unwrap(), new, "没有回滚");
 }
 
 fn is_root() -> bool {

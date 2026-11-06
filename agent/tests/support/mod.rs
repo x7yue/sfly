@@ -57,6 +57,8 @@ struct State {
     target_version: Mutex<String>,
     /// Welcome 中目标版本的 Agent 二进制（下载地址, sha256）。
     agent_binary: Mutex<(String, String)>,
+    /// 对这些版本的 Hello 不回 Welcome，直接结束会话（握手失败）。
+    reject_versions: Mutex<HashSet<String>>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -260,6 +262,15 @@ impl FakeControlPlane {
         *self.state.agent_binary.lock().unwrap() = (url.to_string(), sha256.to_string());
     }
 
+    /// 之后对上报版本 `version` 的 Hello 不回 Welcome、直接结束会话（连得上却握手失败）。
+    pub fn reject_hello_from(&self, version: &str) {
+        self.state
+            .reject_versions
+            .lock()
+            .unwrap()
+            .insert(version.to_string());
+    }
+
     /// 等到一条带更新状态、且 `pick` 接受的 Heartbeat，返回其中的更新状态。
     pub async fn update_status(
         &self,
@@ -325,6 +336,21 @@ impl AgentGateway for Gateway {
         let tx = tx.downgrade();
         tokio::spawn(async move {
             while let Some(Ok(message)) = inbound.next().await {
+                if let Some(agent_message::Body::Hello(hello)) = &message.body
+                    && state
+                        .reject_versions
+                        .lock()
+                        .unwrap()
+                        .contains(&hello.agent_version)
+                {
+                    state.received.lock().unwrap().push(Received {
+                        session,
+                        message,
+                        at: tokio::time::Instant::now(),
+                    });
+                    state.current.lock().unwrap().take();
+                    return;
+                }
                 let reply = match &message.body {
                     Some(agent_message::Body::Hello(hello)) => {
                         let abandon = state.abandon.lock().unwrap().clone();

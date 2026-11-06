@@ -597,6 +597,25 @@ impl Runtime {
 ///
 /// 任务结果在收到控制面的 Ack 之前一直保留，每次重新连接后再次上报（控制面按 task_id + attempt 幂等处理）。
 pub async fn run(config: Config) -> anyhow::Result<()> {
+    let http = reqwest::Client::new();
+    let uv_marker = config
+        .manage_uv
+        .then(|| {
+            config
+                .uv
+                .parent()
+                .map(|dir| dir.join(environment::UV_UPDATE_MARKER))
+        })
+        .flatten();
+    let updater = update::Updater::new(
+        config.self_update.clone(),
+        config.version.clone(),
+        uv_marker,
+        http.clone(),
+    );
+    // 刚自更新上来的新版本：在任何可能失败的启动步骤之前计一次尝试，连续失败时回滚（ADR 0014）。
+    updater.begin_attempt();
+    update::crash_on_start_for_tests(&config.version);
     std::fs::create_dir_all(&config.work_dir)
         .with_context(|| format!("create work dir {}", config.work_dir.display()))?;
     let work_dir = std::fs::canonicalize(&config.work_dir)?;
@@ -608,7 +627,6 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let (telemetry_tx, mut telemetry_rx) =
         logs::telemetry(config.telemetry_queue_bytes, config.metric_queue_points);
-    let http = reqwest::Client::new();
     let runtime = Arc::new(Runtime {
         name: config.name.clone(),
         dev: DevRegistry::new(work_dir.join(".dev")),
@@ -659,21 +677,13 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             config.version
         );
     }
-    let uv_marker = config
-        .manage_uv
-        .then(|| {
-            config
-                .uv
-                .parent()
-                .map(|dir| dir.join(environment::UV_UPDATE_MARKER))
-        })
-        .flatten();
-    let updater = update::Updater::new(
-        config.self_update.clone(),
-        config.version.clone(),
-        uv_marker,
-        runtime.http.clone(),
-    );
+    if let Some(bad) = std::env::var_os(update::ROLLED_BACK_FROM_ENV) {
+        eprintln!(
+            "Agent 已从坏版本 {} 回滚到 {}",
+            bad.to_string_lossy(),
+            config.version
+        );
+    }
 
     loop {
         // 断线期间的安装状态已经过时：重新连接时 Hello 带上最新的已安装列表。
@@ -690,7 +700,14 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             dev_packages: runtime.dev.list().iter().map(|e| e.to_proto()).collect(),
             running_tasks: runtime.held(&unacked),
         };
-        match connect(&config, hello).await {
+        updater.begin_attempt();
+        let connected = connect(&config, hello).await;
+        updater.end_attempt(match &connected {
+            Ok(_) => update::Attempt::Welcomed,
+            Err(error) if unreachable(error) => update::Attempt::Unreachable,
+            Err(_) => update::Attempt::Failed,
+        });
+        match connected {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
                 // uv 和共享 venv 在收到 Welcome 之后才准备：控制面在 Welcome 里下发镜像配置（ADR 0012）。
@@ -743,6 +760,15 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RECONNECT_MAX);
     }
+}
+
+/// 连不上控制面（建立连接失败，或 gRPC 报告不可用）：与「连上了却握手失败」区分，前者不算新版本的失败。
+fn unreachable(error: &anyhow::Error) -> bool {
+    error.chain().any(|e| {
+        e.downcast_ref::<tonic::transport::Error>().is_some()
+            || e.downcast_ref::<tonic::Status>()
+                .is_some_and(|s| s.code() == tonic::Code::Unavailable)
+    })
 }
 
 /// 准备 uv（Agent 管理的 uv 不存在时从镜像安装）和共享 venv（不存在时创建）；已经准备好时只检查 uv 能运行。
