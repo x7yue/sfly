@@ -1,0 +1,518 @@
+"""本地执行：不经过控制面和 Agent，在开发机上执行一个节点（本地调试）。只用标准库（ADR 0002）。
+
+`sfly.testing` 和 `sfly run` 共用这里。和 Agent 一样按本地协议（docs/ARCHITECTURE.md §5.4）
+启动执行器子进程 `python -u -m sfly.runner`，只把读取事件、存放产物的一端换成本地实现：
+
+- 参数校验：按节点类型的输入 schema 检查必填和类型（与控制面派发前的检查相同，
+  packages/orchestration/src/inputs.ts），不通过时以 `config_error` 失败，不启动执行器；
+- 输出上限、指标声明检查、产物引用：由执行器和 `Context` 负责，与 Agent 上完全相同
+  （本地没有产物下载地址，产物引用是本地文件路径）；
+- 日志：标准输出 → 来源 stdout、级别 info，标准错误 → 来源 stderr、级别 error，
+  事件文件里的日志 → 来源 sdk、级别取 SDK 记录的级别，不认识的行原样记成 sdk info 日志
+  （agent/src/logs.rs）；进度和指标保留每一次上报（Agent 上报前按秒合并）；
+- 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
+  （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import queue
+import signal
+import subprocess
+import sys
+import threading
+import time
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import IO, Any, Literal
+
+#: 取消时从 SIGTERM 到强制杀掉的默认宽限期（秒，docs/SEMANTICS.md §3.4）。
+DEFAULT_GRACE = 10.0
+#: 读取事件文件、检查取消和进程状态的间隔（秒）。
+_TICK = 0.05
+#: 一行日志的最大字节数；更长的行被拆成多行（与 Agent 相同）。
+_MAX_LINE_BYTES = 64 * 1024
+#: 执行器退出后，等待仍持有标准输出的后台子进程关闭管道的最长时间（秒）。
+_DRAIN_TIMEOUT = 2.0
+#: 失败时附带的标准错误尾部的最大字节数。
+_STDERR_TAIL_BYTES = 8 * 1024
+
+Status = Literal["running", "success", "failed", "cancelled"]
+
+
+@dataclass(frozen=True)
+class LogLine:
+    """一行日志。`source`：stdout | stderr | sdk；`level`：debug | info | warn | error。"""
+
+    ts: int
+    source: str
+    level: str
+    message: str
+
+
+@dataclass(frozen=True)
+class Progress:
+    """一次 `ctx.progress` 上报。"""
+
+    ts: int
+    current: float
+    total: float | None
+    message: str
+
+
+@dataclass(frozen=True)
+class MetricPoint:
+    """一次 `ctx.metric` 上报（未声明的指标和非有限数值已被 `Context` 丢弃）。"""
+
+    ts: int
+    name: str
+    kind: str
+    value: float
+
+
+@dataclass(frozen=True)
+class NodeError:
+    """失败原因。`kind` 与平台的错误类型相同：`node_error`（节点抛出异常、执行器异常退出）、
+    `config_error`（参数校验失败）；`type` 是节点抛出的异常类名（只有 node_error 有）。"""
+
+    kind: str
+    message: str
+    type: str | None = None
+    traceback: str = ""
+
+
+@dataclass
+class Execution:
+    """一次本地执行的结果（执行中是到目前为止的部分结果，`status` 为 running）。"""
+
+    status: Status
+    work_dir: Path
+    outputs: dict[str, Any] | None = None
+    error: NodeError | None = None
+    logs: list[LogLine] = field(default_factory=list)
+    progress: list[Progress] = field(default_factory=list)
+    metrics: list[MetricPoint] = field(default_factory=list)
+
+    @property
+    def artifacts_dir(self) -> Path:
+        """产物目录（`ctx.artifacts` 保存的文件都在这里）。"""
+        return self.work_dir / "artifacts"
+
+    @property
+    def artifacts(self) -> dict[str, Path]:
+        """产物：名称（产物目录内用 / 分隔的相对路径）→ 本地文件路径，按名称排序。"""
+        root = self.artifacts_dir
+        if not root.is_dir():
+            return {}
+        files = sorted(p for p in root.rglob("*") if p.is_file())
+        return {p.relative_to(root).as_posix(): p for p in files}
+
+
+class Cancellation:
+    """取消请求：`cancel()` 优雅取消（取消标记 + SIGTERM + 宽限期），`cancel(force=True)` 立即杀掉。
+
+    可以在其他线程或信号处理函数里调用。
+    """
+
+    def __init__(self) -> None:
+        self.requested = False
+        self.forced = False
+
+    def cancel(self, force: bool = False) -> None:
+        self.requested = True
+        if force:
+            self.forced = True
+
+
+# ---- 参数校验（与 packages/orchestration/src/inputs.ts 一致）----
+
+
+def _show(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _describe(schema: Mapping[str, Any]) -> str:
+    if isinstance(schema.get("enum"), list):
+        return f"{' | '.join(_show(e) for e in schema['enum'])} 之一"
+    if isinstance(schema.get("anyOf"), list):
+        return " | ".join(_describe(s) for s in schema["anyOf"])
+    if isinstance(schema.get("type"), str):
+        return str(schema["type"])
+    if isinstance(schema.get("type"), list):
+        return " | ".join(schema["type"])
+    return "任意值"
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _matches_type(kind: Any, value: Any) -> bool:
+    if kind == "string":
+        return isinstance(value, str)
+    if kind == "integer":
+        return _is_number(value) and float(value).is_integer()
+    if kind == "number":
+        return _is_number(value) and float(value) not in (float("inf"), float("-inf"))
+    if kind == "boolean":
+        return isinstance(value, bool)
+    if kind == "null":
+        return value is None
+    if kind == "array":
+        return isinstance(value, list)
+    if kind == "object":
+        return isinstance(value, dict)
+    return True
+
+
+def _matches(schema: Mapping[str, Any], value: Any) -> bool:
+    enum = schema.get("enum")
+    if isinstance(enum, list) and not any(_show(e) == _show(value) for e in enum):
+        return False
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list) and not any(_matches(s, value) for s in any_of):
+        return False
+    if "type" in schema:
+        kinds = schema["type"] if isinstance(schema["type"], list) else [schema["type"]]
+        if not any(_matches_type(k, value) for k in kinds):
+            return False
+    items = schema.get("items")
+    if isinstance(value, list) and isinstance(items, dict):
+        if not all(_matches(items, item) for item in value):
+            return False
+    if isinstance(value, dict):
+        properties = schema.get("properties") or {}
+        if any(name not in value for name in schema.get("required") or []):
+            return False
+        extra = schema.get("additionalProperties")
+        for key, item in value.items():
+            sub = properties.get(key, extra if isinstance(extra, dict) else None)
+            if sub is not None and not _matches(sub, item):
+                return False
+    return True
+
+
+def input_problems(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[str]:
+    """输入是否符合节点类型的输入 schema；返回问题列表（空表示通过）。
+
+    与控制面派发前的检查相同：必填输入要给出，声明了的输入要符合类型，没有声明的输入不检查。
+    """
+    properties: Mapping[str, Any] = schema.get("properties") or {}
+    problems = [
+        f"缺少必填输入 {name}" for name in schema.get("required") or [] if name not in inputs
+    ]
+    for name, value in inputs.items():
+        sub = properties.get(name)
+        if sub is not None and not _matches(sub, value):
+            problems.append(f"输入 {name} 应为 {_describe(sub)}，实际是 {_show(value)}")
+    return problems
+
+
+# ---- 执行 ----
+
+
+def _now_ms() -> int:
+    return int(time.time() * 1000)
+
+
+_SDK_LEVELS = {
+    "debug": "debug",
+    "info": "info",
+    "warn": "warn",
+    "warning": "warn",
+    "error": "error",
+}
+
+
+class _Pump:
+    """读取执行器的标准输出 / 标准错误和事件文件，转成日志、进度、指标。"""
+
+    def __init__(
+        self,
+        execution: Execution,
+        events: Path,
+        on_log: Callable[[LogLine], None] | None,
+        on_progress: Callable[[Progress], None] | None,
+        on_metric: Callable[[MetricPoint], None] | None,
+    ) -> None:
+        self._execution = execution
+        self._events = events
+        self._offset = 0
+        self._partial = b""
+        self._lines: queue.Queue[LogLine] = queue.Queue()
+        self._readers: list[threading.Thread] = []
+        self._on_log = on_log
+        self._on_progress = on_progress
+        self._on_metric = on_metric
+
+    def read_pipe(self, pipe: IO[bytes], copy: Path, source: str, level: str) -> None:
+        def run() -> None:
+            with pipe, copy.open("wb") as out:
+                for raw in iter(pipe.readline, b""):
+                    out.write(raw)
+                    out.flush()
+                    line = raw[:-1] if raw.endswith(b"\n") else raw
+                    if line.endswith(b"\r"):
+                        line = line[:-1]
+                    for start in range(0, max(len(line), 1), _MAX_LINE_BYTES):
+                        chunk = line[start : start + _MAX_LINE_BYTES]
+                        text = chunk.decode("utf-8", errors="replace")
+                        self._lines.put(LogLine(_now_ms(), source, level, text))
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        self._readers.append(thread)
+
+    def poll(self) -> None:
+        """读出新增的事件和管道里的行；同一批内按时间排序（与 Agent 相同）。"""
+        batch: list[LogLine] = []
+        while True:
+            try:
+                batch.append(self._lines.get_nowait())
+            except queue.Empty:
+                break
+        for raw in self._read_events():
+            self._event(raw, batch)
+        batch.sort(key=lambda line: line.ts)
+        for line in batch:
+            self._execution.logs.append(line)
+            if self._on_log is not None:
+                self._on_log(line)
+
+    def drain(self) -> None:
+        """执行器已退出：等管道关闭（最多等一会儿），读完剩余内容。"""
+        deadline = time.monotonic() + _DRAIN_TIMEOUT
+        for thread in self._readers:
+            thread.join(max(0.0, deadline - time.monotonic()))
+        self.poll()
+
+    def _read_events(self) -> list[bytes]:
+        try:
+            with self._events.open("rb") as f:
+                f.seek(self._offset)
+                data = f.read()
+        except FileNotFoundError:
+            return []
+        self._offset += len(data)
+        self._partial += data
+        complete, sep, rest = self._partial.rpartition(b"\n")
+        if not sep:
+            return []
+        self._partial = rest
+        return [line for line in complete.split(b"\n") if line]
+
+    def _event(self, raw: bytes, batch: list[LogLine]) -> None:
+        try:
+            event = json.loads(raw)
+            kind = event["type"]
+            ts = int(event.get("ts") or _now_ms())
+            if kind == "log":
+                level = _SDK_LEVELS.get(str(event.get("level", "")), "info")
+                batch.append(LogLine(ts, "sdk", level, str(event.get("message", ""))))
+                return
+            if kind == "progress":
+                total = event.get("total")
+                progress = Progress(
+                    ts,
+                    float(event["current"]),
+                    None if total is None else float(total),
+                    str(event.get("message", "")),
+                )
+                self._execution.progress.append(progress)
+                if self._on_progress is not None:
+                    self._on_progress(progress)
+                return
+            if kind == "metric":
+                metric_kind = "counter" if event.get("kind") == "counter" else "gauge"
+                point = MetricPoint(ts, str(event["name"]), metric_kind, float(event["value"]))
+                self._execution.metrics.append(point)
+                if self._on_metric is not None:
+                    self._on_metric(point)
+                return
+        except (ValueError, TypeError, KeyError, AttributeError):
+            pass
+        # 不认识的内容原样记成一行 SDK 日志。
+        batch.append(LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace")))
+
+
+def _signal_group(pgid: int, sig: int) -> None:
+    try:
+        os.killpg(pgid, sig)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _stderr_tail(path: Path) -> str:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return ""
+    return data[-_STDERR_TAIL_BYTES:].decode("utf-8", errors="replace").rstrip()
+
+
+def execute(
+    entry: str,
+    inputs: Mapping[str, Any],
+    work_dir: str | os.PathLike[str],
+    *,
+    schema: Mapping[str, Any] | None = None,
+    pythonpath: Iterable[str | os.PathLike[str]] = (),
+    python: str = sys.executable,
+    grace: float = DEFAULT_GRACE,
+    cancellation: Cancellation | None = None,
+    on_log: Callable[[LogLine], None] | None = None,
+    on_progress: Callable[[Progress], None] | None = None,
+    on_metric: Callable[[MetricPoint], None] | None = None,
+    on_tick: Callable[[Execution], None] | None = None,
+) -> Execution:
+    """在 `work_dir`（不存在时创建）里执行节点入口 `模块:函数`，等它结束并返回结果。
+
+    - `schema`：节点类型的输入 schema（`sfly build` 生成的 inputs），给出时先校验参数；
+    - `pythonpath`：执行器子进程额外的模块搜索路径（放在 PYTHONPATH 最前面）；
+    - `cancellation`：取消请求；`on_tick` 在执行期间定期以部分结果调用，可以在里面请求取消；
+    - `on_log` / `on_progress` / `on_metric`：每读到一条就调用（实时显示用）。
+    """
+    work = Path(work_dir)
+    execution = Execution(status="running", work_dir=work)
+
+    def fail(kind: str, message: str) -> Execution:
+        execution.status = "failed"
+        execution.error = NodeError(kind, message)
+        return execution
+
+    if not isinstance(inputs, Mapping):
+        return fail("config_error", "任务输入不是 JSON 对象")
+    try:
+        inputs = json.loads(json.dumps(dict(inputs), ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError) as error:
+        return fail("config_error", f"任务输入不能序列化为 JSON：{error}")
+    if schema is not None:
+        problems = input_problems(schema, inputs)
+        if problems:
+            return fail("config_error", "; ".join(problems))
+
+    (work / "artifacts").mkdir(parents=True, exist_ok=True)
+    task = work / "task.json"
+    task.write_text(
+        json.dumps(
+            {"task_id": "local", "attempt": 1, "entry": entry, "inputs": inputs},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    output, cancel_marker, events = work / "output.json", work / "cancel", work / "events.jsonl"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("SFLY_")}
+    paths = [os.fspath(p) for p in pythonpath]
+    if os.environ.get("PYTHONPATH"):
+        paths.append(os.environ["PYTHONPATH"])
+    if paths:
+        env["PYTHONPATH"] = os.pathsep.join(paths)
+    env.update(
+        SFLY_TASK=str(task),
+        SFLY_OUTPUT=str(output),
+        SFLY_ARTIFACTS=str(work / "artifacts"),
+        SFLY_EVENTS=str(events),
+        SFLY_CANCEL=str(cancel_marker),
+    )
+    # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。
+    proc = subprocess.Popen(
+        [python, "-u", "-m", "sfly.runner"],
+        cwd=work,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    assert proc.stdout is not None and proc.stderr is not None
+    pump = _Pump(execution, events, on_log, on_progress, on_metric)
+    pump.read_pipe(proc.stdout, work / "stdout.log", "stdout", "info")
+    pump.read_pipe(proc.stderr, work / "stderr.log", "stderr", "error")
+    cancellation = cancellation or Cancellation()
+
+    try:
+        while proc.poll() is None and not cancellation.requested:
+            pump.poll()
+            if on_tick is not None:
+                on_tick(execution)
+            if not cancellation.requested:
+                time.sleep(_TICK)
+    except BaseException:
+        # 回调抛出异常（或测试被中断）时不留下孤儿进程。
+        _signal_group(proc.pid, signal.SIGKILL)
+        proc.wait()
+        raise
+
+    if cancellation.requested and proc.poll() is None:
+        how = _cancel(proc, cancel_marker, cancellation, grace, pump)
+        pump.drain()
+        execution.status = "cancelled"
+        execution.error = NodeError("cancelled", f"任务已取消，{how}")
+        return execution
+
+    pump.drain()
+    try:
+        result = json.loads(output.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        result = None
+    if isinstance(result, dict) and result.get("status") == "success" and proc.returncode == 0:
+        execution.status = "success"
+        execution.outputs = result.get("outputs") or {}
+    elif isinstance(result, dict) and result.get("status") == "failed":
+        failure = result.get("error") or {}
+        execution.status = "failed"
+        execution.error = NodeError(
+            "node_error",
+            str(failure.get("message", "")),
+            failure.get("type"),
+            str(failure.get("traceback", "")),
+        )
+    else:
+        fail(
+            "node_error",
+            f"执行器异常退出（退出码 {proc.returncode}），没有写出结果\n\n"
+            + _stderr_tail(work / "stderr.log"),
+        )
+    return execution
+
+
+def _cancel(
+    proc: subprocess.Popen[bytes],
+    marker: Path,
+    cancellation: Cancellation,
+    grace: float,
+    pump: _Pump,
+) -> str:
+    """取消：写取消标记，向进程组发 SIGTERM，等整组退出，最多等 grace 秒，仍未退出的强制杀掉。"""
+    try:
+        marker.write_text("", encoding="utf-8")
+    except OSError as error:
+        print(f"无法写入取消标记 {marker}：{error}", file=sys.stderr)
+    pgid = proc.pid
+    terminated = not cancellation.forced
+    if terminated:
+        _signal_group(pgid, signal.SIGTERM)
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline and not cancellation.forced:
+            # 先回收组长，否则它的僵尸进程会让进程组一直“活着”。
+            if proc.poll() is not None and not _group_alive(pgid):
+                break
+            pump.poll()
+            time.sleep(_TICK)
+        terminated = not cancellation.forced
+    _signal_group(pgid, signal.SIGKILL)
+    proc.wait()
+    return "已终止进程树" if terminated else "已强制杀掉进程树"
