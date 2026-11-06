@@ -70,6 +70,16 @@ export interface ControlPlaneOptions {
 	leaseMs?: number;
 	/** SDK 运行时 wheel 所在目录（src/sdk/sdk-wheels.ts）；不设置时不提供 SDK 下载。 */
 	sdkWheelDir?: string;
+	/**
+	 * PyPI 镜像（简单索引地址，例如 `https://mirrors.ustc.edu.cn/pypi/simple`），在 Welcome 里下发给 Agent 安装节点包依赖（ADR 0012）。
+	 * 没有默认值：不设置时 Agent 用 uv 自己的配置。
+	 */
+	pypiMirror?: string;
+	/**
+	 * GitHub Release 镜像（例如 `https://mirrors.ustc.edu.cn/github-release`），在 Welcome 里下发给 Agent 安装 uv、下载 Python（ADR 0012）。
+	 * 没有默认值：不设置时 Agent 用 uv 的官方来源。
+	 */
+	githubReleaseMirror?: string;
 	/** 用户文档目录（仓库的 docs/guide，src/docs/user-docs.ts）；不设置时没有文档。 */
 	docsDir?: string;
 	/** 控制面版本号，默认取 package.json；测试里固定，让文档等输出与发版无关。 */
@@ -142,6 +152,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			const wheel = sdkWheels.find((w) => w.version === agentVersion);
 			return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
 		},
+		mirrors: { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror },
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
 	await engine.recover();

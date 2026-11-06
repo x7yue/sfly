@@ -8,6 +8,10 @@
 //   SFLY_AGENT_TOKEN Agent 共享注册令牌（可选；设置后令牌不对的 Agent 被拒绝）
 //   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包
 //                    （可选；默认取监听地址，监听 0.0.0.0 时用本机主机名）
+//   SFLY_PYPI_MIRROR PyPI 镜像（简单索引地址，例如 https://mirrors.ustc.edu.cn/pypi/simple），
+//                    下发给 Agent 安装节点包依赖（可选；未设置时 Agent 用 uv 自己的配置，ADR 0012）
+//   SFLY_GITHUB_RELEASE_MIRROR GitHub Release 镜像（例如 https://mirrors.ustc.edu.cn/github-release），
+//                    下发给 Agent 安装 uv、下载 Python（可选；未设置时 Agent 用 uv 的官方来源）
 //   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30），运行结束超过这么久后自动清理
 //   SFLY_METRIC_RETENTION_DAYS 指标的保留天数（默认 30），整天超过保留期的指标分区自动删除
 //   SFLY_LOG_LIMIT_MB     单个任务日志的上限（默认 200），超出部分截断
@@ -69,6 +73,8 @@ const controlPlane = await startControlPlane({
 	logger: true,
 	agentToken: env.SFLY_AGENT_TOKEN || undefined,
 	publicHttpUrl: env.SFLY_PUBLIC_URL || undefined,
+	pypiMirror: env.SFLY_PYPI_MIRROR || undefined,
+	githubReleaseMirror: env.SFLY_GITHUB_RELEASE_MIRROR || undefined,
 	retentionDays: positive("SFLY_RETENTION_DAYS"),
 	metricRetentionDays: positive("SFLY_METRIC_RETENTION_DAYS"),
 	logLimitBytes: mb("SFLY_LOG_LIMIT_MB"),

@@ -113,6 +113,13 @@ message Welcome {
   string sdk_wheel_url = 3;
   // SDK 运行时 wheel 的 sha256（hex）。
   string sdk_wheel_sha256 = 4;
+  // 控制面配置的 PyPI 镜像（简单索引地址，例如 https://mirrors.ustc.edu.cn/pypi/simple）；未配置时为空。
+  // Agent 安装节点包依赖时用它作为索引（Agent 本地的 --index-url 优先）；为空时用 uv 自己的配置（ADR 0012）。
+  string pypi_mirror = 5;
+  // 控制面配置的 GitHub Release 镜像（例如 https://mirrors.ustc.edu.cn/github-release）；未配置时为空。
+  // Agent 从 `<镜像>/astral-sh/uv/LatestRelease/` 安装 uv，从 `<镜像>/astral-sh/python-build-standalone/`
+  // 下载 Python；为空时用 uv 的官方来源（ADR 0012）。
+  string github_release_mirror = 6;
 }
 
 // 控制面对 Agent 手上一个任务的处置。

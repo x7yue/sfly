@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::Context as _;
 use clap::{CommandFactory, Parser};
+use sfly_agent::environment::{self, EnvironmentError};
 use sfly_agent::home;
 use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
 use sfly_agent::metrics::DEFAULT_METRIC_QUEUE_POINTS;
@@ -37,19 +38,21 @@ struct Args {
     /// 任务工作目录的根目录（每个任务一个子目录）；默认 `$SFLY_HOME/work`。
     #[arg(long, env = "SFLY_WORK_DIR")]
     work_dir: Option<PathBuf>,
-    /// 安装节点包依赖用的 PyPI 镜像地址。
+    /// 安装节点包依赖用的 PyPI 镜像地址；默认用控制面下发的 PyPI 镜像。
     #[arg(long, env = "SFLY_INDEX_URL")]
     index_url: Option<String>,
-    /// uv 可执行文件（安装节点包用）。
-    #[arg(long, env = "SFLY_UV", default_value = "uv")]
-    uv: PathBuf,
+    /// uv 可执行文件（创建共享 venv、安装节点包用）；指定时 Agent 不管理 uv。
+    /// 默认 `$SFLY_HOME/bin/uv`，不存在时从控制面下发的 GitHub Release 镜像安装。
+    #[arg(long, env = "SFLY_UV")]
+    uv: Option<PathBuf>,
     /// `sfly dev` 连接的本地 socket（Unix domain socket，只有本机同一用户可以连接）；默认 `<work_dir>/agent.sock`。
     #[arg(long, env = "SFLY_DEV_SOCKET")]
     dev_socket: Option<PathBuf>,
     /// 任务超时或被取消时，从优雅终止（SIGTERM）到强制杀掉进程树的宽限秒数。
     #[arg(long, env = "SFLY_TERMINATE_GRACE", default_value_t = DEFAULT_TERMINATE_GRACE.as_secs())]
     terminate_grace: u64,
-    /// 共享 venv 不存在时用 `uv venv --python <PYTHON>` 创建（版本号如 3.13，或解释器路径）；默认由 uv 选择。
+    /// 共享 venv 不存在时用 `uv venv --python <PYTHON>` 创建（版本号或解释器路径）；默认 3.13，
+    /// Python 从控制面下发的 GitHub Release 镜像下载。
     #[arg(long, env = "SFLY_PYTHON")]
     python: Option<String>,
     /// 与控制面断开期间最多排队的日志字节数，超出后丢弃新的日志。
@@ -100,7 +103,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse_from(program.into_iter().chain(from_file).chain(argv));
     let under_home = |name: &str| {
         sfly_home.as_ref().map(|dir| dir.join(name)).context(
-            "cannot locate SFLY_HOME: set SFLY_HOME or HOME, or pass --venv and --work-dir",
+            "cannot locate SFLY_HOME: set SFLY_HOME or HOME, or pass --venv, --work-dir and --uv",
         )
     };
     let venv = match args.venv {
@@ -111,6 +114,10 @@ async fn main() -> anyhow::Result<()> {
         Some(work_dir) => work_dir,
         None => under_home("work")?,
     };
+    let (uv, manage_uv) = match args.uv {
+        Some(uv) => (uv, false),
+        None => (under_home("bin/uv")?, true),
+    };
     let config = Config {
         server: args.server,
         name: args.name,
@@ -119,7 +126,8 @@ async fn main() -> anyhow::Result<()> {
         venv,
         work_dir,
         index_url: args.index_url,
-        uv: args.uv,
+        uv,
+        manage_uv,
         dev_socket: args.dev_socket,
         terminate_grace: Duration::from_secs(args.terminate_grace),
         python: args.python,
@@ -127,8 +135,16 @@ async fn main() -> anyhow::Result<()> {
         metric_queue_points: args.metric_queue_points,
     };
 
-    tokio::select! {
+    let result = tokio::select! {
         result = run(config) => result,
         _ = tokio::signal::ctrl_c() => Ok(()),
+    };
+    // 环境准备失败：打印完整报告，以固定退出码退出（systemd 不再重启，ADR 0012）。
+    if let Err(error) = &result
+        && let Some(failure) = error.downcast_ref::<EnvironmentError>()
+    {
+        eprintln!("{failure}");
+        std::process::exit(environment::EXIT_CODE);
     }
+    result
 }
