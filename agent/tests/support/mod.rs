@@ -16,8 +16,8 @@ use std::time::Duration;
 
 use sfly_agent::proto::agent_gateway_server::{AgentGateway, AgentGatewayServer};
 use sfly_agent::proto::{
-    Ack, AgentMessage, AssignTask, Hello, InstallState, InstallStatus, ServerMessage, TaskAction,
-    TaskDisposition, TaskResult, Welcome, agent_message, server_message,
+    Ack, AgentMessage, AgentUpdate, AssignTask, Hello, InstallState, InstallStatus, ServerMessage,
+    TaskAction, TaskDisposition, TaskResult, Welcome, agent_message, server_message,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -53,6 +53,8 @@ struct State {
     sdk_wheel: Mutex<(String, String)>,
     /// Welcome 中的镜像（PyPI 镜像, GitHub Release 镜像）。
     mirrors: Mutex<(String, String)>,
+    /// Welcome 中的目标 Agent 版本（空串 = 与 Hello.agent_version 相同，即版本一致）。
+    target_version: Mutex<String>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -246,6 +248,26 @@ impl FakeControlPlane {
         *self.state.mirrors.lock().unwrap() = (pypi.to_string(), github_release.to_string());
     }
 
+    /// 之后的 Welcome 给出的目标 Agent 版本（控制面版本）；不设置时回给 Agent 它自己上报的版本。
+    pub fn set_target_version(&self, version: &str) {
+        *self.state.target_version.lock().unwrap() = version.to_string();
+    }
+
+    /// 等到一条带更新状态、且 `pick` 接受的 Heartbeat，返回其中的更新状态。
+    pub async fn update_status(
+        &self,
+        what: &str,
+        pick: impl Fn(&AgentUpdate) -> bool,
+    ) -> AgentUpdate {
+        self.wait_for(what, |all| {
+            all.iter().find_map(|r| match &r.message.body {
+                Some(agent_message::Body::Heartbeat(h)) => h.update.clone().filter(|u| pick(u)),
+                _ => None,
+            })
+        })
+        .await
+    }
+
     /// 已收到的 Heartbeat（会话序号与到达时间）。
     pub fn heartbeats(&self) -> Vec<Received> {
         self.received_with_session()
@@ -298,6 +320,11 @@ impl AgentGateway for Gateway {
                             state.sdk_wheel.lock().unwrap().clone();
                         let (pypi_mirror, github_release_mirror) =
                             state.mirrors.lock().unwrap().clone();
+                        let target_agent_version =
+                            match state.target_version.lock().unwrap().clone() {
+                                target if target.is_empty() => hello.agent_version.clone(),
+                                target => target,
+                            };
                         Some(server_message::Body::Welcome(Welcome {
                             dispositions: hello
                                 .running_tasks
@@ -320,6 +347,8 @@ impl AgentGateway for Gateway {
                             sdk_wheel_sha256,
                             pypi_mirror,
                             github_release_mirror,
+                            target_agent_version,
+                            ..Default::default()
                         }))
                     }
                     Some(agent_message::Body::Result(r))

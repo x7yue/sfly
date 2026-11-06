@@ -42,7 +42,7 @@ describe("控制面托管前端（SPA）", () => {
 
 		const agents = await cp.fetch("/api/agents");
 		expect(agents.status).toBe(200);
-		expect(await agents.json()).toEqual({ agents: [] });
+		expect(await agents.json()).toEqual({ agents: [], control_plane_version: cp.version });
 	});
 
 	it("浏览器导航到前端路由时回退到入口页，包括与 API 同名的路径", async () => {
@@ -76,7 +76,7 @@ describe("控制面托管前端（SPA）", () => {
 	it("Agent、CLI 等非浏览器客户端访问根路径上的 API 不受影响", async () => {
 		cp = await startTestControlPlane({ webDir });
 		const agents = await cp.fetch("/agents");
-		expect(await agents.json()).toEqual({ agents: [] });
+		expect(await agents.json()).toEqual({ agents: [], control_plane_version: cp.version });
 		const missing = await cp.fetch("/no/such/route");
 		expect(missing.status).toBe(404);
 		expect(await missing.json()).toMatchObject({ error: { code: "not_found" } });

@@ -139,7 +139,6 @@ export async function seedDashboard({
 }: Pick<E2eFixtures, "controlPlane" | "connectAgent" | "clock"> & { page: Page }) {
 	const linux = await connectAgent({
 		name: "agent-linux",
-		agentVersion: "0.1.0",
 		os: "linux",
 		arch: "x86_64",
 		slots: 4,

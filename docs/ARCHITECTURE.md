@@ -183,7 +183,8 @@ message AgentMessage {
   oneof body {
     Hello         hello      = 1;  // name, token, agent_version, os, arch, slots,
                                    // installed_packages, dev_packages, running_tasks
-    Heartbeat     heartbeat  = 2;  // running_tasks：Agent 实际持有的任务，只续约这些
+    Heartbeat     heartbeat  = 2;  // running_tasks：Agent 实际持有的任务，只续约这些；
+                                   // update：更新状态（无 / 下载中 / 等待任务结束 / 替换中 / 失败 / 需要手动升级）
     TaskStarted   started    = 3;  // 执行器子进程真正启动：任务从派发阶段进入 running
     LogBatch      logs       = 4;  // task_id, [seq, ts, stream, level, text]
     Progress      progress   = 5;  // task_id, current, total, message（合并为每秒最多一次）
@@ -196,7 +197,8 @@ message AgentMessage {
 
 message ServerMessage {
   oneof body {
-    Welcome    welcome = 1;  // 对 running_tasks 的处置：继续 / 放弃；心跳间隔、SDK wheel、PyPI 与 GitHub Release 镜像
+    Welcome    welcome = 1;  // 对 running_tasks 的处置：继续 / 放弃；心跳间隔、SDK wheel、PyPI 与 GitHub Release 镜像；
+                             // 目标 Agent 版本（控制面版本）与对应架构的 Agent 二进制地址、sha256
     AssignTask assign  = 2;  // TaskSpec：task_id, attempt, package@version, node,
                              //           inputs_json（已解析引用）, timeout, artifact_upload_url
     CancelTask cancel  = 3;  // task_id, force
@@ -255,7 +257,7 @@ flowchart TD
 - 租约：心跳携带 Agent 实际持有的任务（`Heartbeat.running_tasks`），控制面只续约这些；控制面认为在这个 Agent 上、但连续两次心跳都没上报的任务以 `agent_lost` 失败。租约过期同样视为 `agent_lost`，按节点的 `retries` 决定是否重新派发。租约默认 30 秒，Welcome 告诉 Agent 每 10 秒（租约的三分之一，`Welcome.heartbeat_interval_ms`）心跳一次。
 - 重连：Agent 在 Hello 中上报手上的任务（正在执行的，以及结果还没收到 Ack 的），控制面在 Welcome 中逐个答复继续或放弃（放弃的任务被立即杀掉、结果丢弃）；控制面认为在这个 Agent 上运行、但 Hello 里没有的任务立即以 `agent_lost` 失败。
 - 重启：运行、链实例、任务、定时器都在库里，启动时不重放；只把已经（或即将）到期的租约和排队超时顺延到一个租约之后，给 Agent 重新连接的时间。
-- 派发：任务 `queued` 后，目标 Agent 在线且有空闲槽位时推送；超过 `queue_timeout` 仍未派发则 `env_error`。
+- 派发：任务 `queued` 后，目标 Agent 在线、版本与控制面一致且有空闲槽位时推送；超过 `queue_timeout` 仍未派发则 `env_error`。版本不一致的 Agent 照常连接、续约、上报日志和结果，只是不派新任务（ADR 0014），Agents 页显示它的更新状态。
 - ID 确定性生成：子流程实例 ID 和任务 ID 都由运行、链实例、节点、attempt 推导，崩溃恢复时不会重复创建。
 
 ### 6.2 数据模型

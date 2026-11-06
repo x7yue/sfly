@@ -9,6 +9,7 @@ import {
 } from "@sfly/orchestration";
 import {
 	type AgentMessage,
+	AgentUpdateState,
 	InstallState,
 	ErrorKind as ProtoErrorKind,
 	TaskStatus as ProtoTaskStatus,
@@ -27,6 +28,7 @@ import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/a
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
+	type AgentUpdateInfo,
 	chainInstances,
 	type ErrorKind,
 	nodePackages,
@@ -112,6 +114,15 @@ const INSTALL_STATES: Partial<Record<InstallState, "installing" | "installed" | 
 	[InstallState.FAILED]: "failed",
 };
 
+const UPDATE_STATES: Partial<Record<AgentUpdateState, AgentUpdateInfo["state"]>> = {
+	[AgentUpdateState.NONE]: "none",
+	[AgentUpdateState.DOWNLOADING]: "downloading",
+	[AgentUpdateState.WAITING_FOR_TASKS]: "waiting_for_tasks",
+	[AgentUpdateState.REPLACING]: "replacing",
+	[AgentUpdateState.FAILED]: "failed",
+	[AgentUpdateState.MANUAL_UPGRADE_REQUIRED]: "manual_upgrade_required",
+};
+
 /** 任务由 Agent 负责（派发阶段或执行阶段）。 */
 const onAgent = (task: TaskRow) => (ON_AGENT as readonly string[]).includes(task.status);
 
@@ -153,6 +164,8 @@ export class Engine implements AgentSessionHandler {
 			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
 			/** 控制面配置的镜像，原样在 Welcome 里下发（ADR 0012）；未配置的为空。 */
 			mirrors?: { pypi?: string; githubRelease?: string };
+			/** 目标版本（控制面版本）、给定架构的 Agent 二进制（Welcome 里告诉 Agent，ADR 0014）；没有时为 undefined。 */
+			agentBinary?: (arch: string) => Promise<{ url: string; sha256: string } | undefined>;
 		},
 	) {}
 
@@ -380,6 +393,7 @@ export class Engine implements AgentSessionHandler {
 				return out;
 			});
 			const sdk = this.deps.sdkWheel?.(conn.info.agent_version);
+			const binary = await this.deps.agentBinary?.(conn.info.arch);
 			conn.welcome(
 				create(ServerMessageSchema, {
 					body: {
@@ -391,6 +405,9 @@ export class Engine implements AgentSessionHandler {
 							sdkWheelSha256: sdk?.sha256 ?? "",
 							pypiMirror: this.deps.mirrors?.pypi ?? "",
 							githubReleaseMirror: this.deps.mirrors?.githubRelease ?? "",
+							targetAgentVersion: this.deps.hub.version,
+							agentBinaryUrl: binary?.url ?? "",
+							agentBinarySha256: binary?.sha256 ?? "",
 						},
 					},
 				}),
@@ -456,8 +473,18 @@ export class Engine implements AgentSessionHandler {
 			const started = message.body.value;
 			await this.#event((step) => this.#started(step, conn.name, started));
 		} else if (message.body.case === "heartbeat") {
-			const held = message.body.value.runningTasks.map(runningTaskRef);
+			const { runningTasks, update } = message.body.value;
+			const held = runningTasks.map(runningTaskRef);
 			await this.#event((step) => this.#heartbeat(step, conn.name, held));
+			// 不带更新状态的心跳（旧版本 Agent）不改变已保存的状态。
+			const state = update && UPDATE_STATES[update.state];
+			if (update && state) {
+				await this.deps.hub.recordUpdate(conn, {
+					state,
+					remaining_tasks: update.remainingTasks,
+					reason: update.reason,
+				});
+			}
 		} else if (message.body.case === "install") {
 			const status = message.body.value;
 			const state = INSTALL_STATES[status.state];
@@ -884,10 +911,13 @@ export class Engine implements AgentSessionHandler {
 		}
 	}
 
-	/** 把排队中的任务派发给在线的 Agent，直到槽位用满。调用方需持有锁。 */
+	/**
+	 * 把排队中的任务派发给在线的 Agent，直到槽位用满。调用方需持有锁。
+	 * 版本与控制面不一致的 Agent 不派新任务（ADR 0014），任务留在队列里，等它更新后重新连上再派。
+	 */
 	async #dispatch(agentName: string): Promise<void> {
 		const conn = this.deps.hub.connection(agentName);
-		if (!conn) return;
+		if (!conn || this.deps.hub.versionMismatch(conn.info)) return;
 		await this.#step(async (step) => {
 			const [running] = await step.tx
 				.select({ n: count() })
