@@ -9,6 +9,7 @@ import {
 } from "@sfly/orchestration";
 import {
 	type AgentMessage,
+	AgentUpdateState,
 	InstallState,
 	ErrorKind as ProtoErrorKind,
 	TaskStatus as ProtoTaskStatus,
@@ -23,10 +24,17 @@ import {
 	type PackageMetadata,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
-import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
+import {
+	type AgentConnection,
+	type AgentHub,
+	devPackageInfo,
+	type RunningTaskView,
+} from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
+	type AgentUpdateInfo,
+	agents,
 	chainInstances,
 	type ErrorKind,
 	nodePackages,
@@ -41,6 +49,7 @@ import {
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
+import type { Mirrors } from "../public-config.js";
 import type { Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
@@ -97,6 +106,10 @@ export type CancelOutcome =
 	| { ok: true; force: boolean }
 	| { ok: false; status: 404 | 409; code: string; message: string };
 
+export type UpdateNowOutcome =
+	| { ok: true; terminated: RunningTaskView[] }
+	| { ok: false; status: 404 | 409; code: string; message: string };
+
 const ERROR_KINDS: Record<ProtoErrorKind, ErrorKind> = {
 	[ProtoErrorKind.UNSPECIFIED]: "node_error",
 	[ProtoErrorKind.NODE_ERROR]: "node_error",
@@ -110,6 +123,15 @@ const INSTALL_STATES: Partial<Record<InstallState, "installing" | "installed" | 
 	[InstallState.INSTALLING]: "installing",
 	[InstallState.INSTALLED]: "installed",
 	[InstallState.FAILED]: "failed",
+};
+
+const UPDATE_STATES: Partial<Record<AgentUpdateState, AgentUpdateInfo["state"]>> = {
+	[AgentUpdateState.NONE]: "none",
+	[AgentUpdateState.DOWNLOADING]: "downloading",
+	[AgentUpdateState.WAITING_FOR_TASKS]: "waiting_for_tasks",
+	[AgentUpdateState.REPLACING]: "replacing",
+	[AgentUpdateState.FAILED]: "failed",
+	[AgentUpdateState.MANUAL_UPGRADE_REQUIRED]: "manual_upgrade_required",
 };
 
 /** 任务由 Agent 负责（派发阶段或执行阶段）。 */
@@ -151,6 +173,10 @@ export class Engine implements AgentSessionHandler {
 			leaseMs?: number;
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
 			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
+			/** 控制面配置的镜像，原样在 Welcome 里下发（ADR 0012）；未配置的为空。 */
+			mirrors?: Mirrors;
+			/** 目标版本（控制面版本）、给定架构的 Agent 二进制（Welcome 里告诉 Agent，ADR 0014）；没有时为 undefined。 */
+			agentBinary?: (arch: string) => Promise<{ url: string; sha256: string } | undefined>;
 		},
 	) {}
 
@@ -313,6 +339,83 @@ export class Engine implements AgentSessionHandler {
 		});
 	}
 
+	/**
+	 * 立即更新（ADR 0014）：版本不一致、正在更新（下载中或等待任务结束）的在线 Agent 手上的任务立即以 agent_lost 失败（按重试配置在它这里重新排队，
+	 * 等它以一致的版本重新连上再派发），事务提交后通知 Agent（UpdateNow）。Agent 按取消流程终止这些任务后照常上报结果，
+	 * 控制面已不再等这些尝试，只回 Ack。
+	 */
+	updateNow(agentName: string): Promise<UpdateNowOutcome> {
+		return this.#event(async (step) => {
+			const conn = this.deps.hub.connection(agentName);
+			if (!conn) {
+				const [known] = await step.tx
+					.select({ name: agents.name })
+					.from(agents)
+					.where(eq(agents.name, agentName));
+				return known
+					? {
+							ok: false,
+							status: 409,
+							code: "agent_offline",
+							message: `agent ${agentName} is offline`,
+						}
+					: { ok: false, status: 404, code: "not_found", message: "agent not found" };
+			}
+			if (!this.deps.hub.versionMismatch(conn.info)) {
+				return {
+					ok: false,
+					status: 409,
+					code: "version_matches",
+					message: `agent ${agentName} already runs the control plane version ${this.deps.hub.version}`,
+				};
+			}
+			const update = conn.info.update;
+			if (update?.state === "manual_upgrade_required") {
+				return {
+					ok: false,
+					status: 409,
+					code: "manual_upgrade_required",
+					message: `agent ${agentName} cannot update itself: ${update.reason}`,
+				};
+			}
+			// 只有确实在更新流程中（下载中、等待任务结束）的 Agent 收到指令后会替换自己；更新失败、正在替换，
+			// 或还没有自更新能力的旧 Agent（不上报更新状态）终止任务没有意义。
+			if (update?.state !== "downloading" && update?.state !== "waiting_for_tasks") {
+				return {
+					ok: false,
+					status: 409,
+					code: "not_updating",
+					message: `agent ${agentName} is not updating itself (update state: ${update?.state ?? "none"})`,
+				};
+			}
+			const held = await step.tx
+				.select({ task: tasks, orchestrationId: runs.orchestrationId })
+				.from(tasks)
+				.innerJoin(runs, eq(runs.id, tasks.runId))
+				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
+				.orderBy(asc(tasks.seq))
+				.for("update", { of: tasks });
+			const terminated = held.map(({ task, orchestrationId }) => ({
+				task_id: task.id,
+				run_id: task.runId,
+				orchestration_id: orchestrationId,
+				node_id: task.nodeId,
+				attempt: task.attempt,
+				status: task.status as RunningTaskView["status"],
+				started_at: task.startedAt?.toISOString() ?? null,
+			}));
+			for (const { task } of held) {
+				await this.#failTask(step, task, "agent_lost", "Agent 立即更新，终止了这个任务");
+			}
+			// 与派发消息一样在事务提交后发出。
+			step.assigns.push({
+				conn,
+				message: create(ServerMessageSchema, { body: { case: "updateNow", value: {} } }),
+			});
+			return { ok: true, terminated };
+		});
+	}
+
 	/** 取消一个链实例上正在排队 / 运行的任务；任务立即结束时从它后面继续推进链。 */
 	async #cancelChain(step: Step, run: RunRow, chain: ChainRow): Promise<void> {
 		const plan = await this.#plan(step.tx, run, chain);
@@ -378,6 +481,7 @@ export class Engine implements AgentSessionHandler {
 				return out;
 			});
 			const sdk = this.deps.sdkWheel?.(conn.info.agent_version);
+			const binary = await this.deps.agentBinary?.(conn.info.arch);
 			conn.welcome(
 				create(ServerMessageSchema, {
 					body: {
@@ -387,6 +491,11 @@ export class Engine implements AgentSessionHandler {
 							heartbeatIntervalMs: Math.min(Math.round(this.leaseMs / 3), 0xffff_ffff),
 							sdkWheelUrl: sdk?.url ?? "",
 							sdkWheelSha256: sdk?.sha256 ?? "",
+							pypiMirror: this.deps.mirrors?.pypi ?? "",
+							githubReleaseMirror: this.deps.mirrors?.githubRelease ?? "",
+							targetAgentVersion: this.deps.hub.version,
+							agentBinaryUrl: binary?.url ?? "",
+							agentBinarySha256: binary?.sha256 ?? "",
 						},
 					},
 				}),
@@ -452,8 +561,18 @@ export class Engine implements AgentSessionHandler {
 			const started = message.body.value;
 			await this.#event((step) => this.#started(step, conn.name, started));
 		} else if (message.body.case === "heartbeat") {
-			const held = message.body.value.runningTasks.map(runningTaskRef);
+			const { runningTasks, update } = message.body.value;
+			const held = runningTasks.map(runningTaskRef);
 			await this.#event((step) => this.#heartbeat(step, conn.name, held));
+			// 不带更新状态的心跳（旧版本 Agent）不改变已保存的状态。
+			const state = update && UPDATE_STATES[update.state];
+			if (update && state) {
+				await this.deps.hub.recordUpdate(conn, {
+					state,
+					remaining_tasks: update.remainingTasks,
+					reason: update.reason,
+				});
+			}
 		} else if (message.body.case === "install") {
 			const status = message.body.value;
 			const state = INSTALL_STATES[status.state];
@@ -880,10 +999,13 @@ export class Engine implements AgentSessionHandler {
 		}
 	}
 
-	/** 把排队中的任务派发给在线的 Agent，直到槽位用满。调用方需持有锁。 */
+	/**
+	 * 把排队中的任务派发给在线的 Agent，直到槽位用满。调用方需持有锁。
+	 * 版本与控制面不一致的 Agent 不派新任务（ADR 0014），任务留在队列里，等它更新后重新连上再派。
+	 */
 	async #dispatch(agentName: string): Promise<void> {
 		const conn = this.deps.hub.connection(agentName);
-		if (!conn) return;
+		if (!conn || this.deps.hub.versionMismatch(conn.info)) return;
 		await this.#step(async (step) => {
 			const [running] = await step.tx
 				.select({ n: count() })

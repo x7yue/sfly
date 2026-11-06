@@ -35,6 +35,7 @@ export const PAGE = {
 	editor: "编排画布",
 	monitor: "运行监控",
 	versions: "版本历史",
+	docs: "开发文档",
 } as const;
 
 /** 运行与链实例的状态。 */

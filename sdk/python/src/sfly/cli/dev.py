@@ -51,7 +51,8 @@ def request(socket_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
             raise DevError(
                 f"无法连接本机 Agent 的本地 socket {socket_path}（{error.strerror or error}）；"
                 "确认 Agent 正在运行，并用 --socket 指定它的 socket"
-                "（默认 <Agent 工作目录>/agent.sock）"
+                "（默认按 Agent 的 SFLY_DEV_SOCKET、SFLY_WORK_DIR 配置找，"
+                "都没有时 $SFLY_HOME/work/agent.sock）"
             ) from error
         conn.sendall(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
         conn.shutdown(socket.SHUT_WR)

@@ -41,6 +41,7 @@ export const SHORTCUTS = [
 	{ id: "go-runs", group: "全局", label: "运行记录", keys: "G R" },
 	{ id: "go-agents", group: "全局", label: "Agent 管理", keys: "G A" },
 	{ id: "go-packages", group: "全局", label: "节点包管理", keys: "G P" },
+	{ id: "go-docs", group: "全局", label: "开发文档", keys: "G H" },
 	{ id: "toggle-sidebar", group: "全局", label: "折叠 / 展开侧边栏", keys: "Ctrl+B" },
 	// 编排画布（全屏页）：方向键、Enter、Esc 由画布组件自己处理（components/canvas/FlowCanvas.tsx）。
 	{

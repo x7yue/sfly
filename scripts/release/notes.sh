@@ -20,12 +20,13 @@ docker pull ${image}:${version}
 \`gunzip -c sfly-server-${version}-linux-amd64.tar.gz | docker load\`。
 部署方式见仓库中的 \`deploy/docker-compose.yml\`。
 
-**Agent**（musl 静态链接，不依赖 glibc 版本；机器上需要 [uv](https://docs.astral.sh/uv/)）
+**Agent**（musl 静态链接，不依赖 glibc 版本）：控制面镜像带着同版本的 x86_64 / aarch64 Agent，在测试机上运行
 
 \`\`\`sh
-tar -xzf sfly-agent-${version}-x86_64-unknown-linux-musl.tar.gz   # arm64 机器用 aarch64-unknown-linux-musl
-./sfly-agent --help
+curl -fsSL <控制面地址>/install.sh | sh -s -- --name <名称>
 \`\`\`
+
+离线分发时也可以直接用附件：\`tar -xzf sfly-agent-${version}-x86_64-unknown-linux-musl.tar.gz\`（arm64 机器用 aarch64-unknown-linux-musl）。
 
 **SDK**：\`sfly-${version}-py3-none-any.whl\`（开发者安装 CLI：\`pip install "./sfly-${version}-py3-none-any.whl[cli]"\`）。
 

@@ -1,6 +1,11 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
-import { ON_AGENT_STATUSES, type OrchestrationDocument, type PackageMetadata } from "@sfly/schema";
+import {
+	type AgentUpdateState,
+	ON_AGENT_STATUSES,
+	type OrchestrationDocument,
+	type PackageMetadata,
+} from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
 	bigint,
@@ -35,6 +40,15 @@ export interface AgentInfo {
 	install?: InstallProgress;
 	/** 以开发模式（sfly dev）加载在这个 Agent 上的节点包（#19）；Hello 和 InstallStatus 中上报。 */
 	dev_packages?: DevPackageInfo[];
+	/** 最近一次 Heartbeat 上报的更新状态（ADR 0014）；每次连接（Hello）时清空。 */
+	update?: AgentUpdateInfo;
+}
+
+/** Agent 的更新状态（@sfly/schema 的 AgentUpdateView）。 */
+export interface AgentUpdateInfo {
+	state: AgentUpdateState;
+	remaining_tasks: number;
+	reason: string;
 }
 
 /** Agent 上以开发模式加载的节点包 `包名@dev`。 */

@@ -50,6 +50,9 @@ describe("Agent 注册", () => {
 				install: null,
 				dev_packages: [],
 				running_tasks: [],
+				// 控制面是 package.json 的版本，与 1.2.3 不一致。
+				version_mismatch: true,
+				update: { state: "none", remaining_tasks: 0, reason: "" },
 				referencing_orchestrations: 0,
 			},
 		]);

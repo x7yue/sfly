@@ -10,12 +10,15 @@
 
 pub mod artifacts;
 pub mod dev;
+pub mod environment;
 pub mod executor;
+pub mod home;
 pub mod install;
 pub mod logs;
 pub mod metrics;
 pub mod process_tree;
 pub mod sdk;
+pub mod update;
 pub mod venv;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -34,16 +37,17 @@ pub mod proto {
 }
 
 use dev::{DEV_VERSION, DevRegistry, DevReply, DevRequest};
+use environment::{Mirrors, Setup};
 use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat, Hello, InstallState,
-    InstallStatus, InstalledPackage, RunningTask, ServerMessage, TaskAction, TaskResult, Welcome,
-    agent_message, server_message,
+    AgentMessage, AgentUpdateState, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat,
+    Hello, InstallState, InstallStatus, InstalledPackage, RunningTask, ServerMessage, TaskAction,
+    TaskResult, Welcome, agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
-/// Agent 程序版本（随 Hello 上报）。
+/// Agent 程序版本（默认随 Hello 上报，见 [`Config::version`]）。
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 默认并发槽位数。
@@ -74,20 +78,32 @@ pub struct Config {
     pub venv: PathBuf,
     /// 任务工作目录的根目录。
     pub work_dir: PathBuf,
-    /// 安装节点包依赖用的 PyPI 镜像地址；未设置时使用 uv 自己的配置。
+    /// 安装节点包依赖用的 PyPI 镜像地址，优先于控制面下发的镜像；都没有时使用 uv 自己的配置。
     pub index_url: Option<String>,
     /// uv 可执行文件。
     pub uv: PathBuf,
+    /// uv 由 Agent 管理（没有指定 `--uv`，`uv` 是 `SFLY_HOME/bin/uv`）：不存在时从镜像安装（[`environment`]）。
+    pub manage_uv: bool,
     /// `sfly dev` 连接的本地 socket；未设置时为 `<work_dir>/agent.sock`。
     pub dev_socket: Option<PathBuf>,
     /// 超时和取消时从优雅终止到强制杀掉进程树的宽限期。
     pub terminate_grace: Duration,
-    /// 共享 venv 不存在时，`uv venv --python` 用的解释器（版本号或路径）；未设置时由 uv 选择。
+    /// 共享 venv 不存在时，`uv venv --python` 用的解释器（版本号或路径）；
+    /// 未设置时为 [`environment::PYTHON_VERSION`]。
     pub python: Option<String>,
     /// 与控制面断开期间最多排队多少字节的日志；超出后丢弃新的日志批次（控制面看到序号缺口）。
     pub telemetry_queue_bytes: usize,
     /// 与控制面断开期间最多排队多少个指标点（所有任务合计）；超出后丢弃最早的点，恢复后上报丢弃计数。
     pub metric_queue_points: usize,
+    /// 自更新下载新二进制时每次读取的超时（[`update::DEFAULT_READ_TIMEOUT`]）。
+    pub update_read_timeout: Duration,
+    /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
+    /// 让同一个二进制扮演新旧两个版本。与控制面版本比较、选择 SDK 运行时都用它。
+    pub version: String,
+    /// 能否自更新（ADR 0014，[`update`]）。
+    pub self_update: update::SelfUpdate,
+    /// 本进程是不是试用中的新版本（[`update::trial`]）：main 在启动最早期创建。
+    pub trial: Arc<update::Trial>,
 }
 
 impl Config {
@@ -101,11 +117,16 @@ impl Config {
             work_dir: PathBuf::from("work"),
             index_url: None,
             uv: PathBuf::from("uv"),
+            manage_uv: false,
             dev_socket: None,
             terminate_grace: DEFAULT_TERMINATE_GRACE,
             python: None,
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
             metric_queue_points: metrics::DEFAULT_METRIC_QUEUE_POINTS,
+            update_read_timeout: update::DEFAULT_READ_TIMEOUT,
+            version: AGENT_VERSION.to_string(),
+            self_update: update::SelfUpdate::detect(true, None),
+            trial: Arc::new(update::Trial::off()),
         }
     }
 }
@@ -147,7 +168,7 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
             body: Some(agent_message::Body::Hello(Hello {
                 name: config.name.clone(),
                 token: config.token.clone().unwrap_or_default(),
-                agent_version: AGENT_VERSION.to_string(),
+                agent_version: config.version.clone(),
                 os: std::env::consts::OS.to_string(),
                 arch: std::env::consts::ARCH.to_string(),
                 slots: config.slots,
@@ -192,7 +213,9 @@ struct Inventory {
 impl Inventory {
     /// 重新读取已安装的节点包；失败时记录日志并视为没有安装任何包。
     async fn refresh(&self) -> Vec<InstalledPackage> {
+        // 共享 venv 还没创建（在 Welcome 之后创建）：没有安装任何包。
         let installed = match self.venv.installed().await {
+            Err(_) if !self.venv.python().exists() => Installed::default(),
             Ok(installed) => installed,
             Err(error) => {
                 eprintln!("cannot list packages in shared venv: {error:#}");
@@ -260,6 +283,8 @@ struct Runtime {
     http: reqwest::Client,
     uv: PathBuf,
     scratch: PathBuf,
+    /// 上报的 Agent 版本（[`Config::version`]）。
+    version: String,
 }
 
 /// 发送任务的取消请求（见 [`executor::CancelSignal`]）。
@@ -301,8 +326,9 @@ impl Runtime {
             }
             Err(result) => result,
         };
-        self.cancels.lock().unwrap().remove(&key);
+        // 先交出结果再移出：排空判断（[`update::Updater::poll`]）任何时刻都能看到这个任务。
         let _ = self.results.send(result);
+        self.cancels.lock().unwrap().remove(&key);
     }
 
     /// 正在执行（含安装中）的任务。
@@ -482,13 +508,14 @@ impl Runtime {
     /// （[`sdk`]；与启动新任务互斥）。版本一致时不重装；控制面没有提供地址时只记日志，任务照常尝试执行。
     async fn ensure_sdk(&self, welcome: &Welcome) {
         let venv = &self.inventory.venv;
+        let version = self.version.as_str();
         let installed = sdk::installed_version(venv).await;
-        if installed.as_deref() == Some(AGENT_VERSION) {
+        if installed.as_deref() == Some(version) {
             return;
         }
         if welcome.sdk_wheel_url.is_empty() {
             eprintln!(
-                "shared venv has SDK {} but the agent is {AGENT_VERSION}, and the control plane offers no SDK wheel for it",
+                "shared venv has SDK {} but the agent is {version}, and the control plane offers no SDK wheel for it",
                 installed.as_deref().unwrap_or("(none)")
             );
             return;
@@ -505,10 +532,10 @@ impl Runtime {
         .await
         {
             Ok(_) => {
-                emit(serde_json::json!({ "event": "sdk_installed", "version": AGENT_VERSION }));
+                emit(serde_json::json!({ "event": "sdk_installed", "version": version }));
                 self.inventory.refresh().await;
             }
-            Err(error) => eprintln!("cannot install SDK runtime {AGENT_VERSION}: {error:#}"),
+            Err(error) => eprintln!("cannot install SDK runtime {version}: {error:#}"),
         }
     }
 
@@ -572,34 +599,37 @@ impl Runtime {
 }
 
 /// Agent 主循环：连接控制面并执行任务；连接失败或断开后按退避时间自动重连。
-/// 只有不可恢复的错误（例如令牌被拒绝）才会返回。
+/// 只有不可恢复的错误（例如令牌被拒绝、环境准备失败 [`environment::EnvironmentError`]）才会返回。
 ///
 /// 任务结果在收到控制面的 Ack 之前一直保留，每次重新连接后再次上报（控制面按 task_id + attempt 幂等处理）。
 pub async fn run(config: Config) -> anyhow::Result<()> {
+    let http = reqwest::Client::new();
+    let uv_marker = config
+        .manage_uv
+        .then(|| {
+            config
+                .uv
+                .parent()
+                .map(|dir| dir.join(environment::UV_UPDATE_MARKER))
+        })
+        .flatten();
+    let updater = update::Updater::new(
+        config.self_update.clone(),
+        config.version.clone(),
+        uv_marker,
+        update::download_client(config.update_read_timeout)?,
+    );
     std::fs::create_dir_all(&config.work_dir)
         .with_context(|| format!("create work dir {}", config.work_dir.display()))?;
     let work_dir = std::fs::canonicalize(&config.work_dir)?;
     let venv =
         std::fs::canonicalize(&config.venv).or_else(|_| std::path::absolute(&config.venv))?;
-    // 共享 venv 不存在时用 uv 创建（SDK 运行时在连上控制面后安装）；创建失败时照常连接，任务以 env_error 失败。
-    match sdk::create_venv(
-        &config.uv,
-        &SharedVenv::new(venv.clone()),
-        config.python.as_deref(),
-    )
-    .await
-    {
-        Ok(true) => emit(serde_json::json!({ "event": "venv_created", "path": venv })),
-        Ok(false) => {}
-        Err(error) => eprintln!("cannot create shared venv: {error:#}"),
-    }
 
     let scratch = work_dir.join(".install");
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let (telemetry_tx, mut telemetry_rx) =
         logs::telemetry(config.telemetry_queue_bytes, config.metric_queue_points);
-    let http = reqwest::Client::new();
     let runtime = Arc::new(Runtime {
         name: config.name.clone(),
         dev: DevRegistry::new(work_dir.join(".dev")),
@@ -610,7 +640,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         installer: Installer {
             venv: SharedVenv::new(venv),
             scratch: scratch.clone(),
-            index_url: config.index_url.clone(),
+            index_url: std::sync::Mutex::new(config.index_url.clone()),
             uv: config.uv.clone(),
             http: http.clone(),
         },
@@ -628,6 +658,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         http,
         uv: config.uv.clone(),
         scratch,
+        version: config.version.clone(),
     });
     let dev_socket = config
         .dev_socket
@@ -642,6 +673,20 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     // 控制面在 Welcome 中放弃的任务：之后结束时不再上报结果。
     let mut abandoned: HashSet<(String, u32)> = HashSet::new();
     let mut delay = RECONNECT_MIN;
+    if let Some(from) = std::env::var_os(update::UPDATED_FROM_ENV) {
+        eprintln!(
+            "Agent 已从 {} 自更新到 {}",
+            from.to_string_lossy(),
+            config.version
+        );
+    }
+    if let Some(bad) = std::env::var_os(update::ROLLED_BACK_FROM_ENV) {
+        eprintln!(
+            "Agent 已从坏版本 {} 回滚到 {}",
+            bad.to_string_lossy(),
+            config.version
+        );
+    }
 
     loop {
         // 断线期间的安装状态已经过时：重新连接时 Hello 带上最新的已安装列表。
@@ -658,9 +703,32 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             dev_packages: runtime.dev.list().iter().map(|e| e.to_proto()).collect(),
             running_tasks: runtime.held(&unacked),
         };
-        match connect(&config, hello).await {
+        // 试用中的新版本每次连接计一次尝试；握手成功且环境准备完成才算健康（ADR 0014）。
+        config.trial.begin();
+        let connected = connect(&config, hello).await;
+        match &connected {
+            Ok(_) => {}
+            Err(error) if unreachable(error) => config.trial.end(update::Attempt::Unreachable),
+            Err(_) => config.trial.end(update::Attempt::Failed),
+        }
+        match connected {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
+                // uv 和共享 venv 在收到 Welcome 之后才准备：控制面在 Welcome 里下发镜像配置（ADR 0012）。
+                // 准备失败时 Agent 退出，不带着坏环境继续连接。
+                let mirrors = Mirrors::from_welcome(&connection.welcome);
+                *runtime.installer.index_url.lock().unwrap() =
+                    config.index_url.clone().or_else(|| mirrors.pypi.clone());
+                if let Err(error) = prepare_environment(&config, &runtime, &mirrors).await {
+                    // 试用中的新版本：计一次失败，以 systemd 会重启的退出码退出，连续失败后回滚；
+                    // 否则以固定退出码退出，systemd 不再重启。
+                    if config.trial.in_trial() {
+                        config.trial.end(update::Attempt::Failed);
+                        return Err(update::TrialFailed(error).into());
+                    }
+                    return Err(error.into());
+                }
+                config.trial.end(update::Attempt::Healthy);
                 // SDK 运行时与 Agent 版本不一致（或还没装）时，先从控制面下载安装，再开始接收任务。
                 runtime.ensure_sdk(&connection.welcome).await;
                 emit(serde_json::json!({ "event": "welcome", "name": config.name }));
@@ -680,13 +748,15 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                         abandoned.insert(key);
                     }
                 }
+                // 版本与控制面不一致：控制面不再派新任务；能自更新时开始（或继续）更新，在心跳里上报更新状态（ADR 0014）。
+                updater.on_welcome(&connection.welcome);
                 let channels = Channels {
                     results: &mut results_rx,
                     installs: &mut installs_rx,
                     telemetry: &mut telemetry_rx,
                     abandoned: &mut abandoned,
                 };
-                match serve(connection, &runtime, channels, &mut unacked).await {
+                match serve(connection, &runtime, channels, &mut unacked, &updater).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
                     Err(error) => eprintln!("connection lost: {error:#}"),
                 }
@@ -703,6 +773,63 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RECONNECT_MAX);
     }
+}
+
+/// 连不上控制面（建立连接失败，或 gRPC 报告不可用）：与「连上了却握手失败」区分，前者不算新版本的失败。
+fn unreachable(error: &anyhow::Error) -> bool {
+    error.chain().any(|e| {
+        e.downcast_ref::<tonic::transport::Error>().is_some()
+            || e.downcast_ref::<tonic::Status>()
+                .is_some_and(|s| s.code() == tonic::Code::Unavailable)
+    })
+}
+
+/// 准备 uv（Agent 管理的 uv 不存在时从镜像安装）和共享 venv（不存在时创建）；已经准备好时只检查 uv 能运行。
+async fn prepare_environment(
+    config: &Config,
+    runtime: &Runtime,
+    mirrors: &Mirrors,
+) -> Result<(), environment::EnvironmentError> {
+    let setup = Setup {
+        uv: &config.uv,
+        manage_uv: config.manage_uv,
+        mirrors,
+        index_url: config.index_url.as_deref(),
+        scratch: &runtime.scratch,
+    };
+    let installed = setup.ensure_uv().await?;
+    if installed {
+        emit(serde_json::json!({ "event": "uv_installed", "path": config.uv }));
+    }
+    // 安装后（自更新后）的首次启动：更新一次 uv，刚装的 uv 已是最新版不再更新；只尝试一次，失败只告警。
+    if config.manage_uv
+        && let Some(marker) = config
+            .uv
+            .parent()
+            .map(|dir| dir.join(environment::UV_UPDATE_MARKER))
+        && marker.exists()
+    {
+        if !installed {
+            match setup.update_uv().await {
+                Ok(()) => emit(serde_json::json!({ "event": "uv_updated", "path": config.uv })),
+                Err(error) => eprintln!(
+                    "warning: 更新 uv 失败，继续使用现有的 uv。失败的命令：{}\n{}",
+                    error.command,
+                    error.output.trim_end()
+                ),
+            }
+            // 更新把 uv 弄坏了时不能继续。
+            setup.check_uv().await?;
+        }
+        if let Err(error) = std::fs::remove_file(&marker) {
+            eprintln!("warning: cannot remove {}: {error}", marker.display());
+        }
+    }
+    let venv = &runtime.inventory.venv;
+    if setup.ensure_venv(venv, config.python.as_deref()).await? {
+        emit(serde_json::json!({ "event": "venv_created", "path": venv.root() }));
+    }
+    Ok(())
 }
 
 fn result_message(result: TaskResult) -> AgentMessage {
@@ -727,6 +854,7 @@ async fn serve(
     runtime: &Arc<Runtime>,
     channels: Channels<'_>,
     unacked: &mut BTreeMap<(String, u32), TaskResult>,
+    updater: &Arc<update::Updater>,
 ) -> anyhow::Result<()> {
     let Channels {
         results,
@@ -740,24 +868,68 @@ async fn serve(
     };
     let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut status = updater.subscribe();
+    let heartbeat_message =
+        |running_tasks, status: &mut watch::Receiver<proto::AgentUpdate>| AgentMessage {
+            body: Some(agent_message::Body::Heartbeat(Heartbeat {
+                running_tasks,
+                update: Some(status.borrow_and_update().clone()),
+            })),
+        };
     for result in unacked.values() {
         connection
             .outbound
             .send(result_message(result.clone()))
             .await?;
     }
+    // 需要更新时立即上报一次，不等第一个心跳周期，界面上马上能看到。
+    if updater.status().state() != AgentUpdateState::None {
+        connection
+            .outbound
+            .send(heartbeat_message(runtime.held(unacked), &mut status))
+            .await?;
+    }
     loop {
+        // 排空：手上的任务（含还没交给这里的结果）都结束、结果都被 Ack 后替换并 execve（成功时不返回）。
+        let remaining = runtime.held(unacked).len() + results.len();
+        if updater.poll(remaining) == update::Drain::Replace {
+            connection
+                .outbound
+                .send(heartbeat_message(Vec::new(), &mut status))
+                .await?;
+            updater.replace_and_exec().await;
+        }
         tokio::select! {
             biased;
             message = connection.inbound.message() => {
                 let Some(message) = message? else { return Ok(()) };
                 match message.body {
+                    // 排空中不接新任务：不执行、不续约，控制面按 agent_lost 处理。
+                    Some(server_message::Body::Assign(task)) if updater.draining() => {
+                        eprintln!(
+                            "ignored task {} attempt {}: the agent is updating itself",
+                            task.task_id, task.attempt
+                        );
+                    }
                     Some(server_message::Body::Assign(task)) => {
                         let cancel = runtime.accept(&task);
                         let runtime = runtime.clone();
                         tokio::spawn(async move { runtime.run_task(task, cancel).await });
                     }
                     Some(server_message::Body::Cancel(cancel)) => runtime.cancel_task(&cancel),
+                    // 立即更新：控制面已让这些任务以 agent_lost 失败。按取消流程终止它们（取消标记、SIGTERM、宽限期），
+                    // 结果照常上报、被 Ack 后 poll 看到 0 就替换。
+                    Some(server_message::Body::UpdateNow(_)) => {
+                        updater.update_now();
+                        let running = runtime.running();
+                        eprintln!(
+                            "control plane asked to update now: terminating {} task(s)",
+                            running.len()
+                        );
+                        for (task_id, attempt) in running {
+                            runtime.cancel_task(&CancelTask { task_id, attempt, force: false });
+                        }
+                    }
                     Some(server_message::Body::Ack(ack)) => {
                         unacked.remove(&(ack.task_id, ack.attempt));
                     }
@@ -769,12 +941,16 @@ async fn serve(
             }
             _ = heartbeat.tick() => {
                 // 只为手上的任务续约；控制面据此发现 Agent 已经丢失的任务。
-                let running_tasks = runtime.held(unacked);
                 connection
                     .outbound
-                    .send(AgentMessage {
-                        body: Some(agent_message::Body::Heartbeat(Heartbeat { running_tasks })),
-                    })
+                    .send(heartbeat_message(runtime.held(unacked), &mut status))
+                    .await?;
+            }
+            // 更新状态变化时立即上报。
+            Ok(()) = status.changed() => {
+                connection
+                    .outbound
+                    .send(heartbeat_message(runtime.held(unacked), &mut status))
                     .await?;
             }
             Some(result) = results.recv() => {

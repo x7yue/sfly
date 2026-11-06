@@ -19,3 +19,7 @@ Agent、SDK 运行时和控制面共用一个版本号（`scripts/release/versio
 - 只支持 `X.Y.Z` 版本：预发布版本在 Cargo（`0.2.0-rc.1`）和 Python（规范化为 `0.2.0rc1`）里的写法不同，控制面匹配不上，Agent 会拿不到 SDK。
 - 镜像只带同版本的 SDK wheel，控制面和 Agent 要一起升级。
 - 发布前要求 tag 指向的提交在 main 上且 CI 已通过，所以 main 上的 CI 不再因为新的推送而被取消。
+
+## 修订
+
+- 镜像里也带同版本的 Agent 二进制，由控制面提供下载和安装脚本（ADR 0011）；Agent 自更新见 ADR 0014。

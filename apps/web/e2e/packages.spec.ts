@@ -75,10 +75,22 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(detail.getByRole("link", { name: "1.2.0" })).toHaveAttribute("aria-current");
 });
 
-test("还没有节点包时显示空状态和发布命令", async ({ page }) => {
+test("还没有节点包时显示空状态和发布命令，链接到开发文档", async ({ page }) => {
 	await page.goto("/packages");
 	const empty = page.getByRole("region", { name: "还没有发布节点包" });
-	await expect(empty).toContainText("sfly build && sfly publish");
+	await expect(empty).toContainText("uv run sfly publish");
+
+	await empty.getByRole("link", { name: "从零开始开发节点包" }).click();
+	await expect(page).toHaveURL(/\/docs\/quickstart$/);
+	await expect(page.getByRole("article", { name: "快速开始" })).toBeVisible();
+
+	await page.goBack();
+	await page
+		.getByRole("region", { name: "还没有发布节点包" })
+		.getByRole("link", { name: "发布节点包" })
+		.click();
+	await expect(page).toHaveURL(/\/docs\/publish$/);
+	await expect(page.getByRole("article", { name: "发布" })).toBeVisible();
 });
 
 test("加载失败时显示错误，可以重试", async ({ page, controlPlane }) => {

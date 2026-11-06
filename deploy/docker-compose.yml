@@ -19,6 +19,10 @@ services:
       # Agent 下载节点包和 SDK 用的地址，必须是 Agent 能访问到的地址。
       SFLY_PUBLIC_URL: ${SFLY_PUBLIC_URL:?在 .env 里设置 SFLY_PUBLIC_URL}
       SFLY_AGENT_TOKEN: ${SFLY_AGENT_TOKEN:-}
+      # 下发给 Agent 的镜像（ADR 0012）：PyPI 镜像用于安装节点包依赖，GitHub Release 镜像用于安装 uv、下载 Python。
+      # 留空时 Agent 用 uv 的官方来源；中科大镜像的写法见 .env.example。
+      SFLY_PYPI_MIRROR: ${SFLY_PYPI_MIRROR:-}
+      SFLY_GITHUB_RELEASE_MIRROR: ${SFLY_GITHUB_RELEASE_MIRROR:-}
     ports:
       - "${SFLY_HTTP_PORT:-8080}:8080" # 页面、API、SSE、节点包与 SDK 下载
       - "${SFLY_GRPC_PORT:-50051}:50051" # Agent 网关（gRPC，HTTP/2）

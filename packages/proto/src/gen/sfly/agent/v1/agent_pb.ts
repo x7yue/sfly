@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file sfly/agent/v1/agent.proto.
  */
 export const file_sfly_agent_v1_agent: GenFile = /*@__PURE__*/
-  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIv4CCgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASLQoJaGVhcnRiZWF0GAIgASgLMhguc2ZseS5hZ2VudC52MS5IZWFydGJlYXRIABItCgdzdGFydGVkGAMgASgLMhouc2ZseS5hZ2VudC52MS5UYXNrU3RhcnRlZEgAEicKBGxvZ3MYBCABKAsyFy5zZmx5LmFnZW50LnYxLkxvZ0JhdGNoSAASKwoIcHJvZ3Jlc3MYBSABKAsyFy5zZmx5LmFnZW50LnYxLlByb2dyZXNzSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAEi0KB21ldHJpY3MYCCABKAsyGi5zZmx5LmFnZW50LnYxLk1ldHJpY0JhdGNoSABCBgoEYm9keSK/AQoNU2VydmVyTWVzc2FnZRIpCgd3ZWxjb21lGAEgASgLMhYuc2ZseS5hZ2VudC52MS5XZWxjb21lSAASKwoGYXNzaWduGAIgASgLMhkuc2ZseS5hZ2VudC52MS5Bc3NpZ25UYXNrSAASKwoGY2FuY2VsGAMgASgLMhkuc2ZseS5hZ2VudC52MS5DYW5jZWxUYXNrSAASIQoDYWNrGAQgASgLMhIuc2ZseS5hZ2VudC52MS5BY2tIAEIGCgRib2R5IoUCCgVIZWxsbxIMCgRuYW1lGAEgASgJEg0KBXRva2VuGAIgASgJEhUKDWFnZW50X3ZlcnNpb24YAyABKAkSCgoCb3MYBCABKAkSDAoEYXJjaBgFIAEoCRINCgVzbG90cxgGIAEoDRI7ChJpbnN0YWxsZWRfcGFja2FnZXMYByADKAsyHy5zZmx5LmFnZW50LnYxLkluc3RhbGxlZFBhY2thZ2USLwoMZGV2X3BhY2thZ2VzGAggAygLMhkuc2ZseS5hZ2VudC52MS5EZXZQYWNrYWdlEjEKDXJ1bm5pbmdfdGFza3MYCSADKAsyGi5zZmx5LmFnZW50LnYxLlJ1bm5pbmdUYXNrIkAKC1J1bm5pbmdUYXNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdzdGFydGVkGAMgASgIIj4KCUhlYXJ0YmVhdBIxCg1ydW5uaW5nX3Rhc2tzGAEgAygLMhouc2ZseS5hZ2VudC52MS5SdW5uaW5nVGFzayIvCgtUYXNrU3RhcnRlZBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0iQQoKRGV2UGFja2FnZRIMCgRuYW1lGAEgASgJEg4KBnNvdXJjZRgCIAEoCRIVCg1tZXRhZGF0YV9qc29uGAMgASgJIjEKEEluc3RhbGxlZFBhY2thZ2USDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJIo8BCgdXZWxjb21lEjQKDGRpc3Bvc2l0aW9ucxgBIAMoCzIeLnNmbHkuYWdlbnQudjEuVGFza0Rpc3Bvc2l0aW9uEh0KFWhlYXJ0YmVhdF9pbnRlcnZhbF9tcxgCIAEoDRIVCg1zZGtfd2hlZWxfdXJsGAMgASgJEhgKEHNka193aGVlbF9zaGEyNTYYBCABKAkiXgoPVGFza0Rpc3Bvc2l0aW9uEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIpCgZhY3Rpb24YAyABKA4yGS5zZmx5LmFnZW50LnYxLlRhc2tBY3Rpb24i/wEKCkFzc2lnblRhc2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB3BhY2thZ2UYAyABKAkSFwoPcGFja2FnZV92ZXJzaW9uGAQgASgJEgwKBG5vZGUYBSABKAkSEwoLaW5wdXRzX2pzb24YBiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAcgASgNEg4KBnJ1bl9pZBgIIAEoCRIPCgdub2RlX2lkGAkgASgJEhYKDnBhY2thZ2Vfc2hhMjU2GAogASgJEhMKC3BhY2thZ2VfdXJsGAsgASgJEhsKE2FydGlmYWN0X3VwbG9hZF91cmwYDCABKAkiPQoKQ2FuY2VsVGFzaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDQoFZm9yY2UYAyABKAgi7AEKDUluc3RhbGxTdGF0dXMSDwoHcGFja2FnZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEioKBXN0YXRlGAMgASgOMhsuc2ZseS5hZ2VudC52MS5JbnN0YWxsU3RhdGUSDwoHdGFza19pZBgEIAEoCRIOCgZvdXRwdXQYBSABKAkSOwoSaW5zdGFsbGVkX3BhY2thZ2VzGAYgAygLMh8uc2ZseS5hZ2VudC52MS5JbnN0YWxsZWRQYWNrYWdlEi8KDGRldl9wYWNrYWdlcxgHIAMoCzIZLnNmbHkuYWdlbnQudjEuRGV2UGFja2FnZSJTCghMb2dCYXRjaBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SJQoFbGluZXMYAyADKAsyFi5zZmx5LmFnZW50LnYxLkxvZ0xpbmUijAEKB0xvZ0xpbmUSCwoDc2VxGAEgASgEEhQKDHRpbWVfdW5peF9tcxgCIAEoAxIoCgZzb3VyY2UYAyABKA4yGC5zZmx5LmFnZW50LnYxLkxvZ1NvdXJjZRImCgVsZXZlbBgEIAEoDjIXLnNmbHkuYWdlbnQudjEuTG9nTGV2ZWwSDAoEdGV4dBgFIAEoCSKCAQoIUHJvZ3Jlc3MSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB2N1cnJlbnQYAyABKAESEgoFdG90YWwYBCABKAFIAIgBARIPCgdtZXNzYWdlGAUgASgJEhQKDHRpbWVfdW5peF9tcxgGIAEoA0IICgZfdG90YWwicwoLTWV0cmljQmF0Y2gSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEioKBnBvaW50cxgDIAMoCzIaLnNmbHkuYWdlbnQudjEuTWV0cmljUG9pbnQSFgoOZHJvcHBlZF9wb2ludHMYBCABKAQiWQoLTWV0cmljUG9pbnQSDAoEbmFtZRgBIAEoCRITCgt0aW1lX3VuaXhfcxgCIAEoAxINCgV2YWx1ZRgDIAEoARILCgNtaW4YBCABKAESCwoDbWF4GAUgASgBIpgBCgpUYXNrUmVzdWx0Eg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIpCgZzdGF0dXMYAyABKA4yGS5zZmx5LmFnZW50LnYxLlRhc2tTdGF0dXMSFAoMb3V0cHV0c19qc29uGAQgASgJEicKBWVycm9yGAUgASgLMhguc2ZseS5hZ2VudC52MS5UYXNrRXJyb3IiRAoJVGFza0Vycm9yEiYKBGtpbmQYASABKA4yGC5zZmx5LmFnZW50LnYxLkVycm9yS2luZBIPCgdtZXNzYWdlGAIgASgJIicKA0FjaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0qXAoKVGFza0FjdGlvbhIbChdUQVNLX0FDVElPTl9VTlNQRUNJRklFRBAAEhgKFFRBU0tfQUNUSU9OX0NPTlRJTlVFEAESFwoTVEFTS19BQ1RJT05fQUJBTkRPThACKoIBCgxJbnN0YWxsU3RhdGUSHQoZSU5TVEFMTF9TVEFURV9VTlNQRUNJRklFRBAAEhwKGElOU1RBTExfU1RBVEVfSU5TVEFMTElORxABEhsKF0lOU1RBTExfU1RBVEVfSU5TVEFMTEVEEAISGAoUSU5TVEFMTF9TVEFURV9GQUlMRUQQAyppCglMb2dTb3VyY2USGgoWTE9HX1NPVVJDRV9VTlNQRUNJRklFRBAAEhUKEUxPR19TT1VSQ0VfU1RET1VUEAESFQoRTE9HX1NPVVJDRV9TVERFUlIQAhISCg5MT0dfU09VUkNFX1NESxADKncKCExvZ0xldmVsEhkKFUxPR19MRVZFTF9VTlNQRUNJRklFRBAAEhMKD0xPR19MRVZFTF9ERUJVRxABEhIKDkxPR19MRVZFTF9JTkZPEAISEgoOTE9HX0xFVkVMX1dBUk4QAxITCg9MT0dfTEVWRUxfRVJST1IQBCp1CgpUYXNrU3RhdHVzEhsKF1RBU0tfU1RBVFVTX1VOU1BFQ0lGSUVEEAASFwoTVEFTS19TVEFUVVNfU1VDQ0VTUxABEhYKElRBU0tfU1RBVFVTX0ZBSUxFRBACEhkKFVRBU0tfU1RBVFVTX0NBTkNFTExFRBADKqwBCglFcnJvcktpbmQSGgoWRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEhkKFUVSUk9SX0tJTkRfTk9ERV9FUlJPUhABEhYKEkVSUk9SX0tJTkRfVElNRU9VVBACEhkKFUVSUk9SX0tJTkRfQUdFTlRfTE9TVBADEhgKFEVSUk9SX0tJTkRfRU5WX0VSUk9SEAQSGwoXRVJST1JfS0lORF9DT05GSUdfRVJST1IQBTJYCgxBZ2VudEdhdGV3YXkSSAoHU2Vzc2lvbhIbLnNmbHkuYWdlbnQudjEuQWdlbnRNZXNzYWdlGhwuc2ZseS5hZ2VudC52MS5TZXJ2ZXJNZXNzYWdlKAEwAWIGcHJvdG8z");
+  fileDesc("ChlzZmx5L2FnZW50L3YxL2FnZW50LnByb3RvEg1zZmx5LmFnZW50LnYxIv4CCgxBZ2VudE1lc3NhZ2USJQoFaGVsbG8YASABKAsyFC5zZmx5LmFnZW50LnYxLkhlbGxvSAASLQoJaGVhcnRiZWF0GAIgASgLMhguc2ZseS5hZ2VudC52MS5IZWFydGJlYXRIABItCgdzdGFydGVkGAMgASgLMhouc2ZseS5hZ2VudC52MS5UYXNrU3RhcnRlZEgAEicKBGxvZ3MYBCABKAsyFy5zZmx5LmFnZW50LnYxLkxvZ0JhdGNoSAASKwoIcHJvZ3Jlc3MYBSABKAsyFy5zZmx5LmFnZW50LnYxLlByb2dyZXNzSAASKwoGcmVzdWx0GAYgASgLMhkuc2ZseS5hZ2VudC52MS5UYXNrUmVzdWx0SAASLwoHaW5zdGFsbBgHIAEoCzIcLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXR1c0gAEi0KB21ldHJpY3MYCCABKAsyGi5zZmx5LmFnZW50LnYxLk1ldHJpY0JhdGNoSABCBgoEYm9keSLvAQoNU2VydmVyTWVzc2FnZRIpCgd3ZWxjb21lGAEgASgLMhYuc2ZseS5hZ2VudC52MS5XZWxjb21lSAASKwoGYXNzaWduGAIgASgLMhkuc2ZseS5hZ2VudC52MS5Bc3NpZ25UYXNrSAASKwoGY2FuY2VsGAMgASgLMhkuc2ZseS5hZ2VudC52MS5DYW5jZWxUYXNrSAASIQoDYWNrGAQgASgLMhIuc2ZseS5hZ2VudC52MS5BY2tIABIuCgp1cGRhdGVfbm93GAUgASgLMhguc2ZseS5hZ2VudC52MS5VcGRhdGVOb3dIAEIGCgRib2R5IoUCCgVIZWxsbxIMCgRuYW1lGAEgASgJEg0KBXRva2VuGAIgASgJEhUKDWFnZW50X3ZlcnNpb24YAyABKAkSCgoCb3MYBCABKAkSDAoEYXJjaBgFIAEoCRINCgVzbG90cxgGIAEoDRI7ChJpbnN0YWxsZWRfcGFja2FnZXMYByADKAsyHy5zZmx5LmFnZW50LnYxLkluc3RhbGxlZFBhY2thZ2USLwoMZGV2X3BhY2thZ2VzGAggAygLMhkuc2ZseS5hZ2VudC52MS5EZXZQYWNrYWdlEjEKDXJ1bm5pbmdfdGFza3MYCSADKAsyGi5zZmx5LmFnZW50LnYxLlJ1bm5pbmdUYXNrIkAKC1J1bm5pbmdUYXNrEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdzdGFydGVkGAMgASgIImoKCUhlYXJ0YmVhdBIxCg1ydW5uaW5nX3Rhc2tzGAEgAygLMhouc2ZseS5hZ2VudC52MS5SdW5uaW5nVGFzaxIqCgZ1cGRhdGUYAiABKAsyGi5zZmx5LmFnZW50LnYxLkFnZW50VXBkYXRlImYKC0FnZW50VXBkYXRlEi4KBXN0YXRlGAEgASgOMh8uc2ZseS5hZ2VudC52MS5BZ2VudFVwZGF0ZVN0YXRlEhcKD3JlbWFpbmluZ190YXNrcxgCIAEoDRIOCgZyZWFzb24YAyABKAkiLwoLVGFza1N0YXJ0ZWQSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNIkEKCkRldlBhY2thZ2USDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkSFQoNbWV0YWRhdGFfanNvbhgDIAEoCSIxChBJbnN0YWxsZWRQYWNrYWdlEgwKBG5hbWUYASABKAkSDwoHdmVyc2lvbhgCIAEoCSKYAgoHV2VsY29tZRI0CgxkaXNwb3NpdGlvbnMYASADKAsyHi5zZmx5LmFnZW50LnYxLlRhc2tEaXNwb3NpdGlvbhIdChVoZWFydGJlYXRfaW50ZXJ2YWxfbXMYAiABKA0SFQoNc2RrX3doZWVsX3VybBgDIAEoCRIYChBzZGtfd2hlZWxfc2hhMjU2GAQgASgJEhMKC3B5cGlfbWlycm9yGAUgASgJEh0KFWdpdGh1Yl9yZWxlYXNlX21pcnJvchgGIAEoCRIcChR0YXJnZXRfYWdlbnRfdmVyc2lvbhgHIAEoCRIYChBhZ2VudF9iaW5hcnlfdXJsGAggASgJEhsKE2FnZW50X2JpbmFyeV9zaGEyNTYYCSABKAkiXgoPVGFza0Rpc3Bvc2l0aW9uEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIpCgZhY3Rpb24YAyABKA4yGS5zZmx5LmFnZW50LnYxLlRhc2tBY3Rpb24i/wEKCkFzc2lnblRhc2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEg8KB3BhY2thZ2UYAyABKAkSFwoPcGFja2FnZV92ZXJzaW9uGAQgASgJEgwKBG5vZGUYBSABKAkSEwoLaW5wdXRzX2pzb24YBiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAcgASgNEg4KBnJ1bl9pZBgIIAEoCRIPCgdub2RlX2lkGAkgASgJEhYKDnBhY2thZ2Vfc2hhMjU2GAogASgJEhMKC3BhY2thZ2VfdXJsGAsgASgJEhsKE2FydGlmYWN0X3VwbG9hZF91cmwYDCABKAkiPQoKQ2FuY2VsVGFzaxIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SDQoFZm9yY2UYAyABKAgiCwoJVXBkYXRlTm93IuwBCg1JbnN0YWxsU3RhdHVzEg8KB3BhY2thZ2UYASABKAkSDwoHdmVyc2lvbhgCIAEoCRIqCgVzdGF0ZRgDIAEoDjIbLnNmbHkuYWdlbnQudjEuSW5zdGFsbFN0YXRlEg8KB3Rhc2tfaWQYBCABKAkSDgoGb3V0cHV0GAUgASgJEjsKEmluc3RhbGxlZF9wYWNrYWdlcxgGIAMoCzIfLnNmbHkuYWdlbnQudjEuSW5zdGFsbGVkUGFja2FnZRIvCgxkZXZfcGFja2FnZXMYByADKAsyGS5zZmx5LmFnZW50LnYxLkRldlBhY2thZ2UiUwoITG9nQmF0Y2gSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNEiUKBWxpbmVzGAMgAygLMhYuc2ZseS5hZ2VudC52MS5Mb2dMaW5lIowBCgdMb2dMaW5lEgsKA3NlcRgBIAEoBBIUCgx0aW1lX3VuaXhfbXMYAiABKAMSKAoGc291cmNlGAMgASgOMhguc2ZseS5hZ2VudC52MS5Mb2dTb3VyY2USJgoFbGV2ZWwYBCABKA4yFy5zZmx5LmFnZW50LnYxLkxvZ0xldmVsEgwKBHRleHQYBSABKAkiggEKCFByb2dyZXNzEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIPCgdjdXJyZW50GAMgASgBEhIKBXRvdGFsGAQgASgBSACIAQESDwoHbWVzc2FnZRgFIAEoCRIUCgx0aW1lX3VuaXhfbXMYBiABKANCCAoGX3RvdGFsInMKC01ldHJpY0JhdGNoEg8KB3Rhc2tfaWQYASABKAkSDwoHYXR0ZW1wdBgCIAEoDRIqCgZwb2ludHMYAyADKAsyGi5zZmx5LmFnZW50LnYxLk1ldHJpY1BvaW50EhYKDmRyb3BwZWRfcG9pbnRzGAQgASgEIlkKC01ldHJpY1BvaW50EgwKBG5hbWUYASABKAkSEwoLdGltZV91bml4X3MYAiABKAMSDQoFdmFsdWUYAyABKAESCwoDbWluGAQgASgBEgsKA21heBgFIAEoASKYAQoKVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEg8KB2F0dGVtcHQYAiABKA0SKQoGc3RhdHVzGAMgASgOMhkuc2ZseS5hZ2VudC52MS5UYXNrU3RhdHVzEhQKDG91dHB1dHNfanNvbhgEIAEoCRInCgVlcnJvchgFIAEoCzIYLnNmbHkuYWdlbnQudjEuVGFza0Vycm9yIkQKCVRhc2tFcnJvchImCgRraW5kGAEgASgOMhguc2ZseS5hZ2VudC52MS5FcnJvcktpbmQSDwoHbWVzc2FnZRgCIAEoCSInCgNBY2sSDwoHdGFza19pZBgBIAEoCRIPCgdhdHRlbXB0GAIgASgNKpICChBBZ2VudFVwZGF0ZVN0YXRlEiIKHkFHRU5UX1VQREFURV9TVEFURV9VTlNQRUNJRklFRBAAEhsKF0FHRU5UX1VQREFURV9TVEFURV9OT05FEAESIgoeQUdFTlRfVVBEQVRFX1NUQVRFX0RPV05MT0FESU5HEAISKAokQUdFTlRfVVBEQVRFX1NUQVRFX1dBSVRJTkdfRk9SX1RBU0tTEAMSIAocQUdFTlRfVVBEQVRFX1NUQVRFX1JFUExBQ0lORxAEEh0KGUFHRU5UX1VQREFURV9TVEFURV9GQUlMRUQQBRIuCipBR0VOVF9VUERBVEVfU1RBVEVfTUFOVUFMX1VQR1JBREVfUkVRVUlSRUQQBipcCgpUYXNrQWN0aW9uEhsKF1RBU0tfQUNUSU9OX1VOU1BFQ0lGSUVEEAASGAoUVEFTS19BQ1RJT05fQ09OVElOVUUQARIXChNUQVNLX0FDVElPTl9BQkFORE9OEAIqggEKDEluc3RhbGxTdGF0ZRIdChlJTlNUQUxMX1NUQVRFX1VOU1BFQ0lGSUVEEAASHAoYSU5TVEFMTF9TVEFURV9JTlNUQUxMSU5HEAESGwoXSU5TVEFMTF9TVEFURV9JTlNUQUxMRUQQAhIYChRJTlNUQUxMX1NUQVRFX0ZBSUxFRBADKmkKCUxvZ1NvdXJjZRIaChZMT0dfU09VUkNFX1VOU1BFQ0lGSUVEEAASFQoRTE9HX1NPVVJDRV9TVERPVVQQARIVChFMT0dfU09VUkNFX1NUREVSUhACEhIKDkxPR19TT1VSQ0VfU0RLEAMqdwoITG9nTGV2ZWwSGQoVTE9HX0xFVkVMX1VOU1BFQ0lGSUVEEAASEwoPTE9HX0xFVkVMX0RFQlVHEAESEgoOTE9HX0xFVkVMX0lORk8QAhISCg5MT0dfTEVWRUxfV0FSThADEhMKD0xPR19MRVZFTF9FUlJPUhAEKnUKClRhc2tTdGF0dXMSGwoXVEFTS19TVEFUVVNfVU5TUEVDSUZJRUQQABIXChNUQVNLX1NUQVRVU19TVUNDRVNTEAESFgoSVEFTS19TVEFUVVNfRkFJTEVEEAISGQoVVEFTS19TVEFUVVNfQ0FOQ0VMTEVEEAMqrAEKCUVycm9yS2luZBIaChZFUlJPUl9LSU5EX1VOU1BFQ0lGSUVEEAASGQoVRVJST1JfS0lORF9OT0RFX0VSUk9SEAESFgoSRVJST1JfS0lORF9USU1FT1VUEAISGQoVRVJST1JfS0lORF9BR0VOVF9MT1NUEAMSGAoURVJST1JfS0lORF9FTlZfRVJST1IQBBIbChdFUlJPUl9LSU5EX0NPTkZJR19FUlJPUhAFMlgKDEFnZW50R2F0ZXdheRJICgdTZXNzaW9uEhsuc2ZseS5hZ2VudC52MS5BZ2VudE1lc3NhZ2UaHC5zZmx5LmFnZW50LnYxLlNlcnZlck1lc3NhZ2UoATABYgZwcm90bzM");
 
 /**
  * Agent → 控制面。
@@ -112,6 +112,12 @@ export type ServerMessage = Message<"sfly.agent.v1.ServerMessage"> & {
      */
     value: Ack;
     case: "ack";
+  } | {
+    /**
+     * @generated from field: sfly.agent.v1.UpdateNow update_now = 5;
+     */
+    value: UpdateNow;
+    case: "updateNow";
   } | { case: undefined; value?: undefined };
 };
 
@@ -246,6 +252,13 @@ export type Heartbeat = Message<"sfly.agent.v1.Heartbeat"> & {
    * @generated from field: repeated sfly.agent.v1.RunningTask running_tasks = 1;
    */
   runningTasks: RunningTask[];
+
+  /**
+   * Agent 的更新状态（ADR 0014）；不带这个字段的心跳（旧版本 Agent）不改变控制面保存的状态。
+   *
+   * @generated from field: sfly.agent.v1.AgentUpdate update = 2;
+   */
+  update?: AgentUpdate | undefined;
 };
 
 /**
@@ -254,6 +267,39 @@ export type Heartbeat = Message<"sfly.agent.v1.Heartbeat"> & {
  */
 export const HeartbeatSchema: GenMessage<Heartbeat> = /*@__PURE__*/
   messageDesc(file_sfly_agent_v1_agent, 4);
+
+/**
+ * Agent 的更新状态：版本与控制面不一致时 Agent 在做什么（ADR 0014），控制面保存最新一次上报的，在 Agents 页显示。
+ *
+ * @generated from message sfly.agent.v1.AgentUpdate
+ */
+export type AgentUpdate = Message<"sfly.agent.v1.AgentUpdate"> & {
+  /**
+   * @generated from field: sfly.agent.v1.AgentUpdateState state = 1;
+   */
+  state: AgentUpdateState;
+
+  /**
+   * WAITING_FOR_TASKS：还要等多少个任务结束（含结果还没收到 Ack 的）。
+   *
+   * @generated from field: uint32 remaining_tasks = 2;
+   */
+  remainingTasks: number;
+
+  /**
+   * FAILED / MANUAL_UPGRADE_REQUIRED：原因（给人看的一句话）。
+   *
+   * @generated from field: string reason = 3;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message sfly.agent.v1.AgentUpdate.
+ * Use `create(AgentUpdateSchema)` to create a new message.
+ */
+export const AgentUpdateSchema: GenMessage<AgentUpdate> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 5);
 
 /**
  * 任务的执行器子进程已经启动（节点包下载、安装完成之后）。控制面收到后才把任务记为 running，
@@ -279,7 +325,7 @@ export type TaskStarted = Message<"sfly.agent.v1.TaskStarted"> & {
  * Use `create(TaskStartedSchema)` to create a new message.
  */
 export const TaskStartedSchema: GenMessage<TaskStarted> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 5);
+  messageDesc(file_sfly_agent_v1_agent, 6);
 
 /**
  * 以本地开发模式（sfly dev）加载的节点包：本地源码目录以可编辑方式安装进共享 venv，注册为 `包名@dev`。
@@ -315,7 +361,7 @@ export type DevPackage = Message<"sfly.agent.v1.DevPackage"> & {
  * Use `create(DevPackageSchema)` to create a new message.
  */
 export const DevPackageSchema: GenMessage<DevPackage> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 6);
+  messageDesc(file_sfly_agent_v1_agent, 7);
 
 /**
  * 安装在 Agent 共享 venv 中的一个节点包版本。
@@ -339,7 +385,7 @@ export type InstalledPackage = Message<"sfly.agent.v1.InstalledPackage"> & {
  * Use `create(InstalledPackageSchema)` to create a new message.
  */
 export const InstalledPackageSchema: GenMessage<InstalledPackage> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 7);
+  messageDesc(file_sfly_agent_v1_agent, 8);
 
 /**
  * 控制面对 Hello 的回应，表示连接已被接受。
@@ -375,6 +421,45 @@ export type Welcome = Message<"sfly.agent.v1.Welcome"> & {
    * @generated from field: string sdk_wheel_sha256 = 4;
    */
   sdkWheelSha256: string;
+
+  /**
+   * 控制面配置的 PyPI 镜像（简单索引地址，例如 https://mirrors.ustc.edu.cn/pypi/simple）；未配置时为空。
+   * Agent 安装节点包依赖时用它作为索引（Agent 本地的 --index-url 优先）；为空时用 uv 自己的配置（ADR 0012）。
+   *
+   * @generated from field: string pypi_mirror = 5;
+   */
+  pypiMirror: string;
+
+  /**
+   * 控制面配置的 GitHub Release 镜像（例如 https://mirrors.ustc.edu.cn/github-release）；未配置时为空。
+   * Agent 从 `<镜像>/astral-sh/uv/LatestRelease/` 安装 uv，从 `<镜像>/astral-sh/python-build-standalone/`
+   * 下载 Python；为空时用 uv 的官方来源（ADR 0012）。
+   *
+   * @generated from field: string github_release_mirror = 6;
+   */
+  githubReleaseMirror: string;
+
+  /**
+   * 目标 Agent 版本，即控制面的版本（ADR 0010、0014）。与 Hello.agent_version 不同（高或低）时控制面不给它派新任务，
+   * Agent 应当更新到这个版本。
+   *
+   * @generated from field: string target_agent_version = 7;
+   */
+  targetAgentVersion: string;
+
+  /**
+   * 目标版本、Hello.arch 对应架构的 Agent 二进制下载地址（HTTP，原始二进制）；控制面没有这个架构的二进制时为空。
+   *
+   * @generated from field: string agent_binary_url = 8;
+   */
+  agentBinaryUrl: string;
+
+  /**
+   * 该二进制的 sha256（hex）。
+   *
+   * @generated from field: string agent_binary_sha256 = 9;
+   */
+  agentBinarySha256: string;
 };
 
 /**
@@ -382,7 +467,7 @@ export type Welcome = Message<"sfly.agent.v1.Welcome"> & {
  * Use `create(WelcomeSchema)` to create a new message.
  */
 export const WelcomeSchema: GenMessage<Welcome> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 8);
+  messageDesc(file_sfly_agent_v1_agent, 9);
 
 /**
  * 控制面对 Agent 手上一个任务的处置。
@@ -411,7 +496,7 @@ export type TaskDisposition = Message<"sfly.agent.v1.TaskDisposition"> & {
  * Use `create(TaskDispositionSchema)` to create a new message.
  */
 export const TaskDispositionSchema: GenMessage<TaskDisposition> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 9);
+  messageDesc(file_sfly_agent_v1_agent, 10);
 
 /**
  * 控制面派发给 Agent 的一个任务（节点的一次尝试）。输入中的引用已经解析。
@@ -507,7 +592,7 @@ export type AssignTask = Message<"sfly.agent.v1.AssignTask"> & {
  * Use `create(AssignTaskSchema)` to create a new message.
  */
 export const AssignTaskSchema: GenMessage<AssignTask> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 10);
+  messageDesc(file_sfly_agent_v1_agent, 11);
 
 /**
  * 取消一个正在执行的任务（docs/SEMANTICS.md §3.4）。Agent 先写入取消标记文件（SFLY_CANCEL），
@@ -540,7 +625,24 @@ export type CancelTask = Message<"sfly.agent.v1.CancelTask"> & {
  * Use `create(CancelTaskSchema)` to create a new message.
  */
 export const CancelTaskSchema: GenMessage<CancelTask> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 11);
+  messageDesc(file_sfly_agent_v1_agent, 12);
+
+/**
+ * 立即更新（ADR 0014）：只发给版本与控制面不一致的 Agent。控制面发出前已经让它手上的任务以 agent_lost 失败
+ * （按重试配置重新派发）；Agent 不再接新任务，按取消流程（与优雅的 CancelTask 相同）终止手上的全部任务，
+ * 结果照常上报（控制面忽略但仍回 Ack），然后立即替换并重新执行。新版本还没下载好时下载好后替换。
+ *
+ * @generated from message sfly.agent.v1.UpdateNow
+ */
+export type UpdateNow = Message<"sfly.agent.v1.UpdateNow"> & {
+};
+
+/**
+ * Describes the message sfly.agent.v1.UpdateNow.
+ * Use `create(UpdateNowSchema)` to create a new message.
+ */
+export const UpdateNowSchema: GenMessage<UpdateNow> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_agent, 13);
 
 /**
  * Agent 安装或切换节点包的状态（安装期间 Agent 不启动新任务）。
@@ -601,7 +703,7 @@ export type InstallStatus = Message<"sfly.agent.v1.InstallStatus"> & {
  * Use `create(InstallStatusSchema)` to create a new message.
  */
 export const InstallStatusSchema: GenMessage<InstallStatus> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 12);
+  messageDesc(file_sfly_agent_v1_agent, 14);
 
 /**
  * 一个任务新增的日志行（Agent 批量转发）。执行器的标准输出、标准错误和 SDK 日志合并成同一条日志流。
@@ -632,7 +734,7 @@ export type LogBatch = Message<"sfly.agent.v1.LogBatch"> & {
  * Use `create(LogBatchSchema)` to create a new message.
  */
 export const LogBatchSchema: GenMessage<LogBatch> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 13);
+  messageDesc(file_sfly_agent_v1_agent, 15);
 
 /**
  * @generated from message sfly.agent.v1.LogLine
@@ -675,7 +777,7 @@ export type LogLine = Message<"sfly.agent.v1.LogLine"> & {
  * Use `create(LogLineSchema)` to create a new message.
  */
 export const LogLineSchema: GenMessage<LogLine> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 14);
+  messageDesc(file_sfly_agent_v1_agent, 16);
 
 /**
  * 任务的最新进度（ctx.progress）；Agent 端合并，每个任务每秒最多上报一次，任务结束前补发最后一次。
@@ -723,7 +825,7 @@ export type Progress = Message<"sfly.agent.v1.Progress"> & {
  * Use `create(ProgressSchema)` to create a new message.
  */
 export const ProgressSchema: GenMessage<Progress> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 15);
+  messageDesc(file_sfly_agent_v1_agent, 17);
 
 /**
  * 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 指标 × 秒」合并，每个任务每秒最多发一批，
@@ -762,7 +864,7 @@ export type MetricBatch = Message<"sfly.agent.v1.MetricBatch"> & {
  * Use `create(MetricBatchSchema)` to create a new message.
  */
 export const MetricBatchSchema: GenMessage<MetricBatch> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 16);
+  messageDesc(file_sfly_agent_v1_agent, 18);
 
 /**
  * 一个指标在一秒内合并后的点。
@@ -809,7 +911,7 @@ export type MetricPoint = Message<"sfly.agent.v1.MetricPoint"> & {
  * Use `create(MetricPointSchema)` to create a new message.
  */
 export const MetricPointSchema: GenMessage<MetricPoint> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 17);
+  messageDesc(file_sfly_agent_v1_agent, 19);
 
 /**
  * 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
@@ -852,7 +954,7 @@ export type TaskResult = Message<"sfly.agent.v1.TaskResult"> & {
  * Use `create(TaskResultSchema)` to create a new message.
  */
 export const TaskResultSchema: GenMessage<TaskResult> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 18);
+  messageDesc(file_sfly_agent_v1_agent, 20);
 
 /**
  * @generated from message sfly.agent.v1.TaskError
@@ -874,7 +976,7 @@ export type TaskError = Message<"sfly.agent.v1.TaskError"> & {
  * Use `create(TaskErrorSchema)` to create a new message.
  */
 export const TaskErrorSchema: GenMessage<TaskError> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 19);
+  messageDesc(file_sfly_agent_v1_agent, 21);
 
 /**
  * 控制面确认已处理 Agent 的某条上报（目前是 TaskResult，重复上报同样会收到 Ack）。
@@ -898,7 +1000,65 @@ export type Ack = Message<"sfly.agent.v1.Ack"> & {
  * Use `create(AckSchema)` to create a new message.
  */
 export const AckSchema: GenMessage<Ack> = /*@__PURE__*/
-  messageDesc(file_sfly_agent_v1_agent, 20);
+  messageDesc(file_sfly_agent_v1_agent, 22);
+
+/**
+ * @generated from enum sfly.agent.v1.AgentUpdateState
+ */
+export enum AgentUpdateState {
+  /**
+   * @generated from enum value: AGENT_UPDATE_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * 不需要更新（版本与控制面一致）。
+   *
+   * @generated from enum value: AGENT_UPDATE_STATE_NONE = 1;
+   */
+  NONE = 1,
+
+  /**
+   * 正在下载、校验并试运行目标版本的二进制。
+   *
+   * @generated from enum value: AGENT_UPDATE_STATE_DOWNLOADING = 2;
+   */
+  DOWNLOADING = 2,
+
+  /**
+   * 新版本已就绪，等手上的任务结束、结果都被 Ack（remaining_tasks）。
+   *
+   * @generated from enum value: AGENT_UPDATE_STATE_WAITING_FOR_TASKS = 3;
+   */
+  WAITING_FOR_TASKS = 3,
+
+  /**
+   * 正在替换二进制并重新执行自己。
+   *
+   * @generated from enum value: AGENT_UPDATE_STATE_REPLACING = 4;
+   */
+  REPLACING = 4,
+
+  /**
+   * 更新失败（reason）：例如下载或校验失败、新版本连续启动失败后已回滚。
+   *
+   * @generated from enum value: AGENT_UPDATE_STATE_FAILED = 5;
+   */
+  FAILED = 5,
+
+  /**
+   * 不能自更新，需要手动升级（reason）：例如指定了 --no-auto-update、二进制不在 SFLY_HOME/bin、目录不可写。
+   *
+   * @generated from enum value: AGENT_UPDATE_STATE_MANUAL_UPGRADE_REQUIRED = 6;
+   */
+  MANUAL_UPGRADE_REQUIRED = 6,
+}
+
+/**
+ * Describes the enum sfly.agent.v1.AgentUpdateState.
+ */
+export const AgentUpdateStateSchema: GenEnum<AgentUpdateState> = /*@__PURE__*/
+  enumDesc(file_sfly_agent_v1_agent, 0);
 
 /**
  * @generated from enum sfly.agent.v1.TaskAction
@@ -929,7 +1089,7 @@ export enum TaskAction {
  * Describes the enum sfly.agent.v1.TaskAction.
  */
 export const TaskActionSchema: GenEnum<TaskAction> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 0);
+  enumDesc(file_sfly_agent_v1_agent, 1);
 
 /**
  * @generated from enum sfly.agent.v1.InstallState
@@ -966,7 +1126,7 @@ export enum InstallState {
  * Describes the enum sfly.agent.v1.InstallState.
  */
 export const InstallStateSchema: GenEnum<InstallState> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 1);
+  enumDesc(file_sfly_agent_v1_agent, 2);
 
 /**
  * 日志来源。
@@ -1005,7 +1165,7 @@ export enum LogSource {
  * Describes the enum sfly.agent.v1.LogSource.
  */
 export const LogSourceSchema: GenEnum<LogSource> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 2);
+  enumDesc(file_sfly_agent_v1_agent, 3);
 
 /**
  * 日志级别。标准输出为 INFO，标准错误为 ERROR，SDK 日志按调用的级别。
@@ -1043,7 +1203,7 @@ export enum LogLevel {
  * Describes the enum sfly.agent.v1.LogLevel.
  */
 export const LogLevelSchema: GenEnum<LogLevel> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 3);
+  enumDesc(file_sfly_agent_v1_agent, 4);
 
 /**
  * @generated from enum sfly.agent.v1.TaskStatus
@@ -1076,7 +1236,7 @@ export enum TaskStatus {
  * Describes the enum sfly.agent.v1.TaskStatus.
  */
 export const TaskStatusSchema: GenEnum<TaskStatus> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 4);
+  enumDesc(file_sfly_agent_v1_agent, 5);
 
 /**
  * 失败类型（docs/SEMANTICS.md §3.3）。
@@ -1119,7 +1279,7 @@ export enum ErrorKind {
  * Describes the enum sfly.agent.v1.ErrorKind.
  */
 export const ErrorKindSchema: GenEnum<ErrorKind> = /*@__PURE__*/
-  enumDesc(file_sfly_agent_v1_agent, 5);
+  enumDesc(file_sfly_agent_v1_agent, 6);
 
 /**
  * Agent 网关：Agent 主动发起一条 gRPC 双向流，控制面在同一条流上推送指令（ADR 0003）。

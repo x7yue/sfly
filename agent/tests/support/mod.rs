@@ -2,6 +2,7 @@
 //! 启动真实 Agent 二进制、准备装好桩节点包的共享 venv。
 #![allow(dead_code)] // 各测试文件只用到其中一部分。
 
+pub mod mirror;
 pub mod packages;
 
 use std::collections::HashSet;
@@ -15,8 +16,8 @@ use std::time::Duration;
 
 use sfly_agent::proto::agent_gateway_server::{AgentGateway, AgentGatewayServer};
 use sfly_agent::proto::{
-    Ack, AgentMessage, AssignTask, Hello, InstallState, InstallStatus, ServerMessage, TaskAction,
-    TaskDisposition, TaskResult, Welcome, agent_message, server_message,
+    Ack, AgentMessage, AgentUpdate, AssignTask, Hello, InstallState, InstallStatus, ServerMessage,
+    TaskAction, TaskDisposition, TaskResult, Welcome, agent_message, server_message,
 };
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
@@ -50,6 +51,14 @@ struct State {
     heartbeat_interval_ms: AtomicU32,
     /// Welcome 中的 SDK 运行时 wheel（下载地址, sha256）。
     sdk_wheel: Mutex<(String, String)>,
+    /// Welcome 中的镜像（PyPI 镜像, GitHub Release 镜像）。
+    mirrors: Mutex<(String, String)>,
+    /// Welcome 中的目标 Agent 版本（空串 = 与 Hello.agent_version 相同，即版本一致）。
+    target_version: Mutex<String>,
+    /// Welcome 中目标版本的 Agent 二进制（下载地址, sha256）。
+    agent_binary: Mutex<(String, String)>,
+    /// 这些会话（序号从 0 开始）里的 Hello 不回 Welcome，直接结束会话（握手失败）。
+    reject_sessions: Mutex<HashSet<usize>>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -238,6 +247,41 @@ impl FakeControlPlane {
         *self.state.sdk_wheel.lock().unwrap() = (url.to_string(), sha256.to_string());
     }
 
+    /// 之后的 Welcome 下发的镜像（PyPI 镜像, GitHub Release 镜像；空串表示未配置）。
+    pub fn set_mirrors(&self, pypi: &str, github_release: &str) {
+        *self.state.mirrors.lock().unwrap() = (pypi.to_string(), github_release.to_string());
+    }
+
+    /// 之后的 Welcome 给出的目标 Agent 版本（控制面版本）；不设置时回给 Agent 它自己上报的版本。
+    pub fn set_target_version(&self, version: &str) {
+        *self.state.target_version.lock().unwrap() = version.to_string();
+    }
+
+    /// 之后的 Welcome 给出的目标版本 Agent 二进制（下载地址, sha256）。
+    pub fn set_agent_binary(&self, url: &str, sha256: &str) {
+        *self.state.agent_binary.lock().unwrap() = (url.to_string(), sha256.to_string());
+    }
+
+    /// 第 `sessions` 个会话（从 0 开始）里的 Hello 不回 Welcome、直接结束会话（连得上却握手失败）。
+    pub fn reject_hellos_in(&self, sessions: impl IntoIterator<Item = usize>) {
+        self.state.reject_sessions.lock().unwrap().extend(sessions);
+    }
+
+    /// 等到一条带更新状态、且 `pick` 接受的 Heartbeat，返回其中的更新状态。
+    pub async fn update_status(
+        &self,
+        what: &str,
+        pick: impl Fn(&AgentUpdate) -> bool,
+    ) -> AgentUpdate {
+        self.wait_for(what, |all| {
+            all.iter().find_map(|r| match &r.message.body {
+                Some(agent_message::Body::Heartbeat(h)) => h.update.clone().filter(|u| pick(u)),
+                _ => None,
+            })
+        })
+        .await
+    }
+
     /// 已收到的 Heartbeat（会话序号与到达时间）。
     pub fn heartbeats(&self) -> Vec<Received> {
         self.received_with_session()
@@ -249,6 +293,11 @@ impl FakeControlPlane {
     /// 之后收到的 TaskResult 不再回 Ack。
     pub fn stop_acking(&self) {
         self.state.no_ack.store(true, Ordering::SeqCst);
+    }
+
+    /// 之后收到的 TaskResult 恢复回 Ack。
+    pub fn start_acking(&self) {
+        self.state.no_ack.store(false, Ordering::SeqCst);
     }
 }
 
@@ -283,11 +332,31 @@ impl AgentGateway for Gateway {
         let tx = tx.downgrade();
         tokio::spawn(async move {
             while let Some(Ok(message)) = inbound.next().await {
+                if let Some(agent_message::Body::Hello(_)) = &message.body
+                    && state.reject_sessions.lock().unwrap().contains(&session)
+                {
+                    state.received.lock().unwrap().push(Received {
+                        session,
+                        message,
+                        at: tokio::time::Instant::now(),
+                    });
+                    state.current.lock().unwrap().take();
+                    return;
+                }
                 let reply = match &message.body {
                     Some(agent_message::Body::Hello(hello)) => {
                         let abandon = state.abandon.lock().unwrap().clone();
                         let (sdk_wheel_url, sdk_wheel_sha256) =
                             state.sdk_wheel.lock().unwrap().clone();
+                        let (pypi_mirror, github_release_mirror) =
+                            state.mirrors.lock().unwrap().clone();
+                        let target_agent_version =
+                            match state.target_version.lock().unwrap().clone() {
+                                target if target.is_empty() => hello.agent_version.clone(),
+                                target => target,
+                            };
+                        let (agent_binary_url, agent_binary_sha256) =
+                            state.agent_binary.lock().unwrap().clone();
                         Some(server_message::Body::Welcome(Welcome {
                             dispositions: hello
                                 .running_tasks
@@ -308,6 +377,11 @@ impl AgentGateway for Gateway {
                                 .load(Ordering::SeqCst),
                             sdk_wheel_url,
                             sdk_wheel_sha256,
+                            pypi_mirror,
+                            github_release_mirror,
+                            target_agent_version,
+                            agent_binary_url,
+                            agent_binary_sha256,
                         }))
                     }
                     Some(agent_message::Body::Result(r))
@@ -401,9 +475,43 @@ impl<'a> AgentOptions<'a> {
     }
 }
 
+/// 真实 Agent 二进制的命令：`SFLY_HOME` 指向 `home`（不读开发者自己的 `~/.sfly/agent.env`），
+/// 标准输出丢弃，测试结束时被杀掉。其余参数由调用方添加。
+///
+/// 默认 `SFLY_UV=uv`（用测试机 PATH 上的 uv，不让 Agent 去安装自己管理的 uv）；
+/// 测 Agent 管理 uv 的测试用 `env_remove("SFLY_UV")` 去掉它。
+pub fn agent_command(home: &Path) -> tokio::process::Command {
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_sfly-agent"));
+    command
+        .env("SFLY_HOME", home)
+        .env("SFLY_UV", "uv")
+        .stdout(Stdio::null())
+        .kill_on_drop(true);
+    command
+}
+
+/// 仓库约定的 Python 版本（`.python-version`）。
+pub fn python_version() -> String {
+    std::fs::read_to_string(repo_root().join(".python-version"))
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
+/// 仓库约定版本的 Python 解释器的绝对路径（`uv python find`）：改了 HOME 的测试里 uv 找不到自己管理的 Python。
+pub fn python_interpreter() -> String {
+    let output = std::process::Command::new("uv")
+        .args(["python", "find", "--no-project"])
+        .arg(python_version())
+        .output()
+        .expect("run uv python find");
+    assert!(output.status.success(), "uv python find failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_string()
+}
+
 pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
     let work_dir = tempfile::tempdir().unwrap();
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_sfly-agent"));
+    let mut command = agent_command(&work_dir.path().join("sfly-home"));
     command
         .arg("--server")
         .arg(&options.server)
@@ -414,9 +522,7 @@ pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
         .arg("--work-dir")
         .arg(work_dir.path())
         .args(&options.args)
-        .envs(options.env.iter().copied())
-        .stdout(Stdio::null())
-        .kill_on_drop(true);
+        .envs(options.env.iter().copied());
     AgentProcess {
         child: command.spawn().expect("spawn sfly-agent"),
         work_dir,

@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "undici";
+import packageJson from "../../package.json" with { type: "json" };
 import type { Clock } from "../../src/clock.js";
 import {
 	type ControlPlane,
@@ -17,6 +18,8 @@ export interface TestControlPlane {
 	readonly httpUrl: string;
 	readonly grpcUrl: string;
 	readonly clock: Clock;
+	/** 控制面版本（Agent 的目标版本）：`version` 选项，默认 package.json 的版本。 */
+	readonly version: string;
 	readonly database: TestDatabase;
 	/** 临时数据目录；restart() 后保留，close() 时删除。 */
 	readonly dataDir: string;
@@ -50,6 +53,13 @@ export async function startTestControlPlane(
 		| "leaseMs"
 		| "sdkWheelDir"
 		| "webDir"
+		| "docsDir"
+		| "version"
+		| "publicHttpUrl"
+		| "publicGrpcUrl"
+		| "agentBinaries"
+		| "pypiMirror"
+		| "githubReleaseMirror"
 	> = {},
 ): Promise<TestControlPlane> {
 	const clock = options.clock ?? new ManualClock();
@@ -71,6 +81,13 @@ export async function startTestControlPlane(
 			leaseMs: options.leaseMs,
 			sdkWheelDir: options.sdkWheelDir,
 			webDir: options.webDir,
+			docsDir: options.docsDir,
+			version: options.version,
+			publicHttpUrl: options.publicHttpUrl,
+			publicGrpcUrl: options.publicGrpcUrl,
+			agentBinaries: options.agentBinaries,
+			pypiMirror: options.pypiMirror,
+			githubReleaseMirror: options.githubReleaseMirror,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 定时 / Sleep 节点的定时器扫描（#14）同样调快。
@@ -105,6 +122,7 @@ export async function startTestControlPlane(
 			return current.grpcUrl;
 		},
 		clock,
+		version: options.version ?? packageJson.version,
 		database,
 		dataDir,
 		fetch: (path, init) =>

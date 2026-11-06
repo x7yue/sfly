@@ -1,9 +1,18 @@
 import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
+import { fileURLToPath } from "node:url";
+import packageJson from "../package.json" with { type: "json" };
+import {
+	AgentBinaries,
+	type AgentBinaryFiles,
+	agentBinaryUrl,
+} from "./agent-binaries/agent-binaries.js";
+import { loadInstallScript } from "./agent-binaries/install-script.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
+import { loadUserDocs } from "./docs/user-docs.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
@@ -16,6 +25,7 @@ import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
+import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createPreflight } from "./runs/preflight.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
@@ -44,6 +54,11 @@ export interface ControlPlaneOptions {
 	 */
 	publicHttpUrl?: string;
 	/**
+	 * Agent 网关对 Agent 可见的地址（install.sh 写进 agent.env），例如 `http://sfly.internal:50051`。
+	 * 默认取 HTTP 对外地址的主机名加 Agent 网关的端口。
+	 */
+	publicGrpcUrl?: string;
+	/**
 	 * 周期扫描（在线编辑者超时、任务租约过期、排队超时）的间隔，默认 250 毫秒；
 	 * 测试里调小，配合手动时钟推进。
 	 */
@@ -68,6 +83,24 @@ export interface ControlPlaneOptions {
 	leaseMs?: number;
 	/** SDK 运行时 wheel 所在目录（src/sdk/sdk-wheels.ts）；不设置时不提供 SDK 下载。 */
 	sdkWheelDir?: string;
+	/**
+	 * PyPI 镜像（简单索引地址，例如 `https://mirrors.ustc.edu.cn/pypi/simple`），在 Welcome 里下发给 Agent 安装节点包依赖（ADR 0012）。
+	 * 没有默认值：不设置时 Agent 用 uv 自己的配置。
+	 */
+	pypiMirror?: string;
+	/**
+	 * GitHub Release 镜像（例如 `https://mirrors.ustc.edu.cn/github-release`），在 Welcome 里下发给 Agent 安装 uv、下载 Python（ADR 0012）。
+	 * 没有默认值：不设置时 Agent 用 uv 的官方来源。
+	 */
+	githubReleaseMirror?: string;
+	/** 提供下载的 Agent 二进制（架构 → 文件，src/agent-binaries/agent-binaries.ts）；不设置时没有 Agent 下载。 */
+	agentBinaries?: AgentBinaryFiles;
+	/** install.sh 模板；默认取源码中的 src/agent-binaries/install.sh，打包后的控制面需要指定。 */
+	installScriptFile?: string;
+	/** 用户文档目录（仓库的 docs/guide，src/docs/user-docs.ts）；不设置时没有文档。 */
+	docsDir?: string;
+	/** 控制面版本号，默认取 package.json；测试里固定，让文档等输出与发版无关。 */
+	version?: string;
 	/** 前端构建产物目录（apps/web 的 vite build 输出）；不设置时只提供 API，不提供页面。 */
 	webDir?: string;
 	/** 数据库迁移目录；默认取源码中的 apps/server/drizzle，打包后的控制面需要指定。 */
@@ -107,11 +140,32 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 	const sdkWheels = await loadSdkWheels(options.sdkWheelDir);
+	let docs: Awaited<ReturnType<typeof loadUserDocs>>;
+	try {
+		docs = await loadUserDocs(options.docsDir);
+	} catch (error) {
+		await database.close();
+		throw error;
+	}
+	const version = options.version ?? packageJson.version;
+	let installScript: string;
+	try {
+		installScript = await loadInstallScript(
+			options.installScriptFile ??
+				fileURLToPath(new URL("./agent-binaries/install.sh", import.meta.url)),
+		);
+	} catch (error) {
+		await database.close();
+		throw error;
+	}
+	const agentBinaries = new AgentBinaries(options.agentBinaries ?? {}, version);
 	const mutex = new Mutex();
-	const hub = new AgentHub({ db: database.db, clock, mutex });
+	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
 	const orchestrations = new OrchestrationStore({ db: database.db, clock });
 	let publicHttpUrl = "";
+	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
+	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const preflight = createPreflight({ db: database.db, packages });
 	const engine = new Engine({
@@ -127,6 +181,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		sdkWheel: (agentVersion) => {
 			const wheel = sdkWheels.find((w) => w.version === agentVersion);
 			return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
+		},
+		mirrors,
+		agentBinary: async (arch) => {
+			const binary = await agentBinaries.find(version, arch);
+			return binary && { url: agentBinaryUrl(publicHttpUrl, binary), sha256: binary.sha256 };
 		},
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
@@ -177,8 +236,16 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		retention,
 		artifacts,
 		agentToken: options.agentToken,
-		publicHttpUrl: () => publicHttpUrl,
+		publicConfig: {
+			httpUrl: () => publicHttpUrl,
+			grpcUrl: () => publicGrpcUrl,
+			version,
+			mirrors,
+		},
 		sdkWheels,
+		agentBinaries,
+		installScript,
+		docs,
 		webApp,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
@@ -217,6 +284,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		await database.close();
 		throw error;
 	}
+	publicGrpcUrl = (
+		options.publicGrpcUrl ?? withPort(publicHttpUrl, new URL(gateway.url).port)
+	).replace(/\/+$/, "");
 
 	// 周期扫描（src/util/periodic.ts：上一次没结束时跳过本次）；是否到期都只按注入的时钟判断。
 	const fail = (what: string) => (error: unknown) => {
@@ -264,6 +334,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			await database.close();
 		},
 	};
+}
+
+/** 同一主机、另一个端口的 http 地址。 */
+function withPort(url: string, port: string): string {
+	const parsed = new URL(url);
+	return `http://${parsed.hostname}:${port}`;
 }
 
 function formatHost(host: string): string {

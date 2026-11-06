@@ -30,8 +30,13 @@ known-first-party = ["sfly"]
 [tool.mypy]
 strict = true
 files = ["sdk/python/src", "sdk/python/tests"]
+# sdk/python/tests 里 sfly.testing 的测试直接导入桩节点包的节点函数。
+# sdk/python/tests 里的测试从 indexes.py 导入共用的桩。
+mypy_path = "testdata/stub-package/src:sdk/python/tests"
 python_version = "3.10"
 
 [tool.pytest.ini_options]
 testpaths = ["sdk/python/tests"]
 addopts = "--import-mode=importlib"
+# 测试共用的桩（sdk/python/tests/indexes.py）。
+pythonpath = ["sdk/python/tests"]

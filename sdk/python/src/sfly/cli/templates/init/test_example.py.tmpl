@@ -1,0 +1,40 @@
+from pathlib import Path
+
+from sfly.testing import run_node
+
+from {{module}}.example import countdown
+
+
+def test_countdown_greets_and_reports_progress(tmp_path: Path) -> None:
+    result = run_node(
+        countdown, {"name": "世界", "steps": 2, "interval": 0}, work_dir=tmp_path
+    )
+
+    assert result.status == "success", result.error
+    assert result.outputs == {"greeting": "你好，世界", "ticks": 2}
+    assert [p.current for p in result.progress] == [1, 2]
+    assert [(m.name, m.value) for m in result.metrics] == [
+        ("remaining", 1),
+        ("remaining", 0),
+    ]
+    assert [line.message for line in result.logs] == ["开始倒计时：2 步", "倒计时结束"]
+
+
+def test_countdown_rejects_non_positive_steps(tmp_path: Path) -> None:
+    result = run_node(countdown, {"name": "世界", "steps": 0}, work_dir=tmp_path)
+
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.message == "ValueError: steps 必须大于 0，收到 0"
+
+
+def test_countdown_cleans_up_when_cancelled(tmp_path: Path) -> None:
+    result = run_node(
+        countdown,
+        {"name": "世界", "steps": 1000, "interval": 0.05},
+        cancel_when=lambda partial: bool(partial.progress),  # 第一次上报进度后取消
+        work_dir=tmp_path,
+    )
+
+    assert result.status == "cancelled"
+    assert "倒计时结束" in [line.message for line in result.logs]

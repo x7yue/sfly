@@ -42,7 +42,7 @@ describe("控制面托管前端（SPA）", () => {
 
 		const agents = await cp.fetch("/api/agents");
 		expect(agents.status).toBe(200);
-		expect(await agents.json()).toEqual({ agents: [] });
+		expect(await agents.json()).toEqual({ agents: [], control_plane_version: cp.version });
 	});
 
 	it("浏览器导航到前端路由时回退到入口页，包括与 API 同名的路径", async () => {
@@ -76,10 +76,57 @@ describe("控制面托管前端（SPA）", () => {
 	it("Agent、CLI 等非浏览器客户端访问根路径上的 API 不受影响", async () => {
 		cp = await startTestControlPlane({ webDir });
 		const agents = await cp.fetch("/agents");
-		expect(await agents.json()).toEqual({ agents: [] });
+		expect(await agents.json()).toEqual({ agents: [], control_plane_version: cp.version });
 		const missing = await cp.fetch("/no/such/route");
 		expect(missing.status).toBe(404);
 		expect(await missing.json()).toMatchObject({ error: { code: "not_found" } });
+	});
+
+	it("浏览器打开文档原文与 llms.txt 时得到原文，不回退到入口页", async () => {
+		const docsDir = await mkdtemp(join(tmpdir(), "sfly-web-docs-"));
+		try {
+			await writeFile(
+				join(docsDir, "pages.json"),
+				JSON.stringify({
+					pages: [
+						{ slug: "quickstart", title: "快速开始", description: "d" },
+						{ slug: "sdk-reference", title: "SDK 参考", description: "d" },
+					],
+				}),
+			);
+			await writeFile(join(docsDir, "quickstart.md"), "# 快速开始\n");
+			await writeFile(join(docsDir, "sdk-reference.md"), "# SDK 参考\n");
+			await mkdir(join(docsDir, "skills", "sfly-node-dev"), { recursive: true });
+			await writeFile(join(docsDir, "skills", "sfly-node-dev", "SKILL.md"), "# skill\n");
+			cp = await startTestControlPlane({ webDir, docsDir });
+			const page = await cp.fetch("/docs/quickstart.md", { headers: NAVIGATE });
+			expect(await page.text()).toBe("# 快速开始\n");
+			const skill = await cp.fetch("/docs/skills/sfly-node-dev/SKILL.md", { headers: NAVIGATE });
+			expect(await skill.text()).toBe("# skill\n");
+			const index = await cp.fetch("/llms.txt", { headers: NAVIGATE });
+			expect(await index.text()).toMatch(/^# sfly 开发文档/);
+			// 前端的文档页仍然回退到入口页。
+			expect(await (await cp.fetch("/docs/quickstart", { headers: NAVIGATE })).text()).toBe(
+				INDEX_HTML,
+			);
+		} finally {
+			await rm(docsDir, { recursive: true, force: true });
+		}
+	});
+
+	it("浏览器打开 install.sh、Agent 下载与 sfly 简单索引时不回退到入口页", async () => {
+		cp = await startTestControlPlane({ webDir });
+		for (const path of [
+			"/install.sh",
+			"/agent/binaries",
+			"/agent/binaries/0.0.0/x86_64",
+			"/simple",
+			"/simple/",
+			"/simple/sfly/",
+		]) {
+			const res = await cp.fetch(path, { headers: NAVIGATE });
+			expect(await res.text(), path).not.toBe(INDEX_HTML);
+		}
 	});
 
 	it("没有配置前端目录时不提供页面", async () => {

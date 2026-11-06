@@ -36,7 +36,8 @@ pub struct Installer {
     pub venv: SharedVenv,
     /// 下载、解包用的临时目录的父目录。
     pub scratch: PathBuf,
-    pub index_url: Option<String>,
+    /// 生效的 PyPI 镜像：本地 `--index-url`，否则控制面在 Welcome 里下发的镜像（每次连上控制面时更新）。
+    pub index_url: std::sync::Mutex<Option<String>>,
     pub uv: PathBuf,
     pub http: reqwest::Client,
 }
@@ -170,8 +171,8 @@ impl Installer {
             .args(["pip", "install", "--no-progress", "--color", "never"])
             .arg("--python")
             .arg(self.venv.python());
-        if let Some(index) = &self.index_url {
-            command.args(["--index-url", index]);
+        if let Some(index) = self.index_url.lock().unwrap().clone() {
+            command.args(["--index-url", &index]);
         }
         if reinstall {
             command

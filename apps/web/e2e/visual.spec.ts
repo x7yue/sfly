@@ -1,5 +1,10 @@
+import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
-import { type AssignedTask, LogLevel } from "../../server/test/support/fake-agent.js";
+import {
+	AgentUpdateState,
+	type AssignedTask,
+	LogLevel,
+} from "../../server/test/support/fake-agent.js";
 import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
@@ -24,7 +29,9 @@ import {
 import { saveSecondVersion, twoVersions } from "./versions-support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
-// 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）。
+// 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）、
+// 固定的控制面对外地址（页面上的 install.sh 命令不随端口变化）与版本号（Agent 列表里的版本不随发版变化）。
+test.use({ controlPlaneOptions: { publicHttpUrl: "http://sfly.example:8080", version: "0.1.0" } });
 
 async function twoAgents(connectAgent: E2eFixtures["connectAgent"]) {
 	await connectAgent({
@@ -57,9 +64,71 @@ test("Agent 列表", async ({ page, connectAgent, controlPlane }) => {
 	await expect(page).toHaveScreenshot("agents.png");
 });
 
+test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgent }) => {
+	await connectAgent({ name: "agent-current", os: "linux", arch: "x86_64" });
+	const states = [
+		["agent-old", { state: AgentUpdateState.NONE }],
+		["agent-waiting", { state: AgentUpdateState.WAITING_FOR_TASKS, remainingTasks: 2 }],
+		[
+			"agent-manual",
+			{
+				state: AgentUpdateState.MANUAL_UPGRADE_REQUIRED,
+				reason:
+					"Agent 二进制 /usr/local/bin/sfly-agent 不在 /home/qa/.sfly/bin 下（只更新安装脚本安装的 Agent）",
+			},
+		],
+		["agent-failed", { state: AgentUpdateState.FAILED, reason: "sha256 不匹配" }],
+	] as const;
+	for (const [name, update] of states) {
+		const agent = await connectAgent({ name, agentVersion: "0.0.9", os: "linux", arch: "x86_64" });
+		agent.send({ case: "heartbeat", value: { runningTasks: [], update } });
+		await agent.sync();
+	}
+
+	await page.goto("/agents");
+	await expect(page.getByRole("row", { name: /agent-failed/ })).toContainText("更新失败");
+	await expect(page).toHaveScreenshot("agents-update.png");
+});
+
+test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connectAgent }) => {
+	await publishPackage(controlPlane);
+	const current = await connectAgent({ name: "agent-linux", os: "linux", arch: "x86_64" });
+	await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "巡检", scenarioUsing("agent-linux")),
+	);
+	const held = await current.nextAssign();
+	await current.disconnect();
+	const old = await connectAgent({
+		name: "agent-linux",
+		agentVersion: "0.0.9",
+		os: "linux",
+		arch: "x86_64",
+		runningTasks: [{ taskId: held.taskId, attempt: held.attempt, started: true }],
+	});
+	old.send({
+		case: "heartbeat",
+		value: {
+			runningTasks: [],
+			update: { state: AgentUpdateState.WAITING_FOR_TASKS, remainingTasks: 1 },
+		},
+	});
+	await old.sync();
+
+	await page.goto("/agents");
+	await page.getByRole("button", { name: "立即更新" }).click();
+	const dialog = page.getByRole("dialog", { name: "立即更新 agent-linux？" });
+	await expect(dialog.getByRole("listitem")).toHaveCount(1);
+	// 运行 ID 是随机的。
+	await expect(page).toHaveScreenshot("agents-update-now.png", {
+		mask: [page.locator('ul[aria-label="会被终止的任务"] li > span.text-xs')],
+	});
+});
+
 test("Agent 列表为空", async ({ page }) => {
 	await page.goto("/agents");
-	await expect(page.getByRole("region", { name: "还没有 Agent 连接" })).toBeVisible();
+	const empty = page.getByRole("region", { name: "还没有 Agent 连接" });
+	await expect(empty).toContainText("http://sfly.example:8080/install.sh");
 	await expect(page).toHaveScreenshot("agents-empty.png");
 });
 
@@ -511,4 +580,39 @@ test("保存冲突弹窗", async ({ page, controlPlane, connectAgent, clock }) =
 	await expect(dialog).toContainText("− report");
 	await page.mouse.move(700, 880);
 	await expect(page).toHaveScreenshot("editor-conflict.png");
+});
+
+test.describe("开发文档", () => {
+	// 固定的文档、地址和版本号：替换出来的内容不随端口和发版变化。
+	test.use({
+		controlPlaneOptions: {
+			docsDir: fileURLToPath(new URL("./docs-fixture", import.meta.url)),
+			publicHttpUrl: "http://sfly.example:8080",
+			version: "1.2.3",
+		},
+	});
+
+	const openDocs = async (page: Page) => {
+		await page.goto("/docs/quickstart");
+		await expect(page.getByRole("article", { name: "快速开始" }).getByRole("table")).toBeVisible();
+	};
+
+	test("文档页", async ({ page }) => {
+		await openDocs(page);
+		await expect(page).toHaveScreenshot("docs.png");
+	});
+
+	// 应用只有深色主题（tokens.css 的 color-scheme: dark），系统偏好浅色时也要可读。
+	test("系统偏好浅色时的文档页", async ({ page }) => {
+		await page.emulateMedia({ colorScheme: "light" });
+		await openDocs(page);
+		await expect(page).toHaveScreenshot("docs-light-scheme.png");
+	});
+
+	// 最小支持宽度（docs/DESIGN-SYSTEM.md：1280）：长命令在代码块里横向滚动，不撑宽页面。
+	test("窄屏下的文档页", async ({ page }) => {
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await openDocs(page);
+		await expect(page).toHaveScreenshot("docs-narrow.png");
+	});
 });

@@ -1,10 +1,12 @@
-import { type AgentView, agentsApi } from "@sfly/schema";
+import { type AgentView, agentBinariesApi, agentsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { cn } from "cn";
 import { ServerIcon, TerminalIcon } from "lucide-react";
+import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
-import { SlotBar, StatusPill } from "#/components/status";
+import { SlotBar, type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
@@ -32,50 +34,52 @@ export const Route = createFileRoute("/_shell/agents")({
 	component: AgentsPage,
 });
 
-/** Agent 默认连接的 gRPC 端口（控制面 SFLY_GRPC_PORT 的默认值）。 */
-const DEFAULT_GRPC_PORT = 50051;
-
-/** 接入命令：控制面地址取浏览器当前访问的主机名 + 默认 gRPC 端口。 */
-const connectCommand = () =>
-	[
-		"sfly-agent --name <名称> \\",
-		`  --server http://${window.location.hostname}:${DEFAULT_GRPC_PORT} \\`,
-		"  --slots 4",
-	].join("\n");
+/**
+ * 接入命令：在测试机上运行控制面的 install.sh（ADR 0011）。地址用控制面给出的对外地址（SFLY_PUBLIC_URL），
+ * 还没取到时用浏览器当前访问的地址。
+ */
+function useConnectCommand() {
+	const binaries = useQuery(apiQuery(agentBinariesApi.list));
+	const url = binaries.data?.install_script_url ?? `${window.location.origin}/install.sh`;
+	return `curl -fsSL ${url} | sh -s -- --name <名称>`;
+}
 
 function AgentsPage() {
+	const command = useConnectCommand();
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
 	return (
 		<Page>
 			<PageHeader
 				title={PAGE.agents}
 				count={agents.data?.agents.length}
-				actions={agents.data && agents.data.agents.length > 0 && <ConnectHelp />}
+				actions={agents.data && agents.data.agents.length > 0 && <ConnectHelp command={command} />}
 			/>
 			<Panel>
 				<QueryView
 					query={agents}
-					loading={<TableSkeleton columns={8} />}
+					loading={<TableSkeleton columns={9} />}
 					errorTitle="无法加载 Agent"
 					isEmpty={(d) => d.agents.length === 0}
 					empty={
 						<EmptyState
 							icon={<ServerIcon />}
 							title="还没有 Agent 连接"
-							description="在测试机上启动 Agent，它会主动连接控制面并出现在这里。首次启动会自动创建共享 venv 并安装 SDK 运行时。"
+							description="在测试机上运行下面的命令安装 Agent，它会主动连接控制面并出现在这里。首次启动会自动准备 uv、共享 venv 和 SDK 运行时。"
 						>
-							<CodeBlock code={connectCommand()} className="mx-auto w-fit" />
+							<CodeBlock code={command} className="mx-auto w-fit" />
 						</EmptyState>
 					}
 				>
-					{(data) => <AgentTable agents={data.agents} />}
+					{(data) => (
+						<AgentTable agents={data.agents} controlPlaneVersion={data.control_plane_version} />
+					)}
 				</QueryView>
 			</Panel>
 		</Page>
 	);
 }
 
-function ConnectHelp() {
+function ConnectHelp({ command }: { command: string }) {
 	return (
 		<Dialog>
 			<DialogTrigger render={<Button variant="ghost" />}>
@@ -86,17 +90,33 @@ function ConnectHelp() {
 				<DialogHeader>
 					<DialogTitle>接入 Agent</DialogTitle>
 					<DialogDescription>
-						在测试机上安装 uv 后运行下面的命令；Agent 按名称注册，同名重新连接会替换旧连接。
-						配置了注册令牌时加上 <code className="font-mono">--token</code>。
+						在测试机上运行下面的命令：识别架构、下载并校验 Agent，写入配置并注册 systemd 服务。
+						Agent 按名称注册，同名重新连接会替换旧连接。配置了注册令牌时加上{" "}
+						<code className="font-mono">--token &lt;令牌&gt;</code>
+						。开发机、配置和自动更新见开发文档的「
+						<Link
+							to="/docs/$page"
+							params={{ page: "install-agent" }}
+							className="text-fg-1 underline decoration-fg-3 underline-offset-2 hover:decoration-fg-1"
+						>
+							安装 Agent
+						</Link>
+						」。
 					</DialogDescription>
 				</DialogHeader>
-				<CodeBlock code={connectCommand()} />
+				<CodeBlock code={command} />
 			</DialogContent>
 		</Dialog>
 	);
 }
 
-function AgentTable({ agents }: { agents: AgentView[] }) {
+function AgentTable({
+	agents,
+	controlPlaneVersion,
+}: {
+	agents: AgentView[];
+	controlPlaneVersion: string;
+}) {
 	return (
 		<Table aria-label="Agent 列表">
 			<TableHeader>
@@ -109,19 +129,58 @@ function AgentTable({ agents }: { agents: AgentView[] }) {
 					<TableHead>已安装的节点包</TableHead>
 					<TableHead>被场景引用</TableHead>
 					<TableHead>最后在线</TableHead>
+					<TableHead>
+						<span className="sr-only">操作</span>
+					</TableHead>
 				</TableRow>
 			</TableHeader>
 			<TableBody>
 				{agents.map((agent) => (
-					<AgentRow key={agent.name} agent={agent} />
+					<AgentRow key={agent.name} agent={agent} controlPlaneVersion={controlPlaneVersion} />
 				))}
 			</TableBody>
 		</Table>
 	);
 }
 
-function AgentRow({ agent }: { agent: AgentView }) {
+/**
+ * 在线 Agent 的更新状态（ADR 0014）：版本与控制面不一致时不接新任务，状态列说明它在做什么；
+ * 不需要更新时为 undefined。
+ */
+function updateStatus(
+	agent: AgentView,
+): { kind: StatusKind; label: string; detail?: string } | undefined {
+	const { update } = agent;
+	switch (update.state) {
+		case "downloading":
+			return { kind: "running", label: "更新中", detail: "下载新版本" };
+		case "waiting_for_tasks":
+			return {
+				kind: "running",
+				label: "更新中",
+				detail: `等待 ${update.remaining_tasks} 个任务结束`,
+			};
+		case "replacing":
+			return { kind: "running", label: "更新中", detail: "替换并重新启动" };
+		case "failed":
+			return { kind: "failed", label: "更新失败", detail: update.reason };
+		case "manual_upgrade_required":
+			return { kind: "warn", label: "需要手动升级", detail: update.reason };
+		case "none":
+			return agent.version_mismatch ? { kind: "warn", label: "版本不一致" } : undefined;
+	}
+}
+
+function AgentRow({
+	agent,
+	controlPlaneVersion,
+}: {
+	agent: AgentView;
+	controlPlaneVersion: string;
+}) {
 	const online = agent.status === "online";
+	const update = online ? updateStatus(agent) : undefined;
+	const mismatch = online && agent.version_mismatch;
 	const installing = online && agent.install?.state === "installing";
 	const failed = agent.install?.state === "failed";
 	const packages = [
@@ -132,14 +191,26 @@ function AgentRow({ agent }: { agent: AgentView }) {
 		<TableRow>
 			<TableCell className="font-mono font-medium">{agent.name}</TableCell>
 			<TableCell>
-				{installing ? (
+				{update ? (
+					<StatusPill kind={update.kind}>{update.label}</StatusPill>
+				) : installing ? (
 					<StatusPill kind="warn">安装中</StatusPill>
 				) : online ? (
 					<StatusPill kind="ok">在线</StatusPill>
 				) : (
 					<StatusPill kind="pending">离线</StatusPill>
 				)}
-				{installing && agent.install && (
+				{update?.detail && (
+					<div
+						className={cn(
+							"max-w-60 text-2xs",
+							update.kind === "failed" ? "text-danger-fg" : "text-fg-3",
+						)}
+					>
+						{update.detail}
+					</div>
+				)}
+				{!update && installing && agent.install && (
 					<div className="font-mono text-2xs text-fg-3">
 						{agent.install.package}@{agent.install.version}
 					</div>
@@ -153,7 +224,10 @@ function AgentRow({ agent }: { agent: AgentView }) {
 			<TableCell>
 				<SlotBar used={agent.running_tasks.length} total={agent.info.slots} />
 			</TableCell>
-			<TableCell className="font-mono">{agent.info.agent_version || "—"}</TableCell>
+			<TableCell className="font-mono">
+				{agent.info.agent_version || "—"}
+				{mismatch && <div className="text-2xs text-fg-3">控制面 {controlPlaneVersion}</div>}
+			</TableCell>
 			<TableCell className="font-mono text-xs text-fg-2">
 				{agent.info.os || "?"}/{agent.info.arch || "?"}
 			</TableCell>
@@ -169,6 +243,11 @@ function AgentRow({ agent }: { agent: AgentView }) {
 			</TableCell>
 			<TableCell className="font-mono text-xs text-fg-3">
 				{online ? "—" : formatDateTime(agent.last_seen_at)}
+			</TableCell>
+			<TableCell className="text-right">
+				{canUpdateNow(agent) && (
+					<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
+				)}
 			</TableCell>
 		</TableRow>
 	);

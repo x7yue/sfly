@@ -34,6 +34,7 @@ message ServerMessage {
     AssignTask assign = 2;
     CancelTask cancel = 3;
     Ack ack = 4;
+    UpdateNow update_now = 5;
   }
 }
 
@@ -75,6 +76,33 @@ message Heartbeat {
   // Agent 手上的任务（含义同 Hello.running_tasks）：只为这些任务续约。控制面认为派发给这个 Agent、
   // 但连续两次心跳都不在列表里的任务以 agent_lost 失败（第一次可能是心跳与派发消息在路上交错）。
   repeated RunningTask running_tasks = 1;
+  // Agent 的更新状态（ADR 0014）；不带这个字段的心跳（旧版本 Agent）不改变控制面保存的状态。
+  AgentUpdate update = 2;
+}
+
+// Agent 的更新状态：版本与控制面不一致时 Agent 在做什么（ADR 0014），控制面保存最新一次上报的，在 Agents 页显示。
+message AgentUpdate {
+  AgentUpdateState state = 1;
+  // WAITING_FOR_TASKS：还要等多少个任务结束（含结果还没收到 Ack 的）。
+  uint32 remaining_tasks = 2;
+  // FAILED / MANUAL_UPGRADE_REQUIRED：原因（给人看的一句话）。
+  string reason = 3;
+}
+
+enum AgentUpdateState {
+  AGENT_UPDATE_STATE_UNSPECIFIED = 0;
+  // 不需要更新（版本与控制面一致）。
+  AGENT_UPDATE_STATE_NONE = 1;
+  // 正在下载、校验并试运行目标版本的二进制。
+  AGENT_UPDATE_STATE_DOWNLOADING = 2;
+  // 新版本已就绪，等手上的任务结束、结果都被 Ack（remaining_tasks）。
+  AGENT_UPDATE_STATE_WAITING_FOR_TASKS = 3;
+  // 正在替换二进制并重新执行自己。
+  AGENT_UPDATE_STATE_REPLACING = 4;
+  // 更新失败（reason）：例如下载或校验失败、新版本连续启动失败后已回滚。
+  AGENT_UPDATE_STATE_FAILED = 5;
+  // 不能自更新，需要手动升级（reason）：例如指定了 --no-auto-update、二进制不在 SFLY_HOME/bin、目录不可写。
+  AGENT_UPDATE_STATE_MANUAL_UPGRADE_REQUIRED = 6;
 }
 
 // 任务的执行器子进程已经启动（节点包下载、安装完成之后）。控制面收到后才把任务记为 running，
@@ -113,6 +141,20 @@ message Welcome {
   string sdk_wheel_url = 3;
   // SDK 运行时 wheel 的 sha256（hex）。
   string sdk_wheel_sha256 = 4;
+  // 控制面配置的 PyPI 镜像（简单索引地址，例如 https://mirrors.ustc.edu.cn/pypi/simple）；未配置时为空。
+  // Agent 安装节点包依赖时用它作为索引（Agent 本地的 --index-url 优先）；为空时用 uv 自己的配置（ADR 0012）。
+  string pypi_mirror = 5;
+  // 控制面配置的 GitHub Release 镜像（例如 https://mirrors.ustc.edu.cn/github-release）；未配置时为空。
+  // Agent 从 `<镜像>/astral-sh/uv/LatestRelease/` 安装 uv，从 `<镜像>/astral-sh/python-build-standalone/`
+  // 下载 Python；为空时用 uv 的官方来源（ADR 0012）。
+  string github_release_mirror = 6;
+  // 目标 Agent 版本，即控制面的版本（ADR 0010、0014）。与 Hello.agent_version 不同（高或低）时控制面不给它派新任务，
+  // Agent 应当更新到这个版本。
+  string target_agent_version = 7;
+  // 目标版本、Hello.arch 对应架构的 Agent 二进制下载地址（HTTP，原始二进制）；控制面没有这个架构的二进制时为空。
+  string agent_binary_url = 8;
+  // 该二进制的 sha256（hex）。
+  string agent_binary_sha256 = 9;
 }
 
 // 控制面对 Agent 手上一个任务的处置。
@@ -168,6 +210,11 @@ message CancelTask {
   // true：强制取消，立即杀掉进程树（也用于加速一次正在进行的优雅终止）。
   bool force = 3;
 }
+
+// 立即更新（ADR 0014）：只发给版本与控制面不一致的 Agent。控制面发出前已经让它手上的任务以 agent_lost 失败
+// （按重试配置重新派发）；Agent 不再接新任务，按取消流程（与优雅的 CancelTask 相同）终止手上的全部任务，
+// 结果照常上报（控制面忽略但仍回 Ack），然后立即替换并重新执行。新版本还没下载好时下载好后替换。
+message UpdateNow {}
 
 // Agent 安装或切换节点包的状态（安装期间 Agent 不启动新任务）。
 message InstallStatus {

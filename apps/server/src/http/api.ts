@@ -1,9 +1,11 @@
 import { httpContract, systemApi } from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
+import type { UserDocs } from "../docs/user-docs.js";
 import type { Engine } from "../engine/engine.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import type { MetricQueries } from "../metrics/metric-queries.js";
@@ -11,14 +13,17 @@ import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import type { PresenceRegistry } from "../presence/presence-registry.js";
+import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
+import { registerAgentBinaryRoutes } from "./agent-binary-routes.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
 import { contractRoute, guardHttpContract } from "./contract-route.js";
 import { registerDashboardRoutes } from "./dashboard-routes.js";
+import { registerDocsRoutes } from "./docs-routes.js";
 import { sendError } from "./errors.js";
 import { registerLogRoutes } from "./log-routes.js";
 import { registerMetricRoutes } from "./metric-routes.js";
@@ -47,10 +52,15 @@ export interface HttpApiDeps {
 	artifacts: ArtifactStore;
 	/** Agent 共享注册令牌：设置后上传产物要带上它。 */
 	agentToken?: string;
-	/** HTTP API 对 Agent 可见的地址（产物引用用它拼下载地址）；监听之后才确定。 */
-	publicHttpUrl: () => string;
+	/** 对外公开的地址、版本号和镜像（产物引用、Agent 下载与 install.sh、sfly 索引、文档占位符用）。 */
+	publicConfig: PublicConfig;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
+	agentBinaries: AgentBinaries;
+	installScript: string;
+	/** 用户文档（src/docs/user-docs.ts）。 */
+	docs: UserDocs;
 	/** 前端构建产物（src/http/web-app.ts）；不设置时不提供页面。 */
 	webApp?: WebApp;
 }
@@ -80,8 +90,11 @@ export function buildHttpApi({
 	retention,
 	artifacts,
 	agentToken,
-	publicHttpUrl,
+	publicConfig,
 	sdkWheels,
+	agentBinaries,
+	installScript,
+	docs,
 	webApp,
 }: HttpApiDeps): FastifyInstance {
 	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
@@ -113,7 +126,7 @@ export function buildHttpApi({
 			.send({ status: health, database: health, time: clock.now().toISOString() });
 	});
 
-	registerAgentRoutes(app, { hub, orchestrations });
+	registerAgentRoutes(app, { hub, engine, orchestrations });
 	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerRunRoutes(app, {
@@ -128,10 +141,15 @@ export function buildHttpApi({
 	registerRunListRoutes(app, { db: database.db });
 	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
-	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
+	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
-	registerSdkRoutes(app, { wheels: sdkWheels, publicHttpUrl });
+	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig });
+	registerAgentBinaryRoutes(app, { binaries: agentBinaries, installScript, publicConfig });
+	registerDocsRoutes(app, {
+		docs,
+		values: () => ({ SFLY_URL: publicConfig.httpUrl(), SFLY_VERSION: publicConfig.version }),
+	});
 
 	return app;
 }
