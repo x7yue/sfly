@@ -43,6 +43,24 @@ export const sdkApi = {
 	 * （`install.sh --dev`、`sfly init` 写入的显式索引），不会从 PyPI 镜像装到同名的其他包。
 	 */
 	index: download({ path: "/simple/", contentType: "text/html; charset=utf-8" }),
+	/**
+	 * `sfly init` 写进新项目 `pyproject.toml` 的配置：`sfly[cli]` 锁定的控制面版本、sfly 简单索引，
+	 * 以及控制面统一配置的镜像（ADR 0012，未配置时为 null，项目用 uv 的默认来源）。
+	 */
+	projectSettings: endpoint({
+		method: "GET",
+		path: "/sdk/project-settings",
+		key: ["sdk", "project-settings"],
+		response: z.object({
+			version: z.string(),
+			/** sfly 简单索引的完整地址（带末尾 `/`）。 */
+			sfly_index_url: z.string(),
+			/** PyPI 镜像（简单索引地址）。 */
+			pypi_mirror: z.string().nullable(),
+			/** uv 的 Python 下载镜像：GitHub Release 镜像上的 `astral-sh/python-build-standalone/`。 */
+			python_install_mirror: z.string().nullable(),
+		}),
+	}),
 	/** 索引的项目页：与控制面同版本的 SDK wheel（链接带 `#sha256=`）；`sfly` 以外的项目 404。 */
 	indexProject: download({
 		path: "/simple/:project/",
