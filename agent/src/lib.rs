@@ -878,6 +878,19 @@ async fn serve(
                         tokio::spawn(async move { runtime.run_task(task, cancel).await });
                     }
                     Some(server_message::Body::Cancel(cancel)) => runtime.cancel_task(&cancel),
+                    // 立即更新：控制面已让这些任务以 agent_lost 失败。按取消流程终止它们（取消标记、SIGTERM、宽限期），
+                    // 结果照常上报、被 Ack 后 poll 看到 0 就替换。
+                    Some(server_message::Body::UpdateNow(_)) => {
+                        updater.update_now();
+                        let running = runtime.running();
+                        eprintln!(
+                            "control plane asked to update now: terminating {} task(s)",
+                            running.len()
+                        );
+                        for (task_id, attempt) in running {
+                            runtime.cancel_task(&CancelTask { task_id, attempt, force: false });
+                        }
+                    }
                     Some(server_message::Body::Ack(ack)) => {
                         unacked.remove(&(ack.task_id, ack.attempt));
                     }

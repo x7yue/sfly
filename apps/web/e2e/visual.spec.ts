@@ -90,6 +90,41 @@ test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgen
 	await expect(page).toHaveScreenshot("agents-update.png");
 });
 
+test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connectAgent }) => {
+	await publishPackage(controlPlane);
+	const current = await connectAgent({ name: "agent-linux", os: "linux", arch: "x86_64" });
+	await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "巡检", scenarioUsing("agent-linux")),
+	);
+	const held = await current.nextAssign();
+	await current.disconnect();
+	const old = await connectAgent({
+		name: "agent-linux",
+		agentVersion: "0.0.9",
+		os: "linux",
+		arch: "x86_64",
+		runningTasks: [{ taskId: held.taskId, attempt: held.attempt, started: true }],
+	});
+	old.send({
+		case: "heartbeat",
+		value: {
+			runningTasks: [],
+			update: { state: AgentUpdateState.WAITING_FOR_TASKS, remainingTasks: 1 },
+		},
+	});
+	await old.sync();
+
+	await page.goto("/agents");
+	await page.getByRole("button", { name: "立即更新" }).click();
+	const dialog = page.getByRole("dialog", { name: "立即更新 agent-linux？" });
+	await expect(dialog.getByRole("listitem")).toHaveCount(1);
+	// 运行 ID 是随机的。
+	await expect(page).toHaveScreenshot("agents-update-now.png", {
+		mask: [page.locator('ul[aria-label="会被终止的任务"] li > span.text-xs')],
+	});
+});
+
 test("Agent 列表为空", async ({ page }) => {
 	await page.goto("/agents");
 	const empty = page.getByRole("region", { name: "还没有 Agent 连接" });

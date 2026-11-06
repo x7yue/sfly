@@ -97,6 +97,19 @@ export const agentsApi = {
 			control_plane_version: z.string(),
 		}),
 	}),
+	/**
+	 * 立即更新（ADR 0014）：让版本不一致的在线 Agent 不再等手上的任务跑完。这些任务立即以 agent_lost 失败、按重试配置重新排队
+	 * （Agent 更新后重新连上再派发），Agent 按取消流程终止它们后立即替换自己。返回被终止的任务。
+	 * Agent 不存在 404 `not_found`；不在线 409 `agent_offline`；版本一致 409 `version_matches`；
+	 * 上报了需要手动升级 409 `manual_upgrade_required`（它不会自更新，终止任务没有意义）。
+	 */
+	updateNow: endpoint({
+		method: "POST",
+		path: "/agents/:name/update-now",
+		key: ["agents", "update-now"],
+		params: z.object({ name: z.string().min(1) }),
+		response: z.object({ terminated_tasks: z.array(RunningTaskView) }),
+	}),
 };
 
 export type AgentView = z.infer<typeof AgentView>;

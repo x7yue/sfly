@@ -9,6 +9,8 @@
 //!    失败时上报「更新失败」及原因，继续以旧版本运行；下一次 Welcome 重试。
 //! 2. 等待任务结束（[`AgentUpdateState::WaitingForTasks`]，附剩余任务数）：不再接新任务（派来的任务直接忽略，
 //!    控制面按 agent_lost 处理），等手上的任务都结束、结果都被 Ack（不设超时）。断线重连后继续排空。
+//!    控制面要求立即更新（UpdateNow，[`Updater::update_now`]）时，调用方按取消流程终止手上的任务，
+//!    从那时起（即使还在下载）不再接新任务。
 //! 3. 替换中（[`AgentUpdateState::Replacing`]）：持有 `bin/.sfly-agent.lock` 的文件锁（同一 `SFLY_HOME` 下串行），
 //!    当前文件已经是目标 sha256 时不替换；否则把当前文件保存为 `sfly-agent.prev`（硬链接），`rename` 覆盖，
 //!    fsync 目录。Agent 管理 uv 时写入「首次启动更新 uv」的标记（[`crate::environment::UV_UPDATE_MARKER`]）。
@@ -20,7 +22,7 @@
 use std::ffi::OsString;
 use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -157,6 +159,8 @@ pub struct Updater {
     job: Mutex<Option<Job>>,
     /// 最近一次 [`Updater::poll`] 看到的剩余任务数。
     held: AtomicUsize,
+    /// 控制面要求立即更新（[`Updater::update_now`]）：下载期间就不再接新任务。更新目标变化时清除。
+    now: AtomicBool,
 }
 
 fn clamp(n: usize) -> u32 {
@@ -187,6 +191,7 @@ impl Updater {
             status,
             job: Mutex::new(None),
             held: AtomicUsize::new(0),
+            now: AtomicBool::new(false),
         })
     }
 
@@ -216,12 +221,19 @@ impl Updater {
         self.set_status(update(AgentUpdateState::Failed, 0, reason));
     }
 
-    /// 排空中：不接新任务。
+    /// 排空中：不接新任务。要求了立即更新时下载期间也算。
     pub fn draining(&self) -> bool {
-        matches!(
-            self.job.lock().unwrap().as_ref().map(|j| &j.phase),
-            Some(Phase::Ready(_) | Phase::Replacing)
-        )
+        match self.job.lock().unwrap().as_ref().map(|j| &j.phase) {
+            Some(Phase::Ready(_) | Phase::Replacing) => true,
+            Some(Phase::Downloading(_)) => self.now.load(Ordering::SeqCst),
+            _ => false,
+        }
+    }
+
+    /// 控制面要求立即更新（UpdateNow）：从现在起不再接新任务。调用方按取消流程终止手上的任务，
+    /// 它们的结果被 Ack 后 [`Updater::poll`] 就会替换（还在下载时等下载、校验完成）。
+    pub fn update_now(&self) {
+        self.now.store(true, Ordering::SeqCst);
     }
 
     /// 每次收到 Welcome 后调用：按目标版本开始、继续或放弃更新。
@@ -312,6 +324,7 @@ impl Updater {
     }
 
     fn discard(&self, job: Job) {
+        self.now.store(false, Ordering::SeqCst);
         match job.phase {
             Phase::Downloading(handle) => {
                 handle.abort();
