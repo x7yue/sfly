@@ -12,17 +12,18 @@
 
 ## 开发
 
-工具链：Node 26（当前 LTS，见 `.node-version`）、pnpm 10、Rust stable、protoc、uv；测试需要 PostgreSQL（`DATABASE_URL`，默认 `postgres://sfly:sfly@127.0.0.1:5432/sfly`，需要建库权限）。
+工具链：Node（当前 LTS，主版本只写在 `.node-version`，镜像和打包都读取它）、pnpm 10、Rust stable、protoc、uv；测试需要 PostgreSQL（`DATABASE_URL`，默认 `postgres://sfly:sfly@127.0.0.1:5432/sfly`，需要建库权限）。
 
 | 命令 | 作用 |
 |---|---|
-| `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖 |
+| `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖，并启用 `.githooks/`：推送分支前运行 gen:check、lint、typecheck、test（跳过用 `git push --no-verify`） |
 | `pnpm gen` | 从 `proto/` 生成 TS 代码，从 `packages/schema` 导出 JSON Schema |
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试 |
 | `pnpm proto:breaking` | buf breaking 检查 |
 | `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main`、`spec/**`、`impl/**`，PR，以及手动触发；`impl/**` 与手动触发供实现分支在合并前跑 CI） |
 | `pnpm test:e2e` | 构建前端并运行 Playwright 端到端测试与视觉回归（`apps/web/e2e`；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
 | `pnpm test:e2e:docker` | 在 Playwright 官方镜像中运行（与 CI 相同，视觉基线以它为准；加 `--update-snapshots` 更新基线） |
+| `pnpm test:e2e:stress <spec:行号>` | 复现 e2e 偶发失败：限制在 2 个 CPU 上重复运行（默认 40 次），修复后用同一命令确认失败降到 0。CI 上失败的用例是 check run 注释：`gh api repos/x7yue/sfly/check-runs/<job id>/annotations` |
 | `pnpm --filter @sfly/server dev` / `pnpm --filter @sfly/web dev` | 启动控制面 / 前端开发服务器（端口 3000，`/api` 代理到控制面） |
 | `pnpm bundle:server` | 构建前端和 SDK wheel，把控制面打成单文件，组装到 `out/server/`（镜像的构建上下文，ADR 0010） |
 | `pnpm test:bundle` / `pnpm test:image` | 打包后的控制面与真实 Agent 跑通一条链 / 构建镜像并检查健康检查、页面和 API（都需要先 `pnpm bundle:server`；后者需要 docker 和 psql） |
@@ -67,7 +68,7 @@ docker compose up -d
   }
   ```
 
-不用 Docker 时，在 Node 26 上直接运行 `pnpm bundle:server` 的产物：`node --enable-source-maps out/server/main.mjs`（前端、SDK、迁移目录自动取 `main.mjs` 旁边的 `web/`、`sdk/`、`drizzle/`）。
+不用 Docker 时，在 `.node-version` 指定的 Node 上直接运行 `pnpm bundle:server` 的产物：`node --enable-source-maps out/server/main.mjs`（前端、SDK、迁移目录自动取 `main.mjs` 旁边的 `web/`、`sdk/`、`drizzle/`）。
 
 Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown-linux-musl.tar.gz`，静态链接，不依赖 glibc 版本（已在 CentOS 7 上验证）。机器上只需要 [uv](https://docs.astral.sh/uv/)，老系统上用 uv 的 musl 版本。启动参数见 `sfly-agent --help`（`--server`、`--name`、`--token`、`--slots`、`--venv`、`--index-url`、`--python` 等，均可用 `SFLY_*` 环境变量设置）。
 

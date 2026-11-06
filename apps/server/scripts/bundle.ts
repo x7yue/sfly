@@ -8,7 +8,7 @@
 //
 // 需要先构建前端和 SDK wheel；根目录的 `pnpm bundle:server` 会依次完成这两步和打包。
 // 产物与 CPU 架构无关（依赖都是纯 JS），镜像直接复制这个目录（apps/server/Dockerfile）。
-import { cp, mkdir, readdir, rm } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { build } from "esbuild";
 import packageJson from "../package.json" with { type: "json" };
@@ -19,6 +19,8 @@ const outDir = join(repoRoot, "out", "server");
 const webDist = join(repoRoot, "apps", "web", "dist");
 const sdkDist = join(serverDir, "dist", "sdk");
 const { version } = packageJson;
+/** 运行时的 Node 主版本：仓库根目录的 .node-version（镜像的基础镜像也由它决定）。 */
+const nodeMajor = (await readFile(join(repoRoot, ".node-version"), "utf8")).trim();
 
 const fail = (message: string): never => {
 	console.error(`bundle: ${message}`);
@@ -46,7 +48,7 @@ await build({
 	bundle: true,
 	platform: "node",
 	format: "esm",
-	target: "node26",
+	target: `node${nodeMajor}`,
 	// pg 的可选原生绑定，我们不用。
 	external: ["pg-native"],
 	// 依赖里有 CommonJS 模块会调用 require；ESM 输出里没有 require，需要补上。

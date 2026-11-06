@@ -1,10 +1,14 @@
 # 控制面镜像（ADR 0010）。构建上下文是 `pnpm bundle:server` 的产物 out/server/：
 #
-#   docker build -f apps/server/Dockerfile -t sfly-server out/server
+#   docker build -f apps/server/Dockerfile --build-arg NODE_MAJOR="$(cat .node-version)" \
+#     -t sfly-server out/server
 #
 # 产物是纯 JS，与 CPU 架构无关；这里只复制文件、没有 RUN，构建多架构镜像不需要模拟执行。
 # 运行方式见 deploy/docker-compose.yml（Node 官方建议用 --init / `init: true` 启动）。
-FROM node:26-trixie-slim
+
+# Node 主版本只写在仓库根目录的 .node-version，构建时传入（没有默认值，漏传会直接失败）。
+ARG NODE_MAJOR
+FROM node:${NODE_MAJOR}-trixie-slim
 
 ENV NODE_ENV=production \
     SFLY_DATA_DIR=/data

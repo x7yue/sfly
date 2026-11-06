@@ -1,0 +1,11 @@
+language js
+
+// 运行视图 `GET /runs/:id` 的缓存只能经 apps/web/src/monitor/live-run.ts 读写（#47）：
+// 那里的 runViewQuery / writeRunView 按 latestRunView 合并，较早生成的数据不覆盖运行的最终状态。
+or {
+	`queryKey(runsApi.get, $args)`,
+	`apiQuery(runsApi.get, $args)`
+} as $call where {
+	$filename <: not r".*apps/web/src/monitor/live-run\.ts",
+	register_diagnostic(span=$call, message="运行视图的缓存只能经 monitor/live-run.ts 读写：查询用 runViewQuery，写入用 writeRunView（#47：较早生成的数据会覆盖运行的最终状态）。")
+}

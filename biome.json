@@ -34,5 +34,6 @@
 		"formatter": {
 			"quoteStyle": "double"
 		}
-	}
+	},
+	"plugins": ["./biome-plugins/run-view-cache.grit"]
 }
