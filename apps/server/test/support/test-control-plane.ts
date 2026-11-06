@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "undici";
+import packageJson from "../../package.json" with { type: "json" };
 import type { Clock } from "../../src/clock.js";
 import {
 	type ControlPlane,
@@ -17,6 +18,8 @@ export interface TestControlPlane {
 	readonly httpUrl: string;
 	readonly grpcUrl: string;
 	readonly clock: Clock;
+	/** 控制面版本（Agent 的目标版本）：`version` 选项，默认 package.json 的版本。 */
+	readonly version: string;
 	readonly database: TestDatabase;
 	/** 临时数据目录；restart() 后保留，close() 时删除。 */
 	readonly dataDir: string;
@@ -119,6 +122,7 @@ export async function startTestControlPlane(
 			return current.grpcUrl;
 		},
 		clock,
+		version: options.version ?? packageJson.version,
 		database,
 		dataDir,
 		fetch: (path, init) =>

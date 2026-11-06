@@ -19,6 +19,7 @@ export function registerAgentRoutes(
 				...agent,
 				referencing_orchestrations: references.get(agent.name) ?? 0,
 			})),
+			control_plane_version: hub.version,
 		};
 	});
 }

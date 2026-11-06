@@ -2,7 +2,11 @@ import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
-import { AgentBinaries, type AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
+import {
+	AgentBinaries,
+	type AgentBinaryFiles,
+	agentBinaryUrl,
+} from "./agent-binaries/agent-binaries.js";
 import { loadInstallScript } from "./agent-binaries/install-script.js";
 import { AgentHub } from "./agents/agent-hub.js";
 import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
@@ -155,7 +159,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	}
 	const agentBinaries = new AgentBinaries(options.agentBinaries ?? {}, version);
 	const mutex = new Mutex();
-	const hub = new AgentHub({ db: database.db, clock, mutex });
+	const hub = new AgentHub({ db: database.db, clock, mutex, version });
 	await hub.markAllOffline();
 	const orchestrations = new OrchestrationStore({ db: database.db, clock });
 	let publicHttpUrl = "";
@@ -177,6 +181,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
 		},
 		mirrors: { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror },
+		agentBinary: async (arch) => {
+			const binary = await agentBinaries.find(version, arch);
+			return binary && { url: agentBinaryUrl(publicHttpUrl, binary), sha256: binary.sha256 };
+		},
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
 	await engine.recover();

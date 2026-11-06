@@ -1,6 +1,10 @@
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
-import { type AssignedTask, LogLevel } from "../../server/test/support/fake-agent.js";
+import {
+	AgentUpdateState,
+	type AssignedTask,
+	LogLevel,
+} from "../../server/test/support/fake-agent.js";
 import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
@@ -26,8 +30,8 @@ import { saveSecondVersion, twoVersions } from "./versions-support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
 // 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）、
-// 固定的控制面对外地址（页面上的 install.sh 命令不随端口变化）。
-test.use({ controlPlaneOptions: { publicHttpUrl: "http://sfly.example:8080" } });
+// 固定的控制面对外地址（页面上的 install.sh 命令不随端口变化）与版本号（Agent 列表里的版本不随发版变化）。
+test.use({ controlPlaneOptions: { publicHttpUrl: "http://sfly.example:8080", version: "0.1.0" } });
 
 async function twoAgents(connectAgent: E2eFixtures["connectAgent"]) {
 	await connectAgent({
@@ -58,6 +62,32 @@ test("Agent 列表", async ({ page, connectAgent, controlPlane }) => {
 	await expect(page.getByRole("row", { name: /agent-linux/ })).toContainText("1 个场景");
 
 	await expect(page).toHaveScreenshot("agents.png");
+});
+
+test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgent }) => {
+	await connectAgent({ name: "agent-current", os: "linux", arch: "x86_64" });
+	const states = [
+		["agent-old", { state: AgentUpdateState.NONE }],
+		["agent-waiting", { state: AgentUpdateState.WAITING_FOR_TASKS, remainingTasks: 2 }],
+		[
+			"agent-manual",
+			{
+				state: AgentUpdateState.MANUAL_UPGRADE_REQUIRED,
+				reason:
+					"Agent 二进制 /usr/local/bin/sfly-agent 不在 /home/qa/.sfly/bin 下（只更新安装脚本安装的 Agent）",
+			},
+		],
+		["agent-failed", { state: AgentUpdateState.FAILED, reason: "sha256 不匹配" }],
+	] as const;
+	for (const [name, update] of states) {
+		const agent = await connectAgent({ name, agentVersion: "0.0.9", os: "linux", arch: "x86_64" });
+		agent.send({ case: "heartbeat", value: { runningTasks: [], update } });
+		await agent.sync();
+	}
+
+	await page.goto("/agents");
+	await expect(page.getByRole("row", { name: /agent-failed/ })).toContainText("更新失败");
+	await expect(page).toHaveScreenshot("agents-update.png");
 });
 
 test("Agent 列表为空", async ({ page }) => {

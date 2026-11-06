@@ -22,7 +22,7 @@ export interface E2eFixtures {
 	clock: ManualClock;
 	/** 本测试独占的真实控制面（独立数据库），在同一端口托管前端、API 与 SSE。 */
 	controlPlane: TestControlPlane;
-	/** 连接一个假 Agent；测试结束时自动断开。 */
+	/** 连接一个假 Agent（默认上报控制面的版本）；测试结束时自动断开。 */
 	connectAgent: (hello: HelloInit) => Promise<FakeAgent>;
 	/** 浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；设为 null 时不写。 */
 	nickname: string | null;
@@ -58,7 +58,11 @@ export const test = base.extend<E2eFixtures>({
 	connectAgent: async ({ controlPlane }, use) => {
 		const agents: FakeAgent[] = [];
 		await use(async (hello) => {
-			const agent = await FakeAgent.connect(controlPlane.grpcUrl, hello);
+			// 默认与控制面同版本（版本不一致的 Agent 不会被派任务，ADR 0014）。
+			const agent = await FakeAgent.connect(controlPlane.grpcUrl, {
+				agentVersion: controlPlane.version,
+				...hello,
+			});
 			agents.push(agent);
 			return agent;
 		});

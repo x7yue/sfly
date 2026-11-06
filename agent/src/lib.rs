@@ -18,6 +18,7 @@ pub mod logs;
 pub mod metrics;
 pub mod process_tree;
 pub mod sdk;
+pub mod update;
 pub mod venv;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -40,13 +41,13 @@ use environment::{Mirrors, Setup};
 use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat, Hello, InstallState,
-    InstallStatus, InstalledPackage, RunningTask, ServerMessage, TaskAction, TaskResult, Welcome,
-    agent_message, server_message,
+    AgentMessage, AgentUpdate, AgentUpdateState, AssignTask, CancelTask, DevPackage, ErrorKind,
+    Heartbeat, Hello, InstallState, InstallStatus, InstalledPackage, RunningTask, ServerMessage,
+    TaskAction, TaskResult, Welcome, agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
-/// Agent 程序版本（随 Hello 上报）。
+/// Agent 程序版本（默认随 Hello 上报，见 [`Config::version`]）。
 pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 默认并发槽位数。
@@ -94,6 +95,11 @@ pub struct Config {
     pub telemetry_queue_bytes: usize,
     /// 与控制面断开期间最多排队多少个指标点（所有任务合计）；超出后丢弃最早的点，恢复后上报丢弃计数。
     pub metric_queue_points: usize,
+    /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
+    /// 让同一个二进制扮演新旧两个版本。与控制面版本比较、选择 SDK 运行时都用它。
+    pub version: String,
+    /// 能否自更新（ADR 0014，[`update`]）。
+    pub self_update: update::SelfUpdate,
 }
 
 impl Config {
@@ -113,6 +119,8 @@ impl Config {
             python: None,
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
             metric_queue_points: metrics::DEFAULT_METRIC_QUEUE_POINTS,
+            version: AGENT_VERSION.to_string(),
+            self_update: update::SelfUpdate::detect(true, None),
         }
     }
 }
@@ -154,7 +162,7 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
             body: Some(agent_message::Body::Hello(Hello {
                 name: config.name.clone(),
                 token: config.token.clone().unwrap_or_default(),
-                agent_version: AGENT_VERSION.to_string(),
+                agent_version: config.version.clone(),
                 os: std::env::consts::OS.to_string(),
                 arch: std::env::consts::ARCH.to_string(),
                 slots: config.slots,
@@ -269,6 +277,8 @@ struct Runtime {
     http: reqwest::Client,
     uv: PathBuf,
     scratch: PathBuf,
+    /// 上报的 Agent 版本（[`Config::version`]）。
+    version: String,
 }
 
 /// 发送任务的取消请求（见 [`executor::CancelSignal`]）。
@@ -491,13 +501,14 @@ impl Runtime {
     /// （[`sdk`]；与启动新任务互斥）。版本一致时不重装；控制面没有提供地址时只记日志，任务照常尝试执行。
     async fn ensure_sdk(&self, welcome: &Welcome) {
         let venv = &self.inventory.venv;
+        let version = self.version.as_str();
         let installed = sdk::installed_version(venv).await;
-        if installed.as_deref() == Some(AGENT_VERSION) {
+        if installed.as_deref() == Some(version) {
             return;
         }
         if welcome.sdk_wheel_url.is_empty() {
             eprintln!(
-                "shared venv has SDK {} but the agent is {AGENT_VERSION}, and the control plane offers no SDK wheel for it",
+                "shared venv has SDK {} but the agent is {version}, and the control plane offers no SDK wheel for it",
                 installed.as_deref().unwrap_or("(none)")
             );
             return;
@@ -514,10 +525,10 @@ impl Runtime {
         .await
         {
             Ok(_) => {
-                emit(serde_json::json!({ "event": "sdk_installed", "version": AGENT_VERSION }));
+                emit(serde_json::json!({ "event": "sdk_installed", "version": version }));
                 self.inventory.refresh().await;
             }
-            Err(error) => eprintln!("cannot install SDK runtime {AGENT_VERSION}: {error:#}"),
+            Err(error) => eprintln!("cannot install SDK runtime {version}: {error:#}"),
         }
     }
 
@@ -625,6 +636,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         http,
         uv: config.uv.clone(),
         scratch,
+        version: config.version.clone(),
     });
     let dev_socket = config
         .dev_socket
@@ -683,13 +695,23 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                         abandoned.insert(key);
                     }
                 }
+                // 版本与控制面不一致：控制面不再派新任务，在心跳里上报更新状态（ADR 0014）。
+                let update = config
+                    .self_update
+                    .status(&config.version, &connection.welcome);
+                if update.state() != AgentUpdateState::None {
+                    eprintln!(
+                        "warning: Agent 版本 {} 与控制面 {} 不一致，控制面不会派新任务；需要手动升级：{}",
+                        config.version, connection.welcome.target_agent_version, update.reason
+                    );
+                }
                 let channels = Channels {
                     results: &mut results_rx,
                     installs: &mut installs_rx,
                     telemetry: &mut telemetry_rx,
                     abandoned: &mut abandoned,
                 };
-                match serve(connection, &runtime, channels, &mut unacked).await {
+                match serve(connection, &runtime, channels, &mut unacked, update).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
                     Err(error) => eprintln!("connection lost: {error:#}"),
                 }
@@ -778,6 +800,7 @@ async fn serve(
     runtime: &Arc<Runtime>,
     channels: Channels<'_>,
     unacked: &mut BTreeMap<(String, u32), TaskResult>,
+    update: AgentUpdate,
 ) -> anyhow::Result<()> {
     let Channels {
         results,
@@ -791,10 +814,23 @@ async fn serve(
     };
     let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let heartbeat_message = |running_tasks| AgentMessage {
+        body: Some(agent_message::Body::Heartbeat(Heartbeat {
+            running_tasks,
+            update: Some(update.clone()),
+        })),
+    };
     for result in unacked.values() {
         connection
             .outbound
             .send(result_message(result.clone()))
+            .await?;
+    }
+    // 需要更新时立即上报一次，不等第一个心跳周期，界面上马上能看到。
+    if update.state() != AgentUpdateState::None {
+        connection
+            .outbound
+            .send(heartbeat_message(runtime.held(unacked)))
             .await?;
     }
     loop {
@@ -820,12 +856,9 @@ async fn serve(
             }
             _ = heartbeat.tick() => {
                 // 只为手上的任务续约；控制面据此发现 Agent 已经丢失的任务。
-                let running_tasks = runtime.held(unacked);
                 connection
                     .outbound
-                    .send(AgentMessage {
-                        body: Some(agent_message::Body::Heartbeat(Heartbeat { running_tasks })),
-                    })
+                    .send(heartbeat_message(runtime.held(unacked)))
                     .await?;
             }
             Some(result) = results.recv() => {

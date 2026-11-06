@@ -33,6 +33,28 @@ export const RunningTaskView = z.object({
 	started_at: Timestamp.nullable(),
 });
 
+/**
+ * Agent 的更新状态（ADR 0014，Agent 在 Heartbeat 中上报）：none 不需要更新；downloading 下载、校验新版本；
+ * waiting_for_tasks 等手上的任务结束（remaining_tasks）；replacing 替换并重新执行；failed 更新失败（reason）；
+ * manual_upgrade_required 不能自更新、需要手动升级（reason）。
+ */
+export const AgentUpdateState = z.enum([
+	"none",
+	"downloading",
+	"waiting_for_tasks",
+	"replacing",
+	"failed",
+	"manual_upgrade_required",
+]);
+
+export const AgentUpdateView = z.object({
+	state: AgentUpdateState,
+	/** waiting_for_tasks 时还要等的任务数，其余状态为 0。 */
+	remaining_tasks: z.number().int(),
+	/** failed / manual_upgrade_required 的原因，其余状态为空串。 */
+	reason: z.string(),
+});
+
 export const AgentView = z.object({
 	name: z.string(),
 	status: z.enum(["online", "offline"]),
@@ -52,6 +74,13 @@ export const AgentView = z.object({
 	dev_packages: z.array(DevPackageView),
 	/** 按派发顺序排列；长度即占用的槽位数。 */
 	running_tasks: z.array(RunningTaskView),
+	/**
+	 * Agent 版本与控制面版本（列表响应的 control_plane_version）不一致：控制面不给它派新任务（ADR 0014），
+	 * 它手上的任务照常跑完。按最近一次连接上报的版本判断。
+	 */
+	version_mismatch: z.boolean(),
+	/** 最近一次 Heartbeat 上报的更新状态；本次连接还没上报过（或旧版本 Agent 不上报）时为 none。 */
+	update: AgentUpdateView,
 	/** 有多少个场景引用这个 Agent（最新版本里的默认 Agent 或节点另选的 Agent）。 */
 	referencing_orchestrations: z.number().int(),
 });
@@ -62,10 +91,16 @@ export const agentsApi = {
 		method: "GET",
 		path: "/agents",
 		key: ["agents", "list"],
-		response: z.object({ agents: z.array(AgentView) }),
+		response: z.object({
+			agents: z.array(AgentView),
+			/** 控制面版本，也就是 Agent 的目标版本。 */
+			control_plane_version: z.string(),
+		}),
 	}),
 };
 
 export type AgentView = z.infer<typeof AgentView>;
+export type AgentUpdateState = z.infer<typeof AgentUpdateState>;
+export type AgentUpdateView = z.infer<typeof AgentUpdateView>;
 export type DevPackageView = z.infer<typeof DevPackageView>;
 export type RunningTaskView = z.infer<typeof RunningTaskView>;
