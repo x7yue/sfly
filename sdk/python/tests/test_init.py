@@ -37,12 +37,17 @@ def work(tmp_path: Path) -> Path:
 
 
 def sfly_init(
-    cwd: Path, *args: str, server: str | None = None, env_root: Path | None = None
+    cwd: Path,
+    *args: str,
+    server: str | None = None,
+    env_root: Path | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     command = [SFLY, "init", *args]
     if server:
         command += ["--server", server]
     env = uv_env(env_root or cwd.parent)
+    env.update(extra_env or {})
     return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True, timeout=120)
 
 
@@ -139,6 +144,60 @@ def test_server_defaults_to_agent_env(work: Path, control_plane: FakeControlPlan
 
     assert run.returncode == 0, run.stderr
     assert "/sdk/project-settings" in control_plane.requests
+
+
+def write_agent_env(work: Path, **entries: str) -> None:
+    home = work.parent / "sfly-home"
+    home.mkdir(exist_ok=True)
+    (home / "agent.env").write_text("".join(f"{k}={v}\n" for k, v in entries.items()))
+
+
+def test_local_mirror_overrides_in_agent_env_take_precedence_over_the_control_plane(
+    work: Path, control_plane: FakeControlPlane
+) -> None:
+    write_agent_env(
+        work,
+        SFLY_INDEX_URL="https://pypi.local.example/simple/",
+        SFLY_GITHUB_RELEASE_MIRROR="https://ustc.example/github-release",
+        SFLY_PYTHON_INSTALL_MIRROR="https://nju.example/github-release/astral-sh/python-build-standalone/",
+    )
+
+    run = sfly_init(work, "demo", server=control_plane.url)
+
+    assert run.returncode == 0, run.stderr
+    uv = pyproject(work / "demo")["tool"]["uv"]
+    assert uv["python-install-mirror"] == (
+        "https://nju.example/github-release/astral-sh/python-build-standalone/"
+    )
+    assert uv["index"][0] == {
+        "name": "pypi-mirror",
+        "url": "https://pypi.local.example/simple/",
+        "default": True,
+    }
+
+
+def test_python_mirror_derives_from_a_local_release_mirror_and_env_vars_beat_agent_env(
+    work: Path, control_plane: FakeControlPlane
+) -> None:
+    write_agent_env(
+        work,
+        SFLY_INDEX_URL="https://pypi.agent-env.example/simple/",
+        SFLY_GITHUB_RELEASE_MIRROR="https://agent-env.example/github-release",
+    )
+
+    run = sfly_init(
+        work,
+        "demo",
+        server=control_plane.url,
+        extra_env={"SFLY_GITHUB_RELEASE_MIRROR": "https://env.example/github-release/"},
+    )
+
+    assert run.returncode == 0, run.stderr
+    uv = pyproject(work / "demo")["tool"]["uv"]
+    assert uv["python-install-mirror"] == (
+        "https://env.example/github-release/astral-sh/python-build-standalone/"
+    )
+    assert uv["index"][0]["url"] == "https://pypi.agent-env.example/simple/"
 
 
 def test_invalid_name_fails_without_leftovers(work: Path, control_plane: FakeControlPlane) -> None:

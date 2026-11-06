@@ -5,12 +5,15 @@
 值为空视为没有设置。CLI 用到的键：
 - `SFLY_CONTROL_PLANE_URL`：控制面 HTTP 地址（`sfly publish` 等）；
 - `SFLY_DEV_SOCKET`、`SFLY_WORK_DIR`：本机 Agent 的本地 socket 和工作目录（与 Agent 的同名配置相同，
-  `sfly dev` 按 Agent 的规则找到它的 socket）。
+  `sfly dev` 按 Agent 的规则找到它的 socket）；
+- `SFLY_INDEX_URL`、`SFLY_GITHUB_RELEASE_MIRROR`、`SFLY_PYTHON_INSTALL_MIRROR`：
+  本机对控制面镜像的覆盖（与 Agent 相同，`sfly init` 生成的项目用它们）。
 """
 
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 ENV_FILE = "agent.env"
@@ -51,6 +54,31 @@ def control_plane_url(server: str | None, default: str) -> str:
     """控制面 HTTP 地址：`--server` > `SFLY_SERVER` > `agent.env` 的 `SFLY_CONTROL_PLANE_URL`
     > `default`。"""
     return server or os.environ.get("SFLY_SERVER") or agent_env().get(CONTROL_PLANE_KEY) or default
+
+
+def _setting(key: str, env: dict[str, str]) -> str | None:
+    """与 Agent 相同：环境变量（非空）优先于 `agent.env`。"""
+    return os.environ.get(key, "").strip() or env.get(key) or None
+
+
+@dataclass(frozen=True)
+class LocalMirrors:
+    """本机对控制面镜像的覆盖（与 Agent 的 `--index-url`、`--github-release-mirror`、
+    `--python-install-mirror` 同名的环境变量和 `agent.env` 键）；没有覆盖的为 None。"""
+
+    pypi: str | None
+    github_release: str | None
+    python_install: str | None
+
+
+def local_mirrors() -> LocalMirrors:
+    """本机的镜像覆盖：环境变量 > `agent.env`。"""
+    env = agent_env()
+    return LocalMirrors(
+        pypi=_setting("SFLY_INDEX_URL", env),
+        github_release=_setting("SFLY_GITHUB_RELEASE_MIRROR", env),
+        python_install=_setting("SFLY_PYTHON_INSTALL_MIRROR", env),
+    )
 
 
 def dev_socket(socket: str | None) -> Path:

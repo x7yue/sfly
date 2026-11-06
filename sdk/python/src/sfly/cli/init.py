@@ -1,7 +1,8 @@
 """`sfly init`：创建一个开箱即用的节点包项目。
 
 1. 校验包名（节点包的全局命名规则，与 package-metadata schema 相同），目标目录不存在或为空。
-2. 从控制面读取新项目的配置（`GET /sdk/project-settings`：控制面版本、sfly 简单索引、镜像）。
+2. 从控制面读取新项目的配置（`GET /sdk/project-settings`：控制面版本、sfly 简单索引、镜像）；
+   镜像按本机的覆盖（与 Agent 相同的环境变量和 `agent.env` 键，sfly/cli/home.py）改写，本地优先。
 3. 在目标目录旁的临时目录里 `uv init --lib --python 3.13`（src 布局、`.python-version`、
    `.gitignore`、git 仓库；已在 git 仓库里时 uv 不再建仓库），再依次执行 `STEPS`：
    写入 pyproject 的 uv 配置与开发依赖、把 uv 的示例代码换成示例节点和它的单元测试、
@@ -24,10 +25,11 @@ import tempfile
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from importlib import resources
 from pathlib import Path
 
+from sfly.cli.home import LocalMirrors, local_mirrors
 from sfly.schemas import load_schema
 
 if sys.version_info >= (3, 11):
@@ -110,6 +112,21 @@ def fetch_settings(server: str) -> ProjectSettings:
     )
 
 
+def with_local_mirrors(settings: ProjectSettings, local: LocalMirrors) -> ProjectSettings:
+    """本机覆盖优先（与 Agent 相同）：PyPI 镜像用 `SFLY_INDEX_URL`；Python 下载镜像用
+    `SFLY_PYTHON_INSTALL_MIRROR`，否则从本机的 `SFLY_GITHUB_RELEASE_MIRROR` 推导，
+    都没有时用控制面的。"""
+    python_install = local.python_install
+    if not python_install and local.github_release:
+        base = local.github_release.rstrip("/")
+        python_install = f"{base}/astral-sh/python-build-standalone/"
+    return replace(
+        settings,
+        pypi_mirror=local.pypi or settings.pypi_mirror,
+        python_install_mirror=python_install or settings.python_install_mirror,
+    )
+
+
 def _toml(value: str) -> str:
     # JSON 字符串也是合法的 TOML 基本字符串。
     return json.dumps(value, ensure_ascii=False)
@@ -123,9 +140,9 @@ def configure_pyproject(project: NewProject) -> None:
     lines += [f"    {_toml(d)}," for d in dev]
     lines += ["]", ""]
     lines += [
-        "# 镜像与 sfly 索引来自控制面（sfly init 生成）。sfly 不在 PyPI 上：",
-        "# 它只从控制面的 sfly 索引解析（explicit，不会装到 PyPI 上同名的其他包），",
-        "# 其余依赖照常走 PyPI 镜像。",
+        "# 镜像与 sfly 索引来自控制面（sfly init 生成；本机覆盖了镜像时用覆盖的值）。",
+        "# sfly 不在 PyPI 上：它只从控制面的 sfly 索引解析（explicit，",
+        "# 不会装到 PyPI 上同名的其他包），其余依赖照常走 PyPI 镜像。",
         "[tool.uv]",
     ]
     if s.python_install_mirror:
@@ -203,7 +220,7 @@ def init(target: Path, name: str | None, server: str) -> Path:
         raise InitError(f"{target} 已存在且不是空目录", usage=True)
     if not target.parent.is_dir():
         raise InitError(f"上级目录 {target.parent} 不存在", usage=True)
-    settings = fetch_settings(server)
+    settings = with_local_mirrors(fetch_settings(server), local_mirrors())
     uv = _uv()
 
     # 在目标目录旁边生成（同一文件系统，最后 rename；也让 uv 看到目标位置所在的 git 仓库）。
