@@ -81,8 +81,10 @@ test("命令面板：「运行」分组跳转到最近的运行；「运行场�
 	const runId = await triggerRun(controlPlane, scenarioId);
 	await agent.nextAssign();
 	await page.goto("/agents");
+	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 
 	await page.keyboard.press("Control+k");
+	await expect(page.getByRole("combobox", { name: "命令" })).toBeFocused();
 	const palette = page.getByRole("dialog", { name: "命令面板" });
 	await page.keyboard.type(runId.slice(0, 6));
 	const runs = palette.getByRole("group", { name: "运行", exact: true });
@@ -93,7 +95,9 @@ test("命令面板：「运行」分组跳转到最近的运行；「运行场�
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
 
 	await page.goto("/agents");
+	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 	await page.keyboard.press("Control+k");
+	await expect(page.getByRole("combobox", { name: "命令" })).toBeFocused();
 	await page.keyboard.type("日终");
 	const start = palette.getByRole("group", { name: "运行场景" }).getByRole("option");
 	await expect(start).toHaveText(["运行「日终数据处理」"]);

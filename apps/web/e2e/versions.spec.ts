@@ -169,7 +169,10 @@ test("保存冲突：弹窗显示对方作者和时间、与最新版本的差�
 	// 焦点锁定在弹窗里。
 	for (let i = 0; i < 8; i++) {
 		await page.keyboard.press("Tab");
-		expect(await dialog.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+		// 从最后一个元素 Tab 时，焦点先落到弹窗外的焦点守卫上、再被拉回弹窗，所以要轮询而不是只看一次。
+		await expect
+			.poll(() => dialog.evaluate((el) => el.contains(document.activeElement)))
+			.toBe(true);
 	}
 	// 继续编辑：关闭弹窗，修改还在；顶栏的「保存被拦截」可以重新打开弹窗。
 	await page.keyboard.press("Escape");
