@@ -83,7 +83,8 @@ impl HttpFixture {
         self.put_with(path, body, "application/octet-stream", Duration::ZERO)
     }
 
-    fn put_with(
+    /// 在 `path` 上提供 `body`（内容类型 `content_type`），第一次下载时先等待 `delay`；返回完整 URL。
+    pub fn put_with(
         &self,
         path: &str,
         body: Vec<u8>,

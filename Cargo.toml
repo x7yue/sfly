@@ -12,3 +12,7 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+# 调试构建里也优化 sha2：自更新要对约 100 MB 的调试版二进制算几次 sha256，不优化时每次要好几秒。
+[profile.dev.package.sha2]
+opt-level = 3

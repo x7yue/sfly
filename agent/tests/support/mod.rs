@@ -55,6 +55,8 @@ struct State {
     mirrors: Mutex<(String, String)>,
     /// Welcome 中的目标 Agent 版本（空串 = 与 Hello.agent_version 相同，即版本一致）。
     target_version: Mutex<String>,
+    /// Welcome 中目标版本的 Agent 二进制（下载地址, sha256）。
+    agent_binary: Mutex<(String, String)>,
 }
 
 /// 假控制面：记录收到的全部 AgentMessage，对 Hello 回复 Welcome，对 TaskResult 回复 Ack；
@@ -253,6 +255,11 @@ impl FakeControlPlane {
         *self.state.target_version.lock().unwrap() = version.to_string();
     }
 
+    /// 之后的 Welcome 给出的目标版本 Agent 二进制（下载地址, sha256）。
+    pub fn set_agent_binary(&self, url: &str, sha256: &str) {
+        *self.state.agent_binary.lock().unwrap() = (url.to_string(), sha256.to_string());
+    }
+
     /// 等到一条带更新状态、且 `pick` 接受的 Heartbeat，返回其中的更新状态。
     pub async fn update_status(
         &self,
@@ -279,6 +286,11 @@ impl FakeControlPlane {
     /// 之后收到的 TaskResult 不再回 Ack。
     pub fn stop_acking(&self) {
         self.state.no_ack.store(true, Ordering::SeqCst);
+    }
+
+    /// 之后收到的 TaskResult 恢复回 Ack。
+    pub fn start_acking(&self) {
+        self.state.no_ack.store(false, Ordering::SeqCst);
     }
 }
 
@@ -325,6 +337,8 @@ impl AgentGateway for Gateway {
                                 target if target.is_empty() => hello.agent_version.clone(),
                                 target => target,
                             };
+                        let (agent_binary_url, agent_binary_sha256) =
+                            state.agent_binary.lock().unwrap().clone();
                         Some(server_message::Body::Welcome(Welcome {
                             dispositions: hello
                                 .running_tasks
@@ -348,7 +362,8 @@ impl AgentGateway for Gateway {
                             pypi_mirror,
                             github_release_mirror,
                             target_agent_version,
-                            ..Default::default()
+                            agent_binary_url,
+                            agent_binary_sha256,
                         }))
                     }
                     Some(agent_message::Body::Result(r))
