@@ -11,6 +11,8 @@ import {
 
 /** 前端构建产物（`vite build`，`pnpm test:e2e` 会先构建）。 */
 const WEB_DIST = fileURLToPath(new URL("../dist", import.meta.url));
+/** 仓库里的用户文档（ADR 0013），「开发文档」页渲染它。 */
+const DOCS_DIR = fileURLToPath(new URL("../../../docs/guide", import.meta.url));
 
 /** 手动时钟的起点；浏览器里的时间也固定在这一刻，页面上的时间显示才稳定。 */
 export const START_TIME = "2026-01-01T00:00:00.000Z";
@@ -24,6 +26,11 @@ export interface E2eFixtures {
 	connectAgent: (hello: HelloInit) => Promise<FakeAgent>;
 	/** 浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；设为 null 时不写。 */
 	nickname: string | null;
+	/**
+	 * 覆盖控制面的选项：对外地址、版本号（默认是实际监听地址和 package.json 的版本；视觉回归里固定它们，
+	 * 文档里替换出来的地址、版本号才不随端口和发版变化）和用户文档目录（默认仓库的 docs/guide）。
+	 */
+	controlPlaneOptions: { publicHttpUrl?: string; version?: string; docsDir?: string };
 }
 
 export const test = base.extend<E2eFixtures>({
@@ -31,8 +38,14 @@ export const test = base.extend<E2eFixtures>({
 	clock: async ({}, use) => {
 		await use(new ManualClock(START_TIME));
 	},
-	controlPlane: async ({ clock }, use) => {
-		const cp = await startTestControlPlane({ clock, webDir: WEB_DIST });
+	controlPlaneOptions: [{}, { option: true }],
+	controlPlane: async ({ clock, controlPlaneOptions }, use) => {
+		const cp = await startTestControlPlane({
+			clock,
+			webDir: WEB_DIST,
+			docsDir: DOCS_DIR,
+			...controlPlaneOptions,
+		});
 		try {
 			await use(cp);
 		} finally {

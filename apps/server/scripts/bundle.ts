@@ -5,6 +5,7 @@
 //   drizzle/                 数据库迁移
 //   web/                     前端构建产物（apps/web/dist）
 //   sdk/                     与本版本一致的 SDK 运行时 wheel（apps/server/dist/sdk）
+//   docs/                    用户文档（docs/guide，ADR 0013）
 //
 // 需要先构建前端和 SDK wheel；根目录的 `pnpm bundle:server` 会依次完成这两步和打包。
 // 产物与 CPU 架构无关（依赖都是纯 JS），镜像直接复制这个目录（apps/server/Dockerfile）。
@@ -63,6 +64,7 @@ await build({
 });
 await cp(join(serverDir, "drizzle"), join(outDir, "drizzle"), { recursive: true });
 await cp(webDist, join(outDir, "web"), { recursive: true });
+await cp(join(repoRoot, "docs", "guide"), join(outDir, "docs"), { recursive: true });
 await cp(join(sdkDist, wheel), join(outDir, "sdk", wheel));
 
 console.log(`bundle: sfly control plane ${version} -> ${relative(repoRoot, outDir)}`);

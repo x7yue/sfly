@@ -18,8 +18,9 @@
 //   SFLY_WEB_DIR     前端构建产物目录（默认 apps/web/dist，由 `pnpm --filter @sfly/web build` 生成）；
 //                    控制面在 HTTP 端口上同时提供页面（ADR 0006）。未设置且默认目录不存在时只提供 API
 //   SFLY_MIGRATIONS_DIR 数据库迁移目录（默认 apps/server/drizzle）
-// 打包成单文件后（scripts/bundle.ts，ADR 0010），上面三个目录的默认值改为 main.mjs 旁边的
-// sdk/、web/、drizzle/。
+//   SFLY_DOCS_DIR    用户文档目录（默认仓库的 docs/guide，ADR 0013），控制面提供 /docs/<页>.md 与 /llms.txt
+// 打包成单文件后（scripts/bundle.ts，ADR 0010），上面四个目录的默认值改为 main.mjs 旁边的
+// sdk/、web/、drizzle/、docs/。
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
@@ -31,11 +32,17 @@ declare const SFLY_BUNDLED: boolean | undefined;
 const bundled = typeof SFLY_BUNDLED !== "undefined" && SFLY_BUNDLED;
 const fromHere = (path: string) => fileURLToPath(new URL(path, import.meta.url));
 const defaults = bundled
-	? { webDir: fromHere("./web"), sdkDir: fromHere("./sdk"), migrationsDir: fromHere("./drizzle") }
+	? {
+			webDir: fromHere("./web"),
+			sdkDir: fromHere("./sdk"),
+			migrationsDir: fromHere("./drizzle"),
+			docsDir: fromHere("./docs"),
+		}
 	: {
 			webDir: fromHere("../../web/dist"),
 			sdkDir: fromHere("../dist/sdk"),
 			migrationsDir: defaultMigrationsDir,
+			docsDir: fromHere("../../../docs/guide"),
 		};
 
 const env = process.env;
@@ -69,6 +76,7 @@ const controlPlane = await startControlPlane({
 	metricLimitBytes: mb("SFLY_METRIC_LIMIT_MB"),
 	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
 	webDir,
+	docsDir: env.SFLY_DOCS_DIR || defaults.docsDir,
 	migrationsDir: env.SFLY_MIGRATIONS_DIR || defaults.migrationsDir,
 });
 console.log(

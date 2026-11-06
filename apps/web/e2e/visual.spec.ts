@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { type AssignedTask, LogLevel } from "../../server/test/support/fake-agent.js";
 import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
@@ -511,4 +512,39 @@ test("保存冲突弹窗", async ({ page, controlPlane, connectAgent, clock }) =
 	await expect(dialog).toContainText("− report");
 	await page.mouse.move(700, 880);
 	await expect(page).toHaveScreenshot("editor-conflict.png");
+});
+
+test.describe("开发文档", () => {
+	// 固定的文档、地址和版本号：替换出来的内容不随端口和发版变化。
+	test.use({
+		controlPlaneOptions: {
+			docsDir: fileURLToPath(new URL("./docs-fixture", import.meta.url)),
+			publicHttpUrl: "http://sfly.example:8080",
+			version: "1.2.3",
+		},
+	});
+
+	const openDocs = async (page: Page) => {
+		await page.goto("/docs/quickstart");
+		await expect(page.getByRole("article", { name: "快速开始" }).getByRole("table")).toBeVisible();
+	};
+
+	test("文档页", async ({ page }) => {
+		await openDocs(page);
+		await expect(page).toHaveScreenshot("docs.png");
+	});
+
+	// 应用只有深色主题（tokens.css 的 color-scheme: dark），系统偏好浅色时也要可读。
+	test("系统偏好浅色时的文档页", async ({ page }) => {
+		await page.emulateMedia({ colorScheme: "light" });
+		await openDocs(page);
+		await expect(page).toHaveScreenshot("docs-light-scheme.png");
+	});
+
+	// 最小支持宽度（docs/DESIGN-SYSTEM.md：1280）：长命令在代码块里横向滚动，不撑宽页面。
+	test("窄屏下的文档页", async ({ page }) => {
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await openDocs(page);
+		await expect(page).toHaveScreenshot("docs-narrow.png");
+	});
 });

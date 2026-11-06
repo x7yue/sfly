@@ -81,7 +81,10 @@ export function Keys({ keys, className }: { keys: string; className?: string }) 
 export function CodeBlock({ code, className }: { code: string; className?: string }) {
 	const [copied, setCopied] = useState(false);
 	return (
-		<div className={cn("relative rounded-lg border border-border-soft bg-sunk", className)}>
+		<div
+			data-slot="code-block"
+			className={cn("relative rounded-lg border border-border-soft bg-sunk", className)}
+		>
 			<pre className="m-0 overflow-x-auto px-3 py-2.5 pr-11 text-left font-mono text-xs leading-relaxed whitespace-pre text-fg-2">
 				{code}
 			</pre>

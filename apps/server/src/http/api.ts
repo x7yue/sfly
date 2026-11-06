@@ -4,6 +4,7 @@ import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
+import type { DocValues, UserDoc } from "../docs/user-docs.js";
 import type { Engine } from "../engine/engine.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import type { MetricQueries } from "../metrics/metric-queries.js";
@@ -19,6 +20,7 @@ import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
 import { contractRoute, guardHttpContract } from "./contract-route.js";
 import { registerDashboardRoutes } from "./dashboard-routes.js";
+import { registerDocsRoutes } from "./docs-routes.js";
 import { sendError } from "./errors.js";
 import { registerLogRoutes } from "./log-routes.js";
 import { registerMetricRoutes } from "./metric-routes.js";
@@ -51,6 +53,9 @@ export interface HttpApiDeps {
 	publicHttpUrl: () => string;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 用户文档（src/docs/user-docs.ts）与占位符的取值。 */
+	docs: readonly UserDoc[];
+	docValues: () => DocValues;
 	/** 前端构建产物（src/http/web-app.ts）；不设置时不提供页面。 */
 	webApp?: WebApp;
 }
@@ -82,6 +87,8 @@ export function buildHttpApi({
 	agentToken,
 	publicHttpUrl,
 	sdkWheels,
+	docs,
+	docValues,
 	webApp,
 }: HttpApiDeps): FastifyInstance {
 	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
@@ -132,6 +139,7 @@ export function buildHttpApi({
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicHttpUrl });
+	registerDocsRoutes(app, { docs, values: docValues });
 
 	return app;
 }
