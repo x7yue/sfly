@@ -14,6 +14,9 @@ export interface InstallScriptValues {
 	/** 各架构 Agent 的 sha256；控制面没有这个架构时为空串。 */
 	SHA256_X86_64: string;
 	SHA256_AARCH64: string;
+	/** 控制面配置的 PyPI 镜像、GitHub Release 镜像（`--dev` 安装 uv 和 sfly CLI 时用）；未配置时为空串。 */
+	PYPI_MIRROR: string;
+	GITHUB_RELEASE_MIRROR: string;
 }
 
 const NAMES: ReadonlySet<string> = new Set<keyof InstallScriptValues>([
@@ -22,6 +25,8 @@ const NAMES: ReadonlySet<string> = new Set<keyof InstallScriptValues>([
 	"SFLY_VERSION",
 	"SHA256_X86_64",
 	"SHA256_AARCH64",
+	"PYPI_MIRROR",
+	"GITHUB_RELEASE_MIRROR",
 ]);
 
 const PLACEHOLDER = /\{\{([A-Z0-9_]+)\}\}/g;

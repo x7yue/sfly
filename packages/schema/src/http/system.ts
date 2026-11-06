@@ -38,6 +38,17 @@ export const sdkApi = {
 		params: z.object({ version: z.string(), filename: z.string() }),
 		contentType: "application/octet-stream",
 	}),
+	/**
+	 * sfly 简单索引（PEP 503）的根页面：只有 `sfly` 一个项目。开发机从这里装 `sfly`
+	 * （`install.sh --dev`、`sfly init` 写入的显式索引），不会从 PyPI 镜像装到同名的其他包。
+	 */
+	index: download({ path: "/simple/", contentType: "text/html; charset=utf-8" }),
+	/** 索引的项目页：与控制面同版本的 SDK wheel（链接带 `#sha256=`）；`sfly` 以外的项目 404。 */
+	indexProject: download({
+		path: "/simple/:project/",
+		params: z.object({ project: z.string() }),
+		contentType: "text/html; charset=utf-8",
+	}),
 };
 
 export type SdkWheelView = z.infer<typeof SdkWheelView>;

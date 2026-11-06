@@ -62,6 +62,8 @@ export interface HttpApiDeps {
 	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
 	agentBinaries: AgentBinaries;
 	installScript: string;
+	/** 控制面配置的镜像（install.sh --dev 安装 uv 和 sfly CLI 时用）。 */
+	mirrors: { pypi?: string; githubRelease?: string };
 	/** 用户文档（src/docs/user-docs.ts）与占位符的取值。 */
 	docs: readonly UserDoc[];
 	docValues: () => DocValues;
@@ -100,6 +102,7 @@ export function buildHttpApi({
 	sdkWheels,
 	agentBinaries,
 	installScript,
+	mirrors,
 	docs,
 	docValues,
 	webApp,
@@ -151,13 +154,14 @@ export function buildHttpApi({
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
-	registerSdkRoutes(app, { wheels: sdkWheels, publicHttpUrl });
+	registerSdkRoutes(app, { wheels: sdkWheels, version, publicHttpUrl });
 	registerAgentBinaryRoutes(app, {
 		binaries: agentBinaries,
 		installScript,
 		version,
 		publicHttpUrl,
 		publicGrpcUrl,
+		mirrors,
 	});
 	registerDocsRoutes(app, { docs, values: docValues });
 
