@@ -4,6 +4,11 @@
 			"slug": "quickstart",
 			"title": "快速开始",
 			"description": "从接入 sfly Agent 到发布第一个节点包的整体流程"
+		},
+		{
+			"slug": "sdk-reference",
+			"title": "开发节点（SDK 参考）",
+			"description": "@node、输入输出的类型注解、ctx 的日志、进度、指标、产物、取消，sfly.testing 与 sfly 命令行"
 		}
 	]
 }

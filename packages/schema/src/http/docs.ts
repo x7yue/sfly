@@ -30,6 +30,15 @@ export const docsApi = {
 		params: z.object({ page: z.string() }),
 		contentType: "text/markdown; charset=utf-8",
 	}),
+	/**
+	 * 节点开发 skill 的一个文件（占位符已替换）：`SKILL.md`，以及同目录的 `reference.md`（SDK 参考页）。
+	 * 与 SDK wheel 里 `sfly init` 写进项目的内容出自同一份源文件；未知的 skill 或文件 404。
+	 */
+	skill: download({
+		path: "/docs/skills/:skill/:file",
+		params: z.object({ skill: z.string(), file: z.string() }),
+		contentType: "text/markdown; charset=utf-8",
+	}),
 	/** llms.txt 索引：列出每一页原文的完整地址。 */
 	llms: download({ path: "/llms.txt", contentType: "text/plain; charset=utf-8" }),
 };

@@ -87,12 +87,22 @@ describe("控制面托管前端（SPA）", () => {
 		try {
 			await writeFile(
 				join(docsDir, "pages.json"),
-				JSON.stringify({ pages: [{ slug: "quickstart", title: "快速开始", description: "d" }] }),
+				JSON.stringify({
+					pages: [
+						{ slug: "quickstart", title: "快速开始", description: "d" },
+						{ slug: "sdk-reference", title: "SDK 参考", description: "d" },
+					],
+				}),
 			);
 			await writeFile(join(docsDir, "quickstart.md"), "# 快速开始\n");
+			await writeFile(join(docsDir, "sdk-reference.md"), "# SDK 参考\n");
+			await mkdir(join(docsDir, "skills", "sfly-node-dev"), { recursive: true });
+			await writeFile(join(docsDir, "skills", "sfly-node-dev", "SKILL.md"), "# skill\n");
 			cp = await startTestControlPlane({ webDir, docsDir });
 			const page = await cp.fetch("/docs/quickstart.md", { headers: NAVIGATE });
 			expect(await page.text()).toBe("# 快速开始\n");
+			const skill = await cp.fetch("/docs/skills/sfly-node-dev/SKILL.md", { headers: NAVIGATE });
+			expect(await skill.text()).toBe("# skill\n");
 			const index = await cp.fetch("/llms.txt", { headers: NAVIGATE });
 			expect(await index.text()).toMatch(/^# sfly 开发文档/);
 			// 前端的文档页仍然回退到入口页。

@@ -6,6 +6,7 @@ CLI 作为子进程运行，控制面与 PyPI 镜像都是本地桩（conftest.p
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import zipfile
@@ -24,6 +25,7 @@ else:
     import tomli as tomllib
 
 SFLY = str(Path(sys.executable).parent / "sfly")
+GUIDE = Path(__file__).resolve().parents[3] / "docs" / "guide"
 
 
 @pytest.fixture
@@ -85,6 +87,26 @@ def test_project_layout_from_uv_init_without_agent_instructions(
     assert not (project / "CLAUDE.md").exists()
     assert "Hello from" not in (project / "src" / "demo_nodes" / "__init__.py").read_text()
     assert [p.name for p in work.iterdir()] == ["demo-nodes"]
+
+
+def test_writes_node_dev_skill_for_codex_and_claude_code(
+    work: Path, control_plane: FakeControlPlane
+) -> None:
+    run = sfly_init(work, "demo", server=control_plane.url)
+
+    assert run.returncode == 0, run.stderr
+    project = work / "demo"
+    skill = project / ".agents" / "skills" / "sfly-node-dev"
+    # 内容与仓库里的用户文档源文件相同（SDK 参考即 reference.md）。
+    assert (skill / "SKILL.md").read_bytes() == (
+        GUIDE / "skills" / "sfly-node-dev" / "SKILL.md"
+    ).read_bytes()
+    assert (skill / "reference.md").read_bytes() == (GUIDE / "sdk-reference.md").read_bytes()
+    link = project / ".claude" / "skills" / "sfly-node-dev"
+    assert link.is_symlink()
+    # 相对链接：项目移动或克隆到别处后仍然有效。
+    assert not Path(os.readlink(link)).is_absolute()
+    assert link.resolve() == skill.resolve()
 
 
 def test_without_mirrors_uses_uv_defaults(work: Path) -> None:
@@ -205,3 +227,7 @@ def test_generated_project_syncs_tests_lints_runs_and_builds(
         assert "demo-0.1.0-py3-none-any.whl" in zf.namelist()
     assert list(Draft202012Validator(load_schema("package-metadata")).iter_errors(meta)) == []
     assert [n["name"] for n in meta["nodes"]] == ["countdown"]
+
+    # 项目 venv 里装的是 SDK wheel：skill 文件从 wheel 里读取；ruff format 不动 skill 目录。
+    update = run_in(project, "sfly", "skill", "update")
+    assert update.returncode == 0, update.stderr

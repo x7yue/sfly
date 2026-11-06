@@ -10,7 +10,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
  * - Agent、CLI 等非浏览器客户端继续访问根路径上的 API，不受影响。
  * - 其余 GET 请求：命中前端构建产物中的文件就返回文件；浏览器导航（Accept 含 text/html）
  *   回退到入口页 index.html，由前端路由处理（前端路由与根路径 API 同名也没关系）。
- *   用户文档的原文（`/docs/<页>.md`、`/llms.txt`）、`/install.sh`、Agent 下载与 sfly 简单索引不回退，在浏览器里也能直接打开。
+ *   用户文档的原文（`/docs/<页>.md`、skill 文件 `/docs/skills/<skill>/<文件>.md`、`/llms.txt`）、`/install.sh`、Agent 下载与 sfly 简单索引不回退，在浏览器里也能直接打开。
  */
 
 const API_PREFIX = "/api";
@@ -26,7 +26,7 @@ const isRawPath = (path: string) =>
 	path === "/install.sh" ||
 	path === "/simple" ||
 	path.startsWith("/simple/") ||
-	/^\/docs\/[^/]+\.md$/.test(path) ||
+	/^\/docs\/(skills\/[^/]+\/)?[^/]+\.md$/.test(path) ||
 	path.startsWith("/agent/binaries");
 
 /** Fastify `rewriteUrl`：`/api/agents?x=1` → `/agents?x=1`。 */

@@ -1,6 +1,6 @@
 import { docsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
-import { type DocValues, llmsTxt, renderDoc, type UserDoc } from "../docs/user-docs.js";
+import { type DocValues, llmsTxt, renderDoc, SKILL, type UserDocs } from "../docs/user-docs.js";
 import { contractDownload, contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
@@ -12,23 +12,35 @@ import { sendError } from "./errors.js";
  * |---|---|---|
  * | GET | `/docs` | 文档目录 `{ pages: [{ slug, title, description }] }` |
  * | GET | `/docs/:page.md` | 一页的 Markdown 原文，占位符已替换 |
- * | GET | `/llms.txt` | 索引：每一页原文的完整地址 |
+ * | GET | `/docs/skills/sfly-node-dev/:file` | 节点开发 skill 的 `SKILL.md`、`reference.md`（SDK 参考页），占位符已替换 |
+ * | GET | `/llms.txt` | 索引：每一页原文和 skill 文件的完整地址 |
  */
 export function registerDocsRoutes(
 	app: FastifyInstance,
-	deps: { docs: readonly UserDoc[]; values: () => DocValues },
+	deps: { docs: UserDocs; values: () => DocValues },
 ): void {
 	contractRoute(app, docsApi.list, async () => ({
-		pages: deps.docs.map(({ slug, title, description }) => ({ slug, title, description })),
+		pages: deps.docs.pages.map(({ slug, title, description }) => ({ slug, title, description })),
 	}));
 
 	contractDownload(app, docsApi.page, async ({ params }, reply) => {
-		const doc = deps.docs.find((d) => d.slug === params.page);
+		const doc = deps.docs.pages.find((d) => d.slug === params.page);
 		if (!doc) return sendError(reply, 404, "not_found", `文档页 ${params.page} 不存在`);
 		return reply
 			.header("content-type", docsApi.page.contentType)
 			.header("cache-control", "no-cache")
 			.send(renderDoc(doc.source, deps.values()));
+	});
+
+	contractDownload(app, docsApi.skill, async ({ params }, reply) => {
+		const source = params.skill === SKILL.name ? deps.docs.skill.get(params.file) : undefined;
+		if (source === undefined) {
+			return sendError(reply, 404, "not_found", `skill 文件 ${params.skill}/${params.file} 不存在`);
+		}
+		return reply
+			.header("content-type", docsApi.skill.contentType)
+			.header("cache-control", "no-cache")
+			.send(renderDoc(source, deps.values()));
 	});
 
 	contractDownload(app, docsApi.llms, async (_request, reply) =>

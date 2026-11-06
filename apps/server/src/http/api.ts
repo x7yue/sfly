@@ -5,7 +5,7 @@ import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
-import type { DocValues, UserDoc } from "../docs/user-docs.js";
+import type { DocValues, UserDocs } from "../docs/user-docs.js";
 import type { Engine } from "../engine/engine.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import type { MetricQueries } from "../metrics/metric-queries.js";
@@ -65,7 +65,7 @@ export interface HttpApiDeps {
 	/** 控制面配置的镜像（install.sh --dev 安装 uv 和 sfly CLI、sfly init 写入新项目时用）。 */
 	mirrors: { pypi?: string; githubRelease?: string };
 	/** 用户文档（src/docs/user-docs.ts）与占位符的取值。 */
-	docs: readonly UserDoc[];
+	docs: UserDocs;
 	docValues: () => DocValues;
 	/** 前端构建产物（src/http/web-app.ts）；不设置时不提供页面。 */
 	webApp?: WebApp;
