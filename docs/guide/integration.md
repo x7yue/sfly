@@ -12,7 +12,7 @@
 uv run sfly dev
 ```
 
-`sfly dev` 通过本机 Agent 的本地 socket（`~/.sfly/work/agent.sock`）让 Agent 以可编辑方式安装项目的源码，注册为 `<包名>@dev`。Agent 管理页面里这个 Agent 的已安装节点包会列出它。
+`sfly dev` 通过本机 Agent 的本地 socket（默认 `~/.sfly/work/agent.sock`；`agent.env` 里改了 `SFLY_WORK_DIR` 或 `SFLY_DEV_SOCKET` 时按同样的配置找）让 Agent 以可编辑方式安装项目的源码，注册为 `<包名>@dev`。Agent 管理页面里这个 Agent 的已安装节点包会列出它。
 
 ## 在场景里运行
 

@@ -159,8 +159,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_dev.add_argument("project", nargs="?", default=".", help="项目目录（默认当前目录）")
     p_dev.add_argument(
         "--socket",
-        help="本机 Agent 的本地 socket（默认 $SFLY_DEV_SOCKET，其次 $SFLY_HOME/agent.env 的 "
-        "SFLY_DEV_SOCKET，都没有时 $SFLY_HOME/work/agent.sock）",
+        help="本机 Agent 的本地 socket（默认与 Agent 相同：SFLY_DEV_SOCKET，"
+        "其次工作目录 SFLY_WORK_DIR 下的 agent.sock，环境变量优先于 $SFLY_HOME/agent.env；"
+        "都没有时 $SFLY_HOME/work/agent.sock）",
     )
     p_dev.set_defaults(func=_dev)
 
