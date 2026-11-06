@@ -15,11 +15,30 @@ import { sendError } from "./errors.js";
  * | GET | `/sdk/python/:version/:filename` | 下载 wheel |
  * | GET | `/simple/` | sfly 简单索引（PEP 503）：只有 `sfly` 项目 |
  * | GET | `/simple/sfly/` | 与控制面同版本的 wheel，链接带 `#sha256=` |
+ * | GET | `/sdk/project-settings` | `sfly init` 写进新项目的版本、sfly 索引与镜像 |
  */
 export function registerSdkRoutes(
 	app: FastifyInstance,
-	deps: { wheels: readonly SdkWheel[]; version: string; publicHttpUrl: () => string },
+	deps: {
+		wheels: readonly SdkWheel[];
+		version: string;
+		publicHttpUrl: () => string;
+		mirrors: { pypi?: string; githubRelease?: string };
+	},
 ): void {
+	contractRoute(app, sdkApi.projectSettings, async () => {
+		const githubRelease = deps.mirrors.githubRelease?.replace(/\/+$/, "");
+		return {
+			version: deps.version,
+			sfly_index_url: `${deps.publicHttpUrl()}/simple/`,
+			pypi_mirror: deps.mirrors.pypi || null,
+			// 与 Agent（agent/src/environment.rs 的 Mirrors）和 install.sh 派生的地址相同。
+			python_install_mirror: githubRelease
+				? `${githubRelease}/astral-sh/python-build-standalone/`
+				: null,
+		};
+	});
+
 	contractRoute(app, sdkApi.wheels, async () => ({
 		wheels: deps.wheels.map((w) => ({
 			version: w.version,

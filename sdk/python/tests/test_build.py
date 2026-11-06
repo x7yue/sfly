@@ -327,3 +327,29 @@ def test_build_rejects_metadata_that_fails_schema(
     assert main(["build", str(project)]) == 1
     _, err = capsys.readouterr()
     assert "name" in err
+
+
+@pytest.mark.parametrize(
+    "dependency", ["sfly", "sfly[cli]==0.0.1", "SFLY>=0.1", "sfly ; python_version >= '3.10'"]
+)
+def test_build_rejects_sfly_in_project_dependencies(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], dependency: str
+) -> None:
+    project = demo_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        PYPROJECT.replace('"pyyaml"]', f'"pyyaml", "{dependency}"]'), encoding="utf-8"
+    )
+    assert main(["build", str(project)]) == 1
+    _, err = capsys.readouterr()
+    assert "sfly" in err and "Agent 自带 SDK 运行时" in err
+    assert not (project / "dist").exists()
+
+
+def test_sfly_lookalike_dependencies_are_allowed(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = demo_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        PYPROJECT.replace('"pyyaml"]', '"pyyaml", "sfly-helpers>=1"]'), encoding="utf-8"
+    )
+    build(project, capsys)

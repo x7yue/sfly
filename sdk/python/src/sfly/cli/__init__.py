@@ -1,4 +1,4 @@
-"""sfly 命令行入口：build / publish / dev / run。
+"""sfly 命令行入口：init / build / publish / dev / run。
 
 CLI 在开发者机器上运行，可以使用 `sfly[cli]` extra 中的第三方依赖；
 这些依赖只在子命令执行时才导入，`import sfly.cli` 本身只用标准库。
@@ -15,6 +15,21 @@ from sfly import __version__
 from sfly.cli.home import control_plane_url, dev_socket
 
 DEFAULT_SERVER = "http://127.0.0.1:8080"
+
+
+def _init(args: argparse.Namespace) -> int:
+    from sfly.cli.init import InitError, init
+
+    try:
+        project = init(
+            Path(args.directory), args.name, control_plane_url(args.server, DEFAULT_SERVER)
+        )
+    except InitError as error:
+        print(f"初始化失败：{error}", file=sys.stderr)
+        return 2 if error.usage else 1
+    print(f"已创建节点包项目 {project}")
+    print(f"下一步：cd {project} && uv sync && uv run pytest")
+    return 0
 
 
 def _build(args: argparse.Namespace) -> int:
@@ -86,6 +101,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sfly", description="sfly 节点包开发工具")
     parser.add_argument("--version", action="version", version=f"sfly {__version__}")
     sub = parser.add_subparsers(dest="command")
+
+    p_init = sub.add_parser(
+        "init",
+        help="创建节点包项目（uv 项目 + 控制面的镜像与 sfly 索引配置 + 示例节点）",
+        description="用 uv init --lib --python 3.13 创建项目，"
+        "写入控制面的 PyPI 镜像、Python 下载镜像和 sfly 索引，"
+        "加开发依赖（sfly[cli]、pytest、ruff）和一个示例节点及其单元测试。"
+        "退出码：成功 0，失败 1，包名不合法或目录非空 2。",
+    )
+    p_init.add_argument("directory", help="项目目录（不存在或为空）")
+    p_init.add_argument(
+        "--name",
+        help="包名（默认为目录名）：小写字母、数字、- 和 _，以字母或数字开头",
+    )
+    p_init.add_argument(
+        "--server",
+        help="控制面 HTTP 地址（默认 $SFLY_SERVER，其次 $SFLY_HOME/agent.env 的 "
+        f"SFLY_CONTROL_PLANE_URL，都没有时 {DEFAULT_SERVER}）",
+    )
+    p_init.set_defaults(func=_init)
 
     p_build = sub.add_parser("build", help="扫描 @node，构建 .sflypkg 节点包")
     p_build.add_argument("project", nargs="?", default=".", help="项目目录（默认当前目录）")
