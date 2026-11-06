@@ -114,6 +114,21 @@ describe("控制面托管前端（SPA）", () => {
 		}
 	});
 
+	it("浏览器打开 install.sh、Agent 下载与 sfly 简单索引时不回退到入口页", async () => {
+		cp = await startTestControlPlane({ webDir });
+		for (const path of [
+			"/install.sh",
+			"/agent/binaries",
+			"/agent/binaries/0.0.0/x86_64",
+			"/simple",
+			"/simple/",
+			"/simple/sfly/",
+		]) {
+			const res = await cp.fetch(path, { headers: NAVIGATE });
+			expect(await res.text(), path).not.toBe(INDEX_HTML);
+		}
+	});
+
 	it("没有配置前端目录时不提供页面", async () => {
 		cp = await startTestControlPlane();
 		const res = await cp.fetch("/", { headers: NAVIGATE });

@@ -49,6 +49,7 @@ import {
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
+import type { Mirrors } from "../public-config.js";
 import type { Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
@@ -173,7 +174,7 @@ export class Engine implements AgentSessionHandler {
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
 			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
 			/** 控制面配置的镜像，原样在 Welcome 里下发（ADR 0012）；未配置的为空。 */
-			mirrors?: { pypi?: string; githubRelease?: string };
+			mirrors?: Mirrors;
 			/** 目标版本（控制面版本）、给定架构的 Agent 二进制（Welcome 里告诉 Agent，ADR 0014）；没有时为 undefined。 */
 			agentBinary?: (arch: string) => Promise<{ url: string; sha256: string } | undefined>;
 		},
@@ -339,7 +340,7 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 立即更新（ADR 0014）：版本不一致的在线 Agent 手上的任务立即以 agent_lost 失败（按重试配置在它这里重新排队，
+	 * 立即更新（ADR 0014）：版本不一致、正在更新（下载中或等待任务结束）的在线 Agent 手上的任务立即以 agent_lost 失败（按重试配置在它这里重新排队，
 	 * 等它以一致的版本重新连上再派发），事务提交后通知 Agent（UpdateNow）。Agent 按取消流程终止这些任务后照常上报结果，
 	 * 控制面已不再等这些尝试，只回 Ack。
 	 */
@@ -368,12 +369,23 @@ export class Engine implements AgentSessionHandler {
 					message: `agent ${agentName} already runs the control plane version ${this.deps.hub.version}`,
 				};
 			}
-			if (conn.info.update?.state === "manual_upgrade_required") {
+			const update = conn.info.update;
+			if (update?.state === "manual_upgrade_required") {
 				return {
 					ok: false,
 					status: 409,
 					code: "manual_upgrade_required",
-					message: `agent ${agentName} cannot update itself: ${conn.info.update.reason}`,
+					message: `agent ${agentName} cannot update itself: ${update.reason}`,
+				};
+			}
+			// 只有确实在更新流程中（下载中、等待任务结束）的 Agent 收到指令后会替换自己；更新失败、正在替换，
+			// 或还没有自更新能力的旧 Agent（不上报更新状态）终止任务没有意义。
+			if (update?.state !== "downloading" && update?.state !== "waiting_for_tasks") {
+				return {
+					ok: false,
+					status: 409,
+					code: "not_updating",
+					message: `agent ${agentName} is not updating itself (update state: ${update?.state ?? "none"})`,
 				};
 			}
 			const held = await step.tx

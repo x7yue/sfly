@@ -4,7 +4,8 @@
 空行和 `#` 开头的行忽略，值两侧的空白去掉，整个值被一对 `"` 或 `'` 包住时去掉引号（不处理转义），
 值为空视为没有设置。CLI 用到的键：
 - `SFLY_CONTROL_PLANE_URL`：控制面 HTTP 地址（`sfly publish` 等）；
-- `SFLY_DEV_SOCKET`：本机 Agent 的本地 socket（与 Agent 的同名配置相同）。
+- `SFLY_DEV_SOCKET`、`SFLY_WORK_DIR`：本机 Agent 的本地 socket 和工作目录（与 Agent 的同名配置相同，
+  `sfly dev` 按 Agent 的规则找到它的 socket）。
 """
 
 from __future__ import annotations
@@ -53,7 +54,16 @@ def control_plane_url(server: str | None, default: str) -> str:
 
 
 def dev_socket(socket: str | None) -> Path:
-    """本机 Agent 的本地 socket：`--socket` > `SFLY_DEV_SOCKET` > `agent.env` 的 `SFLY_DEV_SOCKET`
+    """本机 Agent 的本地 socket，与 Agent 的规则相同（环境变量优先于 `agent.env`）：
+    `--socket` > `SFLY_DEV_SOCKET` > 工作目录 `SFLY_WORK_DIR` 下的 `agent.sock`
     > `$SFLY_HOME/work/agent.sock`。"""
-    value = socket or os.environ.get("SFLY_DEV_SOCKET") or agent_env().get("SFLY_DEV_SOCKET")
-    return Path(value) if value else sfly_home() / SOCKET_FILE
+    env = agent_env()
+
+    def setting(key: str) -> str | None:
+        return os.environ.get(key) or env.get(key)
+
+    if value := socket or setting("SFLY_DEV_SOCKET"):
+        return Path(value)
+    if work_dir := setting("SFLY_WORK_DIR"):
+        return Path(work_dir) / SOCKET_FILE.name
+    return sfly_home() / SOCKET_FILE

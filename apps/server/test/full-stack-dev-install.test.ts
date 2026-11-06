@@ -23,6 +23,7 @@ const TOOLS = [
 	"curl",
 	"cut",
 	"dirname",
+	"flock",
 	"gzip",
 	"id",
 	"mkdir",
@@ -116,7 +117,7 @@ describe("全栈：install.sh --dev", () => {
 				'curl -fsSL "$0/install.sh" | sh -s -- --name dev-agent --no-service --dev',
 				plane.httpUrl,
 			],
-			{ env: { PATH: tools, HOME: home(), UV_PYTHON: python } },
+			{ env: { PATH: tools, HOME: home(), TMPDIR: tmpdir(), UV_PYTHON: python } },
 		);
 		return stdout;
 	}

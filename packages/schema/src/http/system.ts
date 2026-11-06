@@ -42,7 +42,7 @@ export const sdkApi = {
 	 * sfly 简单索引（PEP 503）的根页面：只有 `sfly` 一个项目。开发机从这里装 `sfly`
 	 * （`install.sh --dev`、`sfly init` 写入的显式索引），不会从 PyPI 镜像装到同名的其他包。
 	 */
-	index: download({ path: "/simple/", contentType: "text/html; charset=utf-8" }),
+	index: download({ path: "/simple/", raw: true, contentType: "text/html; charset=utf-8" }),
 	/**
 	 * `sfly init` 写进新项目 `pyproject.toml` 的配置：`sfly[cli]` 锁定的控制面版本、sfly 简单索引，
 	 * 以及控制面统一配置的镜像（ADR 0012，未配置时为 null，项目用 uv 的默认来源）。
@@ -64,6 +64,7 @@ export const sdkApi = {
 	/** 索引的项目页：与控制面同版本的 SDK wheel（链接带 `#sha256=`）；`sfly` 以外的项目 404。 */
 	indexProject: download({
 		path: "/simple/:project/",
+		raw: true,
 		params: z.object({ project: z.string() }),
 		contentType: "text/html; charset=utf-8",
 	}),

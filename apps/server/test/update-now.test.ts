@@ -44,6 +44,23 @@ describe("立即更新", () => {
 	const updateNow = (name: string) =>
 		api.post(`/agents/${encodeURIComponent(name)}/update-now`, {});
 
+	/** Agent 在心跳里上报更新状态，并带上手上的任务 `held`。 */
+	const report = async (
+		agent: FakeAgent,
+		state: AgentUpdateState,
+		extra: { remainingTasks?: number; reason?: string } = {},
+		held: { taskId: string; attempt: number }[] = [],
+	) => {
+		agent.send({
+			case: "heartbeat",
+			value: {
+				runningTasks: held.map((t) => ({ taskId: t.taskId, attempt: t.attempt, started: true })),
+				update: { state, ...extra },
+			},
+		});
+		await agent.sync();
+	};
+
 	/** 版本一致时把任务派给 agent-a，然后以旧版本带着这些任务重新连上（模拟控制面升级）。 */
 	const holding = async (nodes: Record<string, unknown>[]) => {
 		const current = await connect({ name: "agent-a", agentVersion: "2.0.0", slots: 4 });
@@ -59,6 +76,7 @@ describe("立即更新", () => {
 			slots: 4,
 			runningTasks: held.map((t) => ({ taskId: t.taskId, attempt: t.attempt, started: true })),
 		});
+		await report(old, AgentUpdateState.WAITING_FOR_TASKS, { remainingTasks: held.length }, held);
 		return { old, held, runs };
 	};
 
@@ -104,13 +122,14 @@ describe("立即更新", () => {
 	it("手上没有任务时也通知 Agent", async () => {
 		await start();
 		const old = await connect({ name: "agent-a", agentVersion: "1.0.0" });
+		await report(old, AgentUpdateState.DOWNLOADING);
 		const res = await updateNow("agent-a");
 		expect(res.status).toBe(200);
 		expect(agentsApi.updateNow.response.parse(await res.json())).toEqual({ terminated_tasks: [] });
 		await old.next("updateNow");
 	});
 
-	it("Agent 不存在、离线、版本一致或需要手动升级时拒绝，不终止任务", async () => {
+	it("Agent 不存在、离线、版本一致或不在更新流程中（下载中、等待任务结束之外）时拒绝，不终止任务", async () => {
 		await start();
 		const error = async (res: Response, status: number, code: string) => {
 			expect(res.status).toBe(status);
@@ -126,18 +145,17 @@ describe("立即更新", () => {
 		expect((await api.node(run, "a")).status).toBe("running");
 
 		const manual = await connect({ name: "agent-m", agentVersion: "1.0.0" });
-		manual.send({
-			case: "heartbeat",
-			value: {
-				runningTasks: [],
-				update: {
-					state: AgentUpdateState.MANUAL_UPGRADE_REQUIRED,
-					reason: "已指定 --no-auto-update",
-				},
-			},
-		});
-		await manual.sync();
-		await error(await updateNow("agent-m"), 409, "manual_upgrade_required");
+		// 还没有自更新能力的旧 Agent 不上报更新状态（none）。
+		await error(await updateNow("agent-m"), 409, "not_updating");
+		for (const [state, code] of [
+			[AgentUpdateState.NONE, "not_updating"],
+			[AgentUpdateState.FAILED, "not_updating"],
+			[AgentUpdateState.REPLACING, "not_updating"],
+			[AgentUpdateState.MANUAL_UPGRADE_REQUIRED, "manual_upgrade_required"],
+		] as const) {
+			await report(manual, state, { reason: "原因" });
+			await error(await updateNow("agent-m"), 409, code);
+		}
 		await manual.disconnect();
 		await eventually(async () => error(await updateNow("agent-m"), 409, "agent_offline"));
 		expect(manual.received.some((m) => m.body.case === "updateNow")).toBe(false);

@@ -3,6 +3,6 @@
 from sfly.context import Cancelled, Context
 from sfly.nodes import Chart, Metric, node
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 __all__ = ["Cancelled", "Chart", "Context", "Metric", "__version__", "node"]

@@ -3,6 +3,7 @@ import { agentBinariesApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type AgentBinaries, agentBinaryUrl } from "../agent-binaries/agent-binaries.js";
 import { renderInstallScript } from "../agent-binaries/install-script.js";
+import type { PublicConfig } from "../public-config.js";
 import { attachment } from "./content-disposition.js";
 import { contractDownload, contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
@@ -19,19 +20,13 @@ import { sendError } from "./errors.js";
  */
 export function registerAgentBinaryRoutes(
 	app: FastifyInstance,
-	deps: {
-		binaries: AgentBinaries;
-		installScript: string;
-		version: string;
-		publicHttpUrl: () => string;
-		publicGrpcUrl: () => string;
-		mirrors: { pypi?: string; githubRelease?: string };
-	},
+	deps: { binaries: AgentBinaries; installScript: string; publicConfig: PublicConfig },
 ): void {
+	const { httpUrl, grpcUrl, version, mirrors } = deps.publicConfig;
 	contractRoute(app, agentBinariesApi.list, async () => {
-		const base = deps.publicHttpUrl();
+		const base = httpUrl();
 		return {
-			version: deps.version,
+			version,
 			install_script_url: `${base}/install.sh`,
 			binaries: (await deps.binaries.list()).map((b) => ({
 				arch: b.arch,
@@ -59,13 +54,13 @@ export function registerAgentBinaryRoutes(
 			.header("cache-control", "no-cache")
 			.send(
 				renderInstallScript(deps.installScript, {
-					SFLY_URL: deps.publicHttpUrl(),
-					SFLY_GRPC_URL: deps.publicGrpcUrl(),
-					SFLY_VERSION: deps.version,
+					SFLY_URL: httpUrl(),
+					SFLY_GRPC_URL: grpcUrl(),
+					SFLY_VERSION: version,
 					SHA256_X86_64: sha256("x86_64"),
 					SHA256_AARCH64: sha256("aarch64"),
-					PYPI_MIRROR: deps.mirrors.pypi ?? "",
-					GITHUB_RELEASE_MIRROR: deps.mirrors.githubRelease ?? "",
+					PYPI_MIRROR: mirrors.pypi ?? "",
+					GITHUB_RELEASE_MIRROR: mirrors.githubRelease ?? "",
 				}),
 			);
 	});

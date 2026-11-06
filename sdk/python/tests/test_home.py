@@ -1,5 +1,6 @@
 """`SFLY_HOME`（默认 `~/.sfly`）：`sfly publish` 的控制面地址按 `--server` > `SFLY_SERVER` >
-`$SFLY_HOME/agent.env` 取值；`sfly dev` 默认连接 `$SFLY_HOME/work/agent.sock`。"""
+`$SFLY_HOME/agent.env` 取值；`sfly dev` 按 Agent 相同的规则找本地 socket
+（默认 `$SFLY_HOME/work/agent.sock`）。"""
 
 from __future__ import annotations
 
@@ -7,6 +8,7 @@ import json
 import socket
 import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -59,6 +61,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("SFLY_HOME", str(home))
     monkeypatch.delenv("SFLY_SERVER", raising=False)
     monkeypatch.delenv("SFLY_DEV_SOCKET", raising=False)
+    monkeypatch.delenv("SFLY_WORK_DIR", raising=False)
     return home
 
 
@@ -126,17 +129,21 @@ def dev_project(root: Path) -> Path:
     return root
 
 
-def test_dev_connects_to_the_socket_under_sfly_home(
-    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    (home / "work").mkdir()
+@contextmanager
+def fake_agent(path: Path) -> Iterator[list[dict[str, object]]]:
+    """在 `path` 上监听的假 Agent（本地 socket）：记录 `sfly dev` 发来的请求，回复加载成功。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
     requests: list[dict[str, object]] = []
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
-        server.bind(str(home / "work" / "agent.sock"))
+        server.bind(str(path))
         server.listen(1)
+        server.settimeout(5)
 
         def serve() -> None:
-            conn, _ = server.accept()
+            try:
+                conn, _ = server.accept()
+            except OSError:
+                return
             with conn:
                 data = b""
                 while chunk := conn.recv(65536):
@@ -146,8 +153,52 @@ def test_dev_connects_to_the_socket_under_sfly_home(
 
         thread = threading.Thread(target=serve, daemon=True)
         thread.start()
-        assert main(["dev", str(dev_project(tmp_path / "proj"))]) == 0
+        yield requests
         thread.join(5)
+
+
+def test_dev_connects_to_the_socket_under_sfly_home(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with fake_agent(home / "work" / "agent.sock") as requests:
+        assert main(["dev", str(dev_project(tmp_path / "proj"))]) == 0
 
     assert [r["package"] for r in requests] == ["demo-dev"]
     assert "loaded demo-dev@dev" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("agent_env", "environment", "socket_at"),
+    [
+        # 与 Agent 的优先级相同：dev socket > 工作目录下的 agent.sock，
+        # 每一项都是环境变量 > agent.env。
+        ("SFLY_WORK_DIR={tmp}/work-file\n", {}, "work-file/agent.sock"),
+        (
+            "SFLY_WORK_DIR={tmp}/work-file\n",
+            {"SFLY_WORK_DIR": "{tmp}/work-env"},
+            "work-env/agent.sock",
+        ),
+        (
+            "SFLY_DEV_SOCKET={tmp}/file.sock\n",
+            {"SFLY_WORK_DIR": "{tmp}/work-env"},
+            "file.sock",
+        ),
+        ("SFLY_DEV_SOCKET={tmp}/file.sock\n", {"SFLY_DEV_SOCKET": "{tmp}/env.sock"}, "env.sock"),
+    ],
+)
+def test_dev_finds_the_socket_the_way_the_agent_does(
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    agent_env: str,
+    environment: dict[str, str],
+    socket_at: str,
+) -> None:
+    (home / "agent.env").write_text(agent_env.format(tmp=tmp_path), encoding="utf-8")
+    for key, value in environment.items():
+        monkeypatch.setenv(key, value.format(tmp=tmp_path))
+
+    with fake_agent(tmp_path / socket_at) as requests:
+        assert main(["dev", str(dev_project(tmp_path / "proj"))]) == 0
+
+    assert [r["package"] for r in requests] == ["demo-dev"]

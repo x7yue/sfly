@@ -74,7 +74,7 @@ describe("全栈：install.sh 安装的 Agent", () => {
 				'curl -fsSL "$0/install.sh" | sh -s -- --name installed-agent --no-service',
 				cp.httpUrl,
 			],
-			{ env: { PATH: process.env.PATH, HOME: home } },
+			{ env: { PATH: process.env.PATH, HOME: home, TMPDIR: tmpdir() } },
 		);
 
 		// 共享 venv 用测试机上 uv 管理的 Python（Python 从镜像下载的路径由 agent/tests/environment.rs 覆盖）。
@@ -82,7 +82,13 @@ describe("全栈：install.sh 安装的 Agent", () => {
 		const python = (await run("uv", ["python", "find", "--no-project", version])).stdout.trim();
 		agent = spawn(join(sflyHome, "bin", "sfly-agent"), [], {
 			stdio: ["ignore", "pipe", "inherit"],
-			env: { PATH: process.env.PATH, HOME: home, SFLY_HOME: sflyHome, SFLY_PYTHON: python },
+			env: {
+				PATH: process.env.PATH,
+				HOME: home,
+				TMPDIR: tmpdir(),
+				SFLY_HOME: sflyHome,
+				SFLY_PYTHON: python,
+			},
 		});
 		const lines = createInterface({ input: agent.stdout as NodeJS.ReadableStream });
 		lines.on("line", (line) => events.push(JSON.parse(line) as Record<string, unknown>));

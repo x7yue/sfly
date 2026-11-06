@@ -13,3 +13,7 @@ Agent 机器上的 uv 和 Python 解释器不随 sfly 打包，也不固定版�
 - Agent 必须先连上控制面拿到镜像配置，才能准备 uv 和 venv。
 - 不同时间安装的 Agent 可能用着不同的 uv 和 Python 补丁版本。
 - `sfly` SDK 不在 PyPI 上：控制面提供一个只含 `sfly` 的简单索引，项目里用 uv 的显式索引把 `sfly` 绑定到它，避免从 PyPI 镜像装到同名的其他包。
+
+## 修订
+
+「执行 `uv self update`」改为：控制面配置了 GitHub Release 镜像时，重新运行镜像上的 `astral-sh/uv/LatestRelease/uv-installer.sh`（与首次安装 uv 相同，`UV_DOWNLOAD_URL` 指向镜像），没有配置时才执行 `uv self update`。原因：`uv self update` 要用镜像时得设 `UV_INSTALLER_GITHUB_BASE_URL`，设了之后 uv 会去访问镜像主机上的 GitHub API（`api.<主机>/repos/astral-sh/uv/releases`），中科大 `github-release` 这类只镜像文件的站点上不存在；而 `uv self update` 内部本来也是下载并运行这个安装脚本。时机不变：Agent 安装后和自更新后的首次启动各一次，失败但旧 uv 可用时只告警。

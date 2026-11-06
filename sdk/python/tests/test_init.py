@@ -60,7 +60,11 @@ def test_pyproject_has_mirrors_sfly_index_and_dev_dependencies(
     data = pyproject(work / "demo")
     assert data["project"]["name"] == "demo-nodes"
     assert data["project"]["dependencies"] == []
-    assert data["dependency-groups"]["dev"] == ["sfly[cli]==0.0.1", "pytest>=8", "ruff>=0.6"]
+    assert data["dependency-groups"]["dev"] == [
+        f"sfly[cli]=={control_plane.version}",
+        "pytest>=8",
+        "ruff>=0.6",
+    ]
     uv = data["tool"]["uv"]
     assert uv["python-install-mirror"] == control_plane.python_install_mirror
     assert uv["index"] == [

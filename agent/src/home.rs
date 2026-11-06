@@ -22,6 +22,16 @@ pub const ENV_FILE: &str = "agent.env";
 /// `agent.env` 里给 `sfly` CLI 用的键（控制面 HTTP 地址），Agent 不使用。
 pub const CLI_ONLY_KEYS: &[&str] = &["SFLY_CONTROL_PLANE_URL"];
 
+/// 开关的取值（与 clap 的 `BoolishValueParser` 相同）：y/yes/t/true/on/1 为真，n/no/f/false/off/0 为假，大小写不敏感；
+/// 其他值为 None。
+pub fn boolish(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" | "t" | "true" | "on" | "1" => Some(true),
+        "n" | "no" | "f" | "false" | "off" | "0" => Some(false),
+        _ => None,
+    }
+}
+
 /// `SFLY_HOME`：环境变量 `SFLY_HOME`，否则 `$HOME/.sfly`；两者都没有时为 None。返回绝对路径。
 pub fn resolve() -> Option<PathBuf> {
     let home = match std::env::var_os("SFLY_HOME").filter(|v| !v.is_empty()) {

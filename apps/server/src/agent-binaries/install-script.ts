@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { placeholders } from "../placeholders.js";
 
 /**
  * 一键安装脚本 install.sh（ADR 0011）：模板是同目录的 install.sh（打包后在 main.mjs 旁边），
@@ -19,29 +20,25 @@ export interface InstallScriptValues {
 	GITHUB_RELEASE_MIRROR: string;
 }
 
-const NAMES: ReadonlySet<string> = new Set<keyof InstallScriptValues>([
-	"SFLY_URL",
-	"SFLY_GRPC_URL",
-	"SFLY_VERSION",
-	"SHA256_X86_64",
-	"SHA256_AARCH64",
-	"PYPI_MIRROR",
-	"GITHUB_RELEASE_MIRROR",
-]);
-
-const PLACEHOLDER = /\{\{([A-Z0-9_]+)\}\}/g;
+const PLACEHOLDERS = placeholders<keyof InstallScriptValues>(
+	[
+		"SFLY_URL",
+		"SFLY_GRPC_URL",
+		"SFLY_VERSION",
+		"SHA256_X86_64",
+		"SHA256_AARCH64",
+		"PYPI_MIRROR",
+		"GITHUB_RELEASE_MIRROR",
+	],
+	(value) => value.replace(/[\r\n]/g, "").replace(/'/g, "'\\''"),
+);
 
 /** 读取模板；出现未知的占位符时报错。 */
 export async function loadInstallScript(file: string): Promise<string> {
 	const template = await readFile(file, "utf8");
-	for (const [, name] of template.matchAll(PLACEHOLDER)) {
-		if (!(name && NAMES.has(name))) throw new Error(`${file}: 未知的占位符 {{${name}}}`);
-	}
+	PLACEHOLDERS.check(file, template);
 	return template;
 }
 
-export function renderInstallScript(template: string, values: InstallScriptValues): string {
-	return template.replace(PLACEHOLDER, (_, name: keyof InstallScriptValues) =>
-		values[name].replace(/[\r\n]/g, "").replace(/'/g, "'\\''"),
-	);
-}
+export const renderInstallScript = (template: string, values: InstallScriptValues): string =>
+	PLACEHOLDERS.render(template, values);

@@ -35,6 +35,7 @@ const TOOLS = [
 	"cut",
 	"dirname",
 	"echo",
+	"flock",
 	"git",
 	"grep",
 	"gzip",
@@ -170,7 +171,9 @@ describe("全栈：开发文档里的命令", () => {
 		// uv 和 Agent 用测试机上 uv 管理的 Python（Python 从镜像下载的路径由 agent/tests/environment.rs 覆盖）。
 		const version = (await readFile(join(repoRoot, ".python-version"), "utf8")).trim();
 		python = (await run("uv", ["python", "find", "--no-project", version])).stdout.trim();
-		devAgent = (await run("sh", ["-c", 'printf %s "dev-$(id -un)-$(uname -n)"'])).stdout;
+		// install.sh --dev 的默认名称：dev-<用户名>-<主机名>（不带域名）。
+		devAgent = (await run("sh", ["-c", 'printf %s "dev-$(id -un)-$(uname -n | cut -d. -f1)"']))
+			.stdout;
 	}, 600_000);
 
 	afterAll(async () => {

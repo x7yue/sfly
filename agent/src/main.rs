@@ -8,7 +8,7 @@ use sfly_agent::environment::{self, EnvironmentError};
 use sfly_agent::home;
 use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
 use sfly_agent::metrics::DEFAULT_METRIC_QUEUE_POINTS;
-use sfly_agent::update::SelfUpdate;
+use sfly_agent::update::{self, SelfUpdate, Trial, TrialFailed};
 use sfly_agent::{AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
 
 /// sfly Agent。
@@ -62,18 +62,27 @@ struct Args {
     /// 与控制面断开期间最多排队的指标点数，超出后丢弃最早的点。
     #[arg(long, env = "SFLY_METRIC_QUEUE_POINTS", default_value_t = DEFAULT_METRIC_QUEUE_POINTS, hide = true)]
     metric_queue_points: usize,
+    /// 自更新下载新二进制时，连接建立后等待数据的超时秒数（每次读取）；超时算「更新失败」，下一次握手后重试。
+    #[arg(long, env = "SFLY_UPDATE_READ_TIMEOUT", default_value_t = sfly_agent::update::DEFAULT_READ_TIMEOUT.as_secs(), hide = true)]
+    update_read_timeout: u64,
     /// 不自动更新：版本与控制面不一致时只连接、不接新任务，Agents 页提示需要手动升级。
-    #[arg(long, env = "SFLY_NO_AUTO_UPDATE")]
+    /// 环境变量和 `agent.env` 接受 1/0、true/false、yes/no（大小写不敏感）。
+    #[arg(long, env = "SFLY_NO_AUTO_UPDATE", value_parser = clap::builder::BoolishValueParser::new())]
     no_auto_update: bool,
-    /// 只在测试中使用：覆盖上报给控制面的 Agent 版本号，让同一个二进制扮演不同版本。
-    /// 自更新 execve 新二进制时不传下去（命令行参数和环境变量都去掉），新进程上报真实版本。
+    /// 只在测试中使用：覆盖上报给控制面的 Agent 版本号，让同一个二进制扮演不同版本。只影响上报的版本
+    /// （新版本的试用按二进制的 sha256 判断）；execve（自更新或回滚）时不传下去（命令行参数和环境变量都去掉）。
     #[arg(long, env = "SFLY_VERSION_OVERRIDE", hide = true)]
     version_override: Option<String>,
 }
 
 /// 把 `agent.env` 里的配置转成命令行参数，放在真正的命令行参数之前（`args_override_self`：后出现的生效），
 /// 环境变量里已经有的键跳过：优先级为命令行参数 > 环境变量 > `agent.env`。
-fn env_file_args(entries: Vec<(String, String)>, file: &std::path::Path) -> Vec<OsString> {
+/// 不带值的开关（如 `--no-auto-update`）在 `agent.env` 里的值与环境变量的写法相同：1/0、true/false、yes/no
+/// （以及 y/n、t/f、on/off，大小写不敏感）；为真时注入这个开关，其他值报错。
+fn env_file_args(
+    entries: Vec<(String, String)>,
+    file: &std::path::Path,
+) -> anyhow::Result<Vec<OsString>> {
     let command = Args::command();
     let mut args = Vec::new();
     for (key, value) in entries {
@@ -92,20 +101,41 @@ fn env_file_args(entries: Vec<(String, String)>, file: &std::path::Path) -> Vec<
         let long = arg.get_long().expect("env-backed args have a long flag");
         if arg.get_action().takes_values() {
             args.push(OsString::from(format!("--{long}={value}")));
-        } else if matches!(value.as_str(), "1" | "true" | "yes" | "on") {
-            args.push(OsString::from(format!("--{long}")));
+        } else {
+            match home::boolish(&value) {
+                Some(true) => args.push(OsString::from(format!("--{long}"))),
+                Some(false) => {}
+                None => anyhow::bail!(
+                    "invalid value '{value}' for {key} in {}: use 1/0, true/false or yes/no",
+                    file.display()
+                ),
+            }
         }
     }
-    args
+    Ok(args)
+}
+
+/// 只看版本或帮助的调用（安装脚本、自更新的试运行、用户手动查看）：不是一次启动，不参与新版本的试用。
+fn info_only() -> bool {
+    std::env::args_os()
+        .skip(1)
+        .any(|a| matches!(a.to_str(), Some("--version" | "-V" | "--help" | "-h")))
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // 刚自更新上来的新版本：在读取配置、解析参数等任何可能失败的步骤之前计一次尝试，连续失败时回滚（ADR 0014）。
+    let exe = update::current_exe();
+    let trial = if info_only() {
+        Trial::off()
+    } else {
+        Trial::start(exe.clone())
+    };
     let sfly_home = home::resolve();
     let mut argv = std::env::args_os();
     let program = argv.next();
     let from_file = match &sfly_home {
-        Some(dir) => env_file_args(home::read_env_file(dir)?, &dir.join(home::ENV_FILE)),
+        Some(dir) => env_file_args(home::read_env_file(dir)?, &dir.join(home::ENV_FILE))?,
         None => Vec::new(),
     };
     let args = Args::parse_from(program.into_iter().chain(from_file).chain(argv));
@@ -141,22 +171,33 @@ async fn main() -> anyhow::Result<()> {
         python: args.python,
         telemetry_queue_bytes: args.log_queue_bytes,
         metric_queue_points: args.metric_queue_points,
+        update_read_timeout: Duration::from_secs(args.update_read_timeout),
         version: args
             .version_override
             .unwrap_or_else(|| AGENT_VERSION.to_string()),
-        self_update: SelfUpdate::detect(!args.no_auto_update, sfly_home.clone()),
+        self_update: SelfUpdate {
+            enabled: !args.no_auto_update,
+            exe,
+            home: sfly_home.clone(),
+        },
+        trial: std::sync::Arc::new(trial),
     };
 
     let result = tokio::select! {
         result = run(config) => result,
         _ = tokio::signal::ctrl_c() => Ok(()),
     };
-    // 环境准备失败：打印完整报告，以固定退出码退出（systemd 不再重启，ADR 0012）。
-    if let Err(error) = &result
-        && let Some(failure) = error.downcast_ref::<EnvironmentError>()
-    {
-        eprintln!("{failure}");
-        std::process::exit(environment::EXIT_CODE);
+    if let Err(error) = &result {
+        // 试用中的新版本环境准备失败：systemd 会重启它，连续失败后回滚（ADR 0014）。
+        if let Some(failure) = error.downcast_ref::<TrialFailed>() {
+            eprintln!("{failure}");
+            std::process::exit(update::trial::TRIAL_FAILURE_EXIT_CODE);
+        }
+        // 环境准备失败：打印完整报告，以固定退出码退出（systemd 不再重启，ADR 0012）。
+        if let Some(failure) = error.downcast_ref::<EnvironmentError>() {
+            eprintln!("{failure}");
+            std::process::exit(environment::EXIT_CODE);
+        }
     }
     result
 }

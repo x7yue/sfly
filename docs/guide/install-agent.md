@@ -15,9 +15,17 @@ curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
 安装脚本识别 CPU 架构，从控制面下载 sfly Agent {{SFLY_VERSION}} 并校验 sha256，写好配置，注册并启动 systemd 服务。
 
 - `--name`：Agent 名称，全局唯一，场景按名称选择 Agent。上面的命令用主机名，也可以换成别的名称。
-- `--token '<令牌>'`：控制面配置了注册令牌时必填，向平台管理员索取。令牌不对时 Agent 打印 `invalid agent token` 后退出。
+- `--token '<令牌>'`：控制面配置了注册令牌时必填，向平台管理员索取。令牌不对时 Agent 打印 `invalid agent token` 后退出。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，令牌不会留在 shell 历史和进程列表里（见下面的例子）。
 - `--slots <数量>`：同时执行的任务上限，默认 4。
+- `--no-auto-update`：不自动更新（见「版本与自动更新」）。
 - 完整参数：`curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --help`。
+
+用环境变量传令牌：先读入令牌（粘贴后回车，输入不显示），再运行安装命令：
+
+```text
+read -rs SFLY_TOKEN && export SFLY_TOKEN
+curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
+```
 
 Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动时它会准备运行环境，需要一两分钟：
 
@@ -46,14 +54,14 @@ loginctl enable-linger "$(id -un)"
 ~/.sfly/bin/sfly-agent
 ```
 
-环境准备失败（装不了 uv、创建不了 venv）时，Agent 打印失败的命令、完整输出和用到的镜像地址，以退出码 78 退出，systemd 不会再重启它。把这段输出发给平台管理员。
+环境准备失败（装不了 uv、创建不了 venv）时，Agent 打印失败的命令、完整输出和用到的镜像地址，以退出码 78 退出，systemd 不会再重启它。把这段输出发给平台管理员。刚自动更新上来的新版本例外：它以退出码 1 退出，由 systemd 重启，连续失败后恢复旧版本（见下面的「版本与自动更新」）。
 
 ## 开发机：`--dev`
 
-在写节点包的机器上加 `--dev`，除了 Agent，再装好 uv（PATH 上没有时，装到 `~/.local/bin`）和 `sfly` 命令行 {{SFLY_VERSION}}（`uv tool install`，从控制面的 sfly 索引 `{{SFLY_URL}}/simple/` 安装）。联调用的 Agent 名称约定为 `dev-<用户名>-<主机名>`，不和测试机上的 Agent 重名：
+在写节点包的机器上加 `--dev`，除了 Agent，再装好 uv（PATH 上没有时，装到 `~/.local/bin`）和 `sfly` 命令行 {{SFLY_VERSION}}（`uv tool install`，从控制面的 sfly 索引 `{{SFLY_URL}}/simple/` 安装）。加 `--dev` 时 `--name` 可以省略，联调用的 Agent 默认叫 `dev-<用户名>-<主机名>`（主机名不带域名），不和测试机上的 Agent 重名：
 
 ```sh
-curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "dev-$(id -un)-$(uname -n)" --dev
+curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --dev
 ```
 
 安装脚本提示 `~/.local/bin` 不在 PATH 上时，把它加进 shell 配置（例如 `~/.bashrc`），当前终端里先执行：
@@ -73,7 +81,7 @@ sfly --version
 |---|---|
 | `bin/sfly-agent` | Agent 二进制 |
 | `bin/uv` | Agent 管理的 uv |
-| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、令牌、槽位数 |
+| `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、令牌、槽位数、是否自动更新 |
 | `venv/` | 共享 venv：SDK 运行时和所有节点包都装在这里 |
 | `work/` | 任务工作目录，以及 `sfly dev` 连接的本地 socket `agent.sock` |
 
@@ -83,7 +91,7 @@ sfly --version
 ~/.sfly/bin/sfly-agent --help
 ```
 
-改完 `agent.env` 后重启 Agent（`systemctl --user restart sfly-agent`）。重新运行安装脚本会整个覆盖 `agent.env`：需要的令牌要再传一次 `--token`，自己加的键要再加一次。
+改完 `agent.env` 后重启 Agent（`systemctl --user restart sfly-agent`）。重新运行安装脚本时只改写它管理的键（`SFLY_SERVER`、`SFLY_CONTROL_PLANE_URL`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`、`SFLY_SLOTS`、`SFLY_NO_AUTO_UPDATE`），自己加的键保留；没有再传 `--token`、`--slots`、`--no-auto-update` 时沿用原来的值。
 
 ## 版本与自动更新
 
@@ -93,19 +101,15 @@ Agent 和控制面必须是同一个版本。控制面升级（或回滚）后�
 2. 「更新中 · 等待 N 个任务结束」：等手上的任务跑完、结果都上报给控制面。
 3. 「更新中 · 替换并重新启动」：替换 `bin/sfly-agent`（旧版本保留为 `bin/sfly-agent.prev`），以原来的参数重新启动，重新连上后恢复接任务。更新后的首次启动更新一次 uv。
 
-下载、校验或替换失败时显示「更新失败」和原因，Agent 继续以旧版本保持连接。用 `sfly dev` 加载的开发版本在更新后仍然有效。
+有长任务时不必一直等：在「下载新版本」或「等待任务结束」时，Agent 管理页的这一行有「立即更新」按钮。确认框列出会被终止的任务；确认后 Agent 按取消流程终止它们（任务以 `agent_lost` 失败，配置了重试的节点在更新后的 Agent 上重新执行），然后立即替换。更新失败、需要手动升级的 Agent 没有这个按钮。
 
-新版本连续 3 次启动失败（崩溃后被 systemd 重启，或连上控制面却握手失败；连不上控制面不算）时，Agent 恢复 `bin/sfly-agent.prev` 里的旧版本，把这个版本记为坏版本，页面上显示「更新失败」和原因。之后 Agent 只保持连接、不接任务，也不再自动尝试这个版本；控制面换成其他版本后重新尝试。替换后执行新版本这一步本身就失败时，Agent 同样恢复旧版本，在日志里写出手动处理步骤并退出；用 systemd 运行时会被重新拉起，前台运行时要自己重新启动。
+下载、校验或替换失败时（下载 30 秒没有收到数据也算）显示「更新失败」和原因，Agent 继续以旧版本保持连接，下次重新连上控制面时再试。用 `sfly dev` 加载的开发版本在更新后仍然有效。
+
+新版本连续 3 次启动失败时，Agent 恢复 `bin/sfly-agent.prev` 里的旧版本，把这个版本记为坏版本，页面上显示「更新失败」和原因。启动失败指新版本在连上控制面、准备好运行环境之前退出（读不了配置、崩溃、环境准备失败，之后被 systemd 重启），或连上控制面却握手失败；连不上控制面不算。之后 Agent 只保持连接、不接任务，也不再自动尝试这个版本；控制面换成其他版本，或回到 Agent 现在的版本之后，会重新尝试。替换后执行新版本这一步本身就失败时，Agent 同样恢复旧版本，在日志里写出手动处理步骤并退出；用 systemd 运行时会被重新拉起，前台运行时要自己重新启动。
 
 以下情况 Agent 不自动更新，页面上显示「需要手动升级」和原因：
 
-- 配置了不自动更新：
-
-  ```sh
-  echo 'SFLY_NO_AUTO_UPDATE=1' >> ~/.sfly/agent.env
-  ```
-
-  然后重启 Agent。需要严格控制版本的机器这样设置，升级时自己重新运行安装命令。
+- 配置了不自动更新：安装时加 `--no-auto-update`（`agent.env` 里写入 `SFLY_NO_AUTO_UPDATE=1`；也可以自己写这一行再重启 Agent，值可以是 `1`/`true`/`yes`）。需要严格控制版本的机器这样设置，升级时自己重新运行安装命令，这个设置会保留；要恢复自动更新，删掉 `agent.env` 里的这一行再重启 Agent。
 - Agent 二进制不在 `$SFLY_HOME/bin`（默认 `~/.sfly/bin`）下（不是安装脚本安装的），或者这个目录不可写。
 
 手动升级就是重新运行安装命令，名称、令牌和原来一样。
