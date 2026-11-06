@@ -49,6 +49,7 @@ import {
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
+import type { Mirrors } from "../public-config.js";
 import type { Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
@@ -173,7 +174,7 @@ export class Engine implements AgentSessionHandler {
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
 			sdkWheel?: (agentVersion: string) => { url: string; sha256: string } | undefined;
 			/** 控制面配置的镜像，原样在 Welcome 里下发（ADR 0012）；未配置的为空。 */
-			mirrors?: { pypi?: string; githubRelease?: string };
+			mirrors?: Mirrors;
 			/** 目标版本（控制面版本）、给定架构的 Agent 二进制（Welcome 里告诉 Agent，ADR 0014）；没有时为 undefined。 */
 			agentBinary?: (arch: string) => Promise<{ url: string; sha256: string } | undefined>;
 		},

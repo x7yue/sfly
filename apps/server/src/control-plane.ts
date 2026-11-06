@@ -25,6 +25,7 @@ import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
+import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createPreflight } from "./runs/preflight.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
@@ -163,6 +164,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	await hub.markAllOffline();
 	const orchestrations = new OrchestrationStore({ db: database.db, clock });
 	let publicHttpUrl = "";
+	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const preflight = createPreflight({ db: database.db, packages });
@@ -180,7 +182,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			const wheel = sdkWheels.find((w) => w.version === agentVersion);
 			return wheel && { url: sdkWheelUrl(publicHttpUrl, wheel), sha256: wheel.sha256 };
 		},
-		mirrors: { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror },
+		mirrors,
 		agentBinary: async (arch) => {
 			const binary = await agentBinaries.find(version, arch);
 			return binary && { url: agentBinaryUrl(publicHttpUrl, binary), sha256: binary.sha256 };
@@ -234,15 +236,16 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		retention,
 		artifacts,
 		agentToken: options.agentToken,
-		publicHttpUrl: () => publicHttpUrl,
-		publicGrpcUrl: () => publicGrpcUrl,
-		version,
+		publicConfig: {
+			httpUrl: () => publicHttpUrl,
+			grpcUrl: () => publicGrpcUrl,
+			version,
+			mirrors,
+		},
 		sdkWheels,
 		agentBinaries,
 		installScript,
-		mirrors: { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror },
 		docs,
-		docValues: () => ({ SFLY_URL: publicHttpUrl, SFLY_VERSION: version }),
 		webApp,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";

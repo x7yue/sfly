@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { sdkApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
+import type { PublicConfig } from "../public-config.js";
 import { type SdkWheel, sdkWheelUrl } from "../sdk/sdk-wheels.js";
 import { attachment } from "./content-disposition.js";
 import { contractDownload, contractRoute } from "./contract-route.js";
@@ -19,13 +20,14 @@ import { sendError } from "./errors.js";
  */
 export function registerSdkRoutes(
 	app: FastifyInstance,
-	deps: {
-		wheels: readonly SdkWheel[];
-		version: string;
-		publicHttpUrl: () => string;
-		mirrors: { pypi?: string; githubRelease?: string };
-	},
+	{ wheels, publicConfig }: { wheels: readonly SdkWheel[]; publicConfig: PublicConfig },
 ): void {
+	const deps = {
+		wheels,
+		version: publicConfig.version,
+		publicHttpUrl: publicConfig.httpUrl,
+		mirrors: publicConfig.mirrors,
+	};
 	contractRoute(app, sdkApi.projectSettings, async () => {
 		const githubRelease = deps.mirrors.githubRelease?.replace(/\/+$/, "");
 		return {
