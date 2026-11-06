@@ -136,7 +136,7 @@ export function buildHttpApi({
 			.send({ status: health, database: health, time: clock.now().toISOString() });
 	});
 
-	registerAgentRoutes(app, { hub, orchestrations });
+	registerAgentRoutes(app, { hub, engine, orchestrations });
 	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerRunRoutes(app, {

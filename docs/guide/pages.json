@@ -3,12 +3,42 @@
 		{
 			"slug": "quickstart",
 			"title": "快速开始",
-			"description": "从接入 sfly Agent 到发布第一个节点包的整体流程"
+			"description": "从安装 sfly Agent 到发布第一个节点包的整体流程，以及读取文档原文的方式"
+		},
+		{
+			"slug": "install-agent",
+			"title": "安装 Agent",
+			"description": "用 install.sh 一条命令安装 sfly Agent：systemd 服务、开发机的 --dev、agent.env 配置、自动更新与 --no-auto-update、旧 Agent 首次手动升级、镜像"
+		},
+		{
+			"slug": "init-project",
+			"title": "初始化项目",
+			"description": "sfly init 创建节点包项目：生成的文件、pyproject 里的镜像与 sfly 索引、给 AI 编程助手的 skill 与 sfly skill update"
 		},
 		{
 			"slug": "sdk-reference",
 			"title": "开发节点（SDK 参考）",
 			"description": "@node、输入输出的类型注解、ctx 的日志、进度、指标、产物、取消，sfly.testing 与 sfly 命令行"
+		},
+		{
+			"slug": "local-debug",
+			"title": "本地调试",
+			"description": "在开发机上直接执行节点：ruff、单元测试、sfly run 的输出与退出码、用 Ctrl-C 验证取消"
+		},
+		{
+			"slug": "integration",
+			"title": "联调",
+			"description": "sfly dev 把项目以 <包名>@dev 装到本机 Agent，在真实场景里运行"
+		},
+		{
+			"slug": "publish",
+			"title": "发布",
+			"description": "sfly build 与 sfly publish、版本号规则、在场景里换成新版本"
+		},
+		{
+			"slug": "ai-quickstart",
+			"title": "AI 编程助手快速开始",
+			"description": "给 AI 编程助手的提示词，以及它从零完成检查环境、安装、sfly init、写节点、本地调试、联调、发布的步骤"
 		}
 	]
 }

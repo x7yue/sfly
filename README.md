@@ -26,7 +26,8 @@
 | `pnpm test:e2e:stress <spec:行号>` | 复现 e2e 偶发失败：限制在 2 个 CPU 上重复运行（默认 40 次），修复后用同一命令确认失败降到 0。CI 上失败的用例是 check run 注释：`gh api repos/x7yue/sfly/check-runs/<job id>/annotations` |
 | `pnpm --filter @sfly/server dev` / `pnpm --filter @sfly/web dev` | 启动控制面 / 前端开发服务器（端口 3000，`/api` 代理到控制面） |
 | `pnpm bundle:server` | 构建前端和 SDK wheel，把控制面打成单文件，连同 `out/agent/` 里两个架构的 Agent 组装到 `out/server/`（镜像的构建上下文，ADR 0010、0011；先 `pnpm pack:agents`） |
-| `pnpm test:bundle` / `pnpm test:image` | 用打包后的控制面的 install.sh 安装 Agent 并跑通一条链 / 构建镜像并检查健康检查、页面、API 和两个架构的 Agent（都需要先 `pnpm bundle:server`；后者需要 docker 和 psql） |
+| `pnpm test:bundle` / `pnpm test:image` | 用打包后的控制面的 install.sh 安装 Agent 并跑通一条链，上一个 Release 的 Agent 在它上面跑完任务后自更新 / 构建镜像并检查健康检查、页面、API 和两个架构的 Agent（都需要先 `pnpm bundle:server`；后者需要 docker 和 psql） |
+| `pnpm fetch:previous-agent [--simulate [版本]]` | 从 GitHub Release 下载上一个发布版本的 Agent 到 `out/previous-agent/`，给 `test:bundle` 的跨版本自更新测试用（需要 `gh` 已登录）；`--simulate` 用当前打包的 Agent 扮演上一版本，本地验证自更新的全流程（见 `docs/agents/branching-and-release.md`） |
 | `pnpm pack:agent <target>` / `pnpm pack:agents` | 构建并打包 musl 静态链接的 Agent（`x86_64-unknown-linux-musl` / `aarch64-unknown-linux-musl`；在别的架构上用 rust-lld 交叉编译，不运行产物）到 `out/agent/`；后者打包两个架构 |
 | `pnpm release:version show \| check \| set X.Y.Z` | 查看 / 校验 / 修改版本号（Agent、SDK、控制面共用一个版本号） |
 
@@ -41,6 +42,7 @@
    - Release 附件：Agent `sfly-agent-X.Y.Z-{x86_64,aarch64}-unknown-linux-musl.tar.gz`、离线镜像 `sfly-server-X.Y.Z-linux-{amd64,arm64}.tar.gz`、SDK `sfly-X.Y.Z-py3-none-any.whl`、`SHA256SUMS`
 
 只支持 `X.Y.Z`，不支持预发布版本（见 ADR 0010）。不使用 Actions Artifacts；失败时直接重新运行工作流，草稿 Release 会被复用。
+CI 用上一个 Release 的 Agent 验证它能在当前控制面上跑完任务并自更新，含义与失败时的处理见 `docs/agents/branching-and-release.md`「跨版本自更新测试」。
 
 ## 部署与运维
 

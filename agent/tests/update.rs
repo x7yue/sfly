@@ -18,7 +18,8 @@ use std::time::Duration;
 use serde_json::json;
 use sfly_agent::AGENT_VERSION;
 use sfly_agent::proto::{
-    AgentUpdate, AgentUpdateState, Hello, InstallState, TaskStatus, agent_message,
+    AgentUpdate, AgentUpdateState, Hello, InstallState, TaskStatus, UpdateNow, agent_message,
+    server_message,
 };
 use support::packages::{HttpFixture, fresh_venv, sha256_hex, venv_of};
 use support::{FakeControlPlane, Received, repo_root, stub_task, stub_venv};
@@ -405,6 +406,116 @@ async fn self_update_also_downgrades_when_the_control_plane_is_older() {
     assert_eq!(cp.hello(0).await.agent_version, "9.9.9");
     assert_eq!(cp.hello(1).await.agent_version, AGENT_VERSION);
     assert_eq!(std::fs::read(&exe).unwrap(), new);
+}
+
+/// 以旧版本启动、版本一致时接下一个等取消的任务（wait_cancel：启动后写 ready_file，被取消时在清理代码里写 report_file），
+/// 然后控制面升级：重连后的 Welcome 给出新的目标版本和二进制（第一次下载前等 `delay`）。
+async fn holding_a_task_when_the_control_plane_upgrades(
+    dir: &Path,
+    delay: Duration,
+) -> (
+    FakeControlPlane,
+    HttpFixture,
+    tokio::process::Child,
+    PathBuf,
+    Vec<u8>,
+) {
+    let home = dir.join("home");
+    let exe = install_into(&home);
+    let http = HttpFixture::start().await;
+    let cp = control_plane("").await;
+    let child = agent_as(&exe, &home, &cp, "0.0.0").start();
+    cp.hello(0).await;
+    cp.assign(stub_task(
+        "task-long",
+        "wait_cancel",
+        json!({ "ready_file": dir.join("ready"), "report_file": dir.join("report") }),
+    ))
+    .await;
+    wait_for_file(&dir.join("ready")).await;
+
+    let new = new_binary();
+    offer_binary(&cp, &http, new.clone(), &sha256_hex(&new), delay);
+    cp.set_target_version(AGENT_VERSION);
+    cp.end_session();
+    assert_eq!(cp.hello(1).await.running_tasks.len(), 1);
+    (cp, http, child, exe, new)
+}
+
+async fn update_now(cp: &FakeControlPlane) {
+    cp.send(server_message::Body::UpdateNow(UpdateNow {})).await;
+}
+
+#[tokio::test]
+async fn update_now_terminates_tasks_through_the_cancel_flow_then_replaces_and_execs() {
+    let dir = scratch();
+    let (cp, _http, mut child, exe, new) =
+        holding_a_task_when_the_control_plane_upgrades(dir.path(), Duration::ZERO).await;
+    let pid = child.id();
+    let (waiting, _) = update_after(&cp, "waiting for tasks", 0, |u| {
+        u.state() == AgentUpdateState::WaitingForTasks
+    })
+    .await;
+    assert_eq!(waiting.remaining_tasks, 1, "{waiting:?}");
+
+    update_now(&cp).await;
+
+    // 按取消流程终止：节点的清理代码执行了，结果照常上报。
+    let (result, session) = cp.result("task-long").await;
+    assert_eq!(session, 1);
+    assert_eq!(result.status(), TaskStatus::Cancelled, "{result:?}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("report")).unwrap(),
+        "cancelled"
+    );
+    assert!(dir.path().join("home/work/task-long/cancel").exists());
+
+    // 结果被 Ack 后替换并 execve，新进程（同一个 PID）以目标版本握手。
+    let hello = cp.hello(2).await;
+    assert_eq!(hello.agent_version, AGENT_VERSION);
+    assert!(hello.running_tasks.is_empty(), "{hello:?}");
+    assert!(child.try_wait().unwrap().is_none(), "Agent 没有退出");
+    assert_eq!(child.id(), pid);
+    assert_eq!(std::fs::read(&exe).unwrap(), new, "二进制已替换");
+}
+
+#[tokio::test]
+async fn update_now_while_downloading_terminates_tasks_at_once_and_takes_no_new_ones() {
+    let dir = scratch();
+    let (cp, _http, _child, exe, new) =
+        holding_a_task_when_the_control_plane_upgrades(dir.path(), Duration::from_secs(2)).await;
+    update_after(&cp, "downloading", 0, |u| {
+        u.state() == AgentUpdateState::Downloading
+    })
+    .await;
+
+    update_now(&cp).await;
+    cp.assign(stub_task("task-rejected", "echo", json!({ "text": "hi" })))
+        .await;
+
+    // 不等下载完成就终止手上的任务。
+    let (result, at) = cp.result_at("task-long").await;
+    assert_eq!(result.status(), TaskStatus::Cancelled, "{result:?}");
+    let downloaded = cp.received().into_iter().take(at).any(|m| match m.body {
+        Some(agent_message::Body::Heartbeat(h)) => h.update.is_some_and(|u| {
+            matches!(
+                u.state(),
+                AgentUpdateState::WaitingForTasks | AgentUpdateState::Replacing
+            )
+        }),
+        _ => false,
+    });
+    assert!(!downloaded, "还在下载时就终止了任务");
+
+    // 下载好之后立即替换。
+    assert_eq!(cp.hello(2).await.agent_version, AGENT_VERSION);
+    assert_eq!(std::fs::read(&exe).unwrap(), new);
+    let rejected = cp.received().into_iter().any(|m| match m.body {
+        Some(agent_message::Body::Result(r)) => r.task_id == "task-rejected",
+        Some(agent_message::Body::Started(s)) => s.task_id == "task-rejected",
+        _ => false,
+    });
+    assert!(!rejected, "收到立即更新后派来的任务没有被接下");
 }
 
 #[tokio::test]

@@ -24,11 +24,17 @@ import {
 	type PackageMetadata,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
-import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
+import {
+	type AgentConnection,
+	type AgentHub,
+	devPackageInfo,
+	type RunningTaskView,
+} from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
 	type AgentUpdateInfo,
+	agents,
 	chainInstances,
 	type ErrorKind,
 	nodePackages,
@@ -97,6 +103,10 @@ export type TriggerOutcome =
 
 export type CancelOutcome =
 	| { ok: true; force: boolean }
+	| { ok: false; status: 404 | 409; code: string; message: string };
+
+export type UpdateNowOutcome =
+	| { ok: true; terminated: RunningTaskView[] }
 	| { ok: false; status: 404 | 409; code: string; message: string };
 
 const ERROR_KINDS: Record<ProtoErrorKind, ErrorKind> = {
@@ -325,6 +335,72 @@ export class Engine implements AgentSessionHandler {
 				.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt));
 			for (const chain of chains) await this.#cancelChain(step, updated as RunRow, chain);
 			return { ok: true, force };
+		});
+	}
+
+	/**
+	 * 立即更新（ADR 0014）：版本不一致的在线 Agent 手上的任务立即以 agent_lost 失败（按重试配置在它这里重新排队，
+	 * 等它以一致的版本重新连上再派发），事务提交后通知 Agent（UpdateNow）。Agent 按取消流程终止这些任务后照常上报结果，
+	 * 控制面已不再等这些尝试，只回 Ack。
+	 */
+	updateNow(agentName: string): Promise<UpdateNowOutcome> {
+		return this.#event(async (step) => {
+			const conn = this.deps.hub.connection(agentName);
+			if (!conn) {
+				const [known] = await step.tx
+					.select({ name: agents.name })
+					.from(agents)
+					.where(eq(agents.name, agentName));
+				return known
+					? {
+							ok: false,
+							status: 409,
+							code: "agent_offline",
+							message: `agent ${agentName} is offline`,
+						}
+					: { ok: false, status: 404, code: "not_found", message: "agent not found" };
+			}
+			if (!this.deps.hub.versionMismatch(conn.info)) {
+				return {
+					ok: false,
+					status: 409,
+					code: "version_matches",
+					message: `agent ${agentName} already runs the control plane version ${this.deps.hub.version}`,
+				};
+			}
+			if (conn.info.update?.state === "manual_upgrade_required") {
+				return {
+					ok: false,
+					status: 409,
+					code: "manual_upgrade_required",
+					message: `agent ${agentName} cannot update itself: ${conn.info.update.reason}`,
+				};
+			}
+			const held = await step.tx
+				.select({ task: tasks, orchestrationId: runs.orchestrationId })
+				.from(tasks)
+				.innerJoin(runs, eq(runs.id, tasks.runId))
+				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
+				.orderBy(asc(tasks.seq))
+				.for("update", { of: tasks });
+			const terminated = held.map(({ task, orchestrationId }) => ({
+				task_id: task.id,
+				run_id: task.runId,
+				orchestration_id: orchestrationId,
+				node_id: task.nodeId,
+				attempt: task.attempt,
+				status: task.status as RunningTaskView["status"],
+				started_at: task.startedAt?.toISOString() ?? null,
+			}));
+			for (const { task } of held) {
+				await this.#failTask(step, task, "agent_lost", "Agent 立即更新，终止了这个任务");
+			}
+			// 与派发消息一样在事务提交后发出。
+			step.assigns.push({
+				conn,
+				message: create(ServerMessageSchema, { body: { case: "updateNow", value: {} } }),
+			});
+			return { ok: true, terminated };
 		});
 	}
 

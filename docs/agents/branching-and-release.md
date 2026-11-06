@@ -37,3 +37,25 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - 版本号：0.x 阶段新功能升次版本号，修复升补丁版本号；只支持 `X.Y.Z`（ADR 0010）。
 - 只发布 `main` 上的提交，不维护旧版本的修复分支：有问题就修复后发新的补丁版本。
 - `v*` tag 推送后不能更新或删除（强制），Release 发布后附件与 tag 都不能修改（Immutable releases）。发错版本时，发一个新的补丁版本。
+
+## 跨版本自更新测试
+
+Agent 只跟随控制面的版本（ADR 0014）：升级控制面后，旧 Agent 要在新控制面上把手上的任务跑完，再自更新到新版本。
+所以相邻两个版本之间的会话协议（Hello、心跳、日志、结果与 Ack、Welcome 里的更新字段）必须兼容，由 CI 保证：
+
+- `pnpm fetch:previous-agent`（CI 的 Previous release agent 步骤）从 GitHub Release 下载「上一个 Release」——已发布的
+  `vX.Y.Z` 里低于当前版本号的最高版本——的 Agent 和同版本的 SDK wheel，按 `SHA256SUMS` 校验。只用 Release 附件，不用 Actions Artifacts（ADR 0010）。
+  发版前把版本号改成 X.Y.Z 之后，测试的就是「上一个发布版本的 Agent 能否升级到 X.Y.Z」。
+- `pnpm test:bundle` 的 `bundle-self-update.test.ts`：旧 Agent 装在 `$SFLY_HOME/bin`，先连上以上一个版本号启动的控制面、
+  接到一个闸门任务；任务运行中换成当前打包的控制面（同一个数据库和端口），验证 Agent 重连后下载新二进制、上报「等待任务结束」，
+  任务结束、结果被 Ack 后替换自己并 execve（进程号不变），以当前版本握手并照常接新任务。
+- 上一个 Release 的 Agent 还不支持自更新（二进制不认识 `--no-auto-update`）或没有更旧的 Release 时，测试标为跳过，
+  原因写在输出里。第一个带自更新的版本没有可比较的旧版本，从它的下一个版本起生效。
+- 本地验证全流程：`pnpm bundle:server && pnpm fetch:previous-agent --simulate && pnpm test:bundle`（用当前打包的 Agent
+  加隐藏的版本覆盖参数扮演版本 0.0.0）。
+
+失败时：先看卡在哪一步——旧 Agent 重连不上或报错、更新状态没有到「等待任务结束」、任务没有成功（例如被当成 `agent_lost`）、
+替换后没有以当前版本握手。这说明当前控制面与已经部署出去的上一个版本的 Agent 不兼容，升级后那些 Agent 会掉线或丢任务：
+修改当前代码，让它继续理解旧 Agent 的消息（proto 只做向后兼容的新增，新增的语义在旧 Agent 不发送时保持原样）。不要跳过或放宽
+这项测试来发版，也不能靠修改已发布的 Release 修复（Release 不可变）。确实需要不兼容的改动时，先与维护者确认，并在 Release 说明里
+写明老 Agent 要手动升级。`fetch:previous-agent` 本身失败（下载或校验不过）时查 `gh` 的登录、网络和那个 Release 的附件。

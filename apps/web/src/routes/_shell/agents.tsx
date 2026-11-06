@@ -1,8 +1,9 @@
 import { type AgentView, agentBinariesApi, agentsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ServerIcon, TerminalIcon } from "lucide-react";
+import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { SlotBar, type StatusKind, StatusPill } from "#/components/status";
@@ -56,7 +57,7 @@ function AgentsPage() {
 			<Panel>
 				<QueryView
 					query={agents}
-					loading={<TableSkeleton columns={8} />}
+					loading={<TableSkeleton columns={9} />}
 					errorTitle="无法加载 Agent"
 					isEmpty={(d) => d.agents.length === 0}
 					empty={
@@ -91,7 +92,16 @@ function ConnectHelp({ command }: { command: string }) {
 					<DialogDescription>
 						在测试机上运行下面的命令：识别架构、下载并校验 Agent，写入配置并注册 systemd 服务。
 						Agent 按名称注册，同名重新连接会替换旧连接。配置了注册令牌时加上{" "}
-						<code className="font-mono">--token &lt;令牌&gt;</code>。
+						<code className="font-mono">--token &lt;令牌&gt;</code>
+						。开发机、配置和自动更新见开发文档的「
+						<Link
+							to="/docs/$page"
+							params={{ page: "install-agent" }}
+							className="text-fg-1 underline decoration-fg-3 underline-offset-2 hover:decoration-fg-1"
+						>
+							安装 Agent
+						</Link>
+						」。
 					</DialogDescription>
 				</DialogHeader>
 				<CodeBlock code={command} />
@@ -119,6 +129,9 @@ function AgentTable({
 					<TableHead>已安装的节点包</TableHead>
 					<TableHead>被场景引用</TableHead>
 					<TableHead>最后在线</TableHead>
+					<TableHead>
+						<span className="sr-only">操作</span>
+					</TableHead>
 				</TableRow>
 			</TableHeader>
 			<TableBody>
@@ -230,6 +243,11 @@ function AgentRow({
 			</TableCell>
 			<TableCell className="font-mono text-xs text-fg-3">
 				{online ? "—" : formatDateTime(agent.last_seen_at)}
+			</TableCell>
+			<TableCell className="text-right">
+				{canUpdateNow(agent) && (
+					<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
+				)}
 			</TableCell>
 		</TableRow>
 	);
