@@ -41,9 +41,9 @@ use environment::{Mirrors, Setup};
 use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AgentUpdate, AgentUpdateState, AssignTask, CancelTask, DevPackage, ErrorKind,
-    Heartbeat, Hello, InstallState, InstallStatus, InstalledPackage, RunningTask, ServerMessage,
-    TaskAction, TaskResult, Welcome, agent_message, server_message,
+    AgentMessage, AgentUpdateState, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat,
+    Hello, InstallState, InstallStatus, InstalledPackage, RunningTask, ServerMessage, TaskAction,
+    TaskResult, Welcome, agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
@@ -320,8 +320,9 @@ impl Runtime {
             }
             Err(result) => result,
         };
-        self.cancels.lock().unwrap().remove(&key);
+        // 先交出结果再移出：排空判断（[`update::Updater::poll`]）任何时刻都能看到这个任务。
         let _ = self.results.send(result);
+        self.cancels.lock().unwrap().remove(&key);
     }
 
     /// 正在执行（含安装中）的任务。
@@ -651,6 +652,28 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     // 控制面在 Welcome 中放弃的任务：之后结束时不再上报结果。
     let mut abandoned: HashSet<(String, u32)> = HashSet::new();
     let mut delay = RECONNECT_MIN;
+    if let Some(from) = std::env::var_os(update::UPDATED_FROM_ENV) {
+        eprintln!(
+            "Agent 已从 {} 自更新到 {}",
+            from.to_string_lossy(),
+            config.version
+        );
+    }
+    let uv_marker = config
+        .manage_uv
+        .then(|| {
+            config
+                .uv
+                .parent()
+                .map(|dir| dir.join(environment::UV_UPDATE_MARKER))
+        })
+        .flatten();
+    let updater = update::Updater::new(
+        config.self_update.clone(),
+        config.version.clone(),
+        uv_marker,
+        runtime.http.clone(),
+    );
 
     loop {
         // 断线期间的安装状态已经过时：重新连接时 Hello 带上最新的已安装列表。
@@ -695,23 +718,15 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                         abandoned.insert(key);
                     }
                 }
-                // 版本与控制面不一致：控制面不再派新任务，在心跳里上报更新状态（ADR 0014）。
-                let update = config
-                    .self_update
-                    .status(&config.version, &connection.welcome);
-                if update.state() != AgentUpdateState::None {
-                    eprintln!(
-                        "warning: Agent 版本 {} 与控制面 {} 不一致，控制面不会派新任务；需要手动升级：{}",
-                        config.version, connection.welcome.target_agent_version, update.reason
-                    );
-                }
+                // 版本与控制面不一致：控制面不再派新任务；能自更新时开始（或继续）更新，在心跳里上报更新状态（ADR 0014）。
+                updater.on_welcome(&connection.welcome);
                 let channels = Channels {
                     results: &mut results_rx,
                     installs: &mut installs_rx,
                     telemetry: &mut telemetry_rx,
                     abandoned: &mut abandoned,
                 };
-                match serve(connection, &runtime, channels, &mut unacked, update).await {
+                match serve(connection, &runtime, channels, &mut unacked, &updater).await {
                     Ok(()) => eprintln!("control plane closed the stream"),
                     Err(error) => eprintln!("connection lost: {error:#}"),
                 }
@@ -800,7 +815,7 @@ async fn serve(
     runtime: &Arc<Runtime>,
     channels: Channels<'_>,
     unacked: &mut BTreeMap<(String, u32), TaskResult>,
-    update: AgentUpdate,
+    updater: &Arc<update::Updater>,
 ) -> anyhow::Result<()> {
     let Channels {
         results,
@@ -814,12 +829,14 @@ async fn serve(
     };
     let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let heartbeat_message = |running_tasks| AgentMessage {
-        body: Some(agent_message::Body::Heartbeat(Heartbeat {
-            running_tasks,
-            update: Some(update.clone()),
-        })),
-    };
+    let mut status = updater.subscribe();
+    let heartbeat_message =
+        |running_tasks, status: &mut watch::Receiver<proto::AgentUpdate>| AgentMessage {
+            body: Some(agent_message::Body::Heartbeat(Heartbeat {
+                running_tasks,
+                update: Some(status.borrow_and_update().clone()),
+            })),
+        };
     for result in unacked.values() {
         connection
             .outbound
@@ -827,18 +844,34 @@ async fn serve(
             .await?;
     }
     // 需要更新时立即上报一次，不等第一个心跳周期，界面上马上能看到。
-    if update.state() != AgentUpdateState::None {
+    if updater.status().state() != AgentUpdateState::None {
         connection
             .outbound
-            .send(heartbeat_message(runtime.held(unacked)))
+            .send(heartbeat_message(runtime.held(unacked), &mut status))
             .await?;
     }
     loop {
+        // 排空：手上的任务（含还没交给这里的结果）都结束、结果都被 Ack 后替换并 execve（成功时不返回）。
+        let remaining = runtime.held(unacked).len() + results.len();
+        if updater.poll(remaining) == update::Drain::Replace {
+            connection
+                .outbound
+                .send(heartbeat_message(Vec::new(), &mut status))
+                .await?;
+            updater.replace_and_exec().await;
+        }
         tokio::select! {
             biased;
             message = connection.inbound.message() => {
                 let Some(message) = message? else { return Ok(()) };
                 match message.body {
+                    // 排空中不接新任务：不执行、不续约，控制面按 agent_lost 处理。
+                    Some(server_message::Body::Assign(task)) if updater.draining() => {
+                        eprintln!(
+                            "ignored task {} attempt {}: the agent is updating itself",
+                            task.task_id, task.attempt
+                        );
+                    }
                     Some(server_message::Body::Assign(task)) => {
                         let cancel = runtime.accept(&task);
                         let runtime = runtime.clone();
@@ -858,7 +891,14 @@ async fn serve(
                 // 只为手上的任务续约；控制面据此发现 Agent 已经丢失的任务。
                 connection
                     .outbound
-                    .send(heartbeat_message(runtime.held(unacked)))
+                    .send(heartbeat_message(runtime.held(unacked), &mut status))
+                    .await?;
+            }
+            // 更新状态变化时立即上报。
+            Ok(()) = status.changed() => {
+                connection
+                    .outbound
+                    .send(heartbeat_message(runtime.held(unacked), &mut status))
                     .await?;
             }
             Some(result) = results.recv() => {
