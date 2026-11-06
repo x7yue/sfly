@@ -1,18 +1,19 @@
 //! 任务日志与进度的转发（docs/ARCHITECTURE.md §5.3）。
 //!
-//! 执行器的标准输出、标准错误（包括继承了它们的子进程）和 SDK 写入的事件文件 `events.jsonl`
+//! 执行器的标准输出、标准错误（包括继承了它们的子进程）和 SDK 写入的事件管道 `events.fifo`（[`EventsPipe`]，ADR 0015）
 //! 合并成同一条日志流：每行分配任务内递增的序号，批量（约每 100 毫秒一批）以 `LogBatch` 发往控制面。
 //!
 //! - 标准输出 → 来源 stdout、级别 info；标准错误 → 来源 stderr、级别 error；
-//! - 事件文件里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；
+//! - 事件管道里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；
 //! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次；
 //! - `{"type":"metric"}` 按「指标 × 秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
 //!   任务结束前发完。
 //!
 //! 同一批内按时间排序后再编号，所以不同来源的行大致按发生顺序排列；同一来源内保持写入顺序。
-//! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`（失败消息取标准错误尾部）。
+//! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`，每个文件 8 MiB，超过后改名为 `.1`
+//! 再新建（[`LogCopy`]）；失败消息里的标准错误尾部取自内存（[`Pump::finish`]）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -20,7 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use prost::Message as _;
 
 use serde::Deserialize;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -31,7 +32,7 @@ use crate::proto::{
     agent_message,
 };
 
-/// 读取事件文件、发送一批日志的间隔。
+/// 发送一批日志、检查进度与指标的间隔。
 const TICK: Duration = Duration::from_millis(100);
 /// 同一任务两次进度上报的最小间隔。
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
@@ -40,11 +41,13 @@ const METRIC_INTERVAL: Duration = Duration::from_secs(1);
 /// 一秒结束后再等这么多秒才发出它的点：在一秒最后时刻记录、下一秒才读到的事件仍并入那一秒，
 /// 不会变成控制面按重复丢弃的同一秒第二个点。
 const METRIC_GRACE_SECONDS: i64 = 1;
+/// 读出、还没处理的事件管道内容最多排这么多块（每块不超过一次读取的 64 KiB 加上跨块的不完整行）。
+const EVENT_CHUNKS: usize = 16;
 /// 一行的最大字节数；更长的行被拆成多行。
 const MAX_LINE_BYTES: usize = 64 * 1024;
 /// 一批最多的行数。
 const MAX_BATCH_LINES: usize = 1000;
-/// 执行器退出后，等待仍持有标准输出的后台子进程关闭管道的最长时间。
+/// 执行器退出后，等待仍持有标准输出（或事件管道）的后台子进程关闭管道的最长时间。
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// 断开期间默认最多排队的日志字节数。
@@ -154,21 +157,113 @@ impl TelemetryReceiver {
     }
 }
 
+/// SDK 写入结构化事件的命名管道（`SFLY_EVENTS`，ADR 0015）：数据只在内核缓冲区里，读走即释放。
+///
+/// 在启动执行器之前创建：先以非阻塞方式打开读端，再由 Agent 自己持有一个写端——没有任何写者时
+/// 读端读到的是 EOF，持有写端保证执行器打开管道之前不会提前结束；执行器退出后关掉它（[`Pump::finish`]），
+/// 其余写者也都关闭后读端读到 EOF。容量调到 `/proc/sys/fs/pipe-max-size`（失败时保持默认）。
+pub struct EventsPipe {
+    reader: Box<dyn AsyncRead + Unpin + Send>,
+    /// Agent 自己持有的写端（只为保持管道打开，从不写入）。
+    writer: Box<dyn Send>,
+}
+
+impl EventsPipe {
+    /// 在 `path` 创建命名管道（已存在的同名文件先删除）并打开两端。
+    #[cfg(unix)]
+    pub fn create(path: &Path) -> std::io::Result<EventsPipe> {
+        use nix::sys::stat::Mode;
+        use tokio::net::unix::pipe;
+
+        match std::fs::remove_file(path) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        nix::unistd::mkfifo(path, Mode::S_IRUSR | Mode::S_IWUSR).map_err(std::io::Error::from)?;
+        let reader = pipe::OpenOptions::new().open_receiver(path)?;
+        let writer = pipe::OpenOptions::new().open_sender(path)?;
+        #[cfg(target_os = "linux")]
+        grow_pipe(&reader);
+        Ok(EventsPipe {
+            reader: Box::new(reader),
+            writer: Box::new(writer),
+        })
+    }
+
+    #[cfg(not(unix))]
+    pub fn create(_path: &Path) -> std::io::Result<EventsPipe> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "named pipes are only supported on Unix",
+        ))
+    }
+}
+
+/// 把管道容量调到非特权进程允许的最大值；失败时保持默认（64 KiB）。
+#[cfg(target_os = "linux")]
+fn grow_pipe(fd: &impl std::os::fd::AsFd) {
+    use nix::fcntl::{FcntlArg, fcntl};
+
+    let Some(max) = std::fs::read_to_string("/proc/sys/fs/pipe-max-size")
+        .ok()
+        .and_then(|s| s.trim().parse::<i32>().ok())
+    else {
+        return;
+    };
+    let _ = fcntl(fd, FcntlArg::F_SETPIPE_SZ(max));
+}
+
 /// 一个任务的日志转发；执行器退出后调用 [`Pump::finish`] 发完剩余的日志和最后一次进度。
 pub struct Pump {
     exited: oneshot::Sender<()>,
     handle: JoinHandle<()>,
+    /// 事件管道上 Agent 自己的写端，执行器退出时关闭。
+    events_writer: Box<dyn Send>,
+    /// 标准错误最后的 [`STDERR_TAIL_BYTES`] 字节。
+    stderr_tail: Arc<Tail>,
+}
+
+/// 失败时附带的标准错误尾部的最大字节数。
+pub const STDERR_TAIL_BYTES: usize = 8 * 1024;
+
+/// 内存里保留的一个管道最后几千字节（错误摘要用，不依赖磁盘上的副本，#70）。
+#[derive(Default)]
+struct Tail(Mutex<Vec<u8>>);
+
+impl Tail {
+    fn push(&self, bytes: &[u8]) {
+        let Ok(mut tail) = self.0.lock() else { return };
+        tail.extend_from_slice(bytes);
+        if tail.len() > 2 * STDERR_TAIL_BYTES {
+            let excess = tail.len() - STDERR_TAIL_BYTES;
+            tail.drain(..excess);
+        }
+    }
+
+    fn get(&self) -> Vec<u8> {
+        let Ok(tail) = self.0.lock() else {
+            return Vec::new();
+        };
+        tail[tail.len().saturating_sub(STDERR_TAIL_BYTES)..].to_vec()
+    }
 }
 
 impl Pump {
-    /// 开始转发：读取管道和事件文件（事件文件可以还不存在）。
+    /// 开始转发：读取标准输出、标准错误和事件管道。
     pub fn start(
         task: &AssignTask,
         stdout: impl AsyncRead + Unpin + Send + 'static,
         stderr: impl AsyncRead + Unpin + Send + 'static,
+        events: EventsPipe,
         dir: PathBuf,
         telemetry: Telemetry,
     ) -> Pump {
+        let EventsPipe {
+            reader,
+            writer: events_writer,
+        } = events;
+        let (events_tx, events_rx) = mpsc::channel(EVENT_CHUNKS);
+        tokio::spawn(read_events(reader, events_tx));
         let (lines_tx, lines_rx) = mpsc::unbounded_channel();
         tokio::spawn(read_pipe(
             stdout,
@@ -176,13 +271,16 @@ impl Pump {
             LogSource::Stdout,
             LogLevel::Info,
             lines_tx.clone(),
+            None,
         ));
+        let stderr_tail = Arc::new(Tail::default());
         tokio::spawn(read_pipe(
             stderr,
             dir.join("stderr.log"),
             LogSource::Stderr,
             LogLevel::Error,
             lines_tx,
+            Some(stderr_tail.clone()),
         ));
         let (exited, exited_rx) = oneshot::channel();
         let forwarder = Forwarder {
@@ -191,20 +289,27 @@ impl Pump {
             telemetry,
             seq: 0,
             pending: Vec::new(),
-            events: EventsFile::new(dir.join("events.jsonl")),
             progress: None,
             progress_sent_at: None,
             metrics: Merger::default(),
             metrics_sent_at: None,
         };
-        let handle = tokio::spawn(forwarder.run(lines_rx, exited_rx));
-        Pump { exited, handle }
+        let handle = tokio::spawn(forwarder.run(lines_rx, events_rx, exited_rx));
+        Pump {
+            exited,
+            handle,
+            events_writer,
+            stderr_tail,
+        }
     }
 
-    /// 执行器已退出：读完管道（最多等 [`DRAIN_TIMEOUT`]）和事件文件，发出剩余日志和最后一次进度。
-    pub async fn finish(self) {
+    /// 执行器已退出：关掉 Agent 自己的事件管道写端，读完各个管道（最多等 [`DRAIN_TIMEOUT`]），
+    /// 发出剩余日志和最后一次进度。返回标准错误最后的 [`STDERR_TAIL_BYTES`] 字节。
+    pub async fn finish(self) -> Vec<u8> {
+        drop(self.events_writer);
         let _ = self.exited.send(());
         let _ = self.handle.await;
+        self.stderr_tail.get()
     }
 }
 
@@ -223,21 +328,16 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// 逐行读取一个管道，原始内容同时写到 `copy`。
+/// 逐行读取一个管道，原始内容同时写到 `copy`（写失败时忽略），并在 `tail` 里保留最后一段。
 async fn read_pipe(
     mut pipe: impl AsyncRead + Unpin,
     copy: PathBuf,
     source: LogSource,
     level: LogLevel,
     lines: mpsc::UnboundedSender<Pending>,
+    tail: Option<Arc<Tail>>,
 ) {
-    let mut file = match tokio::fs::File::create(&copy).await {
-        Ok(file) => Some(file),
-        Err(error) => {
-            eprintln!("cannot create {}: {error}", copy.display());
-            None
-        }
-    };
+    let mut copy = LogCopy::create(copy).await;
     let mut splitter = LineSplitter::default();
     let mut buf = vec![0u8; 16 * 1024];
     let emit = |text: String| {
@@ -253,14 +353,68 @@ async fn read_pipe(
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
-        if let Some(file) = file.as_mut() {
-            let _ = file.write_all(&buf[..n]).await;
+        if let Some(tail) = &tail {
+            tail.push(&buf[..n]);
         }
+        copy.write(&buf[..n]).await;
         splitter.push(&buf[..n], emit);
     }
     splitter.finish(emit);
-    if let Some(mut file) = file {
-        let _ = file.flush().await;
+    copy.flush().await;
+}
+
+/// 一个流在工作目录里的副本（`stdout.log` / `stderr.log`）：单个文件写到 [`LOG_FILE_MAX_BYTES`]
+/// 时改名为 `.1`（覆盖旧的 `.1`）再新建，每个流最多两个文件。写失败时忽略（控制面有完整日志）。
+struct LogCopy {
+    path: PathBuf,
+    file: Option<tokio::fs::File>,
+    written: u64,
+}
+
+/// `stdout.log` / `stderr.log` 单个文件的上限。
+const LOG_FILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+impl LogCopy {
+    async fn create(path: PathBuf) -> LogCopy {
+        let file = Self::open(&path).await;
+        LogCopy {
+            path,
+            file,
+            written: 0,
+        }
+    }
+
+    async fn open(path: &Path) -> Option<tokio::fs::File> {
+        match tokio::fs::File::create(path).await {
+            Ok(file) => Some(file),
+            Err(error) => {
+                eprintln!("cannot create {}: {error}", path.display());
+                None
+            }
+        }
+    }
+
+    async fn write(&mut self, bytes: &[u8]) {
+        if self.written > 0 && self.written + bytes.len() as u64 > LOG_FILE_MAX_BYTES {
+            self.flush().await;
+            self.file = None;
+            let mut rotated = self.path.clone().into_os_string();
+            rotated.push(".1");
+            let _ = tokio::fs::rename(&self.path, rotated).await;
+            self.file = Self::open(&self.path).await;
+            self.written = 0;
+        }
+        if let Some(file) = self.file.as_mut()
+            && file.write_all(bytes).await.is_ok()
+        {
+            self.written += bytes.len() as u64;
+        }
+    }
+
+    async fn flush(&mut self) {
+        if let Some(file) = self.file.as_mut() {
+            let _ = file.flush().await;
+        }
     }
 }
 
@@ -307,7 +461,7 @@ impl LineSplitter {
     }
 }
 
-/// 事件文件中的一行（sfly.context）。
+/// 事件管道中的一行（sfly.context）。
 #[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum Event {
@@ -339,50 +493,25 @@ enum Event {
     },
 }
 
-/// 持续读取事件文件新增的完整行。
-struct EventsFile {
-    path: PathBuf,
-    offset: u64,
-    partial: Vec<u8>,
-}
-
-impl EventsFile {
-    fn new(path: PathBuf) -> Self {
-        Self {
-            path,
-            offset: 0,
-            partial: Vec::new(),
-        }
-    }
-
-    /// 读出新增的完整行（最后不完整的一行留到下次）。
-    async fn read_new(&mut self) -> Vec<Vec<u8>> {
-        let Ok(mut file) = tokio::fs::File::open(&self.path).await else {
-            return Vec::new();
+/// 读取事件管道，把以换行结尾的完整内容按块交给 `chunks`，直到所有写端关闭（最后不完整的一行丢弃）。
+/// 通道有界：处理跟不上时不再读管道，写满后 SDK 的写入等待（背压），Agent 内存里不会越积越多。
+async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<Vec<u8>>) {
+    let mut partial = Vec::new();
+    let mut buf = vec![0u8; 64 * 1024];
+    loop {
+        let n = match pipe.read(&mut buf).await {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
         };
-        if file
-            .seek(std::io::SeekFrom::Start(self.offset))
-            .await
-            .is_err()
-        {
-            return Vec::new();
-        }
-        let mut bytes = Vec::new();
-        if file.read_to_end(&mut bytes).await.is_err() {
-            return Vec::new();
-        }
-        self.offset += bytes.len() as u64;
-        self.partial.extend_from_slice(&bytes);
-        let Some(last) = self.partial.iter().rposition(|&b| b == b'\n') else {
-            return Vec::new();
+        partial.extend_from_slice(&buf[..n]);
+        let Some(last) = partial.iter().rposition(|&b| b == b'\n') else {
+            continue;
         };
-        let rest = self.partial.split_off(last + 1);
-        let complete = std::mem::replace(&mut self.partial, rest);
-        complete
-            .split(|&b| b == b'\n')
-            .filter(|line| !line.is_empty())
-            .map(<[u8]>::to_vec)
-            .collect()
+        let rest = partial.split_off(last + 1);
+        let complete = std::mem::replace(&mut partial, rest);
+        if chunks.send(complete).await.is_err() {
+            return;
+        }
     }
 }
 
@@ -401,7 +530,6 @@ struct Forwarder {
     telemetry: Telemetry,
     seq: u64,
     pending: Vec<Pending>,
-    events: EventsFile,
     /// 还没上报的最新进度。
     progress: Option<Progress>,
     progress_sent_at: Option<Instant>,
@@ -414,79 +542,106 @@ impl Forwarder {
     async fn run(
         mut self,
         mut lines: mpsc::UnboundedReceiver<Pending>,
+        mut events: mpsc::Receiver<Vec<u8>>,
         mut exited: oneshot::Receiver<()>,
     ) {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut pipes_open = true;
+        let mut events_open = true;
         loop {
             tokio::select! {
                 line = lines.recv(), if pipes_open => match line {
                     Some(line) => {
                         self.pending.push(line);
-                        if self.pending.len() >= MAX_BATCH_LINES {
-                            self.flush_lines();
-                        }
+                        self.flush_full_batch();
                     }
                     None => pipes_open = false,
                 },
-                _ = tick.tick() => self.poll(false).await,
+                chunk = events.recv(), if events_open => match chunk {
+                    Some(chunk) => self.events(&chunk),
+                    None => events_open = false,
+                },
+                _ = tick.tick() => self.poll(false),
                 _ = &mut exited => break,
             }
         }
         // 执行器已退出：等管道关闭（后台子进程可能还持有它们，最多等一会儿）。
         let deadline = Instant::now() + DRAIN_TIMEOUT;
-        while pipes_open {
-            match tokio::time::timeout_at(deadline, lines.recv()).await {
-                Ok(Some(line)) => self.pending.push(line),
-                Ok(None) | Err(_) => pipes_open = false,
+        while pipes_open || events_open {
+            tokio::select! {
+                line = lines.recv(), if pipes_open => match line {
+                    Some(line) => self.pending.push(line),
+                    None => pipes_open = false,
+                },
+                chunk = events.recv(), if events_open => match chunk {
+                    Some(chunk) => self.events(&chunk),
+                    None => events_open = false,
+                },
+                () = tokio::time::sleep_until(deadline) => break,
             }
         }
-        self.poll(true).await;
+        self.poll(true);
     }
 
-    /// 读事件文件，发出这一批日志；进度到时间（或 `last`）时发出。
-    async fn poll(&mut self, last: bool) {
-        for line in self.events.read_new().await {
-            match serde_json::from_slice::<Event>(&line) {
-                Ok(Event::Log { ts, level, message }) => self.pending.push(Pending {
-                    time_unix_ms: ts.unwrap_or_else(now_ms),
-                    source: LogSource::Sdk,
-                    level: sdk_level(&level),
-                    text: message,
-                }),
-                Ok(Event::Progress {
-                    ts,
+    fn flush_full_batch(&mut self) {
+        if self.pending.len() >= MAX_BATCH_LINES {
+            self.flush_lines();
+        }
+    }
+
+    /// 处理事件管道里的一块完整内容。
+    fn events(&mut self, chunk: &[u8]) {
+        for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
+            self.event(line);
+            self.flush_full_batch();
+        }
+    }
+
+    /// 处理事件管道里的一行。
+    fn event(&mut self, line: &[u8]) {
+        match serde_json::from_slice::<Event>(line) {
+            Ok(Event::Log { ts, level, message }) => self.pending.push(Pending {
+                time_unix_ms: ts.unwrap_or_else(now_ms),
+                source: LogSource::Sdk,
+                level: sdk_level(&level),
+                text: message,
+            }),
+            Ok(Event::Progress {
+                ts,
+                current,
+                total,
+                message,
+            }) => {
+                self.progress = Some(Progress {
+                    task_id: self.task_id.clone(),
+                    attempt: self.attempt,
                     current,
                     total,
                     message,
-                }) => {
-                    self.progress = Some(Progress {
-                        task_id: self.task_id.clone(),
-                        attempt: self.attempt,
-                        current,
-                        total,
-                        message,
-                        time_unix_ms: ts.unwrap_or_else(now_ms),
-                    });
-                }
-                Ok(Event::Metric {
-                    ts,
-                    name,
-                    kind,
-                    value,
-                }) => self
-                    .metrics
-                    .add(ts.unwrap_or_else(now_ms), name, &kind, value),
-                // 不认识的内容原样记成一行 SDK 日志。
-                Err(_) => self.pending.push(Pending {
-                    time_unix_ms: now_ms(),
-                    source: LogSource::Sdk,
-                    level: LogLevel::Info,
-                    text: String::from_utf8_lossy(&line).into_owned(),
-                }),
+                    time_unix_ms: ts.unwrap_or_else(now_ms),
+                });
             }
+            Ok(Event::Metric {
+                ts,
+                name,
+                kind,
+                value,
+            }) => self
+                .metrics
+                .add(ts.unwrap_or_else(now_ms), name, &kind, value),
+            // 不认识的内容原样记成一行 SDK 日志。
+            Err(_) => self.pending.push(Pending {
+                time_unix_ms: now_ms(),
+                source: LogSource::Sdk,
+                level: LogLevel::Info,
+                text: String::from_utf8_lossy(line).into_owned(),
+            }),
         }
+    }
+
+    /// 发出这一批日志；进度、指标到时间（或 `last`）时发出。
+    fn poll(&mut self, last: bool) {
         self.flush_lines();
         let due = self
             .progress_sent_at

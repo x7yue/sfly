@@ -135,7 +135,7 @@ async fn each_task_runs_in_its_own_work_dir_with_the_shared_venv_isolated_from_a
         assert_eq!(env["SFLY_TASK"], path(&dir.join("task.json")));
         assert_eq!(env["SFLY_OUTPUT"], path(&dir.join("output.json")));
         assert_eq!(env["SFLY_ARTIFACTS"], path(&dir.join("artifacts")));
-        assert_eq!(env["SFLY_EVENTS"], path(&dir.join("events.jsonl")));
+        assert_eq!(env["SFLY_EVENTS"], path(&dir.join("events.fifo")));
         assert_eq!(env["SFLY_CANCEL"], path(&dir.join("cancel")));
         assert_eq!(env["PYTHONPATH"], Value::Null);
         assert_eq!(env["PYTHONHOME"], Value::Null);

@@ -83,7 +83,7 @@ sfly --version
 | `bin/uv` | Agent 管理的 uv |
 | `agent.env` | 配置：每行 `KEY=VALUE`，安装脚本写入控制面地址、名称、令牌、槽位数、是否自动更新、本机的镜像覆盖 |
 | `venv/` | 共享 venv：SDK 运行时和所有节点包都装在这里 |
-| `work/` | 任务工作目录，以及 `sfly dev` 连接的本地 socket `agent.sock` |
+| `work/` | 任务工作目录（每个任务一个子目录），以及 `sfly dev` 连接的本地 socket `agent.sock` |
 
 `agent.env` 里的键就是 Agent 参数对应的环境变量（`SFLY_AGENT_NAME`、`SFLY_TOKEN`、`SFLY_SLOTS`……）。命令行参数和环境变量优先于 `agent.env`。全部参数和对应的环境变量：
 
@@ -92,6 +92,14 @@ sfly --version
 ```
 
 改完 `agent.env` 后重启 Agent（`systemctl --user restart sfly-agent`）。重新运行安装脚本时只改写它管理的键（`SFLY_SERVER`、`SFLY_CONTROL_PLANE_URL`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`、`SFLY_SLOTS`、`SFLY_NO_AUTO_UPDATE`，以及镜像覆盖 `SFLY_INDEX_URL`、`SFLY_GITHUB_RELEASE_MIRROR`、`SFLY_PYTHON_INSTALL_MIRROR`），自己加的键保留；没有再传 `--token`、`--slots`、`--no-auto-update`、没有再设置镜像环境变量时沿用原来的值。
+
+任务目录里有任务的输入、输出、产物，以及标准输出 / 标准错误的副本 `stdout.log` / `stderr.log`（完整日志在控制面）。副本每个文件 8 MiB，写满后改名为 `stdout.log.1` / `stderr.log.1`（覆盖旧的）再写新文件，每个流最多占 16 MiB。任务结束、结果交给控制面后，任务目录默认保留 7 天：Agent 启动时和之后每小时删除超过保留期的目录。用 `SFLY_TASK_DIR_RETENTION`（参数 `--task-dir-retention`）修改，例如在 `agent.env` 里加一行（改完重启 Agent）：
+
+```ini
+SFLY_TASK_DIR_RETENTION=24h
+```
+
+可以写成 `30m`、`24h`、`7d` 这样；`0` 表示任务结束后立即删除。正在执行的任务、`.dev` 等以点开头的目录和 `agent.sock` 不会被删除。
 
 ## 版本与自动更新
 

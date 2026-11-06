@@ -3,12 +3,14 @@
 `sfly.testing` 和 `sfly run` 共用这里。和 Agent 一样按本地协议（docs/ARCHITECTURE.md §5.4）
 启动执行器子进程 `python -u -m sfly.runner`，只把读取事件、存放产物的一端换成本地实现：
 
+- 事件：和 Agent 一样经工作目录里的命名管道 `events.fifo` 读取（ADR 0015），不写事件文件；
+
 - 参数校验：按节点类型的输入 schema 检查必填和类型（与控制面派发前的检查相同，
   packages/orchestration/src/inputs.ts），不通过时以 `config_error` 失败，不启动执行器；
 - 输出上限、指标声明检查、产物引用：由执行器和 `Context` 负责，与 Agent 上完全相同
   （本地没有产物下载地址，产物引用是本地文件路径）；
 - 日志：标准输出 → 来源 stdout、级别 info，标准错误 → 来源 stderr、级别 error，
-  事件文件里的日志 → 来源 sdk、级别取 SDK 记录的级别，不认识的行原样记成 sdk info 日志
+  事件管道里的日志 → 来源 sdk、级别取 SDK 记录的级别，不认识的行原样记成 sdk info 日志
   （agent/src/logs.rs）；进度和指标保留每一次上报（Agent 上报前按秒合并）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
@@ -31,11 +33,11 @@ from typing import IO, Any, Literal
 
 #: 取消时从 SIGTERM 到强制杀掉的默认宽限期（秒，docs/SEMANTICS.md §3.4）。
 DEFAULT_GRACE = 10.0
-#: 读取事件文件、检查取消和进程状态的间隔（秒）。
+#: 处理读到的日志与事件、检查取消和进程状态的间隔（秒）。
 _TICK = 0.05
 #: 一行日志的最大字节数；更长的行被拆成多行（与 Agent 相同）。
 _MAX_LINE_BYTES = 64 * 1024
-#: 执行器退出后，等待仍持有标准输出的后台子进程关闭管道的最长时间（秒）。
+#: 执行器退出后，等待仍持有标准输出（或事件管道）的后台子进程关闭管道的最长时间（秒）。
 _DRAIN_TIMEOUT = 2.0
 #: 失败时附带的标准错误尾部的最大字节数。
 _STDERR_TAIL_BYTES = 8 * 1024
@@ -227,31 +229,90 @@ _SDK_LEVELS = {
 }
 
 
+class _EventsPipe:
+    """SDK 写入事件的命名管道（`SFLY_EVENTS`，与 Agent 相同，ADR 0015）。
+
+    在启动执行器之前创建：先以非阻塞方式打开读端，再自己持有一个写端（没有任何写者时读端读到
+    EOF），然后把读端改回阻塞模式交给读取线程。执行器退出后 `close_writer()`，其余写者也都关闭后
+    读取线程结束。
+    """
+
+    def __init__(self, path: Path) -> None:
+        path.unlink(missing_ok=True)
+        os.mkfifo(path, 0o600)
+        self.read_fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        self._write_fd: int | None = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
+        _grow_pipe(self.read_fd)
+        os.set_blocking(self.read_fd, True)
+
+    def close_writer(self) -> None:
+        if self._write_fd is not None:
+            os.close(self._write_fd)
+            self._write_fd = None
+
+
+def _grow_pipe(fd: int) -> None:
+    """把管道容量调到 `/proc/sys/fs/pipe-max-size`；不支持或失败时保持默认。"""
+    try:
+        import fcntl
+
+        size = int(Path("/proc/sys/fs/pipe-max-size").read_text(encoding="ascii"))
+        fcntl.fcntl(fd, fcntl.F_SETPIPE_SZ, size)
+    except (ImportError, AttributeError, OSError, ValueError):
+        pass
+
+
 class _Pump:
-    """读取执行器的标准输出 / 标准错误和事件文件，转成日志、进度、指标。"""
+    """读取执行器的标准输出 / 标准错误和事件管道，转成日志、进度、指标。"""
 
     def __init__(
         self,
         execution: Execution,
-        events: Path,
+        events: _EventsPipe,
         on_log: Callable[[LogLine], None] | None,
         on_progress: Callable[[Progress], None] | None,
         on_metric: Callable[[MetricPoint], None] | None,
     ) -> None:
         self._execution = execution
         self._events = events
-        self._offset = 0
-        self._partial = b""
         self._lines: queue.Queue[LogLine] = queue.Queue()
+        self._event_lines: queue.Queue[bytes] = queue.Queue()
         self._readers: list[threading.Thread] = []
         self._on_log = on_log
         self._on_progress = on_progress
         self._on_metric = on_metric
+        #: 标准错误最后的 `_STDERR_TAIL_BYTES` 字节（错误摘要用，不读 stderr.log）。
+        self.stderr_tail = bytearray()
+        self._start(self._read_events)
+
+    def _start(self, target: Callable[[], None]) -> None:
+        thread = threading.Thread(target=target, daemon=True)
+        thread.start()
+        self._readers.append(thread)
+
+    def _read_events(self) -> None:
+        partial = b""
+        fd = self._events.read_fd
+        try:
+            while data := os.read(fd, 64 * 1024):
+                complete, sep, partial = (partial + data).rpartition(b"\n")
+                if not sep:
+                    continue
+                for line in complete.split(b"\n"):
+                    if line:
+                        self._event_lines.put(line)
+        finally:
+            os.close(fd)
 
     def read_pipe(self, pipe: IO[bytes], copy: Path, source: str, level: str) -> None:
+        tail = self.stderr_tail if source == "stderr" else None
+
         def run() -> None:
             with pipe, copy.open("wb") as out:
                 for raw in iter(pipe.readline, b""):
+                    if tail is not None:
+                        tail.extend(raw)
+                        del tail[:-_STDERR_TAIL_BYTES]
                     out.write(raw)
                     out.flush()
                     line = raw[:-1] if raw.endswith(b"\n") else raw
@@ -262,9 +323,7 @@ class _Pump:
                         text = chunk.decode("utf-8", errors="replace")
                         self._lines.put(LogLine(_now_ms(), source, level, text))
 
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
-        self._readers.append(thread)
+        self._start(run)
 
     def poll(self) -> None:
         """读出新增的事件和管道里的行；同一批内按时间排序（与 Agent 相同）。"""
@@ -274,7 +333,11 @@ class _Pump:
                 batch.append(self._lines.get_nowait())
             except queue.Empty:
                 break
-        for raw in self._read_events():
+        while True:
+            try:
+                raw = self._event_lines.get_nowait()
+            except queue.Empty:
+                break
             self._event(raw, batch)
         batch.sort(key=lambda line: line.ts)
         for line in batch:
@@ -283,26 +346,12 @@ class _Pump:
                 self._on_log(line)
 
     def drain(self) -> None:
-        """执行器已退出：等管道关闭（最多等一会儿），读完剩余内容。"""
+        """执行器已退出：关掉自己的事件管道写端，等各个管道关闭（最多等一会儿），读完剩余内容。"""
+        self._events.close_writer()
         deadline = time.monotonic() + _DRAIN_TIMEOUT
         for thread in self._readers:
             thread.join(max(0.0, deadline - time.monotonic()))
         self.poll()
-
-    def _read_events(self) -> list[bytes]:
-        try:
-            with self._events.open("rb") as f:
-                f.seek(self._offset)
-                data = f.read()
-        except FileNotFoundError:
-            return []
-        self._offset += len(data)
-        self._partial += data
-        complete, sep, rest = self._partial.rpartition(b"\n")
-        if not sep:
-            return []
-        self._partial = rest
-        return [line for line in complete.split(b"\n") if line]
 
     def _event(self, raw: bytes, batch: list[LogLine]) -> None:
         try:
@@ -355,14 +404,6 @@ def _group_alive(pgid: int) -> bool:
     return True
 
 
-def _stderr_tail(path: Path) -> str:
-    try:
-        data = path.read_bytes()
-    except OSError:
-        return ""
-    return data[-_STDERR_TAIL_BYTES:].decode("utf-8", errors="replace").rstrip()
-
-
 def execute(
     entry: str,
     inputs: Mapping[str, Any],
@@ -413,7 +454,8 @@ def execute(
         ),
         encoding="utf-8",
     )
-    output, cancel_marker, events = work / "output.json", work / "cancel", work / "events.jsonl"
+    output, cancel_marker = work / "output.json", work / "cancel"
+    events = _EventsPipe(work / "events.fifo")
     env = {k: v for k, v in os.environ.items() if not k.startswith("SFLY_")}
     paths = [os.fspath(p) for p in pythonpath]
     if os.environ.get("PYTHONPATH"):
@@ -424,21 +466,25 @@ def execute(
         SFLY_TASK=str(task),
         SFLY_OUTPUT=str(output),
         SFLY_ARTIFACTS=str(work / "artifacts"),
-        SFLY_EVENTS=str(events),
+        SFLY_EVENTS=str(work / "events.fifo"),
         SFLY_CANCEL=str(cancel_marker),
     )
-    # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。
-    proc = subprocess.Popen(
-        [python, "-u", "-m", "sfly.runner"],
-        cwd=work,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
-    assert proc.stdout is not None and proc.stderr is not None
     pump = _Pump(execution, events, on_log, on_progress, on_metric)
+    # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。
+    try:
+        proc = subprocess.Popen(
+            [python, "-u", "-m", "sfly.runner"],
+            cwd=work,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+    except BaseException:
+        events.close_writer()
+        raise
+    assert proc.stdout is not None and proc.stderr is not None
     pump.read_pipe(proc.stdout, work / "stdout.log", "stdout", "info")
     pump.read_pipe(proc.stderr, work / "stderr.log", "stderr", "error")
     cancellation = cancellation or Cancellation()
@@ -454,6 +500,7 @@ def execute(
         # 回调抛出异常（或测试被中断）时不留下孤儿进程。
         _signal_group(proc.pid, signal.SIGKILL)
         proc.wait()
+        events.close_writer()
         raise
 
     if cancellation.requested and proc.poll() is None:
@@ -484,7 +531,7 @@ def execute(
         fail(
             "node_error",
             f"执行器异常退出（退出码 {proc.returncode}），没有写出结果\n\n"
-            + _stderr_tail(work / "stderr.log"),
+            + pump.stderr_tail[-_STDERR_TAIL_BYTES:].decode("utf-8", errors="replace").rstrip(),
         )
     return execution
 

@@ -226,6 +226,52 @@ def flood(ctx: Context, lines: int = 1000, interval: float = 0.0) -> dict[str, A
     return {"lines": lines}
 
 
+@node(title="大量输出", outputs=[])
+def spew(ctx: Context, stdout_mib: float = 0, stderr_mib: float = 0) -> None:
+    """日志副本轮换测试用：向标准输出 / 标准错误各写出约这么多 MiB（每行 1 KiB）。
+
+    每个流最后写一行「最后一行」。
+    """
+    line = "x" * 1023 + "\n"
+    for stream, mib in ((sys.stdout, stdout_mib), (sys.stderr, stderr_mib)):
+        for _ in range(int(mib * 1024)):
+            stream.write(line)
+        stream.write("最后一行\n")
+        stream.flush()
+
+
+@node(title="写盘失败", outputs=[])
+def write_failure(ctx: Context, message: str = "OSError: [Errno 122] Disk quota exceeded") -> None:
+    """错误摘要测试用（#70）：往标准错误打一行 message，然后模拟磁盘写满——
+
+    工作目录里的 stderr.log 读不到（换成同名目录），执行器写 output.json 失败而异常退出
+    （临时文件路径被同名目录占住）。
+    """
+    deadline = time.monotonic() + 10
+    while not os.path.exists("stderr.log") and time.monotonic() < deadline:
+        time.sleep(0.01)
+    print(message, file=sys.stderr, flush=True)
+    os.remove("stderr.log")
+    os.mkdir("stderr.log")
+    os.mkdir(os.environ["SFLY_OUTPUT"] + ".tmp")
+
+
+@node(
+    title="高频指标",
+    outputs=["count"],
+    metrics=[Metric("total", "", "counter", "累计上报次数")],
+    primary_metric="total",
+)
+def metric_burst(ctx: Context, seconds: float = 3.0) -> dict[str, Any]:
+    """事件通道测试用：在 seconds 秒内尽快上报累计计数 total（每次加一），返回上报次数。"""
+    deadline = time.monotonic() + seconds
+    count = 0
+    while time.monotonic() < deadline:
+        count += 1
+        ctx.metric("total", float(count))
+    return {"count": count}
+
+
 @node(
     title="指标",
     outputs=[],

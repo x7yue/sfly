@@ -8,6 +8,7 @@ use sfly_agent::environment::{self, EnvironmentError};
 use sfly_agent::home;
 use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
 use sfly_agent::metrics::DEFAULT_METRIC_QUEUE_POINTS;
+use sfly_agent::retention;
 use sfly_agent::update::{self, SelfUpdate, Trial, TrialFailed};
 use sfly_agent::{AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
 
@@ -43,6 +44,13 @@ struct Args {
     /// 任务工作目录的根目录（每个任务一个子目录）；默认 `$SFLY_HOME/work`。
     #[arg(long, env = "SFLY_WORK_DIR")]
     work_dir: Option<PathBuf>,
+    /// 任务目录在结果被控制面确认后保留多久，例如 `30m`、`24h`、`7d`；`0` 表示立即删除。
+    /// Agent 启动时和之后每小时删除超过保留期的任务目录（上次运行留下的按目录的修改时间算）。
+    #[arg(long, env = "SFLY_TASK_DIR_RETENTION", default_value = "7d", value_parser = retention::parse_retention)]
+    task_dir_retention: Duration,
+    /// 两次扫描工作目录的间隔秒数。
+    #[arg(long, env = "SFLY_TASK_DIR_SWEEP_INTERVAL", default_value_t = retention::SWEEP_INTERVAL.as_secs(), hide = true)]
+    task_dir_sweep_interval: u64,
     /// PyPI 镜像地址（简单索引），覆盖控制面下发的 PyPI 镜像：Agent 所有访问 PyPI 的 uv 调用
     /// （安装节点包依赖）都用它。
     #[arg(long, env = "SFLY_INDEX_URL")]
@@ -177,6 +185,8 @@ async fn main() -> anyhow::Result<()> {
         slots: args.slots,
         venv,
         work_dir,
+        task_dir_retention: args.task_dir_retention,
+        task_dir_sweep_interval: Duration::from_secs(args.task_dir_sweep_interval.max(1)),
         mirrors: environment::LocalMirrors {
             pypi: args.index_url,
             github_release: args.github_release_mirror,

@@ -65,7 +65,7 @@ flowchart LR
   AG -- "HTTP：下载节点包 · 上传产物" --> API
   AG --> VENV
   AG -- "启动 / 终止" --> PROC
-  PROC -- "JSONL 事件文件 · stdout/stderr" --> AG
+  PROC -- "JSONL 事件（命名管道）· stdout/stderr" --> AG
   CLI -- "HTTP：发布节点包" --> API
 ```
 
@@ -222,7 +222,7 @@ flowchart TD
   B -- 是 --> D["创建工作目录 work/&lt;task_id&gt;/"]
   C -- 成功 --> D
   D --> E["写入 task.json，启动子进程<br/>venv/python -m sfly.runner"]
-  E --> F["读取 stdout/stderr 和 events.jsonl<br/>批量转发日志和进度"]
+  E --> F["读取 stdout/stderr 和 events.fifo<br/>批量转发日志和进度"]
   F --> G{"超时 / 取消？"}
   G -- 是 --> H["优雅终止 → 宽限 10 秒 → 杀掉进程树"]
   G -- 否 --> I["进程退出，读取 output.json"]
@@ -232,16 +232,20 @@ flowchart TD
 
 ### 5.4 Agent 与执行器之间的本地协议
 
-执行器在共享 venv 中运行，**SDK 运行时不能引入任何第三方依赖**，以免和用户节点包冲突。因此本地协议只用文件和环境变量：
+执行器在共享 venv 中运行，**SDK 运行时不能引入任何第三方依赖**，以免和用户节点包冲突。因此本地协议只用文件、命名管道和环境变量：
 
 | 环境变量 | 内容 |
 |---|---|
 | `SFLY_TASK` | `task.json` 路径：节点入口、已解析的输入、超时等 |
 | `SFLY_OUTPUT` | 执行器写入返回值 `output.json` 的路径 |
-| `SFLY_EVENTS` | SDK 追加写入结构化日志和进度的 JSONL 文件；Agent 持续读取新增内容 |
+| `SFLY_EVENTS` | 命名管道 `events.fifo` 的路径：SDK 以追加方式打开，逐行写入结构化日志、进度和指标（JSONL）；Agent 在启动执行器前创建它并打开读端（ADR 0015） |
 | `SFLY_ARTIFACTS` | 产物目录，任务结束后由 Agent 上传 |
 | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀；`ctx.artifacts.save()` 返回的产物引用 = 前缀 + 按路径段编码的名称 |
 | `SFLY_CANCEL` | 取消标记文件；出现时 `ctx.cancelled()` 返回 true |
+
+- 事件管道：Agent 先以非阻塞方式打开读端、自己持有一个写端（没有写者时读端读到 EOF），再启动执行器；容量调到 `/proc/sys/fs/pipe-max-size`。数据只在内核缓冲区里，有数据时立即读取；写满时 SDK 的写入阻塞等待，不丢事件。执行器退出后 Agent 关掉自己的写端，把剩余数据读完（后台子进程还持有写端时最多等 2 秒）。本地调试（`sfly run`、`sfly.testing`）用同样的做法。
+- 工作目录 `work/<task_id>/` 里还有 `task.json`、`output.json`、`artifacts/`、取消标记，以及 Agent 写的标准输出 / 标准错误副本 `stdout.log` / `stderr.log`：每个文件 8 MiB，超过后改名为 `.1`（覆盖旧的 `.1`）再新建，每个流最多 16 MiB，写失败时忽略。执行器异常退出时，错误摘要附带的标准错误末尾（8 KiB）取自 Agent 内存，不读 `stderr.log`。
+- 任务目录的保留期：`--task-dir-retention`（`SFLY_TASK_DIR_RETENTION`），默认 `7d`，`0` 表示结果被 Ack 后立即删除。结果被 Ack 时写结束标记 `.finished`；Agent 启动时和之后每小时扫描工作目录，删除超过保留期的任务目录（有标记的按标记时间，没有的按目录修改时间）。正在执行或结果未 Ack 的任务、以点开头的目录（`.dev`、`.install`）、`agent.sock`、既没有标记也没有 `task.json` 的子目录不动。
 
 进程树终止方式：Linux 使用进程组，Windows 使用 Job Object。
 
