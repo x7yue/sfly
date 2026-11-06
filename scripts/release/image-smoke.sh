@@ -52,13 +52,17 @@ for _ in $(seq 60); do
 done
 [[ $status == healthy ]] || fail "健康检查没有转为 healthy（$status）"
 
+# 先取完整输出再检查，不用 `cmd | grep -q`：grep -q 匹配到就退出，还在输出的 cmd 收到 SIGPIPE，
+# 在 pipefail 下整条管道失败（匹配到了反而报失败）。
+contains() { grep -q "${@:2}" <<<"$1"; }
 base=http://127.0.0.1:$http_port
-curl -fsS "$base/api/health" | grep -q '"status":"ok"' || fail "/api/health"
-curl -fsS -H 'accept: text/html' "$base/" | grep -qi '<!doctype html>' || fail "页面"
+contains "$(curl -fsS "$base/api/health")" '"status":"ok"' || fail "/api/health"
+contains "$(curl -fsS -H 'accept: text/html' "$base/")" -i '<!doctype html>' || fail "页面"
 curl -fsS "$base/api/agents" >/dev/null || fail "/api/agents"
-curl -fsS "$base/sdk/python" | grep -q "\"version\":\"$version\"" || fail "SDK wheel $version"
+contains "$(curl -fsS "$base/sdk/python")" "\"version\":\"$version\"" || fail "SDK wheel $version"
 [[ $(docker exec "$container" id -u) != 0 ]] || fail "容器以 root 运行"
 docker exec "$container" sh -c 'touch /data/.write-test && rm /data/.write-test' || fail "/data 不可写"
-docker logs "$container" 2>&1 | grep -q "sfly control plane $version" || fail "启动日志里没有版本号 $version"
+contains "$(docker logs "$container" 2>&1)" "sfly control plane $version" ||
+	fail "启动日志里没有版本号 $version"
 
 echo "镜像冒烟通过：$image（sfly $version）"

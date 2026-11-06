@@ -22,9 +22,11 @@ if command -v rustup >/dev/null; then rustup target add "$target" >/dev/null; fi
 CARGO_PROFILE_RELEASE_STRIP=symbols cargo build --release --locked -p sfly-agent --target "$target"
 bin=target/$target/release/sfly-agent
 
-if readelf --dynamic "$bin" | grep -q NEEDED; then
+# 先取完整输出再检查：`readelf | grep -q` 在 pipefail 下会因 SIGPIPE 把匹配到误报为失败。
+dynamic=$(readelf --dynamic "$bin")
+if grep -q NEEDED <<<"$dynamic"; then
 	echo "$bin 不是静态链接：" >&2
-	readelf --dynamic "$bin" | grep NEEDED >&2
+	grep NEEDED <<<"$dynamic" >&2
 	exit 1
 fi
 reported=$("$bin" --version)
