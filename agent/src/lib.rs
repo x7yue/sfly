@@ -78,8 +78,9 @@ pub struct Config {
     pub venv: PathBuf,
     /// 任务工作目录的根目录。
     pub work_dir: PathBuf,
-    /// 安装节点包依赖用的 PyPI 镜像地址，优先于控制面下发的镜像；都没有时使用 uv 自己的配置。
-    pub index_url: Option<String>,
+    /// 本机对镜像的覆盖，优先于控制面下发的镜像（[`environment::Mirrors`]）；
+    /// 都没有时使用 uv 自己的配置。
+    pub mirrors: environment::LocalMirrors,
     /// uv 可执行文件。
     pub uv: PathBuf,
     /// uv 由 Agent 管理（没有指定 `--uv`，`uv` 是 `SFLY_HOME/bin/uv`）：不存在时从镜像安装（[`environment`]）。
@@ -115,7 +116,7 @@ impl Config {
             slots: DEFAULT_SLOTS,
             venv: PathBuf::from("venv"),
             work_dir: PathBuf::from("work"),
-            index_url: None,
+            mirrors: environment::LocalMirrors::default(),
             uv: PathBuf::from("uv"),
             manage_uv: false,
             dev_socket: None,
@@ -640,7 +641,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         installer: Installer {
             venv: SharedVenv::new(venv),
             scratch: scratch.clone(),
-            index_url: std::sync::Mutex::new(config.index_url.clone()),
+            index_url: std::sync::Mutex::new(config.mirrors.pypi.clone()),
             uv: config.uv.clone(),
             http: http.clone(),
         },
@@ -716,9 +717,11 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                 delay = RECONNECT_MIN;
                 // uv 和共享 venv 在收到 Welcome 之后才准备：控制面在 Welcome 里下发镜像配置（ADR 0012）。
                 // 准备失败时 Agent 退出，不带着坏环境继续连接。
-                let mirrors = Mirrors::from_welcome(&connection.welcome);
+                // 本机的覆盖优先。节点包依赖（`uv pip install`）是 Agent 唯一访问 PyPI 的 uv 调用：
+                // SDK 运行时 `--no-deps` 安装，`uv venv` 不解析包。
+                let mirrors = Mirrors::new(&connection.welcome, &config.mirrors);
                 *runtime.installer.index_url.lock().unwrap() =
-                    config.index_url.clone().or_else(|| mirrors.pypi.clone());
+                    mirrors.pypi().map(|(url, _)| url.to_string());
                 if let Err(error) = prepare_environment(&config, &runtime, &mirrors).await {
                     // 试用中的新版本：计一次失败，以 systemd 会重启的退出码退出，连续失败后回滚；
                     // 否则以固定退出码退出，systemd 不再重启。
@@ -794,7 +797,6 @@ async fn prepare_environment(
         uv: &config.uv,
         manage_uv: config.manage_uv,
         mirrors,
-        index_url: config.index_url.as_deref(),
         scratch: &runtime.scratch,
     };
     let installed = setup.ensure_uv().await?;

@@ -6,7 +6,9 @@
 //!   再次启动不更新；更新失败只告警；
 //! - 共享 venv 不存在时按 Python 3.13 创建，Python 从 GitHub Release 镜像下载；
 //! - 节点包依赖从下发的 PyPI 镜像安装，`--index-url` 优先；
-//! - 环境准备失败时以退出码 78 退出，标准错误给出失败的命令、输出、镜像地址和报告提示。
+//! - 本机可以覆盖下发的镜像（`agent.env`、环境变量或命令行）：GitHub Release 镜像（安装和更新 uv）、
+//!   Python 下载镜像（优先于从 GitHub Release 镜像推导的地址）；
+//! - 环境准备失败时以退出码 78 退出，标准错误给出失败的命令、输出、镜像地址（及其来源）和报告提示。
 
 mod support;
 
@@ -289,6 +291,158 @@ async fn venv_creation_failure_exits_with_78_and_reports_the_command_output_and_
         !mirror.python_requests().is_empty(),
         "Python 下载请求打到了镜像"
     );
+    assert_report_hint(&stderr);
+}
+
+/// 写 `SFLY_HOME/agent.env`。
+fn write_agent_env(home: &Path, lines: &[(&str, &str)]) {
+    std::fs::create_dir_all(home).unwrap();
+    let text: String = lines.iter().map(|(k, v)| format!("{k}={v}\n")).collect();
+    std::fs::write(home.join("agent.env"), text).unwrap();
+}
+
+/// 镜像上 python-build-standalone 目录的地址（`UV_PYTHON_INSTALL_MIRROR` 的写法）。
+fn python_mirror_of(mirror: &ReleaseMirror) -> String {
+    format!("{}/astral-sh/python-build-standalone/", mirror.url())
+}
+
+/// 等共享 venv 的 Python 出现。
+async fn wait_venv(home: &Path) {
+    let venv_python = home.join("venv/bin/python");
+    let deadline = tokio::time::Instant::now() + WAIT * 3;
+    while !venv_python.exists() {
+        assert!(tokio::time::Instant::now() < deadline, "venv 没有创建");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+#[tokio::test]
+async fn local_release_and_python_mirrors_in_agent_env_override_the_distributed_ones() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let distributed = ReleaseMirror::start().await;
+    distributed.serve_uv();
+    distributed.serve_python();
+    let local_release = ReleaseMirror::start().await;
+    local_release.serve_uv();
+    let local_python = ReleaseMirror::start().await;
+    let python = local_python.serve_python();
+    let cp = FakeControlPlane::start().await;
+    cp.set_mirrors("", &distributed.url());
+    write_agent_env(
+        &home,
+        &[
+            ("SFLY_GITHUB_RELEASE_MIRROR", &local_release.url()),
+            (
+                "SFLY_PYTHON_INSTALL_MIRROR",
+                &python_mirror_of(&local_python),
+            ),
+        ],
+    );
+
+    let _agent = agent(&home, &cp, "agent-local-mirrors")
+        .env_remove("SFLY_UV")
+        .envs(local_python.python_env(&dir.path().join("pythons")))
+        .spawn()
+        .unwrap();
+    cp.hello(0).await;
+    wait_venv(&home).await;
+    assert_eq!(local_release.uv_installs(), 1, "uv 从本地覆盖的镜像安装");
+    assert_eq!(
+        local_python.python_requests(),
+        vec![python],
+        "Python 从本地覆盖的镜像下载"
+    );
+    assert_eq!(
+        distributed.http.requests(),
+        Vec::<String>::new(),
+        "没有访问下发的镜像"
+    );
+}
+
+#[tokio::test]
+async fn with_only_a_local_python_mirror_uv_still_comes_from_the_distributed_release_mirror() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let distributed = ReleaseMirror::start().await;
+    distributed.serve_uv();
+    distributed.serve_python();
+    let local_python = ReleaseMirror::start().await;
+    let python = local_python.serve_python();
+    let cp = FakeControlPlane::start().await;
+    cp.set_mirrors("", &distributed.url());
+    write_agent_env(
+        &home,
+        &[(
+            "SFLY_PYTHON_INSTALL_MIRROR",
+            &python_mirror_of(&local_python),
+        )],
+    );
+
+    let _agent = agent(&home, &cp, "agent-local-python")
+        .env_remove("SFLY_UV")
+        .envs(local_python.python_env(&dir.path().join("pythons")))
+        .spawn()
+        .unwrap();
+    cp.hello(0).await;
+    wait_venv(&home).await;
+    assert_eq!(distributed.uv_installs(), 1, "uv 从下发的镜像安装");
+    assert_eq!(distributed.python_requests(), Vec::<String>::new());
+    assert_eq!(
+        local_python.python_requests(),
+        vec![python],
+        "Python 从本地覆盖的镜像下载"
+    );
+}
+
+#[tokio::test]
+async fn the_failure_report_tells_where_each_mirror_address_comes_from() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let distributed = ReleaseMirror::start().await; // 空镜像。
+    let local_python = ReleaseMirror::start().await; // 本地覆盖的 Python 镜像上也没有 Python。
+    let cp = FakeControlPlane::start().await;
+    cp.set_mirrors("https://pypi.example/simple/", &distributed.url());
+    write_agent_env(
+        &home,
+        &[
+            (
+                "SFLY_PYTHON_INSTALL_MIRROR",
+                &python_mirror_of(&local_python),
+            ),
+            ("SFLY_INDEX_URL", "https://local-pypi.example/simple/"),
+        ],
+    );
+
+    let child = agent(&home, &cp, "agent-report-sources")
+        .envs(local_python.python_env(&dir.path().join("pythons")))
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let (code, stderr) = exit_of(child).await;
+    assert_eq!(code, Some(ENV_FAILURE), "{stderr}");
+    let line = |prefix: &str| {
+        stderr
+            .lines()
+            .find(|l| l.trim_start().starts_with(prefix))
+            .unwrap_or_else(|| panic!("没有 {prefix} 一行：{stderr}"))
+            .to_string()
+    };
+    let release = line("GitHub Release 镜像：");
+    assert!(release.contains(&distributed.url()), "{release}");
+    assert!(release.contains("控制面下发"), "{release}");
+    let python = line("Python 下载镜像：");
+    assert!(
+        python.contains(&python_mirror_of(&local_python)),
+        "{python}"
+    );
+    assert!(python.contains("本地覆盖"), "{python}");
+    let pypi = line("PyPI 镜像：");
+    assert!(
+        pypi.contains("https://local-pypi.example/simple/"),
+        "{pypi}"
+    );
+    assert!(pypi.contains("本地覆盖"), "{pypi}");
     assert_report_hint(&stderr);
 }
 

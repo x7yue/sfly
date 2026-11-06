@@ -18,6 +18,10 @@ use sfly_agent::{AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, 
 ///
 /// 共享 venv、工作目录和 dev socket 默认都在 `SFLY_HOME`（默认 `~/.sfly`）下；
 /// 启动时读取 `$SFLY_HOME/agent.env`（每行 `SFLY_*=值`），命令行参数和环境变量优先。
+///
+/// 镜像：默认用控制面下发的 PyPI 镜像和 GitHub Release 镜像；`--index-url`、`--github-release-mirror`、
+/// `--python-install-mirror` 在本机覆盖它们。优先级：命令行参数 > 环境变量 > `agent.env` > 控制面下发；
+/// Python 下载镜像没有覆盖时从（覆盖后的）GitHub Release 镜像推导。
 #[derive(Debug, Parser)]
 #[command(version, args_override_self = true)]
 struct Args {
@@ -39,11 +43,21 @@ struct Args {
     /// 任务工作目录的根目录（每个任务一个子目录）；默认 `$SFLY_HOME/work`。
     #[arg(long, env = "SFLY_WORK_DIR")]
     work_dir: Option<PathBuf>,
-    /// 安装节点包依赖用的 PyPI 镜像地址；默认用控制面下发的 PyPI 镜像。
+    /// PyPI 镜像地址（简单索引），覆盖控制面下发的 PyPI 镜像：Agent 所有访问 PyPI 的 uv 调用
+    /// （安装节点包依赖）都用它。
     #[arg(long, env = "SFLY_INDEX_URL")]
     index_url: Option<String>,
+    /// GitHub Release 镜像地址（例如 https://mirrors.ustc.edu.cn/github-release），覆盖控制面下发的：
+    /// 安装和更新 uv 用它；没有 `--python-install-mirror` 时 Python 也从它下载。
+    #[arg(long, env = "SFLY_GITHUB_RELEASE_MIRROR")]
+    github_release_mirror: Option<String>,
+    /// Python 下载镜像（直接作为 `UV_PYTHON_INSTALL_MIRROR`，
+    /// 例如 https://mirror.nju.edu.cn/github-release/astral-sh/python-build-standalone/），
+    /// 优先于从 GitHub Release 镜像推导的地址。
+    #[arg(long, env = "SFLY_PYTHON_INSTALL_MIRROR")]
+    python_install_mirror: Option<String>,
     /// uv 可执行文件（创建共享 venv、安装节点包用）；指定时 Agent 不管理 uv。
-    /// 默认 `$SFLY_HOME/bin/uv`，不存在时从控制面下发的 GitHub Release 镜像安装。
+    /// 默认 `$SFLY_HOME/bin/uv`，不存在时从 GitHub Release 镜像安装（见 `--github-release-mirror`）。
     #[arg(long, env = "SFLY_UV")]
     uv: Option<PathBuf>,
     /// `sfly dev` 连接的本地 socket（Unix domain socket，只有本机同一用户可以连接）；默认 `<work_dir>/agent.sock`。
@@ -53,7 +67,7 @@ struct Args {
     #[arg(long, env = "SFLY_TERMINATE_GRACE", default_value_t = DEFAULT_TERMINATE_GRACE.as_secs())]
     terminate_grace: u64,
     /// 共享 venv 不存在时用 `uv venv --python <PYTHON>` 创建（版本号或解释器路径）；默认 3.13，
-    /// Python 从控制面下发的 GitHub Release 镜像下载。
+    /// Python 从 Python 下载镜像下载（见 `--python-install-mirror`）。
     #[arg(long, env = "SFLY_PYTHON")]
     python: Option<String>,
     /// 与控制面断开期间最多排队的日志字节数，超出后丢弃新的日志。
@@ -163,7 +177,11 @@ async fn main() -> anyhow::Result<()> {
         slots: args.slots,
         venv,
         work_dir,
-        index_url: args.index_url,
+        mirrors: environment::LocalMirrors {
+            pypi: args.index_url,
+            github_release: args.github_release_mirror,
+            python_install: args.python_install_mirror,
+        },
         uv,
         manage_uv,
         dev_socket: args.dev_socket,
