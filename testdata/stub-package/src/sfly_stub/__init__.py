@@ -226,6 +226,20 @@ def flood(ctx: Context, lines: int = 1000, interval: float = 0.0) -> dict[str, A
     return {"lines": lines}
 
 
+@node(title="大量输出", outputs=[])
+def spew(ctx: Context, stdout_mib: float = 0, stderr_mib: float = 0) -> None:
+    """日志副本轮换测试用：向标准输出 / 标准错误各写出约这么多 MiB（每行 1 KiB）。
+
+    每个流最后写一行「最后一行」。
+    """
+    line = "x" * 1023 + "\n"
+    for stream, mib in ((sys.stdout, stdout_mib), (sys.stderr, stderr_mib)):
+        for _ in range(int(mib * 1024)):
+            stream.write(line)
+        stream.write("最后一行\n")
+        stream.flush()
+
+
 @node(title="写盘失败", outputs=[])
 def write_failure(ctx: Context, message: str = "OSError: [Errno 122] Disk quota exceeded") -> None:
     """错误摘要测试用（#70）：往标准错误打一行 message，然后模拟磁盘写满——

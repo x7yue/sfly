@@ -120,3 +120,46 @@ async fn the_failure_summary_keeps_the_stderr_tail_when_stderr_log_cannot_be_rea
     // 执行器自己写结果失败的 traceback 也在。
     assert!(message.contains("IsADirectoryError"), "{message}");
 }
+
+#[tokio::test]
+async fn stdout_and_stderr_copies_rotate_at_8_mib_keeping_at_most_two_files_per_stream() {
+    const MIB: u64 = 1024 * 1024;
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-rotate"));
+    cp.hello(0).await;
+
+    cp.assign(stub_task(
+        "task-spew",
+        "spew",
+        json!({ "stdout_mib": 17, "stderr_mib": 9 }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-spew").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+
+    let dir = agent.work_dir.path().join("task-spew");
+    let size = |name: &str| std::fs::metadata(dir.join(name)).map(|m| m.len()).ok();
+    for (stream, written) in [("stdout", 17 * MIB), ("stderr", 9 * MIB)] {
+        let current = size(&format!("{stream}.log")).unwrap();
+        let previous = size(&format!("{stream}.log.1")).expect("轮换出 .1");
+        assert!(
+            current <= 8 * MIB && previous <= 8 * MIB,
+            "{stream}：{current} + {previous}"
+        );
+        assert!(
+            previous > 7 * MIB,
+            "{stream}.log.1 是写满的一个文件：{previous}"
+        );
+        // 当前文件就是最后写出的那一段。
+        let text = std::fs::read_to_string(dir.join(format!("{stream}.log"))).unwrap();
+        assert!(text.ends_with("最后一行\n"), "{stream}.log 以最后一行结尾");
+        if written > 16 * MIB {
+            // 第二次轮换覆盖了旧的 .1：每个流最多留两个文件。
+            assert!(
+                current + previous < written - 7 * MIB,
+                "{stream}：{current} + {previous}"
+            );
+        }
+    }
+    assert!(size("stdout.log.2").is_none());
+}

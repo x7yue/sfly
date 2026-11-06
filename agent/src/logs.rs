@@ -10,7 +10,8 @@
 //!   任务结束前发完。
 //!
 //! 同一批内按时间排序后再编号，所以不同来源的行大致按发生顺序排列；同一来源内保持写入顺序。
-//! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`（失败消息取标准错误尾部）。
+//! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`，每个文件 8 MiB，超过后改名为 `.1`
+//! 再新建（[`LogCopy`]）；失败消息里的标准错误尾部取自内存（[`Pump::finish`]）。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -336,13 +337,7 @@ async fn read_pipe(
     lines: mpsc::UnboundedSender<Pending>,
     tail: Option<Arc<Tail>>,
 ) {
-    let mut file = match tokio::fs::File::create(&copy).await {
-        Ok(file) => Some(file),
-        Err(error) => {
-            eprintln!("cannot create {}: {error}", copy.display());
-            None
-        }
-    };
+    let mut copy = LogCopy::create(copy).await;
     let mut splitter = LineSplitter::default();
     let mut buf = vec![0u8; 16 * 1024];
     let emit = |text: String| {
@@ -361,14 +356,65 @@ async fn read_pipe(
         if let Some(tail) = &tail {
             tail.push(&buf[..n]);
         }
-        if let Some(file) = file.as_mut() {
-            let _ = file.write_all(&buf[..n]).await;
-        }
+        copy.write(&buf[..n]).await;
         splitter.push(&buf[..n], emit);
     }
     splitter.finish(emit);
-    if let Some(mut file) = file {
-        let _ = file.flush().await;
+    copy.flush().await;
+}
+
+/// 一个流在工作目录里的副本（`stdout.log` / `stderr.log`）：单个文件写到 [`LOG_FILE_MAX_BYTES`]
+/// 时改名为 `.1`（覆盖旧的 `.1`）再新建，每个流最多两个文件。写失败时忽略（控制面有完整日志）。
+struct LogCopy {
+    path: PathBuf,
+    file: Option<tokio::fs::File>,
+    written: u64,
+}
+
+/// `stdout.log` / `stderr.log` 单个文件的上限。
+const LOG_FILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+impl LogCopy {
+    async fn create(path: PathBuf) -> LogCopy {
+        let file = Self::open(&path).await;
+        LogCopy {
+            path,
+            file,
+            written: 0,
+        }
+    }
+
+    async fn open(path: &Path) -> Option<tokio::fs::File> {
+        match tokio::fs::File::create(path).await {
+            Ok(file) => Some(file),
+            Err(error) => {
+                eprintln!("cannot create {}: {error}", path.display());
+                None
+            }
+        }
+    }
+
+    async fn write(&mut self, bytes: &[u8]) {
+        if self.written > 0 && self.written + bytes.len() as u64 > LOG_FILE_MAX_BYTES {
+            self.flush().await;
+            self.file = None;
+            let mut rotated = self.path.clone().into_os_string();
+            rotated.push(".1");
+            let _ = tokio::fs::rename(&self.path, rotated).await;
+            self.file = Self::open(&self.path).await;
+            self.written = 0;
+        }
+        if let Some(file) = self.file.as_mut()
+            && file.write_all(bytes).await.is_ok()
+        {
+            self.written += bytes.len() as u64;
+        }
+    }
+
+    async fn flush(&mut self) {
+        if let Some(file) = self.file.as_mut() {
+            let _ = file.flush().await;
+        }
     }
 }
 
