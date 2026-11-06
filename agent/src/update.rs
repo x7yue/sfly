@@ -5,7 +5,8 @@
 //!
 //! 1. 下载中（[`AgentUpdateState::Downloading`]）：在后台把新二进制下载到 `bin/.sfly-agent.update.<pid>`，
 //!    校验 sha256，fsync，试运行 `--version`。当前文件已经是目标 sha256（同一 `SFLY_HOME` 下的另一个 Agent
-//!    已经替换过）时跳过下载。失败时上报「更新失败」及原因，继续以旧版本运行；下一次 Welcome 重试。
+//!    已经替换过）时跳过下载；目标就是正在运行的二进制（它报的版本不是目标版本，替换后还会不一致）时算失败。
+//!    失败时上报「更新失败」及原因，继续以旧版本运行；下一次 Welcome 重试。
 //! 2. 等待任务结束（[`AgentUpdateState::WaitingForTasks`]，附剩余任务数）：不再接新任务（派来的任务直接忽略，
 //!    控制面按 agent_lost 处理），等手上的任务都结束、结果都被 Ack（不设超时）。断线重连后继续排空。
 //! 3. 替换中（[`AgentUpdateState::Replacing`]）：持有 `bin/.sfly-agent.lock` 的文件锁（同一 `SFLY_HOME` 下串行），
@@ -342,6 +343,17 @@ impl Updater {
         let exe = self.exe()?.to_path_buf();
         let dir = exe.parent().unwrap_or(Path::new("/")).to_path_buf();
         remove_stale_downloads(&dir);
+        // 目标二进制就是正在运行的这个（`/proc/self/exe` 在文件被替换后仍指向运行中的映像）：
+        // 它的版本不是目标版本，execve 之后还会不一致，不能循环重启。
+        if file_sha256(Path::new("/proc/self/exe"))
+            .await
+            .is_ok_and(|sha| sha == target.sha256)
+        {
+            return Err(format!(
+                "控制面提供的 Agent 二进制就是正在运行的这个，它的版本是 {}，不是目标版本 {}",
+                self.version, target.version
+            ));
+        }
         if file_sha256(&exe)
             .await
             .is_ok_and(|sha| sha == target.sha256)

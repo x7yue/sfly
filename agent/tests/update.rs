@@ -61,6 +61,25 @@ async fn manual_upgrade(cp: &FakeControlPlane) -> AgentUpdate {
     .await
 }
 
+/// 启动刚复制出来的二进制：并发的测试在 fork 时可能还继承着复制时的写句柄（ETXTBSY），稍后重试。
+trait Start {
+    fn start(&mut self) -> tokio::process::Child;
+}
+
+impl Start for tokio::process::Command {
+    fn start(&mut self) -> tokio::process::Child {
+        for _ in 0..50 {
+            match self.spawn() {
+                Err(error) if error.raw_os_error() == Some(26) => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                spawned => return spawned.unwrap(),
+            }
+        }
+        panic!("text file busy");
+    }
+}
+
 /// 测试目录：放在构建目录下而不是 /tmp（每个测试要复制几份约 100 MB 的调试版二进制，/tmp 常是很小的 tmpfs）。
 fn scratch() -> tempfile::TempDir {
     tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
@@ -161,9 +180,7 @@ async fn wait_for_file(path: &Path) {
 async fn version_override_is_reported_and_matching_version_needs_no_update() {
     let dir = scratch();
     let cp = control_plane("1.0.0").await;
-    let _agent = agent(Path::new(env!("CARGO_BIN_EXE_sfly-agent")), dir.path(), &cp)
-        .spawn()
-        .unwrap();
+    let _agent = agent(Path::new(env!("CARGO_BIN_EXE_sfly-agent")), dir.path(), &cp).start();
 
     assert_eq!(cp.hello(0).await.agent_version, "1.0.0");
     let update = cp.update_status("update status", |_| true).await;
@@ -176,10 +193,7 @@ async fn no_auto_update_reports_manual_upgrade_required() {
     let home = dir.path().join("home");
     let exe = install_into(&home);
     let cp = control_plane("2.0.0").await;
-    let _agent = agent(&exe, &home, &cp)
-        .arg("--no-auto-update")
-        .spawn()
-        .unwrap();
+    let _agent = agent(&exe, &home, &cp).arg("--no-auto-update").start();
 
     let update = manual_upgrade(&cp).await;
     assert!(update.reason.contains("--no-auto-update"), "{update:?}");
@@ -192,7 +206,7 @@ async fn no_auto_update_can_come_from_agent_env() {
     let exe = install_into(&home);
     std::fs::write(home.join("agent.env"), "SFLY_NO_AUTO_UPDATE=1\n").unwrap();
     let cp = control_plane("2.0.0").await;
-    let _agent = agent(&exe, &home, &cp).spawn().unwrap();
+    let _agent = agent(&exe, &home, &cp).start();
 
     let update = manual_upgrade(&cp).await;
     assert!(update.reason.contains("--no-auto-update"), "{update:?}");
@@ -203,9 +217,7 @@ async fn binary_outside_sfly_home_bin_reports_manual_upgrade_required() {
     let dir = scratch();
     let cp = control_plane("2.0.0").await;
     // cargo 构建产物不在 SFLY_HOME/bin 下。
-    let _agent = agent(Path::new(env!("CARGO_BIN_EXE_sfly-agent")), dir.path(), &cp)
-        .spawn()
-        .unwrap();
+    let _agent = agent(Path::new(env!("CARGO_BIN_EXE_sfly-agent")), dir.path(), &cp).start();
 
     let update = manual_upgrade(&cp).await;
     assert!(update.reason.contains("不在"), "{update:?}");
@@ -229,7 +241,7 @@ async fn unwritable_bin_directory_reports_manual_upgrade_required() {
     let bin = home.join("bin");
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o555)).unwrap();
     let cp = control_plane("2.0.0").await;
-    let mut agent = agent(&exe, &home, &cp).spawn().unwrap();
+    let mut agent = agent(&exe, &home, &cp).start();
 
     let update = manual_upgrade(&cp).await;
     agent.kill().await.unwrap();
@@ -249,7 +261,7 @@ async fn self_update_downloads_first_then_drains_until_results_are_acked_then_re
     let http = HttpFixture::start().await;
     // 一开始版本一致：先让 Agent 接下一个任务。
     let cp = control_plane("").await;
-    let mut child = agent_as(&exe, &home, &cp, "0.0.0").spawn().unwrap();
+    let mut child = agent_as(&exe, &home, &cp, "0.0.0").start();
     let pid = child.id();
     cp.hello(0).await;
     let (ready, release) = (dir.path().join("ready"), dir.path().join("release"));
@@ -358,7 +370,7 @@ async fn self_update_also_downgrades_when_the_control_plane_is_older() {
     let cp = control_plane(AGENT_VERSION).await;
     let new = new_binary();
     offer_binary(&cp, &http, new.clone(), &sha256_hex(&new), Duration::ZERO);
-    let _agent = agent_as(&exe, &home, &cp, "9.9.9").spawn().unwrap();
+    let _agent = agent_as(&exe, &home, &cp, "9.9.9").start();
 
     assert_eq!(cp.hello(0).await.agent_version, "9.9.9");
     assert_eq!(cp.hello(1).await.agent_version, AGENT_VERSION);
@@ -373,7 +385,7 @@ async fn sha256_mismatch_keeps_the_old_version_and_reports_failure() {
     let http = HttpFixture::start().await;
     let cp = control_plane(AGENT_VERSION).await;
     offer_binary(&cp, &http, new_binary(), &"0".repeat(64), Duration::ZERO);
-    let _agent = agent_as(&exe, &home, &cp, "0.0.0").spawn().unwrap();
+    let _agent = agent_as(&exe, &home, &cp, "0.0.0").start();
 
     let (failed, _) = update_after(&cp, "update failed", 0, |u| {
         u.state() == AgentUpdateState::Failed
@@ -393,7 +405,7 @@ async fn a_binary_that_fails_its_trial_run_is_not_installed() {
     let broken = b"#!/bin/sh\necho 'cannot start' >&2\nexit 3\n".to_vec();
     let sha256 = sha256_hex(&broken);
     offer_binary(&cp, &http, broken, &sha256, Duration::ZERO);
-    let _agent = agent_as(&exe, &home, &cp, "0.0.0").spawn().unwrap();
+    let _agent = agent_as(&exe, &home, &cp, "0.0.0").start();
 
     let (failed, _) = update_after(&cp, "update failed", 0, |u| {
         u.state() == AgentUpdateState::Failed
@@ -401,6 +413,32 @@ async fn a_binary_that_fails_its_trial_run_is_not_installed() {
     .await;
     assert!(failed.reason.contains("--version"), "{failed:?}");
     assert!(failed.reason.contains("cannot start"), "{failed:?}");
+    assert_old_version_keeps_running(&cp, &home, &exe).await;
+}
+
+#[tokio::test]
+async fn a_target_binary_that_is_the_running_binary_is_not_reexecuted_in_a_loop() {
+    let dir = scratch();
+    let home = dir.path().join("home");
+    let exe = install_into(&home);
+    let http = HttpFixture::start().await;
+    // 控制面提供的就是正在运行的二进制，而它的版本不是目标版本：execve 后还会不一致。
+    let cp = control_plane("2.0.0").await;
+    let running = original_binary();
+    offer_binary(
+        &cp,
+        &http,
+        running.clone(),
+        &sha256_hex(&running),
+        Duration::ZERO,
+    );
+    let _agent = agent(&exe, &home, &cp).start();
+
+    let (failed, _) = update_after(&cp, "update failed", 0, |u| {
+        u.state() == AgentUpdateState::Failed
+    })
+    .await;
+    assert!(failed.reason.contains("2.0.0"), "{failed:?}");
     assert_old_version_keeps_running(&cp, &home, &exe).await;
 }
 
@@ -429,7 +467,7 @@ async fn two_agents_sharing_sfly_home_replace_the_binary_only_once() {
         command
             .args(["--name", name, "--work-dir"])
             .arg(home.join(format!("work-{name}")));
-        command.spawn().unwrap()
+        command.start()
     };
     let _a = spawn("agent-a");
     let _b = spawn("agent-b");
@@ -493,7 +531,7 @@ async fn after_self_update_uv_is_updated_once_and_dev_packages_are_still_loaded(
         .args(["--version-override", "0.0.0"])
         .stdout(std::process::Stdio::null())
         .kill_on_drop(true);
-    let _agent = command.spawn().unwrap();
+    let _agent = command.start();
     cp.hello(0).await;
 
     // 用 sfly dev 加载开发版本。
