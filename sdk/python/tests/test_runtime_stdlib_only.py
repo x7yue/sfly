@@ -11,9 +11,13 @@ RUNTIME_MODULES = [
     "sfly",
     "sfly.context",
     "sfly.installed",
+    "sfly.local",
     "sfly.nodes",
     "sfly.runner",
     "sfly.schemas",
+    # 本地调试（sfly.testing 在节点包的 pytest 里使用，执行时还会导入 sfly.cli.scan）。
+    "sfly.testing",
+    "sfly.cli.scan",
 ]
 
 PROBE = """

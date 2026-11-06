@@ -1,4 +1,4 @@
-"""sfly 命令行入口：build / publish / dev。
+"""sfly 命令行入口：build / publish / dev / run。
 
 CLI 在开发者机器上运行，可以使用 `sfly[cli]` extra 中的第三方依赖；
 这些依赖只在子命令执行时才导入，`import sfly.cli` 本身只用标准库。
@@ -70,6 +70,20 @@ def _dev(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run(args: argparse.Namespace) -> int:
+    from sfly.cli.build import BuildError
+    from sfly.cli.run import EXIT_INVALID, RunError, run
+
+    try:
+        return run(Path(args.project).resolve(), args.node, args.params, args.grace)
+    except RunError as error:
+        print(error, file=sys.stderr)
+        return EXIT_INVALID
+    except BuildError as error:
+        print(f"扫描节点失败：{error}", file=sys.stderr)
+        return 1
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sfly", description="sfly 节点包开发工具")
     parser.add_argument("--version", action="version", version=f"sfly {__version__}")
@@ -102,6 +116,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"本机 Agent 的本地 socket（默认 $SFLY_DEV_SOCKET 或 {DEFAULT_SOCKET}）",
     )
     p_dev.set_defaults(func=_dev)
+
+    p_run = sub.add_parser(
+        "run",
+        help="本地调试：在当前项目环境里执行一个节点，打印输出、日志和指标",
+        description="在当前项目环境里用 Agent 同一个执行器执行一个节点（不经过控制面和 Agent）。"
+        "产物和工作文件放在 <项目>/.sfly/runs/<时间>-<节点>/。Ctrl-C 取消，再按一次立即杀掉。"
+        "退出码：成功 0，节点失败 1，参数不合法 2，取消 130。",
+    )
+    p_run.add_argument("node", help="节点名（@node 的 name，默认为函数名）")
+    p_run.add_argument("--params", default="{}", help="节点的输入，JSON 对象（默认 {}）")
+    p_run.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+    p_run.add_argument(
+        "--grace",
+        type=float,
+        default=10.0,
+        help="取消时从 SIGTERM 到强制杀掉的宽限期，秒（默认 10）",
+    )
+    p_run.set_defaults(func=_run)
 
     args = parser.parse_args(argv)
     if args.command is None:
