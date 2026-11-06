@@ -140,6 +140,55 @@ test("运行抽屉摘要：正在执行的节点显示主指标的最新值与�
 	await expect(metric).toHaveText("level（主指标）42");
 });
 
+test("序列的响应早于指标点生成、晚于增量到达：运行抽屉的主指标仍显示最新值（#47）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane, metricPackage());
+	await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
+	// 第一次序列请求在上报指标之前到达控制面（响应里没有点），响应先扣住，等增量经事件流到达后再交给页面。
+	let release!: () => void;
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let requested!: () => void;
+	const firstRequest = new Promise<void>((resolve) => {
+		requested = resolve;
+	});
+	let first = true;
+	await page.route(/\/api\/runs\/[^/]+\/metrics\/series/, async (route) => {
+		if (!first) return route.continue();
+		first = false;
+		const response = await route.fetch();
+		requested();
+		await held;
+		await route.fulfill({ response });
+	});
+
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("textbox", { name: /^host/ }).fill("10.0.0.8");
+	await drawer.getByRole("textbox", { name: /^api_token / }).fill("tok-live");
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	const task = await agent.nextAssign();
+	const active = drawer.getByRole("list", { name: "正在执行的节点" });
+	await expect(active).toContainText("执行中");
+	await firstRequest;
+
+	// 事件流里的增量没有可以观察的完成信号，等一小段时间让它先到达页面（增量来得更晚时
+	// 只是走了普通的追加路径，用例依然通过，不会因此误报）。
+	agent.metrics(task, pingPoints(START, 0, 3));
+	await page.waitForTimeout(500);
+	release();
+	const metric = active.locator('[data-primary-metric="level"]');
+	await expect(metric).toHaveText("level（主指标）4");
+	agent.metrics(task, [["level", unixAt(START, 4), 42]]);
+	await expect(metric).toHaveText("level（主指标）42");
+});
+
 test("运行记录的进行中卡片：当前节点显示主指标的最新值与趋势，随列表刷新更新", async ({
 	page,
 	controlPlane,

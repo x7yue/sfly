@@ -3,7 +3,6 @@ import {
 	orchestrationsApi,
 	type ParamDeclView,
 	type PreflightProblem,
-	queryKey,
 	type RunView,
 	runListApi,
 	runsApi,
@@ -19,6 +18,7 @@ import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { useNickname } from "#/lib/nickname";
+import { writeRunView } from "#/monitor/live-run";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -119,7 +119,7 @@ function ParamsForm({
 		mutationFn: (params: Record<string, unknown>) =>
 			callApi(runsApi.trigger, { params: { id: orchestrationId }, body: { params } }),
 		onSuccess: (run) => {
-			queryClient.setQueryData(queryKey(runsApi.get, { params: { id: run.id } }), run);
+			writeRunView(queryClient, run);
 			// 运行列表与场景卡片上的最近运行。
 			void queryClient.invalidateQueries({ queryKey: domainKey(runsApi.get) });
 			void queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.list) });
