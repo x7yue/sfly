@@ -2,6 +2,8 @@
 //!
 //! - 没有指定 `--uv` 时使用 `SFLY_HOME/bin/uv`，没有就从 GitHub Release 镜像的 `uv-installer.sh` 安装；
 //!   指定了 `--uv` 时不管理 uv；
+//! - install.sh 留下标记时，安装后首次启动更新一次 uv（有镜像时重新运行镜像上的安装脚本，否则 `uv self update`），
+//!   再次启动不更新；更新失败只告警；
 //! - 共享 venv 不存在时按 Python 3.13 创建，Python 从 GitHub Release 镜像下载；
 //! - 节点包依赖从下发的 PyPI 镜像安装，`--index-url` 优先；
 //! - 环境准备失败时以退出码 78 退出，标准错误给出失败的命令、输出、镜像地址和报告提示。
@@ -288,4 +290,141 @@ async fn venv_creation_failure_exits_with_78_and_reports_the_command_output_and_
         "Python 下载请求打到了镜像"
     );
     assert_report_hint(&stderr);
+}
+
+/// 测试机 PATH 上的 uv 的绝对路径。
+fn host_uv() -> std::path::PathBuf {
+    let output = std::process::Command::new("sh")
+        .args(["-c", "command -v uv"])
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap().trim().into()
+}
+
+/// 模拟 install.sh 刚装完：`SFLY_HOME/bin/uv` 已经存在（`uv` 是放进去的文件），并留下「首次启动更新 uv」的标记。
+fn installed_home(home: &Path, uv: impl AsRef<Path>) {
+    let bin = home.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::copy(uv, bin.join("uv")).unwrap();
+    std::fs::write(bin.join(".uv-update"), "").unwrap();
+}
+
+/// 记录参数的 uv：每次调用把参数写进 `log` 一行；`self update` 直接成功，其余转给测试机的 uv。
+fn recording_uv(dir: &Path, log: &Path) -> std::path::PathBuf {
+    let path = dir.join("recording-uv");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\n[ \"$1 $2\" = 'self update' ] && exit 0\nexec '{}' \"$@\"\n",
+            log.display(),
+            host_uv().display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+#[tokio::test]
+async fn after_install_the_first_start_updates_uv_from_the_release_mirror_and_later_starts_do_not()
+{
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    installed_home(&home, host_uv());
+    let mirror = ReleaseMirror::start().await;
+    mirror.serve_uv();
+    let cp = FakeControlPlane::start().await;
+    cp.set_mirrors("", &mirror.url());
+
+    let mut first = agent(&home, &cp, "agent-uv-update")
+        .env_remove("SFLY_UV")
+        .arg("--venv")
+        .arg(stub_venv())
+        .spawn()
+        .unwrap();
+    cp.hello(0).await;
+    run_echo(&cp, "task-1").await;
+    // 有 GitHub Release 镜像时 `uv self update` 用不了镜像（它只认 GitHub API），改为重新运行镜像上的安装脚本。
+    assert_eq!(mirror.uv_installs(), 1, "首次启动更新了 uv");
+    assert!(!home.join("bin/.uv-update").exists(), "标记已清除");
+    first.kill().await.unwrap();
+
+    let _second = agent(&home, &cp, "agent-uv-update")
+        .env_remove("SFLY_UV")
+        .arg("--venv")
+        .arg(stub_venv())
+        .spawn()
+        .unwrap();
+    cp.hello(1).await;
+    run_echo(&cp, "task-2").await;
+    assert_eq!(mirror.uv_installs(), 1, "再次启动不更新 uv");
+}
+
+#[tokio::test]
+async fn without_a_release_mirror_the_first_start_after_install_runs_uv_self_update_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let log = dir.path().join("uv.log");
+    installed_home(&home, recording_uv(dir.path(), &log));
+    let cp = FakeControlPlane::start().await;
+    let self_updates = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.starts_with("self update"))
+            .count()
+    };
+
+    let mut first = agent(&home, &cp, "agent-self-update")
+        .env_remove("SFLY_UV")
+        .arg("--venv")
+        .arg(stub_venv())
+        .spawn()
+        .unwrap();
+    cp.hello(0).await;
+    run_echo(&cp, "task-1").await;
+    assert_eq!(self_updates(), 1, "首次启动执行了 uv self update");
+    first.kill().await.unwrap();
+
+    let _second = agent(&home, &cp, "agent-self-update")
+        .env_remove("SFLY_UV")
+        .arg("--venv")
+        .arg(stub_venv())
+        .spawn()
+        .unwrap();
+    cp.hello(1).await;
+    run_echo(&cp, "task-2").await;
+    assert_eq!(self_updates(), 1, "再次启动不执行");
+}
+
+#[tokio::test]
+async fn a_failed_uv_update_only_warns_while_the_old_uv_still_works() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    installed_home(&home, host_uv());
+    let mirror = ReleaseMirror::start().await; // 空镜像：安装脚本 404。
+    let cp = FakeControlPlane::start().await;
+    cp.set_mirrors("", &mirror.url());
+
+    let mut child = agent(&home, &cp, "agent-uv-update-fails")
+        .env_remove("SFLY_UV")
+        .arg("--venv")
+        .arg(stub_venv())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    cp.hello(0).await;
+    run_echo(&cp, "task-1").await;
+    assert!(!home.join("bin/.uv-update").exists(), "失败也只尝试一次");
+    child.kill().await.unwrap();
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .await
+        .unwrap();
+    assert!(stderr.contains("更新 uv 失败"), "{stderr}");
 }

@@ -124,6 +124,11 @@ impl ReleaseMirror {
         "/github-release/astral-sh/uv/LatestRelease/uv-installer.sh"
     }
 
+    /// 安装脚本被下载的次数（每次安装或更新 uv 一次）。
+    pub fn uv_installs(&self) -> usize {
+        self.http.count(self.installer_path())
+    }
+
     /// 提供 python-build-standalone 的 Python 包，返回它的请求路径。
     pub fn serve_python(&self) -> String {
         let (_, file, bytes) = python_release();

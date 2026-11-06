@@ -2,7 +2,8 @@ name: Release
 
 # 推送 vX.Y.Z tag 时发布（ADR 0010；发版步骤见 README「发布」）：
 #   - 控制面：多架构镜像推送到 GHCR；docker save 导出的镜像作为 Release 附件（离线部署用）
-#   - Agent：x86_64 / aarch64 musl 静态二进制，作为 Release 附件
+#   - Agent：x86_64 / aarch64 musl 静态二进制，作为 Release 附件；同时放进控制面的打包目录和镜像，
+#     由控制面提供下载和 install.sh（ADR 0011）
 #   - SDK 运行时 wheel、SHA256SUMS，作为 Release 附件
 # 不使用 Actions Artifacts（私有仓库有额度限制）：各 job 直接上传到草稿 Release，全部成功后再发布。
 # 失败后可以直接重新运行：草稿 Release 会被复用，附件和镜像标签会被覆盖。
@@ -89,8 +90,9 @@ jobs:
       - name: Upload to release
         run: gh release upload "$TAG" out/agent/*.tar.gz --clobber
 
+  # 控制面镜像带着 agent job 上传到草稿 Release 的两个架构的 Agent。
   image:
-    needs: prepare
+    needs: [prepare, agent]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -108,6 +110,12 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Install
         run: pnpm install --frozen-lockfile
+      - name: Download agents
+        run: |
+          mkdir -p out/agent
+          gh release download "$TAG" --dir out/agent --clobber \
+            --pattern "sfly-agent-$VERSION-x86_64-unknown-linux-musl.tar.gz" \
+            --pattern "sfly-agent-$VERSION-aarch64-unknown-linux-musl.tar.gz"
       - name: Bundle control plane
         run: pnpm bundle:server
       - id: node

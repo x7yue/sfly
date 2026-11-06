@@ -1,3 +1,4 @@
+import { agentBinariesApi } from "./agent-binaries.js";
 import { agentsApi } from "./agents.js";
 import type { RouteDef } from "./contract.js";
 import { dashboardApi } from "./dashboard.js";
@@ -10,6 +11,7 @@ import { runListApi } from "./run-list.js";
 import { artifactsApi, logsApi, runsApi } from "./runs.js";
 import { sdkApi, systemApi } from "./system.js";
 
+export * from "./agent-binaries.js";
 export * from "./agents.js";
 export * from "./contract.js";
 export * from "./dashboard.js";
@@ -27,6 +29,7 @@ export * from "./system.js";
  * （apps/server/src/http/contract-route.ts 的 guardHttpContract）。新增接口表时加在这里。
  */
 export const httpContract: readonly RouteDef[] = [
+	agentBinariesApi,
 	agentsApi,
 	artifactsApi,
 	dashboardApi,

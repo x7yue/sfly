@@ -25,7 +25,9 @@ import {
 import { saveSecondVersion, twoVersions } from "./versions-support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
-// 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）。
+// 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）、
+// 固定的控制面对外地址（页面上的 install.sh 命令不随端口变化）。
+test.use({ controlPlaneOptions: { publicHttpUrl: "http://sfly.example:8080" } });
 
 async function twoAgents(connectAgent: E2eFixtures["connectAgent"]) {
 	await connectAgent({
@@ -60,7 +62,8 @@ test("Agent 列表", async ({ page, connectAgent, controlPlane }) => {
 
 test("Agent 列表为空", async ({ page }) => {
 	await page.goto("/agents");
-	await expect(page.getByRole("region", { name: "还没有 Agent 连接" })).toBeVisible();
+	const empty = page.getByRole("region", { name: "还没有 Agent 连接" });
+	await expect(empty).toContainText("http://sfly.example:8080/install.sh");
 	await expect(page).toHaveScreenshot("agents-empty.png");
 });
 

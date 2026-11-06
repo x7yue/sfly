@@ -1,4 +1,4 @@
-import { type AgentView, agentsApi } from "@sfly/schema";
+import { type AgentView, agentBinariesApi, agentsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ServerIcon, TerminalIcon } from "lucide-react";
@@ -32,25 +32,25 @@ export const Route = createFileRoute("/_shell/agents")({
 	component: AgentsPage,
 });
 
-/** Agent 默认连接的 gRPC 端口（控制面 SFLY_GRPC_PORT 的默认值）。 */
-const DEFAULT_GRPC_PORT = 50051;
-
-/** 接入命令：控制面地址取浏览器当前访问的主机名 + 默认 gRPC 端口。 */
-const connectCommand = () =>
-	[
-		"sfly-agent --name <名称> \\",
-		`  --server http://${window.location.hostname}:${DEFAULT_GRPC_PORT} \\`,
-		"  --slots 4",
-	].join("\n");
+/**
+ * 接入命令：在测试机上运行控制面的 install.sh（ADR 0011）。地址用控制面给出的对外地址（SFLY_PUBLIC_URL），
+ * 还没取到时用浏览器当前访问的地址。
+ */
+function useConnectCommand() {
+	const binaries = useQuery(apiQuery(agentBinariesApi.list));
+	const url = binaries.data?.install_script_url ?? `${window.location.origin}/install.sh`;
+	return `curl -fsSL ${url} | sh -s -- --name <名称>`;
+}
 
 function AgentsPage() {
+	const command = useConnectCommand();
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
 	return (
 		<Page>
 			<PageHeader
 				title={PAGE.agents}
 				count={agents.data?.agents.length}
-				actions={agents.data && agents.data.agents.length > 0 && <ConnectHelp />}
+				actions={agents.data && agents.data.agents.length > 0 && <ConnectHelp command={command} />}
 			/>
 			<Panel>
 				<QueryView
@@ -62,9 +62,9 @@ function AgentsPage() {
 						<EmptyState
 							icon={<ServerIcon />}
 							title="还没有 Agent 连接"
-							description="在测试机上启动 Agent，它会主动连接控制面并出现在这里。首次启动会自动创建共享 venv 并安装 SDK 运行时。"
+							description="在测试机上运行下面的命令安装 Agent，它会主动连接控制面并出现在这里。首次启动会自动准备 uv、共享 venv 和 SDK 运行时。"
 						>
-							<CodeBlock code={connectCommand()} className="mx-auto w-fit" />
+							<CodeBlock code={command} className="mx-auto w-fit" />
 						</EmptyState>
 					}
 				>
@@ -75,7 +75,7 @@ function AgentsPage() {
 	);
 }
 
-function ConnectHelp() {
+function ConnectHelp({ command }: { command: string }) {
 	return (
 		<Dialog>
 			<DialogTrigger render={<Button variant="ghost" />}>
@@ -86,11 +86,12 @@ function ConnectHelp() {
 				<DialogHeader>
 					<DialogTitle>接入 Agent</DialogTitle>
 					<DialogDescription>
-						在测试机上安装 uv 后运行下面的命令；Agent 按名称注册，同名重新连接会替换旧连接。
-						配置了注册令牌时加上 <code className="font-mono">--token</code>。
+						在测试机上运行下面的命令：识别架构、下载并校验 Agent，写入配置并注册 systemd 服务。
+						Agent 按名称注册，同名重新连接会替换旧连接。配置了注册令牌时加上{" "}
+						<code className="font-mono">--token &lt;令牌&gt;</code>。
 					</DialogDescription>
 				</DialogHeader>
-				<CodeBlock code={connectCommand()} />
+				<CodeBlock code={command} />
 			</DialogContent>
 		</Dialog>
 	);

@@ -1,16 +1,18 @@
-// 打包后的控制面冒烟（ADR 0010）：用 node 运行 out/server/main.mjs，不设置目录类环境变量（验证单文件包
-// 自带的 web/、sdk/、drizzle/ 布局）；真实 Agent 从全新的 venv 开始，从控制面下载 SDK 运行时和节点包，跑通一条链。
-// 覆盖打包最容易出问题的地方：迁移、HTTP API 与页面、用户文档、节点包上传解压、gRPC（HTTP/2）、SDK 与节点包下载。
+// 打包后的控制面冒烟（ADR 0010、0011）：用 node 运行 out/server/main.mjs，不设置目录类环境变量（验证单文件包
+// 自带的 web/、sdk/、drizzle/、docs/、agent/ 布局）；用控制面的 install.sh 安装它带的 Agent，
+// 这个 Agent 从全新的 venv 开始，从控制面下载 SDK 运行时和节点包，跑通一条链。
+// 覆盖打包最容易出问题的地方：迁移、HTTP API 与页面、用户文档、Agent 下载与 install.sh、节点包上传解压、
+// gRPC（HTTP/2）、SDK 与节点包下载。
 // 只在设置 SFLY_BUNDLE_DIR 时运行：根目录 `pnpm bundle:server && pnpm test:bundle`。
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { arch, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import packageJson from "../package.json" with { type: "json" };
-import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
@@ -73,15 +75,15 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 	let dataDir: string;
 	let server: BundledServer;
 	let agent: RealAgent;
-	let bin: string;
+	let sflyHome: string;
 	const fetchPath = (path: string, init?: RequestInit) => fetch(`${server.httpUrl}${path}`, init);
 	const api = new ApiClient({ fetch: fetchPath });
 
 	beforeAll(async () => {
-		bin = agentBinary();
-		[database, dataDir] = await Promise.all([
+		[database, dataDir, sflyHome] = await Promise.all([
 			createTestDatabase(),
 			mkdtemp(join(tmpdir(), "sfly-bundle-data-")),
+			mkdtemp(join(tmpdir(), "sfly-bundle-home-")),
 		]);
 		server = await startBundledServer(bundleDir as string, database.url, dataDir);
 	}, 60_000);
@@ -95,6 +97,7 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 		}
 		await database?.drop();
 		if (dataDir) await rm(dataDir, { recursive: true, force: true });
+		if (sflyHome) await rm(sflyHome, { recursive: true, force: true });
 	});
 
 	it("健康检查、页面和同版本的 SDK wheel 都可用", async () => {
@@ -123,7 +126,35 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 		for (const { slug } of pages) expect(index).toContain(`(${server.httpUrl}/docs/${slug}.md)`);
 	});
 
-	it("真实 Agent 从全新 venv 开始安装 SDK 和节点包，跑通一条链", async () => {
+	it("提供两个架构的同版本 Agent；install.sh 安装本机架构的 Agent", async () => {
+		const list = await api.getJson<{ binaries: Array<{ arch: string; version: string }> }>(
+			"/agent/binaries",
+		);
+		expect(list.binaries.map((b) => [b.arch, b.version])).toEqual([
+			["x86_64", version],
+			["aarch64", version],
+		]);
+
+		const { stdout } = await promisify(execFile)(
+			"sh",
+			[
+				"-c",
+				'curl -fsSL "$0/install.sh" | sh -s -- --name bundle-agent --no-service',
+				server.httpUrl,
+			],
+			{ env: { PATH: process.env.PATH, HOME: sflyHome, SFLY_HOME: sflyHome } },
+		);
+		expect(stdout).toContain("前台启动");
+		const hostArch = arch() === "arm64" ? "aarch64" : "x86_64";
+		const installed = await readFile(join(sflyHome, "bin", "sfly-agent"));
+		const bundled = await readFile(join(bundleDir as string, "agent", hostArch, "sfly-agent"));
+		expect(installed.equals(bundled)).toBe(true);
+		const env = await readFile(join(sflyHome, "agent.env"), "utf8");
+		expect(env).toContain(`SFLY_SERVER=${server.grpcUrl}\n`);
+		expect(env).toContain(`SFLY_CONTROL_PLANE_URL=${server.httpUrl}\n`);
+	});
+
+	it("install.sh 装好的 Agent 从全新 venv 开始安装 SDK 和节点包，跑通一条链", async () => {
 		// 发布桩节点包（经 HTTP 上传，控制面解压校验）。
 		const out = await mkdtemp(join(tmpdir(), "sfly-bundle-pkg-"));
 		try {
@@ -142,11 +173,11 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 			await rm(out, { recursive: true, force: true });
 		}
 
-		// Agent 先用 uv 创建 venv，连上控制面后下载安装 SDK，然后才发出 welcome。
+		// Agent 连上控制面后用 uv 创建 venv、下载安装 SDK，然后才发出 welcome。
 		agent = await startRealAgent({
 			grpcUrl: server.grpcUrl,
 			name: "bundle-agent",
-			bin,
+			bin: join(sflyHome, "bin", "sfly-agent"),
 			welcomeTimeoutMs: 120_000,
 		});
 		expect(agent.events).toContainEqual({ event: "sdk_installed", version });

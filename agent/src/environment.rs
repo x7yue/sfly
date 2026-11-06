@@ -7,6 +7,13 @@
 //! - 共享 venv：不存在时用 `uv venv --python 3.13` 创建（`--python` 可以覆盖），
 //!   `UV_PYTHON_INSTALL_MIRROR` 指向镜像上的 `astral-sh/python-build-standalone/`；已存在时什么也不做，不升级 Python。
 //!
+//! - 更新 uv：只在 Agent 安装后（以及自更新后，ADR 0014）的首次启动执行一次，由 uv 旁边的标记文件
+//!   [`UV_UPDATE_MARKER`] 触发（install.sh 写入；执行后删除，失败也不重试，之后由用户决定）。
+//!   没有配置镜像时运行 `uv self update`；配置了 GitHub Release 镜像时重新运行镜像上的安装脚本（同上）：
+//!   `uv self update` 认的 `UV_INSTALLER_GITHUB_BASE_URL` 是 GitHub 实例的地址（它去 `api.<主机>` 调 GitHub API），
+//!   中科大这类只镜像发布文件的镜像站用不了；而 `uv self update` 本身也是下载并运行同一个安装脚本。
+//!   更新失败但旧 uv 仍能运行时只告警。
+//!
 //! 失败时返回 [`EnvironmentError`]：Agent 以退出码 [`EXIT_CODE`] 退出，标准错误打印失败的命令、完整输出、
 //! 用到的镜像地址，最后一行提示把输出报告给平台管理员。
 
@@ -25,6 +32,9 @@ pub const EXIT_CODE: i32 = 78;
 
 /// 没有配置 GitHub Release 镜像时使用的 uv 官方安装脚本。
 pub const OFFICIAL_UV_INSTALLER: &str = "https://astral.sh/uv/install.sh";
+
+/// 「首次启动时更新 uv」的标记文件，放在 Agent 管理的 uv 所在目录（`SFLY_HOME/bin/.uv-update`）。
+pub const UV_UPDATE_MARKER: &str = ".uv-update";
 
 /// 控制面在 Welcome 里下发的镜像（ADR 0012）；未配置的为 None。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -168,14 +178,39 @@ impl Setup<'_> {
         } else {
             false
         };
-        let mut check = tokio::process::Command::new(self.uv);
-        check.arg("--version");
-        self.run("没有可用的 uv", check).await?;
+        self.check_uv().await?;
         Ok(installed)
     }
 
+    /// 更新 Agent 管理的 uv（见模块说明）：没有镜像时 `uv self update`，有镜像时重新运行镜像上的安装脚本；
+    /// 然后检查 uv 仍能运行。
+    pub async fn update_uv(&self) -> Result<(), EnvironmentError> {
+        const WHAT: &str = "更新 uv 失败";
+        if self.mirrors.uv_download_url().is_some() {
+            self.run_installer(WHAT).await?;
+        } else {
+            let mut update = tokio::process::Command::new(self.uv);
+            update
+                .args(["self", "update", "--no-progress", "--color", "never"])
+                .env("UV_NO_MODIFY_PATH", "1");
+            self.run(WHAT, update).await?;
+        }
+        Ok(())
+    }
+
+    /// 检查 uv 能运行。
+    pub async fn check_uv(&self) -> Result<(), EnvironmentError> {
+        let mut check = tokio::process::Command::new(self.uv);
+        check.arg("--version");
+        self.run("没有可用的 uv", check).await.map(drop)
+    }
+
     async fn install_uv(&self) -> Result<(), EnvironmentError> {
-        const WHAT: &str = "安装 uv 失败";
+        self.run_installer("安装 uv 失败").await
+    }
+
+    /// 下载并运行 uv 安装脚本，装到 uv 所在目录。
+    async fn run_installer(&self, what: &str) -> Result<(), EnvironmentError> {
         let bin = self.uv.parent().unwrap_or(Path::new("."));
         let url = self.mirrors.uv_installer_url();
         let script: PathBuf = self
@@ -183,7 +218,7 @@ impl Setup<'_> {
             .join(format!("uv-installer-{}.sh", std::process::id()));
         if let Err(e) = tokio::fs::create_dir_all(self.scratch).await {
             return Err(self.error(
-                WHAT,
+                what,
                 format!("mkdir -p {}", self.scratch.display()),
                 e.to_string(),
             ));
@@ -198,13 +233,13 @@ impl Setup<'_> {
             wget
         } else {
             return Err(self.error(
-                WHAT,
+                what,
                 format!("curl -fsSL {url}"),
                 "PATH 里没有 curl 或 wget（下载并运行 uv 安装脚本需要其中一个）".to_string(),
             ));
         };
         let result = async {
-            self.run(WHAT, download).await?;
+            self.run(what, download).await?;
             let mut install = tokio::process::Command::new("sh");
             install
                 .arg(&script)
@@ -214,10 +249,10 @@ impl Setup<'_> {
                 install.env("UV_DOWNLOAD_URL", dir);
             }
             let line = command_line(install.as_std());
-            let output = self.run(WHAT, install).await?;
+            let output = self.run(what, install).await?;
             if !self.uv.exists() {
                 return Err(self.error(
-                    format!("安装 uv 失败：安装脚本没有生成 {}", self.uv.display()),
+                    format!("{what}：安装脚本没有生成 {}", self.uv.display()),
                     line,
                     output,
                 ));
