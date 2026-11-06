@@ -10,7 +10,9 @@ use serde_json::json;
 use sfly_agent::AGENT_VERSION;
 use sfly_agent::proto::TaskStatus;
 use support::packages::{HttpFixture, package_task, publish, sha256_hex};
-use support::{AgentOptions, AgentProcess, FakeControlPlane, repo_root, spawn_agent};
+use support::{
+    AgentOptions, AgentProcess, FakeControlPlane, python_version, repo_root, spawn_agent,
+};
 
 /// 构建 SDK 运行时 wheel（sdk/python），返回 (文件名, 内容)。
 fn sdk_wheel(out: &Path) -> (String, Vec<u8>) {
@@ -24,13 +26,6 @@ fn sdk_wheel(out: &Path) -> (String, Vec<u8>) {
     let name = format!("sfly-{AGENT_VERSION}-py3-none-any.whl");
     let bytes = std::fs::read(out.join(&name)).expect("SDK wheel named after the agent version");
     (name, bytes)
-}
-
-fn python_version() -> String {
-    std::fs::read_to_string(repo_root().join(".python-version"))
-        .unwrap()
-        .trim()
-        .to_string()
 }
 
 fn agent(cp: &FakeControlPlane, venv: &Path, fixture: &HttpFixture, cache: &str) -> AgentProcess {

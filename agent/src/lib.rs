@@ -11,6 +11,7 @@
 pub mod artifacts;
 pub mod dev;
 pub mod executor;
+pub mod home;
 pub mod install;
 pub mod logs;
 pub mod metrics;
@@ -192,7 +193,9 @@ struct Inventory {
 impl Inventory {
     /// 重新读取已安装的节点包；失败时记录日志并视为没有安装任何包。
     async fn refresh(&self) -> Vec<InstalledPackage> {
+        // 共享 venv 还没创建（在 Welcome 之后创建）：没有安装任何包。
         let installed = match self.venv.installed().await {
+            Err(_) if !self.venv.python().exists() => Installed::default(),
             Ok(installed) => installed,
             Err(error) => {
                 eprintln!("cannot list packages in shared venv: {error:#}");
@@ -581,18 +584,6 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     let work_dir = std::fs::canonicalize(&config.work_dir)?;
     let venv =
         std::fs::canonicalize(&config.venv).or_else(|_| std::path::absolute(&config.venv))?;
-    // 共享 venv 不存在时用 uv 创建（SDK 运行时在连上控制面后安装）；创建失败时照常连接，任务以 env_error 失败。
-    match sdk::create_venv(
-        &config.uv,
-        &SharedVenv::new(venv.clone()),
-        config.python.as_deref(),
-    )
-    .await
-    {
-        Ok(true) => emit(serde_json::json!({ "event": "venv_created", "path": venv })),
-        Ok(false) => {}
-        Err(error) => eprintln!("cannot create shared venv: {error:#}"),
-    }
 
     let scratch = work_dir.join(".install");
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
@@ -661,6 +652,8 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         match connect(&config, hello).await {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
+                // 共享 venv 在收到 Welcome 之后才准备：控制面会在 Welcome 里下发镜像配置（ADR 0012）。
+                prepare_venv(&config, &runtime.inventory.venv).await;
                 // SDK 运行时与 Agent 版本不一致（或还没装）时，先从控制面下载安装，再开始接收任务。
                 runtime.ensure_sdk(&connection.welcome).await;
                 emit(serde_json::json!({ "event": "welcome", "name": config.name }));
@@ -702,6 +695,15 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         }
         tokio::time::sleep(delay).await;
         delay = (delay * 2).min(RECONNECT_MAX);
+    }
+}
+
+/// 共享 venv 不存在时用 uv 创建（已存在时什么也不做）；创建失败时照常运行，任务以 env_error 失败。
+async fn prepare_venv(config: &Config, venv: &SharedVenv) {
+    match sdk::create_venv(&config.uv, venv, config.python.as_deref()).await {
+        Ok(true) => emit(serde_json::json!({ "event": "venv_created", "path": venv.root() })),
+        Ok(false) => {}
+        Err(error) => eprintln!("cannot create shared venv: {error:#}"),
     }
 }
 

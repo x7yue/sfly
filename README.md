@@ -72,8 +72,10 @@ docker compose up -d
 
 Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown-linux-musl.tar.gz`，静态链接，不依赖 glibc 版本（已在 CentOS 7 上验证）。机器上只需要 [uv](https://docs.astral.sh/uv/)，老系统上用 uv 的 musl 版本。启动参数见 `sfly-agent --help`（`--server`、`--name`、`--token`、`--slots`、`--venv`、`--index-url`、`--python` 等，均可用 `SFLY_*` 环境变量设置）。
 
-- 共享 venv（`--venv`，默认 `./venv`）不存在时，Agent 启动时用 `uv venv` 自动创建（`--python` 指定 Python 版本或解释器，默认由 uv 选择）。
-- 连上控制面后，若 venv 里的 SDK 运行时版本与 Agent 自身版本不一致，Agent 从控制面下载同版本的 wheel，校验 sha256 后用 `uv pip install` 安装；版本一致时不重装。控制面没有对应版本的 wheel 时保留现状并在日志里告警。
+- Agent 的文件都在 `SFLY_HOME`（默认 `~/.sfly`）下：共享 venv 默认 `$SFLY_HOME/venv`，任务工作目录默认 `$SFLY_HOME/work`，`sfly dev` 用的本地 socket 默认 `$SFLY_HOME/work/agent.sock`，从哪个目录启动都一样。
+- 启动时读取 `$SFLY_HOME/agent.env`：每行一个 `KEY=VALUE`，键是参数对应的环境变量名（如 `SFLY_SERVER`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`），`#` 开头的行是注释；命令行参数和环境变量优先于它。`sfly publish` 在没有 `--server` 和 `SFLY_SERVER` 时使用其中的 `SFLY_CONTROL_PLANE_URL`（控制面 HTTP 地址）。
+- 连上控制面、收到 Welcome 之后，共享 venv 不存在时用 `uv venv` 自动创建（`--python` 指定 Python 版本或解释器，默认由 uv 选择）。
+- 随后若 venv 里的 SDK 运行时版本与 Agent 自身版本不一致，Agent 从控制面下载同版本的 wheel，校验 sha256 后用 `uv pip install` 安装；版本一致时不重装。控制面没有对应版本的 wheel 时保留现状并在日志里告警。
 - 节点包依赖从 `--index-url`（内网 PyPI 镜像）安装。
 
 ## 约定
