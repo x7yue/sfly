@@ -15,13 +15,11 @@
 //!    当前文件已经是目标 sha256 时不替换；否则把当前文件保存为 `sfly-agent.prev`（硬链接），`rename` 覆盖，
 //!    fsync 目录。Agent 管理 uv 时写入「首次启动更新 uv」的标记（[`crate::environment::UV_UPDATE_MARKER`]）。
 //!    然后以原来的参数和环境 `execve` 启动时记住的路径，附加 `SFLY_UPDATED_FROM=<旧版本>`；
-//!    只在测试中使用的版本覆盖（`--version-override` / `SFLY_VERSION_OVERRIDE`）描述的是旧二进制，不传给新进程。
-//!    execve 前写状态文件 `bin/update-state.json`（目标版本、旧版本、尝试次数）。execve 失败时恢复 `.prev`，
+//!    只在测试中使用的版本覆盖（`--version-override` / `SFLY_VERSION_OVERRIDE`）只影响本进程上报的版本，
+//!    不传给 execve 的进程。execve 前写状态文件（[`trial`]）。execve 失败时恢复 `.prev`，
 //!    把目标版本记为坏版本，在日志里给出手动处理步骤并以非零码退出（systemd 会拉起恢复的旧版本）。
-//! 4. 新版本的试用（[`Updater::begin_attempt`] / [`Updater::end_attempt`]）：新版本每次启动、每次握手前计一次尝试，
-//!    握手成功即健康（删除状态文件）；连不上控制面时撤回这一次；崩溃（由 systemd 重启）或连上后握手失败都算失败。
-//!    连续 [`MAX_ATTEMPTS`] 次失败后恢复 `.prev`，把这个版本记为坏版本并 execve 旧版本。旧版本看到目标仍是坏版本时
-//!    上报「更新失败」及原因，不再自动尝试（版本不一致，控制面不派任务）；控制面的目标版本变了就重新尝试。
+//! 4. 新版本的试用与回滚、坏版本见 [`trial`]。旧版本看到目标仍是坏版本时上报「更新失败」及原因，不再自动尝试
+//!    （版本不一致，控制面不派任务）；控制面的目标版本变了就重新尝试。
 //!
 //! 开发版本登记在工作目录里（[`crate::dev`]），新进程重新读取，所以自更新后仍然有效。
 
@@ -37,31 +35,37 @@ use tokio::sync::watch;
 
 use crate::proto::{AgentUpdate, AgentUpdateState, Welcome};
 
+pub mod trial;
+
+pub use trial::{Attempt, MAX_ATTEMPTS, Trial, TrialFailed, prev_path};
+use trial::{Record, exit_with_manual_steps, restore, save_record, state_path, write_record};
+
 /// execve 新版本时附加的环境变量：旧版本号。
 pub const UPDATED_FROM_ENV: &str = "SFLY_UPDATED_FROM";
 
 /// 回滚到旧版本后 execve 时附加的环境变量：被回滚的坏版本号。
 pub const ROLLED_BACK_FROM_ENV: &str = "SFLY_ROLLED_BACK_FROM";
 
-/// 新版本连续失败多少次后回滚。
-pub const MAX_ATTEMPTS: u32 = 3;
-
-/// 自更新的状态文件（与二进制同一目录，持有文件锁时读写）。
-const STATE_FILE: &str = "update-state.json";
-
-/// 只在测试中使用：上报的版本等于它时，Agent 记下这次启动（[`Updater::begin_attempt`]）后立即以非零码退出，
-/// 模拟「能通过 `--version` 试运行、启动后却崩溃」的新版本。
-const CRASH_ON_START_ENV: &str = "SFLY_TEST_CRASH_ON_START";
-
-/// 只在测试中使用的版本覆盖（main.rs 的隐藏参数），不传给替换后的新二进制。
+/// 只在测试中使用的版本覆盖（main.rs 的隐藏参数）：只影响本进程上报的版本，不传给 execve 的进程。
 const VERSION_OVERRIDE_ENV: &str = "SFLY_VERSION_OVERRIDE";
 const VERSION_OVERRIDE_ARG: &str = "--version-override";
 
-/// 替换二进制时持有的文件锁（与二进制同一目录）。
-const LOCK_FILE: &str = ".sfly-agent.lock";
-
 /// 下载中的新二进制：`<目录>/.sfly-agent.update.<pid>`。
 const DOWNLOAD_PREFIX: &str = ".sfly-agent.update.";
+
+/// 下载新二进制：建立连接的超时。
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// 下载新二进制：连接建立后每次读取的默认超时。卡住的下载算「更新失败」，下一次 Welcome 重试。
+pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 下载新二进制用的 HTTP 客户端：建立连接和每次读取都有超时，下载卡住时不会一直停在「下载中」。
+pub fn download_client(read_timeout: Duration) -> anyhow::Result<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(read_timeout)
+        .build()?)
+}
 
 /// 试运行 `--version` 的超时。
 const TRIAL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -77,13 +81,21 @@ pub struct SelfUpdate {
     pub home: Option<PathBuf>,
 }
 
+/// 当前可执行文件的路径（canonicalize 过）：启动时解析并记住。
+pub fn current_exe() -> Option<PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe))
+}
+
 impl SelfUpdate {
     /// 启动时调用：解析当前可执行文件的路径。
     pub fn detect(enabled: bool, home: Option<PathBuf>) -> Self {
-        let exe = std::env::current_exe()
-            .ok()
-            .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
-        Self { enabled, exe, home }
+        Self {
+            enabled,
+            exe: current_exe(),
+            home,
+        }
     }
 
     /// 不能自更新的原因；能自更新时为 None。依次检查：`--no-auto-update`、二进制在 `SFLY_HOME/bin` 下、目录可写。
@@ -166,47 +178,6 @@ struct Job {
     phase: Phase,
 }
 
-/// 状态文件的内容：最近一次替换。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct Record {
-    /// 替换成的新版本。
-    target: String,
-    /// 替换前的旧版本（`.prev` 的版本）。
-    from: String,
-    /// 新版本失败的次数；进行中的一次尝试也计入（崩溃就留在里面），连不上控制面时撤回。
-    attempts: u32,
-    /// 新版本已被记为坏版本：控制面的目标仍是它时不再自动尝试。
-    #[serde(default)]
-    bad: bool,
-    /// 记为坏版本的原因（上报为「更新失败」的原因）。
-    #[serde(default)]
-    reason: String,
-}
-
-/// 本进程作为新版本的试用状态。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Trial {
-    /// 还没看过状态文件。
-    Unknown,
-    /// 不是刚替换上的新版本，或已经握手成功。
-    Off,
-    /// 试用中，这一次尝试已计入状态文件。
-    Counted,
-    /// 试用中，上一次尝试已经有了结果（失败或撤回）。
-    Uncounted,
-}
-
-/// 一次握手尝试的结果（[`Updater::end_attempt`]）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Attempt {
-    /// 收到 Welcome。
-    Welcomed,
-    /// 连不上控制面：不计入失败次数。
-    Unreachable,
-    /// 连上了控制面却握手失败。
-    Failed,
-}
-
 /// 自更新的状态机，跨连接存在（断线重连后继续）。
 pub struct Updater {
     config: SelfUpdate,
@@ -221,7 +192,6 @@ pub struct Updater {
     held: AtomicUsize,
     /// 控制面要求立即更新（[`Updater::update_now`]）：下载期间就不再接新任务。更新目标变化时清除。
     now: AtomicBool,
-    trial: Mutex<Trial>,
 }
 
 fn clamp(n: usize) -> u32 {
@@ -253,112 +223,7 @@ impl Updater {
             job: Mutex::new(None),
             held: AtomicUsize::new(0),
             now: AtomicBool::new(false),
-            trial: Mutex::new(Trial::Unknown),
         })
-    }
-
-    fn state_path(&self) -> Option<PathBuf> {
-        Some(self.config.exe.as_deref()?.with_file_name(STATE_FILE))
-    }
-
-    fn lock_path(&self) -> Option<PathBuf> {
-        Some(self.config.exe.as_deref()?.with_file_name(LOCK_FILE))
-    }
-
-    /// 启动时和每次连接控制面之前调用。本进程是刚替换上、还没握手成功的新版本时，在状态文件里计一次尝试；
-    /// 已经失败 [`MAX_ATTEMPTS`] 次时恢复 `.prev`、把这个版本记为坏版本并 execve 旧版本（成功时不返回）。
-    pub fn begin_attempt(&self) {
-        let mut trial = self.trial.lock().unwrap();
-        if matches!(*trial, Trial::Off | Trial::Counted) {
-            return;
-        }
-        let (Some(path), Some(lock)) = (self.state_path(), self.lock_path()) else {
-            *trial = Trial::Off;
-            return;
-        };
-        if !path.exists() {
-            *trial = Trial::Off;
-            return;
-        }
-        let _lock = match open_lock(&lock) {
-            Ok(lock) => lock,
-            Err(error) => {
-                eprintln!("warning: cannot lock {}: {error}", lock.display());
-                return;
-            }
-        };
-        let Some(mut record) = read_record(&path).filter(|r| r.target == self.version && !r.bad)
-        else {
-            *trial = Trial::Off;
-            return;
-        };
-        if record.attempts >= MAX_ATTEMPTS {
-            self.roll_back(record);
-        }
-        record.attempts += 1;
-        write_record(&path, &record);
-        eprintln!(
-            "Agent 新版本 {} 第 {} 次尝试启动（连续失败 {MAX_ATTEMPTS} 次后恢复到 {}）",
-            record.target, record.attempts, record.from
-        );
-        *trial = Trial::Counted;
-    }
-
-    /// 一次握手尝试有了结果：成功则新版本健康（删除状态文件），连不上控制面则撤回这一次。
-    pub fn end_attempt(&self, outcome: Attempt) {
-        let mut trial = self.trial.lock().unwrap();
-        if *trial != Trial::Counted {
-            return;
-        }
-        let (Some(path), Some(lock)) = (self.state_path(), self.lock_path()) else {
-            return;
-        };
-        let Ok(_lock) = open_lock(&lock) else { return };
-        let record = read_record(&path).filter(|r| r.target == self.version && !r.bad);
-        match (outcome, record) {
-            (Attempt::Welcomed, record) => {
-                if record.is_some()
-                    && let Err(error) = std::fs::remove_file(&path)
-                {
-                    eprintln!("warning: cannot remove {}: {error}", path.display());
-                }
-                *trial = Trial::Off;
-            }
-            (Attempt::Unreachable, Some(mut record)) => {
-                record.attempts = record.attempts.saturating_sub(1);
-                write_record(&path, &record);
-                *trial = Trial::Uncounted;
-            }
-            (_, _) => *trial = Trial::Uncounted,
-        }
-    }
-
-    /// 新版本连续失败：恢复 `.prev`，记为坏版本，execve 旧版本。调用方持有文件锁（随 execve 关闭）。不返回。
-    fn roll_back(&self, mut record: Record) -> ! {
-        let path = self.state_path().expect("state file is known");
-        let exe = self.exe().expect("exe is known").to_path_buf();
-        let prev = prev_path(&exe);
-        record.bad = true;
-        record.reason = format!(
-            "新版本 {} 连续 {MAX_ATTEMPTS} 次启动失败（崩溃，或连上控制面后握手失败），已恢复到 {}；控制面换成其他版本之前不再自动尝试",
-            record.target, record.from
-        );
-        if let Err(error) = restore(&exe, &prev) {
-            record.reason = format!(
-                "新版本 {} 连续 {MAX_ATTEMPTS} 次启动失败，但无法从 {} 恢复旧版本 {}：{error}",
-                record.target,
-                prev.display(),
-                record.from
-            );
-            write_record(&path, &record);
-            eprintln!("error: Agent 自更新失败：{}", record.reason);
-            exit_with_manual_steps(&exe, crate::environment::EXIT_CODE);
-        }
-        write_record(&path, &record);
-        eprintln!("error: Agent 自更新失败：{}", record.reason);
-        let error = exec_rollback(&exe, &record);
-        eprintln!("error: 执行恢复的旧版本 {} 失败：{error}", exe.display());
-        exit_with_manual_steps(&exe, 1);
     }
 
     /// 当前要上报的更新状态。
@@ -408,6 +273,9 @@ impl Updater {
         // 控制面没有给出目标版本（旧版本控制面）时视为一致。
         if target.is_empty() || target == self.version {
             self.abandon();
+            if let Some(exe) = &self.config.exe {
+                trial::forget_bad_version(exe);
+            }
             self.set_status(update(AgentUpdateState::None, 0, String::new()));
             return;
         }
@@ -418,14 +286,15 @@ impl Updater {
             return;
         }
         // 目标是已经回滚过的坏版本：不再自动尝试，直到控制面换成别的版本。
-        if let Some(record) = self
-            .state_path()
-            .and_then(|path| read_record(&path))
-            .filter(|r| r.bad && r.target == target)
+        if let Some(reason) = self
+            .config
+            .exe
+            .as_deref()
+            .and_then(|exe| trial::bad_version(exe, target))
         {
             self.abandon();
-            self.warn_mismatch(target, &format!("不再自动更新：{}", record.reason));
-            self.set_status(update(AgentUpdateState::Failed, 0, record.reason));
+            self.warn_mismatch(target, &format!("不再自动更新：{reason}"));
+            self.set_status(update(AgentUpdateState::Failed, 0, reason));
             return;
         }
         if welcome.agent_binary_url.is_empty() {
@@ -569,12 +438,10 @@ impl Updater {
         use tokio::io::AsyncWriteExt as _;
 
         let url = &target.url;
-        let mut response = self
-            .http
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| format!("下载 Agent 二进制 {url} 失败：{e}"))?;
+        let mut response =
+            self.http.get(url).send().await.map_err(|e| {
+                format!("下载 Agent 二进制 {url} 失败：{:#}", anyhow::Error::new(e))
+            })?;
         if !response.status().is_success() {
             return Err(format!(
                 "下载 Agent 二进制 {url} 失败：{}",
@@ -593,7 +460,7 @@ impl Updater {
         while let Some(chunk) = response
             .chunk()
             .await
-            .map_err(|e| format!("下载 Agent 二进制 {url} 失败：{e}"))?
+            .map_err(|e| format!("下载 Agent 二进制 {url} 失败：{:#}", anyhow::Error::new(e)))?
         {
             hasher.update(&chunk);
             file.write_all(&chunk)
@@ -665,7 +532,6 @@ impl Updater {
             Ok(exe) => exe,
             Err(reason) => return reason,
         };
-        let dir = exe.parent().unwrap_or(Path::new("/"));
         let staged_path = match &staged {
             Staged::Downloaded(path) => Some(path.clone()),
             Staged::AlreadyInstalled => None,
@@ -675,14 +541,14 @@ impl Updater {
                 let _ = std::fs::remove_file(path);
             }
         };
-        // 同一 SFLY_HOME 下的 Agent 串行替换；锁随 execve 关闭（文件描述符带 CLOEXEC）。
-        let lock = match open_lock(&dir.join(LOCK_FILE)) {
+        // 同一 SFLY_HOME 下的 Agent（和安装脚本）串行替换；锁随 execve 关闭（文件描述符带 CLOEXEC）。
+        let lock = match trial::lock(exe) {
             Ok(lock) => lock,
             Err(error) => {
                 cleanup();
                 return format!(
                     "获取 {} 的文件锁失败：{error}",
-                    dir.join(LOCK_FILE).display()
+                    trial::lock_path(exe).display()
                 );
             }
         };
@@ -712,10 +578,11 @@ impl Updater {
             eprintln!("warning: cannot write {}: {error}", marker.display());
         }
         // 新版本的试用从这里开始：它每次启动计一次尝试，连续失败时自己回滚。
-        let state = dir.join(STATE_FILE);
+        let state = state_path(exe);
         let mut record = Record {
             target: target.version.clone(),
             from: self.version.clone(),
+            sha256: target.sha256.clone(),
             attempts: 0,
             bad: false,
             reason: String::new(),
@@ -736,12 +603,17 @@ impl Updater {
             target.version,
             exe.display()
         );
-        let error = exec(exe, &self.version);
+        let error = exec(
+            exe,
+            Handover::Updated {
+                from: &self.version,
+            },
+        );
         // execve 失败：恢复旧版本，把新版本记为坏版本（systemd 拉起的旧版本不会再试它），以非零码退出。
         record.bad = true;
         record.reason = format!("执行新版本 {} 失败：{error}", exe.display());
         if replaced {
-            match restore(exe, &prev) {
+            match restore(exe) {
                 Ok(()) => record
                     .reason
                     .push_str(&format!("；已恢复到 {}", self.version)),
@@ -758,84 +630,6 @@ impl Updater {
     }
 }
 
-fn read_record(path: &Path) -> Option<Record> {
-    let text = std::fs::read_to_string(path).ok()?;
-    match serde_json::from_str(&text) {
-        Ok(record) => Some(record),
-        Err(error) => {
-            eprintln!("warning: ignored {}: {error}", path.display());
-            None
-        }
-    }
-}
-
-/// 写状态文件：同一目录临时文件 + fsync + rename。
-fn save_record(path: &Path, record: &Record) -> std::io::Result<()> {
-    let temp = path.with_extension(format!("json.{}", std::process::id()));
-    let mut file = std::fs::File::create(&temp)?;
-    file.write_all(&serde_json::to_vec_pretty(record).map_err(std::io::Error::other)?)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&temp, path)?;
-    std::fs::File::open(path.parent().unwrap_or(Path::new("/")))?.sync_all()
-}
-
-fn write_record(path: &Path, record: &Record) {
-    if let Err(error) = save_record(path, record) {
-        eprintln!("warning: cannot write {}: {error}", path.display());
-    }
-}
-
-/// 用 `.prev` 覆盖当前二进制，fsync 目录。
-fn restore(exe: &Path, prev: &Path) -> std::io::Result<()> {
-    std::fs::rename(prev, exe)?;
-    std::fs::File::open(exe.parent().unwrap_or(Path::new("/")))?.sync_all()
-}
-
-/// 自更新无法继续：在日志里给出手动处理步骤，以 `code` 退出。
-fn exit_with_manual_steps(exe: &Path, code: i32) -> ! {
-    let dir = exe.parent().unwrap_or(Path::new("/"));
-    eprintln!(
-        "手动处理：
-  1. 确认 {exe} 能运行：{exe} --version（不能运行时把 {prev} 改名为 {exe}，或重新运行安装脚本：
-     curl -fsSL <控制面地址>/install.sh | sh -s -- --name <名称>）；
-  2. 重新启动 Agent：systemd 服务用 systemctl restart sfly-agent（用户级服务加 --user），前台运行时重新执行原来的命令；
-  3. 恢复的旧版本只连接、不接任务，不再自动尝试这个版本；控制面换成其他版本后会重新尝试。
-     继续失败时把这段输出和 {state} 报告给平台管理员。",
-        exe = exe.display(),
-        prev = prev_path(exe).display(),
-        state = dir.join(STATE_FILE).display(),
-    );
-    let _ = std::io::stderr().flush();
-    std::process::exit(code);
-}
-
-/// 只在测试中使用（[`CRASH_ON_START_ENV`]）：模拟启动即崩溃的新版本。
-pub fn crash_on_start_for_tests(version: &str) {
-    if std::env::var(CRASH_ON_START_ENV).is_ok_and(|v| v == version) {
-        eprintln!("{CRASH_ON_START_ENV}={version}: 模拟启动即崩溃");
-        std::process::exit(101);
-    }
-}
-
-/// 上一个版本的二进制：`<二进制>.prev`。
-pub fn prev_path(exe: &Path) -> PathBuf {
-    let mut name = exe.file_name().unwrap_or_default().to_os_string();
-    name.push(".prev");
-    exe.with_file_name(name)
-}
-
-fn open_lock(path: &Path) -> std::io::Result<std::fs::File> {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path)?;
-    file.lock()?;
-    Ok(file)
-}
-
 /// 把当前文件保存为 `.prev`（硬链接，不支持时复制），用准备好的文件 `rename` 覆盖，fsync 目录。
 fn replace(exe: &Path, staged: &Path, prev: &Path) -> std::io::Result<()> {
     let _ = std::fs::remove_file(prev);
@@ -848,8 +642,16 @@ fn replace(exe: &Path, staged: &Path, prev: &Path) -> std::io::Result<()> {
     std::fs::File::open(dir)?.sync_all()
 }
 
-/// 以原来的参数和环境 execve `exe`（成功时不返回），附加 `SFLY_UPDATED_FROM`，去掉测试用的版本覆盖。
-fn exec(exe: &Path, from: &str) -> std::io::Error {
+/// execve 之后的进程是怎么来的（打在它的启动日志里）。
+pub(super) enum Handover<'a> {
+    /// 自更新：附加 `SFLY_UPDATED_FROM=<旧版本>`。
+    Updated { from: &'a str },
+    /// 新版本连续失败后恢复的旧版本：附加 `SFLY_ROLLED_BACK_FROM=<坏版本>`。
+    RolledBack { bad: &'a str },
+}
+
+/// 以原来的参数和环境 execve `exe`（成功时不返回）。测试用的版本覆盖只描述本进程，不传下去。
+pub(super) fn exec(exe: &Path, handover: Handover<'_>) -> std::io::Error {
     use std::os::unix::process::CommandExt as _;
 
     let mut args = std::env::args_os();
@@ -858,33 +660,18 @@ fn exec(exe: &Path, from: &str) -> std::io::Error {
         .unwrap_or_else(|| exe.as_os_str().to_os_string());
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
-    std::process::Command::new(exe)
+    let mut command = std::process::Command::new(exe);
+    command
         .arg0(arg0)
         .args(without_version_override(args))
         .env_remove(VERSION_OVERRIDE_ENV)
-        .env(UPDATED_FROM_ENV, from)
-        .exec()
-}
-
-/// 回滚后 execve 恢复的旧版本（成功时不返回），附加 `SFLY_ROLLED_BACK_FROM`。
-/// 恢复的二进制就是旧版本 `from`，所以让它上报 `from`（正常安装时就是它自己的版本号；
-/// 测试里同一个二进制靠版本覆盖扮演旧版本）。
-fn exec_rollback(exe: &Path, record: &Record) -> std::io::Error {
-    use std::os::unix::process::CommandExt as _;
-
-    let mut args = std::env::args_os();
-    let arg0 = args
-        .next()
-        .unwrap_or_else(|| exe.as_os_str().to_os_string());
-    let _ = std::io::stdout().flush();
-    let _ = std::io::stderr().flush();
-    std::process::Command::new(exe)
-        .arg0(arg0)
-        .args(without_version_override(args))
-        .env(VERSION_OVERRIDE_ENV, &record.from)
         .env_remove(UPDATED_FROM_ENV)
-        .env(ROLLED_BACK_FROM_ENV, &record.target)
-        .exec()
+        .env_remove(ROLLED_BACK_FROM_ENV);
+    match handover {
+        Handover::Updated { from } => command.env(UPDATED_FROM_ENV, from),
+        Handover::RolledBack { bad } => command.env(ROLLED_BACK_FROM_ENV, bad),
+    };
+    command.exec()
 }
 
 /// 去掉 `--version-override <版本>` 和 `--version-override=<版本>`。
@@ -966,7 +753,7 @@ async fn file_sha256(path: &Path) -> std::io::Result<String> {
         .map_err(std::io::Error::other)?
 }
 
-fn blocking_sha256(path: &Path) -> std::io::Result<String> {
+pub(super) fn blocking_sha256(path: &Path) -> std::io::Result<String> {
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0; 1 << 16];

@@ -95,11 +95,15 @@ pub struct Config {
     pub telemetry_queue_bytes: usize,
     /// 与控制面断开期间最多排队多少个指标点（所有任务合计）；超出后丢弃最早的点，恢复后上报丢弃计数。
     pub metric_queue_points: usize,
+    /// 自更新下载新二进制时每次读取的超时（[`update::DEFAULT_READ_TIMEOUT`]）。
+    pub update_read_timeout: Duration,
     /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
     /// 让同一个二进制扮演新旧两个版本。与控制面版本比较、选择 SDK 运行时都用它。
     pub version: String,
     /// 能否自更新（ADR 0014，[`update`]）。
     pub self_update: update::SelfUpdate,
+    /// 本进程是不是试用中的新版本（[`update::trial`]）：main 在启动最早期创建。
+    pub trial: Arc<update::Trial>,
 }
 
 impl Config {
@@ -119,8 +123,10 @@ impl Config {
             python: None,
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
             metric_queue_points: metrics::DEFAULT_METRIC_QUEUE_POINTS,
+            update_read_timeout: update::DEFAULT_READ_TIMEOUT,
             version: AGENT_VERSION.to_string(),
             self_update: update::SelfUpdate::detect(true, None),
+            trial: Arc::new(update::Trial::off()),
         }
     }
 }
@@ -611,11 +617,8 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         config.self_update.clone(),
         config.version.clone(),
         uv_marker,
-        http.clone(),
+        update::download_client(config.update_read_timeout)?,
     );
-    // 刚自更新上来的新版本：在任何可能失败的启动步骤之前计一次尝试，连续失败时回滚（ADR 0014）。
-    updater.begin_attempt();
-    update::crash_on_start_for_tests(&config.version);
     std::fs::create_dir_all(&config.work_dir)
         .with_context(|| format!("create work dir {}", config.work_dir.display()))?;
     let work_dir = std::fs::canonicalize(&config.work_dir)?;
@@ -700,13 +703,14 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             dev_packages: runtime.dev.list().iter().map(|e| e.to_proto()).collect(),
             running_tasks: runtime.held(&unacked),
         };
-        updater.begin_attempt();
+        // 试用中的新版本每次连接计一次尝试；握手成功且环境准备完成才算健康（ADR 0014）。
+        config.trial.begin();
         let connected = connect(&config, hello).await;
-        updater.end_attempt(match &connected {
-            Ok(_) => update::Attempt::Welcomed,
-            Err(error) if unreachable(error) => update::Attempt::Unreachable,
-            Err(_) => update::Attempt::Failed,
-        });
+        match &connected {
+            Ok(_) => {}
+            Err(error) if unreachable(error) => config.trial.end(update::Attempt::Unreachable),
+            Err(_) => config.trial.end(update::Attempt::Failed),
+        }
         match connected {
             Ok(connection) => {
                 delay = RECONNECT_MIN;
@@ -715,7 +719,16 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
                 let mirrors = Mirrors::from_welcome(&connection.welcome);
                 *runtime.installer.index_url.lock().unwrap() =
                     config.index_url.clone().or_else(|| mirrors.pypi.clone());
-                prepare_environment(&config, &runtime, &mirrors).await?;
+                if let Err(error) = prepare_environment(&config, &runtime, &mirrors).await {
+                    // 试用中的新版本：计一次失败，以 systemd 会重启的退出码退出，连续失败后回滚；
+                    // 否则以固定退出码退出，systemd 不再重启。
+                    if config.trial.in_trial() {
+                        config.trial.end(update::Attempt::Failed);
+                        return Err(update::TrialFailed(error).into());
+                    }
+                    return Err(error.into());
+                }
+                config.trial.end(update::Attempt::Healthy);
                 // SDK 运行时与 Agent 版本不一致（或还没装）时，先从控制面下载安装，再开始接收任务。
                 runtime.ensure_sdk(&connection.welcome).await;
                 emit(serde_json::json!({ "event": "welcome", "name": config.name }));
