@@ -129,6 +129,10 @@ test.describe("接入命令", () => {
 		await page.getByRole("button", { name: "如何接入 Agent" }).click();
 		const dialog = page.getByRole("dialog", { name: "接入 Agent" });
 		await expect(dialog.locator('[data-slot="code-block"]')).toHaveText(command);
+
+		await dialog.getByRole("link", { name: "安装 Agent" }).click();
+		await expect(page).toHaveURL(/\/docs\/install-agent$/);
+		await expect(page.getByRole("article", { name: "安装 Agent" })).toBeVisible();
 	});
 });
 

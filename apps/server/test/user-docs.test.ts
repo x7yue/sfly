@@ -154,6 +154,38 @@ describe("仓库里的用户文档", () => {
 		}
 	});
 
+	it("按「安装 → 初始化 → 开发 → 本地调试 → 联调 → 发布」排列全部页面，llms.txt 逐页列出，页面之间的链接都指向登记的页面", async () => {
+		const cp = await startTestControlPlane({ docsDir: join(repoRoot, "docs", "guide") });
+		try {
+			const { pages } = docsApi.list.response.parse(await (await cp.fetch("/docs")).json());
+			expect(pages.map((p) => [p.slug, p.title])).toEqual([
+				["quickstart", "快速开始"],
+				["install-agent", "安装 Agent"],
+				["init-project", "初始化项目"],
+				["sdk-reference", "开发节点（SDK 参考）"],
+				["local-debug", "本地调试"],
+				["integration", "联调"],
+				["publish", "发布"],
+				["ai-quickstart", "AI 编程助手快速开始"],
+			]);
+			const index = await (await cp.fetch("/llms.txt")).text();
+			for (const { slug, title } of pages) {
+				expect(index).toContain(`- [${title}](${cp.httpUrl}/docs/${slug}.md): `);
+				const text = await (await cp.fetch(`/docs/${slug}.md`)).text();
+				for (const [, target] of text.matchAll(/\]\(([^)\s]+)\)/g)) {
+					const page = /^([a-z0-9-]+)\.md(#.*)?$/.exec(target ?? "")?.[1];
+					if (page)
+						expect(
+							pages.map((p) => p.slug),
+							`${slug} → ${target}`,
+						).toContain(page);
+				}
+			}
+		} finally {
+			await cp.close();
+		}
+	});
+
 	it("文档里出现未知的占位符时控制面启动失败", async () => {
 		const dir = await mkdtemp(join(tmpdir(), "sfly-docs-bad-"));
 		try {

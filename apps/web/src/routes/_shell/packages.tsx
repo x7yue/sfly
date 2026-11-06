@@ -61,9 +61,14 @@ function PackagesPage() {
 						<EmptyState
 							icon={<BoxIcon />}
 							title="还没有发布节点包"
-							description="用 SDK 写好节点后，在包目录里执行构建和发布。"
+							description="用 sfly init 创建项目、写好节点后，在项目目录里发布。"
 						>
-							<CodeBlock code="sfly build && sfly publish" className="mx-auto w-fit" />
+							<CodeBlock code="uv run sfly publish" className="mx-auto w-fit" />
+							<p className="m-0 mt-4 text-sm">
+								<DocLink page="quickstart">从零开始开发节点包</DocLink>
+								<span className="mx-2 text-fg-3">·</span>
+								<DocLink page="publish">发布节点包</DocLink>
+							</p>
 						</EmptyState>
 					</Panel>
 				}
@@ -71,6 +76,19 @@ function PackagesPage() {
 				{(data) => <PackagesView packages={data.packages} />}
 			</QueryView>
 		</Page>
+	);
+}
+
+/** 链接到开发文档的一页。 */
+function DocLink({ page, children }: { page: string; children: React.ReactNode }) {
+	return (
+		<Link
+			to="/docs/$page"
+			params={{ page }}
+			className="text-fg-1 underline decoration-fg-3 underline-offset-2 hover:decoration-fg-1"
+		>
+			{children}
+		</Link>
 	);
 }
 
