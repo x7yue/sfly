@@ -6,6 +6,7 @@ import {
 	AgentGateway,
 	type AgentMessage,
 	AgentMessageSchema,
+	AgentUpdateState,
 	type AssignTask,
 	type CancelTask,
 	ErrorKind,
@@ -19,6 +20,13 @@ import {
 	TaskStatus,
 	type Welcome,
 } from "@sfly/proto";
+import packageJson from "../../package.json" with { type: "json" };
+
+/**
+ * 假 Agent 默认上报的版本：控制面的默认版本（package.json）。版本与控制面不一致的 Agent 不会被派任务（ADR 0014），
+ * 控制面用 `version` 覆盖了版本号的测试要自己传 `agentVersion`。
+ */
+export const DEFAULT_AGENT_VERSION = packageJson.version;
 
 const keyOf = (t: TaskRef) => `${t.taskId}:${t.attempt}`;
 
@@ -71,7 +79,7 @@ export type MetricPointInit = MessageInitShape<typeof MetricPointSchema>;
 export { LogLevel, LogSource };
 /** 派发的任务；`inputs` 是解析后的 inputs_json。 */
 export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
-export { ErrorKind, TaskStatus };
+export { AgentUpdateState, ErrorKind, TaskStatus };
 
 export type ServerMessageCase = NonNullable<ServerMessage["body"]["case"]>;
 export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
@@ -129,7 +137,8 @@ export class FakeAgent {
 	): Promise<FakeAgent> {
 		return FakeAgent.connectRaw(
 			grpcUrl,
-			(agent) => agent.send({ case: "hello", value: { agentVersion: "fake", ...hello } }),
+			(agent) =>
+				agent.send({ case: "hello", value: { agentVersion: DEFAULT_AGENT_VERSION, ...hello } }),
 			{ ...options, name: hello.name },
 		);
 	}

@@ -5,6 +5,7 @@ import type { Db } from "../db/database.js";
 import {
 	type AgentInfo,
 	type AgentStatus,
+	type AgentUpdateInfo,
 	agents,
 	type DevPackageInfo,
 	type InstalledPackage,
@@ -70,11 +71,16 @@ export class AgentConnection {
 	}
 }
 
+/** 还没上报过更新状态时的取值。 */
+const NO_UPDATE: AgentUpdateInfo = { state: "none", remaining_tasks: 0, reason: "" };
+
 export interface AgentView {
 	name: string;
 	status: AgentStatus;
-	/** 注册信息（安装状态与开发版本另有字段）。 */
-	info: Omit<AgentInfo, "install" | "dev_packages"> & { installed_packages: InstalledPackage[] };
+	/** 注册信息（安装状态、开发版本与更新状态另有字段）。 */
+	info: Omit<AgentInfo, "install" | "dev_packages" | "update"> & {
+		installed_packages: InstalledPackage[];
+	};
 	last_seen_at: string;
 	/** Agent 共享 venv 中已安装的节点包（Agent 在 Hello 中上报）。 */
 	installed_packages: { name: string; version: string }[];
@@ -84,6 +90,10 @@ export interface AgentView {
 	dev_packages: DevPackageInfo[];
 	/** 派发给这个 Agent、还没结束的任务（派发阶段和执行阶段），按派发顺序排列。 */
 	running_tasks: RunningTaskView[];
+	/** Agent 版本与控制面版本不一致（ADR 0014）：不给它派新任务。 */
+	version_mismatch: boolean;
+	/** 最近一次 Heartbeat 上报的更新状态。 */
+	update: AgentUpdateInfo;
 }
 
 export interface RunningTaskView {
@@ -105,7 +115,28 @@ export interface RunningTaskView {
 export class AgentHub {
 	#connections = new Map<string, AgentConnection>();
 
-	constructor(private readonly deps: { db: Db; clock: Clock; mutex: Mutex }) {}
+	constructor(
+		private readonly deps: {
+			db: Db;
+			clock: Clock;
+			mutex: Mutex;
+			/** 控制面版本，即 Agent 的目标版本（ADR 0014）。 */
+			version: string;
+		},
+	) {}
+
+	/** 控制面版本，即 Agent 的目标版本。 */
+	get version(): string {
+		return this.deps.version;
+	}
+
+	/**
+	 * Agent 版本与控制面不一致（高于或低于都算，ADR 0014）：照常接受连接、续约和结果，但不派新任务。
+	 * 调度判断「能不能派给它」只看这里。
+	 */
+	versionMismatch(info: Pick<AgentInfo, "agent_version">): boolean {
+		return info.agent_version !== this.deps.version;
+	}
 
 	/** 当前在线（已收到 Welcome）的连接。 */
 	connection(name: string): AgentConnection | undefined {
@@ -158,6 +189,25 @@ export class AgentHub {
 		});
 	}
 
+	/** Agent 在 Heartbeat 中上报更新状态（ADR 0014）：只在变化时写库。旧连接的上报忽略。 */
+	recordUpdate(conn: AgentConnection, update: AgentUpdateInfo): Promise<void> {
+		return this.deps.mutex.run(async () => {
+			if (this.#connections.get(conn.name) !== conn) return;
+			const old = conn.info.update ?? NO_UPDATE;
+			if (
+				old.state === update.state &&
+				old.remaining_tasks === update.remaining_tasks &&
+				old.reason === update.reason
+			)
+				return;
+			conn.info = { ...conn.info, update };
+			await this.deps.db
+				.update(agents)
+				.set({ info: conn.info, lastSeenAt: this.deps.clock.now() })
+				.where(eq(agents.name, conn.name));
+		});
+	}
+
 	/** 连接结束：如果它仍是该名称的当前连接，记录为离线。 */
 	detach(conn: AgentConnection): Promise<void> {
 		return this.deps.mutex.run(async () => {
@@ -188,7 +238,7 @@ export class AgentHub {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(and(inArray(tasks.status, ON_AGENT), isNotNull(tasks.agentName)))
 			.orderBy(asc(tasks.seq));
-		return rows.map(({ info: { install, dev_packages, ...info }, ...row }) => ({
+		return rows.map(({ info: { install, dev_packages, update, ...info }, ...row }) => ({
 			name: row.name,
 			status: row.status,
 			// 早于 #5 注册的记录没有 installed_packages。
@@ -211,6 +261,8 @@ export class AgentHub {
 					status: t.status as RunningTaskView["status"],
 					started_at: t.startedAt?.toISOString() ?? null,
 				})),
+			version_mismatch: this.versionMismatch(info),
+			update: update ?? NO_UPDATE,
 		}));
 	}
 

@@ -8,7 +8,8 @@ use sfly_agent::environment::{self, EnvironmentError};
 use sfly_agent::home;
 use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
 use sfly_agent::metrics::DEFAULT_METRIC_QUEUE_POINTS;
-use sfly_agent::{Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
+use sfly_agent::update::SelfUpdate;
+use sfly_agent::{AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
 
 /// sfly Agent。
 ///
@@ -61,6 +62,12 @@ struct Args {
     /// 与控制面断开期间最多排队的指标点数，超出后丢弃最早的点。
     #[arg(long, env = "SFLY_METRIC_QUEUE_POINTS", default_value_t = DEFAULT_METRIC_QUEUE_POINTS, hide = true)]
     metric_queue_points: usize,
+    /// 不自动更新：版本与控制面不一致时只连接、不接新任务，Agents 页提示需要手动升级。
+    #[arg(long, env = "SFLY_NO_AUTO_UPDATE")]
+    no_auto_update: bool,
+    /// 只在测试中使用：覆盖上报给控制面的 Agent 版本号，让同一个二进制扮演不同版本。
+    #[arg(long, env = "SFLY_VERSION_OVERRIDE", hide = true)]
+    version_override: Option<String>,
 }
 
 /// 把 `agent.env` 里的配置转成命令行参数，放在真正的命令行参数之前（`args_override_self`：后出现的生效），
@@ -133,6 +140,10 @@ async fn main() -> anyhow::Result<()> {
         python: args.python,
         telemetry_queue_bytes: args.log_queue_bytes,
         metric_queue_points: args.metric_queue_points,
+        version: args
+            .version_override
+            .unwrap_or_else(|| AGENT_VERSION.to_string()),
+        self_update: SelfUpdate::detect(!args.no_auto_update, sfly_home.clone()),
     };
 
     let result = tokio::select! {

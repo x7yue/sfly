@@ -1,10 +1,11 @@
 import { type AgentView, agentBinariesApi, agentsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
+import { cn } from "cn";
 import { ServerIcon, TerminalIcon } from "lucide-react";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
-import { SlotBar, StatusPill } from "#/components/status";
+import { SlotBar, type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
@@ -68,7 +69,9 @@ function AgentsPage() {
 						</EmptyState>
 					}
 				>
-					{(data) => <AgentTable agents={data.agents} />}
+					{(data) => (
+						<AgentTable agents={data.agents} controlPlaneVersion={data.control_plane_version} />
+					)}
 				</QueryView>
 			</Panel>
 		</Page>
@@ -97,7 +100,13 @@ function ConnectHelp({ command }: { command: string }) {
 	);
 }
 
-function AgentTable({ agents }: { agents: AgentView[] }) {
+function AgentTable({
+	agents,
+	controlPlaneVersion,
+}: {
+	agents: AgentView[];
+	controlPlaneVersion: string;
+}) {
 	return (
 		<Table aria-label="Agent 列表">
 			<TableHeader>
@@ -114,15 +123,51 @@ function AgentTable({ agents }: { agents: AgentView[] }) {
 			</TableHeader>
 			<TableBody>
 				{agents.map((agent) => (
-					<AgentRow key={agent.name} agent={agent} />
+					<AgentRow key={agent.name} agent={agent} controlPlaneVersion={controlPlaneVersion} />
 				))}
 			</TableBody>
 		</Table>
 	);
 }
 
-function AgentRow({ agent }: { agent: AgentView }) {
+/**
+ * 在线 Agent 的更新状态（ADR 0014）：版本与控制面不一致时不接新任务，状态列说明它在做什么；
+ * 不需要更新时为 undefined。
+ */
+function updateStatus(
+	agent: AgentView,
+): { kind: StatusKind; label: string; detail?: string } | undefined {
+	const { update } = agent;
+	switch (update.state) {
+		case "downloading":
+			return { kind: "running", label: "更新中", detail: "下载新版本" };
+		case "waiting_for_tasks":
+			return {
+				kind: "running",
+				label: "更新中",
+				detail: `等待 ${update.remaining_tasks} 个任务结束`,
+			};
+		case "replacing":
+			return { kind: "running", label: "更新中", detail: "替换并重新启动" };
+		case "failed":
+			return { kind: "failed", label: "更新失败", detail: update.reason };
+		case "manual_upgrade_required":
+			return { kind: "warn", label: "需要手动升级", detail: update.reason };
+		case "none":
+			return agent.version_mismatch ? { kind: "warn", label: "版本不一致" } : undefined;
+	}
+}
+
+function AgentRow({
+	agent,
+	controlPlaneVersion,
+}: {
+	agent: AgentView;
+	controlPlaneVersion: string;
+}) {
 	const online = agent.status === "online";
+	const update = online ? updateStatus(agent) : undefined;
+	const mismatch = online && agent.version_mismatch;
 	const installing = online && agent.install?.state === "installing";
 	const failed = agent.install?.state === "failed";
 	const packages = [
@@ -133,14 +178,26 @@ function AgentRow({ agent }: { agent: AgentView }) {
 		<TableRow>
 			<TableCell className="font-mono font-medium">{agent.name}</TableCell>
 			<TableCell>
-				{installing ? (
+				{update ? (
+					<StatusPill kind={update.kind}>{update.label}</StatusPill>
+				) : installing ? (
 					<StatusPill kind="warn">安装中</StatusPill>
 				) : online ? (
 					<StatusPill kind="ok">在线</StatusPill>
 				) : (
 					<StatusPill kind="pending">离线</StatusPill>
 				)}
-				{installing && agent.install && (
+				{update?.detail && (
+					<div
+						className={cn(
+							"max-w-60 text-2xs",
+							update.kind === "failed" ? "text-danger-fg" : "text-fg-3",
+						)}
+					>
+						{update.detail}
+					</div>
+				)}
+				{!update && installing && agent.install && (
 					<div className="font-mono text-2xs text-fg-3">
 						{agent.install.package}@{agent.install.version}
 					</div>
@@ -154,7 +211,10 @@ function AgentRow({ agent }: { agent: AgentView }) {
 			<TableCell>
 				<SlotBar used={agent.running_tasks.length} total={agent.info.slots} />
 			</TableCell>
-			<TableCell className="font-mono">{agent.info.agent_version || "—"}</TableCell>
+			<TableCell className="font-mono">
+				{agent.info.agent_version || "—"}
+				{mismatch && <div className="text-2xs text-fg-3">控制面 {controlPlaneVersion}</div>}
+			</TableCell>
 			<TableCell className="font-mono text-xs text-fg-2">
 				{agent.info.os || "?"}/{agent.info.arch || "?"}
 			</TableCell>

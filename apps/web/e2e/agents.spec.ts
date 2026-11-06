@@ -1,3 +1,4 @@
+import { AgentUpdateState } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
 import {
 	createScenario,
@@ -9,6 +10,9 @@ import {
 } from "./support";
 
 // Agent 管理页（原型 #/agents）。
+
+// 控制面版本固定为 1.2.3：与它一致的 Agent 才会被派任务（ADR 0014）。
+test.use({ controlPlaneOptions: { version: "1.2.3" } });
 
 test("列出 Agent：在线状态、槽位占用、版本、系统、已安装节点包、被引用场景数、最后在线", async ({
 	page,
@@ -62,6 +66,46 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、已安装�
 		"01-01 08:01",
 	]);
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
+});
+
+test.describe("版本不一致", () => {
+	test.use({ controlPlaneOptions: { version: "2.0.0" } });
+
+	test("显示更新状态和 Agent、控制面各自的版本号；版本一致的 Agent 照常显示在线", async ({
+		page,
+		connectAgent,
+	}) => {
+		const report = async (
+			name: string,
+			update: { state: AgentUpdateState; remainingTasks?: number; reason?: string },
+		) => {
+			const agent = await connectAgent({ name, agentVersion: "1.0.0" });
+			agent.send({ case: "heartbeat", value: { runningTasks: [], update } });
+			await agent.sync();
+		};
+		await connectAgent({ name: "agent-current" });
+		await connectAgent({ name: "agent-old", agentVersion: "1.0.0" });
+		await report("agent-waiting", { state: AgentUpdateState.WAITING_FOR_TASKS, remainingTasks: 2 });
+		await report("agent-manual", {
+			state: AgentUpdateState.MANUAL_UPGRADE_REQUIRED,
+			reason: "已指定 --no-auto-update，不自动更新",
+		});
+		await report("agent-failed", { state: AgentUpdateState.FAILED, reason: "sha256 不匹配" });
+
+		await page.goto("/agents");
+		const cells = (name: string) =>
+			page.getByRole("row", { name: new RegExp(name) }).getByRole("cell");
+		await expect(cells("agent-current").nth(1)).toHaveText("在线");
+		await expect(cells("agent-current").nth(3)).toHaveText("2.0.0");
+		await expect(cells("agent-old").nth(1)).toHaveText("版本不一致");
+		await expect(cells("agent-old").nth(3)).toHaveText("1.0.0控制面 2.0.0");
+		await expect(cells("agent-waiting").nth(1)).toHaveText("更新中等待 2 个任务结束");
+		await expect(cells("agent-manual").nth(1)).toHaveText(
+			"需要手动升级已指定 --no-auto-update，不自动更新",
+		);
+		await expect(cells("agent-failed").nth(1)).toHaveText("更新失败sha256 不匹配");
+		await expect(cells("agent-failed").nth(3)).toHaveText("1.0.0控制面 2.0.0");
+	});
 });
 
 test.describe("接入命令", () => {
