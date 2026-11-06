@@ -196,6 +196,8 @@ test.describe("版本不一致", () => {
 			value: { runningTasks: [], update: { state: AgentUpdateState.REPLACING } },
 		});
 		await old.sync();
+		// 确认后的刷新可能早于这次心跳，下一次轮询（5 秒）又和断言超时打平：重新加载，不依赖轮询时机。
+		await page.reload();
 		await expect(status).toHaveText("更新中替换并重新启动");
 		await expect(row.getByRole("button", { name: "立即更新" })).toHaveCount(0);
 	});
