@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { placeholders } from "../placeholders.js";
 
 /**
  * 用户文档（ADR 0013）：仓库 docs/guide/ 下的一组 Markdown，打包时复制到 main.mjs 旁边的 docs/。
@@ -55,17 +56,10 @@ const PagesFile = z.object({
 	),
 });
 
-const PLACEHOLDER = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+const DOC_PLACEHOLDERS = placeholders(Object.keys(PLACEHOLDERS) as (keyof DocValues)[]);
 
-function checkPlaceholders(file: string, source: string): void {
-	for (const [, name] of source.matchAll(PLACEHOLDER)) {
-		if (!(name && name in PLACEHOLDERS)) {
-			throw new Error(
-				`docs/guide/${file}: 未知的占位符 {{${name}}}（可用：${Object.keys(PLACEHOLDERS).join("、")}）`,
-			);
-		}
-	}
-}
+const checkPlaceholders = (file: string, source: string) =>
+	DOC_PLACEHOLDERS.check(`docs/guide/${file}`, source);
 
 const readIfExists = (path: string) =>
 	readFile(path, "utf8").catch((error: NodeJS.ErrnoException) => {
@@ -105,7 +99,7 @@ export const skillFileUrl = (publicHttpUrl: string, file: string) =>
 
 /** 把原文里的占位符替换成取值。 */
 export const renderDoc = (source: string, values: DocValues) =>
-	source.replace(PLACEHOLDER, (_, name: keyof DocValues) => values[name]);
+	DOC_PLACEHOLDERS.render(source, values);
 
 /** 原文地址（对开发机可见）。 */
 export const docUrl = (publicHttpUrl: string, slug: string) =>
