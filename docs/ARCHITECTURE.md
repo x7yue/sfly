@@ -72,10 +72,10 @@ flowchart LR
 | 组件 | 技术 | 职责 |
 |---|---|---|
 | Web 前端 | 纯 SPA：TanStack Router、TanStack Query、shadcn/ui（Base UI）、Tailwind v4、React Flow；构建产物由控制面托管 | 控制台、场景列表、编排画布、版本与冲突处理、运行抽屉、运行监控（时间线、图表、日志）、运行记录、Agent 与节点包管理 |
-| 控制面 | Node LTS、TypeScript、Fastify、Drizzle ORM | HTTP API、SSE、前端页面、引擎、Agent 网关、节点包仓库；单进程、单个 HTTP 端口部署 |
+| 控制面 | Node LTS、TypeScript、Fastify、Drizzle ORM | HTTP API、SSE、前端页面、引擎、Agent 网关、节点包仓库；单进程、单个 HTTP 端口部署，以 Docker 镜像发布（ADR 0010） |
 | 数据库 | PostgreSQL | 唯一可信的状态来源 |
 | 文件存储 | 控制面本地磁盘 | 节点包文件、任务日志、产物 |
-| Agent | Rust、tokio、tonic | 连接控制面、安装节点包、执行任务、转发日志/进度/结果 |
+| Agent | Rust、tokio、tonic | 连接控制面、安装节点包、执行任务、转发日志/进度/结果；以 musl 静态二进制发布（ADR 0010） |
 | SDK 运行时 | Python，**只用标准库** | 在任务子进程中加载并调用节点函数 |
 | SDK CLI | Python | 生成节点元信息、构建并发布节点包、本地开发模式 |
 

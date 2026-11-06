@@ -8,7 +8,8 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # main 上每个提交都要跑完：发布前会检查 tag 指向的提交在 main 上的 CI 已通过（release.yml）。
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 # 每一步都只调用仓库根目录的统一命令（与本地完全一致，见 package.json scripts）。
 jobs:
@@ -53,6 +54,8 @@ jobs:
 
       - name: Install
         run: pnpm bootstrap
+      - name: Versions are consistent
+        run: pnpm release:version check
       - name: Generated code is up to date
         run: pnpm gen:check
       - name: Lint
@@ -68,6 +71,13 @@ jobs:
         run: pnpm test
       - name: Build
         run: pnpm build
+      # 发布用的单文件控制面和镜像（ADR 0010）：真实 Agent 对接打包后的控制面跑通一条链，镜像能启动并通过健康检查。
+      - name: Bundle control plane
+        run: pnpm bundle:server
+      - name: Bundle smoke test
+        run: pnpm test:bundle
+      - name: Image smoke test
+        run: pnpm test:image
 
   # 前端端到端测试与视觉回归（apps/web/e2e）：在 Playwright 官方镜像中运行，与本机
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
@@ -112,4 +122,5 @@ jobs:
           path: |
             apps/web/playwright-report
             apps/web/test-results
-          retention-days: 7
+          # 私有仓库的 Artifacts 与 Packages 共用存储额度，只保留一天。
+          retention-days: 1
