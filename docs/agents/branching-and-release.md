@@ -54,6 +54,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
    与上一次相比变差超过 20% 的数值，在描述里说明原因或确认是机器波动。确认后合入。
 3. 等 `main` 上这个提交的 CI 通过，在它上面打 tag 并推送：`git tag vX.Y.Z <提交> && git push origin vX.Y.Z`。
 4. `.github/workflows/release.yml` 接手：校验版本号、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
+   Release 说明里的变更列表从上一个平台版本起算（见下文「变更列表的起点」）。
 
 - 版本号：0.x 阶段新功能升次版本号，修复升补丁版本号；只支持 `X.Y.Z`（ADR 0010）。
 - 只发布 `main` 上的提交，不维护旧版本的修复分支：有问题就修复后发新的补丁版本。
@@ -69,10 +70,21 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 2. 等 `main` 上这个提交的 CI 通过，打 tag 并推送：`git tag std-vX.Y.Z <提交> && git push origin std-vX.Y.Z`。
 3. `.github/workflows/std-release.yml` 接手：确认提交在 `main` 上且 CI 已通过，运行 `scripts/release/std.sh pack`
    （tag 与版本号一致、节点包元信息检查、构建 `.sflypkg`、`SHA256SUMS` 和含最低 Agent 版本的发布说明），上传到草稿 Release
-   后发布。不标为 Latest，不推镜像，不自动登记到控制面。
+   后发布。不标为 Latest，不推镜像，不自动登记到控制面。发布说明后面附上与上一个 `std-vX.Y.Z` 相比的变更列表，
+   首次发布不附。
 
 - 发布前在本地 dry-run：`bash scripts/release/std.sh pack std-vX.Y.Z`，产物在 `out/std/`，与 Release 附件相同，只是不上传。
 - 与平台一样只支持 `X.Y.Z`，发布后不可修改；发错时发新的补丁版本。
+
+## 变更列表的起点
+
+平台（`vX.Y.Z`）与 sfly-std（`std-vX.Y.Z`）的 tag 在同一个仓库里，版本号各自独立。GitHub 自动生成变更列表时自己挑上一个
+tag，可能跨系列选到另一边的，所以两个工作流都用 `scripts/release/previous-tag.sh <tag>` 显式指定起点：只在同一前缀的
+`X.Y.Z` tag 里按语义版本取比当前小的最大者（`v0.0.10` 的起点是 `v0.0.9`，不会是 `std-v0.1.0`），没有时（首次发布）不输出。
+
+- 发版前在本地确认起点：`git fetch --tags && bash scripts/release/previous-tag.sh vX.Y.Z`（sfly-std 传 `std-vX.Y.Z`），
+  工作流的日志里也会打印「变更列表起点」。
+- 测试在 `scripts/tests/test_previous_tag.py`（`pnpm test:py` 运行），在临时 git 仓库里造 tag 验证选出的起点。
 
 ## 跨版本自更新测试
 
