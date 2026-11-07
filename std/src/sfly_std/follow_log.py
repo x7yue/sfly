@@ -47,7 +47,8 @@ def follow_log(
 ) -> FollowLogOutputs:
     """把日志文件 `path` 新增的行实时转为任务日志（来源 stdout）。
 
-    - `read_from` 默认 `end`：从节点开始时的文件末尾跟起；`start` 先转发已有的内容；
+    - `read_from`（不叫 `from`：节点参数就是函数参数，`from` 是 Python 关键字）默认 `end`：
+      从节点开始时的文件末尾跟起；`start` 先转发已有的内容；
     - `fail_on`：正则列表（`re.search`），有一行匹配任意一个时节点失败，错误信息附上这一行；
     - `duration`：跟随多少秒后成功结束；不设置时一直跟随，直到被停止子流程节点停止或运行被取消。
 
