@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterator
 from importlib import metadata
 from typing import Any
 
@@ -272,6 +273,34 @@ def metric_burst(ctx: Context, seconds: float = 3.0) -> dict[str, Any]:
     return {"count": count}
 
 
+class _Pacer:
+    """定速节拍（性能测试的几个定速节点共用）：每 100 次对一次时间，提前了就等到计划时刻，
+    落后了记下最长落后多久。"""
+
+    def __init__(self, rate: float) -> None:
+        self.rate = rate
+        self.start = time.monotonic()
+        self.max_behind = 0.0
+
+    def ticks(self, total: int, before_wait: Callable[[], None] | None = None) -> Iterator[int]:
+        """依次给出 0..total-1；before_wait 在每次等待之前调用（例如先把缓冲写出去）。"""
+        for i in range(total):
+            if i % 100 == 0:
+                delay = self.start + i / self.rate - time.monotonic()
+                if delay > 0:
+                    if before_wait is not None:
+                        before_wait()
+                    time.sleep(delay)
+                else:
+                    self.max_behind = max(self.max_behind, -delay)
+            yield i
+
+    @property
+    def elapsed(self) -> float:
+        """从开始到现在的秒数。"""
+        return time.monotonic() - self.start
+
+
 @node(
     title="定速指标",
     outputs=["count", "elapsed", "max_behind_ms", "max_call_ms"],
@@ -285,23 +314,16 @@ def metric_rate(ctx: Context, rate: float = 10000, seconds: float = 10) -> dict[
     比计划落后的最长时间与单次 `ctx.metric()` 的最长耗时（毫秒）：事件通道堵住时后两者会变大。
     """
     total = int(rate * seconds)
-    start = time.monotonic()
-    max_behind = 0.0
+    pacer = _Pacer(rate)
     max_call = 0.0
-    for i in range(total):
-        if i % 100 == 0:
-            delay = start + i / rate - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            else:
-                max_behind = max(max_behind, -delay)
+    for i in pacer.ticks(total):
         before = time.perf_counter()
         ctx.metric("seq", float(i + 1))
         max_call = max(max_call, time.perf_counter() - before)
     return {
         "count": total,
-        "elapsed": time.monotonic() - start,
-        "max_behind_ms": max_behind * 1000,
+        "elapsed": pacer.elapsed,
+        "max_behind_ms": pacer.max_behind * 1000,
         "max_call_ms": max_call * 1000,
     }
 
@@ -320,14 +342,10 @@ def metric_clock(ctx: Context, rate: float = 1000, seconds: float = 10) -> dict[
     每 100 次对一次时间，提前了就等到计划时刻。
     """
     total = int(rate * seconds)
-    start = time.monotonic()
-    for i in range(total):
-        if i % 100 == 0:
-            delay = start + i / rate - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
+    pacer = _Pacer(rate)
+    for _ in pacer.ticks(total):
         ctx.metric("clock_ms", time.time() * 1000)
-    return {"count": total, "elapsed": time.monotonic() - start}
+    return {"count": total, "elapsed": pacer.elapsed}
 
 
 @node(title="定速输出", outputs=["lines", "bytes", "elapsed", "max_behind_ms"])
@@ -341,27 +359,18 @@ def stdout_rate(
     与比计划落后的最长时间（毫秒）：标准输出写不动（Agent 背压）时它会变大。
     """
     total = int(mib_per_second * 1024 * 1024 * seconds / line_bytes)
-    rate = total / seconds
     filler = "x" * line_bytes
     out = sys.stdout
-    start = time.monotonic()
-    max_behind = 0.0
-    for i in range(total):
-        if i % 100 == 0:
-            delay = start + i / rate - time.monotonic()
-            if delay > 0:
-                out.flush()
-                time.sleep(delay)
-            else:
-                max_behind = max(max_behind, -delay)
+    pacer = _Pacer(total / seconds)
+    for i in pacer.ticks(total, before_wait=out.flush):
         head = f"{i + 1} "
         out.write(head + filler[: line_bytes - len(head) - 1] + "\n")
     out.flush()
     return {
         "lines": total,
         "bytes": total * line_bytes,
-        "elapsed": time.monotonic() - start,
-        "max_behind_ms": max_behind * 1000,
+        "elapsed": pacer.elapsed,
+        "max_behind_ms": pacer.max_behind * 1000,
     }
 
 
