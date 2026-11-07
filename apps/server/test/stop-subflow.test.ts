@@ -744,4 +744,54 @@ describe("停止子流程节点的引用检查（保存时警告，触发时阻�
 		});
 		expect(await check(scene("mon"))).toEqual({ warnings: [], problems: [] });
 	});
+
+	it("指向自己所在的链、上级链或其他分支上的子流程时保存成功但返回警告，触发被拒绝", async () => {
+		const id = await api.createOrchestration("停止子流程范围");
+		// 主链触发 a、b 两个分支，a 再触发 deep；stopper 放在 chain 链末尾，停止 target。
+		const doc = (chain: "a" | "deep", target: string) =>
+			orchestration(
+				[
+					[entry(), spawn("spawn_a"), spawn("spawn_b")],
+					[
+						subflowEntry("a"),
+						spawn("spawn_deep"),
+						...(chain === "a" ? [stop("stop", target)] : []),
+					],
+					[subflowEntry("b"), echo("watch_b")],
+					[subflowEntry("deep"), ...(chain === "deep" ? [stop("stop", target)] : [])],
+				],
+				[
+					["spawn_a", "a"],
+					["spawn_b", "b"],
+					["spawn_deep", "deep"],
+				],
+			);
+		const check = async (document: unknown) => {
+			const saved = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: await api.headVersion(id),
+				document,
+			});
+			expect(saved.status).toBe(201);
+			const { warnings } = (await saved.json()) as {
+				warnings: { code: string; node_id?: string }[];
+			};
+			const res = await api.trigger(id);
+			expect(res.status).toBe(400);
+			const { error } = (await res.json()) as {
+				error: { details: { code: string; node_id?: string }[] };
+			};
+			return {
+				warnings: warnings.map((w) => [w.code, w.node_id]),
+				problems: error.details.map((p) => [p.code, p.node_id]),
+			};
+		};
+		const outOfScope = {
+			warnings: [["stop_subflow_out_of_scope", "stop"]],
+			problems: [["stop_subflow_out_of_scope", "stop"]],
+		};
+
+		expect(await check(doc("a", "a"))).toEqual(outOfScope); // 自己所在的链
+		expect(await check(doc("deep", "a"))).toEqual(outOfScope); // 上级链
+		expect(await check(doc("a", "b"))).toEqual(outOfScope); // 其他分支
+	});
 });
