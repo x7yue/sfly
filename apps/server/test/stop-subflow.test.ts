@@ -3,7 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { chainOf, echo, type Node, orchestration, spawn, statuses } from "./support/chains.js";
+import { eventually } from "./support/eventually.js";
 import { type AssignedTask, ErrorKind, FakeAgent } from "./support/fake-agent.js";
+import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -423,6 +425,48 @@ describe("停止子流程节点的边界情况", () => {
 		});
 		expect(chainOf(run, "deep").status).toBe("success");
 		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "failed" } });
+	});
+
+	it("停止中 Agent 失联、租约过期（agent_lost）：任务记为已停止且不重试，子流程照常结束并记为成功", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry(), spawn("spawn"), echo("load"), stop("stop", "mon"), echo("cleanup")],
+					[
+						subflowEntry("mon"),
+						{ ...echo("watch"), retries: 2 },
+						echo("after"),
+						{ ...echo("flush"), always: true },
+					],
+				],
+				[["spawn", "mon"]],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(2);
+		await agent.succeed(first.load as AssignedTask);
+		expect(await cancels(1)).toEqual([first.watch?.taskId]);
+
+		// Agent 还没上报取消就断线了；租约（30 秒）过期后任务以 agent_lost 结束。
+		await agent.disconnect();
+		(cp.clock as ManualClock).advance(30_000);
+		await eventually(async () =>
+			expect(statuses(chainOf(await api.run(runId), "mon"))).toMatchObject({
+				watch: "stopped",
+				after: "stopped",
+				flush: "queued",
+			}),
+		);
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 8 });
+		const flush = await agent.nextAssign();
+		expect(flush.nodeId).toBe("flush");
+		await agent.succeed(flush);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		const run = await api.run(runId);
+		expect(chainOf(run, "mon").nodes.find((n) => n.node_id === "watch")?.attempts).toHaveLength(1);
+		expect(chainOf(run, "mon").status).toBe("success");
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "success" } });
 	});
 
 	it("被停止的任务没有按取消结束、而是上报失败：记为失败且不重试，子流程记为失败，停止子流程节点输出 failed", async () => {

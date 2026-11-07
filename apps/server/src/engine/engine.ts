@@ -1071,7 +1071,8 @@ export class Engine implements AgentSessionHandler {
 	 * 任务失败：可重试的错误且还有重试次数时，在同一个 Agent 上排队下一次尝试（attempt + 1）；
 	 * 否则节点最终失败，链继续往后推进（普通节点跳过、always 节点照常执行）。
 	 * 运行已被取消时（普通节点，或强制取消时的任何节点），任务记为 cancelled、不再重试（§3.4）。
-	 * 所在的链已被停止时，Agent 上报的取消结果（cancelled）记为 stopped；其他未成功的结果仍是失败，但不再重试（§4.1）。
+	 * 所在的链已被停止时，Agent 上报的取消结果（cancelled）和 Agent 失联（agent_lost，任务本来就要被终止）记为 stopped；
+	 * 节点自己报的失败（node_error、timeout……）仍是失败，但不再重试（§4.1）。
 	 */
 	async #failTask(
 		step: Step,
@@ -1091,7 +1092,7 @@ export class Engine implements AgentSessionHandler {
 			return;
 		}
 		const stopped = stoppedFor(chain, node);
-		if (stopped && cancelled) {
+		if (stopped && (cancelled || kind === "agent_lost")) {
 			await step.tx
 				.update(tasks)
 				.set({ status: "stopped", errorMessage: message, endedAt: step.now })
