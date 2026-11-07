@@ -231,3 +231,140 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 ```
 
 设置了 `duration` 的监控到期后自己成功结束，不需要停止子流程节点；但仍要放在子流程里才能和压测同时运行（同一条链上的节点依次执行）。
+
+## `process_monitor`：监控进程
+
+按采样间隔统计一个或多个目标进程（默认连同它们的全部子孙进程）用了多少资源，指标是所有进程的合计；每个进程每次采样的明细写进产物 `processes.csv`。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `pid` | 无 | 进程号，或进程号的列表；通常引用 `start_process` 的输出 `pid` |
+| `name` | 无 | 进程名（可执行文件名，例如 `nginx`，必须完全一致），或进程名的列表 |
+| `match` | 无 | 命令行（各参数以空格连接）的正则表达式，部分匹配即可，或正则的列表 |
+| `include_children` | `true` | 是否连同目标的全部子孙进程一起统计 |
+| `wait_for_process` | `60` | 开始时最多等多少秒让每个目标都出现 |
+| `interval` | `1` | 采样间隔（秒） |
+| `duration` | 无 | 监控多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消 |
+| `on_exit` | `fail` | 目标进程退出时：`fail` 让节点失败，`succeed` 让节点成功结束 |
+
+| 输出 | 说明 |
+|---|---|
+| `samples` | 采样了多少次 |
+| `processes_csv` | 产物 `processes.csv` 的引用 |
+
+| 指标 | 单位 | 说明 |
+|---|---|---|
+| `cpu_percent`（主指标） | % | CPU 占用之和，一个核满载为 100 |
+| `rss_bytes` | B | 常驻内存之和 |
+| `threads` | | 线程数之和 |
+| `open_fds` | | 打开的文件描述符数之和 |
+| `io_read_bytes_per_s` | B/s | 磁盘读取速率之和 |
+| `io_write_bytes_per_s` | B/s | 磁盘写入速率之和 |
+
+| `processes.csv` 的列 | 说明 |
+|---|---|
+| `time` | 采样时间（UTC，ISO 8601，到毫秒），同一次采样的各行相同 |
+| `pid` | 进程号 |
+| `ppid` | 父进程号 |
+| `name` | 进程名 |
+| `cpu_percent` | 这个进程在上一次采样以来的 CPU 占用 |
+| `rss_bytes` | 常驻内存（字节） |
+| `threads` | 线程数 |
+| `open_fds` | 打开的文件描述符数 |
+| `io_read_bytes_per_s` | 磁盘读取速率（字节/秒） |
+| `io_write_bytes_per_s` | 磁盘写入速率（字节/秒） |
+| `cmdline` | 命令行 |
+
+- 目标：`pid`、`name`、`match` 至少给一个，可以同时给多个；每个进程号、进程名、正则各是一个目标，所有目标匹配到的进程合在一起统计，同一个进程只算一次。
+- 开始时每个目标都要匹配到进程，最多等 `wait_for_process` 秒，等不到时节点失败，错误信息列出没找到的目标。
+- 每次采样都重新查找：按名称或正则匹配的新进程、新的子进程会加进来，退出的进程不再统计。进程列表开始时写一次日志，之后有进程加入或退出时写一次，没有变化时每 60 秒写一次（附每个进程的 CPU、内存、线程数、文件描述符数）。
+- **目标退出**：某个目标匹配的进程全部退出时（子孙进程退出不算），按 `on_exit` 失败或成功结束。被监控的进程是同一次运行里 `start_process` 启动的时，错误信息附上它的退出码。想在被测进程退出时正常结束监控，设为 `succeed`。
+- `processes.csv` 每采样一次就写入：节点被停止、取消、因目标退出失败时，已采集的明细都在产物里。第一次采样在开始后一个 `interval` 时（CPU 占用要两次读数才能算出来）；某个进程第一次被采样时它的 IO 速率为空。
+- 别的用户的进程读不到文件描述符数和 IO（Agent 不是 root 时），`processes.csv` 里这两项为空，不计入合计。
+- 按进程分别画曲线暂不支持，需要时下载 `processes.csv`。监控的是执行这个节点的 Agent 所在机器上的进程，引用 `start_process` 的 `pid` 时要选同一个 Agent。
+
+例：压测期间监控被测服务。服务由 `start_process` 节点 `server` 启动，会再启动若干工作进程；在一个子流程里放 `process_monitor`，参数里的 `pid` 引用节点 `server` 的输出 `pid`，压测结束后用停止子流程节点停止这个子流程，服务中途退出时监控失败、暴露问题：
+
+```json
+{
+  "interval": 2
+}
+```
+
+按名称和命令行监控机器上已有的几个服务，不统计子进程，最多监控 10 分钟，其中任何一个服务的进程全部退出时提前成功结束：
+
+```json
+{
+  "name": ["nginx", "redis-server"],
+  "match": "java .*-jar /srv/app/app\\.jar",
+  "include_children": false,
+  "duration": 600,
+  "on_exit": "succeed"
+}
+```
+
+## `http_request`：HTTP 请求
+
+发一个 HTTP 请求，检查状态码和响应 JSON；打开 `until_ok` 时重试直到满足，可以用来等待 HTTP 服务就绪。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `url` | 必填 | 请求地址，`http://` 或 `https://` |
+| `method` | `GET` | `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`HEAD`、`OPTIONS` |
+| `headers` | 无 | 请求头（对象，值为字符串） |
+| `json` | 无 | JSON 请求体（任意 JSON 值），自动加上 `Content-Type: application/json` |
+| `body` | 无 | 文本请求体，按 UTF-8 发送；需要时在 `headers` 里写 `Content-Type`。与 `json` 只能填一个 |
+| `request_timeout` | `30` | 单次请求最多等多少秒（连接、发送、等响应） |
+| `verify_tls` | `true` | 是否校验 HTTPS 证书；被测环境用自签证书时设为 `false` |
+| `expect_status` | `"2xx"` | 算作成功的状态码：状态码（例如 `404`）或 `"1xx"`～`"5xx"`，可以是列表，例如 `[200, "3xx"]` |
+| `expect_json` | 无 | 对响应 JSON 的断言列表，格式与 `assert` 节点的 `assertions` 相同（见上文） |
+| `until_ok` | `false` | 打开时，没有得到响应（连接失败、超时）或断言不通过就每 `poll` 秒重试一次，直到通过或超过 `wait` 秒 |
+| `wait` | `300` | `until_ok` 时最多等多少秒 |
+| `poll` | `1` | `until_ok` 时的重试间隔（秒） |
+
+| 输出 | 说明 |
+|---|---|
+| `status` | 状态码 |
+| `headers` | 响应头（对象）。名字都是小写；同名的多个响应头用 `, ` 连起来 |
+| `json` | 响应内容是 JSON 且不超过 256 KiB 时，解析后的值 |
+| `text` | 响应内容不是 JSON 或超过 256 KiB 时的文本，最多保留开头 256 KiB（截断时写一条警告日志） |
+| `elapsed_ms` | 最后一次请求的耗时（毫秒） |
+
+| 指标 | 单位 | 说明 |
+|---|---|---|
+| `elapsed_ms`（主指标） | ms | 每次请求的耗时 |
+
+- 先检查状态码，再检查 `expect_json`。不满足时节点失败，错误信息写明请求方法和地址、状态码，以及不在 `expect_status` 里时响应的开头、不通过的断言（与 `assert` 一样逐条列出）。响应不是 JSON 而填了 `expect_json` 时也失败。
+- `expect_json` 检查完整的响应 JSON：超过 256 KiB、输出里只有截断的 `text` 时也一样。
+- 没有得到响应时（连接被拒绝、请求超时、证书校验失败）节点失败，错误信息写明原因。
+- `until_ok` 重试时，原因变化时写一条日志（第几次、为什么不满足）；超过 `wait` 时失败，错误信息是请求次数和最后一次不满足的原因。每次请求最多等 `request_timeout` 秒，所以实际可能比 `wait` 多等一次请求的时间。
+- 不跟随重定向：3xx 响应按原样检查，需要时把它写进 `expect_status`。
+- 走 Agent 的 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 环境变量设置的代理。
+- 请求头和请求体在运行页面上对所有人可见，不要直接写密钥。
+
+例：被测服务用 `start_process` 启动后，等它的健康检查接口返回 `{"status": "ok"}`，最多等 2 分钟。节点 `ready` 的参数：
+
+```json
+{
+  "url": "http://127.0.0.1:8080/health",
+  "expect_json": [{ "path": "$.status", "op": "eq", "value": "ok" }],
+  "until_ok": true,
+  "wait": 120,
+  "poll": 2
+}
+```
+
+服务启动前连接被拒绝也会重试。下单接口要返回 201 和订单号时，节点 `order` 的参数：
+
+```json
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8080/api/orders",
+  "headers": { "X-Request-Id": "sfly-smoke" },
+  "json": { "sku": "A-100", "count": 2 },
+  "expect_status": 201,
+  "expect_json": [{ "path": "$.order_id", "op": "exists" }]
+}
+```
+
+后面的节点引用 `order` 的输出 `json` 拿到整个响应，或者用 `assert` 对它做更多检查。
