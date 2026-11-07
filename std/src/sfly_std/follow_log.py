@@ -6,13 +6,13 @@
 
 from __future__ import annotations
 
-import re
 import sys
 import time
 from collections.abc import Sequence
 from typing import Literal, TypedDict
 
 from sfly import Context, Metric, node
+from sfly_std import _params
 from sfly_std._logfile import LogFile
 from sfly_std._sampling import validate_duration
 
@@ -57,12 +57,7 @@ def follow_log(
     输出转发的总行数 `lines`。
     """
     validate_duration(duration)
-    patterns = []
-    for i, pattern in enumerate(fail_on, 1):
-        try:
-            patterns.append(re.compile(pattern))
-        except re.error as error:
-            raise ValueError(f"fail_on 第 {i} 条不是合法的正则表达式：{error}：{pattern}") from None
+    patterns = [_params.regex(f"fail_on 第 {i} 条", p) for i, p in enumerate(fail_on, 1)]
 
     log = LogFile(path, from_start=read_from == "start")
     out = sys.stdout.buffer

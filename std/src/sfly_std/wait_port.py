@@ -8,6 +8,7 @@ from __future__ import annotations
 import socket
 
 from sfly import Context, node
+from sfly_std import _params
 from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
 
 #: 单次连接尝试的最长时间（秒），不超过 `poll`。
@@ -24,8 +25,7 @@ def wait_port(
 ) -> None:
     """每 `poll` 秒（默认 1）尝试连接一次 `host:port`（默认 `127.0.0.1`），能连上就成功；
     `wait` 秒（默认 300）内一直连不上时失败，错误信息附最后一次连接的错误。"""
-    if not 0 < port < 65536:
-        raise ValueError(f"port 必须在 1–65535 之间，实际为 {port}")
+    _params.port(port)
     target = f"{host}:{port}"
     last_error = ""
 

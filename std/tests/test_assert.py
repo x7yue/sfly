@@ -230,7 +230,7 @@ def test_exists_checks_that_the_path_exists_or_with_false_that_it_does_not(
         ({"op": "eq"}, "eq 需要 value"),
         ({"op": "gt", "value": "3"}, 'gt 的 value 必须是数字，实际是 "3"'),
         ({"op": "matches", "value": 1}, "matches 的 value 必须是正则表达式文本，实际是 1"),
-        ({"op": "matches", "value": "("}, "matches 的 value 不是合法的正则表达式："),
+        ({"op": "matches", "value": "("}, "matches 的 value 不是合法的正则表达式：'('（missing )"),
         ({"op": "len_eq", "value": -1}, "len_eq 的 value 必须是非负整数，实际是 -1"),
         ({"op": "exists", "value": "yes"}, 'exists 的 value 必须是 true 或 false，实际是 "yes"'),
         ({"op": "eq", "value": 1, "valeu": 2}, "有未知的键 valeu（只能是 path、op、value）"),

@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 
+from sfly_std import _params
+
 Op = Literal["eq", "ne", "gt", "ge", "lt", "le", "contains", "matches", "exists", "len_eq"]
 _OPS: tuple[str, ...] = typing.get_args(Op)
 
@@ -200,10 +202,7 @@ def _validate(assertion: Assertion) -> list[str | int | object]:
     if op == "matches":
         if not isinstance(value, str):
             raise ValueError(f"matches 的 value 必须是正则表达式文本，实际是 {_show(value)}")
-        try:
-            re.compile(value)
-        except re.error as error:
-            raise ValueError(f"matches 的 value 不是合法的正则表达式：{error}") from None
+        _params.regex("matches 的 value", value)
     if op == "len_eq" and not (
         isinstance(value, int) and not isinstance(value, bool) and value >= 0
     ):

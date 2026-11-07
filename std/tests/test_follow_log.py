@@ -202,5 +202,5 @@ def test_an_invalid_fail_on_pattern_fails_at_once(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert result.error is not None
     assert result.error.message.startswith(
-        "ValueError: fail_on 第 2 条不是合法的正则表达式：missing ), unterminated subpattern"
+        "ValueError: fail_on 第 2 条不是合法的正则表达式：'('（missing ), unterminated subpattern"
     ), result.error.message

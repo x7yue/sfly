@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from sfly import node
+from sfly_std import _params
 
 
 class FileAssertOutputs(TypedDict):
@@ -51,10 +52,7 @@ def file_assert(
     given = {k: v for k, v in given.items() if v is not None}
     if not exists and given:
         raise ValueError(f"exists 为 false 时不能再给 {'、'.join(given)}")
-    try:
-        pattern = re.compile(matches, re.MULTILINE) if matches is not None else None
-    except re.error as error:
-        raise ValueError(f"matches 不是合法的正则表达式：{matches!r}（{error}）") from None
+    pattern = _params.regex("matches", matches, re.MULTILINE) if matches is not None else None
     file = Path(path)
     present = file.exists()
     if present != exists:

@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-import re
 from typing import Literal, TypedDict
 
 from sfly import Context, node
+from sfly_std import _params
 from sfly_std._logfile import LogFile
 from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until, validate
 
@@ -35,10 +35,7 @@ def wait_log_line(
     文件还不存在时等它出现；文件被轮转或截断时继续读新的内容。
     """
     validate(wait, poll)
-    try:
-        regex = re.compile(pattern)
-    except re.error as error:
-        raise ValueError(f"pattern 不是合法的正则表达式：{error}：{pattern}") from None
+    regex = _params.regex("pattern", pattern)
     log = LogFile(path, from_start=read_from == "start")
     try:
         ctx.log.info("等待日志 %s 出现匹配 %s 的行，最多 %g 秒", path, pattern, wait)

@@ -9,6 +9,7 @@ import socket
 from typing import TypedDict
 
 from sfly import node
+from sfly_std import _params
 
 
 class PortAssertOutputs(TypedDict):
@@ -33,8 +34,7 @@ def port_assert(
 
     主机名解析不到时无论 `reachable` 是什么都失败（多半是写错了）。通过时输出 `passed`（true）。
     """
-    if not 1 <= port <= 65535:
-        raise ValueError(f"port 必须在 1–65535 之间，实际为 {port}")
+    _params.port(port)
     if connect_timeout <= 0:
         raise ValueError(f"connect_timeout 必须大于 0，实际为 {connect_timeout}")
     try:

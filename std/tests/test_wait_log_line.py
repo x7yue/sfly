@@ -156,5 +156,5 @@ def test_an_invalid_pattern_fails_before_waiting(tmp_path: Path) -> None:
     assert result.status == "failed"
     assert result.error is not None
     assert result.error.message.startswith(
-        "ValueError: pattern 不是合法的正则表达式：missing ), unterminated subpattern"
+        "ValueError: pattern 不是合法的正则表达式：'('（missing ), unterminated subpattern"
     ), result.error.message
