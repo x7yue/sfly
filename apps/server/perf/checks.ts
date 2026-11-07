@@ -136,16 +136,47 @@ export function secondWindows(first: number, last: number, width: number): Array
 	return windows;
 }
 
-/**
- * 随时间变化的数据（[毫秒, 值]）按时间对半分，后半段的峰值减去前半段的峰值：平稳时约为 0，
- * 缓慢泄漏（内存、磁盘随运行时长一直涨）时为正。少于两个采样时返回 null。
- */
-export function lateGrowth(points: ReadonlyArray<readonly [number, number]>): number | null {
+type TimePoints = ReadonlyArray<readonly [number, number]>;
+
+/** 按时间对半分（[毫秒, 值]，中点归后半段）；少于两个采样时返回 null。 */
+function halves(points: TimePoints): [number[], number[]] | null {
 	const first = points[0];
 	const last = points.at(-1);
 	if (!first || !last || points.length < 2) return null;
 	const middle = (first[0] + last[0]) / 2;
-	const peak = (part: ReadonlyArray<readonly [number, number]>) =>
-		part.reduce((max, [, value]) => Math.max(max, value), Number.NEGATIVE_INFINITY);
-	return peak(points.filter(([ms]) => ms >= middle)) - peak(points.filter(([ms]) => ms < middle));
+	return [
+		points.filter(([ms]) => ms < middle).map(([, v]) => v),
+		points.filter(([ms]) => ms >= middle).map(([, v]) => v),
+	];
+}
+
+/**
+ * 随时间变化的数据（[毫秒, 值]）按时间对半分，后半段的峰值减去前半段的峰值：平稳时约为 0，
+ * 缓慢泄漏（内存、磁盘随运行时长一直涨）时为正。少于两个采样时返回 null。
+ */
+export function lateGrowth(points: TimePoints): number | null {
+	const parts = halves(points);
+	if (!parts) return null;
+	const peak = (values: number[]) =>
+		values.reduce((max, value) => Math.max(max, value), Number.NEGATIVE_INFINITY);
+	return peak(parts[1]) - peak(parts[0]);
+}
+
+function median(values: number[]): number {
+	const sorted = [...values].sort((a, b) => a - b);
+	const mid = Math.floor(sorted.length / 2);
+	return sorted.length % 2 === 1
+		? (sorted[mid] as number)
+		: ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
+}
+
+/**
+ * 按时间对半分，后半段的中位数减去前半段的中位数。用来判断积压是否随时间增长（同步探测的往返时间）：
+ * 处理不过来时积压越来越多，整体一直往上走；控制面周期性地批量写库（一批指标段同时攒满）造成的一次性尖峰
+ * 不影响中位数。少于两个采样时返回 null。
+ */
+export function lateMedianGrowth(points: TimePoints): number | null {
+	const parts = halves(points);
+	if (!parts) return null;
+	return median(parts[1]) - median(parts[0]);
 }
