@@ -6,8 +6,8 @@ import { checkSequence } from "../checks.js";
 import { definePerfItem, hard, type ItemRun, target } from "../item.js";
 import type { Measurement } from "../report.js";
 import { sampleProcess, sleep, startStack } from "../stack.js";
+import { EVENTS_PER_SECOND } from "../targets.js";
 
-const RATE = 10_000;
 const SECONDS = 30;
 const MB = 1024 * 1024;
 
@@ -34,7 +34,7 @@ export default definePerfItem({
 					kind: "package",
 					package: "sfly-stub",
 					node: "metric_rate",
-					inputs: { rate: RATE, seconds: SECONDS },
+					inputs: { rate: EVENTS_PER_SECOND, seconds: SECONDS },
 				},
 			],
 			edges: [{ from: "entry", to: "events", kind: "chain" }],
@@ -42,7 +42,7 @@ export default definePerfItem({
 		});
 
 		const usage = sampleProcess(agent.child.pid as number);
-		ctx.log(`节点按每秒 ${RATE} 次上报 ${SECONDS} 秒`);
+		ctx.log(`节点按每秒 ${EVENTS_PER_SECOND} 次上报 ${SECONDS} 秒`);
 		const runId = await api.trigger(orchestration);
 		const view = await api.waitRun(runId, ctx.signal, (SECONDS + 120) * 1000);
 		const agentUsage = await usage.stop();
@@ -117,7 +117,7 @@ export default definePerfItem({
 				label: "实际上报速率",
 				value: outputs.count / outputs.elapsed,
 				unit: "次/秒",
-				check: target(">=", RATE),
+				check: target(">=", EVENTS_PER_SECOND),
 			},
 			{
 				id: "max_behind_ms",
@@ -167,7 +167,7 @@ export default definePerfItem({
 				},
 			],
 			notes: [
-				`节点计划每秒上报 ${RATE} 次、共 ${SECONDS} 秒，实际上报 ${outputs.count} 次，用时 ${outputs.elapsed.toFixed(2)} 秒。`,
+				`节点计划每秒上报 ${EVENTS_PER_SECOND} 次、共 ${SECONDS} 秒，实际上报 ${outputs.count} 次，用时 ${outputs.elapsed.toFixed(2)} 秒。`,
 				`控制面收到 ${buckets.length} 秒的点（写入 ${writtenPoints} 个）；Agent 资源按 ${agentUsage.samples.length} 次采样计算，只算 Agent 进程本身。`,
 			],
 		};

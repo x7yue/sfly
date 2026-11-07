@@ -9,8 +9,8 @@
 // 只记录：接收吞吐、1 小时范围查询的 p95（目标 < 500 ms）、控制面内存与 CPU。
 // 用在 items/04-control-plane-metrics.ts（pnpm perf，默认 60 秒）与长时负载测试（soak.ts，跑满时长）。
 import pg from "pg";
-import { target as goal, hard, type ItemRun, type PerfContext } from "./item.js";
 import { lateMedianGrowth } from "./checks.js";
+import { target as goal, hard, type ItemRun, type PerfContext } from "./item.js";
 import { distribution } from "./latency.js";
 import {
 	backfill,
@@ -23,12 +23,12 @@ import {
 } from "./metric-load.js";
 import type { Measurement, Series } from "./report.js";
 import { type PerfApi, sampleProcess, sleep } from "./stack.js";
+import { INGEST_POINTS_PER_SECOND, INGEST_SECONDS, QUERY_P95_MS } from "./targets.js";
 
-const RATE = 10_000;
 const METRICS_PER_TASK = 10;
 const AGENTS = 10;
 /** 查询的时间范围与补的历史数据：1 小时。 */
-const HISTORY_SECONDS = 3600;
+const HISTORY_SECONDS = INGEST_SECONDS;
 /**
  * 积压增长的上限：同步探测往返后半段中位数比前半段多出的部分。处理能力比负载少 5% 时，
  * 60 秒的负载就会多出约 1.5 秒，1 小时多出约 90 秒；处理得过来时两半相差几十毫秒。
@@ -92,7 +92,7 @@ export async function controlPlaneLoad(
 ): Promise<ItemRun> {
 	const api = target.api;
 	const plan = planLoad({
-		pointsPerSecond: RATE,
+		pointsPerSecond: INGEST_POINTS_PER_SECOND,
 		metricsPerTask: METRICS_PER_TASK,
 		agents: AGENTS,
 	});
@@ -169,7 +169,7 @@ export async function controlPlaneLoad(
 			value: queryMs?.p95 ?? Number.NaN,
 			unit: "ms",
 			noise: 20,
-			check: goal("<=", 500),
+			check: goal("<=", QUERY_P95_MS),
 		},
 		{
 			id: "query_p50_ms",
@@ -300,7 +300,7 @@ export async function controlPlaneLoad(
 			label: "接收吞吐",
 			value: realtimePoints / (windowMs / 1000),
 			unit: "点/秒",
-			check: goal(">=", RATE),
+			check: goal(">=", INGEST_POINTS_PER_SECOND),
 		},
 		{
 			id: "drain_ms",

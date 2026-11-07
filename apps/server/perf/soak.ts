@@ -21,10 +21,8 @@ import { dirUsage, sampleEvery } from "./disk.js";
 import { definePerfItem, hard, type ItemRun, type PerfContext, target } from "./item.js";
 import type { Measurement, Series } from "./report.js";
 import { type PerfApi, type Stack, sampleProcess, sleep, startStack } from "./stack.js";
+import { AGENT_RSS_GROWTH_MB, AGENT_SLOTS, EVENTS_PER_SECOND } from "./targets.js";
 
-const SLOTS = 4;
-/** 长任务的上报速率（§7.6「单个任务 SDK → Agent」）。 */
-const LONG_RATE = 10_000;
 /** 定速输出的短任务：12 MiB 超过 8 MiB，每个任务都会轮换一次日志副本；总量远低于控制面单任务日志上限 200 MiB。 */
 const STDOUT_TASK = { mib_per_second: 0.2, seconds: 60, line_bytes: 1024 };
 /** 短时上报指标的任务。 */
@@ -53,7 +51,7 @@ export function soak(seconds: number) {
 
 async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 	const stack = await startStack(ctx, {
-		agentArgs: ["--slots", String(SLOTS), "--task-dir-retention", "0"],
+		agentArgs: ["--slots", String(AGENT_SLOTS), "--task-dir-retention", "0"],
 	});
 	// 一类负载没法测下去（抛出）时停下另一类；用户中断时两类都会收到。
 	const stop = new AbortController();
@@ -223,7 +221,7 @@ async function databaseStats(client: pg.Client) {
 async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promise<ItemRun> {
 	const { api, agent } = stack;
 	const [long, stdout, short] = await Promise.all([
-		orchestration(stack, "soak-long", "metric_rate", { rate: LONG_RATE, seconds }),
+		orchestration(stack, "soak-long", "metric_rate", { rate: EVENTS_PER_SECOND, seconds }),
 		orchestration(stack, "soak-stdout", "stdout_rate", STDOUT_TASK),
 		orchestration(stack, "soak-short", "metric_rate", SHORT_TASK),
 	]);
@@ -242,7 +240,7 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 	const onFinished = () => finishedAt.push(Date.now() - startedAt);
 
 	ctx.log(
-		`${SLOTS} 个槽位：一个任务每秒上报 ${LONG_RATE} 次、持续 ${seconds} 秒；两个槽位轮流执行定速输出与短时上报的任务`,
+		`${AGENT_SLOTS} 个槽位：一个任务每秒上报 ${EVENTS_PER_SECOND} 次、持续 ${seconds} 秒；两个槽位轮流执行定速输出与短时上报的任务`,
 	);
 	const deadline = startedAt + seconds * 1000;
 	const longRun = await api.trigger(long);
@@ -299,7 +297,7 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 			value: (usage.peakRssBytes - usage.startRssBytes) / MB,
 			unit: "MB",
 			noise: 5,
-			check: hard("<=", 100),
+			check: hard("<=", AGENT_RSS_GROWTH_MB),
 		},
 		{
 			id: "work_dir_peak_mb",
@@ -360,7 +358,7 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 				label: "长任务的实际上报速率",
 				value: outputs.count / outputs.elapsed,
 				unit: "次/秒",
-				check: target(">=", LONG_RATE),
+				check: target(">=", EVENTS_PER_SECOND),
 			},
 			{
 				id: "long_max_behind_ms",
@@ -446,7 +444,7 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 		ctx.signal.aborted
 			? `被中断：计划 ${seconds} 秒，实际运行 ${ranSeconds.toFixed(0)} 秒；长任务没有运行完，没有核对它的事件。`
 			: `Agent 负载运行 ${ranSeconds.toFixed(0)} 秒（计划 ${seconds} 秒）。`,
-		`长任务每秒上报 ${LONG_RATE} 次${longTask ? `，实际 ${longTask.outputs.count} 次 / ${longTask.outputs.elapsed.toFixed(1)} 秒` : ""}；` +
+		`长任务每秒上报 ${EVENTS_PER_SECOND} 次${longTask ? `，实际 ${longTask.outputs.count} 次 / ${longTask.outputs.elapsed.toFixed(1)} 秒` : ""}；` +
 			`定速输出任务每个 ${STDOUT_TASK.mib_per_second} MiB/秒 × ${STDOUT_TASK.seconds} 秒、短时上报任务每个 ${SHORT_TASK.rate} 次/秒 × ${SHORT_TASK.seconds} 秒，共完成 ${finished} 个。`,
 		`随时间变化的数据每 ${intervalMs / 1000} 秒采样一次；Agent 以 --task-dir-retention 0 启动，工作目录占用只反映执行中的任务。`,
 		...failures.slice(0, 5).map((f) => `没有成功的短任务：${f}`),

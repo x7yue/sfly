@@ -5,7 +5,20 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseDuration, parseOptions } from "../perf/options.js";
 import { loadItems, selectItems } from "../perf/registry.js";
-import { parseTargets } from "../perf/targets.js";
+import {
+	AGENT_RSS_GROWTH_MB,
+	AGENT_SLOTS,
+	DISCONNECT_SECONDS,
+	END_TO_END_MS,
+	EVENTS_PER_SECOND,
+	INGEST_POINTS_PER_SECOND,
+	INGEST_SECONDS,
+	parseTargets,
+	QUERY_P95_MS,
+	STDOUT_LOG_MAX_MIB,
+	STDOUT_MIB_PER_SECOND,
+	targetQuantities,
+} from "../perf/targets.js";
 import { repoRoot } from "./support/agent-binary.js";
 
 describe("ARCHITECTURE §7.6 的目标表", () => {
@@ -43,6 +56,43 @@ describe("ARCHITECTURE §7.6 的目标表", () => {
 	it("仓库里的 ARCHITECTURE.md 能读出目标表", async () => {
 		const targets = parseTargets(await readFile(join(repoRoot, "docs/ARCHITECTURE.md"), "utf8"));
 		expect(targets.get("单个任务 SDK → Agent")).toBe("持续每秒 1 万次事件不阻塞节点");
+	});
+});
+
+describe("§7.6 目标里的数量", () => {
+	it("读出目标原文里带单位的数量：「万」乘一万，分钟、小时换算成秒；p95 这样的名字不算数量", () => {
+		expect(
+			targetQuantities("持续每秒 1 万点 1 小时不积压；1 小时范围的指标查询 p95 < 500 ms"),
+		).toEqual([
+			{ value: 10_000, unit: "点" },
+			{ value: 3600, unit: "秒" },
+			{ value: 3600, unit: "秒" },
+			{ value: 500, unit: "ms" },
+		]);
+		expect(targetQuantities("断线 5 分钟内存不超过排队上限")).toEqual([{ value: 300, unit: "秒" }]);
+		expect(targetQuantities("没有数量")).toEqual([]);
+	});
+
+	it("各项判定与负载用的数字与仓库里 §7.6 目标表一致（改了表要同步改 perf/targets.ts）", async () => {
+		const targets = parseTargets(await readFile(join(repoRoot, "docs/ARCHITECTURE.md"), "utf8"));
+		const quantities = (scope: string) => targetQuantities(targets.get(scope) ?? "");
+		expect(quantities("单个任务 SDK → Agent")).toEqual([{ value: EVENTS_PER_SECOND, unit: "次" }]);
+		expect(quantities("单个 Agent")).toEqual([
+			{ value: AGENT_SLOTS, unit: "个" },
+			{ value: AGENT_RSS_GROWTH_MB, unit: "MB" },
+		]);
+		expect(quantities("节点大量输出 stdout")).toEqual([
+			{ value: STDOUT_MIB_PER_SECOND, unit: "MB" },
+			{ value: STDOUT_LOG_MAX_MIB, unit: "MiB" },
+		]);
+		expect(quantities("控制面接收指标")).toEqual([
+			{ value: INGEST_POINTS_PER_SECOND, unit: "点" },
+			{ value: INGEST_SECONDS, unit: "秒" },
+			{ value: INGEST_SECONDS, unit: "秒" },
+			{ value: QUERY_P95_MS, unit: "ms" },
+		]);
+		expect(quantities("端到端延迟")).toEqual([{ value: END_TO_END_MS / 1000, unit: "秒" }]);
+		expect(quantities("Agent 断线")).toEqual([{ value: DISCONNECT_SECONDS, unit: "秒" }]);
 	});
 });
 

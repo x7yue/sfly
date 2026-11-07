@@ -14,14 +14,15 @@ import { listDirs, listFiles, sampleEvery } from "../disk.js";
 import { definePerfItem, hard, type ItemRun, target } from "../item.js";
 import type { Measurement } from "../report.js";
 import { type PerfApi, sampleProcess, sleep, startStack } from "../stack.js";
+import { AGENT_RSS_GROWTH_MB, STDOUT_LOG_MAX_MIB, STDOUT_MIB_PER_SECOND } from "../targets.js";
 
-const MIB_PER_SECOND = 10;
 /** 共 150 MiB：控制面单个任务的日志上限是 200 MiB（JSONL，每行约多 100 字节），留出余量。 */
 const SECONDS = 15;
 const LINE_BYTES = 1024;
 const MB = 1024 * 1024;
+/** Agent 每个流的日志副本：最多两个文件、每个 8 MiB（agent/src/logs.rs 的 LogCopy），合计即 §7.6 的 16 MiB。 */
 const LOG_COPY_MAX_FILES = 2;
-const LOG_COPY_MAX_MIB = 8;
+const LOG_COPY_MAX_MIB = STDOUT_LOG_MAX_MIB / LOG_COPY_MAX_FILES;
 
 interface StdoutOutputs {
 	lines: number;
@@ -80,7 +81,11 @@ export default definePerfItem({
 					kind: "package",
 					package: "sfly-stub",
 					node: "stdout_rate",
-					inputs: { mib_per_second: MIB_PER_SECOND, seconds: SECONDS, line_bytes: LINE_BYTES },
+					inputs: {
+						mib_per_second: STDOUT_MIB_PER_SECOND,
+						seconds: SECONDS,
+						line_bytes: LINE_BYTES,
+					},
 				},
 			],
 			edges: [{ from: "entry", to: "spew", kind: "chain" }],
@@ -101,7 +106,7 @@ export default definePerfItem({
 		};
 		const usage = sampleProcess(agent.child.pid as number);
 		const copies = sampleEvery(copiesNow, 100);
-		ctx.log(`节点按每秒 ${MIB_PER_SECOND} MiB 写标准输出 ${SECONDS} 秒`);
+		ctx.log(`节点按每秒 ${STDOUT_MIB_PER_SECOND} MiB 写标准输出 ${SECONDS} 秒`);
 		const runId = await api.trigger(orchestration);
 		const view = await api.waitRun(runId, ctx.signal, (SECONDS + 120) * 1000);
 		const [agentUsage, copySamples] = await Promise.all([usage.stop(), copies.stop()]);
@@ -125,8 +130,9 @@ export default definePerfItem({
 				value: (agentUsage.peakRssBytes - agentUsage.startRssBytes) / MB,
 				unit: "MB",
 				noise: 2,
-				// 断线时日志最多排队 64 MB（--log-queue-bytes）；连着控制面时不该接近这个量。
-				check: hard("<=", 100),
+				// §7.6 只要求「有上限」，借用单个 Agent 的 100 MB：断线时日志最多排队 64 MB（--log-queue-bytes），
+				// 连着控制面时不该接近这个量。
+				check: hard("<=", AGENT_RSS_GROWTH_MB),
 			},
 			{
 				id: "missing_lines",
@@ -177,14 +183,14 @@ export default definePerfItem({
 				value: peak((c) => c.totalBytes) / MB,
 				unit: "MiB",
 				noise: 0.5,
-				check: hard("<=", LOG_COPY_MAX_FILES * LOG_COPY_MAX_MIB),
+				check: hard("<=", STDOUT_LOG_MAX_MIB),
 			},
 			{
 				id: "stdout_rate_mib",
 				label: "节点实际写出速率",
 				value: outputs.bytes / MB / outputs.elapsed,
 				unit: "MiB/秒",
-				check: target(">=", MIB_PER_SECOND),
+				check: target(">=", STDOUT_MIB_PER_SECOND),
 			},
 			{
 				id: "max_behind_ms",
@@ -220,7 +226,7 @@ export default definePerfItem({
 				},
 			],
 			notes: [
-				`节点计划每秒写 ${MIB_PER_SECOND} MiB、共 ${SECONDS} 秒（每行 ${LINE_BYTES} 字节）；实际写出 ${outputs.lines} 行 / ${(outputs.bytes / MB).toFixed(0)} MiB，用时 ${outputs.elapsed.toFixed(2)} 秒。`,
+				`节点计划每秒写 ${STDOUT_MIB_PER_SECOND} MiB、共 ${SECONDS} 秒（每行 ${LINE_BYTES} 字节）；实际写出 ${outputs.lines} 行 / ${(outputs.bytes / MB).toFixed(0)} MiB，用时 ${outputs.elapsed.toFixed(2)} 秒。`,
 				`控制面收到 ${received.numbers.length} 行 stdout（日志已写入的最大序号 ${page.last_seq}）；结束时 stdout.log 副本 ${final?.files ?? 0} 个、合计 ${((final?.totalBytes ?? 0) / MB).toFixed(1)} MiB，运行期间按 ${copySamples.length} 次采样取最坏值。`,
 			],
 		};

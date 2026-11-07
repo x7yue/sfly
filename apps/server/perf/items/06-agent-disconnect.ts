@@ -20,9 +20,9 @@ import { sampleEvery } from "../disk.js";
 import { definePerfItem, hard, type ItemRun, type PerfItem } from "../item.js";
 import type { Measurement } from "../report.js";
 import { type PerfApi, sampleProcess, sleep, startStack } from "../stack.js";
+import { EVENTS_PER_SECOND } from "../targets.js";
 
 const MB = 1024 * 1024;
-const METRIC_RATE = 10_000;
 const STDOUT_MIB_PER_SECOND = 3;
 const LINE_BYTES = 1024;
 /** Agent 断线期间最多排队的日志字节数（agent/src/logs.rs 的 DEFAULT_TELEMETRY_QUEUE_BYTES，这里用默认值）。 */
@@ -151,7 +151,7 @@ export function agentDisconnect(seconds?: number): PerfItem {
 					id,
 				);
 			const metricOrchestration = await single("events", "metric_rate", {
-				rate: METRIC_RATE,
+				rate: EVENTS_PER_SECOND,
 				seconds: nodeSeconds,
 			});
 			const stdoutOrchestration = await single("spew", "stdout_rate", {
@@ -163,7 +163,7 @@ export function agentDisconnect(seconds?: number): PerfItem {
 			const sampledFrom = Date.now();
 			const usage = sampleProcess(agent.child.pid as number);
 			ctx.log(
-				`控制面停掉 ${downSeconds} 秒；两个任务各跑 ${nodeSeconds} 秒：每秒 ${METRIC_RATE} 次指标、每秒 ${STDOUT_MIB_PER_SECOND} MiB stdout`,
+				`控制面停掉 ${downSeconds} 秒；两个任务各跑 ${nodeSeconds} 秒：每秒 ${EVENTS_PER_SECOND} 次指标、每秒 ${STDOUT_MIB_PER_SECOND} MiB stdout`,
 			);
 			const metricRun = await api.trigger(metricOrchestration);
 			const stdoutRun = await api.trigger(stdoutOrchestration);
@@ -424,7 +424,7 @@ export function agentDisconnect(seconds?: number): PerfItem {
 					},
 				],
 				notes: [
-					`控制面停掉 ${downSeconds} 秒；两个任务各跑 ${nodeSeconds} 秒：每秒 ${METRIC_RATE} 次指标、每秒 ${STDOUT_MIB_PER_SECOND} MiB stdout（每行 ${LINE_BYTES} 字节）。` +
+					`控制面停掉 ${downSeconds} 秒；两个任务各跑 ${nodeSeconds} 秒：每秒 ${EVENTS_PER_SECOND} 次指标、每秒 ${STDOUT_MIB_PER_SECOND} MiB stdout（每行 ${LINE_BYTES} 字节）。` +
 						`日志排队上限用 Agent 默认的 ${LOG_QUEUE_BYTES / MB} MiB，指标排队上限调成 ${METRIC_QUEUE_POINTS} 个点（默认 50 万点，一个任务断线 5 分钟也排不满）。`,
 					`时间线（相对采样开始，秒）：${offset(stopAt)} 停掉控制面，${offset(restartAt)} 重启，${offset(welcomeAt)} Agent 重新连上；` +
 						`断线期间内存从 ${(growth.baselineBytes / MB).toFixed(1)} MB 涨到峰值 ${(growth.peakBytes / MB).toFixed(1)} MB。`,

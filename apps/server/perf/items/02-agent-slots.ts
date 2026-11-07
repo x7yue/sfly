@@ -9,9 +9,8 @@ import { dirUsage, sampleEvery } from "../disk.js";
 import { definePerfItem, hard, type ItemRun, target } from "../item.js";
 import type { Measurement } from "../report.js";
 import { type PerfApi, sampleProcess, sleep, startStack } from "../stack.js";
+import { AGENT_RSS_GROWTH_MB, AGENT_SLOTS, EVENTS_PER_SECOND } from "../targets.js";
 
-const SLOTS = 4;
-const RATE = 10_000;
 const SECONDS = 30;
 const MB = 1024 * 1024;
 /** 窗口从最后一个任务开始后这么久算起：执行器刚启动时 Python 导入、创建文件的那一下不算增长。 */
@@ -81,7 +80,7 @@ export default definePerfItem({
 	needsArtifacts: true,
 	async run(ctx): Promise<ItemRun> {
 		const { agent, agentName, api } = await startStack(ctx, {
-			agentArgs: ["--slots", String(SLOTS)],
+			agentArgs: ["--slots", String(AGENT_SLOTS)],
 		});
 		const orchestration = await api.createOrchestration({
 			default_agent: agentName,
@@ -92,7 +91,7 @@ export default definePerfItem({
 					kind: "package",
 					package: "sfly-stub",
 					node: "metric_rate",
-					inputs: { rate: RATE, seconds: SECONDS },
+					inputs: { rate: EVENTS_PER_SECOND, seconds: SECONDS },
 				},
 			],
 			edges: [{ from: "entry", to: "events", kind: "chain" }],
@@ -102,9 +101,9 @@ export default definePerfItem({
 		const tasksDir = join(agent.workDir, "tasks");
 		const usage = sampleProcess(agent.child.pid as number);
 		const disk = sampleEvery(() => dirUsage(tasksDir), 500);
-		ctx.log(`${SLOTS} 个任务同时按每秒 ${RATE} 次上报 ${SECONDS} 秒`);
+		ctx.log(`${AGENT_SLOTS} 个任务同时按每秒 ${EVENTS_PER_SECOND} 次上报 ${SECONDS} 秒`);
 		const runIds: string[] = [];
-		for (let i = 0; i < SLOTS; i++) runIds.push(await api.trigger(orchestration));
+		for (let i = 0; i < AGENT_SLOTS; i++) runIds.push(await api.trigger(orchestration));
 		const tasks = await Promise.all(runIds.map((id) => checkRun(api, id, ctx.signal)));
 		const [agentUsage, diskSamples] = await Promise.all([usage.stop(), disk.stop()]);
 
@@ -127,7 +126,7 @@ export default definePerfItem({
 				value: (agentUsage.peakRssBytes - agentUsage.startRssBytes) / MB,
 				unit: "MB",
 				noise: 2,
-				check: hard("<=", 100),
+				check: hard("<=", AGENT_RSS_GROWTH_MB),
 			},
 			{
 				id: "work_dir_growth_mb",
@@ -141,7 +140,7 @@ export default definePerfItem({
 			},
 			{
 				id: "concurrent_seconds",
-				label: `${SLOTS} 个任务同时执行的时长`,
+				label: `${AGENT_SLOTS} 个任务同时执行的时长`,
 				value: (firstEnd - lastStart) / 1000,
 				unit: "秒",
 				noise: 2,
@@ -187,7 +186,7 @@ export default definePerfItem({
 				label: "最慢任务的实际上报速率",
 				value: min((t) => t.outputs.count / t.outputs.elapsed),
 				unit: "次/秒",
-				check: target(">=", RATE),
+				check: target(">=", EVENTS_PER_SECOND),
 			},
 			{
 				id: "max_behind_ms",
@@ -244,7 +243,7 @@ export default definePerfItem({
 				},
 			],
 			notes: [
-				`${SLOTS} 个任务各计划每秒上报 ${RATE} 次、共 ${SECONDS} 秒；实际 ${tasks
+				`${AGENT_SLOTS} 个任务各计划每秒上报 ${EVENTS_PER_SECOND} 次、共 ${SECONDS} 秒；实际 ${tasks
 					.map((t) => `${t.outputs.count} 次 / ${t.outputs.elapsed.toFixed(2)} 秒`)
 					.join("、")}。`,
 				`工作目录占用按 ${diskSamples.length} 次采样（每 0.5 秒）计算，窗口内基准 ${(growth.baselineBytes / 1024).toFixed(0)} KiB、峰值 ${(growth.peakBytes / 1024).toFixed(0)} KiB。`,

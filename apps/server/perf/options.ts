@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
+import { INGEST_SECONDS } from "./targets.js";
 
 /** `pnpm perf` 与 `pnpm perf:soak`（--soak）的命令行参数。 */
 export interface PerfOptions {
@@ -18,7 +19,7 @@ export interface PerfOptions {
 }
 
 /** 长时负载测试的默认时长：1 小时（ARCHITECTURE §7.6）。 */
-export const DEFAULT_SOAK_SECONDS = 3600;
+export const DEFAULT_SOAK_SECONDS = INGEST_SECONDS;
 
 export const USAGE = `用法：pnpm perf [--only <项>[,<项>...]] [--tmp-dir <目录>] [--out-dir <目录>] [--no-build] [--list]
       pnpm perf:soak [--duration <时长>] [--tmp-dir <目录>] [--out-dir <目录>] [--no-build]

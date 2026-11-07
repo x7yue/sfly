@@ -12,10 +12,10 @@ import { durationSeconds } from "../metric-load.js";
 import type { Measurement } from "../report.js";
 import { openSse } from "../sse.js";
 import { sleep, startStack } from "../stack.js";
+import { END_TO_END_MS, EVENTS_PER_SECOND } from "../targets.js";
 
 export const SECONDS_ENV = "SFLY_PERF_END_TO_END_SECONDS";
 const DEFAULT_SECONDS = 30;
-const RATE = 10_000;
 const METRIC = "clock_ms";
 const NODE_ID = "clock";
 
@@ -46,14 +46,14 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 				kind: "package",
 				package: "sfly-stub",
 				node: "metric_clock",
-				inputs: { rate: RATE, seconds },
+				inputs: { rate: EVENTS_PER_SECOND, seconds },
 			},
 		],
 		edges: [{ from: "entry", to: NODE_ID, kind: "chain" }],
 		packages: { "sfly-stub": "0.1.0" },
 	});
 
-	ctx.log(`节点每秒 ${RATE} 次上报调用时刻，持续 ${seconds} 秒；运行事件流上测延迟`);
+	ctx.log(`节点每秒 ${EVENTS_PER_SECOND} 次上报调用时刻，持续 ${seconds} 秒；运行事件流上测延迟`);
 	const runId = await api.trigger(orchestration);
 	const latencies: PushLatency[] = [];
 	// 执行器启动要几百毫秒，节点的第一次上报一定在订阅之后。
@@ -99,7 +99,7 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 			value: first?.max ?? Number.NaN,
 			unit: "ms",
 			noise: 100,
-			check: target("<=", 3000),
+			check: target("<=", END_TO_END_MS),
 		},
 		{
 			id: "latency_p99_ms",
@@ -134,7 +134,7 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 			label: "节点实际上报速率",
 			value: outputs.count / outputs.elapsed,
 			unit: "次/秒",
-			check: target(">=", RATE),
+			check: target(">=", EVENTS_PER_SECOND),
 		},
 	];
 	return {
