@@ -306,6 +306,30 @@ def metric_rate(ctx: Context, rate: float = 10000, seconds: float = 10) -> dict[
     }
 
 
+@node(
+    title="定速时钟",
+    outputs=["count", "elapsed"],
+    metrics=[Metric("clock_ms", "ms", "gauge", "调用 ctx.metric() 时的 Unix 毫秒数")],
+    primary_metric="clock_ms",
+)
+def metric_clock(ctx: Context, rate: float = 1000, seconds: float = 10) -> dict[str, Any]:
+    """性能测试用（pnpm perf 的端到端延迟）：按每秒 rate 次的速率上报 seconds 秒，
+
+    每次上报调用时的 Unix 毫秒数。Agent 按秒合并成 gauge：最小值是这一秒第一次调用的时刻，
+    最新值是最后一次，收到推送的一方据此算出从 `ctx.metric()` 到看到数据的延迟。
+    每 100 次对一次时间，提前了就等到计划时刻。
+    """
+    total = int(rate * seconds)
+    start = time.monotonic()
+    for i in range(total):
+        if i % 100 == 0:
+            delay = start + i / rate - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+        ctx.metric("clock_ms", time.time() * 1000)
+    return {"count": total, "elapsed": time.monotonic() - start}
+
+
 @node(title="定速输出", outputs=["lines", "bytes", "elapsed", "max_behind_ms"])
 def stdout_rate(
     ctx: Context, mib_per_second: float = 10, seconds: float = 10, line_bytes: int = 1024
