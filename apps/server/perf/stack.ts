@@ -180,6 +180,8 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 export interface Stack {
 	readonly database: TestDatabase;
 	readonly server: BundledServer;
+	/** 控制面的数据目录（重启控制面时沿用）。 */
+	readonly dataDir: string;
 	readonly agent: RealAgent;
 	readonly agentName: string;
 	readonly api: PerfApi;
@@ -214,7 +216,7 @@ export async function startStack(
 		env: options.agentEnv,
 	});
 	ctx.defer(() => agent.close());
-	return { database, server, agent, agentName, api };
+	return { database, server, dataDir, agent, agentName, api };
 }
 
 /** 进程资源采样的结果。 */
