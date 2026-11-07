@@ -6,6 +6,7 @@ import type {
 	ProgressEvent,
 	RunView,
 } from "@sfly/schema";
+import { KIND_META } from "#/components/canvas/node-display";
 import { runStatusView } from "#/components/status";
 import { chainLabel as chainName, subflowLabel } from "#/lib/copy";
 import type { NodeRef } from "./monitor-state";
@@ -47,16 +48,6 @@ export function orderedChains(run: RunView): ChainRunView[] {
 export const chainLabel = (chain: ChainRunView) =>
 	chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name }, chain.id);
 
-const KIND_TITLE: Record<OrchestrationNode["kind"], string> = {
-	entry: "入口",
-	subflow_entry: "子流程入口",
-	async: "异步任务",
-	timer: "定时",
-	sleep: "Sleep",
-	stop_subflow: "停止子流程",
-	package: "包节点",
-};
-
 /** 节点 ID → 文档里的节点（标题、always 标记、引用了哪些参数）。 */
 export const documentNodes = (doc: OrchestrationDocument | undefined) =>
 	new Map((doc?.nodes ?? []).map((n) => [n.id, n]));
@@ -72,8 +63,8 @@ export function nodeTitle(
 ): string {
 	if (decl?.kind === "package") return `${decl.package}/${decl.node}`;
 	const target = stopTarget(decl, decls);
-	if (target) return `${KIND_TITLE.stop_subflow}「${target}」`;
-	return KIND_TITLE[node.kind] ?? node.kind;
+	if (target) return `${KIND_META.stop_subflow.label}「${target}」`;
+	return KIND_META[node.kind].label;
 }
 
 /** 停止子流程节点停止的子流程（按子流程入口 ID）在运行里的名称（每次运行每个子流程最多一个实例）。 */
