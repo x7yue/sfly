@@ -360,7 +360,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 针对 sfly 本身（SDK → Agent → 控制面 → PostgreSQL）的性能，分三类，都只在本地开发环境运行，不进 CI：
 
-- **基准测试**：单独测一段代码的耗时和吞吐，只有三处：SDK 单次 `ctx.metric()`（标准库 `timeit`）、Agent 的指标合并与按行切分（criterion，只作开发依赖）、控制面的指标分段写入与降采样查询（`vitest bench`）。
+- **基准测试**：单独测一段代码的耗时和吞吐，只有三处：SDK 单次 `ctx.metric()`（标准库 `timeit`）、Agent 的指标合并与按行切分（criterion，只作开发依赖）、控制面的指标分段写入与降采样查询（`vitest bench`）。可以单独运行：`uv run --locked python sdk/python/benchmarks/metric.py`、`cargo bench -p sfly-agent --bench telemetry`、`pnpm --filter @sfly/server exec vitest bench --run perf/benchmarks/control-plane.bench.ts`；`cargo test`、pytest 与 `vitest run` 都不会运行它们。
 - **负载测试**：用 release 构建的 Agent、打包后的控制面和本机 PostgreSQL，在指定负载下验证资源有上限、数据正确、端到端延迟达标。`pnpm perf` 约 10 分钟，顺带运行基准测试，结果写到 `out/perf/<时间>/`，并与本机上一次结果对比。发版前必跑；改动 Agent 日志转发与指标合并、控制面指标写入等关键路径的 PR 在描述里贴结果。
 - **长时负载测试**：`pnpm perf:soak`，默认 1 小时，只在维护者要求时运行。
 
