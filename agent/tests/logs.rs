@@ -266,3 +266,70 @@ async fn logs_queued_while_disconnected_are_capped_and_the_result_still_arrives(
     let seqs: Vec<u64> = lines.iter().map(|(_, l)| l.seq).collect();
     assert!(seqs.windows(2).all(|w| w[0] < w[1]));
 }
+
+/// Agent 进程到目前为止的峰值常驻内存（`/proc/<pid>/status` 的 VmHWM）。
+fn peak_rss_bytes(pid: u32) -> u64 {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+    let kib: u64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmHWM:"))
+        .and_then(|v| v.trim().strip_suffix("kB"))
+        .and_then(|v| v.trim().parse().ok())
+        .expect("VmHWM");
+    kib * 1024
+}
+
+#[tokio::test]
+async fn stdout_written_faster_than_it_is_forwarded_makes_the_node_wait_instead_of_growing_agent_memory()
+ {
+    const MIB: u64 = 1024 * 1024;
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-backpressure");
+    // 转发器每秒只处理 8 MiB：节点不受限地写，远快于转发。
+    options.args = vec!["--log-forward-rate".into(), (8 * MIB).to_string()];
+    let agent = spawn_agent(options);
+    let pid = agent.child.id().unwrap();
+    cp.hello(0).await;
+    let before = peak_rss_bytes(pid);
+
+    // 20 MiB 标准输出（每行 1 KiB），最后一行是「最后一行」。
+    cp.assign(stub_task("task-spew", "spew", json!({ "stdout_mib": 20 })))
+        .await;
+    let (result, _) = cp.result("task-spew").await;
+    assert_eq!(
+        result.status(),
+        sfly_agent::proto::TaskStatus::Success,
+        "{result:?}"
+    );
+    let growth = peak_rss_bytes(pid).saturating_sub(before);
+
+    // 日志不丢：标准输出的每一行都按顺序到达，序号连续。
+    let lines = log_lines(&cp.received_with_session(), "task-spew");
+    let seqs: Vec<u64> = lines.iter().map(|(_, l)| l.seq).collect();
+    assert_eq!(seqs, (1..=lines.len() as u64).collect::<Vec<_>>());
+    let stdout: Vec<&str> = lines
+        .iter()
+        .filter(|(_, l)| l.source() == LogSource::Stdout)
+        .map(|(_, l)| l.text.as_str())
+        .collect();
+    assert_eq!(stdout.len(), 20 * 1024 + 1, "标准输出的行数");
+    assert_eq!(stdout.last(), Some(&"最后一行"));
+
+    // 转发跟不上时节点等待，Agent 不在内存里攒下没转发的输出（攒下的话至少增长十几 MiB）。
+    assert!(
+        growth < 10 * MIB,
+        "Agent 峰值内存增长了 {} MiB",
+        growth / MIB
+    );
+
+    // stdout.log 副本照常轮换：最多两个 8 MiB 的文件。
+    let dir = agent.work_dir.path().join("task-spew");
+    let size = |name: &str| std::fs::metadata(dir.join(name)).map(|m| m.len()).ok();
+    let current = size("stdout.log").unwrap();
+    let previous = size("stdout.log.1").expect("轮换出 .1");
+    assert!(
+        current <= 8 * MIB && previous <= 8 * MIB,
+        "{current} + {previous}"
+    );
+    assert!(size("stdout.log.2").is_none());
+}

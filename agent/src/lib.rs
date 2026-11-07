@@ -101,6 +101,8 @@ pub struct Config {
     pub telemetry_queue_bytes: usize,
     /// 与控制面断开期间最多排队多少个指标点（所有任务合计）；超出后丢弃最早的点，恢复后上报丢弃计数。
     pub metric_queue_points: usize,
+    /// 只在测试中使用：转发器每秒最多处理多少字节的标准输出 / 标准错误（0 = 不限制，[`logs::Pump::start`]）。
+    pub log_forward_rate: u64,
     /// 自更新下载新二进制时每次读取的超时（[`update::DEFAULT_READ_TIMEOUT`]）。
     pub update_read_timeout: Duration,
     /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
@@ -131,6 +133,7 @@ impl Config {
             python: None,
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
             metric_queue_points: metrics::DEFAULT_METRIC_QUEUE_POINTS,
+            log_forward_rate: 0,
             update_read_timeout: update::DEFAULT_READ_TIMEOUT,
             version: AGENT_VERSION.to_string(),
             self_update: update::SelfUpdate::detect(true, None),
@@ -278,6 +281,8 @@ struct Runtime {
     /// 任务目录的保留期（[`Config::task_dir_retention`]）。
     retention: Duration,
     terminate_grace: Duration,
+    /// [`Config::log_forward_rate`]。
+    log_forward_rate: u64,
     /// 安装与启动新任务互斥：启动任务（查找入口到子进程启动）持有读锁，安装持有写锁。
     /// 已经在运行的任务不持有锁，安装期间照常运行。
     gate: RwLock<()>,
@@ -458,6 +463,7 @@ impl Runtime {
             entry,
             &self.telemetry,
             self.terminate_grace,
+            self.log_forward_rate,
         )
         .await
     }
@@ -677,6 +683,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         work_dir: work_dir.clone(),
         retention: config.task_dir_retention,
         terminate_grace: config.terminate_grace,
+        log_forward_rate: config.log_forward_rate,
         gate: RwLock::new(()),
         results: results_tx,
         installs: installs_tx,

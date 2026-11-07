@@ -88,6 +88,7 @@ pub async fn start(
     entry: &str,
     telemetry: &Telemetry,
     grace: Duration,
+    log_forward_rate: u64,
 ) -> Result<Running, TaskResult> {
     if !valid_task_id(&task.task_id) {
         return Err(failure(
@@ -114,7 +115,7 @@ pub async fn start(
             format!("准备工作目录 {} 失败：{error}", dir.display()),
         ));
     }
-    spawn_process(venv, &dir, task, telemetry, grace)
+    spawn_process(venv, &dir, task, telemetry, grace, log_forward_rate)
 }
 
 async fn prepare_dir(
@@ -168,6 +169,7 @@ fn spawn_process(
     task: &AssignTask,
     telemetry: &Telemetry,
     grace: Duration,
+    log_forward_rate: u64,
 ) -> Result<Running, TaskResult> {
     let paths = Paths {
         output: dir.join("output.json"),
@@ -226,6 +228,7 @@ fn spawn_process(
                 events,
                 dir.to_path_buf(),
                 telemetry.clone(),
+                log_forward_rate,
             );
             Ok(Running {
                 process,
