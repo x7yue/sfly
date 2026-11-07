@@ -44,6 +44,15 @@ function KindChip({ kind }: { kind: AddItem["kind"] }) {
 }
 
 /**
+ * 搜索框一挂载就拿到焦点（React 提交阶段同步执行）。弹层自己的初始焦点要等下一帧
+ * （Base UI 的 FloatingFocusManager 用 requestAnimationFrame），按 / 后紧接着输入的字
+ * 会落在原来的焦点上丢掉，回车就选中了过滤前的第一项（#123）。
+ */
+function focusOnMount(input: HTMLInputElement | null) {
+	input?.focus({ preventScroll: true });
+}
+
+/**
  * 添加节点菜单（原型 #/editor 的 addMenu）：可搜索；内置节点与各节点包的节点类型分组列出。
  * 「＋」按钮本身放在工具条最左侧（FlowCanvas 的 dockStart）；拖线到空白处时菜单出现在松开鼠标的位置，
  * 不列子流程入口（子流程入口只能由调度连线触发，不能接在链上）。
@@ -129,7 +138,11 @@ export function AddNodeMenu({
 					/>
 				) : (
 					<Command loop className="bg-transparent">
-						<CommandInput placeholder="搜索节点类型…" aria-label="搜索节点类型" />
+						<CommandInput
+							ref={focusOnMount}
+							placeholder="搜索节点类型…"
+							aria-label="搜索节点类型"
+						/>
 						<CommandList className="max-h-[min(360px,var(--available-height))]">
 							<CommandEmpty>没有匹配的节点类型</CommandEmpty>
 							<CommandGroup heading="内置">

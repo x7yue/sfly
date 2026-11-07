@@ -95,6 +95,30 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 	await expect(nodeCard(page, "timer_1")).toBeFocused();
 });
 
+test("按 / 后立即输入并回车：渲染帧来得晚时输入也不丢，选中过滤后的节点（#123）", async ({
+	page,
+	controlPlane,
+}) => {
+	// 模拟机器繁忙时渲染帧来得晚：requestAnimationFrame 的回调推迟 300ms 执行。
+	// 搜索框若等下一帧才拿到焦点，这段时间里输入的字会落在节点卡片上丢掉，回车选中的是过滤前的第一项。
+	await page.addInitScript(() => {
+		const raf = window.requestAnimationFrame.bind(window);
+		window.requestAnimationFrame = (callback) =>
+			raf((time) => setTimeout(() => callback(time), 300)) as number;
+	});
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+
+	await nodeCard(page, "fetch").click();
+	await expect(nodeCard(page, "fetch")).toBeFocused();
+	await page.keyboard.press("/");
+	await page.keyboard.type("定时");
+	await page.keyboard.press("Enter");
+	await expect(addMenu(page)).toHaveCount(0);
+	await expect(edge(page, "chain:ping->timer_1")).toHaveCount(1);
+	await expect(nodeCard(page, "async_1")).toHaveCount(0);
+});
+
 test("从链尾端口拖线到空白处：弹出可以接上的节点菜单，新节点放在松开鼠标的位置", async ({
 	page,
 	controlPlane,
