@@ -346,7 +346,7 @@ export default definePerfItem({
 			],
 			notes: [
 				`控制面停掉 ${downSeconds} 秒${downSeconds < DISCONNECT_SECONDS ? `（§7.6 的目标是 ${DISCONNECT_SECONDS} 秒，设 ${DISCONNECT_SECONDS_ENV}=${DISCONNECT_SECONDS} 跑满）` : ""}；两个任务各跑 ${nodeSeconds} 秒：每秒 ${EVENTS_PER_SECOND} 次指标、每秒 ${STDOUT_MIB_PER_SECOND} MiB stdout（每行 ${LINE_BYTES} 字节）。` +
-					`日志排队上限用 Agent 默认的 ${LOG_QUEUE_BYTES / MB} MiB，指标排队上限调成 ${METRIC_QUEUE_POINTS} 个点（默认 50 万点，一个任务断线 5 分钟也排不满）。`,
+					`日志排队上限用 Agent 默认的 ${LOG_QUEUE_BYTES / MB} MiB，指标排队上限调成 ${METRIC_QUEUE_POINTS} 个点：每个指标每秒只合并出 1 个点，断线 5 分钟也排不满默认的 50 万点，所以 50 万点排满时的内存没有测到。`,
 				`时间线（相对采样开始，秒）：${offset(stopAt)} 停掉控制面，${offset(restartAt)} 重启，${offset(welcomeAt)} Agent 重新连上；` +
 					`断线期间内存从 ${(growth.baselineBytes / MB).toFixed(1)} MB 涨到峰值 ${(growth.peakBytes / MB).toFixed(1)} MB。`,
 				`日志：节点写出 ${stdoutOutputs.lines} 行，控制面收到 ${stdout.length} 行 stdout（最大序号 ${maxSeq}），` +

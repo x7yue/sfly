@@ -1,4 +1,6 @@
-// 负载：节点每秒向标准输出写 10 MiB（ARCHITECTURE §7.6「节点大量输出 stdout」，也是 #75 的验收手段）。
+// 负载：节点每秒向标准输出写 10 MiB（ARCHITECTURE §7.6「节点大量输出 stdout」）。
+// 本机上 Agent 的转发跟得上这个速率，#75（转发跟不上时无界通道积压）在这里不会出现：这一项区分不出 #75 修复前后，
+// 只是日志完整、副本有上限、内存有上限的回归检查；#75 的回归测试应在 Agent 单测里人为拖慢转发环节。
 // 桩节点 stdout_rate 定速写出带序号的行；Agent 把每行转发给控制面，原始内容同时写到工作目录的 stdout.log
 // （每个文件 8 MiB，超过后改名为 .1，最多两个文件）。
 // 硬性断言：Agent 内存增量 ≤ 100 MB；控制面收到的 stdout 行按序号核对不丢不重、内容完整、日志没有被截断；
@@ -161,6 +163,7 @@ export default definePerfItem({
 			notes: [
 				`节点计划每秒写 ${STDOUT_MIB_PER_SECOND} MiB、共 ${SECONDS} 秒（每行 ${LINE_BYTES} 字节）；实际写出 ${outputs.lines} 行 / ${(outputs.bytes / MB).toFixed(0)} MiB，用时 ${outputs.elapsed.toFixed(2)} 秒。`,
 				`控制面收到 ${stdout.length} 行 stdout（日志已写入的最大序号 ${page.last_seq}）；结束时 stdout.log 副本 ${final?.files ?? 0} 个、合计 ${((final?.totalBytes ?? 0) / MB).toFixed(1)} MiB，运行期间按 ${copySamples.length} 次采样取最坏值。`,
+				"端到端的速率达不到让 #75（Agent 转发跟不上时无界通道积压）出现的程度：这一项区分不出 #75 修复前后，是日志完整、副本有上限、内存有上限的回归检查；#75 的回归测试应在 Agent 单测里人为拖慢转发环节。",
 			],
 		};
 	},
