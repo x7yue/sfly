@@ -148,3 +148,31 @@ def test_ctrl_c_cancels_like_the_platform(project: Path, tmp_path: Path) -> None
     assert "已取消：任务已取消，已终止进程树" in stderr
     # 节点里抛出 Cancelled，finally 里的清理执行了，并且看到了取消标记。
     assert report.read_text() == "cancelled"
+
+
+def test_ctrl_c_while_printing_logs_still_cancels(project: Path) -> None:
+    """Ctrl-C 恰好打断往标准错误打印日志时（#109）：仍以 130 结束，并打印取消提示。
+
+    先读到几行日志，然后停止读取标准错误：管道写满后 `sfly run` 阻塞在打印日志的 write 里，
+    此时发出的 SIGINT 必然在打印中途到达。
+    """
+    params = json.dumps({"lines": 1_000_000, "interval": 0.0001})
+    proc = subprocess.Popen(
+        [SFLY, "run", "flood", "--params", params],
+        cwd=project,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert proc.stderr is not None
+    for _ in range(5):
+        assert proc.stderr.readline(), "没有日志输出"
+    time.sleep(1)  # 每秒上万行日志，远超管道容量（64 KiB）
+
+    proc.send_signal(signal.SIGINT)
+    _, rest = proc.communicate(timeout=60)
+    stderr = rest.decode("utf-8", errors="replace")
+
+    assert proc.returncode == 130, stderr[-4000:]
+    assert "reentrant call" not in stderr
+    assert "正在取消（再按一次 Ctrl-C 立即杀掉）……" in stderr
+    assert "已取消：任务已取消，已终止进程树" in stderr
