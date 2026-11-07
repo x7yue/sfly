@@ -35,26 +35,10 @@ export function replayDuration(
 	return done ? done.ms - reconnectAt : null;
 }
 
-/** pnpm perf 里默认的断线时长（秒）；ARCHITECTURE §7.6 的目标是 5 分钟，perf:soak 可以设成 300。 */
+/** pnpm perf 里默认的断线时长（秒）；ARCHITECTURE §7.6 的目标是 5 分钟（DISCONNECT_SECONDS），用环境变量跑满。 */
 export const DEFAULT_DISCONNECT_SECONDS = 45;
 /** 断线时长下限：节点每秒 3 MiB stdout，约 21 秒排满 64 MiB 的日志队列，之后还要再断一会儿才能验证丢弃与计数。 */
-export const MIN_DISCONNECT_SECONDS = 30;
-const ENV = "SFLY_PERF_DISCONNECT_SECONDS";
-
-/** 断线时长（秒）：显式给出的优先，其次是环境变量 SFLY_PERF_DISCONNECT_SECONDS，都没有时用默认值。 */
-export function disconnectSeconds(
-	given: number | undefined,
-	env: Record<string, string | undefined>,
-): number {
-	let seconds = given ?? DEFAULT_DISCONNECT_SECONDS;
-	if (given === undefined && env[ENV]) {
-		seconds = Number(env[ENV]);
-		if (!Number.isFinite(seconds)) throw new Error(`${ENV} 应为秒数：${env[ENV]}`);
-	}
-	if (seconds < MIN_DISCONNECT_SECONDS) {
-		throw new Error(
-			`断线时长至少 ${MIN_DISCONNECT_SECONDS} 秒（日志队列排满之后还要再断一会儿）：${seconds}`,
-		);
-	}
-	return seconds;
-}
+export const MIN_DISCONNECT_SECONDS = {
+	seconds: 30,
+	reason: "日志队列排满之后还要再断一会儿",
+};

@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseDuration, parseOptions } from "../perf/options.js";
+import { parseDuration, parseOptions, secondsFromEnv } from "../perf/options.js";
 import { loadItems, selectItems } from "../perf/registry.js";
 import {
 	AGENT_RSS_GROWTH_MB,
@@ -186,5 +186,30 @@ describe("时长", () => {
 		for (const text of ["", "0", "0m", "-5m", "5x", "m", "1h 30m", "5m1h"]) {
 			expect(() => parseDuration(text), text).toThrow("无效的时长");
 		}
+	});
+});
+
+describe("环境变量里的秒数（secondsFromEnv）", () => {
+	const NAME = "SFLY_PERF_X_SECONDS";
+
+	it("没设或为空时用默认值，设了就按秒数（可以带小数）", () => {
+		expect(secondsFromEnv({}, NAME, 60)).toBe(60);
+		expect(secondsFromEnv({ [NAME]: "" }, NAME, 60)).toBe(60);
+		expect(secondsFromEnv({ [NAME]: "3600" }, NAME, 60)).toBe(3600);
+		expect(secondsFromEnv({ [NAME]: "2.5" }, NAME, 60)).toBe(2.5);
+	});
+
+	it("不是正数时报错并指出变量名", () => {
+		for (const bad of ["0", "-5", "abc", "1h", "5m"]) {
+			expect(() => secondsFromEnv({ [NAME]: bad }, NAME, 60), bad).toThrow(NAME);
+		}
+	});
+
+	it("有下限时，短于下限报错并说明原因", () => {
+		const min = { seconds: 30, reason: "日志队列排满之后还要再断一会儿" };
+		expect(secondsFromEnv({ [NAME]: "30" }, NAME, 45, min)).toBe(30);
+		expect(() => secondsFromEnv({ [NAME]: "10" }, NAME, 45, min)).toThrow(
+			`${NAME} 至少 30 秒（日志队列排满之后还要再断一会儿）：10`,
+		);
 	});
 });

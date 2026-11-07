@@ -3,20 +3,17 @@
 // 运行事件流 `GET /runs/:id/events` 的 metrics 事件，与运行页面订阅的是同一条流。
 // 每秒一个点：min 是这一秒第一次调用的时刻，收到推送的时刻减去它就是用户最多要等多久（first）。
 // 硬性断言：控制面写入的每一秒都推送到了事件流（没有断线，不该漏推）。
-// 只记录：延迟分布（p50 / p95 / p99 / 最长），最长与目标 3 秒比较。
-// 持续时间默认 30 秒，可以用环境变量 SFLY_PERF_END_TO_END_SECONDS 调整。
+// 只记录：延迟分布（p50 / p95 / p99 / 最长），最长与目标 3 秒比较。持续 30 秒（30 个每秒的点）。
 import { MetricIncrement as metricIncrement } from "@sfly/schema";
 import { definePerfItem, hard, type ItemRun, type PerfContext, target } from "../item.js";
 import { distribution, type PushLatency, pushLatencies } from "../latency.js";
-import { durationSeconds } from "../metric-load.js";
 import type { Measurement } from "../report.js";
 import { openSse } from "../sse.js";
 import { sleep, startStack } from "../stack.js";
 import { stubScenario } from "../stub.js";
 import { END_TO_END_MS, EVENTS_PER_SECOND } from "../targets.js";
 
-export const SECONDS_ENV = "SFLY_PERF_END_TO_END_SECONDS";
-const DEFAULT_SECONDS = 30;
+const SECONDS = 30;
 const METRIC = "clock_ms";
 const NODE_ID = "clock";
 
@@ -25,25 +22,22 @@ interface ClockOutputs {
 	elapsed: number;
 }
 
-/** 端到端延迟；seconds 不传时读环境变量 {@link SECONDS_ENV}（默认 30 秒）。 */
-export function endToEndLatency(seconds?: number) {
-	return definePerfItem({
-		id: "end-to-end-latency",
-		title: "ctx.metric() 到运行页面收到推送的延迟",
-		scope: "端到端延迟",
-		needsArtifacts: true,
-		run: (ctx) => run(ctx, seconds ?? durationSeconds(process.env, SECONDS_ENV, DEFAULT_SECONDS)),
-	});
-}
+export default definePerfItem({
+	id: "end-to-end-latency",
+	title: "ctx.metric() 到运行页面收到推送的延迟",
+	scope: "端到端延迟",
+	needsArtifacts: true,
+	run,
+});
 
-async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
+async function run(ctx: PerfContext): Promise<ItemRun> {
 	const { agentName, api, server } = await startStack(ctx);
 	const scenario = await stubScenario(api, agentName, NODE_ID, "metric_clock", {
 		rate: EVENTS_PER_SECOND,
-		seconds,
+		seconds: SECONDS,
 	});
 
-	ctx.log(`节点每秒 ${EVENTS_PER_SECOND} 次上报调用时刻，持续 ${seconds} 秒；运行事件流上测延迟`);
+	ctx.log(`节点每秒 ${EVENTS_PER_SECOND} 次上报调用时刻，持续 ${SECONDS} 秒；运行事件流上测延迟`);
 	const runId = await api.trigger(scenario);
 	const latencies: PushLatency[] = [];
 	// 执行器启动要几百毫秒，节点的第一次上报一定在订阅之后。
@@ -59,7 +53,7 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 		runId,
 		NODE_ID,
 		ctx.signal,
-		(seconds + 120) * 1000,
+		(SECONDS + 120) * 1000,
 	);
 	// 任务结束时 Agent 补发最后一秒；等它推送过来再关闭事件流。
 	await sleep(2000, ctx.signal);
@@ -143,5 +137,3 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 		],
 	};
 }
-
-export default endToEndLatency();

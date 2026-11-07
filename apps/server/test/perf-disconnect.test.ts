@@ -1,6 +1,6 @@
 // Agent 断线负载（perf/items/06-agent-disconnect.ts）里的核对与测量（纯逻辑）。
 import { describe, expect, it } from "vitest";
-import { disconnectSeconds, missingSeconds, replayDuration } from "../perf/disconnect.js";
+import { missingSeconds, replayDuration } from "../perf/disconnect.js";
 
 describe("每秒一个点的序列里整秒缺失的点数（missingSeconds）", () => {
 	const t = (second: number) => Date.UTC(2026, 10, 7, 0, 0, second);
@@ -50,21 +50,5 @@ describe("重连后补发完排队日志的耗时（replayDuration）", () => {
 
 	it("重连前产生的行一行都没收到时无需补发，耗时为 0", () => {
 		expect(replayDuration([at(150, 11)], [line(10, 110), line(11, 120)], 100)).toBe(0);
-	});
-});
-
-describe("断线时长（disconnectSeconds）", () => {
-	it("显式给出的优先，其次是环境变量 SFLY_PERF_DISCONNECT_SECONDS，都没有时用默认的 45 秒", () => {
-		expect(disconnectSeconds(300, { SFLY_PERF_DISCONNECT_SECONDS: "60" })).toBe(300);
-		expect(disconnectSeconds(undefined, { SFLY_PERF_DISCONNECT_SECONDS: "60" })).toBe(60);
-		expect(disconnectSeconds(undefined, { SFLY_PERF_DISCONNECT_SECONDS: "" })).toBe(45);
-		expect(disconnectSeconds(undefined, {})).toBe(45);
-	});
-
-	it("短于 30 秒（日志还没排满）或不是数字时报错", () => {
-		expect(() => disconnectSeconds(10, {})).toThrow(/至少 30 秒/);
-		expect(() => disconnectSeconds(undefined, { SFLY_PERF_DISCONNECT_SECONDS: "5m" })).toThrow(
-			/SFLY_PERF_DISCONNECT_SECONDS/,
-		);
 	});
 });

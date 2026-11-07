@@ -57,24 +57,6 @@ export function reconcilePoints(
 	return { sent: total(sent), stored: total(stored), missing, extra };
 }
 
-/**
- * 负载的持续时间（秒）：环境变量 `name` 没设或为空时用 fallback。`pnpm perf` 用缩短的默认值，
- * 长时负载测试（perf:soak）设成更长的时间再跑同一项。不是正数时抛出错误。
- */
-export function durationSeconds(
-	env: Record<string, string | undefined>,
-	name: string,
-	fallback: number,
-): number {
-	const raw = env[name];
-	if (raw === undefined || raw === "") return fallback;
-	const seconds = Number(raw);
-	if (!Number.isFinite(seconds) || seconds <= 0) {
-		throw new Error(`${name} 应为正的秒数，实际为 ${JSON.stringify(raw)}`);
-	}
-	return seconds;
-}
-
 /** 负载用的节点包：一个不执行任何代码的节点类型，声明 metricsPerTask 个 gauge（假 Agent 不运行它）。 */
 const PACKAGE = "perf-metrics";
 const PACKAGE_VERSION = "1.0.0";

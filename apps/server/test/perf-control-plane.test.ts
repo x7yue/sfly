@@ -1,7 +1,7 @@
 // 控制面指标负载与端到端延迟（pnpm perf 的 control-plane-metrics、end-to-end-latency 两项）里的纯逻辑。
 import { describe, expect, it } from "vitest";
 import { distribution, pushLatencies } from "../perf/latency.js";
-import { durationSeconds, planLoad, reconcilePoints } from "../perf/metric-load.js";
+import { planLoad, reconcilePoints } from "../perf/metric-load.js";
 import { SseParser } from "../perf/sse.js";
 
 describe("延迟分布（distribution）", () => {
@@ -100,22 +100,5 @@ describe("核对写入的点数与上报的点数（reconcilePoints）", () => {
 			missing: 10,
 			extra: 0,
 		});
-	});
-});
-
-describe("负载持续时间（durationSeconds）", () => {
-	const NAME = "SFLY_PERF_METRICS_SECONDS";
-
-	it("环境变量没设时用默认值，设了就按秒数（可以带小数）", () => {
-		expect(durationSeconds({}, NAME, 60)).toBe(60);
-		expect(durationSeconds({ [NAME]: "" }, NAME, 60)).toBe(60);
-		expect(durationSeconds({ [NAME]: "3600" }, NAME, 60)).toBe(3600);
-		expect(durationSeconds({ [NAME]: "2.5" }, NAME, 60)).toBe(2.5);
-	});
-
-	it("不是正数时报错并指出变量名", () => {
-		for (const bad of ["0", "-5", "abc", "1h"]) {
-			expect(() => durationSeconds({ [NAME]: bad }, NAME, 60)).toThrow(NAME);
-		}
 	});
 });

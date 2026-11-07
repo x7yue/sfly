@@ -21,6 +21,11 @@ export interface PerfOptions {
 /** 长时负载测试的默认时长：1 小时（ARCHITECTURE §7.6）。 */
 export const DEFAULT_SOAK_SECONDS = INGEST_SECONDS;
 
+/** 控制面接收指标这一项（control-plane-metrics）的持续时间（秒）。 */
+export const CONTROL_PLANE_SECONDS_ENV = "SFLY_PERF_CONTROL_PLANE_SECONDS";
+/** Agent 断线这一项（agent-disconnect）里控制面停掉的时长（秒）。 */
+export const DISCONNECT_SECONDS_ENV = "SFLY_PERF_DISCONNECT_SECONDS";
+
 export const USAGE = `用法：pnpm perf [--only <项>[,<项>...]] [--tmp-dir <目录>] [--out-dir <目录>] [--no-build] [--list]
       pnpm perf:soak [--duration <时长>] [--tmp-dir <目录>] [--out-dir <目录>] [--no-build]
   --only      只运行指定的项（可重复，或用逗号分隔）；--list 列出全部项
@@ -28,7 +33,32 @@ export const USAGE = `用法：pnpm perf [--only <项>[,<项>...]] [--tmp-dir <�
   --tmp-dir   临时目录，默认 out/perf/tmp（也可以用环境变量 SFLY_PERF_TMPDIR）；不要放在很小的 /tmp 上
   --out-dir   结果目录，默认 out/perf（perf:soak 为 out/perf/soak）；报告写到 <结果目录>/<时间>/report.{md,json}
   --no-build  不重新构建 release Agent 与打包控制面，直接用上次构建的产物
+环境变量（秒数）：
+  ${CONTROL_PLANE_SECONDS_ENV}  control-plane-metrics 的持续时间，默认 60（1 小时的目标由 perf:soak 覆盖）
+  ${DISCONNECT_SECONDS_ENV}     agent-disconnect 里控制面停掉的时长，默认 45、至少 30；300 即 §7.6 的断线 5 分钟
 相对路径按仓库根目录解析。perf:soak 中途按 Ctrl-C 会停止负载，已采集的数据照常写进报告。`;
+
+/**
+ * 环境变量 name 里的秒数：没设或为空时用 fallback；不是正数时报错并指出变量名，给了 min 时短于它也报错。
+ * 某一项要缩短或加长时用（见 {@link USAGE}），在这一项运行时读取。
+ */
+export function secondsFromEnv(
+	env: Record<string, string | undefined>,
+	name: string,
+	fallback: number,
+	min?: { seconds: number; reason: string },
+): number {
+	const raw = env[name];
+	if (raw === undefined || raw === "") return fallback;
+	const seconds = Number(raw);
+	if (!Number.isFinite(seconds) || seconds <= 0) {
+		throw new Error(`${name} 应为正的秒数，实际为 ${JSON.stringify(raw)}`);
+	}
+	if (min && seconds < min.seconds) {
+		throw new Error(`${name} 至少 ${min.seconds} 秒（${min.reason}）：${seconds}`);
+	}
+	return seconds;
+}
 
 const DURATION = /^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+(?:\.\d+)?)s)?$/;
 

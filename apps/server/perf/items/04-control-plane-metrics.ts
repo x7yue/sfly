@@ -7,23 +7,18 @@ import { startBundledServer } from "../../test/support/bundled-server.js";
 import { createTestDatabase } from "../../test/support/test-database.js";
 import { controlPlaneLoad } from "../control-plane-load.js";
 import { definePerfItem, type ItemRun, type PerfContext } from "../item.js";
-import { durationSeconds } from "../metric-load.js";
+import { CONTROL_PLANE_SECONDS_ENV, secondsFromEnv } from "../options.js";
 import { PerfApi } from "../stack.js";
 
-/** 持续时间的环境变量（秒）。 */
-export const SECONDS_ENV = "SFLY_PERF_CONTROL_PLANE_SECONDS";
 const DEFAULT_SECONDS = 60;
 
-/** 控制面接收指标负载；seconds 不传时读环境变量 {@link SECONDS_ENV}（默认 60 秒）。 */
-export function controlPlaneMetrics(seconds?: number) {
-	return definePerfItem({
-		id: "control-plane-metrics",
-		title: "控制面每秒接收 1 万个指标点",
-		scope: "控制面接收指标",
-		needsArtifacts: true,
-		run: (ctx) => run(ctx, seconds ?? durationSeconds(process.env, SECONDS_ENV, DEFAULT_SECONDS)),
-	});
-}
+export default definePerfItem({
+	id: "control-plane-metrics",
+	title: "控制面每秒接收 1 万个指标点",
+	scope: "控制面接收指标",
+	needsArtifacts: true,
+	run: (ctx) => run(ctx, secondsFromEnv(process.env, CONTROL_PLANE_SECONDS_ENV, DEFAULT_SECONDS)),
+});
 
 async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 	ctx.log("启动被测对象：数据库与打包后的控制面（假 Agent 代替真实 Agent）");
@@ -46,5 +41,3 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 		seconds,
 	);
 }
-
-export default controlPlaneMetrics();
