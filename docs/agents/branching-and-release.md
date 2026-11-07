@@ -28,11 +28,32 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - 加上分类标签，Release 说明按它分组（`.github/release.yml`）：`enhancement` 新功能、`bug` 修复、`documentation` 文档；其余归入「其他」。
 - 用 `gh pr merge <编号> --auto --squash` 合入：CI 通过后自动合入并删除分支，不用守着 CI。
 
+### 关键路径的改动要贴 `pnpm perf` 结果
+
+性能测试不进 CI（ARCHITECTURE §7.6），所以改动下面这些关键路径的 PR，由作者在本地运行 `pnpm perf`（约 10 分钟），
+把报告 `out/perf/<时间>/report.md` 的结论、总览和「与上一次相比变化超过 20% 的数值」贴进 PR 描述：
+
+| 关键路径 | 主要位置 |
+|---|---|
+| Agent 日志转发 | `agent/src/logs.rs`（stdout/stderr 与事件管道合并、分批发往控制面、日志副本轮换、断线排队） |
+| 事件通道（SDK → Agent，ADR 0015） | SDK 的 `ctx.metric()` / `ctx.log` / 进度写入（`sdk/python/src/sfly/context.py`）、`events.fifo` 的创建与读取（`agent/src/executor.rs`、`agent/src/logs.rs`） |
+| 指标合并 | `agent/src/metrics.rs`（按「指标 × 秒」合并、断线排队与丢弃计数） |
+| 控制面指标写入与查询（ADR 0009） | `apps/server/src/metrics/`（分段写入、摘要、降采样查询、保留期）及其表结构 |
+
+- 跑在改动前后同一台机器上：报告自动与本机上一次结果对比，先在改动前跑一次作为基准，变化才有意义。
+- 硬性断言不满足（结论「不通过」）说明有 bug，修好再合入；变差超过 20% 的数值在描述里说明原因。
+  机器负载会让吞吐、延迟、CPU 波动，这类数值只有明显变差、复跑仍然如此时才需要处理。
+- 只改了其中一段时可以先用 `pnpm perf --only <项>` 排查（`pnpm perf --list` 列出各项），贴进 PR 的是完整一次的报告。
+- 长时负载测试 `pnpm perf:soak`（默认 1 小时，`--duration` 指定）只在维护者要求时运行，同样贴报告。
+
 ## 发版
 
-1. 从 `main` 新建 `release/X.Y.Z`，运行 `pnpm release:version set X.Y.Z`，提交并开 PR 合入。
-2. 等 `main` 上这个提交的 CI 通过，在它上面打 tag 并推送：`git tag vX.Y.Z <提交> && git push origin vX.Y.Z`。
-3. `.github/workflows/release.yml` 接手：校验版本号、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
+1. 从 `main` 新建 `release/X.Y.Z`，运行 `pnpm release:version set X.Y.Z`，提交并开 PR。
+2. 在这个分支上运行 `pnpm perf`（必跑，约 10 分钟：release 构建的 Agent、打包后的控制面与本机 PostgreSQL，ARCHITECTURE §7.6），
+   把报告 `out/perf/<时间>/report.md` 整份贴进发版 PR 的描述。结论不通过（硬性断言不满足或某项出错）时不发版，先修复；
+   与上一次相比变差超过 20% 的数值，在描述里说明原因或确认是机器波动。确认后合入。
+3. 等 `main` 上这个提交的 CI 通过，在它上面打 tag 并推送：`git tag vX.Y.Z <提交> && git push origin vX.Y.Z`。
+4. `.github/workflows/release.yml` 接手：校验版本号、确认提交在 `main` 上且 CI 已通过，构建并发布（产物见 README「发布」）。
 
 - 版本号：0.x 阶段新功能升次版本号，修复升补丁版本号；只支持 `X.Y.Z`（ADR 0010）。
 - 只发布 `main` 上的提交，不维护旧版本的修复分支：有问题就修复后发新的补丁版本。

@@ -12,15 +12,23 @@
 // 需要先构建前端和 SDK wheel；根目录的 `pnpm bundle:server` 会依次完成这两步和打包。
 // Agent 发布包由 `pnpm pack:agents`（scripts/release/pack-agent.sh）生成；发布流程从草稿 Release 下载。
 // 产物与 CPU 架构无关（依赖都是纯 JS），镜像直接复制这个目录（apps/server/Dockerfile）。
+//
+// 性能测试（pnpm perf）用 `--without-agents --out-dir <目录>` 打一个不带 Agent 下载的包到别的目录：
+// 它直接运行 release 构建的 Agent，不需要交叉编译两个架构的发布包，也不覆盖 out/server/。
 import { execFileSync } from "node:child_process";
 import { cp, mkdir, readdir, readFile, rm } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
+import { parseArgs } from "node:util";
 import { build } from "esbuild";
 import packageJson from "../package.json" with { type: "json" };
 
 const serverDir = resolve(import.meta.dirname, "..");
 const repoRoot = resolve(serverDir, "../..");
-const outDir = join(repoRoot, "out", "server");
+const { values: args } = parseArgs({
+	options: { "without-agents": { type: "boolean" }, "out-dir": { type: "string" } },
+});
+const withAgents = !args["without-agents"];
+const outDir = resolve(repoRoot, args["out-dir"] ?? join("out", "server"));
 const webDist = join(repoRoot, "apps", "web", "dist");
 const sdkDist = join(serverDir, "dist", "sdk");
 const agentDist = join(repoRoot, "out", "agent");
@@ -46,7 +54,7 @@ if (!sdkFiles.includes(wheel)) {
 }
 
 const agentFiles = await readdir(agentDist).catch(() => [] as string[]);
-const agentPackages = (["x86_64", "aarch64"] as const).map((arch) => {
+const agentPackages = (withAgents ? (["x86_64", "aarch64"] as const) : []).map((arch) => {
 	const name = `sfly-agent-${version}-${arch}-unknown-linux-musl.tar.gz`;
 	if (!agentFiles.includes(name)) {
 		fail(`${agentDist}/${name} 不存在（版本须与控制面 ${version} 一致），先运行 pnpm pack:agents`);

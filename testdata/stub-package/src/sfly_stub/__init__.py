@@ -8,6 +8,7 @@ import signal
 import subprocess
 import sys
 import time
+from collections.abc import Callable, Iterator
 from importlib import metadata
 from typing import Any
 
@@ -278,6 +279,107 @@ def metric_burst(ctx: Context, seconds: float = 3.0) -> dict[str, Any]:
         count += 1
         ctx.metric("total", float(count))
     return {"count": count}
+
+
+class _Pacer:
+    """定速节拍（性能测试的几个定速节点共用）：每 100 次对一次时间，提前了就等到计划时刻，
+    落后了记下最长落后多久。"""
+
+    def __init__(self, rate: float) -> None:
+        self.rate = rate
+        self.start = time.monotonic()
+        self.max_behind = 0.0
+
+    def ticks(self, total: int, before_wait: Callable[[], None] | None = None) -> Iterator[int]:
+        """依次给出 0..total-1；before_wait 在每次等待之前调用（例如先把缓冲写出去）。"""
+        for i in range(total):
+            if i % 100 == 0:
+                delay = self.start + i / self.rate - time.monotonic()
+                if delay > 0:
+                    if before_wait is not None:
+                        before_wait()
+                    time.sleep(delay)
+                else:
+                    self.max_behind = max(self.max_behind, -delay)
+            yield i
+
+    @property
+    def elapsed(self) -> float:
+        """从开始到现在的秒数。"""
+        return time.monotonic() - self.start
+
+
+@node(
+    title="定速指标",
+    outputs=["count", "elapsed", "max_behind_ms", "max_call_ms"],
+    metrics=[Metric("seq", "", "gauge", "本次上报的序号")],
+    primary_metric="seq",
+)
+def metric_rate(ctx: Context, rate: float = 10000, seconds: float = 10) -> dict[str, Any]:
+    """性能测试用（pnpm perf）：按每秒 rate 次的速率上报 seconds 秒，第 i 次上报 seq = i。
+
+    每 100 次对一次时间，提前了就等到计划时刻。返回上报次数、实际用时（秒）、
+    比计划落后的最长时间与单次 `ctx.metric()` 的最长耗时（毫秒）：事件通道堵住时后两者会变大。
+    """
+    total = int(rate * seconds)
+    pacer = _Pacer(rate)
+    max_call = 0.0
+    for i in pacer.ticks(total):
+        before = time.perf_counter()
+        ctx.metric("seq", float(i + 1))
+        max_call = max(max_call, time.perf_counter() - before)
+    return {
+        "count": total,
+        "elapsed": pacer.elapsed,
+        "max_behind_ms": pacer.max_behind * 1000,
+        "max_call_ms": max_call * 1000,
+    }
+
+
+@node(
+    title="定速时钟",
+    outputs=["count", "elapsed"],
+    metrics=[Metric("clock_ms", "ms", "gauge", "调用 ctx.metric() 时的 Unix 毫秒数")],
+    primary_metric="clock_ms",
+)
+def metric_clock(ctx: Context, rate: float = 1000, seconds: float = 10) -> dict[str, Any]:
+    """性能测试用（pnpm perf 的端到端延迟）：按每秒 rate 次的速率上报 seconds 秒，
+
+    每次上报调用时的 Unix 毫秒数。Agent 按秒合并成 gauge：最小值是这一秒第一次调用的时刻，
+    最新值是最后一次，收到推送的一方据此算出从 `ctx.metric()` 到看到数据的延迟。
+    每 100 次对一次时间，提前了就等到计划时刻。
+    """
+    total = int(rate * seconds)
+    pacer = _Pacer(rate)
+    for _ in pacer.ticks(total):
+        ctx.metric("clock_ms", time.time() * 1000)
+    return {"count": total, "elapsed": pacer.elapsed}
+
+
+@node(title="定速输出", outputs=["lines", "bytes", "elapsed", "max_behind_ms"])
+def stdout_rate(
+    ctx: Context, mib_per_second: float = 10, seconds: float = 10, line_bytes: int = 1024
+) -> dict[str, Any]:
+    """性能测试用（pnpm perf）：按每秒 mib_per_second MiB 的速率向标准输出写 seconds 秒。
+
+    每行连同换行 line_bytes 字节，以「序号 + 空格」开头，序号从 1 开始，用来核对日志不丢不重。
+    每 100 行对一次时间，提前了就等到计划时刻。返回行数、字节数、实际用时（秒）
+    与比计划落后的最长时间（毫秒）：标准输出写不动（Agent 背压）时它会变大。
+    """
+    total = int(mib_per_second * 1024 * 1024 * seconds / line_bytes)
+    filler = "x" * line_bytes
+    out = sys.stdout
+    pacer = _Pacer(total / seconds)
+    for i in pacer.ticks(total, before_wait=out.flush):
+        head = f"{i + 1} "
+        out.write(head + filler[: line_bytes - len(head) - 1] + "\n")
+    out.flush()
+    return {
+        "lines": total,
+        "bytes": total * line_bytes,
+        "elapsed": pacer.elapsed,
+        "max_behind_ms": pacer.max_behind * 1000,
+    }
 
 
 @node(

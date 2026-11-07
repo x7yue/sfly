@@ -27,6 +27,8 @@
 		"test:e2e": "pnpm --filter @sfly/web test:e2e",
 		"test:e2e:docker": "bash scripts/e2e-docker.sh",
 		"test:e2e:stress": "bash scripts/e2e-stress.sh",
+		"perf": "pnpm --filter @sfly/server perf",
+		"perf:soak": "pnpm --filter @sfly/server perf:soak",
 		"proto:breaking": "bash scripts/proto-breaking.sh",
 		"build": "pnpm -r build && cargo build --workspace --locked",
 		"bundle:server": "pnpm --filter @sfly/web --filter @sfly/server build && pnpm --filter @sfly/server bundle",

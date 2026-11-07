@@ -105,6 +105,62 @@ def test_events_go_through_a_fifo_in_the_work_dir_and_none_are_lost(tmp_path: Pa
     assert not (tmp_path / "w" / "events.jsonl").exists()
 
 
+def test_metric_rate_reports_sequence_numbers_at_the_given_rate(tmp_path: Path) -> None:
+    from sfly_stub import metric_rate
+
+    result = run_node(metric_rate, {"rate": 2000, "seconds": 0.5}, work_dir=tmp_path / "w")
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["count"] == 1000
+    # 按速率均匀上报，不会一口气写完：最后一次对时（第 900 次）要等到 0.45 秒。只断言这个下限——
+    # 它由节拍保证，与机器快慢无关；上限取决于机器有多忙，不断言。
+    assert result.outputs["elapsed"] >= 0.45
+    assert result.outputs["max_behind_ms"] >= 0
+    assert result.outputs["max_call_ms"] >= 0
+    assert [(m.name, m.value) for m in result.metrics] == [
+        ("seq", float(i)) for i in range(1, 1001)
+    ]
+
+
+def test_metric_clock_reports_the_wall_clock_time_of_each_call(tmp_path: Path) -> None:
+    from sfly_stub import metric_clock
+
+    before = time.time() * 1000
+    result = run_node(metric_clock, {"rate": 2000, "seconds": 0.5}, work_dir=tmp_path / "w")
+    after = time.time() * 1000
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["count"] == 1000
+    assert result.outputs["elapsed"] >= 0.45
+    values = [m.value for m in result.metrics]
+    assert [m.name for m in result.metrics] == ["clock_ms"] * 1000
+    # 每次上报调用时的 Unix 毫秒数：单调不减，落在执行前后之间，并按速率铺满 seconds。
+    assert values == sorted(values)
+    assert before <= values[0] and values[-1] <= after
+    assert values[-1] - values[0] >= 400
+
+
+def test_stdout_rate_writes_numbered_lines_of_fixed_size_at_the_given_rate() -> None:
+    from sfly_stub import stdout_rate
+
+    # 每秒 0.1 MiB、每行 100 字节、0.5 秒：共 524 行。
+    result = run_node(stdout_rate, {"mib_per_second": 0.1, "seconds": 0.5, "line_bytes": 100})
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["lines"] == 524
+    assert result.outputs["bytes"] == 52400
+    # 最后一次对时（第 500 行）要等到 500 / 1048 ≈ 0.48 秒（每秒 524 / 0.5 行）。
+    assert result.outputs["elapsed"] >= 0.45
+    assert result.outputs["max_behind_ms"] >= 0
+    lines = [line.message for line in result.logs if line.source == "stdout"]
+    assert [int(line.split(" ", 1)[0]) for line in lines] == list(range(1, 525))
+    # 每行连同换行正好 line_bytes 字节。
+    assert {len(line) + 1 for line in lines} == {100}
+
+
 def test_executor_crash_summary_keeps_the_stderr_tail_without_stderr_log(tmp_path: Path) -> None:
     from sfly_stub import write_failure
 

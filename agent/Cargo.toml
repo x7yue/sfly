@@ -27,9 +27,15 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 nix = { version = "0.31", default-features = false, features = ["fs", "process", "signal"] }
 
 [dev-dependencies]
+# 基准测试（benches/，ARCHITECTURE §7.6）：只作开发依赖，不进 release 二进制；不要图表，少编译 rayon / plotters。
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "process"] }
 tokio-stream = { version = "0.1", features = ["net"] }
+
+[[bench]]
+name = "telemetry"
+harness = false
 
 [build-dependencies]
 tonic-prost-build = "0.14"
