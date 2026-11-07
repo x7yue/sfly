@@ -189,7 +189,7 @@ def _outputs(ctx: Context, response: httpx.Response, elapsed_ms: float) -> tuple
         "elapsed_ms": elapsed_ms,
     }
     parsed = _parse_json(response)
-    if parsed is not _NOT_JSON and _serialized_size(parsed) <= BODY_OUTPUT_BYTES:
+    if parsed is not _NOT_JSON and _fits(parsed, BODY_OUTPUT_BYTES):
         outputs["json"] = parsed
         return outputs, parsed
     text = _serialized_head(response.text, BODY_OUTPUT_BYTES)
@@ -203,6 +203,16 @@ def _outputs(ctx: Context, response: httpx.Response, elapsed_ms: float) -> tuple
         ctx.log.warn("响应是 JSON，但序列化后超过 256 KiB，改为输出 text")
     outputs["text"] = text
     return outputs, parsed
+
+
+def _fits(value: Any, limit: int) -> bool:
+    """value 写进节点输出后是否不超过 limit 字节；边序列化边累计，超过就停，不整份序列化大响应。"""
+    size = 0
+    for chunk in jsonlib.JSONEncoder(ensure_ascii=False).iterencode(value):
+        size += len(chunk.encode())
+        if size > limit:
+            return False
+    return True
 
 
 def _serialized_size(value: Any) -> int:
