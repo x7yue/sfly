@@ -21,7 +21,9 @@ use super::repo_root;
 
 #[derive(Clone)]
 struct File {
-    body: Vec<u8>,
+    /// 共享的内容：每次请求取一份 [`File`] 只复制指针。整份复制约 100 MB 的 Agent 二进制在负载高时要一两秒，
+    /// 会让响应头晚于测试特意调小的读取超时（见 update.rs 的下载卡住测试）。
+    body: Arc<[u8]>,
     content_type: &'static str,
     delay: Duration,
 }
@@ -94,7 +96,7 @@ impl HttpFixture {
         self.files.lock().unwrap().by_path.insert(
             path.to_string(),
             File {
-                body,
+                body: body.into(),
                 content_type,
                 delay,
             },
@@ -125,7 +127,7 @@ impl HttpFixture {
         files.by_path.insert(
             format!("/simple/{project}/"),
             File {
-                body: page.into_bytes(),
+                body: page.into_bytes().into(),
                 content_type: "text/html",
                 delay: Duration::ZERO,
             },
