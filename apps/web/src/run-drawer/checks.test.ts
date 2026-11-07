@@ -68,14 +68,14 @@ describe("触发前检查清单", () => {
 		]);
 	});
 
-	it("Agent 不满足节点包需要的 SDK 版本时归到 Agent 一行，不能触发", () => {
+	it("控制面版本（即 Agent 执行时的版本）不满足节点包需要的 SDK 版本时归到 Agent 一行，不能触发", () => {
 		const p: Preflight = {
 			...passed,
 			problems: [
 				{
 					code: "sdk_version_unsatisfied",
 					message:
-						"节点 a：节点包 sfly-std@0.2.0 需要 SDK >=0.0.5，Agent agent-a 的版本是 0.0.4：请升级 Agent",
+						"节点 a：节点包 sfly-std@0.2.0 需要 SDK >=0.0.5，控制面的版本是 0.0.4：Agent 会先自更新到控制面的版本再执行任务，请升级控制面",
 					node_id: "a",
 				},
 			],

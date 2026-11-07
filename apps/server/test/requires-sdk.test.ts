@@ -1,5 +1,6 @@
 // 切入点 A：节点包声明的最低 SDK 版本（requires_sdk，#79）。Agent 上 SDK 运行时的版本等于 Agent 版本（ADR 0010），
-// 派发前控制面比较两者，不满足时任务以 env_error 失败、提示升级 Agent；触发前预检对引用的 Agent 给出同样的提示。
+// 派发前控制面比较两者，不满足时任务以 env_error 失败、提示升级 Agent。触发前预检比较的是控制面版本：控制面只给
+// 同版本的 Agent 派任务（ADR 0014），旧 Agent 会先自更新到控制面的版本，所以提示如实写控制面版本、请升级控制面。
 // 早于 #79 构建的节点包没有这个字段，行为不变（其余测试里的节点包都没有它）。
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -85,7 +86,7 @@ describe("最低 SDK 版本", () => {
 		await eventually(async () => expect((await api.node(runId, "p")).status).toBe("success"));
 	});
 
-	it("触发前预检对引用的 Agent 给出同样的提示，并拒绝触发", async () => {
+	it("触发前预检按控制面版本判断，提示写明控制面的版本并请升级控制面，拒绝触发", async () => {
 		await start();
 		await publish(">=1.1");
 		await connect({ name: "agent-a" });
@@ -99,13 +100,13 @@ describe("最低 SDK 版本", () => {
 				code: "sdk_version_unsatisfied",
 				node_id: "p",
 				message:
-					"节点 p：节点包 demo-checks@1.2.0 需要 SDK >=1.1，Agent agent-a 的版本是 1.0.0：请升级 Agent",
+					"节点 p：节点包 demo-checks@1.2.0 需要 SDK >=1.1，控制面的版本是 1.0.0：Agent 会先自更新到控制面的版本再执行任务，请升级控制面",
 			},
 		]);
 		expect((await api.trigger(id)).status).toBe(400);
 	});
 
-	// 按 PEP 440 的语义比较；位数不同时补 0。控制面（Agent）版本为 1.0.0。
+	// 按 PEP 440 的语义比较；位数不同时补 0。控制面版本为 1.0.0（Agent 执行任务时也是这个版本）。
 	it.each([
 		[">=1.0", true],
 		["==1", true],

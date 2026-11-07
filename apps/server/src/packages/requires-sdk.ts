@@ -55,7 +55,7 @@ export function satisfiesSdk(agentVersion: string, requirement: string): boolean
 }
 
 /**
- * 节点包的 SDK 要求不满足时的提示（派发失败和触发前预检共用）；满足或节点包没有声明要求时返回 undefined。
+ * 派发前 Agent 版本不满足节点包的 SDK 要求时的错误信息；满足或节点包没有声明要求时返回 undefined。
  */
 export function sdkRequirementProblem(
 	metadata: Pick<PackageMetadata, "requires_sdk">,
@@ -65,4 +65,18 @@ export function sdkRequirementProblem(
 	const requirement = metadata.requires_sdk;
 	if (requirement === undefined || satisfiesSdk(agent.version, requirement)) return undefined;
 	return `节点包 ${pkg.name}@${pkg.version} 需要 SDK ${requirement}，Agent ${agent.name} 的版本是 ${agent.version}：请升级 Agent`;
+}
+
+/**
+ * 触发前预检的提示：比较的是控制面版本。控制面只给与自己同版本的 Agent 派任务（ADR 0014），版本不同的 Agent
+ * 会先自更新到控制面的版本，所以执行时的 SDK 版本就是控制面版本；不满足时要升级的是控制面。
+ */
+export function controlPlaneSdkProblem(
+	metadata: Pick<PackageMetadata, "requires_sdk">,
+	pkg: { name: string; version: string },
+	controlPlaneVersion: string,
+): string | undefined {
+	const requirement = metadata.requires_sdk;
+	if (requirement === undefined || satisfiesSdk(controlPlaneVersion, requirement)) return undefined;
+	return `节点包 ${pkg.name}@${pkg.version} 需要 SDK ${requirement}，控制面的版本是 ${controlPlaneVersion}：Agent 会先自更新到控制面的版本再执行任务，请升级控制面`;
 }

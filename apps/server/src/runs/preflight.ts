@@ -5,7 +5,7 @@ import { agents } from "../db/schema.js";
 import { agentFor, planRun } from "../engine/chain.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import type { PackageRepository } from "../packages/package-repository.js";
-import { sdkRequirementProblem } from "../packages/requires-sdk.js";
+import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 
 /**
  * 不能触发的一个原因；code 与保存时的警告一致，另有 `agent_not_registered`、`not_supported`、
@@ -21,11 +21,11 @@ export type Preflight = (doc: OrchestrationDocument) => Promise<PreflightProblem
 
 /**
  * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用校验全部通过，
- * 包节点派发到的 Agent 都已注册（不要求在线），且 Agent 满足节点包需要的 SDK 版本（#79）。
+ * 包节点派发到的 Agent 都已注册（不要求在线），且控制面版本满足节点包需要的 SDK 版本（#79）。
  * 返回全部不能触发的原因，空数组表示可以触发。未保存的草稿只存在于浏览器，由画布在触发前检查。
  *
- * 只给与控制面版本一致的 Agent 派任务（ADR 0014），所以 Agent 执行任务时的版本就是控制面版本 `version`；
- * 记录里版本不同的 Agent 会先自更新到这个版本。
+ * 比较的是控制面版本 `version` 而不是 Agent 记录里的版本：只给与控制面版本一致的 Agent 派任务（ADR 0014），
+ * 记录里版本不同的 Agent 会先自更新到这个版本，所以 Agent 执行任务时的 SDK 版本就是控制面版本；提示也如实这样写。
  */
 export function createPreflight(deps: {
 	db: Db;
@@ -65,16 +65,16 @@ export function createPreflight(deps: {
 			});
 		}
 
-		for (const [nodeId, agent] of wanted) {
+		for (const nodeId of wanted.keys()) {
 			const node = doc.nodes.find((n) => n.id === nodeId);
 			if (node?.kind !== "package") continue;
 			const version = doc.packages[node.package];
 			const published = version && (await deps.packages.getVersion(node.package, version));
 			if (!published) continue;
-			const message = sdkRequirementProblem(
+			const message = controlPlaneSdkProblem(
 				published.metadata,
 				{ name: node.package, version: published.version },
-				{ name: agent, version: deps.version },
+				deps.version,
 			);
 			if (message) {
 				problems.push({
