@@ -79,18 +79,26 @@ fn valid_task_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+/// 执行器的 Agent 级设置：对每个任务都一样。
+pub struct Settings<'a> {
+    /// 任务工作目录的根（每个任务一个子目录）。
+    pub work_root: &'a Path,
+    /// 后台进程记录目录的根（每个运行一个子目录，`SFLY_PROCS`）。
+    pub procs_root: &'a Path,
+    /// 超时后从优雅终止到强制杀掉进程树的宽限期。
+    pub grace: Duration,
+    /// 只在测试中使用：转发器每秒最多处理多少字节的标准输出 / 标准错误（0 = 不限制）。
+    pub log_forward_rate: u64,
+}
+
 /// 准备工作目录并启动执行器子进程；启动失败时直接给出结果。
 /// 返回的 [`Running`] 用 [`Running::wait`] 等待结果（不会返回错误：所有失败都转成 TaskResult）。
-/// `grace`：超时后从优雅终止到强制杀掉进程树的宽限期。
 pub async fn start(
     venv: &SharedVenv,
-    work_root: &Path,
-    procs_root: &Path,
+    settings: &Settings<'_>,
     task: &AssignTask,
     entry: &str,
     telemetry: &Telemetry,
-    grace: Duration,
-    log_forward_rate: u64,
 ) -> Result<Running, TaskResult> {
     if !valid_task_id(&task.task_id) {
         return Err(failure(
@@ -109,7 +117,7 @@ pub async fn start(
             ));
         }
     };
-    let dir = work_root.join(&task.task_id);
+    let dir = settings.work_root.join(&task.task_id);
     if let Err(error) = prepare_dir(&dir, task, entry, inputs).await {
         return Err(failure(
             task,
@@ -118,8 +126,16 @@ pub async fn start(
         ));
     }
     // 运行 ID 由控制面生成，正常总能用作目录名；不能时不设置 SFLY_PROCS，SDK 退回默认位置。
-    let procs = valid_task_id(&task.run_id).then(|| procs_root.join(&task.run_id));
-    spawn_process(venv, &dir, procs.as_deref(), task, telemetry, grace, log_forward_rate)
+    let procs = valid_task_id(&task.run_id).then(|| settings.procs_root.join(&task.run_id));
+    spawn_process(
+        venv,
+        &dir,
+        procs.as_deref(),
+        task,
+        telemetry,
+        settings.grace,
+        settings.log_forward_rate,
+    )
 }
 
 async fn prepare_dir(

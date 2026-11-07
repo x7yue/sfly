@@ -484,15 +484,18 @@ impl Runtime {
     }
 
     async fn start(&self, task: &AssignTask, entry: &str) -> Result<executor::Running, TaskResult> {
+        let settings = executor::Settings {
+            work_root: &self.work_dir,
+            procs_root: &self.procs_dir,
+            grace: self.terminate_grace,
+            log_forward_rate: self.log_forward_rate,
+        };
         executor::start(
             &self.inventory.venv,
-            &self.work_dir,
-            &self.procs_dir,
+            &settings,
             task,
             entry,
             &self.telemetry,
-            self.terminate_grace,
-            self.log_forward_rate,
         )
         .await
     }
