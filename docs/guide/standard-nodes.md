@@ -190,3 +190,74 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 ```
 
 `stop_server` 要和 `server` 选同一个 Agent。压测中服务意外退出时，`stop_server` 的输出是 `was_running` 为 false、`exit_code` 为服务的退出码。
+
+## `process_monitor`：监控进程
+
+按采样间隔统计一个或多个目标进程（默认连同它们的全部子孙进程）用了多少资源，指标是所有进程的合计；每个进程每次采样的明细写进产物 `processes.csv`。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `pid` | 无 | 进程号，或进程号的列表；通常引用 `start_process` 的输出 `pid` |
+| `name` | 无 | 进程名（可执行文件名，例如 `nginx`，必须完全一致），或进程名的列表 |
+| `match` | 无 | 命令行（各参数以空格连接）的正则表达式，部分匹配即可，或正则的列表 |
+| `include_children` | `true` | 是否连同目标的全部子孙进程一起统计 |
+| `wait_for_process` | `60` | 开始时最多等多少秒让每个目标都出现 |
+| `interval` | `1` | 采样间隔（秒） |
+| `duration` | 无 | 监控多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消 |
+| `on_exit` | `fail` | 目标进程退出时：`fail` 让节点失败，`succeed` 让节点成功结束 |
+
+| 输出 | 说明 |
+|---|---|
+| `samples` | 采样了多少次 |
+| `processes_csv` | 产物 `processes.csv` 的引用 |
+
+| 指标 | 单位 | 说明 |
+|---|---|---|
+| `cpu_percent`（主指标） | % | CPU 占用之和，一个核满载为 100 |
+| `rss_bytes` | B | 常驻内存之和 |
+| `threads` | | 线程数之和 |
+| `open_fds` | | 打开的文件描述符数之和 |
+| `io_read_bytes_per_s` | B/s | 磁盘读取速率之和 |
+| `io_write_bytes_per_s` | B/s | 磁盘写入速率之和 |
+
+| `processes.csv` 的列 | 说明 |
+|---|---|
+| `time` | 采样时间（UTC，ISO 8601，到毫秒），同一次采样的各行相同 |
+| `pid` | 进程号 |
+| `ppid` | 父进程号 |
+| `name` | 进程名 |
+| `cpu_percent` | 这个进程在上一次采样以来的 CPU 占用 |
+| `rss_bytes` | 常驻内存（字节） |
+| `threads` | 线程数 |
+| `open_fds` | 打开的文件描述符数 |
+| `io_read_bytes_per_s` | 磁盘读取速率（字节/秒） |
+| `io_write_bytes_per_s` | 磁盘写入速率（字节/秒） |
+| `cmdline` | 命令行 |
+
+- 目标：`pid`、`name`、`match` 至少给一个，可以同时给多个；每个进程号、进程名、正则各是一个目标，所有目标匹配到的进程合在一起统计，同一个进程只算一次。
+- 开始时每个目标都要匹配到进程，最多等 `wait_for_process` 秒，等不到时节点失败，错误信息列出没找到的目标。
+- 每次采样都重新查找：按名称或正则匹配的新进程、新的子进程会加进来，退出的进程不再统计。进程列表开始时写一次日志，之后有进程加入或退出时写一次，没有变化时每 60 秒写一次（附每个进程的 CPU、内存、线程数、文件描述符数）。
+- **目标退出**：某个目标匹配的进程全部退出时（子孙进程退出不算），按 `on_exit` 失败或成功结束。被监控的进程是同一次运行里 `start_process` 启动的时，错误信息附上它的退出码。想在被测进程退出时正常结束监控，设为 `succeed`。
+- `processes.csv` 每采样一次就写入：节点被停止、取消、因目标退出失败时，已采集的明细都在产物里。第一次采样在开始后一个 `interval` 时（CPU 占用要两次读数才能算出来）；某个进程第一次被采样时它的 IO 速率为空。
+- 别的用户的进程读不到文件描述符数和 IO（Agent 不是 root 时），`processes.csv` 里这两项为空，不计入合计。
+- 按进程分别画曲线暂不支持，需要时下载 `processes.csv`。监控的是执行这个节点的 Agent 所在机器上的进程，引用 `start_process` 的 `pid` 时要选同一个 Agent。
+
+例：压测期间监控被测服务。服务由 `start_process` 节点 `server` 启动，会再启动若干工作进程；在一个子流程里放 `process_monitor`，参数里的 `pid` 引用节点 `server` 的输出 `pid`，压测结束后用停止子流程节点停止这个子流程，服务中途退出时监控失败、暴露问题：
+
+```json
+{
+  "interval": 2
+}
+```
+
+按名称和命令行监控机器上已有的几个服务，不统计子进程，最多监控 10 分钟，其中任何一个服务的进程全部退出时提前成功结束：
+
+```json
+{
+  "name": ["nginx", "redis-server"],
+  "match": "java .*-jar /srv/app/app\\.jar",
+  "include_children": false,
+  "duration": 600,
+  "on_exit": "succeed"
+}
+```
