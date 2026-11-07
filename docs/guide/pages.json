@@ -36,6 +36,11 @@
 			"description": "sfly build 与 sfly publish、版本号规则、在场景里换成新版本"
 		},
 		{
+			"slug": "standard-nodes",
+			"title": "标准节点",
+			"description": "平台维护的标准节点包 sfly-std：从 Release 下载并上传到控制面、安全说明，以及每个标准节点（shell……）的参数、输出与用法"
+		},
+		{
 			"slug": "ai-quickstart",
 			"title": "AI 编程助手快速开始",
 			"description": "给 AI 编程助手的提示词，以及它从零完成检查环境、安装、sfly init、写节点、本地调试、联调、发布的步骤"

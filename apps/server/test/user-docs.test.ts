@@ -154,7 +154,7 @@ describe("仓库里的用户文档", () => {
 		}
 	});
 
-	it("按「安装 → 初始化 → 开发 → 本地调试 → 联调 → 发布」排列全部页面，llms.txt 逐页列出，页面之间的链接都指向登记的页面", async () => {
+	it("按「安装 → 初始化 → 开发 → 本地调试 → 联调 → 发布 → 标准节点」排列全部页面，llms.txt 逐页列出，页面之间的链接都指向登记的页面", async () => {
 		const cp = await startTestControlPlane({ docsDir: join(repoRoot, "docs", "guide") });
 		try {
 			const { pages } = docsApi.list.response.parse(await (await cp.fetch("/docs")).json());
@@ -166,6 +166,7 @@ describe("仓库里的用户文档", () => {
 				["local-debug", "本地调试"],
 				["integration", "联调"],
 				["publish", "发布"],
+				["standard-nodes", "标准节点"],
 				["ai-quickstart", "AI 编程助手快速开始"],
 			]);
 			const index = await (await cp.fetch("/llms.txt")).text();
