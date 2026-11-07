@@ -841,7 +841,7 @@ export class Engine implements AgentSessionHandler {
 
 	/**
 	 * 停止子流程节点（§4.1）：目标子流程实例（每次运行每个子流程最多一个实例，按子流程入口 ID 确定）
-	 * 不存在或已结束时立即成功并返回 true；否则停止它和它直接或间接触发、仍在进行的子流程实例
+	 * 不存在、或它和它的各级下级实例都已结束时立即成功并返回 true；否则停止其中仍在进行的子流程实例
 	 * （chain_instances.stop_task_id 记下这个节点的任务，#stopChain 终止其中的任务），节点进入 waiting 并返回 false，
 	 * 等这些子流程完全结束后由 #settleStops 完成。已经被另一个停止子流程节点停止的实例不再重复停止，同样等它们结束；
 	 * 运行已被取消时（always 节点）也只等它们结束。
@@ -865,7 +865,8 @@ export class Engine implements AgentSessionHandler {
 			.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt))
 			.for("update");
 		const target = chains.find((c) => c.chainId === node.subflow);
-		if (!target || target.status !== "running") {
+		// 目标已经结束、但它的下级子流程还在运行时，仍要停止这些下级并等它们结束。
+		if (!target || subtree(chains, target).every((c) => c.status !== "running")) {
 			await step.tx
 				.insert(tasks)
 				.values({
