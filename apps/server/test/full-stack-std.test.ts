@@ -130,4 +130,54 @@ describe("全栈：标准节点包 sfly-std", () => {
 			]),
 		);
 	}, 180_000);
+
+	it("assert 引用 shell 的输出并断言通过；断言不通过时运行失败，错误信息逐条列出", async () => {
+		const count = {
+			id: "count",
+			node: "shell",
+			inputs: { command: "printf '%s\\n' a b c | wc -l" },
+		};
+		const actual = {
+			exit_code: "${{ nodes.count.outputs.exit_code }}",
+			stdout: "${{ nodes.count.outputs.stdout }}",
+		};
+		const passing = await runChain([
+			count,
+			{
+				id: "check",
+				node: "assert",
+				inputs: {
+					actual,
+					assertions: [
+						{ path: "$.exit_code", op: "eq", value: 0 },
+						{ path: "$.stdout", op: "ge", value: 3 },
+						{ path: "$.stdout", op: "matches", value: "^\\s*3$" },
+					],
+				},
+			},
+		]);
+		expect((await passing.api.run(passing.runId)).status).toBe("success");
+		expect((await passing.api.node(passing.runId, "check")).outputs).toEqual({ passed: true });
+
+		const failing = await runChain([
+			count,
+			{
+				id: "check",
+				node: "assert",
+				inputs: {
+					actual,
+					assertions: [
+						{ path: "$.exit_code", op: "eq", value: 0 },
+						{ path: "$.stdout", op: "gt", value: 10 },
+					],
+				},
+			},
+		]);
+		expect((await failing.api.run(failing.runId)).status).toBe("failed");
+		const check = await failing.api.node(failing.runId, "check");
+		expect(check.error?.kind).toBe("node_error");
+		expect(check.error?.message).toMatch(
+			/^sfly_std\.assert_\.AssertionFailed: 2 条断言中 1 条不通过：\n- 第 2 条：\$\.stdout 应 gt 10，实际是 "\s*3\\n"\n/,
+		);
+	}, 300_000);
 });

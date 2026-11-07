@@ -68,3 +68,63 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 ```
 
 后面的节点在参数里引用 `build` 的输出 `stdout` 拿到版本号（含末尾的换行）。允许 `grep` 没有匹配（退出码 1）时，把 `ok_exit_codes` 设为 `[0, 1]`。
+
+## `assert`：断言
+
+对任意值逐条做断言：数值、文本、JSON 都用同一个节点检查。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `actual` | 必填 | 要检查的值，通常整个值就是一个引用（引用上游节点的输出，保持原类型）；也可以是包含多个引用的对象 |
+| `assertions` | 必填 | 断言列表，至少一条；每条是 `{"path": ..., "op": ..., "value": ...}` |
+
+每条断言的写法：
+
+| 键 | 说明 |
+|---|---|
+| `path` | 取 `actual` 的哪一部分，默认 `$`（整个值）。支持 JSONPath 的常用子集：`$.a.b`、`$.items[0]`、`$.items[-1]`（从末尾数）、`$["带 空格.的键"]`、通配 `$.items[*]` 和 `$.service.*` |
+| `op` | 比较方式，见下表 |
+| `value` | 期望值；`exists` 可以省略 |
+
+| `op` | 通过的条件 |
+|---|---|
+| `eq` / `ne` | 等于 / 不等于 `value`。按 JSON 比较：`1` 等于 `1.0`，`true` 不等于 `1`，数组按顺序比较，对象按键比较 |
+| `gt` `ge` `lt` `le` | 大于、大于等于、小于、小于等于 `value`（数字）。实际值是数字文本时按数值比较，例如 shell 的 stdout `"42\n"` |
+| `contains` | 文本包含 `value` 这段文字；数组含有等于 `value` 的元素；对象含有名为 `value` 的键 |
+| `matches` | 文本里有匹配正则表达式 `value` 的部分（Python 语法，多行模式：`^` `$` 匹配每一行的开头和结尾）。要求整段匹配时写成 `\A...\Z` |
+| `exists` | 路径存在；`value` 为 `false` 时要求路径不存在 |
+| `len_eq` | 文本的字符数、数组的元素数或对象的键数等于 `value` |
+
+| 输出 | 说明 |
+|---|---|
+| `passed` | 全部通过时为 `true` |
+
+- 有断言不通过时节点失败，错误信息逐条列出不通过的断言：第几条、具体路径、期望和实际值。例如 `第 2 条：$.items[1].status 应 eq "ok"，实际是 "error"`；值太长时只显示开头。
+- 路径里有通配时，每个匹配到的值都要满足；一个都没匹配到时不通过（`exists` 为 `false` 时通过）。
+- 路径不存在时，除 `exists` 外的断言都不通过（`ne` 也一样），错误信息写明「路径不存在」。
+- 断言写错时（路径无法解析、缺少 `value`、`value` 类型不对、正则表达式不合法、有未知的键）节点失败，错误信息写明是第几条、哪里不对，不检查任何断言。
+- 断言格式与 `http_request` 的 `expect_json` 相同。
+
+例：节点 `count` 是一个 `shell`，输出某个目录下的文件数。检查它成功执行、文件数至少 3 个，节点 `check` 的参数：
+
+```json
+{
+  "actual": {
+    "exit_code": "<引用 count 的输出 exit_code>",
+    "stdout": "<引用 count 的输出 stdout>"
+  },
+  "assertions": [
+    { "path": "$.exit_code", "op": "eq", "value": 0 },
+    { "path": "$.stdout", "op": "ge", "value": 3 }
+  ]
+}
+```
+
+两处尖括号在画布里分别填成对 `count` 输出 `exit_code` 和 `stdout` 的整值引用。检查一个 JSON 响应里每一项的状态都是 `ok`（`items` 为空时也不通过）、并且有 `total` 字段时，`actual` 整值引用上游的 JSON 输出，`assertions` 写成：
+
+```json
+[
+  { "path": "$.items[*].status", "op": "eq", "value": "ok" },
+  { "path": "$.total", "op": "exists" }
+]
+```
