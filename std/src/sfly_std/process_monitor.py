@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import csv
 import os
-import re
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
@@ -18,8 +17,10 @@ from typing import Literal, TypedDict
 import psutil
 
 from sfly import Chart, Context, Metric, node
-from sfly_std import _supervise
+from sfly_std import _process
+from sfly_std._process import Target
 from sfly_std._sampling import rate, validate_duration, validate_interval
+from sfly_std._waiting import poll_until
 
 #: 每个进程每次采样的明细产物。
 CSV_NAME = "processes.csv"
@@ -39,12 +40,8 @@ CSV_COLUMNS = (
 )
 #: 等目标进程出现时的检查间隔（秒）。
 WAIT_POLL = 0.2
-#: 目标进程退出后等 start_process 的看护进程写下退出码的最长时间（秒）。
-STATUS_WAIT = 2.0
 #: 进程没有变化时，每隔多少秒把进程列表和各自的资源写一次日志。
 LOG_EVERY = 60.0
-#: 日志里命令行的最大字符数。
-CMDLINE_PREVIEW_CHARS = 200
 
 
 class ProcessMonitorOutputs(TypedDict):
@@ -113,21 +110,10 @@ def process_monitor(
     每个进程每次采样的明细写进产物 `processes.csv`；输出采样次数 `samples` 和它的产物引用
     `processes_csv`。
     """
-    pids, names, patterns = _as_list(pid), _as_list(name), _as_list(match)
-    if not (pids or names or patterns):
-        raise ValueError("至少要给出 pid、name、match 中的一个")
-    for p in pids:
-        if p <= 0:
-            raise ValueError(f"pid 必须是正整数，实际为 {p}")
-    for pattern in patterns:
-        try:
-            re.compile(pattern)
-        except re.error as error:
-            raise ValueError(f"match 不是合法的正则表达式：{pattern!r}（{error}）") from None
+    targets = _Targets(_process.targets(pid, name, match), include_children)
     validate_interval(interval)
     validate_duration(duration)
 
-    targets = _Targets(pids, names, patterns, include_children)
     _wait_for_targets(ctx, targets, wait_for_process)
     tracked: dict[int, _Tracked] = {}
     _refresh(targets, tracked)
@@ -167,7 +153,7 @@ def process_monitor(
                     "监控 %d 个进程：\n%s", len(samples), "\n".join(_describe(s) for s in samples)
                 )
             if exited:
-                what = "、".join(_with_exit_code(ctx, label) for label in exited)
+                what = "、".join(_with_exit_code(ctx, target) for target in exited)
                 if on_exit == "fail":
                     raise ProcessExited(f"目标进程已退出：{what}")
                 ctx.log.info("目标进程已退出：%s；on_exit 为 succeed，结束监控", what)
@@ -176,57 +162,44 @@ def process_monitor(
 
 
 class _Targets:
-    """按 pid、进程名、命令行正则找目标进程；`include_children` 时加上它们的全部子孙进程。
+    """按目标（`pid`、`name`、`match` 里的每一项）找进程；`include_children` 时加上全部子孙进程。
 
-    每个 pid、名称、正则是一个**目标**（标签如 `pid 123`、`name "nginx"`），各自匹配零到多个进程。
+    每个目标各自匹配零到多个进程。
     """
 
-    def __init__(
-        self,
-        pids: Sequence[int],
-        names: Sequence[str],
-        patterns: Sequence[str],
-        include_children: bool,
-    ) -> None:
-        self._pids = list(pids)
-        self._names = list(names)
-        self._patterns = [(p, re.compile(p)) for p in patterns]
+    def __init__(self, targets: Sequence[Target], include_children: bool) -> None:
+        self._targets = list(targets)
         self._include_children = include_children
         # 按 pid 指定的目标第一次找到时的进程：pid 被别的进程复用时不会把新进程当成它。
         self._pinned: dict[int, psutil.Process] = {}
 
-    def roots(self) -> dict[str, list[psutil.Process]]:
+    def roots(self) -> dict[Target, list[psutil.Process]]:
         """每个目标当前匹配的进程（不含僵尸进程和执行器自己），按参数里的顺序。"""
-        found: dict[str, list[psutil.Process]] = {}
-        for pid in self._pids:
-            found[f"pid {pid}"] = matched = []
-            proc = self._pinned.get(pid)
+        found: dict[Target, list[psutil.Process]] = {t: [] for t in self._targets}
+        for target in self._targets:
+            if target.kind != "pid":
+                continue
+            proc = self._pinned.get(target.pid)
             if proc is None:
                 try:
-                    proc = self._pinned[pid] = psutil.Process(pid)
+                    proc = self._pinned[target.pid] = psutil.Process(target.pid)
                 except psutil.NoSuchProcess:
                     continue
-            if proc.is_running() and _alive(proc):
-                matched.append(proc)
-        for name in self._names:
-            found[f'name "{name}"'] = []
-        for pattern, _ in self._patterns:
-            found[f'match "{pattern}"'] = []
-        if self._names or self._patterns:
+            if proc.is_running() and _process.alive(proc):
+                found[target].append(proc)
+        by_name = [t for t in self._targets if t.kind != "pid"]
+        if by_name:
             for proc in psutil.process_iter(["name", "cmdline"]):
-                if proc.pid == os.getpid() or not _alive(proc):
+                if proc.pid == os.getpid() or not _process.alive(proc):
                     continue
                 name = proc.info["name"] or ""
-                cmdline = " ".join(proc.info["cmdline"] or ())
-                for wanted in self._names:
-                    if name == wanted:
-                        found[f'name "{wanted}"'].append(proc)
-                for pattern, regex in self._patterns:
-                    if regex.search(cmdline):
-                        found[f'match "{pattern}"'].append(proc)
+                command = " ".join(proc.info["cmdline"] or ())
+                for target in by_name:
+                    if target.matches(proc, name, command):
+                        found[target].append(proc)
         return found
 
-    def processes(self, roots: dict[str, list[psutil.Process]]) -> dict[int, psutil.Process]:
+    def processes(self, roots: dict[Target, list[psutil.Process]]) -> dict[int, psutil.Process]:
         """目标进程（`include_children` 时含子孙进程），pid → 进程。"""
         result: dict[int, psutil.Process] = {}
         for matched in roots.values():
@@ -238,24 +211,28 @@ class _Targets:
                     except psutil.NoSuchProcess:
                         continue
                 for proc in family:
-                    if proc.pid != os.getpid() and _alive(proc):
+                    if proc.pid != os.getpid() and _process.alive(proc):
                         result.setdefault(proc.pid, proc)
         return result
 
 
 def _wait_for_targets(ctx: Context, targets: _Targets, wait: float) -> None:
     """等到每个目标都匹配到进程；`wait` 秒后仍有目标没有匹配到时失败。"""
-    missing = [label for label, matched in targets.roots().items() if not matched]
-    if not missing:
+    missing: list[str] = []
+
+    def all_found() -> bool | None:
+        missing[:] = [t.label for t, matched in targets.roots().items() if not matched]
+        return True if not missing else None
+
+    if all_found():
         return
     ctx.log.info("等待目标进程出现（最多 %g 秒）：%s", wait, "、".join(missing))
-    deadline = time.monotonic() + wait
-    while missing:
-        left = deadline - time.monotonic()
-        if left <= 0:
-            raise ProcessNotFound(f"等待 {wait:g} 秒后仍没有找到目标进程：{'、'.join(missing)}")
-        time.sleep(min(WAIT_POLL, left))
-        missing = [label for label, matched in targets.roots().items() if not matched]
+    try:
+        poll_until(all_found, what="目标进程出现", wait=max(wait, 0), poll=WAIT_POLL)
+    except TimeoutError:
+        raise ProcessNotFound(
+            f"等待 {wait:g} 秒后仍没有找到目标进程：{'、'.join(missing)}"
+        ) from None
 
 
 class _Tracked:
@@ -266,11 +243,11 @@ class _Tracked:
         with proc.oneshot():
             proc.cpu_percent(None)  # 第一次调用只记下起点，下一次采样返回这段时间的占用
             self.name = proc.name()
-            self.cmdline = _cmdline(proc)
+            self.cmdline = _process.cmdline(proc)
         self.io = _io(proc)
 
     def describe(self) -> str:
-        return f"pid {self.proc.pid} {self.name}：{_preview(self.cmdline)}"
+        return f"pid {self.proc.pid} {self.name}：{_process.preview(self.cmdline)}"
 
     def sample(self) -> _Sample:
         proc = self.proc
@@ -281,7 +258,7 @@ class _Tracked:
             ppid = proc.ppid()
             # exec 换了程序时 pid 不变，名称和命令行跟着变。
             self.name = proc.name()
-            self.cmdline = _cmdline(proc)
+            self.cmdline = _process.cmdline(proc)
             try:
                 fds: int | None = proc.num_fds()
             except psutil.AccessDenied:
@@ -309,7 +286,7 @@ class _Tracked:
 
 def _refresh(
     targets: _Targets, tracked: dict[int, _Tracked]
-) -> tuple[list[str], list[_Tracked], list[_Tracked]]:
+) -> tuple[list[Target], list[_Tracked], list[_Tracked]]:
     """按目标当前匹配的进程更新 `tracked`。
 
     返回（匹配的进程已全部退出的目标, 新增的进程, 退出的进程）。
@@ -330,7 +307,7 @@ def _refresh(
             tracked.pop(pid, None)
             continue
         added.append(tracked[pid])
-    exited = [label for label, matched in roots.items() if not matched]
+    exited = [target for target, matched in roots.items() if not matched]
     return exited, added, removed
 
 
@@ -344,21 +321,6 @@ def _report_totals(ctx: Context, samples: Sequence[_Sample]) -> None:
     ctx.metric("io_write_bytes_per_s", sum(s["io_write_bytes_per_s"] or 0 for s in samples))
 
 
-def _alive(proc: psutil.Process) -> bool:
-    """进程还在且不是僵尸进程。"""
-    try:
-        return proc.status() != psutil.STATUS_ZOMBIE
-    except psutil.NoSuchProcess:
-        return False
-
-
-def _cmdline(proc: psutil.Process) -> str:
-    try:
-        return " ".join(proc.cmdline())
-    except psutil.AccessDenied:
-        return ""
-
-
 def _io(proc: psutil.Process) -> tuple[float, int, int] | None:
     """（读数时刻、累计读字节、累计写字节）；没有权限读取或平台不支持时为 None。"""
     try:
@@ -366,12 +328,6 @@ def _io(proc: psutil.Process) -> tuple[float, int, int] | None:
     except (psutil.AccessDenied, psutil.NoSuchProcess, AttributeError):
         return None
     return (time.monotonic(), counters.read_bytes, counters.write_bytes)
-
-
-def _preview(cmdline: str) -> str:
-    if len(cmdline) > CMDLINE_PREVIEW_CHARS:
-        return cmdline[:CMDLINE_PREVIEW_CHARS] + "…"
-    return cmdline
 
 
 def _describe(s: _Sample) -> str:
@@ -382,25 +338,9 @@ def _describe(s: _Sample) -> str:
     )
 
 
-def _as_list(value: int | str | Sequence[int] | Sequence[str] | None) -> list:  # type: ignore[type-arg]
-    """单个值或列表（JSON 数组）统一成列表。"""
-    if value is None:
-        return []
-    if isinstance(value, (int, str)):
-        return [value]
-    return list(value)
-
-
-def _with_exit_code(ctx: Context, label: str) -> str:
-    """`pid 123` 是同一次运行里 `start_process` 启动的进程时，附上看护进程记下的退出码。"""
-    if not label.startswith("pid "):
-        return label
-    deadline = time.monotonic() + STATUS_WAIT
-    while True:
-        status = _supervise.read_status(ctx.procs_dir, int(label[4:]))
-        code = status.get("exit_code") if status is not None else None
-        if isinstance(code, int):
-            return f"{label}（退出码 {code}）"
-        if status is None or time.monotonic() >= deadline:
-            return label
-        time.sleep(WAIT_POLL)
+def _with_exit_code(ctx: Context, target: Target) -> str:
+    """按 pid 指定的目标是同一次运行里 `start_process` 启动的进程时，附上看护进程记下的退出码。"""
+    if target.kind != "pid":
+        return target.label
+    code = _process.exit_code(ctx.procs_dir, target.pid, _process.EXIT_CODE_WAIT)
+    return target.label if code is None else f"{target.label}（退出码 {code}）"

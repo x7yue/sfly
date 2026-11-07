@@ -16,13 +16,24 @@ SIGKILL 时它和命令一起被杀掉，没有退出码。
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import signal
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+
+
+@dataclasses.dataclass(frozen=True)
+class Status:
+    """状态文件的内容。"""
+
+    pid: int
+    #: 命令所在的进程组（看护进程是组长）。
+    pgid: int
+    #: 命令的退出码（被信号终止时为 128 + 信号值）；还在运行时为 None。
+    exit_code: int | None
 
 
 def status_path(procs_dir: str | os.PathLike[str], pid: int) -> Path:
@@ -30,18 +41,23 @@ def status_path(procs_dir: str | os.PathLike[str], pid: int) -> Path:
     return Path(procs_dir) / f".process-{pid}.json"
 
 
-def read_status(procs_dir: str | os.PathLike[str], pid: int) -> dict[str, Any] | None:
+def read_status(procs_dir: str | os.PathLike[str], pid: int) -> Status | None:
     """读取状态文件；不存在或内容不对时为 None。"""
     try:
-        status = json.loads(status_path(procs_dir, pid).read_text(encoding="utf-8"))
+        data = json.loads(status_path(procs_dir, pid).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return status if isinstance(status, dict) and status.get("pid") == pid else None
+    if not isinstance(data, dict) or data.get("pid") != pid:
+        return None
+    pgid, exit_code = data.get("pgid"), data.get("exit_code")
+    if not isinstance(pgid, int) or not (exit_code is None or isinstance(exit_code, int)):
+        return None
+    return Status(pid, pgid, exit_code)
 
 
-def _write_status(path: Path, status: dict[str, Any]) -> None:
+def _write_status(path: Path, status: Status) -> None:
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(status), encoding="utf-8")
+    tmp.write_text(json.dumps(dataclasses.asdict(status)), encoding="utf-8")
     os.replace(tmp, path)
 
 
@@ -60,7 +76,7 @@ def main(argv: list[str]) -> int:
             report.write(f"error {error}\n")
             return 127
         path = status_path(procs_dir, child.pid)
-        status: dict[str, Any] = {"pid": child.pid, "pgid": os.getpgrp(), "exit_code": None}
+        status = Status(child.pid, os.getpgrp(), None)
         try:
             Path(procs_dir).mkdir(parents=True, exist_ok=True)
             _write_status(path, status)
@@ -68,7 +84,9 @@ def main(argv: list[str]) -> int:
             print(f"无法写入状态文件 {path}：{error}", file=sys.stderr, flush=True)
         report.write(f"{child.pid}\n")
     returncode = child.wait()
-    status["exit_code"] = returncode if returncode >= 0 else 128 - returncode
+    status = dataclasses.replace(
+        status, exit_code=returncode if returncode >= 0 else 128 - returncode
+    )
     try:
         _write_status(path, status)
     except OSError:

@@ -15,13 +15,12 @@ from collections.abc import Sequence
 from typing import IO, TypedDict
 
 from sfly import Context, node
+from sfly_std import _process
 
 #: 输出里保留的 stdout 末尾字节数。
 STDOUT_TAIL_BYTES = 64 * 1024
 #: 失败信息里附带的 stderr 末尾字节数（从完整的一行开始）。
 STDERR_TAIL_BYTES = 4 * 1024
-#: 失败信息里命令的最大字符数。
-COMMAND_PREVIEW_CHARS = 200
 #: 命令退出后，等待仍持有输出管道的后台进程关闭管道的最长时间（秒）。
 DRAIN_TIMEOUT = 2.0
 
@@ -88,13 +87,12 @@ def shell(
 
     输出退出码（被信号终止时为 128 + 信号值）和 stdout 的最后 64 KiB。
     """
-    if cwd is not None and not os.path.isdir(cwd):
-        raise NotADirectoryError(f"工作目录不存在：{cwd}")
+    _process.check_cwd(cwd)
     try:
         proc = subprocess.Popen(
             [shell, "-c", command],
             cwd=cwd,
-            env={**os.environ, **env} if env else None,
+            env=_process.child_env(env),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -121,9 +119,9 @@ def shell(
             reason = f"命令被信号 {signal.Signals(-returncode).name} 终止（退出码 {exit_code}）"
         else:
             reason = f"命令退出码 {exit_code}"
-        if len(command) > COMMAND_PREVIEW_CHARS:
-            command = command[:COMMAND_PREVIEW_CHARS] + "…"
-        message = f"{reason}，不在 ok_exit_codes {list(ok_exit_codes)} 中：{command}"
+        message = (
+            f"{reason}，不在 ok_exit_codes {list(ok_exit_codes)} 中：{_process.preview(command)}"
+        )
         tail = stderr.last_lines()
         raise CommandFailed(f"{message}\n\nstderr 末尾：\n{tail}" if tail else message)
     return {"exit_code": exit_code, "stdout": stdout.text()}

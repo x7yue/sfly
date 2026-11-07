@@ -14,12 +14,10 @@ import time
 from typing import TypedDict
 
 from sfly import Context, node
-from sfly_std import _supervise
+from sfly_std import _process, _supervise
 
 #: 等看护进程报告命令 pid 的最长时间（秒）。
 REPORT_TIMEOUT = 30.0
-#: 日志里命令的最大字符数。
-COMMAND_PREVIEW_CHARS = 200
 
 
 class StartProcessOutputs(TypedDict):
@@ -49,8 +47,7 @@ def start_process(
 
     输出进程的 `pid`（交给 `stop_process`、`process_monitor` 等）和日志文件的绝对路径 `log_file`。
     """
-    if cwd is not None and not os.path.isdir(cwd):
-        raise NotADirectoryError(f"工作目录不存在：{cwd}")
+    _process.check_cwd(cwd)
     if log_file is None:
         log = os.path.abspath(ctx.procs_dir / f"{ctx.task.node_id}.log")
     else:
@@ -72,7 +69,7 @@ def start_process(
                     command,
                 ],
                 cwd=cwd,
-                env={**os.environ, **env} if env else None,
+                env=_process.child_env(env),
                 stdin=subprocess.DEVNULL,
                 stdout=out,
                 stderr=subprocess.STDOUT,
@@ -86,9 +83,7 @@ def start_process(
         report = _read_report(read_fd)
     finally:
         os.close(read_fd)
-    preview = command
-    if len(command) > COMMAND_PREVIEW_CHARS:
-        preview = command[:COMMAND_PREVIEW_CHARS] + "…"
+    preview = _process.preview(command)
     if not report.isdigit():
         supervisor.wait()
         reason = report.removeprefix("error ") or f"看护进程退出码 {supervisor.returncode}"

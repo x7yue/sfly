@@ -5,21 +5,18 @@
 
 from __future__ import annotations
 
-import json
 import os
-import re
 from typing import TypedDict
 
 import psutil
 
 from sfly import Context, node
+from sfly_std import _process
 
 #: 失败信息里最多列出多少个进程。
 LIST_LIMIT = 20
 #: 输出 `pids` 最多列出多少个进程号（节点输出不能超过 1 MB）；`count` 不受影响。
 PIDS_LIMIT = 1000
-#: 失败信息里命令行的最大字符数。
-CMDLINE_PREVIEW_CHARS = 200
 
 
 class ProcessAssertOutputs(TypedDict):
@@ -51,42 +48,25 @@ def process_assert(
     通过时输出 `passed`（true）、匹配的进程数 `count` 和进程号 `pids`（从小到大，最多 1000 个）；
     不通过时失败，写明期望与实际，并列出匹配到的进程。
     """
-    labels = []
-    if pid is not None:
-        labels.append(f"pid {pid}")
-    if name is not None:
-        labels.append(f"name {json.dumps(name, ensure_ascii=False)}")
-    if match is not None:
-        labels.append(f"match {json.dumps(match, ensure_ascii=False)}")
-    if not labels:
-        raise ValueError("至少要给出 pid、name、match 中的一个")
-    if pid is not None and pid <= 0:
-        raise ValueError(f"pid 必须是正整数，实际为 {pid}")
+    targets = _process.targets(pid, name, match)
     if count is not None and count < 0:
         raise ValueError(f"count 不能是负数，实际为 {count}")
     if not running and count:
         raise ValueError(f"running 为 false 时 count 只能是 0 或不填，实际为 {count}")
-    try:
-        regex = re.compile(match) if match is not None else None
-    except re.error as error:
-        raise ValueError(f"match 不是合法的正则表达式：{match!r}（{error}）") from None
 
     found = []
     for proc in _candidates(pid):
+        if proc.pid == os.getpid() or not _process.alive(proc):
+            continue
         try:
-            if proc.pid == os.getpid() or proc.status() == psutil.STATUS_ZOMBIE:
-                continue
-            if name is not None and proc.name() != name:
-                continue
-            cmdline = _cmdline(proc)
-            if regex is not None and not regex.search(cmdline):
-                continue
-            found.append((proc.pid, proc.name(), cmdline))
+            proc_name, command = proc.name(), _process.cmdline(proc)
         except psutil.NoSuchProcess:
             continue
+        if all(t.matches(proc, proc_name, command) for t in targets):
+            found.append((proc.pid, proc_name, command))
     found.sort()
 
-    subject = f"{' 且 '.join(labels)} 的进程"
+    subject = f"{' 且 '.join(t.label for t in targets)} 的进程"
     if count is not None:
         if len(found) != count:
             listed = f"：\n{_list(found)}" if found else ""
@@ -114,23 +94,11 @@ def _candidates(pid: int | None) -> list[psutil.Process]:
         return []
 
 
-def _cmdline(proc: psutil.Process) -> str:
-    try:
-        return " ".join(proc.cmdline())
-    except psutil.AccessDenied:
-        return ""
-
-
 def _list(found: list[tuple[int, str, str]]) -> str:
     lines = [
-        f"- pid {pid} {name}：{_preview(cmdline)}" for pid, name, cmdline in found[:LIST_LIMIT]
+        f"- pid {pid} {name}：{_process.preview(command)}"
+        for pid, name, command in found[:LIST_LIMIT]
     ]
     if len(found) > LIST_LIMIT:
         lines.append(f"- ……还有 {len(found) - LIST_LIMIT} 个")
     return "\n".join(lines)
-
-
-def _preview(cmdline: str) -> str:
-    if len(cmdline) > CMDLINE_PREVIEW_CHARS:
-        return cmdline[:CMDLINE_PREVIEW_CHARS] + "…"
-    return cmdline
