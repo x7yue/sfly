@@ -17,6 +17,7 @@ import {
 } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { seedRunRecords } from "./run-records";
+import { stoppingRun } from "./stop-subflow-scenario";
 import {
 	createScenario,
 	failApi,
@@ -507,6 +508,24 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-entry.png");
 	});
 
+	test("子流程名称：检查器字段与警告", async ({ page }) => {
+		await nodeCard(page, "sub_entry").click();
+		await page.getByRole("textbox", { name: "子流程名称" }).fill("");
+		await idle(page);
+		await expect(page.getByText("子流程入口节点 sub_entry 没有填写名称")).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-subflow-name.png");
+	});
+
+	test("新建子流程：填写名称", async ({ page }) => {
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await menu.getByRole("option", { name: /子流程入口/ }).click();
+		await menu.getByRole("textbox", { name: "子流程名称" }).fill("sub_entry");
+		await idle(page);
+		await expect(menu.getByText("子流程入口节点 sub_entry 已使用名称「sub_entry」")).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-new-subflow.png");
+	});
+
 	test("语义缩放", async ({ page }) => {
 		for (let i = 0; i < 3; i++) {
 			await page.getByRole("button", { name: "缩小" }).click();
@@ -547,6 +566,39 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	}
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-run-state.png", {
+		mask: [
+			page.getByTestId("canvas-run").locator(".font-mono").first(),
+			page.getByTestId("run-summary").locator("dd").first(),
+		],
+	});
+});
+
+test("运行监控：子流程被停止（停止子流程节点的尝试）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, finish } = await stoppingRun(controlPlane, connectAgent, clock);
+	await finish();
+	await openMonitor(page, clock, runId, "stop");
+	await page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }).click();
+	await expect(page.getByRole("article", { name: "stop 第 1 次尝试" })).toBeVisible();
+	await expect(page.getByRole("banner").getByTestId("run-status")).toHaveText("成功");
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-stopped.png", { mask: runIds(page) });
+});
+
+test("编排画布：运行状态（子流程被停止）", async ({ page, controlPlane, connectAgent, clock }) => {
+	const { runId, scenarioId, finish } = await stoppingRun(controlPlane, connectAgent, clock);
+	await finish();
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(nodeCard(page, "watch")).toHaveAttribute("data-run", "stopped");
+	await nodeCard(page, "watch").click();
+	await expect(page.getByTestId("run-summary")).toContainText("agent-a");
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-run-state-stopped.png", {
 		mask: [
 			page.getByTestId("canvas-run").locator(".font-mono").first(),
 			page.getByTestId("run-summary").locator("dd").first(),

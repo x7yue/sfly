@@ -14,6 +14,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
 import { formatBytes, formatClock, formatDuration } from "#/lib/format";
+import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { LogList } from "./LogList";
@@ -33,6 +34,7 @@ import {
 	orderedChains,
 	secretInputKeys,
 	secretParams,
+	stoppedSubflowLabel,
 } from "./run-model";
 import { taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
 
@@ -216,12 +218,7 @@ export function BottomPanel({
 	);
 }
 
-const noAttempt = (node: NodeRunView) =>
-	node.status === "skipped"
-		? `${node.node_id} 已跳过，没有执行。`
-		: node.status === "cancelled"
-			? `${node.node_id} 在开始前被取消，没有执行。`
-			: `${node.node_id} 还没有开始执行。`;
+const noAttempt = (node: NodeRunView) => `${node.node_id} ${NODE_STATUS[node.status].notRun}`;
 
 function Hint({ children }: { children: ReactNode }) {
 	return <p className="m-0 p-4 text-sm text-fg-3">{children}</p>;
@@ -399,6 +396,12 @@ function AttemptsTab({
 								<>
 									<dt>唤醒</dt>
 									<dd className="m-0">{formatClock(a.wake_at)}</dd>
+								</>
+							)}
+							{n.kind === "stop_subflow" && typeof a.inputs?.subflow === "string" && (
+								<>
+									<dt>停止</dt>
+									<dd className="m-0 font-sans">{stoppedSubflowLabel(run, a.inputs.subflow)}</dd>
 								</>
 							)}
 							<dt>结束</dt>

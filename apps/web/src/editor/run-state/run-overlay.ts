@@ -1,23 +1,12 @@
-import type { ChainRunView, ErrorView, NodeRunView, NodeStatus, RunView } from "@sfly/schema";
+import type { ChainRunView, ErrorView, NodeRunView, RunView } from "@sfly/schema";
 import type { EdgeDecoration, NodeRunState } from "#/components/canvas/context";
+import { NODE_STATUS } from "#/lib/node-status";
 import { orderedChains } from "#/monitor/run-model";
 
 /**
  * 画布「运行状态」模式（#41）的纯逻辑：把运行视图整理成按节点 ID 查询的叠加信息，
  * 供 FlowCanvas 的 decorateNode / decorateEdge / regionMeta 与运行状态检查器使用。
  */
-
-const RUN_STATE: Record<NodeStatus, NodeRunState> = {
-	pending: "pending",
-	queued: "waiting",
-	dispatched: "running",
-	running: "running",
-	waiting: "waiting",
-	success: "done",
-	failed: "failed",
-	skipped: "skipped",
-	cancelled: "cancelled",
-};
 
 export interface NodeRunSummary {
 	/** 节点所在的链实例（子流程有多个实例时取第一个，与监控页 `?node=` 定位的实例一致）。 */
@@ -42,7 +31,13 @@ export function runOverlay(run: RunView): RunOverlay {
 		for (const node of chain.nodes) {
 			const seen = nodes.get(node.node_id);
 			if (seen) seen.instances += 1;
-			else nodes.set(node.node_id, { chain, node, state: RUN_STATE[node.status], instances: 1 });
+			else
+				nodes.set(node.node_id, {
+					chain,
+					node,
+					state: NODE_STATUS[node.status].canvas,
+					instances: 1,
+				});
 		}
 	}
 	return {

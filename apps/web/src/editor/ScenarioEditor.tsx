@@ -39,6 +39,7 @@ import {
 	uniqueNodeId,
 } from "#/components/canvas/flow";
 import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
+import { subflowLabels } from "#/components/canvas/node-display";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
@@ -56,6 +57,7 @@ import {
 	idStem,
 	isChainTail,
 	newDocNode,
+	newSubflowNameProblem,
 	packageGroups,
 } from "./add-node";
 import { usePackageCatalog } from "./catalog";
@@ -201,9 +203,10 @@ function Editor({
 			defaultAgent: meta.default_agent,
 			titleOf,
 			packages: meta.packages,
+			subflowLabelOf: subflowLabels(doc),
 			warnings: warningsByNode,
 		}),
-		[meta, titleOf, warningsByNode],
+		[meta, titleOf, warningsByNode, doc],
 	);
 
 	// —— 运行状态模式：只读显示运行绑定的版本，叠加节点状态 ——
@@ -218,6 +221,7 @@ function Editor({
 						defaultAgent: readyRun.doc.default_agent,
 						titleOf,
 						packages: readyRun.doc.packages,
+						subflowLabelOf: subflowLabels(readyRun.doc),
 						warnings: new Map(),
 					}
 				: info,
@@ -501,6 +505,7 @@ function Editor({
 								request={adding}
 								tail={menuTail}
 								groups={groups}
+								subflowNameProblem={(name) => newSubflowNameProblem(name, doc)}
 								onOpenChange={(open) => setAdding(open ? { via: "menu" } : null)}
 								onPick={addNode}
 							/>

@@ -99,6 +99,7 @@
 	--pending: var(--base-gray-450);
 	--skipped: var(--base-gray-500);
 	--cancelled: var(--base-gray-425);
+	--stopped: var(--base-gray-350); /* 实心方块，与取消（虚线）、跳过（淡灰空心）区分 */
 
 	/* 日志级别：INFO 不上色 */
 	--log-debug: var(--fg-3);
@@ -164,6 +165,7 @@
 	--canvas-run-running: var(--signal);
 	--canvas-run-failed: var(--danger);
 	--canvas-run-cancelled: var(--cancelled); /* 虚线 */
+	--canvas-run-stopped: var(--stopped);
 	--canvas-run-done-opacity: 0.6;
 	--canvas-minimap-mask: rgb(0 0 0 / 0.35); /* 小地图上视口以外的遮罩 */
 }

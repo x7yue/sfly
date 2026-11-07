@@ -2,7 +2,7 @@ import type { LastRunNodeStatus, OrchestrationStructure } from "@sfly/schema";
 import { useMemo } from "react";
 import { layoutThumbnail, type ThumbState } from "./thumbnail";
 
-/** 缩略图节点的配色（只用语义层与画布层 token）：成功是压暗的绿、执行中青色描边、失败红、已取消灰色虚线。 */
+/** 缩略图节点的配色（只用语义层与画布层 token）：成功是压暗的绿、执行中青色描边、失败红、已取消灰色虚线、已停止实心灰。 */
 const NODE: Record<ThumbState, string> = {
 	pending: "fill-border-strong",
 	done: "fill-ok/40",
@@ -10,6 +10,7 @@ const NODE: Record<ThumbState, string> = {
 	failed: "fill-danger",
 	cancelled: "fill-raised-2 stroke-cancelled [stroke-dasharray:2_2]",
 	skipped: "fill-transparent stroke-border-strong",
+	stopped: "fill-stopped/55",
 	waiting: "fill-warn/45",
 };
 

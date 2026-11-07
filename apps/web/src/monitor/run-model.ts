@@ -8,8 +8,9 @@ import type {
 	RunView,
 	TaskProgressView,
 } from "@sfly/schema";
+import { KIND_META } from "#/components/canvas/node-display";
 import { runStatusView } from "#/components/status";
-import { chainLabel as chainName } from "#/lib/copy";
+import { chainLabel as chainName, subflowLabel } from "#/lib/copy";
 import type { NodeRef } from "./monitor-state";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
@@ -45,27 +46,43 @@ export function orderedChains(run: RunView): ChainRunView[] {
 	return out;
 }
 
-/** 链实例的名称：主链，或「子流程 <起点> · <实例短 ID>」。 */
+/** 链实例的名称：主链，或「子流程 <名称> · <实例短 ID>」。 */
 export const chainLabel = (chain: ChainRunView) =>
-	chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0 }, chain.id);
-
-const KIND_TITLE: Record<OrchestrationNode["kind"], string> = {
-	entry: "入口",
-	subflow_entry: "子流程入口",
-	async: "异步任务",
-	timer: "定时",
-	sleep: "Sleep",
-	package: "包节点",
-};
+	chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name }, chain.id);
 
 /** 节点 ID → 文档里的节点（标题、always 标记、引用了哪些参数）。 */
 export const documentNodes = (doc: OrchestrationDocument | undefined) =>
 	new Map((doc?.nodes ?? []).map((n) => [n.id, n]));
 
-/** 节点的说明文字：包节点是 `包/节点类型`，内置节点是类型名。 */
-export function nodeTitle(node: NodeRunView, decl: OrchestrationNode | undefined): string {
+/**
+ * 节点的说明文字：包节点是 `包/节点类型`，停止子流程节点带上它要停止的子流程名称（故事 23：看得出在等哪个子流程），
+ * 其余内置节点是类型名。
+ */
+export function nodeTitle(
+	node: NodeRunView,
+	decl: OrchestrationNode | undefined,
+	decls?: ReturnType<typeof documentNodes>,
+): string {
 	if (decl?.kind === "package") return `${decl.package}/${decl.node}`;
-	return KIND_TITLE[node.kind] ?? node.kind;
+	const target = stopTarget(decl, decls);
+	if (target) return `${KIND_META.stop_subflow.label}「${target}」`;
+	return KIND_META[node.kind].label;
+}
+
+/** 停止子流程节点停止的子流程（按子流程入口 ID）在运行里的名称（每次运行每个子流程最多一个实例）。 */
+export function stoppedSubflowLabel(run: RunView, subflowId: string): string {
+	const chain = run.chains.find((c) => c.chain_id === subflowId);
+	return chainName({ chain_id: subflowId, subflow: true, name: chain?.name ?? null });
+}
+
+/** 停止子流程节点要停止的子流程的显示名称；不是停止子流程节点、没有选择或目标不在文档里时为 undefined。 */
+export function stopTarget(
+	decl: OrchestrationNode | undefined,
+	decls: ReturnType<typeof documentNodes> | undefined,
+): string | undefined {
+	if (decl?.kind !== "stop_subflow" || !decl.subflow) return undefined;
+	const target = decls?.get(decl.subflow);
+	return target?.kind === "subflow_entry" ? subflowLabel(target) : undefined;
 }
 
 export const isAlways = (decl: OrchestrationNode | undefined) =>

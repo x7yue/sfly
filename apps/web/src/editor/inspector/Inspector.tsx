@@ -24,6 +24,8 @@ import {
 	PackageParams,
 	PackageVersionField,
 	SleepForm,
+	StopSubflowField,
+	SubflowNameField,
 	SubflowTrigger,
 	TimerForm,
 } from "./node-forms";
@@ -175,12 +177,17 @@ function NodeInspector({
 		...Object.keys(type?.inputs.properties ?? {}),
 		...(node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : []),
 		...(node.kind === "timer" ? ["at", "tz"] : node.kind === "sleep" ? ["duration"] : []),
+		...(node.kind === "subflow_entry" ? ["name"] : node.kind === "stop_subflow" ? ["subflow"] : []),
 	]);
 	const general = warnings.filter(
 		(w) => !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
 	);
 	const change = (next: DocNode) => context.onChangeNode(id, next);
-	const hasExec = node.kind === "package" || node.kind === "timer" || node.kind === "sleep";
+	const hasExec =
+		node.kind === "package" ||
+		node.kind === "timer" ||
+		node.kind === "sleep" ||
+		node.kind === "stop_subflow";
 	const paramErrors = fieldErrors.length;
 	const version = node.kind === "package" ? doc.packages[node.package] : undefined;
 
@@ -236,7 +243,15 @@ function NodeInspector({
 					{(node.kind === "entry" || node.kind === "subflow_entry") && (
 						<>
 							{node.kind === "subflow_entry" && (
-								<SubflowTrigger id={id} doc={doc} onLocate={context.onLocate} />
+								<>
+									<SubflowNameField
+										id={id}
+										node={node}
+										problems={problemsOf("name")}
+										onChange={change}
+									/>
+									<SubflowTrigger id={id} doc={doc} onLocate={context.onLocate} />
+								</>
 							)}
 							<SectionTitle>参数</SectionTitle>
 							<ParamsEditor
@@ -276,6 +291,16 @@ function NodeInspector({
 					{node.kind === "sleep" && (
 						<SleepForm node={node} choices={choices} problemsOf={problemsOf} onChange={change} />
 					)}
+					{node.kind === "stop_subflow" && (
+						<StopSubflowField
+							id={id}
+							node={node}
+							doc={doc}
+							problems={problemsOf("subflow")}
+							onChange={change}
+							onLocate={context.onLocate}
+						/>
+					)}
 					{fieldErrors
 						.filter((e) => !e.draft && !e.field.startsWith("params."))
 						.map((e) => (
@@ -303,6 +328,8 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 	async: "派发一个子流程后主链立即继续；子流程失败不影响主链。",
 	timer: "等到某个时刻再继续，由控制面执行，不占用 Agent。",
 	sleep: "等待一段时长再继续，由控制面执行，不占用 Agent。",
+	stop_subflow:
+		"停止本链触发的某个子流程，等它完全结束（包括其中的 always 节点）后再继续；由控制面执行，不占用 Agent。",
 	package: "在 Agent 上执行节点包里的函数。",
 };
 

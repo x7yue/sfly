@@ -107,6 +107,9 @@
                 "type": "string",
                 "const": "subflow_entry"
               },
+              "name": {
+                "type": "string"
+              },
               "params": {
                 "default": [],
                 "type": "array",
@@ -279,6 +282,48 @@
               "id",
               "kind",
               "duration"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
+              "kind": {
+                "type": "string",
+                "const": "stop_subflow"
+              },
+              "always": {
+                "default": false,
+                "type": "boolean"
+              },
+              "subflow": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "kind"
             ],
             "additionalProperties": false
           },

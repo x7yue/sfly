@@ -36,6 +36,11 @@ export const EntryNode = z.strictObject({
 export const SubflowEntryNode = z.strictObject({
 	...nodeBase,
 	kind: z.literal("subflow_entry"),
+	/**
+	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
+	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（§1.2）。
+	 */
+	name: z.string().optional(),
 	params: z.array(ParamDeclaration).default([]),
 });
 
@@ -63,6 +68,17 @@ export const SleepNode = z.strictObject({
 	duration: z.string().min(1),
 });
 
+export const StopSubflowNode = z.strictObject({
+	...nodeBase,
+	kind: z.literal("stop_subflow"),
+	always: z.boolean().default(false),
+	/**
+	 * 要停止的子流程：子流程入口的节点 ID（画布里按名称选择，改名不影响引用，docs/SEMANTICS.md §4.1）。
+	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝（§1.2）。
+	 */
+	subflow: z.string().min(1).optional(),
+});
+
 export const PackageNode = z.strictObject({
 	...nodeBase,
 	kind: z.literal("package"),
@@ -85,6 +101,7 @@ export const OrchestrationNode = z.discriminatedUnion("kind", [
 	AsyncTaskNode,
 	TimerNode,
 	SleepNode,
+	StopSubflowNode,
 	PackageNode,
 ]);
 

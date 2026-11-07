@@ -1,6 +1,13 @@
-import type { AttemptView, RunView, TaskProgressView } from "@sfly/schema";
+import type {
+	AttemptView,
+	ChainRunView,
+	NodeRunView,
+	OrchestrationDocument,
+	RunView,
+	TaskProgressView,
+} from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { applyProgress, latestRunView } from "./run-model";
+import { applyProgress, chainLabel, documentNodes, latestRunView, nodeTitle } from "./run-model";
 
 const view = (status: RunView["status"], cancelled = false): RunView => ({
 	id: "00000000-0000-4000-8000-000000000001",
@@ -36,6 +43,54 @@ describe("运行视图的合并（#47）", () => {
 	});
 });
 
+describe("子流程名称（#80 故事 1、23）", () => {
+	const chain = (over: Partial<ChainRunView>): ChainRunView => ({
+		id: "6f1c2d3e-0000-4000-8000-000000000002",
+		chain_id: "mon",
+		name: "监控",
+		parent_chain_instance_id: "6f1c2d3e-0000-4000-8000-000000000001",
+		async_node_id: "spawn",
+		depth: 1,
+		status: "running",
+		params: {},
+		started_at: "2026-01-01T00:00:00.000Z",
+		ended_at: null,
+		nodes: [],
+		...over,
+	});
+
+	it("链名显示子流程名称；名称为空时显示「未命名子流程」，主链显示「主链」", () => {
+		expect(chainLabel(chain({}))).toBe("子流程 监控 · 6f1c2d3e");
+		expect(chainLabel(chain({ name: "" }))).toBe("子流程 未命名子流程 · 6f1c2d3e");
+		expect(chainLabel(chain({ depth: 0, name: null, chain_id: "entry" }))).toBe("主链");
+	});
+
+	it("停止子流程节点的说明文字是它要停止的子流程名称", () => {
+		const doc: OrchestrationDocument = {
+			nodes: [
+				{ id: "entry", kind: "entry", params: [] },
+				{ id: "stop", kind: "stop_subflow", always: false, subflow: "mon" },
+				{ id: "unset", kind: "stop_subflow", always: false },
+				{ id: "mon", kind: "subflow_entry", name: "监控", params: [] },
+			],
+			edges: [],
+			packages: {},
+		};
+		const decls = documentNodes(doc);
+		const node = (id: string): NodeRunView => ({
+			node_id: id,
+			kind: "stop_subflow",
+			status: "waiting",
+			agent: null,
+			outputs: null,
+			error: null,
+			attempts: [],
+		});
+		expect(nodeTitle(node("stop"), decls.get("stop"), decls)).toBe("停止子流程「监控」");
+		expect(nodeTitle(node("unset"), decls.get("unset"), decls)).toBe("停止子流程");
+	});
+});
+
 describe("运行视图与进度推送的合并（#110）", () => {
 	const TASK = "00000000-0000-4000-8000-0000000000a1";
 	const progress = (current: number, time: string): TaskProgressView => ({
@@ -50,6 +105,7 @@ describe("运行视图与进度推送的合并（#110）", () => {
 			{
 				id: "chain-main",
 				chain_id: "entry",
+				name: null,
 				parent_chain_instance_id: null,
 				async_node_id: null,
 				depth: 0,

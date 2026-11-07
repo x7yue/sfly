@@ -2,60 +2,14 @@
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ApiClient, type ChainView, type RunView } from "./support/api-client.js";
+import { ApiClient, type RunView } from "./support/api-client.js";
+import { chainOf, echo, orchestration, param, spawn, statuses } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
-
-type Node = Record<string, unknown> & { id: string };
-
-/** 包节点：stub/echo。 */
-const echo = (id: string, inputs: Record<string, unknown> = {}): Node => ({
-	id,
-	kind: "package",
-	package: "stub",
-	node: "echo",
-	inputs,
-});
-const spawn = (id: string, params: Record<string, unknown> = {}): Node => ({
-	id,
-	kind: "async",
-	params,
-});
-const param = (name: string, extra: Record<string, unknown> = {}) => ({
-	name,
-	type: "string",
-	...extra,
-});
-
-/**
- * 由若干条链组成的编排：每条链是按顺序排列的节点（第一个是起点）；
- * dispatch 为 [异步任务节点, 子流程入口节点]。
- */
-function orchestration(chains: Node[][], dispatch: Array<[string, string]>) {
-	return {
-		default_agent: "agent-a",
-		nodes: chains.flat(),
-		edges: [
-			...chains.flatMap((c) =>
-				c.slice(1).map((n, i) => ({ from: c[i]?.id, to: n.id, kind: "chain" })),
-			),
-			...dispatch.map(([from, to]) => ({ from, to, kind: "dispatch" })),
-		],
-		packages: { stub: "1.0.0" },
-	};
-}
-
-const chainOf = (run: RunView, chainId: string): ChainView => {
-	const chain = run.chains.find((c) => c.chain_id === chainId);
-	if (!chain) throw new Error(`chain ${chainId} not in run ${run.id}`);
-	return chain;
-};
-const statuses = (chain: ChainView) =>
-	Object.fromEntries(chain.nodes.map((n) => [n.node_id, n.status]));
 
 describe("异步任务节点与子流程", () => {
 	let cp: TestControlPlane;
@@ -122,6 +76,8 @@ describe("异步任务节点与子流程", () => {
 		const sub1 = chainOf(run, "sub1");
 		expect(main).toMatchObject({ depth: 0, parent_chain_instance_id: null, async_node_id: null });
 		expect(sub1).toMatchObject({
+			// 没有名称的旧版本以子流程入口的节点 ID 作为名称。
+			name: "sub1",
 			depth: 1,
 			parent_chain_instance_id: main.id,
 			async_node_id: "spawn1",
@@ -508,6 +464,87 @@ describe("子流程的静态检查（保存时警告，触发时阻断）", () =
 		const id = await api.orchestrationWith(doc);
 		const preflight = await api.getJson<{ problems: Problem[] }>(`/orchestrations/${id}/preflight`);
 		expect(preflight.problems).toEqual([]);
+	});
+
+	it("子流程名称为空或重复时保存成功但返回警告，触发被拒绝；改正后可以触发", async () => {
+		/** 主链依次触发 sub1、sub2，两个子流程入口的名称由参数给出（undefined 表示没有名称字段）。 */
+		const named = (a: string | undefined, b: string | undefined) =>
+			orchestration(
+				[
+					[{ id: "entry", kind: "entry", params: [] }, spawn("spawn1"), spawn("spawn2")],
+					[{ id: "sub1", kind: "subflow_entry", params: [], name: a }, echo("c")],
+					[{ id: "sub2", kind: "subflow_entry", params: [], name: b }, echo("d")],
+				],
+				[
+					["spawn1", "sub1"],
+					["spawn2", "sub2"],
+				],
+			);
+		const id = await api.createOrchestration("子流程名称");
+		const save = async (doc: unknown) => {
+			const res = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: await api.headVersion(id),
+				document: doc,
+			});
+			expect(res.status).toBe(201);
+			return ((await res.json()) as { warnings: Problem[] }).warnings;
+		};
+
+		const dup = named("监控", "监控");
+		expect(await save(dup)).toEqual([
+			{
+				code: "subflow_name_duplicate",
+				node_id: "sub1",
+				input: "name",
+				message: "子流程名称「监控」重复（子流程入口节点 sub1、sub2）",
+			},
+			{
+				code: "subflow_name_duplicate",
+				node_id: "sub2",
+				input: "name",
+				message: "子流程名称「监控」重复（子流程入口节点 sub1、sub2）",
+			},
+		]);
+		expect((await problems(dup)).map((p) => [p.code, p.node_id])).toEqual([
+			["subflow_name_duplicate", "sub1"],
+			["subflow_name_duplicate", "sub2"],
+		]);
+
+		const empty = named("", "压测");
+		expect((await save(empty)).map((w) => [w.code, w.node_id])).toEqual([
+			["subflow_name_empty", "sub1"],
+		]);
+		expect((await problems(empty)).map((p) => [p.code, p.node_id])).toEqual([
+			["subflow_name_empty", "sub1"],
+		]);
+
+		const ok = named("监控", "压测");
+		expect(await save(ok)).toEqual([]);
+		expect(await problems(ok)).toEqual([]);
+		// 名称随版本内容保存。
+		const head = await api.getJson<{ document: { nodes: { id: string; name?: string }[] } }>(
+			`/orchestrations/${id}/versions/${await api.headVersion(id)}`,
+		);
+		expect(head.document.nodes.filter((n) => n.id.startsWith("sub"))).toEqual([
+			expect.objectContaining({ id: "sub1", name: "监控" }),
+			expect.objectContaining({ id: "sub2", name: "压测" }),
+		]);
+	});
+
+	it("没有子流程名称的旧版本照常保存、触发，名称字段不会被补写进版本", async () => {
+		const legacy = orchestration(
+			[
+				[{ id: "entry", kind: "entry", params: [] }, spawn("spawn")],
+				[{ id: "sub", kind: "subflow_entry", params: [] }, echo("c")],
+			],
+			[["spawn", "sub"]],
+		);
+		const id = await api.orchestrationWith(legacy);
+		expect(await problems(legacy)).toEqual([]);
+		const head = await api.getJson<{ document: { nodes: Record<string, unknown>[] } }>(
+			`/orchestrations/${id}/versions/1`,
+		);
+		expect(head.document.nodes.find((n) => n.id === "sub")).not.toHaveProperty("name");
 	});
 
 	it("嵌套超过 3 层时报错", async () => {

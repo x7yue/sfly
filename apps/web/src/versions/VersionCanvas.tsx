@@ -6,6 +6,7 @@ import { useCallback, useMemo, useState } from "react";
 import type { CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import { FlowCanvas } from "#/components/canvas/FlowCanvas";
 import { toFlow } from "#/components/canvas/flow";
+import { subflowLabels } from "#/components/canvas/node-display";
 import { ZOOM_TEXT_11 } from "#/components/canvas/zoom-text";
 import { type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
@@ -59,6 +60,7 @@ export function VersionCanvas({
 			defaultAgent: document.default_agent,
 			titleOf: (pkg, node) => titles.get(`${pkg}/${node}`),
 			packages: document.packages,
+			subflowLabelOf: subflowLabels(document),
 			warnings: new Map(),
 		};
 	}, [document, packages.data]);

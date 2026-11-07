@@ -4,6 +4,7 @@ export type PackageNode = Extract<OrchestrationNode, { kind: "package" }>;
 export type EntryNode = Extract<OrchestrationNode, { kind: "entry" }>;
 export type SubflowEntryNode = Extract<OrchestrationNode, { kind: "subflow_entry" }>;
 export type AsyncTaskNode = Extract<OrchestrationNode, { kind: "async" }>;
+export type StopSubflowNode = Extract<OrchestrationNode, { kind: "stop_subflow" }>;
 
 /** 执行用的链：从起点（入口节点或子流程入口节点）开始按顺序排列的节点。 */
 export interface ChainPlan {
@@ -27,11 +28,13 @@ const SUPPORTED_KINDS = new Set<OrchestrationNode["kind"]>([
 	"package",
 	"timer",
 	"sleep",
+	"stop_subflow",
 ]);
 
 /**
  * 排出主链和全部子流程，并做触发前必须满足的检查（单入单出、无环、节点种类受支持、
- * 包节点有 Agent 和锁定版本、异步任务节点连到一个子流程入口节点）。返回错误列表或执行计划。
+ * 包节点有 Agent 和锁定版本、异步任务节点连到一个子流程入口节点、停止子流程节点选择了一个子流程入口节点）。
+ * 返回错误列表或执行计划。
  */
 export function planRun(document: OrchestrationDocument): RunPlan | { errors: string[] } {
 	const entries = document.nodes.filter((n): n is EntryNode => n.kind === "entry");
@@ -59,6 +62,12 @@ export function planRun(document: OrchestrationDocument): RunPlan | { errors: st
 		const target = dispatch.get(node.id);
 		if (!target || document.nodes.find((n) => n.id === target)?.kind !== "subflow_entry") {
 			errors.push(`node ${node.id}: async task node must dispatch to a subflow entry node`);
+		}
+	}
+	for (const node of document.nodes) {
+		if (node.kind !== "stop_subflow") continue;
+		if (document.nodes.find((n) => n.id === node.subflow)?.kind !== "subflow_entry") {
+			errors.push(`node ${node.id}: stop subflow node must select a subflow entry node`);
 		}
 	}
 	if (errors.length > 0) return { errors };

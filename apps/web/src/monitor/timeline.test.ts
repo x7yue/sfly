@@ -129,6 +129,38 @@ describe("节点的时间线区段", () => {
 		expect(segs.map((g) => [g.kind, g.start, g.end])).toEqual([["cancel", s(1), s(6)]]);
 	});
 
+	it("执行中被停止的尝试画成已停止段", () => {
+		const segs = nodeSegments(
+			node("package", [
+				attempt({ status: "stopped", queued_at: at(1), started_at: at(1), ended_at: at(6) }),
+			]),
+			s(20),
+		);
+		expect(segs.map((g) => [g.kind, g.start, g.end])).toEqual([["stop", s(1), s(6)]]);
+	});
+
+	it("停止子流程节点等子流程结束的时段画成等待段", () => {
+		const kinds = (status: AttemptView["status"], ended: string | null) =>
+			nodeSegments(
+				node("stop_subflow", [
+					attempt({ status, queued_at: at(1), started_at: at(1), ended_at: ended }),
+				]),
+				s(20),
+			).map((g) => g.kind);
+		expect(kinds("waiting", null)).toEqual(["wait"]);
+		expect(kinds("success", at(6))).toEqual(["wait"]);
+	});
+
+	it("定时 / Sleep 节点失败或被取消的尝试仍画成失败段、已取消段", () => {
+		const kinds = (status: AttemptView["status"]) =>
+			nodeSegments(
+				node("timer", [attempt({ status, queued_at: at(1), started_at: at(1), ended_at: at(6) })]),
+				s(20),
+			).map((g) => g.kind);
+		expect(kinds("failed")).toEqual(["fail"]);
+		expect(kinds("cancelled")).toEqual(["cancel"]);
+	});
+
 	it("没有尝试（待执行、跳过、没开始就取消）就没有区段", () => {
 		expect(nodeSegments(node("package", []), s(10))).toEqual([]);
 	});

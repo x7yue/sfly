@@ -119,7 +119,8 @@ export type ChainStatus = RunStatus;
  * 记一行 attempt 1 的占位（没有派发，不算一次尝试）。
  * cancelled（#12）：运行被取消；没有开始执行（started_at 为空）的行是占位，不算一次尝试。
  */
-/** waiting：定时 / Sleep 节点正在等待唤醒时间（#14），不占用 Agent。 */
+/** waiting：定时 / Sleep 节点正在等待唤醒时间（#14），或停止子流程节点在等被停止的子流程结束，不占用 Agent。 */
+/** stopped：所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1）；没有开始执行的行是占位，不算一次尝试。 */
 /**
  * dispatched：已派发给 Agent，Agent 还在下载、安装节点包或启动执行器；Agent 上报 TaskStarted 后才是 running，
  * 超时和耗时都从 running 开始计算（docs/SEMANTICS.md §3.3）。
@@ -132,7 +133,8 @@ export type TaskStatus =
 	| "success"
 	| "failed"
 	| "skipped"
-	| "cancelled";
+	| "cancelled"
+	| "stopped";
 /** 占用 Agent 槽位、由 Agent 负责的任务状态：派发阶段和执行阶段（有租约，心跳续约）。定义在 @sfly/schema。 */
 export const ON_AGENT = ON_AGENT_STATUSES satisfies readonly TaskStatus[];
 
@@ -194,6 +196,13 @@ export const chainInstances = pgTable(
 		status: text("status").$type<ChainStatus>().notNull(),
 		startedAt: timestamptz("started_at").notNull(),
 		endedAt: timestamptz("ended_at"),
+		/**
+		 * 停止（docs/SEMANTICS.md §4.1）：停止这个子流程实例的停止子流程节点任务（tasks.id）和停止的时间；没有被停止时为空。
+		 * 停止的全部状态都在这里：之后未开始的普通节点记为 stopped、Agent 上报的取消结果记为 stopped，
+		 * 停止子流程节点（waiting）在目标子流程实例和它的各级下级实例都结束后成功。控制面重启后照常推进。
+		 */
+		stopTaskId: uuid("stop_task_id"),
+		stopRequestedAt: timestamptz("stop_requested_at"),
 	},
 	(t) => [index("chain_instances_run").on(t.runId)],
 );

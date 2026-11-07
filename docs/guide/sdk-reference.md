@@ -138,7 +138,7 @@ return {"report": ref}
 
 ## 取消与超时
 
-- 用户取消运行或任务超时（默认 1 小时）时，Agent 先写取消标记，再向任务的进程树发 SIGTERM。执行器把 SIGTERM 变成节点里抛出的 `sfly.Cancelled`。
+- 用户取消运行、任务超时（默认 1 小时），或任务所在的子流程被场景里的停止子流程节点停止时，Agent 先写取消标记，再向任务的进程树发 SIGTERM。执行器把 SIGTERM 变成节点里抛出的 `sfly.Cancelled`。
 - `Cancelled` 是 `BaseException` 的子类：`except Exception` 不会捕获它。清理代码写在 `finally` / `with` 里，会照常执行。
 - 宽限期 10 秒，过后整棵进程树被强制杀掉。
 - 后台线程里收不到异常，用 `ctx.cancelled()` 轮询任务是否已取消。

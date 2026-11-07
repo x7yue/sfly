@@ -394,6 +394,8 @@ function minimapColor(run: NodeDecoration["run"]): string {
 			return "var(--ok)";
 		case "waiting":
 			return "var(--warn)";
+		case "stopped":
+			return "var(--canvas-run-stopped)";
 		default:
 			return "var(--canvas-edge)";
 	}
