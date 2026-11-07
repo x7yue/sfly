@@ -140,3 +140,20 @@ def test_rejects_count_contradicting_running_false(tmp_path: Path) -> None:
     assert failure(run(tmp_path, name="x", running=False, count=1)) == (
         "ValueError: running 为 false 时 count 只能是 0 或不填，实际为 1"
     )
+
+
+def test_outputs_at_most_1000_pids_but_counts_every_match(
+    tmp_path: Path, spawn: Any, unique_sleep: str
+) -> None:
+    # 节点输出有大小上限：pids 只列出 pid 最小的 1000 个，count 仍是全部数量，并在日志里写明。
+    procs = [spawn(unique_sleep, "300") for _ in range(1001)]
+
+    result = run(tmp_path, name=Path(unique_sleep).name, count=1001)
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["count"] == 1001
+    assert result.outputs["pids"] == sorted(p.pid for p in procs)[:1000]
+    assert "匹配到 1001 个进程，输出 pids 只列出 pid 最小的 1000 个" in [
+        line.message for line in result.logs if line.source == "sdk"
+    ]

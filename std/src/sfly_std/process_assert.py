@@ -12,10 +12,12 @@ from typing import TypedDict
 
 import psutil
 
-from sfly import node
+from sfly import Context, node
 
 #: 失败信息里最多列出多少个进程。
 LIST_LIMIT = 20
+#: 输出 `pids` 最多列出多少个进程号（节点输出不能超过 1 MB）；`count` 不受影响。
+PIDS_LIMIT = 1000
 #: 失败信息里命令行的最大字符数。
 CMDLINE_PREVIEW_CHARS = 200
 
@@ -32,6 +34,7 @@ class ProcessAssertionFailed(Exception):
 
 @node(title="进程断言")
 def process_assert(
+    ctx: Context,
     pid: int | None = None,
     name: str | None = None,
     match: str | None = None,
@@ -45,8 +48,8 @@ def process_assert(
     - `running`（默认 true）：应至少有一个匹配的进程；为 false 时应一个都没有；
     - `count`：应恰好有这么多个匹配的进程（给出时代替 `running` 的检查）。
 
-    通过时输出 `passed`（true）、匹配的进程数 `count` 和进程号 `pids`；不通过时失败，
-    写明期望与实际，并列出匹配到的进程。
+    通过时输出 `passed`（true）、匹配的进程数 `count` 和进程号 `pids`（从小到大，最多 1000 个）；
+    不通过时失败，写明期望与实际，并列出匹配到的进程。
     """
     labels = []
     if pid is not None:
@@ -96,7 +99,10 @@ def process_assert(
         raise ProcessAssertionFailed(
             f"{subject}应不在运行，实际有 {len(found)} 个：\n{_list(found)}"
         )
-    return {"passed": True, "count": len(found), "pids": [p for p, _, _ in found]}
+    if len(found) > PIDS_LIMIT:
+        ctx.log.warn("匹配到 %d 个进程，输出 pids 只列出 pid 最小的 %d 个", len(found), PIDS_LIMIT)
+    pids = [p for p, _, _ in found[:PIDS_LIMIT]]
+    return {"passed": True, "count": len(found), "pids": pids}
 
 
 def _candidates(pid: int | None) -> list[psutil.Process]:

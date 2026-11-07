@@ -142,6 +142,28 @@ def test_get_outputs_status_headers_json_and_elapsed_ms(tmp_path: Path, stub: St
     assert [(r.method, r.path) for r in stub.received] == [("GET", "/health")]
 
 
+def test_headers_output_keeps_the_first_64_kib_and_logs_what_was_dropped(
+    tmp_path: Path, stub: Stub
+) -> None:
+    # 节点输出不能超过 1 MB：响应头多到超过 64 KiB 时只保留前面的，日志写明。
+    big = {f"X-Big-{i:02d}": "v" * 1000 for i in range(80)}
+    stub.routes["/big"] = Reply(200, b"ok", big)
+
+    result = run(tmp_path, url=f"{stub.url}/big")
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    headers = result.outputs["headers"]
+    assert "x-big-00" in headers
+    assert "x-big-79" not in headers
+    assert sum(len(k) + len(v) for k, v in headers.items()) <= 64 * 1024
+    warnings = [line.message for line in result.logs if line.source == "sdk"]
+    assert any(
+        m.startswith("响应头共 ") and f"输出 headers 只保留前 {len(headers)} 个（64 KiB）" in m
+        for m in warnings
+    ), warnings
+
+
 @pytest.mark.parametrize("method", ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 def test_sends_each_method(tmp_path: Path, stub: Stub, method: str) -> None:
     stub.routes["/items/1"] = Reply(204)

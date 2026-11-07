@@ -21,6 +21,8 @@ from sfly_std._assertions import Assertion, check, describe, validate
 
 #: 输出里响应内容的最大字节数：超过时（即使是 JSON）输出 text，只保留开头。
 BODY_OUTPUT_BYTES = 256 * 1024
+#: 输出里响应头（名字和值的字符数之和）的上限：超过时只保留前面的响应头。
+HEADERS_OUTPUT_CHARS = 64 * 1024
 #: 失败信息里附带的响应开头的最大字符数。
 RESPONSE_PREVIEW_CHARS = 1000
 
@@ -171,7 +173,7 @@ def _outputs(ctx: Context, response: httpx.Response, elapsed_ms: float) -> tuple
     """节点的输出，以及解析出的完整 JSON（不是 JSON 时为 _NOT_JSON）。"""
     outputs: HttpResponse = {
         "status": response.status_code,
-        "headers": dict(response.headers.items()),
+        "headers": _headers(ctx, response),
         "elapsed_ms": elapsed_ms,
     }
     parsed = _parse_json(response)
@@ -185,6 +187,25 @@ def _outputs(ctx: Context, response: httpx.Response, elapsed_ms: float) -> tuple
     else:
         outputs["text"] = response.text
     return outputs, parsed
+
+
+def _headers(ctx: Context, response: httpx.Response) -> dict[str, str]:
+    """输出的响应头：按顺序保留，名字和值的字符数之和不超过 HEADERS_OUTPUT_CHARS。"""
+    headers: dict[str, str] = {}
+    size = 0
+    for name, value in response.headers.items():
+        size += len(name) + len(value)
+        if size > HEADERS_OUTPUT_CHARS:
+            total = sum(len(k) + len(v) for k, v in response.headers.items())
+            ctx.log.warn(
+                "响应头共 %d 个、%d 字符，输出 headers 只保留前 %d 个（64 KiB）",
+                len(response.headers),
+                total,
+                len(headers),
+            )
+            break
+        headers[name] = value
+    return headers
 
 
 _NOT_JSON = object()

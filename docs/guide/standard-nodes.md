@@ -429,6 +429,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 匹配到目录时收集其中的全部文件（含子目录）。多个通配符匹配到同一个文件时只收集一次。
 - 产物名称保留相对 `base_dir` 的目录结构，所以通配符不能是绝对路径、不能含 `..`；要收集别处的文件时改 `base_dir`。
 - 一个都没匹配到时，`required` 为 `true` 则节点失败，错误信息写明 `base_dir` 和通配符；为 `false` 则成功、`refs` 为空（`archive` 时也不生成 zip）。`base_dir` 不存在时总是失败。
+- 节点输出不能超过 1 MB，所以 `refs` 最多 512 KiB（大约一两千个文件，取决于文件名长短）：匹配的文件多到超过时节点失败、一个都不保存，错误信息写明文件数，提示改用 `archive` 或缩小 `paths`。
 - 每个任务的工作目录是独立的新目录，前面的节点写在它自己工作目录里的文件这里看不到：让前面的节点把结果写到一个约定的绝对路径，再把它设为 `base_dir`。产物目录本身不会被收集。
 - 产物引用是控制面上的下载地址。`refs` 的键含 `.`，引用语法取不到其中一项：后面的节点整值引用 `refs`，再按名称取（例如 `assert` 的路径 `$["report.html"]`）。产物随运行一起按保留期清理。
 
@@ -465,7 +466,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 输出 | 说明 |
 |---|---|
 | `status` | 状态码 |
-| `headers` | 响应头（对象）。名字都是小写；同名的多个响应头用 `, ` 连起来 |
+| `headers` | 响应头（对象）。名字都是小写；同名的多个响应头用 `, ` 连起来。名字和值合计超过 64 KiB 时只保留前面的响应头（写一条警告日志） |
 | `json` | 响应内容是 JSON 且不超过 256 KiB 时，解析后的值 |
 | `text` | 响应内容不是 JSON 或超过 256 KiB 时的文本，最多保留开头 256 KiB（截断时写一条警告日志） |
 | `elapsed_ms` | 最后一次请求的耗时（毫秒） |
@@ -621,7 +622,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 |---|---|
 | `passed` | 通过时为 `true` |
 | `count` | 匹配的进程数 |
-| `pids` | 匹配的进程号，从小到大 |
+| `pids` | 匹配的进程号，从小到大；最多列出 1000 个（超过时写一条警告日志，`count` 仍是全部数量） |
 
 - `pid`、`name`、`match` 至少给一个；同时给几个时，进程要全部满足（例如 `name` 为 `python`、`match` 为 `server\.py`）。
 - 僵尸进程（已退出、还没被父进程回收）不算在运行。执行这个节点的进程自己不参与匹配。

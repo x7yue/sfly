@@ -153,3 +153,34 @@ def test_logs_what_was_collected(tmp_path: Path) -> None:
     assert [line.message for line in result.logs if line.source == "sdk"] == [
         f"从 {base} 收集了 2 个文件，共 8 字节"
     ]
+
+
+def test_fails_before_saving_anything_when_refs_would_exceed_the_output_limit(
+    tmp_path: Path,
+) -> None:
+    # 节点输出不能超过 1 MB：1200 个 250 字符的文件名，refs 约 700 KB，超过 refs 的 512 KiB 上限。
+    base = make_files(tmp_path / "out", {f"{i:04d}{'x' * 246}": "" for i in range(1200)})
+
+    result = run(tmp_path, paths=["*"], base_dir=str(base))
+
+    assert result.status == "failed"
+    assert result.error is not None
+    message = result.error.message
+    assert message.startswith(
+        "sfly_std.collect_artifacts.TooManyRefs: 匹配到 1200 个文件，refs 共 "
+    )
+    assert "超过 512 KiB 的上限" in message
+    assert "archive=true" in message
+    assert result.artifacts == {}
+
+
+def test_archive_collects_files_too_many_to_list_in_refs(tmp_path: Path) -> None:
+    base = make_files(tmp_path / "out", {f"{i:04d}{'x' * 246}": "" for i in range(1200)})
+
+    result = run(tmp_path, paths=["*"], base_dir=str(base), archive=True)
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert list(result.outputs["refs"]) == ["artifacts.zip"]
+    with zipfile.ZipFile(result.artifacts["artifacts.zip"]) as zf:
+        assert len(zf.namelist()) == 1200
