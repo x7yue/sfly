@@ -57,16 +57,24 @@ def _alive(pid: int) -> bool:
     return True
 
 
+def _signal(pid: int, sig: int) -> None:
+    # 进程可能在存活检查之后、发信号之前退出。
+    try:
+        os.kill(pid, sig)
+    except ProcessLookupError:
+        pass
+
+
 @node(title="停止常驻进程", outputs=["was_running"])
 def stop_process(ctx: Context, pid: int | None = None, wait: float = 10) -> dict[str, Any]:
     """终止 start_process 启动的进程并等它退出；pid 为空（上游没有产出）时什么也不做。"""
     if pid is None or not _alive(pid):
         return {"was_running": False}
-    os.kill(pid, signal.SIGTERM)
+    _signal(pid, signal.SIGTERM)
     deadline = time.monotonic() + wait
     while _alive(pid):
         if time.monotonic() > deadline:
-            os.kill(pid, signal.SIGKILL)
+            _signal(pid, signal.SIGKILL)
             break
         time.sleep(0.05)
     return {"was_running": True}

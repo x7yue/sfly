@@ -52,6 +52,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				"data-[run=running]:border-canvas-run-running data-[run=failed]:border-canvas-run-failed",
 				"data-[run=cancelled]:border-dashed data-[run=cancelled]:border-canvas-run-cancelled data-[run=cancelled]:opacity-60",
 				"data-[run=done]:opacity-(--canvas-run-done-opacity) data-[run=pending]:opacity-55 data-[run=skipped]:opacity-55",
+				"data-[run=stopped]:border-canvas-run-stopped data-[run=stopped]:opacity-60",
 				"data-[mark=added]:border-ok data-[mark=changed]:border-warn data-[mark=removed]:border-dashed data-[mark=removed]:border-danger data-[mark=removed]:opacity-60",
 				"in-[.selected]:opacity-100",
 			)}
@@ -159,11 +160,13 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	);
 }
 
-export const nodeTypes = {
+/** 每种节点都用节点卡片画；Record 的类型让新增的节点种类漏注册时类型检查报错。 */
+export const nodeTypes: Record<SfNode["data"]["node"]["kind"], typeof NodeCard> = {
 	entry: NodeCard,
 	subflow_entry: NodeCard,
 	async: NodeCard,
 	timer: NodeCard,
 	sleep: NodeCard,
+	stop_subflow: NodeCard,
 	package: NodeCard,
 };

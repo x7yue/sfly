@@ -35,6 +35,7 @@ const node = (node_id: string, status: NodeRunView["status"], attempts: AttemptV
 const chain = (
 	over: Partial<ChainRunView> & Pick<ChainRunView, "id" | "chain_id">,
 ): ChainRunView => ({
+	name: null,
 	parent_chain_instance_id: null,
 	async_node_id: null,
 	depth: 0,
@@ -86,11 +87,14 @@ describe("画布运行状态叠加", () => {
 						node("f", "cancelled"),
 						node("g", "waiting"),
 						node("h", "pending"),
+						node("i", "stopped"),
 					],
 				}),
 			]),
 		);
-		const states = ["a", "b", "c", "d", "e", "f", "g", "h"].map((id) => overlay.node(id)?.state);
+		const states = ["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(
+			(id) => overlay.node(id)?.state,
+		);
 		expect(states).toEqual([
 			"done",
 			"running",
@@ -100,6 +104,7 @@ describe("画布运行状态叠加", () => {
 			"cancelled",
 			"waiting",
 			"pending",
+			"stopped",
 		]);
 		expect(overlay.node("missing")).toBeUndefined();
 	});

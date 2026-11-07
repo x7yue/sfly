@@ -62,6 +62,7 @@ const ROUTES = {
 		"local-debug",
 		"integration",
 		"publish",
+		"subflows",
 	],
 	ai: ["ai-quickstart"],
 } as const;

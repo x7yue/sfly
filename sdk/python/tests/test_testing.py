@@ -270,8 +270,7 @@ def test_cancel_kills_a_node_that_ignores_sigterm_once_the_grace_period_ends(
 
     assert result.status == "cancelled"
     assert time.monotonic() - started < 10
-    for pid in map(int, pid_file.read_text().split()):
-        assert not _alive(pid), f"进程 {pid} 仍在运行"
+    _assert_all_exited(list(map(int, pid_file.read_text().split())))
 
 
 def test_cancel_after_seconds() -> None:
@@ -282,14 +281,41 @@ def test_cancel_after_seconds() -> None:
     assert result.status == "cancelled"
 
 
+@pytest.mark.parametrize("error", [ProcessLookupError, FileNotFoundError])
+def test_alive_treats_a_process_that_vanishes_before_proc_is_read_as_exited(
+    monkeypatch: pytest.MonkeyPatch, error: type[OSError]
+) -> None:
+    # 竞态的确定性复现：os.kill(pid, 0) 时进程还在，读 /proc/<pid>/stat 时已经消失。
+    monkeypatch.setattr(os, "kill", lambda pid, sig: None)
+
+    def vanished(path: str, *args: object, **kwargs: object) -> None:
+        raise error(3, "No such process", path)
+
+    monkeypatch.setattr("builtins.open", vanished)
+
+    assert not _alive(12345)
+
+
+def _assert_all_exited(pids: list[int]) -> None:
+    # SIGKILL 的投递是异步的：执行器只等得到组长，孙进程在高负载下可能稍后才真正退出。
+    # 与 Agent 的同类测试（agent/tests/timeout.rs 的 assert_all_gone）一样限时轮询。
+    deadline = time.monotonic() + 5
+    while any(_alive(pid) for pid in pids):
+        assert time.monotonic() < deadline, f"进程仍在运行：{[p for p in pids if _alive(p)]}"
+        time.sleep(0.02)
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return False
-    # 僵尸进程（已退出未回收）也算退出。
+    # 僵尸进程（已退出未回收）也算退出。进程可能在 os.kill 之后、读 /proc 之前退出，
+    # 这时读取会抛 ProcessLookupError 或 FileNotFoundError，同样算已退出。
     try:
         with open(f"/proc/{pid}/stat") as f:
-            return f.read().split()[2] != "Z"
-    except FileNotFoundError:
+            stat = f.read()
+    except OSError:
         return False
+    # 第三个字段是状态；命令名在括号里，可能有空格，从最后一个 ')' 之后取。
+    return stat.rpartition(")")[2].split()[0] not in ("Z", "X")

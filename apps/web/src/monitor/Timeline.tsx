@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { formatClock, formatDuration } from "#/lib/format";
+import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,6 +47,7 @@ const SEGMENT_STYLE: Record<SegmentKind, string> = {
 	fail: "bg-danger",
 	cancel:
 		"bg-[repeating-linear-gradient(135deg,var(--cancelled)_0_3px,transparent_3px_6px)] shadow-[inset_0_0_0_1px_var(--cancelled)] opacity-70",
+	stop: "bg-stopped/55",
 	queue:
 		"bg-[repeating-linear-gradient(135deg,var(--border-strong)_0_3px,var(--raised-2)_3px_6px)] shadow-[inset_0_0_0_1px_var(--border-strong)]",
 	wait: "bg-[repeating-linear-gradient(135deg,var(--warn-line)_0_3px,var(--warn-soft)_3px_6px)]",
@@ -56,11 +58,12 @@ const SEGMENT_LABEL: Record<SegmentKind, string> = {
 	run: "执行中",
 	fail: "失败的尝试",
 	cancel: "已取消",
+	stop: "已停止",
 	queue: "排队等待 Agent",
 	wait: "等待节点",
 };
 
-const LEGEND: SegmentKind[] = ["ok", "run", "fail", "wait", "queue", "cancel"];
+const LEGEND: SegmentKind[] = ["ok", "run", "fail", "wait", "queue", "cancel", "stop"];
 const LEGEND_LABEL: Record<SegmentKind, string> = {
 	...SEGMENT_LABEL,
 	ok: "完成",
@@ -495,7 +498,7 @@ function NodeRow({
 	const status = nodeStatusView(node.status);
 	const span = spanOf(segments);
 	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
-	const title = nodeTitle(node, decl);
+	const title = nodeTitle(node, decl, decls);
 	return (
 		<div
 			data-node-row={node.node_id}
@@ -522,7 +525,7 @@ function NodeRow({
 					</Badge>
 				)}
 				<span className="ml-auto min-w-13 flex-none text-right font-mono text-2xs text-fg-3">
-					{span === null ? (node.status === "skipped" ? "跳过" : "—") : formatDuration(span)}
+					{span === null ? NODE_STATUS[node.status].notRunDuration : formatDuration(span)}
 				</span>
 			</button>
 			<div className="relative mr-3.5 h-full">

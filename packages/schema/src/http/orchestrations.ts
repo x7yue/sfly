@@ -79,6 +79,7 @@ const NodeRunStatus = z.enum([
 	"failed",
 	"skipped",
 	"cancelled",
+	"stopped",
 ]);
 
 /** 缩略图用的结构：最新版本（没有版本时是只含入口节点的初始文档）的节点与连线，不含参数与布局。 */
@@ -86,7 +87,15 @@ export const OrchestrationStructure = z.object({
 	nodes: z.array(
 		z.object({
 			id: z.string(),
-			kind: z.enum(["entry", "subflow_entry", "async", "timer", "sleep", "package"]),
+			kind: z.enum([
+				"entry",
+				"subflow_entry",
+				"async",
+				"timer",
+				"sleep",
+				"stop_subflow",
+				"package",
+			]),
 		}),
 	),
 	edges: z.array(

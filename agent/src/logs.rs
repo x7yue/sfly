@@ -12,6 +12,9 @@
 //! 同一批内按时间排序后再编号，所以不同来源的行大致按发生顺序排列；同一来源内保持写入顺序。
 //! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`，每个文件 8 MiB，超过后改名为 `.1`
 //! 再新建（[`LogCopy`]）；失败消息里的标准错误尾部取自内存（[`Pump::finish`]）。
+//!
+//! 读出、还没转发的内容有上限（[`LINE_CHUNKS`]、[`EVENT_CHUNKS`]）：转发跟不上时暂停读取，管道写满后节点的写入等待，
+//! 不丢日志，Agent 内存不随节点的输出量增长（#75）。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -43,6 +46,8 @@ const METRIC_INTERVAL: Duration = Duration::from_secs(1);
 const METRIC_GRACE_SECONDS: i64 = 1;
 /// 读出、还没处理的事件管道内容最多排这么多块（每块不超过一次读取的 64 KiB 加上跨块的不完整行）。
 const EVENT_CHUNKS: usize = 16;
+/// 读出、还没处理的标准输出 / 标准错误最多排这么多块（每块是一次读取拆出的行，不超过 16 KiB 加上跨块的不完整行）。
+const LINE_CHUNKS: usize = 16;
 /// 一行的最大字节数；更长的行被拆成多行。
 const MAX_LINE_BYTES: usize = 64 * 1024;
 /// 一批最多的行数。
@@ -249,7 +254,8 @@ impl Tail {
 }
 
 impl Pump {
-    /// 开始转发：读取标准输出、标准错误和事件管道。
+    /// 开始转发：读取标准输出、标准错误和事件管道。`forward_rate` 只在测试中使用：
+    /// 转发器每秒最多处理这么多字节的标准输出 / 标准错误（0 = 不限制），模拟转发跟不上节点的输出。
     pub fn start(
         task: &AssignTask,
         stdout: impl AsyncRead + Unpin + Send + 'static,
@@ -257,6 +263,7 @@ impl Pump {
         events: EventsPipe,
         dir: PathBuf,
         telemetry: Telemetry,
+        forward_rate: u64,
     ) -> Pump {
         let EventsPipe {
             reader,
@@ -264,7 +271,7 @@ impl Pump {
         } = events;
         let (events_tx, events_rx) = mpsc::channel(EVENT_CHUNKS);
         tokio::spawn(read_events(reader, events_tx));
-        let (lines_tx, lines_rx) = mpsc::unbounded_channel();
+        let (lines_tx, lines_rx) = mpsc::channel(LINE_CHUNKS);
         tokio::spawn(read_pipe(
             stdout,
             dir.join("stdout.log"),
@@ -293,6 +300,7 @@ impl Pump {
             progress_sent_at: None,
             metrics: Merger::default(),
             metrics_sent_at: None,
+            throttle: Throttle::new(forward_rate),
         };
         let handle = tokio::spawn(forwarder.run(lines_rx, events_rx, exited_rx));
         Pump {
@@ -328,20 +336,24 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
-/// 逐行读取一个管道，原始内容同时写到 `copy`（写失败时忽略），并在 `tail` 里保留最后一段。
+/// 逐行读取一个管道，原始内容同时写到 `copy`（写失败时忽略），并在 `tail` 里保留最后一段；
+/// 每次读取拆出的行作为一块交给 `lines`。通道有界：转发跟不上时不再读管道，写满后节点写标准输出 / 标准错误
+/// 等待（背压），Agent 内存里不会越积越多，日志也不丢。转发器已经结束（执行器退出后等管道关闭超时）时
+/// 照常读完管道、写副本，只是不再转发。
 async fn read_pipe(
     mut pipe: impl AsyncRead + Unpin,
     copy: PathBuf,
     source: LogSource,
     level: LogLevel,
-    lines: mpsc::UnboundedSender<Pending>,
+    lines: mpsc::Sender<Vec<Pending>>,
     tail: Option<Arc<Tail>>,
 ) {
     let mut copy = LogCopy::create(copy).await;
     let mut splitter = LineSplitter::default();
     let mut buf = vec![0u8; 16 * 1024];
-    let emit = |text: String| {
-        let _ = lines.send(Pending {
+    let mut chunk = Vec::new();
+    let emit = |chunk: &mut Vec<Pending>, text: String| {
+        chunk.push(Pending {
             time_unix_ms: now_ms(),
             source,
             level,
@@ -357,9 +369,15 @@ async fn read_pipe(
             tail.push(&buf[..n]);
         }
         copy.write(&buf[..n]).await;
-        splitter.push(&buf[..n], emit);
+        splitter.push(&buf[..n], |text| emit(&mut chunk, text));
+        if !chunk.is_empty() {
+            let _ = lines.send(std::mem::take(&mut chunk)).await;
+        }
     }
-    splitter.finish(emit);
+    splitter.finish(|text| emit(&mut chunk, text));
+    if !chunk.is_empty() {
+        let _ = lines.send(chunk).await;
+    }
     copy.flush().await;
 }
 
@@ -538,12 +556,42 @@ struct Forwarder {
     /// 还没发出的指标点。
     metrics: Merger,
     metrics_sent_at: Option<Instant>,
+    throttle: Throttle,
+}
+
+/// 测试用的转发限速（[`Pump::start`] 的 `forward_rate`）：按累计处理的字节数等到对应的时刻。
+struct Throttle {
+    /// 每秒字节数，0 = 不限制。
+    rate: u64,
+    started: Instant,
+    bytes: u64,
+}
+
+impl Throttle {
+    fn new(rate: u64) -> Throttle {
+        Throttle {
+            rate,
+            started: Instant::now(),
+            bytes: 0,
+        }
+    }
+
+    async fn pace(&mut self, bytes: usize) {
+        if self.rate == 0 {
+            return;
+        }
+        self.bytes += bytes as u64;
+        let due = self.started + Duration::from_secs_f64(self.bytes as f64 / self.rate as f64);
+        if due > Instant::now() {
+            tokio::time::sleep_until(due).await;
+        }
+    }
 }
 
 impl Forwarder {
     async fn run(
         mut self,
-        mut lines: mpsc::UnboundedReceiver<Pending>,
+        mut lines: mpsc::Receiver<Vec<Pending>>,
         mut events: mpsc::Receiver<Vec<u8>>,
         mut exited: oneshot::Receiver<()>,
     ) {
@@ -553,11 +601,8 @@ impl Forwarder {
         let mut events_open = true;
         loop {
             tokio::select! {
-                line = lines.recv(), if pipes_open => match line {
-                    Some(line) => {
-                        self.pending.push(line);
-                        self.flush_full_batch();
-                    }
+                chunk = lines.recv(), if pipes_open => match chunk {
+                    Some(chunk) => self.lines(chunk).await,
                     None => pipes_open = false,
                 },
                 chunk = events.recv(), if events_open => match chunk {
@@ -572,8 +617,8 @@ impl Forwarder {
         let deadline = Instant::now() + DRAIN_TIMEOUT;
         while pipes_open || events_open {
             tokio::select! {
-                line = lines.recv(), if pipes_open => match line {
-                    Some(line) => self.pending.push(line),
+                chunk = lines.recv(), if pipes_open => match chunk {
+                    Some(chunk) => self.lines(chunk).await,
                     None => pipes_open = false,
                 },
                 chunk = events.recv(), if events_open => match chunk {
@@ -589,6 +634,15 @@ impl Forwarder {
     fn flush_full_batch(&mut self) {
         if self.pending.len() >= MAX_BATCH_LINES {
             self.flush_lines();
+        }
+    }
+
+    /// 处理标准输出 / 标准错误的一块行。
+    async fn lines(&mut self, chunk: Vec<Pending>) {
+        for line in chunk {
+            self.throttle.pace(line.text.len()).await;
+            self.pending.push(line);
+            self.flush_full_batch();
         }
     }
 

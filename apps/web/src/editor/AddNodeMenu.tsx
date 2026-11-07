@@ -1,7 +1,8 @@
 import { cn } from "cn";
 import { PlusIcon } from "lucide-react";
-import { useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
+import { Button } from "@/components/ui/button";
 import {
 	Command,
 	CommandEmpty,
@@ -10,6 +11,7 @@ import {
 	CommandItem,
 	CommandList,
 } from "@/components/ui/command";
+import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -45,11 +47,13 @@ function KindChip({ kind }: { kind: AddItem["kind"] }) {
  * 添加节点菜单（原型 #/editor 的 addMenu）：可搜索；内置节点与各节点包的节点类型分组列出。
  * 「＋」按钮本身放在工具条最左侧（FlowCanvas 的 dockStart）；拖线到空白处时菜单出现在松开鼠标的位置，
  * 不列子流程入口（子流程入口只能由调度连线触发，不能接在链上）。
+ * 选择子流程入口后菜单换成填写子流程名称的表单（名称必填、场景内唯一，SEMANTICS §1.2）。
  */
 export function AddNodeMenu({
 	request,
 	tail,
 	groups,
+	subflowNameProblem,
 	onOpenChange,
 	onPick,
 }: {
@@ -57,10 +61,14 @@ export function AddNodeMenu({
 	/** 新节点接在哪个节点之后（菜单底部的提示）。 */
 	tail: string | undefined;
 	groups: PackageGroup[];
+	/** 新子流程的名称有什么问题（为空、重名）；可以使用时返回 null。 */
+	subflowNameProblem(name: string): string | null;
 	onOpenChange(open: boolean): void;
 	onPick(item: AddItem): void;
 }) {
 	const picked = useRef(false);
+	const [naming, setNaming] = useState(false);
+	if (request === null && naming) setNaming(false);
 	const drop = request?.via === "drop" ? request : null;
 	const anchor = drop
 		? {
@@ -113,55 +121,117 @@ export function AddNodeMenu({
 				finalFocus={() => !picked.current}
 				className="w-80"
 			>
-				<Command loop className="bg-transparent">
-					<CommandInput placeholder="搜索节点类型…" aria-label="搜索节点类型" />
-					<CommandList className="max-h-[min(360px,var(--available-height))]">
-						<CommandEmpty>没有匹配的节点类型</CommandEmpty>
-						<CommandGroup heading="内置">
-							{builtins.map((b) => (
-								<CommandItem
-									key={b.kind}
-									value={`builtin:${b.kind}`}
-									keywords={[KIND_META[b.kind].label, b.kind, b.hint]}
-									onSelect={() => pick({ kind: b.kind })}
-								>
-									<KindChip kind={b.kind} />
-									<span>{KIND_META[b.kind].label}</span>
-									<span className="ml-auto text-2xs text-fg-3">{b.hint}</span>
-								</CommandItem>
-							))}
-						</CommandGroup>
-						{groups.map((g) => (
-							<CommandGroup key={g.name} heading={`${g.name} @${g.version}`}>
-								{g.items.map((item) => (
+				{naming ? (
+					<SubflowNameForm
+						problemOf={subflowNameProblem}
+						onBack={() => setNaming(false)}
+						onCreate={(name) => pick({ kind: "subflow_entry", name })}
+					/>
+				) : (
+					<Command loop className="bg-transparent">
+						<CommandInput placeholder="搜索节点类型…" aria-label="搜索节点类型" />
+						<CommandList className="max-h-[min(360px,var(--available-height))]">
+							<CommandEmpty>没有匹配的节点类型</CommandEmpty>
+							<CommandGroup heading="内置">
+								{builtins.map((b) => (
 									<CommandItem
-										key={item.node}
-										value={`package:${g.name}/${item.node}`}
-										keywords={[item.title, item.node, g.name]}
-										onSelect={() => pick(item)}
+										key={b.kind}
+										value={`builtin:${b.kind}`}
+										keywords={[KIND_META[b.kind].label, b.kind, b.hint]}
+										onSelect={() =>
+											b.kind === "subflow_entry" ? setNaming(true) : pick({ kind: b.kind })
+										}
 									>
-										<KindChip kind="package" />
-										<span className="truncate">{item.title}</span>
-										<span className="ml-auto truncate font-mono text-2xs text-fg-3">
-											{item.node}
-										</span>
+										<KindChip kind={b.kind} />
+										<span>{KIND_META[b.kind].label}</span>
+										<span className="ml-auto text-2xs text-fg-3">{b.hint}</span>
 									</CommandItem>
 								))}
 							</CommandGroup>
-						))}
-					</CommandList>
-					<p className={cn("border-t border-border-soft px-3 py-2 text-2xs text-fg-3")}>
-						{tail ? (
-							<>
-								新节点接在 <span className="font-mono text-fg-2">{tail}</span> 之后
-								{drop ? "" : " · 也可从链尾端口拖线到空白处"}
-							</>
-						) : (
-							"场景没有入口节点，新节点不会接到链上"
-						)}
-					</p>
-				</Command>
+							{groups.map((g) => (
+								<CommandGroup key={g.name} heading={`${g.name} @${g.version}`}>
+									{g.items.map((item) => (
+										<CommandItem
+											key={item.node}
+											value={`package:${g.name}/${item.node}`}
+											keywords={[item.title, item.node, g.name]}
+											onSelect={() => pick(item)}
+										>
+											<KindChip kind="package" />
+											<span className="truncate">{item.title}</span>
+											<span className="ml-auto truncate font-mono text-2xs text-fg-3">
+												{item.node}
+											</span>
+										</CommandItem>
+									))}
+								</CommandGroup>
+							))}
+						</CommandList>
+						<p className={cn("border-t border-border-soft px-3 py-2 text-2xs text-fg-3")}>
+							{tail ? (
+								<>
+									新节点接在 <span className="font-mono text-fg-2">{tail}</span> 之后
+									{drop ? "" : " · 也可从链尾端口拖线到空白处"}
+								</>
+							) : (
+								"场景没有入口节点，新节点不会接到链上"
+							)}
+						</p>
+					</Command>
+				)}
 			</PopoverContent>
 		</Popover>
+	);
+}
+
+/** 新建子流程：填写名称。空名称在提交时提示，重名随输入提示。 */
+function SubflowNameForm({
+	problemOf,
+	onBack,
+	onCreate,
+}: {
+	problemOf(name: string): string | null;
+	onBack(): void;
+	onCreate(name: string): void;
+}) {
+	const inputId = useId();
+	const input = useRef<HTMLInputElement>(null);
+	const [name, setName] = useState("");
+	const [submitted, setSubmitted] = useState(false);
+	const problem = problemOf(name);
+	const shown = submitted || name.trim() !== "" ? problem : null;
+	useEffect(() => input.current?.focus(), []);
+	return (
+		<form
+			aria-label="新建子流程"
+			className="flex flex-col gap-2 p-3"
+			onSubmit={(e) => {
+				e.preventDefault();
+				setSubmitted(true);
+				if (problem === null) onCreate(name);
+			}}
+		>
+			<label htmlFor={inputId} className="text-sm text-fg-2">
+				子流程名称
+			</label>
+			<Input
+				ref={input}
+				id={inputId}
+				value={name}
+				placeholder="例如 压测监控"
+				aria-invalid={shown !== null || undefined}
+				onChange={(e) => setName(e.target.value)}
+			/>
+			{shown && <p className="m-0 text-2xs text-danger-fg">{shown}</p>}
+			<p className="m-0 text-2xs text-fg-3">场景内唯一；停止子流程节点按名称选择子流程。</p>
+			<div className="flex justify-end gap-1.5">
+				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
+					返回
+				</Button>
+				<Button type="submit" size="sm">
+					新建子流程
+				</Button>
+			</div>
+		</form>
 	);
 }

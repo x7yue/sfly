@@ -131,6 +131,8 @@ export interface NodeView {
 export interface ChainView {
 	id: string;
 	chain_id: string;
+	/** 子流程名称；主链为 null。 */
+	name: string | null;
 	parent_chain_instance_id: string | null;
 	async_node_id: string | null;
 	status: string;

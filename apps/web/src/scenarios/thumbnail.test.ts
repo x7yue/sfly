@@ -95,6 +95,36 @@ describe("场景缩略图布局", () => {
 		});
 	});
 
+	it("每个节点状态的颜色：排队算待执行，准备中算执行中，成功算完成", () => {
+		const statuses = [
+			"pending",
+			"queued",
+			"dispatched",
+			"running",
+			"waiting",
+			"success",
+			"failed",
+			"skipped",
+			"cancelled",
+			"stopped",
+		] as const;
+		const s = structure([[["entry", "entry"], ...statuses.map(pkg)]]);
+		const t = layoutThumbnail(s, Object.fromEntries(statuses.map((id) => [id, id])));
+		expect(Object.fromEntries(t.nodes.map((n) => [n.id, n.state]))).toEqual({
+			entry: "pending",
+			pending: "pending",
+			queued: "pending",
+			dispatched: "running",
+			running: "running",
+			waiting: "waiting",
+			success: "done",
+			failed: "failed",
+			skipped: "skipped",
+			cancelled: "cancelled",
+			stopped: "stopped",
+		});
+	});
+
 	it("没有连到任何链上的节点不画", () => {
 		const s = structure([[["entry", "entry"], pkg("a")]]);
 		s.nodes.push({ id: "loose", kind: "package" });

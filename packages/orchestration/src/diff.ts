@@ -1,4 +1,5 @@
 import { OrchestrationDocument } from "@sfly/schema";
+import { subflowName } from "./structure.js";
 
 /**
  * 两份编排文档的差异：用于保存冲突时对比本地修改与最新版本、对比任意两个历史版本。
@@ -56,13 +57,19 @@ interface NormalDoc {
 	packages: Record<string, unknown>;
 }
 
+/** 没有名称字段的旧版本子流程入口以节点 ID 作为名称（ADR 0016），按显示的名称比较。 */
+const withSubflowName = (node: Node): Node =>
+	node.kind === "subflow_entry" && node.name === undefined
+		? { ...node, name: subflowName(node) }
+		: node;
+
 /** 补齐默认值；文档不完全合法（例如编辑到一半的草稿）时按原样比较。 */
 function normalize(doc: DiffableDocument): NormalDoc {
 	const parsed = OrchestrationDocument.safeParse(doc);
 	const d = (parsed.success ? parsed.data : doc) as Partial<NormalDoc>;
 	return {
 		default_agent: d.default_agent,
-		nodes: [...(d.nodes ?? [])],
+		nodes: (d.nodes ?? []).map(withSubflowName),
 		edges: [...(d.edges ?? [])],
 		packages: d.packages ?? {},
 	};

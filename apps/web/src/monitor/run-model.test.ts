@@ -1,6 +1,13 @@
-import type { RunView } from "@sfly/schema";
+import type {
+	AttemptView,
+	ChainRunView,
+	NodeRunView,
+	OrchestrationDocument,
+	RunView,
+	TaskProgressView,
+} from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { latestRunView } from "./run-model";
+import { applyProgress, chainLabel, documentNodes, latestRunView, nodeTitle } from "./run-model";
 
 const view = (status: RunView["status"], cancelled = false): RunView => ({
 	id: "00000000-0000-4000-8000-000000000001",
@@ -33,5 +40,128 @@ describe("运行视图的合并（#47）", () => {
 		expect(latestRunView(view("running", true), ended)).toBe(ended);
 		const success = view("success");
 		expect(latestRunView(view("failed"), success)).toBe(success);
+	});
+});
+
+describe("子流程名称（#80 故事 1、23）", () => {
+	const chain = (over: Partial<ChainRunView>): ChainRunView => ({
+		id: "6f1c2d3e-0000-4000-8000-000000000002",
+		chain_id: "mon",
+		name: "监控",
+		parent_chain_instance_id: "6f1c2d3e-0000-4000-8000-000000000001",
+		async_node_id: "spawn",
+		depth: 1,
+		status: "running",
+		params: {},
+		started_at: "2026-01-01T00:00:00.000Z",
+		ended_at: null,
+		nodes: [],
+		...over,
+	});
+
+	it("链名显示子流程名称；名称为空时显示「未命名子流程」，主链显示「主链」", () => {
+		expect(chainLabel(chain({}))).toBe("子流程 监控 · 6f1c2d3e");
+		expect(chainLabel(chain({ name: "" }))).toBe("子流程 未命名子流程 · 6f1c2d3e");
+		expect(chainLabel(chain({ depth: 0, name: null, chain_id: "entry" }))).toBe("主链");
+	});
+
+	it("停止子流程节点的说明文字是它要停止的子流程名称", () => {
+		const doc: OrchestrationDocument = {
+			nodes: [
+				{ id: "entry", kind: "entry", params: [] },
+				{ id: "stop", kind: "stop_subflow", always: false, subflow: "mon" },
+				{ id: "unset", kind: "stop_subflow", always: false },
+				{ id: "mon", kind: "subflow_entry", name: "监控", params: [] },
+			],
+			edges: [],
+			packages: {},
+		};
+		const decls = documentNodes(doc);
+		const node = (id: string): NodeRunView => ({
+			node_id: id,
+			kind: "stop_subflow",
+			status: "waiting",
+			agent: null,
+			outputs: null,
+			error: null,
+			attempts: [],
+		});
+		expect(nodeTitle(node("stop"), decls.get("stop"), decls)).toBe("停止子流程「监控」");
+		expect(nodeTitle(node("unset"), decls.get("unset"), decls)).toBe("停止子流程");
+	});
+});
+
+describe("运行视图与进度推送的合并（#110）", () => {
+	const TASK = "00000000-0000-4000-8000-0000000000a1";
+	const progress = (current: number, time: string): TaskProgressView => ({
+		current,
+		total: 100,
+		message: `第 ${current} 步`,
+		time,
+	});
+	const withPing = (attemptProgress: AttemptView["progress"]): RunView => ({
+		...view("running"),
+		chains: [
+			{
+				id: "chain-main",
+				chain_id: "entry",
+				name: null,
+				parent_chain_instance_id: null,
+				async_node_id: null,
+				depth: 0,
+				status: "running",
+				params: {},
+				started_at: "2026-01-01T00:00:00.000Z",
+				ended_at: null,
+				nodes: [
+					{
+						node_id: "ping",
+						kind: "package",
+						status: "running",
+						agent: "agent-a",
+						outputs: null,
+						error: null,
+						attempts: [
+							{
+								task_id: TASK,
+								attempt: 1,
+								status: "running",
+								agent: "agent-a",
+								inputs: {},
+								outputs: null,
+								error: null,
+								queued_at: "2026-01-01T00:00:00.000Z",
+								started_at: "2026-01-01T00:00:00.000Z",
+								ended_at: null,
+								wake_at: null,
+								progress: attemptProgress,
+							},
+						],
+					},
+				],
+			},
+		],
+	});
+	const pingProgress = (run: RunView) => run.chains[0]?.nodes[0]?.attempts[0]?.progress;
+	const event = (p: TaskProgressView) => ({
+		run_id: view("running").id,
+		chain_instance_id: "chain-main",
+		node_id: "ping",
+		task_id: TASK,
+		progress: p,
+	});
+
+	it("进度推送之前查询、之后才到达的运行视图不把进度改回旧值", () => {
+		const pushed = progress(40, "2026-01-01T00:00:02.000Z");
+		const cached = applyProgress(withPing(null), event(pushed));
+		expect(pingProgress(latestRunView(cached, withPing(null)))).toEqual(pushed);
+		const older = withPing(progress(10, "2026-01-01T00:00:01.000Z"));
+		expect(pingProgress(latestRunView(cached, older))).toEqual(pushed);
+	});
+
+	it("运行视图里的进度更新时用它", () => {
+		const cached = withPing(progress(40, "2026-01-01T00:00:02.000Z"));
+		const newer = withPing(progress(60, "2026-01-01T00:00:03.000Z"));
+		expect(latestRunView(cached, newer)).toBe(newer);
 	});
 });
