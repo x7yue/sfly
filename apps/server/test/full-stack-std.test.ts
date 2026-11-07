@@ -181,6 +181,38 @@ describe("全栈：标准节点包 sfly-std", () => {
 		);
 	}, 300_000);
 
+	it("start_process 启动的进程在节点结束后继续运行，日志在后台进程目录；always 的 stop_process 在前面失败后停止它", async () => {
+		const { api, runId } = await runChain([
+			{ id: "server", node: "start_process", inputs: { command: "echo 已启动; exec sleep 300" } },
+			{
+				id: "alive",
+				node: "shell",
+				inputs: { command: "kill -0 ${{ nodes.server.outputs.pid }} && exit 1" },
+			},
+			{
+				id: "stop",
+				node: "stop_process",
+				always: true,
+				inputs: { pid: "${{ nodes.server.outputs.pid }}", grace: 5 },
+			},
+		]);
+
+		expect((await api.run(runId)).status).toBe("failed");
+		const server = await api.node(runId, "server");
+		expect(server.status).toBe("success");
+		const { pid, log_file } = server.outputs as { pid: number; log_file: string };
+		expect(log_file.endsWith(`/procs/${runId}/server.log`)).toBe(true);
+		expect(await readFile(log_file, "utf8")).toBe("已启动\n");
+		// alive 节点在 server 结束后检查到进程仍在运行（kill -0 成功），按设计以退出码 1 失败。
+		expect((await api.node(runId, "alive")).error?.message).toMatch(/命令退出码 1/);
+		const stop = await api.node(runId, "stop");
+		expect(stop).toMatchObject({
+			status: "success",
+			outputs: { was_running: true, exit_code: 143 },
+		});
+		expect(() => process.kill(pid, 0)).toThrow();
+	}, 180_000);
+
 	it("http_request 用 until_ok 等服务就绪并断言响应 JSON，assert 引用它的输出", async () => {
 		const { createServer } = await import("node:http");
 		let requests = 0;

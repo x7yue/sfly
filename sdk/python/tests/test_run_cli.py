@@ -91,6 +91,22 @@ def test_artifacts_of_each_run_are_in_their_own_timestamped_directory(project: P
     assert (project / ".sfly" / ".gitignore").read_text() == "*\n"
 
 
+def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
+    project: Path,
+) -> None:
+    run = sfly_run(project, "task_info")
+
+    assert run.returncode == 0, run.stderr
+    (run_dir,) = (project / ".sfly" / "runs").iterdir()
+    assert outputs_of(run.stdout) == {
+        "run_id": run_dir.name,
+        "node_id": "task_info",
+        "task_id": "local",
+        "attempt": 1,
+        "procs_dir": str(project / ".sfly" / "procs" / run_dir.name),
+    }
+
+
 def test_node_failure_exits_1_with_the_error_and_traceback(project: Path) -> None:
     run = sfly_run(project, "fail", "--params", '{"message": "磁盘满了"}')
 

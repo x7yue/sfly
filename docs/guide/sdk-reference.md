@@ -138,6 +138,22 @@ return {"report": ref}
 - 任务结束后 Agent 把产物上传到控制面，运行视图里可以下载。
 - **产物引用**：在 Agent 上是产物的下载地址，写进输出交给后续节点，后续节点可以直接下载（例如 `urllib.request.urlopen(ref)`）；本地调试时是本地文件路径。
 
+## `ctx.task` 与 `ctx.procs_dir`：任务信息与后台进程目录
+
+```python
+ctx.task.run_id     # 运行 ID
+ctx.task.node_id    # 场景里的节点 ID（同一个节点类型出现多次时各不相同）
+ctx.task.task_id    # 任务 ID
+ctx.task.attempt    # 第几次尝试，从 1 开始，重试时加 1
+
+log = ctx.procs_dir / f"{ctx.task.node_id}.log"
+log.parent.mkdir(parents=True, exist_ok=True)
+```
+
+- `ctx.procs_dir` 是这次运行的**后台进程目录**：节点启动的、节点结束后还要继续运行的进程，把日志等文件放在这里。它不在任务目录里，任务目录被清理或任务重试时不受影响；同一次运行的任务共用一个目录（用节点 ID 区分文件名）。目录不一定已经存在，使用前自己创建。
+- 在 Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`，和任务目录按同一个保留期清理（运行还有任务在 Agent 上时不动），见「安装 Agent」。0.0.4 之前的 Agent 不提供这个目录，SDK 取同样的位置，但旧 Agent 不会清理它。
+- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly run` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
+
 ## 取消与超时
 
 - 用户取消运行或任务超时（默认 1 小时）时，Agent 先写取消标记，再向任务的进程树发 SIGTERM。执行器把 SIGTERM 变成节点里抛出的 `sfly.Cancelled`。
@@ -216,7 +232,7 @@ uv run sfly run countdown --params '{"name": "世界", "steps": 5}'
 ```
 
 - 日志实时打印到标准错误；结束后在标准输出打印输出值（`输出：` 后的 JSON）、指标汇总表和运行目录。
-- 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`，里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。
+- 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`（目录名也是 `ctx.task.run_id`；`ctx.procs_dir` 是 `.sfly/procs/<目录名>/`），里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。
 - Ctrl-C 按平台的取消流程取消（节点里抛出 `Cancelled`，宽限期后强制杀掉），再按一次立即杀掉。
 - 退出码：成功 0，节点失败 1，参数不合法或找不到节点 2，取消 130。
 
