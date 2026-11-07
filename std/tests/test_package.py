@@ -80,3 +80,25 @@ def test_every_node_has_its_own_section_on_the_standard_nodes_page(
     sections = re.findall(r"^## `([a-z_][a-z0-9_]*)`", DOC.read_text(encoding="utf-8"), re.M)
 
     assert sorted(sections) == sorted(node["name"] for node in metadata["nodes"])
+
+
+def test_system_monitor_declares_its_metrics_charts_and_primary_metric(
+    metadata: dict[str, Any],
+) -> None:
+    node = next(n for n in metadata["nodes"] if n["name"] == "system_monitor")
+
+    assert node["primary_metric"] == "cpu_percent"
+    assert {m["name"] for m in node["metrics"]} == {
+        "cpu_percent",
+        "mem_used_percent",
+        "mem_used_bytes",
+        "load1",
+        "disk_used_percent",
+        "disk_read_bytes_per_s",
+        "disk_write_bytes_per_s",
+        "net_rx_bytes_per_s",
+        "net_tx_bytes_per_s",
+    }
+    # 每个指标都画在声明的图表里，不靠平台生成的默认图表。
+    charted = {name for chart in node["charts"] for name in chart["metrics"]}
+    assert charted == {m["name"] for m in node["metrics"]}
