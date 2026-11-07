@@ -418,14 +418,15 @@ impl LogCopy {
     }
 }
 
-/// 按换行拆分字节流；去掉行尾的 `\r`，过长的行拆开。
+/// 按换行拆分字节流；去掉行尾的 `\r`，过长的行拆开。公开只是为了基准测试（benches/telemetry.rs）。
 #[derive(Default)]
-struct LineSplitter {
+pub struct LineSplitter {
     partial: Vec<u8>,
 }
 
 impl LineSplitter {
-    fn push(&mut self, mut bytes: &[u8], mut emit: impl FnMut(String)) {
+    /// 追加一段字节，每切出一个完整的行（或过长被拆开的一段）调用一次 `emit`。
+    pub fn push(&mut self, mut bytes: &[u8], mut emit: impl FnMut(String)) {
         while !bytes.is_empty() {
             match bytes.iter().position(|&b| b == b'\n') {
                 Some(i) => {
@@ -454,7 +455,8 @@ impl LineSplitter {
         self.partial.clear();
     }
 
-    fn finish(mut self, mut emit: impl FnMut(String)) {
+    /// 流结束：剩下没有换行结尾的内容作为最后一行。
+    pub fn finish(mut self, mut emit: impl FnMut(String)) {
         if !self.partial.is_empty() {
             self.emit_partial(&mut emit);
         }
