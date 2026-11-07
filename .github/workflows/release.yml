@@ -55,8 +55,10 @@ jobs:
             echo "复用已有的草稿 Release $TAG"
           else
             bash scripts/release/notes.sh "$VERSION" "$IMAGE" > notes.md
-            # 变更列表从上一个平台版本 vX.Y.Z 起算，不让 GitHub 自己挑到 std-v* tag（#121）；首次发版没有起点。
-            start=$(bash scripts/release/previous-tag.sh "$TAG")
+            # 变更列表从上一个已发布的平台版本 vX.Y.Z 起算，不让 GitHub 自己挑到 std-v* 或发版失败被放弃的 tag（#121）；
+            # 首次发版没有起点。先取列表再选，gh 失败时步骤直接失败。
+            released=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName')
+            start=$(bash scripts/release/previous-tag.sh "$TAG" <<<"$released")
             echo "变更列表起点：${start:-（无，首次发版）}"
             gh release create "$TAG" --draft --verify-tag --title "sfly $VERSION" \
               --notes-file notes.md --generate-notes ${start:+--notes-start-tag "$start"}

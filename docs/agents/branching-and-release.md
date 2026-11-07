@@ -79,12 +79,20 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 ## 变更列表的起点
 
 平台（`vX.Y.Z`）与 sfly-std（`std-vX.Y.Z`）的 tag 在同一个仓库里，版本号各自独立。GitHub 自动生成变更列表时自己挑上一个
-tag，可能跨系列选到另一边的，所以两个工作流都用 `scripts/release/previous-tag.sh <tag>` 显式指定起点：只在同一前缀的
-`X.Y.Z` tag 里按语义版本取比当前小的最大者（`v0.0.10` 的起点是 `v0.0.9`，不会是 `std-v0.1.0`），没有时（首次发布）不输出。
+tag，可能跨系列选到另一边的，所以两个工作流都显式指定起点：上一个 Release——已发布（非草稿、非预发布）、同一前缀的
+`X.Y.Z` 里按语义版本比当前小的最大者（`v0.0.10` 的起点是 `v0.0.9`，不会是 `std-v0.1.0`），没有时（首次发布）不附起点。
+只看已发布的 Release 而不是所有 tag：tag 推送后不能删除，发版失败被放弃的 tag 不能当起点，否则那段改动不会出现在任何
+已发布 Release 的说明里。与「跨版本自更新测试」的「上一个 Release」是同一个定义，选择逻辑都在 `scripts/release/previous-tag.sh`
+（从标准输入读候选 tag）。
 
-- 发版前在本地确认起点：`git fetch --tags && bash scripts/release/previous-tag.sh vX.Y.Z`（sfly-std 传 `std-vX.Y.Z`），
-  工作流的日志里也会打印「变更列表起点」。
-- 测试在 `scripts/tests/test_previous_tag.py`（`pnpm test:py` 运行），在临时 git 仓库里造 tag 验证选出的起点。
+- 发版前在本地确认起点（sfly-std 传 `std-vX.Y.Z`），工作流的日志里也会打印「变更列表起点」：
+
+  ```sh
+  gh release list --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName' |
+    bash scripts/release/previous-tag.sh vX.Y.Z
+  ```
+
+- 测试在 `scripts/tests/test_previous_tag.py`（`pnpm test:py` 运行），喂候选 tag 列表验证选出的起点。
 
 ## 跨版本自更新测试
 

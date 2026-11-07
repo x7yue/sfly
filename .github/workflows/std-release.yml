@@ -41,11 +41,12 @@ jobs:
       # tag 与 std/pyproject.toml 的版本号一致、节点包元信息检查，构建节点包、SHA256SUMS 和发布说明。
       - name: Pack
         run: bash scripts/release/std.sh pack "$TAG" out/std
-      # 变更列表只与上一个 std-vX.Y.Z 比较，不跨到平台的 v* tag（#121）；首次发布没有起点，不附变更列表。
-      # 生成后接在 notes.md 后面，新建和复用草稿时都用同一份说明。
+      # 变更列表只与上一个已发布的 std-vX.Y.Z 比较，不跨到平台的 v* tag、不从发版失败被放弃的 tag 起算（#121）；
+      # 首次发布没有起点，不附变更列表。生成后接在 notes.md 后面，新建和复用草稿时都用同一份说明。
       - name: Changes since previous sfly-std release
         run: |
-          start=$(bash scripts/release/previous-tag.sh "$TAG")
+          released=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName')
+          start=$(bash scripts/release/previous-tag.sh "$TAG" <<<"$released")
           echo "变更列表起点：${start:-（无，首次发布）}"
           if [[ -n $start ]]; then
             {
