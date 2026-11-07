@@ -14,6 +14,7 @@ from typing import Literal, TypedDict
 
 from sfly import Context, Metric, node
 from sfly_std._logfile import LogFile
+from sfly_std._sampling import validate_duration
 
 #: 检查新增内容的间隔（秒）。
 POLL_INTERVAL = 0.2
@@ -54,8 +55,7 @@ def follow_log(
     指标 `lines_per_s`（每秒新增的行数，主指标）和 `fail_matches`（累计匹配 `fail_on` 的行数）；
     输出转发的总行数 `lines`。
     """
-    if duration is not None and duration <= 0:
-        raise ValueError(f"duration 必须大于 0，实际为 {duration:g}")
+    validate_duration(duration)
     patterns = []
     for i, pattern in enumerate(fail_on, 1):
         try:

@@ -12,6 +12,7 @@ from typing import NamedTuple
 import psutil
 
 from sfly import Chart, Context, Metric, node
+from sfly_std._sampling import rate, validate_duration, validate_interval
 
 
 class Counters(NamedTuple):
@@ -94,10 +95,8 @@ def system_monitor(
     `disk_path`（默认 `/`）决定统计哪个文件系统的空间使用率；`nic`、`disk` 指定统计哪块网卡、
     哪块磁盘的速率，不指定时取全部网卡、全部磁盘的合计。
     """
-    if interval <= 0:
-        raise ValueError(f"interval 必须大于 0，实际为 {interval:g}")
-    if duration is not None and duration < 0:
-        raise ValueError(f"duration 不能小于 0，实际为 {duration:g}")
+    validate_interval(interval)
+    validate_duration(duration)
     if not os.path.exists(disk_path):
         raise ValueError(f"disk_path 不存在：{disk_path}")
     # 第一次采样的 CPU 使用率和速率都相对于这里。
@@ -134,8 +133,7 @@ def system_monitor(
             ctx.metric("load1", psutil.getloadavg()[0])
             ctx.metric("disk_used_percent", psutil.disk_usage(disk_path).percent)
             for name, current, previous in zip(RATE_METRICS, after, before, strict=True):
-                # 计数器被重置（例如网卡重新插拔）时不报负数。
-                ctx.metric(name, max(current - previous, 0) / elapsed)
+                ctx.metric(name, rate(current, previous, elapsed))
             before = after
     finally:
         # 被停止或取消时（Cancelled 从 sleep 里抛出）也执行；已上报的指标不受影响。

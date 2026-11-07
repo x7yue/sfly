@@ -34,7 +34,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 运行时的输出实时转为任务日志。节点输出不超过 1 MB，大内容保存为产物。
 - 失败时错误信息写明原因和关键参数，在运行页面的节点详情里查看。
 - 等待类节点（`wait_port`、`wait_file`、`wait_log_line`）都有 `wait` 和 `poll`：`wait` 是等待本身的期限，节点的超时（timeout）仍然有效，`wait` 比超时长时以超时为准。`wait` 为 0 时只检查一次。
-- 持续运行的节点（`system_monitor`、`process_monitor`、`follow_log`）都有 `duration`：设置时到期后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消（用法见下文「压测期间监控被测服务」）。被停止时节点记为「已停止」，不算失败，已经上报的指标、日志和产物都保留。
+- 持续运行的节点（`system_monitor`、`process_monitor`、`follow_log`）都有 `duration`：设置时（必须大于 0）到期后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消（用法见下文「压测期间监控被测服务」）。被停止时节点记为「已停止」，不算失败，已经上报的指标、日志和产物都保留。
 - 进程、端口、文件类的节点作用于执行它的 Agent 所在的机器：启动进程的节点和后面停止、监控、检查它的节点要选同一个 Agent。
 
 ## 节点一览

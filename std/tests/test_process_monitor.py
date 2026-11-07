@@ -274,6 +274,7 @@ def test_cpu_percent_is_the_total_of_all_processes(tmp_path: Path, spawn: Spawn)
         ({"pid": 0}, "ValueError: pid 必须是正整数，实际为 0"),
         ({"match": "("}, "ValueError: match 不是合法的正则表达式：'('（"),
         ({"pid": 1, "interval": 0}, "ValueError: interval 必须大于 0，实际为 0"),
+        ({"pid": 1, "duration": 0}, "ValueError: duration 必须大于 0，实际为 0"),
     ],
 )
 def test_rejects_invalid_parameters(

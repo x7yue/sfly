@@ -178,7 +178,9 @@ def test_disk_rates_cover_writes_to_disk(tmp_path: Path) -> None:
         ({"disk": "/dev/sdz9"}, "ValueError: 磁盘 '/dev/sdz9' 不存在，本机的磁盘有："),
         ({"disk_path": "/不存在/目录"}, "ValueError: disk_path 不存在：/不存在/目录"),
         ({"interval": 0}, "ValueError: interval 必须大于 0，实际为 0"),
-        ({"duration": -1}, "ValueError: duration 不能小于 0，实际为 -1"),
+        # 与 process_monitor、follow_log 的校验相同：duration 为 0 没有意义，也拒绝。
+        ({"duration": 0}, "ValueError: duration 必须大于 0，实际为 0"),
+        ({"duration": -1}, "ValueError: duration 必须大于 0，实际为 -1"),
     ],
 )
 def test_fails_clearly_before_sampling_when_inputs_are_wrong(
@@ -232,10 +234,3 @@ def test_runs_until_cancelled_without_duration_and_keeps_the_samples(tmp_path: P
         "一直运行到被停止或取消",
         f"监控结束，共采样 {samples} 次",
     ]
-
-
-def test_zero_duration_succeeds_without_sampling(tmp_path: Path) -> None:
-    result = run_node(system_monitor, {"duration": 0}, work_dir=tmp_path)
-
-    assert result.status == "success", result.error
-    assert result.metrics == []

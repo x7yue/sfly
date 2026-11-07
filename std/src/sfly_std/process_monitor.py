@@ -19,6 +19,7 @@ import psutil
 
 from sfly import Chart, Context, Metric, node
 from sfly_std import _supervise
+from sfly_std._sampling import rate, validate_duration, validate_interval
 
 #: 每个进程每次采样的明细产物。
 CSV_NAME = "processes.csv"
@@ -123,10 +124,8 @@ def process_monitor(
             re.compile(pattern)
         except re.error as error:
             raise ValueError(f"match 不是合法的正则表达式：{pattern!r}（{error}）") from None
-    if interval <= 0:
-        raise ValueError(f"interval 必须大于 0，实际为 {interval:g}")
-    if duration is not None and duration <= 0:
-        raise ValueError(f"duration 必须大于 0，实际为 {duration:g}")
+    validate_interval(interval)
+    validate_duration(duration)
 
     targets = _Targets(pids, names, patterns, include_children)
     _wait_for_targets(ctx, targets, wait_for_process)
@@ -291,8 +290,8 @@ class _Tracked:
         io = _io(proc)
         if io is not None and self.io is not None and io[0] > self.io[0]:
             elapsed = io[0] - self.io[0]
-            read_rate = max(0, io[1] - self.io[1]) / elapsed
-            write_rate = max(0, io[2] - self.io[2]) / elapsed
+            read_rate = rate(io[1], self.io[1], elapsed)
+            write_rate = rate(io[2], self.io[2], elapsed)
         self.io = io
         return {
             "pid": proc.pid,
