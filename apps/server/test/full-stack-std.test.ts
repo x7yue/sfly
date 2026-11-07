@@ -212,4 +212,54 @@ describe("全栈：标准节点包 sfly-std", () => {
 		});
 		expect(() => process.kill(pid, 0)).toThrow();
 	}, 180_000);
+
+	it("shell 写出结果文件，file_assert 检查后 collect_artifacts 收集为产物；refs 交给后面的节点，可以下载", async () => {
+		const out = join(dir, "collect-out");
+		const { api, runId } = await runChain([
+			{
+				id: "bench",
+				node: "shell",
+				inputs: {
+					command: `mkdir -p '${out}/logs' && printf 'p99=12ms\\n' > '${out}/report.txt' && echo 启动完成 > '${out}/logs/app.log'`,
+				},
+			},
+			{
+				id: "report_ok",
+				node: "file_assert",
+				inputs: { path: `${out}/report.txt`, min_lines: 1, matches: "^p99=\\d+ms$" },
+			},
+			{
+				id: "collect",
+				node: "collect_artifacts",
+				inputs: { paths: ["*.txt", "logs"], base_dir: out },
+			},
+			{
+				id: "check",
+				node: "assert",
+				inputs: {
+					actual: "${{ nodes.collect.outputs.refs }}",
+					assertions: [
+						{ path: '$["report.txt"]', op: "matches", value: "^https?://" },
+						{ path: '$["logs/app.log"]', op: "exists" },
+						{ path: "$", op: "len_eq", value: 2 },
+					],
+				},
+			},
+		]);
+
+		expect((await api.run(runId)).status).toBe("success");
+		const collect = await api.node(runId, "collect");
+		const refs = collect.outputs?.refs as Record<string, string>;
+		const taskId = collect.attempts[0]?.task_id as string;
+		const listed = (await (
+			await cp.fetch(`/tasks/${encodeURIComponent(taskId)}/artifacts`)
+		).json()) as {
+			artifacts: Array<{ name: string; url: string }>;
+		};
+		expect(refs).toEqual(Object.fromEntries(listed.artifacts.map((a) => [a.name, a.url])));
+		expect(Object.keys(refs).sort()).toEqual(["logs/app.log", "report.txt"]);
+		expect(await (await fetch(refs["report.txt"] as string)).text()).toBe("p99=12ms\n");
+		expect(await (await fetch(refs["logs/app.log"] as string)).text()).toBe("启动完成\n");
+		expect((await api.node(runId, "check")).outputs).toEqual({ passed: true });
+	}, 180_000);
 });
