@@ -461,6 +461,9 @@ pub struct AgentOptions<'a> {
     pub venv: &'a Path,
     pub args: Vec<String>,
     pub env: Vec<(&'a str, &'a str)>,
+    /// 把 Agent 的标准错误接成管道（[`AgentProcess::child`] 的 `stderr`）；默认继承测试进程的。
+    /// 接了就要一直读，否则管道写满会卡住 Agent。
+    pub pipe_stderr: bool,
 }
 
 impl<'a> AgentOptions<'a> {
@@ -471,6 +474,7 @@ impl<'a> AgentOptions<'a> {
             venv: stub_venv(),
             args: Vec::new(),
             env: Vec::new(),
+            pipe_stderr: false,
         }
     }
 }
@@ -523,6 +527,9 @@ pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
         .arg(work_dir.path())
         .args(&options.args)
         .envs(options.env.iter().copied());
+    if options.pipe_stderr {
+        command.stderr(Stdio::piped());
+    }
     AgentProcess {
         child: command.spawn().expect("spawn sfly-agent"),
         work_dir,

@@ -358,9 +358,14 @@ impl Runtime {
         // 连同通道里的结果一起看时用 [`Runtime::held_collecting`]）要么看到它还在执行，
         // 要么看到它已移出、结果已交出，没有中间状态。排空判断（[`update::Updater::poll`]）因此任何时刻都能看到这个任务；
         // 结果的 Ack 来得再快，[`Runtime::acked`] 也不会把它当成还在执行而漏写结束标记。
-        let mut cancels = self.cancels.lock().unwrap();
-        let _ = self.results.send(result);
-        cancels.remove(&key);
+        let status = result.status();
+        {
+            let mut cancels = self.cancels.lock().unwrap();
+            let _ = self.results.send(result);
+            cancels.remove(&key);
+        }
+        // 结果已经交出、任务已经移出之后才打这一行：测试据此等到这一刻（agent/tests/recovery.rs）。
+        eprintln!("task {} attempt {} finished: {status:?}", key.0, key.1);
     }
 
     /// 正在执行（含安装中）的任务。
