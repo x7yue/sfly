@@ -138,7 +138,7 @@ def http_request(
                         f"{wait:g} 秒内 {attempt} 次请求都不满足，最后一次：{error}"
                     ) from None
                 if str(error) != logged:  # 原因没变时不重复打日志
-                    ctx.log(f"第 {attempt} 次不满足，{poll:g} 秒后重试：{error}")
+                    ctx.log.info("第 %d 次不满足，%g 秒后重试：%s", attempt, poll, error)
                     logged = str(error)
             time.sleep(poll)
     raise AssertionError("unreachable")
@@ -179,7 +179,7 @@ def _outputs(ctx: Context, response: httpx.Response, elapsed_ms: float) -> tuple
     parsed = _parse_json(response)
     size = len(response.content)
     if size > BODY_OUTPUT_BYTES:
-        ctx.log.warn(f"响应共 {size} 字节，输出 text 只保留前 256 KiB")
+        ctx.log.warn("响应共 %d 字节，输出 text 只保留前 256 KiB", size)
         head = response.text.encode()[:BODY_OUTPUT_BYTES]
         outputs["text"] = head.decode("utf-8", errors="ignore")  # 去掉截断处残缺的字符
     elif parsed is not _NOT_JSON:

@@ -72,7 +72,7 @@ def collect_artifacts(
             "（节点输出不能超过 1 MB）：用 archive=true 打成一个 zip，或缩小 paths"
         )
     size = sum(p.stat().st_size for p in files)
-    ctx.log.info(f"从 {base} 收集了 {len(files)} 个文件，共 {size} 字节")
+    ctx.log.info("从 %s 收集了 %d 个文件，共 %d 字节", base, len(files), size)
     if archived:
         with zipfile.ZipFile(ctx.artifacts.path(ARCHIVE_NAME), "w", zipfile.ZIP_DEFLATED) as zf:
             for name, path in names.items():
