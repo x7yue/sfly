@@ -157,6 +157,13 @@ const stopOutputs = (status: ChainRow["status"] | null) => ({
 	status: status === null ? null : status === "success" ? "success" : "failed",
 });
 
+/** 停止子流程节点的任务成功完成：status 是目标子流程的最终状态（未触发时为 null）。 */
+const succeedStop = (step: Step, taskId: string, status: ChainRow["status"] | null) =>
+	step.tx
+		.update(tasks)
+		.set({ status: "success", outputs: stopOutputs(status), endedAt: step.now })
+		.where(eq(tasks.id, taskId));
+
 /** 链实例 root 和它直接或间接触发的子流程实例（chains 是同一次运行的全部链实例），按深度排列。 */
 function subtree(chains: ChainRow[], root: ChainRow): ChainRow[] {
 	const out = [root];
@@ -865,25 +872,18 @@ export class Engine implements AgentSessionHandler {
 			.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt))
 			.for("update");
 		const target = chains.find((c) => c.chainId === node.subflow);
-		// 目标已经结束、但它的下级子流程还在运行时，仍要停止这些下级并等它们结束。
-		if (!target || subtree(chains, target).every((c) => c.status !== "running")) {
-			await step.tx
-				.insert(tasks)
-				.values({
-					...base,
-					status: "success",
-					outputs: stopOutputs(target?.status ?? null),
-					endedAt: step.now,
-				})
-				.onConflictDoNothing();
-			return true;
-		}
+		// 未触发、或目标和它的各级下级都已结束时立即成功（§4.1 第 2 条）；目标结束但下级还在运行时仍要停止下级。
+		const ended = !target || subtree(chains, target).every((c) => c.status !== "running");
 		// 停止期间先记为 running：子流程在同一个事务里结束时 #settleStops 不会抢先推进这条链。
 		const [task] = await step.tx
 			.insert(tasks)
 			.values({ ...base, status: "running" })
 			.onConflictDoNothing()
 			.returning();
+		if (ended) {
+			if (task) await succeedStop(step, task.id, target?.status ?? null);
+			return true;
+		}
 		if (!task) return false;
 		// 运行已被取消时不再停止（§4.1 第 6 条）：子流程按取消的规则结束，这里只等它们结束。
 		const pending = cancelling(run)
@@ -911,10 +911,7 @@ export class Engine implements AgentSessionHandler {
 			await step.tx.update(tasks).set({ status: "waiting" }).where(eq(tasks.id, task.id));
 			return false;
 		}
-		await step.tx
-			.update(tasks)
-			.set({ status: "success", outputs: stopOutputs(status), endedAt: step.now })
-			.where(eq(tasks.id, task.id));
+		await succeedStop(step, task.id, status);
 		return true;
 	}
 
@@ -995,10 +992,7 @@ export class Engine implements AgentSessionHandler {
 			if (located.node.kind !== "stop_subflow") continue;
 			const status = await this.#stopResult(step.tx, run, located.node.subflow);
 			if (status === undefined) continue;
-			await step.tx
-				.update(tasks)
-				.set({ status: "success", outputs: stopOutputs(status), endedAt: step.now })
-				.where(eq(tasks.id, task.id));
+			await succeedStop(step, task.id, status);
 			await this.#advance(step, located.run, located.chain, located.index + 1);
 		}
 	}
