@@ -212,4 +212,53 @@ describe("全栈：标准节点包 sfly-std", () => {
 		});
 		expect(() => process.kill(pid, 0)).toThrow();
 	}, 180_000);
+
+	it("http_request 用 until_ok 等服务就绪并断言响应 JSON，assert 引用它的输出", async () => {
+		const { createServer } = await import("node:http");
+		let requests = 0;
+		const server = createServer((_req, res) => {
+			requests += 1;
+			if (requests < 3) {
+				res.writeHead(503).end("starting");
+				return;
+			}
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ status: "ok", version: "1.2.3" }));
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const { port } = server.address() as { port: number };
+		try {
+			const { api, runId } = await runChain([
+				{
+					id: "ready",
+					node: "http_request",
+					inputs: {
+						url: `http://127.0.0.1:${port}/health`,
+						expect_json: [{ path: "$.status", op: "eq", value: "ok" }],
+						until_ok: true,
+						wait: 60,
+						poll: 0.2,
+					},
+				},
+				{
+					id: "check",
+					node: "assert",
+					inputs: {
+						actual: "${{ nodes.ready.outputs.json }}",
+						assertions: [{ path: "$.version", op: "eq", value: "1.2.3" }],
+					},
+				},
+			]);
+
+			expect((await api.run(runId)).status).toBe("success");
+			const ready = await api.node(runId, "ready");
+			expect(ready.outputs).toMatchObject({
+				status: 200,
+				json: { status: "ok", version: "1.2.3" },
+			});
+			expect(requests).toBe(3);
+		} finally {
+			server.close();
+		}
+	}, 180_000);
 });
