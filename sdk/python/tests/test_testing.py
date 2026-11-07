@@ -122,6 +122,24 @@ def test_metric_rate_reports_sequence_numbers_at_the_given_rate(tmp_path: Path) 
     ]
 
 
+def test_stdout_rate_writes_numbered_lines_of_fixed_size_at_the_given_rate() -> None:
+    from sfly_stub import stdout_rate
+
+    # 每秒 0.1 MiB、每行 100 字节、0.5 秒：共 524 行。
+    result = run_node(stdout_rate, {"mib_per_second": 0.1, "seconds": 0.5, "line_bytes": 100})
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["lines"] == 524
+    assert result.outputs["bytes"] == 52400
+    assert 0.45 <= result.outputs["elapsed"] < 2
+    assert result.outputs["max_behind_ms"] >= 0
+    lines = [line.message for line in result.logs if line.source == "stdout"]
+    assert [int(line.split(" ", 1)[0]) for line in lines] == list(range(1, 525))
+    # 每行连同换行正好 line_bytes 字节。
+    assert {len(line) + 1 for line in lines} == {100}
+
+
 def test_executor_crash_summary_keeps_the_stderr_tail_without_stderr_log(tmp_path: Path) -> None:
     from sfly_stub import write_failure
 

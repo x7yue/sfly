@@ -306,6 +306,41 @@ def metric_rate(ctx: Context, rate: float = 10000, seconds: float = 10) -> dict[
     }
 
 
+@node(title="定速输出", outputs=["lines", "bytes", "elapsed", "max_behind_ms"])
+def stdout_rate(
+    ctx: Context, mib_per_second: float = 10, seconds: float = 10, line_bytes: int = 1024
+) -> dict[str, Any]:
+    """性能测试用（pnpm perf）：按每秒 mib_per_second MiB 的速率向标准输出写 seconds 秒。
+
+    每行连同换行 line_bytes 字节，以「序号 + 空格」开头，序号从 1 开始，用来核对日志不丢不重。
+    每 100 行对一次时间，提前了就等到计划时刻。返回行数、字节数、实际用时（秒）
+    与比计划落后的最长时间（毫秒）：标准输出写不动（Agent 背压）时它会变大。
+    """
+    total = int(mib_per_second * 1024 * 1024 * seconds / line_bytes)
+    rate = total / seconds
+    filler = "x" * line_bytes
+    out = sys.stdout
+    start = time.monotonic()
+    max_behind = 0.0
+    for i in range(total):
+        if i % 100 == 0:
+            delay = start + i / rate - time.monotonic()
+            if delay > 0:
+                out.flush()
+                time.sleep(delay)
+            else:
+                max_behind = max(max_behind, -delay)
+        head = f"{i + 1} "
+        out.write(head + filler[: line_bytes - len(head) - 1] + "\n")
+    out.flush()
+    return {
+        "lines": total,
+        "bytes": total * line_bytes,
+        "elapsed": time.monotonic() - start,
+        "max_behind_ms": max_behind * 1000,
+    }
+
+
 @node(
     title="指标",
     outputs=[],
