@@ -1076,29 +1076,30 @@ export class Engine implements AgentSessionHandler {
 	 * 任务失败：可重试的错误且还有重试次数时，在同一个 Agent 上排队下一次尝试（attempt + 1）；
 	 * 否则节点最终失败，链继续往后推进（普通节点跳过、always 节点照常执行）。
 	 * 运行已被取消时（普通节点，或强制取消时的任何节点），任务记为 cancelled、不再重试（§3.4）。
+	 * 所在的链已被停止时，Agent 上报的取消结果（cancelled）记为 stopped；其他未成功的结果仍是失败，但不再重试（§4.1）。
 	 */
 	async #failTask(
 		step: Step,
 		task: TaskRow,
 		kind: ErrorKind,
 		message: string,
-		extra: Partial<TaskRow> = {},
+		{ cancelled = false }: { cancelled?: boolean } = {},
 	): Promise<void> {
 		const { run, chain, index, node } = await this.#locate(step.tx, task);
 		step.touchedRuns.add(run.id);
 		if (cancelledFor(run, node)) {
 			await step.tx
 				.update(tasks)
-				.set({ ...extra, status: "cancelled", errorMessage: message, endedAt: step.now })
+				.set({ status: "cancelled", errorMessage: message, endedAt: step.now })
 				.where(eq(tasks.id, task.id));
 			await this.#advance(step, run, chain, index + 1);
 			return;
 		}
-		// 链实例已被停止：Agent 上报的取消（以及其他未成功的结果）记为 stopped、不再重试（§4.1）。
-		if (stoppedFor(chain, node)) {
+		const stopped = stoppedFor(chain, node);
+		if (stopped && cancelled) {
 			await step.tx
 				.update(tasks)
-				.set({ ...extra, status: "stopped", errorMessage: message, endedAt: step.now })
+				.set({ status: "stopped", errorMessage: message, endedAt: step.now })
 				.where(eq(tasks.id, task.id));
 			await this.#advance(step, run, chain, index + 1);
 			return;
@@ -1106,14 +1107,14 @@ export class Engine implements AgentSessionHandler {
 		await step.tx
 			.update(tasks)
 			.set({
-				...extra,
 				status: "failed",
 				errorKind: kind,
 				errorMessage: message,
 				endedAt: step.now,
 			})
 			.where(eq(tasks.id, task.id));
-		if (task.agentName && shouldRetry(node, kind, task.attempt)) {
+		// 已被停止的链不再派发新的尝试：这次失败就是节点的最终结果（§4.1 第 4 条），后面的普通节点记为 stopped。
+		if (!stopped && task.agentName && shouldRetry(node, kind, task.attempt)) {
 			const attempt = task.attempt + 1;
 			await step.tx
 				.insert(tasks)
@@ -1156,7 +1157,9 @@ export class Engine implements AgentSessionHandler {
 
 		if (result.status !== ProtoTaskStatus.SUCCESS) {
 			const kind = ERROR_KINDS[result.error?.kind ?? ProtoErrorKind.UNSPECIFIED] ?? "node_error";
-			await this.#failTask(step, task, kind, result.error?.message ?? "");
+			await this.#failTask(step, task, kind, result.error?.message ?? "", {
+				cancelled: result.status === ProtoTaskStatus.CANCELLED,
+			});
 			return;
 		}
 		let outputs: unknown;

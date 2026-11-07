@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { chainOf, echo, type Node, orchestration, spawn, statuses } from "./support/chains.js";
-import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
+import { type AssignedTask, ErrorKind, FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -375,6 +375,46 @@ describe("停止子流程节点的边界情况", () => {
 			status: "success",
 			outputs: { status: "failed" },
 		});
+	});
+
+	it("被停止的任务没有按取消结束、而是上报失败：记为失败且不重试，子流程记为失败，停止子流程节点输出 failed", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry(), spawn("spawn"), echo("load"), stop("stop", "mon"), echo("cleanup")],
+					[
+						subflowEntry("mon"),
+						{ ...echo("watch"), retries: 2 },
+						echo("after"),
+						{ ...echo("flush"), always: true },
+					],
+				],
+				[["spawn", "mon"]],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(2);
+		await agent.succeed(first.load as AssignedTask);
+		expect(await cancels(1)).toEqual([first.watch?.taskId]);
+
+		// 停止前后节点自己出错（例如收尾时超时）：这是失败，不是停止。
+		await agent.fail(first.watch as AssignedTask, "watch timed out", ErrorKind.TIMEOUT);
+		const flush = await agent.nextAssign();
+		expect(flush.nodeId).toBe("flush");
+		await agent.succeed(flush);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		let run = await api.run(runId);
+		const watch = chainOf(run, "mon").nodes.find((n) => n.node_id === "watch");
+		expect(watch).toMatchObject({ status: "failed" });
+		expect(watch?.attempts).toHaveLength(1);
+		expect(statuses(chainOf(run, "mon"))).toMatchObject({ after: "stopped", flush: "success" });
+		expect(chainOf(run, "mon").status).toBe("failed");
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "failed" } });
+
+		await agent.succeed(cleanup);
+		run = await api.run(runId);
+		expect(run.status).toBe("failed");
 	});
 
 	it("停止子流程节点设为 always：主链前面失败后它照样停止子流程，后面的普通节点跳过，运行失败", async () => {
