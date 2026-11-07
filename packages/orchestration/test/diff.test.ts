@@ -183,4 +183,32 @@ describe("编排文档差异", () => {
 		};
 		expect(isEmptyDiff(diffDocuments(base, sparse))).toBe(true);
 	});
+
+	it("子流程名称的变化；没有名称字段的旧版本以节点 ID 作为名称比较", () => {
+		const withSubflow = (name?: string) => ({
+			...base,
+			nodes: [
+				...base.nodes,
+				{ id: "spawn", kind: "async", params: {} },
+				name === undefined
+					? { id: "sub", kind: "subflow_entry", params: [] }
+					: { id: "sub", kind: "subflow_entry", name, params: [] },
+			],
+		});
+		expect(diffDocuments(withSubflow("监控"), withSubflow("压测监控")).nodes.changed).toEqual([
+			{
+				id: "sub",
+				kind: "subflow_entry",
+				changes: [{ path: "name", before: "监控", after: "压测监控" }],
+			},
+		]);
+		expect(diffDocuments(withSubflow(), withSubflow("监控")).nodes.changed).toEqual([
+			{
+				id: "sub",
+				kind: "subflow_entry",
+				changes: [{ path: "name", before: "sub", after: "监控" }],
+			},
+		]);
+		expect(isEmptyDiff(diffDocuments(withSubflow(), withSubflow("sub")))).toBe(true);
+	});
 });

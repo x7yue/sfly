@@ -90,6 +90,7 @@ pub async fn start(
     entry: &str,
     telemetry: &Telemetry,
     grace: Duration,
+    log_forward_rate: u64,
 ) -> Result<Running, TaskResult> {
     if !valid_task_id(&task.task_id) {
         return Err(failure(
@@ -118,7 +119,7 @@ pub async fn start(
     }
     // 运行 ID 由控制面生成，正常总能用作目录名；不能时不设置 SFLY_PROCS，SDK 退回默认位置。
     let procs = valid_task_id(&task.run_id).then(|| procs_root.join(&task.run_id));
-    spawn_process(venv, &dir, procs.as_deref(), task, telemetry, grace)
+    spawn_process(venv, &dir, procs.as_deref(), task, telemetry, grace, log_forward_rate)
 }
 
 async fn prepare_dir(
@@ -173,6 +174,7 @@ fn spawn_process(
     task: &AssignTask,
     telemetry: &Telemetry,
     grace: Duration,
+    log_forward_rate: u64,
 ) -> Result<Running, TaskResult> {
     let paths = Paths {
         output: dir.join("output.json"),
@@ -234,6 +236,7 @@ fn spawn_process(
                 events,
                 dir.to_path_buf(),
                 telemetry.clone(),
+                log_forward_rate,
             );
             Ok(Running {
                 process,

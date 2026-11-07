@@ -117,7 +117,7 @@ function ChainRow({ chain }: { chain: ChainRunView }) {
 				{chainLabel(chain)}
 			</span>
 			<ChainBar
-				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0 })}
+				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name })}
 				nodes={chain.nodes}
 			/>
 			<span className="ml-auto font-mono text-2xs text-fg-3">

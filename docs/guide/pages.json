@@ -36,6 +36,11 @@
 			"description": "sfly build 与 sfly publish、版本号规则、在场景里换成新版本"
 		},
 		{
+			"slug": "subflows",
+			"title": "子流程与停止子流程",
+			"description": "子流程名称、异步任务节点触发子流程、停止子流程节点（已停止不算失败），以及「压测期间一直监控，压测结束就停」的典型编排"
+		},
+		{
 			"slug": "standard-nodes",
 			"title": "标准节点",
 			"description": "平台维护的标准节点包 sfly-std：从 Release 下载并上传到控制面、安全说明、压测期间配合子流程与停止子流程节点的监控，以及全部 15 个标准节点（shell、start_process、system_monitor、http_request、assert……）的参数、输出、指标与用法"

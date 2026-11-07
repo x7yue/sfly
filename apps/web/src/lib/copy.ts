@@ -1,4 +1,5 @@
-import type { NodeStatus, RunStatus } from "@sfly/schema";
+import { subflowName } from "@sfly/orchestration";
+import type { RunStatus } from "@sfly/schema";
 import { shortId } from "./format";
 
 /**
@@ -51,20 +52,6 @@ export const CANCELLING_LABEL = "取消中";
 /** 清理期间再次取消，正在强制终止。 */
 export const FORCE_CANCELLING_LABEL = "强制终止中";
 
-/** 节点（最后一次尝试）的状态。 */
-export const NODE_STATUS_LABEL: Record<NodeStatus, string> = {
-	pending: "待执行",
-	queued: "排队中",
-	// 已派发给 Agent，还在下载、安装节点包或启动执行器。
-	dispatched: "准备中",
-	running: "执行中",
-	waiting: "等待中",
-	success: "成功",
-	failed: "失败",
-	skipped: "已跳过",
-	cancelled: "已取消",
-};
-
 /** 通用操作（按钮、菜单项、命令）。 */
 export const ACTION = {
 	run: "运行",
@@ -93,11 +80,25 @@ export const MESSAGE = {
 	archived: "已归档",
 } as const;
 
+/** 名称为空的子流程显示的名称。 */
+export const UNNAMED_SUBFLOW = "未命名子流程";
+
 /**
- * 链实例的名称：「主链」或「子流程 <起点>」；给出实例 ID 时带上实例短 ID（同一子流程有多个实例时区分）。
+ * 子流程的显示名称（画布、检查器、运行视图共用）：子流程名称（subflowName），
+ * 没有名称字段的旧版本显示节点 ID，填了空名称时显示 {@link UNNAMED_SUBFLOW}。
  */
-export function chainLabel(chain: { chain_id: string; subflow: boolean }, instanceId?: string) {
+export const subflowLabel = (node: { id: string; name?: string | null | undefined }): string =>
+	subflowName({ id: node.id, name: node.name ?? undefined }) || UNNAMED_SUBFLOW;
+
+/**
+ * 链实例的名称：「主链」或「子流程 <名称>」（运行视图带子流程名称，没有名称时用起点节点 ID）；
+ * 给出实例 ID 时带上实例短 ID（同一子流程有多个实例时区分）。
+ */
+export function chainLabel(
+	chain: { chain_id: string; subflow: boolean; name?: string | null },
+	instanceId?: string,
+) {
 	if (!chain.subflow) return TERM.mainChain;
-	const name = `${TERM.subflow} ${chain.chain_id}`;
+	const name = `${TERM.subflow} ${subflowLabel({ id: chain.chain_id, name: chain.name })}`;
 	return instanceId ? `${name} · ${shortId(instanceId)}` : name;
 }

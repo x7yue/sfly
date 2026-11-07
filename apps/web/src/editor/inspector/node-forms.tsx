@@ -7,11 +7,13 @@ import {
 	orderedInputs,
 	parseDuration,
 	referencesIn,
+	stopCandidates,
 	timerTarget,
 } from "@sfly/orchestration";
 import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { useId } from "react";
 import type { DocNode } from "#/components/canvas/flow";
+import { subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,7 +30,8 @@ type PackageNode = Extract<DocNode, { kind: "package" }>;
 type AsyncNode = Extract<DocNode, { kind: "async" }>;
 type TimerNode = Extract<DocNode, { kind: "timer" }>;
 type SleepNode = Extract<DocNode, { kind: "sleep" }>;
-type AlwaysNode = PackageNode | TimerNode | SleepNode;
+type StopSubflowNode = Extract<DocNode, { kind: "stop_subflow" }>;
+type AlwaysNode = PackageNode | TimerNode | SleepNode | StopSubflowNode;
 
 /** 某个字段的静态检查警告（不阻止保存）。 */
 export type ProblemsOf = (input: string) => string[];
@@ -176,7 +179,7 @@ const SETTINGS = [
 	},
 ] as const;
 
-/** 执行设置：超时、重试次数、排队超时（包节点），always（包节点、定时、Sleep）。 */
+/** 执行设置：超时、重试次数、排队超时（包节点），always（包节点、定时、Sleep、停止子流程）。 */
 export function ExecutionSettings({
 	id,
 	node,
@@ -309,7 +312,10 @@ export function AsyncMapping({
 		<>
 			<Field label="调度到">
 				<div className="flex h-7.5 items-center gap-2">
-					<Badge className="font-mono">◆ {subflow.id}</Badge>
+					<Badge>◆ {subflowLabel(subflow)}</Badge>
+					{subflowLabel(subflow) !== subflow.id && (
+						<span className="font-mono text-2xs text-fg-3">{subflow.id}</span>
+					)}
 					<Button size="sm" variant="ghost" onClick={() => onLocate(subflow.id)}>
 						定位
 					</Button>
@@ -355,6 +361,122 @@ export function AsyncMapping({
 			<p className="m-0 text-2xs text-fg-3">
 				子流程只能看到这里传入的参数；可以写常量，或输入 <code>{"${{"}</code>{" "}
 				引用本链的入口参数和前序节点的输出。
+			</p>
+		</>
+	);
+}
+
+type SubflowEntryNode = Extract<DocNode, { kind: "subflow_entry" }>;
+
+/**
+ * 子流程入口节点的名称（场景内唯一，停止子流程节点按名称选择子流程）。
+ * 没有名称字段的旧版本显示节点 ID；名称为空或重复的警告显示在字段下面。
+ */
+export function SubflowNameField({
+	id,
+	node,
+	problems,
+	onChange,
+}: {
+	id: string;
+	node: SubflowEntryNode;
+	problems: string[];
+	onChange(node: SubflowEntryNode): void;
+}) {
+	const inputId = useId();
+	return (
+		<Field
+			label="子流程名称"
+			htmlFor={inputId}
+			required
+			error={problems.length > 0 ? problems.join("；") : undefined}
+			help="场景内唯一；停止子流程节点按名称选择子流程，改名不影响引用"
+		>
+			<Input
+				id={inputId}
+				aria-invalid={problems.length > 0 || undefined}
+				value={node.name ?? id}
+				onChange={(e) => onChange({ ...node, name: e.target.value })}
+			/>
+		</Field>
+	);
+}
+
+/**
+ * 停止子流程节点：按名称选择要停止的子流程（SEMANTICS §4.1）。只列出合法候选——本链在它之前触发的子流程及其下级子流程；
+ * 已选的子流程不再合法（例如顺序变了）时仍显示在列表里，警告显示在字段下面。
+ */
+export function StopSubflowField({
+	id,
+	node,
+	doc,
+	problems,
+	onChange,
+	onLocate,
+}: {
+	id: string;
+	node: StopSubflowNode;
+	doc: OrchestrationDocument;
+	problems: string[];
+	onChange(node: StopSubflowNode): void;
+	onLocate(id: string): void;
+}) {
+	const selectId = useId();
+	const entries = new Map(
+		doc.nodes.flatMap((n) => (n.kind === "subflow_entry" ? [[n.id, n] as const] : [])),
+	);
+	const candidates = stopCandidates(doc, id).flatMap((c) => {
+		const entry = entries.get(c);
+		return entry ? [entry] : [];
+	});
+	const current = node.subflow;
+	const stale = current !== undefined && !candidates.some((c) => c.id === current);
+	const label = (subflowId: string) => {
+		const entry = entries.get(subflowId);
+		return entry ? subflowLabel(entry) : subflowId;
+	};
+	return (
+		<>
+			<Field
+				label="要停止的子流程"
+				htmlFor={selectId}
+				required
+				error={problems.length > 0 ? problems.join("；") : undefined}
+				help="只列出本链在这个节点之前触发的子流程（含它们触发的子流程）；改名不影响引用"
+			>
+				<div className="flex items-center gap-2">
+					<NativeSelect
+						id={selectId}
+						className="min-w-0 flex-1"
+						aria-invalid={problems.length > 0 || undefined}
+						value={current ?? ""}
+						onChange={(e) => {
+							const { subflow: _old, ...rest } = node;
+							onChange(e.target.value === "" ? rest : { ...rest, subflow: e.target.value });
+						}}
+					>
+						<NativeSelectOption value="">
+							{candidates.length === 0 ? "本链在这里之前没有触发子流程" : "选择子流程"}
+						</NativeSelectOption>
+						{candidates.map((c) => (
+							<NativeSelectOption key={c.id} value={c.id}>
+								{subflowLabel(c)}
+							</NativeSelectOption>
+						))}
+						{stale && (
+							<NativeSelectOption value={current}>{label(current)}（不能停止）</NativeSelectOption>
+						)}
+					</NativeSelect>
+					{current !== undefined && entries.has(current) && (
+						<Button size="sm" variant="ghost" onClick={() => onLocate(current)}>
+							定位
+						</Button>
+					)}
+				</div>
+			</Field>
+			<p className="m-0 text-2xs text-fg-3">
+				运行到这里时停止这个子流程：任务按取消的方式终止，未开始的节点记为已停止，always
+				节点照常执行； 子流程完全结束后本节点才成功，输出子流程的结果 <code>status</code>。
 			</p>
 		</>
 	);

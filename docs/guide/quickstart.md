@@ -15,6 +15,8 @@ sfly 是测试编排平台：节点包里用 `@node` 声明的 Python 函数，�
 | 5. 联调 | `sfly dev` 把项目以开发版本装到本机 Agent，在真实场景里运行 | [联调](integration.md) |
 | 6. 发布 | `sfly publish` 发布到控制面，场景锁定版本使用 | [发布](publish.md) |
 
+节点发布后在场景里编排：要和主链并行的步骤（例如压测期间一直监控）放进子流程，用停止子流程节点结束它，见 [子流程与停止子流程](subflows.md)。
+
 用 Claude Code、Codex 这类 AI 编程助手开发时，从 [AI 编程助手快速开始](ai-quickstart.md) 复制提示词交给它。
 
 ## 读取原文

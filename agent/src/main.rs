@@ -88,6 +88,9 @@ struct Args {
     /// 与控制面断开期间最多排队的指标点数，超出后丢弃最早的点。
     #[arg(long, env = "SFLY_METRIC_QUEUE_POINTS", default_value_t = DEFAULT_METRIC_QUEUE_POINTS, hide = true)]
     metric_queue_points: usize,
+    /// 只在测试中使用：转发器每秒最多处理这么多字节的标准输出 / 标准错误（0 = 不限制），模拟转发跟不上节点的输出。
+    #[arg(long, env = "SFLY_LOG_FORWARD_RATE", default_value_t = 0, hide = true)]
+    log_forward_rate: u64,
     /// 自更新下载新二进制时，连接建立后等待数据的超时秒数（每次读取）；超时算「更新失败」，下一次握手后重试。
     #[arg(long, env = "SFLY_UPDATE_READ_TIMEOUT", default_value_t = sfly_agent::update::DEFAULT_READ_TIMEOUT.as_secs(), hide = true)]
     update_read_timeout: u64,
@@ -208,6 +211,7 @@ async fn main() -> anyhow::Result<()> {
         python: args.python,
         telemetry_queue_bytes: args.log_queue_bytes,
         metric_queue_points: args.metric_queue_points,
+        log_forward_rate: args.log_forward_rate,
         update_read_timeout: Duration::from_secs(args.update_read_timeout),
         version: args
             .version_override

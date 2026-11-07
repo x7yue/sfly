@@ -14,6 +14,7 @@ Ctrl-C 走和平台相同的取消流程：取消标记 + SIGTERM，宽限期过
 from __future__ import annotations
 
 import json
+import os
 import signal
 import sys
 import time
@@ -45,6 +46,21 @@ def _clock(ts: int) -> str:
 
 def _print_log(line: LogLine) -> None:
     print(f"{_clock(line.ts)} {line.level:<5} {line.source:<6} {line.message}", file=sys.stderr)
+
+
+def _say_from_signal_handler(text: str) -> None:
+    """在信号处理函数里往标准错误写一行。
+
+    处理函数在主线程里运行，可能正好在 `_print_log` 写标准错误的中途（例如 write 被信号打断时）；
+    `sys.stderr` 底层的 BufferedWriter 不可重入，这时再用它写会抛 `RuntimeError: reentrant call`，
+    所以直接写文件描述符。
+    """
+    data = (text + "\n").encode("utf-8", errors="replace")
+    while data:
+        try:
+            data = data[os.write(2, data) :]
+        except OSError:
+            return
 
 
 def _number(value: float) -> str:
@@ -133,10 +149,10 @@ def run(project: Path, node: str, params_text: str, grace: float = DEFAULT_GRACE
 
     def on_sigint(signum: int, frame: FrameType | None) -> None:
         if cancellation.requested:
-            print("强制杀掉进程树……", file=sys.stderr)
+            _say_from_signal_handler("强制杀掉进程树……")
             cancellation.cancel(force=True)
         else:
-            print("正在取消（再按一次 Ctrl-C 立即杀掉）……", file=sys.stderr)
+            _say_from_signal_handler("正在取消（再按一次 Ctrl-C 立即杀掉）……")
             cancellation.cancel()
 
     previous = signal.signal(signal.SIGINT, on_sigint)

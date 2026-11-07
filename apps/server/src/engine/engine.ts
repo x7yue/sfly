@@ -23,7 +23,7 @@ import {
 	type OrchestrationNode,
 	type PackageMetadata,
 } from "@sfly/schema";
-import { and, asc, count, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import {
 	type AgentConnection,
 	type AgentHub,
@@ -62,6 +62,7 @@ import {
 	type PackageNode,
 	planRun,
 	type RunPlan,
+	type StopSubflowNode,
 } from "./chain.js";
 import { hasFinalFailure, isAlways, shouldRetry } from "./failures.js";
 import { chainInstanceId, taskId } from "./ids.js";
@@ -144,6 +145,46 @@ const forced = (run: RunRow) => run.cancelForcedAt !== null;
 /** 运行取消后这个节点还能不能执行：普通取消时只有 always 节点照常执行。 */
 const cancelledFor = (run: RunRow, node: OrchestrationNode | undefined) =>
 	cancelling(run) && (forced(run) || !node || !isAlways(node));
+
+/** 链实例是否已被停止子流程节点停止（§4.1）；always 节点照常执行。 */
+const stoppedFor = (chain: ChainRow, node: OrchestrationNode | undefined) =>
+	chain.stopTaskId !== null && (!node || !isAlways(node));
+
+/**
+ * 停止子流程节点的输出（§4.1 第 5 条）：子流程的最终结果 success | failed，未触发时为 null。
+ * 运行被取消时子流程以 cancelled 结束，它没有成功完成，输出 failed。
+ */
+const stopOutputs = (status: ChainRow["status"] | null) => ({
+	status: status === null ? null : status === "success" ? "success" : "failed",
+});
+
+/** 停止子流程节点的任务成功完成：status 是目标子流程的最终状态（未触发时为 null）。 */
+const succeedStop = (step: Step, taskId: string, status: ChainRow["status"] | null) =>
+	step.tx
+		.update(tasks)
+		.set({ status: "success", outputs: stopOutputs(status), endedAt: step.now })
+		.where(eq(tasks.id, taskId));
+
+/** 链实例 root 和它直接或间接触发的子流程实例（chains 是同一次运行的全部链实例），按深度排列。 */
+function subtree(chains: ChainRow[], root: ChainRow): ChainRow[] {
+	const out = [root];
+	for (let i = 0; i < out.length; i++) {
+		const parent = out[i];
+		out.push(...chains.filter((c) => c.parentChainInstanceId === parent?.id));
+	}
+	return out;
+}
+
+/** 链实例和它的各级上级链实例（chains 是同一次运行的全部链实例）。 */
+function ancestry(chains: ChainRow[], chain: ChainRow): ChainRow[] {
+	const out: ChainRow[] = [];
+	for (let c: ChainRow | undefined = chain; c; ) {
+		const current: ChainRow = c;
+		out.push(current);
+		c = chains.find((p) => p.id === current.parentChainInstanceId);
+	}
+	return out;
+}
 
 /**
  * 引擎：PostgreSQL 之上的链状态机（docs/SEMANTICS.md §3）。
@@ -506,7 +547,9 @@ export class Engine implements AgentSessionHandler {
 		});
 	}
 
-	/** Agent 重新连上时，对它上面仍在运行、但所属运行已被取消的任务重发取消指令（断线期间可能没收到）。 */
+	/**
+	 * Agent 重新连上时，对它上面仍在运行、但所属运行已被取消或所在子流程已被停止的任务重发取消指令（断线期间可能没收到）。
+	 */
 	async #resendCancels(conn: AgentConnection): Promise<void> {
 		const rows = await this.deps.db
 			.select({ task: tasks, run: runs, chain: chainInstances })
@@ -517,23 +560,19 @@ export class Engine implements AgentSessionHandler {
 				and(
 					eq(tasks.agentName, conn.name),
 					inArray(tasks.status, ON_AGENT),
-					isNotNull(runs.cancelRequestedAt),
+					or(isNotNull(runs.cancelRequestedAt), isNotNull(chainInstances.stopTaskId)),
 				),
 			);
 		for (const { task, run, chain } of rows) {
 			const plan = await this.deps.db.transaction((tx) => this.#plan(tx, run, chain));
-			if (
-				!cancelledFor(
-					run,
-					plan.nodes.find((n) => n.id === task.nodeId),
-				)
-			)
-				continue;
+			const node = plan.nodes.find((n) => n.id === task.nodeId);
+			const cancelled = cancelledFor(run, node);
+			if (!cancelled && !stoppedFor(chain, node)) continue;
 			this.#sendCancel({
 				agentName: conn.name,
 				taskId: task.id,
 				attempt: task.attempt,
-				force: forced(run),
+				force: cancelled && forced(run),
 			});
 		}
 	}
@@ -662,6 +701,7 @@ export class Engine implements AgentSessionHandler {
 	/**
 	 * 从链上第 index 个节点开始推进：内置节点立即完成，遇到包节点就排队等待派发。
 	 * 链上已有节点最终失败时，普通节点标记为 skipped，always 节点照常执行（§3.2）。
+	 * 链实例已被停止时，普通节点标记为 stopped（§4.1）。
 	 * 运行已被取消时，普通节点标记为 cancelled（强制取消时 always 节点也是），链以 cancelled 结束（§3.4）。
 	 */
 	async #advance(step: Step, run: RunRow, chain: ChainRow, index: number): Promise<void> {
@@ -680,11 +720,23 @@ export class Engine implements AgentSessionHandler {
 					.onConflictDoNothing();
 				continue;
 			}
+			if (stoppedFor(chain, node)) {
+				await step.tx
+					.insert(tasks)
+					.values({ ...base, status: "stopped", endedAt: step.now })
+					.onConflictDoNothing();
+				continue;
+			}
 			if (failed && !isAlways(node)) {
 				await step.tx
 					.insert(tasks)
 					.values({ ...base, status: "skipped", endedAt: step.now })
 					.onConflictDoNothing();
+				continue;
+			}
+			if (node.kind === "stop_subflow") {
+				// 子流程还没完全结束时停在这里，由 #settleStops 在它结束后继续。
+				if (!(await this.#stopSubflow(step, run, chain, node))) return;
 				continue;
 			}
 			if (node.kind === "async") {
@@ -796,6 +848,157 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
+	 * 停止子流程节点（§4.1）：目标子流程实例（每次运行每个子流程最多一个实例，按子流程入口 ID 确定）
+	 * 不存在、或它和它的各级下级实例都已结束时立即成功并返回 true；否则停止其中仍在进行的子流程实例
+	 * （chain_instances.stop_task_id 记下这个节点的任务，#stopChain 终止其中的任务），节点进入 waiting 并返回 false，
+	 * 等这些子流程完全结束后由 #settleStops 完成。已经被另一个停止子流程节点停止的实例不再重复停止，同样等它们结束；
+	 * 运行已被取消时（always 节点）也只等它们结束。
+	 * 停止在同一个事务里可能直接让子流程结束（没有需要等 Agent 上报的任务、也没有 always 节点），这时也立即成功。
+	 */
+	async #stopSubflow(
+		step: Step,
+		run: RunRow,
+		chain: ChainRow,
+		node: StopSubflowNode,
+	): Promise<boolean> {
+		const base = {
+			...firstAttempt(run, chain, node.id, step.now),
+			startedAt: step.now,
+			inputs: { subflow: node.subflow },
+		};
+		const chains = await step.tx
+			.select()
+			.from(chainInstances)
+			.where(eq(chainInstances.runId, run.id))
+			.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt))
+			.for("update");
+		const target = chains.find((c) => c.chainId === node.subflow);
+		// 未触发、或目标和它的各级下级都已结束时立即成功（§4.1 第 2 条）；目标结束但下级还在运行时仍要停止下级。
+		const ended = !target || subtree(chains, target).every((c) => c.status !== "running");
+		// 停止期间先记为 running：子流程在同一个事务里结束时 #settleStops 不会抢先推进这条链。
+		const [task] = await step.tx
+			.insert(tasks)
+			.values({ ...base, status: "running" })
+			.onConflictDoNothing()
+			.returning();
+		if (ended) {
+			if (task) await succeedStop(step, task.id, target?.status ?? null);
+			return true;
+		}
+		if (!task) return false;
+		// 运行已被取消时不再停止（§4.1 第 6 条）：子流程按取消的规则结束，这里只等它们结束。
+		const pending = cancelling(run)
+			? []
+			: subtree(chains, target).filter((c) => c.status === "running" && c.stopTaskId === null);
+		// 先把要停止的实例都记下来，再逐个终止任务：推进其中一个时，其他实例已经处在停止状态。
+		const stopped = pending.length
+			? await step.tx
+					.update(chainInstances)
+					.set({ stopTaskId: task.id, stopRequestedAt: step.now })
+					.where(
+						inArray(
+							chainInstances.id,
+							pending.map((c) => c.id),
+						),
+					)
+					.returning()
+			: [];
+		for (const c of pending) {
+			const row = stopped.find((r) => r.id === c.id);
+			if (row) await this.#stopChain(step, run, row);
+		}
+		const status = await this.#stopResult(step.tx, run, node.subflow);
+		if (status === undefined) {
+			await step.tx.update(tasks).set({ status: "waiting" }).where(eq(tasks.id, task.id));
+			return false;
+		}
+		await succeedStop(step, task.id, status);
+		return true;
+	}
+
+	/**
+	 * 停止一个链实例（§4.1 第 3 条）：正在运行的普通任务按取消的方式通知 Agent（优雅取消），等 Agent 上报结果后记为 stopped
+	 * （#failTask）；排队中、等待中的普通任务立即 stopped，从它后面继续推进（未开始的普通节点记为 stopped，always 节点照常执行）。
+	 */
+	async #stopChain(step: Step, run: RunRow, chain: ChainRow): Promise<void> {
+		const plan = await this.#plan(step.tx, run, chain);
+		const active = await step.tx
+			.select()
+			.from(tasks)
+			.where(and(eq(tasks.chainInstanceId, chain.id), inArray(tasks.status, ACTIVE_STATUSES)))
+			.orderBy(asc(tasks.seq))
+			.for("update");
+		let resumeAt: number | undefined;
+		for (const task of active) {
+			const index = plan.nodes.findIndex((n) => n.id === task.nodeId);
+			if (!stoppedFor(chain, plan.nodes[index])) continue;
+			if (onAgent(task) && task.agentName) {
+				step.cancels.push({
+					agentName: task.agentName,
+					taskId: task.id,
+					attempt: task.attempt,
+					force: false,
+				});
+				continue;
+			}
+			await step.tx
+				.update(tasks)
+				.set({ status: "stopped", endedAt: step.now })
+				.where(eq(tasks.id, task.id));
+			if (task.agentName) step.touchedAgents.add(task.agentName);
+			resumeAt = Math.max(resumeAt ?? 0, index + 1);
+		}
+		if (resumeAt !== undefined) await this.#advance(step, run, chain, resumeAt);
+	}
+
+	/**
+	 * 停止子流程节点等待的子流程（子流程入口 ID 为 subflow 的实例和它的各级下级实例）是否都已结束：
+	 * 都结束时返回该子流程的最终状态，否则 undefined。
+	 */
+	async #stopResult(
+		tx: Tx,
+		run: RunRow,
+		subflow: string | undefined,
+	): Promise<ChainRow["status"] | undefined> {
+		const chains = await tx.select().from(chainInstances).where(eq(chainInstances.runId, run.id));
+		const target = chains.find((c) => c.chainId === subflow);
+		if (!target) throw new Error(`run ${run.id}: stopped subflow ${subflow} has no instance`);
+		if (subtree(chains, target).some((c) => c.status === "running")) return undefined;
+		return target.status;
+	}
+
+	/**
+	 * 链实例结束后：等待它或它的某个上级子流程结束的停止子流程节点，在等待的子流程都已结束时成功，所在的链继续推进。
+	 */
+	async #settleStops(step: Step, run: RunRow, ended: ChainRow): Promise<void> {
+		const chains = await step.tx
+			.select()
+			.from(chainInstances)
+			.where(eq(chainInstances.runId, run.id));
+		const subflows = ancestry(chains, ended).map((c) => c.chainId);
+		const waiting = await step.tx
+			.select()
+			.from(tasks)
+			.where(
+				and(
+					eq(tasks.runId, run.id),
+					eq(tasks.status, "waiting"),
+					inArray(sql<string>`${tasks.inputs} ->> 'subflow'`, subflows),
+				),
+			)
+			.orderBy(asc(tasks.seq))
+			.for("update");
+		for (const task of waiting) {
+			const located = await this.#locate(step.tx, task);
+			if (located.node.kind !== "stop_subflow") continue;
+			const status = await this.#stopResult(step.tx, run, located.node.subflow);
+			if (status === undefined) continue;
+			await succeedStop(step, task.id, status);
+			await this.#advance(step, located.run, located.chain, located.index + 1);
+		}
+	}
+
+	/**
 	 * 链上第 index 个节点解析引用时的作用域（包节点派发、异步任务节点、等待节点共用）：
 	 * 本链的入口参数和前面已成功节点的输出。always 节点前面的节点可能失败或被跳过，
 	 * 引用缺失的输出得到 null（§2.4）。
@@ -842,10 +1045,13 @@ export class Engine implements AgentSessionHandler {
 		status: "success" | "failed" | "cancelled",
 	): Promise<void> {
 		step.touchedRuns.add(run.id);
-		await step.tx
+		const [ended] = await step.tx
 			.update(chainInstances)
 			.set({ status, endedAt: step.now })
-			.where(eq(chainInstances.id, chain.id));
+			.where(eq(chainInstances.id, chain.id))
+			.returning();
+		// 等这个子流程结束的停止子流程节点可能可以完成了（它所在的链还没结束，运行也就没结束）。
+		if (ended) await this.#settleStops(step, run, ended);
 		const chains = await step.tx
 			.select({ status: chainInstances.status })
 			.from(chainInstances)
@@ -866,20 +1072,31 @@ export class Engine implements AgentSessionHandler {
 	 * 任务失败：可重试的错误且还有重试次数时，在同一个 Agent 上排队下一次尝试（attempt + 1）；
 	 * 否则节点最终失败，链继续往后推进（普通节点跳过、always 节点照常执行）。
 	 * 运行已被取消时（普通节点，或强制取消时的任何节点），任务记为 cancelled、不再重试（§3.4）。
+	 * 所在的链已被停止时，Agent 上报的取消结果（cancelled）和 Agent 失联（agent_lost，任务本来就要被终止）记为 stopped；
+	 * 节点自己报的失败（node_error、timeout……）仍是失败，但不再重试（§4.1）。
 	 */
 	async #failTask(
 		step: Step,
 		task: TaskRow,
 		kind: ErrorKind,
 		message: string,
-		extra: Partial<TaskRow> = {},
+		{ cancelled = false }: { cancelled?: boolean } = {},
 	): Promise<void> {
 		const { run, chain, index, node } = await this.#locate(step.tx, task);
 		step.touchedRuns.add(run.id);
 		if (cancelledFor(run, node)) {
 			await step.tx
 				.update(tasks)
-				.set({ ...extra, status: "cancelled", errorMessage: message, endedAt: step.now })
+				.set({ status: "cancelled", errorMessage: message, endedAt: step.now })
+				.where(eq(tasks.id, task.id));
+			await this.#advance(step, run, chain, index + 1);
+			return;
+		}
+		const stopped = stoppedFor(chain, node);
+		if (stopped && (cancelled || kind === "agent_lost")) {
+			await step.tx
+				.update(tasks)
+				.set({ status: "stopped", errorMessage: message, endedAt: step.now })
 				.where(eq(tasks.id, task.id));
 			await this.#advance(step, run, chain, index + 1);
 			return;
@@ -887,14 +1104,14 @@ export class Engine implements AgentSessionHandler {
 		await step.tx
 			.update(tasks)
 			.set({
-				...extra,
 				status: "failed",
 				errorKind: kind,
 				errorMessage: message,
 				endedAt: step.now,
 			})
 			.where(eq(tasks.id, task.id));
-		if (task.agentName && shouldRetry(node, kind, task.attempt)) {
+		// 已被停止的链不再派发新的尝试：这次失败就是节点的最终结果（§4.1 第 4 条），后面的普通节点记为 stopped。
+		if (!stopped && task.agentName && shouldRetry(node, kind, task.attempt)) {
 			const attempt = task.attempt + 1;
 			await step.tx
 				.insert(tasks)
@@ -937,7 +1154,9 @@ export class Engine implements AgentSessionHandler {
 
 		if (result.status !== ProtoTaskStatus.SUCCESS) {
 			const kind = ERROR_KINDS[result.error?.kind ?? ProtoErrorKind.UNSPECIFIED] ?? "node_error";
-			await this.#failTask(step, task, kind, result.error?.message ?? "");
+			await this.#failTask(step, task, kind, result.error?.message ?? "", {
+				cancelled: result.status === ProtoTaskStatus.CANCELLED,
+			});
 			return;
 		}
 		let outputs: unknown;
