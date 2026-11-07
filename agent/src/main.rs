@@ -224,10 +224,14 @@ async fn main() -> anyhow::Result<()> {
         trial: std::sync::Arc::new(trial),
     };
 
+    let terminate_grace = config.terminate_grace;
     let result = tokio::select! {
         result = run(config) => result,
-        _ = tokio::signal::ctrl_c() => Ok(()),
+        _ = shutdown_signal() => Ok(()),
     };
+    // 执行器自成进程组，收不到发给 Agent 的 SIGTERM / Ctrl-C：按取消的方式终止它们再退出，
+    // 不留孤儿执行器（#113）。控制面那边这些任务按 agent_lost 处理。
+    sfly_agent::process_tree::terminate_all(terminate_grace).await;
     if let Err(error) = &result {
         // 试用中的新版本环境准备失败：systemd 会重启它，连续失败后回滚（ADR 0014）。
         if let Some(failure) = error.downcast_ref::<TrialFailed>() {
@@ -241,4 +245,25 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     result
+}
+
+/// 等到要求 Agent 退出的信号：Ctrl-C（SIGINT），Unix 上还有 SIGTERM（`systemctl stop`、`kill`）。
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = terminate.recv() => {}
+                }
+            }
+            Err(_) => {
+                let _ = tokio::signal::ctrl_c().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }

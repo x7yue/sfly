@@ -6,6 +6,9 @@
 //! - Linux / Unix：子进程自成一个进程组（`process_group(0)`），信号发给整个进程组；
 //!   后代如果自己调用 `setsid` / `setpgid` 离开进程组，就不在这棵树里。
 //! - Windows：目前只能结束子进程本身；整棵树由 Job Object 实现（#20）。
+//!
+//! 进程树不随 Agent 一起收到终端或服务管理器发给 Agent 的信号，Agent 退出时用 [`terminate_all`]
+//! 终止还在运行的进程树，否则执行器会成为孤儿继续运行（#113）。
 
 use std::io;
 use std::process::ExitStatus;
@@ -15,6 +18,38 @@ use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 
 /// 强制杀掉前检查进程组是否已经清空的间隔。
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// 还在运行的进程树（进程组 ID）：启动时登记，[`ProcessTree`] 被丢弃时移除。
+#[cfg(unix)]
+static LIVE: std::sync::Mutex<std::collections::BTreeSet<nix::unistd::Pid>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// 终止全部还在运行的进程树（Agent 退出前调用）：先向每个进程组发 SIGTERM，
+/// 等它们都清空，最多等 grace；仍未清空的强制杀掉。
+///
+/// 组长由各自任务的 [`ProcessTree::wait`] 回收，调用方要让运行时继续驱动这些任务；
+/// 没有回收的组长（僵尸）让进程组一直“活着”，最多多等到 grace。
+pub async fn terminate_all(grace: Duration) {
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{Signal, killpg};
+        let groups: Vec<_> = LIVE.lock().unwrap().iter().copied().collect();
+        for &pgid in &groups {
+            let _ = killpg(pgid, Signal::SIGTERM);
+        }
+        let deadline = tokio::time::Instant::now() + grace;
+        while groups.iter().any(|&pgid| killpg(pgid, None).is_ok())
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        for &pgid in &groups {
+            let _ = killpg(pgid, Signal::SIGKILL);
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = grace;
+}
 
 /// 以进程树方式启动的子进程。
 pub struct ProcessTree {
@@ -38,6 +73,7 @@ impl ProcessTree {
             let pgid = nix::unistd::Pid::from_raw(
                 i32::try_from(pid).map_err(|_| io::Error::other("pid out of range"))?,
             );
+            LIVE.lock().unwrap().insert(pgid);
             Ok(Self { child, pgid })
         }
         #[cfg(not(unix))]
@@ -110,5 +146,12 @@ impl ProcessTree {
     #[cfg(not(unix))]
     fn group_alive(&self) -> bool {
         false
+    }
+}
+
+impl Drop for ProcessTree {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        LIVE.lock().unwrap().remove(&self.pgid);
     }
 }

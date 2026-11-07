@@ -251,7 +251,7 @@ flowchart TD
 - 任务目录的保留期：`--task-dir-retention`（`SFLY_TASK_DIR_RETENTION`），默认 `7d`，`0` 表示结果被 Ack 后立即删除。结果被 Ack 时写结束标记 `.finished`；Agent 启动时和之后每小时扫描工作目录，删除超过保留期的任务目录（有标记的按标记时间，没有的按目录修改时间）。正在执行或结果未 Ack 的任务、以点开头的目录（`.dev`、`.install`）、`agent.sock`、既没有标记也没有 `task.json` 的子目录不动。
 - 后台进程目录（节点启动、节点结束后继续运行的进程的日志，例如 `start_process`）不在任务目录里，任务目录被删除或同一任务重试时不受影响。同一次扫描按同一个保留期删除过期的运行目录：按目录和其中直接条目里最新的修改时间判断（后台进程还在写日志时不过期），运行还有任务在手上时不动；以点开头的目录和文件不动。保留期为 0 时，运行的任务都不在手上之后的下一次扫描就删除。
 
-进程树终止方式：Linux 使用进程组，Windows 使用 Job Object。
+进程树终止方式：Linux 使用进程组，Windows 使用 Job Object。执行器自成进程组，收不到发给 Agent 的 SIGTERM / Ctrl-C；Agent 收到它们时先按取消的方式终止手上任务的进程树（SIGTERM，宽限期 `--terminate-grace` 后强制杀掉）再退出，不留孤儿执行器，这些任务由控制面按 `agent_lost` 处理。Agent 被 SIGKILL 时来不及终止它们，由 systemd 按服务的控制组一并结束。
 
 ### 5.5 自更新（ADR 0014，`agent/src/update/`）
 
