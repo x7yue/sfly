@@ -112,14 +112,14 @@ export class PerfApi {
 		});
 	}
 
-	/** 新建编排并保存第一个版本，返回编排 ID。 */
+	/** 新建场景并保存第一个版本，返回场景 ID。 */
 	async createOrchestration(document: unknown, name = "perf"): Promise<string> {
 		const { id } = (await this.postJson("/orchestrations", { name })) as { id: string };
 		await this.postJson(`/orchestrations/${id}/versions`, { base_version: 0, document });
 		return id;
 	}
 
-	/** 触发编排的最新版本，返回运行 ID。 */
+	/** 触发场景的最新版本，返回运行 ID。 */
 	async trigger(orchestrationId: string): Promise<string> {
 		return (
 			(await this.postJson(`/orchestrations/${orchestrationId}/runs`, { params: {} })) as {

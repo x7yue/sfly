@@ -118,7 +118,7 @@ async function pool<T>(jobs: Array<() => Promise<T>>, concurrency: number): Prom
 
 /**
  * 发布负载用的节点包，连上 plan.tasksPerAgent.length 个假 Agent（槽位数 = 分到的任务数），
- * 每个假 Agent 一个编排、触发分到的次数，收下全部派发并上报 TaskStarted（任务进入 running）。
+ * 每个假 Agent 一个场景、触发分到的次数，收下全部派发并上报 TaskStarted（任务进入 running）。
  */
 export async function startFleet(options: {
 	api: PerfApi;

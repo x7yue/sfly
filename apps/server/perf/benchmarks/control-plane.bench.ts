@@ -5,7 +5,7 @@
 // 单独运行：`pnpm --filter @sfly/server exec vitest bench --run perf/benchmarks/control-plane.bench.ts`
 //
 // 直接驱动 TaskMetrics / MetricQueries（src/metrics），不经过 gRPC 与 HTTP：测的是写入与查询本身。
-// 任务、编排与节点包声明经由测试用控制面和假 Agent 正常创建（与控制面测试相同）。
+// 任务、场景与节点包声明经由测试用控制面和假 Agent 正常创建（与控制面测试相同）。
 //
 // - segment_write：一个任务 10 个指标，按 Agent 的节奏每秒一批（每个指标一个点）接收 120 秒——
 //   最后一批让 10 段同时攒满，在一个事务里整段写入（ADR 0009）；一次迭代 = 1200 个点。

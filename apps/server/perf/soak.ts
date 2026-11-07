@@ -126,7 +126,7 @@ interface RateOutputs {
 	max_call_ms: number;
 }
 
-/** 编排：入口 → 一个桩节点。 */
+/** 场景：入口 → 一个桩节点。 */
 function orchestration(stack: Stack, name: string, node: string, inputs: unknown) {
 	return stack.api.createOrchestration(
 		{
@@ -142,7 +142,7 @@ function orchestration(stack: Stack, name: string, node: string, inputs: unknown
 	);
 }
 
-/** 不停地一个接一个执行同一个编排，直到剩下的时间不够再执行一次（或被中断）。 */
+/** 不停地一个接一个运行同一个场景，直到剩下的时间不够再执行一次（或被中断）。 */
 async function repeat(
 	api: PerfApi,
 	orchestrationId: string,
