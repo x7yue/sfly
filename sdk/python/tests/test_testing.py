@@ -122,6 +122,25 @@ def test_metric_rate_reports_sequence_numbers_at_the_given_rate(tmp_path: Path) 
     ]
 
 
+def test_metric_clock_reports_the_wall_clock_time_of_each_call(tmp_path: Path) -> None:
+    from sfly_stub import metric_clock
+
+    before = time.time() * 1000
+    result = run_node(metric_clock, {"rate": 2000, "seconds": 0.5}, work_dir=tmp_path / "w")
+    after = time.time() * 1000
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["count"] == 1000
+    assert 0.45 <= result.outputs["elapsed"] < 2
+    values = [m.value for m in result.metrics]
+    assert [m.name for m in result.metrics] == ["clock_ms"] * 1000
+    # 每次上报调用时的 Unix 毫秒数：单调不减，落在执行前后之间，并按速率铺满 seconds。
+    assert values == sorted(values)
+    assert before <= values[0] and values[-1] <= after
+    assert values[-1] - values[0] >= 400
+
+
 def test_stdout_rate_writes_numbered_lines_of_fixed_size_at_the_given_rate() -> None:
     from sfly_stub import stdout_rate
 
