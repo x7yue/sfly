@@ -1,6 +1,6 @@
 # 标准节点包 sfly-std（ADR 0017）：平台维护、与业务无关的标准节点。它是一个普通的节点包，
 # 版本号独立于平台；推送 std-vX.Y.Z tag 时由 .github/workflows/std-release.yml 构建并作为 Release 附件发布。
-# 结构与新增节点的步骤见 src/sfly_std/__init__.py。
+# 包的结构（各共用模块）与新增节点的步骤写在 src/sfly_std/__init__.py 的模块说明里。
 [project]
 name = "sfly-std"
 version = "0.1.0"
