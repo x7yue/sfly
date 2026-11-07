@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import itertools
 import json as jsonlib
 import re
 import time
@@ -17,7 +16,9 @@ from typing import Any, Literal, TypedDict
 import httpx
 
 from sfly import Context, Metric, node
+from sfly_std import _waiting
 from sfly_std._assertions import Assertion, check, describe, validate
+from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
 
 #: 输出里响应内容的最大字节数：超过时（即使是 JSON）输出 text，只保留开头。
 BODY_OUTPUT_BYTES = 256 * 1024
@@ -91,8 +92,8 @@ def http_request(
     expect_status: int | str | Sequence[int | str] = "2xx",
     expect_json: Sequence[Assertion] = (),
     until_ok: bool = False,
-    wait: float = 300,
-    poll: float = 1,
+    wait: float = DEFAULT_WAIT,
+    poll: float = DEFAULT_POLL,
 ) -> HttpResponse:
     """发一个 HTTP 请求，检查状态码（`expect_status`，默认 2xx）和响应 JSON（`expect_json`）。
 
@@ -109,39 +110,47 @@ def http_request(
         raise ValueError("json 和 body 只能填一个")
     if request_timeout <= 0:
         raise ValueError("request_timeout 必须大于 0")
-    if poll <= 0:
-        raise ValueError("poll 必须大于 0")
-    if wait < 0:
-        raise ValueError("wait 不能小于 0")
+    _waiting.validate(wait, poll)
     statuses = _status_patterns(expect_status)
     validate(expect_json)
     request = _Request(
         method, url, headers, json, body.encode() if body is not None else None, request_timeout
     )
-    deadline = time.monotonic() + wait
-    logged = None
     with httpx.Client(timeout=request_timeout, verify=verify_tls) as client:
-        for attempt in itertools.count(1):
-            try:
-                response, elapsed_ms = request.send(client)
-                ctx.metric("elapsed_ms", elapsed_ms)
-                outputs, parsed = _outputs(ctx, response, elapsed_ms)
-                problem = _problem(response, parsed, statuses, expect_json)
-                if problem is None:
-                    return outputs
+
+        def attempt() -> HttpResponse:
+            """发一次请求并检查；不满足时抛出 RequestFailed / ExpectationFailed。"""
+            response, elapsed_ms = request.send(client)
+            ctx.metric("elapsed_ms", elapsed_ms)
+            outputs, parsed = _outputs(ctx, response, elapsed_ms)
+            problem = _problem(response, parsed, statuses, expect_json)
+            if problem is not None:
                 raise ExpectationFailed(f"{method} {url} 状态码 {response.status_code}，{problem}")
+            return outputs
+
+        if not until_ok:
+            return attempt()
+
+        attempts = 0
+        last: RequestFailed | ExpectationFailed | None = None
+
+        def retry() -> HttpResponse | None:
+            nonlocal attempts, last
+            attempts += 1
+            try:
+                return attempt()
             except (RequestFailed, ExpectationFailed) as error:
-                if not until_ok:
-                    raise
-                if time.monotonic() + poll > deadline:
-                    raise type(error)(
-                        f"{wait:g} 秒内 {attempt} 次请求都不满足，最后一次：{error}"
-                    ) from None
-                if str(error) != logged:  # 原因没变时不重复打日志
-                    ctx.log.info("第 %d 次不满足，%g 秒后重试：%s", attempt, poll, error)
-                    logged = str(error)
-            time.sleep(poll)
-    raise AssertionError("unreachable")
+                if last is None or str(error) != str(last):  # 原因没变时不重复打日志
+                    ctx.log.info("第 %d 次不满足，%g 秒后重试：%s", attempts, poll, error)
+                last = error
+                return None
+
+        try:
+            outputs, _ = poll_until(retry, what="请求满足", wait=wait, poll=poll)
+        except TimeoutError:
+            assert last is not None
+            raise type(last)(f"{wait:g} 秒内 {attempts} 次请求都不满足，最后一次：{last}") from None
+        return outputs
 
 
 @dataclass(frozen=True)

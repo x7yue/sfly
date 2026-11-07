@@ -605,8 +605,9 @@ def test_until_ok_stops_retrying_when_cancelled(tmp_path: Path, stub: Stub) -> N
     ("inputs", "message"),
     [
         ({"request_timeout": 0}, "ValueError: request_timeout 必须大于 0"),
-        ({"poll": 0}, "ValueError: poll 必须大于 0"),
-        ({"wait": -1}, "ValueError: wait 不能小于 0"),
+        # wait、poll 的校验与等待类节点相同。
+        ({"poll": 0}, "ValueError: poll 必须大于 0，实际为 0"),
+        ({"wait": -1}, "ValueError: wait 不能为负数，实际为 -1"),
     ],
 )
 def test_rejects_non_positive_durations(
