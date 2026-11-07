@@ -130,6 +130,7 @@ const kindLabel = (kind: string) => KIND_META[kind as keyof typeof KIND_META]?.l
 
 const FIELD_LABEL: Record<string, string> = {
 	default_agent: "默认 Agent",
+	name: "名称",
 	agent: "Agent",
 	always: "always",
 	kind: "种类",

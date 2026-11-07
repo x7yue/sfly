@@ -36,6 +36,11 @@ export const EntryNode = z.strictObject({
 export const SubflowEntryNode = z.strictObject({
 	...nodeBase,
 	kind: z.literal("subflow_entry"),
+	/**
+	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
+	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（§1.2）。
+	 */
+	name: z.string().optional(),
 	params: z.array(ParamDeclaration).default([]),
 });
 

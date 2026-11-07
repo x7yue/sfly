@@ -507,6 +507,24 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-entry.png");
 	});
 
+	test("子流程名称：检查器字段与警告", async ({ page }) => {
+		await nodeCard(page, "sub_entry").click();
+		await page.getByRole("textbox", { name: "子流程名称" }).fill("");
+		await idle(page);
+		await expect(page.getByText("子流程入口节点 sub_entry 没有填写名称")).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-subflow-name.png");
+	});
+
+	test("新建子流程：填写名称", async ({ page }) => {
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await menu.getByRole("option", { name: /子流程入口/ }).click();
+		await menu.getByRole("textbox", { name: "子流程名称" }).fill("sub_entry");
+		await idle(page);
+		await expect(menu.getByText("子流程入口节点 sub_entry 已使用名称「sub_entry」")).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-new-subflow.png");
+	});
+
 	test("语义缩放", async ({ page }) => {
 		for (let i = 0; i < 3; i++) {
 			await page.getByRole("button", { name: "缩小" }).click();

@@ -6,7 +6,13 @@ import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
  */
 export interface StructureDocument {
 	default_agent?: string | undefined;
-	nodes: readonly { id: string; kind: OrchestrationNode["kind"]; agent?: string | undefined }[];
+	nodes: readonly {
+		id: string;
+		kind: OrchestrationNode["kind"];
+		agent?: string | undefined;
+		/** 子流程入口的名称。 */
+		name?: string | undefined;
+	}[];
 	edges: readonly Pick<OrchestrationDocument["edges"][number], "from" | "to" | "kind">[];
 }
 
@@ -25,6 +31,8 @@ export type StructureWarningCode =
 	| "async_multiple_dispatch"
 	| "subflow_not_triggered"
 	| "subflow_multiple_triggers"
+	| "subflow_name_empty"
+	| "subflow_name_duplicate"
 	| "nesting_too_deep"
 	| "orphan_node"
 	| "missing_agent";
@@ -38,6 +46,13 @@ export interface StructureWarning {
 
 /** 子流程嵌套深度上限（主链为第 0 层）。 */
 export const MAX_NESTING_DEPTH = 3;
+
+/**
+ * 子流程的名称（GLOSSARY「子流程」）：子流程入口节点上填写的名称，去掉首尾空白；
+ * 没有名称字段的旧版本以节点 ID 作为名称（ADR 0016）。填了空名称时为空字符串。
+ */
+export const subflowName = (node: { id: string; name?: string | undefined }): string =>
+	node.name === undefined ? node.id : node.name.trim();
 
 const isStart = (node: StructureNode) => node.kind === "entry" || node.kind === "subflow_entry";
 
@@ -200,6 +215,30 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 			warn(
 				"subflow_multiple_triggers",
 				`子流程入口节点 ${node.id} 只能被一个异步任务节点触发`,
+				node.id,
+			);
+		}
+	}
+
+	// 子流程名称：非空、场景内唯一（停止子流程节点按名称选择子流程，SEMANTICS §4.1）。
+	const subflows = doc.nodes.filter((n) => n.kind === "subflow_entry");
+	const named = new Map<string, string[]>();
+	for (const node of subflows) {
+		const name = subflowName(node);
+		if (name === "") continue;
+		named.set(name, [...(named.get(name) ?? []), node.id]);
+	}
+	for (const node of subflows) {
+		const name = subflowName(node);
+		if (name === "") {
+			warn("subflow_name_empty", `子流程入口节点 ${node.id} 没有填写名称`, node.id);
+			continue;
+		}
+		const same = named.get(name) ?? [];
+		if (same.length > 1) {
+			warn(
+				"subflow_name_duplicate",
+				`子流程名称「${name}」重复（子流程入口节点 ${same.join("、")}）`,
 				node.id,
 			);
 		}

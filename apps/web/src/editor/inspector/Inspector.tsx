@@ -24,6 +24,7 @@ import {
 	PackageParams,
 	PackageVersionField,
 	SleepForm,
+	SubflowNameField,
 	SubflowTrigger,
 	TimerForm,
 } from "./node-forms";
@@ -176,8 +177,11 @@ function NodeInspector({
 		...(node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : []),
 		...(node.kind === "timer" ? ["at", "tz"] : node.kind === "sleep" ? ["duration"] : []),
 	]);
+	const isNameWarning = (w: OrchestrationWarning) =>
+		w.code === "subflow_name_empty" || w.code === "subflow_name_duplicate";
 	const general = warnings.filter(
-		(w) => !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
+		(w) =>
+			!isNameWarning(w) && !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
 	);
 	const change = (next: DocNode) => context.onChangeNode(id, next);
 	const hasExec = node.kind === "package" || node.kind === "timer" || node.kind === "sleep";
@@ -236,7 +240,15 @@ function NodeInspector({
 					{(node.kind === "entry" || node.kind === "subflow_entry") && (
 						<>
 							{node.kind === "subflow_entry" && (
-								<SubflowTrigger id={id} doc={doc} onLocate={context.onLocate} />
+								<>
+									<SubflowNameField
+										id={id}
+										node={node}
+										problems={warnings.filter(isNameWarning).map((w) => w.message)}
+										onChange={change}
+									/>
+									<SubflowTrigger id={id} doc={doc} onLocate={context.onLocate} />
+								</>
 							)}
 							<SectionTitle>参数</SectionTitle>
 							<ParamsEditor

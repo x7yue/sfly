@@ -56,6 +56,7 @@ import {
 	idStem,
 	isChainTail,
 	newDocNode,
+	newSubflowNameProblem,
 	packageGroups,
 } from "./add-node";
 import { usePackageCatalog } from "./catalog";
@@ -501,6 +502,7 @@ function Editor({
 								request={adding}
 								tail={menuTail}
 								groups={groups}
+								subflowNameProblem={(name) => newSubflowNameProblem(name, doc)}
 								onOpenChange={(open) => setAdding(open ? { via: "menu" } : null)}
 								onPick={addNode}
 							/>

@@ -1,4 +1,4 @@
-import { NODE_DEFAULTS } from "@sfly/orchestration";
+import { NODE_DEFAULTS, subflowName } from "@sfly/orchestration";
 import type { CanvasInfo } from "./context";
 import type { DocNode } from "./flow";
 
@@ -12,8 +12,14 @@ export const KIND_META: Record<DocNode["kind"], { label: string; code: string }>
 	subflow_entry: { label: "子流程入口", code: "SE" },
 };
 
+/** 子流程的显示名称：没有名称字段的旧版本显示节点 ID，填了空名称时显示「未命名子流程」。 */
+export const subflowLabel = (node: { id: string; name?: string | undefined }): string =>
+	subflowName(node) || "未命名子流程";
+
 export function nodeTitle(node: DocNode, info: CanvasInfo): string {
 	switch (node.kind) {
+		case "subflow_entry":
+			return subflowLabel(node);
 		case "package":
 			return info.titleOf(node.package, node.node) ?? node.node;
 		case "timer":

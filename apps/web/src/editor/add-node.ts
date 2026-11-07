@@ -1,4 +1,4 @@
-import { chainMembers, type StructureDocument } from "@sfly/orchestration";
+import { chainMembers, type StructureDocument, subflowName } from "@sfly/orchestration";
 import type { AgentView, PackageSummary } from "@sfly/schema";
 import type { DocNode } from "#/components/canvas/flow";
 import { latestVersion } from "#/lib/package-versions";
@@ -7,7 +7,9 @@ import { DEFAULT_TZ } from "./inspector/wait-nodes";
 
 /** 添加节点菜单里的一项：内置节点，或某个节点包版本里的节点类型。 */
 export type AddItem =
-	| { kind: "async" | "timer" | "sleep" | "subflow_entry" }
+	| { kind: "async" | "timer" | "sleep" }
+	/** 子流程入口：新建时必须填写名称（SEMANTICS §1.2）。 */
+	| { kind: "subflow_entry"; name: string }
 	| { kind: "package"; package: string; version: string; node: string; title: string };
 
 export const BUILTIN_ITEMS: { kind: Exclude<AddItem["kind"], "package">; hint: string }[] = [
@@ -65,6 +67,20 @@ export function packageGroups(
 	return groups;
 }
 
+/**
+ * 新建子流程入口时填写的名称有什么问题：为空，或与已有子流程重名（按 subflowName 比较，
+ * 没有名称字段的旧子流程以节点 ID 作为名称）。可以使用时返回 null。
+ */
+export function newSubflowNameProblem(
+	name: string,
+	doc: Pick<StructureDocument, "nodes">,
+): string | null {
+	const wanted = name.trim();
+	if (wanted === "") return "请填写子流程名称";
+	const taken = doc.nodes.find((n) => n.kind === "subflow_entry" && subflowName(n) === wanted);
+	return taken ? `子流程入口节点 ${taken.id} 已使用名称「${wanted}」` : null;
+}
+
 /** 新节点 ID 的前缀。 */
 export const idStem = (item: AddItem) =>
 	item.kind === "package" ? item.node : item.kind === "subflow_entry" ? "subflow" : item.kind;
@@ -84,7 +100,7 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 		case "async":
 			return { id, kind: "async", params: {} };
 		case "subflow_entry":
-			return { id, kind: "subflow_entry", params: [] };
+			return { id, kind: "subflow_entry", name: item.name.trim(), params: [] };
 		case "timer":
 			return { id, kind: "timer", always: false, at: "09:30:00", tz: DEFAULT_TZ };
 		case "sleep":

@@ -5,10 +5,13 @@ import { useMemo } from "react";
 import { useFlowCanvas } from "./context";
 import type { SfEdge, SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_WIDTH, REGION_PADDING } from "./geometry";
+import { subflowLabel } from "./node-display";
 import { ZOOM_TEXT_12 } from "./zoom-text";
 
 interface Region {
 	id: string;
+	/** 子流程名称（subflowLabel）。 */
+	name: string;
 	trigger: string | undefined;
 	count: number;
 	box: { x: number; y: number; w: number; h: number };
@@ -23,7 +26,8 @@ export function subflowRegions(nodes: SfNode[], edges: SfEdge[]): Region[] {
 	});
 	const out: Region[] = [];
 	for (const [start, ids] of members) {
-		if (byId.get(start)?.data.node.kind !== "subflow_entry") continue;
+		const entry = byId.get(start)?.data.node;
+		if (entry?.kind !== "subflow_entry") continue;
 		const at = ids.flatMap((id) => {
 			const n = byId.get(id);
 			return n ? [n.position] : [];
@@ -34,6 +38,7 @@ export function subflowRegions(nodes: SfNode[], edges: SfEdge[]): Region[] {
 		const y1 = Math.max(...at.map((p) => p.y)) + NODE_HEIGHT + REGION_PADDING.bottom;
 		out.push({
 			id: start,
+			name: subflowLabel(entry),
 			trigger: edges.find((e) => e.target === start && e.data?.kind === "dispatch")?.source,
 			count: ids.length,
 			box: { x, y, w: x1 - x, h: y1 - y },
@@ -43,7 +48,7 @@ export function subflowRegions(nodes: SfNode[], edges: SfEdge[]): Region[] {
 }
 
 /**
- * 子流程区域（原型 `.region`）：紫色虚线框，标题行写子流程 ID 和触发它的异步任务节点。
+ * 子流程区域（原型 `.region`）：紫色虚线框，标题行写子流程名称和触发它的异步任务节点。
  * 标题行右侧可以由 FlowCanvas 的 regionMeta 替换（运行状态，#41）。画在节点和连线下面。
  */
 export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdge[] }) {
@@ -54,7 +59,7 @@ export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdg
 			{regions.map((r) => (
 				<section
 					key={r.id}
-					aria-label={`子流程 ${r.id}`}
+					aria-label={`子流程 ${r.name}`}
 					className="pointer-events-none absolute -z-10 rounded-xl border border-dashed border-canvas-subflow-line bg-canvas-subflow-soft"
 					style={{ left: r.box.x, top: r.box.y, width: r.box.w, height: r.box.h }}
 				>
@@ -65,7 +70,7 @@ export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdg
 						)}
 					>
 						<span>子流程</span>
-						<span className="font-mono text-canvas-subflow">{r.id}</span>
+						<span className="truncate font-medium text-canvas-subflow">{r.name}</span>
 						<span className="pointer-events-auto ml-auto truncate text-fg-3">
 							{regionMeta?.(r.id) ??
 								`${r.trigger ? `由 ${r.trigger} 触发` : "没有异步任务节点触发"} · ${r.count} 个节点`}

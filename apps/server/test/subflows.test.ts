@@ -510,6 +510,85 @@ describe("子流程的静态检查（保存时警告，触发时阻断）", () =
 		expect(preflight.problems).toEqual([]);
 	});
 
+	it("子流程名称为空或重复时保存成功但返回警告，触发被拒绝；改正后可以触发", async () => {
+		/** 主链依次触发 sub1、sub2，两个子流程入口的名称由参数给出（undefined 表示没有名称字段）。 */
+		const named = (a: string | undefined, b: string | undefined) =>
+			orchestration(
+				[
+					[{ id: "entry", kind: "entry", params: [] }, spawn("spawn1"), spawn("spawn2")],
+					[{ id: "sub1", kind: "subflow_entry", params: [], name: a }, echo("c")],
+					[{ id: "sub2", kind: "subflow_entry", params: [], name: b }, echo("d")],
+				],
+				[
+					["spawn1", "sub1"],
+					["spawn2", "sub2"],
+				],
+			);
+		const id = await api.createOrchestration("子流程名称");
+		const save = async (doc: unknown) => {
+			const res = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: await api.headVersion(id),
+				document: doc,
+			});
+			expect(res.status).toBe(201);
+			return ((await res.json()) as { warnings: Problem[] }).warnings;
+		};
+
+		const dup = named("监控", "监控");
+		expect(await save(dup)).toEqual([
+			{
+				code: "subflow_name_duplicate",
+				node_id: "sub1",
+				message: "子流程名称「监控」重复（子流程入口节点 sub1、sub2）",
+			},
+			{
+				code: "subflow_name_duplicate",
+				node_id: "sub2",
+				message: "子流程名称「监控」重复（子流程入口节点 sub1、sub2）",
+			},
+		]);
+		expect((await problems(dup)).map((p) => [p.code, p.node_id])).toEqual([
+			["subflow_name_duplicate", "sub1"],
+			["subflow_name_duplicate", "sub2"],
+		]);
+
+		const empty = named("", "压测");
+		expect((await save(empty)).map((w) => [w.code, w.node_id])).toEqual([
+			["subflow_name_empty", "sub1"],
+		]);
+		expect((await problems(empty)).map((p) => [p.code, p.node_id])).toEqual([
+			["subflow_name_empty", "sub1"],
+		]);
+
+		const ok = named("监控", "压测");
+		expect(await save(ok)).toEqual([]);
+		expect(await problems(ok)).toEqual([]);
+		// 名称随版本内容保存。
+		const head = await api.getJson<{ document: { nodes: { id: string; name?: string }[] } }>(
+			`/orchestrations/${id}/versions/${await api.headVersion(id)}`,
+		);
+		expect(head.document.nodes.filter((n) => n.id.startsWith("sub"))).toEqual([
+			expect.objectContaining({ id: "sub1", name: "监控" }),
+			expect.objectContaining({ id: "sub2", name: "压测" }),
+		]);
+	});
+
+	it("没有子流程名称的旧版本照常保存、触发，名称字段不会被补写进版本", async () => {
+		const legacy = orchestration(
+			[
+				[{ id: "entry", kind: "entry", params: [] }, spawn("spawn")],
+				[{ id: "sub", kind: "subflow_entry", params: [] }, echo("c")],
+			],
+			[["spawn", "sub"]],
+		);
+		const id = await api.orchestrationWith(legacy);
+		expect(await problems(legacy)).toEqual([]);
+		const head = await api.getJson<{ document: { nodes: Record<string, unknown>[] } }>(
+			`/orchestrations/${id}/versions/1`,
+		);
+		expect(head.document.nodes.find((n) => n.id === "sub")).not.toHaveProperty("name");
+	});
+
 	it("嵌套超过 3 层时报错", async () => {
 		/** 嵌套 depth 层的编排：每层子流程里放一个异步任务节点触发下一层，最内层放一个包节点。 */
 		const nested = (depth: number) => {

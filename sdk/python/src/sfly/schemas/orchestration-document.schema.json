@@ -107,6 +107,9 @@
                 "type": "string",
                 "const": "subflow_entry"
               },
+              "name": {
+                "type": "string"
+              },
               "params": {
                 "default": [],
                 "type": "array",

@@ -12,6 +12,7 @@ import {
 import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { useId } from "react";
 import type { DocNode } from "#/components/canvas/flow";
+import { subflowLabel } from "#/components/canvas/node-display";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -309,7 +310,10 @@ export function AsyncMapping({
 		<>
 			<Field label="调度到">
 				<div className="flex h-7.5 items-center gap-2">
-					<Badge className="font-mono">◆ {subflow.id}</Badge>
+					<Badge>◆ {subflowLabel(subflow)}</Badge>
+					{subflowLabel(subflow) !== subflow.id && (
+						<span className="font-mono text-2xs text-fg-3">{subflow.id}</span>
+					)}
 					<Button size="sm" variant="ghost" onClick={() => onLocate(subflow.id)}>
 						定位
 					</Button>
@@ -357,6 +361,42 @@ export function AsyncMapping({
 				引用本链的入口参数和前序节点的输出。
 			</p>
 		</>
+	);
+}
+
+type SubflowEntryNode = Extract<DocNode, { kind: "subflow_entry" }>;
+
+/**
+ * 子流程入口节点的名称（场景内唯一，停止子流程节点按名称选择子流程）。
+ * 没有名称字段的旧版本显示节点 ID；名称为空或重复的警告显示在字段下面。
+ */
+export function SubflowNameField({
+	id,
+	node,
+	problems,
+	onChange,
+}: {
+	id: string;
+	node: SubflowEntryNode;
+	problems: string[];
+	onChange(node: SubflowEntryNode): void;
+}) {
+	const inputId = useId();
+	return (
+		<Field
+			label="子流程名称"
+			htmlFor={inputId}
+			required
+			error={problems.length > 0 ? problems.join("；") : undefined}
+			help="场景内唯一；停止子流程节点按名称选择子流程，改名不影响引用"
+		>
+			<Input
+				id={inputId}
+				aria-invalid={problems.length > 0 || undefined}
+				value={node.name ?? id}
+				onChange={(e) => onChange({ ...node, name: e.target.value })}
+			/>
+		</Field>
 	);
 }
 
