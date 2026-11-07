@@ -5,7 +5,9 @@
 - `ctx.progress(当前值, 总数, 说明)`：上报进度，总数未知时省略；
 - `ctx.metric(指标名, 数值)`：上报节点类型声明的指标（见 `Context.metric`）；
 - `ctx.artifacts`：保存产物，返回可以写进输出的产物引用（见 `Artifacts`）；
-- `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）。
+- `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）；
+- `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt（见 `TaskInfo`）；
+- `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）。
 
 取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
@@ -33,6 +35,7 @@ import threading
 import time
 import traceback
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -170,12 +173,62 @@ def _artifact_parts(name: str) -> list[str]:
     return parts
 
 
+@dataclass(frozen=True)
+class TaskInfo:
+    """`ctx.task`：当前任务的基本信息。
+
+    - `run_id`：运行 ID；`node_id`：场景里的节点 ID（同一个节点类型可以出现多次，
+      各有不同的节点 ID）；
+    - `task_id`：任务 ID；`attempt`：第几次尝试（从 1 开始，重试时加 1）。
+
+    在 Agent 上取自 Agent 写的 task.json（`SFLY_TASK`）；本地调试（`sfly run`、`sfly.testing`）时
+    任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名，运行 ID 见 `sfly run` 与 `run_node` 的说明。
+    没有 task.json 时（在执行器之外直接构造 Context）都取 `local` 和 1。
+    """
+
+    run_id: str = "local"
+    node_id: str = "local"
+    task_id: str = "local"
+    attempt: int = 1
+
+
+def _task_from_env() -> TaskInfo:
+    path = os.environ.get("SFLY_TASK")
+    try:
+        spec = json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
+    except (OSError, ValueError):
+        spec = {}
+    if not isinstance(spec, dict):
+        spec = {}
+    default = TaskInfo()
+
+    def text(key: str) -> str:
+        value = spec.get(key)
+        return value if isinstance(value, str) and value else str(getattr(default, key))
+
+    attempt = spec.get("attempt")
+    return TaskInfo(
+        run_id=text("run_id"),
+        node_id=text("node_id"),
+        task_id=text("task_id"),
+        attempt=attempt if isinstance(attempt, int) and attempt > 0 else default.attempt,
+    )
+
+
+def _default_procs_dir(task: TaskInfo) -> Path:
+    """Agent 没有给出 `SFLY_PROCS`（低于 0.0.4 的 Agent）时的后台进程目录：Agent 默认布局下的位置
+    `$SFLY_HOME/procs/<运行 ID>/`（`SFLY_HOME` 默认 `~/.sfly`）。旧 Agent 不会清理它。"""
+    home = os.environ.get("SFLY_HOME") or os.path.join(os.path.expanduser("~"), ".sfly")
+    return Path(home).absolute() / "procs" / task.run_id
+
+
 class Context:
     """节点执行时由执行器传入的任务上下文。
 
     `events_path` 默认取环境变量 `SFLY_EVENTS`；为 None（或环境变量未设置）时日志和进度被丢弃。
     `cancel_path` 默认取 `SFLY_CANCEL`；为 None 时 `cancelled()` 总是 False。
     `artifacts_dir` / `artifacts_url` 默认取 `SFLY_ARTIFACTS` / `SFLY_ARTIFACTS_URL`。
+    `task` 默认读 `SFLY_TASK` 指向的 task.json（见 `TaskInfo`）；`procs_dir` 默认取 `SFLY_PROCS`。
     `metrics` 是节点类型声明的指标（指标名 → `gauge` | `counter`），执行器从 `@node` 的声明传入；
     为 None（不知道声明，例如在节点之外直接构造）时不检查指标名，都按 `gauge` 上报。
     """
@@ -187,6 +240,8 @@ class Context:
         artifacts_dir: str | os.PathLike[str] | None = _FROM_ENV,
         artifacts_url: str | None = _FROM_ENV,
         metrics: Mapping[str, str] | None = None,
+        task: TaskInfo | None = None,
+        procs_dir: str | os.PathLike[str] | None = None,
     ) -> None:
         if events_path is _FROM_ENV:
             events_path = os.environ.get("SFLY_EVENTS")
@@ -196,12 +251,31 @@ class Context:
             artifacts_dir = os.environ.get("SFLY_ARTIFACTS")
         if artifacts_url is _FROM_ENV:
             artifacts_url = os.environ.get("SFLY_ARTIFACTS_URL")
+        self.task = task if task is not None else _task_from_env()
+        if procs_dir is None:
+            procs_dir = os.environ.get("SFLY_PROCS") or _default_procs_dir(self.task)
+        self._procs_dir = Path(procs_dir)
         self._events = _EventWriter(events_path)
         self._cancel = cancel_path
         self.log = Log(self._events)
         self.artifacts = Artifacts(artifacts_dir, artifacts_url)
         self._metrics = dict(metrics) if metrics is not None else None
         self._warned: set[tuple[str, str]] = set()
+
+    @property
+    def procs_dir(self) -> Path:
+        """这次运行的后台进程目录：节点启动的、要在节点结束后继续运行的进程（例如标准节点
+        `start_process`）把日志等文件放在这里，任务目录被清理时它们不受影响。
+
+        同一次运行的所有任务共用一个目录（不同节点用节点 ID 区分文件名），目录不一定已经存在，
+        使用前自己创建（`mkdir(parents=True, exist_ok=True)`）。
+
+        - Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`（`SFLY_PROCS`），和任务目录按同一个保留期清理，
+          运行还有任务在 Agent 手上时不动；
+        - `sfly run` 时是项目下的 `.sfly/procs/<运行目录名>/`，
+          `sfly.testing.run_node` 时是任务工作目录下的 `procs/`。
+        """
+        return self._procs_dir
 
     def cancelled(self) -> bool:
         """任务是否已被取消（Agent 已写入取消标记）。"""

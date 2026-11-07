@@ -59,6 +59,21 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - 只发布 `main` 上的提交，不维护旧版本的修复分支：有问题就修复后发新的补丁版本。
 - `v*` tag 推送后不能更新或删除（强制），Release 发布后附件与 tag 都不能修改（Immutable releases）。发错版本时，发一个新的补丁版本。
 
+## 发布 sfly-std
+
+标准节点包 `sfly-std`（`std/`，ADR 0017）的版本号独立于平台，写在 `std/pyproject.toml` 的 `[project].version`，不受
+`pnpm release:version` 管理。
+
+1. 从 `main` 新建 `release/std-X.Y.Z`，改 `std/pyproject.toml` 的版本号（用到新版 SDK 的接口时同时调高
+   `[tool.sfly] requires-sdk`），`uv lock` 后提交并开 PR 合入。
+2. 等 `main` 上这个提交的 CI 通过，打 tag 并推送：`git tag std-vX.Y.Z <提交> && git push origin std-vX.Y.Z`。
+3. `.github/workflows/std-release.yml` 接手：确认提交在 `main` 上且 CI 已通过，运行 `scripts/release/std.sh pack`
+   （tag 与版本号一致、节点包元信息检查、构建 `.sflypkg`、`SHA256SUMS` 和含最低 Agent 版本的发布说明），上传到草稿 Release
+   后发布。不标为 Latest，不推镜像，不自动登记到控制面。
+
+- 发布前在本地 dry-run：`bash scripts/release/std.sh pack std-vX.Y.Z`，产物在 `out/std/`，与 Release 附件相同，只是不上传。
+- 与平台一样只支持 `X.Y.Z`，发布后不可修改；发错时发新的补丁版本。
+
 ## 跨版本自更新测试
 
 Agent 只跟随控制面的版本（ADR 0014）：升级控制面后，旧 Agent 要在新控制面上把手上的任务跑完，再自更新到新版本。

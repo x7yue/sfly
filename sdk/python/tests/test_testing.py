@@ -174,6 +174,21 @@ def test_executor_crash_summary_keeps_the_stderr_tail_without_stderr_log(tmp_pat
     assert "OSError: [Errno 122] Disk quota exceeded" in result.error.message
 
 
+def test_task_info_is_local_and_procs_dir_is_in_the_work_dir(tmp_path: Path) -> None:
+    from sfly_stub import task_info
+
+    result = run_node(task_info, work_dir=tmp_path)
+
+    assert result.status == "success", result.error
+    assert result.outputs == {
+        "run_id": "local",
+        "node_id": "task_info",
+        "task_id": "local",
+        "attempt": 1,
+        "procs_dir": str(tmp_path / "procs"),
+    }
+
+
 def test_artifacts_are_saved_in_the_work_dir_and_refs_are_local_paths(tmp_path: Path) -> None:
     from sfly_stub import artifacts
 

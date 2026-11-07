@@ -6,6 +6,8 @@
 
 项目约定：
 - `pyproject.toml` 的 `[project]` 提供 name、version、requires-python（默认 `>=3.10`）。
+- 需要的 SDK 版本取 `[tool.sfly] requires-sdk`（例如 `>=0.0.4`），写进元信息的 `requires_sdk`，
+  控制面派发前和 Agent 版本比较；没写时用构建时 SDK 的版本作为下限。
 - 依赖取 `[project].dependencies`；pyproject 未声明 dependencies 时读 `requirements.txt`。
   依赖里不能有 `sfly`：Agent 自带 SDK 运行时，`sfly` 只放在开发依赖组里。
 - 代码位于 `src/<模块>/`、`<模块>/` 或 `<模块>.py`，模块名为包名规范化（`-` → `_`）。
@@ -25,6 +27,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from sfly import __version__ as SDK_VERSION
 from sfly.cli.wheel import build_wheel, dist_name
 from sfly.schemas import load_schema
 
@@ -48,6 +51,7 @@ class Project:
     name: str
     version: str
     requires_python: str
+    requires_sdk: str
     dependencies: list[str]
     module: str
     source_root: Path
@@ -84,6 +88,9 @@ def load_project(root: Path) -> Project:
     else:
         dependencies = []
 
+    # 格式由元信息的 schema 校验（validate_metadata）。
+    requires_sdk = data.get("tool", {}).get("sfly", {}).get("requires-sdk", f">={SDK_VERSION}")
+
     module = dist_name(name)
     for source_root in (root / "src", root):
         for source in (source_root / module, source_root / f"{module}.py"):
@@ -93,6 +100,7 @@ def load_project(root: Path) -> Project:
                     name=name,
                     version=version,
                     requires_python=project.get("requires-python", DEFAULT_REQUIRES_PYTHON),
+                    requires_sdk=requires_sdk,
                     dependencies=dependencies,
                     module=module,
                     source_root=source_root,
@@ -149,6 +157,7 @@ def build(root: Path, out_dir: Path | None = None) -> Path:
         "name": project.name,
         "version": project.version,
         "requires_python": project.requires_python,
+        "requires_sdk": project.requires_sdk,
         "nodes": scan_nodes(project),
     }
     validate_metadata(metadata)

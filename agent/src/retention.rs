@@ -6,6 +6,11 @@
 //! - 不动：手上的任务（正在执行或结果还没 Ack），以点开头的目录（`.dev`、`.install`），
 //!   不是目录的条目（`agent.sock`），以及看起来不是任务目录的子目录（既没有结束标记也没有 `task.json`）。
 //!
+//! 后台进程目录 `<procs_dir>/<运行 ID>/`（`SFLY_PROCS`）按同一个保留期在同一次扫描里清理（[`sweep_procs`]）：
+//! 按目录和其中直接条目的修改时间里最新的一个判断（后台进程还在写日志时不会过期），运行还有任务在手上
+//! （正在执行或结果还没 Ack）时不动；以点开头的目录和不是目录的条目不动。没有结束标记：保留期为 0 时，
+//! 运行的任务都不在手上之后的下一次扫描就会删除，哪怕后台进程还在运行。
+//!
 //! 删除时先把目录改名为 `<task_id>~deleted`（`~` 不会出现在任务 ID 里）再在后台删除：
 //! 同一任务的下一次尝试可以立即在原来的位置新建目录；删到一半被打断的目录在下次扫描时删掉。
 
@@ -97,6 +102,41 @@ pub fn sweep(work_dir: &Path, retention: Duration, held: impl Fn(&str) -> bool) 
     }
 }
 
+/// 删除后台进程目录的根目录里超过保留期的运行目录；`held(运行 ID)` 为真的（运行还有任务在手上）不动。
+pub fn sweep_procs(procs_dir: &Path, retention: Duration, held: impl Fn(&str) -> bool) {
+    let Ok(entries) = std::fs::read_dir(procs_dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let path = entry.path();
+        if name.starts_with('.') || !entry.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        if name.ends_with(DELETED_SUFFIX) {
+            delete(&path);
+            continue;
+        }
+        let expired = latest_write(&path)
+            .is_some_and(|at| now.duration_since(at).unwrap_or_default() >= retention);
+        if expired && !held(&name) {
+            remove(&path);
+        }
+    }
+}
+
+/// 目录和其中直接条目的修改时间里最新的一个；目录读不到时为 None。
+fn latest_write(dir: &Path) -> Option<SystemTime> {
+    let mut latest = std::fs::metadata(dir).and_then(|m| m.modified()).ok()?;
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
+        if let Ok(at) = entry.metadata().and_then(|m| m.modified()) {
+            latest = latest.max(at);
+        }
+    }
+    Some(latest)
+}
+
 /// 改名后删除（见模块文档）。
 fn remove(dir: &Path) {
     if let Some(target) = rename(dir) {
@@ -111,7 +151,7 @@ fn rename(dir: &Path) -> Option<PathBuf> {
     match std::fs::rename(dir, &target) {
         Ok(()) => Some(target),
         Err(error) => {
-            eprintln!("cannot remove task dir {}: {error}", dir.display());
+            eprintln!("cannot remove {}: {error}", dir.display());
             None
         }
     }
@@ -119,7 +159,7 @@ fn rename(dir: &Path) -> Option<PathBuf> {
 
 fn delete(dir: &Path) {
     if let Err(error) = std::fs::remove_dir_all(dir) {
-        eprintln!("cannot remove task dir {}: {error}", dir.display());
+        eprintln!("cannot remove {}: {error}", dir.display());
     }
 }
 

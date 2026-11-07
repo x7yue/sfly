@@ -1,0 +1,24 @@
+# 标准节点包 sfly-std（ADR 0017）：平台维护、与业务无关的标准节点。它是一个普通的节点包，
+# 版本号独立于平台；推送 std-vX.Y.Z tag 时由 .github/workflows/std-release.yml 构建并作为 Release 附件发布。
+# 包的结构（各共用模块）与新增节点的步骤写在 src/sfly_std/__init__.py 的模块说明里。
+[project]
+name = "sfly-std"
+version = "0.1.0"
+description = "sfly 标准节点包：Shell 命令、后台进程、监控、等待、日志、产物、HTTP、断言"
+requires-python = ">=3.10"
+# 和用户的节点包装在同一个共享 venv 里（ADR 0002）：只用常见的库，只写宽松的下限。
+dependencies = [
+    "httpx>=0.25",
+    "psutil>=5.9",
+]
+
+# 节点包需要的最低 SDK 版本（即 Agent 版本，#79）。用到新版 SDK 才有的接口时调高到包含它的第一个平台版本，
+# 发布说明里的「最低 Agent 版本」取自这里。
+# start_process / stop_process 用到 SDK 0.0.4 才有的 ctx.task、ctx.procs_dir（#90）：仓库版本号改为 0.0.4 时
+# 把这里同步调成 ">=0.0.4"（现在调高会让同版本 0.0.3 的控制面在预检时拒绝全部标准节点）。
+[tool.sfly]
+requires-sdk = ">=0.0.3"
+
+[build-system]
+requires = ["uv_build>=0.8,<0.14"]
+build-backend = "uv_build"

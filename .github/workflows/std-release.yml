@@ -1,0 +1,61 @@
+name: Release sfly-std
+
+# 推送 std-vX.Y.Z tag 时发布标准节点包 sfly-std（ADR 0017；发版步骤见 docs/agents/branching-and-release.md）：
+#   sfly-std-X.Y.Z.sflypkg 与 SHA256SUMS 作为 Release 附件，部署者下载后像用户的节点包一样上传到控制面。
+# 版本号独立于平台（std/pyproject.toml），不随控制面镜像发布、不自动登记。平台的发布见 release.yml（v* tag）。
+# 不使用 Actions Artifacts（ADR 0010）：直接上传到草稿 Release，附件齐全后再发布。失败后可以直接重新运行：
+# 草稿 Release 会被复用，附件会被覆盖。打包与检查都在 scripts/release/std.sh pack 里，本地运行它就是 dry-run。
+on:
+  push:
+    tags: ["std-v*"]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TAG: ${{ github.ref_name }}
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_REPO: ${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v6 # Python 版本取自 .python-version
+      # sfly-std 的测试在 main 的 CI 里和平台一起运行（ci.yml 的 Test 步骤）。
+      - name: Commit is on main and CI passed
+        run: bash scripts/release/wait-ci.sh "$GITHUB_SHA"
+      - name: Install
+        run: uv sync --locked --all-packages
+      # tag 与 std/pyproject.toml 的版本号一致、节点包元信息检查，构建节点包、SHA256SUMS 和发布说明。
+      - name: Pack
+        run: bash scripts/release/std.sh pack "$TAG" out/std
+      - name: Upload to draft release
+        run: |
+          version=${TAG#std-v}
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ $draft != true ]]; then
+              echo "$TAG 已经发布，不能重新发布" >&2
+              exit 1
+            fi
+            echo "复用已有的草稿 Release $TAG"
+            gh release edit "$TAG" --notes-file out/std/notes.md
+          else
+            # 不标为 Latest：「最新版本」留给平台的 vX.Y.Z Release。
+            gh release create "$TAG" --draft --verify-tag --latest=false \
+              --title "sfly-std $version" --notes-file out/std/notes.md
+          fi
+          gh release upload "$TAG" "out/std/sfly-std-$version.sflypkg" out/std/SHA256SUMS --clobber
+      - name: Publish
+        run: gh release edit "$TAG" --draft=false --latest=false

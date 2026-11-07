@@ -167,7 +167,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	const mirrors: Mirrors = { pypi: options.pypiMirror, githubRelease: options.githubReleaseMirror };
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
-	const preflight = createPreflight({ db: database.db, packages });
+	const preflight = createPreflight({ db: database.db, packages, version });
 	const engine = new Engine({
 		db: database.db,
 		clock,

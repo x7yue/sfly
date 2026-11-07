@@ -73,6 +73,7 @@ def dev(root: Path, socket_path: Path) -> dict[str, Any]:
         "name": project.name,
         "version": project.version,
         "requires_python": project.requires_python,
+        "requires_sdk": project.requires_sdk,
         "nodes": scan_nodes(project),
     }
     validate_metadata(metadata)

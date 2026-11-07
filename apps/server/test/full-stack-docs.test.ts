@@ -1,13 +1,13 @@
 // 全栈（#61）：用户文档里的命令按原样能跑通。从控制面读取每一页的原文（占位符已替换成这个控制面的地址），
 // 把 ```sh 代码块按页面顺序送进同一个 bash 会话，像读者在一台全新的开发机上照着做：
-// install.sh --dev → sfly init → 本地调试 → sfly dev 联调 → sfly build / publish。
+// install.sh --dev → sfly init → 本地调试 → sfly dev 联调 → sfly build / publish → 上传标准节点包 sfly-std。
 // 读者在页面上做的事（在场景里选节点运行）由测试用 HTTP API 代做，并检查运行结果。
 // 最后检查每一页的每个 sh 代码块都运行过，或者在 SKIP 里写明了原因。
 //
 // 环境：PATH 上只有基本命令（没有 uv、sfly、systemctl），uv 从 GitHub Release 镜像桩安装，
-// PyPI 镜像桩里是测试环境里已安装的 pytest、ruff、jsonschema 重新打成的 wheel，不访问外网。
+// PyPI 镜像桩里是测试环境里已安装的 pytest、ruff、jsonschema 和 sfly-std 的依赖重新打成的 wheel，不访问外网。
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { arch, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
@@ -20,6 +20,7 @@ import { type BlockResult, DocShell, shellBlocks } from "./support/doc-commands.
 import { eventually } from "./support/eventually.js";
 import { type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
+import { buildStdPackage, type StdPackage, wheelhouse } from "./support/std-package.js";
 import { startTestControlPlane } from "./support/test-control-plane.js";
 
 const run = promisify(execFile);
@@ -63,6 +64,7 @@ const ROUTES = {
 		"integration",
 		"publish",
 		"subflows",
+		"standard-nodes",
 	],
 	ai: ["ai-quickstart"],
 } as const;
@@ -121,6 +123,7 @@ describe("全栈：开发文档里的命令", () => {
 	let tools: string;
 	let python: string;
 	let devAgent: string;
+	let std: StdPackage;
 	/** 每一页的 sh 代码块（取自 docs/guide 的原文，占位符已替换）。 */
 	const blocks = new Map<string, string[]>();
 	const executed = new Set<string>();
@@ -133,35 +136,13 @@ describe("全栈：开发文档里的命令", () => {
 			cwd: repoRoot,
 		});
 		// PyPI 镜像桩：把测试环境里已安装的发行版重新打成 wheel（sdk/python/tests/indexes.py）。
-		const wheels = join(dir, "wheels");
-		await mkdir(wheels);
-		await run(
-			"uv",
-			[
-				"run",
-				"--locked",
-				"--quiet",
-				"python",
-				"-c",
-				"import sys; from pathlib import Path; from indexes import wheelhouse; " +
-					"wheelhouse(['pytest', 'ruff', 'jsonschema'], Path(sys.argv[1]))",
-				wheels,
-			],
-			{ cwd: repoRoot, env: { ...process.env, PYTHONPATH: join(repoRoot, "sdk/python/tests") } },
-		);
-		const files = await readdir(wheels);
 		pypi = await startPypiStub(
-			await Promise.all(
-				files.map(
-					async (file) =>
-						[file.split("-")[0] as string, file, await readFile(join(wheels, file))] as [
-							string,
-							string,
-							Uint8Array,
-						],
-				),
-			),
+			await wheelhouse(join(dir, "wheels"), ["pytest", "ruff", "jsonschema"], {
+				withStdDependencies: true,
+			}),
 		);
+		// 「标准节点」页让读者从 Release 下载的 sfly-std：用当前源码构建（与发布流程相同的 sfly build std）。
+		std = await buildStdPackage(join(dir, "std"));
 		mirror = await startReleaseMirror();
 
 		tools = join(dir, "tools");
@@ -300,6 +281,40 @@ describe("全栈：开发文档里的命令", () => {
 			return { code, stdout, stderr };
 		}
 
+		/** 读者从 GitHub Release 下载 sfly-std 的附件到 ~/Downloads（std-release.yml 发布的就是这两个文件）。 */
+		async function downloadStdRelease() {
+			const downloads = join(home, "Downloads");
+			await mkdir(downloads, { recursive: true });
+			await copyFile(std.path, join(downloads, std.file));
+			const sum = (await run("sha256sum", [std.file], { cwd: downloads })).stdout;
+			await writeFile(join(downloads, "SHA256SUMS"), sum);
+		}
+
+		/** 读者在场景里用上传的 sfly-std 的 shell 节点（本机 Agent）。 */
+		async function runStdScenario() {
+			const id = await api.orchestrationWith({
+				default_agent: devAgent,
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{
+						id: "sh",
+						kind: "package",
+						package: "sfly-std",
+						node: "shell",
+						inputs: { command: "echo 标准节点" },
+					},
+				],
+				edges: [{ from: "entry", to: "sh", kind: "chain" }],
+				packages: { "sfly-std": std.version },
+			});
+			const runId = await api.triggerOk(id);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 120_000);
+			expect((await api.node(runId, "sh")).outputs).toEqual({
+				exit_code: 0,
+				stdout: "标准节点\n",
+			});
+		}
+
 		async function after(block: string, result: BlockResult) {
 			if (block.includes("/install.sh | sh")) {
 				// 有 systemd 时 install.sh 会重启服务；这里没有，读者重新运行前台启动的命令。
@@ -319,6 +334,13 @@ describe("全栈：开发文档里的命令", () => {
 				expect(result.stdout).toContain(`已发布 ${PACKAGE}@${version}`);
 				await runScenario(version);
 			}
+			if (block.includes("sfly-std-") && block.includes("/packages")) {
+				// sha256sum -c 的输出之后是 curl 打印的响应：上传的节点包版本。
+				expect(result.stdout).toContain(`${std.file}: OK`);
+				const published = JSON.parse(result.stdout.slice(result.stdout.indexOf("{")));
+				expect(published).toMatchObject({ name: "sfly-std", version: std.version });
+				await runStdScenario();
+			}
 		}
 
 		try {
@@ -327,6 +349,7 @@ describe("全栈：开发文档里的命令", () => {
 				expect(res.status, page).toBe(200);
 				const pageBlocks = shellBlocks(await res.text());
 				blocks.set(page, pageBlocks);
+				if (page === "standard-nodes") await downloadStdRelease();
 				for (const block of pageBlocks) {
 					const where = `${page}.md：\n${block}`;
 					if (SKIP.some((s) => s.when(block))) {

@@ -186,3 +186,104 @@ async fn periodic_sweeps_skip_running_and_unacked_tasks() {
     })
     .await;
 }
+
+/// 上次运行留下的后台进程目录 `<procs>/<运行 ID>/`：目录和里面的日志的修改时间分别在 `dir_ago`、`log_ago` 之前。
+fn procs_run(procs: &Path, run_id: &str, dir_ago: Duration, log_ago: Duration) {
+    let dir = procs.join(run_id);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("start.log"), "log").unwrap();
+    age(&dir.join("start.log"), log_ago);
+    age(&dir, dir_ago);
+}
+
+#[tokio::test]
+async fn procs_dirs_past_the_retention_are_removed_by_the_latest_write_in_them() {
+    let cp = FakeControlPlane::start().await;
+    let procs_root = tempfile::tempdir().unwrap();
+    let p = procs_root.path();
+    procs_run(p, "run-old", 3 * DAY, 2 * DAY);
+    // 后台进程还在写日志：目录本身旧也保留。
+    procs_run(p, "run-writing", 3 * DAY, HOUR);
+    procs_run(p, "run-recent", HOUR, HOUR);
+    std::fs::create_dir_all(p.join("run-half~deleted")).unwrap();
+    other_dir(p, ".hidden", 30 * DAY);
+    std::fs::write(p.join("notes.txt"), "x").unwrap();
+    age(&p.join("notes.txt"), 30 * DAY);
+
+    let _agent = spawn_agent(options(
+        &cp,
+        "agent-sweep-procs",
+        &[
+            "--procs-dir",
+            p.to_str().unwrap(),
+            "--task-dir-retention",
+            "24h",
+        ],
+    ));
+    cp.hello(0).await;
+
+    wait_until("expired procs dirs removed", || {
+        !p.join("run-old").exists() && !p.join("run-half~deleted").exists()
+    })
+    .await;
+    for kept in ["run-writing", "run-recent", ".hidden", "notes.txt"] {
+        assert!(p.join(kept).exists(), "{kept} 保留");
+    }
+}
+
+#[tokio::test]
+async fn periodic_sweeps_skip_procs_dirs_of_runs_with_running_or_unacked_tasks() {
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(options(
+        &cp,
+        "agent-sweep-procs-held",
+        &[
+            "--task-dir-retention",
+            "24h",
+            "--task-dir-sweep-interval",
+            "1",
+        ],
+    ));
+    let w = agent.work_dir.path();
+    let p = w.join("sfly-home/procs");
+    cp.hello(0).await;
+    cp.stop_acking();
+
+    let ready = w.join("gate-ready");
+    let release = w.join("gate-release");
+    let mut running = stub_task(
+        "task-running",
+        "gate",
+        json!({ "ready_file": ready, "release_file": release }),
+    );
+    running.run_id = "run-running".into();
+    cp.assign(running).await;
+    let mut unacked = stub_task("task-unacked", "echo", json!({ "text": "x" }));
+    unacked.run_id = "run-unacked".into();
+    cp.assign(unacked).await;
+    cp.result("task-unacked").await;
+    wait_until("gate ready", || ready.exists()).await;
+
+    for run in ["run-running", "run-unacked", "run-other"] {
+        procs_run(&p, run, 2 * DAY, 2 * DAY);
+    }
+    wait_until("periodic sweep", || !p.join("run-other").exists()).await;
+    assert!(
+        p.join("run-running").exists(),
+        "运行中的任务所在运行的目录不动"
+    );
+    assert!(
+        p.join("run-unacked").exists(),
+        "结果没有 Ack 的任务所在运行的目录不动"
+    );
+
+    std::fs::write(&release, "").unwrap();
+    cp.result("task-running").await;
+    cp.start_acking();
+    cp.end_session();
+    cp.hello(1).await;
+    wait_until("procs dirs of acked runs removed", || {
+        !p.join("run-running").exists() && !p.join("run-unacked").exists()
+    })
+    .await;
+}

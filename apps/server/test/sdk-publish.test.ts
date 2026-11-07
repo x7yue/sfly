@@ -67,6 +67,8 @@ describe("sfly publish → 控制面", () => {
 			name: "demo-e2e",
 			version: "0.1.0",
 			requires_python: ">=3.10",
+			// 项目没写 [tool.sfly] requires-sdk：用构建时 SDK 的版本（与控制面同版本）作为下限（#79）。
+			requires_sdk: `>=${cp.version}`,
 			nodes: [
 				{
 					name: "echo",

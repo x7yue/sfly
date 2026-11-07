@@ -46,17 +46,16 @@ def execute(
     entry: str,
     inputs: dict[str, Any] | None = None,
     env: dict[str, str] | None = None,
+    task_fields: dict[str, Any] | None = None,
 ) -> Execution:
     work = tmp_path / "work"
     work.mkdir(exist_ok=True)
     task = work / "task.json"
-    task.write_text(
-        json.dumps({"task_id": "t-1", "attempt": 1, "entry": entry, "inputs": inputs or {}}),
-        encoding="utf-8",
-    )
+    spec = {"task_id": "t-1", "attempt": 1, "entry": entry, "inputs": inputs or {}}
+    task.write_text(json.dumps({**spec, **(task_fields or {})}), encoding="utf-8")
     output = work / "output.json"
     env = {
-        **os.environ,
+        **{k: v for k, v in os.environ.items() if not k.startswith("SFLY_")},
         **(env or {}),
         "PYTHONPATH": os.pathsep.join([str(SDK_SRC), str(code_dir)]),
         "SFLY_TASK": str(task),
@@ -493,3 +492,65 @@ def test_ctx_artifacts_rejects_names_outside_the_artifacts_dir(tmp_path: Path, n
     with pytest.raises(ValueError, match="产物名称"):
         ctx.artifacts.save(name, "x")
     assert not (tmp_path / "x").exists()
+
+
+TASK_INFO_NODE = """
+from sfly import Context
+
+def info(ctx: Context) -> dict:
+    t = ctx.task
+    return {
+        "task": [t.run_id, t.node_id, t.task_id, t.attempt],
+        "procs_dir": str(ctx.procs_dir),
+    }
+"""
+
+#: Agent 写的 task.json 里的任务信息（agent/src/executor.rs）。
+AGENT_TASK = {"task_id": "task-9", "attempt": 2, "run_id": "run-7", "node_id": "start-db"}
+
+
+def test_ctx_task_and_procs_dir_come_from_the_agent(tmp_path: Path, code_dir: Path) -> None:
+    write_module(code_dir, "info", TASK_INFO_NODE)
+    procs = tmp_path / "home" / "procs" / "run-7"
+
+    run = execute(
+        tmp_path, code_dir, "info:info", env={"SFLY_PROCS": str(procs)}, task_fields=AGENT_TASK
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert run.output is not None
+    assert run.output["outputs"] == {
+        "task": ["run-7", "start-db", "task-9", 2],
+        "procs_dir": str(procs),
+    }
+
+
+def test_without_sfly_procs_from_an_older_agent_procs_dir_is_under_sfly_home(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 低于 0.0.4 的 Agent 不设置 SFLY_PROCS：取 Agent 默认布局下的位置（不会被旧 Agent 清理）。
+    write_module(code_dir, "info", TASK_INFO_NODE)
+    home = tmp_path / "home"
+
+    run = execute(
+        tmp_path, code_dir, "info:info", env={"SFLY_HOME": str(home)}, task_fields=AGENT_TASK
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert run.output is not None
+    assert run.output["outputs"]["procs_dir"] == str(home / "procs" / "run-7")
+
+
+def test_context_outside_an_executor_has_local_task_info(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sfly import Context, TaskInfo
+
+    monkeypatch.delenv("SFLY_TASK", raising=False)
+    monkeypatch.delenv("SFLY_PROCS", raising=False)
+    monkeypatch.setenv("SFLY_HOME", str(tmp_path))
+
+    ctx = Context(events_path=None)
+
+    assert ctx.task == TaskInfo(run_id="local", node_id="local", task_id="local", attempt=1)
+    assert ctx.procs_dir == tmp_path / "procs" / "local"

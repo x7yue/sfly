@@ -95,6 +95,19 @@ export const NodeTypeMetadata = z
 		}
 	});
 
+/**
+ * 最低 SDK 版本要求（#79）：逗号分隔的若干条件，每条是比较符加只含数字的版本号，例如 `>=0.0.4`。
+ * 比较符取 PEP 440 的 `>=`、`>`、`<=`、`<`、`==`、`!=`、`~=`；不支持通配符和预发布版本
+ * （Agent 的版本只有 `X.Y.Z`，ADR 0010）。
+ */
+const SDK_CLAUSE = String.raw`(?:~=|==|!=|<=|>=|<|>)\s*[0-9]+(?:\.[0-9]+)*`;
+export const RequiresSdk = z
+	.string()
+	.regex(
+		new RegExp(String.raw`^\s*${SDK_CLAUSE}(?:\s*,\s*${SDK_CLAUSE})*\s*$`),
+		"SDK 版本要求必须形如 >=0.0.4（逗号分隔的比较符加数字版本号）",
+	);
+
 /** 节点包元信息：节点包归档中的 `sfly-package.json`。 */
 export const PackageMetadata = z
 	.strictObject({
@@ -108,6 +121,11 @@ export const PackageMetadata = z
 			.regex(/^[0-9][0-9A-Za-z.+_!-]*$/, "版本号必须以数字开头，只能包含字母、数字和 . + _ ! -"),
 		/** Python 版本要求，例如 `>=3.10`。 */
 		requires_python: z.string().min(1),
+		/**
+		 * 需要的 SDK 运行时版本（即 Agent 版本，ADR 0010），控制面派发前检查；
+		 * 早于 #79 构建的节点包没有这个字段，不检查。
+		 */
+		requires_sdk: RequiresSdk.optional(),
 		nodes: z.array(NodeTypeMetadata).min(1),
 	})
 	.meta({ title: "sfly 节点包元信息" });

@@ -68,7 +68,8 @@ jobs:
         run: pnpm proto:breaking
         env:
           PROTO_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
-      # 含验收场景 S1–S3（apps/server/test/acceptance-s*.test.ts，真实控制面 + Agent + SDK）。
+      # 含验收场景 S1–S3（apps/server/test/acceptance-s*.test.ts，真实控制面 + Agent + SDK），
+      # 以及标准节点包 sfly-std 的测试与节点包元信息检查（std/tests）。
       - name: Test
         run: pnpm test
       - name: Build

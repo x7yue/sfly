@@ -79,6 +79,9 @@ pub struct Config {
     pub venv: PathBuf,
     /// 任务工作目录的根目录。
     pub work_dir: PathBuf,
+    /// 后台进程目录的根目录：每次运行一个子目录 `<procs_dir>/<运行 ID>/`，通过 `SFLY_PROCS` 交给执行器，
+    /// 和任务目录按同一个保留期清理（[`retention::sweep_procs`]）。
+    pub procs_dir: PathBuf,
     /// 任务目录在结果被 Ack 后保留多久（0 表示立即删除，[`retention`]）。
     pub task_dir_retention: Duration,
     /// 两次扫描工作目录、删除过期任务目录的间隔（[`retention::SWEEP_INTERVAL`]，测试里改短）。
@@ -123,6 +126,7 @@ impl Config {
             slots: DEFAULT_SLOTS,
             venv: PathBuf::from("venv"),
             work_dir: PathBuf::from("work"),
+            procs_dir: PathBuf::from("procs"),
             task_dir_retention: retention::DEFAULT_RETENTION,
             task_dir_sweep_interval: retention::SWEEP_INTERVAL,
             mirrors: environment::LocalMirrors::default(),
@@ -278,6 +282,8 @@ struct Runtime {
     dev: DevRegistry,
     installer: Installer,
     work_dir: PathBuf,
+    /// 后台进程目录的根目录（[`Config::procs_dir`]）。
+    procs_dir: PathBuf,
     /// 任务目录的保留期（[`Config::task_dir_retention`]）。
     retention: Duration,
     terminate_grace: Duration,
@@ -290,6 +296,9 @@ struct Runtime {
     installs: mpsc::UnboundedSender<InstallStatus>,
     /// 任务的日志与进度（[`logs`]）。
     telemetry: logs::Telemetry,
+    /// 手上的任务各属于哪次运行（任务 ID → 运行 ID）：收下任务时登记，扫描时去掉已经不在手上的。
+    /// 清理后台进程目录时据此跳过还有任务在手上的运行（[`retention::sweep_procs`]）。
+    task_runs: std::sync::Mutex<HashMap<String, String>>,
     /// 正在执行（含安装中）的任务，键为 (task_id, attempt)。
     cancels: std::sync::Mutex<HashMap<(String, u32), HeldTask>>,
     /// 任务结束后上传产物（[`artifacts`]）。
@@ -316,6 +325,10 @@ impl Runtime {
     /// 收下派发的任务（在收到 AssignTask 时同步调用：之后的心跳一定带上它），返回它的取消信号。
     fn accept(&self, task: &AssignTask) -> executor::CancelSignal {
         let (cancel_tx, cancel) = watch::channel(None);
+        self.task_runs
+            .lock()
+            .unwrap()
+            .insert(task.task_id.clone(), task.run_id.clone());
         self.cancels.lock().unwrap().insert(
             (task.task_id.clone(), task.attempt),
             HeldTask {
@@ -362,14 +375,26 @@ impl Runtime {
         retention::finished(&self.work_dir, task_id, self.retention);
     }
 
-    /// 在后台扫描工作目录，删除超过保留期的任务目录（[`retention::sweep`]）：结果还没 Ack 的按现在的快照，
-    /// 正在执行的在删除前再查一次（扫描期间可能收到新任务）。
+    /// 在后台扫描工作目录和后台进程目录，删除超过保留期的任务目录（[`retention::sweep`]）和运行目录
+    /// （[`retention::sweep_procs`]）：结果还没 Ack 的按现在的快照，正在执行的在删除前再查一次
+    /// （扫描期间可能收到新任务）。
     fn sweep(self: &Arc<Self>, unacked: &BTreeMap<(String, u32), TaskResult>) {
         let held: HashSet<String> = self.held(unacked).into_iter().map(|t| t.task_id).collect();
+        self.task_runs
+            .lock()
+            .unwrap()
+            .retain(|task_id, _| held.contains(task_id));
         let runtime = self.clone();
         tokio::task::spawn_blocking(move || {
-            retention::sweep(&runtime.work_dir, runtime.retention, |task_id| {
+            let is_held = |task_id: &str| {
                 held.contains(task_id) || runtime.running().iter().any(|(id, _)| id == task_id)
+            };
+            retention::sweep(&runtime.work_dir, runtime.retention, is_held);
+            retention::sweep_procs(&runtime.procs_dir, runtime.retention, |run_id| {
+                let task_runs = runtime.task_runs.lock().unwrap().clone();
+                task_runs
+                    .iter()
+                    .any(|(task_id, run)| run == run_id && is_held(task_id))
             });
         });
     }
@@ -459,14 +484,18 @@ impl Runtime {
     }
 
     async fn start(&self, task: &AssignTask, entry: &str) -> Result<executor::Running, TaskResult> {
+        let settings = executor::Settings {
+            work_root: &self.work_dir,
+            procs_root: &self.procs_dir,
+            grace: self.terminate_grace,
+            log_forward_rate: self.log_forward_rate,
+        };
         executor::start(
             &self.inventory.venv,
-            &self.work_dir,
+            &settings,
             task,
             entry,
             &self.telemetry,
-            self.terminate_grace,
-            self.log_forward_rate,
         )
         .await
     }
@@ -661,6 +690,9 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     std::fs::create_dir_all(&config.work_dir)
         .with_context(|| format!("create work dir {}", config.work_dir.display()))?;
     let work_dir = std::fs::canonicalize(&config.work_dir)?;
+    std::fs::create_dir_all(&config.procs_dir)
+        .with_context(|| format!("create procs dir {}", config.procs_dir.display()))?;
+    let procs_dir = std::fs::canonicalize(&config.procs_dir)?;
     let venv =
         std::fs::canonicalize(&config.venv).or_else(|_| std::path::absolute(&config.venv))?;
 
@@ -684,6 +716,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             http: http.clone(),
         },
         work_dir: work_dir.clone(),
+        procs_dir,
         retention: config.task_dir_retention,
         terminate_grace: config.terminate_grace,
         log_forward_rate: config.log_forward_rate,
@@ -691,6 +724,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         results: results_tx,
         installs: installs_tx,
         telemetry: telemetry_tx,
+        task_runs: std::sync::Mutex::new(HashMap::new()),
         cancels: std::sync::Mutex::new(HashMap::new()),
         uploader: artifacts::Uploader {
             http: http.clone(),

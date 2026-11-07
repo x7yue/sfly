@@ -1,6 +1,6 @@
 # uv 虚拟工作区根（不是可发布的包）。成员见 [tool.uv.workspace]。
 [tool.uv.workspace]
-members = ["sdk/python"]
+members = ["sdk/python", "std"]
 
 [dependency-groups]
 dev = [
@@ -11,6 +11,8 @@ dev = [
     # sfly.cli.build 在 Python 3.10 上用 tomli；mypy 以 3.10 为目标检查时需要它的类型。
     "tomli>=2",
     "types-jsonschema>=4.23",
+    # sfly-std 的进程类节点和测试用 psutil。
+    "types-psutil>=5.9",
 ]
 
 [tool.uv]
@@ -25,18 +27,18 @@ extend-exclude = ["node_modules", "apps", "packages", "*.md"]
 select = ["E", "F", "W", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["sfly"]
+known-first-party = ["sfly", "sfly_std"]
 
 [tool.mypy]
 strict = true
-files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks"]
+files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks", "std/src", "std/tests"]
 # sdk/python/tests 里 sfly.testing 的测试直接导入桩节点包的节点函数。
-# sdk/python/tests 里的测试从 indexes.py 导入共用的桩。
-mypy_path = "testdata/stub-package/src:sdk/python/tests"
+# sdk/python/tests 里的测试从 indexes.py 导入共用的桩，std/tests 里的从 named_sleep.py 导入。
+mypy_path = "testdata/stub-package/src:sdk/python/tests:std/tests"
 python_version = "3.10"
 
 [tool.pytest.ini_options]
-testpaths = ["sdk/python/tests"]
+testpaths = ["sdk/python/tests", "std/tests"]
 addopts = "--import-mode=importlib"
-# 测试共用的桩（sdk/python/tests/indexes.py）。
-pythonpath = ["sdk/python/tests"]
+# 测试共用的桩（sdk/python/tests/indexes.py、std/tests/named_sleep.py）。
+pythonpath = ["sdk/python/tests", "std/tests"]

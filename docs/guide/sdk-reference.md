@@ -12,12 +12,14 @@
 |---|---|
 | `pyproject.toml` 的 `[project]` | `name`（节点包名：小写字母、数字、`-`、`_`，以字母或数字开头）、`version`、`requires-python`（默认 `>=3.10`）、`dependencies` |
 | `src/<模块>/` | 节点代码；模块名是包名把 `-` 换成 `_`。也可以是 `<模块>/` 或 `<模块>.py` |
+| `pyproject.toml` 的 `[tool.sfly]` | `requires-sdk`：节点包需要的 SDK 版本，例如 `>=0.0.4`（见下文） |
 | `[dependency-groups] dev` | `sfly[cli]`（锁定为控制面版本）、pytest、ruff |
 | `tests/` | 单元测试（`sfly.testing`） |
 
 - `sfly build` 导入模块及其全部子模块，收集其中的 `@node`。节点名在一个节点包里不能重复。
 - 依赖只写在 `[project].dependencies`（pyproject 没有声明 dependencies 时读 `requirements.txt`）。Agent 上所有节点包共用一个 venv，只写宽松的下限。
 - `sfly` 不能写进 `[project].dependencies`：Agent 自带 SDK 运行时，`sfly build` 遇到它直接报错。
+- Agent 上 SDK 运行时的版本就是 Agent 的版本。`requires-sdk` 声明节点包需要的 SDK 版本，`sfly build` 把它写进节点包元信息的 `requires_sdk`；没写时用构建时 SDK 的版本作为下限（`>=<版本>`），`sfly init` 生成的项目写的是当时控制面的版本。格式是逗号分隔的比较符加数字版本号（`>=`、`>`、`<=`、`<`、`==`、`!=`、`~=`），例如 `>=0.0.4`。用到新版 SDK 才有的接口时调高它：派发到版本不满足的 Agent 时任务以 `env_error` 失败，错误信息写明需要的 SDK 版本和 Agent 的版本，提示升级 Agent。触发前检查比较的是控制面的版本（Agent 会先自更新到控制面的版本再执行任务），不满足时提示升级控制面。
 
 ## `@node`
 
@@ -136,6 +138,22 @@ return {"report": ref}
 - 任务结束后 Agent 把产物上传到控制面，运行视图里可以下载。
 - **产物引用**：在 Agent 上是产物的下载地址，写进输出交给后续节点，后续节点可以直接下载（例如 `urllib.request.urlopen(ref)`）；本地调试时是本地文件路径。
 
+## `ctx.task` 与 `ctx.procs_dir`：任务信息与后台进程目录
+
+```python
+ctx.task.run_id     # 运行 ID
+ctx.task.node_id    # 场景里的节点 ID（同一个节点类型出现多次时各不相同）
+ctx.task.task_id    # 任务 ID
+ctx.task.attempt    # 第几次尝试，从 1 开始，重试时加 1
+
+log = ctx.procs_dir / f"{ctx.task.node_id}.log"
+log.parent.mkdir(parents=True, exist_ok=True)
+```
+
+- `ctx.procs_dir` 是这次运行的**后台进程目录**：节点启动的、节点结束后还要继续运行的进程，把日志等文件放在这里。它不在任务目录里，任务目录被清理或任务重试时不受影响；同一次运行的任务共用一个目录（用节点 ID 区分文件名）。目录不一定已经存在，使用前自己创建。
+- 在 Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`，和任务目录按同一个保留期清理（运行还有任务在 Agent 上时不动），见「安装 Agent」。0.0.4 之前的 Agent 不提供这个目录，SDK 取同样的位置，但旧 Agent 不会清理它。
+- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly run` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
+
 ## 取消与超时
 
 - 用户取消运行、任务超时（默认 1 小时），或任务所在的子流程被场景里的停止子流程节点停止时，Agent 先写取消标记，再向任务的进程树发 SIGTERM。执行器把 SIGTERM 变成节点里抛出的 `sfly.Cancelled`。
@@ -214,7 +232,7 @@ uv run sfly run countdown --params '{"name": "世界", "steps": 5}'
 ```
 
 - 日志实时打印到标准错误；结束后在标准输出打印输出值（`输出：` 后的 JSON）、指标汇总表和运行目录。
-- 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`，里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。
+- 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`（目录名也是 `ctx.task.run_id`；`ctx.procs_dir` 是 `.sfly/procs/<目录名>/`），里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。
 - Ctrl-C 按平台的取消流程取消（节点里抛出 `Cancelled`，宽限期后强制杀掉），再按一次立即杀掉。
 - 退出码：成功 0，节点失败 1，参数不合法或找不到节点 2，取消 130。
 
