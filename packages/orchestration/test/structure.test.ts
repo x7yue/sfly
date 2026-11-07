@@ -230,8 +230,18 @@ describe("子流程名称", () => {
 
 	it("名称为空（或只有空白）时给出警告", () => {
 		expect(structureWarnings(withSubflows([subflow("s", ""), subflow("t", "  ")]))).toEqual([
-			{ code: "subflow_name_empty", node_id: "s", message: "子流程入口节点 s 没有填写名称" },
-			{ code: "subflow_name_empty", node_id: "t", message: "子流程入口节点 t 没有填写名称" },
+			{
+				code: "subflow_name_empty",
+				node_id: "s",
+				input: "name",
+				message: "子流程入口节点 s 没有填写名称",
+			},
+			{
+				code: "subflow_name_empty",
+				node_id: "t",
+				input: "name",
+				message: "子流程入口节点 t 没有填写名称",
+			},
 		]);
 	});
 
@@ -244,11 +254,13 @@ describe("子流程名称", () => {
 			{
 				code: "subflow_name_duplicate",
 				node_id: "s",
+				input: "name",
 				message: "子流程名称「监控」重复（子流程入口节点 s、t）",
 			},
 			{
 				code: "subflow_name_duplicate",
 				node_id: "t",
+				input: "name",
 				message: "子流程名称「监控」重复（子流程入口节点 s、t）",
 			},
 		]);
@@ -306,6 +318,7 @@ describe("停止子流程节点的引用检查（SEMANTICS §4.1 第 1 条）", 
 			{
 				code: "stop_subflow_unset",
 				node_id: "stopper",
+				input: "subflow",
 				message: "停止子流程节点 stopper 没有选择子流程",
 			},
 		]);
@@ -313,6 +326,7 @@ describe("停止子流程节点的引用检查（SEMANTICS §4.1 第 1 条）", 
 			{
 				code: "stop_subflow_unknown",
 				node_id: "stopper",
+				input: "subflow",
 				message: "停止子流程节点 stopper 要停止的子流程 gone 不存在",
 			},
 		]);
@@ -324,6 +338,7 @@ describe("停止子流程节点的引用检查（SEMANTICS §4.1 第 1 条）", 
 			{
 				code: "stop_subflow_before_trigger",
 				node_id: "stopper",
+				input: "subflow",
 				message: "停止子流程节点 stopper 在触发子流程「压测」的异步任务节点 spawnB 之前",
 			},
 		]);
@@ -334,6 +349,7 @@ describe("停止子流程节点的引用检查（SEMANTICS §4.1 第 1 条）", 
 			{
 				code: "stop_subflow_out_of_scope",
 				node_id: "inner",
+				input: "subflow",
 				message: "停止子流程节点 inner 只能停止本链触发的子流程，「监控」不是",
 			},
 		]);

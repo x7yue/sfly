@@ -495,11 +495,13 @@ describe("子流程的静态检查（保存时警告，触发时阻断）", () =
 			{
 				code: "subflow_name_duplicate",
 				node_id: "sub1",
+				input: "name",
 				message: "子流程名称「监控」重复（子流程入口节点 sub1、sub2）",
 			},
 			{
 				code: "subflow_name_duplicate",
 				node_id: "sub2",
+				input: "name",
 				message: "子流程名称「监控」重复（子流程入口节点 sub1、sub2）",
 			},
 		]);

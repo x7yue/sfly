@@ -177,15 +177,10 @@ function NodeInspector({
 		...Object.keys(type?.inputs.properties ?? {}),
 		...(node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : []),
 		...(node.kind === "timer" ? ["at", "tz"] : node.kind === "sleep" ? ["duration"] : []),
+		...(node.kind === "subflow_entry" ? ["name"] : node.kind === "stop_subflow" ? ["subflow"] : []),
 	]);
-	const isNameWarning = (w: OrchestrationWarning) =>
-		w.code === "subflow_name_empty" || w.code === "subflow_name_duplicate";
-	const isStopWarning = (w: OrchestrationWarning) => w.code.startsWith("stop_subflow_");
 	const general = warnings.filter(
-		(w) =>
-			!isNameWarning(w) &&
-			!isStopWarning(w) &&
-			!("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
+		(w) => !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
 	);
 	const change = (next: DocNode) => context.onChangeNode(id, next);
 	const hasExec =
@@ -252,7 +247,7 @@ function NodeInspector({
 									<SubflowNameField
 										id={id}
 										node={node}
-										problems={warnings.filter(isNameWarning).map((w) => w.message)}
+										problems={problemsOf("name")}
 										onChange={change}
 									/>
 									<SubflowTrigger id={id} doc={doc} onLocate={context.onLocate} />
@@ -301,7 +296,7 @@ function NodeInspector({
 							id={id}
 							node={node}
 							doc={doc}
-							problems={warnings.filter(isStopWarning).map((w) => w.message)}
+							problems={problemsOf("subflow")}
 							onChange={change}
 							onLocate={context.onLocate}
 						/>

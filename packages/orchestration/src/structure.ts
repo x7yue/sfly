@@ -48,6 +48,8 @@ export interface StructureWarning {
 	message: string;
 	/** 警告所指的节点（连线问题指向连线的起点或不存在的端点）。 */
 	node_id?: string;
+	/** 警告所指的节点配置字段（子流程入口的 name、停止子流程节点的 subflow），检查器显示在字段下面。 */
+	input?: string;
 }
 
 /** 子流程嵌套深度上限（主链为第 0 层）。 */
@@ -128,8 +130,13 @@ export function checkConnection(doc: StructureDocument, edge: StructureEdge): st
 /** 结构检查：返回全部警告（顺序固定：按规则分类，同类按节点 / 连线在文档中的顺序）。 */
 export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	const warnings: StructureWarning[] = [];
-	const warn = (code: StructureWarningCode, message: string, node_id?: string) =>
-		warnings.push(node_id === undefined ? { code, message } : { code, message, node_id });
+	const warn = (code: StructureWarningCode, message: string, node_id?: string, input?: string) =>
+		warnings.push({
+			code,
+			message,
+			...(node_id === undefined ? {} : { node_id }),
+			...(input === undefined ? {} : { input }),
+		});
 	const { byId, out, into } = indexEdges(doc);
 	const count = (m: Map<string, string[]>, id: string) => (m.get(id) ?? []).length;
 
@@ -237,7 +244,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	for (const node of subflows) {
 		const name = subflowName(node);
 		if (name === "") {
-			warn("subflow_name_empty", `子流程入口节点 ${node.id} 没有填写名称`, node.id);
+			warn("subflow_name_empty", `子流程入口节点 ${node.id} 没有填写名称`, node.id, "name");
 			continue;
 		}
 		const same = named.get(name) ?? [];
@@ -246,6 +253,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				"subflow_name_duplicate",
 				`子流程名称「${name}」重复（子流程入口节点 ${same.join("、")}）`,
 				node.id,
+				"name",
 			);
 		}
 	}
@@ -255,7 +263,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	for (const node of doc.nodes) {
 		if (node.kind !== "stop_subflow") continue;
 		if (!node.subflow) {
-			warn("stop_subflow_unset", `停止子流程节点 ${node.id} 没有选择子流程`, node.id);
+			warn("stop_subflow_unset", `停止子流程节点 ${node.id} 没有选择子流程`, node.id, "subflow");
 			continue;
 		}
 		const target = byId.get(node.subflow);
@@ -264,6 +272,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				"stop_subflow_unknown",
 				`停止子流程节点 ${node.id} 要停止的子流程 ${node.subflow} 不存在`,
 				node.id,
+				"subflow",
 			);
 			continue;
 		}
@@ -277,12 +286,14 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 				"stop_subflow_before_trigger",
 				`停止子流程节点 ${node.id} 在触发子流程「${name}」的异步任务节点 ${trigger} 之前`,
 				node.id,
+				"subflow",
 			);
 		} else {
 			warn(
 				"stop_subflow_out_of_scope",
 				`停止子流程节点 ${node.id} 只能停止本链触发的子流程，「${name}」不是`,
 				node.id,
+				"subflow",
 			);
 		}
 	}
