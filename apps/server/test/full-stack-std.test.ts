@@ -5,8 +5,9 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { logsApi } from "@sfly/schema";
+import { logsApi, metricsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { systemClock } from "../src/clock.js";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -30,8 +31,9 @@ describe("全栈：标准节点包 sfly-std", () => {
 		const bin = agentBinary();
 		dir = await mkdtemp(join(tmpdir(), "sfly-full-std-"));
 		let wheels: Awaited<ReturnType<typeof wheelhouse>>;
+		// 指标点的时间戳来自真实 Agent 的系统时钟，控制面也用系统时钟：否则超出保留期的可接收范围而被丢弃（#32）。
 		[cp, venv, std, wheels] = await Promise.all([
-			startTestControlPlane(),
+			startTestControlPlane({ clock: systemClock }),
 			createStubVenv({ sdkOnly: true }),
 			buildStdPackage(join(dir, "dist")),
 			wheelhouse(join(dir, "wheels"), [], { withStdDependencies: true }),
@@ -211,6 +213,94 @@ describe("全栈：标准节点包 sfly-std", () => {
 			outputs: { was_running: true, exit_code: 143 },
 		});
 		expect(() => process.kill(pid, 0)).toThrow();
+	}, 180_000);
+
+	it("http_request 用 until_ok 等服务就绪并断言响应 JSON，assert 引用它的输出", async () => {
+		const { createServer } = await import("node:http");
+		let requests = 0;
+		const server = createServer((_req, res) => {
+			requests += 1;
+			if (requests < 3) {
+				res.writeHead(503).end("starting");
+				return;
+			}
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ status: "ok", version: "1.2.3" }));
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const { port } = server.address() as { port: number };
+		try {
+			const { api, runId } = await runChain([
+				{
+					id: "ready",
+					node: "http_request",
+					inputs: {
+						url: `http://127.0.0.1:${port}/health`,
+						expect_json: [{ path: "$.status", op: "eq", value: "ok" }],
+						until_ok: true,
+						wait: 60,
+						poll: 0.2,
+					},
+				},
+				{
+					id: "check",
+					node: "assert",
+					inputs: {
+						actual: "${{ nodes.ready.outputs.json }}",
+						assertions: [{ path: "$.version", op: "eq", value: "1.2.3" }],
+					},
+				},
+			]);
+
+			expect((await api.run(runId)).status).toBe("success");
+			const ready = await api.node(runId, "ready");
+			expect(ready.outputs).toMatchObject({
+				status: 200,
+				json: { status: "ok", version: "1.2.3" },
+			});
+			expect(requests).toBe(3);
+		} finally {
+			server.close();
+		}
+	}, 180_000);
+
+	it("system_monitor 在 Agent 上按间隔上报声明的系统指标，duration 到期后成功", async () => {
+		const { api, runId } = await runChain([
+			{ id: "monitor", node: "system_monitor", inputs: { interval: 0.5, duration: 3 } },
+		]);
+
+		expect((await api.run(runId)).status).toBe("success");
+		const catalog = metricsApi.catalog.response.parse(await api.getJson(`/runs/${runId}/metrics`));
+		const [node] = catalog.nodes;
+		expect(node).toMatchObject({
+			node_id: "monitor",
+			package: "sfly-std",
+			node: "system_monitor",
+			primary_metric: "cpu_percent",
+		});
+		expect(node?.charts.map((c) => c.title)).toEqual([
+			"CPU 使用率",
+			"内存使用率",
+			"已用内存",
+			"负载",
+			"磁盘空间使用率",
+			"磁盘读写",
+			"网络收发",
+		]);
+		const metrics = node?.attempts[0]?.metrics ?? [];
+		expect(metrics.map((m) => m.name).sort()).toEqual([
+			"cpu_percent",
+			"disk_read_bytes_per_s",
+			"disk_used_percent",
+			"disk_write_bytes_per_s",
+			"load1",
+			"mem_used_bytes",
+			"mem_used_percent",
+			"net_rx_bytes_per_s",
+			"net_tx_bytes_per_s",
+		]);
+		// Agent 按秒合并：3 秒的监控至少落在 2 个秒桶里。
+		for (const metric of metrics) expect(metric.points, metric.name).toBeGreaterThanOrEqual(2);
 	}, 180_000);
 
 	it("shell 写出结果文件，file_assert 检查后 collect_artifacts 收集为产物；refs 交给后面的节点，可以下载", async () => {
