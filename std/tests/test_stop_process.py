@@ -108,7 +108,8 @@ def test_the_whole_process_group_is_terminated(tmp_path: Path, start: Callable[[
 
     assert result.status == "success", result.error
     assert result.outputs is not None and result.outputs["was_running"] is True
-    assert not any(alive(p) for p in [pid, *children])
+    # 信号是异步生效的：节点等到组长退出就返回，同组的子进程可能还要片刻才退出。
+    wait_for("整组进程退出", lambda: not any(alive(p) for p in [pid, *children]))
 
 
 def test_a_process_that_already_exited_succeeds_with_its_exit_code(
