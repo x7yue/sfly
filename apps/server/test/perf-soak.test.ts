@@ -75,3 +75,13 @@ describe("后半段比前半段多出的中位数（lateMedianGrowth，看积压
 		expect(lateMedianGrowth([[0, 1]])).toBeNull();
 	});
 });
+
+describe("长时负载测试的长任务超时（longTaskTimeout）", () => {
+	it("比计划时长多留余量：长任务跑满时长时不会被平台按超时终止", async () => {
+		const { longTaskTimeout } = await import("../perf/soak.js");
+		for (const seconds of [60, 3600, 5400]) {
+			expect(longTaskTimeout(seconds)).toBeGreaterThanOrEqual(seconds + 300);
+		}
+		expect(Number.isInteger(longTaskTimeout(90))).toBe(true);
+	});
+});

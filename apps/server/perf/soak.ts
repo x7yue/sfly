@@ -40,6 +40,12 @@ const NODE_ID = "load";
 export const sampleIntervalMs = (seconds: number) =>
 	Math.min(10_000, Math.max(1000, Math.round((seconds * 1000) / 720)));
 
+/**
+ * 长任务的执行超时（秒）：节点默认 1 小时（SEMANTICS §3.1），1 小时的 soak 会让长任务在最后被平台按超时终止，
+ * 所以比计划时长多留 10 分钟（任务的开始晚于计时起点，结束后还要写完最后一批指标）。
+ */
+export const longTaskTimeout = (seconds: number) => Math.ceil(seconds) + 600;
+
 /** 长时负载测试，持续 seconds 秒。 */
 export function soak(seconds: number) {
 	return definePerfItem({
@@ -168,10 +174,15 @@ async function databaseStats(client: pg.Client) {
 
 async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promise<ItemRun> {
 	const { api, agent, agentName } = stack;
-	const scenario = (name: string, node: string, inputs: unknown) =>
-		stubScenario(api, agentName, NODE_ID, node, inputs, name);
+	const scenario = (name: string, node: string, inputs: unknown, settings = {}) =>
+		stubScenario(api, agentName, NODE_ID, node, inputs, name, settings);
 	const [long, stdout, short] = await Promise.all([
-		scenario("soak-long", "metric_rate", { rate: EVENTS_PER_SECOND, seconds }),
+		scenario(
+			"soak-long",
+			"metric_rate",
+			{ rate: EVENTS_PER_SECOND, seconds },
+			{ timeout: longTaskTimeout(seconds) },
+		),
 		scenario("soak-stdout", "stdout_rate", STDOUT_TASK),
 		scenario("soak-short", "metric_rate", SHORT_TASK),
 	]);
@@ -212,12 +223,15 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 		clearInterval(progress);
 	}
 	let longTask: Awaited<ReturnType<typeof checkLongTask>> | null = null;
+	// 长任务没有成功（例如失败、超时）时不抛出：一小时采集的曲线照常写进报告，这一条记为不通过。
+	let longTaskError: string | null = null;
 	if (!ctx.signal.aborted) {
 		ctx.log("等长任务结束，按序号核对它的事件");
 		try {
 			longTask = await checkLongTask(api, longRun, ctx.signal);
 		} catch (error) {
-			if (!ctx.signal.aborted) throw error;
+			if (!ctx.signal.aborted)
+				longTaskError = error instanceof Error ? error.message : String(error);
 		}
 	}
 	const [agentUsage, workSamples, dataSamples, dbSamples] = await Promise.all([
@@ -263,6 +277,15 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 			check: hard("<=", 0),
 		},
 	];
+	if (longTaskError !== null) {
+		measurements.push({
+			id: "long_task_failed",
+			label: "长任务没有成功，没法核对它的事件",
+			value: 1,
+			unit: "个",
+			check: hard("<=", 0),
+		});
+	}
 	if (longTask) {
 		const { outputs, sequence } = longTask;
 		measurements.push(
@@ -384,6 +407,7 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 			`定速输出任务每个 ${STDOUT_TASK.mib_per_second} MiB/秒 × ${STDOUT_TASK.seconds} 秒、短时上报任务每个 ${SHORT_TASK.rate} 次/秒 × ${SHORT_TASK.seconds} 秒，共完成 ${finished} 个。`,
 		`随时间变化的数据每 ${intervalMs / 1000} 秒采样一次；Agent 以 --task-dir-retention 0 启动，工作目录占用只反映执行中的任务。`,
 		...failures.slice(0, 5).map((f) => `没有成功的短任务：${f}`),
+		...(longTaskError === null ? [] : [`长任务没有成功：${longTaskError}`]),
 	];
 	return { measurements, series, notes };
 }

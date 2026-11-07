@@ -27,13 +27,15 @@ export function stubScenario(
 	node: string,
 	inputs: unknown,
 	name = "perf",
+	/** 节点的其余配置，例如 `timeout`。 */
+	settings: Record<string, unknown> = {},
 ): Promise<string> {
 	return api.createOrchestration(
 		{
 			default_agent: agentName,
 			nodes: [
 				{ id: "entry", kind: "entry" },
-				{ id: nodeId, kind: "package", package: "sfly-stub", node, inputs },
+				{ id: nodeId, kind: "package", package: "sfly-stub", node, inputs, ...settings },
 			],
 			edges: [{ from: "entry", to: nodeId, kind: "chain" }],
 			packages: { "sfly-stub": "0.1.0" },
