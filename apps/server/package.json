@@ -9,7 +9,8 @@
 		"start": "tsx src/main.ts",
 		"build": "rm -rf dist/sdk && uv build --wheel --quiet --out-dir dist/sdk ../../sdk/python",
 		"bundle": "tsx scripts/bundle.ts",
-		"perf": "tsx perf/main.ts",
+		"perf": "node --import tsx perf/main.ts",
+		"perf:soak": "node --import tsx perf/main.ts --soak",
 		"db:generate": "drizzle-kit generate",
 		"typecheck": "tsc -p .",
 		"test": "vitest run"

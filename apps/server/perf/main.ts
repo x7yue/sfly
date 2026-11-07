@@ -1,8 +1,9 @@
-// 本地性能测试入口（ARCHITECTURE §7.6）：根目录 `pnpm perf`。只在本地开发环境运行，不进 CI。
+// 本地性能测试入口（ARCHITECTURE §7.6）：根目录 `pnpm perf` 与 `pnpm perf:soak`（--soak）。只在本地开发环境运行，不进 CI。
 //
 // 1. 构建 release Agent 与打包后的控制面（--no-build 跳过）；
-// 2. 依次运行 perf/items/ 下的各项（--only 只运行指定项），每项用独立的数据库、临时目录和进程，
-//    结束（包括失败与 Ctrl-C）后清理；
+// 2. 依次运行 perf/items/ 下的各项（--only 只运行指定项；--soak 只运行 soak.ts 的长时负载测试），
+//    每项用独立的数据库、临时目录和进程，结束（包括失败与 Ctrl-C）后清理；被 Ctrl-C 中断时，
+//    正在运行的项交出已采集的数据，报告照常写出并标为被中断；
 // 3. 把报告写到 out/perf/<时间>/report.{json,md}，与本机上一次结果对比，标出变化超过 20% 的数值；
 // 4. 有硬性断言不满足或某项出错时以退出码 1 结束，并列出是哪一项、哪个数值。
 import { execFileSync } from "node:child_process";
@@ -23,6 +24,7 @@ import {
 	renderMarkdown,
 	type VersionInfo,
 } from "./report.js";
+import { soak } from "./soak.js";
 import { buildArtifacts, existingArtifacts } from "./stack.js";
 import { parseTargets } from "./targets.js";
 
@@ -130,7 +132,7 @@ async function main(): Promise<number> {
 		console.error(`${error instanceof Error ? error.message : String(error)}\n\n${USAGE}`);
 		return 2;
 	}
-	const all = await loadItems();
+	const all = options.soakSeconds === null ? await loadItems() : [soak(options.soakSeconds)];
 	if (options.list) {
 		for (const item of all) console.log(`${item.id}\t${item.title}`);
 		return 0;
@@ -142,11 +144,25 @@ async function main(): Promise<number> {
 		console.error(error instanceof Error ? error.message : String(error));
 		return 2;
 	}
+	if (options.soakSeconds !== null) {
+		log(
+			`长时负载测试：持续 ${options.soakSeconds} 秒（中途按 Ctrl-C 停止，已采集的数据照常写进报告）`,
+		);
+	}
 
 	const abort = new AbortController();
-	const onSignal = () => {
-		if (abort.signal.aborted) process.exit(130);
-		log("收到中断：停止当前项并清理（再按一次 Ctrl-C 立即退出，不清理）");
+	// 终端的 Ctrl-C 发给整个进程组（Agent、控制面也会收到），pnpm 还会把它收到的 SIGINT 转发给本进程（几毫秒后）、
+	// 也可能再发 SIGTERM。所以中断之后：1 秒内的 SIGINT 算同一次 Ctrl-C，SIGTERM 忽略，都不打断清理与写报告；
+	// 隔 1 秒以上再按一次 Ctrl-C 才立即退出。也因此 package.json 用 `node --import tsx` 启动：
+	// tsx 命令行会转发信号，本进程忙时它会重发信号、最后 SIGKILL。
+	let firstSigint: number | undefined;
+	const onSignal = (signal: NodeJS.Signals) => {
+		if (signal === "SIGINT") {
+			if (firstSigint !== undefined && Date.now() - firstSigint > 1000) process.exit(130);
+			firstSigint ??= Date.now();
+		}
+		if (abort.signal.aborted) return;
+		log("收到中断：停止当前项并清理，写出已采集的数据（再按一次 Ctrl-C 立即退出，不清理）");
 		abort.abort(new Error("被中断"));
 	};
 	process.on("SIGINT", onSignal);
@@ -190,6 +206,7 @@ async function main(): Promise<number> {
 		machine,
 		version: versionInfo(),
 		only: options.only,
+		interrupted: abort.signal.aborted,
 		items: outcomes,
 		previous: previous && { dir: relative(repoRoot, previous.dir), report: previous.report },
 	});
@@ -201,7 +218,10 @@ async function main(): Promise<number> {
 	log(`报告：${relative(repoRoot, dir)}/report.md`);
 	log(report.comparison ? `已与 ${report.comparison.dir} 对比` : "本机没有更早的结果，不对比");
 	for (const c of report.changes) log(`变化超过 20%：${c.title} / ${c.label}`);
-	if (report.ok) {
+	if (report.interrupted) {
+		log("结论：被中断（已采集的数据照常写进报告）");
+		for (const failure of report.failures) log(`  ${failure}`);
+	} else if (report.ok) {
 		log("结论：通过");
 	} else {
 		log("结论：不通过");

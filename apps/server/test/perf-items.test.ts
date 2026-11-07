@@ -3,7 +3,7 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseOptions } from "../perf/options.js";
+import { parseDuration, parseOptions } from "../perf/options.js";
 import { loadItems, selectItems } from "../perf/registry.js";
 import { parseTargets } from "../perf/targets.js";
 import { repoRoot } from "./support/agent-binary.js";
@@ -75,6 +75,7 @@ describe("命令行参数", () => {
 			outDir: "/repo/out/perf",
 			build: true,
 			list: false,
+			soakSeconds: null,
 		});
 	});
 
@@ -91,6 +92,7 @@ describe("命令行参数", () => {
 			outDir: "/o",
 			build: false,
 			list: false,
+			soakSeconds: null,
 		});
 		expect(parseOptions([], { SFLY_PERF_TMPDIR: "/big/tmp" }, "/repo").tmpDir).toBe("/big/tmp");
 		expect(parseOptions(["--list"], {}, "/repo").list).toBe(true);
@@ -98,5 +100,41 @@ describe("命令行参数", () => {
 
 	it("不认识的参数报错", () => {
 		expect(() => parseOptions(["--bogus"], {}, "/repo")).toThrow(/bogus/);
+	});
+
+	it("--soak（pnpm perf:soak）默认运行 1 小时，结果单独放在 out/perf/soak 下，不与 pnpm perf 的结果互相对比", () => {
+		const options = parseOptions(["--soak"], {}, "/repo");
+		expect(options.soakSeconds).toBe(3600);
+		expect(options.outDir).toBe("/repo/out/perf/soak");
+		expect(options.tmpDir).toBe("/repo/out/perf/tmp");
+		expect(parseOptions(["--soak", "--out-dir", "o"], {}, "/repo").outDir).toBe("/repo/o");
+	});
+
+	it("--duration 指定长时负载测试的时长", () => {
+		expect(parseOptions(["--soak", "--duration", "5m"], {}, "/repo").soakSeconds).toBe(300);
+		expect(parseOptions(["--soak", "--duration=1h30m"], {}, "/repo").soakSeconds).toBe(5400);
+	});
+
+	it("--duration 只用于 --soak；--soak 只有一项长时负载，不能与 --only 同用", () => {
+		expect(() => parseOptions(["--duration", "5m"], {}, "/repo")).toThrow("--duration 只用于");
+		expect(() => parseOptions(["--soak", "--only", "a"], {}, "/repo")).toThrow("--only");
+	});
+});
+
+describe("时长", () => {
+	it("接受秒数，或数字加单位 s、m、h 的组合", () => {
+		expect(parseDuration("90")).toBe(90);
+		expect(parseDuration("90s")).toBe(90);
+		expect(parseDuration("5m")).toBe(300);
+		expect(parseDuration("2h")).toBe(7200);
+		expect(parseDuration("1h30m")).toBe(5400);
+		expect(parseDuration("1m30s")).toBe(90);
+		expect(parseDuration("0.5h")).toBe(1800);
+	});
+
+	it("零、负数和写错的时长报错", () => {
+		for (const text of ["", "0", "0m", "-5m", "5x", "m", "1h 30m", "5m1h"]) {
+			expect(() => parseDuration(text), text).toThrow("无效的时长");
+		}
 	});
 });

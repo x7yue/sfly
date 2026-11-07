@@ -81,6 +81,8 @@ export interface ReportInput {
 	items: ItemOutcome[];
 	/** 本机上一次的结果（pickPrevious 选出）；null 表示不对比。 */
 	previous: { dir: string; report: PerfReport } | null;
+	/** 运行被中断（Ctrl-C）：已采集的数据照常写进报告，但结论不算通过。 */
+	interrupted?: boolean;
 }
 
 export interface MeasurementResult extends Measurement {
@@ -121,6 +123,8 @@ export interface PerfReport {
 	machine: MachineInfo;
 	version: VersionInfo;
 	only: string[] | null;
+	/** 运行被中断（Ctrl-C）；被中断的结果不算通过，也不作为下一次对比的基准。 */
+	interrupted: boolean;
 	ok: boolean;
 	/** 不通过的说明，每条指出是哪一项、哪个数值。 */
 	failures: string[];
@@ -218,6 +222,7 @@ export function buildReport(input: ReportInput): PerfReport {
 	const items = input.items.map(judgeItem);
 	const failures = items.flatMap(failuresOf);
 	const changes = input.previous ? compare(items, input.previous.report) : [];
+	const interrupted = input.interrupted ?? false;
 	return {
 		schema: 1,
 		startedAt: input.startedAt,
@@ -225,7 +230,8 @@ export function buildReport(input: ReportInput): PerfReport {
 		machine: input.machine,
 		version: input.version,
 		only: input.only,
-		ok: failures.length === 0,
+		interrupted,
+		ok: failures.length === 0 && !interrupted,
 		failures,
 		items,
 		comparison: input.previous
@@ -236,7 +242,7 @@ export function buildReport(input: ReportInput): PerfReport {
 }
 
 /**
- * 从 out/perf 下已有的结果里选出要对比的上一次：同一台机器、早于本次开始时间的最近一次。
+ * 从 out/perf 下已有的结果里选出要对比的上一次：同一台机器、早于本次开始时间、没有被中断的最近一次。
  * `report` 是读出的 report.json（未校验），结构不认识（schema 不同）的跳过。
  */
 export function pickPrevious(
@@ -246,7 +252,7 @@ export function pickPrevious(
 ): { dir: string; report: PerfReport } | null {
 	let best: { dir: string; report: PerfReport } | null = null;
 	for (const { dir, report } of candidates) {
-		if (!isReport(report) || report.machine.id !== machineId) continue;
+		if (!isReport(report) || report.machine.id !== machineId || report.interrupted) continue;
 		if (report.startedAt >= startedAt) continue;
 		if (!best || report.startedAt > best.report.startedAt) best = { dir, report };
 	}
@@ -315,7 +321,11 @@ export function renderMarkdown(report: PerfReport): string {
 			? `- 对比：${report.comparison.startedAt} 的结果（${report.comparison.dir}）`
 			: "- 对比：本机没有更早的结果，不对比",
 	);
-	out.push(`- 结论：**${report.ok ? "通过" : "不通过"}**`);
+	out.push(
+		report.interrupted
+			? "- 结论：**被中断**：已采集的数据照常写进报告，没有运行完的检查不算数"
+			: `- 结论：**${report.ok ? "通过" : "不通过"}**`,
+	);
 	for (const failure of report.failures) out.push(`  - ${failure}`);
 
 	out.push(

@@ -215,6 +215,17 @@ describe("选出本机上一次的结果", () => {
 		expect(pickPrevious(candidates, "m1", "2026-11-07T10:00:00.000Z")?.dir).toBe("b");
 	});
 
+	it("被中断的结果不作为对比的基准（时长不同，数值没有可比性）", () => {
+		const interrupted = buildReport(
+			input([], { startedAt: "2026-11-06T12:00:00.000Z", interrupted: true }),
+		);
+		const candidates = [
+			{ dir: "a", report: at("2026-11-06T10:00:00.000Z") },
+			{ dir: "b", report: interrupted },
+		];
+		expect(pickPrevious(candidates, "m1", "2026-11-07T10:00:00.000Z")?.dir).toBe("a");
+	});
+
 	it("忽略结构不认识的报告；没有符合的结果时返回 null", () => {
 		const unknown = { ...at("2026-11-06T10:00:00.000Z"), schema: 2 } as unknown;
 		expect(
@@ -302,6 +313,15 @@ describe("Markdown 报告", () => {
 			buildReport(input([item([{ id: "t", label: "耗时", value: 0.003456, unit: "ms" }])])),
 		);
 		expect(md).toContain("| 耗时 | 0.00346 ms | — | 记录 | — |");
+	});
+
+	it("被中断时结论是被中断（不算通过），已采集的数值照常列出", () => {
+		const report = buildReport(input([item([lost(0)])], { interrupted: true }));
+		expect(report.interrupted).toBe(true);
+		expect(report.ok).toBe(false);
+		const lines = renderMarkdown(report).split("\n");
+		expect(lines).toContain("- 结论：**被中断**：已采集的数据照常写进报告，没有运行完的检查不算数");
+		expect(lines).toContain("| 丢失的点 | 0 个 | 硬性 ≤ 0 | 通过 | — |");
 	});
 
 	it("通过且没有上一次结果时说明不对比", () => {

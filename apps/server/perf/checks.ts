@@ -123,3 +123,29 @@ export function checkLogCopies(
 		totalBytes: copies.reduce((sum, f) => sum + f.size, 0),
 	};
 }
+
+/**
+ * 把 [first, last]（整秒，首尾都包含）切成每段最多 width 秒的窗口，相邻两段首尾相接、不重叠。
+ * 长时负载测试的指标序列很长：分段查询才能保持每秒一个桶，逐秒核对序号。
+ */
+export function secondWindows(first: number, last: number, width: number): Array<[number, number]> {
+	const windows: Array<[number, number]> = [];
+	for (let from = first; from <= last; from += width) {
+		windows.push([from, Math.min(from + width - 1, last)]);
+	}
+	return windows;
+}
+
+/**
+ * 随时间变化的数据（[毫秒, 值]）按时间对半分，后半段的峰值减去前半段的峰值：平稳时约为 0，
+ * 缓慢泄漏（内存、磁盘随运行时长一直涨）时为正。少于两个采样时返回 null。
+ */
+export function lateGrowth(points: ReadonlyArray<readonly [number, number]>): number | null {
+	const first = points[0];
+	const last = points.at(-1);
+	if (!first || !last || points.length < 2) return null;
+	const middle = (first[0] + last[0]) / 2;
+	const peak = (part: ReadonlyArray<readonly [number, number]>) =>
+		part.reduce((max, [, value]) => Math.max(max, value), Number.NEGATIVE_INFINITY);
+	return peak(points.filter(([ms]) => ms >= middle)) - peak(points.filter(([ms]) => ms < middle));
+}

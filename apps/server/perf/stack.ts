@@ -160,6 +160,26 @@ export class PerfApi {
 			await this.getJson(`/runs/${runId}/metrics/series?${query}`),
 		);
 	}
+
+	/** 一个节点在 [fromSecond, toSecond]（Unix 秒，首尾都包含）的指标序列；不超过 5000 秒时每秒一个桶。 */
+	async metricSeriesRange(
+		runId: string,
+		chainInstanceId: string,
+		nodeId: string,
+		fromSecond: number,
+		toSecond: number,
+	) {
+		const query = new URLSearchParams({
+			chain_instance_id: chainInstanceId,
+			node_id: nodeId,
+			from: new Date(fromSecond * 1000).toISOString(),
+			to: new Date(toSecond * 1000).toISOString(),
+			points: "5000",
+		});
+		return metricsApi.series.response.parse(
+			await this.getJson(`/runs/${runId}/metrics/series?${query}`),
+		);
+	}
 }
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {

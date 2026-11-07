@@ -235,7 +235,7 @@ export interface LoadRun {
 	maxSendBehindMs: number;
 	/** 同步探测的往返时间：控制面处理完此前全部批次所需的时间，持续增长即积压。 */
 	probes: Array<{ ms: number; agent: number; rttMs: number }>;
-	/** 最后一批发出后，到所有假 Agent 的同步探测都返回的时间。 */
+	/** 最后一批发出后，到所有假 Agent 的同步探测都返回的时间；被中断时不排空，为 NaN。 */
 	drainMs: number;
 	/** 负载期间周期执行的查询及其耗时。 */
 	queries: Array<{ ms: number; durationMs: number }>;
@@ -244,7 +244,8 @@ export interface LoadRun {
 /**
  * 从 firstSecond 开始持续 seconds 秒：每到一个整秒，每个任务为每个指标上报这一秒的一个点；
  * 同时每个假 Agent 每秒做一次同步探测（测积压），按心跳间隔的一半发心跳，并按 1 秒的间隔串行执行 query
- * （测负载下的查询耗时）。结束后等所有假 Agent 的同步探测返回（排空）。signal 中断时提前结束并如实返回。
+ * （测负载下的查询耗时）。结束后等所有假 Agent 的同步探测返回（排空）。signal 中断时提前结束、不排空，
+ * 如实返回已采集的数据。
  */
 export async function runLoad(options: {
 	fleet: LoadFleet;
@@ -316,8 +317,12 @@ export async function runLoad(options: {
 		clearInterval(heartbeats);
 	}
 	// 排空：每个假 Agent 再做一次同步探测，全部返回时控制面处理完了全部批次。
-	await Promise.all(fleet.agents.map((agent) => probe(agent, ++probeAttempt, 600_000)));
-	const drainMs = Date.now() - lastSentAt;
+	// 被中断时不排空：终端的 Ctrl-C 同时发给了控制面进程，它可能已经退出。
+	let drainMs = Number.NaN;
+	if (!signal.aborted) {
+		await Promise.all(fleet.agents.map((agent) => probe(agent, ++probeAttempt, 600_000)));
+		drainMs = Date.now() - lastSentAt;
+	}
 	// 循环里的探测与查询可能还在等待（它们都会在排空后很快返回）；没被中断却失败了（查询出错等）就没法测下去。
 	for (const outcome of await Promise.allSettled([...probeLoops, queryLoop])) {
 		if (outcome.status === "rejected" && !signal.aborted) throw outcome.reason;
