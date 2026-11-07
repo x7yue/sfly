@@ -33,6 +33,55 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 运行时间由节点的超时（timeout，默认 1 小时）限制；超时和取消一样终止节点的整棵进程树。
 - 运行时的输出实时转为任务日志。节点输出不超过 1 MB，大内容保存为产物。
 - 失败时错误信息写明原因和关键参数，在运行页面的节点详情里查看。
+- 等待类节点（`wait_port`、`wait_file`、`wait_log_line`）都有 `wait` 和 `poll`：`wait` 是等待本身的期限，节点的超时（timeout）仍然有效，`wait` 比超时长时以超时为准。`wait` 为 0 时只检查一次。
+- 持续运行的节点（`system_monitor`、`process_monitor`、`follow_log`）都有 `duration`：设置时到期后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消（用法见下文「压测期间监控被测服务」）。被停止时节点记为「已停止」，不算失败，已经上报的指标、日志和产物都保留。
+- 进程、端口、文件类的节点作用于执行它的 Agent 所在的机器：启动进程的节点和后面停止、监控、检查它的节点要选同一个 Agent。
+
+## 节点一览
+
+| 类别 | 节点 | 标题 | 用途 |
+|---|---|---|---|
+| 执行 | `shell` | Shell 命令 | 执行一段命令，输出退出码和标准输出 |
+| 执行 | `start_process` | 启动后台进程 | 启动被测系统等常驻进程，节点结束后进程继续运行 |
+| 执行 | `stop_process` | 停止后台进程 | 停止 `start_process` 启动的进程组，适合作为 always 节点清理 |
+| 监控 | `system_monitor` | 系统监控 | 上报机器的 CPU、内存、负载、磁盘和网络指标 |
+| 监控 | `process_monitor` | 监控进程 | 上报目标进程（默认含子孙进程）的资源合计，每个进程的明细写进 `processes.csv` |
+| 等待 | `wait_port` | 等待端口 | 等 TCP 端口可以连接 |
+| 等待 | `wait_file` | 等待文件 | 等文件出现，可以要求它保持若干秒不变 |
+| 等待 | `wait_log_line` | 等待日志行 | 等日志文件里出现匹配的行，输出这一行 |
+| 日志 | `follow_log` | 跟随日志 | 把日志文件实时转为任务日志，出现匹配的错误行时失败 |
+| 产物 | `collect_artifacts` | 收集产物 | 按通配符把文件保存为产物，可以打成一个 zip |
+| 接口 | `http_request` | HTTP 请求 | 发请求并检查状态码和响应 JSON，可以重试直到满足 |
+| 断言 | `assert` | 断言 | 对上游节点的输出逐条断言 |
+| 断言 | `file_assert` | 文件断言 | 检查一次文件是否存在、大小、行数和内容 |
+| 断言 | `process_assert` | 进程断言 | 检查一次进程在不在、有几个 |
+| 断言 | `port_assert` | 端口断言 | 检查一次端口能不能连接 |
+
+## 压测期间监控被测服务
+
+一个典型的压测场景：启动被测服务，等它就绪，压测期间监控机器、服务进程和服务日志；压测结束后停止监控、收集结果、停掉服务，再确认环境恢复干净。链上的节点依次执行，要和压测同时运行的监控节点都放在子流程里，压测结束后用停止子流程节点把它们停下来。下面的节点都选被测机器上的同一个 Agent。
+
+**主链**：
+
+1. `server`（`start_process`）：启动被测服务，`log_file` 设为 `/srv/bench/out/server.log`；
+2. `ready`（`http_request`，打开 `until_ok`）：等服务的健康检查接口返回成功；
+3. 异步任务节点：触发子流程「监控」，把 `server` 的输出 `pid` 和 `log_file` 作为参数传进去；
+4. `bench`（`shell`）：执行压测工具，把报告写到 `/srv/bench/out`；
+5. `check`（`assert`）：检查 `bench` 的输出，例如错误数为 0；
+6. 停止子流程节点（always 节点）：选中子流程「监控」；
+7. `collect`（`collect_artifacts`，always 节点）：`base_dir` 为 `/srv/bench/out`，收集压测报告和服务日志；
+8. `stop_server`（`stop_process`，always 节点）：`pid` 引用 `server` 的输出 `pid`；
+9. `port_free`（`port_assert`，`reachable` 为 `false`）、`no_leftover`（`process_assert`，`running` 为 `false`）：确认端口已经释放、没有留下进程。
+
+**子流程「监控」**：子流程入口声明参数 `pid` 和 `log_file`。同一条链上的节点依次执行，三个不会自己结束的监控节点要各占一条链：入口之后先用两个异步任务节点触发下级子流程「进程监控」和「服务日志」，最后是 `system_monitor`。「进程监控」里是 `process_monitor`，`pid` 引用子流程参数 `pid`；「服务日志」里是 `follow_log`，`path` 引用子流程参数 `log_file`，`fail_on` 写服务致命错误的正则。三个监控节点都不设置 `duration`。
+
+这样安排的效果：
+
+- 监控从压测开始前一直持续到压测结束。停止子流程节点停止「监控」时，连同它触发的两个下级子流程一起停止，三个监控节点记为「已停止」，不算失败。运行页面上能看到整个压测期间的系统指标、进程指标和服务日志，`process_monitor` 的产物里有每个进程的明细 `processes.csv`。
+- 停止子流程节点要设为 always 节点：压测或断言失败时也要停止监控，否则监控一直运行到节点超时，运行迟迟不能结束。
+- 停止子流程节点放在 `stop_server` 之前：先停监控再停服务，否则 `process_monitor` 会因为服务退出而失败。
+- 服务在压测中意外退出时 `process_monitor` 失败（`on_exit` 默认 `fail`），服务日志里出现致命错误时 `follow_log` 失败。子流程失败不影响主链继续执行，但运行最终记为失败，在运行详情里能看到是哪个子流程。
+- 压测时长固定、不需要停止子流程节点时，给监控节点设置 `duration`，到期后自己成功结束；它们仍然要放在子流程里才能和压测同时运行。
 
 ## `shell`：Shell 命令
 
@@ -68,66 +117,6 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 ```
 
 后面的节点在参数里引用 `build` 的输出 `stdout` 拿到版本号（含末尾的换行）。允许 `grep` 没有匹配（退出码 1）时，把 `ok_exit_codes` 设为 `[0, 1]`。
-
-## `assert`：断言
-
-对任意值逐条做断言：数值、文本、JSON 都用同一个节点检查。
-
-| 参数 | 默认值 | 说明 |
-|---|---|---|
-| `actual` | 必填 | 要检查的值，通常整个值就是一个引用（引用上游节点的输出，保持原类型）；也可以是包含多个引用的对象 |
-| `assertions` | 必填 | 断言列表，至少一条；每条是 `{"path": ..., "op": ..., "value": ...}` |
-
-每条断言的写法：
-
-| 键 | 说明 |
-|---|---|
-| `path` | 取 `actual` 的哪一部分，默认 `$`（整个值）。支持 JSONPath 的常用子集：`$.a.b`、`$.items[0]`、`$.items[-1]`（从末尾数）、`$["带 空格.的键"]`、通配 `$.items[*]` 和 `$.service.*` |
-| `op` | 比较方式，见下表 |
-| `value` | 期望值；`exists` 可以省略 |
-
-| `op` | 通过的条件 |
-|---|---|
-| `eq` / `ne` | 等于 / 不等于 `value`。按 JSON 比较：`1` 等于 `1.0`，`true` 不等于 `1`，数组按顺序比较，对象按键比较 |
-| `gt` `ge` `lt` `le` | 大于、大于等于、小于、小于等于 `value`（数字）。实际值是数字文本时按数值比较，例如 shell 的 stdout `"42\n"` |
-| `contains` | 文本包含 `value` 这段文字；数组含有等于 `value` 的元素；对象含有名为 `value` 的键 |
-| `matches` | 文本里有匹配正则表达式 `value` 的部分（Python 语法，多行模式：`^` `$` 匹配每一行的开头和结尾）。要求整段匹配时写成 `\A...\Z` |
-| `exists` | 路径存在；`value` 为 `false` 时要求路径不存在 |
-| `len_eq` | 文本的字符数、数组的元素数或对象的键数等于 `value` |
-
-| 输出 | 说明 |
-|---|---|
-| `passed` | 全部通过时为 `true` |
-
-- 有断言不通过时节点失败，错误信息逐条列出不通过的断言：第几条、具体路径、期望和实际值。例如 `第 2 条：$.items[1].status 应 eq "ok"，实际是 "error"`；值太长时只显示开头。
-- 路径里有通配时，每个匹配到的值都要满足；一个都没匹配到时不通过（`exists` 为 `false` 时通过）。
-- 路径不存在时，除 `exists` 外的断言都不通过（`ne` 也一样），错误信息写明「路径不存在」。
-- 断言写错时（路径无法解析、缺少 `value`、`value` 类型不对、正则表达式不合法、有未知的键）节点失败，错误信息写明是第几条、哪里不对，不检查任何断言。
-- 断言格式与 `http_request` 的 `expect_json` 相同。
-
-例：节点 `count` 是一个 `shell`，输出某个目录下的文件数。检查它成功执行、文件数至少 3 个，节点 `check` 的参数：
-
-```json
-{
-  "actual": {
-    "exit_code": "<引用 count 的输出 exit_code>",
-    "stdout": "<引用 count 的输出 stdout>"
-  },
-  "assertions": [
-    { "path": "$.exit_code", "op": "eq", "value": 0 },
-    { "path": "$.stdout", "op": "ge", "value": 3 }
-  ]
-}
-```
-
-两处尖括号在画布里分别填成对 `count` 输出 `exit_code` 和 `stdout` 的整值引用。检查一个 JSON 响应里每一项的状态都是 `ok`（`items` 为空时也不通过）、并且有 `total` 字段时，`actual` 整值引用上游的 JSON 输出，`assertions` 写成：
-
-```json
-[
-  { "path": "$.items[*].status", "op": "eq", "value": "ok" },
-  { "path": "$.total", "op": "exists" }
-]
-```
 
 ## `start_process`：启动后台进程
 
@@ -203,9 +192,11 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `nic` | 全部网卡合计 | 统计哪块网卡的收发速率，例如 `eth0`；合计包含回环网卡 `lo` |
 | `disk` | 全部磁盘合计 | 统计哪块磁盘的读写速率，例如 `nvme0n1` 或 `/dev/sda`；合计只算整块磁盘，不重复计入分区 |
 
+没有输出。
+
 | 指标 | 单位 | 说明 |
 |---|---|---|
-| `cpu_percent` | % | CPU 使用率，所有核的平均（主指标） |
+| `cpu_percent`（主指标） | % | CPU 使用率，所有核的平均 |
 | `mem_used_percent` | % | 已用内存占总内存的比例 |
 | `mem_used_bytes` | B | 已用内存：总内存减去可用内存（available），不含可以回收的缓存 |
 | `load1` | | 1 分钟平均负载 |
@@ -213,13 +204,13 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `disk_read_bytes_per_s`、`disk_write_bytes_per_s` | B/s | 磁盘每秒读取、写入的字节数 |
 | `net_rx_bytes_per_s`、`net_tx_bytes_per_s` | B/s | 网卡每秒接收、发送的字节数 |
 
-- 节点没有输出。第一次采样在开始后一个 `interval`：CPU 使用率和各项速率都是两次采样之间的平均值。
+- 第一次采样在开始后一个 `interval`：CPU 使用率和各项速率都是两次采样之间的平均值。
 - 默认图表：CPU 使用率、内存使用率、已用内存、负载、磁盘空间使用率、磁盘读写、网络收发各一张。
 - 指定的网卡、磁盘或 `disk_path` 不存在时节点立即失败，错误信息列出本机有哪些网卡、磁盘。
 - 被停止或取消时节点立即结束，已经上报的指标都保留，运行页面上仍能看到完整的曲线。
 - 监控的是执行这个节点的 Agent 所在的机器：要监控被测机器，就让节点选那台机器上的 Agent。
 
-**压测期间一直监控**：把 `system_monitor` 放在子流程里，不设置 `duration`。主链先用异步任务节点触发这个子流程，再执行压测；压测之后放一个停止子流程节点，选中监控所在的子流程。监控从压测开始前一直持续到压测结束，停止子流程节点把它停下来，这个子流程记为「已停止」，不算失败。希望压测失败时也停止监控，就把停止子流程节点设为 always 节点。例：监控子流程里的节点 `monitor` 的参数，每 2 秒采样一次，只看业务网卡和数据盘：
+**压测期间一直监控**：把 `system_monitor` 放在子流程里、不设置 `duration`，主链先用异步任务节点触发这个子流程再执行压测，压测之后用停止子流程节点（设为 always 节点）停止它；节点记为「已停止」，不算失败。完整的安排见上文「压测期间监控被测服务」。例：监控子流程里的节点 `monitor` 的参数，每 2 秒采样一次，只看业务网卡和数据盘：
 
 ```json
 {
@@ -229,8 +220,6 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
   "disk_path": "/data"
 }
 ```
-
-设置了 `duration` 的监控到期后自己成功结束，不需要停止子流程节点；但仍要放在子流程里才能和压测同时运行（同一条链上的节点依次执行）。
 
 ## `process_monitor`：监控进程
 
@@ -303,72 +292,6 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 }
 ```
 
-## `http_request`：HTTP 请求
-
-发一个 HTTP 请求，检查状态码和响应 JSON；打开 `until_ok` 时重试直到满足，可以用来等待 HTTP 服务就绪。
-
-| 参数 | 默认值 | 说明 |
-|---|---|---|
-| `url` | 必填 | 请求地址，`http://` 或 `https://` |
-| `method` | `GET` | `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`HEAD`、`OPTIONS` |
-| `headers` | 无 | 请求头（对象，值为字符串） |
-| `json` | 无 | JSON 请求体（任意 JSON 值），自动加上 `Content-Type: application/json` |
-| `body` | 无 | 文本请求体，按 UTF-8 发送；需要时在 `headers` 里写 `Content-Type`。与 `json` 只能填一个 |
-| `request_timeout` | `30` | 单次请求最多等多少秒（连接、发送、等响应） |
-| `verify_tls` | `true` | 是否校验 HTTPS 证书；被测环境用自签证书时设为 `false` |
-| `expect_status` | `"2xx"` | 算作成功的状态码：状态码（例如 `404`）或 `"1xx"`～`"5xx"`，可以是列表，例如 `[200, "3xx"]` |
-| `expect_json` | 无 | 对响应 JSON 的断言列表，格式与 `assert` 节点的 `assertions` 相同（见上文） |
-| `until_ok` | `false` | 打开时，没有得到响应（连接失败、超时）或断言不通过就每 `poll` 秒重试一次，直到通过或超过 `wait` 秒 |
-| `wait` | `300` | `until_ok` 时最多等多少秒 |
-| `poll` | `1` | `until_ok` 时的重试间隔（秒） |
-
-| 输出 | 说明 |
-|---|---|
-| `status` | 状态码 |
-| `headers` | 响应头（对象）。名字都是小写；同名的多个响应头用 `, ` 连起来 |
-| `json` | 响应内容是 JSON 且不超过 256 KiB 时，解析后的值 |
-| `text` | 响应内容不是 JSON 或超过 256 KiB 时的文本，最多保留开头 256 KiB（截断时写一条警告日志） |
-| `elapsed_ms` | 最后一次请求的耗时（毫秒） |
-
-| 指标 | 单位 | 说明 |
-|---|---|---|
-| `elapsed_ms`（主指标） | ms | 每次请求的耗时 |
-
-- 先检查状态码，再检查 `expect_json`。不满足时节点失败，错误信息写明请求方法和地址、状态码，以及不在 `expect_status` 里时响应的开头、不通过的断言（与 `assert` 一样逐条列出）。响应不是 JSON 而填了 `expect_json` 时也失败。
-- `expect_json` 检查完整的响应 JSON：超过 256 KiB、输出里只有截断的 `text` 时也一样。
-- 没有得到响应时（连接被拒绝、请求超时、证书校验失败）节点失败，错误信息写明原因。
-- `until_ok` 重试时，原因变化时写一条日志（第几次、为什么不满足）；超过 `wait` 时失败，错误信息是请求次数和最后一次不满足的原因。每次请求最多等 `request_timeout` 秒，所以实际可能比 `wait` 多等一次请求的时间。
-- 不跟随重定向：3xx 响应按原样检查，需要时把它写进 `expect_status`。
-- 走 Agent 的 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 环境变量设置的代理。
-- 请求头和请求体在运行页面上对所有人可见，不要直接写密钥。
-
-例：被测服务用 `start_process` 启动后，等它的健康检查接口返回 `{"status": "ok"}`，最多等 2 分钟。节点 `ready` 的参数：
-
-```json
-{
-  "url": "http://127.0.0.1:8080/health",
-  "expect_json": [{ "path": "$.status", "op": "eq", "value": "ok" }],
-  "until_ok": true,
-  "wait": 120,
-  "poll": 2
-}
-```
-
-服务启动前连接被拒绝也会重试。下单接口要返回 201 和订单号时，节点 `order` 的参数：
-
-```json
-{
-  "method": "POST",
-  "url": "http://127.0.0.1:8080/api/orders",
-  "headers": { "X-Request-Id": "sfly-smoke" },
-  "json": { "sku": "A-100", "count": 2 },
-  "expect_status": 201,
-  "expect_json": [{ "path": "$.order_id", "op": "exists" }]
-}
-```
-
-后面的节点引用 `order` 的输出 `json` 拿到整个响应，或者用 `assert` 对它做更多检查。
-
 ## `wait_port`：等待端口
 
 每隔 `poll` 秒尝试连接一次 TCP 端口，能连上就成功；`wait` 秒内一直连不上时失败。用来等被测服务开始监听。
@@ -380,9 +303,9 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `wait` | `300` | 最多等多少秒 |
 | `poll` | `1` | 检查间隔（秒） |
 
-没有输出。超时的错误信息写明等的是哪个地址、等了多久和最后一次连接的错误，例如 `TimeoutError: 等待端口 127.0.0.1:8080 可以连接超时：已等 300 秒，最后一次连接：Connection refused`。
+没有输出。
 
-- 等待类节点（`wait_port`、`wait_file`、`wait_log_line`）都有 `wait` 和 `poll`：`wait` 是等待本身的期限，节点的超时（timeout）仍然有效，`wait` 比超时长时以超时为准。`wait` 为 0 时只检查一次。
+- 超时的错误信息写明等的是哪个地址、等了多久和最后一次连接的错误，例如 `TimeoutError: 等待端口 127.0.0.1:8080 可以连接超时：已等 300 秒，最后一次连接：Connection refused`。
 - 端口能连上只说明进程在监听，不一定已经能正常处理请求：服务有健康检查接口时改用 `http_request`（打开 `until_ok`）等它返回成功，或用 `wait_log_line` 等它打出就绪日志。
 
 例：`start_process` 启动服务后等它监听 8080 端口，最多等 1 分钟：
@@ -469,17 +392,17 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 |---|---|
 | `lines` | 转发的总行数（`duration` 到期时才有输出） |
 
-| 指标 | 说明 |
-|---|---|
-| `lines_per_s` | 每秒新增的行数（主指标） |
-| `fail_matches` | 累计匹配 `fail_on` 的行数 |
+| 指标 | 单位 | 说明 |
+|---|---|---|
+| `lines_per_s`（主指标） | 行/s | 每秒新增的行数 |
+| `fail_matches` | | 累计匹配 `fail_on` 的行数 |
 
 - 每 0.2 秒检查一次新内容，指标每秒上报一次。文件还不存在时等它出现，出现后从头转发。
 - 文件被轮转（改名后新建，路径指向另一个文件）时，先转发旧文件剩下的内容，再从头跟随新文件；文件被截断（例如 logrotate 的 copytruncate）时从头跟随。两次检查之间被截断又写到超过原来长度的情况分辨不出来。
 - 匹配 `fail_on` 时立即失败，错误信息附上第一行匹配的内容和匹配的正则；同一次检查读到的其余行照常转发并计入 `fail_matches`。
 - 被停止或取消时，已经转发的行都留在任务日志里。超过 64 KiB 还没有换行符的内容先作为一行转发。
 
-**与子流程配合**：把 `follow_log` 放在子流程上、不设置 `duration`，压测期间一直跟随被测服务的日志；压测结束后用停止子流程节点停止它，停止不算失败。被测服务在压测中打出致命错误时，`follow_log` 失败，运行会把它暴露出来。例：`path` 引用 `start_process` 的输出 `log_file`，其余参数：
+**与子流程配合**：把 `follow_log` 放在子流程里、不设置 `duration`，压测期间一直跟随被测服务的日志，压测结束后用停止子流程节点停止它，停止不算失败（见上文「压测期间监控被测服务」）。被测服务在压测中打出致命错误时 `follow_log` 失败，运行把它暴露出来。例：`path` 引用 `start_process` 的输出 `log_file`，其余参数：
 
 ```json
 {
@@ -519,6 +442,132 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 ```
 
 运行页面上会出现 `report.html`、`logs/app.log` 这样的产物。文件很多时加上 `"archive": true` 打成一个 zip 下载；收集可能不存在的崩溃转储时加上 `"required": false`。
+
+## `http_request`：HTTP 请求
+
+发一个 HTTP 请求，检查状态码和响应 JSON；打开 `until_ok` 时重试直到满足，可以用来等待 HTTP 服务就绪。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `url` | 必填 | 请求地址，`http://` 或 `https://` |
+| `method` | `GET` | `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`HEAD`、`OPTIONS` |
+| `headers` | 无 | 请求头（对象，值为字符串） |
+| `json` | 无 | JSON 请求体（任意 JSON 值），自动加上 `Content-Type: application/json` |
+| `body` | 无 | 文本请求体，按 UTF-8 发送；需要时在 `headers` 里写 `Content-Type`。与 `json` 只能填一个 |
+| `request_timeout` | `30` | 单次请求最多等多少秒（连接、发送、等响应） |
+| `verify_tls` | `true` | 是否校验 HTTPS 证书；被测环境用自签证书时设为 `false` |
+| `expect_status` | `"2xx"` | 算作成功的状态码：状态码（例如 `404`）或 `"1xx"`～`"5xx"`，可以是列表，例如 `[200, "3xx"]` |
+| `expect_json` | 无 | 对响应 JSON 的断言列表，格式与 `assert` 节点的 `assertions` 相同（见 `assert` 一节） |
+| `until_ok` | `false` | 打开时，没有得到响应（连接失败、超时）或断言不通过就每 `poll` 秒重试一次，直到通过或超过 `wait` 秒 |
+| `wait` | `300` | `until_ok` 时最多等多少秒 |
+| `poll` | `1` | `until_ok` 时的重试间隔（秒） |
+
+| 输出 | 说明 |
+|---|---|
+| `status` | 状态码 |
+| `headers` | 响应头（对象）。名字都是小写；同名的多个响应头用 `, ` 连起来 |
+| `json` | 响应内容是 JSON 且不超过 256 KiB 时，解析后的值 |
+| `text` | 响应内容不是 JSON 或超过 256 KiB 时的文本，最多保留开头 256 KiB（截断时写一条警告日志） |
+| `elapsed_ms` | 最后一次请求的耗时（毫秒） |
+
+| 指标 | 单位 | 说明 |
+|---|---|---|
+| `elapsed_ms`（主指标） | ms | 每次请求的耗时 |
+
+- 先检查状态码，再检查 `expect_json`。不满足时节点失败，错误信息写明请求方法和地址、状态码，以及不在 `expect_status` 里时响应的开头、不通过的断言（与 `assert` 一样逐条列出）。响应不是 JSON 而填了 `expect_json` 时也失败。
+- `expect_json` 检查完整的响应 JSON：超过 256 KiB、输出里只有截断的 `text` 时也一样。
+- 没有得到响应时（连接被拒绝、请求超时、证书校验失败）节点失败，错误信息写明原因。
+- `until_ok` 重试时，原因变化时写一条日志（第几次、为什么不满足）；超过 `wait` 时失败，错误信息是请求次数和最后一次不满足的原因。每次请求最多等 `request_timeout` 秒，所以实际可能比 `wait` 多等一次请求的时间。
+- 不跟随重定向：3xx 响应按原样检查，需要时把它写进 `expect_status`。
+- 走 Agent 的 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 环境变量设置的代理。
+- 请求头和请求体在运行页面上对所有人可见，不要直接写密钥。
+
+例：被测服务用 `start_process` 启动后，等它的健康检查接口返回 `{"status": "ok"}`，最多等 2 分钟。节点 `ready` 的参数：
+
+```json
+{
+  "url": "http://127.0.0.1:8080/health",
+  "expect_json": [{ "path": "$.status", "op": "eq", "value": "ok" }],
+  "until_ok": true,
+  "wait": 120,
+  "poll": 2
+}
+```
+
+服务启动前连接被拒绝也会重试。下单接口要返回 201 和订单号时，节点 `order` 的参数：
+
+```json
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8080/api/orders",
+  "headers": { "X-Request-Id": "sfly-smoke" },
+  "json": { "sku": "A-100", "count": 2 },
+  "expect_status": 201,
+  "expect_json": [{ "path": "$.order_id", "op": "exists" }]
+}
+```
+
+后面的节点引用 `order` 的输出 `json` 拿到整个响应，或者用 `assert` 对它做更多检查。
+
+## `assert`：断言
+
+对任意值逐条做断言：数值、文本、JSON 都用同一个节点检查。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `actual` | 必填 | 要检查的值，通常整个值就是一个引用（引用上游节点的输出，保持原类型）；也可以是包含多个引用的对象 |
+| `assertions` | 必填 | 断言列表，至少一条；每条是 `{"path": ..., "op": ..., "value": ...}` |
+
+每条断言的写法：
+
+| 键 | 说明 |
+|---|---|
+| `path` | 取 `actual` 的哪一部分，默认 `$`（整个值）。支持 JSONPath 的常用子集：`$.a.b`、`$.items[0]`、`$.items[-1]`（从末尾数）、`$["带 空格.的键"]`、通配 `$.items[*]` 和 `$.service.*` |
+| `op` | 比较方式，见下表 |
+| `value` | 期望值；`exists` 可以省略 |
+
+| `op` | 通过的条件 |
+|---|---|
+| `eq` / `ne` | 等于 / 不等于 `value`。按 JSON 比较：`1` 等于 `1.0`，`true` 不等于 `1`，数组按顺序比较，对象按键比较 |
+| `gt` `ge` `lt` `le` | 大于、大于等于、小于、小于等于 `value`（数字）。实际值是数字文本时按数值比较，例如 shell 的 stdout `"42\n"` |
+| `contains` | 文本包含 `value` 这段文字；数组含有等于 `value` 的元素；对象含有名为 `value` 的键 |
+| `matches` | 文本里有匹配正则表达式 `value` 的部分（Python 语法，多行模式：`^` `$` 匹配每一行的开头和结尾）。要求整段匹配时写成 `\A...\Z` |
+| `exists` | 路径存在；`value` 为 `false` 时要求路径不存在 |
+| `len_eq` | 文本的字符数、数组的元素数或对象的键数等于 `value` |
+
+| 输出 | 说明 |
+|---|---|
+| `passed` | 全部通过时为 `true` |
+
+- 有断言不通过时节点失败，错误信息逐条列出不通过的断言：第几条、具体路径、期望和实际值。例如 `第 2 条：$.items[1].status 应 eq "ok"，实际是 "error"`；值太长时只显示开头。
+- 路径里有通配时，每个匹配到的值都要满足；一个都没匹配到时不通过（`exists` 为 `false` 时通过）。
+- 路径不存在时，除 `exists` 外的断言都不通过（`ne` 也一样），错误信息写明「路径不存在」。
+- 断言写错时（路径无法解析、缺少 `value`、`value` 类型不对、正则表达式不合法、有未知的键）节点失败，错误信息写明是第几条、哪里不对，不检查任何断言。
+- 断言格式与 `http_request` 的 `expect_json` 相同。
+
+例：节点 `count` 是一个 `shell`，输出某个目录下的文件数。检查它成功执行、文件数至少 3 个，节点 `check` 的参数：
+
+```json
+{
+  "actual": {
+    "exit_code": "<引用 count 的输出 exit_code>",
+    "stdout": "<引用 count 的输出 stdout>"
+  },
+  "assertions": [
+    { "path": "$.exit_code", "op": "eq", "value": 0 },
+    { "path": "$.stdout", "op": "ge", "value": 3 }
+  ]
+}
+```
+
+两处尖括号在画布里分别填成对 `count` 输出 `exit_code` 和 `stdout` 的整值引用。检查一个 JSON 响应里每一项的状态都是 `ok`（`items` 为空时也不通过）、并且有 `total` 字段时，`actual` 整值引用上游的 JSON 输出，`assertions` 写成：
+
+```json
+[
+  { "path": "$.items[*].status", "op": "eq", "value": "ok" },
+  { "path": "$.total", "op": "exists" }
+]
+```
 
 ## `file_assert`：文件断言
 
