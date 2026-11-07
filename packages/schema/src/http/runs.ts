@@ -19,6 +19,7 @@ const NODE_KINDS = [
 	"async",
 	"timer",
 	"sleep",
+	"stop_subflow",
 	"package",
 ] as const satisfies readonly OrchestrationNode["kind"][];
 
@@ -26,7 +27,8 @@ export const RunStatus = z.enum(["running", "success", "failed", "cancelled"]);
 
 /**
  * 任务（一次尝试）与节点的状态（docs/SEMANTICS.md §3.1）。节点另有 pending（还没有尝试）。
- * dispatched：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间。
+ * dispatched：已派发给 Agent，还在下载、安装节点包或启动执行器；waiting：定时 / Sleep 节点在等唤醒时间，
+ * 停止子流程节点在等被停止的子流程结束；stopped：所在子流程被停止子流程节点停止（§4.1，不算失败）。
  */
 export const TaskStatus = z.enum([
 	"queued",
@@ -37,6 +39,7 @@ export const TaskStatus = z.enum([
 	"failed",
 	"skipped",
 	"cancelled",
+	"stopped",
 ]);
 export const NodeStatus = z.enum([...TaskStatus.options, "pending"]);
 
@@ -110,6 +113,8 @@ export const ChainRunView = z.object({
 	id: z.string(),
 	/** 链起点节点 ID（主链是入口节点，子流程是子流程入口节点）。 */
 	chain_id: z.string(),
+	/** 子流程名称（没有名称的旧版本为子流程入口的节点 ID，名称为空时为空字符串）；主链为 null。 */
+	name: z.string().nullable(),
 	parent_chain_instance_id: z.string().nullable(),
 	/** 派发这个子流程实例的异步任务节点；主链为 null。 */
 	async_node_id: z.string().nullable(),

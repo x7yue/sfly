@@ -31,3 +31,13 @@ describe("新建子流程入口时填写的名称", () => {
 		});
 	});
 });
+
+describe("新建停止子流程节点", () => {
+	it("还没有选择子流程，always 默认关闭", () => {
+		expect(newDocNode({ kind: "stop_subflow" }, "stop_subflow_1")).toEqual({
+			id: "stop_subflow_1",
+			kind: "stop_subflow",
+			always: false,
+		});
+	});
+});

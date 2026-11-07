@@ -17,6 +17,7 @@ export type ThumbState =
 	| "failed"
 	| "cancelled"
 	| "skipped"
+	| "stopped"
 	| "waiting";
 
 export interface ThumbNode {

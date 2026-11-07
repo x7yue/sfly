@@ -10,11 +10,22 @@ export const KIND_META: Record<DocNode["kind"], { label: string; code: string }>
 	sleep: { label: "Sleep", code: "SL" },
 	async: { label: "异步任务", code: "AS" },
 	subflow_entry: { label: "子流程入口", code: "SE" },
+	stop_subflow: { label: "停止子流程", code: "ST" },
 };
 
 /** 子流程的显示名称：没有名称字段的旧版本显示节点 ID，填了空名称时显示「未命名子流程」。 */
 export const subflowLabel = (node: { id: string; name?: string | undefined }): string =>
 	subflowName(node) || "未命名子流程";
+
+/** 文档里子流程入口节点 ID → 显示名称的查找（CanvasInfo.subflowLabelOf）。 */
+export function subflowLabels(doc: {
+	nodes: readonly { id: string; kind: string; name?: string | undefined }[];
+}): (id: string) => string | undefined {
+	const labels = new Map(
+		doc.nodes.filter((n) => n.kind === "subflow_entry").map((n) => [n.id, subflowLabel(n)]),
+	);
+	return (id) => labels.get(id);
+}
 
 export function nodeTitle(node: DocNode, info: CanvasInfo): string {
 	switch (node.kind) {
@@ -26,6 +37,11 @@ export function nodeTitle(node: DocNode, info: CanvasInfo): string {
 			return `等到 ${node.at}`;
 		case "sleep":
 			return `等待 ${node.duration}`;
+		case "stop_subflow":
+			// 卡片标题显示要停止的子流程名称（故事 9）；目标不存在时显示节点 ID，由校验面板提示。
+			return node.subflow
+				? `停止「${info.subflowLabelOf(node.subflow) ?? node.subflow}」`
+				: KIND_META.stop_subflow.label;
 		default:
 			return KIND_META[node.kind].label;
 	}
@@ -55,6 +71,8 @@ export function nodeSlot(node: DocNode): string {
 			return `${node.at} · ${node.tz}`;
 		case "sleep":
 			return node.duration;
+		case "stop_subflow":
+			return node.subflow ? `子流程入口 ${node.subflow}` : "未选择子流程";
 		case "package": {
 			const [first] = Object.entries(node.inputs);
 			return first ? `${first[0]} ${summarizeValue(first[1])}` : `${node.package}/${node.node}`;

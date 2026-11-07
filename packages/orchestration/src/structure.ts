@@ -12,6 +12,8 @@ export interface StructureDocument {
 		agent?: string | undefined;
 		/** 子流程入口的名称。 */
 		name?: string | undefined;
+		/** 停止子流程节点要停止的子流程（子流程入口的节点 ID）。 */
+		subflow?: string | undefined;
 	}[];
 	edges: readonly Pick<OrchestrationDocument["edges"][number], "from" | "to" | "kind">[];
 }
@@ -33,6 +35,10 @@ export type StructureWarningCode =
 	| "subflow_multiple_triggers"
 	| "subflow_name_empty"
 	| "subflow_name_duplicate"
+	| "stop_subflow_unset"
+	| "stop_subflow_unknown"
+	| "stop_subflow_before_trigger"
+	| "stop_subflow_out_of_scope"
 	| "nesting_too_deep"
 	| "orphan_node"
 	| "missing_agent";
@@ -244,6 +250,43 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		}
 	}
 
+	// 停止子流程节点的引用（SEMANTICS §4.1 第 1 条）：只能停止本链在它之前触发的子流程及其下级子流程。
+	const members = chainMembers(doc);
+	for (const node of doc.nodes) {
+		if (node.kind !== "stop_subflow") continue;
+		if (!node.subflow) {
+			warn("stop_subflow_unset", `停止子流程节点 ${node.id} 没有选择子流程`, node.id);
+			continue;
+		}
+		const target = byId.get(node.subflow);
+		if (target?.kind !== "subflow_entry") {
+			warn(
+				"stop_subflow_unknown",
+				`停止子流程节点 ${node.id} 要停止的子流程 ${node.subflow} 不存在`,
+				node.id,
+			);
+			continue;
+		}
+		const own = chainOf(members, node.id);
+		// 不在任何链上的节点由孤立节点检查报告。
+		if (!own || candidatesOf(doc, members, node.id).includes(target.id)) continue;
+		const name = subflowName(target) || target.id;
+		const trigger = validDispatch(target.id, "into").find((id) => own.includes(id));
+		if (trigger !== undefined) {
+			warn(
+				"stop_subflow_before_trigger",
+				`停止子流程节点 ${node.id} 在触发子流程「${name}」的异步任务节点 ${trigger} 之前`,
+				node.id,
+			);
+		} else {
+			warn(
+				"stop_subflow_out_of_scope",
+				`停止子流程节点 ${node.id} 只能停止本链触发的子流程，「${name}」不是`,
+				node.id,
+			);
+		}
+	}
+
 	// 嵌套深度：从入口节点（第 0 层）出发，沿链走到异步任务节点，再沿调度连线进入下一层子流程。
 	const depthOf = new Map<string, number>();
 	const queue: [string, number][] = entries.map((e) => [e.id, 0]);
@@ -288,6 +331,44 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		}
 	}
 	return warnings;
+}
+
+/** 节点所在链的成员（chainMembers 的一项）；不在任何链上时为 undefined。 */
+function chainOf(members: Map<string, string[]>, nodeId: string): string[] | undefined {
+	for (const ids of members.values()) if (ids.includes(nodeId)) return ids;
+	return undefined;
+}
+
+function candidatesOf(
+	doc: StructureDocument,
+	members: Map<string, string[]>,
+	nodeId: string,
+): string[] {
+	const own = chainOf(members, nodeId);
+	if (!own) return [];
+	const { byId, out } = indexEdges(doc);
+	const triggered = (id: string) =>
+		(out.dispatch.get(id) ?? []).filter((to) =>
+			isValidDispatch(byId, { from: id, to, kind: "dispatch" }),
+		);
+	const result: string[] = [];
+	const queue = own.slice(0, own.indexOf(nodeId)).flatMap(triggered);
+	while (queue.length > 0) {
+		const sub = queue.shift() as string;
+		if (result.includes(sub)) continue;
+		result.push(sub);
+		for (const id of members.get(sub) ?? []) queue.push(...triggered(id));
+	}
+	return result;
+}
+
+/**
+ * 停止子流程节点可以停止的子流程（SEMANTICS §4.1 第 1 条）：本链上排在它前面的异步任务节点直接触发的子流程，
+ * 以及这些子流程直接或间接触发的子流程；按触发的先后（广度优先）返回子流程入口的节点 ID。
+ * 画布的子流程选择器只列出这些候选，结构检查对其余目标给出警告。
+ */
+export function stopCandidates(doc: StructureDocument, nodeId: string): string[] {
+	return candidatesOf(doc, chainMembers(doc), nodeId);
 }
 
 /**

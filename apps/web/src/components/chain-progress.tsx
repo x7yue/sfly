@@ -22,6 +22,7 @@ export type ChainBarSegment =
 	| "waiting"
 	| "skipped"
 	| "cancelled"
+	| "stopped"
 	| "empty";
 
 const SEGMENT: Record<ChainBarSegment, string> = {
@@ -31,6 +32,7 @@ const SEGMENT: Record<ChainBarSegment, string> = {
 	waiting: "bg-warn/45",
 	skipped: "shadow-[inset_0_0_0_1px_var(--border-strong)]",
 	cancelled: "border border-dashed border-cancelled",
+	stopped: "bg-stopped/55",
 	empty: "bg-track",
 };
 

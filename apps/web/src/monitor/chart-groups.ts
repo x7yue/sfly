@@ -9,6 +9,7 @@ import {
 	type RunView,
 } from "@sfly/schema";
 import { nodeStatusView, type StatusKind } from "#/components/status";
+import { chainLabel } from "#/lib/copy";
 import { type NodeRef, nodeKey } from "./monitor-state";
 import { orderedChains } from "./run-model";
 
@@ -57,9 +58,8 @@ export function buildGroups(
 	const chainName = (chain: ChainRunView) => {
 		if (chain.depth === 0) return null;
 		const ids = instances.get(chain.chain_id) ?? [];
-		return ids.length > 1
-			? `子流程 ${chain.chain_id} #${ids.indexOf(chain.id) + 1}`
-			: `子流程 ${chain.chain_id}`;
+		const name = chainLabel({ chain_id: chain.chain_id, subflow: true, name: chain.name });
+		return ids.length > 1 ? `${name} #${ids.indexOf(chain.id) + 1}` : name;
 	};
 	for (const chain of chains) {
 		for (const node of chain.nodes) {

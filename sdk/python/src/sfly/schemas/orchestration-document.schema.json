@@ -310,6 +310,48 @@
               },
               "kind": {
                 "type": "string",
+                "const": "stop_subflow"
+              },
+              "always": {
+                "default": false,
+                "type": "boolean"
+              },
+              "subflow": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
+              "kind": {
+                "type": "string",
                 "const": "package"
               },
               "always": {

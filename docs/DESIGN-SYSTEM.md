@@ -37,7 +37,7 @@
 | 主操作 | `primary`、`primary-hover`、`primary-foreground` | 白色按钮 |
 | 信号（青） | `signal`、`signal-fg`、`signal-line`、`signal-soft` | 执行中、键盘焦点环（`ring`）、调度连线 |
 | 选中 | `selected`、`selected-bg`、`selected-ring` | 中性高亮 |
-| 状态 | `ok`、`warn`(`-fg`)、`danger`(`-fg`)，各带 `-soft` / `-line`；`pending`、`skipped`、`cancelled` | 见第 5 节 |
+| 状态 | `ok`、`warn`(`-fg`)、`danger`(`-fg`)，各带 `-soft` / `-line`；`pending`、`skipped`、`cancelled`、`stopped` | 见第 5 节 |
 | 日志 | `log-debug`、`log-info`、`log-warn`、`log-error` | INFO 不上色 |
 | 图表 | `chart-1` … `chart-4`、`chart-grid` | 多序列线色（中性灰与灰蓝，按序使用）、网格线；状态色只用于节点状态 |
 | 阴影 | `shadow-float`、`shadow-pop`、`shadow-inset-top` | 悬浮控件 / 弹窗、菜单 / 可滚动区域顶部的内阴影 |
@@ -46,7 +46,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ### 2.3 画布专用 `--canvas-*`
 
-`canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-run-running` / `-failed` / `-cancelled`、`--canvas-run-done-opacity`、`--canvas-minimap-mask`（小地图视口外遮罩）。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
+`canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-run-running` / `-failed` / `-cancelled` / `-stopped`、`--canvas-run-done-opacity`、`--canvas-minimap-mask`（小地图视口外遮罩）。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
 
 ### 2.4 配色规则
 
@@ -55,6 +55,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - **选中是中性高亮**：`raised` / `raised-2` 底 + 左侧 2px 白色短条（`shadow-[inset_2px_0_0_var(--primary)]`），画布上是 `selected` 描边 + `selected-ring`，相关连线灰色虚线流动。
 - 绿色 = 成功，红色 = 失败，琥珀色 = 等待与警告（含安装中）。
 - **已取消**用中性灰虚线圈，与跳过（淡灰空心圈）、待执行（灰空心圈）区分。
+- **已停止**用中性灰实心小方块（画布卡片灰色描边、进度条与时间线实心灰段），与已取消、已跳过区分：停止是场景的正常流程，不用警示色。
 - **紫色只用于子流程区域**（`canvas-subflow*`），语义层没有紫色。
 - **日志 INFO 不上色**（`log-info` = 正文色），只有 WARN / ERROR 着色，DEBUG 用辅助文字色。
 - 阴影带偏移和模糊，不用零偏移的彩色发光。
@@ -138,6 +139,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `pending` | 灰色空心圈 | 待执行、离线 |
 | `skipped` | 淡灰空心圈（70% 不透明） | 已跳过 |
 | `cancelled` | 灰色**虚线**圈 | 已取消 |
+| `stopped` | 灰色实心小方块（停止符号） | 已停止（子流程被停止子流程节点停止，不算失败） |
 
 ### 6.2 空、加载、错误、禁用
 

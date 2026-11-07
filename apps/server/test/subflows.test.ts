@@ -2,60 +2,14 @@
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ApiClient, type ChainView, type RunView } from "./support/api-client.js";
+import { ApiClient, type RunView } from "./support/api-client.js";
+import { chainOf, echo, orchestration, param, spawn, statuses } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
-
-type Node = Record<string, unknown> & { id: string };
-
-/** 包节点：stub/echo。 */
-const echo = (id: string, inputs: Record<string, unknown> = {}): Node => ({
-	id,
-	kind: "package",
-	package: "stub",
-	node: "echo",
-	inputs,
-});
-const spawn = (id: string, params: Record<string, unknown> = {}): Node => ({
-	id,
-	kind: "async",
-	params,
-});
-const param = (name: string, extra: Record<string, unknown> = {}) => ({
-	name,
-	type: "string",
-	...extra,
-});
-
-/**
- * 由若干条链组成的编排：每条链是按顺序排列的节点（第一个是起点）；
- * dispatch 为 [异步任务节点, 子流程入口节点]。
- */
-function orchestration(chains: Node[][], dispatch: Array<[string, string]>) {
-	return {
-		default_agent: "agent-a",
-		nodes: chains.flat(),
-		edges: [
-			...chains.flatMap((c) =>
-				c.slice(1).map((n, i) => ({ from: c[i]?.id, to: n.id, kind: "chain" })),
-			),
-			...dispatch.map(([from, to]) => ({ from, to, kind: "dispatch" })),
-		],
-		packages: { stub: "1.0.0" },
-	};
-}
-
-const chainOf = (run: RunView, chainId: string): ChainView => {
-	const chain = run.chains.find((c) => c.chain_id === chainId);
-	if (!chain) throw new Error(`chain ${chainId} not in run ${run.id}`);
-	return chain;
-};
-const statuses = (chain: ChainView) =>
-	Object.fromEntries(chain.nodes.map((n) => [n.node_id, n.status]));
 
 describe("异步任务节点与子流程", () => {
 	let cp: TestControlPlane;
@@ -122,6 +76,8 @@ describe("异步任务节点与子流程", () => {
 		const sub1 = chainOf(run, "sub1");
 		expect(main).toMatchObject({ depth: 0, parent_chain_instance_id: null, async_node_id: null });
 		expect(sub1).toMatchObject({
+			// 没有名称的旧版本以子流程入口的节点 ID 作为名称。
+			name: "sub1",
 			depth: 1,
 			parent_chain_instance_id: main.id,
 			async_node_id: "spawn1",

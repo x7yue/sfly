@@ -24,6 +24,7 @@ import {
 	PackageParams,
 	PackageVersionField,
 	SleepForm,
+	StopSubflowField,
 	SubflowNameField,
 	SubflowTrigger,
 	TimerForm,
@@ -179,12 +180,19 @@ function NodeInspector({
 	]);
 	const isNameWarning = (w: OrchestrationWarning) =>
 		w.code === "subflow_name_empty" || w.code === "subflow_name_duplicate";
+	const isStopWarning = (w: OrchestrationWarning) => w.code.startsWith("stop_subflow_");
 	const general = warnings.filter(
 		(w) =>
-			!isNameWarning(w) && !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
+			!isNameWarning(w) &&
+			!isStopWarning(w) &&
+			!("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
 	);
 	const change = (next: DocNode) => context.onChangeNode(id, next);
-	const hasExec = node.kind === "package" || node.kind === "timer" || node.kind === "sleep";
+	const hasExec =
+		node.kind === "package" ||
+		node.kind === "timer" ||
+		node.kind === "sleep" ||
+		node.kind === "stop_subflow";
 	const paramErrors = fieldErrors.length;
 	const version = node.kind === "package" ? doc.packages[node.package] : undefined;
 
@@ -288,6 +296,16 @@ function NodeInspector({
 					{node.kind === "sleep" && (
 						<SleepForm node={node} choices={choices} problemsOf={problemsOf} onChange={change} />
 					)}
+					{node.kind === "stop_subflow" && (
+						<StopSubflowField
+							id={id}
+							node={node}
+							doc={doc}
+							problems={warnings.filter(isStopWarning).map((w) => w.message)}
+							onChange={change}
+							onLocate={context.onLocate}
+						/>
+					)}
 					{fieldErrors
 						.filter((e) => !e.draft && !e.field.startsWith("params."))
 						.map((e) => (
@@ -315,6 +333,8 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 	async: "派发一个子流程后主链立即继续；子流程失败不影响主链。",
 	timer: "等到某个时刻再继续，由控制面执行，不占用 Agent。",
 	sleep: "等待一段时长再继续，由控制面执行，不占用 Agent。",
+	stop_subflow:
+		"停止本链触发的某个子流程，等它完全结束（包括其中的 always 节点）后再继续；由控制面执行，不占用 Agent。",
 	package: "在 Agent 上执行节点包里的函数。",
 };
 

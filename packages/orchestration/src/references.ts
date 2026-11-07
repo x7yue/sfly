@@ -24,6 +24,7 @@ export const BUILTIN_OUTPUTS: Record<Exclude<OrchestrationNode["kind"], "package
 	async: ["chain_instance_id"],
 	timer: ["triggered_at", "late"],
 	sleep: ["triggered_at"],
+	stop_subflow: ["status"],
 };
 
 /**

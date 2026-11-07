@@ -7,7 +7,7 @@ import { DEFAULT_TZ } from "./inspector/wait-nodes";
 
 /** 添加节点菜单里的一项：内置节点，或某个节点包版本里的节点类型。 */
 export type AddItem =
-	| { kind: "async" | "timer" | "sleep" }
+	| { kind: "async" | "timer" | "sleep" | "stop_subflow" }
 	/** 子流程入口：新建时必须填写名称（SEMANTICS §1.2）。 */
 	| { kind: "subflow_entry"; name: string }
 	| { kind: "package"; package: string; version: string; node: string; title: string };
@@ -16,6 +16,7 @@ export const BUILTIN_ITEMS: { kind: Exclude<AddItem["kind"], "package">; hint: s
 	{ kind: "async", hint: "派发一个子流程" },
 	{ kind: "timer", hint: "等到某个时刻" },
 	{ kind: "sleep", hint: "等待一段时长" },
+	{ kind: "stop_subflow", hint: "停止本链触发的子流程" },
 	{ kind: "subflow_entry", hint: "新建子流程区域" },
 ];
 
@@ -105,6 +106,9 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 			return { id, kind: "timer", always: false, at: "09:30:00", tz: DEFAULT_TZ };
 		case "sleep":
 			return { id, kind: "sleep", always: false, duration: "30s" };
+		case "stop_subflow":
+			// 要停止的子流程在检查器里按名称选择（只列出合法候选）。
+			return { id, kind: "stop_subflow", always: false };
 	}
 }
 

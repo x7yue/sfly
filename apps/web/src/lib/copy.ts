@@ -79,11 +79,19 @@ export const MESSAGE = {
 	archived: "已归档",
 } as const;
 
+/** 名称为空的子流程显示的名称（与画布 node-display 的 subflowLabel 一致）。 */
+export const UNNAMED_SUBFLOW = "未命名子流程";
+
 /**
- * 链实例的名称：「主链」或「子流程 <起点>」；给出实例 ID 时带上实例短 ID（同一子流程有多个实例时区分）。
+ * 链实例的名称：「主链」或「子流程 <名称>」（运行视图带子流程名称，没有名称时用起点节点 ID）；
+ * 给出实例 ID 时带上实例短 ID（同一子流程有多个实例时区分）。
  */
-export function chainLabel(chain: { chain_id: string; subflow: boolean }, instanceId?: string) {
+export function chainLabel(
+	chain: { chain_id: string; subflow: boolean; name?: string | null },
+	instanceId?: string,
+) {
 	if (!chain.subflow) return TERM.mainChain;
-	const name = `${TERM.subflow} ${chain.chain_id}`;
+	const shown = chain.name == null ? chain.chain_id : chain.name || UNNAMED_SUBFLOW;
+	const name = `${TERM.subflow} ${shown}`;
 	return instanceId ? `${name} · ${shortId(instanceId)}` : name;
 }

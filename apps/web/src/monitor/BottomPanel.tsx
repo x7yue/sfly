@@ -34,6 +34,7 @@ import {
 	orderedChains,
 	secretInputKeys,
 	secretParams,
+	stoppedSubflowLabel,
 } from "./run-model";
 import { taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
 
@@ -395,6 +396,12 @@ function AttemptsTab({
 								<>
 									<dt>唤醒</dt>
 									<dd className="m-0">{formatClock(a.wake_at)}</dd>
+								</>
+							)}
+							{n.kind === "stop_subflow" && typeof a.inputs?.subflow === "string" && (
+								<>
+									<dt>停止</dt>
+									<dd className="m-0 font-sans">{stoppedSubflowLabel(run, a.inputs.subflow)}</dd>
 								</>
 							)}
 							<dt>结束</dt>

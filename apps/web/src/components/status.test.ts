@@ -22,6 +22,7 @@ describe("状态显示（各页面共用一张表）", () => {
 			failed: { kind: "failed", label: "失败" },
 			skipped: { kind: "skipped", label: "已跳过" },
 			cancelled: { kind: "cancelled", label: "已取消" },
+			stopped: { kind: "stopped", label: "已停止" },
 		});
 		// 不认识的状态按待执行的样式显示原文。
 		expect(nodeStatusView("mystery")).toEqual({ kind: "pending", label: "mystery" });

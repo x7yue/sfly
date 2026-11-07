@@ -142,6 +142,7 @@ const FIELD_LABEL: Record<string, string> = {
 	at: "定时",
 	tz: "时区",
 	duration: "时长",
+	subflow: "要停止的子流程",
 };
 
 function fieldLabel(path: string): string {

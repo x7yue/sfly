@@ -15,7 +15,7 @@ export const retriesOf = (node: OrchestrationNode): number =>
 export const shouldRetry = (node: OrchestrationNode, kind: ErrorKind, attempt: number): boolean =>
 	isRetryable(kind) && attempt <= retriesOf(node);
 
-/** 前面的节点失败后仍然执行的节点（包节点、定时节点、Sleep 节点可以设置）。 */
+/** 前面的节点失败后仍然执行的节点（包节点、定时节点、Sleep 节点、停止子流程节点可以设置）。 */
 export const isAlways = (node: OrchestrationNode): boolean => "always" in node && node.always;
 
 /** 链上是否已有节点最终失败：某个节点最近一次尝试的状态是 failed。 */

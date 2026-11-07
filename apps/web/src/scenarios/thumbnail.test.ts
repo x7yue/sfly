@@ -106,6 +106,7 @@ describe("场景缩略图布局", () => {
 			"failed",
 			"skipped",
 			"cancelled",
+			"stopped",
 		] as const;
 		const s = structure([[["entry", "entry"], ...statuses.map(pkg)]]);
 		const t = layoutThumbnail(s, Object.fromEntries(statuses.map((id) => [id, id])));
@@ -120,6 +121,7 @@ describe("场景缩略图布局", () => {
 			failed: "failed",
 			skipped: "skipped",
 			cancelled: "cancelled",
+			stopped: "stopped",
 		});
 	});
 

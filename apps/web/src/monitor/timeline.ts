@@ -8,10 +8,11 @@ import { NODE_STATUS } from "#/lib/node-status";
 
 /**
  * 区段类型：queue 排队等待 Agent（含派发、安装节点包、启动执行器），run 执行中，ok 执行完成，
- * fail 失败的尝试，cancel 执行中被取消，wait 定时 / Sleep 节点在等待唤醒时间。
+ * fail 失败的尝试，cancel 执行中被取消，stop 执行中所在子流程被停止，
+ * wait 定时 / Sleep 节点在等待唤醒时间、停止子流程节点在等被停止的子流程结束。
  * 尝试的状态对应哪一种执行段见 lib/node-status。
  */
-export type SegmentKind = "queue" | "run" | "ok" | "fail" | "cancel" | "wait";
+export type SegmentKind = "queue" | "run" | "ok" | "fail" | "cancel" | "stop" | "wait";
 
 export interface Segment {
 	kind: SegmentKind;
@@ -29,7 +30,7 @@ export interface TimeRange {
 	end: number;
 }
 
-const WAIT_KINDS: ReadonlySet<NodeRunView["kind"]> = new Set(["timer", "sleep"]);
+const WAIT_KINDS: ReadonlySet<NodeRunView["kind"]> = new Set(["timer", "sleep", "stop_subflow"]);
 
 const time = (iso: string | null) => (iso === null ? null : Date.parse(iso));
 
@@ -65,7 +66,7 @@ export function nodeSegments(node: NodeRunView, now: number): Segment[] {
 
 function executionKind(kind: NodeRunView["kind"], status: AttemptView["status"]): SegmentKind {
 	const segment = NODE_STATUS[status].segment;
-	// 定时 / Sleep 节点正常执行的时段就是在等待唤醒时间。
+	// 定时 / Sleep 节点正常执行的时段就是在等待唤醒时间，停止子流程节点就是在等子流程结束。
 	return WAIT_KINDS.has(kind) && (segment === "ok" || segment === "run") ? "wait" : segment;
 }
 

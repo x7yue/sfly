@@ -138,6 +138,18 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 		notRun: "在开始前被取消，没有执行。",
 		notRunDuration: "—",
 	},
+	// 所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1）：场景的正常流程，不算失败，链路进度里算已完成。
+	stopped: {
+		label: "已停止",
+		badge: "stopped",
+		canvas: "stopped",
+		thumb: "stopped",
+		bar: "stopped",
+		done: true,
+		segment: "stop",
+		notRun: "子流程被停止，没有执行。",
+		notRunDuration: "停止",
+	},
 };
 
 /** 按状态字符串查显示规则；不认识的状态（例如更新的控制面新增的）返回 undefined，由调用方兜底。 */

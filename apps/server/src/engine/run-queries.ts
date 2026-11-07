@@ -1,3 +1,4 @@
+import { subflowName } from "@sfly/orchestration";
 import type { AttemptView, ChainRunView, NodeRunView, RunSummary, RunView } from "@sfly/schema";
 import { asc, desc, eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
@@ -40,6 +41,10 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 	const chainNodes = (chainId: string) =>
 		("errors" in plan ? undefined : plan.chains.get(chainId)?.nodes) ?? [];
 	const secrets = secretValues(document, chains);
+	const chainName = (chainId: string) => {
+		const start = document.nodes.find((n) => n.id === chainId);
+		return start?.kind === "subflow_entry" ? subflowName(start) : null;
+	};
 
 	// 只打码用户内容（参数、输入、输出、错误信息），ID、状态、时间等字段原样返回。
 	const m = <T>(value: T): T => maskDeep(value, secrets);
@@ -65,6 +70,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		chains: chains.map((chain) => ({
 			id: chain.id,
 			chain_id: chain.chainId,
+			name: chainName(chain.chainId),
 			parent_chain_instance_id: chain.parentChainInstanceId,
 			async_node_id: chain.asyncNodeId,
 			depth: chain.depth,
@@ -74,9 +80,10 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			ended_at: iso(chain.endedAt),
 			nodes: chainNodes(chain.chainId).map((node) => {
 				const rows = attemptsOf(chain.id, node.id);
-				// 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试；节点状态取最后一行（含占位）。
+				// 被跳过的节点、还没开始就被取消或停止的尝试只是占位，不算尝试；节点状态取最后一行（含占位）。
 				const placeholder = (t: (typeof rows)[number]) =>
-					t.status === "skipped" || (t.status === "cancelled" && t.startedAt === null);
+					t.status === "skipped" ||
+					((t.status === "cancelled" || t.status === "stopped") && t.startedAt === null);
 				const attempts: AttemptView[] = rows
 					.filter((t) => !placeholder(t))
 					.map((t) => ({

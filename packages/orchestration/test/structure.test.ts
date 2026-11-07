@@ -3,6 +3,7 @@ import {
 	chainMembers,
 	checkConnection,
 	type StructureDocument,
+	stopCandidates,
 	structureWarnings,
 	subflowName,
 } from "../src/index.js";
@@ -15,6 +16,10 @@ const pkg = (id: string, agent?: string): Node => ({ id, kind: "package", agent 
 const asyncNode = (id: string): Node => ({ id, kind: "async" });
 const subflow = (id: string, name?: string): Node =>
 	name === undefined ? { id, kind: "subflow_entry" } : { id, kind: "subflow_entry", name };
+const stop = (id: string, target?: string): Node =>
+	target === undefined
+		? { id, kind: "stop_subflow" }
+		: { id, kind: "stop_subflow", subflow: target };
 const chain = (from: string, to: string): Edge => ({ from, to, kind: "chain" });
 const dispatch = (from: string, to: string): Edge => ({ from, to, kind: "dispatch" });
 
@@ -251,6 +256,88 @@ describe("子流程名称", () => {
 			["subflow_name_duplicate", "s"],
 			["subflow_name_duplicate", "t"],
 		]);
+	});
+});
+
+describe("停止子流程节点的引用检查（SEMANTICS §4.1 第 1 条）", () => {
+	/**
+	 * 主链 entry → spawnA → stopper → spawnB；spawnA 触发 a（a → spawnC，触发 c），spawnB 触发 b；
+	 * 另有子流程 a 上的停止子流程节点 inner。stopper 和 inner 要停止哪个子流程由参数给出。
+	 */
+	const scene = (target?: string, innerTarget = "c") =>
+		doc(
+			[
+				entry(),
+				asyncNode("spawnA"),
+				stop("stopper", target),
+				asyncNode("spawnB"),
+				subflow("a", "监控"),
+				asyncNode("spawnC"),
+				stop("inner", innerTarget),
+				subflow("b", "压测"),
+				subflow("c", "日志"),
+			],
+			[
+				chain("entry", "spawnA"),
+				chain("spawnA", "stopper"),
+				chain("stopper", "spawnB"),
+				dispatch("spawnA", "a"),
+				dispatch("spawnB", "b"),
+				chain("a", "spawnC"),
+				chain("spawnC", "inner"),
+				dispatch("spawnC", "c"),
+			],
+		);
+
+	it("候选是本链在停止子流程节点之前直接触发的子流程，以及它们间接触发的子流程", () => {
+		expect(stopCandidates(scene(), "stopper")).toEqual(["a", "c"]);
+		expect(stopCandidates(scene(), "inner")).toEqual(["c"]);
+		// 不在任何链上的节点没有候选。
+		expect(stopCandidates(doc([entry(), stop("lost")]), "lost")).toEqual([]);
+	});
+
+	it("指向合法候选时没有警告", () => {
+		expect(codes(scene("a"))).toEqual([]);
+		expect(codes(scene("c"))).toEqual([]);
+	});
+
+	it("没有选择子流程、或选择的子流程不存在时给出警告", () => {
+		expect(structureWarnings(scene())).toEqual([
+			{
+				code: "stop_subflow_unset",
+				node_id: "stopper",
+				message: "停止子流程节点 stopper 没有选择子流程",
+			},
+		]);
+		expect(structureWarnings(scene("gone"))).toEqual([
+			{
+				code: "stop_subflow_unknown",
+				node_id: "stopper",
+				message: "停止子流程节点 stopper 要停止的子流程 gone 不存在",
+			},
+		]);
+		expect(codes(scene("spawnB"))).toEqual([["stop_subflow_unknown", "stopper"]]);
+	});
+
+	it("触发子流程的异步任务节点在停止子流程节点之后时给出警告", () => {
+		expect(structureWarnings(scene("b"))).toEqual([
+			{
+				code: "stop_subflow_before_trigger",
+				node_id: "stopper",
+				message: "停止子流程节点 stopper 在触发子流程「压测」的异步任务节点 spawnB 之前",
+			},
+		]);
+	});
+
+	it("不能停止自己所在的链、上级链或其他分支上的子流程", () => {
+		expect(structureWarnings(scene("a", "a"))).toEqual([
+			{
+				code: "stop_subflow_out_of_scope",
+				node_id: "inner",
+				message: "停止子流程节点 inner 只能停止本链触发的子流程，「监控」不是",
+			},
+		]);
+		expect(codes(scene("a", "b"))).toEqual([["stop_subflow_out_of_scope", "inner"]]);
 	});
 });
 

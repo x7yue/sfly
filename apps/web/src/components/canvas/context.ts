@@ -22,7 +22,8 @@ export type NodeRunState =
 	| "done"
 	| "failed"
 	| "skipped"
-	| "cancelled";
+	| "cancelled"
+	| "stopped";
 
 export interface NodeDecoration {
 	run?: NodeRunState;
@@ -43,6 +44,8 @@ export interface CanvasInfo {
 	titleOf(pkg: string, node: string): string | undefined;
 	/** 包名 → 锁定的版本。 */
 	packages: Readonly<Record<string, string>>;
+	/** 子流程入口节点 ID → 子流程的显示名称（node-display 的 subflowLabel）；不是子流程入口时为 undefined。 */
+	subflowLabelOf(id: string): string | undefined;
 	/** 节点 ID → 静态检查警告（编辑模式）。 */
 	warnings: ReadonlyMap<string, readonly { message: string }[]>;
 }
@@ -71,6 +74,7 @@ export const EMPTY_INFO: CanvasInfo = {
 	defaultAgent: undefined,
 	titleOf: () => undefined,
 	packages: {},
+	subflowLabelOf: () => undefined,
 	warnings: new Map(),
 };
 

@@ -7,9 +7,18 @@ import { nodeStatusDisplay } from "#/lib/node-status";
  * 状态指示（原型 `.st`）：圆点 + 文字。配色规则见 docs/DESIGN-SYSTEM.md：
  *   ok 成功/在线（绿） · running 执行中（青，圆点脉冲） · failed 失败（红） · warn 等待/警告/安装中（琥珀）
  *   pending 待执行/离线（空心灰圈） · skipped 已跳过（淡灰空心圈） · cancelled 已取消（灰色虚线圈）
+ *   stopped 已停止（灰色实心小方块）
  * 状态一律用这个组件表达，不要自己拼颜色。
  */
-export type StatusKind = "ok" | "running" | "failed" | "warn" | "pending" | "skipped" | "cancelled";
+export type StatusKind =
+	| "ok"
+	| "running"
+	| "failed"
+	| "warn"
+	| "pending"
+	| "skipped"
+	| "cancelled"
+	| "stopped";
 
 /** 运行状态与链实例状态的显示（各页面共用这一张表）。 */
 const RUN_STATUS_KIND: Record<RunStatus, StatusKind> = {
@@ -60,6 +69,7 @@ const TEXT: Record<StatusKind, string> = {
 	pending: "text-pending",
 	skipped: "text-skipped",
 	cancelled: "text-cancelled",
+	stopped: "text-stopped",
 };
 
 const DOT: Record<StatusKind, string> = {
@@ -70,6 +80,8 @@ const DOT: Record<StatusKind, string> = {
 	pending: "size-2 border-[1.5px] border-current",
 	skipped: "size-2 border-[1.5px] border-current opacity-70",
 	cancelled: "size-2 border-[1.5px] border-dashed border-current",
+	// 圆点之外唯一的方块（停止符号）：与取消、跳过区分开。
+	stopped: "size-1.75 rounded-[2px] bg-current",
 };
 
 /** 只有圆点（单独使用时自带状态色，例如时间线的行标签）；需要文字时用 StatusPill。 */
