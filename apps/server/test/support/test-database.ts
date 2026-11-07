@@ -21,9 +21,9 @@ async function withAdmin<T>(fn: (client: pg.Client) => Promise<T>): Promise<T> {
 	}
 }
 
-/** 创建一个随机命名的空数据库；每个测试文件/控制面实例独占一个，互不干扰。 */
-export async function createTestDatabase(): Promise<TestDatabase> {
-	const name = `sfly_test_${randomBytes(6).toString("hex")}`;
+/** 创建一个随机命名的空数据库；每个测试文件/控制面实例独占一个，互不干扰。`prefix` 便于区分来源（性能测试用 sfly_perf）。 */
+export async function createTestDatabase(prefix = "sfly_test"): Promise<TestDatabase> {
+	const name = `${prefix}_${randomBytes(6).toString("hex")}`;
 	await withAdmin((c) => c.query(`CREATE DATABASE "${name}"`));
 	const url = new URL(ADMIN_DATABASE_URL);
 	url.pathname = `/${name}`;

@@ -366,6 +366,8 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 资源有上限、数据正确类的检查是硬性断言，失败即 bug；吞吐、延迟、CPU 只记录并与宽松阈值比较（低于目标一半才提示）。几秒内结束、结果确定的有界检查（如 `agent/tests/work_dir.rs`）算普通测试，留在 CI。
 
+代码在 `apps/server/perf/`：每项（负载测试或基准测试）一个文件放在 `perf/items/`，自动注册；报告里的目标从下表读取；判定、对比与报告生成的纯逻辑有单测（`apps/server/test/perf-*.test.ts`，随控制面测试进 CI）。临时文件放在 `--tmp-dir`（默认 `out/perf/tmp`），不用 `/tmp`。
+
 目标（release 构建）：
 
 | 范围 | 目标 |

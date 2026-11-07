@@ -273,6 +273,40 @@ def metric_burst(ctx: Context, seconds: float = 3.0) -> dict[str, Any]:
 
 
 @node(
+    title="定速指标",
+    outputs=["count", "elapsed", "max_behind_ms", "max_call_ms"],
+    metrics=[Metric("seq", "", "gauge", "本次上报的序号")],
+    primary_metric="seq",
+)
+def metric_rate(ctx: Context, rate: float = 10000, seconds: float = 10) -> dict[str, Any]:
+    """性能测试用（pnpm perf）：按每秒 rate 次的速率上报 seconds 秒，第 i 次上报 seq = i。
+
+    每 100 次对一次时间，提前了就等到计划时刻。返回上报次数、实际用时（秒）、
+    比计划落后的最长时间与单次 `ctx.metric()` 的最长耗时（毫秒）：事件通道堵住时后两者会变大。
+    """
+    total = int(rate * seconds)
+    start = time.monotonic()
+    max_behind = 0.0
+    max_call = 0.0
+    for i in range(total):
+        if i % 100 == 0:
+            delay = start + i / rate - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            else:
+                max_behind = max(max_behind, -delay)
+        before = time.perf_counter()
+        ctx.metric("seq", float(i + 1))
+        max_call = max(max_call, time.perf_counter() - before)
+    return {
+        "count": total,
+        "elapsed": time.monotonic() - start,
+        "max_behind_ms": max_behind * 1000,
+        "max_call_ms": max_call * 1000,
+    }
+
+
+@node(
     title="指标",
     outputs=[],
     metrics=[

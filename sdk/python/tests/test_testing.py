@@ -105,6 +105,23 @@ def test_events_go_through_a_fifo_in_the_work_dir_and_none_are_lost(tmp_path: Pa
     assert not (tmp_path / "w" / "events.jsonl").exists()
 
 
+def test_metric_rate_reports_sequence_numbers_at_the_given_rate(tmp_path: Path) -> None:
+    from sfly_stub import metric_rate
+
+    result = run_node(metric_rate, {"rate": 2000, "seconds": 0.5}, work_dir=tmp_path / "w")
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["count"] == 1000
+    # 按速率均匀上报：用时接近 seconds，不会一口气写完。
+    assert 0.45 <= result.outputs["elapsed"] < 2
+    assert result.outputs["max_behind_ms"] >= 0
+    assert result.outputs["max_call_ms"] >= 0
+    assert [(m.name, m.value) for m in result.metrics] == [
+        ("seq", float(i)) for i in range(1, 1001)
+    ]
+
+
 def test_executor_crash_summary_keeps_the_stderr_tail_without_stderr_log(tmp_path: Path) -> None:
     from sfly_stub import write_failure
 

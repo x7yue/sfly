@@ -30,6 +30,8 @@ export async function startBundledServer(options: {
 		stdio: ["ignore", "pipe", "pipe"],
 		env: {
 			PATH: process.env.PATH,
+			// 临时文件跟随调用方（性能测试把它指到可配置的临时目录，避免写满 /tmp）。
+			...(process.env.TMPDIR ? { TMPDIR: process.env.TMPDIR } : {}),
 			NODE_ENV: "production",
 			DATABASE_URL: options.databaseUrl,
 			SFLY_DATA_DIR: options.dataDir,
