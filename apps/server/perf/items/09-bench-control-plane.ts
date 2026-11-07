@@ -2,7 +2,8 @@
 // 运行 perf/benchmarks/control-plane.bench.ts（也可以单独运行，见该文件），需要本机 PostgreSQL。只记录，不判定。
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { readVitestBench, runCommand } from "../bench.js";
+import { readVitestBench } from "../bench.js";
+import { runCommand } from "../command.js";
 import { definePerfItem, type ItemRun } from "../item.js";
 import type { Measurement } from "../report.js";
 

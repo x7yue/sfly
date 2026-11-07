@@ -1,7 +1,7 @@
 // 性能测试的被测对象：release 构建的 Agent、打包后的控制面（pnpm bundle:server 的同一套脚本）、
 // 本机 PostgreSQL 上的独立数据库，以及不依赖 vitest 的 HTTP API 客户端和进程资源采样。
 // 启动真实 Agent、打包控制面、测试数据库复用 test/support 里的实现。
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import { type AttemptView, logsApi, metricsApi, runsApi } from "@sfly/schema";
 import { type BundledServer, startBundledServer } from "../test/support/bundled-server.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "../test/support/real-agent.js";
 import { createTestDatabase, type TestDatabase } from "../test/support/test-database.js";
+import { runChecked } from "./command.js";
 import type { Artifacts, PerfContext } from "./item.js";
 
 /** 构建产物的位置：release Agent 在 cargo 的 target 目录，打包的控制面在 out/perf/server（不覆盖 out/server）。 */
@@ -24,18 +25,6 @@ export function artifactsAt(repoRoot: string): Artifacts {
 	};
 }
 
-function run(command: string, args: string[], cwd: string): Promise<void> {
-	return new Promise((resolve, reject) => {
-		const child = spawn(command, args, { cwd, stdio: "inherit" });
-		child.once("error", reject);
-		child.once("exit", (code, signal) =>
-			code === 0
-				? resolve()
-				: reject(new Error(`${command} ${args.join(" ")} 失败（${signal ?? code}）`)),
-		);
-	});
-}
-
 /** 构建 release Agent 与打包后的控制面（不带 Agent 下载，见 scripts/bundle.ts 的 --without-agents）。 */
 export async function buildArtifacts(
 	repoRoot: string,
@@ -43,10 +32,14 @@ export async function buildArtifacts(
 ): Promise<Artifacts> {
 	const artifacts = artifactsAt(repoRoot);
 	log("构建 release Agent：cargo build --release -p sfly-agent");
-	await run("cargo", ["build", "--release", "--locked", "-p", "sfly-agent"], repoRoot);
+	await runChecked("cargo", ["build", "--release", "--locked", "-p", "sfly-agent"], {
+		cwd: repoRoot,
+	});
 	log("打包控制面：前端、SDK wheel 与单文件包");
-	await run("pnpm", ["--filter", "@sfly/web", "--filter", "@sfly/server", "build"], repoRoot);
-	await run(
+	await runChecked("pnpm", ["--filter", "@sfly/web", "--filter", "@sfly/server", "build"], {
+		cwd: repoRoot,
+	});
+	await runChecked(
 		"pnpm",
 		[
 			"--filter",
@@ -58,7 +51,7 @@ export async function buildArtifacts(
 			"--out-dir",
 			artifacts.bundleDir,
 		],
-		repoRoot,
+		{ cwd: repoRoot },
 	);
 	return artifacts;
 }

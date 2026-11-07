@@ -2,7 +2,8 @@
 // 运行 `cargo bench -p sfly-agent --bench telemetry`（也可以单独运行，见 agent/benches/telemetry.rs），
 // 结果写到这一项的临时目录（CRITERION_HOME），不影响 target/criterion 里自己跑的结果。只记录，不判定。
 import { join } from "node:path";
-import { readCriterion, runChecked } from "../bench.js";
+import { readCriterion } from "../bench.js";
+import { runChecked } from "../command.js";
 import { definePerfItem, type ItemRun } from "../item.js";
 import { MB } from "../measure.js";
 import type { Measurement } from "../report.js";
