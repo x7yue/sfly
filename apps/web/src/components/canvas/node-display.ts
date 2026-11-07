@@ -1,4 +1,5 @@
 import { NODE_DEFAULTS, subflowName } from "@sfly/orchestration";
+import { UNNAMED_SUBFLOW } from "#/lib/copy";
 import type { CanvasInfo } from "./context";
 import type { DocNode } from "./flow";
 
@@ -13,9 +14,9 @@ export const KIND_META: Record<DocNode["kind"], { label: string; code: string }>
 	stop_subflow: { label: "停止子流程", code: "ST" },
 };
 
-/** 子流程的显示名称：没有名称字段的旧版本显示节点 ID，填了空名称时显示「未命名子流程」。 */
+/** 子流程的显示名称：没有名称字段的旧版本显示节点 ID，填了空名称时显示 {@link UNNAMED_SUBFLOW}。 */
 export const subflowLabel = (node: { id: string; name?: string | undefined }): string =>
-	subflowName(node) || "未命名子流程";
+	subflowName(node) || UNNAMED_SUBFLOW;
 
 /** 文档里子流程入口节点 ID → 显示名称的查找（CanvasInfo.subflowLabelOf）。 */
 export function subflowLabels(doc: {
