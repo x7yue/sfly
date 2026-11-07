@@ -10,6 +10,7 @@
 //! | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀（`AssignTask.artifact_upload_url`，为空时不设置） |
 //! | `SFLY_EVENTS` | `events.fifo`：结构化日志、进度与指标（命名管道，启动执行器前由 Agent 创建并打开读端，ADR 0015） |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
+//! | `SFLY_PROCS` | `<procs_dir>/<运行 ID>/`：这次运行的后台进程目录（不在任务目录里，不预先创建；运行 ID 不能用作目录名时不设置） |
 //!
 //! 执行器的标准输出 / 标准错误和事件管道由 [`crate::logs`] 合并转发给控制面，
 //! 原始的标准输出 / 标准错误同时写到工作目录下的 `stdout.log` / `stderr.log`。失败消息里的标准错误尾部
@@ -68,7 +69,7 @@ pub fn failure(task: &AssignTask, kind: ErrorKind, message: impl Into<String>) -
     }
 }
 
-/// 任务 ID 用作目录名，只允许安全字符。
+/// 任务 ID（和运行 ID）用作目录名，只允许安全字符。
 fn valid_task_id(id: &str) -> bool {
     !id.is_empty()
         && id != "."
@@ -84,6 +85,7 @@ fn valid_task_id(id: &str) -> bool {
 pub async fn start(
     venv: &SharedVenv,
     work_root: &Path,
+    procs_root: &Path,
     task: &AssignTask,
     entry: &str,
     telemetry: &Telemetry,
@@ -114,7 +116,9 @@ pub async fn start(
             format!("准备工作目录 {} 失败：{error}", dir.display()),
         ));
     }
-    spawn_process(venv, &dir, task, telemetry, grace)
+    // 运行 ID 由控制面生成，正常总能用作目录名；不能时不设置 SFLY_PROCS，SDK 退回默认位置。
+    let procs = valid_task_id(&task.run_id).then(|| procs_root.join(&task.run_id));
+    spawn_process(venv, &dir, procs.as_deref(), task, telemetry, grace)
 }
 
 async fn prepare_dir(
@@ -165,6 +169,7 @@ pub struct Running {
 fn spawn_process(
     venv: &SharedVenv,
     dir: &Path,
+    procs: Option<&Path>,
     task: &AssignTask,
     telemetry: &Telemetry,
     grace: Duration,
@@ -203,6 +208,9 @@ fn spawn_process(
         .stderr(Stdio::piped());
     if !task.artifact_upload_url.is_empty() {
         command.env("SFLY_ARTIFACTS_URL", &task.artifact_upload_url);
+    }
+    if let Some(procs) = procs {
+        command.env("SFLY_PROCS", procs);
     }
 
     // 每个任务是一棵进程树，超时、取消时整体终止。

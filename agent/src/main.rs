@@ -44,6 +44,10 @@ struct Args {
     /// 任务工作目录的根目录（每个任务一个子目录）；默认 `$SFLY_HOME/work`。
     #[arg(long, env = "SFLY_WORK_DIR")]
     work_dir: Option<PathBuf>,
+    /// 后台进程目录的根目录（每次运行一个子目录，节点启动的后台进程的日志放在这里，和任务目录按同一个保留期清理）；
+    /// 默认 `$SFLY_HOME/procs`。
+    #[arg(long, env = "SFLY_PROCS_DIR")]
+    procs_dir: Option<PathBuf>,
     /// 任务目录在结果被控制面确认后保留多久，例如 `30m`、`24h`、`7d`；`0` 表示立即删除。
     /// Agent 启动时和之后每小时删除超过保留期的任务目录（上次运行留下的按目录的修改时间算）。
     #[arg(long, env = "SFLY_TASK_DIR_RETENTION", default_value = "7d", value_parser = retention::parse_retention)]
@@ -163,7 +167,7 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse_from(program.into_iter().chain(from_file).chain(argv));
     let under_home = |name: &str| {
         sfly_home.as_ref().map(|dir| dir.join(name)).context(
-            "cannot locate SFLY_HOME: set SFLY_HOME or HOME, or pass --venv, --work-dir and --uv",
+            "cannot locate SFLY_HOME: set SFLY_HOME or HOME, or pass --venv, --work-dir, --procs-dir and --uv",
         )
     };
     let venv = match args.venv {
@@ -173,6 +177,10 @@ async fn main() -> anyhow::Result<()> {
     let work_dir = match args.work_dir {
         Some(work_dir) => work_dir,
         None => under_home("work")?,
+    };
+    let procs_dir = match args.procs_dir {
+        Some(procs_dir) => procs_dir,
+        None => under_home("procs")?,
     };
     let (uv, manage_uv) = match args.uv {
         Some(uv) => (uv, false),
@@ -185,6 +193,7 @@ async fn main() -> anyhow::Result<()> {
         slots: args.slots,
         venv,
         work_dir,
+        procs_dir,
         task_dir_retention: args.task_dir_retention,
         task_dir_sweep_interval: Duration::from_secs(args.task_dir_sweep_interval.max(1)),
         mirrors: environment::LocalMirrors {
