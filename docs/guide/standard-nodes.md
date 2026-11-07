@@ -128,3 +128,69 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
   { "path": "$.total", "op": "exists" }
 ]
 ```
+
+## `http_request`：HTTP 请求
+
+发一个 HTTP 请求，检查状态码和响应 JSON；打开 `until_ok` 时重试直到满足，可以用来等待 HTTP 服务就绪。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `url` | 必填 | 请求地址，`http://` 或 `https://` |
+| `method` | `GET` | `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`HEAD`、`OPTIONS` |
+| `headers` | 无 | 请求头（对象，值为字符串） |
+| `json` | 无 | JSON 请求体（任意 JSON 值），自动加上 `Content-Type: application/json` |
+| `body` | 无 | 文本请求体，按 UTF-8 发送；需要时在 `headers` 里写 `Content-Type`。与 `json` 只能填一个 |
+| `request_timeout` | `30` | 单次请求最多等多少秒（连接、发送、等响应） |
+| `verify_tls` | `true` | 是否校验 HTTPS 证书；被测环境用自签证书时设为 `false` |
+| `expect_status` | `"2xx"` | 算作成功的状态码：状态码（例如 `404`）或 `"1xx"`～`"5xx"`，可以是列表，例如 `[200, "3xx"]` |
+| `expect_json` | 无 | 对响应 JSON 的断言列表，格式与 `assert` 节点的 `assertions` 相同（见上文） |
+| `until_ok` | `false` | 打开时，没有得到响应（连接失败、超时）或断言不通过就每 `poll` 秒重试一次，直到通过或超过 `wait` 秒 |
+| `wait` | `300` | `until_ok` 时最多等多少秒 |
+| `poll` | `1` | `until_ok` 时的重试间隔（秒） |
+
+| 输出 | 说明 |
+|---|---|
+| `status` | 状态码 |
+| `headers` | 响应头（对象）。名字都是小写；同名的多个响应头用 `, ` 连起来 |
+| `json` | 响应内容是 JSON 且不超过 256 KiB 时，解析后的值 |
+| `text` | 响应内容不是 JSON 或超过 256 KiB 时的文本，最多保留开头 256 KiB（截断时写一条警告日志） |
+| `elapsed_ms` | 最后一次请求的耗时（毫秒） |
+
+| 指标 | 单位 | 说明 |
+|---|---|---|
+| `elapsed_ms`（主指标） | ms | 每次请求的耗时 |
+
+- 先检查状态码，再检查 `expect_json`。不满足时节点失败，错误信息写明请求方法和地址、状态码，以及不在 `expect_status` 里时响应的开头、不通过的断言（与 `assert` 一样逐条列出）。响应不是 JSON 而填了 `expect_json` 时也失败。
+- `expect_json` 检查完整的响应 JSON：超过 256 KiB、输出里只有截断的 `text` 时也一样。
+- 没有得到响应时（连接被拒绝、请求超时、证书校验失败）节点失败，错误信息写明原因。
+- `until_ok` 重试时，原因变化时写一条日志（第几次、为什么不满足）；超过 `wait` 时失败，错误信息是请求次数和最后一次不满足的原因。每次请求最多等 `request_timeout` 秒，所以实际可能比 `wait` 多等一次请求的时间。
+- 不跟随重定向：3xx 响应按原样检查，需要时把它写进 `expect_status`。
+- 走 Agent 的 `HTTP_PROXY`、`HTTPS_PROXY`、`NO_PROXY` 环境变量设置的代理。
+- 请求头和请求体在运行页面上对所有人可见，不要直接写密钥。
+
+例：被测服务用 `start_process` 启动后，等它的健康检查接口返回 `{"status": "ok"}`，最多等 2 分钟。节点 `ready` 的参数：
+
+```json
+{
+  "url": "http://127.0.0.1:8080/health",
+  "expect_json": [{ "path": "$.status", "op": "eq", "value": "ok" }],
+  "until_ok": true,
+  "wait": 120,
+  "poll": 2
+}
+```
+
+服务启动前连接被拒绝也会重试。下单接口要返回 201 和订单号时，节点 `order` 的参数：
+
+```json
+{
+  "method": "POST",
+  "url": "http://127.0.0.1:8080/api/orders",
+  "headers": { "X-Request-Id": "sfly-smoke" },
+  "json": { "sku": "A-100", "count": 2 },
+  "expect_status": 201,
+  "expect_json": [{ "path": "$.order_id", "op": "exists" }]
+}
+```
+
+后面的节点引用 `order` 的输出 `json` 拿到整个响应，或者用 `assert` 对它做更多检查。
