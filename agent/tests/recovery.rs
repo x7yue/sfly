@@ -79,6 +79,98 @@ async fn hello_after_reconnecting_lists_running_tasks_and_tasks_with_unacked_res
     );
 }
 
+/// 包一层共享 venv 的 python（#132）：`sfly.installed`（重连时 Hello 前清点已安装的包）在 `hold`
+/// 存在时先写出 `refreshing` 再等它被删掉；`sfly.runner`（执行器）把自己的 pid 写进 `runner_pid`。
+/// 其余照常交给真正的 venv python。
+fn gated_venv(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let venv = dir.join("venv");
+    std::fs::create_dir_all(venv.join("bin")).unwrap();
+    let python = venv.join("bin/python");
+    std::fs::write(
+        &python,
+        format!(
+            r#"#!/bin/sh
+case " $* " in
+  *" sfly.installed "*)
+    if [ -e '{hold}' ]; then
+      : > '{refreshing}'
+      while [ -e '{hold}' ]; do sleep 0.02; done
+    fi ;;
+  *" sfly.runner "*) echo $$ > '{runner_pid}' ;;
+esac
+exec '{real}' "$@"
+"#,
+            hold = dir.join("hold").display(),
+            refreshing = dir.join("refreshing").display(),
+            runner_pid = dir.join("runner_pid").display(),
+            real = support::stub_venv().join("bin/python").display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&python, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (venv, dir.join("hold"))
+}
+
+/// #132：重连时先取出已结束任务的结果、再清点已安装的包（要跑一次 python，可能很慢）、最后才看哪些任务还在执行。
+/// 任务恰好在这中间结束时，它既不在「结果还没 Ack」里，也不在「正在执行」里，Hello 漏报，
+/// 控制面随即以 agent_lost 判它失败，之后补报的结果被丢弃。
+#[tokio::test]
+async fn hello_lists_a_task_that_finishes_while_the_hello_is_being_prepared() {
+    let cp = FakeControlPlane::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let (venv, hold) = gated_venv(dir.path());
+    let mut options = AgentOptions::new(&cp.url, "agent-hello-race");
+    options.venv = &venv;
+    let _agent = spawn_agent(options);
+    cp.hello(0).await;
+    cp.stop_acking();
+    let ready = dir.path().join("ready");
+    let release = dir.path().join("release");
+    cp.assign(stub_task(
+        "task-gate",
+        "gate",
+        json!({ "ready_file": ready, "release_file": release }),
+    ))
+    .await;
+    wait_for_file(&ready).await;
+    let runner: u32 = wait_for_file(&dir.path().join("runner_pid"))
+        .await
+        .trim()
+        .parse()
+        .unwrap();
+
+    // 断开：Agent 重连前准备 Hello，清点已安装的包时停住。
+    std::fs::write(&hold, "").unwrap();
+    cp.end_session();
+    wait_for_file_to_exist(&dir.path().join("refreshing")).await;
+
+    // 这时任务结束：执行器退出后 Agent 立即交出结果。
+    std::fs::write(&release, "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    // 已被 Agent 回收（不再是僵尸进程）：它的 wait 已经返回。
+    while Path::new(&format!("/proc/{runner}")).exists() {
+        assert!(Instant::now() < deadline, "executor never exited");
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    std::fs::remove_file(&hold).unwrap();
+
+    assert_eq!(cp.hello(1).await.running_tasks, vec![held("task-gate")]);
+}
+
+async fn wait_for_file_to_exist(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !path.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "{} never appeared",
+            path.display()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 #[tokio::test]
 async fn abandoned_tasks_are_killed_and_their_results_dropped() {
     let cp = FakeControlPlane::start().await;
