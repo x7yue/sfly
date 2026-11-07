@@ -139,11 +139,15 @@ def process_tree(
 
 
 @node(title="等待取消", outputs=[])
-def wait_cancel(ctx: Context, ready_file: str, report_file: str, seconds: float = 3600) -> None:
+def wait_cancel(
+    ctx: Context, ready_file: str, report_file: str, seconds: float = 3600, artifacts: int = 0
+) -> None:
     """写出 ready_file 后等待；被终止时（finally）把 ctx.cancelled() 写到 report_file。
 
-    取消测试用。
+    取消测试用。artifacts 大于 0 时先保存这么多个名字很长的空产物，让取消后打印的产物清单很长。
     """
+    for i in range(artifacts):
+        ctx.artifacts.save(f"{i:05d}-{'x' * 100}.txt", "")
     with open(ready_file, "w") as f:
         f.write(str(os.getpid()))
     try:
