@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 import time
 import uuid
@@ -12,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from named_sleep import NamedSleep, named_sleep_fixture  # noqa: F401 -- fixture
 
 from sfly.testing import Execution, run_node
 from sfly_std.process_assert import process_assert
@@ -76,20 +75,15 @@ def _state(pid: int) -> str:
     return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
 
 
-@pytest.fixture
-def unique_sleep(tmp_path: Path) -> str:
-    """指向 sleep 的符号链接：进程名（执行的文件名）在机器上唯一。"""
-    name = f"sl{uuid.uuid4().hex[:10]}"
-    sleep = shutil.which("sleep")
-    assert sleep is not None
-    os.symlink(sleep, tmp_path / name)
-    return str(tmp_path / name)
+def unique_name() -> str:
+    """在机器上唯一的进程名。"""
+    return f"sl{uuid.uuid4().hex[:10]}"
 
 
-def test_name_and_match_must_both_hold(tmp_path: Path, spawn: Any, unique_sleep: str) -> None:
-    name = Path(unique_sleep).name
-    a = spawn(unique_sleep, "300")
-    spawn(unique_sleep, "301")
+def test_name_and_match_must_both_hold(tmp_path: Path, named_sleep: NamedSleep) -> None:
+    name = unique_name()
+    a = named_sleep.start(name, "300")
+    named_sleep.start(name, "301")
 
     result = run(tmp_path, name=name, match=r"\b300$")
 
@@ -98,27 +92,27 @@ def test_name_and_match_must_both_hold(tmp_path: Path, spawn: Any, unique_sleep:
 
 
 def test_running_false_fails_listing_the_processes_still_running(
-    tmp_path: Path, spawn: Any, unique_sleep: str
+    tmp_path: Path, named_sleep: NamedSleep
 ) -> None:
-    name = Path(unique_sleep).name
-    a = spawn(unique_sleep, "300")
-    b = spawn(unique_sleep, "301")
+    name = unique_name()
+    a = named_sleep.start(name, "300")
+    b = named_sleep.start(name, "301")
 
     assert failure(run(tmp_path, name=name, running=False)) == (
         "sfly_std.process_assert.ProcessAssertionFailed: "
         f'name "{name}" 的进程应不在运行，实际有 2 个：\n'
-        f"- pid {a.pid} {name}：{unique_sleep} 300\n"
-        f"- pid {b.pid} {name}：{unique_sleep} 301"
+        f"- pid {a.pid} {name}：{a.cmdline}\n"
+        f"- pid {b.pid} {name}：{b.cmdline}"
     )
     assert run(tmp_path, name=name + "x", running=False).status == "success"
 
 
 def test_count_checks_the_exact_number_of_matched_processes(
-    tmp_path: Path, spawn: Any, unique_sleep: str
+    tmp_path: Path, named_sleep: NamedSleep
 ) -> None:
-    name = Path(unique_sleep).name
-    a = spawn(unique_sleep, "300")
-    b = spawn(unique_sleep, "301")
+    name = unique_name()
+    a = named_sleep.start(name, "300")
+    b = named_sleep.start(name, "301")
 
     result = run(tmp_path, name=name, count=2)
     assert result.status == "success", result.error
@@ -127,8 +121,8 @@ def test_count_checks_the_exact_number_of_matched_processes(
     assert failure(run(tmp_path, match=f"{name} 30[01]$", count=3)) == (
         "sfly_std.process_assert.ProcessAssertionFailed: "
         f'match "{name} 30[01]$" 的进程应有 3 个，实际有 2 个：\n'
-        f"- pid {a.pid} {name}：{unique_sleep} 300\n"
-        f"- pid {b.pid} {name}：{unique_sleep} 301"
+        f"- pid {a.pid} {name}：{a.cmdline}\n"
+        f"- pid {b.pid} {name}：{b.cmdline}"
     )
     assert failure(run(tmp_path, name=name + "x", count=1)) == (
         "sfly_std.process_assert.ProcessAssertionFailed: "
@@ -143,17 +137,17 @@ def test_rejects_count_contradicting_running_false(tmp_path: Path) -> None:
 
 
 def test_outputs_at_most_1000_pids_but_counts_every_match(
-    tmp_path: Path, spawn: Any, unique_sleep: str
+    tmp_path: Path, named_sleep: NamedSleep
 ) -> None:
     # 节点输出有大小上限：pids 只列出 pid 最小的 1000 个，count 仍是全部数量，并在日志里写明。
-    procs = [spawn(unique_sleep, "300") for _ in range(1001)]
+    procs = named_sleep.start(unique_name(), "300", copies=1001)
 
-    result = run(tmp_path, name=Path(unique_sleep).name, count=1001)
+    result = run(tmp_path, name=procs.name, count=1001)
 
     assert result.status == "success", result.error
     assert result.outputs is not None
     assert result.outputs["count"] == 1001
-    assert result.outputs["pids"] == sorted(p.pid for p in procs)[:1000]
+    assert result.outputs["pids"] == procs.pids[:1000]
     assert "匹配到 1001 个进程，输出 pids 只列出 pid 最小的 1000 个" in [
         line.message for line in result.logs if line.source == "sdk"
     ]

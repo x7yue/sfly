@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -14,6 +15,7 @@ from pathlib import Path
 
 import psutil
 import pytest
+from named_sleep import NamedSleep, named_sleep_fixture  # noqa: F401 -- fixture
 
 from sfly.testing import Execution, run_node
 from sfly_std.process_monitor import process_monitor
@@ -97,23 +99,18 @@ def test_monitors_a_process_by_pid_and_writes_per_process_samples(
     assert [p.value for p in result.metrics if p.name == "threads"][-1] == 1
 
 
-def named_sleep(tmp_path: Path, name: str) -> str:
-    """一个名为 `name` 的 sleep（符号链接：进程名取自执行的文件名）。"""
-    link = tmp_path / name
-    link.symlink_to(subprocess.check_output(["which", "sleep"], text=True).strip())
-    return str(link)
-
-
-def test_matches_targets_by_name_and_by_command_line_pattern(tmp_path: Path, spawn: Spawn) -> None:
+def test_matches_targets_by_name_and_by_command_line_pattern(
+    tmp_path: Path, spawn: Spawn, named_sleep: NamedSleep
+) -> None:
     tag = f"pm{os.getpid()}"
-    first = spawn([named_sleep(tmp_path, f"{tag}a"), "300"])
-    second = spawn([named_sleep(tmp_path, f"{tag}b"), "300"])
+    first = named_sleep.start(f"{tag}a", "300")
+    second = named_sleep.start(f"{tag}b", "300")
     third = spawn([sys.executable, "-c", "import time; time.sleep(300)", tag])
 
     by_name = monitor(tmp_path / "name", name=[f"{tag}a", f"{tag}b"], duration=0.6)
     by_pattern = monitor(tmp_path / "match", match=rf"sleep\(300\) {tag}$", duration=0.6)
     mixed = monitor(
-        tmp_path / "mixed", pid=first.pid, match=[f"/{tag}b 300$", rf"\) {tag}$"], duration=0.6
+        tmp_path / "mixed", pid=first.pid, match=[f" {tag}b 300$", rf"\) {tag}$"], duration=0.6
     )
 
     assert by_name.status == "success", by_name.error
@@ -154,7 +151,7 @@ def wait_for_children(pid: int, count: int) -> None:
 
 def test_waits_for_the_targets_to_appear(tmp_path: Path, spawn: Spawn) -> None:
     name = f"pm{os.getpid()}late"
-    late = spawn(["sh", "-c", f"sleep 0.8; exec {named_sleep(tmp_path, name)} 300"])
+    late = spawn(["sh", "-c", f"sleep 0.8; exec {shlex.join(NamedSleep.argv(name, '300'))}"])
 
     result = monitor(tmp_path / "run", name=name, duration=0.6)
 
@@ -199,9 +196,11 @@ def test_fails_when_a_target_exits_by_default(tmp_path: Path) -> None:
     assert str(pid) in {row["pid"] for row in rows(result)}  # 另有子进程 sleep
 
 
-def test_on_exit_succeed_ends_monitoring_successfully(tmp_path: Path, spawn: Spawn) -> None:
+def test_on_exit_succeed_ends_monitoring_successfully(
+    tmp_path: Path, spawn: Spawn, named_sleep: NamedSleep
+) -> None:
     name = f"pm{os.getpid()}exit"
-    short = spawn([named_sleep(tmp_path, name), "0.8"])
+    short = named_sleep.start(name, "0.8")
     other = spawn(["sleep", "300"])
 
     result = monitor(tmp_path / "run", pid=other.pid, name=name, on_exit="succeed")
