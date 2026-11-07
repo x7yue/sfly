@@ -1,5 +1,6 @@
 import { cn } from "cn";
 import { chainLabel } from "#/lib/copy";
+import { nodeStatusDisplay } from "#/lib/node-status";
 
 /**
  * 各链进度条（原型 chainBars / chainBarsOne）：每个节点一段，读屏读出「主链 2/3」。
@@ -9,21 +10,28 @@ import { chainLabel } from "#/lib/copy";
  */
 export type ChainProgressVariant = "ticks" | "wide";
 
-/** 已完成的节点（成功或跳过）。 */
-export const isNodeDone = (status: string) => status === "success" || status === "skipped";
-
+/** 已完成的节点数（哪些状态算已完成见 lib/node-status）。 */
 export const doneCount = (nodes: readonly { status: string }[]) =>
-	nodes.filter((n) => isNodeDone(n.status)).length;
+	nodes.filter((n) => nodeStatusDisplay(n.status)?.done).length;
 
-/** 节点状态 → 进度段；排队与待执行为空槽。 */
-const SEGMENT: Record<string, string> = {
-	success: "bg-ok/70",
+/** 进度条上一段的样式种类（节点状态对应哪一种见 lib/node-status）；empty 是空槽（排队、待执行）。 */
+export type ChainBarSegment =
+	| "ok"
+	| "running"
+	| "failed"
+	| "waiting"
+	| "skipped"
+	| "cancelled"
+	| "empty";
+
+const SEGMENT: Record<ChainBarSegment, string> = {
+	ok: "bg-ok/70",
 	running: "bg-signal",
-	dispatched: "bg-signal",
 	failed: "bg-danger",
 	waiting: "bg-warn/45",
 	skipped: "shadow-[inset_0_0_0_1px_var(--border-strong)]",
 	cancelled: "border border-dashed border-cancelled",
+	empty: "bg-track",
 };
 
 const SHAPE: Record<ChainProgressVariant, string> = {
@@ -50,7 +58,7 @@ export function ChainBar({
 					className={cn(
 						"flex-none rounded-[2px]",
 						SHAPE[variant],
-						SEGMENT[node.status] ?? "bg-track",
+						SEGMENT[nodeStatusDisplay(node.status)?.bar ?? "empty"],
 					)}
 				/>
 			))}

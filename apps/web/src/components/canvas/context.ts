@@ -14,7 +14,7 @@ import type { DocNode } from "./flow";
  *   配合 FlowCanvas 的 `editable={false}` 做只读画布。
  */
 
-/** 运行中的节点状态（与原型 `.n[data-run=…]` 对应）。 */
+/** 运行中的节点状态（与原型 `.n[data-run=…]` 对应；节点状态对应哪一种见 lib/node-status）。 */
 export type NodeRunState =
 	| "pending"
 	| "running"

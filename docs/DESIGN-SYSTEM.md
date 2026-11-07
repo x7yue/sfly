@@ -117,8 +117,8 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `app-shell/CommandPalette` | 「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」五组；新命令加在 `commands` 里 |
 | `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
 | `#/docs/Markdown` | 用户文档（ADR 0013）的 Markdown 渲染：代码块用 `CodeBlock`，表格用 `ui/table`，`<slug>.md` 链接换成文档页 |
-| `status`：`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView` | 状态与槽位，见下表；运行 / 链 / 节点状态的颜色与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，不另写映射表 |
-| `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状，配色只在这里） |
+| `status`：`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView` | 状态与槽位，见下表；运行 / 链 / 节点状态的颜色与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，不另写映射表。节点状态在各处的显示规则（徽标、标签、链路进度、画布运行状态、缩略图、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
+| `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状，配色只在这里；节点状态对应哪种进度段见 `lib/node-status`） |
 | `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |
 | `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它 |
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
@@ -172,7 +172,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 - `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词）；`chainLabel()`：链实例名称（主链 / 子流程 X）。
 - `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）。
-- `RUN_STATUS_LABEL`、`NODE_STATUS_LABEL`、`CANCELLING_LABEL`：状态文字（显示时用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
+- `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
 - `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字。
 
 规则：两处及以上用到的文字、状态与术语放在这里，新增时先加到这里再引用，不要在组件里另写一份；只在一个页面出现的说明文字（空状态说明、提示语）留在组件里。

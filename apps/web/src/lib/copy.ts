@@ -1,4 +1,4 @@
-import type { NodeStatus, RunStatus } from "@sfly/schema";
+import type { RunStatus } from "@sfly/schema";
 import { shortId } from "./format";
 
 /**
@@ -50,20 +50,6 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
 export const CANCELLING_LABEL = "取消中";
 /** 清理期间再次取消，正在强制终止。 */
 export const FORCE_CANCELLING_LABEL = "强制终止中";
-
-/** 节点（最后一次尝试）的状态。 */
-export const NODE_STATUS_LABEL: Record<NodeStatus, string> = {
-	pending: "待执行",
-	queued: "排队中",
-	// 已派发给 Agent，还在下载、安装节点包或启动执行器。
-	dispatched: "准备中",
-	running: "执行中",
-	waiting: "等待中",
-	success: "成功",
-	failed: "失败",
-	skipped: "已跳过",
-	cancelled: "已取消",
-};
 
 /** 通用操作（按钮、菜单项、命令）。 */
 export const ACTION = {

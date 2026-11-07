@@ -1,4 +1,5 @@
 import type { LastRunNodeStatus, OrchestrationStructure } from "@sfly/schema";
+import { NODE_STATUS } from "#/lib/node-status";
 
 /**
  * 场景卡片的缩略图布局（原型 thumbSVG）：按文档结构而不是画布坐标绘制——主链按连线顺序蛇形排列，
@@ -8,7 +9,7 @@ import type { LastRunNodeStatus, OrchestrationStructure } from "@sfly/schema";
 
 export const THUMB_WIDTH = 300;
 
-/** 缩略图上的节点状态（决定颜色）。 */
+/** 缩略图上的节点状态（决定颜色；节点状态对应哪一种见 lib/node-status）。 */
 export type ThumbState =
 	| "pending"
 	| "running"
@@ -53,18 +54,6 @@ export interface Thumbnail {
 	dispatches: string[];
 }
 
-const STATE: Record<LastRunNodeStatus, ThumbState> = {
-	pending: "pending",
-	queued: "pending",
-	dispatched: "running",
-	running: "running",
-	waiting: "waiting",
-	success: "done",
-	failed: "failed",
-	skipped: "skipped",
-	cancelled: "cancelled",
-};
-
 const NODE_H = 18;
 const ROW_GAP = 14;
 const SUB_SCALE = 0.8;
@@ -96,7 +85,7 @@ export function layoutThumbnail(
 			if (!next.has(e.from)) next.set(e.from, e.to);
 		} else dispatchOf.set(e.to, e.from);
 	}
-	const state = (id: string): ThumbState => STATE[nodeStates?.[id] ?? "pending"];
+	const state = (id: string): ThumbState => NODE_STATUS[nodeStates?.[id] ?? "pending"].thumb;
 
 	const entry = structure.nodes.find((n) => n.kind === "entry");
 	const main = entry ? chainFrom(entry.id, next) : [];
