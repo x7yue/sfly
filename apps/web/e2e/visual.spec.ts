@@ -17,6 +17,7 @@ import {
 } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { seedRunRecords } from "./run-records";
+import { stoppingRun } from "./stop-subflow-scenario";
 import {
 	createScenario,
 	failApi,
@@ -565,6 +566,39 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	}
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-run-state.png", {
+		mask: [
+			page.getByTestId("canvas-run").locator(".font-mono").first(),
+			page.getByTestId("run-summary").locator("dd").first(),
+		],
+	});
+});
+
+test("运行监控：子流程被停止（停止子流程节点的尝试）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, finish } = await stoppingRun(controlPlane, connectAgent, clock);
+	await finish();
+	await openMonitor(page, clock, runId, "stop");
+	await page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }).click();
+	await expect(page.getByRole("article", { name: "stop 第 1 次尝试" })).toBeVisible();
+	await expect(page.getByRole("banner").getByTestId("run-status")).toHaveText("成功");
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-stopped.png", { mask: runIds(page) });
+});
+
+test("编排画布：运行状态（子流程被停止）", async ({ page, controlPlane, connectAgent, clock }) => {
+	const { runId, scenarioId, finish } = await stoppingRun(controlPlane, connectAgent, clock);
+	await finish();
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(nodeCard(page, "watch")).toHaveAttribute("data-run", "stopped");
+	await nodeCard(page, "watch").click();
+	await expect(page.getByTestId("run-summary")).toContainText("agent-a");
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-run-state-stopped.png", {
 		mask: [
 			page.getByTestId("canvas-run").locator(".font-mono").first(),
 			page.getByTestId("run-summary").locator("dd").first(),

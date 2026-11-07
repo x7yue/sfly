@@ -75,7 +75,7 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 									"主链"
 								) : (
 									<span className="font-mono">
-										{chain.chain_id} · {shortId(chain.id).slice(0, 4)}
+										{chain.name || chain.chain_id} · {shortId(chain.id).slice(0, 4)}
 									</span>
 								)}
 								<StatusDot kind={s.kind} />

@@ -160,11 +160,13 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	);
 }
 
-export const nodeTypes = {
+/** 每种节点都用节点卡片画；Record 的类型让新增的节点种类漏注册时类型检查报错。 */
+export const nodeTypes: Record<SfNode["data"]["node"]["kind"], typeof NodeCard> = {
 	entry: NodeCard,
 	subflow_entry: NodeCard,
 	async: NodeCard,
 	timer: NodeCard,
 	sleep: NodeCard,
+	stop_subflow: NodeCard,
 	package: NodeCard,
 };

@@ -77,10 +77,10 @@ export function nodeTitle(
 	return KIND_TITLE[node.kind] ?? node.kind;
 }
 
-/** 停止子流程节点停止的子流程（按子流程入口 ID）在运行里的名称；还没有实例时显示节点 ID。 */
+/** 停止子流程节点停止的子流程（按子流程入口 ID）在运行里的名称（每次运行每个子流程最多一个实例）。 */
 export function stoppedSubflowLabel(run: RunView, subflowId: string): string {
 	const chain = run.chains.find((c) => c.chain_id === subflowId);
-	return chain ? chainLabel(chain) : subflowId;
+	return chainName({ chain_id: subflowId, subflow: true, name: chain?.name ?? null });
 }
 
 /** 停止子流程节点要停止的子流程的显示名称；不是停止子流程节点、没有选择或目标不在文档里时为 undefined。 */
