@@ -1,10 +1,12 @@
 import type {
+	AttemptView,
 	ChainRunView,
 	NodeRunView,
 	OrchestrationDocument,
 	OrchestrationNode,
 	ProgressEvent,
 	RunView,
+	TaskProgressView,
 } from "@sfly/schema";
 import { runStatusView } from "#/components/status";
 import { chainLabel as chainName } from "#/lib/copy";
@@ -140,12 +142,45 @@ export const MASK = "••••••";
  * 取消与触发的响应、重新获取——到达顺序不一定是生成顺序：运行结束前生成、结束后才到达的响应会把最终状态
  * 改回「运行中」，而运行已经结束，事件流不会再推送，界面就停在旧状态。运行结束后不会再回到运行中，
  * 所以已结束的视图不被「运行中」的视图覆盖。运行中的视图之间谁新谁旧无法判断，但没有关系：
- * 运行中事件流会继续推送，下一次变化就会纠正。
+ * 运行中事件流会继续推送，下一次变化就会纠正——进度除外，见 {@link keepNewerProgress}。
  */
-export const latestRunView = (current: RunView | undefined, next: RunView): RunView =>
-	current !== undefined && current.status !== "running" && next.status === "running"
-		? current
-		: next;
+export function latestRunView(current: RunView | undefined, next: RunView): RunView {
+	if (current === undefined) return next;
+	if (current.status !== "running" && next.status === "running") return current;
+	return keepNewerProgress(current, next);
+}
+
+/**
+ * 进度不在运行视图的推送条件里：只走 progress 事件，不触发新的 run 推送。所以进度推送之前查询、之后才到达的
+ * 运行视图（例如事件流连上时那一次推送、重新获取的响应）会把刚推来的进度改回旧值，而之后不一定还有推送来纠正，
+ * 界面就停在旧进度上（#110）。进度只会更新、不会清空，所以按尝试保留时间更新的那一份。
+ */
+function keepNewerProgress(current: RunView, next: RunView): RunView {
+	const known = new Map<string, TaskProgressView>();
+	for (const chain of current.chains)
+		for (const node of chain.nodes)
+			for (const a of node.attempts) if (a.progress) known.set(a.task_id, a.progress);
+	const newer = (a: AttemptView) => {
+		const kept = known.get(a.task_id);
+		return kept && (!a.progress || Date.parse(kept.time) > Date.parse(a.progress.time))
+			? kept
+			: undefined;
+	};
+	if (!next.chains.some((c) => c.nodes.some((n) => n.attempts.some(newer)))) return next;
+	return {
+		...next,
+		chains: next.chains.map((chain) => ({
+			...chain,
+			nodes: chain.nodes.map((node) => ({
+				...node,
+				attempts: node.attempts.map((a) => {
+					const progress = newer(a);
+					return progress ? { ...a, progress } : a;
+				}),
+			})),
+		})),
+	};
+}
 
 /** 把一条进度推送合并进运行视图（只改对应尝试的 progress）。 */
 export function applyProgress(run: RunView | undefined, event: ProgressEvent): RunView | undefined {
