@@ -4,74 +4,33 @@
 // ADR 0015）；4 个任务的事件按序号核对不丢不重、Agent 没有丢弃点、数据没有被截断；4 个任务确实同时在执行。
 // 只记录：各任务的实际速率、节点比计划落后的时间、单次 ctx.metric() 最长耗时、Agent CPU。
 import { join } from "node:path";
-import { checkSequence, windowGrowth } from "../checks.js";
+import { windowGrowth } from "../checks.js";
 import { dirUsage, sampleEvery } from "../disk.js";
 import { definePerfItem, hard, type ItemRun, target } from "../item.js";
+import { AGENT, MB, usageMeasurements } from "../measure.js";
 import type { Measurement } from "../report.js";
-import { type PerfApi, sampleProcess, sleep, startStack } from "../stack.js";
+import { type PerfApi, sampleProcess, startStack } from "../stack.js";
+import { checkSeqMetric, type RateOutputs, stubScenario } from "../stub.js";
 import { AGENT_RSS_GROWTH_MB, AGENT_SLOTS, EVENTS_PER_SECOND } from "../targets.js";
 
 const SECONDS = 30;
-const MB = 1024 * 1024;
+const NODE_ID = "events";
 /** 窗口从最后一个任务开始后这么久算起：执行器刚启动时 Python 导入、创建文件的那一下不算增长。 */
 const SETTLE_MS = 2000;
 
-interface RateOutputs {
-	count: number;
-	elapsed: number;
-	max_behind_ms: number;
-	max_call_ms: number;
-}
-
-/** 一个任务的核对结果。 */
-interface TaskResult {
-	outputs: RateOutputs;
-	startedMs: number;
-	endedMs: number;
-	missing: number;
-	duplicated: number;
-	duplicatePoints: number;
-	droppedPoints: number;
-	truncated: boolean;
-}
-
 /** 等运行结束、最后一个点写进控制面，再按序号核对这个任务的 seq 序列。 */
-async function checkRun(api: PerfApi, runId: string, signal: AbortSignal): Promise<TaskResult> {
-	const view = await api.waitRun(runId, signal, (SECONDS + 120) * 1000);
-	const attempt = view.chains[0]?.nodes.find((n) => n.node_id === "events")?.attempts.at(-1);
-	if (view.status !== "success" || !attempt?.outputs || !attempt.started_at || !attempt.ended_at) {
-		throw new Error(`运行没有成功（${view.status}）：${JSON.stringify(attempt?.error ?? null)}`);
-	}
-	const outputs = attempt.outputs as unknown as RateOutputs;
-	const deadline = Date.now() + 20_000;
-	let catalogAttempt:
-		| Awaited<ReturnType<typeof api.metricCatalog>>["nodes"][number]["attempts"][number]
-		| undefined;
-	for (;;) {
-		const catalog = await api.metricCatalog(runId);
-		catalogAttempt = catalog.nodes.find((n) => n.node_id === "events")?.attempts.at(-1);
-		const seq = catalogAttempt?.metrics.find((m) => m.name === "seq");
-		if (seq?.last === outputs.count || Date.now() > deadline) break;
-		await sleep(500, signal);
-	}
-	const series = await api.metricSeries(runId, view.chains[0]?.id as string, "events");
-	const buckets = series.series.find((s) => s.name === "seq")?.buckets ?? [];
-	if (buckets.length > 0 && series.bucket_seconds !== 1) {
-		throw new Error(`序列不是每秒一个桶（${series.bucket_seconds} 秒）`);
-	}
-	const writtenPoints = catalogAttempt?.metrics.find((m) => m.name === "seq")?.points ?? 0;
-	const sequence = checkSequence(buckets, outputs.count);
-	return {
-		outputs,
-		startedMs: Date.parse(attempt.started_at),
-		endedMs: Date.parse(attempt.ended_at),
-		missing: sequence.missing,
-		duplicated: sequence.duplicated,
-		duplicatePoints: Math.max(sequence.duplicatePoints, writtenPoints - buckets.length),
-		droppedPoints: catalogAttempt?.dropped_points ?? 0,
-		truncated: catalogAttempt?.truncated ?? false,
-	};
+async function checkRun(api: PerfApi, runId: string, signal: AbortSignal) {
+	const task = await api.succeeded<RateOutputs>(runId, NODE_ID, signal, (SECONDS + 120) * 1000);
+	const seq = await checkSeqMetric(
+		api,
+		{ runId, nodeId: NODE_ID, ...task },
+		task.outputs.count,
+		signal,
+	);
+	return { ...task, ...seq };
 }
+
+type TaskResult = Awaited<ReturnType<typeof checkRun>>;
 
 export default definePerfItem({
 	id: "agent-slots",
@@ -82,30 +41,25 @@ export default definePerfItem({
 		const { agent, agentName, api } = await startStack(ctx, {
 			agentArgs: ["--slots", String(AGENT_SLOTS)],
 		});
-		const orchestration = await api.createOrchestration({
-			default_agent: agentName,
-			nodes: [
-				{ id: "entry", kind: "entry" },
-				{
-					id: "events",
-					kind: "package",
-					package: "sfly-stub",
-					node: "metric_rate",
-					inputs: { rate: EVENTS_PER_SECOND, seconds: SECONDS },
-				},
-			],
-			edges: [{ from: "entry", to: "events", kind: "chain" }],
-			packages: { "sfly-stub": "0.1.0" },
+		const scenario = await stubScenario(api, agentName, NODE_ID, "metric_rate", {
+			rate: EVENTS_PER_SECOND,
+			seconds: SECONDS,
 		});
 
 		const tasksDir = join(agent.workDir, "tasks");
-		const usage = sampleProcess(agent.child.pid as number);
+		const sampler = sampleProcess(agent.child.pid as number);
 		const disk = sampleEvery(() => dirUsage(tasksDir), 500);
 		ctx.log(`${AGENT_SLOTS} 个任务同时按每秒 ${EVENTS_PER_SECOND} 次上报 ${SECONDS} 秒`);
 		const runIds: string[] = [];
-		for (let i = 0; i < AGENT_SLOTS; i++) runIds.push(await api.trigger(orchestration));
+		for (let i = 0; i < AGENT_SLOTS; i++) runIds.push(await api.trigger(scenario));
 		const tasks = await Promise.all(runIds.map((id) => checkRun(api, id, ctx.signal)));
-		const [agentUsage, diskSamples] = await Promise.all([usage.stop(), disk.stop()]);
+		const [agentUsage, diskSamples] = await Promise.all([sampler.stop(), disk.stop()]);
+		const usage = usageMeasurements(
+			agentUsage,
+			AGENT,
+			{ rssMb: 2, cpuPercent: 3 },
+			hard("<=", AGENT_RSS_GROWTH_MB),
+		);
 
 		const lastStart = Math.max(...tasks.map((t) => t.startedMs));
 		const firstEnd = Math.min(...tasks.map((t) => t.endedMs));
@@ -120,14 +74,7 @@ export default definePerfItem({
 		const min = (pick: (t: TaskResult) => number) => Math.min(...tasks.map(pick));
 
 		const measurements: Measurement[] = [
-			{
-				id: "agent_rss_growth_mb",
-				label: "Agent 内存增量（峰值 - 开始）",
-				value: (agentUsage.peakRssBytes - agentUsage.startRssBytes) / MB,
-				unit: "MB",
-				noise: 2,
-				check: hard("<=", AGENT_RSS_GROWTH_MB),
-			},
+			usage.growth,
 			{
 				id: "work_dir_growth_mb",
 				label: "工作目录占用增长（所有任务开始后到第一个任务结束）",
@@ -149,14 +96,14 @@ export default definePerfItem({
 			{
 				id: "missing_events",
 				label: "丢失的事件（按序号核对，4 个任务合计）",
-				value: sum((t) => t.missing),
+				value: sum((t) => t.sequence.missing),
 				unit: "个",
 				check: hard("<=", 0),
 			},
 			{
 				id: "duplicated_events",
 				label: "重复的事件（按序号核对，4 个任务合计）",
-				value: sum((t) => t.duplicated),
+				value: sum((t) => t.sequence.duplicated),
 				unit: "个",
 				check: hard("<=", 0),
 			},
@@ -203,13 +150,7 @@ export default definePerfItem({
 				unit: "ms",
 				noise: 5,
 			},
-			{
-				id: "agent_peak_rss_mb",
-				label: "Agent 峰值内存（RSS）",
-				value: agentUsage.peakRssBytes / MB,
-				unit: "MB",
-				noise: 2,
-			},
+			usage.peak,
 			{
 				id: "work_dir_peak_mb",
 				label: "工作目录峰值占用",
@@ -217,24 +158,13 @@ export default definePerfItem({
 				unit: "MB",
 				noise: 0.1,
 			},
-			{
-				id: "agent_cpu_percent",
-				label: "Agent 平均 CPU（单核 = 100%）",
-				value: agentUsage.cpuPercent,
-				unit: "%",
-				noise: 3,
-			},
+			usage.cpu,
 		];
 		const diskStart = diskSamples[0]?.ms ?? 0;
 		return {
 			measurements,
 			series: [
-				{
-					id: "agent_rss",
-					label: "Agent 内存（RSS）",
-					unit: "MB",
-					points: agentUsage.samples.map((p) => [p.ms, p.rssBytes / MB]),
-				},
+				usage.series,
 				{
 					id: "work_dir",
 					label: "工作目录占用",

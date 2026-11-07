@@ -10,19 +10,25 @@
 // 硬性断言：断线期间 Agent 内存增量不超过日志排队上限加余量；重连后补发了断线期间排队的日志与指标；
 // 丢弃的 stdout 行数与控制面看到的序号缺口一致、丢失的整秒指标点数与控制面记录的丢弃数一致；没有重复、损坏、截断。
 // 只记录：断线期间的内存曲线、重连耗时、补发耗时、丢弃数量。
-import { createInterface } from "node:readline";
-import { Readable } from "node:stream";
-import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { startBundledServer } from "../../test/support/bundled-server.js";
-import { checkNumbered, checkSequence, windowGrowth } from "../checks.js";
+import { checkNumbered, windowGrowth } from "../checks.js";
 import { disconnectSeconds, missingSeconds, replayDuration } from "../disconnect.js";
 import { sampleEvery } from "../disk.js";
 import { definePerfItem, hard, type ItemRun, type PerfItem } from "../item.js";
+import { AGENT, MB, usageMeasurements } from "../measure.js";
 import type { Measurement } from "../report.js";
 import { type PerfApi, sampleProcess, sleep, startStack } from "../stack.js";
+import {
+	checkSeqMetric,
+	checkStdoutLines,
+	type RateOutputs,
+	type StdoutLine,
+	type StdoutOutputs,
+	stdoutLine,
+	stubScenario,
+} from "../stub.js";
 import { EVENTS_PER_SECOND } from "../targets.js";
 
-const MB = 1024 * 1024;
 const STDOUT_MIB_PER_SECOND = 3;
 const LINE_BYTES = 1024;
 /** Agent 断线期间最多排队的日志字节数（agent/src/logs.rs 的 DEFAULT_TELEMETRY_QUEUE_BYTES，这里用默认值）。 */
@@ -38,61 +44,30 @@ const CONNECTED_SECONDS = 5;
  * 补发完才有重连后产生的日志可比。日志总量（断线前 + 排队 64 MiB + 重连后）要留在控制面单任务 200 MiB 上限以内。
  */
 const EXTRA_SECONDS = 25;
+const METRIC_NODE = "events";
+const STDOUT_NODE = "spew";
 
-interface MetricOutputs {
-	count: number;
-}
-
-interface StdoutOutputs {
-	lines: number;
-	elapsed: number;
-}
-
+/** 控制面收到的一行日志（不留正文：十几万行）。 */
 interface ReceivedLine {
 	seq: number;
 	timeMs: number;
-	source: string;
-	text: string;
+	/** 正文的长度（不含换行）。 */
+	length: number;
+	/** stdout 行的序号与长度；其他来源（Agent、系统）为 null。 */
+	stdout: StdoutLine | null;
 }
 
-/** 控制面里一个任务的全部日志行（流式下载）。 */
-async function readLines(api: PerfApi, taskId: string): Promise<ReceivedLine[]> {
-	const res = await api.request(`/tasks/${taskId}/logs/download`);
-	const input = createInterface({
-		input: Readable.fromWeb(res.body as WebReadableStream<Uint8Array>),
-		crlfDelay: Number.POSITIVE_INFINITY,
-	});
+async function receivedLines(api: PerfApi, taskId: string): Promise<ReceivedLine[]> {
 	const lines: ReceivedLine[] = [];
-	for await (const raw of input) {
-		if (!raw) continue;
-		const line = JSON.parse(raw) as { seq: number; time: string; source: string; text: string };
+	await api.readTaskLogs(taskId, (l) => {
 		lines.push({
-			seq: line.seq,
-			timeMs: Date.parse(line.time),
-			source: line.source,
-			text: line.text,
+			seq: l.seq,
+			timeMs: l.timeMs,
+			length: l.text.length,
+			stdout: l.source === "stdout" ? stdoutLine(l.text) : null,
 		});
-	}
+	});
 	return lines;
-}
-
-async function logPage(api: PerfApi, taskId: string) {
-	return (await api.getJson(`/tasks/${taskId}/logs?limit=1`)) as {
-		last_seq: number;
-		truncated: boolean;
-	};
-}
-
-/** 等控制面写完这个任务的日志：已写入的最大序号 1 秒内不再变化（最多等 30 秒）。 */
-async function waitLogSettled(api: PerfApi, taskId: string, signal: AbortSignal) {
-	const deadline = Date.now() + 30_000;
-	let last = -1;
-	for (;;) {
-		const page = await logPage(api, taskId);
-		if (page.last_seq === last || Date.now() > deadline) return page;
-		last = page.last_seq;
-		await sleep(1000, signal);
-	}
 }
 
 /** 等两个运行里的节点都开始执行，返回各自的任务 ID。 */
@@ -103,12 +78,7 @@ async function waitRunning(
 ): Promise<string[]> {
 	const deadline = Date.now() + 120_000;
 	for (;;) {
-		const attempts = await Promise.all(
-			runs.map(async ({ runId, nodeId }) => {
-				const view = await api.run(runId);
-				return view.chains[0]?.nodes.find((n) => n.node_id === nodeId)?.attempts.at(-1);
-			}),
-		);
+		const attempts = await Promise.all(runs.map(({ runId, nodeId }) => api.attempt(runId, nodeId)));
 		if (attempts.every((a) => a?.status === "running")) {
 			return attempts.map((a) => a?.task_id as string);
 		}
@@ -137,41 +107,35 @@ export function agentDisconnect(seconds?: number): PerfItem {
 				agentEnv: { SFLY_METRIC_QUEUE_POINTS: String(METRIC_QUEUE_POINTS) },
 			});
 			const { agent, agentName, api, database } = stack;
-			const single = (id: string, node: string, inputs: Record<string, unknown>) =>
-				api.createOrchestration(
-					{
-						default_agent: agentName,
-						nodes: [
-							{ id: "entry", kind: "entry" },
-							{ id, kind: "package", package: "sfly-stub", node, inputs },
-						],
-						edges: [{ from: "entry", to: id, kind: "chain" }],
-						packages: { "sfly-stub": "0.1.0" },
-					},
-					id,
-				);
-			const metricOrchestration = await single("events", "metric_rate", {
-				rate: EVENTS_PER_SECOND,
-				seconds: nodeSeconds,
-			});
-			const stdoutOrchestration = await single("spew", "stdout_rate", {
-				mib_per_second: STDOUT_MIB_PER_SECOND,
-				seconds: nodeSeconds,
-				line_bytes: LINE_BYTES,
-			});
+			const metricScenario = await stubScenario(
+				api,
+				agentName,
+				METRIC_NODE,
+				"metric_rate",
+				{ rate: EVENTS_PER_SECOND, seconds: nodeSeconds },
+				METRIC_NODE,
+			);
+			const stdoutScenario = await stubScenario(
+				api,
+				agentName,
+				STDOUT_NODE,
+				"stdout_rate",
+				{ mib_per_second: STDOUT_MIB_PER_SECOND, seconds: nodeSeconds, line_bytes: LINE_BYTES },
+				STDOUT_NODE,
+			);
 
 			const sampledFrom = Date.now();
-			const usage = sampleProcess(agent.child.pid as number);
+			const sampler = sampleProcess(agent.child.pid as number);
 			ctx.log(
 				`控制面停掉 ${downSeconds} 秒；两个任务各跑 ${nodeSeconds} 秒：每秒 ${EVENTS_PER_SECOND} 次指标、每秒 ${STDOUT_MIB_PER_SECOND} MiB stdout`,
 			);
-			const metricRun = await api.trigger(metricOrchestration);
-			const stdoutRun = await api.trigger(stdoutOrchestration);
+			const metricRun = await api.trigger(metricScenario);
+			const stdoutRun = await api.trigger(stdoutScenario);
 			const tasks = await waitRunning(
 				api,
 				[
-					{ runId: metricRun, nodeId: "events" },
-					{ runId: stdoutRun, nodeId: "spew" },
+					{ runId: metricRun, nodeId: METRIC_NODE },
+					{ runId: stdoutRun, nodeId: STDOUT_NODE },
 				],
 				ctx.signal,
 			);
@@ -195,7 +159,7 @@ export function agentDisconnect(seconds?: number): PerfItem {
 			ctx.defer(() => server.stop());
 			const restartAt = Date.now();
 			// 控制面已写入的日志最大序号：补发耗时从这里算。
-			const progress = sampleEvery(async () => (await logPage(api, stdoutTask)).last_seq, 200);
+			const progress = sampleEvery(async () => (await api.logPage(stdoutTask)).last_seq, 200);
 			ctx.log("控制面已重启，等 Agent 重连");
 			const reconnectDeadline = Date.now() + 60_000;
 			while (welcomes(agent.events) <= welcomed) {
@@ -205,39 +169,19 @@ export function agentDisconnect(seconds?: number): PerfItem {
 			const welcomeAt = Date.now();
 
 			const timeoutMs = (nodeSeconds + 120) * 1000;
-			const [metricView, stdoutView] = await Promise.all([
-				api.waitRun(metricRun, ctx.signal, timeoutMs),
-				api.waitRun(stdoutRun, ctx.signal, timeoutMs),
+			const [metricTask, stdoutTaskResult] = await Promise.all([
+				api.succeeded<RateOutputs>(metricRun, METRIC_NODE, ctx.signal, timeoutMs),
+				api.succeeded<StdoutOutputs>(stdoutRun, STDOUT_NODE, ctx.signal, timeoutMs),
 			]);
-			const agentUsage = await usage.stop();
-			const metricAttempt = metricView.chains[0]?.nodes
-				.find((n) => n.node_id === "events")
-				?.attempts.at(-1);
-			const stdoutAttempt = stdoutView.chains[0]?.nodes
-				.find((n) => n.node_id === "spew")
-				?.attempts.at(-1);
-			for (const [view, attempt] of [
-				[metricView, metricAttempt],
-				[stdoutView, stdoutAttempt],
-			] as const) {
-				if (view.status !== "success" || !attempt?.outputs) {
-					throw new Error(
-						`运行没有成功（${view.status}）：${JSON.stringify(attempt?.error ?? null)}`,
-					);
-				}
-			}
+			const agentUsage = await sampler.stop();
 
 			// 日志：补发、丢弃与控制面看到的序号缺口。
-			const page = await waitLogSettled(api, stdoutTask, ctx.signal);
+			const page = await api.waitLogsSettled(stdoutTask, ctx.signal);
 			const progressSamples = await progress.stop();
-			const stdoutOutputs = stdoutAttempt?.outputs as unknown as StdoutOutputs;
-			const lines = await readLines(api, stdoutTask);
-			const stdout = lines.filter((l) => l.source === "stdout");
-			const numbered = checkNumbered(
-				stdout.map((l) => Number(l.text.slice(0, l.text.indexOf(" ")))),
-				stdoutOutputs.lines,
-			);
-			const malformed = stdout.filter((l) => l.text.length !== LINE_BYTES - 1).length;
+			const stdoutOutputs = stdoutTaskResult.outputs;
+			const lines = await receivedLines(api, stdoutTask);
+			const stdout = lines.flatMap((l) => (l.stdout ? [l.stdout] : []));
+			const numbered = checkStdoutLines(stdout, stdoutOutputs.lines, LINE_BYTES);
 			// 十几万行：不能展开成 Math.max 的参数（调用栈放不下）。
 			const maxSeq = lines.reduce((m, l) => Math.max(m, l.seq), 0);
 			const seqGaps = checkNumbered(
@@ -245,7 +189,7 @@ export function agentDisconnect(seconds?: number): PerfItem {
 				maxSeq,
 			);
 			const replayedLog = lines.filter((l) => l.timeMs >= stopAt && l.timeMs < welcomeAt);
-			const replayedLogBytes = replayedLog.reduce((n, l) => n + l.text.length + 1, 0);
+			const replayedLogBytes = replayedLog.reduce((n, l) => n + l.length + 1, 0);
 			const replayMs = replayDuration(
 				progressSamples.map((s) => ({ ms: s.ms, lastSeq: s.value })),
 				lines,
@@ -255,31 +199,14 @@ export function agentDisconnect(seconds?: number): PerfItem {
 				throw new Error("日志写完之前没有看到补发完成（进度采样里序号没有追上）");
 
 			// 指标：等最后一个点写进控制面，再核对整秒丢失的点数与控制面记录的丢弃数。
-			const metricOutputs = metricAttempt?.outputs as unknown as MetricOutputs;
-			const deadline = Date.now() + 20_000;
-			let catalogAttempt:
-				| Awaited<ReturnType<typeof api.metricCatalog>>["nodes"][number]["attempts"][number]
-				| undefined;
-			for (;;) {
-				const catalog = await api.metricCatalog(metricRun);
-				catalogAttempt = catalog.nodes.find((n) => n.node_id === "events")?.attempts.at(-1);
-				const seq = catalogAttempt?.metrics.find((m) => m.name === "seq");
-				if (seq?.last === metricOutputs.count || Date.now() > deadline) break;
-				await sleep(500, ctx.signal);
-			}
-			const series = await api.metricSeries(
-				metricRun,
-				metricView.chains[0]?.id as string,
-				"events",
+			const seq = await checkSeqMetric(
+				api,
+				{ runId: metricRun, nodeId: METRIC_NODE, ...metricTask },
+				metricTask.outputs.count,
+				ctx.signal,
 			);
-			const buckets = series.series.find((s) => s.name === "seq")?.buckets ?? [];
-			if (buckets.length > 0 && series.bucket_seconds !== 1) {
-				throw new Error(`序列不是每秒一个桶（${series.bucket_seconds} 秒）`);
-			}
+			const { buckets, droppedPoints } = seq;
 			const bucketTimes = buckets.map((b) => Date.parse(b.time));
-			const sequence = checkSequence(buckets, metricOutputs.count);
-			const writtenPoints = catalogAttempt?.metrics.find((m) => m.name === "seq")?.points ?? 0;
-			const droppedPoints = catalogAttempt?.dropped_points ?? 0;
 			const lostSeconds = missingSeconds(bucketTimes);
 			const replayedPoints = bucketTimes.filter((t) => t >= stopAt && t < welcomeAt).length;
 
@@ -287,6 +214,7 @@ export function agentDisconnect(seconds?: number): PerfItem {
 			const rss = agentUsage.samples.map((s) => ({ ms: sampledFrom + s.ms, bytes: s.rssBytes }));
 			const growth = windowGrowth(rss, stopAt, welcomeAt);
 			if (!growth) throw new Error("断线期间没有采到 Agent 内存");
+			const usage = usageMeasurements(agentUsage, AGENT, { rssMb: 4, cpuPercent: 5 });
 
 			const measurements: Measurement[] = [
 				{
@@ -332,7 +260,8 @@ export function agentDisconnect(seconds?: number): PerfItem {
 				{
 					id: "corrupted_log_lines",
 					label: "重复、序号或长度不对的 stdout 行",
-					value: numbered.duplicated + numbered.unexpected + malformed + seqGaps.duplicated,
+					value:
+						numbered.duplicated + numbered.unexpected + numbered.malformed + seqGaps.duplicated,
 					unit: "行",
 					check: hard("<=", 0),
 				},
@@ -370,16 +299,14 @@ export function agentDisconnect(seconds?: number): PerfItem {
 				{
 					id: "duplicated_metric",
 					label: "重复的事件与同一秒多出的指标点",
-					value:
-						sequence.duplicated +
-						Math.max(sequence.duplicatePoints, writtenPoints - buckets.length),
+					value: seq.sequence.duplicated + seq.duplicatePoints,
 					unit: "个",
 					check: hard("<=", 0),
 				},
 				{
 					id: "metric_truncated",
 					label: "指标数据被截断",
-					value: catalogAttempt?.truncated ? 1 : 0,
+					value: seq.truncated ? 1 : 0,
 					unit: "",
 					check: hard("<=", 0),
 				},
@@ -398,24 +325,13 @@ export function agentDisconnect(seconds?: number): PerfItem {
 					unit: "ms",
 					noise: 1000,
 				},
-				{
-					id: "agent_peak_rss_mb",
-					label: "Agent 峰值内存（RSS）",
-					value: agentUsage.peakRssBytes / MB,
-					unit: "MB",
-					noise: 4,
-				},
+				usage.peak,
 			];
 			const offset = (ms: number) => ((ms - sampledFrom) / 1000).toFixed(1);
 			return {
 				measurements,
 				series: [
-					{
-						id: "agent_rss",
-						label: "Agent 内存（RSS）",
-						unit: "MB",
-						points: agentUsage.samples.map((p) => [p.ms, p.rssBytes / MB]),
-					},
+					usage.series,
 					{
 						id: "log_last_seq",
 						label: "控制面已写入的 stdout 任务日志最大序号（重启后）",

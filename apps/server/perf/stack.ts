@@ -5,8 +5,11 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { promisify } from "node:util";
-import { metricsApi, runsApi } from "@sfly/schema";
+import { type AttemptView, logsApi, metricsApi, runsApi } from "@sfly/schema";
 import { type BundledServer, startBundledServer } from "../test/support/bundled-server.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "../test/support/real-agent.js";
 import { createTestDatabase, type TestDatabase } from "../test/support/test-database.js";
@@ -145,6 +148,69 @@ export class PerfApi {
 		}
 	}
 
+	/** 主链上一个节点的最后一次尝试；还没有尝试时为 undefined。 */
+	async attempt(runId: string, nodeId: string): Promise<AttemptView | undefined> {
+		return lastAttempt(await this.run(runId), nodeId);
+	}
+
+	/**
+	 * 等运行结束，返回主链上这个节点成功的最后一次尝试（有输出、开始与结束时间）与主链实例 ID；
+	 * 运行没有成功时抛出错误（负载没法核对下去）。outputs 按节点的输出结构 T 交出。
+	 */
+	async succeeded<T>(runId: string, nodeId: string, signal: AbortSignal, timeoutMs: number) {
+		const view = await this.waitRun(runId, signal, timeoutMs);
+		const attempt = lastAttempt(view, nodeId);
+		if (
+			view.status !== "success" ||
+			!attempt?.outputs ||
+			!attempt.started_at ||
+			!attempt.ended_at
+		) {
+			throw new Error(`运行没有成功（${view.status}）：${JSON.stringify(attempt?.error ?? null)}`);
+		}
+		return {
+			attempt,
+			outputs: attempt.outputs as unknown as T,
+			startedMs: Date.parse(attempt.started_at),
+			endedMs: Date.parse(attempt.ended_at),
+			chainInstanceId: view.chains[0]?.id as string,
+		};
+	}
+
+	/** 一个任务日志的最后一页（limit=1）：已写入的最大序号与截断标记。 */
+	async logPage(taskId: string) {
+		return logsApi.page.response.parse(await this.getJson(`/tasks/${taskId}/logs?limit=1`));
+	}
+
+	/** 等控制面写完这个任务的日志：已写入的最大序号 1 秒内不再变化（最多等 30 秒），返回最后一页。 */
+	async waitLogsSettled(taskId: string, signal: AbortSignal) {
+		const deadline = Date.now() + 30_000;
+		let last = -1;
+		for (;;) {
+			const page = await this.logPage(taskId);
+			if (page.last_seq === last || Date.now() > deadline) return page;
+			last = page.last_seq;
+			await sleep(1000, signal);
+		}
+	}
+
+	/**
+	 * 流式下载一个任务的全部日志，逐行交给 visit（上百 MiB 的日志不必整份留在内存里）。
+	 * `timeMs` 是 Agent 读到这一行的时间。
+	 */
+	async readTaskLogs(taskId: string, visit: (line: TaskLogLine) => void): Promise<void> {
+		const res = await this.request(`/tasks/${taskId}/logs/download`);
+		const input = createInterface({
+			input: Readable.fromWeb(res.body as WebReadableStream<Uint8Array>),
+			crlfDelay: Number.POSITIVE_INFINITY,
+		});
+		for await (const raw of input) {
+			if (!raw) continue;
+			const line = JSON.parse(raw) as { seq: number; time: string; source: string; text: string };
+			visit({ seq: line.seq, timeMs: Date.parse(line.time), source: line.source, text: line.text });
+		}
+	}
+
 	async metricCatalog(runId: string) {
 		return metricsApi.catalog.response.parse(await this.getJson(`/runs/${runId}/metrics`));
 	}
@@ -181,6 +247,21 @@ export class PerfApi {
 		);
 	}
 }
+
+/** 任务日志的一行。 */
+export interface TaskLogLine {
+	seq: number;
+	/** Agent 读到这一行的时间（毫秒）。 */
+	timeMs: number;
+	source: string;
+	text: string;
+}
+
+/** 运行视图里主链上一个节点的最后一次尝试。 */
+const lastAttempt = (
+	view: { chains: Array<{ nodes: Array<{ node_id: string; attempts: AttemptView[] }> }> },
+	nodeId: string,
+) => view.chains[0]?.nodes.find((n) => n.node_id === nodeId)?.attempts.at(-1);
 
 export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {

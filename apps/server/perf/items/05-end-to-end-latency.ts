@@ -12,6 +12,7 @@ import { durationSeconds } from "../metric-load.js";
 import type { Measurement } from "../report.js";
 import { openSse } from "../sse.js";
 import { sleep, startStack } from "../stack.js";
+import { stubScenario } from "../stub.js";
 import { END_TO_END_MS, EVENTS_PER_SECOND } from "../targets.js";
 
 export const SECONDS_ENV = "SFLY_PERF_END_TO_END_SECONDS";
@@ -37,24 +38,13 @@ export function endToEndLatency(seconds?: number) {
 
 async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 	const { agentName, api, server } = await startStack(ctx);
-	const orchestration = await api.createOrchestration({
-		default_agent: agentName,
-		nodes: [
-			{ id: "entry", kind: "entry" },
-			{
-				id: NODE_ID,
-				kind: "package",
-				package: "sfly-stub",
-				node: "metric_clock",
-				inputs: { rate: EVENTS_PER_SECOND, seconds },
-			},
-		],
-		edges: [{ from: "entry", to: NODE_ID, kind: "chain" }],
-		packages: { "sfly-stub": "0.1.0" },
+	const scenario = await stubScenario(api, agentName, NODE_ID, "metric_clock", {
+		rate: EVENTS_PER_SECOND,
+		seconds,
 	});
 
 	ctx.log(`节点每秒 ${EVENTS_PER_SECOND} 次上报调用时刻，持续 ${seconds} 秒；运行事件流上测延迟`);
-	const runId = await api.trigger(orchestration);
+	const runId = await api.trigger(scenario);
 	const latencies: PushLatency[] = [];
 	// 执行器启动要几百毫秒，节点的第一次上报一定在订阅之后。
 	const sse = await openSse(`${server.httpUrl}/runs/${runId}/events`, (event, receivedAtMs) => {
@@ -65,17 +55,17 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 		}
 	});
 	ctx.defer(() => sse.close());
-	const view = await api.waitRun(runId, ctx.signal, (seconds + 120) * 1000);
-	const attempt = view.chains[0]?.nodes.find((n) => n.node_id === NODE_ID)?.attempts.at(-1);
-	if (view.status !== "success" || !attempt?.outputs) {
-		throw new Error(`运行没有成功（${view.status}）：${JSON.stringify(attempt?.error ?? null)}`);
-	}
-	const outputs = attempt.outputs as unknown as ClockOutputs;
+	const { outputs, chainInstanceId } = await api.succeeded<ClockOutputs>(
+		runId,
+		NODE_ID,
+		ctx.signal,
+		(seconds + 120) * 1000,
+	);
 	// 任务结束时 Agent 补发最后一秒；等它推送过来再关闭事件流。
 	await sleep(2000, ctx.signal);
 	sse.close();
 
-	const series = await api.metricSeries(runId, view.chains[0]?.id as string, NODE_ID);
+	const series = await api.metricSeries(runId, chainInstanceId, NODE_ID);
 	const stored = (series.series.find((s) => s.name === METRIC)?.buckets ?? []).map(
 		(b) => Date.parse(b.time) / 1000,
 	);

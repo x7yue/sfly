@@ -15,12 +15,14 @@
 // 中途按 Ctrl-C：两类负载都停下，已采集的数据照常写进报告（没有运行完的检查不做），报告标为被中断。
 import { join } from "node:path";
 import pg from "pg";
-import { checkSequence, lateGrowth, type SecondBucket, secondWindows } from "./checks.js";
+import { lateGrowth } from "./checks.js";
 import { controlPlaneLoad } from "./control-plane-load.js";
 import { dirUsage, sampleEvery } from "./disk.js";
 import { definePerfItem, hard, type ItemRun, type PerfContext, target } from "./item.js";
+import { AGENT, MB, usageMeasurements } from "./measure.js";
 import type { Measurement, Series } from "./report.js";
 import { type PerfApi, type Stack, sampleProcess, sleep, startStack } from "./stack.js";
+import { checkSeqMetric, type RateOutputs, stubScenario } from "./stub.js";
 import { AGENT_RSS_GROWTH_MB, AGENT_SLOTS, EVENTS_PER_SECOND } from "./targets.js";
 
 /** 定速输出的短任务：12 MiB 超过 8 MiB，每个任务都会轮换一次日志副本；总量远低于控制面单任务日志上限 200 MiB。 */
@@ -32,7 +34,7 @@ const SHORT_TASK = { rate: 1000, seconds: 5 };
  * 再算上刚结束、正在后台删除的上一个任务的同样一份，加上余量。事件落盘（#69）时长任务每秒约 0.5 MB，很快超出。
  */
 const WORK_DIR_LIMIT_MB = 48;
-const MB = 1024 * 1024;
+const NODE_ID = "load";
 
 /** 随时间变化的数据的采样间隔：1 小时约 720 个点，最短 1 秒、最长 10 秒。 */
 export const sampleIntervalMs = (seconds: number) =>
@@ -117,33 +119,10 @@ async function run(ctx: PerfContext, seconds: number): Promise<ItemRun> {
 	return { measurements, series, notes: [...notes, ...parts.flatMap((p) => p.notes ?? [])] };
 }
 
-interface RateOutputs {
-	count: number;
-	elapsed: number;
-	max_behind_ms: number;
-	max_call_ms: number;
-}
-
-/** 场景：入口 → 一个桩节点。 */
-function orchestration(stack: Stack, name: string, node: string, inputs: unknown) {
-	return stack.api.createOrchestration(
-		{
-			default_agent: stack.agentName,
-			nodes: [
-				{ id: "entry", kind: "entry" },
-				{ id: "load", kind: "package", package: "sfly-stub", node, inputs },
-			],
-			edges: [{ from: "entry", to: "load", kind: "chain" }],
-			packages: { "sfly-stub": "0.1.0" },
-		},
-		name,
-	);
-}
-
-/** 不停地一个接一个运行同一个场景，直到剩下的时间不够再执行一次（或被中断）。 */
+/** 不停地一个接一个运行同一个场景，直到剩下的时间不够再运行一次（或被中断）。 */
 async function repeat(
 	api: PerfApi,
-	orchestrationId: string,
+	scenarioId: string,
 	taskSeconds: number,
 	deadlineMs: number,
 	signal: AbortSignal,
@@ -153,7 +132,7 @@ async function repeat(
 	const failures: string[] = [];
 	while (!signal.aborted && Date.now() + taskSeconds * 1000 <= deadlineMs) {
 		try {
-			const runId = await api.trigger(orchestrationId);
+			const runId = await api.trigger(scenarioId);
 			const view = await api.waitRun(runId, signal, (taskSeconds + 120) * 1000);
 			if (signal.aborted) break;
 			finished++;
@@ -169,45 +148,14 @@ async function repeat(
 
 /** 长任务结束后，分段查询它整个时长的 seq 序列（每秒一个桶），按序号核对。 */
 async function checkLongTask(api: PerfApi, runId: string, signal: AbortSignal) {
-	const view = await api.waitRun(runId, signal, 300_000);
-	const attempt = view.chains[0]?.nodes.find((n) => n.node_id === "load")?.attempts.at(-1);
-	if (view.status !== "success" || !attempt?.outputs || !attempt.started_at || !attempt.ended_at) {
-		throw new Error(`长任务没有成功（${view.status}）：${JSON.stringify(attempt?.error ?? null)}`);
-	}
-	const outputs = attempt.outputs as unknown as RateOutputs;
-	// 等最后一个点写进控制面。
-	const deadline = Date.now() + 30_000;
-	const catalogAttempt = async () =>
-		(await api.metricCatalog(runId)).nodes.find((n) => n.node_id === "load")?.attempts.at(-1);
-	let written = await catalogAttempt();
-	while (
-		written?.metrics.find((m) => m.name === "seq")?.last !== outputs.count &&
-		Date.now() < deadline
-	) {
-		await sleep(500, signal);
-		written = await catalogAttempt();
-	}
-	const metric = written?.metrics.find((m) => m.name === "seq");
-	const chainInstanceId = view.chains[0]?.id as string;
-	const buckets: SecondBucket[] = [];
-	const first = Math.floor(Date.parse(attempt.started_at) / 1000) - 1;
-	const last = Math.ceil(Date.parse(attempt.ended_at) / 1000) + 1;
-	for (const [from, to] of secondWindows(first, last, 3600)) {
-		const series = await api.metricSeriesRange(runId, chainInstanceId, "load", from, to);
-		const part = series.series.find((s) => s.name === "seq")?.buckets ?? [];
-		if (part.length > 0 && series.bucket_seconds !== 1) {
-			throw new Error(`序列不是每秒一个桶（${series.bucket_seconds} 秒）`);
-		}
-		buckets.push(...part);
-	}
-	const sequence = checkSequence(buckets, outputs.count);
-	return {
-		outputs,
-		sequence,
-		duplicatePoints: Math.max(sequence.duplicatePoints, (metric?.points ?? 0) - buckets.length),
-		droppedPoints: written?.dropped_points ?? 0,
-		truncated: written?.truncated ?? false,
-	};
+	const task = await api.succeeded<RateOutputs>(runId, NODE_ID, signal, 300_000);
+	const seq = await checkSeqMetric(
+		api,
+		{ runId, nodeId: NODE_ID, ...task },
+		task.outputs.count,
+		signal,
+	);
+	return { outputs: task.outputs, ...seq };
 }
 
 /** 控制面数据库里的指标点数与数据库大小。 */
@@ -219,11 +167,13 @@ async function databaseStats(client: pg.Client) {
 }
 
 async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promise<ItemRun> {
-	const { api, agent } = stack;
+	const { api, agent, agentName } = stack;
+	const scenario = (name: string, node: string, inputs: unknown) =>
+		stubScenario(api, agentName, NODE_ID, node, inputs, name);
 	const [long, stdout, short] = await Promise.all([
-		orchestration(stack, "soak-long", "metric_rate", { rate: EVENTS_PER_SECOND, seconds }),
-		orchestration(stack, "soak-stdout", "stdout_rate", STDOUT_TASK),
-		orchestration(stack, "soak-short", "metric_rate", SHORT_TASK),
+		scenario("soak-long", "metric_rate", { rate: EVENTS_PER_SECOND, seconds }),
+		scenario("soak-stdout", "stdout_rate", STDOUT_TASK),
+		scenario("soak-short", "metric_rate", SHORT_TASK),
 	]);
 	const client = new pg.Client({ connectionString: stack.database.url });
 	await client.connect();
@@ -232,7 +182,7 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 	const intervalMs = sampleIntervalMs(seconds);
 	const tasksDir = join(agent.workDir, "tasks");
 	const startedAt = Date.now();
-	const agentUsage = sampleProcess(agent.child.pid as number, intervalMs);
+	const sampler = sampleProcess(agent.child.pid as number, intervalMs);
 	const workDir = sampleEvery(() => dirUsage(tasksDir), intervalMs);
 	const dataDir = sampleEvery(() => dirUsage(stack.dataDir), intervalMs);
 	const database = sampleEvery(() => databaseStats(client), intervalMs);
@@ -270,8 +220,8 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 			if (!ctx.signal.aborted) throw error;
 		}
 	}
-	const [usage, workSamples, dataSamples, dbSamples] = await Promise.all([
-		agentUsage.stop(),
+	const [agentUsage, workSamples, dataSamples, dbSamples] = await Promise.all([
+		sampler.stop(),
 		workDir.stop(),
 		dataDir.stop(),
 		database.stop(),
@@ -280,7 +230,12 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 
 	const toSeries = <T>(samples: Array<{ ms: number; value: T }>, pick: (v: T) => number) =>
 		samples.map((s): [number, number] => [s.ms - startedAt, pick(s.value)]);
-	const agentRss = usage.samples.map((p): [number, number] => [p.ms, p.rssBytes / MB]);
+	const usage = usageMeasurements(
+		agentUsage,
+		AGENT,
+		{ rssMb: 5, cpuPercent: 5 },
+		hard("<=", AGENT_RSS_GROWTH_MB),
+	);
 	const workMb = toSeries(workSamples, (v) => v / MB);
 	const dataMb = toSeries(dataSamples, (v) => v / MB);
 	const points = toSeries(dbSamples, (v) => v.points);
@@ -291,14 +246,7 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 	const finished = loops.reduce((n, l) => n + l.finished, 0);
 
 	const measurements: Measurement[] = [
-		{
-			id: "agent_rss_growth_mb",
-			label: "Agent 内存增量（峰值 - 开始）",
-			value: (usage.peakRssBytes - usage.startRssBytes) / MB,
-			unit: "MB",
-			noise: 5,
-			check: hard("<=", AGENT_RSS_GROWTH_MB),
-		},
+		usage.growth,
 		{
 			id: "work_dir_peak_mb",
 			label: "Agent 工作目录峰值占用",
@@ -381,23 +329,11 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 		const value = lateGrowth(s);
 		if (value !== null) measurements.push({ id, label, value, unit: "MB", noise });
 	};
-	late("agent_rss_late_growth_mb", "Agent 内存：后半段峰值比前半段多出", agentRss, 5);
+	late("agent_rss_late_growth_mb", "Agent 内存：后半段峰值比前半段多出", usage.series.points, 5);
 	late("work_dir_late_growth_mb", "Agent 工作目录：后半段峰值比前半段多出", workMb, 2);
 	measurements.push(
-		{
-			id: "agent_peak_rss_mb",
-			label: "Agent 峰值内存（RSS）",
-			value: usage.peakRssBytes / MB,
-			unit: "MB",
-			noise: 5,
-		},
-		{
-			id: "agent_cpu_percent",
-			label: "Agent 平均 CPU（单核 = 100%）",
-			value: usage.cpuPercent,
-			unit: "%",
-			noise: 5,
-		},
+		usage.peak,
+		usage.cpu,
 		{
 			id: "finished_tasks",
 			label: "完成的短任务",
@@ -428,7 +364,7 @@ async function agentLoad(ctx: PerfContext, stack: Stack, seconds: number): Promi
 	);
 
 	const series: Series[] = [
-		{ id: "agent_rss", label: "Agent 内存（RSS）", unit: "MB", points: agentRss },
+		usage.series,
 		{ id: "work_dir", label: "Agent 工作目录占用", unit: "MB", points: workMb },
 		{ id: "stored_points", label: "控制面里的指标点数", unit: "个", points },
 		{ id: "database_size", label: "控制面数据库大小", unit: "MB", points: dbMb },

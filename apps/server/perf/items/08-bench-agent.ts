@@ -4,9 +4,8 @@
 import { join } from "node:path";
 import { readCriterion, runChecked } from "../bench.js";
 import { definePerfItem, type ItemRun } from "../item.js";
+import { MB } from "../measure.js";
 import type { Measurement } from "../report.js";
-
-const MB = 1024 * 1024;
 
 /** criterion 的函数名 → 报告里的名称。 */
 const LABELS: Record<string, string> = {

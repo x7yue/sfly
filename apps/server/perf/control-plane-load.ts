@@ -12,6 +12,7 @@ import pg from "pg";
 import { lateMedianGrowth } from "./checks.js";
 import { target as goal, hard, type ItemRun, type PerfContext } from "./item.js";
 import { distribution } from "./latency.js";
+import { CONTROL_PLANE, usageMeasurements } from "./measure.js";
 import {
 	backfill,
 	finishTasks,
@@ -39,7 +40,6 @@ const BACKLOG_GROWTH_LIMIT_MS = 1000;
  * 再留一倍余量。积压时排空时间约等于积下的量：1 小时负载哪怕只差 1% 也有约 36 秒。
  */
 const DRAIN_LIMIT_MS = 15_000;
-const MB = 1024 * 1024;
 
 /**
  * 分段表与摘要里 taskIds 这些任务每个「任务 × 指标」的点数，以及被截断的任务数、Agent 丢弃的点数（所有任务）。
@@ -130,7 +130,7 @@ export async function controlPlaneLoad(
 	};
 
 	ctx.log(`${AGENTS} 个假 Agent 每秒共上报 ${plan.pointsPerSecond} 个点，持续 ${seconds} 秒`);
-	const usage = sampleProcess(target.serverPid, 500);
+	const sampler = sampleProcess(target.serverPid, 500);
 	const load = await runLoad({
 		fleet,
 		firstSecond: Math.floor(Date.now() / 1000) + 1,
@@ -139,7 +139,10 @@ export async function controlPlaneLoad(
 		signal: ctx.signal,
 		log: (m) => ctx.log(m),
 	});
-	const serverUsage = await usage.stop();
+	const usage = usageMeasurements(await sampler.stop(), CONTROL_PLANE, {
+		rssMb: 20,
+		cpuPercent: 5,
+	});
 	const realtimePoints =
 		[...load.sentSeconds.values()].reduce((a, b) => a + b, 0) * METRICS_PER_TASK;
 	const probeRtt = distribution(load.probes.map((p) => p.rttMs));
@@ -199,35 +202,12 @@ export async function controlPlaneLoad(
 			unit: "ms",
 			noise: 50,
 		},
-		{
-			id: "server_peak_rss_mb",
-			label: "控制面峰值内存（RSS）",
-			value: serverUsage.peakRssBytes / MB,
-			unit: "MB",
-			noise: 20,
-		},
-		{
-			id: "server_rss_growth_mb",
-			label: "控制面内存增量（峰值 - 开始）",
-			value: (serverUsage.peakRssBytes - serverUsage.startRssBytes) / MB,
-			unit: "MB",
-			noise: 20,
-		},
-		{
-			id: "server_cpu_percent",
-			label: "控制面平均 CPU（单核 = 100%）",
-			value: serverUsage.cpuPercent,
-			unit: "%",
-			noise: 5,
-		},
+		usage.peak,
+		usage.growth,
+		usage.cpu,
 	];
 	const series: Series[] = [
-		{
-			id: "server_rss",
-			label: "控制面内存（RSS）",
-			unit: "MB",
-			points: serverUsage.samples.map((p) => [p.ms, p.rssBytes / MB]),
-		},
+		usage.series,
 		{
 			id: "probe_rtt",
 			label: "同步探测往返（积压）",
