@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 
+import sfly
 from sfly.cli import main
 from sfly.schemas import load_schema
 
@@ -353,3 +354,34 @@ def test_sfly_lookalike_dependencies_are_allowed(
         PYPROJECT.replace('"pyyaml"]', '"pyyaml", "sfly-helpers>=1"]'), encoding="utf-8"
     )
     build(project, capsys)
+
+
+def test_requires_sdk_comes_from_tool_sfly_in_pyproject(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = demo_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        PYPROJECT + '\n[tool.sfly]\nrequires-sdk = ">=0.0.2"\n', encoding="utf-8"
+    )
+    assert read_metadata(build(project, capsys))["requires_sdk"] == ">=0.0.2"
+
+
+def test_requires_sdk_defaults_to_building_sdk_version_as_lower_bound(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    meta = read_metadata(build(demo_project(tmp_path), capsys))
+    assert meta["requires_sdk"] == f">={sfly.__version__}"
+
+
+@pytest.mark.parametrize("spec", ["0.0.2", ">= banana", ">=0.0.2,", "^1.0"])
+def test_build_rejects_malformed_requires_sdk(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], spec: str
+) -> None:
+    project = demo_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        PYPROJECT + f'\n[tool.sfly]\nrequires-sdk = "{spec}"\n', encoding="utf-8"
+    )
+    assert main(["build", str(project)]) == 1
+    _, err = capsys.readouterr()
+    assert "requires_sdk" in err
+    assert not (project / "dist").exists()

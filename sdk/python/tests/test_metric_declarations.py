@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+import sfly
 from sfly.cli import main
 
 PYPROJECT = """\
@@ -157,6 +158,8 @@ def test_dev_sends_declarations_to_agent(
 
     [request] = requests
     assert request["metadata"]["version"] == "dev"
+    # 开发版本和 sfly build 一样声明最低 SDK 版本，控制面派发时同样检查（#79）。
+    assert request["metadata"]["requires_sdk"] == f">={sfly.__version__}"
     order_gen = {n["name"]: n for n in request["metadata"]["nodes"]}["order_gen"]
     assert [m["name"] for m in order_gen["metrics"]] == ["tps", "p99", "rejected"]
     assert [c["title"] for c in order_gen["charts"]] == ["TPS", "延迟"]

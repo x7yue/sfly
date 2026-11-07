@@ -3,3 +3,8 @@
 name = "sfly-stub"
 version = "0.1.0"
 dependencies = []
+
+# 跨版本自更新测试（bundle-self-update）在上一个发布版本的 Agent 上运行它（`fetch:previous-agent --simulate`
+# 时版本为 0.0.0）：桩节点只用最早就有的 SDK 接口，不限制 SDK 版本（#79）。
+[tool.sfly]
+requires-sdk = ">=0.0.0"

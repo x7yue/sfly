@@ -77,6 +77,8 @@ def test_pyproject_has_mirrors_sfly_index_and_dev_dependencies(
         {"name": "sfly", "url": f"{control_plane.url}/simple/", "explicit": True},
     ]
     assert uv["sources"] == {"sfly": {"index": "sfly"}}
+    # 最低 SDK 版本写成当前版本：节点包用到的接口在更旧的 Agent 上可能没有（#79）。
+    assert data["tool"]["sfly"] == {"requires-sdk": f">={control_plane.version}"}
 
 
 def test_project_layout_from_uv_init_without_agent_instructions(
