@@ -14,6 +14,8 @@ dependencies = [
 
 # 节点包需要的最低 SDK 版本（即 Agent 版本，#79）。用到新版 SDK 才有的接口时调高到包含它的第一个平台版本，
 # 发布说明里的「最低 Agent 版本」取自这里。
+# start_process / stop_process 用到 SDK 0.0.4 才有的 ctx.task、ctx.procs_dir（#90）：仓库版本号改为 0.0.4 时
+# 把这里同步调成 ">=0.0.4"（现在调高会让同版本 0.0.3 的控制面在预检时拒绝全部标准节点）。
 [tool.sfly]
 requires-sdk = ">=0.0.3"
 
