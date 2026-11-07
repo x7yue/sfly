@@ -383,7 +383,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 没有输出。超时的错误信息写明等的是哪个地址、等了多久和最后一次连接的错误，例如 `TimeoutError: 等待端口 127.0.0.1:8080 可以连接超时：已等 300 秒，最后一次连接：Connection refused`。
 
 - 等待类节点（`wait_port`、`wait_file`、`wait_log_line`）都有 `wait` 和 `poll`：`wait` 是等待本身的期限，节点的超时（timeout）仍然有效，`wait` 比超时长时以超时为准。`wait` 为 0 时只检查一次。
-- 端口能连上只说明进程在监听，不一定已经能正常处理请求；服务有健康检查接口时可以改用 `wait_log_line` 等它打出就绪日志。
+- 端口能连上只说明进程在监听，不一定已经能正常处理请求：服务有健康检查接口时改用 `http_request`（打开 `until_ok`）等它返回成功，或用 `wait_log_line` 等它打出就绪日志。
 
 例：`start_process` 启动服务后等它监听 8080 端口，最多等 1 分钟：
 
