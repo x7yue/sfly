@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, readFile } from "node:fs/promises";
+import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { repoRoot } from "./agent-binary.js";
@@ -24,6 +24,37 @@ export async function buildStdPackage(out: string): Promise<StdPackage> {
 	if (!file) throw new Error(`sfly build std 没有在 ${out} 生成 sfly-std-*.sflypkg`);
 	const version = file.replace(/^sfly-std-/, "").replace(/\.sflypkg$/, "");
 	return { path: join(out, file), file, version };
+}
+
+/**
+ * 构建 sfly-std 的另一个版本（版本锁定的场景用）：把 std/ 的源码复制到 `out/project`，改版本号并按 `edits`
+ * （相对 std/ 的文件、原文、替换为）修改源码后用 `sfly build` 构建到 `out`。原文找不到时报错，不会悄悄构建出没改的包。
+ */
+export async function buildStdPackageVariant(
+	out: string,
+	options: { version: string; edits?: Array<[file: string, from: string, to: string]> },
+): Promise<StdPackage> {
+	const project = join(out, "project");
+	await mkdir(project, { recursive: true });
+	await cp(join(repoRoot, "std/pyproject.toml"), join(project, "pyproject.toml"));
+	await cp(join(repoRoot, "std/src"), join(project, "src"), {
+		recursive: true,
+		filter: (src) => !src.includes("__pycache__"),
+	});
+	const edit = async (file: string, from: string | RegExp, to: string) => {
+		const path = join(project, file);
+		const text = await readFile(path, "utf8");
+		const edited = text.replace(from, to);
+		if (edited === text) throw new Error(`${file} 里找不到 ${from}`);
+		await writeFile(path, edited);
+	};
+	await edit("pyproject.toml", /^version = ".*"$/m, `version = "${options.version}"`);
+	for (const [file, from, to] of options.edits ?? []) await edit(file, from, to);
+	await run("uv", ["run", "--locked", "--quiet", "sfly", "build", project, "--out", out], {
+		cwd: repoRoot,
+	});
+	const file = `sfly-std-${options.version}.sflypkg`;
+	return { path: join(out, file), file, version: options.version };
 }
 
 /**

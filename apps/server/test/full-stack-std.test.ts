@@ -13,7 +13,12 @@ import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
-import { buildStdPackage, type StdPackage, wheelhouse } from "./support/std-package.js";
+import {
+	buildStdPackage,
+	buildStdPackageVariant,
+	type StdPackage,
+	wheelhouse,
+} from "./support/std-package.js";
 import { publishArchive } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -57,25 +62,34 @@ describe("全栈：标准节点包 sfly-std", () => {
 		if (dir) await rm(dir, { recursive: true, force: true });
 	});
 
-	/** 只用 sfly-std 的场景：entry 之后按顺序串起 nodes，锁定刚上传的版本，运行到结束。 */
-	async function runChain(nodes: Array<Record<string, unknown>>) {
-		const api = new ApiClient(cp);
+	/** 只用 sfly-std 的场景：entry 之后按顺序串起 nodes，锁定 sfly-std 的 version（默认刚上传的版本），返回场景 ID。 */
+	async function saveChain(nodes: Array<Record<string, unknown>>, version = std.version) {
 		const ids = ["entry", ...nodes.map((n) => n.id as string)];
-		const id = await api.orchestrationWith({
+		return new ApiClient(cp).orchestrationWith({
 			default_agent: AGENT,
 			nodes: [
 				{ id: "entry", kind: "entry" },
 				...nodes.map((n) => ({ kind: "package", package: "sfly-std", ...n })),
 			],
 			edges: ids.slice(1).map((to, i) => ({ from: ids[i], to, kind: "chain" })),
-			packages: { "sfly-std": std.version },
+			packages: { "sfly-std": version },
 		});
-		const runId = await api.triggerOk(id);
+	}
+
+	/** 触发场景并等运行结束。 */
+	async function runToEnd(orchestrationId: string) {
+		const api = new ApiClient(cp);
+		const runId = await api.triggerOk(orchestrationId);
 		await eventually(
 			async () => expect(["success", "failed"]).toContain((await api.run(runId)).status),
 			120_000,
 		);
 		return { api, runId };
+	}
+
+	/** saveChain 后立即运行到结束。 */
+	async function runChain(nodes: Array<Record<string, unknown>>) {
+		return runToEnd(await saveChain(nodes));
 	}
 
 	it("上传后 Agent 从控制面安装 sfly-std 并运行 shell；后一个 shell 引用前一个的输出", async () => {
@@ -352,4 +366,70 @@ describe("全栈：标准节点包 sfly-std", () => {
 		expect(await (await fetch(refs["logs/app.log"] as string)).text()).toBe("启动完成\n");
 		expect((await api.node(runId, "check")).outputs).toEqual({ passed: true });
 	}, 180_000);
+
+	it("单独上传新版本后，锁定旧版本的场景行为不变：shell → assert → collect_artifacts 在 Agent 上按锁定的版本执行，产物可以下载", async () => {
+		// 新版本把 shell 的默认解释器改成 /bin/bash：同一条命令在两个版本上的结果不同，能看出 Agent 执行的是哪个版本。
+		const next = await buildStdPackageVariant(join(dir, "dist-next"), {
+			version: "0.1.1",
+			edits: [["src/sfly_std/shell.py", 'shell: str = "/bin/sh"', 'shell: str = "/bin/bash"']],
+		});
+		// $0 是实际执行命令的解释器：不用 $BASH_VERSION 区分，有的系统上 /bin/sh 就是 bash。
+		const chain = (interpreter: string) => {
+			const out = join(dir, `locked${interpreter.replaceAll("/", "-")}`);
+			return [
+				{
+					id: "probe",
+					node: "shell",
+					inputs: {
+						command: `mkdir -p '${out}' && echo "interpreter=$0" > '${out}/report.txt' && echo "$0"`,
+					},
+				},
+				{
+					id: "check",
+					node: "assert",
+					inputs: {
+						actual: "${{ nodes.probe.outputs.stdout }}",
+						assertions: [{ op: "eq", value: `${interpreter}\n` }],
+					},
+				},
+				{
+					id: "collect",
+					node: "collect_artifacts",
+					inputs: { paths: ["report.txt"], base_dir: out },
+				},
+			];
+		};
+		// 场景先锁定已上传的版本，之后才上传新版本。
+		const locked = await saveChain(chain("/bin/sh"));
+		await publishArchive(cp, await readFile(next.path));
+		const upgraded = await saveChain(chain("/bin/bash"), next.version);
+
+		const installed = async () =>
+			(
+				await new ApiClient(cp).getJson<{
+					agents: Array<{ installed_packages: Array<{ name: string; version: string }> }>;
+				}>("/agents")
+			).agents[0]?.installed_packages;
+		const download = async (api: ApiClient, runId: string) => {
+			const collect = await api.node(runId, "collect");
+			const refs = collect.outputs?.refs as Record<string, string>;
+			expect(Object.keys(refs)).toEqual(["report.txt"]);
+			return (await fetch(refs["report.txt"] as string)).text();
+		};
+
+		const onNext = await runToEnd(upgraded);
+		expect((await onNext.api.run(onNext.runId)).status).toBe("success");
+		expect(await installed()).toEqual([{ name: "sfly-std", version: next.version }]);
+		expect(await download(onNext.api, onNext.runId)).toBe("interpreter=/bin/bash\n");
+
+		const onLocked = await runToEnd(locked);
+		expect((await onLocked.api.run(onLocked.runId)).status).toBe("success");
+		expect(await installed()).toEqual([{ name: "sfly-std", version: std.version }]);
+		expect((await onLocked.api.node(onLocked.runId, "probe")).outputs).toEqual({
+			exit_code: 0,
+			stdout: "/bin/sh\n",
+		});
+		expect((await onLocked.api.node(onLocked.runId, "check")).outputs).toEqual({ passed: true });
+		expect(await download(onLocked.api, onLocked.runId)).toBe("interpreter=/bin/sh\n");
+	}, 300_000);
 });
