@@ -26,7 +26,7 @@ const PACKAGE_CODES = new Set([
 	"package_version_missing",
 	"unknown_node_type",
 ]);
-const AGENT_CODES = new Set(["agent_not_registered"]);
+const AGENT_CODES = new Set(["agent_not_registered", "sdk_version_unsatisfied"]);
 
 /** 从画布打开时才有的本地检查。 */
 export interface LocalState {

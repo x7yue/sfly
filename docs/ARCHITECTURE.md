@@ -143,7 +143,7 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 
 | 命令 | 作用 |
 |---|---|
-| `sfly build` | 扫描 `@node`，生成 `sfly-package.json`，构建 wheel，打包成 `.sflypkg` |
+| `sfly build` | 扫描 `@node`，生成 `sfly-package.json`（含 `[tool.sfly] requires-sdk` 声明的 SDK 版本，没写时为构建时 SDK 版本的下限），构建 wheel，打包成 `.sflypkg` |
 | `sfly publish` | 上传到控制面；控制面校验元信息，`包名@版本` 已存在时拒绝 |
 | `sfly dev <path>` | 让本机 Agent 以可编辑方式安装本地源码目录，注册为 `包名@dev` |
 

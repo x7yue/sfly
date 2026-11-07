@@ -176,6 +176,7 @@ describe("节点包仓库", () => {
 		["元信息未通过 schema 校验", packageArchive(packageMetadata({ name: "Demo Checks" }))],
 		["版本号不合法", packageArchive(packageMetadata({ version: "../1.0" }))],
 		["节点列表为空", packageArchive(packageMetadata({ nodes: [] }))],
+		["SDK 版本要求不合法", packageArchive(packageMetadata({ requires_sdk: "0.0.4" }))],
 		["没有 wheel", packageArchive(packageMetadata(), {})],
 		[
 			"多个 wheel",
@@ -200,6 +201,14 @@ describe("节点包仓库", () => {
 			error: { code: "invalid_package", message: expect.any(String) },
 		});
 		expect(await (await cp.fetch("/packages")).json()).toEqual({ packages: [] });
+	});
+
+	it("元信息里的最低 SDK 版本原样保存，查询版本时返回", async () => {
+		cp = await startTestControlPlane();
+		const metadata = packageMetadata({ requires_sdk: ">=0.0.4, <1" });
+		expect((await cp.fetch("/packages", publishInit(packageArchive(metadata)))).status).toBe(201);
+		const version = await cp.fetch("/packages/demo-checks/versions/1.2.0");
+		expect(await version.json()).toMatchObject({ metadata: { requires_sdk: ">=0.0.4, <1" } });
 	});
 
 	it("控制面重启后节点包和文件仍然可用", async () => {

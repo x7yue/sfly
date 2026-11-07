@@ -49,6 +49,7 @@ import {
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
+import { sdkRequirementProblem } from "../packages/requires-sdk.js";
 import type { Mirrors } from "../public-config.js";
 import type { Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
@@ -1067,6 +1068,18 @@ export class Engine implements AgentSessionHandler {
 						| null
 						| undefined)
 				: undefined);
+		// 节点包需要的 SDK 比 Agent 上的新：在 Agent 上运行只会得到难以理解的错误（#79）。
+		const sdkProblem =
+			metadata &&
+			sdkRequirementProblem(
+				metadata,
+				{ name: node.package, version: packageVersion },
+				{ name: conn.name, version: conn.info.agent_version },
+			);
+		if (sdkProblem) {
+			await this.#failTask(step, task, "env_error", sdkProblem);
+			return undefined;
+		}
 		const type = metadata?.nodes?.find((n) => n.name === node.node);
 		const problems = type ? inputProblems(type.inputs, inputs, { allowNull: isAlways(node) }) : [];
 		if (problems.length > 0) {

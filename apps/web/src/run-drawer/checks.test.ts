@@ -68,6 +68,23 @@ describe("触发前检查清单", () => {
 		]);
 	});
 
+	it("Agent 不满足节点包需要的 SDK 版本时归到 Agent 一行，不能触发", () => {
+		const p: Preflight = {
+			...passed,
+			problems: [
+				{
+					code: "sdk_version_unsatisfied",
+					message:
+						"节点 a：节点包 sfly-std@0.2.0 需要 SDK >=0.0.5，Agent agent-a 的版本是 0.0.4：请升级 Agent",
+					node_id: "a",
+				},
+			],
+		};
+		const checks = preflightChecks(p);
+		expect(checks.blocked).toBe(true);
+		expect(checks.rows.find((r) => r.state === "blocked")?.key).toBe("agents");
+	});
+
 	it("场景还没有版本或已归档时只列出这一条原因", () => {
 		const p: Preflight = {
 			version: 0,
