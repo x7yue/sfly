@@ -10,7 +10,7 @@
 // 用在 items/04-control-plane-metrics.ts（pnpm perf，默认 60 秒）与长时负载测试（soak.ts，跑满时长）。
 import pg from "pg";
 import { lateMedianGrowth } from "./checks.js";
-import { target as goal, hard, type ItemRun, type PerfContext } from "./item.js";
+import { hard, type ItemRun, type PerfContext, target } from "./item.js";
 import { distribution } from "./latency.js";
 import { CONTROL_PLANE, usageMeasurements } from "./measure.js";
 import {
@@ -74,7 +74,7 @@ async function storedPoints(databaseUrl: string, taskIds: string[]) {
 }
 
 /** 被测的控制面（已经启动）。 */
-export interface ControlPlaneTarget {
+export interface ControlPlaneUnderTest {
 	api: PerfApi;
 	grpcUrl: string;
 	databaseUrl: string;
@@ -87,10 +87,10 @@ export interface ControlPlaneTarget {
  */
 export async function controlPlaneLoad(
 	ctx: PerfContext,
-	target: ControlPlaneTarget,
+	server: ControlPlaneUnderTest,
 	seconds: number,
 ): Promise<ItemRun> {
-	const api = target.api;
+	const api = server.api;
 	const plan = planLoad({
 		pointsPerSecond: INGEST_POINTS_PER_SECOND,
 		metricsPerTask: METRICS_PER_TASK,
@@ -98,7 +98,7 @@ export async function controlPlaneLoad(
 	});
 	const fleet = await startFleet({
 		api,
-		grpcUrl: target.grpcUrl,
+		grpcUrl: server.grpcUrl,
 		plan,
 		metricsPerTask: METRICS_PER_TASK,
 		log: (m) => ctx.log(m),
@@ -130,7 +130,7 @@ export async function controlPlaneLoad(
 	};
 
 	ctx.log(`${AGENTS} 个假 Agent 每秒共上报 ${plan.pointsPerSecond} 个点，持续 ${seconds} 秒`);
-	const sampler = sampleProcess(target.serverPid, 500);
+	const sampler = sampleProcess(server.serverPid, 500);
 	const load = await runLoad({
 		fleet,
 		firstSecond: Math.floor(Date.now() / 1000) + 1,
@@ -172,7 +172,7 @@ export async function controlPlaneLoad(
 			value: queryMs?.p95 ?? Number.NaN,
 			unit: "ms",
 			noise: 20,
-			check: goal("<=", QUERY_P95_MS),
+			check: target("<=", QUERY_P95_MS),
 		},
 		{
 			id: "query_p50_ms",
@@ -238,7 +238,7 @@ export async function controlPlaneLoad(
 		for (const metric of fleet.metrics) sent.set(`${t.task.taskId}/${metric}`, n);
 	}
 	const taskIds = fleet.tasks.map((t) => t.task.taskId);
-	let stored = await storedPoints(target.databaseUrl, taskIds);
+	let stored = await storedPoints(server.databaseUrl, taskIds);
 	const deadline = Date.now() + 30_000;
 	while (
 		reconcilePoints(sent, stored.segments).missing > 0 &&
@@ -246,7 +246,7 @@ export async function controlPlaneLoad(
 		!ctx.signal.aborted
 	) {
 		await sleep(1000, ctx.signal);
-		stored = await storedPoints(target.databaseUrl, taskIds);
+		stored = await storedPoints(server.databaseUrl, taskIds);
 	}
 	const segments = reconcilePoints(sent, stored.segments);
 	const summaries = reconcilePoints(sent, stored.series);
@@ -280,7 +280,7 @@ export async function controlPlaneLoad(
 			label: "接收吞吐",
 			value: realtimePoints / (windowMs / 1000),
 			unit: "点/秒",
-			check: goal(">=", INGEST_POINTS_PER_SECOND),
+			check: target(">=", INGEST_POINTS_PER_SECOND),
 		},
 		{
 			id: "drain_ms",
