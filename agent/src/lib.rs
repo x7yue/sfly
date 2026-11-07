@@ -336,9 +336,12 @@ impl Runtime {
             }
             Err(result) => result,
         };
-        // 先交出结果再移出：排空判断（[`update::Updater::poll`]）任何时刻都能看到这个任务。
+        // 持锁交出结果并移出：看手上任务的地方（[`Runtime::held`]、[`Runtime::running`]）要么看到它还在执行，
+        // 要么看到它已移出、结果已交出，没有中间状态。排空判断（[`update::Updater::poll`]）因此任何时刻都能看到这个任务；
+        // 结果的 Ack 来得再快，[`Runtime::acked`] 也不会把它当成还在执行而漏写结束标记。
+        let mut cancels = self.cancels.lock().unwrap();
         let _ = self.results.send(result);
-        self.cancels.lock().unwrap().remove(&key);
+        cancels.remove(&key);
     }
 
     /// 正在执行（含安装中）的任务。
