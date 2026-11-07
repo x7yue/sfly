@@ -1,11 +1,7 @@
-import type { NodeStatus, RunStatus } from "@sfly/schema";
+import type { RunStatus } from "@sfly/schema";
 import { cn } from "cn";
-import {
-	CANCELLING_LABEL,
-	FORCE_CANCELLING_LABEL,
-	NODE_STATUS_LABEL,
-	RUN_STATUS_LABEL,
-} from "#/lib/copy";
+import { CANCELLING_LABEL, FORCE_CANCELLING_LABEL, RUN_STATUS_LABEL } from "#/lib/copy";
+import { nodeStatusDisplay } from "#/lib/node-status";
 
 /**
  * 状态指示（原型 `.st`）：圆点 + 文字。配色规则见 docs/DESIGN-SYSTEM.md：
@@ -20,19 +16,6 @@ const RUN_STATUS_KIND: Record<RunStatus, StatusKind> = {
 	running: "running",
 	success: "ok",
 	failed: "failed",
-	cancelled: "cancelled",
-};
-
-/** 节点状态的显示。 */
-const NODE_STATUS_KIND: Record<NodeStatus, StatusKind> = {
-	pending: "pending",
-	queued: "warn",
-	dispatched: "running",
-	running: "running",
-	waiting: "warn",
-	success: "ok",
-	failed: "failed",
-	skipped: "skipped",
 	cancelled: "cancelled",
 };
 
@@ -61,13 +44,11 @@ export function runStatusView(
 		: { kind: "pending", label: status };
 }
 
-/** 节点（最后一次尝试）的状态。 */
+/** 节点（最后一次尝试）的状态；显示规则见 lib/node-status。 */
 export function nodeStatusView(status: string): StatusView {
-	return status in NODE_STATUS_KIND
-		? {
-				kind: NODE_STATUS_KIND[status as NodeStatus],
-				label: NODE_STATUS_LABEL[status as NodeStatus],
-			}
+	const display = nodeStatusDisplay(status);
+	return display
+		? { kind: display.badge, label: display.label }
 		: { kind: "pending", label: status };
 }
 

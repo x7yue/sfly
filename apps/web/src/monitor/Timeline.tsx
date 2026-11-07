@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { formatClock, formatDuration } from "#/lib/format";
+import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -522,7 +523,7 @@ function NodeRow({
 					</Badge>
 				)}
 				<span className="ml-auto min-w-13 flex-none text-right font-mono text-2xs text-fg-3">
-					{span === null ? (node.status === "skipped" ? "跳过" : "—") : formatDuration(span)}
+					{span === null ? NODE_STATUS[node.status].notRunDuration : formatDuration(span)}
 				</span>
 			</button>
 			<div className="relative mr-3.5 h-full">

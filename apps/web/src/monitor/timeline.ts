@@ -1,4 +1,5 @@
-import type { NodeRunView } from "@sfly/schema";
+import type { AttemptView, NodeRunView } from "@sfly/schema";
+import { NODE_STATUS } from "#/lib/node-status";
 
 /**
  * 链路时间线的计算（纯逻辑，单测见 timeline.test.ts）：节点每次尝试画成哪几段、时间轴显示的范围、刻度。
@@ -8,6 +9,7 @@ import type { NodeRunView } from "@sfly/schema";
 /**
  * 区段类型：queue 排队等待 Agent（含派发、安装节点包、启动执行器），run 执行中，ok 执行完成，
  * fail 失败的尝试，cancel 执行中被取消，wait 定时 / Sleep 节点在等待唤醒时间。
+ * 尝试的状态对应哪一种执行段见 lib/node-status。
  */
 export type SegmentKind = "queue" | "run" | "ok" | "fail" | "cancel" | "wait";
 
@@ -61,11 +63,10 @@ export function nodeSegments(node: NodeRunView, now: number): Segment[] {
 	return segments;
 }
 
-function executionKind(kind: NodeRunView["kind"], status: string): SegmentKind {
-	if (status === "failed") return "fail";
-	if (status === "cancelled") return "cancel";
-	if (WAIT_KINDS.has(kind) || status === "waiting") return "wait";
-	return status === "success" ? "ok" : "run";
+function executionKind(kind: NodeRunView["kind"], status: AttemptView["status"]): SegmentKind {
+	const segment = NODE_STATUS[status].segment;
+	// 定时 / Sleep 节点正常执行的时段就是在等待唤醒时间。
+	return WAIT_KINDS.has(kind) && (segment === "ok" || segment === "run") ? "wait" : segment;
 }
 
 /** 时间轴最短显示的时长：刚开始的运行也有可读的刻度。 */
