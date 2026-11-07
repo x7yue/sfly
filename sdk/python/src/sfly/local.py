@@ -12,6 +12,9 @@
 - 日志：标准输出 → 来源 stdout、级别 info，标准错误 → 来源 stderr、级别 error，
   事件管道里的日志 → 来源 sdk、级别取 SDK 记录的级别，不认识的行原样记成 sdk info 日志
   （agent/src/logs.rs）；进度和指标保留每一次上报（Agent 上报前按秒合并）；
+- 任务信息与后台进程目录：task.json 里任务 ID 是 `local`、attempt 是 1，
+  运行 ID 和节点 ID 由调用方给出；
+  `SFLY_PROCS` 默认是工作目录下的 `procs/`（`sfly run` 改为项目下的 `.sfly/procs/<运行目录名>/`）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
 """
@@ -418,13 +421,18 @@ def execute(
     on_progress: Callable[[Progress], None] | None = None,
     on_metric: Callable[[MetricPoint], None] | None = None,
     on_tick: Callable[[Execution], None] | None = None,
+    run_id: str = "local",
+    node_id: str | None = None,
+    procs_dir: str | os.PathLike[str] | None = None,
 ) -> Execution:
     """在 `work_dir`（不存在时创建）里执行节点入口 `模块:函数`，等它结束并返回结果。
 
     - `schema`：节点类型的输入 schema（`sfly build` 生成的 inputs），给出时先校验参数；
     - `pythonpath`：执行器子进程额外的模块搜索路径（放在 PYTHONPATH 最前面）；
     - `cancellation`：取消请求；`on_tick` 在执行期间定期以部分结果调用，可以在里面请求取消；
-    - `on_log` / `on_progress` / `on_metric`：每读到一条就调用（实时显示用）。
+    - `on_log` / `on_progress` / `on_metric`：每读到一条就调用（实时显示用）；
+    - `run_id`、`node_id`（默认取入口的函数名）：写进 task.json，节点里是 `ctx.task`；
+    - `procs_dir`：后台进程目录（`ctx.procs_dir`），默认 `work_dir/procs`。
     """
     work = Path(work_dir)
     execution = Execution(status="running", work_dir=work)
@@ -449,7 +457,14 @@ def execute(
     task = work / "task.json"
     task.write_text(
         json.dumps(
-            {"task_id": "local", "attempt": 1, "entry": entry, "inputs": inputs},
+            {
+                "task_id": "local",
+                "attempt": 1,
+                "run_id": run_id,
+                "node_id": node_id or entry.rpartition(":")[2].rpartition(".")[2],
+                "entry": entry,
+                "inputs": inputs,
+            },
             ensure_ascii=False,
         ),
         encoding="utf-8",
@@ -468,6 +483,9 @@ def execute(
         SFLY_ARTIFACTS=str(work / "artifacts"),
         SFLY_EVENTS=str(work / "events.fifo"),
         SFLY_CANCEL=str(cancel_marker),
+        SFLY_PROCS=str(
+            Path(procs_dir).absolute() if procs_dir is not None else work.absolute() / "procs"
+        ),
     )
     pump = _Pump(execution, events, on_log, on_progress, on_metric)
     # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。

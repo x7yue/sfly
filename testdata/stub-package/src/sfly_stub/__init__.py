@@ -147,12 +147,32 @@ def wait_cancel(ctx: Context, ready_file: str, report_file: str, seconds: float 
 @node(title="环境探针", outputs=["prefix", "cwd", "env"])
 def probe(ctx: Context) -> dict[str, Any]:
     """报告执行环境：解释器所在 venv、工作目录、相关环境变量。"""
-    names = ["SFLY_TASK", "SFLY_OUTPUT", "SFLY_ARTIFACTS", "SFLY_EVENTS", "SFLY_CANCEL"]
+    names = [
+        "SFLY_TASK",
+        "SFLY_OUTPUT",
+        "SFLY_ARTIFACTS",
+        "SFLY_EVENTS",
+        "SFLY_CANCEL",
+        "SFLY_PROCS",
+    ]
     names += ["PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"]
     return {
         "prefix": sys.prefix,
         "cwd": os.getcwd(),
         "env": {name: os.environ.get(name) for name in names},
+    }
+
+
+@node(title="任务信息", outputs=["run_id", "node_id", "task_id", "attempt", "procs_dir"])
+def task_info(ctx: Context) -> dict[str, Any]:
+    """报告 `ctx.task` 与 `ctx.procs_dir`（需要 0.0.4 及以上的 SDK）。"""
+    t = ctx.task
+    return {
+        "run_id": t.run_id,
+        "node_id": t.node_id,
+        "task_id": t.task_id,
+        "attempt": t.attempt,
+        "procs_dir": str(ctx.procs_dir),
     }
 
 

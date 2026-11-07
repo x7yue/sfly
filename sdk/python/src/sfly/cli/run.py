@@ -3,7 +3,8 @@
 和 Agent 用同一个执行器与本地协议（见 `sfly.local`）：节点按 `sfly build` 扫描出的元信息查找，
 参数按元信息里的输入 schema 校验。日志实时打印到标准错误；结束后把输出值、指标汇总和运行目录
 打印到标准输出。每次运行的工作目录（task.json、output.json、事件管道 events.fifo、stdout.log、
-stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互不覆盖。
+stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互不覆盖。运行目录名同时作为运行 ID
+（`ctx.task.run_id`），后台进程目录（`ctx.procs_dir`）是 `.sfly/procs/<运行目录名>/`。
 
 Ctrl-C 走和平台相同的取消流程：取消标记 + SIGTERM，宽限期过后强制杀掉；再按一次立即杀掉。
 
@@ -26,6 +27,8 @@ from sfly.local import DEFAULT_GRACE, Cancellation, Execution, LogLine, MetricPo
 
 #: 运行目录（相对项目根目录）。
 RUNS_DIR = Path(".sfly") / "runs"
+#: 后台进程目录的根目录（相对项目根目录）。
+PROCS_DIR = Path(".sfly") / "procs"
 
 EXIT_FAILED = 1
 EXIT_INVALID = 2
@@ -147,6 +150,9 @@ def run(project: Path, node: str, params_text: str, grace: float = DEFAULT_GRACE
             grace=grace,
             cancellation=cancellation,
             on_log=_print_log,
+            run_id=work.name,
+            node_id=node,
+            procs_dir=project.absolute() / PROCS_DIR / work.name,
         )
     finally:
         signal.signal(signal.SIGINT, previous)
