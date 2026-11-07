@@ -6,9 +6,8 @@ import type {
 	ProgressEvent,
 	RunView,
 } from "@sfly/schema";
-import { subflowLabel } from "#/components/canvas/node-display";
 import { runStatusView } from "#/components/status";
-import { chainLabel as chainName } from "#/lib/copy";
+import { chainLabel as chainName, subflowLabel } from "#/lib/copy";
 import type { NodeRef } from "./monitor-state";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */

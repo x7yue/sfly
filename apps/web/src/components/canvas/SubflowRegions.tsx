@@ -2,10 +2,10 @@ import { chainMembers } from "@sfly/orchestration";
 import { ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
 import { useMemo } from "react";
+import { subflowLabel } from "#/lib/copy";
 import { useFlowCanvas } from "./context";
 import type { SfEdge, SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_WIDTH, REGION_PADDING } from "./geometry";
-import { subflowLabel } from "./node-display";
 import { ZOOM_TEXT_12 } from "./zoom-text";
 
 interface Region {

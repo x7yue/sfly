@@ -1,3 +1,4 @@
+import { subflowName } from "@sfly/orchestration";
 import type { RunStatus } from "@sfly/schema";
 import { shortId } from "./format";
 
@@ -79,8 +80,15 @@ export const MESSAGE = {
 	archived: "已归档",
 } as const;
 
-/** 名称为空的子流程显示的名称（与画布 node-display 的 subflowLabel 一致）。 */
+/** 名称为空的子流程显示的名称。 */
 export const UNNAMED_SUBFLOW = "未命名子流程";
+
+/**
+ * 子流程的显示名称（画布、检查器、运行视图共用）：子流程名称（subflowName），
+ * 没有名称字段的旧版本显示节点 ID，填了空名称时显示 {@link UNNAMED_SUBFLOW}。
+ */
+export const subflowLabel = (node: { id: string; name?: string | null | undefined }): string =>
+	subflowName({ id: node.id, name: node.name ?? undefined }) || UNNAMED_SUBFLOW;
 
 /**
  * 链实例的名称：「主链」或「子流程 <名称>」（运行视图带子流程名称，没有名称时用起点节点 ID）；
@@ -91,7 +99,6 @@ export function chainLabel(
 	instanceId?: string,
 ) {
 	if (!chain.subflow) return TERM.mainChain;
-	const shown = chain.name == null ? chain.chain_id : chain.name || UNNAMED_SUBFLOW;
-	const name = `${TERM.subflow} ${shown}`;
+	const name = `${TERM.subflow} ${subflowLabel({ id: chain.chain_id, name: chain.name })}`;
 	return instanceId ? `${name} · ${shortId(instanceId)}` : name;
 }

@@ -13,7 +13,7 @@ import {
 import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { useId } from "react";
 import type { DocNode } from "#/components/canvas/flow";
-import { subflowLabel } from "#/components/canvas/node-display";
+import { subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
