@@ -72,11 +72,33 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 	const id = await createEditorScenario(controlPlane);
 	await openEditor(page, id);
 
+	const addButton = dock(page).getByRole("button", { name: "添加节点" });
+	const closeWithEscape = async () => {
+		await expect(addMenu(page)).toBeVisible();
+		await expect(addMenu(page).getByRole("combobox", { name: "搜索节点类型" })).toBeFocused();
+		await page.keyboard.press("Escape");
+		await expect(addMenu(page)).toHaveCount(0);
+	};
+
+	// 页面上没有焦点时打开：Esc 后焦点落在工具条「添加节点」按钮上。
 	await page.keyboard.press("Tab");
-	await expect(addMenu(page)).toBeVisible();
-	await expect(addMenu(page).getByRole("combobox", { name: "搜索节点类型" })).toBeFocused();
-	await page.keyboard.press("Escape");
-	await expect(addMenu(page)).toHaveCount(0);
+	await closeWithEscape();
+	await expect(addButton).toBeFocused();
+
+	// 在节点卡片上用 Tab 或 / 打开：Esc 后焦点回到这张卡片。
+	await nodeCard(page, "fetch").click();
+	await page.keyboard.press("Tab");
+	await closeWithEscape();
+	await expect(nodeCard(page, "fetch")).toBeFocused();
+	await page.keyboard.press("/");
+	await closeWithEscape();
+	await expect(nodeCard(page, "fetch")).toBeFocused();
+
+	// 点工具条按钮打开：Esc 后回到按钮。
+	await nodeCard(page, "fetch").click();
+	await addButton.click();
+	await closeWithEscape();
+	await expect(addButton).toBeFocused();
 
 	// 焦点在工具条按钮上时 Tab 照常切换焦点。
 	await dock(page).getByRole("button", { name: "指针" }).focus();
@@ -149,6 +171,14 @@ test("从链尾端口拖线到空白处：弹出可以接上的节点菜单，�
 	const menuBox = await box(menu);
 	expect(Math.abs(menuBox.x - drop.x)).toBeLessThan(12);
 	expect(Math.abs(menuBox.y - drop.y)).toBeLessThan(12);
+
+	// Esc 关闭：焦点回到拖出连线的节点。再拖一次接着选。
+	await expect(menu.getByRole("combobox", { name: "搜索节点类型" })).toBeFocused();
+	await page.keyboard.press("Escape");
+	await expect(menu).toHaveCount(0);
+	await expect(nodeCard(page, "ping")).toBeFocused();
+	await dragToBlank("ping");
+	await expect(menu).toBeVisible();
 
 	await menu.getByRole("option", { name: /异步任务/ }).click();
 	await expect(edge(page, "chain:ping->async_1")).toHaveCount(1);
