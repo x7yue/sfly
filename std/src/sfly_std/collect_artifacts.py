@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import os
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
@@ -46,7 +45,8 @@ def collect_artifacts(
     if not base.is_dir():
         raise FileNotFoundError(f"base_dir 不存在：{base}")
     # 产物目录本身（Agent 上在任务工作目录里）不收集，否则会把产物再复制进自己。
-    own = Path(os.environ["SFLY_ARTIFACTS"]).resolve()
+    # SDK 没有直接给出产物目录：顶层产物名称的本地路径的父目录就是它（ctx.artifacts.path 会建好）。
+    own = ctx.artifacts.path(ARCHIVE_NAME).parent.resolve()
     found: set[Path] = set()
     for pattern in paths:
         for match in base.glob(pattern):
