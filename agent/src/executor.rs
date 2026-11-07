@@ -232,7 +232,8 @@ fn spawn_process(
     }
 
     // 每个任务是一棵进程树，超时、取消时整体终止。
-    match ProcessTree::spawn(&mut command) {
+    // 登记取消标记：Agent 退出时也和取消一样先写它再终止（process_tree::terminate_all）。
+    match ProcessTree::spawn_cancellable(&mut command, paths.cancel.clone()) {
         Ok(mut process) => {
             let (Some(stdout), Some(stderr)) = process.take_output_pipes() else {
                 unreachable!("stdout and stderr are piped");

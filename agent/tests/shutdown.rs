@@ -83,10 +83,11 @@ async fn running_task_is_terminated_on(signal: Signal) {
     stop_agent(&mut agent, signal, Duration::from_secs(15)).await;
 
     assert_all_gone(&[pid]).await;
-    // 优雅终止：节点里抛出 Cancelled，finally 里的清理代码执行了。
-    assert!(
-        std::fs::read_to_string(&report).is_ok_and(|r| !r.is_empty()),
-        "the node's finally did not run"
+    // 和取消一样优雅终止：先写取消标记再 SIGTERM，节点里抛出 Cancelled，
+    // finally 里的清理代码执行了，并且看得到 ctx.cancelled()。
+    assert_eq!(
+        std::fs::read_to_string(&report).ok().as_deref(),
+        Some("cancelled")
     );
 }
 
@@ -120,5 +121,35 @@ async fn task_processes_ignoring_sigterm_are_killed_after_the_grace_period() {
     let took = stop_agent(&mut agent, Signal::SIGTERM, Duration::from_secs(10)).await;
 
     assert!(took >= Duration::from_millis(900), "exited after {took:?}");
+    assert_all_gone(&pids).await;
+}
+
+#[tokio::test]
+async fn a_second_signal_during_the_grace_period_kills_task_processes_at_once() {
+    let cp = FakeControlPlane::start().await;
+    let mut options = AgentOptions::new(&cp.url, "agent-shutdown-twice");
+    options.args = vec!["--terminate-grace".into(), "60".into()];
+    let mut agent = spawn_agent(options);
+    cp.hello(0).await;
+    let dir = tempfile::tempdir().unwrap();
+    let pid_file = dir.path().join("pids");
+    cp.assign(stub_task(
+        "task-stubborn",
+        "process_tree",
+        json!({ "pid_file": pid_file, "ignore_term": true }),
+    ))
+    .await;
+    let pids = pids(&wait_for_file(&pid_file).await);
+    let agent_pid = Pid::from_raw(agent.child.id().unwrap() as i32);
+
+    // 第一次：开始等宽限期（执行器忽略 SIGTERM）；第二次：不再等，直接强制杀掉后退出。
+    kill(agent_pid, Signal::SIGTERM).unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        agent.child.try_wait().unwrap().is_none(),
+        "the agent exited before the grace period ended"
+    );
+    stop_agent(&mut agent, Signal::SIGINT, Duration::from_secs(10)).await;
+
     assert_all_gone(&pids).await;
 }
