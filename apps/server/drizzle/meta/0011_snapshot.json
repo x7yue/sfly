@@ -252,21 +252,6 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
-        },
-        "chain_instances_stop_task": {
-          "name": "chain_instances_stop_task",
-          "columns": [
-            {
-              "expression": "stop_task_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
         }
       },
       "foreignKeys": {

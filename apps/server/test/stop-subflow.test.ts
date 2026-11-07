@@ -210,6 +210,474 @@ describe("停止子流程节点", () => {
 	});
 });
 
+describe("停止子流程节点的边界情况", () => {
+	let cp: TestControlPlane;
+	let api: ApiClient;
+	let agent: FakeAgent;
+
+	beforeEach(async () => {
+		cp = await startTestControlPlane();
+		api = new ApiClient(cp);
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 8 });
+	});
+	afterEach(async () => {
+		await agent.disconnect();
+		await cp.close();
+	});
+
+	/** 依次收下 n 个派发，按节点 ID 返回。 */
+	async function assigns(n: number, from = agent): Promise<Record<string, AssignedTask>> {
+		const out: Record<string, AssignedTask> = {};
+		for (let i = 0; i < n; i++) {
+			const task = await from.nextAssign();
+			out[task.nodeId] = task;
+		}
+		return out;
+	}
+	/** 依次收下 n 个取消指令，返回被取消的任务 ID。 */
+	async function cancels(n: number, from = agent): Promise<string[]> {
+		const out: string[] = [];
+		for (let i = 0; i < n; i++) out.push((await from.nextCancel()).taskId);
+		return out.sort();
+	}
+	const stopNode = (run: Awaited<ReturnType<ApiClient["run"]>>, nodeId = "stop") =>
+		chainOf(run, "entry").nodes.find((n) => n.node_id === nodeId);
+
+	it("嵌套两层的子流程一起停止：各层任务按取消的方式终止，各层 always 节点照常执行，停止子流程节点等两层都结束后才成功", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry(), spawn("spawn"), echo("load"), stop("stop", "mon"), echo("cleanup")],
+					[
+						subflowEntry("mon"),
+						spawn("spawn_deep"),
+						echo("watch"),
+						{ ...echo("flush"), always: true },
+					],
+					[
+						subflowEntry("deep"),
+						echo("tail"),
+						echo("after"),
+						{ ...echo("flush_deep"), always: true },
+					],
+				],
+				[
+					["spawn", "mon"],
+					["spawn_deep", "deep"],
+				],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(3);
+		await agent.succeed(first.load as AssignedTask);
+
+		expect(await cancels(2)).toEqual([first.watch?.taskId, first.tail?.taskId].sort());
+		await agent.cancelled(first.tail as AssignedTask);
+		const flushDeep = await agent.nextAssign();
+		expect(flushDeep.nodeId).toBe("flush_deep");
+		await agent.cancelled(first.watch as AssignedTask);
+		const flush = await agent.nextAssign();
+		expect(flush.nodeId).toBe("flush");
+
+		// 上层先结束：下层的 always 节点还在执行，停止子流程节点继续等待。
+		await agent.succeed(flush);
+		let run = await api.run(runId);
+		expect(chainOf(run, "mon").status).toBe("success");
+		expect(stopNode(run)?.status).toBe("waiting");
+		await agent.expectNoAssign();
+
+		await agent.succeed(flushDeep);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		run = await api.run(runId);
+		expect(statuses(chainOf(run, "mon"))).toEqual({
+			mon: "success",
+			spawn_deep: "success",
+			watch: "stopped",
+			flush: "success",
+		});
+		expect(statuses(chainOf(run, "deep"))).toEqual({
+			deep: "success",
+			tail: "stopped",
+			after: "stopped",
+			flush_deep: "success",
+		});
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "success" } });
+		await agent.succeed(cleanup);
+		run = await api.run(runId);
+		expect(run.status).toBe("success");
+	});
+
+	it("目标子流程还没被触发（触发它的异步任务节点被跳过）时立即成功，status 为 null", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry(), spawn("spawn"), echo("load"), stop("stop", "deep"), echo("cleanup")],
+					[subflowEntry("mon"), echo("fragile"), spawn("spawn_deep")],
+					[subflowEntry("deep"), echo("tail")],
+				],
+				[
+					["spawn", "mon"],
+					["spawn_deep", "deep"],
+				],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(2);
+		await agent.fail(first.fragile as AssignedTask);
+		await agent.succeed(first.load as AssignedTask);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		await agent.expectNoCancel();
+		const run = await api.run(runId);
+		expect(statuses(chainOf(run, "mon"))).toMatchObject({ spawn_deep: "skipped" });
+		expect(run.chains.map((c) => c.chain_id)).toEqual(["entry", "mon"]);
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: null } });
+	});
+
+	it("目标子流程已经结束时立即成功，status 为它的结果", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[
+						entry(),
+						spawn("spawn_ok"),
+						spawn("spawn_bad"),
+						echo("load"),
+						stop("stop_ok", "ok"),
+						stop("stop_bad", "bad"),
+						echo("cleanup"),
+					],
+					[subflowEntry("ok"), echo("quick")],
+					[subflowEntry("bad"), echo("broken")],
+				],
+				[
+					["spawn_ok", "ok"],
+					["spawn_bad", "bad"],
+				],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(3);
+		await agent.succeed(first.quick as AssignedTask);
+		await agent.fail(first.broken as AssignedTask);
+		await agent.succeed(first.load as AssignedTask);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		await agent.expectNoCancel();
+		const run = await api.run(runId);
+		expect(stopNode(run, "stop_ok")).toMatchObject({
+			status: "success",
+			outputs: { status: "success" },
+		});
+		expect(stopNode(run, "stop_bad")).toMatchObject({
+			status: "success",
+			outputs: { status: "failed" },
+		});
+	});
+
+	it("停止子流程节点设为 always：主链前面失败后它照样停止子流程，后面的普通节点跳过，运行失败", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[
+						entry(),
+						spawn("spawn"),
+						echo("load"),
+						stop("stop", "mon", { always: true }),
+						echo("report"),
+						{ ...echo("cleanup"), always: true },
+					],
+					[subflowEntry("mon"), echo("watch")],
+				],
+				[["spawn", "mon"]],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(2);
+		await agent.fail(first.load as AssignedTask);
+		expect((await agent.nextCancel()).taskId).toBe(first.watch?.taskId);
+		await agent.cancelled(first.watch as AssignedTask);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		let run = await api.run(runId);
+		expect(statuses(chainOf(run, "mon"))).toEqual({ mon: "success", watch: "stopped" });
+		expect(chainOf(run, "mon").status).toBe("success");
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "success" } });
+		expect(statuses(chainOf(run, "entry"))).toMatchObject({ load: "failed", report: "skipped" });
+		await agent.succeed(cleanup);
+		run = await api.run(runId);
+		expect(run.status).toBe("failed");
+	});
+
+	it("目标已被另一个停止子流程节点停止：等那次停止完成，输出该子流程的结果", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry(), spawn("spawn"), echo("load"), stop("stop", "deep"), echo("cleanup")],
+					[subflowEntry("mid"), spawn("spawn_deep"), echo("work"), stop("stop_mid", "deep")],
+					[subflowEntry("deep"), echo("tail"), { ...echo("flush"), always: true }],
+				],
+				[
+					["spawn", "mid"],
+					["spawn_deep", "deep"],
+				],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(3);
+		await agent.succeed(first.work as AssignedTask);
+		expect((await agent.nextCancel()).taskId).toBe(first.tail?.taskId);
+
+		// 主链上的停止子流程节点到达时子流程正在被停止：不再重复通知 Agent，等它结束。
+		await agent.succeed(first.load as AssignedTask);
+		await agent.expectNoCancel();
+		let run = await api.run(runId);
+		expect(stopNode(run)?.status).toBe("waiting");
+
+		await agent.cancelled(first.tail as AssignedTask);
+		const flush = await agent.nextAssign();
+		expect(flush.nodeId).toBe("flush");
+		await agent.expectNoAssign();
+		await agent.fail(flush);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		run = await api.run(runId);
+		expect(chainOf(run, "deep").status).toBe("failed");
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "failed" } });
+		expect(chainOf(run, "mid").nodes.find((n) => n.node_id === "stop_mid")).toMatchObject({
+			status: "success",
+			outputs: { status: "failed" },
+		});
+	});
+
+	it("停止一个正在停止自己下级子流程的子流程：它的停止子流程节点记为已停止，外层等下级也结束后才成功", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry(), spawn("spawn"), echo("load"), stop("stop", "mid"), echo("cleanup")],
+					[
+						subflowEntry("mid"),
+						spawn("spawn_deep"),
+						echo("work"),
+						stop("stop_mid", "deep"),
+						echo("next"),
+					],
+					[subflowEntry("deep"), echo("tail"), { ...echo("flush"), always: true }],
+				],
+				[
+					["spawn", "mid"],
+					["spawn_deep", "deep"],
+				],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(3);
+		await agent.succeed(first.work as AssignedTask);
+		expect((await agent.nextCancel()).taskId).toBe(first.tail?.taskId);
+
+		await agent.succeed(first.load as AssignedTask);
+		await agent.expectNoCancel();
+		let run = await api.run(runId);
+		expect(statuses(chainOf(run, "mid"))).toMatchObject({ stop_mid: "stopped", next: "stopped" });
+		expect(chainOf(run, "mid").status).toBe("success");
+		expect(stopNode(run)?.status).toBe("waiting");
+
+		await agent.cancelled(first.tail as AssignedTask);
+		const flush = await agent.nextAssign();
+		expect(flush.nodeId).toBe("flush");
+		await agent.succeed(flush);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		run = await api.run(runId);
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "success" } });
+		await agent.succeed(cleanup);
+		expect((await api.run(runId)).status).toBe("success");
+	});
+
+	it("停止过程中取消运行：按取消的规则处理，已停止的保持不变；再次取消即强制取消，always 节点也立即终止", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[
+						entry(),
+						spawn("spawn"),
+						echo("load"),
+						stop("stop", "mon"),
+						echo("cleanup"),
+						{ ...echo("final"), always: true },
+					],
+					[
+						subflowEntry("mon"),
+						spawn("spawn_deep"),
+						echo("watch"),
+						{ ...echo("flush"), always: true },
+					],
+					[
+						subflowEntry("deep"),
+						{ id: "nap", kind: "sleep", duration: "1h" },
+						{ ...echo("flush_deep"), always: true },
+					],
+				],
+				[
+					["spawn", "mon"],
+					["spawn_deep", "deep"],
+				],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(2);
+		await agent.succeed(first.load as AssignedTask);
+		expect(await agent.nextCancel()).toMatchObject({ taskId: first.watch?.taskId, force: false });
+		const flushDeep = await agent.nextAssign();
+		expect(flushDeep.nodeId).toBe("flush_deep");
+		let run = await api.run(runId);
+		expect(statuses(chainOf(run, "deep"))).toMatchObject({ nap: "stopped" });
+
+		// 第一次取消：等待中的停止子流程节点与未开始的普通节点记为已取消，always 节点照常执行。
+		await api.cancelOk(runId);
+		expect(await agent.nextCancel()).toMatchObject({ taskId: first.watch?.taskId, force: false });
+		const final = await agent.nextAssign();
+		expect(final.nodeId).toBe("final");
+		run = await api.run(runId);
+		expect(statuses(chainOf(run, "entry"))).toMatchObject({
+			stop: "cancelled",
+			cleanup: "cancelled",
+			final: "running",
+		});
+		expect(statuses(chainOf(run, "deep"))).toMatchObject({ nap: "stopped", flush_deep: "running" });
+
+		// 再次取消：所有任务（含 always）立即取消；已经记为已停止的保持不变。
+		await api.cancelOk(runId);
+		expect(await cancels(3)).toEqual([first.watch?.taskId, flushDeep.taskId, final.taskId].sort());
+		run = await api.run(runId);
+		expect(run.status).toBe("cancelled");
+		expect(statuses(chainOf(run, "entry"))).toMatchObject({
+			stop: "cancelled",
+			cleanup: "cancelled",
+			final: "cancelled",
+		});
+		expect(statuses(chainOf(run, "mon"))).toEqual({
+			mon: "success",
+			spawn_deep: "success",
+			watch: "cancelled",
+			flush: "cancelled",
+		});
+		expect(statuses(chainOf(run, "deep"))).toEqual({
+			deep: "success",
+			nap: "stopped",
+			flush_deep: "cancelled",
+		});
+	});
+
+	it("运行被取消后才执行的 always 停止子流程节点：不再停止子流程，等它按取消结束，status 为 failed", async () => {
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[
+						entry(),
+						spawn("spawn"),
+						echo("load"),
+						stop("stop", "mon", { always: true }),
+						echo("cleanup"),
+					],
+					[subflowEntry("mon"), echo("watch"), { ...echo("flush"), always: true }],
+				],
+				[["spawn", "mon"]],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(2);
+		await api.cancelOk(runId);
+		expect(await cancels(2)).toEqual([first.load?.taskId, first.watch?.taskId].sort());
+		await agent.cancelled(first.load as AssignedTask);
+		await agent.expectNoCancel();
+		let run = await api.run(runId);
+		expect(stopNode(run)?.status).toBe("waiting");
+
+		await agent.cancelled(first.watch as AssignedTask);
+		const flush = await agent.nextAssign();
+		expect(flush.nodeId).toBe("flush");
+		await agent.succeed(flush);
+		run = await api.run(runId);
+		expect(statuses(chainOf(run, "mon"))).toEqual({
+			mon: "success",
+			watch: "cancelled",
+			flush: "success",
+		});
+		expect(chainOf(run, "mon").status).toBe("cancelled");
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "failed" } });
+		expect(statuses(chainOf(run, "entry"))).toMatchObject({ cleanup: "cancelled" });
+		expect(run.status).toBe("cancelled");
+	});
+
+	it("停止进行中重启控制面：Agent 重连后重新收到停止的取消指令，被停止的子流程和等待中的停止子流程节点照常完成", async () => {
+		/** 模拟控制面崩溃重启：Agent 的连接断开，控制面在同一个数据库上重新启动，Agent 带着手上的任务重连。 */
+		const restart = async (running: AssignedTask[]) => {
+			await agent.disconnect();
+			await cp.restart();
+			agent = await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-a",
+				slots: 8,
+				runningTasks: running.map((t) => ({ taskId: t.taskId, attempt: t.attempt })),
+			});
+		};
+		const id = await api.orchestrationWith(
+			orchestration(
+				[
+					[entry(), spawn("spawn"), echo("load"), stop("stop", "mon"), echo("cleanup")],
+					[
+						subflowEntry("mon"),
+						spawn("spawn_deep"),
+						echo("watch"),
+						{ ...echo("flush"), always: true },
+					],
+					[subflowEntry("deep"), echo("tail"), echo("after")],
+				],
+				[
+					["spawn", "mon"],
+					["spawn_deep", "deep"],
+				],
+			),
+		);
+		const runId = await api.triggerOk(id);
+		const first = await assigns(3);
+		await agent.succeed(first.load as AssignedTask);
+		expect(await cancels(2)).toEqual([first.watch?.taskId, first.tail?.taskId].sort());
+
+		// 取消指令可能随断开的连接丢失：重连后重新发出。
+		await restart([first.watch as AssignedTask, first.tail as AssignedTask]);
+		expect(await cancels(2)).toEqual([first.watch?.taskId, first.tail?.taskId].sort());
+		let run = await api.run(runId);
+		expect(stopNode(run)?.status).toBe("waiting");
+		await agent.cancelled(first.watch as AssignedTask);
+		const flush = await agent.nextAssign();
+		expect(flush.nodeId).toBe("flush");
+
+		// 停止子流程节点在等子流程的 always 节点和下级子流程时重启：重启后照常等待、完成。
+		await restart([flush, first.tail as AssignedTask]);
+		expect((await agent.nextCancel()).taskId).toBe(first.tail?.taskId);
+		await agent.succeed(flush);
+		run = await api.run(runId);
+		expect(stopNode(run)?.status).toBe("waiting");
+		await agent.expectNoAssign();
+		await agent.cancelled(first.tail as AssignedTask);
+		const cleanup = await agent.nextAssign();
+		expect(cleanup.nodeId).toBe("cleanup");
+		await agent.succeed(cleanup);
+		run = await api.run(runId);
+		expect(statuses(chainOf(run, "mon"))).toMatchObject({ watch: "stopped", flush: "success" });
+		expect(statuses(chainOf(run, "deep"))).toEqual({
+			deep: "success",
+			tail: "stopped",
+			after: "stopped",
+		});
+		expect(stopNode(run)).toMatchObject({ status: "success", outputs: { status: "success" } });
+		expect(run.status).toBe("success");
+	});
+});
+
 describe("停止子流程节点的引用检查（保存时警告，触发时阻断）", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;

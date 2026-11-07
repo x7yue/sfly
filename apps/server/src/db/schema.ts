@@ -199,15 +199,12 @@ export const chainInstances = pgTable(
 		/**
 		 * 停止（docs/SEMANTICS.md §4.1）：停止这个子流程实例的停止子流程节点任务（tasks.id）和停止的时间；没有被停止时为空。
 		 * 停止的全部状态都在这里：之后未开始的普通节点记为 stopped、Agent 上报的取消结果记为 stopped，
-		 * 停止子流程节点（waiting）在所有 stop_task_id 指向它的链实例都结束后成功。控制面重启后照常推进。
+		 * 停止子流程节点（waiting）在目标子流程实例和它的各级下级实例都结束后成功。控制面重启后照常推进。
 		 */
 		stopTaskId: uuid("stop_task_id"),
 		stopRequestedAt: timestamptz("stop_requested_at"),
 	},
-	(t) => [
-		index("chain_instances_run").on(t.runId),
-		index("chain_instances_stop_task").on(t.stopTaskId),
-	],
+	(t) => [index("chain_instances_run").on(t.runId)],
 );
 
 /** 任务：节点在运行中的一次尝试（内置节点也记一条，agent_name 为空）。ID 由链实例、节点、attempt 确定性生成。 */

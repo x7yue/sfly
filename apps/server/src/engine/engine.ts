@@ -23,7 +23,7 @@ import {
 	type OrchestrationNode,
 	type PackageMetadata,
 } from "@sfly/schema";
-import { and, asc, count, eq, inArray, isNotNull, isNull, or } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import {
 	type AgentConnection,
 	type AgentHub,
@@ -149,8 +149,34 @@ const cancelledFor = (run: RunRow, node: OrchestrationNode | undefined) =>
 const stoppedFor = (chain: ChainRow, node: OrchestrationNode | undefined) =>
 	chain.stopTaskId !== null && (!node || !isAlways(node));
 
-/** 停止子流程节点的输出（§4.1 第 5 条）：子流程的最终结果，未触发时为 null。 */
-const stopOutputs = (status: ChainRow["status"] | null) => ({ status });
+/**
+ * 停止子流程节点的输出（§4.1 第 5 条）：子流程的最终结果 success | failed，未触发时为 null。
+ * 运行被取消时子流程以 cancelled 结束，它没有成功完成，输出 failed。
+ */
+const stopOutputs = (status: ChainRow["status"] | null) => ({
+	status: status === null ? null : status === "success" ? "success" : "failed",
+});
+
+/** 链实例 root 和它直接或间接触发的子流程实例（chains 是同一次运行的全部链实例），按深度排列。 */
+function subtree(chains: ChainRow[], root: ChainRow): ChainRow[] {
+	const out = [root];
+	for (let i = 0; i < out.length; i++) {
+		const parent = out[i];
+		out.push(...chains.filter((c) => c.parentChainInstanceId === parent?.id));
+	}
+	return out;
+}
+
+/** 链实例和它的各级上级链实例（chains 是同一次运行的全部链实例）。 */
+function ancestry(chains: ChainRow[], chain: ChainRow): ChainRow[] {
+	const out: ChainRow[] = [];
+	for (let c: ChainRow | undefined = chain; c; ) {
+		const current: ChainRow = c;
+		out.push(current);
+		c = chains.find((p) => p.id === current.parentChainInstanceId);
+	}
+	return out;
+}
 
 /**
  * 引擎：PostgreSQL 之上的链状态机（docs/SEMANTICS.md §3）。
@@ -701,7 +727,7 @@ export class Engine implements AgentSessionHandler {
 				continue;
 			}
 			if (node.kind === "stop_subflow") {
-				// 子流程还没完全结束时停在这里，由 #settleStop 在它结束后继续。
+				// 子流程还没完全结束时停在这里，由 #settleStops 在它结束后继续。
 				if (!(await this.#stopSubflow(step, run, chain, node))) return;
 				continue;
 			}
@@ -815,8 +841,10 @@ export class Engine implements AgentSessionHandler {
 
 	/**
 	 * 停止子流程节点（§4.1）：目标子流程实例（每次运行每个子流程最多一个实例，按子流程入口 ID 确定）
-	 * 不存在或已结束时立即成功并返回 true；否则把它记为被这个节点的任务停止（chain_instances.stop_task_id），
-	 * 按停止的规则终止其中的任务（#stopChain），节点进入 waiting 并返回 false，等子流程完全结束后由 #settleStop 完成。
+	 * 不存在或已结束时立即成功并返回 true；否则停止它和它直接或间接触发、仍在进行的子流程实例
+	 * （chain_instances.stop_task_id 记下这个节点的任务，#stopChain 终止其中的任务），节点进入 waiting 并返回 false，
+	 * 等这些子流程完全结束后由 #settleStops 完成。已经被另一个停止子流程节点停止的实例不再重复停止，同样等它们结束；
+	 * 运行已被取消时（always 节点）也只等它们结束。
 	 * 停止在同一个事务里可能直接让子流程结束（没有需要等 Agent 上报的任务、也没有 always 节点），这时也立即成功。
 	 */
 	async #stopSubflow(
@@ -830,11 +858,13 @@ export class Engine implements AgentSessionHandler {
 			startedAt: step.now,
 			inputs: { subflow: node.subflow },
 		};
-		const [target] = await step.tx
+		const chains = await step.tx
 			.select()
 			.from(chainInstances)
-			.where(and(eq(chainInstances.runId, run.id), eq(chainInstances.chainId, node.subflow ?? "")))
+			.where(eq(chainInstances.runId, run.id))
+			.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt))
 			.for("update");
+		const target = chains.find((c) => c.chainId === node.subflow);
 		if (!target || target.status !== "running") {
 			await step.tx
 				.insert(tasks)
@@ -847,20 +877,35 @@ export class Engine implements AgentSessionHandler {
 				.onConflictDoNothing();
 			return true;
 		}
-		// 停止期间先记为 running：子流程在同一个事务里结束时 #settleStop 不会抢先推进这条链。
+		// 停止期间先记为 running：子流程在同一个事务里结束时 #settleStops 不会抢先推进这条链。
 		const [task] = await step.tx
 			.insert(tasks)
 			.values({ ...base, status: "running" })
 			.onConflictDoNothing()
 			.returning();
 		if (!task) return false;
-		const [stopped] = await step.tx
-			.update(chainInstances)
-			.set({ stopTaskId: task.id, stopRequestedAt: step.now })
-			.where(and(eq(chainInstances.id, target.id), isNull(chainInstances.stopTaskId)))
-			.returning();
-		if (stopped) await this.#stopChain(step, run, stopped);
-		const status = await this.#stopResult(step.tx, task.id);
+		// 运行已被取消时不再停止（§4.1 第 6 条）：子流程按取消的规则结束，这里只等它们结束。
+		const pending = cancelling(run)
+			? []
+			: subtree(chains, target).filter((c) => c.status === "running" && c.stopTaskId === null);
+		// 先把要停止的实例都记下来，再逐个终止任务：推进其中一个时，其他实例已经处在停止状态。
+		const stopped = pending.length
+			? await step.tx
+					.update(chainInstances)
+					.set({ stopTaskId: task.id, stopRequestedAt: step.now })
+					.where(
+						inArray(
+							chainInstances.id,
+							pending.map((c) => c.id),
+						),
+					)
+					.returning()
+			: [];
+		for (const c of pending) {
+			const row = stopped.find((r) => r.id === c.id);
+			if (row) await this.#stopChain(step, run, row);
+		}
+		const status = await this.#stopResult(step.tx, run, node.subflow);
 		if (status === undefined) {
 			await step.tx.update(tasks).set({ status: "waiting" }).where(eq(tasks.id, task.id));
 			return false;
@@ -908,35 +953,53 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 停止子流程节点任务停止的链实例是否都已结束：都结束时返回目标子流程的最终状态（输出 status），否则 undefined。
+	 * 停止子流程节点等待的子流程（子流程入口 ID 为 subflow 的实例和它的各级下级实例）是否都已结束：
+	 * 都结束时返回该子流程的最终状态，否则 undefined。
 	 */
-	async #stopResult(tx: Tx, stopTaskId: string): Promise<ChainRow["status"] | null | undefined> {
-		const [task] = await tx.select().from(tasks).where(eq(tasks.id, stopTaskId));
-		const stopped = await tx
-			.select({ chainId: chainInstances.chainId, status: chainInstances.status })
-			.from(chainInstances)
-			.where(eq(chainInstances.stopTaskId, stopTaskId));
-		if (stopped.some((c) => c.status === "running")) return undefined;
-		const subflow = (task?.inputs as { subflow?: string } | null)?.subflow;
-		return stopped.find((c) => c.chainId === subflow)?.status ?? null;
+	async #stopResult(
+		tx: Tx,
+		run: RunRow,
+		subflow: string | undefined,
+	): Promise<ChainRow["status"] | undefined> {
+		const chains = await tx.select().from(chainInstances).where(eq(chainInstances.runId, run.id));
+		const target = chains.find((c) => c.chainId === subflow);
+		if (!target) throw new Error(`run ${run.id}: stopped subflow ${subflow} has no instance`);
+		if (subtree(chains, target).some((c) => c.status === "running")) return undefined;
+		return target.status;
 	}
 
-	/** 被停止的链实例结束后：停止它的停止子流程节点仍在等待、且停止的链实例都已结束时，节点成功，所在的链继续推进。 */
-	async #settleStop(step: Step, stopTaskId: string): Promise<void> {
-		const [task] = await step.tx
+	/**
+	 * 链实例结束后：等待它或它的某个上级子流程结束的停止子流程节点，在等待的子流程都已结束时成功，所在的链继续推进。
+	 */
+	async #settleStops(step: Step, run: RunRow, ended: ChainRow): Promise<void> {
+		const chains = await step.tx
+			.select()
+			.from(chainInstances)
+			.where(eq(chainInstances.runId, run.id));
+		const subflows = ancestry(chains, ended).map((c) => c.chainId);
+		const waiting = await step.tx
 			.select()
 			.from(tasks)
-			.where(and(eq(tasks.id, stopTaskId), eq(tasks.status, "waiting")))
+			.where(
+				and(
+					eq(tasks.runId, run.id),
+					eq(tasks.status, "waiting"),
+					inArray(sql<string>`${tasks.inputs} ->> 'subflow'`, subflows),
+				),
+			)
+			.orderBy(asc(tasks.seq))
 			.for("update");
-		if (!task) return;
-		const status = await this.#stopResult(step.tx, stopTaskId);
-		if (status === undefined) return;
-		await step.tx
-			.update(tasks)
-			.set({ status: "success", outputs: stopOutputs(status), endedAt: step.now })
-			.where(eq(tasks.id, task.id));
-		const { run, chain, index } = await this.#locate(step.tx, task);
-		await this.#advance(step, run, chain, index + 1);
+		for (const task of waiting) {
+			const located = await this.#locate(step.tx, task);
+			if (located.node.kind !== "stop_subflow") continue;
+			const status = await this.#stopResult(step.tx, run, located.node.subflow);
+			if (status === undefined) continue;
+			await step.tx
+				.update(tasks)
+				.set({ status: "success", outputs: stopOutputs(status), endedAt: step.now })
+				.where(eq(tasks.id, task.id));
+			await this.#advance(step, located.run, located.chain, located.index + 1);
+		}
 	}
 
 	/**
@@ -990,9 +1053,9 @@ export class Engine implements AgentSessionHandler {
 			.update(chainInstances)
 			.set({ status, endedAt: step.now })
 			.where(eq(chainInstances.id, chain.id))
-			.returning({ stopTaskId: chainInstances.stopTaskId });
-		// 被停止的子流程结束：停止它的停止子流程节点可能可以完成了（它所在的链还没结束，运行也就没结束）。
-		if (ended?.stopTaskId) await this.#settleStop(step, ended.stopTaskId);
+			.returning();
+		// 等这个子流程结束的停止子流程节点可能可以完成了（它所在的链还没结束，运行也就没结束）。
+		if (ended) await this.#settleStops(step, run, ended);
 		const chains = await step.tx
 			.select({ status: chainInstances.status })
 			.from(chainInstances)
