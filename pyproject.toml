@@ -31,7 +31,7 @@ known-first-party = ["sfly", "sfly_std"]
 
 [tool.mypy]
 strict = true
-files = ["sdk/python/src", "sdk/python/tests", "std/src", "std/tests"]
+files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks", "std/src", "std/tests"]
 # sdk/python/tests 里 sfly.testing 的测试直接导入桩节点包的节点函数。
 # sdk/python/tests 里的测试从 indexes.py 导入共用的桩，std/tests 里的从 named_sleep.py 导入。
 mypy_path = "testdata/stub-package/src:sdk/python/tests:std/tests"
