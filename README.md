@@ -44,6 +44,9 @@
 只支持 `X.Y.Z`，不支持预发布版本（见 ADR 0010）。不使用 Actions Artifacts；失败时直接重新运行工作流，草稿 Release 会被复用。
 CI 用上一个 Release 的 Agent 验证它能在当前控制面上跑完任务并自更新，含义与失败时的处理见 `docs/agents/branching-and-release.md`「跨版本自更新测试」。
 
+标准节点包 `sfly-std`（`std/`，ADR 0017）版本号独立，推送 `std-vX.Y.Z` tag 后由 `.github/workflows/std-release.yml` 发布：
+Release 附件 `sfly-std-X.Y.Z.sflypkg` 与 `SHA256SUMS`，部署者下载后上传到控制面（开发文档「标准节点」页）。步骤见 `docs/agents/branching-and-release.md`「发布 sfly-std」。
+
 ## 部署与运维
 
 控制面以 Docker 镜像部署（`deploy/docker-compose.yml`，数据库用已有的 PostgreSQL）：
