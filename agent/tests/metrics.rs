@@ -170,10 +170,14 @@ async fn metric_batches_are_sent_at_most_once_per_second() {
         "每秒最多一批，实际 {} 批",
         batches.len()
     );
-    // 任务结束时补发的最后一批不受间隔限制。
-    for pair in batches[..batches.len() - 1].windows(2) {
-        let gap = pair[1].1.at - pair[0].1.at;
-        assert!(gap >= Duration::from_millis(900), "两批间隔 {gap:?}");
+    // 一批只带宽限期已过、还没发过的秒，前后两批的秒不重叠（一秒的宽限期一结束就发，按整秒对齐，#119）。
+    for pair in batches.windows(2) {
+        let last = pair[0].2.points.iter().map(|p| p.time_unix_s).max();
+        let first = pair[1].2.points.iter().map(|p| p.time_unix_s).min();
+        assert!(
+            first > last,
+            "前一批到第 {last:?} 秒，后一批从第 {first:?} 秒开始"
+        );
     }
     assert!(batches.iter().all(|(i, _, _)| *i < result_at));
     let level = points_of(&batches, "level");

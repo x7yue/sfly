@@ -39,11 +39,6 @@ use crate::proto::{
 const TICK: Duration = Duration::from_millis(100);
 /// 同一任务两次进度上报的最小间隔。
 const PROGRESS_INTERVAL: Duration = Duration::from_secs(1);
-/// 同一任务两批指标的最小间隔。
-const METRIC_INTERVAL: Duration = Duration::from_secs(1);
-/// 一秒结束后再等这么多秒才发出它的点：在一秒最后时刻记录、下一秒才读到的事件仍并入那一秒，
-/// 不会变成控制面按重复丢弃的同一秒第二个点。
-const METRIC_GRACE_SECONDS: i64 = 1;
 /// 读出、还没处理的事件管道内容最多排这么多块（每块不超过一次读取的 64 KiB 加上跨块的不完整行）。
 const EVENT_CHUNKS: usize = 16;
 /// 读出、还没处理的标准输出 / 标准错误最多排这么多块（每块是一次读取拆出的行，不超过 16 KiB 加上跨块的不完整行）。
@@ -305,7 +300,6 @@ impl Pump {
             progress: None,
             progress_sent_at: None,
             metrics: Merger::default(),
-            metrics_sent_at: None,
             throttle: Throttle::new(forward_rate),
         };
         let handle = tokio::spawn(forwarder.run(lines_rx, events_rx, exited_rx));
@@ -561,7 +555,6 @@ struct Forwarder {
     progress_sent_at: Option<Instant>,
     /// 还没发出的指标点。
     metrics: Merger,
-    metrics_sent_at: Option<Instant>,
     throttle: Throttle,
 }
 
@@ -714,23 +707,19 @@ impl Forwarder {
             self.progress_sent_at = Some(Instant::now());
             self.send(agent_message::Body::Progress(progress));
         }
-        let due = self
-            .metrics_sent_at
-            .is_none_or(|at| at.elapsed() >= METRIC_INTERVAL);
-        if due || last {
-            // 平时只发结束了至少 METRIC_GRACE_SECONDS 秒的秒（之后还可能读到那一秒的值），任务结束时发出全部。
-            let points = self
-                .metrics
-                .take((!last).then(|| now_ms().div_euclid(1000) - METRIC_GRACE_SECONDS));
-            if !points.is_empty() {
-                self.metrics_sent_at = Some(Instant::now());
-                self.telemetry.send_metrics(MetricBatch {
-                    task_id: self.task_id.clone(),
-                    attempt: self.attempt,
-                    points,
-                    dropped_points: 0,
-                });
-            }
+        // 平时一秒的宽限期一结束（下一个检查点，最多晚 TICK）就发出这一秒，每秒最多一批；任务结束时发出全部。
+        let points = if last {
+            self.metrics.take(None)
+        } else {
+            self.metrics.take_due(now_ms())
+        };
+        if !points.is_empty() {
+            self.telemetry.send_metrics(MetricBatch {
+                task_id: self.task_id.clone(),
+                attempt: self.attempt,
+                points,
+                dropped_points: 0,
+            });
         }
     }
 
