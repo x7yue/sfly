@@ -32,3 +32,17 @@ tmp/
 # 控制面默认数据目录（SFLY_DATA_DIR）
 data/
 .cache/
+
+# apps/web 的构建、开发与 e2e 产物。写在根目录而不是 apps/web/.gitignore：
+# biome 只读根目录的 .gitignore，写在子目录里会被 `pnpm lint` 检查到。
+/apps/web/dist-ssr/
+/apps/web/*.local
+/apps/web/.nitro/
+/apps/web/.tanstack/
+/apps/web/.wrangler/
+/apps/web/.output/
+/apps/web/.vinxi/
+/apps/web/__unconfig*
+/apps/web/todos.json
+/apps/web/test-results/
+/apps/web/playwright-report/
