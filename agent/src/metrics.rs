@@ -2,8 +2,8 @@
 //!
 //! - 合并（[`Merger`]，每个任务一个）：`gauge` 取这一秒最后一个值，并带这一秒的最小值和最大值；
 //!   `counter` 取这一秒结束时的值（最小值、最大值与它相同）。非有限值被丢弃（SDK 已经丢弃过一次）。
-//!   一秒结束后再留一秒宽限才发出（这一秒最后时刻记录、下一秒才读到的值仍并入这一秒，不会变成重复点），
-//!   任务结束时发出全部。
+//!   一秒结束后再留一秒宽限（这一秒最后时刻记录、下一秒才读到的值仍并入这一秒，不会变成重复点），
+//!   宽限一结束就发出（[`Merger::take_due`]，按整秒对齐，而不是距上一批满一秒，#119），任务结束时发出全部。
 //! - 排队（[`MetricQueue`]）：合并后的批次在这里等待发送，所有任务合计最多排队 `limit` 个点；
 //!   超出时丢弃最早的点，按任务记下丢弃数，随这个任务下一次发出的批次（`dropped_points`）上报。
 //!   一次写满只警告一次（与日志队列一致），又有一批不丢弃地放下之后再写满才再警告。
@@ -16,6 +16,9 @@ use crate::proto::{MetricBatch, MetricPoint};
 pub const DEFAULT_METRIC_QUEUE_POINTS: usize = 500_000;
 /// 合并排队的批次时，一批最多的点数。
 const MAX_BATCH_POINTS: usize = 10_000;
+/// 一秒结束后再等这么多秒才发出它的点：在一秒最后时刻记录、下一秒才读到的事件仍并入那一秒，
+/// 不会变成控制面按重复丢弃的同一秒第二个点。
+pub const GRACE_SECONDS: i64 = 1;
 
 struct Bucket {
     counter: bool,
@@ -29,6 +32,8 @@ struct Bucket {
 pub struct Merger {
     /// (指标名, Unix 秒) → 这一秒合并后的值。
     buckets: BTreeMap<(String, i64), Bucket>,
+    /// [`Merger::take_due`] 上一次的界限：取到哪一秒之前（Unix 秒，不含）。
+    due_before: i64,
 }
 
 impl Merger {
@@ -52,6 +57,21 @@ impl Merger {
                 min: value,
                 max: value,
             });
+    }
+
+    /// 平时的发送时机：`now_ms` 时已经过了宽限期的秒（早于 `now_ms` 所在秒减 [`GRACE_SECONDS`]）的点。
+    /// 只在这个界限变化时（每秒一次，一到整秒就变）取出，所以每个任务每秒最多一批；
+    /// 界限没变时读到的迟到点留到下一秒再发。
+    /// 判断「变了」而不是「推进了」：墙钟回拨后界限变小，仍照常每秒最多一批，
+    /// 不必等时钟追上原来的界限（否则期间不发，点在合并器里越积越多，不受排队上限约束）。
+    /// 时钟前跳（休眠）时错过的秒合成一批。
+    pub fn take_due(&mut self, now_ms: i64) -> Vec<MetricPoint> {
+        let before = now_ms.div_euclid(1000) - GRACE_SECONDS;
+        if before == self.due_before {
+            return Vec::new();
+        }
+        self.due_before = before;
+        self.take(Some(before))
     }
 
     /// 取出早于 `before`（Unix 秒）的点；`None` 时取出全部。同一指标按时间递增。
@@ -204,6 +224,67 @@ mod tests {
             dropped += b.dropped_points;
         }
         (points, dropped)
+    }
+
+    fn seconds(points: &[MetricPoint]) -> Vec<i64> {
+        points.iter().map(|p| p.time_unix_s).collect()
+    }
+
+    #[test]
+    fn a_second_is_due_as_soon_as_its_grace_ends() {
+        let mut merger = Merger::default();
+        merger.add(100_200, "m".into(), "gauge", 1.0);
+        merger.add(100_900, "m".into(), "gauge", 2.0);
+        merger.add(101_500, "m".into(), "gauge", 3.0);
+        // 第 100 秒在 101.000 结束，再过一秒宽限：102.000 之前不发，一到 102.000 就发，下一秒的点留下。
+        assert!(merger.take_due(101_999).is_empty());
+        assert_eq!(seconds(&merger.take_due(102_000)), [100]);
+        assert_eq!(seconds(&merger.take_due(103_050)), [101]);
+    }
+
+    #[test]
+    fn at_most_one_batch_per_second_even_when_late_points_arrive() {
+        let mut merger = Merger::default();
+        merger.add(100_500, "m".into(), "gauge", 1.0);
+        assert_eq!(seconds(&merger.take_due(102_100)), [100]);
+        // 同一秒里又读到更早的秒（迟到）和刚结束的秒的点：留到下一秒再发，这一秒不发第二批。
+        merger.add(100_999, "m".into(), "gauge", 2.0);
+        merger.add(101_300, "m".into(), "gauge", 3.0);
+        assert!(merger.take_due(102_200).is_empty());
+        assert!(merger.take_due(102_999).is_empty());
+        assert_eq!(seconds(&merger.take_due(103_000)), [100, 101]);
+        assert!(merger.take_due(103_900).is_empty());
+    }
+
+    #[test]
+    fn after_the_wall_clock_steps_back_batches_are_sent_again_the_next_second() {
+        let mut merger = Merger::default();
+        merger.add(100_500, "m".into(), "gauge", 1.0);
+        assert_eq!(seconds(&merger.take_due(102_100)), [100]);
+        // 墙钟回拨约 10 秒：回拨后记录的点不必等时钟追上原来的界限（第 100 秒），下一秒照常发出。
+        merger.add(92_300, "m".into(), "gauge", 2.0);
+        assert!(
+            merger.take_due(92_400).is_empty(),
+            "界限刚变：本秒没有到期的点"
+        );
+        merger.add(92_600, "m".into(), "gauge", 3.0);
+        assert!(merger.take_due(92_900).is_empty(), "同一秒不发第二批");
+        assert_eq!(seconds(&merger.take_due(94_000)), [92]);
+        merger.add(94_100, "m".into(), "gauge", 4.0);
+        assert!(merger.take_due(94_500).is_empty(), "同一秒不发第二批");
+        assert_eq!(seconds(&merger.take_due(96_000)), [94]);
+    }
+
+    #[test]
+    fn after_the_wall_clock_jumps_forward_the_missed_seconds_go_out_in_one_batch() {
+        let mut merger = Merger::default();
+        for s in 100..105 {
+            merger.add(s * 1000 + 500, "m".into(), "gauge", s as f64);
+        }
+        assert_eq!(seconds(&merger.take_due(102_000)), [100]);
+        // 休眠后时钟前跳：错过的秒合成一批，之后这一秒不再发。
+        assert_eq!(seconds(&merger.take_due(200_000)), [101, 102, 103, 104]);
+        assert!(merger.take_due(200_900).is_empty());
     }
 
     #[test]
