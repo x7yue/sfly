@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { PlusIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
 import { Button } from "@/components/ui/button";
 import {
@@ -67,6 +67,23 @@ export function AddNodeMenu({
 	onPick(item: AddItem): void;
 }) {
 	const picked = useRef(false);
+	const trigger = useRef<HTMLButtonElement>(null);
+	/** 打开菜单前焦点所在的元素：Esc 关闭后回到这里。 */
+	const opener = useRef<HTMLElement | null>(null);
+	/**
+	 * 搜索框一挂载就拿到焦点（React 提交阶段同步执行）。弹层自己的初始焦点要等下一帧
+	 * （Base UI 的 FloatingFocusManager 用 requestAnimationFrame），按 / 后紧接着输入的字
+	 * 会落在原来的焦点上丢掉，回车就选中了过滤前的第一项（#123）。
+	 * 这样一来 FloatingFocusManager 记下的「打开前的焦点」成了搜索框本身，所以先在这里记下
+	 * 打开前的焦点，关闭时由 finalFocus 显式交还。从子流程表单返回时焦点已在菜单里，不覆盖。
+	 */
+	const focusSearch = useCallback((input: HTMLInputElement | null) => {
+		if (!input) return;
+		const active = document.activeElement;
+		const popup = input.closest('[data-slot="popover-content"]');
+		if (!popup?.contains(active)) opener.current = active instanceof HTMLElement ? active : null;
+		input.focus({ preventScroll: true });
+	}, []);
 	const [naming, setNaming] = useState(false);
 	if (request === null && naming) setNaming(false);
 	const drop = request?.via === "drop" ? request : null;
@@ -97,6 +114,7 @@ export function AddNodeMenu({
 							render={
 								<button
 									type="button"
+									ref={trigger}
 									aria-label="添加节点"
 									className="grid size-8 cursor-pointer place-items-center rounded-full border border-border-strong bg-raised-2 text-fg-1 hover:bg-raised [&_svg]:size-4"
 								/>
@@ -117,8 +135,13 @@ export function AddNodeMenu({
 				side={drop ? "bottom" : "top"}
 				align={drop ? "start" : "center"}
 				sideOffset={drop ? 6 : 16}
-				// 选了节点之后焦点交给新节点（由使用方处理）；Esc 关闭时回到打开前的位置。
-				finalFocus={() => !picked.current}
+				// 选了节点之后焦点交给新节点（由使用方处理）；Esc 关闭时回到打开前的位置，
+				// 打开前页面上没有焦点时回到「＋」按钮（与 Base UI 的默认行为一致）。
+				finalFocus={() => {
+					if (picked.current) return false;
+					const back = opener.current;
+					return back?.isConnected && back !== document.body ? back : trigger.current;
+				}}
 				className="w-80"
 			>
 				{naming ? (
@@ -129,7 +152,7 @@ export function AddNodeMenu({
 					/>
 				) : (
 					<Command loop className="bg-transparent">
-						<CommandInput placeholder="搜索节点类型…" aria-label="搜索节点类型" />
+						<CommandInput ref={focusSearch} placeholder="搜索节点类型…" aria-label="搜索节点类型" />
 						<CommandList className="max-h-[min(360px,var(--available-height))]">
 							<CommandEmpty>没有匹配的节点类型</CommandEmpty>
 							<CommandGroup heading="内置">
