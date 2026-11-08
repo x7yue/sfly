@@ -321,9 +321,15 @@ async fn labels_survive_queueing_while_disconnected() {
         (!batches_of(all, "task-labels-queue").is_empty()).then_some(())
     })
     .await;
-    // 控制面下线约 2 秒：这期间的点在 Agent 内存里排队，恢复后补发。
+    // 控制面下线：这期间的点在 Agent 内存里排队，恢复后补发。第 t 秒的点在墙上时钟到第 t + 2 秒时才发出
+    // （合并的一秒加 1 秒宽限），所以第 down_at 秒到第 up_at - 3 秒的点都是下线期间发出、排队后补发的；
+    // 至少等到 down_at + 3 再恢复，这一段才不为空（任务约 5 秒，这时还在上报）。
     drop(cp);
-    tokio::time::sleep(Duration::from_millis(2000)).await;
+    let down_at = unix_now();
+    while unix_now() < down_at + 3 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let up_at = unix_now();
     let cp = FakeControlPlane::start_on(port).await;
 
     let (result, _) = cp.result("task-labels-queue").await;
@@ -339,12 +345,28 @@ async fn labels_survive_queueing_while_disconnected() {
         "补发的点带着各自的标签：{conn:?}"
     );
     for series in [&a, &b] {
-        let values: Vec<f64> = conn
+        let points: Vec<(i64, f64)> = conn
             .iter()
             .filter(|p| p.labels == *series)
-            .map(|p| p.value)
+            .map(|p| (p.time_unix_s, p.value))
             .collect();
-        assert!(values.len() >= 3, "{series:?}: {values:?}");
-        assert_eq!(values.last(), Some(&19.0), "{series:?}: {values:?}");
+        // 不按点数断言（取决于下线时长和机器负载），只要求下线期间发出的点带着标签补发到了。
+        assert!(
+            points.iter().any(|&(t, _)| t >= down_at && t + 2 < up_at),
+            "{series:?} 下线期间（{down_at}–{up_at}）的点：{points:?}"
+        );
+        assert_eq!(
+            points.last().map(|&(_, v)| v),
+            Some(19.0),
+            "{series:?}: {points:?}"
+        );
     }
+}
+
+/// 墙上时钟的 Unix 秒（与 SDK 上报的时间戳同一个时钟）。
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("时钟早于 1970 年")
+        .as_secs() as i64
 }

@@ -125,7 +125,7 @@ def node_with(declarations: str) -> str:
         ("metrics=[Metric('m', labels=['pid', 'pid'])]", "标签键 pid 重复"),
         ("metrics=[Metric('m', labels=['2nd'])]", "2nd"),
         ("metrics=[Metric('m', labels=['a-b'])]", "a-b"),
-        ("metrics=[Metric('m', labels='pid')]", "标签键"),
+        ("metrics=[Metric('m', labels={'pid'})]", "标签键必须是列表"),
         (
             "metrics=[Metric('cpu', labels=['pid'])], primary_metric='cpu'",
             "主指标 cpu 带标签键",
@@ -151,6 +151,12 @@ def test_build_rejects_invalid_declarations(
     assert "probe" in err
     assert message in err
     assert not (root / "dist").exists()
+
+
+def test_metric_labels_given_as_a_string_fail_at_declaration() -> None:
+    # 字符串也是字符序列：不报错的话 "pid" 会被当成标签键 p、i、d。
+    with pytest.raises(TypeError, match=r"labels=\['pid'\]"):
+        sfly.Metric("rss_by_process", labels="pid")
 
 
 def test_dev_sends_declarations_to_agent(

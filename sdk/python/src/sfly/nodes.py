@@ -41,6 +41,14 @@ class Metric:
     description: str | None = None
     labels: Sequence[str] = ()
 
+    def __post_init__(self) -> None:
+        # 字符串也是字符序列：labels="pid" 不报错的话会被当成标签键 p、i、d。
+        if isinstance(self.labels, str):
+            raise TypeError(
+                f"指标 {self.name} 的标签键必须是列表，例如 labels=[{self.labels!r}]，"
+                f"不能是字符串 {self.labels!r}"
+            )
+
 
 @dataclass(frozen=True)
 class Chart:

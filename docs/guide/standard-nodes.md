@@ -281,6 +281,8 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - `processes.csv` 每采样一次就写入：节点被停止、取消、因目标退出失败时，已采集的明细都在产物里。第一次采样在开始后一个 `interval` 时（CPU 占用要两次读数才能算出来）；某个进程第一次被采样时它的 IO 速率为空。
 - 默认图表：CPU、内存、线程与文件描述符、磁盘读写这四张画合计；CPU（按进程）、内存（按进程）、线程数（按进程）、文件描述符（按进程）、磁盘读写（按进程）这五张每个进程一条曲线，图例是 `进程号 · 进程名`。按进程的指标和 `processes.csv` 里同一次采样的那一行数值相同。
 - 别的用户的进程读不到文件描述符数和 IO（Agent 不是 root 时），`processes.csv` 里这两项为空，不计入合计，也不上报这个进程的 `open_fds_by_process`、`io_read_bytes_per_s_by_process`、`io_write_bytes_per_s_by_process`。
+- 进程名为空时（读不到进程名，例如某些内核线程），这个进程不上报按进程的指标（标签值不能为空），合计和 `processes.csv` 照常包括它。
+- 序列按 `进程号 · 进程名` 区分：进程 exec 换成另一个程序后，同一个进程号会成为一个新的序列（图例里是新的一项），之前的曲线停在 exec 前。
 - 每个进程是一个序列：进程很多或者频繁启停（例如每个请求起一个子进程）时序列会很多，一个任务最多 1000 个序列（见 [SDK 参考](sdk-reference.md) `ctx.metric` 一节的「序列上限」），超出后新进程的点不再上报，任务日志里每个按进程的指标有一条警告；合计和 `processes.csv` 不受影响。
 - 监控的是执行这个节点的 Agent 所在机器上的进程，引用 `start_process` 的 `pid` 时要选同一个 Agent。
 

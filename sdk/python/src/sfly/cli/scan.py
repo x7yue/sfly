@@ -237,7 +237,7 @@ def metric_declarations(decl: NodeDeclaration) -> dict[str, Any]:
 
 
 def _label_keys(metric: Metric) -> list[str]:
-    if isinstance(metric.labels, str) or not isinstance(metric.labels, (list, tuple)):
+    if not isinstance(metric.labels, (list, tuple)):
         raise ScanError(f'指标 {metric.name} 的标签键必须是列表，例如 labels=["pid"]')
     if len(metric.labels) > MAX_LABEL_KEYS:
         raise ScanError(

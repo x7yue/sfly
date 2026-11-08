@@ -49,10 +49,10 @@ LEVELS = ("debug", "info", "warn", "error")
 
 _FROM_ENV: Any = object()
 
-#: 标签值的最大长度（字符数）。
+#: 标签值的最大长度（字符数，与 packages/schema 一致）。
 MAX_LABEL_VALUE_CHARS = 128
 
-#: 每个任务所有指标的序列数上限（不带标签的指标各算 1 个），与控制面一致，不开放配置。
+#: 每个任务所有指标的序列数上限（不带标签的指标各算 1 个，与 packages/schema 一致），不开放配置。
 MAX_SERIES = 1000
 
 
