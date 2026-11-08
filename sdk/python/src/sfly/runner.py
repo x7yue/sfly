@@ -24,14 +24,16 @@ import json
 import os
 import signal
 import sys
-import traceback
 import typing
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from typing import Any
 
 from sfly.context import Cancelled, Context
 from sfly.nodes import NODE_ATTR, NodeDeclaration, is_context_param
+
+# 执行器每个任务启动一个进程（#76）：从解释器启动到开始导入节点模块的路径上只导入必需的模块，
+# 只在节点失败时才用到的 traceback 推迟到用到时再导入，读写 task.json、output.json 不用 pathlib。
+# 测试见 tests/test_runner.py 的 test_startup_path_does_not_import_deferred_modules。
 
 #: 节点返回值序列化后的大小上限（docs/ARCHITECTURE.md §4.1）。
 MAX_OUTPUT_BYTES = 1024 * 1024
@@ -102,6 +104,8 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
     except BaseException as error:  # noqa: BLE001 - 节点代码的任何异常（包括 SystemExit）都是失败
         if isinstance(error, KeyboardInterrupt):
             raise
+        import traceback
+
         tb = traceback.format_exc()
         sys.stderr.write(tb)
         failure = {
@@ -121,11 +125,13 @@ def _on_sigterm(signum: int, frame: object) -> None:
 
 def main() -> int:
     signal.signal(signal.SIGTERM, _on_sigterm)
-    task = json.loads(Path(os.environ["SFLY_TASK"]).read_text(encoding="utf-8"))
+    with open(os.environ["SFLY_TASK"], encoding="utf-8") as f:
+        task = json.loads(f.read())
     code, text = run(task)
-    output = Path(os.environ["SFLY_OUTPUT"])
-    tmp = output.with_name(output.name + ".tmp")
-    tmp.write_text(text, encoding="utf-8")
+    output = os.environ["SFLY_OUTPUT"]
+    tmp = output + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(text)
     os.replace(tmp, output)
     return code
 
