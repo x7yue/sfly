@@ -4,23 +4,30 @@
 // 2. 依次运行 perf/items/ 下的各项（--only 只运行指定项；--soak 只运行 soak.ts 的长时负载测试），
 //    每项用独立的数据库、临时目录和进程，结束（包括失败与 Ctrl-C）后清理；被 Ctrl-C 中断时，
 //    正在运行的项交出已采集的数据，报告照常写出并标为被中断；
-// 3. 把报告写到 out/perf/<时间>/report.{json,md}，与本机上一次结果对比，标出变化超过 20% 的数值；
-// 4. 有硬性断言不满足或某项出错时以退出码 1 结束，并列出是哪一项、哪个数值。
+// 3. 把报告写到本机结果目录（默认 ~/.local/share/sfly/perf，在仓库之外、各 worktree 共用）的 <时间>/report.{json,md}，
+//    分别与本机上一次结果、仓库里最近一个版本的发版报告（docs/perf/<版本>/）对比，标出变化超过 20% 的数值；
+// 4. 发版运行（--release）：完整运行、通过、没有未提交的改动时，把报告另存进 docs/perf/<当前版本>/；
+// 5. 有硬性断言不满足或某项出错（--release 时还有存不成发版报告）时以退出码 1 结束，并列出原因。
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { cpus, hostname, release, totalmem, type } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { cpus, homedir, hostname, release, totalmem, type } from "node:os";
+import { join, resolve } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
+import {
+	pickPrevious,
+	pickReleaseBaseline,
+	type ReleaseCandidate,
+	releaseBlockers,
+} from "./baseline.js";
 import type { Artifacts, PerfContext, PerfItem } from "./item.js";
-import { parseOptions, USAGE } from "./options.js";
+import { displayPath, parseOptions, USAGE } from "./options.js";
 import { loadItems, selectItems } from "./registry.js";
 import {
 	buildReport,
 	type ItemOutcome,
 	type MachineInfo,
-	pickPrevious,
 	renderMarkdown,
 	type VersionInfo,
 } from "./report.js";
@@ -29,7 +36,10 @@ import { buildArtifacts, existingArtifacts } from "./stack.js";
 import { parseTargets } from "./targets.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
+/** 发版报告在仓库里的位置：docs/perf/<版本>/。 */
+const releaseRoot = join(repoRoot, "docs/perf");
 const log = (message: string) => console.log(`[perf] ${message}`);
+const show = (path: string) => displayPath(path, repoRoot, process.env.HOME || homedir());
 
 function machineInfo(): MachineInfo {
 	let raw: string;
@@ -55,14 +65,35 @@ function versionInfo(): VersionInfo {
 		return {
 			sfly: packageJson.version,
 			commit: git("rev-parse", "--short", "HEAD"),
-			dirty: git("status", "--porcelain") !== "",
+			// docs/perf/ 下的发版报告不影响测得的数值：发版时重跑一次，不会因为上一次存下的报告算作有改动。
+			dirty: git("status", "--porcelain", "--", ".", ":(exclude)docs/perf") !== "",
 		};
 	} catch {
 		return { sfly: packageJson.version, commit: "unknown", dirty: false };
 	}
 }
 
-/** out/perf 下已有的结果（`<时间>/report.json`）。 */
+/** 仓库里 docs/perf/<版本>/ 下的发版报告（`<name>.json`）。 */
+async function releaseReports(name: string): Promise<ReleaseCandidate[]> {
+	const dirs = await readdir(releaseRoot, { withFileTypes: true }).catch(() => []);
+	const reports: ReleaseCandidate[] = [];
+	for (const entry of dirs) {
+		if (!entry.isDirectory()) continue;
+		const dir = join(releaseRoot, entry.name);
+		const raw = await readFile(join(dir, `${name}.json`), "utf8").catch(() => null);
+		if (raw === null) continue;
+		let report: unknown = null;
+		try {
+			report = JSON.parse(raw);
+		} catch {
+			// 解析不了：当作结构不认识，选基准时说明。
+		}
+		reports.push({ version: entry.name, dir: show(dir), report });
+	}
+	return reports;
+}
+
+/** 本机结果目录下已有的结果（`<时间>/report.json`）。 */
 async function existingReports(outDir: string) {
 	const dirs = await readdir(outDir, { withFileTypes: true }).catch(() => []);
 	const reports: Array<{ dir: string; report: unknown }> = [];
@@ -169,6 +200,8 @@ async function main(): Promise<number> {
 	process.on("SIGTERM", onSignal);
 
 	const startedAt = new Date().toISOString();
+	// 开始时的版本：测的是这时构建的代码。
+	const version = versionInfo();
 	await mkdir(options.tmpDir, { recursive: true });
 	const runTmp = await mkdtemp(join(options.tmpDir, "r"));
 	const outcomes: ItemOutcome[] = [];
@@ -199,25 +232,61 @@ async function main(): Promise<number> {
 	if (outcomes.length === 0) return abort.signal.aborted ? 130 : 1;
 
 	const machine = machineInfo();
-	const previous = pickPrevious(await existingReports(options.outDir), machine.id, startedAt);
+	const dir = join(options.outDir, startedAt.replace(/\.\d+Z$/, "").replace(/:/g, "-"));
+	const local = pickPrevious(await existingReports(options.outDir), machine.id, startedAt);
+	// 长时负载测试的发版报告是 soak.{json,md}，只与同类对比。
+	const releaseName = options.soakSeconds === null ? "report" : "soak";
 	const report = buildReport({
 		startedAt,
 		finishedAt: new Date().toISOString(),
 		machine,
-		version: versionInfo(),
+		version,
 		only: options.only,
 		interrupted: abort.signal.aborted,
 		items: outcomes,
-		previous: previous && { dir: relative(repoRoot, previous.dir), report: previous.report },
+		dir: show(dir),
+		baselines: {
+			local: "skipped" in local ? local : { dir: show(local.dir), report: local.report },
+			release: pickReleaseBaseline(await releaseReports(releaseName), {
+				version: version.sfly,
+				machineId: machine.id,
+				release: options.release,
+			}),
+		},
 	});
-	const dir = join(options.outDir, startedAt.replace(/\.\d+Z$/, "").replace(/:/g, "-"));
+	const json = `${JSON.stringify(report, null, "\t")}\n`;
+	const markdown = renderMarkdown(report);
 	await mkdir(dir, { recursive: true });
-	await writeFile(join(dir, "report.json"), `${JSON.stringify(report, null, "\t")}\n`);
-	await writeFile(join(dir, "report.md"), renderMarkdown(report));
+	await writeFile(join(dir, "report.json"), json);
+	await writeFile(join(dir, "report.md"), markdown);
 
-	log(`报告：${relative(repoRoot, dir)}/report.md`);
-	log(report.comparison ? `已与 ${report.comparison.dir} 对比` : "本机没有更早的结果，不对比");
-	for (const c of report.changes) log(`变化超过 20%：${c.title} / ${c.label}`);
+	log(`报告：${show(dir)}/report.md`);
+	for (const [title, c] of [
+		["本机上一次", report.comparisons.local],
+		["发版基线", report.comparisons.release],
+	] as const) {
+		if ("skipped" in c) {
+			log(`${title}：${c.skipped}`);
+			continue;
+		}
+		log(`${title}：已与 ${c.dir}（sfly ${c.version}，${c.startedAt}）对比`);
+		for (const ch of c.changes) log(`  变化超过 20%：${ch.title} / ${ch.label}`);
+	}
+	let releaseSaved = true;
+	if (options.release) {
+		const blockers = releaseBlockers(report);
+		if (blockers.length > 0) {
+			releaseSaved = false;
+			log("没有存为发版报告：");
+			for (const b of blockers) log(`  ${b}`);
+		} else {
+			const target = join(releaseRoot, version.sfly);
+			await mkdir(target, { recursive: true });
+			await writeFile(join(target, `${releaseName}.json`), json);
+			await writeFile(join(target, `${releaseName}.md`), markdown);
+			log(`发版报告：${show(target)}/${releaseName}.{json,md}（提交进发版 PR）`);
+		}
+	}
 	if (report.interrupted) {
 		log("结论：被中断（已采集的数据照常写进报告）");
 		for (const failure of report.failures) log(`  ${failure}`);
@@ -228,7 +297,7 @@ async function main(): Promise<number> {
 		for (const failure of report.failures) log(`  ${failure}`);
 	}
 	if (abort.signal.aborted) return 130;
-	return report.ok ? 0 : 1;
+	return report.ok && releaseSaved ? 0 : 1;
 }
 
 // 显式退出：万一某项留下了句柄（定时器、连接），也不让命令挂住。

@@ -1,5 +1,6 @@
-// 性能测试报告（ARCHITECTURE §7.6）：判定每个数值、与本机上一次结果对比、生成 report.json 与 report.md。
-// 这里只有纯逻辑（单测见 test/perf-report.test.ts），运行负载、读写文件在 main.ts。
+// 性能测试报告（ARCHITECTURE §7.6）：判定每个数值、与两份基准（本机上一次、仓库里最近一个版本的发版报告）对比、
+// 生成 report.json 与 report.md。这里只有纯逻辑（单测见 test/perf-report.test.ts），选基准在 baseline.ts，
+// 运行负载、读写文件在 main.ts。
 //
 // 判定规则：
 // - 硬性断言（资源上限、数据正确）：不满足即该项不通过，`pnpm perf` 以非零退出码结束；
@@ -71,6 +72,12 @@ export interface VersionInfo {
 	dirty: boolean;
 }
 
+/** 选出的对比基准（baseline.ts 选出）；不对比时给出原因。 */
+export type BaselineChoice = { dir: string; report: PerfReport } | { skipped: string };
+
+/** 两份基准：本机上一次（同一台机器的结果目录里），与仓库里最近一个版本的发版报告（docs/perf/<版本>/）。 */
+export type BaselineKind = "local" | "release";
+
 export interface ReportInput {
 	startedAt: string;
 	finishedAt: string;
@@ -79,18 +86,25 @@ export interface ReportInput {
 	/** 只运行了这些项；null 表示全部。 */
 	only: string[] | null;
 	items: ItemOutcome[];
-	/** 本机上一次的结果（pickPrevious 选出）；null 表示不对比。 */
-	previous: { dir: string; report: PerfReport } | null;
+	/** 这次结果写到的目录（显示用）。 */
+	dir: string;
+	baselines: Record<BaselineKind, BaselineChoice>;
 	/** 运行被中断（Ctrl-C）：已采集的数据照常写进报告，但结论不算通过。 */
 	interrupted?: boolean;
 }
 
+/** 与一份基准相比：基准里同一项同一数值的值，和相对它的变化比例。 */
+export interface Delta {
+	value: number;
+	/** (本次 - 基准) / |基准|；基准为 0 而本次不为 0 时为 ±Infinity。 */
+	change: number;
+}
+
 export interface MeasurementResult extends Measurement {
 	verdict: MeasurementVerdict;
-	/** 上一次结果里同一项同一数值的值；上一次没有时不设置。 */
-	previous?: number;
-	/** 相对上一次的变化比例（(本次 - 上次) / |上次|）；上次为 0 而本次不为 0 时为 ±Infinity。 */
-	change?: number;
+	/** 与各份基准相比；基准里没有这个数值（或不对比）时不设置。 */
+	local?: Delta;
+	release?: Delta;
 }
 
 export interface ItemResult extends ItemOutcome {
@@ -112,12 +126,31 @@ export interface Change {
 	trend: "better" | "worse" | "neutral";
 }
 
-/** 与上一次相比，变化比例超过它就在报告里标出。 */
+/** 与基准相比，变化比例超过它就在报告里标出。 */
 export const CHANGE_THRESHOLD = 0.2;
 
-/** report.json 的结构；改动不兼容时增加 schema。 */
+/** 与一份基准的对比；不对比时只有原因。 */
+export type Comparison =
+	| {
+			/** 基准所在的目录（本机结果目录，或仓库里的 docs/perf/<版本>）。 */
+			dir: string;
+			startedAt: string;
+			/** 基准的 sfly 版本。 */
+			version: string;
+			commit: string;
+			/** 变化超过 20% 的数值，按项、数值的顺序。 */
+			changes: Change[];
+	  }
+	| { skipped: string };
+
+/**
+ * report.json 的结构；改动不兼容时增加 schema。
+ * 选基准时只读各版本共有的字段（startedAt、machine.id、interrupted、version、items 的数值），所以旧版本的报告仍可作为基准。
+ */
+export const REPORT_SCHEMAS = [1, 2] as const;
+
 export interface PerfReport {
-	schema: 1;
+	schema: 2;
 	startedAt: string;
 	finishedAt: string;
 	machine: MachineInfo;
@@ -129,10 +162,9 @@ export interface PerfReport {
 	/** 不通过的说明，每条指出是哪一项、哪个数值。 */
 	failures: string[];
 	items: ItemResult[];
-	/** 对比的上一次结果；null 表示本机没有更早的结果。 */
-	comparison: { dir: string; startedAt: string } | null;
-	/** 变化超过 20% 的数值，按项、数值的顺序。 */
-	changes: Change[];
+	/** 这次结果写到的目录（显示用，可能以 ~ 开头）。 */
+	dir: string;
+	comparisons: Record<BaselineKind, Comparison>;
 }
 
 const satisfies = (value: number, op: Check["op"], limit: number) =>
@@ -188,19 +220,19 @@ function trendOf(m: Measurement, change: number): Change["trend"] {
 	return change > 0 === (m.check.op === ">=") ? "better" : "worse";
 }
 
-/** 给每个数值附上与上一次的变化，返回变化超过阈值的数值。 */
-function compare(items: ItemResult[], previous: PerfReport): Change[] {
+/** 给每个数值附上与基准（kind）的变化，返回变化超过阈值、且超出数值声明的噪声的数值。 */
+function compare(items: ItemResult[], baseline: PerfReport, kind: BaselineKind): Change[] {
 	const before = new Map(
-		previous.items.flatMap((i) => i.measurements.map((m) => [`${i.id}\0${m.id}`, m.value])),
+		baseline.items.flatMap((i) => i.measurements.map((m) => [`${i.id}\0${m.id}`, m.value])),
 	);
 	const changes: Change[] = [];
 	for (const item of items) {
 		for (const m of item.measurements) {
 			const prev = before.get(`${item.id}\0${m.id}`);
 			if (prev === undefined) continue;
-			m.previous = prev;
-			m.change = changeRatio(prev, m.value);
-			if (Math.abs(m.change) <= CHANGE_THRESHOLD) continue;
+			const change = changeRatio(prev, m.value);
+			m[kind] = { value: prev, change };
+			if (Math.abs(change) <= CHANGE_THRESHOLD) continue;
 			if (m.noise !== undefined && Math.abs(m.value - prev) <= m.noise) continue;
 			changes.push({
 				item: item.id,
@@ -210,21 +242,32 @@ function compare(items: ItemResult[], previous: PerfReport): Change[] {
 				unit: m.unit,
 				previous: prev,
 				current: m.value,
-				change: m.change,
-				trend: trendOf(m, m.change),
+				change,
+				trend: trendOf(m, change),
 			});
 		}
 	}
 	return changes;
 }
 
+function comparison(items: ItemResult[], choice: BaselineChoice, kind: BaselineKind): Comparison {
+	if ("skipped" in choice) return { skipped: choice.skipped };
+	const { report } = choice;
+	return {
+		dir: choice.dir,
+		startedAt: report.startedAt,
+		version: report.version.sfly,
+		commit: report.version.commit,
+		changes: compare(items, report, kind),
+	};
+}
+
 export function buildReport(input: ReportInput): PerfReport {
 	const items = input.items.map(judgeItem);
 	const failures = items.flatMap(failuresOf);
-	const changes = input.previous ? compare(items, input.previous.report) : [];
 	const interrupted = input.interrupted ?? false;
 	return {
-		schema: 1,
+		schema: 2,
 		startedAt: input.startedAt,
 		finishedAt: input.finishedAt,
 		machine: input.machine,
@@ -234,39 +277,24 @@ export function buildReport(input: ReportInput): PerfReport {
 		ok: failures.length === 0 && !interrupted,
 		failures,
 		items,
-		comparison: input.previous
-			? { dir: input.previous.dir, startedAt: input.previous.report.startedAt }
-			: null,
-		changes,
+		dir: input.dir,
+		comparisons: {
+			local: comparison(items, input.baselines.local, "local"),
+			release: comparison(items, input.baselines.release, "release"),
+		},
 	};
 }
 
-/**
- * 从 out/perf 下已有的结果里选出要对比的上一次：同一台机器、早于本次开始时间、没有被中断的最近一次。
- * `report` 是读出的 report.json（未校验），结构不认识（schema 不同）的跳过。
- */
-export function pickPrevious(
-	candidates: Array<{ dir: string; report: unknown }>,
-	machineId: string,
-	startedAt: string,
-): { dir: string; report: PerfReport } | null {
-	let best: { dir: string; report: PerfReport } | null = null;
-	for (const { dir, report } of candidates) {
-		if (!isReport(report) || report.machine.id !== machineId || report.interrupted) continue;
-		if (report.startedAt >= startedAt) continue;
-		if (!best || report.startedAt > best.report.startedAt) best = { dir, report };
-	}
-	return best;
-}
-
-function isReport(value: unknown): value is PerfReport {
-	const r = value as Partial<PerfReport> | null;
+/** 读出的 report.json（未校验）是不是认识的报告：选基准时只用到这里检查的字段与各项的数值。 */
+export function isReport(value: unknown): value is PerfReport {
+	const r = value as Partial<Omit<PerfReport, "schema">> & { schema?: unknown };
 	return (
 		typeof r === "object" &&
 		r !== null &&
-		r.schema === 1 &&
+		(REPORT_SCHEMAS as readonly unknown[]).includes(r.schema) &&
 		typeof r.startedAt === "string" &&
 		typeof r.machine?.id === "string" &&
+		typeof r.version?.sfly === "string" &&
 		Array.isArray(r.items)
 	);
 }
@@ -301,6 +329,14 @@ function requirement(check: Check | undefined): string {
 	return `${check.kind === "hard" ? "硬性" : "目标"} ${opText(check.op)} ${formatNumber(check.value)}`;
 }
 
+const BASELINE_KINDS: BaselineKind[] = ["local", "release"];
+const BASELINE_TITLE: Record<BaselineKind, string> = { local: "本机上一次", release: "发版基线" };
+type Compared = Exclude<Comparison, { skipped: string }>;
+const BASELINE_SUBJECT: Record<BaselineKind, (c: Compared) => string> = {
+	local: (c) => `${c.startedAt} 的结果（${c.dir}）`,
+	release: (c) => `sfly ${c.version} 的发版报告（${c.dir}，${c.startedAt}）`,
+};
+
 /** 表格单元格里的文本：竖线与换行会破坏表格。 */
 const cell = (text: string) => text.replace(/\|/g, "\\|").replace(/\n/g, " ");
 
@@ -316,11 +352,15 @@ export function renderMarkdown(report: PerfReport): string {
 		`- 机器：${machine.hostname}，${machine.cpuModel} × ${machine.cpus}，内存 ${formatNumber(machine.memoryBytes / 1024 ** 3)} GiB，${machine.os}（标识 ${machine.id}）`,
 	);
 	if (report.only) out.push(`- 只运行：${report.only.join(", ")}`);
-	out.push(
-		report.comparison
-			? `- 对比：${report.comparison.startedAt} 的结果（${report.comparison.dir}）`
-			: "- 对比：本机没有更早的结果，不对比",
-	);
+	out.push(`- 结果目录：${report.dir}`);
+	for (const kind of BASELINE_KINDS) {
+		const c = report.comparisons[kind];
+		const what =
+			"skipped" in c
+				? c.skipped
+				: `${BASELINE_SUBJECT[kind](c)}，变化超过 20% 的数值 ${c.changes.length} 个`;
+		out.push(`- ${BASELINE_TITLE[kind]}：${what}`);
+	}
 	out.push(
 		report.interrupted
 			? "- 结论：**被中断**：已采集的数据照常写进报告，没有运行完的检查不算数"
@@ -347,14 +387,19 @@ export function renderMarkdown(report: PerfReport): string {
 		out.push(`结论：${STATUS_TEXT[item.status]}，用时 ${formatDuration(item.durationMs)}`, "");
 		if (item.error) out.push("运行出错：", "", "```", item.error, "```", "");
 		if (item.measurements.length > 0) {
-			out.push("| 数值 | 结果 | 要求 | 结论 | 与上次相比 |", "|---|---|---|---|---|");
+			out.push(
+				`| 数值 | 结果 | 要求 | 结论 | ${BASELINE_KINDS.map((k) => `与${BASELINE_TITLE[k]}相比`).join(" | ")} |`,
+				"|---|---|---|---|---|---|",
+			);
 			for (const m of item.measurements) {
-				const vs =
-					m.previous === undefined || m.change === undefined
-						? "—"
-						: `${formatNumber(m.previous)} → ${formatNumber(m.value)}（${formatChange(m.change)}）`;
+				const vs = BASELINE_KINDS.map((kind) => {
+					const d = m[kind];
+					return d
+						? `${formatNumber(d.value)} → ${formatNumber(m.value)}（${formatChange(d.change)}）`
+						: "—";
+				});
 				out.push(
-					`| ${cell(m.label)} | ${withUnit(m.value, m.unit)} | ${requirement(m.check)} | ${VERDICT_TEXT[m.verdict]} | ${vs} |`,
+					`| ${cell(m.label)} | ${withUnit(m.value, m.unit)} | ${requirement(m.check)} | ${VERDICT_TEXT[m.verdict]} | ${vs.join(" | ")} |`,
 				);
 			}
 			out.push("");
@@ -367,12 +412,15 @@ export function renderMarkdown(report: PerfReport): string {
 		}
 	}
 
-	if (report.changes.length > 0) {
-		out.push("", "## 与上一次相比变化超过 20% 的数值", "");
-		const trend = { better: "变好", worse: "变差", neutral: "无判定方向" };
-		for (const c of report.changes) {
+	const trend = { better: "变好", worse: "变差", neutral: "无判定方向" };
+	for (const kind of BASELINE_KINDS) {
+		const c = report.comparisons[kind];
+		if ("skipped" in c || c.changes.length === 0) continue;
+		const title = kind === "release" ? `发版基线（sfly ${c.version}）` : BASELINE_TITLE[kind];
+		out.push("", `## 与${title}相比变化超过 20% 的数值`, "");
+		for (const ch of c.changes) {
 			out.push(
-				`- ${c.title} / ${c.label}：${formatNumber(c.previous)} → ${withUnit(c.current, c.unit)}（${formatChange(c.change)}，${trend[c.trend]}）`,
+				`- ${ch.title} / ${ch.label}：${formatNumber(ch.previous)} → ${withUnit(ch.current, ch.unit)}（${formatChange(ch.change)}，${trend[ch.trend]}）`,
 			);
 		}
 	}
