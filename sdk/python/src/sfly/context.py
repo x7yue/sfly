@@ -30,15 +30,15 @@ from __future__ import annotations
 import json
 import math
 import os
-import shutil
-import threading
 import time
-import traceback
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
-from urllib.parse import quote
+from typing import TYPE_CHECKING, Any
+
+# 执行器每个任务启动一个进程（#76），导入 sfly 在每个任务的启动路径上：pathlib、threading、shutil、
+# traceback、urllib.parse 只在构造 Context、保存产物、记录异常时才用到，推迟到用到时再导入。
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: 日志级别（与控制面、画布一致）。
 LEVELS = ("debug", "info", "warn", "error")
@@ -54,6 +54,8 @@ class _EventWriter:
     """把事件逐行追加写入事件文件；多线程同时写也保证每行完整。"""
 
     def __init__(self, path: str | os.PathLike[str] | None) -> None:
+        import threading
+
         self._path = path
         self._fd: int | None = None
         self._lock = threading.Lock()
@@ -104,6 +106,8 @@ class Log:
 
     def exception(self, message: object, *args: object) -> None:
         """在 except 块里调用：error 级别，消息后附上当前异常的 traceback。"""
+        import traceback
+
         text = str(message) % args if args else str(message)
         self(text + "\n" + traceback.format_exc().rstrip(), level="error")
 
@@ -120,6 +124,8 @@ class Artifacts:
     """
 
     def __init__(self, directory: str | os.PathLike[str] | None, url: str | None) -> None:
+        from pathlib import Path
+
         self._dir = Path(directory) if directory is not None else None
         self._url = url or None
 
@@ -134,6 +140,8 @@ class Artifacts:
         elif isinstance(data, str):
             target.write_text(data, encoding="utf-8")
         else:
+            import shutil
+
             shutil.copyfile(data, target)
         return self.ref(name)
 
@@ -150,6 +158,8 @@ class Artifacts:
         """产物引用：下载地址（没有 SFLY_ARTIFACTS_URL 时为本地文件路径）。"""
         parts = _artifact_parts(name)
         if self._url is not None:
+            from urllib.parse import quote
+
             return self._url + "/".join(quote(p, safe="") for p in parts)
         if self._dir is None:
             raise RuntimeError("没有产物目录：执行器没有设置 SFLY_ARTIFACTS")
@@ -193,6 +203,8 @@ class TaskInfo:
 
 
 def _task_from_env() -> TaskInfo:
+    from pathlib import Path
+
     path = os.environ.get("SFLY_TASK")
     try:
         spec = json.loads(Path(path).read_text(encoding="utf-8")) if path else {}
@@ -218,6 +230,8 @@ def _task_from_env() -> TaskInfo:
 def _default_procs_dir(task: TaskInfo) -> Path:
     """Agent 没有给出 `SFLY_PROCS`（低于 0.0.4 的 Agent）时的后台进程目录：Agent 默认布局下的位置
     `$SFLY_HOME/procs/<运行 ID>/`（`SFLY_HOME` 默认 `~/.sfly`）。旧 Agent 不会清理它。"""
+    from pathlib import Path
+
     home = os.environ.get("SFLY_HOME") or os.path.join(os.path.expanduser("~"), ".sfly")
     return Path(home).absolute() / "procs" / task.run_id
 
@@ -251,6 +265,8 @@ class Context:
             artifacts_dir = os.environ.get("SFLY_ARTIFACTS")
         if artifacts_url is _FROM_ENV:
             artifacts_url = os.environ.get("SFLY_ARTIFACTS_URL")
+        from pathlib import Path
+
         self.task = task if task is not None else _task_from_env()
         if procs_dir is None:
             procs_dir = os.environ.get("SFLY_PROCS") or _default_procs_dir(self.task)

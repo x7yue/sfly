@@ -167,6 +167,42 @@ def test_missing_entry_is_a_failure(tmp_path: Path, code_dir: Path) -> None:
     assert run.output["error"]["type"] == "ModuleNotFoundError"
 
 
+#: 执行器启动路径上推迟导入的标准库模块（#76）：每个任务一个进程，它们只在构造 Context、保存产物、
+#: 节点失败时才用到。这个测试防止以后又在 sfly 或 sfly.runner 的模块顶层导入它们。
+DEFERRED_MODULES = {"pathlib", "shutil", "threading", "traceback", "urllib.parse"}
+
+
+def test_startup_path_does_not_import_deferred_modules(tmp_path: Path, code_dir: Path) -> None:
+    # 节点模块被导入时记下已经导入的模块：这就是执行器从解释器启动到开始导入节点模块之间导入的。
+    write_module(
+        code_dir,
+        "probe",
+        """
+        import sys
+
+        LOADED = sorted(sys.modules)
+
+        def loaded() -> dict:
+            return {"modules": LOADED}
+        """,
+    )
+    # 解释器自己启动时（site 等）就导入的不算：不同的 Python 和 venv 可能不一样。
+    baseline = subprocess.run(
+        [sys.executable, "-c", "import sys, json; print(json.dumps(sorted(sys.modules)))"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+
+    run = execute(tmp_path, code_dir, "probe:loaded")
+
+    assert run.returncode == 0, run.stderr
+    assert run.output is not None
+    loaded = set(run.output["outputs"]["modules"]) - set(json.loads(baseline))
+    assert "sfly.context" in loaded
+    assert loaded & DEFERRED_MODULES == set()
+
+
 # ---- ctx.log / ctx.progress：按本地协议追加写入事件文件 SFLY_EVENTS ----
 #
 # 事件文件是 JSONL，每行一个事件：
