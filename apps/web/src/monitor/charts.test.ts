@@ -5,6 +5,7 @@ import {
 	balancedColumns,
 	bucketAt,
 	chartWindow,
+	defaultShown,
 	envelopePoints,
 	formatReading,
 	hasSpread,
@@ -249,5 +250,35 @@ describe("降采样后的尖峰（故事 14）", () => {
 		expect(formatReading(spiky[1] as MetricBucket)).toBe("11（2–95）");
 		expect(formatReading(bucket(0, 3, 3, 3))).toBe("3");
 		expect(bucketAt(spiky, s(35), 10)).toBeNull();
+	});
+});
+
+describe("序列多时默认显示的序列（#78）", () => {
+	const b = (points: number, avg: number): MetricBucket => ({
+		time: at(0),
+		points,
+		min: avg,
+		max: avg,
+		avg,
+		last: avg,
+	});
+	const line = (key: string, ...buckets: MetricBucket[]) => ({ key, buckets });
+
+	it("不超过上限时全部显示", () => {
+		const lines = [line("a", b(1, 1)), line("b"), line("c", b(1, 3))];
+		expect(defaultShown(lines, 3)).toEqual(new Set(["a", "b", "c"]));
+	});
+
+	it("超过上限时按平均值（按点数加权）从高到低取前几个；没有数据的序列排在最后，平均值相同时取靠前的", () => {
+		const lines = [
+			line("empty"),
+			// (10×1 + 100×1) / 2 = 55，按点数加权是 (10×9 + 100×1) / 10 = 19。
+			line("weighted", b(9, 10), b(1, 100)),
+			line("high", b(1, 50)),
+			line("tie1", b(2, 20)),
+			line("tie2", b(2, 20)),
+		];
+		expect(defaultShown(lines, 2)).toEqual(new Set(["high", "tie1"]));
+		expect(defaultShown(lines, 4)).toEqual(new Set(["high", "tie1", "tie2", "weighted"]));
 	});
 });

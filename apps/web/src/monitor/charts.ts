@@ -150,6 +150,36 @@ export function seriesName(
 	return (multiMetric ? [name, ...values] : values).join(" · ");
 }
 
+/** 序列多于这个数时，图表默认只显示平均值最高的这么多个（#78）。 */
+export const DEFAULT_SHOWN = 10;
+
+/**
+ * 默认显示的序列（按身份）：不超过 limit 个时全部显示；超过时按传入的桶（调用方截取到当前时间范围）的平均值
+ * 从高到低取前 limit 个，平均值按桶的点数加权；没有数据的序列排在最后，平均值相同时取靠前的。
+ */
+export function defaultShown(
+	lines: readonly { key: string; buckets: readonly MetricBucket[] }[],
+	limit = DEFAULT_SHOWN,
+): Set<string> {
+	if (lines.length <= limit) return new Set(lines.map((l) => l.key));
+	const average = (buckets: readonly MetricBucket[]) => {
+		let points = 0;
+		let sum = 0;
+		for (const b of buckets) {
+			points += b.points;
+			sum += b.avg * b.points;
+		}
+		return points === 0 ? Number.NEGATIVE_INFINITY : sum / points;
+	};
+	return new Set(
+		lines
+			.map((l, i) => ({ key: l.key, i, avg: average(l.buckets) }))
+			.sort((a, b) => b.avg - a.avg || a.i - b.i)
+			.slice(0, limit)
+			.map((l) => l.key),
+	);
+}
+
 /** 悬停时刻所在的桶；不在任何桶里时为 null。 */
 export function bucketAt(
 	buckets: readonly MetricBucket[],
@@ -180,6 +210,8 @@ export function valueExtent(
 	fromZero: boolean,
 ): { min: number; max: number; top: number } {
 	const buckets = lines.flatMap((l) => l.buckets);
+	// 所有序列都隐藏时没有桶。
+	if (buckets.length === 0) return { min: 0, max: 1, top: 1.12 };
 	let min = Math.min(...buckets.map((b) => Math.min(b.min, b.last)));
 	let max = Math.max(...buckets.map((b) => Math.max(b.max, b.last)));
 	if (fromZero) min = Math.min(0, min);

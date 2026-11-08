@@ -10,7 +10,7 @@ import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import { packageMetadata } from "../../server/test/support/package-archive.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { type E2eFixtures, expect } from "./fixtures";
-import { createScenario, publishPackage, triggerRun } from "./support";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 运行监控页端到端测试与视觉回归共用的场景。
 
@@ -325,4 +325,59 @@ export async function largeScenario(
 	agent.metrics(m15, points("m15", m15From, elapsed() - 1));
 	await agent.sync();
 	return { runId };
+}
+
+/** 带标签的指标：上报一个尝试的 conn_tps 点（labels 原样）。 */
+export const connPoint = (
+	clock0: number,
+	labels: Record<string, string>,
+	s: number,
+	value: number,
+) => ({
+	name: "conn_tps",
+	labels,
+	timeUnixS: BigInt(unixAt(clock0, s)),
+	value,
+	min: value,
+	max: value,
+});
+
+/** demo-checks@1.3.0 的 ping 声明了给定的指标与图表；触发一次运行，返回分到的任务与运行开始的时刻。 */
+export async function labeledRun(
+	{
+		controlPlane,
+		connectAgent,
+		clock,
+	}: Pick<E2eFixtures, "controlPlane" | "connectAgent" | "clock">,
+	metrics: unknown[],
+	charts: unknown[],
+) {
+	const agent = await connectAgent({
+		name: "agent-a",
+		installedPackages: [{ name: "demo-checks", version: "1.3.0" }],
+	});
+	await publishPackage(controlPlane, {
+		version: "1.3.0",
+		nodes: [
+			{
+				name: "ping",
+				title: "ping",
+				entry: "demo_checks.http:ping_host",
+				inputs: { type: "object", properties: { host: { type: "string" } }, required: ["host"] },
+				outputs: { type: "object", properties: {} },
+				metrics,
+				charts,
+				primary_metric: "tps",
+			},
+		],
+	});
+	const scenarioId = await createScenario(
+		controlPlane,
+		"按连接",
+		scenarioUsing("agent-a", "1.3.0"),
+	);
+	const clock0 = clock.now().getTime();
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const task = await agent.nextAssign();
+	return { agent, task, runId, clock0 };
 }

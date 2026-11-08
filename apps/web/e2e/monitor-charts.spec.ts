@@ -1,8 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
-import { openMonitor, runningScenario, unixAt } from "./monitor-scenario";
-import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
+import { connPoint, labeledRun, openMonitor, runningScenario, unixAt } from "./monitor-scenario";
 
 // 运行监控页的图表工作区（原型 #/monitor/:runId 的中间区域）：按节点分组的指标图表、筛选、只看、
 // 悬停联动、拖选缩放、实时追加、选中节点。
@@ -23,9 +22,9 @@ const groupOrder = (page: Page) =>
 		.locator("[data-group]")
 		.evaluateAll((els) => els.map((el) => (el as HTMLElement).getAttribute("aria-label")));
 
-/** 拖选时间线轨道上 a–b（比例）这一段。 */
-async function brush(page: Page, a: number, b: number) {
-	const track = await timeline(page).locator('[data-node-row="fetch"] > div').boundingBox();
+/** 拖选时间线轨道（node 那一行）上 a–b（比例）这一段。 */
+async function brush(page: Page, a: number, b: number, node = "fetch") {
+	const track = await timeline(page).locator(`[data-node-row="${node}"] > div`).boundingBox();
 	if (!track) throw new Error("没有轨道");
 	const y = track.y + track.height / 2;
 	await page.mouse.move(track.x + track.width * a, y);
@@ -120,48 +119,20 @@ test("带标签的指标每个序列一条线，图例用标签值命名；运�
 	connectAgent,
 	clock,
 }) => {
-	const agent = await connectAgent({
-		name: "agent-a",
-		installedPackages: [{ name: "demo-checks", version: "1.3.0" }],
-	});
-	await publishPackage(controlPlane, {
-		version: "1.3.0",
-		nodes: [
-			{
-				name: "ping",
-				title: "ping",
-				entry: "demo_checks.http:ping_host",
-				inputs: { type: "object", properties: { host: { type: "string" } }, required: ["host"] },
-				outputs: { type: "object", properties: {} },
-				metrics: [
-					{ name: "tps", unit: "req/s", kind: "gauge" },
-					// 图例按声明的标签键顺序（port 在前）连接标签值。
-					{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["port", "host"] },
-				],
-				charts: [
-					{ title: "各连接", type: "line", metrics: ["conn_tps"] },
-					{ title: "合计与各连接", type: "area", metrics: ["tps", "conn_tps"] },
-				],
-				primary_metric: "tps",
-			},
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			// 图例按声明的标签键顺序（port 在前）连接标签值。
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["port", "host"] },
 		],
-	});
-	const scenarioId = await createScenario(
-		controlPlane,
-		"按连接",
-		scenarioUsing("agent-a", "1.3.0"),
+		[
+			{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+			{ title: "合计与各连接", type: "area", metrics: ["tps", "conn_tps"] },
+		],
 	);
-	const clock0 = clock.now().getTime();
-	const runId = await triggerRun(controlPlane, scenarioId);
-	const task = await agent.nextAssign();
-	const conn = (host: string, s: number, value: number) => ({
-		name: "conn_tps",
-		labels: { host, port: "80" },
-		timeUnixS: BigInt(unixAt(clock0, s)),
-		value,
-		min: value,
-		max: value,
-	});
+	const conn = (host: string, s: number, value: number) =>
+		connPoint(clock0, { host, port: "80" }, s, value);
 	agent.metrics(task, [
 		...[1, 2, 3].flatMap((s) => [conn("a", s, 10 + s), conn("b", s, 20 + s)]),
 		...[1, 2, 3].map((s): [string, number, number] => ["tps", unixAt(clock0, s), 30 + s]),
@@ -193,6 +164,116 @@ test("带标签的指标每个序列一条线，图例用标签值命名；运�
 		"conn_tps · 80 · b",
 		"conn_tps · 80 · c",
 	]);
+});
+
+test("序列超过 10 个时默认只显示时间范围内平均值最高的 10 个，其余在图例里置灰；点击图例切换；缩放后按新范围重新挑选", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+		],
+		[{ title: "各连接", type: "line", metrics: ["conn_tps"] }],
+	);
+	// h03…h12 在第 1–6 秒恒为 30…120；h01 恒为 10；h02 前 5 秒是 0、第 6 秒跳到 100
+	// （最新值比多数序列高，但整段的平均值只有 16.7）。
+	const hosts = Array.from({ length: 12 }, (_, i) => `h${String(i + 1).padStart(2, "0")}`);
+	const value = (host: string, s: number) =>
+		host === "h01" ? 10 : host === "h02" ? (s === 6 ? 100 : 0) : Number(host.slice(1)) * 10;
+	agent.metrics(
+		task,
+		[1, 2, 3, 4, 5, 6].flatMap((s) =>
+			hosts.map((h) => connPoint(clock0, { host: h }, s, value(h, s))),
+		),
+	);
+	await agent.sync();
+	clock.advance(10_000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const byConn = chart(page, "ping", "各连接");
+	const legend = byConn.locator("[data-legend]");
+	await expect(legend).toHaveText(hosts);
+	await expect(byConn.locator("[data-series]")).toHaveCount(10);
+	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h02"]);
+	await expect(byConn.locator('[data-series="h02"]')).toHaveCount(0);
+
+	// 拖选到最后几秒：h02 在这段里的平均值超过 h03，h03 改为置灰。
+	await brush(page, 0.55, 1, "ping");
+	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h03"]);
+	await expect(byConn.locator("[data-series]")).toHaveCount(10);
+	await timeline(page).getByRole("button", { name: "回到实时" }).click();
+	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h02"]);
+
+	// 点置灰的图例项显示它，点显示中的图例项隐藏它。
+	await legend.filter({ hasText: "h01" }).click();
+	await expect(legend.filter({ hasText: "h01" })).toHaveAttribute("aria-pressed", "true");
+	await expect(byConn.locator('[data-series="h01"]')).toHaveCount(1);
+	await expect(byConn.locator("[data-series]")).toHaveCount(11);
+	await legend.filter({ hasText: "h12" }).click();
+	await expect(legend.filter({ hasText: "h12" })).toHaveAttribute("aria-pressed", "false");
+	await expect(byConn.locator('[data-series="h12"]')).toHaveCount(0);
+	await expect(byConn.locator("[data-series]")).toHaveCount(10);
+
+	// 只看这个节点：图表与图例的选择照常。
+	await workspace(page).getByRole("button", { name: "只看 ping" }).click();
+	expect(await groupOrder(page)).toEqual(["ping 的图表"]);
+	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h02", "h12"]);
+});
+
+test("悬停多序列图表时，提示列出所有可见序列在那一刻的值；其他图表照常联动", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+		],
+		[
+			{ title: "合计与各连接", type: "line", metrics: ["tps", "conn_tps"] },
+			{ title: "合计", type: "line", metrics: ["tps"] },
+		],
+	);
+	agent.metrics(task, [
+		...[1, 2, 3, 4, 5, 6, 7].flatMap((s) => [
+			connPoint(clock0, { host: "a" }, s, s),
+			connPoint(clock0, { host: "b" }, s, 10 * s),
+			["tps", unixAt(clock0, s), 11 * s] as [string, number, number],
+		]),
+	]);
+	await agent.sync();
+	clock.advance(8000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const mixed = chart(page, "ping", "合计与各连接");
+	// 运行 08:00:00 开始；悬停在第 4.5 秒（横轴是 0–8 秒）。
+	const plotBox = await mixed.locator("svg[data-plot]").boundingBox();
+	if (!plotBox) throw new Error("没有绘图区");
+	await page.mouse.move(plotBox.x + plotBox.width * (4.5 / 8), plotBox.y + plotBox.height / 2);
+	const values = mixed.locator("[data-hover-values] [data-hover-value]");
+	// 按这一刻的值从大到小。
+	await expect(values).toHaveText(["tps44", "conn_tps · b40", "conn_tps · a4"]);
+	await expect(mixed.locator("[data-hover-reading]")).toHaveText("08:00:04");
+	// 只有一条线的图表照常在标题栏显示读数，不弹出提示。
+	const total = chart(page, "ping", "合计");
+	await expect(total.locator("[data-hover-reading]")).toHaveText("08:00:04  44");
+	await expect(total.locator("[data-hover-values]")).toHaveCount(0);
+
+	// 隐藏的序列不在提示里。
+	await page.mouse.move(0, 0);
+	await mixed.locator("[data-legend]").filter({ hasText: "conn_tps · b" }).click();
+	await page.mouse.move(plotBox.x + plotBox.width * (4.5 / 8), plotBox.y + plotBox.height / 2);
+	await expect(values).toHaveText(["tps44", "conn_tps · a4"]);
+	await page.mouse.move(0, 0);
+	await expect(mixed.locator("[data-hover-values]")).toHaveCount(0);
 });
 
 test("节点多选筛选：按链整组勾选、搜索、快速选择、平台自带图表；清除筛选；底部面板范围跟随筛选", async ({
