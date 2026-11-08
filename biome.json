@@ -12,7 +12,8 @@
 			"!packages/proto/src/gen",
 			"!sdk/python/src/sfly/schemas",
 			"!apps/server/drizzle",
-			"!docs/prototype"
+			"!docs/prototype",
+			"!docs/perf"
 		]
 	},
 	"formatter": {

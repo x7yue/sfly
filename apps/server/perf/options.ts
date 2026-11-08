@@ -1,4 +1,5 @@
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { INGEST_SECONDS } from "./targets.js";
 
@@ -8,7 +9,7 @@ export interface PerfOptions {
 	only: string[] | null;
 	/** 临时目录（数据库之外的全部临时文件：数据目录、Agent 工作目录、venv、TMPDIR）。 */
 	tmpDir: string;
-	/** 结果目录：每次运行写到它下面的 `<时间>/`，对比也在这里找上一次。 */
+	/** 本机结果目录：每次运行写到它下面的 `<时间>/`，对比也在这里找上一次。默认在仓库之外（{@link defaultResultsDir}）。 */
 	outDir: string;
 	/** 运行前构建 release Agent 与打包控制面；`--no-build` 时直接用已有的产物。 */
 	build: boolean;
@@ -16,6 +17,33 @@ export interface PerfOptions {
 	list: boolean;
 	/** 长时负载测试（`--soak`）的时长（秒）；null 表示运行 `pnpm perf` 的各项。 */
 	soakSeconds: number | null;
+	/** 发版运行（`--release`）：通过后把报告另存进仓库的 `docs/perf/<版本>/`。 */
+	release: boolean;
+}
+
+/** 本机结果目录的环境变量（覆盖默认位置，`--out-dir` 优先于它）。 */
+export const RESULTS_DIR_ENV = "SFLY_PERF_DIR";
+
+/**
+ * 本机结果目录：`$SFLY_PERF_DIR`，没设时 `${XDG_DATA_HOME:-~/.local/share}/sfly/perf`。
+ * 放在仓库之外、所有 worktree 共用：worktree 删掉后结果还在，在哪个 worktree 里跑都能与本机上一次对比。
+ */
+export function defaultResultsDir(env: Record<string, string | undefined>): string {
+	const override = env[RESULTS_DIR_ENV];
+	if (override) return resolve(override);
+	// XDG 规范：XDG_DATA_HOME 不是绝对路径时视为没设。
+	const dataHome = env.XDG_DATA_HOME?.startsWith("/")
+		? env.XDG_DATA_HOME
+		: join(env.HOME || homedir(), ".local/share");
+	return join(dataHome, "sfly", "perf");
+}
+
+/** 显示用的路径：仓库里的写成相对仓库根目录的，家目录下的以 `~` 开头，其余原样。 */
+export function displayPath(path: string, root: string, home: string): string {
+	const inside = (dir: string) => path === dir || path.startsWith(dir + sep);
+	if (inside(root)) return relative(root, path) || ".";
+	if (home && home !== sep && inside(home)) return `~${path.slice(home.length)}`;
+	return path;
 }
 
 /** 长时负载测试的默认时长：1 小时（ARCHITECTURE §7.6）。 */
@@ -26,13 +54,16 @@ export const CONTROL_PLANE_SECONDS_ENV = "SFLY_PERF_CONTROL_PLANE_SECONDS";
 /** Agent 断线这一项（agent-disconnect）里控制面停掉的时长（秒）。 */
 export const DISCONNECT_SECONDS_ENV = "SFLY_PERF_DISCONNECT_SECONDS";
 
-export const USAGE = `用法：pnpm perf [--only <项>[,<项>...]] [--tmp-dir <目录>] [--out-dir <目录>] [--no-build] [--list]
-      pnpm perf:soak [--duration <时长>] [--tmp-dir <目录>] [--out-dir <目录>] [--no-build]
+export const USAGE = `用法：pnpm perf [--only <项>[,<项>...]] [--tmp-dir <目录>] [--out-dir <目录>] [--no-build] [--list] [--release]
+      pnpm perf:soak [--duration <时长>] [--tmp-dir <目录>] [--out-dir <目录>] [--no-build] [--release]
   --only      只运行指定的项（可重复，或用逗号分隔）；--list 列出全部项
   --duration  长时负载测试的时长，默认 1h；写成 300（秒）、90s、30m、2h、1h30m 这样
   --tmp-dir   临时目录，默认 out/perf/tmp（也可以用环境变量 SFLY_PERF_TMPDIR）；不要放在很小的 /tmp 上
-  --out-dir   结果目录，默认 out/perf（perf:soak 为 out/perf/soak）；报告写到 <结果目录>/<时间>/report.{md,json}
+  --out-dir   本机结果目录，默认 $${RESULTS_DIR_ENV}，没设时 \${XDG_DATA_HOME:-~/.local/share}/sfly/perf（perf:soak 用它下面的 soak/）；
+              所有 worktree 共用，报告写到 <结果目录>/<时间>/report.{md,json}，对比也在这里找本机上一次
   --no-build  不重新构建 release Agent 与打包控制面，直接用上次构建的产物
+  --release   发版运行：完整运行、通过、没有未提交的改动时，把报告另存进仓库的 docs/perf/<当前版本>/
+              （pnpm perf 为 report.{json,md}，perf:soak 为 soak.{json,md}）；不能与 --only、--no-build 同用
 环境变量（秒数）：
   ${CONTROL_PLANE_SECONDS_ENV}  control-plane-metrics 的持续时间，默认 60（1 小时的目标由 perf:soak 覆盖）
   ${DISCONNECT_SECONDS_ENV}     agent-disconnect 里控制面停掉的时长，默认 45、至少 30；300 即 §7.6 的断线 5 分钟
@@ -97,6 +128,7 @@ export function parseOptions(
 			list: { type: "boolean" },
 			soak: { type: "boolean" },
 			duration: { type: "string" },
+			release: { type: "boolean" },
 		},
 	});
 	const only = values.only?.flatMap((v) => v.split(",").map((s) => s.trim())).filter(Boolean);
@@ -107,8 +139,18 @@ export function parseOptions(
 	if (soak && only && only.length > 0) {
 		throw new Error("长时负载测试（pnpm perf:soak）只有一项，不能用 --only");
 	}
+	const release = values.release ?? false;
+	if (release && only && only.length > 0) {
+		throw new Error("--release 的报告是之后各版本的对比基准，要完整运行一次，不能用 --only");
+	}
+	if (release && values["no-build"]) {
+		throw new Error("--release 要用当前提交构建的产物，不能用 --no-build");
+	}
 	// 长时负载测试的结果单独放：对比只找同类的上一次，pnpm perf 也不会拿它当上一次。
-	const outDir = resolve(root, values["out-dir"] ?? (soak ? "out/perf/soak" : "out/perf"));
+	const outDir =
+		values["out-dir"] !== undefined
+			? resolve(root, values["out-dir"])
+			: join(defaultResultsDir(env), ...(soak ? ["soak"] : []));
 	return {
 		only: only && only.length > 0 ? only : null,
 		tmpDir: resolve(root, values["tmp-dir"] ?? env.SFLY_PERF_TMPDIR ?? "out/perf/tmp"),
@@ -120,5 +162,6 @@ export function parseOptions(
 				? DEFAULT_SOAK_SECONDS
 				: parseDuration(values.duration)
 			: null,
+		release,
 	};
 }

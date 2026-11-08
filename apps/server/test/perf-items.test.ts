@@ -3,7 +3,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { parseDuration, parseOptions, secondsFromEnv } from "../perf/options.js";
+import {
+	defaultResultsDir,
+	displayPath,
+	parseDuration,
+	parseOptions,
+	secondsFromEnv,
+} from "../perf/options.js";
 import { loadItems, selectItems } from "../perf/registry.js";
 import {
 	AGENT_RSS_GROWTH_MB,
@@ -124,15 +130,46 @@ describe("项的注册", () => {
 });
 
 describe("命令行参数", () => {
-	it("默认运行全部项，临时目录与结果目录在仓库的 out/perf 下", () => {
-		expect(parseOptions([], {}, "/repo")).toEqual({
+	const HOME = { HOME: "/home/u" };
+
+	it("默认运行全部项；结果目录在仓库之外（~/.local/share/sfly/perf，各 worktree 共用），临时目录在仓库的 out/perf/tmp", () => {
+		expect(parseOptions([], HOME, "/repo")).toEqual({
 			only: null,
 			tmpDir: "/repo/out/perf/tmp",
-			outDir: "/repo/out/perf",
+			outDir: "/home/u/.local/share/sfly/perf",
 			build: true,
 			list: false,
 			soakSeconds: null,
+			release: false,
 		});
+	});
+
+	it("结果目录：--out-dir 优先，其次 SFLY_PERF_DIR，再次 $XDG_DATA_HOME/sfly/perf（不是绝对路径时不算）", () => {
+		const outDir = (argv: string[], env: Record<string, string>) =>
+			parseOptions(argv, { ...HOME, ...env }, "/repo").outDir;
+		expect(outDir([], { XDG_DATA_HOME: "/data" })).toBe("/data/sfly/perf");
+		expect(outDir([], { XDG_DATA_HOME: "rel" })).toBe("/home/u/.local/share/sfly/perf");
+		expect(outDir([], { XDG_DATA_HOME: "/data", SFLY_PERF_DIR: "/p" })).toBe("/p");
+		expect(outDir(["--out-dir", "o"], { SFLY_PERF_DIR: "/p" })).toBe("/repo/o");
+		expect(defaultResultsDir({ ...HOME, SFLY_PERF_DIR: "" })).toBe(
+			"/home/u/.local/share/sfly/perf",
+		);
+	});
+
+	it("显示用的路径：仓库里的相对仓库根目录，家目录下的以 ~ 开头", () => {
+		expect(displayPath("/repo/docs/perf/0.0.5", "/repo", "/home/u")).toBe("docs/perf/0.0.5");
+		expect(displayPath("/home/u/.local/share/sfly/perf/x", "/repo", "/home/u")).toBe(
+			"~/.local/share/sfly/perf/x",
+		);
+		expect(displayPath("/home/uu/x", "/repo", "/home/u")).toBe("/home/uu/x");
+		expect(displayPath("/srv/perf", "/repo", "/home/u")).toBe("/srv/perf");
+	});
+
+	it("--release 要完整运行、用当前提交构建，不能与 --only、--no-build 同用", () => {
+		expect(parseOptions(["--release"], HOME, "/repo").release).toBe(true);
+		expect(parseOptions(["--soak", "--release"], HOME, "/repo").release).toBe(true);
+		expect(() => parseOptions(["--release", "--only", "a"], HOME, "/repo")).toThrow("--only");
+		expect(() => parseOptions(["--release", "--no-build"], HOME, "/repo")).toThrow("--no-build");
 	});
 
 	it("--only 可以重复或用逗号分隔；临时目录可以用参数或 SFLY_PERF_TMPDIR 指定", () => {
@@ -149,6 +186,7 @@ describe("命令行参数", () => {
 			build: false,
 			list: false,
 			soakSeconds: null,
+			release: false,
 		});
 		expect(parseOptions([], { SFLY_PERF_TMPDIR: "/big/tmp" }, "/repo").tmpDir).toBe("/big/tmp");
 		expect(parseOptions(["--list"], {}, "/repo").list).toBe(true);
@@ -158,10 +196,11 @@ describe("命令行参数", () => {
 		expect(() => parseOptions(["--bogus"], {}, "/repo")).toThrow(/bogus/);
 	});
 
-	it("--soak（pnpm perf:soak）默认运行 1 小时，结果单独放在 out/perf/soak 下，不与 pnpm perf 的结果互相对比", () => {
-		const options = parseOptions(["--soak"], {}, "/repo");
+	it("--soak（pnpm perf:soak）默认运行 1 小时，结果单独放在结果目录的 soak/ 下，不与 pnpm perf 的结果互相对比", () => {
+		const options = parseOptions(["--soak"], HOME, "/repo");
 		expect(options.soakSeconds).toBe(3600);
-		expect(options.outDir).toBe("/repo/out/perf/soak");
+		expect(options.outDir).toBe("/home/u/.local/share/sfly/perf/soak");
+		expect(parseOptions(["--soak"], { SFLY_PERF_DIR: "/p" }, "/repo").outDir).toBe("/p/soak");
 		expect(options.tmpDir).toBe("/repo/out/perf/tmp");
 		expect(parseOptions(["--soak", "--out-dir", "o"], {}, "/repo").outDir).toBe("/repo/o");
 	});
