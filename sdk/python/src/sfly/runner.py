@@ -25,11 +25,11 @@ import os
 import signal
 import sys
 import typing
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from sfly.context import Cancelled, Context
-from sfly.nodes import NODE_ATTR, NodeDeclaration, is_context_param
+from sfly.nodes import NODE_ATTR, Metric, NodeDeclaration, is_context_param
 
 # 执行器每个任务启动一个进程（#76）：从解释器启动到开始导入节点模块的路径上只导入必需的模块，
 # 只在节点失败时才用到的 traceback 推迟到用到时再导入，读写 task.json、output.json 不用 pathlib。
@@ -66,12 +66,12 @@ def _takes_context(fn: Callable[..., Any]) -> bool:
     return is_context_param(params[0], hint)
 
 
-def _declared_metrics(fn: Callable[..., Any]) -> dict[str, str] | None:
-    """`@node` 声明的指标（指标名 → 类型）；入口没有用 `@node` 声明时为 None（不检查指标名）。"""
+def _declared_metrics(fn: Callable[..., Any]) -> Sequence[Metric] | None:
+    """`@node` 声明的指标；入口没有用 `@node` 声明时为 None（不检查指标名和标签键）。"""
     decl = getattr(fn, NODE_ATTR, None)
     if not isinstance(decl, NodeDeclaration):
         return None
-    return {m.name: m.kind for m in decl.metrics}
+    return decl.metrics
 
 
 def invoke(fn: Callable[..., Any], inputs: Mapping[str, Any]) -> dict[str, Any]:

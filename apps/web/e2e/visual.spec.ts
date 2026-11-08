@@ -8,12 +8,15 @@ import {
 import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
+	connPoint,
+	labeledRun,
 	largeScenario,
 	logLine,
 	metricPackage,
 	openMonitor,
 	pingPoints,
 	runningScenario,
+	unixAt,
 } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { seedRunRecords } from "./run-records";
@@ -438,6 +441,52 @@ test("运行监控：图表工作区（小型运行，全部展开，悬停联�
 	await page.mouse.move(box.x + box.width * (4.5 / 8), box.y + box.height / 2);
 	await expect(page.locator("[data-hover-reading]").first()).toBeVisible();
 	await expect(page).toHaveScreenshot("monitor-charts.png", { mask: runIds(page) });
+});
+
+test("运行监控：多序列图表（超过 10 个序列时置灰的图例、悬停提示）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+		],
+		[
+			{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+			{ title: "合计与各连接", type: "area", metrics: ["tps", "conn_tps"] },
+		],
+	);
+	// 14 个连接、第 1–8 秒，各自围绕不同的水平起伏。
+	const hosts = Array.from({ length: 14 }, (_, i) => `10.0.0.${i + 1}`);
+	const level = (i: number, s: number) => 10 + i * 6 + ((i * 7 + s * 5) % 11);
+	agent.metrics(
+		task,
+		[1, 2, 3, 4, 5, 6, 7, 8].flatMap((s) => [
+			...hosts.map((h, i) => connPoint(clock0, { host: h }, s, level(i, s))),
+			["tps", unixAt(clock0, s), 200 + s * 4] as [string, number, number],
+		]),
+	);
+	await agent.sync();
+	clock.advance(9000);
+	await openMonitor(page, clock, runId, "ping");
+	await chartsLoaded(page);
+	// ping 没有日志：底部面板自动收起，图表区高一些。
+	await expect(
+		page.getByRole("region", { name: "底部面板" }).getByRole("button", { name: "展开" }),
+	).toBeVisible();
+	const plot = page
+		.getByRole("region", { name: "ping 的图表" })
+		.getByRole("figure", { name: "各连接", exact: true })
+		.locator("svg[data-plot]");
+	const box = await plot.boundingBox();
+	if (!box) throw new Error("没有绘图区");
+	await page.mouse.move(box.x + box.width * (6.5 / 9), box.y + box.height / 2);
+	await expect(page.locator("[data-hover-values]")).toBeVisible();
+	await expect(page).toHaveScreenshot("monitor-charts-series.png", { mask: runIds(page) });
 });
 
 test("运行监控：图表工作区（大型运行，定位到失败的组）", async ({

@@ -1,6 +1,6 @@
-//! 任务指标（`ctx.metric`，#29）：按「任务 × 指标 × 秒」合并，以及断线期间的有界排队。
+//! 任务指标（`ctx.metric`，#29）：按「任务 × 序列 × 秒」合并，以及断线期间的有界排队。
 //!
-//! - 合并（[`Merger`]，每个任务一个）：`gauge` 取这一秒最后一个值，并带这一秒的最小值和最大值；
+//! - 合并（[`Merger`]，每个任务一个）：序列是指标名加标签（#78），同一秒内不同序列的点分别合并。`gauge` 取这一秒最后一个值，并带这一秒的最小值和最大值；
 //!   `counter` 取这一秒结束时的值（最小值、最大值与它相同）。非有限值被丢弃（SDK 已经丢弃过一次）。
 //!   一秒结束后再留一秒宽限（这一秒最后时刻记录、下一秒才读到的值仍并入这一秒，不会变成重复点），
 //!   宽限一结束就发出（[`Merger::take_due`]，按整秒对齐，而不是距上一批满一秒，#119），任务结束时发出全部。
@@ -8,7 +8,11 @@
 //!   超出时丢弃最早的点，按任务记下丢弃数，随这个任务下一次发出的批次（`dropped_points`）上报。
 //!   一次写满只警告一次（与日志队列一致），又有一批不丢弃地放下之后再写满才再警告。
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::fmt;
+
+use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 
 use crate::proto::{MetricBatch, MetricPoint};
 
@@ -20,6 +24,66 @@ const MAX_BATCH_POINTS: usize = 10_000;
 /// 不会变成控制面按重复丢弃的同一秒第二个点。
 pub const GRACE_SECONDS: i64 = 1;
 
+/// 一个点的标签（键 → 值）：按键排序、键不重复，内容相同的标签比较时相等。
+/// 不带标签时为空（不分配内存）。用排好序的数组而不是 `BTreeMap`：解析时只分配一次，
+/// 合并时比较更快（基准 `merge_labeled_events`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Labels(Vec<(String, String)>);
+
+impl Labels {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// 按键排序；同一个键出现多次时取最后一个值（与 JSON 对象里键重复时一致）。
+impl FromIterator<(String, String)> for Labels {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(pairs: I) -> Self {
+        let mut pairs: Vec<(String, String)> = pairs.into_iter().collect();
+        if pairs.len() > 1 {
+            // 先倒过来再稳定排序：同一个键里原来靠后的排在前面，去重时保留的就是它。
+            pairs.reverse();
+            pairs.sort_by(|a, b| a.0.cmp(&b.0));
+            pairs.dedup_by(|later, kept| later.0 == kept.0);
+        }
+        Self(pairs)
+    }
+}
+
+impl IntoIterator for Labels {
+    type Item = (String, String);
+    type IntoIter = std::vec::IntoIter<(String, String)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+/// 从事件 JSON 的 `labels` 对象（键 → 字符串值）解析，解析时排序一次。
+impl<'de> Deserialize<'de> for Labels {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct LabelsVisitor;
+
+        impl<'de> Visitor<'de> for LabelsVisitor {
+            type Value = Labels;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("an object with string values")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Labels, A::Error> {
+                let mut pairs = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some(pair) = map.next_entry()? {
+                    pairs.push(pair);
+                }
+                Ok(pairs.into_iter().collect())
+            }
+        }
+
+        deserializer.deserialize_map(LabelsVisitor)
+    }
+}
+
 struct Bucket {
     counter: bool,
     value: f64,
@@ -27,25 +91,9 @@ struct Bucket {
     max: f64,
 }
 
-/// 一个任务的指标合并器。
-#[derive(Default)]
-pub struct Merger {
-    /// (指标名, Unix 秒) → 这一秒合并后的值。
-    buckets: BTreeMap<(String, i64), Bucket>,
-    /// [`Merger::take_due`] 上一次的界限：取到哪一秒之前（Unix 秒，不含）。
-    due_before: i64,
-}
-
-impl Merger {
-    /// 记录一次上报；`ts_ms` 是 SDK 记录的时间（Unix 毫秒）。
-    pub fn add(&mut self, ts_ms: i64, name: String, kind: &str, value: f64) {
-        if !value.is_finite() {
-            return;
-        }
-        let second = ts_ms.div_euclid(1000);
-        let counter = kind == "counter";
-        self.buckets
-            .entry((name, second))
+impl Bucket {
+    fn merge<K: Ord>(entry: Entry<'_, K, Bucket>, counter: bool, value: f64) {
+        entry
             .and_modify(|b| {
                 b.value = value;
                 b.min = b.min.min(value);
@@ -57,6 +105,52 @@ impl Merger {
                 min: value,
                 max: value,
             });
+    }
+
+    fn point(self, name: String, labels: Labels, second: i64) -> MetricPoint {
+        let (min, max) = if self.counter {
+            (self.value, self.value)
+        } else {
+            (self.min, self.max)
+        };
+        MetricPoint {
+            name,
+            time_unix_s: second,
+            value: self.value,
+            min,
+            max,
+            labels: labels.into_iter().collect(),
+        }
+    }
+}
+
+/// 一个任务的指标合并器。
+///
+/// 不带标签与带标签的序列分开放：合并键里哪怕多一个空的标签字段，不带标签时（最常见）的合并就慢约四成
+/// （基准 `merge_events`，ARCHITECTURE §7.6）。
+#[derive(Default)]
+pub struct Merger {
+    /// (指标名, Unix 秒) → 不带标签的序列这一秒合并后的值。
+    plain: BTreeMap<(String, i64), Bucket>,
+    /// (指标名, 标签, Unix 秒) → 带标签的序列这一秒合并后的值。
+    labeled: BTreeMap<(String, Labels, i64), Bucket>,
+    /// [`Merger::take_due`] 上一次的界限：取到哪一秒之前（Unix 秒，不含）。
+    due_before: i64,
+}
+
+impl Merger {
+    /// 记录一次上报；`ts_ms` 是 SDK 记录的时间（Unix 毫秒）。
+    pub fn add(&mut self, ts_ms: i64, name: String, labels: Labels, kind: &str, value: f64) {
+        if !value.is_finite() {
+            return;
+        }
+        let second = ts_ms.div_euclid(1000);
+        let counter = kind == "counter";
+        if labels.0.is_empty() {
+            Bucket::merge(self.plain.entry((name, second)), counter, value);
+        } else {
+            Bucket::merge(self.labeled.entry((name, labels, second)), counter, value);
+        }
     }
 
     /// 平时的发送时机：`now_ms` 时已经过了宽限期的秒（早于 `now_ms` 所在秒减 [`GRACE_SECONDS`]）的点。
@@ -74,32 +168,18 @@ impl Merger {
         self.take(Some(before))
     }
 
-    /// 取出早于 `before`（Unix 秒）的点；`None` 时取出全部。同一指标按时间递增。
+    /// 取出早于 `before`（Unix 秒）的点；`None` 时取出全部。同一序列按时间递增。
     pub fn take(&mut self, before: Option<i64>) -> Vec<MetricPoint> {
-        let keys: Vec<(String, i64)> = self
-            .buckets
-            .keys()
-            .filter(|(_, second)| before.is_none_or(|b| *second < b))
-            .cloned()
-            .collect();
-        keys.into_iter()
-            .filter_map(|key| {
-                let bucket = self.buckets.remove(&key)?;
-                let (name, second) = key;
-                let (min, max) = if bucket.counter {
-                    (bucket.value, bucket.value)
-                } else {
-                    (bucket.min, bucket.max)
-                };
-                Some(MetricPoint {
-                    name,
-                    time_unix_s: second,
-                    value: bucket.value,
-                    min,
-                    max,
-                })
-            })
-            .collect()
+        let due = |second: i64| before.is_none_or(|b| second < b);
+        let plain = self
+            .plain
+            .extract_if(.., |(_, second), _| due(*second))
+            .map(|((name, second), bucket)| bucket.point(name, Labels::new(), second));
+        let labeled = self
+            .labeled
+            .extract_if(.., |(_, _, second), _| due(*second))
+            .map(|((name, labels, second), bucket)| bucket.point(name, labels, second));
+        plain.chain(labeled).collect()
     }
 }
 
@@ -211,6 +291,7 @@ mod tests {
                     value: 0.0,
                     min: 0.0,
                     max: 0.0,
+                    labels: Default::default(),
                 })
                 .collect(),
             dropped_points: 0,
@@ -233,9 +314,9 @@ mod tests {
     #[test]
     fn a_second_is_due_as_soon_as_its_grace_ends() {
         let mut merger = Merger::default();
-        merger.add(100_200, "m".into(), "gauge", 1.0);
-        merger.add(100_900, "m".into(), "gauge", 2.0);
-        merger.add(101_500, "m".into(), "gauge", 3.0);
+        merger.add(100_200, "m".into(), Labels::new(), "gauge", 1.0);
+        merger.add(100_900, "m".into(), Labels::new(), "gauge", 2.0);
+        merger.add(101_500, "m".into(), Labels::new(), "gauge", 3.0);
         // 第 100 秒在 101.000 结束，再过一秒宽限：102.000 之前不发，一到 102.000 就发，下一秒的点留下。
         assert!(merger.take_due(101_999).is_empty());
         assert_eq!(seconds(&merger.take_due(102_000)), [100]);
@@ -245,11 +326,11 @@ mod tests {
     #[test]
     fn at_most_one_batch_per_second_even_when_late_points_arrive() {
         let mut merger = Merger::default();
-        merger.add(100_500, "m".into(), "gauge", 1.0);
+        merger.add(100_500, "m".into(), Labels::new(), "gauge", 1.0);
         assert_eq!(seconds(&merger.take_due(102_100)), [100]);
         // 同一秒里又读到更早的秒（迟到）和刚结束的秒的点：留到下一秒再发，这一秒不发第二批。
-        merger.add(100_999, "m".into(), "gauge", 2.0);
-        merger.add(101_300, "m".into(), "gauge", 3.0);
+        merger.add(100_999, "m".into(), Labels::new(), "gauge", 2.0);
+        merger.add(101_300, "m".into(), Labels::new(), "gauge", 3.0);
         assert!(merger.take_due(102_200).is_empty());
         assert!(merger.take_due(102_999).is_empty());
         assert_eq!(seconds(&merger.take_due(103_000)), [100, 101]);
@@ -259,18 +340,18 @@ mod tests {
     #[test]
     fn after_the_wall_clock_steps_back_batches_are_sent_again_the_next_second() {
         let mut merger = Merger::default();
-        merger.add(100_500, "m".into(), "gauge", 1.0);
+        merger.add(100_500, "m".into(), Labels::new(), "gauge", 1.0);
         assert_eq!(seconds(&merger.take_due(102_100)), [100]);
         // 墙钟回拨约 10 秒：回拨后记录的点不必等时钟追上原来的界限（第 100 秒），下一秒照常发出。
-        merger.add(92_300, "m".into(), "gauge", 2.0);
+        merger.add(92_300, "m".into(), Labels::new(), "gauge", 2.0);
         assert!(
             merger.take_due(92_400).is_empty(),
             "界限刚变：本秒没有到期的点"
         );
-        merger.add(92_600, "m".into(), "gauge", 3.0);
+        merger.add(92_600, "m".into(), Labels::new(), "gauge", 3.0);
         assert!(merger.take_due(92_900).is_empty(), "同一秒不发第二批");
         assert_eq!(seconds(&merger.take_due(94_000)), [92]);
-        merger.add(94_100, "m".into(), "gauge", 4.0);
+        merger.add(94_100, "m".into(), Labels::new(), "gauge", 4.0);
         assert!(merger.take_due(94_500).is_empty(), "同一秒不发第二批");
         assert_eq!(seconds(&merger.take_due(96_000)), [94]);
     }
@@ -279,12 +360,64 @@ mod tests {
     fn after_the_wall_clock_jumps_forward_the_missed_seconds_go_out_in_one_batch() {
         let mut merger = Merger::default();
         for s in 100..105 {
-            merger.add(s * 1000 + 500, "m".into(), "gauge", s as f64);
+            merger.add(s * 1000 + 500, "m".into(), Labels::new(), "gauge", s as f64);
         }
         assert_eq!(seconds(&merger.take_due(102_000)), [100]);
         // 休眠后时钟前跳：错过的秒合成一批，之后这一秒不再发。
         assert_eq!(seconds(&merger.take_due(200_000)), [101, 102, 103, 104]);
         assert!(merger.take_due(200_900).is_empty());
+    }
+
+    fn labels_of(json: &str) -> Labels {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn labels_in_any_order_are_the_same_series_and_a_repeated_key_keeps_its_last_value() {
+        let mut merger = Merger::default();
+        let a = r#"{"pid":"1","name":"a"}"#;
+        merger.add(100_100, "cpu".into(), labels_of(a), "gauge", 1.0);
+        merger.add(
+            100_200,
+            "cpu".into(),
+            labels_of(r#"{"name":"a","pid":"1"}"#),
+            "gauge",
+            3.0,
+        );
+        merger.add(
+            100_300,
+            "cpu".into(),
+            labels_of(r#"{"name":"b","pid":"1","name":"a"}"#),
+            "gauge",
+            2.0,
+        );
+        merger.add(
+            100_400,
+            "cpu".into(),
+            labels_of(r#"{"pid":"2","name":"a"}"#),
+            "gauge",
+            5.0,
+        );
+        merger.add(100_500, "cpu".into(), Labels::default(), "gauge", 7.0);
+        let points = merger.take(None);
+        // 每个点：排好序的「键=值」、值、最小值、最大值。
+        let series: Vec<(String, [f64; 3])> = points
+            .iter()
+            .map(|p| {
+                let mut labels: Vec<String> =
+                    p.labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                labels.sort();
+                (labels.join(","), [p.value, p.min, p.max])
+            })
+            .collect();
+        assert_eq!(
+            series,
+            [
+                ("".to_owned(), [7.0, 7.0, 7.0]),
+                ("name=a,pid=1".to_owned(), [2.0, 1.0, 3.0]),
+                ("name=a,pid=2".to_owned(), [5.0, 5.0, 5.0]),
+            ]
+        );
     }
 
     #[test]

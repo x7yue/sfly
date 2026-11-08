@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
-import { openMonitor, runningScenario, unixAt } from "./monitor-scenario";
+import { connPoint, labeledRun, openMonitor, runningScenario, unixAt } from "./monitor-scenario";
 
 // 运行监控页的图表工作区（原型 #/monitor/:runId 的中间区域）：按节点分组的指标图表、筛选、只看、
 // 悬停联动、拖选缩放、实时追加、选中节点。
@@ -22,9 +22,9 @@ const groupOrder = (page: Page) =>
 		.locator("[data-group]")
 		.evaluateAll((els) => els.map((el) => (el as HTMLElement).getAttribute("aria-label")));
 
-/** 拖选时间线轨道上 a–b（比例）这一段。 */
-async function brush(page: Page, a: number, b: number) {
-	const track = await timeline(page).locator('[data-node-row="fetch"] > div').boundingBox();
+/** 拖选时间线轨道（node 那一行）上 a–b（比例）这一段。 */
+async function brush(page: Page, a: number, b: number, node = "fetch") {
+	const track = await timeline(page).locator(`[data-node-row="${node}"] > div`).boundingBox();
 	if (!track) throw new Error("没有轨道");
 	const y = track.y + track.height / 2;
 	await page.mouse.move(track.x + track.width * a, y);
@@ -47,12 +47,9 @@ test("按节点分组，顺序与链上执行顺序一致；默认只展开执�
 	await expect(ws.getByTestId("chart-count")).toHaveText(
 		"3 个节点 · 12 张图表 · 共 3 个节点声明了图表",
 	);
-	expect(await groupOrder(page)).toEqual([
-		"fetch 的图表",
-		"verify 的图表",
-		"probe 的图表",
-		"平台自带图表",
-	]);
+	await expect
+		.poll(() => groupOrder(page))
+		.toEqual(["fetch 的图表", "verify 的图表", "probe 的图表", "平台自带图表"]);
 
 	// 组标题：状态、名称、主指标最新值、图表数、Agent。
 	const fetch = group(page, "fetch");
@@ -97,6 +94,8 @@ test("四种图表类型与多序列图例；横轴是节点实际运行的时�
 	await expect(latency.locator("[data-series]")).toHaveCount(2);
 	await expect(latency).toContainText("latency_ms");
 	await expect(latency).toContainText("p99_ms");
+	// 两个不带标签的指标：标题栏不显示最新值（读数在悬停提示里）。
+	await expect(latency.locator("[data-latest]")).toHaveCount(0);
 	// fetch 在 08:00:02 开始、08:00:06 结束。
 	await expect(latency.locator("[data-window]")).toHaveText("08:00:02 – 08:00:06");
 	await expect(chart(page, "fetch", "吞吐").locator("[data-series] path")).toHaveCount(2);
@@ -111,6 +110,206 @@ test("四种图表类型与多序列图例；横轴是节点实际运行的时�
 	agent.metrics(tasks.probe as AssignedTask, [["level", unixAt(clock0, 14), 42]]);
 	await expect(level.locator("[data-latest]")).toHaveText("42");
 	await expect(group(page, "probe").locator('[data-primary-metric="level"]')).toContainText("42");
+});
+
+test("带标签的指标每个序列一条线，图例用标签值命名；运行中出现的新序列实时加入图表", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			// 图例按声明的标签键顺序（port 在前）连接标签值。
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["port", "host"] },
+		],
+		[
+			{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+			{ title: "合计与各连接", type: "area", metrics: ["tps", "conn_tps"] },
+		],
+	);
+	const conn = (host: string, s: number, value: number) =>
+		connPoint(clock0, { host, port: "80" }, s, value);
+	agent.metrics(task, [
+		...[1, 2, 3].flatMap((s) => [conn("a", s, 10 + s), conn("b", s, 20 + s)]),
+		...[1, 2, 3].map((s): [string, number, number] => ["tps", unixAt(clock0, s), 30 + s]),
+	]);
+	await agent.sync();
+	clock.advance(5000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const byConn = chart(page, "ping", "各连接");
+	await expect(byConn.locator("[data-series] path")).toHaveCount(2);
+	await expect(byConn.locator("[data-legend]")).toHaveText(["80 · a", "80 · b"]);
+	const mixed = chart(page, "ping", "合计与各连接");
+	await expect(mixed.locator("[data-series]")).toHaveCount(3);
+	await expect(mixed.locator("[data-legend]")).toHaveText([
+		"tps",
+		"conn_tps · 80 · a",
+		"conn_tps · 80 · b",
+	]);
+	// 标题栏的最新值：合计与各连接显示合计（不带标签的 tps）；只有各连接的多条线时不显示，读数在悬停提示里。
+	await expect(mixed.locator("[data-latest]")).toHaveText("33req/s");
+	await expect(byConn.locator("[data-latest]")).toHaveCount(0);
+	// 主指标（不带标签）照常显示最新值。
+	await expect(group(page, "ping").locator('[data-primary-metric="tps"]')).toContainText("33");
+
+	// 运行中出现的新序列实时加入图表和图例。
+	agent.metrics(task, [conn("c", 4, 5)]);
+	await expect(byConn.locator("[data-legend]")).toHaveText(["80 · a", "80 · b", "80 · c"]);
+	await expect(byConn.locator("[data-series] path")).toHaveCount(3);
+	await expect(mixed.locator("[data-legend]")).toHaveText([
+		"tps",
+		"conn_tps · 80 · a",
+		"conn_tps · 80 · b",
+		"conn_tps · 80 · c",
+	]);
+});
+
+test("序列超过 10 个时默认只显示时间范围内平均值最高的 10 个，其余在图例里置灰；点击图例切换；缩放后按新范围重新挑选", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+		],
+		[{ title: "各连接", type: "line", metrics: ["conn_tps"] }],
+	);
+	// h03…h12 在第 1–6 秒恒为 30…120；h01 恒为 10；h02 前 5 秒是 0、第 6 秒跳到 100
+	// （最新值比多数序列高，但整段的平均值只有 16.7）。
+	const hosts = Array.from({ length: 12 }, (_, i) => `h${String(i + 1).padStart(2, "0")}`);
+	const value = (host: string, s: number) =>
+		host === "h01" ? 10 : host === "h02" ? (s === 6 ? 100 : 0) : Number(host.slice(1)) * 10;
+	agent.metrics(
+		task,
+		[1, 2, 3, 4, 5, 6].flatMap((s) =>
+			hosts.map((h) => connPoint(clock0, { host: h }, s, value(h, s))),
+		),
+	);
+	await agent.sync();
+	clock.advance(10_000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const byConn = chart(page, "ping", "各连接");
+	const legend = byConn.locator("[data-legend]");
+	await expect(legend).toHaveText(hosts);
+	await expect(byConn.locator("[data-series]")).toHaveCount(10);
+	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h02"]);
+	await expect(byConn.locator('[data-series="h02"]')).toHaveCount(0);
+
+	// 拖选到最后几秒：h02 在这段里的平均值超过 h03，h03 改为置灰。
+	await brush(page, 0.55, 1, "ping");
+	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h03"]);
+	await expect(byConn.locator("[data-series]")).toHaveCount(10);
+	await timeline(page).getByRole("button", { name: "回到实时" }).click();
+	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h02"]);
+
+	// 点置灰的图例项显示它，点显示中的图例项隐藏它。
+	await legend.filter({ hasText: "h01" }).click();
+	await expect(legend.filter({ hasText: "h01" })).toHaveAttribute("aria-pressed", "true");
+	await expect(byConn.locator('[data-series="h01"]')).toHaveCount(1);
+	await expect(byConn.locator("[data-series]")).toHaveCount(11);
+	await legend.filter({ hasText: "h12" }).click();
+	await expect(legend.filter({ hasText: "h12" })).toHaveAttribute("aria-pressed", "false");
+	await expect(byConn.locator('[data-series="h12"]')).toHaveCount(0);
+	await expect(byConn.locator("[data-series]")).toHaveCount(10);
+
+	// 只看这个节点：图表与图例的选择照常。
+	await workspace(page).getByRole("button", { name: "只看 ping" }).click();
+	await expect.poll(() => groupOrder(page)).toEqual(["ping 的图表"]);
+	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h02", "h12"]);
+});
+
+test("悬停多序列图表时，提示列出所有可见序列在那一刻的值；其他图表照常联动", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+		],
+		[
+			{ title: "合计与各连接", type: "line", metrics: ["tps", "conn_tps"] },
+			{ title: "合计", type: "line", metrics: ["tps"] },
+		],
+	);
+	agent.metrics(task, [
+		...[1, 2, 3, 4, 5, 6, 7].flatMap((s) => [
+			connPoint(clock0, { host: "a" }, s, s),
+			connPoint(clock0, { host: "b" }, s, 10 * s),
+			["tps", unixAt(clock0, s), 11 * s] as [string, number, number],
+		]),
+	]);
+	await agent.sync();
+	clock.advance(8000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const mixed = chart(page, "ping", "合计与各连接");
+	// 运行 08:00:00 开始；悬停在第 4.5 秒（横轴是 0–8 秒）。
+	const plotBox = await mixed.locator("svg[data-plot]").boundingBox();
+	if (!plotBox) throw new Error("没有绘图区");
+	await page.mouse.move(plotBox.x + plotBox.width * (4.5 / 8), plotBox.y + plotBox.height / 2);
+	const values = mixed.locator("[data-hover-values] [data-hover-value]");
+	// 按这一刻的值从大到小。
+	await expect(values).toHaveText(["tps44", "conn_tps · b40", "conn_tps · a4"]);
+	await expect(mixed.locator("[data-hover-reading]")).toHaveText("08:00:04");
+	// 只有一条线的图表照常在标题栏显示读数，不弹出提示。
+	const total = chart(page, "ping", "合计");
+	await expect(total.locator("[data-hover-reading]")).toHaveText("08:00:04  44");
+	await expect(total.locator("[data-hover-values]")).toHaveCount(0);
+
+	// 隐藏的序列不在提示里。
+	await page.mouse.move(0, 0);
+	await mixed.locator("[data-legend]").filter({ hasText: "conn_tps · b" }).click();
+	await page.mouse.move(plotBox.x + plotBox.width * (4.5 / 8), plotBox.y + plotBox.height / 2);
+	await expect(values).toHaveText(["tps44", "conn_tps · a4"]);
+	await page.mouse.move(0, 0);
+	await expect(mixed.locator("[data-hover-values]")).toHaveCount(0);
+});
+
+test("任务的序列数超过上限时，组标题和引用带标签指标的图表上显示「序列超限」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+		],
+		[
+			{ title: "合计", type: "line", metrics: ["tps"] },
+			{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+		],
+	);
+	// 上限 1000 个序列，tps 占 1 个：conn_tps 的第 1000 个序列被拒绝。
+	agent.metrics(task, [
+		["tps", unixAt(clock0, 1), 1],
+		...Array.from({ length: 1000 }, (_, i) => connPoint(clock0, { host: `h${i}` }, 1, i)),
+	]);
+	await agent.sync();
+	clock.advance(5000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const ping = group(page, "ping");
+	await expect(ping.getByText("序列超限", { exact: true })).toHaveCount(2);
+	await expect(chart(page, "ping", "各连接")).toContainText("序列超限");
+	await expect(chart(page, "ping", "合计")).not.toContainText("序列超限");
+	await expect(ping).toContainText("丢弃 1 个点");
+	await expect(ping).not.toContainText("截断");
 });
 
 test("节点多选筛选：按链整组勾选、搜索、快速选择、平台自带图表；清除筛选；底部面板范围跟随筛选", async ({
@@ -141,9 +340,11 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 
 	// 快速选择：执行中（不含平台自带图表），再单独勾上平台自带图表。
 	await menu.getByRole("button", { name: "执行中", exact: true }).click();
-	expect(await groupOrder(page)).toEqual(["verify 的图表", "probe 的图表"]);
+	await expect.poll(() => groupOrder(page)).toEqual(["verify 的图表", "probe 的图表"]);
 	await menu.getByRole("checkbox", { name: "平台自带图表" }).check();
-	expect(await groupOrder(page)).toEqual(["verify 的图表", "probe 的图表", "平台自带图表"]);
+	await expect
+		.poll(() => groupOrder(page))
+		.toEqual(["verify 的图表", "probe 的图表", "平台自带图表"]);
 	await menu.getByRole("button", { name: "清空" }).click();
 	await expect(ws.locator("[data-group]")).toHaveCount(0);
 	await expect(ws).toContainText("没有匹配的图表");
@@ -177,7 +378,7 @@ test("只看一个节点；按名称搜索图表；紧凑密度", async ({
 	const ws = workspace(page);
 
 	await ws.getByRole("button", { name: "只看 fetch" }).click();
-	expect(await groupOrder(page)).toEqual(["fetch 的图表"]);
+	await expect.poll(() => groupOrder(page)).toEqual(["fetch 的图表"]);
 	await expect(groupToggle(page, "fetch")).toHaveAttribute("aria-expanded", "true");
 	await expect(ws.getByRole("button", { name: /节点：fetch/ })).toBeVisible();
 	await expect(ws.getByRole("button", { name: "只看 fetch" })).toHaveCount(0);
@@ -185,7 +386,7 @@ test("只看一个节点；按名称搜索图表；紧凑密度", async ({
 	await expect(ws.locator("[data-group]")).toHaveCount(4);
 
 	await ws.getByRole("textbox", { name: "搜索图表或节点" }).fill("吞吐");
-	expect(await groupOrder(page)).toEqual(["fetch 的图表"]);
+	await expect.poll(() => groupOrder(page)).toEqual(["fetch 的图表"]);
 	await expect(group(page, "fetch").getByRole("figure")).toHaveCount(1);
 	await expect(ws.getByTestId("chart-count")).toHaveText(
 		"1 个节点 · 1 张图表 · 共 3 个节点声明了图表",

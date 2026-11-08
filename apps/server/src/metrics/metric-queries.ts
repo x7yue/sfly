@@ -1,14 +1,18 @@
 import {
 	type CatalogNode,
+	compareSeries,
+	isLabeled,
+	type Labels,
 	type MetricBucket,
 	type MetricSeries,
 	type MetricSeriesQuery,
-	type MetricSummary,
 	NodeTypeMetadata,
 	type OrchestrationDocument,
 	type PlatformBucket,
 	type PlatformMetrics,
 	type RunMetricCatalog,
+	seriesKey,
+	sortedLabels,
 } from "@sfly/schema";
 import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
@@ -23,7 +27,12 @@ import {
 import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf } from "./node-types.js";
-import type { Point, TaskMetrics } from "./task-metrics.js";
+import {
+	dataLossOf,
+	seriesSummaries,
+	type TaskMetrics,
+	type UnwrittenSeries,
+} from "./task-metrics.js";
 
 type TaskRow = typeof tasks.$inferSelect;
 
@@ -45,6 +54,7 @@ interface Acc {
 /** metric_segments 的一行；能直接用段摘要时数组为 null（不读取、不解压）。 */
 interface SegmentRow extends Record<string, unknown> {
 	metric: string;
+	labels: Labels;
 	start_s: number;
 	end_s: number;
 	points: number;
@@ -87,7 +97,7 @@ export class MetricQueries {
 			run.document.nodes.filter((n) => n.kind === "package").map((n) => n.id),
 		);
 		const groups = this.#groups(await this.#tasks(runId), (id) => packageNodes.has(id));
-		const summaries = await this.#summaries(runId);
+		const summaries = await seriesSummaries(this.deps.db, runId);
 		const nodes: CatalogNode[] = [];
 		for (const attempts of groups) {
 			const latest = attempts[attempts.length - 1] as TaskRow;
@@ -107,8 +117,7 @@ export class MetricQueries {
 				attempts: attempts.map((t) => ({
 					task_id: t.id,
 					attempt: t.attempt,
-					truncated: t.metricTruncated,
-					dropped_points: t.metricDropped,
+					...dataLossOf(t),
 					metrics: summaries.get(t.id) ?? [],
 				})),
 			});
@@ -119,7 +128,8 @@ export class MetricQueries {
 	/**
 	 * 一个节点（默认最新一次尝试）的指标序列，按目标点数降采样：时间范围 [from, to]（秒）分成跨度
 	 * bucket_seconds 的桶，每个桶给出点数、最小（每秒最小值中的最小）、最大（每秒最大值中的最大，尖峰可见）、
-	 * 平均、最新值。整段落在一个桶里时直接用段摘要，不展开数组；内存里尚未写库的点覆盖库里同一范围的数据。
+	 * 平均、最新值。每个序列（指标名 + 标签，#78）分别降采样，按指标名查询时返回这个指标的全部序列。
+	 * 整段落在一个桶里时直接用段摘要，不展开数组；内存里尚未写库的点覆盖库里同一范围的数据。
 	 */
 	async series(runId: string, query: MetricSeriesQuery): Promise<SeriesOutcome> {
 		const run = await this.#run(runId);
@@ -143,23 +153,32 @@ export class MetricQueries {
 				: attempts.find((t) => t.attempt === query.attempt);
 		if (!task) return { ok: false, status: 404, code: "not_found", message: "attempt not found" };
 
-		let names = query.metrics;
-		if (!names) {
-			const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
-			names = (ref?.type?.metrics ?? []).map((m) => m.name);
-		}
-		// 已过保留期（#32）：数据已清理，不再查询，每个指标都没有桶。
+		const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
+		const declared = ref?.type?.metrics ?? [];
+		const names = query.metrics ?? declared.map((m) => m.name);
+		const labeled = new Set(declared.filter(isLabeled).map((m) => m.name));
+		// 已过保留期（#32）：数据已清理，不再查询，每个序列都没有桶。
 		const expired = run.run.metricsPurgedAt !== null;
-		const unwritten = expired
-			? new Map<string, Point[]>()
-			: await this.deps.metrics.unwritten(task.id);
+		const unwritten = new Map(
+			expired
+				? []
+				: [...(await this.deps.metrics.unwritten(task.id))].filter(([, s]) =>
+						names.includes(s.name),
+					),
+		);
+		const known = expired
+			? { series: [], first: undefined, last: undefined }
+			: await this.#known(task.id, names, unwritten);
+		// 每个指标的全部序列；没有任何数据、也没有声明标签键的指标给出一个空序列（图表照常画出空图）。
+		const list = names.flatMap((name) => {
+			const found = known.series.filter((s) => s.name === name);
+			if (found.length > 0 || labeled.has(name)) return found;
+			return [{ name, labels: {}, key: name }];
+		});
 		let from = query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000);
 		let to = query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000);
-		if (!expired && (from === undefined || to === undefined)) {
-			const extent = await this.#extent(task.id, names, unwritten);
-			from ??= extent?.first;
-			to ??= extent?.last;
-		}
+		from ??= known.first;
+		to ??= known.last;
 		const base = {
 			run_id: runId,
 			chain_instance_id: task.chainInstanceId,
@@ -167,6 +186,7 @@ export class MetricQueries {
 			task_id: task.id,
 			attempt: task.attempt,
 			truncated: task.metricTruncated,
+			series_capped: task.metricSeriesCapped,
 			expired,
 		};
 		if (expired || from === undefined || to === undefined || names.length === 0) {
@@ -177,7 +197,7 @@ export class MetricQueries {
 					from: from === undefined ? null : isoOf(from),
 					to: to === undefined ? null : isoOf(to),
 					bucket_seconds: 1,
-					series: names.map((name) => ({ name, buckets: [] })),
+					series: list.map(({ name, labels }) => ({ name, labels, buckets: [] })),
 				},
 			};
 		}
@@ -190,50 +210,75 @@ export class MetricQueries {
 				from: isoOf(from),
 				to: isoOf(to),
 				bucket_seconds: width,
-				series: names.map((name) => ({ name, buckets: buckets.get(name) ?? [] })),
+				series: list.map(({ name, labels, key }) => ({
+					name,
+					labels,
+					buckets: buckets.get(key) ?? [],
+				})),
 			},
 		};
 	}
 
-	/** 这些指标的数据的首尾时间（Unix 秒），含尚未写库的点；没有数据时为 undefined。 */
-	async #extent(
+	/**
+	 * 这些指标已有的序列（库里的摘要加上内存里还没写库的，按指标名、标签排序），以及数据的首尾时间（Unix 秒）；
+	 * 没有数据时首尾时间为 undefined。
+	 */
+	async #known(
 		taskId: string,
 		names: string[],
-		unwritten: Map<string, Point[]>,
-	): Promise<{ first: number; last: number } | undefined> {
+		unwritten: Map<string, UnwrittenSeries>,
+	): Promise<{
+		series: Array<{ name: string; labels: Labels; key: string }>;
+		first: number | undefined;
+		last: number | undefined;
+	}> {
 		let first = Number.POSITIVE_INFINITY;
 		let last = Number.NEGATIVE_INFINITY;
+		const series = new Map<string, { name: string; labels: Labels; key: string }>();
 		if (names.length > 0) {
 			const rows = await this.deps.db
-				.select({ firstAt: metricSeries.firstAt, lastAt: metricSeries.lastAt })
+				.select({
+					metric: metricSeries.metric,
+					labels: metricSeries.labels,
+					firstAt: metricSeries.firstAt,
+					lastAt: metricSeries.lastAt,
+				})
 				.from(metricSeries)
 				.where(and(eq(metricSeries.taskId, taskId), inArray(metricSeries.metric, names)));
 			for (const r of rows) {
 				first = Math.min(first, r.firstAt.getTime() / 1000);
 				last = Math.max(last, r.lastAt.getTime() / 1000);
+				const labels = sortedLabels(r.labels);
+				const key = seriesKey(r.metric, labels);
+				series.set(key, { name: r.metric, labels, key });
 			}
 		}
-		for (const name of names) {
-			const points = unwritten.get(name) ?? [];
-			const head = points[0];
-			const tail = points[points.length - 1];
+		for (const [key, s] of unwritten) {
+			const head = s.points[0];
+			const tail = s.points[s.points.length - 1];
 			if (head) first = Math.min(first, head.t);
 			if (tail) last = Math.max(last, tail.t);
+			series.set(key, { name: s.name, labels: s.labels, key });
 		}
-		return Number.isFinite(first) ? { first, last } : undefined;
+		return {
+			series: [...series.values()].sort(compareSeries),
+			first: Number.isFinite(first) ? first : undefined,
+			last: Number.isFinite(last) ? last : undefined,
+		};
 	}
 
+	/** 这些指标每个序列（键是 {@link seriesKey}）的非空桶。 */
 	async #bucketize(
 		taskId: string,
 		names: string[],
-		unwritten: Map<string, Point[]>,
+		unwritten: Map<string, UnwrittenSeries>,
 		from: number,
 		to: number,
 		width: number,
 	): Promise<Map<string, MetricBucket[]>> {
 		// 段落在一个桶内、不和内存里的点重叠时只取段摘要（数组不读取、不解压）。
 		const memFirst = Math.min(
-			...names.map((n) => unwritten.get(n)?.[0]?.t ?? Number.POSITIVE_INFINITY),
+			...[...unwritten.values()].map((s) => s.points[0]?.t ?? Number.POSITIVE_INFINITY),
 		);
 		const memBound = Number.isFinite(memFirst) ? isoOf(memFirst) : "infinity";
 		const fromIso = isoOf(from);
@@ -243,7 +288,7 @@ export class MetricQueries {
 			and floor((extract(epoch from start_at)::float8 - ${from}::float8) / ${width}::float8)
 				= floor((extract(epoch from end_at)::float8 - ${from}::float8) / ${width}::float8))`;
 		const result = await this.deps.db.execute<SegmentRow>(sql`
-			select metric, extract(epoch from start_at)::float8 as start_s, extract(epoch from end_at)::float8 as end_s,
+			select metric, labels, extract(epoch from start_at)::float8 as start_s, extract(epoch from end_at)::float8 as end_s,
 				points, min, max, avg, last,
 				case when ${summarized} then null else offsets end as offsets,
 				case when ${summarized} then null else "values" end as "values",
@@ -255,15 +300,15 @@ export class MetricQueries {
 				sql`, `,
 			)})
 				and start_at <= ${toIso}::timestamptz and end_at >= ${fromIso}::timestamptz
-			order by metric, start_at`);
+			order by metric, labels, start_at`);
 
 		const accs = new Map<string, Map<number, Acc>>();
-		const add = (name: string, t: number, p: Omit<Acc, "lastAt">) => {
+		const add = (key: string, t: number, p: Omit<Acc, "lastAt">) => {
 			const k = Math.floor((t - from) / width);
-			let byBucket = accs.get(name);
+			let byBucket = accs.get(key);
 			if (!byBucket) {
 				byBucket = new Map();
-				accs.set(name, byBucket);
+				accs.set(key, byBucket);
 			}
 			const acc = byBucket.get(k);
 			if (!acc) {
@@ -279,15 +324,16 @@ export class MetricQueries {
 				acc.lastAt = t;
 			}
 		};
-		const inMemory = (name: string, t: number) => {
-			const points = unwritten.get(name);
+		const inMemory = (key: string, t: number) => {
+			const points = unwritten.get(key)?.points;
 			const head = points?.[0];
 			const tail = points?.[points.length - 1];
 			return head !== undefined && tail !== undefined && t >= head.t && t <= tail.t;
 		};
 		for (const row of result.rows) {
+			const key = seriesKey(row.metric, row.labels);
 			if (!row.offsets || !row.values || !row.mins || !row.maxs) {
-				add(row.metric, row.end_s, {
+				add(key, row.end_s, {
 					points: row.points,
 					min: row.min,
 					max: row.max,
@@ -298,9 +344,9 @@ export class MetricQueries {
 			}
 			for (const [i, offset] of row.offsets.entries()) {
 				const t = row.start_s + offset;
-				if (t < from || t > to || inMemory(row.metric, t)) continue;
+				if (t < from || t > to || inMemory(key, t)) continue;
 				const value = row.values[i] as number;
-				add(row.metric, t, {
+				add(key, t, {
 					points: 1,
 					min: row.mins[i] as number,
 					max: row.maxs[i] as number,
@@ -309,17 +355,17 @@ export class MetricQueries {
 				});
 			}
 		}
-		for (const name of names) {
-			for (const p of unwritten.get(name) ?? []) {
+		for (const [key, s] of unwritten) {
+			for (const p of s.points) {
 				if (p.t < from || p.t > to) continue;
-				add(name, p.t, { points: 1, min: p.min, max: p.max, sum: p.value, last: p.value });
+				add(key, p.t, { points: 1, min: p.min, max: p.max, sum: p.value, last: p.value });
 			}
 		}
 
 		const buckets = new Map<string, MetricBucket[]>();
-		for (const [name, byBucket] of accs) {
+		for (const [key, byBucket] of accs) {
 			buckets.set(
-				name,
+				key,
 				[...byBucket.entries()]
 					.sort(([a], [b]) => a - b)
 					.map(([k, acc]) => ({
@@ -448,31 +494,6 @@ export class MetricQueries {
 			groups.set(key, list);
 		}
 		return [...groups.values()].map((list) => list.sort((a, b) => a.attempt - b.attempt));
-	}
-
-	/** 任务 ID → 已写库的指标摘要（按指标名排序）。 */
-	async #summaries(runId: string): Promise<Map<string, MetricSummary[]>> {
-		const rows = await this.deps.db
-			.select()
-			.from(metricSeries)
-			.where(eq(metricSeries.runId, runId))
-			.orderBy(asc(metricSeries.metric));
-		const byTask = new Map<string, MetricSummary[]>();
-		for (const row of rows) {
-			const list = byTask.get(row.taskId) ?? [];
-			list.push({
-				name: row.metric,
-				points: row.points,
-				min: row.min,
-				max: row.max,
-				avg: row.sum / row.points,
-				last: row.last,
-				first_time: row.firstAt.toISOString(),
-				last_time: row.lastAt.toISOString(),
-			});
-			byTask.set(row.taskId, list);
-		}
-		return byTask;
 	}
 }
 

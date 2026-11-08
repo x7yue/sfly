@@ -6,6 +6,8 @@
 //!
 //! - `merge_events`：[`Merger`] 合并 1 秒内的 1 万次上报（4 个指标轮流），再全部取出——
 //!   对应节点每秒 1 万次 `ctx.metric()` 时 Agent 每秒的合并工作量；
+//! - `merge_labeled_events`：同样 1 万次上报，但是 4 个带标签（`pid`、`name`）的指标 × 50 个进程
+//!   （200 个序列轮流），每次上报新建标签（与 Agent 解析事件 JSON 时一样，含排序）——对应按进程上报的节点；
 //! - `split_short_lines` / `split_long_lines`：[`LineSplitter`] 按 16 KiB 一块（与读取管道时相同）切分
 //!   1 MiB 的输出，分别是 80 字节的短行和没有换行、按 64 KiB 拆开的长行。
 
@@ -14,10 +16,17 @@ use std::time::Duration;
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use sfly_agent::logs::LineSplitter;
-use sfly_agent::metrics::Merger;
+use sfly_agent::metrics::{Labels, Merger};
 
 const EVENTS: usize = 10_000;
 const METRICS: [&str; 4] = ["seq", "tps", "latency", "errors"];
+const LABELED_METRICS: [&str; 4] = [
+    "cpu_by_process",
+    "rss_by_process",
+    "fds_by_process",
+    "io_by_process",
+];
+const PROCESSES: usize = 50;
 const OUTPUT_BYTES: usize = 1024 * 1024;
 const READ_CHUNK: usize = 16 * 1024;
 
@@ -38,7 +47,37 @@ fn merge(c: &mut Criterion) {
             let mut merger = Merger::default();
             for &(ts, name, kind, value) in &events {
                 // 与 Agent 一样每次上报一个新的 String（来自事件 JSON 的解析结果）。
-                merger.add(ts, name.to_owned(), kind, value);
+                merger.add(ts, name.to_owned(), Labels::new(), kind, value);
+            }
+            black_box(merger.take(None))
+        });
+    });
+    let processes: Vec<(String, String)> = (0..PROCESSES)
+        .map(|p| ((1000 + p).to_string(), format!("worker-{p}")))
+        .collect();
+    let labeled: Vec<(i64, &str, &str, &str, f64)> = (0..EVENTS)
+        .map(|i| {
+            let name = LABELED_METRICS[i % LABELED_METRICS.len()];
+            let (pid, process) = &processes[i / LABELED_METRICS.len() % PROCESSES];
+            (
+                start_ms + (i * 1000 / EVENTS) as i64,
+                name,
+                pid.as_str(),
+                process.as_str(),
+                i as f64,
+            )
+        })
+        .collect();
+    group.bench_function("merge_labeled_events", |b| {
+        b.iter(|| {
+            let mut merger = Merger::default();
+            for &(ts, name, pid, process, value) in &labeled {
+                // 事件里的标签对象顺序是 SDK 写入的顺序（不一定按键排序），解析时排序。
+                let labels = Labels::from_iter([
+                    ("pid".to_owned(), pid.to_owned()),
+                    ("name".to_owned(), process.to_owned()),
+                ]);
+                merger.add(ts, name.to_owned(), labels, "gauge", value);
             }
             black_box(merger.take(None))
         });

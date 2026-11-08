@@ -1,4 +1,4 @@
-import { type ChartView, NodeTypeMetadata, type PackageMetadata } from "@sfly/schema";
+import { type ChartView, isLabeled, NodeTypeMetadata, type PackageMetadata } from "@sfly/schema";
 import { z } from "zod";
 
 /** 节点包查询 API 返回的节点类型：图表含默认生成的图表。 */
@@ -6,7 +6,7 @@ export type NodeTypeView = Omit<NodeTypeMetadata, "charts"> & { charts?: ChartVi
 
 /**
  * 给节点类型补上默认图表：没被任何声明的图表引用的指标各生成一张，
- * `gauge` 画折线，`counter` 画数值卡（带趋势）。没有声明指标和图表的节点类型原样返回。
+ * `gauge` 画折线，`counter` 画数值卡（带趋势）；带标签的指标一律画折线（数值卡画不出多个序列）。没有声明指标和图表的节点类型原样返回。
  */
 export function withDefaultCharts(node: NodeTypeMetadata): NodeTypeView {
 	const metrics = node.metrics ?? [];
@@ -17,7 +17,7 @@ export function withDefaultCharts(node: NodeTypeMetadata): NodeTypeView {
 		.filter((m) => !referenced.has(m.name))
 		.map((m) => ({
 			title: m.name,
-			type: m.kind === "counter" ? "stat" : "line",
+			type: m.kind === "counter" && !isLabeled(m) ? "stat" : "line",
 			metrics: [m.name],
 			default: true,
 		}));

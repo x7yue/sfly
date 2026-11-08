@@ -11,9 +11,32 @@ import { endpoint, Timestamp } from "./contract.js";
 /** 路径里的运行 ID：不是 UUID 时控制面返回 404（与找不到相同），所以这里只要求是字符串。 */
 const IdParams = z.object({ id: z.string() });
 
-/** 一个任务（一次尝试）一个指标的摘要。 */
+/**
+ * 序列的标签（#78）：键 → 值。一个任务里，一个指标在一组确定的标签值下的全部点构成一个序列；
+ * 不带标签的序列为 `{}`。
+ */
+export const MetricLabels = z.record(z.string(), z.string());
+
+/**
+ * 一个任务（一次尝试）的指标数据有没有缺失：截断、序列超限与丢弃的点数。
+ * 摘要、目录与序列查询都带这一组字段（序列查询只带 truncated、series_capped）。
+ */
+export const MetricDataLoss = z.object({
+	/** 指标数据超过单任务上限，之后的点已被丢弃。 */
+	truncated: z.boolean(),
+	/**
+	 * 序列数超过单任务上限（`MAX_SERIES` 个，见 ../series.ts；不带标签的指标各算 1 个）：之后新出现的序列的点已被丢弃
+	 * （计入 dropped_points），已有序列照常写入。
+	 */
+	series_capped: z.boolean(),
+	/** 被丢弃的点数：Agent 断线期间排队超过上限、标签与声明的标签键不一致、序列超限。 */
+	dropped_points: z.number().int().nonnegative(),
+});
+
+/** 一个任务（一次尝试）一个序列的摘要。 */
 export const MetricSummary = z.object({
 	name: MetricName,
+	labels: MetricLabels,
 	/** 已写入的点数（每秒最多一个点）。 */
 	points: z.number().int().nonnegative(),
 	/** 所有点的每秒最小值中的最小值。 */
@@ -34,11 +57,8 @@ export const TaskMetricSummary = z.object({
 	chain_instance_id: z.uuid(),
 	node_id: z.string(),
 	attempt: z.number().int().positive(),
-	/** 指标数据超过单任务上限，之后的点已被丢弃。 */
-	truncated: z.boolean(),
-	/** Agent 断线期间排队超过上限而丢弃的点数。 */
-	dropped_points: z.number().int().nonnegative(),
-	/** 按指标名排序。 */
+	...MetricDataLoss.shape,
+	/** 按指标名排序，同一指标的序列按标签排序。 */
 	metrics: z.array(MetricSummary),
 });
 
@@ -57,11 +77,8 @@ export const RunMetricSummary = z.object({
 export const CatalogAttempt = z.object({
 	task_id: z.uuid(),
 	attempt: z.number().int().positive(),
-	/** 指标数据超过单任务上限，之后的点已被丢弃。 */
-	truncated: z.boolean(),
-	/** Agent 断线期间排队超过上限而丢弃的点数。 */
-	dropped_points: z.number().int().nonnegative(),
-	/** 已写库的点的摘要，按指标名排序；运行中的当前段约每 10 秒写一次。 */
+	...MetricDataLoss.shape,
+	/** 已写库的点的摘要（每个序列一项），按指标名、标签排序；运行中的当前段约每 10 秒写一次。 */
 	metrics: z.array(MetricSummary),
 });
 
@@ -137,8 +154,9 @@ export const MetricBucket = z.object({
 });
 
 /**
- * 序列查询的结果：每个指标的非空桶，按时间升序。
- * 已过保留期时 `expired` 为 true，每个指标都没有桶；没有指定时间范围时 from、to 为 null。
+ * 序列查询的结果：查询的每个指标的全部序列（按指标的查询顺序，同一指标按标签排序），每个序列的非空桶按时间升序。
+ * 没有任何数据的指标：没声明标签键时给出一个 `labels` 为 `{}`、没有桶的序列，声明了标签键时没有序列。
+ * 已过保留期时 `expired` 为 true，每个序列都没有桶；没有指定时间范围时 from、to 为 null。
  */
 export const MetricSeries = z.object({
 	run_id: z.uuid(),
@@ -153,13 +171,16 @@ export const MetricSeries = z.object({
 	to: Timestamp.nullable(),
 	/** 每个桶的跨度（秒，至少 1）：桶 k 覆盖 [from + k × bucket_seconds, from + (k + 1) × bucket_seconds)。 */
 	bucket_seconds: z.number().int().positive(),
-	truncated: z.boolean(),
-	series: z.array(z.object({ name: MetricName, buckets: z.array(MetricBucket) })),
+	...MetricDataLoss.pick({ truncated: true, series_capped: true }).shape,
+	series: z.array(
+		z.object({ name: MetricName, labels: MetricLabels, buckets: z.array(MetricBucket) }),
+	),
 });
 
-/** 一个合并后的点（每个指标每秒一个）。 */
+/** 一个合并后的点（每个序列每秒一个）。 */
 export const MetricPointView = z.object({
 	name: MetricName,
+	labels: MetricLabels,
 	time: Timestamp,
 	value: z.number(),
 	/** 这一秒内的最小、最大值（counter 与 value 相同）。 */
@@ -275,6 +296,8 @@ export const metricsApi = {
 	}),
 };
 
+export type MetricLabels = z.infer<typeof MetricLabels>;
+export type MetricDataLoss = z.infer<typeof MetricDataLoss>;
 export type MetricSummary = z.infer<typeof MetricSummary>;
 export type CatalogAttempt = z.infer<typeof CatalogAttempt>;
 export type CatalogNode = z.infer<typeof CatalogNode>;

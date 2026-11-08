@@ -11,6 +11,8 @@ import type { Measurement } from "../report.js";
 /** criterion 的函数名 → 报告里的名称。 */
 const LABELS: Record<string, string> = {
 	merge_events: "指标合并吞吐（1 秒内 1 万次上报，4 个指标）",
+	merge_labeled_events:
+		"带标签的指标合并吞吐（1 秒内 1 万次上报，4 个指标 × 50 个进程，标签 pid、name）",
 	split_short_lines: "按行切分吞吐（80 字节的短行）",
 	split_long_lines: "按行切分吞吐（没有换行，按 64 KiB 拆开）",
 };

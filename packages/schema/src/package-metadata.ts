@@ -32,13 +32,25 @@ export const MetricName = z
 	.string()
 	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "指标名必须是标识符（字母、数字、下划线，不以数字开头）");
 
-/** 指标声明：`gauge` 瞬时值 | `counter` 累计值。 */
+/** 每个指标最多声明的标签键数。 */
+export const MAX_LABEL_KEYS = 3;
+
+/**
+ * 指标声明：`gauge` 瞬时值 | `counter` 累计值。
+ * `labels` 是标签键（命名规则同指标名、不重复）：每个点必须给全这些键的值，每组标签值是一个序列；
+ * 没有这个字段的指标不带标签。
+ */
 export const MetricDeclaration = z.strictObject({
 	name: MetricName,
 	unit: z.string(),
 	kind: z.enum(["gauge", "counter"]),
 	description: z.string().optional(),
+	labels: z.array(MetricName).max(MAX_LABEL_KEYS).optional(),
 });
+
+/** 指标是否带标签（声明了标签键）。 */
+export const isLabeled = (metric: { labels?: readonly string[] | undefined }): boolean =>
+	(metric.labels?.length ?? 0) > 0;
 
 /** 图表声明：把一个或几个本节点类型声明的指标画出来。 */
 export const ChartDeclaration = z.strictObject({
@@ -65,6 +77,7 @@ export const NodeTypeMetadata = z
 	.superRefine((node, ctx) => {
 		// 交叉引用约束 JSON Schema 表达不了：Python CLI 在 sfly build 时做同样的检查。
 		const names = new Set<string>();
+		const labeled = new Set<string>();
 		for (const [i, metric] of (node.metrics ?? []).entries()) {
 			if (names.has(metric.name)) {
 				ctx.addIssue({
@@ -74,6 +87,17 @@ export const NodeTypeMetadata = z
 				});
 			}
 			names.add(metric.name);
+			const keys = metric.labels ?? [];
+			if (isLabeled(metric)) labeled.add(metric.name);
+			for (const [j, key] of keys.entries()) {
+				if (keys.indexOf(key) !== j) {
+					ctx.addIssue({
+						code: "custom",
+						path: ["metrics", i, "labels", j],
+						message: `指标 ${metric.name} 的标签键 ${key} 重复`,
+					});
+				}
+			}
 		}
 		for (const [i, chart] of (node.charts ?? []).entries()) {
 			for (const ref of chart.metrics) {
@@ -84,6 +108,14 @@ export const NodeTypeMetadata = z
 						message: `图表 ${chart.title} 引用了未声明的指标 ${ref}`,
 					});
 				}
+				// 数值卡和柱状图每个指标只画一个值，画不出多个序列。
+				if (labeled.has(ref) && (chart.type === "stat" || chart.type === "bar")) {
+					ctx.addIssue({
+						code: "custom",
+						path: ["charts", i, "metrics"],
+						message: `图表 ${chart.title} 是 ${chart.type}，不能引用带标签键的指标 ${ref}；带标签的指标只能画在 line 或 area 图表里`,
+					});
+				}
 			}
 		}
 		if (node.primary_metric !== undefined && !names.has(node.primary_metric)) {
@@ -91,6 +123,14 @@ export const NodeTypeMetadata = z
 				code: "custom",
 				path: ["primary_metric"],
 				message: `主指标 ${node.primary_metric} 未声明`,
+			});
+		}
+		// 紧凑位置只显示一个值；需要合计时由节点另报一个不带标签的指标。
+		if (node.primary_metric !== undefined && labeled.has(node.primary_metric)) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["primary_metric"],
+				message: `主指标 ${node.primary_metric} 带标签键，不能作为主指标；请另报一个不带标签的合计指标作为主指标`,
 			});
 		}
 	});

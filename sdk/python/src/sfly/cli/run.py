@@ -68,18 +68,29 @@ def _number(value: float) -> str:
     return f"{value:g}"
 
 
+def _series_name(point: MetricPoint) -> str:
+    """序列在表里的名字：指标名，带标签时后面跟按键排序的 `{键=值,…}`。"""
+    if not point.labels:
+        return point.name
+    pairs = ",".join(f"{k}={v}" for k, v in sorted(point.labels.items()))
+    return f"{point.name}{{{pairs}}}"
+
+
 def metric_table(points: Sequence[MetricPoint]) -> list[str]:
-    """指标汇总表：每个指标一行（按首次上报的顺序），列出类型、上报次数、最后值、最小值、最大值。"""
-    summary: dict[str, dict[str, Any]] = {}
+    """指标汇总表：每个序列一行（按首次上报的顺序），列出类型、上报次数、最后值、最小值、最大值。"""
+    summary: dict[tuple[str, tuple[tuple[str, str], ...]], dict[str, Any]] = {}
     for point in points:
-        row = summary.setdefault(point.name, {"kind": point.kind, "values": []})
+        key = (point.name, tuple(sorted(point.labels.items())))
+        row = summary.setdefault(
+            key, {"name": _series_name(point), "kind": point.kind, "values": []}
+        )
         row["values"].append(point.value)
     rows = [["指标", "类型", "次数", "最后值", "最小值", "最大值"]]
-    for name, row in summary.items():
+    for row in summary.values():
         values: list[float] = row["values"]
         rows.append(
             [
-                name,
+                row["name"],
                 row["kind"],
                 str(len(values)),
                 _number(values[-1]),

@@ -53,7 +53,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | `outputs` | 从返回类型读取 | 输出键：键名列表，或 键名 → 类型注解 的字典 |
 | `metrics` | 无 | 指标声明（`Metric`），最多 50 个 |
 | `charts` | 无 | 图表声明（`Chart`），最多 20 张 |
-| `primary_metric` | 无 | 主指标名，必须是已声明的指标，显示在紧凑位置 |
+| `primary_metric` | 无 | 主指标名，必须是已声明、不带标签键的指标，显示在紧凑位置 |
 
 ## 输入
 
@@ -112,16 +112,23 @@ ctx.progress(3, 10, "第 3 批")
 ## `ctx.metric`：指标
 
 ```python
-Metric(name, unit="", kind="gauge", description=None)
+Metric(name, unit="", kind="gauge", description=None, labels=())
 Chart(title, type="line", metrics=())
 ctx.metric("latency_ms", 12.5)
+ctx.metric("conn_latency_ms", 8.2, labels={"host": "db-1", "port": 5432})
 ```
 
 - 指标要先在 `@node(metrics=...)` 里声明再上报。指标名是标识符（字母、数字、下划线，不以数字开头），不能重复。
 - `kind`：`gauge` 是瞬时值（例如延迟、队列长度），`counter` 是累计值（例如已发送的请求数，上报当前累计值）。
-- `Chart.type`：`line`、`area`、`bar`、`stat`；`metrics` 列出至少一个已声明的指标。没有被任何图表引用的指标由平台生成默认图表。
-- `ctx.metric` 可以随意频繁调用：Agent 按「指标 × 秒」合并，每秒最多上报一次（`gauge` 取这一秒最后一个值并带最小、最大值，`counter` 取这一秒结束时的值）。
-- 未声明的指标名和非有限数值（NaN、无穷大）被丢弃，并写一条 warn 日志（每个指标名、每种原因只写一次）。
+- `Chart.type`：`line`、`area`、`bar`、`stat`；`metrics` 列出至少一个已声明的指标。没有被任何图表引用的指标由平台生成默认图表：瞬时值画折线，累计值画数值卡，带标签的指标一律画折线。
+- `labels`：标签键，用来在一个节点里同时上报多个对象的同一个指标（例如每个连接、每个进程）。最多 3 个键，命名规则同指标名，不能重复；`sfly build` 检查这些规则。
+- 上报时 `labels` 给出这个点的标签值。一个指标在一组确定的标签值下的全部点是一个**序列**，运行监控页的折线和面积图里每个序列画一条线，图例用标签值以「 · 」连接（按声明的标签键顺序），图表引用多个指标时前面再加上指标名。不带标签的指标仍然只有一个序列。平台不对多个序列求和或求平均，需要合计时另报一个不带标签的指标。
+- 带标签的指标只能画在 `line`、`area` 图表里，同一张图表可以混用带标签和不带标签的指标（例如把「合计」和「各进程」画在一起）；`stat`（数值卡）和 `bar`（柱状图）不能引用带标签的指标，带标签的指标也不能作为 `primary_metric`，需要时另报一个不带标签的合计指标作为主指标。`sfly build` 和控制面发布时都检查这些约束。
+- 在运行监控页上点图例项可以显示或隐藏对应的线；序列超过 10 个时，默认只显示当前时间范围内平均值最高的 10 个，其余在图例里置灰。悬停时提示列出每条显示中的线在那一刻的值。
+- 声明了标签键的指标，每个点都要给全这些键；没声明标签键的指标不能带标签。标签值是不超过 128 个字符的非空字符串，数字自动转成字符串。
+- `ctx.metric` 可以随意频繁调用：Agent 按「序列 × 秒」合并，每秒最多上报一次（`gauge` 取这一秒最后一个值并带最小、最大值，`counter` 取这一秒结束时的值）。
+- 以下点被丢弃，并写一条 warn 日志（每个指标名、每种原因只写一次）：未声明的指标名、非有限数值（NaN、无穷大）、缺少声明过的标签键、带了未声明的标签键、给没声明标签键的指标带标签、标签值为空或超过 128 个字符。
+- **序列上限**：每个任务所有指标合计最多 1000 个序列，不带标签的指标各算 1 个（预先占好名额，总是能上报）。这个数固定，不能配置。超出后不再建立新序列：新序列的点被丢弃，每个指标写一条 warn 日志；已经有的序列照常上报。控制面也按同一上限兜底，被拒的点计入任务的丢弃数，运行监控页显示「序列超限」。本地调试（`sfly run`、`sfly.testing`）的行为相同。标签值用来区分少量对象（进程、网卡、连接），不要用请求 ID、时间戳这类取值很多的值。序列上限和单任务约 50 MB 的点数上限互不影响。
 
 ## `ctx.artifacts`：产物
 
@@ -206,7 +213,7 @@ def test_countdown_cleans_up_when_cancelled(tmp_path: Path) -> None:
 | `error` | `NodeError(kind, message, type, traceback)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled` |
 | `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr 或 sdk |
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
-| `metrics` | `MetricPoint(ts, name, kind, value)` 的列表，保留每一次上报（未声明的已丢弃） |
+| `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
 | `artifacts` | 产物名称 → 本地文件路径 |
 | `artifacts_dir`、`work_dir` | 产物目录、工作目录 |
 
@@ -231,7 +238,7 @@ def test_countdown_cleans_up_when_cancelled(tmp_path: Path) -> None:
 uv run sfly run countdown --params '{"name": "世界", "steps": 5}'
 ```
 
-- 日志实时打印到标准错误；结束后在标准输出打印输出值（`输出：` 后的 JSON）、指标汇总表和运行目录。
+- 日志实时打印到标准错误；结束后在标准输出打印输出值（`输出：` 后的 JSON）、指标汇总表和运行目录。指标汇总表每个序列一行，带标签的指标在指标名后面跟标签值，例如 `conn_latency_ms{host=db-1,port=5432}`。
 - 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`（目录名也是 `ctx.task.run_id`；`ctx.procs_dir` 是 `.sfly/procs/<目录名>/`），里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。
 - Ctrl-C 按平台的取消流程取消（节点里抛出 `Cancelled`，宽限期后强制杀掉），再按一次立即杀掉；节点结束后、打印结果期间的 Ctrl-C 被忽略。
 - 退出码：成功 0，节点失败 1，参数不合法或找不到节点 2，取消 130。

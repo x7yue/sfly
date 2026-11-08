@@ -6,9 +6,15 @@ import { join } from "node:path";
 /** SDK 基准测试（sdk/python/benchmarks/metric.py --json）的结果。 */
 export interface TimeitResult {
 	python: string;
+	repeat: number;
+	/** 每种情况（`metric` 不带标签、`labeled_metric` 带标签）一项，顺序同脚本输出。 */
+	cases: TimeitCase[];
+}
+
+export interface TimeitCase {
+	id: string;
 	/** 每轮调用 ctx.metric() 的次数（timeit 自动选定）。 */
 	calls: number;
-	repeat: number;
 	/** 各轮单次耗时的中位数（微秒）。 */
 	medianUs: number;
 	/** 各轮单次耗时的最小值（微秒）：最接近不受干扰时的开销。 */
@@ -17,34 +23,48 @@ export interface TimeitResult {
 
 /** 读取 SDK 基准测试脚本的 JSON 输出；格式不对时抛出错误并带上原文。 */
 export function readTimeit(stdout: string): TimeitResult {
-	let parsed: { python?: unknown; calls?: unknown; repeat?: unknown; per_call_us?: unknown };
+	let parsed: { python?: unknown; repeat?: unknown; cases?: unknown };
 	try {
 		parsed = JSON.parse(stdout);
 	} catch {
 		throw new Error(`timeit 的输出不是 JSON：${stdout.slice(0, 2000)}`);
 	}
-	const perCall = parsed.per_call_us;
+	const missing = () => new Error(`timeit 的输出缺少字段：${stdout.slice(0, 2000)}`);
+	const { python, repeat, cases } = parsed;
 	if (
-		typeof parsed.python !== "string" ||
-		typeof parsed.calls !== "number" ||
-		typeof parsed.repeat !== "number" ||
-		!Array.isArray(perCall) ||
-		perCall.length === 0 ||
-		!perCall.every((v) => typeof v === "number")
+		typeof python !== "string" ||
+		typeof repeat !== "number" ||
+		!Array.isArray(cases) ||
+		cases.length === 0
 	) {
-		throw new Error(`timeit 的输出缺少字段：${stdout.slice(0, 2000)}`);
+		throw missing();
 	}
-	const sorted = [...(perCall as number[])].sort((a, b) => a - b);
-	const mid = Math.floor(sorted.length / 2);
 	return {
-		python: parsed.python,
-		calls: parsed.calls,
-		repeat: parsed.repeat,
-		medianUs:
-			sorted.length % 2 === 1
-				? (sorted[mid] as number)
-				: ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2,
-		bestUs: sorted[0] as number,
+		python,
+		repeat,
+		cases: cases.map((c: { id?: unknown; calls?: unknown; per_call_us?: unknown }) => {
+			const perCall = c.per_call_us;
+			if (
+				typeof c.id !== "string" ||
+				typeof c.calls !== "number" ||
+				!Array.isArray(perCall) ||
+				perCall.length === 0 ||
+				!perCall.every((v) => typeof v === "number")
+			) {
+				throw missing();
+			}
+			const sorted = [...(perCall as number[])].sort((a, b) => a - b);
+			const mid = Math.floor(sorted.length / 2);
+			return {
+				id: c.id,
+				calls: c.calls,
+				medianUs:
+					sorted.length % 2 === 1
+						? (sorted[mid] as number)
+						: ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2,
+				bestUs: sorted[0] as number,
+			};
+		}),
 	};
 }
 

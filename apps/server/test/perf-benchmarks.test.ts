@@ -7,37 +7,41 @@ import { afterEach, describe, expect, it } from "vitest";
 import { readCriterion, readTimeit, readVitestBench } from "../perf/bench.js";
 
 describe("timeit 的结果（SDK 基准测试）", () => {
-	it("每轮的单次耗时取中位数与最小值（微秒）", () => {
+	it("每种情况各轮的单次耗时取中位数与最小值（微秒）", () => {
 		const stdout = JSON.stringify({
 			python: "3.12.8",
-			calls: 100_000,
 			repeat: 5,
-			per_call_us: [3.1, 2.9, 4.5, 3.0, 3.3],
+			cases: [
+				{ id: "metric", calls: 100_000, per_call_us: [3.1, 2.9, 4.5, 3.0, 3.3] },
+				{ id: "labeled_metric", calls: 80_000, per_call_us: [5.2, 5.0, 5.1, 6.0, 5.5] },
+			],
 		});
 		expect(readTimeit(`${stdout}\n`)).toEqual({
 			python: "3.12.8",
-			calls: 100_000,
 			repeat: 5,
-			medianUs: 3.1,
-			bestUs: 2.9,
+			cases: [
+				{ id: "metric", calls: 100_000, medianUs: 3.1, bestUs: 2.9 },
+				{ id: "labeled_metric", calls: 80_000, medianUs: 5.2, bestUs: 5.0 },
+			],
 		});
 	});
 
 	it("偶数轮取中间两个的平均", () => {
 		const stdout = JSON.stringify({
 			python: "3.13.1",
-			calls: 10,
 			repeat: 4,
-			per_call_us: [4, 1, 3, 2],
+			cases: [{ id: "metric", calls: 10, per_call_us: [4, 1, 3, 2] }],
 		});
-		expect(readTimeit(stdout).medianUs).toBe(2.5);
+		expect(readTimeit(stdout).cases[0]?.medianUs).toBe(2.5);
 	});
 
 	it("输出不是预期的格式时报错并带上原文", () => {
 		expect(() => readTimeit("Traceback (most recent call last): ...")).toThrow(/Traceback/);
-		expect(() => readTimeit(JSON.stringify({ python: "3.12", per_call_us: [] }))).toThrow(
-			"timeit 的输出",
-		);
+		for (const cases of [[], [{ id: "metric", calls: 1, per_call_us: [] }], undefined]) {
+			expect(() => readTimeit(JSON.stringify({ python: "3.12", repeat: 1, cases }))).toThrow(
+				"timeit 的输出",
+			);
+		}
 	});
 });
 

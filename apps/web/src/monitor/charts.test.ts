@@ -5,10 +5,15 @@ import {
 	appendIncrement,
 	balancedColumns,
 	bucketAt,
+	chartLines,
 	chartWindow,
+	colorSlots,
+	defaultShown,
 	envelopePoints,
 	formatReading,
 	hasSpread,
+	latestLine,
+	pickShown,
 	valueExtent,
 } from "./charts";
 
@@ -91,9 +96,11 @@ const series = (buckets: [number, number][], bucketSeconds = 1): MetricSeries =>
 	to: buckets.length ? at(buckets.at(-1)?.[0] ?? 0) : null,
 	bucket_seconds: bucketSeconds,
 	truncated: false,
+	series_capped: false,
 	series: [
 		{
 			name: "tps",
+			labels: {},
 			buckets: buckets.map(([t, v]) => ({
 				time: at(t),
 				points: 1,
@@ -106,12 +113,22 @@ const series = (buckets: [number, number][], bucketSeconds = 1): MetricSeries =>
 	],
 });
 
-const increment = (points: [string, number, number][], attempt = 1): MetricIncrement => ({
+const increment = (
+	points: Array<[string, number, number] | [string, number, number, Record<string, string>]>,
+	attempt = 1,
+): MetricIncrement => ({
 	task_id: "00000000-0000-4000-8000-000000000003",
 	chain_instance_id: "00000000-0000-4000-8000-000000000002",
 	node_id: "load",
 	attempt,
-	points: points.map(([name, t, value]) => ({ name, time: at(t), value, min: value, max: value })),
+	points: points.map(([name, t, value, labels = {}]) => ({
+		name,
+		labels,
+		time: at(t),
+		value,
+		min: value,
+		max: value,
+	})),
 });
 
 const lastOf = (result: MetricSeries, name = "tps") =>
@@ -149,6 +166,31 @@ describe("实时追加的指标点", () => {
 		);
 		expect(lastOf(result)).toEqual([[at(5), 1, 1]]);
 		expect(lastOf(result, "p99")).toEqual([[at(6), 1, 120]]);
+	});
+
+	it("按序列（指标名 + 标签）合并：运行中出现的新序列排在同一指标已有的序列旁边，按标签排序", () => {
+		const base: MetricSeries = {
+			...series([[0, 1]]),
+			series: [
+				{ name: "conn", labels: { host: "b" }, buckets: series([[0, 2]]).series[0]?.buckets ?? [] },
+				...series([[0, 1]]).series,
+			],
+		};
+		const result = appendIncrement(
+			base,
+			increment([
+				["conn", 1, 20, { host: "b" }],
+				["conn", 1, 30, { host: "a" }],
+				["tps", 1, 5],
+				["p99", 1, 7],
+			]),
+		);
+		expect(result.series.map((x) => [x.name, x.labels, x.buckets.map((b) => b.last)])).toEqual([
+			["conn", { host: "a" }, [30]],
+			["conn", { host: "b" }, [2, 20]],
+			["tps", {}, [1, 5]],
+			["p99", {}, [7]],
+		]);
 	});
 
 	it("其他尝试的点不追加", () => {
@@ -214,6 +256,144 @@ describe("降采样后的尖峰（故事 14）", () => {
 		expect(formatReading(spiky[1] as MetricBucket)).toBe("11（2–95）");
 		expect(formatReading(bucket(0, 3, 3, 3))).toBe("3");
 		expect(bucketAt(spiky, s(35), 10)).toBeNull();
+	});
+});
+
+describe("序列多时默认显示的序列（#78）", () => {
+	const b = (points: number, avg: number): MetricBucket => ({
+		time: at(0),
+		points,
+		min: avg,
+		max: avg,
+		avg,
+		last: avg,
+	});
+	const line = (key: string, ...buckets: MetricBucket[]) => ({ key, buckets });
+
+	it("不超过上限时全部显示", () => {
+		const lines = [line("a", b(1, 1)), line("b"), line("c", b(1, 3))];
+		expect(defaultShown(lines, 3)).toEqual(new Set(["a", "b", "c"]));
+	});
+
+	it("超过上限时按平均值（按点数加权）从高到低取前几个；没有数据的序列排在最后，平均值相同时取靠前的", () => {
+		const lines = [
+			line("empty"),
+			// (10×1 + 100×1) / 2 = 55，按点数加权是 (10×9 + 100×1) / 10 = 19。
+			line("weighted", b(9, 10), b(1, 100)),
+			line("high", b(1, 50)),
+			line("tie1", b(2, 20)),
+			line("tie2", b(2, 20)),
+		];
+		expect(defaultShown(lines, 2)).toEqual(new Set(["high", "tie1"]));
+		expect(defaultShown(lines, 4)).toEqual(new Set(["high", "tie1", "tie2", "weighted"]));
+	});
+});
+
+describe("默认显示的序列只在时间范围变化或出现新序列时重新挑选（#78）", () => {
+	const b = (avg: number): MetricBucket => ({
+		time: at(0),
+		points: 1,
+		min: avg,
+		max: avg,
+		avg,
+		last: avg,
+	});
+	const line = (key: string, avg: number) => ({ key, buckets: [b(avg)] });
+	const zoomA = { start: s(0), end: s(10) };
+
+	it("新点到来、时钟推进时保持原来的挑选", () => {
+		const first = pickShown(undefined, [line("a", 1), line("b", 2), line("c", 3)], null, 2);
+		expect(first.shown).toEqual(new Set(["b", "c"]));
+		// a 的平均值后来变成最高，但时间范围没变、也没有新序列：不重新挑选。
+		const next = pickShown(first, [line("a", 9), line("b", 2), line("c", 3)], null, 2);
+		expect(next).toBe(first);
+	});
+
+	it("用户改了时间范围时按新范围重新挑选", () => {
+		const first = pickShown(undefined, [line("a", 1), line("b", 2), line("c", 3)], null, 2);
+		const zoomed = pickShown(first, [line("a", 9), line("b", 2), line("c", 3)], zoomA, 2);
+		expect(zoomed.shown).toEqual(new Set(["a", "c"]));
+		// 同一个缩放范围对象：不再重新挑选。
+		expect(pickShown(zoomed, [line("a", 0), line("b", 2), line("c", 3)], zoomA, 2)).toBe(zoomed);
+	});
+
+	it("出现新序列时重新挑选", () => {
+		const first = pickShown(undefined, [line("a", 1), line("b", 2), line("c", 3)], null, 2);
+		const next = pickShown(
+			first,
+			[line("a", 9), line("b", 2), line("c", 3), line("d", 0)],
+			null,
+			2,
+		);
+		expect(next.shown).toEqual(new Set(["a", "c"]));
+	});
+});
+
+describe("曲线颜色按序列首次出现的顺序固定（#78）", () => {
+	it("新序列取下一个颜色，插在已有序列之间也不让已有曲线换色", () => {
+		const first = colorSlots(new Map(), ["a", "c"]);
+		expect([...first]).toEqual([
+			["a", 0],
+			["c", 1],
+		]);
+		const next = colorSlots(first, ["a", "b", "c"]);
+		expect([...next]).toEqual([
+			["a", 0],
+			["c", 1],
+			["b", 2],
+		]);
+	});
+
+	it("没有新序列时返回原来的分配", () => {
+		const first = colorSlots(new Map(), ["a", "b"]);
+		expect(colorSlots(first, ["b"])).toBe(first);
+	});
+});
+
+describe("标题栏的最新值（#78）", () => {
+	const line = (name: string, labeled = false) => ({ name, labeled, buckets: [] });
+
+	it("只有一条可见线时取这条线", () => {
+		const only = line("conn · a", true);
+		expect(latestLine([only])).toBe(only);
+		expect(latestLine([])).toBeUndefined();
+	});
+
+	it("多条线且有一条不带标签的指标（合计）时取它", () => {
+		const total = line("tps");
+		expect(latestLine([line("conn · a", true), total, line("conn · b", true)])).toBe(total);
+	});
+
+	it("多条线、没有唯一的合计时不取任何一条（读数交给悬停提示）", () => {
+		expect(latestLine([line("conn · a", true), line("conn · b", true)])).toBeNull();
+		expect(latestLine([line("latency_ms"), line("p99_ms")])).toBeNull();
+	});
+});
+
+describe("图表的线（#78）", () => {
+	const declared = [
+		{ name: "tps", unit: "", kind: "gauge" as const },
+		{ name: "conn_tps", unit: "", kind: "gauge" as const, labels: ["host"] },
+	];
+	const bucket: MetricBucket = { time: at(0), points: 1, min: 1, max: 1, avg: 1, last: 1 };
+
+	it("每个序列一条线；带标签的序列用标签值命名并标为带标签", () => {
+		const lines = chartLines(["tps", "conn_tps"], declared, [
+			{ name: "tps", labels: {}, buckets: [bucket] },
+			{ name: "conn_tps", labels: { host: "a" }, buckets: [bucket] },
+		]);
+		expect(lines.map(({ name, labeled }) => ({ name, labeled }))).toEqual([
+			{ name: "tps", labeled: false },
+			{ name: "conn_tps · a", labeled: true },
+		]);
+		expect(new Set(lines.map((l) => l.key)).size).toBe(2);
+	});
+
+	it("还没有数据的指标：不带标签时占一条空线，带标签时没有线（不占图例项和颜色）", () => {
+		expect(chartLines(["tps", "conn_tps"], declared, undefined)).toEqual([
+			{ name: "tps", key: "tps", labeled: false, buckets: [] },
+		]);
+		expect(chartLines(["conn_tps"], declared, [])).toEqual([]);
 	});
 });
 

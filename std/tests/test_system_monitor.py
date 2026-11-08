@@ -27,6 +27,13 @@ METRICS = {
     "net_rx_bytes_per_s",
     "net_tx_bytes_per_s",
 }
+#: 按网卡、按磁盘的指标与它们的标签键。
+BY_DEVICE = {
+    "net_rx_bytes_per_s_by_nic": "nic",
+    "net_tx_bytes_per_s_by_nic": "nic",
+    "disk_read_bytes_per_s_by_disk": "disk",
+    "disk_write_bytes_per_s_by_disk": "disk",
+}
 
 
 def test_samples_every_metric_each_interval_and_succeeds_when_duration_ends(
@@ -35,7 +42,7 @@ def test_samples_every_metric_each_interval_and_succeeds_when_duration_ends(
     result = run_node(system_monitor, {"interval": 0.2, "duration": 1}, work_dir=tmp_path)
 
     assert result.status == "success", result.error
-    assert {point.name for point in result.metrics} == METRICS
+    assert {point.name for point in result.metrics} == METRICS | set(BY_DEVICE)
     for name in METRICS:
         samples = [point for point in result.metrics if point.name == name]
         assert 3 <= len(samples) <= 6, (name, len(samples))
@@ -44,6 +51,55 @@ def test_samples_every_metric_each_interval_and_succeeds_when_duration_ends(
 
 def values(result: Execution, name: str) -> list[float]:
     return [point.value for point in result.metrics if point.name == name]
+
+
+def by_device(result: Execution, name: str) -> dict[str, list[float]]:
+    """按网卡或按磁盘的指标：网卡名或磁盘名 → 依次上报的值。"""
+    series: dict[str, list[float]] = {}
+    for point in result.metrics:
+        if point.name == name:
+            assert list(point.labels) == [BY_DEVICE[name]], point
+            series.setdefault(point.labels[BY_DEVICE[name]], []).append(point.value)
+    return series
+
+
+def whole_disks() -> set[str]:
+    """本机的整块磁盘（不含分区）：/sys/block 下有的设备。"""
+    return {
+        name
+        for name in psutil.disk_io_counters(perdisk=True) or {}
+        if os.path.exists(f"/sys/block/{name.replace('/', '!')}")
+    }
+
+
+def test_reports_every_network_interface_and_every_whole_disk_as_its_own_series(
+    tmp_path: Path, loopback_traffic: None
+) -> None:
+    nics_before = set(psutil.net_io_counters(pernic=True))
+    disks = whole_disks()
+    others = sorted(nics_before - {"lo"})
+    # nic、disk 参数只决定合计指标统计哪一块，按网卡、按磁盘的指标总是覆盖全部。
+    inputs: dict[str, object] = {"interval": 0.2, "duration": 0.6}
+    if others:
+        inputs["nic"] = others[0]
+    if disks:
+        inputs["disk"] = sorted(disks)[0]
+
+    result = run_node(system_monitor, inputs, work_dir=tmp_path)
+
+    assert result.status == "success", result.error
+    stable_nics = nics_before & set(psutil.net_io_counters(pernic=True))
+    samples = len(values(result, "cpu_percent"))
+    for name in ("net_rx_bytes_per_s_by_nic", "net_tx_bytes_per_s_by_nic"):
+        series = by_device(result, name)
+        assert stable_nics <= set(series), (name, sorted(series))
+        assert all(len(series[nic]) == samples for nic in stable_nics)
+        # 回环网卡上的流量每次采样都远超 1 MB/s。
+        assert all(v > 1e6 for v in series["lo"]), series["lo"]
+    for name in ("disk_read_bytes_per_s_by_disk", "disk_write_bytes_per_s_by_disk"):
+        series = by_device(result, name)
+        assert set(series) == disks, (name, sorted(series))
+        assert all(len(v) == samples and min(v) >= 0 for v in series.values())
 
 
 def used_percent(path: str) -> float:
@@ -169,6 +225,8 @@ def test_disk_rates_cover_writes_to_disk(tmp_path: Path) -> None:
     assert done.is_set()
     # 速率 × 间隔 ≈ 这段时间里写入的字节数；合计还包括其他进程的写入，所以只要求不少于。
     assert sum(values(result, "disk_write_bytes_per_s")) * 0.2 >= written * 0.9
+    per_disk = by_device(result, "disk_write_bytes_per_s_by_disk")
+    assert max(sum(v) for v in per_disk.values()) * 0.2 >= written * 0.9, per_disk
 
 
 @pytest.mark.parametrize(

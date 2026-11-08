@@ -258,6 +258,11 @@ export const tasks = pgTable(
 		metricPoints: bigint("metric_points", { mode: "number" }).notNull().default(0),
 		/** 指标超过单任务上限已被截断（#29）：之后上报的点都被丢弃。 */
 		metricTruncated: boolean("metric_truncated").notNull().default(false),
+		/**
+		 * 任务的序列数超过上限（#78，每个任务 1000 个）：之后新出现的序列的点都被丢弃（计入 metric_dropped），
+		 * 已有序列照常写入。
+		 */
+		metricSeriesCapped: boolean("metric_series_capped").notNull().default(false),
 		/** Agent 断线排队超过上限而丢弃的指标点数（#29，Agent 在 MetricBatch 中上报）。 */
 		metricDropped: bigint("metric_dropped", { mode: "number" }).notNull().default(0),
 	},
@@ -311,7 +316,7 @@ export const nodePackages = pgTable(
 );
 
 /**
- * 指标摘要（#29）：每个任务（一次尝试）每个指标一行，写段时一起更新；主指标和列表页直接读它，不扫描原始段。
+ * 指标摘要（#29）：每个任务（一次尝试）每个序列（指标名 + 标签，#78）一行，写段时一起更新；主指标和列表页直接读它，不扫描原始段。
  * 原始数据在按天分区的分段表 `metric_segments`（drizzle 不支持声明式分区，迁移里手写，见 src/metrics/task-metrics.ts）。
  */
 export const metricSeries = pgTable(
@@ -324,6 +329,8 @@ export const metricSeries = pgTable(
 			.notNull()
 			.references(() => runs.id),
 		metric: text("metric").notNull(),
+		/** 序列的标签（#78）：与指标名一起区分序列；不带标签的序列为 `{}`。jsonb 的规范形式保证内容相同的标签相等。 */
+		labels: jsonb("labels").$type<Record<string, string>>().notNull().default({}),
 		points: integer("points").notNull(),
 		min: doublePrecision("min").notNull(),
 		max: doublePrecision("max").notNull(),
@@ -333,5 +340,8 @@ export const metricSeries = pgTable(
 		firstAt: timestamptz("first_at").notNull(),
 		lastAt: timestamptz("last_at").notNull(),
 	},
-	(t) => [primaryKey({ columns: [t.taskId, t.metric] }), index("metric_series_run").on(t.runId)],
+	(t) => [
+		primaryKey({ columns: [t.taskId, t.metric, t.labels] }),
+		index("metric_series_run").on(t.runId),
+	],
 );

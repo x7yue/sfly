@@ -1,6 +1,7 @@
 """`process_monitor`：按采样间隔统计目标进程（默认含整棵进程树）的资源。
 
-指标是所有进程的合计；每个进程每次采样的明细写进产物 `processes.csv`，每采样一次就写入并刷新，
+指标是所有进程的合计，另按每个进程（标签 `pid`、`name`）各上报一个序列。
+每个进程每次采样的明细写进产物 `processes.csv`，每采样一次就写入并刷新，
 节点被停止、取消时已采集的明细不丢。用法见开发文档「标准节点」页（docs/guide/standard-nodes.md）的
 `process_monitor` 一节。
 """
@@ -38,6 +39,27 @@ CSV_COLUMNS = (
     "io_write_bytes_per_s",
     "cmdline",
 )
+#: 按进程的指标（`*_by_process`）的标签键。
+BY_PROCESS_LABELS = ("pid", "name")
+#: 按进程的指标 → `_Sample` 里对应的值；值为 None（读不到）时这个进程不上报这一项。
+BY_PROCESS: dict[
+    str,
+    Literal[
+        "cpu_percent",
+        "rss_bytes",
+        "threads",
+        "open_fds",
+        "io_read_bytes_per_s",
+        "io_write_bytes_per_s",
+    ],
+] = {
+    "cpu_percent_by_process": "cpu_percent",
+    "rss_bytes_by_process": "rss_bytes",
+    "threads_by_process": "threads",
+    "open_fds_by_process": "open_fds",
+    "io_read_bytes_per_s_by_process": "io_read_bytes_per_s",
+    "io_write_bytes_per_s_by_process": "io_write_bytes_per_s",
+}
 #: 等目标进程出现时的检查间隔（秒）。
 WAIT_POLL = 0.2
 #: 进程没有变化时，每隔多少秒把进程列表和各自的资源写一次日志。
@@ -79,12 +101,50 @@ class _Sample(TypedDict):
         Metric("open_fds", description="所有进程打开的文件描述符数之和"),
         Metric("io_read_bytes_per_s", unit="B/s", description="所有进程的磁盘读取速率之和"),
         Metric("io_write_bytes_per_s", unit="B/s", description="所有进程的磁盘写入速率之和"),
+        Metric(
+            "cpu_percent_by_process",
+            unit="%",
+            description="每个进程的 CPU 占用（一个核满载为 100）",
+            labels=BY_PROCESS_LABELS,
+        ),
+        Metric(
+            "rss_bytes_by_process",
+            unit="B",
+            description="每个进程的常驻内存",
+            labels=BY_PROCESS_LABELS,
+        ),
+        Metric("threads_by_process", description="每个进程的线程数", labels=BY_PROCESS_LABELS),
+        Metric(
+            "open_fds_by_process",
+            description="每个进程打开的文件描述符数（读不到的进程不上报）",
+            labels=BY_PROCESS_LABELS,
+        ),
+        Metric(
+            "io_read_bytes_per_s_by_process",
+            unit="B/s",
+            description="每个进程的磁盘读取速率（读不到的进程不上报）",
+            labels=BY_PROCESS_LABELS,
+        ),
+        Metric(
+            "io_write_bytes_per_s_by_process",
+            unit="B/s",
+            description="每个进程的磁盘写入速率（读不到的进程不上报）",
+            labels=BY_PROCESS_LABELS,
+        ),
     ],
     charts=[
         Chart("CPU", metrics=["cpu_percent"]),
         Chart("内存", metrics=["rss_bytes"]),
         Chart("线程与文件描述符", metrics=["threads", "open_fds"]),
         Chart("磁盘读写", metrics=["io_read_bytes_per_s", "io_write_bytes_per_s"]),
+        Chart("CPU（按进程）", metrics=["cpu_percent_by_process"]),
+        Chart("内存（按进程）", metrics=["rss_bytes_by_process"]),
+        Chart("线程数（按进程）", metrics=["threads_by_process"]),
+        Chart("文件描述符（按进程）", metrics=["open_fds_by_process"]),
+        Chart(
+            "磁盘读写（按进程）",
+            metrics=["io_read_bytes_per_s_by_process", "io_write_bytes_per_s_by_process"],
+        ),
     ],
     primary_metric="cpu_percent",
 )
@@ -99,7 +159,7 @@ def process_monitor(
     duration: float | None = None,
     on_exit: Literal["fail", "succeed"] = "fail",
 ) -> ProcessMonitorOutputs:
-    """每 `interval` 秒（默认 1）采样一次目标进程，上报所有进程的合计指标。
+    """每 `interval` 秒（默认 1）采样一次目标进程，上报所有进程的合计指标和每个进程各自的指标。
 
     - 目标：`pid`（进程号）、`name`（进程名，完全相同）、`match`（命令行正则，部分匹配即可），
       都可以是列表，至少给出一个；`include_children`（默认 true）时加上目标的全部子孙进程；
@@ -141,6 +201,7 @@ def process_monitor(
             f.flush()
             count += 1
             _report_totals(ctx, samples)
+            _report_by_process(ctx, samples)
 
             exited, added, removed = _refresh(targets, tracked)
             if added or removed:
@@ -319,6 +380,16 @@ def _report_totals(ctx: Context, samples: Sequence[_Sample]) -> None:
     ctx.metric("open_fds", sum(s["open_fds"] or 0 for s in samples))
     ctx.metric("io_read_bytes_per_s", sum(s["io_read_bytes_per_s"] or 0 for s in samples))
     ctx.metric("io_write_bytes_per_s", sum(s["io_write_bytes_per_s"] or 0 for s in samples))
+
+
+def _report_by_process(ctx: Context, samples: Sequence[_Sample]) -> None:
+    """每个进程各自上报，标签是 pid 和进程名；读不到的值（文件描述符、IO）不上报。"""
+    for s in samples:
+        labels = {"pid": str(s["pid"]), "name": s["name"]}
+        for metric, key in BY_PROCESS.items():
+            value = s[key]
+            if value is not None:
+                ctx.metric(metric, value, labels=labels)
 
 
 def _io(proc: psutil.Process) -> tuple[float, int, int] | None:

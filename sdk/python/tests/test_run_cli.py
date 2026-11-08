@@ -73,6 +73,27 @@ def test_metrics_are_summarized_as_a_table(project: Path) -> None:
     assert table[2].split() == ["total", "counter", "2", "7", "5", "7"]
 
 
+def test_metric_table_has_a_row_per_series_with_its_label_values(project: Path) -> None:
+    steps = [
+        ["level", 1],
+        ["conn", 3, {"port": 80, "host": "a"}],
+        ["conn", 5, {"host": "b", "port": "80"}],
+        ["conn", 1, {"host": "a", "port": "80"}],
+        ["level", 2],
+    ]
+
+    run = sfly_run(project, "metrics", "--params", json.dumps({"steps": steps}))
+
+    assert run.returncode == 0, run.stderr
+    table = run.stdout.split("指标：\n", 1)[1].splitlines()
+    # 每个序列一行（按首次上报的顺序），指标名后面跟标签值（数字已转成字符串，按键排序）。
+    assert [row.split() for row in table[1:4]] == [
+        ["level", "gauge", "2", "2", "1", "2"],
+        ["conn{host=a,port=80}", "gauge", "2", "1", "1", "3"],
+        ["conn{host=b,port=80}", "gauge", "1", "5", "5", "5"],
+    ]
+
+
 def test_artifacts_of_each_run_are_in_their_own_timestamped_directory(project: Path) -> None:
     first = sfly_run(project, "artifacts", "--params", '{"files": {"a.txt": "第一次"}}')
     second = sfly_run(project, "artifacts", "--params", '{"files": {"a.txt": "第二次"}}')

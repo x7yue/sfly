@@ -22,3 +22,7 @@
 - 代价：每段在封存前约重写 12 次（写入与 WAL 约为最终体积的 6 倍），并在当天分区留下死元组，由 autovacuum 回收；过期仍按整天删除分区，不受影响。更新后的行物理位置可能变化，BRIN 的相关性略降，但段的起始时间不变、同一天的数据仍在同一分区内，影响可忽略。
 - 完全随机的浮点数本身不可压缩，PostgreSQL 会原样存储。
 - 日后迁移到 TimescaleDB 超表不受影响。
+
+## 修订（2026-11-08，#78 设计时）
+
+为标签预留的 jsonb 列定名为 `labels`，只存序列的标签，并且是序列身份的一部分：`metric_series` 与 `metric_segments` 都加 `labels jsonb NOT NULL DEFAULT '{}'`，主键分别改为 `(task_id, metric, labels)` 与 `(task_id, metric, labels, start_at)`。jsonb 按规范形式存储（键已排序），写法不同但内容相同的标签在比较时相等，可以直接参与主键，不需要另存一个规范化的文本键。从未写入过的 `ext` 列删除。
