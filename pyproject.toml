@@ -24,7 +24,10 @@ target-version = "py310"
 extend-exclude = ["node_modules", "apps", "packages", "*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B"]
+# G：日志参数按 % 传入（sdk-reference「ctx.log」），不在调用前用 f-string、% 或 format 拼好。
+# G010 不适用：`ctx.log.warn` 是 SDK 文档里写明的 `warning` 别名。
+select = ["E", "F", "W", "I", "UP", "B", "G"]
+ignore = ["G010"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["sfly", "sfly_std"]
