@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use sfly_agent::proto::{RunningTask, agent_message};
-use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task};
+use support::{AgentOptions, AgentProcess, FakeControlPlane, spawn_agent, stub_task};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 fn alive(pid: u32) -> bool {
@@ -38,6 +38,19 @@ async fn wait_for_file(path: &Path) -> String {
     }
 }
 
+/// 测试结束时任务还在执行：丢弃 Agent 后它的执行器不能留下来继续运行（#113）。
+async fn assert_no_orphan_after_dropping(agent: AgentProcess, pid: u32) {
+    drop(agent);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while alive(pid) {
+        assert!(
+            Instant::now() < deadline,
+            "orphaned executor {pid} still running"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 fn held(task_id: &str) -> RunningTask {
     RunningTask {
         task_id: task_id.into(),
@@ -55,7 +68,7 @@ fn sorted(mut tasks: Vec<RunningTask>) -> Vec<RunningTask> {
 #[tokio::test]
 async fn hello_after_reconnecting_lists_running_tasks_and_tasks_with_unacked_results() {
     let cp = FakeControlPlane::start().await;
-    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-held"));
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-held"));
     assert!(cp.hello(0).await.running_tasks.is_empty());
     cp.stop_acking();
     let dir = tempfile::tempdir().unwrap();
@@ -69,7 +82,7 @@ async fn hello_after_reconnecting_lists_running_tasks_and_tasks_with_unacked_res
     .await;
     cp.assign(stub_task("task-done", "echo", json!({ "text": "x" })))
         .await;
-    wait_for_file(&ready).await;
+    let pid: u32 = wait_for_file(&ready).await.trim().parse().unwrap();
     cp.result("task-done").await;
     cp.end_session();
 
@@ -78,6 +91,7 @@ async fn hello_after_reconnecting_lists_running_tasks_and_tasks_with_unacked_res
         sorted(hello.running_tasks),
         vec![held("task-done"), held("task-running")]
     );
+    assert_no_orphan_after_dropping(agent, pid).await;
 }
 
 /// 包一层共享 venv 的 python（#132）：`sfly.installed`（重连时 Hello 前清点已安装的包）在 `hold`
@@ -235,7 +249,7 @@ async fn sends_heartbeats_at_the_interval_given_in_welcome() {
 async fn heartbeats_list_the_tasks_the_agent_holds() {
     let cp = FakeControlPlane::start().await;
     cp.set_heartbeat_interval(Duration::from_millis(100));
-    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-held-beats"));
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-held-beats"));
     cp.hello(0).await;
     cp.stop_acking();
     let dir = tempfile::tempdir().unwrap();
@@ -248,7 +262,7 @@ async fn heartbeats_list_the_tasks_the_agent_holds() {
     .await;
     cp.assign(stub_task("task-done", "echo", json!({ "text": "x" })))
         .await;
-    wait_for_file(&ready).await;
+    let pid: u32 = wait_for_file(&ready).await.trim().parse().unwrap();
     cp.result("task-done").await;
 
     // 心跳带上正在执行的任务和结果还没收到 Ack 的任务（控制面只为它们续约）。
@@ -266,4 +280,5 @@ async fn heartbeats_list_the_tasks_the_agent_holds() {
         sorted(beat.running_tasks),
         vec![held("task-done"), held("task-running")]
     );
+    assert_no_orphan_after_dropping(agent, pid).await;
 }
