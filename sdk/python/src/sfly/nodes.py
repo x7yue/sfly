@@ -28,12 +28,18 @@ ChartType = Literal["line", "area", "bar", "stat"]
 
 @dataclass(frozen=True)
 class Metric:
-    """指标声明：名称（标识符）、单位、类型（`gauge` 瞬时值 | `counter` 累计值）、可选说明。"""
+    """指标声明：名称（标识符）、单位、类型（`gauge` 瞬时值 | `counter` 累计值）、可选说明、
+    标签键（最多 3 个，命名规则同指标名）。
+
+    声明了标签键的指标，每次上报都要给全这些键的值（`ctx.metric(name, value, labels={...})`），
+    每组不同的标签值是一个序列，运行监控页的折线和面积图里各画一条线；没声明标签键的指标不能带标签。
+    """
 
     name: str
     unit: str = ""
     kind: MetricKind = "gauge"
     description: str | None = None
+    labels: Sequence[str] = ()
 
 
 @dataclass(frozen=True)

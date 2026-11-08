@@ -161,6 +161,8 @@ def output_schema(fn: Any, decl: NodeDeclaration, label: str) -> JsonSchema:
 #: 每个节点类型最多声明的指标数和图表数（与 packages/schema 一致）。
 MAX_METRICS = 50
 MAX_CHARTS = 20
+#: 每个指标最多声明的标签键数（与 packages/schema 一致）。
+MAX_LABEL_KEYS = 3
 METRIC_KINDS = ("gauge", "counter")
 CHART_TYPES = ("line", "area", "bar", "stat")
 _METRIC_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -192,6 +194,9 @@ def metric_declarations(decl: NodeDeclaration) -> dict[str, Any]:
         item: dict[str, Any] = {"name": metric.name, "unit": metric.unit, "kind": metric.kind}
         if metric.description is not None:
             item["description"] = metric.description
+        labels = _label_keys(metric)
+        if labels:
+            item["labels"] = labels
         metrics.append(item)
 
     charts: list[dict[str, Any]] = []
@@ -217,6 +222,26 @@ def metric_declarations(decl: NodeDeclaration) -> dict[str, Any]:
             raise ScanError(f"主指标 {decl.primary_metric} 未声明")
         result["primary_metric"] = decl.primary_metric
     return result
+
+
+def _label_keys(metric: Metric) -> list[str]:
+    if isinstance(metric.labels, str) or not isinstance(metric.labels, (list, tuple)):
+        raise ScanError(f'指标 {metric.name} 的标签键必须是列表，例如 labels=["pid"]')
+    if len(metric.labels) > MAX_LABEL_KEYS:
+        raise ScanError(
+            f"指标 {metric.name} 最多 {MAX_LABEL_KEYS} 个标签键，声明了 {len(metric.labels)} 个"
+        )
+    keys: list[str] = []
+    for key in metric.labels:
+        if not isinstance(key, str) or not _METRIC_NAME.match(key):
+            raise ScanError(
+                f"指标 {metric.name} 的标签键 {key!r} 必须是标识符"
+                "（字母、数字、下划线，不以数字开头）"
+            )
+        if key in keys:
+            raise ScanError(f"指标 {metric.name} 的标签键 {key} 重复")
+        keys.append(key)
+    return keys
 
 
 def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:

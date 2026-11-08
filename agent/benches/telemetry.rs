@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use sfly_agent::logs::LineSplitter;
-use sfly_agent::metrics::Merger;
+use sfly_agent::metrics::{Labels, Merger};
 
 const EVENTS: usize = 10_000;
 const METRICS: [&str; 4] = ["seq", "tps", "latency", "errors"];
@@ -38,7 +38,7 @@ fn merge(c: &mut Criterion) {
             let mut merger = Merger::default();
             for &(ts, name, kind, value) in &events {
                 // 与 Agent 一样每次上报一个新的 String（来自事件 JSON 的解析结果）。
-                merger.add(ts, name.to_owned(), kind, value);
+                merger.add(ts, name.to_owned(), Labels::new(), kind, value);
             }
             black_box(merger.take(None))
         });

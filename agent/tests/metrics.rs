@@ -1,9 +1,10 @@
 //! 切入点 B（Agent 一侧）：真实 Agent + SDK 执行器 + 桩节点 `metrics` 上报指标（#29）。
-//! Agent 按「任务 × 指标 × 秒」合并，每个任务每秒最多发一批 `MetricBatch`，任务结束前发完；
+//! Agent 按「任务 × 序列（指标名 + 标签）× 秒」合并，每个任务每秒最多发一批 `MetricBatch`，任务结束前发完；
 //! 断线期间在内存里排队（有上限，超出丢弃最早的点），恢复后上报丢弃计数。
 
 mod support;
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -38,6 +39,13 @@ fn sdk_logs(all: &[Received], task_id: &str) -> Vec<String> {
             _ => None,
         })
         .flatten()
+        .collect()
+}
+
+fn labels(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+    pairs
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect()
 }
 
@@ -115,6 +123,58 @@ async fn points_are_merged_per_metric_and_second_and_non_finite_values_are_dropp
         "{logs:?}"
     );
     assert!(logs.iter().all(|l| !l.contains("\"metric\"")), "{logs:?}");
+}
+
+#[tokio::test]
+async fn points_of_different_series_in_the_same_second_are_merged_separately() {
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-metric-labels"));
+    cp.hello(0).await;
+
+    let a = json!({ "host": "a", "port": 1 });
+    let b = json!({ "port": "1", "host": "b" });
+    cp.assign(stub_task(
+        "task-labels",
+        "metrics",
+        json!({ "steps": [
+            "align",
+            ["conn", 5, a], ["conn", 1, b], ["conn", 3, a], ["conn", 2, b], ["level", 9],
+            "align",
+            ["conn", 7, a],
+        ] }),
+    ))
+    .await;
+
+    let (result, _) = cp.result("task-labels").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    let batches = batches_of(&cp.received_with_session(), "task-labels");
+    let conn = points_of(&batches, "conn");
+    let of = |host: &str| -> Vec<(i64, f64, f64, f64)> {
+        conn.iter()
+            .filter(|p| p.labels == labels(&[("host", host), ("port", "1")]))
+            .map(|p| (p.time_unix_s, p.value, p.min, p.max))
+            .collect()
+    };
+    let (series_a, series_b) = (of("a"), of("b"));
+    assert_eq!(conn.len(), 3, "每个序列每秒一个点：{conn:?}");
+    assert_eq!(series_a.len(), 2, "{conn:?}");
+    assert_eq!(series_b.len(), 1, "{conn:?}");
+    // 同一秒里两个序列各自取最后一个值、最小值和最大值，互不影响。
+    assert_eq!(
+        (series_a[0].1, series_a[0].2, series_a[0].3),
+        (3.0, 3.0, 5.0)
+    );
+    assert_eq!(
+        (series_b[0].1, series_b[0].2, series_b[0].3),
+        (2.0, 1.0, 2.0)
+    );
+    assert_eq!(series_a[1].1, 7.0);
+    let level = points_of(&batches, "level");
+    assert_eq!(level.len(), 1);
+    assert!(level[0].labels.is_empty(), "不带标签的指标没有标签");
+    assert_eq!(series_b[0].0, level[0].time_unix_s);
+    assert_eq!(series_a[0].0, level[0].time_unix_s);
+    assert_eq!(series_a[1].0, level[0].time_unix_s + 1);
 }
 
 #[tokio::test]
@@ -233,4 +293,58 @@ async fn points_queued_while_disconnected_are_capped_by_dropping_the_oldest() {
         Some(23.0),
         "最后一个值"
     );
+}
+
+#[tokio::test]
+async fn labels_survive_queueing_while_disconnected() {
+    let cp = FakeControlPlane::start().await;
+    let port = cp.port;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-metric-labels-queue"));
+    cp.hello(0).await;
+    // 约 5 秒，每 0.25 秒给两个序列各上报一次。
+    let steps: Vec<Value> = (0..20)
+        .flat_map(|i| {
+            [
+                json!(["conn", i, { "host": "a", "port": 1 }]),
+                json!(["conn", i, { "host": "b", "port": 1 }]),
+                json!(0.25),
+            ]
+        })
+        .collect();
+    cp.assign(stub_task(
+        "task-labels-queue",
+        "metrics",
+        json!({ "steps": steps }),
+    ))
+    .await;
+    cp.wait_for("first metric batch", |all| {
+        (!batches_of(all, "task-labels-queue").is_empty()).then_some(())
+    })
+    .await;
+    // 控制面下线约 2 秒：这期间的点在 Agent 内存里排队，恢复后补发。
+    drop(cp);
+    tokio::time::sleep(Duration::from_millis(2000)).await;
+    let cp = FakeControlPlane::start_on(port).await;
+
+    let (result, _) = cp.result("task-labels-queue").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    let conn = points_of(
+        &batches_of(&cp.received_with_session(), "task-labels-queue"),
+        "conn",
+    );
+    let a = labels(&[("host", "a"), ("port", "1")]);
+    let b = labels(&[("host", "b"), ("port", "1")]);
+    assert!(
+        conn.iter().all(|p| p.labels == a || p.labels == b),
+        "补发的点带着各自的标签：{conn:?}"
+    );
+    for series in [&a, &b] {
+        let values: Vec<f64> = conn
+            .iter()
+            .filter(|p| p.labels == *series)
+            .map(|p| p.value)
+            .collect();
+        assert!(values.len() >= 3, "{series:?}: {values:?}");
+        assert_eq!(values.last(), Some(&19.0), "{series:?}: {values:?}");
+    }
 }

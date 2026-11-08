@@ -26,6 +26,7 @@ import tempfile
 import timeit
 
 from sfly.context import Context
+from sfly.nodes import Metric
 
 
 def measure(repeat: int) -> tuple[int, list[float]]:
@@ -38,7 +39,7 @@ def measure(repeat: int) -> tuple[int, list[float]]:
             cancel_path=None,
             artifacts_dir=None,
             artifacts_url=None,
-            metrics={"seq": "gauge"},
+            metrics=[Metric("seq")],
         )
         timer = timeit.Timer(
             "ctx.metric('seq', 12345.5)",

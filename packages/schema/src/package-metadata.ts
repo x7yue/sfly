@@ -32,12 +32,20 @@ export const MetricName = z
 	.string()
 	.regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "指标名必须是标识符（字母、数字、下划线，不以数字开头）");
 
-/** 指标声明：`gauge` 瞬时值 | `counter` 累计值。 */
+/** 每个指标最多声明的标签键数。 */
+export const MAX_LABEL_KEYS = 3;
+
+/**
+ * 指标声明：`gauge` 瞬时值 | `counter` 累计值。
+ * `labels` 是标签键（命名规则同指标名、不重复）：每个点必须给全这些键的值，每组标签值是一个序列；
+ * 没有这个字段的指标不带标签。
+ */
 export const MetricDeclaration = z.strictObject({
 	name: MetricName,
 	unit: z.string(),
 	kind: z.enum(["gauge", "counter"]),
 	description: z.string().optional(),
+	labels: z.array(MetricName).max(MAX_LABEL_KEYS).optional(),
 });
 
 /** 图表声明：把一个或几个本节点类型声明的指标画出来。 */
@@ -74,6 +82,16 @@ export const NodeTypeMetadata = z
 				});
 			}
 			names.add(metric.name);
+			const keys = metric.labels ?? [];
+			for (const [j, key] of keys.entries()) {
+				if (keys.indexOf(key) !== j) {
+					ctx.addIssue({
+						code: "custom",
+						path: ["metrics", i, "labels", j],
+						message: `指标 ${metric.name} 的标签键 ${key} 重复`,
+					});
+				}
+			}
 		}
 		for (const [i, chart] of (node.charts ?? []).entries()) {
 			for (const ref of chart.metrics) {

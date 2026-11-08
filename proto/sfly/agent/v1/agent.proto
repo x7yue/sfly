@@ -294,18 +294,18 @@ message Progress {
   int64 time_unix_ms = 6;
 }
 
-// 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 指标 × 秒」合并，每个任务每秒最多发一批，
-// 任务结束前补发剩余的点；控制面不回 Ack，同一指标同一秒的重复点被忽略。
+// 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 序列 × 秒」合并，每个任务每秒最多发一批，
+// 任务结束前补发剩余的点；控制面不回 Ack，同一序列同一秒的重复点被忽略。
 message MetricBatch {
   string task_id = 1;
   uint32 attempt = 2;
-  // 同一指标按时间递增。
+  // 同一序列按时间递增。
   repeated MetricPoint points = 3;
   // 自上一批以来，断线排队超过上限而被丢弃的（最早的）点数。
   uint64 dropped_points = 4;
 }
 
-// 一个指标在一秒内合并后的点。
+// 一个序列（指标名 + 标签）在一秒内合并后的点。
 message MetricPoint {
   // 节点类型声明的指标名。
   string name = 1;
@@ -316,6 +316,9 @@ message MetricPoint {
   // 这一秒的最小值、最大值（counter 与 value 相同）。
   double min = 4;
   double max = 5;
+  // 这个点所属序列的标签（键 → 值）；指标没有声明标签键时为空。
+  // 键必须与节点类型声明的标签键一致，否则控制面丢弃这个点（计入丢弃数）。
+  map<string, string> labels = 6;
 }
 
 // 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。

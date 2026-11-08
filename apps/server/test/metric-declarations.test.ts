@@ -18,9 +18,10 @@ const orderGen = {
 		{ name: "p99", unit: "ms", kind: "gauge" },
 		{ name: "inflight", unit: "笔", kind: "gauge" },
 		{ name: "rejected", unit: "", kind: "counter" },
+		{ name: "tps_by_conn", unit: "笔/s", kind: "gauge", labels: ["host", "port"] },
 	],
 	charts: [
-		{ title: "TPS", type: "area", metrics: ["tps"] },
+		{ title: "TPS", type: "area", metrics: ["tps", "tps_by_conn"] },
 		{ title: "下单延迟", type: "line", metrics: ["p50", "p99"] },
 	],
 	primary_metric: "tps",
@@ -30,7 +31,7 @@ const orderGen = {
 const orderGenView = {
 	...orderGen,
 	charts: [
-		{ title: "TPS", type: "area", metrics: ["tps"], default: false },
+		{ title: "TPS", type: "area", metrics: ["tps", "tps_by_conn"], default: false },
 		{ title: "下单延迟", type: "line", metrics: ["p50", "p99"], default: false },
 		{ title: "inflight", type: "line", metrics: ["inflight"], default: true },
 		{ title: "rejected", type: "stat", metrics: ["rejected"], default: true },
@@ -83,6 +84,7 @@ describe("指标与图表声明", () => {
 				{ title: "p99", type: "line", metrics: ["p99"], default: true },
 				{ title: "inflight", type: "line", metrics: ["inflight"], default: true },
 				{ title: "rejected", type: "stat", metrics: ["rejected"], default: true },
+				{ title: "tps_by_conn", type: "line", metrics: ["tps_by_conn"], default: true },
 			],
 		});
 		// 没有指定主指标时，节点类型没有主指标。
@@ -101,6 +103,21 @@ describe("指标与图表声明", () => {
 			"指标名 tps 重复",
 		],
 		["主指标未声明", { primary_metric: "latency" }, "主指标 latency 未声明"],
+		[
+			"标签键超过 3 个",
+			{ metrics: [{ name: "m", unit: "", kind: "gauge", labels: ["a", "b", "c", "d"] }] },
+			"labels",
+		],
+		[
+			"标签键重复",
+			{ metrics: [{ name: "m", unit: "", kind: "gauge", labels: ["pid", "pid"] }] },
+			"指标 m 的标签键 pid 重复",
+		],
+		[
+			"标签键不是标识符",
+			{ metrics: [{ name: "m", unit: "", kind: "gauge", labels: ["a-b"] }] },
+			"labels",
+		],
 		[
 			"超过 50 个指标",
 			{

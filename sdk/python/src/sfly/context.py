@@ -3,7 +3,8 @@
 - `ctx.log`：带级别的结构化日志，`ctx.log.info("checking %s", url)`，
   也可以 `ctx.log("...", level="warn")`；
 - `ctx.progress(当前值, 总数, 说明)`：上报进度，总数未知时省略；
-- `ctx.metric(指标名, 数值)`：上报节点类型声明的指标（见 `Context.metric`）；
+- `ctx.metric(指标名, 数值, labels={...})`：上报节点类型声明的指标，可以带标签
+  （见 `Context.metric`）；
 - `ctx.artifacts`：保存产物，返回可以写进输出的产物引用（见 `Artifacts`）；
 - `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）；
 - `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt（见 `TaskInfo`）；
@@ -19,7 +20,8 @@
 - 日志 `{"type": "log", "ts": <Unix 毫秒>, "level": "debug|info|warn|error", "message": "..."}`
 - 进度 `{"type": "progress", "ts": ..., "current": 1, "total": 3, "message": "..."}`
   （`total` 可以是 null）
-- 指标 `{"type": "metric", "ts": ..., "name": "tps", "kind": "gauge|counter", "value": 1.5}`
+- 指标 `{"type": "metric", "ts": ..., "name": "tps", "kind": "gauge|counter", "value": 1.5}`，
+  带标签时加 `"labels": {"pid": "1234"}`（值都是字符串；不带标签时没有这个字段）
 
 `print` 和子进程的输出不经过这里：Agent 直接读取执行器的标准输出 / 标准错误，
 与事件文件合并成同一条日志流。
@@ -31,7 +33,7 @@ import json
 import math
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -40,10 +42,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from sfly.nodes import Metric
+
 #: 日志级别（与控制面、画布一致）。
 LEVELS = ("debug", "info", "warn", "error")
 
 _FROM_ENV: Any = object()
+
+#: 标签值的最大长度（字符数）。
+MAX_LABEL_VALUE_CHARS = 128
 
 
 class Cancelled(BaseException):
@@ -243,8 +250,8 @@ class Context:
     `cancel_path` 默认取 `SFLY_CANCEL`；为 None 时 `cancelled()` 总是 False。
     `artifacts_dir` / `artifacts_url` 默认取 `SFLY_ARTIFACTS` / `SFLY_ARTIFACTS_URL`。
     `task` 默认读 `SFLY_TASK` 指向的 task.json（见 `TaskInfo`）；`procs_dir` 默认取 `SFLY_PROCS`。
-    `metrics` 是节点类型声明的指标（指标名 → `gauge` | `counter`），执行器从 `@node` 的声明传入；
-    为 None（不知道声明，例如在节点之外直接构造）时不检查指标名，都按 `gauge` 上报。
+    `metrics` 是节点类型声明的指标（`sfly.Metric` 列表），执行器从 `@node` 的声明传入；
+    为 None（不知道声明，例如在节点之外直接构造）时不检查指标名和标签键，都按 `gauge` 上报。
     """
 
     def __init__(
@@ -253,7 +260,7 @@ class Context:
         cancel_path: str | os.PathLike[str] | None = _FROM_ENV,
         artifacts_dir: str | os.PathLike[str] | None = _FROM_ENV,
         artifacts_url: str | None = _FROM_ENV,
-        metrics: Mapping[str, str] | None = None,
+        metrics: Sequence[Metric] | None = None,
         task: TaskInfo | None = None,
         procs_dir: str | os.PathLike[str] | None = None,
     ) -> None:
@@ -275,7 +282,12 @@ class Context:
         self._cancel = cancel_path
         self.log = Log(self._events)
         self.artifacts = Artifacts(artifacts_dir, artifacts_url)
-        self._metrics = dict(metrics) if metrics is not None else None
+        # 指标名 → (类型, 声明的标签键)。
+        self._metrics = (
+            {m.name: (m.kind, frozenset(m.labels)) for m in metrics}
+            if metrics is not None
+            else None
+        )
         self._warned: set[tuple[str, str]] = set()
 
     @property
@@ -309,23 +321,32 @@ class Context:
             }
         )
 
-    def metric(self, name: str, value: float) -> None:
-        """上报一个指标的当前值。可以随意频繁调用：Agent 按「指标 × 秒」合并后每秒最多上报一次
+    def metric(
+        self, name: str, value: float, labels: Mapping[str, str | int | float] | None = None
+    ) -> None:
+        """上报一个指标的当前值。可以随意频繁调用：Agent 按「序列 × 秒」合并后每秒最多上报一次
         （`gauge` 取这一秒最后一个值并带最小 / 最大值，`counter` 取这一秒结束时的值）。
 
-        节点类型没有声明的指标名和非有限数值（NaN、无穷大）被丢弃，并写一条警告日志
-        （每个指标名、每种原因只警告一次）。
+        `labels` 是这个点的标签（键 → 值），一组标签值是一个序列，运行监控页的折线和面积图里
+        每个序列画一条线。指标在 `Metric(labels=[...])` 里声明了标签键时，每次都要给全这些键；
+        没声明标签键的指标不能带标签。值是不超过 128 个字符的非空字符串，数字自动转成字符串。
+
+        以下点被丢弃，并写一条警告日志（每个指标名、每种原因只警告一次）：节点类型没有声明的指标名、
+        非有限数值（NaN、无穷大）、缺少声明过的标签键、带了未声明的标签键、给没声明标签键的指标带标签、
+        标签值为空或超过 128 个字符。
         """
         kind = "gauge"
+        keys: frozenset[str] = frozenset()
         if self._metrics is not None:
-            if name not in self._metrics:
+            declared = self._metrics.get(name)
+            if declared is None:
                 self._warn_once(
                     "undeclared",
                     name,
                     f"指标 {name!r} 未声明，已丢弃（在 @node(metrics=...) 中声明后才能上报）",
                 )
                 return
-            kind = self._metrics[name]
+            kind, keys = declared
         try:
             number = float(value)
         except (TypeError, ValueError):
@@ -335,9 +356,78 @@ class Context:
                 "non-finite", name, f"指标 {name!r} 的值必须是有限数值，实际为 {value!r}，已丢弃"
             )
             return
-        self._events.write(
-            {"type": "metric", "ts": _now_ms(), "name": name, "kind": kind, "value": number}
-        )
+        event: dict[str, Any] = {
+            "type": "metric",
+            "ts": _now_ms(),
+            "name": name,
+            "kind": kind,
+            "value": number,
+        }
+        if labels or keys:
+            checked = self._check_labels(name, keys, labels or {})
+            if checked is None:
+                return
+            if checked:
+                event["labels"] = checked
+        self._events.write(event)
+
+    def _check_labels(
+        self, name: str, keys: frozenset[str], labels: Mapping[str, Any]
+    ) -> dict[str, str] | None:
+        """校验并规范化标签（值转成字符串）；不合法时警告并返回 None。"""
+        if self._metrics is not None:
+            if not keys:
+                self._warn_once(
+                    "unexpected-labels",
+                    name,
+                    f"指标 {name!r} 没有声明标签键，不能带标签，已丢弃"
+                    "（在 Metric(labels=[...]) 中声明标签键后才能带标签上报）",
+                )
+                return None
+            missing = sorted(keys.difference(labels))
+            if missing:
+                self._warn_once(
+                    "missing-labels",
+                    name,
+                    f"指标 {name!r} 的点缺少标签 {', '.join(missing)}，已丢弃"
+                    f"（声明的标签键：{', '.join(sorted(keys))}）",
+                )
+                return None
+            extra = sorted(str(k) for k in labels if k not in keys)
+            if extra:
+                self._warn_once(
+                    "undeclared-labels",
+                    name,
+                    f"指标 {name!r} 的点带了未声明的标签键 {', '.join(extra)}，已丢弃"
+                    f"（声明的标签键：{', '.join(sorted(keys))}）",
+                )
+                return None
+        result: dict[str, str] = {}
+        for key, raw in labels.items():
+            if isinstance(raw, str):
+                text = raw
+            elif isinstance(raw, (int, float)) and not isinstance(raw, bool):
+                text = str(raw)
+            else:
+                self._warn_once(
+                    "label-type",
+                    name,
+                    f"指标 {name!r} 的标签 {key} 的值必须是字符串或数字，实际为 {raw!r}，已丢弃",
+                )
+                return None
+            if not text:
+                self._warn_once("empty-label", name, f"指标 {name!r} 的标签 {key} 的值为空，已丢弃")
+                return None
+            if len(text) > MAX_LABEL_VALUE_CHARS:
+                self._warn_once(
+                    "long-label",
+                    name,
+                    f"指标 {name!r} 的标签 {key} 的值超过 {MAX_LABEL_VALUE_CHARS} 个字符，已丢弃"
+                    "（标签值用来区分对象，不要放请求体、堆栈这类内容）",
+                )
+                return None
+            result[str(key)] = text
+        return result
 
     def _warn_once(self, reason: str, name: str, message: str) -> None:
         if (reason, name) in self._warned:

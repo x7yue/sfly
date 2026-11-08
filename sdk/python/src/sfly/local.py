@@ -70,12 +70,16 @@ class Progress:
 
 @dataclass(frozen=True)
 class MetricPoint:
-    """一次 `ctx.metric` 上报（未声明的指标和非有限数值已被 `Context` 丢弃）。"""
+    """一次 `ctx.metric` 上报（未声明的指标、非有限数值和标签不合法的点已被 `Context` 丢弃）。
+
+    `labels` 是这个点的标签（值都是字符串），不带标签时为空。
+    """
 
     ts: int
     name: str
     kind: str
     value: float
+    labels: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -379,7 +383,14 @@ class _Pump:
                 return
             if kind == "metric":
                 metric_kind = "counter" if event.get("kind") == "counter" else "gauge"
-                point = MetricPoint(ts, str(event["name"]), metric_kind, float(event["value"]))
+                labels = event.get("labels") or {}
+                point = MetricPoint(
+                    ts,
+                    str(event["name"]),
+                    metric_kind,
+                    float(event["value"]),
+                    {str(k): str(v) for k, v in labels.items()},
+                )
                 self._execution.metrics.append(point)
                 if self._on_metric is not None:
                     self._on_metric(point)

@@ -412,6 +412,7 @@ def stdout_rate(
     metrics=[
         Metric("level", "", "gauge", "瞬时值"),
         Metric("total", "", "counter", "累计值"),
+        Metric("conn", "", "gauge", "按连接区分的瞬时值", labels=["host", "port"]),
     ],
     primary_metric="level",
 )
@@ -419,6 +420,7 @@ def metrics(ctx: Context, steps: list[Any]) -> None:
     """指标测试用：按顺序执行 steps。
 
     - `[指标名, 值]`：`ctx.metric(指标名, float(值))`，值可以是 `"nan"`、`"inf"` 这样的字符串；
+    - `[指标名, 值, 标签]`：同上，带上标签（对象，原样传给 `labels`）；
     - 数字：等待这么多秒；
     - `"align"`：等到下一个整秒开始（让随后的几次上报落在同一秒里）；
     - `["late", 指标名, 值]`：补写一条时间戳为上一秒末（x.999）的 gauge 事件，
@@ -435,6 +437,9 @@ def metrics(ctx: Context, steps: list[Any]) -> None:
             ctx._events.write(
                 {"type": "metric", "ts": ts, "name": name, "kind": "gauge", "value": float(value)}
             )
+        elif len(step) == 3:
+            name, value, labels = step
+            ctx.metric(name, float(value), labels=labels)
         else:
             name, value = step
             ctx.metric(name, float(value))

@@ -6,7 +6,7 @@
 //! - 标准输出 → 来源 stdout、级别 info；标准错误 → 来源 stderr、级别 error；
 //! - 事件管道里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；
 //! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次；
-//! - `{"type":"metric"}` 按「指标 × 秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
+//! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
 //!   任务结束前发完。
 //!
 //! 同一批内按时间排序后再编号，所以不同来源的行大致按发生顺序排列；同一来源内保持写入顺序。
@@ -29,7 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
-use crate::metrics::{Merger, MetricQueue};
+use crate::metrics::{Labels, Merger, MetricQueue};
 use crate::proto::{
     AgentMessage, AssignTask, LogBatch, LogLevel, LogLine, LogSource, MetricBatch, Progress,
     agent_message,
@@ -510,6 +510,9 @@ enum Event {
         #[serde(default)]
         kind: String,
         value: f64,
+        /// 标签（键 → 值）；不带标签时没有这个字段。
+        #[serde(default)]
+        labels: Labels,
     },
 }
 
@@ -682,9 +685,10 @@ impl Forwarder {
                 name,
                 kind,
                 value,
+                labels,
             }) => self
                 .metrics
-                .add(ts.unwrap_or_else(now_ms), name, &kind, value),
+                .add(ts.unwrap_or_else(now_ms), name, labels, &kind, value),
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
                 time_unix_ms: now_ms(),

@@ -32,8 +32,13 @@ from sfly import Chart, Metric, node
         Metric("tps", unit="笔/s", description="每秒成交笔数"),
         Metric("p99", unit="ms"),
         Metric("rejected", kind="counter"),
+        Metric("conn_tps", unit="笔/s", labels=["host", "port"]),
     ],
-    charts=[Chart("TPS", type="area", metrics=["tps"]), Chart("延迟", metrics=["p99"])],
+    charts=[
+        Chart("TPS", type="area", metrics=["tps"]),
+        Chart("延迟", metrics=["p99"]),
+        Chart("按连接", metrics=["tps", "conn_tps"]),
+    ],
     primary_metric="tps",
 )
 def order_gen(ctx, rate: int) -> dict:
@@ -71,10 +76,12 @@ def test_build_writes_declared_metrics_charts_and_primary_metric(
         {"name": "tps", "unit": "笔/s", "kind": "gauge", "description": "每秒成交笔数"},
         {"name": "p99", "unit": "ms", "kind": "gauge"},
         {"name": "rejected", "unit": "", "kind": "counter"},
+        {"name": "conn_tps", "unit": "笔/s", "kind": "gauge", "labels": ["host", "port"]},
     ]
     assert order_gen["charts"] == [
         {"title": "TPS", "type": "area", "metrics": ["tps"]},
         {"title": "延迟", "type": "line", "metrics": ["p99"]},
+        {"title": "按连接", "type": "line", "metrics": ["tps", "conn_tps"]},
     ]
     assert order_gen["primary_metric"] == "tps"
 
@@ -114,6 +121,11 @@ def node_with(declarations: str) -> str:
         ("metrics=[Metric('m', kind='histogram')]", "histogram"),
         ("metrics=[Metric('m')], charts=[Chart('c', type='pie', metrics=['m'])]", "pie"),
         ("metrics=[Metric('m')], charts=[Chart('空图表', metrics=[])]", "空图表"),
+        ("metrics=[Metric('m', labels=['a', 'b', 'c', 'd'])]", "最多 3 个标签键"),
+        ("metrics=[Metric('m', labels=['pid', 'pid'])]", "标签键 pid 重复"),
+        ("metrics=[Metric('m', labels=['2nd'])]", "2nd"),
+        ("metrics=[Metric('m', labels=['a-b'])]", "a-b"),
+        ("metrics=[Metric('m', labels='pid')]", "标签键"),
     ],
 )
 def test_build_rejects_invalid_declarations(
@@ -161,8 +173,8 @@ def test_dev_sends_declarations_to_agent(
     # 开发版本和 sfly build 一样声明最低 SDK 版本，控制面派发时同样检查（#79）。
     assert request["metadata"]["requires_sdk"] == f">={sfly.__version__}"
     order_gen = {n["name"]: n for n in request["metadata"]["nodes"]}["order_gen"]
-    assert [m["name"] for m in order_gen["metrics"]] == ["tps", "p99", "rejected"]
-    assert [c["title"] for c in order_gen["charts"]] == ["TPS", "延迟"]
+    assert [m["name"] for m in order_gen["metrics"]] == ["tps", "p99", "rejected", "conn_tps"]
+    assert [c["title"] for c in order_gen["charts"]] == ["TPS", "延迟", "按连接"]
     assert order_gen["primary_metric"] == "tps"
 
 
