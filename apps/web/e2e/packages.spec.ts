@@ -50,8 +50,8 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(detail).toContainText("发布于 01-01 09:00");
 	await expect(detail).toContainText("未被锁定");
 	await expect(detail.getByRole("table", { name: "节点类型" }).getByRole("row")).toHaveText([
-		"节点类型输入输出声明的指标图表",
-		"http_checkHTTP 检查url* · methodstatus · body——（平台自带图表）",
+		"节点类型输入输出声明的指标标签键图表",
+		"http_checkHTTP 检查url* · methodstatus · body———（平台自带图表）",
 	]);
 	const versions = detail.getByRole("table", { name: "版本" }).getByRole("row");
 	await expect(versions.nth(1)).toContainText("1.3.0");
@@ -64,15 +64,56 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(page).toHaveURL(/\/packages\?name=demo-checks&version=1\.2\.0$/);
 	await expect(detail).toContainText("被 2 个场景锁定");
 	await expect(detail.getByRole("table", { name: "节点类型" }).getByRole("row")).toHaveText([
-		"节点类型输入输出声明的指标图表",
-		"http_checkHTTP 检查url* · expectstatus——（平台自带图表）",
-		"pingpinghost*alive——（平台自带图表）",
+		"节点类型输入输出声明的指标标签键图表",
+		"http_checkHTTP 检查url* · expectstatus———（平台自带图表）",
+		"pingpinghost*alive———（平台自带图表）",
 	]);
 	const sha = await detail.locator("dd").first().textContent();
 	expect(sha).toMatch(/^[0-9a-f]{64}$/);
 
 	await page.reload();
 	await expect(detail.getByRole("link", { name: "1.2.0" })).toHaveAttribute("aria-current");
+});
+
+test("节点类型的「标签键」列：列出每个带标签的指标和它的标签键", async ({ page, controlPlane }) => {
+	await publishPackage(controlPlane, {
+		nodes: [
+			{
+				name: "proc_mon",
+				title: "进程监控",
+				entry: "demo_checks.proc:proc_mon",
+				inputs: { type: "object", properties: {} },
+				outputs: { type: "object", properties: {} },
+				metrics: [
+					{ name: "cpu", unit: "%", kind: "gauge" },
+					{ name: "cpu_by_process", unit: "%", kind: "gauge", labels: ["pid", "name"] },
+					{ name: "io_by_disk", unit: "B/s", kind: "counter", labels: ["disk", "direction"] },
+				],
+				charts: [{ title: "CPU", type: "line", metrics: ["cpu", "cpu_by_process"] }],
+				primary_metric: "cpu",
+			},
+		],
+	});
+	await page.goto("/packages?name=demo-checks");
+	const table = page
+		.getByRole("region", { name: "demo-checks 详情" })
+		.getByRole("table", { name: "节点类型" });
+	await expect(table.getByRole("columnheader")).toHaveText([
+		"节点类型",
+		"输入",
+		"输出",
+		"声明的指标",
+		"标签键",
+		"图表",
+	]);
+	const cells = table.getByRole("row", { name: /proc_mon/ }).getByRole("cell");
+	await expect(cells.nth(4).getByRole("listitem")).toHaveText([
+		"cpu_by_process：pid · name",
+		"io_by_disk：disk · direction",
+	]);
+	// 带标签的累计值也默认画折线。
+	await expect(cells.nth(5)).toHaveText("2 张 · 主指标 cpuCPU · io_by_disk 默认");
+	await expect(cells.nth(5).getByTitle("折线：io_by_disk")).toBeVisible();
 });
 
 test("还没有节点包时显示空状态和发布命令，链接到开发文档", async ({ page }) => {

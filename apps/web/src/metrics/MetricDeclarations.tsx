@@ -2,7 +2,7 @@ import type { ChartView, MetricDeclaration, NodeTypeView } from "@sfly/schema";
 import { Badge } from "@/components/ui/badge";
 
 /**
- * 节点类型声明的指标与图表（#43）：节点包管理页的「声明的指标」「图表」两列，检查器的「说明与指标」。
+ * 节点类型声明的指标与图表（#43）：节点包管理页的「声明的指标」「标签键」「图表」三列，检查器的「说明与指标」。
  * 图表含控制面为没被任何图表引用的指标生成的默认图表（`default: true`），随锁定的节点包版本走。
  */
 
@@ -43,6 +43,23 @@ export function MetricsCell({ info }: { info: NodeMetricsInfo }) {
 				</span>
 			))}
 		</span>
+	);
+}
+
+/** 节点包管理页「标签键」列：每个带标签的指标一行，列出它的标签键（按声明顺序）。 */
+export function LabelKeysCell({ info }: { info: NodeMetricsInfo }) {
+	const labeled = metricsOf(info).filter((m) => m.labels?.length);
+	if (labeled.length === 0) return <span className="text-fg-3">—</span>;
+	return (
+		<ul aria-label="标签键" className="m-0 list-none p-0 font-mono text-xs text-fg-2">
+			{labeled.map((m) => (
+				<li key={m.name}>
+					{m.name}
+					<span className="text-fg-3">：</span>
+					{m.labels?.join(" · ")}
+				</li>
+			))}
+		</ul>
 	);
 }
 

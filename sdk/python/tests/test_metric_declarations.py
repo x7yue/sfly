@@ -126,6 +126,20 @@ def node_with(declarations: str) -> str:
         ("metrics=[Metric('m', labels=['2nd'])]", "2nd"),
         ("metrics=[Metric('m', labels=['a-b'])]", "a-b"),
         ("metrics=[Metric('m', labels='pid')]", "标签键"),
+        (
+            "metrics=[Metric('cpu', labels=['pid'])], primary_metric='cpu'",
+            "主指标 cpu 带标签键",
+        ),
+        (
+            "metrics=[Metric('cpu', labels=['pid'])], "
+            "charts=[Chart('CPU', type='stat', metrics=['cpu'])]",
+            "图表 CPU 是 stat，不能引用带标签键的指标 cpu",
+        ),
+        (
+            "metrics=[Metric('total'), Metric('cpu', labels=['pid'])], "
+            "charts=[Chart('CPU', type='bar', metrics=['total', 'cpu'])]",
+            "图表 CPU 是 bar，不能引用带标签键的指标 cpu",
+        ),
     ],
 )
 def test_build_rejects_invalid_declarations(
