@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import signal
 import subprocess
@@ -192,3 +193,65 @@ def test_ctrl_c_while_printing_logs_still_cancels(project: Path) -> None:
     assert "reentrant call" not in stderr
     assert "正在取消（再按一次 Ctrl-C 立即杀掉）……" in stderr
     assert "已取消：任务已取消，已终止进程树" in stderr
+
+
+def python_errors(stderr: str) -> list[str]:
+    """`sfly run` 自己的 Python 堆栈（节点的日志行带时间前缀，不算）。"""
+    starts = ("Traceback", "KeyboardInterrupt", "Exception ignored")
+    return [line for line in stderr.splitlines() if line.startswith(starts)]
+
+
+def interrupt_while_printing(proc: subprocess.Popen[bytes]) -> tuple[bytes, str]:
+    """等 `sfly run` 开始往标准输出打印结果，在打印中途发 SIGINT，返回完整的标准输出和标准错误。
+
+    标准输出只在节点结束后打印结果时写入，所以读到第一个字节就说明已经在打印结果；结果远超管道容量
+    （64 KiB）而测试暂不读取，`sfly run` 必然阻塞在打印里，此时发出的 SIGINT 必然在打印中途到达。
+    """
+    assert proc.stdout is not None
+    first = os.read(proc.stdout.fileno(), 1)
+    assert first, proc.communicate()
+    proc.send_signal(signal.SIGINT)
+    rest, stderr = proc.communicate(timeout=60)
+    return first + rest, stderr.decode("utf-8", errors="replace")
+
+
+def test_ctrl_c_while_printing_a_cancelled_result_is_ignored(project: Path, tmp_path: Path) -> None:
+    """取消后、打印结果期间再按 Ctrl-C（#122）：没有 Python 堆栈，结果打印完整，仍以 130 退出。"""
+    ready, report = tmp_path / "ready", tmp_path / "report"
+    params = json.dumps({"ready_file": str(ready), "report_file": str(report), "artifacts": 3000})
+    proc = subprocess.Popen(
+        [SFLY, "run", "wait_cancel", "--params", params],
+        cwd=project,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    deadline = time.monotonic() + 30
+    while not ready.exists():
+        assert proc.poll() is None, proc.communicate()
+        assert time.monotonic() < deadline, "节点没有启动"
+        time.sleep(0.05)
+    proc.send_signal(signal.SIGINT)
+
+    stdout, stderr = interrupt_while_printing(proc)
+
+    assert proc.returncode == 130, stderr
+    assert not python_errors(stderr), stderr
+    assert "强制杀掉" not in stderr
+    assert "已取消：任务已取消，已终止进程树" in stderr
+    assert "产物（3000 个" in stdout.decode() and f"02999-{'x' * 100}.txt" in stdout.decode()
+
+
+def test_ctrl_c_while_printing_a_successful_result_is_ignored(project: Path) -> None:
+    """成功结束后、打印结果期间按 Ctrl-C：结果已经确定，忽略它——没有堆栈，输出完整，以 0 退出。"""
+    proc = subprocess.Popen(
+        [SFLY, "run", "big", "--params", '{"size": 300000}'],
+        cwd=project,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+    stdout, stderr = interrupt_while_printing(proc)
+
+    assert proc.returncode == 0, stderr
+    assert not python_errors(stderr), stderr
+    assert outputs_of(stdout.decode()) == {"text": "x" * 300000}

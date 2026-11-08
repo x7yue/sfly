@@ -49,11 +49,10 @@ if [[ ${1:-} == --simulate ]]; then
 	exit 0
 fi
 
-previous=$(
-	gh release list --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName' |
-		sed -nE 's/^v([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' |
-		{ cat; echo "$current"; } | sort -uV | sed -n "/^${current//./\\.}\$/q;p" | tail -n1
-)
+# 先取列表再选，gh 失败时脚本直接退出，不会当成「没有旧 Release」。
+released=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1000 --json tagName --jq '.[].tagName')
+previous=$(bash scripts/release/previous-tag.sh "v$current" <<<"$released")
+previous=${previous#v}
 if [[ -z $previous ]]; then
 	echo "没有比当前版本 $current 旧的 Release" >"$out/skip"
 	cat "$out/skip"
