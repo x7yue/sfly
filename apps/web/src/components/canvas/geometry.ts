@@ -10,7 +10,8 @@ import { NODE_SIZE, REGION_PADDING } from "@sfly/orchestration";
 /** 节点卡片（原型 `.n`）。 */
 export const NODE_WIDTH = NODE_SIZE.width;
 export const NODE_HEIGHT = NODE_SIZE.height;
-export const NODE_RADIUS = 10;
+/** 卡片圆角：设计体系的 `rounded-lg`（8px）。 */
+export const NODE_RADIUS = 8;
 
 /** 端口直径（圆点；调度端口是旋转 45° 的方块，外接框同宽）。 */
 export const PORT_SIZE = 9;

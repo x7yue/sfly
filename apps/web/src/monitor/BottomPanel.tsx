@@ -21,6 +21,7 @@ import { LogList } from "./LogList";
 import {
 	type NodeRef,
 	nodeKey,
+	type PanelTab,
 	PLATFORM_KEY,
 	useMonitor,
 	useMonitorActions,
@@ -36,10 +37,10 @@ import {
 	secretParams,
 	stoppedSubflowLabel,
 } from "./run-model";
+import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
 import { taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
 
-type Tab = "logs" | "attempts" | "io" | "artifacts";
-const TABS: [Tab, string][] = [
+const TABS: [PanelTab, string][] = [
 	["logs", "日志"],
 	["attempts", "尝试"],
 	["io", "输入输出"],
@@ -57,7 +58,11 @@ const MIN_LEVELS: [MinLevel, string][] = [
 const levelsFrom = (min: MinLevel): LogLineView["level"][] =>
 	min === "all" ? [] : LOG_LEVELS.slice(LOG_LEVELS.indexOf(min));
 
-const DEFAULT_HEIGHT = 260;
+/**
+ * 默认高度：监控页（窗口减去顶栏）高度的 28%，限制在 160–320px，矮窗口里给图表工作区留出空间。
+ * 拖动调整后用拖动的高度。
+ */
+const DEFAULT_HEIGHT = `clamp(160px, calc((100dvh - ${MONITOR_TOPBAR_HEIGHT}px) * 0.28), 320px)`;
 const COLLAPSED_HEIGHT = 37;
 
 const ERROR_KIND_LABEL: Record<string, string> = {
@@ -70,7 +75,9 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 
 /**
  * 底部面板（原型 bpBody）：日志、尝试、输入输出、产物四个页签，范围跟随时间线上选中的节点
- * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter）。节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认。
+ * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter）。节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
+ * 页签与展开状态在共享状态里（顶栏的失败摘要会切到「尝试」页签）。用户还没有展开 / 收起、拖动或切换过页签时，
+ * 日志页签没有内容（没选中节点、节点还没开始、或日志加载完是空的）就自动收起，把高度让给图表；日志到了再自动展开。
  */
 export function BottomPanel({
 	run,
@@ -83,9 +90,12 @@ export function BottomPanel({
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
 	const filtered = filter ? [...filter].filter((k) => k !== PLATFORM_KEY).length : 0;
-	const [tab, setTab] = useState<Tab>("logs");
+	const tab = useMonitor((s) => s.panelTab);
+	const panelOpen = useMonitor((s) => s.panelOpen);
+	const actions = useMonitorActions();
 	const [height, setHeight] = useState<number | null>(null);
-	const [collapsed, setCollapsed] = useState(false);
+	/** 日志页签加载完、没有任何日志（自动收起的依据）。 */
+	const [logsEmpty, setLogsEmpty] = useState(false);
 	const panel = useRef<HTMLElement>(null);
 	const node = findNode(run, selected);
 	const [attemptId, setAttemptId] = useState<string | null>(null);
@@ -96,6 +106,8 @@ export function BottomPanel({
 		node?.attempts.find((a) => a.task_id === attemptId) ?? node?.attempts.at(-1) ?? undefined;
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
 
+	const empty = tab === "logs" && (!attempt || logsEmpty);
+	const collapsed = panelOpen === null ? empty : !panelOpen;
 	const effective = collapsed ? COLLAPSED_HEIGHT : (height ?? DEFAULT_HEIGHT);
 	return (
 		<section
@@ -108,15 +120,16 @@ export function BottomPanel({
 				label="调整底部面板高度"
 				edge="top"
 				height={height}
-				measure={() => panel.current?.clientHeight ?? DEFAULT_HEIGHT}
+				measure={() => panel.current?.clientHeight ?? COLLAPSED_HEIGHT}
 				min={COLLAPSED_HEIGHT}
 				max={() => window.innerHeight * 0.7}
 				onResize={(h) => {
-					setCollapsed(false);
+					actions.setPanelOpen(true);
 					setHeight(h);
 				}}
 				onReset={() => {
-					setCollapsed(false);
+					// 恢复默认：默认高度，展开与否回到按内容自动决定。
+					actions.setPanelOpen(null);
 					setHeight(null);
 				}}
 			/>
@@ -130,10 +143,7 @@ export function BottomPanel({
 							id={`bp-tab-${value}`}
 							aria-selected={tab === value}
 							aria-controls="bp-panel"
-							onClick={() => {
-								setTab(value);
-								setCollapsed(false);
-							}}
+							onClick={() => actions.showPanel(value)}
 							className="relative h-full px-3 text-sm text-fg-3 hover:text-fg-1 aria-selected:text-fg-1 aria-selected:after:absolute aria-selected:after:right-2 aria-selected:after:bottom-0 aria-selected:after:left-2 aria-selected:after:h-0.5 aria-selected:after:bg-primary"
 						>
 							{label}
@@ -179,16 +189,18 @@ export function BottomPanel({
 							)}
 						</>
 					)}
-					<Button variant="ghost" size="sm" onClick={() => setCollapsed((c) => !c)}>
+					<Button variant="ghost" size="sm" onClick={() => actions.setPanelOpen(collapsed)}>
 						{collapsed ? "展开" : "收起"}
 					</Button>
 				</div>
 			</div>
-			{!collapsed && (
+			{/* 自动收起时内容仍然挂着（隐藏）：日志到了能自动展开。 */}
+			{(!collapsed || panelOpen === null) && (
 				<div
 					id="bp-panel"
 					role="tabpanel"
 					aria-labelledby={`bp-tab-${tab}`}
+					hidden={collapsed}
 					className="min-h-0 flex-1 overflow-hidden shadow-inset-top"
 				>
 					{tab === "logs" &&
@@ -198,6 +210,7 @@ export function BottomPanel({
 								attempt={attempt}
 								levels={levelsFrom(minLevel)}
 								filtered={minLevel !== "all"}
+								onEmpty={setLogsEmpty}
 							/>
 						) : (
 							<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的日志。"}</Hint>
@@ -256,12 +269,18 @@ function LogsTab({
 	attempt,
 	levels,
 	filtered,
+	onEmpty,
 }: {
 	attempt: AttemptView;
 	levels: LogLineView["level"][];
 	filtered: boolean;
+	/** 加载完、没有任何日志时为 true（筛选了级别时不算空：那是用户自己筛掉的）。 */
+	onEmpty: (empty: boolean) => void;
 }) {
 	const logs = useTaskLogs(attempt.task_id, levels);
+	const empty = !filtered && logs.loaded && logs.lines.length === 0 && !logs.hasOlder;
+	useEffect(() => onEmpty(empty), [empty, onEmpty]);
+	useEffect(() => () => onEmpty(false), [onEmpty]);
 	const zoom = useMonitor((s) => s.zoom);
 	const marker = useMonitor((s) => s.marker);
 	const actions = useMonitorActions();

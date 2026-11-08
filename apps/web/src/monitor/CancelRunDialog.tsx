@@ -9,7 +9,8 @@ import {
 	runsApi,
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useId, useState } from "react";
+import { CircleStopIcon } from "lucide-react";
+import { useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
@@ -24,18 +25,16 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { runViewQuery, writeRunView } from "./live-run";
 import { cancelImpact } from "./run-model";
-
-/** 确认时要输入的运行编号前几位。 */
-const CONFIRM_CHARS = 4;
+import { COLLAPSE_BUTTON, COLLAPSE_LABEL } from "./top-bar";
 
 const ids = (nodes: { node_id: string }[]) =>
 	nodes.length === 0 ? "—" : [...new Set(nodes.map((n) => n.node_id))].join("、");
 
 /**
- * 取消运行的确认弹窗（原型 ovCancel，docs/SEMANTICS.md §3.4）：列出影响，输入运行编号前 4 位后才能确认。
+ * 取消运行的确认弹窗（原型 ovCancel，docs/SEMANTICS.md §3.4）：列出影响，点「取消运行」确认。
+ * 打开时焦点在「继续运行」（安全的默认项），误按 Enter 不会取消运行。
  * 第一次取消：执行中的任务优雅终止，always 节点照常清理，未开始的节点标记为已取消；
  * 清理期间（已取消、运行还没结束）再次取消即强制终止：always 节点也立即终止。
  */
@@ -52,9 +51,7 @@ export function CancelRunDialog({
 }) {
 	const queryClient = useQueryClient();
 	const force = run.cancel !== null;
-	const [typed, setTyped] = useState("");
-	const inputId = useId();
-	const code = run.id.slice(0, CONFIRM_CHARS);
+	const keep = useRef<HTMLButtonElement>(null);
 	const impact = cancelImpact(run, doc);
 	const cancel = useMutation({
 		mutationFn: () => callApi(runsApi.cancel, { params: { id: run.id } }),
@@ -81,14 +78,8 @@ export function CancelRunDialog({
 	});
 
 	return (
-		<Dialog
-			open={open}
-			onOpenChange={(next) => {
-				if (!next) setTyped("");
-				onOpenChange(next);
-			}}
-		>
-			<DialogContent className="w-[480px]">
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent className="w-[480px]" initialFocus={keep}>
 				<DialogHeader>
 					<DialogTitle>
 						{force ? "强制终止运行" : "取消运行"}{" "}
@@ -124,34 +115,14 @@ export function CancelRunDialog({
 						</>
 					)}
 				</ul>
-				<form
-					id={`${inputId}-form`}
-					onSubmit={(e) => {
-						e.preventDefault();
-						if (typed === code && !cancel.isPending) cancel.mutate();
-					}}
-				>
-					<label htmlFor={inputId} className="mb-1.5 block text-sm text-fg-2">
-						输入运行编号前 {CONFIRM_CHARS} 位 <span className="font-mono text-fg-1">{code}</span>{" "}
-						以确认
-					</label>
-					<Input
-						id={inputId}
-						autoComplete="off"
-						className="font-mono"
-						value={typed}
-						onChange={(e) => setTyped(e.target.value.trim())}
-					/>
-				</form>
 				<DialogFooter>
-					<Button variant="ghost" onClick={() => onOpenChange(false)}>
+					<Button ref={keep} variant="ghost" onClick={() => onOpenChange(false)}>
 						{ACTION.keepRunning}
 					</Button>
 					<Button
-						type="submit"
-						form={`${inputId}-form`}
 						variant="danger-solid"
-						disabled={typed !== code || cancel.isPending}
+						disabled={cancel.isPending}
+						onClick={() => cancel.mutate()}
 					>
 						{force ? ACTION.forceCancel : ACTION.cancelRun}
 					</Button>
@@ -172,6 +143,7 @@ export function CancelRunButton({
 	orchestrationVersion,
 	cancelling,
 	size,
+	collapse,
 }: {
 	runId: string;
 	orchestrationId: string;
@@ -179,7 +151,10 @@ export function CancelRunButton({
 	/** 已请求取消、运行还没结束（按钮变成「强制终止」）。 */
 	cancelling: boolean;
 	size?: "sm";
+	/** 窗口窄于 1280 时只显示图标（文字留给读屏与悬停提示），监控页顶栏用。 */
+	collapse?: boolean;
 }) {
+	const label = cancelling ? ACTION.forceCancel : ACTION.cancelRun;
 	const [open, setOpen] = useState(false);
 	const run = useQuery({ ...runViewQuery(runId), enabled: open });
 	const version = useQuery({
@@ -188,9 +163,16 @@ export function CancelRunButton({
 	});
 	return (
 		<>
-			<Button size={size} onClick={() => setOpen(true)}>
-				{cancelling ? ACTION.forceCancel : ACTION.cancelRun}
-			</Button>
+			{collapse ? (
+				<Button size={size} title={label} className={COLLAPSE_BUTTON} onClick={() => setOpen(true)}>
+					<CircleStopIcon className="xl:hidden" />
+					<span className={COLLAPSE_LABEL}>{label}</span>
+				</Button>
+			) : (
+				<Button size={size} onClick={() => setOpen(true)}>
+					{label}
+				</Button>
+			)}
 			{run.data && (
 				<CancelRunDialog
 					run={run.data}

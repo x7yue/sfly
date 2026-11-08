@@ -7,7 +7,7 @@ import type { DocNode } from "./flow";
  * 编辑模式（#35）只用 info；之后的票据在这里叠加信息，不需要改画布本身：
  *
  * - 运行状态（#41）：decorateNode 返回 `run`（卡片描边 / 透明度、小地图颜色）和 `status`（替换右上角的
- *   「就绪 / N 警告」）；decorateEdge 返回 `live`（进入执行中节点的连线，青色实线）或 `failed`；
+ *   「N 警告」，没有警告时不显示）；decorateEdge 返回 `live`（进入执行中节点的连线，青色实线）或 `failed`；
  *   regionMeta 替换子流程区域标题行右侧的「由 X 触发 · N 个节点」（例如实例状态与实例切换）。
  * - 主指标槽（#43）：decorateNode 返回 `slot`，替换卡片底部的配置摘要。
  * - 版本对比（#40）：decorateNode 返回 `mark`（新增 / 删除 / 修改），卡片加差异标记；

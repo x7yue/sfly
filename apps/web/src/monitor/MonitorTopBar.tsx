@@ -5,6 +5,7 @@ import { ArrowLeftIcon, ChevronDownIcon, PlayIcon, WorkflowIcon } from "lucide-r
 import { useState } from "react";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
+import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -18,15 +19,28 @@ import {
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { CancelRunButton } from "./CancelRunDialog";
-import { useTimeAxis } from "./monitor-state";
-import { chainLabel, chainRunStatus, orderedChains, runStatus } from "./run-model";
+import { useMonitorActions, useTimeAxis } from "./monitor-state";
+import {
+	chainLabel,
+	chainRunStatus,
+	failureAttempt,
+	failureMessageSeparator,
+	failureSummary,
+	orderedChains,
+	type RunFailure,
+	runFailure,
+	runStatus,
+} from "./run-model";
+import { COLLAPSE_BUTTON, COLLAPSE_LABEL, MONITOR_TOPBAR_HEIGHT } from "./top-bar";
 
 /** 顶栏最多显示几条链的状态，其余收成「+N」。 */
 const MAX_CHAIN_BADGES = 4;
 
 /**
  * 运行监控页顶栏（原型 monitorHTML 的 `.mon-top`）：返回、场景名与版本、触发人 / 开始时间 / 已运行时长、
- * 运行切换（同场景的其他运行）、各链状态、在画布中查看、取消（运行中）或再次运行（已结束，主操作）。
+ * 运行切换（同场景的其他运行）、运行状态、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
+ * 在画布中查看、取消（运行中）或再次运行（已结束，主操作）。
+ * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。
  */
 export function MonitorTopBar({ run, name }: { run: RunView; name: string | undefined }) {
 	const { now, live } = useTimeAxis();
@@ -34,10 +48,14 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 	const [rerunOpen, setRerunOpen] = useState(false);
 	const chains = orderedChains(run);
 	const status = runStatus(run);
+	const failure = run.status === "failed" ? runFailure(run) : null;
 	const elapsed = (run.ended_at ? Date.parse(run.ended_at) : now) - Date.parse(run.started_at);
 
 	return (
-		<header className="flex h-13 flex-none items-center gap-2.5 border-b border-border-soft bg-surface px-3">
+		<header
+			style={{ height: MONITOR_TOPBAR_HEIGHT }}
+			className="flex flex-none items-center gap-2.5 border-b border-border-soft bg-surface px-3"
+		>
 			<Link
 				to="/runs"
 				aria-label="返回运行记录"
@@ -46,26 +64,31 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 			>
 				<ArrowLeftIcon />
 			</Link>
-			<div className="flex min-w-0 flex-col leading-tight">
+			<div className="flex min-w-36 shrink flex-col leading-tight">
 				<h1 className="m-0 flex items-center gap-1.5 truncate text-sm font-semibold">
 					<span className="truncate">{name ?? "场景"}</span>
 					<Badge className="font-mono">v{run.orchestration_version}</Badge>
 				</h1>
-				<span className="truncate text-2xs text-fg-3">
+				<span className="truncate text-xs text-fg-3">
 					{run.triggered_by} 触发 · 开始 {formatDateTime(run.started_at)} ·{" "}
 					<span className="font-mono" data-testid="run-elapsed">
 						{live ? "已运行" : "耗时"} {formatDuration(elapsed)}
 					</span>
 				</span>
 			</div>
-			<span aria-hidden className="h-5 w-px bg-border" />
+			<span aria-hidden className="h-5 w-px flex-none bg-border" />
 			<RunSwitcher run={run} />
-			<span data-testid="run-status">
+			{/* output 即 role="status"（礼貌播报）：运行状态变化时读屏会读出来。 */}
+			<output data-testid="run-status" aria-live="polite" className="flex-none">
 				<StatusPill kind={status.kind} className="text-sm">
 					{status.label}
 				</StatusPill>
-			</span>
-			<ul aria-label="各链状态" className="m-0 flex min-w-0 list-none gap-1.5 overflow-hidden p-0">
+			</output>
+			{failure && <FailureSummary failure={failure} />}
+			<ul
+				aria-label="各链状态"
+				className="m-0 flex min-w-0 shrink-[4] list-none gap-1.5 overflow-hidden p-0 max-xl:hidden"
+			>
 				{chains.slice(0, MAX_CHAIN_BADGES).map((chain) => {
 					const s = chainRunStatus(chain, run.cancel !== null);
 					return (
@@ -90,15 +113,16 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 					</li>
 				)}
 			</ul>
-			<span className="flex-1" />
+			<span className="min-w-0 flex-1" />
 			<Link
 				to="/orchestrations/$id"
 				params={{ id: run.orchestration_id }}
 				search={{ run: run.id }}
-				className={buttonVariants()}
+				title="在画布中查看"
+				className={buttonVariants({ className: COLLAPSE_BUTTON })}
 			>
 				<WorkflowIcon />
-				在画布中查看
+				<span className={COLLAPSE_LABEL}>在画布中查看</span>
 			</Link>
 			{run.status === "running" ? (
 				<CancelRunButton
@@ -106,11 +130,17 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 					orchestrationId={run.orchestration_id}
 					orchestrationVersion={run.orchestration_version}
 					cancelling={run.cancel !== null}
+					collapse
 				/>
 			) : (
-				<Button variant="primary" onClick={() => setRerunOpen(true)}>
+				<Button
+					variant="primary"
+					title={ACTION.rerun}
+					className={COLLAPSE_BUTTON}
+					onClick={() => setRerunOpen(true)}
+				>
 					<PlayIcon />
-					再次运行
+					<span className={COLLAPSE_LABEL}>{ACTION.rerun}</span>
 				</Button>
 			)}
 			<RunDrawer
@@ -123,6 +153,35 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 				onTriggered={(next) => navigate({ to: "/runs/$id", params: { id: next.id } })}
 			/>
 		</header>
+	);
+}
+
+/**
+ * 失败摘要：「失败于 verify（第 2 次）· AssertionError: …」，太长时截断（悬停看完整的第一行）。
+ * 点击选中这个节点，并把底部面板切到「尝试」页签（错误类型与堆栈）。
+ */
+function FailureSummary({ failure }: { failure: RunFailure }) {
+	const actions = useMonitorActions();
+	return (
+		<button
+			type="button"
+			title={`${failureSummary(failure)}\n点击查看这个节点的尝试`}
+			data-testid="run-failure"
+			onClick={() => {
+				actions.select(failure.ref);
+				actions.showPanel("attempts");
+			}}
+			className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
+		>
+			失败于 <span className="font-mono text-fg-1">{failure.nodeId}</span>
+			{failureAttempt(failure)}
+			{failure.message && (
+				<span className="text-danger-fg">
+					{failureMessageSeparator(failure)}
+					{failure.message}
+				</span>
+			)}
+		</button>
 	);
 }
 
@@ -164,7 +223,7 @@ function RunSwitcher({ run }: { run: RunView }) {
 							>
 								<StatusPill kind={s.kind}>{s.label}</StatusPill>
 								<span className="font-mono">{shortId(r.id)}</span>
-								<span className="ml-auto pl-4 font-mono text-2xs text-fg-3">
+								<span className="ml-auto pl-4 font-mono text-xs text-fg-3">
 									v{r.orchestration_version} · {r.triggered_by} · {formatDateTime(r.started_at)}
 								</span>
 							</DropdownMenuItem>

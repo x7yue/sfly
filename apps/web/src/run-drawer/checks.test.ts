@@ -20,7 +20,7 @@ describe("触发前检查清单", () => {
 		const checks = preflightChecks(passed);
 		expect(checks.blocked).toBe(false);
 		expect(summary(passed)).toEqual([
-			["structure", "ok", "结构、引用与输入检查通过", undefined],
+			["structure", "ok", "结构与引用检查通过", undefined],
 			["packages", "ok", "节点包版本已锁定", "demo-checks 1.2.0 · stub 0.1.0"],
 			["agents", "ok", "引用的 Agent 都在线", "agent-a · agent-b"],
 		]);

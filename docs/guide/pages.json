@@ -3,7 +3,7 @@
 		{
 			"slug": "quickstart",
 			"title": "快速开始",
-			"description": "从安装 sfly Agent 到发布第一个节点包的整体流程，以及读取文档原文的方式"
+			"description": "从零开发第一个节点包的两种方式：把提示词交给 AI 编程助手，让它自己读取文档、从检查环境做到发布；或者按步骤自己从安装 Agent 做到发布。以及读取文档原文的方式"
 		},
 		{
 			"slug": "install-agent",
@@ -44,11 +44,6 @@
 			"slug": "standard-nodes",
 			"title": "标准节点",
 			"description": "平台维护的标准节点包 sfly-std：从 Release 下载并上传到控制面、安全说明、压测期间配合子流程与停止子流程节点的监控，以及全部 15 个标准节点（shell、start_process、system_monitor、http_request、assert……）的参数、输出、指标与用法"
-		},
-		{
-			"slug": "ai-quickstart",
-			"title": "AI 编程助手快速开始",
-			"description": "给 AI 编程助手的提示词，以及它从零完成检查环境、安装、sfly init、写节点、本地调试、联调、发布的步骤"
 		}
 	]
 }

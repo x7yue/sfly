@@ -135,7 +135,7 @@ export function PackageParams({
 					</Button>
 				</div>
 			))}
-			<p className="m-0 text-2xs text-fg-3">
+			<p className="m-0 text-xs text-fg-3">
 				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>{"${{"}</code> 可以内嵌引用。
 			</p>
 			<SectionTitle>Agent</SectionTitle>
@@ -215,7 +215,7 @@ export function ExecutionSettings({
 				</div>
 			</Field>
 			{node.kind !== "package" && (
-				<p className="m-0 text-2xs text-fg-3">由控制面执行，不占用 Agent 槽位。</p>
+				<p className="m-0 text-xs text-fg-3">由控制面执行，不占用 Agent 槽位。</p>
 			)}
 		</>
 	);
@@ -358,7 +358,7 @@ export function AsyncMapping({
 					</Button>
 				</div>
 			))}
-			<p className="m-0 text-2xs text-fg-3">
+			<p className="m-0 text-xs text-fg-3">
 				子流程只能看到这里传入的参数；可以写常量，或输入 <code>{"${{"}</code>{" "}
 				引用本链的入口参数和前序节点的输出。
 			</p>
@@ -474,7 +474,7 @@ export function StopSubflowField({
 					)}
 				</div>
 			</Field>
-			<p className="m-0 text-2xs text-fg-3">
+			<p className="m-0 text-xs text-fg-3">
 				运行到这里时停止这个子流程：任务按取消的方式终止，未开始的节点记为已停止，always
 				节点照常执行； 子流程完全结束后本节点才成功，输出子流程的结果 <code>status</code>。
 			</p>

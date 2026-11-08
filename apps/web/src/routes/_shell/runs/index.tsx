@@ -100,7 +100,7 @@ function RunsBody({ runs }: { runs: RunListItem[] }) {
 		<>
 			{live.length > 0 && (
 				<section aria-label="进行中">
-					<SectionHeading>
+					<SectionHeading level={2}>
 						进行中 <span className="font-mono text-fg-3">{live.length}</span>
 					</SectionHeading>
 					<div className="mb-2 grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] gap-3">
@@ -112,7 +112,7 @@ function RunsBody({ runs }: { runs: RunListItem[] }) {
 			)}
 			{history.length > 0 && (
 				<section aria-label="历史运行">
-					<SectionHeading>
+					<SectionHeading level={2}>
 						历史运行 <span className="font-mono text-fg-3">{history.length}</span>
 					</SectionHeading>
 					<Panel>

@@ -1,18 +1,41 @@
 import { NODE_DEFAULTS } from "@sfly/orchestration";
+import {
+	AlarmClockIcon,
+	BoxIcon,
+	CircleStopIcon,
+	CornerDownRightIcon,
+	HourglassIcon,
+	type LucideIcon,
+	PlayIcon,
+	SplitIcon,
+} from "lucide-react";
 import { subflowLabel } from "#/lib/copy";
 import type { CanvasInfo } from "./context";
 import type { DocNode } from "./flow";
 
-/** 节点种类的名称与卡片上的两字母代号（原型 KIND）。 */
-export const KIND_META: Record<DocNode["kind"], { label: string; code: string }> = {
-	entry: { label: "入口", code: "IN" },
-	package: { label: "包节点", code: "PK" },
-	timer: { label: "定时", code: "TM" },
-	sleep: { label: "Sleep", code: "SL" },
-	async: { label: "异步任务", code: "AS" },
-	subflow_entry: { label: "子流程入口", code: "SE" },
-	stop_subflow: { label: "停止子流程", code: "ST" },
+/**
+ * 节点种类的名称与图标。图标出现在节点卡片头部（语义缩放时也保留，缩小后仍能分辨种类）和添加节点菜单里，
+ * 取代原型里需要记忆的两字母代号。
+ */
+export const KIND_META: Record<DocNode["kind"], { label: string; icon: LucideIcon }> = {
+	entry: { label: "入口", icon: PlayIcon },
+	package: { label: "包节点", icon: BoxIcon },
+	timer: { label: "定时", icon: AlarmClockIcon },
+	sleep: { label: "Sleep", icon: HourglassIcon },
+	async: { label: "异步任务", icon: SplitIcon },
+	subflow_entry: { label: "子流程入口", icon: CornerDownRightIcon },
+	stop_subflow: { label: "停止子流程", icon: CircleStopIcon },
 };
+
+/**
+ * 卡片头部 ID 旁的种类名：包节点不显示（标题就是节点类型），标题已经说明种类时也不重复
+ * （入口节点标题「入口」、异步任务节点标题「异步任务」）。
+ */
+export function kindCaption(node: DocNode, title: string): string | undefined {
+	if (node.kind === "package") return undefined;
+	const { label } = KIND_META[node.kind];
+	return title.includes(label) ? undefined : label;
+}
 
 /** 文档里子流程入口节点 ID → 显示名称的查找（CanvasInfo.subflowLabelOf）。 */
 export function subflowLabels(doc: {
@@ -52,27 +75,34 @@ const summarizeValue = (value: unknown): string => {
 	return `= ${JSON.stringify(value)}`;
 };
 
-/** 卡片底部摘要槽的文字（编辑模式）：节点最主要的配置。 */
-export function nodeSlot(node: DocNode): string {
+/**
+ * 卡片底部摘要槽（编辑模式）：节点最主要的配置。`empty` 表示还没有配置（没有参数、没有映射……），
+ * 卡片上用辅助文字显示，与真实的配置值区分开。
+ */
+export function nodeSlot(node: DocNode): { text: string; empty: boolean } {
+	const value = (text: string) => ({ text, empty: false });
+	const empty = (text: string) => ({ text, empty: true });
 	switch (node.kind) {
 		case "entry":
 		case "subflow_entry":
 			return node.params.length === 0
-				? "没有参数"
-				: node.params.map((p) => (p.secret ? `${p.name}*` : p.name)).join(" · ");
+				? empty("没有参数")
+				: value(node.params.map((p) => (p.secret ? `${p.name}*` : p.name)).join(" · "));
 		case "async": {
 			const keys = Object.keys(node.params);
-			return keys.length === 0 ? "没有参数映射" : `映射 ${keys.join(" · ")}`;
+			return keys.length === 0 ? empty("没有参数映射") : value(`映射 ${keys.join(" · ")}`);
 		}
 		case "timer":
-			return `${node.at} · ${node.tz}`;
+			return value(`${node.at} · ${node.tz}`);
 		case "sleep":
-			return node.duration;
+			return value(node.duration);
 		case "stop_subflow":
-			return node.subflow ? `子流程入口 ${node.subflow}` : "未选择子流程";
+			return node.subflow ? value(`子流程入口 ${node.subflow}`) : empty("未选择子流程");
 		case "package": {
 			const [first] = Object.entries(node.inputs);
-			return first ? `${first[0]} ${summarizeValue(first[1])}` : `${node.package}/${node.node}`;
+			return first
+				? value(`${first[0]} ${summarizeValue(first[1])}`)
+				: value(`${node.package}/${node.node}`);
 		}
 	}
 }

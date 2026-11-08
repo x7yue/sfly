@@ -27,6 +27,7 @@
 	--base-gray-600: #5a5a5a;
 	--base-gray-500: #7a7a7a;
 	--base-gray-450: #8e8e8e;
+	--base-gray-440: #969696;
 	--base-gray-425: #9a9a9a;
 	--base-gray-350: #a8a8a8;
 	--base-gray-200: #d4d4d4;
@@ -63,10 +64,10 @@
 	--border-soft: var(--base-gray-825);
 	--border-strong: var(--base-gray-700);
 
-	/* 文字三级（对 --bg / --surface / --raised 的对比度均 ≥ 4.5:1） */
+	/* 文字三级（对 --bg / --surface / --raised / --raised-2 的对比度均 ≥ 4.5:1；fg-3 在 raised-2 上 4.6:1） */
 	--fg-1: var(--base-gray-100);
 	--fg-2: var(--base-gray-350);
-	--fg-3: var(--base-gray-450);
+	--fg-3: var(--base-gray-440);
 
 	/* 主操作：白色，每屏只有一个 */
 	--primary: var(--base-gray-50);
@@ -166,6 +167,8 @@
 	--canvas-run-failed: var(--danger);
 	--canvas-run-cancelled: var(--cancelled); /* 虚线 */
 	--canvas-run-stopped: var(--stopped);
-	--canvas-run-done-opacity: 0.6;
+	/* 已完成的节点「下沉」：卡片底色与画布相同、描边变淡，文字对比度不降（不用不透明度） */
+	--canvas-run-done-bg: var(--canvas-bg);
+	--canvas-run-done-border: var(--border-soft);
 	--canvas-minimap-mask: rgb(0 0 0 / 0.35); /* 小地图上视口以外的遮罩 */
 }

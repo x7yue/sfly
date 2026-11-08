@@ -20,12 +20,11 @@ export interface PrimaryMetricData {
 	bucketSeconds: number;
 }
 
-/** 迷你趋势的颜色随节点状态：执行中青色、失败红色，其余中性灰。 */
-export function metricAccent(status: string | undefined): string {
-	if (status === "running" || status === "dispatched") return "var(--signal)";
-	if (status === "failed") return "var(--danger)";
-	return "var(--fg-3)";
-}
+/**
+ * 迷你趋势的线色：图表线色 chart-1（docs/DESIGN-SYSTEM.md §2.4，状态色只用于节点状态），
+ * 节点状态由旁边的状态徽标表达，不随状态变色。
+ */
+const METRIC_LINE = "var(--chart-1)";
 
 /**
  * 主指标的迷你趋势：桶的最新值，横轴按桶的时间（画在桶覆盖时段的中点），带面积（components/sparkline）。
@@ -70,12 +69,10 @@ const valueText = (last: number | undefined) => (last === undefined ? "—" : fo
  */
 export function PrimaryMetric({
 	data,
-	accent,
 	variant,
 	className,
 }: {
 	data: PrimaryMetricData;
-	accent: string;
 	variant: "chip" | "inline" | "block";
 	className?: string;
 }) {
@@ -84,7 +81,7 @@ export function PrimaryMetric({
 		<MetricSparkline
 			buckets={buckets}
 			bucketSeconds={bucketSeconds}
-			color={accent}
+			color={METRIC_LINE}
 			height={height}
 			className={sparkClass}
 		/>
@@ -139,7 +136,7 @@ export function PrimaryMetric({
 
 /**
  * 运行里一个节点的主指标（自己查询序列）；节点类型没有主指标、或给了 fallback 且还没有数据时渲染 fallback。
- * status 是节点状态（决定趋势颜色、序列是否还会变化）。
+ * status 是节点状态（决定序列是否还会变化）。
  */
 export function NodePrimaryMetric({
 	runId,
@@ -161,12 +158,5 @@ export function NodePrimaryMetric({
 	const finished = !isOnAgentStatus(status);
 	const data = usePrimaryMetric(runId, entry, { finished, poll });
 	if (!data || (data.last === undefined && fallback !== null)) return fallback;
-	return (
-		<PrimaryMetric
-			data={data}
-			accent={metricAccent(status)}
-			variant={variant}
-			className={className}
-		/>
-	);
+	return <PrimaryMetric data={data} variant={variant} className={className} />;
 }

@@ -1,5 +1,6 @@
 import type { MetricBucket, MetricIncrement, MetricSeries } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
+import { type ChartGroup, failedFirst } from "./chart-groups";
 import {
 	appendIncrement,
 	balancedColumns,
@@ -213,5 +214,26 @@ describe("降采样后的尖峰（故事 14）", () => {
 		expect(formatReading(spiky[1] as MetricBucket)).toBe("11（2–95）");
 		expect(formatReading(bucket(0, 3, 3, 3))).toBe("3");
 		expect(bucketAt(spiky, s(35), 10)).toBeNull();
+	});
+});
+
+describe("图表分组的显示顺序", () => {
+	const group = (key: string, status: string) =>
+		({ key, node: { node_id: key, status } }) as unknown as ChartGroup;
+	const keys = (groups: readonly ChartGroup[]) => groups.map((g) => g.key);
+
+	it("有失败的节点时，失败节点的组排在最前，其余保持链上的执行顺序", () => {
+		const groups = [
+			group("fetch", "success"),
+			group("verify", "failed"),
+			group("probe", "running"),
+			group("check", "failed"),
+		];
+		expect(keys(failedFirst(groups))).toEqual(["verify", "check", "fetch", "probe"]);
+	});
+
+	it("没有失败的节点时顺序不变（返回同一个数组）", () => {
+		const groups = [group("fetch", "success"), group("probe", "running")];
+		expect(failedFirst(groups)).toBe(groups);
 	});
 });

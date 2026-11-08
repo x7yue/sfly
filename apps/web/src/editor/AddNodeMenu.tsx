@@ -2,6 +2,7 @@ import { cn } from "cn";
 import { PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
+import { KIND_CHIP } from "#/components/canvas/zoom-text";
 import { Button } from "@/components/ui/button";
 import {
 	Command,
@@ -33,12 +34,10 @@ export type AddRequest =
 	  };
 
 function KindChip({ kind }: { kind: AddItem["kind"] }) {
+	const Icon = KIND_META[kind].icon;
 	return (
-		<span
-			aria-hidden
-			className="grid size-4.5 flex-none place-items-center rounded-sm bg-raised-2 font-mono text-2xs leading-none font-semibold text-fg-2"
-		>
-			{KIND_META[kind].code}
+		<span aria-hidden className={cn(KIND_CHIP, "text-2xs")}>
+			<Icon strokeWidth={2} />
 		</span>
 	);
 }
@@ -245,8 +244,8 @@ function SubflowNameForm({
 				aria-invalid={shown !== null || undefined}
 				onChange={(e) => setName(e.target.value)}
 			/>
-			{shown && <p className="m-0 text-2xs text-danger-fg">{shown}</p>}
-			<p className="m-0 text-2xs text-fg-3">场景内唯一；停止子流程节点按名称选择子流程。</p>
+			{shown && <p className="m-0 text-xs text-danger-fg">{shown}</p>}
+			<p className="m-0 text-xs text-fg-3">场景内唯一；停止子流程节点按名称选择子流程。</p>
 			<div className="flex justify-end gap-1.5">
 				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
 					返回

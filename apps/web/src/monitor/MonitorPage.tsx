@@ -1,8 +1,10 @@
-import { orchestrationsApi } from "@sfly/schema";
+import { orchestrationsApi, type RunView } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { notify } from "#/components/feedback/notify";
 import { ErrorState } from "#/components/feedback/states";
 import { apiQuery } from "#/lib/api";
+import { formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { versionQuery } from "#/versions/queries";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,7 +13,7 @@ import { ChartWorkspace } from "./ChartWorkspace";
 import { useLiveRun } from "./live-run";
 import { MonitorTopBar } from "./MonitorTopBar";
 import { createMonitorStore, MonitorProvider, type TimeAxis } from "./monitor-state";
-import { focusNode } from "./run-model";
+import { failureSummary, focusNode, runDocumentTitle, runFailure } from "./run-model";
 import { Timeline } from "./Timeline";
 import { runExtent, visibleRange } from "./timeline";
 
@@ -19,6 +21,7 @@ import { runExtent, visibleRange } from "./timeline";
  * 运行监控页（原型 #/monitor/:runId，全屏）：顶栏、链路时间线、图表工作区（#42）、底部面板。
  * 运行中通过运行事件流实时更新（live-run.ts：运行视图、进度、指标增量）。
  * 时间线、图表与底部面板共用一份时间轴状态（monitor-state.tsx）。
+ * 浏览器标签页标题显示运行状态与场景名；在页面上看着运行结束时弹出一次结果通知。
  */
 export function MonitorPage({ runId, initialNode }: { runId: string; initialNode?: string }) {
 	const runQuery = useLiveRun(runId);
@@ -45,6 +48,10 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 		selectedOnce.current = true;
 		store.select(focusNode(run, initialNode));
 	}, [run, initialNode, store]);
+
+	const name = orchestration.data?.name;
+	useRunDocumentTitle(run, name);
+	useTerminalNotice(run, name);
 
 	const now = useNow(running);
 	const zoom = useSyncExternalStore(store.subscribe, () => store.get().zoom);
@@ -83,8 +90,9 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 	const doc = version.data?.document;
 	return (
 		<MonitorProvider store={store} axis={axis}>
-			<div className="fixed inset-0 flex min-w-[1280px] flex-col bg-bg">
-				<MonitorTopBar run={run} name={orchestration.data?.name} />
+			{/* 规格最小宽度 1280；更窄时顶栏收成图标按钮，到 1024 仍不裁切操作。 */}
+			<div className="fixed inset-0 flex min-w-[1024px] flex-col bg-bg">
+				<MonitorTopBar run={run} name={name} />
 				<main className="flex min-h-0 flex-1 flex-col">
 					<Timeline run={run} doc={doc} />
 					<ChartWorkspace run={run} />
@@ -93,4 +101,46 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 			</div>
 		</MonitorProvider>
 	);
+}
+
+/** 浏览器标签页标题：「● 运行中 · 日终数据处理 · sfly」；离开页面时恢复原来的标题。 */
+function useRunDocumentTitle(run: RunView | undefined, name: string | undefined) {
+	useEffect(() => {
+		const previous = document.title;
+		return () => {
+			document.title = previous;
+		};
+	}, []);
+	const title = run ? runDocumentTitle(run, name ?? shortId(run.id)) : null;
+	useEffect(() => {
+		if (title) document.title = title;
+	}, [title]);
+}
+
+/**
+ * 运行结束的通知：只在页面上看着运行从「运行中」变成结束时弹出一次；打开一个已经结束的运行不弹。
+ * 成功、失败、取消分别用 notify.success / error / info（失败的通知需要手动关闭）。
+ */
+function useTerminalNotice(run: RunView | undefined, name: string | undefined) {
+	const seen = useRef<RunView["status"] | null>(null);
+	useEffect(() => {
+		if (!run) return;
+		const before = seen.current;
+		seen.current = run.status;
+		if (before !== "running" || run.status === "running") return;
+		const scenario = name ?? "场景";
+		const took = run.ended_at
+			? `耗时 ${formatDuration(Date.parse(run.ended_at) - Date.parse(run.started_at))}`
+			: undefined;
+		if (run.status === "success") {
+			notify.success(`${scenario} 运行成功`, { description: took });
+		} else if (run.status === "failed") {
+			const failure = runFailure(run);
+			notify.error(`${scenario} 运行失败`, {
+				description: failure ? failureSummary(failure) : took,
+			});
+		} else {
+			notify.info(`${scenario} 运行已取消`, { description: took });
+		}
+	}, [run, name]);
 }

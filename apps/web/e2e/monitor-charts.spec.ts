@@ -227,7 +227,8 @@ test("悬停联动：图表上的竖线与读数跨图表和时间线按时间�
 	if (!track || !line) throw new Error("没有竖线");
 	expect((line.x - track.x) / track.width).toBeCloseTo(10.5 / 14, 1);
 
-	await page.mouse.move(plot.x + plot.width / 2, plot.y - 200);
+	// 移到顶栏上（离开所有图表与时间线）。
+	await page.mouse.move(plot.x + plot.width / 2, 8);
 	await expect(page.locator("[data-chart-hover]")).toHaveCount(0);
 
 	// 在时间线上悬停，图表上出现竖线。
