@@ -109,6 +109,7 @@ export class MetricQueries {
 					task_id: t.id,
 					attempt: t.attempt,
 					truncated: t.metricTruncated,
+					series_capped: t.metricSeriesCapped,
 					dropped_points: t.metricDropped,
 					metrics: summaries.get(t.id) ?? [],
 				})),
@@ -178,6 +179,7 @@ export class MetricQueries {
 			task_id: task.id,
 			attempt: task.attempt,
 			truncated: task.metricTruncated,
+			series_capped: task.metricSeriesCapped,
 			expired,
 		};
 		if (expired || from === undefined || to === undefined || names.length === 0) {

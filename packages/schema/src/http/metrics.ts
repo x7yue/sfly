@@ -59,7 +59,12 @@ export const TaskMetricSummary = z.object({
 	attempt: z.number().int().positive(),
 	/** 指标数据超过单任务上限，之后的点已被丢弃。 */
 	truncated: z.boolean(),
-	/** Agent 断线期间排队超过上限而丢弃的点数。 */
+	/**
+	 * 序列数超过单任务上限（1000 个，不带标签的指标各算 1 个）：之后新出现的序列的点已被丢弃（计入 dropped_points），
+	 * 已有序列照常写入。
+	 */
+	series_capped: z.boolean(),
+	/** 被丢弃的点数：Agent 断线期间排队超过上限、标签与声明的标签键不一致、序列超限。 */
 	dropped_points: z.number().int().nonnegative(),
 	/** 按指标名排序，同一指标的序列按标签排序。 */
 	metrics: z.array(MetricSummary),
@@ -82,7 +87,12 @@ export const CatalogAttempt = z.object({
 	attempt: z.number().int().positive(),
 	/** 指标数据超过单任务上限，之后的点已被丢弃。 */
 	truncated: z.boolean(),
-	/** Agent 断线期间排队超过上限而丢弃的点数。 */
+	/**
+	 * 序列数超过单任务上限（1000 个，不带标签的指标各算 1 个）：之后新出现的序列的点已被丢弃（计入 dropped_points），
+	 * 已有序列照常写入。
+	 */
+	series_capped: z.boolean(),
+	/** 被丢弃的点数：Agent 断线期间排队超过上限、标签与声明的标签键不一致、序列超限。 */
 	dropped_points: z.number().int().nonnegative(),
 	/** 已写库的点的摘要（每个序列一项），按指标名、标签排序；运行中的当前段约每 10 秒写一次。 */
 	metrics: z.array(MetricSummary),
@@ -178,6 +188,8 @@ export const MetricSeries = z.object({
 	/** 每个桶的跨度（秒，至少 1）：桶 k 覆盖 [from + k × bucket_seconds, from + (k + 1) × bucket_seconds)。 */
 	bucket_seconds: z.number().int().positive(),
 	truncated: z.boolean(),
+	/** 序列数超过单任务上限，之后新出现的序列的点已被丢弃（同 {@link TaskMetricSummary}）。 */
+	series_capped: z.boolean(),
 	series: z.array(
 		z.object({ name: MetricName, labels: MetricLabels, buckets: z.array(MetricBucket) }),
 	),

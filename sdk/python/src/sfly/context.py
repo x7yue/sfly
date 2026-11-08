@@ -52,6 +52,9 @@ _FROM_ENV: Any = object()
 #: 标签值的最大长度（字符数）。
 MAX_LABEL_VALUE_CHARS = 128
 
+#: 每个任务所有指标的序列数上限（不带标签的指标各算 1 个），与控制面一致，不开放配置。
+MAX_SERIES = 1000
+
 
 class Cancelled(BaseException):
     """任务被取消（或超时）时，执行器收到 SIGTERM 后在节点代码里抛出。"""
@@ -289,6 +292,13 @@ class Context:
             else None
         )
         self._warned: set[tuple[str, str]] = set()
+        # 已经上报过的带标签的序列（指标名, 排好序的标签）。
+        # 不带标签的指标各占 1 个名额，总是能上报：知道声明时预留声明了的个数，
+        # 不知道时（metrics 为 None）按上报过的个数计。
+        self._series: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+        self._unlabeled: set[str] = (
+            {m.name for m in metrics if not m.labels} if metrics is not None else set()
+        )
 
     @property
     def procs_dir(self) -> Path:
@@ -334,6 +344,9 @@ class Context:
         以下点被丢弃，并写一条警告日志（每个指标名、每种原因只警告一次）：节点类型没有声明的指标名、
         非有限数值（NaN、无穷大）、缺少声明过的标签键、带了未声明的标签键、给没声明标签键的指标带标签、
         标签值为空或超过 128 个字符。
+
+        每个任务所有指标合计最多 1000 个序列（`MAX_SERIES`，不带标签的指标各算 1 个，总是能上报）：
+        超出后不再建立新序列，新序列的点被丢弃，每个指标警告一次；已有序列照常上报。控制面也按同一上限兜底。
         """
         kind = "gauge"
         keys: frozenset[str] = frozenset()
@@ -363,13 +376,34 @@ class Context:
             "kind": kind,
             "value": number,
         }
+        checked: dict[str, str] | None = {}
         if labels or keys:
             checked = self._check_labels(name, keys, labels or {})
             if checked is None:
                 return
-            if checked:
-                event["labels"] = checked
+        if checked:
+            if not self._admit(name, checked):
+                return
+            event["labels"] = checked
+        elif self._metrics is None:
+            self._unlabeled.add(name)
         self._events.write(event)
+
+    def _admit(self, name: str, labels: dict[str, str]) -> bool:
+        """带标签的点：已有序列照常上报；新序列在没超出序列上限时建立，超出时丢弃并警告。"""
+        series = (name, tuple(sorted(labels.items())))
+        if series in self._series:
+            return True
+        if len(self._series) + len(self._unlabeled) >= MAX_SERIES:
+            self._warn_once(
+                "series-cap",
+                name,
+                f"任务的序列数已达上限 {MAX_SERIES}，指标 {name!r} 新出现的序列的点已丢弃"
+                "（已有序列照常上报；标签值用来区分少量对象，不要用请求 ID、时间这类取值很多的值）",
+            )
+            return False
+        self._series.add(series)
+        return True
 
     def _check_labels(
         self, name: str, keys: frozenset[str], labels: Mapping[str, Any]
