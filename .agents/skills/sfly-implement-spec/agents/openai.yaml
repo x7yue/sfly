@@ -1,0 +1,5 @@
+interface:
+  display_name: "Implement Spec (sfly)"
+  short_description: "Implement an sfly spec and its tickets in parallel on one integration branch."
+policy:
+  allow_implicit_invocation: false

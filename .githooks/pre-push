@@ -13,6 +13,13 @@ done
 ((branches)) || exit 0
 
 cd "$(git rev-parse --show-toplevel)"
+# git 给钩子设置的 GIT_DIR 等变量会被测试启动的 git 子进程继承，让它们作用到这个仓库而不是测试的临时仓库：
+# 一次 `git -C <临时目录> init` 就会把共享配置改成 core.bare=true。检查只靠当前目录定位仓库，所以全部去掉。
+unset $(git rev-parse --local-env-vars)
+if [[ ! -d node_modules ]]; then
+	echo "pre-push：这个工作区还没装依赖（新建的 worktree 要单独装），先运行 pnpm bootstrap" >&2
+	exit 1
+fi
 echo "pre-push：运行 gen:check、lint、typecheck、test（跳过：git push --no-verify）" >&2
 pnpm release:version check >/dev/null
 pnpm gen:check
