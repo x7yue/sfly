@@ -242,12 +242,13 @@ describe("验收 S2：并行", () => {
 			const r = await api.run(runId);
 			expect(chainOf(r, "logs").status).toBe("success");
 			expect(nodeOf(chainOf(r, "mon"), "watch").status).toBe("stopped");
+			// tidy-ready 由节点代码写出，控制面可能还没处理 TaskStarted（仍是 dispatched），所以也要等。
+			expect(nodeOf(chainOf(r, "mon"), "tidy").status).toBe("running");
 		}, 30_000);
 		// always 清理还没结束：停止子流程节点仍在等待，主链停在这里。
 		run = await api.run(runId);
 		expect(run.status).toBe("running");
 		expect(chainOf(run, "mon").status).toBe("running");
-		expect(nodeOf(chainOf(run, "mon"), "tidy").status).toBe("running");
 		expect(statuses(chainOf(run, "entry"))).toMatchObject({
 			stop_mon: "waiting",
 			report: "pending",
