@@ -406,13 +406,25 @@ def stdout_rate(
     }
 
 
+def _labeled_metrics() -> list[Metric]:
+    """带标签的指标（#78）。
+
+    bundle-self-update 用上一个 Release 的 Agent 和它自带的 SDK 加载本包，那个 SDK 的 `Metric`
+    还没有 `labels`：在那里不声明这个指标，本包的其余节点照常可用。
+    """
+    try:
+        return [Metric("conn", "", "gauge", "按连接区分的瞬时值", labels=["host", "port"])]
+    except TypeError:
+        return []
+
+
 @node(
     title="指标",
     outputs=[],
     metrics=[
         Metric("level", "", "gauge", "瞬时值"),
         Metric("total", "", "counter", "累计值"),
-        Metric("conn", "", "gauge", "按连接区分的瞬时值", labels=["host", "port"]),
+        *_labeled_metrics(),
     ],
     primary_metric="level",
 )
