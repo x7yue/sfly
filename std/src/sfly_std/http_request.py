@@ -20,7 +20,9 @@ from sfly_std import _waiting
 from sfly_std._assertions import Assertion, check, describe, validate
 from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
 
-#: 输出里响应内容的最大字节数：超过时（即使是 JSON）输出 text，只保留开头。
+#: 输出里响应内容（json 或 text）JSON 序列化后的最大字节数：json 超过时改为输出 text，
+#: text 超过时只保留开头。按序列化后的大小算，是因为控制字符会转义成 \u00XX（6 字节）、
+#: 1e15 这样的数会写成 1000000000000000.0，按原始字节限制可能让输出超过 1 MB 上限。
 BODY_OUTPUT_BYTES = 256 * 1024
 #: 输出里响应头（名字和值的字符数之和）的上限：超过时只保留前面的响应头。
 HEADERS_OUTPUT_CHARS = 64 * 1024
@@ -103,8 +105,9 @@ def http_request(
     - `expect_json`：断言列表，格式与 `assert` 节点相同；
     - `until_ok`：打开时，没有响应或断言不通过就每 `poll` 秒重试，直到通过或超过 `wait` 秒。
 
-    输出状态码、响应头、`json`（响应是 JSON 且不超过 256 KiB 时）或 `text`（最多 256 KiB）、
-    耗时（毫秒，也上报为指标 `elapsed_ms`）。不满足时失败，错误信息带上状态码和不通过的断言。
+    输出状态码、响应头、`json`（响应是 JSON 且序列化后不超过 256 KiB 时）或 `text`
+    （序列化后最多 256 KiB，超过时只保留开头）、耗时（毫秒，也上报为指标 `elapsed_ms`）。
+    不满足时失败，错误信息带上状态码和不通过的断言。
     """
     if json is not None and body is not None:
         raise ValueError("json 和 body 只能填一个")
@@ -186,16 +189,51 @@ def _outputs(ctx: Context, response: httpx.Response, elapsed_ms: float) -> tuple
         "elapsed_ms": elapsed_ms,
     }
     parsed = _parse_json(response)
-    size = len(response.content)
-    if size > BODY_OUTPUT_BYTES:
-        ctx.log.warn("响应共 %d 字节，输出 text 只保留前 256 KiB", size)
-        head = response.text.encode()[:BODY_OUTPUT_BYTES]
-        outputs["text"] = head.decode("utf-8", errors="ignore")  # 去掉截断处残缺的字符
-    elif parsed is not _NOT_JSON:
+    if parsed is not _NOT_JSON and _fits(parsed, BODY_OUTPUT_BYTES):
         outputs["json"] = parsed
-    else:
-        outputs["text"] = response.text
+        return outputs, parsed
+    text = _serialized_head(response.text, BODY_OUTPUT_BYTES)
+    if len(text) < len(response.text):
+        ctx.log.warn(
+            "响应共 %d 字节，输出 text 只保留开头 %d 个字符（JSON 序列化后 256 KiB）",
+            len(response.content),
+            len(text),
+        )
+    elif parsed is not _NOT_JSON:
+        ctx.log.warn("响应是 JSON，但序列化后超过 256 KiB，改为输出 text")
+    outputs["text"] = text
     return outputs, parsed
+
+
+def _fits(value: Any, limit: int) -> bool:
+    """value 写进节点输出后是否不超过 limit 字节；边序列化边累计，超过就停，不整份序列化大响应。"""
+    size = 0
+    for chunk in jsonlib.JSONEncoder(ensure_ascii=False).iterencode(value):
+        size += len(chunk.encode())
+        if size > limit:
+            return False
+    return True
+
+
+def _serialized_size(value: Any) -> int:
+    """value 写进节点输出（JSON，不转义非 ASCII 字符）后占的字节数；字符串不算两边的引号。"""
+    size = len(jsonlib.dumps(value, ensure_ascii=False).encode())
+    return size - 2 if isinstance(value, str) else size
+
+
+def _serialized_head(text: str, limit: int) -> str:
+    """text 最长的开头，写进节点输出后不超过 limit 字节。"""
+    # 每个字符序列化后至少 1 字节：合格的开头不超过 limit 个字符。二分找最长的。
+    if len(text) <= limit and _serialized_size(text) <= limit:
+        return text
+    low, high = 0, min(len(text), limit)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if _serialized_size(text[:middle]) <= limit:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low]
 
 
 def _headers(ctx: Context, response: httpx.Response) -> dict[str, str]:

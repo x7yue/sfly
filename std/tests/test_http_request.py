@@ -382,8 +382,35 @@ def test_text_keeps_the_first_256_kib_and_warns(tmp_path: Path, stub: Stub) -> N
     assert result.outputs is not None
     text = result.outputs["text"]
     assert text == "a" + "汉" * ((256 * KIB - 1) // 3)
-    assert ("sdk", "warn", f"响应共 {len(body)} 字节，输出 text 只保留前 256 KiB") in [
-        (line.source, line.level, line.message) for line in result.logs
+    assert warn_logs(result) == [
+        f"响应共 {len(body)} 字节，输出 text 只保留开头 {len(text)} 个字符（JSON 序列化后 256 KiB）"
+    ]
+
+
+def warn_logs(result: Execution) -> list[str]:
+    return [line.message for line in result.logs if line.level == "warn"]
+
+
+def serialized_size(text: str) -> int:
+    """text 写进输出 JSON 后占的字节数（不含两边的引号）。"""
+    return len(json.dumps(text, ensure_ascii=False).encode()) - 2
+
+
+def test_text_is_limited_by_its_serialized_size_so_control_characters_fit(
+    tmp_path: Path, stub: Stub
+) -> None:
+    # 控制字符在 JSON 里转义成 \u00XX（6 字节）：按原始字节截到 256 KiB 会让输出超过 1 MB。
+    body = b"\x01" * (300 * KIB)
+    stub.routes["/bin"] = Reply(200, body, {"Content-Type": "application/octet-stream"})
+
+    result = run(tmp_path, url=f"{stub.url}/bin")
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    kept = 256 * KIB // 6
+    assert result.outputs["text"] == "\x01" * kept
+    assert warn_logs(result) == [
+        f"响应共 {len(body)} 字节，输出 text 只保留开头 {kept} 个字符（JSON 序列化后 256 KiB）"
     ]
 
 
@@ -405,8 +432,28 @@ def test_json_over_256_kib_is_output_as_truncated_text_but_still_checked(
     assert result.status == "success", result.error
     assert result.outputs is not None
     assert "json" not in result.outputs
-    assert result.outputs["text"].startswith('{"items": [{"id": 0, "status": "ok"}')
-    assert len(result.outputs["text"]) == 256 * KIB
+    text = result.outputs["text"]
+    assert text.startswith('{"items": [{"id": 0, "status": "ok"}')
+    # 引号转义成 \"：最多差一个转义（2 字节）就到 256 KiB。
+    assert 256 * KIB - 2 < serialized_size(text) <= 256 * KIB
+
+
+def test_json_that_serializes_over_256_kib_is_output_as_text(tmp_path: Path, stub: Stub) -> None:
+    # 1e15 重新序列化成 1000000000000000.0：原文 100 KiB 出头，序列化后 400 KiB 以上。
+    body = ("[" + ",".join(["1e15"] * (20 * KIB)) + "]").encode()
+    stub.routes["/floats"] = Reply(200, body, {"Content-Type": "application/json"})
+
+    result = run(
+        tmp_path,
+        url=f"{stub.url}/floats",
+        expect_json=[{"path": "$", "op": "len_eq", "value": 20 * KIB}],
+    )
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert "json" not in result.outputs
+    assert result.outputs["text"] == body.decode()
+    assert warn_logs(result) == ["响应是 JSON，但序列化后超过 256 KiB，改为输出 text"]
 
 
 def test_fails_when_the_response_takes_longer_than_request_timeout(
