@@ -1,4 +1,10 @@
-import type { MetricBucket, MetricIncrement, MetricSeries } from "@sfly/schema";
+import {
+	type MetricBucket,
+	type MetricIncrement,
+	type MetricSeries,
+	seriesKey,
+	sortedLabels,
+} from "@sfly/schema";
 import { formatMetric } from "#/lib/format";
 import type { TimeRange } from "./timeline";
 
@@ -40,8 +46,10 @@ export function balancedColumns(count: number, width: number, minWidth: number):
 }
 
 /**
- * 把运行 SSE 的 metrics 增量追加进序列查询的结果：只追加同一尝试的点；落进最后一个桶的点合并，
- * 之后的点按 from 对齐开新桶；不晚于最后一个桶的点（重连补齐时已经包含）不追加。没有变化时返回原对象。
+ * 把运行 SSE 的 metrics 增量追加进序列查询的结果：只追加同一尝试的点，按序列（指标名 + 标签，#78）合并；
+ * 落进最后一个桶的点合并，之后的点按 from 对齐开新桶；不晚于最后一个桶的点（重连补齐时已经包含）不追加。
+ * 运行中新出现的序列排在同一指标已有的序列旁边（同一指标按标签排序，与序列查询一致），没有的指标排在最后。
+ * 没有变化时返回原对象。
  */
 export function appendIncrement(series: MetricSeries, increment: MetricIncrement): MetricSeries {
 	if (
@@ -52,14 +60,26 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		return series;
 	}
 	const span = series.bucket_seconds * 1000;
-	const byName = new Map(series.series.map((s) => [s.name, [...s.buckets]]));
+	const byKey = new Map(
+		series.series.map((s) => [
+			seriesKey(s.name, s.labels),
+			{ name: s.name, labels: s.labels, buckets: [...s.buckets] },
+		]),
+	);
+	let added = false;
 	let origin = series.from === null ? null : Date.parse(series.from);
 	let changed = false;
 	for (const point of increment.points) {
 		const t = Date.parse(point.time);
 		origin ??= t;
-		const buckets = byName.get(point.name) ?? [];
-		if (!byName.has(point.name)) byName.set(point.name, buckets);
+		const key = seriesKey(point.name, point.labels);
+		let entry = byKey.get(key);
+		if (!entry) {
+			entry = { name: point.name, labels: sortedLabels(point.labels), buckets: [] };
+			byKey.set(key, entry);
+			added = true;
+		}
+		const buckets = entry.buckets;
 		const last = buckets.at(-1);
 		const lastStart = last ? Date.parse(last.time) : null;
 		if (last && lastStart !== null && t < lastStart + span) {
@@ -89,16 +109,47 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 	}
 	if (!changed) return series;
 	const from = series.from ?? (origin === null ? null : new Date(origin).toISOString());
-	const lastTimes = [...byName.values()].flatMap((b) => b.at(-1)?.time ?? []).sort();
+	const lastTimes = [...byKey.values()].flatMap((s) => s.buckets.at(-1)?.time ?? []).sort();
+	let entries = [...byKey];
+	if (added) {
+		// 指标的位置取它在原结果里第一次出现的位置；同一指标的序列按身份（即标签）排序。
+		const order = new Map<string, number>();
+		for (const [i, s] of series.series.entries()) if (!order.has(s.name)) order.set(s.name, i);
+		const rank = (name: string) => order.get(name) ?? Number.POSITIVE_INFINITY;
+		const firstSeen = new Map<string, number>();
+		for (const [i, [, s]] of entries.entries())
+			if (!firstSeen.has(s.name)) firstSeen.set(s.name, i);
+		entries = entries.sort(
+			([ka, a], [kb, b]) =>
+				rank(a.name) - rank(b.name) ||
+				(firstSeen.get(a.name) ?? 0) - (firstSeen.get(b.name) ?? 0) ||
+				(ka < kb ? -1 : ka > kb ? 1 : 0),
+		);
+	}
 	return {
 		...series,
 		from,
 		to: lastTimes.at(-1) ?? series.to,
-		series: [...byName].map(([name, buckets]) => ({ name, buckets })),
+		series: entries.map(([, s]) => s),
 	};
 }
 
-/** 悬停时刻所在桶的最新值；不在任何桶里时为 null。 */
+/**
+ * 图例里一个序列的名字（#78）：不带标签时是指标名；带标签时是标签值以「 · 」连接（按声明的标签键的顺序，
+ * 没有声明时按键名），图表引用多个指标时前面再加上指标名（例如 `read_bytes · sda`）。
+ */
+export function seriesName(
+	name: string,
+	labels: Readonly<Record<string, string>>,
+	keys: readonly string[] | undefined,
+	multiMetric: boolean,
+): string {
+	const order = keys?.length ? keys : Object.keys(labels).sort();
+	const values = order.flatMap((k) => labels[k] ?? []);
+	if (values.length === 0) return name;
+	return (multiMetric ? [name, ...values] : values).join(" · ");
+}
+
 /** 悬停时刻所在的桶；不在任何桶里时为 null。 */
 export function bucketAt(
 	buckets: readonly MetricBucket[],

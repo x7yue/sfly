@@ -4,6 +4,7 @@ import {
 	type MetricSeries,
 	type PlatformMetrics,
 	type RunView,
+	seriesKey,
 } from "@sfly/schema";
 import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -21,7 +22,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
 import { buildGroups, type ChartGroup, groupHasData, isActive, isFailed } from "./chart-groups";
-import { balancedColumns, chartWindow } from "./charts";
+import { balancedColumns, chartWindow, seriesName } from "./charts";
 import { type ChartLine, MetricChart } from "./MetricChart";
 import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
@@ -397,11 +398,18 @@ function NodeGroup({
 }) {
 	const { entry, node, chain, attempt, runAttempt, status } = group;
 	const units = new Map(entry.metrics.map((m) => [m.name, m.unit]));
+	const labelKeys = new Map(entry.metrics.map((m) => [m.name, m.labels]));
+	// 每个序列（指标名 + 标签，#78）一条线；还没有数据的指标占一条空线。
 	const linesOf = (names: readonly string[]): ChartLine[] =>
-		names.map((name) => ({
-			name,
-			buckets: series?.series.find((s) => s.name === name)?.buckets ?? [],
-		}));
+		names.flatMap((name): ChartLine[] => {
+			const found = series?.series.filter((s) => s.name === name) ?? [];
+			if (found.length === 0) return [{ name, buckets: [] }];
+			return found.map((s) => ({
+				name: seriesName(s.name, s.labels, labelKeys.get(s.name), names.length > 1),
+				key: seriesKey(s.name, s.labels),
+				buckets: s.buckets,
+			}));
+		});
 	const window = runAttempt ? chartWindow(runAttempt, range, now) : null;
 	const truncated = attempt.truncated || !!series?.truncated;
 	const empty = !runAttempt?.started_at

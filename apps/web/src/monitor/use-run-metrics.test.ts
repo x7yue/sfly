@@ -18,7 +18,7 @@ const series = (runId: string): MetricSeries => ({
 	to: null,
 	bucket_seconds: 1,
 	truncated: false,
-	series: [{ name: "tps", buckets: [] }],
+	series: [{ name: "tps", labels: {}, buckets: [] }],
 });
 const keyOf = (runId: string, extra: Record<string, string> = {}) =>
 	queryKey(metricsApi.series, {
@@ -38,7 +38,9 @@ describe("指标增量追加进序列缓存", () => {
 			chain_instance_id: CHAIN,
 			node_id: "load",
 			attempt: 1,
-			points: [{ name: "tps", time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 }],
+			points: [
+				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
+			],
 		});
 
 		const buckets = (key: readonly unknown[]) =>
@@ -73,7 +75,9 @@ describe("指标增量追加进序列缓存", () => {
 			chain_instance_id: CHAIN,
 			node_id: "load",
 			attempt: 1,
-			points: [{ name: "tps", time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 }],
+			points: [
+				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
+			],
 		});
 
 		const state = (key: readonly unknown[]) => client.getQueryState<MetricSeries>(key);

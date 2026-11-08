@@ -93,6 +93,7 @@ const series = (buckets: [number, number][], bucketSeconds = 1): MetricSeries =>
 	series: [
 		{
 			name: "tps",
+			labels: {},
 			buckets: buckets.map(([t, v]) => ({
 				time: at(t),
 				points: 1,
@@ -105,12 +106,22 @@ const series = (buckets: [number, number][], bucketSeconds = 1): MetricSeries =>
 	],
 });
 
-const increment = (points: [string, number, number][], attempt = 1): MetricIncrement => ({
+const increment = (
+	points: Array<[string, number, number] | [string, number, number, Record<string, string>]>,
+	attempt = 1,
+): MetricIncrement => ({
 	task_id: "00000000-0000-4000-8000-000000000003",
 	chain_instance_id: "00000000-0000-4000-8000-000000000002",
 	node_id: "load",
 	attempt,
-	points: points.map(([name, t, value]) => ({ name, time: at(t), value, min: value, max: value })),
+	points: points.map(([name, t, value, labels = {}]) => ({
+		name,
+		labels,
+		time: at(t),
+		value,
+		min: value,
+		max: value,
+	})),
 });
 
 const lastOf = (result: MetricSeries, name = "tps") =>
@@ -148,6 +159,31 @@ describe("实时追加的指标点", () => {
 		);
 		expect(lastOf(result)).toEqual([[at(5), 1, 1]]);
 		expect(lastOf(result, "p99")).toEqual([[at(6), 1, 120]]);
+	});
+
+	it("按序列（指标名 + 标签）合并：运行中出现的新序列排在同一指标已有的序列旁边，按标签排序", () => {
+		const base: MetricSeries = {
+			...series([[0, 1]]),
+			series: [
+				{ name: "conn", labels: { host: "b" }, buckets: series([[0, 2]]).series[0]?.buckets ?? [] },
+				...series([[0, 1]]).series,
+			],
+		};
+		const result = appendIncrement(
+			base,
+			increment([
+				["conn", 1, 20, { host: "b" }],
+				["conn", 1, 30, { host: "a" }],
+				["tps", 1, 5],
+				["p99", 1, 7],
+			]),
+		);
+		expect(result.series.map((x) => [x.name, x.labels, x.buckets.map((b) => b.last)])).toEqual([
+			["conn", { host: "a" }, [30]],
+			["conn", { host: "b" }, [2, 20]],
+			["tps", {}, [1, 5]],
+			["p99", {}, [7]],
+		]);
 	});
 
 	it("其他尝试的点不追加", () => {

@@ -9,6 +9,7 @@ import type { TimeRange } from "./timeline";
 
 /**
  * 一张指标图表（原型 chartHTML / plotSVG）：折线、面积、柱状、数值卡四种类型，多序列时显示图例。
+ * 每个序列（指标名 + 标签，#78）一条线，颜色按序列的顺序在 4 种主题色里轮换。
  * 横轴由调用方给出（节点实际运行的时段与时间线范围的交集，见 charts.ts 的 chartWindow）。
  * 悬停时把时刻写进共享状态（时间线和其他图表同步显示竖线与读数），日志标记画成琥珀色虚线。
  */
@@ -16,9 +17,14 @@ import type { TimeRange } from "./timeline";
 export type ChartType = "line" | "area" | "bar" | "stat";
 
 export interface ChartLine {
+	/** 图例里的名字（`data-series`）。 */
 	name: string;
+	/** 序列的身份（指标名 + 标签，见 @sfly/schema 的 seriesKey）；没有时用 name。 */
+	key?: string;
 	buckets: readonly MetricBucket[];
 }
+
+const lineKey = (line: ChartLine) => line.key ?? line.name;
 
 /** 多序列的线色（token chart-1 … chart-4，按序循环）。 */
 export const SERIES_COLORS = [
@@ -138,10 +144,10 @@ export function MetricChart({
 						bucketSeconds={bucketSeconds}
 						height={dense ? 56 : 96}
 					/>
-					<div className="mt-0.5 flex gap-2.5 text-2xs text-fg-3">
+					<div className="mt-0.5 flex flex-wrap gap-x-2.5 text-2xs text-fg-3">
 						{visible.length > 1 &&
 							visible.map((l, i) => (
-								<span key={l.name} className="inline-flex items-center gap-1">
+								<span key={lineKey(l)} className="inline-flex items-center gap-1" data-legend>
 									<i
 										aria-hidden
 										className="inline-block h-0.5 w-2.5"
@@ -270,7 +276,7 @@ const Paths = memo(function Paths({
 					const bw = Math.max(1, (span / (window.end - window.start)) * W * 0.7);
 					// 柱高是最新值；桶里有范围时叠一条最小–最大的细线（尖峰不被合并掉）。
 					return (
-						<g key={line.name} fill={stroke} data-series={line.name}>
+						<g key={lineKey(line)} fill={stroke} data-series={line.name}>
 							{line.buckets.map((b) => (
 								<g key={b.time}>
 									<rect
@@ -309,7 +315,7 @@ const Paths = memo(function Paths({
 				const last = line.buckets.at(-1) as MetricBucket;
 				const band = !mini && hasSpread(line.buckets) && line.buckets.length > 1;
 				return (
-					<g key={line.name} data-series={line.name}>
+					<g key={lineKey(line)} data-series={line.name}>
 						{band && (
 							// 最小–最大包络：降采样合并掉的短时尖峰仍然看得到（故事 14）。
 							<path

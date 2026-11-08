@@ -17,6 +17,22 @@ const IdParams = z.object({ id: z.string() });
  */
 export const MetricLabels = z.record(z.string(), z.string());
 
+/** 按键排序的标签副本：内容相同的标签得到相同的 JSON（与 jsonb 的规范形式一样，比较时相等）。 */
+export function sortedLabels(labels: Readonly<Record<string, string>>): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(labels).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+	);
+}
+
+/**
+ * 序列的身份（指标名 + 标签）：不带标签时就是指标名，带标签时是指标名、NUL 和键排序后的标签 JSON。
+ * 指标名是标识符、不含 NUL，两种形式不会冲突；按它排序即先按指标名、再按标签排序。
+ */
+export function seriesKey(name: string, labels: Readonly<Record<string, string>>): string {
+	for (const _ in labels) return `${name}\u0000${JSON.stringify(sortedLabels(labels))}`;
+	return name;
+}
+
 /** 一个任务（一次尝试）一个序列的摘要。 */
 export const MetricSummary = z.object({
 	name: MetricName,

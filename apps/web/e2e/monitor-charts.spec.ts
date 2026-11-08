@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
 import { openMonitor, runningScenario, unixAt } from "./monitor-scenario";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 运行监控页的图表工作区（原型 #/monitor/:runId 的中间区域）：按节点分组的指标图表、筛选、只看、
 // 悬停联动、拖选缩放、实时追加、选中节点。
@@ -111,6 +112,87 @@ test("四种图表类型与多序列图例；横轴是节点实际运行的时�
 	agent.metrics(tasks.probe as AssignedTask, [["level", unixAt(clock0, 14), 42]]);
 	await expect(level.locator("[data-latest]")).toHaveText("42");
 	await expect(group(page, "probe").locator('[data-primary-metric="level"]')).toContainText("42");
+});
+
+test("带标签的指标每个序列一条线，图例用标签值命名；运行中出现的新序列实时加入图表", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		installedPackages: [{ name: "demo-checks", version: "1.3.0" }],
+	});
+	await publishPackage(controlPlane, {
+		version: "1.3.0",
+		nodes: [
+			{
+				name: "ping",
+				title: "ping",
+				entry: "demo_checks.http:ping_host",
+				inputs: { type: "object", properties: { host: { type: "string" } }, required: ["host"] },
+				outputs: { type: "object", properties: {} },
+				metrics: [
+					{ name: "tps", unit: "req/s", kind: "gauge" },
+					// 图例按声明的标签键顺序（port 在前）连接标签值。
+					{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["port", "host"] },
+				],
+				charts: [
+					{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+					{ title: "合计与各连接", type: "area", metrics: ["tps", "conn_tps"] },
+				],
+				primary_metric: "tps",
+			},
+		],
+	});
+	const scenarioId = await createScenario(
+		controlPlane,
+		"按连接",
+		scenarioUsing("agent-a", "1.3.0"),
+	);
+	const clock0 = clock.now().getTime();
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const task = await agent.nextAssign();
+	const conn = (host: string, s: number, value: number) => ({
+		name: "conn_tps",
+		labels: { host, port: "80" },
+		timeUnixS: BigInt(unixAt(clock0, s)),
+		value,
+		min: value,
+		max: value,
+	});
+	agent.metrics(task, [
+		...[1, 2, 3].flatMap((s) => [conn("a", s, 10 + s), conn("b", s, 20 + s)]),
+		...[1, 2, 3].map((s): [string, number, number] => ["tps", unixAt(clock0, s), 30 + s]),
+	]);
+	await agent.sync();
+	clock.advance(5000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const byConn = chart(page, "ping", "各连接");
+	await expect(byConn.locator("[data-series] path")).toHaveCount(2);
+	await expect(byConn.locator("[data-legend]")).toHaveText(["80 · a", "80 · b"]);
+	const mixed = chart(page, "ping", "合计与各连接");
+	await expect(mixed.locator("[data-series]")).toHaveCount(3);
+	await expect(mixed.locator("[data-legend]")).toHaveText([
+		"tps",
+		"conn_tps · 80 · a",
+		"conn_tps · 80 · b",
+	]);
+	// 主指标（不带标签）照常显示最新值。
+	await expect(group(page, "ping").locator('[data-primary-metric="tps"]')).toContainText("33");
+
+	// 运行中出现的新序列实时加入图表和图例。
+	agent.metrics(task, [conn("c", 4, 5)]);
+	await expect(byConn.locator("[data-legend]")).toHaveText(["80 · a", "80 · b", "80 · c"]);
+	await expect(byConn.locator("[data-series] path")).toHaveCount(3);
+	await expect(mixed.locator("[data-legend]")).toHaveText([
+		"tps",
+		"conn_tps · 80 · a",
+		"conn_tps · 80 · b",
+		"conn_tps · 80 · c",
+	]);
 });
 
 test("节点多选筛选：按链整组勾选、搜索、快速选择、平台自带图表；清除筛选；底部面板范围跟随筛选", async ({

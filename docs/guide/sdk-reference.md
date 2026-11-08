@@ -112,16 +112,20 @@ ctx.progress(3, 10, "第 3 批")
 ## `ctx.metric`：指标
 
 ```python
-Metric(name, unit="", kind="gauge", description=None)
+Metric(name, unit="", kind="gauge", description=None, labels=())
 Chart(title, type="line", metrics=())
 ctx.metric("latency_ms", 12.5)
+ctx.metric("conn_latency_ms", 8.2, labels={"host": "db-1", "port": 5432})
 ```
 
 - 指标要先在 `@node(metrics=...)` 里声明再上报。指标名是标识符（字母、数字、下划线，不以数字开头），不能重复。
 - `kind`：`gauge` 是瞬时值（例如延迟、队列长度），`counter` 是累计值（例如已发送的请求数，上报当前累计值）。
 - `Chart.type`：`line`、`area`、`bar`、`stat`；`metrics` 列出至少一个已声明的指标。没有被任何图表引用的指标由平台生成默认图表。
-- `ctx.metric` 可以随意频繁调用：Agent 按「指标 × 秒」合并，每秒最多上报一次（`gauge` 取这一秒最后一个值并带最小、最大值，`counter` 取这一秒结束时的值）。
-- 未声明的指标名和非有限数值（NaN、无穷大）被丢弃，并写一条 warn 日志（每个指标名、每种原因只写一次）。
+- `labels`：标签键，用来在一个节点里同时上报多个对象的同一个指标（例如每个连接、每个进程）。最多 3 个键，命名规则同指标名，不能重复；`sfly build` 检查这些规则。
+- 上报时 `labels` 给出这个点的标签值。一个指标在一组确定的标签值下的全部点是一个**序列**，运行监控页的折线和面积图里每个序列画一条线，图例用标签值以「 · 」连接（按声明的标签键顺序），图表引用多个指标时前面再加上指标名。不带标签的指标仍然只有一个序列。平台不对多个序列求和或求平均，需要合计时另报一个不带标签的指标。
+- 声明了标签键的指标，每个点都要给全这些键；没声明标签键的指标不能带标签。标签值是不超过 128 个字符的非空字符串，数字自动转成字符串。
+- `ctx.metric` 可以随意频繁调用：Agent 按「序列 × 秒」合并，每秒最多上报一次（`gauge` 取这一秒最后一个值并带最小、最大值，`counter` 取这一秒结束时的值）。
+- 以下点被丢弃，并写一条 warn 日志（每个指标名、每种原因只写一次）：未声明的指标名、非有限数值（NaN、无穷大）、缺少声明过的标签键、带了未声明的标签键、给没声明标签键的指标带标签、标签值为空或超过 128 个字符。
 
 ## `ctx.artifacts`：产物
 
@@ -206,7 +210,7 @@ def test_countdown_cleans_up_when_cancelled(tmp_path: Path) -> None:
 | `error` | `NodeError(kind, message, type, traceback)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled` |
 | `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr 或 sdk |
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
-| `metrics` | `MetricPoint(ts, name, kind, value)` 的列表，保留每一次上报（未声明的已丢弃） |
+| `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
 | `artifacts` | 产物名称 → 本地文件路径 |
 | `artifacts_dir`、`work_dir` | 产物目录、工作目录 |
 

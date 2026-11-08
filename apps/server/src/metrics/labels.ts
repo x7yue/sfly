@@ -1,3 +1,7 @@
+import { seriesKey } from "@sfly/schema";
+
+export { seriesKey, sortedLabels } from "@sfly/schema";
+
 /**
  * 序列的标签（#78）：一个任务里，一个指标在一组确定的标签值下的全部点构成一个序列。
  * 标签键在节点类型的元信息里声明（每个指标最多 3 个），值是不超过 128 个字符的非空字符串。
@@ -22,19 +26,6 @@ export function labelsMatch(labels: Labels, keys: readonly string[]): boolean {
 		}
 	}
 	return true;
-}
-
-/** 按键排序的副本：内容相同的标签得到相同的 JSON，与 jsonb 的规范形式一样比较时相等。 */
-export function sortedLabels(labels: Labels): Labels {
-	return Object.fromEntries(
-		Object.entries(labels).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-	);
-}
-
-/** 序列在内存里的键：不带标签时就是指标名（指标名是标识符，不含 NUL，不会与带标签的键冲突）。 */
-export function seriesKey(name: string, labels: Labels): string {
-	for (const _ in labels) return `${name}\u0000${JSON.stringify(sortedLabels(labels))}`;
-	return name;
 }
 
 /** 序列的排序：先按指标名，同一指标按标签（键排序后的 JSON）。 */
