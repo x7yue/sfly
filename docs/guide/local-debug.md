@@ -42,7 +42,7 @@ uv run sfly run countdown --params '{"name": "世界", "steps": 0}'
 
 ## 取消
 
-运行中按 Ctrl-C，按平台的取消流程取消：节点里抛出 `sfly.Cancelled`，`finally` 里的清理代码照常执行，宽限期（默认 10 秒，`--grace` 修改）过后强制杀掉进程树；再按一次 Ctrl-C 立即杀掉。用一个跑得久的参数验证清理代码：
+运行中按 Ctrl-C，按平台的取消流程取消：节点里抛出 `sfly.Cancelled`，`finally` 里的清理代码照常执行，宽限期（默认 10 秒，`--grace` 修改）过后强制杀掉进程树；再按一次 Ctrl-C 立即杀掉。节点结束后结果已经确定，打印结果期间的 Ctrl-C 会被忽略，退出码按结果给出。用一个跑得久的参数验证清理代码：
 
 ```sh
 uv run sfly run countdown --params '{"name": "世界", "steps": 100, "interval": 1}'

@@ -7,6 +7,7 @@ stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互�
 （`ctx.task.run_id`），后台进程目录（`ctx.procs_dir`）是 `.sfly/procs/<运行目录名>/`。
 
 Ctrl-C 走和平台相同的取消流程：取消标记 + SIGTERM，宽限期过后强制杀掉；再按一次立即杀掉。
+节点结束后结果已经确定，打印结果期间的 Ctrl-C 被忽略，退出码按结果给出。
 
 退出码：成功 0，节点失败 1，参数不合法（或找不到节点）2，取消 130。
 """
@@ -170,9 +171,15 @@ def run(project: Path, node: str, params_text: str, grace: float = DEFAULT_GRACE
             node_id=node,
             procs_dir=project.absolute() / PROCS_DIR / work.name,
         )
+        # 节点已经结束，结果（和退出码）已经确定：打印结果期间的 Ctrl-C 一律忽略，
+        # 否则恢复成默认处理后会在打印中途抛出 KeyboardInterrupt（#122）。
+        # 标准输出接管道时是块缓冲，在这里刷完，免得剩下的部分留到退出时才写、又没有保护。
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+        code = _report(result)
+        sys.stdout.flush()
     finally:
         signal.signal(signal.SIGINT, previous)
-    return _report(result)
+    return code
 
 
 def _report(result: Execution) -> int:
