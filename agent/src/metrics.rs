@@ -6,6 +6,7 @@
 //!   任务结束时发出全部。
 //! - 排队（[`MetricQueue`]）：合并后的批次在这里等待发送，所有任务合计最多排队 `limit` 个点；
 //!   超出时丢弃最早的点，按任务记下丢弃数，随这个任务下一次发出的批次（`dropped_points`）上报。
+//!   一次写满只警告一次（与日志队列一致），又有一批不丢弃地放下之后再写满才再警告。
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -89,6 +90,8 @@ pub struct MetricQueue {
     limit: usize,
     /// (task_id, attempt) → 还没上报的丢弃点数。
     dropped: HashMap<(String, u32), u64>,
+    /// 正在丢弃：上一次排队（有点的批次）丢弃了点。一次写满只警告一次，放得下之后再写满才再警告。
+    dropping: bool,
 }
 
 impl MetricQueue {
@@ -98,14 +101,22 @@ impl MetricQueue {
             points: 0,
             limit,
             dropped: HashMap::new(),
+            dropping: false,
         }
     }
 
-    /// 排队一批；超出上限时丢弃最早的点。
-    pub fn push(&mut self, batch: MetricBatch) {
+    /// 最多排队的点数。
+    pub fn limit(&self) -> usize {
+        self.limit
+    }
+
+    /// 排队一批；超出上限时丢弃最早的点。返回 true 表示这次开始丢弃、调用方应打一条警告：
+    /// 与日志队列一致，持续写满期间只在第一次丢弃时返回 true，直到又有一批不丢弃地放下。
+    pub fn push(&mut self, batch: MetricBatch) -> bool {
+        let empty = batch.points.is_empty();
         self.points += batch.points.len();
         self.batches.push_back(batch);
-        let mut warned = false;
+        let mut dropped = false;
         while self.points > self.limit {
             let Some(front) = self.batches.front_mut() else {
                 break;
@@ -120,14 +131,16 @@ impl MetricQueue {
             if front.points.is_empty() {
                 self.batches.pop_front();
             }
-            if n > 0 && !warned {
-                warned = true;
-                eprintln!(
-                    "metric queue is full ({} points queued while disconnected): dropping the oldest points",
-                    self.limit
-                );
+            if n > 0 {
+                dropped = true;
             }
         }
+        if empty {
+            return false;
+        }
+        let warn = dropped && !self.dropping;
+        self.dropping = dropped;
+        warn
     }
 
     /// 取出最早的一批（同一任务排在后面的批次合并进来），带上这个任务的丢弃计数；
@@ -160,5 +173,58 @@ impl MetricQueue {
             .remove(&(batch.task_id.clone(), batch.attempt))
             .unwrap_or_default();
         Some(batch)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn batch(task_id: &str, n: usize) -> MetricBatch {
+        MetricBatch {
+            task_id: task_id.into(),
+            attempt: 1,
+            points: (0..n)
+                .map(|i| MetricPoint {
+                    name: "m".into(),
+                    time_unix_s: i as i64,
+                    value: 0.0,
+                    min: 0.0,
+                    max: 0.0,
+                })
+                .collect(),
+            dropped_points: 0,
+        }
+    }
+
+    fn drain(queue: &mut MetricQueue) -> (usize, u64) {
+        let (mut points, mut dropped) = (0, 0);
+        while let Some(b) = queue.pop() {
+            points += b.points.len();
+            dropped += b.dropped_points;
+        }
+        (points, dropped)
+    }
+
+    #[test]
+    fn repeated_overflow_warns_only_once_and_still_counts_dropped_points() {
+        let mut queue = MetricQueue::new(10);
+        assert!(!queue.push(batch("t", 10)));
+        let warnings = (0..5).filter(|_| queue.push(batch("t", 3))).count();
+        assert_eq!(warnings, 1);
+        assert_eq!(drain(&mut queue), (10, 15));
+    }
+
+    #[test]
+    fn overflow_warns_again_after_the_queue_has_recovered() {
+        let mut queue = MetricQueue::new(10);
+        assert!(queue.push(batch("t", 12)));
+        assert!(!queue.push(batch("t", 2)));
+        // 重连后排空，再写入不超限：恢复；之后再写满可以再打一次。
+        drain(&mut queue);
+        assert!(!queue.push(batch("t", 4)));
+        assert!(queue.push(batch("t", 8)));
+        assert!(!queue.push(batch("t", 1)));
+        assert_eq!(drain(&mut queue), (10, 3));
     }
 }

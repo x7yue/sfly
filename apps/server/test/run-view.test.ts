@@ -50,7 +50,9 @@ describe("运行视图", () => {
 	};
 
 	beforeEach(async () => {
-		cp = await startTestControlPlane();
+		// 用例会把手动时钟一次推进超过默认租约（30 秒）。假 Agent 不发心跳，租约若比这短，
+		// 每 20 毫秒一次的租约扫描可能抢在任务结果之前把它以 agent_lost 结束（#129）。
+		cp = await startTestControlPlane({ leaseMs: 60 * 60_000 });
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text", "n"] });
 	});
