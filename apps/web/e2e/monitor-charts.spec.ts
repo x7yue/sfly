@@ -195,6 +195,69 @@ test("带标签的指标每个序列一条线，图例用标签值命名；运�
 	]);
 });
 
+test("任务的序列数超过上限时，组标题和引用带标签指标的图表上显示「序列超限」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		installedPackages: [{ name: "demo-checks", version: "1.3.0" }],
+	});
+	await publishPackage(controlPlane, {
+		version: "1.3.0",
+		nodes: [
+			{
+				name: "ping",
+				title: "ping",
+				entry: "demo_checks.http:ping_host",
+				inputs: { type: "object", properties: {} },
+				outputs: { type: "object", properties: {} },
+				metrics: [
+					{ name: "tps", unit: "req/s", kind: "gauge" },
+					{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+				],
+				charts: [
+					{ title: "合计", type: "line", metrics: ["tps"] },
+					{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+				],
+				primary_metric: "tps",
+			},
+		],
+	});
+	const scenarioId = await createScenario(
+		controlPlane,
+		"连接很多",
+		scenarioUsing("agent-a", "1.3.0"),
+	);
+	const clock0 = clock.now().getTime();
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const task = await agent.nextAssign();
+	// 上限 1000 个序列，tps 占 1 个：conn_tps 的第 1000 个序列被拒绝。
+	agent.metrics(task, [
+		["tps", unixAt(clock0, 1), 1],
+		...Array.from({ length: 1000 }, (_, i) => ({
+			name: "conn_tps",
+			labels: { host: `h${i}` },
+			timeUnixS: BigInt(unixAt(clock0, 1)),
+			value: i,
+			min: i,
+			max: i,
+		})),
+	]);
+	await agent.sync();
+	clock.advance(5000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const ping = group(page, "ping");
+	await expect(ping.getByText("序列超限", { exact: true })).toHaveCount(2);
+	await expect(chart(page, "ping", "各连接")).toContainText("序列超限");
+	await expect(chart(page, "ping", "合计")).not.toContainText("序列超限");
+	await expect(ping).toContainText("丢弃 1 个点");
+	await expect(ping).not.toContainText("截断");
+});
+
 test("节点多选筛选：按链整组勾选、搜索、快速选择、平台自带图表；清除筛选；底部面板范围跟随筛选", async ({
 	page,
 	controlPlane,

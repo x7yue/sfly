@@ -112,6 +112,7 @@ describe("指标上报与存储", () => {
 					node_id: "load",
 					attempt: 1,
 					truncated: false,
+					series_capped: false,
 					dropped_points: 0,
 					metrics: [
 						{
@@ -234,6 +235,60 @@ describe("指标上报与存储", () => {
 		expect(summaryOfTask?.metrics.map((m) => [m.name, m.labels, m.points, m.last])).toEqual([
 			["conn_tps", { host: "a", port: "80" }, 2, 80],
 		]);
+	});
+
+	it("每个任务最多 1000 个序列：超出后新序列的点被丢弃并计数，已有序列照常写入；序列超限标记在重启后仍在", async () => {
+		const agent = await connect();
+		const { runId, task } = await start(agent);
+		// 不带标签的 tps、requests 各占 1 个名额（总是能写入），conn_tps 最多 998 个序列。
+		agent.metrics(task, [
+			...Array.from({ length: 1000 }, (_, i) => conn(`h${i}`, 1, i)),
+			["tps", at(1), 1],
+		]);
+		await agent.sync();
+		clock().advance(10_000);
+		await eventually(async () => {
+			expect((await summary(runId)).tasks[0]?.metrics).toHaveLength(999);
+		}, 20_000);
+
+		await agent.disconnect();
+		agents.splice(0);
+		await cp.restart();
+		expect((await summary(runId)).tasks[0]).toMatchObject({
+			series_capped: true,
+			dropped_points: 2,
+		});
+		const again = await connect();
+		again.metrics(task, [conn("h0", 2, 20), conn("h999", 2, 1), ["requests", at(2), 5]]);
+		await again.succeed(task);
+
+		const [summaryOfTask] = (await summary(runId)).tasks;
+		expect(summaryOfTask).toMatchObject({
+			series_capped: true,
+			truncated: false,
+			dropped_points: 3,
+		});
+		const metrics = summaryOfTask?.metrics ?? [];
+		expect(metrics).toHaveLength(1000);
+		expect(metrics.filter((m) => m.name === "conn_tps")).toHaveLength(998);
+		expect(metrics.find((m) => m.labels.host === "h0")).toMatchObject({ points: 2, last: 20 });
+		expect(metrics.some((m) => m.labels.host === "h998" || m.labels.host === "h999")).toBe(false);
+		expect(metrics.filter((m) => m.name !== "conn_tps").map((m) => [m.name, m.last])).toEqual([
+			["requests", 5],
+			["tps", 1],
+		]);
+
+		const catalog = metricsApi.catalog.response.parse(await api.getJson(`/runs/${runId}/metrics`));
+		expect(catalog.nodes[0]?.attempts[0]).toMatchObject({ series_capped: true, truncated: false });
+		const params = new URLSearchParams({
+			chain_instance_id: summaryOfTask?.chain_instance_id ?? "",
+			node_id: "load",
+			metrics: "tps",
+		});
+		const series = metricsApi.series.response.parse(
+			await api.getJson(`/runs/${runId}/metrics/series?${params}`),
+		);
+		expect(series).toMatchObject({ series_capped: true, truncated: false });
 	});
 
 	it("只接受任务所在 Agent、同一次尝试上报的指标", async () => {
@@ -423,22 +478,49 @@ describe("指标上报与存储", () => {
 	});
 });
 
+/** 0012 之后的迁移加在 tasks 上的列：列名、类型。 */
+const LATER_TASK_COLUMNS: [string, string][] = [
+	["metric_series_capped", "boolean DEFAULT false NOT NULL"],
+];
+
 describe("迁移前的指标数据", () => {
 	let cp: TestControlPlane;
 	let oldMigrations: string;
 	const agents: FakeAgent[] = [];
 
-	/** 只含加标签之前（0000–0011）的迁移的目录，模拟旧版控制面。 */
+	/**
+	 * 只含加标签之前（0000–0011）的迁移的目录，模拟旧版控制面。旧版控制面阶段跑的仍是当前代码，它会读写
+	 * 之后的迁移加在 tasks 上的列，所以在这里先补上（{@link LATER_TASK_COLUMNS}），升级前再删掉，由真正的迁移重新加上。
+	 */
 	const migrationsBeforeLabels = async () => {
 		const dir = await mkdtemp(join(tmpdir(), "sfly-migrations-"));
 		await copy(defaultMigrationsDir, dir, { recursive: true });
 		const journalPath = join(dir, "meta", "_journal.json");
 		const journal = JSON.parse(await readFile(journalPath, "utf8")) as {
-			entries: { idx: number }[];
+			entries: { idx: number; tag: string }[];
 		};
 		journal.entries = journal.entries.filter((e) => e.idx <= 11);
 		await writeFile(journalPath, JSON.stringify(journal));
+		const last = join(dir, `${journal.entries.at(-1)?.tag}.sql`);
+		const added = LATER_TASK_COLUMNS.map(
+			([column, type]) => `ALTER TABLE "tasks" ADD COLUMN "${column}" ${type};`,
+		);
+		await writeFile(
+			last,
+			`${await readFile(last, "utf8")}--> statement-breakpoint\n${added.join("\n")}`,
+		);
 		return dir;
+	};
+	const dropLaterColumns = async () => {
+		const client = new pg.Client({ connectionString: cp.database.url });
+		await client.connect();
+		try {
+			for (const [column] of LATER_TASK_COLUMNS) {
+				await client.query(`alter table tasks drop column "${column}"`);
+			}
+		} finally {
+			await client.end();
+		}
 	};
 
 	beforeEach(async () => {
@@ -488,7 +570,7 @@ describe("迁移前的指标数据", () => {
 
 		await agent.disconnect();
 		agents.splice(0);
-		await cp.restart(undefined, { migrationsDir: defaultMigrationsDir });
+		await cp.restart(dropLaterColumns, { migrationsDir: defaultMigrationsDir });
 		const again = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
 		agents.push(again);
 		again.metrics(task, [
@@ -562,7 +644,7 @@ describe("指标单任务上限", () => {
 
 		const res = await cp.fetch(`/runs/${runId}/metrics/summary`);
 		const body = metricsApi.summary.response.parse(await res.json());
-		expect(body.tasks[0]).toMatchObject({ truncated: true });
+		expect(body.tasks[0]).toMatchObject({ truncated: true, series_capped: false });
 		expect(body.tasks[0]?.metrics).toEqual([
 			expect.objectContaining({ name: "tps", points: 3, last: 3, last_time: iso(3) }),
 		]);

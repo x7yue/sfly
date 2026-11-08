@@ -412,6 +412,7 @@ function NodeGroup({
 		});
 	const window = runAttempt ? chartWindow(runAttempt, range, now) : null;
 	const truncated = attempt.truncated || !!series?.truncated;
+	const seriesCapped = attempt.series_capped || !!series?.series_capped;
 	const empty = !runAttempt?.started_at
 		? "节点尚未开始 · 暂无数据"
 		: !window || zoomed
@@ -452,9 +453,13 @@ function NodeGroup({
 							数据已截断
 						</Badge>
 					)}
+					{seriesCapped && <Badge {...SERIES_CAPPED} />}
 					{attempt.dropped_points > 0 && (
-						<Badge variant="warn" title="Agent 断线期间排队超过上限而丢弃的点">
-							断线丢弃 {attempt.dropped_points} 个点
+						<Badge
+							variant="warn"
+							title="被丢弃的点：Agent 断线期间排队超过上限、标签与声明不一致或序列超限"
+						>
+							丢弃 {attempt.dropped_points} 个点
 						</Badge>
 					)}
 					<span className="flex-none text-xs text-fg-3">{charts.length} 张图表</span>
@@ -514,12 +519,24 @@ function NodeGroup({
 						dense={dense}
 						accent={ACCENT[status.kind] ?? "var(--fg-3)"}
 						truncated={truncated}
+						notice={
+							seriesCapped && chart.metrics.some((m) => labelKeys.get(m)?.length) ? (
+								<Badge {...SERIES_CAPPED} className="h-4 px-1" />
+							) : undefined
+						}
 					/>
 				))}
 			</div>
 		</GroupShell>
 	);
 }
+
+/** 「序列超限」提示（组标题与引用了带标签指标的图表上，与「截断」提示一致）。 */
+const SERIES_CAPPED = {
+	variant: "warn",
+	title: "序列数超过单个任务的上限（1000 个），之后新出现的序列的点已被丢弃，已有序列照常上报",
+	children: "序列超限",
+} as const;
 
 /** 选中节点的摘要（组内顶部）：状态、节点类型、Agent、耗时、尝试、进度、错误。 */
 function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {

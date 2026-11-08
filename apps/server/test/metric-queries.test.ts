@@ -534,6 +534,7 @@ describe("指标查询", () => {
 								task_id: task.taskId,
 								attempt: 1,
 								truncated: false,
+								series_capped: false,
 								dropped_points: 0,
 								metrics: [
 									{

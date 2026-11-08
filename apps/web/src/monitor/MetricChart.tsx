@@ -48,6 +48,7 @@ export function MetricChart({
 	dense,
 	accent,
 	truncated,
+	notice,
 	footnote,
 }: {
 	title: string;
@@ -63,6 +64,8 @@ export function MetricChart({
 	/** 数值卡迷你趋势的颜色（随节点状态）。 */
 	accent?: string;
 	truncated?: boolean;
+	/** 标题旁的其他提示（例如「序列超限」），排在「已截断」之后。 */
+	notice?: React.ReactNode;
 	footnote?: React.ReactNode;
 }) {
 	const span = bucketSeconds * 1000;
@@ -100,6 +103,7 @@ export function MetricChart({
 						已截断
 					</Badge>
 				)}
+				{notice}
 				{shown && type !== "stat" && (
 					<HoverReading lines={visible} window={shown} bucketSeconds={bucketSeconds} />
 				)}

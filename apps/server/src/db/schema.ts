@@ -258,6 +258,11 @@ export const tasks = pgTable(
 		metricPoints: bigint("metric_points", { mode: "number" }).notNull().default(0),
 		/** 指标超过单任务上限已被截断（#29）：之后上报的点都被丢弃。 */
 		metricTruncated: boolean("metric_truncated").notNull().default(false),
+		/**
+		 * 任务的序列数超过上限（#78，每个任务 1000 个）：之后新出现的序列的点都被丢弃（计入 metric_dropped），
+		 * 已有序列照常写入。
+		 */
+		metricSeriesCapped: boolean("metric_series_capped").notNull().default(false),
 		/** Agent 断线排队超过上限而丢弃的指标点数（#29，Agent 在 MetricBatch 中上报）。 */
 		metricDropped: bigint("metric_dropped", { mode: "number" }).notNull().default(0),
 	},
