@@ -11,6 +11,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { OnlineEditors } from "./OnlineEditors";
+import { checkSummary } from "./validation";
 
 /** 画布模式：编辑，或叠加一次运行的节点状态（只读，#41）。 */
 export type EditorMode = "edit" | "run";
@@ -26,6 +27,7 @@ export function EditorTopLeft({
 	orchestration,
 	version,
 	warnings,
+	notes,
 	onShowChecks,
 	mode,
 	onMode,
@@ -34,11 +36,14 @@ export function EditorTopLeft({
 	orchestration: OrchestrationView;
 	version: number;
 	warnings: number;
+	/** 不影响保存与触发的提醒条数（validation.ts 的 undeclaredInputNotes）。 */
+	notes: number;
 	onShowChecks(): void;
 	mode: EditorMode;
 	onMode(mode: EditorMode): void;
 	runState?: ReactNode;
 }) {
+	const summary = checkSummary(warnings, notes);
 	return (
 		<div className={cn(floatGroupClass, "top-3 left-3")}>
 			<Link
@@ -61,9 +66,7 @@ export function EditorTopLeft({
 					className="cursor-pointer rounded-md px-1.5 py-1 hover:bg-raised"
 					onClick={onShowChecks}
 				>
-					<StatusPill kind={warnings > 0 ? "warn" : "ok"}>
-						{warnings > 0 ? `${warnings} 条警告` : "检查通过"}
-					</StatusPill>
+					<StatusPill kind={summary.kind}>{summary.label}</StatusPill>
 				</button>
 			)}
 			<GroupDivider />

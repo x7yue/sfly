@@ -11,3 +11,9 @@ export const ZOOM_TEXT_12 = "text-[length:max(12px,calc(11px/var(--canvas-zoom))
 export const ZOOM_TEXT_TITLE = "text-[length:max(13px,calc(12px/var(--canvas-zoom)))]";
 /** 语义缩放时隐藏的细节（摘要槽、标签、种类名）。 */
 export const LOD_HIDDEN = "in-data-[lod=true]:hidden";
+/**
+ * 节点种类图标的方块：方块与图标按所在文字的字号（em）取尺寸。卡片头部随语义缩放一起放大，缩小视图时
+ * 仍能分辨种类，也不会撑高头部；添加节点菜单里放在 11px 文字中（约 18px）。
+ */
+export const KIND_CHIP =
+	"grid size-[1.6em] flex-none place-items-center rounded-sm bg-raised-2 text-fg-2 [&_svg]:size-[1.05em]";

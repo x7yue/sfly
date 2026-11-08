@@ -124,7 +124,7 @@ export function VersionHistory({
 	const comparing = panes.length > 1;
 
 	return (
-		<Page className="max-w-none">
+		<Page>
 			<PageHeader title={name} count={list.length} description="版本历史" actions={editorLink} />
 			<div className="grid grid-cols-[300px_minmax(0,1fr)] gap-3">
 				<Panel className="max-h-60 overflow-y-auto">

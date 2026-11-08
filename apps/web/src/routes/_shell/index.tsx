@@ -105,7 +105,8 @@ function Stats({ data }: { data: DashboardView }) {
 			<StatCard
 				name="成功"
 				value={runs.success}
-				valueClassName="text-ok"
+				// 数值为 0 时不着色：颜色只在有成功 / 失败时传达信号。
+				valueClassName={runs.success > 0 ? "text-ok" : undefined}
 				detail={
 					<Sparkline values={hourly.map((h) => h.success)} className="mt-1.5 w-full text-ok" />
 				}
@@ -113,7 +114,7 @@ function Stats({ data }: { data: DashboardView }) {
 			<StatCard
 				name="失败"
 				value={runs.failed}
-				valueClassName="text-danger-fg"
+				valueClassName={runs.failed > 0 ? "text-danger-fg" : undefined}
 				unit={runs.failed_subflows > 0 ? `含 ${runs.failed_subflows} 个子流程` : undefined}
 				detail={
 					<Sparkline values={hourly.map((h) => h.failed)} className="mt-1.5 w-full text-danger" />
@@ -187,7 +188,7 @@ function StatCard({
 				{value}
 				{unit && <small className="ml-1 text-xs font-normal text-fg-3">{unit}</small>}
 			</div>
-			{detail && <div className="mt-0.5 truncate text-2xs text-fg-3">{detail}</div>}
+			{detail && <div className="mt-0.5 truncate text-xs text-fg-3">{detail}</div>}
 		</section>
 	);
 }
@@ -368,7 +369,15 @@ function AgentsPanel({ agents }: { agents: DashboardAgent[] }) {
 	return (
 		<DashboardPanel title="Agent 状态" count={agents.length} aside={panelLink("/agents", "管理")}>
 			{agents.length === 0 ? (
-				<PanelEmpty>还没有 Agent 连接</PanelEmpty>
+				<PanelEmpty>
+					还没有 Agent 连接。
+					<Link
+						to="/agents"
+						className="ml-1 text-fg-2 underline underline-offset-2 hover:text-fg-1"
+					>
+						查看安装命令
+					</Link>
+				</PanelEmpty>
 			) : (
 				<Table aria-label="Agent 状态">
 					<TableBody>

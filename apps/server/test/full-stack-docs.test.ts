@@ -53,7 +53,9 @@ const TOOLS = [
 	"uname",
 ];
 
-/** 两条从零开始的路线：给人看的各页（按目录顺序），以及给 AI 编程助手的快速开始。 */
+/**
+ * 从零开始的路线：各页按目录顺序。AI 编程助手也按快速开始「自己手动开始」的步骤读这些页，没有单独的路线。
+ */
 const ROUTES = {
 	guide: [
 		"quickstart",
@@ -66,7 +68,6 @@ const ROUTES = {
 		"subflows",
 		"standard-nodes",
 	],
-	ai: ["ai-quickstart"],
 } as const;
 
 /** 测试环境里运行不了的代码块。 */
@@ -85,12 +86,6 @@ const EXPECTED_FAILURES: Array<{
 		when: (_, b) => b.includes('"steps": 0'),
 		code: 1,
 		output: /节点失败：ValueError: steps 必须大于 0/,
-	},
-	// AI 快速开始的环境检查：全新的开发机上还没有 sfly。
-	{
-		when: (page, b) => page === "ai-quickstart" && b.startsWith("uname -sm"),
-		code: 127,
-		output: /sfly: command not found/,
 	},
 ];
 
@@ -388,15 +383,11 @@ describe("全栈：开发文档里的命令", () => {
 		await walk("guide");
 	}, 900_000);
 
-	it("从零照着 AI 编程助手快速开始做", async () => {
-		await walk("ai");
-	}, 900_000);
-
 	it("每一页的每个 sh 代码块都运行过", async () => {
 		const cp = await startTestControlPlane({ docsDir: join(repoRoot, "docs", "guide") });
 		try {
 			const { pages } = docsApi.list.response.parse(await (await cp.fetch("/docs")).json());
-			expect(pages.map((p) => p.slug).sort()).toEqual([...ROUTES.guide, ...ROUTES.ai].sort());
+			expect(pages.map((p) => p.slug).sort()).toEqual([...ROUTES.guide].sort());
 		} finally {
 			await cp.close();
 		}

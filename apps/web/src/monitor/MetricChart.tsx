@@ -40,7 +40,6 @@ export function MetricChart({
 	window,
 	empty,
 	dense,
-	accent,
 	truncated,
 	footnote,
 }: {
@@ -54,8 +53,6 @@ export function MetricChart({
 	/** 没有数据时的说明。 */
 	empty: string;
 	dense: boolean;
-	/** 数值卡迷你趋势的颜色（随节点状态）。 */
-	accent?: string;
 	truncated?: boolean;
 	footnote?: React.ReactNode;
 }) {
@@ -126,7 +123,6 @@ export function MetricChart({
 						bucketSeconds={bucketSeconds}
 						height={30}
 						mini
-						color={accent}
 					/>
 				</>
 			) : (
@@ -225,7 +221,7 @@ export function Plot(props: PlotProps) {
 				<Cursor window={window} height={height} />
 			</svg>
 			{!mini && (
-				<span className="pointer-events-none absolute top-0.5 right-0.5 font-mono text-2xs text-fg-3 opacity-70">
+				<span className="pointer-events-none absolute top-0.5 right-0.5 font-mono text-2xs text-fg-3">
 					{formatMetric(scale.max)}
 				</span>
 			)}

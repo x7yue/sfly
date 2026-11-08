@@ -93,7 +93,7 @@ export function ParamsEditor({
 								<Trash2Icon />
 							</Button>
 						</div>
-						{nameError && <p className="m-0 text-2xs text-danger-fg">{nameError}</p>}
+						{nameError && <p className="m-0 text-xs text-danger-fg">{nameError}</p>}
 						<DefaultValue
 							// 换类型时重建输入框（旧的文本和草稿不再适用）
 							key={param.type}
@@ -254,7 +254,7 @@ function DefaultValue({
 					</Button>
 				)}
 			</div>
-			{field.error && <p className="m-0 text-2xs text-danger-fg">{field.error}</p>}
+			{field.error && <p className="m-0 text-xs text-danger-fg">{field.error}</p>}
 		</div>
 	);
 }

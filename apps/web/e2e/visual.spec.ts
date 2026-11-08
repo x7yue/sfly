@@ -424,11 +424,10 @@ test("运行监控：图表工作区（小型运行，全部展开，悬停联�
 	await ws.getByRole("button", { name: "全部展开" }).click();
 	await expect(ws.getByRole("figure")).toHaveCount(12);
 	await chartsLoaded(page);
-	// 底部面板收起，图表区高一些。
-	await page
-		.getByRole("region", { name: "底部面板" })
-		.getByRole("button", { name: "收起" })
-		.click();
+	// 选中的 verify 第 2 次还没有日志：底部面板自动收起，图表区高一些。
+	await expect(
+		page.getByRole("region", { name: "底部面板" }).getByRole("button", { name: "展开" }),
+	).toBeVisible();
 	const plot = ws
 		.getByRole("region", { name: "probe 的图表" })
 		.getByRole("figure", { name: "level", exact: true })

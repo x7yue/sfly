@@ -115,6 +115,8 @@
 	--color-canvas-run-failed: var(--canvas-run-failed);
 	--color-canvas-run-cancelled: var(--canvas-run-cancelled);
 	--color-canvas-run-stopped: var(--canvas-run-stopped);
+	--color-canvas-run-done-bg: var(--canvas-run-done-bg);
+	--color-canvas-run-done-border: var(--canvas-run-done-border);
 
 	/* 字体：界面无衬线（中文回退系统字体）；数值、ID、命令用等宽 */
 	--font-*: initial;

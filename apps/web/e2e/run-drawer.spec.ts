@@ -24,7 +24,7 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
 	await expect(drawer).toContainText("v1");
 	const checks = drawer.getByRole("list", { name: "触发前检查" });
-	await expect(checks).toContainText("结构、引用与输入检查通过");
+	await expect(checks).toContainText("结构与引用检查通过");
 	await expect(checks).toContainText("节点包版本已锁定");
 	await expect(checks).toContainText("demo-checks 1.2.0");
 	await expect(checks).toContainText("引用的 Agent 都在线");
@@ -134,8 +134,6 @@ test("摘要里可以取消运行", async ({ page, controlPlane, connectAgent })
 	);
 	await drawer.getByRole("button", { name: "取消运行" }).click();
 	const confirm = page.getByRole("dialog", { name: /取消运行/ });
-	const runId = (await (await controlPlane.fetch("/runs?limit=1")).json()).runs[0].id as string;
-	await confirm.getByLabel(/输入运行编号前 4 位/).fill(runId.slice(0, 4));
 	await confirm.getByRole("button", { name: "取消运行" }).click();
 	expect(await agent.nextCancel()).toMatchObject({ taskId: task.taskId });
 	await agent.cancelled(task);
@@ -169,8 +167,6 @@ test("取消请求的响应晚于运行结束到达：摘要保持「已取消�
 	await expect(drawer.getByTestId("summary-status")).toHaveText("运行中");
 	await drawer.getByRole("button", { name: "取消运行" }).click();
 	const confirm = page.getByRole("dialog", { name: /取消运行/ });
-	const runId = (await (await controlPlane.fetch("/runs?limit=1")).json()).runs[0].id as string;
-	await confirm.getByLabel(/输入运行编号前 4 位/).fill(runId.slice(0, 4));
 	await confirm.getByRole("button", { name: "取消运行" }).click();
 	expect(await agent.nextCancel()).toMatchObject({ taskId: task.taskId });
 	await agent.cancelled(task);
@@ -213,7 +209,7 @@ test("预检有阻断项时不能触发，「前往」进入编排画布并选�
 	const checks = drawer.getByRole("list", { name: "触发前检查" });
 	await expect(checks).toContainText("Agent 有 1 个问题");
 	await expect(checks).toContainText("ghost 还没有注册过");
-	await expect(checks).toContainText("结构、引用与输入检查通过");
+	await expect(checks).toContainText("结构与引用检查通过");
 	await expect(drawer.getByRole("button", { name: "触发运行" })).toBeDisabled();
 
 	await checks.getByRole("button", { name: "前往 ping" }).click();

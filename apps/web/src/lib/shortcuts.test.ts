@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { type KeyInput, keyLabels, type ShortcutDef, ShortcutMatcher } from "./shortcuts";
+import {
+	type KeyInput,
+	keyChords,
+	keyLabels,
+	type ShortcutDef,
+	ShortcutMatcher,
+} from "./shortcuts";
 
 const defs: ShortcutDef[] = [
 	{ id: "palette", group: "全局", label: "命令面板", keys: "Ctrl+K", inInputs: true },
@@ -73,5 +79,9 @@ describe("快捷键显示", () => {
 		expect(keyLabels("Alt+Shift+F")).toEqual(["Alt", "Shift", "F"]);
 		expect(keyLabels("Esc")).toEqual(["Esc"]);
 		expect(keyLabels("?")).toEqual(["?"]);
+		// 依次按的分组，同时按的在一组（快捷键面板据此区分「G 然后 D」与「Ctrl K」）。
+		expect(keyChords("G D")).toEqual([["G"], ["D"]]);
+		expect(keyChords("Ctrl+Shift+Z")).toEqual([["Ctrl", "Shift", "Z"]]);
+		expect(keyChords("←/→")).toEqual([["←/→"]]);
 	});
 });

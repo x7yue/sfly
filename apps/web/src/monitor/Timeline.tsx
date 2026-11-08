@@ -25,6 +25,7 @@ import {
 	orderedChains,
 } from "./run-model";
 import {
+	defaultTimelineMode,
 	fractionOf,
 	nodeSegments,
 	type Segment,
@@ -86,7 +87,13 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 	const { range, live, following, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
 	const actions = useMonitorActions();
-	const [mode, setMode] = useState<"summary" | "expanded">("expanded");
+	// 链或节点很多时默认汇总（打开页面时定一次，之后以用户的切换为准）。
+	const [mode, setMode] = useState(() =>
+		defaultTimelineMode(
+			run.chains.length,
+			run.chains.reduce((n, c) => n + c.nodes.length, 0),
+		),
+	);
 	const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
 	const [height, setHeight] = useState<number | null>(null);
 	const body = useRef<HTMLDivElement>(null);
@@ -118,7 +125,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 			aria-label="链路时间线"
 			className="relative flex-none border-b border-border-soft bg-bg"
 		>
-			<div className="flex items-center gap-2 border-b border-border-soft px-3 py-1.5">
+			<div className="flex min-w-0 items-center gap-2 border-b border-border-soft px-3 py-1.5">
 				<h2 className="m-0 text-sm font-semibold">链路时间线</h2>
 				<span className="text-xs text-fg-3">
 					{run.chains.length} 条链 · {nodeCount} 个节点
@@ -150,7 +157,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 				<span className="flex-1" />
 				<ul
 					aria-label="图例"
-					className="m-0 flex list-none items-center gap-3 p-0 text-2xs text-fg-3"
+					className="m-0 flex list-none items-center gap-3 p-0 text-2xs text-fg-3 max-xl:hidden"
 				>
 					{LEGEND.map((kind) => (
 						<li key={kind} className="inline-flex items-center gap-1.25">
@@ -159,7 +166,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 						</li>
 					))}
 				</ul>
-				<span aria-hidden className="mx-1 h-4.5 w-px bg-border" />
+				<span aria-hidden className="mx-1 h-4.5 w-px bg-border max-xl:hidden" />
 				{zoom ? (
 					<>
 						<span className="font-mono text-2xs text-fg-3" data-testid="zoom-range">
@@ -172,7 +179,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 						)}
 					</>
 				) : (
-					<span className="text-2xs text-fg-3">在轨道上拖选一段时间可缩放</span>
+					<span className="text-xs text-fg-3 max-xl:hidden">在轨道上拖选一段时间可缩放</span>
 				)}
 				{live &&
 					(following ? (
@@ -556,11 +563,23 @@ function SegmentBar({
 	selected: boolean;
 	chainRow?: boolean;
 }) {
+	const actions = useMonitorActions();
 	if (seg.end < range.start || seg.start > range.end) return null;
 	const left = Math.max(0, fractionOf(seg.start, range)) * 100;
 	const right = Math.min(1, fractionOf(seg.end, range)) * 100;
 	return (
+		// 鼠标点选由行容器按坐标处理（拖选时指针被容器捕获）；这里让键盘也能选中某次尝试（Enter / 空格）。
+		// 不用 button 元素：按钮选择器（节点行的标签按钮）保持唯一。链汇总行的区段与节点行重复，不进 Tab 顺序。
+		// biome-ignore lint/a11y/useSemanticElements: 见上
 		<span
+			role="button"
+			tabIndex={chainRow ? -1 : 0}
+			aria-label={`${node.nodeId} 第 ${seg.attempt} 次（${SEGMENT_LABEL[seg.kind]}）`}
+			onKeyDown={(e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				e.preventDefault();
+				actions.select(node);
+			}}
 			data-segment={seg.kind}
 			data-chain={node.chainInstanceId}
 			data-node={node.nodeId}
@@ -570,6 +589,7 @@ function SegmentBar({
 				chainRow ? "top-2.25" : "top-1.75",
 				SEGMENT_STYLE[seg.kind],
 				selected && "outline-[1.5px] outline-offset-1 outline-selected",
+				"focus-visible:outline-2 focus-visible:outline-signal",
 				seg.live &&
 					seg.kind === "run" &&
 					"after:absolute after:-top-0.5 after:-right-0.75 after:h-4 after:w-1.5 after:animate-status-pulse after:rounded-[2px] after:bg-signal",

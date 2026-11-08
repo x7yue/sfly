@@ -1,0 +1,236 @@
+{
+	"schemaVersion": 2,
+	"generatedAt": "2026-11-08T11:39:13.923709+00:00",
+	"title": "Design System: sfly",
+	"extensions": {
+		"colorMeta": {
+			"primary": {
+				"role": "primary",
+				"displayName": "控制台白"
+			},
+			"signal": {
+				"role": "secondary",
+				"displayName": "执行中青"
+			},
+			"subflow": {
+				"role": "secondary",
+				"displayName": "子流程紫"
+			},
+			"ok": {
+				"role": "tertiary",
+				"displayName": "成功绿"
+			},
+			"danger": {
+				"role": "tertiary",
+				"displayName": "失败红"
+			},
+			"warn": {
+				"role": "tertiary",
+				"displayName": "等待琥珀"
+			},
+			"bg": {
+				"role": "neutral",
+				"displayName": "页面炭灰",
+				"tonalRamp": [
+					"#141414",
+					"#161616",
+					"#1a1a1a",
+					"#1f1f1f",
+					"#262626",
+					"#2e2e2e",
+					"#3a3a3a",
+					"#444444"
+				]
+			},
+			"fg-1": {
+				"role": "neutral",
+				"displayName": "正文"
+			},
+			"fg-2": {
+				"role": "neutral",
+				"displayName": "次要文字"
+			},
+			"fg-3": {
+				"role": "neutral",
+				"displayName": "辅助文字"
+			}
+		},
+		"typographyMeta": {
+			"stat": {
+				"displayName": "Stat",
+				"purpose": "控制台统计数字"
+			},
+			"page-title": {
+				"displayName": "Page title",
+				"purpose": "页面标题"
+			},
+			"section-title": {
+				"displayName": "Section title",
+				"purpose": "区块、弹窗、空状态标题"
+			},
+			"body": {
+				"displayName": "Body",
+				"purpose": "正文、按钮、输入、菜单"
+			},
+			"caption": {
+				"displayName": "Caption",
+				"purpose": "表头、说明、次要信息"
+			},
+			"label": {
+				"displayName": "Label",
+				"purpose": "徽标、计数、kbd、分组标题"
+			}
+		},
+		"shadows": [
+			{
+				"name": "float",
+				"value": "0 10px 30px -10px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.4)",
+				"purpose": "画布悬浮控件组、浮动工具条"
+			},
+			{
+				"name": "pop",
+				"value": "0 30px 80px -20px rgb(0 0 0 / 0.85)",
+				"purpose": "弹窗、菜单"
+			},
+			{
+				"name": "inset-top",
+				"value": "inset 0 8px 8px -8px rgb(0 0 0 / 0.8)",
+				"purpose": "可滚动区域顶部"
+			}
+		],
+		"motion": [
+			{
+				"name": "ease-standard",
+				"value": "cubic-bezier(0.2, 0.7, 0.2, 1)",
+				"purpose": "状态过渡（150ms）；减少动效时全部停止"
+			}
+		],
+		"breakpoints": [
+			{
+				"name": "min-desktop",
+				"value": "1280px"
+			}
+		]
+	},
+	"components": [
+		{
+			"name": "Primary Button",
+			"kind": "button",
+			"refersTo": "button-primary",
+			"description": "每屏唯一的白色主操作。",
+			"html": "<button class=\"ds-btn-primary\">新建场景</button>",
+			"css": ".ds-btn-primary{height:30px;padding:0 12px;border:1px solid var(--primary,#f2f2f2);background:var(--primary,#f2f2f2);color:var(--primary-foreground,#141414);border-radius:6px;font:500 13px/20px 'IBM Plex Sans',sans-serif;cursor:pointer;transition:background .15s cubic-bezier(.2,.7,.2,1)}.ds-btn-primary:hover{background:#fff}.ds-btn-primary:focus-visible{outline:2px solid var(--signal,#2cc4f0);outline-offset:2px}"
+		},
+		{
+			"name": "Default Button",
+			"kind": "button",
+			"refersTo": "button-default",
+			"description": "中性按钮，页面上的大多数操作。",
+			"html": "<button class=\"ds-btn\">再次运行</button>",
+			"css": ".ds-btn{height:30px;padding:0 12px;border:1px solid var(--border,#333);background:var(--raised,#262626);color:var(--fg-1,#ececec);border-radius:6px;font:500 13px/20px 'IBM Plex Sans',sans-serif;cursor:pointer;transition:background .15s}.ds-btn:hover{background:var(--raised-2,#2e2e2e)}.ds-btn:focus-visible{outline:2px solid var(--signal,#2cc4f0);outline-offset:2px}"
+		},
+		{
+			"name": "Ghost Button",
+			"kind": "button",
+			"refersTo": "button-ghost",
+			"description": "工具条与次要操作。",
+			"html": "<button class=\"ds-btn-ghost\">全部展开</button>",
+			"css": ".ds-btn-ghost{height:30px;padding:0 12px;border:1px solid transparent;background:transparent;color:var(--fg-2,#a8a8a8);border-radius:6px;font:500 13px/20px 'IBM Plex Sans',sans-serif;cursor:pointer}.ds-btn-ghost:hover{background:var(--raised,#262626);color:var(--fg-1,#ececec)}.ds-btn-ghost:focus-visible{outline:2px solid var(--signal,#2cc4f0);outline-offset:2px}"
+		},
+		{
+			"name": "Input",
+			"kind": "input",
+			"refersTo": "input",
+			"description": "凹陷底输入框，聚焦时青色描边。",
+			"html": "<input class=\"ds-input\" placeholder=\"搜索场景、说明或 Agent\">",
+			"css": ".ds-input{height:30px;padding:0 10px;border:1px solid var(--border,#333);background:var(--sunk,#161616);color:var(--fg-1,#ececec);border-radius:6px;font:400 13px/20px 'IBM Plex Sans',sans-serif;width:240px}.ds-input::placeholder{color:var(--fg-3,#969696)}.ds-input:focus{outline:none;border-color:var(--signal,#2cc4f0);box-shadow:0 0 0 3px rgb(44 196 240 / .14)}"
+		},
+		{
+			"name": "Status Pills",
+			"kind": "chip",
+			"refersTo": "badge",
+			"description": "颜色 + 形状编码的运行状态。",
+			"html": "<div class=\"ds-pills\"><span class=\"ds-pill\"><i class=\"ds-dot ok\"></i>成功</span><span class=\"ds-pill\"><i class=\"ds-dot run\"></i>执行中</span><span class=\"ds-pill\"><i class=\"ds-dot fail\"></i>失败</span><span class=\"ds-pill\"><i class=\"ds-ring\"></i>待执行</span><span class=\"ds-pill\"><i class=\"ds-ring dash\"></i>已取消</span><span class=\"ds-pill\"><i class=\"ds-sq\"></i>已停止</span></div>",
+			"css": ".ds-pills{display:flex;gap:14px;font:400 13px/20px 'IBM Plex Sans',sans-serif;color:var(--fg-2,#a8a8a8)}.ds-pill{display:inline-flex;align-items:center;gap:6px}.ds-dot{width:7px;height:7px;border-radius:50%;display:inline-block}.ds-dot.ok{background:#5bd69a}.ds-dot.run{background:#2cc4f0;box-shadow:0 0 0 0 rgb(44 196 240 / .55)}.ds-dot.fail{background:#ef5350}.ds-ring{width:7px;height:7px;border-radius:50%;border:1.5px solid #8e8e8e;display:inline-block}.ds-ring.dash{border-style:dashed;border-color:#9a9a9a}.ds-sq{width:7px;height:7px;border-radius:1px;background:#a8a8a8;display:inline-block}"
+		},
+		{
+			"name": "Panel",
+			"kind": "card",
+			"refersTo": "panel",
+			"description": "面板：surface 底、1px 描边、无阴影。",
+			"html": "<section class=\"ds-panel\"><header class=\"ds-panel-h\">最近失败 <span class=\"ds-count\">2</span></header><div class=\"ds-row\"><span class=\"ds-dot fail\"></span>巡检 <span class=\"ds-mono\">失败节点 ping · 01-01 08:01</span></div></section>",
+			"css": ".ds-panel{width:360px;background:var(--surface,#1f1f1f);border:1px solid var(--border-soft,#2b2b2b);border-radius:8px;overflow:hidden;font:400 13px/20px 'IBM Plex Sans',sans-serif;color:var(--fg-1,#ececec)}.ds-panel-h{padding:10px 14px;border-bottom:1px solid var(--border-soft,#2b2b2b);font-weight:600;font-size:14px}.ds-count{color:var(--fg-3,#969696);font-weight:400;font-size:12px;margin-left:4px}.ds-row{display:flex;align-items:center;gap:8px;padding:10px 14px}.ds-row:hover{background:var(--raised,#262626)}.ds-dot{width:7px;height:7px;border-radius:50%;background:#ef5350}.ds-mono{margin-left:auto;font:400 12px/18px 'JetBrains Mono',monospace;color:var(--fg-3,#969696)}"
+		},
+		{
+			"name": "Node Card",
+			"kind": "custom",
+			"refersTo": "node-card",
+			"description": "贯穿全产品的节点卡片；执行中时青色描边。",
+			"html": "<div class=\"ds-node\"><div class=\"ds-node-h\"><span class=\"ds-code\">PK</span><span class=\"ds-id\">verify</span><span class=\"ds-st\"><i></i>执行中</span></div><div class=\"ds-node-t\">ping</div><div class=\"ds-slot\">level <b>11</b></div></div>",
+			"css": ".ds-node{width:168px;padding:10px 12px;background:var(--raised,#262626);border:1px solid #2cc4f0;border-radius:8px;font:400 11px/16px 'IBM Plex Sans',sans-serif;color:var(--fg-3,#969696)}.ds-node-h{display:flex;align-items:center;gap:6px}.ds-code{display:grid;place-items:center;width:18px;height:18px;border-radius:4px;background:var(--raised-2,#2e2e2e);color:var(--fg-2,#a8a8a8);font:600 11px 'JetBrains Mono',monospace}.ds-id{font-family:'JetBrains Mono',monospace;color:var(--fg-2,#a8a8a8)}.ds-st{margin-left:auto;display:inline-flex;align-items:center;gap:4px;color:#7fdcf7}.ds-st i{width:6px;height:6px;border-radius:50%;background:#2cc4f0}.ds-node-t{margin:8px 0 7px;color:var(--fg-1,#ececec);font-size:13px;font-weight:600}.ds-slot{height:24px;display:flex;align-items:center;padding:0 8px;border-radius:6px;background:var(--sunk,#161616);font:400 12px 'JetBrains Mono',monospace;color:var(--fg-2,#a8a8a8)}.ds-slot b{color:var(--fg-1,#ececec);margin-left:4px}"
+		}
+	],
+	"narrative": {
+		"northStar": "夜班控制室",
+		"overview": "sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，屏幕安静到只剩下正在发生的事。唯一会亮的是青色——它只属于「执行中」、键盘焦点和调度连线；成功、失败、等待各有固定的颜色与形状，异常因此一眼可见。密度接近 IDE，层级靠表面明度台阶和 1px 描边建立；组件手感紧凑、克制，像工具。",
+		"keyCharacteristics": [
+			"只做深色，炭灰无色偏的五级表面台阶",
+			"青色是稀缺信号：执行中、焦点环、调度连线，别无他用",
+			"严格的状态语法：颜色 + 形状共同编码",
+			"IDE 级密度，数字一律等宽",
+			"节点卡片是贯穿全产品的基本单元"
+		],
+		"rules": [
+			{
+				"name": "The Scarce Cyan Rule",
+				"body": "青色只表示执行中、键盘焦点、调度连线。",
+				"section": "colors"
+			},
+			{
+				"name": "The One White Rule",
+				"body": "每屏最多一个 primary 白色按钮。",
+				"section": "colors"
+			},
+			{
+				"name": "The Status-Only Color Rule",
+				"body": "彩色只在表达状态时出现。",
+				"section": "colors"
+			},
+			{
+				"name": "The Fixed Scale Rule",
+				"body": "只有 11 / 12 / 13 / 14 / 16 / 22 六档字号。",
+				"section": "typography"
+			},
+			{
+				"name": "The Tabular Rule",
+				"body": "所有数字等宽。",
+				"section": "typography"
+			},
+			{
+				"name": "The Tonal Depth Rule",
+				"body": "层级用表面台阶表达；阴影只属于浮层。",
+				"section": "elevation"
+			},
+			{
+				"name": "The No-Glow Rule",
+				"body": "不用零偏移的彩色发光。",
+				"section": "elevation"
+			}
+		],
+		"dos": [
+			"Do 用表面台阶和 1px 描边建立层级，阴影只给浮层。",
+			"Do 让状态同时用颜色和形状表达，并使用统一的状态组件。",
+			"Do 把数字、ID、耗时、版本写成等宽。",
+			"Do 在高风险对话框里写清后果，dismiss 按钮用「继续运行」这类动作名。",
+			"Do 保证 fg-3 及以上的文字在所在表面上 ≥ 4.5:1，不在文字上再叠不透明度。"
+		],
+		"donts": [
+			"Don't 用青色表示选中、链接或强调。",
+			"Don't 在一屏放第二个白色实心按钮。",
+			"Don't 给图表线、零值统计或装饰着状态色。",
+			"Don't 写规定以外的字号、圆角或色值。",
+			"Don't 用 11px 写成句的说明文字。",
+			"Don't 做浅色主题或移动端布局。"
+		]
+	}
+}

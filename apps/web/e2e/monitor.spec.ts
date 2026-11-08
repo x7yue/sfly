@@ -270,6 +270,8 @@ test("时间线下沿与底部面板上沿可以拖动调整高度，双击恢�
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
 	const bp = panel(page);
+	// 默认选中的 verify 第 2 次还没有日志：底部面板自动收起；拖动后展开，双击恢复默认（又自动收起）。
+	await expect(bp.getByRole("button", { name: "展开" })).toBeVisible();
 	const before = (await bp.boundingBox())?.height ?? 0;
 	const handle = page.getByRole("separator", { name: "调整底部面板高度" });
 	const box = await handle.boundingBox();
@@ -299,7 +301,7 @@ test("时间线下沿与底部面板上沿可以拖动调整高度，双击恢�
 		.toBeCloseTo(tlBefore, 0);
 });
 
-test("取消：确认弹窗列出影响，输入运行编号前 4 位才能确认；取消中不显示为运行中；清理期间再次取消即强制终止", async ({
+test("取消：确认弹窗列出影响，默认焦点在「继续运行」；取消中不显示为运行中；清理期间再次取消即强制终止", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -316,12 +318,9 @@ test("取消：确认弹窗列出影响，输入运行编号前 4 位才能确�
 	await expect(impact).toContainText("verify、probe");
 	await expect(impact).toContainText("always 节点照常执行清理");
 	await expect(impact).toContainText("cleanup");
-	const confirm = dialog.getByRole("button", { name: "取消运行" });
-	await expect(confirm).toBeDisabled();
-	await dialog.getByLabel(/输入运行编号前 4 位/).fill("0000");
-	await expect(confirm).toBeDisabled();
-	await dialog.getByLabel(/输入运行编号前 4 位/).fill(runId.slice(0, 4));
-	await confirm.click();
+	// 不用输入运行编号：焦点默认在「继续运行」，误按 Enter 不会取消。
+	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
+	await dialog.getByRole("button", { name: "取消运行" }).click();
 	await expect(dialog).toBeHidden();
 
 	// 执行中的任务被 Agent 终止后，always 节点开始清理。
@@ -342,7 +341,6 @@ test("取消：确认弹窗列出影响，输入运行编号前 4 位才能确�
 	const force = page.getByRole("dialog", { name: /强制终止运行/ });
 	await expect(force).toContainText("执行中的 1 个任务立即终止");
 	await expect(force).toContainText("cleanup");
-	await force.getByLabel(/输入运行编号前 4 位/).fill(runId.slice(0, 4));
 	await force.getByRole("button", { name: "强制终止" }).click();
 	expect(await agent.nextCancel()).toMatchObject({ taskId: cleanup.taskId, force: true });
 
@@ -351,7 +349,7 @@ test("取消：确认弹窗列出影响，输入运行编号前 4 位才能确�
 	await expect(header.getByRole("button", { name: /取消运行|强制终止/ })).toHaveCount(0);
 });
 
-test("失败的运行：默认选中失败的节点；再次运行沿用上次的参数（敏感参数除外）进入新运行；运行切换列出同场景的运行", async ({
+test("失败的运行：默认选中失败的节点，顶栏有失败摘要；再次运行沿用上次的参数（敏感参数除外）进入新运行；运行切换列出同场景的运行", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -370,6 +368,19 @@ test("失败的运行：默认选中失败的节点；再次运行沿用上次�
 	await expect(header.getByTestId("run-elapsed")).toHaveText("耗时 15.0s");
 	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
 	await expect(timeline(page).getByText("实时跟随")).toHaveCount(0);
+	await expect(page).toHaveTitle("✕ 失败 · 日终数据处理 · sfly");
+
+	// 失败摘要：第一个失败的节点、第几次尝试、错误信息的第一行；点击切到它的「尝试」页签。
+	const failure = header.getByTestId("run-failure");
+	await expect(failure).toHaveText("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
+	await failure.click();
+	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await expect(panel(page).getByRole("article", { name: "verify 第 2 次尝试" })).toContainText(
+		"仍然漏拦",
+	);
 
 	await header.getByRole("button", { name: "再次运行" }).click();
 	const rerun = page.getByRole("dialog", { name: "再次运行 · 日终数据处理" });

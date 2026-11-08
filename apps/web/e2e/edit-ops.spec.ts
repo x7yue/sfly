@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { createEditorScenario, headOf, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { createScenario, publishPackage } from "./support";
+import { createScenario, expectFocusVisible, publishPackage } from "./support";
 
 // 编排画布的编辑操作（#39）：添加节点、撤销 / 重做、整理布局。
 
@@ -80,10 +80,21 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 		await expect(addMenu(page)).toHaveCount(0);
 	};
 
-	// 页面上没有焦点时打开：Esc 后焦点落在工具条「添加节点」按钮上。
+	// 页面上没有焦点时 Tab 照常进入页面，不打开菜单；用 Tab 走到画布区域上也不打开（键盘用户能进出画布）。
+	const canvas = page.getByRole("region", { name: /^编排画布/ });
+	await page.keyboard.press("Tab");
+	await expect(addMenu(page)).toHaveCount(0);
+	await canvas.focus();
+	await expectFocusVisible(canvas);
+	await page.keyboard.press("Tab");
+	await expect(addMenu(page)).toHaveCount(0);
+	await expect(canvas).not.toBeFocused();
+
+	// 用鼠标点过画布空白处后 Tab 打开：Esc 后焦点回到画布。
+	await page.locator(".react-flow__pane").click({ position: { x: 40, y: 400 } });
 	await page.keyboard.press("Tab");
 	await closeWithEscape();
-	await expect(addButton).toBeFocused();
+	await expect(canvas).toBeFocused();
 
 	// 在节点卡片上用 Tab 或 / 打开：Esc 后焦点回到这张卡片。
 	await nodeCard(page, "fetch").click();

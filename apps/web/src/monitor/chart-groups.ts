@@ -88,3 +88,12 @@ export function buildGroups(
 	}
 	return out;
 }
+
+/**
+ * 显示顺序：运行里有失败的节点时，失败节点的分组排在最前（先看出了什么问题），其余保持链上的执行顺序；
+ * 没有失败的节点时原样返回。
+ */
+export function failedFirst(groups: readonly ChartGroup[]): readonly ChartGroup[] {
+	if (!groups.some(isFailed)) return groups;
+	return [...groups.filter(isFailed), ...groups.filter((g) => !isFailed(g))];
+}

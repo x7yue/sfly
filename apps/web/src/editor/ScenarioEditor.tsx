@@ -26,7 +26,7 @@ import { Redo2Icon, Undo2Icon, Wand2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolButton } from "#/components/canvas/CanvasDock";
 import type { CanvasInfo } from "#/components/canvas/context";
-import { FlowCanvas } from "#/components/canvas/FlowCanvas";
+import { FlowCanvas, isPointerFocusedCanvas } from "#/components/canvas/FlowCanvas";
 import {
 	type DocMeta,
 	type DocNode,
@@ -72,7 +72,7 @@ import {
 	useRunDecorations,
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
-import { documentFieldErrors, type FieldError } from "./validation";
+import { documentFieldErrors, type FieldError, undeclaredInputNotes } from "./validation";
 
 /** 打开着的弹窗或弹出层（有它们时 Tab 照常切换焦点）。 */
 const OPEN_OVERLAY = '[role="dialog"][data-open], [role="alertdialog"][data-open]';
@@ -179,6 +179,7 @@ function Editor({
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages, agentList);
 	const warnings = useMemo(() => documentWarnings(doc, catalog), [doc, catalog]);
+	const notes = useMemo(() => undeclaredInputNotes(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	// 在线编辑者：整个画布页一份在线状态，编辑 / 运行状态切换时不中断。
 	const editors = useOtherEditors(orchestration.id);
@@ -380,7 +381,9 @@ function Editor({
 	useShortcut("canvas-add", openAddMenu, !running);
 	useShortcut("canvas-undo", history.undo, !running);
 	useShortcut("canvas-redo", history.redo, !running);
-	// Tab：焦点在画布上（或页面上没有焦点）时打开添加节点菜单，其他时候照常切换焦点。
+	// Tab：焦点在节点卡片上、或用鼠标点过画布空白处时打开添加节点菜单，其他时候照常切换焦点。
+	// 页面上没有焦点、或用键盘把焦点放到画布区域上（Tab 进入、Esc 退回）时不拦截（见 FlowCanvas 的 isPointerFocusedCanvas）：
+	// 键盘用户能用 Tab 进出画布，进入后用方向键浏览节点（components/canvas/navigation.ts）。
 	const openRef = useRef<(() => void) | null>(openAddMenu);
 	openRef.current = running ? null : openAddMenu;
 	useEffect(() => {
@@ -391,10 +394,9 @@ function Editor({
 			if (!open || event.defaultPrevented || document.querySelector(OPEN_OVERLAY)) return;
 			const target = event.target instanceof HTMLElement ? event.target : null;
 			const onCanvas =
-				target === document.body ||
 				target?.closest("[data-node-id]") ||
 				target?.classList.contains("react-flow__pane") ||
-				target?.matches('[role="region"][aria-label^="编排画布"]');
+				isPointerFocusedCanvas(target);
 			if (!onCanvas) return;
 			event.preventDefault();
 			open();
@@ -443,6 +445,7 @@ function Editor({
 		packages: packages.data?.packages,
 		agents: agentList,
 		warnings,
+		notes,
 		fieldErrors,
 		onChangeNode: updateNode,
 		onDefaultAgent: (agent) => {
@@ -543,6 +546,7 @@ function Editor({
 							readyRun && running ? readyRun.run.orchestration_version : versioning.base.version
 						}
 						warnings={warnings.length}
+						notes={notes.length}
 						onShowChecks={() => {
 							setSelectedId(null);
 							setInspectorOpen(true);

@@ -167,3 +167,15 @@ export function ticks(range: TimeRange, options: TickOptions): Tick[] {
 	}
 	return out;
 }
+
+/** 时间线默认用汇总模式的阈值：链实例多于这么多条，或展开后的行（链 + 节点）多于这么多行。 */
+export const SUMMARY_CHAINS = 6;
+export const SUMMARY_ROWS = 24;
+
+/**
+ * 打开页面时时间线的显示模式：链实例或节点很多时默认「汇总」（每条链一行），把高度留给图表；
+ * 否则「展开节点」。用户切换过之后以用户的选择为准（由调用方保存）。
+ */
+export function defaultTimelineMode(chains: number, nodes: number): "summary" | "expanded" {
+	return chains > SUMMARY_CHAINS || chains + nodes > SUMMARY_ROWS ? "summary" : "expanded";
+}

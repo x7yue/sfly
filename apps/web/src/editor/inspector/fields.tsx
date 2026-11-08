@@ -49,8 +49,8 @@ export function Field({
 					<div className="min-w-0 flex-1">{children}</div>
 					{aside}
 				</div>
-				{error && <p className="m-0 text-2xs text-danger-fg">{error}</p>}
-				{help && <p className="m-0 text-2xs text-fg-3">{help}</p>}
+				{error && <p className="m-0 text-xs text-danger-fg">{error}</p>}
+				{help && <p className="m-0 text-xs text-fg-3">{help}</p>}
 			</div>
 		</div>
 	);
