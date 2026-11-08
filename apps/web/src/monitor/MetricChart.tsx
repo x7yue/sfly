@@ -174,27 +174,31 @@ export function MetricChart({
 						bucketSeconds={bucketSeconds}
 						height={dense ? 56 : 96}
 					/>
-					<div className="mt-0.5 flex flex-wrap gap-x-2.5 text-2xs text-fg-3">
-						{inWindow.length > 1 &&
-							inWindow.map((l) => (
-								<button
-									key={l.key}
-									type="button"
-									data-legend
-									aria-pressed={isShown(l.key)}
-									title={isShown(l.key) ? "点击隐藏这条曲线" : "点击显示这条曲线"}
-									onClick={() => toggle(l.key)}
-									className="inline-flex items-center gap-1 rounded-sm hover:text-fg-1 aria-[pressed=false]:opacity-45"
-								>
-									<i
-										aria-hidden
-										className="inline-block h-0.5 w-2.5"
-										style={{ background: isShown(l.key) ? l.color : "var(--fg-3)" }}
-									/>
-									{l.name}
-								</button>
-							))}
-						<span className="ml-auto font-mono" data-window>
+					<div className="mt-0.5 flex items-start gap-x-2.5 text-2xs text-fg-3">
+						{inWindow.length > 1 && (
+							// 序列很多时图例最多 4 行，其余滚动查看。
+							<div className="flex max-h-16 min-w-0 flex-1 flex-wrap gap-x-2.5 overflow-y-auto">
+								{inWindow.map((l) => (
+									<button
+										key={l.key}
+										type="button"
+										data-legend
+										aria-pressed={isShown(l.key)}
+										title={isShown(l.key) ? "点击隐藏这条曲线" : "点击显示这条曲线"}
+										onClick={() => toggle(l.key)}
+										className="inline-flex items-center gap-1 rounded-sm hover:text-fg-1 aria-[pressed=false]:opacity-45"
+									>
+										<i
+											aria-hidden
+											className="inline-block h-0.5 w-2.5"
+											style={{ background: isShown(l.key) ? l.color : "var(--fg-3)" }}
+										/>
+										{l.name}
+									</button>
+								))}
+							</div>
+						)}
+						<span className="ml-auto flex-none font-mono" data-window>
 							{formatClock(shown.start)} – {formatClock(shown.end)}
 						</span>
 					</div>
