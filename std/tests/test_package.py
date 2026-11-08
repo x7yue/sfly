@@ -14,7 +14,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from packaging.specifiers import SpecifierSet
+from packaging.version import Version
 
+from sfly import __version__ as SDK_VERSION
 from sfly.cli.build import build
 
 if sys.version_info >= (3, 11):
@@ -25,6 +28,8 @@ else:
 REPO = Path(__file__).resolve().parents[2]
 STD = REPO / "std"
 DOC = REPO / "docs" / "guide" / "standard-nodes.md"
+#: 最后一个不支持指标标签的已发布平台版本（v0.0.4）；标签（#78）从它的下一个版本起才有。
+LAST_SDK_WITHOUT_LABELS = Version("0.0.4")
 
 
 @pytest.fixture(scope="module")
@@ -52,6 +57,22 @@ def test_declares_the_minimum_sdk_version_explicitly(metadata: dict[str, Any]) -
 
     assert declared, "std/pyproject.toml 必须声明 [tool.sfly] requires-sdk"
     assert metadata["requires_sdk"] == declared
+
+
+def test_requires_an_sdk_that_supports_metric_labels() -> None:
+    # system_monitor、process_monitor 按网卡、磁盘、进程上报带标签的指标：
+    # 不支持标签的旧 Agent 会丢掉标签，把各个对象的点混进同一个序列。
+    # 标签还没随平台版本发布时只能声明当前版本（否则同版本的控制面拒绝全部标准节点）；
+    # 仓库版本号一旦越过 LAST_SDK_WITHOUT_LABELS，requires-sdk 必须同步排除它。
+    pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = SpecifierSet(pyproject["tool"]["sfly"]["requires-sdk"])
+    sdk = Version(SDK_VERSION)
+
+    assert sdk in declared, f"当前 SDK {sdk} 不满足 requires-sdk {declared}"
+    if sdk > LAST_SDK_WITHOUT_LABELS:
+        assert LAST_SDK_WITHOUT_LABELS not in declared, (
+            f"版本号已是 {sdk}：std/pyproject.toml 的 requires-sdk 要调成 >={sdk}（指标标签）"
+        )
 
 
 def test_dependencies_only_have_lower_bounds(archive: Path) -> None:
@@ -112,6 +133,12 @@ def _node_sections() -> dict[str, tuple[str, str]]:
     }
 
 
+def _labels(cell: str) -> list[str]:
+    """指标说明末尾的「标签 `a`、`b`」里的标签键；没有时为空。"""
+    m = re.search(r"，标签 ((?:`[a-z_][a-z0-9_]*`、?)+)$", cell)
+    return _names(m[1]) if m else []
+
+
 def test_the_overview_lists_every_node_with_its_title(metadata: dict[str, Any]) -> None:
     overview = DOC.read_text(encoding="utf-8").split("\n## 节点一览\n", 1)[1].split("\n## ", 1)[0]
     header, rows = _tables(overview)["类别"]
@@ -126,7 +153,8 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
     metadata: dict[str, Any],
 ) -> None:
     # 每节的结构一致：标题与节点标题相同；参数表、输出表（没有输出时写明「没有输出。」）、
-    # 指标表（有指标时，含单位、标出主指标）与构建出的元信息逐项对应。
+    # 指标表（有指标时，含单位、标出主指标，带标签的指标在说明末尾写「标签 `键`、`键`」）
+    # 与构建出的元信息逐项对应。
     sections = _node_sections()
     for node in metadata["nodes"]:
         name = node["name"]
@@ -155,6 +183,8 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
             assert units == {m["name"]: m.get("unit", "") for m in node["metrics"]}, name
             primary = [n for row in rows if "（主指标）" in row[0] for n in _names(row[0])]
             assert primary == [node["primary_metric"]], name
+            labels = {n: _labels(row[2]) for row in rows for n in _names(row[0])}
+            assert labels == {m["name"]: m.get("labels", []) for m in node["metrics"]}, name
         else:
             assert "指标" not in tables, name
 
@@ -175,6 +205,10 @@ def test_system_monitor_declares_its_metrics_charts_and_primary_metric(
         "disk_write_bytes_per_s",
         "net_rx_bytes_per_s",
         "net_tx_bytes_per_s",
+        "net_rx_bytes_per_s_by_nic",
+        "net_tx_bytes_per_s_by_nic",
+        "disk_read_bytes_per_s_by_disk",
+        "disk_write_bytes_per_s_by_disk",
     }
     # 每个指标都画在声明的图表里，不靠平台生成的默认图表。
     charted = {name for chart in node["charts"] for name in chart["metrics"]}

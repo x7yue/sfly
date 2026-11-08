@@ -11,10 +11,10 @@
 ```sh
 cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
-curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.1.0.sflypkg {{SFLY_URL}}/packages
+curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.2.0.sflypkg {{SFLY_URL}}/packages
 ```
 
-- 上传成功时返回节点包的版本信息（JSON）；装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.1.0.sflypkg`。
+- 上传成功时返回节点包的版本信息（JSON）；装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.2.0.sflypkg`。
 - 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里。Agent 第一次执行时从控制面安装它，依赖（`psutil`、`httpx`）从 PyPI 镜像安装。
 - Release 说明写明了需要的**最低 Agent 版本**。Agent 版本更旧时任务以 `env_error` 失败并提示升级（见 [需要的 SDK 版本](publish.md#需要的-sdk-版本)）；Agent 跟随控制面的版本，升级控制面即可。
 - 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。
@@ -45,8 +45,8 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 执行 | `shell` | Shell 命令 | 执行一段命令，输出退出码和标准输出 |
 | 执行 | `start_process` | 启动后台进程 | 启动被测系统等常驻进程，节点结束后进程继续运行 |
 | 执行 | `stop_process` | 停止后台进程 | 停止 `start_process` 启动的进程组，适合作为 always 节点清理 |
-| 监控 | `system_monitor` | 系统监控 | 上报机器的 CPU、内存、负载、磁盘和网络指标 |
-| 监控 | `process_monitor` | 监控进程 | 上报目标进程（默认含子孙进程）的资源合计，每个进程的明细写进 `processes.csv` |
+| 监控 | `system_monitor` | 系统监控 | 上报机器的 CPU、内存、负载、磁盘和网络指标，磁盘和网络另按每块磁盘、每块网卡各画一条曲线 |
+| 监控 | `process_monitor` | 监控进程 | 上报目标进程（默认含子孙进程）的资源合计和每个进程各自的资源，每个进程的明细写进 `processes.csv` |
 | 等待 | `wait_port` | 等待端口 | 等 TCP 端口可以连接 |
 | 等待 | `wait_file` | 等待文件 | 等文件出现，可以要求它保持若干秒不变 |
 | 等待 | `wait_log_line` | 等待日志行 | 等日志文件里出现匹配的行，输出这一行 |
@@ -183,7 +183,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 ## `system_monitor`：系统监控
 
-按采样间隔上报执行它的 Agent 所在机器的 CPU、内存、负载、磁盘和网络指标，运行页面上按声明的图表画出来。
+按采样间隔上报执行它的 Agent 所在机器的 CPU、内存、负载、磁盘和网络指标，运行页面上按声明的图表画出来。磁盘和网络的速率除了合计，还按每块磁盘、每块网卡各上报一个序列，在「按磁盘」「按网卡」的图表里每块一条曲线。
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
@@ -204,9 +204,12 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `disk_used_percent` | % | `disk_path` 所在文件系统的已用空间比例 |
 | `disk_read_bytes_per_s`、`disk_write_bytes_per_s` | B/s | 磁盘每秒读取、写入的字节数 |
 | `net_rx_bytes_per_s`、`net_tx_bytes_per_s` | B/s | 网卡每秒接收、发送的字节数 |
+| `disk_read_bytes_per_s_by_disk`、`disk_write_bytes_per_s_by_disk` | B/s | 每块整块磁盘每秒读取、写入的字节数，标签 `disk` |
+| `net_rx_bytes_per_s_by_nic`、`net_tx_bytes_per_s_by_nic` | B/s | 每块网卡每秒接收、发送的字节数，标签 `nic` |
 
 - 第一次采样在开始后一个 `interval`：CPU 使用率和各项速率都是两次采样之间的平均值。
-- 默认图表：CPU 使用率、内存使用率、已用内存、负载、磁盘空间使用率、磁盘读写、网络收发各一张。
+- 默认图表：CPU 使用率、内存使用率、已用内存、负载、磁盘空间使用率、磁盘读写、网络收发、磁盘读写（按磁盘）、网络收发（按网卡）各一张。
+- 按磁盘、按网卡的指标覆盖本机全部整块磁盘（不含分区，与磁盘合计的口径相同）和全部网卡（包括回环网卡 `lo`），每块一个序列，标签值是磁盘名（例如 `nvme0n1`）、网卡名（例如 `eth0`）；不受 `disk`、`nic` 参数影响，参数只决定合计指标统计哪一块。监控期间新出现的网卡、磁盘从下一次采样开始上报。
 - 指定的网卡、磁盘或 `disk_path` 不存在时节点立即失败，错误信息列出本机有哪些网卡、磁盘。
 - 被停止或取消时节点立即结束，已经上报的指标都保留，运行页面上仍能看到完整的曲线。
 - 监控的是执行这个节点的 Agent 所在的机器：要监控被测机器，就让节点选那台机器上的 Agent。
@@ -224,7 +227,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 ## `process_monitor`：监控进程
 
-按采样间隔统计一个或多个目标进程（默认连同它们的全部子孙进程）用了多少资源，指标是所有进程的合计；每个进程每次采样的明细写进产物 `processes.csv`。
+按采样间隔统计一个或多个目标进程（默认连同它们的全部子孙进程）用了多少资源，上报所有进程的合计，并按每个进程各上报一个序列；每个进程每次采样的明细写进产物 `processes.csv`。
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
@@ -250,6 +253,12 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `open_fds` | | 打开的文件描述符数之和 |
 | `io_read_bytes_per_s` | B/s | 磁盘读取速率之和 |
 | `io_write_bytes_per_s` | B/s | 磁盘写入速率之和 |
+| `cpu_percent_by_process` | % | 每个进程的 CPU 占用，标签 `pid`、`name` |
+| `rss_bytes_by_process` | B | 每个进程的常驻内存，标签 `pid`、`name` |
+| `threads_by_process` | | 每个进程的线程数，标签 `pid`、`name` |
+| `open_fds_by_process` | | 每个进程打开的文件描述符数，标签 `pid`、`name` |
+| `io_read_bytes_per_s_by_process` | B/s | 每个进程的磁盘读取速率，标签 `pid`、`name` |
+| `io_write_bytes_per_s_by_process` | B/s | 每个进程的磁盘写入速率，标签 `pid`、`name` |
 
 | `processes.csv` 的列 | 说明 |
 |---|---|
@@ -270,8 +279,10 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 每次采样都重新查找：按名称或正则匹配的新进程、新的子进程会加进来，退出的进程不再统计。进程列表开始时写一次日志，之后有进程加入或退出时写一次，没有变化时每 60 秒写一次（附每个进程的 CPU、内存、线程数、文件描述符数）。
 - **目标退出**：某个目标匹配的进程全部退出时（子孙进程退出不算），按 `on_exit` 失败或成功结束。被监控的进程是同一次运行里 `start_process` 启动的时，错误信息附上它的退出码。想在被测进程退出时正常结束监控，设为 `succeed`。
 - `processes.csv` 每采样一次就写入：节点被停止、取消、因目标退出失败时，已采集的明细都在产物里。第一次采样在开始后一个 `interval` 时（CPU 占用要两次读数才能算出来）；某个进程第一次被采样时它的 IO 速率为空。
-- 别的用户的进程读不到文件描述符数和 IO（Agent 不是 root 时），`processes.csv` 里这两项为空，不计入合计。
-- 按进程分别画曲线暂不支持，需要时下载 `processes.csv`。监控的是执行这个节点的 Agent 所在机器上的进程，引用 `start_process` 的 `pid` 时要选同一个 Agent。
+- 默认图表：CPU、内存、线程与文件描述符、磁盘读写这四张画合计；CPU（按进程）、内存（按进程）、线程数（按进程）、文件描述符（按进程）、磁盘读写（按进程）这五张每个进程一条曲线，图例是 `进程号 · 进程名`。按进程的指标和 `processes.csv` 里同一次采样的那一行数值相同。
+- 别的用户的进程读不到文件描述符数和 IO（Agent 不是 root 时），`processes.csv` 里这两项为空，不计入合计，也不上报这个进程的 `open_fds_by_process`、`io_read_bytes_per_s_by_process`、`io_write_bytes_per_s_by_process`。
+- 每个进程是一个序列：进程很多或者频繁启停（例如每个请求起一个子进程）时序列会很多，一个任务最多 1000 个序列（见 [SDK 参考](sdk-reference.md) `ctx.metric` 一节的「序列上限」），超出后新进程的点不再上报，任务日志里每个按进程的指标有一条警告；合计和 `processes.csv` 不受影响。
+- 监控的是执行这个节点的 Agent 所在机器上的进程，引用 `start_process` 的 `pid` 时要选同一个 Agent。
 
 例：压测期间监控被测服务。服务由 `start_process` 节点 `server` 启动，会再启动若干工作进程；在一个子流程里放 `process_monitor`，参数里的 `pid` 引用节点 `server` 的输出 `pid`，压测结束后用停止子流程节点停止这个子流程，服务中途退出时监控失败、暴露问题：
 

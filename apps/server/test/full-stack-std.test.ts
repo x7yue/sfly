@@ -278,21 +278,34 @@ describe("全栈：标准节点包 sfly-std", () => {
 		}
 	}, 180_000);
 
-	it("system_monitor 在 Agent 上按间隔上报声明的系统指标，duration 到期后成功", async () => {
+	/** 运行里唯一一个节点的指标目录：声明的图表标题、第一次尝试的各序列（不带标签的序列只有名字）。 */
+	async function monitorCatalog(api: ApiClient, runId: string) {
+		const catalog = metricsApi.catalog.response.parse(await api.getJson(`/runs/${runId}/metrics`));
+		const node = catalog.nodes.find((n) => n.node_id === "monitor");
+		const metrics = node?.attempts[0]?.metrics ?? [];
+		return {
+			node,
+			charts: node?.charts.map((c) => c.title),
+			totals: metrics.filter((m) => Object.keys(m.labels).length === 0),
+			labelled: (name: string) => metrics.filter((m) => m.name === name).map((m) => m.labels),
+			metrics,
+		};
+	}
+
+	it("system_monitor 在 Agent 上按间隔上报声明的系统指标，另按每块网卡、每块磁盘各一个序列，duration 到期后成功", async () => {
 		const { api, runId } = await runChain([
 			{ id: "monitor", node: "system_monitor", inputs: { interval: 0.5, duration: 3 } },
 		]);
 
 		expect((await api.run(runId)).status).toBe("success");
-		const catalog = metricsApi.catalog.response.parse(await api.getJson(`/runs/${runId}/metrics`));
-		const [node] = catalog.nodes;
+		const { node, charts, totals, labelled, metrics } = await monitorCatalog(api, runId);
 		expect(node).toMatchObject({
 			node_id: "monitor",
 			package: "sfly-std",
 			node: "system_monitor",
 			primary_metric: "cpu_percent",
 		});
-		expect(node?.charts.map((c) => c.title)).toEqual([
+		expect(charts).toEqual([
 			"CPU 使用率",
 			"内存使用率",
 			"已用内存",
@@ -300,9 +313,10 @@ describe("全栈：标准节点包 sfly-std", () => {
 			"磁盘空间使用率",
 			"磁盘读写",
 			"网络收发",
+			"磁盘读写（按磁盘）",
+			"网络收发（按网卡）",
 		]);
-		const metrics = node?.attempts[0]?.metrics ?? [];
-		expect(metrics.map((m) => m.name).sort()).toEqual([
+		expect(totals.map((m) => m.name).sort()).toEqual([
 			"cpu_percent",
 			"disk_read_bytes_per_s",
 			"disk_used_percent",
@@ -313,7 +327,85 @@ describe("全栈：标准节点包 sfly-std", () => {
 			"net_rx_bytes_per_s",
 			"net_tx_bytes_per_s",
 		]);
+		// 全部网卡（含回环网卡 lo），每块各一个序列，标签 nic。
+		for (const name of ["net_rx_bytes_per_s_by_nic", "net_tx_bytes_per_s_by_nic"]) {
+			const nics = labelled(name);
+			expect(nics.every((l) => Object.keys(l).join() === "nic")).toBe(true);
+			expect(nics.map((l) => l.nic)).toContain("lo");
+		}
+		// 整块磁盘，标签 disk；按磁盘的读、写覆盖同一组磁盘。
+		const disks = labelled("disk_read_bytes_per_s_by_disk");
+		expect(disks.every((l) => Object.keys(l).join() === "disk")).toBe(true);
+		expect(labelled("disk_write_bytes_per_s_by_disk")).toEqual(disks);
 		// Agent 按秒合并：3 秒的监控至少落在 2 个秒桶里。
+		for (const metric of metrics) expect(metric.points, metric.name).toBeGreaterThanOrEqual(2);
+	}, 180_000);
+
+	it("process_monitor 上报目标进程的合计，另按每个进程各一个序列（标签 pid、name），合计与 processes.csv 不变", async () => {
+		const { api, runId } = await runChain([
+			{
+				id: "server",
+				node: "start_process",
+				inputs: { command: "sleep 300 & exec sleep 300" },
+			},
+			{
+				id: "monitor",
+				node: "process_monitor",
+				inputs: { pid: "${{ nodes.server.outputs.pid }}", interval: 0.5, duration: 3 },
+			},
+			{
+				id: "stop",
+				node: "stop_process",
+				always: true,
+				inputs: { pid: "${{ nodes.server.outputs.pid }}", grace: 5 },
+			},
+		]);
+
+		expect((await api.run(runId)).status).toBe("success");
+		const { pid } = (await api.node(runId, "server")).outputs as { pid: number };
+		const monitor = await api.node(runId, "monitor");
+		expect(Object.keys(monitor.outputs ?? {}).sort()).toEqual(["processes_csv", "samples"]);
+		const { node, charts, totals, labelled, metrics } = await monitorCatalog(api, runId);
+		expect(node?.primary_metric).toBe("cpu_percent");
+		expect(charts).toEqual([
+			"CPU",
+			"内存",
+			"线程与文件描述符",
+			"磁盘读写",
+			"CPU（按进程）",
+			"内存（按进程）",
+			"线程数（按进程）",
+			"文件描述符（按进程）",
+			"磁盘读写（按进程）",
+		]);
+		expect(totals.map((m) => m.name).sort()).toEqual([
+			"cpu_percent",
+			"io_read_bytes_per_s",
+			"io_write_bytes_per_s",
+			"open_fds",
+			"rss_bytes",
+			"threads",
+		]);
+		// start_process 启动的 sleep 和它的子进程 sleep：每个进程一个序列。
+		for (const name of [
+			"cpu_percent_by_process",
+			"rss_bytes_by_process",
+			"threads_by_process",
+			"open_fds_by_process",
+			"io_read_bytes_per_s_by_process",
+			"io_write_bytes_per_s_by_process",
+		]) {
+			const processes = labelled(name);
+			expect(processes, name).toHaveLength(2);
+			expect(
+				processes.map((l) => l.name),
+				name,
+			).toEqual(["sleep", "sleep"]);
+			expect(
+				processes.map((l) => l.pid),
+				name,
+			).toContain(String(pid));
+		}
 		for (const metric of metrics) expect(metric.points, metric.name).toBeGreaterThanOrEqual(2);
 	}, 180_000);
 
@@ -370,7 +462,7 @@ describe("全栈：标准节点包 sfly-std", () => {
 	it("单独上传新版本后，锁定旧版本的场景行为不变：shell → assert → collect_artifacts 在 Agent 上按锁定的版本执行，产物可以下载", async () => {
 		// 新版本把 shell 的默认解释器改成 /bin/bash：同一条命令在两个版本上的结果不同，能看出 Agent 执行的是哪个版本。
 		const next = await buildStdPackageVariant(join(dir, "dist-next"), {
-			version: "0.1.1",
+			version: "0.2.1",
 			edits: [["src/sfly_std/shell.py", 'shell: str = "/bin/sh"', 'shell: str = "/bin/bash"']],
 		});
 		// $0 是实际执行命令的解释器：不用 $BASH_VERSION 区分，有的系统上 /bin/sh 就是 bash。

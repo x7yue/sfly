@@ -3,7 +3,7 @@
 # 包的结构（各共用模块）与新增节点的步骤写在 src/sfly_std/__init__.py 的模块说明里。
 [project]
 name = "sfly-std"
-version = "0.1.0"
+version = "0.2.0"
 description = "sfly 标准节点包：Shell 命令、后台进程、监控、等待、日志、产物、HTTP、断言"
 requires-python = ">=3.10"
 # 和用户的节点包装在同一个共享 venv 里（ADR 0002）：只用常见的库，只写宽松的下限。
@@ -15,6 +15,9 @@ dependencies = [
 # 节点包需要的最低 SDK 版本（即 Agent 版本，#79）。用到新版 SDK 才有的接口时调高到包含它的第一个平台版本，
 # 发布说明里的「最低 Agent 版本」取自这里。
 # start_process / stop_process 用到 SDK 0.0.4 才有的 ctx.task、ctx.procs_dir（#90）。
+# 0.2.0 起 system_monitor、process_monitor 用到指标标签（#78），第一个支持标签的是 v0.0.4 之后的下一个平台版本：
+# 仓库版本号改为它（0.0.5）时把这里同步调成 ">=0.0.5"（现在调高会让同版本 0.0.4 的控制面在预检时拒绝全部标准节点），
+# 并在那之后再发布 sfly-std 0.2.0。std/tests/test_package.py 在版本号改了而这里没改时失败。
 [tool.sfly]
 requires-sdk = ">=0.0.4"
 

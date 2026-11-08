@@ -88,6 +88,7 @@ def test_monitors_a_process_by_pid_and_writes_per_process_samples(
         "open_fds",
         "io_read_bytes_per_s",
         "io_write_bytes_per_s",
+        *BY_PROCESS,
     }
     samples = rows(result)
     assert len(samples) >= 3
@@ -140,6 +141,77 @@ def test_children_count_towards_the_totals_unless_include_children_is_false(
     assert alone.status == "success", alone.error
     assert {row["pid"] for row in rows(alone)} == {str(parent.pid)}
     assert [p.value for p in alone.metrics if p.name == "rss_bytes"][-1] < 64 << 20
+
+
+#: 按进程的指标与 processes.csv 里对应的列。
+BY_PROCESS = {
+    "cpu_percent_by_process": "cpu_percent",
+    "rss_bytes_by_process": "rss_bytes",
+    "threads_by_process": "threads",
+    "open_fds_by_process": "open_fds",
+    "io_read_bytes_per_s_by_process": "io_read_bytes_per_s",
+    "io_write_bytes_per_s_by_process": "io_write_bytes_per_s",
+}
+
+
+def by_process(result: Execution, name: str) -> dict[tuple[str, str], list[float]]:
+    """按进程的指标：(pid, 进程名) → 依次上报的值。"""
+    series: dict[tuple[str, str], list[float]] = {}
+    for point in result.metrics:
+        if point.name == name:
+            assert set(point.labels) == {"pid", "name"}, point
+            series.setdefault((point.labels["pid"], point.labels["name"]), []).append(point.value)
+    return series
+
+
+def test_reports_each_process_as_a_series_labelled_with_pid_and_name(
+    tmp_path: Path, spawn: Spawn
+) -> None:
+    child = f"{sys.executable} -c 'import time; b = bytes([1]) * (64 << 20); time.sleep(300)'"
+    parent = spawn(["sh", "-c", f"{child} & {child} & wait"])
+    wait_for_children(parent.pid, 2)
+
+    result = monitor(tmp_path, pid=parent.pid, duration=0.6)
+
+    assert result.status == "success", result.error
+    # 每个进程每次采样的值与 processes.csv 里这个进程的那一行相同。
+    expected: dict[str, dict[tuple[str, str], list[float]]] = {name: {} for name in BY_PROCESS}
+    for row in rows(result):
+        for name, column in BY_PROCESS.items():
+            if row[column]:  # 读不到的值为空，不上报
+                expected[name].setdefault((row["pid"], row["name"]), []).append(float(row[column]))
+    for name in BY_PROCESS:
+        assert by_process(result, name) == expected[name], name
+    assert len(expected["rss_bytes_by_process"]) == 3
+    # 合计不变：仍是所有进程之和。
+    totals = [p.value for p in result.metrics if p.name == "rss_bytes"]
+    per_process = by_process(result, "rss_bytes_by_process").values()
+    assert totals == [sum(values) for values in zip(*per_process, strict=True)]
+
+
+def test_processes_whose_fds_and_io_cannot_be_read_do_not_report_them(
+    tmp_path: Path, spawn: Spawn
+) -> None:
+    other = psutil.Process(1)  # init：Agent 不是 root 时读不到它的文件描述符和 IO
+    try:
+        other.num_fds()
+        pytest.skip("能读到 pid 1 的文件描述符（以 root 运行或在容器里）")
+    except psutil.AccessDenied:
+        pass
+    own = spawn(["sleep", "300"])
+
+    result = monitor(tmp_path, pid=[1, own.pid], include_children=False, duration=0.6)
+
+    assert result.status == "success", result.error
+    everyone = {str(1), str(own.pid)}
+    for name in ("cpu_percent_by_process", "rss_bytes_by_process", "threads_by_process"):
+        assert {pid for pid, _ in by_process(result, name)} == everyone, name
+    for name in (
+        "open_fds_by_process",
+        "io_read_bytes_per_s_by_process",
+        "io_write_bytes_per_s_by_process",
+    ):
+        assert {pid for pid, _ in by_process(result, name)} == {str(own.pid)}, name
 
 
 def wait_for_children(pid: int, count: int) -> None:
