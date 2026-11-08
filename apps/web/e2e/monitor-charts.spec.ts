@@ -47,12 +47,9 @@ test("按节点分组，顺序与链上执行顺序一致；默认只展开执�
 	await expect(ws.getByTestId("chart-count")).toHaveText(
 		"3 个节点 · 12 张图表 · 共 3 个节点声明了图表",
 	);
-	await expect.poll(() => groupOrder(page)).toEqual([
-		"fetch 的图表",
-		"verify 的图表",
-		"probe 的图表",
-		"平台自带图表",
-	]);
+	await expect
+		.poll(() => groupOrder(page))
+		.toEqual(["fetch 的图表", "verify 的图表", "probe 的图表", "平台自带图表"]);
 
 	// 组标题：状态、名称、主指标最新值、图表数、Agent。
 	const fetch = group(page, "fetch");
@@ -345,7 +342,9 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	await menu.getByRole("button", { name: "执行中", exact: true }).click();
 	await expect.poll(() => groupOrder(page)).toEqual(["verify 的图表", "probe 的图表"]);
 	await menu.getByRole("checkbox", { name: "平台自带图表" }).check();
-	await expect.poll(() => groupOrder(page)).toEqual(["verify 的图表", "probe 的图表", "平台自带图表"]);
+	await expect
+		.poll(() => groupOrder(page))
+		.toEqual(["verify 的图表", "probe 的图表", "平台自带图表"]);
 	await menu.getByRole("button", { name: "清空" }).click();
 	await expect(ws.locator("[data-group]")).toHaveCount(0);
 	await expect(ws).toContainText("没有匹配的图表");
