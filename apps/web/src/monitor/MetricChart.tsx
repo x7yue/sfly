@@ -148,12 +148,18 @@ export function MetricChart({
 				{shown && type !== "stat" && (
 					<HoverReading lines={visible} window={shown} bucketSeconds={bucketSeconds} />
 				)}
-				{type !== "stat" && latestOf !== null && (
-					<span className="ml-auto font-mono text-sm font-semibold text-fg-1" data-latest>
-						{latest === undefined ? "—" : formatMetric(latest)}
-						<small className="ml-0.5 text-2xs font-normal text-fg-3">{unit}</small>
-					</span>
-				)}
+				{type !== "stat" &&
+					(latestOf === null ? (
+						// 不显示数值时留一个空的同字号占位：标题栏高度与基线不变，与同一行显示最新值的图表对齐。
+						<span aria-hidden className="ml-auto font-mono text-sm">
+							{"\u200b"}
+						</span>
+					) : (
+						<span className="ml-auto font-mono text-sm font-semibold text-fg-1" data-latest>
+							{latest === undefined ? "—" : formatMetric(latest)}
+							<small className="ml-0.5 text-2xs font-normal text-fg-3">{unit}</small>
+						</span>
+					))}
 			</figcaption>
 			{!shown ? (
 				<div
