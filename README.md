@@ -9,6 +9,7 @@
 - [docs/SEMANTICS.md](./docs/SEMANTICS.md)：场景执行语义规范
 - [docs/DESIGN-SYSTEM.md](./docs/DESIGN-SYSTEM.md)：前端设计体系（token、组件、状态样式、快捷键、HTTP 契约用法）
 - [docs/adr/](./docs/adr/)：架构决策记录
+- [CODING_STANDARDS.md](./CODING_STANDARDS.md)：代码审查对照的规范（测试写法）
 
 ## 开发
 
