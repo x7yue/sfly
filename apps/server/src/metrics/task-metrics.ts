@@ -44,6 +44,10 @@ import { nodeTypeOf } from "./node-types.js";
  * ## 上限
  * 单任务所有序列合计最多 `limitBytes / 28` 个点（默认约 50 MB）；超出后不再写入，`tasks.metric_truncated` 置为 true。
  *
+ * 单任务所有指标合计最多 {@link MAX_SERIES} 个序列（SDK 已经执行过一次，这里兜底）：不带标签的指标各占 1 个名额
+ * （按声明预留，总是能写入），带标签的新序列在名额用完后被拒绝——点计入丢弃数，`tasks.metric_series_capped` 置为 true；
+ * 已有序列照常写入。两个上限互不影响：被拒的序列不占点数，点数截断也不影响序列名额。
+ *
  * 与日志一样不经过引擎的互斥锁；同一个任务的处理按到达顺序串行执行。
  */
 
@@ -55,6 +59,8 @@ export const FLUSH_AFTER_MS = 10_000;
 export const BYTES_PER_POINT = 4 + 3 * 8;
 /** 单个任务指标数据的默认上限：50 MB。 */
 export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
+/** 单个任务所有指标的序列数上限（不带标签的指标各算 1 个），与 SDK 一致，不开放配置。 */
+export const MAX_SERIES = 1000;
 /** 没有未写入数据、这么久没收到上报的任务状态从内存中移除。 */
 const IDLE_MS = 5 * 60_000;
 
@@ -110,8 +116,14 @@ interface TaskState {
 	/** 已接受的点数（所有序列合计，含尚未写入的）。 */
 	points: number;
 	truncated: boolean;
+	/** 序列数超过上限，拒绝过新序列。 */
+	seriesCapped: boolean;
+	/** 带标签的序列最多这么多个：{@link MAX_SERIES} 减去声明的不带标签的指标数。 */
+	maxLabeledSeries: number;
+	/** 已有的带标签的序列数。 */
+	labeledSeries: number;
 	dropped: number;
-	/** 截断标记或丢弃计数还没写入。 */
+	/** 截断标记、序列超限标记或丢弃计数还没写入。 */
 	countersDirty: boolean;
 	/** 序列键（{@link seriesKey}）→ 序列。 */
 	series: Map<string, Series>;
@@ -188,6 +200,15 @@ export class TaskMetrics {
 					state.truncated = true;
 					state.countersDirty = true;
 					continue;
+				}
+				if (!series && keys.length > 0) {
+					if (state.labeledSeries >= state.maxLabeledSeries) {
+						state.dropped++;
+						state.seriesCapped = true;
+						state.countersDirty = true;
+						continue;
+					}
+					state.labeledSeries++;
 				}
 				if (!series) {
 					series = emptySeries(p.name, keys.length === 0 ? {} : sortedLabels(p.labels));
@@ -295,6 +316,7 @@ export class TaskMetrics {
 				nodeId: tasks.nodeId,
 				attempt: tasks.attempt,
 				truncated: tasks.metricTruncated,
+				seriesCapped: tasks.metricSeriesCapped,
 				dropped: tasks.metricDropped,
 			})
 			.from(tasks)
@@ -304,6 +326,7 @@ export class TaskMetrics {
 					or(
 						gt(tasks.metricPoints, 0),
 						eq(tasks.metricTruncated, true),
+						eq(tasks.metricSeriesCapped, true),
 						gt(tasks.metricDropped, 0),
 					),
 				),
@@ -319,6 +342,7 @@ export class TaskMetrics {
 				node_id: t.nodeId,
 				attempt: t.attempt,
 				truncated: t.truncated,
+				series_capped: t.seriesCapped,
 				dropped_points: t.dropped,
 				metrics: byTask.get(t.id) ?? [],
 			})),
@@ -413,6 +437,7 @@ export class TaskMetrics {
 							0,
 						),
 						metricTruncated: state.truncated,
+						metricSeriesCapped: state.seriesCapped,
 						metricDropped: state.dropped,
 					})
 					.where(eq(tasks.id, state.taskId));
@@ -525,6 +550,9 @@ export class TaskMetrics {
 			declared,
 			points: task.metricPoints,
 			truncated: task.metricTruncated,
+			seriesCapped: task.metricSeriesCapped,
+			maxLabeledSeries: MAX_SERIES - [...declared.values()].filter((k) => k.length === 0).length,
+			labeledSeries: [...series.values()].filter((s) => Object.keys(s.labels).length > 0).length,
 			dropped: task.metricDropped,
 			countersDirty: false,
 			series,

@@ -91,6 +91,7 @@ const series = (buckets: [number, number][], bucketSeconds = 1): MetricSeries =>
 	to: buckets.length ? at(buckets.at(-1)?.[0] ?? 0) : null,
 	bucket_seconds: bucketSeconds,
 	truncated: false,
+	series_capped: false,
 	series: [
 		{
 			name: "tps",

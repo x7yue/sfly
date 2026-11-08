@@ -15,7 +15,7 @@ import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
 import { compareVersions } from "#/lib/package-versions";
-import { ChartsCell, MetricsCell } from "#/metrics/MetricDeclarations";
+import { ChartsCell, LabelKeysCell, MetricsCell } from "#/metrics/MetricDeclarations";
 import { Badge } from "@/components/ui/badge";
 import {
 	Table,
@@ -263,6 +263,7 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 					<TableHead>输入</TableHead>
 					<TableHead>输出</TableHead>
 					<TableHead>声明的指标</TableHead>
+					<TableHead>标签键</TableHead>
 					<TableHead>图表</TableHead>
 				</TableRow>
 			</TableHeader>
@@ -281,6 +282,9 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 						</TableCell>
 						<TableCell>
 							<MetricsCell info={node} />
+						</TableCell>
+						<TableCell>
+							<LabelKeysCell info={node} />
 						</TableCell>
 						<TableCell>
 							<ChartsCell info={node} />

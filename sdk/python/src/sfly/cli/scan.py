@@ -177,6 +177,7 @@ def metric_declarations(decl: NodeDeclaration) -> dict[str, Any]:
 
     metrics: list[dict[str, Any]] = []
     names: set[str] = set()
+    labeled: set[str] = set()
     for metric in decl.metrics:
         if not isinstance(metric, Metric):
             raise ScanError(f"metrics 的元素必须是 sfly.Metric：{metric!r}")
@@ -197,6 +198,7 @@ def metric_declarations(decl: NodeDeclaration) -> dict[str, Any]:
         labels = _label_keys(metric)
         if labels:
             item["labels"] = labels
+            labeled.add(metric.name)
         metrics.append(item)
 
     charts: list[dict[str, Any]] = []
@@ -214,12 +216,22 @@ def metric_declarations(decl: NodeDeclaration) -> dict[str, Any]:
         for ref in chart.metrics:
             if ref not in names:
                 raise ScanError(f"图表 {chart.title} 引用了未声明的指标 {ref}")
+            if ref in labeled and chart.type in ("stat", "bar"):
+                raise ScanError(
+                    f"图表 {chart.title} 是 {chart.type}，不能引用带标签键的指标 {ref}；"
+                    "带标签的指标只能画在 line 或 area 图表里"
+                )
         charts.append({"title": chart.title, "type": chart.type, "metrics": list(chart.metrics)})
 
     result: dict[str, Any] = {"metrics": metrics, "charts": charts}
     if decl.primary_metric is not None:
         if decl.primary_metric not in names:
             raise ScanError(f"主指标 {decl.primary_metric} 未声明")
+        if decl.primary_metric in labeled:
+            raise ScanError(
+                f"主指标 {decl.primary_metric} 带标签键，不能作为主指标；"
+                "请另报一个不带标签的合计指标作为主指标"
+            )
         result["primary_metric"] = decl.primary_metric
     return result
 

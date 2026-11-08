@@ -276,6 +276,40 @@ test("悬停多序列图表时，提示列出所有可见序列在那一刻的�
 	await expect(mixed.locator("[data-hover-values]")).toHaveCount(0);
 });
 
+test("任务的序列数超过上限时，组标题和引用带标签指标的图表上显示「序列超限」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+		],
+		[
+			{ title: "合计", type: "line", metrics: ["tps"] },
+			{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+		],
+	);
+	// 上限 1000 个序列，tps 占 1 个：conn_tps 的第 1000 个序列被拒绝。
+	agent.metrics(task, [
+		["tps", unixAt(clock0, 1), 1],
+		...Array.from({ length: 1000 }, (_, i) => connPoint(clock0, { host: `h${i}` }, 1, i)),
+	]);
+	await agent.sync();
+	clock.advance(5000);
+	await openMonitor(page, clock, runId, "ping");
+
+	const ping = group(page, "ping");
+	await expect(ping.getByText("序列超限", { exact: true })).toHaveCount(2);
+	await expect(chart(page, "ping", "各连接")).toContainText("序列超限");
+	await expect(chart(page, "ping", "合计")).not.toContainText("序列超限");
+	await expect(ping).toContainText("丢弃 1 个点");
+	await expect(ping).not.toContainText("截断");
+});
+
 test("节点多选筛选：按链整组勾选、搜索、快速选择、平台自带图表；清除筛选；底部面板范围跟随筛选", async ({
 	page,
 	controlPlane,

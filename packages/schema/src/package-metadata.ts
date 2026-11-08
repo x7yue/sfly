@@ -73,6 +73,7 @@ export const NodeTypeMetadata = z
 	.superRefine((node, ctx) => {
 		// 交叉引用约束 JSON Schema 表达不了：Python CLI 在 sfly build 时做同样的检查。
 		const names = new Set<string>();
+		const labeled = new Set<string>();
 		for (const [i, metric] of (node.metrics ?? []).entries()) {
 			if (names.has(metric.name)) {
 				ctx.addIssue({
@@ -83,6 +84,7 @@ export const NodeTypeMetadata = z
 			}
 			names.add(metric.name);
 			const keys = metric.labels ?? [];
+			if (keys.length > 0) labeled.add(metric.name);
 			for (const [j, key] of keys.entries()) {
 				if (keys.indexOf(key) !== j) {
 					ctx.addIssue({
@@ -102,6 +104,14 @@ export const NodeTypeMetadata = z
 						message: `图表 ${chart.title} 引用了未声明的指标 ${ref}`,
 					});
 				}
+				// 数值卡和柱状图每个指标只画一个值，画不出多个序列。
+				if (labeled.has(ref) && (chart.type === "stat" || chart.type === "bar")) {
+					ctx.addIssue({
+						code: "custom",
+						path: ["charts", i, "metrics"],
+						message: `图表 ${chart.title} 是 ${chart.type}，不能引用带标签键的指标 ${ref}；带标签的指标只能画在 line 或 area 图表里`,
+					});
+				}
 			}
 		}
 		if (node.primary_metric !== undefined && !names.has(node.primary_metric)) {
@@ -109,6 +119,14 @@ export const NodeTypeMetadata = z
 				code: "custom",
 				path: ["primary_metric"],
 				message: `主指标 ${node.primary_metric} 未声明`,
+			});
+		}
+		// 紧凑位置只显示一个值；需要合计时由节点另报一个不带标签的指标。
+		if (node.primary_metric !== undefined && labeled.has(node.primary_metric)) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["primary_metric"],
+				message: `主指标 ${node.primary_metric} 带标签键，不能作为主指标；请另报一个不带标签的合计指标作为主指标`,
 			});
 		}
 	});

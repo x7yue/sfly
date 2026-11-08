@@ -130,6 +130,38 @@ def test_labeled_points_are_returned_and_invalid_labels_dropped_with_one_warning
     assert "conn" in warnings[4] and "host" in warnings[4] and "128" in warnings[4]
 
 
+def test_series_beyond_the_per_task_cap_are_dropped_with_one_warning_per_metric() -> None:
+    from sfly_stub import metrics
+
+    # 上限 1000 个序列：两个不带标签的指标（level、total）各占 1 个，conn 最多 998 个序列。
+    hosts = [f"h{i}" for i in range(1000)]
+    result = run_node(
+        metrics,
+        {
+            "steps": [
+                *(["conn", i, {"host": h, "port": 80}] for i, h in enumerate(hosts)),
+                ["level", 1],
+                ["conn", 2000, {"host": "h0", "port": 80}],
+                ["conn", 3000, {"host": "h999", "port": 80}],
+                ["total", 4],
+            ]
+        },
+    )
+
+    assert result.status == "success", result.error
+    conn = [(m.labels["host"], m.value) for m in result.metrics if m.name == "conn"]
+    assert len({host for host, _ in conn}) == 998
+    assert conn[:2] == [("h0", 0.0), ("h1", 1.0)]
+    assert conn[-2:] == [("h997", 997.0), ("h0", 2000.0)]
+    assert [(m.name, m.value) for m in result.metrics if m.name != "conn"] == [
+        ("level", 1.0),
+        ("total", 4.0),
+    ]
+    warnings = [line.message for line in result.logs if line.level == "warn"]
+    assert len(warnings) == 1, warnings
+    assert "conn" in warnings[0] and "1000" in warnings[0]
+
+
 def test_events_go_through_a_fifo_in_the_work_dir_and_none_are_lost(tmp_path: Path) -> None:
     from sfly_stub import metric_burst
 
