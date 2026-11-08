@@ -1,0 +1,10 @@
+# 短节点链路的性能测试（apps/server/perf/items/10-short-node-chain.ts，#76）用的节点包：
+# 一个什么都不做的空节点，和一个导入一大批标准库模块、模拟 pandas 这类重依赖的节点。
+# 不依赖第三方库：性能测试不访问外网，结果也不随某个库的版本变化。用 `sfly build testdata/short-package` 构建。
+[project]
+name = "sfly-short"
+version = "0.1.0"
+dependencies = []
+
+[tool.sfly]
+requires-sdk = ">=0.0.0"

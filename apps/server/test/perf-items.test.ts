@@ -8,6 +8,7 @@ import { loadItems, selectItems } from "../perf/registry.js";
 import {
 	AGENT_RSS_GROWTH_MB,
 	AGENT_SLOTS,
+	CHAIN_NODES,
 	DISCONNECT_SECONDS,
 	END_TO_END_MS,
 	EVENTS_PER_SECOND,
@@ -15,6 +16,7 @@ import {
 	INGEST_SECONDS,
 	parseTargets,
 	QUERY_P95_MS,
+	SHORT_NODE_MS,
 	STDOUT_LOG_MAX_MIB,
 	STDOUT_MIB_PER_SECOND,
 	targetQuantities,
@@ -93,6 +95,10 @@ describe("§7.6 目标里的数量", () => {
 		]);
 		expect(quantities("端到端延迟")).toEqual([{ value: END_TO_END_MS / 1000, unit: "秒" }]);
 		expect(quantities("Agent 断线")).toEqual([{ value: DISCONNECT_SECONDS, unit: "秒" }]);
+		expect(quantities("短节点链路")).toEqual([
+			{ value: CHAIN_NODES, unit: "个" },
+			{ value: SHORT_NODE_MS, unit: "ms" },
+		]);
 	});
 });
 
