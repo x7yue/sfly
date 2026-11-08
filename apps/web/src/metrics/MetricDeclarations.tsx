@@ -1,4 +1,4 @@
-import type { ChartView, MetricDeclaration, NodeTypeView } from "@sfly/schema";
+import { type ChartView, isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
 import { Badge } from "@/components/ui/badge";
 
 /**
@@ -48,7 +48,7 @@ export function MetricsCell({ info }: { info: NodeMetricsInfo }) {
 
 /** 节点包管理页「标签键」列：每个带标签的指标一行，列出它的标签键（按声明顺序）。 */
 export function LabelKeysCell({ info }: { info: NodeMetricsInfo }) {
-	const labeled = metricsOf(info).filter((m) => m.labels?.length);
+	const labeled = metricsOf(info).filter(isLabeled);
 	if (labeled.length === 0) return <span className="text-fg-3">—</span>;
 	return (
 		<ul aria-label="标签键" className="m-0 list-none p-0 font-mono text-xs text-fg-2">

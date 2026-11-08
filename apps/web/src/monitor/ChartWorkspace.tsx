@@ -1,10 +1,12 @@
 import {
 	type CatalogNode,
+	isLabeled,
 	isOnAgentStatus,
+	MAX_SERIES,
+	type MetricDataLoss,
 	type MetricSeries,
 	type PlatformMetrics,
 	type RunView,
-	seriesKey,
 } from "@sfly/schema";
 import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -22,8 +24,8 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
 import { buildGroups, type ChartGroup, groupHasData, isActive, isFailed } from "./chart-groups";
-import { balancedColumns, chartWindow, seriesName } from "./charts";
-import { type ChartLine, MetricChart } from "./MetricChart";
+import { balancedColumns, chartLines, chartWindow } from "./charts";
+import { MetricChart } from "./MetricChart";
 import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
 import { chainLabel } from "./run-model";
@@ -398,21 +400,14 @@ function NodeGroup({
 }) {
 	const { entry, node, chain, attempt, runAttempt, status } = group;
 	const units = new Map(entry.metrics.map((m) => [m.name, m.unit]));
-	const labelKeys = new Map(entry.metrics.map((m) => [m.name, m.labels]));
-	// 每个序列（指标名 + 标签，#78）一条线；还没有数据的指标占一条空线。
-	const linesOf = (names: readonly string[]): ChartLine[] =>
-		names.flatMap((name): ChartLine[] => {
-			const found = series?.series.filter((s) => s.name === name) ?? [];
-			if (found.length === 0) return [{ name, buckets: [] }];
-			return found.map((s) => ({
-				name: seriesName(s.name, s.labels, labelKeys.get(s.name), names.length > 1),
-				key: seriesKey(s.name, s.labels),
-				buckets: s.buckets,
-			}));
-		});
+	const labeled = new Set(entry.metrics.filter(isLabeled).map((m) => m.name));
 	const window = runAttempt ? chartWindow(runAttempt, range, now) : null;
-	const truncated = attempt.truncated || !!series?.truncated;
-	const seriesCapped = attempt.series_capped || !!series?.series_capped;
+	// 目录里的摘要只在写库时更新，序列查询（含内存里的点）可能更新：截断与序列超限取两者之一。
+	const loss: MetricDataLoss = {
+		truncated: attempt.truncated || !!series?.truncated,
+		series_capped: attempt.series_capped || !!series?.series_capped,
+		dropped_points: attempt.dropped_points,
+	};
 	const empty = !runAttempt?.started_at
 		? "节点尚未开始 · 暂无数据"
 		: !window || zoomed
@@ -448,20 +443,7 @@ function NodeGroup({
 						/>
 					)}
 					<span className="flex-1" />
-					{truncated && (
-						<Badge variant="warn" title="指标数据超过单个任务的上限，之后的点已被丢弃">
-							数据已截断
-						</Badge>
-					)}
-					{seriesCapped && <Badge {...SERIES_CAPPED} />}
-					{attempt.dropped_points > 0 && (
-						<Badge
-							variant="warn"
-							title="被丢弃的点：Agent 断线期间排队超过上限、标签与声明不一致或序列超限"
-						>
-							丢弃 {attempt.dropped_points} 个点
-						</Badge>
-					)}
+					<DataLossBadges loss={loss} />
 					<span className="flex-none text-xs text-fg-3">{charts.length} 张图表</span>
 					<span className="flex-none font-mono text-2xs text-fg-3">{node.agent ?? ""}</span>
 				</>
@@ -512,15 +494,15 @@ function NodeGroup({
 						title={chart.title}
 						type={chart.type}
 						unit={units.get(chart.metrics[0] ?? "") ?? ""}
-						lines={linesOf(chart.metrics)}
+						lines={chartLines(chart.metrics, entry.metrics, series?.series)}
 						bucketSeconds={series?.bucket_seconds ?? 1}
 						window={window}
 						empty={empty}
 						dense={dense}
 						accent={ACCENT[status.kind] ?? "var(--fg-3)"}
-						truncated={truncated}
+						truncated={loss.truncated}
 						notice={
-							seriesCapped && chart.metrics.some((m) => labelKeys.get(m)?.length) ? (
+							loss.series_capped && chart.metrics.some((m) => labeled.has(m)) ? (
 								<Badge {...SERIES_CAPPED} className="h-4 px-1" />
 							) : undefined
 						}
@@ -534,9 +516,31 @@ function NodeGroup({
 /** 「序列超限」提示（组标题与引用了带标签指标的图表上，与「截断」提示一致）。 */
 const SERIES_CAPPED = {
 	variant: "warn",
-	title: "序列数超过单个任务的上限（1000 个），之后新出现的序列的点已被丢弃，已有序列照常上报",
+	title: `序列数超过单个任务的上限（${MAX_SERIES} 个），之后新出现的序列的点已被丢弃，已有序列照常上报`,
 	children: "序列超限",
 } as const;
+
+/** 组标题上的指标数据缺失提示：截断、序列超限、丢弃的点数。 */
+function DataLossBadges({ loss }: { loss: MetricDataLoss }) {
+	return (
+		<>
+			{loss.truncated && (
+				<Badge variant="warn" title="指标数据超过单个任务的上限，之后的点已被丢弃">
+					数据已截断
+				</Badge>
+			)}
+			{loss.series_capped && <Badge {...SERIES_CAPPED} />}
+			{loss.dropped_points > 0 && (
+				<Badge
+					variant="warn"
+					title="被丢弃的点：Agent 断线期间排队超过上限、标签与声明不一致或序列超限"
+				>
+					丢弃 {loss.dropped_points} 个点
+				</Badge>
+			)}
+		</>
+	);
+}
 
 /** 选中节点的摘要（组内顶部）：状态、节点类型、Agent、耗时、尝试、进度、错误。 */
 function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {

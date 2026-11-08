@@ -1,11 +1,15 @@
 import {
+	compareSeries,
+	isLabeled,
 	type MetricBucket,
+	type MetricDeclaration,
 	type MetricIncrement,
 	type MetricSeries,
 	seriesKey,
 	sortedLabels,
 } from "@sfly/schema";
 import { formatMetric } from "#/lib/format";
+import type { ChartLine } from "./MetricChart";
 import type { TimeRange } from "./timeline";
 
 /**
@@ -112,7 +116,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 	const lastTimes = [...byKey.values()].flatMap((s) => s.buckets.at(-1)?.time ?? []).sort();
 	let entries = [...byKey];
 	if (added) {
-		// 指标的位置取它在原结果里第一次出现的位置；同一指标的序列按身份（即标签）排序。
+		// 指标的位置取它在原结果里第一次出现的位置；同一指标的序列按标签排序（与序列查询一致）。
 		const order = new Map<string, number>();
 		for (const [i, s] of series.series.entries()) if (!order.has(s.name)) order.set(s.name, i);
 		const rank = (name: string) => order.get(name) ?? Number.POSITIVE_INFINITY;
@@ -120,10 +124,10 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		for (const [i, [, s]] of entries.entries())
 			if (!firstSeen.has(s.name)) firstSeen.set(s.name, i);
 		entries = entries.sort(
-			([ka, a], [kb, b]) =>
+			([, a], [, b]) =>
 				rank(a.name) - rank(b.name) ||
 				(firstSeen.get(a.name) ?? 0) - (firstSeen.get(b.name) ?? 0) ||
-				(ka < kb ? -1 : ka > kb ? 1 : 0),
+				compareSeries(a, b),
 		);
 	}
 	return {
@@ -148,6 +152,30 @@ export function seriesName(
 	const values = order.flatMap((k) => labels[k] ?? []);
 	if (values.length === 0) return name;
 	return (multiMetric ? [name, ...values] : values).join(" · ");
+}
+
+/**
+ * 一张图表引用的指标画成的线：每个序列（指标名 + 标签）一条，按指标的引用顺序、同一指标按序列查询的顺序。
+ * 还没有任何数据的指标：不带标签时占一条以指标名命名的空线（图表照常画出空图），带标签时没有线。
+ */
+export function chartLines(
+	names: readonly string[],
+	declared: readonly MetricDeclaration[],
+	series: MetricSeries["series"] | undefined,
+): ChartLine[] {
+	const byName = new Map(declared.map((m) => [m.name, m]));
+	return names.flatMap((name): ChartLine[] => {
+		const metric = byName.get(name);
+		const labeled = !!metric && isLabeled(metric);
+		const found = series?.filter((s) => s.name === name) ?? [];
+		if (found.length === 0) return labeled ? [] : [{ name, key: name, labeled, buckets: [] }];
+		return found.map((s) => ({
+			name: seriesName(s.name, s.labels, metric?.labels, names.length > 1),
+			key: seriesKey(s.name, s.labels),
+			labeled,
+			buckets: s.buckets,
+		}));
+	});
 }
 
 /** 序列多于这个数时，图表默认只显示平均值最高的这么多个（#78）。 */
@@ -178,6 +206,57 @@ export function defaultShown(
 			.slice(0, limit)
 			.map((l) => l.key),
 	);
+}
+
+/** 图表上默认显示的序列，及挑选时的时间范围与已有的序列。 */
+export interface ShownPick {
+	/** 挑选时用户选的时间范围（缩放范围；null 为整个运行）。 */
+	range: unknown;
+	keys: ReadonlySet<string>;
+	shown: ReadonlySet<string>;
+}
+
+/**
+ * 默认显示的序列（{@link defaultShown}）：只在用户改了时间范围（拖选缩放、回到实时，range 换了对象）或出现新序列时
+ * 重新挑选；新点到来、时钟推进时返回原来的挑选，曲线不会随数据变化忽隐忽现。
+ */
+export function pickShown(
+	previous: ShownPick | undefined,
+	lines: readonly { key: string; buckets: readonly MetricBucket[] }[],
+	range: unknown,
+	limit = DEFAULT_SHOWN,
+): ShownPick {
+	if (previous && previous.range === range && lines.every((l) => previous.keys.has(l.key))) {
+		return previous;
+	}
+	return { range, keys: new Set(lines.map((l) => l.key)), shown: defaultShown(lines, limit) };
+}
+
+/**
+ * 图表里每个序列的颜色序号：按序列在这张图表里首次出现的顺序分配，之后不变——运行中新序列按标签排序插在已有序列之间，
+ * 已有曲线也不换色。没有新序列时返回原来的分配。
+ */
+export function colorSlots(
+	previous: ReadonlyMap<string, number>,
+	keys: readonly string[],
+): ReadonlyMap<string, number> {
+	const added = keys.filter((k) => !previous.has(k));
+	if (added.length === 0) return previous;
+	const next = new Map(previous);
+	for (const key of added) if (!next.has(key)) next.set(key, next.size);
+	return next;
+}
+
+/**
+ * 标题栏的最新值取哪条线：只有一条可见线时取它（没有可见线时为 undefined）；多条线里恰有一条不带标签的指标
+ * （通常是合计）时取它；否则为 null，不显示数值，读数交给悬停提示。
+ */
+export function latestLine<L extends { labeled?: boolean }>(
+	visible: readonly L[],
+): L | undefined | null {
+	if (visible.length <= 1) return visible[0];
+	const totals = visible.filter((l) => !l.labeled);
+	return totals.length === 1 && totals.length < visible.length ? totals[0] : null;
 }
 
 /** 悬停时刻所在的桶；不在任何桶里时为 null。 */

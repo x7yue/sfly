@@ -1,5 +1,8 @@
 import {
 	type CatalogNode,
+	compareSeries,
+	isLabeled,
+	type Labels,
 	type MetricBucket,
 	type MetricSeries,
 	type MetricSeriesQuery,
@@ -8,6 +11,8 @@ import {
 	type PlatformBucket,
 	type PlatformMetrics,
 	type RunMetricCatalog,
+	seriesKey,
+	sortedLabels,
 } from "@sfly/schema";
 import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Clock } from "../clock.js";
@@ -21,9 +26,13 @@ import {
 } from "../db/schema.js";
 import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
-import { compareSeries, type Labels, seriesKey, sortedLabels } from "./labels.js";
 import { nodeTypeOf } from "./node-types.js";
-import { seriesSummaries, type TaskMetrics, type UnwrittenSeries } from "./task-metrics.js";
+import {
+	dataLossOf,
+	seriesSummaries,
+	type TaskMetrics,
+	type UnwrittenSeries,
+} from "./task-metrics.js";
 
 type TaskRow = typeof tasks.$inferSelect;
 
@@ -108,9 +117,7 @@ export class MetricQueries {
 				attempts: attempts.map((t) => ({
 					task_id: t.id,
 					attempt: t.attempt,
-					truncated: t.metricTruncated,
-					series_capped: t.metricSeriesCapped,
-					dropped_points: t.metricDropped,
+					...dataLossOf(t),
 					metrics: summaries.get(t.id) ?? [],
 				})),
 			});
@@ -149,7 +156,7 @@ export class MetricQueries {
 		const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
 		const declared = ref?.type?.metrics ?? [];
 		const names = query.metrics ?? declared.map((m) => m.name);
-		const labeled = new Set(declared.filter((m) => (m.labels ?? []).length > 0).map((m) => m.name));
+		const labeled = new Set(declared.filter(isLabeled).map((m) => m.name));
 		// 已过保留期（#32）：数据已清理，不再查询，每个序列都没有桶。
 		const expired = run.run.metricsPurgedAt !== null;
 		const unwritten = new Map(

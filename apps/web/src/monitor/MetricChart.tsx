@@ -1,14 +1,17 @@
 import type { MetricBucket } from "@sfly/schema";
 import { cn } from "cn";
-import { memo, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState } from "react";
 import { formatClock, formatMetric } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import {
 	bucketAt,
-	defaultShown,
+	colorSlots,
 	envelopePoints,
 	formatReading,
 	hasSpread,
+	latestLine,
+	pickShown,
+	type ShownPick,
 	valueExtent,
 } from "./charts";
 import { useMonitor, useMonitorActions } from "./monitor-state";
@@ -16,8 +19,10 @@ import type { TimeRange } from "./timeline";
 
 /**
  * 一张指标图表（原型 chartHTML / plotSVG）：折线、面积、柱状、数值卡四种类型，多序列时显示图例。
- * 每个序列（指标名 + 标签，#78）一条线，颜色按序列的顺序在 4 种主题色里轮换；点图例项显示或隐藏这条线，
- * 序列多于 10 个时默认只显示横轴范围内平均值最高的 10 个（charts.ts 的 defaultShown）。
+ * 每个序列（指标名 + 标签，#78）一条线，颜色按序列在这张图表里首次出现的顺序在 4 种主题色里轮换（之后不变）；
+ * 点图例项显示或隐藏这条线，序列多于 10 个时默认只显示横轴范围内平均值最高的 10 个（charts.ts 的 defaultShown），
+ * 只在用户改时间范围或出现新序列时重新挑选（pickShown）。
+ * 标题栏的最新值见 charts.ts 的 latestLine：多条线且没有唯一的合计时不显示数值，读数在悬停提示里。
  * 横轴由调用方给出（节点实际运行的时段与时间线范围的交集，见 charts.ts 的 chartWindow）。
  * 悬停时把时刻写进共享状态（时间线和其他图表同步显示竖线与读数），日志标记画成琥珀色虚线。
  */
@@ -29,6 +34,8 @@ export interface ChartLine {
 	name: string;
 	/** 序列的身份（指标名 + 标签，见 @sfly/schema 的 seriesKey）；没有时用 name。 */
 	key?: string;
+	/** 带标签的指标的序列（标题栏的最新值优先取不带标签的合计，见 charts.ts 的 latestLine）。 */
+	labeled?: boolean;
 	buckets: readonly MetricBucket[];
 }
 
@@ -40,7 +47,7 @@ interface DrawnLine extends ChartLine {
 	color: string;
 }
 
-/** 多序列的线色（token chart-1 … chart-4，按序循环）。 */
+/** 多序列的线色（token chart-1 … chart-4，按颜色序号循环）。 */
 export const SERIES_COLORS = [
 	"var(--chart-1)",
 	"var(--chart-2)",
@@ -83,33 +90,41 @@ export function MetricChart({
 	footnote?: React.ReactNode;
 }) {
 	const span = bucketSeconds * 1000;
+	// 颜色序号按序列首次出现的顺序分配（显示或隐藏别的序列、运行中插入新序列时都不变）。
+	const [slotState, setSlots] = useState<ReadonlyMap<string, number>>(new Map());
+	const slots = colorSlots(slotState, lines.map(lineKey));
+	if (slots !== slotState) setSlots(slots);
 	const inWindow = useMemo(
 		(): DrawnLine[] =>
 			window
-				? lines.map((l, i) => ({
+				? lines.map((l) => ({
 						...l,
 						key: lineKey(l),
-						// 颜色按序列在全部序列里的位置，显示或隐藏别的序列时不变。
-						color: seriesColor(i),
+						color: seriesColor(slots.get(lineKey(l)) ?? 0),
 						buckets: l.buckets.filter((b) => {
 							const t = Date.parse(b.time);
 							return t + span > window.start && t <= window.end;
 						}),
 					}))
 				: [],
-		[lines, window, span],
+		[lines, window, span, slots],
 	);
-	// 图例上点过的序列（身份 → 是否显示）；没点过的按默认（defaultShown）。
+	// 默认显示的序列：只在用户改时间范围（缩放、回到实时）或出现新序列时重新挑选。
+	const zoom = useMonitor((s) => s.zoom);
+	const [pickState, setPick] = useState<ShownPick | undefined>(undefined);
+	const pick = pickShown(pickState, inWindow, zoom);
+	if (pick !== pickState) setPick(pick);
+	// 图例上点过的序列（身份 → 是否显示）覆盖默认。
 	const [toggled, setToggled] = useState<ReadonlyMap<string, boolean>>(new Map());
-	const defaults = useMemo(() => defaultShown(inWindow), [inWindow]);
-	const isShown = (key: string) => toggled.get(key) ?? defaults.has(key);
-	const visible = useMemo(
-		() => inWindow.filter((l) => toggled.get(l.key) ?? defaults.has(l.key)),
-		[inWindow, defaults, toggled],
+	const isShown = useCallback(
+		(key: string) => toggled.get(key) ?? pick.shown.has(key),
+		[toggled, pick],
 	);
+	const visible = useMemo(() => inWindow.filter((l) => isShown(l.key)), [inWindow, isShown]);
 	const toggle = (key: string) => setToggled((t) => new Map(t).set(key, !isShown(key)));
 	const has = inWindow.some((l) => l.buckets.length > 0);
-	const latest = (type === "stat" ? inWindow : visible)[0]?.buckets.at(-1)?.last;
+	const latestOf = type === "stat" ? inWindow[0] : latestLine(visible);
+	const latest = latestOf?.buckets.at(-1)?.last;
 	const shown = window && has ? window : null;
 
 	return (
@@ -133,7 +148,7 @@ export function MetricChart({
 				{shown && type !== "stat" && (
 					<HoverReading lines={visible} window={shown} bucketSeconds={bucketSeconds} />
 				)}
-				{type !== "stat" && (
+				{type !== "stat" && latestOf !== null && (
 					<span className="ml-auto font-mono text-sm font-semibold text-fg-1" data-latest>
 						{latest === undefined ? "—" : formatMetric(latest)}
 						<small className="ml-0.5 text-2xs font-normal text-fg-3">{unit}</small>

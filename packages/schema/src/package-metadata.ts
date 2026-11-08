@@ -48,6 +48,10 @@ export const MetricDeclaration = z.strictObject({
 	labels: z.array(MetricName).max(MAX_LABEL_KEYS).optional(),
 });
 
+/** 指标是否带标签（声明了标签键）。 */
+export const isLabeled = (metric: { labels?: readonly string[] | undefined }): boolean =>
+	(metric.labels?.length ?? 0) > 0;
+
 /** 图表声明：把一个或几个本节点类型声明的指标画出来。 */
 export const ChartDeclaration = z.strictObject({
 	title: z.string().min(1),
@@ -84,7 +88,7 @@ export const NodeTypeMetadata = z
 			}
 			names.add(metric.name);
 			const keys = metric.labels ?? [];
-			if (keys.length > 0) labeled.add(metric.name);
+			if (isLabeled(metric)) labeled.add(metric.name);
 			for (const [j, key] of keys.entries()) {
 				if (keys.indexOf(key) !== j) {
 					ctx.addIssue({

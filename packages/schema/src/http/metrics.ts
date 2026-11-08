@@ -17,21 +17,21 @@ const IdParams = z.object({ id: z.string() });
  */
 export const MetricLabels = z.record(z.string(), z.string());
 
-/** 按键排序的标签副本：内容相同的标签得到相同的 JSON（与 jsonb 的规范形式一样，比较时相等）。 */
-export function sortedLabels(labels: Readonly<Record<string, string>>): Record<string, string> {
-	return Object.fromEntries(
-		Object.entries(labels).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-	);
-}
-
 /**
- * 序列的身份（指标名 + 标签）：不带标签时就是指标名，带标签时是指标名、NUL 和键排序后的标签 JSON。
- * 指标名是标识符、不含 NUL，两种形式不会冲突；按它排序即先按指标名、再按标签排序。
+ * 一个任务（一次尝试）的指标数据有没有缺失：截断、序列超限与丢弃的点数。
+ * 摘要、目录与序列查询都带这一组字段（序列查询只带 truncated、series_capped）。
  */
-export function seriesKey(name: string, labels: Readonly<Record<string, string>>): string {
-	for (const _ in labels) return `${name}\u0000${JSON.stringify(sortedLabels(labels))}`;
-	return name;
-}
+export const MetricDataLoss = z.object({
+	/** 指标数据超过单任务上限，之后的点已被丢弃。 */
+	truncated: z.boolean(),
+	/**
+	 * 序列数超过单任务上限（`MAX_SERIES` 个，见 ../series.ts；不带标签的指标各算 1 个）：之后新出现的序列的点已被丢弃
+	 * （计入 dropped_points），已有序列照常写入。
+	 */
+	series_capped: z.boolean(),
+	/** 被丢弃的点数：Agent 断线期间排队超过上限、标签与声明的标签键不一致、序列超限。 */
+	dropped_points: z.number().int().nonnegative(),
+});
 
 /** 一个任务（一次尝试）一个序列的摘要。 */
 export const MetricSummary = z.object({
@@ -57,15 +57,7 @@ export const TaskMetricSummary = z.object({
 	chain_instance_id: z.uuid(),
 	node_id: z.string(),
 	attempt: z.number().int().positive(),
-	/** 指标数据超过单任务上限，之后的点已被丢弃。 */
-	truncated: z.boolean(),
-	/**
-	 * 序列数超过单任务上限（1000 个，不带标签的指标各算 1 个）：之后新出现的序列的点已被丢弃（计入 dropped_points），
-	 * 已有序列照常写入。
-	 */
-	series_capped: z.boolean(),
-	/** 被丢弃的点数：Agent 断线期间排队超过上限、标签与声明的标签键不一致、序列超限。 */
-	dropped_points: z.number().int().nonnegative(),
+	...MetricDataLoss.shape,
 	/** 按指标名排序，同一指标的序列按标签排序。 */
 	metrics: z.array(MetricSummary),
 });
@@ -85,15 +77,7 @@ export const RunMetricSummary = z.object({
 export const CatalogAttempt = z.object({
 	task_id: z.uuid(),
 	attempt: z.number().int().positive(),
-	/** 指标数据超过单任务上限，之后的点已被丢弃。 */
-	truncated: z.boolean(),
-	/**
-	 * 序列数超过单任务上限（1000 个，不带标签的指标各算 1 个）：之后新出现的序列的点已被丢弃（计入 dropped_points），
-	 * 已有序列照常写入。
-	 */
-	series_capped: z.boolean(),
-	/** 被丢弃的点数：Agent 断线期间排队超过上限、标签与声明的标签键不一致、序列超限。 */
-	dropped_points: z.number().int().nonnegative(),
+	...MetricDataLoss.shape,
 	/** 已写库的点的摘要（每个序列一项），按指标名、标签排序；运行中的当前段约每 10 秒写一次。 */
 	metrics: z.array(MetricSummary),
 });
@@ -187,9 +171,7 @@ export const MetricSeries = z.object({
 	to: Timestamp.nullable(),
 	/** 每个桶的跨度（秒，至少 1）：桶 k 覆盖 [from + k × bucket_seconds, from + (k + 1) × bucket_seconds)。 */
 	bucket_seconds: z.number().int().positive(),
-	truncated: z.boolean(),
-	/** 序列数超过单任务上限，之后新出现的序列的点已被丢弃（同 {@link TaskMetricSummary}）。 */
-	series_capped: z.boolean(),
+	...MetricDataLoss.pick({ truncated: true, series_capped: true }).shape,
 	series: z.array(
 		z.object({ name: MetricName, labels: MetricLabels, buckets: z.array(MetricBucket) }),
 	),
@@ -315,6 +297,7 @@ export const metricsApi = {
 };
 
 export type MetricLabels = z.infer<typeof MetricLabels>;
+export type MetricDataLoss = z.infer<typeof MetricDataLoss>;
 export type MetricSummary = z.infer<typeof MetricSummary>;
 export type CatalogAttempt = z.infer<typeof CatalogAttempt>;
 export type CatalogNode = z.infer<typeof CatalogNode>;

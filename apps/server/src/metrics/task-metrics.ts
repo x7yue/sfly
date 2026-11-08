@@ -1,10 +1,18 @@
 import type { AgentMessage, MetricBatch } from "@sfly/proto";
-import type {
-	MetricIncrement,
-	MetricPointView,
-	MetricSummary,
-	OrchestrationDocument,
-	RunMetricSummary,
+import {
+	compareSeries,
+	isLabeled,
+	type Labels,
+	MAX_SERIES,
+	type MetricDataLoss,
+	type MetricDeclaration,
+	type MetricIncrement,
+	type MetricPointView,
+	type MetricSummary,
+	type OrchestrationDocument,
+	type RunMetricSummary,
+	seriesKey,
+	sortedLabels,
 } from "@sfly/schema";
 import { and, asc, eq, gt, or, sql } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
@@ -13,7 +21,7 @@ import type { Db } from "../db/database.js";
 import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
-import { compareSeries, type Labels, labelsMatch, seriesKey, sortedLabels } from "./labels.js";
+import { labelsMatch } from "./labels.js";
 import { type MetricRetention, purgeRunMetrics } from "./metric-retention.js";
 import { nodeTypeOf } from "./node-types.js";
 
@@ -59,8 +67,6 @@ export const FLUSH_AFTER_MS = 10_000;
 export const BYTES_PER_POINT = 4 + 3 * 8;
 /** 单个任务指标数据的默认上限：50 MB。 */
 export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
-/** 单个任务所有指标的序列数上限（不带标签的指标各算 1 个），与 SDK 一致，不开放配置。 */
-export const MAX_SERIES = 1000;
 /** 没有未写入数据、这么久没收到上报的任务状态从内存中移除。 */
 const IDLE_MS = 5 * 60_000;
 
@@ -192,7 +198,7 @@ export class TaskMetrics {
 				const t = Number(p.timeUnixS);
 				// 时间戳来自 Agent 的时钟：超出可接收范围的（时钟异常）丢弃，不按异常的日期建分区（#32）。
 				if (!this.deps.retention.accepts(t)) continue;
-				const key = keys.length === 0 ? p.name : seriesKey(p.name, p.labels);
+				const key = seriesKey(p.name, p.labels);
 				let series = state.series.get(key);
 				if (series && series.points > 0 && t <= series.lastAt) continue;
 				if (state.truncated) continue;
@@ -211,7 +217,7 @@ export class TaskMetrics {
 					state.labeledSeries++;
 				}
 				if (!series) {
-					series = emptySeries(p.name, keys.length === 0 ? {} : sortedLabels(p.labels));
+					series = emptySeries(p.name, sortedLabels(p.labels));
 					state.series.set(key, series);
 				}
 				const point = {
@@ -315,9 +321,9 @@ export class TaskMetrics {
 				chainInstanceId: tasks.chainInstanceId,
 				nodeId: tasks.nodeId,
 				attempt: tasks.attempt,
-				truncated: tasks.metricTruncated,
-				seriesCapped: tasks.metricSeriesCapped,
-				dropped: tasks.metricDropped,
+				metricTruncated: tasks.metricTruncated,
+				metricSeriesCapped: tasks.metricSeriesCapped,
+				metricDropped: tasks.metricDropped,
 			})
 			.from(tasks)
 			.where(
@@ -341,9 +347,7 @@ export class TaskMetrics {
 				chain_instance_id: t.chainInstanceId,
 				node_id: t.nodeId,
 				attempt: t.attempt,
-				truncated: t.truncated,
-				series_capped: t.seriesCapped,
-				dropped_points: t.dropped,
+				...dataLossOf(t),
 				metrics: byTask.get(t.id) ?? [],
 			})),
 		};
@@ -515,7 +519,7 @@ export class TaskMetrics {
 			.where(eq(tasks.id, taskId));
 		if (!row) return undefined;
 		const { task } = row;
-		const declared = await this.#declared(row.document, task.nodeId, task.agentName);
+		const metrics = await this.#declared(row.document, task.nodeId, task.agentName);
 		const rows = await this.deps.db
 			.select()
 			.from(metricSeries)
@@ -547,11 +551,11 @@ export class TaskMetrics {
 			nodeId: task.nodeId,
 			attempt: task.attempt,
 			agentName: task.agentName,
-			declared,
+			declared: new Map(metrics.map((m) => [m.name, [...(m.labels ?? [])].sort()])),
 			points: task.metricPoints,
 			truncated: task.metricTruncated,
 			seriesCapped: task.metricSeriesCapped,
-			maxLabeledSeries: MAX_SERIES - [...declared.values()].filter((k) => k.length === 0).length,
+			maxLabeledSeries: MAX_SERIES - metrics.filter((m) => !isLabeled(m)).length,
 			labeledSeries: [...series.values()].filter((s) => Object.keys(s.labels).length > 0).length,
 			dropped: task.metricDropped,
 			countersDirty: false,
@@ -561,18 +565,25 @@ export class TaskMetrics {
 		};
 	}
 
-	/**
-	 * 任务的节点类型声明的指标名 → 标签键（已排序）：锁定的节点包版本；开发版本取任务所在 Agent 上报的元信息。
-	 */
+	/** 任务的节点类型声明的指标：锁定的节点包版本；开发版本取任务所在 Agent 上报的元信息。 */
 	async #declared(
 		document: OrchestrationDocument,
 		nodeId: string,
 		agentName: string | null,
-	): Promise<Map<string, string[]>> {
+	): Promise<MetricDeclaration[]> {
 		const ref = await nodeTypeOf(this.deps.db, document, nodeId, agentName);
-		return new Map((ref?.type?.metrics ?? []).map((m) => [m.name, [...(m.labels ?? [])].sort()]));
+		return ref?.type?.metrics ?? [];
 	}
 }
+
+/** 任务行上记录的指标数据缺失：截断、序列超限与丢弃的点数。 */
+export const dataLossOf = (
+	task: Pick<typeof tasks.$inferSelect, "metricTruncated" | "metricSeriesCapped" | "metricDropped">,
+): MetricDataLoss => ({
+	truncated: task.metricTruncated,
+	series_capped: task.metricSeriesCapped,
+	dropped_points: task.metricDropped,
+});
 
 /** 写入的行没有对应的分区（PostgreSQL 23514 check_violation：no partition of relation … found for row）。 */
 function isMissingPartition(error: unknown): boolean {
@@ -587,11 +598,7 @@ export async function seriesSummaries(
 	db: Db,
 	runId: string,
 ): Promise<Map<string, MetricSummary[]>> {
-	const rows = await db
-		.select()
-		.from(metricSeries)
-		.where(eq(metricSeries.runId, runId))
-		.orderBy(asc(metricSeries.metric));
+	const rows = await db.select().from(metricSeries).where(eq(metricSeries.runId, runId));
 	const byTask = new Map<string, MetricSummary[]>();
 	for (const row of rows) {
 		const list = byTask.get(row.taskId) ?? [];

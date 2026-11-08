@@ -1,4 +1,4 @@
-import { type ChartView, NodeTypeMetadata, type PackageMetadata } from "@sfly/schema";
+import { type ChartView, isLabeled, NodeTypeMetadata, type PackageMetadata } from "@sfly/schema";
 import { z } from "zod";
 
 /** 节点包查询 API 返回的节点类型：图表含默认生成的图表。 */
@@ -17,7 +17,7 @@ export function withDefaultCharts(node: NodeTypeMetadata): NodeTypeView {
 		.filter((m) => !referenced.has(m.name))
 		.map((m) => ({
 			title: m.name,
-			type: m.kind === "counter" && !m.labels?.length ? "stat" : "line",
+			type: m.kind === "counter" && !isLabeled(m) ? "stat" : "line",
 			metrics: [m.name],
 			default: true,
 		}));

@@ -47,7 +47,7 @@ test("按节点分组，顺序与链上执行顺序一致；默认只展开执�
 	await expect(ws.getByTestId("chart-count")).toHaveText(
 		"3 个节点 · 12 张图表 · 共 3 个节点声明了图表",
 	);
-	expect(await groupOrder(page)).toEqual([
+	await expect.poll(() => groupOrder(page)).toEqual([
 		"fetch 的图表",
 		"verify 的图表",
 		"probe 的图表",
@@ -97,6 +97,8 @@ test("四种图表类型与多序列图例；横轴是节点实际运行的时�
 	await expect(latency.locator("[data-series]")).toHaveCount(2);
 	await expect(latency).toContainText("latency_ms");
 	await expect(latency).toContainText("p99_ms");
+	// 两个不带标签的指标：标题栏不显示最新值（读数在悬停提示里）。
+	await expect(latency.locator("[data-latest]")).toHaveCount(0);
 	// fetch 在 08:00:02 开始、08:00:06 结束。
 	await expect(latency.locator("[data-window]")).toHaveText("08:00:02 – 08:00:06");
 	await expect(chart(page, "fetch", "吞吐").locator("[data-series] path")).toHaveCount(2);
@@ -151,6 +153,9 @@ test("带标签的指标每个序列一条线，图例用标签值命名；运�
 		"conn_tps · 80 · a",
 		"conn_tps · 80 · b",
 	]);
+	// 标题栏的最新值：合计与各连接显示合计（不带标签的 tps）；只有各连接的多条线时不显示，读数在悬停提示里。
+	await expect(mixed.locator("[data-latest]")).toHaveText("33req/s");
+	await expect(byConn.locator("[data-latest]")).toHaveCount(0);
 	// 主指标（不带标签）照常显示最新值。
 	await expect(group(page, "ping").locator('[data-primary-metric="tps"]')).toContainText("33");
 
@@ -221,7 +226,7 @@ test("序列超过 10 个时默认只显示时间范围内平均值最高的 10 
 
 	// 只看这个节点：图表与图例的选择照常。
 	await workspace(page).getByRole("button", { name: "只看 ping" }).click();
-	expect(await groupOrder(page)).toEqual(["ping 的图表"]);
+	await expect.poll(() => groupOrder(page)).toEqual(["ping 的图表"]);
 	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h02", "h12"]);
 });
 
@@ -338,9 +343,9 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 
 	// 快速选择：执行中（不含平台自带图表），再单独勾上平台自带图表。
 	await menu.getByRole("button", { name: "执行中", exact: true }).click();
-	expect(await groupOrder(page)).toEqual(["verify 的图表", "probe 的图表"]);
+	await expect.poll(() => groupOrder(page)).toEqual(["verify 的图表", "probe 的图表"]);
 	await menu.getByRole("checkbox", { name: "平台自带图表" }).check();
-	expect(await groupOrder(page)).toEqual(["verify 的图表", "probe 的图表", "平台自带图表"]);
+	await expect.poll(() => groupOrder(page)).toEqual(["verify 的图表", "probe 的图表", "平台自带图表"]);
 	await menu.getByRole("button", { name: "清空" }).click();
 	await expect(ws.locator("[data-group]")).toHaveCount(0);
 	await expect(ws).toContainText("没有匹配的图表");
@@ -374,7 +379,7 @@ test("只看一个节点；按名称搜索图表；紧凑密度", async ({
 	const ws = workspace(page);
 
 	await ws.getByRole("button", { name: "只看 fetch" }).click();
-	expect(await groupOrder(page)).toEqual(["fetch 的图表"]);
+	await expect.poll(() => groupOrder(page)).toEqual(["fetch 的图表"]);
 	await expect(groupToggle(page, "fetch")).toHaveAttribute("aria-expanded", "true");
 	await expect(ws.getByRole("button", { name: /节点：fetch/ })).toBeVisible();
 	await expect(ws.getByRole("button", { name: "只看 fetch" })).toHaveCount(0);
@@ -382,7 +387,7 @@ test("只看一个节点；按名称搜索图表；紧凑密度", async ({
 	await expect(ws.locator("[data-group]")).toHaveCount(4);
 
 	await ws.getByRole("textbox", { name: "搜索图表或节点" }).fill("吞吐");
-	expect(await groupOrder(page)).toEqual(["fetch 的图表"]);
+	await expect.poll(() => groupOrder(page)).toEqual(["fetch 的图表"]);
 	await expect(group(page, "fetch").getByRole("figure")).toHaveCount(1);
 	await expect(ws.getByTestId("chart-count")).toHaveText(
 		"1 个节点 · 1 张图表 · 共 3 个节点声明了图表",
