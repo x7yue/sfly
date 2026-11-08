@@ -15,11 +15,10 @@ dependencies = [
 # 节点包需要的最低 SDK 版本（即 Agent 版本，#79）。用到新版 SDK 才有的接口时调高到包含它的第一个平台版本，
 # 发布说明里的「最低 Agent 版本」取自这里。
 # start_process / stop_process 用到 SDK 0.0.4 才有的 ctx.task、ctx.procs_dir（#90）。
-# 0.2.0 起 system_monitor、process_monitor 用到指标标签（#78），第一个支持标签的是 v0.0.4 之后的下一个平台版本：
-# 仓库版本号改为它（0.0.5）时把这里同步调成 ">=0.0.5"（现在调高会让同版本 0.0.4 的控制面在预检时拒绝全部标准节点），
-# 并在那之后再发布 sfly-std 0.2.0。std/tests/test_package.py 在版本号改了而这里没改时失败。
+# 0.2.0 起 system_monitor、process_monitor 用到指标标签（#78），平台 0.1.0 起才支持；
+# sfly-std 0.2.0 在平台 0.1.0 发布之后再发布。std/tests/test_package.py 检查这里排除了不支持标签的 SDK。
 [tool.sfly]
-requires-sdk = ">=0.0.4"
+requires-sdk = ">=0.1.0"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.14"]
