@@ -133,8 +133,14 @@ impl Telemetry {
 
     /// 排队一批指标（超出上限时丢弃最早的点）。
     pub fn send_metrics(&self, batch: MetricBatch) {
-        if let Ok(mut queue) = self.metrics.lock() {
-            queue.push(batch);
+        let limit = match self.metrics.lock() {
+            Ok(mut queue) => queue.push(batch).then_some(queue.limit()),
+            Err(_) => None,
+        };
+        if let Some(limit) = limit {
+            eprintln!(
+                "metric queue is full ({limit} points queued while disconnected): dropping the oldest points"
+            );
         }
         let _ = self.tx.send(Queued::Metrics);
     }
