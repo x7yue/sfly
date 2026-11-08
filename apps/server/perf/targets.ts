@@ -23,6 +23,10 @@ export const QUERY_P95_MS = 500;
 export const END_TO_END_MS = 3000;
 /** Agent 断线：断线 5 分钟（秒）。 */
 export const DISCONNECT_SECONDS = 300;
+/** 短节点链路：30 个节点的单链。 */
+export const CHAIN_NODES = 30;
+/** 短节点链路：sfly-std 的短节点每节点端到端 ≤ 120 ms。 */
+export const SHORT_NODE_MS = 120;
 
 /** 读出 §7.6 目标表：范围 → 目标原文。 */
 export function parseTargets(architecture: string): Map<string, string> {

@@ -3,7 +3,7 @@
 // 启动真实 Agent、打包控制面、测试数据库复用 test/support 里的实现。
 import { execFile, execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
@@ -95,16 +95,28 @@ export class PerfApi {
 
 	/** 用 sfly CLI 构建桩节点包（testdata/stub-package）并发布。 */
 	async publishStubPackage(repoRoot: string, tmpDir: string): Promise<void> {
-		const out = await mkdtemp(join(tmpDir, "stub-pkg-"));
+		await this.publishPackage(repoRoot, tmpDir, "testdata/stub-package");
+	}
+
+	/** 用 sfly CLI 构建一个节点包项目（`project` 相对仓库根目录，例如 `std`）并发布。 */
+	async publishPackage(repoRoot: string, tmpDir: string, project: string): Promise<void> {
+		const out = await mkdtemp(join(tmpDir, "pkg-"));
 		await promisify(execFile)(
 			"uv",
-			["run", "--locked", "--quiet", "sfly", "build", "testdata/stub-package", "--out", out],
+			["run", "--locked", "--quiet", "sfly", "build", project, "--out", out],
 			{ cwd: repoRoot },
 		);
+		const [file] = (await readdir(out)).filter((f) => f.endsWith(".sflypkg"));
+		if (!file) throw new Error(`sfly build ${project} 没有生成 .sflypkg`);
+		await this.publishArchive(await readFile(join(out, file)));
+	}
+
+	/** 发布一个已经构建好的节点包（`.sflypkg` 的内容）。 */
+	async publishArchive(body: Uint8Array): Promise<void> {
 		await this.request("/packages", {
 			method: "POST",
 			headers: { "content-type": "application/octet-stream" },
-			body: await readFile(join(out, "sfly-stub-0.1.0.sflypkg")),
+			body,
 		});
 	}
 
