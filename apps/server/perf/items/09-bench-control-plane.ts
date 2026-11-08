@@ -12,6 +12,14 @@ const BENCHES: Record<string, { label: string; noise: number }> = {
 	segment_write: { label: "分段写入（120 秒 × 10 个指标，10 段整段写入）", noise: 2 },
 	query_300: { label: "降采样查询（1 小时 × 10 个指标 → 300 个桶）", noise: 10 },
 	query_12: { label: "降采样查询（1 小时 × 10 个指标 → 12 个桶，用段摘要）", noise: 5 },
+	segment_write_labeled: {
+		label: "带标签的分段写入（120 秒 × 4 个指标 × 50 个进程，200 段整段写入）",
+		noise: 20,
+	},
+	query_300_labeled: {
+		label: "带标签的降采样查询（1 小时 × 4 个指标 × 50 个进程 → 300 个桶）",
+		noise: 100,
+	},
 };
 
 export default definePerfItem({

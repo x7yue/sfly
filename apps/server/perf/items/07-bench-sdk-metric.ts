@@ -3,6 +3,13 @@
 import { readTimeit } from "../bench.js";
 import { runChecked } from "../command.js";
 import { definePerfItem, type ItemRun } from "../item.js";
+import type { Measurement } from "../report.js";
+
+/** 脚本里的情况 → 报告里的名称。 */
+const CASES: Record<string, string> = {
+	metric: "单次 ctx.metric() 耗时",
+	labeled_metric: "单次带标签的 ctx.metric() 耗时（4 个指标 × 50 个进程，标签 pid、name）",
+};
 
 export default definePerfItem({
 	id: "bench-sdk-metric",
@@ -17,25 +24,30 @@ export default definePerfItem({
 			{ cwd: ctx.repoRoot, signal: ctx.signal, capture: true },
 		);
 		const result = readTimeit(stdout);
+		const measurements: Measurement[] = result.cases.flatMap((c) => {
+			const label = CASES[c.id] ?? c.id;
+			return [
+				{
+					id: `${c.id}_call_us`,
+					label: `${label}（各轮中位数）`,
+					value: c.medianUs,
+					unit: "µs",
+					noise: 0.5,
+				},
+				{
+					id: `${c.id}_call_best_us`,
+					label: `${label}（最好的一轮）`,
+					value: c.bestUs,
+					unit: "µs",
+					noise: 0.5,
+				},
+			];
+		});
+		const calls = result.cases.map((c) => `${CASES[c.id] ?? c.id} 每轮 ${c.calls} 次`).join("，");
 		return {
-			measurements: [
-				{
-					id: "metric_call_us",
-					label: "单次 ctx.metric() 耗时（各轮中位数）",
-					value: result.medianUs,
-					unit: "µs",
-					noise: 0.5,
-				},
-				{
-					id: "metric_call_best_us",
-					label: "单次 ctx.metric() 耗时（最好的一轮）",
-					value: result.bestUs,
-					unit: "µs",
-					noise: 0.5,
-				},
-			],
+			measurements,
 			notes: [
-				`Python ${result.python}，${result.repeat} 轮 × 每轮 ${result.calls} 次；事件写普通文件，不经过 Agent 的 FIFO。`,
+				`Python ${result.python}，${result.repeat} 轮（${calls}）；事件写普通文件，不经过 Agent 的 FIFO。`,
 			],
 		};
 	},

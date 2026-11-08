@@ -8,7 +8,11 @@
 //!   超出时丢弃最早的点，按任务记下丢弃数，随这个任务下一次发出的批次（`dropped_points`）上报。
 //!   一次写满只警告一次（与日志队列一致），又有一批不丢弃地放下之后再写满才再警告。
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::fmt;
+
+use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
 
 use crate::proto::{MetricBatch, MetricPoint};
 
@@ -20,8 +24,65 @@ const MAX_BATCH_POINTS: usize = 10_000;
 /// 不会变成控制面按重复丢弃的同一秒第二个点。
 pub const GRACE_SECONDS: i64 = 1;
 
-/// 一个点的标签（键 → 值）；按键排序，内容相同的标签比较时相等。不带标签时为空（不分配内存）。
-pub type Labels = BTreeMap<String, String>;
+/// 一个点的标签（键 → 值）：按键排序、键不重复，内容相同的标签比较时相等。
+/// 不带标签时为空（不分配内存）。用排好序的数组而不是 `BTreeMap`：解析时只分配一次，
+/// 合并时比较更快（基准 `merge_labeled_events`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Labels(Vec<(String, String)>);
+
+impl Labels {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// 按键排序；同一个键出现多次时取最后一个值（与 JSON 对象里键重复时一致）。
+impl FromIterator<(String, String)> for Labels {
+    fn from_iter<I: IntoIterator<Item = (String, String)>>(pairs: I) -> Self {
+        let mut pairs: Vec<(String, String)> = pairs.into_iter().collect();
+        if pairs.len() > 1 {
+            // 先倒过来再稳定排序：同一个键里原来靠后的排在前面，去重时保留的就是它。
+            pairs.reverse();
+            pairs.sort_by(|a, b| a.0.cmp(&b.0));
+            pairs.dedup_by(|later, kept| later.0 == kept.0);
+        }
+        Self(pairs)
+    }
+}
+
+impl IntoIterator for Labels {
+    type Item = (String, String);
+    type IntoIter = std::vec::IntoIter<(String, String)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+/// 从事件 JSON 的 `labels` 对象（键 → 字符串值）解析，解析时排序一次。
+impl<'de> Deserialize<'de> for Labels {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct LabelsVisitor;
+
+        impl<'de> Visitor<'de> for LabelsVisitor {
+            type Value = Labels;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("an object with string values")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Labels, A::Error> {
+                let mut pairs = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some(pair) = map.next_entry()? {
+                    pairs.push(pair);
+                }
+                Ok(pairs.into_iter().collect())
+            }
+        }
+
+        deserializer.deserialize_map(LabelsVisitor)
+    }
+}
 
 struct Bucket {
     counter: bool,
@@ -30,11 +91,49 @@ struct Bucket {
     max: f64,
 }
 
+impl Bucket {
+    fn merge<K: Ord>(entry: Entry<'_, K, Bucket>, counter: bool, value: f64) {
+        entry
+            .and_modify(|b| {
+                b.value = value;
+                b.min = b.min.min(value);
+                b.max = b.max.max(value);
+            })
+            .or_insert(Bucket {
+                counter,
+                value,
+                min: value,
+                max: value,
+            });
+    }
+
+    fn point(self, name: String, labels: Labels, second: i64) -> MetricPoint {
+        let (min, max) = if self.counter {
+            (self.value, self.value)
+        } else {
+            (self.min, self.max)
+        };
+        MetricPoint {
+            name,
+            time_unix_s: second,
+            value: self.value,
+            min,
+            max,
+            labels: labels.into_iter().collect(),
+        }
+    }
+}
+
 /// 一个任务的指标合并器。
+///
+/// 不带标签与带标签的序列分开放：合并键里哪怕多一个空的标签字段，不带标签时（最常见）的合并就慢约四成
+/// （基准 `merge_events`，ARCHITECTURE §7.6）。
 #[derive(Default)]
 pub struct Merger {
-    /// (指标名, 标签, Unix 秒) → 这个序列这一秒合并后的值。
-    buckets: BTreeMap<(String, Labels, i64), Bucket>,
+    /// (指标名, Unix 秒) → 不带标签的序列这一秒合并后的值。
+    plain: BTreeMap<(String, i64), Bucket>,
+    /// (指标名, 标签, Unix 秒) → 带标签的序列这一秒合并后的值。
+    labeled: BTreeMap<(String, Labels, i64), Bucket>,
     /// [`Merger::take_due`] 上一次的界限：取到哪一秒之前（Unix 秒，不含）。
     due_before: i64,
 }
@@ -47,19 +146,11 @@ impl Merger {
         }
         let second = ts_ms.div_euclid(1000);
         let counter = kind == "counter";
-        self.buckets
-            .entry((name, labels, second))
-            .and_modify(|b| {
-                b.value = value;
-                b.min = b.min.min(value);
-                b.max = b.max.max(value);
-            })
-            .or_insert(Bucket {
-                counter,
-                value,
-                min: value,
-                max: value,
-            });
+        if labels.0.is_empty() {
+            Bucket::merge(self.plain.entry((name, second)), counter, value);
+        } else {
+            Bucket::merge(self.labeled.entry((name, labels, second)), counter, value);
+        }
     }
 
     /// 平时的发送时机：`now_ms` 时已经过了宽限期的秒（早于 `now_ms` 所在秒减 [`GRACE_SECONDS`]）的点。
@@ -79,31 +170,16 @@ impl Merger {
 
     /// 取出早于 `before`（Unix 秒）的点；`None` 时取出全部。同一序列按时间递增。
     pub fn take(&mut self, before: Option<i64>) -> Vec<MetricPoint> {
-        let keys: Vec<(String, Labels, i64)> = self
-            .buckets
-            .keys()
-            .filter(|(_, _, second)| before.is_none_or(|b| *second < b))
-            .cloned()
-            .collect();
-        keys.into_iter()
-            .filter_map(|key| {
-                let bucket = self.buckets.remove(&key)?;
-                let (name, labels, second) = key;
-                let (min, max) = if bucket.counter {
-                    (bucket.value, bucket.value)
-                } else {
-                    (bucket.min, bucket.max)
-                };
-                Some(MetricPoint {
-                    name,
-                    time_unix_s: second,
-                    value: bucket.value,
-                    min,
-                    max,
-                    labels: labels.into_iter().collect(),
-                })
-            })
-            .collect()
+        let due = |second: i64| before.is_none_or(|b| second < b);
+        let plain = self
+            .plain
+            .extract_if(.., |(_, second), _| due(*second))
+            .map(|((name, second), bucket)| bucket.point(name, Labels::new(), second));
+        let labeled = self
+            .labeled
+            .extract_if(.., |(_, _, second), _| due(*second))
+            .map(|((name, labels, second), bucket)| bucket.point(name, labels, second));
+        plain.chain(labeled).collect()
     }
 }
 
@@ -290,6 +366,58 @@ mod tests {
         // 休眠后时钟前跳：错过的秒合成一批，之后这一秒不再发。
         assert_eq!(seconds(&merger.take_due(200_000)), [101, 102, 103, 104]);
         assert!(merger.take_due(200_900).is_empty());
+    }
+
+    fn labels_of(json: &str) -> Labels {
+        serde_json::from_str(json).unwrap()
+    }
+
+    #[test]
+    fn labels_in_any_order_are_the_same_series_and_a_repeated_key_keeps_its_last_value() {
+        let mut merger = Merger::default();
+        let a = r#"{"pid":"1","name":"a"}"#;
+        merger.add(100_100, "cpu".into(), labels_of(a), "gauge", 1.0);
+        merger.add(
+            100_200,
+            "cpu".into(),
+            labels_of(r#"{"name":"a","pid":"1"}"#),
+            "gauge",
+            3.0,
+        );
+        merger.add(
+            100_300,
+            "cpu".into(),
+            labels_of(r#"{"name":"b","pid":"1","name":"a"}"#),
+            "gauge",
+            2.0,
+        );
+        merger.add(
+            100_400,
+            "cpu".into(),
+            labels_of(r#"{"pid":"2","name":"a"}"#),
+            "gauge",
+            5.0,
+        );
+        merger.add(100_500, "cpu".into(), Labels::default(), "gauge", 7.0);
+        let points = merger.take(None);
+        // 每个点：排好序的「键=值」、值、最小值、最大值。
+        let series: Vec<(String, [f64; 3])> = points
+            .iter()
+            .map(|p| {
+                let mut labels: Vec<String> =
+                    p.labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                labels.sort();
+                (labels.join(","), [p.value, p.min, p.max])
+            })
+            .collect();
+        assert_eq!(
+            series,
+            [
+                ("".to_owned(), [7.0, 7.0, 7.0]),
+                ("name=a,pid=1".to_owned(), [2.0, 1.0, 3.0]),
+                ("name=a,pid=2".to_owned(), [5.0, 5.0, 5.0]),
+            ]
+        );
     }
 
     #[test]

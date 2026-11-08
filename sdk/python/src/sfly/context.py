@@ -55,6 +55,8 @@ MAX_LABEL_VALUE_CHARS = 128
 #: 每个任务所有指标的序列数上限（不带标签的指标各算 1 个，与 packages/schema 一致），不开放配置。
 MAX_SERIES = 1000
 
+_NO_LABEL_KEYS: frozenset[str] = frozenset()
+
 
 class Cancelled(BaseException):
     """任务被取消（或超时）时，执行器收到 SIGTERM 后在节点代码里抛出。"""
@@ -348,10 +350,11 @@ class Context:
         每个任务所有指标合计最多 1000 个序列（`MAX_SERIES`，不带标签的指标各算 1 个，总是能上报）：
         超出后不再建立新序列，新序列的点被丢弃，每个指标警告一次；已有序列照常上报。控制面也按同一上限兜底。
         """
-        kind = "gauge"
-        keys: frozenset[str] = frozenset()
-        if self._metrics is not None:
-            declared = self._metrics.get(name)
+        metrics = self._metrics
+        if metrics is None:
+            kind, keys = "gauge", _NO_LABEL_KEYS
+        else:
+            declared = metrics.get(name)
             if declared is None:
                 self._warn_once(
                     "undeclared",
@@ -369,25 +372,27 @@ class Context:
                 "non-finite", name, f"指标 {name!r} 的值必须是有限数值，实际为 {value!r}，已丢弃"
             )
             return
-        event: dict[str, Any] = {
-            "type": "metric",
-            "ts": _now_ms(),
-            "name": name,
-            "kind": kind,
-            "value": number,
-        }
-        checked: dict[str, str] | None = {}
-        if labels or keys:
-            checked = self._check_labels(name, keys, labels or {})
-            if checked is None:
-                return
-        if checked:
-            if not self._admit(name, checked):
-                return
-            event["labels"] = checked
-        elif self._metrics is None:
-            self._unlabeled.add(name)
-        self._events.write(event)
+        # 不带标签、也没声明标签键（最常见，节点可能每秒调用上万次）：直接写，不经过标签检查。
+        if not labels and not keys:
+            if metrics is None:
+                self._unlabeled.add(name)
+            self._events.write(
+                {"type": "metric", "ts": _now_ms(), "name": name, "kind": kind, "value": number}
+            )
+            return
+        checked = self._check_labels(name, keys, labels or {})
+        if checked is None or not self._admit(name, checked):
+            return
+        self._events.write(
+            {
+                "type": "metric",
+                "ts": _now_ms(),
+                "name": name,
+                "kind": kind,
+                "value": number,
+                "labels": checked,
+            }
+        )
 
     def _admit(self, name: str, labels: dict[str, str]) -> bool:
         """带标签的点：已有序列照常上报；新序列在没超出序列上限时建立，超出时丢弃并警告。"""
