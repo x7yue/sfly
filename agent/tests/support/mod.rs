@@ -449,10 +449,34 @@ fn remove_stale_venvs(base: &Path) {
     }
 }
 
-/// 以子进程方式运行的真实 Agent（测试结束时被杀掉）。
+/// 以子进程方式运行的真实 Agent。测试结束时先发 SIGTERM，让它终止手上任务的执行器后退出
+/// （执行器自成进程组，直接 SIGKILL 掉 Agent 会留下孤儿执行器，#113）；超时仍未退出再强制杀掉。
 pub struct AgentProcess {
     pub child: tokio::process::Child,
     pub work_dir: tempfile::TempDir,
+}
+
+/// 测试结束时等 Agent 收到 SIGTERM 后自行退出的上限（Agent 默认的终止宽限期是 10 秒）。
+const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(15);
+
+impl Drop for AgentProcess {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        if let Some(pid) = self.child.id() {
+            let _ = nix::sys::signal::kill(
+                nix::unistd::Pid::from_raw(pid as i32),
+                nix::sys::signal::Signal::SIGTERM,
+            );
+            let deadline = std::time::Instant::now() + AGENT_STOP_TIMEOUT;
+            while std::time::Instant::now() < deadline {
+                if !matches!(self.child.try_wait(), Ok(None)) {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        // 之后 child 被丢弃时 kill_on_drop 强制杀掉。
+    }
 }
 
 pub struct AgentOptions<'a> {
@@ -461,6 +485,9 @@ pub struct AgentOptions<'a> {
     pub venv: &'a Path,
     pub args: Vec<String>,
     pub env: Vec<(&'a str, &'a str)>,
+    /// 把 Agent 的标准错误接成管道（[`AgentProcess::child`] 的 `stderr`）；默认继承测试进程的。
+    /// 接了就要一直读，否则管道写满会卡住 Agent。
+    pub pipe_stderr: bool,
 }
 
 impl<'a> AgentOptions<'a> {
@@ -471,6 +498,7 @@ impl<'a> AgentOptions<'a> {
             venv: stub_venv(),
             args: Vec::new(),
             env: Vec::new(),
+            pipe_stderr: false,
         }
     }
 }
@@ -523,6 +551,9 @@ pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
         .arg(work_dir.path())
         .args(&options.args)
         .envs(options.env.iter().copied());
+    if options.pipe_stderr {
+        command.stderr(Stdio::piped());
+    }
     AgentProcess {
         child: command.spawn().expect("spawn sfly-agent"),
         work_dir,

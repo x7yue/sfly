@@ -224,10 +224,16 @@ async fn main() -> anyhow::Result<()> {
         trial: std::sync::Arc::new(trial),
     };
 
+    let terminate_grace = config.terminate_grace;
+    let mut shutdown = ShutdownSignals::listen()?;
     let result = tokio::select! {
         result = run(config) => result,
-        _ = tokio::signal::ctrl_c() => Ok(()),
+        () = shutdown.recv() => Ok(()),
     };
+    // 执行器自成进程组，收不到发给 Agent 的 SIGTERM / Ctrl-C：和取消一样终止它们再退出，
+    // 不留孤儿执行器（#113）。控制面那边这些任务按 agent_lost 处理。宽限期内再收到一次
+    // SIGTERM / Ctrl-C 时不再等，直接强制杀掉。
+    sfly_agent::process_tree::terminate_all(terminate_grace, shutdown.recv()).await;
     if let Err(error) = &result {
         // 试用中的新版本环境准备失败：systemd 会重启它，连续失败后回滚（ADR 0014）。
         if let Some(failure) = error.downcast_ref::<TrialFailed>() {
@@ -241,4 +247,40 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     result
+}
+
+/// 要求 Agent 退出的信号：Ctrl-C（SIGINT），Unix 上还有 SIGTERM（`systemctl stop`、`kill`）。
+///
+/// 启动时就开始监听并一直持有：第一次信号之后、第二次 [`ShutdownSignals::recv`] 之前到达的信号也不会丢。
+struct ShutdownSignals {
+    #[cfg(unix)]
+    interrupt: tokio::signal::unix::Signal,
+    #[cfg(unix)]
+    terminate: tokio::signal::unix::Signal,
+}
+
+impl ShutdownSignals {
+    fn listen() -> std::io::Result<Self> {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{SignalKind, signal};
+            Ok(Self {
+                interrupt: signal(SignalKind::interrupt())?,
+                terminate: signal(SignalKind::terminate())?,
+            })
+        }
+        #[cfg(not(unix))]
+        Ok(Self {})
+    }
+
+    /// 等到下一次退出信号。
+    async fn recv(&mut self) {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = self.interrupt.recv() => {}
+            _ = self.terminate.recv() => {}
+        }
+        #[cfg(not(unix))]
+        let _ = tokio::signal::ctrl_c().await;
+    }
 }
