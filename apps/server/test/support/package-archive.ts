@@ -65,7 +65,12 @@ export type InputsSchema = {
 };
 
 /** 节点类型声明的指标（#27）。 */
-export type MetricSpec = { name: string; unit: string; kind: "gauge" | "counter" };
+export type MetricSpec = {
+	name: string;
+	unit: string;
+	kind: "gauge" | "counter";
+	labels?: string[];
+};
 /** 节点类型声明的图表（#27）。 */
 export type ChartSpec = {
 	title: string;

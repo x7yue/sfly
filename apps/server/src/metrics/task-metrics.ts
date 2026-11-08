@@ -13,6 +13,7 @@ import type { Db } from "../db/database.js";
 import { metricSeries, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
+import { compareSeries, type Labels, labelsMatch, seriesKey, sortedLabels } from "./labels.js";
 import { type MetricRetention, purgeRunMetrics } from "./metric-retention.js";
 import { nodeTypeOf } from "./node-types.js";
 
@@ -20,27 +21,28 @@ import { nodeTypeOf } from "./node-types.js";
  * 指标上报与存储（#29，ADR 0009）。
  *
  * ## 接收
- * Agent 按「任务 × 指标 × 秒」合并后以 `MetricBatch` 上报（每个任务每秒最多一批）。只接受任务所在 Agent、
- * attempt 一致的批次；节点类型没有声明的指标名（兜底，SDK 已经丢弃过一次）和非有限数值被丢弃；
- * 同一指标不晚于已收到的最后一秒的点视为重复而忽略（幂等）。
+ * Agent 按「任务 × 序列 × 秒」合并后以 `MetricBatch` 上报（每个任务每秒最多一批）。序列是指标名加标签（#78）。
+ * 只接受任务所在 Agent、attempt 一致的批次；节点类型没有声明的指标名（兜底，SDK 已经丢弃过一次）和非有限数值被丢弃；
+ * 标签与声明的标签键不一致（见 {@link labelsMatch}）的点被丢弃并计入任务的丢弃数；
+ * 同一序列不晚于已收到的最后一秒的点视为重复而忽略（幂等）。
  * 时间戳超出可接收范围（保留期内到最后一个提前创建的分区为止，见 src/metrics/metric-retention.ts）的点也被丢弃。
  *
  * ## 分段表 `metric_segments`
- * 按天分区（`start_at`），一行 = 一个任务一个指标的一段：时间偏移（秒，相对 start_at）、值、每秒最小 / 最大值的
- * 类型化数组 + 段摘要 + 预留的 ext（jsonb）。分区的创建与到期删除见 src/metrics/metric-retention.ts（#32）。
+ * 按天分区（`start_at`），一行 = 一个任务一个序列（指标名 + 标签 `labels`）的一段：时间偏移（秒，相对 start_at）、
+ * 值、每秒最小 / 最大值的类型化数组 + 段摘要。分区的创建与到期删除见 src/metrics/metric-retention.ts（#32）。
  *
  * 段的大小按实测确定：PostgreSQL 只在一行超过约 2 KB（TOAST_TUPLE_THRESHOLD，与 toast_tuple_target 无关）时
  * 才尝试压缩，每点 4 个数组元素约 28 字节，所以一段攒满 {@link SEGMENT_POINTS} 个点（约 3.4 KB）才关闭；
  * 分区设置 `toast_tuple_target = 128`，触发后所有数组都在行内（STORAGE MAIN）压缩，而不是压到 2 KB 以下就停。
  * 为了让控制面崩溃时最多丢失约 10 秒的点，还没攒满的当前段每约 {@link FLUSH_AFTER_MS} 毫秒把已有的点整段重写一次
- * （按 task_id + metric + start_at upsert）；攒满后关闭，之后不再修改。任务结束时立即写入。
+ * （按 task_id + metric + labels + start_at upsert）；攒满后关闭，之后不再修改。任务结束时立即写入。
  *
  * ## 摘要
- * 每个「任务 × 指标」一行 `metric_series`（点数、最小、最大、总和、最新值、首尾时间），与段在同一个事务里更新；
+ * 每个「任务 × 序列」一行 `metric_series`（点数、最小、最大、总和、最新值、首尾时间），与段在同一个事务里更新；
  * 任务行记录已写入的点数（不含内存里还没写库的点，崩溃后与摘要一致）、截断标记和 Agent 丢弃的点数。
  *
  * ## 上限
- * 单任务所有指标合计最多 `limitBytes / 28` 个点（默认约 50 MB）；超出后不再写入，`tasks.metric_truncated` 置为 true。
+ * 单任务所有序列合计最多 `limitBytes / 28` 个点（默认约 50 MB）；超出后不再写入，`tasks.metric_truncated` 置为 true。
  *
  * 与日志一样不经过引擎的互斥锁；同一个任务的处理按到达顺序串行执行。
  */
@@ -56,7 +58,7 @@ export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
 /** 没有未写入数据、这么久没收到上报的任务状态从内存中移除。 */
 const IDLE_MS = 5 * 60_000;
 
-/** 合并后的一个点（一个指标一秒一个）。 */
+/** 合并后的一个点（一个序列一秒一个）。 */
 export interface Point {
 	/** Unix 秒。 */
 	t: number;
@@ -65,8 +67,18 @@ export interface Point {
 	max: number;
 }
 
+/** 内存里还没写库的一个序列的点（序列查询用）。 */
+export interface UnwrittenSeries {
+	name: string;
+	labels: Labels;
+	/** 按时间升序。 */
+	points: Point[];
+}
+
 interface Series {
 	name: string;
+	/** 键已排序；不带标签时为 `{}`。 */
+	labels: Labels;
 	/** 摘要（含尚未写入的点）；没有点时 points 为 0。 */
 	points: number;
 	/** 其中已经写库的点数（`tasks.metric_points` 只计这些，与 `metric_series` 一致）。 */
@@ -93,14 +105,15 @@ interface TaskState {
 	nodeId: string;
 	attempt: number;
 	agentName: string | null;
-	/** 节点类型声明的指标名。 */
-	declared: Set<string>;
-	/** 已接受的点数（所有指标合计，含尚未写入的）。 */
+	/** 节点类型声明的指标名 → 声明的标签键（已排序，没有时为空）。 */
+	declared: Map<string, string[]>;
+	/** 已接受的点数（所有序列合计，含尚未写入的）。 */
 	points: number;
 	truncated: boolean;
 	dropped: number;
 	/** 截断标记或丢弃计数还没写入。 */
 	countersDirty: boolean;
+	/** 序列键（{@link seriesKey}）→ 序列。 */
 	series: Map<string, Series>;
 	lastSeen: number;
 	/** 运行已过指标保留期（#32）：之后收到的点直接丢弃，不再写库。 */
@@ -156,12 +169,19 @@ export class TaskMetrics {
 			const full = new Set<Series>();
 			const accepted: MetricPointView[] = [];
 			for (const p of batch.points) {
-				if (!state.declared.has(p.name)) continue;
+				const keys = state.declared.get(p.name);
+				if (keys === undefined) continue;
+				if (!labelsMatch(p.labels, keys)) {
+					state.dropped++;
+					state.countersDirty = true;
+					continue;
+				}
 				if (![p.value, p.min, p.max].every(Number.isFinite)) continue;
 				const t = Number(p.timeUnixS);
 				// 时间戳来自 Agent 的时钟：超出可接收范围的（时钟异常）丢弃，不按异常的日期建分区（#32）。
 				if (!this.deps.retention.accepts(t)) continue;
-				let series = state.series.get(p.name);
+				const key = keys.length === 0 ? p.name : seriesKey(p.name, p.labels);
+				let series = state.series.get(key);
 				if (series && series.points > 0 && t <= series.lastAt) continue;
 				if (state.truncated) continue;
 				if (state.points >= this.#limitPoints) {
@@ -170,8 +190,8 @@ export class TaskMetrics {
 					continue;
 				}
 				if (!series) {
-					series = emptySeries(p.name);
-					state.series.set(p.name, series);
+					series = emptySeries(p.name, keys.length === 0 ? {} : sortedLabels(p.labels));
+					state.series.set(key, series);
 				}
 				const point = {
 					t,
@@ -182,6 +202,7 @@ export class TaskMetrics {
 				addPoint(series, point);
 				accepted.push({
 					name: p.name,
+					labels: series.labels,
 					time: new Date(t * 1000).toISOString(),
 					value: point.value,
 					min: point.min,
@@ -245,17 +266,17 @@ export class TaskMetrics {
 	}
 
 	/**
-	 * 内存里可能还没写库（或库里只是较早版本）的点：每个指标已攒满还没写入的段和当前段，按时间升序。
-	 * 序列查询用它们覆盖库里同一时间范围的数据。不会为此从库里加载任务状态。
+	 * 内存里可能还没写库（或库里只是较早版本）的点：每个序列已攒满还没写入的段和当前段，按时间升序；
+	 * 键是 {@link seriesKey}。序列查询用它们覆盖库里同一时间范围的数据。不会为此从库里加载任务状态。
 	 */
-	async unwritten(taskId: string): Promise<Map<string, Point[]>> {
+	async unwritten(taskId: string): Promise<Map<string, UnwrittenSeries>> {
 		const state = await this.#states.get(taskId)?.catch(() => undefined);
-		const points = new Map<string, Point[]>();
-		for (const s of state?.series.values() ?? []) {
-			const list = [...s.closed.flat(), ...s.segment].map((p) => ({ ...p }));
-			if (list.length > 0) points.set(s.name, list);
+		const result = new Map<string, UnwrittenSeries>();
+		for (const [key, s] of state?.series ?? []) {
+			const points = [...s.closed.flat(), ...s.segment].map((p) => ({ ...p }));
+			if (points.length > 0) result.set(key, { name: s.name, labels: s.labels, points });
 		}
-		return points;
+		return result;
 	}
 
 	/** 运行的指标摘要；运行不存在时为 undefined，已过保留期（#32）时 expired 为 true、没有任务。 */
@@ -288,26 +309,7 @@ export class TaskMetrics {
 				),
 			)
 			.orderBy(asc(tasks.seq));
-		const seriesRows = await this.deps.db
-			.select()
-			.from(metricSeries)
-			.where(eq(metricSeries.runId, runId))
-			.orderBy(asc(metricSeries.metric));
-		const byTask = new Map<string, MetricSummary[]>();
-		for (const row of seriesRows) {
-			const list = byTask.get(row.taskId) ?? [];
-			list.push({
-				name: row.metric,
-				points: row.points,
-				min: row.min,
-				max: row.max,
-				avg: row.sum / row.points,
-				last: row.last,
-				first_time: row.firstAt.toISOString(),
-				last_time: row.lastAt.toISOString(),
-			});
-			byTask.set(row.taskId, list);
-		}
+		const byTask = await seriesSummaries(this.deps.db, runId);
 		return {
 			run_id: runId,
 			expired: false,
@@ -328,7 +330,7 @@ export class TaskMetrics {
 		if (dirty.length > 0 || state.countersDirty) await this.#write(state, dirty);
 	}
 
-	/** 写入这些指标攒满的段、当前段与摘要，以及任务的计数。 */
+	/** 写入这些序列攒满的段、当前段与摘要，以及任务的计数。 */
 	async #write(state: TaskState, list: Series[]): Promise<void> {
 		const segments = list.flatMap((s) =>
 			[...s.closed, s.segment]
@@ -365,15 +367,16 @@ export class TaskMetrics {
 					const startAt = new Date(start.t * 1000);
 					await tx.execute(sql`
 						insert into metric_segments
-							(run_id, task_id, metric, start_at, end_at, offsets, "values", mins, maxs, points, min, max, avg, last)
+							(run_id, task_id, metric, labels, start_at, end_at, offsets, "values", mins, maxs, points, min, max, avg, last)
 						values (
-							${state.runId}, ${state.taskId}, ${s.name}, ${startAt.toISOString()}, ${new Date(end.t * 1000).toISOString()},
+							${state.runId}, ${state.taskId}, ${s.name}, ${JSON.stringify(s.labels)}::jsonb,
+							${startAt.toISOString()}, ${new Date(end.t * 1000).toISOString()},
 							${sql.param(segment.map((p) => p.t - start.t))}::int4[], ${sql.param(values)}::float8[],
 							${sql.param(mins)}::float8[], ${sql.param(maxs)}::float8[],
 							${segment.length}, ${Math.min(...mins)}, ${Math.max(...maxs)},
 							${values.reduce((a, b) => a + b, 0) / values.length}, ${end.value}
 						)
-						on conflict (task_id, metric, start_at) do update set
+						on conflict (task_id, metric, labels, start_at) do update set
 							end_at = excluded.end_at, offsets = excluded.offsets, "values" = excluded."values",
 							mins = excluded.mins, maxs = excluded.maxs, points = excluded.points,
 							min = excluded.min, max = excluded.max, avg = excluded.avg, last = excluded.last`);
@@ -390,9 +393,15 @@ export class TaskMetrics {
 					};
 					await tx
 						.insert(metricSeries)
-						.values({ taskId: state.taskId, runId: state.runId, metric: s.name, ...summary })
+						.values({
+							taskId: state.taskId,
+							runId: state.runId,
+							metric: s.name,
+							labels: s.labels,
+							...summary,
+						})
 						.onConflictDoUpdate({
-							target: [metricSeries.taskId, metricSeries.metric],
+							target: [metricSeries.taskId, metricSeries.metric, metricSeries.labels],
 							set: summary,
 						});
 				}
@@ -488,8 +497,10 @@ export class TaskMetrics {
 			.where(eq(metricSeries.taskId, taskId));
 		const series = new Map<string, Series>();
 		for (const r of rows) {
-			series.set(r.metric, {
+			const labels = sortedLabels(r.labels);
+			series.set(seriesKey(r.metric, labels), {
 				name: r.metric,
+				labels,
 				points: r.points,
 				written: r.points,
 				min: r.min,
@@ -522,14 +533,16 @@ export class TaskMetrics {
 		};
 	}
 
-	/** 任务的节点类型声明的指标名：锁定的节点包版本；开发版本取任务所在 Agent 上报的元信息。 */
+	/**
+	 * 任务的节点类型声明的指标名 → 标签键（已排序）：锁定的节点包版本；开发版本取任务所在 Agent 上报的元信息。
+	 */
 	async #declared(
 		document: OrchestrationDocument,
 		nodeId: string,
 		agentName: string | null,
-	): Promise<Set<string>> {
+	): Promise<Map<string, string[]>> {
 		const ref = await nodeTypeOf(this.deps.db, document, nodeId, agentName);
-		return new Set((ref?.type?.metrics ?? []).map((m) => m.name));
+		return new Map((ref?.type?.metrics ?? []).map((m) => [m.name, [...(m.labels ?? [])].sort()]));
 	}
 }
 
@@ -541,9 +554,40 @@ function isMissingPartition(error: unknown): boolean {
 	return false;
 }
 
-function emptySeries(name: string): Series {
+/** 运行的已写库的序列摘要：任务 ID → 摘要，按指标名、标签排序。 */
+export async function seriesSummaries(
+	db: Db,
+	runId: string,
+): Promise<Map<string, MetricSummary[]>> {
+	const rows = await db
+		.select()
+		.from(metricSeries)
+		.where(eq(metricSeries.runId, runId))
+		.orderBy(asc(metricSeries.metric));
+	const byTask = new Map<string, MetricSummary[]>();
+	for (const row of rows) {
+		const list = byTask.get(row.taskId) ?? [];
+		list.push({
+			name: row.metric,
+			labels: sortedLabels(row.labels),
+			points: row.points,
+			min: row.min,
+			max: row.max,
+			avg: row.sum / row.points,
+			last: row.last,
+			first_time: row.firstAt.toISOString(),
+			last_time: row.lastAt.toISOString(),
+		});
+		byTask.set(row.taskId, list);
+	}
+	for (const list of byTask.values()) list.sort(compareSeries);
+	return byTask;
+}
+
+function emptySeries(name: string, labels: Labels): Series {
 	return {
 		name,
+		labels,
 		points: 0,
 		written: 0,
 		min: Number.POSITIVE_INFINITY,

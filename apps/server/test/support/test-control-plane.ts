@@ -28,9 +28,10 @@ export interface TestControlPlane {
 	/**
 	 * 停掉当前实例，在同一个数据库、同样的 HTTP / gRPC 端口上重新启动（模拟控制面重启；
 	 * 端口不变，真实 Agent 才能按原地址重连、继续下载和上传）；
-	 * `whileDown` 在停机期间执行（例如推进手动时钟模拟停机时长）。
+	 * `whileDown` 在停机期间执行（例如推进手动时钟模拟停机时长）；`migrationsDir` 换一个迁移目录重新启动
+	 * （例如从只含旧迁移的目录升级到当前版本，模拟升级控制面）。
 	 */
-	restart(whileDown?: () => void | Promise<void>): Promise<void>;
+	restart(whileDown?: () => void | Promise<void>, next?: { migrationsDir?: string }): Promise<void>;
 	/** 停掉实例并删除临时数据库。 */
 	close(): Promise<void>;
 }
@@ -60,8 +61,10 @@ export async function startTestControlPlane(
 		| "agentBinaries"
 		| "pypiMirror"
 		| "githubReleaseMirror"
+		| "migrationsDir"
 	> = {},
 ): Promise<TestControlPlane> {
+	let migrationsDir = options.migrationsDir;
 	const clock = options.clock ?? new ManualClock();
 	const database = await createTestDatabase();
 	const dataDir = await mkdtemp(join(tmpdir(), "sfly-test-"));
@@ -88,6 +91,7 @@ export async function startTestControlPlane(
 			agentBinaries: options.agentBinaries,
 			pypiMirror: options.pypiMirror,
 			githubReleaseMirror: options.githubReleaseMirror,
+			migrationsDir,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 定时 / Sleep 节点的定时器扫描（#14）同样调快。
@@ -127,7 +131,8 @@ export async function startTestControlPlane(
 		dataDir,
 		fetch: (path, init) =>
 			fetch(`${current.httpUrl}${path}`, { ...init, dispatcher } as RequestInit),
-		async restart(whileDown) {
+		async restart(whileDown, next) {
+			if (next && "migrationsDir" in next) migrationsDir = next.migrationsDir;
 			const ports = { http: portOf(current.httpUrl), grpc: portOf(current.grpcUrl) };
 			await current.close();
 			const old = dispatcher;

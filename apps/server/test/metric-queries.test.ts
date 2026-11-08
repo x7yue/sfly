@@ -25,8 +25,12 @@ const LOAD = {
 		{ name: "tps", unit: "req/s", kind: "gauge" as const },
 		{ name: "p99", unit: "ms", kind: "gauge" as const },
 		{ name: "requests", unit: "", kind: "counter" as const },
+		{ name: "conn_tps", unit: "req/s", kind: "gauge" as const, labels: ["host"] },
 	],
-	charts: [{ title: "TPS", type: "area" as const, metrics: ["tps"] }],
+	charts: [
+		{ title: "TPS", type: "area" as const, metrics: ["tps"] },
+		{ title: "各连接", type: "line" as const, metrics: ["tps", "conn_tps"] },
+	],
 	primary_metric: "tps",
 };
 
@@ -90,6 +94,15 @@ describe("指标查询", () => {
 					round(b.avg),
 					b.last,
 				]),
+			]),
+		);
+
+	/** 序列（「指标名 主机」，不带标签时只有指标名）→ 桶的 [相对秒, 点数, 最小, 最大, 平均, 最新]。 */
+	const seriesOf = (result: MetricSeries) =>
+		Object.fromEntries(
+			result.series.map((s) => [
+				[s.name, ...Object.values(s.labels)].join(" "),
+				bucketsOf({ ...result, series: [s] })[s.name],
 			]),
 		);
 
@@ -199,6 +212,49 @@ describe("指标查询", () => {
 			});
 		});
 
+		it("按序列（指标名 + 标签）分别降采样，按指标名查询时返回这个指标的全部序列", async () => {
+			const agent = await connect();
+			const { runId, task } = await start(agent);
+			const conn = (host: string, t: number, value: number) => ({
+				name: "conn_tps",
+				labels: { host },
+				timeUnixS: BigInt(at(t)),
+				value,
+				min: value,
+				max: value,
+			});
+			// host=a 第 0–129 秒：前 120 个点攒满一段写库，后 10 个点还在内存里；host=b 只有内存里的 4 个点。
+			agent.metrics(task, [
+				...Array.from({ length: 130 }, (_, i) => conn("a", i, i < 120 ? 1 : 2)),
+				...Array.from({ length: 4 }, (_, i) => conn("b", 120 + i, 100 + i)),
+				["tps", at(125), 7],
+			]);
+			await agent.sync();
+
+			const expected = {
+				"conn_tps a": [
+					[0, 65, 1, 1, 1, 1],
+					[65, 65, 1, 2, round((55 + 20) / 65), 2],
+				],
+				"conn_tps b": [[65, 4, 100, 103, 101.5, 103]],
+			};
+			const running = await series(runId, { metrics: "conn_tps", points: 2 });
+			expect(running.series.map((s) => [s.name, s.labels])).toEqual([
+				["conn_tps", { host: "a" }],
+				["conn_tps", { host: "b" }],
+			]);
+			expect(seriesOf(running)).toEqual(expected);
+
+			await agent.succeed(task);
+			const done = await series(runId, { metrics: "tps,conn_tps", points: 2 });
+			expect(done.series.map((s) => [s.name, s.labels])).toEqual([
+				["tps", {}],
+				["conn_tps", { host: "a" }],
+				["conn_tps", { host: "b" }],
+			]);
+			expect(seriesOf(done)).toEqual({ tps: [[65, 1, 7, 7, 7, 7]], ...expected });
+		});
+
 		it("运行中尚未写库的点也能查到（断线重连后用来补齐实时增量）", async () => {
 			const agent = await connect();
 			const { runId, task } = await start(agent);
@@ -240,7 +296,7 @@ describe("指标查询", () => {
 			expect(await series(runId, { metrics: "tps" })).toMatchObject({
 				from: null,
 				to: null,
-				series: [{ name: "tps", buckets: [] }],
+				series: [{ name: "tps", labels: {}, buckets: [] }],
 			});
 			const invalid: Record<string, string | number>[] = [
 				{ metrics: "not-a-name" },
@@ -270,6 +326,22 @@ describe("指标查询", () => {
 					{ name: "tps", timeUnixS: BigInt(at(1)), value: 10, min: 4, max: 12 },
 					["typo", at(1), 1],
 					["requests", at(1), 3],
+					{
+						name: "conn_tps",
+						labels: { host: "a" },
+						timeUnixS: BigInt(at(1)),
+						value: 5,
+						min: 5,
+						max: 5,
+					},
+					{
+						name: "conn_tps",
+						labels: { host: "b" },
+						timeUnixS: BigInt(at(1)),
+						value: 6,
+						min: 6,
+						max: 6,
+					},
 				]);
 				const first = await sse.next<MetricIncrement>("metrics");
 				expect(first.data).toEqual({
@@ -278,8 +350,10 @@ describe("指标查询", () => {
 					node_id: "load",
 					attempt: 1,
 					points: [
-						{ name: "tps", time: iso(1), value: 10, min: 4, max: 12 },
-						{ name: "requests", time: iso(1), value: 3, min: 3, max: 3 },
+						{ name: "tps", labels: {}, time: iso(1), value: 10, min: 4, max: 12 },
+						{ name: "requests", labels: {}, time: iso(1), value: 3, min: 3, max: 3 },
+						{ name: "conn_tps", labels: { host: "a" }, time: iso(1), value: 5, min: 5, max: 5 },
+						{ name: "conn_tps", labels: { host: "b" }, time: iso(1), value: 6, min: 6, max: 6 },
 					],
 				});
 
@@ -289,7 +363,7 @@ describe("指标查询", () => {
 					["tps", at(3), 30],
 				]);
 				expect((await sse.next<MetricIncrement>("metrics")).data.points).toEqual([
-					{ name: "tps", time: iso(3), value: 30, min: 30, max: 30 },
+					{ name: "tps", labels: {}, time: iso(3), value: 30, min: 30, max: 30 },
 				]);
 
 				// 一批里没有新点时不推送。
@@ -426,6 +500,14 @@ describe("指标查询", () => {
 				["tps", at(1), 10],
 				["tps", at(2), 30],
 				["requests", at(2), 7],
+				{
+					name: "conn_tps",
+					labels: { host: "a" },
+					timeUnixS: BigInt(at(2)),
+					value: 3,
+					min: 3,
+					max: 3,
+				},
 			]);
 			await agent.succeed(task);
 
@@ -442,6 +524,7 @@ describe("指标查询", () => {
 						metrics: LOAD.metrics,
 						charts: [
 							{ title: "TPS", type: "area", metrics: ["tps"], default: false },
+							{ title: "各连接", type: "line", metrics: ["tps", "conn_tps"], default: false },
 							{ title: "p99", type: "line", metrics: ["p99"], default: true },
 							{ title: "requests", type: "stat", metrics: ["requests"], default: true },
 						],
@@ -454,7 +537,19 @@ describe("指标查询", () => {
 								dropped_points: 0,
 								metrics: [
 									{
+										name: "conn_tps",
+										labels: { host: "a" },
+										points: 1,
+										min: 3,
+										max: 3,
+										avg: 3,
+										last: 3,
+										first_time: iso(2),
+										last_time: iso(2),
+									},
+									{
 										name: "requests",
+										labels: {},
 										points: 1,
 										min: 7,
 										max: 7,
@@ -465,6 +560,7 @@ describe("指标查询", () => {
 									},
 									{
 										name: "tps",
+										labels: {},
 										points: 2,
 										min: 10,
 										max: 30,

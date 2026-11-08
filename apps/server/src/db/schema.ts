@@ -311,7 +311,7 @@ export const nodePackages = pgTable(
 );
 
 /**
- * 指标摘要（#29）：每个任务（一次尝试）每个指标一行，写段时一起更新；主指标和列表页直接读它，不扫描原始段。
+ * 指标摘要（#29）：每个任务（一次尝试）每个序列（指标名 + 标签，#78）一行，写段时一起更新；主指标和列表页直接读它，不扫描原始段。
  * 原始数据在按天分区的分段表 `metric_segments`（drizzle 不支持声明式分区，迁移里手写，见 src/metrics/task-metrics.ts）。
  */
 export const metricSeries = pgTable(
@@ -324,6 +324,8 @@ export const metricSeries = pgTable(
 			.notNull()
 			.references(() => runs.id),
 		metric: text("metric").notNull(),
+		/** 序列的标签（#78）：与指标名一起区分序列；不带标签的序列为 `{}`。jsonb 的规范形式保证内容相同的标签相等。 */
+		labels: jsonb("labels").$type<Record<string, string>>().notNull().default({}),
 		points: integer("points").notNull(),
 		min: doublePrecision("min").notNull(),
 		max: doublePrecision("max").notNull(),
@@ -333,5 +335,8 @@ export const metricSeries = pgTable(
 		firstAt: timestamptz("first_at").notNull(),
 		lastAt: timestamptz("last_at").notNull(),
 	},
-	(t) => [primaryKey({ columns: [t.taskId, t.metric] }), index("metric_series_run").on(t.runId)],
+	(t) => [
+		primaryKey({ columns: [t.taskId, t.metric, t.labels] }),
+		index("metric_series_run").on(t.runId),
+	],
 );
