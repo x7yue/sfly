@@ -274,9 +274,11 @@ describe("验收 S3：故障", () => {
 			await writeFile(release, "");
 			await eventually(() => access(join(agent.workDir, "tasks", taskId, "output.json")), 30_000);
 		});
+		// 失败时带上 g 的尝试记录：Hello 漏报任务时它以 agent_lost 失败（#132）。
 		await eventually(async () => {
 			expect(welcomes()).toBeGreaterThan(before);
-			expect((await api.node(runId, "nap")).status).toBe("waiting");
+			const attempts = JSON.stringify((await api.node(runId, "g")).attempts);
+			expect((await api.node(runId, "nap")).status, `g 的尝试：${attempts}`).toBe("waiting");
 		}, 30_000);
 		const g = await api.node(runId, "g");
 		expect(g.attempts.map((a) => [a.attempt, a.status])).toEqual([[1, "success"]]);
@@ -285,7 +287,10 @@ describe("验收 S3：故障", () => {
 
 		// 第二次重启：停机期间时钟越过唤醒时间，重启后定时器扫描照常唤醒，后续节点派发到重连的 Agent。
 		await cp.restart(() => clock.advance(6 * 60_000));
-		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 30_000);
+		await eventually(async () => {
+			const run = await api.run(runId);
+			expect(run.status, JSON.stringify(statuses(chainOf(run, "entry")))).toBe("success");
+		}, 30_000);
 		expect(welcomes()).toBeGreaterThanOrEqual(before + 2);
 		const nap = await api.node(runId, "nap");
 		const triggeredAt = nap.outputs?.triggered_at as string;

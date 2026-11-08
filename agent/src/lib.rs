@@ -354,12 +354,18 @@ impl Runtime {
             }
             Err(result) => result,
         };
-        // 持锁交出结果并移出：看手上任务的地方（[`Runtime::held`]、[`Runtime::running`]）要么看到它还在执行，
+        // 持锁交出结果并移出：看手上任务的地方（[`Runtime::held`]、[`Runtime::running`]；
+        // 连同通道里的结果一起看时用 [`Runtime::held_collecting`]）要么看到它还在执行，
         // 要么看到它已移出、结果已交出，没有中间状态。排空判断（[`update::Updater::poll`]）因此任何时刻都能看到这个任务；
         // 结果的 Ack 来得再快，[`Runtime::acked`] 也不会把它当成还在执行而漏写结束标记。
-        let mut cancels = self.cancels.lock().unwrap();
-        let _ = self.results.send(result);
-        cancels.remove(&key);
+        let status = result.status();
+        {
+            let mut cancels = self.cancels.lock().unwrap();
+            let _ = self.results.send(result);
+            cancels.remove(&key);
+        }
+        // 结果已经交出、任务已经移出之后才打这一行：测试据此等到这一刻（agent/tests/recovery.rs）。
+        eprintln!("task {} attempt {} finished: {status:?}", key.0, key.1);
     }
 
     /// 正在执行（含安装中）的任务。
@@ -402,27 +408,22 @@ impl Runtime {
     /// 手上的任务（Hello / Heartbeat 的 running_tasks）：正在执行（含安装中）的，
     /// 加上已经结束、结果还没收到 Ack 的。
     fn held(&self, unacked: &BTreeMap<(String, u32), TaskResult>) -> Vec<RunningTask> {
-        let mut held: Vec<RunningTask> = self
-            .cancels
-            .lock()
-            .unwrap()
-            .iter()
-            .map(|((task_id, attempt), task)| RunningTask {
-                task_id: task_id.clone(),
-                attempt: *attempt,
-                started: task.started,
-            })
-            .collect();
-        held.extend(unacked.keys().map(|(task_id, attempt)| RunningTask {
-            task_id: task_id.clone(),
-            attempt: *attempt,
-            started: true,
-        }));
-        held.sort_by(|a, b| (&a.task_id, a.attempt).cmp(&(&b.task_id, b.attempt)));
-        held.dedup_by(|a, b| a.task_id == b.task_id && a.attempt == b.attempt);
-        held
+        held_tasks(&self.cancels.lock().unwrap(), unacked)
     }
 
+    /// 重连时 Hello 里手上的任务（#132）：先把已经交出的结果收进 `unacked`，再列出手上的任务，两步都持
+    /// `cancels` 的锁。[`Runtime::run_task`] 也持这把锁交出结果并移出，所以每个任务要么还在执行，要么结果已在
+    /// 通道里、这里收下；不会两边都看不到而在 Hello 里漏报（控制面会立即以 agent_lost 判它失败）。
+    fn held_collecting(
+        &self,
+        results: &mut mpsc::UnboundedReceiver<TaskResult>,
+        unacked: &mut BTreeMap<(String, u32), TaskResult>,
+        abandoned: &mut HashSet<(String, u32)>,
+    ) -> Vec<RunningTask> {
+        let cancels = self.cancels.lock().unwrap();
+        collect_results(results, unacked, abandoned);
+        held_tasks(&cancels, unacked)
+    }
     /// 处理控制面的取消指令；任务不在这个 Agent 上执行（或已经结束）时忽略。
     /// 优雅取消之后再收到强制取消会升级为立即杀掉。
     fn cancel_task(&self, cancel: &CancelTask) {
@@ -666,6 +667,43 @@ impl Runtime {
     }
 }
 
+/// 手上的任务：`cancels` 里正在执行（含安装中）的，加上已经结束、结果还没收到 Ack 的。
+fn held_tasks(
+    cancels: &HashMap<(String, u32), HeldTask>,
+    unacked: &BTreeMap<(String, u32), TaskResult>,
+) -> Vec<RunningTask> {
+    let mut held: Vec<RunningTask> = cancels
+        .iter()
+        .map(|((task_id, attempt), task)| RunningTask {
+            task_id: task_id.clone(),
+            attempt: *attempt,
+            started: task.started,
+        })
+        .collect();
+    held.extend(unacked.keys().map(|(task_id, attempt)| RunningTask {
+        task_id: task_id.clone(),
+        attempt: *attempt,
+        started: true,
+    }));
+    held.sort_by(|a, b| (&a.task_id, a.attempt).cmp(&(&b.task_id, b.attempt)));
+    held.dedup_by(|a, b| a.task_id == b.task_id && a.attempt == b.attempt);
+    held
+}
+
+/// 断线期间（或连接之间）已经交出的结果收进 `unacked`；控制面放弃了的任务的结果丢弃。
+fn collect_results(
+    results: &mut mpsc::UnboundedReceiver<TaskResult>,
+    unacked: &mut BTreeMap<(String, u32), TaskResult>,
+    abandoned: &mut HashSet<(String, u32)>,
+) {
+    while let Ok(result) = results.try_recv() {
+        let key = (result.task_id.clone(), result.attempt);
+        if !abandoned.remove(&key) {
+            unacked.insert(key, result);
+        }
+    }
+}
+
 /// Agent 主循环：连接控制面并执行任务；连接失败或断开后按退避时间自动重连。
 /// 只有不可恢复的错误（例如令牌被拒绝、环境准备失败 [`environment::EnvironmentError`]）才会返回。
 ///
@@ -771,20 +809,17 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     loop {
         // 断线期间的安装状态已经过时：重新连接时 Hello 带上最新的已安装列表。
         while installs_rx.try_recv().is_ok() {}
-        // 手上的任务：正在执行的，加上已经结束、结果还没收到 Ack 的（断线期间结束的也算）。
-        while let Ok(result) = results_rx.try_recv() {
-            let key = (result.task_id.clone(), result.attempt);
-            if !abandoned.remove(&key) {
-                unacked.insert(key, result);
-            }
-        }
+        collect_results(&mut results_rx, &mut unacked, &mut abandoned);
         if sweep.due() {
             runtime.sweep(&unacked);
         }
+        let installed_packages = runtime.inventory.refresh().await;
         let hello = HelloContent {
-            installed_packages: runtime.inventory.refresh().await,
+            installed_packages,
             dev_packages: runtime.dev.list().iter().map(|e| e.to_proto()).collect(),
-            running_tasks: runtime.held(&unacked),
+            // 手上的任务：正在执行的，加上已经结束、结果还没收到 Ack 的（断线期间结束的也算）。
+            // 清点已安装的包可能很慢，期间结束的任务也要算上（#132）。
+            running_tasks: runtime.held_collecting(&mut results_rx, &mut unacked, &mut abandoned),
         };
         // 试用中的新版本每次连接计一次尝试；握手成功且环境准备完成才算健康（ADR 0014）。
         config.trial.begin();
