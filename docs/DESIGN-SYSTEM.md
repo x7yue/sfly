@@ -2,7 +2,9 @@
 
 前端（`apps/web`）的设计 token、配色规则、组件清单、各状态的样式，以及写页面时要遵守的约定（HTTP 契约、query key、快捷键、CSS layer）。实现与评审都以本文为依据；信息架构、布局与交互以定稿原型 `docs/prototype/frontend-v2.html` 为准，原型里的演示数据不是规格。相关决定：ADR 0005（E2E 优先）、0006（SPA）、0007（HTTP 契约用 zod）、0008（shadcn/ui + Base UI）。
 
-定位：内网专业工具，只做深色主题、只支持桌面（最小宽度 1280）、界面只用中文。
+定位：内网专业工具，只做深色主题、只支持桌面（最小宽度 1280；运行监控页窄到 1024 仍可用，顶栏按钮收成图标）、界面只用中文。
+
+与定稿原型不同、以本文为准的交互：取消运行的确认弹窗列出影响后直接确认，不要求输入运行编号（只做测试的平台，取消可以用相同参数再跑一次；2026-11 设计评审决定）。
 
 ## 1. 代码布局
 
@@ -33,7 +35,7 @@
 | 表面 | `sunk` < `bg` < `surface` < `raised` < `raised-2` | 输入框 / 页面 / 面板与侧栏 / 按钮与菜单 / 悬停与选中 |
 | | `track`、`scrim` | 槽位条与进度条的空槽；弹窗遮罩 |
 | 描边 | `border`、`border-soft`、`border-strong` | 控件 / 面板内分隔 / 浮层 |
-| 文字 | `fg-1`、`fg-2`、`fg-3` | 正文 / 次要 / 辅助（对 `bg`、`surface`、`raised` 都 ≥ 4.5:1） |
+| 文字 | `fg-1`、`fg-2`、`fg-3` | 正文 / 次要 / 辅助（对 `bg`、`surface`、`raised`、`raised-2` 都 ≥ 4.5:1；不再叠加不透明度） |
 | 主操作 | `primary`、`primary-hover`、`primary-foreground` | 白色按钮 |
 | 信号（青） | `signal`、`signal-fg`、`signal-line`、`signal-soft` | 执行中、键盘焦点环（`ring`）、调度连线 |
 | 选中 | `selected`、`selected-bg`、`selected-ring` | 中性高亮 |
@@ -46,7 +48,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ### 2.3 画布专用 `--canvas-*`
 
-`canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-run-running` / `-failed` / `-cancelled` / `-stopped`、`--canvas-run-done-opacity`、`--canvas-minimap-mask`（小地图视口外遮罩）。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
+`canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-run-running` / `-failed` / `-cancelled` / `-stopped` / `-done-bg` / `-done-border`（已完成的节点下沉，不降文字对比度）、`--canvas-minimap-mask`（小地图视口外遮罩）。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
 
 ### 2.4 配色规则
 
@@ -117,7 +119,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、运行抽屉、通知；`useOverlays().open("shortcuts")`、`useOverlays().runScenario(场景)` |
 | `app-shell/CommandPalette` | 「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」五组；新命令加在 `commands` 里 |
 | `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
-| `#/docs/Markdown` | 用户文档（ADR 0013）的 Markdown 渲染：代码块用 `CodeBlock`，表格用 `ui/table`，`<slug>.md` 链接换成文档页 |
+| `#/docs/Markdown` | 用户文档（ADR 0013）的 Markdown 渲染：代码块用 `CodeBlock`（```prompt 代码块是给人读、复制给 AI 编程助手的提示词，自动换行、正文字体；其余代码块不换行），表格用 `ui/table`，`<slug>.md` 链接换成文档页 |
 | `status`：`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView` | 状态与槽位，见下表；运行 / 链 / 节点状态的颜色与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，不另写映射表。节点状态在各处的显示规则（徽标、标签、链路进度、画布运行状态、缩略图、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状，配色只在这里；节点状态对应哪种进度段见 `lib/node-status`） |
 | `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |

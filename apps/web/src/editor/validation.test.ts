@@ -1,6 +1,7 @@
+import { type PackageCatalog, packageKey } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { documentFieldErrors } from "./validation";
+import { checkSummary, documentFieldErrors, undeclaredInputNotes } from "./validation";
 
 const base: OrchestrationDocument = {
 	nodes: [
@@ -57,5 +58,42 @@ describe("保存前的字段校验", () => {
 		expect(documentFieldErrors(doc)).toEqual([
 			{ nodeId: "wait", field: "duration", message: "不能为空" },
 		]);
+	});
+});
+
+describe("提醒：节点类型没有声明的输入", () => {
+	const doc: OrchestrationDocument = {
+		...base,
+		nodes: [
+			...base.nodes,
+			{
+				id: "fetch",
+				kind: "package",
+				always: false,
+				package: "demo",
+				node: "http_check",
+				inputs: { url: "x", token: "t" },
+			},
+		],
+		packages: { demo: "1.0.0" },
+	};
+	const type = {
+		name: "http_check",
+		inputs: { type: "object", properties: { url: { type: "string" } } },
+		outputs: { type: "object", properties: {} },
+	};
+
+	it("节点类型加载后列出没有声明的输入；还没加载时不算", () => {
+		const loaded = new Map([[packageKey("demo", "1.0.0"), [type]]]) as unknown as PackageCatalog;
+		expect(undeclaredInputNotes(doc, loaded)).toEqual([
+			{ node_id: "fetch", input: "token", message: "fetch 的输入 token 没有在节点类型中声明" },
+		]);
+		expect(undeclaredInputNotes(doc, new Map())).toEqual([]);
+	});
+
+	it("检查结果：警告优先，没有警告时带上提醒条数", () => {
+		expect(checkSummary(2, 1)).toEqual({ kind: "warn", label: "2 条警告" });
+		expect(checkSummary(0, 1)).toEqual({ kind: "ok", label: "检查通过 · 1 条提醒" });
+		expect(checkSummary(0, 0)).toEqual({ kind: "ok", label: "检查通过" });
 	});
 });

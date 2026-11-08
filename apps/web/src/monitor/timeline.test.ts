@@ -1,6 +1,13 @@
 import type { AttemptView, NodeRunView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { nodeSegments, runExtent, ticks, visibleRange, zoomFromFractions } from "./timeline";
+import {
+	defaultTimelineMode,
+	nodeSegments,
+	runExtent,
+	ticks,
+	visibleRange,
+	zoomFromFractions,
+} from "./timeline";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 const at = (seconds: number) => new Date(T0 + seconds * 1000).toISOString();
@@ -254,5 +261,17 @@ describe("刻度", () => {
 			"08:40",
 		]);
 		expect(labels[0]?.at).toBe(s(300));
+	});
+});
+
+describe("时间线的默认显示模式", () => {
+	it("链与节点不多时展开节点", () => {
+		expect(defaultTimelineMode(2, 7)).toBe("expanded");
+		expect(defaultTimelineMode(6, 18)).toBe("expanded");
+	});
+
+	it("链实例多于 6 条，或展开后多于 24 行时默认汇总", () => {
+		expect(defaultTimelineMode(7, 7)).toBe("summary");
+		expect(defaultTimelineMode(1, 24)).toBe("summary");
 	});
 });

@@ -13,7 +13,7 @@ import { cn } from "cn";
 import { BarChart3Icon, ChevronDownIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
-import { type StatusKind, StatusPill } from "#/components/status";
+import { StatusPill } from "#/components/status";
 import { formatDuration } from "#/lib/format";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
@@ -23,7 +23,14 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
-import { buildGroups, type ChartGroup, groupHasData, isActive, isFailed } from "./chart-groups";
+import {
+	buildGroups,
+	type ChartGroup,
+	failedFirst,
+	groupHasData,
+	isActive,
+	isFailed,
+} from "./chart-groups";
 import { balancedColumns, chartLines, chartWindow } from "./charts";
 import { MetricChart } from "./MetricChart";
 import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
@@ -48,7 +55,7 @@ const iso = (ms: number) => new Date(ms).toISOString();
 
 /**
  * 图表工作区（原型 monitorHTML 的 wsp 部分）：工具栏（节点筛选、图表搜索、全部展开 / 折叠、密度）吸顶；
- * 每个上报指标的包节点一组，按链上的执行顺序，组标题显示状态、名称、主指标的最新值与迷你趋势、图表数与 Agent；
+ * 每个上报指标的包节点一组，按链上的执行顺序（运行里有失败的节点时失败的组排在最前），组标题显示状态、名称、主指标的最新值与迷你趋势、图表数与 Agent；
  * 平台自带图表是最后一组。默认只展开执行中与失败的组，打开页面时滚到第一个执行中或失败的组（或选中的节点）；
  * 选中节点时展开它的组、滚到可见处，并在组内顶部显示节点摘要。悬停、缩放、日志标记与时间线共享（monitor-state.tsx）。
  */
@@ -98,7 +105,9 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 	const query = search.trim().toLowerCase();
 	const matches = (text: string) => text.toLowerCase().includes(query);
 	const inFilter = (key: string) => !filter || filter.has(key);
-	const shown = groups
+	// 有失败的节点时失败的组排在最前（筛选菜单里仍按链上的执行顺序）。
+	const ordered = useMemo(() => failedFirst(groups), [groups]);
+	const shown = ordered
 		.filter((g) => inFilter(g.key))
 		.map((g) => ({
 			group: g,
@@ -143,7 +152,7 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 			setOpened((o) => ({ ...o, [target]: true }));
 			setScrollTo(target);
 		} else if (first) {
-			const busy = groups.find((g) => isActive(g) || isFailed(g));
+			const busy = ordered.find((g) => isActive(g) || isFailed(g));
 			if (busy) setScrollTo(busy.key);
 		}
 	}, [catalog.data, selectedKey, groupKeys]);
@@ -313,11 +322,6 @@ function useWidth(ref: React.RefObject<HTMLElement | null>) {
 	return width;
 }
 
-const ACCENT: Partial<Record<StatusKind, string>> = {
-	running: "var(--signal)",
-	failed: "var(--danger)",
-};
-
 function GroupShell({
 	groupKey,
 	label,
@@ -439,7 +443,6 @@ function NodeGroup({
 						<PrimaryMetric
 							variant="chip"
 							data={primaryMetricData(entry.primary_metric, entry, attempt, series)}
-							accent={ACCENT[status.kind] ?? "var(--fg-3)"}
 						/>
 					)}
 					<span className="flex-1" />
@@ -454,7 +457,7 @@ function NodeGroup({
 						<NativeSelect
 							aria-label={`${node.node_id} 的尝试`}
 							title="切换查看这个节点的每次尝试"
-							className="w-28 flex-none [&_select]:h-6.5 [&_select]:text-xs"
+							className="w-34 flex-none [&_select]:h-6.5 [&_select]:text-xs"
 							value={String(attempt.attempt)}
 							onChange={(e) => onAttempt(Number(e.target.value))}
 						>
@@ -499,7 +502,6 @@ function NodeGroup({
 						window={window}
 						empty={empty}
 						dense={dense}
-						accent={ACCENT[status.kind] ?? "var(--fg-3)"}
 						truncated={loss.truncated}
 						notice={
 							loss.series_capped && chart.metrics.some((m) => labeled.has(m)) ? (
@@ -714,7 +716,7 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 		>
 			<figcaption className="flex items-baseline gap-2 text-xs">
 				<span className="text-fg-2">节点耗时 Top 10</span>
-				<span className="text-2xs text-fg-3">含排队与等待</span>
+				<span className="text-xs text-fg-3">含排队与等待</span>
 			</figcaption>
 			{nodes.length === 0 ? (
 				<p className="m-0 mt-1.5 text-xs text-fg-3">

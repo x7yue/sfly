@@ -1,3 +1,4 @@
+import { nodeTypeOf, type PackageCatalog } from "@sfly/orchestration";
 import { OrchestrationDocument } from "@sfly/schema";
 
 /**
@@ -55,4 +56,46 @@ export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
 		});
 	}
 	return errors;
+}
+
+/** 一条提醒：节点、输入名与显示的文字（检查器「检查」一节逐条列出，可以「前往」节点）。 */
+export interface InputNote {
+	node_id: string;
+	input: string;
+	message: string;
+}
+
+/**
+ * 提醒：包节点上填了、但节点类型没有声明的输入（通常是节点包升级后删掉了这个输入）。
+ * 不阻止保存与触发，节点类型还没加载完时不算。检查器的「参数」页可以逐个移除。
+ */
+export function undeclaredInputNotes(
+	doc: OrchestrationDocument,
+	catalog: PackageCatalog,
+): InputNote[] {
+	const notes: InputNote[] = [];
+	for (const node of doc.nodes) {
+		if (node.kind !== "package") continue;
+		const type = nodeTypeOf(doc, node, catalog);
+		if (!type) continue;
+		for (const input of Object.keys(node.inputs)) {
+			if (!type.inputs.properties[input]) {
+				notes.push({
+					node_id: node.id,
+					input,
+					message: `${node.id} 的输入 ${input} 没有在节点类型中声明`,
+				});
+			}
+		}
+	}
+	return notes;
+}
+
+/** 编辑器顶栏与检查器「检查」标题旁的检查结果：警告优先，没有警告时带上提醒条数。 */
+export function checkSummary(
+	warnings: number,
+	notes: number,
+): { kind: "warn" | "ok"; label: string } {
+	if (warnings > 0) return { kind: "warn", label: `${warnings} 条警告` };
+	return { kind: "ok", label: notes > 0 ? `检查通过 · ${notes} 条提醒` : "检查通过" };
 }

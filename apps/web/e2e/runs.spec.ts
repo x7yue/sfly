@@ -165,7 +165,7 @@ test("实时更新：运行结束后从卡片移到历史表格", async ({ page,
 	).toContainText("成功");
 });
 
-test("取消运行：确认框列出影响、输入运行编号前 4 位后确认，运行进入取消中；Esc 关闭确认框时焦点回到按钮", async ({
+test("取消运行：确认框列出影响、点「取消运行」确认，运行进入取消中；Esc 关闭确认框时焦点回到按钮", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -189,10 +189,9 @@ test("取消运行：确认框列出影响、输入运行编号前 4 位后确�
 
 	await cancel.click();
 	await expect(dialog.getByRole("list", { name: "取消的影响" })).toContainText("check");
-	const confirm = dialog.getByRole("button", { name: "取消运行" });
-	await expect(confirm).toBeDisabled();
-	await dialog.getByLabel(/输入运行编号前 4 位/).fill(runId.slice(0, 4));
-	await confirm.click();
+	// 打开时焦点在「继续运行」（安全的默认项），点「取消运行」确认。
+	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
+	await dialog.getByRole("button", { name: "取消运行" }).click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByText("已请求取消运行")).toBeVisible();
 	await expect(card).toContainText("取消中");

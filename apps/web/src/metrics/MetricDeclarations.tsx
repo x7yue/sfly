@@ -136,7 +136,7 @@ export function MetricDeclarations({ info }: { info: NodeMetricsInfo | null | un
 					</li>
 				))}
 			</ul>
-			<p className="m-0 mt-2.5 text-2xs text-fg-3">
+			<p className="m-0 mt-2.5 text-xs text-fg-3">
 				图表定义来自节点包元信息，随锁定的版本走；场景里不需要配置。
 			</p>
 		</>

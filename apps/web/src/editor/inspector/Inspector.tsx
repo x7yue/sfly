@@ -15,7 +15,7 @@ import { StatusPill } from "#/components/status";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { FieldError } from "../validation";
+import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { Field, SectionTitle } from "./fields";
 import {
 	AgentSelect,
@@ -40,6 +40,8 @@ export interface InspectorContext {
 	packages: PackageSummary[] | undefined;
 	agents: AgentView[];
 	warnings: OrchestrationWarning[];
+	/** 不影响保存与触发的提醒（validation.ts 的 undeclaredInputNotes）。 */
+	notes: readonly InputNote[];
 	/** 阻止保存的字段错误（文档校验 + 还没生效的输入）。 */
 	fieldErrors: FieldError[];
 	onChangeNode(id: string, node: DocNode): void;
@@ -304,7 +306,7 @@ function NodeInspector({
 					{fieldErrors
 						.filter((e) => !e.draft && !e.field.startsWith("params."))
 						.map((e) => (
-							<p key={e.field} className="m-0 mt-2 text-2xs text-danger-fg">
+							<p key={e.field} className="m-0 mt-2 text-xs text-danger-fg">
 								{e.field}：{e.message}
 							</p>
 						))}
@@ -389,7 +391,8 @@ function ScenarioInspector({
 	context: InspectorContext;
 	onCollapse(): void;
 }) {
-	const { doc, warnings, fieldErrors } = context;
+	const { doc, warnings, notes, fieldErrors } = context;
+	const summary = checkSummary(warnings.length, notes.length);
 	const used = [
 		...new Set(doc.nodes.flatMap((n) => (n.kind === "package" ? [n.package] : []))),
 	].sort();
@@ -419,13 +422,7 @@ function ScenarioInspector({
 						/>
 					</Field>
 				))}
-				<SectionTitle
-					aside={
-						<StatusPill kind={warnings.length > 0 ? "warn" : "ok"}>
-							{warnings.length > 0 ? `${warnings.length} 条警告` : "检查通过"}
-						</StatusPill>
-					}
-				>
+				<SectionTitle aside={<StatusPill kind={summary.kind}>{summary.label}</StatusPill>}>
 					检查
 				</SectionTitle>
 				{fieldErrors.length > 0 && (
@@ -456,10 +453,11 @@ function ScenarioInspector({
 				{warnings.length > 0 ? (
 					<WarningList warnings={warnings} onLocate={context.onLocate} />
 				) : (
-					<p className="m-0 text-xs text-ok">结构、包版本和引用检查都通过了。</p>
+					<p className="m-0 mb-3 text-xs text-ok">结构、包版本和引用检查都通过了。</p>
 				)}
-				<p className="m-0 text-2xs text-fg-3">
-					警告不阻止保存，触发运行时必须全部通过；字段错误（红色）改正后才能保存。
+				{notes.length > 0 && <WarningList warnings={notes} onLocate={context.onLocate} />}
+				<p className="m-0 text-xs text-fg-3">
+					警告不阻止保存，触发运行时必须全部通过；提醒不影响运行；字段错误（红色）改正后才能保存。
 				</p>
 			</div>
 		</>

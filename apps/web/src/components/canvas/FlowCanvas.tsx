@@ -13,7 +13,7 @@ import {
 	useStore,
 } from "@xyflow/react";
 import { cn } from "cn";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useShortcut } from "#/components/shortcuts";
 import { CanvasDock, type CanvasTool } from "./CanvasDock";
 import {
@@ -122,6 +122,7 @@ export function FlowCanvas({
 }: FlowCanvasProps) {
 	const flow = useReactFlow<SfNode, SfEdge>();
 	const wrapper = useRef<HTMLDivElement>(null);
+	const hintId = useId();
 	const [tool, setTool] = useState<CanvasTool>("pointer");
 	const [minimap, setMinimap] = useState(initialMinimap);
 
@@ -300,7 +301,13 @@ export function FlowCanvas({
 				ref={wrapper}
 				role="region"
 				aria-label={label}
-				tabIndex={-1}
+				data-canvas-region=""
+				aria-describedby={hintId}
+				// biome-ignore lint/a11y/noNoninteractiveTabindex: 画布区域是键盘入口：Tab 进入后用方向键浏览节点，Esc 退回这里后 Tab 继续往后走
+				tabIndex={0}
+				onBlur={(e) => {
+					if (e.target === e.currentTarget) delete e.currentTarget.dataset.pointerFocus;
+				}}
 				data-lod={false}
 				data-tool={tool}
 				style={{ "--canvas-zoom": 1 } as React.CSSProperties}
@@ -311,6 +318,9 @@ export function FlowCanvas({
 					"data-[tool=hand]:[&_.react-flow__pane]:cursor-grab data-[tool=hand]:[&_.react-flow__node]:cursor-grab",
 				)}
 			>
+				<p id={hintId} hidden>
+					方向键沿链浏览节点，↓ ↑ 进出子流程，Esc 取消选中
+				</p>
 				<ReactFlow<SfNode, SfEdge>
 					nodes={shownNodes}
 					edges={edges}
@@ -322,7 +332,17 @@ export function FlowCanvas({
 					onConnectEnd={onConnectEnd}
 					isValidConnection={isValidConnection}
 					onNodeClick={(_e, node) => onSelect(node.id)}
-					onPaneClick={() => onSelect(null)}
+					onPaneClick={() => {
+						onSelect(null);
+						// 拖动画布的手势拦掉了 mousedown 的默认行为，点空白处时焦点不会自己移过来：
+						// 手动聚焦画布区域，并标记是鼠标放过来的（失焦时清掉）：编辑器据此决定 Tab 是添加节点
+						// 还是照常切换焦点（editor/ScenarioEditor.tsx）。
+						const root = wrapper.current;
+						if (root) {
+							root.dataset.pointerFocus = "";
+							root.focus({ preventScroll: true });
+						}
+					}}
 					nodesDraggable={canEdit}
 					nodesConnectable={canEdit}
 					edgesFocusable={false}
@@ -399,6 +419,18 @@ function minimapColor(run: NodeDecoration["run"]): string {
 		default:
 			return "var(--canvas-edge)";
 	}
+}
+
+/**
+ * 焦点是不是用鼠标点画布空白处放到画布区域上的（点空白处时由 onPaneClick 标记，失焦时清掉）。
+ * 编辑器据此决定 Tab 是打开添加节点菜单，还是照常切换焦点（键盘用户 Tab 进入、Esc 退回画布区域时）。
+ */
+export function isPointerFocusedCanvas(target: Element | null): boolean {
+	return (
+		target instanceof HTMLElement &&
+		target.dataset.canvasRegion !== undefined &&
+		target.dataset.pointerFocus !== undefined
+	);
 }
 
 /** 把当前缩放比例写到画布容器上（--canvas-zoom、data-lod），供语义缩放的 CSS 使用。 */

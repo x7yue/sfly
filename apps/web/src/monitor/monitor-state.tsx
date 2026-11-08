@@ -17,10 +17,14 @@ import type { TimeRange } from "./timeline";
  *   actions.select({ chainInstanceId, nodeId })  // 点图表分组选中节点，底部面板随之切换
  *   actions.setFilter(keys)     // 图表工作区的节点筛选（nodeKey / PLATFORM_KEY 的集合，null 为全部）；
  *                               // 没有选中节点时，底部面板的范围跟随筛选
+ *   actions.showPanel("attempts") // 打开底部面板的某个页签（顶栏的失败摘要用它跳到尝试页签）
  *
  * 时间都是毫秒时间戳。hoverAt 更新很频繁，状态放在一个外部 store 里，组件按 selector 订阅，
  * 只有用到的字段变化时才重新渲染；range / extent 每秒随「现在」变化，放在 context 里。
  */
+
+/** 底部面板的页签。 */
+export type PanelTab = "logs" | "attempts" | "io" | "artifacts";
 
 /** 时间线上的一个节点：同一个子流程可能有多个实例，所以要带链实例 ID。 */
 export interface NodeRef {
@@ -39,6 +43,10 @@ export interface MonitorState {
 	selected: NodeRef | null;
 	/** 图表工作区的节点筛选：{@link nodeKey} 与 {@link PLATFORM_KEY} 的集合；null 表示全部。 */
 	filter: ReadonlySet<string> | null;
+	/** 底部面板当前的页签。 */
+	panelTab: PanelTab;
+	/** 底部面板是否展开：用户展开 / 收起（或拖动高度、切换页签）后为 true / false；null 表示还没选过，按内容自动决定。 */
+	panelOpen: boolean | null;
 }
 
 export interface MonitorActions {
@@ -49,6 +57,10 @@ export interface MonitorActions {
 	mark: (at: number | null) => void;
 	select: (node: NodeRef | null) => void;
 	setFilter: (filter: ReadonlySet<string> | null) => void;
+	/** 切换到底部面板的某个页签并展开面板。 */
+	showPanel: (tab: PanelTab) => void;
+	/** 展开 / 收起底部面板；null 回到按内容自动决定。 */
+	setPanelOpen: (open: boolean | null) => void;
 }
 
 type Listener = () => void;
@@ -65,6 +77,8 @@ export function createMonitorStore(initial: Partial<MonitorState> = {}): Monitor
 		marker: null,
 		selected: null,
 		filter: null,
+		panelTab: "logs",
+		panelOpen: null,
 		...initial,
 	};
 	const listeners = new Set<Listener>();
@@ -84,6 +98,8 @@ export function createMonitorStore(initial: Partial<MonitorState> = {}): Monitor
 		mark: (marker) => set({ marker }),
 		select: (selected) => set({ selected }),
 		setFilter: (filter) => set({ filter }),
+		showPanel: (panelTab) => set({ panelTab, panelOpen: true }),
+		setPanelOpen: (panelOpen) => set({ panelOpen }),
 	};
 }
 
@@ -144,6 +160,8 @@ export function useMonitorActions(): MonitorActions {
 			mark: store.mark,
 			select: store.select,
 			setFilter: store.setFilter,
+			showPanel: store.showPanel,
+			setPanelOpen: store.setPanelOpen,
 		}),
 		[store],
 	);

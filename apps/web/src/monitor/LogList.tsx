@@ -116,7 +116,7 @@ export function LogList({
 						type="button"
 						disabled={loadingOlder}
 						onClick={loadOlder}
-						className="text-2xs text-fg-3 underline-offset-2 hover:text-fg-1 hover:underline"
+						className="text-xs text-fg-3 underline-offset-2 hover:text-fg-1 hover:underline"
 					>
 						{loadingOlder ? "正在加载更早的日志…" : "向上滚动或点击加载更早的日志"}
 					</button>

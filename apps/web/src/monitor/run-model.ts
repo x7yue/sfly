@@ -9,7 +9,7 @@ import type {
 	TaskProgressView,
 } from "@sfly/schema";
 import { KIND_META } from "#/components/canvas/node-display";
-import { runStatusView } from "#/components/status";
+import { runStatusView, type StatusKind } from "#/components/status";
 import { chainLabel as chainName, subflowLabel } from "#/lib/copy";
 import type { NodeRef } from "./monitor-state";
 
@@ -105,6 +105,65 @@ export function focusNode(run: RunView, nodeId?: string): NodeRef | null {
 		all.find((n) => n.status === "failed") ??
 		all.find((n) => ["running", "dispatched", "waiting", "queued"].includes(n.status));
 	return pick ? { chainInstanceId: pick.chainInstanceId, nodeId: pick.nodeId } : null;
+}
+
+/** 失败运行的摘要：第一个失败的节点（按链的层级与节点顺序）、它的第几次尝试与错误信息的第一行。 */
+export interface RunFailure {
+	ref: NodeRef;
+	nodeId: string;
+	/** 失败的那次尝试的序号；节点没有尝试记录时为 null。 */
+	attempt: number | null;
+	/** 错误信息的第一行（不含堆栈）；没有错误信息时为空字符串。 */
+	message: string;
+}
+
+/** 第一个失败的节点；没有失败的节点时为 null（运行中也可能已有失败的节点）。 */
+export function runFailure(run: RunView): RunFailure | null {
+	for (const chain of orderedChains(run)) {
+		const node = chain.nodes.find((n) => n.status === "failed");
+		if (!node) continue;
+		const attempt = [...node.attempts].reverse().find((a) => a.error) ?? node.attempts.at(-1);
+		const error = node.error ?? attempt?.error ?? null;
+		return {
+			ref: { chainInstanceId: chain.id, nodeId: node.node_id },
+			nodeId: node.node_id,
+			attempt: attempt?.attempt ?? null,
+			message: (error?.message ?? "").trim().split("\n")[0]?.trim() ?? "",
+		};
+	}
+	return null;
+}
+
+/** 失败的那次尝试：「（第 2 次）」；节点没有尝试记录时为空。 */
+export const failureAttempt = (failure: RunFailure): string =>
+	failure.attempt === null ? "" : `（第 ${failure.attempt} 次）`;
+
+/** 错误信息前的分隔：紧跟全角括号时不再加空格。 */
+export const failureMessageSeparator = (failure: RunFailure): string =>
+	failure.attempt === null ? " · " : "· ";
+
+/**
+ * 失败摘要：「失败于 verify（第 2 次）· AssertionError: 仍然漏拦」。
+ * 监控页顶栏（悬停提示）与运行结束的通知共用这一份文字。
+ */
+export function failureSummary(failure: RunFailure): string {
+	const message = failure.message ? `${failureMessageSeparator(failure)}${failure.message}` : "";
+	return `失败于 ${failure.nodeId}${failureAttempt(failure)}${message}`;
+}
+
+/** 浏览器标签页标题前的状态符号（标题只能是文字）。 */
+const TITLE_MARK: Partial<Record<StatusKind, string>> = {
+	running: "●",
+	ok: "✓",
+	failed: "✕",
+	cancelled: "○",
+};
+
+/** 运行监控页的浏览器标签页标题：「● 运行中 · 日终数据处理 · sfly」。 */
+export function runDocumentTitle(run: Pick<RunView, "status" | "cancel">, name: string): string {
+	const status = runStatus(run);
+	const mark = TITLE_MARK[status.kind];
+	return `${mark ? `${mark} ` : ""}${status.label} · ${name} · sfly`;
 }
 
 /** 取消整个运行的影响（docs/SEMANTICS.md §3.4），在取消确认弹窗里列出。 */

@@ -56,7 +56,7 @@ export const SHORTCUTS = [
 	{ id: "canvas-undo", group: "编排画布", label: "撤销", keys: "Ctrl+Z" },
 	{ id: "canvas-redo", group: "编排画布", label: "重做", keys: "Ctrl+Shift+Z" },
 	{ id: "canvas-tidy", group: "编排画布", label: "整理布局", keys: "Alt+Shift+F" },
-	// Tab 只在焦点在画布上时打开添加节点菜单（editor/ScenarioEditor.tsx），其他时候照常切换焦点。
+	// Tab 只在焦点在节点卡片或画布空白处时打开添加节点菜单（editor/ScenarioEditor.tsx），其他时候照常切换焦点。
 	{ id: "canvas-add-tab", group: "编排画布", label: "添加节点", keys: "Tab", displayOnly: true },
 	{ id: "canvas-add", group: "编排画布", label: "搜索节点类型", keys: "/" },
 	{ id: "canvas-delete", group: "编排画布", label: "删除节点", keys: "Delete", displayOnly: true },
@@ -65,8 +65,8 @@ export const SHORTCUTS = [
 	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },
 	{ id: "canvas-minimap", group: "编排画布", label: "小地图", keys: "M" },
 	{ id: "canvas-inspector", group: "编排画布", label: "检查器", keys: "I" },
-	{ id: "canvas-chain", group: "编排画布", label: "沿链切换节点", keys: "← →", displayOnly: true },
-	{ id: "canvas-subflow", group: "编排画布", label: "进出子流程", keys: "↓ ↑", displayOnly: true },
+	{ id: "canvas-chain", group: "编排画布", label: "沿链切换节点", keys: "←/→", displayOnly: true },
+	{ id: "canvas-subflow", group: "编排画布", label: "进出子流程", keys: "↓/↑", displayOnly: true },
 	{
 		id: "canvas-to-inspector",
 		group: "编排画布",
@@ -123,11 +123,15 @@ const parseKeys = (keys: string): Chord[] => keys.trim().split(/\s+/).map(parseC
 
 /** 用于显示的逐个按键标签：`Ctrl+K` → `["Ctrl", "K"]`，`G D` → `["G", "D"]`。 */
 export function keyLabels(keys: string): string[] {
+	return keyChords(keys).flat();
+}
+
+/** 按依次按下的组分开的按键：`G D` → [["G"], ["D"]]；`Ctrl+K` → [["Ctrl", "K"]]（同时按的在一组）。 */
+export function keyChords(keys: string): string[][] {
 	return keys
 		.trim()
 		.split(/\s+/)
-		.flatMap((chord) => chord.split("+"))
-		.map((k) => (k.length === 1 ? k.toUpperCase() : k));
+		.map((chord) => chord.split("+").map((k) => (k.length === 1 ? k.toUpperCase() : k)));
 }
 
 function chordMatches(chord: Chord, input: KeyInput): boolean {

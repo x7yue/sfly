@@ -61,6 +61,12 @@ function DocLink({ href = "", children }: { href?: string; children?: React.Reac
 }
 
 /** 代码块的文字：`<pre><code>…</code></pre>`，去掉末尾的换行。 */
+/** 代码块的语言（```后面的标记）；react-markdown 写在 <code> 的 className 上：language-xxx。 */
+function codeLanguage(children: React.ReactNode): string | undefined {
+	if (!isValidElement<{ className?: string }>(children)) return undefined;
+	return /\blanguage-(\S+)/.exec(children.props.className ?? "")?.[1];
+}
+
 function codeText(children: React.ReactNode): string {
 	const code = isValidElement<{ children?: React.ReactNode }>(children)
 		? children.props.children
@@ -100,7 +106,14 @@ const COMPONENTS: Components = {
 	code: ({ children }) => (
 		<code className="rounded-sm bg-raised px-1 py-px font-mono text-xs text-fg-1">{children}</code>
 	),
-	pre: ({ children }) => <CodeBlock code={codeText(children)} className="my-3" />,
+	// ```prompt：给人读、复制给 AI 编程助手的提示词，自动换行；其余代码块（命令、目录树、编排示意）不换行。
+	pre: ({ children }) => (
+		<CodeBlock
+			code={codeText(children)}
+			wrap={codeLanguage(children) === "prompt"}
+			className="my-3"
+		/>
+	),
 	table: ({ children }) => (
 		<div className="my-3 overflow-hidden rounded-lg border border-border-soft">
 			<Table>{children}</Table>

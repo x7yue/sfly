@@ -216,7 +216,7 @@ function AgentRow({
 					</div>
 				)}
 				{failed && agent.install && (
-					<div className="text-2xs text-danger-fg">
+					<div className="text-xs text-danger-fg">
 						安装 {agent.install.package}@{agent.install.version} 失败
 					</div>
 				)}
@@ -241,8 +241,8 @@ function AgentRow({
 					<span className="text-fg-3">未被引用</span>
 				)}
 			</TableCell>
-			<TableCell className="font-mono text-xs text-fg-3">
-				{online ? "—" : formatDateTime(agent.last_seen_at)}
+			<TableCell className={cn("text-xs text-fg-3", !online && "font-mono")}>
+				{online ? "现在" : formatDateTime(agent.last_seen_at)}
 			</TableCell>
 			<TableCell className="text-right">
 				{canUpdateNow(agent) && (

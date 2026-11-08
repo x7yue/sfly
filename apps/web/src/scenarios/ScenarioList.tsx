@@ -72,7 +72,7 @@ function AgentChips({ scenario }: { scenario: OrchestrationSummary }) {
 					</span>
 				);
 			})}
-			{offline > 0 && <span className="text-2xs text-warn">{offline} 个不在线，任务会排队</span>}
+			{offline > 0 && <span className="text-xs text-warn">{offline} 个不在线，任务会排队</span>}
 		</div>
 	);
 }
@@ -295,11 +295,11 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 				)}
 			</div>
 			<div className="flex flex-1 flex-col gap-2 px-3.5 pt-3 pb-2.5">
-				<h3 className="m-0 truncate text-base font-semibold">
+				<h2 className="m-0 truncate text-base font-semibold">
 					<Link to="/orchestrations/$id" params={{ id: scenario.id }} className="hover:underline">
 						{scenario.name}
 					</Link>
-				</h3>
+				</h2>
 				<p
 					className={cn(
 						"m-0 line-clamp-2 min-h-10 text-sm",

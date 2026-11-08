@@ -87,12 +87,7 @@ export function preflightChecks(
 
 	const structure = problems.filter((p) => !PACKAGE_CODES.has(p.code) && !AGENT_CODES.has(p.code));
 	rows.push(
-		row(
-			"structure",
-			structure,
-			"结构、引用与输入检查通过",
-			`结构与引用有 ${structure.length} 个问题`,
-		),
+		row("structure", structure, "结构与引用检查通过", `结构与引用有 ${structure.length} 个问题`),
 	);
 
 	const packages = problems.filter((p) => PACKAGE_CODES.has(p.code));

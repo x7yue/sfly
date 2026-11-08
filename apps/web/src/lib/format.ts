@@ -19,7 +19,7 @@ export function formatBytes(bytes: number): string {
 	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 耗时：`850ms`、`12.3s`、`3m 05s`、`1h 02m`。 */
+/** 耗时：`850ms`、`12.3s`、`3m 05s`、`1h 02m`、`2d 03h`。 */
 export function formatDuration(ms: number): string {
 	const d = Math.max(0, ms);
 	if (d < 1000) return `${Math.round(d)}ms`;
@@ -27,7 +27,10 @@ export function formatDuration(ms: number): string {
 	if (s < 60) return `${s.toFixed(1)}s`;
 	const m = Math.floor(s / 60);
 	if (m < 60) return `${m}m ${pad(Math.floor(s % 60))}s`;
-	return `${Math.floor(m / 60)}h ${pad(m % 60)}m`;
+	const h = Math.floor(m / 60);
+	if (h < 24) return `${h}h ${pad(m % 60)}m`;
+	// 长时间的浸泡测试：超过一天换成「天 + 小时」，不出现「7474h」。
+	return `${Math.floor(h / 24)}d ${pad(h % 24)}h`;
 }
 
 /** `08:00`：一天内的时刻（只到分钟）。 */

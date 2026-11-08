@@ -168,7 +168,6 @@ describe("仓库里的用户文档", () => {
 				["publish", "发布"],
 				["subflows", "子流程与停止子流程"],
 				["standard-nodes", "标准节点"],
-				["ai-quickstart", "AI 编程助手快速开始"],
 			]);
 			const index = await (await cp.fetch("/llms.txt")).text();
 			for (const { slug, title } of pages) {
