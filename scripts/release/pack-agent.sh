@@ -51,9 +51,11 @@ if $native; then
 		echo "$bin --version 输出 '$reported'，应为 'sfly-agent $version'" >&2
 		exit 1
 	fi
-	# 在老系统（CentOS 7，glibc 2.17）里能运行；没有 docker 时跳过。
+	# 在老系统（CentOS 7，glibc 2.17）里能运行；没有 docker 时跳过。二进制从 stdin 传进容器，不用挂载：
+	# docker 守护进程可能不在本机文件系统上（Mac mini 的 runner 容器用 Docker Desktop，构建产物在容器的卷里）。
 	if command -v docker >/dev/null; then
-		docker run --rm -v "$PWD/$bin:/sfly-agent:ro" centos:7 /sfly-agent --version >/dev/null
+		docker run --rm -i centos:7 sh -c 'cat >/tmp/sfly-agent && chmod +x /tmp/sfly-agent && /tmp/sfly-agent --version' \
+			<"$bin" >/dev/null
 		echo "已在 centos:7 中验证 $bin"
 	else
 		echo "没有 docker，跳过 centos:7 验证" >&2
