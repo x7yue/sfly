@@ -102,6 +102,55 @@ async fn without_uv_the_agent_installs_it_from_the_release_mirror_into_sfly_home
     assert_eq!(mirror.http.count(mirror.installer_path()), 1);
 }
 
+/// 镜像站会封禁 curl、wget 的默认 User-Agent：下载安装脚本和安装脚本里下载 uv 都带 sfly 的 User-Agent，
+/// `SFLY_USER_AGENT`（这里写在 agent.env）可以换掉它。
+#[tokio::test]
+async fn installing_uv_sends_the_sfly_user_agent_which_agent_env_can_replace() {
+    let dir = tempfile::tempdir().unwrap();
+    let mirror = ReleaseMirror::start().await;
+    mirror.serve_uv();
+    let cp = FakeControlPlane::start().await;
+    cp.set_mirrors("", &mirror.url());
+    // (下载安装脚本, 安装脚本下载 uv 发布包) 各次请求带的 User-Agent。
+    let user_agents = || {
+        (
+            mirror.http.user_agents(mirror.installer_path()),
+            mirror.http.user_agents(&mirror.uv_archive_path()),
+        )
+    };
+
+    let default_home = dir.path().join("default");
+    let mut first = agent(&default_home, &cp, "agent-ua-default")
+        .env_remove("SFLY_UV")
+        .env_remove("SFLY_USER_AGENT")
+        .arg("--venv")
+        .arg(stub_venv())
+        .spawn()
+        .unwrap();
+    cp.hello(0).await;
+    run_echo(&cp, "task-1").await;
+    let default = Some(format!("sfly-agent/{}", sfly_agent::AGENT_VERSION));
+    assert_eq!(
+        user_agents(),
+        (vec![default.clone()], vec![default.clone()])
+    );
+    first.kill().await.unwrap();
+
+    let custom_home = dir.path().join("custom");
+    write_agent_env(&custom_home, &[("SFLY_USER_AGENT", "acme-lab-sfly/1.0")]);
+    let _second = agent(&custom_home, &cp, "agent-ua-custom")
+        .env_remove("SFLY_UV")
+        .env_remove("SFLY_USER_AGENT")
+        .arg("--venv")
+        .arg(stub_venv())
+        .spawn()
+        .unwrap();
+    cp.hello(1).await;
+    run_echo(&cp, "task-2").await;
+    let both = vec![default, Some("acme-lab-sfly/1.0".to_string())];
+    assert_eq!(user_agents(), (both.clone(), both));
+}
+
 #[tokio::test]
 async fn with_uv_specified_the_agent_neither_installs_nor_modifies_it() {
     let dir = tempfile::tempdir().unwrap();

@@ -72,6 +72,8 @@ docker compose up -d
 
   单台机器可以在本机覆盖（Agent 的 `--index-url`、`--github-release-mirror`、`--python-install-mirror`，即 `agent.env` 的 `SFLY_INDEX_URL`、`SFLY_GITHUB_RELEASE_MIRROR`、`SFLY_PYTHON_INSTALL_MIRROR`），install.sh 和 `sfly init` 读取同样的配置，见用户文档「安装 Agent」的「单台机器覆盖镜像」。
 
+  install.sh 和 Agent 用 curl、wget 下载时带 User-Agent `sfly-agent/<版本>`（镜像站会封禁它们的部分默认 User-Agent，[ustclug/discussions#479](https://github.com/ustclug/discussions/issues/479)），本机可以用 `SFLY_USER_AGENT`（Agent 的 `--user-agent`）换成自己机构的标识，见用户文档「安装 Agent」的「下载用的 User-Agent」。
+
 - 其余配置见 `apps/server/src/main.ts` 顶部注释（保留天数与大小上限等）。
 - 需要 TLS 或统一入口时，按 Fastify 官方建议在前面加反向代理。SSE 要关闭代理缓冲；Agent 网关是 gRPC（HTTP/2），要么单独开放 50051，要么用 `grpc_pass` 转发。nginx 示例：
 
@@ -87,12 +89,12 @@ docker compose up -d
 
 不用 Docker 时，在 `.node-version` 指定的 Node 上直接运行 `pnpm bundle:server` 的产物：`node --enable-source-maps out/server/main.mjs`（前端、SDK、迁移、Agent 目录自动取 `main.mjs` 旁边的 `web/`、`sdk/`、`drizzle/`、`agent/`）。
 
-Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown-linux-musl.tar.gz`，静态链接，不依赖 glibc 版本（已在 CentOS 7 上验证）。机器上不需要预装 uv 或 Python。启动参数见 `sfly-agent --help`（`--server`、`--name`、`--token`、`--slots`、`--venv`、`--uv`、`--index-url`、`--github-release-mirror`、`--python-install-mirror`、`--python` 等，均可用 `SFLY_*` 环境变量设置）。
+Agent：从 Release 附件下载对应架构的 `sfly-agent-X.Y.Z-<arch>-unknown-linux-musl.tar.gz`，静态链接，不依赖 glibc 版本（已在 CentOS 7 上验证）。机器上不需要预装 uv 或 Python。启动参数见 `sfly-agent --help`（`--server`、`--name`、`--token`、`--slots`、`--venv`、`--uv`、`--index-url`、`--github-release-mirror`、`--python-install-mirror`、`--user-agent`、`--python` 等，均可用 `SFLY_*` 环境变量设置）。
 
 - Agent 的文件都在 `SFLY_HOME`（默认 `~/.sfly`）下：共享 venv 默认 `$SFLY_HOME/venv`，任务工作目录默认 `$SFLY_HOME/work`，`sfly dev` 用的本地 socket 默认 `$SFLY_HOME/work/agent.sock`，从哪个目录启动都一样。
 - 启动时读取 `$SFLY_HOME/agent.env`：每行一个 `KEY=VALUE`，键是参数对应的环境变量名（如 `SFLY_SERVER`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`），`#` 开头的行是注释；命令行参数和环境变量优先于它。`sfly publish` 在没有 `--server` 和 `SFLY_SERVER` 时使用其中的 `SFLY_CONTROL_PLANE_URL`（控制面 HTTP 地址）。
 - 连上控制面、收到 Welcome（带控制面配置的镜像）之后准备运行环境：
-  - uv：没有 `--uv` 时使用 `$SFLY_HOME/bin/uv`，不存在时用 GitHub Release 镜像上 `astral-sh/uv/LatestRelease/uv-installer.sh` 安装到 `$SFLY_HOME/bin`（不修改 PATH；安装脚本需要 curl 或 wget）。指定了 `--uv` 时 Agent 不管理 uv。
+  - uv：没有 `--uv` 时使用 `$SFLY_HOME/bin/uv`，不存在时用 GitHub Release 镜像上 `astral-sh/uv/LatestRelease/uv-installer.sh` 安装到 `$SFLY_HOME/bin`（不修改 PATH；安装脚本需要 curl 或 wget，下载时带 `--user-agent` 的 User-Agent）。指定了 `--uv` 时 Agent 不管理 uv。
   - 共享 venv 不存在时用 `uv venv --python 3.13` 创建，Python 从 GitHub Release 镜像的 `astral-sh/python-build-standalone/` 下载；之后不主动升级 Python。`--python` 可以指定别的版本或解释器。
   - 环境准备失败（没有可用的 uv、安装 uv 失败、创建 venv 失败）时 Agent 以退出码 78 退出，标准错误打印失败的命令、完整输出和镜像地址（标明来自控制面还是本机覆盖），请把它报告给平台管理员。
 - 随后若 venv 里的 SDK 运行时版本与 Agent 自身版本不一致，Agent 从控制面下载同版本的 wheel，校验 sha256 后用 `uv pip install` 安装；版本一致时不重装。控制面没有对应版本的 wheel 时保留现状并在日志里告警。

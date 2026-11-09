@@ -21,11 +21,13 @@ SHA256_AARCH64='{{SHA256_AARCH64}}'
 # 控制面配置的镜像（ADR 0012），未配置时为空；只在 --dev 安装 uv 和 sfly CLI 时以环境变量传给这一次的命令。
 # 本机可以用环境变量 SFLY_INDEX_URL、SFLY_GITHUB_RELEASE_MIRROR、SFLY_PYTHON_INSTALL_MIRROR 覆盖（与 Agent 相同），
 # 覆盖值写进 agent.env，Agent 和 sfly init 也用它们。
+# 下载时 curl、wget 带的 User-Agent 默认 sfly-agent/<版本>（镜像站会封禁它们的部分默认 User-Agent），
+# 环境变量 SFLY_USER_AGENT 覆盖，覆盖值同样写进 agent.env。
 PYPI_MIRROR='{{PYPI_MIRROR}}'
 GITHUB_RELEASE_MIRROR='{{GITHUB_RELEASE_MIRROR}}'
 
 # agent.env 里由本脚本管理的键（重新运行时改写），其余的行原样保留。
-MANAGED_KEYS='SFLY_SERVER SFLY_CONTROL_PLANE_URL SFLY_AGENT_NAME SFLY_TOKEN SFLY_SLOTS SFLY_NO_AUTO_UPDATE SFLY_INDEX_URL SFLY_GITHUB_RELEASE_MIRROR SFLY_PYTHON_INSTALL_MIRROR'
+MANAGED_KEYS='SFLY_SERVER SFLY_CONTROL_PLANE_URL SFLY_AGENT_NAME SFLY_TOKEN SFLY_SLOTS SFLY_NO_AUTO_UPDATE SFLY_INDEX_URL SFLY_GITHUB_RELEASE_MIRROR SFLY_PYTHON_INSTALL_MIRROR SFLY_USER_AGENT'
 
 usage() {
 	cat <<EOF
@@ -59,6 +61,10 @@ usage() {
   从 GitHub Release 镜像推导（<镜像>/astral-sh/python-build-standalone/）。
   控制面配置的 PyPI 镜像：${PYPI_MIRROR:-未配置}
   控制面配置的 GitHub Release 镜像：${GITHUB_RELEASE_MIRROR:-未配置}
+
+  SFLY_USER_AGENT             下载时 curl、wget 带的 User-Agent（默认 sfly-agent/$SFLY_VERSION）；
+                              镜像站封禁默认 User-Agent 时换成能看出机构或用途的值，例如 acme-lab-sfly/1.0。
+                              同样写进 agent.env，Agent 安装和更新 uv 时也用它。
 EOF
 }
 
@@ -79,12 +85,33 @@ unit_value() {
 
 download() {
 	if command -v curl >/dev/null 2>&1; then
-		curl -fsSL -o "$2" "$1"
+		curl -fsSL -A "$user_agent" -o "$2" "$1"
 	elif command -v wget >/dev/null 2>&1; then
-		wget -q -O "$2" "$1"
+		wget -q -U "$user_agent" -O "$2" "$1"
 	else
 		die "需要 curl 或 wget"
 	fi
+}
+
+# 在目录 $1 下写 curl 和 wget 的配置（运行时设置 CURL_HOME=$1、WGETRC=$1/wgetrc），让第三方安装脚本里
+# 改不了参数的 curl、wget 也带上 User-Agent。原有的 curlrc、wgetrc 照抄在前面，User-Agent 放最后（后出现的生效）；
+# 设置 CURL_HOME 后老版本 curl 不再读 ~/.curlrc，所以要照抄。
+user_agent_config() {
+	mkdir -p "$1"
+	{
+		for f in "${CURL_HOME:+$CURL_HOME/.curlrc}" "${XDG_CONFIG_HOME:+$XDG_CONFIG_HOME/curlrc}" "${HOME:+$HOME/.curlrc}"; do
+			if [ -n "$f" ] && [ -f "$f" ]; then
+				cat "$f" && echo
+				break
+			fi
+		done
+		printf 'user-agent = "%s"\n' "$user_agent"
+	} >"$1/.curlrc"
+	{
+		f=${WGETRC:-${HOME:+$HOME/.wgetrc}}
+		if [ -n "$f" ] && [ -f "$f" ]; then cat "$f" && echo; fi
+		printf 'user_agent = %s\n' "$user_agent"
+	} >"$1/wgetrc"
 }
 
 sha256_of() {
@@ -171,6 +198,17 @@ detect_platform() {
 	case $SFLY_HOME in /*) ;; *) SFLY_HOME=$(pwd)/$SFLY_HOME ;; esac
 	bin=$SFLY_HOME/bin
 	agent=$bin/sfly-agent
+	env_file=$SFLY_HOME/agent.env
+}
+
+# 下载用的 User-Agent：这次设置的 SFLY_USER_AGENT > agent.env 里原有的值 > sfly-agent/<版本>。
+# 要原样写进 curlrc 的引号里和 wgetrc：只允许可打印 ASCII，不能有 " 和 \。
+resolve_user_agent() {
+	local_user_agent=${SFLY_USER_AGENT:-$(env_value SFLY_USER_AGENT)}
+	user_agent=${local_user_agent:-sfly-agent/$SFLY_VERSION}
+	bad_user_agent="SFLY_USER_AGENT 只能包含可打印 ASCII 字符，不能有 \" 和 \\：$user_agent"
+	case $user_agent in *"$newline"* | *'"'* | *\\*) die "$bad_user_agent" ;; esac
+	[ -z "$(printf '%s' "$user_agent" | LC_ALL=C sed 's/[ -~]//g')" ] || die "$bad_user_agent"
 }
 
 # 下载到同一目录的临时文件，校验、试运行通过后，与自更新一样持有 bin/.sfly-agent.lock 再 rename 覆盖
@@ -223,7 +261,6 @@ unmanaged_lines() {
 # 写入 agent.env：本脚本管理的键按这次的参数写（没有传令牌、槽位数、--no-auto-update、没有设置镜像环境变量时
 # 沿用原来的值），其他行保留。配置文件里有令牌：只有当前用户可读。
 write_env_file() {
-	env_file=$SFLY_HOME/agent.env
 	[ -n "$token" ] || token=$(env_value SFLY_TOKEN)
 	[ -n "$slots" ] || slots=$(env_value SFLY_SLOTS)
 	if [ "$no_auto_update" = 1 ]; then
@@ -252,6 +289,7 @@ write_env_file() {
 			if [ -n "$local_index_url" ]; then echo "SFLY_INDEX_URL=$local_index_url"; fi
 			if [ -n "$local_release_mirror" ]; then echo "SFLY_GITHUB_RELEASE_MIRROR=$local_release_mirror"; fi
 			if [ -n "$local_python_mirror" ]; then echo "SFLY_PYTHON_INSTALL_MIRROR=$local_python_mirror"; fi
+			if [ -n "$local_user_agent" ]; then echo "SFLY_USER_AGENT=$local_user_agent"; fi
 			unmanaged_lines
 		} >"$env_file.tmp"
 	)
@@ -286,8 +324,10 @@ install_dev() {
 		fi
 		echo "安装 uv 到 $user_bin：$installer_url"
 		download "$installer_url" "$uv_installer" || die "下载 uv 安装脚本失败：$installer_url"
+		user_agent_config "$user_agent_dir"
 		(
 			export UV_INSTALL_DIR="$user_bin" UV_NO_MODIFY_PATH=1
+			export CURL_HOME="$user_agent_dir" WGETRC="$user_agent_dir/wgetrc"
 			if [ -n "$mirror" ]; then export UV_DOWNLOAD_URL="$mirror/astral-sh/uv/LatestRelease"; fi
 			sh "$uv_installer"
 		) || die "安装 uv 失败（安装脚本 $installer_url）"
@@ -370,7 +410,9 @@ main() {
 	detect_platform
 	tmp=$bin/.sfly-agent.download.$$
 	uv_installer=$bin/.uv-installer.$$.sh
-	trap 'rm -f "$tmp" "$uv_installer"' EXIT
+	user_agent_dir=$bin/.user-agent.$$
+	trap 'rm -rf "$tmp" "$uv_installer" "$user_agent_dir"' EXIT
+	resolve_user_agent
 	install_agent
 	write_env_file
 	if [ "$dev" = 1 ]; then install_dev; fi

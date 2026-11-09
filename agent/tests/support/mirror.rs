@@ -124,6 +124,14 @@ impl ReleaseMirror {
         "/github-release/astral-sh/uv/LatestRelease/uv-installer.sh"
     }
 
+    /// uv 发布包的请求路径（安装脚本从这里下载 uv）。
+    pub fn uv_archive_path(&self) -> String {
+        format!(
+            "/github-release/astral-sh/uv/LatestRelease/{}",
+            uv_release().0
+        )
+    }
+
     /// 安装脚本被下载的次数（每次安装或更新 uv 一次）。
     pub fn uv_installs(&self) -> usize {
         self.http.count(self.installer_path())

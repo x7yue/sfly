@@ -18,6 +18,12 @@
 //! `--index-url`（PyPI）、`--github-release-mirror`（安装和更新 uv，也用来推导 Python 下载镜像）、
 //! `--python-install-mirror`（直接作为 `UV_PYTHON_INSTALL_MIRROR`，优先于推导的地址）。
 //!
+//! User-Agent：镜像站会封禁 wget、curl 的部分默认 User-Agent（中科大要求换成能反映下载用途或机构的值，
+//! <https://github.com/ustclug/discussions/issues/479>），所以下载安装脚本时带上 [`Setup::user_agent`]
+//! （默认 [`default_user_agent`]，`--user-agent` / `SFLY_USER_AGENT` 覆盖）。安装脚本里的 curl、wget 改不了参数，
+//! 运行它时用 `CURL_HOME`、`WGETRC` 指向临时配置文件（[`UserAgentConfig`]）：原有的 curlrc、wgetrc 内容照抄，
+//! 末尾再加一行 User-Agent。uv 自己发出的请求带的是 `uv/<版本>`，不受影响。
+//!
 //! 失败时返回 [`EnvironmentError`]：Agent 以退出码 [`EXIT_CODE`] 退出，标准错误打印失败的命令、完整输出、
 //! 用到的镜像地址及其来源，最后一行提示把输出报告给平台管理员。
 
@@ -39,6 +45,119 @@ pub const OFFICIAL_UV_INSTALLER: &str = "https://astral.sh/uv/install.sh";
 
 /// 「首次启动时更新 uv」的标记文件，放在 Agent 管理的 uv 所在目录（`SFLY_HOME/bin/.uv-update`）。
 pub const UV_UPDATE_MARKER: &str = ".uv-update";
+
+/// 默认的 User-Agent：`sfly-agent/<版本>`。
+pub fn default_user_agent() -> String {
+    format!("sfly-agent/{}", crate::AGENT_VERSION)
+}
+
+/// 校验 `--user-agent`：非空的可打印 ASCII，不含 `"` 和 `\`（要原样写进 curlrc 的引号里和 wgetrc）。
+pub fn parse_user_agent(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("User-Agent 不能为空".into());
+    }
+    if let Some(c) = value
+        .chars()
+        .find(|c| !(' '..='~').contains(c) || matches!(c, '"' | '\\'))
+    {
+        return Err(format!(
+            "User-Agent 只能包含可打印 ASCII 字符，不能有 \" 和 \\：{c:?}"
+        ));
+    }
+    Ok(value.to_string())
+}
+
+/// 运行第三方安装脚本时让其中的 curl、wget 带上 User-Agent 的临时配置（见模块说明）。
+struct UserAgentConfig {
+    dir: PathBuf,
+}
+
+impl UserAgentConfig {
+    /// 在 `dir` 下写 `.curlrc`（给 `CURL_HOME`）和 `wgetrc`（给 `WGETRC`）。
+    async fn write(dir: PathBuf, user_agent: &str) -> std::io::Result<Self> {
+        tokio::fs::create_dir_all(&dir).await?;
+        tokio::fs::write(
+            dir.join(".curlrc"),
+            curlrc(read_first(&user_curlrc()).await, user_agent),
+        )
+        .await?;
+        tokio::fs::write(
+            dir.join("wgetrc"),
+            wgetrc(read_first(&user_wgetrc()).await, user_agent),
+        )
+        .await?;
+        Ok(Self { dir })
+    }
+
+    fn apply(&self, command: &mut tokio::process::Command) {
+        command
+            .env("CURL_HOME", &self.dir)
+            .env("WGETRC", self.dir.join("wgetrc"));
+    }
+
+    async fn remove(self) {
+        let _ = tokio::fs::remove_dir_all(&self.dir).await;
+    }
+}
+
+/// curl 读取的用户配置，按 curl 的查找顺序（设置了 `CURL_HOME` 后老版本 curl 不再读 `~/.curlrc`，所以要照抄）。
+fn user_curlrc() -> Vec<PathBuf> {
+    let var = |name: &str| {
+        std::env::var_os(name)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    [
+        var("CURL_HOME").map(|d| d.join(".curlrc")),
+        var("XDG_CONFIG_HOME").map(|d| d.join("curlrc")),
+        var("HOME").map(|d| d.join(".curlrc")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// wget 读取的用户配置（`WGETRC` 或 `~/.wgetrc`；系统级的 `/etc/wgetrc` 不受 `WGETRC` 影响）。
+fn user_wgetrc() -> Vec<PathBuf> {
+    match std::env::var_os("WGETRC").filter(|v| !v.is_empty()) {
+        Some(file) => vec![PathBuf::from(file)],
+        None => std::env::var_os("HOME")
+            .filter(|v| !v.is_empty())
+            .map(|home| PathBuf::from(home).join(".wgetrc"))
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// 第一个存在的文件的内容。
+async fn read_first(files: &[PathBuf]) -> Option<String> {
+    for file in files {
+        if let Ok(text) = tokio::fs::read_to_string(file).await {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn curlrc(original: Option<String>, user_agent: &str) -> String {
+    append_line(original, &format!("user-agent = \"{user_agent}\""))
+}
+
+fn wgetrc(original: Option<String>, user_agent: &str) -> String {
+    append_line(original, &format!("user_agent = {user_agent}"))
+}
+
+/// 原有配置末尾加一行（两者都是后出现的设置生效）。
+fn append_line(original: Option<String>, line: &str) -> String {
+    let mut text = original.unwrap_or_default();
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(line);
+    text.push('\n');
+    text
+}
 
 /// 本机对镜像的覆盖（`--index-url`、`--github-release-mirror`、`--python-install-mirror`，
 /// 也可以写在环境变量或 `agent.env` 里）；没有覆盖的为 None。
@@ -214,6 +333,8 @@ pub struct Setup<'a> {
     pub mirrors: &'a Mirrors,
     /// 下载安装脚本用的临时目录。
     pub scratch: &'a Path,
+    /// 下载安装脚本和运行安装脚本时 curl、wget 带的 User-Agent（见模块说明）。
+    pub user_agent: &'a str,
 }
 
 impl Setup<'_> {
@@ -305,11 +426,15 @@ impl Setup<'_> {
         }
         let download = if in_path("curl") {
             let mut curl = tokio::process::Command::new("curl");
-            curl.args(["-fsSL", "-o"]).arg(&script).arg(&url);
+            curl.args(["-fsSL", "-A", self.user_agent, "-o"])
+                .arg(&script)
+                .arg(&url);
             curl
         } else if in_path("wget") {
             let mut wget = tokio::process::Command::new("wget");
-            wget.args(["-q", "-O"]).arg(&script).arg(&url);
+            wget.args(["-q", "-U", self.user_agent, "-O"])
+                .arg(&script)
+                .arg(&url);
             wget
         } else {
             return Err(self.error(
@@ -317,6 +442,20 @@ impl Setup<'_> {
                 format!("curl -fsSL {url}"),
                 "PATH 里没有 curl 或 wget（下载并运行 uv 安装脚本需要其中一个）".to_string(),
             ));
+        };
+        let config_dir = self
+            .scratch
+            .join(format!("user-agent-{}", std::process::id()));
+        let config = match UserAgentConfig::write(config_dir.clone(), self.user_agent).await {
+            Ok(config) => config,
+            Err(e) => {
+                let _ = tokio::fs::remove_dir_all(&config_dir).await;
+                return Err(self.error(
+                    what,
+                    format!("写入 {}", config_dir.display()),
+                    e.to_string(),
+                ));
+            }
         };
         let result = async {
             self.run(what, download).await?;
@@ -328,6 +467,7 @@ impl Setup<'_> {
             if let Some(dir) = self.mirrors.uv_download_url() {
                 install.env("UV_DOWNLOAD_URL", dir);
             }
+            config.apply(&mut install);
             let line = command_line(install.as_std());
             let output = self.run(what, install).await?;
             if !self.uv.exists() {
@@ -341,6 +481,7 @@ impl Setup<'_> {
         }
         .await;
         let _ = tokio::fs::remove_file(&script).await;
+        config.remove().await;
         result
     }
 
@@ -393,4 +534,33 @@ fn command_line(command: &std::process::Command) -> String {
     parts.push(quote(command.get_program()));
     parts.extend(command.get_args().map(quote));
     parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_agent_must_be_printable_ascii_without_quotes_or_backslashes() {
+        assert_eq!(
+            parse_user_agent(" acme-lab sfly-agent/1.0 ").as_deref(),
+            Ok("acme-lab sfly-agent/1.0")
+        );
+        for bad in ["", "  ", "a\"b", "a\\b", "a\nb", "实验室"] {
+            assert!(parse_user_agent(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn config_files_keep_the_original_settings_and_add_the_user_agent_last() {
+        assert_eq!(curlrc(None, "ua/1"), "user-agent = \"ua/1\"\n");
+        assert_eq!(
+            curlrc(Some("proxy = \"http://p:3128\"".into()), "ua/1"),
+            "proxy = \"http://p:3128\"\nuser-agent = \"ua/1\"\n"
+        );
+        assert_eq!(
+            wgetrc(Some("https_proxy = http://p:3128\n".into()), "ua/1"),
+            "https_proxy = http://p:3128\nuser_agent = ua/1\n"
+        );
+    }
 }

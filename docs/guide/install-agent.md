@@ -176,3 +176,15 @@ SFLY_PYTHON_INSTALL_MIRROR=https://mirror.nju.edu.cn/github-release/astral-sh/py
 ```
 
 已经用控制面的镜像生成的项目不会自动改变：把 `pyproject.toml` 里 `[tool.uv]` 的 `python-install-mirror` 和名为 `pypi-mirror` 的索引地址改成同样的值，或者重新 `sfly init`。
+
+### 下载用的 User-Agent
+
+镜像站会封禁 curl、wget 的部分默认 User-Agent（例如中科大对老版本 curl、wget 返回 403，要求换成能看出下载用途或所在机构的值，见 [ustclug/discussions#479](https://github.com/ustclug/discussions/issues/479)）。所以安装脚本下载 Agent、`--dev` 安装 uv，以及 Agent 安装和更新 uv 时，curl、wget 都带 `sfly-agent/<版本>`。uv 官方安装脚本里的 curl、wget 改不了参数，所以运行它时用临时的 `CURL_HOME`、`WGETRC` 配置文件带上同一个 User-Agent，原有的 `~/.curlrc`、`~/.wgetrc` 内容照抄过去。uv 自己发出的请求（下载 Python、安装依赖）带的是 `uv/<版本>`，不受这一项影响。
+
+要换成自己机构的标识，设置 `SFLY_USER_AGENT`（Agent 参数 `--user-agent`，优先级同上）。值只能包含可打印 ASCII 字符，不能有 `"` 和 `\`。和镜像覆盖一样，运行安装脚本时设在 `sh` 前面，会写进 `agent.env`：
+
+```text
+curl -fsSL {{SFLY_URL}}/install.sh | SFLY_USER_AGENT=acme-lab-sfly/1.0 sh -s -- --name <名称>
+```
+
+已经安装过的机器可以在 `agent.env` 里加一行 `SFLY_USER_AGENT=acme-lab-sfly/1.0`，再重启 Agent。

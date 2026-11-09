@@ -306,6 +306,38 @@ describe("install.sh", () => {
 		expect(await readFile(join(dir, "uv.log"), "utf8")).toContain("sfly[cli]==1.2.3");
 	});
 
+	it("下载时 curl 带 sfly 的 User-Agent；SFLY_USER_AGENT 覆盖它并写进 agent.env，不合法时报错", async () => {
+		const curl = (await promisify(execFile)("sh", ["-c", "command -v curl"])).stdout.trim();
+		const log = join(dir, "curl.log");
+		await stub("curl", `echo "$*" >> '${log}'\nexec '${curl}' "$@"`);
+		const binary = `${cp.httpUrl}/agent/binaries/1.2.3/x86_64`;
+		const downloads = async () =>
+			(await readFile(log, "utf8")).split("\n").filter((l) => l.endsWith(binary));
+
+		let run = await install(["--name", "lab-ua", "--no-service"]);
+		expect(run.code, run.stderr).toBe(0);
+		expect(await downloads()).toEqual([expect.stringContaining("-A sfly-agent/1.2.3 ")]);
+
+		await rm(log);
+		run = await install(["--name", "lab-ua", "--no-service"], {
+			SFLY_USER_AGENT: "acme-lab-sfly/1.0",
+		});
+		expect(run.code, run.stderr).toBe(0);
+		expect(await downloads()).toEqual([expect.stringContaining("-A acme-lab-sfly/1.0 ")]);
+		const env = join(home, ".sfly", "agent.env");
+		expect(await readFile(env, "utf8")).toContain("SFLY_USER_AGENT=acme-lab-sfly/1.0\n");
+
+		// 重新运行时沿用 agent.env 里的值。
+		await rm(log);
+		run = await install(["--name", "lab-ua", "--no-service"]);
+		expect(run.code, run.stderr).toBe(0);
+		expect(await downloads()).toEqual([expect.stringContaining("-A acme-lab-sfly/1.0 ")]);
+
+		run = await install(["--name", "lab-ua", "--no-service"], { SFLY_USER_AGENT: 'bad"ua' });
+		expect(run.code).not.toBe(0);
+		expect(run.stderr).toContain("SFLY_USER_AGENT 只能包含可打印 ASCII 字符");
+	});
+
 	it("缺少 --name 时报错退出", async () => {
 		const run = await install(["--no-service"]);
 		expect(run.code).not.toBe(0);

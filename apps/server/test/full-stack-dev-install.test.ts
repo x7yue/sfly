@@ -142,6 +142,8 @@ describe("全栈：install.sh --dev", () => {
 		const stdout = await installDev(plane);
 
 		expect(mirror.uvInstalls()).toBe(1);
+		// 下载安装脚本和安装脚本里下载 uv 都带 sfly 的 User-Agent（镜像站会封禁 curl 的默认 User-Agent）。
+		expect(mirror.uvUserAgents()).toEqual([`sfly-agent/${version}`, `sfly-agent/${version}`]);
 		expect(await sflyVersion()).toBe(`sfly ${version}`);
 		// sfly 只从控制面的索引解析，依赖走 PyPI 镜像。
 		expect(pypi.requests).toContain("/simple/jsonschema/");
@@ -161,7 +163,7 @@ describe("全栈：install.sh --dev", () => {
 		expect(await sflyVersion()).toBe(`sfly ${newVersion}`);
 	}, 300_000);
 
-	it("环境变量覆盖镜像：uv 和 sfly CLI 从覆盖的地址安装，覆盖值写进 agent.env，重新运行时保留", async () => {
+	it("环境变量覆盖镜像和 User-Agent：uv 和 sfly CLI 从覆盖的地址安装，覆盖值写进 agent.env，重新运行时保留", async () => {
 		const [plane] = planes as [TestControlPlane];
 		const localMirror = await startReleaseMirror();
 		const localPypi = await startPypiStub([dependencyWheel("jsonschema", "4.23.0")]);
@@ -175,9 +177,11 @@ describe("全栈：install.sh --dev", () => {
 					SFLY_GITHUB_RELEASE_MIRROR: localMirror.url,
 					SFLY_INDEX_URL: localPypi.indexUrl,
 					SFLY_PYTHON_INSTALL_MIRROR: pythonMirror,
+					SFLY_USER_AGENT: "acme-lab-sfly/1.0",
 				},
 			});
 			expect(localMirror.uvInstalls()).toBe(1);
+			expect(localMirror.uvUserAgents()).toEqual(["acme-lab-sfly/1.0", "acme-lab-sfly/1.0"]);
 			expect(localPypi.requests).toContain("/simple/jsonschema/");
 			expect(await sflyVersion(otherHome)).toBe(`sfly ${version}`);
 			// 没有访问控制面下发的镜像。
@@ -186,6 +190,7 @@ describe("全栈：install.sh --dev", () => {
 				`SFLY_INDEX_URL=${localPypi.indexUrl}`,
 				`SFLY_GITHUB_RELEASE_MIRROR=${localMirror.url}`,
 				`SFLY_PYTHON_INSTALL_MIRROR=${pythonMirror}`,
+				"SFLY_USER_AGENT=acme-lab-sfly/1.0",
 			];
 			const envFile = join(otherHome, ".sfly/agent.env");
 			const lines = async () => (await readFile(envFile, "utf8")).split("\n");
