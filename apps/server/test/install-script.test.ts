@@ -46,6 +46,11 @@ describe("install.sh", () => {
 		await mkdir(stubs);
 		// systemctl 的桩：记录参数。
 		await stub("systemctl", `echo "$*" >> '${join(dir, "systemctl.log")}'`);
+		// 默认是 x86_64 的 Linux，与跑测试的机器无关（CI 也在 aarch64 上跑）；要别的架构的用例自己覆盖。
+		await stub(
+			"uname",
+			"case $1 in -m) echo x86_64 ;; -n) echo lab.example.com ;; *) echo Linux ;; esac",
+		);
 	});
 	afterEach(async () => {
 		await rm(dir, { recursive: true, force: true });
