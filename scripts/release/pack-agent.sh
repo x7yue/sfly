@@ -2,8 +2,8 @@
 # 构建并打包 Agent 发布物（ADR 0010）：musl 静态链接，不依赖目标机器的 glibc，老版本系统也能运行。
 #   scripts/release/pack-agent.sh <target>
 #     target：x86_64-unknown-linux-musl 或 aarch64-unknown-linux-musl
-# 发布时在与 target 同架构的机器上运行（CI 分别用 x86_64 和 arm64 runner），这样能直接运行产物做检查。
-# 在别的架构上交叉编译时（CI 的检查、本机的 `pnpm pack:agents`，给 test:image 用）用 rust-lld 链接
+# 在与 target 同架构的机器上运行时，直接运行产物做检查（--version，以及在 CentOS 7 里运行）。
+# 在别的架构上交叉编译时（发版与 CI 的 aarch64，只有 x86_64 的 runner；本机的 `pnpm pack:agents`）用 rust-lld 链接
 # （Agent 没有 C 依赖），不能运行产物，只检查 ELF 的架构。
 # 产物在 out/agent/：sfly-agent-<版本>-<target>.tar.gz（内含 sfly-agent）及同名 .sha256。
 set -euo pipefail
