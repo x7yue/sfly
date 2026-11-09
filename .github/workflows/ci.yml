@@ -14,11 +14,9 @@ concurrency:
 # 每一步都只调用仓库根目录的统一命令（与本地完全一致，见 package.json scripts）。
 jobs:
   check:
-    # 账户账单里的 Actions 额度用尽后托管 runner 不再启动，CI 接到自托管 runner 上（标签 `sfly-ci`）：
-    # 一台 x86_64 Linux 开发机（runner 以单独的系统用户运行，工具链装在它自己的家目录，不动开发用户的环境），
-    # 和一台 Mac mini（arm64 Linux 容器里的 runner，工作目录挂在不区分大小写的 APFS 上，
-    # 所以仓库里不能有只差大小写的路径，见 scripts/tests/test_path_case.py）。各步骤与架构无关。
-    runs-on: [self-hosted, linux, sfly-ci]
+    # 账户账单里的 Actions 额度用尽后托管 runner 不再启动，CI 接到自托管 runner 上：一台 x86_64 Linux 开发机，
+    # runner 以单独的系统用户运行（工具链装在它自己的家目录，不动开发用户的环境），标签 `sfly-ci`。
+    runs-on: [self-hosted, linux, x64, sfly-ci]
     timeout-minutes: 60
     services:
       postgres:
@@ -27,11 +25,9 @@ jobs:
           POSTGRES_USER: sfly
           POSTGRES_PASSWORD: sfly
           POSTGRES_DB: sfly
-        # 宿主机端口随机分配：runner 所在的机器上可能已经有占用 5432 的 PostgreSQL。写成 0:5432 而不是 5432：
-        # Docker Desktop（Mac mini 的 runner）的 API 代理对没写宿主端口的发布会另在 macOS 一侧分配端口并报给
-        # `docker port`，与虚拟机里 dockerd 实际发布的端口不同，host 网络里的 runner 连不上；写 0 时两边一致。
+        # 宿主机端口随机分配：runner 所在的机器上可能已经有占用 5432 的 PostgreSQL。
         ports:
-          - "0:5432"
+          - 5432
         options: >-
           --health-cmd "pg_isready -U sfly"
           --health-interval 5s
@@ -103,7 +99,7 @@ jobs:
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
   # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致。
   e2e:
-    runs-on: [self-hosted, linux, sfly-ci]
+    runs-on: [self-hosted, linux, x64, sfly-ci]
     timeout-minutes: 45
     container:
       image: mcr.microsoft.com/playwright:v1.64.1-noble

@@ -1,7 +1,6 @@
-"""仓库里不能有只差大小写的路径：macOS 默认的 APFS 不区分大小写，CI 的 runner
-也可能把工作目录放在这样的文件系统上。同一目录下去掉扩展名后只差大小写的文件也不行：
-`import "./Timeline"` 会先找 `Timeline.ts`，不区分大小写时命中 `timeline.ts`，
-导入了另一个模块（Typecheck 与 vite build 失败）。"""
+"""仓库里不能有只差大小写的路径：macOS 默认的 APFS 不区分大小写，在 Mac 上检出的仓库会坏掉。
+同一目录下去掉扩展名后只差大小写的文件也不行：`import "./Timeline"` 会先找 `Timeline.ts`，
+不区分大小写时命中 `timeline.ts`，导入了另一个模块（Typecheck 与 vite build 失败）。"""
 
 from __future__ import annotations
 

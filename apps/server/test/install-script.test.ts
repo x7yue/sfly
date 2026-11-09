@@ -46,7 +46,7 @@ describe("install.sh", () => {
 		await mkdir(stubs);
 		// systemctl 的桩：记录参数。
 		await stub("systemctl", `echo "$*" >> '${join(dir, "systemctl.log")}'`);
-		// 默认是 x86_64 Linux 上的普通用户，与跑测试的机器无关（CI 也在 aarch64 上、以 root 跑）；
+		// 默认是 x86_64 Linux 上的普通用户，与跑测试的机器无关（比如在 aarch64 上或以 root 跑测试）；
 		// 要别的架构或 root 的用例自己覆盖。
 		await stub(
 			"uname",

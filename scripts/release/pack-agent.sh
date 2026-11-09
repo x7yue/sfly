@@ -52,7 +52,7 @@ if $native; then
 		exit 1
 	fi
 	# 在老系统（CentOS 7，glibc 2.17）里能运行；没有 docker 时跳过。二进制从 stdin 传进容器，不用挂载：
-	# docker 守护进程可能不在本机文件系统上（Mac mini 的 runner 容器用 Docker Desktop，构建产物在容器的卷里）。
+	# docker 守护进程可能不在本机文件系统上（比如在容器里构建、用宿主机的 Docker）。
 	if command -v docker >/dev/null; then
 		docker run --rm -i centos:7 sh -c 'cat >/tmp/sfly-agent && chmod +x /tmp/sfly-agent && /tmp/sfly-agent --version' \
 			<"$bin" >/dev/null
