@@ -7,6 +7,9 @@ name: Release
 #   - SDK 运行时 wheel、SHA256SUMS，作为 Release 附件
 # 不使用 Actions Artifacts（私有仓库有额度限制）：各 job 直接上传到草稿 Release，全部成功后再发布。
 # 失败后可以直接重新运行：草稿 Release 会被复用，附件和镜像标签会被覆盖。
+# 与 CI 一样跑在自托管 runner 上（ci.yml）：账户账单里的 Actions 额度用尽后托管 runner 不再启动（v0.1.1 因此没有发布）。
+# 只有一台 x86_64 的 runner：aarch64 的 Agent 交叉编译，不运行产物，只检查 ELF 的架构（pack-agent.sh）；
+# 控制面镜像的 Dockerfile 里没有 RUN，arm64 镜像不需要 QEMU。
 on:
   push:
     tags: ["v*"]
@@ -27,7 +30,7 @@ env:
 jobs:
   # tag 与各处版本号一致、提交在 main 上且 CI 已通过，然后创建（或复用）草稿 Release。
   prepare:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, sfly-ci]
     timeout-minutes: 45
     permissions:
       contents: write
@@ -68,12 +71,8 @@ jobs:
     needs: prepare
     strategy:
       matrix:
-        include:
-          - runner: ubuntu-24.04
-            target: x86_64-unknown-linux-musl
-          - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-    runs-on: ${{ matrix.runner }}
+        target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
+    runs-on: [self-hosted, linux, x64, sfly-ci]
     timeout-minutes: 30
     permissions:
       contents: write
@@ -98,7 +97,7 @@ jobs:
   # 控制面镜像带着 agent job 上传到草稿 Release 的两个架构的 Agent。
   image:
     needs: [prepare, agent]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, sfly-ci]
     timeout-minutes: 30
     permissions:
       contents: write
@@ -173,7 +172,7 @@ jobs:
   # 汇总校验和，发布 Release。
   publish:
     needs: [prepare, agent, image]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, sfly-ci]
     timeout-minutes: 15
     permissions:
       contents: write
