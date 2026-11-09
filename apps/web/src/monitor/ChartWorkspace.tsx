@@ -82,26 +82,6 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 	const toolbar = useRef<HTMLDivElement>(null);
 	const width = useWidth(scroller);
 
-	// 每个分组一个序列查询（显示的那次尝试）；缩放时按缩放范围查询，得到更细的桶。
-	const seriesResults = useQueries({
-		queries: groups.map((g) =>
-			seriesQuery(
-				run.id,
-				{
-					chain_instance_id: g.ref.chainInstanceId,
-					node_id: g.ref.nodeId,
-					attempt: g.attempt.attempt,
-					...(zoom && {
-						from: iso(Math.floor(zoom.start / 1000) * 1000),
-						to: iso(Math.ceil(zoom.end / 1000) * 1000),
-					}),
-				},
-				!!g.runAttempt?.ended_at,
-			),
-		),
-	});
-	const seriesByKey = new Map(groups.map((g, i) => [g.key, seriesResults[i]]));
-
 	const query = search.trim().toLowerCase();
 	const matches = (text: string) => text.toLowerCase().includes(query);
 	const inFilter = (key: string) => !filter || filter.has(key);
@@ -124,6 +104,54 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 	const defaultOpen = (g: ChartGroup) => !!filter || !!query || isActive(g) || isFailed(g);
 	const isOpen = (key: string, fallback: boolean) => opened[key] ?? fallback;
 	const platformOpen = isOpen(PLATFORM_KEY, !!filter || !!query);
+
+	// 序列查询（显示的那次尝试；缩放时按缩放范围查询，得到更细的桶），每张图表只查它引用的指标（#153）：
+	// 每个分组查主指标（组标题、筛选菜单用，只有一个序列，折叠时也查），展开的分组里显示的每张图表各查一次。
+	// 查询耗时与点数成正比，按图表查询时只取决于一张图表的序列数，而不是整个节点的。
+	const requests: SeriesRequest[] = [
+		...groups.flatMap((g) =>
+			g.entry.primary_metric ? [{ group: g, chart: null, metrics: [g.entry.primary_metric] }] : [],
+		),
+		...shown.flatMap(({ group, charts }) =>
+			isOpen(group.key, defaultOpen(group))
+				? charts.map((c) => ({ group, chart: c.title, metrics: c.metrics }))
+				: [],
+		),
+	];
+	// 只引用主指标的图表与组标题是同一个查询：按「分组 + 指标」去重后再查询。
+	const unique = [...new Map(requests.map((r) => [requestKey(r), r])).values()];
+	const results = useQueries({
+		queries: unique.map(({ group: g, metrics }) =>
+			seriesQuery(
+				run.id,
+				{
+					chain_instance_id: g.ref.chainInstanceId,
+					node_id: g.ref.nodeId,
+					attempt: g.attempt.attempt,
+					metrics: metrics.join(","),
+					...(zoom && {
+						from: iso(Math.floor(zoom.start / 1000) * 1000),
+						to: iso(Math.ceil(zoom.end / 1000) * 1000),
+					}),
+				},
+				!!g.runAttempt?.ended_at,
+			),
+		),
+	});
+	const resultOf = new Map(unique.map((r, i) => [requestKey(r), results[i] as SeriesResult]));
+	const seriesByGroup = new Map<string, GroupSeries>();
+	for (const request of requests) {
+		const { group, chart } = request;
+		const result = resultOf.get(requestKey(request)) as SeriesResult;
+		let entry = seriesByGroup.get(group.key);
+		if (!entry) {
+			entry = { primary: undefined, charts: new Map(), loaded: [] };
+			seriesByGroup.set(group.key, entry);
+		}
+		if (chart === null) entry.primary = result.data;
+		else entry.charts.set(chart, result);
+		if (result.data && !entry.loaded.includes(result.data)) entry.loaded.push(result.data);
+	}
 
 	const changeFilter = (next: ReadonlySet<string> | null, open: Record<string, boolean> = {}) => {
 		actions.setFilter(next);
@@ -192,7 +220,7 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 					label={filterLabel}
 					groups={groups}
 					filter={filter}
-					hasData={(g) => groupHasData(g, seriesByKey.get(g.key)?.data)}
+					hasData={(g) => groupHasData(g, seriesByGroup.get(g.key)?.loaded ?? [])}
 					onChange={(next) => changeFilter(next)}
 				/>
 				{filter && (
@@ -264,8 +292,7 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 					key={group.key}
 					group={group}
 					charts={charts}
-					series={seriesByKey.get(group.key)?.data}
-					loading={!!seriesByKey.get(group.key)?.isPending}
+					series={seriesByGroup.get(group.key) ?? NO_SERIES}
 					open={isOpen(group.key, defaultOpen(group))}
 					onToggle={(open) => setOpened((o) => ({ ...o, [group.key]: open }))}
 					onlyThis={
@@ -298,6 +325,26 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 		</section>
 	);
 }
+
+type SeriesResult = { data?: MetricSeries; isPending: boolean };
+
+/** 一个序列查询：分组的主指标（chart 为 null），或一张图表（按标题）。 */
+interface SeriesRequest {
+	group: ChartGroup;
+	chart: string | null;
+	metrics: readonly string[];
+}
+
+/** 一个分组的序列查询结果：主指标、每张图表（按标题；分组折叠时没有）、已加载的全部结果。 */
+interface GroupSeries {
+	primary: MetricSeries | undefined;
+	charts: Map<string, SeriesResult>;
+	loaded: MetricSeries[];
+}
+
+const requestKey = (r: SeriesRequest) => `${r.group.key}\u0000${r.metrics.join(",")}`;
+
+const NO_SERIES: GroupSeries = { primary: undefined, charts: new Map(), loaded: [] };
 
 function Notice({ children }: { children: React.ReactNode }) {
 	return (
@@ -375,7 +422,6 @@ function NodeGroup({
 	group,
 	charts,
 	series,
-	loading,
 	open,
 	onToggle,
 	onlyThis,
@@ -390,8 +436,7 @@ function NodeGroup({
 	group: ChartGroup;
 	onAttempt: (attempt: number) => void;
 	charts: CatalogNode["charts"];
-	series: MetricSeries | undefined;
-	loading: boolean;
+	series: GroupSeries;
 	open: boolean;
 	onToggle: (open: boolean) => void;
 	onlyThis: (() => void) | undefined;
@@ -406,21 +451,22 @@ function NodeGroup({
 	const units = new Map(entry.metrics.map((m) => [m.name, m.unit]));
 	const labeled = new Set(entry.metrics.filter(isLabeled).map((m) => m.name));
 	const window = runAttempt ? chartWindow(runAttempt, range, now) : null;
-	// 目录里的摘要只在写库时更新，序列查询（含内存里的点）可能更新：截断与序列超限取两者之一。
+	// 目录里的摘要只在写库时更新，序列查询（含内存里的点）可能更新：截断与序列超限取任一。
 	const loss: MetricDataLoss = {
-		truncated: attempt.truncated || !!series?.truncated,
-		series_capped: attempt.series_capped || !!series?.series_capped,
+		truncated: attempt.truncated || series.loaded.some((s) => s.truncated),
+		series_capped: attempt.series_capped || series.loaded.some((s) => s.series_capped),
 		dropped_points: attempt.dropped_points,
 	};
-	const empty = !runAttempt?.started_at
-		? "节点尚未开始 · 暂无数据"
-		: !window || zoomed
-			? "所选时间段内无数据"
-			: loading
-				? "正在加载…"
-				: runAttempt.ended_at
-					? "这次尝试没有上报数据"
-					: "还没有上报数据";
+	const empty = (loading: boolean) =>
+		!runAttempt?.started_at
+			? "节点尚未开始 · 暂无数据"
+			: !window || zoomed
+				? "所选时间段内无数据"
+				: loading
+					? "正在加载…"
+					: runAttempt.ended_at
+						? "这次尝试没有上报数据"
+						: "还没有上报数据";
 	const title = `${entry.package}/${entry.node}`;
 	return (
 		<GroupShell
@@ -442,7 +488,7 @@ function NodeGroup({
 					{entry.primary_metric && (
 						<PrimaryMetric
 							variant="chip"
-							data={primaryMetricData(entry.primary_metric, entry, attempt, series)}
+							data={primaryMetricData(entry.primary_metric, entry, attempt, series.primary)}
 						/>
 					)}
 					<span className="flex-1" />
@@ -491,25 +537,28 @@ function NodeGroup({
 						<NodeSummary group={group} now={now} />
 					</div>
 				)}
-				{charts.map((chart) => (
-					<MetricChart
-						key={chart.title}
-						title={chart.title}
-						type={chart.type}
-						unit={units.get(chart.metrics[0] ?? "") ?? ""}
-						lines={chartLines(chart.metrics, entry.metrics, series?.series)}
-						bucketSeconds={series?.bucket_seconds ?? 1}
-						window={window}
-						empty={empty}
-						dense={dense}
-						truncated={loss.truncated}
-						notice={
-							loss.series_capped && chart.metrics.some((m) => labeled.has(m)) ? (
-								<Badge {...SERIES_CAPPED} className="h-4 px-1" />
-							) : undefined
-						}
-					/>
-				))}
+				{charts.map((chart) => {
+					const result = series.charts.get(chart.title);
+					return (
+						<MetricChart
+							key={chart.title}
+							title={chart.title}
+							type={chart.type}
+							unit={units.get(chart.metrics[0] ?? "") ?? ""}
+							lines={chartLines(chart.metrics, entry.metrics, result?.data?.series)}
+							bucketSeconds={result?.data?.bucket_seconds ?? 1}
+							window={window}
+							empty={empty(result?.isPending ?? true)}
+							dense={dense}
+							truncated={loss.truncated}
+							notice={
+								loss.series_capped && chart.metrics.some((m) => labeled.has(m)) ? (
+									<Badge {...SERIES_CAPPED} className="h-4 px-1" />
+								) : undefined
+							}
+						/>
+					);
+				})}
 			</div>
 		</GroupShell>
 	);

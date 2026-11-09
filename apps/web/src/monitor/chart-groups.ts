@@ -31,9 +31,10 @@ export interface ChartGroup {
 	chainName: string | null;
 }
 
-/** 有数据的节点：目录摘要或序列里有点。 */
-export const groupHasData = (g: ChartGroup, series: MetricSeries | undefined) =>
-	g.attempt.metrics.some((m) => m.points > 0) || !!series?.series.some((s) => s.buckets.length > 0);
+/** 有数据的节点：目录摘要或这个节点已加载的序列查询里有点。 */
+export const groupHasData = (g: ChartGroup, loaded: readonly MetricSeries[]) =>
+	g.attempt.metrics.some((m) => m.points > 0) ||
+	loaded.some((r) => r.series.some((s) => s.buckets.length > 0));
 
 /** 还会继续上报指标的节点（任务在 Agent 上）。 */
 export const isActive = (g: ChartGroup) => isOnAgentStatus(g.node.status);

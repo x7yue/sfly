@@ -80,6 +80,42 @@ test("按节点分组，顺序与链上执行顺序一致；默认只展开执�
 	await expect(ws.getByRole("figure")).toHaveCount(0);
 });
 
+test("每张图表只查它引用的指标；折叠的组只查组标题上的主指标（#153）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	// 每个节点请求过的 metrics 参数。
+	const requested = new Map<string, Set<string | null>>();
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		if (!url.pathname.endsWith("/metrics/series")) return;
+		const node = url.searchParams.get("node_id") ?? "";
+		const set = requested.get(node) ?? new Set();
+		set.add(url.searchParams.get("metrics"));
+		requested.set(node, set);
+	});
+	const metricsOf = (node: string) => [...(requested.get(node) ?? [])].sort();
+	await openMonitor(page, clock, runId);
+	const fetch = group(page, "fetch");
+
+	// fetch 成功后折叠：只查主指标；执行中的 verify 展开：两张默认图表各查一次（level 也是主指标）。
+	await expect(fetch.locator('[data-primary-metric="latency_ms"]')).toContainText("50ms");
+	await expect(chart(page, "verify", "total")).toBeVisible();
+	await expect.poll(() => metricsOf("verify")).toEqual(["level", "total"]);
+	expect(metricsOf("fetch")).toEqual(["latency_ms"]);
+
+	// 展开 fetch：每张图表按它引用的指标查询，不再有查全部指标的请求。
+	await groupToggle(page, "fetch").click();
+	await expect(chart(page, "fetch", "延迟").locator("[data-series]")).toHaveCount(2);
+	await expect
+		.poll(() => metricsOf("fetch"))
+		.toEqual(["errors", "latency_ms", "latency_ms,p99_ms", "requests", "rps"]);
+	await expect(chart(page, "fetch", "吞吐").locator("[data-series] path")).toHaveCount(2);
+});
+
 test("四种图表类型与多序列图例；横轴是节点实际运行的时段并标出起止时间；运行中实时追加", async ({
 	page,
 	controlPlane,
