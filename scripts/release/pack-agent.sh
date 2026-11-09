@@ -29,7 +29,7 @@ if ! $native; then
 	export "$linker_var=${!linker_var:-rust-lld}"
 fi
 CARGO_PROFILE_RELEASE_STRIP=symbols cargo build --release --locked -p sfly-agent --target "$target"
-bin=target/$target/release/sfly-agent
+bin=${CARGO_TARGET_DIR:-target}/$target/release/sfly-agent
 
 # 先取完整输出再检查：`readelf | grep -q` 在 pipefail 下会因 SIGPIPE 把匹配到误报为失败。
 dynamic=$(readelf --dynamic "$bin")
