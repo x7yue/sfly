@@ -1,6 +1,6 @@
 {
 	"name": "@sfly/server",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"private": true,
 	"type": "module",
 	"description": "sfly 控制面：HTTP API、SSE、引擎、Agent 网关、节点包仓库",

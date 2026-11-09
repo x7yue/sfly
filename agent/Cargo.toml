@@ -1,6 +1,6 @@
 [package]
 name = "sfly-agent"
-version = "0.1.1"
+version = "0.1.2"
 description = "sfly Agent：连接控制面、安装节点包、执行任务"
 edition.workspace = true
 license.workspace = true
