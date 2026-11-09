@@ -121,6 +121,29 @@ test("选中是中性高亮，只有相连的连线流动；端口常显：已�
 	await expect(port("dispatch", "source", "dispatch")).toHaveAttribute("data-state", "connected");
 });
 
+test("连续快速点击缩放按钮时每次都生效：上一次的动画没结束，下一次从它的目标继续缩放", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const before = await zoomLevel(page);
+	// 同一个事件循环里连点：前一次 150 ms 的动画都还没开始推进。
+	const clickTimes = (label: string, times: number) =>
+		dock(page)
+			.getByRole("button", { name: label })
+			.evaluate((button, n) => {
+				for (let i = 0; i < n; i++) (button as HTMLButtonElement).click();
+			}, times);
+
+	await clickTimes("缩小", 2);
+	await expect.poll(() => zoomLevel(page)).toBe(Math.round(before / 1.2 / 1.2));
+	await clickTimes("缩小", 12);
+	await expect.poll(() => zoomLevel(page)).toBe(30);
+	await clickTimes("放大", 2);
+	await expect.poll(() => zoomLevel(page)).toBe(Math.round(30 * 1.2 * 1.2));
+});
+
 test("语义缩放：缩小后卡片只留关键信息，屏幕上的文字不小于 11px；缩放有下限", async ({
 	page,
 	controlPlane,
