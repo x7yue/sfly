@@ -449,33 +449,73 @@ fn remove_stale_venvs(base: &Path) {
     }
 }
 
-/// 以子进程方式运行的真实 Agent。测试结束时先发 SIGTERM，让它终止手上任务的执行器后退出
-/// （执行器自成进程组，直接 SIGKILL 掉 Agent 会留下孤儿执行器，#113）；超时仍未退出再强制杀掉。
+/// 以子进程方式运行的真实 Agent（[`spawn_agent`]）与它的工作目录。
 pub struct AgentProcess {
-    pub child: tokio::process::Child,
+    pub child: AgentChild,
     pub work_dir: tempfile::TempDir,
 }
 
 /// 测试结束时等 Agent 收到 SIGTERM 后自行退出的上限（Agent 默认的终止宽限期是 10 秒）。
 const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
-impl Drop for AgentProcess {
+/// 运行中的 Agent 进程（[`agent_command`] 启动，自成进程组）。被丢弃时先发 SIGTERM，让它终止手上任务的执行器
+/// 后退出（执行器自成进程组，直接 SIGKILL 掉 Agent 会留下孤儿执行器，#113）；然后杀掉 Agent 的整个进程组并等它
+/// 结束：Agent 准备环境时启动的 uv（下载 Python、建 venv）在这个组里，只杀 Agent 时它们成了孤儿，在测试的
+/// 临时目录删掉之后还在往里写，每次运行都留下上百 MB，填满 /tmp，还占着 CPU 拖慢后面的测试。
+pub struct AgentChild {
+    child: tokio::process::Child,
+    /// 进程组号，就是 Agent 的进程号；Agent 被 kill() 或自己退出、已经收尸后 `child.id()` 为空，组里的进程可能还在。
+    group: Option<u32>,
+}
+
+impl std::ops::Deref for AgentChild {
+    type Target = tokio::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+
+impl std::ops::DerefMut for AgentChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+
+impl Drop for AgentChild {
     fn drop(&mut self) {
-        #[cfg(unix)]
-        if let Some(pid) = self.child.id() {
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
-            );
-            let deadline = std::time::Instant::now() + AGENT_STOP_TIMEOUT;
-            while std::time::Instant::now() < deadline {
-                if !matches!(self.child.try_wait(), Ok(None)) {
-                    return;
-                }
+        use nix::sys::signal::{Signal, kill, killpg};
+        use nix::unistd::Pid;
+        let Some(group) = self.group else {
+            return;
+        };
+        let group = Pid::from_raw(group as i32);
+        let deadline = std::time::Instant::now() + AGENT_STOP_TIMEOUT;
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = kill(group, Signal::SIGTERM);
+            while matches!(self.child.try_wait(), Ok(None)) && std::time::Instant::now() < deadline
+            {
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
-        // 之后 child 被丢弃时 kill_on_drop 强制杀掉。
+        let _ = killpg(group, Signal::SIGKILL);
+        // 等组里的进程都结束（被杀的孤儿由 init 收尸）再让调用方删临时目录。
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while killpg(group, None).is_ok() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+}
+
+/// `agent_command(...)....spawn_agent()`：启动 Agent，得到被丢弃时连同它的子进程一起结束的 [`AgentChild`]。
+pub trait SpawnAgent {
+    fn spawn_agent(&mut self) -> AgentChild;
+}
+
+impl SpawnAgent for tokio::process::Command {
+    fn spawn_agent(&mut self) -> AgentChild {
+        let child = self.spawn().expect("spawn sfly-agent");
+        let group = child.id();
+        AgentChild { child, group }
     }
 }
 
@@ -514,6 +554,8 @@ pub fn agent_command(home: &Path) -> tokio::process::Command {
         .env("SFLY_HOME", home)
         .env("SFLY_UV", "uv")
         .stdout(Stdio::null())
+        // 自成进程组：测试结束时连同 Agent 启动的 uv 等子进程一起杀掉（[`AgentChild`]）。
+        .process_group(0)
         .kill_on_drop(true);
     command
 }
@@ -555,7 +597,7 @@ pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
         command.stderr(Stdio::piped());
     }
     AgentProcess {
-        child: command.spawn().expect("spawn sfly-agent"),
+        child: command.spawn_agent(),
         work_dir,
     }
 }
