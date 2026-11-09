@@ -10,7 +10,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 
-use support::{FakeControlPlane, WAIT, agent_command, python_interpreter, stub_venv};
+use support::{FakeControlPlane, SpawnAgent, WAIT, agent_command, python_interpreter, stub_venv};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// 等到路径出现。
@@ -50,9 +50,7 @@ async fn venv_work_dir_and_dev_socket_default_to_sfly_home_wherever_the_agent_st
     std::fs::create_dir_all(&cwd).unwrap();
     let cp = FakeControlPlane::start().await;
 
-    let _agent = agent_in(&home, &cwd, &cp, &dir.path().join("uv-cache"))
-        .spawn()
-        .unwrap();
+    let _agent = agent_in(&home, &cwd, &cp, &dir.path().join("uv-cache")).spawn_agent();
     cp.hello(0).await;
     wait_exists(&home.join("venv/bin/python")).await;
     wait_exists(&home.join("work/agent.sock")).await;
@@ -71,8 +69,7 @@ async fn sfly_home_defaults_to_dot_sfly_in_the_home_directory() {
     let _agent = command
         .env_remove("SFLY_HOME")
         .env("HOME", &user)
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     wait_exists(&user.join(".sfly/venv/bin/python")).await;
     wait_exists(&user.join(".sfly/work/agent.sock")).await;
@@ -96,7 +93,7 @@ async fn agent_env_provides_settings_and_command_line_and_environment_override_i
     .unwrap();
 
     // 只有 agent.env：控制面地址、名称、槽位和 venv 都来自它。
-    let mut first = agent_command(&home).spawn().unwrap();
+    let mut first = agent_command(&home).spawn_agent();
     let hello = cp.hello(0).await;
     assert_eq!((hello.name.as_str(), hello.slots), ("from-file", 3));
     assert!(
@@ -112,8 +109,7 @@ async fn agent_env_provides_settings_and_command_line_and_environment_override_i
     let _second = agent_command(&home)
         .args(["--name", "from-cli"])
         .env("SFLY_SLOTS", "5")
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     let hello = cp.hello(1).await;
     assert_eq!((hello.name.as_str(), hello.slots), ("from-cli", 5));
 }
@@ -133,8 +129,7 @@ async fn shared_venv_is_created_only_after_welcome() {
         .args(["--name", "agent-late", "--python", &python_interpreter()])
         .env("UV_CACHE_DIR", dir.path().join("uv-cache"))
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
 
     // 控制面不可达：Agent 重试了两次连接，venv 仍未创建。
     let mut stderr = BufReader::new(agent.stderr.take().unwrap()).lines();

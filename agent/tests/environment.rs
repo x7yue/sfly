@@ -22,7 +22,9 @@ use support::mirror::ReleaseMirror;
 use support::packages::{
     HttpFixture, dependency_wheel, fresh_venv, package_task, publish, venv_of,
 };
-use support::{FakeControlPlane, WAIT, agent_command, stub_task, stub_venv};
+use support::{
+    AgentChild, FakeControlPlane, SpawnAgent, WAIT, agent_command, stub_task, stub_venv,
+};
 use tokio::io::AsyncReadExt;
 
 /// 环境准备失败时的退出码（EX_CONFIG）。
@@ -46,7 +48,7 @@ async fn run_echo(cp: &FakeControlPlane, task_id: &str) {
 }
 
 /// 等 Agent 退出，返回退出码和标准错误。
-async fn exit_of(mut child: tokio::process::Child) -> (Option<i32>, String) {
+async fn exit_of(mut child: AgentChild) -> (Option<i32>, String) {
     let mut stderr = String::new();
     let mut pipe = child.stderr.take().unwrap();
     let status = tokio::time::timeout(WAIT * 3, async {
@@ -77,8 +79,7 @@ async fn without_uv_the_agent_installs_it_from_the_release_mirror_into_sfly_home
         .env_remove("SFLY_UV")
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     run_echo(&cp, "task-1").await;
     let uv = home.join("bin/uv");
@@ -95,8 +96,7 @@ async fn without_uv_the_agent_installs_it_from_the_release_mirror_into_sfly_home
         .env_remove("SFLY_UV")
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(1).await;
     run_echo(&cp, "task-2").await;
     assert_eq!(mirror.http.count(mirror.installer_path()), 1);
@@ -125,8 +125,7 @@ async fn installing_uv_sends_the_sfly_user_agent_which_agent_env_can_replace() {
         .env_remove("SFLY_USER_AGENT")
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     run_echo(&cp, "task-1").await;
     let default = Some(format!("sfly-agent/{}", sfly_agent::AGENT_VERSION));
@@ -143,8 +142,7 @@ async fn installing_uv_sends_the_sfly_user_agent_which_agent_env_can_replace() {
         .env_remove("SFLY_USER_AGENT")
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(1).await;
     run_echo(&cp, "task-2").await;
     let both = vec![default, Some("acme-lab-sfly/1.0".to_string())];
@@ -176,8 +174,7 @@ async fn with_uv_specified_the_agent_neither_installs_nor_modifies_it() {
         .arg(&custom)
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     run_echo(&cp, "task-1").await;
     assert_eq!(mirror.http.requests(), Vec::<String>::new(), "没有访问镜像");
@@ -200,8 +197,7 @@ async fn shared_venv_is_created_with_python_3_13_downloaded_from_the_release_mir
 
     let _agent = agent(&home, &cp, "agent-python")
         .envs(mirror.python_env(&dir.path().join("pythons")))
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     let venv_python = home.join("venv/bin/python");
     let deadline = tokio::time::Instant::now() + WAIT * 3;
@@ -243,8 +239,7 @@ async fn node_package_dependencies_come_from_the_distributed_pypi_mirror_unless_
     let mut first = agent(venv.path(), &cp, "agent-pypi")
         .arg("--venv")
         .arg(venv_of(&venv))
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     cp.assign(task("task-1")).await;
     let (result, _) = cp.result("task-1").await;
@@ -259,8 +254,7 @@ async fn node_package_dependencies_come_from_the_distributed_pypi_mirror_unless_
         .arg("--venv")
         .arg(venv_of(&venv))
         .args(["--index-url", &local.index_url()])
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(1).await;
     cp.assign(task("task-2")).await;
     let (result, _) = cp.result("task-2").await;
@@ -284,8 +278,7 @@ async fn unavailable_uv_mirror_exits_with_78_and_reports_the_command_output_and_
     let child = agent(&home, &cp, "agent-no-uv")
         .env_remove("SFLY_UV")
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     let (code, stderr) = exit_of(child).await;
     assert_eq!(code, Some(ENV_FAILURE), "{stderr}");
     let installer = format!(
@@ -308,8 +301,7 @@ async fn missing_uv_exits_with_78() {
         .arg("--uv")
         .arg(&missing)
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     let (code, stderr) = exit_of(child).await;
     assert_eq!(code, Some(ENV_FAILURE), "{stderr}");
     assert!(stderr.contains(&missing.display().to_string()), "{stderr}");
@@ -327,8 +319,7 @@ async fn venv_creation_failure_exits_with_78_and_reports_the_command_output_and_
     let child = agent(&home, &cp, "agent-no-python")
         .envs(mirror.python_env(&dir.path().join("pythons")))
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     let (code, stderr) = exit_of(child).await;
     assert_eq!(code, Some(ENV_FAILURE), "{stderr}");
     assert!(stderr.contains("venv"), "失败的命令：{stderr}");
@@ -392,8 +383,7 @@ async fn local_release_and_python_mirrors_in_agent_env_override_the_distributed_
     let _agent = agent(&home, &cp, "agent-local-mirrors")
         .env_remove("SFLY_UV")
         .envs(local_python.python_env(&dir.path().join("pythons")))
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     wait_venv(&home).await;
     assert_eq!(local_release.uv_installs(), 1, "uv 从本地覆盖的镜像安装");
@@ -431,8 +421,7 @@ async fn with_only_a_local_python_mirror_uv_still_comes_from_the_distributed_rel
     let _agent = agent(&home, &cp, "agent-local-python")
         .env_remove("SFLY_UV")
         .envs(local_python.python_env(&dir.path().join("pythons")))
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     wait_venv(&home).await;
     assert_eq!(distributed.uv_installs(), 1, "uv 从下发的镜像安装");
@@ -466,8 +455,7 @@ async fn the_failure_report_tells_where_each_mirror_address_comes_from() {
     let child = agent(&home, &cp, "agent-report-sources")
         .envs(local_python.python_env(&dir.path().join("pythons")))
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     let (code, stderr) = exit_of(child).await;
     assert_eq!(code, Some(ENV_FAILURE), "{stderr}");
     let line = |prefix: &str| {
@@ -544,8 +532,7 @@ async fn after_install_the_first_start_updates_uv_from_the_release_mirror_and_la
         .env_remove("SFLY_UV")
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     run_echo(&cp, "task-1").await;
     // 有 GitHub Release 镜像时 `uv self update` 用不了镜像（它只认 GitHub API），改为重新运行镜像上的安装脚本。
@@ -557,8 +544,7 @@ async fn after_install_the_first_start_updates_uv_from_the_release_mirror_and_la
         .env_remove("SFLY_UV")
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(1).await;
     run_echo(&cp, "task-2").await;
     assert_eq!(mirror.uv_installs(), 1, "再次启动不更新 uv");
@@ -583,8 +569,7 @@ async fn without_a_release_mirror_the_first_start_after_install_runs_uv_self_upd
         .env_remove("SFLY_UV")
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     run_echo(&cp, "task-1").await;
     assert_eq!(self_updates(), 1, "首次启动执行了 uv self update");
@@ -594,8 +579,7 @@ async fn without_a_release_mirror_the_first_start_after_install_runs_uv_self_upd
         .env_remove("SFLY_UV")
         .arg("--venv")
         .arg(stub_venv())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(1).await;
     run_echo(&cp, "task-2").await;
     assert_eq!(self_updates(), 1, "再次启动不执行");
@@ -615,8 +599,7 @@ async fn a_failed_uv_update_only_warns_while_the_old_uv_still_works() {
         .arg("--venv")
         .arg(stub_venv())
         .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+        .spawn_agent();
     cp.hello(0).await;
     run_echo(&cp, "task-1").await;
     assert!(!home.join("bin/.uv-update").exists(), "失败也只尝试一次");
