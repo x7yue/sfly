@@ -23,6 +23,8 @@ export interface ReleaseMirror {
 	readonly requests: string[];
 	/** 安装脚本被下载的次数。 */
 	uvInstalls(): number;
+	/** `LatestRelease/` 下各次请求（安装脚本、uv 发布包）带的 User-Agent，按到达顺序。 */
+	uvUserAgents(): (string | undefined)[];
 	close(): Promise<void>;
 }
 
@@ -72,9 +74,11 @@ export async function startReleaseMirror(): Promise<ReleaseMirror> {
 		[`/github-release/astral-sh/uv/LatestRelease/${name}`, archive],
 	]);
 	const requests: string[] = [];
+	const userAgents: (string | undefined)[] = [];
 	const server = createServer((req, res) => {
 		const path = (req.url ?? "/").split(/[?#]/)[0] ?? "/";
 		requests.push(path);
+		userAgents.push(req.headers["user-agent"]);
 		const body = files.get(path);
 		if (body) res.writeHead(200, { "content-type": "application/octet-stream" }).end(body);
 		else res.writeHead(404).end();
@@ -85,6 +89,10 @@ export async function startReleaseMirror(): Promise<ReleaseMirror> {
 		url: `http://127.0.0.1:${port}/github-release`,
 		requests,
 		uvInstalls: () => requests.filter((p) => p === INSTALLER).length,
+		uvUserAgents: () =>
+			userAgents.filter((_, i) =>
+				requests[i]?.startsWith("/github-release/astral-sh/uv/LatestRelease/"),
+			),
 		close: () =>
 			new Promise<void>((resolve) => {
 				server.closeAllConnections();

@@ -68,6 +68,10 @@ struct Args {
     /// 优先于从 GitHub Release 镜像推导的地址。
     #[arg(long, env = "SFLY_PYTHON_INSTALL_MIRROR")]
     python_install_mirror: Option<String>,
+    /// 下载和运行 uv 安装脚本时 curl、wget 带的 User-Agent；默认 `sfly-agent/<版本>`。
+    /// 镜像站可能封禁 curl、wget 的默认 User-Agent，可以换成能看出机构或用途的值（例如 `acme-lab-sfly/1.0`）。
+    #[arg(long, env = "SFLY_USER_AGENT", value_parser = environment::parse_user_agent)]
+    user_agent: Option<String>,
     /// uv 可执行文件（创建共享 venv、安装节点包用）；指定时 Agent 不管理 uv。
     /// 默认 `$SFLY_HOME/bin/uv`，不存在时从 GitHub Release 镜像安装（见 `--github-release-mirror`）。
     #[arg(long, env = "SFLY_UV")]
@@ -204,6 +208,9 @@ async fn main() -> anyhow::Result<()> {
             github_release: args.github_release_mirror,
             python_install: args.python_install_mirror,
         },
+        user_agent: args
+            .user_agent
+            .unwrap_or_else(environment::default_user_agent),
         uv,
         manage_uv,
         dev_socket: args.dev_socket,

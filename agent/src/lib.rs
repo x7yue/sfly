@@ -89,6 +89,8 @@ pub struct Config {
     /// 本机对镜像的覆盖，优先于控制面下发的镜像（[`environment::Mirrors`]）；
     /// 都没有时使用 uv 自己的配置。
     pub mirrors: environment::LocalMirrors,
+    /// 下载 uv 安装脚本、运行安装脚本时 curl、wget 带的 User-Agent（[`environment::default_user_agent`]）。
+    pub user_agent: String,
     /// uv 可执行文件。
     pub uv: PathBuf,
     /// uv 由 Agent 管理（没有指定 `--uv`，`uv` 是 `SFLY_HOME/bin/uv`）：不存在时从镜像安装（[`environment`]）。
@@ -130,6 +132,7 @@ impl Config {
             task_dir_retention: retention::DEFAULT_RETENTION,
             task_dir_sweep_interval: retention::SWEEP_INTERVAL,
             mirrors: environment::LocalMirrors::default(),
+            user_agent: environment::default_user_agent(),
             uv: PathBuf::from("uv"),
             manage_uv: false,
             dev_socket: None,
@@ -942,6 +945,7 @@ async fn prepare_environment(
         manage_uv: config.manage_uv,
         mirrors,
         scratch: &runtime.scratch,
+        user_agent: &config.user_agent,
     };
     let installed = setup.ensure_uv().await?;
     if installed {
