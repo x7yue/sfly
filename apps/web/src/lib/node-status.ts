@@ -2,7 +2,7 @@ import type { LastRunNodeStatus, NodeStatus } from "@sfly/schema";
 import type { NodeRunState } from "#/components/canvas/context";
 import type { ChainBarSegment } from "#/components/chain-progress";
 import type { StatusKind } from "#/components/status";
-import type { SegmentKind } from "#/monitor/timeline";
+import type { SegmentKind } from "#/monitor/timeline-model";
 import type { ThumbState } from "#/scenarios/thumbnail";
 
 /**

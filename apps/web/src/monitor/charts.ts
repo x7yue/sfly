@@ -10,7 +10,7 @@ import {
 } from "@sfly/schema";
 import { formatMetric } from "#/lib/format";
 import type { ChartLine } from "./MetricChart";
-import type { TimeRange } from "./timeline";
+import type { TimeRange } from "./timeline-model";
 
 /**
  * 图表工作区的计算（纯逻辑，单测见 charts.test.ts）：图表横轴的时间范围、组内列数、实时追加的指标点、悬停读数。

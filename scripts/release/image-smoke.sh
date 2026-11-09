@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 控制面镜像冒烟：用 out/server（先运行 `pnpm bundle:server`）构建 linux/amd64 镜像，连本机 PostgreSQL 的
+# 控制面镜像冒烟：用 out/server（先运行 `pnpm bundle:server`）构建本机架构（linux/amd64 或 linux/arm64）的镜像，
+# 不靠模拟运行别的架构（CI 的自托管 runner 有 x86_64 也有 arm64）；连本机 PostgreSQL 的
 # 临时数据库启动容器，检查健康检查转为 healthy、页面、API、SDK wheel、两个架构的 Agent 与 install.sh、
 # 非 root 运行、数据卷可写。
 #   scripts/release/image-smoke.sh [镜像标签，默认 sfly-server:smoke]
@@ -29,7 +30,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
-docker build --quiet --platform linux/amd64 -f apps/server/Dockerfile \
+case $(uname -m) in
+x86_64 | amd64) platform=linux/amd64 ;;
+aarch64 | arm64) platform=linux/arm64 ;;
+*)
+	echo "不支持的架构：$(uname -m)" >&2
+	exit 2
+	;;
+esac
+docker build --quiet --platform "$platform" -f apps/server/Dockerfile \
 	--build-arg NODE_MAJOR="$(cat .node-version)" -t "$image" out/server >/dev/null
 psql "$admin_url" -qc "CREATE DATABASE \"$db\""
 db_url=$(node -e 'const u = new URL(process.argv[1]); u.pathname = "/" + process.argv[2]; console.log(u.href)' "$admin_url" "$db")

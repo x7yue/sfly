@@ -46,6 +46,13 @@ describe("install.sh", () => {
 		await mkdir(stubs);
 		// systemctl 的桩：记录参数。
 		await stub("systemctl", `echo "$*" >> '${join(dir, "systemctl.log")}'`);
+		// 默认是 x86_64 Linux 上的普通用户，与跑测试的机器无关（比如在 aarch64 上或以 root 跑测试）；
+		// 要别的架构或 root 的用例自己覆盖。
+		await stub(
+			"uname",
+			"case $1 in -m) echo x86_64 ;; -n) echo lab.example.com ;; *) echo Linux ;; esac",
+		);
+		await stub("id", "case $1 in -u) echo 1000 ;; -un) echo alice ;; esac");
 	});
 	afterEach(async () => {
 		await rm(dir, { recursive: true, force: true });
@@ -157,7 +164,7 @@ describe("install.sh", () => {
 			const file = join(dir, "install.sh");
 			await writeFile(file, script);
 			const run = await promisify(execFile)("sh", [file, "--name", "lab-04", "--no-service"], {
-				env: { PATH: process.env.PATH, HOME: home },
+				env: { PATH: `${stubs}:${process.env.PATH}`, HOME: home },
 			}).then(
 				() => ({ code: 0, stderr: "" }),
 				(e: { code: number; stderr: string }) => e,

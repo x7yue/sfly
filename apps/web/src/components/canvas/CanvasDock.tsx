@@ -9,9 +9,10 @@ import {
 	PlusIcon,
 	ScanIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { MAX_ZOOM, MIN_ZOOM } from "./geometry";
 
 /** 悬浮控件组（原型 `.grp`）：半透明表面 + 浮起阴影。 */
 export const floatGroupClass =
@@ -89,8 +90,8 @@ export function CanvasDock({
 	start?: ReactNode;
 	tools?: ReactNode;
 }) {
-	const { zoomIn, zoomOut } = useReactFlow();
 	const zoom = useStore((s) => s.transform[2]);
+	const zoomBy = useZoomSteps();
 	return (
 		<div
 			role="toolbar"
@@ -115,13 +116,13 @@ export function CanvasDock({
 				<HandIcon />
 			</ToolButton>
 			<GroupDivider />
-			<ToolButton label="缩小" onClick={() => zoomOut({ duration: 150 })}>
+			<ToolButton label="缩小" onClick={() => zoomBy(1 / ZOOM_STEP)}>
 				<MinusIcon />
 			</ToolButton>
 			<output aria-label="缩放比例" className="min-w-13 text-center font-mono text-xs text-fg-2">
 				{Math.round(zoom * 100)}%
 			</output>
-			<ToolButton label="放大" onClick={() => zoomIn({ duration: 150 })}>
+			<ToolButton label="放大" onClick={() => zoomBy(ZOOM_STEP)}>
 				<PlusIcon />
 			</ToolButton>
 			<ToolButton label="适配视图" keys="0" onClick={onFit}>
@@ -144,4 +145,24 @@ export function CanvasDock({
 			)}
 		</div>
 	);
+}
+
+/** 缩放按钮每次的倍数（与 React Flow 的 zoomIn / zoomOut 相同）。 */
+const ZOOM_STEP = 1.2;
+const ZOOM_DURATION = 150;
+
+/**
+ * 缩放按钮：上一次的动画还没结束时，从它的目标继续缩放，而不是从动画中途的值。React Flow 的 zoomIn / zoomOut
+ * 以当前（动画中途的）缩放为基准，连续快速点击时后一次打断前一次，前一次的那一步就丢了（机器慢时更明显）。
+ */
+function useZoomSteps() {
+	const { zoomTo, getZoom } = useReactFlow();
+	const pending = useRef<{ zoom: number; until: number } | null>(null);
+	return (factor: number) => {
+		const now = performance.now();
+		const from = pending.current && now < pending.current.until ? pending.current.zoom : getZoom();
+		const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, from * factor));
+		pending.current = { zoom, until: now + ZOOM_DURATION };
+		void zoomTo(zoom, { duration: ZOOM_DURATION });
+	};
 }

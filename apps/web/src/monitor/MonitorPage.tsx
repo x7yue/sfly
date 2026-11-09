@@ -15,7 +15,7 @@ import { MonitorTopBar } from "./MonitorTopBar";
 import { createMonitorStore, MonitorProvider, type TimeAxis } from "./monitor-state";
 import { failureSummary, focusNode, runDocumentTitle, runFailure } from "./run-model";
 import { Timeline } from "./Timeline";
-import { runExtent, visibleRange } from "./timeline";
+import { runExtent, visibleRange } from "./timeline-model";
 
 /**
  * 运行监控页（原型 #/monitor/:runId，全屏）：顶栏、链路时间线、图表工作区（#42）、底部面板。
