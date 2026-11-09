@@ -14,10 +14,11 @@ concurrency:
 # 每一步都只调用仓库根目录的统一命令（与本地完全一致，见 package.json scripts）。
 jobs:
   check:
-    # 账户账单里的 Actions 额度用尽后托管 runner 不再启动，CI 接到自托管 runner 上：一台 x86_64 Linux 开发机，
-    # runner 以单独的系统用户运行（工具链装在它自己的家目录，不动开发用户的环境），标签 `sfly-ci`。
-    # 工作目录必须在区分大小写的文件系统上（apps/web/src/monitor 下有 Timeline.tsx 与 timeline.ts）。
-    runs-on: [self-hosted, linux, x64, sfly-ci]
+    # 账户账单里的 Actions 额度用尽后托管 runner 不再启动，CI 接到自托管 runner 上（标签 `sfly-ci`）：
+    # 一台 x86_64 Linux 开发机（runner 以单独的系统用户运行，工具链装在它自己的家目录，不动开发用户的环境），
+    # 和一台 Mac mini（arm64 Linux 容器里的 runner，工作目录挂在不区分大小写的 APFS 上，
+    # 所以仓库里不能有只差大小写的路径，见 scripts/tests/test_path_case.py）。各步骤与架构无关。
+    runs-on: [self-hosted, linux, sfly-ci]
     timeout-minutes: 60
     services:
       postgres:
@@ -100,7 +101,7 @@ jobs:
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
   # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致。
   e2e:
-    runs-on: [self-hosted, linux, x64, sfly-ci]
+    runs-on: [self-hosted, linux, sfly-ci]
     timeout-minutes: 45
     container:
       image: mcr.microsoft.com/playwright:v1.64.1-noble
@@ -141,3 +142,9 @@ jobs:
             apps/web/test-results
           # 私有仓库的 Artifacts 与 Packages 共用存储额度，只保留一天。
           retention-days: 1
+      # 容器里是 root：自托管 runner 的工作目录在作业之间共用，留下 root 的文件时，下一个在宿主机上以
+      # runner 用户运行的作业（check）检出代码时删不掉。把所有权还给工作目录本来的属主。
+      - name: Return workspace ownership to the runner
+        if: always()
+        continue-on-error: true # 清理失败不影响测试结论
+        run: chown -R "$(stat -c %u:%g /__w)" /__w

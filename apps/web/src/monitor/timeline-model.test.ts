@@ -7,7 +7,7 @@ import {
 	ticks,
 	visibleRange,
 	zoomFromFractions,
-} from "./timeline";
+} from "./timeline-model";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 const at = (seconds: number) => new Date(T0 + seconds * 1000).toISOString();

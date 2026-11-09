@@ -1,5 +1,5 @@
 import { createContext, useContext, useMemo, useRef, useSyncExternalStore } from "react";
-import type { TimeRange } from "./timeline";
+import type { TimeRange } from "./timeline-model";
 
 /**
  * 运行监控页的共享时间轴状态。链路时间线、底部面板与中间的图表工作区（#42）都从这里读写，

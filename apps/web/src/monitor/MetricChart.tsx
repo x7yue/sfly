@@ -15,7 +15,7 @@ import {
 	valueExtent,
 } from "./charts";
 import { useMonitor, useMonitorActions } from "./monitor-state";
-import type { TimeRange } from "./timeline";
+import type { TimeRange } from "./timeline-model";
 
 /**
  * 一张指标图表（原型 chartHTML / plotSVG）：折线、面积、柱状、数值卡四种类型，多序列时显示图例。

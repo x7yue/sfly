@@ -36,7 +36,7 @@ import { MetricChart } from "./MetricChart";
 import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
 import { chainLabel } from "./run-model";
-import type { TimeRange } from "./timeline";
+import type { TimeRange } from "./timeline-model";
 import {
 	attemptsSignature,
 	seriesQuery,

@@ -33,7 +33,7 @@ import {
 	type TimeRange,
 	ticks,
 	zoomFromFractions,
-} from "./timeline";
+} from "./timeline-model";
 
 /** 标签列宽度（px）：节点 ID 不截断，说明文字在剩余宽度里截断。 */
 const LABEL_W = 272;

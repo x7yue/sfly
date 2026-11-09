@@ -2,7 +2,7 @@ import type { AttemptView, NodeRunView } from "@sfly/schema";
 import { NODE_STATUS } from "#/lib/node-status";
 
 /**
- * 链路时间线的计算（纯逻辑，单测见 timeline.test.ts）：节点每次尝试画成哪几段、时间轴显示的范围、刻度。
+ * 链路时间线的计算（纯逻辑，单测见 timeline-model.test.ts）：节点每次尝试画成哪几段、时间轴显示的范围、刻度。
  * 时间一律是毫秒时间戳；「现在」由调用方传入（页面每秒刷新一次）。
  */
 
