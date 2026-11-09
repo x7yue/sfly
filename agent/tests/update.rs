@@ -100,6 +100,15 @@ fn scratch() -> tempfile::TempDir {
     tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap()
 }
 
+/// `sfly dev` 连接的本地 socket 单独放在 /tmp 下的小目录里：Unix 域套接字的路径最多 107 字节，
+/// worktree 较深时 [`scratch`] 下的 `work/agent.sock` 会超出（#144）。目录里只有 socket，不占 tmpfs 空间。
+fn short_socket_dir() -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix("sfly-sock")
+        .tempdir_in("/tmp")
+        .unwrap()
+}
+
 /// 把 Agent 二进制复制到 `home/bin/sfly-agent`（install.sh 安装的位置）。
 fn install_into(home: &Path) -> PathBuf {
     let bin = home.join("bin");
@@ -736,11 +745,15 @@ async fn after_self_update_uv_is_updated_once_and_dev_packages_are_still_loaded(
     let http = HttpFixture::start().await;
     let venv = fresh_venv(true);
     let cp = control_plane("").await;
+    let sockets = short_socket_dir();
+    let socket = sockets.path().join("agent.sock");
     let mut command = tokio::process::Command::new(&exe);
     command
         .env("SFLY_HOME", &home)
         .env("UV_CACHE_DIR", venv.path().join("uv-cache"))
         .args(["--server", &cp.url, "--name", "agent-dev-update"])
+        .arg("--dev-socket")
+        .arg(&socket)
         .arg("--venv")
         .arg(venv_of(&venv))
         .args(["--index-url", &http.index_url()])
@@ -767,7 +780,7 @@ async fn after_self_update_uv_is_updated_once_and_dev_packages_are_still_loaded(
         .args(["run", "--locked", "--quiet", "sfly", "dev"])
         .arg(project.path())
         .arg("--socket")
-        .arg(home.join("work/agent.sock"))
+        .arg(&socket)
         .current_dir(repo_root())
         .output()
         .unwrap();
