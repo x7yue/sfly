@@ -27,6 +27,18 @@ read -rs SFLY_TOKEN && export SFLY_TOKEN
 curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
 ```
 
+### 用 sudo 安装（系统级服务）
+
+用 `sudo` 运行安装脚本，注册的是系统级服务：开机就运行，不依赖有人登录。机器跑不了用户级服务时（见下面「排查」里的 `Failed to get D-Bus connection`）也用这种方式：
+
+```text
+curl -fsSL {{SFLY_URL}}/install.sh | sudo sh -s -- --name "$(uname -n)"
+```
+
+- Agent 以 root 运行，文件在 root 的家目录下（通常是 `/root/.sfly`，以安装脚本最后打印的路径为准），下面写的 `~/.sfly` 都指这个目录。之后升级、改配置也要用 `sudo`。
+- `sudo` 默认不传递环境变量：用环境变量传令牌、镜像覆盖、`SFLY_USER_AGENT` 时，用 `--preserve-env` 列出它们，例如 `sudo --preserve-env=SFLY_TOKEN sh -s -- --name "$(uname -n)"`；要把文件放到别的目录，写成 `sudo SFLY_HOME=/opt/sfly sh -s -- …`。
+- 同一台机器上之前用普通用户装过时，先停掉那个 Agent（`systemctl --user disable --now sfly-agent`，或结束前台进程），否则两个同名的 Agent 会同时连接控制面。
+
 Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动时它会准备运行环境，需要一两分钟：
 
 1. 没有 uv 时从 GitHub Release 镜像（控制面配置的，或本机覆盖的，见下面的「镜像」）安装 uv（到 `~/.sfly/bin/uv`）。uv 只在运行安装脚本后和 Agent 自动更新后的首次启动时各更新一次。
@@ -35,11 +47,18 @@ Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动�
 
 ## 服务
 
-用普通用户运行安装脚本时注册用户级服务，用 root 运行时注册系统级服务（`/etc/systemd/system/sfly-agent.service`）。查看状态和日志（系统级服务去掉 `--user`）：
+用普通用户运行安装脚本时注册用户级服务（`~/.config/systemd/user/sfly-agent.service`），用 root 或 `sudo` 运行时注册系统级服务（`/etc/systemd/system/sfly-agent.service`）。查看用户级服务的状态和日志：
 
 ```sh
 systemctl --user status sfly-agent
 journalctl --user -u sfly-agent -f
+```
+
+系统级服务去掉 `--user`，前面加 `sudo`：
+
+```text
+sudo systemctl status sfly-agent
+sudo journalctl -u sfly-agent -f
 ```
 
 用户级服务只在你登录期间运行。要让它开机就运行：
@@ -188,3 +207,70 @@ curl -fsSL {{SFLY_URL}}/install.sh | SFLY_USER_AGENT=acme-lab-sfly/1.0 sh -s -- 
 ```
 
 已经安装过的机器可以在 `agent.env` 里加一行 `SFLY_USER_AGENT=acme-lab-sfly/1.0`，再重启 Agent。
+
+## 排查
+
+先看 Agent 的日志：服务用上面「服务」里的 `journalctl` 命令，前台运行时就是终端输出。环境准备失败时日志末尾是一份报告（失败的命令、完整输出、用到的镜像），连同下面对应条目的检查结果一起发给平台管理员。
+
+### 前台能运行，服务运行不了
+
+服务和你在终端里运行的 Agent 环境不同，逐项对比：
+
+- **`SFLY_HOME` 不同**：用 `sudo` 安装的服务用 root 的 `/root/.sfly`，你在终端里运行的用你自己的 `~/.sfly`。已经准备好 venv 的那个不用再下载 Python，新的那个要从头准备，失败时只有它报错。日志里的路径、`ls ~/.sfly/venv` 能看出是哪个。
+- **环境变量不同**：systemd 不读 `~/.bashrc`、`/etc/profile`，写在里面的代理（`http_proxy`、`https_proxy`）、`PATH` 对服务无效。需要时用 `systemctl edit` 加到服务里（写法见下面的 `UV_LIBC`）。
+- **用户不同**：系统级服务以 root 运行，用户级服务以安装它的用户运行。
+
+### 下载 Agent 失败：`curl: (23) Failed writing body`
+
+curl 已经收到控制面的数据，但写不进本地文件，原因在测试机这一侧：磁盘或配额满了，或者输出路径不可写、是一个已有的目录。安装脚本把 Agent 下载到 `~/.sfly/bin`，下面的命令检查空间、确认控制面这一侧正常（应该输出 `200` 和几 MB 的大小）：
+
+```text
+df -h ~ /tmp
+curl -A sfly-agent/{{SFLY_VERSION}} -o /dev/null -w '%{http_code} %{size_download}\n' {{SFLY_URL}}/agent/binaries/{{SFLY_VERSION}}/x86_64
+```
+
+aarch64 的机器把最后的 `x86_64` 换成 `aarch64`。
+
+### 注册服务失败：`Failed to get D-Bus connection: No such file or directory`
+
+安装脚本用 `systemctl --user` 注册用户级服务，它要连接你这个用户的 systemd 实例（`/run/user/<uid>/bus`），这里没找到。常见于 CentOS / RHEL 7（systemd 219 对用户级服务支持不全），或者用 `su`、`sudo -u` 切换过来的用户（没有建立登录会话）。Agent 已经装好，只是没有注册成服务。检查：
+
+```text
+systemctl --version | head -1
+echo "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"; ls -l /run/user/$(id -u)/bus
+```
+
+任选一种：
+
+- 有 `sudo` 权限：按上面「用 sudo 安装（系统级服务）」重新安装，注册系统级服务（推荐）。
+- systemd 较新、只是缺少登录会话：直接用 SSH 登录这个用户（不要经过 `su`），执行 `loginctl enable-linger "$(id -un)"`，再运行一次安装命令。
+- 都不行：安装时加 `--no-service`，用 `tmux` 或 `nohup` 运行安装脚本打印的前台启动命令。机器重启后要自己再启动。
+
+### 环境准备失败：`Could not detect either glibc version nor musl libc version`
+
+Agent 用 uv 下载 Python 之前，uv 要识别这台机器的 C 库是 glibc 还是 musl：它读 `/bin/sh` 用的动态链接器，看链接器的文件名或运行 `链接器 --version` 的输出。在个别系统上这几步都失败，就报这个错。只在需要下载 Python 时（新的 `SFLY_HOME`、venv 还没建好）才会遇到。检查（第一条输出 `glibc 2.xx` 说明是 glibc）：
+
+```text
+getconf GNU_LIBC_VERSION
+cat /etc/os-release | head -3; getenforce
+readelf -l /bin/sh | grep interpreter
+ls -l /lib64/ld-linux-x86-64.so.2; /lib64/ld-linux-x86-64.so.2 --version | head -1
+~/.sfly/bin/uv python list 3.13 -vv 2>&1 | grep -iE 'libc|musl|ld' | head -20
+```
+
+aarch64 的机器链接器是 `/lib/ld-linux-aarch64.so.1`；`sudo` 安装的把 `~/.sfly` 换成 `/root/.sfly`，命令前加 `sudo`。
+
+确认是 glibc 后，可以用 uv 的环境变量 `UV_LIBC=gnu` 跳过识别（musl 的机器写 `musl`）。它不是 Agent 的参数，不能写进 `agent.env`，要加到服务里：
+
+```text
+sudo systemctl edit sfly-agent         # 用户级服务：systemctl --user edit sfly-agent
+```
+
+在打开的编辑器里写入下面两行，保存后重启服务（`sudo systemctl restart sfly-agent`）：
+
+```ini
+[Service]
+Environment="UV_LIBC=gnu"
+```
+
+前台运行时写在命令前面：`UV_LIBC=gnu ~/.sfly/bin/sfly-agent`。
