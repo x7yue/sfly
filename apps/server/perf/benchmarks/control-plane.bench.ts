@@ -32,6 +32,7 @@ import {
 	startTestControlPlane,
 	type TestControlPlane,
 } from "../../test/support/test-control-plane.js";
+import { CHART_SERIES } from "../targets.js";
 
 const AGENT = "bench-agent";
 const METRICS = Array.from({ length: 10 }, (_, i) => `m${i}`);
@@ -234,7 +235,12 @@ test("带标签的降采样查询", async ({ bench }) => {
 
 test("一张图表的带标签降采样查询", async ({ bench }) => {
 	const one = await seriesQuery(labeledQueryTask, [300], LABELED_METRICS.slice(0, 1));
-	const two = await seriesQuery(labeledQueryTask, [300], LABELED_METRICS.slice(0, 2));
+	// §7.6「运行监控页的图表」的规模：CHART_SERIES 个序列，即这么多个带标签指标 × 50 个进程。
+	const two = await seriesQuery(
+		labeledQueryTask,
+		[300],
+		LABELED_METRICS.slice(0, CHART_SERIES / PROCESSES.length),
+	);
 	await bench("query_300_chart_50", () => one(300)).run(LABELED_RUN);
 	await bench("query_300_chart_100", () => two(300)).run(LABELED_RUN);
 });

@@ -92,10 +92,14 @@ const seriesOf = (runId: string, match: (q: Partial<SeriesQuery>) => boolean) =>
 	// 只给出 params 的 key 是前缀（TanStack Query 按对象部分匹配），不是一次完整的请求，所以不按请求类型检查。
 	queryKey: queryKey(metricsApi.series, { params: { id: runId } } as never),
 	predicate: (q: { queryKey: readonly unknown[] }) => {
-		const vars = q.queryKey.at(-1) as SeriesKeyVars | undefined;
+		const vars = varsOf(q);
 		return vars?.params?.id === runId && !!vars.query && match(vars.query);
 	},
 });
+
+/** 序列查询的参数（query key 的最后一项）。 */
+const varsOf = (q: { queryKey: readonly unknown[] }) =>
+	q.queryKey.at(-1) as SeriesKeyVars | undefined;
 
 /**
  * 把一条 metrics 增量追加进这个节点的序列缓存（只追加没有指定时间范围的查询：缩放的范围是固定的）。
@@ -119,7 +123,7 @@ export function applyMetricIncrement(
 	);
 	const pending = new Set<string>();
 	for (const query of client.getQueryCache().findAll(filters)) {
-		const names = requestedMetrics((query.queryKey.at(-1) as SeriesKeyVars).query ?? {});
+		const names = requestedMetrics(varsOf(query)?.query ?? {});
 		const points = names ? increment.points.filter((p) => names.has(p.name)) : increment.points;
 		if (points.length === 0) continue;
 		if (query.state.data === undefined || query.state.fetchStatus === "fetching") {

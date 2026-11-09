@@ -145,7 +145,7 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 		const result = resultOf.get(requestKey(request)) as SeriesResult;
 		let entry = seriesByGroup.get(group.key);
 		if (!entry) {
-			entry = { primary: undefined, charts: new Map(), loaded: [] };
+			entry = noSeries();
 			seriesByGroup.set(group.key, entry);
 		}
 		if (chart === null) entry.primary = result.data;
@@ -292,7 +292,7 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 					key={group.key}
 					group={group}
 					charts={charts}
-					series={seriesByGroup.get(group.key) ?? NO_SERIES}
+					series={seriesByGroup.get(group.key) ?? noSeries()}
 					open={isOpen(group.key, defaultOpen(group))}
 					onToggle={(open) => setOpened((o) => ({ ...o, [group.key]: open }))}
 					onlyThis={
@@ -344,7 +344,7 @@ interface GroupSeries {
 
 const requestKey = (r: SeriesRequest) => `${r.group.key}\u0000${r.metrics.join(",")}`;
 
-const NO_SERIES: GroupSeries = { primary: undefined, charts: new Map(), loaded: [] };
+const noSeries = (): GroupSeries => ({ primary: undefined, charts: new Map(), loaded: [] });
 
 function Notice({ children }: { children: React.ReactNode }) {
 	return (

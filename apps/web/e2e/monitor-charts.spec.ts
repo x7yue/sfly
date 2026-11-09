@@ -348,6 +348,47 @@ test("任务的序列数超过上限时，组标题和引用带标签指标的�
 	await expect(ping).not.toContainText("截断");
 });
 
+test.describe("指标超过单任务上限", () => {
+	// 每点 28 字节：一个任务最多 5 个点。
+	test.use({ controlPlaneOptions: { metricLimitBytes: 28 * 5 } });
+
+	test("任务的指标数据被截断时，组标题和每张图表都显示截断提示（每张图表各自查询，#153）", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const { agent, task, runId, clock0 } = await labeledRun(
+			{ controlPlane, connectAgent, clock },
+			[
+				{ name: "tps", unit: "req/s", kind: "gauge" },
+				{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+			],
+			[
+				{ title: "合计", type: "line", metrics: ["tps"] },
+				{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+			],
+		);
+		agent.metrics(
+			task,
+			Array.from({ length: 8 }, (_, i): [string, number, number] => [
+				"tps",
+				unixAt(clock0, i + 1),
+				i,
+			]),
+		);
+		await agent.sync();
+		clock.advance(5000);
+		await openMonitor(page, clock, runId, "ping");
+
+		const ping = group(page, "ping");
+		await expect(ping).toContainText("数据已截断");
+		await expect(chart(page, "ping", "合计")).toContainText("已截断");
+		await expect(chart(page, "ping", "各连接")).toContainText("已截断");
+		await expect(ping).not.toContainText("序列超限");
+	});
+});
+
 test("节点多选筛选：按链整组勾选、搜索、快速选择、平台自带图表；清除筛选；底部面板范围跟随筛选", async ({
 	page,
 	controlPlane,
