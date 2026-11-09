@@ -5,7 +5,7 @@ import type { PrimaryMetricData } from "./PrimaryMetric";
 
 /**
  * 主指标的数据（#43），复用运行的指标契约（metricsApi）：节点类型、主指标名与单位来自运行的指标目录
- * （useMetricCatalog），最新值与迷你趋势来自这个节点最新一次尝试的序列（按 TREND_POINTS 降采样）。
+ * （useMetricCatalog），最新值与迷你趋势来自这个节点最新一次尝试、只含主指标的序列（按 TREND_POINTS 降采样）。
  * 运行中的实时更新：有运行事件流的页面（画布运行状态、运行抽屉）把 metrics 增量追加进序列缓存
  * （applyMetricIncrement）；没有事件流的列表（运行记录）定时重新查询（poll）。
  */
@@ -55,6 +55,8 @@ export function usePrimaryMetric(
 				chain_instance_id: entry?.chain_instance_id ?? "",
 				node_id: entry?.node_id ?? "",
 				attempt: attempt?.attempt,
+				// 只查主指标：不带时会查回节点的全部指标（按进程上报的节点有几百个序列，#153）。
+				metrics: name ?? undefined,
 				points: TREND_POINTS,
 			},
 			finished,

@@ -65,7 +65,15 @@ export function usePlatformMetrics(runId: string, signature: string, live: boole
 type SeriesQuery = Pick<
 	MetricSeriesQuery,
 	"chain_instance_id" | "node_id" | "attempt" | "from" | "to"
-> & { points?: number };
+> & {
+	points?: number;
+	/** 只查这些指标（逗号分隔，与契约的查询参数相同）；不给时查节点类型声明的全部指标。 */
+	metrics?: string;
+};
+
+/** 查询参数里的指标名；没有指定时为 undefined（全部指标）。 */
+const requestedMetrics = (query: Partial<SeriesQuery>) =>
+	query.metrics === undefined ? undefined : new Set(query.metrics.split(","));
 
 /** 一个节点一次尝试的序列查询选项；缩放时带上时间范围（按秒取整），得到更细的桶。 */
 export function seriesQuery(runId: string, query: SeriesQuery, finished: boolean) {
@@ -91,6 +99,7 @@ const seriesOf = (runId: string, match: (q: Partial<SeriesQuery>) => boolean) =>
 
 /**
  * 把一条 metrics 增量追加进这个节点的序列缓存（只追加没有指定时间范围的查询：缩放的范围是固定的）。
+ * 只查部分指标的查询（每张图表一个查询，#153）只追加它查的指标的点，增量里没有这些指标时不动它。
  *
  * 还没有数据或正在请求的序列不追加，而是重新请求（#47）：进行中的请求可能在这些点之前生成，
  * 晚于增量到达时会覆盖追加的点（没有数据时增量更是直接丢失），之后没有新增量就一直没有这些点。
@@ -108,17 +117,19 @@ export function applyMetricIncrement(
 			q.node_id === increment.node_id &&
 			q.to === undefined,
 	);
-	const pending = new Set(
-		client
-			.getQueryCache()
-			.findAll(filters)
-			.filter((q) => q.state.data === undefined || q.state.fetchStatus === "fetching")
-			.map((q) => q.queryHash),
-	);
-	client.setQueriesData<MetricSeries>(
-		{ ...filters, predicate: (q) => !pending.has(q.queryHash) && filters.predicate(q) },
-		(old) => (old ? appendIncrement(old, increment) : old),
-	);
+	const pending = new Set<string>();
+	for (const query of client.getQueryCache().findAll(filters)) {
+		const names = requestedMetrics((query.queryKey.at(-1) as SeriesKeyVars).query ?? {});
+		const points = names ? increment.points.filter((p) => names.has(p.name)) : increment.points;
+		if (points.length === 0) continue;
+		if (query.state.data === undefined || query.state.fetchStatus === "fetching") {
+			pending.add(query.queryHash);
+			continue;
+		}
+		client.setQueryData<MetricSeries>(query.queryKey, (old) =>
+			old ? appendIncrement(old, { ...increment, points }) : old,
+		);
+	}
 	if (pending.size === 0) return Promise.resolve();
 	return refetchFresh(client, { predicate: (q) => pending.has(q.queryHash) });
 }
