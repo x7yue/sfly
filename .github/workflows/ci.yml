@@ -27,9 +27,11 @@ jobs:
           POSTGRES_USER: sfly
           POSTGRES_PASSWORD: sfly
           POSTGRES_DB: sfly
-        # 宿主机端口随机分配：runner 所在的机器上可能已经有占用 5432 的 PostgreSQL。
+        # 宿主机端口随机分配：runner 所在的机器上可能已经有占用 5432 的 PostgreSQL。写成 0:5432 而不是 5432：
+        # Docker Desktop（Mac mini 的 runner）的 API 代理对没写宿主端口的发布会另在 macOS 一侧分配端口并报给
+        # `docker port`，与虚拟机里 dockerd 实际发布的端口不同，host 网络里的 runner 连不上；写 0 时两边一致。
         ports:
-          - 5432
+          - "0:5432"
         options: >-
           --health-cmd "pg_isready -U sfly"
           --health-interval 5s
