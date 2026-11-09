@@ -14,8 +14,10 @@ concurrency:
 # 每一步都只调用仓库根目录的统一命令（与本地完全一致，见 package.json scripts）。
 jobs:
   check:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 账户账单里的 Actions 额度用尽后托管 runner 不再启动，CI 接到自托管 runner 上。
+    # 需要先注册一台带 `sfly-ci` 标签的 Linux runner（docker 里跑，container / service 作业需要）。
+    runs-on: [self-hosted, linux, sfly-ci]
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:18
@@ -94,8 +96,8 @@ jobs:
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
   # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致。
   e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    runs-on: [self-hosted, linux, sfly-ci]
+    timeout-minutes: 45
     container:
       image: mcr.microsoft.com/playwright:v1.64.1-noble
       options: --ipc=host
