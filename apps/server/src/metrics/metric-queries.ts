@@ -27,6 +27,7 @@ import {
 import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf } from "./node-types.js";
+import { decodeFloat8Array, decodeInt4Array } from "./pg-array.js";
 import {
 	dataLossOf,
 	seriesSummaries,
@@ -51,7 +52,10 @@ interface Acc {
 	lastAt: number;
 }
 
-/** metric_segments 的一行；能直接用段摘要时数组为 null（不读取、不解压）。 */
+/**
+ * metric_segments 的一行；能直接用段摘要时数组为 null（不读取、不解压）。数组以二进制读出（array_send），
+ * 用 {@link decodeFloat8Array} / {@link decodeInt4Array} 解码（#153）。
+ */
 interface SegmentRow extends Record<string, unknown> {
 	metric: string;
 	labels: Labels;
@@ -62,10 +66,10 @@ interface SegmentRow extends Record<string, unknown> {
 	max: number;
 	avg: number;
 	last: number;
-	offsets: number[] | null;
-	values: number[] | null;
-	mins: number[] | null;
-	maxs: number[] | null;
+	offsets: Buffer | null;
+	values: Buffer | null;
+	mins: Buffer | null;
+	maxs: Buffer | null;
 }
 
 const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
@@ -290,17 +294,18 @@ export class MetricQueries {
 		const result = await this.deps.db.execute<SegmentRow>(sql`
 			select metric, labels, extract(epoch from start_at)::float8 as start_s, extract(epoch from end_at)::float8 as end_s,
 				points, min, max, avg, last,
-				case when ${summarized} then null else offsets end as offsets,
-				case when ${summarized} then null else "values" end as "values",
-				case when ${summarized} then null else mins end as mins,
-				case when ${summarized} then null else maxs end as maxs
+				case when ${summarized} then null else array_send(offsets) end as offsets,
+				case when ${summarized} then null else array_send("values") end as "values",
+				case when ${summarized} then null else array_send(mins) end as mins,
+				case when ${summarized} then null else array_send(maxs) end as maxs
 			from metric_segments
 			where task_id = ${taskId} and metric in (${sql.join(
 				names.map((n) => sql`${n}`),
 				sql`, `,
 			)})
-				and start_at <= ${toIso}::timestamptz and end_at >= ${fromIso}::timestamptz
-			order by metric, labels, start_at`);
+				and start_at <= ${toIso}::timestamptz and end_at >= ${fromIso}::timestamptz`);
+		// 不排序：分桶按序列键累计，与行的顺序无关（同一序列的段在时间上互不重叠）。按 labels 排序要逐次比较
+		// 存在行外（TOAST）的 jsonb，带标签时比查询本身还慢（#153）。
 
 		const accs = new Map<string, Map<number, Acc>>();
 		const add = (key: string, t: number, p: Omit<Acc, "lastAt">) => {
@@ -342,14 +347,18 @@ export class MetricQueries {
 				});
 				continue;
 			}
-			for (const [i, offset] of row.offsets.entries()) {
+			const offsets = decodeInt4Array(row.offsets);
+			const values = decodeFloat8Array(row.values);
+			const mins = decodeFloat8Array(row.mins);
+			const maxs = decodeFloat8Array(row.maxs);
+			for (const [i, offset] of offsets.entries()) {
 				const t = row.start_s + offset;
 				if (t < from || t > to || inMemory(key, t)) continue;
-				const value = row.values[i] as number;
+				const value = values[i] as number;
 				add(key, t, {
 					points: 1,
-					min: row.mins[i] as number,
-					max: row.maxs[i] as number,
+					min: mins[i] as number,
+					max: maxs[i] as number,
 					sum: value,
 					last: value,
 				});

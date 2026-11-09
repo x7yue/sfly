@@ -80,6 +80,42 @@ test("按节点分组，顺序与链上执行顺序一致；默认只展开执�
 	await expect(ws.getByRole("figure")).toHaveCount(0);
 });
 
+test("每张图表只查它引用的指标；折叠的组只查组标题上的主指标（#153）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	// 每个节点请求过的 metrics 参数。
+	const requested = new Map<string, Set<string | null>>();
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		if (!url.pathname.endsWith("/metrics/series")) return;
+		const node = url.searchParams.get("node_id") ?? "";
+		const set = requested.get(node) ?? new Set();
+		set.add(url.searchParams.get("metrics"));
+		requested.set(node, set);
+	});
+	const metricsOf = (node: string) => [...(requested.get(node) ?? [])].sort();
+	await openMonitor(page, clock, runId);
+	const fetch = group(page, "fetch");
+
+	// fetch 成功后折叠：只查主指标；执行中的 verify 展开：两张默认图表各查一次（level 也是主指标）。
+	await expect(fetch.locator('[data-primary-metric="latency_ms"]')).toContainText("50ms");
+	await expect(chart(page, "verify", "total")).toBeVisible();
+	await expect.poll(() => metricsOf("verify")).toEqual(["level", "total"]);
+	expect(metricsOf("fetch")).toEqual(["latency_ms"]);
+
+	// 展开 fetch：每张图表按它引用的指标查询，不再有查全部指标的请求。
+	await groupToggle(page, "fetch").click();
+	await expect(chart(page, "fetch", "延迟").locator("[data-series]")).toHaveCount(2);
+	await expect
+		.poll(() => metricsOf("fetch"))
+		.toEqual(["errors", "latency_ms", "latency_ms,p99_ms", "requests", "rps"]);
+	await expect(chart(page, "fetch", "吞吐").locator("[data-series] path")).toHaveCount(2);
+});
+
 test("四种图表类型与多序列图例；横轴是节点实际运行的时段并标出起止时间；运行中实时追加", async ({
 	page,
 	controlPlane,
@@ -310,6 +346,47 @@ test("任务的序列数超过上限时，组标题和引用带标签指标的�
 	await expect(chart(page, "ping", "合计")).not.toContainText("序列超限");
 	await expect(ping).toContainText("丢弃 1 个点");
 	await expect(ping).not.toContainText("截断");
+});
+
+test.describe("指标超过单任务上限", () => {
+	// 每点 28 字节：一个任务最多 5 个点。
+	test.use({ controlPlaneOptions: { metricLimitBytes: 28 * 5 } });
+
+	test("任务的指标数据被截断时，组标题和每张图表都显示截断提示（每张图表各自查询，#153）", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const { agent, task, runId, clock0 } = await labeledRun(
+			{ controlPlane, connectAgent, clock },
+			[
+				{ name: "tps", unit: "req/s", kind: "gauge" },
+				{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+			],
+			[
+				{ title: "合计", type: "line", metrics: ["tps"] },
+				{ title: "各连接", type: "line", metrics: ["conn_tps"] },
+			],
+		);
+		agent.metrics(
+			task,
+			Array.from({ length: 8 }, (_, i): [string, number, number] => [
+				"tps",
+				unixAt(clock0, i + 1),
+				i,
+			]),
+		);
+		await agent.sync();
+		clock.advance(5000);
+		await openMonitor(page, clock, runId, "ping");
+
+		const ping = group(page, "ping");
+		await expect(ping).toContainText("数据已截断");
+		await expect(chart(page, "ping", "合计")).toContainText("已截断");
+		await expect(chart(page, "ping", "各连接")).toContainText("已截断");
+		await expect(ping).not.toContainText("序列超限");
+	});
 });
 
 test("节点多选筛选：按链整组勾选、搜索、快速选择、平台自带图表；清除筛选；底部面板范围跟随筛选", async ({

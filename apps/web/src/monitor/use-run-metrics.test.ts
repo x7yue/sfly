@@ -91,6 +91,50 @@ describe("指标增量追加进序列缓存", () => {
 		expect(state(refetching)?.data?.series[0]?.buckets).toHaveLength(0);
 	});
 
+	it("只查部分指标的序列只追加它查的指标的点；增量里没有它查的指标时不追加、也不重新请求（#153）", async () => {
+		const client = new QueryClient();
+		const all = keyOf(RUN);
+		const tps = keyOf(RUN, { metrics: "tps" });
+		const p99 = keyOf(RUN, { metrics: "p99" });
+		const p99Loading = keyOf(RUN, { metrics: "p99", attempt: "2" });
+		client.setQueryData(all, series(RUN));
+		client.setQueryData(tps, series(RUN));
+		client.setQueryData(p99, {
+			...series(RUN),
+			series: [{ name: "p99", labels: {}, buckets: [] }],
+		});
+		const loading = client
+			.fetchQuery({ queryKey: p99Loading, queryFn: () => new Promise<MetricSeries>(() => {}) })
+			.then(
+				() => "resolved",
+				() => "cancelled",
+			);
+
+		await applyMetricIncrement(client, RUN, {
+			task_id: series(RUN).task_id,
+			chain_instance_id: CHAIN,
+			node_id: "load",
+			attempt: 1,
+			points: [
+				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
+				{ name: "rps", labels: {}, time: "2026-01-01T00:00:01.000Z", value: 7, min: 7, max: 7 },
+			],
+		});
+
+		const names = (key: readonly unknown[]) =>
+			client.getQueryData<MetricSeries>(key)?.series.map((s) => [s.name, s.buckets.length]);
+		expect(names(all)).toEqual([
+			["tps", 1],
+			["rps", 1],
+		]);
+		expect(names(tps)).toEqual([["tps", 1]]);
+		expect(names(p99)).toEqual([["p99", 0]]);
+		expect(client.getQueryState(p99)?.isInvalidated).toBe(false);
+		expect(client.getQueryState(p99Loading)?.isInvalidated).toBe(false);
+		await client.cancelQueries({ queryKey: p99Loading });
+		expect(await loading).toBe("cancelled");
+	});
+
 	it("事件流连上后重新获取序列：进行中的首次加载也要取消重发，它可能早于连上之前推送的点生成（#47）", async () => {
 		const client = new QueryClient();
 		const loading = keyOf(RUN);

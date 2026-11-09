@@ -28,9 +28,15 @@ export interface E2eFixtures {
 	nickname: string | null;
 	/**
 	 * 覆盖控制面的选项：对外地址、版本号（默认是实际监听地址和 package.json 的版本；视觉回归里固定它们，
-	 * 文档里替换出来的地址、版本号才不随端口和发版变化）和用户文档目录（默认仓库的 docs/guide）。
+	 * 文档里替换出来的地址、版本号才不随端口和发版变化）、用户文档目录（默认仓库的 docs/guide）和单任务的指标上限
+	 * （字节，每点 28 字节；调小后用来触发「截断」）。
 	 */
-	controlPlaneOptions: { publicHttpUrl?: string; version?: string; docsDir?: string };
+	controlPlaneOptions: {
+		publicHttpUrl?: string;
+		version?: string;
+		docsDir?: string;
+		metricLimitBytes?: number;
+	};
 }
 
 export const test = base.extend<E2eFixtures>({

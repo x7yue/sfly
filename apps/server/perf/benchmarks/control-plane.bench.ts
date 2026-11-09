@@ -14,6 +14,8 @@
 // - segment_write_labeled / query_300_labeled：同样的写入与 300 个桶的查询，但是 4 个带标签（pid、name）的指标
 //   × 50 个进程，共 200 个序列（按进程上报的节点，例如标准节点 process_monitor）：一次写入迭代 = 24000 个点、
 //   200 段；查询的数据是 1 小时 × 200 个序列（72 万个点）。
+// - query_300_chart_50 / query_300_chart_100：同一份带标签的数据，按运行监控页的用法只查一张图表引用的指标
+//   （#153）：1 个指标（50 个序列）、2 个指标（100 个序列，标准节点 process_monitor 最大的按进程图表），300 个桶。
 import { create } from "@bufbuild/protobuf";
 import { MetricBatchSchema } from "@sfly/proto";
 import { eq } from "drizzle-orm";
@@ -30,6 +32,7 @@ import {
 	startTestControlPlane,
 	type TestControlPlane,
 } from "../../test/support/test-control-plane.js";
+import { CHART_SERIES } from "../targets.js";
 
 const AGENT = "bench-agent";
 const METRICS = Array.from({ length: 10 }, (_, i) => `m${i}`);
@@ -184,20 +187,31 @@ test("带标签的指标分段写入", async ({ bench }) => {
 	await bench("segment_write_labeled", segmentWrite(labeledWriteTask)).run(LABELED_RUN);
 });
 
-/** 一个任务的序列查询；先核对一次数据完整：每个序列的桶里合计 3600 个点。 */
-const seriesQuery = async (task: BenchTask, checkPoints: readonly number[]) => {
+/**
+ * 一个任务的序列查询（`metrics` 不给时查节点的全部指标）；先核对一次数据完整：序列个数对得上，
+ * 每个序列的桶里合计 3600 个点。
+ */
+const seriesQuery = async (
+	task: BenchTask,
+	checkPoints: readonly number[],
+	metrics?: readonly string[],
+) => {
 	const query = async (points: number) => {
 		const outcome = await queries.series(task.runId, {
 			chain_instance_id: task.chainInstanceId,
 			node_id: "load",
 			points,
+			...(metrics && { metrics: [...metrics] }),
 		});
 		if (!outcome.ok) throw new Error(outcome.message);
 		return outcome.series;
 	};
+	const expected = metrics
+		? task.series.filter((s) => metrics.includes(s.name)).length
+		: task.series.length;
 	for (const points of checkPoints) {
 		const result = await query(points);
-		if (result.series.length !== task.series.length) {
+		if (result.series.length !== expected) {
 			throw new Error(`只查到 ${result.series.length} 个序列`);
 		}
 		for (const s of result.series) {
@@ -217,4 +231,16 @@ test("降采样查询", async ({ bench }) => {
 test("带标签的降采样查询", async ({ bench }) => {
 	const query = await seriesQuery(labeledQueryTask, [300]);
 	await bench("query_300_labeled", () => query(300)).run(LABELED_RUN);
+});
+
+test("一张图表的带标签降采样查询", async ({ bench }) => {
+	const one = await seriesQuery(labeledQueryTask, [300], LABELED_METRICS.slice(0, 1));
+	// §7.6「运行监控页的图表」的规模：CHART_SERIES 个序列，即这么多个带标签指标 × 50 个进程。
+	const two = await seriesQuery(
+		labeledQueryTask,
+		[300],
+		LABELED_METRICS.slice(0, CHART_SERIES / PROCESSES.length),
+	);
+	await bench("query_300_chart_50", () => one(300)).run(LABELED_RUN);
+	await bench("query_300_chart_100", () => two(300)).run(LABELED_RUN);
 });

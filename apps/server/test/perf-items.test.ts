@@ -15,6 +15,8 @@ import {
 	AGENT_RSS_GROWTH_MB,
 	AGENT_SLOTS,
 	CHAIN_NODES,
+	CHART_QUERY_P95_MS,
+	CHART_SERIES,
 	DISCONNECT_SECONDS,
 	END_TO_END_MS,
 	EVENTS_PER_SECOND,
@@ -98,6 +100,11 @@ describe("§7.6 目标里的数量", () => {
 			{ value: INGEST_SECONDS, unit: "秒" },
 			{ value: INGEST_SECONDS, unit: "秒" },
 			{ value: QUERY_P95_MS, unit: "ms" },
+		]);
+		expect(quantities("运行监控页的图表")).toEqual([
+			{ value: INGEST_SECONDS, unit: "秒" },
+			{ value: CHART_SERIES, unit: "个" },
+			{ value: CHART_QUERY_P95_MS, unit: "ms" },
 		]);
 		expect(quantities("端到端延迟")).toEqual([{ value: END_TO_END_MS / 1000, unit: "秒" }]);
 		expect(quantities("Agent 断线")).toEqual([{ value: DISCONNECT_SECONDS, unit: "秒" }]);
