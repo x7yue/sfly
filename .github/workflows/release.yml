@@ -41,9 +41,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # version.sh 用 node 读 package.json；自托管 runner 上没有预装 node（托管 runner 上有）。
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
       - id: version
         name: Version matches tag
-        run: echo "version=$(bash scripts/release/version.sh check "$TAG")" >> "$GITHUB_OUTPUT"
+        # 先赋值再写输出：`echo "version=$(…)"` 在检查失败时也成功，错误要到下一步用空版本号时才暴露（v0.1.2）。
+        run: |
+          version=$(bash scripts/release/version.sh check "$TAG")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Commit is on main and CI passed
         run: bash scripts/release/wait-ci.sh "$GITHUB_SHA"
       - name: Create draft release
@@ -89,6 +96,9 @@ jobs:
       - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4 # pack-agent.sh 用 version.sh 取版本号
+        with:
+          node-version-file: .node-version
       - name: Build and pack
         run: bash scripts/release/pack-agent.sh ${{ matrix.target }}
       - name: Upload to release
