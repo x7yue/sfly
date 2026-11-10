@@ -79,6 +79,8 @@ export interface ControlPlaneOptions {
 	retentionSweepIntervalMs?: number;
 	/** 定时 / Sleep 节点的定时器扫描间隔（#14），默认 1 秒；是否到期只按注入的时钟判断。 */
 	timerSweepIntervalMs?: number;
+	/** SSE 心跳的间隔，默认 15 秒；每次心跳带上控制面时间。 */
+	sseHeartbeatMs?: number;
 	/** 运行中任务的租约（毫秒），默认 30 秒；Agent 按它的三分之一发送心跳（#15）。 */
 	leaseMs?: number;
 	/** SDK 运行时 wheel 所在目录（src/sdk/sdk-wheels.ts）；不设置时不提供 SDK 下载。 */
@@ -246,6 +248,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		agentBinaries,
 		installScript,
 		docs,
+		sseHeartbeatMs: options.sseHeartbeatMs,
 		webApp,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";

@@ -1,9 +1,11 @@
 /** 显示用的格式化（时间按浏览器时区，数字等宽由样式保证）。 */
 
+import { controlPlaneNow } from "./control-plane-time";
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** `01-01 08:00`：列表里的日期时间（当年省略年份）。 */
-export function formatDateTime(iso: string, now: Date = new Date()): string {
+/** `01-01 08:00`：列表里的日期时间（当年省略年份；"当年"按控制面时间）。 */
+export function formatDateTime(iso: string, now: Date = new Date(controlPlaneNow())): string {
 	const d = new Date(iso);
 	const date = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 	const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
