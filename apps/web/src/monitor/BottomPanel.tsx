@@ -24,7 +24,7 @@ import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { attemptAgentTimes } from "./attempt-clock";
-import { LogList, NOT_LOCATABLE } from "./LogList";
+import { LogList } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
 import {
 	type NodeRef,
@@ -226,6 +226,7 @@ export function BottomPanel({
 								levels={levelsFrom(minLevel)}
 								filtered={minLevel !== "all"}
 								timeKind={logTimeKind}
+								day={run.started_at}
 								onEmpty={setLogsEmpty}
 							/>
 						) : (
@@ -286,6 +287,7 @@ function LogsTab({
 	levels,
 	filtered,
 	timeKind,
+	day,
 	onEmpty,
 }: {
 	attempt: AttemptView;
@@ -293,6 +295,8 @@ function LogsTab({
 	filtered: boolean;
 	/** 时间列显示哪一种时间；定位和按时间范围过滤始终用控制面时间。 */
 	timeKind: LogTimeKind;
+	/** 运行开始的时刻：时间列要不要带日期按它那一天判断。 */
+	day: string;
 	/** 加载完、没有任何日志时为 true（筛选了级别时不算空：那是用户自己筛掉的）。 */
 	onEmpty: (empty: boolean) => void;
 }) {
@@ -316,7 +320,7 @@ function LogsTab({
 				: logs.lines,
 		[logs.lines, zoom],
 	);
-	const unlocatable = useMemo(() => logs.lines.some((l) => l.time === null), [logs.lines]);
+	const unlocatable = useMemo(() => logs.lines.filter((l) => l.time === null).length, [logs.lines]);
 	// 标记被别处清除（或换了标记）时取消行的高亮。
 	const marked =
 		markedSeq !== null &&
@@ -334,12 +338,14 @@ function LogsTab({
 					日志超过单个任务的大小上限，之后的输出已被截断。
 				</p>
 			)}
-			{unlocatable && (
+			{unlocatable > 0 && (
 				<p
 					data-testid="logs-unlocatable"
 					className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-fg-3"
 				>
-					{NOT_LOCATABLE}（升级之前写入的日志只有 Agent 时间）；按时间范围过滤时这些行也不显示。
+					{logs.hasOlder ? "已加载的日志里有" : "有"} {unlocatable}{" "}
+					行日志没有记录控制面时间（升级之前写入的日志只有 Agent
+					时间）：这些行不能在时间轴上定位，按时间范围过滤时也不显示。
 				</p>
 			)}
 			{logs.error && (
@@ -366,6 +372,7 @@ function LogsTab({
 						loadOlder={logs.loadOlder}
 						marked={marked}
 						timeKind={timeKind}
+						day={day}
 						onPick={(line) => {
 							if (line.time === null) return;
 							const same = marked === line.seq;
@@ -441,8 +448,15 @@ function AttemptsTab({
 							</span>
 						</header>
 						{agentTimes && (
+							// 每一头的说明不在中间断开：换行只落在标点后面，不会剩下一个「天」字。
 							<p className="m-0 mt-1.5 text-2xs text-warn-fg">
-								这个任务执行期间 Agent 时间与控制面不一致：{agentTimes.detail}
+								这个任务执行期间 Agent 时间与控制面不一致：
+								{agentTimes.details.map((part, i) => (
+									<span key={part} className="whitespace-nowrap">
+										{part}
+										{i < agentTimes.details.length - 1 && "，"}
+									</span>
+								))}
 							</p>
 						)}
 						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-2xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
@@ -451,7 +465,9 @@ function AttemptsTab({
 							<dt>开始</dt>
 							<dd className="m-0">
 								{a.started_at ? formatClock(a.started_at) : "—"}
-								{agentTimes?.start && `（Agent 时间 ${formatFullDateTime(agentTimes.start)}）`}
+								{agentTimes?.start && (
+									<span data-agent-time>（Agent 时间 {formatFullDateTime(agentTimes.start)}）</span>
+								)}
 							</dd>
 							{a.wake_at && (
 								<>
@@ -468,7 +484,9 @@ function AttemptsTab({
 							<dt>结束</dt>
 							<dd className="m-0">
 								{a.ended_at ? formatClock(a.ended_at) : "—"}
-								{agentTimes?.end && `（Agent 时间 ${formatFullDateTime(agentTimes.end)}）`}
+								{agentTimes?.end && (
+									<span data-agent-time>（Agent 时间 {formatFullDateTime(agentTimes.end)}）</span>
+								)}
 							</dd>
 						</dl>
 						{a.error && error && (

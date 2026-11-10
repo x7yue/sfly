@@ -6,8 +6,8 @@ export interface AttemptAgentTimes {
 	/** 开始、结束时的 Agent 时间（ISO）；那一头没有记录偏差（或时间超出可表示的范围）时为 null。 */
 	start: string | null;
 	end: string | null;
-	/** 两头各差多少：`开始时比控制面快 613 天，结束时慢 3 秒`。 */
-	detail: string;
+	/** 两头各差多少，一头一条：`开始时比控制面快 613 天`、`结束时慢 3 秒`。 */
+	details: string[];
 }
 
 /** 测量那一刻的 Agent 时间：测量时刻（控制面时间）加偏差。Agent 时间可以是任何值，超出 Date 范围时为 null。 */
@@ -41,6 +41,6 @@ export function attemptAgentTimes(
 	return {
 		start: agentTime(attempt.start_clock_offset),
 		end: agentTime(attempt.end_clock_offset),
-		detail: parts.join("，"),
+		details: parts,
 	};
 }

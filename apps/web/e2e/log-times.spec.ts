@@ -22,6 +22,9 @@ const AGENT_AHEAD_MS = ((613 * 24 + 3) * 3600 + 25 * 60 + 7) * 1000;
 const M0 = 40_000;
 /** 页面上的时刻（浏览器时区 Asia/Shanghai）：`08:00:06.000`。 */
 const clockMs = (ms: number) => new Date(ms + 8 * 3600_000).toISOString().slice(11, 23);
+/** 带日期的时刻：`2027-09-06 11:25:13.000`。列表里有时间不在运行开始那天时，整列都这样显示。 */
+const dateClockMs = (ms: number) =>
+	new Date(ms + 8 * 3600_000).toISOString().slice(0, 23).replace("T", " ");
 
 /** Agent 在连上后第 afterMs 毫秒读到的一行：Agent 时间带着偏差，单调时钟读数照实走。 */
 const lineAt = (clock0: number, seq: number, afterMs: number, text: string) => ({
@@ -57,21 +60,17 @@ test("日志时间列默认显示 Agent 时间，切换成控制面时间后刷�
 	const second = logs.getByRole("button", { name: /probe keeps going/ });
 	const kind = (name: string) => panel(page).getByRole("button", { name, exact: true });
 
-	// 默认：Agent 时间。
+	// 默认：Agent 时间。它和运行开始那天（控制面时间 2026-01-01）不在同一天：整列带上日期。
 	await expect(kind("Agent 时间")).toHaveAttribute("aria-pressed", "true");
-	await expect(first.locator("[data-log-time]")).toHaveText(
-		clockMs(clock0 + AGENT_AHEAD_MS + 6_000),
-	);
-	await expect(second.locator("[data-log-time]")).toHaveText(
-		clockMs(clock0 + AGENT_AHEAD_MS + 9_500),
-	);
+	await expect(first.locator("[data-log-time]")).toHaveText("2027-09-06 11:25:13.000");
+	await expect(second.locator("[data-log-time]")).toHaveText("2027-09-06 11:25:16.500");
 	// 悬停时两种时间都给出，带日期。
 	await expect(first.locator("[data-log-time]")).toHaveAttribute(
 		"title",
 		"Agent 时间 2027-09-06 11:25:13\n控制面时间 2026-01-01 08:00:06",
 	);
 
-	// 切换成控制面时间。
+	// 切换成控制面时间：都在运行开始那天，只显示时刻。
 	await kind("控制面时间").click();
 	await expect(first.locator("[data-log-time]")).toHaveText(clockMs(clock0 + 6_000));
 	await expect(second.locator("[data-log-time]")).toHaveText(clockMs(clock0 + 9_500));
@@ -134,11 +133,28 @@ test("没有控制面时间的旧日志行：时间列显示未记录，不能�
 	const reason = "这行日志没有记录控制面时间，不能在时间轴上定位";
 
 	// 默认的 Agent 时间照常显示。
-	await expect(old.locator("[data-log-time]")).toHaveText(clockMs(clock0 + AGENT_AHEAD_MS + 9_000));
-	await expect(panel(page).getByTestId("logs-unlocatable")).toContainText(reason);
+	await expect(old.locator("[data-log-time]")).toHaveText(
+		dateClockMs(clock0 + AGENT_AHEAD_MS + 9_000),
+	);
+	// 面板顶部说清有几行、为什么；行自己的说明是单行的说法。
+	await expect(panel(page).getByTestId("logs-unlocatable")).toHaveText(
+		"有 1 行日志没有记录控制面时间（升级之前写入的日志只有 Agent 时间）：这些行不能在时间轴上定位，按时间范围过滤时也不显示。",
+	);
 	await expect(old).toHaveAttribute("aria-disabled", "true");
 	await expect(old).toHaveAttribute("title", reason);
 	await expect(fresh).not.toHaveAttribute("aria-disabled", "true");
+	// 不能定位的行一眼能认出来：正文退到辅助色，鼠标指针是「不可用」。
+	await expect(old).toHaveCSS("cursor", "not-allowed");
+	await expect(fresh).toHaveCSS("cursor", "pointer");
+	const textColor = (row: typeof old) =>
+		row
+			.locator("span")
+			.last()
+			.evaluate((el) => getComputedStyle(el).color);
+	expect(await textColor(old)).toBe(
+		await old.locator("[data-log-time]").evaluate((el) => getComputedStyle(el).color),
+	);
+	expect(await textColor(old)).not.toBe(await textColor(fresh));
 
 	// 点旧行不出现标记；点新行才有。
 	await expect(old).toBeDisabled();

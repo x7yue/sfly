@@ -278,6 +278,15 @@ test("日志：Agent 时间跳变时 Agent 写入的提示行来源显示为 age
 	const own = logs.getByRole("button", { name: /probe started/ });
 	await expect(own).toHaveAttribute("data-source", "stdout");
 	await expect(own.locator("[data-log-source]")).toHaveText("stdout");
+	// 跳变后的时间和运行开始那天不在同一天：整列带上日期，跳变前后的行才看得出差别。
+	await expect(logs.locator("[data-log-time]")).toHaveText([
+		"2026-01-01 08:00:14.000",
+		"2027-09-06 08:00:14.000",
+	]);
+	// 控制面时间都在同一天：只显示时刻。
+	await panel(page).getByRole("button", { name: "控制面时间", exact: true }).click();
+	await expect(logs.locator("[data-log-time]")).toHaveText(["08:00:14.000", "08:00:14.000"]);
+	await panel(page).getByRole("button", { name: "Agent 时间", exact: true }).click();
 
 	// 只看 WARN 时提示行还在；之后的输出实时接上，提示行留在原来的位置。
 	await panel(page).getByRole("button", { name: "WARN", exact: true }).click();
@@ -555,9 +564,40 @@ test.describe("尝试页签的 Agent 时间", () => {
 			"08:00:00（Agent 时间 2027-09-06 08:00:00）",
 			"08:00:10（Agent 时间 2027-09-06 08:00:10）",
 		]);
-		await expect(attempt).toContainText(
+		const notice = attempt.getByText("这个任务执行期间 Agent 时间与控制面不一致");
+		await expect(notice).toHaveText(
 			"这个任务执行期间 Agent 时间与控制面不一致：开始时比控制面快 613 天，结束时快 613 天",
 		);
+		// 提示换行时不留孤字（「天」单独掉到下一行），窄窗口里也一样；两行的 Agent 时间左边对齐。
+		for (const size of [
+			{ width: 1440, height: 900 },
+			{ width: 1024, height: 768 },
+		]) {
+			await page.setViewportSize(size);
+			const lines = await notice.evaluate((el) => {
+				const range = document.createRange();
+				const counts = new Map<number, number>();
+				const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+					for (let i = 0; i < (node.textContent ?? "").length; i++) {
+						range.setStart(node, i);
+						range.setEnd(node, i + 1);
+						const top = Math.round(range.getBoundingClientRect().top);
+						counts.set(top, (counts.get(top) ?? 0) + 1);
+					}
+				}
+				return [...counts.values()];
+			});
+			expect(Math.min(...lines), `${size.width} 宽时每行的字数 ${lines}`).toBeGreaterThan(4);
+			const agentTimes = attempt.locator("[data-agent-time]");
+			await expect(agentTimes).toHaveCount(2);
+			const [start, end] = await Promise.all([
+				agentTimes.nth(0).boundingBox(),
+				agentTimes.nth(1).boundingBox(),
+			]);
+			expect(start?.x).toBe(end?.x);
+			expect(start?.height).toBe(end?.height);
+		}
 	});
 
 	test("偏差 1 秒：只显示一个时间，没有不一致的提示", async ({

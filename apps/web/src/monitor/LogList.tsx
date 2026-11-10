@@ -1,7 +1,13 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "cn";
-import { useLayoutEffect, useRef } from "react";
-import { formatClockMs, formatFullDateTime, TIME_NOT_RECORDED } from "#/lib/format";
+import { useLayoutEffect, useMemo, useRef } from "react";
+import {
+	formatClockMs,
+	formatFullDateTime,
+	formatFullDateTimeMs,
+	spansOtherDay,
+	TIME_NOT_RECORDED,
+} from "#/lib/format";
 import type { LoadedLine } from "./log-buffer";
 import { type LogTimeKind, logLineTime } from "./log-time-kind";
 
@@ -23,14 +29,16 @@ const LEVEL_STYLE: Record<LoadedLine["level"], string> = {
 const LOAD_OLDER_AT = 120;
 
 /** 没有控制面时间的行（升级之前写入的）不能定位的原因。 */
-export const NOT_LOCATABLE = "这行日志没有记录控制面时间，不能在时间轴上定位";
+const NOT_LOCATABLE = "这行日志没有记录控制面时间，不能在时间轴上定位";
 
 const fullTime = (iso: string | null) => (iso ? formatFullDateTime(iso) : TIME_NOT_RECORDED);
 
 /**
  * 日志行（虚拟滚动）：停在底部时跟随新行（实时跟随），滚到顶部时加载更早的一页（加载后视口内容不跳动）。
- * 时间列按 timeKind 显示 Agent 时间或控制面时间（ADR 0018），悬停时两种都给出。
- * 点一行把它的控制面时间标到时间轴上（onPick），标记的行高亮；没有控制面时间的行不能点。
+ * 时间列按 timeKind 显示 Agent 时间或控制面时间（ADR 0018），悬停时两种都给出；平时只显示时刻，
+ * 列表里有一行显示的时间不在运行开始那天（day）时整列都带上日期。
+ * 点一行把它的控制面时间标到时间轴上（onPick），标记的行高亮；没有控制面时间的行不能点：
+ * 正文退到辅助色，指针是「不可用」。
  */
 export function LogList({
 	lines,
@@ -40,6 +48,7 @@ export function LogList({
 	marked,
 	onPick,
 	timeKind,
+	day,
 }: {
 	lines: LoadedLine[];
 	hasOlder: boolean;
@@ -50,7 +59,18 @@ export function LogList({
 	onPick: (line: LoadedLine) => void;
 	/** 时间列显示哪一种时间。 */
 	timeKind: LogTimeKind;
+	/** 运行开始的时刻（控制面时间）：时间列要不要带日期按它那一天判断。 */
+	day: string;
 }) {
+	const dated = useMemo(
+		() =>
+			spansOtherDay(
+				lines.map((l) => logLineTime(l, timeKind)),
+				day,
+			),
+		[lines, timeKind, day],
+	);
+	const formatTime = dated ? formatFullDateTimeMs : formatClockMs;
 	const box = useRef<HTMLDivElement>(null);
 	const follow = useRef(true);
 	/** 加载更早的一页之前，视口顶部那一行：加载后滚回它。 */
@@ -159,8 +179,9 @@ export function LogList({
 								}
 							}}
 							className={cn(
-								"absolute top-0 left-0 grid w-full grid-cols-[96px_44px_52px_1fr] gap-2 px-3 leading-5 break-all whitespace-pre-wrap",
-								locatable ? "cursor-pointer hover:bg-fg-1/3" : "cursor-default",
+								"absolute top-0 left-0 grid w-full gap-2 px-3 leading-5 break-all whitespace-pre-wrap",
+								dated ? "grid-cols-[168px_44px_52px_1fr]" : "grid-cols-[96px_44px_52px_1fr]",
+								locatable ? "cursor-pointer hover:bg-fg-1/3" : "cursor-not-allowed",
 								"data-marked:bg-warn-soft",
 							)}
 							style={{ transform: `translateY(${item.start}px)` }}
@@ -170,16 +191,20 @@ export function LogList({
 								className="text-fg-3"
 								title={`Agent 时间 ${fullTime(line.agent_time)}\n控制面时间 ${fullTime(line.time)}`}
 							>
-								{shown ? formatClockMs(shown) : TIME_NOT_RECORDED}
+								{shown ? formatTime(shown) : TIME_NOT_RECORDED}
 							</span>
-							<span className={LEVEL_STYLE[line.level]}>{LEVEL_LABEL[line.level]}</span>
+							<span
+								className={
+									!locatable && line.level === "info" ? "text-fg-3" : LEVEL_STYLE[line.level]
+								}
+							>
+								{LEVEL_LABEL[line.level]}
+							</span>
 							{/* Agent 自己写入的提示行（Agent 时间跳变）不是节点的输出：来源用正文色，与其余来源区分。 */}
 							<span data-log-source className={line.source === "agent" ? "text-fg-1" : "text-fg-3"}>
 								{line.source}
 							</span>
-							<span className={line.level === "info" ? "text-log-info" : LEVEL_STYLE[line.level]}>
-								{line.text}
-							</span>
+							<span className={locatable ? LEVEL_STYLE[line.level] : "text-fg-3"}>{line.text}</span>
 						</div>
 					);
 				})}
