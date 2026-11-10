@@ -80,7 +80,6 @@ interface SegmentRow extends Record<string, unknown> {
 
 const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 
-
 /** 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试（与运行视图一致）。 */
 const isPlaceholder = (t: TaskRow) =>
 	t.status === "skipped" || (t.status === "cancelled" && t.startedAt === null);
