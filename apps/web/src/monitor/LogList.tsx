@@ -133,6 +133,7 @@ export function LogList({
 							ref={virtualizer.measureElement}
 							data-index={item.index}
 							data-level={line.level}
+							data-source={line.source}
 							data-marked={marked === line.seq || undefined}
 							role="button"
 							tabIndex={0}
@@ -152,7 +153,10 @@ export function LogList({
 						>
 							<span className="text-fg-3">{formatClockMs(line.time)}</span>
 							<span className={LEVEL_STYLE[line.level]}>{LEVEL_LABEL[line.level]}</span>
-							<span className="text-fg-3">{line.source}</span>
+							{/* Agent 自己写入的提示行（Agent 时间跳变）不是节点的输出：来源用正文色，与其余来源区分。 */}
+							<span data-log-source className={line.source === "agent" ? "text-fg-1" : "text-fg-3"}>
+								{line.source}
+							</span>
 							<span className={line.level === "info" ? "text-log-info" : LEVEL_STYLE[line.level]}>
 								{line.text}
 							</span>

@@ -99,6 +99,7 @@ except OSError:
 
 - 级别：`debug`、`info`、`warn`（`warning` 等同 `warn`）、`error`。
 - `print` 和子进程的输出也会进入日志：标准输出记为 info，标准错误记为 error，来源分别是 stdout / stderr；`ctx.log` 的来源是 sdk。
+- 任务执行中途 Agent 机器的系统时间被改动（超过 2 秒）时，Agent 会往日志里写一行来源为 agent 的提示，写明跳变前后的时间；本地调试时没有这一行。
 
 ## `ctx.progress`：进度
 

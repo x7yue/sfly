@@ -5,6 +5,7 @@
 //!
 //! - 标准输出 → 来源 stdout、级别 info；标准错误 → 来源 stderr、级别 error；
 //! - 事件管道里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；
+//! - 任务执行中途 Agent 时间跳变（[`crate::time_jump`]）→ Agent 自己写一行提示，来源 agent、级别 warn；
 //! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次；
 //! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
 //!   任务结束前发完。
@@ -35,6 +36,7 @@ use crate::proto::{
     AgentMessage, AssignTask, LogBatch, LogLevel, LogLine, LogSource, MetricBatch, Progress,
     agent_message,
 };
+use crate::time_jump;
 
 /// 发送一批日志、检查进度与指标的间隔。
 const TICK: Duration = Duration::from_millis(100);
@@ -302,6 +304,7 @@ impl Pump {
             progress_sent_at: None,
             metrics: Merger::default(),
             throttle: Throttle::new(forward_rate),
+            time_jumps: time_jump::Watch::start(),
         };
         let handle = tokio::spawn(forwarder.run(lines_rx, events_rx, exited_rx));
         Pump {
@@ -564,6 +567,8 @@ struct Forwarder {
     /// 还没发出的指标点。
     metrics: Merger,
     throttle: Throttle,
+    /// Agent 时间跳变的检测。
+    time_jumps: time_jump::Watch,
 }
 
 /// 测试用的转发限速（[`Pump::start`] 的 `forward_rate`）：按累计处理的字节数等到对应的时刻。
@@ -616,7 +621,10 @@ impl Forwarder {
                     Some(chunk) => self.events(&chunk),
                     None => events_open = false,
                 },
-                _ = tick.tick() => self.poll(false),
+                _ = tick.tick() => {
+                    self.note_time_jump();
+                    self.poll(false);
+                }
                 _ = &mut exited => break,
             }
         }
@@ -702,6 +710,21 @@ impl Forwarder {
                 text: String::from_utf8_lossy(line).into_owned(),
             }),
         }
+    }
+
+    /// Agent 时间跳变了（[`time_jump`]）就往日志里写一行提示：排在已经读到的行之后，沿用任务的日志序号。
+    /// 只在检查点调用，不在逐行处理的路径上。
+    fn note_time_jump(&mut self) {
+        let Some(jump) = self.time_jumps.check() else {
+            return;
+        };
+        self.flush_lines();
+        self.pending.push(Pending {
+            time_unix_ms: jump.after_ms,
+            source: LogSource::Agent,
+            level: LogLevel::Warn,
+            text: jump.notice(),
+        });
     }
 
     /// 发出这一批日志；进度、指标到时间（或 `last`）时发出。

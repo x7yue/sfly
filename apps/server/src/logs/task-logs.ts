@@ -41,8 +41,8 @@ import { maskSecrets, secretValues } from "./secrets.js";
 export interface LogLineView {
 	seq: number;
 	time: string;
-	/** system：控制面自己写入的行（截断标记，#18）。 */
-	source: "stdout" | "stderr" | "sdk" | "system";
+	/** agent：Agent 自己写入的提示行（Agent 时间跳变，ADR 0018）；system：控制面自己写入的行（截断标记，#18）。 */
+	source: "stdout" | "stderr" | "sdk" | "agent" | "system";
 	level: "debug" | "info" | "warn" | "error";
 	text: string;
 }
@@ -68,6 +68,7 @@ const SOURCES: Record<LogSource, LogLineView["source"]> = {
 	[LogSource.STDOUT]: "stdout",
 	[LogSource.STDERR]: "stderr",
 	[LogSource.SDK]: "sdk",
+	[LogSource.AGENT]: "agent",
 };
 
 const LEVELS: Record<LogLevel, LogLineView["level"]> = {
