@@ -236,7 +236,9 @@ describe("日志和进度的两种时间", () => {
 				const { lines, size } = await page(task.taskId);
 				expect(lines[0]?.offset).toBe(0);
 				expect(lines[1]?.offset).toBe(Buffer.byteLength(`${JSON.stringify(OLD[0])}\n`));
-				expect(lines[2]?.offset).toBe(Buffer.byteLength(OLD.map((l) => `${JSON.stringify(l)}\n`).join("")));
+				expect(lines[2]?.offset).toBe(
+					Buffer.byteLength(OLD.map((l) => `${JSON.stringify(l)}\n`).join("")),
+				);
 				expect(size).toBeGreaterThan(lines[2]?.offset ?? 0);
 
 				const sse = await SseClient.open(cp, `/tasks/${task.taskId}/logs/events`);
@@ -260,7 +262,12 @@ describe("日志和进度的两种时间", () => {
 				expect(res.status).toBe(200);
 				const text = await res.text();
 				expect(text.endsWith("\n")).toBe(true);
-				expect(text.trimEnd().split("\n").map((l) => JSON.parse(l))).toEqual([
+				expect(
+					text
+						.trimEnd()
+						.split("\n")
+						.map((l) => JSON.parse(l)),
+				).toEqual([
 					{
 						seq: 1,
 						time: null,

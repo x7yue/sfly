@@ -185,9 +185,7 @@ export class TaskLogs {
 		// 收到的时刻在这里取（之后同一任务的写入要排队）：没有单调时钟读数时用它作控制面时间。
 		const receivedAt = this.deps.clock.now();
 		const controlPlaneTime: ControlPlaneTimeOf = (monotonicMs) =>
-			monotonicMs !== 0n && conn.clock.hasMapping
-				? conn.controlPlaneTime(monotonicMs)
-				: receivedAt;
+			monotonicMs !== 0n && conn.clock.hasMapping ? conn.controlPlaneTime(monotonicMs) : receivedAt;
 		if (message.body.case === "logs")
 			await this.append(conn.name, message.body.value, controlPlaneTime);
 		else if (message.body.case === "progress")
@@ -217,11 +215,7 @@ export class TaskLogs {
 	 * 追加一批日志（只接受任务所在 Agent 上报的）；同一任务的追加串行执行。
 	 * `controlPlaneTime` 把一行的单调时钟读数折算成控制面时间。
 	 */
-	append(
-		agentName: string,
-		batch: LogBatch,
-		controlPlaneTime: ControlPlaneTimeOf,
-	): Promise<void> {
+	append(agentName: string, batch: LogBatch, controlPlaneTime: ControlPlaneTimeOf): Promise<void> {
 		return this.#serial(batch.taskId, async () => {
 			const state = await this.#stateFor(batch.taskId, agentName);
 			if (!state || state.truncated) return;

@@ -697,11 +697,7 @@ impl Forwarder {
 
     /// 处理事件管道里的一块完整内容。
     fn events(&mut self, chunk: &EventChunk) {
-        for line in chunk
-            .bytes
-            .split(|&b| b == b'\n')
-            .filter(|l| !l.is_empty())
-        {
+        for line in chunk.bytes.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
             self.event(line, chunk.stamp);
             self.flush_full_batch();
         }

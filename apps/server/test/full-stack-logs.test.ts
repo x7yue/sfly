@@ -11,6 +11,8 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 
 interface LogLine {
 	seq: number;
+	time: string;
+	agent_time: string;
 	source: string;
 	level: string;
 	text: string;
@@ -57,15 +59,40 @@ describe("全栈：日志、进度与打码", () => {
 			packages: { "sfly-stub": "0.1.0" },
 		});
 
+		const before = Date.now();
 		const runId = await api.triggerOk(id, { token: "hunter2-very-secret" });
 		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 30_000);
 		const [attempt] = (await api.node(runId, "talk")).attempts;
 		expect(attempt?.progress).toMatchObject({ current: 3, total: 3, message: "第 3 步" });
+		const after = Date.now();
+		// 两种时间（ADR 0018）：控制面用的是停在 2026-01-01 的手动时钟，Agent 时间是这台机器的系统时间。
+		// 控制面时间由真实 Agent 打的单调时钟读数折算：从 Agent 连上的那一刻（手动时钟的起点）往后数真实流逝的毫秒，
+		// 手动时钟不动它也在走；Agent 时间原样保存。
+		const connectedAt = cp.clock.now().getTime();
+		const isControlPlaneTime = (time: string | null | undefined) => {
+			const ms = Date.parse(time ?? "");
+			expect(ms).toBeGreaterThan(connectedAt);
+			expect(ms).toBeLessThan(connectedAt + 600_000);
+		};
+		const isAgentTime = (time: string | null | undefined) => {
+			const ms = Date.parse(time ?? "");
+			expect(ms).toBeGreaterThanOrEqual(before);
+			expect(ms).toBeLessThanOrEqual(after);
+		};
+		isControlPlaneTime(attempt?.progress?.time);
+		isAgentTime(attempt?.progress?.agent_time);
 
 		const sse = await SseClient.open(cp, `/tasks/${attempt?.task_id}/logs/events`);
 		try {
 			const { lines } = (await sse.next<{ lines: LogLine[] }>("logs")).data;
 			expect(lines.map((l) => l.seq)).toEqual(lines.map((_, i) => i + 1));
+			for (const line of lines) {
+				isControlPlaneTime(line.time);
+				isAgentTime(line.agent_time);
+			}
+			// 控制面时间按读到的先后不倒退。
+			const times = lines.map((l) => Date.parse(l.time));
+			expect(times).toEqual([...times].sort((a, b) => a - b));
 			expect(lines.map((l) => [l.source, l.level, l.text])).toEqual(
 				expect.arrayContaining([
 					["stdout", "info", "来自 print"],
