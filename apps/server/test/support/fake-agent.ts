@@ -177,7 +177,10 @@ export class FakeAgent {
 				}),
 			{ ...options, name: hello.name },
 		);
-		if (now !== undefined) agent.#monotonicShiftMs = SYNCED_MONOTONIC_MS - now;
+		// hello 里自己写了单调时钟读数时按它对应（Agent 时间可以另写，与控制面不一致）。
+		if (now !== undefined) {
+			agent.#monotonicShiftMs = Number(hello.monotonicMs ?? SYNCED_MONOTONIC_MS) - now;
+		}
 		return agent;
 	}
 
