@@ -86,8 +86,8 @@ async fn high_frequency_metrics_go_through_a_fifo_without_growing_the_work_dir()
     // 累计计数的最大值等于上报次数：管道写满时写端等待，一个事件也不丢。
     let max = points.iter().map(|p| p.value).fold(0.0, f64::max);
     assert_eq!(max, count);
-    // Agent 跟得上（读不过来时写端等待，而不是在内存里越积越多、晚于宽限期才处理）：每秒只有一个点。
-    let mut seconds: Vec<i64> = points.iter().map(|p| p.time_unix_s).collect();
+    // 每个单调时钟秒只有一个点（Agent 按读到事件时的单调时钟读数分秒合并，ADR 0018）。
+    let mut seconds: Vec<i64> = points.iter().map(|p| p.monotonic_ms).collect();
     let all = seconds.len();
     seconds.sort_unstable();
     seconds.dedup();
