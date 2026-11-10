@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 控制面镜像冒烟：用 out/server（先运行 `pnpm bundle:server`）构建本机架构（linux/amd64 或 linux/arm64）的镜像，
-# 不靠模拟运行别的架构（CI 的自托管 runner 有 x86_64 也有 arm64）；连本机 PostgreSQL 的
+# 不靠模拟运行别的架构（开发机有 x86_64 也有 arm64）；连本机 PostgreSQL 的
 # 临时数据库启动容器，检查健康检查转为 healthy、页面、API、SDK wheel、两个架构的 Agent 与 install.sh、
 # 非 root 运行、数据卷可写。
 #   scripts/release/image-smoke.sh [镜像标签，默认 sfly-server:smoke]
