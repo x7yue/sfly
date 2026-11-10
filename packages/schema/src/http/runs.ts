@@ -362,10 +362,16 @@ export const ArtifactView = z.object({
 	name: z.string(),
 	size: z.number().int(),
 	sha256: z.string(),
+	/** 上传时间（控制面时间）。 */
 	created_at: Timestamp,
+	/** 文件在 Agent 上的修改时间（Agent 时间）；Agent 没有上报时为 null（未记录）。 */
+	agent_modified_at: Timestamp.nullable(),
 	/** 对 Agent 可见的完整下载地址（节点输出里的产物引用）；浏览器用 `/api/tasks/:id/artifacts/<name>`。 */
 	url: z.string(),
 });
+
+/** 上传产物的请求头：文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。旧版 Agent 不带。 */
+export const AGENT_MODIFIED_MS_HEADER = "x-sfly-agent-modified-ms";
 
 const ArtifactParams = z.object({ id: z.string(), "*": z.string() });
 
@@ -384,7 +390,7 @@ export const artifactsApi = {
 	}),
 	/**
 	 * Agent 上传一个产物（201）：请求体是文件内容（原始字节，不在契约里）；`*` 是产物目录内的相对路径，
-	 * 每个路径段单独百分号编码。配置了注册令牌时需要 `Authorization: Bearer <token>`，否则 401 `unauthorized`；
+	 * 每个路径段单独百分号编码。`x-sfly-agent-modified-ms` 请求头是文件在 Agent 上的修改时间，可以不带。配置了注册令牌时需要 `Authorization: Bearer <token>`，否则 401 `unauthorized`；
 	 * 超过单个任务的产物上限时 413。
 	 */
 	upload: endpoint({

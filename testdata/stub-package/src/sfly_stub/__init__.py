@@ -227,10 +227,18 @@ def chatter(
 
 @node(title="产物", outputs=["refs"])
 def artifacts(
-    ctx: Context, files: dict[str, str] | None = None, fail: bool = False
+    ctx: Context,
+    files: dict[str, str] | None = None,
+    fail: bool = False,
+    mtimes: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """产物测试用：把 files（名称 → 文本内容）保存为产物，返回产物引用；fail 时保存后抛出异常。"""
+    """产物测试用：把 files（名称 → 文本内容）保存为产物，返回产物引用；fail 时保存后抛出异常。
+
+    mtimes（名称 → Unix 秒）把对应产物文件的修改时间改成指定的值。
+    """
     refs = {name: ctx.artifacts.save(name, content) for name, content in (files or {}).items()}
+    for name, mtime in (mtimes or {}).items():
+        os.utime(ctx.artifacts.path(name), (mtime, mtime))
     if fail:
         raise RuntimeError("保存产物后失败")
     return {"refs": refs}
