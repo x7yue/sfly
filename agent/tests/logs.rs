@@ -104,6 +104,40 @@ async fn print_subprocess_output_and_sdk_logs_form_one_numbered_log_stream_befor
     );
 }
 
+/// 任务的所有日志行的 Agent 时间。
+async fn line_times(cp: &FakeControlPlane, task_id: &str) -> Vec<i64> {
+    cp.assign(stub_task(task_id, "chatter", json!({}))).await;
+    cp.result(task_id).await;
+    let lines = log_lines(&cp.received_with_session(), task_id);
+    assert_eq!(lines.len(), 8, "{lines:?}");
+    lines.iter().map(|(_, l)| l.time_unix_ms).collect()
+}
+
+#[tokio::test]
+async fn log_lines_carry_the_agent_time_which_follows_the_test_offset_as_soon_as_it_changes() {
+    const DAYS_613_MS: i64 = 613 * 24 * 3600 * 1000;
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-logs-offset"));
+    cp.hello(0).await;
+
+    // 标准输出、标准错误（Agent 读到时打点）和 SDK 日志（SDK 按系统时钟打点）都落在同一个 Agent 时间上。
+    for (task_id, offset) in [
+        ("task-now", 0),
+        ("task-ahead", DAYS_613_MS),
+        ("task-back", -DAYS_613_MS),
+        ("task-now-again", 0),
+    ] {
+        agent.set_agent_time_offset_ms(offset);
+        let before = now_ms() + offset;
+        let times = line_times(&cp, task_id).await;
+        let after = now_ms() + offset;
+        assert!(
+            times.iter().all(|t| before <= *t && *t <= after),
+            "{task_id}: {before} <= {times:?} <= {after}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn progress_is_merged_to_at_most_once_per_second_and_the_last_value_precedes_the_result() {
     let cp = FakeControlPlane::start().await;

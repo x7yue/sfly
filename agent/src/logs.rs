@@ -19,7 +19,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use prost::Message as _;
 
@@ -29,6 +29,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::clock;
 use crate::metrics::{Labels, Merger, MetricQueue};
 use crate::proto::{
     AgentMessage, AssignTask, LogBatch, LogLevel, LogLine, LogSource, MetricBatch, Progress,
@@ -329,11 +330,15 @@ struct Pending {
     text: String,
 }
 
+/// 现在的 Agent 时间。
 fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or_default()
+    clock::agent_time_ms()
+}
+
+/// SDK 事件的 Agent 时间：事件带时间戳时用它（SDK 读的是系统时钟，经 [`clock::to_agent_time_ms`] 换算），
+/// 没带时取现在。
+fn sdk_time_ms(ts: Option<i64>) -> i64 {
+    ts.map_or_else(now_ms, clock::to_agent_time_ms)
 }
 
 /// 逐行读取一个管道，原始内容同时写到 `copy`（写失败时忽略），并在 `tail` 里保留最后一段；
@@ -660,7 +665,7 @@ impl Forwarder {
     fn event(&mut self, line: &[u8]) {
         match serde_json::from_slice::<Event>(line) {
             Ok(Event::Log { ts, level, message }) => self.pending.push(Pending {
-                time_unix_ms: ts.unwrap_or_else(now_ms),
+                time_unix_ms: sdk_time_ms(ts),
                 source: LogSource::Sdk,
                 level: sdk_level(&level),
                 text: message,
@@ -677,7 +682,7 @@ impl Forwarder {
                     current,
                     total,
                     message,
-                    time_unix_ms: ts.unwrap_or_else(now_ms),
+                    time_unix_ms: sdk_time_ms(ts),
                 });
             }
             Ok(Event::Metric {
@@ -688,7 +693,7 @@ impl Forwarder {
                 labels,
             }) => self
                 .metrics
-                .add(ts.unwrap_or_else(now_ms), name, labels, &kind, value),
+                .add(sdk_time_ms(ts), name, labels, &kind, value),
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
                 time_unix_ms: now_ms(),

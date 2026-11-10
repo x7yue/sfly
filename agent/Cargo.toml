@@ -24,7 +24,7 @@ tonic-prost = "0.14"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["fs", "process", "signal"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "process", "signal", "time"] }
 
 [dev-dependencies]
 # 基准测试（benches/，ARCHITECTURE §7.6）：只作开发依赖，不进 release 二进制；不要图表，少编译 rayon / plotters。

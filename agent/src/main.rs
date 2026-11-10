@@ -49,7 +49,8 @@ struct Args {
     #[arg(long, env = "SFLY_PROCS_DIR")]
     procs_dir: Option<PathBuf>,
     /// 任务目录在结果被控制面确认后保留多久，例如 `30m`、`24h`、`7d`；`0` 表示立即删除。
-    /// Agent 启动时和之后每小时删除超过保留期的任务目录（上次运行留下的按目录的修改时间算）。
+    /// Agent 启动时和之后每小时删除超过保留期的任务目录；保留期按真实流逝的时长算，不受修改系统时间影响，
+    /// Agent 重启后已有的目录从启动时重新算起。
     #[arg(long, env = "SFLY_TASK_DIR_RETENTION", default_value = "7d", value_parser = retention::parse_retention)]
     task_dir_retention: Duration,
     /// 两次扫描工作目录的间隔秒数。
@@ -106,6 +107,10 @@ struct Args {
     /// （新版本的试用按二进制的 sha256 判断）；execve（自更新或回滚）时不传下去（命令行参数和环境变量都去掉）。
     #[arg(long, env = "SFLY_VERSION_OVERRIDE", hide = true)]
     version_override: Option<String>,
+    /// 只在测试中使用：模拟修改系统时间。Agent 每次读 Agent 时间时都加上这个文件里写的偏移量
+    /// （十进制整数，毫秒，可以为负）；文件可以在运行中修改，立即生效。
+    #[arg(long, env = "SFLY_AGENT_TIME_OFFSET_FILE", hide = true)]
+    agent_time_offset_file: Option<PathBuf>,
 }
 
 /// 把 `agent.env` 里的配置转成命令行参数，放在真正的命令行参数之前（`args_override_self`：后出现的生效），
@@ -223,6 +228,7 @@ async fn main() -> anyhow::Result<()> {
         version: args
             .version_override
             .unwrap_or_else(|| AGENT_VERSION.to_string()),
+        agent_time_offset_file: args.agent_time_offset_file,
         self_update: SelfUpdate {
             enabled: !args.no_auto_update,
             exe,
