@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { posix } from "node:path";
 import type { Readable } from "node:stream";
-import { artifactsApi } from "@sfly/schema";
+import { AGENT_MODIFIED_MS_HEADER, artifactsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { agentTokenMatches, bearerToken } from "../agents/agent-token.js";
 import { type ArtifactRow, type ArtifactStore, artifactUrl } from "../artifacts/artifact-store.js";
@@ -15,13 +15,27 @@ import { sendError } from "./errors.js";
  *
  * | 方法 | 路径 | 说明 |
  * |---|---|---|
- * | PUT | `/tasks/:id/artifacts/<name>` | Agent 上传（请求体是文件内容）；配置了注册令牌时需要 `Authorization: Bearer <token>`。201 → 产物 |
- * | GET | `/tasks/:id/artifacts` | `{ task_id, artifacts: [{name, size, sha256, created_at, url}], expired }`（契约：artifactsApi.list） |
+ * | PUT | `/tasks/:id/artifacts/<name>` | Agent 上传（请求体是文件内容）；配置了注册令牌时需要 `Authorization: Bearer <token>`；`x-sfly-agent-modified-ms` 头是文件在 Agent 上的修改时间，可以不带。201 → 产物 |
+ * | GET | `/tasks/:id/artifacts` | `{ task_id, artifacts: [{name, size, sha256, created_at, agent_modified_at, url}], expired }`（契约：artifactsApi.list） |
  * | GET | `/tasks/:id/artifacts/<name>` | 下载（attachment）；运行已过保留期被清理时 410 `expired` |
  *
  * `<name>` 是产物目录内的相对路径，每个路径段单独百分号编码。`url` 是对 Agent 可见的完整下载地址，
  * 与 SDK `ctx.artifacts.save()` 返回、节点写进输出里的引用相同。
  */
+/** 公元 1 年到 9999 年：接口里的时间是四位年份的 ISO 8601 字符串，之外的值表示不了。 */
+const MIN_TIME_MS = -62_135_596_800_000;
+const MAX_TIME_MS = 253_402_300_799_999;
+
+/**
+ * 上传请求头里的 Agent 修改时间（Unix 毫秒）。它是被测机器上的事实，不拿控制面时间检查范围（ADR 0018）；
+ * 没带（旧版 Agent）、不是整数或表示不了时为 null，上传照常成功。
+ */
+function agentModifiedAt(header: string | string[] | undefined): Date | null {
+	if (typeof header !== "string" || !/^-?\d{1,15}$/.test(header)) return null;
+	const ms = Number(header);
+	return ms >= MIN_TIME_MS && ms <= MAX_TIME_MS ? new Date(ms) : null;
+}
+
 export function registerArtifactRoutes(
 	app: FastifyInstance,
 	deps: { artifacts: ArtifactStore; agentToken?: string; publicHttpUrl: () => string },
@@ -31,6 +45,7 @@ export function registerArtifactRoutes(
 		size: a.size,
 		sha256: a.sha256,
 		created_at: a.createdAt.toISOString(),
+		agent_modified_at: a.agentModifiedAt?.toISOString() ?? null,
 		url: artifactUrl(deps.publicHttpUrl(), a.taskId, a.name),
 	});
 	const authorized = (header: string | undefined) =>
@@ -50,7 +65,12 @@ export function registerArtifactRoutes(
 				return sendError(reply, 404, "not_found", "task not found");
 			}
 			const body = (request.body as Readable | undefined) ?? request.raw;
-			const outcome = await deps.artifacts.save(taskId, params["*"], body);
+			const outcome = await deps.artifacts.save(
+				taskId,
+				params["*"],
+				body,
+				agentModifiedAt(request.headers[AGENT_MODIFIED_MS_HEADER]),
+			);
 			if (!outcome.ok) {
 				body.resume();
 				return sendError(reply, outcome.status, outcome.code, outcome.message);

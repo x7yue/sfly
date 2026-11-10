@@ -294,7 +294,10 @@ export const artifacts = pgTable(
 		path: text("path").notNull(),
 		size: bigint("size", { mode: "number" }).notNull(),
 		sha256: text("sha256").notNull(),
+		/** 上传时间（控制面时间）。 */
 		createdAt: timestamptz("created_at").notNull(),
+		/** 文件在 Agent 上的修改时间（Agent 时间，#171）；旧版 Agent 不上报时为空。 */
+		agentModifiedAt: timestamptz("agent_modified_at"),
 	},
 	(t) => [unique("artifacts_task_name").on(t.taskId, t.name), index("artifacts_run").on(t.runId)],
 );

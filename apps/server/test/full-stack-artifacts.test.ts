@@ -38,7 +38,11 @@ describe("全栈：产物与完整日志", () => {
 					kind: "package",
 					package: "sfly-stub",
 					node: "artifacts",
-					inputs: { files: { "report.txt": "报告", "图/截图.txt": "像素" } },
+					inputs: {
+						files: { "report.txt": "报告", "图/截图.txt": "像素" },
+						// 这个文件在 Agent 上的修改时间是 2099 年（#171）。
+						mtimes: { "report.txt": 4070908800 },
+					},
 				},
 				{
 					id: "use",
@@ -62,8 +66,15 @@ describe("全栈：产物与完整日志", () => {
 		const refs = save.outputs?.refs as Record<string, string>;
 
 		const listed = (await (await cp.fetch(`/tasks/${taskId}/artifacts`)).json()) as {
-			artifacts: Array<{ name: string; size: number; url: string }>;
+			artifacts: Array<{
+				name: string;
+				size: number;
+				url: string;
+				agent_modified_at: string | null;
+			}>;
 		};
+		expect(listed.artifacts[0]?.agent_modified_at).toBe("2099-01-01T00:00:00.000Z");
+		expect(listed.artifacts[1]?.agent_modified_at).not.toBeNull();
 		expect(listed.artifacts.map((a) => [a.name, a.size])).toEqual([
 			["report.txt", Buffer.byteLength("报告")],
 			["图/截图.txt", Buffer.byteLength("像素")],

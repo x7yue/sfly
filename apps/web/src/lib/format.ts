@@ -12,6 +12,13 @@ export function formatDateTime(iso: string, now: Date = new Date()): string {
 		: `${d.getFullYear()}-${date} ${time}`;
 }
 
+/** `2099-01-01 08:00:05`：完整的日期时间（总是带年份和秒），用于 Agent 时间这类可能离现在很远的时间。 */
+export function formatFullDateTime(iso: string): string {
+	const d = new Date(iso);
+	const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+	return `${date} ${formatClock(d.getTime())}`;
+}
+
 /** 字节数：`812 B`、`12.4 KB`、`3.1 MB`。 */
 export function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
