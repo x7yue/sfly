@@ -164,7 +164,7 @@ describe("完整日志", () => {
 		expect(notices.lines).toMatchObject([
 			{
 				seq: 2,
-				time: "2028-07-12T06:34:24.000Z",
+				agent_time: "2028-07-12T06:34:24.000Z",
 				source: "agent",
 				level: "warn",
 				text: "Agent 时间向后跳了 613 天（2026-01-01 08:00:01 → 2028-07-12 14:34:24）",
