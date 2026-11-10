@@ -98,7 +98,10 @@ test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒
 	// 这台机器的时间被往回改了 90 秒：下一次心跳后显示出来。
 	clock.advance(10_000);
 	await synced.heartbeat([], agentClock(now() - 90_000, 15_000));
-	await expect(status("agent-synced")).toHaveText("在线时间比控制面慢 1 分钟");
+	// 列表每 STATUS_POLL_MS（5 秒）才重新拉取一次，默认的 5 秒等不到下一次。
+	await expect(status("agent-synced")).toHaveText("在线时间比控制面慢 1 分钟", {
+		timeout: 15_000,
+	});
 });
 
 test.describe("版本不一致", () => {
