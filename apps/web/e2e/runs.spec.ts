@@ -1,4 +1,4 @@
-import { expect, START_TIME, test } from "./fixtures";
+import { expect, test } from "./fixtures";
 import { advance, runDocument as document } from "./run-records";
 import { createScenario, holdApi, publishPackage, triggerRun } from "./support";
 
@@ -10,6 +10,7 @@ test("进行中的运行显示为卡片：场景、版本、时长、各链进�
 	page,
 	controlPlane,
 	connectAgent,
+	clock,
 }) => {
 	const agent = await connectAgent({ name: "agent", slots: 4 });
 	await publishPackage(controlPlane);
@@ -22,8 +23,8 @@ test("进行中的运行显示为卡片：场景、版本、时长、各链进�
 	if (!verify || !probe) throw new Error("没有派发 verify 与 probe");
 	agent.progress(verify, 3, 10);
 	await agent.fail(probe);
-	// 只把浏览器时间往后拨（控制面时钟不动，任务租约不会过期）。
-	await page.clock.setFixedTime(new Date(Date.parse(START_TIME) + 5 * MINUTE + 3_000));
+	// 时长按控制面时间算：推进控制面时钟（带心跳，任务租约不会过期），浏览器时间不动。
+	await advance(clock, agent, 5 * MINUTE + 3_000);
 
 	await page.goto("/runs");
 	const card = page.getByRole("article", { name: `运行 ${runId.slice(0, 8)}` });

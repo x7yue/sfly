@@ -14,7 +14,10 @@ const WEB_DIST = fileURLToPath(new URL("../dist", import.meta.url));
 /** 仓库里的用户文档（ADR 0013），「开发文档」页渲染它。 */
 const DOCS_DIR = fileURLToPath(new URL("../../../docs/guide", import.meta.url));
 
-/** 手动时钟的起点；浏览器里的时间也固定在这一刻，页面上的时间显示才稳定。 */
+/**
+ * 手动时钟的起点；浏览器里的时间也固定在这一刻。页面上的"现在"按控制面时间算（接口响应和 SSE 心跳带回来，
+ * ADR 0018），所以推进手动时钟后页面会跟上，不需要再拨浏览器时间。
+ */
 export const START_TIME = "2026-01-01T00:00:00.000Z";
 
 export interface E2eFixtures {
@@ -22,8 +25,12 @@ export interface E2eFixtures {
 	clock: ManualClock;
 	/** 本测试独占的真实控制面（独立数据库），在同一端口托管前端、API 与 SSE。 */
 	controlPlane: TestControlPlane;
-	/** 连接一个假 Agent（默认上报控制面的版本）；测试结束时自动断开。 */
-	connectAgent: (hello: HelloInit) => Promise<FakeAgent>;
+	/**
+	 * 连接一个假 Agent（默认上报控制面的版本，时钟与控制面一致：指标点的控制面时间就是给出的 Unix 秒，
+	 * 见 FakeAgent.connect 的 clock 选项）；测试结束时自动断开。要模拟 Agent 时间不一致，在 hello 里写 agentTimeUnixMs；
+	 * `clock: false` 时是不上报时钟读数的旧版本 Agent。
+	 */
+	connectAgent: (hello: HelloInit, options?: { clock?: false }) => Promise<FakeAgent>;
 	/** 浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；设为 null 时不写。 */
 	nickname: string | null;
 	/**
@@ -50,6 +57,8 @@ export const test = base.extend<E2eFixtures>({
 			clock,
 			webDir: WEB_DIST,
 			docsDir: DOCS_DIR,
+			// SSE 心跳调快：推进手动时钟后，页面很快就从心跳里得到新的控制面时间。
+			sseHeartbeatMs: 250,
 			...controlPlaneOptions,
 		});
 		try {
@@ -61,14 +70,15 @@ export const test = base.extend<E2eFixtures>({
 	baseURL: async ({ controlPlane }, use) => {
 		await use(controlPlane.httpUrl);
 	},
-	connectAgent: async ({ controlPlane }, use) => {
+	connectAgent: async ({ controlPlane, clock }, use) => {
 		const agents: FakeAgent[] = [];
-		await use(async (hello) => {
+		await use(async (hello, options = {}) => {
 			// 默认与控制面同版本（版本不一致的 Agent 不会被派任务，ADR 0014）。
-			const agent = await FakeAgent.connect(controlPlane.grpcUrl, {
-				agentVersion: controlPlane.version,
-				...hello,
-			});
+			const agent = await FakeAgent.connect(
+				controlPlane.grpcUrl,
+				{ agentVersion: controlPlane.version, ...hello },
+				options.clock === false ? {} : { clock },
+			);
 			agents.push(agent);
 			return agent;
 		});

@@ -11,7 +11,9 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 
 interface LogLine {
 	seq: number;
-	time: string;
+	/** 控制面时间；这里的假 Agent 不带单调时钟读数，取控制面收到的时刻（手动时钟不动）。 */
+	time: string | null;
+	agent_time: string | null;
 	source: string;
 	level: string;
 	text: string;
@@ -28,10 +30,13 @@ interface ProgressView {
 	current: number;
 	total: number | null;
 	message: string;
-	time: string;
+	time: string | null;
+	agent_time: string | null;
 }
 
 const MASK = "******";
+/** 手动时钟的起点：不带单调时钟读数的日志和进度，控制面时间取收到的时刻。 */
+const RECEIVED = "2026-01-01T00:00:00.000Z";
 
 function chain(params: Array<Record<string, unknown>> = []) {
 	return {
@@ -108,10 +113,18 @@ describe("任务日志与进度", () => {
 			expect(event.task_id).toBe(task.taskId);
 			expect(event.offset).toBe(0);
 			expect(event.lines).toEqual([
-				{ seq: 1, time: "2026-01-01T00:00:03.000Z", source: "sdk", level: "warn", text: "慢" },
+				{
+					seq: 1,
+					time: RECEIVED,
+					agent_time: "2026-01-01T00:00:03.000Z",
+					source: "sdk",
+					level: "warn",
+					text: "慢",
+				},
 				{
 					seq: 2,
-					time: "2026-01-01T00:00:00.000Z",
+					time: RECEIVED,
+					agent_time: "2026-01-01T00:00:00.000Z",
 					source: "stdout",
 					level: "info",
 					text: "第二行",
@@ -131,7 +144,8 @@ describe("任务日志与进度", () => {
 			expect(live.data.lines).toEqual([
 				{
 					seq: 3,
-					time: "2026-01-01T00:00:04.000Z",
+					time: RECEIVED,
+					agent_time: "2026-01-01T00:00:04.000Z",
 					source: "stderr",
 					level: "error",
 					text: "错误输出",
@@ -225,7 +239,8 @@ describe("任务日志与进度", () => {
 					current: 1,
 					total: 3,
 					message: "建立连接",
-					time: "2026-01-01T00:00:01.000Z",
+					time: RECEIVED,
+					agent_time: "2026-01-01T00:00:01.000Z",
 				},
 			});
 			agent.progress(task, 2.5);

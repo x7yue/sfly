@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
+import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
 import { ReferencedAgent } from "./orchestrations.js";
@@ -66,13 +67,16 @@ export const isActiveStatus = (status: string): status is ActiveStatus =>
 /** 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。 */
 export const ErrorView = z.object({ kind: z.string(), message: z.string() });
 
-/** 最新进度（ctx.progress）；time 是 SDK 记录的时间。 */
+/** 最新进度（ctx.progress），带两种时间（ADR 0018）。 */
 export const TaskProgressView = z.object({
 	current: z.number(),
 	/** 总数；未知时为 null。 */
 	total: z.number().nullable(),
 	message: z.string(),
-	time: Timestamp,
+	/** 控制面时间：这次进度发生时的控制面时间；升级之前保存的进度没有记录，为 null。 */
+	time: Timestamp.nullable(),
+	/** Agent 时间：SDK 记录这次进度的时间，原样保存；没有上报时为 null。 */
+	agent_time: Timestamp.nullable(),
 });
 
 export const AttemptView = z.object({
@@ -88,6 +92,13 @@ export const AttemptView = z.object({
 	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、派发阶段为 null。 */
 	started_at: Timestamp.nullable(),
 	ended_at: Timestamp.nullable(),
+	/**
+	 * 任务开始、结束时的时钟偏差（ADR 0018）：Agent 在执行器启动、得到结果那一刻的 Agent 时间减去当时的控制面时间；
+	 * measured_at 加 offset_ms 就是那一刻的 Agent 时间。started_at / ended_at 仍是控制面收到消息的时刻。
+	 * 旧版本 Agent、升级之前的任务、不在 Agent 上执行的节点、不是由 Agent 上报而结束的任务为 null。
+	 */
+	start_clock_offset: ClockOffsetView.nullable(),
+	end_clock_offset: ClockOffsetView.nullable(),
 	/** 定时 / Sleep 节点的唤醒时间；其他节点为 null。 */
 	wake_at: Timestamp.nullable(),
 	progress: TaskProgressView.nullable(),
@@ -262,15 +273,21 @@ export const runsApi = {
 };
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
-export const LOG_SOURCES = ["stdout", "stderr", "sdk", "system"] as const;
+export const LOG_SOURCES = ["stdout", "stderr", "sdk", "agent", "system"] as const;
 export const MAX_LOG_PAGE_LINES = 1000;
 
-/** 一行日志（日志文件是 JSONL，每行就是这个对象）。 */
+/**
+ * 一行日志，带两种时间（ADR 0018）。日志文件是 JSONL，每行就是这个对象（字段顺序也相同：页面按它算字节偏移）；
+ * 升级之前写入的行只有一个 `time`，读出时它是 `agent_time`，`time` 为 null。
+ */
 export const LogLineView = z.object({
-	/** 任务内从 1 开始递增的序号，用来去重。 */
+	/** 任务内从 1 开始递增的序号，用来排序和去重。 */
 	seq: z.number().int(),
-	time: Timestamp,
-	/** system：控制面写入的截断标记。 */
+	/** 控制面时间：这一行在 Agent 上被读到时的控制面时间，时间线定位和按时间范围筛选用它；未记录时为 null。 */
+	time: Timestamp.nullable(),
+	/** Agent 时间：原样保存，不做范围检查，只用于展示和对照；没有上报时为 null。 */
+	agent_time: Timestamp.nullable(),
+	/** agent：Agent 自己写入的提示行（Agent 时间跳变）；system：控制面写入的截断标记。 */
 	source: z.enum(LOG_SOURCES),
 	level: z.enum(LOG_LEVELS),
 	/** secret 参数的值已替换成掩码。 */
@@ -362,10 +379,16 @@ export const ArtifactView = z.object({
 	name: z.string(),
 	size: z.number().int(),
 	sha256: z.string(),
+	/** 上传时间（控制面时间）。 */
 	created_at: Timestamp,
+	/** 文件在 Agent 上的修改时间（Agent 时间）；Agent 没有上报时为 null（未记录）。 */
+	agent_modified_at: Timestamp.nullable(),
 	/** 对 Agent 可见的完整下载地址（节点输出里的产物引用）；浏览器用 `/api/tasks/:id/artifacts/<name>`。 */
 	url: z.string(),
 });
+
+/** 上传产物的请求头：文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。旧版本 Agent 不带。 */
+export const AGENT_MODIFIED_MS_HEADER = "x-sfly-agent-modified-ms";
 
 const ArtifactParams = z.object({ id: z.string(), "*": z.string() });
 
@@ -384,7 +407,7 @@ export const artifactsApi = {
 	}),
 	/**
 	 * Agent 上传一个产物（201）：请求体是文件内容（原始字节，不在契约里）；`*` 是产物目录内的相对路径，
-	 * 每个路径段单独百分号编码。配置了注册令牌时需要 `Authorization: Bearer <token>`，否则 401 `unauthorized`；
+	 * 每个路径段单独百分号编码。`x-sfly-agent-modified-ms` 请求头是文件在 Agent 上的修改时间，可以不带。配置了注册令牌时需要 `Authorization: Bearer <token>`，否则 401 `unauthorized`；
 	 * 超过单个任务的产物上限时 413。
 	 */
 	upload: endpoint({

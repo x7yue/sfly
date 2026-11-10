@@ -99,6 +99,34 @@
       "when": 1794137993899,
       "tag": "0013_metric_series_cap",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1794281578415,
+      "tag": "0014_artifact_agent_modified_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1794286166152,
+      "tag": "0015_agent_clock_offset",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1794288373922,
+      "tag": "0016_task_clock_offset",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1794289835753,
+      "tag": "0017_metric_agent_time",
+      "breakpoints": true
     }
   ]
 }

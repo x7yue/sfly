@@ -1,7 +1,9 @@
 import { appendFile, mkdir, open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type AgentMessage, type LogBatch, LogLevel, LogSource, type Progress } from "@sfly/proto";
+import type { TaskProgressView } from "@sfly/schema";
 import { eq } from "drizzle-orm";
+import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -21,14 +23,18 @@ import { maskSecrets, secretValues } from "./secrets.js";
  * ## 日志文件
  * - 每个任务（一次尝试）一个文件：`<数据目录>/logs/<run_id>/<task_id>.jsonl`，相对路径记在 `tasks.log_path`。
  *   按运行分目录，保留期清理可以按运行结束时间整目录删除。
- * - JSONL，每行一条日志，与 HTTP / SSE 返回的 {@link LogLineView} 完全相同：
- *   `{"seq":1,"time":"2026-01-01T00:00:00.000Z","source":"stdout","level":"info","text":"..."}`。
+ * - JSONL，每行一条日志，与 HTTP / SSE 返回的 {@link LogLineView} 完全相同（字段顺序也相同）：
+ *   `{"seq":1,"time":"2026-01-01T00:00:00.000Z","agent_time":"2027-09-06T00:00:00.000Z","source":"stdout","level":"info","text":"..."}`。
  *   文本里的换行被 JSON 转义，所以一行就是一条日志：任意行首的字节偏移都是合法的分页位置。
+ * - 每行带两种时间（ADR 0018）：`time` 是控制面时间，由这一行的单调时钟读数按连接的对应关系折算
+ *   （旧版本 Agent 没有读数时取收到这一批的时刻）；`agent_time` 是 Agent 时间，原样保存，不做范围检查。
+ *   升级之前写入的行只有一个 `time`（当时记的是 Agent 时间）、没有 `agent_time`：读出时一律经
+ *   {@link logLineView} / {@link normalizeLogRow}，按「只有 Agent 时间、控制面时间未记录」返回。
  * - 只追加。`tasks.log_bytes` 是已写入的字节数（= 文件大小），`tasks.log_seq` 是已写入的最大序号；
  *   序号不大于它的行视为重复而丢弃。secret 参数的值在写入前就替换成掩码，文件里没有明文。
  *
  * ## 进度
- * 只在 `tasks.progress` 保留最新值，不写文件。
+ * 只在 `tasks.progress` 保留最新值，不写文件；同样带两种时间，升级之前保存的值经 {@link taskProgressView} 读出。
  *
  * ## 上限（#18）
  * 单个任务的日志文件不超过 `limitBytes`（默认 200 MB）：放不下的第一行换成一行截断标记
@@ -40,11 +46,45 @@ import { maskSecrets, secretValues } from "./secrets.js";
 /** 一行日志（日志文件里的一行、SSE 推送的一项）。 */
 export interface LogLineView {
 	seq: number;
-	time: string;
-	/** system：控制面自己写入的行（截断标记，#18）。 */
-	source: "stdout" | "stderr" | "sdk" | "system";
+	/** 控制面时间（ISO）；升级之前写入的行没有记录，为 null。 */
+	time: string | null;
+	/** Agent 时间（ISO）；没有上报时为 null。 */
+	agent_time: string | null;
+	/** agent：Agent 自己写入的提示行（Agent 时间跳变，ADR 0018）；system：控制面自己写入的行（截断标记，#18）。 */
+	source: "stdout" | "stderr" | "sdk" | "agent" | "system";
 	level: "debug" | "info" | "warn" | "error";
 	text: string;
+}
+
+/** 日志文件里新写入的行都带这个键；没有它的是升级之前写入的行。 */
+const AGENT_TIME_KEY = Buffer.from('"agent_time":');
+
+/**
+ * 日志文件里解析出来的一行 → {@link LogLineView}。升级之前写入的行只有一个 `time`（Agent 时间）：
+ * 按「只有 Agent 时间、控制面时间未记录」返回，字段顺序与新写入的行一致。
+ */
+export function logLineView(row: LogLineView | Omit<LogLineView, "agent_time">): LogLineView {
+	if ("agent_time" in row) return row;
+	const { seq, time, ...rest } = row;
+	return { seq, time: null, agent_time: time, ...rest };
+}
+
+/**
+ * 日志文件里的一行（不含换行符）→ 下载内容里的一行：新写入的行原样返回（不解析），
+ * 升级之前写入的行补成两种时间都有的格式（{@link logLineView}）。文本里的引号在 JSON 里是转义的，
+ * 所以原样出现的 `"agent_time":` 只可能是键。
+ */
+export function normalizeLogRow(row: Buffer): Buffer {
+	if (row.length === 0 || row.includes(AGENT_TIME_KEY)) return row;
+	return Buffer.from(JSON.stringify(logLineView(JSON.parse(row.toString("utf8")))));
+}
+
+/** 保存的进度 → 接口里的进度。升级之前保存的只有一个 `time`（Agent 时间）：控制面时间未记录。 */
+export function taskProgressView(stored: TaskProgress): TaskProgressView {
+	const { current, total, message, time } = stored;
+	return "agent_time" in stored
+		? { current, total, message, time, agent_time: stored.agent_time ?? null }
+		: { current, total, message, time: null, agent_time: time };
 }
 
 /** 连续的若干行日志，`offset` 是第一行在日志文件中的字节偏移（没有行时为文件大小）。 */
@@ -60,7 +100,7 @@ export interface ProgressEvent {
 	chain_instance_id: string;
 	node_id: string;
 	task_id: string;
-	progress: TaskProgress;
+	progress: TaskProgressView;
 }
 
 const SOURCES: Record<LogSource, LogLineView["source"]> = {
@@ -68,6 +108,7 @@ const SOURCES: Record<LogSource, LogLineView["source"]> = {
 	[LogSource.STDOUT]: "stdout",
 	[LogSource.STDERR]: "stderr",
 	[LogSource.SDK]: "sdk",
+	[LogSource.AGENT]: "agent",
 };
 
 const LEVELS: Record<LogLevel, LogLineView["level"]> = {
@@ -142,9 +183,14 @@ export class TaskLogs {
 	}
 
 	async onMessage(conn: AgentConnection, message: AgentMessage): Promise<void> {
-		if (message.body.case === "logs") await this.append(conn.name, message.body.value);
+		// 收到的时刻在这里取（之后同一任务的写入要排队）：没有单调时钟读数时用它作控制面时间。
+		const receivedAt = this.deps.clock.now();
+		const controlPlaneTime: ControlPlaneTimeOf = (monotonicMs) =>
+			conn.clock.controlPlaneTime(monotonicMs, receivedAt);
+		if (message.body.case === "logs")
+			await this.append(conn.name, message.body.value, controlPlaneTime);
 		else if (message.body.case === "progress")
-			await this.recordProgress(conn.name, message.body.value);
+			await this.recordProgress(conn.name, message.body.value, controlPlaneTime);
 	}
 
 	/** 任务是否存在。 */
@@ -166,8 +212,11 @@ export class TaskLogs {
 		};
 	}
 
-	/** 追加一批日志（只接受任务所在 Agent 上报的）；同一任务的追加串行执行。 */
-	append(agentName: string, batch: LogBatch): Promise<void> {
+	/**
+	 * 追加一批日志（只接受任务所在 Agent 上报的）；同一任务的追加串行执行。
+	 * `controlPlaneTime` 把一行的单调时钟读数折算成控制面时间。
+	 */
+	append(agentName: string, batch: LogBatch, controlPlaneTime: ControlPlaneTimeOf): Promise<void> {
 		return this.#serial(batch.taskId, async () => {
 			const state = await this.#stateFor(batch.taskId, agentName);
 			if (!state || state.truncated) return;
@@ -184,7 +233,8 @@ export class TaskLogs {
 				seq = n;
 				const view: LogLineView = {
 					seq: n,
-					time: this.#time(line.timeUnixMs),
+					time: controlPlaneTime(line.monotonicMs).toISOString(),
+					agent_time: agentTime(line.timeUnixMs),
 					source: SOURCES[line.source] ?? "stdout",
 					level: LEVELS[line.level] ?? "info",
 					text: maskSecrets(line.text, state.secrets),
@@ -225,16 +275,21 @@ export class TaskLogs {
 	}
 
 	/** 记录最新进度（只接受任务所在 Agent 上报的）；与同一任务的日志追加串行执行。 */
-	recordProgress(agentName: string, progress: Progress): Promise<void> {
+	recordProgress(
+		agentName: string,
+		progress: Progress,
+		controlPlaneTime: ControlPlaneTimeOf,
+	): Promise<void> {
 		return this.#serial(progress.taskId, async () => {
 			const state = await this.#stateFor(progress.taskId, agentName);
 			if (!state) return;
 			state.secrets = await this.#currentSecrets(state.runId);
-			const value: TaskProgress = {
+			const value: TaskProgressView = {
 				current: progress.current,
 				total: progress.total ?? null,
 				message: maskSecrets(progress.message, state.secrets),
-				time: this.#time(progress.timeUnixMs),
+				time: controlPlaneTime(progress.monotonicMs).toISOString(),
+				agent_time: agentTime(progress.timeUnixMs),
 			};
 			await this.deps.db
 				.update(tasks)
@@ -276,7 +331,7 @@ export class TaskLogs {
 		while (start === 0 || pos > 0) {
 			const end = bytes.indexOf(0x0a, pos);
 			if (end < 0) break;
-			const line = JSON.parse(bytes.subarray(pos, end).toString("utf8")) as LogLineView;
+			const line = logLineView(JSON.parse(bytes.subarray(pos, end).toString("utf8")));
 			if (line.seq > afterSeq) found.push({ offset: start + pos, line });
 			pos = end + 1;
 		}
@@ -286,12 +341,6 @@ export class TaskLogs {
 			lines: kept.map((f) => f.line),
 			offset: kept[0]?.offset ?? size,
 		};
-	}
-
-	#time(unixMs: bigint): string {
-		return unixMs > 0n
-			? new Date(Number(unixMs)).toISOString()
-			: this.deps.clock.now().toISOString();
 	}
 
 	#serial(taskId: string, work: () => Promise<void>): Promise<void> {
@@ -378,6 +427,18 @@ export class TaskLogs {
 			secrets: [],
 		};
 	}
+}
+
+/** 把一条消息里的单调时钟读数折算成控制面时间（0 = 没有读数，取收到这条消息的时刻）。 */
+export type ControlPlaneTimeOf = (monotonicMs: bigint) => Date;
+
+/**
+ * Agent 时间（Unix 毫秒）→ ISO。原样保存，不判断它是否合理（ADR 0018）：1970 年、2099 年都照记，
+ * 超出能记录的范围时记成边界值（{@link recordableAgentTimeMs}）。0（没有上报）为 null。
+ */
+function agentTime(unixMs: bigint): string | null {
+	if (unixMs === 0n) return null;
+	return new Date(recordableAgentTimeMs(unixMs)).toISOString();
 }
 
 function formatBytes(n: number): string {

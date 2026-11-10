@@ -10,6 +10,8 @@
 // 硬性断言：断线期间 Agent 内存增量不超过日志排队上限加余量；重连后补发了断线期间排队的日志与指标；
 // 丢弃的 stdout 行数与控制面看到的序号缺口一致、丢失的整秒指标点数与控制面记录的丢弃数一致；没有重复、损坏、截断。
 // 只记录：断线期间的内存曲线、重连耗时、补发耗时、丢弃数量。
+
+import { bucketStartMs } from "@sfly/schema";
 import { startBundledServer } from "../../test/support/bundled-server.js";
 import { checkNumbered, windowGrowth } from "../checks.js";
 import {
@@ -212,7 +214,7 @@ export default definePerfItem({
 			ctx.signal,
 		);
 		const { buckets, droppedPoints } = seq;
-		const bucketTimes = buckets.map((b) => Date.parse(b.time));
+		const bucketTimes = buckets.map(bucketStartMs);
 		const lostSeconds = missingSeconds(bucketTimes);
 		const replayedPoints = bucketTimes.filter((t) => t >= stopAt && t < welcomeAt).length;
 

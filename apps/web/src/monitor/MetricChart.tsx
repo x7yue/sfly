@@ -1,10 +1,12 @@
-import type { MetricBucket } from "@sfly/schema";
+import { bucketStartMs } from "@sfly/schema";
 import { cn } from "cn";
 import { memo, useCallback, useMemo, useState } from "react";
 import { formatClock, formatMetric } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import {
 	bucketAt,
+	bucketTimes,
+	type ChartBucket,
 	colorSlots,
 	envelopePoints,
 	formatReading,
@@ -36,7 +38,7 @@ export interface ChartLine {
 	key?: string;
 	/** 带标签的指标的序列（标题栏的最新值优先取不带标签的合计，见 charts.ts 的 latestLine）。 */
 	labeled?: boolean;
-	buckets: readonly MetricBucket[];
+	buckets: readonly ChartBucket[];
 }
 
 const lineKey = (line: ChartLine) => line.key ?? line.name;
@@ -99,7 +101,7 @@ export function MetricChart({
 						key: lineKey(l),
 						color: seriesColor(slots.get(lineKey(l)) ?? 0),
 						buckets: l.buckets.filter((b) => {
-							const t = Date.parse(b.time);
+							const t = bucketStartMs(b);
 							return t + span > window.start && t <= window.end;
 						}),
 					}))
@@ -306,7 +308,7 @@ function Plot(props: PlotProps) {
 					{formatMetric(scale.max)}
 				</span>
 			)}
-			{pointerInside && !mini && lines.length > 1 && (
+			{pointerInside && !mini && (
 				<HoverValues lines={lines} window={window} bucketSeconds={bucketSeconds} />
 			)}
 		</span>
@@ -326,8 +328,8 @@ const Paths = memo(function Paths({
 	const span = bucketSeconds * 1000;
 	const { min, top } = scale;
 	// 桶画在它覆盖的时段的中点（每秒一个桶时就是那一秒）。
-	const X = (b: MetricBucket) =>
-		((Date.parse(b.time) + span / 2 - window.start) / (window.end - window.start)) * W;
+	const X = (b: ChartBucket) =>
+		((bucketStartMs(b) + span / 2 - window.start) / (window.end - window.start)) * W;
 	const Y = (v: number) => H - 2 - ((v - min) / (top - min)) * (H - 6);
 	return (
 		<>
@@ -380,13 +382,13 @@ const Paths = memo(function Paths({
 				const pts =
 					line.buckets.length === 1
 						? [-1.5, 1.5].map((dx) => [
-								X(line.buckets[0] as MetricBucket) + dx,
+								X(line.buckets[0] as ChartBucket) + dx,
 								Y(line.buckets[0]?.last ?? 0),
 							])
 						: line.buckets.map((b) => [X(b), Y(b.last)]);
 				const d = `M${pts.map(([x, y]) => `${x?.toFixed(1)} ${y?.toFixed(1)}`).join(" L")}`;
-				const first = line.buckets[0] as MetricBucket;
-				const last = line.buckets.at(-1) as MetricBucket;
+				const first = line.buckets[0] as ChartBucket;
+				const last = line.buckets.at(-1) as ChartBucket;
 				const band = !mini && hasSpread(line.buckets) && line.buckets.length > 1;
 				return (
 					<g key={line.key} data-series={line.name}>
@@ -423,8 +425,9 @@ const Paths = memo(function Paths({
 });
 
 /**
- * 多条线的悬停提示：每条显示中的线在悬停时刻的值，按值从大到小；那一刻没有点的线不列出。
- * 提示贴着竖线，悬停在右半边时放到竖线左侧。
+ * 绘图区的悬停提示：悬停的那个点的控制面时间和 Agent 时间（charts.ts 的 bucketTimes；平台自带图表没有），
+ * 画了多条线时再列出每条显示中的线在悬停时刻的值，按值从大到小，那一刻没有点的线不列出
+ * （只有一条线时值在标题栏里，见 HoverReading）。提示贴着竖线，悬停在右半边时放到竖线左侧。
  */
 function HoverValues({
 	lines,
@@ -443,7 +446,10 @@ function HoverValues({
 			return bucket ? [{ line, bucket }] : [];
 		})
 		.sort((a, b) => b.bucket.last - a.bucket.last);
-	if (rows.length === 0) return null;
+	// 一张图表的线来自同一个任务：同一时刻各条线的两种时间相同，取第一条有 Agent 时间的。
+	const times = rows.map((r) => bucketTimes(r.bucket)).find((t) => t !== null);
+	const values = lines.length > 1 ? rows : [];
+	if (!times && values.length === 0) return null;
 	const f = (hoverAt - window.start) / (window.end - window.start);
 	const side =
 		f > 0.5 ? { right: `calc(${(1 - f) * 100}% + 8px)` } : { left: `calc(${f * 100}% + 8px)` };
@@ -453,7 +459,13 @@ function HoverValues({
 			className="pointer-events-none absolute top-1 z-3 flex max-w-60 flex-col rounded-md border border-border-strong bg-raised px-2 py-1 text-2xs whitespace-nowrap shadow-pop"
 			style={side}
 		>
-			{rows.map(({ line, bucket }) => (
+			{times && (
+				<span className="flex flex-col font-mono text-fg-3">
+					<span data-hover-time>控制面时间 {times.controlPlane}</span>
+					<span data-hover-agent-time>Agent 时间 {times.agent}</span>
+				</span>
+			)}
+			{values.map(({ line, bucket }) => (
 				<span key={line.key} data-hover-value className="flex items-center gap-1.5">
 					<i
 						aria-hidden

@@ -20,11 +20,12 @@ import { create } from "@bufbuild/protobuf";
 import { MetricBatchSchema } from "@sfly/proto";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, test } from "vitest";
+import { ConnectionClock } from "../../src/agents/agent-clock.js";
 import { type Database, openDatabase } from "../../src/db/database.js";
 import { tasks } from "../../src/db/schema.js";
 import { MetricQueries } from "../../src/metrics/metric-queries.js";
 import { MetricRetention } from "../../src/metrics/metric-retention.js";
-import { SEGMENT_POINTS, TaskMetrics } from "../../src/metrics/task-metrics.js";
+import { type MetricSource, SEGMENT_POINTS, TaskMetrics } from "../../src/metrics/task-metrics.js";
 import { ApiClient } from "../../test/support/api-client.js";
 import { FakeAgent } from "../../test/support/fake-agent.js";
 import { publishPackage } from "../../test/support/package-archive.js";
@@ -70,6 +71,8 @@ let labeledWriteTask: BenchTask;
 let labeledQueryTask: BenchTask;
 /** 当前时钟（测试控制面的手动时钟，不前进）的 Unix 秒。 */
 let now: number;
+/** 批次的来源：时钟与控制面一致的 Agent 连接，单调时钟读数 = Unix 毫秒。 */
+let source: MetricSource;
 
 /** 一个任务在第 t 秒（Unix 秒）的一批：每个序列一个点，与 Agent 每秒发出的合并结果相同。 */
 const batch = (task: BenchTask, t: number) =>
@@ -78,13 +81,21 @@ const batch = (task: BenchTask, t: number) =>
 		attempt: task.attempt,
 		points: task.series.map(({ name, labels }, i) => {
 			const value = Math.sin(t / 60 + i) * 100;
-			return { name, labels, timeUnixS: BigInt(t), value, min: value - 1, max: value + 1 };
+			return {
+				name,
+				labels,
+				timeUnixS: BigInt(t),
+				monotonicMs: BigInt(t * 1000),
+				value,
+				min: value - 1,
+				max: value + 1,
+			};
 		}),
 	});
 
 /** 从第 from 秒起接收 seconds 秒的批次（每秒一批，按顺序）。 */
 const ingest = async (task: BenchTask, from: number, seconds: number) => {
-	for (let t = from; t < from + seconds; t++) await metrics.ingest(AGENT, batch(task, t));
+	for (let t = from; t < from + seconds; t++) await metrics.ingest(source, batch(task, t));
 };
 
 const startTask = async (
@@ -151,7 +162,10 @@ beforeAll(async () => {
 		limitBytes: Number.MAX_SAFE_INTEGER,
 	});
 	queries = new MetricQueries({ db: database.db, clock: cp.clock, metrics });
-	now = Math.floor(cp.clock.now().getTime() / 1000);
+	const startedAt = cp.clock.now();
+	now = Math.floor(startedAt.getTime() / 1000);
+	const reading = { agentTimeMs: startedAt.getTime(), monotonicMs: startedAt.getTime() };
+	source = { name: AGENT, clock: new ConnectionClock(cp.clock, reading, startedAt) };
 
 	writeTask = await startTask(api, plain, plainSeries);
 	queryTask = await startTask(api, plain, plainSeries);

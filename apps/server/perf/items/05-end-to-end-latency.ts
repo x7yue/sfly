@@ -4,7 +4,7 @@
 // 每秒一个点：min 是这一秒第一次调用的时刻，收到推送的时刻减去它就是用户最多要等多久（first）。
 // 硬性断言：控制面写入的每一秒都推送到了事件流（没有断线，不该漏推）。
 // 只记录：延迟分布（p50 / p95 / p99 / 最长），最长与目标 3 秒比较。持续 30 秒（30 个每秒的点）。
-import { MetricIncrement as metricIncrement } from "@sfly/schema";
+import { bucketStartMs, MetricIncrement as metricIncrement } from "@sfly/schema";
 import { definePerfItem, hard, type ItemRun, type PerfContext, target } from "../item.js";
 import { distribution, type PushLatency, pushLatencies } from "../latency.js";
 import type { Measurement } from "../report.js";
@@ -61,7 +61,7 @@ async function run(ctx: PerfContext): Promise<ItemRun> {
 
 	const series = await api.metricSeries(runId, chainInstanceId, NODE_ID);
 	const stored = (series.series.find((s) => s.name === METRIC)?.buckets ?? []).map(
-		(b) => Date.parse(b.time) / 1000,
+		(b) => bucketStartMs(b) / 1000,
 	);
 	const pushed = new Set(latencies.map((l) => l.second));
 	const first = distribution(latencies.map((l) => l.first));

@@ -238,7 +238,7 @@ function keepNewerProgress(current: RunView, next: RunView): RunView {
 			for (const a of node.attempts) if (a.progress) known.set(a.task_id, a.progress);
 	const newer = (a: AttemptView) => {
 		const kept = known.get(a.task_id);
-		return kept && (!a.progress || Date.parse(kept.time) > Date.parse(a.progress.time))
+		return kept && (!a.progress || progressOrder(kept) > progressOrder(a.progress))
 			? kept
 			: undefined;
 	};
@@ -257,6 +257,11 @@ function keepNewerProgress(current: RunView, next: RunView): RunView {
 		})),
 	};
 }
+
+/**
+ * 进度的先后：按控制面时间比（ADR 0018，Agent 时间可能倒退）；升级之前保存的进度没有控制面时间，退回 Agent 时间。
+ */
+const progressOrder = (p: TaskProgressView) => Date.parse(p.time ?? p.agent_time ?? "") || 0;
 
 /** 把一条进度推送合并进运行视图（只改对应尝试的 progress）。 */
 export function applyProgress(run: RunView | undefined, event: ProgressEvent): RunView | undefined {

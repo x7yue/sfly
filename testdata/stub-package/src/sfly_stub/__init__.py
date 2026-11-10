@@ -227,10 +227,18 @@ def chatter(
 
 @node(title="产物", outputs=["refs"])
 def artifacts(
-    ctx: Context, files: dict[str, str] | None = None, fail: bool = False
+    ctx: Context,
+    files: dict[str, str] | None = None,
+    fail: bool = False,
+    mtimes: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """产物测试用：把 files（名称 → 文本内容）保存为产物，返回产物引用；fail 时保存后抛出异常。"""
+    """产物测试用：把 files（名称 → 文本内容）保存为产物，返回产物引用；fail 时保存后抛出异常。
+
+    mtimes（名称 → Unix 秒）把对应产物文件的修改时间改成指定的值。
+    """
     refs = {name: ctx.artifacts.save(name, content) for name, content in (files or {}).items()}
+    for name, mtime in (mtimes or {}).items():
+        os.utime(ctx.artifacts.path(name), (mtime, mtime))
     if fail:
         raise RuntimeError("保存产物后失败")
     return {"refs": refs}
@@ -434,21 +442,17 @@ def metrics(ctx: Context, steps: list[Any]) -> None:
     - `[指标名, 值]`：`ctx.metric(指标名, float(值))`，值可以是 `"nan"`、`"inf"` 这样的字符串；
     - `[指标名, 值, 标签]`：同上，带上标签（对象，原样传给 `labels`）；
     - 数字：等待这么多秒；
-    - `"align"`：等到下一个整秒开始（让随后的几次上报落在同一秒里）；
-    - `["late", 指标名, 值]`：补写一条时间戳为上一秒末（x.999）的 gauge 事件，
-      模拟在一秒的最后时刻记录、Agent 下一秒才读到的事件。
+    - `"align"`：等到 Agent 合并指标用的下一秒开始（让随后的几次上报落在同一秒里）。
+      Agent 按单调时钟分秒（ADR 0018），所以这里按同一个时钟对齐，不看系统时间。
     """
+    # 与 Agent 的 clock::monotonic_ms 同一个时钟：
+    # Linux 上是 CLOCK_BOOTTIME，其他系统是 CLOCK_MONOTONIC。
+    merge_clock = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
     for step in steps:
         if step == "align":
-            time.sleep(1 - time.time() % 1)
+            time.sleep(1 - time.clock_gettime(merge_clock) % 1)
         elif isinstance(step, (int, float)):
             time.sleep(step)
-        elif step[0] == "late":
-            _, name, value = step
-            ts = (int(time.time()) - 1) * 1000 + 999
-            ctx._events.write(
-                {"type": "metric", "ts": ts, "name": name, "kind": "gauge", "value": float(value)}
-            )
         elif len(step) == 3:
             name, value, labels = step
             ctx.metric(name, float(value), labels=labels)

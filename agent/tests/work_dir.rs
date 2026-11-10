@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use sfly_agent::proto::{TaskStatus, agent_message};
-use support::{AgentOptions, FakeControlPlane, WAIT, spawn_agent, stub_task};
+use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task, wait_until};
 
 /// 目录下（递归）普通文件的总字节数。
 fn file_bytes(dir: &Path) -> u64 {
@@ -25,17 +25,6 @@ fn file_bytes(dir: &Path) -> u64 {
             _ => 0,
         })
         .sum()
-}
-
-async fn wait_until(what: &str, check: impl Fn() -> bool) {
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while !check() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 #[tokio::test]
@@ -86,8 +75,8 @@ async fn high_frequency_metrics_go_through_a_fifo_without_growing_the_work_dir()
     // 累计计数的最大值等于上报次数：管道写满时写端等待，一个事件也不丢。
     let max = points.iter().map(|p| p.value).fold(0.0, f64::max);
     assert_eq!(max, count);
-    // Agent 跟得上（读不过来时写端等待，而不是在内存里越积越多、晚于宽限期才处理）：每秒只有一个点。
-    let mut seconds: Vec<i64> = points.iter().map(|p| p.time_unix_s).collect();
+    // 每个单调时钟秒只有一个点（Agent 按读到事件时的单调时钟读数分秒合并，ADR 0018）。
+    let mut seconds: Vec<i64> = points.iter().map(|p| p.monotonic_ms).collect();
     let all = seconds.len();
     seconds.sort_unstable();
     seconds.dedup();

@@ -1,9 +1,11 @@
 import { subflowName } from "@sfly/orchestration";
 import type { AttemptView, ChainRunView, NodeRunView, RunSummary, RunView } from "@sfly/schema";
 import { asc, desc, eq } from "drizzle-orm";
+import { clockOffsetView } from "../agents/agent-clock.js";
 import type { Db } from "../db/database.js";
 import { chainInstances, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
+import { taskProgressView } from "../logs/task-logs.js";
 import { agentFor, planRun } from "./chain.js";
 import { groupAttempts, nodeStatus } from "./run-board.js";
 
@@ -97,9 +99,14 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						queued_at: t.queuedAt.toISOString(),
 						started_at: iso(t.startedAt),
 						ended_at: iso(t.endedAt),
+						start_clock_offset: clockOffsetView(t.startClockOffsetMs, t.startClockOffsetMeasuredAt),
+						end_clock_offset: clockOffsetView(t.endClockOffsetMs, t.endClockOffsetMeasuredAt),
 						wake_at: iso(t.wakeAt),
 						progress: t.progress
-							? { ...t.progress, message: maskSecrets(t.progress.message, secrets) }
+							? {
+									...taskProgressView(t.progress),
+									message: maskSecrets(t.progress.message, secrets),
+								}
 							: null,
 					}));
 				const last = attempts.at(-1);

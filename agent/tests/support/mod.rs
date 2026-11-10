@@ -28,6 +28,29 @@ use tonic::{Request, Response, Status, Streaming};
 /// 等待条件成立的默认超时。
 pub const WAIT: Duration = Duration::from_secs(20);
 
+/// 613 天（毫秒）：发现问题时 Agent 时间与控制面时间的差（#167）。
+pub const DAYS_613_MS: i64 = 613 * 24 * 3600 * 1000;
+
+/// 测试进程读到的系统时间（Unix 毫秒）：没有拨动时 Agent 时间与它一致。
+pub fn system_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// 等到 `check` 成立（看的是假控制面收不到的东西，例如文件；消息用 [`FakeControlPlane::wait_for`]）。
+pub async fn wait_until(what: &str, check: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !check() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// 收到的一条消息：第几个会话（从 0 开始）+ 消息本身。
 #[derive(Debug, Clone)]
 pub struct Received {
@@ -75,9 +98,22 @@ impl FakeControlPlane {
         Self::start_on(0).await
     }
 
-    /// 在指定端口（0 为随机）上启动。
+    /// 在指定端口（0 为随机）上启动。端口还被刚关掉的上一个假控制面占着时（关闭是异步的），等它释放。
     pub async fn start_on(port: u16) -> Self {
-        let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+        let deadline = tokio::time::Instant::now() + WAIT;
+        let listener = loop {
+            match TcpListener::bind(("127.0.0.1", port)).await {
+                Ok(listener) => break listener,
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "port {port} still in use"
+                    );
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(error) => panic!("bind 127.0.0.1:{port}: {error}"),
+            }
+        };
         let addr: SocketAddr = listener.local_addr().unwrap();
         let state = Arc::new(State::default());
         let service = Gateway {
@@ -455,6 +491,34 @@ pub struct AgentProcess {
     pub work_dir: tempfile::TempDir,
 }
 
+/// Agent 的隐藏选项：指向 Agent 时间偏移文件（`sfly_agent::clock`）。[`spawn_agent`] 总是设置它。
+pub const AGENT_TIME_OFFSET_FILE_ENV: &str = "SFLY_AGENT_TIME_OFFSET_FILE";
+
+impl AgentProcess {
+    /// 这个 Agent 的 Agent 时间偏移文件（[`spawn_agent`] 时用环境变量交给了 Agent）。
+    pub fn agent_time_offset_file(&self) -> PathBuf {
+        self.work_dir.path().join(AGENT_TIME_OFFSET_FILE)
+    }
+
+    /// 模拟修改这台 Agent 的系统时间：之后 Agent 读到的 Agent 时间 = 系统时间 + `offset_ms`（负数是往回拨），
+    /// 立即生效，执行任务的中途也可以改。再次调用是重新设置，不是累加；0 恢复成系统时间。
+    pub fn set_agent_time_offset_ms(&self, offset_ms: i64) {
+        write_agent_time_offset(&self.agent_time_offset_file(), offset_ms);
+    }
+}
+
+/// Agent 时间偏移文件在 [`spawn_agent`] 的工作目录里的文件名。
+const AGENT_TIME_OFFSET_FILE: &str = "agent-time-offset";
+
+/// 把偏移量（毫秒）写进 Agent 时间偏移文件：先写临时文件再改名，Agent 不会读到写了一半的内容。
+/// 自己用 [`agent_command`] 启动 Agent 的测试用它，并把 [`AGENT_TIME_OFFSET_FILE_ENV`] 指向同一个文件。
+pub fn write_agent_time_offset(file: &Path, offset_ms: i64) {
+    let mut tmp = file.as_os_str().to_owned();
+    tmp.push(".tmp");
+    std::fs::write(&tmp, offset_ms.to_string()).unwrap();
+    std::fs::rename(&tmp, file).unwrap();
+}
+
 /// 测试结束时等 Agent 收到 SIGTERM 后自行退出的上限（Agent 默认的终止宽限期是 10 秒）。
 const AGENT_STOP_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -592,6 +656,10 @@ pub fn spawn_agent(options: AgentOptions<'_>) -> AgentProcess {
         .arg("--work-dir")
         .arg(work_dir.path())
         .args(&options.args)
+        .env(
+            AGENT_TIME_OFFSET_FILE_ENV,
+            work_dir.path().join(AGENT_TIME_OFFSET_FILE),
+        )
         .envs(options.env.iter().copied());
     if options.pipe_stderr {
         command.stderr(Stdio::piped());

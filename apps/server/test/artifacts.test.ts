@@ -16,6 +16,7 @@ interface ArtifactView {
 	size: number;
 	sha256: string;
 	created_at: string;
+	agent_modified_at: string | null;
 	/** 下载地址（与 SDK 返回给节点、写进输出里的引用相同）。 */
 	url: string;
 }
@@ -72,15 +73,26 @@ describe("产物", () => {
 	};
 
 	/** 像 Agent 一样上传一个产物：PUT 到上传地址 + 按路径段编码的名称。 */
-	const upload = (task: AssignedTask, name: string, body: string | Buffer, token?: string) =>
+	const upload = (
+		task: AssignedTask,
+		name: string,
+		body: string | Buffer,
+		token?: string,
+		headers: Record<string, string> = {},
+	) =>
 		fetch(`${task.artifactUploadUrl}${name.split("/").map(encodeURIComponent).join("/")}`, {
 			method: "PUT",
 			headers: {
 				"content-type": "application/octet-stream",
 				...(token ? { authorization: `Bearer ${token}` } : {}),
+				...headers,
 			},
 			body,
 		});
+
+	/** 带上文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）上传。 */
+	const uploadModifiedAt = (task: AssignedTask, name: string, modifiedMs: string) =>
+		upload(task, name, "x", undefined, { "x-sfly-agent-modified-ms": modifiedMs });
 
 	const list = async (taskId: string): Promise<ArtifactList> => {
 		const res = await cp.fetch(`/tasks/${taskId}/artifacts`);
@@ -130,6 +142,76 @@ describe("产物", () => {
 		expect(((await late.json()) as { error: { code: string } }).error.code).toBe(
 			"task_not_running",
 		);
+	});
+
+	// #171：Agent 修改时间是被测机器上的事实，原样保存、不做范围检查；上传时间是控制面时间。
+	it("保存并返回文件在 Agent 上的修改时间，不管它离控制面时间多远", async () => {
+		const { task } = await setup();
+		const uploadedAt = cp.clock.now().toISOString();
+		const put = await uploadModifiedAt(task, "2099.txt", "4070908800123");
+		expect(put.status).toBe(201);
+		expect(await put.json()).toMatchObject({
+			agent_modified_at: "2099-01-01T00:00:00.123Z",
+			created_at: uploadedAt,
+		});
+		expect((await uploadModifiedAt(task, "1970.txt", "0")).status).toBe(201);
+		expect((await uploadModifiedAt(task, "1969.txt", "-1000")).status).toBe(201);
+
+		const { artifacts } = await list(task.taskId);
+		expect(artifacts.map((a) => [a.name, a.agent_modified_at, a.created_at])).toEqual([
+			["1969.txt", "1969-12-31T23:59:59.000Z", uploadedAt],
+			["1970.txt", "1970-01-01T00:00:00.000Z", uploadedAt],
+			["2099.txt", "2099-01-01T00:00:00.123Z", uploadedAt],
+		]);
+	});
+
+	it("旧版本 Agent 不带修改时间时照常上传，Agent 修改时间为空", async () => {
+		const { task } = await setup();
+		const put = await upload(task, "old.txt", "x");
+		expect(put.status).toBe(201);
+		expect(await put.json()).toMatchObject({ name: "old.txt", agent_modified_at: null });
+		expect((await list(task.taskId)).artifacts.map((a) => [a.name, a.agent_modified_at])).toEqual([
+			["old.txt", null],
+		]);
+	});
+
+	it("修改时间不是整数毫秒时，上传成功但 Agent 修改时间为空", async () => {
+		const { task } = await setup();
+		for (const [name, value] of [
+			["text.txt", "yesterday"],
+			["float.txt", "1.5"],
+		] as const) {
+			expect((await uploadModifiedAt(task, name, value)).status, name).toBe(201);
+		}
+		expect((await list(task.taskId)).artifacts.map((a) => a.agent_modified_at)).toEqual([
+			null,
+			null,
+		]);
+	});
+
+	it("修改时间超出能记录的范围（公元 100 年到 9999 年）时，上传成功，Agent 修改时间记成边界值", async () => {
+		const { task } = await setup();
+		for (const [name, value] of [
+			["ancient.txt", "-99999999999999999999"],
+			["huge.txt", "99999999999999999999"],
+		] as const) {
+			expect((await uploadModifiedAt(task, name, value)).status, name).toBe(201);
+		}
+		expect((await list(task.taskId)).artifacts.map((a) => a.agent_modified_at)).toEqual([
+			"0100-01-01T00:00:00.000Z",
+			"9999-12-31T23:59:59.999Z",
+		]);
+	});
+
+	it("同名产物覆盖时 Agent 修改时间跟着更新", async () => {
+		const { task } = await setup();
+		await uploadModifiedAt(task, "a.txt", "1000");
+		await uploadModifiedAt(task, "a.txt", "2000");
+		expect((await list(task.taskId)).artifacts[0]?.agent_modified_at).toBe(
+			"1970-01-01T00:00:02.000Z",
+		);
+		await upload(task, "a.txt", "x");
+		expect((await list(task.taskId)).artifacts[0]?.agent_modified_at).toBeNull();
 	});
 
 	it("同名产物重复上传时覆盖", async () => {

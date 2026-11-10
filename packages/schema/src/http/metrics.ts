@@ -47,8 +47,12 @@ export const MetricSummary = z.object({
 	avg: z.number(),
 	/** 最新值。 */
 	last: z.number(),
-	first_time: Timestamp,
-	last_time: Timestamp,
+	/** 第一个和最后一个点的控制面时间（ADR 0018）；升级之前存下的数据没有记录，为 null。 */
+	first_time: Timestamp.nullable(),
+	last_time: Timestamp.nullable(),
+	/** 第一个和最后一个点的 Agent 时间。 */
+	first_agent_time: Timestamp,
+	last_agent_time: Timestamp,
 });
 
 /** 一个任务（一次尝试）的指标摘要。 */
@@ -117,7 +121,7 @@ export const MAX_SERIES_POINTS = 5000;
 
 /**
  * 序列查询的查询参数：节点（链实例 × 节点）、可选的尝试（默认最新一次）、
- * 指标名（逗号分隔，默认节点类型声明的全部指标）、时间范围（ISO，闭区间，按秒取整；默认数据的首尾时间）、
+ * 指标名（逗号分隔，默认节点类型声明的全部指标）、时间范围（控制面时间，ISO，闭区间，按秒取整；默认数据的首尾时间）、
  * 目标点数（桶数上限）。
  */
 export const MetricSeriesQuery = z
@@ -142,9 +146,15 @@ export const MetricSeriesQuery = z
 		},
 	);
 
-/** 一个桶：起始时间 + 落在桶里的点的最小（每秒最小值中的最小）、最大、平均、最新值。 */
+/**
+ * 一个桶：起始时间 + 落在桶里的点的最小（每秒最小值中的最小）、最大、平均、最新值。桶按控制面时间划分（ADR 0018）。
+ * 升级之前存下的数据只有 Agent 时间：它的桶按 Agent 时间划分，`time` 为 null，`agent_time` 是桶的起始时间。
+ */
 export const MetricBucket = z.object({
-	time: Timestamp,
+	/** 桶的起始时间（控制面时间）；没有记录时为 null。 */
+	time: Timestamp.nullable(),
+	/** 桶里最后一个点（`last` 对应的点）的 Agent 时间。 */
+	agent_time: Timestamp,
 	/** 桶里的点数（每秒最多一个）。 */
 	points: z.number().int().positive(),
 	min: z.number(),
@@ -152,6 +162,16 @@ export const MetricBucket = z.object({
 	avg: z.number(),
 	last: z.number(),
 });
+
+/**
+ * 桶在时间轴上的起始位置（毫秒时间戳）：控制面时间（ADR 0018）。图表横轴和页面上其他按时间摆放桶的地方都用它。
+ *
+ * 旧数据的回退：升级之前存下的数据没有记录控制面时间（`time` 为 null），按它的 Agent 时间放，否则历史运行的
+ * 图表没法回看（当时两种时间不一致的点本来就不会被接收）。新数据总有控制面时间，不会走到这里。
+ * 平台自带图表的桶不是在 Agent 上产生的，没有 Agent 时间（null），但总有控制面时间。
+ */
+export const bucketStartMs = (bucket: { time: string | null; agent_time: string | null }): number =>
+	Date.parse(bucket.time ?? bucket.agent_time ?? "");
 
 /**
  * 序列查询的结果：查询的每个指标的全部序列（按指标的查询顺序，同一指标按标签排序），每个序列的非空桶按时间升序。
@@ -166,7 +186,7 @@ export const MetricSeries = z.object({
 	node_id: z.string(),
 	task_id: z.uuid(),
 	attempt: z.number().int().positive(),
-	/** 实际的时间范围（按秒取整）；没有指定且没有任何数据时为 null。 */
+	/** 实际的时间范围（控制面时间，按秒取整）；没有指定且没有任何数据时为 null。 */
 	from: Timestamp.nullable(),
 	to: Timestamp.nullable(),
 	/** 每个桶的跨度（秒，至少 1）：桶 k 覆盖 [from + k × bucket_seconds, from + (k + 1) × bucket_seconds)。 */
@@ -181,7 +201,10 @@ export const MetricSeries = z.object({
 export const MetricPointView = z.object({
 	name: MetricName,
 	labels: MetricLabels,
+	/** 这个点在 Agent 上发生的时刻对应的控制面时间（按秒取整），同一序列严格递增。 */
 	time: Timestamp,
+	/** 这个点的 Agent 时间：被测机器上的时间，可能与 `time` 相差很远，也可能倒退。 */
+	agent_time: Timestamp,
 	value: z.number(),
 	/** 这一秒内的最小、最大值（counter 与 value 相同）。 */
 	min: z.number(),

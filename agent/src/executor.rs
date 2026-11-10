@@ -24,6 +24,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::watch;
 
+use crate::clock;
 use crate::logs::{EventsPipe, Pump, Telemetry};
 use crate::process_tree::ProcessTree;
 use crate::proto::{
@@ -53,6 +54,8 @@ pub fn success(task: &AssignTask, outputs: &Value) -> TaskResult {
         status: TaskStatus::Success.into(),
         outputs_json: outputs.to_string(),
         error: None,
+        // 结束时的 Agent 时间与单调时钟读数在交出结果时统一打上（[`stamp_end`]）。
+        ..Default::default()
     }
 }
 
@@ -66,7 +69,17 @@ pub fn failure(task: &AssignTask, kind: ErrorKind, message: impl Into<String>) -
             kind: kind.into(),
             message: message.into(),
         }),
+        ..Default::default()
     }
+}
+
+/// 给结果打上任务结束这一刻的 Agent 时间与单调时钟读数（ADR 0018）：控制面据此记下结束时的时钟偏差。
+/// 在结果交出去之前调用一次；结果在断线期间排队、重发时仍是这一刻的值。
+pub fn stamp_end(mut result: TaskResult) -> TaskResult {
+    let end = clock::Reading::now();
+    result.agent_time_unix_ms = end.agent_time_ms;
+    result.monotonic_ms = end.monotonic_ms;
+    result
 }
 
 /// 任务 ID（和运行 ID）用作目录名，只允许安全字符。
@@ -240,10 +253,14 @@ fn spawn_process(
             };
             // 执行器已启动：控制面收到 TaskStarted 后把任务记为 running（超时也从这时开始算，见 wait）。
             // 先于日志进入同一个通道，控制面总是先看到 TaskStarted。
+            let started = clock::Reading::now();
             telemetry.send(AgentMessage {
+                // 带上这一刻的 Agent 时间与单调时钟读数：控制面据此记下任务开始时的时钟偏差（ADR 0018）。
                 body: Some(agent_message::Body::Started(TaskStarted {
                     task_id: task.task_id.clone(),
                     attempt: task.attempt,
+                    agent_time_unix_ms: started.agent_time_ms,
+                    monotonic_ms: started.monotonic_ms,
                 })),
             });
             let pump = Pump::start(
@@ -394,6 +411,7 @@ impl Running {
                 kind: ErrorKind::Unspecified.into(),
                 message: format!("任务已取消，{how}"),
             }),
+            ..Default::default()
         }
     }
 

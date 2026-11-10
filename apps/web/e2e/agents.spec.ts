@@ -1,4 +1,4 @@
-import { AgentUpdateState } from "../../server/test/support/fake-agent.js";
+import { AgentUpdateState, agentClock } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
 import {
 	createScenario,
@@ -70,6 +70,40 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、已安装�
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 });
 
+test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒时不显示，心跳测到新的偏差后更新", async ({
+	page,
+	connectAgent,
+	clock,
+}) => {
+	const DAY = 86_400_000;
+	const now = () => clock.now().getTime();
+	await connectAgent({
+		name: "agent-ahead",
+		...agentClock(now() + 613 * DAY + 3 * 3_600_000, 5_000),
+	});
+	const synced = await connectAgent({ name: "agent-synced", ...agentClock(now() + 1_000, 5_000) });
+	// 不上报时间的旧版本 Agent：偏差未知，不显示。
+	await connectAgent({ name: "agent-old" }, { clock: false });
+
+	await page.goto("/agents");
+	const status = (name: string) =>
+		page
+			.getByRole("row", { name: new RegExp(name) })
+			.getByRole("cell")
+			.nth(1);
+	await expect(status("agent-ahead")).toHaveText("在线时间比控制面快 613 天");
+	await expect(status("agent-synced")).toHaveText("在线");
+	await expect(status("agent-old")).toHaveText("在线");
+
+	// 这台机器的时间被往回改了 90 秒：下一次心跳后显示出来。
+	clock.advance(10_000);
+	await synced.heartbeat([], agentClock(now() - 90_000, 15_000));
+	// 列表每 STATUS_POLL_MS（5 秒）才重新拉取一次，默认的 5 秒等不到下一次。
+	await expect(status("agent-synced")).toHaveText("在线时间比控制面慢 1 分钟", {
+		timeout: 15_000,
+	});
+});
+
 test.describe("版本不一致", () => {
 	test.use({ controlPlaneOptions: { version: "2.0.0" } });
 
@@ -136,7 +170,7 @@ test.describe("版本不一致", () => {
 			await createScenario(controlPlane, "拨测", scenarioUsing("agent-a")),
 		);
 		const held = [await current.nextAssign(), await current.nextAssign()];
-		// 控制面升级后，旧版本的 Agent 带着手上的任务重新连上，等它们结束。
+		// 控制面升级后，旧版本 Agent 带着手上的任务重新连上，等它们结束。
 		await current.disconnect();
 		const old = await connectAgent({
 			name: "agent-a",

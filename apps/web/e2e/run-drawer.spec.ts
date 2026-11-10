@@ -75,6 +75,18 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	const logs = summary.getByRole("list", { name: "最新日志" });
 	await expect(logs).toContainText("连接 10.0.0.8");
 	await expect(logs).toContainText("WARN 丢包率偏高");
+	// 时间都在运行开始那天：只显示时刻。
+	await expect(logs.getByRole("listitem")).toHaveText([
+		/^\d{2}:\d{2}:\d{2} INFO 连接 10\.0\.0\.8$/,
+		/^\d{2}:\d{2}:\d{2} WARN 丢包率偏高$/,
+	]);
+	// 有一行的时间不在那一天（Agent 时间被改到 613 天后）：每一行都带上日期。
+	agent.logs(task, [logLine(clock, 3, "时间被改了", LogLevel.INFO, 613 * 24 * 3600 * 1000)]);
+	await expect(logs.getByRole("listitem")).toHaveText([
+		/^2026-01-01 \d{2}:\d{2}:\d{2} INFO 连接 10\.0\.0\.8$/,
+		/^2026-01-01 \d{2}:\d{2}:\d{2} WARN 丢包率偏高$/,
+		/^2027-09-06 \d{2}:\d{2}:\d{2} INFO 时间被改了$/,
+	]);
 
 	await agent.succeed(task);
 	await expect(summary.getByTestId("summary-status")).toHaveText("成功");

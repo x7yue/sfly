@@ -1,6 +1,8 @@
 //! 产物上传（docs/ARCHITECTURE.md §5.3，#18）：任务结束后、上报结果之前，把工作目录下 `artifacts/`
 //! 里的每个普通文件 `PUT <artifact_upload_url><按路径段百分号编码的相对路径>` 上传到控制面
 //! （配置了注册令牌时带 `Authorization: Bearer <token>`）。符号链接和其他特殊文件被跳过。
+//! 每个请求用 `x-sfly-agent-modified-ms` 头带上文件的修改时间（Agent 时间，Unix 毫秒；#171），
+//! 取不到修改时间时不带这个头。
 //!
 //! 上传失败时（网络错误重试几次；控制面拒绝时不重试）：成功的任务改为 `node_error` 失败，
 //! 失败的任务保留原来的错误、在消息后附上上传失败的原因。`artifact_upload_url` 为空时不上传。
@@ -8,12 +10,15 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::clock;
 use crate::executor;
 use crate::proto::{AssignTask, ErrorKind, TaskResult, TaskStatus};
 
 /// 网络错误 / 5xx 时的上传尝试次数。
 const ATTEMPTS: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(500);
+/// 文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。
+const MODIFIED_MS_HEADER: &str = "x-sfly-agent-modified-ms";
 
 pub struct Uploader {
     pub http: reqwest::Client,
@@ -82,17 +87,22 @@ impl Uploader {
         let file = tokio::fs::File::open(path)
             .await
             .map_err(|e| (false, format!("打开 {} 失败：{e}", path.display())))?;
-        let len = file
+        let metadata = file
             .metadata()
             .await
-            .map_err(|e| (false, format!("读取 {} 失败：{e}", path.display())))?
-            .len();
+            .map_err(|e| (false, format!("读取 {} 失败：{e}", path.display())))?;
+        let len = metadata.len();
         let mut request = self
             .http
             .put(url.clone())
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .header(reqwest::header::CONTENT_LENGTH, len)
             .body(reqwest::Body::from(file));
+        // 文件的修改时间是按系统时钟记的：换成 Agent 时间（测试用的偏移选项生效时加上偏移量）。
+        let modified = metadata.modified().ok().map(clock::system_time_ms);
+        if let Some(modified) = modified.map(clock::to_agent_time_ms) {
+            request = request.header(MODIFIED_MS_HEADER, modified);
+        }
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }

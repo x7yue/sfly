@@ -1,4 +1,6 @@
+import { CONTROL_PLANE_TIME_EVENT, CONTROL_PLANE_TIME_HEADER } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type { Clock } from "../clock.js";
 
 /** 一条 SSE 消息。data 按 JSON 序列化；id 会成为浏览器重连时的 `Last-Event-ID`。 */
 export interface SseMessage {
@@ -21,8 +23,10 @@ export interface SseStream {
 export type SseSetup = (stream: SseStream) => (() => void) | undefined;
 
 export interface SseOptions {
-	/** 保活注释的间隔（防止代理断开空闲连接），默认 15 秒。 */
-	keepAliveMs?: number;
+	/** 控制面时间的来源：每条流在连上时和每次心跳都把它发给页面。 */
+	clock: Clock;
+	/** 心跳的间隔（带控制面时间，也防止代理断开空闲连接），默认 15 秒。 */
+	heartbeatMs?: number;
 	/** 建议浏览器断线后多久重连，默认 3 秒。 */
 	retryMs?: number;
 }
@@ -30,7 +34,8 @@ export interface SseOptions {
 /**
  * 控制面的 SSE 推送（运行状态、日志、在线编辑者共用）。
  *
- * 用 `registerSse(app)` 创建，路由里 `sse.open(request, reply, setup)` 把请求变成 SSE 流。
+ * 用 `registerSse(app, { clock })` 创建，路由里 `sse.open(request, reply, setup)` 把请求变成 SSE 流。
+ * 每条流在连上时和每次心跳都发一条控制面时间事件（@sfly/schema 的 CONTROL_PLANE_TIME_EVENT）。
  * 控制面关闭时（Fastify preClose）结束所有打开的流，避免长连接拖住 `app.close()`。
  */
 export interface Sse {
@@ -39,8 +44,9 @@ export interface Sse {
 	readonly size: number;
 }
 
-export function registerSse(app: FastifyInstance, options: SseOptions = {}): Sse {
-	const keepAliveMs = options.keepAliveMs ?? 15_000;
+export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
+	const { clock } = options;
+	const heartbeatMs = options.heartbeatMs ?? 15_000;
 	const retryMs = options.retryMs ?? 3_000;
 	const open = new Set<SseStream>();
 
@@ -56,7 +62,9 @@ export function registerSse(app: FastifyInstance, options: SseOptions = {}): Sse
 		open(request, reply, setup) {
 			reply.hijack();
 			const res = reply.raw;
+			const time = () => clock.now().toISOString();
 			res.writeHead(200, {
+				[CONTROL_PLANE_TIME_HEADER]: time(),
 				"content-type": "text/event-stream; charset=utf-8",
 				"cache-control": "no-cache, no-transform",
 				connection: "keep-alive",
@@ -64,16 +72,19 @@ export function registerSse(app: FastifyInstance, options: SseOptions = {}): Sse
 				"x-accel-buffering": "no",
 			});
 			res.write(`retry: ${retryMs}\n\n`);
+			const sendTime = () =>
+				res.write(formatMessage({ event: CONTROL_PLANE_TIME_EVENT, data: { time: time() } }));
+			sendTime();
 
 			let closed = false;
 			let cleanup: (() => void) | undefined;
-			const keepAlive = setInterval(() => res.write(": ping\n\n"), keepAliveMs);
-			keepAlive.unref();
+			const heartbeat = setInterval(sendTime, heartbeatMs);
+			heartbeat.unref();
 
 			const finish = () => {
 				if (closed) return;
 				closed = true;
-				clearInterval(keepAlive);
+				clearInterval(heartbeat);
 				open.delete(stream);
 				cleanup?.();
 			};

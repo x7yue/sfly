@@ -81,6 +81,10 @@ export const agents = pgTable("agents", {
 	status: text("status").$type<AgentStatus>().notNull(),
 	registeredAt: timestamptz("registered_at").notNull(),
 	lastSeenAt: timestamptz("last_seen_at").notNull(),
+	/** 最近一次 Hello 或 Heartbeat 测得的时钟偏差（Agent 时间 − 控制面时间，毫秒，#172）；未知时为空。 */
+	clockOffsetMs: bigint("clock_offset_ms", { mode: "number" }),
+	/** 测得 clock_offset_ms 的控制面时间。 */
+	clockOffsetMeasuredAt: timestamptz("clock_offset_measured_at"),
 });
 
 /**
@@ -144,8 +148,10 @@ export interface TaskProgress {
 	/** 总数；未知时为 null。 */
 	total: number | null;
 	message: string;
-	/** SDK 记录这次进度的时间（ISO）。 */
-	time: string;
+	/** 控制面时间（ISO）：这次进度发生时的控制面时间。升级之前保存的进度没有 agent_time，这一项是 Agent 时间。 */
+	time: string | null;
+	/** Agent 时间（ISO）：SDK 记录这次进度的时间；没有上报时为 null。升级之前保存的进度没有这个字段。 */
+	agent_time?: string | null;
 }
 
 export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
@@ -233,6 +239,15 @@ export const tasks = pgTable(
 		seq: bigserial("seq", { mode: "number" }).notNull(),
 		startedAt: timestamptz("started_at"),
 		endedAt: timestamptz("ended_at"),
+		/**
+		 * 任务开始时的时钟偏差（Agent 时间 − 控制面时间，毫秒，#175）和它对应的控制面时间：TaskStarted 里的
+		 * 时钟读数折算出来的，不是收到消息的时刻（started_at 才是）。旧版本 Agent 或没有上报时为空。
+		 */
+		startClockOffsetMs: bigint("start_clock_offset_ms", { mode: "number" }),
+		startClockOffsetMeasuredAt: timestamptz("start_clock_offset_measured_at"),
+		/** 任务结束时的时钟偏差和它对应的控制面时间，来自 TaskResult，含义同上。 */
+		endClockOffsetMs: bigint("end_clock_offset_ms", { mode: "number" }),
+		endClockOffsetMeasuredAt: timestamptz("end_clock_offset_measured_at"),
 		/** 最新进度（#10），只保留最后一次上报的值。 */
 		progress: jsonb("progress").$type<TaskProgress>(),
 		/** 日志文件（#10）：相对数据目录的路径，第一次收到日志时设置；格式见 src/logs/task-logs.ts。 */
@@ -294,7 +309,10 @@ export const artifacts = pgTable(
 		path: text("path").notNull(),
 		size: bigint("size", { mode: "number" }).notNull(),
 		sha256: text("sha256").notNull(),
+		/** 上传时间（控制面时间）。 */
 		createdAt: timestamptz("created_at").notNull(),
+		/** 文件在 Agent 上的修改时间（Agent 时间，#171）；旧版本 Agent 不上报时为空。 */
+		agentModifiedAt: timestamptz("agent_modified_at"),
 	},
 	(t) => [unique("artifacts_task_name").on(t.taskId, t.name), index("artifacts_run").on(t.runId)],
 );
@@ -337,8 +355,12 @@ export const metricSeries = pgTable(
 		/** 值的总和（平均值 = sum / points）。 */
 		sum: doublePrecision("sum").notNull(),
 		last: doublePrecision("last").notNull(),
+		/** 首尾两个点的控制面时间（ADR 0018）。升级之前写入的行（Agent 时间两列为空）这两列是 Agent 时间。 */
 		firstAt: timestamptz("first_at").notNull(),
 		lastAt: timestamptz("last_at").notNull(),
+		/** 首尾两个点的 Agent 时间（#174）；升级之前写入的行为空。 */
+		firstAgentAt: timestamptz("first_agent_at"),
+		lastAgentAt: timestamptz("last_agent_at"),
 	},
 	(t) => [
 		primaryKey({ columns: [t.taskId, t.metric, t.labels] }),

@@ -1,7 +1,14 @@
 import type { Page } from "@playwright/test";
-import { type AssignedTask, ErrorKind, LogLevel } from "../../server/test/support/fake-agent.js";
-import { expect, test } from "./fixtures";
+import {
+	type AssignedTask,
+	agentClock,
+	ErrorKind,
+	LogLevel,
+	LogSource,
+} from "../../server/test/support/fake-agent.js";
+import { type E2eFixtures, expect, test } from "./fixtures";
 import { logLine, openMonitor, runningScenario } from "./monitor-scenario";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 运行监控页（原型 #/monitor/:runId）：顶栏、链路时间线、底部面板、取消。
 
@@ -241,6 +248,59 @@ test("日志：级别筛选、点一行在时间轴上标出该时刻、实时�
 	await expect(logs).toContainText("probe live line");
 });
 
+test("日志：Agent 时间跳变时 Agent 写入的提示行来源显示为 agent，与节点自己的输出区分开", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const probe = tasks.probe as AssignedTask;
+	const notice = "Agent 时间向后跳了 613 天（2026-01-01 08:00:13 → 2027-09-06 08:00:13）";
+	agent.logs(probe, [
+		logLine(clock, 1, "probe started"),
+		{
+			seq: 2n,
+			timeUnixMs: BigInt(clock.now().getTime() + 613 * 24 * 3600 * 1000),
+			source: LogSource.AGENT,
+			level: LogLevel.WARN,
+			text: notice,
+		},
+	]);
+	await agent.sync();
+	await openMonitor(page, clock, runId, "probe");
+	const logs = panel(page).getByRole("log", { name: "日志" });
+
+	const jumped = logs.getByRole("button", { name: notice });
+	await expect(jumped).toHaveAttribute("data-source", "agent");
+	await expect(jumped).toHaveAttribute("data-level", "warn");
+	await expect(jumped.locator("[data-log-source]")).toHaveText("agent");
+	const own = logs.getByRole("button", { name: /probe started/ });
+	await expect(own).toHaveAttribute("data-source", "stdout");
+	await expect(own.locator("[data-log-source]")).toHaveText("stdout");
+	// 跳变后的时间和运行开始那天不在同一天：整列带上日期，跳变前后的行才看得出差别。
+	await expect(logs.locator("[data-log-time]")).toHaveText([
+		"2026-01-01 08:00:14.000",
+		"2027-09-06 08:00:14.000",
+	]);
+	// 控制面时间都在同一天：只显示时刻。
+	await panel(page).getByRole("button", { name: "控制面时间", exact: true }).click();
+	await expect(logs.locator("[data-log-time]")).toHaveText(["08:00:14.000", "08:00:14.000"]);
+	await panel(page).getByRole("button", { name: "Agent 时间", exact: true }).click();
+
+	// 只看 WARN 时提示行还在；之后的输出实时接上，提示行留在原来的位置。
+	await panel(page).getByRole("button", { name: "WARN", exact: true }).click();
+	await expect(jumped).toBeVisible();
+	await expect(own).toHaveCount(0);
+	await panel(page).getByRole("button", { name: "全部", exact: true }).click();
+	agent.logs(probe, [logLine(clock, 3, "probe after the jump")]);
+	await expect(logs.getByRole("button")).toContainText([
+		"probe started",
+		notice,
+		"probe after the jump",
+	]);
+});
+
 test("产物：列出选中尝试的产物并可下载", async ({ page, controlPlane, connectAgent, clock }) => {
 	const { runId, tasks } = await runningScenario(controlPlane, connectAgent, clock);
 	const res = await controlPlane.fetch(`/tasks/${tasks.probe?.taskId}/artifacts/report.html`, {
@@ -259,6 +319,34 @@ test("产物：列出选中尝试的产物并可下载", async ({ page, controlP
 	);
 	await nodeButton(page, "cleanup").click();
 	await expect(panel(page).getByRole("tabpanel")).toContainText("cleanup 还没有开始执行。");
+});
+
+test("产物：同时显示文件在 Agent 上的修改时间和上传时间，没有修改时间的显示未记录", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const put = (name: string, headers: Record<string, string> = {}) =>
+		controlPlane.fetch(`/tasks/${tasks.probe?.taskId}/artifacts/${name}`, {
+			method: "PUT",
+			headers,
+			body: "x",
+		});
+	// Agent 的时间被改到了 2099 年；控制面时间是 2026-01-01 08:00:14（场景跑了 14 秒，浏览器在东八区）。
+	expect((await put("dump.bin", { "x-sfly-agent-modified-ms": "4070908800123" })).status).toBe(201);
+	// 旧版本 Agent 不带修改时间。
+	expect((await put("legacy.bin")).status).toBe(201);
+	await openMonitor(page, clock, runId, "probe");
+	await panel(page).getByRole("tab", { name: "产物" }).click();
+	const list = panel(page).getByRole("list", { name: "产物" });
+	const dump = list.getByRole("listitem").filter({ hasText: "dump.bin" });
+	await expect(dump.getByTitle("文件在 Agent 上的修改时间")).toHaveText("2099-01-01 08:00:00");
+	await expect(dump.getByTitle("上传到控制面的时间")).toHaveText("2026-01-01 08:00:14");
+	const legacy = list.getByRole("listitem").filter({ hasText: "legacy.bin" });
+	await expect(legacy.getByTitle("文件在 Agent 上的修改时间")).toHaveText("未记录");
+	await expect(legacy.getByTitle("上传到控制面的时间")).toHaveText("2026-01-01 08:00:14");
 });
 
 test("时间线下沿与底部面板上沿可以拖动调整高度，双击恢复默认", async ({
@@ -422,4 +510,105 @@ test("运行切换菜单里，已请求取消、还在等待清理的运行显�
 		.getByRole("menuitem", { name: new RegExp(runId.slice(0, 8)) });
 	await expect(item).toContainText("取消中");
 	await expect(item).not.toContainText("运行中");
+});
+
+// 节点详情里任务开始和结束时的时钟偏差（#175，ADR 0018）。
+test.describe("尝试页签的 Agent 时间", () => {
+	const DAY = 86_400_000;
+
+	/** agent-a 的时间比控制面快 offsetMs：ping 节点执行 10 秒后成功，打开监控页的「尝试」页签。 */
+	async function finishedPing(
+		{
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}: Pick<E2eFixtures, "controlPlane" | "connectAgent" | "clock"> & { page: Page },
+		offsetMs: number,
+	) {
+		const start = clock.now().getTime();
+		// 单调时钟读数 5000 对应控制面时间 start。
+		const reading = () => {
+			const now = clock.now().getTime();
+			return agentClock(now + offsetMs, 5_000 + now - start);
+		};
+		const agent = await connectAgent({
+			name: "agent-a",
+			installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+			...reading(),
+		});
+		await publishPackage(controlPlane);
+		const runId = await triggerRun(
+			controlPlane,
+			await createScenario(controlPlane, "改时间测试", scenarioUsing("agent-a")),
+		);
+		const task = await agent.nextAssign({ clock: reading() });
+		clock.advance(10_000);
+		await agent.succeed(task, {}, reading());
+
+		await openMonitor(page, clock, runId, "ping");
+		await panel(page).getByRole("tab", { name: "尝试" }).click();
+		return panel(page).getByRole("article", { name: "ping 第 1 次尝试" });
+	}
+
+	test("偏差 613 天：开始和结束同时显示控制面时间和 Agent 时间，并提示不一致", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const attempt = await finishedPing({ page, controlPlane, connectAgent, clock }, 613 * DAY);
+
+		await expect(attempt.getByRole("definition")).toHaveText([
+			"08:00:00",
+			"08:00:00（Agent 时间 2027-09-06 08:00:00）",
+			"08:00:10（Agent 时间 2027-09-06 08:00:10）",
+		]);
+		const notice = attempt.getByText("这个任务执行期间 Agent 时间与控制面不一致");
+		await expect(notice).toHaveText(
+			"这个任务执行期间 Agent 时间与控制面不一致：开始时比控制面快 613 天，结束时快 613 天",
+		);
+		// 提示换行时不留孤字（「天」单独掉到下一行），窄窗口里也一样；两行的 Agent 时间左边对齐。
+		for (const size of [
+			{ width: 1440, height: 900 },
+			{ width: 1024, height: 768 },
+		]) {
+			await page.setViewportSize(size);
+			const lines = await notice.evaluate((el) => {
+				const range = document.createRange();
+				const counts = new Map<number, number>();
+				const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+				for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+					for (let i = 0; i < (node.textContent ?? "").length; i++) {
+						range.setStart(node, i);
+						range.setEnd(node, i + 1);
+						const top = Math.round(range.getBoundingClientRect().top);
+						counts.set(top, (counts.get(top) ?? 0) + 1);
+					}
+				}
+				return [...counts.values()];
+			});
+			expect(Math.min(...lines), `${size.width} 宽时每行的字数 ${lines}`).toBeGreaterThan(4);
+			const agentTimes = attempt.locator("[data-agent-time]");
+			await expect(agentTimes).toHaveCount(2);
+			const [start, end] = await Promise.all([
+				agentTimes.nth(0).boundingBox(),
+				agentTimes.nth(1).boundingBox(),
+			]);
+			expect(start?.x).toBe(end?.x);
+			expect(start?.height).toBe(end?.height);
+		}
+	});
+
+	test("偏差 1 秒：只显示一个时间，没有不一致的提示", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const attempt = await finishedPing({ page, controlPlane, connectAgent, clock }, 1_000);
+
+		await expect(attempt.getByRole("definition")).toHaveText(["08:00:00", "08:00:00", "08:00:10"]);
+		await expect(attempt).not.toContainText("Agent 时间");
+	});
 });

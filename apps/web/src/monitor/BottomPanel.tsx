@@ -13,11 +13,19 @@ import { DownloadIcon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { formatBytes, formatClock, formatDuration } from "#/lib/format";
+import {
+	formatBytes,
+	formatClock,
+	formatDuration,
+	formatFullDateTime,
+	TIME_NOT_RECORDED,
+} from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { attemptAgentTimes } from "./attempt-clock";
 import { LogList } from "./LogList";
+import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
 import {
 	type NodeRef,
 	nodeKey,
@@ -105,6 +113,7 @@ export function BottomPanel({
 	const attempt =
 		node?.attempts.find((a) => a.task_id === attemptId) ?? node?.attempts.at(-1) ?? undefined;
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
+	const logTimeKind = useLogTimeKind();
 
 	const empty = tab === "logs" && (!attempt || logsEmpty);
 	const collapsed = panelOpen === null ? empty : !panelOpen;
@@ -171,6 +180,12 @@ export function BottomPanel({
 					{tab === "logs" && (
 						<>
 							<Segmented
+								label="日志时间"
+								value={logTimeKind}
+								options={LOG_TIME_KINDS}
+								onChange={(v) => setLogTimeKind(v as LogTimeKind)}
+							/>
+							<Segmented
 								label="日志级别"
 								value={minLevel}
 								options={MIN_LEVELS}
@@ -210,6 +225,8 @@ export function BottomPanel({
 								attempt={attempt}
 								levels={levelsFrom(minLevel)}
 								filtered={minLevel !== "all"}
+								timeKind={logTimeKind}
+								day={run.started_at}
 								onEmpty={setLogsEmpty}
 							/>
 						) : (
@@ -269,11 +286,17 @@ function LogsTab({
 	attempt,
 	levels,
 	filtered,
+	timeKind,
+	day,
 	onEmpty,
 }: {
 	attempt: AttemptView;
 	levels: LogLineView["level"][];
 	filtered: boolean;
+	/** 时间列显示哪一种时间；定位和按时间范围过滤始终用控制面时间。 */
+	timeKind: LogTimeKind;
+	/** 运行开始的时刻：时间列要不要带日期按它那一天判断。 */
+	day: string;
 	/** 加载完、没有任何日志时为 true（筛选了级别时不算空：那是用户自己筛掉的）。 */
 	onEmpty: (empty: boolean) => void;
 }) {
@@ -285,21 +308,24 @@ function LogsTab({
 	const marker = useMonitor((s) => s.marker);
 	const actions = useMonitorActions();
 	const [markedSeq, setMarkedSeq] = useState<number | null>(null);
+	// 按时间范围过滤只看控制面时间（时间线是按它画的）；没有控制面时间的行不在任何范围里。
 	const lines = useMemo(
 		() =>
 			zoom
 				? logs.lines.filter((l) => {
+						if (l.time === null) return false;
 						const t = Date.parse(l.time);
 						return t >= zoom.start && t <= zoom.end;
 					})
 				: logs.lines,
 		[logs.lines, zoom],
 	);
+	const unlocatable = useMemo(() => logs.lines.filter((l) => l.time === null).length, [logs.lines]);
 	// 标记被别处清除（或换了标记）时取消行的高亮。
 	const marked =
 		markedSeq !== null &&
 		marker !== null &&
-		logs.lines.some((l) => l.seq === markedSeq && Date.parse(l.time) === marker)
+		logs.lines.some((l) => l.seq === markedSeq && l.time !== null && Date.parse(l.time) === marker)
 			? markedSeq
 			: null;
 	const finished = attempt.ended_at !== null;
@@ -310,6 +336,16 @@ function LogsTab({
 			{logs.truncated && (
 				<p className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-warn-fg">
 					日志超过单个任务的大小上限，之后的输出已被截断。
+				</p>
+			)}
+			{unlocatable > 0 && (
+				<p
+					data-testid="logs-unlocatable"
+					className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-fg-3"
+				>
+					{logs.hasOlder ? "已加载的日志里有" : "有"} {unlocatable}{" "}
+					行日志没有记录控制面时间（升级之前写入的日志只有 Agent
+					时间）：这些行不能在时间轴上定位，按时间范围过滤时也不显示。
 				</p>
 			)}
 			{logs.error && (
@@ -335,7 +371,10 @@ function LogsTab({
 						loadingOlder={logs.loadingOlder}
 						loadOlder={logs.loadOlder}
 						marked={marked}
+						timeKind={timeKind}
+						day={day}
 						onPick={(line) => {
+							if (line.time === null) return;
 							const same = marked === line.seq;
 							setMarkedSeq(same ? null : line.seq);
 							actions.mark(same ? null : Date.parse(line.time));
@@ -388,6 +427,8 @@ function AttemptsTab({
 				const status = nodeStatusView(a.status);
 				const error = a.error ? splitError(a.error.message) : null;
 				const end = a.ended_at ? Date.parse(a.ended_at) : now;
+				// 时钟偏差达到阈值时，开始和结束除了控制面时间还给出 Agent 时间（ADR 0018）。
+				const agentTimes = attemptAgentTimes(a);
 				return (
 					<article
 						key={a.task_id}
@@ -406,11 +447,28 @@ function AttemptsTab({
 								{a.started_at ? formatDuration(end - Date.parse(a.started_at)) : "—"}
 							</span>
 						</header>
+						{agentTimes && (
+							// 每一头的说明不在中间断开：换行只落在标点后面，不会剩下一个「天」字。
+							<p className="m-0 mt-1.5 text-2xs text-warn-fg">
+								这个任务执行期间 Agent 时间与控制面不一致：
+								{agentTimes.details.map((part, i) => (
+									<span key={part} className="whitespace-nowrap">
+										{part}
+										{i < agentTimes.details.length - 1 && "，"}
+									</span>
+								))}
+							</p>
+						)}
 						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-2xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
 							<dt>排队</dt>
 							<dd className="m-0">{formatClock(a.queued_at)}</dd>
 							<dt>开始</dt>
-							<dd className="m-0">{a.started_at ? formatClock(a.started_at) : "—"}</dd>
+							<dd className="m-0">
+								{a.started_at ? formatClock(a.started_at) : "—"}
+								{agentTimes?.start && (
+									<span data-agent-time>（Agent 时间 {formatFullDateTime(agentTimes.start)}）</span>
+								)}
+							</dd>
 							{a.wake_at && (
 								<>
 									<dt>唤醒</dt>
@@ -424,7 +482,12 @@ function AttemptsTab({
 								</>
 							)}
 							<dt>结束</dt>
-							<dd className="m-0">{a.ended_at ? formatClock(a.ended_at) : "—"}</dd>
+							<dd className="m-0">
+								{a.ended_at ? formatClock(a.ended_at) : "—"}
+								{agentTimes?.end && (
+									<span data-agent-time>（Agent 时间 {formatFullDateTime(agentTimes.end)}）</span>
+								)}
+							</dd>
 						</dl>
 						{a.error && error && (
 							<div className="mt-2">
@@ -563,6 +626,20 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 						<div className="truncate font-mono text-2xs text-fg-3" title={a.sha256}>
 							{formatBytes(a.size)} · sha256 {a.sha256.slice(0, 12)}
 						</div>
+					</div>
+					{/* 主列是文件在 Agent 上的修改时间（Agent 时间），上传时间是控制面时间（ADR 0018）。 */}
+					<div className="grid shrink-0 grid-cols-[auto_auto] gap-x-2 text-2xs text-fg-3">
+						<span>Agent 修改</span>
+						<span
+							title="文件在 Agent 上的修改时间（Agent 时间）"
+							className={cn("font-mono", a.agent_modified_at && "text-fg")}
+						>
+							{a.agent_modified_at ? formatFullDateTime(a.agent_modified_at) : TIME_NOT_RECORDED}
+						</span>
+						<span>上传</span>
+						<span title="上传到控制面的时间（控制面时间）" className="font-mono">
+							{formatFullDateTime(a.created_at)}
+						</span>
 					</div>
 					<a
 						className={buttonVariants({ size: "sm" })}

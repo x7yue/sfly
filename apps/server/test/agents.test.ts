@@ -46,6 +46,7 @@ describe("Agent 注册", () => {
 					installed_packages: [],
 				},
 				last_seen_at: "2026-01-01T00:00:00.000Z",
+				clock_offset: null,
 				installed_packages: [],
 				install: null,
 				dev_packages: [],

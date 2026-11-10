@@ -9,6 +9,7 @@ import {
 	type ServerMessage,
 	ServerMessageSchema,
 } from "@sfly/proto";
+import { agentClockReading } from "../agents/agent-clock.js";
 import {
 	type AgentConnection,
 	type AgentHub,
@@ -75,6 +76,8 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 			if (first.done || first.value.body.case !== "hello") {
 				throw new ConnectError("first message must be Hello", Code.InvalidArgument);
 			}
+			// 收到 Hello 的控制面时间：这次连接的折算关系和第一次时钟偏差都按它算（ADR 0018）。
+			const helloReceivedAt = options.hub.now();
 			const hello = first.value.body.value;
 			if (!hello.name) throw new ConnectError("Hello.name is required", Code.InvalidArgument);
 			if (!agentTokenMatches(options.agentToken, hello.token)) {
@@ -96,6 +99,8 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 					dev_packages: hello.devPackages.map(devPackageInfo),
 				},
 				outbox,
+				agentClockReading(hello),
+				helloReceivedAt,
 			);
 			context.signal.addEventListener("abort", () => conn.close());
 
@@ -108,6 +113,11 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 					for (;;) {
 						const next = await inbound.next();
 						if (next.done || conn.closed) break;
+						if (next.value.body.case === "heartbeat") {
+							// 每次心跳更新时钟偏差；不带时钟读数的心跳（旧版本 Agent）不改变保存的值。
+							const reading = agentClockReading(next.value.body.value);
+							if (reading) await options.hub.recordClock(conn, reading, options.hub.now());
+						}
 						await options.handler?.onMessage(conn, next.value);
 					}
 				} catch (error) {

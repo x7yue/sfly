@@ -60,6 +60,13 @@ message Hello {
   // 控制面在 Welcome 中逐个告诉 Agent 继续还是放弃；控制面认为在这个 Agent 上运行、
   // 但不在这个列表里的任务立即以 agent_lost 失败（docs/SEMANTICS.md §3.3）。
   repeated RunningTask running_tasks = 9;
+  // 发送这条消息时的 Agent 时间（Unix 毫秒）：Agent 机器的系统时间，可能是任何值，控制面不做范围检查（ADR 0018）。
+  // 只在 monotonic_ms 不为 0 时有意义。
+  int64 agent_time_unix_ms = 10;
+  // 发送这条消息时 Agent 的单调时钟读数（毫秒）：不受系统时间修改影响，同一次开机内连续。
+  // 控制面用收到 Hello 的控制面时间和它建立这次连接的固定对应关系（控制面时间 = 单调时钟读数 + 常量），
+  // 并据 agent_time_unix_ms 计算时钟偏差。0 表示没有上报（旧版本 Agent）：不建立对应关系，时钟偏差未知。
+  int64 monotonic_ms = 11;
 }
 
 // Agent 手上的一个任务（节点的一次尝试）。
@@ -78,6 +85,10 @@ message Heartbeat {
   repeated RunningTask running_tasks = 1;
   // Agent 的更新状态（ADR 0014）；不带这个字段的心跳（旧版本 Agent）不改变控制面保存的状态。
   AgentUpdate update = 2;
+  // 发送这条消息时的 Agent 时间（Unix 毫秒）与单调时钟读数（毫秒），含义同 Hello 的同名字段：
+  // 控制面据此更新时钟偏差。monotonic_ms 为 0 的心跳（旧版本 Agent）不改变控制面保存的时钟偏差。
+  int64 agent_time_unix_ms = 3;
+  int64 monotonic_ms = 4;
 }
 
 // Agent 的更新状态：版本与控制面不一致时 Agent 在做什么（ADR 0014），控制面保存最新一次上报的，在 Agents 页显示。
@@ -111,6 +122,11 @@ enum AgentUpdateState {
 message TaskStarted {
   string task_id = 1;
   uint32 attempt = 2;
+  // 执行器启动时的 Agent 时间（Unix 毫秒）与单调时钟读数（毫秒），含义同 Hello 的同名字段（ADR 0018）：
+  // 控制面据此记下任务开始时的时钟偏差；任务的开始时间仍按收到这条消息的时刻记。
+  // monotonic_ms 为 0（旧版本 Agent）时不记偏差。
+  int64 agent_time_unix_ms = 3;
+  int64 monotonic_ms = 4;
 }
 
 // 以本地开发模式（sfly dev）加载的节点包：本地源码目录以可编辑方式安装进共享 venv，注册为 `包名@dev`。
@@ -254,12 +270,17 @@ message LogBatch {
 message LogLine {
   // 任务内从 1 开始递增的序号；控制面和画布按它去重。
   uint64 seq = 1;
-  // 时间（Unix 毫秒）：SDK 日志取 SDK 记录的时间，标准输出 / 标准错误取 Agent 读到这一行的时间。
+  // Agent 时间（Unix 毫秒）：SDK 日志取 SDK 记录的时间，标准输出 / 标准错误取 Agent 读到这一行的时间，
+  // Agent 自己写入的行取写入的时间。
   int64 time_unix_ms = 2;
   LogSource source = 3;
   LogLevel level = 4;
   // 一行文本（不含换行符）；SDK 日志的一条消息可以有多行。
   string text = 5;
+  // Agent 读到这一行（标准输出 / 标准错误的一次读取、事件管道的一次读取）时的单调时钟读数（毫秒），含义同
+  // Hello.monotonic_ms。控制面按这次连接的对应关系把它折算成这一行的控制面时间（ADR 0018）；time_unix_ms
+  // 仍是 Agent 时间。0 表示没有上报（旧版本 Agent）：控制面时间取收到这一批的时刻。
+  int64 monotonic_ms = 6;
 }
 
 // 日志来源。
@@ -271,6 +292,8 @@ enum LogSource {
   LOG_SOURCE_STDERR = 2;
   // SDK 的 ctx.log。
   LOG_SOURCE_SDK = 3;
+  // Agent 自己写入的提示行（例如 Agent 时间跳变，ADR 0018）；不认识这个取值的旧版控制面把它记成标准输出。
+  LOG_SOURCE_AGENT = 4;
 }
 
 // 日志级别。标准输出为 INFO，标准错误为 ERROR，SDK 日志按调用的级别。
@@ -290,12 +313,15 @@ message Progress {
   // 总数；未设置表示未知。
   optional double total = 4;
   string message = 5;
-  // SDK 记录这次进度的时间（Unix 毫秒）。
+  // SDK 记录这次进度的时间（Unix 毫秒），是 Agent 时间。
   int64 time_unix_ms = 6;
+  // Agent 从事件管道读到这次进度时的单调时钟读数（毫秒），含义同 LogLine.monotonic_ms：控制面据此折算出
+  // 这次进度的控制面时间。0 表示没有上报（旧版本 Agent）：控制面时间取收到的时刻。
+  int64 monotonic_ms = 7;
 }
 
-// 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 序列 × 秒」合并，每个任务每秒最多发一批，
-// 任务结束前补发剩余的点；控制面不回 Ack，同一序列同一秒的重复点被忽略。
+// 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 序列 × 单调时钟秒」合并，每个任务每秒最多发一批，
+// 任务结束前补发剩余的点；控制面不回 Ack，同一序列同一秒（单调时钟读数相同）的重复点被忽略。
 message MetricBatch {
   string task_id = 1;
   uint32 attempt = 2;
@@ -309,7 +335,8 @@ message MetricBatch {
 message MetricPoint {
   // 节点类型声明的指标名。
   string name = 1;
-  // 这一秒（Unix 秒）。
+  // 这个点的 Agent 时间（Unix 秒）：这一秒里最后一次上报时 SDK 记录的时间。原样记录，控制面不做范围检查，
+  // 也不用它排序或去重（ADR 0018）。旧版本 Agent 按它分秒合并。
   int64 time_unix_s = 2;
   // gauge：这一秒最后一个值；counter：这一秒结束时的值。
   double value = 3;
@@ -319,6 +346,10 @@ message MetricPoint {
   // 这个点所属序列的标签（键 → 值）；指标没有声明标签键时为空。
   // 键必须与节点类型声明的标签键一致，否则控制面丢弃这个点（计入丢弃数）。
   map<string, string> labels = 6;
+  // 这一秒的起点的单调时钟读数（毫秒，整秒）：Agent 从事件管道读到上报时打点，按「任务 × 序列 × 单调时钟秒」合并。
+  // 控制面按连接时建立的对应关系把它折算成控制面时间，序列内的顺序、去重、分区和保留期都按折算后的时间。
+  // 0 表示没有上报（旧版本 Agent）：控制面时间取收到这一批的时刻。
+  int64 monotonic_ms = 7;
 }
 
 // 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。
@@ -330,6 +361,11 @@ message TaskResult {
   string outputs_json = 4;
   // 失败时的错误。
   TaskError error = 5;
+  // 任务结束（得到结果）时的 Agent 时间（Unix 毫秒）与单调时钟读数（毫秒），含义同 Hello 的同名字段（ADR 0018）：
+  // 控制面据此记下任务结束时的时钟偏差；任务的结束时间仍按收到这条消息的时刻记。
+  // 结果在断线期间排队、重连后重发时，这两个值仍是结束那一刻的。monotonic_ms 为 0（旧版本 Agent）时不记偏差。
+  int64 agent_time_unix_ms = 6;
+  int64 monotonic_ms = 7;
 }
 
 enum TaskStatus {

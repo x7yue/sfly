@@ -1,4 +1,5 @@
 import type { ServerMessage } from "@sfly/proto";
+import type { ClockOffsetView } from "@sfly/schema";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -17,6 +18,12 @@ import {
 import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
+import {
+	type AgentClockReading,
+	ConnectionClock,
+	clockOffsetView,
+	measureClockOffset,
+} from "./agent-clock.js";
 
 /** proto 的 DevPackage 转成存储形式：metadata_json 解析为对象（不是 JSON 对象时为 null）。 */
 export function devPackageInfo(p: { name: string; source: string; metadataJson: string }) {
@@ -41,6 +48,8 @@ export class AgentConnection {
 		readonly name: string,
 		public info: AgentInfo,
 		readonly outbox: AsyncQueue<ServerMessage>,
+		/** 这次连接的「单调时钟读数 → 控制面时间」对应关系（ADR 0018）：日志、进度、指标、任务事件共用。 */
+		readonly clock: ConnectionClock,
 	) {}
 
 	/** 已推送 Welcome（#15：Welcome 带着对重连前任务的处置，之前不能向它派发或取消）。 */
@@ -82,6 +91,8 @@ export interface AgentView {
 		installed_packages: InstalledPackage[];
 	};
 	last_seen_at: string;
+	/** 最近一次测得的时钟偏差；未知（旧版本 Agent）时为 null。 */
+	clock_offset: ClockOffsetView | null;
 	/** Agent 共享 venv 中已安装的节点包（Agent 在 Hello 中上报）。 */
 	installed_packages: { name: string; version: string }[];
 	/** 最近一次上报的节点包安装状态；本次连接还没有安装过时为 null。 */
@@ -144,26 +155,65 @@ export class AgentHub {
 		return conn && !conn.closed && conn.welcomed ? conn : undefined;
 	}
 
-	/** 注册一个新连接：替换同名旧连接，记录为在线。 */
+	/** 现在的控制面时间：网关在收到消息时取它，作为这条消息的收到时刻。 */
+	now(): Date {
+		return this.deps.clock.now();
+	}
+
+	/**
+	 * 注册一个新连接：替换同名旧连接，记录为在线。`helloClock` 是 Hello 里的时钟读数（旧版本 Agent 没有），
+	 * `receivedAt` 是收到 Hello 的控制面时间：据此建立这次连接的折算关系并测一次时钟偏差；
+	 * 没有读数时时钟偏差记为未知。
+	 */
 	attach(
 		name: string,
 		info: AgentInfo,
 		outbox: AsyncQueue<ServerMessage>,
+		helloClock?: AgentClockReading,
+		receivedAt: Date = this.deps.clock.now(),
 	): Promise<AgentConnection> {
 		return this.deps.mutex.run(async () => {
-			const conn = new AgentConnection(name, info, outbox);
+			const clock = new ConnectionClock(this.deps.clock, helloClock, receivedAt);
+			const conn = new AgentConnection(name, info, outbox, clock);
 			const old = this.#connections.get(name);
 			this.#connections.set(name, conn);
 			old?.close();
 			const now = this.deps.clock.now();
+			const offset = helloClock && measureClockOffset(helloClock, receivedAt);
+			const clockOffset = {
+				clockOffsetMs: offset?.offsetMs ?? null,
+				clockOffsetMeasuredAt: offset?.measuredAt ?? null,
+			};
 			await this.deps.db
 				.insert(agents)
-				.values({ name, info, status: "online", registeredAt: now, lastSeenAt: now })
+				.values({
+					name,
+					info,
+					status: "online",
+					registeredAt: now,
+					lastSeenAt: now,
+					...clockOffset,
+				})
 				.onConflictDoUpdate({
 					target: agents.name,
-					set: { info, status: "online", lastSeenAt: now },
+					set: { info, status: "online", lastSeenAt: now, ...clockOffset },
 				});
 			return conn;
+		});
+	}
+
+	/**
+	 * Heartbeat 带来的时钟读数：更新保存的时钟偏差（偏差值和测量时刻）。这次连接的折算关系不变。
+	 * 旧连接的上报忽略。
+	 */
+	recordClock(conn: AgentConnection, reading: AgentClockReading, receivedAt: Date): Promise<void> {
+		return this.deps.mutex.run(async () => {
+			if (this.#connections.get(conn.name) !== conn) return;
+			const offset = measureClockOffset(reading, receivedAt);
+			await this.deps.db
+				.update(agents)
+				.set({ clockOffsetMs: offset.offsetMs, clockOffsetMeasuredAt: offset.measuredAt })
+				.where(eq(agents.name, conn.name));
 		});
 	}
 
@@ -244,6 +294,7 @@ export class AgentHub {
 			// 早于 #5 注册的记录没有 installed_packages。
 			info: { ...info, installed_packages: info.installed_packages ?? [] },
 			last_seen_at: row.lastSeenAt.toISOString(),
+			clock_offset: clockOffsetView(row.clockOffsetMs, row.clockOffsetMeasuredAt),
 			installed_packages: info.installed_packages ?? [],
 			install: install ?? null,
 			dev_packages: (dev_packages ?? []).map((p) => ({

@@ -81,6 +81,28 @@ export { LogLevel, LogSource };
 export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
 export { AgentUpdateState, ErrorKind, TaskStatus };
 
+/** Hello / Heartbeat / TaskStarted / TaskResult 里的时钟字段：Agent 时间和单调时钟读数。 */
+export interface AgentClockInit {
+	agentTimeUnixMs: bigint;
+	monotonicMs: bigint;
+}
+
+/**
+ * 任意的 Agent 时间（Date、ISO 字符串或 Unix 毫秒）加单调时钟读数（毫秒），展开进 Hello 或传给
+ * {@link FakeAgent.heartbeat}：`FakeAgent.connect(url, { name, ...agentClock("2027-09-06T00:00:00Z", 5_000) })`。
+ * 任务开始和结束时的读数传给 {@link FakeAgent.started}、`nextAssign({ clock })`、`succeed` / `fail` / `cancelled`。
+ * 不带它的消息相当于旧版本 Agent（两个字段都是 0）。
+ */
+export function agentClock(agentTime: Date | string | number, monotonicMs: number): AgentClockInit {
+	return {
+		agentTimeUnixMs: BigInt(new Date(agentTime).getTime()),
+		monotonicMs: BigInt(monotonicMs),
+	};
+}
+
+/** {@link FakeAgent.connect} 的 `clock` 选项用的单调时钟读数起点（毫秒）：足够大，早于连接的时刻也折算得出正的读数。 */
+const SYNCED_MONOTONIC_MS = 1_000_000_000_000;
+
 export type ServerMessageCase = NonNullable<ServerMessage["body"]["case"]>;
 export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
 
@@ -129,18 +151,50 @@ export class FakeAgent {
 		})();
 	}
 
-	/** 连接网关，发送 Hello，等待 Welcome 后返回。 */
+	/**
+	 * 连接网关，发送 Hello，等待 Welcome 后返回。
+	 *
+	 * `clock` 传控制面的时钟（测试里的手动时钟）时，这是一台时钟与控制面一致的新版本 Agent：Hello 带上 Agent 时间
+	 * 和单调时钟读数，之后 {@link FakeAgent.metrics} 的点自动带上与它的 Unix 秒对应的单调时钟读数，
+	 * 所以点的控制面时间就是给出的 Unix 秒（{@link FakeAgent.monotonicAt}）。不传时相当于旧版本 Agent。
+	 */
 	static async connect(
 		grpcUrl: string,
 		hello: HelloInit,
-		options: { timeoutMs?: number } = {},
+		options: { timeoutMs?: number; clock?: { now(): Date } } = {},
 	): Promise<FakeAgent> {
-		return FakeAgent.connectRaw(
+		const now = options.clock?.now().getTime();
+		const agent = await FakeAgent.connectRaw(
 			grpcUrl,
 			(agent) =>
-				agent.send({ case: "hello", value: { agentVersion: DEFAULT_AGENT_VERSION, ...hello } }),
+				agent.send({
+					case: "hello",
+					value: {
+						agentVersion: DEFAULT_AGENT_VERSION,
+						...(now === undefined ? {} : agentClock(now, SYNCED_MONOTONIC_MS)),
+						...hello,
+					},
+				}),
 			{ ...options, name: hello.name },
 		);
+		// hello 里自己写了单调时钟读数时按它对应（Agent 时间可以另写，与控制面不一致）。
+		if (now !== undefined) {
+			agent.#monotonicShiftMs = Number(hello.monotonicMs ?? SYNCED_MONOTONIC_MS) - now;
+		}
+		return agent;
+	}
+
+	/** 单调时钟读数 − 控制面时间（毫秒）；只有用 `clock` 选项连接的才有。 */
+	#monotonicShiftMs: number | undefined;
+
+	/**
+	 * 控制面时间为 `unixMs` 的时刻在这台 Agent 上的单调时钟读数（毫秒）。只有用 `clock` 选项连接的 Agent 才能用。
+	 */
+	monotonicAt(unixMs: number): bigint {
+		if (this.#monotonicShiftMs === undefined) {
+			throw new Error(`agent ${this.name}: 没有用 clock 选项连接，没有单调时钟读数`);
+		}
+		return BigInt(unixMs + this.#monotonicShiftMs);
 	}
 
 	/** 建立双向流后由 `handshake` 自行发送消息（例如不合规的首条消息），然后等待 Welcome。 */
@@ -217,11 +271,13 @@ export class FakeAgent {
 	/**
 	 * 发送心跳并等到控制面处理完它。心跳带上手上的任务（默认 {@link held}：派发给本 Agent、还没上报结果的），
 	 * 控制面只为它们续约；连续两次心跳都没有上报的任务以 agent_lost 失败。
+	 * `clock`（{@link agentClock}）是心跳带的 Agent 时间和单调时钟读数，不传时相当于旧版本 Agent。
 	 */
-	async heartbeat(tasks: TaskRef[] = this.held): Promise<void> {
+	async heartbeat(tasks: TaskRef[] = this.held, clock?: AgentClockInit): Promise<void> {
 		this.send({
 			case: "heartbeat",
 			value: {
+				...clock,
 				runningTasks: tasks.map((t) => ({
 					taskId: t.taskId,
 					attempt: t.attempt,
@@ -240,10 +296,16 @@ export class FakeAgent {
 	#held = new Map<string, TaskRef>();
 	#started = new Set<string>();
 
-	/** 上报 TaskStarted（执行器已启动：任务从派发阶段进入 running），并等到控制面处理完它。 */
-	async started(task: TaskRef): Promise<void> {
+	/**
+	 * 上报 TaskStarted（执行器已启动：任务从派发阶段进入 running），并等到控制面处理完它。
+	 * `clock`（{@link agentClock}）是执行器启动时的 Agent 时间和单调时钟读数，不传时相当于旧版本 Agent。
+	 */
+	async started(task: TaskRef, clock?: AgentClockInit): Promise<void> {
 		this.#started.add(keyOf(task));
-		this.send({ case: "started", value: { taskId: task.taskId, attempt: task.attempt } });
+		this.send({
+			case: "started",
+			value: { ...clock, taskId: task.taskId, attempt: task.attempt },
+		});
 		await this.sync();
 	}
 
@@ -264,12 +326,15 @@ export class FakeAgent {
 	/**
 	 * 等待下一个派发给本 Agent 的任务。默认像真实 Agent 一样立即上报 TaskStarted（任务进入 running）；
 	 * `start: false` 时停在派发阶段（下载、安装中），之后可以自己调用 {@link started}。
+	 * `clock` 是这条 TaskStarted 带的时钟读数。
 	 */
-	async nextAssign(options: { timeoutMs?: number; start?: boolean } = {}): Promise<AssignedTask> {
+	async nextAssign(
+		options: { timeoutMs?: number; start?: boolean; clock?: AgentClockInit } = {},
+	): Promise<AssignedTask> {
 		const message = await this.next("assign", options);
 		const assign = message.body.value as AssignTask;
 		this.#held.set(keyOf(assign), { taskId: assign.taskId, attempt: assign.attempt });
-		if (options.start ?? true) await this.started(assign);
+		if (options.start ?? true) await this.started(assign, options.clock);
 		return { ...assign, inputs: JSON.parse(assign.inputsJson) as Record<string, unknown> };
 	}
 
@@ -299,9 +364,10 @@ export class FakeAgent {
 		}
 	}
 
-	/** 上报任务已被取消（收到 CancelTask 后终止），等待 Ack。 */
-	cancelled(task: TaskRef, message = "任务已取消"): Promise<Ack> {
+	/** 上报任务已被取消（收到 CancelTask 后终止），等待 Ack。`clock` 是任务结束时的时钟读数（下同）。 */
+	cancelled(task: TaskRef, message = "任务已取消", clock?: AgentClockInit): Promise<Ack> {
 		return this.report({
+			...clock,
 			taskId: task.taskId,
 			attempt: task.attempt,
 			status: TaskStatus.CANCELLED,
@@ -310,8 +376,13 @@ export class FakeAgent {
 	}
 
 	/** 上报任务成功，等待 Ack。 */
-	succeed(task: TaskRef, outputs: Record<string, unknown> = {}): Promise<Ack> {
+	succeed(
+		task: TaskRef,
+		outputs: Record<string, unknown> = {},
+		clock?: AgentClockInit,
+	): Promise<Ack> {
 		return this.report({
+			...clock,
 			taskId: task.taskId,
 			attempt: task.attempt,
 			status: TaskStatus.SUCCESS,
@@ -320,8 +391,14 @@ export class FakeAgent {
 	}
 
 	/** 上报任务失败，等待 Ack。 */
-	fail(task: TaskRef, message = "boom", kind: ErrorKind = ErrorKind.NODE_ERROR): Promise<Ack> {
+	fail(
+		task: TaskRef,
+		message = "boom",
+		kind: ErrorKind = ErrorKind.NODE_ERROR,
+		clock?: AgentClockInit,
+	): Promise<Ack> {
 		return this.report({
+			...clock,
 			taskId: task.taskId,
 			attempt: task.attempt,
 			status: TaskStatus.FAILED,
@@ -369,6 +446,9 @@ export class FakeAgent {
 	/**
 	 * 上报一批指标点（#29）：每个点 `[指标名, Unix 秒, 值]`（最小值、最大值与值相同）或完整的 MetricPoint 字段；
 	 * `droppedPoints` 是 Agent 断线排队时丢弃的点数。控制面不回 Ack。
+	 *
+	 * 用 `clock` 选项连接的 Agent（{@link FakeAgent.connect}）：没有写 `monotonicMs` 的点自动带上与它的 Unix 秒
+	 * 对应的读数，也就是 Agent 时间与控制面时间一致。要让两者不同，自己写 `monotonicMs`（{@link FakeAgent.monotonicAt}）。
 	 */
 	metrics(
 		task: TaskRef,
@@ -381,11 +461,16 @@ export class FakeAgent {
 				taskId: task.taskId,
 				attempt: task.attempt,
 				droppedPoints: BigInt(droppedPoints),
-				points: points.map((p) =>
-					Array.isArray(p)
+				points: points.map((p) => {
+					const point: MetricPointInit = Array.isArray(p)
 						? { name: p[0], timeUnixS: BigInt(p[1]), value: p[2], min: p[2], max: p[2] }
-						: p,
-				),
+						: p;
+					if (this.#monotonicShiftMs === undefined || point.monotonicMs !== undefined) return point;
+					return {
+						...point,
+						monotonicMs: this.monotonicAt(Number(point.timeUnixS ?? 0n) * 1000),
+					};
+				}),
 			},
 		});
 	}

@@ -201,7 +201,7 @@ export class PerfApi {
 
 	/**
 	 * 流式下载一个任务的全部日志，逐行交给 visit（上百 MiB 的日志不必整份留在内存里）。
-	 * `timeMs` 是 Agent 读到这一行的时间。
+	 * `timeMs` 是 Agent 读到这一行的时刻（控制面时间：由这一行的单调时钟读数折算，ADR 0018）。
 	 */
 	async readTaskLogs(taskId: string, visit: (line: TaskLogLine) => void): Promise<void> {
 		const res = await this.request(`/tasks/${taskId}/logs/download`);

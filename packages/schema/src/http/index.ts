@@ -13,6 +13,7 @@ import { sdkApi, systemApi } from "./system.js";
 
 export * from "./agent-binaries.js";
 export * from "./agents.js";
+export * from "./clock-offset.js";
 export * from "./contract.js";
 export * from "./dashboard.js";
 export * from "./docs.js";
