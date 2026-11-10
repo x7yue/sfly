@@ -17,6 +17,7 @@ import { formatBytes, formatClock, formatDuration, formatFullDateTime } from "#/
 import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { attemptAgentTimes } from "./attempt-clock";
 import { LogList } from "./LogList";
 import {
 	type NodeRef,
@@ -388,6 +389,8 @@ function AttemptsTab({
 				const status = nodeStatusView(a.status);
 				const error = a.error ? splitError(a.error.message) : null;
 				const end = a.ended_at ? Date.parse(a.ended_at) : now;
+				// 时钟偏差达到阈值时，开始和结束除了控制面时间还给出 Agent 时间（ADR 0018）。
+				const agentTimes = attemptAgentTimes(a);
 				return (
 					<article
 						key={a.task_id}
@@ -406,11 +409,19 @@ function AttemptsTab({
 								{a.started_at ? formatDuration(end - Date.parse(a.started_at)) : "—"}
 							</span>
 						</header>
+						{agentTimes && (
+							<p className="m-0 mt-1.5 text-2xs text-warn-fg">
+								这个任务执行期间 Agent 时间与控制面不一致：{agentTimes.detail}
+							</p>
+						)}
 						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-2xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
 							<dt>排队</dt>
 							<dd className="m-0">{formatClock(a.queued_at)}</dd>
 							<dt>开始</dt>
-							<dd className="m-0">{a.started_at ? formatClock(a.started_at) : "—"}</dd>
+							<dd className="m-0">
+								{a.started_at ? formatClock(a.started_at) : "—"}
+								{agentTimes?.start && `（Agent 时间 ${formatFullDateTime(agentTimes.start)}）`}
+							</dd>
 							{a.wake_at && (
 								<>
 									<dt>唤醒</dt>
@@ -424,7 +435,10 @@ function AttemptsTab({
 								</>
 							)}
 							<dt>结束</dt>
-							<dd className="m-0">{a.ended_at ? formatClock(a.ended_at) : "—"}</dd>
+							<dd className="m-0">
+								{a.ended_at ? formatClock(a.ended_at) : "—"}
+								{agentTimes?.end && `（Agent 时间 ${formatFullDateTime(agentTimes.end)}）`}
+							</dd>
 						</dl>
 						{a.error && error && (
 							<div className="mt-2">

@@ -81,7 +81,7 @@ export { LogLevel, LogSource };
 export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
 export { AgentUpdateState, ErrorKind, TaskStatus };
 
-/** Hello / Heartbeat 里的时钟字段：Agent 时间和单调时钟读数。 */
+/** Hello / Heartbeat / TaskStarted / TaskResult 里的时钟字段：Agent 时间和单调时钟读数。 */
 export interface AgentClockInit {
 	agentTimeUnixMs: bigint;
 	monotonicMs: bigint;
@@ -90,7 +90,8 @@ export interface AgentClockInit {
 /**
  * 任意的 Agent 时间（Date、ISO 字符串或 Unix 毫秒）加单调时钟读数（毫秒），展开进 Hello 或传给
  * {@link FakeAgent.heartbeat}：`FakeAgent.connect(url, { name, ...agentClock("2027-09-06T00:00:00Z", 5_000) })`。
- * 不带它的 Hello / Heartbeat 相当于旧版本 Agent（两个字段都是 0）。
+ * 任务开始和结束时的读数传给 {@link FakeAgent.started}、`nextAssign({ clock })`、`succeed` / `fail` / `cancelled`。
+ * 不带它的消息相当于旧版本 Agent（两个字段都是 0）。
  */
 export function agentClock(agentTime: Date | string | number, monotonicMs: number): AgentClockInit {
 	return {
@@ -260,10 +261,16 @@ export class FakeAgent {
 	#held = new Map<string, TaskRef>();
 	#started = new Set<string>();
 
-	/** 上报 TaskStarted（执行器已启动：任务从派发阶段进入 running），并等到控制面处理完它。 */
-	async started(task: TaskRef): Promise<void> {
+	/**
+	 * 上报 TaskStarted（执行器已启动：任务从派发阶段进入 running），并等到控制面处理完它。
+	 * `clock`（{@link agentClock}）是执行器启动时的 Agent 时间和单调时钟读数，不传时相当于旧版本 Agent。
+	 */
+	async started(task: TaskRef, clock?: AgentClockInit): Promise<void> {
 		this.#started.add(keyOf(task));
-		this.send({ case: "started", value: { taskId: task.taskId, attempt: task.attempt } });
+		this.send({
+			case: "started",
+			value: { ...clock, taskId: task.taskId, attempt: task.attempt },
+		});
 		await this.sync();
 	}
 
@@ -284,12 +291,15 @@ export class FakeAgent {
 	/**
 	 * 等待下一个派发给本 Agent 的任务。默认像真实 Agent 一样立即上报 TaskStarted（任务进入 running）；
 	 * `start: false` 时停在派发阶段（下载、安装中），之后可以自己调用 {@link started}。
+	 * `clock` 是这条 TaskStarted 带的时钟读数。
 	 */
-	async nextAssign(options: { timeoutMs?: number; start?: boolean } = {}): Promise<AssignedTask> {
+	async nextAssign(
+		options: { timeoutMs?: number; start?: boolean; clock?: AgentClockInit } = {},
+	): Promise<AssignedTask> {
 		const message = await this.next("assign", options);
 		const assign = message.body.value as AssignTask;
 		this.#held.set(keyOf(assign), { taskId: assign.taskId, attempt: assign.attempt });
-		if (options.start ?? true) await this.started(assign);
+		if (options.start ?? true) await this.started(assign, options.clock);
 		return { ...assign, inputs: JSON.parse(assign.inputsJson) as Record<string, unknown> };
 	}
 
@@ -319,9 +329,10 @@ export class FakeAgent {
 		}
 	}
 
-	/** 上报任务已被取消（收到 CancelTask 后终止），等待 Ack。 */
-	cancelled(task: TaskRef, message = "任务已取消"): Promise<Ack> {
+	/** 上报任务已被取消（收到 CancelTask 后终止），等待 Ack。`clock` 是任务结束时的时钟读数（下同）。 */
+	cancelled(task: TaskRef, message = "任务已取消", clock?: AgentClockInit): Promise<Ack> {
 		return this.report({
+			...clock,
 			taskId: task.taskId,
 			attempt: task.attempt,
 			status: TaskStatus.CANCELLED,
@@ -330,8 +341,13 @@ export class FakeAgent {
 	}
 
 	/** 上报任务成功，等待 Ack。 */
-	succeed(task: TaskRef, outputs: Record<string, unknown> = {}): Promise<Ack> {
+	succeed(
+		task: TaskRef,
+		outputs: Record<string, unknown> = {},
+		clock?: AgentClockInit,
+	): Promise<Ack> {
 		return this.report({
+			...clock,
 			taskId: task.taskId,
 			attempt: task.attempt,
 			status: TaskStatus.SUCCESS,
@@ -340,8 +356,14 @@ export class FakeAgent {
 	}
 
 	/** 上报任务失败，等待 Ack。 */
-	fail(task: TaskRef, message = "boom", kind: ErrorKind = ErrorKind.NODE_ERROR): Promise<Ack> {
+	fail(
+		task: TaskRef,
+		message = "boom",
+		kind: ErrorKind = ErrorKind.NODE_ERROR,
+		clock?: AgentClockInit,
+	): Promise<Ack> {
 		return this.report({
+			...clock,
 			taskId: task.taskId,
 			attempt: task.attempt,
 			status: TaskStatus.FAILED,

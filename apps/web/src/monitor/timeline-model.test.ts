@@ -25,6 +25,8 @@ function attempt(overrides: Partial<AttemptView>): AttemptView {
 		queued_at: at(0),
 		started_at: null,
 		ended_at: null,
+		start_clock_offset: null,
+		end_clock_offset: null,
 		wake_at: null,
 		progress: null,
 		...overrides,
