@@ -97,7 +97,9 @@ impl Uploader {
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .header(reqwest::header::CONTENT_LENGTH, len)
             .body(reqwest::Body::from(file));
-        if let Some(modified) = metadata.modified().ok().and_then(unix_ms) {
+        // 文件的修改时间是按系统时钟记的：换成 Agent 时间（测试用的偏移选项生效时加上偏移量）。
+        let modified = metadata.modified().ok().and_then(unix_ms);
+        if let Some(modified) = modified.map(crate::clock::to_agent_time_ms) {
             request = request.header(MODIFIED_MS_HEADER, modified);
         }
         if let Some(token) = &self.token {
