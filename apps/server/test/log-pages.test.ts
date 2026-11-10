@@ -137,6 +137,39 @@ describe("完整日志", () => {
 		expect(misaligned.lines.map((l) => l.seq)).toEqual([11, 12]);
 	});
 
+	it("Agent 自己写入的提示行记为来源 agent，可以按这个来源筛选", async () => {
+		const { agent, task } = await setup();
+		agent.logs(task, [
+			line(1),
+			{
+				seq: 2n,
+				timeUnixMs: BigInt(Date.UTC(2028, 6, 12, 6, 34, 24)),
+				source: LogSource.AGENT,
+				level: LogLevel.WARN,
+				text: "Agent 时间向后跳了 613 天（2026-01-01 08:00:01 → 2028-07-12 14:34:24）",
+			},
+			line(3),
+		]);
+		await eventually(async () => expect((await page(task.taskId)).last_seq).toBe(3));
+
+		const all = await page(task.taskId);
+		expect(all.lines.map((l) => [l.seq, l.source])).toEqual([
+			[1, "stdout"],
+			[2, "agent"],
+			[3, "sdk"],
+		]);
+		const notices = await page(task.taskId, "source=agent");
+		expect(notices.lines).toMatchObject([
+			{
+				seq: 2,
+				time: "2028-07-12T06:34:24.000Z",
+				source: "agent",
+				level: "warn",
+				text: "Agent 时间向后跳了 613 天（2026-01-01 08:00:01 → 2028-07-12 14:34:24）",
+			},
+		]);
+	});
+
 	it("按级别和来源筛选：只返回匹配的行，翻页时跳过不匹配的行", async () => {
 		const { agent, task } = await setup();
 		await write(agent, task, 60);

@@ -262,7 +262,7 @@ export const runsApi = {
 };
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
-export const LOG_SOURCES = ["stdout", "stderr", "sdk", "system"] as const;
+export const LOG_SOURCES = ["stdout", "stderr", "sdk", "agent", "system"] as const;
 export const MAX_LOG_PAGE_LINES = 1000;
 
 /** 一行日志（日志文件是 JSONL，每行就是这个对象）。 */
@@ -270,7 +270,7 @@ export const LogLineView = z.object({
 	/** 任务内从 1 开始递增的序号，用来去重。 */
 	seq: z.number().int(),
 	time: Timestamp,
-	/** system：控制面写入的截断标记。 */
+	/** agent：Agent 自己写入的提示行（Agent 时间跳变）；system：控制面写入的截断标记。 */
 	source: z.enum(LOG_SOURCES),
 	level: z.enum(LOG_LEVELS),
 	/** secret 参数的值已替换成掩码。 */

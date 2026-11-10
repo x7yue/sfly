@@ -20,6 +20,7 @@ pub mod metrics;
 pub mod process_tree;
 pub mod retention;
 pub mod sdk;
+pub mod time_jump;
 pub mod update;
 pub mod venv;
 

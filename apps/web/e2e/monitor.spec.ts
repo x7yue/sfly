@@ -1,5 +1,10 @@
 import type { Page } from "@playwright/test";
-import { type AssignedTask, ErrorKind, LogLevel } from "../../server/test/support/fake-agent.js";
+import {
+	type AssignedTask,
+	ErrorKind,
+	LogLevel,
+	LogSource,
+} from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
 import { logLine, openMonitor, runningScenario } from "./monitor-scenario";
 
@@ -239,6 +244,50 @@ test("日志：级别筛选、点一行在时间轴上标出该时刻、实时�
 	});
 	agent.logs(probe, [logLine(clock, 351, "probe live line", LogLevel.ERROR)]);
 	await expect(logs).toContainText("probe live line");
+});
+
+test("日志：Agent 时间跳变时 Agent 写入的提示行来源显示为 agent，与节点自己的输出区分开", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const probe = tasks.probe as AssignedTask;
+	const notice = "Agent 时间向后跳了 613 天（2026-01-01 08:00:13 → 2027-09-06 08:00:13）";
+	agent.logs(probe, [
+		logLine(clock, 1, "probe started"),
+		{
+			seq: 2n,
+			timeUnixMs: BigInt(clock.now().getTime() + 613 * 24 * 3600 * 1000),
+			source: LogSource.AGENT,
+			level: LogLevel.WARN,
+			text: notice,
+		},
+	]);
+	await agent.sync();
+	await openMonitor(page, clock, runId, "probe");
+	const logs = panel(page).getByRole("log", { name: "日志" });
+
+	const jumped = logs.getByRole("button", { name: notice });
+	await expect(jumped).toHaveAttribute("data-source", "agent");
+	await expect(jumped).toHaveAttribute("data-level", "warn");
+	await expect(jumped.locator("[data-log-source]")).toHaveText("agent");
+	const own = logs.getByRole("button", { name: /probe started/ });
+	await expect(own).toHaveAttribute("data-source", "stdout");
+	await expect(own.locator("[data-log-source]")).toHaveText("stdout");
+
+	// 只看 WARN 时提示行还在；之后的输出实时接上，提示行留在原来的位置。
+	await panel(page).getByRole("button", { name: "WARN", exact: true }).click();
+	await expect(jumped).toBeVisible();
+	await expect(own).toHaveCount(0);
+	await panel(page).getByRole("button", { name: "全部", exact: true }).click();
+	agent.logs(probe, [logLine(clock, 3, "probe after the jump")]);
+	await expect(logs.getByRole("button")).toContainText([
+		"probe started",
+		notice,
+		"probe after the jump",
+	]);
 });
 
 test("产物：列出选中尝试的产物并可下载", async ({ page, controlPlane, connectAgent, clock }) => {
