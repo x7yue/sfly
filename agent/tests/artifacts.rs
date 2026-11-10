@@ -158,3 +158,45 @@ async fn without_an_upload_url_nothing_is_uploaded_and_refs_are_local_paths() {
     assert!(path.ends_with("/task-art-none/artifacts/a.txt"), "{path}");
     assert!(fixture.uploads().is_empty());
 }
+
+#[tokio::test]
+async fn each_upload_carries_the_modification_time_of_the_file_on_the_agent() {
+    let fixture = HttpFixture::start().await;
+    let cp = FakeControlPlane::start().await;
+    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-art-mtime"));
+    cp.hello(0).await;
+
+    // 修改时间是被测机器上的事实：2099 年、1970 年以前都原样带上（Unix 毫秒）。
+    cp.assign(artifact_task(
+        "task-art-mtime",
+        &fixture,
+        json!({
+            "files": { "future.txt": "x", "old.txt": "x", "past.txt": "x" },
+            "mtimes": { "future.txt": 4070908800.25, "old.txt": 1700000000, "past.txt": -86400 },
+        }),
+    ))
+    .await;
+    let (result, _) = cp.result("task-art-mtime").await;
+
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    let mut got: Vec<(String, Option<String>)> = fixture
+        .uploads()
+        .into_iter()
+        .map(|u| (u.path, u.agent_modified_ms))
+        .collect();
+    got.sort();
+    let at = |name: &str, ms: &str| {
+        (
+            format!("/tasks/task-art-mtime/artifacts/{name}"),
+            Some(ms.to_string()),
+        )
+    };
+    assert_eq!(
+        got,
+        vec![
+            at("future.txt", "4070908800250"),
+            at("old.txt", "1700000000000"),
+            at("past.txt", "-86400000"),
+        ]
+    );
+}

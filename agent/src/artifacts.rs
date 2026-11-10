@@ -1,12 +1,14 @@
 //! 产物上传（docs/ARCHITECTURE.md §5.3，#18）：任务结束后、上报结果之前，把工作目录下 `artifacts/`
 //! 里的每个普通文件 `PUT <artifact_upload_url><按路径段百分号编码的相对路径>` 上传到控制面
 //! （配置了注册令牌时带 `Authorization: Bearer <token>`）。符号链接和其他特殊文件被跳过。
+//! 每个请求用 `x-sfly-agent-modified-ms` 头带上文件的修改时间（Agent 时间，Unix 毫秒；#171），
+//! 取不到修改时间时不带这个头。
 //!
 //! 上传失败时（网络错误重试几次；控制面拒绝时不重试）：成功的任务改为 `node_error` 失败，
 //! 失败的任务保留原来的错误、在消息后附上上传失败的原因。`artifact_upload_url` 为空时不上传。
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::executor;
 use crate::proto::{AssignTask, ErrorKind, TaskResult, TaskStatus};
@@ -14,6 +16,8 @@ use crate::proto::{AssignTask, ErrorKind, TaskResult, TaskStatus};
 /// 网络错误 / 5xx 时的上传尝试次数。
 const ATTEMPTS: u32 = 3;
 const RETRY_DELAY: Duration = Duration::from_millis(500);
+/// 文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。
+const MODIFIED_MS_HEADER: &str = "x-sfly-agent-modified-ms";
 
 pub struct Uploader {
     pub http: reqwest::Client,
@@ -82,17 +86,20 @@ impl Uploader {
         let file = tokio::fs::File::open(path)
             .await
             .map_err(|e| (false, format!("打开 {} 失败：{e}", path.display())))?;
-        let len = file
+        let metadata = file
             .metadata()
             .await
-            .map_err(|e| (false, format!("读取 {} 失败：{e}", path.display())))?
-            .len();
+            .map_err(|e| (false, format!("读取 {} 失败：{e}", path.display())))?;
+        let len = metadata.len();
         let mut request = self
             .http
             .put(url.clone())
             .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
             .header(reqwest::header::CONTENT_LENGTH, len)
             .body(reqwest::Body::from(file));
+        if let Some(modified) = metadata.modified().ok().and_then(unix_ms) {
+            request = request.header(MODIFIED_MS_HEADER, modified);
+        }
         if let Some(token) = &self.token {
             request = request.bearer_auth(token);
         }
@@ -109,6 +116,16 @@ impl Uploader {
             status.is_server_error(),
             format!("控制面返回 {status} {}", body.trim()),
         ))
+    }
+}
+
+/// Unix 毫秒；1970 年以前为负数。超出 i64 时为 None。
+fn unix_ms(time: SystemTime) -> Option<i64> {
+    match time.duration_since(UNIX_EPOCH) {
+        Ok(after) => i64::try_from(after.as_millis()).ok(),
+        Err(before) => i64::try_from(before.duration().as_millis())
+            .ok()
+            .map(|ms| -ms),
     }
 }
 
