@@ -80,9 +80,6 @@ interface SegmentRow extends Record<string, unknown> {
 
 const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 
-/** 段里第 i 个点的「Agent 时间 − 控制面时间」（秒）：全段相同时数组只有一个元素（见 task-metrics.ts 的 agentOffsets）。 */
-const agentOffsetAt = (offsets: Float64Array, i: number): number =>
-	(offsets.length === 1 ? offsets[0] : offsets[i]) as number;
 
 /** 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试（与运行视图一致）。 */
 const isPlaceholder = (t: TaskRow) =>
@@ -365,7 +362,9 @@ export class MetricQueries {
 				continue;
 			}
 			const offsets = decodeInt4Array(row.offsets);
+			// 每点的「Agent 时间 − 控制面时间」（秒）：全段相同时数组只有一个元素（见 task-metrics.ts 的 agentOffsets）。
 			const agentOffsets = row.agent_offsets && decodeInt8Array(row.agent_offsets);
+			const sameOffset = agentOffsets?.length === 1 ? (agentOffsets[0] as number) : undefined;
 			const values = decodeFloat8Array(row.values);
 			const mins = decodeFloat8Array(row.mins);
 			const maxs = decodeFloat8Array(row.maxs);
@@ -379,7 +378,7 @@ export class MetricQueries {
 					max: maxs[i] as number,
 					sum: value,
 					last: value,
-					agentAt: agentOffsets ? t + agentOffsetAt(agentOffsets, i) : null,
+					agentAt: agentOffsets ? t + (sameOffset ?? (agentOffsets[i] as number)) : null,
 				});
 			}
 		}

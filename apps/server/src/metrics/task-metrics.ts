@@ -724,7 +724,7 @@ function isDuplicate(series: Series, t: number, agentT: number, mono: number | u
 
 /**
  * 段里每个点的「Agent 时间 − 控制面时间」（秒）；全段相同时（通常如此）只存一个元素。
- * 读出时见 metric-queries.ts 的 agentOffsetAt。
+ * 读出时见 metric-queries.ts。
  */
 function agentOffsets(segment: Point[]): number[] {
 	const offsets = segment.map((p) => p.agentT - p.t);
