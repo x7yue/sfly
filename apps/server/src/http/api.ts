@@ -1,4 +1,4 @@
-import { httpContract, systemApi } from "@sfly/schema";
+import { CONTROL_PLANE_TIME_HEADER, httpContract, systemApi } from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentHub } from "../agents/agent-hub.js";
@@ -63,6 +63,8 @@ export interface HttpApiDeps {
 	docs: UserDocs;
 	/** 前端构建产物（src/http/web-app.ts）；不设置时不提供页面。 */
 	webApp?: WebApp;
+	/** SSE 心跳的间隔（src/sse/sse.ts）。 */
+	sseHeartbeatMs?: number;
 }
 
 const errorCode = (status: number): string =>
@@ -96,14 +98,20 @@ export function buildHttpApi({
 	installScript,
 	docs,
 	webApp,
+	sseHeartbeatMs,
 }: HttpApiDeps): FastifyInstance {
 	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
 	const app = Fastify({ logger, rewriteUrl: (req) => stripApiPrefix(req.url ?? "/") });
 	// 所有路由都按 @sfly/schema 的 HTTP 契约注册（ADR 0007）：不在契约里的路由、没注册的接口都让启动失败。
 	guardHttpContract(app, httpContract);
+	// 每个响应都带控制面时间，页面据此修正浏览器时间（ADR 0018）；SSE 另有心跳事件。
+	// 在发出响应时取时间（不是收到请求时），处理耗时不算进页面的误差里。
+	app.addHook("onSend", async (_request, reply) => {
+		reply.header(CONTROL_PLANE_TIME_HEADER, clock.now().toISOString());
+	});
 	if (webApp) registerWebApp(app, webApp);
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
-	const sse = registerSse(app);
+	const sse = registerSse(app, { clock, heartbeatMs: sseHeartbeatMs });
 
 	// Fastify 自身产生的错误（未知路由、请求体过大、JSON 解析失败等）也用统一的错误格式。
 	app.setNotFoundHandler((request, reply) =>

@@ -19,7 +19,7 @@ import {
 	unixAt,
 } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
-import { seedRunRecords } from "./run-records";
+import { advance, seedRunRecords } from "./run-records";
 import { stoppingRun } from "./stop-subflow-scenario";
 import {
 	createScenario,
@@ -349,8 +349,8 @@ test("控制台没有数据", async ({ page }) => {
 
 test("运行记录", async ({ page, controlPlane, connectAgent, clock }) => {
 	const agent = await connectAgent({ name: "agent", slots: 4 });
-	const last = await seedRunRecords(controlPlane, clock, agent);
-	await page.clock.setFixedTime(new Date(last.getTime() + 42_000));
+	await seedRunRecords(controlPlane, clock, agent);
+	await advance(clock, agent, 42_000);
 	await page.goto("/runs");
 	await expect(page.getByRole("article")).toHaveCount(2);
 	await expect(page.getByRole("table", { name: "历史运行" }).getByRole("row")).toHaveCount(5);

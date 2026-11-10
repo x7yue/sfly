@@ -13,6 +13,7 @@ import {
 import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { useId } from "react";
 import type { DocNode } from "#/components/canvas/flow";
+import { controlPlaneNow } from "#/lib/control-plane-time";
 import { subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
@@ -551,7 +552,7 @@ export function TimerForm({
 	const atProblems = problemsOf("at");
 	const tzProblems = problemsOf("tz");
 	const tzValid = isTimeZone(node.tz);
-	const target = tzValid ? timerTarget(node.at, node.tz, new Date()) : null;
+	const target = tzValid ? timerTarget(node.at, node.tz, new Date(controlPlaneNow())) : null;
 	const timeOfDay = /^\d{2}:\d{2}:\d{2}$/.test(node.at.trim());
 	return (
 		<>

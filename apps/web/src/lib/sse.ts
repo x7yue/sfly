@@ -1,6 +1,13 @@
-import type { EndpointInput, StreamDef, StreamEvents } from "@sfly/schema";
+import {
+	CONTROL_PLANE_TIME_EVENT,
+	type ControlPlaneTimeEvent,
+	type EndpointInput,
+	type StreamDef,
+	type StreamEvents,
+} from "@sfly/schema";
 import { useEffect, useRef } from "react";
 import { apiUrl, type InputArgs } from "./api";
+import { observeControlPlaneTime } from "./control-plane-time";
 
 /** 事件名 → 处理函数；data 的类型由契约推导。 */
 export type SseHandlers<S extends StreamDef> = {
@@ -50,7 +57,7 @@ export function useEventSource<S extends StreamDef>(
 
 /**
  * 打开一条 SSE 连接（不依赖组件，useEventSource 与跨组件共用的连接都用它）：按事件名分发已解析的 data
- * （开发环境下按契约校验，不符合时在控制台报错并丢弃）。返回关闭函数。
+ * （开发环境下按契约校验，不符合时在控制台报错并丢弃）；控制面时间事件在这里统一处理，不分发。返回关闭函数。
  */
 export function openEventSource<S extends StreamDef>(
 	def: S,
@@ -61,6 +68,15 @@ export function openEventSource<S extends StreamDef>(
 ): () => void {
 	const source = new EventSource(url);
 	source.onopen = () => onOpen?.();
+	// 每条流在连上时和每次心跳都带控制面时间（./control-plane-time.ts）。
+	source.addEventListener(CONTROL_PLANE_TIME_EVENT, (message) => {
+		try {
+			const data = JSON.parse((message as MessageEvent<string>).data) as ControlPlaneTimeEvent;
+			observeControlPlaneTime(data.time);
+		} catch {
+			// 不是 JSON：忽略，继续按上一次的差值算。
+		}
+	});
 	for (const event of events) {
 		source.addEventListener(event, (message) => {
 			let data: unknown;
