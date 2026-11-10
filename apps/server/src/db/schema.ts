@@ -239,6 +239,15 @@ export const tasks = pgTable(
 		seq: bigserial("seq", { mode: "number" }).notNull(),
 		startedAt: timestamptz("started_at"),
 		endedAt: timestamptz("ended_at"),
+		/**
+		 * 任务开始时的时钟偏差（Agent 时间 − 控制面时间，毫秒，#175）和它对应的控制面时间：TaskStarted 里的
+		 * 时钟读数折算出来的，不是收到消息的时刻（started_at 才是）。旧版 Agent 或没有上报时为空。
+		 */
+		startClockOffsetMs: bigint("start_clock_offset_ms", { mode: "number" }),
+		startClockOffsetMeasuredAt: timestamptz("start_clock_offset_measured_at"),
+		/** 任务结束时的时钟偏差和它对应的控制面时间，来自 TaskResult，含义同上。 */
+		endClockOffsetMs: bigint("end_clock_offset_ms", { mode: "number" }),
+		endClockOffsetMeasuredAt: timestamptz("end_clock_offset_measured_at"),
 		/** 最新进度（#10），只保留最后一次上报的值。 */
 		progress: jsonb("progress").$type<TaskProgress>(),
 		/** 日志文件（#10）：相对数据目录的路径，第一次收到日志时设置；格式见 src/logs/task-logs.ts。 */

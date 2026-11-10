@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
+import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
 import { ReferencedAgent } from "./orchestrations.js";
@@ -91,6 +92,13 @@ export const AttemptView = z.object({
 	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、派发阶段为 null。 */
 	started_at: Timestamp.nullable(),
 	ended_at: Timestamp.nullable(),
+	/**
+	 * 任务开始、结束时的时钟偏差（ADR 0018）：Agent 在执行器启动、得到结果那一刻的 Agent 时间减去当时的控制面时间；
+	 * measured_at 加 offset_ms 就是那一刻的 Agent 时间。started_at / ended_at 仍是控制面收到消息的时刻。
+	 * 旧版本 Agent、改动之前的任务、不在 Agent 上执行的节点、不是由 Agent 上报而结束的任务为 null。
+	 */
+	start_clock_offset: ClockOffsetView.nullable(),
+	end_clock_offset: ClockOffsetView.nullable(),
 	/** 定时 / Sleep 节点的唤醒时间；其他节点为 null。 */
 	wake_at: Timestamp.nullable(),
 	progress: TaskProgressView.nullable(),

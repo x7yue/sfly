@@ -1,4 +1,4 @@
-import { runsApi } from "@sfly/schema";
+import { type ClockOffsetView, runsApi } from "@sfly/schema";
 import { expect } from "vitest";
 import type { TestControlPlane } from "./test-control-plane.js";
 
@@ -113,6 +113,9 @@ export interface AttemptView {
 	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
+	/** 任务开始、结束时的时钟偏差（#175）；旧版 Agent 或没有上报时为 null。 */
+	start_clock_offset: ClockOffsetView | null;
+	end_clock_offset: ClockOffsetView | null;
 	/** 定时 / Sleep 节点的唤醒时间（#14）；其他节点为 null。 */
 	wake_at: string | null;
 	progress: {
