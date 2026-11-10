@@ -16,6 +16,7 @@ import { createContext, type ReactNode, useContext, useRef, useState } from "rea
 import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ACTION } from "#/lib/copy";
+import { controlPlaneNow } from "#/lib/control-plane-time";
 import { formatDateTime, formatDuration } from "#/lib/format";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -82,7 +83,7 @@ function LastRunInfo({ run, className }: { run: LastRun | null; className?: stri
 	if (!run) return <span className="text-fg-3">从未运行</span>;
 	// 取消后等待清理的运行显示为「取消中」（故事 70）。
 	const status = runStatusView(run.status, { cancelling: run.cancelling });
-	const end = run.ended_at ? new Date(run.ended_at).getTime() : Date.now();
+	const end = run.ended_at ? new Date(run.ended_at).getTime() : controlPlaneNow();
 	const pill = <StatusPill kind={status.kind}>{status.label}</StatusPill>;
 	return (
 		<span className={cn("inline-flex flex-wrap items-center gap-2", className)}>

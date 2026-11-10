@@ -145,6 +145,19 @@ export type ApiErrorBody = z.infer<typeof ApiErrorBody>;
 export const Timestamp = z.iso.datetime();
 
 /**
+ * 控制面时间（GLOSSARY「时间」，ADR 0018）：控制面把自己的当前时间带给页面，页面据此修正浏览器时间，
+ * "已运行"等时长才不依赖浏览器时钟（apps/web/src/lib/control-plane-time.ts）。
+ *
+ * - 每个 HTTP 响应都带 {@link CONTROL_PLANE_TIME_HEADER} 响应头，值是 `Timestamp`。
+ * - 每条 SSE 流在连上时和每次心跳都发一条 {@link CONTROL_PLANE_TIME_EVENT} 事件，data 是 {@link ControlPlaneTimeEvent}。
+ *   它由控制面统一发送，不写进各个 `stream` 的 `events`。
+ */
+export const CONTROL_PLANE_TIME_HEADER = "x-sfly-time";
+export const CONTROL_PLANE_TIME_EVENT = "time";
+export const ControlPlaneTimeEvent = z.object({ time: Timestamp });
+export type ControlPlaneTimeEvent = z.infer<typeof ControlPlaneTimeEvent>;
+
+/**
  * 按路径模板拼出路径；路径参数用 encodeURIComponent 编码，末尾 `*` 的值按 `/` 分段、每段单独编码。
  */
 export function pathFor(def: Pick<RouteDef, "path">, params?: Record<string, unknown>): string {
