@@ -48,7 +48,8 @@ import { nodeTypeOf } from "./node-types.js";
  *   时刻，其余的按与它的 Agent 时间间隔往前排，不挤在同一秒；间隔不可信时（同一序列里 Agent 时间没有递增，或往前
  *   排会超出可接收范围：Agent 时间中途跳变过）整批改按到达顺序排，每个序列的最后一个点取收到的时刻，前面的每秒
  *   一个往前排。Agent 时间取什么值都不会让点被丢弃或排错顺序。
- * - 序列里已有的点是升级之前写入的（只有 Agent 时间）时，新点不与它们比较：不去重，也不往后排。
+ * - 序列里已有的点是升级之前写入的（只有 Agent 时间）时，新点不与它们比较：不去重，也不往后排；只避开旧段的
+ *   起始时间（段按起始时间区分）。摘要的首尾时间这时取能包住新旧数据的范围。
  * - 控制面时间超出可接收范围（保留期内到最后一个提前创建的分区为止，见 src/metrics/metric-retention.ts）的点被丢弃。
  *
  * ## 分段表 `metric_segments`
@@ -132,11 +133,21 @@ interface Series {
 	sum: number;
 	last: number;
 	/**
-	 * 首尾的控制面时间（Unix 秒）。升级之前写入的序列（只有 Agent 时间）：firstAt 是 Agent 时间，新点更早时改成
-	 * 新点的时间；lastAt 在收到新点之前是负无穷，新点不与旧数据的 Agent 时间比较。
+	 * 摘要里首尾的控制面时间（Unix 秒）。升级之前写入的序列（只有 Agent 时间）这两项是 Agent 时间；之后收到新点时
+	 * 取能包住新旧数据的范围（序列查询的默认范围据此取），不用来和新点比较。
 	 */
 	firstAt: number;
 	lastAt: number;
+	/**
+	 * 已收到的最后一个带控制面时间的点的控制面时间（Unix 秒），排序和去重用；还没有这样的点时是负无穷
+	 * （新序列，或序列里只有升级之前写入的数据：新点不与旧数据的 Agent 时间比较）。
+	 */
+	lastT: number;
+	/**
+	 * 升级之前写入的段的起始时间（Unix 秒，Agent 时间）；只有这样的序列才有。新点的控制面时间避开它们：
+	 * 段按起始时间区分，撞上了会覆盖旧段。
+	 */
+	legacyStarts?: Set<number>;
 	/** 首尾的 Agent 时间（Unix 秒）。 */
 	firstAgentAt: number;
 	lastAgentAt: number;
@@ -227,7 +238,8 @@ export class TaskMetrics {
 			}
 			const full = new Set<Series>();
 			const accepted: MetricPointView[] = [];
-			for (const [i, p] of batch.points.entries()) {
+			for (let i = 0; i < batch.points.length; i++) {
+				const p = batch.points[i] as MetricBatch["points"][number];
 				const keys = state.declared.get(p.name);
 				if (keys === undefined) continue;
 				if (!labelsMatch(p.labels, keys)) {
@@ -245,7 +257,8 @@ export class TaskMetrics {
 				let series = state.series.get(key);
 				if (series && series.points > 0) {
 					if (isDuplicate(series, t, mono)) continue;
-					if (t <= series.lastAt) t = series.lastAt + 1;
+					if (t <= series.lastT) t = series.lastT + 1;
+					if (series.legacyStarts) while (series.legacyStarts.has(t)) t++;
 				}
 				// 控制面时间超出可接收范围的丢弃（例如排队太久、已经过了保留期的点），不为它建分区（#32）。
 				if (!this.deps.retention.accepts(t)) continue;
@@ -592,8 +605,10 @@ export class TaskMetrics {
 				sum: r.sum,
 				last: r.last,
 				firstAt: r.firstAt.getTime() / 1000,
+				lastAt: r.lastAt.getTime() / 1000,
 				// 升级之前写入的摘要没有 Agent 时间：它的首尾时间就是 Agent 时间，没有可以和新点比较的控制面时间。
-				lastAt: r.lastAgentAt === null ? Number.NEGATIVE_INFINITY : r.lastAt.getTime() / 1000,
+				lastT: r.lastAgentAt === null ? Number.NEGATIVE_INFINITY : r.lastAt.getTime() / 1000,
+				...(r.lastAgentAt === null && { legacyStarts: new Set<number>() }),
 				firstAgentAt: (r.firstAgentAt ?? r.firstAt).getTime() / 1000,
 				lastAgentAt: (r.lastAgentAt ?? r.lastAt).getTime() / 1000,
 				lastMono: undefined,
@@ -602,6 +617,20 @@ export class TaskMetrics {
 				closed: [],
 				dirtySince: undefined,
 			});
+		}
+		if ([...series.values()].some((s) => s.legacyStarts)) {
+			// 只在跨升级仍在执行的任务第一次收到点时查一次。
+			const starts = await this.deps.db.execute<{
+				metric: string;
+				labels: Labels;
+				start_s: number;
+			}>(
+				sql`select metric, labels, extract(epoch from start_at)::float8 as start_s
+					from metric_segments where task_id = ${taskId}`,
+			);
+			for (const row of starts.rows) {
+				series.get(seriesKey(row.metric, sortedLabels(row.labels)))?.legacyStarts?.add(row.start_s);
+			}
 		}
 		return {
 			taskId,
@@ -691,6 +720,7 @@ function emptySeries(name: string, labels: Labels): Series {
 		lastAt: 0,
 		firstAgentAt: 0,
 		lastAgentAt: 0,
+		lastT: Number.NEGATIVE_INFINITY,
 		lastMono: undefined,
 		segment: [],
 		closed: [],
@@ -701,17 +731,20 @@ function emptySeries(name: string, labels: Labels): Series {
 function addPoint(series: Series, p: Point): void {
 	if (series.points === 0) {
 		series.firstAt = p.t;
+		series.lastAt = p.t;
 		series.firstAgentAt = p.agentT;
-	} else if (p.t < series.firstAt) {
-		// 只有已有的点是升级之前写入的（firstAt 是 Agent 时间）才会这样：首尾时间要包住新点，查询的默认范围才取得到它。
-		series.firstAt = p.t;
+	} else {
+		// 通常 lastAt 就是这个点的时间（序列内严格递增）；取最小最大是为了序列里还有升级之前写入的数据
+		// （Agent 时间）时首尾时间能包住新旧数据。
+		series.firstAt = Math.min(series.firstAt, p.t);
+		series.lastAt = Math.max(series.lastAt, p.t);
 	}
 	series.points++;
 	series.min = Math.min(series.min, p.min);
 	series.max = Math.max(series.max, p.max);
 	series.sum += p.value;
 	series.last = p.value;
-	series.lastAt = p.t;
+	series.lastT = p.t;
 	series.lastAgentAt = p.agentT;
 	series.segment.push(p);
 }
@@ -722,7 +755,7 @@ function addPoint(series: Series, p: Point): void {
  */
 function isDuplicate(series: Series, t: number, mono: number | undefined): boolean {
 	if (mono === undefined) return false;
-	if (series.lastMono === undefined) return t <= series.lastAt;
+	if (series.lastMono === undefined) return t <= series.lastT;
 	return mono <= series.lastMono;
 }
 

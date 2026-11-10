@@ -678,8 +678,9 @@ describe("迁移前的指标数据", () => {
 				points: 5,
 				max: 50,
 				last: 50,
+				// 首尾时间包住新旧数据（旧数据在 Agent 时间上），默认的查询范围两边都取得到。
 				first_time: iso(4),
-				last_time: iso(5),
+				last_time: iso(103),
 				last_agent_time: iso(105),
 			}),
 		]);
@@ -688,7 +689,31 @@ describe("迁移前的指标数据", () => {
 		).toEqual([
 			[iso(4), iso(104), 40],
 			[iso(5), iso(105), 50],
+			[null, iso(101), 10],
+			[null, iso(102), 20],
+			[null, iso(103), 30],
 		]);
+	});
+
+	it("跨升级后的新点正好落在旧段的起始时间上时不覆盖旧段：排到后一秒", async () => {
+		// 旧段从 Agent 时间第 101 秒开始；Agent 比控制面快 100 秒，升级后第一个点的控制面时间也是第 101 秒。
+		const { again, task, summaryOf, seriesOf } = await upgradeWithLegacyPoints(101);
+		again.metrics(task, [
+			{
+				name: "tps",
+				timeUnixS: BigInt(at(201)),
+				monotonicMs: again.monotonicAt(at(101) * 1000),
+				value: 40,
+				min: 40,
+				max: 40,
+			},
+		]);
+		await again.succeed(task);
+
+		expect(await summaryOf()).toEqual([expect.objectContaining({ points: 4, last: 40 })]);
+		const buckets = (await seriesOf()).series[0]?.buckets ?? [];
+		expect(buckets.reduce((n, b) => n + b.points, 0)).toBe(4);
+		expect(buckets.map((b) => b.max)).toEqual(expect.arrayContaining([10, 30, 40]));
 	});
 });
 
