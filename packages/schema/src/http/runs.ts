@@ -66,13 +66,16 @@ export const isActiveStatus = (status: string): status is ActiveStatus =>
 /** 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。 */
 export const ErrorView = z.object({ kind: z.string(), message: z.string() });
 
-/** 最新进度（ctx.progress）；time 是 SDK 记录的时间。 */
+/** 最新进度（ctx.progress），带两种时间（ADR 0018）。 */
 export const TaskProgressView = z.object({
 	current: z.number(),
 	/** 总数；未知时为 null。 */
 	total: z.number().nullable(),
 	message: z.string(),
-	time: Timestamp,
+	/** 控制面时间：这次进度发生时的控制面时间；改动之前保存的进度没有记录，为 null。 */
+	time: Timestamp.nullable(),
+	/** Agent 时间：SDK 记录这次进度的时间，原样保存；没有上报时为 null。 */
+	agent_time: Timestamp.nullable(),
 });
 
 export const AttemptView = z.object({
@@ -265,11 +268,17 @@ export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
 export const LOG_SOURCES = ["stdout", "stderr", "sdk", "system"] as const;
 export const MAX_LOG_PAGE_LINES = 1000;
 
-/** 一行日志（日志文件是 JSONL，每行就是这个对象）。 */
+/**
+ * 一行日志，带两种时间（ADR 0018）。日志文件是 JSONL，每行就是这个对象（字段顺序也相同：页面按它算字节偏移）；
+ * 改动之前写入的行只有一个 `time`，读出时它是 `agent_time`，`time` 为 null。
+ */
 export const LogLineView = z.object({
-	/** 任务内从 1 开始递增的序号，用来去重。 */
+	/** 任务内从 1 开始递增的序号，用来排序和去重。 */
 	seq: z.number().int(),
-	time: Timestamp,
+	/** 控制面时间：这一行在 Agent 上被读到时的控制面时间，时间线定位和按时间范围筛选用它；未记录时为 null。 */
+	time: Timestamp.nullable(),
+	/** Agent 时间：原样保存，不做范围检查，只用于展示和对照；没有上报时为 null。 */
+	agent_time: Timestamp.nullable(),
 	/** system：控制面写入的截断标记。 */
 	source: z.enum(LOG_SOURCES),
 	level: z.enum(LOG_LEVELS),

@@ -148,8 +148,10 @@ export interface TaskProgress {
 	/** 总数；未知时为 null。 */
 	total: number | null;
 	message: string;
-	/** SDK 记录这次进度的时间（ISO）。 */
-	time: string;
+	/** 控制面时间（ISO）：这次进度发生时的控制面时间。改动之前保存的进度没有 agent_time，这一项是 Agent 时间。 */
+	time: string | null;
+	/** Agent 时间（ISO）：SDK 记录这次进度的时间；没有上报时为 null。改动之前保存的进度没有这个字段。 */
+	agent_time?: string | null;
 }
 
 export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";

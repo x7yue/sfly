@@ -1,5 +1,5 @@
 import { type FileHandle, open } from "node:fs/promises";
-import type { LogLineView } from "./task-logs.js";
+import { type LogLineView, logLineView } from "./task-logs.js";
 
 /**
  * 按字节偏移分页读取日志文件（#18）。文件格式见 task-logs.ts：JSONL，每行一条日志，任意行首都是合法的分页位置。
@@ -80,7 +80,8 @@ async function completeSize(handle: FileHandle, size: number): Promise<number> {
 	return 0;
 }
 
-const parse = (bytes: Buffer): LogLineView => JSON.parse(bytes.toString("utf8")) as LogLineView;
+/** 解析文件里的一行；改动之前写入的行按「只有 Agent 时间」读出（task-logs.ts 的 logLineView）。 */
+const parse = (bytes: Buffer): LogLineView => logLineView(JSON.parse(bytes.toString("utf8")));
 
 async function forward(
 	handle: FileHandle,

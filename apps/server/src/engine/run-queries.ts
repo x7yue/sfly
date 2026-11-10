@@ -4,6 +4,7 @@ import { asc, desc, eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { chainInstances, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
+import { taskProgressView } from "../logs/task-logs.js";
 import { agentFor, planRun } from "./chain.js";
 import { groupAttempts, nodeStatus } from "./run-board.js";
 
@@ -99,7 +100,10 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 						ended_at: iso(t.endedAt),
 						wake_at: iso(t.wakeAt),
 						progress: t.progress
-							? { ...t.progress, message: maskSecrets(t.progress.message, secrets) }
+							? {
+									...taskProgressView(t.progress),
+									message: maskSecrets(t.progress.message, secrets),
+								}
 							: null,
 					}));
 				const last = attempts.at(-1);
