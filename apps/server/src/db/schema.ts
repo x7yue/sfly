@@ -355,8 +355,12 @@ export const metricSeries = pgTable(
 		/** 值的总和（平均值 = sum / points）。 */
 		sum: doublePrecision("sum").notNull(),
 		last: doublePrecision("last").notNull(),
+		/** 首尾两个点的控制面时间（ADR 0018）。改动之前写入的行（Agent 时间两列为空）这两列是 Agent 时间。 */
 		firstAt: timestamptz("first_at").notNull(),
 		lastAt: timestamptz("last_at").notNull(),
+		/** 首尾两个点的 Agent 时间（#174）；改动之前写入的行为空。 */
+		firstAgentAt: timestamptz("first_agent_at"),
+		lastAgentAt: timestamptz("last_agent_at"),
 	},
 	(t) => [
 		primaryKey({ columns: [t.taskId, t.metric, t.labels] }),

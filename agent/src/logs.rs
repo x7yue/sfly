@@ -7,7 +7,7 @@
 //! - 事件管道里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；
 //! - 任务执行中途 Agent 时间跳变（[`crate::time_jump`]）→ Agent 自己写一行提示，来源 agent、级别 warn；
 //! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次；
-//! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
+//! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 单调时钟秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
 //!   任务结束前发完。
 //!
 //! 每行和每次进度带两个时间（ADR 0018）：Agent 时间（SDK 事件取 SDK 记录的时间，其余取读到的时刻），以及读到它时的
@@ -735,9 +735,14 @@ impl Forwarder {
                 kind,
                 value,
                 labels,
-            }) => self
-                .metrics
-                .add(sdk_time_ms(ts), name, labels, &kind, value),
+            }) => self.metrics.add(
+                stamp.monotonic_ms,
+                sdk_time_ms(ts),
+                name,
+                labels,
+                &kind,
+                value,
+            ),
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
                 time_unix_ms: now_ms(),
@@ -777,11 +782,11 @@ impl Forwarder {
             self.progress_sent_at = Some(Instant::now());
             self.send(agent_message::Body::Progress(progress));
         }
-        // 平时一秒的宽限期一结束（下一个检查点，最多晚 TICK）就发出这一秒，每秒最多一批；任务结束时发出全部。
+        // 平时一秒（按单调时钟）的宽限期一结束（下一个检查点，最多晚 TICK）就发出这一秒，每秒最多一批；任务结束时发出全部。
         let points = if last {
             self.metrics.take(None)
         } else {
-            self.metrics.take_due(now_ms())
+            self.metrics.take_due(clock::monotonic_ms())
         };
         if !points.is_empty() {
             self.telemetry.send_metrics(MetricBatch {

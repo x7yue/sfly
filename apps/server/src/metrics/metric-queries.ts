@@ -27,7 +27,7 @@ import {
 import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf } from "./node-types.js";
-import { decodeFloat8Array, decodeInt4Array } from "./pg-array.js";
+import { decodeFloat8Array, decodeInt4Array, decodeInt8Array } from "./pg-array.js";
 import {
 	dataLossOf,
 	seriesSummaries,
@@ -48,7 +48,9 @@ interface Acc {
 	max: number;
 	sum: number;
 	last: number;
-	/** last 对应的 Unix 秒。 */
+	/** last 对应的点的 Agent 时间（Unix 秒）；没有记录控制面时间的点（改动之前写入的段）为 null。 */
+	agentAt: number | null;
+	/** last 对应的点在时间轴上的位置（Unix 秒）。 */
 	lastAt: number;
 }
 
@@ -67,6 +69,10 @@ interface SegmentRow extends Record<string, unknown> {
 	avg: number;
 	last: number;
 	offsets: Buffer | null;
+	/** 每点的「Agent 时间 − 控制面时间」（秒），全段相同时只有一个元素；改动之前写入的段为 null。 */
+	agent_offsets: Buffer | null;
+	/** 段里最后一个点的这个差值；改动之前写入的段为 null（它的时间列是 Agent 时间，控制面时间没有记录）。 */
+	agent_last: number | null;
 	values: Buffer | null;
 	mins: Buffer | null;
 	maxs: Buffer | null;
@@ -130,10 +136,12 @@ export class MetricQueries {
 	}
 
 	/**
-	 * 一个节点（默认最新一次尝试）的指标序列，按目标点数降采样：时间范围 [from, to]（秒）分成跨度
+	 * 一个节点（默认最新一次尝试）的指标序列，按目标点数降采样：时间范围 [from, to]（控制面时间，秒）分成跨度
 	 * bucket_seconds 的桶，每个桶给出点数、最小（每秒最小值中的最小）、最大（每秒最大值中的最大，尖峰可见）、
 	 * 平均、最新值。每个序列（指标名 + 标签，#78）分别降采样，按指标名查询时返回这个指标的全部序列。
 	 * 整段落在一个桶里时直接用段摘要，不展开数组；内存里尚未写库的点覆盖库里同一范围的数据。
+	 * 每个桶另带 Agent 时间（桶里最后一个点的）。改动之前写入的段没有记录控制面时间：按它的时间列（Agent 时间）
+	 * 落桶，桶的 `time` 为 null（ADR 0018）。
 	 */
 	async series(runId: string, query: MetricSeriesQuery): Promise<SeriesOutcome> {
 		const run = await this.#run(runId);
@@ -295,6 +303,8 @@ export class MetricQueries {
 			select metric, labels, extract(epoch from start_at)::float8 as start_s, extract(epoch from end_at)::float8 as end_s,
 				points, min, max, avg, last,
 				case when ${summarized} then null else array_send(offsets) end as offsets,
+				case when ${summarized} then null else array_send(agent_offsets) end as agent_offsets,
+				agent_offsets[cardinality(agent_offsets)]::float8 as agent_last,
 				case when ${summarized} then null else array_send("values") end as "values",
 				case when ${summarized} then null else array_send(mins) end as mins,
 				case when ${summarized} then null else array_send(maxs) end as maxs
@@ -308,6 +318,7 @@ export class MetricQueries {
 		// 存在行外（TOAST）的 jsonb，带标签时比查询本身还慢（#153）。
 
 		const accs = new Map<string, Map<number, Acc>>();
+		/** t 是点在时间轴上的位置（Unix 秒）。 */
 		const add = (key: string, t: number, p: Omit<Acc, "lastAt">) => {
 			const k = Math.floor((t - from) / width);
 			let byBucket = accs.get(key);
@@ -326,6 +337,7 @@ export class MetricQueries {
 			acc.sum += p.sum;
 			if (t >= acc.lastAt) {
 				acc.last = p.last;
+				acc.agentAt = p.agentAt;
 				acc.lastAt = t;
 			}
 		};
@@ -344,10 +356,14 @@ export class MetricQueries {
 					max: row.max,
 					sum: row.avg * row.points,
 					last: row.last,
+					agentAt: row.agent_last === null ? null : row.end_s + row.agent_last,
 				});
 				continue;
 			}
 			const offsets = decodeInt4Array(row.offsets);
+			// 每点的「Agent 时间 − 控制面时间」（秒）：全段相同时数组只有一个元素（见 task-metrics.ts 的 agentOffsets）。
+			const agentOffsets = row.agent_offsets && decodeInt8Array(row.agent_offsets);
+			const sameOffset = agentOffsets?.length === 1 ? (agentOffsets[0] as number) : undefined;
 			const values = decodeFloat8Array(row.values);
 			const mins = decodeFloat8Array(row.mins);
 			const maxs = decodeFloat8Array(row.maxs);
@@ -361,13 +377,21 @@ export class MetricQueries {
 					max: maxs[i] as number,
 					sum: value,
 					last: value,
+					agentAt: agentOffsets ? t + (sameOffset ?? (agentOffsets[i] as number)) : null,
 				});
 			}
 		}
 		for (const [key, s] of unwritten) {
 			for (const p of s.points) {
 				if (p.t < from || p.t > to) continue;
-				add(key, p.t, { points: 1, min: p.min, max: p.max, sum: p.value, last: p.value });
+				add(key, p.t, {
+					points: 1,
+					min: p.min,
+					max: p.max,
+					sum: p.value,
+					last: p.value,
+					agentAt: p.agentT,
+				});
 			}
 		}
 
@@ -378,7 +402,9 @@ export class MetricQueries {
 				[...byBucket.entries()]
 					.sort(([a], [b]) => a - b)
 					.map(([k, acc]) => ({
-						time: isoOf(from + k * width),
+						// 没有记录控制面时间的桶：桶是按 Agent 时间划分的，起始时间放在 agent_time。
+						time: acc.agentAt === null ? null : isoOf(from + k * width),
+						agent_time: isoOf(acc.agentAt ?? from + k * width),
 						points: acc.points,
 						min: acc.min,
 						max: acc.max,

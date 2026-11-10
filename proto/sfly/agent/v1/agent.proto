@@ -320,8 +320,8 @@ message Progress {
   int64 monotonic_ms = 7;
 }
 
-// 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 序列 × 秒」合并，每个任务每秒最多发一批，
-// 任务结束前补发剩余的点；控制面不回 Ack，同一序列同一秒的重复点被忽略。
+// 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 序列 × 单调时钟秒」合并，每个任务每秒最多发一批，
+// 任务结束前补发剩余的点；控制面不回 Ack，同一序列同一秒（单调时钟读数相同）的重复点被忽略。
 message MetricBatch {
   string task_id = 1;
   uint32 attempt = 2;
@@ -335,7 +335,8 @@ message MetricBatch {
 message MetricPoint {
   // 节点类型声明的指标名。
   string name = 1;
-  // 这一秒（Unix 秒）。
+  // 这个点的 Agent 时间（Unix 秒）：这一秒里最后一次上报时 SDK 记录的时间。原样记录，控制面不做范围检查，
+  // 也不用它排序或去重（ADR 0018）。旧版本 Agent 按它分秒合并。
   int64 time_unix_s = 2;
   // gauge：这一秒最后一个值；counter：这一秒结束时的值。
   double value = 3;
@@ -345,6 +346,10 @@ message MetricPoint {
   // 这个点所属序列的标签（键 → 值）；指标没有声明标签键时为空。
   // 键必须与节点类型声明的标签键一致，否则控制面丢弃这个点（计入丢弃数）。
   map<string, string> labels = 6;
+  // 这一秒的起点的单调时钟读数（毫秒，整秒）：Agent 从事件管道读到上报时打点，按「任务 × 序列 × 单调时钟秒」合并。
+  // 控制面按连接时建立的对应关系把它折算成控制面时间，序列内的顺序、去重、分区和保留期都按折算后的时间。
+  // 0 表示没有上报（旧版本 Agent）：控制面时间取收到这一批的时刻。
+  int64 monotonic_ms = 7;
 }
 
 // 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。

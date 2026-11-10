@@ -8,7 +8,7 @@ import {
 	seriesKey,
 	sortedLabels,
 } from "@sfly/schema";
-import { formatMetric } from "#/lib/format";
+import { formatFullDateTime, formatMetric } from "#/lib/format";
 import type { ChartLine } from "./MetricChart";
 import type { TimeRange } from "./timeline-model";
 
@@ -16,6 +16,19 @@ import type { TimeRange } from "./timeline-model";
  * 图表工作区的计算（纯逻辑，单测见 charts.test.ts）：图表横轴的时间范围、组内列数、实时追加的指标点、悬停读数。
  * 时间一律是毫秒时间戳。
  */
+
+/**
+ * 图表上的一个桶：序列查询的桶（@sfly/schema 的 MetricBucket），或平台自带图表由任务记录推导的桶——
+ * 后者不是在 Agent 上产生的，没有 Agent 时间。横轴一律是控制面时间（ADR 0018）。
+ */
+export type ChartBucket = Omit<MetricBucket, "agent_time"> & { agent_time: string | null };
+
+/**
+ * 桶在横轴上的起始位置（毫秒时间戳）：控制面时间。改动之前存下的数据没有记录控制面时间（`time` 为 null），
+ * 按它的 Agent 时间放（当时两种时间不一致的点本来就不会被接收）。
+ */
+export const bucketStart = (bucket: ChartBucket): number =>
+	Date.parse(bucket.time ?? bucket.agent_time ?? "");
 
 /** 图表横轴最短的时长：刚开始执行的节点也有可读的横轴。 */
 export const MIN_CHART_SPAN = 1000;
@@ -50,7 +63,8 @@ export function balancedColumns(count: number, width: number, minWidth: number):
 }
 
 /**
- * 把运行 SSE 的 metrics 增量追加进序列查询的结果：只追加同一尝试的点，按序列（指标名 + 标签，#78）合并；
+ * 把运行 SSE 的 metrics 增量追加进序列查询的结果：只追加同一尝试的点，按序列（指标名 + 标签，#78）合并，
+ * 按点的控制面时间落桶，桶的 Agent 时间取最后并入的点的；
  * 落进最后一个桶的点合并，之后的点按 from 对齐开新桶；不晚于最后一个桶的点（重连补齐时已经包含）不追加。
  * 运行中新出现的序列排在同一指标已有的序列旁边（同一指标按标签排序，与序列查询一致），没有的指标排在最后。
  * 没有变化时返回原对象。
@@ -85,12 +99,13 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		}
 		const buckets = entry.buckets;
 		const last = buckets.at(-1);
-		const lastStart = last ? Date.parse(last.time) : null;
+		const lastStart = last ? bucketStart(last) : null;
 		if (last && lastStart !== null && t < lastStart + span) {
 			// 落在最后一个桶里：每秒一个桶时就是同一秒（已经有了），否则合并。
 			if (span === 1000 || t <= lastStart) continue;
 			buckets[buckets.length - 1] = {
 				time: last.time,
+				agent_time: point.agent_time,
 				points: last.points + 1,
 				min: Math.min(last.min, point.min),
 				max: Math.max(last.max, point.max),
@@ -102,6 +117,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 			const k = Math.floor((t - origin) / span);
 			buckets.push({
 				time: new Date(origin + k * span).toISOString(),
+				agent_time: point.agent_time,
 				points: 1,
 				min: point.min,
 				max: point.max,
@@ -186,11 +202,11 @@ export const DEFAULT_SHOWN = 10;
  * 从高到低取前 limit 个，平均值按桶的点数加权；没有数据的序列排在最后，平均值相同时取靠前的。
  */
 export function defaultShown(
-	lines: readonly { key: string; buckets: readonly MetricBucket[] }[],
+	lines: readonly { key: string; buckets: readonly ChartBucket[] }[],
 	limit = DEFAULT_SHOWN,
 ): Set<string> {
 	if (lines.length <= limit) return new Set(lines.map((l) => l.key));
-	const average = (buckets: readonly MetricBucket[]) => {
+	const average = (buckets: readonly ChartBucket[]) => {
 		let points = 0;
 		let sum = 0;
 		for (const b of buckets) {
@@ -222,7 +238,7 @@ export interface ShownPick {
  */
 export function pickShown(
 	previous: ShownPick | undefined,
-	lines: readonly { key: string; buckets: readonly MetricBucket[] }[],
+	lines: readonly { key: string; buckets: readonly ChartBucket[] }[],
 	range: unknown,
 	limit = DEFAULT_SHOWN,
 ): ShownPick {
@@ -260,22 +276,35 @@ export function latestLine<L extends { labeled?: boolean }>(
 }
 
 /** 悬停时刻所在的桶；不在任何桶里时为 null。 */
-export function bucketAt(
-	buckets: readonly MetricBucket[],
+export function bucketAt<B extends ChartBucket>(
+	buckets: readonly B[],
 	t: number,
 	bucketSeconds: number,
-): MetricBucket | null {
+): B | null {
 	const span = bucketSeconds * 1000;
 	for (let i = buckets.length - 1; i >= 0; i--) {
-		const b = buckets[i] as MetricBucket;
-		const start = Date.parse(b.time);
+		const b = buckets[i] as B;
+		const start = bucketStart(b);
 		if (start <= t) return t < start + span ? b : null;
 	}
 	return null;
 }
 
+/**
+ * 悬停提示里一个桶的两种时间（ADR 0018）：控制面时间（横轴，桶的起始时间）和 Agent 时间（桶里最后一个点在被测机器上
+ * 的时间），都带日期——两者可能差很多天。改动之前存下的数据没有控制面时间，显示「未记录」而不是猜一个值。
+ * 不是在 Agent 上产生的桶（平台自带图表）没有 Agent 时间，返回 null。
+ */
+export function bucketTimes(b: ChartBucket): { controlPlane: string; agent: string } | null {
+	if (b.agent_time === null) return null;
+	return {
+		controlPlane: b.time === null ? "未记录" : formatFullDateTime(b.time),
+		agent: formatFullDateTime(b.agent_time),
+	};
+}
+
 /** 悬停读数：最新值；桶里有范围时带上最小–最大值（尖峰在读数里也看得到）。 */
-export function formatReading(b: MetricBucket): string {
+export function formatReading(b: ChartBucket): string {
 	const last = formatMetric(b.last);
 	return b.min < b.max ? `${last}（${formatMetric(b.min)}–${formatMetric(b.max)}）` : last;
 }
@@ -285,7 +314,7 @@ export function formatReading(b: MetricBucket): string {
  * fromZero 时从 0 起（柱状、面积与迷你趋势）。上方留 12%。
  */
 export function valueExtent(
-	lines: readonly { buckets: readonly MetricBucket[] }[],
+	lines: readonly { buckets: readonly ChartBucket[] }[],
 	fromZero: boolean,
 ): { min: number; max: number; top: number } {
 	const buckets = lines.flatMap((l) => l.buckets);
@@ -299,12 +328,12 @@ export function valueExtent(
 }
 
 /** 是否有桶带范围（最小值小于最大值）：有时画最小–最大包络。 */
-export const hasSpread = (buckets: readonly MetricBucket[]) => buckets.some((b) => b.min < b.max);
+export const hasSpread = (buckets: readonly ChartBucket[]) => buckets.some((b) => b.min < b.max);
 
 /** 最小–最大包络的多边形顶点：沿各桶最大值向前，再沿最小值返回。 */
 export function envelopePoints(
-	buckets: readonly MetricBucket[],
-	x: (b: MetricBucket) => number,
+	buckets: readonly ChartBucket[],
+	x: (b: ChartBucket) => number,
 	y: (v: number) => number,
 ): Array<[number, number]> {
 	return [

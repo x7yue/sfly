@@ -1,6 +1,7 @@
 // 切入点 A：指标查询、降采样与实时推送（#31）。假 Agent 经 gRPC 上报 MetricBatch，
 // 通过运行的指标目录、序列查询、平台自带图表接口和运行事件流（SSE）观察。
 import {
+	bucketStartMs,
 	type MetricIncrement,
 	type MetricSeries,
 	metricsApi,
@@ -50,7 +51,7 @@ describe("指标查询", () => {
 	const agents: FakeAgent[] = [];
 
 	const connect = async (name = "agent-a", devPackages: HelloInit["devPackages"] = []) => {
-		const agent = await FakeAgent.connect(cp.grpcUrl, { name, devPackages });
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name, devPackages }, { clock: cp.clock });
 		agents.push(agent);
 		return agent;
 	};
@@ -87,7 +88,7 @@ describe("指标查询", () => {
 			result.series.map((s) => [
 				s.name,
 				s.buckets.map((b) => [
-					(Date.parse(b.time) - Date.UTC(2026, 0, 1)) / 1000,
+					(bucketStartMs(b) - Date.UTC(2026, 0, 1)) / 1000,
 					b.points,
 					b.min,
 					b.max,
@@ -350,10 +351,42 @@ describe("指标查询", () => {
 					node_id: "load",
 					attempt: 1,
 					points: [
-						{ name: "tps", labels: {}, time: iso(1), value: 10, min: 4, max: 12 },
-						{ name: "requests", labels: {}, time: iso(1), value: 3, min: 3, max: 3 },
-						{ name: "conn_tps", labels: { host: "a" }, time: iso(1), value: 5, min: 5, max: 5 },
-						{ name: "conn_tps", labels: { host: "b" }, time: iso(1), value: 6, min: 6, max: 6 },
+						{
+							name: "tps",
+							labels: {},
+							time: iso(1),
+							agent_time: iso(1),
+							value: 10,
+							min: 4,
+							max: 12,
+						},
+						{
+							name: "requests",
+							labels: {},
+							time: iso(1),
+							agent_time: iso(1),
+							value: 3,
+							min: 3,
+							max: 3,
+						},
+						{
+							name: "conn_tps",
+							labels: { host: "a" },
+							time: iso(1),
+							agent_time: iso(1),
+							value: 5,
+							min: 5,
+							max: 5,
+						},
+						{
+							name: "conn_tps",
+							labels: { host: "b" },
+							time: iso(1),
+							agent_time: iso(1),
+							value: 6,
+							min: 6,
+							max: 6,
+						},
 					],
 				});
 
@@ -363,7 +396,15 @@ describe("指标查询", () => {
 					["tps", at(3), 30],
 				]);
 				expect((await sse.next<MetricIncrement>("metrics")).data.points).toEqual([
-					{ name: "tps", labels: {}, time: iso(3), value: 30, min: 30, max: 30 },
+					{
+						name: "tps",
+						labels: {},
+						time: iso(3),
+						agent_time: iso(3),
+						value: 30,
+						min: 30,
+						max: 30,
+					},
 				]);
 
 				// 一批里没有新点时不推送。
@@ -383,7 +424,11 @@ describe("指标查询", () => {
 
 		it("节点耗时、重试次数、排队与等待时长由任务记录计算，并发任务数与 Agent 槽位占用由执行区间推导", async () => {
 			const clock = cp.clock as ManualClock;
-			const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 });
+			const agent = await FakeAgent.connect(
+				cp.grpcUrl,
+				{ name: "agent-a", slots: 4 },
+				{ clock: cp.clock },
+			);
 			agents.push(agent);
 			const document = orchestration({ retries: 1 });
 			document.nodes.push({ id: "pause", kind: "sleep", duration: "10s" } as never);
@@ -547,6 +592,8 @@ describe("指标查询", () => {
 										last: 3,
 										first_time: iso(2),
 										last_time: iso(2),
+										first_agent_time: iso(2),
+										last_agent_time: iso(2),
 									},
 									{
 										name: "requests",
@@ -558,6 +605,8 @@ describe("指标查询", () => {
 										last: 7,
 										first_time: iso(2),
 										last_time: iso(2),
+										first_agent_time: iso(2),
+										last_agent_time: iso(2),
 									},
 									{
 										name: "tps",
@@ -569,6 +618,8 @@ describe("指标查询", () => {
 										last: 30,
 										first_time: iso(1),
 										last_time: iso(2),
+										first_agent_time: iso(1),
+										last_agent_time: iso(2),
 									},
 								],
 							},

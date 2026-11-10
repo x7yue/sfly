@@ -47,7 +47,7 @@ fn merge(c: &mut Criterion) {
             let mut merger = Merger::default();
             for &(ts, name, kind, value) in &events {
                 // 与 Agent 一样每次上报一个新的 String（来自事件 JSON 的解析结果）。
-                merger.add(ts, name.to_owned(), Labels::new(), kind, value);
+                merger.add(ts, ts, name.to_owned(), Labels::new(), kind, value);
             }
             black_box(merger.take(None))
         });
@@ -77,7 +77,7 @@ fn merge(c: &mut Criterion) {
                     ("pid".to_owned(), pid.to_owned()),
                     ("name".to_owned(), process.to_owned()),
                 ]);
-                merger.add(ts, name.to_owned(), labels, "gauge", value);
+                merger.add(ts, ts, name.to_owned(), labels, "gauge", value);
             }
             black_box(merger.take(None))
         });

@@ -644,6 +644,8 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 const toBuckets = (buckets: PlatformMetrics["concurrency"]) =>
 	buckets.map((b) => ({
 		time: b.time,
+		// 由任务记录推导，不是在 Agent 上产生的：没有 Agent 时间。
+		agent_time: null,
 		points: 1,
 		min: b.max,
 		max: b.max,

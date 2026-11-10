@@ -342,7 +342,10 @@ export const connPoint = (
 	max: value,
 });
 
-/** demo-checks@1.3.0 的 ping 声明了给定的指标与图表；触发一次运行，返回分到的任务与运行开始的时刻。 */
+/**
+ * demo-checks@1.3.0 的 ping 声明了给定的指标与图表；触发一次运行，返回分到的任务与运行开始的时刻。
+ * `hello` 覆盖 Agent 的 Hello 字段（例如 agentTimeUnixMs：Agent 时间与控制面不一致）。
+ */
 export async function labeledRun(
 	{
 		controlPlane,
@@ -351,10 +354,12 @@ export async function labeledRun(
 	}: Pick<E2eFixtures, "controlPlane" | "connectAgent" | "clock">,
 	metrics: unknown[],
 	charts: unknown[],
+	hello: { agentTimeUnixMs?: bigint } = {},
 ) {
 	const agent = await connectAgent({
 		name: "agent-a",
 		installedPackages: [{ name: "demo-checks", version: "1.3.0" }],
+		...hello,
 	});
 	await publishPackage(controlPlane, {
 		version: "1.3.0",

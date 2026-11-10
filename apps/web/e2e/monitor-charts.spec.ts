@@ -476,6 +476,70 @@ test("只看一个节点；按名称搜索图表；紧凑密度", async ({
 	await expect(plot).toHaveCSS("height", "56px");
 });
 
+test("Agent 时间比控制面快 613 天：图表照常有数据并与时间线对齐，悬停提示同时显示控制面时间和 Agent 时间", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const FAST_S = 613 * 86_400;
+	const { agent, task, runId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[{ name: "tps", unit: "req/s", kind: "gauge" }],
+		[{ title: "合计", type: "line", metrics: ["tps"] }],
+		{ agentTimeUnixMs: BigInt(clock.now().getTime() + FAST_S * 1000) },
+	);
+	// 每秒一个点：发生在运行开始后第 s 秒（控制面时间），Agent 上的时间是 613 天之后。
+	agent.metrics(
+		task,
+		[1, 2, 3, 4, 5, 6, 7].map((s) => ({
+			name: "tps",
+			timeUnixS: BigInt(unixAt(clock0, s) + FAST_S),
+			monotonicMs: agent.monotonicAt(clock0 + s * 1000),
+			value: 11 * s,
+			min: 11 * s,
+			max: 11 * s,
+		})),
+	);
+	await agent.sync();
+	clock.advance(8000);
+	await openMonitor(page, clock, runId, "ping");
+
+	// 点没有因为 Agent 时间偏差被丢弃：图表有数据，横轴是节点运行的时段（控制面时间）。
+	const total = chart(page, "ping", "合计");
+	await expect(total.locator("[data-latest]")).toHaveText("77req/s");
+	await expect(total.locator("[data-window]")).toHaveText("08:00:00 – 08:00:08");
+
+	// 悬停在第 4.5 秒：读数是控制面时间第 4 秒的点，提示里同时给出两种时间。
+	const plot = await total.locator("svg[data-plot]").boundingBox();
+	if (!plot) throw new Error("没有绘图区");
+	await page.mouse.move(plot.x + plot.width * (4.5 / 8), plot.y + plot.height / 2);
+	await expect(total.locator("[data-hover-reading]")).toHaveText("08:00:04  44");
+	await expect(total.locator("[data-hover-time]")).toHaveText("控制面时间 2026-01-01 08:00:04");
+	await expect(total.locator("[data-hover-agent-time]")).toHaveText(
+		"Agent 时间 2027-09-06 08:00:04",
+	);
+	// 和时间线对齐：ping 的条带是它运行的 8 秒，时间线上的竖线也在条带的 4.5 / 8 处。
+	const bar = await timeline(page).locator('[data-node-row="ping"] [data-segment]').boundingBox();
+	const line = await timeline(page).locator("[data-hover-line]").boundingBox();
+	if (!bar || !line) throw new Error("没有竖线");
+	expect((line.x - bar.x) / bar.width).toBeCloseTo(4.5 / 8, 1);
+
+	// 实时追加的点同样按控制面时间落位，带着 Agent 时间。
+	await page.mouse.move(0, 0);
+	agent.metrics(task, [
+		{
+			name: "tps",
+			timeUnixS: BigInt(unixAt(clock0, 8) + FAST_S),
+			monotonicMs: agent.monotonicAt(clock0 + 8000),
+			value: 99,
+			min: 99,
+			max: 99,
+		},
+	]);
+	await expect(total.locator("[data-latest]")).toHaveText("99req/s");
+});
+
 test("悬停联动：图表上的竖线与读数跨图表和时间线按时间对齐", async ({
 	page,
 	controlPlane,

@@ -83,7 +83,7 @@ test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒
 	});
 	const synced = await connectAgent({ name: "agent-synced", ...agentClock(now() + 1_000, 5_000) });
 	// 不上报时间的旧版本 Agent：偏差未知，不显示。
-	await connectAgent({ name: "agent-old" });
+	await connectAgent({ name: "agent-old" }, { clock: false });
 
 	await page.goto("/agents");
 	const status = (name: string) =>
