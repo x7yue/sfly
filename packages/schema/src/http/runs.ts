@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
+import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
 import { ReferencedAgent } from "./orchestrations.js";
@@ -88,6 +89,13 @@ export const AttemptView = z.object({
 	/** 执行器启动的时间（定时 / Sleep 节点是开始等待的时间）；排队、派发阶段为 null。 */
 	started_at: Timestamp.nullable(),
 	ended_at: Timestamp.nullable(),
+	/**
+	 * 任务开始、结束时的时钟偏差（ADR 0018）：Agent 在执行器启动、得到结果那一刻的 Agent 时间减去当时的控制面时间；
+	 * measured_at 加 offset_ms 就是那一刻的 Agent 时间。started_at / ended_at 仍是控制面收到消息的时刻。
+	 * 旧版本 Agent、改动之前的任务、不在 Agent 上执行的节点、不是由 Agent 上报而结束的任务为 null。
+	 */
+	start_clock_offset: ClockOffsetView.nullable(),
+	end_clock_offset: ClockOffsetView.nullable(),
 	/** 定时 / Sleep 节点的唤醒时间；其他节点为 null。 */
 	wake_at: Timestamp.nullable(),
 	progress: TaskProgressView.nullable(),
@@ -262,7 +270,7 @@ export const runsApi = {
 };
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
-export const LOG_SOURCES = ["stdout", "stderr", "sdk", "system"] as const;
+export const LOG_SOURCES = ["stdout", "stderr", "sdk", "agent", "system"] as const;
 export const MAX_LOG_PAGE_LINES = 1000;
 
 /** 一行日志（日志文件是 JSONL，每行就是这个对象）。 */
@@ -270,7 +278,7 @@ export const LogLineView = z.object({
 	/** 任务内从 1 开始递增的序号，用来去重。 */
 	seq: z.number().int(),
 	time: Timestamp,
-	/** system：控制面写入的截断标记。 */
+	/** agent：Agent 自己写入的提示行（Agent 时间跳变）；system：控制面写入的截断标记。 */
 	source: z.enum(LOG_SOURCES),
 	level: z.enum(LOG_LEVELS),
 	/** secret 参数的值已替换成掩码。 */

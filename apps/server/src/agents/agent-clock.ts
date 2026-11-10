@@ -9,7 +9,7 @@ import type { Clock } from "../clock.js";
 /** 时钟偏差的绝对值达到这个值才提示；不到时视为一致。阈值只在这里定义。 */
 export const CLOCK_OFFSET_THRESHOLD_MS = 2000;
 
-/** Agent 在一条消息里上报的时钟读数（Hello、Heartbeat，以及之后的 TaskStarted、TaskResult）。 */
+/** Agent 在一条消息里上报的时钟读数（Hello、Heartbeat、TaskStarted、TaskResult）。 */
 export interface AgentClockReading {
 	/** Agent 时间（Unix 毫秒）：原样记录，不做范围检查。 */
 	agentTimeMs: number;
@@ -97,5 +97,15 @@ export class ConnectionClock {
 		const reading = Number(monotonicMs);
 		if (this.#constantMs === undefined || reading === 0) return this.clock.now();
 		return new Date(reading + this.#constantMs);
+	}
+
+	/**
+	 * 一件事（任务开始、结束）发生时的时钟偏差：消息里的 Agent 时间减去它的单调时钟读数折算出的控制面时间，
+	 * 测量时刻就是折算出的那个时间。消息晚到（断线期间排队的结果）时仍是发生那一刻的偏差。
+	 * 消息没带读数（旧版本 Agent）时返回 undefined。
+	 */
+	offsetAt(message: { agentTimeUnixMs: bigint; monotonicMs: bigint }): ClockOffset | undefined {
+		const reading = agentClockReading(message);
+		return reading && measureClockOffset(reading, this.controlPlaneTime(reading.monotonicMs));
 	}
 }

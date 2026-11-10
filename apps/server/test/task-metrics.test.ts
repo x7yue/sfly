@@ -492,6 +492,10 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["metric_series", "first_agent_at", "timestamp with time zone"],
 	["metric_series", "last_agent_at", "timestamp with time zone"],
 	["metric_segments", "agent_offsets", "bigint[]"],
+	["tasks", "start_clock_offset_ms", "bigint"],
+	["tasks", "start_clock_offset_measured_at", "timestamp with time zone"],
+	["tasks", "end_clock_offset_ms", "bigint"],
+	["tasks", "end_clock_offset_measured_at", "timestamp with time zone"],
 ];
 
 describe("迁移前的指标数据", () => {

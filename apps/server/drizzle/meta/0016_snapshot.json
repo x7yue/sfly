@@ -1,5 +1,5 @@
 {
-  "id": "6a9fe95b-11a0-4a16-ade9-59bd462c811e",
+  "id": "cbe02326-6ad7-4444-b102-0dd3a44cf978",
   "prevId": "bb34d26d-4300-4600-8b2e-bb2c3e833f30",
   "version": "7",
   "dialect": "postgresql",
@@ -363,18 +363,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
-        },
-        "first_agent_at": {
-          "name": "first_agent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_agent_at": {
-          "name": "last_agent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         }
       },
       "indexes": {
@@ -862,6 +850,30 @@
         },
         "ended_at": {
           "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "start_clock_offset_ms": {
+          "name": "start_clock_offset_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "start_clock_offset_measured_at": {
+          "name": "start_clock_offset_measured_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "end_clock_offset_ms": {
+          "name": "end_clock_offset_ms",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "end_clock_offset_measured_at": {
+          "name": "end_clock_offset_measured_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

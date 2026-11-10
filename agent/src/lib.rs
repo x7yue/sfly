@@ -20,6 +20,7 @@ pub mod metrics;
 pub mod process_tree;
 pub mod retention;
 pub mod sdk;
+pub mod time_jump;
 pub mod update;
 pub mod venv;
 
@@ -365,6 +366,8 @@ impl Runtime {
             }
             Err(result) => result,
         };
+        // 任务到这里结束（产物也已上传）：打上这一刻的 Agent 时间与单调时钟读数。
+        let result = executor::stamp_end(result);
         // 持锁交出结果并移出：看手上任务的地方（[`Runtime::held`]、[`Runtime::running`]；
         // 连同通道里的结果一起看时用 [`Runtime::held_collecting`]）要么看到它还在执行，
         // 要么看到它已移出、结果已交出，没有中间状态。排空判断（[`update::Updater::poll`]）因此任何时刻都能看到这个任务；

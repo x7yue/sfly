@@ -16,6 +16,8 @@ const attempt = (over: Partial<AttemptView>): AttemptView => ({
 	queued_at: at(0),
 	started_at: at(0),
 	ended_at: at(1),
+	start_clock_offset: null,
+	end_clock_offset: null,
 	wake_at: null,
 	progress: null,
 	...over,
