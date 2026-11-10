@@ -1,8 +1,9 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "cn";
 import { useLayoutEffect, useRef } from "react";
-import { formatClockMs } from "#/lib/format";
+import { formatClockMs, formatFullDateTime } from "#/lib/format";
 import type { LoadedLine } from "./log-buffer";
+import { type LogTimeKind, logLineTime, TIME_NOT_RECORDED } from "./log-time-kind";
 
 const LEVEL_LABEL: Record<LoadedLine["level"], string> = {
 	debug: "DEBUG",
@@ -21,9 +22,15 @@ const LEVEL_STYLE: Record<LoadedLine["level"], string> = {
 /** 离顶部多近时加载更早的一页（像素）。 */
 const LOAD_OLDER_AT = 120;
 
+/** 没有控制面时间的行（改动之前写入的）不能定位的原因。 */
+export const NOT_LOCATABLE = "这行日志没有记录控制面时间，不能在时间轴上定位";
+
+const fullTime = (iso: string | null) => (iso ? formatFullDateTime(iso) : TIME_NOT_RECORDED);
+
 /**
  * 日志行（虚拟滚动）：停在底部时跟随新行（实时跟随），滚到顶部时加载更早的一页（加载后视口内容不跳动）。
- * 点一行把它的时刻标到时间轴上（onPick），标记的行高亮。
+ * 时间列按 timeKind 显示 Agent 时间或控制面时间（ADR 0018），悬停时两种都给出。
+ * 点一行把它的控制面时间标到时间轴上（onPick），标记的行高亮；没有控制面时间的行不能点。
  */
 export function LogList({
 	lines,
@@ -32,6 +39,7 @@ export function LogList({
 	loadOlder,
 	marked,
 	onPick,
+	timeKind,
 }: {
 	lines: LoadedLine[];
 	hasOlder: boolean;
@@ -40,6 +48,8 @@ export function LogList({
 	/** 标记的行序号。 */
 	marked: number | null;
 	onPick: (line: LoadedLine) => void;
+	/** 时间列显示哪一种时间。 */
+	timeKind: LogTimeKind;
 }) {
 	const box = useRef<HTMLDivElement>(null);
 	const follow = useRef(true);
@@ -126,6 +136,8 @@ export function LogList({
 				{items.map((item) => {
 					const line = lines[item.index];
 					if (!line) return null;
+					const locatable = line.time !== null;
+					const shown = logLineTime(line, timeKind);
 					return (
 						// biome-ignore lint/a11y/useSemanticElements: 虚拟滚动的行需要绝对定位，不能用 button 包一整行的网格
 						<div
@@ -137,21 +149,29 @@ export function LogList({
 							data-marked={marked === line.seq || undefined}
 							role="button"
 							tabIndex={0}
-							title="在时间轴上标出这一时刻"
-							onClick={() => onPick(line)}
+							aria-disabled={!locatable || undefined}
+							title={locatable ? "在时间轴上标出这一时刻" : NOT_LOCATABLE}
+							onClick={() => locatable && onPick(line)}
 							onKeyDown={(e) => {
 								if (e.key === "Enter" || e.key === " ") {
 									e.preventDefault();
-									onPick(line);
+									if (locatable) onPick(line);
 								}
 							}}
 							className={cn(
-								"absolute top-0 left-0 grid w-full cursor-pointer grid-cols-[96px_44px_52px_1fr] gap-2 px-3 leading-5 break-all whitespace-pre-wrap hover:bg-fg-1/3",
+								"absolute top-0 left-0 grid w-full grid-cols-[96px_44px_52px_1fr] gap-2 px-3 leading-5 break-all whitespace-pre-wrap",
+								locatable ? "cursor-pointer hover:bg-fg-1/3" : "cursor-default",
 								"data-marked:bg-warn-soft",
 							)}
 							style={{ transform: `translateY(${item.start}px)` }}
 						>
-							<span className="text-fg-3">{formatClockMs(line.time)}</span>
+							<span
+								data-log-time={timeKind}
+								className="text-fg-3"
+								title={`Agent 时间 ${fullTime(line.agent_time)}\n控制面时间 ${fullTime(line.time)}`}
+							>
+								{shown ? formatClockMs(shown) : TIME_NOT_RECORDED}
+							</span>
 							<span className={LEVEL_STYLE[line.level]}>{LEVEL_LABEL[line.level]}</span>
 							{/* Agent 自己写入的提示行（Agent 时间跳变）不是节点的输出：来源用正文色，与其余来源区分。 */}
 							<span data-log-source className={line.source === "agent" ? "text-fg-1" : "text-fg-3"}>

@@ -19,7 +19,7 @@ export function missingSeconds(times: ReadonlyArray<number>): number {
  * 追上「重连之前产生、最终收到的最后一行」为止。Agent 按先后顺序发送排队的日志，重连后产生的行排在它们后面，
  * 所以追上这一行就是补发完了。重连前产生的行一行都没收到时为 0；采样里一直没追上时为 null。
  *
- * `lines` 是控制面最终收到的行（`timeMs` 是 Agent 读到这一行的时间，与 `reconnectAt` 同一时钟）。
+ * `lines` 是控制面最终收到的行（`timeMs` 是 Agent 读到这一行的时刻，控制面时间，与 `reconnectAt` 同一时钟）。
  */
 export function replayDuration(
 	progress: ReadonlyArray<{ ms: number; lastSeq: number }>,

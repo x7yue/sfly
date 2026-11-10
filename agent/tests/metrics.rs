@@ -335,8 +335,8 @@ async fn labels_survive_queueing_while_disconnected() {
     let port = cp.port;
     let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-metric-labels-queue"));
     cp.hello(0).await;
-    // 约 5 秒，每 0.25 秒给两个序列各上报一次。
-    let steps: Vec<Value> = (0..20)
+    // 约 7 秒，每 0.25 秒给两个序列各上报一次。
+    let steps: Vec<Value> = (0..28)
         .flat_map(|i| {
             [
                 json!(["conn", i, { "host": "a", "port": 1 }]),
@@ -355,13 +355,13 @@ async fn labels_survive_queueing_while_disconnected() {
         (!batches_of(all, "task-labels-queue").is_empty()).then_some(())
     })
     .await;
-    // 控制面下线：这期间的点在 Agent 内存里排队，恢复后补发。一秒（按单调时钟）的点在这一秒过完时发出，
-    // 也就是这一秒里最后一次上报之后的 1 秒以内。所以 Agent 时间晚于第 down_at 秒（下线之后才上报）、
-    // 不晚于第 up_at - 2 秒（恢复之前已经发出）的点都是下线期间发出、排队后补发的；
-    // 至少等到 down_at + 3 再恢复，这一段才不为空（任务约 5 秒，这时还在上报）。
+    // 控制面下线：这期间的点在 Agent 内存里排队，恢复后补发。一秒（按单调时钟）的点在这一秒过完、再过 1 秒宽限时发出，
+    // 也就是这一秒里最后一次上报之后的 2 秒以内。所以 Agent 时间晚于第 down_at 秒（下线之后才上报）、
+    // 不晚于第 up_at - 3 秒（恢复之前已经发出）的点都是下线期间发出、排队后补发的；
+    // 至少等到 down_at + 4 再恢复，这一段才不为空（任务约 7 秒，这时还在上报）。
     drop(cp);
     let down_at = unix_now();
-    while unix_now() < down_at + 3 {
+    while unix_now() < down_at + 4 {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     let up_at = unix_now();
@@ -387,12 +387,12 @@ async fn labels_survive_queueing_while_disconnected() {
             .collect();
         // 不按点数断言（取决于下线时长和机器负载），只要求下线期间发出的点带着标签补发到了。
         assert!(
-            points.iter().any(|&(t, _)| t > down_at && t + 2 <= up_at),
+            points.iter().any(|&(t, _)| t > down_at && t + 3 <= up_at),
             "{series:?} 下线期间（{down_at}–{up_at}）的点：{points:?}"
         );
         assert_eq!(
             points.last().map(|&(_, v)| v),
-            Some(19.0),
+            Some(27.0),
             "{series:?}: {points:?}"
         );
     }

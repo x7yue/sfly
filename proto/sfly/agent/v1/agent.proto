@@ -270,13 +270,17 @@ message LogBatch {
 message LogLine {
   // 任务内从 1 开始递增的序号；控制面和画布按它去重。
   uint64 seq = 1;
-  // 时间（Unix 毫秒）：SDK 日志取 SDK 记录的时间，标准输出 / 标准错误取 Agent 读到这一行的时间，
+  // Agent 时间（Unix 毫秒）：SDK 日志取 SDK 记录的时间，标准输出 / 标准错误取 Agent 读到这一行的时间，
   // Agent 自己写入的行取写入的时间。
   int64 time_unix_ms = 2;
   LogSource source = 3;
   LogLevel level = 4;
   // 一行文本（不含换行符）；SDK 日志的一条消息可以有多行。
   string text = 5;
+  // Agent 读到这一行（标准输出 / 标准错误的一次读取、事件管道的一次读取）时的单调时钟读数（毫秒），含义同
+  // Hello.monotonic_ms。控制面按这次连接的对应关系把它折算成这一行的控制面时间（ADR 0018）；time_unix_ms
+  // 仍是 Agent 时间。0 表示没有上报（旧版本 Agent）：控制面时间取收到这一批的时刻。
+  int64 monotonic_ms = 6;
 }
 
 // 日志来源。
@@ -309,8 +313,11 @@ message Progress {
   // 总数；未设置表示未知。
   optional double total = 4;
   string message = 5;
-  // SDK 记录这次进度的时间（Unix 毫秒）。
+  // SDK 记录这次进度的时间（Unix 毫秒），是 Agent 时间。
   int64 time_unix_ms = 6;
+  // Agent 从事件管道读到这次进度时的单调时钟读数（毫秒），含义同 LogLine.monotonic_ms：控制面据此折算出
+  // 这次进度的控制面时间。0 表示没有上报（旧版本 Agent）：控制面时间取收到的时刻。
+  int64 monotonic_ms = 7;
 }
 
 // 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 序列 × 单调时钟秒」合并，每个任务每秒最多发一批，

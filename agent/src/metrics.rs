@@ -5,8 +5,9 @@
 //!   「秒」按 Agent 从事件管道读到上报时的单调时钟读数划分（ADR 0018，#174），不看 Agent 时间：Agent 时间中途
 //!   倒退或往前跳，点都不会丢、不会并错；合并后的点带这一秒起点的读数（控制面折算成控制面时间），
 //!   Agent 时间取这一秒里最后一次上报时 SDK 记录的时间。
-//!   读数只增不减，一秒过完就不会再有它的点：这一秒一结束就发出（[`Merger::take_due`]，按整秒对齐，
-//!   而不是距上一批满一秒，#119），任务结束时发出全部。
+//!   一秒结束后再留一秒宽限（读数在读管道时打，处理它稍晚一点：一秒最后时刻读到、下一秒才处理的值仍并入这一秒，
+//!   不会变成重复点），宽限一结束就发出（[`Merger::take_due`]，按整秒对齐，而不是距上一批满一秒，#119），
+//!   任务结束时发出全部。
 //! - 排队（[`MetricQueue`]）：合并后的批次在这里等待发送，所有任务合计最多排队 `limit` 个点；
 //!   超出时丢弃最早的点，按任务记下丢弃数，随这个任务下一次发出的批次（`dropped_points`）上报。
 //!   一次写满只警告一次（与日志队列一致），又有一批不丢弃地放下之后再写满才再警告。
@@ -23,6 +24,9 @@ use crate::proto::{MetricBatch, MetricPoint};
 pub const DEFAULT_METRIC_QUEUE_POINTS: usize = 500_000;
 /// 合并排队的批次时，一批最多的点数。
 const MAX_BATCH_POINTS: usize = 10_000;
+/// 一秒结束后再等这么多秒才发出它的点：在一秒最后时刻读到、下一秒才处理的事件仍并入那一秒，
+/// 不会变成控制面按重复丢弃的同一秒第二个点。
+pub const GRACE_SECONDS: i64 = 1;
 
 /// 一个点的标签（键 → 值）：按键排序、键不重复，内容相同的标签比较时相等。
 /// 不带标签时为空（不分配内存）。用排好序的数组而不是 `BTreeMap`：解析时只分配一次，
@@ -146,7 +150,7 @@ pub struct Merger {
 }
 
 impl Merger {
-    /// 记录一次上报：`read_at_ms` 是从事件管道读到它时的单调时钟读数（毫秒，只增不减），
+    /// 记录一次上报：`read_at_ms` 是从事件管道读到它时的单调时钟读数（毫秒），
     /// `agent_time_ms` 是 SDK 记录它的 Agent 时间（Unix 毫秒）。
     pub fn add(
         &mut self,
@@ -171,11 +175,11 @@ impl Merger {
         }
     }
 
-    /// 平时的发送时机：单调时钟读数为 `now_ms` 时已经过完的秒（早于 `now_ms` 所在的秒）的点。
-    /// 只在这个界限变化时（每秒一次，一到整秒就变）取出，所以每个任务每秒最多一批。
-    /// 机器休眠后错过的秒合成一批。
+    /// 平时的发送时机：单调时钟读数为 `now_ms` 时已经过了宽限期的秒（早于 `now_ms` 所在秒减 [`GRACE_SECONDS`]）的点。
+    /// 只在这个界限变化时（每秒一次，一到整秒就变）取出，所以每个任务每秒最多一批；
+    /// 界限没变时处理到的迟到点留到下一秒再发。机器休眠后错过的秒合成一批。
     pub fn take_due(&mut self, now_ms: i64) -> Vec<MetricPoint> {
-        let before = now_ms.div_euclid(1000);
+        let before = now_ms.div_euclid(1000) - GRACE_SECONDS;
         if before == self.due_before {
             return Vec::new();
         }
@@ -344,30 +348,44 @@ mod tests {
     const AGENT_AHEAD_MS: i64 = 1_800_000_000_000;
 
     #[test]
-    fn a_second_is_due_as_soon_as_it_ends() {
+    fn a_second_is_due_as_soon_as_its_grace_ends() {
         let mut merger = Merger::default();
         gauge(&mut merger, 100_200, AGENT_AHEAD_MS + 100_200, 1.0);
         gauge(&mut merger, 100_900, AGENT_AHEAD_MS + 100_900, 2.0);
         gauge(&mut merger, 101_500, AGENT_AHEAD_MS + 101_500, 3.0);
-        // 第 100 秒在 101.000 结束：之前不发，一到 101.000 就发，下一秒的点留下。
-        assert!(merger.take_due(100_999).is_empty());
-        let due = merger.take_due(101_000);
+        // 第 100 秒在 101.000 结束，再过一秒宽限：102.000 之前不发，一到 102.000 就发，下一秒的点留下。
+        assert!(merger.take_due(101_999).is_empty());
+        let due = merger.take_due(102_000);
         assert_eq!(seconds(&due), [100]);
         assert_eq!((due[0].value, due[0].min, due[0].max), (2.0, 1.0, 2.0));
         assert_eq!(due[0].monotonic_ms, 100_000, "带这一秒起点的读数");
-        assert_eq!(seconds(&merger.take_due(102_050)), [101]);
+        assert_eq!(seconds(&merger.take_due(103_050)), [101]);
     }
 
     #[test]
-    fn at_most_one_batch_per_second() {
+    fn at_most_one_batch_per_second_even_when_late_points_arrive() {
         let mut merger = Merger::default();
         gauge(&mut merger, 100_500, 0, 1.0);
-        assert_eq!(seconds(&merger.take_due(101_100)), [100]);
+        assert_eq!(seconds(&merger.take_due(102_100)), [100]);
+        // 同一秒里又处理到更早的秒（迟到）和刚结束的秒的点：留到下一秒再发，这一秒不发第二批。
+        gauge(&mut merger, 100_999, 0, 2.0);
         gauge(&mut merger, 101_300, 0, 3.0);
-        assert!(merger.take_due(101_400).is_empty());
-        assert!(merger.take_due(101_999).is_empty());
-        assert_eq!(seconds(&merger.take_due(102_000)), [101]);
-        assert!(merger.take_due(102_900).is_empty());
+        assert!(merger.take_due(102_200).is_empty());
+        assert!(merger.take_due(102_999).is_empty());
+        assert_eq!(seconds(&merger.take_due(103_000)), [100, 101]);
+        assert!(merger.take_due(103_900).is_empty());
+    }
+
+    #[test]
+    fn a_report_read_at_the_end_of_a_second_but_handled_late_is_merged_into_that_second() {
+        let mut merger = Merger::default();
+        gauge(&mut merger, 100_200, 0, 1.0);
+        // 第 100 秒已经过完（宽限期内）：这时才处理到第 100 秒最后时刻读到的值，仍并入第 100 秒。
+        assert!(merger.take_due(101_050).is_empty());
+        gauge(&mut merger, 100_999, 0, 5.0);
+        let due = merger.take_due(102_000);
+        assert_eq!(seconds(&due), [100]);
+        assert_eq!((due[0].value, due[0].min, due[0].max), (5.0, 1.0, 5.0));
     }
 
     #[test]
@@ -391,7 +409,7 @@ mod tests {
         gauge(&mut merger, 103_500, AGENT_AHEAD_MS + 103_400 - hour, 4.0);
         // 拨回到与第 100 秒那个点相同的 Agent 时间：仍是单独的一个点。
         gauge(&mut merger, 104_500, AGENT_AHEAD_MS + 100_400, 5.0);
-        assert_eq!(seconds(&merger.take_due(103_000)), [100, 101, 102]);
+        assert_eq!(seconds(&merger.take_due(104_000)), [100, 101, 102]);
         let rest = merger.take(None);
         assert_eq!(seconds(&rest), [103, 104]);
         assert_eq!(
@@ -435,7 +453,7 @@ mod tests {
         for s in 100..105 {
             gauge(&mut merger, s * 1000 + 500, 0, s as f64);
         }
-        assert_eq!(seconds(&merger.take_due(101_000)), [100]);
+        assert_eq!(seconds(&merger.take_due(102_000)), [100]);
         // 休眠后单调时钟（含休眠的时间）前跳：错过的秒合成一批，之后这一秒不再发。
         assert_eq!(seconds(&merger.take_due(200_000)), [101, 102, 103, 104]);
         assert!(merger.take_due(200_900).is_empty());

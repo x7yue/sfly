@@ -1,9 +1,10 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
+import { Transform, type TransformCallback } from "node:stream";
 import { logsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
-import type { LogChunk, TaskLogs } from "../logs/task-logs.js";
+import { type LogChunk, normalizeLogRow, type TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
 import { isUuid } from "../util/uuid.js";
 import { attachment } from "./content-disposition.js";
@@ -20,7 +21,7 @@ import { sendError } from "./errors.js";
  * - `?after_seq=<n>`：已经用分页接口读到了第 n 行，连上时只发之后的行（与 `Last-Event-ID` 取较大者）。
  * - `GET /tasks/:id/logs`：按字节偏移分页读取（`before` / `after`、`limit`、`level`、`source`），见 log-pages.ts；
  *   契约见 @sfly/schema 的 logsApi.page，查询参数不合法时 400 `invalid_request`。
- * - `GET /tasks/:id/logs/download`：下载原始日志文件（JSONL）。
+ * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（改动之前写入的行在下载时补齐）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
  */
 export function registerLogRoutes(
@@ -62,10 +63,12 @@ export function registerLogRoutes(
 		reply
 			.header("content-type", `${logsApi.download.contentType}; charset=utf-8`)
 			.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`));
-		if (size === undefined) return reply.send("");
-		// 只发送此刻的内容（文件可能还在追加）。
-		reply.header("content-length", size);
-		return reply.send(size === 0 ? "" : createReadStream(info.file, { start: 0, end: size - 1 }));
+		if (size === undefined || size === 0) return reply.send("");
+		// 只发送此刻的内容（文件可能还在追加）。每行都带两种时间：改动之前写入的行在这里补齐，
+		// 所以长度事先不知道，不带 content-length。
+		return reply.send(
+			createReadStream(info.file, { start: 0, end: size - 1 }).pipe(new LogRowNormalizer()),
+		);
 	});
 
 	contractStream(app, deps.sse, logsApi.events, async ({ params, query }, open, reply, request) => {
@@ -114,3 +117,39 @@ export function registerLogRoutes(
 		return undefined;
 	});
 }
+
+/**
+ * 把日志文件的字节流逐行交给 {@link normalizeLogRow}：新写入的行原样通过，改动之前写入的行补成两种时间都有的格式。
+ * 一块里没有需要改写的行时整块原样转发，不复制。
+ */
+class LogRowNormalizer extends Transform {
+	/** 上一块末尾还没读到换行的半行。 */
+	#partial: Buffer = Buffer.alloc(0);
+
+	override _transform(chunk: Buffer, _encoding: BufferEncoding, done: TransformCallback): void {
+		const bytes = this.#partial.length ? Buffer.concat([this.#partial, chunk]) : chunk;
+		const out: Buffer[] = [];
+		let changed = false;
+		let from = 0;
+		for (;;) {
+			const nl = bytes.indexOf(0x0a, from);
+			if (nl < 0) break;
+			const row = bytes.subarray(from, nl);
+			const normalized = normalizeLogRow(row);
+			changed ||= normalized !== row;
+			out.push(normalized, NEWLINE);
+			from = nl + 1;
+		}
+		this.#partial = bytes.subarray(from);
+		if (from > 0) this.push(changed ? Buffer.concat(out) : bytes.subarray(0, from));
+		done();
+	}
+
+	override _flush(done: TransformCallback): void {
+		// 还在写入的最后半行原样发出（与直接发送文件时一样）。
+		if (this.#partial.length) this.push(this.#partial);
+		done();
+	}
+}
+
+const NEWLINE = Buffer.from("\n");

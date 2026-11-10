@@ -108,6 +108,8 @@ describe("运行视图与进度推送的合并（#110）", () => {
 		total: 100,
 		message: `第 ${current} 步`,
 		time,
+		// Agent 时间不参与先后的判断：这里让它倒着走。
+		agent_time: new Date(Date.UTC(2030, 0, 1) - current * 1000).toISOString(),
 	});
 	const withPing = (attemptProgress: AttemptView["progress"]): RunView => ({
 		...view("running"),

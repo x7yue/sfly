@@ -10,7 +10,10 @@
 //! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 单调时钟秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
 //!   任务结束前发完。
 //!
-//! 同一批内按时间排序后再编号，所以不同来源的行大致按发生顺序排列；同一来源内保持写入顺序。
+//! 每行和每次进度带两个时间（ADR 0018）：Agent 时间（SDK 事件取 SDK 记录的时间，其余取读到的时刻），以及读到它时的
+//! 单调时钟读数（[`Stamp`]，每次读取打一次点），控制面据此折算出控制面时间。
+//! 同一批内按单调时钟读数排序后再编号，所以不同来源的行大致按读到的先后排列，Agent 时间跳变也不打乱顺序；
+//! 同一来源内保持写入顺序。
 //! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`，每个文件 8 MiB，超过后改名为 `.1`
 //! 再新建（[`LogCopy`]）；失败消息里的标准错误尾部取自内存（[`Pump::finish`]）。
 //!
@@ -327,7 +330,10 @@ impl Pump {
 
 /// 尚未编号的一行。
 struct Pending {
+    /// Agent 时间。
     time_unix_ms: i64,
+    /// 读到这一行时的单调时钟读数（[`Stamp`]）。
+    monotonic_ms: i64,
     source: LogSource,
     level: LogLevel,
     text: String,
@@ -336,6 +342,28 @@ struct Pending {
 /// 现在的 Agent 时间。
 fn now_ms() -> i64 {
     clock::agent_time_ms()
+}
+
+/// 读到一块内容（标准输出 / 标准错误的一次读取、事件管道的一次读取）时打的点：这一块里的每一行、每个事件
+/// （日志、进度、指标）都用它，不逐行读时钟。控制面按 `monotonic_ms` 折算出控制面时间（ADR 0018）。
+#[derive(Clone, Copy)]
+struct Stamp {
+    /// 单调时钟读数（[`clock::monotonic_ms`]）。
+    monotonic_ms: i64,
+}
+
+impl Stamp {
+    fn now() -> Stamp {
+        Stamp {
+            monotonic_ms: clock::monotonic_ms(),
+        }
+    }
+}
+
+/// 事件管道里读出的一块完整内容（若干行事件）和读到它时打的点。
+struct EventChunk {
+    bytes: Vec<u8>,
+    stamp: Stamp,
 }
 
 /// SDK 事件的 Agent 时间：事件带时间戳时用它（SDK 读的是系统时钟，经 [`clock::to_agent_time_ms`] 换算），
@@ -360,9 +388,11 @@ async fn read_pipe(
     let mut splitter = LineSplitter::default();
     let mut buf = vec![0u8; 16 * 1024];
     let mut chunk = Vec::new();
-    let emit = |chunk: &mut Vec<Pending>, text: String| {
+    // 两个时钟每次读取各读一次，这次读取拆出的行共用（一次读取里的行本来就是同时到的）。
+    let emit = |chunk: &mut Vec<Pending>, (time_unix_ms, stamp): (i64, Stamp), text: String| {
         chunk.push(Pending {
-            time_unix_ms: now_ms(),
+            time_unix_ms,
+            monotonic_ms: stamp.monotonic_ms,
             source,
             level,
             text,
@@ -373,16 +403,18 @@ async fn read_pipe(
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
+        let at = (now_ms(), Stamp::now());
         if let Some(tail) = &tail {
             tail.push(&buf[..n]);
         }
         copy.write(&buf[..n]).await;
-        splitter.push(&buf[..n], |text| emit(&mut chunk, text));
+        splitter.push(&buf[..n], |text| emit(&mut chunk, at, text));
         if !chunk.is_empty() {
             let _ = lines.send(std::mem::take(&mut chunk)).await;
         }
     }
-    splitter.finish(|text| emit(&mut chunk, text));
+    let at = (now_ms(), Stamp::now());
+    splitter.finish(|text| emit(&mut chunk, at, text));
     if !chunk.is_empty() {
         let _ = lines.send(chunk).await;
     }
@@ -525,8 +557,9 @@ enum Event {
 }
 
 /// 读取事件管道，把以换行结尾的完整内容按块交给 `chunks`，直到所有写端关闭（最后不完整的一行丢弃）。
+/// 每块带上读到它的那一刻打的点（[`Stamp`]）：SDK 不改，事件的单调时钟读数由 Agent 在这里打上。
 /// 通道有界：处理跟不上时不再读管道，写满后 SDK 的写入等待（背压），Agent 内存里不会越积越多。
-async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<Vec<u8>>) {
+async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<EventChunk>) {
     let mut partial = Vec::new();
     let mut buf = vec![0u8; 64 * 1024];
     loop {
@@ -534,13 +567,14 @@ async fn read_events(mut pipe: impl AsyncRead + Unpin, chunks: mpsc::Sender<Vec<
             Ok(0) | Err(_) => break,
             Ok(n) => n,
         };
+        let stamp = Stamp::now();
         partial.extend_from_slice(&buf[..n]);
         let Some(last) = partial.iter().rposition(|&b| b == b'\n') else {
             continue;
         };
         let rest = partial.split_off(last + 1);
-        let complete = std::mem::replace(&mut partial, rest);
-        if chunks.send(complete).await.is_err() {
+        let bytes = std::mem::replace(&mut partial, rest);
+        if chunks.send(EventChunk { bytes, stamp }).await.is_err() {
             return;
         }
     }
@@ -604,7 +638,7 @@ impl Forwarder {
     async fn run(
         mut self,
         mut lines: mpsc::Receiver<Vec<Pending>>,
-        mut events: mpsc::Receiver<Vec<u8>>,
+        mut events: mpsc::Receiver<EventChunk>,
         mut exited: oneshot::Receiver<()>,
     ) {
         let mut tick = tokio::time::interval(TICK);
@@ -662,20 +696,19 @@ impl Forwarder {
     }
 
     /// 处理事件管道里的一块完整内容。
-    fn events(&mut self, chunk: &[u8]) {
-        // 读到这一块事件时的单调时钟读数（ADR 0018）：一块读一次。
-        let read_at_ms = clock::monotonic_ms();
-        for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
-            self.event(line, read_at_ms);
+    fn events(&mut self, chunk: &EventChunk) {
+        for line in chunk.bytes.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
+            self.event(line, chunk.stamp);
             self.flush_full_batch();
         }
     }
 
-    /// 处理事件管道里的一行；`read_at_ms` 是读到它时的单调时钟读数。
-    fn event(&mut self, line: &[u8], read_at_ms: i64) {
+    /// 处理事件管道里的一行；`stamp` 是读到它所在的那一块时打的点，三种事件都能取到。
+    fn event(&mut self, line: &[u8], stamp: Stamp) {
         match serde_json::from_slice::<Event>(line) {
             Ok(Event::Log { ts, level, message }) => self.pending.push(Pending {
                 time_unix_ms: sdk_time_ms(ts),
+                monotonic_ms: stamp.monotonic_ms,
                 source: LogSource::Sdk,
                 level: sdk_level(&level),
                 text: message,
@@ -693,6 +726,7 @@ impl Forwarder {
                     total,
                     message,
                     time_unix_ms: sdk_time_ms(ts),
+                    monotonic_ms: stamp.monotonic_ms,
                 });
             }
             Ok(Event::Metric {
@@ -701,12 +735,18 @@ impl Forwarder {
                 kind,
                 value,
                 labels,
-            }) => self
-                .metrics
-                .add(read_at_ms, sdk_time_ms(ts), name, labels, &kind, value),
+            }) => self.metrics.add(
+                stamp.monotonic_ms,
+                sdk_time_ms(ts),
+                name,
+                labels,
+                &kind,
+                value,
+            ),
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
                 time_unix_ms: now_ms(),
+                monotonic_ms: stamp.monotonic_ms,
                 source: LogSource::Sdk,
                 level: LogLevel::Info,
                 text: String::from_utf8_lossy(line).into_owned(),
@@ -723,6 +763,7 @@ impl Forwarder {
         self.flush_lines();
         self.pending.push(Pending {
             time_unix_ms: jump.after_ms,
+            monotonic_ms: Stamp::now().monotonic_ms,
             source: LogSource::Agent,
             level: LogLevel::Warn,
             text: jump.notice(),
@@ -741,7 +782,7 @@ impl Forwarder {
             self.progress_sent_at = Some(Instant::now());
             self.send(agent_message::Body::Progress(progress));
         }
-        // 平时一秒（按单调时钟）一结束（下一个检查点，最多晚 TICK）就发出这一秒，每秒最多一批；任务结束时发出全部。
+        // 平时一秒（按单调时钟）的宽限期一结束（下一个检查点，最多晚 TICK）就发出这一秒，每秒最多一批；任务结束时发出全部。
         let points = if last {
             self.metrics.take(None)
         } else {
@@ -762,7 +803,8 @@ impl Forwarder {
             return;
         }
         let mut pending = std::mem::take(&mut self.pending);
-        pending.sort_by_key(|p| p.time_unix_ms);
+        // 按读到的先后（单调时钟）排，不按 Agent 时间：Agent 时间往回跳时，跳变之后的行不会排到之前的行前面。
+        pending.sort_by_key(|p| p.monotonic_ms);
         let lines = pending
             .into_iter()
             .map(|p| {
@@ -770,6 +812,7 @@ impl Forwarder {
                 LogLine {
                     seq: self.seq,
                     time_unix_ms: p.time_unix_ms,
+                    monotonic_ms: p.monotonic_ms,
                     source: p.source.into(),
                     level: p.level.into(),
                     text: p.text,

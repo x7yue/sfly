@@ -6,6 +6,7 @@ mod support;
 use std::time::Duration;
 
 use serde_json::json;
+use sfly_agent::clock;
 use sfly_agent::proto::{LogBatch, LogLevel, LogLine, LogSource, Progress, agent_message};
 use support::{AgentOptions, FakeControlPlane, Received, spawn_agent, stub_task};
 
@@ -136,6 +137,92 @@ async fn log_lines_carry_the_agent_time_which_follows_the_test_offset_as_soon_as
             "{task_id}: {before} <= {times:?} <= {after}"
         );
     }
+}
+
+#[tokio::test]
+async fn log_lines_and_progress_carry_the_monotonic_reading_taken_when_the_agent_read_them() {
+    const DAYS_613_MS: i64 = 613 * 24 * 3600 * 1000;
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-logs-monotonic"));
+    cp.hello(0).await;
+    // Agent 时间快 613 天：单调时钟读数不受影响，仍然落在任务执行的这段真实时间里。
+    agent.set_agent_time_offset_ms(DAYS_613_MS);
+    let before = clock::monotonic_ms();
+
+    cp.assign(stub_task("task-mono", "chatter", json!({ "steps": 1 })))
+        .await;
+    cp.result("task-mono").await;
+    let after = clock::monotonic_ms();
+    let all = cp.received_with_session();
+    let lines = log_lines(&all, "task-mono");
+    assert_eq!(lines.len(), 8, "{lines:?}");
+    let readings: Vec<i64> = lines.iter().map(|(_, l)| l.monotonic_ms).collect();
+    assert!(
+        readings.iter().all(|m| before <= *m && *m <= after),
+        "{before} <= {readings:?} <= {after}"
+    );
+    // 行按读到的先后编号。
+    assert!(readings.is_sorted(), "{readings:?}");
+    assert!(
+        lines
+            .iter()
+            .all(|(_, l)| l.time_unix_ms >= now_ms() + DAYS_613_MS - 60_000),
+        "Agent 时间仍然带着偏移"
+    );
+
+    let progress = progress_of(&all, "task-mono");
+    let (_, _, last) = progress.last().expect("进度");
+    assert!(
+        before <= last.monotonic_ms && last.monotonic_ms <= after,
+        "{before} <= {} <= {after}",
+        last.monotonic_ms
+    );
+}
+
+#[tokio::test]
+async fn monotonic_readings_keep_increasing_when_the_agent_time_jumps_back_mid_task() {
+    const DAY_MS: i64 = 24 * 3600 * 1000;
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-progress-jump"));
+    cp.hello(0).await;
+
+    // 约 4 秒里写 40 次进度；第一次进度上报之后把 Agent 时间往回拨一天。
+    cp.assign(stub_task(
+        "task-jump",
+        "chatter",
+        json!({ "steps": 40, "interval": 0.1 }),
+    ))
+    .await;
+    cp.wait_for("第一次进度", |all| {
+        (!progress_of(all, "task-jump").is_empty()).then_some(())
+    })
+    .await;
+    agent.set_agent_time_offset_ms(-DAY_MS);
+    cp.result("task-jump").await;
+
+    let progress: Vec<Progress> = progress_of(&cp.received_with_session(), "task-jump")
+        .into_iter()
+        .map(|(_, _, p)| p)
+        .collect();
+    assert!(progress.len() >= 3, "{progress:#?}");
+    let (first, last) = (&progress[0], progress.last().unwrap());
+    assert!(
+        last.time_unix_ms < first.time_unix_ms - DAY_MS / 2,
+        "Agent 时间倒退了：{} -> {}",
+        first.time_unix_ms,
+        last.time_unix_ms
+    );
+    for pair in progress.windows(2) {
+        assert!(
+            pair[1].monotonic_ms > pair[0].monotonic_ms,
+            "单调时钟读数继续增加：{} -> {}",
+            pair[0].monotonic_ms,
+            pair[1].monotonic_ms
+        );
+    }
+    // 进度的读数是读到这次进度的时刻：最后一次进度是任务结束前约 0.1 秒写的，不是补发它的时刻之后。
+    let elapsed = last.monotonic_ms - first.monotonic_ms;
+    assert!((3_000..=30_000).contains(&elapsed), "{elapsed}");
 }
 
 #[tokio::test]

@@ -709,7 +709,8 @@ describe("指标的控制面时间与 Agent 时间（#174，ADR 0018）", () => 
 	const clock = () => cp.clock as ManualClock;
 
 	beforeEach(async () => {
-		cp = await startTestControlPlane();
+		// 测试里时钟一次推进一分钟：任务租约设得更长，免得没有心跳的假 Agent 的任务以 agent_lost 结束。
+		cp = await startTestControlPlane({ leaseMs: DAY_S * 1000 });
 		api = new ApiClient(cp);
 		await publishPackage(cp, "bench", "1.0.0", {
 			load: { outputs: [], metrics: [{ name: "tps", unit: "req/s", kind: "gauge" }] },
