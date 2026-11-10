@@ -265,7 +265,7 @@ export const runsApi = {
 };
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
-export const LOG_SOURCES = ["stdout", "stderr", "sdk", "system"] as const;
+export const LOG_SOURCES = ["stdout", "stderr", "sdk", "agent", "system"] as const;
 export const MAX_LOG_PAGE_LINES = 1000;
 
 /**
@@ -279,7 +279,7 @@ export const LogLineView = z.object({
 	time: Timestamp.nullable(),
 	/** Agent 时间：原样保存，不做范围检查，只用于展示和对照；没有上报时为 null。 */
 	agent_time: Timestamp.nullable(),
-	/** system：控制面写入的截断标记。 */
+	/** agent：Agent 自己写入的提示行（Agent 时间跳变）；system：控制面写入的截断标记。 */
 	source: z.enum(LOG_SOURCES),
 	level: z.enum(LOG_LEVELS),
 	/** secret 参数的值已替换成掩码。 */

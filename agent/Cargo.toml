@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 anyhow = "1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 clap = { version = "4", features = ["derive", "env"] }
 prost = "0.14"
 reqwest = { version = "0.13", default-features = false, features = ["stream"] }

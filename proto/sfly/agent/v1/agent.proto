@@ -265,7 +265,8 @@ message LogBatch {
 message LogLine {
   // 任务内从 1 开始递增的序号；控制面和画布按它去重。
   uint64 seq = 1;
-  // Agent 时间（Unix 毫秒）：SDK 日志取 SDK 记录的时间，标准输出 / 标准错误取 Agent 读到这一行的时间。
+  // Agent 时间（Unix 毫秒）：SDK 日志取 SDK 记录的时间，标准输出 / 标准错误取 Agent 读到这一行的时间，
+  // Agent 自己写入的行取写入的时间。
   int64 time_unix_ms = 2;
   LogSource source = 3;
   LogLevel level = 4;
@@ -286,6 +287,8 @@ enum LogSource {
   LOG_SOURCE_STDERR = 2;
   // SDK 的 ctx.log。
   LOG_SOURCE_SDK = 3;
+  // Agent 自己写入的提示行（例如 Agent 时间跳变，ADR 0018）；不认识这个取值的旧版控制面把它记成标准输出。
+  LOG_SOURCE_AGENT = 4;
 }
 
 // 日志级别。标准输出为 INFO，标准错误为 ERROR，SDK 日志按调用的级别。
