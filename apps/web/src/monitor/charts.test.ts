@@ -306,11 +306,7 @@ describe("降采样后的尖峰（故事 14）", () => {
 	});
 
 	it("包络：沿最大值向前、沿最小值返回的闭合多边形", () => {
-		const pts = envelopePoints(
-			spiky,
-			bucketStart,
-			(v) => v,
-		);
+		const pts = envelopePoints(spiky, bucketStart, (v) => v);
 		expect(pts).toEqual([
 			[s(0), 10],
 			[s(10), 95],

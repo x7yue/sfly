@@ -858,8 +858,8 @@ export const ProgressSchema: GenMessage<Progress> = /*@__PURE__*/
   messageDesc(file_sfly_agent_v1_agent, 17);
 
 /**
- * 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 序列 × 秒」合并，每个任务每秒最多发一批，
- * 任务结束前补发剩余的点；控制面不回 Ack，同一序列同一秒的重复点被忽略。
+ * 一个任务新增的指标点（ctx.metric）。Agent 按「任务 × 序列 × 单调时钟秒」合并，每个任务每秒最多发一批，
+ * 任务结束前补发剩余的点；控制面不回 Ack，同一序列同一秒（单调时钟读数相同）的重复点被忽略。
  *
  * @generated from message sfly.agent.v1.MetricBatch
  */

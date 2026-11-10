@@ -1,9 +1,4 @@
-import {
-	bucketStartMs,
-	type CatalogNode,
-	isOnAgentStatus,
-	type MetricBucket,
-} from "@sfly/schema";
+import { bucketStartMs, type CatalogNode, isOnAgentStatus, type MetricBucket } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
 import { Sparkline } from "#/components/sparkline";

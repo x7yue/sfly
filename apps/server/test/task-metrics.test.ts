@@ -9,12 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { defaultMigrationsDir } from "../src/db/database.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
-import {
-	type AssignedTask,
-	agentClock,
-	FakeAgent,
-	type HelloInit,
-} from "./support/fake-agent.js";
+import { type AssignedTask, agentClock, FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";

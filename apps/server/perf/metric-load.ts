@@ -125,7 +125,12 @@ export async function startFleet(options: {
 	);
 	const agents = await Promise.all(
 		plan.tasksPerAgent.map(async (slots, i) => {
-			const agent = await FakeAgent.connect(options.grpcUrl, { name: `load-${i}`, slots });
+			// 时钟与控制面一致的新版本 Agent（同一台机器的系统时钟）：点带单调时钟读数，控制面时间就是点的 Unix 秒。
+			const agent = await FakeAgent.connect(
+				options.grpcUrl,
+				{ name: `load-${i}`, slots },
+				{ clock: { now: () => new Date() } },
+			);
 			options.defer(() => agent.disconnect());
 			return agent;
 		}),

@@ -411,7 +411,12 @@ mod tests {
         // 同一个单调时钟秒里，Agent 时间往前跳了 613 天：还是一个点，带最后一次上报的 Agent 时间。
         let days_613 = 613 * 86_400_000;
         gauge(&mut merger, 100_100, AGENT_AHEAD_MS + 100_100, 1.0);
-        gauge(&mut merger, 100_600, AGENT_AHEAD_MS + 100_600 + days_613, 9.0);
+        gauge(
+            &mut merger,
+            100_600,
+            AGENT_AHEAD_MS + 100_600 + days_613,
+            9.0,
+        );
         let points = merger.take(None);
         assert_eq!(points.len(), 1);
         assert_eq!(
@@ -445,17 +450,26 @@ mod tests {
         let mut merger = Merger::default();
         let a = r#"{"pid":"1","name":"a"}"#;
         merger.add(100_100, 0, "cpu".into(), labels_of(a), "gauge", 1.0);
-        merger.add(100_200, 0, "cpu".into(),
+        merger.add(
+            100_200,
+            0,
+            "cpu".into(),
             labels_of(r#"{"name":"a","pid":"1"}"#),
             "gauge",
             3.0,
         );
-        merger.add(100_300, 0, "cpu".into(),
+        merger.add(
+            100_300,
+            0,
+            "cpu".into(),
             labels_of(r#"{"name":"b","pid":"1","name":"a"}"#),
             "gauge",
             2.0,
         );
-        merger.add(100_400, 0, "cpu".into(),
+        merger.add(
+            100_400,
+            0,
+            "cpu".into(),
             labels_of(r#"{"pid":"2","name":"a"}"#),
             "gauge",
             5.0,

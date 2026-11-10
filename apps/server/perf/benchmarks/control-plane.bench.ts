@@ -19,17 +19,13 @@
 import { create } from "@bufbuild/protobuf";
 import { MetricBatchSchema } from "@sfly/proto";
 import { eq } from "drizzle-orm";
-import { ConnectionClock } from "../../src/agents/agent-clock.js";
 import { afterAll, beforeAll, test } from "vitest";
+import { ConnectionClock } from "../../src/agents/agent-clock.js";
 import { type Database, openDatabase } from "../../src/db/database.js";
 import { tasks } from "../../src/db/schema.js";
 import { MetricQueries } from "../../src/metrics/metric-queries.js";
 import { MetricRetention } from "../../src/metrics/metric-retention.js";
-import {
-	type MetricSource,
-	SEGMENT_POINTS,
-	TaskMetrics,
-} from "../../src/metrics/task-metrics.js";
+import { type MetricSource, SEGMENT_POINTS, TaskMetrics } from "../../src/metrics/task-metrics.js";
 import { ApiClient } from "../../test/support/api-client.js";
 import { FakeAgent } from "../../test/support/fake-agent.js";
 import { publishPackage } from "../../test/support/package-archive.js";

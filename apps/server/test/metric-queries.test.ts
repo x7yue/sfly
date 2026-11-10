@@ -351,10 +351,42 @@ describe("指标查询", () => {
 					node_id: "load",
 					attempt: 1,
 					points: [
-						{ name: "tps", labels: {}, time: iso(1), agent_time: iso(1), value: 10, min: 4, max: 12 },
-						{ name: "requests", labels: {}, time: iso(1), agent_time: iso(1), value: 3, min: 3, max: 3 },
-						{ name: "conn_tps", labels: { host: "a" }, time: iso(1), agent_time: iso(1), value: 5, min: 5, max: 5 },
-						{ name: "conn_tps", labels: { host: "b" }, time: iso(1), agent_time: iso(1), value: 6, min: 6, max: 6 },
+						{
+							name: "tps",
+							labels: {},
+							time: iso(1),
+							agent_time: iso(1),
+							value: 10,
+							min: 4,
+							max: 12,
+						},
+						{
+							name: "requests",
+							labels: {},
+							time: iso(1),
+							agent_time: iso(1),
+							value: 3,
+							min: 3,
+							max: 3,
+						},
+						{
+							name: "conn_tps",
+							labels: { host: "a" },
+							time: iso(1),
+							agent_time: iso(1),
+							value: 5,
+							min: 5,
+							max: 5,
+						},
+						{
+							name: "conn_tps",
+							labels: { host: "b" },
+							time: iso(1),
+							agent_time: iso(1),
+							value: 6,
+							min: 6,
+							max: 6,
+						},
 					],
 				});
 
@@ -364,7 +396,15 @@ describe("指标查询", () => {
 					["tps", at(3), 30],
 				]);
 				expect((await sse.next<MetricIncrement>("metrics")).data.points).toEqual([
-					{ name: "tps", labels: {}, time: iso(3), agent_time: iso(3), value: 30, min: 30, max: 30 },
+					{
+						name: "tps",
+						labels: {},
+						time: iso(3),
+						agent_time: iso(3),
+						value: 30,
+						min: 30,
+						max: 30,
+					},
 				]);
 
 				// 一批里没有新点时不推送。
@@ -384,7 +424,11 @@ describe("指标查询", () => {
 
 		it("节点耗时、重试次数、排队与等待时长由任务记录计算，并发任务数与 Agent 槽位占用由执行区间推导", async () => {
 			const clock = cp.clock as ManualClock;
-			const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 4 }, { clock: cp.clock });
+			const agent = await FakeAgent.connect(
+				cp.grpcUrl,
+				{ name: "agent-a", slots: 4 },
+				{ clock: cp.clock },
+			);
 			agents.push(agent);
 			const document = orchestration({ retries: 1 });
 			document.nodes.push({ id: "pause", kind: "sleep", duration: "10s" } as never);

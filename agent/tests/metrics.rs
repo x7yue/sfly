@@ -113,7 +113,9 @@ async fn points_are_merged_per_metric_and_second_and_non_finite_values_are_dropp
     assert_eq!(total[0].monotonic_ms, level[0].monotonic_ms);
     let now = unix_now();
     assert!(
-        level.iter().all(|p| (now - 60..=now).contains(&p.time_unix_s)),
+        level
+            .iter()
+            .all(|p| (now - 60..=now).contains(&p.time_unix_s)),
         "Agent 时间是上报时的系统时间：{level:?}"
     );
     assert!(points_of(&batches, "typo").is_empty(), "未声明的指标被丢弃");
