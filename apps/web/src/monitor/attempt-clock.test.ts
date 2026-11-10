@@ -29,7 +29,7 @@ describe("尝试的 Agent 时间", () => {
 		).toEqual({
 			start: "2026-11-10T00:00:01.000Z",
 			end: "2025-03-07T00:00:58.000Z",
-			detail: "开始时比控制面快 613 天，结束时慢 3 秒",
+			details: ["开始时比控制面快 613 天", "结束时慢 3 秒"],
 		});
 	});
 
@@ -42,14 +42,18 @@ describe("尝试的 Agent 时间", () => {
 		).toEqual({
 			start: "2025-03-07T00:00:00.500Z",
 			end: "2025-03-07T00:02:30.000Z",
-			detail: "开始时一致，结束时比控制面快 1 分钟",
+			details: ["开始时一致", "结束时比控制面快 1 分钟"],
 		});
 		expect(
 			attemptAgentTimes({
 				start_clock_offset: offset(-7_200_000, "2025-03-07T02:00:00.000Z"),
 				end_clock_offset: null,
 			}),
-		).toEqual({ start: "2025-03-07T00:00:00.000Z", end: null, detail: "开始时比控制面慢 2 小时" });
+		).toEqual({
+			start: "2025-03-07T00:00:00.000Z",
+			end: null,
+			details: ["开始时比控制面慢 2 小时"],
+		});
 	});
 
 	it("Agent 时间超出可表示的范围时不给出时间，偏差说明照常", () => {

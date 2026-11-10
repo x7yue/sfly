@@ -17,11 +17,31 @@ export function formatDateTime(iso: string, now: Date = new Date(controlPlaneNow
 /** 没有记录的时间显示成这个，不猜一个值（ADR 0018：升级之前存下的数据缺一种时间）。 */
 export const TIME_NOT_RECORDED = "未记录";
 
+const fullDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
 /** `2099-01-01 08:00:05`：完整的日期时间（总是带年份和秒），用于 Agent 时间这类可能离现在很远的时间。 */
 export function formatFullDateTime(iso: string): string {
 	const d = new Date(iso);
-	const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-	return `${date} ${formatClock(d.getTime())}`;
+	return `${fullDate(d)} ${formatClock(d.getTime())}`;
+}
+
+/** `2099-01-01 08:00:05.120`：带日期的日志行时刻（列表里有不在运行开始那天的时间时用，见 spansOtherDay）。 */
+export function formatFullDateTimeMs(iso: string): string {
+	const d = new Date(iso);
+	return `${fullDate(d)} ${formatClockMs(d.getTime())}`;
+}
+
+/**
+ * 这些时间里有没有哪个和 day 不在同一天（浏览器时区）；没有记录的时间（null）不算。
+ * 日志的时间列平时只显示时刻；列表里有一行显示的时间不在运行开始那天（控制面时间）时整列都带上日期，
+ * 否则 Agent 时间差出几百天、或跨过零点的行看不出差别。
+ */
+export function spansOtherDay(times: Iterable<string | null>, day: string): boolean {
+	const date = fullDate(new Date(day));
+	for (const time of times) {
+		if (time !== null && fullDate(new Date(time)) !== date) return true;
+	}
+	return false;
 }
 
 /** 字节数：`812 B`、`12.4 KB`、`3.1 MB`。 */

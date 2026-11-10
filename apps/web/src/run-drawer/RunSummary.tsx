@@ -14,7 +14,9 @@ import {
 	formatClock,
 	formatDateTime,
 	formatDuration,
+	formatFullDateTime,
 	shortId,
+	spansOtherDay,
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
@@ -108,7 +110,7 @@ export function RunSummary({ runId }: { runId: string }) {
 				{focus && <span className="ml-auto font-mono font-normal text-fg-3">{focus.node_id}</span>}
 			</h3>
 			{taskId ? (
-				<LatestLogs taskId={taskId} />
+				<LatestLogs taskId={taskId} day={run.started_at} />
 			) : (
 				<p className="m-0 text-xs text-fg-3">还没有日志。</p>
 			)}
@@ -211,11 +213,18 @@ const LEVEL: Record<string, { label: string; className: string }> = {
 
 const NO_FILTER: never[] = [];
 
-function LatestLogs({ taskId }: { taskId: string }) {
+/** day：运行开始的时刻；有一行的时间不在那一天时每行都带上日期（与监控页的日志时间列同一条规则）。 */
+function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 	const logs = useTaskLogs(taskId, NO_FILTER);
 	// 与监控页日志面板的时间列用同一个选择（默认 Agent 时间）。
 	const timeKind = useLogTimeKind();
 	const lines = logs.lines.slice(-LOG_LINES);
+	const formatTime = spansOtherDay(
+		lines.map((l) => logLineTime(l, timeKind)),
+		day,
+	)
+		? formatFullDateTime
+		: formatClock;
 	if (logs.error) return <p className="m-0 text-xs text-danger-fg">无法加载日志：{logs.error}</p>;
 	if (!logs.loaded) return <Skeleton className="h-16 w-full" />;
 	if (lines.length === 0) return <p className="m-0 text-xs text-fg-3">还没有日志。</p>;
@@ -229,7 +238,7 @@ function LatestLogs({ taskId }: { taskId: string }) {
 				const time = logLineTime(line, timeKind);
 				return (
 					<li key={line.seq} className="truncate">
-						<span className="text-fg-3">{time ? formatClock(time) : TIME_NOT_RECORDED}</span>{" "}
+						<span className="text-fg-3">{time ? formatTime(time) : TIME_NOT_RECORDED}</span>{" "}
 						<span className={level.className}>{level.label}</span>{" "}
 						<span className={cn(line.level === "info" ? "text-log-info" : level.className)}>
 							{line.text}
