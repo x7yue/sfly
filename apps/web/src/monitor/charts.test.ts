@@ -5,6 +5,8 @@ import {
 	appendIncrement,
 	balancedColumns,
 	bucketAt,
+	bucketStart,
+	bucketTimes,
 	chartLines,
 	chartWindow,
 	colorSlots,
@@ -103,6 +105,7 @@ const series = (buckets: [number, number][], bucketSeconds = 1): MetricSeries =>
 			labels: {},
 			buckets: buckets.map(([t, v]) => ({
 				time: at(t),
+				agent_time: at(t),
 				points: 1,
 				min: v,
 				max: v,
@@ -125,6 +128,7 @@ const increment = (
 		name,
 		labels,
 		time: at(t),
+		agent_time: at(t),
 		value,
 		min: value,
 		max: value,
@@ -147,7 +151,7 @@ describe("实时追加的指标点", () => {
 		const base = series([[0, 1]], 10);
 		const merged = appendIncrement(base, increment([["tps", 4, 3]]));
 		expect(merged.series[0]?.buckets).toEqual([
-			{ time: at(0), points: 2, min: 1, max: 3, avg: 2, last: 3 },
+			{ time: at(0), agent_time: at(4), points: 2, min: 1, max: 3, avg: 2, last: 3 },
 		]);
 		expect(lastOf(appendIncrement(merged, increment([["tps", 23, 7]])))).toEqual([
 			[at(0), 2, 3],
@@ -199,6 +203,74 @@ describe("实时追加的指标点", () => {
 	});
 });
 
+describe("控制面时间与 Agent 时间（#174，ADR 0018）", () => {
+	const DAYS_613 = 613 * 86_400;
+	/** 控制面时间在第 t 秒、Agent 时间在第 agentT 秒的一个 tps 点。 */
+	const skewed = (points: Array<[t: number, agentT: number, value: number]>): MetricIncrement => ({
+		...increment([]),
+		points: points.map(([t, agentT, value]) => ({
+			name: "tps",
+			labels: {},
+			time: at(t),
+			agent_time: at(agentT),
+			value,
+			min: value,
+			max: value,
+		})),
+	});
+	const bucketsOf = (result: MetricSeries) =>
+		result.series[0]?.buckets.map((b) => [b.time, b.agent_time, b.last]);
+
+	it("实时追加的点按控制面时间落桶，带上自己的 Agent 时间：Agent 时间差 613 天或倒退都不影响位置", () => {
+		const result = appendIncrement(
+			series([[0, 1]]),
+			skewed([
+				[1, 1 + DAYS_613, 5],
+				[2, 2 - 3600, 6],
+			]),
+		);
+		expect(bucketsOf(result)).toEqual([
+			[at(0), at(0), 1],
+			[at(1), at(1 + DAYS_613), 5],
+			[at(2), at(2 - 3600), 6],
+		]);
+		expect(result.to).toBe(at(2));
+	});
+
+	it("桶跨多秒时，桶的 Agent 时间取最后并入的点的", () => {
+		const result = appendIncrement(series([[0, 1]], 10), skewed([[4, 4 + DAYS_613, 3]]));
+		expect(bucketsOf(result)).toEqual([[at(0), at(4 + DAYS_613), 3]]);
+	});
+
+	it("桶在横轴上按控制面时间放；没有记录控制面时间的旧数据按 Agent 时间放", () => {
+		const bucket = { points: 1, min: 1, max: 1, avg: 1, last: 1 };
+		expect(bucketStart({ ...bucket, time: at(3), agent_time: at(3 + DAYS_613) })).toBe(s(3));
+		expect(bucketStart({ ...bucket, time: null, agent_time: at(7) })).toBe(s(7));
+		// 悬停时也按同一个位置找桶。
+		const legacy = [{ ...bucket, time: null, agent_time: at(7) }];
+		expect(bucketAt(legacy, s(7.5), 1)).toBe(legacy[0]);
+	});
+
+	it("悬停提示给出两种时间，都带日期；旧数据的控制面时间显示未记录；平台自带图表的桶没有 Agent 时间", () => {
+		const bucket = { points: 1, min: 1, max: 1, avg: 1, last: 1 };
+		// 按本地时区显示：用本地时间构造，结果与时区无关。
+		const local = (y: number, m: number, d: number, h: number) =>
+			new Date(y, m - 1, d, h, 0, 5).toISOString();
+		expect(
+			bucketTimes({
+				...bucket,
+				time: local(2025, 3, 7, 8),
+				agent_time: local(2026, 11, 10, 9),
+			}),
+		).toEqual({ controlPlane: "2025-03-07 08:00:05", agent: "2026-11-10 09:00:05" });
+		expect(bucketTimes({ ...bucket, time: null, agent_time: local(2026, 1, 1, 8) })).toEqual({
+			controlPlane: "未记录",
+			agent: "2026-01-01 08:00:05",
+		});
+		expect(bucketTimes({ ...bucket, time: at(0), agent_time: null })).toBeNull();
+	});
+});
+
 describe("悬停读数", () => {
 	const buckets = series(
 		[
@@ -219,6 +291,7 @@ describe("悬停读数", () => {
 describe("降采样后的尖峰（故事 14）", () => {
 	const bucket = (sec: number, last: number, min: number, max: number) => ({
 		time: at(sec),
+		agent_time: at(sec),
 		points: 10,
 		min,
 		max,
@@ -235,7 +308,7 @@ describe("降采样后的尖峰（故事 14）", () => {
 	it("包络：沿最大值向前、沿最小值返回的闭合多边形", () => {
 		const pts = envelopePoints(
 			spiky,
-			(b) => Date.parse(b.time),
+			bucketStart,
 			(v) => v,
 		);
 		expect(pts).toEqual([
@@ -262,6 +335,7 @@ describe("降采样后的尖峰（故事 14）", () => {
 describe("序列多时默认显示的序列（#78）", () => {
 	const b = (points: number, avg: number): MetricBucket => ({
 		time: at(0),
+		agent_time: at(0),
 		points,
 		min: avg,
 		max: avg,
@@ -292,6 +366,7 @@ describe("序列多时默认显示的序列（#78）", () => {
 describe("默认显示的序列只在时间范围变化或出现新序列时重新挑选（#78）", () => {
 	const b = (avg: number): MetricBucket => ({
 		time: at(0),
+		agent_time: at(0),
 		points: 1,
 		min: avg,
 		max: avg,
@@ -375,7 +450,15 @@ describe("图表的线（#78）", () => {
 		{ name: "tps", unit: "", kind: "gauge" as const },
 		{ name: "conn_tps", unit: "", kind: "gauge" as const, labels: ["host"] },
 	];
-	const bucket: MetricBucket = { time: at(0), points: 1, min: 1, max: 1, avg: 1, last: 1 };
+	const bucket: MetricBucket = {
+		time: at(0),
+		agent_time: at(0),
+		points: 1,
+		min: 1,
+		max: 1,
+		avg: 1,
+		last: 1,
+	};
 
 	it("每个序列一条线；带标签的序列用标签值命名并标为带标签", () => {
 		const lines = chartLines(["tps", "conn_tps"], declared, [

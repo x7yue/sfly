@@ -25,7 +25,10 @@ export interface E2eFixtures {
 	clock: ManualClock;
 	/** 本测试独占的真实控制面（独立数据库），在同一端口托管前端、API 与 SSE。 */
 	controlPlane: TestControlPlane;
-	/** 连接一个假 Agent（默认上报控制面的版本）；测试结束时自动断开。 */
+	/**
+	 * 连接一个假 Agent（默认上报控制面的版本，时钟与控制面一致：指标点的控制面时间就是给出的 Unix 秒，
+	 * 见 FakeAgent.connect 的 clock 选项）；测试结束时自动断开。要模拟 Agent 时间不一致，在 hello 里写 agentTimeUnixMs。
+	 */
 	connectAgent: (hello: HelloInit) => Promise<FakeAgent>;
 	/** 浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；设为 null 时不写。 */
 	nickname: string | null;
@@ -66,14 +69,15 @@ export const test = base.extend<E2eFixtures>({
 	baseURL: async ({ controlPlane }, use) => {
 		await use(controlPlane.httpUrl);
 	},
-	connectAgent: async ({ controlPlane }, use) => {
+	connectAgent: async ({ controlPlane, clock }, use) => {
 		const agents: FakeAgent[] = [];
 		await use(async (hello) => {
 			// 默认与控制面同版本（版本不一致的 Agent 不会被派任务，ADR 0014）。
-			const agent = await FakeAgent.connect(controlPlane.grpcUrl, {
-				agentVersion: controlPlane.version,
-				...hello,
-			});
+			const agent = await FakeAgent.connect(
+				controlPlane.grpcUrl,
+				{ agentVersion: controlPlane.version, ...hello },
+				{ clock },
+			);
 			agents.push(agent);
 			return agent;
 		});

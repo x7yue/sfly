@@ -1,4 +1,9 @@
-import { type CatalogNode, isOnAgentStatus, type MetricBucket } from "@sfly/schema";
+import {
+	bucketStartMs,
+	type CatalogNode,
+	isOnAgentStatus,
+	type MetricBucket,
+} from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
 import { Sparkline } from "#/components/sparkline";
@@ -47,11 +52,11 @@ function MetricSparkline({
 		const end = buckets.at(-1);
 		if (!first || !end) return null;
 		const span = bucketSeconds * 1000;
-		const start = Date.parse(first.time);
-		const stop = Math.max(Date.parse(end.time) + span, start + 1000);
+		const start = bucketStartMs(first);
+		const stop = Math.max(bucketStartMs(end) + span, start + 1000);
 		return {
 			values: buckets.map((b) => b.last),
-			xs: buckets.map((b) => Date.parse(b.time) + span / 2),
+			xs: buckets.map((b) => bucketStartMs(b) + span / 2),
 			domain: [start, stop] as const,
 		};
 	}, [buckets, bucketSeconds]);

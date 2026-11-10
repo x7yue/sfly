@@ -40,7 +40,7 @@ describe("指标增量追加进序列缓存", () => {
 			node_id: "load",
 			attempt: 1,
 			points: [
-				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
+				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", agent_time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
 			],
 		});
 
@@ -77,7 +77,7 @@ describe("指标增量追加进序列缓存", () => {
 			node_id: "load",
 			attempt: 1,
 			points: [
-				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
+				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", agent_time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
 			],
 		});
 
@@ -116,8 +116,8 @@ describe("指标增量追加进序列缓存", () => {
 			node_id: "load",
 			attempt: 1,
 			points: [
-				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
-				{ name: "rps", labels: {}, time: "2026-01-01T00:00:01.000Z", value: 7, min: 7, max: 7 },
+				{ name: "tps", labels: {}, time: "2026-01-01T00:00:01.000Z", agent_time: "2026-01-01T00:00:01.000Z", value: 5, min: 5, max: 5 },
+				{ name: "rps", labels: {}, time: "2026-01-01T00:00:01.000Z", agent_time: "2026-01-01T00:00:01.000Z", value: 7, min: 7, max: 7 },
 			],
 		});
 
