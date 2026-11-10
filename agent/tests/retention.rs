@@ -10,18 +10,7 @@ use std::time::{Duration, SystemTime};
 
 use serde_json::json;
 use sfly_agent::proto::TaskStatus;
-use support::{AgentOptions, FakeControlPlane, WAIT, spawn_agent, stub_task};
-
-async fn wait_until(what: &str, check: impl Fn() -> bool) {
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while !check() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-}
+use support::{AgentOptions, DAYS_613_MS, FakeControlPlane, spawn_agent, stub_task, wait_until};
 
 fn options<'a>(cp: &FakeControlPlane, name: &'a str, args: &[&str]) -> AgentOptions<'a> {
     let mut options = AgentOptions::new(&cp.url, name);
@@ -330,8 +319,6 @@ async fn periodic_sweeps_skip_procs_dirs_of_runs_with_running_or_unacked_tasks()
 }
 
 /// Agent 时间的 613 天（毫秒）：内网里实际遇到的偏差。
-const DAYS_613_MS: i64 = 613 * 24 * 3600 * 1000;
-
 /// 放一个等待删除的目录，等下一次扫描把它删掉：之后看到的就是这次扫描留下的状态。
 async fn next_sweep(dir: &Path) {
     let probe = dir.join(format!("probe-{}~deleted", std::process::id()));

@@ -210,7 +210,9 @@ describe("实时追加的指标点", () => {
 describe("控制面时间与 Agent 时间（#174，ADR 0018）", () => {
 	const DAYS_613 = 613 * 86_400;
 	/** 控制面时间在第 t 秒、Agent 时间在第 agentT 秒的一个 tps 点。 */
-	const offsetPoints = (points: Array<[t: number, agentT: number, value: number]>): MetricIncrement => ({
+	const offsetPoints = (
+		points: Array<[t: number, agentT: number, value: number]>,
+	): MetricIncrement => ({
 		...increment([]),
 		points: points.map(([t, agentT, value]) => ({
 			name: "tps",

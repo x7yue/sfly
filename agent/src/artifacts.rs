@@ -8,8 +8,9 @@
 //! 失败的任务保留原来的错误、在消息后附上上传失败的原因。`artifact_upload_url` 为空时不上传。
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
+use crate::clock;
 use crate::executor;
 use crate::proto::{AssignTask, ErrorKind, TaskResult, TaskStatus};
 
@@ -98,8 +99,8 @@ impl Uploader {
             .header(reqwest::header::CONTENT_LENGTH, len)
             .body(reqwest::Body::from(file));
         // 文件的修改时间是按系统时钟记的：换成 Agent 时间（测试用的偏移选项生效时加上偏移量）。
-        let modified = metadata.modified().ok().and_then(unix_ms);
-        if let Some(modified) = modified.map(crate::clock::to_agent_time_ms) {
+        let modified = metadata.modified().ok().map(clock::system_time_ms);
+        if let Some(modified) = modified.map(clock::to_agent_time_ms) {
             request = request.header(MODIFIED_MS_HEADER, modified);
         }
         if let Some(token) = &self.token {
@@ -118,16 +119,6 @@ impl Uploader {
             status.is_server_error(),
             format!("控制面返回 {status} {}", body.trim()),
         ))
-    }
-}
-
-/// Unix 毫秒；1970 年以前为负数。超出 i64 时为 None。
-fn unix_ms(time: SystemTime) -> Option<i64> {
-    match time.duration_since(UNIX_EPOCH) {
-        Ok(after) => i64::try_from(after.as_millis()).ok(),
-        Err(before) => i64::try_from(before.duration().as_millis())
-            .ok()
-            .map(|ms| -ms),
     }
 }
 

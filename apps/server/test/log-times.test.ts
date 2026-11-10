@@ -43,7 +43,7 @@ describe("日志和进度的两种时间", () => {
 	const agents: FakeAgent[] = [];
 	const streams: SseClient[] = [];
 
-	/** 新版 Agent：Hello 带 Agent 时间和单调时钟读数。 */
+	/** 新版本 Agent：Hello 带 Agent 时间和单调时钟读数。 */
 	const connect = async (agentTime = AGENT_T0, monotonicMs = M0) => {
 		const agent = await FakeAgent.connect(cp.grpcUrl, {
 			name: "agent-a",
@@ -117,6 +117,20 @@ describe("日志和进度的两种时间", () => {
 				[2, iso(T0 + 2_000), "1970-01-02T00:00:00.000Z"],
 				[3, iso(T0 + 3_000), "2099-12-31T23:59:59.000Z"],
 				[4, iso(T0 + 4_000), iso(AGENT_T0 - 3_600_000)],
+			]);
+		});
+
+		it("Agent 时间超出能记录的范围（公元 100 年到 9999 年）时，日志行照常接收，Agent 时间记成边界值", async () => {
+			const agent = await connect();
+			const { task } = await start(agent);
+			agent.logs(task, [
+				line(1, Date.parse("9999-12-31T23:59:59.999Z") + 1, M0 + 1_000),
+				line(2, -9e15, M0 + 2_000),
+			]);
+
+			expect(await times(task.taskId, 2)).toEqual([
+				[1, iso(T0 + 1_000), "9999-12-31T23:59:59.999Z"],
+				[2, iso(T0 + 2_000), "0100-01-01T00:00:00.000Z"],
 			]);
 		});
 
@@ -197,7 +211,7 @@ describe("日志和进度的两种时间", () => {
 			]);
 		});
 
-		it("新版 Agent 的某一行没带读数（0）时，这一行的控制面时间取收到的时刻", async () => {
+		it("新版本 Agent 的某一行没带读数（0）时，这一行的控制面时间取收到的时刻", async () => {
 			const agent = await connect();
 			const { task } = await start(agent);
 			clock.advance(9_000);

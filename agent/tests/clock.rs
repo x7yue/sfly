@@ -3,20 +3,16 @@
 
 mod support;
 
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde_json::json;
 use sfly_agent::proto::{Heartbeat, TaskStarted, TaskStatus, agent_message};
-use support::{AgentOptions, FakeControlPlane, Received, WAIT, spawn_agent, stub_task};
+use support::{
+    AgentOptions, FakeControlPlane, Received, spawn_agent, stub_task, system_time_ms, wait_until,
+};
 
 const DAY_MS: i64 = 86_400_000;
-
-fn system_time_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
-}
+const HOUR_MS: i64 = 3_600_000;
 
 fn heartbeats(all: &[Received]) -> Vec<Heartbeat> {
     all.iter()
@@ -86,17 +82,17 @@ async fn heartbeat_agent_time_follows_the_agent_clock_while_the_monotonic_readin
     })
     .await;
 
-    // 单调时钟读数不受拨动影响：全程不倒退，总共只走了真实流逝的时长（远小于拨动的量）。
+    // 单调时钟读数不受拨动影响：全程不倒退，也没有跟着拨动的量（613 天、1 天）走。
+    // 上限不是对耗时的断言：只用来区分「真实流逝的时长」和「拨动的量」，取两者之间差着几个数量级的一小时。
     let readings: Vec<i64> = heartbeats(&cp.received_with_session())
         .iter()
         .map(|h| h.monotonic_ms)
         .collect();
     assert!(readings.windows(2).all(|w| w[0] <= w[1]), "{readings:?}");
-    let elapsed = system_time_ms() - started;
     let advanced = readings.last().unwrap() - hello.monotonic_ms;
     assert!(
-        (0..=elapsed + 60_000).contains(&advanced),
-        "monotonic advanced {advanced}ms in {elapsed}ms: {readings:?}"
+        (0..HOUR_MS).contains(&advanced),
+        "monotonic advanced {advanced}ms: {readings:?}"
     );
 }
 
@@ -137,11 +133,7 @@ async fn task_started_and_result_carry_the_agent_time_of_their_own_moment() {
     assert!(started.monotonic_ms >= hello.monotonic_ms, "{started:?}");
 
     // 执行中途把 Agent 时间改成比系统时间慢 1 天，再让任务结束。
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while !ready.exists() {
-        assert!(tokio::time::Instant::now() < deadline, "task never started");
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_until("the task to start", || ready.exists()).await;
     agent.set_agent_time_offset_ms(-DAY_MS);
     let before_end = system_time_ms();
     std::fs::write(&release, "").unwrap();
@@ -152,12 +144,12 @@ async fn task_started_and_result_carry_the_agent_time_of_their_own_moment() {
         "{result:?}"
     );
 
-    // 单调时钟读数不受拨动影响：从开始到结束只走了真实流逝的时长。
-    let elapsed = system_time_ms() - before_start;
+    // 单调时钟读数不受拨动影响：从开始到结束没有跟着拨动的量（613 天、1 天）走。
+    // 上限不是对耗时的断言，只用来区分「真实流逝的时长」和「拨动的量」。
     let advanced = result.monotonic_ms - started.monotonic_ms;
     assert!(
-        (0..=elapsed).contains(&advanced),
-        "monotonic advanced {advanced}ms in {elapsed}ms"
+        (0..HOUR_MS).contains(&advanced),
+        "monotonic advanced {advanced}ms"
     );
 }
 

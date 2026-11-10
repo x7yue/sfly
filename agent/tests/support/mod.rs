@@ -28,6 +28,29 @@ use tonic::{Request, Response, Status, Streaming};
 /// 等待条件成立的默认超时。
 pub const WAIT: Duration = Duration::from_secs(20);
 
+/// 613 天（毫秒）：发现问题时 Agent 时间与控制面时间的差（#167）。
+pub const DAYS_613_MS: i64 = 613 * 24 * 3600 * 1000;
+
+/// 测试进程读到的系统时间（Unix 毫秒）：没有拨动时 Agent 时间与它一致。
+pub fn system_time_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// 等到 `check` 成立（看的是假控制面收不到的东西，例如文件；消息用 [`FakeControlPlane::wait_for`]）。
+pub async fn wait_until(what: &str, check: impl Fn() -> bool) {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while !check() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
 /// 收到的一条消息：第几个会话（从 0 开始）+ 消息本身。
 #[derive(Debug, Clone)]
 pub struct Received {
@@ -75,9 +98,22 @@ impl FakeControlPlane {
         Self::start_on(0).await
     }
 
-    /// 在指定端口（0 为随机）上启动。
+    /// 在指定端口（0 为随机）上启动。端口还被刚关掉的上一个假控制面占着时（关闭是异步的），等它释放。
     pub async fn start_on(port: u16) -> Self {
-        let listener = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+        let deadline = tokio::time::Instant::now() + WAIT;
+        let listener = loop {
+            match TcpListener::bind(("127.0.0.1", port)).await {
+                Ok(listener) => break listener,
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                    assert!(
+                        tokio::time::Instant::now() < deadline,
+                        "port {port} still in use"
+                    );
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(error) => panic!("bind 127.0.0.1:{port}: {error}"),
+            }
+        };
         let addr: SocketAddr = listener.local_addr().unwrap();
         let state = Arc::new(State::default());
         let service = Gateway {

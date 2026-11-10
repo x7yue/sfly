@@ -10,13 +10,13 @@ use chrono::{FixedOffset, NaiveDateTime, TimeZone};
 use serde_json::json;
 use sfly_agent::proto::{LogBatch, LogLevel, LogLine, LogSource, TaskStatus, agent_message};
 use support::{
-    AgentOptions, AgentProcess, FakeControlPlane, Received, WAIT, spawn_agent, stub_task,
+    AgentOptions, AgentProcess, DAYS_613_MS, FakeControlPlane, Received, spawn_agent, stub_task,
+    system_time_ms, wait_until,
 };
 
 const SECOND_MS: i64 = 1000;
 const MINUTE_MS: i64 = 60 * SECOND_MS;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
-const DAYS_613_MS: i64 = 613 * 24 * HOUR_MS;
 
 /// Agent 机器的时区：提示行里的时间按它写。
 const AGENT_TZ: &str = "Asia/Shanghai";
@@ -26,13 +26,6 @@ fn spawn_agent_in_tz(cp: &FakeControlPlane, name: &str) -> AgentProcess {
     let mut options = AgentOptions::new(&cp.url, name);
     options.env = vec![("TZ", AGENT_TZ)];
     spawn_agent(options)
-}
-
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64
 }
 
 /// 任务到目前为止收到的日志行。
@@ -78,14 +71,7 @@ async fn start_gate(cp: &FakeControlPlane, dir: &Path, task_id: &'static str) ->
         json!({ "ready_file": gate.ready, "release_file": gate.release }),
     ))
     .await;
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while !gate.ready.exists() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "{task_id} never started"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    wait_until(&format!("{task_id} to start"), || gate.ready.exists()).await;
     gate
 }
 
@@ -118,7 +104,7 @@ fn parse_notice(text: &str) -> (String, i64, i64) {
 /// 提示行写明方向与变化量 `change`，跳变前后的 Agent 时间分别是系统时间加 `from_offset`、`to_offset`
 /// （`since`..现在 之间，文字里的时间精确到秒）；行本身的 Agent 时间是跳变之后的。
 fn assert_notice(line: &LogLine, change: &str, since: i64, from_offset: i64, to_offset: i64) {
-    let until = now_ms();
+    let until = system_time_ms();
     assert_eq!(line.level(), LogLevel::Warn, "{line:?}");
     let (got_change, before, after) = parse_notice(&line.text);
     assert_eq!(got_change, change, "{line:?}");
@@ -134,6 +120,7 @@ fn assert_notice(line: &LogLine, change: &str, since: i64, from_offset: i64, to_
 #[tokio::test]
 async fn each_running_task_gets_one_log_line_per_agent_time_jump_of_more_than_two_seconds() {
     let cp = FakeControlPlane::start().await;
+    cp.set_heartbeat_interval(Duration::from_millis(200));
     let agent = spawn_agent_in_tz(&cp, "agent-time-jump");
     cp.hello(0).await;
     let dir = tempfile::tempdir().unwrap();
@@ -143,19 +130,30 @@ async fn each_running_task_gets_one_log_line_per_agent_time_jump_of_more_than_tw
     ];
 
     // 往后拨 613 天。
-    let since = now_ms();
+    let since = system_time_ms();
     agent.set_agent_time_offset_ms(DAYS_613_MS);
     for gate in &gates {
         let line = agent_line(&cp, gate.task_id, 1).await;
         assert_notice(&line, "向后跳了 613 天", since, 0, DAYS_613_MS);
     }
 
-    // 只拨 1 秒（NTP 校正的量级）：不提示。给 Agent 几个检查周期，再做下一次拨动。
+    // 只拨 1 秒（NTP 校正的量级）：不提示（结尾断言每个任务恰好两行提示）。下一次拨动之前等 Agent 再发来
+    // 三次心跳：至少有两次是拨动之后才发的，中间隔着一个心跳间隔（200 毫秒），跳变检查（约每 100 毫秒一次）
+    // 已经看到过这 1 秒。
     agent.set_agent_time_offset_ms(DAYS_613_MS + SECOND_MS);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    let heartbeats = |all: &[Received]| {
+        all.iter()
+            .filter(|r| matches!(r.message.body, Some(agent_message::Body::Heartbeat(_))))
+            .count()
+    };
+    let seen = heartbeats(&cp.received_with_session());
+    cp.wait_for("three more heartbeats", |all| {
+        (heartbeats(all) >= seen + 3).then_some(())
+    })
+    .await;
 
     // 往回拨 5 分钟。
-    let since = now_ms();
+    let since = system_time_ms();
     let back = DAYS_613_MS + SECOND_MS - 5 * MINUTE_MS;
     agent.set_agent_time_offset_ms(back);
     for gate in &gates {
@@ -193,9 +191,10 @@ async fn a_jump_while_disconnected_is_logged_and_delivered_after_reconnecting() 
 
     // 控制面下线期间往回拨 2 小时。
     drop(cp);
-    let since = now_ms();
+    let since = system_time_ms();
     agent.set_agent_time_offset_ms(-2 * HOUR_MS);
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // 不用固定等一段时间：Agent 断线后至少过 500 毫秒才重连，跳变检查约每 100 毫秒一次，提示行是在断线期间
+    // 写的；下面的断言也不依赖这一点（重连之后才写的提示行同样是第 1 行）。
     let cp = FakeControlPlane::start_on(port).await;
 
     let line = agent_line(&cp, gate.task_id, 1).await;
