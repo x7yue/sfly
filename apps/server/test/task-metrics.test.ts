@@ -220,7 +220,7 @@ describe("指标上报与存储", () => {
 		const { runId, task } = await start(agent);
 		agent.metrics(task, [
 			conn("a", 1, 10),
-			// 缺少声明过的键（例如旧版 Agent 不认识 labels 字段时，所有键都缺）。
+			// 缺少声明过的键（例如旧版本 Agent 不认识 labels 字段时，所有键都缺）。
 			{ name: "conn_tps", timeUnixS: BigInt(at(2)), value: 1, min: 1, max: 1 },
 			{ ...conn("a", 3, 1), labels: { host: "a" } },
 			// 带了未声明的键。
@@ -551,14 +551,17 @@ describe("迁移前的指标数据", () => {
 		await rm(oldMigrations, { recursive: true, force: true });
 	});
 
-	it("升级控制面后作为不带标签的序列照常可查，之后的点接着累计", async () => {
+	/**
+	 * 旧版控制面阶段：任务派给 Agent 后，直接按旧表结构写入它的一段点（第 firstS 秒起每秒一个，值 10、20、30；
+	 * 旧数据的时间列是 Agent 时间）、摘要和任务上的点数；然后升级控制面，Agent 重新连上。
+	 */
+	const upgradeWithLegacyPoints = async (firstS: number) => {
 		const api = new ApiClient(cp);
 		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
 		agents.push(agent);
 		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
 		const task = await agent.nextAssign();
 
-		// 旧版控制面写入的数据：一段第 1–3 秒的点、摘要和任务上的点数（旧表结构，直接写库）。
 		const client = new pg.Client({ connectionString: cp.database.url });
 		await client.connect();
 		try {
@@ -571,12 +574,12 @@ describe("迁移前的指标数据", () => {
 				`insert into metric_segments (run_id, task_id, metric, start_at, end_at, offsets, "values", mins, maxs,
 					points, min, max, avg, last, ext)
 				values ($1, $2, 'tps', $3, $4, '{0,1,2}', '{10,20,30}', '{10,20,30}', '{10,20,30}', 3, 10, 30, 20, 30, null)`,
-				[runId, task.taskId, iso(1), iso(3)],
+				[runId, task.taskId, iso(firstS), iso(firstS + 2)],
 			);
 			await client.query(
 				`insert into metric_series (task_id, run_id, metric, points, min, max, sum, last, first_at, last_at)
 				values ($1, $2, 'tps', 3, 10, 30, 60, 30, $3, $4)`,
-				[task.taskId, runId, iso(1), iso(3)],
+				[task.taskId, runId, iso(firstS), iso(firstS + 2)],
 			);
 			await client.query("update tasks set metric_points = 3 where id = $1", [task.taskId]);
 		} finally {
@@ -599,7 +602,13 @@ describe("迁移前的指标数据", () => {
 			metricsApi.series.response.parse(
 				await (await cp.fetch(`/runs/${runId}/metrics/series?${params}`)).json(),
 			);
-		// 改动之前写入的数据只有 Agent 时间（原来的时间列）：控制面时间没有记录，不猜一个值（#174）。
+		return { again, task, summaryOf, seriesOf };
+	};
+
+	it("升级控制面后作为不带标签的序列照常可查，之后的点接着累计", async () => {
+		const { again, task, summaryOf, seriesOf } = await upgradeWithLegacyPoints(1);
+
+		// 升级之前写入的数据只有 Agent 时间（原来的时间列）：控制面时间没有记录，不猜一个值（#174）。
 		expect(await summaryOf()).toEqual([
 			expect.objectContaining({
 				points: 3,
@@ -617,10 +626,7 @@ describe("迁移前的指标数据", () => {
 			[null, iso(3), 30],
 		]);
 
-		again.metrics(task, [
-			["tps", at(3), 99],
-			["tps", at(4), 40],
-		]);
+		again.metrics(task, [["tps", at(4), 40]]);
 		await again.succeed(task);
 
 		expect(await summaryOf()).toEqual([
@@ -650,6 +656,65 @@ describe("迁移前的指标数据", () => {
 			[iso(4), iso(4)],
 		]);
 	});
+
+	it("跨升级仍在执行的任务：Agent 时间比控制面快时，升级后的点不因为与旧数据的 Agent 时间比较而丢弃", async () => {
+		// 旧数据是 Agent 时间第 101–103 秒（Agent 比控制面快 100 秒），控制面时间没有记录。
+		const { again, task, summaryOf, seriesOf } = await upgradeWithLegacyPoints(101);
+
+		// 升级后的点：控制面时间第 4、5 秒，早于旧数据的 Agent 时间。
+		const point = (cpS: number, value: number) => ({
+			name: "tps",
+			timeUnixS: BigInt(at(cpS + 100)),
+			monotonicMs: again.monotonicAt(at(cpS) * 1000),
+			value,
+			min: value,
+			max: value,
+		});
+		again.metrics(task, [point(4, 40), point(5, 50)]);
+		await again.succeed(task);
+
+		expect(await summaryOf()).toEqual([
+			expect.objectContaining({
+				points: 5,
+				max: 50,
+				last: 50,
+				// 首尾时间包住新旧数据（旧数据在 Agent 时间上），默认的查询范围两边都取得到。
+				first_time: iso(4),
+				last_time: iso(103),
+				last_agent_time: iso(105),
+			}),
+		]);
+		expect(
+			(await seriesOf()).series[0]?.buckets.map((b) => [b.time, b.agent_time, b.last]),
+		).toEqual([
+			[iso(4), iso(104), 40],
+			[iso(5), iso(105), 50],
+			[null, iso(101), 10],
+			[null, iso(102), 20],
+			[null, iso(103), 30],
+		]);
+	});
+
+	it("跨升级后的新点正好落在旧段的起始时间上时不覆盖旧段：排到后一秒", async () => {
+		// 旧段从 Agent 时间第 101 秒开始；Agent 比控制面快 100 秒，升级后第一个点的控制面时间也是第 101 秒。
+		const { again, task, summaryOf, seriesOf } = await upgradeWithLegacyPoints(101);
+		again.metrics(task, [
+			{
+				name: "tps",
+				timeUnixS: BigInt(at(201)),
+				monotonicMs: again.monotonicAt(at(101) * 1000),
+				value: 40,
+				min: 40,
+				max: 40,
+			},
+		]);
+		await again.succeed(task);
+
+		expect(await summaryOf()).toEqual([expect.objectContaining({ points: 4, last: 40 })]);
+		const buckets = (await seriesOf()).series[0]?.buckets ?? [];
+		expect(buckets.reduce((n, b) => n + b.points, 0)).toBe(4);
+		expect(buckets.map((b) => b.max)).toEqual(expect.arrayContaining([10, 30, 40]));
+	});
 });
 
 describe("指标的控制面时间与 Agent 时间（#174，ADR 0018）", () => {
@@ -661,11 +726,11 @@ describe("指标的控制面时间与 Agent 时间（#174，ADR 0018）", () => 
 	const DAY_S = 86_400;
 
 	/**
-	 * 连接一台 Agent 时间与控制面相差 skewS 秒的新版本 Agent（连接时单调时钟读数为 {@link MONO}）；
+	 * 连接一台 Agent 时间与控制面相差 offsetS 秒的新版本 Agent（连接时单调时钟读数为 {@link MONO}）；
 	 * `clock: false` 时是不带时钟读数的旧版本 Agent。
 	 */
-	const connect = async (skewS = 0, options: { clock?: boolean } = {}) => {
-		const agentTime = cp.clock.now().getTime() + skewS * 1000;
+	const connect = async (offsetS = 0, options: { clock?: boolean } = {}) => {
+		const agentTime = cp.clock.now().getTime() + offsetS * 1000;
 		const agent = await FakeAgent.connect(cp.grpcUrl, {
 			name: "agent-a",
 			...(options.clock === false ? {} : agentClock(agentTime, MONO)),
@@ -914,18 +979,62 @@ describe("指标的控制面时间与 Agent 时间（#174，ADR 0018）", () => 
 			]);
 		});
 
-		it("同一秒收到两批时后一批的点排在后一秒；重复的点（Agent 时间和收到的时刻都不更晚）只算一次", async () => {
+		it("同一秒收到的几批按到达顺序逐秒排开：没有读数的点无从判断重复，Agent 时间往回跳也不丢", async () => {
 			const agent = await connect(0, { clock: false });
 			const { runId, task } = await start(agent);
-			agent.metrics(task, [point(at(1), 1)]);
-			agent.metrics(task, [point(at(2), 2)]);
-			agent.metrics(task, [point(at(2), 99)]);
+			agent.metrics(task, [point(at(1000), 1)]);
+			agent.metrics(task, [point(at(1001), 2)]);
+			// Agent 时间往回拨了：比序列最后一个点早，收到的时刻也不更晚。
+			agent.metrics(task, [point(at(500), 3)]);
 			await agent.succeed(task);
 
 			expect(await tpsBuckets(runId)).toEqual([
-				[iso(0), iso(1), 1],
-				[iso(1), iso(2), 2],
+				[iso(0), iso(1000), 1],
+				[iso(1), iso(1001), 2],
+				[iso(2), iso(500), 3],
 			]);
+		});
+
+		it("补发的一批中途 Agent 时间往前跳 613 天：间隔不可信，按到达顺序逐秒排开，跳变前的点不丢", async () => {
+			const fast = 613 * DAY_S;
+			const agent = await connect(0, { clock: false });
+			const { runId, task } = await start(agent);
+			clock().advance(60_000);
+			agent.metrics(task, [
+				point(at(1000), 1),
+				point(at(1001), 2),
+				point(at(1002) + fast, 3),
+				point(at(1003) + fast, 4),
+			]);
+			await agent.succeed(task);
+
+			expect(await tpsBuckets(runId)).toEqual([
+				[iso(57), iso(1000), 1],
+				[iso(58), iso(1001), 2],
+				[iso(59), isoS(at(1002) + fast), 3],
+				[iso(60), isoS(at(1003) + fast), 4],
+			]);
+		});
+
+		it("补发的一批中途 Agent 时间往回跳：跳变后的点不当作重复，顺序不变", async () => {
+			const agent = await connect(0, { clock: false });
+			const { runId, task } = await start(agent);
+			clock().advance(60_000);
+			agent.metrics(task, [
+				point(at(1000), 1),
+				point(at(1001), 2),
+				point(at(1002) - 3600, 3),
+				point(at(1003) - 3600, 4),
+			]);
+			await agent.succeed(task);
+
+			expect(await tpsBuckets(runId)).toEqual([
+				[iso(57), iso(1000), 1],
+				[iso(58), iso(1001), 2],
+				[iso(59), isoS(at(1002) - 3600), 3],
+				[iso(60), isoS(at(1003) - 3600), 4],
+			]);
+			expect(await tpsSummary(runId)).toMatchObject({ points: 4, last: 4 });
 		});
 
 		it("新版本 Agent 的连接上不带读数的点同样取收到的时刻", async () => {

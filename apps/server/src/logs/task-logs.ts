@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { type AgentMessage, type LogBatch, LogLevel, LogSource, type Progress } from "@sfly/proto";
 import type { TaskProgressView } from "@sfly/schema";
 import { eq } from "drizzle-orm";
+import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -27,13 +28,13 @@ import { maskSecrets, secretValues } from "./secrets.js";
  *   文本里的换行被 JSON 转义，所以一行就是一条日志：任意行首的字节偏移都是合法的分页位置。
  * - 每行带两种时间（ADR 0018）：`time` 是控制面时间，由这一行的单调时钟读数按连接的对应关系折算
  *   （旧版本 Agent 没有读数时取收到这一批的时刻）；`agent_time` 是 Agent 时间，原样保存，不做范围检查。
- *   改动之前写入的行只有一个 `time`（当时记的是 Agent 时间）、没有 `agent_time`：读出时一律经
+ *   升级之前写入的行只有一个 `time`（当时记的是 Agent 时间）、没有 `agent_time`：读出时一律经
  *   {@link logLineView} / {@link normalizeLogRow}，按「只有 Agent 时间、控制面时间未记录」返回。
  * - 只追加。`tasks.log_bytes` 是已写入的字节数（= 文件大小），`tasks.log_seq` 是已写入的最大序号；
  *   序号不大于它的行视为重复而丢弃。secret 参数的值在写入前就替换成掩码，文件里没有明文。
  *
  * ## 进度
- * 只在 `tasks.progress` 保留最新值，不写文件；同样带两种时间，改动之前保存的值经 {@link taskProgressView} 读出。
+ * 只在 `tasks.progress` 保留最新值，不写文件；同样带两种时间，升级之前保存的值经 {@link taskProgressView} 读出。
  *
  * ## 上限（#18）
  * 单个任务的日志文件不超过 `limitBytes`（默认 200 MB）：放不下的第一行换成一行截断标记
@@ -45,7 +46,7 @@ import { maskSecrets, secretValues } from "./secrets.js";
 /** 一行日志（日志文件里的一行、SSE 推送的一项）。 */
 export interface LogLineView {
 	seq: number;
-	/** 控制面时间（ISO）；改动之前写入的行没有记录，为 null。 */
+	/** 控制面时间（ISO）；升级之前写入的行没有记录，为 null。 */
 	time: string | null;
 	/** Agent 时间（ISO）；没有上报时为 null。 */
 	agent_time: string | null;
@@ -55,11 +56,11 @@ export interface LogLineView {
 	text: string;
 }
 
-/** 日志文件里新写入的行都带这个键；没有它的是改动之前写入的行。 */
+/** 日志文件里新写入的行都带这个键；没有它的是升级之前写入的行。 */
 const AGENT_TIME_KEY = Buffer.from('"agent_time":');
 
 /**
- * 日志文件里解析出来的一行 → {@link LogLineView}。改动之前写入的行只有一个 `time`（Agent 时间）：
+ * 日志文件里解析出来的一行 → {@link LogLineView}。升级之前写入的行只有一个 `time`（Agent 时间）：
  * 按「只有 Agent 时间、控制面时间未记录」返回，字段顺序与新写入的行一致。
  */
 export function logLineView(row: LogLineView | Omit<LogLineView, "agent_time">): LogLineView {
@@ -70,7 +71,7 @@ export function logLineView(row: LogLineView | Omit<LogLineView, "agent_time">):
 
 /**
  * 日志文件里的一行（不含换行符）→ 下载内容里的一行：新写入的行原样返回（不解析），
- * 改动之前写入的行补成两种时间都有的格式（{@link logLineView}）。文本里的引号在 JSON 里是转义的，
+ * 升级之前写入的行补成两种时间都有的格式（{@link logLineView}）。文本里的引号在 JSON 里是转义的，
  * 所以原样出现的 `"agent_time":` 只可能是键。
  */
 export function normalizeLogRow(row: Buffer): Buffer {
@@ -78,7 +79,7 @@ export function normalizeLogRow(row: Buffer): Buffer {
 	return Buffer.from(JSON.stringify(logLineView(JSON.parse(row.toString("utf8")))));
 }
 
-/** 保存的进度 → 接口里的进度。改动之前保存的只有一个 `time`（Agent 时间）：控制面时间未记录。 */
+/** 保存的进度 → 接口里的进度。升级之前保存的只有一个 `time`（Agent 时间）：控制面时间未记录。 */
 export function taskProgressView(stored: TaskProgress): TaskProgressView {
 	const { current, total, message, time } = stored;
 	return "agent_time" in stored
@@ -185,7 +186,7 @@ export class TaskLogs {
 		// 收到的时刻在这里取（之后同一任务的写入要排队）：没有单调时钟读数时用它作控制面时间。
 		const receivedAt = this.deps.clock.now();
 		const controlPlaneTime: ControlPlaneTimeOf = (monotonicMs) =>
-			monotonicMs !== 0n && conn.clock.hasMapping ? conn.controlPlaneTime(monotonicMs) : receivedAt;
+			conn.clock.controlPlaneTime(monotonicMs, receivedAt);
 		if (message.body.case === "logs")
 			await this.append(conn.name, message.body.value, controlPlaneTime);
 		else if (message.body.case === "progress")
@@ -431,17 +432,13 @@ export class TaskLogs {
 /** 把一条消息里的单调时钟读数折算成控制面时间（0 = 没有读数，取收到这条消息的时刻）。 */
 export type ControlPlaneTimeOf = (monotonicMs: bigint) => Date;
 
-/** `Timestamp`（四位年份的 ISO 8601）能写出的范围：公元 0000 年到 9999 年。 */
-const MIN_TIMESTAMP_MS = -62_167_219_200_000n;
-const MAX_TIMESTAMP_MS = 253_402_300_799_999n;
-
 /**
- * Agent 时间（Unix 毫秒）→ ISO。原样保存，不判断它是否合理（ADR 0018）：1970 年、2099 年都照记。
- * 0（没有上报）和接口的时间格式写不出来的值（年份不是四位数）为 null。
+ * Agent 时间（Unix 毫秒）→ ISO。原样保存，不判断它是否合理（ADR 0018）：1970 年、2099 年都照记，
+ * 超出能记录的范围时记成边界值（{@link recordableAgentTimeMs}）。0（没有上报）为 null。
  */
 function agentTime(unixMs: bigint): string | null {
-	if (unixMs === 0n || unixMs < MIN_TIMESTAMP_MS || unixMs > MAX_TIMESTAMP_MS) return null;
-	return new Date(Number(unixMs)).toISOString();
+	if (unixMs === 0n) return null;
+	return new Date(recordableAgentTimeMs(unixMs)).toISOString();
 }
 
 function formatBytes(n: number): string {

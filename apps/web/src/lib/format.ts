@@ -14,6 +14,9 @@ export function formatDateTime(iso: string, now: Date = new Date(controlPlaneNow
 		: `${d.getFullYear()}-${date} ${time}`;
 }
 
+/** 没有记录的时间显示成这个，不猜一个值（ADR 0018：升级之前存下的数据缺一种时间）。 */
+export const TIME_NOT_RECORDED = "未记录";
+
 /** `2099-01-01 08:00:05`：完整的日期时间（总是带年份和秒），用于 Agent 时间这类可能离现在很远的时间。 */
 export function formatFullDateTime(iso: string): string {
 	const d = new Date(iso);

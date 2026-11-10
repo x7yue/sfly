@@ -1,9 +1,9 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "cn";
 import { useLayoutEffect, useRef } from "react";
-import { formatClockMs, formatFullDateTime } from "#/lib/format";
+import { formatClockMs, formatFullDateTime, TIME_NOT_RECORDED } from "#/lib/format";
 import type { LoadedLine } from "./log-buffer";
-import { type LogTimeKind, logLineTime, TIME_NOT_RECORDED } from "./log-time-kind";
+import { type LogTimeKind, logLineTime } from "./log-time-kind";
 
 const LEVEL_LABEL: Record<LoadedLine["level"], string> = {
 	debug: "DEBUG",
@@ -22,7 +22,7 @@ const LEVEL_STYLE: Record<LoadedLine["level"], string> = {
 /** 离顶部多近时加载更早的一页（像素）。 */
 const LOAD_OLDER_AT = 120;
 
-/** 没有控制面时间的行（改动之前写入的）不能定位的原因。 */
+/** 没有控制面时间的行（升级之前写入的）不能定位的原因。 */
 export const NOT_LOCATABLE = "这行日志没有记录控制面时间，不能在时间轴上定位";
 
 const fullTime = (iso: string | null) => (iso ? formatFullDateTime(iso) : TIME_NOT_RECORDED);

@@ -15,7 +15,7 @@ import {
 	sortedLabels,
 } from "@sfly/schema";
 import { and, asc, eq, gt, or, sql } from "drizzle-orm";
-import type { ConnectionClock } from "../agents/agent-clock.js";
+import { type ConnectionClock, recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -40,12 +40,16 @@ import { nodeTypeOf } from "./node-types.js";
  * 可接收范围、分区和保留期都只看它，所以断线期间排队的点重连后落在发生的时刻。**Agent 时间**（`time_unix_s`）
  * 原样保存，不做范围检查，不参与排序：它快 613 天、是 1970 年或中途倒退，点都照常接收，曲线连续。
  * - 同一序列里，单调时钟读数不晚于已收到的最后一个点的视为重复而忽略（幂等）；控制面重启后不记得上一个点的读数，
- *   这时折算出的时间不晚于最后一个点的视为重复。
- * - 读数更晚、折算出的时间却不晚于序列最后一个点时（重连后对应关系重新建立，误差是一次网络延迟），
- *   紧接着排在它后一秒，不丢弃。
- * - 旧版本 Agent 的点不带读数（{@link ControlPlaneTimes}）：一批里 Agent 时间最新的点取收到这一批的时刻，其余的点按它们
- *   与这个点的 Agent 时间间隔往前排（一批通常每个序列一个点，就是收到的时刻；断线后补发的一大批不会挤在同一秒）。
- *   Agent 时间和排出来的时间都不晚于序列最后一个点的才视为重复。
+ *   这时折算出的时间不晚于最后一个点的视为重复。去重不看 Agent 时间。
+ * - 不是重复、控制面时间却不晚于序列最后一个点时（重连后对应关系重新建立，误差是一次网络延迟；或者没有读数的点
+ *   在同一秒收到），紧接着排在它后一秒，不丢弃。
+ * - 旧版本 Agent 的点不带读数（{@link ArrivalTimes}），控制面时间按收到这一批的时刻排，没法判断重复，全部接收。
+ *   一批通常每个序列一个点，就是收到的时刻。断线后补发的一大批里同一序列有多个点：Agent 时间最新的点取收到的
+ *   时刻，其余的按与它的 Agent 时间间隔往前排，不挤在同一秒；间隔不可信时（同一序列里 Agent 时间没有递增，或往前
+ *   排会超出可接收范围：Agent 时间中途跳变过）整批改按到达顺序排，每个序列的最后一个点取收到的时刻，前面的每秒
+ *   一个往前排。Agent 时间取什么值都不会让点被丢弃或排错顺序。
+ * - 序列里已有的点是升级之前写入的（只有 Agent 时间）时，新点不与它们比较：不去重，也不往后排；只避开旧段的
+ *   起始时间（段按起始时间区分）。摘要的首尾时间这时取能包住新旧数据的范围。
  * - 控制面时间超出可接收范围（保留期内到最后一个提前创建的分区为止，见 src/metrics/metric-retention.ts）的点被丢弃。
  *
  * ## 分段表 `metric_segments`
@@ -53,7 +57,7 @@ import { nodeTypeOf } from "./node-types.js";
  * 值、每秒最小 / 最大值的类型化数组 + 段摘要，以及每个点的「Agent 时间 − 控制面时间」（秒，`agent_offsets`）。
  * 这个差值在一段里通常不变，全段相同时只存一个元素（一段多十几个字节）；Agent 时间中途被改动、或合并的那一秒
  * 正好跨过 Agent 时间的整秒时才逐点存（120 个点约 1 KB，值只有两三种，随整行一起压缩）。
- * 改动之前写入的段没有这一列（NULL）：它的时间列是 Agent 时间，控制面时间没有记录。
+ * 升级之前写入的段没有这一列（NULL）：它的时间列是 Agent 时间，控制面时间没有记录。
  * 分区的创建与到期删除见 src/metrics/metric-retention.ts（#32）。
  *
  * 段的大小按实测确定：PostgreSQL 只在一行超过约 2 KB（TOAST_TUPLE_THRESHOLD，与 toast_tuple_target 无关）时
@@ -87,16 +91,9 @@ export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
 /** 没有未写入数据、这么久没收到上报的任务状态从内存中移除。 */
 const IDLE_MS = 5 * 60_000;
 
-/**
- * Agent 时间能记录的范围（Unix 秒，公元 1 年到 9999 年）：时间戳只能表示这个范围，超出的按边界值记录。
- * 这不是接收条件，点照常接收。
- */
-const MIN_AGENT_TIME_S = -62_135_596_800;
-const MAX_AGENT_TIME_S = 253_402_300_799;
-
-/** 上报的 Agent 时间（Unix 秒，任意值）→ 能记录的 Unix 秒。 */
+/** 上报的 Agent 时间（Unix 秒，任意值）→ 能记录的 Unix 秒（超出范围的按边界值记录，点照常接收）。 */
 const agentSeconds = (timeUnixS: bigint): number =>
-	Math.min(MAX_AGENT_TIME_S, Math.max(MIN_AGENT_TIME_S, Number(timeUnixS)));
+	Math.floor(recordableAgentTimeMs(Number(timeUnixS) * 1000) / 1000);
 
 /** 一批指标的来源：上报它的 Agent，以及这次连接的「单调时钟读数 → 控制面时间」对应关系。 */
 export interface MetricSource {
@@ -135,9 +132,22 @@ interface Series {
 	max: number;
 	sum: number;
 	last: number;
-	/** 首尾的控制面时间（Unix 秒）。改动之前写入、之后没有新点的序列这两项是 Agent 时间。 */
+	/**
+	 * 摘要里首尾的控制面时间（Unix 秒）。升级之前写入的序列（只有 Agent 时间）这两项是 Agent 时间；之后收到新点时
+	 * 取能包住新旧数据的范围（序列查询的默认范围据此取），不用来和新点比较。
+	 */
 	firstAt: number;
 	lastAt: number;
+	/**
+	 * 已收到的最后一个带控制面时间的点的控制面时间（Unix 秒），排序和去重用；还没有这样的点时是负无穷
+	 * （新序列，或序列里只有升级之前写入的数据：新点不与旧数据的 Agent 时间比较）。
+	 */
+	lastT: number;
+	/**
+	 * 升级之前写入的段的起始时间（Unix 秒，Agent 时间）；只有这样的序列才有。新点的控制面时间避开它们：
+	 * 段按起始时间区分，撞上了会覆盖旧段。
+	 */
+	legacyStarts?: Set<number>;
 	/** 首尾的 Agent 时间（Unix 秒）。 */
 	firstAgentAt: number;
 	lastAgentAt: number;
@@ -221,14 +231,15 @@ export class TaskMetrics {
 			if (!state || state.attempt !== batch.attempt || state.expired) return;
 			const now = this.deps.clock.now().getTime();
 			state.lastSeen = now;
-			const times = new ControlPlaneTimes(source.clock, batch, now);
+			const arrival = new ArrivalTimes(source.clock, batch, now, this.deps.retention);
 			if (batch.droppedPoints > 0n) {
 				state.dropped += Number(batch.droppedPoints);
 				state.countersDirty = true;
 			}
 			const full = new Set<Series>();
 			const accepted: MetricPointView[] = [];
-			for (const p of batch.points) {
+			for (let i = 0; i < batch.points.length; i++) {
+				const p = batch.points[i] as MetricBatch["points"][number];
 				const keys = state.declared.get(p.name);
 				if (keys === undefined) continue;
 				if (!labelsMatch(p.labels, keys)) {
@@ -238,13 +249,16 @@ export class TaskMetrics {
 				}
 				if (![p.value, p.min, p.max].every(Number.isFinite)) continue;
 				const agentT = agentSeconds(p.timeUnixS);
-				const mono = times.reading(p);
-				let t = times.of(p, agentT);
+				// 能折算的读数（去重用）和控制面时间；没有读数的点（旧版本 Agent）按收到的时刻排。
+				const occurredAt = source.clock.occurredAt(p.monotonicMs);
+				const mono = occurredAt && Number(p.monotonicMs);
+				let t = occurredAt ? Math.floor(occurredAt.getTime() / 1000) : arrival.of(i);
 				const key = seriesKey(p.name, p.labels);
 				let series = state.series.get(key);
 				if (series && series.points > 0) {
-					if (isDuplicate(series, t, agentT, mono)) continue;
-					if (t <= series.lastAt) t = series.lastAt + 1;
+					if (isDuplicate(series, t, mono)) continue;
+					if (t <= series.lastT) t = series.lastT + 1;
+					if (series.legacyStarts) while (series.legacyStarts.has(t)) t++;
 				}
 				// 控制面时间超出可接收范围的丢弃（例如排队太久、已经过了保留期的点），不为它建分区（#32）。
 				if (!this.deps.retention.accepts(t)) continue;
@@ -592,7 +606,9 @@ export class TaskMetrics {
 				last: r.last,
 				firstAt: r.firstAt.getTime() / 1000,
 				lastAt: r.lastAt.getTime() / 1000,
-				// 改动之前写入的摘要没有 Agent 时间：它的首尾时间就是 Agent 时间。
+				// 升级之前写入的摘要没有 Agent 时间：它的首尾时间就是 Agent 时间，没有可以和新点比较的控制面时间。
+				lastT: r.lastAgentAt === null ? Number.NEGATIVE_INFINITY : r.lastAt.getTime() / 1000,
+				...(r.lastAgentAt === null && { legacyStarts: new Set<number>() }),
 				firstAgentAt: (r.firstAgentAt ?? r.firstAt).getTime() / 1000,
 				lastAgentAt: (r.lastAgentAt ?? r.lastAt).getTime() / 1000,
 				lastMono: undefined,
@@ -601,6 +617,20 @@ export class TaskMetrics {
 				closed: [],
 				dirtySince: undefined,
 			});
+		}
+		if ([...series.values()].some((s) => s.legacyStarts)) {
+			// 只在跨升级仍在执行的任务第一次收到点时查一次。
+			const starts = await this.deps.db.execute<{
+				metric: string;
+				labels: Labels;
+				start_s: number;
+			}>(
+				sql`select metric, labels, extract(epoch from start_at)::float8 as start_s
+					from metric_segments where task_id = ${taskId}`,
+			);
+			for (const row of starts.rows) {
+				series.get(seriesKey(row.metric, sortedLabels(row.labels)))?.legacyStarts?.add(row.start_s);
+			}
 		}
 		return {
 			taskId,
@@ -690,6 +720,7 @@ function emptySeries(name: string, labels: Labels): Series {
 		lastAt: 0,
 		firstAgentAt: 0,
 		lastAgentAt: 0,
+		lastT: Number.NEGATIVE_INFINITY,
 		lastMono: undefined,
 		segment: [],
 		closed: [],
@@ -700,25 +731,31 @@ function emptySeries(name: string, labels: Labels): Series {
 function addPoint(series: Series, p: Point): void {
 	if (series.points === 0) {
 		series.firstAt = p.t;
+		series.lastAt = p.t;
 		series.firstAgentAt = p.agentT;
+	} else {
+		// 通常 lastAt 就是这个点的时间（序列内严格递增）；取最小最大是为了序列里还有升级之前写入的数据
+		// （Agent 时间）时首尾时间能包住新旧数据。
+		series.firstAt = Math.min(series.firstAt, p.t);
+		series.lastAt = Math.max(series.lastAt, p.t);
 	}
 	series.points++;
 	series.min = Math.min(series.min, p.min);
 	series.max = Math.max(series.max, p.max);
 	series.sum += p.value;
 	series.last = p.value;
-	series.lastAt = p.t;
+	series.lastT = p.t;
 	series.lastAgentAt = p.agentT;
 	series.segment.push(p);
 }
 
 /**
- * 这个点是不是序列里已经收到过的（见文件头「两种时间」）：`t`、`agentT` 是它的控制面时间和 Agent 时间（Unix 秒），
- * `mono` 是单调时钟读数（旧版本 Agent 没有）。
+ * 这个点是不是序列里已经收到过的（见文件头「两种时间」）：`t` 是它的控制面时间（Unix 秒），`mono` 是单调时钟读数。
+ * 没有读数的点（旧版本 Agent）没法判断，一律不算重复；Agent 时间不参与判断。
  */
-function isDuplicate(series: Series, t: number, agentT: number, mono: number | undefined): boolean {
-	if (mono === undefined) return agentT <= series.lastAgentAt && t <= series.lastAt;
-	if (series.lastMono === undefined) return t <= series.lastAt;
+function isDuplicate(series: Series, t: number, mono: number | undefined): boolean {
+	if (mono === undefined) return false;
+	if (series.lastMono === undefined) return t <= series.lastT;
 	return mono <= series.lastMono;
 }
 
@@ -732,7 +769,7 @@ function agentOffsets(segment: Point[]): number[] {
 }
 
 /**
- * 摘要行的首尾时间。改动之前写入的行（没有 Agent 时间列）只有 Agent 时间：它的时间列就是 Agent 时间，
+ * 摘要行的首尾时间。升级之前写入的行（没有 Agent 时间列）只有 Agent 时间：它的时间列就是 Agent 时间，
  * 控制面时间没有记录（null）。
  */
 export function summaryTimes(
@@ -758,33 +795,56 @@ export function summaryTimes(
 }
 
 /**
- * 一批点的控制面时间（Unix 秒）。带单调时钟读数的点按连接的对应关系折算；不带读数的（旧版本 Agent，或连接没有
- * 对应关系）一批里 Agent 时间最新的点取收到的时刻，其余的按与它的 Agent 时间间隔往前排。
+ * 一批里不带读数的点（旧版本 Agent，或连接没有对应关系）的控制面时间（Unix 秒）：按收到这一批的时刻排，
+ * 规则见文件头「两种时间」。用到时才算，带读数的批次没有这份开销。
  */
-class ControlPlaneTimes {
-	/** 不带读数的点里最新的 Agent 时间（Unix 秒）；用到时才算。 */
-	#newest: number | undefined;
+class ArrivalTimes {
+	/** `batch.points` 的下标 → 控制面时间。 */
+	#times: Map<number, number> | undefined;
 
 	constructor(
 		private readonly clock: ConnectionClock,
 		private readonly batch: MetricBatch,
 		private readonly receivedAtMs: number,
+		private readonly range: { accepts(t: number): boolean },
 	) {}
 
-	/** 这个点的单调时钟读数（毫秒）；没有可用的读数时为 undefined。 */
-	reading(p: { monotonicMs: bigint }): number | undefined {
-		return this.clock.hasMapping && p.monotonicMs !== 0n ? Number(p.monotonicMs) : undefined;
+	/** `batch.points[index]`（不带读数的点）的控制面时间。 */
+	of(index: number): number {
+		this.#times ??= this.#arrange();
+		return this.#times.get(index) as number;
 	}
 
-	of(p: { monotonicMs: bigint }, agentT: number): number {
-		if (this.reading(p) !== undefined) {
-			return Math.floor(this.clock.controlPlaneTime(p.monotonicMs).getTime() / 1000);
+	#arrange(): Map<number, number> {
+		const receivedS = Math.floor(this.receivedAtMs / 1000);
+		/** 序列 → 它在这一批里不带读数的点（到达顺序）：下标和 Agent 时间。 */
+		const bySeries = new Map<string, { index: number; agentT: number }[]>();
+		let oldest = Number.POSITIVE_INFINITY;
+		let newest = Number.NEGATIVE_INFINITY;
+		for (const [index, p] of this.batch.points.entries()) {
+			if (this.clock.occurredAt(p.monotonicMs)) continue;
+			const agentT = agentSeconds(p.timeUnixS);
+			oldest = Math.min(oldest, agentT);
+			newest = Math.max(newest, agentT);
+			const key = seriesKey(p.name, p.labels);
+			const list = bySeries.get(key) ?? [];
+			list.push({ index, agentT });
+			bySeries.set(key, list);
 		}
-		this.#newest ??= this.batch.points.reduce(
-			(newest, q) =>
-				this.reading(q) === undefined ? Math.max(newest, agentSeconds(q.timeUnixS)) : newest,
-			Number.NEGATIVE_INFINITY,
-		);
-		return Math.floor(this.receivedAtMs / 1000) - (this.#newest - agentT);
+		const groups = [...bySeries.values()];
+		// Agent 时间的间隔可信：每个序列里都严格递增，并且照它往前排的最早的点还在可接收范围内。
+		const trusted =
+			this.range.accepts(receivedS - (newest - oldest)) &&
+			groups.every((points) =>
+				points.every((p, i) => i === 0 || p.agentT > (points[i - 1]?.agentT ?? p.agentT)),
+			);
+		const times = new Map<number, number>();
+		for (const points of groups) {
+			for (const [i, p] of points.entries()) {
+				const before = trusted ? newest - p.agentT : points.length - 1 - i;
+				times.set(p.index, receivedS - before);
+			}
+		}
+		return times;
 	}
 }

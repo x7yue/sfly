@@ -148,9 +148,9 @@ export interface TaskProgress {
 	/** 总数；未知时为 null。 */
 	total: number | null;
 	message: string;
-	/** 控制面时间（ISO）：这次进度发生时的控制面时间。改动之前保存的进度没有 agent_time，这一项是 Agent 时间。 */
+	/** 控制面时间（ISO）：这次进度发生时的控制面时间。升级之前保存的进度没有 agent_time，这一项是 Agent 时间。 */
 	time: string | null;
-	/** Agent 时间（ISO）：SDK 记录这次进度的时间；没有上报时为 null。改动之前保存的进度没有这个字段。 */
+	/** Agent 时间（ISO）：SDK 记录这次进度的时间；没有上报时为 null。升级之前保存的进度没有这个字段。 */
 	agent_time?: string | null;
 }
 
@@ -241,7 +241,7 @@ export const tasks = pgTable(
 		endedAt: timestamptz("ended_at"),
 		/**
 		 * 任务开始时的时钟偏差（Agent 时间 − 控制面时间，毫秒，#175）和它对应的控制面时间：TaskStarted 里的
-		 * 时钟读数折算出来的，不是收到消息的时刻（started_at 才是）。旧版 Agent 或没有上报时为空。
+		 * 时钟读数折算出来的，不是收到消息的时刻（started_at 才是）。旧版本 Agent 或没有上报时为空。
 		 */
 		startClockOffsetMs: bigint("start_clock_offset_ms", { mode: "number" }),
 		startClockOffsetMeasuredAt: timestamptz("start_clock_offset_measured_at"),
@@ -311,7 +311,7 @@ export const artifacts = pgTable(
 		sha256: text("sha256").notNull(),
 		/** 上传时间（控制面时间）。 */
 		createdAt: timestamptz("created_at").notNull(),
-		/** 文件在 Agent 上的修改时间（Agent 时间，#171）；旧版 Agent 不上报时为空。 */
+		/** 文件在 Agent 上的修改时间（Agent 时间，#171）；旧版本 Agent 不上报时为空。 */
 		agentModifiedAt: timestamptz("agent_modified_at"),
 	},
 	(t) => [unique("artifacts_task_name").on(t.taskId, t.name), index("artifacts_run").on(t.runId)],
@@ -355,10 +355,10 @@ export const metricSeries = pgTable(
 		/** 值的总和（平均值 = sum / points）。 */
 		sum: doublePrecision("sum").notNull(),
 		last: doublePrecision("last").notNull(),
-		/** 首尾两个点的控制面时间（ADR 0018）。改动之前写入的行（Agent 时间两列为空）这两列是 Agent 时间。 */
+		/** 首尾两个点的控制面时间（ADR 0018）。升级之前写入的行（Agent 时间两列为空）这两列是 Agent 时间。 */
 		firstAt: timestamptz("first_at").notNull(),
 		lastAt: timestamptz("last_at").notNull(),
-		/** 首尾两个点的 Agent 时间（#174）；改动之前写入的行为空。 */
+		/** 首尾两个点的 Agent 时间（#174）；升级之前写入的行为空。 */
 		firstAgentAt: timestamptz("first_agent_at"),
 		lastAgentAt: timestamptz("last_agent_at"),
 	},

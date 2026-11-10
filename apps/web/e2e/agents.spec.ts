@@ -170,7 +170,7 @@ test.describe("版本不一致", () => {
 			await createScenario(controlPlane, "拨测", scenarioUsing("agent-a")),
 		);
 		const held = [await current.nextAssign(), await current.nextAssign()];
-		// 控制面升级后，旧版本的 Agent 带着手上的任务重新连上，等它们结束。
+		// 控制面升级后，旧版本 Agent 带着手上的任务重新连上，等它们结束。
 		await current.disconnect();
 		const old = await connectAgent({
 			name: "agent-a",

@@ -47,7 +47,7 @@ export const MetricSummary = z.object({
 	avg: z.number(),
 	/** 最新值。 */
 	last: z.number(),
-	/** 第一个和最后一个点的控制面时间（ADR 0018）；改动之前存下的数据没有记录，为 null。 */
+	/** 第一个和最后一个点的控制面时间（ADR 0018）；升级之前存下的数据没有记录，为 null。 */
 	first_time: Timestamp.nullable(),
 	last_time: Timestamp.nullable(),
 	/** 第一个和最后一个点的 Agent 时间。 */
@@ -148,7 +148,7 @@ export const MetricSeriesQuery = z
 
 /**
  * 一个桶：起始时间 + 落在桶里的点的最小（每秒最小值中的最小）、最大、平均、最新值。桶按控制面时间划分（ADR 0018）。
- * 改动之前存下的数据只有 Agent 时间：它的桶按 Agent 时间划分，`time` 为 null，`agent_time` 是桶的起始时间。
+ * 升级之前存下的数据只有 Agent 时间：它的桶按 Agent 时间划分，`time` 为 null，`agent_time` 是桶的起始时间。
  */
 export const MetricBucket = z.object({
 	/** 桶的起始时间（控制面时间）；没有记录时为 null。 */
@@ -163,9 +163,15 @@ export const MetricBucket = z.object({
 	last: z.number(),
 });
 
-/** 桶在时间轴上的起始位置（毫秒时间戳）：控制面时间；没有记录时（改动之前存下的数据）是 Agent 时间。 */
-export const bucketStartMs = (bucket: { time: string | null; agent_time: string }): number =>
-	Date.parse(bucket.time ?? bucket.agent_time);
+/**
+ * 桶在时间轴上的起始位置（毫秒时间戳）：控制面时间（ADR 0018）。图表横轴和页面上其他按时间摆放桶的地方都用它。
+ *
+ * 旧数据的回退：升级之前存下的数据没有记录控制面时间（`time` 为 null），按它的 Agent 时间放，否则历史运行的
+ * 图表没法回看（当时两种时间不一致的点本来就不会被接收）。新数据总有控制面时间，不会走到这里。
+ * 平台自带图表的桶不是在 Agent 上产生的，没有 Agent 时间（null），但总有控制面时间。
+ */
+export const bucketStartMs = (bucket: { time: string | null; agent_time: string | null }): number =>
+	Date.parse(bucket.time ?? bucket.agent_time ?? "");
 
 /**
  * 序列查询的结果：查询的每个指标的全部序列（按指标的查询顺序，同一指标按标签排序），每个序列的非空桶按时间升序。

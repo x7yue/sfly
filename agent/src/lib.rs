@@ -186,6 +186,7 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
         .with_context(|| format!("connect to control plane at {}", config.server))?;
 
     let (outbound, rx) = mpsc::channel(64);
+    let now = clock::Reading::now();
     outbound
         .send(AgentMessage {
             body: Some(agent_message::Body::Hello(Hello {
@@ -198,8 +199,8 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
                 installed_packages,
                 dev_packages,
                 running_tasks,
-                agent_time_unix_ms: clock::agent_time_ms(),
-                monotonic_ms: clock::monotonic_ms(),
+                agent_time_unix_ms: now.agent_time_ms,
+                monotonic_ms: now.monotonic_ms,
             })),
         })
         .await
@@ -1054,16 +1055,18 @@ async fn serve(
     let mut heartbeat = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut status = updater.subscribe();
-    let heartbeat_message =
-        |running_tasks, status: &mut watch::Receiver<proto::AgentUpdate>| AgentMessage {
+    let heartbeat_message = |running_tasks, status: &mut watch::Receiver<proto::AgentUpdate>| {
+        let now = clock::Reading::now();
+        AgentMessage {
             body: Some(agent_message::Body::Heartbeat(Heartbeat {
                 running_tasks,
                 update: Some(status.borrow_and_update().clone()),
                 // 控制面据此更新时钟偏差（ADR 0018）。
-                agent_time_unix_ms: clock::agent_time_ms(),
-                monotonic_ms: clock::monotonic_ms(),
+                agent_time_unix_ms: now.agent_time_ms,
+                monotonic_ms: now.monotonic_ms,
             })),
-        };
+        }
+    };
     for result in unacked.values() {
         connection
             .outbound

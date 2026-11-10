@@ -327,7 +327,7 @@ test("产物：同时显示文件在 Agent 上的修改时间和上传时间，�
 		});
 	// Agent 的时间被改到了 2099 年；控制面时间是 2026-01-01 08:00:14（场景跑了 14 秒，浏览器在东八区）。
 	expect((await put("dump.bin", { "x-sfly-agent-modified-ms": "4070908800123" })).status).toBe(201);
-	// 旧版 Agent 不带修改时间。
+	// 旧版本 Agent 不带修改时间。
 	expect((await put("legacy.bin")).status).toBe(201);
 	await openMonitor(page, clock, runId, "probe");
 	await panel(page).getByRole("tab", { name: "产物" }).click();

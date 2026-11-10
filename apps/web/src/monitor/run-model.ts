@@ -259,7 +259,7 @@ function keepNewerProgress(current: RunView, next: RunView): RunView {
 }
 
 /**
- * 进度的先后：按控制面时间比（ADR 0018，Agent 时间可能倒退）；改动之前保存的进度没有控制面时间，退回 Agent 时间。
+ * 进度的先后：按控制面时间比（ADR 0018，Agent 时间可能倒退）；升级之前保存的进度没有控制面时间，退回 Agent 时间。
  */
 const progressOrder = (p: TaskProgressView) => Date.parse(p.time ?? p.agent_time ?? "") || 0;
 

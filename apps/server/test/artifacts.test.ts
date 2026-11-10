@@ -165,7 +165,7 @@ describe("产物", () => {
 		]);
 	});
 
-	it("旧版 Agent 不带修改时间时照常上传，Agent 修改时间为空", async () => {
+	it("旧版本 Agent 不带修改时间时照常上传，Agent 修改时间为空", async () => {
 		const { task } = await setup();
 		const put = await upload(task, "old.txt", "x");
 		expect(put.status).toBe(201);
@@ -175,19 +175,31 @@ describe("产物", () => {
 		]);
 	});
 
-	it("修改时间不是整数毫秒或超出可表示的范围时，上传成功但 Agent 修改时间为空", async () => {
+	it("修改时间不是整数毫秒时，上传成功但 Agent 修改时间为空", async () => {
 		const { task } = await setup();
 		for (const [name, value] of [
 			["text.txt", "yesterday"],
 			["float.txt", "1.5"],
-			["huge.txt", "99999999999999999999"],
 		] as const) {
 			expect((await uploadModifiedAt(task, name, value)).status, name).toBe(201);
 		}
 		expect((await list(task.taskId)).artifacts.map((a) => a.agent_modified_at)).toEqual([
 			null,
 			null,
-			null,
+		]);
+	});
+
+	it("修改时间超出能记录的范围（公元 100 年到 9999 年）时，上传成功，Agent 修改时间记成边界值", async () => {
+		const { task } = await setup();
+		for (const [name, value] of [
+			["ancient.txt", "-99999999999999999999"],
+			["huge.txt", "99999999999999999999"],
+		] as const) {
+			expect((await uploadModifiedAt(task, name, value)).status, name).toBe(201);
+		}
+		expect((await list(task.taskId)).artifacts.map((a) => a.agent_modified_at)).toEqual([
+			"0100-01-01T00:00:00.000Z",
+			"9999-12-31T23:59:59.999Z",
 		]);
 	});
 

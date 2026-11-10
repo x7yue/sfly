@@ -111,7 +111,7 @@ test("没有控制面时间的旧日志行：时间列显示未记录，不能�
 		connectAgent({ ...hello, ...agentClock(clock0 + AGENT_AHEAD_MS, M0) });
 	const { runId, agent, tasks } = await runningScenario(controlPlane, connect, clock);
 	const verify = tasks.verify as AssignedTask;
-	// 改动之前写入的日志文件：每行只有一个时间（当时记的是 Agent 时间）。
+	// 升级之前写入的日志文件：每行只有一个时间（当时记的是 Agent 时间）。
 	const dir = join(controlPlane.dataDir, "logs", runId);
 	await mkdir(dir, { recursive: true });
 	await writeFile(

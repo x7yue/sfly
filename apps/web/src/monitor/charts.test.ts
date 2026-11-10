@@ -1,11 +1,15 @@
-import type { MetricBucket, MetricIncrement, MetricSeries } from "@sfly/schema";
+import {
+	bucketStartMs,
+	type MetricBucket,
+	type MetricIncrement,
+	type MetricSeries,
+} from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { type ChartGroup, failedFirst } from "./chart-groups";
 import {
 	appendIncrement,
 	balancedColumns,
 	bucketAt,
-	bucketStart,
 	bucketTimes,
 	chartLines,
 	chartWindow,
@@ -206,7 +210,9 @@ describe("实时追加的指标点", () => {
 describe("控制面时间与 Agent 时间（#174，ADR 0018）", () => {
 	const DAYS_613 = 613 * 86_400;
 	/** 控制面时间在第 t 秒、Agent 时间在第 agentT 秒的一个 tps 点。 */
-	const skewed = (points: Array<[t: number, agentT: number, value: number]>): MetricIncrement => ({
+	const offsetPoints = (
+		points: Array<[t: number, agentT: number, value: number]>,
+	): MetricIncrement => ({
 		...increment([]),
 		points: points.map(([t, agentT, value]) => ({
 			name: "tps",
@@ -224,7 +230,7 @@ describe("控制面时间与 Agent 时间（#174，ADR 0018）", () => {
 	it("实时追加的点按控制面时间落桶，带上自己的 Agent 时间：Agent 时间差 613 天或倒退都不影响位置", () => {
 		const result = appendIncrement(
 			series([[0, 1]]),
-			skewed([
+			offsetPoints([
 				[1, 1 + DAYS_613, 5],
 				[2, 2 - 3600, 6],
 			]),
@@ -238,14 +244,14 @@ describe("控制面时间与 Agent 时间（#174，ADR 0018）", () => {
 	});
 
 	it("桶跨多秒时，桶的 Agent 时间取最后并入的点的", () => {
-		const result = appendIncrement(series([[0, 1]], 10), skewed([[4, 4 + DAYS_613, 3]]));
+		const result = appendIncrement(series([[0, 1]], 10), offsetPoints([[4, 4 + DAYS_613, 3]]));
 		expect(bucketsOf(result)).toEqual([[at(0), at(4 + DAYS_613), 3]]);
 	});
 
 	it("桶在横轴上按控制面时间放；没有记录控制面时间的旧数据按 Agent 时间放", () => {
 		const bucket = { points: 1, min: 1, max: 1, avg: 1, last: 1 };
-		expect(bucketStart({ ...bucket, time: at(3), agent_time: at(3 + DAYS_613) })).toBe(s(3));
-		expect(bucketStart({ ...bucket, time: null, agent_time: at(7) })).toBe(s(7));
+		expect(bucketStartMs({ ...bucket, time: at(3), agent_time: at(3 + DAYS_613) })).toBe(s(3));
+		expect(bucketStartMs({ ...bucket, time: null, agent_time: at(7) })).toBe(s(7));
 		// 悬停时也按同一个位置找桶。
 		const legacy = [{ ...bucket, time: null, agent_time: at(7) }];
 		expect(bucketAt(legacy, s(7.5), 1)).toBe(legacy[0]);
@@ -306,7 +312,7 @@ describe("降采样后的尖峰（故事 14）", () => {
 	});
 
 	it("包络：沿最大值向前、沿最小值返回的闭合多边形", () => {
-		const pts = envelopePoints(spiky, bucketStart, (v) => v);
+		const pts = envelopePoints(spiky, bucketStartMs, (v) => v);
 		expect(pts).toEqual([
 			[s(0), 10],
 			[s(10), 95],

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use sfly_agent::proto::{TaskStatus, agent_message};
-use support::{AgentOptions, FakeControlPlane, WAIT, spawn_agent, stub_task};
+use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task, wait_until};
 
 /// 目录下（递归）普通文件的总字节数。
 fn file_bytes(dir: &Path) -> u64 {
@@ -25,17 +25,6 @@ fn file_bytes(dir: &Path) -> u64 {
             _ => 0,
         })
         .sum()
-}
-
-async fn wait_until(what: &str, check: impl Fn() -> bool) {
-    let deadline = tokio::time::Instant::now() + WAIT;
-    while !check() {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
 }
 
 #[tokio::test]

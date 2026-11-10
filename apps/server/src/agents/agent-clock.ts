@@ -67,6 +67,23 @@ export function clockOffsetView(
 }
 
 /**
+ * Agent 时间能记录的范围（Unix 毫秒，公元 100 年到 9999 年）。范围只在这里定义。
+ * - 上限：接口里的时间是四位年份的 ISO 8601 字符串，9999 年之后写不出来。
+ * - 下限：数据库里的时间读回来时，年份不到 100 的会被当成两位数年份读错（0001 年读成 2001 年）。
+ */
+const MIN_AGENT_TIME_MS = -59_011_459_200_000;
+const MAX_AGENT_TIME_MS = 253_402_300_799_999;
+
+/**
+ * Agent 上报的 Agent 时间（Unix 毫秒，任意值）→ 能记录的 Unix 毫秒。Agent 时间不做范围检查（ADR 0018）：
+ * 超出能记录的范围时按边界值记录，带着它的日志行、进度、指标点和产物都照常接收，不因此丢弃，也不记成「未记录」。
+ * 日志、进度、指标、产物的 Agent 时间都经这里。
+ */
+export function recordableAgentTimeMs(unixMs: bigint | number): number {
+	return Math.min(MAX_AGENT_TIME_MS, Math.max(MIN_AGENT_TIME_MS, Number(unixMs)));
+}
+
+/**
  * 一次连接的「单调时钟读数 → 控制面时间」对应关系：收到 Hello 时用当时的控制面时间和 Hello 里的单调时钟读数
  * 定下常量（控制面时间 = 单调时钟读数 + 常量），这次连接内不再重新估算，折算出的时间不倒退、间隔不变。
  * 旧版本 Agent 的 Hello 不带单调时钟读数时没有对应关系。
@@ -83,20 +100,22 @@ export class ConnectionClock {
 		this.#constantMs = hello && helloReceivedAt.getTime() - hello.monotonicMs;
 	}
 
-	/** 这次连接建立了对应关系（Hello 带了单调时钟读数）。 */
-	get hasMapping(): boolean {
-		return this.#constantMs !== undefined;
+	/**
+	 * 把 Agent 打的单调时钟读数折算成控制面时间：这件事在 Agent 上发生时的控制面时间，可以早于这次连接
+	 * （断线期间排队的数据）。没法折算时返回 undefined：连接没有对应关系（旧版本 Agent），或读数为 0（消息没带读数）。
+	 */
+	occurredAt(monotonicMs: bigint | number): Date | undefined {
+		const reading = Number(monotonicMs);
+		if (this.#constantMs === undefined || reading === 0) return undefined;
+		return new Date(reading + this.#constantMs);
 	}
 
 	/**
-	 * 把 Agent 打的单调时钟读数折算成控制面时间：这件事在 Agent 上发生时的控制面时间，可以早于这次连接
-	 * （断线期间排队的数据）。兜底：没有对应关系（旧版本 Agent 的连接）或读数为 0（消息没带读数）时，
-	 * 返回现在的控制面时间，也就是处理这条消息的时刻，与没有这些字段之前的行为一致。
+	 * 一条消息的控制面时间：能折算时是 {@link occurredAt}；没法折算时兜底为收到这条消息的时刻 `receivedAt`，
+	 * 与没有这些字段之前的行为一致。「没有读数」的兜底只写在这里。
 	 */
-	controlPlaneTime(monotonicMs: bigint | number): Date {
-		const reading = Number(monotonicMs);
-		if (this.#constantMs === undefined || reading === 0) return this.clock.now();
-		return new Date(reading + this.#constantMs);
+	controlPlaneTime(monotonicMs: bigint | number, receivedAt: Date): Date {
+		return this.occurredAt(monotonicMs) ?? receivedAt;
 	}
 
 	/**
@@ -106,6 +125,9 @@ export class ConnectionClock {
 	 */
 	offsetAt(message: { agentTimeUnixMs: bigint; monotonicMs: bigint }): ClockOffset | undefined {
 		const reading = agentClockReading(message);
-		return reading && measureClockOffset(reading, this.controlPlaneTime(reading.monotonicMs));
+		return (
+			reading &&
+			measureClockOffset(reading, this.controlPlaneTime(reading.monotonicMs, this.clock.now()))
+		);
 	}
 }

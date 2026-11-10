@@ -94,7 +94,7 @@ describe("版本不一致", () => {
 		const first = await api.triggerOk(id);
 		const held = await current.nextAssign();
 
-		// 控制面升级后，旧版本的 Agent 带着手上的任务重新连上：任务继续，连接照常接受。
+		// 控制面升级后，旧版本 Agent 带着手上的任务重新连上：任务继续，连接照常接受。
 		await current.disconnect();
 		const old = await connect({
 			name: "agent-a",

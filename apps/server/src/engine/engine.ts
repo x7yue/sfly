@@ -138,7 +138,7 @@ const UPDATE_STATES: Partial<Record<AgentUpdateState, AgentUpdateInfo["state"]>>
 };
 
 /** 任务由 Agent 负责（派发阶段或执行阶段）。 */
-/** 任务行上「结束时的时钟偏差」两列的值；没有偏差（旧版 Agent、不是 Agent 上报的结束）时不写这两列。 */
+/** 任务行上「结束时的时钟偏差」两列的值；没有偏差（旧版本 Agent、不是 Agent 上报的结束）时不写这两列。 */
 const endClockOffset = (offset: ClockOffset | undefined) =>
 	offset ? { endClockOffsetMs: offset.offsetMs, endClockOffsetMeasuredAt: offset.measuredAt } : {};
 

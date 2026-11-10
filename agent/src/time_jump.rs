@@ -29,14 +29,16 @@ pub struct Watch {
 impl Watch {
     /// 从现在开始看。
     pub fn start() -> Watch {
+        let now = clock::Reading::now();
         Watch {
-            offset_ms: clock::agent_time_ms() - clock::monotonic_ms(),
+            offset_ms: now.agent_time_ms.saturating_sub(now.monotonic_ms),
         }
     }
 
     /// 从上一次检查（或开始）到现在 Agent 时间是否跳变了。
     pub fn check(&mut self) -> Option<Jump> {
-        self.check_at(clock::agent_time_ms(), clock::monotonic_ms())
+        let now = clock::Reading::now();
+        self.check_at(now.agent_time_ms, now.monotonic_ms)
     }
 
     fn check_at(&mut self, agent_ms: i64, monotonic_ms: i64) -> Option<Jump> {

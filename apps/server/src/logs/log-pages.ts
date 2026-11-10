@@ -80,7 +80,7 @@ async function completeSize(handle: FileHandle, size: number): Promise<number> {
 	return 0;
 }
 
-/** 解析文件里的一行；改动之前写入的行按「只有 Agent 时间」读出（task-logs.ts 的 logLineView）。 */
+/** 解析文件里的一行；升级之前写入的行按「只有 Agent 时间」读出（task-logs.ts 的 logLineView）。 */
 const parse = (bytes: Buffer): LogLineView => logLineView(JSON.parse(bytes.toString("utf8")));
 
 async function forward(

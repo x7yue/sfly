@@ -18,9 +18,6 @@ export const logLineTime = (
 	kind: LogTimeKind,
 ) => (kind === "agent" ? line.agent_time : line.time);
 
-/** 时间列上没有记录的那一种时间显示成这个（不猜一个值）。 */
-export const TIME_NOT_RECORDED = "未记录";
-
 const STORAGE_KEY = "sfly.logs.time";
 const listeners = new Set<() => void>();
 

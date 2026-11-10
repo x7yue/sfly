@@ -43,7 +43,7 @@ describe("日志和进度的两种时间", () => {
 	const agents: FakeAgent[] = [];
 	const streams: SseClient[] = [];
 
-	/** 新版 Agent：Hello 带 Agent 时间和单调时钟读数。 */
+	/** 新版本 Agent：Hello 带 Agent 时间和单调时钟读数。 */
 	const connect = async (agentTime = AGENT_T0, monotonicMs = M0) => {
 		const agent = await FakeAgent.connect(cp.grpcUrl, {
 			name: "agent-a",
@@ -120,6 +120,20 @@ describe("日志和进度的两种时间", () => {
 			]);
 		});
 
+		it("Agent 时间超出能记录的范围（公元 100 年到 9999 年）时，日志行照常接收，Agent 时间记成边界值", async () => {
+			const agent = await connect();
+			const { task } = await start(agent);
+			agent.logs(task, [
+				line(1, Date.parse("9999-12-31T23:59:59.999Z") + 1, M0 + 1_000),
+				line(2, -9e15, M0 + 2_000),
+			]);
+
+			expect(await times(task.taskId, 2)).toEqual([
+				[1, iso(T0 + 1_000), "9999-12-31T23:59:59.999Z"],
+				[2, iso(T0 + 2_000), "0100-01-01T00:00:00.000Z"],
+			]);
+		});
+
 		it("SSE 的日志增量和订阅时补发的尾部都带两种时间", async () => {
 			const agent = await connect();
 			const { task } = await start(agent);
@@ -178,7 +192,7 @@ describe("日志和进度的两种时间", () => {
 			]);
 		});
 
-		it("旧版 Agent 不带单调时钟读数：控制面时间取收到的时刻，Agent 时间仍取原字段，不做范围检查", async () => {
+		it("旧版本 Agent 不带单调时钟读数：控制面时间取收到的时刻，Agent 时间仍取原字段，不做范围检查", async () => {
 			const agent = await connectOld();
 			const { task } = await start(agent);
 			clock.advance(7_000);
@@ -197,7 +211,7 @@ describe("日志和进度的两种时间", () => {
 			]);
 		});
 
-		it("新版 Agent 的某一行没带读数（0）时，这一行的控制面时间取收到的时刻", async () => {
+		it("新版本 Agent 的某一行没带读数（0）时，这一行的控制面时间取收到的时刻", async () => {
 			const agent = await connect();
 			const { task } = await start(agent);
 			clock.advance(9_000);
@@ -211,7 +225,7 @@ describe("日志和进度的两种时间", () => {
 				{ seq: 1, time: "2024-05-01T00:00:01.000Z", source: "stdout", level: "info", text: "旧 1" },
 				{ seq: 2, time: "2024-05-01T00:00:02.000Z", source: "sdk", level: "warn", text: "旧 2" },
 			];
-			/** 在任务的日志文件里放两行改动之前写入的日志。 */
+			/** 在任务的日志文件里放两行升级之前写入的日志。 */
 			const writeOld = async (runId: string, taskId: string) => {
 				const dir = join(cp.dataDir, "logs", runId);
 				await mkdir(dir, { recursive: true });
@@ -356,7 +370,7 @@ describe("日志和进度的两种时间", () => {
 			expect(await progressOf(runId)).toEqual(second.progress);
 		});
 
-		it("旧版 Agent 不带单调时钟读数：控制面时间取收到的时刻", async () => {
+		it("旧版本 Agent 不带单调时钟读数：控制面时间取收到的时刻", async () => {
 			const agent = await connectOld();
 			const { runId, task } = await start(agent);
 			clock.advance(4_000);
@@ -370,10 +384,10 @@ describe("日志和进度的两种时间", () => {
 			);
 		});
 
-		it("改动之前保存的进度只有一个时间：读出时是 Agent 时间，控制面时间未记录", async () => {
+		it("升级之前保存的进度只有一个时间：读出时是 Agent 时间，控制面时间未记录", async () => {
 			const agent = await connect();
 			const { runId, task } = await start(agent);
-			// 改动之前的格式。
+			// 升级之前的格式。
 			const old = { current: 3, total: 9, message: "旧", time: "2024-05-01T00:00:01.000Z" };
 			const client = new pg.Client({ connectionString: cp.database.url });
 			await client.connect();

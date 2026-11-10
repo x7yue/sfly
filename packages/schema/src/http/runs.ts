@@ -73,7 +73,7 @@ export const TaskProgressView = z.object({
 	/** 总数；未知时为 null。 */
 	total: z.number().nullable(),
 	message: z.string(),
-	/** 控制面时间：这次进度发生时的控制面时间；改动之前保存的进度没有记录，为 null。 */
+	/** 控制面时间：这次进度发生时的控制面时间；升级之前保存的进度没有记录，为 null。 */
 	time: Timestamp.nullable(),
 	/** Agent 时间：SDK 记录这次进度的时间，原样保存；没有上报时为 null。 */
 	agent_time: Timestamp.nullable(),
@@ -95,7 +95,7 @@ export const AttemptView = z.object({
 	/**
 	 * 任务开始、结束时的时钟偏差（ADR 0018）：Agent 在执行器启动、得到结果那一刻的 Agent 时间减去当时的控制面时间；
 	 * measured_at 加 offset_ms 就是那一刻的 Agent 时间。started_at / ended_at 仍是控制面收到消息的时刻。
-	 * 旧版本 Agent、改动之前的任务、不在 Agent 上执行的节点、不是由 Agent 上报而结束的任务为 null。
+	 * 旧版本 Agent、升级之前的任务、不在 Agent 上执行的节点、不是由 Agent 上报而结束的任务为 null。
 	 */
 	start_clock_offset: ClockOffsetView.nullable(),
 	end_clock_offset: ClockOffsetView.nullable(),
@@ -278,7 +278,7 @@ export const MAX_LOG_PAGE_LINES = 1000;
 
 /**
  * 一行日志，带两种时间（ADR 0018）。日志文件是 JSONL，每行就是这个对象（字段顺序也相同：页面按它算字节偏移）；
- * 改动之前写入的行只有一个 `time`，读出时它是 `agent_time`，`time` 为 null。
+ * 升级之前写入的行只有一个 `time`，读出时它是 `agent_time`，`time` 为 null。
  */
 export const LogLineView = z.object({
 	/** 任务内从 1 开始递增的序号，用来排序和去重。 */
@@ -387,7 +387,7 @@ export const ArtifactView = z.object({
 	url: z.string(),
 });
 
-/** 上传产物的请求头：文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。旧版 Agent 不带。 */
+/** 上传产物的请求头：文件在 Agent 上的修改时间（Agent 时间，Unix 毫秒）。旧版本 Agent 不带。 */
 export const AGENT_MODIFIED_MS_HEADER = "x-sfly-agent-modified-ms";
 
 const ArtifactParams = z.object({ id: z.string(), "*": z.string() });
