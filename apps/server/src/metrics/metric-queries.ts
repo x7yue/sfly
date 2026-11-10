@@ -48,7 +48,7 @@ interface Acc {
 	max: number;
 	sum: number;
 	last: number;
-	/** last 对应的点的 Agent 时间（Unix 秒）；没有记录控制面时间的点（改动之前写入的段）为 null。 */
+	/** last 对应的点的 Agent 时间（Unix 秒）；没有记录控制面时间的点（升级之前写入的段）为 null。 */
 	agentAt: number | null;
 	/** last 对应的点在时间轴上的位置（Unix 秒）。 */
 	lastAt: number;
@@ -69,9 +69,9 @@ interface SegmentRow extends Record<string, unknown> {
 	avg: number;
 	last: number;
 	offsets: Buffer | null;
-	/** 每点的「Agent 时间 − 控制面时间」（秒），全段相同时只有一个元素；改动之前写入的段为 null。 */
+	/** 每点的「Agent 时间 − 控制面时间」（秒），全段相同时只有一个元素；升级之前写入的段为 null。 */
 	agent_offsets: Buffer | null;
-	/** 段里最后一个点的这个差值；改动之前写入的段为 null（它的时间列是 Agent 时间，控制面时间没有记录）。 */
+	/** 段里最后一个点的这个差值；升级之前写入的段为 null（它的时间列是 Agent 时间，控制面时间没有记录）。 */
 	agent_last: number | null;
 	values: Buffer | null;
 	mins: Buffer | null;
@@ -140,7 +140,7 @@ export class MetricQueries {
 	 * bucket_seconds 的桶，每个桶给出点数、最小（每秒最小值中的最小）、最大（每秒最大值中的最大，尖峰可见）、
 	 * 平均、最新值。每个序列（指标名 + 标签，#78）分别降采样，按指标名查询时返回这个指标的全部序列。
 	 * 整段落在一个桶里时直接用段摘要，不展开数组；内存里尚未写库的点覆盖库里同一范围的数据。
-	 * 每个桶另带 Agent 时间（桶里最后一个点的）。改动之前写入的段没有记录控制面时间：按它的时间列（Agent 时间）
+	 * 每个桶另带 Agent 时间（桶里最后一个点的）。升级之前写入的段没有记录控制面时间：按它的时间列（Agent 时间）
 	 * 落桶，桶的 `time` 为 null（ADR 0018）。
 	 */
 	async series(runId: string, query: MetricSeriesQuery): Promise<SeriesOutcome> {

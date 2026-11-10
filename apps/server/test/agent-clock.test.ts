@@ -85,7 +85,7 @@ describe("Agent 的时钟偏差（#172）", () => {
 		}
 	});
 
-	it("旧版 Agent 不带时钟字段：连接照常，时钟偏差未知", async () => {
+	it("旧版本 Agent 不带时钟字段：连接照常，时钟偏差未知", async () => {
 		const clock = new ManualClock(START);
 		cp = await startTestControlPlane({ clock });
 		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-old" });
@@ -97,7 +97,7 @@ describe("Agent 的时钟偏差（#172）", () => {
 		expect(view.clock_offset).toBeNull();
 	});
 
-	it("换成旧版 Agent 重新连接后，之前测得的时钟偏差不再显示", async () => {
+	it("换成旧版本 Agent 重新连接后，之前测得的时钟偏差不再显示", async () => {
 		cp = await startTestControlPlane({ clock: new ManualClock(START) });
 		const first = await FakeAgent.connect(cp.grpcUrl, {
 			name: "agent-a",
@@ -168,11 +168,10 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 		);
 		const conn = connection("agent-a");
 
-		expect(conn.clock.hasMapping).toBe(true);
-		expect(conn.controlPlaneTime(50_000).toISOString()).toBe(START);
-		expect(conn.controlPlaneTime(53_250n).toISOString()).toBe("2025-03-07T00:00:03.250Z");
+		expect(conn.clock.occurredAt(50_000)?.toISOString()).toBe(START);
+		expect(conn.clock.occurredAt(53_250n)?.toISOString()).toBe("2025-03-07T00:00:03.250Z");
 		// 断线期间排队的数据：发生在这次连接之前 20 秒。
-		expect(conn.controlPlaneTime(30_000).toISOString()).toBe("2025-03-06T23:59:40.000Z");
+		expect(conn.clock.occurredAt(30_000)?.toISOString()).toBe("2025-03-06T23:59:40.000Z");
 	});
 
 	it("同一次连接内折算结果不变：心跳带来新的读数、Agent 时间跳变、控制面时间流逝都不影响", async () => {
@@ -182,7 +181,7 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 		});
 		agents.push(agent);
 		const conn = connection("agent-a");
-		const before = conn.controlPlaneTime(60_000).toISOString();
+		const before = conn.clock.occurredAt(60_000)?.toISOString();
 		expect(before).toBe("2025-03-07T00:00:10.000Z");
 
 		// 心跳晚到了 3 秒（单调时钟只走了 10 秒，控制面过了 13 秒），Agent 时间还往前跳了 613 天。
@@ -193,7 +192,7 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 			expect(view?.clock_offset?.measured_at).toBe("2025-03-07T00:00:13.000Z");
 		});
 
-		expect(conn.controlPlaneTime(60_000).toISOString()).toBe(before);
+		expect(conn.clock.occurredAt(60_000)?.toISOString()).toBe(before);
 	});
 
 	it("重新连接后按新的 Hello 重新建立对应关系", async () => {
@@ -208,30 +207,37 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 			await FakeAgent.connect(gateway.url, { name: "agent-a", ...agentClock(START_MS, 1_000) }),
 		);
 
-		expect(connection("agent-a").controlPlaneTime(2_000).toISOString()).toBe(
+		expect(connection("agent-a").clock.occurredAt(2_000)?.toISOString()).toBe(
 			"2025-03-07T00:01:01.000Z",
 		);
 	});
 
-	it("旧版 Agent 的连接没有对应关系：折算兜底为现在的控制面时间", async () => {
+	it("旧版本 Agent 的连接没有对应关系：没法折算，控制面时间兜底为收到消息的时刻", async () => {
 		agents.push(await FakeAgent.connect(gateway.url, { name: "agent-old" }));
 		const conn = connection("agent-old");
 		clock.advance(5_000);
+		const receivedAt = clock.now();
 
-		expect(conn.clock.hasMapping).toBe(false);
-		expect(conn.controlPlaneTime(0).toISOString()).toBe("2025-03-07T00:00:05.000Z");
+		expect(conn.clock.occurredAt(0)).toBeUndefined();
+		expect(conn.clock.controlPlaneTime(0, receivedAt)).toEqual(receivedAt);
 		// 就算消息里带了读数，没有对应关系也无从折算。
-		expect(conn.controlPlaneTime(123_456).toISOString()).toBe("2025-03-07T00:00:05.000Z");
+		expect(conn.clock.occurredAt(123_456)).toBeUndefined();
+		expect(conn.clock.controlPlaneTime(123_456, receivedAt)).toEqual(receivedAt);
 	});
 
-	it("新版 Agent 的消息没带读数（0）时同样兜底为现在的控制面时间", async () => {
+	it("新版本 Agent 的消息没带读数（0）时同样兜底为收到消息的时刻，带读数时不用兜底", async () => {
 		agents.push(
 			await FakeAgent.connect(gateway.url, { name: "agent-a", ...agentClock(START_MS, 50_000) }),
 		);
 		clock.advance(5_000);
+		const conn = connection("agent-a");
 
-		expect(connection("agent-a").controlPlaneTime(0n).toISOString()).toBe(
+		expect(conn.clock.occurredAt(0n)).toBeUndefined();
+		expect(conn.clock.controlPlaneTime(0n, clock.now()).toISOString()).toBe(
 			"2025-03-07T00:00:05.000Z",
+		);
+		expect(conn.clock.controlPlaneTime(51_000n, clock.now()).toISOString()).toBe(
+			"2025-03-07T00:00:01.000Z",
 		);
 	});
 });

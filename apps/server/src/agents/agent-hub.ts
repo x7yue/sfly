@@ -48,17 +48,9 @@ export class AgentConnection {
 		readonly name: string,
 		public info: AgentInfo,
 		readonly outbox: AsyncQueue<ServerMessage>,
-		/** 这次连接的「单调时钟读数 → 控制面时间」对应关系（ADR 0018）。 */
+		/** 这次连接的「单调时钟读数 → 控制面时间」对应关系（ADR 0018）：日志、进度、指标、任务事件共用。 */
 		readonly clock: ConnectionClock,
 	) {}
-
-	/**
-	 * 把 Agent 在消息里打的单调时钟读数折算成控制面时间（日志、进度、指标、任务事件共用）。
-	 * 旧版本 Agent 的连接或消息没带读数（0）时返回现在的控制面时间，见 {@link ConnectionClock.controlPlaneTime}。
-	 */
-	controlPlaneTime(monotonicMs: bigint | number): Date {
-		return this.clock.controlPlaneTime(monotonicMs);
-	}
 
 	/** 已推送 Welcome（#15：Welcome 带着对重连前任务的处置，之前不能向它派发或取消）。 */
 	#welcomed = false;

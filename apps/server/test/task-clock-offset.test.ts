@@ -143,7 +143,7 @@ describe("任务开始和结束时的时钟偏差（#175）", () => {
 		]);
 	});
 
-	it("旧版 Agent 不带时钟读数：任务照常开始和结束，偏差为空", async () => {
+	it("旧版本 Agent 不带时钟读数：任务照常开始和结束，偏差为空", async () => {
 		const agent = await connect();
 		const runId = await api.triggerOk(await api.orchestrationWith(document()));
 		const task = await agent.nextAssign();

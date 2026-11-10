@@ -3,6 +3,7 @@ import { posix } from "node:path";
 import type { Readable } from "node:stream";
 import { AGENT_MODIFIED_MS_HEADER, artifactsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
+import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import { agentTokenMatches, bearerToken } from "../agents/agent-token.js";
 import { type ArtifactRow, type ArtifactStore, artifactUrl } from "../artifacts/artifact-store.js";
 import { isUuid } from "../util/uuid.js";
@@ -22,18 +23,14 @@ import { sendError } from "./errors.js";
  * `<name>` 是产物目录内的相对路径，每个路径段单独百分号编码。`url` 是对 Agent 可见的完整下载地址，
  * 与 SDK `ctx.artifacts.save()` 返回、节点写进输出里的引用相同。
  */
-/** 公元 1 年到 9999 年：接口里的时间是四位年份的 ISO 8601 字符串，之外的值表示不了。 */
-const MIN_TIME_MS = -62_135_596_800_000;
-const MAX_TIME_MS = 253_402_300_799_999;
-
 /**
- * 上传请求头里的 Agent 修改时间（Unix 毫秒）。它是被测机器上的事实，不拿控制面时间检查范围（ADR 0018）；
- * 没带（旧版 Agent）、不是整数或表示不了时为 null，上传照常成功。
+ * 上传请求头里的 Agent 修改时间（Unix 毫秒）。它是被测机器上的事实，不拿控制面时间检查范围（ADR 0018），
+ * 超出能记录的范围时记成边界值（{@link recordableAgentTimeMs}）；没带（旧版本 Agent）或不是整数时为 null。
+ * 上传都照常成功。
  */
 function agentModifiedAt(header: string | string[] | undefined): Date | null {
-	if (typeof header !== "string" || !/^-?\d{1,15}$/.test(header)) return null;
-	const ms = Number(header);
-	return ms >= MIN_TIME_MS && ms <= MAX_TIME_MS ? new Date(ms) : null;
+	if (typeof header !== "string" || !/^-?\d+$/.test(header)) return null;
+	return new Date(recordableAgentTimeMs(Number(header)));
 }
 
 export function registerArtifactRoutes(

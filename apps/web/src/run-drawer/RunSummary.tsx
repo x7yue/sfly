@@ -10,12 +10,18 @@ import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { chainLabel as chainName } from "#/lib/copy";
-import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
+import {
+	formatClock,
+	formatDateTime,
+	formatDuration,
+	shortId,
+	TIME_NOT_RECORDED,
+} from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { useLiveRun } from "#/monitor/live-run";
-import { logLineTime, TIME_NOT_RECORDED, useLogTimeKind } from "#/monitor/log-time-kind";
+import { logLineTime, useLogTimeKind } from "#/monitor/log-time-kind";
 import { chainLabel, findNode, focusNode, orderedChains, runStatus } from "#/monitor/run-model";
 import { attemptsSignature, useMetricCatalog } from "#/monitor/use-run-metrics";
 import { useTaskLogs } from "#/monitor/use-task-logs";

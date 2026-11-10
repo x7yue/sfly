@@ -4,7 +4,6 @@ import { formatClock, formatMetric } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import {
 	bucketAt,
-	bucketStart,
 	bucketTimes,
 	type ChartBucket,
 	colorSlots,
@@ -101,7 +100,7 @@ export function MetricChart({
 						key: lineKey(l),
 						color: seriesColor(slots.get(lineKey(l)) ?? 0),
 						buckets: l.buckets.filter((b) => {
-							const t = bucketStart(b);
+							const t = bucketStartMs(b);
 							return t + span > window.start && t <= window.end;
 						}),
 					}))
@@ -329,7 +328,7 @@ const Paths = memo(function Paths({
 	const { min, top } = scale;
 	// 桶画在它覆盖的时段的中点（每秒一个桶时就是那一秒）。
 	const X = (b: ChartBucket) =>
-		((bucketStart(b) + span / 2 - window.start) / (window.end - window.start)) * W;
+		((bucketStartMs(b) + span / 2 - window.start) / (window.end - window.start)) * W;
 	const Y = (v: number) => H - 2 - ((v - min) / (top - min)) * (H - 6);
 	return (
 		<>

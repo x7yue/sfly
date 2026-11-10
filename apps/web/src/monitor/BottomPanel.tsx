@@ -13,7 +13,13 @@ import { DownloadIcon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { formatBytes, formatClock, formatDuration, formatFullDateTime } from "#/lib/format";
+import {
+	formatBytes,
+	formatClock,
+	formatDuration,
+	formatFullDateTime,
+	TIME_NOT_RECORDED,
+} from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -610,7 +616,7 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 							title="文件在 Agent 上的修改时间（Agent 时间）"
 							className={cn("font-mono", a.agent_modified_at && "text-fg")}
 						>
-							{a.agent_modified_at ? formatFullDateTime(a.agent_modified_at) : "未记录"}
+							{a.agent_modified_at ? formatFullDateTime(a.agent_modified_at) : TIME_NOT_RECORDED}
 						</span>
 						<span>上传</span>
 						<span title="上传到控制面的时间（控制面时间）" className="font-mono">

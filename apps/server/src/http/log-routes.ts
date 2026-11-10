@@ -21,7 +21,7 @@ import { sendError } from "./errors.js";
  * - `?after_seq=<n>`：已经用分页接口读到了第 n 行，连上时只发之后的行（与 `Last-Event-ID` 取较大者）。
  * - `GET /tasks/:id/logs`：按字节偏移分页读取（`before` / `after`、`limit`、`level`、`source`），见 log-pages.ts；
  *   契约见 @sfly/schema 的 logsApi.page，查询参数不合法时 400 `invalid_request`。
- * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（改动之前写入的行在下载时补齐）。
+ * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（升级之前写入的行在下载时补齐）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
  */
 export function registerLogRoutes(
@@ -64,7 +64,7 @@ export function registerLogRoutes(
 			.header("content-type", `${logsApi.download.contentType}; charset=utf-8`)
 			.header("content-disposition", attachment(`${info.nodeId}-${info.attempt}.log.jsonl`));
 		if (size === undefined || size === 0) return reply.send("");
-		// 只发送此刻的内容（文件可能还在追加）。每行都带两种时间：改动之前写入的行在这里补齐，
+		// 只发送此刻的内容（文件可能还在追加）。每行都带两种时间：升级之前写入的行在这里补齐，
 		// 所以长度事先不知道，不带 content-length。
 		return reply.send(
 			createReadStream(info.file, { start: 0, end: size - 1 }).pipe(new LogRowNormalizer()),
@@ -119,7 +119,7 @@ export function registerLogRoutes(
 }
 
 /**
- * 把日志文件的字节流逐行交给 {@link normalizeLogRow}：新写入的行原样通过，改动之前写入的行补成两种时间都有的格式。
+ * 把日志文件的字节流逐行交给 {@link normalizeLogRow}：新写入的行原样通过，升级之前写入的行补成两种时间都有的格式。
  * 一块里没有需要改写的行时整块原样转发，不复制。
  */
 class LogRowNormalizer extends Transform {

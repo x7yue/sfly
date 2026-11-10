@@ -1,4 +1,5 @@
 import {
+	bucketStartMs,
 	compareSeries,
 	isLabeled,
 	type MetricBucket,
@@ -8,7 +9,7 @@ import {
 	seriesKey,
 	sortedLabels,
 } from "@sfly/schema";
-import { formatFullDateTime, formatMetric } from "#/lib/format";
+import { formatFullDateTime, formatMetric, TIME_NOT_RECORDED } from "#/lib/format";
 import type { ChartLine } from "./MetricChart";
 import type { TimeRange } from "./timeline-model";
 
@@ -22,13 +23,6 @@ import type { TimeRange } from "./timeline-model";
  * 后者不是在 Agent 上产生的，没有 Agent 时间。横轴一律是控制面时间（ADR 0018）。
  */
 export type ChartBucket = Omit<MetricBucket, "agent_time"> & { agent_time: string | null };
-
-/**
- * 桶在横轴上的起始位置（毫秒时间戳）：控制面时间。改动之前存下的数据没有记录控制面时间（`time` 为 null），
- * 按它的 Agent 时间放（当时两种时间不一致的点本来就不会被接收）。
- */
-export const bucketStart = (bucket: ChartBucket): number =>
-	Date.parse(bucket.time ?? bucket.agent_time ?? "");
 
 /** 图表横轴最短的时长：刚开始执行的节点也有可读的横轴。 */
 export const MIN_CHART_SPAN = 1000;
@@ -99,7 +93,7 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		}
 		const buckets = entry.buckets;
 		const last = buckets.at(-1);
-		const lastStart = last ? bucketStart(last) : null;
+		const lastStart = last ? bucketStartMs(last) : null;
 		if (last && lastStart !== null && t < lastStart + span) {
 			// 落在最后一个桶里：每秒一个桶时就是同一秒（已经有了），否则合并。
 			if (span === 1000 || t <= lastStart) continue;
@@ -284,7 +278,7 @@ export function bucketAt<B extends ChartBucket>(
 	const span = bucketSeconds * 1000;
 	for (let i = buckets.length - 1; i >= 0; i--) {
 		const b = buckets[i] as B;
-		const start = bucketStart(b);
+		const start = bucketStartMs(b);
 		if (start <= t) return t < start + span ? b : null;
 	}
 	return null;
@@ -292,13 +286,13 @@ export function bucketAt<B extends ChartBucket>(
 
 /**
  * 悬停提示里一个桶的两种时间（ADR 0018）：控制面时间（横轴，桶的起始时间）和 Agent 时间（桶里最后一个点在被测机器上
- * 的时间），都带日期——两者可能差很多天。改动之前存下的数据没有控制面时间，显示「未记录」而不是猜一个值。
+ * 的时间），都带日期——两者可能差很多天。升级之前存下的数据没有控制面时间，显示「未记录」而不是猜一个值。
  * 不是在 Agent 上产生的桶（平台自带图表）没有 Agent 时间，返回 null。
  */
 export function bucketTimes(b: ChartBucket): { controlPlane: string; agent: string } | null {
 	if (b.agent_time === null) return null;
 	return {
-		controlPlane: b.time === null ? "未记录" : formatFullDateTime(b.time),
+		controlPlane: b.time === null ? TIME_NOT_RECORDED : formatFullDateTime(b.time),
 		agent: formatFullDateTime(b.agent_time),
 	};
 }

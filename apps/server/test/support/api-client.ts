@@ -113,7 +113,7 @@ export interface AttemptView {
 	queued_at: string;
 	started_at: string | null;
 	ended_at: string | null;
-	/** 任务开始、结束时的时钟偏差（#175）；旧版 Agent 或没有上报时为 null。 */
+	/** 任务开始、结束时的时钟偏差（#175）；旧版本 Agent 或没有上报时为 null。 */
 	start_clock_offset: ClockOffsetView | null;
 	end_clock_offset: ClockOffsetView | null;
 	/** 定时 / Sleep 节点的唤醒时间（#14）；其他节点为 null。 */
@@ -122,7 +122,7 @@ export interface AttemptView {
 		current: number;
 		total: number | null;
 		message: string;
-		/** 控制面时间；改动之前保存的进度为 null。 */
+		/** 控制面时间；升级之前保存的进度为 null。 */
 		time: string | null;
 		agent_time: string | null;
 	} | null;

@@ -19,7 +19,7 @@ function agentTime(offset: ClockOffsetView | null): string | null {
 
 /**
  * 尝试开始或结束时的时钟偏差达到阈值（由接口判断）时，给出两头的 Agent 时间和偏差说明；
- * 都不到阈值、或没有记录（旧版 Agent、旧任务、控制面执行的节点）时返回 null：只显示控制面时间。
+ * 都不到阈值、或没有记录（旧版本 Agent、旧任务、控制面执行的节点）时返回 null：只显示控制面时间。
  */
 export function attemptAgentTimes(
 	attempt: Pick<AttemptView, "start_clock_offset" | "end_clock_offset">,
