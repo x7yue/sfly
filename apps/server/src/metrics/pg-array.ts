@@ -11,6 +11,7 @@
 
 const FLOAT8_OID = 701;
 const INT4_OID = 23;
+const INT8_OID = 20;
 
 function decode<T extends Float64Array | Int32Array>(
 	buf: Uint8Array,
@@ -54,4 +55,14 @@ export const decodeInt4Array = (buf: Uint8Array): Int32Array =>
 		4,
 		(n) => new Int32Array(n),
 		(v, at) => v.getInt32(at),
+	);
+
+/** `array_send(x::int8[])` 的输出 → 数组（元素转成 number，超出安全整数范围时不精确）。 */
+export const decodeInt8Array = (buf: Uint8Array): Float64Array =>
+	decode(
+		buf,
+		INT8_OID,
+		8,
+		(n) => new Float64Array(n),
+		(v, at) => Number(v.getBigInt64(at)),
 	);

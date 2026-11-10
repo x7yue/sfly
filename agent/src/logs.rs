@@ -6,7 +6,7 @@
 //! - 标准输出 → 来源 stdout、级别 info；标准错误 → 来源 stderr、级别 error；
 //! - 事件管道里的 `{"type":"log"}` → 来源 sdk、级别取 SDK 记录的级别；
 //! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次；
-//! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
+//! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 单调时钟秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
 //!   任务结束前发完。
 //!
 //! 同一批内按时间排序后再编号，所以不同来源的行大致按发生顺序排列；同一来源内保持写入顺序。
@@ -655,14 +655,16 @@ impl Forwarder {
 
     /// 处理事件管道里的一块完整内容。
     fn events(&mut self, chunk: &[u8]) {
+        // 读到这一块事件时的单调时钟读数（ADR 0018）：一块读一次。
+        let read_at_ms = clock::monotonic_ms();
         for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
-            self.event(line);
+            self.event(line, read_at_ms);
             self.flush_full_batch();
         }
     }
 
-    /// 处理事件管道里的一行。
-    fn event(&mut self, line: &[u8]) {
+    /// 处理事件管道里的一行；`read_at_ms` 是读到它时的单调时钟读数。
+    fn event(&mut self, line: &[u8], read_at_ms: i64) {
         match serde_json::from_slice::<Event>(line) {
             Ok(Event::Log { ts, level, message }) => self.pending.push(Pending {
                 time_unix_ms: sdk_time_ms(ts),
@@ -693,7 +695,7 @@ impl Forwarder {
                 labels,
             }) => self
                 .metrics
-                .add(sdk_time_ms(ts), name, labels, &kind, value),
+                .add(read_at_ms, sdk_time_ms(ts), name, labels, &kind, value),
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
                 time_unix_ms: now_ms(),
@@ -716,11 +718,11 @@ impl Forwarder {
             self.progress_sent_at = Some(Instant::now());
             self.send(agent_message::Body::Progress(progress));
         }
-        // 平时一秒的宽限期一结束（下一个检查点，最多晚 TICK）就发出这一秒，每秒最多一批；任务结束时发出全部。
+        // 平时一秒（按单调时钟）一结束（下一个检查点，最多晚 TICK）就发出这一秒，每秒最多一批；任务结束时发出全部。
         let points = if last {
             self.metrics.take(None)
         } else {
-            self.metrics.take_due(now_ms())
+            self.metrics.take_due(clock::monotonic_ms())
         };
         if !points.is_empty() {
             self.telemetry.send_metrics(MetricBatch {

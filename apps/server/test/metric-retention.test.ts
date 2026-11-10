@@ -38,7 +38,7 @@ describe("指标保留期与分区维护", () => {
 		await publishPackage(cp, "bench", "1.0.0", {
 			load: { outputs: [], metrics: [{ name: "tps", unit: "req/s", kind: "gauge" }] },
 		});
-		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
 		return new ApiClient(cp);
 	};
 	const clock = () => cp.clock as ManualClock;
@@ -303,7 +303,7 @@ describe("指标保留期与分区维护", () => {
 		const runId = await runWithMetrics(api);
 		await agent.disconnect();
 		await cp.restart(() => clock().advance(DAY + 1000));
-		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" }, { clock: cp.clock });
 		await eventually(async () => expect((await summary(runId)).expired).toBe(true));
 	});
 
@@ -311,7 +311,42 @@ describe("指标保留期与分区维护", () => {
 		((await summary(runId)).tasks[0] as { metrics: Array<{ points: number; last: number }> })
 			?.metrics[0];
 
-	it("时间戳超出合理范围的点被丢弃，不按异常的日期建分区", async () => {
+	it("Agent 时间异常（快 613 天、1970 年）：按控制面时间分区和过期，不按 Agent 的日期建分区", async () => {
+		const api = await setup({ metricRetentionDays: 7 });
+		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
+		const task = await agent.nextAssign();
+		/** 控制面时间在现在之后第 s 秒、Agent 时间为 agentS（Unix 秒）的点。 */
+		const point = (s: number, agentS: number, value: number) => ({
+			name: "tps",
+			timeUnixS: BigInt(agentS),
+			monotonicMs: agent.monotonicAt(now(s) * 1000),
+			value,
+			min: value,
+			max: value,
+		});
+		agent.metrics(task, [
+			point(1, now(1) + 613 * 86_400, 1),
+			point(2, 0, 2),
+			point(3, Date.UTC(2099, 0, 1) / 1000, 3),
+		]);
+		await agent.succeed(task);
+
+		expect(await tpsOf(runId)).toMatchObject({ points: 3, last: 3 });
+		expect(await partitions()).toEqual([
+			"metric_segments_20260101",
+			"metric_segments_20260102",
+			"metric_segments_20260103",
+		]);
+
+		// 过期只看控制面时间：保留期 7 天，差 1 秒时还在，过了就按运行结束的时间过期。
+		clock().advance(7 * DAY - 1000);
+		await fewSweeps();
+		expect((await summary(runId)).expired).toBe(false);
+		clock().advance(2000);
+		await eventually(async () => expect((await summary(runId)).expired).toBe(true));
+	});
+
+	it("控制面时间超出可接收范围的点被丢弃，不按异常的日期建分区", async () => {
 		const api = await setup();
 		const runId = await api.triggerOk(await api.orchestrationWith(ORCHESTRATION));
 		const task = await agent.nextAssign();

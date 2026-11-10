@@ -99,6 +99,9 @@ export function agentClock(agentTime: Date | string | number, monotonicMs: numbe
 	};
 }
 
+/** {@link FakeAgent.connect} 的 `clock` 选项用的单调时钟读数起点（毫秒）：足够大，早于连接的时刻也折算得出正的读数。 */
+const SYNCED_MONOTONIC_MS = 1_000_000_000_000;
+
 export type ServerMessageCase = NonNullable<ServerMessage["body"]["case"]>;
 export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
 
@@ -147,18 +150,47 @@ export class FakeAgent {
 		})();
 	}
 
-	/** 连接网关，发送 Hello，等待 Welcome 后返回。 */
+	/**
+	 * 连接网关，发送 Hello，等待 Welcome 后返回。
+	 *
+	 * `clock` 传控制面的时钟（测试里的手动时钟）时，这是一台时钟与控制面一致的新版本 Agent：Hello 带上 Agent 时间
+	 * 和单调时钟读数，之后 {@link FakeAgent.metrics} 的点自动带上与它的 Unix 秒对应的单调时钟读数，
+	 * 所以点的控制面时间就是给出的 Unix 秒（{@link FakeAgent.monotonicAt}）。不传时相当于旧版本 Agent。
+	 */
 	static async connect(
 		grpcUrl: string,
 		hello: HelloInit,
-		options: { timeoutMs?: number } = {},
+		options: { timeoutMs?: number; clock?: { now(): Date } } = {},
 	): Promise<FakeAgent> {
-		return FakeAgent.connectRaw(
+		const now = options.clock?.now().getTime();
+		const agent = await FakeAgent.connectRaw(
 			grpcUrl,
 			(agent) =>
-				agent.send({ case: "hello", value: { agentVersion: DEFAULT_AGENT_VERSION, ...hello } }),
+				agent.send({
+					case: "hello",
+					value: {
+						agentVersion: DEFAULT_AGENT_VERSION,
+						...(now === undefined ? {} : agentClock(now, SYNCED_MONOTONIC_MS)),
+						...hello,
+					},
+				}),
 			{ ...options, name: hello.name },
 		);
+		if (now !== undefined) agent.#monotonicShiftMs = SYNCED_MONOTONIC_MS - now;
+		return agent;
+	}
+
+	/** 单调时钟读数 − 控制面时间（毫秒）；只有用 `clock` 选项连接的才有。 */
+	#monotonicShiftMs: number | undefined;
+
+	/**
+	 * 控制面时间为 `unixMs` 的时刻在这台 Agent 上的单调时钟读数（毫秒）。只有用 `clock` 选项连接的 Agent 才能用。
+	 */
+	monotonicAt(unixMs: number): bigint {
+		if (this.#monotonicShiftMs === undefined) {
+			throw new Error(`agent ${this.name}: 没有用 clock 选项连接，没有单调时钟读数`);
+		}
+		return BigInt(unixMs + this.#monotonicShiftMs);
 	}
 
 	/** 建立双向流后由 `handshake` 自行发送消息（例如不合规的首条消息），然后等待 Welcome。 */
@@ -389,6 +421,9 @@ export class FakeAgent {
 	/**
 	 * 上报一批指标点（#29）：每个点 `[指标名, Unix 秒, 值]`（最小值、最大值与值相同）或完整的 MetricPoint 字段；
 	 * `droppedPoints` 是 Agent 断线排队时丢弃的点数。控制面不回 Ack。
+	 *
+	 * 用 `clock` 选项连接的 Agent（{@link FakeAgent.connect}）：没有写 `monotonicMs` 的点自动带上与它的 Unix 秒
+	 * 对应的读数，也就是 Agent 时间与控制面时间一致。要让两者不同，自己写 `monotonicMs`（{@link FakeAgent.monotonicAt}）。
 	 */
 	metrics(
 		task: TaskRef,
@@ -401,11 +436,16 @@ export class FakeAgent {
 				taskId: task.taskId,
 				attempt: task.attempt,
 				droppedPoints: BigInt(droppedPoints),
-				points: points.map((p) =>
-					Array.isArray(p)
+				points: points.map((p) => {
+					const point: MetricPointInit = Array.isArray(p)
 						? { name: p[0], timeUnixS: BigInt(p[1]), value: p[2], min: p[2], max: p[2] }
-						: p,
-				),
+						: p;
+					if (this.#monotonicShiftMs === undefined || point.monotonicMs !== undefined) return point;
+					return {
+						...point,
+						monotonicMs: this.monotonicAt(Number(point.timeUnixS ?? 0n) * 1000),
+					};
+				}),
 			},
 		});
 	}

@@ -442,21 +442,16 @@ def metrics(ctx: Context, steps: list[Any]) -> None:
     - `[指标名, 值]`：`ctx.metric(指标名, float(值))`，值可以是 `"nan"`、`"inf"` 这样的字符串；
     - `[指标名, 值, 标签]`：同上，带上标签（对象，原样传给 `labels`）；
     - 数字：等待这么多秒；
-    - `"align"`：等到下一个整秒开始（让随后的几次上报落在同一秒里）；
-    - `["late", 指标名, 值]`：补写一条时间戳为上一秒末（x.999）的 gauge 事件，
-      模拟在一秒的最后时刻记录、Agent 下一秒才读到的事件。
+    - `"align"`：等到 Agent 合并指标用的下一秒开始（让随后的几次上报落在同一秒里）。Agent 按单调时钟分秒
+      （ADR 0018），所以这里按同一个时钟对齐，不看系统时间。
     """
+    # 与 Agent 的 clock::monotonic_ms 同一个时钟：Linux 上是 CLOCK_BOOTTIME，其他系统是 CLOCK_MONOTONIC。
+    merge_clock = getattr(time, "CLOCK_BOOTTIME", time.CLOCK_MONOTONIC)
     for step in steps:
         if step == "align":
-            time.sleep(1 - time.time() % 1)
+            time.sleep(1 - time.clock_gettime(merge_clock) % 1)
         elif isinstance(step, (int, float)):
             time.sleep(step)
-        elif step[0] == "late":
-            _, name, value = step
-            ts = (int(time.time()) - 1) * 1000 + 999
-            ctx._events.write(
-                {"type": "metric", "ts": ts, "name": name, "kind": "gauge", "value": float(value)}
-            )
         elif len(step) == 3:
             name, value, labels = step
             ctx.metric(name, float(value), labels=labels)

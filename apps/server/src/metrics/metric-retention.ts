@@ -16,11 +16,13 @@ const PARTITION_NAME = /^metric_segments_(\d{4})(\d{2})(\d{2})$/;
 
 /**
  * 指标保留期与分区维护（#32，ADR 0009）：`metric_segments` 按天（UTC）分区。
+ * 这里的时间都是控制面时间（ADR 0018，#174）：点的控制面时间由 Agent 的单调时钟读数折算（见 TaskMetrics），
+ * Agent 时间不参与分区和过期判断，Agent 时间异常不会建出离谱日期的分区，也不会让数据提前过期或永不过期。
  *
  * - 周期扫描（与日志、产物的保留期清理共用）提前创建今天和之后 {@link PARTITION_DAYS_AHEAD} 天的分区，
  *   并删除整天都早于「现在 − 保留期」的分区；是否到期只按注入的时钟判断。
- * - 接收的点只接受时间戳落在「现在 − 保留期」到最后一个提前创建的分区结束之间的（{@link accepts}）：
- *   点的时间来自 Agent 的时钟，时钟异常时不会按异常的日期建分区。这个范围内、还不存在的过去日期的分区
+ * - 接收的点只接受控制面时间落在「现在 − 保留期」到最后一个提前创建的分区结束之间的（{@link accepts}）：
+ *   排队太久、已经过了保留期的点不再写入。这个范围内、还不存在的过去日期的分区
  *   （例如 Agent 断线期间排队的点）在写入时按需创建（{@link ensurePartition}）。
  * - 运行结束超过保留期后判定为「已过保留期」：删除它的指标摘要（`metric_series`），记下 `runs.metrics_purged_at`，
  *   摘要、目录、序列接口据此返回已过保留期（{@link isExpired}），之后迟到的点直接丢弃、不再写回。
@@ -48,7 +50,7 @@ export class MetricRetention {
 		return (this.deps.retentionDays ?? DEFAULT_METRIC_RETENTION_DAYS) * DAY_MS;
 	}
 
-	/** Unix 秒 t 的点是否在可接收的时间范围内。 */
+	/** 控制面时间为 Unix 秒 t 的点是否在可接收的时间范围内。 */
 	accepts(t: number): boolean {
 		const now = this.deps.clock.now().getTime();
 		const ms = t * 1000;
