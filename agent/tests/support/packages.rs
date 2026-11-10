@@ -34,6 +34,8 @@ pub struct Upload {
     /// 请求路径（未解码）。
     pub path: String,
     pub authorization: Option<String>,
+    /// `x-sfly-agent-modified-ms` 请求头：文件在 Agent 上的修改时间（Unix 毫秒）。
+    pub agent_modified_ms: Option<String>,
     pub body: Vec<u8>,
     pub at: tokio::time::Instant,
 }
@@ -219,6 +221,7 @@ async fn serve(
             files.uploads.push(Upload {
                 path: head.split_whitespace().nth(1).unwrap_or("/").to_string(),
                 authorization: header(&head, "authorization").map(str::to_string),
+                agent_modified_ms: header(&head, "x-sfly-agent-modified-ms").map(str::to_string),
                 body,
                 at: tokio::time::Instant::now(),
             });

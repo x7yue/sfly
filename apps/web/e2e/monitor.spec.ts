@@ -261,6 +261,34 @@ test("产物：列出选中尝试的产物并可下载", async ({ page, controlP
 	await expect(panel(page).getByRole("tabpanel")).toContainText("cleanup 还没有开始执行。");
 });
 
+test("产物：同时显示文件在 Agent 上的修改时间和上传时间，没有修改时间的显示未记录", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const put = (name: string, headers: Record<string, string> = {}) =>
+		controlPlane.fetch(`/tasks/${tasks.probe?.taskId}/artifacts/${name}`, {
+			method: "PUT",
+			headers,
+			body: "x",
+		});
+	// Agent 的时间被改到了 2099 年；控制面时间是 2026-01-01 08:00:14（场景跑了 14 秒，浏览器在东八区）。
+	expect((await put("dump.bin", { "x-sfly-agent-modified-ms": "4070908800123" })).status).toBe(201);
+	// 旧版 Agent 不带修改时间。
+	expect((await put("legacy.bin")).status).toBe(201);
+	await openMonitor(page, clock, runId, "probe");
+	await panel(page).getByRole("tab", { name: "产物" }).click();
+	const list = panel(page).getByRole("list", { name: "产物" });
+	const dump = list.getByRole("listitem").filter({ hasText: "dump.bin" });
+	await expect(dump.getByTitle("文件在 Agent 上的修改时间")).toHaveText("2099-01-01 08:00:00");
+	await expect(dump.getByTitle("上传到控制面的时间")).toHaveText("2026-01-01 08:00:14");
+	const legacy = list.getByRole("listitem").filter({ hasText: "legacy.bin" });
+	await expect(legacy.getByTitle("文件在 Agent 上的修改时间")).toHaveText("未记录");
+	await expect(legacy.getByTitle("上传到控制面的时间")).toHaveText("2026-01-01 08:00:14");
+});
+
 test("时间线下沿与底部面板上沿可以拖动调整高度，双击恢复默认", async ({
 	page,
 	controlPlane,

@@ -13,7 +13,7 @@ import { DownloadIcon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { formatBytes, formatClock, formatDuration } from "#/lib/format";
+import { formatBytes, formatClock, formatDuration, formatFullDateTime } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -563,6 +563,20 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 						<div className="truncate font-mono text-2xs text-fg-3" title={a.sha256}>
 							{formatBytes(a.size)} · sha256 {a.sha256.slice(0, 12)}
 						</div>
+					</div>
+					{/* 主列是文件在 Agent 上的修改时间（Agent 时间），上传时间是控制面时间（ADR 0018）。 */}
+					<div className="grid shrink-0 grid-cols-[auto_auto] gap-x-2 text-2xs text-fg-3">
+						<span>Agent 修改</span>
+						<span
+							title="文件在 Agent 上的修改时间（Agent 时间）"
+							className={cn("font-mono", a.agent_modified_at && "text-fg")}
+						>
+							{a.agent_modified_at ? formatFullDateTime(a.agent_modified_at) : "未记录"}
+						</span>
+						<span>上传</span>
+						<span title="上传到控制面的时间（控制面时间）" className="font-mono">
+							{formatFullDateTime(a.created_at)}
+						</span>
 					</div>
 					<a
 						className={buttonVariants({ size: "sm" })}

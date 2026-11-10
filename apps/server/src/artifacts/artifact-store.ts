@@ -22,7 +22,10 @@ export interface ArtifactRow {
 	file: string;
 	size: number;
 	sha256: string;
+	/** 上传时间（控制面时间）。 */
 	createdAt: Date;
+	/** 文件在 Agent 上的修改时间（Agent 时间）；没有上报时为 null。 */
+	agentModifiedAt: Date | null;
 }
 
 export type SaveOutcome =
@@ -42,6 +45,7 @@ export type SaveOutcome =
  *   例外：因取消（#12）终止、且已经派发给 Agent 开始执行（started_at 非空）的任务也接受——强制取消时控制面先把任务记为
  *   cancelled，Agent 杀掉进程后才上传产物、报结果。运行已被保留期清理时不再接受。
  * - 单个任务的产物总大小不超过 `limitBytes`（默认 1 GB），超出时整个文件被拒绝。
+ * - 文件在 Agent 上的修改时间（Agent 时间，ADR 0018）原样保存，不做范围检查，也不参与任何判断；可以为空。
  * - 文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`，按运行分目录，保留期清理整目录删除（src/retention）。
  */
 export class ArtifactStore {
@@ -63,8 +67,13 @@ export class ArtifactStore {
 		return undefined;
 	}
 
-	/** 把请求体流式写成任务的一个产物。 */
-	async save(taskId: string, name: string, body: Readable): Promise<SaveOutcome> {
+	/** 把请求体流式写成任务的一个产物；`agentModifiedAt` 是文件在 Agent 上的修改时间，没有上报时为 null。 */
+	async save(
+		taskId: string,
+		name: string,
+		body: Readable,
+		agentModifiedAt: Date | null = null,
+	): Promise<SaveOutcome> {
 		const invalid = ArtifactStore.invalidName(name);
 		if (invalid) return { ok: false, status: 400, code: "invalid_artifact_name", message: invalid };
 		const [task] = await this.deps.db
@@ -156,13 +165,20 @@ export class ArtifactStore {
 			size,
 			sha256: hash.digest("hex"),
 			createdAt: this.deps.clock.now(),
+			agentModifiedAt,
 		};
 		await this.deps.db
 			.insert(artifacts)
 			.values(row)
 			.onConflictDoUpdate({
 				target: [artifacts.taskId, artifacts.name],
-				set: { path: row.path, size: row.size, sha256: row.sha256, createdAt: row.createdAt },
+				set: {
+					path: row.path,
+					size: row.size,
+					sha256: row.sha256,
+					createdAt: row.createdAt,
+					agentModifiedAt: row.agentModifiedAt,
+				},
 			});
 		return { ok: true, artifact: { ...row, file } };
 	}
@@ -212,6 +228,7 @@ export class ArtifactStore {
 			size: row.size,
 			sha256: row.sha256,
 			createdAt: row.createdAt,
+			agentModifiedAt: row.agentModifiedAt,
 		};
 	}
 }
