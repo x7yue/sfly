@@ -9,13 +9,13 @@ import {
 	type ServerMessage,
 	ServerMessageSchema,
 } from "@sfly/proto";
+import { agentClockReading } from "../agents/agent-clock.js";
 import {
 	type AgentConnection,
 	type AgentHub,
 	DEFAULT_SLOTS,
 	devPackageInfo,
 } from "../agents/agent-hub.js";
-import { agentClockReading } from "../agents/agent-clock.js";
 import { agentTokenMatches } from "../agents/agent-token.js";
 import { AsyncQueue } from "../util/async-queue.js";
 

@@ -7,8 +7,8 @@ import { Mutex } from "../src/util/mutex.js";
 import { eventually } from "./support/eventually.js";
 import { agentClock, FakeAgent } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
-import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
+import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
 
 const DAY = 86_400_000;
 const START = "2025-03-07T00:00:00.000Z";

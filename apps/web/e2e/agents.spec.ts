@@ -77,14 +77,20 @@ test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒
 }) => {
 	const DAY = 86_400_000;
 	const now = () => clock.now().getTime();
-	await connectAgent({ name: "agent-ahead", ...agentClock(now() + 613 * DAY + 3 * 3_600_000, 5_000) });
+	await connectAgent({
+		name: "agent-ahead",
+		...agentClock(now() + 613 * DAY + 3 * 3_600_000, 5_000),
+	});
 	const synced = await connectAgent({ name: "agent-synced", ...agentClock(now() + 1_000, 5_000) });
 	// 不上报时间的旧版本 Agent：偏差未知，不显示。
 	await connectAgent({ name: "agent-old" });
 
 	await page.goto("/agents");
 	const status = (name: string) =>
-		page.getByRole("row", { name: new RegExp(name) }).getByRole("cell").nth(1);
+		page
+			.getByRole("row", { name: new RegExp(name) })
+			.getByRole("cell")
+			.nth(1);
 	await expect(status("agent-ahead")).toHaveText("在线时间比控制面快 613 天");
 	await expect(status("agent-synced")).toHaveText("在线");
 	await expect(status("agent-old")).toHaveText("在线");
