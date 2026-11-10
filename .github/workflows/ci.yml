@@ -11,12 +11,14 @@ concurrency:
   # main 上每个提交都要跑完：发布前会检查 tag 指向的提交在 main 上的 CI 已通过（release.yml）。
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+permissions:
+  contents: read
+
 # 每一步都只调用仓库根目录的统一命令（与本地完全一致，见 package.json scripts）。
 jobs:
   check:
-    # 账户账单里的 Actions 额度用尽后托管 runner 不再启动，CI 接到自托管 runner 上：一台 x86_64 Linux 开发机，
-    # runner 以单独的系统用户运行（工具链装在它自己的家目录，不动开发用户的环境），标签 `sfly-ci`。
-    runs-on: [self-hosted, linux, x64, sfly-ci]
+    # 只用 GitHub 托管的 runner：仓库公开后任何人都能提 PR，PR 里的代码不能跑在自己的机器上。
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
       postgres:
@@ -25,9 +27,8 @@ jobs:
           POSTGRES_USER: sfly
           POSTGRES_PASSWORD: sfly
           POSTGRES_DB: sfly
-        # 宿主机端口随机分配：runner 所在的机器上可能已经有占用 5432 的 PostgreSQL。
         ports:
-          - 5432
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U sfly"
           --health-interval 5s
@@ -35,10 +36,8 @@ jobs:
           --health-retries 20
     env:
       CARGO_TERM_COLOR: always
+      DATABASE_URL: postgres://sfly:sfly@127.0.0.1:5432/sfly
     steps:
-      - name: Database URL
-        # job 级 env 用不了 job 上下文，随机分配的端口在这里写进后续步骤的环境变量。
-        run: echo "DATABASE_URL=postgres://sfly:sfly@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/sfly" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # buf breaking 需要基线提交
@@ -53,7 +52,12 @@ jobs:
           components: rustfmt, clippy
           # 打包后的控制面带两个架构的 musl Agent（ADR 0011）；aarch64 用 rust-lld 交叉编译。
           targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      # 只有 main 写缓存：GitHub 的缓存按分支隔离，PR 和其他分支只能读 main 的缓存，各自写的只有自己用得上，
+      # 每份约 500MB，会把仓库 10GB 的缓存额度占满、挤掉 main 的缓存。Release 的 agent job 用同一个 shared-key 读它。
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sfly
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -99,7 +103,7 @@ jobs:
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。
   # 镜像标签与 apps/web/package.json 中 @playwright/test 的版本保持一致。
   e2e:
-    runs-on: [self-hosted, linux, x64, sfly-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     container:
       image: mcr.microsoft.com/playwright:v1.64.1-noble
@@ -138,11 +142,4 @@ jobs:
           path: |
             apps/web/playwright-report
             apps/web/test-results
-          # 私有仓库的 Artifacts 与 Packages 共用存储额度，只保留一天。
-          retention-days: 1
-      # 容器里是 root：自托管 runner 的工作目录在作业之间共用，留下 root 的文件时，下一个在宿主机上以
-      # runner 用户运行的作业（check）检出代码时删不掉。把所有权还给工作目录本来的属主。
-      - name: Return workspace ownership to the runner
-        if: always()
-        continue-on-error: true # 清理失败不影响测试结论
-        run: chown -R "$(stat -c %u:%g /__w)" /__w
+          retention-days: 7

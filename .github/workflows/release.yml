@@ -5,11 +5,10 @@ name: Release
 #   - Agent：x86_64 / aarch64 musl 静态二进制，作为 Release 附件；同时放进控制面的打包目录和镜像，
 #     由控制面提供下载和 install.sh（ADR 0011）
 #   - SDK 运行时 wheel、SHA256SUMS，作为 Release 附件
-# 不使用 Actions Artifacts（私有仓库有额度限制）：各 job 直接上传到草稿 Release，全部成功后再发布。
+# 不使用 Actions Artifacts（ADR 0010）：各 job 直接上传到草稿 Release，全部成功后再发布。
 # 失败后可以直接重新运行：草稿 Release 会被复用，附件和镜像标签会被覆盖。
-# 与 CI 一样跑在自托管 runner 上（ci.yml）：账户账单里的 Actions 额度用尽后托管 runner 不再启动（v0.1.1 因此没有发布）。
-# 只有一台 x86_64 的 runner：aarch64 的 Agent 交叉编译，不运行产物，只检查 ELF 的架构（pack-agent.sh）；
-# 控制面镜像的 Dockerfile 里没有 RUN，arm64 镜像不需要 QEMU。
+# 与 CI 一样只用 GitHub 托管的 x86_64 runner（ci.yml）：aarch64 的 Agent 交叉编译，不运行产物，
+# 只检查 ELF 的架构（pack-agent.sh）；控制面镜像的 Dockerfile 里没有 RUN，arm64 镜像不需要 QEMU。
 on:
   push:
     tags: ["v*"]
@@ -30,7 +29,7 @@ env:
 jobs:
   # tag 与各处版本号一致、提交在 main 上且 CI 已通过，然后创建（或复用）草稿 Release。
   prepare:
-    runs-on: [self-hosted, linux, x64, sfly-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: write
@@ -41,7 +40,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # version.sh 用 node 读 package.json；自托管 runner 上没有预装 node（托管 runner 上有）。
+      # version.sh 用 node 读 package.json，版本与 .node-version 一致。
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -79,7 +78,7 @@ jobs:
     strategy:
       matrix:
         target: [x86_64-unknown-linux-musl, aarch64-unknown-linux-musl]
-    runs-on: [self-hosted, linux, x64, sfly-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -90,9 +89,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # 读 main 上 CI 的缓存（ci.yml 的 check 同样构建两个 musl 目标），不写：
+      # tag 上写的缓存只有同一个 tag 能读，下次发版用不上。
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.target }}
+          shared-key: sfly
+          save-if: false
       - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
@@ -107,7 +109,7 @@ jobs:
   # 控制面镜像带着 agent job 上传到草稿 Release 的两个架构的 Agent。
   image:
     needs: [prepare, agent]
-    runs-on: [self-hosted, linux, x64, sfly-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
@@ -182,7 +184,7 @@ jobs:
   # 汇总校验和，发布 Release。
   publish:
     needs: [prepare, agent, image]
-    runs-on: [self-hosted, linux, x64, sfly-ci]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: write
