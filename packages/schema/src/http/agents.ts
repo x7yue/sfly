@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ClockOffsetView } from "./clock-offset.js";
 import { endpoint, Timestamp } from "./contract.js";
 
 /** Agent 管理相关接口的契约（约定见 ./contract.ts）。 */
@@ -81,6 +82,11 @@ export const AgentView = z.object({
 	version_mismatch: z.boolean(),
 	/** 最近一次 Heartbeat 上报的更新状态；本次连接还没上报过（或旧版本 Agent 不上报）时为 none。 */
 	update: AgentUpdateView,
+	/**
+	 * 最近一次 Hello 或 Heartbeat 测得的时钟偏差（ADR 0018）；离线时是断开前最后一次测得的。
+	 * 未知时为 null：本次（或最近一次）连接的 Agent 是不上报时间的旧版本。
+	 */
+	clock_offset: ClockOffsetView.nullable(),
 	/** 有多少个场景引用这个 Agent（最新版本里的默认 Agent 或节点另选的 Agent）。 */
 	referencing_orchestrations: z.number().int(),
 });

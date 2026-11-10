@@ -51,6 +51,7 @@ fn system_time_ms(time: SystemTime) -> i64 {
 ///
 /// Linux 上是开机以来经过的时间，包含休眠（`CLOCK_BOOTTIME`）；其他 Unix 用 `CLOCK_MONOTONIC`。
 /// 同一次开机内 Agent 进程重启前后读数连续；机器重启后重新开始。
+/// 读数总是大于 0：协议里 0 表示没有上报（旧版本 Agent）。
 #[cfg(unix)]
 pub fn monotonic_ms() -> i64 {
     use nix::time::{ClockId, clock_gettime};
@@ -59,7 +60,7 @@ pub fn monotonic_ms() -> i64 {
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     const CLOCK: ClockId = ClockId::CLOCK_MONOTONIC;
     let now = clock_gettime(CLOCK).expect("read the monotonic clock");
-    now.tv_sec() as i64 * 1000 + now.tv_nsec() as i64 / 1_000_000
+    (now.tv_sec() as i64 * 1000 + now.tv_nsec() as i64 / 1_000_000).max(1)
 }
 
 /// 没有系统级单调时钟接口的平台：从本进程第一次读取起算（进程重启后重新开始）。
@@ -70,6 +71,7 @@ pub fn monotonic_ms() -> i64 {
         .get_or_init(std::time::Instant::now)
         .elapsed()
         .as_millis() as i64
+        + 1
 }
 
 #[cfg(test)]

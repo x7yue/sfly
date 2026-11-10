@@ -60,6 +60,13 @@ message Hello {
   // 控制面在 Welcome 中逐个告诉 Agent 继续还是放弃；控制面认为在这个 Agent 上运行、
   // 但不在这个列表里的任务立即以 agent_lost 失败（docs/SEMANTICS.md §3.3）。
   repeated RunningTask running_tasks = 9;
+  // 发送这条消息时的 Agent 时间（Unix 毫秒）：Agent 机器的系统时间，可能是任何值，控制面不做范围检查（ADR 0018）。
+  // 只在 monotonic_ms 不为 0 时有意义。
+  int64 agent_time_unix_ms = 10;
+  // 发送这条消息时 Agent 的单调时钟读数（毫秒）：不受系统时间修改影响，同一次开机内连续。
+  // 控制面用收到 Hello 的控制面时间和它建立这次连接的固定对应关系（控制面时间 = 单调时钟读数 + 常量），
+  // 并据 agent_time_unix_ms 计算时钟偏差。0 表示没有上报（旧版本 Agent）：不建立对应关系，时钟偏差未知。
+  int64 monotonic_ms = 11;
 }
 
 // Agent 手上的一个任务（节点的一次尝试）。
@@ -78,6 +85,10 @@ message Heartbeat {
   repeated RunningTask running_tasks = 1;
   // Agent 的更新状态（ADR 0014）；不带这个字段的心跳（旧版本 Agent）不改变控制面保存的状态。
   AgentUpdate update = 2;
+  // 发送这条消息时的 Agent 时间（Unix 毫秒）与单调时钟读数（毫秒），含义同 Hello 的同名字段：
+  // 控制面据此更新时钟偏差。monotonic_ms 为 0 的心跳（旧版本 Agent）不改变控制面保存的时钟偏差。
+  int64 agent_time_unix_ms = 3;
+  int64 monotonic_ms = 4;
 }
 
 // Agent 的更新状态：版本与控制面不一致时 Agent 在做什么（ADR 0014），控制面保存最新一次上报的，在 Agents 页显示。

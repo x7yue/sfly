@@ -81,6 +81,10 @@ export const agents = pgTable("agents", {
 	status: text("status").$type<AgentStatus>().notNull(),
 	registeredAt: timestamptz("registered_at").notNull(),
 	lastSeenAt: timestamptz("last_seen_at").notNull(),
+	/** 最近一次 Hello 或 Heartbeat 测得的时钟偏差（Agent 时间 − 控制面时间，毫秒，#172）；未知时为空。 */
+	clockOffsetMs: bigint("clock_offset_ms", { mode: "number" }),
+	/** 测得 clock_offset_ms 的控制面时间。 */
+	clockOffsetMeasuredAt: timestamptz("clock_offset_measured_at"),
 });
 
 /**
