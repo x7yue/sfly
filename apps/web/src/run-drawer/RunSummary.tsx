@@ -15,6 +15,7 @@ import { useNow } from "#/lib/use-now";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { useLiveRun } from "#/monitor/live-run";
+import { logLineTime, TIME_NOT_RECORDED, useLogTimeKind } from "#/monitor/log-time-kind";
 import { chainLabel, findNode, focusNode, orderedChains, runStatus } from "#/monitor/run-model";
 import { attemptsSignature, useMetricCatalog } from "#/monitor/use-run-metrics";
 import { useTaskLogs } from "#/monitor/use-task-logs";
@@ -206,6 +207,8 @@ const NO_FILTER: never[] = [];
 
 function LatestLogs({ taskId }: { taskId: string }) {
 	const logs = useTaskLogs(taskId, NO_FILTER);
+	// 与监控页日志面板的时间列用同一个选择（默认 Agent 时间）。
+	const timeKind = useLogTimeKind();
 	const lines = logs.lines.slice(-LOG_LINES);
 	if (logs.error) return <p className="m-0 text-xs text-danger-fg">无法加载日志：{logs.error}</p>;
 	if (!logs.loaded) return <Skeleton className="h-16 w-full" />;
@@ -217,9 +220,10 @@ function LatestLogs({ taskId }: { taskId: string }) {
 		>
 			{lines.map((line) => {
 				const level = LEVEL[line.level] ?? { label: line.level, className: "" };
+				const time = logLineTime(line, timeKind);
 				return (
 					<li key={line.seq} className="truncate">
-						<span className="text-fg-3">{formatClock(line.time)}</span>{" "}
+						<span className="text-fg-3">{time ? formatClock(time) : TIME_NOT_RECORDED}</span>{" "}
 						<span className={level.className}>{level.label}</span>{" "}
 						<span className={cn(line.level === "info" ? "text-log-info" : level.className)}>
 							{line.text}

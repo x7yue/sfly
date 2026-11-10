@@ -17,7 +17,8 @@ import { formatBytes, formatClock, formatDuration, formatFullDateTime } from "#/
 import { NODE_STATUS } from "#/lib/node-status";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { LogList } from "./LogList";
+import { LogList, NOT_LOCATABLE } from "./LogList";
+import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
 import {
 	type NodeRef,
 	nodeKey,
@@ -105,6 +106,7 @@ export function BottomPanel({
 	const attempt =
 		node?.attempts.find((a) => a.task_id === attemptId) ?? node?.attempts.at(-1) ?? undefined;
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
+	const logTimeKind = useLogTimeKind();
 
 	const empty = tab === "logs" && (!attempt || logsEmpty);
 	const collapsed = panelOpen === null ? empty : !panelOpen;
@@ -171,6 +173,12 @@ export function BottomPanel({
 					{tab === "logs" && (
 						<>
 							<Segmented
+								label="日志时间"
+								value={logTimeKind}
+								options={LOG_TIME_KINDS}
+								onChange={(v) => setLogTimeKind(v as LogTimeKind)}
+							/>
+							<Segmented
 								label="日志级别"
 								value={minLevel}
 								options={MIN_LEVELS}
@@ -210,6 +218,7 @@ export function BottomPanel({
 								attempt={attempt}
 								levels={levelsFrom(minLevel)}
 								filtered={minLevel !== "all"}
+								timeKind={logTimeKind}
 								onEmpty={setLogsEmpty}
 							/>
 						) : (
@@ -269,11 +278,14 @@ function LogsTab({
 	attempt,
 	levels,
 	filtered,
+	timeKind,
 	onEmpty,
 }: {
 	attempt: AttemptView;
 	levels: LogLineView["level"][];
 	filtered: boolean;
+	/** 时间列显示哪一种时间；定位和按时间范围过滤始终用控制面时间。 */
+	timeKind: LogTimeKind;
 	/** 加载完、没有任何日志时为 true（筛选了级别时不算空：那是用户自己筛掉的）。 */
 	onEmpty: (empty: boolean) => void;
 }) {
@@ -285,21 +297,24 @@ function LogsTab({
 	const marker = useMonitor((s) => s.marker);
 	const actions = useMonitorActions();
 	const [markedSeq, setMarkedSeq] = useState<number | null>(null);
+	// 按时间范围过滤只看控制面时间（时间线是按它画的）；没有控制面时间的行不在任何范围里。
 	const lines = useMemo(
 		() =>
 			zoom
 				? logs.lines.filter((l) => {
+						if (l.time === null) return false;
 						const t = Date.parse(l.time);
 						return t >= zoom.start && t <= zoom.end;
 					})
 				: logs.lines,
 		[logs.lines, zoom],
 	);
+	const unlocatable = useMemo(() => logs.lines.some((l) => l.time === null), [logs.lines]);
 	// 标记被别处清除（或换了标记）时取消行的高亮。
 	const marked =
 		markedSeq !== null &&
 		marker !== null &&
-		logs.lines.some((l) => l.seq === markedSeq && Date.parse(l.time) === marker)
+		logs.lines.some((l) => l.seq === markedSeq && l.time !== null && Date.parse(l.time) === marker)
 			? markedSeq
 			: null;
 	const finished = attempt.ended_at !== null;
@@ -310,6 +325,14 @@ function LogsTab({
 			{logs.truncated && (
 				<p className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-warn-fg">
 					日志超过单个任务的大小上限，之后的输出已被截断。
+				</p>
+			)}
+			{unlocatable && (
+				<p
+					data-testid="logs-unlocatable"
+					className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-fg-3"
+				>
+					{NOT_LOCATABLE}（升级之前写入的日志只有 Agent 时间）；按时间范围过滤时这些行也不显示。
 				</p>
 			)}
 			{logs.error && (
@@ -335,7 +358,9 @@ function LogsTab({
 						loadingOlder={logs.loadingOlder}
 						loadOlder={logs.loadOlder}
 						marked={marked}
+						timeKind={timeKind}
 						onPick={(line) => {
+							if (line.time === null) return;
 							const same = marked === line.seq;
 							setMarkedSeq(same ? null : line.seq);
 							actions.mark(same ? null : Date.parse(line.time));

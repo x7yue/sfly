@@ -6,6 +6,7 @@ import { fromLatestPage, withLive, withOlderPage } from "./log-buffer";
 const line = (seq: number, level: LogLineView["level"] = "info"): LogLineView => ({
 	seq,
 	time: new Date(Date.UTC(2026, 0, 1, 0, 0, seq)).toISOString(),
+	agent_time: new Date(Date.UTC(2027, 8, 6, 0, 0, seq)).toISOString(),
 	source: "stdout",
 	level,
 	text: `line ${seq}`,
@@ -104,6 +105,7 @@ describe("日志分页与实时接续", () => {
 		const marker = {
 			seq: 4,
 			time: line(4).time,
+			agent_time: line(4).agent_time,
 			source: "system" as const,
 			level: "warn" as const,
 		};
