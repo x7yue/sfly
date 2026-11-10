@@ -197,6 +197,8 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
                 installed_packages,
                 dev_packages,
                 running_tasks,
+                agent_time_unix_ms: clock::agent_time_ms(),
+                monotonic_ms: clock::monotonic_ms(),
             })),
         })
         .await
@@ -1054,6 +1056,9 @@ async fn serve(
             body: Some(agent_message::Body::Heartbeat(Heartbeat {
                 running_tasks,
                 update: Some(status.borrow_and_update().clone()),
+                // 控制面据此更新时钟偏差（ADR 0018）。
+                agent_time_unix_ms: clock::agent_time_ms(),
+                monotonic_ms: clock::monotonic_ms(),
             })),
         };
     for result in unacked.values() {

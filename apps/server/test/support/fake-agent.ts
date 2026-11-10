@@ -81,6 +81,24 @@ export { LogLevel, LogSource };
 export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
 export { AgentUpdateState, ErrorKind, TaskStatus };
 
+/** Hello / Heartbeat 里的时钟字段：Agent 时间和单调时钟读数。 */
+export interface AgentClockInit {
+	agentTimeUnixMs: bigint;
+	monotonicMs: bigint;
+}
+
+/**
+ * 任意的 Agent 时间（Date、ISO 字符串或 Unix 毫秒）加单调时钟读数（毫秒），展开进 Hello 或传给
+ * {@link FakeAgent.heartbeat}：`FakeAgent.connect(url, { name, ...agentClock("2027-09-06T00:00:00Z", 5_000) })`。
+ * 不带它的 Hello / Heartbeat 相当于旧版本 Agent（两个字段都是 0）。
+ */
+export function agentClock(agentTime: Date | string | number, monotonicMs: number): AgentClockInit {
+	return {
+		agentTimeUnixMs: BigInt(new Date(agentTime).getTime()),
+		monotonicMs: BigInt(monotonicMs),
+	};
+}
+
 export type ServerMessageCase = NonNullable<ServerMessage["body"]["case"]>;
 export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
 
@@ -217,11 +235,13 @@ export class FakeAgent {
 	/**
 	 * 发送心跳并等到控制面处理完它。心跳带上手上的任务（默认 {@link held}：派发给本 Agent、还没上报结果的），
 	 * 控制面只为它们续约；连续两次心跳都没有上报的任务以 agent_lost 失败。
+	 * `clock`（{@link agentClock}）是心跳带的 Agent 时间和单调时钟读数，不传时相当于旧版本 Agent。
 	 */
-	async heartbeat(tasks: TaskRef[] = this.held): Promise<void> {
+	async heartbeat(tasks: TaskRef[] = this.held, clock?: AgentClockInit): Promise<void> {
 		this.send({
 			case: "heartbeat",
 			value: {
+				...clock,
 				runningTasks: tasks.map((t) => ({
 					taskId: t.taskId,
 					attempt: t.attempt,

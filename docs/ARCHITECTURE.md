@@ -182,9 +182,12 @@ service AgentGateway {
 message AgentMessage {
   oneof body {
     Hello         hello      = 1;  // name, token, agent_version, os, arch, slots,
-                                   // installed_packages, dev_packages, running_tasks
+                                   // installed_packages, dev_packages, running_tasks,
+                                   // agent_time_unix_ms、monotonic_ms：建立这次连接的「单调时钟读数 → 控制面时间」
+                                   // 对应关系并测时钟偏差（ADR 0018）
     Heartbeat     heartbeat  = 2;  // running_tasks：Agent 实际持有的任务，只续约这些；
-                                   // update：更新状态（无 / 下载中 / 等待任务结束 / 替换中 / 失败 / 需要手动升级）
+                                   // update：更新状态（无 / 下载中 / 等待任务结束 / 替换中 / 失败 / 需要手动升级）；
+                                   // agent_time_unix_ms、monotonic_ms：更新时钟偏差
     TaskStarted   started    = 3;  // 执行器子进程真正启动：任务从派发阶段进入 running
     LogBatch      logs       = 4;  // task_id, [seq, ts, stream, level, text]
     Progress      progress   = 5;  // task_id, current, total, message（合并为每秒最多一次）

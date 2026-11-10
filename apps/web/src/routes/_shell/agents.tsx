@@ -9,7 +9,7 @@ import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { SlotBar, type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
-import { formatDateTime } from "#/lib/format";
+import { formatClockOffset, formatDateTime, formatFullDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
 import {
@@ -181,6 +181,8 @@ function AgentRow({
 	const online = agent.status === "online";
 	const update = online ? updateStatus(agent) : undefined;
 	const mismatch = online && agent.version_mismatch;
+	// 时钟偏差只在达到阈值时提示（由接口判断）；离线 Agent 的偏差是断开前测的，不显示。
+	const clockOffset = online && agent.clock_offset?.exceeds_threshold ? agent.clock_offset : null;
 	const installing = online && agent.install?.state === "installing";
 	const failed = agent.install?.state === "failed";
 	const packages = [
@@ -213,6 +215,14 @@ function AgentRow({
 				{!update && installing && agent.install && (
 					<div className="font-mono text-2xs text-fg-3">
 						{agent.install.package}@{agent.install.version}
+					</div>
+				)}
+				{clockOffset && (
+					<div
+						className="text-2xs text-warn-fg"
+						title={`Agent 时间与控制面时间不一致，测于 ${formatFullDateTime(clockOffset.measured_at)}`}
+					>
+						时间比控制面{formatClockOffset(clockOffset.offset_ms)}
 					</div>
 				)}
 				{failed && agent.install && (

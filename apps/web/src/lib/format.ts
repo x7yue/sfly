@@ -42,6 +42,24 @@ export function formatDuration(ms: number): string {
 	return `${Math.floor(h / 24)}d ${pad(h % 24)}h`;
 }
 
+const CLOCK_OFFSET_UNITS: Array<[ms: number, unit: string]> = [
+	[86_400_000, "天"],
+	[3_600_000, "小时"],
+	[60_000, "分钟"],
+	[1000, "秒"],
+];
+
+/**
+ * 时钟偏差（Agent 时间 − 控制面时间，毫秒）：`快 613 天`、`慢 3 秒`。正数是 Agent 比控制面快；
+ * 按大小选天、小时、分钟、秒，只取最大的单位、舍去零头。要不要显示由接口的 `exceeds_threshold` 决定，这里只管格式。
+ */
+export function formatClockOffset(offsetMs: number): string {
+	const abs = Math.abs(offsetMs);
+	const [size, unit] =
+		CLOCK_OFFSET_UNITS.find(([ms]) => abs >= ms) ?? (CLOCK_OFFSET_UNITS.at(-1) as [number, string]);
+	return `${offsetMs >= 0 ? "快" : "慢"} ${Math.floor(abs / size)} ${unit}`;
+}
+
 /** `08:00`：一天内的时刻（只到分钟）。 */
 export function formatHourMinute(iso: string): string {
 	const d = new Date(iso);

@@ -478,9 +478,11 @@ describe("指标上报与存储", () => {
 	});
 });
 
-/** 0012 之后的迁移加在 tasks 上的列：列名、类型。 */
-const LATER_TASK_COLUMNS: [string, string][] = [
-	["metric_series_capped", "boolean DEFAULT false NOT NULL"],
+/** 0012 之后的迁移加在当前代码会读写的表上的列：表名、列名、类型。 */
+const LATER_COLUMNS: [string, string, string][] = [
+	["tasks", "metric_series_capped", "boolean DEFAULT false NOT NULL"],
+	["agents", "clock_offset_ms", "bigint"],
+	["agents", "clock_offset_measured_at", "timestamp with time zone"],
 ];
 
 describe("迁移前的指标数据", () => {
@@ -490,7 +492,7 @@ describe("迁移前的指标数据", () => {
 
 	/**
 	 * 只含加标签之前（0000–0011）的迁移的目录，模拟旧版控制面。旧版控制面阶段跑的仍是当前代码，它会读写
-	 * 之后的迁移加在 tasks 上的列，所以在这里先补上（{@link LATER_TASK_COLUMNS}），升级前再删掉，由真正的迁移重新加上。
+	 * 之后的迁移加的列，所以在这里先补上（{@link LATER_COLUMNS}），升级前再删掉，由真正的迁移重新加上。
 	 */
 	const migrationsBeforeLabels = async () => {
 		const dir = await mkdtemp(join(tmpdir(), "sfly-migrations-"));
@@ -502,8 +504,8 @@ describe("迁移前的指标数据", () => {
 		journal.entries = journal.entries.filter((e) => e.idx <= 11);
 		await writeFile(journalPath, JSON.stringify(journal));
 		const last = join(dir, `${journal.entries.at(-1)?.tag}.sql`);
-		const added = LATER_TASK_COLUMNS.map(
-			([column, type]) => `ALTER TABLE "tasks" ADD COLUMN "${column}" ${type};`,
+		const added = LATER_COLUMNS.map(
+			([table, column, type]) => `ALTER TABLE "${table}" ADD COLUMN "${column}" ${type};`,
 		);
 		await writeFile(
 			last,
@@ -515,8 +517,8 @@ describe("迁移前的指标数据", () => {
 		const client = new pg.Client({ connectionString: cp.database.url });
 		await client.connect();
 		try {
-			for (const [column] of LATER_TASK_COLUMNS) {
-				await client.query(`alter table tasks drop column "${column}"`);
+			for (const [table, column] of LATER_COLUMNS) {
+				await client.query(`alter table "${table}" drop column "${column}"`);
 			}
 		} finally {
 			await client.end();
