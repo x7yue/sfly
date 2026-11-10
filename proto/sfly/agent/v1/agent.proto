@@ -122,6 +122,11 @@ enum AgentUpdateState {
 message TaskStarted {
   string task_id = 1;
   uint32 attempt = 2;
+  // 执行器启动时的 Agent 时间（Unix 毫秒）与单调时钟读数（毫秒），含义同 Hello 的同名字段（ADR 0018）：
+  // 控制面据此记下任务开始时的时钟偏差；任务的开始时间仍按收到这条消息的时刻记。
+  // monotonic_ms 为 0（旧版本 Agent）时不记偏差。
+  int64 agent_time_unix_ms = 3;
+  int64 monotonic_ms = 4;
 }
 
 // 以本地开发模式（sfly dev）加载的节点包：本地源码目录以可编辑方式安装进共享 venv，注册为 `包名@dev`。
@@ -344,6 +349,11 @@ message TaskResult {
   string outputs_json = 4;
   // 失败时的错误。
   TaskError error = 5;
+  // 任务结束（得到结果）时的 Agent 时间（Unix 毫秒）与单调时钟读数（毫秒），含义同 Hello 的同名字段（ADR 0018）：
+  // 控制面据此记下任务结束时的时钟偏差；任务的结束时间仍按收到这条消息的时刻记。
+  // 结果在断线期间排队、重连后重发时，这两个值仍是结束那一刻的。monotonic_ms 为 0（旧版本 Agent）时不记偏差。
+  int64 agent_time_unix_ms = 6;
+  int64 monotonic_ms = 7;
 }
 
 enum TaskStatus {

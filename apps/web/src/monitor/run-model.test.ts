@@ -143,6 +143,8 @@ describe("运行视图与进度推送的合并（#110）", () => {
 								queued_at: "2026-01-01T00:00:00.000Z",
 								started_at: "2026-01-01T00:00:00.000Z",
 								ended_at: null,
+								start_clock_offset: null,
+								end_clock_offset: null,
 								wake_at: null,
 								progress: attemptProgress,
 							},
@@ -188,6 +190,8 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		queued_at: "2026-01-01T00:00:00.000Z",
 		started_at: "2026-01-01T00:00:00.000Z",
 		ended_at: "2026-01-01T00:00:01.000Z",
+		start_clock_offset: null,
+		end_clock_offset: null,
 		wake_at: null,
 		progress: null,
 	});

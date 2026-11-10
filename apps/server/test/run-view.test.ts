@@ -252,6 +252,9 @@ describe("运行视图", () => {
 					queued_at: "2026-01-01T00:00:00.000Z",
 					started_at: "2026-01-01T00:00:05.000Z",
 					ended_at: "2026-01-01T00:00:07.000Z",
+					// 不带时钟读数的 TaskStarted / TaskResult（旧版本 Agent）：没有偏差。
+					start_clock_offset: null,
+					end_clock_offset: null,
 					wake_at: null,
 					progress: null,
 				},

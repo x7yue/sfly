@@ -1,12 +1,14 @@
 import type { Page } from "@playwright/test";
 import {
 	type AssignedTask,
+	agentClock,
 	ErrorKind,
 	LogLevel,
 	LogSource,
 } from "../../server/test/support/fake-agent.js";
-import { expect, test } from "./fixtures";
+import { type E2eFixtures, expect, test } from "./fixtures";
 import { logLine, openMonitor, runningScenario } from "./monitor-scenario";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 运行监控页（原型 #/monitor/:runId）：顶栏、链路时间线、底部面板、取消。
 
@@ -499,4 +501,74 @@ test("运行切换菜单里，已请求取消、还在等待清理的运行显�
 		.getByRole("menuitem", { name: new RegExp(runId.slice(0, 8)) });
 	await expect(item).toContainText("取消中");
 	await expect(item).not.toContainText("运行中");
+});
+
+// 节点详情里任务开始和结束时的时钟偏差（#175，ADR 0018）。
+test.describe("尝试页签的 Agent 时间", () => {
+	const DAY = 86_400_000;
+
+	/** agent-a 的时间比控制面快 offsetMs：ping 节点执行 10 秒后成功，打开监控页的「尝试」页签。 */
+	async function finishedPing(
+		{
+			page,
+			controlPlane,
+			connectAgent,
+			clock,
+		}: Pick<E2eFixtures, "controlPlane" | "connectAgent" | "clock"> & { page: Page },
+		offsetMs: number,
+	) {
+		const start = clock.now().getTime();
+		// 单调时钟读数 5000 对应控制面时间 start。
+		const reading = () => {
+			const now = clock.now().getTime();
+			return agentClock(now + offsetMs, 5_000 + now - start);
+		};
+		const agent = await connectAgent({
+			name: "agent-a",
+			installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+			...reading(),
+		});
+		await publishPackage(controlPlane);
+		const runId = await triggerRun(
+			controlPlane,
+			await createScenario(controlPlane, "改时间测试", scenarioUsing("agent-a")),
+		);
+		const task = await agent.nextAssign({ clock: reading() });
+		clock.advance(10_000);
+		await agent.succeed(task, {}, reading());
+
+		await openMonitor(page, clock, runId, "ping");
+		await panel(page).getByRole("tab", { name: "尝试" }).click();
+		return panel(page).getByRole("article", { name: "ping 第 1 次尝试" });
+	}
+
+	test("偏差 613 天：开始和结束同时显示控制面时间和 Agent 时间，并提示不一致", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const attempt = await finishedPing({ page, controlPlane, connectAgent, clock }, 613 * DAY);
+
+		await expect(attempt.getByRole("definition")).toHaveText([
+			"08:00:00",
+			"08:00:00（Agent 时间 2027-09-06 08:00:00）",
+			"08:00:10（Agent 时间 2027-09-06 08:00:10）",
+		]);
+		await expect(attempt).toContainText(
+			"这个任务执行期间 Agent 时间与控制面不一致：开始时比控制面快 613 天，结束时快 613 天",
+		);
+	});
+
+	test("偏差 1 秒：只显示一个时间，没有不一致的提示", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const attempt = await finishedPing({ page, controlPlane, connectAgent, clock }, 1_000);
+
+		await expect(attempt.getByRole("definition")).toHaveText(["08:00:00", "08:00:00", "08:00:10"]);
+		await expect(attempt).not.toContainText("Agent 时间");
+	});
 });

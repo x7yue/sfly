@@ -24,6 +24,7 @@ import {
 	type PackageMetadata,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
+import type { ClockOffset } from "../agents/agent-clock.js";
 import {
 	type AgentConnection,
 	type AgentHub,
@@ -137,6 +138,10 @@ const UPDATE_STATES: Partial<Record<AgentUpdateState, AgentUpdateInfo["state"]>>
 };
 
 /** 任务由 Agent 负责（派发阶段或执行阶段）。 */
+/** 任务行上「结束时的时钟偏差」两列的值；没有偏差（旧版 Agent、不是 Agent 上报的结束）时不写这两列。 */
+const endClockOffset = (offset: ClockOffset | undefined) =>
+	offset ? { endClockOffsetMs: offset.offsetMs, endClockOffsetMeasuredAt: offset.measuredAt } : {};
+
 const onAgent = (task: TaskRow) => (ON_AGENT as readonly string[]).includes(task.status);
 
 /** 运行是否已被取消；强制取消时 always 节点也不再执行（§3.4）。 */
@@ -591,7 +596,8 @@ export class Engine implements AgentSessionHandler {
 	async onMessage(conn: AgentConnection, message: AgentMessage): Promise<void> {
 		if (message.body.case === "result") {
 			const result = message.body.value;
-			await this.#event((step) => this.#applyResult(step, conn.name, result));
+			const offset = conn.clock.offsetAt(result);
+			await this.#event((step) => this.#applyResult(step, conn.name, result, offset));
 			conn.send(
 				create(ServerMessageSchema, {
 					body: { case: "ack", value: { taskId: result.taskId, attempt: result.attempt } },
@@ -599,7 +605,8 @@ export class Engine implements AgentSessionHandler {
 			);
 		} else if (message.body.case === "started") {
 			const started = message.body.value;
-			await this.#event((step) => this.#started(step, conn.name, started));
+			const offset = conn.clock.offsetAt(started);
+			await this.#event((step) => this.#started(step, conn.name, started, offset));
 		} else if (message.body.case === "heartbeat") {
 			const { runningTasks, update } = message.body.value;
 			const held = runningTasks.map(runningTaskRef);
@@ -1080,14 +1087,15 @@ export class Engine implements AgentSessionHandler {
 		task: TaskRow,
 		kind: ErrorKind,
 		message: string,
-		{ cancelled = false }: { cancelled?: boolean } = {},
+		{ cancelled = false, endOffset }: { cancelled?: boolean; endOffset?: ClockOffset } = {},
 	): Promise<void> {
+		const ended = { endedAt: step.now, ...endClockOffset(endOffset) };
 		const { run, chain, index, node } = await this.#locate(step.tx, task);
 		step.touchedRuns.add(run.id);
 		if (cancelledFor(run, node)) {
 			await step.tx
 				.update(tasks)
-				.set({ status: "cancelled", errorMessage: message, endedAt: step.now })
+				.set({ status: "cancelled", errorMessage: message, ...ended })
 				.where(eq(tasks.id, task.id));
 			await this.#advance(step, run, chain, index + 1);
 			return;
@@ -1096,19 +1104,14 @@ export class Engine implements AgentSessionHandler {
 		if (stopped && (cancelled || kind === "agent_lost")) {
 			await step.tx
 				.update(tasks)
-				.set({ status: "stopped", errorMessage: message, endedAt: step.now })
+				.set({ status: "stopped", errorMessage: message, ...ended })
 				.where(eq(tasks.id, task.id));
 			await this.#advance(step, run, chain, index + 1);
 			return;
 		}
 		await step.tx
 			.update(tasks)
-			.set({
-				status: "failed",
-				errorKind: kind,
-				errorMessage: message,
-				endedAt: step.now,
-			})
+			.set({ status: "failed", errorKind: kind, errorMessage: message, ...ended })
 			.where(eq(tasks.id, task.id));
 		// 已被停止的链不再派发新的尝试：这次失败就是节点的最终结果（§4.1 第 4 条），后面的普通节点记为 stopped。
 		if (!stopped && task.agentName && shouldRetry(node, kind, task.attempt)) {
@@ -1134,8 +1137,16 @@ export class Engine implements AgentSessionHandler {
 		await this.#advance(step, run, chain, index + 1);
 	}
 
-	/** 处理任务结果；按 task_id + attempt 幂等：只接受当前正在运行、且派发给该 Agent 的那次尝试。 */
-	async #applyResult(step: Step, agentName: string, result: TaskResult): Promise<void> {
+	/**
+	 * 处理任务结果；按 task_id + attempt 幂等：只接受当前正在运行、且派发给该 Agent 的那次尝试。
+	 * `endOffset` 是结果里的时钟读数算出的结束时的时钟偏差（#175）；结束时间仍是处理这条结果的时刻。
+	 */
+	async #applyResult(
+		step: Step,
+		agentName: string,
+		result: TaskResult,
+		endOffset?: ClockOffset,
+	): Promise<void> {
 		if (!isUuid(result.taskId)) return;
 		const [task] = await step.tx
 			.select()
@@ -1156,6 +1167,7 @@ export class Engine implements AgentSessionHandler {
 			const kind = ERROR_KINDS[result.error?.kind ?? ProtoErrorKind.UNSPECIFIED] ?? "node_error";
 			await this.#failTask(step, task, kind, result.error?.message ?? "", {
 				cancelled: result.status === ProtoTaskStatus.CANCELLED,
+				endOffset,
 			});
 			return;
 		}
@@ -1166,12 +1178,19 @@ export class Engine implements AgentSessionHandler {
 			outputs = undefined;
 		}
 		if (outputs === null || typeof outputs !== "object" || Array.isArray(outputs)) {
-			await this.#failTask(step, task, "node_error", "task outputs must be a JSON object");
+			await this.#failTask(step, task, "node_error", "task outputs must be a JSON object", {
+				endOffset,
+			});
 			return;
 		}
 		await step.tx
 			.update(tasks)
-			.set({ status: "success", outputs: outputs as Record<string, unknown>, endedAt: step.now })
+			.set({
+				status: "success",
+				outputs: outputs as Record<string, unknown>,
+				endedAt: step.now,
+				...endClockOffset(endOffset),
+			})
 			.where(eq(tasks.id, task.id));
 		const { run, chain, index } = await this.#locate(step.tx, task);
 		await this.#advance(step, run, chain, index + 1);
@@ -1180,12 +1199,24 @@ export class Engine implements AgentSessionHandler {
 	/**
 	 * TaskStarted（#1 评审）：执行器子进程已经启动，任务从派发阶段进入 running；
 	 * 耗时从这里开始（Agent 也从这时开始计算超时）。只接受派发给该 Agent 的当前尝试。
+	 * `startOffset` 是 TaskStarted 里的时钟读数算出的开始时的时钟偏差（#175）；由 Hello / 心跳补记开始时没有。
 	 */
-	async #started(step: Step, agentName: string, ref: { taskId: string; attempt: number }) {
+	async #started(
+		step: Step,
+		agentName: string,
+		ref: { taskId: string; attempt: number },
+		startOffset?: ClockOffset,
+	) {
 		if (!isUuid(ref.taskId)) return;
 		const [task] = await step.tx
 			.update(tasks)
-			.set({ status: "running", startedAt: step.now, leaseExpiresAt: this.#leaseFrom(step.now) })
+			.set({
+				status: "running",
+				startedAt: step.now,
+				leaseExpiresAt: this.#leaseFrom(step.now),
+				startClockOffsetMs: startOffset?.offsetMs ?? null,
+				startClockOffsetMeasuredAt: startOffset?.measuredAt ?? null,
+			})
 			.where(
 				and(
 					eq(tasks.id, ref.taskId),
