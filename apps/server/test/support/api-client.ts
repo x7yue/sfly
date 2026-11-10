@@ -118,7 +118,14 @@ export interface AttemptView {
 	end_clock_offset: ClockOffsetView | null;
 	/** 定时 / Sleep 节点的唤醒时间（#14）；其他节点为 null。 */
 	wake_at: string | null;
-	progress: { current: number; total: number | null; message: string; time: string } | null;
+	progress: {
+		current: number;
+		total: number | null;
+		message: string;
+		/** 控制面时间；改动之前保存的进度为 null。 */
+		time: string | null;
+		agent_time: string | null;
+	} | null;
 }
 
 export interface NodeView {

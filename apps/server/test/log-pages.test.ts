@@ -12,7 +12,8 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 interface PagedLine {
 	offset: number;
 	seq: number;
-	time: string;
+	time: string | null;
+	agent_time: string | null;
 	source: string;
 	level: string;
 	text: string;
@@ -99,7 +100,8 @@ describe("完整日志", () => {
 		expect(tail.lines.map((l) => l.seq)).toEqual(range(71, 120));
 		expect(tail.lines[0]).toMatchObject({
 			seq: 71,
-			time: "2026-01-01T00:01:11.000Z",
+			time: "2026-01-01T00:00:00.000Z",
+			agent_time: "2026-01-01T00:01:11.000Z",
 			level: "warn",
 			source: "stderr",
 			text: "第 71 行",
@@ -162,7 +164,7 @@ describe("完整日志", () => {
 		expect(notices.lines).toMatchObject([
 			{
 				seq: 2,
-				time: "2028-07-12T06:34:24.000Z",
+				agent_time: "2028-07-12T06:34:24.000Z",
 				source: "agent",
 				level: "warn",
 				text: "Agent 时间向后跳了 613 天（2026-01-01 08:00:01 → 2028-07-12 14:34:24）",
