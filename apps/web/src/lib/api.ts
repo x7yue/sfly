@@ -1,4 +1,5 @@
 import {
+	CONTROL_PLANE_TIME_HEADER,
 	type DownloadDef,
 	type EndpointDef,
 	type EndpointInput,
@@ -9,12 +10,13 @@ import {
 	type StreamDef,
 } from "@sfly/schema";
 import { queryOptions } from "@tanstack/react-query";
+import { observeControlPlaneTime } from "./control-plane-time";
 import { getNickname, NICKNAME_HEADER } from "./nickname";
 
 /**
  * 控制面 HTTP API 客户端。浏览器请求同源的 `/api/*`：生产环境由控制面直接处理（去掉前缀后
  * 按原路由处理，见 apps/server/src/http/web-app.ts），开发时由 vite 原样代理到控制面（vite.config.ts）。
- * 每个请求都带上浏览器昵称请求头。
+ * 每个请求都带上浏览器昵称请求头；每个响应带回控制面时间，页面上的"现在"由它得出（./control-plane-time.ts）。
  *
  * 所有请求都走契约（@sfly/schema 的 http 模块，ADR 0007），没有手写的接口函数和类型：
  *
@@ -70,6 +72,8 @@ async function respond(
 	} catch (error) {
 		throw new ApiError(0, "network_error", "无法连接控制面", String(error), method, path);
 	}
+	// 响应头一到就记下控制面时间（./control-plane-time.ts），不等响应体下载完。
+	observeControlPlaneTime(res.headers.get(CONTROL_PLANE_TIME_HEADER));
 	if (!res.ok) {
 		const parsed = (await res.json().catch(() => null)) as {
 			error?: { code?: string; message?: string; details?: unknown };

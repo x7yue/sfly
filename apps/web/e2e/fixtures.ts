@@ -14,7 +14,10 @@ const WEB_DIST = fileURLToPath(new URL("../dist", import.meta.url));
 /** 仓库里的用户文档（ADR 0013），「开发文档」页渲染它。 */
 const DOCS_DIR = fileURLToPath(new URL("../../../docs/guide", import.meta.url));
 
-/** 手动时钟的起点；浏览器里的时间也固定在这一刻，页面上的时间显示才稳定。 */
+/**
+ * 手动时钟的起点；浏览器里的时间也固定在这一刻。页面上的"现在"按控制面时间算（接口响应和 SSE 心跳带回来，
+ * ADR 0018），所以推进手动时钟后页面会跟上，不需要再拨浏览器时间。
+ */
 export const START_TIME = "2026-01-01T00:00:00.000Z";
 
 export interface E2eFixtures {
@@ -50,6 +53,8 @@ export const test = base.extend<E2eFixtures>({
 			clock,
 			webDir: WEB_DIST,
 			docsDir: DOCS_DIR,
+			// SSE 心跳调快：推进手动时钟后，页面很快就从心跳里得到新的控制面时间。
+			sseHeartbeatMs: 250,
 			...controlPlaneOptions,
 		});
 		try {

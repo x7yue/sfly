@@ -52,6 +52,7 @@ export async function startTestControlPlane(
 		| "retentionDays"
 		| "metricRetentionDays"
 		| "leaseMs"
+		| "sseHeartbeatMs"
 		| "sdkWheelDir"
 		| "webDir"
 		| "docsDir"
@@ -82,6 +83,7 @@ export async function startTestControlPlane(
 			retentionDays: options.retentionDays,
 			metricRetentionDays: options.metricRetentionDays,
 			leaseMs: options.leaseMs,
+			sseHeartbeatMs: options.sseHeartbeatMs,
 			sdkWheelDir: options.sdkWheelDir,
 			webDir: options.webDir,
 			docsDir: options.docsDir,
