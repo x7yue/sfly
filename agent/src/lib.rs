@@ -9,6 +9,7 @@
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
 pub mod artifacts;
+pub mod clock;
 pub mod dev;
 pub mod environment;
 pub mod executor;
@@ -80,7 +81,7 @@ pub struct Config {
     /// 任务工作目录的根目录。
     pub work_dir: PathBuf,
     /// 后台进程目录的根目录：每次运行一个子目录 `<procs_dir>/<运行 ID>/`，通过 `SFLY_PROCS` 交给执行器，
-    /// 和任务目录按同一个保留期清理（[`retention::sweep_procs`]）。
+    /// 和任务目录按同一个保留期清理（[`retention::Tracker::sweep_procs`]）。
     pub procs_dir: PathBuf,
     /// 任务目录在结果被 Ack 后保留多久（0 表示立即删除，[`retention`]）。
     pub task_dir_retention: Duration,
@@ -113,6 +114,8 @@ pub struct Config {
     /// 随 Hello 上报的 Agent 版本：默认 [`AGENT_VERSION`]，测试用隐藏参数 `--version-override` 覆盖，
     /// 让同一个二进制扮演新旧两个版本。与控制面版本比较、选择 SDK 运行时都用它。
     pub version: String,
+    /// 只在测试中使用：Agent 时间偏移文件（隐藏参数 `--agent-time-offset-file`，[`clock::use_offset_file`]）。
+    pub agent_time_offset_file: Option<PathBuf>,
     /// 能否自更新（ADR 0014，[`update`]）。
     pub self_update: update::SelfUpdate,
     /// 本进程是不是试用中的新版本（[`update::trial`]）：main 在启动最早期创建。
@@ -143,6 +146,7 @@ impl Config {
             log_forward_rate: 0,
             update_read_timeout: update::DEFAULT_READ_TIMEOUT,
             version: AGENT_VERSION.to_string(),
+            agent_time_offset_file: None,
             self_update: update::SelfUpdate::detect(true, None),
             trial: Arc::new(update::Trial::off()),
         }
@@ -289,6 +293,8 @@ struct Runtime {
     procs_dir: PathBuf,
     /// 任务目录的保留期（[`Config::task_dir_retention`]）。
     retention: Duration,
+    /// 任务目录和后台进程目录各自从哪一刻开始算保留期。
+    dirs: retention::Tracker,
     terminate_grace: Duration,
     /// [`Config::log_forward_rate`]。
     log_forward_rate: u64,
@@ -300,7 +306,7 @@ struct Runtime {
     /// 任务的日志与进度（[`logs`]）。
     telemetry: logs::Telemetry,
     /// 手上的任务各属于哪次运行（任务 ID → 运行 ID）：收下任务时登记，扫描时去掉已经不在手上的。
-    /// 清理后台进程目录时据此跳过还有任务在手上的运行（[`retention::sweep_procs`]）。
+    /// 清理后台进程目录时据此跳过还有任务在手上的运行（[`retention::Tracker::sweep_procs`]）。
     task_runs: std::sync::Mutex<HashMap<String, String>>,
     /// 正在执行（含安装中）的任务，键为 (task_id, attempt)。
     cancels: std::sync::Mutex<HashMap<(String, u32), HeldTask>>,
@@ -376,35 +382,54 @@ impl Runtime {
         self.cancels.lock().unwrap().keys().cloned().collect()
     }
 
-    /// 任务的结果被 Ack：同一任务没有其他尝试还在手上时，写结束标记或删除任务目录（[`retention::finished`]）。
+    /// 任务的结果被 Ack：同一任务没有其他尝试还在手上时，写结束标记或删除任务目录（[`retention::Tracker::task_acked`]）；
+    /// 它所属的运行没有别的任务还在手上时，运行的后台进程目录开始算保留期（[`retention::Tracker::run_ended`]）。
     fn acked(&self, task_id: &str, unacked: &BTreeMap<(String, u32), TaskResult>) {
-        if self.held(unacked).iter().any(|t| t.task_id == task_id) {
+        let held: HashSet<String> = self.held(unacked).into_iter().map(|t| t.task_id).collect();
+        if held.contains(task_id) {
             return;
         }
-        retention::finished(&self.work_dir, task_id, self.retention);
+        self.dirs
+            .task_acked(&self.work_dir, task_id, self.retention);
+        let task_runs = self.task_runs.lock().unwrap();
+        if let Some(run_id) = task_runs.get(task_id)
+            && !task_runs
+                .iter()
+                .any(|(other, run)| run == run_id && held.contains(other))
+        {
+            self.dirs.run_ended(run_id);
+        }
     }
 
-    /// 在后台扫描工作目录和后台进程目录，删除超过保留期的任务目录（[`retention::sweep`]）和运行目录
-    /// （[`retention::sweep_procs`]）：结果还没 Ack 的按现在的快照，正在执行的在删除前再查一次
+    /// 在后台扫描工作目录和后台进程目录，删除超过保留期的任务目录（[`retention::Tracker::sweep`]）和运行目录
+    /// （[`retention::Tracker::sweep_procs`]）：结果还没 Ack 的按现在的快照，正在执行的在删除前再查一次
     /// （扫描期间可能收到新任务）。
     fn sweep(self: &Arc<Self>, unacked: &BTreeMap<(String, u32), TaskResult>) {
         let held: HashSet<String> = self.held(unacked).into_iter().map(|t| t.task_id).collect();
-        self.task_runs
-            .lock()
-            .unwrap()
-            .retain(|task_id, _| held.contains(task_id));
+        // 不再在手上的任务：没有等到 Ack 的（被控制面放弃的）从现在开始算保留期。
+        self.task_runs.lock().unwrap().retain(|task_id, _| {
+            let on_hand = held.contains(task_id);
+            if !on_hand {
+                self.dirs.task_released(task_id);
+            }
+            on_hand
+        });
         let runtime = self.clone();
         tokio::task::spawn_blocking(move || {
             let is_held = |task_id: &str| {
                 held.contains(task_id) || runtime.running().iter().any(|(id, _)| id == task_id)
             };
-            retention::sweep(&runtime.work_dir, runtime.retention, is_held);
-            retention::sweep_procs(&runtime.procs_dir, runtime.retention, |run_id| {
-                let task_runs = runtime.task_runs.lock().unwrap().clone();
-                task_runs
-                    .iter()
-                    .any(|(task_id, run)| run == run_id && is_held(task_id))
-            });
+            runtime
+                .dirs
+                .sweep(&runtime.work_dir, runtime.retention, is_held);
+            runtime
+                .dirs
+                .sweep_procs(&runtime.procs_dir, runtime.retention, |run_id| {
+                    let task_runs = runtime.task_runs.lock().unwrap().clone();
+                    task_runs
+                        .iter()
+                        .any(|(task_id, run)| run == run_id && is_held(task_id))
+                });
         });
     }
 
@@ -712,6 +737,9 @@ fn collect_results(
 ///
 /// 任务结果在收到控制面的 Ack 之前一直保留，每次重新连接后再次上报（控制面按 task_id + attempt 幂等处理）。
 pub async fn run(config: Config) -> anyhow::Result<()> {
+    if let Some(file) = &config.agent_time_offset_file {
+        clock::use_offset_file(file.clone());
+    }
     let http = reqwest::Client::new();
     let uv_marker = config
         .manage_uv
@@ -759,6 +787,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         work_dir: work_dir.clone(),
         procs_dir,
         retention: config.task_dir_retention,
+        dirs: retention::Tracker::new(),
         terminate_grace: config.terminate_grace,
         log_forward_rate: config.log_forward_rate,
         gate: RwLock::new(()),

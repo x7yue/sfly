@@ -113,7 +113,7 @@ sfly --version
 
 改完 `agent.env` 后重启 Agent（`systemctl --user restart sfly-agent`）。重新运行安装脚本时只改写它管理的键（`SFLY_SERVER`、`SFLY_CONTROL_PLANE_URL`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`、`SFLY_SLOTS`、`SFLY_NO_AUTO_UPDATE`，以及镜像覆盖 `SFLY_INDEX_URL`、`SFLY_GITHUB_RELEASE_MIRROR`、`SFLY_PYTHON_INSTALL_MIRROR`），自己加的键保留；没有再传 `--token`、`--slots`、`--no-auto-update`、没有再设置镜像环境变量时沿用原来的值。
 
-任务目录里有任务的输入、输出、产物，以及标准输出 / 标准错误的副本 `stdout.log` / `stderr.log`（完整日志在控制面）。副本每个文件 8 MiB，写满后改名为 `stdout.log.1` / `stderr.log.1`（覆盖旧的）再写新文件，每个流最多占 16 MiB。任务结束、结果交给控制面后，任务目录默认保留 7 天：Agent 启动时和之后每小时删除超过保留期的目录。用 `SFLY_TASK_DIR_RETENTION`（参数 `--task-dir-retention`）修改，例如在 `agent.env` 里加一行（改完重启 Agent）：
+任务目录里有任务的输入、输出、产物，以及标准输出 / 标准错误的副本 `stdout.log` / `stderr.log`（完整日志在控制面）。副本每个文件 8 MiB，写满后改名为 `stdout.log.1` / `stderr.log.1`（覆盖旧的）再写新文件，每个流最多占 16 MiB。任务结束、结果交给控制面后，任务目录默认保留 7 天：Agent 启动时和之后每小时删除超过保留期的目录。保留期按真实流逝的时长计算，修改 Agent 机器的系统时间不会让目录提前被删或一直不删；Agent 或机器重启后，已有的目录从启动时重新计时。用 `SFLY_TASK_DIR_RETENTION`（参数 `--task-dir-retention`）修改，例如在 `agent.env` 里加一行（改完重启 Agent）：
 
 ```ini
 SFLY_TASK_DIR_RETENTION=24h
@@ -121,7 +121,7 @@ SFLY_TASK_DIR_RETENTION=24h
 
 可以写成 `30m`、`24h`、`7d` 这样；`0` 表示任务结束后立即删除。正在执行的任务、`.dev` 等以点开头的目录和 `agent.sock` 不会被删除。
 
-后台进程目录 `procs/<运行 ID>/` 按同一个保留期清理：里面最后一次写入超过保留期、而且这次运行没有任务还在这个 Agent 上执行时删除，后台进程还在写日志时不会被删。保留期为 `0` 时，运行在这个 Agent 上的任务都结束后，下一次扫描（每小时）就删除，哪怕后台进程还在运行。用 `SFLY_PROCS_DIR`（参数 `--procs-dir`）把它放到别处。
+后台进程目录 `procs/<运行 ID>/` 按同一个保留期清理：从这次运行在这个 Agent 上的最后一个任务结束时开始计时（Agent 重启后从启动时重新计时），超过保留期、而且这次运行没有任务还在这个 Agent 上执行时删除，后台进程还在写日志时不会被删。保留期为 `0` 时，运行在这个 Agent 上的任务都结束后，下一次扫描（每小时）就删除，哪怕后台进程还在运行。用 `SFLY_PROCS_DIR`（参数 `--procs-dir`）把它放到别处。
 
 ## 版本与自动更新
 
