@@ -9,8 +9,10 @@ from sfly.capabilities import (
     AgentTimeout,
     AgentUnreachable,
     AgentUnsupported,
+    FileEvent,
     FileId,
     FileInfo,
+    WatchSnapshot,
 )
 from sfly.context import AgentAddress, ArtifactDownloadError, Cancelled, Context, TaskInfo
 from sfly.nodes import AgentName, Chart, Metric, node
@@ -32,10 +34,12 @@ __all__ = [
     "Cancelled",
     "Chart",
     "Context",
+    "FileEvent",
     "FileId",
     "FileInfo",
     "Metric",
     "TaskInfo",
+    "WatchSnapshot",
     "__version__",
     "node",
 ]

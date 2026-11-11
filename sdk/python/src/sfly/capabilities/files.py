@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sfly.capabilities.files_list import ListStat
+from sfly.capabilities.files_watch import Watch
 
 if TYPE_CHECKING:
     from sfly.capabilities import Agent
@@ -75,12 +76,13 @@ def absolute(path: str | os.PathLike[str]) -> str:
     return text
 
 
-class Files(ListStat):
+class Files(ListStat, Watch):
     """`ctx.agent(...).files`：一台 Agent 上的文件。路径都是那台 Agent 所在机器上的绝对路径，
     权限就是那台 Agent 进程的权限。
 
     - `list(directory, pattern="*", *, recursive=False, timeout=30.0)`：列出文件（迭代器）；
-    - `stat(path, *, timeout=30.0)`：查看一个文件的属性。
+    - `stat(path, *, timeout=30.0)`：查看一个文件的属性；
+    - `watch(directory, pattern="*", *, recursive=False, timeout=30.0)`：监听目录（迭代器）。
     """
 
     def __init__(self, agent: Agent) -> None:

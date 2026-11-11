@@ -11,6 +11,7 @@ SDK 把调用交给自己所在的 Agent（本地 socket，`channel.py`），由
 - `channel.py`：经本地 socket 调用自己所在的 Agent；
 - `local.py`：本地调试时的 Agent（名称映射到本地目录）；
 - `files.py`、`files_list.py`：能力 files。
+- `files_watch.py`、`files_watch_local.py`：监听目录（`files.watch`）。
 
 加一项能力：新建模块写它的类（构造时拿到 `Agent`，用 `Agent._call` 调用、
 用 `Agent._local` 判断是不是本地调试），在 `Agent.__init__` 里挂上。
@@ -33,6 +34,7 @@ from sfly.capabilities.errors import (
     AgentUnsupported,
 )
 from sfly.capabilities.files import FileId, FileInfo, Files
+from sfly.capabilities.files_watch import FileEvent, WatchSnapshot
 
 __all__ = [
     "Agent",
@@ -43,9 +45,11 @@ __all__ = [
     "AgentTimeout",
     "AgentUnreachable",
     "AgentUnsupported",
+    "FileEvent",
     "FileId",
     "FileInfo",
     "Files",
+    "WatchSnapshot",
 ]
 
 
