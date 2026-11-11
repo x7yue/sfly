@@ -11,6 +11,7 @@ import {
 	nodeMenu,
 	nodePosition,
 	openEditor,
+	switchMode,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
 
@@ -131,6 +132,8 @@ test("复制节点 ID；「复制输出引用」列出节点类型声明的每�
 	}
 	await page.keyboard.press("ArrowRight");
 	await expect(outputs.getByRole("menuitem")).toHaveText(["chain_instance_id"]);
+	// 子菜单先出现，焦点稍后才移进去；焦点还在「复制输出引用」上时按 Enter 会把子菜单关掉。
+	await expect(outputs.getByRole("menuitem", { name: "chain_instance_id" })).toBeFocused();
 	await page.keyboard.press("Enter");
 	await expect(nodeMenu(page)).toHaveCount(0);
 	await expect.poll(() => clipboard(page)).toBe("${{ nodes.dispatch.outputs.chain_instance_id }}");
@@ -326,7 +329,7 @@ test("断开入线、断开出线：只删对应的连线，可以撤销", async
 test("运行状态模式下节点菜单只有复制节点 ID、复制输出引用", async ({ page, controlPlane }) => {
 	const id = await createEditorScenario(controlPlane);
 	await openEditor(page, id);
-	await page.locator("body").press("r");
+	await switchMode(page, "run");
 	await expect(page.getByRole("button", { name: /保存/ })).toHaveCount(0);
 
 	const menu = await openMenu(page, "fetch");
