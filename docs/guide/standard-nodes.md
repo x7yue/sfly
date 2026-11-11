@@ -466,7 +466,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 ## `http_request`：HTTP 请求
 
-发一个 HTTP 请求，检查状态码和响应 JSON；打开 `until_ok` 时重试直到满足，可以用来等待 HTTP 服务就绪。
+发一个 HTTP 请求，检查状态码和响应 JSON；打开 `until_ok` 时重试直到满足，可以用来等待 HTTP 服务就绪。打开 `save_body` 时把完整的响应体存成产物，用来下载大文件或二进制内容。
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
@@ -482,6 +482,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `until_ok` | `false` | 打开时，没有得到响应（连接失败、超时）或断言不通过就每 `poll` 秒重试一次，直到通过或超过 `wait` 秒 |
 | `wait` | `300` | `until_ok` 时最多等多少秒 |
 | `poll` | `1` | `until_ok` 时的重试间隔（秒） |
+| `save_body` | `false` | 保存响应体：打开时把响应体的原始字节存成产物 `body`，输出 `body_file` 给出它的产物引用 |
 
 | 输出 | 说明 |
 |---|---|
@@ -490,6 +491,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `json` | 响应内容是 JSON、且解析后的值写进输出（JSON 序列化）后不超过 256 KiB 时，解析后的值 |
 | `text` | 响应内容不是 JSON 或 `json` 超过 256 KiB 时的文本，写进输出后最多 256 KiB，超过时只保留开头（截断、或 JSON 改为输出 `text` 时写一条警告日志） |
 | `elapsed_ms` | 最后一次请求的耗时（毫秒） |
+| `body_file` | `save_body` 打开时是产物 `body` 的产物引用，后面的节点可以引用它下载完整的响应体；关闭时为空值 |
 
 | 指标 | 单位 | 说明 |
 |---|---|---|
@@ -498,6 +500,10 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 先检查状态码，再检查 `expect_json`。不满足时节点失败，错误信息写明请求方法和地址、状态码，以及不在 `expect_status` 里时响应的开头、不通过的断言（与 `assert` 一样逐条列出）。响应不是 JSON 而填了 `expect_json` 时也失败。
 - `expect_json` 检查完整的响应 JSON：超过 256 KiB、输出里只有截断的 `text` 时也一样。
 - 256 KiB 按写进输出后的大小算，不是响应的原始字节数：控制字符会转义成 `\u00XX`（每个 6 字节），引号、反斜杠、换行转义成 2 字节，无法解码的字节换成 `�`（3 字节）。所以二进制或含大量控制字符的响应，`text` 保留的字符会少得多；这样整个节点输出不会超过 1 MB 上限。
+- `save_body` 打开时，响应体边接收边写进产物文件，不整个读进内存，内容与响应体逐字节一致，不截断、不解码成文本（响应带 `Content-Encoding` 压缩时，保存的是解压后的内容）。其它输出不变：`json` / `text` 仍按上面的规则给出。
+  - 与 `until_ok` 一起用时，每次请求覆盖上一次的内容，产物是最后一次响应的内容；节点因断言不通过而失败时，产物仍然保留，是最后一次响应。
+  - 产物在任务结束后由 Agent 上传，大小受单个任务的产物上限约束，随运行一起按保留期清理。
+  - 响应体超过 4 MiB 时内存里只留开头：`text` 照常输出开头的 256 KiB，不再尝试输出 `json`；填了 `expect_json` 时为了检查会把整个响应读进内存解析。
 - 没有得到响应时（连接被拒绝、请求超时、证书校验失败）节点失败，错误信息写明原因。
 - `until_ok` 重试时，原因变化时写一条日志（第几次、为什么不满足）；超过 `wait` 时失败，错误信息是请求次数和最后一次不满足的原因。每次请求最多等 `request_timeout` 秒，所以实际可能比 `wait` 多等一次请求的时间。
 - 不跟随重定向：3xx 响应按原样检查，需要时把它写进 `expect_status`。

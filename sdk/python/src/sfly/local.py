@@ -15,6 +15,9 @@
 - 任务信息与后台进程目录：task.json 里任务 ID 是 `local`、attempt 是 1，
   运行 ID 和节点 ID 由调用方给出；
   `SFLY_PROCS` 默认是工作目录下的 `procs/`（`sfly run` 改为项目下的 `.sfly/procs/<运行目录名>/`）；
+- 下载产物：本地没有控制面，`SFLY_DOWNLOADS` 指向下载内容表 `downloads.json`
+  （产物引用 → 本地文件路径，只有本地执行会设置），`ctx.artifacts.download` 遇到表里的引用时
+  直接复制对应的文件；本地保存的产物的引用是本地文件路径，不用登记就能下载；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
 """
@@ -435,6 +438,7 @@ def execute(
     run_id: str = "local",
     node_id: str | None = None,
     procs_dir: str | os.PathLike[str] | None = None,
+    downloads: Mapping[str, bytes | str | os.PathLike[str]] | None = None,
 ) -> Execution:
     """在 `work_dir`（不存在时创建）里执行节点入口 `模块:函数`，等它结束并返回结果。
 
@@ -443,7 +447,9 @@ def execute(
     - `cancellation`：取消请求；`on_tick` 在执行期间定期以部分结果调用，可以在里面请求取消；
     - `on_log` / `on_progress` / `on_metric`：每读到一条就调用（实时显示用）；
     - `run_id`、`node_id`（默认取入口的函数名）：写进 task.json，节点里是 `ctx.task`；
-    - `procs_dir`：后台进程目录（`ctx.procs_dir`），默认 `work_dir/procs`。
+    - `procs_dir`：后台进程目录（`ctx.procs_dir`），默认 `work_dir/procs`；
+    - `downloads`：产物引用 → 本地内容（bytes / str 是内容，str 按 UTF-8；路径是本地文件）。
+      节点用 `ctx.artifacts.download` 下载表里的引用时得到这份内容，不访问网络。
     """
     work = Path(work_dir)
     execution = Execution(status="running", work_dir=work)
@@ -498,6 +504,8 @@ def execute(
             Path(procs_dir).absolute() if procs_dir is not None else work.absolute() / "procs"
         ),
     )
+    if downloads:
+        env["SFLY_DOWNLOADS"] = str(_write_downloads(work, downloads))
     pump = _Pump(execution, events, on_log, on_progress, on_metric)
     # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。
     try:
@@ -563,6 +571,25 @@ def execute(
             + pump.stderr_tail[-_STDERR_TAIL_BYTES:].decode("utf-8", errors="replace").rstrip(),
         )
     return execution
+
+
+def _write_downloads(work: Path, downloads: Mapping[str, bytes | str | os.PathLike[str]]) -> Path:
+    """写下载内容表 `downloads.json`（产物引用 → 本地文件的绝对路径），返回它的路径。
+
+    直接给出的内容存成 `work/downloads/<序号>`；给出路径的文件不复制。
+    """
+    table: dict[str, str] = {}
+    for index, (ref, content) in enumerate(downloads.items()):
+        if isinstance(content, (bytes, str)):
+            path = work.absolute() / "downloads" / str(index)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content.encode("utf-8") if isinstance(content, str) else content)
+        else:
+            path = Path(content).absolute()
+        table[ref] = str(path)
+    target = work.absolute() / "downloads.json"
+    target.write_text(json.dumps(table, ensure_ascii=False), encoding="utf-8")
+    return target
 
 
 def _cancel(

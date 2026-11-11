@@ -113,6 +113,41 @@ def test_artifacts_of_each_run_are_in_their_own_timestamped_directory(project: P
     assert (project / ".sfly" / ".gitignore").read_text() == "*\n"
 
 
+FETCH_NODE = """
+from sfly import Context, node
+
+
+@node
+def fetch(ctx: Context, ref: str) -> dict:
+    return {"text": ctx.artifacts.download(ref, "got.txt").read_text(encoding="utf-8")}
+"""
+
+
+def test_download_option_serves_a_local_file_for_an_artifact_ref(
+    project: Path, tmp_path: Path
+) -> None:
+    (project / "src" / "sfly_stub" / "fetching.py").write_text(FETCH_NODE, encoding="utf-8")
+    ref = "http://cp.invalid/tasks/t-1/artifacts/a=b.txt"
+    (tmp_path / "完整输出.txt").write_text("来自上游节点", encoding="utf-8")
+
+    run = sfly_run(
+        project, "fetch", "--params", json.dumps({"ref": ref}), "--download", ref, "../完整输出.txt"
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert outputs_of(run.stdout) == {"text": "来自上游节点"}
+
+
+def test_download_option_with_a_missing_file_exits_2_without_running_the_node(
+    project: Path,
+) -> None:
+    run = sfly_run(project, "echo", "--params", '{"text": 1}', "--download", "ref", "nope.bin")
+
+    assert run.returncode == 2, run.stderr
+    assert "--download" in run.stderr and "nope.bin" in run.stderr
+    assert not (project / ".sfly" / "runs").exists()
+
+
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
     project: Path,
 ) -> None:
