@@ -13,15 +13,15 @@
   事件管道里的日志 → 来源 sdk、级别取 SDK 记录的级别，不认识的行原样记成 sdk info 日志
   （agent/src/logs.rs）；进度和指标保留每一次上报（Agent 上报前按秒合并）；
 - 任务信息与后台进程目录：task.json 里任务 ID 是 `local`、attempt 是 1，
-  运行 ID 和节点 ID 由调用方给出；「Agent」类型的输入引用的 Agent 只有名称
-  （`agents`，地址为空、端口为 0）；
+  运行 ID 和节点 ID 由调用方给出；
   `SFLY_PROCS` 默认是工作目录下的 `procs/`（`sfly run` 改为项目下的 `.sfly/procs/<运行目录名>/`）；
 - 下载产物：本地没有控制面，`SFLY_DOWNLOADS` 指向下载内容表 `downloads.json`
   （产物引用 → 本地文件路径，只有本地执行会设置），`ctx.artifacts.download` 遇到表里的引用时
   直接复制对应的文件；本地保存的产物的引用是本地文件路径，不用登记就能下载；
 - Agent 能力：本地没有 Agent，`ctx.agent()` 直接操作本机的文件系统；`SFLY_LOCAL_AGENTS`
-  指向映射表 `local-agents.json`（Agent 名称 → 本地目录，只有本地执行会设置），
-  `ctx.agent(名称)` 把那台 Agent 上的路径落到映射的目录里（见 `sfly.capabilities.local`）；
+  指向映射表 `local-agents.json`（「Agent」类型的输入引用的每台 Agent → 本地目录，没有映射的
+  为 null；只有本地执行会设置），`ctx.agent(名称)` 把那台 Agent 上的路径落到映射的目录里，
+  不在表里的名称不能访问（见 `sfly.capabilities.local`）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
 """
@@ -510,11 +510,6 @@ def execute(
                 "node_id": node_id or entry.rpartition(":")[2].rpartition(".")[2],
                 "entry": entry,
                 "inputs": inputs,
-                # 本地没有控制面：被引用的 Agent 只有名称（ctx.task.agents）。
-                "agents": [
-                    {"name": name, "address": "", "port": 0, "unavailable_reason": ""}
-                    for name in (referenced_agents(schema, inputs) if schema is not None else [])
-                ],
             },
             ensure_ascii=False,
         ),
@@ -541,11 +536,10 @@ def execute(
     if downloads:
         env["SFLY_DOWNLOADS"] = str(_write_downloads(work, downloads))
     local_agents = work.absolute() / "local-agents.json"
+    mapped = {name: str(Path(root).absolute()) for name, root in (agents or {}).items()}
+    referenced = referenced_agents(schema, inputs) if schema is not None else []
     local_agents.write_text(
-        json.dumps(
-            {name: str(Path(root).absolute()) for name, root in (agents or {}).items()},
-            ensure_ascii=False,
-        ),
+        json.dumps({name: mapped.get(name) for name in referenced}, ensure_ascii=False),
         encoding="utf-8",
     )
     env["SFLY_LOCAL_AGENTS"] = str(local_agents)

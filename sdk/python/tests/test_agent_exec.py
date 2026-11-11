@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -145,6 +146,58 @@ def test_cancelling_the_task_ends_the_whole_tree(tmp_path: Path) -> None:
     )
 
     assert result.status == "cancelled"
+    tree = pids_in(pids)
+    wait_for(lambda: not any(alive(p) for p in tree))
+
+
+def test_force_cancelling_the_task_also_ends_the_whole_tree(tmp_path: Path) -> None:
+    # 强制取消直接杀掉执行器，它来不及清理：命令由看守进程启动，执行器一退出看守进程就结束它。
+    from sfly.local import Cancellation, execute
+
+    pids = tmp_path / "pids"
+    cancellation = Cancellation()
+
+    def tick(_: Any) -> None:
+        if len(pids_in(pids)) == 2:
+            cancellation.cancel(force=True)
+
+    result = execute(
+        "sfly_agent_files.commands:run_command",
+        {"command": TREE, "timeout": 600, "env": {"PIDS": str(pids)}},
+        tmp_path / "work",
+        pythonpath=[str(PACKAGE / "src"), *(p for p in sys.path if p)],
+        cancellation=cancellation,
+        on_tick=tick,
+    )
+
+    assert result.status == "cancelled"
+    assert result.error is not None and "强制" in result.error.message
+    tree = pids_in(pids)
+    wait_for(lambda: not any(alive(p) for p in tree))
+
+
+def test_a_cancel_right_after_the_command_starts_ends_the_whole_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 取消（SIGTERM）恰好落在启动命令的调用返回之后、登记好清理之前（这时命令已经在运行）：
+    # 命令照样被结束，exec.run 等它结束才返回。
+    from sfly.context import on_sigterm
+
+    monkeypatch.delenv("SFLY_AGENT_SOCKET", raising=False)
+    pids = tmp_path / "pids"
+    real_popen = subprocess.Popen
+
+    def popen_then_sigterm(*args: Any, **kwargs: Any) -> Any:
+        started = real_popen(*args, **kwargs)
+        wait_for(lambda: len(pids_in(pids)) == 2)
+        on_sigterm(signal.SIGTERM, None)
+        return started
+
+    monkeypatch.setattr(subprocess, "Popen", popen_then_sigterm)
+
+    with pytest.raises(sfly.Cancelled):
+        Agent(None, local_mapping={}).exec.run(TREE, timeout=600, env={"PIDS": str(pids)})
+
     tree = pids_in(pids)
     wait_for(lambda: not any(alive(p) for p in tree))
 

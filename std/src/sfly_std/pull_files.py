@@ -39,7 +39,7 @@ def pull_files(
         raise ValueError("local_dir 不能为空")
     agent = ctx.agent(source)
     root = Path(local_dir).absolute()
-    matched = list(agent.files.list(directory, pattern or "*", recursive=recursive))
+    matched = list(agent.files.list(directory, pattern, recursive=recursive))
     total = sum(f.size for f in matched)
     found = f"Agent {source} 的 {directory} 下有 {len(matched)} 个文件匹配 {pattern}"
     ctx.log.info("%s，共 %d 字节，拉到 %s", found, total, root)

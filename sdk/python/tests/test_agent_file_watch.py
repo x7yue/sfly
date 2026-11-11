@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -15,6 +17,7 @@ from typing import Any
 
 import pytest
 
+import sfly
 from sfly.testing import Execution, run_node
 
 PACKAGE = Path(__file__).resolve().parents[3] / "testdata" / "agent-files-package"
@@ -163,3 +166,21 @@ def test_cancelling_the_task_ends_the_watch_at_once(tmp_path: Path) -> None:
     assert result.status == "cancelled", result.error
     # 节点在宽限期内自己停下（被强制杀掉的话没有这行日志）。
     assert "监听被取消" in [line.message for line in result.logs]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="inotify")
+def test_a_cancel_right_after_the_inotify_instance_is_created_closes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sigterm_after: Callable[[Any, str], None]
+) -> None:
+    # 取消（SIGTERM）恰好落在 inotify 实例建出来之后：它的文件描述符照样被关闭。
+    from sfly.capabilities import Agent, files_watch_local
+
+    monkeypatch.delenv("SFLY_AGENT_SOCKET", raising=False)
+    files = Agent(None, local_mapping={}).files
+    fds = set(os.listdir("/proc/self/fd"))
+    sigterm_after(files_watch_local, "_Inotify")
+
+    with pytest.raises(sfly.Cancelled):
+        next(files.watch(str(tmp_path)))
+
+    assert set(os.listdir("/proc/self/fd")) == fds

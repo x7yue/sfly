@@ -11,19 +11,18 @@ import ctypes
 import errno as errno_module
 import os
 import select
-import stat as stat_module
 import struct
 import sys
 from collections.abc import Iterator
-from fnmatch import fnmatchcase
-from typing import TYPE_CHECKING
+from dataclasses import replace
+from typing import NamedTuple
 
 from sfly.capabilities.errors import AgentError, AgentFileNotFound, AgentUnsupported
-
-if TYPE_CHECKING:
-    from sfly.capabilities.files import FileInfo
-    from sfly.capabilities.files_watch import FileEvent, FileEventKind, WatchSnapshot
-    from sfly.capabilities.local import LocalAgent
+from sfly.capabilities.files_base import FileInfo, Scope
+from sfly.capabilities.files_list import local_entries, local_file, local_files
+from sfly.capabilities.files_watch import FileEvent, FileEventKind, WatchSnapshot
+from sfly.capabilities.local import LocalAgent
+from sfly.context import DeferCancel
 
 IN_MODIFY = 0x00000002
 IN_CLOSE_WRITE = 0x00000008
@@ -59,6 +58,14 @@ _MOVE_PAIRING = 0.01
 
 class _Overflow(Exception):
     """内核的 inotify 队列溢出：重新给快照。"""
+
+
+class _MovedFrom(NamedTuple):
+    """还没配对的 IN_MOVED_FROM：等同一个 `cookie` 的 IN_MOVED_TO。"""
+
+    cookie: int
+    real: str
+    is_dir: bool
 
 
 class _Inotify:
@@ -107,18 +114,17 @@ class _Inotify:
         os.close(self.fd)
 
 
-def local_watch(
-    local: LocalAgent, directory: str, pattern: str, recursive: bool
-) -> Iterator[WatchSnapshot | FileEvent]:
+def local_watch(local: LocalAgent, scope: Scope) -> Iterator[WatchSnapshot | FileEvent]:
     """本地调试时的监听：先给快照，再给事件；内核队列溢出时重新给快照（`missed=True`）。"""
-    from sfly.capabilities.files_watch import WatchSnapshot
-
     if not sys.platform.startswith("linux"):
         raise AgentUnsupported(
             "本地调试时的 files.watch 只支持 Linux（用 inotify 实现）", agent=local.name
         )
-    watcher = _Watcher(local, directory, pattern, recursive)
+    watcher: _Watcher | None = None
     try:
+        # inotify 实例一建出来就归下面的 finally 关闭：取消不会落在建出来和进入 try 之间。
+        with DeferCancel():
+            watcher = _Watcher(local, scope)
         missed = False
         while True:
             yield WatchSnapshot(tuple(watcher.scan()), missed)
@@ -128,18 +134,18 @@ def local_watch(
             except _Overflow:
                 continue
     finally:
-        watcher.close()
+        if watcher is not None:
+            watcher.close()
 
 
 class _Watcher:
     """一次监听：各目录的 watch，和调用方已经知道的文件（`index`，本机上的路径 → 属性）。"""
 
-    def __init__(self, local: LocalAgent, directory: str, pattern: str, recursive: bool) -> None:
+    def __init__(self, local: LocalAgent, scope: Scope) -> None:
         self.local = local
-        self.directory = directory
+        self.scope = scope
+        directory = scope.directory
         self.root = local.real(directory)
-        self.pattern = pattern
-        self.recursive = recursive
         try:
             self.inotify = _Inotify()
         except OSError as error:
@@ -174,72 +180,42 @@ class _Watcher:
 
     def scan(self) -> list[FileInfo]:
         """列出当前匹配的文件（递归时顺便给子目录加上 watch），作为新的「调用方已经知道的文件」。"""
-        found: list[FileInfo] = []
         dirs = {self.root_wd: self.root}
         try:
-            top = _entries(self.root)
+            top = local_entries(self.root)
         except OSError as error:
-            raise self.local.error(error, self.directory) from None
-        self._walk(self.root, top, found, dirs)
+            raise self.local.error(error, self.scope.directory) from None
+        found = list(self._files(top, dirs))
         for wd in set(self.dirs) - set(dirs):
             self.inotify.rm_watch(wd)
         self.dirs = dirs
         self.index = {self.local.real(f.path): f for f in found}
         return found
 
-    def _walk(
-        self,
-        real: str,
-        entries: list[os.DirEntry[str]],
-        found: list[FileInfo],
-        dirs: dict[int, str],
-    ) -> None:
-        subdirs = []
-        for entry in entries:
-            try:
-                if entry.is_dir(follow_symlinks=False):
-                    if self.recursive:
-                        subdirs.append(entry.path)
-                    continue
-            except OSError:
-                continue
-            info = self._matching(entry.name, entry.path)
-            if info is not None:
-                found.append(info)
-        for sub in subdirs:
-            try:
-                wd = self.inotify.add_watch(sub)
-            except OSError as error:
-                if error.errno == errno_module.ENOSPC:
-                    raise self._watch_error(error, self.local.agent_path(sub)) from None
-                continue
-            try:
-                below = _entries(sub)
-            except OSError:
-                continue
-            dirs[wd] = sub
-            self._walk(sub, below, found, dirs)
+    def _files(self, entries: list[os.DirEntry[str]], dirs: dict[int, str]) -> Iterator[FileInfo]:
+        """列出 `entries`（一个目录里的条目）下匹配的文件；递归时进入子目录前先给它加上 watch。"""
+        return local_files(self.local, self.scope, entries, lambda sub: self._enter(sub, dirs))
+
+    def _enter(self, real: str, dirs: dict[int, str]) -> bool:
+        """给目录加上 watch，记进 `dirs`；加不上（例如已经被删除）时为 False。
+        超过系统的 watch 数上限时抛出异常。"""
+        try:
+            wd = self.inotify.add_watch(real)
+        except OSError as error:
+            if error.errno == errno_module.ENOSPC:
+                raise self._watch_error(error, self.local.agent_path(real)) from None
+            return False
+        dirs[wd] = real
+        return True
 
     def _matching(self, name: str, real: str) -> FileInfo | None:
-        from sfly.capabilities.files import FileInfo
-
-        if not fnmatchcase(name, self.pattern):
-            return None
-        try:
-            st = os.stat(real)
-        except OSError:
-            return None
-        if not stat_module.S_ISREG(st.st_mode):
-            return None
-        return FileInfo.from_stat(self.local.agent_path(real), st)
+        return local_file(self.local, self.scope, name, real)
 
     # ---- 事件 ----
 
     def events(self) -> Iterator[FileEvent]:
         """一直读 inotify，逐个给出事件；内核队列溢出时抛出 `_Overflow`。"""
-        moved: tuple[int, str, bool] | None = (
-            None  # 还没配对的 IN_MOVED_FROM：(cookie, 路径, 是否目录)
-        )
+        moved: _MovedFrom | None = None
         while True:
             batch = self.inotify.read(_MOVE_PAIRING if moved is not None else None)
             if not batch and moved is not None:
@@ -255,8 +231,6 @@ class _Watcher:
             yield self.pending.pop(0)
 
     def _emit(self, kind: FileEventKind, info: FileInfo, old_real: str | None = None) -> None:
-        from sfly.capabilities.files_watch import FileEvent
-
         if old_real is not None:
             self.index.pop(old_real, None)
         real = self.local.real(info.path)
@@ -288,19 +262,14 @@ class _Watcher:
         return sorted(p for p in self.index if p.startswith(prefix))
 
     def _dir_appeared(self, real: str) -> None:
-        try:
-            wd = self.inotify.add_watch(real)
-        except OSError as error:
-            if error.errno == errno_module.ENOSPC:
-                raise self._watch_error(error, self.local.agent_path(real)) from None
+        dirs: dict[int, str] = {}
+        if not self._enter(real, dirs):
             return
         try:
-            entries = _entries(real)
+            entries = local_entries(real)
         except OSError:
             return
-        found: list[FileInfo] = []
-        dirs = {wd: real}
-        self._walk(real, entries, found, dirs)
+        found = list(self._files(entries, dirs))
         self.dirs.update(dirs)
         for info in found:
             file_real = self.local.real(info.path)
@@ -316,8 +285,6 @@ class _Watcher:
             self._gone(path)
 
     def _dir_moved(self, old: str, new: str) -> None:
-        from dataclasses import replace
-
         prefix = old.rstrip("/") + "/"
         for wd, path in list(self.dirs.items()):
             if path == old:
@@ -333,16 +300,13 @@ class _Watcher:
             self._emit("moved", info, old_file)
 
     def _stat(self, real: str) -> FileInfo:
-        from sfly.capabilities.files import FileInfo
-
         return FileInfo.from_stat(self.local.agent_path(real), os.stat(real))
 
-    def _moved_out(self, moved: tuple[int, str, bool]) -> None:
-        _, real, is_dir = moved
-        if is_dir:
-            self._dir_gone(real)
+    def _moved_out(self, moved: _MovedFrom) -> None:
+        if moved.is_dir:
+            self._dir_gone(moved.real)
         else:
-            self._gone(real)
+            self._gone(moved.real)
 
     def _file_moved(self, old: str, name: str, new: str) -> None:
         known = old in self.index
@@ -363,25 +327,22 @@ class _Watcher:
         mask: int,
         cookie: int,
         name: str | None,
-        moved: tuple[int, str, bool] | None,
-    ) -> tuple[int, str, bool] | None:
+        moved: _MovedFrom | None,
+    ) -> _MovedFrom | None:
         """处理一个 inotify 事件，返回还没配对的 IN_MOVED_FROM。"""
         if mask & IN_Q_OVERFLOW:
             raise _Overflow
-        if moved is not None and not (mask & IN_MOVED_TO and cookie == moved[0]):
+        if moved is not None and not (mask & IN_MOVED_TO and cookie == moved.cookie):
             self._moved_out(moved)
             moved = None
         if wd == self.root_wd and mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED):
             raise AgentFileNotFound(
-                f"{self.local.label}：被监听的目录 {self.directory} 已被删除或改名，监听结束",
+                f"{self.local.label}：被监听的目录 {self.scope.directory} 已被删除或改名，监听结束",
                 agent=self.local.name,
             )
         if mask & IN_UNMOUNT:
-            raise AgentError(
-                f"{self.local.label}：被监听的目录 {self.directory} 所在的文件系统已被卸载，"
-                "监听结束",
-                agent=self.local.name,
-                kind="invalid",
+            raise self.local.invalid(
+                f"被监听的目录 {self.scope.directory} 所在的文件系统已被卸载，监听结束"
             )
         if mask & IN_IGNORED:
             self.dirs.pop(wd, None)
@@ -391,16 +352,16 @@ class _Watcher:
             return moved
         real = os.path.join(parent, name)
         is_dir = bool(mask & IN_ISDIR)
-        if is_dir and not self.recursive:
+        if is_dir and not self.scope.recursive:
             return moved
         if mask & IN_MOVED_FROM:
-            return (cookie, real, is_dir)
+            return _MovedFrom(cookie, real, is_dir)
         if mask & IN_MOVED_TO:
             if moved is not None:
-                if moved[2]:
-                    self._dir_moved(moved[1], real)
+                if moved.is_dir:
+                    self._dir_moved(moved.real, real)
                 else:
-                    self._file_moved(moved[1], name, real)
+                    self._file_moved(moved.real, name, real)
             elif is_dir:
                 self._dir_appeared(real)
             else:
@@ -421,8 +382,3 @@ class _Watcher:
             if info is not None:
                 self._emit("closed" if mask & IN_CLOSE_WRITE else "modified", info)
         return moved
-
-
-def _entries(real: str) -> list[os.DirEntry[str]]:
-    with os.scandir(real) as it:
-        return sorted(it, key=lambda e: e.name)

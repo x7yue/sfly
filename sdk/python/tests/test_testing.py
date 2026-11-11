@@ -413,31 +413,21 @@ from sfly import AgentName, Context, node
 
 @node
 def reach(ctx: Context, source: AgentName, backup: AgentName | None = None) -> dict:
-    return {
-        "source": source,
-        "agents": {n: [a.address, a.port] for n, a in ctx.task.agents.items()},
-    }
+    return {"source": source, "backup": backup}
 """
 
 
-def test_agent_inputs_are_agent_names_and_listed_in_ctx_task_agents_without_addresses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # 「Agent」类型的输入（#197）：节点收到 Agent 名称；本地没有控制面，被引用的 Agent 只有名称。
+def test_agent_inputs_are_agent_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 「Agent」类型的输入（#197）：节点收到 Agent 名称，本地调试时不检查它是否注册过。
     (tmp_path / "agent_nodes.py").write_text(AGENT_NODES, encoding="utf-8")
     monkeypatch.syspath_prepend(str(tmp_path))
 
     result = run_node("agent_nodes:reach", {"source": "agent-a"})
     both = run_node("agent_nodes:reach", {"source": "agent-a", "backup": "agent-b"})
-    same = run_node("agent_nodes:reach", {"source": "agent-a", "backup": "agent-a"})
 
     assert result.status == "success", result.error
-    assert result.outputs == {"source": "agent-a", "agents": {"agent-a": ["", 0]}}
-    assert both.outputs == {
-        "source": "agent-a",
-        "agents": {"agent-a": ["", 0], "agent-b": ["", 0]},
-    }
-    assert same.outputs == {"source": "agent-a", "agents": {"agent-a": ["", 0]}}
+    assert result.outputs == {"source": "agent-a", "backup": None}
+    assert both.outputs == {"source": "agent-a", "backup": "agent-b"}
 
 
 def test_an_agent_input_that_is_not_a_string_is_a_config_error(

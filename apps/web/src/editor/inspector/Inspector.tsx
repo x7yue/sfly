@@ -20,9 +20,9 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
+import { AgentSelect } from "./AgentSelect";
 import { Field, SectionTitle } from "./fields";
 import {
-	AgentSelect,
 	AsyncMapping,
 	ExecutionSettings,
 	PackageParams,

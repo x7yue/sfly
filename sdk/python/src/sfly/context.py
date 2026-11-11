@@ -7,8 +7,7 @@
   （见 `Context.metric`）；
 - `ctx.artifacts`：保存产物，返回可以写进输出的产物引用；按产物引用下载产物（见 `Artifacts`）；
 - `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）；
-- `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt，以及通过「Agent」类型的输入引用的 Agent
-  （见 `TaskInfo`）；
+- `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt（见 `TaskInfo`）；
 - `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）；
 - `ctx.agent()` / `ctx.agent(名称)`：自己所在的 Agent / 通过「Agent」类型的参数拿到的
   另一台 Agent 的能力（见 `Context.agent`、`sfly.capabilities`）。
@@ -32,12 +31,13 @@
 
 from __future__ import annotations
 
+import _thread
 import json
 import math
 import os
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 # 执行器每个任务启动一个进程（#76），导入 sfly 在每个任务的启动路径上：pathlib、threading、shutil、
@@ -64,6 +64,55 @@ _NO_LABEL_KEYS: frozenset[str] = frozenset()
 
 class Cancelled(BaseException):
     """任务被取消（或超时）时，执行器收到 SIGTERM 后在节点代码里抛出。"""
+
+
+class _Sigterm:
+    """主线程里 `DeferCancel` 的嵌套层数，和推迟期间是否收到了 SIGTERM。"""
+
+    main = _thread.get_ident()
+    depth = 0
+    pending = False
+
+
+def on_sigterm(signum: int, frame: object) -> None:
+    """执行器装的 SIGTERM 处理函数（只在主线程里执行）：在节点代码里抛出 `Cancelled`；
+    正在 `DeferCancel` 里时推迟到离开它。"""
+    if _Sigterm.depth:
+        _Sigterm.pending = True
+        return
+    raise Cancelled("任务被终止（SIGTERM）")
+
+
+class DeferCancel:
+    """`with DeferCancel():` 这一段里收到的 SIGTERM 推迟到离开这一段时才变成 `Cancelled`。
+
+    SDK 拿到要清理的资源（文件描述符、临时文件、子进程）时用，取消不会落在「拿到资源」和
+    「登记好清理」之间（拿到之后、进入 `try` 之前被打断，资源就没人清理了）：
+
+        resource = None
+        try:
+            with DeferCancel():
+                resource = acquire()
+            ...
+        finally:
+            if resource is not None:
+                release(resource)
+
+    只推迟主线程里的取消：其它线程里收不到 `Cancelled`。
+    """
+
+    def __enter__(self) -> None:
+        self._counted = _thread.get_ident() == _Sigterm.main
+        if self._counted:
+            _Sigterm.depth += 1
+
+    def __exit__(self, *exc: object) -> None:
+        if not self._counted:
+            return
+        _Sigterm.depth -= 1
+        if _Sigterm.depth == 0 and _Sigterm.pending:
+            _Sigterm.pending = False
+            raise Cancelled("任务被终止（SIGTERM）")
 
 
 class ArtifactDownloadError(Exception):
@@ -269,9 +318,7 @@ class TaskInfo:
 
     - `run_id`：运行 ID；`node_id`：场景里的节点 ID（同一个节点类型可以出现多次，
       各有不同的节点 ID）；
-    - `task_id`：任务 ID；`attempt`：第几次尝试（从 1 开始，重试时加 1）；
-    - `agents`：通过「Agent」类型的输入引用的 Agent（名称 → `AgentAddress`），只含参数值不为空的；
-      旧版本 Agent 不下发，为空。
+    - `task_id`：任务 ID；`attempt`：第几次尝试（从 1 开始，重试时加 1）。
 
     在 Agent 上取自 Agent 写的 task.json（`SFLY_TASK`）；本地调试（`sfly run`、`sfly.testing`）时
     任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名，运行 ID 见 `sfly run` 与 `run_node` 的说明。
@@ -282,48 +329,6 @@ class TaskInfo:
     node_id: str = "local"
     task_id: str = "local"
     attempt: int = 1
-    #: 这个任务通过「Agent」类型的输入（`sfly.AgentName`）引用的 Agent：名称 → `AgentAddress`。
-    agents: Mapping[str, AgentAddress] = field(default_factory=dict, hash=False)
-
-
-@dataclass(frozen=True)
-class AgentAddress:
-    """`ctx.task.agents` 里的一台 Agent：任务通过「Agent」类型的输入引用了它（ADR 0019）。
-
-    - `name`：Agent 名称，就是节点收到的参数值；
-    - `address`、`port`：其它 Agent 连接它用的地址和端口，控制面在派发任务时解析
-      （对外地址取安装时显式配置的，否则取控制面看到的连接来源地址）；
-    - `unavailable_reason`：它的能力不能被其它 Agent 调用的原因（例如端口被占用、
-      版本过旧不监听端口），为空表示可以调用。
-
-    本地调试（`sfly run`、`sfly.testing`）不经过控制面：只有名称，地址为空、端口为 0。
-    """
-
-    name: str
-    address: str = ""
-    port: int = 0
-    unavailable_reason: str = ""
-
-
-def _agents_from_spec(value: object) -> dict[str, AgentAddress]:
-    """task.json 的 `agents`：`[{"name", "address", "port", "unavailable_reason"}, ...]`。
-    旧版本 Agent 写的 task.json 没有这个字段；不认识的项跳过。"""
-    agents: dict[str, AgentAddress] = {}
-    for item in value if isinstance(value, list) else []:
-        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"]:
-            continue
-        address, port, reason = (
-            item.get("address"),
-            item.get("port"),
-            item.get("unavailable_reason"),
-        )
-        agents[item["name"]] = AgentAddress(
-            name=item["name"],
-            address=address if isinstance(address, str) else "",
-            port=port if isinstance(port, int) and not isinstance(port, bool) else 0,
-            unavailable_reason=reason if isinstance(reason, str) else "",
-        )
-    return agents
 
 
 def _task_from_env() -> TaskInfo:
@@ -348,7 +353,6 @@ def _task_from_env() -> TaskInfo:
         node_id=text("node_id"),
         task_id=text("task_id"),
         attempt=attempt if isinstance(attempt, int) and attempt > 0 else default.attempt,
-        agents=_agents_from_spec(spec.get("agents")),
     )
 
 
@@ -448,11 +452,7 @@ class Context:
         from sfly.capabilities import connect
 
         return connect(
-            name,
-            task_id=self.task.task_id,
-            attempt=self.task.attempt,
-            referenced=tuple(self.task.agents),
-            cancelled=self.cancelled,
+            name, task_id=self.task.task_id, attempt=self.task.attempt, cancelled=self.cancelled
         )
 
     def cancelled(self) -> bool:

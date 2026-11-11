@@ -10,10 +10,12 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
+from sfly import Agent, AgentError, AgentUnreachable, Context, FileId, FileInfo
 from sfly.testing import Execution, run_node
 from sfly_std.watch_files import watch_files
 
@@ -78,22 +80,38 @@ def pulled_logs(result: Execution) -> list[str]:
     ]
 
 
-def test_pulls_the_matching_files_already_there_and_outputs_the_counts_when_duration_ends(
-    tmp_path: Path,
-) -> None:
+def test_pulls_the_matching_files_already_there(tmp_path: Path) -> None:
     source_dir(
         tmp_path,
         {"app.log.1": b"first\n", "app.log.2": "第二个\n".encode(), "app.log": b"writing"},
     )
 
-    result = run(tmp_path, inputs={"pattern": "app.log.*", "duration": 1})
+    result = run(
+        tmp_path,
+        inputs={"pattern": "app.log.*"},
+        cancel_when=lambda partial: len(pulled_logs(partial)) == 2,
+    )
 
-    assert result.status == "success", result.error
+    assert result.status == "cancelled", result.error
     local = tmp_path / "pulled"
     assert sorted(p.name for p in local.iterdir()) == ["app.log.1", "app.log.2"]
     assert (local / "app.log.1").read_bytes() == b"first\n"
     assert (local / "app.log.2").read_text(encoding="utf-8") == "第二个\n"
-    assert result.outputs == {"count": 2, "total_bytes": 6 + len("第二个\n".encode())}
+
+
+def test_ends_successfully_when_duration_ends_and_outputs_what_it_pulled(tmp_path: Path) -> None:
+    # 到期时拉了几个文件取决于机器快慢：输出和拉下来的文件一致就行。
+    source_dir(tmp_path, {"app.log.1": b"first\n", "app.log.2": "第二个\n".encode()})
+
+    result = run(tmp_path, inputs={"pattern": "app.log.*", "duration": 0.5})
+
+    assert result.status == "success", result.error
+    local = [p for p in (tmp_path / "pulled").glob("*") if not p.name.startswith(".")]
+    assert result.outputs == {
+        "count": len(pulled_logs(result)),
+        "total_bytes": sum(p.stat().st_size for p in local),
+    }
+    assert len(local) == len(pulled_logs(result))
 
 
 def test_files_rotated_while_watching_are_pulled_once_until_stopped(
@@ -131,16 +149,26 @@ def test_files_rotated_while_watching_are_pulled_once_until_stopped(
 def test_a_file_still_being_written_is_pulled_only_after_it_has_not_changed_for_stable_seconds(
     tmp_path: Path, once_watching: OnceWatching
 ) -> None:
-    # app.log 每 0.1 秒追加一行、共 1.5 秒，stable 为 0.5：写入期间一直不满足条件，
-    # 停止写入 0.5 秒后才拉取，拉下来的是完整的内容，只拉一次。
-    logs = source_dir(tmp_path, {"app.log": b""})
-    lines = [f"line {i}\n".encode() for i in range(15)]
+    # 监听开始后新建 app.log，每隔约 0.05 秒追加一行，stable 为 1：写入期间不满足条件，
+    # 停止写入 1 秒后才拉取，拉下来的是完整的内容，只拉一次。
+    # 节点只在文件确实有 stable 秒没变时才拉：只有写入线程自己卡住超过 stable 秒（机器负载
+    # 很高时），节点才会在中途拉一次，那样时只检查最后拉下来的内容。
+    stable = 1.0
+    logs = source_dir(tmp_path)
+    lines = [f"line {i}\n".encode() for i in range(10)]
+    # 相邻两次写入最长隔了多久（从上一次开始写到这一次写完：不短于实际的间隔）。
+    longest = [0.0]
 
     def write() -> None:
+        previous: float | None = None
         for line in lines:
+            started = time.monotonic()
             with (logs / "app.log").open("ab") as f:
                 f.write(line)
-            time.sleep(0.1)
+            if previous is not None:
+                longest[0] = max(longest[0], time.monotonic() - previous)
+            previous = started
+            time.sleep(0.05)
 
     local = tmp_path / "pulled" / "app.log"
 
@@ -150,24 +178,28 @@ def test_a_file_still_being_written_is_pulled_only_after_it_has_not_changed_for_
 
     result = run(
         tmp_path,
-        inputs={"pattern": "*.log", "stable": 0.5},
+        inputs={"pattern": "*.log", "stable": stable},
         cancel_when=once_watching(write, lambda partial: complete(partial)),
     )
 
     assert result.status == "cancelled", result.error
-    assert pulled_logs(result) == [f"{LOGS}/app.log"]
     assert local.read_bytes() == b"".join(lines)
+    if longest[0] < stable:
+        assert pulled_logs(result) == [f"{LOGS}/app.log"]
 
 
 def test_delete_source_deletes_each_file_after_pulling_it(tmp_path: Path) -> None:
     logs = source_dir(tmp_path, {"app.log.1": b"1", "app.log.2": b"22", "app.log": b"now"})
 
-    result = run(tmp_path, inputs={"pattern": "app.log.*", "delete_source": True, "duration": 1})
+    result = run(
+        tmp_path,
+        inputs={"pattern": "app.log.*", "delete_source": True},
+        cancel_when=lambda _: sorted(p.name for p in logs.iterdir()) == ["app.log"],
+    )
 
-    assert result.status == "success", result.error
+    assert result.status == "cancelled", result.error
     assert sorted(p.name for p in (tmp_path / "pulled").iterdir()) == ["app.log.1", "app.log.2"]
     assert sorted(p.name for p in logs.iterdir()) == ["app.log"]
-    assert result.outputs == {"count": 2, "total_bytes": 3}
 
 
 def test_a_pulled_file_that_grows_is_pulled_again_and_replaces_the_local_copy(
@@ -196,9 +228,14 @@ def test_a_pulled_file_that_grows_is_pulled_again_and_replaces_the_local_copy(
 def test_reports_the_pulled_files_bytes_and_rate_as_metrics(tmp_path: Path) -> None:
     source_dir(tmp_path, {"a.log": b"a" * 1000, "b.log": b"b" * 24})
 
-    result = run(tmp_path, inputs={"duration": 1.5})
+    result = run(
+        tmp_path,
+        cancel_when=lambda partial: any(
+            p.name == "pulled_files" and p.value == 2 for p in partial.metrics
+        ),
+    )
 
-    assert result.status == "success", result.error
+    assert result.status == "cancelled", result.error
     series: dict[str, list[float]] = {}
     for point in result.metrics:
         series.setdefault(point.name, []).append(point.value)
@@ -207,6 +244,39 @@ def test_reports_the_pulled_files_bytes_and_rate_as_metrics(tmp_path: Path) -> N
     assert series["pulled_bytes"][-1] == 1024
     assert sum(series["bytes_per_s"]) > 0
     assert {p.kind for p in result.metrics if p.name != "bytes_per_s"} == {"counter"}
+
+
+class _ChangedThenUnreachable:
+    """来源 Agent 的 files：下载时报「源文件在下载期间变了」（kind 为 failed），接着查看它是什么
+    原因时连不上了。"""
+
+    def download(self, path: str, target: Path, *, progress: object = None) -> FileInfo:
+        raise AgentError(f"Agent {SOURCE}：{path} 在下载期间被截短，下载作废", agent=SOURCE)
+
+    def stat(self, path: str) -> FileInfo:
+        raise AgentUnreachable(f"从本机连不上 Agent {SOURCE}", agent=SOURCE)
+
+
+def test_losing_the_connection_while_checking_why_a_download_failed_retries_later(
+    tmp_path: Path,
+) -> None:
+    # 连不上来源 Agent 时节点不失败（standard-nodes 的 watch_files 一节），之后再拉这个文件。
+    from sfly_std.watch_files import RETRY_DELAY, _Files, _LocalNames, _Puller, _Stats
+
+    ctx = Context(events_path=None, cancel_path=None, artifacts_dir=None, artifacts_url=None)
+    agent = SimpleNamespace(files=_ChangedThenUnreachable())
+    file = FileInfo(f"{LOGS}/app.log.1", 10, 1, FileId(1, 2))
+    files = _Files(0.0)
+    files.saw(file, changed=True)
+    started = time.monotonic()
+    puller = _Puller(
+        ctx, cast(Agent, agent), files, _Stats(ctx, started), _LocalNames(tmp_path, LOGS), False
+    )
+
+    puller.pull(file)
+
+    assert files.next_ready(time.monotonic()) is None
+    assert files.next_wake(started) >= started + RETRY_DELAY
 
 
 #: 取消测试里拉取的大文件：稀疏文件，在来源上不占磁盘；取消前只写下开头的一小部分。
@@ -236,7 +306,7 @@ def test_stopping_in_the_middle_of_a_download_leaves_no_partial_file(tmp_path: P
 def test_fails_when_the_directory_does_not_exist_on_the_source_agent(tmp_path: Path) -> None:
     (tmp_path / "a").mkdir()
 
-    result = run(tmp_path, inputs={"duration": 1})
+    result = run(tmp_path)
 
     assert result.status == "failed"
     assert result.error is not None

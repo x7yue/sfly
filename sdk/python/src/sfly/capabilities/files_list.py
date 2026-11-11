@@ -1,26 +1,21 @@
 """`files.list`、`files.stat`：列出文件、查看文件属性。只用标准库（ADR 0002）。
 
-Agent 一侧见 agent/src/capabilities/files.rs，本地调试时的实现（`_local_list`）规则与它相同。
+Agent 一侧见 agent/src/capabilities/files.rs，本地调试时的实现（`local_files`）规则与它相同；
+本地调试时的监听（`files_watch_local.py`）也用 `local_files` 列出文件。
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import Generator, Iterator
+import stat as stat_module
+from collections.abc import Callable, Generator, Iterator
 from typing import TYPE_CHECKING
 
 from sfly.capabilities.channel import DEFAULT_TIMEOUT
+from sfly.capabilities.files_base import FileInfo, FilesBase, Scope, absolute
 
 if TYPE_CHECKING:
-    from sfly.capabilities import Agent
-    from sfly.capabilities.files import FileInfo
     from sfly.capabilities.local import LocalAgent
-
-
-class FilesBase:
-    """`Files` 各组操作的共同基类：`_agent` 是这些文件所在的 Agent。"""
-
-    _agent: Agent
 
 
 class ListStat(FilesBase):
@@ -46,23 +41,21 @@ class ListStat(FilesBase):
         迭代时才发起调用：`directory` 不存在、不是目录或没有权限时，迭代时抛出异常
         （见 `sfly.AgentError`）。中途停止迭代（或 `close()`）时调用随之放弃。
         """
-        from sfly.capabilities.files import absolute
-
-        path = absolute(directory)
+        scope = Scope.of(directory, pattern, recursive)
         self._agent._check_timeout(timeout)
-        return self._list(path, pattern or "*", recursive, timeout)
+        return self._list(scope, timeout)
 
-    def _list(
-        self, path: str, pattern: str, recursive: bool, timeout: float | None
-    ) -> Generator[FileInfo, None, None]:
-        from sfly.capabilities.files import FileInfo
-
+    def _list(self, scope: Scope, timeout: float | None) -> Generator[FileInfo, None, None]:
         local = self._agent._local()
         if local is not None:
-            yield from _local_list(local, path, pattern, recursive)
+            real = local.real(scope.directory)
+            try:
+                top = local_entries(real)
+            except OSError as error:
+                raise local.error(error, scope.directory) from None
+            yield from local_files(local, scope, top)
             return
-        args = {"directory": path, "pattern": pattern, "recursive": recursive}
-        with self._agent._call("files.list", args, timeout) as call:
+        with self._agent._call("files.list", scope.args(), timeout) as call:
             for item in call.items():
                 yield FileInfo.from_json(item)
 
@@ -71,8 +64,6 @@ class ListStat(FilesBase):
     ) -> FileInfo:
         """查看一个文件（或目录）的属性（跟随符号链接）。
         文件不存在时抛出 `sfly.AgentFileNotFound`。"""
-        from sfly.capabilities.files import FileInfo, absolute
-
         text = absolute(path)
         self._agent._check_timeout(timeout)
         local = self._agent._local()
@@ -85,45 +76,52 @@ class ListStat(FilesBase):
             return FileInfo.from_json(call.result())
 
 
-def _local_list(
-    local: LocalAgent, directory: str, pattern: str, recursive: bool
+def local_entries(real: str) -> list[os.DirEntry[str]]:
+    """本机目录 `real` 里的条目，按名称排序。"""
+    with os.scandir(real) as it:
+        return sorted(it, key=lambda e: e.name)
+
+
+def local_files(
+    local: LocalAgent,
+    scope: Scope,
+    entries: list[os.DirEntry[str]],
+    enter: Callable[[str], bool] = lambda _: True,
 ) -> Iterator[FileInfo]:
-    """本地调试时的列出，规则与 Agent 相同。"""
-    import stat as stat_module
-    from fnmatch import fnmatchcase
-
-    from sfly.capabilities.files import FileInfo
-
-    pattern = pattern or "*"
-
-    def entries(real: str) -> list[os.DirEntry[str]]:
-        with os.scandir(real) as it:
-            return sorted(it, key=lambda e: e.name)
-
-    def walk(real: str, items: list[os.DirEntry[str]]) -> Iterator[FileInfo]:
-        subdirs = []
-        for entry in items:
-            try:
-                if entry.is_dir(follow_symlinks=False):
-                    if recursive:
-                        subdirs.append(entry.path)
-                    continue
-                if not fnmatchcase(entry.name, pattern):
-                    continue
-                stat = os.stat(entry.path)
-            except OSError:
+    """本地调试时列出：`entries` 是一个目录里的条目（`local_entries`），给出其中匹配的普通文件，
+    `scope.recursive` 时再按名称依次进入子目录，规则与 Agent 相同。进入子目录之前先调用
+    `enter(子目录在本机上的位置)`，返回 False 时跳过它；列不出的子目录、列出期间消失的文件跳过。"""
+    subdirs = []
+    for entry in entries:
+        try:
+            if entry.is_dir(follow_symlinks=False):
+                if scope.recursive:
+                    subdirs.append(entry.path)
                 continue
-            if stat_module.S_ISREG(stat.st_mode):
-                yield FileInfo.from_stat(local.agent_path(entry.path), stat)
-        for sub in subdirs:
-            try:
-                below = entries(sub)
-            except OSError:
-                continue
-            yield from walk(sub, below)
+        except OSError:
+            continue
+        info = local_file(local, scope, entry.name, entry.path)
+        if info is not None:
+            yield info
+    for sub in subdirs:
+        if not enter(sub):
+            continue
+        try:
+            below = local_entries(sub)
+        except OSError:
+            continue
+        yield from local_files(local, scope, below, enter)
 
+
+def local_file(local: LocalAgent, scope: Scope, name: str, real: str) -> FileInfo | None:
+    """本机上的 `real`（文件名 `name`）在范围里时的属性：匹配 `pattern` 的普通文件
+    （跟随符号链接）。"""
+    if not scope.matches(name):
+        return None
     try:
-        top = entries(local.real(directory))
-    except OSError as error:
-        raise local.error(error, directory) from None
-    yield from walk(local.real(directory), top)
+        st = os.stat(real)
+    except OSError:
+        return None
+    if not stat_module.S_ISREG(st.st_mode):
+        return None
+    return FileInfo.from_stat(local.agent_path(real), st)
