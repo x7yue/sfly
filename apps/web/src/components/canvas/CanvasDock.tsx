@@ -10,6 +10,7 @@ import {
 	ScanIcon,
 } from "lucide-react";
 import { type ReactNode, useRef } from "react";
+import { type ShortcutId, shortcutText } from "#/lib/shortcuts";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MAX_ZOOM, MIN_ZOOM } from "./geometry";
@@ -22,17 +23,17 @@ export function GroupDivider() {
 	return <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />;
 }
 
-/** 工具条上的图标按钮（原型 `.tool`），悬停显示名称与快捷键。 */
+/** 工具条上的图标按钮（原型 `.tool`），悬停显示名称与快捷键（`shortcut` 是注册表 id）。 */
 export function ToolButton({
 	label,
-	keys,
+	shortcut,
 	pressed,
 	disabled,
 	onClick,
 	children,
 }: {
 	label: string;
-	keys?: string;
+	shortcut?: ShortcutId;
 	pressed?: boolean;
 	disabled?: boolean;
 	onClick(): void;
@@ -59,7 +60,7 @@ export function ToolButton({
 			</TooltipTrigger>
 			<TooltipContent>
 				{label}
-				{keys && <Kbd>{keys}</Kbd>}
+				{shortcut && <Kbd>{shortcutText(shortcut)}</Kbd>}
 			</TooltipContent>
 		</Tooltip>
 	);
@@ -112,13 +113,18 @@ export function CanvasDock({
 				)}
 				<ToolButton
 					label="指针"
-					keys="V"
+					shortcut="canvas-pointer"
 					pressed={tool === "pointer"}
 					onClick={() => onTool("pointer")}
 				>
 					<MousePointer2Icon />
 				</ToolButton>
-				<ToolButton label="抓手" keys="H" pressed={tool === "hand"} onClick={() => onTool("hand")}>
+				<ToolButton
+					label="抓手"
+					shortcut="canvas-hand"
+					pressed={tool === "hand"}
+					onClick={() => onTool("hand")}
+				>
 					<HandIcon />
 				</ToolButton>
 				<GroupDivider />
@@ -131,7 +137,7 @@ export function CanvasDock({
 				<ToolButton label="放大" onClick={() => zoomBy(ZOOM_STEP)}>
 					<PlusIcon />
 				</ToolButton>
-				<ToolButton label="适配视图" keys="0" onClick={onFit}>
+				<ToolButton label="适配视图" shortcut="canvas-fit" onClick={onFit}>
 					<ScanIcon />
 				</ToolButton>
 				{tools && (
@@ -141,11 +147,21 @@ export function CanvasDock({
 					</>
 				)}
 				<GroupDivider />
-				<ToolButton label="小地图" keys="M" pressed={minimap} onClick={onToggleMinimap}>
+				<ToolButton
+					label="小地图"
+					shortcut="canvas-minimap"
+					pressed={minimap}
+					onClick={onToggleMinimap}
+				>
 					<MapIcon />
 				</ToolButton>
 				{inspector && (
-					<ToolButton label="检查器" keys="I" pressed={inspector.open} onClick={inspector.onToggle}>
+					<ToolButton
+						label="检查器"
+						shortcut="canvas-inspector"
+						pressed={inspector.open}
+						onClick={inspector.onToggle}
+					>
 						<PanelRightIcon />
 					</ToolButton>
 				)}

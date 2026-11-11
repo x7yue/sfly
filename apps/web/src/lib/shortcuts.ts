@@ -153,11 +153,30 @@ export function keyLabels(keys: string): string[] {
 	return keyChords(keys).flat();
 }
 
+declare const keyLabelBrand: unique symbol;
+
 /**
- * 写在文字里的快捷键（提示、通知里的「可以撤销（Ctrl Z）」）：从注册表取，按键之间用空格隔开。
- * 界面上单独显示按键时用 Keys / Kbd，不用它。
+ * 界面上显示的按键文字（`Kbd` 的内容只接受它）。只能从注册表取（shortcutKeys / shortcutText），
+ * 或是不登记的操作说明（operationKey），所以 `<Kbd>Ctrl S</Kbd>` 这样写死的按键过不了类型检查。
  */
-export const shortcutText = (id: ShortcutId): string => keyLabels(shortcutById(id).keys).join(" ");
+export type KeyLabel = string & { readonly [keyLabelBrand]: true };
+
+/** 注册表里快捷键的按键标签，按依次按下的组分开（见 keyChords）。 */
+export const shortcutKeys = (id: ShortcutId): KeyLabel[][] =>
+	keyChords(shortcutById(id).keys) as KeyLabel[][];
+
+/**
+ * 写在文字里的快捷键（提示、通知里的「可以撤销（Ctrl Z）」，工具条按钮提示）：从注册表取，按键之间用空格隔开。
+ */
+export const shortcutText = (id: ShortcutId): KeyLabel =>
+	keyLabels(shortcutById(id).keys).join(" ") as KeyLabel;
+
+/**
+ * 操作说明里的按键：只说明怎么操作眼前的控件（命令面板底部的「↑ ↓ 选择」），不是快捷键，不登记、不进快捷键面板。
+ * 只列在这里的几个键，快捷键不要写成它。
+ */
+export type OperationKey = "↑" | "↓" | "Enter" | "Esc";
+export const operationKey = (key: OperationKey): KeyLabel => key as KeyLabel;
 
 /** 按依次按下的组分开的按键：`G D` → [["G"], ["D"]]；`Ctrl+K` → [["Ctrl", "K"]]（同时按的在一组）。 */
 export function keyChords(keys: string): string[][] {

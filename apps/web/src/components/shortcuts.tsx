@@ -93,7 +93,7 @@ export function ShortcutsDialog({
 										>
 											<dt>{s.label}</dt>
 											<dd className="m-0">
-												<Keys keys={s.keys} />
+												<Keys shortcut={s.id} />
 											</dd>
 										</div>
 									))}

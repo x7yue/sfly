@@ -4,7 +4,7 @@ import { PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
 import { KIND_CHIP } from "#/components/canvas/zoom-text";
-import { keyLabels, shortcutById } from "#/lib/shortcuts";
+import { shortcutKeys, shortcutText } from "#/lib/shortcuts";
 import {
 	Command,
 	CommandEmpty,
@@ -147,9 +147,11 @@ export function AddNodeMenu({
 				</TooltipTrigger>
 				<TooltipContent>
 					添加节点
-					{keyLabels(shortcutById("canvas-add").keys).map((key) => (
-						<Kbd key={key}>{key}</Kbd>
-					))}
+					{shortcutKeys("canvas-add")
+						.flat()
+						.map((key) => (
+							<Kbd key={key}>{key}</Kbd>
+						))}
 				</TooltipContent>
 			</Tooltip>
 			<PopoverContent
@@ -262,6 +264,6 @@ function AddFooter({ after, before }: { after: string | undefined; before: strin
 			新节点接在 <span className="font-mono text-fg-2">{after}</span> 之后
 		</>
 	) : (
-		"新节点不连线 · 从端口拖线到空白处，或在节点上按 Tab，可以接在节点之后"
+		`新节点不连线 · 从端口拖线到空白处，或在节点上按 ${shortcutText("canvas-add-tab")}，可以接在节点之后`
 	);
 }

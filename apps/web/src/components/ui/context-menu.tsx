@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { ChevronRightIcon } from "lucide-react";
 import { createContext, type ReactNode, useContext, useMemo, useRef } from "react";
 import { Kbd } from "@/components/ui/kbd";
-import { keyChords, type ShortcutId, shortcutById } from "@/lib/shortcuts";
+import { type ShortcutId, shortcutById, shortcutKeys } from "@/lib/shortcuts";
 
 /**
  * 上下文菜单（右键菜单；Base UI Menu，没有 Trigger）：由使用方决定什么时候打开、出现在哪。
@@ -110,7 +110,7 @@ const ITEM_CLASS =
 function ShortcutKeys({ id }: { id: ShortcutId }) {
 	return (
 		<span className="ml-auto inline-flex items-center gap-0.75 pl-4">
-			{keyChords(shortcutById(id).keys)
+			{shortcutKeys(id)
 				.flat()
 				.map((key, i) => (
 					// biome-ignore lint/suspicious/noArrayIndexKey: 同一快捷键里可能有重复的键
