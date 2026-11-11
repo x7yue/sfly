@@ -7,7 +7,7 @@
 //!
 //! 路径是那台机器上的绝对路径，权限就是 Agent 进程的权限，不做沙箱。
 
-use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -168,12 +168,23 @@ pub(super) struct TempFile {
 }
 
 impl TempFile {
+    /// 在 `path` 所在的目录里建临时文件。可以随时丢弃这个 future（写入被取消、调用方断开时目标 Agent 就这样丢下
+    /// 处理）：整个过程在一个阻塞任务里完成，产出的就是 `TempFile`；中途丢弃时阻塞任务照样做完，它的结果随之丢弃，
+    /// Drop 删除刚建的文件。不能先 await 打开文件、再构造 `TempFile`：丢弃恰好发生在文件已经建好、结果还没交回的
+    /// 时候，就没有人删它了。
     pub(super) async fn create(path: &str) -> Result<Self, Status> {
+        let path = path.to_string();
+        tokio::task::spawn_blocking(move || Self::create_blocking(&path))
+            .await
+            .map_err(|error| Status::internal(format!("建临时文件失败：{error}")))?
+    }
+
+    fn create_blocking(path: &str) -> Result<Self, Status> {
         let target = absolute(path)?;
         let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
             return Err(Status::invalid_argument(format!("{path} 不是文件路径")));
         };
-        let mode = match tokio::fs::symlink_metadata(&target).await {
+        let mode = match std::fs::symlink_metadata(&target) {
             Ok(metadata) if metadata.is_dir() => {
                 return Err(Status::invalid_argument(format!(
                     "{path} 是目录：只能写入文件"
@@ -198,19 +209,18 @@ impl TempFile {
                 ".{short}.sfly-{:x}-{seq:x}-{nanos:x}.tmp",
                 std::process::id()
             ));
-            let opened = tokio::fs::OpenOptions::new()
+            let opened = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .mode(0o666)
-                .open(&temp)
-                .await;
+                .open(&temp);
             match opened {
                 Ok(file) => {
                     return Ok(Self {
                         path: path.to_string(),
                         target,
                         temp,
-                        file,
+                        file: tokio::fs::File::from_std(file),
                         mode,
                         committed: false,
                     });
@@ -444,4 +454,66 @@ async fn delete(call: Call<'_>) -> Result<Value, CallError> {
     }
     .map_err(|status| target.error(status))?;
     Ok(Value::Null)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::Future as _;
+    use std::path::Path;
+    use std::task::Poll;
+    use std::time::{Duration, Instant};
+
+    use super::TempFile;
+
+    /// 目录里的临时文件（`.<名>.sfly-….tmp`）。
+    fn temp_files(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect()
+    }
+
+    /// 建临时文件的中途被丢弃（写入被取消、调用方断开，目标 Agent 随之丢下处理）时不留下临时文件。
+    /// 最容易漏的时刻是文件已经建好、还没交回给写入方：以前这时丢弃，临时文件会一直留着。
+    /// 这里在临时文件出现在目录里之后就不再推进，直接丢弃。
+    #[tokio::test]
+    async fn dropping_create_after_the_temp_file_exists_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("app.log");
+        let path = path.to_str().unwrap();
+        let mut dropped_midway = 0;
+        for _ in 0..20 {
+            let mut create = Box::pin(TempFile::create(path));
+            let midway = loop {
+                if !temp_files(dir.path()).is_empty() {
+                    break true;
+                }
+                let polled = std::future::poll_fn(|cx| Poll::Ready(create.as_mut().poll(cx))).await;
+                if let Poll::Ready(temp) = polled {
+                    // 已经建好、交回来了：这一轮没测到，丢弃后再来。
+                    drop(temp.unwrap());
+                    break false;
+                }
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            };
+            drop(create);
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !temp_files(dir.path()).is_empty() {
+                assert!(
+                    Instant::now() < deadline,
+                    "丢弃之后临时文件还在：{:?}",
+                    temp_files(dir.path())
+                );
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            if midway {
+                dropped_midway += 1;
+            }
+        }
+        assert!(
+            dropped_midway > 0,
+            "没有一次是在临时文件建好之后、交回之前丢弃的"
+        );
+    }
 }
