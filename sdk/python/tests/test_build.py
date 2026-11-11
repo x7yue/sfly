@@ -385,3 +385,62 @@ def test_build_rejects_malformed_requires_sdk(
     _, err = capsys.readouterr()
     assert "requires_sdk" in err
     assert not (project / "dist").exists()
+
+
+AGENT_MODULE = """\
+from __future__ import annotations
+
+from sfly import AgentName, Context, node
+
+
+@node
+def clean(ctx: Context, source: AgentName, backup: AgentName | None = None, dir: str = "/") -> dict:
+    return {}
+"""
+
+
+def test_agent_name_inputs_are_marked_in_the_metadata(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 「Agent」类型的输入（#197）：值是 Agent 名称字符串，元信息里带 x-sfly-type 标记。
+    project = write_project(
+        tmp_path, {"pyproject.toml": PYPROJECT, "src/demo_checks/__init__.py": AGENT_MODULE}
+    )
+
+    meta = read_metadata(build(project, capsys))
+
+    assert nodes_by_name(meta)["clean"]["inputs"] == {
+        "type": "object",
+        "properties": {
+            "source": {"type": "string", "x-sfly-type": "agent"},
+            "backup": {
+                "anyOf": [{"type": "string", "x-sfly-type": "agent"}, {"type": "null"}],
+                "default": None,
+            },
+            "dir": {"type": "string", "default": "/"},
+        },
+        "required": ["source"],
+        "order": ["source", "backup", "dir"],
+    }
+    errors = list(Draft202012Validator(load_schema("package-metadata")).iter_errors(meta))
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    ["list[AgentName]", "dict[str, AgentName]", "AgentName | int"],
+)
+def test_agent_name_is_only_allowed_as_the_type_of_a_node_parameter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], annotation: str
+) -> None:
+    module = (
+        "from __future__ import annotations\n\nfrom sfly import AgentName, node\n\n"
+        f"@node\ndef clean(sources: {annotation}) -> dict:\n    return {{}}\n"
+    )
+    project = write_project(
+        tmp_path, {"pyproject.toml": PYPROJECT, "src/demo_checks/__init__.py": module}
+    )
+
+    assert main(["build", str(project)]) == 1
+    _, err = capsys.readouterr()
+    assert "参数 sources" in err and "AgentName 只能直接用作节点参数的类型" in err

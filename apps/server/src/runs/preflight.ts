@@ -1,15 +1,27 @@
+import {
+	agentInputs,
+	agentNotRegistered,
+	InvalidReferenceError,
+	nodeTypeOf,
+	referencesIn,
+	resolveInputs,
+} from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { agents } from "../db/schema.js";
-import { agentFor, planRun } from "../engine/chain.js";
-import { checkDocument } from "../orchestrations/document-checks.js";
+import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
+import {
+	checkDocument,
+	packageCatalogFor,
+	registeredAgents,
+} from "../orchestrations/document-checks.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 
 /**
- * 不能触发的一个原因；code 与保存时的警告一致，另有 `agent_not_registered`、`not_supported`、
- * `sdk_version_unsatisfied`。
+ * 不能触发的一个原因；code 与保存时的警告一致（含「Agent」类型的输入选的 Agent 没有注册过的
+ * `agent_input_not_registered`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`。
  */
 export interface PreflightProblem {
 	code: string;
@@ -20,8 +32,9 @@ export interface PreflightProblem {
 export type Preflight = (doc: OrchestrationDocument) => Promise<PreflightProblem[]>;
 
 /**
- * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用校验全部通过，
- * 包节点派发到的 Agent 都已注册（不要求在线），且控制面版本满足节点包需要的 SDK 版本（#79）。
+ * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用、输入的静态检查全部通过
+ * （「Agent」类型的输入的常量是已注册的 Agent），包节点派发到的 Agent 都已注册（不要求在线），
+ * 且控制面版本满足节点包需要的 SDK 版本（#79）。
  * 返回全部不能触发的原因，空数组表示可以触发。未保存的草稿只存在于浏览器，由画布在触发前检查。
  *
  * 比较的是控制面版本 `version` 而不是 Agent 记录里的版本：只给与控制面版本一致的 Agent 派任务（ADR 0014），
@@ -33,7 +46,7 @@ export function createPreflight(deps: {
 	version: string;
 }): Preflight {
 	return async (doc) => {
-		const problems: PreflightProblem[] = (await checkDocument(doc, deps.packages)).map((w) => ({
+		const problems: PreflightProblem[] = (await checkDocument(doc, deps)).map((w) => ({
 			code: w.code,
 			message: w.message,
 			...(w.node_id ? { node_id: w.node_id } : {}),
@@ -93,5 +106,50 @@ export function createPreflight(deps: {
 			}
 		}
 		return problems;
+	};
+}
+
+/** 触发时按入口参数的实际值做的检查（{@link createParamsCheck}）。 */
+export type ParamsCheck = (
+	doc: OrchestrationDocument,
+	plan: RunPlan,
+	params: Record<string, unknown>,
+) => Promise<PreflightProblem[]>;
+
+/**
+ * 触发时按入口参数的实际值检查：主链上「Agent」类型的输入引用入口参数时，取到的 Agent 必须已注册（不要求在线）。
+ * 引用了前面节点输出的值要到派发时才知道，这里跳过；子流程的参数在调度它时才传入，也在派发时检查。
+ */
+export function createParamsCheck(deps: { db: Db; packages: PackageRepository }): ParamsCheck {
+	return async (doc, plan, params) => {
+		const wanted: { nodeId: string; input: string; agent: string }[] = [];
+		const catalog = await packageCatalogFor(doc, deps.packages);
+		for (const node of plan.main.nodes) {
+			if (node.kind !== "package") continue;
+			const type = nodeTypeOf(doc, node, catalog);
+			if (!type) continue;
+			for (const input of agentInputs(type.inputs)) {
+				const value = node.inputs[input];
+				if (typeof value !== "string" || referencesIn(value).length === 0) continue;
+				let agent: unknown;
+				try {
+					agent = resolveInputs({ value }, { params, earlierOutputs: new Map() }).value;
+				} catch (error) {
+					if (error instanceof InvalidReferenceError) continue;
+					throw error;
+				}
+				if (typeof agent === "string" && agent !== "")
+					wanted.push({ nodeId: node.id, input, agent });
+			}
+		}
+		if (wanted.length === 0) return [];
+		const registered = await registeredAgents(deps.db);
+		return wanted
+			.filter((w) => !registered.has(w.agent))
+			.map((w) => ({
+				code: "agent_input_not_registered",
+				message: `${agentNotRegistered(w.nodeId, w.input, w.agent)}（取自入口参数）`,
+				node_id: w.nodeId,
+			}));
 	};
 }

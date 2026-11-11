@@ -1,9 +1,11 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-import { describeSchema } from "@sfly/orchestration";
+import { describeSchema, isAgentInput } from "@sfly/orchestration";
+import type { AgentView } from "@sfly/schema";
 import { useEffect, useId, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { draftKey, useDropFieldDraft, useFieldDraftError, useParsedField } from "../field-drafts";
+import { AgentSelect } from "./AgentSelect";
 import { Field } from "./fields";
 import {
 	InsertReferenceButton,
@@ -16,10 +18,11 @@ import { formatJson, parseJson, parseNumber } from "./value-text";
 import { ZoomEditor } from "./ZoomEditor";
 
 type JsonSchema = Record<string, unknown>;
-type ValueKind = "string" | "number" | "integer" | "boolean" | "enum" | "json";
+type ValueKind = "string" | "number" | "integer" | "boolean" | "enum" | "agent" | "json";
 
 /** 由输入 schema 决定的控件种类。 */
 export function valueKind(schema: JsonSchema): ValueKind {
+	if (isAgentInput(schema)) return "agent";
 	if (Array.isArray(schema.enum)) return "enum";
 	switch (schema.type) {
 		case "string":
@@ -35,8 +38,9 @@ export function valueKind(schema: JsonSchema): ValueKind {
 /**
  * 一个可以写常量或引用的值（包节点的输入）。没有「模式」：显示什么完全由值决定。
  * - 字符串：一个输入框（ReferenceEditor），文字和引用混写；整个值恰好是一个引用就是整值引用。
- * - 数字、布尔、枚举、JSON：值是整值引用时显示引用标签（点 × 回到类型控件），否则显示类型控件；
+ * - 数字、布尔、枚举、Agent、JSON：值是整值引用时显示引用标签（点 × 回到类型控件），否则显示类型控件；
  *   旁边的「插入引用」选一个引用作为整个值。JSON 用同一个编辑器内核（多行、等宽），字符串值里可以内嵌引用。
+ * - Agent（`sfly.AgentName`）：已注册的 Agent 下拉框（带在线状态），引用只能选入口参数。
  * - 字符串和 JSON 字段有「放大编辑」。
  * 不合法的常量（abc 填进整数）只记为字段草稿，不写进文档，并阻止保存（field-drafts.tsx）。
  */
@@ -48,6 +52,7 @@ export function ValueField({
 	required,
 	value,
 	choices,
+	agents = [],
 	problems,
 	help,
 	onChange,
@@ -59,6 +64,8 @@ export function ValueField({
 	required: boolean;
 	value: unknown;
 	choices: ReferenceChoice[];
+	/** 已注册的 Agent（「Agent」类型的输入的下拉框）。 */
+	agents?: AgentView[];
 	/** 静态检查对这个字段的警告（不阻止保存）。 */
 	problems: string[];
 	help?: string;
@@ -74,13 +81,22 @@ export function ValueField({
 				: "可选";
 	const fieldLabel = label ?? `输入 ${name}`;
 	const key = draftKey(nodeId, `value.${name}`);
-	const common = { id, name, label: fieldLabel, placeholder, problems, choices, onChange };
+	const common = {
+		id,
+		name,
+		label: fieldLabel,
+		placeholder,
+		problems,
+		// Agent 只能是常量或入口参数（ADR 0019）：触发前才能检查它是已注册的 Agent。
+		choices: kind === "agent" ? choices.filter((c) => c.kind === "param") : choices,
+		onChange,
+	};
 	const field = (control: React.ReactNode, aside?: React.ReactNode) => (
 		<Field
 			label={<span className="font-mono">{name}</span>}
 			htmlFor={id}
 			required={required}
-			type={describeSchema(schema)}
+			type={kind === "agent" ? "Agent" : describeSchema(schema)}
 			error={<ParsedError fieldKey={key} problems={problems} />}
 			help={help}
 			aside={aside}
@@ -95,6 +111,7 @@ export function ValueField({
 			fieldKey={key}
 			kind={kind}
 			schema={schema}
+			agents={agents}
 			value={value}
 			render={field}
 		/>
@@ -156,12 +173,13 @@ function StringValue({
 	);
 }
 
-/** 数字、布尔、枚举、JSON：整值引用显示为引用标签，否则是类型控件。 */
+/** 数字、布尔、枚举、Agent、JSON：整值引用显示为引用标签，否则是类型控件。 */
 function TypedValue({
 	id,
 	fieldKey,
 	kind,
 	schema,
+	agents,
 	name,
 	label,
 	placeholder,
@@ -170,7 +188,12 @@ function TypedValue({
 	value,
 	onChange,
 	render,
-}: ValueProps & { fieldKey: string; kind: Exclude<ValueKind, "string">; schema: JsonSchema }) {
+}: ValueProps & {
+	fieldKey: string;
+	kind: Exclude<ValueKind, "string">;
+	schema: JsonSchema;
+	agents: AgentView[];
+}) {
 	const dropDraft = useDropFieldDraft();
 	const chip = useRef<HTMLButtonElement>(null);
 	const referenced = wholeReference(value) !== undefined;
@@ -221,6 +244,21 @@ function TypedValue({
 				onChange={onChange}
 				render={render}
 			/>
+		);
+	}
+	if (kind === "agent") {
+		return render(
+			<AgentSelect
+				id={id}
+				label={label}
+				value={typeof value === "string" ? value : undefined}
+				agents={agents}
+				emptyLabel={`（${placeholder}）`}
+				slots={false}
+				invalid={invalid}
+				onChange={onChange}
+			/>,
+			picker,
 		);
 	}
 	if (kind === "boolean" || kind === "enum") {

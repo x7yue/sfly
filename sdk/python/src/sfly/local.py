@@ -13,7 +13,8 @@
   事件管道里的日志 → 来源 sdk、级别取 SDK 记录的级别，不认识的行原样记成 sdk info 日志
   （agent/src/logs.rs）；进度和指标保留每一次上报（Agent 上报前按秒合并）；
 - 任务信息与后台进程目录：task.json 里任务 ID 是 `local`、attempt 是 1，
-  运行 ID 和节点 ID 由调用方给出；
+  运行 ID 和节点 ID 由调用方给出；「Agent」类型的输入引用的 Agent 只有名称
+  （`agents`，地址为空、端口为 0）；
   `SFLY_PROCS` 默认是工作目录下的 `procs/`（`sfly run` 改为项目下的 `.sfly/procs/<运行目录名>/`）；
 - 下载产物：本地没有控制面，`SFLY_DOWNLOADS` 指向下载内容表 `downloads.json`
   （产物引用 → 本地文件路径，只有本地执行会设置），`ctx.artifacts.download` 遇到表里的引用时
@@ -221,6 +222,28 @@ def input_problems(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list
         if sub is not None and not _matches(sub, value):
             problems.append(f"输入 {name} 应为 {_describe(sub)}，实际是 {_show(value)}")
     return problems
+
+
+def _is_agent_input(schema: Mapping[str, Any]) -> bool:
+    """「Agent」类型的输入（`sfly.AgentName` 或 `AgentName | None`）：带 `x-sfly-type: agent`。"""
+    if schema.get("x-sfly-type") == "agent":
+        return True
+    members = schema.get("anyOf")
+    return isinstance(members, list) and any(
+        isinstance(m, dict) and m.get("x-sfly-type") == "agent" for m in members
+    )
+
+
+def referenced_agents(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[str]:
+    """输入通过「Agent」类型的参数引用的 Agent 名称（去重，按参数顺序，空值不算）。"""
+    properties: Mapping[str, Any] = schema.get("properties") or {}
+    names: list[str] = []
+    for name, value in inputs.items():
+        sub = properties.get(name)
+        if isinstance(sub, dict) and _is_agent_input(sub) and isinstance(value, str) and value:
+            if value not in names:
+                names.append(value)
+    return names
 
 
 # ---- 执行 ----
@@ -481,6 +504,11 @@ def execute(
                 "node_id": node_id or entry.rpartition(":")[2].rpartition(".")[2],
                 "entry": entry,
                 "inputs": inputs,
+                # 本地没有控制面：被引用的 Agent 只有名称（ctx.task.agents）。
+                "agents": [
+                    {"name": name, "address": "", "port": 0, "unavailable_reason": ""}
+                    for name in (referenced_agents(schema, inputs) if schema is not None else [])
+                ],
             },
             ensure_ascii=False,
         ),

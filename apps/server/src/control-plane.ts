@@ -27,7 +27,7 @@ import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
 import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
-import { createPreflight } from "./runs/preflight.js";
+import { createParamsCheck, createPreflight } from "./runs/preflight.js";
 import { loadSdkWheels, sdkWheelUrl } from "./sdk/sdk-wheels.js";
 import { Mutex } from "./util/mutex.js";
 import { periodic } from "./util/periodic.js";
@@ -179,6 +179,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			`${publicHttpUrl}/packages/${encodeURIComponent(name)}/versions/${encodeURIComponent(version)}/archive`,
 		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 		preflight,
+		paramsCheck: createParamsCheck({ db: database.db, packages }),
 		leaseMs: options.leaseMs,
 		sdkWheel: (agentVersion) => {
 			const wheel = sdkWheels.find((w) => w.version === agentVersion);

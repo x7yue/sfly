@@ -23,6 +23,7 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Switch } from "@/components/ui/switch";
 import { agentsWithDev } from "../catalog";
 import { draftKey, useParsedField } from "../field-drafts";
+import { AgentSelect } from "./AgentSelect";
 import { Field, SectionTitle } from "./fields";
 import {
 	InsertReferenceButton,
@@ -34,6 +35,9 @@ import { ParsedError, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
 import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
 import { ZoomEditor } from "./ZoomEditor";
+
+// 检查器的场景设置也用它（Inspector.tsx 从这里导入）。
+export { AgentSelect };
 
 type PackageNode = Extract<DocNode, { kind: "package" }>;
 type AsyncNode = Extract<DocNode, { kind: "async" }>;
@@ -47,40 +51,6 @@ export type ProblemsOf = (input: string) => string[];
 
 /** 开发版本的版本号（`包名@dev`）。 */
 const DEV_VERSION = "dev";
-
-export function AgentSelect({
-	label,
-	value,
-	agents,
-	emptyLabel,
-	onChange,
-}: {
-	label: string;
-	value: string | undefined;
-	agents: AgentView[];
-	emptyLabel: string;
-	onChange(value: string | undefined): void;
-}) {
-	const names = agents.map((a) => a.name);
-	return (
-		<NativeSelect
-			aria-label={label}
-			value={value ?? ""}
-			onChange={(e) => onChange(e.target.value || undefined)}
-		>
-			<NativeSelectOption value="">{emptyLabel}</NativeSelectOption>
-			{agents.map((a) => (
-				<NativeSelectOption key={a.name} value={a.name}>
-					{a.name} · {a.status === "online" ? "在线" : "离线"} · {a.running_tasks.length}/
-					{a.info.slots} 槽位
-				</NativeSelectOption>
-			))}
-			{value && !names.includes(value) && (
-				<NativeSelectOption value={value}>{value}（未注册）</NativeSelectOption>
-			)}
-		</NativeSelect>
-	);
-}
 
 /** 包节点的「参数」页：按输入 schema 生成的表单，以及节点的 Agent。 */
 export function PackageParams({
@@ -130,6 +100,7 @@ export function PackageParams({
 					required={required.has(name)}
 					value={node.inputs[name]}
 					choices={choices}
+					agents={agents}
 					problems={problemsOf(name)}
 					onChange={(v) => set(name, v)}
 				/>

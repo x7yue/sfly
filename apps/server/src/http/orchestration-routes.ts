@@ -104,7 +104,7 @@ export function registerOrchestrationRoutes(
 		// 结构、包版本锁定和引用的问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2、§2.4）。
 		// 先设状态码再返回响应：响应在类型上受契约约束。
 		reply.code(201);
-		return { ...saved, warnings: await checkDocument(saved.document, packages) };
+		return { ...saved, warnings: await checkDocument(saved.document, { db, packages }) };
 	});
 
 	contractRoute(app, orchestrationsApi.versions, async ({ params }, reply) => {
@@ -127,7 +127,7 @@ export function registerOrchestrationRoutes(
 		if (!restored) return versionNotFound(reply);
 		return reply
 			.code(201)
-			.send({ ...restored, warnings: await checkDocument(restored.document, packages) });
+			.send({ ...restored, warnings: await checkDocument(restored.document, { db, packages }) });
 	});
 
 	contractRoute(app, orchestrationsApi.version, async ({ params }, reply) => {

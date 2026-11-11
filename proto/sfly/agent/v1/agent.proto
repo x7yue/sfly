@@ -240,6 +240,21 @@ message AssignTask {
   // `PUT <artifact_upload_url><按路径段百分号编码的相对路径>`（配置了注册令牌时带 `Authorization: Bearer <token>`）。
   // 同一地址也是产物的下载地址：SDK 把它作为产物引用返回给节点。为空时不上传。
   string artifact_upload_url = 12;
+  // 这个任务通过「Agent」类型的输入引用的 Agent（ADR 0019），每台一项、不重复；地址在派发时解析。
+  // 节点只能调用这里列出的 Agent 和自己所在 Agent 的能力。旧版本控制面不带：没有可以调用的其它 Agent。
+  repeated ReferencedAgent referenced_agents = 13;
+}
+
+// 任务通过「Agent」类型的输入引用的一台 Agent：节点收到的参数值是它的名称，调用它的能力时连接这里的地址和端口。
+message ReferencedAgent {
+  // Agent 名称。
+  string name = 1;
+  // 其它 Agent 连接它用的地址（IP 地址或主机名）：安装时显式配置的对外地址，否则是控制面看到的连接来源地址。
+  string address = 2;
+  // 它监听的端口；0 表示不知道（旧版本 Agent 不监听端口）。
+  uint32 port = 3;
+  // 它的能力不能被其它 Agent 调用的原因（给人看的一句话，例如端口已被占用、版本过旧）；为空表示可以调用。
+  string unavailable_reason = 4;
 }
 
 // 取消一个正在执行的任务（docs/SEMANTICS.md §3.4）。Agent 先写入取消标记文件（SFLY_CANCEL），

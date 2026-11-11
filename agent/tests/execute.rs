@@ -6,7 +6,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use sfly_agent::proto::{ErrorKind, InstalledPackage, TaskStatus};
+use sfly_agent::proto::{ErrorKind, InstalledPackage, ReferencedAgent, TaskStatus};
 use support::{AgentOptions, FakeControlPlane, spawn_agent, stub_task, stub_venv};
 
 fn outputs(result: &sfly_agent::proto::TaskResult) -> Value {
@@ -152,6 +152,56 @@ async fn each_task_runs_in_its_own_work_dir_with_the_shared_venv_isolated_from_a
         assert_eq!(task_json["inputs"], json!({}));
         assert!(dir.join("artifacts").is_dir());
     }
+}
+
+#[tokio::test]
+async fn agents_referenced_by_the_task_are_passed_to_the_node_in_task_json() {
+    // 「Agent」类型的输入（#197）：控制面派发时随任务下发被引用 Agent 的名称、地址和端口，
+    // 节点收到的参数值仍是名称；SDK 从 task.json 的 agents 读到地址（ctx.task.agents）。
+    let cp = FakeControlPlane::start().await;
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-refs"));
+    cp.hello(0).await;
+
+    let mut task = stub_task("task-refs", "echo", json!({ "text": "agent-a" }));
+    task.referenced_agents = vec![
+        ReferencedAgent {
+            name: "agent-a".into(),
+            address: "10.0.0.5".into(),
+            port: 50052,
+            unavailable_reason: String::new(),
+        },
+        ReferencedAgent {
+            name: "agent-old".into(),
+            address: "10.0.0.6".into(),
+            port: 0,
+            unavailable_reason: "Agent 版本过旧".into(),
+        },
+    ];
+    cp.assign(task).await;
+
+    let (result, _) = cp.result("task-refs").await;
+    assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    assert_eq!(outputs(&result), json!({ "text": "agent-a" }));
+    let dir = agent.work_dir.path().join("task-refs");
+    let task_json: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("task.json")).unwrap()).unwrap();
+    assert_eq!(
+        task_json["agents"],
+        json!([
+            { "name": "agent-a", "address": "10.0.0.5", "port": 50052, "unavailable_reason": "" },
+            { "name": "agent-old", "address": "10.0.0.6", "port": 0, "unavailable_reason": "Agent 版本过旧" },
+        ])
+    );
+
+    // 旧版本控制面不下发：没有被引用的 Agent。
+    cp.assign(stub_task("task-no-refs", "echo", json!({ "text": "x" })))
+        .await;
+    cp.result("task-no-refs").await;
+    let task_json: Value = serde_json::from_str(
+        &std::fs::read_to_string(agent.work_dir.path().join("task-no-refs/task.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(task_json["agents"], json!([]));
 }
 
 #[tokio::test]

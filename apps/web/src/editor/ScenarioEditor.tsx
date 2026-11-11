@@ -76,7 +76,7 @@ import {
 	packageGroups,
 } from "./add-node";
 import { companionSubflow, dispatchProblem } from "./add-subflow";
-import { usePackageCatalog } from "./catalog";
+import { usePackageCatalog, useRegisteredAgents } from "./catalog";
 import { EdgeMenu } from "./EdgeMenu";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { useEditHistory } from "./edit-history";
@@ -204,7 +204,11 @@ function Editor({
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages, agentList);
-	const warnings = useMemo(() => documentWarnings(doc, catalog), [doc, catalog]);
+	const registered = useRegisteredAgents(agents.data?.agents);
+	const warnings = useMemo(
+		() => documentWarnings(doc, catalog, { agents: registered }),
+		[doc, catalog, registered],
+	);
 	const notes = useMemo(() => undeclaredInputNotes(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	// 在线编辑者：整个画布页一份在线状态，编辑 / 运行状态切换时不中断。

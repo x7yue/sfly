@@ -68,11 +68,36 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | TypedDict | 有固定键的对象（非 `total` 的键可选） |
 | `T \| None`、`Optional[T]`、其他 `Union` | 任一成员 |
 | `Annotated[T, ...]` | 同 `T` |
+| `sfly.AgentName` | 「Agent」类型：Agent 名称（字符串），见下文 |
 | 没有注解、`Any`、`object` | 任意 JSON 值，不校验 |
 
 - 有默认值的参数是可选输入，默认值必须能序列化为 JSON；没有默认值的是必填输入。
 - 派发任务前按 schema 校验：缺少必填输入、或声明了的输入类型不符时，任务以 `config_error` 失败，节点不会执行。没有声明的输入不检查。
 - 不支持的注解（例如自定义类）让 `sfly build` 报错。
+
+### 「Agent」类型的输入
+
+```python
+from sfly import AgentName, Context, node
+
+
+@node(outputs=["files"])
+def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> dict:
+    """source 是日志所在的 Agent，节点在另一台 Agent 上清洗它的日志。"""
+    target = ctx.task.agents[source]
+    ctx.log.info("来源 Agent %s 在 %s:%d", source, target.address, target.port)
+    ...
+```
+
+把输入参数标成 `AgentName`，表示节点会访问这台 Agent。`AgentName` 在运行时就是 `str`：节点收到的值是 Agent 名称。可以写成 `AgentName | None`（可选参数）；不能用在列表、字典或输出里，`sfly build` 会报错。
+
+这个类型从 SDK 0.2.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.2.0`：更旧的 Agent 上没有这个类型，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
+
+- `sfly build` 在输入 schema 里标记它：`{"type": "string", "x-sfly-type": "agent"}`。
+- 画布的检查器里它是 Agent 下拉框，列出已注册的 Agent 及在线状态；也可以用「插入引用」改为引用入口参数。
+- 选的 Agent 必须已注册（不要求在线）：常量不是已注册的 Agent 时保存给出警告、触发前的预检阻断，并指出是哪个节点的哪个参数；引用入口参数时按触发时传入的实际值检查；值来自前面节点的输出时在派发时检查，没有注册过时任务以 `config_error` 失败。目标 Agent 不在线不阻断：节点运行时连不上它，访问它的那一步才会失败。
+- 派发任务时，控制面把这些 Agent 的名称、地址、端口随任务下发，节点用 `ctx.task.agents` 读到（见下文）。地址在派发时解析：Agent 重新注册换了地址后，之后派发的任务用新地址。
+- 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是 Agent 名称，不检查它是否注册过；`ctx.task.agents` 里只有名称，地址为空、端口为 0。
 
 ## 输出
 
@@ -191,14 +216,16 @@ ctx.task.run_id     # 运行 ID
 ctx.task.node_id    # 场景里的节点 ID（同一个节点类型出现多次时各不相同）
 ctx.task.task_id    # 任务 ID
 ctx.task.attempt    # 第几次尝试，从 1 开始，重试时加 1
+ctx.task.agents     # 通过「Agent」类型的输入引用的 Agent：名称 → AgentAddress
 
 log = ctx.procs_dir / f"{ctx.task.node_id}.log"
 log.parent.mkdir(parents=True, exist_ok=True)
 ```
 
+- `ctx.task.agents` 列出这个任务通过「Agent」类型的输入引用的 Agent（值为空的参数不算），每台一项：`AgentAddress(name, address, port, unavailable_reason)`。`address`、`port` 是其它 Agent 连接它用的地址和端口（对外地址取安装 Agent 时显式配置的，否则取控制面看到的连接来源地址）；`unavailable_reason` 不为空时它的能力不能被其它 Agent 调用（例如端口被占用、版本过旧不监听端口），端口可能是 0。从 SDK 0.2.0 起可用；更旧的 Agent 不下发，这时为空。
 - `ctx.procs_dir` 是这次运行的**后台进程目录**：节点启动的、节点结束后还要继续运行的进程，把日志等文件放在这里。它不在任务目录里，任务目录被清理或任务重试时不受影响；同一次运行的任务共用一个目录（用节点 ID 区分文件名）。目录不一定已经存在，使用前自己创建。
 - 在 Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`，和任务目录按同一个保留期清理（运行还有任务在 Agent 上时不动），见「安装 Agent」。0.0.4 之前的 Agent 不提供这个目录，SDK 取同样的位置，但旧 Agent 不会清理它。
-- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly run` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
+- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名，`ctx.task.agents` 只有名称。`sfly run` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
 
 ## 取消与超时
 
