@@ -1,9 +1,8 @@
 import { cn } from "cn";
 import { PlusIcon } from "lucide-react";
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
 import { KIND_CHIP } from "#/components/canvas/zoom-text";
-import { Button } from "@/components/ui/button";
 import {
 	Command,
 	CommandEmpty,
@@ -12,21 +11,24 @@ import {
 	CommandItem,
 	CommandList,
 } from "@/components/ui/command";
-import { Input } from "@/components/ui/input";
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { type AddItem, BUILTIN_ITEMS, type PackageGroup } from "./add-node";
+import { AsyncForm, FormFooter, SubflowNameForm } from "./subflow-forms";
 
 /**
  * 一次添加节点的请求。添加分两种（#183）：
  * - 有来源（`after`）：从端口拖线到空白处、焦点在节点上按 Tab、节点菜单「在后面添加节点」——新节点接在来源节点之后，
  *   来源节点不是链尾时插在它和下一个节点（`before`）之间；
  * - 没有来源：工具条「＋」、`/`、空白处右键「添加节点」——新节点不连线，成为游离节点。
+ * 另外，从异步任务节点的调度端口拖线到空白处（`dispatch`）时只新建子流程入口，并连上调度连线（#187）。
  */
 export interface AddRequest {
 	/** 来源节点：新节点接在它之后。 */
 	after?: string;
+	/** 从这个异步任务节点的调度端口拖出：菜单直接是新建子流程的表单。 */
+	dispatch?: string;
 	/** 来源节点在链上的下一个节点：新节点插在两者之间（编辑器按当前连线填写；在连线上插入时就是连线的终点）。 */
 	before?: string;
 	/** 菜单出现的屏幕坐标（松开鼠标、右键的位置）；不给时在「＋」按钮上方。 */
@@ -48,7 +50,8 @@ function KindChip({ kind }: { kind: AddItem["kind"] }) {
  * 添加节点菜单（原型 #/editor 的 addMenu）：可搜索；内置节点与各节点包的节点类型分组列出。
  * 「＋」按钮本身放在工具条最左侧（FlowCanvas 的 dockStart）；拖线到空白处、空白处右键时菜单出现在鼠标的位置。
  * 有来源节点时不列子流程入口（子流程入口只能由调度连线触发，不能接在链上）。菜单底部写明这次是接在谁之后还是不连线。
- * 选择子流程入口后菜单换成填写子流程名称的表单（名称必填、场景内唯一，SEMANTICS §1.2）。
+ * 选择子流程入口后菜单换成填写子流程名称的表单（名称必填、场景内唯一，SEMANTICS §1.2）；选择异步任务后换成
+ * 可以勾选「同时新建子流程」的表单（#187）。表单在 subflow-forms.tsx。
  */
 export function AddNodeMenu({
 	request,
@@ -68,22 +71,29 @@ export function AddNodeMenu({
 	const trigger = useRef<HTMLButtonElement>(null);
 	/** 打开菜单前焦点所在的元素：Esc 关闭后回到这里。 */
 	const opener = useRef<HTMLElement | null>(null);
+	/** 已经记下过打开前焦点的弹层（每次打开都是新的弹层元素）。 */
+	const seen = useRef(new WeakSet<Element>());
 	/**
-	 * 搜索框一挂载就拿到焦点（React 提交阶段同步执行）。弹层自己的初始焦点要等下一帧
+	 * 搜索框（或换成的表单里第一个输入框）一挂载就拿到焦点（React 提交阶段同步执行）。弹层自己的初始焦点要等下一帧
 	 * （Base UI 的 FloatingFocusManager 用 requestAnimationFrame），按 / 后紧接着输入的字
 	 * 会落在原来的焦点上丢掉，回车就选中了过滤前的第一项（#123）。
 	 * 这样一来 FloatingFocusManager 记下的「打开前的焦点」成了搜索框本身，所以先在这里记下
-	 * 打开前的焦点，关闭时由 finalFocus 显式交还。从子流程表单返回时焦点已在菜单里，不覆盖。
+	 * 打开前的焦点，关闭时由 finalFocus 显式交还。在列表和表单之间切换时是同一个弹层，不覆盖
+	 * （切换时原来的焦点元素已经卸载，不能按焦点在不在弹层里判断）。
 	 */
-	const focusSearch = useCallback((input: HTMLInputElement | null) => {
+	const focusFirst = useCallback((input: HTMLInputElement | null) => {
 		if (!input) return;
-		const active = document.activeElement;
 		const popup = input.closest('[data-slot="popover-content"]');
-		if (!popup?.contains(active)) opener.current = active instanceof HTMLElement ? active : null;
+		if (popup && !seen.current.has(popup)) {
+			seen.current.add(popup);
+			const active = document.activeElement;
+			opener.current = active instanceof HTMLElement ? active : null;
+		}
 		input.focus({ preventScroll: true });
 	}, []);
-	const [naming, setNaming] = useState(false);
-	if (request === null && naming) setNaming(false);
+	/** 选了子流程入口或异步任务之后，菜单换成对应的表单。 */
+	const [form, setForm] = useState<"subflow" | "async" | null>(null);
+	if (request === null && form !== null) setForm(null);
 	// 每次打开时清掉上一次「选了节点」的标记：Tab、拖线、右键打开不经过 Popover 的 onOpenChange，
 	// 不清掉的话上一次选过节点后再打开、按 Esc 关闭，焦点就回不到打开前的位置。
 	const wasOpen = useRef(false);
@@ -92,6 +102,7 @@ export function AddNodeMenu({
 	const at = request?.client;
 	const after = request?.after;
 	const before = request?.before;
+	const dispatch = request?.dispatch;
 	const anchor = at
 		? { getBoundingClientRect: () => DOMRect.fromRect({ x: at.x, y: at.y, width: 0, height: 0 }) }
 		: undefined;
@@ -147,15 +158,38 @@ export function AddNodeMenu({
 				}}
 				className="w-80"
 			>
-				{naming ? (
+				{dispatch ? (
 					<SubflowNameForm
+						focusRef={focusFirst}
 						problemOf={subflowNameProblem}
-						onBack={() => setNaming(false)}
+						footer={
+							<>
+								调度连线从 <span className="font-mono text-fg-2">{dispatch}</span>{" "}
+								连到新的子流程入口
+							</>
+						}
 						onCreate={(name) => pick({ kind: "subflow_entry", name })}
+					/>
+				) : form === "subflow" ? (
+					<SubflowNameForm
+						focusRef={focusFirst}
+						problemOf={subflowNameProblem}
+						onBack={() => setForm(null)}
+						onCreate={(name) => pick({ kind: "subflow_entry", name })}
+					/>
+				) : form === "async" ? (
+					<AsyncForm
+						focusRef={focusFirst}
+						problemOf={subflowNameProblem}
+						footer={<AddFooter after={after} before={before} />}
+						onBack={() => setForm(null)}
+						onCreate={(subflow) =>
+							pick(subflow === undefined ? { kind: "async" } : { kind: "async", subflow })
+						}
 					/>
 				) : (
 					<Command loop className="bg-transparent">
-						<CommandInput ref={focusSearch} placeholder="搜索节点类型…" aria-label="搜索节点类型" />
+						<CommandInput ref={focusFirst} placeholder="搜索节点类型…" aria-label="搜索节点类型" />
 						<CommandList className="max-h-[min(360px,var(--available-height))]">
 							<CommandEmpty>没有匹配的节点类型</CommandEmpty>
 							<CommandGroup heading="内置">
@@ -165,7 +199,11 @@ export function AddNodeMenu({
 										value={`builtin:${b.kind}`}
 										keywords={[KIND_META[b.kind].label, b.kind, b.hint]}
 										onSelect={() =>
-											b.kind === "subflow_entry" ? setNaming(true) : pick({ kind: b.kind })
+											b.kind === "async"
+												? setForm("async")
+												: b.kind === "subflow_entry"
+													? setForm("subflow")
+													: pick({ kind: b.kind })
 										}
 									>
 										<KindChip kind={b.kind} />
@@ -193,20 +231,9 @@ export function AddNodeMenu({
 								</CommandGroup>
 							))}
 						</CommandList>
-						<p className={cn("border-t border-border-soft px-3 py-2 text-2xs text-fg-3")}>
-							{after && before ? (
-								<>
-									新节点插在 <span className="font-mono text-fg-2">{after}</span> 和{" "}
-									<span className="font-mono text-fg-2">{before}</span> 之间
-								</>
-							) : after ? (
-								<>
-									新节点接在 <span className="font-mono text-fg-2">{after}</span> 之后
-								</>
-							) : (
-								"新节点不连线 · 从端口拖线到空白处，或在节点上按 Tab，可以接在节点之后"
-							)}
-						</p>
+						<FormFooter>
+							<AddFooter after={after} before={before} />
+						</FormFooter>
 					</Command>
 				)}
 			</PopoverContent>
@@ -214,54 +241,18 @@ export function AddNodeMenu({
 	);
 }
 
-/** 新建子流程：填写名称。空名称在提交时提示，重名随输入提示。 */
-function SubflowNameForm({
-	problemOf,
-	onBack,
-	onCreate,
-}: {
-	problemOf(name: string): string | null;
-	onBack(): void;
-	onCreate(name: string): void;
-}) {
-	const inputId = useId();
-	const input = useRef<HTMLInputElement>(null);
-	const [name, setName] = useState("");
-	const [submitted, setSubmitted] = useState(false);
-	const problem = problemOf(name);
-	const shown = submitted || name.trim() !== "" ? problem : null;
-	useEffect(() => input.current?.focus(), []);
-	return (
-		<form
-			aria-label="新建子流程"
-			className="flex flex-col gap-2 p-3"
-			onSubmit={(e) => {
-				e.preventDefault();
-				setSubmitted(true);
-				if (problem === null) onCreate(name);
-			}}
-		>
-			<label htmlFor={inputId} className="text-sm text-fg-2">
-				子流程名称
-			</label>
-			<Input
-				ref={input}
-				id={inputId}
-				value={name}
-				placeholder="例如 压测监控"
-				aria-invalid={shown !== null || undefined}
-				onChange={(e) => setName(e.target.value)}
-			/>
-			{shown && <p className="m-0 text-xs text-danger-fg">{shown}</p>}
-			<p className="m-0 text-xs text-fg-3">场景内唯一；停止子流程节点按名称选择子流程。</p>
-			<div className="flex justify-end gap-1.5">
-				<Button type="button" variant="ghost" size="sm" onClick={onBack}>
-					返回
-				</Button>
-				<Button type="submit" size="sm">
-					新建子流程
-				</Button>
-			</div>
-		</form>
+/** 菜单底部写明这次添加是插在两个节点之间、接在谁之后还是不连线。 */
+function AddFooter({ after, before }: { after: string | undefined; before: string | undefined }) {
+	return after && before ? (
+		<>
+			新节点插在 <span className="font-mono text-fg-2">{after}</span> 和{" "}
+			<span className="font-mono text-fg-2">{before}</span> 之间
+		</>
+	) : after ? (
+		<>
+			新节点接在 <span className="font-mono text-fg-2">{after}</span> 之后
+		</>
+	) : (
+		"新节点不连线 · 从端口拖线到空白处，或在节点上按 Tab，可以接在节点之后"
 	);
 }

@@ -29,7 +29,7 @@ export const SUBFLOW_TOP_GAP = REGION_PADDING.top + 100;
 /** 子流程相邻两行的行距：区域之间留 40。 */
 const SUBFLOW_ROW = NODE_SIZE.height + REGION_PADDING.bottom + 40 + REGION_PADDING.top;
 /** 子流程入口节点相对触发它的异步任务节点的水平偏移。 */
-const SUBFLOW_INDENT = NODE_SIZE.width / 2 + 106;
+export const SUBFLOW_INDENT = NODE_SIZE.width / 2 + 106;
 /** 主链不超过这么多节点时排成一行。 */
 const MAX_SINGLE_ROW = 5;
 
