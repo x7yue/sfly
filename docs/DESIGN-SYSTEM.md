@@ -104,7 +104,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Segmented` | 分段选择（筛选、视图切换）：`fieldset` + `aria-pressed` 按钮，当前项中性高亮；只有图标的选项给 `label` |
 | `Badge` | `default` / `ok` / `warn` / `danger`；版本号、计数等 |
 | `Dialog` | 模态弹窗：锁定焦点、Esc 与点遮罩关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖） |
-| `Sheet` | 抽屉（右侧 460px），焦点行为同 Dialog |
+| `Sheet` | 抽屉（右侧，默认 460px），焦点行为同 Dialog |
 | `DropdownMenu` | 菜单（Base UI Menu） |
 | `Command` / `CommandDialog` | 命令面板（cmdk + Dialog） |
 | `Tooltip` | 悬浮提示（根部已有 `TooltipProvider`，延迟 400ms） |
@@ -123,6 +123,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `status`：`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView` | 状态与槽位，见下表；运行 / 链 / 节点状态的颜色与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，不另写映射表。节点状态在各处的显示规则（徽标、标签、链路进度、画布运行状态、缩略图、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状，配色只在这里；节点状态对应哪种进度段见 `lib/node-status`） |
 | `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |
+| `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限视口宽度的 60%；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
 | `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它 |
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
 | `feedback/notify` | `notify.success / info / warning / error` |

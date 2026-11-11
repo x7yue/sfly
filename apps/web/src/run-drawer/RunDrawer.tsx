@@ -3,7 +3,9 @@ import { Link } from "@tanstack/react-router";
 import { PlayIcon } from "lucide-react";
 import { useCallback, useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
+import { PanelWidthHandle } from "#/components/PanelWidthHandle";
 import { shortId } from "#/lib/format";
+import { usePanelWidth } from "#/lib/panel-width";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { useLiveRun } from "#/monitor/live-run";
 import { Badge } from "@/components/ui/badge";
@@ -44,11 +46,16 @@ export interface RunDrawerProps extends TriggerOptions {
  * 用于场景卡片的「运行」、编排画布的「运行」与监控页的「再次运行」。
  * 焦点锁定在抽屉里，Esc 关闭，关闭后焦点回到打开它的按钮；抽屉随页面卸载，离开页面即关闭。
  */
+/** 运行抽屉的默认宽度，也是它的下限。 */
+const DRAWER_MIN_WIDTH = 460;
+
 export function RunDrawer({ open, onOpenChange, finalFocus, ...props }: RunDrawerProps) {
+	const width = usePanelWidth(DRAWER_MIN_WIDTH);
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>
-			<SheetContent showCloseButton finalFocus={finalFocus}>
+			<SheetContent showCloseButton finalFocus={finalFocus} style={{ width }}>
 				<DrawerBody {...props} onClose={() => onOpenChange(false)} />
+				<PanelWidthHandle label="调整运行抽屉宽度" min={DRAWER_MIN_WIDTH} />
 			</SheetContent>
 		</Sheet>
 	);

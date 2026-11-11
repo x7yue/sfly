@@ -11,7 +11,9 @@ import { forwardRef, type ReactNode, useMemo, useState } from "react";
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
+import { PanelWidthHandle } from "#/components/PanelWidthHandle";
 import { StatusPill } from "#/components/status";
+import { usePanelWidth } from "#/lib/panel-width";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -67,6 +69,7 @@ export const Inspector = forwardRef<
 		onEscape(): void;
 	}
 >(function Inspector({ selected, context, onCollapse, onEscape }, ref) {
+	const width = usePanelWidth();
 	return (
 		<aside
 			ref={ref}
@@ -78,7 +81,8 @@ export const Inspector = forwardRef<
 					onEscape();
 				}
 			}}
-			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex w-93 flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			style={{ width }}
 		>
 			{selected ? (
 				<NodeInspector
@@ -91,6 +95,7 @@ export const Inspector = forwardRef<
 			) : (
 				<ScenarioInspector context={context} onCollapse={onCollapse} />
 			)}
+			<PanelWidthHandle label="调整检查器宽度" />
 		</aside>
 	);
 });

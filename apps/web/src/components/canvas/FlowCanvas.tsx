@@ -396,6 +396,7 @@ export function FlowCanvas({
 					inspector={inspector}
 					start={dockStart}
 					tools={dockTools}
+					clearRight={area.right}
 				/>
 				{children}
 			</div>

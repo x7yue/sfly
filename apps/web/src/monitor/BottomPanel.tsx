@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { DownloadIcon } from "lucide-react";
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { ResizeHandle } from "#/components/ResizeHandle";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
 import {
@@ -35,7 +36,6 @@ import {
 	useMonitorActions,
 	useTimeAxis,
 } from "./monitor-state";
-import { ResizeHandle } from "./ResizeHandle";
 import {
 	documentNodes,
 	findNode,
@@ -128,7 +128,7 @@ export function BottomPanel({
 			<ResizeHandle
 				label="调整底部面板高度"
 				edge="top"
-				height={height}
+				size={height}
 				measure={() => panel.current?.clientHeight ?? COLLAPSED_HEIGHT}
 				min={COLLAPSED_HEIGHT}
 				max={() => window.innerHeight * 0.7}

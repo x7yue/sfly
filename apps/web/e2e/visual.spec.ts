@@ -539,6 +539,22 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-inspector.png");
 	});
 
+	test("拖宽后的检查器", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		const handle = page.getByRole("separator", { name: "调整检查器宽度" });
+		await handle.focus();
+		for (let i = 0; i < 14; i++) await page.keyboard.press("ArrowLeft");
+		await expect(handle).toHaveAttribute("aria-valuenow", "596");
+		// 适配视图：节点让到拖宽后的检查器左边。
+		await page
+			.getByRole("toolbar", { name: "画布工具" })
+			.getByRole("button", { name: "适配视图" })
+			.click();
+		await handle.blur();
+		await idle(page);
+		await expect(page).toHaveScreenshot("editor-inspector-wide.png");
+	});
+
 	test("引用补全", async ({ page }) => {
 		await nodeCard(page, "ping").click();
 		const host = page.getByRole("combobox", { name: "输入 host" });

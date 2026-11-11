@@ -2,6 +2,7 @@ import type { ChainRunView, NodeRunView, OrchestrationDocument, RunView } from "
 import { cn } from "cn";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
+import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { formatClock, formatDuration } from "#/lib/format";
@@ -15,7 +16,6 @@ import {
 	useMonitorActions,
 	useTimeAxis,
 } from "./monitor-state";
-import { ResizeHandle } from "./ResizeHandle";
 import {
 	chainLabel,
 	chainRunStatus,
@@ -222,7 +222,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 			<ResizeHandle
 				label="调整时间线高度"
 				edge="bottom"
-				height={height}
+				size={height}
 				measure={() => body.current?.clientHeight ?? 0}
 				min={56}
 				max={() => window.innerHeight * 0.62}
