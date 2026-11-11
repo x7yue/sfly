@@ -67,6 +67,14 @@ export const SHORTCUTS = [
 		displayOnly: true,
 	},
 	{ id: "canvas-delete", group: "编排画布", label: "删除节点", keys: "Delete", displayOnly: true },
+	// 节点菜单（components/canvas/FlowCanvas.tsx）：焦点在节点卡片上时打开，菜单键同样可以。
+	{
+		id: "canvas-node-menu",
+		group: "编排画布",
+		label: "打开节点菜单",
+		keys: "Shift+F10",
+		displayOnly: true,
+	},
 	{ id: "canvas-fit", group: "编排画布", label: "适配视图", keys: "0" },
 	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
 	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },

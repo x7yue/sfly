@@ -38,16 +38,42 @@ export function toFlowEdge(edge: DocEdge): SfEdge {
 export function toFlow(doc: OrchestrationDocument): { nodes: SfNode[]; edges: SfEdge[] } {
 	const nodes = ensureLayout(doc).nodes.map((n): SfNode => {
 		const { position, ...node } = n;
-		return {
-			id: n.id,
-			type: n.kind,
-			position: position ?? { x: 0, y: 0 },
-			data: { node },
-			// 入口节点是主链的唯一起点，不能删除。
-			deletable: n.kind !== "entry",
-		};
+		return toFlowNode(node, position ?? { x: 0, y: 0 });
 	});
 	return { nodes, edges: doc.edges.map(toFlowEdge) };
+}
+
+/** 新放到画布上的节点。入口节点是主链的唯一起点，不能删除。 */
+export const toFlowNode = (node: DocNode, position: { x: number; y: number }): SfNode => ({
+	id: node.id,
+	type: node.kind,
+	position,
+	data: { node },
+	deletable: node.kind !== "entry",
+});
+
+/**
+ * 把文档操作（@sfly/orchestration 的 insertAfter、removeNode……）的结果写回画布：只看节点的增删、位置和连线，
+ * 没变的节点和连线沿用原来的对象（React Flow 量好的尺寸等内部状态留着）。`doc` 由 fromFlow 的结果算出。
+ */
+export function applyDocument(
+	nodes: SfNode[],
+	edges: SfEdge[],
+	doc: Pick<OrchestrationDocument, "nodes" | "edges">,
+): { nodes: SfNode[]; edges: SfEdge[] } {
+	const shown = new Map(nodes.map((n) => [n.id, n]));
+	const drawn = new Map(edges.map((e) => [e.id, e]));
+	return {
+		nodes: doc.nodes.map((n) => {
+			const { position = { x: 0, y: 0 }, ...node } = n;
+			const old = shown.get(n.id);
+			if (!old) return toFlowNode(node, position);
+			const moved =
+				Math.round(old.position.x) !== position.x || Math.round(old.position.y) !== position.y;
+			return moved ? { ...old, position } : old;
+		}),
+		edges: doc.edges.map((e) => drawn.get(edgeId(e)) ?? toFlowEdge(e)),
+	};
 }
 
 /** 画布 → 场景文档。布局是版本内容的一部分；只保留仍被包节点使用的包版本锁定。 */
