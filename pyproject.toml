@@ -37,7 +37,7 @@ strict = true
 files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks", "std/src", "std/tests", "scripts/tests"]
 # sdk/python/tests 里 sfly.testing 的测试直接导入桩节点包的节点函数。
 # sdk/python/tests 里的测试从 indexes.py 导入共用的桩，std/tests 里的从 named_sleep.py 导入。
-mypy_path = "testdata/stub-package/src:sdk/python/tests:std/tests"
+mypy_path = "testdata/stub-package/src:testdata/agent-files-package/src:sdk/python/tests:std/tests"
 python_version = "3.10"
 
 [tool.pytest.ini_options]
