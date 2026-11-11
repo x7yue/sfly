@@ -5,6 +5,7 @@ import {
 	keyLabels,
 	type ShortcutDef,
 	ShortcutMatcher,
+	shortcutText,
 } from "./shortcuts";
 
 const defs: ShortcutDef[] = [
@@ -83,5 +84,11 @@ describe("快捷键显示", () => {
 		expect(keyChords("G D")).toEqual([["G"], ["D"]]);
 		expect(keyChords("Ctrl+Shift+Z")).toEqual([["Ctrl", "Shift", "Z"]]);
 		expect(keyChords("←/→")).toEqual([["←/→"]]);
+	});
+
+	it("写在文字里的快捷键取自注册表", () => {
+		expect(shortcutText("canvas-paste")).toBe("Ctrl V");
+		expect(shortcutText("canvas-redo")).toBe("Ctrl Shift Z");
+		expect(shortcutText("canvas-add")).toBe("/");
 	});
 });

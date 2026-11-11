@@ -4,6 +4,7 @@ import { useState } from "react";
 import { keyChords } from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { writeClipboard } from "./feedback/clipboard";
 import { notify } from "./feedback/notify";
 
 /**
@@ -133,16 +134,13 @@ export function CodeBlock({
 				size="icon-sm"
 				aria-label="复制"
 				className="absolute top-1.5 right-1.5"
-				onClick={() => {
-					void navigator.clipboard
-						.writeText(code)
-						.then(() => {
-							setCopied(true);
-							notify.success("已复制到剪贴板");
-							setTimeout(() => setCopied(false), 1500);
-						})
-						.catch(() => notify.error("复制失败", { description: "浏览器不允许访问剪贴板" }));
-				}}
+				onClick={() =>
+					writeClipboard(code, () => {
+						setCopied(true);
+						notify.success("已复制到剪贴板");
+						setTimeout(() => setCopied(false), 1500);
+					})
+				}
 			>
 				{copied ? <CheckIcon /> : <CopyIcon />}
 			</Button>

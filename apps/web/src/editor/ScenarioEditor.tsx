@@ -60,6 +60,7 @@ import { apiQuery } from "#/lib/api";
 import { usePanelWidth } from "#/lib/panel-width";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
+import { shortcutText } from "#/lib/shortcuts";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { DraftBanner } from "#/versions/DraftBanner";
 import { hasDraft } from "#/versions/draft";
@@ -83,7 +84,7 @@ import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
 import { NodeMenu } from "./NodeMenu";
-import { NodeCopyItems, useClipboardShortcuts, writeClipboard } from "./node-clipboard";
+import { copyNodeText, NodeCopyItems, useClipboardShortcuts } from "./node-clipboard";
 import { PaneMenu } from "./PaneMenu";
 import { useReconnect } from "./reconnect";
 import {
@@ -502,7 +503,7 @@ function Editor({
 		const layout = tidyLayout(doc);
 		history.checkpoint();
 		setNodes((ns) => ns.map((n) => ({ ...n, position: layout.get(n.id) ?? n.position })));
-		notify.success("已整理布局", { description: "可以撤销（Ctrl Z）" });
+		notify.success("已整理布局", { description: `可以撤销（${shortcutText("canvas-undo")}）` });
 	};
 	useShortcut("canvas-tidy", tidy, !running);
 
@@ -556,7 +557,9 @@ function Editor({
 		return copied.text;
 	};
 	const copiedNotice = (id: string) =>
-		notify.success(`已复制节点 ${id}`, { description: "可以在任意场景的画布上粘贴（Ctrl V）" });
+		notify.success(`已复制节点 ${id}`, {
+			description: `可以在任意场景的画布上粘贴（${shortcutText("canvas-paste")}）`,
+		});
 	/** 选中的、还在画布上的节点（Ctrl+C、Ctrl+D 作用的节点）。 */
 	const current = () => (selectedId && nodes.some((n) => n.id === selectedId) ? selectedId : null);
 	useClipboardShortcuts({
@@ -710,8 +713,7 @@ function Editor({
 														onDuplicate={() => duplicate(target.id)}
 														onCopy={() => {
 															const text = copyText(target.id);
-															if (text !== null)
-																writeClipboard(text, () => copiedNotice(target.id));
+															if (text !== null) copyNodeText(text, () => copiedNotice(target.id));
 														}}
 													/>
 												),

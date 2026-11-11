@@ -1,6 +1,7 @@
 import { cn } from "cn";
 import { BracesIcon, XIcon } from "lucide-react";
 import { useId, useMemo, useState } from "react";
+import { ACTION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { ReferenceList } from "./ReferenceList";
 import { completionGroups, moveActive, type ReferenceChoice } from "./reference-completion";
@@ -34,11 +35,11 @@ export function ReferencePicker({
 				variant="ghost"
 				size="icon"
 				className="flex-none"
-				aria-label={`在 ${name} 中插入引用`}
+				aria-label={`在 ${name} 中${ACTION.insertReference}`}
 				aria-haspopup="listbox"
 				aria-expanded={open}
 				aria-controls={open ? listId : undefined}
-				title="插入引用"
+				title={ACTION.insertReference}
 				onClick={() => {
 					setActive(0);
 					setOpen((o) => !o);

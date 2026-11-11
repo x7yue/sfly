@@ -3,6 +3,7 @@ import { PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
 import { KIND_CHIP } from "#/components/canvas/zoom-text";
+import { keyLabels, shortcutById } from "#/lib/shortcuts";
 import {
 	Command,
 	CommandEmpty,
@@ -140,7 +141,9 @@ export function AddNodeMenu({
 				</TooltipTrigger>
 				<TooltipContent>
 					添加节点
-					<Kbd>/</Kbd>
+					{keyLabels(shortcutById("canvas-add").keys).map((key) => (
+						<Kbd key={key}>{key}</Kbd>
+					))}
 				</TooltipContent>
 			</Tooltip>
 			<PopoverContent

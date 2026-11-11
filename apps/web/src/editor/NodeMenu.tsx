@@ -1,6 +1,7 @@
 import { referenceText } from "@sfly/orchestration";
 import type { ReactNode } from "react";
 import type { DocNode } from "#/components/canvas/flow";
+import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
 import {
 	ContextMenuItem,
@@ -10,12 +11,8 @@ import {
 	ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
 
-function copy(text: string, done: string) {
-	void navigator.clipboard
-		.writeText(text)
-		.then(() => notify.success(done, { description: text }))
-		.catch(() => notify.error("复制失败", { description: "浏览器不允许访问剪贴板" }));
-}
+const copy = (text: string, done: string) =>
+	writeClipboard(text, () => notify.success(done, { description: text }));
 
 /** 修改场景的操作；运行状态模式下不给（菜单只剩只读项）。 */
 export interface NodeMenuEdit {

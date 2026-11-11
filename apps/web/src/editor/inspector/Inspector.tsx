@@ -13,6 +13,7 @@ import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
 import { PanelWidthHandle } from "#/components/PanelWidthHandle";
 import { StatusPill } from "#/components/status";
+import { ACTION } from "#/lib/copy";
 import { usePanelWidth } from "#/lib/panel-width";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
@@ -96,7 +97,7 @@ export const Inspector = forwardRef<
 			) : (
 				<ScenarioInspector context={context} onCollapse={onCollapse} />
 			)}
-			<PanelWidthHandle label="调整检查器宽度" />
+			<PanelWidthHandle label={ACTION.resizeInspector} />
 		</aside>
 	);
 });

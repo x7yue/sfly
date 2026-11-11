@@ -146,6 +146,12 @@ export function keyLabels(keys: string): string[] {
 	return keyChords(keys).flat();
 }
 
+/**
+ * 写在文字里的快捷键（提示、通知里的「可以撤销（Ctrl Z）」）：从注册表取，按键之间用空格隔开。
+ * 界面上单独显示按键时用 Keys / Kbd，不用它。
+ */
+export const shortcutText = (id: ShortcutId): string => keyLabels(shortcutById(id).keys).join(" ");
+
 /** 按依次按下的组分开的按键：`G D` → [["G"], ["D"]]；`Ctrl+K` → [["Ctrl", "K"]]（同时按的在一组）。 */
 export function keyChords(keys: string): string[][] {
 	return keys

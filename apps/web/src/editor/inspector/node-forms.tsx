@@ -14,7 +14,7 @@ import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/sch
 import { useId, useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { subflowLabel } from "#/lib/copy";
+import { ACTION, subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -145,8 +145,8 @@ export function PackageParams({
 				</div>
 			))}
 			<p className="m-0 text-xs text-fg-3">
-				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>$</code>{" "}
-				或点「插入引用」可以把引用和文字混写。
+				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>$</code> 或点「
+				{ACTION.insertReference}」可以把引用和文字混写。
 			</p>
 			<SectionTitle>Agent</SectionTitle>
 			<Field label="执行机器">

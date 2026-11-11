@@ -1,6 +1,7 @@
 import { type CopiedNode, readCopiedNode } from "@sfly/orchestration";
 import { useEffect, useRef, useState } from "react";
-import { notify } from "#/components/feedback/notify";
+import { writeClipboard } from "#/components/feedback/clipboard";
+import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 
 /**
@@ -82,18 +83,8 @@ export function useClipboardShortcuts(handlers: {
 }
 
 /** 菜单里的「复制」：用 Clipboard API 写入（不是按键触发的复制，没有 copy 事件可用）。 */
-export function writeClipboard(text: string, done: () => void) {
-	if (!navigator.clipboard) {
-		notify.error("复制失败", { description: "浏览器不允许访问剪贴板，可以按 Ctrl C 复制" });
-		return;
-	}
-	void navigator.clipboard
-		.writeText(text)
-		.then(done)
-		.catch(() =>
-			notify.error("复制失败", { description: "浏览器不允许访问剪贴板，可以按 Ctrl C 复制" }),
-		);
-}
+export const copyNodeText = (text: string, done: () => void) =>
+	writeClipboard(text, done, `可以按 ${shortcutText("canvas-copy")} 复制`);
 
 type ClipboardRead =
 	| { status: "reading" }
