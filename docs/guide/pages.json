@@ -43,7 +43,12 @@
 		{
 			"slug": "standard-nodes",
 			"title": "标准节点",
-			"description": "平台维护的标准节点包 sfly-std：从 Release 下载并上传到控制面、安全说明、压测期间配合子流程与停止子流程节点的监控，以及全部 15 个标准节点（shell、start_process、system_monitor、http_request、assert……）的参数、输出、指标与用法"
+			"description": "平台维护的标准节点包 sfly-std：从 Release 下载并上传到控制面、安全说明、压测期间配合子流程与停止子流程节点的监控，以及全部 17 个标准节点（shell、start_process、system_monitor、pull_files、watch_files、http_request、assert……）的参数、输出、指标与用法"
+		},
+		{
+			"slug": "cross-agent-files",
+			"title": "跨 Agent 处理文件",
+			"description": "在一台 Agent 上处理另一台 Agent 上的文件：以日志清洗为例，清洗节点用 ctx.agent() 监听、下载、删除另一台机器上的日志，清洗放在子流程里与主链并行，判断文件不再续写的几种做法及各自的坑，以及不写代码的 watch_files"
 		}
 	]
 }

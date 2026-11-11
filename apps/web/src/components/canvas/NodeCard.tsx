@@ -1,13 +1,13 @@
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
 import type { CSSProperties } from "react";
-import { StatusPill } from "#/components/status";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeader, BaseNodeHeaderTitle } from "@/components/ui/base-node";
 import { useFlowCanvas } from "./context";
 import type { SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
 import { KIND_META, kindCaption, nodeSlot, nodeTags, nodeTitle } from "./node-display";
+import { WarningBadge } from "./WarningBadge";
 import { KIND_CHIP, LOD_HIDDEN, ZOOM_TEXT_11, ZOOM_TEXT_12, ZOOM_TEXT_TITLE } from "./zoom-text";
 
 const portStyle = (at: { x: number; y: number }, rotate = false): CSSProperties => ({
@@ -88,11 +88,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				{caption && <span className={cn("flex-none", LOD_HIDDEN)}>{caption}</span>}
 				<span className="ml-auto flex-none">
 					{decoration?.status ??
-						(warnings.length > 0 && (
-							<StatusPill kind="warn" className={ZOOM_TEXT_11}>
-								{warnings.length} 警告
-							</StatusPill>
-						))}
+						(warnings.length > 0 && <WarningBadge warnings={warnings} className={ZOOM_TEXT_11} />)}
 				</span>
 			</BaseNodeHeader>
 			{/* 行高 1.6：中文回退字体（Noto Sans CJK 等）的字形高约 1.45em、下划线更低，标题是 truncate（溢出隐藏），
@@ -135,11 +131,11 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					style={portStyle(PORTS.in, true)}
 				/>
 			)}
+			{/* 出口可以作为连线的终点：改接连线的起点时拖到这里（#185）。普通拖线从出口出发、只能连到入口。 */}
 			<BaseHandle
 				type="source"
 				position={Position.Right}
 				id="chain"
-				isConnectableEnd={false}
 				state={port.out ? "connected" : "open"}
 				title={port.out ? undefined : "链尾：可以从这里拖线追加节点"}
 				style={portStyle(PORTS.out)}
@@ -150,7 +146,6 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					position={Position.Bottom}
 					id="dispatch"
 					variant="dispatch"
-					isConnectableEnd={false}
 					state={port.dispatch ? "connected" : "idle"}
 					style={portStyle(PORTS.dispatch, true)}
 				/>

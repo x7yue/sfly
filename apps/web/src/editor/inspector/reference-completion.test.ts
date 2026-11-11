@@ -3,10 +3,13 @@ import { type PackageCatalog, packageKey } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
-	applyCompletion,
 	completionGroups,
-	completionTrigger,
+	initialActive,
+	inlineTrigger,
+	moveActive,
 	referenceChoices,
+	referenceRanges,
+	wholeReference,
 } from "./reference-completion";
 
 /** 主链 entry → fetch（http_check）→ wait（Sleep）→ ping；ping 可以引用入口参数与前面节点的输出。 */
@@ -89,33 +92,46 @@ describe("引用补全", () => {
 		expect(completionGroups(choices, "nope").ordered).toEqual([]);
 	});
 
-	it("常量文本里输入 ${{ 时弹出补全，选中后替换成完整的引用、光标停在后面", () => {
-		expect(completionTrigger("http://", 7, false)).toBeNull();
-		const raw = "http://${{ par";
-		const trigger = completionTrigger(raw, raw.length, false);
-		expect(trigger).toEqual({ start: 7, query: "par" });
-		expect(completionTrigger("${{ params.url }} x", 19, false)).toBeNull();
-
-		const next = applyCompletion(
-			`${raw}/path`,
-			trigger,
-			raw.length,
-			{ text: "${{ params.url }}" },
-			false,
-		);
-		expect(next).toEqual({ value: "http://${{ params.url }}/path", caret: 24 });
+	it("合并后的输入框：输入 $ 就弹出补全，$、${、${{ 后面已经输入的部分是查询", () => {
+		expect(inlineTrigger("http://")).toBeNull();
+		expect(inlineTrigger("http://$")).toEqual({ start: 7, query: "", braced: false });
+		expect(inlineTrigger("http://$par")).toEqual({ start: 7, query: "par", braced: false });
+		expect(inlineTrigger("http://${")).toEqual({ start: 7, query: "", braced: true });
+		expect(inlineTrigger("http://${{ nodes.f")).toEqual({
+			start: 7,
+			query: "nodes.f",
+			braced: true,
+		});
+		// 已经闭合的引用后面不弹出；$ 后面隔了空格的文字不算查询。
+		expect(inlineTrigger("${{ params.url }} x")).toBeNull();
+		expect(inlineTrigger("cost $ per")).toBeNull();
 	});
 
-	it("引用模式下整个输入就是表达式，总是弹出；选中后整个值换成引用", () => {
-		expect(completionTrigger("nodes.f", 3, true)).toEqual({ start: 0, query: "nodes.f" });
-		expect(
-			applyCompletion(
-				"nodes.f",
-				{ start: 0, query: "nodes.f" },
-				7,
-				{ text: "${{ nodes.fetch.outputs.status }}" },
-				true,
-			),
-		).toEqual({ value: "${{ nodes.fetch.outputs.status }}", caret: 33 });
+	it("找出文本里每个引用的范围（高亮与整块删除用）", () => {
+		expect(referenceRanges("plain $ text ${{ open")).toEqual([]);
+		expect(referenceRanges("${{ params.url }}")).toEqual([{ from: 0, to: 17 }]);
+		expect(referenceRanges("a ${{params.a}}/${{ nodes.f.outputs.s }}\nb")).toEqual([
+			{ from: 2, to: 15 },
+			{ from: 16, to: 40 },
+		]);
+	});
+
+	it("输入 $ 触发的补全不预选：按过方向键才有选中项；「插入引用」触发的预选第一项", () => {
+		expect(initialActive({ manual: false })).toBe(-1);
+		expect(initialActive({ manual: true })).toBe(0);
+		// 没有选中项时，向下到第一项，向上到最后一项；之后循环。
+		expect(moveActive(-1, 1, 3)).toBe(0);
+		expect(moveActive(-1, -1, 3)).toBe(2);
+		expect(moveActive(2, 1, 3)).toBe(0);
+		expect(moveActive(0, -1, 3)).toBe(2);
+		expect(moveActive(1, 1, 3)).toBe(2);
+	});
+
+	it("整个值恰好是一个引用时取出表达式（非字符串参数据此显示引用标签）", () => {
+		expect(wholeReference("${{ params.url }}")).toBe("params.url");
+		expect(wholeReference("${{nodes.fetch.outputs.status}}")).toBe("nodes.fetch.outputs.status");
+		expect(wholeReference("x ${{ params.url }}")).toBeUndefined();
+		expect(wholeReference(200)).toBeUndefined();
+		expect(wholeReference(undefined)).toBeUndefined();
 	});
 });

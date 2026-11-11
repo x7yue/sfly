@@ -88,7 +88,21 @@ def _run(args: argparse.Namespace) -> int:
     from sfly.cli.run import EXIT_INVALID, RunError, run
 
     try:
-        return run(Path(args.project).resolve(), args.node, args.params, args.grace)
+        downloads = {ref: Path(path).absolute() for ref, path in args.download or []}
+        agents = {}
+        for spec in args.agent or []:
+            name, sep, root = spec.partition("=")
+            if not sep or not name or not root:
+                raise RunError(f"参数不合法：--agent 的格式是 <名称>=<目录>，收到 {spec!r}")
+            agents[name] = Path(root).absolute()
+        return run(
+            Path(args.project).resolve(),
+            args.node,
+            args.params,
+            args.grace,
+            downloads=downloads,
+            agents=agents,
+        )
     except RunError as error:
         print(error, file=sys.stderr)
         return EXIT_INVALID
@@ -175,6 +189,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_run.add_argument("node", help="节点名（@node 的 name，默认为函数名）")
     p_run.add_argument("--params", default="{}", help="节点的输入，JSON 对象（默认 {}）")
     p_run.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+    p_run.add_argument(
+        "--download",
+        nargs=2,
+        action="append",
+        metavar=("产物引用", "文件"),
+        help="节点用 ctx.artifacts.download 下载这个产物引用时，得到这个本地文件的内容"
+        "（不访问网络）；可以重复给出",
+    )
+    p_run.add_argument(
+        "--agent",
+        action="append",
+        metavar="名称=目录",
+        help="把一台 Agent 映射到本地目录：节点用 ctx.agent(名称) 访问它时，那台 Agent 上的绝对路径"
+        "落在这个目录里；可以重复给出",
+    )
     p_run.add_argument(
         "--grace",
         type=float,

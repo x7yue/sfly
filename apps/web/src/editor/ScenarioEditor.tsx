@@ -1,14 +1,20 @@
 import {
 	checkConnection,
+	declaredOutputs,
 	documentWarnings,
-	LAYOUT_COLUMN,
+	insertAfter,
+	insertOnEdge,
+	nodeConnections,
 	type OrchestrationWarning,
-	SUBFLOW_TOP_GAP,
+	outgoingProblem,
+	removeNode,
 	tidyLayout,
+	uniqueNodeId,
 } from "@sfly/orchestration";
 import {
 	agentsApi,
 	type OrchestrationHeadView,
+	type OrchestrationNode,
 	type OrchestrationView,
 	packagesApi,
 } from "@sfly/schema";
@@ -28,6 +34,7 @@ import { ToolButton } from "#/components/canvas/CanvasDock";
 import type { CanvasInfo } from "#/components/canvas/context";
 import { FlowCanvas, isPointerFocusedCanvas } from "#/components/canvas/FlowCanvas";
 import {
+	applyDocument,
 	type DocMeta,
 	type DocNode,
 	type EdgeKind,
@@ -36,15 +43,18 @@ import {
 	type SfNode,
 	toFlow,
 	toFlowEdge,
-	uniqueNodeId,
+	toFlowNode,
 } from "#/components/canvas/flow";
 import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { subflowLabels } from "#/components/canvas/node-display";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
+import { dialogOpen } from "#/lib/focus";
+import { usePanelWidth } from "#/lib/panel-width";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
+import { shortcutText } from "#/lib/shortcuts";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { DraftBanner } from "#/versions/DraftBanner";
 import { hasDraft } from "#/versions/draft";
@@ -53,18 +63,21 @@ import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useV
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
 import {
 	type AddItem,
-	appendTarget,
+	freeCardAt,
 	idStem,
-	isChainTail,
 	newDocNode,
 	newSubflowNameProblem,
 	packageGroups,
 } from "./add-node";
-import { usePackageCatalog } from "./catalog";
+import { companionSubflow } from "./add-subflow";
+import { usePackageCatalog, useRegisteredAgents } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
+import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
+import { useNodeClipboard } from "./node-clipboard";
+import { useReconnect } from "./reconnect";
 import {
 	RunStateBadge,
 	RunStateInspector,
@@ -74,11 +87,8 @@ import {
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { documentFieldErrors, type FieldError, undeclaredInputNotes } from "./validation";
 
-/** 打开着的弹窗或弹出层（有它们时 Tab 照常切换焦点）。 */
-const OPEN_OVERLAY = '[role="dialog"][data-open], [role="alertdialog"][data-open]';
-
-/** 检查器（宽 372 + 右边距 12）占住的宽度。 */
-const INSPECTOR_SPACE = 384;
+/** 检查器右边距。 */
+const INSPECTOR_MARGIN = 12;
 
 /**
  * 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布铺满视口，控件悬浮——左上场景名 / 版本 / 检查状态 /
@@ -112,6 +122,21 @@ export function ScenarioEditor({
 			/>
 		</ReactFlowProvider>
 	);
+}
+
+const NO_PACKAGES: Record<string, string> = {};
+
+const cardOf = (id: string) =>
+	document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
+
+/**
+ * 让刚放到画布上的节点卡片拿到焦点。React Flow 量好新节点的尺寸之前卡片是隐藏的，不能聚焦：
+ * 还没显示出来时下一帧再试（最多约半秒）。
+ */
+function focusNewCard(id: string, frames = 30) {
+	const card = cardOf(id);
+	if (card && getComputedStyle(card).visibility === "visible") card.focus();
+	else if (frames > 0) requestAnimationFrame(() => focusNewCard(id, frames - 1));
 }
 
 const edgeKindOf = (c: Connection | Edge): EdgeKind =>
@@ -156,6 +181,9 @@ function Editor({
 	});
 	const [selectedId, setSelectedId] = useState<string | null>(initialNode ?? null);
 	const [inspectorOpen, setInspectorOpen] = useState(true);
+	const inspectorWidth = usePanelWidth();
+	/** 检查器（实际宽度 + 右边距）占住的宽度：适配视图与定位节点时避开。 */
+	const inspectorSpace = inspectorOpen ? inspectorWidth + INSPECTOR_MARGIN : 0;
 	const [triggering, setTriggering] = useState(false);
 	const inspectorRef = useRef<HTMLElement>(null);
 	const drafts = useFieldDraftStore();
@@ -178,7 +206,11 @@ function Editor({
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages, agentList);
-	const warnings = useMemo(() => documentWarnings(doc, catalog), [doc, catalog]);
+	const registered = useRegisteredAgents(agents.data?.agents);
+	const warnings = useMemo(
+		() => documentWarnings(doc, catalog, { agents: registered }),
+		[doc, catalog, registered],
+	);
 	const notes = useMemo(() => undeclaredInputNotes(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
 	// 在线编辑者：整个画布页一份在线状态，编辑 / 运行状态切换时不中断。
@@ -213,6 +245,8 @@ function Editor({
 	// —— 运行状态模式：只读显示运行绑定的版本，叠加节点状态 ——
 	const runState = useCanvasRun(orchestration.id, initialRun, mode === "run");
 	const readyRun = runState.status === "ready" ? runState : undefined;
+	// 运行绑定的版本锁定的节点包（节点菜单「复制输出引用」按它列出输出）。
+	const runCatalog = usePackageCatalog(readyRun?.doc?.packages ?? NO_PACKAGES, agentList);
 	const decorations = useRunDecorations(readyRun?.run, readyRun?.overlay, readyRun?.metrics);
 	const runFlow = useRunFlow(readyRun?.doc);
 	const runInfo: CanvasInfo = useMemo(
@@ -235,12 +269,19 @@ function Editor({
 	// —— 连线：只允许单入单出，规则与控制面共用（@sfly/orchestration） ——
 	const docRef = useRef(doc);
 	docRef.current = doc;
-	const connectionProblem = useCallback((c: Connection | Edge): string | null => {
-		if ((c.sourceHandle ?? "chain") !== (c.targetHandle ?? "chain")) {
-			return "链端口只能连链端口，调度端口只能连调度端口";
-		}
-		return checkConnection(docRef.current, { from: c.source, to: c.target, kind: edgeKindOf(c) });
-	}, []);
+	// 拖动连线的端点改接：改接过程中按改接的规则检查（原来那条连线不算）。
+	const reconnect = useReconnect(docRef, (next) => applyEdit(next));
+	const connectionProblem = useCallback(
+		(c: Connection | Edge): string | null => {
+			if ((c.sourceHandle ?? "chain") !== (c.targetHandle ?? "chain")) {
+				return "链端口只能连链端口，调度端口只能连调度端口";
+			}
+			const edge = { from: c.source, to: c.target, kind: edgeKindOf(c) };
+			const moving = reconnect.problem(edge);
+			return moving === undefined ? checkConnection(docRef.current, edge) : moving;
+		},
+		[reconnect],
+	);
 	const isValidConnection = useCallback(
 		(c: Connection | Edge) => connectionProblem(c) === null,
 		[connectionProblem],
@@ -259,26 +300,33 @@ function Editor({
 	);
 	const [adding, setAdding] = useState<AddRequest | null>(null);
 	/**
-	 * 从链尾端口拖线到空白处：弹出可以接上的节点菜单；拖到某个端口上但连线被拒绝时，提示原因。
+	 * 从没有出线的链端口（链尾、游离节点）拖线到空白处：弹出可以接上的节点菜单；从还没有调度连线的调度端口拖出时，
+	 * 弹出新建子流程的表单（#187）。拖到某个端口上但连线被拒绝时，提示原因。
 	 */
 	const onConnectEnd: OnConnectEnd = useCallback(
 		(event, state) => {
 			if (!state.fromNode) return;
 			if (!state.toNode) {
-				if (state.fromHandle?.type !== "source" || state.fromHandle.id === "dispatch") return;
-				if (!isChainTail(docRef.current, state.fromNode.id)) {
-					notify.warning("只能在主链或子流程的链尾追加节点");
+				// 改接时松开在空白处：连线回到原处。
+				if (reconnect.active.current) return;
+				if (state.fromHandle?.type !== "source") return;
+				const dispatch = state.fromHandle.id === "dispatch";
+				const from = state.fromNode.id;
+				const problem = outgoingProblem(docRef.current, from, dispatch ? "dispatch" : "chain");
+				if (problem) {
+					notify.warning(problem);
 					return;
 				}
 				const point = "changedTouches" in event ? event.changedTouches[0] : event;
 				if (!point) return;
-				const at = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
-				setAdding({
-					via: "drop",
-					tail: state.fromNode.id,
-					client: { x: point.clientX, y: point.clientY },
-					position: { x: at.x, y: at.y - NODE_HEIGHT / 2 },
-				});
+				const client = { x: point.clientX, y: point.clientY };
+				const at = flow.screenToFlowPosition(client);
+				const position = { x: at.x, y: at.y - NODE_HEIGHT / 2 };
+				setAdding(
+					dispatch
+						? { kind: "dispatch", from, client, position }
+						: { kind: "after", after: from, client, position },
+				);
 				return;
 			}
 			if (state.isValid !== false) return;
@@ -297,7 +345,7 @@ function Editor({
 			});
 			if (problem) notify.warning(problem);
 		},
-		[connectionProblem, flow],
+		[connectionProblem, flow, reconnect],
 	);
 
 	const select = useCallback((id: string | null) => setSelectedId(id), []);
@@ -307,18 +355,40 @@ function Editor({
 			setSelectedId(id);
 			const node = flow.getNode(id);
 			if (node) {
-				void flow.setCenter(node.position.x + 104, node.position.y + 56, {
-					zoom: Math.max(flow.getZoom(), 0.8),
-					duration: 200,
-				});
+				// 定位到没被检查器占住的那部分画布的中间。
+				const zoom = Math.max(flow.getZoom(), 0.8);
+				void flow.setCenter(
+					node.position.x + NODE_WIDTH / 2 + inspectorSpace / 2 / zoom,
+					node.position.y + NODE_HEIGHT / 2,
+					{ zoom, duration: 200 },
+				);
 			}
 		},
-		[flow],
+		[flow, inspectorSpace],
 	);
+	/** 视口里没被顶栏和检查器占住的那部分的中心（画布坐标）：没有位置的新节点、粘贴的节点放在这里。 */
+	const viewportCenter = () =>
+		flow.screenToFlowPosition({
+			x: (window.innerWidth - inspectorSpace) / 2,
+			y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
+		});
+	/** 把文档操作（@sfly/orchestration 的 chain-edits）的结果写回画布，算一步撤销。 */
+	const applyEdit = (next: Pick<typeof doc, "nodes" | "edges">) => {
+		const applied = applyDocument(nodes, edges, next);
+		history.checkpoint();
+		setNodes(applied.nodes);
+		setEdges(applied.edges);
+	};
+	/** 删除节点（Delete 键、节点菜单、检查器的删除按钮）：恰好一进一出时前后自动接上。 */
 	const deleteNode = (id: string) => {
+		const edit = removeNode(doc, id);
+		if (!edit.ok) {
+			notify.warning(edit.reason);
+			return;
+		}
 		drafts.clear(`${id}/`);
-		setSelectedId(null);
-		void flow.deleteElements({ nodes: [{ id }] });
+		if (selectedId === id) setSelectedId(null);
+		applyEdit(edit.doc);
 	};
 	const updateNode = (id: string, node: DocNode) => {
 		// 同一个节点上连续的输入合并为一步撤销。
@@ -326,80 +396,109 @@ function Editor({
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
 	};
 
-	// —— 添加节点：只能接在主链或子流程的链尾；子流程入口在所有节点下方开一个新的子流程区域 ——
+	// —— 添加节点：有来源节点的接在它后面，没有来源的不连线（AddRequest）——
 	const groups = useMemo(
 		() => packageGroups(packages.data?.packages, agentList, meta.packages),
 		[packages.data, agentList, meta.packages],
 	);
-	const menuTail =
-		adding?.via === "drop"
-			? adding.tail
-			: appendTarget(doc, nodes.some((n) => n.id === selectedId) ? selectedId : null);
 	const addNode = (item: AddItem) => {
-		const request = adding;
+		const request: AddRequest = adding ?? { kind: "free" };
 		setAdding(null);
-		const tail = request?.via === "drop" ? request.tail : menuTail;
 		const id = uniqueNodeId(
 			idStem(item),
 			nodes.map((n) => n.id),
 		);
-		const chained = item.kind !== "subflow_entry" && tail !== undefined;
-		const tailNode = tail ? nodes.find((n) => n.id === tail) : undefined;
-		const bottom = Math.max(0, ...nodes.map((n) => n.position.y + NODE_HEIGHT));
-		const right = Math.max(0, ...nodes.map((n) => n.position.x + LAYOUT_COLUMN));
-		const position =
-			request?.via === "drop"
-				? request.position
-				: item.kind === "subflow_entry"
-					? { x: 0, y: bottom + SUBFLOW_TOP_GAP }
-					: tailNode
-						? { x: tailNode.position.x + LAYOUT_COLUMN, y: tailNode.position.y }
-						: { x: right, y: 0 };
+		let next: { nodes: SfNode[]; edges: SfEdge[] };
+		if (request.kind === "after") {
+			// 有来源：接在它后面；它不是链尾时插在它和下一个节点之间，后面的节点让出位置。
+			const fresh = { ...newDocNode(item, id), position: request.position } as OrchestrationNode;
+			const edit = request.before
+				? insertOnEdge(doc, { from: request.after, to: request.before }, fresh)
+				: insertAfter(doc, request.after, fresh);
+			if (!edit.ok) {
+				notify.warning(edit.reason);
+				return;
+			}
+			next = applyDocument(nodes, edges, edit.doc);
+		} else if (request.kind === "dispatch") {
+			// 从调度端口拖出（#187）：子流程入口的调度端口就在松开鼠标的位置，连上调度连线。
+			next = {
+				nodes: [...nodes, toFlowNode(newDocNode(item, id), request.position)],
+				edges: [...edges, toFlowEdge({ from: request.from, to: id, kind: "dispatch" })],
+			};
+		} else {
+			// 没有来源：右键处，否则视口中心；压住已有节点时错开。
+			const position = freeCardAt(
+				request.position ?? viewportCenter(),
+				nodes.map((n) => n.position),
+			);
+			next = { nodes: [...nodes, toFlowNode(newDocNode(item, id), position)], edges };
+		}
+		const position = next.nodes.find((n) => n.id === id)?.position ?? { x: 0, y: 0 };
+		if (item.kind === "async" && item.subflow !== undefined) {
+			// 勾选了「同时新建子流程」（#187）：子流程入口和调度连线一起加，同一步撤销。
+			const others = next.nodes.filter((n) => n.id !== id);
+			const subflow = companionSubflow({ id, position }, item.subflow, others);
+			next = {
+				nodes: [...next.nodes, subflow.node],
+				edges: [...next.edges, toFlowEdge(subflow.edge)],
+			};
+		}
 		history.checkpoint();
 		if (item.kind === "package" && meta.packages[item.package] !== item.version) {
 			setMeta((m) => ({ ...m, packages: { ...m.packages, [item.package]: item.version } }));
 		}
-		setNodes((ns) => [
-			...ns,
-			{ id, type: item.kind, position, data: { node: newDocNode(item, id) }, deletable: true },
-		]);
-		if (chained) setEdges((es) => [...es, toFlowEdge({ from: tail, to: id, kind: "chain" })]);
+		setNodes(next.nodes);
+		setEdges(next.edges);
 		setSelectedId(id);
 		requestAnimationFrame(() => {
-			if (request?.via !== "drop") {
+			// 接在来源节点右侧的新节点可能在视口外：移到中央。
+			if (request.kind === "after" && !request.position) {
 				void flow.setCenter(position.x + NODE_WIDTH / 2, position.y + NODE_HEIGHT / 2, {
 					zoom: flow.getZoom(),
 					duration: 200,
 				});
 			}
-			document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
+			focusNewCard(id);
 		});
 	};
 	if (running && adding) setAdding(null);
-	const openAddMenu = () => setAdding({ via: "menu" });
+	/**
+	 * 打开添加节点菜单；`after` 是来源节点，它不是链尾时新节点插在它和下一个节点之间。
+	 * 在连线上插入（连线菜单、连线中点的「＋」）时直接给出 `before`。
+	 */
+	const openAddMenu = (request: AddRequest) => {
+		if (request.kind !== "after" || request.before !== undefined) {
+			setAdding(request);
+			return;
+		}
+		const next = nodeConnections(docRef.current, request.after).out[0]?.to;
+		setAdding(next === undefined ? request : { ...request, before: next });
+	};
 	// 运行状态下画布只读：添加、撤销 / 重做、整理布局都不生效（工具条上也不显示）。
-	useShortcut("canvas-add", openAddMenu, !running);
+	useShortcut("canvas-add", () => openAddMenu({ kind: "free" }), !running);
 	useShortcut("canvas-undo", history.undo, !running);
 	useShortcut("canvas-redo", history.redo, !running);
-	// Tab：焦点在节点卡片上、或用鼠标点过画布空白处时打开添加节点菜单，其他时候照常切换焦点。
+	// Tab：焦点在节点卡片上（新节点接在它后面）、或用鼠标点过画布空白处时（不连线）打开添加节点菜单，其他时候照常切换焦点。
 	// 页面上没有焦点、或用键盘把焦点放到画布区域上（Tab 进入、Esc 退回）时不拦截（见 FlowCanvas 的 isPointerFocusedCanvas）：
 	// 键盘用户能用 Tab 进出画布，进入后用方向键浏览节点（components/canvas/navigation.ts）。
-	const openRef = useRef<(() => void) | null>(openAddMenu);
+	const openRef = useRef<((request: AddRequest) => void) | null>(openAddMenu);
 	openRef.current = running ? null : openAddMenu;
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== "Tab" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)
 				return;
 			const open = openRef.current;
-			if (!open || event.defaultPrevented || document.querySelector(OPEN_OVERLAY)) return;
+			// 有弹窗或弹出层打开时 Tab 照常切换焦点。
+			if (!open || event.defaultPrevented || dialogOpen()) return;
 			const target = event.target instanceof HTMLElement ? event.target : null;
+			const card = target?.closest<HTMLElement>("[data-node-id]");
 			const onCanvas =
-				target?.closest("[data-node-id]") ||
-				target?.classList.contains("react-flow__pane") ||
-				isPointerFocusedCanvas(target);
+				card || target?.classList.contains("react-flow__pane") || isPointerFocusedCanvas(target);
 			if (!onCanvas) return;
 			event.preventDefault();
-			open();
+			const after = card?.dataset.nodeId;
+			open(after ? { kind: "after", after } : { kind: "free" });
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
@@ -410,9 +509,28 @@ function Editor({
 		const layout = tidyLayout(doc);
 		history.checkpoint();
 		setNodes((ns) => ns.map((n) => ({ ...n, position: layout.get(n.id) ?? n.position })));
-		notify.success("已整理布局", { description: "可以撤销（Ctrl Z）" });
+		notify.success("已整理布局", { description: `可以撤销（${shortcutText("canvas-undo")}）` });
 	};
 	useShortcut("canvas-tidy", tidy, !running);
+
+	// —— 复制、粘贴、创建副本（node-clipboard）：新节点有新的 ID、不带连线，各是一步撤销 ——
+	const clipboard = useNodeClipboard({
+		enabled: !running,
+		doc,
+		nodes,
+		selectedId,
+		viewportCenter,
+		toFlowPosition: (client) => flow.screenToFlowPosition(client),
+		// 包版本锁定可能多了一项；选中并聚焦新节点。
+		onPlace: (edit) => {
+			applyEdit(edit.doc);
+			if (edit.doc.packages !== doc.packages) {
+				setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
+			}
+			setSelectedId(edit.id);
+			requestAnimationFrame(() => focusNewCard(edit.id));
+		},
+	});
 
 	const save = () => {
 		if (fieldErrors.length > 0) {
@@ -465,16 +583,13 @@ function Editor({
 		requestAnimationFrame(() => {
 			const aside = inspectorRef.current;
 			const target = aside?.querySelector<HTMLElement>(
-				'[role="tabpanel"] :is(input, select, textarea, button):not([disabled])',
+				'[role="tabpanel"] :is(input, select, textarea, button, [contenteditable="true"]):not([disabled])',
 			);
 			(target ?? aside)?.focus();
 		});
 	};
 	const focusCanvasNode = () => {
-		const card = selectedId
-			? document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(selectedId)}"]`)
-			: null;
-		card?.focus();
+		if (selectedId) cardOf(selectedId)?.focus();
 	};
 
 	return (
@@ -496,20 +611,53 @@ function Editor({
 					isValidConnection={isValidConnection}
 					insets={{
 						top: TOP_GROUP_SPACE,
-						right: inspectorOpen ? INSPECTOR_SPACE : 0,
+						right: inspectorSpace,
 						bottom: 0,
 						left: 0,
 					}}
 					onEnter={focusInspector}
 					inspector={{ open: inspectorOpen, onToggle: () => setInspectorOpen((o) => !o) }}
+					onDeleteNode={running ? undefined : deleteNode}
+					onInsertOnEdge={
+						running
+							? undefined
+							: (edge, client) =>
+									openAddMenu({ kind: "after", after: edge.from, before: edge.to, client })
+					}
+					reconnect={running ? undefined : reconnect.handlers}
+					menu={(target) => (
+						<EditorMenu
+							target={target}
+							outputsOf={(node) =>
+								running && readyRun?.doc
+									? declaredOutputs(readyRun.doc, node as OrchestrationNode, runCatalog)
+									: declaredOutputs(doc, node as OrchestrationNode, catalog)
+							}
+							edit={
+								running
+									? undefined
+									: {
+											doc,
+											canUndo: history.canUndo,
+											canRedo: history.canRedo,
+											openAddMenu,
+											applyEdit,
+											deleteNode,
+											clipboard,
+											tidy,
+											undo: history.undo,
+											redo: history.redo,
+										}
+							}
+						/>
+					)}
 					dockStart={
 						running ? undefined : (
 							<AddNodeMenu
 								request={adding}
-								tail={menuTail}
 								groups={groups}
 								subflowNameProblem={(name) => newSubflowNameProblem(name, doc)}
-								onOpenChange={(open) => setAdding(open ? { via: "menu" } : null)}
+								onOpenChange={(open) => setAdding(open ? { kind: "free" } : null)}
 								onPick={addNode}
 							/>
 						)
@@ -519,7 +667,7 @@ function Editor({
 							<>
 								<ToolButton
 									label="撤销"
-									keys="Ctrl Z"
+									shortcut="canvas-undo"
 									disabled={!history.canUndo}
 									onClick={history.undo}
 								>
@@ -527,13 +675,13 @@ function Editor({
 								</ToolButton>
 								<ToolButton
 									label="重做"
-									keys="Ctrl Shift Z"
+									shortcut="canvas-redo"
 									disabled={!history.canRedo}
 									onClick={history.redo}
 								>
 									<Redo2Icon />
 								</ToolButton>
-								<ToolButton label="整理布局" keys="Alt Shift F" onClick={tidy}>
+								<ToolButton label="整理布局" shortcut="canvas-tidy" onClick={tidy}>
 									<Wand2Icon />
 								</ToolButton>
 							</>

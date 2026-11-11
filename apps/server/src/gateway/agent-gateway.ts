@@ -1,7 +1,14 @@
 import http2 from "node:http2";
 import type { AddressInfo } from "node:net";
 import { create } from "@bufbuild/protobuf";
-import { Code, ConnectError, type HandlerContext, type ServiceImpl } from "@connectrpc/connect";
+import {
+	Code,
+	ConnectError,
+	createContextKey,
+	createContextValues,
+	type HandlerContext,
+	type ServiceImpl,
+} from "@connectrpc/connect";
 import { connectNodeAdapter } from "@connectrpc/connect-node";
 import {
 	AgentGateway,
@@ -10,6 +17,7 @@ import {
 	ServerMessageSchema,
 } from "@sfly/proto";
 import { agentClockReading } from "../agents/agent-clock.js";
+import { sourceAddress } from "../agents/agent-endpoint.js";
 import {
 	type AgentConnection,
 	type AgentHub,
@@ -59,6 +67,11 @@ export interface AgentGatewayOptions {
 	onError?: (error: unknown) => void;
 }
 
+/** 这次连接的来源地址（ADR 0019：没有显式配置对外地址的 Agent 以它为对外地址）。 */
+const remoteAddressKey = createContextKey<string | undefined>(undefined, {
+	description: "agent connection source address",
+});
+
 /** proto 的 RunningTask（Hello、Heartbeat 里 Agent 手上的任务）。 */
 export const runningTaskRef = (t: { taskId: string; attempt: number; started: boolean }) => ({
 	taskId: t.taskId,
@@ -103,6 +116,15 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 						version: p.version,
 					})),
 					dev_packages: hello.devPackages.map(devPackageInfo),
+					capabilities: hello.capabilities.map((c) => ({ name: c.name, version: c.version })),
+					...(hello.peer && {
+						peer: {
+							port: hello.peer.port,
+							public_address: hello.peer.publicAddress,
+							listen_error: hello.peer.listenError,
+						},
+					}),
+					source_address: sourceAddress(context.values.get(remoteAddressKey)),
 				},
 				outbox,
 				agentClockReading(hello),
@@ -156,6 +178,7 @@ export async function startAgentGateway(options: AgentGatewayOptions): Promise<A
 		routes(router) {
 			router.service(AgentGateway, gatewayService(options));
 		},
+		contextValues: (req) => createContextValues().set(remoteAddressKey, req.socket.remoteAddress),
 	});
 	const server = http2.createServer(handler);
 	const sessions = new Set<http2.ServerHttp2Session>();

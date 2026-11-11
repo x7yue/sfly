@@ -67,6 +67,7 @@ const ROUTES = {
 		"publish",
 		"subflows",
 		"standard-nodes",
+		"cross-agent-files",
 	],
 } as const;
 
@@ -181,6 +182,8 @@ describe("全栈：开发文档里的命令", () => {
 			UV_PYTHON: python,
 			UV_PYTHON_DOWNLOADS: "never",
 			SFLY_PYTHON: python,
+			// 文档里启动的 Agent 让系统分配供其它 Agent 连接的端口：并行的测试不抢默认端口 50052。
+			SFLY_LISTEN_PORT: "0",
 		};
 		const shell = DocShell.start({ cwd: home, env, dir: work });
 		let foreground: ChildProcess | undefined;
@@ -307,6 +310,9 @@ describe("全栈：开发文档里的命令", () => {
 			expect((await api.node(runId, "sh")).outputs).toEqual({
 				exit_code: 0,
 				stdout: "标准节点\n",
+				stderr: "",
+				stdout_file: null,
+				stderr_file: null,
 			});
 		}
 

@@ -1,6 +1,14 @@
 import { cn } from "cn";
+import type { KeyLabel } from "@/lib/shortcuts";
 
-function Kbd({ className, ...props }: React.ComponentProps<"kbd">) {
+/**
+ * 一个按键。内容只能是注册表给出的按键文字（见 KeyLabel），不能写死：`<Kbd>Ctrl S</Kbd>` 会报
+ * TS2745（「expects type 'KeyLabel'」），改用 shortcutText / shortcutKeys。
+ */
+function Kbd({
+	className,
+	...props
+}: Omit<React.ComponentProps<"kbd">, "children"> & { children: KeyLabel }) {
 	return (
 		<kbd
 			data-slot="kbd"

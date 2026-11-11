@@ -9,11 +9,27 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, TypeVar, overload
+from typing import Annotated, Any, Literal, TypeVar, overload
 
 from sfly.context import Context
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+class _AgentMarker:
+    """`AgentName` 的标记：`sfly build` 据此把输入标成「Agent」类型（schema 的 `x-sfly-type`）。"""
+
+    def __repr__(self) -> str:
+        return "sfly.AgentName"
+
+
+AGENT_MARKER = _AgentMarker()
+
+#: 「Agent」类型的输入：值是 Agent 名称（运行时就是 `str`），表示节点会访问这台 Agent（ADR 0019）。
+#: 检查器里显示成 Agent 下拉框；触发前检查它是已注册的 Agent；派发时控制面把它的地址和端口随任务下发
+#: 给节点所在的 Agent，节点用 `ctx.agent(名称)` 访问它。只能直接用作节点参数的类型，
+#: 可以写成 `AgentName | None`。
+AgentName = Annotated[str, AGENT_MARKER]
 
 #: 函数上保存节点声明的属性名。
 NODE_ATTR = "__sfly_node__"

@@ -8,6 +8,9 @@
 - `pyproject.toml` 的 `[project]` 提供 name、version、requires-python（默认 `>=3.10`）。
 - 需要的 SDK 版本取 `[tool.sfly] requires-sdk`（例如 `>=0.0.4`），写进元信息的 `requires_sdk`，
   控制面派发前和 Agent 版本比较；没写时用构建时 SDK 的版本作为下限。
+- 需要的 Agent 版本取 `[tool.sfly] requires-agent`（例如 `>=0.2.0`，用到 Agent 能力时声明），
+  写进元信息的 `requires_agent`：触发前和派发前对节点所在的 Agent 和它通过「Agent」类型的参数
+  引用的 Agent 都检查；没写时不检查，元信息里也没有这个字段。
 - 依赖取 `[project].dependencies`；pyproject 未声明 dependencies 时读 `requirements.txt`。
   依赖里不能有 `sfly`：Agent 自带 SDK 运行时，`sfly` 只放在开发依赖组里。
 - 代码位于 `src/<模块>/`、`<模块>/` 或 `<模块>.py`，模块名为包名规范化（`-` → `_`）。
@@ -52,6 +55,8 @@ class Project:
     version: str
     requires_python: str
     requires_sdk: str
+    #: 没有声明时为 None。
+    requires_agent: str | None
     dependencies: list[str]
     module: str
     source_root: Path
@@ -89,7 +94,9 @@ def load_project(root: Path) -> Project:
         dependencies = []
 
     # 格式由元信息的 schema 校验（validate_metadata）。
-    requires_sdk = data.get("tool", {}).get("sfly", {}).get("requires-sdk", f">={SDK_VERSION}")
+    tool = data.get("tool", {}).get("sfly", {})
+    requires_sdk = tool.get("requires-sdk", f">={SDK_VERSION}")
+    requires_agent = tool.get("requires-agent")
 
     module = dist_name(name)
     for source_root in (root / "src", root):
@@ -101,6 +108,7 @@ def load_project(root: Path) -> Project:
                     version=version,
                     requires_python=project.get("requires-python", DEFAULT_REQUIRES_PYTHON),
                     requires_sdk=requires_sdk,
+                    requires_agent=requires_agent,
                     dependencies=dependencies,
                     module=module,
                     source_root=source_root,
@@ -123,6 +131,20 @@ def scan_nodes(project: Project) -> list[dict[str, Any]]:
     if not nodes:
         raise BuildError(f"没有找到 @node 声明的节点类型（模块 {project.module}）")
     return nodes
+
+
+def package_metadata(project: Project) -> dict[str, Any]:
+    """节点包的元信息（扫描节点）；`requires_agent` 只在声明了时才有。"""
+    metadata: dict[str, Any] = {
+        "name": project.name,
+        "version": project.version,
+        "requires_python": project.requires_python,
+        "requires_sdk": project.requires_sdk,
+    }
+    if project.requires_agent is not None:
+        metadata["requires_agent"] = project.requires_agent
+    metadata["nodes"] = scan_nodes(project)
+    return metadata
 
 
 def validate_metadata(metadata: dict[str, Any]) -> None:
@@ -153,13 +175,7 @@ def build(root: Path, out_dir: Path | None = None) -> Path:
     """构建节点包，返回归档路径。"""
     project = load_project(root)
     check_dependencies(project)
-    metadata = {
-        "name": project.name,
-        "version": project.version,
-        "requires_python": project.requires_python,
-        "requires_sdk": project.requires_sdk,
-        "nodes": scan_nodes(project),
-    }
+    metadata = package_metadata(project)
     validate_metadata(metadata)
 
     out_dir = out_dir or root / "dist"

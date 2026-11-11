@@ -10,12 +10,11 @@ import {
 	UserPenIcon,
 	WorkflowIcon,
 } from "lucide-react";
-import { Keys } from "#/components/page";
+import { KeyHint, Keys } from "#/components/page";
 import { runStatusView } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { shortId } from "#/lib/format";
-import { shortcutById } from "#/lib/shortcuts";
 import {
 	Command,
 	CommandDialog,
@@ -113,7 +112,7 @@ export function CommandPalette({
 								<item.icon />
 								{item.label}
 								<CommandShortcut>
-									<Keys keys={shortcutById(item.shortcut).keys} />
+									<Keys shortcut={item.shortcut} />
 								</CommandShortcut>
 							</CommandItem>
 						))}
@@ -184,7 +183,7 @@ export function CommandPalette({
 								{c.label}
 								{c.shortcut && (
 									<CommandShortcut>
-										<Keys keys={shortcutById(c.shortcut).keys} />
+										<Keys shortcut={c.shortcut} />
 									</CommandShortcut>
 								)}
 							</CommandItem>
@@ -193,16 +192,16 @@ export function CommandPalette({
 				</CommandList>
 				<footer className="flex gap-3.5 border-t border-border-soft px-3.5 py-2 text-2xs text-fg-3">
 					<span className="inline-flex items-center gap-1">
-						<Keys keys="↑" />
-						<Keys keys="↓" />
+						<KeyHint keys="↑" />
+						<KeyHint keys="↓" />
 						选择
 					</span>
 					<span className="inline-flex items-center gap-1">
-						<Keys keys="Enter" />
+						<KeyHint keys="Enter" />
 						执行
 					</span>
 					<span className="inline-flex items-center gap-1">
-						<Keys keys="Esc" />
+						<KeyHint keys="Esc" />
 						关闭
 					</span>
 				</footer>

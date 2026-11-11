@@ -49,8 +49,14 @@ export async function startRealAgent(options: {
 		],
 		{
 			stdio: ["ignore", "pipe", "inherit"],
-			// 独立的 SFLY_HOME：不读开发者自己的 ~/.sfly/agent.env。
-			env: { ...process.env, SFLY_HOME: join(workDir, "sfly-home"), ...options.env },
+			// 独立的 SFLY_HOME：不读开发者自己的 ~/.sfly/agent.env。供其它 Agent 连接的端口由系统分配，
+			// 并行的测试不抢默认端口 50052（不认识这个变量的旧版本 Agent 忽略它）。
+			env: {
+				...process.env,
+				SFLY_HOME: join(workDir, "sfly-home"),
+				SFLY_LISTEN_PORT: "0",
+				...options.env,
+			},
 		},
 	);
 	const events: Array<Record<string, unknown>> = [];

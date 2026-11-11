@@ -54,6 +54,8 @@ def run_node(
     cancel_after: float | None = None,
     grace: float = DEFAULT_GRACE,
     work_dir: str | os.PathLike[str] | None = None,
+    downloads: Mapping[str, bytes | str | os.PathLike[str]] | None = None,
+    agents: Mapping[str, str | os.PathLike[str]] | None = None,
 ) -> Execution:
     """执行一个节点，等它结束并返回结果。
 
@@ -63,7 +65,14 @@ def run_node(
     - `cancel_when`：执行期间定期以到目前为止的结果调用，返回 True 时取消；
       `cancel_after`：开始后这么多秒取消。取消与平台相同：写取消标记、发 SIGTERM，
       宽限期 `grace` 秒后强制杀掉；
-    - `work_dir`：任务工作目录（产物在其中的 `artifacts/`），默认新建一个临时目录，不会自动删除。
+    - `work_dir`：任务工作目录（产物在其中的 `artifacts/`），默认新建一个临时目录，不会自动删除；
+    - `downloads`：产物引用 → 本地内容，节点用 `ctx.artifacts.download` 下载这些引用时得到
+      这份内容，不访问网络。内容是 bytes / str（按 UTF-8）时就是产物的内容，是路径时取该文件
+      （与 `ctx.artifacts.save` 的写法相同）；
+    - `agents`：Agent 名称 → 本地目录，测试「访问另一台 Agent」的节点用：节点用
+      `ctx.agent(名称)` 访问那台 Agent 时，那台 Agent 上的绝对路径落在这个目录里
+      （`/var/log/app.log` 是 `<目录>/var/log/app.log`），返回的路径仍是那台 Agent 上的写法。
+      名称要通过「Agent」类型的参数传给节点。`ctx.agent()`（自己所在的 Agent）就是本机。
 
     执行器子进程使用当前解释器，模块搜索路径与当前进程相同。
     """
@@ -100,4 +109,6 @@ def run_node(
         grace=grace,
         cancellation=cancellation,
         on_tick=tick,
+        downloads=downloads,
+        agents=agents,
     )

@@ -69,6 +69,8 @@ export const ACTION = {
 	retry: "重试",
 	clearFilters: "清除筛选",
 	copyErrorDetails: "复制错误详情",
+	insertReference: "插入引用",
+	resizeInspector: "调整检查器宽度",
 } as const;
 
 /** 通用的加载 / 错误 / 空状态文字。 */
@@ -78,6 +80,8 @@ export const MESSAGE = {
 	neverRun: "从未运行",
 	noLogs: "还没有日志。",
 	archived: "已归档",
+	copyFailed: "复制失败",
+	clipboardDenied: "浏览器不允许访问剪贴板",
 } as const;
 
 /** 名称为空的子流程显示的名称。 */

@@ -5,10 +5,12 @@
 - `ctx.progress(当前值, 总数, 说明)`：上报进度，总数未知时省略；
 - `ctx.metric(指标名, 数值, labels={...})`：上报节点类型声明的指标，可以带标签
   （见 `Context.metric`）；
-- `ctx.artifacts`：保存产物，返回可以写进输出的产物引用（见 `Artifacts`）；
+- `ctx.artifacts`：保存产物，返回可以写进输出的产物引用；按产物引用下载产物（见 `Artifacts`）；
 - `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）；
 - `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt（见 `TaskInfo`）；
-- `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）。
+- `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）；
+- `ctx.agent()` / `ctx.agent(名称)`：自己所在的 Agent / 通过「Agent」类型的参数拿到的
+  另一台 Agent 的能力（见 `Context.agent`、`sfly.capabilities`）。
 
 取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
@@ -29,11 +31,12 @@
 
 from __future__ import annotations
 
+import _thread
 import json
 import math
 import os
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -42,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from sfly.capabilities import Agent
     from sfly.nodes import Metric
 
 #: 日志级别（与控制面、画布一致）。
@@ -60,6 +64,60 @@ _NO_LABEL_KEYS: frozenset[str] = frozenset()
 
 class Cancelled(BaseException):
     """任务被取消（或超时）时，执行器收到 SIGTERM 后在节点代码里抛出。"""
+
+
+class _Sigterm:
+    """主线程里 `DeferCancel` 的嵌套层数，和推迟期间是否收到了 SIGTERM。"""
+
+    main = _thread.get_ident()
+    depth = 0
+    pending = False
+
+
+def on_sigterm(signum: int, frame: object) -> None:
+    """执行器装的 SIGTERM 处理函数（只在主线程里执行）：在节点代码里抛出 `Cancelled`；
+    正在 `DeferCancel` 里时推迟到离开它。"""
+    if _Sigterm.depth:
+        _Sigterm.pending = True
+        return
+    raise Cancelled("任务被终止（SIGTERM）")
+
+
+class DeferCancel:
+    """`with DeferCancel():` 这一段里收到的 SIGTERM 推迟到离开这一段时才变成 `Cancelled`。
+
+    SDK 拿到要清理的资源（文件描述符、临时文件、子进程）时用，取消不会落在「拿到资源」和
+    「登记好清理」之间（拿到之后、进入 `try` 之前被打断，资源就没人清理了）：
+
+        resource = None
+        try:
+            with DeferCancel():
+                resource = acquire()
+            ...
+        finally:
+            if resource is not None:
+                release(resource)
+
+    只推迟主线程里的取消：其它线程里收不到 `Cancelled`。
+    """
+
+    def __enter__(self) -> None:
+        self._counted = _thread.get_ident() == _Sigterm.main
+        if self._counted:
+            _Sigterm.depth += 1
+
+    def __exit__(self, *exc: object) -> None:
+        if not self._counted:
+            return
+        _Sigterm.depth -= 1
+        if _Sigterm.depth == 0 and _Sigterm.pending:
+            _Sigterm.pending = False
+            raise Cancelled("任务被终止（SIGTERM）")
+
+
+class ArtifactDownloadError(Exception):
+    """`ctx.artifacts.download` 失败：产物引用无效、产物不存在或已过保留期被清理、
+    连不上控制面（重试之后仍然失败）。消息里写明是哪一种和产物引用。"""
 
 
 class _EventWriter:
@@ -131,15 +189,74 @@ class Artifacts:
     运行视图里可以下载。名称是产物目录内的相对路径（可以有子目录，用 `/` 分隔）。
 
     保存后得到**产物引用**：Agent 提供了下载地址前缀 `SFLY_ARTIFACTS_URL` 时，
-    是这个产物的下载地址（前缀 + 按路径段百分号编码的名称），可以写进节点输出交给后续节点
-    （例如 `urllib.request.urlopen(ref)`）；没有前缀时（本地调试）是本地文件路径。
+    是这个产物的下载地址（前缀 + 按路径段百分号编码的名称），可以写进节点输出交给后续节点，
+    后续节点用 `download(ref, 目标路径)` 下载；没有前缀时（本地调试）是本地文件路径。
+
+    `cancelled` 是「任务是否已取消」的判断（`Context.cancelled`），下载时用来及时停止。
+    `downloads_path` 是本地调试时的下载内容表（`SFLY_DOWNLOADS`，见 `sfly.local`）：
+    一个 JSON 文件，产物引用 → 本地文件路径，表里有的引用不访问网络。
     """
 
-    def __init__(self, directory: str | os.PathLike[str] | None, url: str | None) -> None:
+    def __init__(
+        self,
+        directory: str | os.PathLike[str] | None,
+        url: str | None,
+        *,
+        cancelled: Callable[[], bool] | None = None,
+        downloads_path: str | os.PathLike[str] | None = None,
+    ) -> None:
         from pathlib import Path
 
         self._dir = Path(directory) if directory is not None else None
         self._url = url or None
+        self._cancelled = cancelled
+        self._downloads_path = downloads_path
+        self._downloads: dict[str, str] | None = None
+
+    def download(
+        self,
+        ref: str,
+        dest: str | os.PathLike[str],
+        *,
+        retries: int = 3,
+        timeout: float = 30.0,
+    ) -> Path:
+        """把产物引用 `ref` 指向的产物下载到本地路径 `dest`，返回写入的路径（`Path(dest)`）。
+
+        - 流式读写，内存占用与产物大小无关；`dest` 的父目录不存在时创建，已有的文件被覆盖。
+          内容先写到旁边的 `<文件名>.part`，全部写完才改名成 `dest`：失败或取消时不留下半个文件。
+        - 连不上控制面、连接中断、控制面返回 5xx 时自动重试，最多 `retries` 次
+          （间隔 0.5 秒起每次加倍）；`timeout` 是连接和每次读取的超时秒数。
+        - 失败时抛出 `sfly.ArtifactDownloadError`，消息写明原因：产物引用无效、产物不存在
+          （404）、产物已过保留期被清理（410）、连不上控制面或连接中断（重试耗尽）。
+        - 任务被取消时立即停止并抛出 `sfly.Cancelled`（在后台线程里下载时，在两次读取之间停止）。
+
+        产物在保存它的任务结束后才上传到控制面：只能下载前面的节点保存的产物。
+        下载地址在控制面上，任何一台 Agent 上的节点都能下载。本地调试时产物引用是本地文件路径，
+        直接复制；`sfly.testing.run_node(downloads=...)` 和 `sfly run --download` 可以给某个
+        引用指定本地内容。
+        """
+        from sfly.download import download
+
+        return download(
+            ref,
+            dest,
+            retries=retries,
+            timeout=timeout,
+            local=self._local_downloads(),
+            cancelled=self._cancelled or (lambda: False),
+        )
+
+    def _local_downloads(self) -> dict[str, str]:
+        if self._downloads is None:
+            table: object = {}
+            if self._downloads_path is not None:
+                with open(self._downloads_path, encoding="utf-8") as f:
+                    table = json.loads(f.read())
+            self._downloads = (
+                {str(k): str(v) for k, v in table.items()} if isinstance(table, dict) else {}
+            )
+        return self._downloads
 
     def save(self, name: str, data: bytes | str | os.PathLike[str]) -> str:
         """保存一个产物并返回产物引用。
@@ -286,7 +403,12 @@ class Context:
         self._events = _EventWriter(events_path)
         self._cancel = cancel_path
         self.log = Log(self._events)
-        self.artifacts = Artifacts(artifacts_dir, artifacts_url)
+        self.artifacts = Artifacts(
+            artifacts_dir,
+            artifacts_url,
+            cancelled=self.cancelled,
+            downloads_path=os.environ.get("SFLY_DOWNLOADS"),
+        )
         # 指标名 → (类型, 声明的标签键)。
         self._metrics = (
             {m.name: (m.kind, frozenset(m.labels)) for m in metrics}
@@ -316,6 +438,22 @@ class Context:
           `sfly.testing.run_node` 时是任务工作目录下的 `procs/`。
         """
         return self._procs_dir
+
+    def agent(self, name: str | None = None) -> Agent:
+        """一台 Agent 的能力（ADR 0019）：不给名称时是节点自己所在的 Agent，给名称时是
+        通过「Agent」类型的参数（`sfly.AgentName`）拿到的另一台 Agent。两者的能力和写法相同，
+        例如 `ctx.agent(source).files.list(...)`。
+
+        只能访问自己所在的 Agent 和参数里选的 Agent：访问其它名称时调用抛出
+        `sfly.AgentNotReferenced`。调用另一台 Agent 时由自己所在的 Agent 代为连接，
+        数据不经过控制面。本地调试（`sfly run`、`sfly.testing`）时直接操作本机的文件系统，
+        其它 Agent 由测试工具映射到本地目录。
+        """
+        from sfly.capabilities import connect
+
+        return connect(
+            name, task_id=self.task.task_id, attempt=self.task.attempt, cancelled=self.cancelled
+        )
 
     def cancelled(self) -> bool:
         """任务是否已被取消（Agent 已写入取消标记）。"""

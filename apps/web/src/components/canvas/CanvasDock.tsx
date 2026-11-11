@@ -10,6 +10,7 @@ import {
 	ScanIcon,
 } from "lucide-react";
 import { type ReactNode, useRef } from "react";
+import { type ShortcutId, shortcutText } from "#/lib/shortcuts";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MAX_ZOOM, MIN_ZOOM } from "./geometry";
@@ -22,17 +23,17 @@ export function GroupDivider() {
 	return <span aria-hidden className="mx-0.5 h-5 w-px bg-border" />;
 }
 
-/** 工具条上的图标按钮（原型 `.tool`），悬停显示名称与快捷键。 */
+/** 工具条上的图标按钮（原型 `.tool`），悬停显示名称与快捷键（`shortcut` 是注册表 id）。 */
 export function ToolButton({
 	label,
-	keys,
+	shortcut,
 	pressed,
 	disabled,
 	onClick,
 	children,
 }: {
 	label: string;
-	keys?: string;
+	shortcut?: ShortcutId;
 	pressed?: boolean;
 	disabled?: boolean;
 	onClick(): void;
@@ -59,7 +60,7 @@ export function ToolButton({
 			</TooltipTrigger>
 			<TooltipContent>
 				{label}
-				{keys && <Kbd>{keys}</Kbd>}
+				{shortcut && <Kbd>{shortcutText(shortcut)}</Kbd>}
 			</TooltipContent>
 		</Tooltip>
 	);
@@ -80,6 +81,7 @@ export function CanvasDock({
 	inspector,
 	start,
 	tools,
+	clearRight = 0,
 }: {
 	tool: CanvasTool;
 	onTool(tool: CanvasTool): void;
@@ -89,60 +91,82 @@ export function CanvasDock({
 	inspector?: { open: boolean; onToggle(): void };
 	start?: ReactNode;
 	tools?: ReactNode;
+	/** 画布右侧被悬浮面板（检查器）占住的宽度：居中放不下时工具条往左让开。 */
+	clearRight?: number;
 }) {
 	const zoom = useStore((s) => s.transform[2]);
 	const zoomBy = useZoomSteps();
 	return (
-		<div
-			role="toolbar"
-			aria-label="画布工具"
-			className={cn(floatGroupClass, "bottom-3.5 left-1/2 -translate-x-1/2")}
-		>
-			{start && (
-				<>
-					{start}
-					<GroupDivider />
-				</>
-			)}
-			<ToolButton
-				label="指针"
-				keys="V"
-				pressed={tool === "pointer"}
-				onClick={() => onTool("pointer")}
+		// 两侧的占位等宽时工具条居中；右侧占位不小于 clearRight，放不下就把工具条往左推。
+		<div className="pointer-events-none absolute inset-x-0 bottom-3.5 z-10 flex">
+			<span className="min-w-0 flex-1" />
+			<div
+				role="toolbar"
+				aria-label="画布工具"
+				className={cn(floatGroupClass, "pointer-events-auto relative flex-none")}
 			>
-				<MousePointer2Icon />
-			</ToolButton>
-			<ToolButton label="抓手" keys="H" pressed={tool === "hand"} onClick={() => onTool("hand")}>
-				<HandIcon />
-			</ToolButton>
-			<GroupDivider />
-			<ToolButton label="缩小" onClick={() => zoomBy(1 / ZOOM_STEP)}>
-				<MinusIcon />
-			</ToolButton>
-			<output aria-label="缩放比例" className="min-w-13 text-center font-mono text-xs text-fg-2">
-				{Math.round(zoom * 100)}%
-			</output>
-			<ToolButton label="放大" onClick={() => zoomBy(ZOOM_STEP)}>
-				<PlusIcon />
-			</ToolButton>
-			<ToolButton label="适配视图" keys="0" onClick={onFit}>
-				<ScanIcon />
-			</ToolButton>
-			{tools && (
-				<>
-					<GroupDivider />
-					{tools}
-				</>
-			)}
-			<GroupDivider />
-			<ToolButton label="小地图" keys="M" pressed={minimap} onClick={onToggleMinimap}>
-				<MapIcon />
-			</ToolButton>
-			{inspector && (
-				<ToolButton label="检查器" keys="I" pressed={inspector.open} onClick={inspector.onToggle}>
-					<PanelRightIcon />
+				{start && (
+					<>
+						{start}
+						<GroupDivider />
+					</>
+				)}
+				<ToolButton
+					label="指针"
+					shortcut="canvas-pointer"
+					pressed={tool === "pointer"}
+					onClick={() => onTool("pointer")}
+				>
+					<MousePointer2Icon />
 				</ToolButton>
-			)}
+				<ToolButton
+					label="抓手"
+					shortcut="canvas-hand"
+					pressed={tool === "hand"}
+					onClick={() => onTool("hand")}
+				>
+					<HandIcon />
+				</ToolButton>
+				<GroupDivider />
+				<ToolButton label="缩小" onClick={() => zoomBy(1 / ZOOM_STEP)}>
+					<MinusIcon />
+				</ToolButton>
+				<output aria-label="缩放比例" className="min-w-13 text-center font-mono text-xs text-fg-2">
+					{Math.round(zoom * 100)}%
+				</output>
+				<ToolButton label="放大" onClick={() => zoomBy(ZOOM_STEP)}>
+					<PlusIcon />
+				</ToolButton>
+				<ToolButton label="适配视图" shortcut="canvas-fit" onClick={onFit}>
+					<ScanIcon />
+				</ToolButton>
+				{tools && (
+					<>
+						<GroupDivider />
+						{tools}
+					</>
+				)}
+				<GroupDivider />
+				<ToolButton
+					label="小地图"
+					shortcut="canvas-minimap"
+					pressed={minimap}
+					onClick={onToggleMinimap}
+				>
+					<MapIcon />
+				</ToolButton>
+				{inspector && (
+					<ToolButton
+						label="检查器"
+						shortcut="canvas-inspector"
+						pressed={inspector.open}
+						onClick={inspector.onToggle}
+					>
+						<PanelRightIcon />
+					</ToolButton>
+				)}
+			</div>
+			<span className="flex-1" style={{ minWidth: clearRight }} />
 		</div>
 	);
 }

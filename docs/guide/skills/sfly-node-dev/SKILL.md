@@ -30,7 +30,7 @@ description: 开发 sfly 节点包：新增或修改 `@node` 节点、本地调�
 ### 日志、进度、指标、产物
 - 信息一律通过 `ctx` 输出：`ctx.log` 带级别进入运行视图；耗时操作用 `ctx.progress` 上报进度。
 - 指标先在 `@node(metrics=...)` 里声明，再用 `ctx.metric` 上报（未声明的会被丢弃）。`gauge` 是瞬时值，`counter` 是累计值；用 `primary_metric` 指出最能代表运行状况的那个。按对象（进程、连接、网卡……）分别统计时在 `Metric(labels=[...])` 声明标签键、上报时带 `labels`；带标签的指标只能画在 `line` / `area` 图表里，也不能当主指标，需要时另报一个不带标签的合计指标。
-- 文件用 `ctx.artifacts.save` / `path` 保存，输出里放返回的产物引用，下游节点可以直接下载。
+- 文件用 `ctx.artifacts.save` / `path` 保存，输出里放返回的产物引用；后续节点用 `ctx.artifacts.download(引用, 本地路径)` 下载，不要自己写 `urlopen`。
 
 ### 取消与清理
 - 取消或超时时，节点里会抛出 `sfly.Cancelled`（`BaseException` 的子类）。捕获异常时写 `except Exception` 或更具体的类型，让 `Cancelled` 继续往外传；清理代码放在 `finally` / `with` 里，宽限期 10 秒内要做完。后台线程轮询 `ctx.cancelled()`。

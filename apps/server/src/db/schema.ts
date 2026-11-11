@@ -42,6 +42,27 @@ export interface AgentInfo {
 	dev_packages?: DevPackageInfo[];
 	/** 最近一次 Heartbeat 上报的更新状态（ADR 0014）；每次连接（Hello）时清空。 */
 	update?: AgentUpdateInfo;
+	/** Hello 上报的 Agent 能力及版本（ADR 0019）；旧版本 Agent 和早于 #196 注册的记录没有。 */
+	capabilities?: CapabilityInfo[];
+	/** Hello 上报的、供其它 Agent 连接的端口（ADR 0019）；不监听端口的旧版本 Agent 没有。 */
+	peer?: PeerEndpointInfo;
+	/** 控制面看到的这次连接的来源地址（ADR 0019）；早于 #196 注册的记录没有。 */
+	source_address?: string;
+}
+
+/** 一项 Agent 能力（@sfly/schema 的 CapabilityView）。 */
+export interface CapabilityInfo {
+	name: string;
+	version: number;
+}
+
+/** Agent 在 Hello 中上报的端口（proto 的 PeerEndpoint）。 */
+export interface PeerEndpointInfo {
+	port: number;
+	/** 安装时显式配置的对外地址；没有配置时为空串。 */
+	public_address: string;
+	/** 没能监听的原因；正在监听时为空串。 */
+	listen_error: string;
 }
 
 /** Agent 的更新状态（@sfly/schema 的 AgentUpdateView）。 */

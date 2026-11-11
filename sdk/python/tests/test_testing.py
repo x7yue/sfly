@@ -405,3 +405,40 @@ def _alive(pid: int) -> bool:
         return False
     # 第三个字段是状态；命令名在括号里，可能有空格，从最后一个 ')' 之后取。
     return stat.rpartition(")")[2].split()[0] not in ("Z", "X")
+
+
+AGENT_NODES = """
+from sfly import AgentName, Context, node
+
+
+@node
+def reach(ctx: Context, source: AgentName, backup: AgentName | None = None) -> dict:
+    return {"source": source, "backup": backup}
+"""
+
+
+def test_agent_inputs_are_agent_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 「Agent」类型的输入（#197）：节点收到 Agent 名称，本地调试时不检查它是否注册过。
+    (tmp_path / "agent_nodes.py").write_text(AGENT_NODES, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    result = run_node("agent_nodes:reach", {"source": "agent-a"})
+    both = run_node("agent_nodes:reach", {"source": "agent-a", "backup": "agent-b"})
+
+    assert result.status == "success", result.error
+    assert result.outputs == {"source": "agent-a", "backup": None}
+    assert both.outputs == {"source": "agent-a", "backup": "agent-b"}
+
+
+def test_an_agent_input_that_is_not_a_string_is_a_config_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "agent_nodes.py").write_text(AGENT_NODES, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    result = run_node("agent_nodes:reach", {"source": 1})
+
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.kind == "config_error"
+    assert result.error.message == "输入 source 应为 string，实际是 1"
