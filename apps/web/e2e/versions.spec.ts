@@ -1,6 +1,6 @@
 import type { Browser, Page } from "@playwright/test";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
-import { createEditorScenario, headOf, inspector, nodeCard } from "./editor-support";
+import { createEditorScenario, headOf, inspector, nodeCard, switchMode } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { box } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
@@ -251,10 +251,10 @@ test("在线编辑者：别人打开同一场景时显示在画布右上，离�
 		body: JSON.stringify({ params: { biz_date: "2026-01-01" } }),
 	});
 	expect(triggered.status).toBe(201);
-	await page.locator("body").press("r");
+	await switchMode(page, "run");
 	await expect(page.getByRole("link", { name: "打开运行监控" })).toBeVisible();
 	await expect(editors).toHaveText(/小李 正在编辑/);
-	await page.locator("body").press("e");
+	await switchMode(page, "edit");
 	await expect(page.getByRole("button", { name: /保存/ })).toBeVisible();
 	await expect(other.page.getByRole("status").filter({ hasText: "tester 正在编辑" })).toBeVisible();
 	await expect(editors).toHaveText(/小李 正在编辑/);

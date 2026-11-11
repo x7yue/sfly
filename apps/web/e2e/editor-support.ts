@@ -157,6 +157,22 @@ export const nodeMenu = (page: Page) => page.getByRole("menu", { name: "节点�
 /** 画布空白处的右键菜单。 */
 export const paneMenu = (page: Page) => page.getByRole("menu", { name: "画布菜单" });
 
+/** 画布左上的模式切换（编辑 / 运行状态）。 */
+export const modes = (page: Page) => page.getByRole("group", { name: "模式" });
+
+/**
+ * 按 E / R 切换画布模式，等切换生效。
+ *
+ * 先等模式切换按钮出现再按键：页面还显示「加载场景…」时编辑器没有挂载，E / R 没有注册，按键会被丢掉。
+ * 打开页面后紧接着按键的写法在 CI 上偶发失败。
+ */
+export async function switchMode(page: Page, mode: "edit" | "run") {
+	const button = modes(page).getByRole("button", { name: mode === "run" ? /^运行状态/ : /^编辑/ });
+	await expect(button).toBeVisible();
+	await page.locator("body").press(mode === "run" ? "r" : "e");
+	await expect(button).toHaveAttribute("aria-pressed", "true");
+}
+
 /** 画布上的一条连线（`chain:a->b`、`dispatch:a->b`）。 */
 export const edge = (page: Page, id: string) => page.locator(`[data-edge="${id}"]`);
 /** 画布上全部连线的 ID，排好序。 */

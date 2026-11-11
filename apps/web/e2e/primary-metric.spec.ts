@@ -1,5 +1,5 @@
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
-import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
+import { createEditorScenario, editorDocument, nodeCard, switchMode } from "./editor-support";
 import { expect, START_TIME, test } from "./fixtures";
 import { metricPackage, pingPoints, runningScenario, unixAt } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
@@ -97,7 +97,7 @@ test("画布运行状态：节点卡片的指标槽显示主指标最新值与�
 }) => {
 	const { scenarioId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
 	await page.goto(`/orchestrations/${scenarioId}`);
-	await page.locator("body").press("r");
+	await switchMode(page, "run");
 	await expect(nodeCard(page, "fetch")).toHaveAttribute("data-run", "done");
 
 	const fetch = nodeCard(page, "fetch").locator('[data-primary-metric="latency_ms"]');
