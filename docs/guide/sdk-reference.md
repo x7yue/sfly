@@ -321,6 +321,7 @@ def pull_log(ctx: Context, source: AgentName, path: str = "/var/log/app/app.log.
 - 先写同一目录里的临时文件（`.<文件名>.sfly-<随机>.tmp`，与 `files.write` 相同），完成、核对并落盘后才改名为 `local_path`：`local_path` 上不会出现半截文件，那里已有的文件替换后保留权限位。下载失败、任务被取消时临时文件被删除。处理本地目录的节点要跳过以 `.` 开头的文件。
 - 下载的是开始时的大小。两台 Agent 之间的连接中断（网络断开、那台 Agent 重启）时自动重连，从已经写下的位置继续，不从头开始；连续多次重连都没有进展时抛出异常（通常是 `AgentUnreachable`）。
 - 完成时再查看一次源文件，核对本地文件与源文件大小一致。源文件在下载期间被删除时抛出 `AgentFileNotFound`；被替换（例如日志轮转时被改名，路径上换成了新文件）、被截短、大小变了（还在写入）时抛出 `AgentError`，消息写明是哪一种。只下载已经不再写入的文件：判断文件是否写完是节点自己的事，平台不提供。
+- 下载期间源文件被删除时 `kind` 是 `not_found`，上一条里其它几种「源文件变了」的情况 `kind` 都是 `failed`：可以据此把这个文件留到之后再下载（例如等它不再写入），其它失败按下文「超时、取消与错误」的表区分。
 - 返回下载完成时源文件的 `FileInfo`：`size` 就是本地文件的字节数，`id` 可以用来判断以后是不是同一个文件（例如只下载一次）。
 - `progress(downloaded, size)`：下载期间不时被调用（在 Agent 上大约每秒一次，本地调试时每块一次），参数是已经下载的字节数和要下载的字节数，可以用来上报进度或速率；它在调用 `download` 的线程里执行。
 - `timeout` 是相邻两次进展之间最多等多久，不是整个下载的时长：几个 GB 的文件用默认的 30 秒也可以。
@@ -458,7 +459,10 @@ def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/va
 | `AgentPermissionDenied`（`PermissionError`） | `permission_denied` | 那台 Agent 进程没有权限 |
 | `AgentTimeout`（`TimeoutError`） | `timeout` | 超过 `timeout` 秒没有回应；`exec.run` 的命令超过 `timeout` 秒没有结束 |
 | `AgentNotReferenced` | `not_referenced` | 那台 Agent 不是通过「Agent」类型的参数拿到的 |
-| `AgentError` | `invalid` 等 | 其它失败，例如要列出的路径不是目录 |
+| `AgentError` | `invalid` | 参数不合法：例如要列出的路径不是目录，要读取、删除的是目录，要写入的路径是目录，`exec.run` 的工作目录不是目录 |
+| `AgentError` | `failed` | 其它失败：例如下载期间源文件变了（见上文「读取与下载」）、那台 Agent 访问文件时出了其它错误 |
+
+`kind` 的取值是固定的字符串，可以在代码里比较，例如 `error.kind == "failed"`。更新的 Agent 可能报出表里没有的 `kind`，抛出的也是 `AgentError`，按其它失败处理。
 
 连不通的消息写明从哪台到哪台、地址和端口，例如 `从 Agent b-01 连不上 Agent a-01（地址 10.0.0.5，端口 50052）：…`，据此去查两台机器之间的防火墙。那台 Agent 已知不能被调用时（端口被占用、版本过旧不监听端口，Agent 页面上有提示），不去连接，直接抛出 `AgentUnreachable`（版本过旧时是 `AgentUnsupported`），消息写明原因。节点不捕获这些异常时，任务以 `node_error` 失败，消息就是异常的消息。
 
