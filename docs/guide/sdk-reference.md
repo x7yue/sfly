@@ -85,8 +85,8 @@ from sfly import AgentName, Context, node
 @node(outputs=["files"])
 def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> dict:
     """source 是日志所在的 Agent，节点在另一台 Agent 上清洗它的日志。"""
-    target = ctx.task.agents[source]
-    ctx.log.info("来源 Agent %s 在 %s:%d", source, target.address, target.port)
+    logs = list(ctx.agent(source).files.list("/var/log/app", "app.log.*"))
+    ctx.log.info("Agent %s 上有 %d 个轮转出来的日志", source, len(logs))
     ...
 ```
 
@@ -97,8 +97,8 @@ def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> d
 - `sfly build` 在输入 schema 里标记它：`{"type": "string", "x-sfly-type": "agent"}`。
 - 画布的检查器里它是 Agent 下拉框，列出已注册的 Agent 及在线状态；也可以用「插入引用」改为引用入口参数。
 - 选的 Agent 必须已注册（不要求在线）：常量不是已注册的 Agent 时保存给出警告、触发前的预检阻断，并指出是哪个节点的哪个参数；引用入口参数时按触发时传入的实际值检查；值来自前面节点的输出时在派发时检查，没有注册过时任务以 `config_error` 失败。目标 Agent 不在线不阻断：节点运行时连不上它，访问它的那一步才会失败。
-- 派发任务时，控制面把这些 Agent 的名称、地址、端口随任务下发，节点用 `ctx.task.agents` 读到（见下文）。地址在派发时解析：Agent 重新注册换了地址后，之后派发的任务用新地址。
-- 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是 Agent 名称，不检查它是否注册过；`ctx.task.agents` 里只有名称，地址为空、端口为 0。
+- 派发任务时，控制面把这些 Agent 的地址和端口随任务下发给节点所在的 Agent。节点用 `ctx.agent(名称)` 访问它们（见下文「`ctx.agent()`：Agent 能力」），不用自己处理地址。地址在派发时解析：Agent 重新注册换了地址后，之后派发的任务用新地址。
+- 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是 Agent 名称，不检查它是否注册过；要访问它时把它映射到本地目录（见下文「本地调试、测试与联调」）。
 
 ## 输出
 
@@ -217,16 +217,14 @@ ctx.task.run_id     # 运行 ID
 ctx.task.node_id    # 场景里的节点 ID（同一个节点类型出现多次时各不相同）
 ctx.task.task_id    # 任务 ID
 ctx.task.attempt    # 第几次尝试，从 1 开始，重试时加 1
-ctx.task.agents     # 通过「Agent」类型的输入引用的 Agent：名称 → AgentAddress
 
 log = ctx.procs_dir / f"{ctx.task.node_id}.log"
 log.parent.mkdir(parents=True, exist_ok=True)
 ```
 
-- `ctx.task.agents` 列出这个任务通过「Agent」类型的输入引用的 Agent（值为空的参数不算），每台一项：`AgentAddress(name, address, port, unavailable_reason)`。`address`、`port` 是其它 Agent 连接它用的地址和端口（对外地址取安装 Agent 时显式配置的，否则取控制面看到的连接来源地址）；`unavailable_reason` 不为空时它的能力不能被其它 Agent 调用（例如端口被占用、版本过旧不监听端口），端口可能是 0。从 SDK 0.2.0 起可用；更旧的 Agent 不下发，这时为空。
 - `ctx.procs_dir` 是这次运行的**后台进程目录**：节点启动的、节点结束后还要继续运行的进程，把日志等文件放在这里。它不在任务目录里，任务目录被清理或任务重试时不受影响；同一次运行的任务共用一个目录（用节点 ID 区分文件名）。目录不一定已经存在，使用前自己创建。
 - 在 Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`，和任务目录按同一个保留期清理（运行还有任务在 Agent 上时不动），见「安装 Agent」。0.0.4 之前的 Agent 不提供这个目录，SDK 取同样的位置，但旧 Agent 不会清理它。
-- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名，`ctx.task.agents` 只有名称。`sfly run` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
+- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly run` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
 
 ## `ctx.agent()`：Agent 能力
 
@@ -253,7 +251,7 @@ Agent 能力是 Agent 自身提供、节点在执行中调用的一组操作。`
 这一组接口从 SDK 0.2.0 起可用。用到它的节点包把 `requires-sdk` 和 `requires-agent` 都调到 `>=0.2.0`（见下文「版本」）。
 
 - 名称是「Agent」类型的参数的值（见上文「「Agent」类型的输入」）。节点只能访问这样拿到的 Agent 和自己所在的 Agent：访问其它名称时调用抛出 `sfly.AgentNotReferenced`，要把那台 Agent 声明成节点的 `AgentName` 参数。`ctx.agent(None)` 等于 `ctx.agent()`：可选的 `AgentName | None` 参数没有选时就是自己所在的 Agent。
-- 调用另一台 Agent 时，SDK 把调用交给自己所在的 Agent，由它直接连到那台 Agent（地址和端口见 Agent 页面，也就是 `ctx.task.agents` 里的），数据不经过控制面。两台 Agent 之间要能连通（防火墙放行那台 Agent 的端口，默认 50052）。这些接口没有认证，只应在内网使用。
+- 调用另一台 Agent 时，SDK 把调用交给自己所在的 Agent，由它直接连到那台 Agent（用控制面随任务下发的地址和端口，就是 Agent 页面上显示的），数据不经过控制面。两台 Agent 之间要能连通（防火墙放行那台 Agent 的端口，默认 50052）。这些接口没有认证，只应在内网使用。
 - 路径都是那台 Agent 所在机器上的绝对路径，相对路径抛出 `ValueError`。权限就是那台 Agent 进程的权限，不做沙箱。
 - 调用另一台 Agent 比调用本机慢，而且会失败（连不通、对方版本太旧）：处理可能的异常，按需重试。
 - 完整的例子（在 B 上持续清洗 A 上轮转出来的日志：监听、下载、删除，场景怎么编排，怎样判断文件不再续写）见 [跨 Agent 处理文件](cross-agent-files.md)。
@@ -324,6 +322,7 @@ def pull_log(ctx: Context, source: AgentName, path: str = "/var/log/app/app.log.
 - 下载的是开始时打开的那个文件、开始时的大小，内容都从打开的文件读。下载期间它被改名（例如日志按序号轮转，`app.log.1` 改名为 `app.log.2`）不影响下载。
 - 完成时按这个文件核对，本地文件与它的大小一致才算完成：它在下载期间被删除时抛出 `AgentFileNotFound`；被截短、大小变了（还在写入）时抛出 `AgentError`，消息写明是哪一种。只下载已经不再写入的文件：判断文件是否写完是节点自己的事，平台不提供。
 - 两台 Agent 之间的连接中断（网络断开、那台 Agent 重启）时自动重连，从已经写下的位置继续读同一个文件，不从头开始；连续多次重连都没有进展时抛出异常（通常是 `AgentUnreachable`）。重连时它已经不在 `path` 上：在同一目录里改了名的，接着读新路径上的它；路径上换成了另一个文件、在同一目录里也找不到它（被移到了别的目录）时抛出 `AgentFileMoved`，路径上没有文件时抛出 `AgentFileNotFound`。知道它去了哪里时（例如 `files.watch` 的 `moved` 事件），用新路径重新下载。
+- 这几种「源文件变了」的情况各有 `kind`：被删除是 `not_found`，被截短、大小变了是 `failed`，续传时被移走是 `moved`：可以据此把这个文件留到之后再下载（例如等它不再写入，或等 `files.watch` 告诉你它的新路径），其它失败按下文「超时、取消与错误」的表区分。
 - 返回下载完成时源文件的 `FileInfo`：`size` 就是本地文件的字节数，`path` 是它现在的路径（下载期间在同一目录里改了名时是新路径；移到了别的目录时仍是 `path`），`id` 可以用来判断以后是不是同一个文件（例如只下载一次）。
 - `progress(downloaded, size)`：下载期间不时被调用（在 Agent 上大约每秒一次，本地调试时每块一次），参数是已经下载的字节数和要下载的字节数，可以用来上报进度或速率；它在调用 `download` 的线程里执行。
 - `timeout` 是相邻两次进展之间最多等多久，不是整个下载的时长：几个 GB 的文件用默认的 30 秒也可以。
@@ -462,9 +461,12 @@ def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/va
 | `AgentPermissionDenied`（`PermissionError`） | `permission_denied` | 那台 Agent 进程没有权限 |
 | `AgentTimeout`（`TimeoutError`） | `timeout` | 超过 `timeout` 秒没有回应；`exec.run` 的命令超过 `timeout` 秒没有结束 |
 | `AgentNotReferenced` | `not_referenced` | 那台 Agent 不是通过「Agent」类型的参数拿到的 |
-| `AgentError` | `invalid` 等 | 其它失败，例如要列出的路径不是目录 |
+| `AgentError` | `invalid` | 参数不合法：例如要列出的路径不是目录，要读取、删除的是目录，要写入的路径是目录，`exec.run` 的工作目录不是目录 |
+| `AgentError` | `failed` | 其它失败：例如下载期间源文件变了（见上文「读取与下载」）、那台 Agent 访问文件时出了其它错误 |
 
-连不通的消息写明从哪台到哪台、地址和端口，例如 `从 Agent b-01 连不上 Agent a-01（地址 10.0.0.5，端口 50052）：…`，据此去查两台机器之间的防火墙。节点不捕获这些异常时，任务以 `node_error` 失败，消息就是异常的消息。
+`kind` 的取值是固定的字符串，可以在代码里比较，例如 `error.kind == "failed"`。更新的 Agent 可能报出表里没有的 `kind`，抛出的也是 `AgentError`，按其它失败处理。
+
+连不通的消息写明从哪台到哪台、地址和端口，例如 `从 Agent b-01 连不上 Agent a-01（地址 10.0.0.5，端口 50052）：…`，据此去查两台机器之间的防火墙。那台 Agent 已知不能被调用时（端口被占用、版本过旧不监听端口，Agent 页面上有提示），不去连接，直接抛出 `AgentUnreachable`（版本过旧时是 `AgentUnsupported`），消息写明原因。节点不捕获这些异常时，任务以 `node_error` 失败，消息就是异常的消息。
 
 ### 版本
 

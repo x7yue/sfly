@@ -108,7 +108,7 @@ def watch_files(
     events = _Watching(ctx, agent, source, directory, pattern)
     files = _Files(stable or 0.0)
     stats = _Stats(ctx, started)
-    local = _LocalNames(root, directory)
+    puller = _Puller(ctx, agent, files, stats, _LocalNames(root, directory), delete_source)
     while True:
         files.apply(events.take(timeout=0))
         now = time.monotonic()
@@ -120,71 +120,85 @@ def watch_files(
             files.apply(events.take(timeout=max(0.0, wake - now)))
             stats.maybe_report()
             continue
-        _pull_one(ctx, agent, file, files, stats, local, delete_source, stable)
+        puller.pull(file)
         stats.maybe_report()
     stats.report()
     ctx.log.info("拉取了 %d 个文件，共 %d 字节", stats.files, stats.bytes)
     return {"count": stats.files, "total_bytes": stats.bytes}
 
 
-def _pull_one(
-    ctx: Context,
-    agent: Agent,
-    file: FileInfo,
-    files: _Files,
-    stats: _Stats,
-    local: _LocalNames,
-    delete_source: bool,
-    stable: float | None,
-) -> None:
-    """拉取一个已经满足条件的文件；可以再试的失败（连接中断、文件还在变化）留到之后再拉。"""
-    try:
-        # 事件可能还在路上：下载前再查看一次，变了就重新计时。
-        if stable and not _unchanged(agent, file, files):
-            return
-        target = local.target(file)
-        # 拉取期间它被改名（日志又轮转了一次）不影响下载：got.path 是它现在的路径。
-        got = _pull.download(agent, file, target, stats.transferring)
-    except AgentFileMoved:
-        # 连接中断期间它被移到了别的目录，续传找不到它：和已经不在这个路径上一样处理。
-        got = None
-    except (AgentUnreachable, AgentTimeout) as error:
-        stats.failed()
-        ctx.log.warning("拉取 %s 时连接中断，%g 秒后再试：%s", file.path, RETRY_DELAY, error)
-        files.retry_later(file, RETRY_DELAY)
-        return
-    except AgentError as error:
-        stats.failed()
-        if error.kind != "failed" or _unchanged(agent, file, files):
-            raise
-        # 不设置 stable 时也不马上重拉一个还在写的文件。
-        files.retry_later(file, RETRY_DELAY)
-        ctx.log.info("%s 在拉取期间变化了，之后再拉：%s", file.path, error)
-        return
-    if got is None:
-        # 被删除了，或被移到了别处：等监听的事件或快照告诉我们它在哪里。
-        stats.failed()
-        ctx.log.info("%s 已经不在这个路径上，跳过", file.path)
-        files.retry_later(file, RETRY_DELAY)
-        return
-    files.pulled(got)
-    local.pulled(got, target)
-    stats.pulled(got.size)
-    ctx.log.info("拉取了 %s（%d 字节）→ %s", got.path, got.size, target)
-    if delete_source:
+@dataclass
+class _Puller:
+    """拉取已经满足条件的文件；可以再试的失败（连接中断、文件还在变化）留到之后再拉。"""
+
+    ctx: Context
+    agent: Agent
+    files: _Files
+    stats: _Stats
+    local: _LocalNames
+    delete_source: bool
+
+    def pull(self, file: FileInfo) -> None:
+        ctx, files, stats = self.ctx, self.files, self.stats
         try:
-            deleted = _pull.delete_pulled(agent, got)
+            got = self._download(file)
         except (AgentUnreachable, AgentTimeout) as error:
-            ctx.log.warning("删除 %s 时连接中断，没有删除：%s", got.path, error)
+            stats.failed()
+            ctx.log.warning("拉取 %s 时连接中断，%g 秒后再试：%s", file.path, RETRY_DELAY, error)
+            files.retry_later(file, RETRY_DELAY)
+            return
+        if got is None:
+            return
+        info, target = got
+        files.pulled(info)
+        self.local.pulled(info, target)
+        stats.pulled(info.size)
+        ctx.log.info("拉取了 %s（%d 字节）→ %s", info.path, info.size, target)
+        if self.delete_source:
+            self._delete(info)
+
+    def _download(self, file: FileInfo) -> tuple[FileInfo, Path] | None:
+        """下载 `file`，返回下载完成时的属性和本地路径；留到之后再拉时为 None。
+        连接中断（包括判断失败原因时）抛出 `AgentUnreachable` / `AgentTimeout`。"""
+        ctx, agent, files, stats = self.ctx, self.agent, self.files, self.stats
+        # 事件可能还在路上：下载前再查看一次，变了就重新计时。
+        if files.stable and not _unchanged(agent, file, files):
+            return None
+        target = self.local.target(file)
+        try:
+            # 拉取期间它被改名（日志又轮转了一次）不影响下载：got.path 是它现在的路径。
+            got = _pull.download(agent, file, target, stats.transferring)
+        except (AgentUnreachable, AgentTimeout):
+            raise
+        except AgentFileMoved:
+            # 连接中断期间它被移到了别的目录，续传找不到它：和已经不在这个路径上一样处理。
+            got = None
+        except AgentError as error:
+            stats.failed()
+            if error.kind != "failed" or _unchanged(agent, file, files):
+                raise
+            # 不设置 stable 时也不马上重拉一个还在写的文件。
+            files.retry_later(file, RETRY_DELAY)
+            ctx.log.info("%s 在拉取期间变化了，之后再拉：%s", file.path, error)
+            return None
+        if got is None:
+            # 被删除了，或被移到了别处：等监听的事件或快照告诉我们它在哪里。
+            stats.failed()
+            ctx.log.info("%s 已经不在这个路径上，跳过", file.path)
+            files.retry_later(file, RETRY_DELAY)
+            return None
+        return got, target
+
+    def _delete(self, got: FileInfo) -> None:
+        try:
+            deleted = _pull.delete_pulled(self.agent, got)
+        except (AgentUnreachable, AgentTimeout) as error:
+            self.ctx.log.warning("删除 %s 时连接中断，没有删除：%s", got.path, error)
             return
         if deleted == "changed":
-            ctx.log.warning("%s 在拉取之后被改动或替换，没有删除", got.path)
+            self.ctx.log.warning("%s 在拉取之后被改动或替换，没有删除", got.path)
         else:
-            files.deleted(got.id)
-
-
-def _changed(now: FileInfo, before: FileInfo) -> bool:
-    return (now.id, now.size, now.mtime_ns) != (before.id, before.size, before.mtime_ns)
+            self.files.deleted(got.id)
 
 
 def _unchanged(agent: Agent, file: FileInfo, files: _Files) -> bool:
@@ -195,7 +209,7 @@ def _unchanged(agent: Agent, file: FileInfo, files: _Files) -> bool:
     except AgentFileNotFound:
         files.retry_later(file, RETRY_DELAY)
         return False
-    if not _changed(now, file):
+    if not _pull.changed(now, file):
         return True
     files.saw(now, changed=True)
     if now.id != file.id:
@@ -284,7 +298,8 @@ class _Files:
     """监听范围里有哪些文件、哪些已经拉过（文件标识 → 拉取时的大小）。"""
 
     def __init__(self, stable: float) -> None:
-        self._stable = stable
+        #: 文件至少这么多秒没有修改才拉（0 为一出现就拉）。
+        self.stable = stable
         self._known: dict[FileId, _Known] = {}
         self._pulled: dict[FileId, int] = {}
 
@@ -306,7 +321,7 @@ class _Files:
             del self._pulled[gone]
         for info in files:
             known = self._known.get(info.id)
-            self.saw(info, changed=known is None or _changed(info, known.info))
+            self.saw(info, changed=known is None or _pull.changed(info, known.info))
 
     def saw(self, info: FileInfo, *, changed: bool) -> None:
         """看到了文件的属性（`changed`：它刚变化过，重新计时）。"""
@@ -341,7 +356,7 @@ class _Files:
         """什么时候可以拉；已经拉过（同样的大小）时为 None。"""
         if self._pulled.get(known.info.id) == known.info.size:
             return None
-        return max(known.changed_at + self._stable, known.not_before)
+        return max(known.changed_at + self.stable, known.not_before)
 
     def next_ready(self, now: float) -> FileInfo | None:
         """现在可以拉的文件里最早满足条件的一个。"""

@@ -12,7 +12,7 @@ Agent 回复若干行 JSON：
 往对方传数据的方法（流式写入）在请求之后接着发 `{"data": N}` + N 个字节的帧（`Call.send_data`），
 最后发 `{"end": true}`（`Call.send_end`），再读回复。
 
-超时由 Agent 负责（`timeout_ms`，等对方回应的上限）；SDK 这边多等 `_MARGIN` 秒兜底，
+超时由 Agent 负责（`timeout_ms`，等对方回应的上限）；SDK 这边多等 `REPLY_MARGIN` 秒兜底，
 Agent 自己卡住时也不会永远等下去。任务被取消时：主线程里的调用被 SIGTERM 打断
 （执行器把它变成 `Cancelled`），后台线程里的调用由 Agent 回复 `cancelled`，同样抛出
 `Cancelled`。关掉连接（`close()`、提前停止迭代）即放弃调用，Agent 随之放弃。
@@ -26,15 +26,17 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from sfly.capabilities.errors import AgentTimeout, AgentUnreachable, error_for
+from sfly.context import Cancelled
 
 #: 调用的默认超时（秒）。
 DEFAULT_TIMEOUT = 30.0
 
-#: 流式写入时每帧最多发多少字节。
+#: 一块数据最多多少字节：流式写入时每帧最多发这么多，本地调试时读文件每次读这么多
+#: （与 Agent 的块大小相同）。
 MAX_DATA = 256 * 1024
 
-#: Agent 应该在 `timeout` 内回复；SDK 多等这么久才认为 Agent 自己卡住了。
-_MARGIN = 5.0
+#: Agent 应该在 `timeout` 内回复；SDK 默认多等这么久才认为 Agent 自己卡住了。
+REPLY_MARGIN = 5.0
 
 
 class AgentSocket:
@@ -59,16 +61,17 @@ class AgentSocket:
         args: dict[str, Any],
         timeout: float | None,
         *,
-        margin: float = _MARGIN,
+        margin: float | None = None,
     ) -> Call:
         """发起调用（`agent` 为 None 时是自己所在的 Agent），返回还没读回复的 `Call`。
-        `margin`：Agent 应该在 `timeout` 之后多久之内回复，SDK 等到这时才认为 Agent 自己卡住了。"""
+        `margin`：Agent 应该在 `timeout` 之后多久之内回复，SDK 等到这时才认为 Agent 自己卡住了；
+        None 为 `REPLY_MARGIN`。"""
         import socket
 
         if self._cancelled():
-            from sfly.context import Cancelled
-
             raise Cancelled("任务已取消")
+        if margin is None:
+            margin = REPLY_MARGIN
         request = {
             "command": "call",
             "task_id": self._task_id,

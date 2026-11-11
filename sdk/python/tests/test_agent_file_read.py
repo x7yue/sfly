@@ -26,7 +26,7 @@ import pytest
 from test_agent_channel import INFO, PACKAGE_SRC, SDK_SRC, FakeAgent, frame, wait_for
 
 import sfly
-from sfly import AgentAddress, Context, TaskInfo
+from sfly import Context, TaskInfo
 from sfly.testing import run_node
 
 PACKAGE = PACKAGE_SRC.parent
@@ -190,7 +190,7 @@ def local_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Path)
         cancel_path=None,
         artifacts_dir=None,
         artifacts_url=None,
-        task=TaskInfo(task_id="local", attempt=1, agents={"fs-source": AgentAddress("fs-source")}),
+        task=TaskInfo(task_id="local", attempt=1),
     )
 
 
@@ -259,6 +259,28 @@ def test_a_source_rotated_during_the_download_is_still_downloaded_and_reports_it
     assert info == sfly.FileInfo.from_json(info_of(rotated, "/var/log/app/app.log.2"))
     assert target.read_bytes() == body
     assert os.listdir(target.parent) == ["app.log.1"]
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="用 /proc/self/fd 数文件描述符")
+def test_a_cancel_right_after_the_file_is_opened_closes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sigterm_after: Callable[[Any, str], None]
+) -> None:
+    # 取消（SIGTERM）恰好落在文件打开之后：文件描述符照样被关闭。
+    from sfly.capabilities import Agent, local
+
+    monkeypatch.delenv("SFLY_AGENT_SOCKET", raising=False)
+    (tmp_path / "app.log").write_bytes(b"data\n")
+    files = Agent(None, local_mapping={}).files
+    fds = set(os.listdir("/proc/self/fd"))
+    sigterm_after(local, "open")
+
+    with pytest.raises(sfly.Cancelled):
+        next(files.read(str(tmp_path / "app.log")))
+    with pytest.raises(sfly.Cancelled):
+        files.download(str(tmp_path / "app.log"), tmp_path / "copy.log")
+
+    assert os.listdir(tmp_path) == ["app.log"]
+    assert set(os.listdir("/proc/self/fd")) == fds
 
 
 def test_sfly_run_downloads_from_a_mapped_agent(tmp_path: Path) -> None:

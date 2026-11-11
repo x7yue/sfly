@@ -36,9 +36,6 @@ import { mappedText, mappedValue } from "./value-text";
 import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
 import { ReferenceActions } from "./ZoomEditor";
 
-// 检查器的场景设置也用它（Inspector.tsx 从这里导入）。
-export { AgentSelect };
-
 type PackageNode = Extract<DocNode, { kind: "package" }>;
 type AsyncNode = Extract<DocNode, { kind: "async" }>;
 type TimerNode = Extract<DocNode, { kind: "timer" }>;

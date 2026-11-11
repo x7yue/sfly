@@ -83,7 +83,8 @@ export function ValueField({
 		label: fieldLabel,
 		placeholder,
 		problems,
-		// Agent 只能是常量或入口参数（ADR 0019）：触发前才能检查它是已注册的 Agent。
+		// 「Agent」类型的参数插入引用时只列入口参数（#197「也可以改为引用入口参数」）：这样的值在
+		// 触发前就能检查是已注册的 Agent。手写的上游输出引用也允许，到派发时才检查（sdk-reference）。
 		choices: kind === "agent" ? choices.filter((c) => c.kind === "param") : choices,
 		onChange,
 	};

@@ -250,7 +250,7 @@ def test_an_agent_that_stops_answering_times_out(
     short_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Agent 自己负责超时；它卡住时 SDK 在 timeout 之外再多等一会儿就放弃。"""
-    monkeypatch.setattr("sfly.capabilities.channel._MARGIN", 0.2)
+    monkeypatch.setattr("sfly.capabilities.channel.REPLY_MARGIN", 0.2)
     agent = FakeAgent(short_dir / "agent.sock", lambda _: [], hang=True)
     ctx = context(short_dir, monkeypatch)
 

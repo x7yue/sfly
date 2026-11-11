@@ -15,14 +15,13 @@ from sfly.capabilities import (
     FileInfo,
     WatchSnapshot,
 )
-from sfly.context import AgentAddress, ArtifactDownloadError, Cancelled, Context, TaskInfo
+from sfly.context import ArtifactDownloadError, Cancelled, Context, TaskInfo
 from sfly.nodes import AgentName, Chart, Metric, node
 
 __version__ = "0.1.3"
 
 __all__ = [
     "Agent",
-    "AgentAddress",
     "AgentError",
     "AgentFileMoved",
     "AgentFileNotFound",
