@@ -126,9 +126,18 @@ export function ScenarioEditor({
 
 const NO_PACKAGES: Record<string, string> = {};
 
-/** 让画布上的节点卡片拿到焦点。 */
-const focusCard = (id: string) =>
-	document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
+const cardOf = (id: string) =>
+	document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
+
+/**
+ * 让刚放到画布上的节点卡片拿到焦点。React Flow 量好新节点的尺寸之前卡片是隐藏的，不能聚焦：
+ * 还没显示出来时下一帧再试（最多约半秒）。
+ */
+function focusNewCard(id: string, frames = 30) {
+	const card = cardOf(id);
+	if (card && getComputedStyle(card).visibility === "visible") card.focus();
+	else if (frames > 0) requestAnimationFrame(() => focusNewCard(id, frames - 1));
+}
 
 const edgeKindOf = (c: Connection | Edge): EdgeKind =>
 	c.sourceHandle === "dispatch" ? "dispatch" : "chain";
@@ -446,7 +455,7 @@ function Editor({
 					duration: 200,
 				});
 			}
-			focusCard(id);
+			focusNewCard(id);
 		});
 	};
 	if (running && adding) setAdding(null);
@@ -515,7 +524,7 @@ function Editor({
 				setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
 			}
 			setSelectedId(edit.id);
-			requestAnimationFrame(() => focusCard(edit.id));
+			requestAnimationFrame(() => focusNewCard(edit.id));
 		},
 	});
 
@@ -576,7 +585,7 @@ function Editor({
 		});
 	};
 	const focusCanvasNode = () => {
-		if (selectedId) focusCard(selectedId);
+		if (selectedId) cardOf(selectedId)?.focus();
 	};
 
 	return (
