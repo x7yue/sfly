@@ -7,7 +7,8 @@
 #                                       - 节点包元信息检查（std/tests/test_package.py：声明了最低 SDK 版本、
 #                                         依赖只写下限、节点标题为中文、每个节点在「标准节点」页有一节）；
 #                                       - sfly build 构建 sfly-std-X.Y.Z.sflypkg（元信息通过 schema 校验），
-#                                         写出 SHA256SUMS 和发布说明 notes.md（含最低 Agent 版本和节点列表）。
+#                                         写出 SHA256SUMS 和发布说明 notes.md（含最低 Agent 版本和节点列表；
+#                                         最低 Agent 版本取 requires-sdk 和 requires-agent 里较高的下限）。
 #
 # .github/workflows/std-release.yml 在 std-vX.Y.Z tag 上运行 pack，把产物作为 Release 附件发布。
 # 本地运行 pack 就是发布流程的 dry-run：产物与 Release 附件相同，只是不上传。
@@ -56,13 +57,26 @@ archive, version = sys.argv[1:]
 with zipfile.ZipFile(archive) as zf:
     meta = json.loads(zf.read("sfly-package.json"))
 requires = meta["requires_sdk"]
-minimum = re.fullmatch(r">=\s*([0-9][0-9.]*)", requires)
-agent = minimum.group(1) if minimum else requires
+requires_agent = meta.get("requires_agent")
+
+
+def minimum(requirement):
+    """`>=X.Y.Z` 里的版本号（元组，便于比较）；不是这种写法时为 None。"""
+    m = re.fullmatch(r">=\s*([0-9][0-9.]*)", requirement)
+    return tuple(int(p) for p in m.group(1).split(".")) if m else None
+
+
+# SDK 运行时随 Agent 安装：最低 Agent 版本取 requires_sdk 和 requires_agent 里较高的下限。
+lowest = [v for v in (minimum(requires), requires_agent and minimum(requires_agent)) if v]
+agent = ".".join(map(str, max(lowest))) if lowest else requires
+declared = f"节点包声明的 SDK 版本要求 `{requires}`"
+if requires_agent:
+    declared += f"、Agent 版本要求 `{requires_agent}`（也约束「Agent」类型的参数选的 Agent）"
 nodes = "\n".join(f"- `{n['name']}`：{n['title']}" for n in meta["nodes"])
 name = f"sfly-std-{version}.sflypkg"
 print(f"""sfly-std {version}：平台维护的标准节点包，版本号独立于平台。
 
-**最低 Agent 版本：{agent}**（节点包声明的 SDK 版本要求 `{requires}`）。版本更旧的 Agent 上任务以 `env_error` 失败，
+**最低 Agent 版本：{agent}**（{declared}）。版本更旧的 Agent 上任务以 `env_error` 失败，
 升级控制面后 Agent 会跟随升级。
 
 ## 上传到控制面
