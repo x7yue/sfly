@@ -15,6 +15,8 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Switch } from "@/components/ui/switch";
 import { draftKey, useClearFieldDrafts, useParsedField } from "../field-drafts";
 import type { FieldError } from "../validation";
+import { ReferenceEditor } from "./ReferenceEditor";
+import { ZoomEditor } from "./ZoomEditor";
 
 type Param = Extract<OrchestrationNode, { kind: "entry" }>["params"][number];
 type ParamType = Param["type"];
@@ -191,7 +193,11 @@ const parseDefault =
 		}
 	};
 
-/** 默认值：留空表示没有默认值；敏感参数默认隐藏，点眼睛图标临时显示 5 秒。 */
+/**
+ * 默认值：留空表示没有默认值。和参数输入用同一个输入框（ReferenceEditor），但默认值是字面量、不能写引用，
+ * 所以没有补全和引用高亮；字符串和 JSON 可以放大编辑。
+ * 敏感参数仍然是密码输入框（ReferenceEditor 不能打码）：默认隐藏，点眼睛图标临时显示 5 秒。
+ */
 function DefaultValue({
 	fieldKey,
 	param,
@@ -228,22 +234,37 @@ function DefaultValue({
 			</NativeSelect>
 		);
 	}
-	const hidden = param.secret && !revealed;
+	const placeholder = param.type === "json" ? "默认值（JSON，可选）" : "默认值（可选）";
+	const label = `参数 ${param.name} 的默认值`;
 	return (
 		<div className="flex flex-col gap-1.25">
 			<div className="flex gap-1.5">
-				<Input
-					aria-label="默认值"
-					aria-invalid={field.error ? true : undefined}
-					type={hidden ? "password" : "text"}
-					autoComplete="off"
-					className={param.type === "string" ? undefined : "font-mono text-xs"}
-					placeholder={param.type === "json" ? "默认值（JSON，可选）" : "默认值（可选）"}
-					value={field.text}
-					spellCheck={false}
-					onChange={(e) => field.change(e.target.value)}
-				/>
-				{param.secret && (
+				{param.secret ? (
+					<Input
+						aria-label="默认值"
+						aria-invalid={field.error ? true : undefined}
+						type={revealed ? "text" : "password"}
+						autoComplete="off"
+						className={param.type === "string" ? undefined : "font-mono text-xs"}
+						placeholder={placeholder}
+						value={field.text}
+						spellCheck={false}
+						onChange={(e) => field.change(e.target.value)}
+					/>
+				) : (
+					<div className="min-w-0 flex-1">
+						<ReferenceEditor
+							label="默认值"
+							value={field.text}
+							choices={null}
+							placeholder={placeholder}
+							invalid={field.error !== undefined}
+							minLines={param.type === "json" ? 3 : 1}
+							onChange={field.change}
+						/>
+					</div>
+				)}
+				{param.secret ? (
 					<Button
 						variant="ghost"
 						size="icon"
@@ -252,6 +273,19 @@ function DefaultValue({
 					>
 						{revealed ? <EyeOffIcon /> : <EyeIcon />}
 					</Button>
+				) : (
+					param.type !== "number" && (
+						<ZoomEditor
+							name={param.name}
+							label={label}
+							value={field.text}
+							choices={null}
+							placeholder={placeholder}
+							invalid={field.error !== undefined}
+							error={field.error}
+							onChange={field.change}
+						/>
+					)
 				)}
 			</div>
 			{field.error && <p className="m-0 text-xs text-danger-fg">{field.error}</p>}
