@@ -9,7 +9,7 @@ import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
-import { AgentUpdateState, ErrorKind, FakeAgent } from "./support/fake-agent.js";
+import { AgentUpdateState, ErrorKind, FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -50,7 +50,7 @@ describe("Agent 上报的字符串里含 NUL", () => {
 	let api: ApiClient;
 	const agents: FakeAgent[] = [];
 
-	const connect = async (hello: { os?: string } = {}) => {
+	const connect = async (hello: Pick<HelloInit, "os" | "capabilities" | "peer"> = {}) => {
 		const agent = await FakeAgent.connect(
 			cp.grpcUrl,
 			{ name: "agent-a", slots: 4, ...hello },
@@ -182,7 +182,11 @@ describe("Agent 上报的字符串里含 NUL", () => {
 	});
 
 	it("Agent 信息（Hello、心跳里的更新状态、安装状态）含 NUL：NUL 换成 U+FFFD", async () => {
-		const agent = await connect({ os: `linux${NUL}` });
+		const agent = await connect({
+			os: `linux${NUL}`,
+			capabilities: [{ name: `files${NUL}`, version: 1 }],
+			peer: { port: 50052, publicAddress: `10.0.0.9${NUL}`, listenError: `端口被占用${NUL}` },
+		});
 		agent.send({
 			case: "heartbeat",
 			value: { update: { state: AgentUpdateState.FAILED, reason: `下载失败${NUL}` } },
@@ -207,6 +211,12 @@ describe("Agent 上报的字符串里含 NUL", () => {
 		expect(view?.update.reason).toBe(`下载失败${REPLACEMENT}`);
 		expect(view?.install?.package).toBe(`stub${REPLACEMENT}`);
 		expect(view?.installed_packages).toEqual([{ name: `stub${REPLACEMENT}`, version: "1.0.0" }]);
+		// Agent 能力（#196）：能力名、对外地址、监听失败的原因。
+		expect(view?.capabilities).toEqual([{ name: `files${REPLACEMENT}`, version: 1 }]);
+		expect(view?.endpoint).toMatchObject({
+			address: `10.0.0.9${REPLACEMENT}`,
+			unavailable_reason: `端口被占用${REPLACEMENT}`,
+		});
 		expect(agent.ended).toBe(false);
 	});
 });

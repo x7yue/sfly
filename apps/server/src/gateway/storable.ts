@@ -1,10 +1,12 @@
 import type {
 	AgentMessage,
+	Capability,
 	DevPackage,
 	Hello,
 	InstalledPackage,
 	MetricBatch,
 	MetricPoint,
+	PeerEndpoint,
 } from "@sfly/proto";
 
 const NUL = "\u0000";
@@ -20,7 +22,7 @@ const ESCAPED_NUL = "\\u0000";
  *
  * | 消息 | 处理的字段 | 写到哪里 |
  * |---|---|---|
- * | Hello | name、agent_version、os、arch、已安装节点包、开发版节点包 | agents.name、agents.info |
+ * | Hello | name、agent_version、os、arch、已安装节点包、开发版节点包、能力名、对外地址与监听失败的原因 | agents.name、agents.info |
  * | Heartbeat | 更新状态的 reason | agents.info |
  * | TaskResult | outputs_json（键和值）、错误信息 | tasks.outputs、tasks.error_message |
  * | Progress | 进度说明 | tasks.progress |
@@ -108,17 +110,44 @@ function hello(h: Hello): Hello {
 	const arch = text(h.arch);
 	const installedPackages = list(h.installedPackages, installed);
 	const devPackages = list(h.devPackages, devPackage);
+	const capabilities = list(h.capabilities, capability);
+	const peer = h.peer && peerEndpoint(h.peer);
 	if (
 		name === h.name &&
 		agentVersion === h.agentVersion &&
 		os === h.os &&
 		arch === h.arch &&
 		installedPackages === h.installedPackages &&
-		devPackages === h.devPackages
+		devPackages === h.devPackages &&
+		capabilities === h.capabilities &&
+		peer === h.peer
 	) {
 		return h;
 	}
-	return { ...h, name, agentVersion, os, arch, installedPackages, devPackages };
+	return {
+		...h,
+		name,
+		agentVersion,
+		os,
+		arch,
+		installedPackages,
+		devPackages,
+		capabilities,
+		peer,
+	};
+}
+
+function capability(c: Capability): Capability {
+	const name = text(c.name);
+	return name === c.name ? c : { ...c, name };
+}
+
+function peerEndpoint(p: PeerEndpoint): PeerEndpoint {
+	const publicAddress = text(p.publicAddress);
+	const listenError = text(p.listenError);
+	return publicAddress === p.publicAddress && listenError === p.listenError
+		? p
+		: { ...p, publicAddress, listenError };
 }
 
 function installed(p: InstalledPackage): InstalledPackage {
