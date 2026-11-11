@@ -6,7 +6,8 @@
 //!   递归时每个子目录一个 watch，监听期间新建（或移进来）的子目录随即加上 watch 并扫描，里面已有的文件作为新建报告。
 //! - 一个线程读 inotify、维护「调用方已经知道的文件」（快照加上之后的事件，[`Watcher::index`]），翻译成事件放进队列；
 //!   另一个任务（[`pump`]）把队列发给调用方，调用方读得慢时队列变长。队列（[`Queue`]）里还没有发出的连续几次修改
-//!   合并成一个事件；超过上限（[`DEFAULT_QUEUE_EVENTS`]）或内核的 inotify 队列溢出（`IN_Q_OVERFLOW`）时丢掉还没发出的事件，
+//!   合并成一个事件；超过上限（[`DEFAULT_QUEUE_EVENTS`]，[`crate::Config::watch_queue_events`]）或内核的 inotify 队列溢出
+//!   （`IN_Q_OVERFLOW`）时丢掉还没发出的事件，
 //!   重新扫描，给一份标明「可能有遗漏」的快照。
 //! - 没有别的回复时定期发心跳，调用方据此发现连接已经中断。
 //!
@@ -17,9 +18,9 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
+use std::ops::ControlFlow;
 use std::os::fd::AsFd as _;
 use std::path::Path;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -31,13 +32,19 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, mpsc};
 use tokio::time::Instant;
+use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::{Stream, StreamExt as _};
-use tonic::{Code, Request, Response, Status};
+use tonic::{Request, Response, Status};
 
-use super::files::{Pattern, absolute, file_info, file_json, io_status};
+use super::fs::{
+    BATCH, Pattern, Visit, absolute, file_info, file_json, io_status, join, matching, same_file,
+    sorted_entries, walk,
+};
 use super::{Capability, Host, Module};
-use crate::calls::{BoxFuture, Call, CallError, Method, Target};
+use crate::calls::{
+    Backoff, BoxFuture, BoxStream, Call, CallError, Method, Target, format_seconds, no_reply,
+    on_target,
+};
 use crate::proto::agent_file_watch_client::AgentFileWatchClient;
 use crate::proto::agent_file_watch_server::{AgentFileWatch, AgentFileWatchServer};
 use crate::proto::{
@@ -57,24 +64,18 @@ pub const MODULE: Module = Module {
     add_service,
 };
 
-fn add_service(routes: &mut tonic::service::RoutesBuilder, _host: &Host) {
-    routes.add_service(AgentFileWatchServer::new(FileWatch));
+fn add_service(routes: &mut tonic::service::RoutesBuilder, host: &Host) {
+    routes.add_service(AgentFileWatchServer::new(FileWatch::new(host)));
 }
 
 /// 队列里最多有多少个还没发出的事件，超过时重新给快照。
 pub const DEFAULT_QUEUE_EVENTS: usize = 10_000;
-
-/// 只在测试中使用：覆盖 [`DEFAULT_QUEUE_EVENTS`]，用很小的队列模拟调用方读得太慢。
-const QUEUE_EVENTS_ENV: &str = "SFLY_WATCH_QUEUE_EVENTS";
 
 /// 请求里没有指定时的心跳间隔。
 const DEFAULT_HEARTBEAT: Duration = Duration::from_secs(10);
 
 /// 心跳间隔的下限。
 const MIN_HEARTBEAT: Duration = Duration::from_millis(100);
-
-/// 快照一批最多多少个文件。
-const BATCH: usize = 256;
 
 /// 读 inotify 的线程每隔多久看一眼调用方是否已经放弃。
 const STOP_CHECK: Duration = Duration::from_millis(200);
@@ -95,10 +96,21 @@ fn dir_mask() -> AddWatchFlags {
         | AddWatchFlags::IN_ONLYDIR
 }
 
-type WatchStream = Pin<Box<dyn Stream<Item = Result<WatchFilesResponse, Status>> + Send>>;
+type WatchStream = BoxStream<WatchFilesResponse>;
 
 /// `AgentFileWatch` 服务：供其它 Agent 调用，也被自己所在的 Agent 直接调用（[`Target::Local`]）。
-pub struct FileWatch;
+pub struct FileWatch {
+    /// 队列里最多有多少个还没发出的事件（[`Host::watch_queue_events`]）。
+    queue_events: usize,
+}
+
+impl FileWatch {
+    pub fn new(host: &Host) -> Self {
+        Self {
+            queue_events: host.watch_queue_events.max(1),
+        }
+    }
+}
 
 #[tonic::async_trait]
 impl AgentFileWatch for FileWatch {
@@ -119,19 +131,14 @@ impl AgentFileWatch for FileWatch {
             0 => DEFAULT_HEARTBEAT,
             ms => Duration::from_millis(ms.into()).max(MIN_HEARTBEAT),
         };
-        let capacity = std::env::var(QUEUE_EVENTS_ENV)
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(DEFAULT_QUEUE_EVENTS)
-            .max(1);
-        let pattern = Pattern::new(if pattern.is_empty() { "*" } else { &pattern });
+        let pattern = Pattern::new(&pattern);
         // 目录本身的错误（不存在、不是目录、没有权限）作为调用的错误。
         let mut watcher =
             tokio::task::spawn_blocking(move || Watcher::start(directory, pattern, recursive))
                 .await
                 .map_err(|error| Status::internal(format!("开始监听失败：{error}")))??;
         let shared = Arc::new(Shared {
-            queue: Mutex::new(Queue::new(capacity)),
+            queue: Mutex::new(Queue::new(self.queue_events)),
             notify: Notify::new(),
             stopped: AtomicBool::new(false),
         });
@@ -492,12 +499,9 @@ impl Watcher {
     /// 列出当前匹配的文件（递归时顺便给每个子目录加上 watch），作为新的「调用方已经知道的文件」。
     /// 顺序与 `files.list` 相同。
     fn scan(&mut self) -> Result<Vec<FileInfo>, Status> {
-        let mut found = Vec::new();
-        let mut dirs = HashMap::from([(self.root_wd, self.root.clone())]);
         let top =
             sorted_entries(Path::new(&self.root)).map_err(|error| io_status(&error, &self.root))?;
-        let root = self.root.clone();
-        self.walk(&root, top, &mut found, &mut dirs)?;
+        let (found, dirs) = self.list(self.root_wd, &self.root, top)?;
         // 不再存在的目录的 watch 去掉（移出去的目录还在别处，不去掉会继续收到它的事件）。
         for (wd, _) in self.dirs.iter().filter(|(wd, _)| !dirs.contains_key(wd)) {
             let _ = self.inotify.rm_watch(*wd);
@@ -507,55 +511,26 @@ impl Watcher {
         Ok(found)
     }
 
-    /// 列出一个目录：先是匹配的文件，再按名称依次进入子目录（递归时）。子目录不存在、没有权限时跳过。
-    fn walk(
+    /// 列出目录 `dir`（它的 watch 是 `wd`，条目是 `entries`）：匹配的文件，和它连同子目录（递归时，先加 watch 再列出）的 watch。
+    fn list(
         &self,
+        wd: WatchDescriptor,
         dir: &str,
         entries: Vec<(String, std::fs::DirEntry)>,
-        found: &mut Vec<FileInfo>,
-        dirs: &mut HashMap<WatchDescriptor, String>,
-    ) -> Result<(), Status> {
-        let mut subdirs = Vec::new();
-        for (name, entry) in entries {
-            let Ok(kind) = entry.file_type() else {
-                continue;
-            };
-            let path = format!("{}/{name}", dir.trim_end_matches('/'));
-            if kind.is_dir() {
-                if self.recursive {
-                    subdirs.push(path);
-                }
-                continue;
-            }
-            if let Some(info) = self.matching(&name, &path) {
-                found.push(info);
-            }
+    ) -> Result<(Vec<FileInfo>, HashMap<WatchDescriptor, String>), Status> {
+        let mut scan = Scan {
+            inotify: &self.inotify,
+            found: Vec::new(),
+            dirs: HashMap::from([(wd, dir.to_string())]),
+        };
+        match walk(dir, entries, &self.pattern, self.recursive, &mut scan) {
+            ControlFlow::Continue(()) => Ok((scan.found, scan.dirs)),
+            ControlFlow::Break(status) => Err(status),
         }
-        for subdir in subdirs {
-            // 先加 watch 再列出：列出之后的变化不会漏掉。
-            let wd = match self.inotify.add_watch(Path::new(&subdir), dir_mask()) {
-                Ok(wd) => wd,
-                Err(Errno::ENOSPC) => return Err(watch_error(Errno::ENOSPC, &subdir)),
-                Err(_) => continue,
-            };
-            let Ok(entries) = sorted_entries(Path::new(&subdir)) else {
-                continue;
-            };
-            dirs.insert(wd, subdir.clone());
-            self.walk(&subdir, entries, found, dirs)?;
-        }
-        Ok(())
     }
 
-    /// 名字匹配通配符的普通文件（跟随符号链接判断）的属性；不匹配、不存在、不是普通文件时为 None。
     fn matching(&self, name: &str, path: &str) -> Option<FileInfo> {
-        if !self.pattern.matches(name) {
-            return None;
-        }
-        let metadata = std::fs::metadata(path).ok()?;
-        metadata
-            .is_file()
-            .then(|| file_info(path.to_string(), &metadata))
+        matching(&self.pattern, name, path)
     }
 
     /// 发出一个事件，记下调用方由此知道的文件。
@@ -635,11 +610,10 @@ impl Watcher {
         let Ok(entries) = sorted_entries(Path::new(dir)) else {
             return Flow::Continue;
         };
-        let mut found = Vec::new();
-        let mut dirs = HashMap::from([(wd, dir.to_string())]);
-        if let Err(status) = self.walk(dir, entries, &mut found, &mut dirs) {
-            return Flow::End(status);
-        }
+        let (found, dirs) = match self.list(wd, dir, entries) {
+            Ok(listed) => listed,
+            Err(status) => return Flow::End(status),
+        };
         self.dirs.extend(dirs);
         for info in found {
             let name = info.path.rsplit('/').next().unwrap_or_default().to_string();
@@ -761,7 +735,7 @@ impl Watcher {
         let Some(name) = name.to_str().map(str::to_string) else {
             return Flow::Continue;
         };
-        let path = format!("{}/{name}", dir.trim_end_matches('/'));
+        let path = join(dir, &name);
         let is_dir = mask.contains(AddWatchFlags::IN_ISDIR);
         if is_dir && !self.recursive {
             return Flow::Continue;
@@ -843,10 +817,6 @@ fn and_then(flow: Flow, next: impl FnOnce() -> Flow) -> Flow {
     }
 }
 
-fn same_file(a: &FileInfo, b: &FileInfo) -> bool {
-    a.device == b.device && a.inode == b.inode
-}
-
 /// 加 watch 失败转成 gRPC 状态。
 fn watch_error(errno: Errno, path: &str) -> Status {
     match errno {
@@ -867,14 +837,32 @@ fn limit(name: &str) -> String {
     }
 }
 
-/// 目录里的条目，按名称排序；名字不是 UTF-8 的跳过。
-fn sorted_entries(dir: &Path) -> std::io::Result<Vec<(String, std::fs::DirEntry)>> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?
-        .flatten()
-        .filter_map(|entry| Some((entry.file_name().into_string().ok()?, entry)))
-        .collect();
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(entries)
+/// 列出时顺便给每个子目录加上 watch（[`Watcher::list`]）。
+struct Scan<'w> {
+    inotify: &'w Inotify,
+    found: Vec<FileInfo>,
+    dirs: HashMap<WatchDescriptor, String>,
+}
+
+impl Visit for Scan<'_> {
+    type Stop = Status;
+
+    fn file(&mut self, file: FileInfo) -> ControlFlow<Status> {
+        self.found.push(file);
+        ControlFlow::Continue(())
+    }
+
+    /// 先加 watch 再列出：列出之后的变化不会漏掉。加不上的跳过，超过系统上限时监听结束。
+    fn enter(&mut self, dir: &str) -> ControlFlow<Status, bool> {
+        match self.inotify.add_watch(Path::new(dir), dir_mask()) {
+            Ok(wd) => {
+                self.dirs.insert(wd, dir.to_string());
+                ControlFlow::Continue(true)
+            }
+            Err(Errno::ENOSPC) => ControlFlow::Break(watch_error(Errno::ENOSPC, dir)),
+            Err(_) => ControlFlow::Continue(false),
+        }
+    }
 }
 
 // ---- 节点调用（[`crate::calls`]）----
@@ -884,10 +872,6 @@ const DEFAULT_SILENCE: Duration = Duration::from_secs(30);
 
 /// 没有别的回复时，每隔这么久回复 SDK 一次保活（SDK 等每一帧最多 `timeout` 加 5 秒）。
 const ALIVE: Duration = Duration::from_secs(2);
-
-/// 重连的间隔：从这里开始每次加倍，最多 [`MAX_BACKOFF`]。
-const FIRST_BACKOFF: Duration = Duration::from_millis(200);
-const MAX_BACKOFF: Duration = Duration::from_secs(5);
 
 #[derive(Deserialize)]
 struct WatchArgs {
@@ -956,6 +940,7 @@ async fn watch(mut call: Call<'_>) -> Result<Value, CallError> {
     };
     let target = call.target;
     let method = call.method;
+    let service = FileWatch::new(call.host);
     let mut out = Out {
         next_alive: Instant::now() + ALIVE,
         call: &mut call,
@@ -966,21 +951,32 @@ async fn watch(mut call: Call<'_>) -> Result<Value, CallError> {
     let mut delivered = false;
     // 连接从什么时候中断、为什么。
     let mut lost: Option<(Instant, String)> = None;
-    let mut backoff = FIRST_BACKOFF;
+    let mut backoff = Backoff::new();
     loop {
         let remaining = match (&lost, limit) {
             (Some((since, _)), Some(limit)) => Some(limit.saturating_sub(since.elapsed())),
             (_, limit) => limit,
         };
-        let ended = match out.alive_while(open(target, &request, remaining)).await? {
-            Ok(stream) => {
+        let opening = open(target, &service, &request, remaining);
+        let ended = match out.alive_while(opening).await? {
+            Some(Ok(stream)) => {
                 connected = true;
                 let missed = delivered && lost.is_some();
                 forward(&mut out, stream, silence, missed, &mut delivered, &mut lost).await?
             }
-            Err(status) if !connected => return Err(first_failure(target, method, limit, status)),
-            Err(status) if retryable(&status) => Lost::Retry(status.message().to_string()),
-            Err(status) => Lost::Fail(target.error(status)),
+            // 第一次就没有打开监听：和其它方法一样以超时、连不通、目录不存在等失败。
+            None if !connected => {
+                return Err(no_reply(target, method, remaining.unwrap_or_default()));
+            }
+            Some(Err(status)) if !connected => return Err(target.error(status)),
+            None => Lost::Retry(format!(
+                "超过 {} 秒没有回应",
+                format_seconds(remaining.unwrap_or_default())
+            )),
+            Some(Err(status)) if target.interrupted(&status) => {
+                Lost::Retry(status.message().to_string())
+            }
+            Some(Err(status)) => Lost::Fail(target.error(status)),
         };
         let reason = match ended {
             Lost::Fail(error) => return Err(error),
@@ -992,7 +988,7 @@ async fn watch(mut call: Call<'_>) -> Result<Value, CallError> {
         let since = match &lost {
             Some((since, _)) => *since,
             None => {
-                backoff = FIRST_BACKOFF;
+                backoff.reset();
                 Instant::now()
             }
         };
@@ -1001,43 +997,26 @@ async fn watch(mut call: Call<'_>) -> Result<Value, CallError> {
         {
             return Err(target.error(Status::unavailable(format!(
                 "监听的连接中断，{} 秒内没有重新连上：{reason}",
-                seconds(limit)
+                format_seconds(limit)
             ))));
         }
         lost = Some((since, reason));
-        out.alive_while(tokio::time::sleep(backoff)).await?;
-        backoff = (backoff * 2).min(MAX_BACKOFF);
+        out.alive_while(tokio::time::sleep(backoff.wait())).await?;
     }
 }
 
-/// 打开一次监听（最多等 `limit`，超过时是 `DEADLINE_EXCEEDED`）。
+/// 打开一次监听，最多等 `limit`：等不到回应时为 None。
 async fn open(
     target: &Target,
+    service: &FileWatch,
     request: &WatchFilesRequest,
     limit: Option<Duration>,
-) -> Result<WatchStream, Status> {
-    let opening = async {
-        match target {
-            Target::Local { .. } => FileWatch
-                .watch(Request::new(request.clone()))
-                .await
-                .map(Response::into_inner),
-            Target::Remote(remote) => AgentFileWatchClient::new(remote.channel())
-                .watch(Request::new(request.clone()))
-                .await
-                .map(|response| Box::pin(response.into_inner()) as WatchStream),
-        }
-    };
+) -> Option<Result<WatchStream, Status>> {
+    let opening =
+        async { on_target!(stream target, service, AgentFileWatchClient::watch(request.clone())) };
     match limit {
-        None => opening.await,
-        Some(limit) => tokio::time::timeout(limit, opening)
-            .await
-            .unwrap_or_else(|_| {
-                Err(Status::deadline_exceeded(format!(
-                    "超过 {} 秒没有回应",
-                    seconds(limit)
-                )))
-            }),
+        None => Some(opening.await),
+        Some(limit) => tokio::time::timeout(limit, opening).await.ok(),
     }
 }
 
@@ -1062,11 +1041,11 @@ async fn forward(
             Err(_) => {
                 return Ok(Lost::Retry(format!(
                     "超过 {} 秒没有收到任何回复",
-                    seconds(silence)
+                    format_seconds(silence)
                 )));
             }
             Ok(None) => return Ok(Lost::Retry("对方结束了监听".into())),
-            Ok(Some(Err(status))) if retryable(&status) => {
+            Ok(Some(Err(status))) if target.interrupted(&status) => {
                 return Ok(Lost::Retry(status.message().to_string()));
             }
             Ok(Some(Err(status))) => return Ok(Lost::Fail(target.error(status))),
@@ -1109,51 +1088,5 @@ async fn forward(
             }
             Some(watch_files_response::Message::Heartbeat(_)) | None => {}
         }
-    }
-}
-
-/// 第一次就没有打开监听：和其它方法一样以超时、连不通、目录不存在等失败。
-fn first_failure(
-    target: &Target,
-    method: &str,
-    limit: Option<Duration>,
-    status: Status,
-) -> CallError {
-    match limit {
-        Some(limit) if status.code() == Code::DeadlineExceeded => CallError::new(
-            crate::calls::ErrorKind::Timeout,
-            format!(
-                "Agent {} 超过 {} 秒没有回应 {method}",
-                target.name(),
-                seconds(limit)
-            ),
-        ),
-        _ => target.error(status),
-    }
-}
-
-/// 连接中断、对方没有回应这类可以重连的错误；目录不存在、没有权限这类确定的错误不重连。
-fn retryable(status: &Status) -> bool {
-    !matches!(
-        status.code(),
-        Code::NotFound
-            | Code::PermissionDenied
-            | Code::InvalidArgument
-            | Code::FailedPrecondition
-            | Code::OutOfRange
-            | Code::ResourceExhausted
-            | Code::Unimplemented
-            | Code::AlreadyExists
-            | Code::Unauthenticated
-    )
-}
-
-/// 秒数（给人看）：整数秒不带小数。
-fn seconds(duration: Duration) -> String {
-    let seconds = duration.as_secs_f64();
-    if seconds.fract() == 0.0 {
-        format!("{seconds:.0}")
-    } else {
-        format!("{seconds}")
     }
 }

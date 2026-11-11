@@ -12,7 +12,12 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
-use sfly_agent::proto::{CancelTask, server_message};
+use sfly_agent::proto::agent_file_read_server::{AgentFileRead, AgentFileReadServer};
+use sfly_agent::proto::agent_peer_server::{AgentPeer, AgentPeerServer};
+use sfly_agent::proto::{
+    CancelTask, DescribeRequest, DescribeResponse, FileInfo, ReadFileRequest, ReadFileResponse,
+    server_message,
+};
 use support::calls::{AgentPair, hold_task, open_call, referenced, request};
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::net::{TcpListener, TcpStream, UnixStream};
@@ -609,4 +614,100 @@ async fn cancelling_the_task_stops_a_download_at_once_and_removes_the_partial_fi
         names_in(local_dir.path()).is_empty()
     })
     .await;
+}
+
+/// 假的另一台 Agent：Describe 照常回答；读文件时先给出文件属性和一段内容，然后回复一个读文件出错的 INTERNAL
+/// （真实 Agent 读到坏磁盘时 EIO 就是这样回复的）。记下被读了几次。
+struct FailingReads {
+    reads: Arc<AtomicUsize>,
+}
+
+#[tonic::async_trait]
+impl AgentPeer for FailingReads {
+    async fn describe(
+        &self,
+        _request: tonic::Request<DescribeRequest>,
+    ) -> Result<tonic::Response<DescribeResponse>, tonic::Status> {
+        Ok(tonic::Response::new(DescribeResponse {
+            name: "source-eio".into(),
+            agent_version: "0.0.0".into(),
+            capabilities: sfly_agent::capabilities::reported(),
+        }))
+    }
+}
+
+#[tonic::async_trait]
+impl AgentFileRead for FailingReads {
+    type ReadStream = sfly_agent::calls::BoxStream<ReadFileResponse>;
+
+    async fn read(
+        &self,
+        request: tonic::Request<ReadFileRequest>,
+    ) -> Result<tonic::Response<Self::ReadStream>, tonic::Status> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        let path = request.into_inner().path;
+        let replies = vec![
+            Ok(ReadFileResponse {
+                file: Some(FileInfo {
+                    path: path.clone(),
+                    size: 1024 * 1024,
+                    mtime_unix_ns: 0,
+                    device: 1,
+                    inode: 2,
+                }),
+                data: vec![7; 1000],
+            }),
+            Err(tonic::Status::internal(format!(
+                "访问 {path} 失败：Input/output error (os error 5)"
+            ))),
+        ];
+        Ok(tonic::Response::new(Box::pin(tokio_stream::iter(replies))))
+    }
+}
+
+#[tokio::test]
+async fn a_read_error_on_the_other_agent_fails_the_download_without_reconnecting() {
+    // 对方回复的错误（例如读文件时的 I/O 错误）重连也一样：不当作连接中断去反复重连。
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let reads = Arc::new(AtomicUsize::new(0));
+    let server = tonic::transport::Server::builder()
+        .add_service(AgentPeerServer::new(FailingReads {
+            reads: reads.clone(),
+        }))
+        .add_service(AgentFileReadServer::new(FailingReads {
+            reads: reads.clone(),
+        }))
+        .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener));
+    tokio::spawn(server);
+    let cp = support::FakeControlPlane::start().await;
+    let runner = support::spawn_agent(support::AgentOptions::new(&cp.url, "runner-eio"));
+    cp.hello(0).await;
+    hold_task(
+        &cp,
+        "task-eio",
+        vec![referenced("source-eio", "127.0.0.1", port)],
+    )
+    .await;
+    let local_dir = tempfile::tempdir().unwrap();
+
+    let reply = call(
+        &support::calls::socket_of(&runner),
+        download_request(
+            "task-eio",
+            "source-eio",
+            Path::new("/var/log/app.log"),
+            &local_dir.path().join("app.log"),
+        ),
+    )
+    .await;
+
+    let (kind, message) = reply.error();
+    assert_eq!(kind, "failed");
+    assert_eq!(
+        message,
+        "Agent source-eio：访问 /var/log/app.log 失败：Input/output error (os error 5)"
+    );
+    assert_eq!(reads.load(Ordering::SeqCst), 1);
+    assert!(names_in(local_dir.path()).is_empty());
 }

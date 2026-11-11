@@ -17,7 +17,7 @@ use serde::Deserialize;
 use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
 
 use crate::Runtime;
-use crate::calls::CallRequest;
+use crate::calls::{self, CallError, CallRequest, ErrorKind};
 use crate::dev::{DevReply, DevRequest};
 
 /// 请求的大小上限（`sfly dev` 的元信息里有全部节点的 schema）。
@@ -73,13 +73,11 @@ async fn connection(stream: tokio::net::UnixStream, runtime: Arc<Runtime>) {
                     match serde_json::from_str::<CallRequest>(&line) {
                         Ok(request) => runtime.call(request, reader, write).await,
                         Err(error) => {
-                            let frame = serde_json::json!({ "error": {
-                                "kind": "invalid", "message": format!("无法解析调用请求：{error}"), "agent": runtime.name,
-                            }});
-                            let mut bytes = frame.to_string().into_bytes();
-                            bytes.push(b'\n');
-                            let _ = write.write_all(&bytes).await;
-                            let _ = write.shutdown().await;
+                            let error = CallError::new(
+                                ErrorKind::Invalid,
+                                format!("无法解析调用请求：{error}"),
+                            );
+                            calls::refuse(write, error, &runtime.host.name).await;
                         }
                     }
                     return;

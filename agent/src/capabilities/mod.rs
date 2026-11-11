@@ -11,12 +11,15 @@
 //!   由 [`crate::calls`] 按方法名找到这里的实现，对自己所在的 Agent 直接调用服务的实现，对另一台 Agent 用 gRPC 客户端连过去。
 //!
 //! 加一项能力：新建 `capabilities/<能力>.rs` 导出一个 `MODULE`，在下面加 `pub mod` 和 [`MODULES`] 里的一项。
+//! 文件类能力共用的部分在 [`fs`]（路径、错误、文件属性、遍历目录）和 [`transfer`]（块大小、临时文件）。
 
 pub mod exec;
 pub mod file_read;
 pub mod file_watch;
 pub mod file_write;
 pub mod files;
+pub mod fs;
+pub mod transfer;
 
 use std::time::Duration;
 
@@ -32,13 +35,18 @@ pub struct Capability {
     pub version: u32,
 }
 
-/// 能力的服务端需要的 Agent 信息。后续能力需要 Agent 运行时的其它东西时往这里加字段。
+/// 这台 Agent：别的 Agent 问起时的回答（`AgentPeer.Describe`，[`crate::peer`]），以及能力需要的 Agent 设置。
+/// Agent 启动时构造一次（[`crate::run`]）。后续能力需要 Agent 运行时的其它东西时往这里加字段。
 #[derive(Debug, Clone)]
 pub struct Host {
     /// Agent 名称。
     pub name: String,
+    /// 上报的 Agent 版本（[`crate::Config::version`]）。
+    pub version: String,
     /// 结束进程树时从 SIGTERM 到 SIGKILL 的宽限期（[`crate::Config::terminate_grace`]，和结束任务时相同）。
     pub terminate_grace: Duration,
+    /// 监听目录时队列里最多有多少个还没发出的事件（[`crate::Config::watch_queue_events`]）。
+    pub watch_queue_events: usize,
 }
 
 /// 一项能力的全部组成部分。

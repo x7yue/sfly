@@ -9,21 +9,23 @@
 
 use std::os::unix::fs::FileExt as _;
 use std::path::Path;
-use std::pin::Pin;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::mpsc;
+use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::{Stream, StreamExt as _};
 use tonic::{Code, Request, Response, Status};
 
-use super::file_write::{CHUNK, TempFile};
-use super::files::{Files, absolute, file_info, file_json, io_status};
+use super::files::Files;
+use super::fs::{absolute, file_info, file_json, io_status, replied_file};
+use super::transfer::{CHUNK, TempFile};
 use super::{Capability, Host, Module};
-use crate::calls::{BoxFuture, Call, CallError, ErrorKind, Method, Target};
+use crate::calls::{
+    Backoff, BoxFuture, BoxStream, Call, CallError, ErrorKind, Method, Target, on_target,
+};
 use crate::proto::agent_file_read_client::AgentFileReadClient;
 use crate::proto::agent_file_read_server::{AgentFileRead, AgentFileReadServer};
 use crate::proto::agent_files_client::AgentFilesClient;
@@ -55,7 +57,7 @@ fn add_service(routes: &mut tonic::service::RoutesBuilder, _host: &Host) {
 /// 读出来还没发走的块最多攒几块：读得比对方收得快时停下来等，内存占用有上限。
 const BUFFERED: usize = 8;
 
-type ReadStream = Pin<Box<dyn Stream<Item = Result<ReadFileResponse, Status>> + Send>>;
+type ReadStream = BoxStream<ReadFileResponse>;
 
 /// `AgentFileRead` 服务：供其它 Agent 调用，也被自己所在的 Agent 直接调用（[`Target::Local`]）。
 pub struct FileRead;
@@ -148,34 +150,15 @@ fn send_chunks(
 
 /// 在目标 Agent 上读一个文件：本机直接调用服务的实现，另一台 Agent 用 gRPC。
 async fn open_stream(target: &Target, request: ReadFileRequest) -> Result<ReadStream, Status> {
-    Ok(match target {
-        Target::Local { .. } => FileRead.read(Request::new(request)).await?.into_inner(),
-        Target::Remote(remote) => Box::pin(
-            AgentFileReadClient::new(remote.channel())
-                .read(Request::new(request))
-                .await?
-                .into_inner(),
-        ),
-    })
+    on_target!(stream target, FileRead, AgentFileReadClient::read(request))
 }
 
 /// 查看目标 Agent 上一个文件的属性（能力 files 的 `Stat`）。
 async fn stat(target: &Target, path: &str) -> Result<FileInfo, Status> {
-    let request = Request::new(StatFileRequest {
+    let request = StatFileRequest {
         path: path.to_string(),
-    });
-    let response = match target {
-        Target::Local { .. } => Files.stat(request).await?,
-        Target::Remote(remote) => {
-            AgentFilesClient::new(remote.channel())
-                .stat(request)
-                .await?
-        }
     };
-    response
-        .into_inner()
-        .file
-        .ok_or_else(|| Status::internal("回复里没有文件属性"))
+    replied_file(on_target!(target, Files, AgentFilesClient::stat(request))?.file)
 }
 
 // ---- 节点调用（[`crate::calls`]）----
@@ -242,10 +225,7 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
     let DownloadArgs { path, local_path } = call.args()?;
     let target = call.target;
     // 本机（目标路径）上的错误：消息写明是自己所在的 Agent。
-    let own = Target::Local {
-        name: target.own().to_string(),
-    };
-    let local = |status: Status| own.error(status);
+    let local = |status: Status| target.local_error(status);
     let dest = absolute(&local_path).map_err(local)?;
     // 目标所在的目录不存在时一并创建（下载到本地常常是新目录）。
     if let Some(dir) = dest.parent() {
@@ -254,15 +234,45 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
             .map_err(|error| local(io_status(&error, &dir.to_string_lossy())))?;
     }
     let mut temp = TempFile::create(&local_path).await.map_err(local)?;
+    let (now, written) = match receive(&mut call, &path, &local_path, &mut temp).await {
+        Ok(done) => done,
+        Err(error) => {
+            temp.discard().await;
+            return Err(error);
+        }
+    };
+    // 落盘、改名为目标路径。落盘可能要一会儿（大文件还有很多没写到磁盘的内容）：照常回复进度。
+    let commit = temp.commit();
+    tokio::pin!(commit);
+    loop {
+        tokio::select! {
+            committed = &mut commit => {
+                committed.map_err(local)?;
+                break;
+            }
+            () = tokio::time::sleep(PROGRESS_EVERY) => call.item(progress(written, written)).await?,
+        }
+    }
+    Ok(file_json(&now))
+}
 
+/// 把源文件读到临时文件里，连接中断时从断点继续；完成后核对源文件，返回它这时的属性和写下的字节数。
+async fn receive(
+    call: &mut Call<'_>,
+    path: &str,
+    local_path: &str,
+    temp: &mut TempFile,
+) -> Result<(FileInfo, u64), CallError> {
+    let target = call.target;
     let mut source: Option<FileInfo> = None;
     let mut written = 0u64;
     let mut failures = 0u32;
+    let mut backoff = Backoff::new();
     let mut reported = Instant::now();
     'attempts: loop {
         let interrupted = 'attempt: {
             let request = ReadFileRequest {
-                path: path.clone(),
+                path: path.to_string(),
                 offset: written,
                 length: None,
                 expect: source.as_ref().map(|file| FileIdentity {
@@ -284,9 +294,9 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
                 if source.is_none() {
                     source = response.file;
                 }
-                let Some(size) = source.as_ref().map(|file| file.size) else {
-                    return Err(target.error(Status::internal("回复里没有文件属性")));
-                };
+                let size = replied_file(source.clone())
+                    .map_err(|status| target.error(status))?
+                    .size;
                 // 只要下载开始时的那么多：之后续写的部分不要（完成时按大小变了报错）。
                 let take = usize::try_from(size - written)
                     .map_or(response.data.len(), |rest| rest.min(response.data.len()));
@@ -294,9 +304,10 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
                     temp.file
                         .write_all(&response.data[..take])
                         .await
-                        .map_err(|error| local(io_status(&error, &local_path)))?;
+                        .map_err(|error| target.local_error(io_status(&error, local_path)))?;
                     written += take as u64;
                     failures = 0;
+                    backoff.reset();
                 }
                 if written >= size {
                     break 'attempts;
@@ -307,8 +318,8 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
                 }
             }
         };
-        if !resumable(target, &interrupted) {
-            return Err(changed(target, &path, interrupted, source.is_some()));
+        if !target.interrupted(&interrupted) {
+            return Err(changed(target, path, interrupted, source.is_some()));
         }
         failures += 1;
         if failures > ATTEMPTS {
@@ -325,21 +336,19 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
             call.item(progress(written, file.size)).await?;
             reported = Instant::now();
         }
-        tokio::time::sleep(backoff(failures)).await;
+        tokio::time::sleep(backoff.wait()).await;
     }
 
-    let Some(source) = source else {
-        return Err(target.error(Status::internal("回复里没有文件属性")));
-    };
+    let source = replied_file(source).map_err(|status| target.error(status))?;
     // 完成：再查看一次源文件，确认下载下来的就是它现在的全部内容。
     let now = loop {
-        match call.within(stat(target, &path)).await? {
+        match call.within(stat(target, path)).await? {
             Ok(file) => break file,
-            Err(status) if resumable(target, &status) && failures < ATTEMPTS => {
+            Err(status) if target.interrupted(&status) && failures < ATTEMPTS => {
                 failures += 1;
-                tokio::time::sleep(backoff(failures)).await;
+                tokio::time::sleep(backoff.wait()).await;
             }
-            Err(status) => return Err(changed(target, &path, status, true)),
+            Err(status) => return Err(changed(target, path, status, true)),
         }
     };
     let name = target.name();
@@ -369,39 +378,12 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
             ),
         ));
     }
-    // 落盘、改名为目标路径。落盘可能要一会儿（大文件还有很多没写到磁盘的内容）：照常回复进度。
-    let commit = temp.commit();
-    tokio::pin!(commit);
-    loop {
-        tokio::select! {
-            committed = &mut commit => {
-                committed.map_err(local)?;
-                break;
-            }
-            () = tokio::time::sleep(PROGRESS_EVERY) => call.item(progress(written, written)).await?,
-        }
-    }
-    Ok(file_json(&now))
+    Ok((now, written))
 }
 
 /// 下载进度：已经写下的字节数、要下载的字节数。
 fn progress(downloaded: u64, size: u64) -> Value {
     json!({ "downloaded": downloaded, "size": size })
-}
-
-/// 连接层面的中断（另一台 Agent 的连接断开、它重启了）：重连后从断点继续。本机不会中断。
-fn resumable(target: &Target, status: &Status) -> bool {
-    matches!(target, Target::Remote(_))
-        && matches!(
-            status.code(),
-            Code::Unavailable | Code::Unknown | Code::Internal | Code::Cancelled | Code::Aborted
-        )
-}
-
-/// 第几次重连之前等多久：0.2 秒起翻倍，最多 4 秒。
-fn backoff(failures: u32) -> Duration {
-    Duration::from_millis(200u64.saturating_mul(1 << failures.min(5).saturating_sub(1)))
-        .min(Duration::from_secs(4))
 }
 
 /// 读源文件失败。已经开始下载（`started`）之后文件不存在、换成了别的文件，说成是下载期间发生的。

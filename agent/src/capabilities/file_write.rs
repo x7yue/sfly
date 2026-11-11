@@ -1,15 +1,11 @@
 //! Agent 能力 `files.write`：写入文件（`files.write`，节点流式发来内容）、从本地路径上传（`files.upload`）、
 //! 删除文件（`files.delete`）。协议见 `proto/sfly/agent/v1/file_write.proto`。
 //!
-//! - 写入先写到目标所在目录里的临时文件，收到全部内容后才改名为目标路径（[`receive`]）：写到一半失败、被取消、
-//!   调用方断开时删除临时文件，目标路径上不会出现半截文件。
+//! - 写入先写到目标所在目录里的临时文件（[`TempFile`]），收到全部内容后才改名为目标路径（[`receive`]）：写到一半失败、
+//!   被取消、调用方断开时删除临时文件，目标路径上不会出现半截文件。
 //! - 上传时由自己所在的 Agent 读本地文件，直接传给目标 Agent，不经过节点进程；目标是自己时就是本机复制。
 //!
 //! 路径是那台机器上的绝对路径，权限就是 Agent 进程的权限，不做沙箱。
-
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -19,9 +15,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt as _};
 use tonic::{Request, Response, Status, Streaming};
 
-use super::files::{absolute, file_info, file_json, io_status};
+use super::fs::{Doing, absolute, file_json, io_error, io_status, replied_file};
+use super::transfer::{CHUNK, TempFile};
 use super::{Capability, Host, Module};
-use crate::calls::{BoxFuture, Call, CallError, Method, Target};
+use crate::calls::{BoxFuture, Call, CallError, Method, Target, on_target};
 use crate::proto::agent_file_write_client::AgentFileWriteClient;
 use crate::proto::agent_file_write_server::{AgentFileWrite, AgentFileWriteServer};
 use crate::proto::write_file_request::Part;
@@ -56,9 +53,6 @@ fn add_service(routes: &mut tonic::service::RoutesBuilder, _host: &Host) {
     routes.add_service(AgentFileWriteServer::new(FileWrite));
 }
 
-/// 传给目标 Agent 时每段最多多少字节（读取文件时每块也是这么多，见 [`super::file_read`]）。
-pub(super) const CHUNK: usize = 256 * 1024;
-
 /// `AgentFileWrite` 服务：供其它 Agent 调用，也被自己所在的 Agent 直接调用（[`Target::Local`]）。
 pub struct FileWrite;
 
@@ -88,12 +82,7 @@ impl AgentFileWrite for FileWrite {
         }
         tokio::fs::remove_file(&target)
             .await
-            .map_err(|error| match error.kind() {
-                std::io::ErrorKind::PermissionDenied => {
-                    Status::permission_denied(format!("没有权限删除 {path}"))
-                }
-                _ => io_status(&error, &path),
-            })?;
+            .map_err(|error| io_error(&error, Doing::Delete(&path)))?;
         Ok(Response::new(DeleteFileResponse {}))
     }
 }
@@ -110,14 +99,29 @@ pub async fn receive(
         }
     };
     let mut temp = TempFile::create(&path).await?;
+    match fill(&mut parts, &path, &mut temp).await {
+        Ok(()) => temp.commit().await,
+        Err(status) => {
+            temp.discard().await;
+            Err(status)
+        }
+    }
+}
+
+/// 把各段 data 写进临时文件，直到 end（核对字节数）。
+async fn fill(
+    parts: &mut (impl Stream<Item = Result<WriteFileRequest, Status>> + Unpin),
+    path: &str,
+    temp: &mut TempFile,
+) -> Result<(), Status> {
     let mut size: u64 = 0;
     loop {
-        match next_part(&mut parts).await? {
+        match next_part(parts).await? {
             Some(Part::Data(data)) => {
                 temp.file
                     .write_all(&data)
                     .await
-                    .map_err(|error| io_status(&error, &path))?;
+                    .map_err(|error| io_status(&error, path))?;
                 size += data.len() as u64;
             }
             Some(Part::End(WriteFileEnd { size: sent })) => {
@@ -126,7 +130,7 @@ pub async fn receive(
                         "写入 {path} 时收到 {size} 字节，发送方发出的是 {sent} 字节：没有改动 {path}"
                     )));
                 }
-                return temp.commit().await;
+                return Ok(());
             }
             Some(Part::Start(_)) => {
                 return Err(Status::invalid_argument("写入文件时收到第二条 start"));
@@ -149,126 +153,6 @@ async fn next_part(
             Some(part) => Ok(Some(part)),
             None => Err(Status::invalid_argument("写入文件的消息是空的")),
         },
-    }
-}
-
-/// 进程内的临时文件序号：同一个目标的几次写入各用各的临时文件。
-static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
-
-/// 目标所在目录里的临时文件：没有 [`TempFile::commit`] 就被丢弃时删除。下载（[`super::file_read`]）也用它落盘。
-pub(super) struct TempFile {
-    /// 目标路径（给人看的写法，调用方给的）。
-    path: String,
-    target: PathBuf,
-    temp: PathBuf,
-    pub(super) file: tokio::fs::File,
-    /// 目标已经是普通文件时它的权限位：替换后保留。
-    mode: Option<u32>,
-    committed: bool,
-}
-
-impl TempFile {
-    /// 在 `path` 所在的目录里建临时文件。可以随时丢弃这个 future（写入被取消、调用方断开时目标 Agent 就这样丢下
-    /// 处理）：整个过程在一个阻塞任务里完成，产出的就是 `TempFile`；中途丢弃时阻塞任务照样做完，它的结果随之丢弃，
-    /// Drop 删除刚建的文件。不能先 await 打开文件、再构造 `TempFile`：丢弃恰好发生在文件已经建好、结果还没交回的
-    /// 时候，就没有人删它了。
-    pub(super) async fn create(path: &str) -> Result<Self, Status> {
-        let path = path.to_string();
-        tokio::task::spawn_blocking(move || Self::create_blocking(&path))
-            .await
-            .map_err(|error| Status::internal(format!("建临时文件失败：{error}")))?
-    }
-
-    fn create_blocking(path: &str) -> Result<Self, Status> {
-        let target = absolute(path)?;
-        let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
-            return Err(Status::invalid_argument(format!("{path} 不是文件路径")));
-        };
-        let mode = match std::fs::symlink_metadata(&target) {
-            Ok(metadata) if metadata.is_dir() => {
-                return Err(Status::invalid_argument(format!(
-                    "{path} 是目录：只能写入文件"
-                )));
-            }
-            Ok(metadata) if metadata.is_file() => Some(metadata.permissions().mode() & 0o7777),
-            Ok(_) => None,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => return Err(io_status(&error, path)),
-        };
-        let name = name.to_string_lossy();
-        // 文件名太长时临时文件名截短，免得超过文件系统的上限。
-        let short: String = name.chars().take(100).collect();
-        let mut attempt = 0;
-        loop {
-            let seq = TEMP_SEQ.fetch_add(1, Ordering::Relaxed);
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.subsec_nanos())
-                .unwrap_or(0);
-            let temp = dir.join(format!(
-                ".{short}.sfly-{:x}-{seq:x}-{nanos:x}.tmp",
-                std::process::id()
-            ));
-            let opened = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o666)
-                .open(&temp);
-            match opened {
-                Ok(file) => {
-                    return Ok(Self {
-                        path: path.to_string(),
-                        target,
-                        temp,
-                        file: tokio::fs::File::from_std(file),
-                        mode,
-                        committed: false,
-                    });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempt < 8 => {
-                    attempt += 1;
-                }
-                Err(error) => return Err(create_status(&error, path, dir)),
-            }
-        }
-    }
-
-    /// 写完了：落盘、改名为目标路径，返回它的属性。
-    pub(super) async fn commit(mut self) -> Result<FileInfo, Status> {
-        let path = self.path.clone();
-        let failed = |error: std::io::Error| io_status(&error, &path);
-        self.file.flush().await.map_err(failed)?;
-        self.file.sync_all().await.map_err(failed)?;
-        if let Some(mode) = self.mode {
-            tokio::fs::set_permissions(&self.temp, std::fs::Permissions::from_mode(mode))
-                .await
-                .map_err(failed)?;
-        }
-        tokio::fs::rename(&self.temp, &self.target)
-            .await
-            .map_err(failed)?;
-        self.committed = true;
-        let metadata = tokio::fs::metadata(&self.target).await.map_err(failed)?;
-        Ok(file_info(path, &metadata))
-    }
-}
-
-impl Drop for TempFile {
-    fn drop(&mut self) {
-        if !self.committed {
-            let _ = std::fs::remove_file(&self.temp);
-        }
-    }
-}
-
-/// 建不了临时文件：多半是目录不存在或没有写权限。
-fn create_status(error: &std::io::Error, path: &str, dir: &Path) -> Status {
-    use std::io::ErrorKind;
-    match error.kind() {
-        ErrorKind::NotFound => Status::not_found(format!("目录 {} 不存在", dir.display())),
-        ErrorKind::PermissionDenied => Status::permission_denied(format!("没有权限写入 {path}")),
-        ErrorKind::NotADirectory => Status::invalid_argument(format!("{} 不是目录", dir.display())),
-        _ => io_status(error, path),
     }
 }
 
@@ -304,24 +188,23 @@ fn upload_call(call: Call<'_>) -> BoxFuture<'_, Result<Value, CallError>> {
 async fn upload(mut call: Call<'_>) -> Result<Value, CallError> {
     let UploadArgs { local_path, path } = call.args()?;
     // 本地文件的错误是自己所在的 Agent 上的。
-    let own = Target::Local {
-        name: call.target.own().to_string(),
-    };
-    let local = absolute(&local_path).map_err(|status| own.error(status))?;
-    let file = tokio::fs::File::open(&local)
+    let local = |status: Status| call.target.local_error(status);
+    let real = absolute(&local_path).map_err(local)?;
+    let file = tokio::fs::File::open(&real)
         .await
-        .map_err(|error| own.error(io_status(&error, &local_path)))?;
+        .map_err(|error| local(io_status(&error, &local_path)))?;
     let metadata = file
         .metadata()
         .await
-        .map_err(|error| own.error(io_status(&error, &local_path)))?;
+        .map_err(|error| local(io_status(&error, &local_path)))?;
     if !metadata.is_file() {
-        return Err(own.error(Status::invalid_argument(format!("{local_path} 不是文件"))));
+        return Err(local(Status::invalid_argument(format!(
+            "{local_path} 不是文件"
+        ))));
     }
     let source = Source::File {
         file,
         path: local_path,
-        own: own.name().to_string(),
     };
     send(&mut call, path, source).await
 }
@@ -331,12 +214,7 @@ enum Source {
     /// 调用方（节点）在请求之后发来。
     Caller,
     /// 自己所在的 Agent 这台机器上的文件。
-    File {
-        file: tokio::fs::File,
-        path: String,
-        /// 自己所在的 Agent 的名称（读文件出错时消息里写它）。
-        own: String,
-    },
+    File { file: tokio::fs::File, path: String },
 }
 
 impl Source {
@@ -344,11 +222,12 @@ impl Source {
     async fn next(&mut self, call: &mut Call<'_>) -> Result<Option<Vec<u8>>, CallError> {
         match self {
             Self::Caller => call.input().await,
-            Self::File { file, path, own } => {
+            Self::File { file, path } => {
                 let mut buf = vec![0u8; CHUNK];
-                let n = file.read(&mut buf).await.map_err(|error| {
-                    Target::Local { name: own.clone() }.error(io_status(&error, path))
-                })?;
+                let n = file
+                    .read(&mut buf)
+                    .await
+                    .map_err(|error| call.target.local_error(io_status(&error, path)))?;
                 if n == 0 {
                     return Ok(None);
                 }
@@ -365,17 +244,19 @@ impl Source {
 async fn send(call: &mut Call<'_>, path: String, mut source: Source) -> Result<Value, CallError> {
     let target = call.target;
     let (tx, rx) = mpsc::channel::<WriteFileRequest>(2);
+    // 本机直接交给 [`receive`]（服务的 `write` 只接受 gRPC 收到的流，本机构造不出来），所以不用 `on_target!`。
     let mut sink: BoxFuture<'static, Result<FileInfo, Status>> = match target {
         Target::Local { .. } => Box::pin(receive(ReceiverStream::new(rx).map(Ok))),
         Target::Remote(remote) => {
             let mut client = AgentFileWriteClient::new(remote.channel());
             Box::pin(async move {
-                client
-                    .write(ReceiverStream::new(rx))
-                    .await?
-                    .into_inner()
-                    .file
-                    .ok_or_else(|| Status::internal("回复里没有文件属性"))
+                replied_file(
+                    client
+                        .write(ReceiverStream::new(rx))
+                        .await?
+                        .into_inner()
+                        .file,
+                )
             })
         }
     };
@@ -444,76 +325,13 @@ fn delete_call(call: Call<'_>) -> BoxFuture<'_, Result<Value, CallError>> {
 async fn delete(call: Call<'_>) -> Result<Value, CallError> {
     let DeleteArgs { path } = call.args()?;
     let request = DeleteFileRequest { path };
-    let target = call.target;
-    match target {
-        Target::Local { .. } => call.within(FileWrite.delete(Request::new(request))).await?,
-        Target::Remote(remote) => {
-            call.within(AgentFileWriteClient::new(remote.channel()).delete(Request::new(request)))
-                .await?
-        }
-    }
-    .map_err(|status| target.error(status))?;
+    call.rpc(async {
+        on_target!(
+            call.target,
+            FileWrite,
+            AgentFileWriteClient::delete(request)
+        )
+    })
+    .await?;
     Ok(Value::Null)
-}
-
-#[cfg(test)]
-mod tests {
-    use std::future::Future as _;
-    use std::path::Path;
-    use std::task::Poll;
-    use std::time::{Duration, Instant};
-
-    use super::TempFile;
-
-    /// 目录里的临时文件（`.<名>.sfly-….tmp`）。
-    fn temp_files(dir: &Path) -> Vec<String> {
-        std::fs::read_dir(dir)
-            .unwrap()
-            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-            .filter(|name| name.ends_with(".tmp"))
-            .collect()
-    }
-
-    /// 建临时文件的中途被丢弃（写入被取消、调用方断开，目标 Agent 随之丢下处理）时不留下临时文件。
-    /// 最容易漏的时刻是文件已经建好、还没交回给写入方：以前这时丢弃，临时文件会一直留着。
-    /// 这里在临时文件出现在目录里之后就不再推进，直接丢弃。
-    #[tokio::test]
-    async fn dropping_create_after_the_temp_file_exists_leaves_nothing_behind() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("app.log");
-        let path = path.to_str().unwrap();
-        let mut dropped_midway = 0;
-        for _ in 0..20 {
-            let mut create = Box::pin(TempFile::create(path));
-            let midway = loop {
-                if !temp_files(dir.path()).is_empty() {
-                    break true;
-                }
-                let polled = std::future::poll_fn(|cx| Poll::Ready(create.as_mut().poll(cx))).await;
-                if let Poll::Ready(temp) = polled {
-                    // 已经建好、交回来了：这一轮没测到，丢弃后再来。
-                    drop(temp.unwrap());
-                    break false;
-                }
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            };
-            drop(create);
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !temp_files(dir.path()).is_empty() {
-                assert!(
-                    Instant::now() < deadline,
-                    "丢弃之后临时文件还在：{:?}",
-                    temp_files(dir.path())
-                );
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            if midway {
-                dropped_midway += 1;
-            }
-        }
-        assert!(
-            dropped_midway > 0,
-            "没有一次是在临时文件建好之后、交回之前丢弃的"
-        );
-    }
 }
