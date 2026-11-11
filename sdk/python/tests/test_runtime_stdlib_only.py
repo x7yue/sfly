@@ -9,6 +9,12 @@ import sys
 
 RUNTIME_MODULES = [
     "sfly",
+    "sfly.capabilities",
+    "sfly.capabilities.channel",
+    "sfly.capabilities.errors",
+    "sfly.capabilities.files",
+    "sfly.capabilities.files_list",
+    "sfly.capabilities.local",
     "sfly.context",
     "sfly.download",
     "sfly.installed",

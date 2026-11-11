@@ -19,6 +19,9 @@
 - 下载产物：本地没有控制面，`SFLY_DOWNLOADS` 指向下载内容表 `downloads.json`
   （产物引用 → 本地文件路径，只有本地执行会设置），`ctx.artifacts.download` 遇到表里的引用时
   直接复制对应的文件；本地保存的产物的引用是本地文件路径，不用登记就能下载；
+- Agent 能力：本地没有 Agent，`ctx.agent()` 直接操作本机的文件系统；`SFLY_LOCAL_AGENTS`
+  指向映射表 `local-agents.json`（Agent 名称 → 本地目录，只有本地执行会设置），
+  `ctx.agent(名称)` 把那台 Agent 上的路径落到映射的目录里（见 `sfly.capabilities.local`）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
 """
@@ -462,6 +465,7 @@ def execute(
     node_id: str | None = None,
     procs_dir: str | os.PathLike[str] | None = None,
     downloads: Mapping[str, bytes | str | os.PathLike[str]] | None = None,
+    agents: Mapping[str, str | os.PathLike[str]] | None = None,
 ) -> Execution:
     """在 `work_dir`（不存在时创建）里执行节点入口 `模块:函数`，等它结束并返回结果。
 
@@ -473,6 +477,8 @@ def execute(
     - `procs_dir`：后台进程目录（`ctx.procs_dir`），默认 `work_dir/procs`；
     - `downloads`：产物引用 → 本地内容（bytes / str 是内容，str 按 UTF-8；路径是本地文件）。
       节点用 `ctx.artifacts.download` 下载表里的引用时得到这份内容，不访问网络。
+    - `agents`：Agent 名称 → 本地目录：节点用 `ctx.agent(名称)` 访问那台 Agent 时，
+      那台 Agent 上的绝对路径落在这个目录里（`/var/log` 是 `<目录>/var/log`）。
     """
     work = Path(work_dir)
     execution = Execution(status="running", work_dir=work)
@@ -534,6 +540,15 @@ def execute(
     )
     if downloads:
         env["SFLY_DOWNLOADS"] = str(_write_downloads(work, downloads))
+    local_agents = work.absolute() / "local-agents.json"
+    local_agents.write_text(
+        json.dumps(
+            {name: str(Path(root).absolute()) for name, root in (agents or {}).items()},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    env["SFLY_LOCAL_AGENTS"] = str(local_agents)
     pump = _Pump(execution, events, on_log, on_progress, on_metric)
     # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。
     try:
