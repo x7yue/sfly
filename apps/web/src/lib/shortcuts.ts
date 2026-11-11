@@ -56,10 +56,30 @@ export const SHORTCUTS = [
 	{ id: "canvas-undo", group: "编排画布", label: "撤销", keys: "Ctrl+Z" },
 	{ id: "canvas-redo", group: "编排画布", label: "重做", keys: "Ctrl+Shift+Z" },
 	{ id: "canvas-tidy", group: "编排画布", label: "整理布局", keys: "Alt+Shift+F" },
-	// Tab 只在焦点在节点卡片或画布空白处时打开添加节点菜单（editor/ScenarioEditor.tsx），其他时候照常切换焦点。
-	{ id: "canvas-add-tab", group: "编排画布", label: "添加节点", keys: "Tab", displayOnly: true },
-	{ id: "canvas-add", group: "编排画布", label: "搜索节点类型", keys: "/" },
+	// 添加节点（editor/ScenarioEditor.tsx）：/ 添加的节点不连线；焦点在节点卡片上按 Tab，新节点接在它后面
+	// （用鼠标点过画布空白处后按 Tab 等同于 /，其他时候 Tab 照常切换焦点）。
+	{ id: "canvas-add", group: "编排画布", label: "添加节点", keys: "/" },
+	{
+		id: "canvas-add-tab",
+		group: "编排画布",
+		label: "在节点后面添加",
+		keys: "Tab",
+		displayOnly: true,
+	},
 	{ id: "canvas-delete", group: "编排画布", label: "删除节点", keys: "Delete", displayOnly: true },
+	// 复制、粘贴、创建副本（editor/node-clipboard.tsx）：焦点在输入框里时仍是文本操作。复制、粘贴不拦按键，
+	// 由浏览器的复制、粘贴事件处理（页面上选中的文字照常复制，剪贴板里不是节点时照常粘贴）。
+	{ id: "canvas-copy", group: "编排画布", label: "复制节点", keys: "Ctrl+C", displayOnly: true },
+	{ id: "canvas-paste", group: "编排画布", label: "粘贴节点", keys: "Ctrl+V", displayOnly: true },
+	{ id: "canvas-duplicate", group: "编排画布", label: "创建副本", keys: "Ctrl+D" },
+	// 节点菜单（components/canvas/FlowCanvas.tsx）：焦点在节点卡片上时打开，菜单键同样可以。
+	{
+		id: "canvas-node-menu",
+		group: "编排画布",
+		label: "打开节点菜单",
+		keys: "Shift+F10",
+		displayOnly: true,
+	},
 	{ id: "canvas-fit", group: "编排画布", label: "适配视图", keys: "0" },
 	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
 	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },

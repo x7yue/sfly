@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import {
@@ -5,7 +6,13 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
-import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
+import {
+	createEditorScenario,
+	editorDocument,
+	nodeCard,
+	typedDocument,
+	typedNodes,
+} from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
 	connPoint,
@@ -548,14 +555,54 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-inspector.png");
 	});
 
-	test("引用补全", async ({ page }) => {
-		await nodeCard(page, "ping").click();
-		const host = page.getByRole("combobox", { name: "输入 host" });
-		await host.fill("");
-		await host.focus();
+	test("拖宽后的检查器", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		const handle = page.getByRole("separator", { name: "调整检查器宽度" });
+		await handle.focus();
+		for (let i = 0; i < 14; i++) await page.keyboard.press("ArrowLeft");
+		await expect(handle).toHaveAttribute("aria-valuenow", "596");
+		// 适配视图：节点让到拖宽后的检查器左边。
+		await page
+			.getByRole("toolbar", { name: "画布工具" })
+			.getByRole("button", { name: "适配视图" })
+			.click();
+		await handle.blur();
 		await idle(page);
+		await expect(page).toHaveScreenshot("editor-inspector-wide.png");
+	});
+
+	test("引用补全与引用高亮", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		const url = page.getByRole("combobox", { name: "输入 url" });
+		await url.fill(
+			"curl -H 'X-Token: ${{ params.api_token }}' https://example.test/${{ params.biz_date }}/",
+		);
+		await page.keyboard.type("$");
+		await idle(page);
+		await expect(url.locator("[data-reference]")).toHaveCount(2);
 		await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
 		await expect(page).toHaveScreenshot("editor-references.png");
+	});
+
+	test("放大编辑弹窗", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await page.getByRole("button", { name: "放大编辑 url" }).click();
+		const dialog = page.getByRole("dialog", { name: "编辑 url" });
+		const big = dialog.getByRole("combobox", { name: "输入 url（放大编辑）" });
+		await big.fill(
+			[
+				"set -euo pipefail",
+				"curl -fsS -H 'X-Token: ${{ params.api_token }}' \\",
+				"  https://example.test/snap/${{ params.biz_date }}/ > snap.json",
+				"echo $HOME",
+				"",
+			].join("\n"),
+		);
+		await page.keyboard.type("date=$");
+		await idle(page);
+		await expect(big.locator("[data-reference]")).toHaveCount(2);
+		await expect(dialog.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-zoom.png");
 	});
 
 	test("入口参数与敏感参数", async ({ page }) => {
@@ -583,6 +630,63 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-new-subflow.png");
 	});
 
+	test("添加异步任务：同时新建子流程", async ({ page }) => {
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await menu.getByRole("option", { name: /异步任务/ }).click();
+		await menu.getByRole("checkbox", { name: "同时新建子流程" }).check();
+		await menu.getByRole("textbox", { name: "子流程名称" }).fill("sub_entry");
+		await idle(page);
+		await expect(menu.getByText("子流程入口节点 sub_entry 已使用名称「sub_entry」")).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-new-async.png");
+	});
+
+	test("空白处右键菜单", async ({ page }) => {
+		await page.mouse.click(200, 640, { button: "right" });
+		const menu = page.getByRole("menu", { name: "画布菜单" });
+		await expect(menu).toBeVisible();
+		await page.keyboard.press("ArrowDown");
+		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("添加节点");
+		await expect(page).toHaveScreenshot("editor-pane-menu.png");
+	});
+
+	test("节点右键菜单：复制输出引用", async ({ page }) => {
+		await nodeCard(page, "fetch").click({ button: "right" });
+		const menu = page.getByRole("menu", { name: "节点菜单" });
+		await expect(menu).toBeVisible();
+		await menu.getByRole("menuitem", { name: "复制输出引用" }).click();
+		const outputs = page.getByRole("menu", { name: "复制输出引用" });
+		await expect(outputs.getByRole("menuitem", { name: "status" })).toBeVisible();
+		await outputs.getByRole("menuitem", { name: "status" }).hover();
+		await expect(page).toHaveScreenshot("editor-node-menu.png");
+	});
+
+	test("连线右键菜单与中点的「＋」", async ({ page }) => {
+		// 连线上离起点三成处右键：鼠标停在连线上，中点的「＋」也显示出来。
+		const at = await page.locator('[data-edge="chain:fetch->dispatch"]').evaluate((el) => {
+			const path = el as SVGPathElement;
+			const ctm = path.getScreenCTM();
+			if (!ctm) throw new Error("连线不可见");
+			const p = path.getPointAtLength(path.getTotalLength() * 0.3).matrixTransform(ctm);
+			return { x: p.x, y: p.y };
+		});
+		await page.mouse.click(at.x, at.y, { button: "right" });
+		const menu = page.getByRole("menu", { name: "连线菜单" });
+		await expect(menu).toBeVisible();
+		await expect(page.getByRole("button", { name: "在此插入节点" })).toBeVisible();
+		await page.keyboard.press("ArrowDown");
+		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("在此插入节点");
+		await expect(page).toHaveScreenshot("editor-edge-menu.png");
+	});
+
+	test("添加节点菜单：不连线", async ({ page }) => {
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await expect(menu.getByText(/^新节点不连线/)).toBeVisible();
+		await idle(page);
+		await expect(page).toHaveScreenshot("editor-add-menu.png");
+	});
+
 	test("语义缩放", async ({ page }) => {
 		for (let i = 0; i < 3; i++) {
 			await page.getByRole("button", { name: "缩小" }).click();
@@ -592,6 +696,22 @@ test.describe("编排画布", () => {
 		await idle(page);
 		await expect(page).toHaveScreenshot("editor-zoomed-out.png");
 	});
+});
+
+test("编排画布：非字符串参数的引用标签与 JSON 输入框", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: typedNodes });
+	const id = await createScenario(controlPlane, "各种类型的参数", typedDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "typed").click();
+	await expect(page.getByRole("group", { name: "输入 count" })).toBeVisible();
+	await expect(page.getByRole("combobox", { name: "输入 options" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-reference-chip.png");
 });
 
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {

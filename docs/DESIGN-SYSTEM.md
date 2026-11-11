@@ -90,7 +90,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - `vendor`：第三方样式（xyflow；sonner 运行时注入的样式由 `vite.config.ts` 的插件包进这一层）；
 - `components`：确实需要的组件级 CSS（尽量不用）；`utilities`：Tailwind 工具类——组件样式都在这里，所以低层的全局规则覆盖不了组件。
 
-端到端测试会检查页面上没有未分层的样式规则（`e2e/shell.spec.ts`）。不写按页面的全局样式文件（MVP 时期的 `.sf-*` 样式与 `legacy` 层已在 #44 删除）。
+端到端测试会检查页面上没有未分层的样式规则（`e2e/shell.spec.ts`）。例外：CodeMirror（`ReferenceEditor`）在运行时注入自己的样式表，不在任何层里；它只作用于编辑器内部的 `.cm-*` 元素，编辑器内部的样式写在组件的 `EditorView.theme` 里（只引用 token），外框照常用 Tailwind 类。不写按页面的全局样式文件（MVP 时期的 `.sf-*` 样式与 `legacy` 层已在 #44 删除）。
 
 ## 5. 组件清单
 
@@ -104,8 +104,9 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Segmented` | 分段选择（筛选、视图切换）：`fieldset` + `aria-pressed` 按钮，当前项中性高亮；只有图标的选项给 `label` |
 | `Badge` | `default` / `ok` / `warn` / `danger`；版本号、计数等 |
 | `Dialog` | 模态弹窗：锁定焦点、Esc 与点遮罩关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖） |
-| `Sheet` | 抽屉（右侧 460px），焦点行为同 Dialog |
+| `Sheet` | 抽屉（右侧，默认 460px），焦点行为同 Dialog |
 | `DropdownMenu` | 菜单（Base UI Menu） |
+| `ContextMenu` | 右键菜单（Base UI Menu，没有 Trigger）：使用方给出 `open` 与 `anchor`（屏幕坐标或元素）；`ContextMenuItem` 的 `shortcut` 从快捷键注册表取按键与名称，`disabledReason` 禁用并写明原因；关闭后焦点回到打开前的元素。画布上经 `FlowCanvas` 的 `menu` 使用 |
 | `Command` / `CommandDialog` | 命令面板（cmdk + Dialog） |
 | `Tooltip` | 悬浮提示（根部已有 `TooltipProvider`，延迟 400ms） |
 | `Table` 系列 | 表头 12px 三级文字；行悬停 3% 白；`data-state="selected"` 为中性选中 |
@@ -123,10 +124,14 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `status`：`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView` | 状态与槽位，见下表；运行 / 链 / 节点状态的颜色与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，不另写映射表。节点状态在各处的显示规则（徽标、标签、链路进度、画布运行状态、缩略图、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状，配色只在这里；节点状态对应哪种进度段见 `lib/node-status`） |
 | `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |
+| `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限视口宽度的 60%；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
 | `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它 |
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
 | `feedback/notify` | `notify.success / info / warning / error` |
 | `shortcuts`：`useShortcut`、`ShortcutsDialog` | 见第 7 节 |
+| `#/editor/inspector/ReferenceEditor`：`ReferenceEditor`、`InsertReferenceButton` | 可以写引用的文本输入框（CodeMirror 6 内核，只引入 `@codemirror/state`、`view`、`commands`）：输入 `$` 或点「插入引用」弹出补全，引用高亮成一块、整块删除，1 到 8 行自动增高；外观与 `Input` 一致。能写引用的字段都用它，不另写一套；`choices` 传 `null` 时是不能写引用的多行输入框（入口参数的默认值）。`$` 触发的补全不预选，方向键或鼠标选中后 `Enter` / `Tab` 才插入 |
+| `#/editor/inspector/ReferencePicker`：`ReferencePicker`、`ReferenceChip` | 非字符串参数（数字、布尔、枚举、JSON）：「插入引用」按钮选一个引用作为整个值；值是整值引用时用引用标签代替类型控件，点 × 回到类型控件。没有「常量 / 引用」切换，显示什么由值决定 |
+| `#/editor/inspector/ZoomEditor` | 字符串、JSON 字段的「放大编辑」：`Dialog` 里放大的 `ReferenceEditor`（等宽、补全、高亮）；修改直接走字段的 `onChange`，没有「保存 / 放弃」 |
 
 ## 6. 各状态的样式
 

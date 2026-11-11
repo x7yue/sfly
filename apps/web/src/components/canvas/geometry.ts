@@ -56,3 +56,11 @@ export interface CanvasInsets {
 	bottom: number;
 	left: number;
 }
+
+/**
+ * 连线两端改接用的拖动区半径（React Flow 的 reconnectRadius，圆贴在端口外侧）与连线中点「＋」的直径。
+ * 默认布局里同一行相邻两个节点之间的连线只有 44（列距 252 − 卡片宽 208），去掉两个端口各露出的半个直径还剩 35：
+ * 两端各 14 的拖动区加中间 14 的「＋」，彼此只重叠约 3.5，两端都还能按到。
+ */
+export const RECONNECT_RADIUS = 7;
+export const EDGE_INSERT_SIZE = 14;

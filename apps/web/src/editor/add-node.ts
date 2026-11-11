@@ -1,4 +1,4 @@
-import { chainMembers, type StructureDocument, subflowName } from "@sfly/orchestration";
+import { NODE_SIZE, type Position, type StructureDocument, subflowName } from "@sfly/orchestration";
 import type { AgentView, PackageSummary } from "@sfly/schema";
 import type { DocNode } from "#/components/canvas/flow";
 import { latestVersion } from "#/lib/package-versions";
@@ -7,7 +7,9 @@ import { DEFAULT_TZ } from "./inspector/wait-nodes";
 
 /** 添加节点菜单里的一项：内置节点，或某个节点包版本里的节点类型。 */
 export type AddItem =
-	| { kind: "async" | "timer" | "sleep" | "stop_subflow" }
+	| { kind: "timer" | "sleep" | "stop_subflow" }
+	/** 异步任务：勾选「同时新建子流程」时带上子流程名称，一并新建子流程入口和调度连线（#187）。 */
+	| { kind: "async"; subflow?: string }
 	/** 子流程入口：新建时必须填写名称（SEMANTICS §1.2）。 */
 	| { kind: "subflow_entry"; name: string }
 	| { kind: "package"; package: string; version: string; node: string; title: string };
@@ -112,27 +114,28 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 	}
 }
 
-/** 节点所在链（主链或子流程）的链尾；节点不在任何链上时为 undefined。 */
-function tailOfChainWith(doc: StructureDocument, id: string): string | undefined {
-	for (const members of chainMembers(doc).values()) {
-		if (members.includes(id)) return members.at(-1);
-	}
-	return undefined;
+/**
+ * 能不能在这个节点后面追加节点：已有链上出线时不行（链不能分叉），返回原因；可以时返回 null。
+ * 链尾、游离节点都可以。
+ */
+export function appendProblem(doc: Pick<StructureDocument, "edges">, id: string): string | null {
+	const taken = doc.edges.some((e) => e.kind === "chain" && e.from === id);
+	return taken ? `节点 ${id} 已有出线，链不能分叉` : null;
 }
+
+/** 落点与已有节点重叠时每次往右下错开的距离。 */
+const NUDGE = 32;
 
 /**
- * 从菜单添加的节点接在哪个链尾之后：选中了某条链（主链或子流程）上的节点时接在那条链的链尾，
- * 否则接在主链的链尾。没有入口节点时为 undefined。
+ * 没有来源的新节点放在哪：想要的位置（视口中心、右键处）空着就用它，
+ * 压住已有节点时按固定步长往右下错开，直到不压住任何节点。位置都是卡片左上角的画布坐标。
  */
-export function appendTarget(
-	doc: StructureDocument,
-	selectedId: string | null,
-): string | undefined {
-	const fromSelected = selectedId ? tailOfChainWith(doc, selectedId) : undefined;
-	if (fromSelected) return fromSelected;
-	const entry = doc.nodes.find((n) => n.kind === "entry");
-	return entry ? tailOfChainWith(doc, entry.id) : undefined;
+export function freePosition(wanted: Position, taken: readonly Position[]): Position {
+	const overlaps = (p: Position) =>
+		taken.some(
+			(t) => Math.abs(t.x - p.x) < NODE_SIZE.width && Math.abs(t.y - p.y) < NODE_SIZE.height,
+		);
+	let at = wanted;
+	while (overlaps(at)) at = { x: at.x + NUDGE, y: at.y + NUDGE };
+	return at;
 }
-
-/** 节点是不是主链或子流程的链尾（只有链尾可以往后追加节点）。 */
-export const isChainTail = (doc: StructureDocument, id: string) => tailOfChainWith(doc, id) === id;
