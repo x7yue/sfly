@@ -109,10 +109,13 @@ describe("全栈：标准节点包 sfly-std", () => {
 		expect((await api.run(runId)).status).toBe("success");
 		const hello = await api.node(runId, "hello");
 		expect(hello).toMatchObject({ status: "success", agent: AGENT });
-		expect(hello.outputs).toEqual({ exit_code: 0, stdout: "你好\n" });
+		// 没有打开 save_output：两个产物引用是空值。
+		const rest = { stderr: "", stdout_file: null, stderr_file: null };
+		expect(hello.outputs).toEqual({ exit_code: 0, stdout: "你好\n", ...rest });
 		expect((await api.node(runId, "greet")).outputs).toEqual({
 			exit_code: 0,
 			stdout: "你好\n世界",
+			...rest,
 		});
 		const { agents } = await api.getJson<{
 			agents: Array<{ installed_packages: Array<{ name: string; version: string }> }>;
@@ -520,6 +523,9 @@ describe("全栈：标准节点包 sfly-std", () => {
 		expect((await onLocked.api.node(onLocked.runId, "probe")).outputs).toEqual({
 			exit_code: 0,
 			stdout: "/bin/sh\n",
+			stderr: "",
+			stdout_file: null,
+			stderr_file: null,
 		});
 		expect((await onLocked.api.node(onLocked.runId, "check")).outputs).toEqual({ passed: true });
 		expect(await download(onLocked.api, onLocked.runId)).toBe("interpreter=/bin/sh\n");
