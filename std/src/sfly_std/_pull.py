@@ -3,6 +3,7 @@
 - `local_path`：来源上的文件拉到本地目录下的哪里（保留子目录）；
 - `download`：下载一个列出的文件，列出之后被删除时返回 None（跳过它）；
 - `delete_pulled`：删除已经拉下来的源文件，下载之后它被改动或替换时不删；
+- `changed`：同一个路径前后两次查看的属性是否不同（换了文件、大小或修改时间变了）；
 - `listed`：输出里的本地路径列表，太多时截断。
 """
 
@@ -51,6 +52,12 @@ def download(
         raise
 
 
+def changed(now: FileInfo, before: FileInfo) -> bool:
+    """同一个路径上前后两次查看到的属性是否不同：换成了另一个文件，或者大小、修改时间变了。
+    两次都是同一台 Agent 上的结果，修改时间可以直接比较。"""
+    return (now.id, now.size, now.mtime_ns) != (before.id, before.size, before.mtime_ns)
+
+
 Deleted = Literal["deleted", "gone", "changed"]
 
 
@@ -62,7 +69,7 @@ def delete_pulled(agent: Agent, pulled: FileInfo) -> Deleted:
         now = agent.files.stat(pulled.path)
     except AgentFileNotFound:
         return "gone"
-    if (now.id, now.size, now.mtime_ns) != (pulled.id, pulled.size, pulled.mtime_ns):
+    if changed(now, pulled):
         return "changed"
     try:
         agent.files.delete(pulled.path)
