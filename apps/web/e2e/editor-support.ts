@@ -146,6 +146,22 @@ export const typedDocument = {
 /** 画布上的节点卡片（按节点 ID）。 */
 export const nodeCard = (page: Page, id: string) => page.locator(`[data-node-id="${id}"]`);
 
+/**
+ * 本地草稿（localStorage，写入有 300ms 防抖）里的某个节点；还没有草稿或没有这个节点时为 undefined。
+ * 刷新页面前用 `expect.poll` 等草稿写进去，不用固定等待。
+ */
+export const draftNode = (page: Page, scenarioId: string, nodeId: string) =>
+	page.evaluate(
+		([key, node]) => {
+			const raw = localStorage.getItem(key);
+			const draft = raw
+				? (JSON.parse(raw) as { document: { nodes: ({ id: string } & Record<string, unknown>)[] } })
+				: null;
+			return draft?.document.nodes.find((n) => n.id === node);
+		},
+		[`sfly.draft.${scenarioId}`, nodeId] as const,
+	);
+
 /** 控制面上的最新版本（编辑起点）。 */
 export async function headOf(cp: TestControlPlane, id: string) {
 	const res = await cp.fetch(`/orchestrations/${id}/head`);

@@ -2,6 +2,7 @@
 import type { Locator, Page } from "@playwright/test";
 import {
 	createEditorScenario,
+	draftNode,
 	editorDocument,
 	headOf,
 	nodeCard,
@@ -668,7 +669,13 @@ test("放大编辑：等宽的大弹窗里有补全和高亮，锁定焦点，Es
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
 
 	// 本地草稿：刷新后还在。
-	await page.waitForTimeout(400); // 草稿写入有 300ms 防抖
+	await expect
+		.poll(() => draftNode(page, id, "fetch"))
+		.toMatchObject({
+			inputs: {
+				url: "https://example.test/snap\ndate=${{ params.biz_date }}${{ params.api_token }}",
+			},
+		});
 	await page.reload();
 	await nodeCard(page, "fetch").click();
 	await expect(url.locator("[data-reference]")).toHaveCount(2);
@@ -761,7 +768,9 @@ test("检查器：字符串输入框随内容增高，最多 8 行；无效的�
 	await expect(page.getByRole("button", { name: /保存/ })).toBeEnabled();
 
 	// 修改进入本地草稿：刷新后还在。
-	await page.waitForTimeout(400); // 草稿写入有 300ms 防抖
+	await expect
+		.poll(() => draftNode(page, id, "fetch"))
+		.toMatchObject({ inputs: { url: "${{ nodes.nope.outputs.x }}" } });
 	await page.reload();
 	await nodeCard(page, "fetch").click();
 	await expect(url).toHaveText("${{ nodes.nope.outputs.x }}");
@@ -866,7 +875,7 @@ test("本地草稿：未保存的修改刷新后还在，保存后清除；Ctrl 
 	await expect(nodeCard(page, "sub_ping").getByText("always")).toBeVisible();
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
 
-	await page.waitForTimeout(400); // 草稿写入有 300ms 防抖
+	await expect.poll(() => draftNode(page, id, "sub_ping")).toMatchObject({ always: true });
 	await page.reload();
 	await expect(nodeCard(page, "sub_ping").getByText("always")).toBeVisible();
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
