@@ -353,8 +353,8 @@ function Editor({
 				// 定位到没被检查器占住的那部分画布的中间。
 				const zoom = Math.max(flow.getZoom(), 0.8);
 				void flow.setCenter(
-					node.position.x + 104 + inspectorSpace / 2 / zoom,
-					node.position.y + 56,
+					node.position.x + NODE_WIDTH / 2 + inspectorSpace / 2 / zoom,
+					node.position.y + NODE_HEIGHT / 2,
 					{ zoom, duration: 200 },
 				);
 			}
