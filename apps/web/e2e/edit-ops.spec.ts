@@ -359,7 +359,12 @@ test("从链尾端口拖线到空白处：弹出可以接上的节点菜单，�
 	await dragToBlank("ping");
 	await expect(menu).toBeVisible();
 
+	// 异步任务节点先换成可以勾选「同时新建子流程」的表单（#187，见 async-subflow.spec.ts），不勾选直接添加。
 	await menu.getByRole("option", { name: /异步任务/ }).click();
+	await menu
+		.getByRole("form", { name: "添加异步任务" })
+		.getByRole("button", { name: "添加" })
+		.click();
 	await expect(edge(page, "chain:ping->async_1")).toHaveCount(1);
 	// 新节点的链入口就在松开鼠标的位置。
 	const inPort = await box(
