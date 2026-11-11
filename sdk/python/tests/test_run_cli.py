@@ -154,7 +154,7 @@ from sfly import AgentName, Context, node
 
 @node
 def reach(ctx: Context, source: AgentName) -> dict:
-    return {"source": source, "agents": sorted(ctx.task.agents)}
+    return {"source": source}
 """
 
 
@@ -166,7 +166,7 @@ def test_agent_inputs_take_an_agent_name(project: Path) -> None:
     wrong = sfly_run(project, "reach", "--params", '{"source": 1}')
 
     assert run.returncode == 0, run.stderr
-    assert outputs_of(run.stdout) == {"source": "agent-a", "agents": ["agent-a"]}
+    assert outputs_of(run.stdout) == {"source": "agent-a"}
     assert wrong.returncode == 2
     assert "输入 source 应为 string" in wrong.stderr
 

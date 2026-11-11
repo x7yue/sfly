@@ -8,8 +8,9 @@
 - 和在 Agent 上一样只能访问通过「Agent」类型的参数拿到的 Agent：参数里没有的名称抛出
   `AgentNotReferenced`，参数里有但没有映射的抛出 `AgentUnreachable`（提示怎样映射）。
 
-映射表是执行器的环境变量 `SFLY_LOCAL_AGENTS` 指向的 JSON 文件（名称 → 本地目录的绝对路径），
-由 `sfly.local` 写；设置了它就是本地调试。每项能力在自己的模块里用 `LocalAgent` 实现本地版本。
+映射表是执行器的环境变量 `SFLY_LOCAL_AGENTS` 指向的 JSON 文件，由 `sfly.local` 写：
+参数里引用的每台 Agent 一项，名称 → 本地目录的绝对路径，没有映射的为 null。设置了它就是本地调试。
+每项能力在自己的模块里用 `LocalAgent` 实现本地版本。
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 import stat as stat_module
-from collections.abc import Collection, Iterator, Mapping
+from collections.abc import Iterator, Mapping
 from typing import BinaryIO
 
 from sfly.capabilities.errors import (
@@ -31,8 +32,8 @@ from sfly.capabilities.errors import (
 from sfly.context import DeferCancel
 
 
-def read_mapping(path: str | os.PathLike[str]) -> dict[str, str]:
-    """读映射表（名称 → 本地目录）；不认识的内容视为空表。"""
+def read_mapping(path: str | os.PathLike[str]) -> dict[str, str | None]:
+    """读映射表（参数里引用的 Agent → 本地目录，没有映射的为 None）；不认识的内容视为空表。"""
     try:
         with open(path, encoding="utf-8") as f:
             table = json.loads(f.read())
@@ -40,7 +41,7 @@ def read_mapping(path: str | os.PathLike[str]) -> dict[str, str]:
         return {}
     if not isinstance(table, dict):
         return {}
-    return {str(k): str(v) for k, v in table.items() if isinstance(v, str)}
+    return {str(k): v if isinstance(v, str) else None for k, v in table.items()}
 
 
 class LocalAgent:
@@ -51,25 +52,25 @@ class LocalAgent:
         self.root = root
 
     @classmethod
-    def resolve(
-        cls, name: str | None, mapping: Mapping[str, str], referenced: Collection[str]
-    ) -> LocalAgent:
-        """按名称找本地调试时的 Agent；None 是自己所在的 Agent（本机，`HERE`）。"""
+    def resolve(cls, name: str | None, mapping: Mapping[str, str | None]) -> LocalAgent:
+        """按名称找本地调试时的 Agent（`mapping` 见 `read_mapping`）；None 是自己所在的 Agent
+        （本机，`HERE`）。"""
         if name is None:
             return HERE
-        if name not in referenced:
+        if name not in mapping:
             raise AgentNotReferenced(
                 "节点只能访问通过「Agent」类型的参数拿到的 Agent 和自己所在的 Agent，"
                 f"Agent {name} 不是：把它声明成节点的 AgentName 类型参数，在场景里选它",
                 agent=name,
             )
-        if name not in mapping:
+        root = mapping[name]
+        if root is None:
             raise AgentUnreachable(
                 f"本地调试时没有 Agent {name}：用 run_node(agents={{{name!r}: 目录}}) 或 "
                 f"sfly run --agent {name}=<目录> 把它映射到本地目录",
                 agent=name,
             )
-        return cls(name, mapping[name])
+        return cls(name, root)
 
     @property
     def label(self) -> str:

@@ -26,7 +26,7 @@ import pytest
 from test_agent_channel import INFO, PACKAGE_SRC, SDK_SRC, FakeAgent, frame, wait_for
 
 import sfly
-from sfly import AgentAddress, Context, TaskInfo
+from sfly import Context, TaskInfo
 from sfly.testing import run_node
 
 PACKAGE = PACKAGE_SRC.parent
@@ -190,7 +190,7 @@ def local_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: Path)
         cancel_path=None,
         artifacts_dir=None,
         artifacts_url=None,
-        task=TaskInfo(task_id="local", attempt=1, agents={"fs-source": AgentAddress("fs-source")}),
+        task=TaskInfo(task_id="local", attempt=1),
     )
 
 

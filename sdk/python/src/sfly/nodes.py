@@ -27,7 +27,8 @@ AGENT_MARKER = _AgentMarker()
 
 #: 「Agent」类型的输入：值是 Agent 名称（运行时就是 `str`），表示节点会访问这台 Agent（ADR 0019）。
 #: 检查器里显示成 Agent 下拉框；触发前检查它是已注册的 Agent；派发时控制面把它的地址和端口随任务下发
-#: （`ctx.task.agents`）。只能直接用作节点参数的类型，可以写成 `AgentName | None`。
+#: 给节点所在的 Agent，节点用 `ctx.agent(名称)` 访问它。只能直接用作节点参数的类型，
+#: 可以写成 `AgentName | None`。
 AgentName = Annotated[str, AGENT_MARKER]
 
 #: 函数上保存节点声明的属性名。
