@@ -265,6 +265,7 @@ Agent 能力是 Agent 自身提供、节点在执行中调用的一组操作。`
 | `files.stat(path, *, timeout=30.0)` | 查看一个文件（或目录）的属性，返回 `FileInfo`；跟随符号链接 |
 | `files.read(path, offset=0, length=None, *, timeout=30.0)` | 从 `offset` 起流式读取文件内容，返回 `bytes` 的迭代器，见下文「读取与下载」 |
 | `files.download(path, local_path, *, timeout=30.0, progress=None)` | 把文件下载到节点所在机器上的 `local_path`，返回源文件的 `FileInfo`，见下文「读取与下载」 |
+| `files.watch(directory, pattern="*", *, recursive=False, timeout=30.0)` | 监听目录：先给出当前文件的快照，再持续给出事件（迭代器），见下文「监听目录」 |
 
 `files.list`：
 
@@ -363,10 +364,90 @@ def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
 - `timeout`：`files.write`、`files.upload` 是对方接收每一段、写完后给出结果各自最多等多久；`files.write` 等 `data` 给出下一段不计时。`files.delete` 是整个调用。
 - 本地调试时规则相同：写到映射的目录里，`local_path` 是本机上的路径。
 
+### 监听目录：`files.watch`
+
+```python
+from sfly import AgentName, Context, FileId, WatchSnapshot, node
+
+
+@node(outputs=["rotated"])
+def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
+    """等 source 上的 app.log 轮转一次，输出被改名后的路径。"""
+    current: FileId | None = None
+    for item in ctx.agent(source).files.watch(directory, "app.log*"):
+        if isinstance(item, WatchSnapshot):
+            # 以快照为准：重连、事件太多来不及发出之后会再给一份（item.missed 为 True）。
+            by_path = {f.path: f.id for f in item.files}
+            current = by_path.get(f"{directory}/app.log", current)
+        elif item.kind == "moved" and item.id == current:
+            return {"rotated": item.path}
+    raise RuntimeError("监听意外结束")
+```
+
+`files.watch` 监听目录下文件名匹配 `pattern` 的普通文件，返回一个一直进行下去的迭代器：先给出一份 `WatchSnapshot`（当前的文件），之后逐个给出 `FileEvent`。停止迭代（`break`、`return`、`close()`）时监听随之结束。从 SDK 0.2.0 起可用，需要那台 Agent 支持能力 `files.watch`（0.2.0 及以上的 Agent）。
+
+- `pattern` 的规则与 `files.list` 相同。`recursive=True` 时监听子目录，包括监听期间新建（或移进来）的子目录：新子目录里已有的文件作为 `created` 给出。
+- `WatchSnapshot(files, missed)`：`files` 是当时匹配的全部文件（`FileInfo` 的元组，顺序与 `files.list` 相同）。快照之后的变化不会漏掉，但可能和快照重复。
+- `missed` 为 True 表示**可能有遗漏**：两台 Agent 之间的连接中断后自动重连、或者事件太多来不及发出（节点读得太慢，事件队列溢出）时，重新给一份快照，之前的一些事件没有送到。这时以这份快照为准，按文件标识去重，不要假设每个变化都有事件。开头的第一份快照为 False。
+- `FileEvent(kind, file, old_path)`：`file` 是事件之后这个文件的属性（`FileInfo`，`path`、`id` 也可以直接从事件上取），`old_path` 只有 `moved` 有。`kind`：
+
+| `kind` | 含义 |
+|---|---|
+| `created` | 新建，包括从监听范围之外移进来 |
+| `moved` | 在监听范围内改名（日志轮转），文件标识不变；`old_path` 是原来的路径 |
+| `closed` | 以写方式打开的文件被关闭（inotify 的 `IN_CLOSE_WRITE`）。不代表不会再被写：同一个文件可以再次打开续写 |
+| `modified` | 内容被修改。还没送到的连续几次修改合并成一个事件 |
+| `deleted` | 被删除，包括移出监听范围；`file` 是最后一次看到的属性 |
+
+- 事件描述的是「匹配 `pattern` 的文件」这个集合的变化：改名后不再匹配是 `deleted`，改名后才匹配是 `created`。
+- **平台不判断文件是否写完。** 一个日志文件算不算「不会再续写」取决于被测系统怎样轮转日志（改名后还写不写、关闭后会不会再打开），由节点自己判断，例如「已经被改名」「至少 N 秒没有 `modified`」，或者两者都要。
+- 用 inotify 实现，**只在 Linux 的本地文件系统上可靠**：NFS 等网络文件系统上看不到别的机器做的修改。
+- 递归时每个子目录占一个 inotify watch，一个用户的 watch 总数受系统上限 `/proc/sys/fs/inotify/max_user_watches` 限制，同时进行的监听数受 `max_user_instances` 限制；超过时抛出 `sfly.AgentError`，消息里写明是哪个上限。目录很多时调大上限，或者监听更深一层的目录、不递归。
+- `timeout`：开始监听时最多等这么久。之后那台 Agent 会定期发心跳，超过 `timeout` 秒（None 时 30 秒）没有任何回应就认为连接中断并自动重连，重连 `timeout` 秒还没成功时抛出 `sfly.AgentUnreachable`；`timeout=None` 时一直重连。事件之间隔多久都不算超时。
+- 迭代时才开始监听：目录不存在、不是目录或没有权限时抛出异常（`AgentFileNotFound` 等）。监听期间目录本身被删除或改名时，先给出里面文件的 `deleted`，再抛出 `sfly.AgentFileNotFound`。
+- 本地调试时同样用 inotify 监听本机的目录（只支持 Linux），映射到本地目录的 Agent 也一样；没有连接，所以没有重连，节点读得太慢、内核的 inotify 队列溢出时同样重新给 `missed=True` 的快照。
+
+### 执行命令：`exec`
+
+```python
+from sfly import AgentName, Context, node
+
+
+@node(outputs=["compressed"])
+def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
+    """在 source 上压缩已经轮转出去的日志（app.log.1、app.log.2…），gzip 的输出进入这个任务的日志。"""
+    agent = ctx.agent(source)
+    rotated = [
+        f.path for f in agent.files.list(directory, "app.log.[0-9]*") if not f.path.endswith(".gz")
+    ]
+    for path in rotated:
+        code = agent.exec.run(["gzip", "-9", "--verbose", path], timeout=600)
+        if code != 0:
+            raise RuntimeError(f"压缩 {path} 失败，gzip 退出码 {code}")
+    return {"compressed": [f"{path}.gz" for path in rotated]}
+```
+
+| 方法 | 说明 |
+|---|---|
+| `exec.run(command, *, timeout, cwd=None, env=None)` | 在那台 Agent 上执行一条命令，等它结束，返回退出码（`int`） |
+
+从 SDK 0.2.0 起可用，需要那台 Agent 支持能力 `exec`（0.2.0 及以上的 Agent）。
+
+- `command` 是字符串时用 `/bin/sh -c` 执行；是字符串列表时第一项是程序（不含 `/` 时在那台 Agent 的 `PATH` 里找），其余是参数，不经过 shell。
+- 命令在那台机器上以那台 Agent 进程的身份运行。`cwd` 是工作目录（那台机器上的绝对路径），默认 `/`；`env` 是在那台 Agent 进程的环境变量之上追加的环境变量。
+- 返回退出码；被信号终止时为 128 + 信号值。退出码不是 0 不算失败，由节点自己检查。找不到程序、工作目录不存在时抛出 `AgentFileNotFound`，没有权限执行时抛出 `AgentPermissionDenied`。
+- 命令的标准输出、标准错误逐行进入**这个任务**的日志（标准输出为 info，标准错误为 error），每行前面标上来自哪台 Agent，例如 `[Agent a-01] /var/log/app/app.log.1: 91.2% -- replaced with /var/log/app/app.log.1.gz`。返回值里没有输出：要拿结果时让命令把它写进文件，再用 `files` 读出来。
+- 命令归属于调用它的任务：不占那台 Agent 的槽位，不在那台 Agent 上产生任务，运行页面上也不出现新的节点。
+- `timeout`（秒）必须给，没有默认值，不能传 `None`：它是命令最多运行多久。超过时命令连同它启动的子进程（同一个进程组里的进程）一起被结束（先 SIGTERM，那台 Agent 的宽限期过后 SIGKILL），抛出 `AgentTimeout`；超时之前的输出照常在日志里。
+- 这个任务被取消、被停止子流程节点停止、失败或正常结束时（包括在后台线程里调用、节点没等它就返回了），还在运行的命令连同子进程一起被结束；两台 Agent 之间的连接断开时也一样，调用抛出 `AgentUnreachable`。
+- 命令退出后，它留在后台的子进程也被结束，所以不能用它启动常驻进程（被测服务等）：那样的进程用标准节点 `start_process` 启动，把这个节点派到那台机器上（见[标准节点](standard-nodes.md)）。自己用 `setsid` 离开进程组的进程不在这个范围里，不要这样做。
+- 本地调试时在本机执行：`ctx.agent()` 和映射到本地目录的 Agent 都在本机运行命令，后者的工作目录落在映射的目录里（`cwd="/srv"` 是 `<目录>/srv`），命令里写的路径不换算。日志里的行标上 `[本机]` 或 `[Agent 名称]`。
+
 ### 超时、取消与错误
 
 - `timeout` 是等对方回应的上限（秒），默认 30，`None` 表示不限，必须大于 0。`files.stat` 是整个调用；`files.list` 是到第一项、以及相邻两项之间各自最多等多久。超时抛出 `sfly.AgentTimeout`。
 - `files.read` 是到第一块、以及相邻两块之间各自最多等多久；`files.download` 是相邻两次进展之间（重连的每一步各自）最多等多久。
+- `exec.run` 例外：`timeout` 必须给，是命令最多运行多久（见上文「执行命令」）。
 - 任务被取消（或超时、被停止子流程节点停止）时，正在进行的调用立即结束并抛出 `sfly.Cancelled`，在后台线程里调用也一样。节点进程退出时调用随之放弃。
 - 失败时抛出 `sfly.AgentError` 的子类，`kind` 区分原因，`agent` 是目标 Agent 的名称，消息写明是哪台 Agent。它们同时是对应的内置异常的子类，`except FileNotFoundError` 这样的写法也能捕获：
 
@@ -374,9 +455,9 @@ def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
 |---|---|---|
 | `AgentUnreachable`（`ConnectionError`） | `unreachable` | 连不通：两台 Agent 之间连不上，或那台 Agent 的端口没在监听（例如端口被占用）；也包括连不上自己所在的 Agent |
 | `AgentUnsupported` | `unsupported` | 对方不支持：那台 Agent 的版本太旧，没有这项能力，要升级它 |
-| `AgentFileNotFound`（`FileNotFoundError`） | `not_found` | 文件或目录不存在 |
+| `AgentFileNotFound`（`FileNotFoundError`） | `not_found` | 文件或目录不存在；`exec.run` 找不到程序、工作目录不存在 |
 | `AgentPermissionDenied`（`PermissionError`） | `permission_denied` | 那台 Agent 进程没有权限 |
-| `AgentTimeout`（`TimeoutError`） | `timeout` | 超过 `timeout` 秒没有回应 |
+| `AgentTimeout`（`TimeoutError`） | `timeout` | 超过 `timeout` 秒没有回应；`exec.run` 的命令超过 `timeout` 秒没有结束 |
 | `AgentNotReferenced` | `not_referenced` | 那台 Agent 不是通过「Agent」类型的参数拿到的 |
 | `AgentError` | `invalid` 等 | 其它失败，例如要列出的路径不是目录 |
 

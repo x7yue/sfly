@@ -89,6 +89,13 @@ impl Target {
                 }
                 ErrorKind::Failed
             }
+            // 不是对方回复的状态，而是连接本身出错（调用中途两台 Agent 之间的连接断了）：带着底层的传输错误。
+            Code::Unknown if std::error::Error::source(&status).is_some() => {
+                if let Self::Remote(remote) = self {
+                    return remote.unreachable(&describe_status(&status));
+                }
+                ErrorKind::Failed
+            }
             _ => ErrorKind::Failed,
         };
         let message = match kind {

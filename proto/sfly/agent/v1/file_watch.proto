@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package sfly.agent.v1;
+
+import "sfly/agent/v1/files.proto";
+
+// Agent 能力 files.watch（ADR 0019）：监听一个目录。和 AgentPeer 在同一个端口上提供，供其它 Agent 直接连接，
+// 没有认证，只应在内网使用。
+//
+// 用 inotify 实现，只在 Linux 的本地文件系统上可靠。回复先是一份当前文件的快照，再是之后的事件；
+// 事件队列溢出时重新给一份快照并标明「可能有遗漏」（missed）。只报告文件上发生了什么，不判断文件是否写完。
+// 错误用 gRPC 状态码区分：NOT_FOUND（目录不存在，或监听期间被删除、改名）、PERMISSION_DENIED（没有权限）、
+// INVALID_ARGUMENT（路径不是绝对路径、不是目录）、RESOURCE_EXHAUSTED（超过 inotify 的系统上限），
+// 消息是给人看的一句话。
+service AgentFileWatch {
+  // 监听目录，直到调用方放弃（或出错）。
+  rpc Watch(WatchFilesRequest) returns (stream WatchFilesResponse);
+}
+
+message WatchFilesRequest {
+  // 要监听的目录（绝对路径）。
+  string directory = 1;
+  // 文件名（不含目录）的通配符，规则与 ListFilesRequest.pattern 相同；为空时等同于 `*`。
+  string pattern = 2;
+  // 是否递归监听子目录（包括监听期间新建的子目录；不进入指向目录的符号链接）。
+  bool recursive = 3;
+  // 没有别的回复时，每隔多久发一次心跳（毫秒），调用方据此发现连接已经中断；0 为 10 秒。
+  uint32 heartbeat_ms = 4;
+}
+
+message WatchFilesResponse {
+  oneof message {
+    // 快照的一批。
+    WatchSnapshot snapshot = 1;
+    // 一个事件。
+    FileEvent event = 2;
+    // 心跳：没有别的回复时定期发一次。
+    WatchHeartbeat heartbeat = 3;
+  }
+}
+
+// 一份快照分成若干批连续发出，中间不夹事件：first 的那一批开始一份新快照，last 的那一批结束它。
+// 文件和 ListFilesResponse 的顺序相同；监听开始之后、快照发完之前发生的变化在快照之后作为事件发出（可能和快照重复）。
+message WatchSnapshot {
+  repeated FileInfo files = 1;
+  // 这一批开始一份新的快照。
+  bool first = 2;
+  // 这一批结束这份快照。
+  bool last = 3;
+  // 可能有遗漏：事件队列溢出后重新给的快照，之前的一些事件没有发出。
+  bool missed = 4;
+}
+
+// 一个文件上发生的事。事件描述的是「匹配通配符的文件」这个集合的变化：改名后不再匹配是删除，改名后才匹配是新建。
+message FileEvent {
+  FileEventKind kind = 1;
+  // 事件之后这个文件的属性（发出事件时取得）；DELETED 是最后一次看到的属性。
+  FileInfo file = 2;
+  // MOVED：原来的路径。
+  string old_path = 3;
+}
+
+enum FileEventKind {
+  FILE_EVENT_KIND_UNSPECIFIED = 0;
+  // 新建（包括从监听范围之外移进来）。
+  FILE_EVENT_KIND_CREATED = 1;
+  // 在监听范围内改名（日志轮转）：文件标识不变。
+  FILE_EVENT_KIND_MOVED = 2;
+  // 以写方式打开的文件被关闭（IN_CLOSE_WRITE）。不代表文件不会再被写。
+  FILE_EVENT_KIND_CLOSED = 3;
+  // 内容被修改。还没有发出的连续几次修改合并成一个事件。
+  FILE_EVENT_KIND_MODIFIED = 4;
+  // 被删除（包括移出监听范围）。
+  FILE_EVENT_KIND_DELETED = 5;
+}
+
+message WatchHeartbeat {}

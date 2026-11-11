@@ -336,3 +336,52 @@ def test_cancelling_the_task_interrupts_a_call_that_is_waiting(short_dir: Path) 
     # 节点进程退出时连接关闭，Agent 一侧随之放弃调用。
     assert agent.closed.wait(10)
     agent.close()
+
+
+def test_a_watch_assembles_snapshots_from_batches_and_skips_keepalives(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = {**INFO, "path": "/var/log/app.log.1", "inode": 78}
+
+    def reply(request: dict[str, Any]) -> list[bytes]:
+        def batch(files: list[Any], *, first: bool, last: bool, missed: bool = False) -> bytes:
+            snapshot = {"files": files, "first": first, "last": last, "missed": missed}
+            return frame({"item": {"snapshot": snapshot}})
+
+        return [
+            batch([INFO], first=True, last=False),
+            frame({"item": {"alive": True}}),
+            batch([other], first=False, last=True),
+            frame({"item": {"event": {"kind": "moved", "file": other, "old_path": INFO["path"]}}}),
+            # 连接中断时没收完的快照：重连后的快照从 first 重新开始。
+            batch([INFO], first=True, last=False, missed=True),
+            batch([other], first=True, last=True, missed=True),
+            frame({"item": {"event": {"kind": "deleted", "file": other, "old_path": None}}}),
+            frame({"error": {"kind": "not_found", "message": "Agent a-01：被监听的目录已被删除"}}),
+        ]
+
+    agent = FakeAgent(short_dir / "agent.sock", reply)
+    ctx = context(short_dir, monkeypatch)
+
+    seen: list[Any] = []
+    with pytest.raises(sfly.AgentFileNotFound):
+        for item in ctx.agent("a-01").files.watch("/var/log", "app.log*", recursive=True):
+            seen.append(item)
+    agent.close()
+
+    first, second = sfly.FileInfo.from_json(INFO), sfly.FileInfo.from_json(other)
+    assert seen == [
+        sfly.WatchSnapshot((first, second), missed=False),
+        sfly.FileEvent("moved", second, old_path="/var/log/app.log"),
+        sfly.WatchSnapshot((second,), missed=True),
+        sfly.FileEvent("deleted", second),
+    ]
+    assert seen[1].path == "/var/log/app.log.1"
+    assert seen[1].id == sfly.FileId(2049, 78)
+    assert agent.requests[0]["method"] == "files.watch"
+    assert agent.requests[0]["args"] == {
+        "directory": "/var/log",
+        "pattern": "app.log*",
+        "recursive": True,
+    }
+    assert agent.requests[0]["timeout_ms"] == 30000
