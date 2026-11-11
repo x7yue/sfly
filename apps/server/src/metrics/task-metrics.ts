@@ -88,6 +88,11 @@ export const FLUSH_AFTER_MS = 10_000;
 export const BYTES_PER_POINT = 4 + 3 * 8;
 /** 单个任务指标数据的默认上限：50 MB。 */
 export const DEFAULT_METRIC_LIMIT_BYTES = 50 * 1024 * 1024;
+/**
+ * 一个任务的写库连续失败这么多次后，丢弃它在内存里还没写入的点（#207）：之后收到的点从库里已有的数据接着记，
+ * 不会每次周期写入都再失败一次。数据库暂时不可用时，下一次周期写入还能重试。
+ */
+export const MAX_WRITE_ATTEMPTS = 3;
 /** 没有未写入数据、这么久没收到上报的任务状态从内存中移除。 */
 const IDLE_MS = 5 * 60_000;
 
@@ -187,6 +192,8 @@ interface TaskState {
 	lastSeen: number;
 	/** 运行已过指标保留期（#32）：之后收到的点直接丢弃，不再写库。 */
 	expired: boolean;
+	/** 写库连续失败的次数（{@link MAX_WRITE_ATTEMPTS}）。 */
+	writeFailures: number;
 }
 
 export class TaskMetrics {
@@ -320,13 +327,17 @@ export class TaskMetrics {
 		});
 	}
 
-	/** 周期扫描：写入已经攒了约 10 秒的当前段，移除长时间没有上报的任务状态。 */
+	/**
+	 * 周期扫描：写入已经攒了约 10 秒的当前段，移除长时间没有上报的任务状态。
+	 * 一个任务写不进去不影响其他任务，扫描完再一起报告。
+	 */
 	async flushDue(): Promise<void> {
 		const now = this.deps.clock.now().getTime();
+		const errors: unknown[] = [];
 		for (const [taskId, pending] of [...this.#states]) {
 			const state = await pending.catch(() => undefined);
 			if (!state) continue;
-			await this.#serial(taskId, async () => {
+			const flushed = this.#serial(taskId, async () => {
 				const due = [...state.series.values()].filter(
 					(s) => s.dirtySince !== undefined && now - s.dirtySince >= FLUSH_AFTER_MS,
 				);
@@ -336,7 +347,9 @@ export class TaskMetrics {
 					this.#states.delete(taskId);
 				}
 			});
+			await flushed.catch((error: unknown) => errors.push(error));
 		}
+		if (errors.length > 0) throw new AggregateError(errors, "metric flush failed");
 	}
 
 	/** 任务结束：立即写入它尚未写入的点，并释放内存中的状态。 */
@@ -422,8 +435,29 @@ export class TaskMetrics {
 		if (dirty.length > 0 || state.countersDirty) await this.#write(state, dirty);
 	}
 
-	/** 写入这些序列攒满的段、当前段与摘要，以及任务的计数。 */
+	/**
+	 * {@link #writeOnce}；连续失败 {@link MAX_WRITE_ATTEMPTS} 次时丢弃这个任务在内存里的状态（还没写入的点），
+	 * 之后收到的点重新从库里加载状态接着记。错误照常抛出，由调用方记下来。
+	 */
 	async #write(state: TaskState, list: Series[]): Promise<void> {
+		try {
+			await this.#writeOnce(state, list);
+			state.writeFailures = 0;
+		} catch (error) {
+			state.writeFailures++;
+			if (state.writeFailures < MAX_WRITE_ATTEMPTS) throw error;
+			state.series = new Map();
+			state.countersDirty = false;
+			this.#states.delete(state.taskId);
+			throw new Error(
+				`metrics of task ${state.taskId} failed to write ${MAX_WRITE_ATTEMPTS} times in a row; unwritten points discarded`,
+				{ cause: error },
+			);
+		}
+	}
+
+	/** 写入这些序列攒满的段、当前段与摘要，以及任务的计数。 */
+	async #writeOnce(state: TaskState, list: Series[]): Promise<void> {
 		const segments = list.flatMap((s) =>
 			[...s.closed, s.segment]
 				.filter((points) => points.length > 0)
@@ -650,6 +684,7 @@ export class TaskMetrics {
 			series,
 			lastSeen: this.deps.clock.now().getTime(),
 			expired: row.purgedAt !== null,
+			writeFailures: 0,
 		};
 	}
 

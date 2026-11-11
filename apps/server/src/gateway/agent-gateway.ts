@@ -26,6 +26,7 @@ import {
 } from "../agents/agent-hub.js";
 import { agentTokenMatches } from "../agents/agent-token.js";
 import { AsyncQueue } from "../util/async-queue.js";
+import { storable } from "./storable.js";
 
 export interface AgentGatewayServer {
 	/** 形如 http://127.0.0.1:50051，供 Agent 连接（h2c）。 */
@@ -40,7 +41,11 @@ export interface AgentSessionHandler {
 	 * 然后开始派发任务。
 	 */
 	onOnline(conn: AgentConnection, runningTasks: RunningTaskRef[]): Promise<void>;
-	/** 握手之后 Agent 发来的消息。 */
+	/**
+	 * 握手之后 Agent 发来的消息（字符串里的 NUL 已换成 U+FFFD，见 ./storable.ts）。
+	 * 抛出的错误只影响这一条：网关记下来（`onError`），接着处理后面的消息，不关闭这条流。
+	 * 任务结果例外：抛出表示结果没有落定（没回 Ack），网关关闭这条流，Agent 重连后重发。
+	 */
 	onMessage(conn: AgentConnection, message: AgentMessage): Promise<void>;
 }
 
@@ -86,12 +91,13 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 		): AsyncIterable<ServerMessage> {
 			const inbound = requests[Symbol.asyncIterator]();
 			const first = await inbound.next();
-			if (first.done || first.value.body.case !== "hello") {
+			const greeting = first.done ? undefined : storable(first.value);
+			if (greeting?.body.case !== "hello") {
 				throw new ConnectError("first message must be Hello", Code.InvalidArgument);
 			}
 			// 收到 Hello 的控制面时间：这次连接的折算关系和第一次时钟偏差都按它算（ADR 0018）。
 			const helloReceivedAt = options.hub.now();
-			const hello = first.value.body.value;
+			const hello = greeting.body.value;
 			if (!hello.name) throw new ConnectError("Hello.name is required", Code.InvalidArgument);
 			if (!agentTokenMatches(options.agentToken, hello.token)) {
 				throw new ConnectError("invalid agent token", Code.Unauthenticated);
@@ -135,12 +141,20 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 					for (;;) {
 						const next = await inbound.next();
 						if (next.done || conn.closed) break;
-						if (next.value.body.case === "heartbeat") {
-							// 每次心跳更新时钟偏差；不带时钟读数的心跳（旧版本 Agent）不改变保存的值。
-							const reading = agentClockReading(next.value.body.value);
-							if (reading) await options.hub.recordClock(conn, reading, options.hub.now());
+						const message = storable(next.value);
+						try {
+							if (message.body.case === "heartbeat") {
+								// 每次心跳更新时钟偏差；不带时钟读数的心跳（旧版本 Agent）不改变保存的值。
+								const reading = agentClockReading(message.body.value);
+								if (reading) await options.hub.recordClock(conn, reading, options.hub.now());
+							}
+							await options.handler?.onMessage(conn, message);
+						} catch (error) {
+							// 一条消息处理失败（例如写库失败）不关闭这条流：这台 Agent 上其他任务的上报照常处理（#207）。
+							// 结果没有落定时关闭，Agent 重连后重发（AgentSessionHandler.onMessage）。
+							if (message.body.case === "result" || conn.closed) throw error;
+							options.onError?.(error);
 						}
-						await options.handler?.onMessage(conn, next.value);
 					}
 				} catch (error) {
 					if (!conn.closed) options.onError?.(error);
