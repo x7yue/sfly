@@ -17,6 +17,7 @@ import { usePanelWidth } from "#/lib/panel-width";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { Field, SectionTitle } from "./fields";
 import {
@@ -312,7 +313,7 @@ function NodeInspector({
 						.filter((e) => !e.draft && !e.field.startsWith("params."))
 						.map((e) => (
 							<p key={e.field} className="m-0 mt-2 text-xs text-danger-fg">
-								{e.field}：{e.message}
+								{fieldLabel(node, e.field)}：{e.message}
 							</p>
 						))}
 				</TabsContent>
@@ -440,7 +441,12 @@ function ScenarioInspector({
 								)}
 							>
 								<span className="min-w-0 flex-1">
-									{e.nodeId && <code className="font-mono">{e.nodeId}</code>} {e.message}
+									{e.nodeId && <code className="font-mono">{e.nodeId}</code>}{" "}
+									{fieldLabel(
+										doc.nodes.find((n) => n.id === e.nodeId),
+										e.field,
+									)}
+									：{e.message}
 								</span>
 								{e.nodeId && (
 									<button

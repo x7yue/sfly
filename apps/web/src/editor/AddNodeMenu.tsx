@@ -19,7 +19,8 @@ import { AsyncForm, FormFooter, SubflowNameForm } from "./subflow-forms";
 
 /**
  * 一次添加节点的请求。添加分两种（#183）：
- * - 有来源（`after`）：从端口拖线到空白处、焦点在节点上按 Tab——新节点接在来源节点之后；
+ * - 有来源（`after`）：从端口拖线到空白处、焦点在节点上按 Tab、节点菜单「在后面添加节点」——新节点接在来源节点之后，
+ *   来源节点不是链尾时插在它和下一个节点（`before`）之间；
  * - 没有来源：工具条「＋」、`/`、空白处右键「添加节点」——新节点不连线，成为游离节点。
  * 另外，从异步任务节点的调度端口拖线到空白处（`dispatch`）时只新建子流程入口，并连上调度连线（#187）。
  */
@@ -28,6 +29,8 @@ export interface AddRequest {
 	after?: string;
 	/** 从这个异步任务节点的调度端口拖出：菜单直接是新建子流程的表单。 */
 	dispatch?: string;
+	/** 来源节点在链上的下一个节点：新节点插在两者之间（由编辑器按当前连线填写，只用来说明）。 */
+	before?: string;
 	/** 菜单出现的屏幕坐标（松开鼠标、右键的位置）；不给时在「＋」按钮上方。 */
 	client?: { x: number; y: number };
 	/** 新节点在画布上的位置；不给时放在来源节点右侧，没有来源则放在视口中心。 */
@@ -85,16 +88,20 @@ export function AddNodeMenu({
 			seen.current.add(popup);
 			const active = document.activeElement;
 			opener.current = active instanceof HTMLElement ? active : null;
-			// 菜单不一定经 onOpenChange 打开（拖线、Tab、右键菜单）：上一次选过节点的标记在这里清掉。
-			picked.current = false;
 		}
 		input.focus({ preventScroll: true });
 	}, []);
 	/** 选了子流程入口或异步任务之后，菜单换成对应的表单。 */
 	const [form, setForm] = useState<"subflow" | "async" | null>(null);
 	if (request === null && form !== null) setForm(null);
+	// 每次打开时清掉上一次「选了节点」的标记：Tab、拖线、右键打开不经过 Popover 的 onOpenChange，
+	// 不清掉的话上一次选过节点后再打开、按 Esc 关闭，焦点就回不到打开前的位置。
+	const wasOpen = useRef(false);
+	if (request !== null && !wasOpen.current) picked.current = false;
+	wasOpen.current = request !== null;
 	const at = request?.client;
 	const after = request?.after;
+	const before = request?.before;
 	const dispatch = request?.dispatch;
 	const anchor = at
 		? { getBoundingClientRect: () => DOMRect.fromRect({ x: at.x, y: at.y, width: 0, height: 0 }) }
@@ -174,7 +181,7 @@ export function AddNodeMenu({
 					<AsyncForm
 						focusRef={focusFirst}
 						problemOf={subflowNameProblem}
-						footer={<AddFooter after={after} />}
+						footer={<AddFooter after={after} before={before} />}
 						onBack={() => setForm(null)}
 						onCreate={(subflow) =>
 							pick(subflow === undefined ? { kind: "async" } : { kind: "async", subflow })
@@ -225,7 +232,7 @@ export function AddNodeMenu({
 							))}
 						</CommandList>
 						<FormFooter>
-							<AddFooter after={after} />
+							<AddFooter after={after} before={before} />
 						</FormFooter>
 					</Command>
 				)}
@@ -234,9 +241,14 @@ export function AddNodeMenu({
 	);
 }
 
-/** 菜单底部写明这次添加是接在谁之后还是不连线。 */
-function AddFooter({ after }: { after: string | undefined }) {
-	return after ? (
+/** 菜单底部写明这次添加是插在两个节点之间、接在谁之后还是不连线。 */
+function AddFooter({ after, before }: { after: string | undefined; before: string | undefined }) {
+	return after && before ? (
+		<>
+			新节点插在 <span className="font-mono text-fg-2">{after}</span> 和{" "}
+			<span className="font-mono text-fg-2">{before}</span> 之间
+		</>
+	) : after ? (
 		<>
 			新节点接在 <span className="font-mono text-fg-2">{after}</span> 之后
 		</>

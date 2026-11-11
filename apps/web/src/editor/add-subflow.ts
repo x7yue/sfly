@@ -5,7 +5,7 @@ import {
 	SUBFLOW_INDENT,
 	SUBFLOW_TOP_GAP,
 } from "@sfly/orchestration";
-import { type DocEdge, type SfNode, uniqueNodeId } from "#/components/canvas/flow";
+import { type DocEdge, type SfNode, toFlowNode, uniqueNodeId } from "#/components/canvas/flow";
 import { freePosition, idStem, newDocNode } from "./add-node";
 
 /**
@@ -42,7 +42,7 @@ export function companionSubflow(
 		others.map((n) => n.position),
 	);
 	return {
-		node: { id, type: item.kind, position, data: { node: newDocNode(item, id) }, deletable: true },
+		node: toFlowNode(newDocNode(item, id), position),
 		edge: { from: trigger.id, to: id, kind: "dispatch" },
 	};
 }

@@ -17,7 +17,7 @@ import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { useShortcut } from "#/components/shortcuts";
 import { ContextMenu } from "@/components/ui/context-menu";
 import { CanvasDock, type CanvasTool } from "./CanvasDock";
-import { type CanvasMenuTarget, FitViewMenuItem } from "./CanvasMenu";
+import { type CanvasMenuTarget, FitViewMenuItem, menuAnchor } from "./CanvasMenu";
 import {
 	type CanvasContextValue,
 	type CanvasInfo,
@@ -53,7 +53,8 @@ import { SubflowRegions } from "./SubflowRegions";
  * 扩展点（后续票据复用这一个组件，不再各写一套画布）：
  * - `editable={false}`：只读（不能拖动、连线、删除），用于运行状态（#41）与版本对比（#40）；
  * - `decorateNode` / `decorateEdge` / `regionMeta`：叠加运行状态、主指标槽、差异标记（见 context.ts）；
- * - `menu`：右键菜单的内容（CanvasMenu.tsx）；不给时空白处的菜单只有「适配视图」；
+ * - `menu`：右键菜单的内容（CanvasMenu.tsx）；不给时空白处的菜单只有「适配视图」，节点没有菜单；
+ * - `onDeleteNode`：删除节点（Delete 键）交给使用方，由它决定连线怎么处理（删除并接上前后）；
  * - `dockStart` / `dockTools`：工具条上的「＋ 添加节点」与撤销 / 重做 / 整理布局（#39）；
  * - `onNodesChange` / `onEdgesChange` / `onConnect`：编辑操作，撤销栈（#39）可以包在外面。
  *
@@ -87,9 +88,15 @@ export interface FlowCanvasProps {
 	initialMinimap?: boolean;
 	/**
 	 * 右键菜单的内容（`ContextMenuItem` 等，见 ui/context-menu），按右键的对象给出；
-	 * 不给时空白处的菜单只有「适配视图」（只读画布）。
+	 * 不给时空白处的菜单只有「适配视图」（只读画布），节点上不弹菜单。
+	 * 节点菜单用鼠标右键或焦点在节点上按 Shift+F10 / 菜单键打开。
 	 */
 	menu?: (target: CanvasMenuTarget) => ReactNode;
+	/**
+	 * 用 Delete / Backspace 删除选中的节点：给了就由使用方删除（画布自己不删），
+	 * 不给时画布直接删掉节点和它的连线。只在 `editable` 时生效。
+	 */
+	onDeleteNode?(id: string): void;
 	dockStart?: ReactNode;
 	dockTools?: ReactNode;
 	/** 悬浮在画布上的控件（左上、右上的控件组、检查器……）。 */
@@ -125,6 +132,7 @@ export function FlowCanvas({
 	inspector,
 	initialMinimap = true,
 	menu,
+	onDeleteNode,
 	dockStart,
 	dockTools,
 	children,
@@ -239,9 +247,26 @@ export function FlowCanvas({
 		[flow, area],
 	);
 
-	// —— 键盘：方向键沿链切换、Enter、Esc ——
-	const latest = useRef({ nodes, edges, selectedId, onSelect, onEnter, reveal });
-	latest.current = { nodes, edges, selectedId, onSelect, onEnter, reveal };
+	// —— 右键菜单：关闭时保留对象，退场动画期间内容不变 ——
+	const [menuState, setMenuState] = useState<{ target: CanvasMenuTarget; open: boolean } | null>(
+		null,
+	);
+	/** 打开节点菜单：先让节点卡片拿到焦点（菜单关闭后焦点回到它）并选中它。 */
+	const openNodeMenu = (id: string, at?: { x: number; y: number }) => {
+		const node = nodes.find((n) => n.id === id);
+		const card = wrapper.current?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
+		if (!menu || !node || !card) return;
+		card.focus({ preventScroll: true });
+		onSelect(id);
+		setMenuState({
+			target: { kind: "node", id, node: node.data.node, anchor: at ?? card },
+			open: true,
+		});
+	};
+
+	// —— 键盘：方向键沿链切换、Enter、Esc、Shift+F10 / 菜单键 ——
+	const latest = useRef({ nodes, edges, selectedId, onSelect, onEnter, reveal, openNodeMenu });
+	latest.current = { nodes, edges, selectedId, onSelect, onEnter, reveal, openNodeMenu };
 	useEffect(() => {
 		const focusNode = (id: string) =>
 			requestAnimationFrame(() => {
@@ -262,8 +287,13 @@ export function FlowCanvas({
 				target?.closest("[data-node-id]") !== null ||
 				target?.classList.contains("react-flow__pane");
 			if (!onCanvas || !(target === document.body || root.contains(target))) return;
-			const { nodes, edges, selectedId, onSelect, onEnter, reveal } = latest.current;
-			if (isNavigationKey(event.key)) {
+			const { nodes, edges, selectedId, onSelect, onEnter, reveal, openNodeMenu } = latest.current;
+			const cardId = target?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
+			if (cardId && (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey))) {
+				// 拦下默认行为：浏览器自己的右键菜单不再弹出。
+				event.preventDefault();
+				openNodeMenu(cardId);
+			} else if (isNavigationKey(event.key)) {
 				event.preventDefault();
 				const next = navigateChain(
 					{
@@ -301,10 +331,6 @@ export function FlowCanvas({
 	useShortcut("canvas-minimap", () => setMinimap((m) => !m));
 	useShortcut("canvas-inspector", () => inspector?.onToggle(), inspector !== undefined);
 
-	// —— 右键菜单：关闭时保留对象，退场动画期间内容不变 ——
-	const [menuState, setMenuState] = useState<{ target: CanvasMenuTarget; open: boolean } | null>(
-		null,
-	);
 	/** 画布区域拿到焦点，并标记是鼠标放过来的（见 isPointerFocusedCanvas）。 */
 	const focusRegion = () => {
 		const root = wrapper.current;
@@ -369,6 +395,21 @@ export function FlowCanvas({
 							open: true,
 						});
 					}}
+					onNodeContextMenu={(event, node) => {
+						if (!menu) return;
+						event.preventDefault();
+						// 键盘触发的 contextmenu 事件（没有按右键）贴着节点卡片打开。
+						openNodeMenu(
+							node.id,
+							event.button === 2 ? { x: event.clientX, y: event.clientY } : undefined,
+						);
+					}}
+					onBeforeDelete={async ({ nodes: removed }) => {
+						const [first] = removed;
+						if (!first || !onDeleteNode) return true;
+						onDeleteNode(first.id);
+						return false;
+					}}
 					nodesDraggable={canEdit}
 					nodesConnectable={canEdit}
 					edgesFocusable={false}
@@ -425,12 +466,14 @@ export function FlowCanvas({
 					clearRight={area.right}
 				/>
 				<ContextMenu
-					label="画布菜单"
+					label={menuState?.target.kind === "node" ? "节点菜单" : "画布菜单"}
 					open={menuState?.open ?? false}
-					anchor={menuState?.target.client ?? null}
+					anchor={menuState ? menuAnchor(menuState.target) : null}
 					onOpenChange={(open) => setMenuState((m) => m && { ...m, open })}
 				>
-					{menuState && (menu?.(menuState.target) ?? <FitViewMenuItem />)}
+					{menuState &&
+						(menu?.(menuState.target) ??
+							(menuState.target.kind === "pane" ? <FitViewMenuItem /> : null))}
 				</ContextMenu>
 				{children}
 			</div>

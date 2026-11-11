@@ -1,13 +1,18 @@
 import {
 	checkConnection,
+	declaredOutputs,
+	disconnectNode,
 	documentWarnings,
-	LAYOUT_COLUMN,
+	insertAfter,
+	nodeConnections,
 	type OrchestrationWarning,
+	removeNode,
 	tidyLayout,
 } from "@sfly/orchestration";
 import {
 	agentsApi,
 	type OrchestrationHeadView,
+	type OrchestrationNode,
 	type OrchestrationView,
 	packagesApi,
 } from "@sfly/schema";
@@ -27,6 +32,7 @@ import { ToolButton } from "#/components/canvas/CanvasDock";
 import type { CanvasInfo } from "#/components/canvas/context";
 import { FlowCanvas, isPointerFocusedCanvas } from "#/components/canvas/FlowCanvas";
 import {
+	applyDocument,
 	type DocMeta,
 	type DocNode,
 	type EdgeKind,
@@ -35,6 +41,7 @@ import {
 	type SfNode,
 	toFlow,
 	toFlowEdge,
+	toFlowNode,
 	uniqueNodeId,
 } from "#/components/canvas/flow";
 import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
@@ -66,6 +73,7 @@ import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from 
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
+import { NodeMenu } from "./NodeMenu";
 import { PaneMenu } from "./PaneMenu";
 import {
 	RunStateBadge,
@@ -115,6 +123,8 @@ export function ScenarioEditor({
 		</ReactFlowProvider>
 	);
 }
+
+const NO_PACKAGES: Record<string, string> = {};
 
 const edgeKindOf = (c: Connection | Edge): EdgeKind =>
 	c.sourceHandle === "dispatch" ? "dispatch" : "chain";
@@ -218,6 +228,8 @@ function Editor({
 	// —— 运行状态模式：只读显示运行绑定的版本，叠加节点状态 ——
 	const runState = useCanvasRun(orchestration.id, initialRun, mode === "run");
 	const readyRun = runState.status === "ready" ? runState : undefined;
+	// 运行绑定的版本锁定的节点包（节点菜单「复制输出引用」按它列出输出）。
+	const runCatalog = usePackageCatalog(readyRun?.doc?.packages ?? NO_PACKAGES, agentList);
 	const decorations = useRunDecorations(readyRun?.run, readyRun?.overlay, readyRun?.metrics);
 	const runFlow = useRunFlow(readyRun?.doc);
 	const runInfo: CanvasInfo = useMemo(
@@ -328,10 +340,23 @@ function Editor({
 		},
 		[flow, inspectorSpace],
 	);
+	/** 把文档操作（@sfly/orchestration 的 chain-edits）的结果写回画布，算一步撤销。 */
+	const applyEdit = (next: Pick<typeof doc, "nodes" | "edges">) => {
+		const applied = applyDocument(nodes, edges, next);
+		history.checkpoint();
+		setNodes(applied.nodes);
+		setEdges(applied.edges);
+	};
+	/** 删除节点（Delete 键、节点菜单、检查器的删除按钮）：恰好一进一出时前后自动接上。 */
 	const deleteNode = (id: string) => {
+		const edit = removeNode(doc, id);
+		if (!edit.ok) {
+			notify.warning(edit.reason);
+			return;
+		}
 		drafts.clear(`${id}/`);
-		setSelectedId(null);
-		void flow.deleteElements({ nodes: [{ id }] });
+		if (selectedId === id) setSelectedId(null);
+		applyEdit(edit.doc);
 	};
 	const updateNode = (id: string, node: DocNode) => {
 		// 同一个节点上连续的输入合并为一步撤销。
@@ -351,15 +376,21 @@ function Editor({
 			idStem(item),
 			nodes.map((n) => n.id),
 		);
-		const source = request.after ? nodes.find((n) => n.id === request.after) : undefined;
-		let position: { x: number; y: number };
-		if (request.dispatch && request.position) {
-			// 从调度端口拖出：子流程入口的调度端口就在松开鼠标的位置。
-			position = request.position;
-		} else if (source) {
-			position = request.position ?? {
-				x: source.position.x + LAYOUT_COLUMN,
-				y: source.position.y,
+		let next: { nodes: SfNode[]; edges: SfEdge[] };
+		if (request.after) {
+			// 有来源：接在它后面；它不是链尾时插在它和下一个节点之间，后面的节点让出位置。
+			const fresh = { ...newDocNode(item, id), position: request.position } as OrchestrationNode;
+			const edit = insertAfter(doc, request.after, fresh);
+			if (!edit.ok) {
+				notify.warning(edit.reason);
+				return;
+			}
+			next = applyDocument(nodes, edges, edit.doc);
+		} else if (request.dispatch && request.position) {
+			// 从调度端口拖出（#187）：子流程入口的调度端口就在松开鼠标的位置，连上调度连线。
+			next = {
+				nodes: [...nodes, toFlowNode(newDocNode(item, id), request.position)],
+				edges: [...edges, toFlowEdge({ from: request.dispatch, to: id, kind: "dispatch" })],
 			};
 		} else {
 			// 没有来源：右键处，否则视口（扣掉顶栏和检查器）中心；压住已有节点时错开。
@@ -369,40 +400,35 @@ function Editor({
 					x: (window.innerWidth - inspectorSpace) / 2,
 					y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
 				});
-			position = freePosition(
+			const position = freePosition(
 				{
 					x: Math.round(wanted.x - NODE_WIDTH / 2),
 					y: Math.round(wanted.y - NODE_HEIGHT / 2),
 				},
 				nodes.map((n) => n.position),
 			);
+			next = { nodes: [...nodes, toFlowNode(newDocNode(item, id), position)], edges };
+		}
+		const position = next.nodes.find((n) => n.id === id)?.position ?? { x: 0, y: 0 };
+		if (item.kind === "async" && item.subflow !== undefined) {
+			// 勾选了「同时新建子流程」（#187）：子流程入口和调度连线一起加，同一步撤销。
+			const others = next.nodes.filter((n) => n.id !== id);
+			const subflow = companionSubflow({ id, position }, item.subflow, others);
+			next = {
+				nodes: [...next.nodes, subflow.node],
+				edges: [...next.edges, toFlowEdge(subflow.edge)],
+			};
 		}
 		history.checkpoint();
 		if (item.kind === "package" && meta.packages[item.package] !== item.version) {
 			setMeta((m) => ({ ...m, packages: { ...m.packages, [item.package]: item.version } }));
 		}
-		// 勾选了「同时新建子流程」的异步任务节点：子流程入口和调度连线一起加，同一步撤销（#187）。
-		const subflow =
-			item.kind === "async" && item.subflow !== undefined
-				? companionSubflow({ id, position }, item.subflow, nodes)
-				: undefined;
-		setNodes((ns) => [
-			...ns,
-			{ id, type: item.kind, position, data: { node: newDocNode(item, id) }, deletable: true },
-			...(subflow ? [subflow.node] : []),
-		]);
-		const added = [
-			...(source ? [toFlowEdge({ from: source.id, to: id, kind: "chain" })] : []),
-			...(request.dispatch
-				? [toFlowEdge({ from: request.dispatch, to: id, kind: "dispatch" })]
-				: []),
-			...(subflow ? [toFlowEdge(subflow.edge)] : []),
-		];
-		if (added.length > 0) setEdges((es) => [...es, ...added]);
+		setNodes(next.nodes);
+		setEdges(next.edges);
 		setSelectedId(id);
 		requestAnimationFrame(() => {
 			// 接在来源节点右侧的新节点可能在视口外：移到中央。
-			if (source && !request.position) {
+			if (request.after && !request.position) {
 				void flow.setCenter(position.x + NODE_WIDTH / 2, position.y + NODE_HEIGHT / 2, {
 					zoom: flow.getZoom(),
 					duration: 200,
@@ -412,11 +438,12 @@ function Editor({
 		});
 	};
 	if (running && adding) setAdding(null);
-	/** 打开添加节点菜单；`after` 是来源节点，它已有出线时提示原因、不打开。 */
+	/** 打开添加节点菜单；`after` 是来源节点，它不是链尾时新节点插在它和下一个节点之间。 */
 	const openAddMenu = (request: AddRequest = {}) => {
-		const problem = request.after ? appendProblem(docRef.current, request.after) : null;
-		if (problem) notify.warning(problem);
-		else setAdding(request);
+		const next = request.after
+			? nodeConnections(docRef.current, request.after).out[0]?.to
+			: undefined;
+		setAdding(next === undefined ? request : { ...request, before: next });
 	};
 	// 运行状态下画布只读：添加、撤销 / 重做、整理布局都不生效（工具条上也不显示）。
 	useShortcut("canvas-add", () => openAddMenu(), !running);
@@ -542,19 +569,40 @@ function Editor({
 					}}
 					onEnter={focusInspector}
 					inspector={{ open: inspectorOpen, onToggle: () => setInspectorOpen((o) => !o) }}
-					menu={
-						running
-							? undefined
-							: (target) => (
-									<PaneMenu
-										canUndo={history.canUndo}
-										canRedo={history.canRedo}
-										onAdd={() => openAddMenu({ client: target.client, position: target.position })}
-										onTidy={tidy}
-										onUndo={history.undo}
-										onRedo={history.redo}
-									/>
-								)
+					onDeleteNode={running ? undefined : deleteNode}
+					menu={(target) =>
+						target.kind === "node" ? (
+							<NodeMenu
+								node={target.node}
+								outputs={
+									running && readyRun?.doc
+										? declaredOutputs(readyRun.doc, target.node as OrchestrationNode, runCatalog)
+										: declaredOutputs(doc, target.node as OrchestrationNode, catalog)
+								}
+								edit={
+									running
+										? undefined
+										: {
+												connections: {
+													in: nodeConnections(doc, target.id).in.length,
+													out: nodeConnections(doc, target.id).out.length,
+												},
+												onAddAfter: () => openAddMenu({ after: target.id }),
+												onDisconnect: (side) => applyEdit(disconnectNode(doc, target.id, side)),
+												onDelete: () => deleteNode(target.id),
+											}
+								}
+							/>
+						) : running ? undefined : (
+							<PaneMenu
+								canUndo={history.canUndo}
+								canRedo={history.canRedo}
+								onAdd={() => openAddMenu({ client: target.client, position: target.position })}
+								onTidy={tidy}
+								onUndo={history.undo}
+								onRedo={history.redo}
+							/>
+						)
 					}
 					dockStart={
 						running ? undefined : (
