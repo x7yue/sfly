@@ -10,6 +10,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+from packaging.version import Version
+
 if sys.version_info >= (3, 11):
     import tomllib
 else:
@@ -20,6 +22,11 @@ SCRIPT = REPO / "scripts" / "release" / "std.sh"
 PYPROJECT = tomllib.loads((REPO / "std" / "pyproject.toml").read_text(encoding="utf-8"))
 VERSION: str = PYPROJECT["project"]["version"]
 REQUIRES_SDK: str = PYPROJECT["tool"]["sfly"]["requires-sdk"]
+REQUIRES_AGENT: str = PYPROJECT["tool"]["sfly"]["requires-agent"]
+
+
+def minimum(requirement: str) -> Version:
+    return Version(requirement.removeprefix(">="))
 
 
 def pack(tag: str, out: Path) -> subprocess.CompletedProcess[str]:
@@ -43,8 +50,12 @@ def test_pack_produces_the_package_checksums_and_release_notes(tmp_path: Path) -
         nodes = json.loads(zf.read("sfly-package.json"))["nodes"]
     notes = (tmp_path / "notes.md").read_text(encoding="utf-8")
     assert f"sfly-std {VERSION}" in notes
-    # 发布说明写明需要的最低 Agent 版本（即 requires-sdk）。
-    assert f"最低 Agent 版本：{REQUIRES_SDK.removeprefix('>=')}" in notes
+    # 发布说明写明需要的最低 Agent 版本：requires-sdk（SDK 运行时随 Agent 安装）和 requires-agent
+    # 里较高的那个，并列出这两项要求。
+    lowest = max(minimum(REQUIRES_SDK), minimum(REQUIRES_AGENT))
+    assert f"最低 Agent 版本：{lowest}**" in notes
+    assert f"SDK 版本要求 `{REQUIRES_SDK}`" in notes
+    assert f"Agent 版本要求 `{REQUIRES_AGENT}`" in notes
     for node in nodes:
         assert f"`{node['name']}`" in notes
         assert node["title"] in notes

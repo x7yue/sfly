@@ -38,6 +38,9 @@ LAST_SDK_WITHOUT_LABELS = Version("0.0.4")
 #: 最后一个没有 ctx.artifacts.download 的已发布平台版本（v0.1.3）；
 #: 下载接口（#193）从它的下一个版本起才有。
 LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD = Version("0.1.3")
+#: 最后一个没有 Agent 能力 files（files.list、files.read、files.write）的已发布平台版本（v0.1.3）；
+#: 它们（#198–#200，ADR 0019）和 SDK 的 ctx.agent() 从它的下一个版本起才有。
+LAST_AGENT_WITHOUT_FILE_CAPABILITIES = Version("0.1.3")
 
 
 @pytest.fixture(scope="module")
@@ -67,6 +70,33 @@ def test_declares_the_minimum_sdk_version_explicitly(metadata: dict[str, Any]) -
     assert metadata["requires_sdk"] == declared
 
 
+def test_declares_the_minimum_agent_version_explicitly(metadata: dict[str, Any]) -> None:
+    # pull_files 用 Agent 能力访问另一台 Agent（ADR 0019）：requires-agent 同时约束节点所在的 Agent
+    # 和「Agent」类型的参数选的 Agent，不满足时触发前预检就阻断，不会运行到一半才失败。
+    pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = pyproject.get("tool", {}).get("sfly", {}).get("requires-agent")
+
+    assert declared, "std/pyproject.toml 必须声明 [tool.sfly] requires-agent"
+    assert metadata["requires_agent"] == declared
+
+
+def test_requires_an_agent_with_the_file_capabilities() -> None:
+    # pull_files 列出、下载、删除另一台 Agent 上的文件：两台 Agent 都要有能力 files、files.read、
+    # files.write。和 requires-sdk 一样，这些能力还没随平台版本发布时只能声明当前版本能满足的范围
+    # （否则同版本的控制面在预检时阻断全部标准节点）；仓库版本号一旦越过
+    # LAST_AGENT_WITHOUT_FILE_CAPABILITIES，requires-agent 必须同步排除它。
+    pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = SpecifierSet(pyproject["tool"]["sfly"]["requires-agent"])
+    version = Version(SDK_VERSION)  # 平台版本：SDK、Agent、控制面同一个版本号
+
+    assert version in declared, f"当前版本 {version} 不满足 requires-agent {declared}"
+    if version > LAST_AGENT_WITHOUT_FILE_CAPABILITIES:
+        assert LAST_AGENT_WITHOUT_FILE_CAPABILITIES not in declared, (
+            f"版本号已是 {version}：std/pyproject.toml 的 requires-agent 要调成 >={version}"
+            "（Agent 能力 files）"
+        )
+
+
 def test_requires_an_sdk_that_supports_metric_labels() -> None:
     # system_monitor、process_monitor 按网卡、磁盘、进程上报带标签的指标：
     # 不支持标签的旧 Agent 会丢掉标签，把各个对象的点混进同一个序列。
@@ -86,6 +116,7 @@ def test_requires_an_sdk_that_supports_metric_labels() -> None:
 def test_requires_an_sdk_that_can_download_artifacts() -> None:
     # 0.3.0 起 shell 的 stdout_file / stderr_file、http_request 的 body_file 是给后续节点用
     # ctx.artifacts.download 下载的（#181）：声明的最低 SDK 版本是第一个带下载接口的平台版本。
+    # pull_files 用到的 ctx.agent()（#198）也从同一个版本起才有。
     # 和指标标签一样，下载接口还没随平台版本发布时只能声明当前版本能满足的范围；
     # 仓库版本号一旦越过 LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD，requires-sdk 必须同步排除它，
     # sfly-std 0.3.0 在那个平台版本发布之后再发布（docs/agents/branching-and-release.md）。

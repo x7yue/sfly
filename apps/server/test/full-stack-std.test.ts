@@ -3,7 +3,7 @@
 // 新增标准节点的全栈场景加在这个文件里（各自一个 it）。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi, metricsApi } from "@sfly/schema";
@@ -24,6 +24,8 @@ import { publishArchive, publishTestPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const AGENT = "std-agent";
+
+const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
 describe("全栈：标准节点包 sfly-std", () => {
 	let dir: string;
@@ -527,6 +529,62 @@ describe("全栈：标准节点包 sfly-std", () => {
 		} finally {
 			await other.close();
 			await otherVenv.remove();
+		}
+	}, 300_000);
+
+	it("pull_files 把另一台 Agent 上匹配的文件拉到本地目录，内容一致，拉完后删除源文件", async () => {
+		// 来源是另一台真实 Agent（ADR 0019）：std-agent 上的 pull_files 用 Agent 能力直接连到它，数据不经过控制面。
+		// 两台 Agent 在同一台机器上，所以「std-source 上的文件」就是这里建的临时文件，绝对路径相同。
+		const SOURCE = "std-source";
+		const sourceVenv = await createStubVenv({ sdkOnly: true });
+		const source = await startRealAgent({
+			grpcUrl: cp.grpcUrl,
+			name: SOURCE,
+			venv: sourceVenv.path,
+		});
+		try {
+			const logs = join(dir, "pull-source");
+			const local = join(dir, "pull-local");
+			await mkdir(logs, { recursive: true });
+			// 轮转下来的旧日志（几 MB，分多块传输）和正在写入的 app.log（不匹配通配符，不拉取也不删除）。
+			const rotated = {
+				"app.log.1": Buffer.alloc(3 * 1024 * 1024 + 7, "第一轮的日志\n"),
+				"app.log.2": Buffer.from("第二轮的日志\n"),
+			};
+			for (const [name, data] of Object.entries(rotated)) await writeFile(join(logs, name), data);
+			await writeFile(join(logs, "app.log"), "还在写\n");
+
+			const { api, runId } = await runChain([
+				{
+					id: "pull",
+					node: "pull_files",
+					inputs: {
+						source: SOURCE,
+						directory: logs,
+						pattern: "app.log.*",
+						local_dir: local,
+						delete_source: true,
+					},
+				},
+			]);
+
+			const pull = await api.node(runId, "pull");
+			expect(pull.status, JSON.stringify(pull.error)).toBe("success");
+			expect(pull.agent).toBe(AGENT);
+			expect(pull.outputs).toEqual({
+				files: [join(local, "app.log.1"), join(local, "app.log.2")],
+				count: 2,
+				total_bytes: 3 * 1024 * 1024 + 7 + Buffer.byteLength("第二轮的日志\n"),
+			});
+			// 目标目录里只有完整的文件（临时文件已改名），内容与源文件一致。
+			expect((await readdir(local)).sort()).toEqual(["app.log.1", "app.log.2"]);
+			for (const [name, data] of Object.entries(rotated)) {
+				expect(sha256(await readFile(join(local, name))), name).toBe(sha256(data));
+			}
+			expect(await readdir(logs)).toEqual(["app.log"]);
+		} finally {
+			await source.close();
+			await sourceVenv.remove();
 		}
 	}, 300_000);
 

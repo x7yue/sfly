@@ -38,6 +38,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 持续运行的节点（`system_monitor`、`process_monitor`、`follow_log`）都有 `duration`：设置时（必须大于 0）到期后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消（用法见下文「压测期间监控被测服务」）。被停止时节点记为「已停止」，不算失败，已经上报的指标、日志和产物都保留。
 - 读日志文件的节点（`wait_log_line`、`follow_log`）用 `read_from` 指定从文件末尾还是开头读起。它没有叫 `from`：参数名就是 Python 函数的参数名，`from` 是 Python 关键字，不能用作参数名。
 - 进程、端口、文件类的节点作用于执行它的 Agent 所在的机器：启动进程的节点和后面停止、监控、检查它的节点要选同一个 Agent。
+- 跨 Agent 的节点（`pull_files`）用 Agent 能力（见 [开发节点](sdk-reference.md) 的「`ctx.agent()`：Agent 能力」）访问参数 `source` 选的另一台 Agent：两台 Agent 直接连接，数据不经过控制面，两台之间要能连通（防火墙放行那台 Agent 的端口，默认 50052）。这些接口没有认证，只应在内网使用。两台 Agent 都要是 0.2.0 及以上，版本更旧时触发前的预检就会阻断，写明是哪台 Agent。
 
 ## 节点一览
 
@@ -53,6 +54,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 等待 | `wait_log_line` | 等待日志行 | 等日志文件里出现匹配的行，输出这一行 |
 | 日志 | `follow_log` | 跟随日志 | 把日志文件实时转为任务日志，出现匹配的错误行时失败 |
 | 产物 | `collect_artifacts` | 收集产物 | 按通配符把文件保存为产物，可以打成一个 zip |
+| 跨 Agent | `pull_files` | 拉取文件 | 把另一台 Agent 上匹配通配符的文件一次性拉到本地目录，可以拉完后删除源文件 |
 | 接口 | `http_request` | HTTP 请求 | 发请求并检查状态码和响应 JSON，可以重试直到满足 |
 | 断言 | `assert` | 断言 | 对上游节点的输出逐条断言 |
 | 断言 | `file_assert` | 文件断言 | 检查一次文件是否存在、大小、行数和内容 |
@@ -465,6 +467,50 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 ```
 
 运行页面上会出现 `report.html`、`logs/app.log` 这样的产物。文件很多时加上 `"archive": true` 打成一个 zip 下载；收集可能不存在的崩溃转储时加上 `"required": false`。
+
+## `pull_files`：拉取文件
+
+把另一台 Agent 上某个目录下文件名匹配通配符的文件一次性下载到执行这个节点的 Agent 所在机器上的本地目录，可以拉完后删除源文件。
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `source` | 必填 | 来源 Agent：文件在哪一台 Agent 上（「Agent」类型的参数，检查器里从已注册的 Agent 中选） |
+| `directory` | 必填 | 来源 Agent 所在机器上的目录，绝对路径 |
+| `local_dir` | 必填 | 拉到哪个本地目录：执行这个节点的 Agent 所在机器上的路径，相对路径相对于任务工作目录；不存在时自动创建 |
+| `pattern` | `*` | 文件名的通配符，只匹配文件名（不含目录），例如 `app.log.*` |
+| `recursive` | `false` | 为 `true` 时也拉取子目录里匹配的文件，在 `local_dir` 下保留子目录结构 |
+| `delete_source` | `false` | 为 `true` 时每拉完一个文件就删除来源 Agent 上的这个源文件 |
+
+| 输出 | 说明 |
+|---|---|
+| `files` | 拉下来的文件的本地绝对路径，按拉取的顺序；最多列出 1000 个（序列化后最多 256 KiB），更多时只列出前面的，以 `count` 为准 |
+| `count` | 拉下来的文件数 |
+| `total_bytes` | 拉下来的文件的总字节数 |
+
+- 通配符的规则与 SDK 的 `files.list` 相同：`*` 任意字符串（也匹配以 `.` 开头的名字）、`?` 任意一个字符、`[a-z]` / `[!0-9]` 字符集合，区分大小写。只拉取普通文件（指向普通文件的符号链接也算），不进入指向目录的符号链接。
+- 先列出全部匹配的文件，再按名称顺序逐个下载（`recursive` 时先拉目录里的文件，再按名称依次进入子目录）。数据由执行节点的 Agent 从来源 Agent 直接读出、写到本地，不经过控制面和节点进程；连接中断时自动从断点续传。
+- 每个文件先写到同一目录里的临时文件（`.<文件名>.sfly-<随机>.tmp`），下载完成、核对大小后才改名：`local_dir` 里出现的都是完整的文件，同名的已有文件被替换。拉取失败或被取消时删除临时文件，不留下半截文件；已经拉完的文件保留。
+- 没有匹配的文件时成功结束，`count` 为 0。`directory` 不存在、不是目录或没有权限时节点失败。
+- 某个文件下载失败时节点立即失败，错误信息写明是哪个文件；之前拉完的文件留在 `local_dir` 里，之后的不再拉取。只拉已经不再写入的文件：文件在下载期间被改写、截短或大小变了（还在写入）时下载失败。列出之后、下载之前被删除的文件跳过，写一条警告日志。
+- `delete_source`：只删除下载成功的文件，下载失败、被跳过、还没轮到的文件都不删。删除前再查看一次源文件，它在下载之后被改动或替换了（例如日志轮转后路径上换成了新文件）时不删，写一条警告日志。
+- 进度按字节上报（已拉取的字节数 / 匹配的文件的总字节数），说明里写明是第几个文件，在运行页面上查看。
+- 被取消或超时时，正在进行的下载立即结束，节点记为「已取消」。
+- `local_dir` 在执行这个节点的 Agent 所在机器上：后面处理这些文件的节点要选同一个 Agent，引用输出 `files` 或直接使用 `local_dir`。
+- 从 sfly-std 0.3.0 起有。
+
+例：压测在 `load-01` 上运行，日志轮转后的旧文件是 `/srv/app/logs/app.log.1`、`app.log.2`……把它们拉到执行这个节点的 Agent 上，拉完后删除，腾出 `load-01` 的磁盘：
+
+```json
+{
+  "source": "load-01",
+  "directory": "/srv/app/logs",
+  "pattern": "app.log.*",
+  "local_dir": "/data/logs/load-01",
+  "delete_source": true
+}
+```
+
+正在写入的 `app.log` 不匹配 `app.log.*`，不会被拉取。
 
 ## `http_request`：HTTP 请求
 
