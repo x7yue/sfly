@@ -422,6 +422,7 @@ export function FlowCanvas({
 					inspector={inspector}
 					start={dockStart}
 					tools={dockTools}
+					clearRight={area.right}
 				/>
 				<ContextMenu
 					label="画布菜单"
