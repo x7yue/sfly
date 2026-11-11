@@ -10,7 +10,8 @@ SDK 把调用交给自己所在的 Agent（本地 socket，`channel.py`），由
 - `errors.py`：调用失败的异常；
 - `channel.py`：经本地 socket 调用自己所在的 Agent；
 - `local.py`：本地调试时的 Agent（名称映射到本地目录）；
-- `files.py`、`files_list.py`：能力 files。
+- `files.py`、`files_list.py`：能力 files；
+- `exec.py`：能力 exec（执行命令）。
 
 加一项能力：新建模块写它的类（构造时拿到 `Agent`，用 `Agent._call` 调用、
 用 `Agent._local` 判断是不是本地调试），在 `Agent.__init__` 里挂上。
@@ -32,6 +33,7 @@ from sfly.capabilities.errors import (
     AgentUnreachable,
     AgentUnsupported,
 )
+from sfly.capabilities.exec import Exec
 from sfly.capabilities.files import FileId, FileInfo, Files
 
 __all__ = [
@@ -43,6 +45,7 @@ __all__ = [
     "AgentTimeout",
     "AgentUnreachable",
     "AgentUnsupported",
+    "Exec",
     "FileId",
     "FileInfo",
     "Files",
@@ -53,7 +56,8 @@ class Agent:
     """一台 Agent 的能力：`ctx.agent()`（自己所在的 Agent）或 `ctx.agent(名称)`（另一台）。
 
     - `name`：Agent 名称；自己所在的 Agent 为 None；
-    - `files`：文件（见 `Files`）。
+    - `files`：文件（见 `Files`）；
+    - `exec`：执行命令（见 `Exec`）。
     """
 
     def __init__(
@@ -70,6 +74,7 @@ class Agent:
         self._mapping = local_mapping
         self._referenced = referenced
         self.files = Files(self)
+        self.exec = Exec(self)
 
     def __repr__(self) -> str:
         return f"Agent({self.name!r})" if self.name is not None else "Agent(自己所在的 Agent)"
@@ -82,10 +87,20 @@ class Agent:
 
         return LocalAgent.resolve(self.name, self._mapping or {}, self._referenced)
 
-    def _call(self, method: str, args: dict[str, Any], timeout: float | None) -> Any:
-        """经自己所在的 Agent 发起调用，返回 `channel.Call`（用 `with` 管理）。"""
+    def _call(
+        self,
+        method: str,
+        args: dict[str, Any],
+        timeout: float | None,
+        *,
+        margin: float | None = None,
+    ) -> Any:
+        """经自己所在的 Agent 发起调用，返回 `channel.Call`（用 `with` 管理）。
+        `margin` 见 `channel.AgentSocket.call`，不给时用默认值。"""
         self._check_timeout(timeout)
-        return self._socket.call(self.name, method, args, timeout)
+        if margin is None:
+            return self._socket.call(self.name, method, args, timeout)
+        return self._socket.call(self.name, method, args, timeout, margin=margin)
 
     @staticmethod
     def _check_timeout(timeout: float | None) -> None:

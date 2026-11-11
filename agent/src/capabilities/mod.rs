@@ -12,8 +12,11 @@
 //!
 //! 加一项能力：新建 `capabilities/<能力>.rs` 导出一个 `MODULE`，在下面加 `pub mod` 和 [`MODULES`] 里的一项。
 
+pub mod exec;
 pub mod file_write;
 pub mod files;
+
+use std::time::Duration;
 
 use crate::calls::Method;
 use crate::proto;
@@ -32,6 +35,8 @@ pub struct Capability {
 pub struct Host {
     /// Agent 名称。
     pub name: String,
+    /// 结束进程树时从 SIGTERM 到 SIGKILL 的宽限期（[`crate::Config::terminate_grace`]，和结束任务时相同）。
+    pub terminate_grace: Duration,
 }
 
 /// 一项能力的全部组成部分。
@@ -44,7 +49,7 @@ pub struct Module {
 }
 
 /// 这个版本的 Agent 提供的能力。
-pub const MODULES: &[Module] = &[files::MODULE, file_write::MODULE];
+pub const MODULES: &[Module] = &[files::MODULE, file_write::MODULE, exec::MODULE];
 
 /// 上报用的能力列表（Hello.capabilities、DescribeResponse.capabilities）。
 pub fn reported() -> Vec<proto::Capability> {

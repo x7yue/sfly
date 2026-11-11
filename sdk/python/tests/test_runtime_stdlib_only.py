@@ -12,6 +12,7 @@ RUNTIME_MODULES = [
     "sfly.capabilities",
     "sfly.capabilities.channel",
     "sfly.capabilities.errors",
+    "sfly.capabilities.exec",
     "sfly.capabilities.files",
     "sfly.capabilities.files_list",
     "sfly.capabilities.files_write",
