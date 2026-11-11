@@ -3,7 +3,7 @@
 # 包的结构（各共用模块）与新增节点的步骤写在 src/sfly_std/__init__.py 的模块说明里。
 [project]
 name = "sfly-std"
-version = "0.2.0"
+version = "0.3.0"
 description = "sfly 标准节点包：Shell 命令、后台进程、监控、等待、日志、产物、HTTP、断言"
 requires-python = ">=3.10"
 # 和用户的节点包装在同一个共享 venv 里（ADR 0002）：只用常见的库，只写宽松的下限。
@@ -17,6 +17,9 @@ dependencies = [
 # start_process / stop_process 用到 SDK 0.0.4 才有的 ctx.task、ctx.procs_dir（#90）。
 # 0.2.0 起 system_monitor、process_monitor 用到指标标签（#78），平台 0.1.0 起才支持；
 # sfly-std 0.2.0 在平台 0.1.0 发布之后再发布。std/tests/test_package.py 检查这里排除了不支持标签的 SDK。
+# 0.3.0 起 shell、http_request 输出的产物引用给后续节点用 ctx.artifacts.download 下载（#181），
+# 下载接口从平台 0.1.3 的下一个版本起才有：那个版本的发版 PR 改版本号时把这里调成 >=<那个版本>
+# （std/tests/test_package.py 会要求这样做），sfly-std 0.3.0 在它发布之后再发布。
 [tool.sfly]
 requires-sdk = ">=0.1.0"
 
