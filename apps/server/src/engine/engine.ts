@@ -144,6 +144,16 @@ const endClockOffset = (offset: ClockOffset | undefined) =>
 
 const onAgent = (task: TaskRow) => (ON_AGENT as readonly string[]).includes(task.status);
 
+/**
+ * 错误最里层原因的说明。查询出错时外层（drizzle）的说明带着整条 SQL 和参数（可能是 1 MB 的输出），
+ * 最里层才是数据库给的原因。
+ */
+function rootMessage(error: unknown): string {
+	let cause = error;
+	while (cause instanceof Error && cause.cause !== undefined) cause = cause.cause;
+	return cause instanceof Error ? cause.message : String(cause);
+}
+
 /** 运行是否已被取消；强制取消时 always 节点也不再执行（§3.4）。 */
 const cancelling = (run: RunRow) => run.cancelRequestedAt !== null;
 const forced = (run: RunRow) => run.cancelForcedAt !== null;
@@ -597,7 +607,21 @@ export class Engine implements AgentSessionHandler {
 		if (message.body.case === "result") {
 			const result = message.body.value;
 			const offset = conn.clock.offsetAt(result);
-			await this.#event((step) => this.#applyResult(step, conn.name, result, offset));
+			try {
+				await this.#event((step) => this.#applyResult(step, conn.name, result, offset));
+			} catch (error) {
+				// 结果写不进数据库（例如数据库拒绝其中的内容）：这次尝试以 node_error 结束（#207）。否则 Agent 收不到 Ack，
+				// 重连后重发同一条结果，任务一直停在运行中。连这一步也失败时（数据库不可用）照常抛出，由 Agent 重连后重发。
+				await this.#event((step) =>
+					this.#rejectResult(
+						step,
+						conn.name,
+						result,
+						`控制面无法保存任务结果：${rootMessage(error)}`,
+						offset,
+					),
+				);
+			}
 			conn.send(
 				create(ServerMessageSchema, {
 					body: { case: "ack", value: { taskId: result.taskId, attempt: result.attempt } },
@@ -1147,21 +1171,8 @@ export class Engine implements AgentSessionHandler {
 		result: TaskResult,
 		endOffset?: ClockOffset,
 	): Promise<void> {
-		if (!isUuid(result.taskId)) return;
-		const [task] = await step.tx
-			.select()
-			.from(tasks)
-			.where(eq(tasks.id, result.taskId))
-			.for("update");
-		if (
-			!task ||
-			task.attempt !== result.attempt ||
-			!onAgent(task) ||
-			task.agentName !== agentName
-		) {
-			return;
-		}
-		step.touchedAgents.add(agentName);
+		const task = await this.#resultTask(step, agentName, result);
+		if (!task) return;
 
 		if (result.status !== ProtoTaskStatus.SUCCESS) {
 			const kind = ERROR_KINDS[result.error?.kind ?? ProtoErrorKind.UNSPECIFIED] ?? "node_error";
@@ -1194,6 +1205,48 @@ export class Engine implements AgentSessionHandler {
 			.where(eq(tasks.id, task.id));
 		const { run, chain, index } = await this.#locate(step.tx, task);
 		await this.#advance(step, run, chain, index + 1);
+	}
+
+	/**
+	 * 结果对应的任务：只接受当前正在运行、且派发给该 Agent 的那次尝试（锁住这一行），否则为 undefined。
+	 */
+	async #resultTask(
+		step: Step,
+		agentName: string,
+		result: TaskResult,
+	): Promise<TaskRow | undefined> {
+		if (!isUuid(result.taskId)) return undefined;
+		const [task] = await step.tx
+			.select()
+			.from(tasks)
+			.where(eq(tasks.id, result.taskId))
+			.for("update");
+		if (
+			!task ||
+			task.attempt !== result.attempt ||
+			!onAgent(task) ||
+			task.agentName !== agentName
+		) {
+			return undefined;
+		}
+		step.touchedAgents.add(agentName);
+		return task;
+	}
+
+	/** 结果写不进数据库时（{@link Engine.onMessage}）：这次尝试以 node_error 失败，错误信息写明原因。 */
+	async #rejectResult(
+		step: Step,
+		agentName: string,
+		result: TaskResult,
+		message: string,
+		endOffset?: ClockOffset,
+	): Promise<void> {
+		const task = await this.#resultTask(step, agentName, result);
+		if (!task) return;
+		await this.#failTask(step, task, "node_error", message, {
+			cancelled: result.status === ProtoTaskStatus.CANCELLED,
+			endOffset,
+		});
 	}
 
 	/**

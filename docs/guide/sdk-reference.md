@@ -79,6 +79,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 - 用 TypedDict 返回类型声明输出键和类型；或用 `@node(outputs=...)` 声明。
 - 返回值必须是 dict，序列化为 JSON 后不超过 1 MB；返回 `None` 视为空对象。不满足时任务失败。
 - 后续节点可以引用输出里的值；大块数据存成产物，输出里放产物引用。
+- 输出里的 NUL 字符（`\x00`）保存时换成 U+FFFD（�），后续节点引用到的是替换后的值；错误信息、进度说明和指标标签也是这样（docs/SEMANTICS.md §2.5）。二进制内容存成产物。
 
 ## 失败
 

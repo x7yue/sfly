@@ -260,6 +260,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		(httpHost === "0.0.0.0" || httpHost === "::" ? `http://${hostname()}:${httpPort}` : httpUrl)
 	).replace(/\/+$/, "");
 
+	const sessionError = (error: unknown) => {
+		if (logger) console.error("agent session error:", error);
+	};
 	let gateway: Awaited<ReturnType<typeof startAgentGateway>>;
 	try {
 		gateway = await startAgentGateway({
@@ -272,15 +275,16 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 				async onMessage(conn, message) {
 					if (metrics.handles(message)) return metrics.onMessage(conn, message);
 					if (logs.handles(message)) return logs.onMessage(conn, message);
-					// 任务结束：先写入它的指标（Agent 在结果之前发完最后的点）。
-					if (message.body.case === "result") await metrics.flushTask(message.body.value.taskId);
+					// 任务结束：先写入它的指标（Agent 在结果之前发完最后的点）。写不进去时记下来、照常处理结果：
+					// 没写入的点留在内存里，由周期写入重试有限次（src/metrics/task-metrics.ts）。
+					if (message.body.case === "result") {
+						await metrics.flushTask(message.body.value.taskId).catch(sessionError);
+					}
 					return engine.onMessage(conn, limitOutputs(message));
 				},
 			},
 			agentToken: options.agentToken,
-			onError: (error) => {
-				if (logger) console.error("agent session error:", error);
-			},
+			onError: sessionError,
 		});
 	} catch (error) {
 		await api.close();
