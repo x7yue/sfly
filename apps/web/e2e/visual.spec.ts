@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import {
@@ -539,12 +540,15 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-inspector.png");
 	});
 
-	test("引用补全", async ({ page }) => {
-		await nodeCard(page, "ping").click();
-		const host = page.getByRole("combobox", { name: "输入 host" });
-		await host.fill("");
-		await host.focus();
+	test("引用补全与引用高亮", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		const url = page.getByRole("combobox", { name: "输入 url" });
+		await url.fill(
+			"curl -H 'X-Token: ${{ params.api_token }}' https://example.test/${{ params.biz_date }}/",
+		);
+		await page.keyboard.type("$");
 		await idle(page);
+		await expect(url.locator("[data-reference]")).toHaveCount(2);
 		await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
 		await expect(page).toHaveScreenshot("editor-references.png");
 	});

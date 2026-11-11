@@ -3,7 +3,7 @@ import { referenceText } from "@sfly/orchestration";
 import { cn } from "cn";
 import { type ReactNode, useId, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
-
+import { ReferenceList } from "./ReferenceList";
 import {
 	applyCompletion,
 	type CompletionTrigger,
@@ -207,51 +207,15 @@ export function ReferenceTextInput({
 				onBlur={() => setOpen(null)}
 			/>
 			{open && (
-				<div
+				<ReferenceList
 					id={listId}
-					role="listbox"
-					aria-label="可引用的值"
-					className="absolute top-8.5 right-0 left-0 z-20 max-h-65 overflow-auto rounded-lg border border-border-strong bg-raised p-1 shadow-pop"
-				>
-					{ordered.length === 0 ? (
-						<p className="m-0 px-2 py-1.5 text-xs text-fg-3">
-							{choices.length === 0 ? "本链上没有可引用的参数或前序节点的输出" : "没有匹配的引用"}
-						</p>
-					) : (
-						groups.map(
-							({ title, choices: items }) =>
-								items.length > 0 && (
-									// biome-ignore lint/a11y/useSemanticElements: listbox 里的分组用 role=group
-									<div key={title} role="group" aria-label={title}>
-										<div className="px-2 pt-1.5 pb-0.75 text-2xs text-fg-3">{title}</div>
-										{items.map((c) => {
-											const index = ordered.indexOf(c);
-											return (
-												<div
-													key={c.expression}
-													role="option"
-													tabIndex={-1}
-													aria-selected={index === active}
-													className={cn(
-														"flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-raised-2",
-														index === active && "bg-raised-2",
-													)}
-													onMouseDown={(e) => e.preventDefault()}
-													onClick={() => choose(c)}
-													onKeyDown={() => {}}
-												>
-													<span className="min-w-0 flex-1 truncate font-mono" title={c.expression}>
-														{c.expression}
-													</span>
-													<span className="flex-none text-2xs text-fg-3">{c.detail}</span>
-												</div>
-											);
-										})}
-									</div>
-								),
-						)
-					)}
-				</div>
+					className="top-8.5"
+					choices={choices}
+					groups={groups}
+					ordered={ordered}
+					active={active}
+					onChoose={choose}
+				/>
 			)}
 		</div>
 	);

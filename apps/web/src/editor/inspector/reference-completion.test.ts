@@ -6,7 +6,9 @@ import {
 	applyCompletion,
 	completionGroups,
 	completionTrigger,
+	inlineTrigger,
 	referenceChoices,
+	referenceRanges,
 } from "./reference-completion";
 
 /** 主链 entry → fetch（http_check）→ wait（Sleep）→ ping；ping 可以引用入口参数与前面节点的输出。 */
@@ -117,5 +119,29 @@ describe("引用补全", () => {
 				true,
 			),
 		).toEqual({ value: "${{ nodes.fetch.outputs.status }}", caret: 33 });
+	});
+
+	it("合并后的输入框：输入 $ 就弹出补全，$、${、${{ 后面已经输入的部分是查询", () => {
+		expect(inlineTrigger("http://")).toBeNull();
+		expect(inlineTrigger("http://$")).toEqual({ start: 7, query: "", braced: false });
+		expect(inlineTrigger("http://$par")).toEqual({ start: 7, query: "par", braced: false });
+		expect(inlineTrigger("http://${")).toEqual({ start: 7, query: "", braced: true });
+		expect(inlineTrigger("http://${{ nodes.f")).toEqual({
+			start: 7,
+			query: "nodes.f",
+			braced: true,
+		});
+		// 已经闭合的引用后面不弹出；$ 后面隔了空格的文字不算查询。
+		expect(inlineTrigger("${{ params.url }} x")).toBeNull();
+		expect(inlineTrigger("cost $ per")).toBeNull();
+	});
+
+	it("找出文本里每个引用的范围（高亮与整块删除用）", () => {
+		expect(referenceRanges("plain $ text ${{ open")).toEqual([]);
+		expect(referenceRanges("${{ params.url }}")).toEqual([{ from: 0, to: 17 }]);
+		expect(referenceRanges("a ${{params.a}}/${{ nodes.f.outputs.s }}\nb")).toEqual([
+			{ from: 2, to: 15 },
+			{ from: 16, to: 40 },
+		]);
 	});
 });
