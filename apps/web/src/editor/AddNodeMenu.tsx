@@ -19,19 +19,18 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { type AddItem, BUILTIN_ITEMS, type PackageGroup } from "./add-node";
 
 /**
- * 打开添加节点菜单的方式：工具条「＋」、Tab 或 /（接在当前链的链尾），
- * 或从链尾端口拖线到空白处（`drop`：接在拖出连线的节点之后，放在松开鼠标的位置）。
+ * 一次添加节点的请求。添加分两种（#183）：
+ * - 有来源（`after`）：从端口拖线到空白处、焦点在节点上按 Tab——新节点接在来源节点之后；
+ * - 没有来源：工具条「＋」、`/`、空白处右键「添加节点」——新节点不连线，成为游离节点。
  */
-export type AddRequest =
-	| { via: "menu" }
-	| {
-			via: "drop";
-			tail: string;
-			/** 松开鼠标的屏幕坐标（菜单出现在这里）。 */
-			client: { x: number; y: number };
-			/** 新节点在画布上的位置。 */
-			position: { x: number; y: number };
-	  };
+export interface AddRequest {
+	/** 来源节点：新节点接在它之后。 */
+	after?: string;
+	/** 菜单出现的屏幕坐标（松开鼠标、右键的位置）；不给时在「＋」按钮上方。 */
+	client?: { x: number; y: number };
+	/** 新节点在画布上的位置；不给时放在来源节点右侧，没有来源则放在视口中心。 */
+	position?: { x: number; y: number };
+}
 
 function KindChip({ kind }: { kind: AddItem["kind"] }) {
 	const Icon = KIND_META[kind].icon;
@@ -44,21 +43,18 @@ function KindChip({ kind }: { kind: AddItem["kind"] }) {
 
 /**
  * 添加节点菜单（原型 #/editor 的 addMenu）：可搜索；内置节点与各节点包的节点类型分组列出。
- * 「＋」按钮本身放在工具条最左侧（FlowCanvas 的 dockStart）；拖线到空白处时菜单出现在松开鼠标的位置，
- * 不列子流程入口（子流程入口只能由调度连线触发，不能接在链上）。
+ * 「＋」按钮本身放在工具条最左侧（FlowCanvas 的 dockStart）；拖线到空白处、空白处右键时菜单出现在鼠标的位置。
+ * 有来源节点时不列子流程入口（子流程入口只能由调度连线触发，不能接在链上）。菜单底部写明这次是接在谁之后还是不连线。
  * 选择子流程入口后菜单换成填写子流程名称的表单（名称必填、场景内唯一，SEMANTICS §1.2）。
  */
 export function AddNodeMenu({
 	request,
-	tail,
 	groups,
 	subflowNameProblem,
 	onOpenChange,
 	onPick,
 }: {
 	request: AddRequest | null;
-	/** 新节点接在哪个节点之后（菜单底部的提示）。 */
-	tail: string | undefined;
 	groups: PackageGroup[];
 	/** 新子流程的名称有什么问题（为空、重名）；可以使用时返回 null。 */
 	subflowNameProblem(name: string): string | null;
@@ -85,18 +81,17 @@ export function AddNodeMenu({
 	}, []);
 	const [naming, setNaming] = useState(false);
 	if (request === null && naming) setNaming(false);
-	const drop = request?.via === "drop" ? request : null;
-	const anchor = drop
-		? {
-				getBoundingClientRect: () =>
-					DOMRect.fromRect({ x: drop.client.x, y: drop.client.y, width: 0, height: 0 }),
-			}
+	const at = request?.client;
+	const after = request?.after;
+	const anchor = at
+		? { getBoundingClientRect: () => DOMRect.fromRect({ x: at.x, y: at.y, width: 0, height: 0 }) }
 		: undefined;
 	const pick = (item: AddItem) => {
 		picked.current = true;
 		onPick(item);
 	};
-	const builtins = BUILTIN_ITEMS.filter((b) => !drop || b.kind !== "subflow_entry");
+	// 子流程入口只能由调度连线触发，不能接在链上。
+	const builtins = BUILTIN_ITEMS.filter((b) => !after || b.kind !== "subflow_entry");
 
 	return (
 		<Popover
@@ -125,15 +120,15 @@ export function AddNodeMenu({
 				</TooltipTrigger>
 				<TooltipContent>
 					添加节点
-					<Kbd>Tab</Kbd>
+					<Kbd>/</Kbd>
 				</TooltipContent>
 			</Tooltip>
 			<PopoverContent
 				aria-label="添加节点"
 				anchor={anchor}
-				side={drop ? "bottom" : "top"}
-				align={drop ? "start" : "center"}
-				sideOffset={drop ? 6 : 16}
+				side={at ? "bottom" : "top"}
+				align={at ? "start" : "center"}
+				sideOffset={at ? 6 : 16}
 				// 选了节点之后焦点交给新节点（由使用方处理）；Esc 关闭时回到打开前的位置，
 				// 打开前页面上没有焦点时回到「＋」按钮（与 Base UI 的默认行为一致）。
 				finalFocus={() => {
@@ -190,13 +185,12 @@ export function AddNodeMenu({
 							))}
 						</CommandList>
 						<p className={cn("border-t border-border-soft px-3 py-2 text-2xs text-fg-3")}>
-							{tail ? (
+							{after ? (
 								<>
-									新节点接在 <span className="font-mono text-fg-2">{tail}</span> 之后
-									{drop ? "" : " · 也可从链尾端口拖线到空白处"}
+									新节点接在 <span className="font-mono text-fg-2">{after}</span> 之后
 								</>
 							) : (
-								"场景没有入口节点，新节点不会接到链上"
+								"新节点不连线 · 从端口拖线到空白处，或在节点上按 Tab，可以接在节点之后"
 							)}
 						</p>
 					</Command>

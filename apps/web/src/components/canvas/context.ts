@@ -68,6 +68,8 @@ export interface CanvasContextValue {
 		kind: "chain" | "dispatch";
 	}) => EdgeDecoration | undefined;
 	regionMeta?: (subflowEntryId: string) => ReactNode;
+	/** 适配视图（避开悬浮控件）；右键菜单的「适配视图」用它（CanvasMenu.tsx）。 */
+	fit(): void;
 }
 
 export const EMPTY_INFO: CanvasInfo = {
@@ -82,6 +84,7 @@ export const FlowCanvasContext = createContext<CanvasContextValue>({
 	info: EMPTY_INFO,
 	selectedId: null,
 	ports: new Map(),
+	fit: () => {},
 });
 
 export const useFlowCanvas = () => useContext(FlowCanvasContext);
