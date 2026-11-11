@@ -10,6 +10,7 @@ import sys
 RUNTIME_MODULES = [
     "sfly",
     "sfly.context",
+    "sfly.download",
     "sfly.installed",
     "sfly.local",
     "sfly.nodes",

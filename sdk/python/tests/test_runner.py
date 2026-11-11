@@ -169,7 +169,17 @@ def test_missing_entry_is_a_failure(tmp_path: Path, code_dir: Path) -> None:
 
 #: 执行器启动路径上推迟导入的标准库模块（#76）：每个任务一个进程，它们只在构造 Context、保存产物、
 #: 节点失败时才用到。这个测试防止以后又在 sfly 或 sfly.runner 的模块顶层导入它们。
-DEFERRED_MODULES = {"pathlib", "shutil", "threading", "traceback", "urllib.parse"}
+DEFERRED_MODULES = {
+    "pathlib",
+    "shutil",
+    "threading",
+    "traceback",
+    "urllib.parse",
+    # 下载产物（sfly.download）只在节点调用 ctx.artifacts.download 时才导入。
+    "urllib.request",
+    "http.client",
+    "sfly.download",
+}
 
 
 def test_startup_path_does_not_import_deferred_modules(tmp_path: Path, code_dir: Path) -> None:
