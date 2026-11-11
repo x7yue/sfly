@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package sfly.agent.v1;
+
+import "sfly/agent/v1/files.proto";
+
+// Agent 能力 files.read（ADR 0019）：流式读取文件内容。和 AgentPeer 在同一个端口上提供，供其它 Agent 直接连接，
+// 没有认证，只应在内网使用。下载到本地路径（可续传）由发起调用的 Agent 用这个服务完成：
+// 它边收边写自己机器上的文件，连接中断后从已经收到的位置再读一次，数据不经过节点进程和控制面。
+//
+// 路径和错误的约定与 files.proto 的 AgentFiles 相同；另外 FAILED_PRECONDITION 表示 expect 那个文件已经不在路径上
+// （路径上换成了另一个文件，在同一目录里也找不到它）。
+service AgentFileRead {
+  // 读取一个文件：第一条回复带打开时的文件属性，之后每条是紧接着的一段内容，读到 length 字节或文件末尾为止，
+  // 最后一条带读完时打开的那个文件的属性（end）。内容都从打开的文件读：读的过程中文件被改名、被删除，读到的照样是它。
+  rpc Read(ReadFileRequest) returns (stream ReadFileResponse);
+}
+
+message ReadFileRequest {
+  // 文件的绝对路径（跟随符号链接；目录不能读取）。
+  string path = 1;
+  // 从第几个字节开始读；超过文件末尾时没有内容。
+  uint64 offset = 2;
+  // 最多读多少字节；不设时读到文件末尾（to_open_size 时读到打开时的大小）。
+  optional uint64 length = 3;
+  // 设了时，读的必须是这个文件（设备号 + inode 相同）：续传时用来确认读的还是原来那个文件。路径上已经不是它时
+  // （日志轮转时改了名），在路径所在的目录里按文件标识找它，找到就读它，回复的 file.path 是它现在的路径；
+  // 找不到时路径上没有文件是 NOT_FOUND，有另一个文件是 FAILED_PRECONDITION。
+  FileIdentity expect = 4;
+  // length 不设时只读到打开时的大小为止，之后续写的部分不读（下载只要开始时的那么多）。
+  bool to_open_size = 5;
+}
+
+// 文件标识：设备号 + inode（与 FileInfo 的 device、inode 相同）。
+message FileIdentity {
+  uint64 device = 1;
+  uint64 inode = 2;
+}
+
+message ReadFileResponse {
+  // 只在第一条回复里有：打开的文件的属性，size 是打开时的大小。
+  FileInfo file = 1;
+  // 一段内容，紧接上一段；第一条回复里可能为空。
+  bytes data = 2;
+  // 只在最后一条回复里有：读完时打开的那个文件的属性。
+  ReadFileEnd end = 3;
+}
+
+// 读完时打开的那个文件（不是路径上现在的文件）的属性：判断读的过程中它有没有被删除、截短或续写。
+message ReadFileEnd {
+  // 文件属性；path 是它现在所在的路径：还在原来的路径上，或在同一目录里改了名；在别处时是原来的路径。
+  FileInfo file = 1;
+  // 硬链接数：0 表示它已经被删除（读到的内容仍然完整，只是文件已经不在了）。
+  uint64 links = 2;
+}

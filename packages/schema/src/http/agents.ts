@@ -56,6 +56,32 @@ export const AgentUpdateView = z.object({
 	reason: z.string(),
 });
 
+/** 一项 Agent 能力（ADR 0019）：Agent 自身提供、节点在执行中通过 SDK 调用的一组操作。 */
+export const CapabilityView = z.object({
+	/** 能力名，例如 files。 */
+	name: z.string(),
+	/** 能力的版本，从 1 开始；新增操作或改变行为时加 1。 */
+	version: z.number().int(),
+});
+
+/** 其它 Agent 连接这台 Agent、调用它的能力用的地址（ADR 0019），按最近一次连接上报的。 */
+export const AgentEndpointView = z.object({
+	/**
+	 * 对外地址（IP 地址或主机名）：安装时显式配置的，没有配置时是控制面看到的连接来源地址。
+	 * 早于这个字段注册、之后没有再连接过的 Agent 为空串。
+	 */
+	address: z.string(),
+	/** configured：安装时显式配置的；connection：控制面看到的连接来源地址。 */
+	address_source: z.enum(["configured", "connection"]),
+	/** 监听的端口；不监听端口的旧版本 Agent 为 null。 */
+	port: z.number().int().nullable(),
+	/**
+	 * 这台 Agent 的能力不能被其它 Agent 调用的原因（例如端口被占用、旧版本 Agent 不监听端口）；可以调用时为 null。
+	 * 不影响它执行任务。
+	 */
+	unavailable_reason: z.string().nullable(),
+});
+
 export const AgentView = z.object({
 	name: z.string(),
 	status: z.enum(["online", "offline"]),
@@ -89,6 +115,9 @@ export const AgentView = z.object({
 	clock_offset: ClockOffsetView.nullable(),
 	/** 有多少个场景引用这个 Agent（最新版本里的默认 Agent 或节点另选的 Agent）。 */
 	referencing_orchestrations: z.number().int(),
+	/** 支持的 Agent 能力及版本，按上报的顺序；不上报能力的旧版本 Agent 为空。 */
+	capabilities: z.array(CapabilityView),
+	endpoint: AgentEndpointView,
 });
 
 export const agentsApi = {
@@ -124,3 +153,5 @@ export type AgentUpdateState = z.infer<typeof AgentUpdateState>;
 export type AgentUpdateView = z.infer<typeof AgentUpdateView>;
 export type DevPackageView = z.infer<typeof DevPackageView>;
 export type RunningTaskView = z.infer<typeof RunningTaskView>;
+export type CapabilityView = z.infer<typeof CapabilityView>;
+export type AgentEndpointView = z.infer<typeof AgentEndpointView>;

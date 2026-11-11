@@ -52,6 +52,8 @@ async function twoAgents(connectAgent: E2eFixtures["connectAgent"]) {
 		arch: "x86_64",
 		slots: 4,
 		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+		capabilities: [{ name: "files", version: 1 }],
+		peer: { port: 50052 },
 	});
 	const mac = await connectAgent({
 		name: "agent-mac",
@@ -59,6 +61,8 @@ async function twoAgents(connectAgent: E2eFixtures["connectAgent"]) {
 		os: "macos",
 		arch: "aarch64",
 		slots: 2,
+		capabilities: [{ name: "files", version: 1 }],
+		peer: { port: 50052, publicAddress: "10.20.30.40" },
 	});
 	return mac;
 }
@@ -76,7 +80,12 @@ test("Agent 列表", async ({ page, connectAgent, controlPlane }) => {
 });
 
 test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgent }) => {
-	await connectAgent({ name: "agent-current", os: "linux", arch: "x86_64" });
+	await connectAgent({
+		name: "agent-current",
+		os: "linux",
+		arch: "x86_64",
+		peer: { port: 50052, listenError: "端口 50052 已被占用" },
+	});
 	const states = [
 		["agent-old", { state: AgentUpdateState.NONE }],
 		["agent-waiting", { state: AgentUpdateState.WAITING_FOR_TASKS, remainingTasks: 2 }],

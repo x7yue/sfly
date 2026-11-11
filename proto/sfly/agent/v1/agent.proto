@@ -67,6 +67,31 @@ message Hello {
   // 控制面用收到 Hello 的控制面时间和它建立这次连接的固定对应关系（控制面时间 = 单调时钟读数 + 常量），
   // 并据 agent_time_unix_ms 计算时钟偏差。0 表示没有上报（旧版本 Agent）：不建立对应关系，时钟偏差未知。
   int64 monotonic_ms = 11;
+  // 这台 Agent 支持的 Agent 能力及各自的版本（ADR 0019）。旧版本 Agent 不带：控制面按没有任何能力处理。
+  repeated Capability capabilities = 12;
+  // 供其它 Agent 连接的端口与显式配置的对外地址（ADR 0019，服务见 peer.proto）。
+  // 旧版本 Agent 不带：它不监听端口，能力不能被其它 Agent 调用。
+  PeerEndpoint peer = 13;
+}
+
+// 一项 Agent 能力（ADR 0019）：Agent 自身提供、节点在执行中通过 SDK 调用的一组操作。
+message Capability {
+  // 能力名，例如 files。
+  string name = 1;
+  // 能力的版本，从 1 开始；新增操作或改变行为时加 1。调用方据此判断对方是否支持所需的操作。
+  uint32 version = 2;
+}
+
+// Agent 供其它 Agent 连接的端口（AgentPeer 服务）。控制面另外记录它看到的连接来源地址：
+// 对外地址取 public_address，为空时取连接来源地址。
+message PeerEndpoint {
+  // 监听的端口（配置为 0 时是系统分配的端口）；没能监听时是配置的端口。
+  uint32 port = 1;
+  // 安装时显式配置的对外地址（IP 地址或主机名，不带端口）；为空表示没有配置。
+  string public_address = 2;
+  // 没能监听的原因（给人看的一句话，例如端口已被占用）；为空表示正在监听。
+  // 没能监听时 Agent 照常执行任务，只是它的能力不能被其它 Agent 调用。
+  string listen_error = 3;
 }
 
 // Agent 手上的一个任务（节点的一次尝试）。
@@ -215,6 +240,21 @@ message AssignTask {
   // `PUT <artifact_upload_url><按路径段百分号编码的相对路径>`（配置了注册令牌时带 `Authorization: Bearer <token>`）。
   // 同一地址也是产物的下载地址：SDK 把它作为产物引用返回给节点。为空时不上传。
   string artifact_upload_url = 12;
+  // 这个任务通过「Agent」类型的输入引用的 Agent（ADR 0019），每台一项、不重复；地址在派发时解析。
+  // 节点只能调用这里列出的 Agent 和自己所在 Agent 的能力。旧版本控制面不带：没有可以调用的其它 Agent。
+  repeated ReferencedAgent referenced_agents = 13;
+}
+
+// 任务通过「Agent」类型的输入引用的一台 Agent：节点收到的参数值是它的名称，调用它的能力时连接这里的地址和端口。
+message ReferencedAgent {
+  // Agent 名称。
+  string name = 1;
+  // 其它 Agent 连接它用的地址（IP 地址或主机名）：安装时显式配置的对外地址，否则是控制面看到的连接来源地址。
+  string address = 2;
+  // 它监听的端口；0 表示不知道（旧版本 Agent 不监听端口）。
+  uint32 port = 3;
+  // 它的能力不能被其它 Agent 调用的原因（给人看的一句话，例如端口已被占用、版本过旧）；为空表示可以调用。
+  string unavailable_reason = 4;
 }
 
 // 取消一个正在执行的任务（docs/SEMANTICS.md §3.4）。Agent 先写入取消标记文件（SFLY_CANCEL），

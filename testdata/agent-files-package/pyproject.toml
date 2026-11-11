@@ -1,0 +1,8 @@
+# Agent 能力 files 的测试用节点包（#198）：SDK 测试（sdk/python/tests/test_agent_files.py，sfly.testing 与 sfly run）
+# 和全栈测试（apps/server/test/full-stack-agent-files.test.ts，两台真实 Agent，以及 sfly dev 联调）共用。
+# 不放进桩节点包（testdata/stub-package 要在上一个发布版本的 SDK 上加载，只能用旧 SDK 也有的接口）。
+# 没写 requires-sdk，取构建时 SDK 的版本作为下限。
+[project]
+name = "sfly-agent-files"
+version = "0.1.0"
+dependencies = []

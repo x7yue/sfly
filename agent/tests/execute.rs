@@ -137,6 +137,11 @@ async fn each_task_runs_in_its_own_work_dir_with_the_shared_venv_isolated_from_a
         assert_eq!(env["SFLY_ARTIFACTS"], path(&dir.join("artifacts")));
         assert_eq!(env["SFLY_EVENTS"], path(&dir.join("events.fifo")));
         assert_eq!(env["SFLY_CANCEL"], path(&dir.join("cancel")));
+        // 节点经 Agent 的本地 socket 调用 Agent 能力。
+        assert_eq!(
+            env["SFLY_AGENT_SOCKET"],
+            path(&work_root.join("agent.sock"))
+        );
         // 后台进程目录按运行分：`$SFLY_HOME/procs/<运行 ID>/`（stub_task 的运行 ID 是 run-1）。
         assert_eq!(
             env["SFLY_PROCS"],

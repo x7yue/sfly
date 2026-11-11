@@ -9,7 +9,9 @@
 - `_waiting.py`：等待与重试的轮询（`wait`、`poll`）；
 - `_sampling.py`：持续运行的节点的 `interval`、`duration` 校验与速率计算；
 - `_logfile.py`：像 `tail -F` 一样读日志文件；
-- `_assertions.py`：`assert` 与 `http_request` 共用的断言格式。
+- `_assertions.py`：`assert` 与 `http_request` 共用的断言格式；
+- `_pull.py`：从另一台 Agent 拉取文件的节点（`pull_files`、`watch_files`）共用的下载、
+  删除源文件与输出路径列表的截断。
 
 新增一个节点：
 
@@ -19,5 +21,6 @@
 3. 在开发文档「标准节点」页（docs/guide/standard-nodes.md）加一节「## `<节点名>`：<标题>」，
    参数表、输出表、指标表与节点的元信息一致（`tests/test_package.py` 逐项比对）；
 4. 只有引入新的第三方库时才改 `pyproject.toml` 的 dependencies（只写宽松下限，之后 `uv lock`）；
-   用到新版 SDK 才有的接口时，把 `[tool.sfly] requires-sdk` 调到包含它的第一个平台版本。
+   用到新版 SDK 才有的接口时，把 `[tool.sfly] requires-sdk` 调到包含它的第一个平台版本；
+   用到新的 Agent 能力（`ctx.agent()`）时同样调高 `requires-agent`。
 """

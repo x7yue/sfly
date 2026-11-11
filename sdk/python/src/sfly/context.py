@@ -8,7 +8,9 @@
 - `ctx.artifacts`：保存产物，返回可以写进输出的产物引用；按产物引用下载产物（见 `Artifacts`）；
 - `ctx.cancelled()`：任务是否已被取消（取消标记文件 `SFLY_CANCEL` 是否存在）；
 - `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt（见 `TaskInfo`）；
-- `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）。
+- `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）；
+- `ctx.agent()` / `ctx.agent(名称)`：自己所在的 Agent / 通过「Agent」类型的参数拿到的
+  另一台 Agent 的能力（见 `Context.agent`、`sfly.capabilities`）。
 
 取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
@@ -29,6 +31,7 @@
 
 from __future__ import annotations
 
+import _thread
 import json
 import math
 import os
@@ -42,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from sfly.capabilities import Agent
     from sfly.nodes import Metric
 
 #: 日志级别（与控制面、画布一致）。
@@ -60,6 +64,55 @@ _NO_LABEL_KEYS: frozenset[str] = frozenset()
 
 class Cancelled(BaseException):
     """任务被取消（或超时）时，执行器收到 SIGTERM 后在节点代码里抛出。"""
+
+
+class _Sigterm:
+    """主线程里 `DeferCancel` 的嵌套层数，和推迟期间是否收到了 SIGTERM。"""
+
+    main = _thread.get_ident()
+    depth = 0
+    pending = False
+
+
+def on_sigterm(signum: int, frame: object) -> None:
+    """执行器装的 SIGTERM 处理函数（只在主线程里执行）：在节点代码里抛出 `Cancelled`；
+    正在 `DeferCancel` 里时推迟到离开它。"""
+    if _Sigterm.depth:
+        _Sigterm.pending = True
+        return
+    raise Cancelled("任务被终止（SIGTERM）")
+
+
+class DeferCancel:
+    """`with DeferCancel():` 这一段里收到的 SIGTERM 推迟到离开这一段时才变成 `Cancelled`。
+
+    SDK 拿到要清理的资源（文件描述符、临时文件、子进程）时用，取消不会落在「拿到资源」和
+    「登记好清理」之间（拿到之后、进入 `try` 之前被打断，资源就没人清理了）：
+
+        resource = None
+        try:
+            with DeferCancel():
+                resource = acquire()
+            ...
+        finally:
+            if resource is not None:
+                release(resource)
+
+    只推迟主线程里的取消：其它线程里收不到 `Cancelled`。
+    """
+
+    def __enter__(self) -> None:
+        self._counted = _thread.get_ident() == _Sigterm.main
+        if self._counted:
+            _Sigterm.depth += 1
+
+    def __exit__(self, *exc: object) -> None:
+        if not self._counted:
+            return
+        _Sigterm.depth -= 1
+        if _Sigterm.depth == 0 and _Sigterm.pending:
+            _Sigterm.pending = False
+            raise Cancelled("任务被终止（SIGTERM）")
 
 
 class ArtifactDownloadError(Exception):
@@ -385,6 +438,22 @@ class Context:
           `sfly.testing.run_node` 时是任务工作目录下的 `procs/`。
         """
         return self._procs_dir
+
+    def agent(self, name: str | None = None) -> Agent:
+        """一台 Agent 的能力（ADR 0019）：不给名称时是节点自己所在的 Agent，给名称时是
+        通过「Agent」类型的参数（`sfly.AgentName`）拿到的另一台 Agent。两者的能力和写法相同，
+        例如 `ctx.agent(source).files.list(...)`。
+
+        只能访问自己所在的 Agent 和参数里选的 Agent：访问其它名称时调用抛出
+        `sfly.AgentNotReferenced`。调用另一台 Agent 时由自己所在的 Agent 代为连接，
+        数据不经过控制面。本地调试（`sfly run`、`sfly.testing`）时直接操作本机的文件系统，
+        其它 Agent 由测试工具映射到本地目录。
+        """
+        from sfly.capabilities import connect
+
+        return connect(
+            name, task_id=self.task.task_id, attempt=self.task.attempt, cancelled=self.cancelled
+        )
 
     def cancelled(self) -> bool:
         """任务是否已被取消（Agent 已写入取消标记）。"""

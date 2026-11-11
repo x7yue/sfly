@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from sfly.cli.build import METADATA_FILE, load_project, scan_nodes, validate_metadata
+from sfly.cli.build import METADATA_FILE, load_project, package_metadata, validate_metadata
 from sfly.cli.wheel import build_wheel
 
 DEV_VERSION = "dev"
@@ -69,13 +69,7 @@ def request(socket_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
 def dev(root: Path, socket_path: Path) -> dict[str, Any]:
     """让 Agent 加载开发版本；返回 Agent 的回复（成功时）。"""
     project = load_project(root)
-    metadata = {
-        "name": project.name,
-        "version": project.version,
-        "requires_python": project.requires_python,
-        "requires_sdk": project.requires_sdk,
-        "nodes": scan_nodes(project),
-    }
+    metadata = package_metadata(project)
     validate_metadata(metadata)
     metadata["version"] = DEV_VERSION
     text = json.dumps(metadata, ensure_ascii=False, indent=2) + "\n"

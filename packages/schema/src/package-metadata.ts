@@ -148,6 +148,17 @@ export const RequiresSdk = z
 		"SDK 版本要求必须形如 >=0.0.4（逗号分隔的比较符加数字版本号）",
 	);
 
+/**
+ * 最低 Agent 版本要求（ADR 0019）：格式与 {@link RequiresSdk} 相同，例如 `>=0.2.0`。用到 Agent 能力的节点包声明它，
+ * 触发前和派发前对节点所在的 Agent 和它通过「Agent」类型的输入引用的 Agent 都检查。
+ */
+export const RequiresAgent = z
+	.string()
+	.regex(
+		new RegExp(String.raw`^\s*${SDK_CLAUSE}(?:\s*,\s*${SDK_CLAUSE})*\s*$`),
+		"Agent 版本要求必须形如 >=0.2.0（逗号分隔的比较符加数字版本号）",
+	);
+
 /** 节点包元信息：节点包归档中的 `sfly-package.json`。 */
 export const PackageMetadata = z
 	.strictObject({
@@ -166,6 +177,8 @@ export const PackageMetadata = z
 		 * 早于 #79 构建的节点包没有这个字段，不检查。
 		 */
 		requires_sdk: RequiresSdk.optional(),
+		/** 需要的 Agent 版本（`[tool.sfly] requires-agent`）；没有声明时不检查。 */
+		requires_agent: RequiresAgent.optional(),
 		nodes: z.array(NodeTypeMetadata).min(1),
 	})
 	.meta({ title: "sfly 节点包元信息" });

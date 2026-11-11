@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import builtins
+import signal
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from indexes import SDK, FakeControlPlane, StaticServer, uv_env, wheelhouse
@@ -49,3 +52,24 @@ def control_plane(sfly_wheel: Path, pypi_mirror: StaticServer) -> Iterator[FakeC
         sfly_wheels=[sfly_wheel],
     )
     server.close()
+
+
+@pytest.fixture
+def sigterm_after(monkeypatch: pytest.MonkeyPatch) -> Callable[[Any, str], None]:
+    """`sigterm_after(对象, 名称)`：之后调用 `对象.名称(...)` 时，在它返回之后、调用方拿到结果之前
+    「收到 SIGTERM」：调用执行器装的处理函数（`sfly.context.on_sigterm`），和真实的信号落在这里
+    一样。用来检查拿到资源（文件描述符、临时文件、子进程）和登记好清理之间被取消时不留下东西。"""
+    from sfly.context import on_sigterm
+
+    def patch(owner: Any, name: str) -> None:
+        # 模块里没有定义的名字（例如 `open`）取内置的。
+        real = getattr(owner, name, None) or getattr(builtins, name)
+
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            result = real(*args, **kwargs)
+            on_sigterm(signal.SIGTERM, None)
+            return result
+
+        monkeypatch.setattr(owner, name, wrapper, raising=False)
+
+    return patch

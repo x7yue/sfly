@@ -88,6 +88,8 @@ describe("全栈：install.sh 安装的 Agent", () => {
 				TMPDIR: tmpdir(),
 				SFLY_HOME: sflyHome,
 				SFLY_PYTHON: python,
+				// 供其它 Agent 连接的端口由系统分配，不抢默认端口 50052。
+				SFLY_LISTEN_PORT: "0",
 			},
 		});
 		const lines = createInterface({ input: agent.stdout as NodeJS.ReadableStream });

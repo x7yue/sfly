@@ -9,6 +9,9 @@ stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互�
 `--download <产物引用> <文件>` 给 `ctx.artifacts.download` 提供本地内容：节点下载这个引用时得到
 这个文件的内容，不访问网络（本地没有控制面）。
 
+`--agent <名称>=<目录>` 把一台 Agent 映射到本地目录：节点用 `ctx.agent(名称)` 访问它时，
+那台 Agent 上的绝对路径落在这个目录里。`ctx.agent()`（自己所在的 Agent）就是本机。
+
 Ctrl-C 走和平台相同的取消流程：取消标记 + SIGTERM，宽限期过后强制杀掉；再按一次立即杀掉。
 节点结束后结果已经确定，打印结果期间的 Ctrl-C 被忽略，退出码按结果给出。
 
@@ -150,10 +153,12 @@ def run(
     grace: float = DEFAULT_GRACE,
     *,
     downloads: Mapping[str, Path] | None = None,
+    agents: Mapping[str, Path] | None = None,
 ) -> int:
     """执行节点并打印结果，返回退出码。
 
     `downloads`（`--download`）：产物引用 → 本地文件，节点下载这些引用时得到文件的内容。
+    `agents`（`--agent`）：Agent 名称 → 本地目录。
     """
     from sfly.cli.build import load_project, scan_nodes
     from sfly.local import input_problems
@@ -162,6 +167,9 @@ def run(
     for ref, path in (downloads or {}).items():
         if not path.is_file():
             raise RunError(f"参数不合法：--download 给产物引用 {ref} 指定的文件不存在：{path}")
+    for name, root in (agents or {}).items():
+        if not root.is_dir():
+            raise RunError(f"参数不合法：--agent 给 Agent {name} 指定的目录不存在：{root}")
     meta = load_project(project)
     nodes = scan_nodes(meta)
     found = next((n for n in nodes if n["name"] == node), None)
@@ -198,6 +206,7 @@ def run(
             node_id=node,
             procs_dir=project.absolute() / PROCS_DIR / work.name,
             downloads=downloads,
+            agents=agents,
         )
         # 节点已经结束，结果（和退出码）已经确定：打印结果期间的 Ctrl-C 一律忽略，
         # 否则恢复成默认处理后会在打印中途抛出 KeyboardInterrupt（#122）。

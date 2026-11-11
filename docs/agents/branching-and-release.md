@@ -86,7 +86,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 `pnpm release:version` 管理。
 
 1. 从 `main` 新建 `release/std-X.Y.Z`，改 `std/pyproject.toml` 的版本号（用到新版 SDK 的接口时同时调高
-   `[tool.sfly] requires-sdk`），`uv lock` 后提交并开 PR 合入。
+   `[tool.sfly] requires-sdk`，用到新的 Agent 能力时同时调高 `requires-agent`），`uv lock` 后提交并开 PR 合入。
 2. 等 `main` 上这个提交的 CI 通过，打 tag 并推送：`git tag std-vX.Y.Z <提交> && git push origin std-vX.Y.Z`。
 3. `.github/workflows/std-release.yml` 接手：确认提交在 `main` 上且 CI 已通过，运行 `scripts/release/std.sh pack`
    （tag 与版本号一致、节点包元信息检查、构建 `.sflypkg`、`SHA256SUMS` 和含最低 Agent 版本的发布说明），上传到草稿 Release

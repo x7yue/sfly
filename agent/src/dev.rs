@@ -1,7 +1,7 @@
 //! 开发模式（`sfly dev`）：把本地源码目录以可编辑方式装进共享 venv，注册为 `包名@dev`。
 //!
-//! - `sfly dev` 通过 Agent 的**本地 socket**（Unix domain socket，默认 `<work_dir>/agent.sock`，权限 0600）
-//!   发来请求；Agent 不对外开放任何网络端口。协议见 [`serve`]。
+//! - `sfly dev` 通过 Agent 的本地 socket（[`crate::socket`]）发来一行 JSON 请求（[`DevRequest`]），
+//!   Agent 回复一行 JSON（[`DevReply`]）后关闭连接。
 //! - 开发版本登记在 `<work_dir>/.dev/<包名>/`（`dev.json` + 可编辑 wheel 的副本），Agent 重启后仍然有效。
 //!   共享 venv 中同一个包只能有一个版本（ADR 0002）：锁定已发布版本的任务会把它切换成已发布版本，
 //!   之后的 `@dev` 任务再用登记的 wheel 装回来。
@@ -162,61 +162,4 @@ impl DevReply {
             output: String::new(),
         }
     }
-}
-
-/// 在本地 socket 上接受 `sfly dev` 的请求：每个连接读一行 JSON 请求，回复一行 JSON 后关闭。
-/// socket 文件已存在时先删除（上一次运行留下的）。绑定失败时返回错误，由调用方决定是否继续运行。
-#[cfg(unix)]
-pub(crate) fn serve(
-    path: &Path,
-    runtime: std::sync::Arc<crate::Runtime>,
-) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-    use std::os::unix::fs::PermissionsExt as _;
-    use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, AsyncWriteExt as _, BufReader};
-
-    /// 请求的大小上限（元信息里有全部节点的 schema）。
-    const MAX_REQUEST: u64 = 16 * 1024 * 1024;
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let _ = std::fs::remove_file(path);
-    let listener = tokio::net::UnixListener::bind(path)
-        .with_context(|| format!("bind dev socket {}", path.display()))?;
-    // 只有运行 Agent 的用户可以连接。
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(tokio::spawn(async move {
-        loop {
-            let Ok((stream, _)) = listener.accept().await else {
-                continue;
-            };
-            let runtime = runtime.clone();
-            tokio::spawn(async move {
-                let (read, mut write) = stream.into_split();
-                let mut line = String::new();
-                let mut reader = BufReader::new(read.take(MAX_REQUEST));
-                let reply = match reader.read_line(&mut line).await {
-                    Ok(_) => match serde_json::from_str::<DevRequest>(&line) {
-                        Ok(request) if request.command == "dev" => runtime.load_dev(request).await,
-                        Ok(request) => DevReply::error(format!("未知命令 {:?}", request.command)),
-                        Err(error) => DevReply::error(format!("无法解析请求：{error}")),
-                    },
-                    Err(error) => DevReply::error(format!("读取请求失败：{error}")),
-                };
-                let mut bytes = serde_json::to_vec(&reply).unwrap_or_default();
-                bytes.push(b'\n');
-                let _ = write.write_all(&bytes).await;
-                let _ = write.shutdown().await;
-            });
-        }
-    }))
-}
-
-/// 非 Unix 平台暂不支持本地 socket（Windows 的命名管道留给 Windows Agent 票据）。
-#[cfg(not(unix))]
-pub(crate) fn serve(
-    _path: &Path,
-    _runtime: std::sync::Arc<crate::Runtime>,
-) -> anyhow::Result<tokio::task::JoinHandle<()>> {
-    bail!("这个平台暂不支持 sfly dev 的本地 socket")
 }

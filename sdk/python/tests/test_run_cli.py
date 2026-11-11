@@ -148,6 +148,29 @@ def test_download_option_with_a_missing_file_exits_2_without_running_the_node(
     assert not (project / ".sfly" / "runs").exists()
 
 
+AGENT_NODE = """
+from sfly import AgentName, Context, node
+
+
+@node
+def reach(ctx: Context, source: AgentName) -> dict:
+    return {"source": source}
+"""
+
+
+def test_agent_inputs_take_an_agent_name(project: Path) -> None:
+    # 「Agent」类型的输入（#197）：本地调试时值就是 Agent 名称，不检查它是否注册过。
+    (project / "src" / "sfly_stub" / "agents.py").write_text(AGENT_NODE, encoding="utf-8")
+
+    run = sfly_run(project, "reach", "--params", '{"source": "agent-a"}')
+    wrong = sfly_run(project, "reach", "--params", '{"source": 1}')
+
+    assert run.returncode == 0, run.stderr
+    assert outputs_of(run.stdout) == {"source": "agent-a"}
+    assert wrong.returncode == 2
+    assert "输入 source 应为 string" in wrong.stderr
+
+
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
     project: Path,
 ) -> None:

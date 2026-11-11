@@ -19,13 +19,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 tonic = "0.14"
 tonic-prost = "0.14"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["fs", "process", "signal", "time"] }
+nix = { version = "0.31", default-features = false, features = ["fs", "inotify", "poll", "process", "signal", "time"] }
 
 [dev-dependencies]
 # 基准测试（benches/，ARCHITECTURE §7.6）：只作开发依赖，不进 release 二进制；不要图表，少编译 rayon / plotters。

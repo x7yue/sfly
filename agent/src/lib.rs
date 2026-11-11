@@ -4,11 +4,16 @@
 //! - [`run`] 是 Agent 主循环：连接、接收任务、上报结果，断线后自动重连。
 //!
 //! 任务需要的节点包版本没有安装时，先下载并安装（[`install`]）；安装与启动新任务互斥。
-//! `sfly dev` 通过本地 socket 让 Agent 加载开发版本 `包名@dev`（[`dev`]）。
+//! `sfly dev` 通过本地 socket（[`socket`]）让 Agent 加载开发版本 `包名@dev`（[`dev`]）。
+//!
+//! 其它 Agent 连接本机的端口和 Agent 能力见 [`peer`]、[`capabilities`]（ADR 0019）；节点经本地 socket 调用 Agent 能力
+//! 见 [`calls`]。
 //!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
 pub mod artifacts;
+pub mod calls;
+pub mod capabilities;
 pub mod clock;
 pub mod dev;
 pub mod environment;
@@ -17,9 +22,11 @@ pub mod home;
 pub mod install;
 pub mod logs;
 pub mod metrics;
+pub mod peer;
 pub mod process_tree;
 pub mod retention;
 pub mod sdk;
+mod socket;
 pub mod time_jump;
 pub mod update;
 pub mod venv;
@@ -45,8 +52,8 @@ use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
     AgentMessage, AgentUpdateState, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat,
-    Hello, InstallState, InstallStatus, InstalledPackage, RunningTask, ServerMessage, TaskAction,
-    TaskResult, Welcome, agent_message, server_message,
+    Hello, InstallState, InstallStatus, InstalledPackage, PeerEndpoint, RunningTask, ServerMessage,
+    TaskAction, TaskResult, Welcome, agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
@@ -97,8 +104,9 @@ pub struct Config {
     pub uv: PathBuf,
     /// uv 由 Agent 管理（没有指定 `--uv`，`uv` 是 `SFLY_HOME/bin/uv`）：不存在时从镜像安装（[`environment`]）。
     pub manage_uv: bool,
-    /// `sfly dev` 连接的本地 socket；未设置时为 `<work_dir>/agent.sock`。
-    pub dev_socket: Option<PathBuf>,
+    /// 本地 socket（[`socket`]）：`sfly dev` 加载开发版本、节点调用 Agent 能力都经过它；未设置时为 `<work_dir>/agent.sock`。
+    /// 命令行参数沿用最早的名字 `--dev-socket`（`SFLY_DEV_SOCKET`，SDK 的 `sfly dev` 也按这个名字找）。
+    pub local_socket: Option<PathBuf>,
     /// 超时和取消时从优雅终止到强制杀掉进程树的宽限期。
     pub terminate_grace: Duration,
     /// 共享 venv 不存在时，`uv venv --python` 用的解释器（版本号或路径）；
@@ -121,6 +129,13 @@ pub struct Config {
     pub self_update: update::SelfUpdate,
     /// 本进程是不是试用中的新版本（[`update::trial`]）：main 在启动最早期创建。
     pub trial: Arc<update::Trial>,
+    /// 供其它 Agent 连接的端口（[`peer`]）；0 由系统分配。
+    pub listen_port: u16,
+    /// 安装时显式配置的对外地址（[`peer::parse_public_address`]）；没有配置时控制面用连接来源地址。
+    pub public_address: Option<String>,
+    /// 监听目录时队列里最多有多少个还没发出的事件，超过时重新给快照
+    /// （[`capabilities::file_watch::DEFAULT_QUEUE_EVENTS`]；测试用隐藏参数 `--watch-queue-events` 改小，模拟调用方读得太慢）。
+    pub watch_queue_events: usize,
 }
 
 impl Config {
@@ -139,7 +154,7 @@ impl Config {
             user_agent: environment::default_user_agent(),
             uv: PathBuf::from("uv"),
             manage_uv: false,
-            dev_socket: None,
+            local_socket: None,
             terminate_grace: DEFAULT_TERMINATE_GRACE,
             python: None,
             telemetry_queue_bytes: logs::DEFAULT_TELEMETRY_QUEUE_BYTES,
@@ -150,6 +165,9 @@ impl Config {
             agent_time_offset_file: None,
             self_update: update::SelfUpdate::detect(true, None),
             trial: Arc::new(update::Trial::off()),
+            listen_port: peer::DEFAULT_LISTEN_PORT,
+            public_address: None,
+            watch_queue_events: capabilities::file_watch::DEFAULT_QUEUE_EVENTS,
         }
     }
 }
@@ -172,6 +190,8 @@ pub struct HelloContent {
     pub dev_packages: Vec<DevPackage>,
     /// 手上的任务：正在执行（含安装中）的，以及已经结束、结果还没收到 Ack 的。
     pub running_tasks: Vec<RunningTask>,
+    /// 供其它 Agent 连接的端口（[`peer::serve`] 的结果）；没有监听时为 None。
+    pub peer: Option<PeerEndpoint>,
 }
 
 /// 连接控制面，发送 Hello（带上已安装的节点包、开发版本和手上的任务）并等待 Welcome。
@@ -180,6 +200,7 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
         installed_packages,
         dev_packages,
         running_tasks,
+        peer,
     } = content;
     let mut client = AgentGatewayClient::connect(config.server.clone())
         .await
@@ -201,6 +222,8 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
                 running_tasks,
                 agent_time_unix_ms: now.agent_time_ms,
                 monotonic_ms: now.monotonic_ms,
+                capabilities: capabilities::reported(),
+                peer,
             })),
         })
         .await
@@ -287,8 +310,8 @@ impl Inventory {
 }
 
 struct Runtime {
-    /// Agent 名称（用于错误消息）。
-    name: String,
+    /// 这台 Agent：名称、上报的版本，和能力需要的设置（[`Config`] 里来的，启动时构造一次）。
+    host: capabilities::Host,
     inventory: Inventory,
     dev: DevRegistry,
     installer: Installer,
@@ -299,7 +322,6 @@ struct Runtime {
     retention: Duration,
     /// 任务目录和后台进程目录各自从哪一刻开始算保留期。
     dirs: retention::Tracker,
-    terminate_grace: Duration,
     /// [`Config::log_forward_rate`]。
     log_forward_rate: u64,
     /// 安装与启动新任务互斥：启动任务（查找入口到子进程启动）持有读锁，安装持有写锁。
@@ -320,8 +342,10 @@ struct Runtime {
     http: reqwest::Client,
     uv: PathBuf,
     scratch: PathBuf,
-    /// 上报的 Agent 版本（[`Config::version`]）。
-    version: String,
+    /// 本地 socket（[`socket`]）：执行器的 `SFLY_AGENT_SOCKET`，节点经它调用 Agent 能力。
+    agent_socket: PathBuf,
+    /// 节点调用另一台 Agent 的能力时用的连接（[`calls`]）。
+    peers: calls::Peers,
 }
 
 /// 发送任务的取消请求（见 [`executor::CancelSignal`]）。
@@ -332,6 +356,8 @@ struct HeldTask {
     cancel: CancelSender,
     /// 执行器子进程已经启动（已发出 TaskStarted）。
     started: bool,
+    /// 任务通过「Agent」类型的输入引用的 Agent：节点只能调用它们和自己的能力（[`calls`]）。
+    referenced_agents: Vec<proto::ReferencedAgent>,
 }
 
 impl Runtime {
@@ -347,6 +373,7 @@ impl Runtime {
             HeldTask {
                 cancel: cancel_tx,
                 started: false,
+                referenced_agents: task.referenced_agents.clone(),
             },
         );
         cancel
@@ -381,6 +408,25 @@ impl Runtime {
         }
         // 结果已经交出、任务已经移出之后才打这一行：测试据此等到这一刻（agent/tests/recovery.rs）。
         eprintln!("task {} attempt {} finished: {status:?}", key.0, key.1);
+    }
+
+    /// 节点调用 Agent 能力（[`calls::serve`]）：按请求里的任务找到它的名单和取消信号；任务不在手上时拒绝。
+    async fn call(
+        &self,
+        request: calls::CallRequest,
+        reader: impl tokio::io::AsyncRead + Unpin + Send,
+        writer: impl tokio::io::AsyncWrite + Send + Sync + 'static,
+    ) {
+        let task = self
+            .cancels
+            .lock()
+            .unwrap()
+            .get(&(request.task_id.clone(), request.attempt))
+            .map(|held| calls::TaskCalls {
+                referenced: held.referenced_agents.clone(),
+                cancel: held.cancel.subscribe(),
+            });
+        calls::serve(request, reader, writer, &self.host, task, &self.peers).await;
     }
 
     /// 正在执行（含安装中）的任务。
@@ -486,7 +532,7 @@ impl Runtime {
                 ErrorKind::EnvError,
                 format!(
                     "开发版本 {}@{DEV_VERSION} 没有在 Agent {} 上加载：开发版本只能在用 sfly dev 加载了它的 Agent 上执行",
-                    task.package, self.name
+                    task.package, self.host.name
                 ),
             ));
         }
@@ -522,8 +568,9 @@ impl Runtime {
         let settings = executor::Settings {
             work_root: &self.work_dir,
             procs_root: &self.procs_dir,
-            grace: self.terminate_grace,
+            grace: self.host.terminate_grace,
             log_forward_rate: self.log_forward_rate,
+            agent_socket: &self.agent_socket,
         };
         executor::start(
             &self.inventory.venv,
@@ -611,7 +658,7 @@ impl Runtime {
     /// （[`sdk`]；与启动新任务互斥）。版本一致时不重装；控制面没有提供地址时只记日志，任务照常尝试执行。
     async fn ensure_sdk(&self, welcome: &Welcome) {
         let venv = &self.inventory.venv;
-        let version = self.version.as_str();
+        let version = self.host.version.as_str();
         let installed = sdk::installed_version(venv).await;
         if installed.as_deref() == Some(version) {
             return;
@@ -672,7 +719,7 @@ impl Runtime {
                     ok: true,
                     message: format!(
                         "已在 Agent {} 上加载开发版本 {package}@{DEV_VERSION}（源码 {}）",
-                        self.name, entry.source
+                        self.host.name, entry.source
                     ),
                     output,
                 },
@@ -772,12 +819,22 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         std::fs::canonicalize(&config.venv).or_else(|_| std::path::absolute(&config.venv))?;
 
     let scratch = work_dir.join(".install");
+    let local_socket = config
+        .local_socket
+        .clone()
+        .unwrap_or_else(|| work_dir.join("agent.sock"));
+    let host = capabilities::Host {
+        name: config.name.clone(),
+        version: config.version.clone(),
+        terminate_grace: config.terminate_grace,
+        watch_queue_events: config.watch_queue_events,
+    };
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let (telemetry_tx, mut telemetry_rx) =
         logs::telemetry(config.telemetry_queue_bytes, config.metric_queue_points);
     let runtime = Arc::new(Runtime {
-        name: config.name.clone(),
+        host: host.clone(),
         dev: DevRegistry::new(work_dir.join(".dev")),
         inventory: Inventory {
             venv: SharedVenv::new(venv.clone()),
@@ -794,7 +851,6 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         procs_dir,
         retention: config.task_dir_retention,
         dirs: retention::Tracker::new(),
-        terminate_grace: config.terminate_grace,
         log_forward_rate: config.log_forward_rate,
         gate: RwLock::new(()),
         results: results_tx,
@@ -809,17 +865,16 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         http,
         uv: config.uv.clone(),
         scratch,
-        version: config.version.clone(),
+        agent_socket: std::path::absolute(&local_socket).unwrap_or_else(|_| local_socket.clone()),
+        peers: calls::Peers::default(),
     });
-    let dev_socket = config
-        .dev_socket
-        .clone()
-        .unwrap_or_else(|| work_dir.join("agent.sock"));
-    // 本地 socket 不可用时照常运行，只是不能用 sfly dev。
-    match dev::serve(&dev_socket, runtime.clone()) {
-        Ok(_) => eprintln!("sfly dev socket: {}", dev_socket.display()),
-        Err(error) => eprintln!("sfly dev is unavailable: {error:#}"),
+    // 本地 socket 不可用时照常运行，只是不能用 sfly dev，节点也调用不了 Agent 能力（调用时报连不上本机 Agent）。
+    match socket::serve(&local_socket, runtime.clone()) {
+        Ok(_) => eprintln!("sfly dev socket: {}", local_socket.display()),
+        Err(error) => eprintln!("sfly dev and agent capabilities are unavailable: {error:#}"),
     }
+    // 端口监听不了时照常运行，只是能力不能被其它 Agent 调用（原因随 Hello 上报）。
+    let endpoint = peer::serve(config.listen_port, config.public_address.clone(), host).await;
     let mut unacked: BTreeMap<(String, u32), TaskResult> = BTreeMap::new();
     // 控制面在 Welcome 中放弃的任务：之后结束时不再上报结果。
     let mut abandoned: HashSet<(String, u32)> = HashSet::new();
@@ -858,6 +913,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             // 手上的任务：正在执行的，加上已经结束、结果还没收到 Ack 的（断线期间结束的也算）。
             // 清点已安装的包可能很慢，期间结束的任务也要算上（#132）。
             running_tasks: runtime.held_collecting(&mut results_rx, &mut unacked, &mut abandoned),
+            peer: Some(endpoint.clone()),
         };
         // 试用中的新版本每次连接计一次尝试；握手成功且环境准备完成才算健康（ADR 0014）。
         config.trial.begin();

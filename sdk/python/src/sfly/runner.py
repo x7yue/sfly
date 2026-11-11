@@ -28,7 +28,7 @@ import typing
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from sfly.context import Cancelled, Context
+from sfly.context import Context, on_sigterm
 from sfly.nodes import NODE_ATTR, Metric, NodeDeclaration, is_context_param
 
 # 执行器每个任务启动一个进程（#76）：从解释器启动到开始导入节点模块的路径上只导入必需的模块，
@@ -119,12 +119,8 @@ def run(task: Mapping[str, Any]) -> tuple[int, str]:
         return 1, json.dumps(failure, ensure_ascii=False)
 
 
-def _on_sigterm(signum: int, frame: object) -> None:
-    raise Cancelled("任务被终止（SIGTERM）")
-
-
 def main() -> int:
-    signal.signal(signal.SIGTERM, _on_sigterm)
+    signal.signal(signal.SIGTERM, on_sigterm)
     with open(os.environ["SFLY_TASK"], encoding="utf-8") as f:
         task = json.loads(f.read())
     code, text = run(task)

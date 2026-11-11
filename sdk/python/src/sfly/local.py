@@ -18,6 +18,10 @@
 - 下载产物：本地没有控制面，`SFLY_DOWNLOADS` 指向下载内容表 `downloads.json`
   （产物引用 → 本地文件路径，只有本地执行会设置），`ctx.artifacts.download` 遇到表里的引用时
   直接复制对应的文件；本地保存的产物的引用是本地文件路径，不用登记就能下载；
+- Agent 能力：本地没有 Agent，`ctx.agent()` 直接操作本机的文件系统；`SFLY_LOCAL_AGENTS`
+  指向映射表 `local-agents.json`（「Agent」类型的输入引用的每台 Agent → 本地目录，没有映射的
+  为 null；只有本地执行会设置），`ctx.agent(名称)` 把那台 Agent 上的路径落到映射的目录里，
+  不在表里的名称不能访问（见 `sfly.capabilities.local`）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
 """
@@ -221,6 +225,28 @@ def input_problems(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list
         if sub is not None and not _matches(sub, value):
             problems.append(f"输入 {name} 应为 {_describe(sub)}，实际是 {_show(value)}")
     return problems
+
+
+def _is_agent_input(schema: Mapping[str, Any]) -> bool:
+    """「Agent」类型的输入（`sfly.AgentName` 或 `AgentName | None`）：带 `x-sfly-type: agent`。"""
+    if schema.get("x-sfly-type") == "agent":
+        return True
+    members = schema.get("anyOf")
+    return isinstance(members, list) and any(
+        isinstance(m, dict) and m.get("x-sfly-type") == "agent" for m in members
+    )
+
+
+def referenced_agents(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[str]:
+    """输入通过「Agent」类型的参数引用的 Agent 名称（去重，按参数顺序，空值不算）。"""
+    properties: Mapping[str, Any] = schema.get("properties") or {}
+    names: list[str] = []
+    for name, value in inputs.items():
+        sub = properties.get(name)
+        if isinstance(sub, dict) and _is_agent_input(sub) and isinstance(value, str) and value:
+            if value not in names:
+                names.append(value)
+    return names
 
 
 # ---- 执行 ----
@@ -439,6 +465,7 @@ def execute(
     node_id: str | None = None,
     procs_dir: str | os.PathLike[str] | None = None,
     downloads: Mapping[str, bytes | str | os.PathLike[str]] | None = None,
+    agents: Mapping[str, str | os.PathLike[str]] | None = None,
 ) -> Execution:
     """在 `work_dir`（不存在时创建）里执行节点入口 `模块:函数`，等它结束并返回结果。
 
@@ -450,6 +477,8 @@ def execute(
     - `procs_dir`：后台进程目录（`ctx.procs_dir`），默认 `work_dir/procs`；
     - `downloads`：产物引用 → 本地内容（bytes / str 是内容，str 按 UTF-8；路径是本地文件）。
       节点用 `ctx.artifacts.download` 下载表里的引用时得到这份内容，不访问网络。
+    - `agents`：Agent 名称 → 本地目录：节点用 `ctx.agent(名称)` 访问那台 Agent 时，
+      那台 Agent 上的绝对路径落在这个目录里（`/var/log` 是 `<目录>/var/log`）。
     """
     work = Path(work_dir)
     execution = Execution(status="running", work_dir=work)
@@ -506,6 +535,14 @@ def execute(
     )
     if downloads:
         env["SFLY_DOWNLOADS"] = str(_write_downloads(work, downloads))
+    local_agents = work.absolute() / "local-agents.json"
+    mapped = {name: str(Path(root).absolute()) for name, root in (agents or {}).items()}
+    referenced = referenced_agents(schema, inputs) if schema is not None else []
+    local_agents.write_text(
+        json.dumps({name: mapped.get(name) for name in referenced}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    env["SFLY_LOCAL_AGENTS"] = str(local_agents)
     pump = _Pump(execution, events, on_log, on_progress, on_metric)
     # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。
     try:
