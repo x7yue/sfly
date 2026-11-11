@@ -228,7 +228,7 @@ test("键盘浏览：方向键沿链切换，↓ / ↑ 进出子流程，Enter �
 	expect(await box(nodeCard(page, "fetch"))).toEqual(before);
 });
 
-test("检查器：按输入 schema 生成表单，常量 / 引用切换，引用补全按入口参数与前序节点分组；补全不拦截画布缩放", async ({
+test("检查器：字符串参数只有一个输入框，输入 $ 或点「插入引用」补全，引用整块高亮、整块删除；补全不拦截画布缩放", async ({
 	page,
 	controlPlane,
 }) => {
@@ -238,12 +238,22 @@ test("检查器：按输入 schema 生成表单，常量 / 引用切换，引用
 	const panel = inspector(page);
 	await expect(panel.getByRole("tab")).toHaveText(["参数", "执行", "说明与指标"]);
 
-	// ping.host 是整值引用：打开时就是引用模式。
-	await expect(panel.getByRole("button", { name: "引用", pressed: true })).toBeVisible();
+	// ping.host 是整值引用：没有模式切换，输入框里就是这个引用，高亮成一块；打开不算修改。
+	await expect(panel.getByRole("group", { name: "host 的取值方式" })).toHaveCount(0);
 	const host = panel.getByRole("combobox", { name: "输入 host" });
-	await expect(host).toHaveValue("nodes.fetch.outputs.status");
-	await host.fill("");
-	await host.focus();
+	await expect(host).toHaveText("${{ nodes.fetch.outputs.status }}");
+	await expect(host.locator("[data-reference]")).toHaveText(["${{ nodes.fetch.outputs.status }}"]);
+	await expect(page.getByText("有未保存的修改")).toHaveCount(0);
+
+	// 光标在引用后面，退格一次整块删除。
+	await host.click();
+	await page.keyboard.press("Control+End");
+	await page.keyboard.press("Backspace");
+	// 空的输入框显示占位文字。
+	await expect(host).toHaveText("必填");
+
+	// 输入 $ 弹出补全，按入口参数 / 前序节点分组。
+	await page.keyboard.type("$");
 	const list = panel.getByRole("listbox", { name: "可引用的值" });
 	await expect(list.getByRole("group")).toHaveText([/^入口参数/, /^前序节点/]);
 	await expect(list.getByRole("group", { name: "入口参数" }).getByRole("option")).toHaveText([
@@ -263,38 +273,122 @@ test("检查器：按输入 schema 生成表单，常量 / 引用切换，引用
 	await expect.poll(() => zoomLevel(page)).toBeLessThan(zoom);
 	await expect(list).toBeVisible();
 
-	await host.pressSequentially("biz");
+	// Esc 只关掉补全，焦点留在输入框里；继续输入又弹出，Enter 选中。
+	await page.keyboard.press("Escape");
+	await expect(list).toHaveCount(0);
+	await expect(host).toBeFocused();
+	await page.keyboard.type("biz");
 	await expect(list.getByRole("option")).toHaveText([/params\.biz_date/]);
 	await page.keyboard.press("Enter");
-	await expect(host).toHaveValue("params.biz_date");
+	await expect(host).toHaveText("${{ params.biz_date }}");
 	await expect(list).toHaveCount(0);
 
-	// 切到 fetch：字符串常量里输入 ${{ 也弹出补全，选中的引用插在光标处。
+	// 切到 fetch：文字和引用混写。「插入引用」弹出同样的补全，选中的引用插在光标处。
 	await nodeCard(page, "fetch").click();
 	const url = panel.getByRole("combobox", { name: "输入 url" });
-	await url.fill("https://example.test/");
-	await url.pressSequentially("${{ par");
-	await list.getByRole("option", { name: /params\.biz_date/ }).click();
-	await expect(url).toHaveValue("https://example.test/${{ params.biz_date }}");
-	// 整数输入可以切到引用。
+	await expect(url).toHaveText("https://example.test/snap");
+	await expect(url.locator("[data-reference]")).toHaveCount(0);
+	await url.fill("https://example.test/?d=");
+	await panel.getByRole("button", { name: "在 url 中插入引用" }).click();
+	await expect(url).toBeFocused();
+	// fetch 是链上第一个节点：只有入口参数可以引用。
+	await expect(list.getByRole("option")).toHaveText([/params\.biz_date/, /params\.api_token/]);
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("ArrowUp");
+	await page.keyboard.press("Enter");
+	await expect(url).toHaveText("https://example.test/?d=${{ params.biz_date }}");
+	// 光标停在引用后面：接着写文字，再把光标移到最前面用 ${{ 插入一个引用。
+	await page.keyboard.type("&x=1");
+	await page.keyboard.press("Control+Home");
+	await page.keyboard.type("${{ api");
+	await list.getByRole("option", { name: /params\.api_token/ }).click();
+	await expect(url).toHaveText(
+		"${{ params.api_token }}https://example.test/?d=${{ params.biz_date }}&x=1",
+	);
+	await expect(url.locator("[data-reference]")).toHaveText([
+		"${{ params.api_token }}",
+		"${{ params.biz_date }}",
+	]);
+	// 刚插入的引用后面退格：整块删除。
+	await page.keyboard.press("Backspace");
+	await expect(url).toHaveText("https://example.test/?d=${{ params.biz_date }}&x=1");
+	// 写普通的 $ 不受影响：没有匹配的引用时不弹出。
+	await page.keyboard.type("$HOME ");
+	await expect(list).toHaveCount(0);
+	await expect(url).toHaveText("$HOME https://example.test/?d=${{ params.biz_date }}&x=1");
+
+	// 非字符串参数仍然可以切到引用。
 	await panel
 		.getByRole("group", { name: "expect 的取值方式" })
 		.getByRole("button", { name: "引用" })
 		.click();
 	await panel.getByRole("combobox", { name: "输入 expect" }).focus();
 	await expect(list.getByRole("group", { name: "前序节点" })).toHaveCount(0);
+	await page.keyboard.press("Escape");
 
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
 	await page.keyboard.press("Control+s");
 	await expect(page.getByText("已保存为版本 2")).toBeVisible();
 	const head = await headOf(controlPlane, id);
 	expect(head.number).toBe(2);
+	// 整个值恰好是一个引用：整值引用；混写：内嵌引用。都是原来的字符串格式。
 	expect(head.document.nodes.find((n) => n.id === "ping")?.inputs).toEqual({
 		host: "${{ params.biz_date }}",
 	});
 	expect(head.document.nodes.find((n) => n.id === "fetch")?.inputs).toEqual({
-		url: "https://example.test/${{ params.biz_date }}",
+		url: "$HOME https://example.test/?d=${{ params.biz_date }}&x=1",
 	});
+});
+
+test("检查器：字符串输入框随内容增高，最多 8 行；无效的引用在字段下警告；清空就是不填", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	await nodeCard(page, "fetch").click();
+	const panel = inspector(page);
+	const url = panel.getByRole("combobox", { name: "输入 url" });
+	const frame = panel.locator('[data-slot="reference-editor"]').filter({
+		has: page.getByRole("combobox", { name: "输入 url" }),
+	});
+	const height = async () => (await box(frame)).height;
+	const lines = (n: number) => Array.from({ length: n }, (_, i) => `echo ${i}`).join("\n");
+
+	const one = await height();
+	await url.fill(lines(3));
+	const three = await height();
+	expect(three).toBeGreaterThan(one);
+	await url.fill(lines(8));
+	const eight = await height();
+	expect(eight).toBeGreaterThan(three);
+	// 超过 8 行不再增高，在输入框内部滚动。
+	await url.fill(lines(20));
+	await expect.poll(height).toBe(eight);
+	// 一行很长的命令自动换行，也会增高。
+	await url.fill("curl ".repeat(40));
+	await expect.poll(height).toBeGreaterThan(one);
+
+	// 引用了不存在的节点：字段下显示静态检查的警告，不阻止保存。
+	await url.fill("${{ nodes.nope.outputs.x }}");
+	await expect(panel.getByText("引用了不存在的节点 nope")).toBeVisible();
+	await expect(url).toHaveAttribute("aria-invalid", "true");
+	await expect(page.getByRole("button", { name: /保存/ })).toBeEnabled();
+
+	// 修改进入本地草稿：刷新后还在。
+	await page.waitForTimeout(400); // 草稿写入有 300ms 防抖
+	await page.reload();
+	await nodeCard(page, "fetch").click();
+	await expect(url).toHaveText("${{ nodes.nope.outputs.x }}");
+	await expect(panel.getByText("引用了不存在的节点 nope")).toBeVisible();
+
+	// 清空后这个输入不再写进文档。
+	await url.fill("");
+	await expect(url).toHaveText("必填");
+	await page.keyboard.press("Control+s");
+	await expect(page.getByText("已保存为版本 2")).toBeVisible();
+	const head = await headOf(controlPlane, id);
+	expect(head.document.nodes.find((n) => n.id === "fetch")?.inputs).toEqual({});
 });
 
 test("字段校验失败时不能保存：按钮禁用，Ctrl S 提示；改正后可以保存", async ({

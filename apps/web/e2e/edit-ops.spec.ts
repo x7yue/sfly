@@ -251,12 +251,12 @@ test("撤销 / 重做：删除节点（连带连线）、移动、参数修改�
 		.getByRole("combobox", { name: "输入 url" });
 	await url.fill("https://example.test/a");
 	await url.pressSequentially("bc");
-	await expect(url).toHaveValue("https://example.test/abc");
+	await expect(url).toHaveText("https://example.test/abc");
 	// 焦点在输入框里时 Ctrl Z 是输入框自己的撤销，用工具条按钮撤销画布上的修改。
 	await undo.click();
-	await expect(url).toHaveValue("https://example.test/snap");
+	await expect(url).toHaveText("https://example.test/snap");
 	await redo.click();
-	await expect(url).toHaveValue("https://example.test/abc");
+	await expect(url).toHaveText("https://example.test/abc");
 
 	// 撤销到底就和已保存的版本一样。
 	await undo.click();
