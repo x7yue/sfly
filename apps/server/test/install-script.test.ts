@@ -345,6 +345,48 @@ describe("install.sh", () => {
 		expect(run.stderr).toContain("SFLY_USER_AGENT 只能包含可打印 ASCII 字符");
 	});
 
+	it("--listen-port、--public-address 写进 agent.env；重新运行没有传时沿用原来的值", async () => {
+		let run = await install([
+			"--name",
+			"lab-10",
+			"--listen-port",
+			"6000",
+			"--public-address",
+			"10.0.0.5",
+			"--no-service",
+		]);
+		expect(run.code, run.stderr).toBe(0);
+		const env = join(home, ".sfly", "agent.env");
+		const managed = async () =>
+			(await readFile(env, "utf8"))
+				.split("\n")
+				.filter((l) => /^SFLY_(LISTEN_PORT|PUBLIC_ADDRESS)=/.test(l));
+		expect(await managed()).toEqual(["SFLY_LISTEN_PORT=6000", "SFLY_PUBLIC_ADDRESS=10.0.0.5"]);
+
+		run = await install(["--name", "lab-10", "--no-service"]);
+		expect(run.code, run.stderr).toBe(0);
+		expect(await managed()).toEqual(["SFLY_LISTEN_PORT=6000", "SFLY_PUBLIC_ADDRESS=10.0.0.5"]);
+
+		run = await install(["--name", "lab-10", "--listen-port=6001", "--no-service"]);
+		expect(run.code, run.stderr).toBe(0);
+		expect(await managed()).toEqual(["SFLY_LISTEN_PORT=6001", "SFLY_PUBLIC_ADDRESS=10.0.0.5"]);
+	});
+
+	it("--listen-port 不是 1–65535 的整数、--public-address 带协议或端口时报错退出", async () => {
+		for (const port of ["0", "65536", "abc", "080"]) {
+			const run = await install(["--name", "lab-11", "--listen-port", port, "--no-service"]);
+			expect(run.code, port).not.toBe(0);
+			expect(run.stderr).toContain(`--listen-port 必须是 1–65535 的整数：${port}`);
+		}
+		for (const address of ["http://10.0.0.5", "10.0.0.5:6000", "two words"]) {
+			const run = await install(["--name", "lab-11", "--public-address", address, "--no-service"]);
+			expect(run.code, address).not.toBe(0);
+			expect(run.stderr).toContain(
+				`--public-address 只能是 IP 地址或主机名（不带协议和端口）：${address}`,
+			);
+		}
+	});
+
 	it("缺少 --name 时报错退出", async () => {
 		const run = await install(["--no-service"]);
 		expect(run.code).not.toBe(0);

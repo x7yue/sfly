@@ -1,4 +1,6 @@
 // 互通测试：真实的 Rust Agent（tonic 客户端）用标准 gRPC 连上控制面网关。
+import { connect } from "node:net";
+import { agentsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { agentBinary } from "./support/agent-binary.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
@@ -27,4 +29,27 @@ describe("Rust Agent 与控制面互通", () => {
 			{ event: "welcome", name: "interop-agent" },
 		]);
 	}, 30_000);
+
+	it("Agent 上报它监听的端口，对外地址是控制面看到的连接来源地址，端口能连上", async () => {
+		const res = await cp.fetch("/agents");
+		const [listed] = agentsApi.list.response.parse(await res.json()).agents;
+		expect(listed?.name).toBe("interop-agent");
+		expect(listed?.capabilities).toEqual([]);
+		const endpoint = listed?.endpoint;
+		expect(endpoint).toMatchObject({
+			address: "127.0.0.1",
+			address_source: "connection",
+			unavailable_reason: null,
+		});
+		// 测试让系统分配端口（support/real-agent.ts）。
+		const port = endpoint?.port ?? 0;
+		expect(port).toBeGreaterThan(0);
+		await new Promise<void>((resolve, reject) => {
+			const socket = connect(port, endpoint?.address, () => {
+				socket.end();
+				resolve();
+			});
+			socket.once("error", reject);
+		});
+	});
 });

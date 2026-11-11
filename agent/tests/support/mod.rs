@@ -611,12 +611,14 @@ impl<'a> AgentOptions<'a> {
 /// 标准输出丢弃，测试结束时被杀掉。其余参数由调用方添加。
 ///
 /// 默认 `SFLY_UV=uv`（用测试机 PATH 上的 uv，不让 Agent 去安装自己管理的 uv）；
-/// 测 Agent 管理 uv 的测试用 `env_remove("SFLY_UV")` 去掉它。
+/// 测 Agent 管理 uv 的测试用 `env_remove("SFLY_UV")` 去掉它。默认 `SFLY_LISTEN_PORT=0`（[`sfly_agent::peer`]）。
 pub fn agent_command(home: &Path) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_sfly-agent"));
     command
         .env("SFLY_HOME", home)
         .env("SFLY_UV", "uv")
+        // 供其它 Agent 连接的端口由系统分配：并行的测试不抢默认端口 50052。
+        .env("SFLY_LISTEN_PORT", "0")
         .stdout(Stdio::null())
         // 自成进程组：测试结束时连同 Agent 启动的 uv 等子进程一起杀掉（[`AgentChild`]）。
         .process_group(0)

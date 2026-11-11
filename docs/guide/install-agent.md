@@ -17,6 +17,7 @@ curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)"
 - `--name`：Agent 名称，全局唯一，场景按名称选择 Agent。上面的命令用主机名，也可以换成别的名称。
 - `--token '<令牌>'`：控制面配置了注册令牌时必填，向平台管理员索取。令牌不对时 Agent 打印 `invalid agent token` 后退出。推荐改用环境变量 `SFLY_TOKEN` 传给安装脚本，令牌不会留在 shell 历史和进程列表里（见下面的例子）。
 - `--slots <数量>`：同时执行的任务上限，默认 4。
+- `--listen-port <端口>`、`--public-address <地址>`：供其它 Agent 连接的端口（默认 50052）和对外地址，见下面的「供其它 Agent 连接的端口」。
 - `--no-auto-update`：不自动更新（见「版本与自动更新」）。
 - 完整参数：`curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --help`。
 
@@ -111,7 +112,7 @@ sfly --version
 ~/.sfly/bin/sfly-agent --help
 ```
 
-改完 `agent.env` 后重启 Agent（`systemctl --user restart sfly-agent`）。重新运行安装脚本时只改写它管理的键（`SFLY_SERVER`、`SFLY_CONTROL_PLANE_URL`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`、`SFLY_SLOTS`、`SFLY_NO_AUTO_UPDATE`，以及镜像覆盖 `SFLY_INDEX_URL`、`SFLY_GITHUB_RELEASE_MIRROR`、`SFLY_PYTHON_INSTALL_MIRROR`），自己加的键保留；没有再传 `--token`、`--slots`、`--no-auto-update`、没有再设置镜像环境变量时沿用原来的值。
+改完 `agent.env` 后重启 Agent（`systemctl --user restart sfly-agent`）。重新运行安装脚本时只改写它管理的键（`SFLY_SERVER`、`SFLY_CONTROL_PLANE_URL`、`SFLY_AGENT_NAME`、`SFLY_TOKEN`、`SFLY_SLOTS`、`SFLY_LISTEN_PORT`、`SFLY_PUBLIC_ADDRESS`、`SFLY_NO_AUTO_UPDATE`，以及镜像覆盖 `SFLY_INDEX_URL`、`SFLY_GITHUB_RELEASE_MIRROR`、`SFLY_PYTHON_INSTALL_MIRROR`），自己加的键保留；没有再传 `--token`、`--slots`、`--listen-port`、`--public-address`、`--no-auto-update`、没有再设置镜像环境变量时沿用原来的值。
 
 任务目录里有任务的输入、输出、产物，以及标准输出 / 标准错误的副本 `stdout.log` / `stderr.log`（完整日志在控制面）。副本每个文件 8 MiB，写满后改名为 `stdout.log.1` / `stderr.log.1`（覆盖旧的）再写新文件，每个流最多占 16 MiB。任务结束、结果交给控制面后，任务目录默认保留 7 天：Agent 启动时和之后每小时删除超过保留期的目录。保留期按真实流逝的时长计算，修改 Agent 机器的系统时间不会让目录提前被删或一直不删；Agent 或机器重启后，已有的目录从启动时重新计时。用 `SFLY_TASK_DIR_RETENTION`（参数 `--task-dir-retention`）修改，例如在 `agent.env` 里加一行（改完重启 Agent）：
 
@@ -122,6 +123,40 @@ SFLY_TASK_DIR_RETENTION=24h
 可以写成 `30m`、`24h`、`7d` 这样；`0` 表示任务结束后立即删除。正在执行的任务、`.dev` 等以点开头的目录和 `agent.sock` 不会被删除。
 
 后台进程目录 `procs/<运行 ID>/` 按同一个保留期清理：从这次运行在这个 Agent 上的最后一个任务结束时开始计时（Agent 重启后从启动时重新计时），超过保留期、而且这次运行没有任务还在这个 Agent 上执行时删除，后台进程还在写日志时不会被删。保留期为 `0` 时，运行在这个 Agent 上的任务都结束后，下一次扫描（每小时）就删除，哪怕后台进程还在运行。用 `SFLY_PROCS_DIR`（参数 `--procs-dir`）把它放到别处。
+
+## 供其它 Agent 连接的端口
+
+节点可以调用另一台 Agent 的 Agent 能力（例如读取那台机器上的文件），这时两台 Agent 直接通信，数据不经过控制面。为此每台 Agent 都在一个端口上等其它 Agent 连接，默认是 50052，在所有网卡上监听。
+
+**这个端口上的接口没有认证，也不加密**：能连上这个端口的机器就能调用这台 Agent 的能力，权限就是 Agent 进程的权限。只在内网使用，不要让外网访问到这个端口。
+
+- **端口**：安装时用 `--listen-port <端口>` 修改（写进 `agent.env` 的 `SFLY_LISTEN_PORT`），机器上 50052 已被别的程序占用，或者要和防火墙规则一致时设置。防火墙要放行这个端口，让其它测试机上的 Agent 连得进来。
+- **对外地址**：其它 Agent 用来连接这台 Agent 的地址。默认是控制面看到的这台 Agent 的连接来源地址，大多数机器不用配置。机器有多块网卡（连控制面和连其它测试机走的不是同一块）、控制面经过代理或地址转换才能访问（控制面看到的不是这台机器的地址）时，安装时用 `--public-address <地址>` 指定（写进 `SFLY_PUBLIC_ADDRESS`）。地址是 IP 地址或主机名，不带协议和端口；主机名要能被其它测试机解析。
+
+例如这台机器在测试网里的地址是 `10.20.30.40`，端口用 6000：
+
+```text
+curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name "$(uname -n)" --listen-port 6000 --public-address 10.20.30.40
+```
+
+已经安装过的机器可以直接改 `agent.env`（改完重启 Agent）：
+
+```ini
+SFLY_LISTEN_PORT=6000
+SFLY_PUBLIC_ADDRESS=10.20.30.40
+```
+
+[Agent 管理](/agents) 页面的「对外地址」列显示每台 Agent 的地址和端口（安装时显式配置的标明「安装时配置」），「能力」列显示它支持的能力及版本。
+
+端口被占用（或因为别的原因监听不了）时，Agent 照常连接控制面、执行任务，只是它的能力不能被其它 Agent 调用：Agent 管理页的「能力」列显示「不能被其它 Agent 调用」和原因（例如「端口 50052 已被占用」）。释放端口或换一个端口后重启 Agent。不监听端口的旧版本 Agent 升级后才有能力。
+
+验证两台 Agent 之间是通的：在另一台测试机上连这台 Agent 的地址和端口（以 Agent 管理页显示的为准），能连上说明网络和防火墙都放行了：
+
+```text
+nc -vz 10.20.30.40 50052
+```
+
+没有 `nc` 时可以用 bash：`timeout 3 bash -c '</dev/tcp/10.20.30.40/50052' && echo 通`。连不上时依次检查：Agent 管理页上这台 Agent 有没有显示「不能被其它 Agent 调用」，这台机器上 `ss -ltnp | grep 50052` 能不能看到 `sfly-agent` 在监听，两台机器之间的防火墙有没有放行这个端口，对外地址是不是另一台机器能访问到的地址。
 
 ## 版本与自动更新
 

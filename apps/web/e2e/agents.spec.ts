@@ -14,7 +14,7 @@ import {
 // 控制面版本固定为 1.2.3：与它一致的 Agent 才会被派任务（ADR 0014）。
 test.use({ controlPlaneOptions: { version: "1.2.3" } });
 
-test("列出 Agent：在线状态、槽位占用、版本、系统、已安装节点包、被引用场景数、最后在线", async ({
+test("列出 Agent：在线状态、槽位占用、版本、系统、对外地址、能力、已安装节点包、被引用场景数、最后在线", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -27,7 +27,10 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、已安装�
 		arch: "x86_64",
 		slots: 2,
 		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+		capabilities: [{ name: "files", version: 1 }],
+		peer: { port: 50052 },
 	});
+	// 不上报端口和能力的旧版本 Agent。
 	const gone = await connectAgent({
 		name: "agent-gone",
 		agentVersion: "1.0.0",
@@ -50,6 +53,8 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、已安装�
 		"1/2",
 		"1.2.3",
 		"linux/x86_64",
+		"127.0.0.1:50052",
+		"files v1",
 		"demo-checks@1.2.0",
 		"2 个场景",
 		"现在",
@@ -62,6 +67,8 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、已安装�
 		"0/4",
 		"1.0.0",
 		"macos/aarch64",
+		"127.0.0.1",
+		"无",
 		"无",
 		"未被引用",
 		"01-01 08:01",
@@ -102,6 +109,41 @@ test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒
 	await expect(status("agent-synced")).toHaveText("在线时间比控制面慢 1 分钟", {
 		timeout: 15_000,
 	});
+});
+
+test("对外地址与能力：显式配置的地址标明来源；端口被占用时说明能力不能被其它 Agent 调用及原因", async ({
+	page,
+	connectAgent,
+}) => {
+	await connectAgent({
+		name: "agent-nat",
+		capabilities: [
+			{ name: "files", version: 2 },
+			{ name: "exec", version: 1 },
+		],
+		peer: { port: 6000, publicAddress: "10.20.30.40" },
+	});
+	await connectAgent({
+		name: "agent-busy-port",
+		capabilities: [{ name: "files", version: 2 }],
+		peer: { port: 50052, listenError: "端口 50052 已被占用" },
+	});
+	await connectAgent({ name: "agent-old" });
+
+	await page.goto("/agents");
+	const cells = (name: string) =>
+		page.getByRole("row", { name: new RegExp(name) }).getByRole("cell");
+	await expect(cells("agent-nat").nth(5)).toHaveText("10.20.30.40:6000安装时配置");
+	await expect(cells("agent-nat").nth(6)).toHaveText("files v2、exec v1");
+	await expect(cells("agent-busy-port").nth(5)).toHaveText("127.0.0.1:50052");
+	await expect(cells("agent-busy-port").nth(6)).toHaveText(
+		"files v2不能被其它 Agent 调用端口 50052 已被占用",
+	);
+	// 不监听端口的旧版本 Agent：只有地址，没有能力。
+	await expect(cells("agent-old").nth(5)).toHaveText("127.0.0.1");
+	await expect(cells("agent-old").nth(6)).toHaveText("无");
+	// 端口被占用不影响执行任务：状态照常是在线。
+	await expect(cells("agent-busy-port").nth(1)).toHaveText("在线");
 });
 
 test.describe("版本不一致", () => {
