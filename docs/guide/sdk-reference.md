@@ -145,7 +145,42 @@ return {"report": ref}
 
 - 名称是产物目录内的相对路径，可以用 `/` 分隔子目录；不能有空段、`.`、`..` 或反斜杠。
 - 任务结束后 Agent 把产物上传到控制面，运行视图里可以下载。
-- **产物引用**：在 Agent 上是产物的下载地址，写进输出交给后续节点，后续节点可以直接下载（例如 `urllib.request.urlopen(ref)`）；本地调试时是本地文件路径。
+- **产物引用**：在 Agent 上是产物在控制面上的下载地址，写进输出交给后续节点，后续节点用 `ctx.artifacts.download` 下载；本地调试时是本地文件路径。
+
+### 下载产物
+
+```python
+from pathlib import Path
+
+from sfly import Context, node
+
+
+@node(outputs=["lines"])
+def count_lines(ctx: Context, log_file: str) -> dict:
+    """log_file 是前面的节点输出的产物引用。"""
+    path = ctx.artifacts.download(log_file, "downloads/server.log")
+    with path.open("rb") as f:
+        return {"lines": sum(1 for _ in f)}
+```
+
+`ctx.artifacts.download(ref, dest, *, retries=3, timeout=30.0)` 把产物引用 `ref` 指向的产物下载到本地路径 `dest`，返回写入的路径（`Path`）。
+
+- `dest` 是相对任务工作目录的路径或绝对路径；父目录不存在时创建，已有的文件被覆盖。
+- 流式读写，内存占用与产物大小无关。内容先写到旁边的 `<文件名>.part`，全部写完才改名成 `dest`：失败或取消时不留下半个文件。
+- 连不上控制面、连接中断、控制面返回 5xx 时自动重试，最多 `retries` 次（间隔 0.5 秒起每次加倍）；`timeout` 是连接和每次读取的超时秒数。
+- 失败时抛出 `sfly.ArtifactDownloadError`，消息里有原因和产物引用：
+
+  | 消息 | 原因 |
+  |---|---|
+  | 产物引用无效 | `ref` 不是 http(s) 下载地址，也不是已有的本地文件：传进来的不是 `ctx.artifacts.save` / `ref` 返回的引用 |
+  | 产物不存在（HTTP 404） | 任务没有保存过这个名称的产物，或者产物还没有上传 |
+  | 产物已被清理（HTTP 410） | 运行已过保留期 |
+  | 连不上控制面、连接中断、控制面返回 HTTP 5xx | 重试 `retries` 次之后仍然失败 |
+
+- 任务被取消时下载立即停止，抛出 `sfly.Cancelled`。在后台线程里下载时，在两次读取之间停止（最长等一次读取超时）。
+- 产物在保存它的任务结束后才上传：只能下载前面的节点保存的产物，不能下载本任务刚保存的（本地调试时可以，因为引用就是本地文件）。
+- 下载直接访问控制面，不经过保存产物的那台 Agent：任何一台 Agent 上的节点都能下载。
+- 本地调试没有控制面。本地保存的产物的引用是本地文件路径，`download` 直接复制；要测试「下载上游节点给的引用」时，给这个引用指定本地内容：`run_node(downloads={引用: 内容})` 或 `sfly run --download <引用> <文件>`（见下文），节点下载它时得到这份内容，不访问网络。
 
 ## `ctx.task` 与 `ctx.procs_dir`：任务信息与后台进程目录
 
@@ -201,12 +236,24 @@ def test_countdown_cleans_up_when_cancelled(tmp_path: Path) -> None:
     assert "倒计时结束" in [line.message for line in result.logs]
 ```
 
-`run_node(node, inputs=None, *, cancel_when=None, cancel_after=None, grace=10.0, work_dir=None)` 在子进程里用和 Agent 相同的执行器执行节点，等它结束后返回 `Execution`：
+`run_node(node, inputs=None, *, cancel_when=None, cancel_after=None, grace=10.0, work_dir=None, downloads=None)` 在子进程里用和 Agent 相同的执行器执行节点，等它结束后返回 `Execution`：
 
 - `node`：`@node` 函数（模块顶层），或入口字符串 `"模块:函数"`。
 - `inputs`：输入，先按类型注解校验，不通过时 `status` 为 failed、`error.kind` 为 config_error，节点不执行。
 - `cancel_when(partial)`：执行中定期以到目前为止的结果调用，返回 True 时取消；`cancel_after`：开始后这么多秒取消。取消与平台相同：节点里抛出 `Cancelled`，宽限期 `grace` 秒后强制杀掉。
 - `work_dir`：任务工作目录，默认新建一个临时目录（不自动删除）；测试里传 pytest 的 `tmp_path`。
+- `downloads`：产物引用 → 本地内容，给 `ctx.artifacts.download` 用。内容是 bytes / str（按 UTF-8）时就是产物的内容，是路径（`Path`）时取该文件，写法与 `ctx.artifacts.save` 相同。没有列出的引用照常下载。
+
+```python
+def test_count_lines(tmp_path: Path) -> None:
+    ref = "http://sfly.example/tasks/t-1/artifacts/server.log"
+
+    result = run_node(
+        count_lines, {"log_file": ref}, downloads={ref: "a\nb\n"}, work_dir=tmp_path
+    )
+
+    assert result.outputs == {"lines": 2}
+```
 
 | `Execution` 的字段 | 内容 |
 |---|---|
@@ -242,6 +289,7 @@ uv run sfly run countdown --params '{"name": "世界", "steps": 5}'
 
 - 日志实时打印到标准错误；结束后在标准输出打印输出值（`输出：` 后的 JSON）、指标汇总表和运行目录。指标汇总表每个序列一行，带标签的指标在指标名后面跟标签值，例如 `conn_latency_ms{host=db-1,port=5432}`。
 - 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`（目录名也是 `ctx.task.run_id`；`ctx.procs_dir` 是 `.sfly/procs/<目录名>/`），里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。
+- `--download <产物引用> <文件>`：节点用 `ctx.artifacts.download` 下载这个产物引用时，得到这个本地文件的内容；可以重复给出。文件不存在时以 2 退出。例如 `uv run sfly run count_lines --params '{"log_file": "up"}' --download up ./server.log`。
 - Ctrl-C 按平台的取消流程取消（节点里抛出 `Cancelled`，宽限期后强制杀掉），再按一次立即杀掉；节点结束后、打印结果期间的 Ctrl-C 被忽略。
 - 退出码：成功 0，节点失败 1，参数不合法或找不到节点 2，取消 130。
 
