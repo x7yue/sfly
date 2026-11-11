@@ -7,7 +7,9 @@ import { DEFAULT_TZ } from "./inspector/wait-nodes";
 
 /** 添加节点菜单里的一项：内置节点，或某个节点包版本里的节点类型。 */
 export type AddItem =
-	| { kind: "async" | "timer" | "sleep" | "stop_subflow" }
+	| { kind: "timer" | "sleep" | "stop_subflow" }
+	/** 异步任务：勾选「同时新建子流程」时带上子流程名称，一并新建子流程入口和调度连线（#187）。 */
+	| { kind: "async"; subflow?: string }
 	/** 子流程入口：新建时必须填写名称（SEMANTICS §1.2）。 */
 	| { kind: "subflow_entry"; name: string }
 	| { kind: "package"; package: string; version: string; node: string; title: string };

@@ -73,6 +73,7 @@ import {
 	newSubflowNameProblem,
 	packageGroups,
 } from "./add-node";
+import { companionSubflow, dispatchProblem } from "./add-subflow";
 import { usePackageCatalog } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { useEditHistory } from "./edit-history";
@@ -282,14 +283,19 @@ function Editor({
 	);
 	const [adding, setAdding] = useState<AddRequest | null>(null);
 	/**
-	 * 从没有出线的链端口（链尾、游离节点）拖线到空白处：弹出可以接上的节点菜单；拖到某个端口上但连线被拒绝时，提示原因。
+	 * 从没有出线的链端口（链尾、游离节点）拖线到空白处：弹出可以接上的节点菜单；从还没有调度连线的调度端口拖出时，
+	 * 弹出新建子流程的表单（#187）。拖到某个端口上但连线被拒绝时，提示原因。
 	 */
 	const onConnectEnd: OnConnectEnd = useCallback(
 		(event, state) => {
 			if (!state.fromNode) return;
 			if (!state.toNode) {
-				if (state.fromHandle?.type !== "source" || state.fromHandle.id === "dispatch") return;
-				const problem = appendProblem(docRef.current, state.fromNode.id);
+				if (state.fromHandle?.type !== "source") return;
+				const from = state.fromHandle.id === "dispatch" ? "dispatch" : "after";
+				const problem = (from === "dispatch" ? dispatchProblem : appendProblem)(
+					docRef.current,
+					state.fromNode.id,
+				);
 				if (problem) {
 					notify.warning(problem);
 					return;
@@ -298,7 +304,7 @@ function Editor({
 				if (!point) return;
 				const at = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
 				setAdding({
-					after: state.fromNode.id,
+					[from]: state.fromNode.id,
 					client: { x: point.clientX, y: point.clientY },
 					position: { x: at.x, y: at.y - NODE_HEIGHT / 2 },
 				});
@@ -387,6 +393,12 @@ function Editor({
 				return;
 			}
 			next = applyDocument(nodes, edges, edit.doc);
+		} else if (request.dispatch && request.position) {
+			// 从调度端口拖出（#187）：子流程入口的调度端口就在松开鼠标的位置，连上调度连线。
+			next = {
+				nodes: [...nodes, toFlowNode(newDocNode(item, id), request.position)],
+				edges: [...edges, toFlowEdge({ from: request.dispatch, to: id, kind: "dispatch" })],
+			};
 		} else {
 			// 没有来源：右键处，否则视口（扣掉顶栏和检查器）中心；压住已有节点时错开。
 			const wanted =
@@ -405,6 +417,15 @@ function Editor({
 			next = { nodes: [...nodes, toFlowNode(newDocNode(item, id), position)], edges };
 		}
 		const position = next.nodes.find((n) => n.id === id)?.position ?? { x: 0, y: 0 };
+		if (item.kind === "async" && item.subflow !== undefined) {
+			// 勾选了「同时新建子流程」（#187）：子流程入口和调度连线一起加，同一步撤销。
+			const others = next.nodes.filter((n) => n.id !== id);
+			const subflow = companionSubflow({ id, position }, item.subflow, others);
+			next = {
+				nodes: [...next.nodes, subflow.node],
+				edges: [...next.edges, toFlowEdge(subflow.edge)],
+			};
+		}
 		history.checkpoint();
 		if (item.kind === "package" && meta.packages[item.package] !== item.version) {
 			setMeta((m) => ({ ...m, packages: { ...m.packages, [item.package]: item.version } }));
