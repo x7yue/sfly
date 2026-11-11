@@ -165,6 +165,8 @@ def count_lines(ctx: Context, log_file: str) -> dict:
 
 `ctx.artifacts.download(ref, dest, *, retries=3, timeout=30.0)` 把产物引用 `ref` 指向的产物下载到本地路径 `dest`，返回写入的路径（`Path`）。
 
+这个接口从 SDK 0.2.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.2.0`：更旧的 Agent 上没有这个接口，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
+
 - `dest` 是相对任务工作目录的路径或绝对路径；父目录不存在时创建，已有的文件被覆盖。
 - 流式读写，内存占用与产物大小无关。内容先写到旁边的 `<文件名>.part`，全部写完才改名成 `dest`：失败或取消时不留下半个文件。
 - 连不上控制面、连接中断、控制面返回 5xx 时自动重试，最多 `retries` 次（间隔 0.5 秒起每次加倍）；`timeout` 是连接和每次读取的超时秒数。
