@@ -218,8 +218,8 @@ export class Engine implements AgentSessionHandler {
 			artifactUploadUrl: (taskId: string) => string;
 			/** 触发前的预检（src/runs/preflight.ts）。 */
 			preflight: Preflight;
-			/** 触发时按入口参数的实际值做的检查（src/runs/preflight.ts）；没有时不检查。 */
-			paramsCheck?: ParamsCheck;
+			/** 触发时按入口参数的实际值做的检查（src/runs/preflight.ts）。 */
+			paramsCheck: ParamsCheck;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
@@ -319,8 +319,7 @@ export class Engine implements AgentSessionHandler {
 					details: filled.errors,
 				};
 			}
-			const paramProblems =
-				(await this.deps.paramsCheck?.(version.document, plan, filled.params)) ?? [];
+			const paramProblems = await this.deps.paramsCheck(version.document, plan, filled.params);
 			if (paramProblems.length > 0) {
 				return {
 					ok: false,

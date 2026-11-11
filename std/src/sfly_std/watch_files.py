@@ -24,6 +24,7 @@ from typing import TypedDict
 from sfly import (
     Agent,
     AgentError,
+    AgentFileMoved,
     AgentFileNotFound,
     AgentName,
     AgentTimeout,
@@ -165,9 +166,13 @@ class _Puller:
             return None
         target = self.local.target(file)
         try:
+            # 拉取期间它被改名（日志又轮转了一次）不影响下载：got.path 是它现在的路径。
             got = _pull.download(agent, file, target, stats.transferring)
         except (AgentUnreachable, AgentTimeout):
             raise
+        except AgentFileMoved:
+            # 连接中断期间它被移到了别的目录，续传找不到它：和已经不在这个路径上一样处理。
+            got = None
         except AgentError as error:
             stats.failed()
             if error.kind != "failed" or _unchanged(agent, file, files):
@@ -177,7 +182,7 @@ class _Puller:
             ctx.log.info("%s 在拉取期间变化了，之后再拉：%s", file.path, error)
             return None
         if got is None:
-            # 被删除或改名了（例如拉取期间日志又轮转了一次）：等监听的事件或快照告诉我们它在哪里。
+            # 被删除了，或被移到了别处：等监听的事件或快照告诉我们它在哪里。
             stats.failed()
             ctx.log.info("%s 已经不在这个路径上，跳过", file.path)
             files.retry_later(file, RETRY_DELAY)
@@ -193,7 +198,7 @@ class _Puller:
         if deleted == "changed":
             self.ctx.log.warning("%s 在拉取之后被改动或替换，没有删除", got.path)
         else:
-            self.files.gone(got.id)
+            self.files.deleted(got.id)
 
 
 def _unchanged(agent: Agent, file: FileInfo, files: _Files) -> bool:
@@ -333,6 +338,11 @@ class _Files:
         """文件已经不在了（被删除、移出监听范围）。它的标识以后可能被新文件重用，所以也忘掉拉过它。"""
         self._known.pop(file, None)
         self._pulled.pop(file, None)
+
+    def deleted(self, file: FileId) -> None:
+        """拉完之后我们删除了它。队列里可能还有删除之前的事件提到它（例如拉取期间它被改名），
+        所以先记着拉过它，等监听报告它被删除（或快照里没有它）时再忘掉。"""
+        self._known.pop(file, None)
 
     def pulled(self, info: FileInfo) -> None:
         self._pulled[info.id] = info.size

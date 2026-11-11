@@ -1,8 +1,6 @@
 import {
 	agentInputs,
-	agentNotRegistered,
 	InvalidReferenceError,
-	nodeTypeOf,
 	referencedAgents,
 	referencesIn,
 	resolveInputs,
@@ -11,10 +9,11 @@ import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
 import { inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { agents } from "../db/schema.js";
-import { agentFor, planRun, type RunPlan } from "../engine/chain.js";
-import { checkDocument, packageCatalogFor } from "../orchestrations/document-checks.js";
+import { agentFor, type ChainPlan, planRun, type RunPlan } from "../engine/chain.js";
+import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
+import { checkDocument } from "../orchestrations/document-checks.js";
 import type { PackageRepository } from "../packages/package-repository.js";
-import { controlPlaneAgentProblem, referencedAgentProblem } from "../packages/requires-agent.js";
+import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
 import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 
 /**
@@ -29,6 +28,21 @@ export interface PreflightProblem {
 }
 
 export type Preflight = (doc: OrchestrationDocument) => Promise<PreflightProblem[]>;
+
+/** 文档锁定的节点包版本的元信息（包名 → 元信息；控制面没有这个版本的不在里面）。每个包查一次。 */
+async function lockedPackages(
+	doc: OrchestrationDocument,
+	packages: PackageRepository,
+): Promise<Map<string, PackageMetadata>> {
+	const found = await Promise.all(
+		Object.entries(doc.packages).map(
+			async ([name, version]) => [name, await packages.getVersion(name, version)] as const,
+		),
+	);
+	return new Map(
+		found.flatMap(([name, published]) => (published ? [[name, published.metadata] as const] : [])),
+	);
+}
 
 /**
  * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用、输入的静态检查全部通过
@@ -78,50 +92,40 @@ export function createPreflight(deps: {
 			});
 		}
 
-		for (const nodeId of wanted.keys()) {
-			const node = doc.nodes.find((n) => n.id === nodeId);
-			if (node?.kind !== "package") continue;
-			const version = doc.packages[node.package];
-			const published = version && (await deps.packages.getVersion(node.package, version));
-			if (!published) continue;
-			const message = controlPlaneSdkProblem(
-				published.metadata,
-				{ name: node.package, version: published.version },
-				deps.version,
-			);
-			if (message) {
+		const locked = await lockedPackages(doc, deps.packages);
+		// 「Agent」类型的输入的常量；引用入口参数的在触发时按实际值检查（createParamsCheck）。
+		const constants: AgentReference[] = [];
+		for (const node of doc.nodes) {
+			if (node.kind !== "package" || !wanted.has(node.id)) continue;
+			const metadata = locked.get(node.package);
+			if (!metadata) continue;
+			const pkg = { name: node.package, version: doc.packages[node.package] ?? "" };
+			const sdk = controlPlaneSdkProblem(metadata, pkg, deps.version);
+			if (sdk) {
 				problems.push({
 					code: "sdk_version_unsatisfied",
-					message: `节点 ${nodeId}：${message}`,
-					node_id: nodeId,
+					message: `节点 ${node.id}：${sdk}`,
+					node_id: node.id,
 				});
 			}
-			const pkg = { name: node.package, version: published.version };
-			const own = controlPlaneAgentProblem(
-				published.metadata,
-				pkg,
-				wanted.get(nodeId) ?? "",
-				deps.version,
-			);
-			if (own) problems.push(agentVersionProblem(nodeId, own));
-			// 「Agent」类型的输入的常量；引用入口参数的在触发时按实际值检查（createParamsCheck）。
-			const type = published.metadata.nodes.find((n) => n.name === node.node);
-			if (!type || published.metadata.requires_agent === undefined) continue;
-			const constants = referencedAgents(type.inputs, node.inputs).filter(
-				(r) => referencesIn(r.agent).length === 0,
-			);
-			const versions = await agentVersions(
-				deps.db,
-				constants.map((r) => r.agent),
-			);
-			for (const { input, agent } of constants) {
-				const version = versions.get(agent);
-				const message =
-					version !== undefined &&
-					referencedAgentProblem(published.metadata, pkg, input, { name: agent, version });
-				if (message) problems.push(agentVersionProblem(nodeId, message));
+			const own = controlPlaneAgentProblem(metadata, pkg, wanted.get(node.id) ?? "", deps.version);
+			if (own) {
+				problems.push({
+					code: "agent_version_unsatisfied",
+					message: `节点 ${node.id}：${own}`,
+					node_id: node.id,
+				});
+			}
+			const type = metadata.nodes.find((n) => n.name === node.node);
+			if (!type || metadata.requires_agent === undefined) continue;
+			for (const { input, agent } of referencedAgents(type.inputs, node.inputs)) {
+				if (referencesIn(agent).length > 0) continue;
+				constants.push({ nodeId: node.id, input, agent, requirement: { metadata, pkg } });
 			}
 		}
+		// 没有注册过的常量已经由静态检查（agent_input_not_registered）指出，这里只看版本。
+		const referenced = await checkReferencedAgents(deps.db, constants);
+		problems.push(...referenced.problems.filter((p) => p.code === "agent_version_unsatisfied"));
 
 		// 执行计划的检查（单链、节点种类受支持、调度目标等）。
 		if (problems.length === 0) {
@@ -134,24 +138,6 @@ export function createPreflight(deps: {
 	};
 }
 
-function agentVersionProblem(nodeId: string, message: string): PreflightProblem {
-	return {
-		code: "agent_version_unsatisfied",
-		message: `节点 ${nodeId}：${message}`,
-		node_id: nodeId,
-	};
-}
-
-/** 已注册的 Agent 最近一次上报的版本（没有注册过的不在里面）。 */
-async function agentVersions(db: Db, names: string[]): Promise<Map<string, string>> {
-	if (names.length === 0) return new Map();
-	const rows = await db
-		.select({ name: agents.name, info: agents.info })
-		.from(agents)
-		.where(inArray(agents.name, [...new Set(names)]));
-	return new Map(rows.map((r) => [r.name, r.info.agent_version]));
-}
-
 /** 触发时按入口参数的实际值做的检查（{@link createParamsCheck}）。 */
 export type ParamsCheck = (
 	doc: OrchestrationDocument,
@@ -160,62 +146,86 @@ export type ParamsCheck = (
 ) => Promise<PreflightProblem[]>;
 
 /**
- * 触发时按入口参数的实际值检查：主链上「Agent」类型的输入引用入口参数时，取到的 Agent 必须已注册（不要求在线），
- * 版本满足节点包需要的 Agent 版本（`requires_agent`）。
- * 引用了前面节点输出的值要到派发时才知道，这里跳过；子流程的参数在调度它时才传入，也在派发时检查。
+ * 触发时按入口参数的实际值检查：「Agent」类型的输入引用入口参数时，取到的 Agent 必须已注册（不要求在线），
+ * 版本满足节点包需要的 Agent 版本（`requires_agent`，{@link checkReferencedAgents}）。
+ * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过。
  */
 export function createParamsCheck(deps: { db: Db; packages: PackageRepository }): ParamsCheck {
 	return async (doc, plan, params) => {
-		const wanted: {
-			nodeId: string;
-			input: string;
-			agent: string;
-			pkg: { name: string; version: string };
-			metadata: Pick<PackageMetadata, "requires_agent">;
-		}[] = [];
-		const catalog = await packageCatalogFor(doc, deps.packages);
-		for (const node of plan.main.nodes) {
-			if (node.kind !== "package") continue;
-			const type = nodeTypeOf(doc, node, catalog);
-			if (!type) continue;
-			const version = doc.packages[node.package] ?? "";
-			const metadata = (await deps.packages.getVersion(node.package, version))?.metadata ?? {};
-			const pkg = { name: node.package, version };
-			for (const input of agentInputs(type.inputs)) {
-				const value = node.inputs[input];
-				if (typeof value !== "string" || referencesIn(value).length === 0) continue;
-				let agent: unknown;
-				try {
-					agent = resolveInputs({ value }, { params, earlierOutputs: new Map() }).value;
-				} catch (error) {
-					if (error instanceof InvalidReferenceError) continue;
-					throw error;
+		const locked = await lockedPackages(doc, deps.packages);
+		const wanted: AgentReference[] = [];
+		for (const { chain, params: known, source } of knownParams(plan, params)) {
+			for (const node of chain.nodes) {
+				if (node.kind !== "package") continue;
+				const metadata = locked.get(node.package);
+				const type = metadata?.nodes.find((n) => n.name === node.node);
+				if (!metadata || !type) continue;
+				const requirement = {
+					metadata,
+					pkg: { name: node.package, version: doc.packages[node.package] ?? "" },
+				};
+				for (const input of agentInputs(type.inputs)) {
+					const value = node.inputs[input];
+					if (typeof value !== "string" || referencesIn(value).length === 0) continue;
+					const agent = resolved(value, known);
+					if (typeof agent === "string" && agent !== "")
+						wanted.push({ nodeId: node.id, input, agent, requirement, source });
 				}
-				if (typeof agent === "string" && agent !== "")
-					wanted.push({ nodeId: node.id, input, agent, pkg, metadata });
 			}
 		}
-		if (wanted.length === 0) return [];
-		const versions = await agentVersions(
-			deps.db,
-			wanted.map((w) => w.agent),
-		);
-		return wanted.flatMap((w): PreflightProblem[] => {
-			const version = versions.get(w.agent);
-			if (version === undefined) {
-				return [
-					{
-						code: "agent_input_not_registered",
-						message: `${agentNotRegistered(w.nodeId, w.input, w.agent)}（取自入口参数）`,
-						node_id: w.nodeId,
-					},
-				];
-			}
-			const message = referencedAgentProblem(w.metadata, w.pkg, w.input, {
-				name: w.agent,
-				version,
-			});
-			return message ? [agentVersionProblem(w.nodeId, `${message}（取自入口参数）`)] : [];
-		});
+		return (await checkReferencedAgents(deps.db, wanted)).problems;
 	};
+}
+
+/** 一条链和触发时就能知道的它的入口参数。 */
+interface KnownParams {
+	chain: ChainPlan;
+	/** 知道值的参数（不知道的不在里面，引用它们的值解析不出来，跳过）。 */
+	params: Record<string, unknown>;
+	/** 这条链上的值取自哪里（写进问题的说明）。 */
+	source: string;
+}
+
+/**
+ * 触发时就能知道入口参数的链：主链的入口参数是触发时给的；子流程的入口参数是调度它的异步任务节点按参数映射传入的，
+ * 映射的值是常量或只引用了那条链的入口参数时就知道（没有映射的取默认值），引用了前面节点的输出的不知道。
+ * 一个子流程被几个异步任务节点调度时各算一次；子流程（间接）调度自己时只算到第一次。
+ */
+function knownParams(plan: RunPlan, params: Record<string, unknown>): KnownParams[] {
+	const found: KnownParams[] = [];
+	const visit = (known: KnownParams, path: ReadonlySet<string>) => {
+		found.push(known);
+		for (const node of known.chain.nodes) {
+			if (node.kind !== "async") continue;
+			const subflow = plan.chains.get(plan.dispatch.get(node.id) ?? "");
+			if (!subflow || path.has(subflow.entry.id)) continue;
+			const passed: Record<string, unknown> = {};
+			for (const decl of subflow.entry.params) {
+				const value = Object.hasOwn(node.params, decl.name)
+					? resolved(node.params[decl.name], known.params)
+					: (decl.default ?? null);
+				if (value !== undefined) passed[decl.name] = value;
+			}
+			visit(
+				{
+					chain: subflow,
+					params: passed,
+					source: `取自子流程的参数，由异步任务节点 ${node.id} 传入`,
+				},
+				new Set([...path, subflow.entry.id]),
+			);
+		}
+	};
+	visit({ chain: plan.main, params, source: "取自入口参数" }, new Set([plan.main.entry.id]));
+	return found;
+}
+
+/** 只用入口参数 `params` 解析一个值；引用了前面节点的输出、或不知道值的参数时为 undefined。 */
+function resolved(value: unknown, params: Record<string, unknown>): unknown {
+	try {
+		return resolveInputs({ value }, { params, earlierOutputs: new Map() }).value;
+	} catch (error) {
+		if (error instanceof InvalidReferenceError) return undefined;
+		throw error;
+	}
 }

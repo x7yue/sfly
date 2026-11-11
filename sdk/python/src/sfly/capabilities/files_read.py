@@ -72,16 +72,20 @@ class ReadDownload(FilesBase):
         progress: Callable[[int, int], Any] | None = None,
     ) -> FileInfo:
         """把这台 Agent 上的文件 `path` 下载到节点所在机器上的 `local_path`，返回下载完成时
-        源文件的属性（`FileInfo`，`size` 就是下载下来的字节数）。
+        源文件的属性（`FileInfo`，`size` 就是下载下来的字节数，`path` 是它现在的路径）。
 
         - 数据由节点所在的 Agent 直接写到 `local_path`，不经过节点进程；
         - `local_path` 是节点所在机器上的路径，相对路径相对于节点的工作目录（任务目录）；
           所在的目录不存在时一并创建，那里已有的文件被替换；
         - 先写同一目录里的临时文件（`.<文件名>.sfly-<随机>.tmp`，与 `write` 相同），完成并核对后
           才改名为 `local_path`：`local_path` 上不会出现半截文件，失败或被取消时临时文件被删除；
-        - 下载的是开始时的大小。连接中断时自动重连，从断点继续；完成时再查看一次源文件，
-          它在下载期间被删除（`sfly.AgentFileNotFound`）、被替换（例如日志轮转时被改名，
-          路径上换成了新文件）、被截短或大小变了（还在写入）时抛出 `sfly.AgentError`；
+        - 下载的是开始时打开的那个文件、开始时的大小，内容都从打开的文件读：下载期间它被改名
+          （例如日志轮转）不影响下载，返回的 `path` 是它现在的路径（在别的目录里时仍是 `path`）。
+          完成时按这个文件核对：它在下载期间被删除时抛出 `sfly.AgentFileNotFound`，被截短或
+          大小变了（还在写入）时抛出 `sfly.AgentError`；
+        - 连接中断时自动重连，从断点继续读同一个文件：它在同一目录里改了名时接着读新路径上的它；
+          路径上换成了另一个文件、在同一目录里也找不到它时抛出 `sfly.AgentFileMoved`（路径上
+          没有文件时抛出 `sfly.AgentFileNotFound`），知道它去了哪里时用新路径重新下载；
         - `progress(downloaded, size)`：下载期间不时被调用（在 Agent 上大约每秒一次），
           参数是已经下载的字节数和要下载的字节数；
         - `timeout`：等对方回应的上限（秒），这里是相邻两次进展之间最多等多久，不是整个下载；
@@ -116,17 +120,18 @@ def _local_download(
     progress: Callable[[int, int], Any] | None,
 ) -> FileInfo:
     """本地调试时的下载，规则与 Agent 相同：和写入一样先写临时文件（`local_write`），
-    读完并核对源文件之后才改名为目标路径。目标在本机（`HERE`）上。"""
+    从打开的文件读到开始时的大小，读完按这个文件（不是路径上现在的文件）核对之后才改名为目标路径。
+    目标在本机（`HERE`）上。"""
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
     except OSError as error:
         raise HERE.error(error, target) from None
-    now: os.stat_result | None = None
+    end: os.stat_result | None = None
     with local.open_file(path) as source:
         start = os.fstat(source.fileno())
 
         def chunks() -> Iterator[bytes]:
-            nonlocal now
+            nonlocal end
             written = 0
             while written < start.st_size:
                 data = source.read(min(MAX_DATA, start.st_size - written))
@@ -137,35 +142,57 @@ def _local_download(
                 if progress is not None:
                     progress(written, start.st_size)
             # 在这里抛出的异常让 `local_write` 删掉临时文件、不改名。
-            try:
-                now = os.stat(local.real(path))
-            except FileNotFoundError:
+            end = os.fstat(source.fileno())
+            if end.st_nlink == 0:
                 raise AgentFileNotFound(
                     f"{local.label}：{path} 在下载期间被删除，下载作废", agent=local.name
-                ) from None
-            except OSError as error:
-                raise local.error(error, path) from None
-            changed = _changed(start, now, written)
+                )
+            changed = _changed(start, end, written)
             if changed:
                 raise AgentError(f"{local.label}：{path} {changed}，下载作废", agent=local.name)
 
         local_write(HERE, target, chunks())
-    assert now is not None
-    return FileInfo.from_stat(path, now)
+    assert end is not None
+    return FileInfo.from_stat(_located(local, path, end), end)
 
 
-def _changed(start: os.stat_result, now: os.stat_result, written: int) -> str:
-    """源文件在下载期间怎样变了（与 Agent 的消息相同）；没有变时为空串。"""
-    if (now.st_dev, now.st_ino) != (start.st_dev, start.st_ino):
-        return "在下载期间被替换（原来的文件被改名或删除，路径上换成了另一个文件）"
+def _changed(start: os.stat_result, end: os.stat_result, written: int) -> str:
+    """打开的源文件在下载期间怎样变了（与 Agent 的消息相同）；没有变时为空串。"""
     if written < start.st_size:
         return (
             f"在下载期间被截短（开始时 {start.st_size} 字节，读到第 {written} 字节就到了末尾，"
-            f"现在 {now.st_size} 字节）"
+            f"现在 {end.st_size} 字节）"
         )
-    if now.st_size != written:
+    if end.st_size != written:
         return (
-            f"在下载期间变化了（开始时 {start.st_size} 字节，现在 {now.st_size} 字节，"
+            f"在下载期间变化了（开始时 {start.st_size} 字节，现在 {end.st_size} 字节，"
             "可能还在写入）"
         )
     return ""
+
+
+def _located(local: LocalAgent, path: str, file: os.stat_result) -> str:
+    """文件 `file` 现在在哪里（那台 Agent 上的写法）：还在 `path` 上就是 `path`，在同一目录里改了名
+    就是新路径，找不到时仍是 `path`（与 Agent 相同）。"""
+    import posixpath
+
+    real = local.real(path)
+    identity = (file.st_dev, file.st_ino)
+    try:
+        here = os.stat(real)
+    except OSError:
+        pass
+    else:
+        if (here.st_dev, here.st_ino) == identity:
+            return path
+    try:
+        with os.scandir(os.path.dirname(real)) as entries:
+            for entry in entries:
+                if entry.inode() != file.st_ino:
+                    continue
+                found = os.stat(entry.path)
+                if (found.st_dev, found.st_ino) == identity:
+                    return posixpath.join(posixpath.dirname(path), entry.name)
+    except OSError:
+        pass
+    return path

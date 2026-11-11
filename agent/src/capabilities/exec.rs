@@ -11,7 +11,6 @@
 
 use std::collections::HashMap;
 use std::os::unix::process::ExitStatusExt as _;
-use std::pin::Pin;
 use std::process::{ExitStatus, Stdio};
 use std::time::Duration;
 
@@ -19,13 +18,15 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt as _};
 use tokio::sync::mpsc;
+use tokio_stream::StreamExt as _;
 use tokio_stream::wrappers::ReceiverStream;
-use tokio_stream::{Stream, StreamExt as _};
 use tonic::{Request, Response, Status};
 
-use super::files::{absolute, io_status};
+use super::fs::{Doing, absolute, io_error, io_status};
 use super::{Capability, Host, Module};
-use crate::calls::{BoxFuture, Call, CallError, ErrorKind, Method, Target};
+use crate::calls::{
+    BoxFuture, BoxStream, Call, CallError, ErrorKind, Method, format_seconds, on_target,
+};
 use crate::logs::LineSplitter;
 use crate::process_tree::ProcessTree;
 use crate::proto::agent_exec_client::AgentExecClient;
@@ -48,9 +49,7 @@ pub const MODULE: Module = Module {
 };
 
 fn add_service(routes: &mut tonic::service::RoutesBuilder, host: &Host) {
-    routes.add_service(AgentExecServer::new(Exec {
-        grace: host.terminate_grace,
-    }));
+    routes.add_service(AgentExecServer::new(Exec::new(host)));
 }
 
 /// 一次读输出最多多少字节。
@@ -62,12 +61,20 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// 发起调用的 Agent 在超时之外多等多久：执行它的 Agent 超时后要结束进程树（最多一个宽限期）才回复。
 const REPLY_SLACK: Duration = Duration::from_secs(10);
 
-type RunStream = Pin<Box<dyn Stream<Item = Result<RunCommandResponse, Status>> + Send>>;
+type RunStream = BoxStream<RunCommandResponse>;
 
-/// `AgentExec` 服务：供其它 Agent 调用，也被自己所在的 Agent 直接调用（[`Target::Local`]）。
+/// `AgentExec` 服务：供其它 Agent 调用，也被自己所在的 Agent 直接调用（[`crate::calls::Target::Local`]）。
 pub struct Exec {
     /// 结束进程树时的宽限期。
     grace: Duration,
+}
+
+impl Exec {
+    pub fn new(host: &Host) -> Self {
+        Self {
+            grace: host.terminate_grace,
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -109,13 +116,8 @@ impl AgentExec for Exec {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        let mut process = ProcessTree::spawn(&mut command).map_err(|error| match error.kind() {
-            std::io::ErrorKind::NotFound => Status::not_found(format!("找不到程序 {program}")),
-            std::io::ErrorKind::PermissionDenied => {
-                Status::permission_denied(format!("没有权限执行 {program}"))
-            }
-            _ => Status::internal(format!("启动 {program} 失败：{error}")),
-        })?;
+        let mut process = ProcessTree::spawn(&mut command)
+            .map_err(|error| io_error(&error, Doing::Run(program)))?;
         let (Some(stdout), Some(stderr)) = process.take_output_pipes() else {
             unreachable!("stdout and stderr are piped");
         };
@@ -163,11 +165,10 @@ async fn supervise(
     };
     // 命令退出之后还剩下的子进程也结束：不用来启动常驻进程。
     let _ = process.terminate(grace).await;
+    let mut readers = readers;
     let drained = async {
-        for reader in &readers {
-            while !reader.is_finished() {
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
+        for reader in &mut readers {
+            let _ = reader.await;
         }
     };
     let _ = tokio::time::timeout(DRAIN_TIMEOUT, drained).await;
@@ -183,7 +184,7 @@ async fn supervise(
         End::Exited(Err(error)) => Err(Status::internal(format!("等待命令退出失败：{error}"))),
         End::TimedOut(limit) => Err(Status::deadline_exceeded(format!(
             "命令超过 {} 秒没有结束，已结束它的进程树",
-            seconds(limit)
+            format_seconds(limit)
         ))),
         End::Abandoned => return,
     };
@@ -196,16 +197,6 @@ fn exit_code(status: ExitStatus) -> i32 {
         .code()
         .or_else(|| status.signal().map(|signal| 128 + signal))
         .unwrap_or(-1)
-}
-
-/// 秒数（给人看）：整数秒不带小数。
-fn seconds(duration: Duration) -> String {
-    let seconds = duration.as_secs_f64();
-    if seconds.fract() == 0.0 {
-        format!("{seconds:.0}")
-    } else {
-        format!("{seconds}")
-    }
 }
 
 /// 把一个输出管道的内容原样交给 `tx`，直到管道关闭。调用方已经放弃时照常读完（丢掉），命令不会因为写不出去而卡住。
@@ -272,23 +263,10 @@ async fn run(mut call: Call<'_>) -> Result<Value, CallError> {
     let deadline = tokio::time::Instant::now() + limit + call.host.terminate_grace + REPLY_SLACK;
     let tag = format!("[Agent {}] ", target.name());
     let mut out = Lines::new(tag);
+    let service = Exec::new(call.host);
     let outcome = tokio::time::timeout_at(deadline, async {
-        let mut stream: RunStream = match target {
-            Target::Local { .. } => Exec {
-                grace: call.host.terminate_grace,
-            }
-            .run(Request::new(request))
-            .await
-            .map_err(|status| target.error(status))?
-            .into_inner(),
-            Target::Remote(remote) => Box::pin(
-                AgentExecClient::new(remote.channel())
-                    .run(Request::new(request))
-                    .await
-                    .map_err(|status| target.error(status))?
-                    .into_inner(),
-            ),
-        };
+        let mut stream = on_target!(stream target, service, AgentExecClient::run(request))
+            .map_err(|status| target.error(status))?;
         while let Some(message) = stream.next().await {
             match message.map_err(|status| target.error(status))?.part {
                 Some(Part::Output(output)) => {
@@ -308,7 +286,7 @@ async fn run(mut call: Call<'_>) -> Result<Value, CallError> {
             format!(
                 "Agent {} 超过 {} 秒没有结束命令，也没有回应",
                 target.name(),
-                seconds(limit)
+                format_seconds(limit)
             ),
         ))
     });

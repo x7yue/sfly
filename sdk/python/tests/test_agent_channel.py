@@ -308,7 +308,6 @@ def test_cancelling_the_task_interrupts_a_call_that_is_waiting(short_dir: Path) 
                 "attempt": 1,
                 "entry": "sfly_agent_files:wait_stat",
                 "inputs": {"path": "/x", "source": "fs-source"},
-                "agents": [{"name": "fs-source", "address": "10.0.0.5", "port": 50052}],
             }
         ),
         encoding="utf-8",

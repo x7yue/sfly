@@ -19,21 +19,11 @@ use crate::proto::agent_peer_server::{AgentPeer, AgentPeerServer};
 /// 默认监听的端口：紧挨着控制面 Agent 网关的默认端口 50051。
 pub const DEFAULT_LISTEN_PORT: u16 = 50052;
 
-/// 这台 Agent 是谁（`AgentPeer.Describe` 的回答）。
-#[derive(Debug, Clone)]
-pub struct Identity {
-    /// Agent 名称。
-    pub name: String,
-    /// 上报的 Agent 版本（[`crate::Config::version`]）。
-    pub version: String,
-}
-
 /// 在 `port`（0 为系统分配）上监听并在后台提供 [`routes`]，返回随 Hello 上报的端口信息。
 /// 监听不了时 `listen_error` 写明原因，`port` 是配置的端口。
 pub async fn serve(
     port: u16,
     public_address: Option<String>,
-    identity: Identity,
     host: capabilities::Host,
 ) -> proto::PeerEndpoint {
     let endpoint = |port: u16, listen_error: String| proto::PeerEndpoint {
@@ -60,7 +50,7 @@ pub async fn serve(
             // 进行中的调用（例如结束正在执行的命令，[`capabilities::exec`]）。
             .http2_keepalive_interval(Some(KEEPALIVE_INTERVAL))
             .http2_keepalive_timeout(Some(KEEPALIVE_TIMEOUT))
-            .add_routes(routes(identity, host))
+            .add_routes(routes(host))
             .serve_with_incoming(TcpListenerStream::new(listener))
             .await;
         if let Err(error) = result {
@@ -76,10 +66,10 @@ const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1
 const KEEPALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 这个端口上的全部 gRPC 服务。
-pub fn routes(identity: Identity, host: capabilities::Host) -> tonic::service::Routes {
+pub fn routes(host: capabilities::Host) -> tonic::service::Routes {
     let mut routes = tonic::service::Routes::builder();
-    routes.add_service(AgentPeerServer::new(Peer { identity }));
     capabilities::add_services(&mut routes, &host);
+    routes.add_service(AgentPeerServer::new(Peer { host }));
     routes.routes()
 }
 
@@ -122,9 +112,9 @@ pub fn parse_public_address(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
-/// `AgentPeer` 服务。
+/// `AgentPeer` 服务：告诉连过来的 Agent 这台 Agent 是谁、支持哪些能力。
 struct Peer {
-    identity: Identity,
+    host: capabilities::Host,
 }
 
 #[tonic::async_trait]
@@ -134,8 +124,8 @@ impl AgentPeer for Peer {
         _request: Request<proto::DescribeRequest>,
     ) -> Result<Response<proto::DescribeResponse>, Status> {
         Ok(Response::new(proto::DescribeResponse {
-            name: self.identity.name.clone(),
-            agent_version: self.identity.version.clone(),
+            name: self.host.name.clone(),
+            agent_version: self.host.version.clone(),
             capabilities: capabilities::reported(),
         }))
     }

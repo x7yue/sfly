@@ -2,9 +2,11 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::pin::Pin;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use tokio_stream::Stream;
 use tonic::transport::{Channel, Endpoint};
 use tonic::{Code, Status};
 
@@ -18,6 +20,44 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 另一台 Agent 的 Describe 结果复用多久：它升级、换了能力后最迟这么久之后看到。
 const DESCRIBE_TTL: Duration = Duration::from_secs(10);
+
+/// 流式方法的回复：本机服务的实现和 gRPC 客户端给出的都装成这个类型（[`on_target!`]）。
+pub type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send>>;
+
+/// 在调用的目标上调用一个 gRPC 方法，取出回复：自己所在的 Agent 直接调用本机服务的实现 `$service`，
+/// 另一台 Agent 用 gRPC 客户端 `$client` 连过去调用同名的方法。回复是流的方法前面加 `stream`，
+/// 两边的流都装成 [`BoxStream`]。结果是 `Result<回复, Status>`，错误交给 [`Target::error`]（或 [`super::Call::rpc`]）。
+///
+/// ```ignore
+/// let file = call.rpc(async { on_target!(call.target, Files, AgentFilesClient::stat(request)) }).await?;
+/// ```
+macro_rules! on_target {
+    ($target:expr, $service:expr, $client:ident :: $method:ident($request:expr)) => {
+        match $target {
+            $crate::calls::Target::Local { .. } => $service
+                .$method(::tonic::Request::new($request))
+                .await
+                .map(::tonic::Response::into_inner),
+            $crate::calls::Target::Remote(remote) => $client::new(remote.channel())
+                .$method(::tonic::Request::new($request))
+                .await
+                .map(::tonic::Response::into_inner),
+        }
+    };
+    (stream $target:expr, $service:expr, $client:ident :: $method:ident($request:expr)) => {
+        match $target {
+            $crate::calls::Target::Local { .. } => $service
+                .$method(::tonic::Request::new($request))
+                .await
+                .map(::tonic::Response::into_inner),
+            $crate::calls::Target::Remote(remote) => $client::new(remote.channel())
+                .$method(::tonic::Request::new($request))
+                .await
+                .map(|response| Box::pin(response.into_inner()) as $crate::calls::BoxStream<_>),
+        }
+    };
+}
+pub(crate) use on_target;
 
 /// 调用的目标。
 pub enum Target {
@@ -37,10 +77,17 @@ pub struct Remote {
     channel: Channel,
 }
 
+/// 另一台 Agent 的地址和端口：到它的连接和它的 Describe 结果按这个复用。
+type PeerAddress = (String, u16);
+
 impl Remote {
     /// 到它的 gRPC 连接（按需建立、断开后自动重连）。
     pub fn channel(&self) -> Channel {
         self.channel.clone()
+    }
+
+    fn address(&self) -> PeerAddress {
+        (self.address.clone(), self.port)
     }
 
     fn unreachable(&self, detail: &str) -> CallError {
@@ -74,39 +121,82 @@ impl Target {
     }
 
     /// 把服务（本机的实现或目标 Agent）返回的 gRPC 状态转成调用错误，消息前面写明是哪台 Agent。
+    /// 两台 Agent 之间的连接出了问题（[`Target::interrupted`]）时是「连不通」，写明两端、地址和端口。
     pub fn error(&self, status: Status) -> CallError {
-        let kind = match status.code() {
-            Code::NotFound => ErrorKind::NotFound,
-            Code::PermissionDenied => ErrorKind::PermissionDenied,
-            Code::InvalidArgument | Code::FailedPrecondition | Code::OutOfRange => {
-                ErrorKind::Invalid
-            }
-            Code::DeadlineExceeded => ErrorKind::Timeout,
-            Code::Unimplemented => ErrorKind::Unsupported,
-            Code::Unavailable => {
-                if let Self::Remote(remote) = self {
-                    return remote.unreachable(&describe_status(&status));
-                }
-                ErrorKind::Failed
-            }
-            // 不是对方回复的状态，而是连接本身出错（调用中途两台 Agent 之间的连接断了）：带着底层的传输错误。
-            Code::Unknown if std::error::Error::source(&status).is_some() => {
-                if let Self::Remote(remote) = self {
-                    return remote.unreachable(&describe_status(&status));
-                }
-                ErrorKind::Failed
-            }
-            _ => ErrorKind::Failed,
-        };
-        let message = match kind {
-            ErrorKind::Unsupported => format!(
-                "Agent {} 不支持这个调用（{}）：升级这台 Agent",
-                self.name(),
-                status.message()
-            ),
-            _ => format!("Agent {}：{}", self.name(), status.message()),
-        };
-        CallError::new(kind, message)
+        if let Self::Remote(remote) = self
+            && self.interrupted(&status)
+        {
+            return remote.unreachable(&describe_status(&status));
+        }
+        status_error(self.name(), &status)
+    }
+
+    /// 自己所在的 Agent 上出的错（例如下载、上传时本机这一侧的路径）：消息写明是自己。
+    pub fn local_error(&self, status: Status) -> CallError {
+        status_error(self.own(), &status)
+    }
+
+    /// 两台 Agent 之间的连接出了问题（连不上、调用中途连接断开、对方重启），而不是对方处理请求时回复的错误：
+    /// 重连之后可能就好了（下载续传、监听重连据此判断）。对方回复的错误（例如读文件时的 I/O 错误）重连也一样，不算。
+    ///
+    /// 判断依据：对方回复的状态只有状态码和消息；传输层的错误由本机的 gRPC 客户端生成，带着底层的原因
+    /// （`source`，状态码可能是 UNKNOWN、INTERNAL、CANCELLED 等），连接建立不了时是 UNAVAILABLE。
+    /// 目标是自己时不经过网络，不会中断。
+    pub fn interrupted(&self, status: &Status) -> bool {
+        matches!(self, Self::Remote(_))
+            && (status.code() == Code::Unavailable || std::error::Error::source(status).is_some())
+    }
+}
+
+/// 对方回复的 gRPC 状态转成调用错误：状态码决定原因，消息前面写明是哪台 Agent。
+fn status_error(agent: &str, status: &Status) -> CallError {
+    let kind = match status.code() {
+        Code::NotFound => ErrorKind::NotFound,
+        Code::PermissionDenied => ErrorKind::PermissionDenied,
+        Code::InvalidArgument | Code::FailedPrecondition | Code::OutOfRange => ErrorKind::Invalid,
+        Code::DeadlineExceeded => ErrorKind::Timeout,
+        Code::Unimplemented => ErrorKind::Unsupported,
+        _ => ErrorKind::Failed,
+    };
+    let message = match kind {
+        ErrorKind::Unsupported => format!(
+            "Agent {agent} 不支持这个调用（{}）：升级这台 Agent",
+            status.message()
+        ),
+        _ => format!("Agent {agent}：{}", status.message()),
+    };
+    CallError::new(kind, message)
+}
+
+/// 重连之前等多久：0.2 秒起每次加倍，最多 4 秒；有了进展（重新连上并收到回复）后从头算起。
+#[derive(Debug, Clone)]
+pub struct Backoff {
+    next: Duration,
+}
+
+impl Backoff {
+    const FIRST: Duration = Duration::from_millis(200);
+    const MAX: Duration = Duration::from_secs(4);
+
+    pub fn new() -> Self {
+        Self { next: Self::FIRST }
+    }
+
+    /// 这一次等多久（下一次加倍）。
+    pub fn wait(&mut self) -> Duration {
+        let wait = self.next;
+        self.next = (self.next * 2).min(Self::MAX);
+        wait
+    }
+
+    pub fn reset(&mut self) {
+        self.next = Self::FIRST;
+    }
+}
+
+impl Default for Backoff {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -181,8 +271,8 @@ pub(super) fn resolve(
 /// 到其它 Agent 的连接（按地址和端口复用）和它们的 Describe 结果。
 #[derive(Default)]
 pub struct Peers {
-    channels: Mutex<HashMap<(String, u16), Channel>>,
-    described: Mutex<HashMap<(String, u16), (Instant, DescribeResponse)>>,
+    channels: Mutex<HashMap<PeerAddress, Channel>>,
+    described: Mutex<HashMap<PeerAddress, (Instant, DescribeResponse)>>,
 }
 
 impl Peers {
@@ -211,7 +301,7 @@ impl Peers {
         capability: Capability,
         timeout: Option<Duration>,
     ) -> Result<(), CallError> {
-        let key = (remote.address.clone(), remote.port);
+        let key = remote.address();
         let cached = self
             .described
             .lock()
@@ -250,10 +340,7 @@ impl Peers {
             }
         };
         if described.name != remote.name {
-            self.described
-                .lock()
-                .unwrap()
-                .remove(&(remote.address.clone(), remote.port));
+            self.described.lock().unwrap().remove(&remote.address());
             return Err(remote.unreachable(&format!(
                 "这个地址上的是 Agent {}（它可能换了地址，重新运行一次）",
                 described.name
@@ -273,5 +360,71 @@ impl Peers {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tonic::Status;
+
+    use super::{Peers, Target, resolve};
+    use crate::calls::ErrorKind;
+    use crate::proto::ReferencedAgent;
+
+    fn remote() -> Target {
+        let peer = ReferencedAgent {
+            name: "b".into(),
+            address: "127.0.0.1".into(),
+            port: 1,
+            unavailable_reason: String::new(),
+        };
+        resolve("b", "a", &[peer], &Peers::default()).unwrap_or_else(|e| panic!("{e:?}"))
+    }
+
+    /// 传输层的错误：本机的 gRPC 客户端生成，带着底层的原因（这里是一个 I/O 错误）。
+    fn transport(mut status: Status) -> Status {
+        status.set_source(std::sync::Arc::new(std::io::Error::other(
+            "connection reset",
+        )));
+        status
+    }
+
+    #[tokio::test]
+    async fn only_connection_problems_between_two_agents_are_interruptions() {
+        let target = remote();
+        // 对方处理请求时回复的错误：重连也一样，不算中断。读文件时的 I/O 错误（EIO）就是 INTERNAL。
+        for status in [
+            Status::internal("访问 /var/log/app.log 失败：Input/output error"),
+            Status::unknown("对方出错"),
+            Status::not_found("/x 不存在"),
+            Status::failed_precondition("已经不是原来的文件"),
+            Status::cancelled("对方取消"),
+        ] {
+            assert!(!target.interrupted(&status), "{status:?}");
+        }
+        // 连接本身的问题：连不上，或调用中途连接断开（客户端生成的状态带着底层原因，状态码各种都有）。
+        for status in [
+            Status::unavailable("tcp connect error"),
+            transport(Status::unknown("error reading a body from connection")),
+            transport(Status::internal("h2 protocol error")),
+            transport(Status::cancelled("operation was canceled")),
+        ] {
+            assert!(target.interrupted(&status), "{status:?}");
+            assert_eq!(target.error(status).kind, ErrorKind::Unreachable);
+        }
+        assert_eq!(
+            target.error(Status::internal("I/O 错误")).kind,
+            ErrorKind::Failed
+        );
+    }
+
+    #[test]
+    fn calls_to_the_own_agent_are_never_interrupted() {
+        let target = Target::Local { name: "a".into() };
+        assert!(!target.interrupted(&Status::unavailable("x")));
+        assert_eq!(
+            target.error(Status::unavailable("x")).kind,
+            ErrorKind::Failed
+        );
     }
 }

@@ -470,7 +470,7 @@ async fn when_the_event_queue_overflows_a_new_snapshot_marks_possible_gaps() {
     let runner = spawn_agent(AgentOptions::new(&runner_cp.url, "runner-overflow"));
     let mut options = AgentOptions::new(&source_cp.url, "source-overflow");
     // 很小的事件队列：读得慢的调用方很快就让它溢出。
-    options.env = vec![("SFLY_WATCH_QUEUE_EVENTS", "4")];
+    options.args = vec!["--watch-queue-events".into(), "4".into()];
     let _source = spawn_agent(options);
     let peer = source_cp.hello(0).await.peer.expect("Hello.peer");
     runner_cp.hello(0).await;

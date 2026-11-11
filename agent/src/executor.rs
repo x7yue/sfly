@@ -4,7 +4,7 @@
 //!
 //! | 环境变量 | 路径 |
 //! |---|---|
-//! | `SFLY_TASK` | `task.json`：入口、已解析的输入、通过「Agent」类型的输入引用的 Agent（`agents`）等 |
+//! | `SFLY_TASK` | `task.json`：入口、已解析的输入等 |
 //! | `SFLY_OUTPUT` | `output.json`：执行器写入的结果 |
 //! | `SFLY_ARTIFACTS` | `artifacts/`：产物目录（任务结束后由 [`crate::artifacts`] 上传） |
 //! | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀（`AssignTask.artifact_upload_url`，为空时不设置） |
@@ -167,13 +167,6 @@ async fn prepare_dir(
         "entry": entry,
         "inputs": inputs,
         "timeout_seconds": task.timeout_seconds,
-        // 任务通过「Agent」类型的输入引用的 Agent（ADR 0019）：SDK 的 `ctx.task.agents`。
-        "agents": task.referenced_agents.iter().map(|agent| json!({
-            "name": agent.name,
-            "address": agent.address,
-            "port": agent.port,
-            "unavailable_reason": agent.unavailable_reason,
-        })).collect::<Vec<_>>(),
     });
     tokio::fs::write(dir.join("task.json"), spec.to_string()).await
 }

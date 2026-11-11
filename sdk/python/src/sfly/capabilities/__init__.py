@@ -32,6 +32,7 @@ from typing import Any
 from sfly.capabilities.channel import AgentSocket
 from sfly.capabilities.errors import (
     AgentError,
+    AgentFileMoved,
     AgentFileNotFound,
     AgentNotReferenced,
     AgentPermissionDenied,
@@ -47,6 +48,7 @@ from sfly.capabilities.local import LocalAgent, read_mapping
 __all__ = [
     "Agent",
     "AgentError",
+    "AgentFileMoved",
     "AgentFileNotFound",
     "AgentNotReferenced",
     "AgentPermissionDenied",

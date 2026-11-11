@@ -12,7 +12,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file sfly/agent/v1/file_read.proto.
  */
 export const file_sfly_agent_v1_file_read: GenFile = /*@__PURE__*/
-  fileDesc("Ch1zZmx5L2FnZW50L3YxL2ZpbGVfcmVhZC5wcm90bxINc2ZseS5hZ2VudC52MSJ8Cg9SZWFkRmlsZVJlcXVlc3QSDAoEcGF0aBgBIAEoCRIOCgZvZmZzZXQYAiABKAQSEwoGbGVuZ3RoGAMgASgESACIAQESKwoGZXhwZWN0GAQgASgLMhsuc2ZseS5hZ2VudC52MS5GaWxlSWRlbnRpdHlCCQoHX2xlbmd0aCItCgxGaWxlSWRlbnRpdHkSDgoGZGV2aWNlGAEgASgEEg0KBWlub2RlGAIgASgEIkcKEFJlYWRGaWxlUmVzcG9uc2USJQoEZmlsZRgBIAEoCzIXLnNmbHkuYWdlbnQudjEuRmlsZUluZm8SDAoEZGF0YRgCIAEoDDJaCg1BZ2VudEZpbGVSZWFkEkkKBFJlYWQSHi5zZmx5LmFnZW50LnYxLlJlYWRGaWxlUmVxdWVzdBofLnNmbHkuYWdlbnQudjEuUmVhZEZpbGVSZXNwb25zZTABYgZwcm90bzM", [file_sfly_agent_v1_files]);
+  fileDesc("Ch1zZmx5L2FnZW50L3YxL2ZpbGVfcmVhZC5wcm90bxINc2ZseS5hZ2VudC52MSKSAQoPUmVhZEZpbGVSZXF1ZXN0EgwKBHBhdGgYASABKAkSDgoGb2Zmc2V0GAIgASgEEhMKBmxlbmd0aBgDIAEoBEgAiAEBEisKBmV4cGVjdBgEIAEoCzIbLnNmbHkuYWdlbnQudjEuRmlsZUlkZW50aXR5EhQKDHRvX29wZW5fc2l6ZRgFIAEoCEIJCgdfbGVuZ3RoIi0KDEZpbGVJZGVudGl0eRIOCgZkZXZpY2UYASABKAQSDQoFaW5vZGUYAiABKAQicAoQUmVhZEZpbGVSZXNwb25zZRIlCgRmaWxlGAEgASgLMhcuc2ZseS5hZ2VudC52MS5GaWxlSW5mbxIMCgRkYXRhGAIgASgMEicKA2VuZBgDIAEoCzIaLnNmbHkuYWdlbnQudjEuUmVhZEZpbGVFbmQiQwoLUmVhZEZpbGVFbmQSJQoEZmlsZRgBIAEoCzIXLnNmbHkuYWdlbnQudjEuRmlsZUluZm8SDQoFbGlua3MYAiABKAQyWgoNQWdlbnRGaWxlUmVhZBJJCgRSZWFkEh4uc2ZseS5hZ2VudC52MS5SZWFkRmlsZVJlcXVlc3QaHy5zZmx5LmFnZW50LnYxLlJlYWRGaWxlUmVzcG9uc2UwAWIGcHJvdG8z", [file_sfly_agent_v1_files]);
 
 /**
  * @generated from message sfly.agent.v1.ReadFileRequest
@@ -33,19 +33,27 @@ export type ReadFileRequest = Message<"sfly.agent.v1.ReadFileRequest"> & {
   offset: bigint;
 
   /**
-   * 最多读多少字节；不设时读到文件末尾。
+   * 最多读多少字节；不设时读到文件末尾（to_open_size 时读到打开时的大小）。
    *
    * @generated from field: optional uint64 length = 3;
    */
   length?: bigint | undefined;
 
   /**
-   * 设了时，打开的文件必须是它（设备号 + inode 相同），否则以 FAILED_PRECONDITION 失败：
-   * 续传时用来确认路径上还是原来那个文件（没有被删除后重建，也没有被别的文件改名顶替）。
+   * 设了时，读的必须是这个文件（设备号 + inode 相同）：续传时用来确认读的还是原来那个文件。路径上已经不是它时
+   * （日志轮转时改了名），在路径所在的目录里按文件标识找它，找到就读它，回复的 file.path 是它现在的路径；
+   * 找不到时路径上没有文件是 NOT_FOUND，有另一个文件是 FAILED_PRECONDITION。
    *
    * @generated from field: sfly.agent.v1.FileIdentity expect = 4;
    */
   expect?: FileIdentity | undefined;
+
+  /**
+   * length 不设时只读到打开时的大小为止，之后续写的部分不读（下载只要开始时的那么多）。
+   *
+   * @generated from field: bool to_open_size = 5;
+   */
+  toOpenSize: boolean;
 };
 
 /**
@@ -96,6 +104,13 @@ export type ReadFileResponse = Message<"sfly.agent.v1.ReadFileResponse"> & {
    * @generated from field: bytes data = 2;
    */
   data: Uint8Array;
+
+  /**
+   * 只在最后一条回复里有：读完时打开的那个文件的属性。
+   *
+   * @generated from field: sfly.agent.v1.ReadFileEnd end = 3;
+   */
+  end?: ReadFileEnd | undefined;
 };
 
 /**
@@ -106,17 +121,47 @@ export const ReadFileResponseSchema: GenMessage<ReadFileResponse> = /*@__PURE__*
   messageDesc(file_sfly_agent_v1_file_read, 2);
 
 /**
+ * 读完时打开的那个文件（不是路径上现在的文件）的属性：判断读的过程中它有没有被删除、截短或续写。
+ *
+ * @generated from message sfly.agent.v1.ReadFileEnd
+ */
+export type ReadFileEnd = Message<"sfly.agent.v1.ReadFileEnd"> & {
+  /**
+   * 文件属性；path 是它现在所在的路径：还在原来的路径上，或在同一目录里改了名；在别处时是原来的路径。
+   *
+   * @generated from field: sfly.agent.v1.FileInfo file = 1;
+   */
+  file?: FileInfo | undefined;
+
+  /**
+   * 硬链接数：0 表示它已经被删除（读到的内容仍然完整，只是文件已经不在了）。
+   *
+   * @generated from field: uint64 links = 2;
+   */
+  links: bigint;
+};
+
+/**
+ * Describes the message sfly.agent.v1.ReadFileEnd.
+ * Use `create(ReadFileEndSchema)` to create a new message.
+ */
+export const ReadFileEndSchema: GenMessage<ReadFileEnd> = /*@__PURE__*/
+  messageDesc(file_sfly_agent_v1_file_read, 3);
+
+/**
  * Agent 能力 files.read（ADR 0019）：流式读取文件内容。和 AgentPeer 在同一个端口上提供，供其它 Agent 直接连接，
  * 没有认证，只应在内网使用。下载到本地路径（可续传）由发起调用的 Agent 用这个服务完成：
  * 它边收边写自己机器上的文件，连接中断后从已经收到的位置再读一次，数据不经过节点进程和控制面。
  *
- * 路径和错误的约定与 files.proto 的 AgentFiles 相同；另外 FAILED_PRECONDITION 表示路径上已经不是 expect 那个文件。
+ * 路径和错误的约定与 files.proto 的 AgentFiles 相同；另外 FAILED_PRECONDITION 表示 expect 那个文件已经不在路径上
+ * （路径上换成了另一个文件，在同一目录里也找不到它）。
  *
  * @generated from service sfly.agent.v1.AgentFileRead
  */
 export const AgentFileRead: GenService<{
   /**
-   * 读取一个文件：第一条回复带打开时的文件属性，之后每条是紧接着的一段内容，读到 length 字节或文件末尾为止。
+   * 读取一个文件：第一条回复带打开时的文件属性，之后每条是紧接着的一段内容，读到 length 字节或文件末尾为止，
+   * 最后一条带读完时打开的那个文件的属性（end）。内容都从打开的文件读：读的过程中文件被改名、被删除，读到的照样是它。
    *
    * @generated from rpc sfly.agent.v1.AgentFileRead.Read
    */

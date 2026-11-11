@@ -9,6 +9,7 @@
 | `AgentUnreachable`（`ConnectionError`） | unreachable | 连不通：连不上另一台 Agent 或本机 Agent |
 | `AgentUnsupported` | unsupported | 对方不支持：目标 Agent 的版本没有这项能力 |
 | `AgentFileNotFound`（`FileNotFoundError`） | not_found | 文件或目录不存在 |
+| `AgentFileMoved` | moved | 下载续传时源文件已经不在原来的路径上（移到了别的目录） |
 | `AgentPermissionDenied`（`PermissionError`） | permission_denied | 没有权限 |
 | `AgentTimeout`（`TimeoutError`） | timeout | 超过 `timeout` 秒没有回应 |
 | `AgentNotReferenced` | not_referenced | 目标 Agent 不是通过「Agent」类型的参数拿到的 |
@@ -27,12 +28,14 @@ class Kind:
     UNREACHABLE = "unreachable"
     UNSUPPORTED = "unsupported"
     NOT_FOUND = "not_found"
+    #: 下载续传时源文件已经不在原来的路径上（`files.download`）。
+    MOVED = "moved"
     PERMISSION_DENIED = "permission_denied"
     TIMEOUT = "timeout"
     NOT_REFERENCED = "not_referenced"
     #: 参数不合法，例如要列出的路径不是目录、要读取的是目录。
     INVALID = "invalid"
-    #: 其它失败，例如下载期间源文件被替换、被截短、大小变了。
+    #: 其它失败，例如下载期间源文件被截短、大小变了。
     FAILED = "failed"
     #: 任务被取消：只在 Agent 的回复里出现，SDK 抛出 `sfly.Cancelled`。
     CANCELLED = "cancelled"
@@ -69,6 +72,13 @@ class AgentFileNotFound(AgentError, FileNotFoundError):
     kind = Kind.NOT_FOUND
 
 
+class AgentFileMoved(AgentError):
+    """下载（`files.download`）连接中断后续传时，源文件已经不在原来的路径上：路径上换成了另一个文件，
+    原来的文件在同一目录里也找不到（被移到了别的目录或被删除）。知道它去了哪里时，用新路径重新下载。"""
+
+    kind = Kind.MOVED
+
+
 class AgentPermissionDenied(AgentError, PermissionError):
     """没有权限：路径的权限就是目标 Agent 进程的权限。"""
 
@@ -94,6 +104,7 @@ _BY_KIND: dict[str, type[AgentError]] = {
         AgentUnreachable,
         AgentUnsupported,
         AgentFileNotFound,
+        AgentFileMoved,
         AgentPermissionDenied,
         AgentTimeout,
         AgentNotReferenced,

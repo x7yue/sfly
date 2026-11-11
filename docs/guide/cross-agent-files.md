@@ -30,6 +30,7 @@ from pathlib import Path
 from sfly import (
     Agent,
     AgentError,
+    AgentFileMoved,
     AgentFileNotFound,
     AgentName,
     Context,
@@ -99,8 +100,8 @@ def clean_logs(
             raw = out / "raw" / Path(file.path).name
             try:
                 got = agent.files.download(file.path, raw)
-            except AgentFileNotFound:
-                continue  # 又被改名或删除了：等监听告诉我们新的路径
+            except (AgentFileNotFound, AgentFileMoved):
+                continue  # 被删除，或在连接中断期间移到了别处：等监听告诉我们新的路径
             except AgentError as error:
                 if error.kind != "failed":
                     raise
@@ -144,7 +145,7 @@ def delete_if_unchanged(agent: Agent, got: FileInfo) -> None:
 
 - **监听**（`files.watch`）先给出一份快照（当前匹配的文件），之后持续给出事件。读监听放在后台线程里：主线程清洗一个几 GB 的文件要好一会儿，这期间事件照常被取走；不这样做，事件在 A 的 Agent 上堆积到溢出，只能重新给一份快照。
 - **以快照为准、按文件标识去重**：两台 Agent 之间的连接中断后自动重连、或者事件来不及发出时，会重新给一份 `missed=True` 的快照，之前的一些事件没有送到。所以不要假设每个变化都有事件，每次收到快照都以它为准重建「现在有哪些文件」。文件标识（设备号 + inode）在改名后不变：`app.log.1` 轮转成 `app.log.2` 时还是同一个文件，不会再清洗一次。文件被删除后标识可能被新文件重用，所以删除时也从 `done` 里去掉。
-- **下载**（`files.download`）由 B 的 Agent 直接把数据写到本地路径，不经过节点进程，大文件的速度不受 Python 影响；连接中断时自动从断点续传。先写临时文件、完成并核对大小后才改名，本地不会出现半截文件。下载期间源文件被改写、截短或替换时抛出 `AgentError`（`kind` 为 `failed`），这里留到之后再试。
+- **下载**（`files.download`）由 B 的 Agent 直接把数据写到本地路径，不经过节点进程，大文件的速度不受 Python 影响；连接中断时自动从断点续传。先写临时文件、完成并核对大小后才改名，本地不会出现半截文件。下载期间源文件被改名（例如又轮转了一次）不影响下载，返回的 `got.path` 是它现在的路径；被改写、截短时抛出 `AgentError`（`kind` 为 `failed`），这里留到之后再试。
 - **删除**（`files.delete`）之前再查看一次：下载之后同一个路径上可能已经是另一个文件（按序号轮转时 `app.log` 改名成了新的 `app.log.1`）。查看和删除之间仍有很短的间隔，轮转恰好发生在这里时会删错，要完全避免就不要删，或者让被测系统把轮转出来的文件用不会重复的名字（例如带时间戳）。
 - **被停止时**节点里抛出 `sfly.Cancelled`：正在进行的下载立即结束（临时文件被删除），清洗的结果先写临时文件再改名，所以不会留下半截的结果；已经清洗完的都保留。下次运行时 A 上剩下的文件会重新出现在快照里，接着清洗。
 - A 要是 Linux 上的 Agent，日志目录在本地文件系统上：监听用 inotify 实现，NFS 这类网络文件系统上看不到别的机器做的修改。

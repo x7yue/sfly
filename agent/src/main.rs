@@ -86,9 +86,10 @@ struct Args {
     /// 默认 `$SFLY_HOME/bin/uv`，不存在时从 GitHub Release 镜像安装（见 `--github-release-mirror`）。
     #[arg(long, env = "SFLY_UV")]
     uv: Option<PathBuf>,
-    /// `sfly dev` 连接的本地 socket（Unix domain socket，只有本机同一用户可以连接）；默认 `<work_dir>/agent.sock`。
-    #[arg(long, env = "SFLY_DEV_SOCKET")]
-    dev_socket: Option<PathBuf>,
+    /// Agent 的本地 socket（Unix domain socket，只有本机同一用户可以连接）：`sfly dev` 加载开发版本、
+    /// 节点调用 Agent 能力都经过它；默认 `<work_dir>/agent.sock`。
+    #[arg(long = "dev-socket", env = "SFLY_DEV_SOCKET")]
+    local_socket: Option<PathBuf>,
     /// 任务超时或被取消时，从优雅终止（SIGTERM）到强制杀掉进程树的宽限秒数。
     #[arg(long, env = "SFLY_TERMINATE_GRACE", default_value_t = DEFAULT_TERMINATE_GRACE.as_secs())]
     terminate_grace: u64,
@@ -116,6 +117,9 @@ struct Args {
     /// （新版本的试用按二进制的 sha256 判断）；execve（自更新或回滚）时不传下去（命令行参数和环境变量都去掉）。
     #[arg(long, env = "SFLY_VERSION_OVERRIDE", hide = true)]
     version_override: Option<String>,
+    /// 只在测试中使用：监听目录时队列里最多有多少个还没发出的事件（超过时重新给快照），改小来模拟调用方读得太慢。
+    #[arg(long, env = "SFLY_WATCH_QUEUE_EVENTS", default_value_t = sfly_agent::capabilities::file_watch::DEFAULT_QUEUE_EVENTS, hide = true)]
+    watch_queue_events: usize,
     /// 只在测试中使用：模拟修改系统时间。Agent 每次读 Agent 时间时都加上这个文件里写的偏移量
     /// （十进制整数，毫秒，可以为负）；文件可以在运行中修改，立即生效。
     #[arg(long, env = "SFLY_AGENT_TIME_OFFSET_FILE", hide = true)]
@@ -227,7 +231,7 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(environment::default_user_agent),
         uv,
         manage_uv,
-        dev_socket: args.dev_socket,
+        local_socket: args.local_socket,
         terminate_grace: Duration::from_secs(args.terminate_grace),
         python: args.python,
         telemetry_queue_bytes: args.log_queue_bytes,
@@ -246,6 +250,7 @@ async fn main() -> anyhow::Result<()> {
         trial: std::sync::Arc::new(trial),
         listen_port: args.listen_port,
         public_address: args.public_address,
+        watch_queue_events: args.watch_queue_events,
     };
 
     let terminate_grace = config.terminate_grace;

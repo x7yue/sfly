@@ -23,7 +23,7 @@
 //! - **取消**：任务被取消（或已经结束）时立即放弃调用，以 `cancelled` 回复；SDK 抛出 `sfly.Cancelled`。
 //! - **调用方断开**：SDK 关掉连接（节点进程退出、提前停止迭代、写入时出错）时 Agent 放弃调用。
 //!
-//! 方法的实现在各项能力里（[`crate::capabilities`]）：[`Method`] 拿到 [`Call`]，按 [`Target`] 直接调用本机服务的实现
+//! 方法的实现在各项能力里（[`crate::capabilities`]）：[`Method`] 拿到 [`Call`]，用 [`on_target!`] 直接调用本机服务的实现
 //! 或用 gRPC 客户端调用目标 Agent，把 gRPC 状态交给 [`Target::error`] 转成能区分原因的 [`CallError`]。
 
 pub mod input;
@@ -39,7 +39,8 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
 use tokio::sync::{mpsc, watch};
 
 pub use input::Input;
-pub use target::{Peers, Remote, Target};
+pub(crate) use target::on_target;
+pub use target::{Backoff, BoxStream, Peers, Remote, Target};
 
 use crate::capabilities;
 use crate::proto::ReferencedAgent;
@@ -83,6 +84,9 @@ pub enum ErrorKind {
     Invalid,
     /// 任务被取消或已经结束。
     Cancelled,
+    /// 下载续传时源文件已经不在原来的路径上：路径上换成了另一个文件，原来的文件在同一目录里也找不到
+    /// （被移到了别的目录或被删除）。
+    Moved,
     /// 其它失败。
     Failed,
 }
@@ -151,18 +155,20 @@ impl Call<'_> {
     pub async fn within<T>(&self, future: impl Future<Output = T>) -> Result<T, CallError> {
         match self.timeout {
             None => Ok(future.await),
-            Some(limit) => tokio::time::timeout(limit, future).await.map_err(|_| {
-                CallError::new(
-                    ErrorKind::Timeout,
-                    format!(
-                        "Agent {} 超过 {} 秒没有回应 {}",
-                        self.target.name(),
-                        format_seconds(limit),
-                        self.method
-                    ),
-                )
-            }),
+            Some(limit) => tokio::time::timeout(limit, future)
+                .await
+                .map_err(|_| no_reply(self.target, self.method, limit)),
         }
+    }
+
+    /// 等目标 Agent 的回复（[`Call::within`]），gRPC 状态转成调用错误（[`Target::error`]）。
+    pub async fn rpc<T>(
+        &self,
+        future: impl Future<Output = Result<T, tonic::Status>>,
+    ) -> Result<T, CallError> {
+        self.within(future)
+            .await?
+            .map_err(|status| self.target.error(status))
     }
 
     /// 回复流式方法的一项。调用方已经断开时返回错误（调用随之结束）。
@@ -191,8 +197,20 @@ impl Call<'_> {
     }
 }
 
+/// 目标 Agent 超过 `limit` 没有回应 `method`。
+pub fn no_reply(target: &Target, method: &str, limit: Duration) -> CallError {
+    CallError::new(
+        ErrorKind::Timeout,
+        format!(
+            "Agent {} 超过 {} 秒没有回应 {method}",
+            target.name(),
+            format_seconds(limit)
+        ),
+    )
+}
+
 /// 秒数（给人看）：整数秒不带小数。
-fn format_seconds(duration: Duration) -> String {
+pub fn format_seconds(duration: Duration) -> String {
     let seconds = duration.as_secs_f64();
     if seconds.fract() == 0.0 {
         format!("{seconds:.0}")
@@ -315,6 +333,18 @@ async fn run(
         input,
     })
     .await
+}
+
+/// 不处理这次调用（例如请求解析不了）：只回复错误。
+pub async fn refuse(
+    writer: impl AsyncWrite + Send + Sync + 'static,
+    error: CallError,
+    agent: &str,
+) {
+    let mut out = Replies {
+        writer: Box::pin(writer),
+    };
+    finish(&mut out, Err(error), agent).await;
 }
 
 /// 写最后一帧。
