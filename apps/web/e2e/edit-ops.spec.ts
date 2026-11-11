@@ -116,7 +116,8 @@ test("空白处右键菜单：各项带注册表里的快捷键；「添加节�
 	await expect(menu).toBeVisible();
 	await expect(menu.getByRole("menuitem")).toHaveText([
 		"添加节点/",
-		"粘贴没有可粘贴的节点",
+		// 没有授权读剪贴板（另见 node-clipboard.spec.ts）。
+		"粘贴浏览器不允许读取剪贴板，请用快捷键粘贴CtrlV",
 		"整理布局AltShiftF",
 		"适配视图0",
 		"撤销没有可撤销的修改CtrlZ",
