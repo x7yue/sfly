@@ -15,14 +15,18 @@
 //! - `{"result": ...}`：调用成功，带方法的返回值（流式方法为 null）；
 //! - `{"error": {"kind": "...", "message": "...", "agent": "..."}}`：调用失败，`kind` 见 [`ErrorKind`]。
 //!
+//! 往对方传数据的方法（流式写入文件）在请求之后由调用方接着发 `{"data": N}` + N 个字节的帧，最后发 `{"end": true}`
+//! （[`input`]，方法用 [`Call::input`] 取）。
+//!
 //! - **超时**：`timeout_ms`（0 为不限）是等对方回应的上限：一次性的方法是整个调用，流式方法是相邻两次回应之间
 //!   （[`Call::within`]）。超时后 Agent 放弃调用（丢掉 gRPC 请求，目标 Agent 随之结束处理），以 `timeout` 回复。
 //! - **取消**：任务被取消（或已经结束）时立即放弃调用，以 `cancelled` 回复；SDK 抛出 `sfly.Cancelled`。
-//! - **调用方断开**：SDK 关掉连接（节点进程退出、提前停止迭代）时 Agent 放弃调用。
+//! - **调用方断开**：SDK 关掉连接（节点进程退出、提前停止迭代、写入时出错）时 Agent 放弃调用。
 //!
 //! 方法的实现在各项能力里（[`crate::capabilities`]）：[`Method`] 拿到 [`Call`]，按 [`Target`] 直接调用本机服务的实现
 //! 或用 gRPC 客户端调用目标 Agent，把 gRPC 状态交给 [`Target::error`] 转成能区分原因的 [`CallError`]。
 
+pub mod input;
 mod target;
 
 use std::future::Future;
@@ -31,9 +35,10 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
-use tokio::sync::watch;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt as _, BufReader};
+use tokio::sync::{mpsc, watch};
 
+pub use input::Input;
 pub use target::{Peers, Remote, Target};
 
 use crate::capabilities;
@@ -126,6 +131,7 @@ pub struct Call<'a> {
     /// 等对方回应的上限（[`CallRequest::timeout_ms`]）。
     pub timeout: Option<Duration>,
     out: &'a mut Replies,
+    input: &'a mut Input,
 }
 
 impl Call<'_> {
@@ -163,6 +169,11 @@ impl Call<'_> {
             .frame(&serde_json::json!({ "item": item }))
             .await
             .map_err(|error| CallError::new(ErrorKind::Failed, format!("回复调用方失败：{error}")))
+    }
+
+    /// 调用方发来的下一段数据（流式写入）；发完了时为 None。不设超时：数据什么时候来由节点决定。
+    pub async fn input(&mut self) -> Result<Option<Vec<u8>>, CallError> {
+        self.input.next().await
     }
 
     /// 回复一段原始字节（传输文件内容的方法）：`{"data": N}` 一行之后紧跟这 N 个字节。
@@ -244,8 +255,10 @@ pub async fn serve(
         }
     };
     let timeout = (request.timeout_ms > 0).then(|| Duration::from_millis(request.timeout_ms));
+    let (input_tx, input_rx) = mpsc::channel(4);
+    let mut input = Input::new(input_rx);
     let outcome = {
-        let call = run(&target, &request, timeout, peers, &mut out);
+        let call = run(&target, &request, timeout, peers, &mut out, &mut input);
         let cancelled = async {
             loop {
                 if cancel.borrow_and_update().is_some() || cancel.changed().await.is_err() {
@@ -253,10 +266,8 @@ pub async fn serve(
                 }
             }
         };
-        let gone = async {
-            let mut buf = [0u8; 256];
-            while matches!(reader.read(&mut buf).await, Ok(n) if n > 0) {}
-        };
+        // 读调用方发来的数据，连接关闭时结束。
+        let gone = input::pump(BufReader::new(&mut reader), input_tx);
         tokio::select! {
             outcome = call => outcome,
             () = cancelled => Err(CallError::new(ErrorKind::Cancelled, "任务已取消，调用已放弃")),
@@ -273,6 +284,7 @@ async fn run(
     timeout: Option<Duration>,
     peers: &Peers,
     out: &mut Replies,
+    input: &mut Input,
 ) -> Result<Value, CallError> {
     let Some((capability, method)) = capabilities::method(&request.method) else {
         return Err(CallError::new(
@@ -293,6 +305,7 @@ async fn run(
         args: request.args.clone(),
         timeout,
         out,
+        input,
     })
     .await
 }
