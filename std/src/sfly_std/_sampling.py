@@ -1,4 +1,4 @@
-"""持续运行的节点（`system_monitor`、`process_monitor`、`follow_log`）共用的参数校验与速率计算。"""
+"""持续运行的节点（`system_monitor`、`process_monitor`、`follow_log`、`watch_files`）共用的参数校验与速率计算。"""
 
 from __future__ import annotations
 
