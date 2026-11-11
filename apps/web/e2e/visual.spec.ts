@@ -643,9 +643,8 @@ test("编排画布：非字符串参数的引用标签与 JSON 输入框", async
 	const id = await createScenario(controlPlane, "各种类型的参数", typedDocument);
 	await page.goto(`/orchestrations/${id}`);
 	await nodeCard(page, "typed").click();
-	await page.getByRole("button", { name: "在 strict 中插入引用" }).click();
-	await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
 	await expect(page.getByRole("group", { name: "输入 count" })).toBeVisible();
+	await expect(page.getByRole("combobox", { name: "输入 options" })).toBeVisible();
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-reference-chip.png");
 });
