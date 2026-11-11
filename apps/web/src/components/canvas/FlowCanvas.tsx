@@ -15,7 +15,9 @@ import {
 import { cn } from "cn";
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useShortcut } from "#/components/shortcuts";
+import { ContextMenu } from "@/components/ui/context-menu";
 import { CanvasDock, type CanvasTool } from "./CanvasDock";
+import { type CanvasMenuTarget, FitViewMenuItem } from "./CanvasMenu";
 import {
 	type CanvasContextValue,
 	type CanvasInfo,
@@ -51,6 +53,7 @@ import { SubflowRegions } from "./SubflowRegions";
  * 扩展点（后续票据复用这一个组件，不再各写一套画布）：
  * - `editable={false}`：只读（不能拖动、连线、删除），用于运行状态（#41）与版本对比（#40）；
  * - `decorateNode` / `decorateEdge` / `regionMeta`：叠加运行状态、主指标槽、差异标记（见 context.ts）；
+ * - `menu`：右键菜单的内容（CanvasMenu.tsx）；不给时空白处的菜单只有「适配视图」；
  * - `dockStart` / `dockTools`：工具条上的「＋ 添加节点」与撤销 / 重做 / 整理布局（#39）；
  * - `onNodesChange` / `onEdgesChange` / `onConnect`：编辑操作，撤销栈（#39）可以包在外面。
  *
@@ -82,6 +85,11 @@ export interface FlowCanvasProps {
 	inspector?: { open: boolean; onToggle(): void };
 	/** 打开时是否显示小地图（默认显示；版本对比的窄画布默认收起）。 */
 	initialMinimap?: boolean;
+	/**
+	 * 右键菜单的内容（`ContextMenuItem` 等，见 ui/context-menu），按右键的对象给出；
+	 * 不给时空白处的菜单只有「适配视图」（只读画布）。
+	 */
+	menu?: (target: CanvasMenuTarget) => ReactNode;
 	dockStart?: ReactNode;
 	dockTools?: ReactNode;
 	/** 悬浮在画布上的控件（左上、右上的控件组、检查器……）。 */
@@ -116,6 +124,7 @@ export function FlowCanvas({
 	onEnter,
 	inspector,
 	initialMinimap = true,
+	menu,
 	dockStart,
 	dockTools,
 	children,
@@ -143,11 +152,6 @@ export function FlowCanvas({
 		}
 		return map;
 	}, [edges]);
-
-	const context = useMemo<CanvasContextValue>(
-		() => ({ info, selectedId, ports, decorateNode, decorateEdge, regionMeta }),
-		[info, selectedId, ports, decorateNode, decorateEdge, regionMeta],
-	);
 
 	// 选中由使用方控制（单选）；React Flow 自己的 select 变化不往外传。
 	const shownNodes = useMemo(
@@ -191,6 +195,10 @@ export function FlowCanvas({
 	const fit = useCallback(() => {
 		void flow.fitView({ ...fitOptions, duration: 200 });
 	}, [flow, fitOptions]);
+	const context = useMemo<CanvasContextValue>(
+		() => ({ info, selectedId, ports, decorateNode, decorateEdge, regionMeta, fit }),
+		[info, selectedId, ports, decorateNode, decorateEdge, regionMeta, fit],
+	);
 	const fitRef = useRef(fitOptions);
 	fitRef.current = fitOptions;
 	useEffect(() => {
@@ -293,6 +301,18 @@ export function FlowCanvas({
 	useShortcut("canvas-minimap", () => setMinimap((m) => !m));
 	useShortcut("canvas-inspector", () => inspector?.onToggle(), inspector !== undefined);
 
+	// —— 右键菜单：关闭时保留对象，退场动画期间内容不变 ——
+	const [menuState, setMenuState] = useState<{ target: CanvasMenuTarget; open: boolean } | null>(
+		null,
+	);
+	/** 画布区域拿到焦点，并标记是鼠标放过来的（见 isPointerFocusedCanvas）。 */
+	const focusRegion = () => {
+		const root = wrapper.current;
+		if (!root) return;
+		root.dataset.pointerFocus = "";
+		root.focus({ preventScroll: true });
+	};
+
 	const canEdit = editable && tool === "pointer";
 	return (
 		<FlowCanvasContext.Provider value={context}>
@@ -337,11 +357,17 @@ export function FlowCanvas({
 						// 拖动画布的手势拦掉了 mousedown 的默认行为，点空白处时焦点不会自己移过来：
 						// 手动聚焦画布区域，并标记是鼠标放过来的（失焦时清掉）：编辑器据此决定 Tab 是添加节点
 						// 还是照常切换焦点（editor/ScenarioEditor.tsx）。
-						const root = wrapper.current;
-						if (root) {
-							root.dataset.pointerFocus = "";
-							root.focus({ preventScroll: true });
-						}
+						focusRegion();
+					}}
+					onPaneContextMenu={(event) => {
+						event.preventDefault();
+						// 菜单关闭后焦点回到画布区域（ui/context-menu 交还给打开前的焦点）。
+						focusRegion();
+						const client = { x: event.clientX, y: event.clientY };
+						setMenuState({
+							target: { kind: "pane", client, position: flow.screenToFlowPosition(client) },
+							open: true,
+						});
 					}}
 					nodesDraggable={canEdit}
 					nodesConnectable={canEdit}
@@ -397,6 +423,14 @@ export function FlowCanvas({
 					start={dockStart}
 					tools={dockTools}
 				/>
+				<ContextMenu
+					label="画布菜单"
+					open={menuState?.open ?? false}
+					anchor={menuState?.target.client ?? null}
+					onOpenChange={(open) => setMenuState((m) => m && { ...m, open })}
+				>
+					{menuState && (menu?.(menuState.target) ?? <FitViewMenuItem />)}
+				</ContextMenu>
 				{children}
 			</div>
 		</FlowCanvasContext.Provider>

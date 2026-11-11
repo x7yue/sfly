@@ -578,6 +578,23 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-new-subflow.png");
 	});
 
+	test("空白处右键菜单", async ({ page }) => {
+		await page.mouse.click(200, 640, { button: "right" });
+		const menu = page.getByRole("menu", { name: "画布菜单" });
+		await expect(menu).toBeVisible();
+		await page.keyboard.press("ArrowDown");
+		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("添加节点");
+		await expect(page).toHaveScreenshot("editor-pane-menu.png");
+	});
+
+	test("添加节点菜单：不连线", async ({ page }) => {
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await expect(menu.getByText(/^新节点不连线/)).toBeVisible();
+		await idle(page);
+		await expect(page).toHaveScreenshot("editor-add-menu.png");
+	});
+
 	test("语义缩放", async ({ page }) => {
 		for (let i = 0; i < 3; i++) {
 			await page.getByRole("button", { name: "缩小" }).click();
