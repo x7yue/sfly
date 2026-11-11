@@ -297,3 +297,24 @@ def test_save_output_writes_artifacts_and_logs_while_the_command_is_running(
 
     # 命令还在 sleep 时日志和产物内容就都到了，所以才会被取消。
     assert result.status == "cancelled"
+
+
+def test_save_output_stops_at_what_the_outputs_hold_when_a_background_process_keeps_writing(
+    tmp_path: Path,
+) -> None:
+    # 命令马上退出，留下的后台进程一直往 stdout 写：节点等够排空超时就不再转发，
+    # 产物停在那一刻，与输出里的 stdout 相同。
+    writer = "import time\nwhile True:\n    print('tick', flush=True)\n    time.sleep(0.001)"
+    (tmp_path / "writer.py").write_text(writer)
+
+    result = run_node(
+        shell,
+        {"command": f"{sys.executable} writer.py & echo 已启动", "save_output": True},
+        work_dir=tmp_path,
+    )
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    stdout = result.outputs["stdout"]
+    assert "tick\n" in stdout
+    assert result.artifacts["stdout.txt"].read_bytes() == stdout.encode()

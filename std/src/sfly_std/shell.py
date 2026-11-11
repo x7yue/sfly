@@ -12,7 +12,6 @@ import sys
 import threading
 import time
 from collections.abc import Sequence
-from pathlib import Path
 from typing import IO, TypedDict
 
 from sfly import Context, node
@@ -43,37 +42,53 @@ class CommandFailed(Exception):
 
 class _Forward:
     """在后台线程里把管道的内容原样写到执行器自己的 stdout / stderr（Agent 实时转为日志），
-    同时保留末尾 `keep` 个字节；给了 `save` 时把读到的原始字节边读边写进这个文件。"""
+    同时保留末尾 OUTPUT_TAIL_BYTES 个字节；给了 `artifact` 时把读到的原始字节边读边写进这个产物。"""
 
-    def __init__(self, pipe: IO[bytes], dest: IO[bytes], keep: int, save: Path | None) -> None:
-        self._pipe, self._dest, self._keep = pipe, dest, keep
-        # 不带缓冲：命令还在运行、或者被取消时，已经读到的内容都在文件里。
-        self._save = save.open("wb", buffering=0) if save is not None else None
+    def __init__(self, ctx: Context, dest: IO[bytes], artifact: str | None) -> None:
+        self._dest = dest
+        #: 保存完整内容的产物的引用；没有保存时为 None。
+        self.ref = ctx.artifacts.ref(artifact) if artifact is not None else None
+        self._path = ctx.artifacts.path(artifact) if artifact is not None else None
+        self._save: IO[bytes] | None = None
         self._tail = bytearray()
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        #: 持有它才能转发；`finish` 之后不再转发。
+        self._lock = threading.Lock()
+        self._finished = False
+        self._thread: threading.Thread | None = None
+
+    def start(self, pipe: IO[bytes]) -> None:
+        """开始转发 `pipe` 的内容。"""
+        if self._path is not None:
+            # 不带缓冲：命令还在运行、或者被取消时，已经读到的内容都在文件里。
+            self._save = self._path.open("wb", buffering=0)
+        self._thread = threading.Thread(target=self._run, args=(pipe.fileno(),), daemon=True)
         self._thread.start()
 
-    def _run(self) -> None:
-        fd = self._pipe.fileno()
-        try:
-            while chunk := os.read(fd, 65536):
+    def _run(self, fd: int) -> None:
+        while chunk := os.read(fd, 65536):
+            with self._lock:
+                if self._finished:
+                    return
                 self._dest.write(chunk)
                 self._dest.flush()
                 if self._save is not None:
                     self._save.write(chunk)
                 self._tail += chunk
-                del self._tail[: -self._keep]
-        finally:
+                del self._tail[:-OUTPUT_TAIL_BYTES]
+
+    def finish(self, deadline: float) -> None:
+        """等管道读完，最晚到 `deadline`；之后不再转发，末尾内容和产物就此不变。"""
+        assert self._thread is not None
+        self._thread.join(max(0.0, deadline - time.monotonic()))
+        with self._lock:
+            self._finished = True
             if self._save is not None:
                 self._save.close()
-
-    def join(self, deadline: float) -> None:
-        self._thread.join(max(0.0, deadline - time.monotonic()))
 
     def text(self) -> str:
         """末尾的内容；截断处落在多字节字符中间时去掉残缺的字节。"""
         tail = bytes(self._tail)
-        if len(tail) >= self._keep:
+        if len(tail) >= OUTPUT_TAIL_BYTES:
             tail = tail.lstrip(bytes(range(0x80, 0xC0)))  # UTF-8 的后续字节 10xxxxxx
         return tail.decode("utf-8", errors="replace")
 
@@ -108,8 +123,8 @@ def shell(
     以及两个产物的引用 `stdout_file`、`stderr_file`（没有打开 `save_output` 时为空值）。
     """
     _process.check_cwd(cwd)
-    stdout_file = ctx.artifacts.path(STDOUT_ARTIFACT) if save_output else None
-    stderr_file = ctx.artifacts.path(STDERR_ARTIFACT) if save_output else None
+    stdout = _Forward(ctx, sys.stdout.buffer, STDOUT_ARTIFACT if save_output else None)
+    stderr = _Forward(ctx, sys.stderr.buffer, STDERR_ARTIFACT if save_output else None)
     try:
         proc = subprocess.Popen(
             [shell, "-c", command],
@@ -122,17 +137,18 @@ def shell(
     except FileNotFoundError:
         raise FileNotFoundError(f"找不到解释器 {shell}") from None
     assert proc.stdout is not None and proc.stderr is not None
-    stdout = _Forward(proc.stdout, sys.stdout.buffer, OUTPUT_TAIL_BYTES, stdout_file)
-    stderr = _Forward(proc.stderr, sys.stderr.buffer, OUTPUT_TAIL_BYTES, stderr_file)
+    stdout.start(proc.stdout)
+    stderr.start(proc.stderr)
     try:
         # 取消或超时时这里抛出 Cancelled：平台已经向整棵进程树（执行器和命令在同一个进程组里）
         # 发了 SIGTERM，宽限期过后强制杀掉，节点不需要自己终止命令，让 Cancelled 继续往外传即可。
         returncode = proc.wait()
     finally:
-        # 命令退出后，它启动的后台进程可能还持有输出管道：最多再转发 DRAIN_TIMEOUT 秒。
+        # 命令退出后，它启动的后台进程可能还持有输出管道：最多再转发 DRAIN_TIMEOUT 秒，
+        # 之后的内容不进日志、输出和产物。
         deadline = time.monotonic() + DRAIN_TIMEOUT
-        stdout.join(deadline)
-        stderr.join(deadline)
+        stdout.finish(deadline)
+        stderr.finish(deadline)
 
     # 被信号终止时按 shell 的习惯记为 128 + 信号值。
     exit_code = returncode if returncode >= 0 else 128 - returncode
@@ -150,6 +166,6 @@ def shell(
         "exit_code": exit_code,
         "stdout": stdout.text(),
         "stderr": stderr.text(),
-        "stdout_file": ctx.artifacts.ref(STDOUT_ARTIFACT) if save_output else None,
-        "stderr_file": ctx.artifacts.ref(STDERR_ARTIFACT) if save_output else None,
+        "stdout_file": stdout.ref,
+        "stderr_file": stderr.ref,
     }

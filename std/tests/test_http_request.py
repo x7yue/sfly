@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import socket
 import ssl
 import subprocess
 import threading
@@ -12,7 +13,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -36,6 +37,8 @@ class Reply:
     delay: float = 0.0
     #: 发出响应体的前一半后先调用它，返回后再发后一半。
     midway: Callable[[], None] | None = None
+    #: 断开连接而不发完响应：`"before_response"` 什么都不发，`"midway"` 发出响应体的前一半后断开。
+    drop: Literal["before_response", "midway"] | None = None
 
 
 def json_reply(value: Any, status: int = 200) -> Reply:
@@ -66,6 +69,9 @@ class Stub:
                 reply = route(request) if callable(route) else route
                 if reply.delay:
                     threading.Event().wait(reply.delay)
+                if reply.drop == "before_response":
+                    self._drop()
+                    return
                 self.send_response(reply.status)
                 for key, value in reply.headers.items():
                     self.send_header(key, value)
@@ -73,14 +79,22 @@ class Stub:
                 self.end_headers()
                 if self.command == "HEAD":
                     return
-                if reply.midway is None:
+                if reply.midway is None and reply.drop is None:
                     self.wfile.write(reply.body)
                     return
                 half = len(reply.body) // 2
                 self.wfile.write(reply.body[:half])
                 self.wfile.flush()
+                if reply.drop == "midway":
+                    self._drop()
+                    return
+                assert reply.midway is not None
                 reply.midway()
                 self.wfile.write(reply.body[half:])
+
+            def _drop(self) -> None:
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
 
             do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _handle
 
@@ -126,6 +140,13 @@ def _no_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
         "all_proxy",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def wait_for(what: str, check: Callable[[], bool], timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while not check():
+        assert time.monotonic() < deadline, f"等待超时：{what}"
+        time.sleep(0.02)
 
 
 def run(tmp_path: Path, **inputs: Any) -> Execution:
@@ -773,20 +794,18 @@ def test_save_body_writes_the_file_while_the_response_is_still_arriving(
 
     def midway() -> None:
         # 后一半还没发出：前一半（除去还在传输途中的部分）应该已经写进文件。
-        deadline = time.monotonic() + 10
-        while time.monotonic() < deadline:
-            if saved.exists() and saved.stat().st_size >= len(body) // 4:
-                break
-            time.sleep(0.02)
-        on_disk_midway.append(saved.exists() and body.startswith(saved.read_bytes()))
-        on_disk_midway.append(saved.stat().st_size >= len(body) // 4)
+        wait_for(
+            "前一半写进文件",
+            lambda: saved.exists() and saved.stat().st_size >= len(body) // 4,
+        )
+        on_disk_midway.append(body.startswith(saved.read_bytes()))
 
     stub.routes["/blob"] = Reply(200, body, midway=midway)
 
     result = run(tmp_path, url=f"{stub.url}/blob", save_body=True)
 
     assert result.status == "success", result.error
-    assert on_disk_midway == [True, True]
+    assert on_disk_midway == [True]
     assert result.artifacts["body"] == saved
     assert saved.read_bytes() == body
 
@@ -816,3 +835,39 @@ def test_until_ok_with_save_body_keeps_the_last_response(tmp_path: Path, stub: S
     assert result.artifacts["body"].read_bytes() == b'{"status": "ok"}'
     assert result.outputs is not None
     assert Path(result.outputs["body_file"]) == result.artifacts["body"]
+
+
+@pytest.mark.parametrize("drop", ["before_response", "midway"])
+def test_until_ok_with_save_body_saves_nothing_when_the_last_request_gets_no_complete_response(
+    tmp_path: Path, stub: Stub, drop: Literal["before_response", "midway"]
+) -> None:
+    # 第一次得到完整的响应（不满足断言），之后每次都在响应发完之前断开。
+    replies = iter([Reply(503, b"starting, please wait a little longer")])
+    dropped = Reply(200, b'{"status": "ok", "padding": "' + b"x" * KIB + b'"}', drop=drop)
+    stub.routes["/health"] = lambda request: next(replies, dropped)
+
+    result = run(
+        tmp_path,
+        url=f"{stub.url}/health",
+        until_ok=True,
+        wait=1,
+        poll=0.1,
+        save_body=True,
+    )
+
+    assert failure(result).startswith("sfly_std.http_request.RequestFailed: 1 秒内 ")
+    assert len(stub.received) >= 2
+    assert result.artifacts == {}
+
+
+def test_save_body_saves_nothing_when_the_response_breaks_off_midway(
+    tmp_path: Path, stub: Stub
+) -> None:
+    stub.routes["/blob"] = Reply(200, bytes(range(256)) * KIB, drop="midway")
+
+    result = run(tmp_path, url=f"{stub.url}/blob", save_body=True)
+
+    assert failure(result).startswith(
+        f"sfly_std.http_request.RequestFailed: GET {stub.url}/blob 请求失败："
+    )
+    assert result.artifacts == {}

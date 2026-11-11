@@ -464,7 +464,7 @@ describe("全栈：标准节点包 sfly-std", () => {
 	}, 180_000);
 
 	it("shell 打开 save_output 保存的完整输出，另一台 Agent 上的节点用 ctx.artifacts.download 下载，内容一致", async () => {
-		// 下游节点在测试用的节点包 sfly-download 里（testdata/download-package），由另一台 Agent 执行：
+		// 后续节点在测试用的节点包 sfly-download 里（testdata/download-package），由另一台 Agent 执行：
 		// 它有自己的共享 venv 和工作目录，拿不到上游 Agent 上的文件，只能从控制面下载。
 		const OTHER = "std-agent-other";
 		await publishTestPackage(cp, "testdata/download-package", "sfly-download-0.1.0.sflypkg");
