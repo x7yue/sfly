@@ -14,6 +14,7 @@ import {
 	nodeConnections,
 	type OrchestrationWarning,
 	outgoingProblem,
+	type Position,
 	placeCopy,
 	removeNode,
 	tidyLayout,
@@ -305,24 +306,23 @@ function Editor({
 				// 改接时松开在空白处：连线回到原处。
 				if (reconnect.active.current) return;
 				if (state.fromHandle?.type !== "source") return;
-				const from = state.fromHandle.id === "dispatch" ? "dispatch" : "after";
-				const problem = outgoingProblem(
-					docRef.current,
-					state.fromNode.id,
-					from === "dispatch" ? "dispatch" : "chain",
-				);
+				const dispatch = state.fromHandle.id === "dispatch";
+				const from = state.fromNode.id;
+				const problem = outgoingProblem(docRef.current, from, dispatch ? "dispatch" : "chain");
 				if (problem) {
 					notify.warning(problem);
 					return;
 				}
 				const point = "changedTouches" in event ? event.changedTouches[0] : event;
 				if (!point) return;
-				const at = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
-				setAdding({
-					[from]: state.fromNode.id,
-					client: { x: point.clientX, y: point.clientY },
-					position: { x: at.x, y: at.y - NODE_HEIGHT / 2 },
-				});
+				const client = { x: point.clientX, y: point.clientY };
+				const at = flow.screenToFlowPosition(client);
+				const position = { x: at.x, y: at.y - NODE_HEIGHT / 2 };
+				setAdding(
+					dispatch
+						? { kind: "dispatch", from, client, position }
+						: { kind: "after", after: from, client, position },
+				);
 				return;
 			}
 			if (state.isValid !== false) return;
@@ -392,14 +392,14 @@ function Editor({
 		[packages.data, agentList, meta.packages],
 	);
 	const addNode = (item: AddItem) => {
-		const request = adding ?? {};
+		const request: AddRequest = adding ?? { kind: "free" };
 		setAdding(null);
 		const id = uniqueNodeId(
 			idStem(item),
 			nodes.map((n) => n.id),
 		);
 		let next: { nodes: SfNode[]; edges: SfEdge[] };
-		if (request.after) {
+		if (request.kind === "after") {
 			// 有来源：接在它后面；它不是链尾时插在它和下一个节点之间，后面的节点让出位置。
 			const fresh = { ...newDocNode(item, id), position: request.position } as OrchestrationNode;
 			const edit = request.before
@@ -410,11 +410,11 @@ function Editor({
 				return;
 			}
 			next = applyDocument(nodes, edges, edit.doc);
-		} else if (request.dispatch && request.position) {
+		} else if (request.kind === "dispatch") {
 			// 从调度端口拖出（#187）：子流程入口的调度端口就在松开鼠标的位置，连上调度连线。
 			next = {
 				nodes: [...nodes, toFlowNode(newDocNode(item, id), request.position)],
-				edges: [...edges, toFlowEdge({ from: request.dispatch, to: id, kind: "dispatch" })],
+				edges: [...edges, toFlowEdge({ from: request.from, to: id, kind: "dispatch" })],
 			};
 		} else {
 			// 没有来源：右键处，否则视口（扣掉顶栏和检查器）中心；压住已有节点时错开。
@@ -452,7 +452,7 @@ function Editor({
 		setSelectedId(id);
 		requestAnimationFrame(() => {
 			// 接在来源节点右侧的新节点可能在视口外：移到中央。
-			if (request.after && !request.position) {
+			if (request.kind === "after" && !request.position) {
 				void flow.setCenter(position.x + NODE_WIDTH / 2, position.y + NODE_HEIGHT / 2, {
 					zoom: flow.getZoom(),
 					duration: 200,
@@ -466,20 +466,22 @@ function Editor({
 	 * 打开添加节点菜单；`after` 是来源节点，它不是链尾时新节点插在它和下一个节点之间。
 	 * 在连线上插入（连线菜单、连线中点的「＋」）时直接给出 `before`。
 	 */
-	const openAddMenu = (request: AddRequest = {}) => {
-		const next =
-			request.before ??
-			(request.after ? nodeConnections(docRef.current, request.after).out[0]?.to : undefined);
+	const openAddMenu = (request: AddRequest) => {
+		if (request.kind !== "after" || request.before !== undefined) {
+			setAdding(request);
+			return;
+		}
+		const next = nodeConnections(docRef.current, request.after).out[0]?.to;
 		setAdding(next === undefined ? request : { ...request, before: next });
 	};
 	// 运行状态下画布只读：添加、撤销 / 重做、整理布局都不生效（工具条上也不显示）。
-	useShortcut("canvas-add", () => openAddMenu(), !running);
+	useShortcut("canvas-add", () => openAddMenu({ kind: "free" }), !running);
 	useShortcut("canvas-undo", history.undo, !running);
 	useShortcut("canvas-redo", history.redo, !running);
 	// Tab：焦点在节点卡片上（新节点接在它后面）、或用鼠标点过画布空白处时（不连线）打开添加节点菜单，其他时候照常切换焦点。
 	// 页面上没有焦点、或用键盘把焦点放到画布区域上（Tab 进入、Esc 退回）时不拦截（见 FlowCanvas 的 isPointerFocusedCanvas）：
 	// 键盘用户能用 Tab 进出画布，进入后用方向键浏览节点（components/canvas/navigation.ts）。
-	const openRef = useRef<((request?: AddRequest) => void) | null>(openAddMenu);
+	const openRef = useRef<((request: AddRequest) => void) | null>(openAddMenu);
 	openRef.current = running ? null : openAddMenu;
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -493,7 +495,8 @@ function Editor({
 				card || target?.classList.contains("react-flow__pane") || isPointerFocusedCanvas(target);
 			if (!onCanvas) return;
 			event.preventDefault();
-			open(card?.dataset.nodeId ? { after: card.dataset.nodeId } : {});
+			const after = card?.dataset.nodeId;
+			open(after ? { kind: "after", after } : { kind: "free" });
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
@@ -535,7 +538,7 @@ function Editor({
 	 * 粘贴：卡片中心落在 `at`（画布坐标，右键处或鼠标处），没有时落在视口（扣掉顶栏和检查器）中心；
 	 * 压住已有节点时错开。
 	 */
-	const paste = (copied: CopiedNode, at?: { x: number; y: number }) => {
+	const paste = (copied: CopiedNode, at?: Position) => {
 		const wanted =
 			at ??
 			flow.screenToFlowPosition({
@@ -674,7 +677,8 @@ function Editor({
 					onInsertOnEdge={
 						running
 							? undefined
-							: (edge, client) => openAddMenu({ after: edge.from, before: edge.to, client })
+							: (edge, client) =>
+									openAddMenu({ kind: "after", after: edge.from, before: edge.to, client })
 					}
 					reconnect={running ? undefined : reconnect.handlers}
 					menu={(target) =>
@@ -684,6 +688,7 @@ function Editor({
 									edge={target.edge}
 									onInsert={() =>
 										openAddMenu({
+											kind: "after",
 											after: target.edge.from,
 											before: target.edge.to,
 											client: target.client,
@@ -708,7 +713,7 @@ function Editor({
 													in: nodeConnections(doc, target.id).in.length,
 													out: nodeConnections(doc, target.id).out.length,
 												},
-												onAddAfter: () => openAddMenu({ after: target.id }),
+												onAddAfter: () => openAddMenu({ kind: "after", after: target.id }),
 												clipboardItems: copyProblem(target.node) ? undefined : (
 													<NodeCopyItems
 														onDuplicate={() => duplicate(target.id)}
@@ -727,7 +732,9 @@ function Editor({
 							<PaneMenu
 								canUndo={history.canUndo}
 								canRedo={history.canRedo}
-								onAdd={() => openAddMenu({ client: target.client, position: target.position })}
+								onAdd={() =>
+									openAddMenu({ kind: "free", client: target.client, position: target.position })
+								}
 								onPaste={(node) => paste(node, target.position)}
 								onTidy={tidy}
 								onUndo={history.undo}
@@ -741,7 +748,7 @@ function Editor({
 								request={adding}
 								groups={groups}
 								subflowNameProblem={(name) => newSubflowNameProblem(name, doc)}
-								onOpenChange={(open) => setAdding(open ? {} : null)}
+								onOpenChange={(open) => setAdding(open ? { kind: "free" } : null)}
 								onPick={addNode}
 							/>
 						)

@@ -1,3 +1,4 @@
+import type { Position } from "@sfly/orchestration";
 import { EdgeLabelRenderer } from "@xyflow/react";
 import { PlusIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -53,8 +54,8 @@ export function EdgeInsertButton({
 	/** 中点的画布坐标。 */
 	at: [number, number];
 	hover: ReturnType<typeof useEdgeHover>;
-	onInsert(client: { x: number; y: number }): void;
-	onMenu(client: { x: number; y: number }): void;
+	onInsert(client: Position): void;
+	onMenu(client: Position): void;
 }) {
 	return (
 		<EdgeLabelRenderer>

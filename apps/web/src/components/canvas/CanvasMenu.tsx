@@ -1,3 +1,4 @@
+import type { Position } from "@sfly/orchestration";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 import { useFlowCanvas } from "./context";
 import type { DocEdge, DocNode } from "./flow";
@@ -11,9 +12,9 @@ import type { DocEdge, DocNode } from "./flow";
 export type CanvasMenuTarget =
 	| {
 			kind: "pane";
-			client: { x: number; y: number };
+			client: Position;
 			/** 右键处的画布坐标（在这里添加、粘贴节点）。 */
-			position: { x: number; y: number };
+			position: Position;
 	  }
 	| {
 			kind: "node";
@@ -21,13 +22,13 @@ export type CanvasMenuTarget =
 			/** 打开菜单时的节点内容（节点被菜单里的操作删除后，退场动画期间菜单内容不变）。 */
 			node: DocNode;
 			/** 菜单出现的位置：鼠标右键处的屏幕坐标；键盘（Shift+F10 / 菜单键）打开时是节点卡片。 */
-			anchor: { x: number; y: number } | Element;
+			anchor: Position | Element;
 	  }
 	| {
 			kind: "edge";
 			edge: DocEdge;
 			/** 右键处（或连线中点「＋」上右键处）的屏幕坐标。 */
-			client: { x: number; y: number };
+			client: Position;
 	  };
 
 /** 菜单贴着哪里出现。 */

@@ -1,3 +1,4 @@
+import type { EdgeEnds, Position } from "@sfly/orchestration";
 import {
 	Background,
 	BackgroundVariant,
@@ -103,7 +104,7 @@ export interface FlowCanvasProps {
 	 */
 	onDeleteNode?(id: string): void;
 	/** 点了链上连线中点的「＋」：在这条连线中间插入节点；`client` 是添加节点菜单出现的屏幕坐标。 */
-	onInsertOnEdge?(edge: { from: string; to: string }, client: { x: number; y: number }): void;
+	onInsertOnEdge?(edge: EdgeEnds, client: Position): void;
 	/** 拖动连线的端点改接（React Flow 的重连手势）。 */
 	reconnect?: Pick<
 		ReactFlowProps<SfNode, SfEdge>,
@@ -233,7 +234,7 @@ export function FlowCanvas({
 	}, []);
 	/** 空白处的菜单：菜单关闭后焦点回到画布区域（ui/context-menu 交还给打开前的焦点）。 */
 	const openPaneMenu = useCallback(
-		(client: { x: number; y: number }) => {
+		(client: Position) => {
 			focusRegion();
 			setMenuState({
 				target: { kind: "pane", client, position: flow.screenToFlowPosition(client) },
@@ -247,7 +248,7 @@ export function FlowCanvas({
 	 * 只读时（运行状态、版本对比）连线没有菜单，右键连线等同于右键空白处。
 	 */
 	const openEdgeMenu = useCallback(
-		(edge: DocEdge, client: { x: number; y: number }) => {
+		(edge: DocEdge, client: Position) => {
 			if (!editable || !menu) {
 				openPaneMenu(client);
 				return;
@@ -324,7 +325,7 @@ export function FlowCanvas({
 	);
 
 	/** 打开节点菜单：先让节点卡片拿到焦点（菜单关闭后焦点回到它）并选中它。 */
-	const openNodeMenu = (id: string, at?: { x: number; y: number }) => {
+	const openNodeMenu = (id: string, at?: Position) => {
 		const node = nodes.find((n) => n.id === id);
 		const card = wrapper.current?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
 		if (!menu || !node || !card) return;

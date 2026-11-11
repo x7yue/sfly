@@ -1,4 +1,4 @@
-import { type CopiedNode, readCopiedNode } from "@sfly/orchestration";
+import { type CopiedNode, type Position, readCopiedNode } from "@sfly/orchestration";
 import { useEffect, useRef } from "react";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
@@ -30,7 +30,7 @@ const forCanvas = (event: ClipboardEvent) =>
 	document.querySelector(OPEN_OVERLAY) === null;
 
 /** 鼠标所在的屏幕坐标在不在画布上（小地图和悬浮在画布上的控件、检查器不算）。 */
-function onCanvas(point: { x: number; y: number }): boolean {
+function onCanvas(point: Position): boolean {
 	const el = document.elementFromPoint(point.x, point.y);
 	return el?.closest(".react-flow") != null && el.closest(".react-flow__panel") == null;
 }
@@ -43,12 +43,12 @@ function onCanvas(point: { x: number; y: number }): boolean {
 export function useClipboardShortcuts(handlers: {
 	enabled: boolean;
 	copy(): string | null;
-	paste(copied: CopiedNode, client?: { x: number; y: number }): void;
+	paste(copied: CopiedNode, client?: Position): void;
 }) {
 	const latest = useRef(handlers);
 	latest.current = handlers;
 	useEffect(() => {
-		let pointer: { x: number; y: number } | null = null;
+		let pointer: Position | null = null;
 		const onMove = (event: PointerEvent) => {
 			pointer = { x: event.clientX, y: event.clientY };
 		};

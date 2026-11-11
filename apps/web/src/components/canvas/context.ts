@@ -1,3 +1,4 @@
+import type { EdgeEnds, Position } from "@sfly/orchestration";
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
 import type { DocEdge, DocNode } from "./flow";
@@ -74,9 +75,9 @@ export interface CanvasContextValue {
 	 * 连线中点的「＋」（EdgeInsert.tsx）：只在可编辑时给出，点它在这条链上的连线中间插入节点；
 	 * `client` 是添加节点菜单出现的屏幕坐标。
 	 */
-	insertOnEdge?: (edge: { from: string; to: string }, client: { x: number; y: number }) => void;
+	insertOnEdge?: (edge: EdgeEnds, client: Position) => void;
 	/** 打开连线菜单（在「＋」上右键时用，连线本身的右键由 FlowCanvas 处理）。 */
-	openEdgeMenu?: (edge: DocEdge, client: { x: number; y: number }) => void;
+	openEdgeMenu?: (edge: DocEdge, client: Position) => void;
 }
 
 export const EMPTY_INFO: CanvasInfo = {
