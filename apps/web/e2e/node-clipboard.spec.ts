@@ -1,58 +1,37 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import type { Locator, Page } from "@playwright/test";
-import { createEditorScenario, editorDocument, headOf, nodeCard } from "./editor-support";
+import {
+	clipboard,
+	createEditorScenario,
+	dock,
+	edges,
+	editorDocument,
+	headOf,
+	inspector,
+	nodeCard,
+	nodeMenu,
+	nodePosition,
+	openEditor,
+	paneMenu,
+} from "./editor-support";
 import { expect, test } from "./fixtures";
-import { createScenario, publishPackage } from "./support";
+import { box, createScenario, publishPackage } from "./support";
 
 // 单个节点的复制、粘贴、创建副本（#186）：Ctrl+C / Ctrl+V / Ctrl+D 与节点菜单、空白处菜单；
 // 内容放在系统剪贴板里，可以粘贴到另一个场景。
 
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
-const nodeMenu = (page: Page) => page.getByRole("menu", { name: "节点菜单" });
-const paneMenu = (page: Page) => page.getByRole("menu", { name: "画布菜单" });
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
-const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText());
 const setClipboard = (page: Page, text: string) =>
 	page.evaluate((t) => navigator.clipboard.writeText(t), text);
-const edges = (page: Page) =>
-	page
-		.locator("[data-edge]")
-		.evaluateAll((els) => els.map((el) => el.getAttribute("data-edge") ?? "").sort());
 const nodeIds = (page: Page) =>
 	page
 		.locator("[data-node-id]")
 		.evaluateAll((els) => els.map((el) => el.getAttribute("data-node-id") ?? "").sort());
-
-/** 节点在画布坐标里的位置（React Flow 写在节点外层的 transform 上）。 */
-const nodePosition = (page: Page, id: string) =>
-	page.locator(`.react-flow__node[data-id="${id}"]`).evaluate((el) => {
-		const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(
-			(el as HTMLElement).style.transform,
-		);
-		return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
-	});
-
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
 
 /** 卡片中心离屏幕上的某一点不到 3px。 */
 async function expectCenteredAt(card: Locator, at: { x: number; y: number }) {
 	const b = await box(card);
 	expect(Math.abs(b.x + b.width / 2 - at.x)).toBeLessThan(3);
 	expect(Math.abs(b.y + b.height / 2 - at.y)).toBeLessThan(3);
-}
-
-/** 打开画布，等适配视图落定（节点不再移动）。 */
-async function openEditor(page: Page, id: string, lastNode: string) {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, lastNode)).toBeVisible();
-	await expect(dock(page)).toBeVisible();
-	await expect
-		.poll(async () => JSON.stringify(await nodeCard(page, "entry").boundingBox()))
-		.toBe(JSON.stringify(await nodeCard(page, "entry").boundingBox()));
 }
 
 const ORIGINAL_IDS = ["dispatch", "entry", "fetch", "ping", "sub_entry", "sub_ping"];

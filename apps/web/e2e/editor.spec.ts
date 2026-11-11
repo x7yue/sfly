@@ -1,38 +1,24 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-import type { Locator, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
 	createEditorScenario,
+	dock,
 	draftNode,
 	editorDocument,
 	headOf,
+	inspector,
 	nodeCard,
+	openEditor,
 	typedDocument,
 	typedNodes,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { createScenario, expectFocusVisible, publishPackage } from "./support";
+import { box, createScenario, expectFocusVisible, publishPackage } from "./support";
 
 // 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布与检查器。
 
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
 const zoomLevel = async (page: Page) =>
 	Number((await dock(page).getByLabel("缩放比例").textContent())?.replace("%", ""));
-
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
-
-async function openEditor(page: Page, id: string) {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "sub_ping")).toBeVisible();
-	// 等打开时的适配视图完成（节点位置不再变化）。
-	await expect
-		.poll(async () => JSON.stringify(await nodeCard(page, "entry").boundingBox()))
-		.toBe(JSON.stringify(await nodeCard(page, "entry").boundingBox()));
-}
 
 test("全屏画布：不带侧边栏，控件悬浮，打开时适配视图并避开悬浮控件，窗口变化时重新适配", async ({
 	page,

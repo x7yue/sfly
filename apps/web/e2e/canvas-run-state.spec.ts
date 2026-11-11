@@ -1,13 +1,12 @@
 import type { Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
-import { nodeCard } from "./editor-support";
+import { inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { MONITOR_SCENARIO, openMonitor, runningScenario } from "./monitor-scenario";
 import { createScenario, expectFocusVisible, publishPackage, triggerRun } from "./support";
 
 // 编排画布的「运行状态」模式（原型 #/editor/:id?run=<id>）：节点叠加运行状态，检查器给出运行摘要与监控页入口。
 
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
 const modes = (page: Page) => page.getByRole("group", { name: "模式" });
 const edge = (page: Page, from: string, to: string) =>
 	page.locator(`[data-edge="chain:${from}->${to}"]`);

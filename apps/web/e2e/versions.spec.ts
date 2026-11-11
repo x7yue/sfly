@@ -1,7 +1,8 @@
-import type { Browser, Locator, Page } from "@playwright/test";
+import type { Browser, Page } from "@playwright/test";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
-import { createEditorScenario, headOf, nodeCard } from "./editor-support";
+import { createEditorScenario, headOf, inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
+import { box } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
 
 // 版本历史与对比、恢复、保存冲突（409）、在线编辑者（#40）。
@@ -12,12 +13,6 @@ const versionRow = (page: Page, n: number) =>
 		.getByRole("listitem")
 		.filter({ has: page.getByText(`v${n}`, { exact: true }) });
 const pane = (page: Page, n: number) => page.getByRole("region", { name: `版本 ${n}（只读）` });
-
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
 
 test("版本历史：版本号、作者、时间；默认并排只读对比最新两个版本，显示子流程区域，差异节点有标记", async ({
 	page,
@@ -130,8 +125,6 @@ test("恢复旧版本：确认后用它的内容生成一个新版本，历史�
 	expect(head.number).toBe(3);
 	expect(head.document.nodes.map((n) => n.id)).toContain("sub_ping");
 });
-
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
 
 /** 打开画布、给 sub_ping 打开 always（本地修改），然后 bob 在第 1 版之后保存了第 2 版，再保存。 */
 async function conflictOnSave(

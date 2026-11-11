@@ -1,37 +1,24 @@
-import type { Locator, Page } from "@playwright/test";
-import { createEditorScenario, headOf, nodeCard } from "./editor-support";
+import type { Page } from "@playwright/test";
+import {
+	addMenu,
+	createEditorScenario,
+	dock,
+	edge,
+	headOf,
+	nodeCard,
+	openEditor,
+} from "./editor-support";
 import { expect, test } from "./fixtures";
+import { box, overlap } from "./support";
 
 // 新建子流程一步完成（#187）：添加异步任务节点时勾选「同时新建子流程」，或从异步任务节点的调度端口拖线到空白处，
 // 一次得到子流程入口节点和调度连线；名称的检查与新建子流程入口一致，整个操作是一步撤销。
 
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
-const addMenu = (page: Page) => page.getByRole("dialog", { name: "添加节点" });
 const region = (page: Page, name: string) => page.getByRole("region", { name: `子流程 ${name}` });
-const edge = (page: Page, id: string) => page.locator(`[data-edge="${id}"]`);
 const asyncForm = (page: Page) => addMenu(page).getByRole("form", { name: "添加异步任务" });
 const withSubflow = (page: Page) =>
 	asyncForm(page).getByRole("checkbox", { name: "同时新建子流程" });
 const subflowName = (page: Page) => addMenu(page).getByRole("textbox", { name: "子流程名称" });
-
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
-
-const overlap = (
-	a: { x: number; y: number; width: number; height: number },
-	b: { x: number; y: number; width: number; height: number },
-) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
-
-async function openEditor(page: Page, id: string) {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "sub_ping")).toBeVisible();
-	await expect
-		.poll(async () => JSON.stringify(await nodeCard(page, "entry").boundingBox()))
-		.toBe(JSON.stringify(await nodeCard(page, "entry").boundingBox()));
-}
 
 test("添加异步任务时勾选「同时新建子流程」：名称为空或重名时不新建；得到两个节点和调度连线，没有来源时不连到链上；一步撤销", async ({
 	page,

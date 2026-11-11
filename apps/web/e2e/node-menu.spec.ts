@@ -1,18 +1,20 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import type { Page } from "@playwright/test";
-import { createEditorScenario, headOf, nodeCard } from "./editor-support";
+import {
+	addMenu,
+	clipboard,
+	createEditorScenario,
+	dock,
+	edges,
+	headOf,
+	nodeCard,
+	nodeMenu,
+	nodePosition,
+	openEditor,
+} from "./editor-support";
 import { expect, test } from "./fixtures";
 
 // 节点右键菜单与链上的操作（#184）：在后面添加或插入、复制 ID 与输出引用、断开入线 / 出线、删除后自动接上。
-
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
-const addMenu = (page: Page) => page.getByRole("dialog", { name: "添加节点" });
-const nodeMenu = (page: Page) => page.getByRole("menu", { name: "节点菜单" });
-const edges = (page: Page) =>
-	page
-		.locator("[data-edge]")
-		.evaluateAll((els) => els.map((el) => el.getAttribute("data-edge") ?? "").sort());
-const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText());
 
 const ORIGINAL = [
 	"chain:dispatch->ping",
@@ -21,21 +23,6 @@ const ORIGINAL = [
 	"chain:sub_entry->sub_ping",
 	"dispatch:dispatch->sub_entry",
 ];
-
-/** 节点在画布坐标里的位置（React Flow 写在节点外层的 transform 上）。 */
-const nodePosition = (page: Page, id: string) =>
-	page.locator(`.react-flow__node[data-id="${id}"]`).evaluate((el) => {
-		const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(
-			(el as HTMLElement).style.transform,
-		);
-		return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
-	});
-
-async function openEditor(page: Page, id: string) {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "sub_ping")).toBeVisible();
-	await expect(dock(page)).toBeVisible();
-}
 
 const openMenu = async (page: Page, id: string) => {
 	await nodeCard(page, id).click({ button: "right" });

@@ -1,20 +1,13 @@
 import type { Locator, Page } from "@playwright/test";
-import { createEditorScenario, nodeCard } from "./editor-support";
+import { createEditorScenario, dock, inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { runningScenario } from "./monitor-scenario";
-import { createScenario, publishPackage, scenarioUsing } from "./support";
+import { box, createScenario, publishPackage, scenarioUsing } from "./support";
 
 // 检查器和运行抽屉拖动左边缘调宽（#188）：宽度记在浏览器里，所有场景共用。
 
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
 const inspectorHandle = (page: Page) => page.getByRole("separator", { name: "调整检查器宽度" });
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
 
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
 const widthOf = async (locator: Locator) => Math.round((await box(locator)).width);
 
 /** 按住拖动条横向拖动 dx（负数往左，面板变宽）。 */
@@ -29,9 +22,9 @@ async function drag(page: Page, handle: Locator, dx: number) {
 	await page.mouse.up();
 }
 
-async function openEditor(page: Page, id: string, node = "sub_ping") {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, node)).toBeVisible();
+/** 打开画布，等检查器出现（要量它的宽度）。 */
+async function openWithInspector(page: Page, id: string, node = "sub_ping") {
+	await openEditor(page, id, node);
 	await expect(inspector(page)).toBeVisible();
 }
 
@@ -41,7 +34,7 @@ test("检查器：拖动左边缘调宽，限制在 372px 到视口宽度的 60%
 }) => {
 	const id = await createEditorScenario(controlPlane);
 	const other = await createScenario(controlPlane, "另一个场景", scenarioUsing("agent-a"));
-	await openEditor(page, id);
+	await openWithInspector(page, id);
 	expect(await widthOf(inspector(page))).toBe(372);
 
 	await drag(page, inspectorHandle(page), -200);
@@ -61,7 +54,7 @@ test("检查器：拖动左边缘调宽，限制在 372px 到视口宽度的 60%
 	await page.reload();
 	await expect(inspector(page)).toBeVisible();
 	expect(await widthOf(inspector(page))).toBe(672);
-	await openEditor(page, other, "ping");
+	await openWithInspector(page, other, "ping");
 	expect(await widthOf(inspector(page))).toBe(672);
 
 	// 窗口缩小：按上限（1000 的 60%）收回；放大后回到保存的宽度。
@@ -82,7 +75,7 @@ test("检查器调宽手柄可以用键盘：聚焦后左右方向键调整，En
 	controlPlane,
 }) => {
 	const id = await createEditorScenario(controlPlane);
-	await openEditor(page, id);
+	await openWithInspector(page, id);
 	const handle = inspectorHandle(page);
 	await handle.focus();
 	await expect(handle).toBeFocused();
@@ -112,7 +105,7 @@ test("适配视图和定位节点按检查器的实际宽度避让", async ({ pa
 		...doc,
 		nodes: doc.nodes.map((n) => (n.id === "ping" ? { ...n, agent: "ghost" } : n)),
 	});
-	await openEditor(page, id, "ping");
+	await openWithInspector(page, id, "ping");
 	await drag(page, inspectorHandle(page), -900);
 	await expect.poll(() => widthOf(inspector(page))).toBe(864);
 
@@ -150,7 +143,7 @@ test("运行状态模式的检查器使用同一个宽度，也可以调宽", as
 	clock,
 }) => {
 	const { scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
-	await openEditor(page, scenarioId, "verify");
+	await openWithInspector(page, scenarioId, "verify");
 	await drag(page, inspectorHandle(page), -128);
 	await expect.poll(() => widthOf(inspector(page))).toBe(500);
 
