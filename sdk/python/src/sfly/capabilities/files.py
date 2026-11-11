@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from sfly.capabilities.files_list import ListStat
 from sfly.capabilities.files_read import ReadDownload
+from sfly.capabilities.files_watch import Watch
 from sfly.capabilities.files_write import WriteDelete
 
 if TYPE_CHECKING:
@@ -82,6 +83,7 @@ class Files(
     ListStat,
     ReadDownload,
     WriteDelete,
+    Watch,
 ):
     """`ctx.agent(...).files`：一台 Agent 上的文件。路径都是那台 Agent 所在机器上的绝对路径，
     权限就是那台 Agent 进程的权限。
@@ -92,7 +94,8 @@ class Files(
     - `download(path, local_path, *, timeout=30.0, progress=None)`：下载到本地路径；
     - `write(path, data, *, timeout=30.0)`：写入（先写临时文件再改名）；
     - `upload(local_path, path, *, timeout=30.0)`：把节点所在机器上的文件上传过去；
-    - `delete(path, *, timeout=30.0)`：删除一个文件。
+    - `delete(path, *, timeout=30.0)`：删除一个文件；
+    - `watch(directory, pattern="*", *, recursive=False, timeout=30.0)`：监听目录（迭代器）。
     """
 
     def __init__(self, agent: Agent) -> None:

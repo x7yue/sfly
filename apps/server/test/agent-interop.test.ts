@@ -37,6 +37,7 @@ describe("Rust Agent 与控制面互通", () => {
 		expect(listed?.capabilities).toContainEqual({ name: "files", version: 1 });
 		expect(listed?.capabilities).toContainEqual({ name: "files.write", version: 1 });
 		expect(listed?.capabilities).toContainEqual({ name: "files.read", version: 1 });
+		expect(listed?.capabilities).toContainEqual({ name: "files.watch", version: 1 });
 		const endpoint = listed?.endpoint;
 		expect(endpoint).toMatchObject({
 			address: "127.0.0.1",

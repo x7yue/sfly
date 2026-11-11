@@ -265,6 +265,7 @@ Agent 能力是 Agent 自身提供、节点在执行中调用的一组操作。`
 | `files.stat(path, *, timeout=30.0)` | 查看一个文件（或目录）的属性，返回 `FileInfo`；跟随符号链接 |
 | `files.read(path, offset=0, length=None, *, timeout=30.0)` | 从 `offset` 起流式读取文件内容，返回 `bytes` 的迭代器，见下文「读取与下载」 |
 | `files.download(path, local_path, *, timeout=30.0, progress=None)` | 把文件下载到节点所在机器上的 `local_path`，返回源文件的 `FileInfo`，见下文「读取与下载」 |
+| `files.watch(directory, pattern="*", *, recursive=False, timeout=30.0)` | 监听目录：先给出当前文件的快照，再持续给出事件（迭代器），见下文「监听目录」 |
 
 `files.list`：
 
@@ -362,6 +363,49 @@ def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
 - 目录没有写权限时，写入、上传、删除都抛出 `AgentPermissionDenied`。
 - `timeout`：`files.write`、`files.upload` 是对方接收每一段、写完后给出结果各自最多等多久；`files.write` 等 `data` 给出下一段不计时。`files.delete` 是整个调用。
 - 本地调试时规则相同：写到映射的目录里，`local_path` 是本机上的路径。
+
+### 监听目录：`files.watch`
+
+```python
+from sfly import AgentName, Context, FileId, WatchSnapshot, node
+
+
+@node(outputs=["rotated"])
+def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
+    """等 source 上的 app.log 轮转一次，输出被改名后的路径。"""
+    current: FileId | None = None
+    for item in ctx.agent(source).files.watch(directory, "app.log*"):
+        if isinstance(item, WatchSnapshot):
+            # 以快照为准：重连、事件太多来不及发出之后会再给一份（item.missed 为 True）。
+            by_path = {f.path: f.id for f in item.files}
+            current = by_path.get(f"{directory}/app.log", current)
+        elif item.kind == "moved" and item.id == current:
+            return {"rotated": item.path}
+    raise RuntimeError("监听意外结束")
+```
+
+`files.watch` 监听目录下文件名匹配 `pattern` 的普通文件，返回一个一直进行下去的迭代器：先给出一份 `WatchSnapshot`（当前的文件），之后逐个给出 `FileEvent`。停止迭代（`break`、`return`、`close()`）时监听随之结束。从 SDK 0.2.0 起可用，需要那台 Agent 支持能力 `files.watch`（0.2.0 及以上的 Agent）。
+
+- `pattern` 的规则与 `files.list` 相同。`recursive=True` 时监听子目录，包括监听期间新建（或移进来）的子目录：新子目录里已有的文件作为 `created` 给出。
+- `WatchSnapshot(files, missed)`：`files` 是当时匹配的全部文件（`FileInfo` 的元组，顺序与 `files.list` 相同）。快照之后的变化不会漏掉，但可能和快照重复。
+- `missed` 为 True 表示**可能有遗漏**：两台 Agent 之间的连接中断后自动重连、或者事件太多来不及发出（节点读得太慢，事件队列溢出）时，重新给一份快照，之前的一些事件没有送到。这时以这份快照为准，按文件标识去重，不要假设每个变化都有事件。开头的第一份快照为 False。
+- `FileEvent(kind, file, old_path)`：`file` 是事件之后这个文件的属性（`FileInfo`，`path`、`id` 也可以直接从事件上取），`old_path` 只有 `moved` 有。`kind`：
+
+| `kind` | 含义 |
+|---|---|
+| `created` | 新建，包括从监听范围之外移进来 |
+| `moved` | 在监听范围内改名（日志轮转），文件标识不变；`old_path` 是原来的路径 |
+| `closed` | 以写方式打开的文件被关闭（inotify 的 `IN_CLOSE_WRITE`）。不代表不会再被写：同一个文件可以再次打开续写 |
+| `modified` | 内容被修改。还没送到的连续几次修改合并成一个事件 |
+| `deleted` | 被删除，包括移出监听范围；`file` 是最后一次看到的属性 |
+
+- 事件描述的是「匹配 `pattern` 的文件」这个集合的变化：改名后不再匹配是 `deleted`，改名后才匹配是 `created`。
+- **平台不判断文件是否写完。** 一个日志文件算不算「不会再续写」取决于被测系统怎样轮转日志（改名后还写不写、关闭后会不会再打开），由节点自己判断，例如「已经被改名」「至少 N 秒没有 `modified`」，或者两者都要。
+- 用 inotify 实现，**只在 Linux 的本地文件系统上可靠**：NFS 等网络文件系统上看不到别的机器做的修改。
+- 递归时每个子目录占一个 inotify watch，一个用户的 watch 总数受系统上限 `/proc/sys/fs/inotify/max_user_watches` 限制，同时进行的监听数受 `max_user_instances` 限制；超过时抛出 `sfly.AgentError`，消息里写明是哪个上限。目录很多时调大上限，或者监听更深一层的目录、不递归。
+- `timeout`：开始监听时最多等这么久。之后那台 Agent 会定期发心跳，超过 `timeout` 秒（None 时 30 秒）没有任何回应就认为连接中断并自动重连，重连 `timeout` 秒还没成功时抛出 `sfly.AgentUnreachable`；`timeout=None` 时一直重连。事件之间隔多久都不算超时。
+- 迭代时才开始监听：目录不存在、不是目录或没有权限时抛出异常（`AgentFileNotFound` 等）。监听期间目录本身被删除或改名时，先给出里面文件的 `deleted`，再抛出 `sfly.AgentFileNotFound`。
+- 本地调试时同样用 inotify 监听本机的目录（只支持 Linux），映射到本地目录的 Agent 也一样；没有连接，所以没有重连，节点读得太慢、内核的 inotify 队列溢出时同样重新给 `missed=True` 的快照。
 
 ### 超时、取消与错误
 
