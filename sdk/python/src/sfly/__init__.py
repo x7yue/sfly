@@ -3,6 +3,7 @@
 from sfly.capabilities import (
     Agent,
     AgentError,
+    AgentFileMoved,
     AgentFileNotFound,
     AgentNotReferenced,
     AgentPermissionDenied,
@@ -23,6 +24,7 @@ __all__ = [
     "Agent",
     "AgentAddress",
     "AgentError",
+    "AgentFileMoved",
     "AgentFileNotFound",
     "AgentName",
     "AgentNotReferenced",

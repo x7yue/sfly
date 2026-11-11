@@ -199,17 +199,11 @@ def grow(path: Path) -> None:
         f.write(b"one more line\n")
 
 
-def replace(path: Path) -> None:
-    path.rename(path.with_name("app.log.2"))
-    path.write_bytes(b"a new file")
-
-
 @pytest.mark.parametrize(
     ("change", "error", "message"),
     [
         (Path.unlink, sfly.AgentFileNotFound, "在下载期间被删除"),
         (lambda p: os.truncate(p, 10), sfly.AgentError, "在下载期间被截短"),
-        (replace, sfly.AgentError, "在下载期间被替换"),
         (grow, sfly.AgentError, "在下载期间变化了"),
     ],
 )
@@ -237,6 +231,34 @@ def test_a_source_that_changes_during_the_download_fails_it_without_leaving_a_fi
 
     assert changed
     assert os.listdir(target.parent) == []
+
+
+def test_a_source_rotated_during_the_download_is_still_downloaded_and_reports_its_new_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 日志轮转：下载到一半时 app.log.1 被改名为 app.log.2，路径上换成了一个新文件。
+    # 内容从打开的文件读，下载照常完成，返回的是它现在的路径。
+    source = tmp_path / "source"
+    path, body = make_source(source)
+    rotated = path.with_name("app.log.2")
+    target = tmp_path / "local" / "app.log.1"
+    ctx = local_context(tmp_path, monkeypatch, source)
+    rotations: list[int] = []
+
+    def progress(done: int, total: int) -> None:
+        if not rotations:
+            rotations.append(done)
+            path.rename(rotated)
+            path.write_bytes(b"a new file")
+
+    info = ctx.agent("fs-source").files.download(
+        "/var/log/app/app.log.1", target, progress=progress
+    )
+
+    assert rotations and rotations[0] < len(body)
+    assert info == sfly.FileInfo.from_json(info_of(rotated, "/var/log/app/app.log.2"))
+    assert target.read_bytes() == body
+    assert os.listdir(target.parent) == ["app.log.1"]
 
 
 def test_sfly_run_downloads_from_a_mapped_agent(tmp_path: Path) -> None:
@@ -355,6 +377,31 @@ def test_a_failed_download_raises_the_agents_error(
 
     assert str(raised.value) == message
     assert raised.value.agent == "fs-source"
+    agent.close()
+
+
+def test_a_source_moved_away_while_resuming_raises_agent_file_moved(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 续传时原来的文件已经不在路径上（Agent 回复 moved）：节点据此用新路径重新下载。
+    message = (
+        "Agent fs-source：/var/log/app.log 在下载期间被移走（路径上换成了另一个文件），下载作废"
+    )
+    agent = FakeAgent(
+        short_dir / "agent.sock",
+        lambda _: [
+            frame({"item": {"downloaded": 4, "size": 12}}),
+            frame({"error": {"kind": "moved", "message": message, "agent": "fs-source"}}),
+        ],
+    )
+    ctx = agent_context(short_dir, monkeypatch)
+
+    with pytest.raises(sfly.AgentFileMoved) as raised:
+        ctx.agent("fs-source").files.download("/var/log/app.log", short_dir / "x")
+
+    assert isinstance(raised.value, sfly.AgentError)
+    assert raised.value.kind == "moved"
+    assert str(raised.value) == message
     agent.close()
 
 

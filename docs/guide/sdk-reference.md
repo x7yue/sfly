@@ -321,9 +321,10 @@ def pull_log(ctx: Context, source: AgentName, path: str = "/var/log/app/app.log.
 - 数据由节点所在的 Agent 从那台 Agent 读出后直接写到 `local_path`，不经过节点进程（`ctx.agent()` 时是本机上的复制）。节点进程只收到进度和结果，大文件的传输不受 Python 的速度影响。
 - `local_path` 是节点所在机器上的路径，相对路径相对于节点的工作目录（任务目录）。所在的目录不存在时一并创建；那里已有的文件被替换。
 - 先写同一目录里的临时文件（`.<文件名>.sfly-<随机>.tmp`，与 `files.write` 相同），完成、核对并落盘后才改名为 `local_path`：`local_path` 上不会出现半截文件，那里已有的文件替换后保留权限位。下载失败、任务被取消时临时文件被删除。处理本地目录的节点要跳过以 `.` 开头的文件。
-- 下载的是开始时的大小。两台 Agent 之间的连接中断（网络断开、那台 Agent 重启）时自动重连，从已经写下的位置继续，不从头开始；连续多次重连都没有进展时抛出异常（通常是 `AgentUnreachable`）。
-- 完成时再查看一次源文件，核对本地文件与源文件大小一致。源文件在下载期间被删除时抛出 `AgentFileNotFound`；被替换（例如日志轮转时被改名，路径上换成了新文件）、被截短、大小变了（还在写入）时抛出 `AgentError`，消息写明是哪一种。只下载已经不再写入的文件：判断文件是否写完是节点自己的事，平台不提供。
-- 返回下载完成时源文件的 `FileInfo`：`size` 就是本地文件的字节数，`id` 可以用来判断以后是不是同一个文件（例如只下载一次）。
+- 下载的是开始时打开的那个文件、开始时的大小，内容都从打开的文件读。下载期间它被改名（例如日志按序号轮转，`app.log.1` 改名为 `app.log.2`）不影响下载。
+- 完成时按这个文件核对，本地文件与它的大小一致才算完成：它在下载期间被删除时抛出 `AgentFileNotFound`；被截短、大小变了（还在写入）时抛出 `AgentError`，消息写明是哪一种。只下载已经不再写入的文件：判断文件是否写完是节点自己的事，平台不提供。
+- 两台 Agent 之间的连接中断（网络断开、那台 Agent 重启）时自动重连，从已经写下的位置继续读同一个文件，不从头开始；连续多次重连都没有进展时抛出异常（通常是 `AgentUnreachable`）。重连时它已经不在 `path` 上：在同一目录里改了名的，接着读新路径上的它；路径上换成了另一个文件、在同一目录里也找不到它（被移到了别的目录）时抛出 `AgentFileMoved`，路径上没有文件时抛出 `AgentFileNotFound`。知道它去了哪里时（例如 `files.watch` 的 `moved` 事件），用新路径重新下载。
+- 返回下载完成时源文件的 `FileInfo`：`size` 就是本地文件的字节数，`path` 是它现在的路径（下载期间在同一目录里改了名时是新路径；移到了别的目录时仍是 `path`），`id` 可以用来判断以后是不是同一个文件（例如只下载一次）。
 - `progress(downloaded, size)`：下载期间不时被调用（在 Agent 上大约每秒一次，本地调试时每块一次），参数是已经下载的字节数和要下载的字节数，可以用来上报进度或速率；它在调用 `download` 的线程里执行。
 - `timeout` 是相邻两次进展之间最多等多久，不是整个下载的时长：几个 GB 的文件用默认的 30 秒也可以。
 
@@ -457,6 +458,7 @@ def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/va
 | `AgentUnreachable`（`ConnectionError`） | `unreachable` | 连不通：两台 Agent 之间连不上，或那台 Agent 的端口没在监听（例如端口被占用）；也包括连不上自己所在的 Agent |
 | `AgentUnsupported` | `unsupported` | 对方不支持：那台 Agent 的版本太旧，没有这项能力，要升级它 |
 | `AgentFileNotFound`（`FileNotFoundError`） | `not_found` | 文件或目录不存在；`exec.run` 找不到程序、工作目录不存在 |
+| `AgentFileMoved` | `moved` | `files.download` 重连续传时，源文件已经不在原来的路径上，在同一目录里也找不到（移到了别的目录） |
 | `AgentPermissionDenied`（`PermissionError`） | `permission_denied` | 那台 Agent 进程没有权限 |
 | `AgentTimeout`（`TimeoutError`） | `timeout` | 超过 `timeout` 秒没有回应；`exec.run` 的命令超过 `timeout` 秒没有结束 |
 | `AgentNotReferenced` | `not_referenced` | 那台 Agent 不是通过「Agent」类型的参数拿到的 |

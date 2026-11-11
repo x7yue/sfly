@@ -327,7 +327,8 @@ async fn the_local_path_of_a_download_must_be_absolute() {
 }
 
 /// 夹在两台 Agent 之间的 TCP 代理：runner 连代理，代理连 source。
-/// 记下从 source 流向 runner 的字节数；可以在流过一定字节数之后切断当时的连接（一次），或者暂停转发直到放行。
+/// 记下从 source 流向 runner 的字节数；可以在流过一定字节数之后切断当时的连接（一次），或者暂停转发直到放行，
+/// 也可以随时切断当时的全部连接（[`Proxy::cut`]）。
 struct Proxy {
     port: u16,
     /// 从 source 流向 runner 的字节数（全部连接合计）。
@@ -342,12 +343,15 @@ struct Proxy {
     release: watch::Sender<bool>,
     /// 已经暂停（达到 `pause_at`）。
     paused: Arc<AtomicBool>,
+    /// 切断当时的全部连接。
+    cut: tokio::sync::broadcast::Sender<()>,
 }
 
 impl Proxy {
     async fn start(to: u16, cut_at: Option<u64>, pause_at: Option<u64>) -> Arc<Self> {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let (release, _) = watch::channel(false);
+        let (cut, _) = tokio::sync::broadcast::channel::<()>(1);
         let proxy = Arc::new(Self {
             port: listener.local_addr().unwrap().port(),
             downstream: Arc::default(),
@@ -357,28 +361,23 @@ impl Proxy {
             pause_at,
             release,
             paused: Arc::default(),
+            cut,
         });
-        let (cut_tx, _) = tokio::sync::broadcast::channel::<()>(1);
         let accepting = proxy.clone();
         tokio::spawn(async move {
             while let Ok((client, _)) = listener.accept().await {
                 accepting.connections.fetch_add(1, Ordering::SeqCst);
                 let server = TcpStream::connect(("127.0.0.1", to)).await.unwrap();
-                tokio::spawn(accepting.clone().relay(client, server, cut_tx.clone()));
+                tokio::spawn(accepting.clone().relay(client, server));
             }
         });
         proxy
     }
 
-    async fn relay(
-        self: Arc<Self>,
-        client: TcpStream,
-        server: TcpStream,
-        cut: tokio::sync::broadcast::Sender<()>,
-    ) {
+    async fn relay(self: Arc<Self>, client: TcpStream, server: TcpStream) {
         let (mut client_read, mut client_write) = client.into_split();
         let (mut server_read, mut server_write) = server.into_split();
-        let mut cut_rx = cut.subscribe();
+        let mut cut_rx = self.cut.subscribe();
         let up = async { tokio::io::copy(&mut client_read, &mut server_write).await };
         let down = async {
             let mut buf = vec![0; 64 * 1024];
@@ -392,7 +391,7 @@ impl Proxy {
                     && total >= at
                     && !self.cut_done.swap(true, Ordering::SeqCst)
                 {
-                    let _ = cut.send(());
+                    let _ = self.cut.send(());
                     return Ok(());
                 }
                 if let Some(at) = self.pause_at
@@ -419,6 +418,11 @@ impl Proxy {
 
     fn release(&self) {
         let _ = self.release.send(true);
+    }
+
+    /// 切断当时的全部连接（之后的新连接照常转发）。
+    fn cut(&self) {
+        let _ = self.cut.send(());
     }
 }
 
@@ -465,11 +469,13 @@ async fn a_download_resumes_where_the_connection_dropped_instead_of_starting_ove
     assert_eq!(names_in(local_dir.path()), vec!["app.log.2"]);
 }
 
-/// 下载 `path`，传到一半时暂停，期间执行 `change`，然后放行，返回调用的回复。
+/// 下载 `path`，传到一半时暂停，期间执行 `change`，然后放行，返回调用的回复。`reconnect` 时放行之前先切断连接：
+/// 两台 Agent 之间的连接中断，runner 重连后从断点续传。
 async fn download_while(
     name: &str,
     path: &Path,
     local: &Path,
+    reconnect: bool,
     change: impl FnOnce(),
 ) -> (Received, AgentPair) {
     let runner = format!("runner-{name}");
@@ -489,6 +495,9 @@ async fn download_while(
     })
     .await;
     change();
+    if reconnect {
+        proxy.cut();
+    }
     proxy.release();
     let reply = tokio::time::timeout(Duration::from_secs(60), reply)
         .await
@@ -510,7 +519,7 @@ fn source_and_target() -> (tempfile::TempDir, PathBuf, tempfile::TempDir, PathBu
 #[tokio::test]
 async fn a_source_deleted_during_the_download_fails_it_without_leaving_a_file() {
     let (_source_dir, path, local_dir, local) = source_and_target();
-    let (reply, _pair) = download_while("deleted", &path, &local, || {
+    let (reply, _pair) = download_while("deleted", &path, &local, false, || {
         std::fs::remove_file(&path).unwrap()
     })
     .await;
@@ -524,7 +533,7 @@ async fn a_source_deleted_during_the_download_fails_it_without_leaving_a_file() 
 #[tokio::test]
 async fn a_source_truncated_during_the_download_fails_it_without_leaving_a_file() {
     let (_source_dir, path, local_dir, local) = source_and_target();
-    let (reply, _pair) = download_while("truncated", &path, &local, || {
+    let (reply, _pair) = download_while("truncated", &path, &local, false, || {
         std::fs::OpenOptions::new()
             .write(true)
             .open(&path)
@@ -541,22 +550,10 @@ async fn a_source_truncated_during_the_download_fails_it_without_leaving_a_file(
 }
 
 #[tokio::test]
-async fn a_source_replaced_or_grown_during_the_download_fails_it_without_leaving_a_file() {
-    // 日志轮转：原来的文件被改名，路径上换成了一个新文件。
-    let (source_dir, path, local_dir, local) = source_and_target();
-    let (reply, _pair) = download_while("replaced", &path, &local, || {
-        std::fs::rename(&path, source_dir.path().join("app.log.1")).unwrap();
-        std::fs::write(&path, b"a new log").unwrap();
-    })
-    .await;
-    let (kind, message) = reply.error();
-    assert_eq!(kind, "failed");
-    assert!(message.contains("下载期间被替换"), "{message}");
-    assert!(names_in(local_dir.path()).is_empty());
-
-    // 还在续写的文件：下载完时大小和源文件对不上。
+async fn a_source_still_being_written_during_the_download_fails_it_without_leaving_a_file() {
+    // 还在续写的文件：下载完时大小和下载开始时对不上。
     let (_source_dir, path, local_dir, local) = source_and_target();
-    let (reply, _pair) = download_while("grown", &path, &local, || {
+    let (reply, _pair) = download_while("grown", &path, &local, false, || {
         use std::io::Write as _;
         let mut file = std::fs::OpenOptions::new()
             .append(true)
@@ -568,6 +565,58 @@ async fn a_source_replaced_or_grown_during_the_download_fails_it_without_leaving
     let (kind, message) = reply.error();
     assert_eq!(kind, "failed");
     assert!(message.contains("下载期间变化"), "{message}");
+    assert!(names_in(local_dir.path()).is_empty());
+}
+
+/// 日志轮转：原来的文件被改名为 `app.log.1`，路径上换成了一个新文件。
+fn rotate(path: &Path) {
+    std::fs::rename(path, path.with_file_name("app.log.1")).unwrap();
+    std::fs::write(path, b"a new log").unwrap();
+}
+
+#[tokio::test]
+async fn a_source_rotated_during_the_download_is_still_downloaded_in_full() {
+    // 内容都从打开的文件读，完成时按它核对：被改名的文件照样下载完，结果里是它现在的路径。
+    let (source_dir, path, local_dir, local) = source_and_target();
+    let body = std::fs::read(&path).unwrap();
+    let rotated = source_dir.path().join("app.log.1");
+    let (reply, _pair) = download_while("rotated", &path, &local, false, || rotate(&path)).await;
+
+    assert_eq!(reply.result(), &expected(&rotated));
+    assert!(std::fs::read(&local).unwrap() == body);
+    assert_eq!(names_in(local_dir.path()), vec!["app.log"]);
+}
+
+#[tokio::test]
+async fn a_download_resumes_from_the_new_name_when_the_source_was_rotated_while_disconnected() {
+    // 连接中断期间日志轮转：续传时在同一目录里找到改了名的文件，从断点接着读。
+    let (source_dir, path, local_dir, local) = source_and_target();
+    let body = std::fs::read(&path).unwrap();
+    let rotated = source_dir.path().join("app.log.1");
+    let (reply, _pair) =
+        download_while("rotated-resume", &path, &local, true, || rotate(&path)).await;
+
+    assert_eq!(reply.result(), &expected(&rotated));
+    assert!(std::fs::read(&local).unwrap() == body);
+    assert_eq!(names_in(local_dir.path()), vec!["app.log"]);
+}
+
+#[tokio::test]
+async fn a_source_moved_elsewhere_while_disconnected_fails_the_download_as_moved() {
+    // 连接中断期间原来的文件被移到了别的目录、路径上换成了新文件：续传找不到它，以「移走了」失败，
+    // 调用方据此去别处找它。
+    let (source_dir, path, local_dir, local) = source_and_target();
+    let archive = source_dir.path().join("archive");
+    std::fs::create_dir(&archive).unwrap();
+    let (reply, _pair) = download_while("moved", &path, &local, true, || {
+        std::fs::rename(&path, archive.join("app.log.1")).unwrap();
+        std::fs::write(&path, b"a new log").unwrap();
+    })
+    .await;
+
+    let (kind, message) = reply.error();
+    assert_eq!(kind, "moved");
+    assert!(message.contains("下载期间被移走"), "{message}");
     assert!(names_in(local_dir.path()).is_empty());
 }
 
@@ -656,6 +705,7 @@ impl AgentFileRead for FailingReads {
                     inode: 2,
                 }),
                 data: vec![7; 1000],
+                ..Default::default()
             }),
             Err(tonic::Status::internal(format!(
                 "访问 {path} 失败：Input/output error (os error 5)"

@@ -27,6 +27,7 @@ from typing import Any
 
 from sfly.capabilities.errors import (
     AgentError,
+    AgentFileMoved,
     AgentFileNotFound,
     AgentNotReferenced,
     AgentPermissionDenied,
@@ -41,6 +42,7 @@ from sfly.capabilities.files_watch import FileEvent, WatchSnapshot
 __all__ = [
     "Agent",
     "AgentError",
+    "AgentFileMoved",
     "AgentFileNotFound",
     "AgentNotReferenced",
     "AgentPermissionDenied",

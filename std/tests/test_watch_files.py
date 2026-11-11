@@ -6,6 +6,12 @@
 
 from __future__ import annotations
 
+import json
+import os
+import socket
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -267,3 +273,164 @@ def wait_for(check: Callable[[], bool], timeout: float = 20.0) -> None:
     while not check():
         assert time.monotonic() < deadline, "timed out"
         time.sleep(0.01)
+
+
+# ---- 在 Agent 上：拉取期间改名 ----
+#
+# 改名发生在 Agent 下载的途中，本地调试时很难卡准时机：这里让节点照在 Agent 上那样
+# 经本地 socket 调用能力，由一个按脚本回复的假 Agent 给出「下载期间被改名」时 Agent 的回复
+# （Agent 一侧见 agent/tests/file_read.rs）。
+
+ROTATED = f"{LOGS}/app.log.2"
+
+
+def info(path: str, size: int = 6) -> dict[str, Any]:
+    """那台 Agent 上的一个文件（文件标识固定：改名不变）。"""
+    return {"path": path, "size": size, "mtime_ns": 1, "device": 1, "inode": 42}
+
+
+class ScriptedAgent:
+    """假的 Agent 本地 socket：`files.watch` 先给出一份只有 app.log.1 的快照，下载结束后
+    再推送 `events`；`files.download` 按 `download` 回复（成功时像 Agent 一样先写好本地文件）；
+    记下每个请求。"""
+
+    def __init__(self, path: Path, download: list[dict[str, Any]], events: list[dict[str, Any]]):
+        self.path = path
+        self.requests: list[dict[str, Any]] = []
+        self._download = download
+        self._events = events
+        self._downloaded = threading.Event()
+        self._server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self._server.bind(str(path))
+        self._server.listen()
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self) -> None:
+        while True:
+            try:
+                conn, _ = self._server.accept()
+            except OSError:
+                return
+            threading.Thread(target=self._handle, args=(conn,), daemon=True).start()
+
+    def _handle(self, conn: socket.socket) -> None:
+        with conn, conn.makefile("rb") as reader:
+            request = json.loads(reader.readline())
+            self.requests.append(request)
+            method, args = request["method"], request["args"]
+
+            def send(*frames: dict[str, Any]) -> None:
+                for value in frames:
+                    conn.sendall(json.dumps(value, ensure_ascii=False).encode() + b"\n")
+
+            if method == "files.watch":
+                snapshot = {"files": [info(f"{LOGS}/app.log.1")], "first": True, "last": True}
+                send({"item": {"snapshot": {**snapshot, "missed": False}}})
+                self._downloaded.wait()
+                send(*({"item": {"event": event}} for event in self._events))
+                reader.read()  # 一直监听，直到节点结束
+            elif method == "files.download":
+                if "result" in self._download[-1]:
+                    local = Path(args["local_path"])
+                    local.parent.mkdir(parents=True, exist_ok=True)
+                    local.write_bytes(b"round1")
+                send({"item": {"downloaded": 6, "size": 6}}, *self._download)
+                self._downloaded.set()
+            elif method == "files.stat":
+                send({"result": info(args["path"])})
+            else:
+                send({"result": None})
+
+    def methods(self, name: str) -> list[dict[str, Any]]:
+        return [r["args"] for r in self.requests if r["method"] == name]
+
+    def close(self) -> None:
+        self._server.close()
+
+
+def run_on_agent(work: Path, agent: Path, **inputs: Any) -> tuple[dict[str, Any], list[str]]:
+    """像 Agent 那样在子进程里执行 watch_files（节点经 `agent` 这个本地 socket 调用能力），
+    返回 output.json 和日志。"""
+    work.mkdir()
+    task = {
+        "task_id": "t-1",
+        "attempt": 1,
+        "entry": "sfly_std.watch_files:watch_files",
+        "inputs": {
+            "source": SOURCE,
+            "directory": LOGS,
+            "local_dir": str(work / "pulled"),
+            **inputs,
+        },
+        "agents": [{"name": SOURCE, "address": "10.0.0.5", "port": 50052}],
+    }
+    (work / "task.json").write_text(json.dumps(task), encoding="utf-8")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("SFLY_")}
+    env.update(
+        SFLY_TASK=str(work / "task.json"),
+        SFLY_OUTPUT=str(work / "output.json"),
+        SFLY_EVENTS=str(work / "events.jsonl"),
+        SFLY_CANCEL=str(work / "cancel"),
+        SFLY_AGENT_SOCKET=str(agent),
+    )
+    subprocess.run([sys.executable, "-m", "sfly.runner"], cwd=work, env=env, timeout=60)
+    output = json.loads((work / "output.json").read_text(encoding="utf-8"))
+    events = [json.loads(line) for line in (work / "events.jsonl").read_text().splitlines()]
+    return output, [e["message"] for e in events if e.get("type") == "log"]
+
+
+@pytest.fixture
+def short_dir() -> Iterator[Path]:
+    """socket 路径不能太长（AF_UNIX 108 字节），放在 TMPDIR 下的短目录里。"""
+    with tempfile.TemporaryDirectory(prefix="sfly-") as tmp:
+        yield Path(tmp)
+
+
+def test_a_file_rotated_while_it_is_being_pulled_is_pulled_once_and_deleted_at_its_new_path(
+    short_dir: Path,
+) -> None:
+    # 拉取 app.log.1 的途中它被轮转成 app.log.2：下载照常完成，结果里是它现在的路径；
+    # 之后的 moved 事件是同一个文件（文件标识不变），不再拉一次；删除源文件删的是新路径。
+    agent = ScriptedAgent(
+        short_dir / "agent.sock",
+        download=[{"result": info(ROTATED)}],
+        events=[{"kind": "moved", "file": info(ROTATED), "old_path": f"{LOGS}/app.log.1"}],
+    )
+    try:
+        output, logs = run_on_agent(
+            short_dir / "work", agent.path, delete_source=True, pattern="app.log.*", duration=1.5
+        )
+    finally:
+        agent.close()
+
+    pulled = short_dir / "work" / "pulled"
+    assert output == {"status": "success", "outputs": {"count": 1, "total_bytes": 6}}, logs
+    assert [args["path"] for args in agent.methods("files.download")] == [f"{LOGS}/app.log.1"]
+    assert [args["path"] for args in agent.methods("files.delete")] == [ROTATED]
+    assert f"拉取了 {ROTATED}（6 字节）→ {pulled / 'app.log.1'}" in logs
+    assert sorted(p.name for p in pulled.iterdir()) == ["app.log.1"]
+
+
+def test_a_file_moved_elsewhere_while_resuming_its_download_is_skipped_until_seen_again(
+    short_dir: Path,
+) -> None:
+    # 拉取途中连接中断、它被移到了别的目录（Agent 续传时找不到它，回复 moved）：节点不失败，
+    # 等监听告诉它去了哪里（这里移出了监听范围，是 deleted），不从头重拉。
+    message = (
+        f"Agent {SOURCE}：{LOGS}/app.log.1 在下载期间被移走（路径上换成了另一个文件），下载作废"
+    )
+    agent = ScriptedAgent(
+        short_dir / "agent.sock",
+        download=[{"error": {"kind": "moved", "message": message, "agent": SOURCE}}],
+        events=[{"kind": "deleted", "file": info(f"{LOGS}/app.log.1")}],
+    )
+    try:
+        output, logs = run_on_agent(
+            short_dir / "work", agent.path, pattern="app.log.*", duration=1.5
+        )
+    finally:
+        agent.close()
+
+    assert output == {"status": "success", "outputs": {"count": 0, "total_bytes": 0}}, logs
+    assert [args["path"] for args in agent.methods("files.download")] == [f"{LOGS}/app.log.1"]
+    assert f"{LOGS}/app.log.1 已经不在这个路径上，跳过" in logs
