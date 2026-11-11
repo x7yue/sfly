@@ -1,6 +1,7 @@
 import { type CopiedNode, readCopiedNode } from "@sfly/orchestration";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { writeClipboard } from "#/components/feedback/clipboard";
+import { notify } from "#/components/feedback/notify";
 import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 
@@ -10,7 +11,8 @@ import { ContextMenuItem } from "@/components/ui/context-menu";
  *
  * - Ctrl+C / Ctrl+V 不拦按键，用浏览器的 copy / paste 事件：焦点在输入框里、页面上选中了文字、
  *   剪贴板里不是节点时都照常是文本操作。事件里读写剪贴板不需要浏览器授权。
- * - 菜单里的「复制」「粘贴」不是按键触发的，只能用 Clipboard API（需要浏览器允许读写剪贴板）。
+ * - 菜单里的「复制」「粘贴」不是按键触发的，只能用 Clipboard API（需要浏览器允许读写剪贴板，
+ *   http 访问时没有）。「粘贴」点了才读剪贴板，不在打开菜单时读。
  */
 
 /** 有弹窗或菜单打开时不处理复制、粘贴。 */
@@ -86,49 +88,37 @@ export function useClipboardShortcuts(handlers: {
 export const copyNodeText = (text: string, done: () => void) =>
 	writeClipboard(text, done, `可以按 ${shortcutText("canvas-copy")} 复制`);
 
-type ClipboardRead =
-	| { status: "reading" }
-	| { status: "node"; copied: CopiedNode }
-	| { status: "other" }
-	| { status: "blocked" };
+/** 「粘贴」用不了 Clipboard API 时的说明：按键粘贴走浏览器的 paste 事件，不需要授权。 */
+const PASTE_WITH_KEYS = `请按 ${shortcutText("canvas-paste")} 粘贴`;
 
-/** 菜单打开时读一次剪贴板：里面是不是可以粘贴的节点。 */
-function useClipboardNode(): ClipboardRead {
-	const [read, setRead] = useState<ClipboardRead>({ status: "reading" });
-	useEffect(() => {
-		let live = true;
-		const settle = (next: ClipboardRead) => live && setRead(next);
-		if (!navigator.clipboard) settle({ status: "blocked" });
-		else {
-			navigator.clipboard.readText().then(
-				(text) => {
-					const copied = readCopiedNode(text);
-					settle(copied ? { status: "node", copied } : { status: "other" });
-				},
-				() => settle({ status: "blocked" }),
-			);
-		}
-		return () => {
-			live = false;
-		};
-	}, []);
-	return read;
+/** 浏览器有没有读剪贴板的 Clipboard API（http 访问等非安全上下文里没有）。 */
+const canReadClipboard = () => typeof navigator.clipboard?.readText === "function";
+
+/** 点了「粘贴」：这时才读剪贴板，里面是节点就粘贴，否则提示原因。 */
+async function pasteFromClipboard(onPaste: (copied: CopiedNode) => void) {
+	let text: string;
+	try {
+		text = await navigator.clipboard.readText();
+	} catch {
+		notify.warning("浏览器不允许读取剪贴板", { description: PASTE_WITH_KEYS });
+		return;
+	}
+	const copied = readCopiedNode(text);
+	if (copied) onPaste(copied);
+	else notify.warning("剪贴板里没有可粘贴的节点");
 }
 
-const PASTE_DISABLED: Record<Exclude<ClipboardRead["status"], "node">, string> = {
-	reading: "正在读取剪贴板",
-	other: "没有可粘贴的节点",
-	blocked: "浏览器不允许读取剪贴板，请用快捷键粘贴",
-};
-
-/** 空白处菜单的「粘贴」：剪贴板里不是节点（或读不到）时禁用并说明原因。 */
+/**
+ * 空白处菜单的「粘贴」。打开菜单时不读剪贴板（浏览器可能每次读都要用户授权）：点了它才读，
+ * 剪贴板里不是节点、或浏览器不允许读取时提示原因。浏览器没有 Clipboard API（http 访问）时禁用，
+ * 写明可以按快捷键粘贴。
+ */
 export function PasteMenuItem({ onPaste }: { onPaste(copied: CopiedNode): void }) {
-	const read = useClipboardNode();
 	return (
 		<ContextMenuItem
 			shortcut="canvas-paste"
-			disabledReason={read.status === "node" ? null : PASTE_DISABLED[read.status]}
-			onClick={() => read.status === "node" && onPaste(read.copied)}
+			disabledReason={canReadClipboard() ? null : `浏览器不允许读取剪贴板，${PASTE_WITH_KEYS}`}
+			onClick={() => void pasteFromClipboard(onPaste)}
 		>
 			粘贴
 		</ContextMenuItem>

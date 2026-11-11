@@ -316,32 +316,105 @@ test("右键粘贴落在右键位置；目标场景已锁定别的版本时用�
 	await expect(nodeCard(page, "fetch_1")).toHaveCount(0);
 });
 
-test("剪贴板里不是节点时「粘贴」禁用、Ctrl+V 无动作", async ({ page, controlPlane }) => {
+test("打开空白处菜单不读剪贴板，点「粘贴」才读：不是节点时提示、Ctrl+V 无动作；不允许读取时提示按 Ctrl V", async ({
+	page,
+	controlPlane,
+}) => {
+	// 数页面调用了几次 readText（calls）、其中几次已经读完（settled）。
+	await page.addInitScript(() => {
+		const clipboard = navigator.clipboard;
+		const read = clipboard.readText.bind(clipboard);
+		const count = { calls: 0, settled: 0 };
+		Object.assign(window, { clipboardReads: count });
+		clipboard.readText = () => {
+			count.calls += 1;
+			return read().finally(() => {
+				count.settled += 1;
+			});
+		};
+	});
+	const reads = () =>
+		page.evaluate(
+			() =>
+				(window as unknown as { clipboardReads: { calls: number; settled: number } })
+					.clipboardReads,
+		);
 	const id = await createEditorScenario(controlPlane);
 	await openEditor(page, id, "sub_ping");
 	const blank = { x: 200, y: 640 };
+	const notNode = page.getByText("剪贴板里没有可粘贴的节点");
 
-	for (const text of [
+	for (const [i, text] of [
 		"hello",
 		JSON.stringify({ type: "sfly/node", node: { id: "x", kind: "sleep", duration: "" } }),
 		JSON.stringify({
 			type: "sfly/node",
 			node: editorDocument.nodes.find((n) => n.id === "entry"),
 		}),
-	]) {
+	].entries()) {
 		await setClipboard(page, text);
 		await page.mouse.click(blank.x, blank.y, { button: "right" });
 		const paste = paneMenu(page).getByRole("menuitem", { name: /粘贴/ });
-		await expect(paste).toHaveText("粘贴没有可粘贴的节点CtrlV");
-		await expect(paste).toBeDisabled();
-		await page.keyboard.press("Escape");
+		await expect(paste).toHaveText("粘贴CtrlV");
+		await expect(paste).toBeEnabled();
+		expect((await reads()).calls).toBe(i);
+		await paste.click();
 		await expect(paneMenu(page)).toHaveCount(0);
+		await expect.poll(async () => (await reads()).settled).toBe(i + 1);
+		await expect(notNode.first()).toBeVisible();
 
 		await page.mouse.move(blank.x, blank.y);
 		await page.keyboard.press("Control+v");
 	}
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
 	await expect.poll(() => nodeIds(page)).toEqual(ORIGINAL_IDS);
+
+	// 浏览器不允许读取剪贴板：提示改按 Ctrl V。
+	await page.evaluate(() => {
+		navigator.clipboard.readText = () =>
+			Promise.reject(new DOMException("拒绝", "NotAllowedError"));
+	});
+	await page.mouse.click(blank.x, blank.y, { button: "right" });
+	await paneMenu(page).getByRole("menuitem", { name: /粘贴/ }).click();
+	await expect(page.getByText("浏览器不允许读取剪贴板")).toBeVisible();
+	await expect(page.getByText("请按 Ctrl V 粘贴")).toBeVisible();
+	await expect.poll(() => nodeIds(page)).toEqual(ORIGINAL_IDS);
+});
+
+test("没有 Clipboard API 时（http 访问）菜单里的「粘贴」禁用并说明，Ctrl+C / Ctrl+V 照常可用", async ({
+	page,
+	controlPlane,
+}) => {
+	await page.addInitScript(() =>
+		Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true }),
+	);
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id, "sub_ping");
+	const blank = { x: 200, y: 640 };
+
+	// 菜单里的「复制」用不了：提示改按 Ctrl C。
+	await nodeCard(page, "ping").click({ button: "right" });
+	await nodeMenu(page)
+		.getByRole("menuitem", { name: /^复制\s*Ctrl\s*C$/ })
+		.click();
+	await expect(page.getByText("复制失败")).toBeVisible();
+	await expect(page.getByText("浏览器不允许访问剪贴板，可以按 Ctrl C 复制")).toBeVisible();
+
+	await page.mouse.click(blank.x, blank.y, { button: "right" });
+	const paste = paneMenu(page).getByRole("menuitem", { name: /粘贴/ });
+	await expect(paste).toHaveText("粘贴浏览器不允许读取剪贴板，请按 Ctrl V 粘贴CtrlV");
+	await expect(paste).toBeDisabled();
+	await page.keyboard.press("Escape");
+	await expect(paneMenu(page)).toHaveCount(0);
+
+	// 按键复制、粘贴走浏览器的 copy / paste 事件，不需要 Clipboard API。
+	await nodeCard(page, "ping").click();
+	await page.keyboard.press("Control+c");
+	await expect(page.getByText("已复制节点 ping")).toBeVisible();
+	await page.mouse.move(blank.x, blank.y);
+	await page.keyboard.press("Control+v");
+	await expect(nodeCard(page, "ping_1")).toBeFocused();
+	await expect.poll(() => nodeIds(page)).toEqual([...ORIGINAL_IDS, "ping_1"].sort());
 });
 
 test("焦点在输入框里时 Ctrl+C / Ctrl+V / Ctrl+D 仍是文本操作", async ({ page, controlPlane }) => {
