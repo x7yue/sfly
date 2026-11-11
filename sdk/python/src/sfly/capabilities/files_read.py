@@ -79,8 +79,8 @@ class ReadDownload(FilesBase):
         - 数据由节点所在的 Agent 直接写到 `local_path`，不经过节点进程；
         - `local_path` 是节点所在机器上的路径，相对路径相对于节点的工作目录（任务目录）；
           所在的目录不存在时一并创建，那里已有的文件被替换；
-        - 先写同一目录里的临时文件（`.<文件名>.….sfly-download`），完成并核对后才改名为
-          `local_path`：`local_path` 上不会出现半截文件，失败或被取消时临时文件被删除；
+        - 先写同一目录里的临时文件（`.<文件名>.sfly-<随机>.tmp`，与 `write` 相同），完成并核对后
+          才改名为 `local_path`：`local_path` 上不会出现半截文件，失败或被取消时临时文件被删除；
         - 下载的是开始时的大小。连接中断时自动重连，从断点继续；完成时再查看一次源文件，
           它在下载期间被删除（`sfly.AgentFileNotFound`）、被替换（例如日志轮转时被改名，
           路径上换成了新文件）、被截短或大小变了（还在写入）时抛出 `sfly.AgentError`；
@@ -146,57 +146,48 @@ def _local_download(
     target: str,
     progress: Callable[[int, int], Any] | None,
 ) -> FileInfo:
-    """本地调试时的下载，规则与 Agent 相同：先写临时文件，核对源文件后改名。"""
-    import tempfile
-
+    """本地调试时的下载，规则与 Agent 相同：和写入一样先写临时文件（`_local_write`），
+    读完并核对源文件之后才改名为目标路径。"""
     from sfly.capabilities.files import FileInfo
+    from sfly.capabilities.files_write import _local_write
     from sfly.capabilities.local import LocalAgent
 
+    # 目标在本机上：路径原样使用，消息里是「本机」。
     own = LocalAgent(None, None)
-    directory, name = os.path.split(target)
     try:
-        os.makedirs(directory, exist_ok=True)
-        if os.path.isdir(target):
-            raise AgentError(
-                f"{own.label}：下载的目标路径 {target} 是目录", agent=local.name, kind="invalid"
-            )
-        fd, partial = tempfile.mkstemp(prefix=f".{name}.", suffix=".sfly-download", dir=directory)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
     except OSError as error:
         raise own.error(error, target) from None
-    try:
-        written = 0
-        with _open(local, path) as source, os.fdopen(fd, "wb") as out:
-            start = os.fstat(source.fileno())
-            size = start.st_size
-            while written < size:
-                data = source.read(min(_CHUNK, size - written))
+    now: os.stat_result | None = None
+    with _open(local, path) as source:
+        start = os.fstat(source.fileno())
+
+        def chunks() -> Iterator[bytes]:
+            nonlocal now
+            written = 0
+            while written < start.st_size:
+                data = source.read(min(_CHUNK, start.st_size - written))
                 if not data:
                     break
-                out.write(data)
+                yield data
                 written += len(data)
                 if progress is not None:
-                    progress(written, size)
-        try:
-            now = os.stat(local.real(path))
-        except FileNotFoundError:
-            raise AgentFileNotFound(
-                f"{local.label}：{path} 在下载期间被删除，下载作废", agent=local.name
-            ) from None
-        except OSError as error:
-            raise local.error(error, path) from None
-        changed = _changed(start, now, written)
-        if changed:
-            raise AgentError(f"{local.label}：{path} {changed}，下载作废", agent=local.name)
-        try:
-            os.replace(partial, target)
-        except OSError as error:
-            raise own.error(error, target) from None
-    except BaseException:
-        try:
-            os.unlink(partial)
-        except OSError:
-            pass
-        raise
+                    progress(written, start.st_size)
+            # 在这里抛出的异常让 `_local_write` 删掉临时文件、不改名。
+            try:
+                now = os.stat(local.real(path))
+            except FileNotFoundError:
+                raise AgentFileNotFound(
+                    f"{local.label}：{path} 在下载期间被删除，下载作废", agent=local.name
+                ) from None
+            except OSError as error:
+                raise local.error(error, path) from None
+            changed = _changed(start, now, written)
+            if changed:
+                raise AgentError(f"{local.label}：{path} {changed}，下载作废", agent=local.name)
+
+        _local_write(own, target, chunks())
+    assert now is not None
     return FileInfo.from_stat(path, now)
 
 

@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package sfly.agent.v1;
+
+import "sfly/agent/v1/files.proto";
+
+// Agent 能力 files.write（ADR 0019）：写入、删除文件。和 AgentPeer 在同一个端口上提供，供其它 Agent 直接连接，
+// 没有认证，只应在内网使用。
+//
+// 路径是这台 Agent 所在机器上的绝对路径，权限就是 Agent 进程的权限，不做沙箱。错误用 gRPC 状态码区分：
+// NOT_FOUND（文件或目录不存在）、PERMISSION_DENIED（没有权限）、INVALID_ARGUMENT（路径不是绝对路径、是目录等），
+// 消息是给人看的一句话。
+service AgentFileWrite {
+  // 写入一个文件：第一条消息是 start，之后是零到多条 data，最后一条是 end。
+  //
+  // 先写到目标所在目录里的临时文件（`.<文件名>.sfly-<随机>.tmp`），收到 end 并核对字节数之后才改名为目标路径：
+  // 目标已存在时整个替换（保留它的权限位），否则新建。流在 end 之前结束、被中断或出错时删除临时文件，
+  // 目标路径不受影响。目标所在的目录必须已经存在。
+  rpc Write(stream WriteFileRequest) returns (WriteFileResponse);
+  // 删除一个文件。不删除目录；路径是符号链接时删除链接本身。
+  rpc Delete(DeleteFileRequest) returns (DeleteFileResponse);
+}
+
+message WriteFileRequest {
+  oneof part {
+    WriteFileStart start = 1;
+    // 文件内容的下一段。
+    bytes data = 2;
+    WriteFileEnd end = 3;
+  }
+}
+
+message WriteFileStart {
+  // 目标文件的绝对路径。
+  string path = 1;
+}
+
+// 写完了：只有收到它才改名为目标路径。
+message WriteFileEnd {
+  // 前面各段 data 的总字节数；与收到的不一致时不改名，以 DATA_LOSS 失败。
+  uint64 size = 1;
+}
+
+message WriteFileResponse {
+  // 写好的文件的属性。
+  FileInfo file = 1;
+}
+
+message DeleteFileRequest {
+  // 要删除的文件的绝对路径。
+  string path = 1;
+}
+
+message DeleteFileResponse {}

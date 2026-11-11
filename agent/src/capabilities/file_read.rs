@@ -2,15 +2,14 @@
 //! 协议见 `proto/sfly/agent/v1/file_read.proto`。
 //!
 //! - 读取：目标 Agent 按块读出文件内容，经发起调用的 Agent 以 data 帧（[`Call::data`]）交给节点。
-//! - 下载：发起调用的 Agent 自己读目标 Agent 上的文件（同一个 `Read`），边收边写本机的临时文件，
-//!   完成并核对后改名为目标路径；数据不经过节点进程，节点只收到进度和结果。连接中断时从已经写下的位置再读
+//! - 下载：发起调用的 Agent 自己读目标 Agent 上的文件（同一个 `Read`），边收边写本机的临时文件
+//!   （与写入共用 [`TempFile`]），完成并核对后改名为目标路径；数据不经过节点进程，节点只收到进度和结果。连接中断时从已经写下的位置再读
 //!   （确认路径上还是原来那个文件），连续多次没有进展才失败。下载开始时的大小就是要下载的大小：读到它为止，
 //!   完成时再查看一次源文件，被删除、被替换、被截短或大小变了都以明确的错误失败，临时文件随之删除。
 
 use std::os::unix::fs::FileExt as _;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -21,6 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt as _};
 use tonic::{Code, Request, Response, Status};
 
+use super::file_write::TempFile;
 use super::files::{Files, absolute, file_info, file_json, io_status};
 use super::{Capability, Host, Module};
 use crate::calls::{BoxFuture, Call, CallError, ErrorKind, Method, Target};
@@ -250,7 +250,13 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
     };
     let local = |status: Status| own.error(status);
     let dest = absolute(&local_path).map_err(local)?;
-    let mut partial = Partial::create(&dest, &local_path).await.map_err(local)?;
+    // 目标所在的目录不存在时一并创建（下载到本地常常是新目录）。
+    if let Some(dir) = dest.parent() {
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|error| local(io_status(&error, &dir.to_string_lossy())))?;
+    }
+    let mut temp = TempFile::create(&local_path).await.map_err(local)?;
 
     let mut source: Option<FileInfo> = None;
     let mut written = 0u64;
@@ -288,7 +294,10 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
                 let take = usize::try_from(size - written)
                     .map_or(response.data.len(), |rest| rest.min(response.data.len()));
                 if take > 0 {
-                    partial.write(&response.data[..take]).await.map_err(local)?;
+                    temp.file
+                        .write_all(&response.data[..take])
+                        .await
+                        .map_err(|error| local(io_status(&error, &local_path)))?;
                     written += take as u64;
                     failures = 0;
                 }
@@ -363,7 +372,18 @@ async fn download(mut call: Call<'_>) -> Result<Value, CallError> {
             ),
         ));
     }
-    partial.finish(&dest).await.map_err(local)?;
+    // 落盘、改名为目标路径。落盘可能要一会儿（大文件还有很多没写到磁盘的内容）：照常回复进度。
+    let commit = temp.commit();
+    tokio::pin!(commit);
+    loop {
+        tokio::select! {
+            committed = &mut commit => {
+                committed.map_err(local)?;
+                break;
+            }
+            () = tokio::time::sleep(PROGRESS_EVERY) => call.item(progress(written, written)).await?,
+        }
+    }
     Ok(file_json(&now))
 }
 
@@ -402,88 +422,5 @@ fn changed(target: &Target, path: &str, status: Status, started: bool) -> CallEr
             ),
         ),
         _ => target.error(status),
-    }
-}
-
-/// 临时文件的序号（同一个进程里同时下载到同一个路径时也不重名）。
-static PARTIALS: AtomicU64 = AtomicU64::new(0);
-
-/// 下载中的临时文件：和目标路径在同一个目录里（改名是原子的），名字以 `.` 开头、以 `.sfly-download` 结尾。
-/// 没有 [`Partial::finish`] 就被丢掉（失败、任务被取消、调用方断开）时删除。
-struct Partial {
-    path: PathBuf,
-    file: tokio::fs::File,
-    finished: bool,
-}
-
-impl Partial {
-    /// 在目标路径所在的目录里建临时文件（目录不存在时一并创建）。`shown` 是消息里的目标路径。
-    async fn create(dest: &Path, shown: &str) -> Result<Self, Status> {
-        let (Some(dir), Some(name)) = (dest.parent(), dest.file_name().and_then(|n| n.to_str()))
-        else {
-            return Err(Status::invalid_argument(format!(
-                "下载的目标路径 {shown} 要以文件名结尾"
-            )));
-        };
-        tokio::fs::create_dir_all(dir)
-            .await
-            .map_err(|error| io_status(&error, &dir.to_string_lossy()))?;
-        if tokio::fs::metadata(dest).await.is_ok_and(|m| m.is_dir()) {
-            return Err(Status::invalid_argument(format!(
-                "下载的目标路径 {shown} 是目录"
-            )));
-        }
-        loop {
-            let path = dir.join(format!(
-                ".{name}.{}-{}.sfly-download",
-                std::process::id(),
-                PARTIALS.fetch_add(1, Ordering::Relaxed)
-            ));
-            match tokio::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-                .await
-            {
-                Ok(file) => {
-                    return Ok(Self {
-                        path,
-                        file,
-                        finished: false,
-                    });
-                }
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(io_status(&error, &path.to_string_lossy())),
-            }
-        }
-    }
-
-    async fn write(&mut self, data: &[u8]) -> Result<(), Status> {
-        self.file
-            .write_all(data)
-            .await
-            .map_err(|error| io_status(&error, &self.path.to_string_lossy()))
-    }
-
-    /// 写完：改名为目标路径（替换那里已有的文件）。
-    async fn finish(mut self, dest: &Path) -> Result<(), Status> {
-        let shown = dest.to_string_lossy().into_owned();
-        self.file
-            .flush()
-            .await
-            .map_err(|error| io_status(&error, &self.path.to_string_lossy()))?;
-        tokio::fs::rename(&self.path, dest)
-            .await
-            .map_err(|error| io_status(&error, &shown))?;
-        self.finished = true;
-        Ok(())
-    }
-}
-
-impl Drop for Partial {
-    fn drop(&mut self) {
-        if !self.finished {
-            let _ = std::fs::remove_file(&self.path);
-        }
     }
 }
