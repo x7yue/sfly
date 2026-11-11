@@ -663,7 +663,7 @@ function Editor({
 							<>
 								<ToolButton
 									label="撤销"
-									keys="Ctrl Z"
+									shortcut="canvas-undo"
 									disabled={!history.canUndo}
 									onClick={history.undo}
 								>
@@ -671,13 +671,13 @@ function Editor({
 								</ToolButton>
 								<ToolButton
 									label="重做"
-									keys="Ctrl Shift Z"
+									shortcut="canvas-redo"
 									disabled={!history.canRedo}
 									onClick={history.redo}
 								>
 									<Redo2Icon />
 								</ToolButton>
-								<ToolButton label="整理布局" keys="Alt Shift F" onClick={tidy}>
+								<ToolButton label="整理布局" shortcut="canvas-tidy" onClick={tidy}>
 									<Wand2Icon />
 								</ToolButton>
 							</>
