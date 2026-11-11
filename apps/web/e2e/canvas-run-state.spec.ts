@@ -1,13 +1,12 @@
 import type { Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
-import { inspector, nodeCard } from "./editor-support";
+import { inspector, modes, nodeCard, switchMode } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { MONITOR_SCENARIO, openMonitor, runningScenario } from "./monitor-scenario";
 import { createScenario, expectFocusVisible, publishPackage, triggerRun } from "./support";
 
 // 编排画布的「运行状态」模式（原型 #/editor/:id?run=<id>）：节点叠加运行状态，检查器给出运行摘要与监控页入口。
 
-const modes = (page: Page) => page.getByRole("group", { name: "模式" });
 const edge = (page: Page, from: string, to: string) =>
 	page.locator(`[data-edge="chain:${from}->${to}"]`);
 
@@ -70,10 +69,10 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 	await expect(edge(page, "spawn", "verify")).toHaveAttribute("data-run", "failed");
 
 	// E 回到编辑模式，R 再切回来。
-	await page.locator("body").press("e");
+	await switchMode(page, "edit");
 	await expect(nodeCard(page, "verify")).not.toHaveAttribute("data-run");
 	await expect(page.getByRole("button", { name: /保存/ })).toBeVisible();
-	await page.locator("body").press("r");
+	await switchMode(page, "run");
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "failed");
 });
 
@@ -132,7 +131,7 @@ test("场景还没有运行过：运行状态模式给出提示，节点不叠�
 	const scenarioId = await createScenario(controlPlane, "空场景", MONITOR_SCENARIO);
 	await page.goto(`/orchestrations/${scenarioId}`);
 	await expect(nodeCard(page, "fetch")).toBeVisible();
-	await page.locator("body").press("r");
+	await switchMode(page, "run");
 	await expect(page.getByTestId("canvas-run")).toHaveText("还没有运行");
 	await expect(nodeCard(page, "fetch")).not.toHaveAttribute("data-run");
 	await expect(inspector(page)).toContainText("这个场景还没有运行过");

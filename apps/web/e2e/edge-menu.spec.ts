@@ -9,6 +9,7 @@ import {
 	nodeCard,
 	nodePosition,
 	openEditor,
+	switchMode,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { box, createScenario, publishPackage } from "./support";
@@ -315,7 +316,7 @@ test("运行状态模式下连线没有菜单、没有「＋」、不能改接",
 	await page.mouse.move(near.x, near.y + 160);
 	await expect(insertButton(page)).toHaveCount(0);
 
-	await page.locator("body").press("r");
+	await switchMode(page, "run");
 	await expect(page.getByRole("button", { name: /保存/ })).toHaveCount(0);
 	await page.mouse.move(near.x, near.y);
 	await expect(insertButton(page)).toHaveCount(0);

@@ -8,6 +8,7 @@ import {
 	nodePosition,
 	openEditor,
 	paneMenu,
+	switchMode,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { box, createScenario, expectFocusVisible, overlap, publishPackage } from "./support";
@@ -477,7 +478,7 @@ test("运行状态下画布只读：工具条不显示添加、撤销 / 重做�
 	await openEditor(page, id);
 	const original = await nodePosition(page, "sub_entry");
 
-	await page.locator("body").press("r");
+	await switchMode(page, "run");
 	await expect(page.getByRole("button", { name: /保存/ })).toHaveCount(0);
 	for (const tool of ["添加节点", "撤销", "重做", "整理布局"]) {
 		await expect(dock(page).getByRole("button", { name: tool })).toHaveCount(0);
@@ -495,7 +496,7 @@ test("运行状态下画布只读：工具条不显示添加、撤销 / 重做�
 	await page.keyboard.press("Escape");
 	await expect(paneMenu(page)).toHaveCount(0);
 
-	await page.locator("body").press("e");
+	await switchMode(page, "edit");
 	await expect(dock(page).getByRole("button", { name: "添加节点" })).toBeVisible();
 	await expect(dock(page).getByRole("button", { name: "整理布局" })).toBeVisible();
 });
