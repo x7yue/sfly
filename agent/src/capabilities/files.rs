@@ -1,4 +1,6 @@
 //! Agent 能力 `files`：列出文件（`files.list`）、查看文件属性（`files.stat`）。协议见 `proto/sfly/agent/v1/files.proto`。
+//! 它是第一项文件类能力，名字里没有后缀；之后加的各自叫 `files.<操作>`（`files.read`、`files.write`、`files.watch`），
+//! 方法名前缀和能力名不是一一对应的（`files.list` 属于能力 `files`，`files.download` 属于能力 `files.read`）。
 //!
 //! 路径是这台机器上的绝对路径，权限就是 Agent 进程的权限，不做沙箱。文件属性里的修改时间是这台机器的 Agent 时间，原样给出。
 
