@@ -502,11 +502,18 @@ async fn when_the_event_queue_overflows_a_new_snapshot_marks_possible_gaps() {
     }
     std::fs::write(root.join("done.log"), "x").unwrap();
 
-    // 读下去：先是溢出前已经发出的事件，然后是标明可能有遗漏的快照，快照加上之后的事件就是全部文件。
+    // 读下去：先是溢出前已经发出的事件，然后是标明可能有遗漏的快照，最后一份快照加上之后的事件就是全部文件。
+    // 快照含有 done.log 不说明已经追上：重新扫描和创建同时进行时，目录列出的顺序不一定是创建的顺序
+    // （ext4 按名字的哈希排列），快照可能已经有 done.log、却没有扫描期间才建的更早的文件，它们随后作为
+    // 新建事件（或者再一份快照）给出。所以一直读到全部文件都出现；有文件始终没有报告时，等下一帧超时失败。
+    let expected: std::collections::BTreeSet<String> = (0..count)
+        .map(|i| format!("f{i:05}.log"))
+        .chain(["done.log".to_string()])
+        .map(|name| root.join(name).to_str().unwrap().to_string())
+        .collect();
     let mut known: std::collections::BTreeSet<String> = Default::default();
     let mut missed_snapshots = 0;
-    let done = root.join("done.log").to_str().unwrap().to_string();
-    while missed_snapshots == 0 || !known.contains(&done) {
+    while missed_snapshots == 0 || known != expected {
         let next = watch.next().await;
         if next.get("snapshot").is_some() {
             assert_eq!(next["snapshot"]["first"], true, "{next}");
@@ -538,7 +545,6 @@ async fn when_the_event_queue_overflows_a_new_snapshot_marks_possible_gaps() {
             panic!("the watch ended: {next}");
         }
     }
-    assert_eq!(known.len(), count + 1);
 }
 
 #[tokio::test]
