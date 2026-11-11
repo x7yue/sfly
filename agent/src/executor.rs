@@ -11,6 +11,7 @@
 //! | `SFLY_EVENTS` | `events.fifo`：结构化日志、进度与指标（命名管道，启动执行器前由 Agent 创建并打开读端，ADR 0015） |
 //! | `SFLY_CANCEL` | `cancel`：取消标记文件 |
 //! | `SFLY_PROCS` | `<procs_dir>/<运行 ID>/`：这次运行的后台进程目录（不在任务目录里，不预先创建；运行 ID 不能用作目录名时不设置） |
+//! | `SFLY_AGENT_SOCKET` | Agent 的本地 socket：节点经它调用 Agent 能力（[`crate::calls`]） |
 //!
 //! 执行器的标准输出 / 标准错误和事件管道由 [`crate::logs`] 合并转发给控制面，
 //! 原始的标准输出 / 标准错误同时写到工作目录下的 `stdout.log` / `stderr.log`。失败消息里的标准错误尾部
@@ -102,6 +103,8 @@ pub struct Settings<'a> {
     pub grace: Duration,
     /// 只在测试中使用：转发器每秒最多处理多少字节的标准输出 / 标准错误（0 = 不限制）。
     pub log_forward_rate: u64,
+    /// Agent 的本地 socket（`SFLY_AGENT_SOCKET`）。
+    pub agent_socket: &'a Path,
 }
 
 /// 准备工作目录并启动执行器子进程；启动失败时直接给出结果。
@@ -140,15 +143,7 @@ pub async fn start(
     }
     // 运行 ID 由控制面生成，正常总能用作目录名；不能时不设置 SFLY_PROCS，SDK 退回默认位置。
     let procs = valid_task_id(&task.run_id).then(|| settings.procs_root.join(&task.run_id));
-    spawn_process(
-        venv,
-        &dir,
-        procs.as_deref(),
-        task,
-        telemetry,
-        settings.grace,
-        settings.log_forward_rate,
-    )
+    spawn_process(venv, &dir, procs.as_deref(), task, telemetry, settings)
 }
 
 async fn prepare_dir(
@@ -209,9 +204,9 @@ fn spawn_process(
     procs: Option<&Path>,
     task: &AssignTask,
     telemetry: &Telemetry,
-    grace: Duration,
-    log_forward_rate: u64,
+    settings: &Settings<'_>,
 ) -> Result<Running, TaskResult> {
+    let (grace, log_forward_rate) = (settings.grace, settings.log_forward_rate);
     let paths = Paths {
         output: dir.join("output.json"),
         cancel: dir.join("cancel"),
@@ -241,6 +236,7 @@ fn spawn_process(
         .env("SFLY_ARTIFACTS", &paths.artifacts)
         .env("SFLY_EVENTS", &events_path)
         .env("SFLY_CANCEL", &paths.cancel)
+        .env("SFLY_AGENT_SOCKET", settings.agent_socket)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

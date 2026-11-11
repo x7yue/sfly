@@ -2,6 +2,7 @@
 //! 启动真实 Agent 二进制、准备装好桩节点包的共享 venv。
 #![allow(dead_code)] // 各测试文件只用到其中一部分。
 
+pub mod calls;
 pub mod mirror;
 pub mod packages;
 

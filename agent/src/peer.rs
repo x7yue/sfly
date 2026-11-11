@@ -4,7 +4,7 @@
 //! - [`serve`] 在所有网卡上监听（默认端口 [`DEFAULT_LISTEN_PORT`]），返回随 Hello 上报的 [`proto::PeerEndpoint`]。
 //!   端口被占用等原因监听不了时不退出：Agent 照常执行任务，只是能力不能被其它 Agent 调用，原因随 Hello 上报。
 //! - 对外地址：安装时显式配置的（[`parse_public_address`]）随 Hello 上报；没有配置时控制面用它看到的连接来源地址。
-//! - [`routes`] 是这个端口上的全部 gRPC 服务：后续能力把自己的服务加在这里。
+//! - [`routes`] 是这个端口上的全部 gRPC 服务：`AgentPeer` 加上每项能力的服务（[`capabilities::add_services`]）。
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -67,7 +67,13 @@ pub async fn serve(
 
 /// 这个端口上的全部 gRPC 服务。
 pub fn routes(identity: Identity) -> tonic::service::Routes {
-    tonic::service::Routes::new(AgentPeerServer::new(Peer { identity }))
+    let mut routes = tonic::service::Routes::builder();
+    let host = capabilities::Host {
+        name: identity.name.clone(),
+    };
+    routes.add_service(AgentPeerServer::new(Peer { identity }));
+    capabilities::add_services(&mut routes, &host);
+    routes.routes()
 }
 
 /// 在所有网卡上监听：先试 IPv6 的 `[::]`（Linux 上同时接受 IPv4），本机不支持 IPv6 时退回 `0.0.0.0`。

@@ -4,13 +4,15 @@
 //! - [`run`] 是 Agent 主循环：连接、接收任务、上报结果，断线后自动重连。
 //!
 //! 任务需要的节点包版本没有安装时，先下载并安装（[`install`]）；安装与启动新任务互斥。
-//! `sfly dev` 通过本地 socket 让 Agent 加载开发版本 `包名@dev`（[`dev`]）。
+//! `sfly dev` 通过本地 socket（[`socket`]）让 Agent 加载开发版本 `包名@dev`（[`dev`]）。
 //!
-//! 其它 Agent 连接本机的端口和 Agent 能力见 [`peer`]、[`capabilities`]（ADR 0019）。
+//! 其它 Agent 连接本机的端口和 Agent 能力见 [`peer`]、[`capabilities`]（ADR 0019）；节点经本地 socket 调用 Agent 能力
+//! 见 [`calls`]。
 //!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
 pub mod artifacts;
+pub mod calls;
 pub mod capabilities;
 pub mod clock;
 pub mod dev;
@@ -24,6 +26,7 @@ pub mod peer;
 pub mod process_tree;
 pub mod retention;
 pub mod sdk;
+mod socket;
 pub mod time_jump;
 pub mod update;
 pub mod venv;
@@ -337,6 +340,10 @@ struct Runtime {
     scratch: PathBuf,
     /// 上报的 Agent 版本（[`Config::version`]）。
     version: String,
+    /// 本地 socket（[`socket`]）：执行器的 `SFLY_AGENT_SOCKET`，节点经它调用 Agent 能力。
+    agent_socket: PathBuf,
+    /// 节点调用另一台 Agent 的能力时用的连接（[`calls`]）。
+    peers: calls::Peers,
 }
 
 /// 发送任务的取消请求（见 [`executor::CancelSignal`]）。
@@ -347,6 +354,8 @@ struct HeldTask {
     cancel: CancelSender,
     /// 执行器子进程已经启动（已发出 TaskStarted）。
     started: bool,
+    /// 任务通过「Agent」类型的输入引用的 Agent：节点只能调用它们和自己的能力（[`calls`]）。
+    referenced_agents: Vec<proto::ReferencedAgent>,
 }
 
 impl Runtime {
@@ -362,6 +371,7 @@ impl Runtime {
             HeldTask {
                 cancel: cancel_tx,
                 started: false,
+                referenced_agents: task.referenced_agents.clone(),
             },
         );
         cancel
@@ -396,6 +406,25 @@ impl Runtime {
         }
         // 结果已经交出、任务已经移出之后才打这一行：测试据此等到这一刻（agent/tests/recovery.rs）。
         eprintln!("task {} attempt {} finished: {status:?}", key.0, key.1);
+    }
+
+    /// 节点调用 Agent 能力（[`calls::serve`]）：按请求里的任务找到它的名单和取消信号；任务不在手上时拒绝。
+    async fn call(
+        &self,
+        request: calls::CallRequest,
+        reader: impl tokio::io::AsyncRead + Unpin + Send,
+        writer: impl tokio::io::AsyncWrite + Send + Sync + 'static,
+    ) {
+        let task = self
+            .cancels
+            .lock()
+            .unwrap()
+            .get(&(request.task_id.clone(), request.attempt))
+            .map(|held| calls::TaskCalls {
+                referenced: held.referenced_agents.clone(),
+                cancel: held.cancel.subscribe(),
+            });
+        calls::serve(request, reader, writer, &self.name, task, &self.peers).await;
     }
 
     /// 正在执行（含安装中）的任务。
@@ -539,6 +568,7 @@ impl Runtime {
             procs_root: &self.procs_dir,
             grace: self.terminate_grace,
             log_forward_rate: self.log_forward_rate,
+            agent_socket: &self.agent_socket,
         };
         executor::start(
             &self.inventory.venv,
@@ -787,6 +817,10 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         std::fs::canonicalize(&config.venv).or_else(|_| std::path::absolute(&config.venv))?;
 
     let scratch = work_dir.join(".install");
+    let dev_socket = config
+        .dev_socket
+        .clone()
+        .unwrap_or_else(|| work_dir.join("agent.sock"));
     let (results_tx, mut results_rx) = mpsc::unbounded_channel();
     let (installs_tx, mut installs_rx) = mpsc::unbounded_channel();
     let (telemetry_tx, mut telemetry_rx) =
@@ -825,15 +859,13 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         uv: config.uv.clone(),
         scratch,
         version: config.version.clone(),
+        agent_socket: std::path::absolute(&dev_socket).unwrap_or_else(|_| dev_socket.clone()),
+        peers: calls::Peers::default(),
     });
-    let dev_socket = config
-        .dev_socket
-        .clone()
-        .unwrap_or_else(|| work_dir.join("agent.sock"));
-    // 本地 socket 不可用时照常运行，只是不能用 sfly dev。
-    match dev::serve(&dev_socket, runtime.clone()) {
+    // 本地 socket 不可用时照常运行，只是不能用 sfly dev，节点也调用不了 Agent 能力（调用时报连不上本机 Agent）。
+    match socket::serve(&dev_socket, runtime.clone()) {
         Ok(_) => eprintln!("sfly dev socket: {}", dev_socket.display()),
-        Err(error) => eprintln!("sfly dev is unavailable: {error:#}"),
+        Err(error) => eprintln!("sfly dev and agent capabilities are unavailable: {error:#}"),
     }
     // 端口监听不了时照常运行，只是能力不能被其它 Agent 调用（原因随 Hello 上报）。
     let endpoint = peer::serve(

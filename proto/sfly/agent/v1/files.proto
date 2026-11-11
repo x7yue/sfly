@@ -1,0 +1,54 @@
+syntax = "proto3";
+
+package sfly.agent.v1;
+
+// Agent 能力 files（ADR 0019）：列出文件、查看文件属性。和 AgentPeer 在同一个端口上提供，供其它 Agent 直接连接，
+// 没有认证，只应在内网使用。
+//
+// 路径是这台 Agent 所在机器上的绝对路径，权限就是 Agent 进程的权限，不做沙箱。错误用 gRPC 状态码区分：
+// NOT_FOUND（文件或目录不存在）、PERMISSION_DENIED（没有权限）、INVALID_ARGUMENT（路径不是绝对路径、不是目录等），
+// 消息是给人看的一句话。
+service AgentFiles {
+  // 列出目录下文件名匹配通配符的普通文件（可递归），分批返回。
+  rpc List(ListFilesRequest) returns (stream ListFilesResponse);
+  // 查看一个文件的属性（跟随符号链接）。
+  rpc Stat(StatFileRequest) returns (StatFileResponse);
+}
+
+// 一个文件的属性。时间是这台机器的 Agent 时间，原样给出，不换算。
+message FileInfo {
+  // 绝对路径。
+  string path = 1;
+  // 字节数。
+  uint64 size = 2;
+  // 修改时间（Unix 纳秒）。
+  int64 mtime_unix_ns = 3;
+  // 文件标识：设备号 + inode。文件被改名后不变，删除后重建会变。
+  uint64 device = 4;
+  uint64 inode = 5;
+}
+
+message ListFilesRequest {
+  // 要列出的目录（绝对路径）。
+  string directory = 1;
+  // 文件名（不含目录）的通配符：`*` 任意字符串、`?` 任意一个字符、`[abc]` / `[a-z]` / `[!abc]` 字符集合，
+  // 与 Python 的 fnmatch.fnmatchcase 相同（区分大小写，`*` 也匹配以 `.` 开头的名字）。为空时等同于 `*`。
+  string pattern = 2;
+  // 是否递归进入子目录（不进入指向目录的符号链接）。
+  bool recursive = 3;
+}
+
+// 一批文件：同一个目录里的文件按名称排序，先列出目录里的文件，再按名称依次进入子目录。
+// 列出期间被删除的文件、没有权限进入的子目录跳过。
+message ListFilesResponse {
+  repeated FileInfo files = 1;
+}
+
+message StatFileRequest {
+  // 文件的绝对路径。
+  string path = 1;
+}
+
+message StatFileResponse {
+  FileInfo file = 1;
+}

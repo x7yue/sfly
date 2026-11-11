@@ -167,6 +167,7 @@ def probe(ctx: Context) -> dict[str, Any]:
         "SFLY_EVENTS",
         "SFLY_CANCEL",
         "SFLY_PROCS",
+        "SFLY_AGENT_SOCKET",
     ]
     names += ["PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"]
     return {

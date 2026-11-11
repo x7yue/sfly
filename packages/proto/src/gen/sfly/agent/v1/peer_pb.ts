@@ -62,7 +62,8 @@ export const DescribeResponseSchema: GenMessage<DescribeResponse> = /*@__PURE__*
 
 /**
  * Agent 之间的服务（ADR 0019）：每台 Agent 在自己的端口（默认 50052）上提供，供其它 Agent 直接连接，
- * 数据不经过控制面。没有认证，只应在内网使用。Agent 能力的各项操作随后续版本加入这个服务。
+ * 数据不经过控制面。没有认证，只应在内网使用。每项 Agent 能力是同一个端口上的另一个服务，各在自己的文件里
+ * （例如 files.proto 的 AgentFiles）；调用之前用 Describe 确认对方支持这项能力。
  *
  * @generated from service sfly.agent.v1.AgentPeer
  */
