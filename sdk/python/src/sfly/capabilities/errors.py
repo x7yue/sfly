@@ -17,12 +17,32 @@
 
 from __future__ import annotations
 
+from sfly.context import Cancelled
+
+
+class Kind:
+    """`AgentError.kind` 的取值，也是 Agent 回复的错误原因（agent/src/calls/mod.rs）。
+    值是公开的（节点里写 `error.kind == "failed"`），不能改。"""
+
+    UNREACHABLE = "unreachable"
+    UNSUPPORTED = "unsupported"
+    NOT_FOUND = "not_found"
+    PERMISSION_DENIED = "permission_denied"
+    TIMEOUT = "timeout"
+    NOT_REFERENCED = "not_referenced"
+    #: 参数不合法，例如要列出的路径不是目录、要读取的是目录。
+    INVALID = "invalid"
+    #: 其它失败，例如下载期间源文件被替换、被截短、大小变了。
+    FAILED = "failed"
+    #: 任务被取消：只在 Agent 的回复里出现，SDK 抛出 `sfly.Cancelled`。
+    CANCELLED = "cancelled"
+
 
 class AgentError(Exception):
     """调用 Agent 能力失败。`kind` 是原因，`agent` 是目标 Agent 的名称（自己所在的 Agent 也写名称，
     本地调试时为 None）。"""
 
-    kind = "failed"
+    kind = Kind.FAILED
 
     def __init__(self, message: str, *, agent: str | None = None, kind: str | None = None) -> None:
         super().__init__(message)
@@ -34,38 +54,38 @@ class AgentError(Exception):
 class AgentUnreachable(AgentError, ConnectionError):
     """连不通：消息里写明从哪台 Agent 到哪台、地址和端口。"""
 
-    kind = "unreachable"
+    kind = Kind.UNREACHABLE
 
 
 class AgentUnsupported(AgentError):
     """对方不支持：目标 Agent 的版本没有这项能力（升级那台 Agent）。"""
 
-    kind = "unsupported"
+    kind = Kind.UNSUPPORTED
 
 
 class AgentFileNotFound(AgentError, FileNotFoundError):
     """文件或目录不存在。"""
 
-    kind = "not_found"
+    kind = Kind.NOT_FOUND
 
 
 class AgentPermissionDenied(AgentError, PermissionError):
     """没有权限：路径的权限就是目标 Agent 进程的权限。"""
 
-    kind = "permission_denied"
+    kind = Kind.PERMISSION_DENIED
 
 
 class AgentTimeout(AgentError, TimeoutError):
     """超过调用的 `timeout` 秒没有回应。"""
 
-    kind = "timeout"
+    kind = Kind.TIMEOUT
 
 
 class AgentNotReferenced(AgentError):
     """目标 Agent 不是通过「Agent」类型的参数（`sfly.AgentName`）拿到的：
     节点只能访问这样拿到的 Agent 和自己所在的 Agent。"""
 
-    kind = "not_referenced"
+    kind = Kind.NOT_REFERENCED
 
 
 _BY_KIND: dict[str, type[AgentError]] = {
@@ -83,11 +103,9 @@ _BY_KIND: dict[str, type[AgentError]] = {
 
 def error_for(kind: str, message: str, agent: str | None) -> BaseException:
     """按 Agent 回复的错误原因构造异常；`cancelled` 是 `sfly.Cancelled`。"""
-    if kind == "cancelled":
-        from sfly.context import Cancelled
-
+    if kind == Kind.CANCELLED:
         return Cancelled(message)
     cls = _BY_KIND.get(kind)
     if cls is None:
-        return AgentError(message, agent=agent, kind=kind or "failed")
+        return AgentError(message, agent=agent, kind=kind or Kind.FAILED)
     return cls(message, agent=agent)

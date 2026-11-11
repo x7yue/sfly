@@ -1,8 +1,8 @@
 """`files.read`、`files.download`：流式读取文件、下载到本地路径。只用标准库（ADR 0002）。
 
 Agent 一侧见 agent/src/capabilities/file_read.rs：下载由节点所在的 Agent 直接写本地文件，
-数据不经过节点进程，节点只收到进度和结果。本地调试时的实现（`_local_read`、`_local_download`）
-规则与它相同。
+数据不经过节点进程，节点只收到进度和结果。本地调试时的实现（`_read` 里的本地分支、
+`_local_download`）规则与它相同。
 """
 
 from __future__ import annotations
@@ -11,16 +11,14 @@ import os
 from collections.abc import Callable, Generator, Iterator
 from typing import TYPE_CHECKING, Any
 
-from sfly.capabilities.channel import DEFAULT_TIMEOUT
+from sfly.capabilities.channel import DEFAULT_TIMEOUT, MAX_DATA
 from sfly.capabilities.errors import AgentError, AgentFileNotFound
-from sfly.capabilities.files_list import FilesBase
+from sfly.capabilities.files_base import FileInfo, FilesBase, absolute
+from sfly.capabilities.files_write import local_write
+from sfly.capabilities.local import HERE, read_chunks
 
 if TYPE_CHECKING:
-    from sfly.capabilities.files import FileInfo
     from sfly.capabilities.local import LocalAgent
-
-#: 本地调试时一次读多少字节（与 Agent 的块大小相同）。
-_CHUNK = 256 * 1024
 
 
 class ReadDownload(FilesBase):
@@ -42,8 +40,6 @@ class ReadDownload(FilesBase):
         迭代时才发起调用：文件不存在、是目录或没有权限时，迭代时抛出异常（见 `sfly.AgentError`）。
         中途停止迭代（或 `close()`）时调用随之放弃。
         """
-        from sfly.capabilities.files import absolute
-
         text = absolute(path)
         _check_offset("offset", offset)
         if length is not None:
@@ -56,7 +52,9 @@ class ReadDownload(FilesBase):
     ) -> Generator[bytes, None, None]:
         local = self._agent._local()
         if local is not None:
-            yield from _local_read(local, path, offset, length)
+            with local.open_file(path) as f:
+                f.seek(offset)
+                yield from read_chunks(f, MAX_DATA, length)
             return
         args = {"path": path, "offset": offset, "length": length}
         with self._agent._call("files.read", args, timeout) as call:
@@ -89,8 +87,6 @@ class ReadDownload(FilesBase):
         - `timeout`：等对方回应的上限（秒），这里是相邻两次进展之间最多等多久，不是整个下载；
           None 为不限。
         """
-        from sfly.capabilities.files import FileInfo, absolute
-
         text = absolute(path)
         target = os.path.abspath(os.fspath(local_path))
         self._agent._check_timeout(timeout)
@@ -113,67 +109,34 @@ def _check_offset(name: str, value: int) -> None:
         raise ValueError(f"{name} 必须是不小于 0 的整数，收到 {value!r}")
 
 
-def _open(local: LocalAgent, path: str) -> Any:
-    """打开那台 Agent 上要读的文件（本机上的位置），错误与 Agent 上相同。"""
-    real = local.real(path)
-    if os.path.isdir(real):
-        raise AgentError(
-            f"{local.label}：{path} 是目录，不能读取", agent=local.name, kind="invalid"
-        )
-    try:
-        return open(real, "rb")  # noqa: SIM115 — 调用方用 with 管理
-    except OSError as error:
-        raise local.error(error, path) from None
-
-
-def _local_read(local: LocalAgent, path: str, offset: int, length: int | None) -> Iterator[bytes]:
-    """本地调试时的读取，规则与 Agent 相同。"""
-    with _open(local, path) as f:
-        f.seek(offset)
-        remaining = length
-        while remaining is None or remaining > 0:
-            data = f.read(_CHUNK if remaining is None else min(_CHUNK, remaining))
-            if not data:
-                return
-            if remaining is not None:
-                remaining -= len(data)
-            yield data
-
-
 def _local_download(
     local: LocalAgent,
     path: str,
     target: str,
     progress: Callable[[int, int], Any] | None,
 ) -> FileInfo:
-    """本地调试时的下载，规则与 Agent 相同：和写入一样先写临时文件（`_local_write`），
-    读完并核对源文件之后才改名为目标路径。"""
-    from sfly.capabilities.files import FileInfo
-    from sfly.capabilities.files_write import _local_write
-    from sfly.capabilities.local import LocalAgent
-
-    # 目标在本机上：路径原样使用，消息里是「本机」。
-    own = LocalAgent(None, None)
+    """本地调试时的下载，规则与 Agent 相同：和写入一样先写临时文件（`local_write`），
+    读完并核对源文件之后才改名为目标路径。目标在本机（`HERE`）上。"""
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
     except OSError as error:
-        raise own.error(error, target) from None
+        raise HERE.error(error, target) from None
     now: os.stat_result | None = None
-    with _open(local, path) as source:
+    with local.open_file(path) as source:
         start = os.fstat(source.fileno())
 
         def chunks() -> Iterator[bytes]:
             nonlocal now
             written = 0
             while written < start.st_size:
-                data = source.read(min(_CHUNK, start.st_size - written))
+                data = source.read(min(MAX_DATA, start.st_size - written))
                 if not data:
                     break
                 yield data
                 written += len(data)
                 if progress is not None:
                     progress(written, start.st_size)
-            # 在这里抛出的异常让 `_local_write` 删掉临时文件、不改名。
+            # 在这里抛出的异常让 `local_write` 删掉临时文件、不改名。
             try:
                 now = os.stat(local.real(path))
             except FileNotFoundError:
@@ -186,7 +149,7 @@ def _local_download(
             if changed:
                 raise AgentError(f"{local.label}：{path} {changed}，下载作废", agent=local.name)
 
-        _local_write(own, target, chunks())
+        local_write(HERE, target, chunks())
     assert now is not None
     return FileInfo.from_stat(path, now)
 

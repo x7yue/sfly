@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Collection, Mapping
+import stat as stat_module
+from collections.abc import Collection, Iterator, Mapping
+from typing import BinaryIO
 
 from sfly.capabilities.errors import (
     AgentError,
@@ -24,7 +26,9 @@ from sfly.capabilities.errors import (
     AgentNotReferenced,
     AgentPermissionDenied,
     AgentUnreachable,
+    Kind,
 )
+from sfly.context import DeferCancel
 
 
 def read_mapping(path: str | os.PathLike[str]) -> dict[str, str]:
@@ -50,9 +54,9 @@ class LocalAgent:
     def resolve(
         cls, name: str | None, mapping: Mapping[str, str], referenced: Collection[str]
     ) -> LocalAgent:
-        """按名称找本地调试时的 Agent；None 是自己所在的 Agent（本机）。"""
+        """按名称找本地调试时的 Agent；None 是自己所在的 Agent（本机，`HERE`）。"""
         if name is None:
-            return cls(None, None)
+            return HERE
         if name not in referenced:
             raise AgentNotReferenced(
                 "节点只能访问通过「Agent」类型的参数拿到的 Agent 和自己所在的 Agent，"
@@ -86,12 +90,86 @@ class LocalAgent:
         relative = os.path.relpath(real, self.root)
         return "/" if relative == "." else "/" + relative.replace(os.sep, "/")
 
-    def error(self, error: OSError, path: str) -> AgentError:
-        """文件系统错误转成和 Agent 上相同的异常（消息写明路径，`path` 是那台 Agent 上的写法）。"""
+    def error(
+        self,
+        error: OSError,
+        path: str,
+        *,
+        missing: str | None = None,
+        denied: str | None = None,
+        not_dir: str | None = None,
+    ) -> AgentError:
+        """文件系统错误转成和 Agent 上相同的异常（消息写明路径，`path` 是那台 Agent 上的写法）。
+        `missing`、`denied`、`not_dir`：不存在、没有权限、不是目录时换成这条消息
+        （与 Agent 上这个操作的消息相同）。"""
         if isinstance(error, FileNotFoundError):
-            return AgentFileNotFound(f"{self.label}：{path} 不存在", agent=self.name)
+            return AgentFileNotFound(self._message(missing or f"{path} 不存在"), agent=self.name)
         if isinstance(error, PermissionError):
-            return AgentPermissionDenied(f"{self.label}：没有权限访问 {path}", agent=self.name)
+            message = self._message(denied or f"没有权限访问 {path}")
+            return AgentPermissionDenied(message, agent=self.name)
         if isinstance(error, NotADirectoryError):
-            return AgentError(f"{self.label}：{path} 不是目录", agent=self.name, kind="invalid")
-        return AgentError(f"{self.label}：访问 {path} 失败：{error}", agent=self.name)
+            return self.invalid(not_dir or f"{path} 不是目录")
+        return AgentError(self._message(f"访问 {path} 失败：{error}"), agent=self.name)
+
+    def invalid(self, message: str) -> AgentError:
+        """参数不合法（`kind` 为 invalid），例如要读取的是目录。"""
+        return AgentError(self._message(message), agent=self.name, kind=Kind.INVALID)
+
+    def _message(self, text: str) -> str:
+        return f"{self.label}：{text}"
+
+    def open_file(self, path: str, *, regular: bool = False) -> _OpenFile:
+        """以只读方式打开这台 Agent 上的文件 `path`（跟随符号链接），用 `with`。
+        错误与 Agent 上相同：是目录时不能读取，`regular` 时不是普通文件都不行（上传时）。"""
+        return _OpenFile(self, path, regular)
+
+
+#: 节点所在的机器：自己所在的 Agent，路径原样使用，消息里称为「本机」。
+HERE = LocalAgent(None, None)
+
+
+class _OpenFile:
+    """`LocalAgent.open_file`：打开和登记关闭之间不会被取消打断（`DeferCancel`）。"""
+
+    def __init__(self, local: LocalAgent, path: str, regular: bool) -> None:
+        self._local = local
+        self._path = path
+        self._regular = regular
+        self._file: BinaryIO | None = None
+
+    def __enter__(self) -> BinaryIO:
+        local, path = self._local, self._path
+        not_file = f"{path} 不是文件" if self._regular else f"{path} 是目录，不能读取"
+        try:
+            with DeferCancel():
+                self._file = open(local.real(path), "rb")  # noqa: SIM115 — __exit__ 关闭
+            mode = os.fstat(self._file.fileno()).st_mode
+        except IsADirectoryError:
+            raise local.invalid(not_file) from None
+        except BaseException as error:
+            self.__exit__()
+            if isinstance(error, OSError):
+                raise local.error(error, path) from None
+            raise
+        if not stat_module.S_ISREG(mode) and (self._regular or stat_module.S_ISDIR(mode)):
+            self.__exit__()
+            raise local.invalid(not_file)
+        return self._file
+
+    def __exit__(self, *exc: object) -> None:
+        if self._file is not None:
+            self._file.close()
+            self._file = None
+
+
+def read_chunks(f: BinaryIO, size: int, length: int | None = None) -> Iterator[bytes]:
+    """从 `f` 的当前位置起逐块读出，每块最多 `size` 字节，读到 `length` 字节为止
+    （None 为读到末尾）。"""
+    remaining = length
+    while remaining is None or remaining > 0:
+        data = f.read(size if remaining is None else min(size, remaining))
+        if not data:
+            return
+        if remaining is not None:
+            remaining -= len(data)
+        yield data

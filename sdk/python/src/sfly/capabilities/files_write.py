@@ -1,7 +1,7 @@
 """`files.write`、`files.upload`、`files.delete`：写入、上传、删除文件。只用标准库（ADR 0002）。
 
 Agent 一侧见 agent/src/capabilities/file_write.rs，本地调试时的实现
-（`_local_write`、`_local_delete`）规则与它相同：先写到目标所在目录里的临时文件
+（`local_write`、`_local_delete`）规则与它相同：先写到目标所在目录里的临时文件
 （`.<文件名>.sfly-<随机>.tmp`），写完才改名为目标路径。
 """
 
@@ -9,20 +9,16 @@ from __future__ import annotations
 
 import itertools
 import os
+import posixpath
+import stat as stat_module
 from collections.abc import Iterable, Iterator
-from typing import TYPE_CHECKING
+from typing import IO
 
 from sfly.capabilities.channel import DEFAULT_TIMEOUT, MAX_DATA
-from sfly.capabilities.errors import (
-    AgentError,
-    AgentFileNotFound,
-    AgentPermissionDenied,
-)
-from sfly.capabilities.files_list import FilesBase
-
-if TYPE_CHECKING:
-    from sfly.capabilities.files import FileInfo
-    from sfly.capabilities.local import LocalAgent
+from sfly.capabilities.errors import AgentError
+from sfly.capabilities.files_base import FileInfo, FilesBase, absolute
+from sfly.capabilities.local import HERE, LocalAgent, read_chunks
+from sfly.context import DeferCancel
 
 #: `files.write` 的内容：一整块字节，或逐段给出字节的可迭代对象（例如生成器）。
 Data = bytes | bytearray | memoryview | Iterable[bytes | bytearray | memoryview]
@@ -49,16 +45,12 @@ class WriteDelete(FilesBase):
         - `timeout`：等对方回应的上限（秒）：对方接收每一段、写完后给出结果各自最多等多久；
           等 `data` 给出下一段不计时。None 为不限。
         """
-        from sfly.capabilities.files import absolute
-
         text = absolute(path)
         self._agent._check_timeout(timeout)
         chunks = _chunks(data)
         local = self._agent._local()
         if local is not None:
-            return _local_write(local, text, chunks)
-        from sfly.capabilities.files import FileInfo
-
+            return local_write(local, text, chunks)
         with self._agent._call("files.write", {"path": text}, timeout) as call:
             for chunk in chunks:
                 if not call.send_data(chunk):
@@ -83,14 +75,14 @@ class WriteDelete(FilesBase):
         - 写入的规则与 `write` 相同（先写临时文件再改名）；
         - `timeout`：对方接收每一段、写完后给出结果各自最多等多久，None 为不限。
         """
-        from sfly.capabilities.files import FileInfo, absolute
-
         text = absolute(path)
         source = os.path.abspath(os.fspath(local_path))
         self._agent._check_timeout(timeout)
         local = self._agent._local()
         if local is not None:
-            return _local_write(local, text, _read_file(source))
+            # 和 Agent 上一样先打开要上传的文件：它不存在时报的是本机上的错误。
+            with HERE.open_file(source, regular=True) as f:
+                return local_write(local, text, read_chunks(f, MAX_DATA))
         args = {"local_path": source, "path": text}
         with self._agent._call("files.upload", args, timeout) as call:
             return FileInfo.from_json(call.result())
@@ -100,8 +92,6 @@ class WriteDelete(FilesBase):
     ) -> None:
         """删除那台 Agent 上的文件 `path`。不删除目录；`path` 是符号链接时删除链接本身。
         文件不存在时抛出 `sfly.AgentFileNotFound`。"""
-        from sfly.capabilities.files import absolute
-
         text = absolute(path)
         self._agent._check_timeout(timeout)
         local = self._agent._local()
@@ -139,44 +129,16 @@ def _chunks(data: Data) -> Iterator[memoryview]:
     return split()
 
 
-def _invalid(local: LocalAgent, message: str) -> AgentError:
-    return AgentError(f"{local.label}：{message}", agent=local.name, kind="invalid")
-
-
-def _read_file(path: str) -> Iterator[bytes]:
-    """本地调试时上传：逐段读本机（节点所在机器）的文件。打不开时抛出和 Agent 上相同的异常。"""
-    from sfly.capabilities.local import LocalAgent
-
-    own = LocalAgent(None, None)
-    try:
-        f = open(path, "rb")  # noqa: SIM115 - 交给下面的生成器，读完关闭
-    except IsADirectoryError:
-        raise _invalid(own, f"{path} 不是文件") from None
-    except OSError as error:
-        raise own.error(error, path) from None
-
-    def read() -> Iterator[bytes]:
-        with f:
-            while chunk := f.read(MAX_DATA):
-                yield chunk
-
-    return read()
-
-
 _TEMP_SEQ = itertools.count()
 
 
-def _local_write(local: LocalAgent, path: str, chunks: Iterable[bytes | memoryview]) -> FileInfo:
-    """本地调试时的写入：先写临时文件再改名，规则与 Agent 相同。"""
-    import posixpath
-    import stat as stat_module
-
-    from sfly.capabilities.files import FileInfo
-
+def local_write(local: LocalAgent, path: str, chunks: Iterable[bytes | memoryview]) -> FileInfo:
+    """本地调试时的写入：先写临时文件再改名，规则与 Agent 相同。失败（包括 `chunks` 抛出异常、
+    任务被取消）时删掉临时文件，目标不受影响。"""
     real = local.real(path)
     directory, name = os.path.split(real)
     if not posixpath.basename(path) or not name:
-        raise _invalid(local, f"{path} 不是文件路径")
+        raise local.invalid(f"{path} 不是文件路径")
     try:
         existing = os.lstat(real)
     except FileNotFoundError:
@@ -185,25 +147,19 @@ def _local_write(local: LocalAgent, path: str, chunks: Iterable[bytes | memoryvi
         raise local.error(error, path) from None
     else:
         if stat_module.S_ISDIR(existing.st_mode):
-            raise _invalid(local, f"{path} 是目录：只能写入文件")
+            raise local.invalid(f"{path} 是目录：只能写入文件")
         regular = stat_module.S_ISREG(existing.st_mode)
         mode = stat_module.S_IMODE(existing.st_mode) if regular else None
     temp = os.path.join(
         directory,
         f".{name[:100]}.sfly-{os.getpid():x}-{next(_TEMP_SEQ):x}-{os.urandom(4).hex()}.tmp",
     )
+    f: IO[bytes] | None = None
     try:
-        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o666)
-    except FileNotFoundError:
-        message = f"{local.label}：目录 {posixpath.dirname(path)} 不存在"
-        raise AgentFileNotFound(message, agent=local.name) from None
-    except PermissionError:
-        message = f"{local.label}：没有权限写入 {path}"
-        raise AgentPermissionDenied(message, agent=local.name) from None
-    except OSError as error:
-        raise local.error(error, path) from None
-    try:
-        with os.fdopen(fd, "wb") as f:
+        # 临时文件一建出来就归下面的清理管：取消不会落在建出来和进入 try 之间。
+        with DeferCancel():
+            f = _create(local, path, temp)
+        with f:
             for chunk in chunks:
                 f.write(chunk)
             f.flush()
@@ -212,7 +168,10 @@ def _local_write(local: LocalAgent, path: str, chunks: Iterable[bytes | memoryvi
             os.chmod(temp, mode)
         os.replace(temp, real)
     except BaseException as error:
-        # 包括 Cancelled、内容抛出的异常：删掉临时文件，目标不受影响。
+        # 包括 Cancelled、内容抛出的异常：删掉临时文件，目标不受影响。建临时文件失败时它不存在，
+        # 删除也失败，不要紧（名字是随机的，不会是别人的文件）。
+        if f is not None:
+            f.close()
         try:
             os.unlink(temp)
         except OSError:
@@ -223,19 +182,30 @@ def _local_write(local: LocalAgent, path: str, chunks: Iterable[bytes | memoryvi
     return FileInfo.from_stat(path, os.stat(real))
 
 
+def _create(local: LocalAgent, path: str, temp: str) -> IO[bytes]:
+    """建临时文件（`O_EXCL`），错误与 Agent 上建临时文件时相同。"""
+    try:
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_CLOEXEC, 0o666)
+    except OSError as error:
+        parent = posixpath.dirname(path)
+        raise local.error(
+            error,
+            path,
+            missing=f"目录 {parent} 不存在",
+            denied=f"没有权限写入 {path}",
+            not_dir=f"{parent} 不是目录",
+        ) from None
+    return os.fdopen(fd, "wb")
+
+
 def _local_delete(local: LocalAgent, path: str) -> None:
     """本地调试时的删除，规则与 Agent 相同。"""
-    import stat as stat_module
-
     real = local.real(path)
     try:
         is_dir = stat_module.S_ISDIR(os.lstat(real).st_mode)
         if not is_dir:
             os.unlink(real)
-    except PermissionError:
-        message = f"{local.label}：没有权限删除 {path}"
-        raise AgentPermissionDenied(message, agent=local.name) from None
     except OSError as error:
-        raise local.error(error, path) from None
+        raise local.error(error, path, denied=f"没有权限删除 {path}") from None
     if is_dir:
-        raise _invalid(local, f"{path} 是目录：只能删除文件")
+        raise local.invalid(f"{path} 是目录：只能删除文件")

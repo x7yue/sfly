@@ -32,6 +32,7 @@
 
 from __future__ import annotations
 
+import _thread
 import json
 import math
 import os
@@ -64,6 +65,55 @@ _NO_LABEL_KEYS: frozenset[str] = frozenset()
 
 class Cancelled(BaseException):
     """任务被取消（或超时）时，执行器收到 SIGTERM 后在节点代码里抛出。"""
+
+
+class _Sigterm:
+    """主线程里 `DeferCancel` 的嵌套层数，和推迟期间是否收到了 SIGTERM。"""
+
+    main = _thread.get_ident()
+    depth = 0
+    pending = False
+
+
+def on_sigterm(signum: int, frame: object) -> None:
+    """执行器装的 SIGTERM 处理函数（只在主线程里执行）：在节点代码里抛出 `Cancelled`；
+    正在 `DeferCancel` 里时推迟到离开它。"""
+    if _Sigterm.depth:
+        _Sigterm.pending = True
+        return
+    raise Cancelled("任务被终止（SIGTERM）")
+
+
+class DeferCancel:
+    """`with DeferCancel():` 这一段里收到的 SIGTERM 推迟到离开这一段时才变成 `Cancelled`。
+
+    SDK 拿到要清理的资源（文件描述符、临时文件、子进程）时用，取消不会落在「拿到资源」和
+    「登记好清理」之间（拿到之后、进入 `try` 之前被打断，资源就没人清理了）：
+
+        resource = None
+        try:
+            with DeferCancel():
+                resource = acquire()
+            ...
+        finally:
+            if resource is not None:
+                release(resource)
+
+    只推迟主线程里的取消：其它线程里收不到 `Cancelled`。
+    """
+
+    def __enter__(self) -> None:
+        self._counted = _thread.get_ident() == _Sigterm.main
+        if self._counted:
+            _Sigterm.depth += 1
+
+    def __exit__(self, *exc: object) -> None:
+        if not self._counted:
+            return
+        _Sigterm.depth -= 1
+        if _Sigterm.depth == 0 and _Sigterm.pending:
+            _Sigterm.pending = False
+            raise Cancelled("任务被终止（SIGTERM）")
 
 
 class ArtifactDownloadError(Exception):

@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,7 @@ import pytest
 
 import sfly
 from sfly import Context, TaskInfo
+from sfly.capabilities import Agent
 from sfly.testing import run_node
 
 PACKAGE = Path(__file__).resolve().parents[3] / "testdata" / "agent-files-package"
@@ -118,6 +120,47 @@ def test_a_write_that_fails_halfway_leaves_nothing_at_the_target(tmp_path: Path)
     assert "生成内容失败" in failed.error.message
     assert sorted(os.listdir(out)) == ["existing.log"]
     assert (out / "existing.log").read_text(encoding="utf-8") == "keep me\n"
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="用 /proc/self/fd 数文件描述符")
+def test_a_cancel_right_after_the_temporary_file_is_created_leaves_nothing_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sigterm_after: Callable[[Any, str], None]
+) -> None:
+    # 取消（SIGTERM）恰好落在临时文件建出来之后：临时文件被删除、文件描述符被关闭，目标不受影响。
+    from sfly.capabilities import files_write
+
+    monkeypatch.delenv("SFLY_AGENT_SOCKET", raising=False)
+    target = tmp_path / "app.log"
+    target.write_bytes(b"old\n")
+    files = Agent(None, local_mapping={}).files
+    fds = set(os.listdir("/proc/self/fd"))
+    sigterm_after(files_write, "_create")
+
+    with pytest.raises(sfly.Cancelled):
+        files.write(str(target), b"new\n")
+
+    assert os.listdir(tmp_path) == ["app.log"]
+    assert target.read_bytes() == b"old\n"
+    assert set(os.listdir("/proc/self/fd")) == fds
+
+
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="用 /proc/self/fd 数文件描述符")
+def test_a_cancel_right_after_the_upload_source_is_opened_closes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sigterm_after: Callable[[Any, str], None]
+) -> None:
+    from sfly.capabilities import local
+
+    monkeypatch.delenv("SFLY_AGENT_SOCKET", raising=False)
+    (tmp_path / "source.log").write_bytes(b"data\n")
+    files = Agent(None, local_mapping={}).files
+    fds = set(os.listdir("/proc/self/fd"))
+    sigterm_after(local, "open")
+
+    with pytest.raises(sfly.Cancelled):
+        files.upload(tmp_path / "source.log", str(tmp_path / "copy.log"))
+
+    assert os.listdir(tmp_path) == ["source.log"]
+    assert set(os.listdir("/proc/self/fd")) == fds
 
 
 def test_errors_tell_apart_missing_directories_directories_and_permissions(tmp_path: Path) -> None:

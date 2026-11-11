@@ -9,13 +9,10 @@ from __future__ import annotations
 import os
 from collections.abc import Generator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from sfly.capabilities.channel import DEFAULT_TIMEOUT
-from sfly.capabilities.files_list import FilesBase
-
-if TYPE_CHECKING:
-    from sfly.capabilities.files import FileId, FileInfo
+from sfly.capabilities.files_base import FileId, FileInfo, FilesBase, Scope
 
 #: 事件的类型。
 FileEventKind = Literal["created", "moved", "closed", "modified", "deleted"]
@@ -89,27 +86,23 @@ class Watch(FilesBase):
         迭代时才开始监听：`directory` 不存在、不是目录或没有权限时，迭代时抛出异常
         （见 `sfly.AgentError`）；监听期间目录被删除或改名时抛出 `sfly.AgentFileNotFound`。
         """
-        from sfly.capabilities.files import absolute
-
-        path = absolute(directory)
+        scope = Scope.of(directory, pattern, recursive)
         self._agent._check_timeout(timeout)
-        return self._watch(path, pattern or "*", recursive, timeout)
+        return self._watch(scope, timeout)
 
     def _watch(
-        self, path: str, pattern: str, recursive: bool, timeout: float | None
+        self, scope: Scope, timeout: float | None
     ) -> Generator[WatchSnapshot | FileEvent, None, None]:
-        from sfly.capabilities.files import FileInfo
-
         local = self._agent._local()
         if local is not None:
+            # 用到时才导入：它用 ctypes 调用 libc，不放在每个任务的启动路径上（#76）。
             from sfly.capabilities.files_watch_local import local_watch
 
-            yield from local_watch(local, path, pattern, recursive)
+            yield from local_watch(local, scope)
             return
-        args = {"directory": path, "pattern": pattern, "recursive": recursive}
         files: list[FileInfo] = []
         missed = False
-        with self._agent._call("files.watch", args, timeout) as call:
+        with self._agent._call("files.watch", scope.args(), timeout) as call:
             for item in call.items():
                 if not isinstance(item, dict):
                     continue

@@ -239,6 +239,28 @@ def test_a_source_that_changes_during_the_download_fails_it_without_leaving_a_fi
     assert os.listdir(target.parent) == []
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="用 /proc/self/fd 数文件描述符")
+def test_a_cancel_right_after_the_file_is_opened_closes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sigterm_after: Callable[[Any, str], None]
+) -> None:
+    # 取消（SIGTERM）恰好落在文件打开之后：文件描述符照样被关闭。
+    from sfly.capabilities import Agent, local
+
+    monkeypatch.delenv("SFLY_AGENT_SOCKET", raising=False)
+    (tmp_path / "app.log").write_bytes(b"data\n")
+    files = Agent(None, local_mapping={}).files
+    fds = set(os.listdir("/proc/self/fd"))
+    sigterm_after(local, "open")
+
+    with pytest.raises(sfly.Cancelled):
+        next(files.read(str(tmp_path / "app.log")))
+    with pytest.raises(sfly.Cancelled):
+        files.download(str(tmp_path / "app.log"), tmp_path / "copy.log")
+
+    assert os.listdir(tmp_path) == ["app.log"]
+    assert set(os.listdir("/proc/self/fd")) == fds
+
+
 def test_sfly_run_downloads_from_a_mapped_agent(tmp_path: Path) -> None:
     project = tmp_path / "project"
     shutil.copytree(PACKAGE, project, ignore=shutil.ignore_patterns("__pycache__", "dist"))
