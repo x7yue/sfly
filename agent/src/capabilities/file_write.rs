@@ -56,8 +56,8 @@ fn add_service(routes: &mut tonic::service::RoutesBuilder, _host: &Host) {
     routes.add_service(AgentFileWriteServer::new(FileWrite));
 }
 
-/// 传给目标 Agent 时每段最多多少字节。
-const CHUNK: usize = 256 * 1024;
+/// 传给目标 Agent 时每段最多多少字节（读取文件时每块也是这么多，见 [`super::file_read`]）。
+pub(super) const CHUNK: usize = 256 * 1024;
 
 /// `AgentFileWrite` 服务：供其它 Agent 调用，也被自己所在的 Agent 直接调用（[`Target::Local`]）。
 pub struct FileWrite;

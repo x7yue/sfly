@@ -20,7 +20,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt as _};
 use tonic::{Code, Request, Response, Status};
 
-use super::file_write::TempFile;
+use super::file_write::{CHUNK, TempFile};
 use super::files::{Files, absolute, file_info, file_json, io_status};
 use super::{Capability, Host, Module};
 use crate::calls::{BoxFuture, Call, CallError, ErrorKind, Method, Target};
@@ -51,9 +51,6 @@ pub const MODULE: Module = Module {
 fn add_service(routes: &mut tonic::service::RoutesBuilder, _host: &Host) {
     routes.add_service(AgentFileReadServer::new(FileRead));
 }
-
-/// 一块最多多少字节（一条 gRPC 回复、一个 data 帧）。
-const CHUNK: usize = 256 * 1024;
 
 /// 读出来还没发走的块最多攒几块：读得比对方收得快时停下来等，内存占用有上限。
 const BUFFERED: usize = 8;
