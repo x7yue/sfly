@@ -88,7 +88,10 @@ def _run(args: argparse.Namespace) -> int:
     from sfly.cli.run import EXIT_INVALID, RunError, run
 
     try:
-        return run(Path(args.project).resolve(), args.node, args.params, args.grace)
+        downloads = {ref: Path(path).absolute() for ref, path in args.download or []}
+        return run(
+            Path(args.project).resolve(), args.node, args.params, args.grace, downloads=downloads
+        )
     except RunError as error:
         print(error, file=sys.stderr)
         return EXIT_INVALID
@@ -175,6 +178,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_run.add_argument("node", help="节点名（@node 的 name，默认为函数名）")
     p_run.add_argument("--params", default="{}", help="节点的输入，JSON 对象（默认 {}）")
     p_run.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+    p_run.add_argument(
+        "--download",
+        nargs=2,
+        action="append",
+        metavar=("产物引用", "文件"),
+        help="节点用 ctx.artifacts.download 下载这个产物引用时，得到这个本地文件的内容"
+        "（不访问网络）；可以重复给出",
+    )
     p_run.add_argument(
         "--grace",
         type=float,

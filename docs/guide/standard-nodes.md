@@ -11,10 +11,10 @@
 ```sh
 cd ~/Downloads
 sha256sum -c SHA256SUMS --ignore-missing
-curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.2.0.sflypkg {{SFLY_URL}}/packages
+curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.3.0.sflypkg {{SFLY_URL}}/packages
 ```
 
-- 上传成功时返回节点包的版本信息（JSON）；装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.2.0.sflypkg`。
+- 上传成功时返回节点包的版本信息（JSON）；装了 sfly 命令行时也可以用 `sfly publish sfly-std-0.3.0.sflypkg`。
 - 上传后 `sfly-std` 出现在 [节点包管理](/packages) 页面，它的节点出现在画布的节点选择里。Agent 第一次执行时从控制面安装它，依赖（`psutil`、`httpx`）从 PyPI 镜像安装。
 - Release 说明写明了需要的**最低 Agent 版本**。Agent 版本更旧时任务以 `env_error` 失败并提示升级（见 [需要的 SDK 版本](publish.md#需要的-sdk-版本)）；Agent 跟随控制面的版本，升级控制面即可。
 - 已上传的版本不能覆盖。升级时上传新版本，再在场景里把 `sfly-std` 换成新版本；旧场景不受影响。
@@ -32,6 +32,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 节点名是英文标识符，标题是中文；下文表格里的参数名和输出名就是节点表单与引用上游输出时用的名字。
 - 运行时间由节点的超时（timeout，默认 1 小时）限制；超时和取消一样终止节点的整棵进程树。
 - 运行时的输出实时转为任务日志。节点输出不超过 1 MB，大内容保存为产物。
+- 产物在任务结束后由 Agent 上传到控制面，一个任务的产物合计不能超过控制面的产物上限（默认 1 GB，部署者用 `SFLY_ARTIFACT_LIMIT_MB` 调整）。超过时控制面拒绝上传（HTTP 413），任务以 `node_error` 失败，错误信息以「上传产物失败」开头并写明是哪个产物；节点本来就失败时保留原来的错误，上传失败的原因附在后面。产物随运行一起按保留期清理，清理后引用它的下载得到「产物已被清理」。
 - 失败时错误信息写明原因和关键参数，在运行页面的节点详情里查看。
 - 等待类节点（`wait_port`、`wait_file`、`wait_log_line`）都有 `wait` 和 `poll`：`wait` 是等待本身的期限，节点的超时（timeout）仍然有效，`wait` 比超时长时以超时为准。`wait` 为 0 时只检查一次。
 - 持续运行的节点（`system_monitor`、`process_monitor`、`follow_log`）都有 `duration`：设置时（必须大于 0）到期后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消（用法见下文「压测期间监控被测服务」）。被停止时节点记为「已停止」，不算失败，已经上报的指标、日志和产物都保留。
@@ -42,7 +43,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 | 类别 | 节点 | 标题 | 用途 |
 |---|---|---|---|
-| 执行 | `shell` | Shell 命令 | 执行一段命令，输出退出码和标准输出 |
+| 执行 | `shell` | Shell 命令 | 执行一段命令，输出退出码、标准输出和标准错误 |
 | 执行 | `start_process` | 启动后台进程 | 启动被测系统等常驻进程，节点结束后进程继续运行 |
 | 执行 | `stop_process` | 停止后台进程 | 停止 `start_process` 启动的进程组，适合作为 always 节点清理 |
 | 监控 | `system_monitor` | 系统监控 | 上报机器的 CPU、内存、负载、磁盘和网络指标，磁盘和网络另按每块磁盘、每块网卡各画一条曲线 |
@@ -95,16 +96,23 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `env` | 无 | 追加的环境变量（对象，值为字符串），在 Agent 的环境变量之上 |
 | `cwd` | 任务工作目录 | 工作目录，必须已经存在 |
 | `ok_exit_codes` | `[0]` | 算作成功的退出码 |
+| `save_output` | `false` | 保存完整输出：为 `true` 时把完整的标准输出和标准错误各保存为一个产物 |
 
 | 输出 | 说明 |
 |---|---|
 | `exit_code` | 退出码；命令被信号终止时为 128 + 信号值（与 shell 的 `$?` 相同） |
 | `stdout` | 标准输出的最后 64 KiB |
+| `stderr` | 标准错误的最后 64 KiB |
+| `stdout_file` | 产物 `stdout.txt`（完整的标准输出）的引用；`save_output` 为 `false` 时是空值 |
+| `stderr_file` | 产物 `stderr.txt`（完整的标准错误）的引用；`save_output` 为 `false` 时是空值 |
 
-- 标准输出和标准错误实时转为任务日志（来源分别是 stdout 和 stderr）。
+- 标准输出和标准错误实时转为任务日志（来源分别是 stdout 和 stderr），`save_output` 不影响这一点。
+- `stdout`、`stderr` 超过 64 KiB 时只保留末尾，截断点不会落在一个多字节字符中间。要完整内容时打开 `save_output`：两个产物是命令输出的原始字节，边运行边写入，命令失败、被取消时已有的内容也保留。后续节点引用 `stdout_file`、`stderr_file`，用 SDK 的 `ctx.artifacts.download` 下载（见 [开发节点](sdk-reference.md) 的「下载产物」）；产物在控制面上，后续节点在哪一台 Agent 上执行都能下载。
+- 两个产物的大小上限和保留期见上文「通用约定」。
+- `stderr`、`save_output`、`stdout_file`、`stderr_file` 从 sfly-std 0.3.0 起有；锁定旧版本的场景只有 `exit_code` 和 `stdout`，行为不变。
 - 退出码不在 `ok_exit_codes` 里时节点失败，错误信息是退出码、命令和标准错误的末尾（约 4 KiB）。解释器或工作目录不存在时也失败，错误信息写明是哪一个。
 - 取消或超时时，命令和它启动的全部子进程都被终止：先发 SIGTERM，宽限期过后强制杀掉。自己调用 `setsid` 脱离进程组的进程不在其中。
-- 命令退出时还在运行的后台进程（例如 `server &`）不会被终止，但它们之后的输出不再转为日志。
+- 命令退出时还在运行的后台进程（例如 `server &`）不会被终止。它们还持有输出管道时，节点最多再等 2 秒；这之后的输出不再转为日志，也不进 `stdout`、`stderr` 和 `save_output` 的产物，产物停在那一刻的内容。
 
 例：构建后把版本号交给后面的节点。节点 `build` 的参数：
 
@@ -460,7 +468,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 ## `http_request`：HTTP 请求
 
-发一个 HTTP 请求，检查状态码和响应 JSON；打开 `until_ok` 时重试直到满足，可以用来等待 HTTP 服务就绪。
+发一个 HTTP 请求，检查状态码和响应 JSON；打开 `until_ok` 时重试直到满足，可以用来等待 HTTP 服务就绪。打开 `save_body` 时把完整的响应体存成产物，用来下载大文件或二进制内容。
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
@@ -476,6 +484,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `until_ok` | `false` | 打开时，没有得到响应（连接失败、超时）或断言不通过就每 `poll` 秒重试一次，直到通过或超过 `wait` 秒 |
 | `wait` | `300` | `until_ok` 时最多等多少秒 |
 | `poll` | `1` | `until_ok` 时的重试间隔（秒） |
+| `save_body` | `false` | 保存响应体：打开时把响应体的原始字节存成产物 `body`，输出 `body_file` 给出它的产物引用 |
 
 | 输出 | 说明 |
 |---|---|
@@ -484,6 +493,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `json` | 响应内容是 JSON、且解析后的值写进输出（JSON 序列化）后不超过 256 KiB 时，解析后的值 |
 | `text` | 响应内容不是 JSON 或 `json` 超过 256 KiB 时的文本，写进输出后最多 256 KiB，超过时只保留开头（截断、或 JSON 改为输出 `text` 时写一条警告日志） |
 | `elapsed_ms` | 最后一次请求的耗时（毫秒） |
+| `body_file` | `save_body` 打开时是产物 `body` 的产物引用，后续节点可以引用它下载完整的响应体；关闭时为空值 |
 
 | 指标 | 单位 | 说明 |
 |---|---|---|
@@ -492,6 +502,12 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 - 先检查状态码，再检查 `expect_json`。不满足时节点失败，错误信息写明请求方法和地址、状态码，以及不在 `expect_status` 里时响应的开头、不通过的断言（与 `assert` 一样逐条列出）。响应不是 JSON 而填了 `expect_json` 时也失败。
 - `expect_json` 检查完整的响应 JSON：超过 256 KiB、输出里只有截断的 `text` 时也一样。
 - 256 KiB 按写进输出后的大小算，不是响应的原始字节数：控制字符会转义成 `\u00XX`（每个 6 字节），引号、反斜杠、换行转义成 2 字节，无法解码的字节换成 `�`（3 字节）。所以二进制或含大量控制字符的响应，`text` 保留的字符会少得多；这样整个节点输出不会超过 1 MB 上限。
+- `save_body` 打开时，响应体边接收边写进产物文件，不整个读进内存，内容与响应体逐字节一致，不截断、不解码成文本（响应带 `Content-Encoding` 压缩时，保存的是解压后的内容）。其它输出不变：`json` / `text` 仍按上面的规则给出。
+  - 产物要么是一次完整的响应，要么不存在：连接失败、响应体中途断开、请求被取消时不留下半截文件。
+  - 与 `until_ok` 一起用时，每次请求取代上一次的内容，产物是最后一次请求的响应；节点因断言不通过而失败时，产物仍然保留。最后一次请求没有收到完整的响应时，没有产物，更早一次的响应也不保留。
+  - 产物的大小上限和保留期见上文「通用约定」。
+  - 后续节点引用 `body_file`，用 SDK 的 `ctx.artifacts.download` 下载（见 [开发节点](sdk-reference.md) 的「下载产物」），在哪一台 Agent 上执行都能下载。`save_body`、`body_file` 从 sfly-std 0.3.0 起有。
+  - 响应体超过 4 MiB 时内存里只留开头：`text` 照常输出开头的 256 KiB，不再尝试输出 `json`；填了 `expect_json` 时为了检查会把整个响应读进内存解析。
 - 没有得到响应时（连接被拒绝、请求超时、证书校验失败）节点失败，错误信息写明原因。
 - `until_ok` 重试时，原因变化时写一条日志（第几次、为什么不满足）；超过 `wait` 时失败，错误信息是请求次数和最后一次不满足的原因。每次请求最多等 `request_timeout` 秒，所以实际可能比 `wait` 多等一次请求的时间。
 - 不跟随重定向：3xx 响应按原样检查，需要时把它写进 `expect_status`。

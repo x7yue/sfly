@@ -309,6 +309,9 @@ describe("全栈：开发文档里的命令", () => {
 			expect((await api.node(runId, "sh")).outputs).toEqual({
 				exit_code: 0,
 				stdout: "标准节点\n",
+				stderr: "",
+				stdout_file: null,
+				stderr_file: null,
 			});
 		}
 

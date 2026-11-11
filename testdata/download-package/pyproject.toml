@@ -1,0 +1,8 @@
+# 跨 Agent 下载产物的全栈测试（apps/server/test/full-stack-std.test.ts，#195）用的节点包：
+# 一个用 ctx.artifacts.download 下载上游产物的节点。不放进 sfly-std（它不是标准节点），也不放进桩节点包
+# （testdata/stub-package 要在上一个发布版本的 SDK 上加载，只能用旧 SDK 也有的接口）。
+# 用 `sfly build testdata/download-package` 构建；没写 requires-sdk，取构建时 SDK 的版本作为下限。
+[project]
+name = "sfly-download"
+version = "0.1.0"
+dependencies = []

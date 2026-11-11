@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import socket
 import ssl
 import subprocess
 import threading
@@ -12,7 +13,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
@@ -34,6 +35,10 @@ class Reply:
     body: bytes = b""
     headers: dict[str, str] = field(default_factory=dict)
     delay: float = 0.0
+    #: 发出响应体的前一半后先调用它，返回后再发后一半。
+    midway: Callable[[], None] | None = None
+    #: 断开连接而不发完响应：`"before_response"` 什么都不发，`"midway"` 发出响应体的前一半后断开。
+    drop: Literal["before_response", "midway"] | None = None
 
 
 def json_reply(value: Any, status: int = 200) -> Reply:
@@ -64,13 +69,32 @@ class Stub:
                 reply = route(request) if callable(route) else route
                 if reply.delay:
                     threading.Event().wait(reply.delay)
+                if reply.drop == "before_response":
+                    self._drop()
+                    return
                 self.send_response(reply.status)
                 for key, value in reply.headers.items():
                     self.send_header(key, value)
                 self.send_header("Content-Length", str(len(reply.body)))
                 self.end_headers()
-                if self.command != "HEAD":
+                if self.command == "HEAD":
+                    return
+                if reply.midway is None and reply.drop is None:
                     self.wfile.write(reply.body)
+                    return
+                half = len(reply.body) // 2
+                self.wfile.write(reply.body[:half])
+                self.wfile.flush()
+                if reply.drop == "midway":
+                    self._drop()
+                    return
+                assert reply.midway is not None
+                reply.midway()
+                self.wfile.write(reply.body[half:])
+
+            def _drop(self) -> None:
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
 
             do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = do_OPTIONS = _handle
 
@@ -116,6 +140,13 @@ def _no_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
         "all_proxy",
     ):
         monkeypatch.delenv(name, raising=False)
+
+
+def wait_for(what: str, check: Callable[[], bool], timeout: float = 10) -> None:
+    deadline = time.monotonic() + timeout
+    while not check():
+        assert time.monotonic() < deadline, f"等待超时：{what}"
+        time.sleep(0.02)
 
 
 def run(tmp_path: Path, **inputs: Any) -> Execution:
@@ -662,3 +693,181 @@ def test_rejects_non_positive_durations(
 ) -> None:
     assert failure(run(tmp_path, url=f"{stub.url}/x", **inputs)) == message
     assert stub.received == []
+
+
+def test_body_file_is_empty_and_nothing_is_saved_by_default(tmp_path: Path, stub: Stub) -> None:
+    stub.routes["/health"] = json_reply({"status": "ok"})
+
+    result = run(tmp_path, url=f"{stub.url}/health")
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["body_file"] is None
+    assert result.artifacts == {}
+
+
+def test_save_body_saves_a_binary_response_over_256_kib_byte_for_byte(
+    tmp_path: Path, stub: Stub
+) -> None:
+    # 每个字节值都出现，不是合法的 UTF-8；3 MiB 多一点，大小不是读取块的整数倍。
+    body = bytes(range(256)) * (12 * KIB) + b"\xff\x00tail"
+    stub.routes["/blob"] = Reply(200, body, {"Content-Type": "application/octet-stream"})
+
+    result = run(tmp_path, url=f"{stub.url}/blob", save_body=True)
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert list(result.artifacts) == ["body"]
+    assert result.artifacts["body"].read_bytes() == body
+    assert Path(result.outputs["body_file"]) == result.artifacts["body"]
+
+
+def test_save_body_leaves_the_other_outputs_as_they_are(tmp_path: Path, stub: Stub) -> None:
+    stub.routes["/health"] = Reply(
+        200, b'{"status": "ok"}', {"Content-Type": "application/json", "X-Version": "1.2.3"}
+    )
+
+    result = run(
+        tmp_path,
+        url=f"{stub.url}/health",
+        expect_json=[{"path": "$.status", "op": "eq", "value": "ok"}],
+        save_body=True,
+    )
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    assert result.outputs["status"] == 200
+    assert result.outputs["json"] == {"status": "ok"}
+    assert "text" not in result.outputs
+    assert result.outputs["headers"]["x-version"] == "1.2.3"
+    assert [(m.name, m.value) for m in result.metrics] == [
+        ("elapsed_ms", result.outputs["elapsed_ms"])
+    ]
+    assert result.artifacts["body"].read_bytes() == b'{"status": "ok"}'
+
+
+def test_save_body_outputs_the_same_text_for_a_response_too_big_to_keep_in_memory(
+    tmp_path: Path, stub: Stub
+) -> None:
+    # 6 MiB：节点只在内存里留开头。截断处同样落在多字节字符中间。
+    body = b"a" + "汉".encode() * (2 * KIB * KIB)
+    stub.routes["/big"] = Reply(200, body, {"Content-Type": "text/plain; charset=utf-8"})
+
+    result = run(tmp_path, url=f"{stub.url}/big", save_body=True)
+
+    assert result.status == "success", result.error
+    assert result.outputs is not None
+    text = result.outputs["text"]
+    assert text == "a" + "汉" * ((256 * KIB - 1) // 3)
+    assert warn_logs(result) == [
+        f"响应共 {len(body)} 字节，输出 text 只保留开头 {len(text)} 个字符（JSON 序列化后 256 KiB）"
+    ]
+    assert result.artifacts["body"].read_bytes() == body
+
+
+def test_save_body_still_checks_expect_json_on_a_response_too_big_to_keep_in_memory(
+    tmp_path: Path, stub: Stub
+) -> None:
+    items = [{"id": i, "status": "ok"} for i in range(200_000)]
+    reply = json_reply({"items": items})
+    assert len(reply.body) > 5 * KIB * KIB
+    stub.routes["/items"] = reply
+
+    result = run(
+        tmp_path,
+        url=f"{stub.url}/items",
+        expect_json=[{"path": "$.items[-1].id", "op": "eq", "value": 0}],
+        save_body=True,
+    )
+
+    assert result.status == "failed"
+    assert "$.items[-1].id 应 eq 0，实际是 199999" in failure(result)
+    assert result.artifacts["body"].read_bytes() == reply.body
+
+
+def test_save_body_writes_the_file_while_the_response_is_still_arriving(
+    tmp_path: Path, stub: Stub
+) -> None:
+    body = bytes(range(256)) * (4 * KIB)  # 1 MiB
+    saved = tmp_path / "artifacts" / "body"
+    on_disk_midway: list[bool] = []
+
+    def midway() -> None:
+        # 后一半还没发出：前一半（除去还在传输途中的部分）应该已经写进文件。
+        wait_for(
+            "前一半写进文件",
+            lambda: saved.exists() and saved.stat().st_size >= len(body) // 4,
+        )
+        on_disk_midway.append(body.startswith(saved.read_bytes()))
+
+    stub.routes["/blob"] = Reply(200, body, midway=midway)
+
+    result = run(tmp_path, url=f"{stub.url}/blob", save_body=True)
+
+    assert result.status == "success", result.error
+    assert on_disk_midway == [True]
+    assert result.artifacts["body"] == saved
+    assert saved.read_bytes() == body
+
+
+def test_until_ok_with_save_body_keeps_the_last_response(tmp_path: Path, stub: Stub) -> None:
+    replies = iter(
+        [
+            Reply(503, b"starting, please wait a little longer"),
+            json_reply({"status": "starting", "progress": [1, 2, 3]}),
+            json_reply({"status": "ok"}),
+        ]
+    )
+    stub.routes["/health"] = lambda request: next(replies)
+
+    result = run(
+        tmp_path,
+        url=f"{stub.url}/health",
+        expect_json=[{"path": "$.status", "op": "eq", "value": "ok"}],
+        until_ok=True,
+        poll=0.1,
+        save_body=True,
+    )
+
+    assert result.status == "success", result.error
+    assert len(stub.received) == 3
+    assert list(result.artifacts) == ["body"]
+    assert result.artifacts["body"].read_bytes() == b'{"status": "ok"}'
+    assert result.outputs is not None
+    assert Path(result.outputs["body_file"]) == result.artifacts["body"]
+
+
+@pytest.mark.parametrize("drop", ["before_response", "midway"])
+def test_until_ok_with_save_body_saves_nothing_when_the_last_request_gets_no_complete_response(
+    tmp_path: Path, stub: Stub, drop: Literal["before_response", "midway"]
+) -> None:
+    # 第一次得到完整的响应（不满足断言），之后每次都在响应发完之前断开。
+    replies = iter([Reply(503, b"starting, please wait a little longer")])
+    dropped = Reply(200, b'{"status": "ok", "padding": "' + b"x" * KIB + b'"}', drop=drop)
+    stub.routes["/health"] = lambda request: next(replies, dropped)
+
+    result = run(
+        tmp_path,
+        url=f"{stub.url}/health",
+        until_ok=True,
+        wait=1,
+        poll=0.1,
+        save_body=True,
+    )
+
+    assert failure(result).startswith("sfly_std.http_request.RequestFailed: 1 秒内 ")
+    assert len(stub.received) >= 2
+    assert result.artifacts == {}
+
+
+def test_save_body_saves_nothing_when_the_response_breaks_off_midway(
+    tmp_path: Path, stub: Stub
+) -> None:
+    stub.routes["/blob"] = Reply(200, bytes(range(256)) * KIB, drop="midway")
+
+    result = run(tmp_path, url=f"{stub.url}/blob", save_body=True)
+
+    assert failure(result).startswith(
+        f"sfly_std.http_request.RequestFailed: GET {stub.url}/blob 请求失败："
+    )
+    assert result.artifacts == {}

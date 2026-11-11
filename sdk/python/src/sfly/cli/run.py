@@ -6,6 +6,9 @@
 stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互不覆盖。运行目录名同时作为运行 ID
 （`ctx.task.run_id`），后台进程目录（`ctx.procs_dir`）是 `.sfly/procs/<运行目录名>/`。
 
+`--download <产物引用> <文件>` 给 `ctx.artifacts.download` 提供本地内容：节点下载这个引用时得到
+这个文件的内容，不访问网络（本地没有控制面）。
+
 Ctrl-C 走和平台相同的取消流程：取消标记 + SIGTERM，宽限期过后强制杀掉；再按一次立即杀掉。
 节点结束后结果已经确定，打印结果期间的 Ctrl-C 被忽略，退出码按结果给出。
 
@@ -19,7 +22,7 @@ import os
 import signal
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from types import FrameType
@@ -140,12 +143,25 @@ def _parse_params(text: str) -> dict[str, Any]:
     return params
 
 
-def run(project: Path, node: str, params_text: str, grace: float = DEFAULT_GRACE) -> int:
-    """执行节点并打印结果，返回退出码。"""
+def run(
+    project: Path,
+    node: str,
+    params_text: str,
+    grace: float = DEFAULT_GRACE,
+    *,
+    downloads: Mapping[str, Path] | None = None,
+) -> int:
+    """执行节点并打印结果，返回退出码。
+
+    `downloads`（`--download`）：产物引用 → 本地文件，节点下载这些引用时得到文件的内容。
+    """
     from sfly.cli.build import load_project, scan_nodes
     from sfly.local import input_problems
 
     params = _parse_params(params_text)
+    for ref, path in (downloads or {}).items():
+        if not path.is_file():
+            raise RunError(f"参数不合法：--download 给产物引用 {ref} 指定的文件不存在：{path}")
     meta = load_project(project)
     nodes = scan_nodes(meta)
     found = next((n for n in nodes if n["name"] == node), None)
@@ -181,6 +197,7 @@ def run(project: Path, node: str, params_text: str, grace: float = DEFAULT_GRACE
             run_id=work.name,
             node_id=node,
             procs_dir=project.absolute() / PROCS_DIR / work.name,
+            downloads=downloads,
         )
         # 节点已经结束，结果（和退出码）已经确定：打印结果期间的 Ctrl-C 一律忽略，
         # 否则恢复成默认处理后会在打印中途抛出 KeyboardInterrupt（#122）。

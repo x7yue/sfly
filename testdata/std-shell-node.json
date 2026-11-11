@@ -1,0 +1,92 @@
+{
+	"name": "shell",
+	"title": "Shell 命令",
+	"entry": "sfly_std.shell:shell",
+	"inputs": {
+		"type": "object",
+		"properties": {
+			"command": {
+				"type": "string"
+			},
+			"shell": {
+				"type": "string",
+				"default": "/bin/sh"
+			},
+			"env": {
+				"anyOf": [
+					{
+						"type": "object",
+						"additionalProperties": {
+							"type": "string"
+						}
+					},
+					{
+						"type": "null"
+					}
+				],
+				"default": null
+			},
+			"cwd": {
+				"anyOf": [
+					{
+						"type": "string"
+					},
+					{
+						"type": "null"
+					}
+				],
+				"default": null
+			},
+			"ok_exit_codes": {
+				"type": "array",
+				"items": {
+					"type": "integer"
+				},
+				"default": [0]
+			},
+			"save_output": {
+				"type": "boolean",
+				"default": false
+			}
+		},
+		"required": ["command"],
+		"order": ["command", "shell", "env", "cwd", "ok_exit_codes", "save_output"]
+	},
+	"outputs": {
+		"type": "object",
+		"properties": {
+			"exit_code": {
+				"type": "integer"
+			},
+			"stdout": {
+				"type": "string"
+			},
+			"stderr": {
+				"type": "string"
+			},
+			"stdout_file": {
+				"anyOf": [
+					{
+						"type": "string"
+					},
+					{
+						"type": "null"
+					}
+				]
+			},
+			"stderr_file": {
+				"anyOf": [
+					{
+						"type": "string"
+					},
+					{
+						"type": "null"
+					}
+				]
+			}
+		},
+		"required": ["exit_code", "stdout", "stderr", "stdout_file", "stderr_file"]
+	},
+	"metrics": [],
+	"charts": []
+}
