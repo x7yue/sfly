@@ -1,0 +1,8 @@
+# 「Agent」类型的输入的全栈测试（apps/server/test/full-stack-agent-param.test.ts，#197）用的节点包：
+# 一个用 sfly.AgentName 标注参数的节点。不放进桩节点包（testdata/stub-package 要在上一个发布版本的 SDK 上加载，
+# 只能用旧 SDK 也有的接口）。用 `sfly build testdata/agent-param-package` 构建；没写 requires-sdk，
+# 取构建时 SDK 的版本作为下限。
+[project]
+name = "sfly-agent-param"
+version = "0.1.0"
+dependencies = []

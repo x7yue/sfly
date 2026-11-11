@@ -600,3 +600,61 @@ def test_context_outside_an_executor_has_local_task_info(
 
     assert ctx.task == TaskInfo(run_id="local", node_id="local", task_id="local", attempt=1)
     assert ctx.procs_dir == tmp_path / "procs" / "local"
+
+
+AGENTS_NODE = """
+from sfly import AgentName, Context, node
+
+
+@node
+def reach(ctx: Context, source: AgentName) -> dict:
+    return {
+        "source": source,
+        "agents": {
+            name: [a.name, a.address, a.port, a.unavailable_reason]
+            for name, a in ctx.task.agents.items()
+        },
+    }
+"""
+
+
+def test_agents_referenced_by_agent_inputs_come_from_the_agent(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    # 「Agent」类型的输入（#197）：节点收到的仍是 Agent 名称；
+    # 控制面派发时解析的地址和端口在 ctx.task.agents。
+    write_module(code_dir, "agents", AGENTS_NODE)
+    agents = [
+        {"name": "agent-a", "address": "10.0.0.5", "port": 50052, "unavailable_reason": ""},
+        {"name": "old", "address": "10.0.0.6", "port": 0, "unavailable_reason": "版本过旧"},
+    ]
+
+    run = execute(
+        tmp_path,
+        code_dir,
+        "agents:reach",
+        {"source": "agent-a"},
+        task_fields={**AGENT_TASK, "agents": agents},
+    )
+
+    assert run.returncode == 0, run.stderr
+    assert run.output is not None
+    assert run.output["outputs"] == {
+        "source": "agent-a",
+        "agents": {
+            "agent-a": ["agent-a", "10.0.0.5", 50052, ""],
+            "old": ["old", "10.0.0.6", 0, "版本过旧"],
+        },
+    }
+
+
+def test_task_json_from_an_older_agent_has_no_referenced_agents(
+    tmp_path: Path, code_dir: Path
+) -> None:
+    write_module(code_dir, "agents", AGENTS_NODE)
+
+    run = execute(tmp_path, code_dir, "agents:reach", {"source": "agent-a"}, task_fields=AGENT_TASK)
+
+    assert run.returncode == 0, run.stderr
+    assert run.output is not None
+    assert run.output["outputs"] == {"source": "agent-a", "agents": {}}

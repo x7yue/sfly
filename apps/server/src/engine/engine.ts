@@ -52,7 +52,7 @@ import {
 } from "../gateway/agent-gateway.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
 import type { Mirrors } from "../public-config.js";
-import type { Preflight } from "../runs/preflight.js";
+import type { ParamsCheck, Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
 import type { Mutex } from "../util/mutex.js";
 import { isUuid } from "../util/uuid.js";
@@ -76,6 +76,7 @@ import {
 	renewHeld,
 } from "./leases.js";
 import { fillParams } from "./params.js";
+import { resolveReferencedAgents } from "./referenced-agents.js";
 import {
 	type CancelOrder,
 	type ChainDriver,
@@ -216,6 +217,8 @@ export class Engine implements AgentSessionHandler {
 			artifactUploadUrl: (taskId: string) => string;
 			/** 触发前的预检（src/runs/preflight.ts）。 */
 			preflight: Preflight;
+			/** 触发时按入口参数的实际值做的检查（src/runs/preflight.ts）；没有时不检查。 */
+			paramsCheck?: ParamsCheck;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
@@ -313,6 +316,17 @@ export class Engine implements AgentSessionHandler {
 					code: "invalid_params",
 					message: filled.errors.join("; "),
 					details: filled.errors,
+				};
+			}
+			const paramProblems =
+				(await this.deps.paramsCheck?.(version.document, plan, filled.params)) ?? [];
+			if (paramProblems.length > 0) {
+				return {
+					ok: false,
+					status: 400,
+					code: "invalid_params",
+					message: paramProblems.map((p) => p.message).join("; "),
+					details: paramProblems,
 				};
 			}
 
@@ -1337,6 +1351,15 @@ export class Engine implements AgentSessionHandler {
 			await this.#failTask(step, task, "config_error", problems.join("; "));
 			return undefined;
 		}
+		// 「Agent」类型的输入引用的 Agent：必须已注册，地址和端口随任务下发（ADR 0019）。
+		const referenced = type
+			? await resolveReferencedAgents(step.tx, node.id, type.inputs, inputs)
+			: { agents: [] };
+		if ("problems" in referenced) {
+			await step.tx.update(tasks).set({ inputs }).where(eq(tasks.id, task.id));
+			await this.#failTask(step, task, "config_error", referenced.problems.join("; "));
+			return undefined;
+		}
 
 		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
 		await step.tx
@@ -1360,6 +1383,7 @@ export class Engine implements AgentSessionHandler {
 					packageSha256: archive?.sha256 ?? "",
 					packageUrl: archive ? this.deps.packageArchiveUrl(node.package, packageVersion) : "",
 					artifactUploadUrl: this.deps.artifactUploadUrl(task.id),
+					referencedAgents: referenced.agents,
 				},
 			},
 		});

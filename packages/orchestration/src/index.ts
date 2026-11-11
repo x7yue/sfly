@@ -1,3 +1,4 @@
+export * from "./agent-inputs.js";
 export * from "./chain-edits.js";
 export * from "./diff.js";
 export * from "./inputs.js";

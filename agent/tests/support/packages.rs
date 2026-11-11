@@ -390,7 +390,7 @@ pub fn package_task(
         node_id: format!("node-{node}"),
         package_sha256: sha256.into(),
         package_url: url.into(),
-        artifact_upload_url: String::new(),
+        ..Default::default()
     }
 }
 

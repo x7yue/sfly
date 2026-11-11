@@ -68,3 +68,15 @@ export function usePackageCatalog(
 		return catalog;
 	}, [key]);
 }
+
+/**
+ * 已注册的 Agent 名称（「Agent」类型的输入的静态检查用）；Agent 列表还没加载时为 undefined（不检查）。
+ * 列表每次轮询都是新对象：名称没变时返回同一个 Set，不让静态检查跟着重算。
+ */
+export function useRegisteredAgents(agents: AgentView[] | undefined): Set<string> | undefined {
+	const names = agents?.map((a) => a.name).join("\n");
+	return useMemo(
+		() => (names === undefined ? undefined : new Set(names === "" ? [] : names.split("\n"))),
+		[names],
+	);
+}
