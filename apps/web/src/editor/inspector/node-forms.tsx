@@ -33,7 +33,7 @@ import type { ReferenceChoice } from "./reference-completion";
 import { ParsedError, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
 import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
-import { ZoomEditor } from "./ZoomEditor";
+import { ReferenceActions } from "./ZoomEditor";
 
 type PackageNode = Extract<DocNode, { kind: "package" }>;
 type AsyncNode = Extract<DocNode, { kind: "async" }>;
@@ -396,21 +396,18 @@ function MappedParam({
 			type={param.type}
 			error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
 			aside={
-				<>
-					<InsertReferenceButton name={param.name} editor={editor} />
-					{(param.type === "string" || param.type === "json") && (
-						<ZoomEditor
-							name={param.name}
-							label={label}
-							value={field.text}
-							choices={choices}
-							placeholder={placeholder}
-							invalid={invalid}
-							error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
-							onChange={field.change}
-						/>
-					)}
-				</>
+				<ReferenceActions
+					editor={editor}
+					zoom={param.type === "string" || param.type === "json"}
+					name={param.name}
+					label={label}
+					value={field.text}
+					choices={choices}
+					placeholder={placeholder}
+					invalid={invalid}
+					error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
+					onChange={field.change}
+				/>
 			}
 		>
 			<ReferenceEditor
