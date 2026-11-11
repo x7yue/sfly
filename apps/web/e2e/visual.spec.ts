@@ -6,7 +6,13 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
-import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
+import {
+	createEditorScenario,
+	editorDocument,
+	nodeCard,
+	typedDocument,
+	typedNodes,
+} from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
 	connPoint,
@@ -540,6 +546,22 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-inspector.png");
 	});
 
+	test("拖宽后的检查器", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		const handle = page.getByRole("separator", { name: "调整检查器宽度" });
+		await handle.focus();
+		for (let i = 0; i < 14; i++) await page.keyboard.press("ArrowLeft");
+		await expect(handle).toHaveAttribute("aria-valuenow", "596");
+		// 适配视图：节点让到拖宽后的检查器左边。
+		await page
+			.getByRole("toolbar", { name: "画布工具" })
+			.getByRole("button", { name: "适配视图" })
+			.click();
+		await handle.blur();
+		await idle(page);
+		await expect(page).toHaveScreenshot("editor-inspector-wide.png");
+	});
+
 	test("引用补全与引用高亮", async ({ page }) => {
 		await nodeCard(page, "fetch").click();
 		const url = page.getByRole("combobox", { name: "输入 url" });
@@ -551,6 +573,27 @@ test.describe("编排画布", () => {
 		await expect(url.locator("[data-reference]")).toHaveCount(2);
 		await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
 		await expect(page).toHaveScreenshot("editor-references.png");
+	});
+
+	test("放大编辑弹窗", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await page.getByRole("button", { name: "放大编辑 url" }).click();
+		const dialog = page.getByRole("dialog", { name: "编辑 url" });
+		const big = dialog.getByRole("combobox", { name: "输入 url（放大编辑）" });
+		await big.fill(
+			[
+				"set -euo pipefail",
+				"curl -fsS -H 'X-Token: ${{ params.api_token }}' \\",
+				"  https://example.test/snap/${{ params.biz_date }}/ > snap.json",
+				"echo $HOME",
+				"",
+			].join("\n"),
+		);
+		await page.keyboard.type("date=$");
+		await idle(page);
+		await expect(big.locator("[data-reference]")).toHaveCount(2);
+		await expect(dialog.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-zoom.png");
 	});
 
 	test("入口参数与敏感参数", async ({ page }) => {
@@ -615,6 +658,22 @@ test.describe("编排画布", () => {
 		await idle(page);
 		await expect(page).toHaveScreenshot("editor-zoomed-out.png");
 	});
+});
+
+test("编排画布：非字符串参数的引用标签与 JSON 输入框", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: typedNodes });
+	const id = await createScenario(controlPlane, "各种类型的参数", typedDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "typed").click();
+	await expect(page.getByRole("group", { name: "输入 count" })).toBeVisible();
+	await expect(page.getByRole("combobox", { name: "输入 options" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-reference-chip.png");
 });
 
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {

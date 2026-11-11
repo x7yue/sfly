@@ -11,7 +11,7 @@ import {
 	timerTarget,
 } from "@sfly/orchestration";
 import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
-import { useId } from "react";
+import { useId, useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { controlPlaneNow } from "#/lib/control-plane-time";
 import { subflowLabel } from "#/lib/copy";
@@ -23,9 +23,17 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Switch } from "@/components/ui/switch";
 import { agentsWithDev } from "../catalog";
 import { draftKey, useParsedField } from "../field-drafts";
-import { Field, type ReferenceChoice, ReferenceTextInput, SectionTitle } from "./fields";
-import { ValueField } from "./value-fields";
+import { Field, SectionTitle } from "./fields";
+import {
+	InsertReferenceButton,
+	ReferenceEditor,
+	type ReferenceEditorHandle,
+} from "./ReferenceEditor";
+import type { ReferenceChoice } from "./reference-completion";
+import { ParsedError, ValueField } from "./value-fields";
+import { mappedText, mappedValue } from "./value-text";
 import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
+import { ZoomEditor } from "./ZoomEditor";
 
 type PackageNode = Extract<DocNode, { kind: "package" }>;
 type AsyncNode = Extract<DocNode, { kind: "async" }>;
@@ -264,18 +272,6 @@ function SettingField({
 	);
 }
 
-/** 输入框文本 → 映射值：目标参数不是 string 时，不含引用的 JSON 字面量按常量保存。 */
-function mappedValue(text: string, type: string): unknown {
-	if (type === "string" || text.includes("${{")) return text;
-	try {
-		return JSON.parse(text);
-	} catch {
-		return text;
-	}
-}
-const textOf = (value: unknown) =>
-	value === undefined ? "" : typeof value === "string" ? value : JSON.stringify(value);
-
 /** 异步任务节点：调度到的子流程，以及把主链的值映射为子流程参数（按值传入）。 */
 export function AsyncMapping({
 	id,
@@ -297,7 +293,7 @@ export function AsyncMapping({
 	const subflow = dispatchTarget(doc, id);
 	const setParam = (name: string, value: unknown) => {
 		const params = { ...node.params };
-		if (value === undefined || value === "") delete params[name];
+		if (value === undefined) delete params[name];
 		else params[name] = value;
 		onChange({ ...node, params });
 	};
@@ -327,29 +323,17 @@ export function AsyncMapping({
 			{subflow.params.length === 0 && (
 				<p className="m-0 text-xs text-fg-3">子流程入口 {subflow.id} 没有声明参数。</p>
 			)}
-			{subflow.params.map((p) => {
-				const problems = problemsOf(p.name);
-				return (
-					<Field
-						key={p.name}
-						label={<span className="font-mono">{p.name}</span>}
-						required={p.required}
-						type={p.type}
-						error={problems.length > 0 ? problems.join("；") : undefined}
-					>
-						<ReferenceTextInput
-							label={`子流程参数 ${p.name}`}
-							value={textOf(node.params[p.name])}
-							choices={choices}
-							placeholder={p.default !== undefined ? `默认 ${textOf(p.default)}` : p.type}
-							invalid={problems.length > 0}
-							onChange={(text) =>
-								setParam(p.name, text === "" ? undefined : mappedValue(text, p.type))
-							}
-						/>
-					</Field>
-				);
-			})}
+			{subflow.params.map((p) => (
+				<MappedParam
+					key={p.name}
+					fieldKey={draftKey(id, `mapping.${p.name}`)}
+					param={p}
+					value={node.params[p.name]}
+					choices={choices}
+					problems={problemsOf(p.name)}
+					onChange={(value) => setParam(p.name, value)}
+				/>
+			))}
 			{extra.map((name) => (
 				<div key={name} className="mb-3 flex items-center gap-2 text-xs text-warn-fg">
 					<span className="min-w-0 flex-1">
@@ -361,7 +345,7 @@ export function AsyncMapping({
 				</div>
 			))}
 			<p className="m-0 text-xs text-fg-3">
-				子流程只能看到这里传入的参数；可以写常量，或输入 <code>{"${{"}</code>{" "}
+				子流程只能看到这里传入的参数；可以写常量，或输入 <code>$</code>{" "}
 				引用本链的入口参数和前序节点的输出。
 			</p>
 		</>
@@ -369,6 +353,79 @@ export function AsyncMapping({
 }
 
 type SubflowEntryNode = Extract<DocNode, { kind: "subflow_entry" }>;
+type SubflowParam = SubflowEntryNode["params"][number];
+
+/**
+ * 一个子流程参数的映射：与包节点的字符串输入同一个输入框，文字和引用混写。
+ * 目标参数不是 string 时，不含引用的 JSON 字面量按常量保存（value-text 的 mappedValue）；清空就是不映射。
+ */
+function MappedParam({
+	fieldKey,
+	param,
+	value,
+	choices,
+	problems,
+	onChange,
+}: {
+	fieldKey: string;
+	param: SubflowParam;
+	value: unknown;
+	choices: ReferenceChoice[];
+	problems: string[];
+	onChange(value: unknown): void;
+}) {
+	const id = useId();
+	const editor = useRef<ReferenceEditorHandle>(null);
+	// 输入框里保留用户写的文本：1.0 保存为数字 1，但不把正在输入的文本改写掉。
+	const field = useParsedField<unknown>({
+		key: fieldKey,
+		value,
+		format: mappedText,
+		parse: (text) => ({ value: mappedValue(text, param.type) }),
+		onChange,
+	});
+	const label = `子流程参数 ${param.name}`;
+	const placeholder =
+		param.default !== undefined ? `默认 ${mappedText(param.default)}` : param.type;
+	const invalid = problems.length > 0;
+	return (
+		<Field
+			label={<span className="font-mono">{param.name}</span>}
+			htmlFor={id}
+			required={param.required}
+			type={param.type}
+			error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
+			aside={
+				<>
+					<InsertReferenceButton name={param.name} editor={editor} />
+					{(param.type === "string" || param.type === "json") && (
+						<ZoomEditor
+							name={param.name}
+							label={label}
+							value={field.text}
+							choices={choices}
+							placeholder={placeholder}
+							invalid={invalid}
+							error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
+							onChange={field.change}
+						/>
+					)}
+				</>
+			}
+		>
+			<ReferenceEditor
+				ref={editor}
+				id={id}
+				label={label}
+				value={field.text}
+				choices={choices}
+				placeholder={placeholder}
+				invalid={invalid}
+				onChange={field.change}
+			/>
+		</Field>
+	);
+}
 
 /**
  * 子流程入口节点的名称（场景内唯一，停止子流程节点按名称选择子流程）。
@@ -622,12 +679,16 @@ export function SleepForm({
 	problemsOf: ProblemsOf;
 	onChange(node: SleepNode): void;
 }) {
+	const id = useId();
+	const editor = useRef<ReferenceEditorHandle>(null);
 	const problems = problemsOf("duration");
 	const hasReference = referencesIn(node.duration).length > 0;
 	const ms = hasReference ? null : parseDuration(node.duration);
 	return (
 		<Field
 			label="等待时长"
+			htmlFor={id}
+			aside={<InsertReferenceButton name="等待时长" editor={editor} />}
 			error={problems.length > 0 ? problems.join("；") : undefined}
 			help={
 				hasReference
@@ -638,7 +699,9 @@ export function SleepForm({
 			}
 		>
 			<div className="flex flex-col gap-1.5">
-				<ReferenceTextInput
+				<ReferenceEditor
+					ref={editor}
+					id={id}
 					label="等待时长"
 					value={node.duration}
 					choices={choices}

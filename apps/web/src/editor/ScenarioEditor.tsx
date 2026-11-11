@@ -49,6 +49,7 @@ import { subflowLabels } from "#/components/canvas/node-display";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
+import { usePanelWidth } from "#/lib/panel-width";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
@@ -85,8 +86,8 @@ import { documentFieldErrors, type FieldError, undeclaredInputNotes } from "./va
 /** 打开着的弹窗或弹出层（有它们时 Tab 照常切换焦点）。 */
 const OPEN_OVERLAY = '[role="dialog"][data-open], [role="alertdialog"][data-open]';
 
-/** 检查器（宽 372 + 右边距 12）占住的宽度。 */
-const INSPECTOR_SPACE = 384;
+/** 检查器右边距。 */
+const INSPECTOR_MARGIN = 12;
 
 /**
  * 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布铺满视口，控件悬浮——左上场景名 / 版本 / 检查状态 /
@@ -166,6 +167,9 @@ function Editor({
 	});
 	const [selectedId, setSelectedId] = useState<string | null>(initialNode ?? null);
 	const [inspectorOpen, setInspectorOpen] = useState(true);
+	const inspectorWidth = usePanelWidth();
+	/** 检查器（实际宽度 + 右边距）占住的宽度：适配视图与定位节点时避开。 */
+	const inspectorSpace = inspectorOpen ? inspectorWidth + INSPECTOR_MARGIN : 0;
 	const [triggering, setTriggering] = useState(false);
 	const inspectorRef = useRef<HTMLElement>(null);
 	const drafts = useFieldDraftStore();
@@ -319,13 +323,16 @@ function Editor({
 			setSelectedId(id);
 			const node = flow.getNode(id);
 			if (node) {
-				void flow.setCenter(node.position.x + 104, node.position.y + 56, {
-					zoom: Math.max(flow.getZoom(), 0.8),
-					duration: 200,
-				});
+				// 定位到没被检查器占住的那部分画布的中间。
+				const zoom = Math.max(flow.getZoom(), 0.8);
+				void flow.setCenter(
+					node.position.x + 104 + inspectorSpace / 2 / zoom,
+					node.position.y + 56,
+					{ zoom, duration: 200 },
+				);
 			}
 		},
-		[flow],
+		[flow, inspectorSpace],
 	);
 	/** 把文档操作（@sfly/orchestration 的 chain-edits）的结果写回画布，算一步撤销。 */
 	const applyEdit = (next: Pick<typeof doc, "nodes" | "edges">) => {
@@ -378,7 +385,7 @@ function Editor({
 			const wanted =
 				request.position ??
 				flow.screenToFlowPosition({
-					x: (window.innerWidth - (inspectorOpen ? INSPECTOR_SPACE : 0)) / 2,
+					x: (window.innerWidth - inspectorSpace) / 2,
 					y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
 				});
 			const position = freePosition(
@@ -535,7 +542,7 @@ function Editor({
 					isValidConnection={isValidConnection}
 					insets={{
 						top: TOP_GROUP_SPACE,
-						right: inspectorOpen ? INSPECTOR_SPACE : 0,
+						right: inspectorSpace,
 						bottom: 0,
 						left: 0,
 					}}

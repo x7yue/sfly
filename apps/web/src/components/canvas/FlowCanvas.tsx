@@ -463,6 +463,7 @@ export function FlowCanvas({
 					inspector={inspector}
 					start={dockStart}
 					tools={dockTools}
+					clearRight={area.right}
 				/>
 				<ContextMenu
 					label={menuState?.target.kind === "node" ? "节点菜单" : "画布菜单"}

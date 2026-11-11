@@ -8,8 +8,10 @@ import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/component
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
 import { ZOOM_TEXT_11 } from "#/components/canvas/zoom-text";
+import { PanelWidthHandle } from "#/components/PanelWidthHandle";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { usePanelWidth } from "#/lib/panel-width";
 import { useNow } from "#/lib/use-now";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
@@ -180,6 +182,7 @@ export const RunStateInspector = forwardRef<
 		onEscape(): void;
 	}
 >(function RunStateInspector({ state, selected, info, onCollapse, onEscape }, ref) {
+	const width = usePanelWidth();
 	return (
 		<aside
 			ref={ref}
@@ -191,7 +194,8 @@ export const RunStateInspector = forwardRef<
 					onEscape();
 				}
 			}}
-			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex w-93 flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			style={{ width }}
 		>
 			{state.status === "ready" && selected ? (
 				<NodeRunInspector
@@ -205,6 +209,7 @@ export const RunStateInspector = forwardRef<
 			) : (
 				<RunOverview state={state} onCollapse={onCollapse} />
 			)}
+			<PanelWidthHandle label="调整检查器宽度" />
 		</aside>
 	);
 });

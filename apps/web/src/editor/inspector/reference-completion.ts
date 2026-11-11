@@ -6,12 +6,13 @@ import {
 	type ReferenceOption,
 	referenceOptions,
 	referenceScope,
+	WHOLE_REFERENCE,
 } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 
 /**
- * 引用补全的纯逻辑（检查器的 ReferenceTextInput 使用，单测覆盖）：可引用的值与来源说明、
- * 何时弹出补全、按「入口参数」「前序节点」分组与过滤、选中后写回的文本。
+ * 引用补全的纯逻辑（检查器的 ReferenceEditor、ReferencePicker 使用，单测覆盖）：可引用的值与来源说明、
+ * 何时弹出补全、按「入口参数」「前序节点」分组与过滤、键盘选择。
  */
 
 /** 一个引用补全项，带上来源说明（类型、所属节点）。 */
@@ -45,27 +46,10 @@ export function referenceChoices(
 	});
 }
 
-/** 光标前面一个还没闭合的 `${{`（以及已经输入的部分表达式）。 */
-const OPEN_REFERENCE = /\$\{\{\s*([\w.-]*)$/;
-
 /** 补全的触发位置：start 是选中后要被替换的起点，query 是已经输入的表达式。 */
 export interface CompletionTrigger {
 	start: number;
 	query: string;
-}
-
-/**
- * 是否弹出补全：引用模式（whole）下整个输入就是表达式，总是弹出；
- * 常量文本里光标前面是 `${{` 开头、还没闭合的引用时弹出。
- */
-export function completionTrigger(
-	raw: string,
-	caret: number,
-	whole: boolean,
-): CompletionTrigger | null {
-	if (whole) return { start: 0, query: raw };
-	const m = OPEN_REFERENCE.exec(raw.slice(0, caret));
-	return m ? { start: caret - m[0].length, query: m[1] ?? "" } : null;
 }
 
 export const COMPLETION_GROUPS = ["入口参数", "前序节点"] as const;
@@ -82,23 +66,20 @@ export function completionGroups(choices: readonly ReferenceChoice[], query: str
 }
 
 /**
- * 选中一个补全项后的值与光标：引用模式下整个值换成 `${{ 表达式 }}`；
- * 常量文本里把触发位置到光标之间替换成引用，光标停在引用之后。
+ * 补全刚打开时的选中项（-1 表示没有）。输入 `$` 触发的补全不预选：`$HOME` 这样的 shell 写法也可能匹配到候选，
+ * 这时按 Enter / Tab 不应该插入引用；用方向键或鼠标选中之后才插入。「插入引用」按钮触发的（manual）预选第一项。
  */
-export function applyCompletion(
-	value: string,
-	trigger: CompletionTrigger | null,
-	caret: number,
-	choice: Pick<ReferenceChoice, "text">,
-	whole: boolean,
-): { value: string; caret: number } {
-	if (whole) return { value: choice.text, caret: choice.text.length };
-	const start = trigger?.start ?? caret;
-	return {
-		value: value.slice(0, start) + choice.text + value.slice(caret),
-		caret: start + choice.text.length,
-	};
+export const initialActive = (trigger: { manual: boolean }): number => (trigger.manual ? 0 : -1);
+
+/** 方向键移动选中项（delta 为 1 或 -1），首尾循环；还没有选中项时向下到第一项，向上到最后一项。 */
+export function moveActive(active: number, delta: 1 | -1, count: number): number {
+	if (active < 0) return delta === 1 ? 0 : count - 1;
+	return (active + delta + count) % count;
 }
+
+/** 整个值恰好是一个引用时的表达式（与派发时的解析用同一条规则）。 */
+export const wholeReference = (value: unknown): string | undefined =>
+	typeof value === "string" ? WHOLE_REFERENCE.exec(value)?.[1] : undefined;
 
 /** 合并后的输入框里的补全触发位置；braced 表示已经写了 `${`（否则只有一个 `$`）。 */
 export interface InlineTrigger extends CompletionTrigger {
