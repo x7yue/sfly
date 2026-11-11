@@ -1,21 +1,12 @@
 import {
-	type CopiedNode,
 	checkConnection,
-	copiedNodeText,
-	copyProblem,
-	type DocumentEdit,
 	declaredOutputs,
-	disconnectEdge,
-	disconnectNode,
 	documentWarnings,
-	duplicateNode,
 	insertAfter,
 	insertOnEdge,
 	nodeConnections,
 	type OrchestrationWarning,
 	outgoingProblem,
-	type Position,
-	placeCopy,
 	removeNode,
 	tidyLayout,
 	uniqueNodeId,
@@ -71,7 +62,7 @@ import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useV
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
 import {
 	type AddItem,
-	freePosition,
+	freeCardAt,
 	idStem,
 	newDocNode,
 	newSubflowNameProblem,
@@ -79,14 +70,12 @@ import {
 } from "./add-node";
 import { companionSubflow } from "./add-subflow";
 import { usePackageCatalog } from "./catalog";
-import { EdgeMenu } from "./EdgeMenu";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
+import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
-import { NodeMenu } from "./NodeMenu";
-import { copyNodeText, NodeCopyItems, useClipboardShortcuts } from "./node-clipboard";
-import { PaneMenu } from "./PaneMenu";
+import { useNodeClipboard } from "./node-clipboard";
 import { useReconnect } from "./reconnect";
 import {
 	RunStateBadge,
@@ -138,6 +127,10 @@ export function ScenarioEditor({
 }
 
 const NO_PACKAGES: Record<string, string> = {};
+
+/** 让画布上的节点卡片拿到焦点。 */
+const focusCard = (id: string) =>
+	document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
 
 const edgeKindOf = (c: Connection | Edge): EdgeKind =>
 	c.sourceHandle === "dispatch" ? "dispatch" : "chain";
@@ -362,6 +355,12 @@ function Editor({
 		},
 		[flow, inspectorSpace],
 	);
+	/** 视口里没被顶栏和检查器占住的那部分的中心（画布坐标）：没有位置的新节点、粘贴的节点放在这里。 */
+	const viewportCenter = () =>
+		flow.screenToFlowPosition({
+			x: (window.innerWidth - inspectorSpace) / 2,
+			y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
+		});
 	/** 把文档操作（@sfly/orchestration 的 chain-edits）的结果写回画布，算一步撤销。 */
 	const applyEdit = (next: Pick<typeof doc, "nodes" | "edges">) => {
 		const applied = applyDocument(nodes, edges, next);
@@ -417,18 +416,9 @@ function Editor({
 				edges: [...edges, toFlowEdge({ from: request.from, to: id, kind: "dispatch" })],
 			};
 		} else {
-			// 没有来源：右键处，否则视口（扣掉顶栏和检查器）中心；压住已有节点时错开。
-			const wanted =
-				request.position ??
-				flow.screenToFlowPosition({
-					x: (window.innerWidth - inspectorSpace) / 2,
-					y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
-				});
-			const position = freePosition(
-				{
-					x: Math.round(wanted.x - NODE_WIDTH / 2),
-					y: Math.round(wanted.y - NODE_HEIGHT / 2),
-				},
+			// 没有来源：右键处，否则视口中心；压住已有节点时错开。
+			const position = freeCardAt(
+				request.position ?? viewportCenter(),
 				nodes.map((n) => n.position),
 			);
 			next = { nodes: [...nodes, toFlowNode(newDocNode(item, id), position)], edges };
@@ -458,7 +448,7 @@ function Editor({
 					duration: 200,
 				});
 			}
-			document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
+			focusCard(id);
 		});
 	};
 	if (running && adding) setAdding(null);
@@ -512,78 +502,23 @@ function Editor({
 	useShortcut("canvas-tidy", tidy, !running);
 
 	// —— 复制、粘贴、创建副本（node-clipboard）：新节点有新的 ID、不带连线，各是一步撤销 ——
-	/** 把粘贴或创建副本的结果写回画布（包版本锁定可能多了一项），选中并聚焦新节点。 */
-	const placeNode = (edit: DocumentEdit<typeof doc, { id: string }>) => {
-		if (!edit.ok) {
-			notify.warning(edit.reason);
-			return;
-		}
-		applyEdit(edit.doc);
-		if (edit.doc.packages !== doc.packages) {
-			setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
-		}
-		setSelectedId(edit.id);
-		requestAnimationFrame(() =>
-			document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(edit.id)}"]`)?.focus(),
-		);
-	};
-	const taken = () => nodes.map((n) => n.position);
-	/** 创建副本：从原节点的位置往右下错开，直到不压住已有节点。 */
-	const duplicate = (id: string) => {
-		const origin = nodes.find((n) => n.id === id)?.position ?? { x: 0, y: 0 };
-		const wanted = { x: Math.round(origin.x), y: Math.round(origin.y) };
-		placeNode(duplicateNode(doc, id, freePosition(wanted, taken())));
-	};
-	/**
-	 * 粘贴：卡片中心落在 `at`（画布坐标，右键处或鼠标处），没有时落在视口（扣掉顶栏和检查器）中心；
-	 * 压住已有节点时错开。
-	 */
-	const paste = (copied: CopiedNode, at?: Position) => {
-		const wanted =
-			at ??
-			flow.screenToFlowPosition({
-				x: (window.innerWidth - inspectorSpace) / 2,
-				y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
-			});
-		const position = freePosition(
-			{ x: Math.round(wanted.x - NODE_WIDTH / 2), y: Math.round(wanted.y - NODE_HEIGHT / 2) },
-			taken(),
-		);
-		placeNode(placeCopy(doc, copied, position));
-	};
-	/** 复制节点要写进剪贴板的文字；不能复制时提示原因、返回 null。 */
-	const copyText = (id: string): string | null => {
-		const copied = copiedNodeText(doc, id);
-		if (!copied.ok) {
-			notify.warning(copied.reason);
-			return null;
-		}
-		return copied.text;
-	};
-	const copiedNotice = (id: string) =>
-		notify.success(`已复制节点 ${id}`, {
-			description: `可以在任意场景的画布上粘贴（${shortcutText("canvas-paste")}）`,
-		});
-	/** 选中的、还在画布上的节点（Ctrl+C、Ctrl+D 作用的节点）。 */
-	const current = () => (selectedId && nodes.some((n) => n.id === selectedId) ? selectedId : null);
-	useClipboardShortcuts({
+	const clipboard = useNodeClipboard({
 		enabled: !running,
-		copy: () => {
-			const id = current();
-			const text = id ? copyText(id) : null;
-			if (id && text !== null) copiedNotice(id);
-			return text;
+		doc,
+		nodes,
+		selectedId,
+		viewportCenter,
+		toFlowPosition: (client) => flow.screenToFlowPosition(client),
+		// 包版本锁定可能多了一项；选中并聚焦新节点。
+		onPlace: (edit) => {
+			applyEdit(edit.doc);
+			if (edit.doc.packages !== doc.packages) {
+				setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
+			}
+			setSelectedId(edit.id);
+			requestAnimationFrame(() => focusCard(edit.id));
 		},
-		paste: (node, client) => paste(node, client && flow.screenToFlowPosition(client)),
 	});
-	useShortcut(
-		"canvas-duplicate",
-		() => {
-			const id = current();
-			if (id) duplicate(id);
-		},
-		!running,
-	);
 
 	const save = () => {
 		if (fieldErrors.length > 0) {
@@ -642,10 +577,7 @@ function Editor({
 		});
 	};
 	const focusCanvasNode = () => {
-		const card = selectedId
-			? document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(selectedId)}"]`)
-			: null;
-		card?.focus();
+		if (selectedId) focusCard(selectedId);
 	};
 
 	return (
@@ -681,67 +613,32 @@ function Editor({
 									openAddMenu({ kind: "after", after: edge.from, before: edge.to, client })
 					}
 					reconnect={running ? undefined : reconnect.handlers}
-					menu={(target) =>
-						target.kind === "edge" ? (
-							running ? undefined : (
-								<EdgeMenu
-									edge={target.edge}
-									onInsert={() =>
-										openAddMenu({
-											kind: "after",
-											after: target.edge.from,
-											before: target.edge.to,
-											client: target.client,
-										})
-									}
-									onDisconnect={() => applyEdit(disconnectEdge(doc, target.edge))}
-								/>
-							)
-						) : target.kind === "node" ? (
-							<NodeMenu
-								node={target.node}
-								outputs={
-									running && readyRun?.doc
-										? declaredOutputs(readyRun.doc, target.node as OrchestrationNode, runCatalog)
-										: declaredOutputs(doc, target.node as OrchestrationNode, catalog)
-								}
-								edit={
-									running
-										? undefined
-										: {
-												connections: {
-													in: nodeConnections(doc, target.id).in.length,
-													out: nodeConnections(doc, target.id).out.length,
-												},
-												onAddAfter: () => openAddMenu({ kind: "after", after: target.id }),
-												clipboardItems: copyProblem(target.node) ? undefined : (
-													<NodeCopyItems
-														onDuplicate={() => duplicate(target.id)}
-														onCopy={() => {
-															const text = copyText(target.id);
-															if (text !== null) copyNodeText(text, () => copiedNotice(target.id));
-														}}
-													/>
-												),
-												onDisconnect: (side) => applyEdit(disconnectNode(doc, target.id, side)),
-												onDelete: () => deleteNode(target.id),
-											}
-								}
-							/>
-						) : running ? undefined : (
-							<PaneMenu
-								canUndo={history.canUndo}
-								canRedo={history.canRedo}
-								onAdd={() =>
-									openAddMenu({ kind: "free", client: target.client, position: target.position })
-								}
-								onPaste={(node) => paste(node, target.position)}
-								onTidy={tidy}
-								onUndo={history.undo}
-								onRedo={history.redo}
-							/>
-						)
-					}
+					menu={(target) => (
+						<EditorMenu
+							target={target}
+							outputsOf={(node) =>
+								running && readyRun?.doc
+									? declaredOutputs(readyRun.doc, node as OrchestrationNode, runCatalog)
+									: declaredOutputs(doc, node as OrchestrationNode, catalog)
+							}
+							edit={
+								running
+									? undefined
+									: {
+											doc,
+											canUndo: history.canUndo,
+											canRedo: history.canRedo,
+											openAddMenu,
+											applyEdit,
+											deleteNode,
+											clipboard,
+											tidy,
+											undo: history.undo,
+											redo: history.redo,
+										}
+							}
+						/>
+					)}
 					dockStart={
 						running ? undefined : (
 							<AddNodeMenu

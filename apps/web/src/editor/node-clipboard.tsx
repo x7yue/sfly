@@ -1,13 +1,24 @@
-import { type CopiedNode, type Position, readCopiedNode } from "@sfly/orchestration";
+import {
+	type CopiedNode,
+	copiedNodeText,
+	type DocumentEdit,
+	duplicateNode,
+	type Position,
+	placeCopy,
+	readCopiedNode,
+} from "@sfly/orchestration";
+import type { OrchestrationDocument } from "@sfly/schema";
 import { useEffect, useRef } from "react";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
+import { useShortcut } from "#/components/shortcuts";
 import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenuItem } from "@/components/ui/context-menu";
+import { freeCardAt, freePosition } from "./add-node";
 
 /**
  * 画布上单个节点的复制、粘贴、创建副本（#186）与系统剪贴板之间的接线。剪贴板里的内容与
- * 文档操作是 @sfly/orchestration 的 node-clipboard（纯逻辑）；这里只管浏览器：
+ * 文档操作是 @sfly/orchestration 的 node-clipboard（纯逻辑）；这里只管浏览器。编辑器用 useNodeClipboard。
  *
  * - Ctrl+C / Ctrl+V 不拦按键，用浏览器的 copy / paste 事件：焦点在输入框里、页面上选中了文字、
  *   剪贴板里不是节点时都照常是文本操作。事件里读写剪贴板不需要浏览器授权。
@@ -40,7 +51,7 @@ function onCanvas(point: Position): boolean {
  * 交给浏览器照常复制）；剪贴板里是节点时调用 `paste`，`client` 是鼠标所在的屏幕坐标，
  * 鼠标不在画布上时不给。`enabled` 为 false 时（运行状态模式）都不处理。
  */
-export function useClipboardShortcuts(handlers: {
+function useClipboardShortcuts(handlers: {
 	enabled: boolean;
 	copy(): string | null;
 	paste(copied: CopiedNode, client?: Position): void;
@@ -84,9 +95,98 @@ export function useClipboardShortcuts(handlers: {
 	}, []);
 }
 
-/** 菜单里的「复制」：用 Clipboard API 写入（不是按键触发的复制，没有 copy 事件可用）。 */
-export const copyNodeText = (text: string, done: () => void) =>
-	writeClipboard(text, done, `可以按 ${shortcutText("canvas-copy")} 复制`);
+/** 编辑器里的复制、粘贴、创建副本（节点菜单、空白处菜单用；快捷键由 useNodeClipboard 自己接上）。 */
+export interface NodeClipboard {
+	/** 创建副本：从原节点的位置往右下错开，直到不压住已有节点。 */
+	duplicate(id: string): void;
+	/** 节点菜单的「复制」：用 Clipboard API 写入（不是按键触发的复制，没有 copy 事件可用）。 */
+	copy(id: string): void;
+	/** 粘贴：卡片中心落在 `at`（画布坐标，右键处或鼠标处），没给时落在视口中心；压住已有节点时错开。 */
+	paste(copied: CopiedNode, at?: Position): void;
+}
+
+/**
+ * 编辑器的复制、粘贴、创建副本：Ctrl+C 复制、Ctrl+V 粘贴、Ctrl+D 创建副本作用于选中的节点，
+ * 返回菜单里用的同样三个操作。新节点有新的 ID、不带连线；成功时交给 `onPlace` 写回画布（各是一步撤销），
+ * 不能复制、粘贴时提示原因。`enabled` 为 false 时（运行状态模式）快捷键都不处理。
+ */
+export function useNodeClipboard({
+	enabled,
+	doc,
+	nodes,
+	selectedId,
+	viewportCenter,
+	toFlowPosition,
+	onPlace,
+}: {
+	enabled: boolean;
+	doc: OrchestrationDocument;
+	/** 画布上的节点：新节点避开它们；选中的节点还在不在。 */
+	nodes: readonly { id: string; position: Position }[];
+	selectedId: string | null;
+	/** 视口中心（画布坐标）：粘贴时没有位置就放在这里。 */
+	viewportCenter(): Position;
+	/** 屏幕坐标换成画布坐标。 */
+	toFlowPosition(client: Position): Position;
+	onPlace(edit: { doc: OrchestrationDocument; id: string }): void;
+}): NodeClipboard {
+	const place = (edit: DocumentEdit<OrchestrationDocument, { id: string }>) => {
+		if (edit.ok) onPlace(edit);
+		else notify.warning(edit.reason);
+	};
+	const positions = () => nodes.map((n) => n.position);
+	/** 复制节点要写进剪贴板的文字；不能复制时提示原因、返回 null。 */
+	const textOf = (id: string): string | null => {
+		const copied = copiedNodeText(doc, id);
+		if (!copied.ok) {
+			notify.warning(copied.reason);
+			return null;
+		}
+		return copied.text;
+	};
+	const copiedNotice = (id: string) =>
+		notify.success(`已复制节点 ${id}`, {
+			description: `可以在任意场景的画布上粘贴（${shortcutText("canvas-paste")}）`,
+		});
+	const clipboard: NodeClipboard = {
+		duplicate(id) {
+			const origin = nodes.find((n) => n.id === id)?.position ?? { x: 0, y: 0 };
+			const wanted = { x: Math.round(origin.x), y: Math.round(origin.y) };
+			place(duplicateNode(doc, id, freePosition(wanted, positions())));
+		},
+		copy(id) {
+			const text = textOf(id);
+			if (text === null) return;
+			writeClipboard(text, () => copiedNotice(id), `可以按 ${shortcutText("canvas-copy")} 复制`);
+		},
+		paste(copied, at) {
+			place(placeCopy(doc, copied, freeCardAt(at ?? viewportCenter(), positions())));
+		},
+	};
+
+	/** 选中的、还在画布上的节点（Ctrl+C、Ctrl+D 作用的节点）。 */
+	const selectedOnCanvas = () =>
+		selectedId && nodes.some((n) => n.id === selectedId) ? selectedId : null;
+	useClipboardShortcuts({
+		enabled,
+		copy: () => {
+			const id = selectedOnCanvas();
+			const text = id ? textOf(id) : null;
+			if (id && text !== null) copiedNotice(id);
+			return text;
+		},
+		paste: (copied, client) => clipboard.paste(copied, client && toFlowPosition(client)),
+	});
+	useShortcut(
+		"canvas-duplicate",
+		() => {
+			const id = selectedOnCanvas();
+			if (id) clipboard.duplicate(id);
+		},
+		enabled,
+	);
+	return clipboard;
+}
 
 /** 「粘贴」用不了 Clipboard API 时的说明：按键粘贴走浏览器的 paste 事件，不需要授权。 */
 const PASTE_WITH_KEYS = `请按 ${shortcutText("canvas-paste")} 粘贴`;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { freePosition, newDocNode, newSubflowNameProblem } from "./add-node";
+import { freeCardAt, freePosition, newDocNode, newSubflowNameProblem } from "./add-node";
 
 describe("新建子流程入口时填写的名称", () => {
 	const doc = {
@@ -59,5 +59,12 @@ describe("没有来源的新节点落在哪（视口中心或右键位置）", (
 				{ x: 100, y: 100 },
 			]),
 		).toEqual({ x: 224, y: 224 });
+	});
+});
+
+describe("按卡片中心放置（视口中心、右键处、粘贴）", () => {
+	it("卡片中心落在给定的点上，坐标取整；压住已有节点时同样错开", () => {
+		expect(freeCardAt({ x: 104.4, y: 56.6 }, [])).toEqual({ x: 0, y: 1 });
+		expect(freeCardAt({ x: 104, y: 56 }, [{ x: 0, y: 0 }])).toEqual({ x: 128, y: 128 });
 	});
 });
