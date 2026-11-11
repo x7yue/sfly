@@ -253,11 +253,12 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 	await closeWithEscape();
 	await expect(nodeCard(page, "ping")).toBeFocused();
 
-	// 已有出线的节点后面不能再接（链不能分叉）：Tab 提示原因，不打开菜单。
+	// 不是链尾的节点：Tab 打开的菜单说明新节点插在它和下一个节点之间（node-menu.spec.ts 覆盖插入的结果）。
 	await nodeCard(page, "fetch").click();
 	await page.keyboard.press("Tab");
-	await expect(page.getByText("节点 fetch 已有出线，链不能分叉")).toBeVisible();
-	await expect(addMenu(page)).toHaveCount(0);
+	await expect(addMenu(page).getByText("新节点插在 fetch 和 dispatch 之间")).toBeVisible();
+	await closeWithEscape();
+	await expect(nodeCard(page, "fetch")).toBeFocused();
 
 	// 点工具条按钮打开：Esc 后回到按钮。
 	await nodeCard(page, "fetch").click();
@@ -364,7 +365,7 @@ test("从链尾端口拖线到空白处：弹出可以接上的节点菜单，�
 	expect(Math.abs(inPort.x + inPort.width / 2 - drop.x)).toBeLessThan(3);
 	expect(Math.abs(inPort.y + inPort.height / 2 - drop.y)).toBeLessThan(3);
 
-	// 已有出线的节点不能往后追加。
+	// 从已有出线的端口拖线不能追加（链不能分叉；要插入用节点菜单「在后面添加节点」或 Tab）。
 	await dragToBlank("fetch");
 	await expect(addMenu(page)).toHaveCount(0);
 	await expect(page.getByText("节点 fetch 已有出线，链不能分叉")).toBeVisible();

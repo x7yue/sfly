@@ -587,6 +587,17 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-pane-menu.png");
 	});
 
+	test("节点右键菜单：复制输出引用", async ({ page }) => {
+		await nodeCard(page, "fetch").click({ button: "right" });
+		const menu = page.getByRole("menu", { name: "节点菜单" });
+		await expect(menu).toBeVisible();
+		await menu.getByRole("menuitem", { name: "复制输出引用" }).click();
+		const outputs = page.getByRole("menu", { name: "复制输出引用" });
+		await expect(outputs.getByRole("menuitem", { name: "status" })).toBeVisible();
+		await outputs.getByRole("menuitem", { name: "status" }).hover();
+		await expect(page).toHaveScreenshot("editor-node-menu.png");
+	});
+
 	test("添加节点菜单：不连线", async ({ page }) => {
 		await page.getByRole("button", { name: "添加节点" }).click();
 		const menu = page.getByRole("dialog", { name: "添加节点" });
