@@ -1,9 +1,11 @@
 import {
 	checkConnection,
 	declaredOutputs,
+	disconnectEdge,
 	disconnectNode,
 	documentWarnings,
 	insertAfter,
+	insertOnEdge,
 	nodeConnections,
 	type OrchestrationWarning,
 	removeNode,
@@ -68,12 +70,14 @@ import {
 	packageGroups,
 } from "./add-node";
 import { usePackageCatalog } from "./catalog";
+import { EdgeMenu } from "./EdgeMenu";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
 import { NodeMenu } from "./NodeMenu";
 import { PaneMenu } from "./PaneMenu";
+import { useReconnect } from "./reconnect";
 import {
 	RunStateBadge,
 	RunStateInspector,
@@ -251,12 +255,19 @@ function Editor({
 	// —— 连线：只允许单入单出，规则与控制面共用（@sfly/orchestration） ——
 	const docRef = useRef(doc);
 	docRef.current = doc;
-	const connectionProblem = useCallback((c: Connection | Edge): string | null => {
-		if ((c.sourceHandle ?? "chain") !== (c.targetHandle ?? "chain")) {
-			return "链端口只能连链端口，调度端口只能连调度端口";
-		}
-		return checkConnection(docRef.current, { from: c.source, to: c.target, kind: edgeKindOf(c) });
-	}, []);
+	// 拖动连线的端点改接：改接过程中按改接的规则检查（原来那条连线不算）。
+	const reconnect = useReconnect(docRef, (next) => applyEdit(next));
+	const connectionProblem = useCallback(
+		(c: Connection | Edge): string | null => {
+			if ((c.sourceHandle ?? "chain") !== (c.targetHandle ?? "chain")) {
+				return "链端口只能连链端口，调度端口只能连调度端口";
+			}
+			const edge = { from: c.source, to: c.target, kind: edgeKindOf(c) };
+			const moving = reconnect.problem(edge);
+			return moving === undefined ? checkConnection(docRef.current, edge) : moving;
+		},
+		[reconnect],
+	);
 	const isValidConnection = useCallback(
 		(c: Connection | Edge) => connectionProblem(c) === null,
 		[connectionProblem],
@@ -281,6 +292,8 @@ function Editor({
 		(event, state) => {
 			if (!state.fromNode) return;
 			if (!state.toNode) {
+				// 改接时松开在空白处：连线回到原处。
+				if (reconnect.active.current) return;
 				if (state.fromHandle?.type !== "source" || state.fromHandle.id === "dispatch") return;
 				const problem = appendProblem(docRef.current, state.fromNode.id);
 				if (problem) {
@@ -313,7 +326,7 @@ function Editor({
 			});
 			if (problem) notify.warning(problem);
 		},
-		[connectionProblem, flow],
+		[connectionProblem, flow, reconnect],
 	);
 
 	const select = useCallback((id: string | null) => setSelectedId(id), []);
@@ -374,7 +387,9 @@ function Editor({
 		if (request.after) {
 			// 有来源：接在它后面；它不是链尾时插在它和下一个节点之间，后面的节点让出位置。
 			const fresh = { ...newDocNode(item, id), position: request.position } as OrchestrationNode;
-			const edit = insertAfter(doc, request.after, fresh);
+			const edit = request.before
+				? insertOnEdge(doc, { from: request.after, to: request.before }, fresh)
+				: insertAfter(doc, request.after, fresh);
 			if (!edit.ok) {
 				notify.warning(edit.reason);
 				return;
@@ -417,11 +432,14 @@ function Editor({
 		});
 	};
 	if (running && adding) setAdding(null);
-	/** 打开添加节点菜单；`after` 是来源节点，它不是链尾时新节点插在它和下一个节点之间。 */
+	/**
+	 * 打开添加节点菜单；`after` 是来源节点，它不是链尾时新节点插在它和下一个节点之间。
+	 * 在连线上插入（连线菜单、连线中点的「＋」）时直接给出 `before`。
+	 */
 	const openAddMenu = (request: AddRequest = {}) => {
-		const next = request.after
-			? nodeConnections(docRef.current, request.after).out[0]?.to
-			: undefined;
+		const next =
+			request.before ??
+			(request.after ? nodeConnections(docRef.current, request.after).out[0]?.to : undefined);
 		setAdding(next === undefined ? request : { ...request, before: next });
 	};
 	// 运行状态下画布只读：添加、撤销 / 重做、整理布局都不生效（工具条上也不显示）。
@@ -549,8 +567,28 @@ function Editor({
 					onEnter={focusInspector}
 					inspector={{ open: inspectorOpen, onToggle: () => setInspectorOpen((o) => !o) }}
 					onDeleteNode={running ? undefined : deleteNode}
+					onInsertOnEdge={
+						running
+							? undefined
+							: (edge, client) => openAddMenu({ after: edge.from, before: edge.to, client })
+					}
+					reconnect={running ? undefined : reconnect.handlers}
 					menu={(target) =>
-						target.kind === "node" ? (
+						target.kind === "edge" ? (
+							running ? undefined : (
+								<EdgeMenu
+									edge={target.edge}
+									onInsert={() =>
+										openAddMenu({
+											after: target.edge.from,
+											before: target.edge.to,
+											client: target.client,
+										})
+									}
+									onDisconnect={() => applyEdit(disconnectEdge(doc, target.edge))}
+								/>
+							)
+						) : target.kind === "node" ? (
 							<NodeMenu
 								node={target.node}
 								outputs={

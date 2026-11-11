@@ -27,7 +27,7 @@ import { type AddItem, BUILTIN_ITEMS, type PackageGroup } from "./add-node";
 export interface AddRequest {
 	/** 来源节点：新节点接在它之后。 */
 	after?: string;
-	/** 来源节点在链上的下一个节点：新节点插在两者之间（由编辑器按当前连线填写，只用来说明）。 */
+	/** 来源节点在链上的下一个节点：新节点插在两者之间（编辑器按当前连线填写；在连线上插入时就是连线的终点）。 */
 	before?: string;
 	/** 菜单出现的屏幕坐标（松开鼠标、右键的位置）；不给时在「＋」按钮上方。 */
 	client?: { x: number; y: number };

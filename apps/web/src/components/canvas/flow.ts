@@ -19,6 +19,13 @@ export type DocMeta = Pick<OrchestrationDocument, "default_agent" | "packages">;
 
 export const edgeId = (edge: DocEdge) => `${edge.kind}:${edge.from}->${edge.to}`;
 
+/** 画布连线 → 场景文档里的连线。 */
+export const docEdgeOf = (edge: SfEdge): DocEdge => ({
+	from: edge.source,
+	to: edge.target,
+	kind: edge.data?.kind ?? "chain",
+});
+
 export function toFlowEdge(edge: DocEdge): SfEdge {
 	return {
 		id: edgeId(edge),
@@ -92,7 +99,7 @@ export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): Orche
 	return {
 		...(meta.default_agent ? { default_agent: meta.default_agent } : {}),
 		nodes: docNodes,
-		edges: edges.map((e) => ({ from: e.source, to: e.target, kind: e.data?.kind ?? "chain" })),
+		edges: edges.map(docEdgeOf),
 		packages,
 	};
 }

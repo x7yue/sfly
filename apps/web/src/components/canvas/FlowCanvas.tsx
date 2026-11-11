@@ -9,8 +9,10 @@ import {
 	type OnEdgesChange,
 	type OnNodesChange,
 	ReactFlow,
+	type ReactFlowProps,
 	useReactFlow,
 	useStore,
+	useStoreApi,
 } from "@xyflow/react";
 import { cn } from "cn";
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -26,7 +28,7 @@ import {
 	type PortState,
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
-import type { SfEdge, SfNode } from "./flow";
+import { type DocEdge, docEdgeOf, edgeId, type SfEdge, type SfNode } from "./flow";
 import {
 	type CanvasInsets,
 	FIT_MAX_ZOOM,
@@ -36,6 +38,7 @@ import {
 	MIN_ZOOM,
 	NODE_HEIGHT,
 	NODE_WIDTH,
+	RECONNECT_RADIUS,
 } from "./geometry";
 import { nodeTypes } from "./NodeCard";
 import { isNavigationKey, navigateChain } from "./navigation";
@@ -54,6 +57,8 @@ import { SubflowRegions } from "./SubflowRegions";
  * - `editable={false}`：只读（不能拖动、连线、删除），用于运行状态（#41）与版本对比（#40）；
  * - `decorateNode` / `decorateEdge` / `regionMeta`：叠加运行状态、主指标槽、差异标记（见 context.ts）；
  * - `menu`：右键菜单的内容（CanvasMenu.tsx）；不给时空白处的菜单只有「适配视图」，节点没有菜单；
+ *   连线菜单只在可编辑时打开（只读时右键连线等同于右键空白处）；
+ * - `onInsertOnEdge`：悬停链上的连线时中点的「＋」；`reconnect`：拖动连线的端点改接（都只在可编辑时生效）；
  * - `onDeleteNode`：删除节点（Delete 键）交给使用方，由它决定连线怎么处理（删除并接上前后）；
  * - `dockStart` / `dockTools`：工具条上的「＋ 添加节点」与撤销 / 重做 / 整理布局（#39）；
  * - `onNodesChange` / `onEdgesChange` / `onConnect`：编辑操作，撤销栈（#39）可以包在外面。
@@ -97,6 +102,13 @@ export interface FlowCanvasProps {
 	 * 不给时画布直接删掉节点和它的连线。只在 `editable` 时生效。
 	 */
 	onDeleteNode?(id: string): void;
+	/** 点了链上连线中点的「＋」：在这条连线中间插入节点；`client` 是添加节点菜单出现的屏幕坐标。 */
+	onInsertOnEdge?(edge: { from: string; to: string }, client: { x: number; y: number }): void;
+	/** 拖动连线的端点改接（React Flow 的重连手势）。 */
+	reconnect?: Pick<
+		ReactFlowProps<SfNode, SfEdge>,
+		"onReconnect" | "onReconnectStart" | "onReconnectEnd"
+	>;
 	dockStart?: ReactNode;
 	dockTools?: ReactNode;
 	/** 悬浮在画布上的控件（左上、右上的控件组、检查器……）。 */
@@ -133,11 +145,14 @@ export function FlowCanvas({
 	initialMinimap = true,
 	menu,
 	onDeleteNode,
+	onInsertOnEdge,
+	reconnect,
 	dockStart,
 	dockTools,
 	children,
 }: FlowCanvasProps) {
 	const flow = useReactFlow<SfNode, SfEdge>();
+	const store = useStoreApi<SfNode, SfEdge>();
 	const wrapper = useRef<HTMLDivElement>(null);
 	const hintId = useId();
 	const [tool, setTool] = useState<CanvasTool>("pointer");
@@ -203,9 +218,70 @@ export function FlowCanvas({
 	const fit = useCallback(() => {
 		void flow.fitView({ ...fitOptions, duration: 200 });
 	}, [flow, fitOptions]);
+	const canEdit = editable && tool === "pointer";
+
+	// —— 右键菜单：关闭时保留对象，退场动画期间内容不变 ——
+	const [menuState, setMenuState] = useState<{ target: CanvasMenuTarget; open: boolean } | null>(
+		null,
+	);
+	/** 画布区域拿到焦点，并标记是鼠标放过来的（见 isPointerFocusedCanvas）。 */
+	const focusRegion = useCallback(() => {
+		const root = wrapper.current;
+		if (!root) return;
+		root.dataset.pointerFocus = "";
+		root.focus({ preventScroll: true });
+	}, []);
+	/** 空白处的菜单：菜单关闭后焦点回到画布区域（ui/context-menu 交还给打开前的焦点）。 */
+	const openPaneMenu = useCallback(
+		(client: { x: number; y: number }) => {
+			focusRegion();
+			setMenuState({
+				target: { kind: "pane", client, position: flow.screenToFlowPosition(client) },
+				open: true,
+			});
+		},
+		[flow, focusRegion],
+	);
+	/**
+	 * 连线菜单：右键的连线选中（高亮），节点取消选中；连线不能聚焦，菜单关闭后焦点回到画布区域。
+	 * 只读时（运行状态、版本对比）连线没有菜单，右键连线等同于右键空白处。
+	 */
+	const openEdgeMenu = useCallback(
+		(edge: DocEdge, client: { x: number; y: number }) => {
+			if (!editable || !menu) {
+				openPaneMenu(client);
+				return;
+			}
+			onSelect(null);
+			store.getState().addSelectedEdges([edgeId(edge)]);
+			focusRegion();
+			setMenuState({ target: { kind: "edge", edge, client }, open: true });
+		},
+		[editable, menu, onSelect, store, focusRegion, openPaneMenu],
+	);
 	const context = useMemo<CanvasContextValue>(
-		() => ({ info, selectedId, ports, decorateNode, decorateEdge, regionMeta, fit }),
-		[info, selectedId, ports, decorateNode, decorateEdge, regionMeta, fit],
+		() => ({
+			info,
+			selectedId,
+			ports,
+			decorateNode,
+			decorateEdge,
+			regionMeta,
+			fit,
+			...(canEdit && onInsertOnEdge ? { insertOnEdge: onInsertOnEdge, openEdgeMenu } : {}),
+		}),
+		[
+			info,
+			selectedId,
+			ports,
+			decorateNode,
+			decorateEdge,
+			regionMeta,
+			fit,
+			canEdit,
+			onInsertOnEdge,
+			openEdgeMenu,
+		],
 	);
 	const fitRef = useRef(fitOptions);
 	fitRef.current = fitOptions;
@@ -247,10 +323,6 @@ export function FlowCanvas({
 		[flow, area],
 	);
 
-	// —— 右键菜单：关闭时保留对象，退场动画期间内容不变 ——
-	const [menuState, setMenuState] = useState<{ target: CanvasMenuTarget; open: boolean } | null>(
-		null,
-	);
 	/** 打开节点菜单：先让节点卡片拿到焦点（菜单关闭后焦点回到它）并选中它。 */
 	const openNodeMenu = (id: string, at?: { x: number; y: number }) => {
 		const node = nodes.find((n) => n.id === id);
@@ -331,15 +403,6 @@ export function FlowCanvas({
 	useShortcut("canvas-minimap", () => setMinimap((m) => !m));
 	useShortcut("canvas-inspector", () => inspector?.onToggle(), inspector !== undefined);
 
-	/** 画布区域拿到焦点，并标记是鼠标放过来的（见 isPointerFocusedCanvas）。 */
-	const focusRegion = () => {
-		const root = wrapper.current;
-		if (!root) return;
-		root.dataset.pointerFocus = "";
-		root.focus({ preventScroll: true });
-	};
-
-	const canEdit = editable && tool === "pointer";
 	return (
 		<FlowCanvasContext.Provider value={context}>
 			{/* biome-ignore lint/a11y/useSemanticElements: 画布容器需要可聚焦（Esc 后焦点回到这里），section 不合适 */}
@@ -387,13 +450,13 @@ export function FlowCanvas({
 					}}
 					onPaneContextMenu={(event) => {
 						event.preventDefault();
-						// 菜单关闭后焦点回到画布区域（ui/context-menu 交还给打开前的焦点）。
-						focusRegion();
-						const client = { x: event.clientX, y: event.clientY };
-						setMenuState({
-							target: { kind: "pane", client, position: flow.screenToFlowPosition(client) },
-							open: true,
-						});
+						openPaneMenu({ x: event.clientX, y: event.clientY });
+					}}
+					// 点选连线时节点取消选中：之后按 Delete 只删这条连线。
+					onEdgeClick={() => onSelect(null)}
+					onEdgeContextMenu={(event, edge) => {
+						event.preventDefault();
+						openEdgeMenu(docEdgeOf(edge), { x: event.clientX, y: event.clientY });
 					}}
 					onNodeContextMenu={(event, node) => {
 						if (!menu) return;
@@ -412,6 +475,9 @@ export function FlowCanvas({
 					}}
 					nodesDraggable={canEdit}
 					nodesConnectable={canEdit}
+					edgesReconnectable={canEdit}
+					reconnectRadius={RECONNECT_RADIUS}
+					{...(canEdit ? (reconnect ?? {}) : {})}
 					edgesFocusable={false}
 					elementsSelectable
 					selectNodesOnDrag={false}
@@ -466,7 +532,7 @@ export function FlowCanvas({
 					clearRight={area.right}
 				/>
 				<ContextMenu
-					label={menuState?.target.kind === "node" ? "节点菜单" : "画布菜单"}
+					label={menuState ? MENU_LABEL[menuState.target.kind] : "画布菜单"}
 					open={menuState?.open ?? false}
 					anchor={menuState ? menuAnchor(menuState.target) : null}
 					onOpenChange={(open) => setMenuState((m) => m && { ...m, open })}
@@ -480,6 +546,12 @@ export function FlowCanvas({
 		</FlowCanvasContext.Provider>
 	);
 }
+
+const MENU_LABEL: Record<CanvasMenuTarget["kind"], string> = {
+	pane: "画布菜单",
+	node: "节点菜单",
+	edge: "连线菜单",
+};
 
 /** 小地图上节点的颜色：编辑模式统一灰色，运行状态（#41）按状态着色。 */
 function minimapColor(run: NodeDecoration["run"]): string {

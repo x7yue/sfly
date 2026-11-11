@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
 	type DocumentEdit,
+	disconnectEdge,
 	disconnectNode,
 	insertAfter,
 	insertOnEdge,
 	insertPlacement,
 	type LayoutDocument,
 	nodeConnections,
+	reconnectEdge,
 	removeNode,
 	structureWarnings,
 } from "../src/index.js";
@@ -254,5 +256,88 @@ describe("断开入线 / 出线", () => {
 
 	it("没有对应连线时原样返回", () => {
 		expect(disconnectNode(withSub, "b", "out")).toBe(withSub);
+	});
+});
+
+describe("改接连线", () => {
+	/** entry → a → b，另有游离节点 c。 */
+	const withLone = doc([...line.nodes, pkg("c", 252, 214)], line.edges);
+
+	it("改接终点：连线换到新节点上，留在原来的位置", () => {
+		const next = done(reconnectEdge(withLone, chain("a", "b"), { from: "a", to: "c" }));
+		expect(next.edges).toEqual([chain("entry", "a"), chain("a", "c")]);
+		expect(next.nodes).toBe(withLone.nodes);
+	});
+
+	it("改接起点", () => {
+		const next = done(reconnectEdge(withLone, chain("a", "b"), { from: "c", to: "b" }));
+		expect(next.edges).toEqual([chain("entry", "a"), chain("c", "b")]);
+	});
+
+	it("两端都没变时原样返回", () => {
+		expect(done(reconnectEdge(line, chain("a", "b"), { from: "a", to: "b" }))).toBe(line);
+	});
+
+	it("不分叉、不汇合、不成环、不连到自己、不连到入口节点：拒绝并说明原因", () => {
+		expect(reasonOf(reconnectEdge(line, chain("a", "b"), { from: "entry", to: "b" }))).toBe(
+			"节点 entry 已有出线，链不能分叉",
+		);
+		expect(reasonOf(reconnectEdge(line, chain("entry", "a"), { from: "entry", to: "b" }))).toBe(
+			"节点 b 已有入线，链不能汇合",
+		);
+		expect(reasonOf(reconnectEdge(line, chain("a", "b"), { from: "a", to: "a" }))).toBe(
+			"节点不能连到自己",
+		);
+		expect(reasonOf(reconnectEdge(line, chain("a", "b"), { from: "a", to: "entry" }))).toBe(
+			"入口节点不能有入线",
+		);
+		const loop = doc([pkg("x"), pkg("y"), pkg("z")], [chain("x", "y"), chain("y", "z")]);
+		expect(reasonOf(reconnectEdge(loop, chain("y", "z"), { from: "y", to: "x" }))).toBe(
+			"连线会形成环",
+		);
+	});
+
+	it("调度连线改接到另一个子流程入口；连到别的节点时拒绝", () => {
+		const subs = doc(
+			[
+				entry(),
+				{ id: "run", kind: "async" },
+				{ id: "sub", kind: "subflow_entry" },
+				{ id: "other", kind: "subflow_entry" },
+				pkg("b"),
+			],
+			[chain("entry", "run"), dispatch("run", "sub"), chain("run", "b")],
+		);
+		expect(
+			done(reconnectEdge(subs, dispatch("run", "sub"), { from: "run", to: "other" })).edges,
+		).toEqual([chain("entry", "run"), dispatch("run", "other"), chain("run", "b")]);
+		expect(reasonOf(reconnectEdge(subs, dispatch("run", "sub"), { from: "run", to: "b" }))).toBe(
+			"调度连线只能连到子流程入口节点",
+		);
+	});
+
+	it("连线不存在时拒绝", () => {
+		expect(reasonOf(reconnectEdge(line, chain("entry", "b"), { from: "entry", to: "a" }))).toBe(
+			"连线 entry → b 不存在",
+		);
+	});
+
+	it("不改动传入的文档", () => {
+		const before = JSON.stringify(withLone);
+		reconnectEdge(withLone, chain("a", "b"), { from: "a", to: "c" });
+		expect(JSON.stringify(withLone)).toBe(before);
+	});
+});
+
+describe("断开连线", () => {
+	it("只删这一条连线，节点不动", () => {
+		const next = disconnectEdge(line, chain("a", "b"));
+		expect(next.edges).toEqual([chain("entry", "a")]);
+		expect(next.nodes).toBe(line.nodes);
+	});
+
+	it("连线种类也要对上；没有这条连线时原样返回", () => {
+		expect(disconnectEdge(line, dispatch("a", "b"))).toBe(line);
+		expect(disconnectEdge(line, chain("entry", "b"))).toBe(line);
 	});
 });
