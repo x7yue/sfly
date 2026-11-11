@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendProblem, freePosition, newDocNode, newSubflowNameProblem } from "./add-node";
+import { freeCardAt, freePosition, newDocNode, newSubflowNameProblem } from "./add-node";
 
 describe("新建子流程入口时填写的名称", () => {
 	const doc = {
@@ -62,29 +62,9 @@ describe("没有来源的新节点落在哪（视口中心或右键位置）", (
 	});
 });
 
-describe("能不能在某个节点后面追加节点", () => {
-	const doc = {
-		nodes: [
-			{ id: "entry", kind: "entry" as const },
-			{ id: "a", kind: "package" as const },
-			{ id: "spawn", kind: "async" as const },
-			{ id: "sub", kind: "subflow_entry" as const },
-			{ id: "loose", kind: "sleep" as const },
-		],
-		edges: [
-			{ from: "entry", to: "a", kind: "chain" as const },
-			{ from: "a", to: "spawn", kind: "chain" as const },
-			{ from: "spawn", to: "sub", kind: "dispatch" as const },
-		],
-	};
-
-	it("没有链上出线的节点可以：链尾、只有调度连线的异步任务节点、游离节点", () => {
-		expect(appendProblem(doc, "spawn")).toBeNull();
-		expect(appendProblem(doc, "sub")).toBeNull();
-		expect(appendProblem(doc, "loose")).toBeNull();
-	});
-
-	it("已有出线的节点不行（链不能分叉）", () => {
-		expect(appendProblem(doc, "a")).toBe("节点 a 已有出线，链不能分叉");
+describe("按卡片中心放置（视口中心、右键处、粘贴）", () => {
+	it("卡片中心落在给定的点上，坐标取整；压住已有节点时同样错开", () => {
+		expect(freeCardAt({ x: 104.4, y: 56.6 }, [])).toEqual({ x: 0, y: 1 });
+		expect(freeCardAt({ x: 104, y: 56 }, [{ x: 0, y: 0 }])).toEqual({ x: 128, y: 128 });
 	});
 });

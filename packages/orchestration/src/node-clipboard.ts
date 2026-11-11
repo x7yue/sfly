@@ -1,5 +1,7 @@
 import { OrchestrationNode } from "@sfly/schema";
+import { type DocumentEdit, type Rejected, rejected } from "./edit-result.js";
 import type { Position } from "./layout.js";
+import { uniqueNodeId } from "./node-id.js";
 
 /**
  * 单个节点的复制、粘贴、创建副本（画布的 Ctrl+C / Ctrl+V / Ctrl+D）。都是纯函数，不改动传入的文档。
@@ -28,17 +30,11 @@ export interface CopiedNode {
 	packageVersion?: string | undefined;
 }
 
-/** 复制、粘贴、创建副本作用的文档（只读取节点、连线和包版本锁定）。 */
+/** 复制、粘贴、创建副本作用的文档（只读取节点和包版本锁定；连线原样保留）。 */
 export interface CopyDocument {
 	nodes: readonly OrchestrationNode[];
-	edges: readonly unknown[];
 	packages: Readonly<Record<string, string>>;
 }
-
-/** 粘贴、创建副本的结果：新文档和新节点的 ID，或拒绝原因。 */
-export type CopyEdit<D> = { ok: true; doc: D; id: string } | { ok: false; reason: string };
-
-const rejected = (reason: string) => ({ ok: false, reason }) as const;
 
 /** 这个节点能不能复制、创建副本；可以时返回 null。 */
 export function copyProblem(node: { kind: OrchestrationNode["kind"] }): string | null {
@@ -51,7 +47,7 @@ export function copyProblem(node: { kind: OrchestrationNode["kind"] }): string |
 export function copiedNodeText(
 	doc: CopyDocument,
 	id: string,
-): { ok: true; text: string } | { ok: false; reason: string } {
+): { ok: true; text: string } | Rejected {
 	const found = doc.nodes.find((n) => n.id === id);
 	if (!found) return rejected(`节点 ${id} 不存在`);
 	const problem = copyProblem(found);
@@ -98,16 +94,6 @@ export function readCopiedNode(text: string): CopiedNode | null {
 	return { node, packageVersion: pkg.version };
 }
 
-/** 在已有节点 ID 中为新节点生成一个不重复的 ID：前缀（非法字符换成下划线）后面接序号。 */
-export function uniqueNodeId(base: string, existing: Iterable<string>): string {
-	const taken = new Set(existing);
-	const stem = base.replace(/[^A-Za-z0-9_]/g, "_") || "node";
-	for (let i = 1; ; i++) {
-		const id = `${stem}_${i}`;
-		if (!taken.has(id)) return id;
-	}
-}
-
 /**
  * 把复制的节点放进文档：新 ID（原 ID 去掉末尾的序号再编号），放在 position，不带连线。
  * 包节点：文档还没锁定这个节点包时带上原来的版本；已锁定别的版本时用文档的版本。
@@ -116,7 +102,7 @@ export function placeCopy<D extends CopyDocument>(
 	doc: D,
 	copied: CopiedNode,
 	position: Position,
-): CopyEdit<D> {
+): DocumentEdit<D, { id: string }> {
 	const problem = copyProblem(copied.node);
 	if (problem) return rejected(problem);
 	const id = uniqueNodeId(
@@ -137,7 +123,7 @@ export function duplicateNode<D extends CopyDocument>(
 	doc: D,
 	id: string,
 	position: Position,
-): CopyEdit<D> {
+): DocumentEdit<D, { id: string }> {
 	const found = doc.nodes.find((n) => n.id === id);
 	if (!found) return rejected(`节点 ${id} 不存在`);
 	const { position: _, ...node } = found;

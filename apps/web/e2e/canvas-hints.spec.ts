@@ -1,23 +1,9 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-import type { Locator, Page } from "@playwright/test";
-import { editorDocument, nodeCard } from "./editor-support";
+import { editorDocument, inspector, nodeCard, openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { createScenario, publishPackage } from "./support";
+import { box, createScenario, publishPackage } from "./support";
 
 // 画布上的提示（#191）：警告徽标悬停或键盘聚焦时显示警告内容；字段错误写参数名和位置；端口的命中范围比圆点大。
-
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
-
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
-
-async function openEditor(page: Page, id: string) {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "sub_ping")).toBeVisible();
-}
 
 /** ping 的输入里有两处无效引用：卡片上「2 警告」。 */
 async function scenarioWithWarnings(cp: Parameters<typeof publishPackage>[0]) {

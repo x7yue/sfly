@@ -1,8 +1,10 @@
+import type { Position } from "@sfly/orchestration";
 import { cn } from "cn";
 import { PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
 import { KIND_CHIP } from "#/components/canvas/zoom-text";
+import { keyLabels, shortcutById } from "#/lib/shortcuts";
 import {
 	Command,
 	CommandEmpty,
@@ -17,25 +19,30 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { type AddItem, BUILTIN_ITEMS, type PackageGroup } from "./add-node";
 import { AsyncForm, FormFooter, SubflowNameForm } from "./subflow-forms";
 
+/** 菜单出现在哪、新节点放在哪。 */
+interface AddPlacement {
+	/** 菜单出现的屏幕坐标（松开鼠标、右键的位置）；不给时在「＋」按钮上方。 */
+	client?: Position;
+	/**
+	 * 新节点在画布上的位置；不给时放在来源节点右侧，没有来源则放在视口中心。
+	 * 没有来源时是卡片中心（右键处），其余是卡片左上角（拖线松开处对着卡片左边缘的中点）。
+	 */
+	position?: Position;
+}
+
 /**
  * 一次添加节点的请求。添加分两种（#183）：
- * - 有来源（`after`）：从端口拖线到空白处、焦点在节点上按 Tab、节点菜单「在后面添加节点」——新节点接在来源节点之后，
- *   来源节点不是链尾时插在它和下一个节点（`before`）之间；
- * - 没有来源：工具条「＋」、`/`、空白处右键「添加节点」——新节点不连线，成为游离节点。
- * 另外，从异步任务节点的调度端口拖线到空白处（`dispatch`）时只新建子流程入口，并连上调度连线（#187）。
+ * - `free`，没有来源：工具条「＋」、`/`、空白处右键「添加节点」——新节点不连线，成为游离节点；
+ * - `after`，有来源：从端口拖线到空白处、焦点在节点上按 Tab、节点菜单「在后面添加节点」、在连线上插入——
+ *   新节点接在来源节点 `after` 之后，来源节点不是链尾时插在它和下一个节点 `before` 之间
+ *   （编辑器按当前连线填写；在连线上插入时就是连线的终点）。
+ * 另外，`dispatch`：从异步任务节点的调度端口拖线到空白处，只新建子流程入口并连上调度连线（#187），
+ * 菜单直接是新建子流程的表单。
  */
-export interface AddRequest {
-	/** 来源节点：新节点接在它之后。 */
-	after?: string;
-	/** 从这个异步任务节点的调度端口拖出：菜单直接是新建子流程的表单。 */
-	dispatch?: string;
-	/** 来源节点在链上的下一个节点：新节点插在两者之间（编辑器按当前连线填写；在连线上插入时就是连线的终点）。 */
-	before?: string;
-	/** 菜单出现的屏幕坐标（松开鼠标、右键的位置）；不给时在「＋」按钮上方。 */
-	client?: { x: number; y: number };
-	/** 新节点在画布上的位置；不给时放在来源节点右侧，没有来源则放在视口中心。 */
-	position?: { x: number; y: number };
-}
+export type AddRequest =
+	| ({ kind: "free" } & AddPlacement)
+	| ({ kind: "after"; after: string; before?: string } & AddPlacement)
+	| { kind: "dispatch"; from: string; client: Position; position: Position };
 
 function KindChip({ kind }: { kind: AddItem["kind"] }) {
 	const Icon = KIND_META[kind].icon;
@@ -100,9 +107,9 @@ export function AddNodeMenu({
 	if (request !== null && !wasOpen.current) picked.current = false;
 	wasOpen.current = request !== null;
 	const at = request?.client;
-	const after = request?.after;
-	const before = request?.before;
-	const dispatch = request?.dispatch;
+	const after = request?.kind === "after" ? request.after : undefined;
+	const before = request?.kind === "after" ? request.before : undefined;
+	const dispatch = request?.kind === "dispatch" ? request.from : undefined;
 	const anchor = at
 		? { getBoundingClientRect: () => DOMRect.fromRect({ x: at.x, y: at.y, width: 0, height: 0 }) }
 		: undefined;
@@ -140,7 +147,9 @@ export function AddNodeMenu({
 				</TooltipTrigger>
 				<TooltipContent>
 					添加节点
-					<Kbd>/</Kbd>
+					{keyLabels(shortcutById("canvas-add").keys).map((key) => (
+						<Kbd key={key}>{key}</Kbd>
+					))}
 				</TooltipContent>
 			</Tooltip>
 			<PopoverContent

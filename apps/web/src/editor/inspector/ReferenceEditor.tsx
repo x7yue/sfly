@@ -14,6 +14,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { ACTION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { ReferenceList } from "./ReferenceList";
 import {
@@ -285,8 +286,8 @@ export function InsertReferenceButton({
 			variant="ghost"
 			size="icon"
 			className="flex-none"
-			aria-label={`在 ${name} 中插入引用`}
-			title="插入引用"
+			aria-label={`在 ${name} 中${ACTION.insertReference}`}
+			title={ACTION.insertReference}
 			// 不抢走输入框的焦点：光标留在原处，引用就插在那里。
 			onMouseDown={(e) => e.preventDefault()}
 			onClick={() => editor.current?.insertReference()}

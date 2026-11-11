@@ -561,12 +561,13 @@ test.describe("编排画布", () => {
 		await handle.focus();
 		for (let i = 0; i < 14; i++) await page.keyboard.press("ArrowLeft");
 		await expect(handle).toHaveAttribute("aria-valuenow", "596");
-		// 适配视图：节点让到拖宽后的检查器左边。
-		await page
-			.getByRole("toolbar", { name: "画布工具" })
-			.getByRole("button", { name: "适配视图" })
-			.click();
-		await handle.blur();
+		// 刷新后保存的宽度仍然生效，打开时的适配视图让到拖宽后的检查器左边。
+		// 不点工具条的「适配视图」再截图：它有缩放动画，画布文字的字号随缩放逐帧变化（语义缩放），
+		// Chromium 的字体缓存会留下中间帧的字号，最终画面里文字的抗锯齿取决于动画碰巧经过了哪些帧，
+		// 截图不稳定。打开时的适配视图没有动画。点击的效果由 panel-resize.spec.ts 的功能用例检查。
+		await page.reload();
+		await nodeCard(page, "fetch").click();
+		await expect(handle).toHaveAttribute("aria-valuenow", "596");
 		await idle(page);
 		await expect(page).toHaveScreenshot("editor-inspector-wide.png");
 	});

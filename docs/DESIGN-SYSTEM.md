@@ -101,6 +101,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Button` | `variant`: `default`（中性）/ `primary`（白色主操作）/ `ghost` / `danger` / `danger-solid` / `link`；`size`: `default` 30px / `sm` 26px / `icon` / `icon-sm`（图标按钮必须有 `aria-label`）；禁用 40% 不透明 |
 | `Input` | `sunk` 底，聚焦时青色描边 + 光晕（焦点），`aria-invalid` 时红色描边 |
 | `Textarea`、`NativeSelect` | 多行输入、原生下拉选择，外观与 `Input` 一致 |
+| `Checkbox` | 勾选框：原生 `input`，16px、`sunk` 底；勾选后中性高亮（`selected` 底 + 深色对勾），不用青色 |
 | `Segmented` | 分段选择（筛选、视图切换）：`fieldset` + `aria-pressed` 按钮，当前项中性高亮；只有图标的选项给 `label` |
 | `Badge` | `default` / `ok` / `warn` / `danger`；版本号、计数等 |
 | `Dialog` | 模态弹窗：锁定焦点、Esc 与点遮罩关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖） |
@@ -131,7 +132,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `shortcuts`：`useShortcut`、`ShortcutsDialog` | 见第 7 节 |
 | `#/editor/inspector/ReferenceEditor`：`ReferenceEditor`、`InsertReferenceButton` | 可以写引用的文本输入框（CodeMirror 6 内核，只引入 `@codemirror/state`、`view`、`commands`）：输入 `$` 或点「插入引用」弹出补全，引用高亮成一块、整块删除，1 到 8 行自动增高；外观与 `Input` 一致。能写引用的字段都用它，不另写一套；`choices` 传 `null` 时是不能写引用的多行输入框（入口参数的默认值）。`$` 触发的补全不预选，方向键或鼠标选中后 `Enter` / `Tab` 才插入 |
 | `#/editor/inspector/ReferencePicker`：`ReferencePicker`、`ReferenceChip` | 非字符串参数（数字、布尔、枚举、JSON）：「插入引用」按钮选一个引用作为整个值；值是整值引用时用引用标签代替类型控件，点 × 回到类型控件。没有「常量 / 引用」切换，显示什么由值决定 |
-| `#/editor/inspector/ZoomEditor` | 字符串、JSON 字段的「放大编辑」：`Dialog` 里放大的 `ReferenceEditor`（等宽、补全、高亮）；修改直接走字段的 `onChange`，没有「保存 / 放弃」 |
+| `#/editor/inspector/ZoomEditor`：`ZoomEditor`、`ReferenceActions` | 字符串、JSON 字段的「放大编辑」：`Dialog` 里放大的 `ReferenceEditor`（等宽、补全、高亮）；修改直接走字段的 `onChange`，没有「保存 / 放弃」。能写引用的文本字段右侧的「插入引用」+「放大编辑」两个按钮用 `ReferenceActions`，不另写 |
 
 ## 6. 各状态的样式
 

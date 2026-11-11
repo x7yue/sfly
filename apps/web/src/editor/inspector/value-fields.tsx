@@ -7,15 +7,11 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { draftKey, useDropFieldDraft, useFieldDraftError, useParsedField } from "../field-drafts";
 import { AgentSelect } from "./AgentSelect";
 import { Field } from "./fields";
-import {
-	InsertReferenceButton,
-	ReferenceEditor,
-	type ReferenceEditorHandle,
-} from "./ReferenceEditor";
+import { ReferenceEditor, type ReferenceEditorHandle } from "./ReferenceEditor";
 import { ReferenceChip, ReferencePicker } from "./ReferencePicker";
 import { type ReferenceChoice, wholeReference } from "./reference-completion";
 import { formatJson, parseJson, parseNumber } from "./value-text";
-import { ZoomEditor } from "./ZoomEditor";
+import { ReferenceActions } from "./ZoomEditor";
 
 type JsonSchema = Record<string, unknown>;
 type ValueKind = "string" | "number" | "integer" | "boolean" | "enum" | "agent" | "json";
@@ -157,19 +153,17 @@ function StringValue({
 			invalid={invalid}
 			onChange={change}
 		/>,
-		<>
-			<InsertReferenceButton name={name} editor={editor} />
-			<ZoomEditor
-				name={name}
-				label={label}
-				value={text}
-				choices={choices}
-				placeholder={placeholder}
-				invalid={invalid}
-				error={<Problems problems={problems} />}
-				onChange={change}
-			/>
-		</>,
+		<ReferenceActions
+			editor={editor}
+			name={name}
+			label={label}
+			value={text}
+			choices={choices}
+			placeholder={placeholder}
+			invalid={invalid}
+			error={<Problems problems={problems} />}
+			onChange={change}
+		/>,
 	);
 }
 
@@ -351,19 +345,17 @@ function JsonValue({
 			minLines={3}
 			onChange={field.change}
 		/>,
-		<>
-			<InsertReferenceButton name={name} editor={editor} />
-			<ZoomEditor
-				name={name}
-				label={label}
-				value={field.text}
-				choices={choices}
-				placeholder={hint}
-				invalid={invalid}
-				error={<ParsedError fieldKey={fieldKey} problems={problems} />}
-				onChange={field.change}
-			/>
-		</>,
+		<ReferenceActions
+			editor={editor}
+			name={name}
+			label={label}
+			value={field.text}
+			choices={choices}
+			placeholder={hint}
+			invalid={invalid}
+			error={<ParsedError fieldKey={fieldKey} problems={problems} />}
+			onChange={field.change}
+		/>,
 	);
 }
 

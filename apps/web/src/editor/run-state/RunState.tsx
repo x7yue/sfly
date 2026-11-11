@@ -10,6 +10,7 @@ import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
 import { ZOOM_TEXT_11 } from "#/components/canvas/zoom-text";
 import { PanelWidthHandle } from "#/components/PanelWidthHandle";
 import { nodeStatusView, StatusPill } from "#/components/status";
+import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { usePanelWidth } from "#/lib/panel-width";
 import { useNow } from "#/lib/use-now";
@@ -209,7 +210,7 @@ export const RunStateInspector = forwardRef<
 			) : (
 				<RunOverview state={state} onCollapse={onCollapse} />
 			)}
-			<PanelWidthHandle label="调整检查器宽度" />
+			<PanelWidthHandle label={ACTION.resizeInspector} />
 		</aside>
 	);
 });

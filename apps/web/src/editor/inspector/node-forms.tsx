@@ -14,7 +14,7 @@ import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/sch
 import { useId, useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { subflowLabel } from "#/lib/copy";
+import { ACTION, subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,7 +34,7 @@ import type { ReferenceChoice } from "./reference-completion";
 import { ParsedError, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
 import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
-import { ZoomEditor } from "./ZoomEditor";
+import { ReferenceActions } from "./ZoomEditor";
 
 // 检查器的场景设置也用它（Inspector.tsx 从这里导入）。
 export { AgentSelect };
@@ -116,8 +116,8 @@ export function PackageParams({
 				</div>
 			))}
 			<p className="m-0 text-xs text-fg-3">
-				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>$</code>{" "}
-				或点「插入引用」可以把引用和文字混写。
+				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>$</code> 或点「
+				{ACTION.insertReference}」可以把引用和文字混写。
 			</p>
 			<SectionTitle>Agent</SectionTitle>
 			<Field label="执行机器">
@@ -367,21 +367,18 @@ function MappedParam({
 			type={param.type}
 			error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
 			aside={
-				<>
-					<InsertReferenceButton name={param.name} editor={editor} />
-					{(param.type === "string" || param.type === "json") && (
-						<ZoomEditor
-							name={param.name}
-							label={label}
-							value={field.text}
-							choices={choices}
-							placeholder={placeholder}
-							invalid={invalid}
-							error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
-							onChange={field.change}
-						/>
-					)}
-				</>
+				<ReferenceActions
+					editor={editor}
+					zoom={param.type === "string" || param.type === "json"}
+					name={param.name}
+					label={label}
+					value={field.text}
+					choices={choices}
+					placeholder={placeholder}
+					invalid={invalid}
+					error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
+					onChange={field.change}
+				/>
 			}
 		>
 			<ReferenceEditor

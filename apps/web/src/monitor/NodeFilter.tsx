@@ -1,7 +1,8 @@
 import { ChevronDownIcon, ListFilterIcon } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { StatusDot } from "#/components/status";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { type ChartGroup, isActive, isFailed } from "./chart-groups";
@@ -164,17 +165,18 @@ function Row({
 	indent?: boolean;
 	children: React.ReactNode;
 }) {
+	const id = useId();
 	return (
 		<label
+			htmlFor={id}
 			className="flex cursor-pointer items-center gap-2 rounded-sm py-1.25 pr-1.5 text-sm hover:bg-raised-2"
 			style={{ paddingLeft: indent ? 22 : 6 }}
 		>
-			<input
-				type="checkbox"
+			<Checkbox
+				id={id}
 				aria-label={name}
 				checked={checked}
 				onChange={(e) => onChange(e.target.checked)}
-				className="m-0 flex-none accent-selected"
 			/>
 			{children}
 		</label>

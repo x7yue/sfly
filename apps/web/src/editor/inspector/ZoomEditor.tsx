@@ -1,5 +1,6 @@
 import { Maximize2Icon } from "lucide-react";
-import { type ReactNode, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useRef, useState } from "react";
+import { ACTION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -21,16 +22,7 @@ import type { ReferenceChoice } from "./reference-completion";
  * 弹窗里的每次修改都直接走字段自己的 onChange，和在检查器里输入完全一样（撤销历史、本地草稿、字段校验），
  * 所以没有「保存 / 放弃」，关闭后检查器里已经是同一个值。
  */
-export function ZoomEditor({
-	name,
-	label,
-	value,
-	choices,
-	placeholder,
-	invalid,
-	error,
-	onChange,
-}: {
+interface ZoomEditorProps {
 	/** 字段名：用在按钮的无障碍名称和弹窗标题里。 */
 	name: string;
 	/** 检查器里这个输入框的无障碍名称；弹窗里的输入框在后面加「（放大编辑）」。 */
@@ -43,7 +35,18 @@ export function ZoomEditor({
 	/** 显示在输入框下面的错误与警告。 */
 	error?: ReactNode;
 	onChange(value: string): void;
-}) {
+}
+
+export function ZoomEditor({
+	name,
+	label,
+	value,
+	choices,
+	placeholder,
+	invalid,
+	error,
+	onChange,
+}: ZoomEditorProps) {
 	const [open, setOpen] = useState(false);
 	const body = useRef<HTMLDivElement>(null);
 	const editor = useRef<ReferenceEditorHandle>(null);
@@ -73,7 +76,7 @@ export function ZoomEditor({
 						</DialogTitle>
 						<DialogDescription>
 							{choices
-								? "修改立即生效，可以撤销。输入 $ 或点「插入引用」插入引用。"
+								? `修改立即生效，可以撤销。输入 $ 或点「${ACTION.insertReference}」插入引用。`
 								: "修改立即生效，可以撤销。"}
 						</DialogDescription>
 					</DialogHeader>
@@ -100,6 +103,27 @@ export function ZoomEditor({
 					</DialogFooter>
 				</DialogContent>
 			</Dialog>
+		</>
+	);
+}
+
+/**
+ * 能写引用的文本字段（字符串、JSON 参数，子流程参数的映射）右侧的按钮：「插入引用」，再加上「放大编辑」
+ * （`zoom` 为 false 时不给，例如映射到数字参数）。放大编辑用的是字段自己的值和 onChange。
+ */
+export function ReferenceActions({
+	editor,
+	zoom = true,
+	...field
+}: ZoomEditorProps & {
+	/** 字段里的输入框：「插入引用」把引用插在它的光标处。 */
+	editor: RefObject<ReferenceEditorHandle | null>;
+	zoom?: boolean;
+}) {
+	return (
+		<>
+			<InsertReferenceButton name={field.name} editor={editor} />
+			{zoom && <ZoomEditor {...field} />}
 		</>
 	);
 }

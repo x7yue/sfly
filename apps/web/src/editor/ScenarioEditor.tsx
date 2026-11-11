@@ -1,21 +1,15 @@
 import {
-	type CopiedNode,
-	type CopyEdit,
 	checkConnection,
-	copiedNodeText,
-	copyProblem,
 	declaredOutputs,
-	disconnectEdge,
-	disconnectNode,
 	documentWarnings,
-	duplicateNode,
 	insertAfter,
 	insertOnEdge,
 	nodeConnections,
 	type OrchestrationWarning,
-	placeCopy,
+	outgoingProblem,
 	removeNode,
 	tidyLayout,
+	uniqueNodeId,
 } from "@sfly/orchestration";
 import {
 	agentsApi,
@@ -50,16 +44,17 @@ import {
 	toFlow,
 	toFlowEdge,
 	toFlowNode,
-	uniqueNodeId,
 } from "#/components/canvas/flow";
 import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { subflowLabels } from "#/components/canvas/node-display";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
+import { dialogOpen } from "#/lib/focus";
 import { usePanelWidth } from "#/lib/panel-width";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
+import { shortcutText } from "#/lib/shortcuts";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { DraftBanner } from "#/versions/DraftBanner";
 import { hasDraft } from "#/versions/draft";
@@ -68,23 +63,20 @@ import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useV
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
 import {
 	type AddItem,
-	appendProblem,
-	freePosition,
+	freeCardAt,
 	idStem,
 	newDocNode,
 	newSubflowNameProblem,
 	packageGroups,
 } from "./add-node";
-import { companionSubflow, dispatchProblem } from "./add-subflow";
+import { companionSubflow } from "./add-subflow";
 import { usePackageCatalog, useRegisteredAgents } from "./catalog";
-import { EdgeMenu } from "./EdgeMenu";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
+import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
-import { NodeMenu } from "./NodeMenu";
-import { NodeCopyItems, useClipboardShortcuts, writeClipboard } from "./node-clipboard";
-import { PaneMenu } from "./PaneMenu";
+import { useNodeClipboard } from "./node-clipboard";
 import { useReconnect } from "./reconnect";
 import {
 	RunStateBadge,
@@ -94,9 +86,6 @@ import {
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { documentFieldErrors, type FieldError, undeclaredInputNotes } from "./validation";
-
-/** 打开着的弹窗或弹出层（有它们时 Tab 照常切换焦点）。 */
-const OPEN_OVERLAY = '[role="dialog"][data-open], [role="alertdialog"][data-open]';
 
 /** 检查器右边距。 */
 const INSPECTOR_MARGIN = 12;
@@ -136,6 +125,19 @@ export function ScenarioEditor({
 }
 
 const NO_PACKAGES: Record<string, string> = {};
+
+const cardOf = (id: string) =>
+	document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
+
+/**
+ * 让刚放到画布上的节点卡片拿到焦点。React Flow 量好新节点的尺寸之前卡片是隐藏的，不能聚焦：
+ * 还没显示出来时下一帧再试（最多约半秒）。
+ */
+function focusNewCard(id: string, frames = 30) {
+	const card = cardOf(id);
+	if (card && getComputedStyle(card).visibility === "visible") card.focus();
+	else if (frames > 0) requestAnimationFrame(() => focusNewCard(id, frames - 1));
+}
 
 const edgeKindOf = (c: Connection | Edge): EdgeKind =>
 	c.sourceHandle === "dispatch" ? "dispatch" : "chain";
@@ -308,23 +310,23 @@ function Editor({
 				// 改接时松开在空白处：连线回到原处。
 				if (reconnect.active.current) return;
 				if (state.fromHandle?.type !== "source") return;
-				const from = state.fromHandle.id === "dispatch" ? "dispatch" : "after";
-				const problem = (from === "dispatch" ? dispatchProblem : appendProblem)(
-					docRef.current,
-					state.fromNode.id,
-				);
+				const dispatch = state.fromHandle.id === "dispatch";
+				const from = state.fromNode.id;
+				const problem = outgoingProblem(docRef.current, from, dispatch ? "dispatch" : "chain");
 				if (problem) {
 					notify.warning(problem);
 					return;
 				}
 				const point = "changedTouches" in event ? event.changedTouches[0] : event;
 				if (!point) return;
-				const at = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
-				setAdding({
-					[from]: state.fromNode.id,
-					client: { x: point.clientX, y: point.clientY },
-					position: { x: at.x, y: at.y - NODE_HEIGHT / 2 },
-				});
+				const client = { x: point.clientX, y: point.clientY };
+				const at = flow.screenToFlowPosition(client);
+				const position = { x: at.x, y: at.y - NODE_HEIGHT / 2 };
+				setAdding(
+					dispatch
+						? { kind: "dispatch", from, client, position }
+						: { kind: "after", after: from, client, position },
+				);
 				return;
 			}
 			if (state.isValid !== false) return;
@@ -356,14 +358,20 @@ function Editor({
 				// 定位到没被检查器占住的那部分画布的中间。
 				const zoom = Math.max(flow.getZoom(), 0.8);
 				void flow.setCenter(
-					node.position.x + 104 + inspectorSpace / 2 / zoom,
-					node.position.y + 56,
+					node.position.x + NODE_WIDTH / 2 + inspectorSpace / 2 / zoom,
+					node.position.y + NODE_HEIGHT / 2,
 					{ zoom, duration: 200 },
 				);
 			}
 		},
 		[flow, inspectorSpace],
 	);
+	/** 视口里没被顶栏和检查器占住的那部分的中心（画布坐标）：没有位置的新节点、粘贴的节点放在这里。 */
+	const viewportCenter = () =>
+		flow.screenToFlowPosition({
+			x: (window.innerWidth - inspectorSpace) / 2,
+			y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
+		});
 	/** 把文档操作（@sfly/orchestration 的 chain-edits）的结果写回画布，算一步撤销。 */
 	const applyEdit = (next: Pick<typeof doc, "nodes" | "edges">) => {
 		const applied = applyDocument(nodes, edges, next);
@@ -394,14 +402,14 @@ function Editor({
 		[packages.data, agentList, meta.packages],
 	);
 	const addNode = (item: AddItem) => {
-		const request = adding ?? {};
+		const request: AddRequest = adding ?? { kind: "free" };
 		setAdding(null);
 		const id = uniqueNodeId(
 			idStem(item),
 			nodes.map((n) => n.id),
 		);
 		let next: { nodes: SfNode[]; edges: SfEdge[] };
-		if (request.after) {
+		if (request.kind === "after") {
 			// 有来源：接在它后面；它不是链尾时插在它和下一个节点之间，后面的节点让出位置。
 			const fresh = { ...newDocNode(item, id), position: request.position } as OrchestrationNode;
 			const edit = request.before
@@ -412,25 +420,16 @@ function Editor({
 				return;
 			}
 			next = applyDocument(nodes, edges, edit.doc);
-		} else if (request.dispatch && request.position) {
+		} else if (request.kind === "dispatch") {
 			// 从调度端口拖出（#187）：子流程入口的调度端口就在松开鼠标的位置，连上调度连线。
 			next = {
 				nodes: [...nodes, toFlowNode(newDocNode(item, id), request.position)],
-				edges: [...edges, toFlowEdge({ from: request.dispatch, to: id, kind: "dispatch" })],
+				edges: [...edges, toFlowEdge({ from: request.from, to: id, kind: "dispatch" })],
 			};
 		} else {
-			// 没有来源：右键处，否则视口（扣掉顶栏和检查器）中心；压住已有节点时错开。
-			const wanted =
-				request.position ??
-				flow.screenToFlowPosition({
-					x: (window.innerWidth - inspectorSpace) / 2,
-					y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
-				});
-			const position = freePosition(
-				{
-					x: Math.round(wanted.x - NODE_WIDTH / 2),
-					y: Math.round(wanted.y - NODE_HEIGHT / 2),
-				},
+			// 没有来源：右键处，否则视口中心；压住已有节点时错开。
+			const position = freeCardAt(
+				request.position ?? viewportCenter(),
 				nodes.map((n) => n.position),
 			);
 			next = { nodes: [...nodes, toFlowNode(newDocNode(item, id), position)], edges };
@@ -454,13 +453,13 @@ function Editor({
 		setSelectedId(id);
 		requestAnimationFrame(() => {
 			// 接在来源节点右侧的新节点可能在视口外：移到中央。
-			if (request.after && !request.position) {
+			if (request.kind === "after" && !request.position) {
 				void flow.setCenter(position.x + NODE_WIDTH / 2, position.y + NODE_HEIGHT / 2, {
 					zoom: flow.getZoom(),
 					duration: 200,
 				});
 			}
-			document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`)?.focus();
+			focusNewCard(id);
 		});
 	};
 	if (running && adding) setAdding(null);
@@ -468,34 +467,38 @@ function Editor({
 	 * 打开添加节点菜单；`after` 是来源节点，它不是链尾时新节点插在它和下一个节点之间。
 	 * 在连线上插入（连线菜单、连线中点的「＋」）时直接给出 `before`。
 	 */
-	const openAddMenu = (request: AddRequest = {}) => {
-		const next =
-			request.before ??
-			(request.after ? nodeConnections(docRef.current, request.after).out[0]?.to : undefined);
+	const openAddMenu = (request: AddRequest) => {
+		if (request.kind !== "after" || request.before !== undefined) {
+			setAdding(request);
+			return;
+		}
+		const next = nodeConnections(docRef.current, request.after).out[0]?.to;
 		setAdding(next === undefined ? request : { ...request, before: next });
 	};
 	// 运行状态下画布只读：添加、撤销 / 重做、整理布局都不生效（工具条上也不显示）。
-	useShortcut("canvas-add", () => openAddMenu(), !running);
+	useShortcut("canvas-add", () => openAddMenu({ kind: "free" }), !running);
 	useShortcut("canvas-undo", history.undo, !running);
 	useShortcut("canvas-redo", history.redo, !running);
 	// Tab：焦点在节点卡片上（新节点接在它后面）、或用鼠标点过画布空白处时（不连线）打开添加节点菜单，其他时候照常切换焦点。
 	// 页面上没有焦点、或用键盘把焦点放到画布区域上（Tab 进入、Esc 退回）时不拦截（见 FlowCanvas 的 isPointerFocusedCanvas）：
 	// 键盘用户能用 Tab 进出画布，进入后用方向键浏览节点（components/canvas/navigation.ts）。
-	const openRef = useRef<((request?: AddRequest) => void) | null>(openAddMenu);
+	const openRef = useRef<((request: AddRequest) => void) | null>(openAddMenu);
 	openRef.current = running ? null : openAddMenu;
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== "Tab" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)
 				return;
 			const open = openRef.current;
-			if (!open || event.defaultPrevented || document.querySelector(OPEN_OVERLAY)) return;
+			// 有弹窗或弹出层打开时 Tab 照常切换焦点。
+			if (!open || event.defaultPrevented || dialogOpen()) return;
 			const target = event.target instanceof HTMLElement ? event.target : null;
 			const card = target?.closest<HTMLElement>("[data-node-id]");
 			const onCanvas =
 				card || target?.classList.contains("react-flow__pane") || isPointerFocusedCanvas(target);
 			if (!onCanvas) return;
 			event.preventDefault();
-			open(card?.dataset.nodeId ? { after: card.dataset.nodeId } : {});
+			const after = card?.dataset.nodeId;
+			open(after ? { kind: "after", after } : { kind: "free" });
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
@@ -506,81 +509,28 @@ function Editor({
 		const layout = tidyLayout(doc);
 		history.checkpoint();
 		setNodes((ns) => ns.map((n) => ({ ...n, position: layout.get(n.id) ?? n.position })));
-		notify.success("已整理布局", { description: "可以撤销（Ctrl Z）" });
+		notify.success("已整理布局", { description: `可以撤销（${shortcutText("canvas-undo")}）` });
 	};
 	useShortcut("canvas-tidy", tidy, !running);
 
 	// —— 复制、粘贴、创建副本（node-clipboard）：新节点有新的 ID、不带连线，各是一步撤销 ——
-	/** 把粘贴或创建副本的结果写回画布（包版本锁定可能多了一项），选中并聚焦新节点。 */
-	const placeNode = (edit: CopyEdit<typeof doc>) => {
-		if (!edit.ok) {
-			notify.warning(edit.reason);
-			return;
-		}
-		applyEdit(edit.doc);
-		if (edit.doc.packages !== doc.packages) {
-			setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
-		}
-		setSelectedId(edit.id);
-		requestAnimationFrame(() =>
-			document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(edit.id)}"]`)?.focus(),
-		);
-	};
-	const taken = () => nodes.map((n) => n.position);
-	/** 创建副本：从原节点的位置往右下错开，直到不压住已有节点。 */
-	const duplicate = (id: string) => {
-		const origin = nodes.find((n) => n.id === id)?.position ?? { x: 0, y: 0 };
-		const wanted = { x: Math.round(origin.x), y: Math.round(origin.y) };
-		placeNode(duplicateNode(doc, id, freePosition(wanted, taken())));
-	};
-	/**
-	 * 粘贴：卡片中心落在 `at`（画布坐标，右键处或鼠标处），没有时落在视口（扣掉顶栏和检查器）中心；
-	 * 压住已有节点时错开。
-	 */
-	const paste = (copied: CopiedNode, at?: { x: number; y: number }) => {
-		const wanted =
-			at ??
-			flow.screenToFlowPosition({
-				x: (window.innerWidth - inspectorSpace) / 2,
-				y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
-			});
-		const position = freePosition(
-			{ x: Math.round(wanted.x - NODE_WIDTH / 2), y: Math.round(wanted.y - NODE_HEIGHT / 2) },
-			taken(),
-		);
-		placeNode(placeCopy(doc, copied, position));
-	};
-	/** 复制节点要写进剪贴板的文字；不能复制时提示原因、返回 null。 */
-	const copyText = (id: string): string | null => {
-		const copied = copiedNodeText(doc, id);
-		if (!copied.ok) {
-			notify.warning(copied.reason);
-			return null;
-		}
-		return copied.text;
-	};
-	const copiedNotice = (id: string) =>
-		notify.success(`已复制节点 ${id}`, { description: "可以在任意场景的画布上粘贴（Ctrl V）" });
-	/** 选中的、还在画布上的节点（Ctrl+C、Ctrl+D 作用的节点）。 */
-	const current = () => (selectedId && nodes.some((n) => n.id === selectedId) ? selectedId : null);
-	useClipboardShortcuts({
+	const clipboard = useNodeClipboard({
 		enabled: !running,
-		copy: () => {
-			const id = current();
-			const text = id ? copyText(id) : null;
-			if (id && text !== null) copiedNotice(id);
-			return text;
+		doc,
+		nodes,
+		selectedId,
+		viewportCenter,
+		toFlowPosition: (client) => flow.screenToFlowPosition(client),
+		// 包版本锁定可能多了一项；选中并聚焦新节点。
+		onPlace: (edit) => {
+			applyEdit(edit.doc);
+			if (edit.doc.packages !== doc.packages) {
+				setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
+			}
+			setSelectedId(edit.id);
+			requestAnimationFrame(() => focusNewCard(edit.id));
 		},
-		paste: (node, client) => paste(node, client && flow.screenToFlowPosition(client)),
 	});
-	useShortcut(
-		"canvas-duplicate",
-		() => {
-			const id = current();
-			if (id) duplicate(id);
-		},
-		!running,
-	);
 
 	const save = () => {
 		if (fieldErrors.length > 0) {
@@ -639,10 +589,7 @@ function Editor({
 		});
 	};
 	const focusCanvasNode = () => {
-		const card = selectedId
-			? document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(selectedId)}"]`)
-			: null;
-		card?.focus();
+		if (selectedId) cardOf(selectedId)?.focus();
 	};
 
 	return (
@@ -674,75 +621,43 @@ function Editor({
 					onInsertOnEdge={
 						running
 							? undefined
-							: (edge, client) => openAddMenu({ after: edge.from, before: edge.to, client })
+							: (edge, client) =>
+									openAddMenu({ kind: "after", after: edge.from, before: edge.to, client })
 					}
 					reconnect={running ? undefined : reconnect.handlers}
-					menu={(target) =>
-						target.kind === "edge" ? (
-							running ? undefined : (
-								<EdgeMenu
-									edge={target.edge}
-									onInsert={() =>
-										openAddMenu({
-											after: target.edge.from,
-											before: target.edge.to,
-											client: target.client,
-										})
-									}
-									onDisconnect={() => applyEdit(disconnectEdge(doc, target.edge))}
-								/>
-							)
-						) : target.kind === "node" ? (
-							<NodeMenu
-								node={target.node}
-								outputs={
-									running && readyRun?.doc
-										? declaredOutputs(readyRun.doc, target.node as OrchestrationNode, runCatalog)
-										: declaredOutputs(doc, target.node as OrchestrationNode, catalog)
-								}
-								edit={
-									running
-										? undefined
-										: {
-												connections: {
-													in: nodeConnections(doc, target.id).in.length,
-													out: nodeConnections(doc, target.id).out.length,
-												},
-												onAddAfter: () => openAddMenu({ after: target.id }),
-												clipboardItems: copyProblem(target.node) ? undefined : (
-													<NodeCopyItems
-														onDuplicate={() => duplicate(target.id)}
-														onCopy={() => {
-															const text = copyText(target.id);
-															if (text !== null)
-																writeClipboard(text, () => copiedNotice(target.id));
-														}}
-													/>
-												),
-												onDisconnect: (side) => applyEdit(disconnectNode(doc, target.id, side)),
-												onDelete: () => deleteNode(target.id),
-											}
-								}
-							/>
-						) : running ? undefined : (
-							<PaneMenu
-								canUndo={history.canUndo}
-								canRedo={history.canRedo}
-								onAdd={() => openAddMenu({ client: target.client, position: target.position })}
-								onPaste={(node) => paste(node, target.position)}
-								onTidy={tidy}
-								onUndo={history.undo}
-								onRedo={history.redo}
-							/>
-						)
-					}
+					menu={(target) => (
+						<EditorMenu
+							target={target}
+							outputsOf={(node) =>
+								running && readyRun?.doc
+									? declaredOutputs(readyRun.doc, node as OrchestrationNode, runCatalog)
+									: declaredOutputs(doc, node as OrchestrationNode, catalog)
+							}
+							edit={
+								running
+									? undefined
+									: {
+											doc,
+											canUndo: history.canUndo,
+											canRedo: history.canRedo,
+											openAddMenu,
+											applyEdit,
+											deleteNode,
+											clipboard,
+											tidy,
+											undo: history.undo,
+											redo: history.redo,
+										}
+							}
+						/>
+					)}
 					dockStart={
 						running ? undefined : (
 							<AddNodeMenu
 								request={adding}
 								groups={groups}
 								subflowNameProblem={(name) => newSubflowNameProblem(name, doc)}
-								onOpenChange={(open) => setAdding(open ? {} : null)}
+								onOpenChange={(open) => setAdding(open ? { kind: "free" } : null)}
 								onPick={addNode}
 							/>
 						)

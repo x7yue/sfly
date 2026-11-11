@@ -1,4 +1,4 @@
-import { ensureLayout } from "@sfly/orchestration";
+import { ensureLayout, type Position } from "@sfly/orchestration";
 import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import type { Edge, Node } from "@xyflow/react";
 
@@ -51,7 +51,7 @@ export function toFlow(doc: OrchestrationDocument): { nodes: SfNode[]; edges: Sf
 }
 
 /** 新放到画布上的节点。入口节点是主链的唯一起点，不能删除。 */
-export const toFlowNode = (node: DocNode, position: { x: number; y: number }): SfNode => ({
+export const toFlowNode = (node: DocNode, position: Position): SfNode => ({
 	id: node.id,
 	type: node.kind,
 	position,
@@ -103,6 +103,3 @@ export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): Orche
 		packages,
 	};
 }
-
-/** 新节点 ID 的生成规则与粘贴、创建副本共用（@sfly/orchestration）。 */
-export { uniqueNodeId } from "@sfly/orchestration";

@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { PopoverClose } from "@/components/ui/popover";
 
@@ -129,6 +130,7 @@ export function AsyncForm({
 	onCreate(subflow?: string): void;
 }) {
 	const [withSubflow, setWithSubflow] = useState(false);
+	const checkboxId = useId();
 	const field = useSubflowName(problemOf);
 	const nameInput = useRef<HTMLInputElement>(null);
 	useEffect(() => {
@@ -144,10 +146,13 @@ export function AsyncForm({
 			}}
 		>
 			<div className="flex flex-col gap-2 p-3">
-				<label className="flex cursor-pointer items-center gap-2 text-sm text-fg-1">
-					<input
+				<label
+					htmlFor={checkboxId}
+					className="flex cursor-pointer items-center gap-2 text-sm text-fg-1"
+				>
+					<Checkbox
+						id={checkboxId}
 						ref={focusRef}
-						type="checkbox"
 						checked={withSubflow}
 						onChange={(e) => setWithSubflow(e.target.checked)}
 						onKeyDown={(e) => {
@@ -156,7 +161,6 @@ export function AsyncForm({
 							e.preventDefault();
 							e.currentTarget.form?.requestSubmit();
 						}}
-						className="m-0 flex-none accent-selected"
 					/>
 					同时新建子流程
 				</label>

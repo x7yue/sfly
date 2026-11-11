@@ -12,7 +12,7 @@ import { keyChords, type ShortcutId, shortcutById } from "@/lib/shortcuts";
  *   <div onContextMenu={(e) => { e.preventDefault(); setMenu({ at: { x: e.clientX, y: e.clientY }, open: true }); }} />
  *   <ContextMenu label="节点菜单" open={menu?.open ?? false} anchor={menu?.at ?? null}
  *     onOpenChange={(open) => setMenu((m) => m && { ...m, open })}>
- *     <ContextMenuItem shortcut="canvas-delete" variant="danger" onClick={remove} />
+ *     <ContextMenuItem shortcut="canvas-delete" variant="danger" onClick={remove}>删除节点</ContextMenuItem>
  *   </ContextMenu>
  *
  * - `anchor`：屏幕坐标（鼠标右键处），或一个元素（键盘 Shift+F10 / 菜单键打开时贴着它）。

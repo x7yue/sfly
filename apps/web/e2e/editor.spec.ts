@@ -1,37 +1,24 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-import type { Locator, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
 	createEditorScenario,
+	dock,
+	draftNode,
 	editorDocument,
 	headOf,
+	inspector,
 	nodeCard,
+	openEditor,
 	typedDocument,
 	typedNodes,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { createScenario, expectFocusVisible, publishPackage } from "./support";
+import { box, createScenario, expectFocusVisible, publishPackage } from "./support";
 
 // 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布与检查器。
 
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
 const zoomLevel = async (page: Page) =>
 	Number((await dock(page).getByLabel("缩放比例").textContent())?.replace("%", ""));
-
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
-
-async function openEditor(page: Page, id: string) {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "sub_ping")).toBeVisible();
-	// 等打开时的适配视图完成（节点位置不再变化）。
-	await expect
-		.poll(async () => JSON.stringify(await nodeCard(page, "entry").boundingBox()))
-		.toBe(JSON.stringify(await nodeCard(page, "entry").boundingBox()));
-}
 
 test("全屏画布：不带侧边栏，控件悬浮，打开时适配视图并避开悬浮控件，窗口变化时重新适配", async ({
 	page,
@@ -668,7 +655,13 @@ test("放大编辑：等宽的大弹窗里有补全和高亮，锁定焦点，Es
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
 
 	// 本地草稿：刷新后还在。
-	await page.waitForTimeout(400); // 草稿写入有 300ms 防抖
+	await expect
+		.poll(() => draftNode(page, id, "fetch"))
+		.toMatchObject({
+			inputs: {
+				url: "https://example.test/snap\ndate=${{ params.biz_date }}${{ params.api_token }}",
+			},
+		});
 	await page.reload();
 	await nodeCard(page, "fetch").click();
 	await expect(url.locator("[data-reference]")).toHaveCount(2);
@@ -761,7 +754,9 @@ test("检查器：字符串输入框随内容增高，最多 8 行；无效的�
 	await expect(page.getByRole("button", { name: /保存/ })).toBeEnabled();
 
 	// 修改进入本地草稿：刷新后还在。
-	await page.waitForTimeout(400); // 草稿写入有 300ms 防抖
+	await expect
+		.poll(() => draftNode(page, id, "fetch"))
+		.toMatchObject({ inputs: { url: "${{ nodes.nope.outputs.x }}" } });
 	await page.reload();
 	await nodeCard(page, "fetch").click();
 	await expect(url).toHaveText("${{ nodes.nope.outputs.x }}");
@@ -866,7 +861,7 @@ test("本地草稿：未保存的修改刷新后还在，保存后清除；Ctrl 
 	await expect(nodeCard(page, "sub_ping").getByText("always")).toBeVisible();
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
 
-	await page.waitForTimeout(400); // 草稿写入有 300ms 防抖
+	await expect.poll(() => draftNode(page, id, "sub_ping")).toMatchObject({ always: true });
 	await page.reload();
 	await expect(nodeCard(page, "sub_ping").getByText("always")).toBeVisible();
 	await expect(page.getByText("有未保存的修改")).toBeVisible();

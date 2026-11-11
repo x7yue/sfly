@@ -1,18 +1,22 @@
-import type { Locator, Page } from "@playwright/test";
-import { createEditorScenario, editorDocument, headOf, nodeCard } from "./editor-support";
+import type { Page } from "@playwright/test";
+import {
+	addMenu,
+	createEditorScenario,
+	dock,
+	edges,
+	editorDocument,
+	headOf,
+	nodeCard,
+	nodePosition,
+	openEditor,
+} from "./editor-support";
 import { expect, test } from "./fixtures";
-import { createScenario, publishPackage } from "./support";
+import { box, createScenario, publishPackage } from "./support";
 
 // 连线的右键菜单、悬停「＋」插入节点、拖动端点改接（#185）。
 
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
-const addMenu = (page: Page) => page.getByRole("dialog", { name: "添加节点" });
 const edgeMenu = (page: Page) => page.getByRole("menu", { name: "连线菜单" });
 const insertButton = (page: Page) => page.getByRole("button", { name: "在此插入节点" });
-const edges = (page: Page) =>
-	page
-		.locator("[data-edge]")
-		.evaluateAll((els) => els.map((el) => el.getAttribute("data-edge") ?? "").sort());
 
 const ORIGINAL = [
 	"chain:dispatch->ping",
@@ -22,11 +26,6 @@ const ORIGINAL = [
 	"dispatch:dispatch->sub_entry",
 ];
 
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
 const center = (b: { x: number; y: number; width: number; height: number }) => ({
 	x: b.x + b.width / 2,
 	y: b.y + b.height / 2,
@@ -41,21 +40,6 @@ const pointOn = (page: Page, id: string, t: number) =>
 		const p = path.getPointAtLength(path.getTotalLength() * t).matrixTransform(ctm);
 		return { x: p.x, y: p.y };
 	}, t);
-
-/** 节点在画布坐标里的位置（React Flow 写在节点外层的 transform 上）。 */
-const nodePosition = (page: Page, id: string) =>
-	page.locator(`.react-flow__node[data-id="${id}"]`).evaluate((el) => {
-		const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(
-			(el as HTMLElement).style.transform,
-		);
-		return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
-	});
-
-async function openEditor(page: Page, id: string) {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "sub_ping")).toBeVisible();
-	await expect(dock(page)).toBeVisible();
-}
 
 /** 在连线上（离起点三成处，避开中点的「＋」）右键。 */
 async function rightClickEdge(page: Page, id: string) {
@@ -224,6 +208,16 @@ test("断开连线：菜单和 Delete 键都只删这一条连线，各是一步
 	await undo.click();
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL);
 	await expect(undo).toBeDisabled();
+
+	// 快捷键面板写明 Delete 也能断开选中的连线。
+	await page.locator("body").press("?");
+	const shortcuts = page.getByRole("dialog", { name: "快捷键" });
+	await expect(
+		shortcuts
+			.getByRole("region", { name: "编排画布" })
+			.locator("dl > div")
+			.filter({ hasText: /Delete$/ }),
+	).toHaveText("删除节点 / 断开连线Delete");
 });
 
 test("拖动连线的终点或起点改接到另一个节点，是一步撤销；违反连线规则时回到原处并提示原因", async ({

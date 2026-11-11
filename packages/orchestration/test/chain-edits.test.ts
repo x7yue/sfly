@@ -8,6 +8,7 @@ import {
 	insertPlacement,
 	type LayoutDocument,
 	nodeConnections,
+	outgoingProblem,
 	reconnectEdge,
 	removeNode,
 	structureWarnings,
@@ -339,5 +340,31 @@ describe("断开连线", () => {
 	it("连线种类也要对上；没有这条连线时原样返回", () => {
 		expect(disconnectEdge(line, dispatch("a", "b"))).toBe(line);
 		expect(disconnectEdge(line, chain("entry", "b"))).toBe(line);
+	});
+});
+
+describe("拖线到空白处新建节点前的检查（outgoingProblem）", () => {
+	const d = doc(
+		[entry(), pkg("a", 252), { id: "spawn", kind: "async" }, { id: "sub", kind: "subflow_entry" }],
+		[chain("entry", "a"), chain("a", "spawn"), dispatch("spawn", "sub")],
+	);
+
+	it("链端口：没有链上出线的节点可以（链尾、只有调度连线的异步任务节点、游离节点）", () => {
+		expect(outgoingProblem(d, "spawn", "chain")).toBeNull();
+		expect(outgoingProblem(d, "sub", "chain")).toBeNull();
+		expect(outgoingProblem(d, "loose", "chain")).toBeNull();
+	});
+
+	it("链端口：已有链上出线时不行（链不能分叉）", () => {
+		expect(outgoingProblem(d, "a", "chain")).toBe("节点 a 已有出线，链不能分叉");
+	});
+
+	it("调度端口：还没有调度连线时可以，只有链上出线不影响", () => {
+		expect(outgoingProblem(d, "idle", "dispatch")).toBeNull();
+		expect(outgoingProblem(d, "a", "dispatch")).toBeNull();
+	});
+
+	it("调度端口：已有调度连线时不行（一个异步任务节点只调度一个子流程）", () => {
+		expect(outgoingProblem(d, "spawn", "dispatch")).toBe("异步任务节点 spawn 已有调度连线");
 	});
 });

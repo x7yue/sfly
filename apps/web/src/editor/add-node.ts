@@ -114,15 +114,6 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 	}
 }
 
-/**
- * 能不能在这个节点后面追加节点：已有链上出线时不行（链不能分叉），返回原因；可以时返回 null。
- * 链尾、游离节点都可以。
- */
-export function appendProblem(doc: Pick<StructureDocument, "edges">, id: string): string | null {
-	const taken = doc.edges.some((e) => e.kind === "chain" && e.from === id);
-	return taken ? `节点 ${id} 已有出线，链不能分叉` : null;
-}
-
 /** 落点与已有节点重叠时每次往右下错开的距离。 */
 const NUDGE = 32;
 
@@ -139,3 +130,16 @@ export function freePosition(wanted: Position, taken: readonly Position[]): Posi
 	while (overlaps(at)) at = { x: at.x + NUDGE, y: at.y + NUDGE };
 	return at;
 }
+
+/**
+ * 没有来源的新节点（视口中心、右键处）和粘贴的节点：卡片中心落在 `center`（画布坐标），
+ * 压住已有节点时错开（freePosition）。返回卡片左上角。
+ */
+export const freeCardAt = (center: Position, taken: readonly Position[]): Position =>
+	freePosition(
+		{
+			x: Math.round(center.x - NODE_SIZE.width / 2),
+			y: Math.round(center.y - NODE_SIZE.height / 2),
+		},
+		taken,
+	);

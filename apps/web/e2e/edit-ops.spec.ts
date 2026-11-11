@@ -1,41 +1,18 @@
-import type { Locator, Page } from "@playwright/test";
-import { createEditorScenario, headOf, nodeCard } from "./editor-support";
+import {
+	addMenu,
+	createEditorScenario,
+	dock,
+	edge,
+	headOf,
+	nodeCard,
+	nodePosition,
+	openEditor,
+	paneMenu,
+} from "./editor-support";
 import { expect, test } from "./fixtures";
-import { createScenario, expectFocusVisible, publishPackage } from "./support";
+import { box, createScenario, expectFocusVisible, overlap, publishPackage } from "./support";
 
 // 编排画布的编辑操作（#39）：添加节点、撤销 / 重做、整理布局。
-
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
-const addMenu = (page: Page) => page.getByRole("dialog", { name: "添加节点" });
-const edge = (page: Page, id: string) => page.locator(`[data-edge="${id}"]`);
-
-async function box(locator: Locator) {
-	const b = await locator.boundingBox();
-	if (!b) throw new Error("元素不可见");
-	return b;
-}
-
-/** 节点在画布坐标里的位置（React Flow 写在节点外层的 transform 上）。 */
-const nodePosition = (page: Page, id: string) =>
-	page.locator(`.react-flow__node[data-id="${id}"]`).evaluate((el) => {
-		const m = /translate\(\s*(-?[\d.]+)px,\s*(-?[\d.]+)px\)/.exec(
-			(el as HTMLElement).style.transform,
-		);
-		return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
-	});
-
-async function openEditor(page: Page, id: string, lastNode = "sub_ping") {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, lastNode)).toBeVisible();
-	await expect
-		.poll(async () => JSON.stringify(await nodeCard(page, "entry").boundingBox()))
-		.toBe(JSON.stringify(await nodeCard(page, "entry").boundingBox()));
-}
-
-const overlap = (
-	a: { x: number; y: number; width: number; height: number },
-	b: { x: number; y: number; width: number; height: number },
-) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
 
 const existing = ["entry", "fetch", "dispatch", "ping", "sub_entry", "sub_ping"];
 
@@ -100,7 +77,6 @@ test("工具条「＋」：可搜索的菜单，新节点落在视口中心、�
 	expect(saved.document.edges).toHaveLength(5);
 });
 
-const paneMenu = (page: Page) => page.getByRole("menu", { name: "画布菜单" });
 /** 画布空白处（主链下方、子流程区域左侧）。 */
 const BLANK = { x: 200, y: 640 };
 
@@ -116,14 +92,14 @@ test("空白处右键菜单：各项带注册表里的快捷键；「添加节�
 	await expect(menu).toBeVisible();
 	await expect(menu.getByRole("menuitem")).toHaveText([
 		"添加节点/",
-		// 没有授权读剪贴板（另见 node-clipboard.spec.ts）。
-		"粘贴浏览器不允许读取剪贴板，请用快捷键粘贴CtrlV",
+		// 打开菜单时不读剪贴板，点了才读（另见 node-clipboard.spec.ts）。
+		"粘贴CtrlV",
 		"整理布局AltShiftF",
 		"适配视图0",
 		"撤销没有可撤销的修改CtrlZ",
 		"重做没有可重做的修改CtrlShiftZ",
 	]);
-	await expect(menu.getByRole("menuitem", { name: /粘贴/ })).toBeDisabled();
+	await expect(menu.getByRole("menuitem", { name: /粘贴/ })).toBeEnabled();
 	await expect(menu.getByRole("menuitem", { name: /撤销/ })).toBeDisabled();
 	const menuBox = await box(menu);
 	expect(Math.abs(menuBox.x - BLANK.x)).toBeLessThan(12);

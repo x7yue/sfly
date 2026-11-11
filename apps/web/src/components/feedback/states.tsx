@@ -5,6 +5,7 @@ import { ApiError } from "#/lib/api";
 import { ACTION, MESSAGE } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { writeClipboard } from "./clipboard";
 import { notify } from "./notify";
 
 /**
@@ -129,12 +130,9 @@ export function ErrorState({
 				)}
 				<Button
 					variant="ghost"
-					onClick={() => {
-						void navigator.clipboard
-							.writeText(errorDetailsText(error))
-							.then(() => notify.success("已复制错误详情"))
-							.catch(() => notify.error("复制失败", { description: "浏览器不允许访问剪贴板" }));
-					}}
+					onClick={() =>
+						writeClipboard(errorDetailsText(error), () => notify.success("已复制错误详情"))
+					}
 				>
 					<CopyIcon />
 					{ACTION.copyErrorDetails}
