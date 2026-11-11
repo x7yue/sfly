@@ -106,6 +106,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Dialog` | 模态弹窗：锁定焦点、Esc 与点遮罩关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖） |
 | `Sheet` | 抽屉（右侧 460px），焦点行为同 Dialog |
 | `DropdownMenu` | 菜单（Base UI Menu） |
+| `ContextMenu` | 右键菜单（Base UI Menu，没有 Trigger）：使用方给出 `open` 与 `anchor`（屏幕坐标或元素）；`ContextMenuItem` 的 `shortcut` 从快捷键注册表取按键与名称，`disabledReason` 禁用并写明原因；关闭后焦点回到打开前的元素。画布上经 `FlowCanvas` 的 `menu` 使用 |
 | `Command` / `CommandDialog` | 命令面板（cmdk + Dialog） |
 | `Tooltip` | 悬浮提示（根部已有 `TooltipProvider`，延迟 400ms） |
 | `Table` 系列 | 表头 12px 三级文字；行悬停 3% 白；`data-state="selected"` 为中性选中 |

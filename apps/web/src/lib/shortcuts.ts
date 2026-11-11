@@ -56,9 +56,16 @@ export const SHORTCUTS = [
 	{ id: "canvas-undo", group: "编排画布", label: "撤销", keys: "Ctrl+Z" },
 	{ id: "canvas-redo", group: "编排画布", label: "重做", keys: "Ctrl+Shift+Z" },
 	{ id: "canvas-tidy", group: "编排画布", label: "整理布局", keys: "Alt+Shift+F" },
-	// Tab 只在焦点在节点卡片或画布空白处时打开添加节点菜单（editor/ScenarioEditor.tsx），其他时候照常切换焦点。
-	{ id: "canvas-add-tab", group: "编排画布", label: "添加节点", keys: "Tab", displayOnly: true },
-	{ id: "canvas-add", group: "编排画布", label: "搜索节点类型", keys: "/" },
+	// 添加节点（editor/ScenarioEditor.tsx）：/ 添加的节点不连线；焦点在节点卡片上按 Tab，新节点接在它后面
+	// （用鼠标点过画布空白处后按 Tab 等同于 /，其他时候 Tab 照常切换焦点）。
+	{ id: "canvas-add", group: "编排画布", label: "添加节点", keys: "/" },
+	{
+		id: "canvas-add-tab",
+		group: "编排画布",
+		label: "在节点后面添加",
+		keys: "Tab",
+		displayOnly: true,
+	},
 	{ id: "canvas-delete", group: "编排画布", label: "删除节点", keys: "Delete", displayOnly: true },
 	{ id: "canvas-fit", group: "编排画布", label: "适配视图", keys: "0" },
 	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
