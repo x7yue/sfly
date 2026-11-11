@@ -66,7 +66,14 @@ export const SHORTCUTS = [
 		keys: "Tab",
 		displayOnly: true,
 	},
-	{ id: "canvas-delete", group: "编排画布", label: "删除节点", keys: "Delete", displayOnly: true },
+	// 选中的是节点时删除节点（editor/ScenarioEditor.tsx 的 deleteNode），是连线时断开连线（FlowCanvas）。
+	{
+		id: "canvas-delete",
+		group: "编排画布",
+		label: "删除节点 / 断开连线",
+		keys: "Delete",
+		displayOnly: true,
+	},
 	// 复制、粘贴、创建副本（editor/node-clipboard.tsx）：焦点在输入框里时仍是文本操作。复制、粘贴不拦按键，
 	// 由浏览器的复制、粘贴事件处理（页面上选中的文字照常复制，剪贴板里不是节点时照常粘贴）。
 	{ id: "canvas-copy", group: "编排画布", label: "复制节点", keys: "Ctrl+C", displayOnly: true },

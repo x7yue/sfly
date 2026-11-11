@@ -92,7 +92,9 @@ export function NodeMenu({
 					{node.kind !== "entry" && (
 						<>
 							<ContextMenuSeparator />
-							<ContextMenuItem shortcut="canvas-delete" variant="danger" onClick={edit.onDelete} />
+							<ContextMenuItem shortcut="canvas-delete" variant="danger" onClick={edit.onDelete}>
+								删除节点
+							</ContextMenuItem>
 						</>
 					)}
 				</>

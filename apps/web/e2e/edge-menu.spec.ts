@@ -224,6 +224,16 @@ test("断开连线：菜单和 Delete 键都只删这一条连线，各是一步
 	await undo.click();
 	await expect.poll(() => edges(page)).toEqual(ORIGINAL);
 	await expect(undo).toBeDisabled();
+
+	// 快捷键面板写明 Delete 也能断开选中的连线。
+	await page.locator("body").press("?");
+	const shortcuts = page.getByRole("dialog", { name: "快捷键" });
+	await expect(
+		shortcuts
+			.getByRole("region", { name: "编排画布" })
+			.locator("dl > div")
+			.filter({ hasText: /Delete$/ }),
+	).toHaveText("删除节点 / 断开连线Delete");
 });
 
 test("拖动连线的终点或起点改接到另一个节点，是一步撤销；违反连线规则时回到原处并提示原因", async ({
