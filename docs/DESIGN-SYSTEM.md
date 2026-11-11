@@ -101,6 +101,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Button` | `variant`: `default`（中性）/ `primary`（白色主操作）/ `ghost` / `danger` / `danger-solid` / `link`；`size`: `default` 30px / `sm` 26px / `icon` / `icon-sm`（图标按钮必须有 `aria-label`）；禁用 40% 不透明 |
 | `Input` | `sunk` 底，聚焦时青色描边 + 光晕（焦点），`aria-invalid` 时红色描边 |
 | `Textarea`、`NativeSelect` | 多行输入、原生下拉选择，外观与 `Input` 一致 |
+| `Checkbox` | 勾选框：原生 `input`，16px、`sunk` 底；勾选后中性高亮（`selected` 底 + 深色对勾），不用青色 |
 | `Segmented` | 分段选择（筛选、视图切换）：`fieldset` + `aria-pressed` 按钮，当前项中性高亮；只有图标的选项给 `label` |
 | `Badge` | `default` / `ok` / `warn` / `danger`；版本号、计数等 |
 | `Dialog` | 模态弹窗：锁定焦点、Esc 与点遮罩关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖） |
