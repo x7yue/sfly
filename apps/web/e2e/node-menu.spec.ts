@@ -47,7 +47,7 @@ test.beforeEach(async ({ context }) => {
 	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 });
 
-test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节点；入口节点没有「删除」，没有连线的方向禁用并说明原因", async ({
+test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节点；入口节点没有「创建副本」「复制」「删除」，没有连线的方向禁用并说明原因", async ({
 	page,
 	controlPlane,
 }) => {
@@ -56,6 +56,8 @@ test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节
 
 	const items = [
 		"在后面添加节点Tab",
+		"创建副本CtrlD",
+		"复制CtrlC",
 		"复制节点 ID",
 		"复制输出引用",
 		"断开入线",
@@ -134,9 +136,9 @@ test("复制节点 ID；「复制输出引用」列出节点类型声明的每�
 	// 内置节点的输出同样列出；键盘也能走进子菜单。
 	await nodeCard(page, "dispatch").click();
 	await page.keyboard.press("Shift+F10");
-	await expect(nodeMenu(page)).toBeVisible();
+	await expect(nodeMenu(page)).toBeFocused();
 	const highlighted = nodeMenu(page).locator('[role="menuitem"][data-highlighted]');
-	for (const item of ["在后面添加节点", "复制节点 ID", "复制输出引用"]) {
+	for (const item of ["在后面添加节点", "创建副本", "复制", "复制节点 ID", "复制输出引用"]) {
 		await page.keyboard.press("ArrowDown");
 		await expect(highlighted).toContainText(item);
 	}

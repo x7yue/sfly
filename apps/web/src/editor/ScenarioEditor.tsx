@@ -1,13 +1,19 @@
 import {
+	type CopiedNode,
+	type CopyEdit,
 	checkConnection,
+	copiedNodeText,
+	copyProblem,
 	declaredOutputs,
 	disconnectEdge,
 	disconnectNode,
 	documentWarnings,
+	duplicateNode,
 	insertAfter,
 	insertOnEdge,
 	nodeConnections,
 	type OrchestrationWarning,
+	placeCopy,
 	removeNode,
 	tidyLayout,
 } from "@sfly/orchestration";
@@ -77,6 +83,7 @@ import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
 import { NodeMenu } from "./NodeMenu";
+import { NodeCopyItems, useClipboardShortcuts, writeClipboard } from "./node-clipboard";
 import { PaneMenu } from "./PaneMenu";
 import { useReconnect } from "./reconnect";
 import {
@@ -499,6 +506,78 @@ function Editor({
 	};
 	useShortcut("canvas-tidy", tidy, !running);
 
+	// —— 复制、粘贴、创建副本（node-clipboard）：新节点有新的 ID、不带连线，各是一步撤销 ——
+	/** 把粘贴或创建副本的结果写回画布（包版本锁定可能多了一项），选中并聚焦新节点。 */
+	const placeNode = (edit: CopyEdit<typeof doc>) => {
+		if (!edit.ok) {
+			notify.warning(edit.reason);
+			return;
+		}
+		applyEdit(edit.doc);
+		if (edit.doc.packages !== doc.packages) {
+			setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
+		}
+		setSelectedId(edit.id);
+		requestAnimationFrame(() =>
+			document.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(edit.id)}"]`)?.focus(),
+		);
+	};
+	const taken = () => nodes.map((n) => n.position);
+	/** 创建副本：从原节点的位置往右下错开，直到不压住已有节点。 */
+	const duplicate = (id: string) => {
+		const origin = nodes.find((n) => n.id === id)?.position ?? { x: 0, y: 0 };
+		const wanted = { x: Math.round(origin.x), y: Math.round(origin.y) };
+		placeNode(duplicateNode(doc, id, freePosition(wanted, taken())));
+	};
+	/**
+	 * 粘贴：卡片中心落在 `at`（画布坐标，右键处或鼠标处），没有时落在视口（扣掉顶栏和检查器）中心；
+	 * 压住已有节点时错开。
+	 */
+	const paste = (copied: CopiedNode, at?: { x: number; y: number }) => {
+		const wanted =
+			at ??
+			flow.screenToFlowPosition({
+				x: (window.innerWidth - inspectorSpace) / 2,
+				y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
+			});
+		const position = freePosition(
+			{ x: Math.round(wanted.x - NODE_WIDTH / 2), y: Math.round(wanted.y - NODE_HEIGHT / 2) },
+			taken(),
+		);
+		placeNode(placeCopy(doc, copied, position));
+	};
+	/** 复制节点要写进剪贴板的文字；不能复制时提示原因、返回 null。 */
+	const copyText = (id: string): string | null => {
+		const copied = copiedNodeText(doc, id);
+		if (!copied.ok) {
+			notify.warning(copied.reason);
+			return null;
+		}
+		return copied.text;
+	};
+	const copiedNotice = (id: string) =>
+		notify.success(`已复制节点 ${id}`, { description: "可以在任意场景的画布上粘贴（Ctrl V）" });
+	/** 选中的、还在画布上的节点（Ctrl+C、Ctrl+D 作用的节点）。 */
+	const current = () => (selectedId && nodes.some((n) => n.id === selectedId) ? selectedId : null);
+	useClipboardShortcuts({
+		enabled: !running,
+		copy: () => {
+			const id = current();
+			const text = id ? copyText(id) : null;
+			if (id && text !== null) copiedNotice(id);
+			return text;
+		},
+		paste: (node, client) => paste(node, client && flow.screenToFlowPosition(client)),
+	});
+	useShortcut(
+		"canvas-duplicate",
+		() => {
+			const id = current();
+			if (id) duplicate(id);
+		},
+		!running,
+	);
+
 	const save = () => {
 		if (fieldErrors.length > 0) {
 			notify.warning(`有 ${fieldErrors.length} 处字段错误，改正后才能保存`);
@@ -626,6 +705,16 @@ function Editor({
 													out: nodeConnections(doc, target.id).out.length,
 												},
 												onAddAfter: () => openAddMenu({ after: target.id }),
+												clipboardItems: copyProblem(target.node) ? undefined : (
+													<NodeCopyItems
+														onDuplicate={() => duplicate(target.id)}
+														onCopy={() => {
+															const text = copyText(target.id);
+															if (text !== null)
+																writeClipboard(text, () => copiedNotice(target.id));
+														}}
+													/>
+												),
 												onDisconnect: (side) => applyEdit(disconnectNode(doc, target.id, side)),
 												onDelete: () => deleteNode(target.id),
 											}
@@ -636,6 +725,7 @@ function Editor({
 								canUndo={history.canUndo}
 								canRedo={history.canRedo}
 								onAdd={() => openAddMenu({ client: target.client, position: target.position })}
+								onPaste={(node) => paste(node, target.position)}
 								onTidy={tidy}
 								onUndo={history.undo}
 								onRedo={history.redo}

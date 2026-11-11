@@ -104,12 +104,5 @@ export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): Orche
 	};
 }
 
-/** 在已有节点 ID 中为新节点生成一个不重复的 ID。 */
-export function uniqueNodeId(base: string, existing: Iterable<string>): string {
-	const taken = new Set(existing);
-	const stem = base.replace(/[^A-Za-z0-9_]/g, "_") || "node";
-	for (let i = 1; ; i++) {
-		const id = `${stem}_${i}`;
-		if (!taken.has(id)) return id;
-	}
-}
+/** 新节点 ID 的生成规则与粘贴、创建副本共用（@sfly/orchestration）。 */
+export { uniqueNodeId } from "@sfly/orchestration";
