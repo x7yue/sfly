@@ -5,6 +5,7 @@ import { ArrowLeftIcon, HistoryIcon, PlayIcon } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { floatGroupClass, GroupDivider } from "#/components/canvas/CanvasDock";
 import { StatusPill } from "#/components/status";
+import { shortcutText } from "#/lib/shortcuts";
 import { ConflictDialog } from "#/versions/ConflictDialog";
 import type { Versioning } from "#/versions/useVersionedDraft";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -76,10 +77,10 @@ export function EditorTopLeft({
 			>
 				{(
 					[
-						["edit", "编辑", "E"],
-						["run", "运行状态", "R"],
+						["edit", "编辑", "canvas-mode-edit"],
+						["run", "运行状态", "canvas-mode-run"],
 					] as const
-				).map(([value, label, key]) => (
+				).map(([value, label, shortcut]) => (
 					<button
 						key={value}
 						type="button"
@@ -92,7 +93,7 @@ export function EditorTopLeft({
 						)}
 					>
 						{label}
-						<Kbd>{key}</Kbd>
+						<Kbd>{shortcutText(shortcut)}</Kbd>
 					</button>
 				))}
 			</fieldset>
@@ -173,7 +174,7 @@ export function EditorTopRight({
 							"border-primary-foreground/20 bg-primary-foreground/10 text-primary-foreground",
 					)}
 				>
-					Ctrl S
+					{shortcutText("canvas-save")}
 				</Kbd>
 			</Button>
 			<Button variant={unsaved ? "default" : "primary"} onClick={onRun}>

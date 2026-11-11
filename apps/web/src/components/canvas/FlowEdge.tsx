@@ -1,6 +1,7 @@
-import { EdgeLabelRenderer, type EdgeProps, useInternalNode } from "@xyflow/react";
+import { EdgeLabelRenderer, type EdgeProps, useInternalNode, useStore } from "@xyflow/react";
 import { cn } from "cn";
 import { useFlowCanvas } from "./context";
+import { EdgeInsertButton, useEdgeHover } from "./EdgeInsert";
 import type { SfEdge } from "./flow";
 import { PORTS } from "./geometry";
 import { ZOOM_TEXT_11 } from "./zoom-text";
@@ -60,19 +61,20 @@ export function edgePath(
 /**
  * 链连线与调度连线。端点 = 节点位置 + geometry.ts 的端口偏移。选中节点相关的连线（或选中的连线本身）
  * 灰色虚线流动；decorateEdge 给出的运行状态：live 青色实线、failed 红色。
+ * 可编辑时，悬停链上的连线在中点出现「＋」（EdgeInsert.tsx）；连线时（拖线、改接）不出现。
  */
 export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdge>) {
-	const { selectedId, decorateEdge } = useFlowCanvas();
+	const { selectedId, decorateEdge, insertOnEdge, openEdgeMenu } = useFlowCanvas();
+	const hover = useEdgeHover();
+	const connecting = useStore((s) => s.connection.inProgress);
 	const from = useInternalNode(source)?.internals.positionAbsolute;
 	const to = useInternalNode(target)?.internals.positionAbsolute;
 	if (!from || !to) return null;
 	const kind = data?.kind ?? "chain";
 	const start = kind === "dispatch" ? PORTS.dispatch : PORTS.out;
-	const { d, mid } = edgePath(
-		kind,
-		[from.x + start.x, from.y + start.y],
-		[to.x + PORTS.in.x, to.y + PORTS.in.y],
-	);
+	const p1: Point = [from.x + start.x, from.y + start.y];
+	const p2: Point = [to.x + PORTS.in.x, to.y + PORTS.in.y];
+	const { d, mid } = edgePath(kind, p1, p2);
 	const highlighted = selected || selectedId === source || selectedId === target;
 	const run = decorateEdge?.({ from: source, to: target, kind });
 	return (
@@ -98,7 +100,17 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 				stroke="transparent"
 				strokeWidth={14}
 				className="react-flow__edge-interaction"
+				ref={hover.bind}
 			/>
+			{insertOnEdge && kind === "chain" && hover.hovered && !connecting && (
+				// 链连线的路径关于中点对称（直线、贝塞尔、换行的折返都是），中点就是两端的中点。
+				<EdgeInsertButton
+					at={[(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2]}
+					hover={hover}
+					onInsert={(client) => insertOnEdge({ from: source, to: target }, client)}
+					onMenu={(client) => openEdgeMenu?.({ from: source, to: target, kind }, client)}
+				/>
+			)}
 			{mid && (
 				<EdgeLabelRenderer>
 					<div

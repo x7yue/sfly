@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { nodeCard } from "./editor-support";
+import { addMenu, inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor } from "./monitor-scenario";
 import { stoppingRun } from "./stop-subflow-scenario";
@@ -8,9 +8,6 @@ import { createScenario, publishPackage } from "./support";
 // 停止子流程节点（#85，SEMANTICS §4.1）：添加节点、按名称选择子流程（只列出合法候选）、校验警告；
 // 运行后运行监控页与画布运行状态显示「已停止」，并能看到停止子流程节点在等哪个子流程。
 
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
-const addMenu = (page: Page) => page.getByRole("dialog", { name: "添加节点" });
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
 const target = (page: Page) => inspector(page).getByRole("combobox", { name: "要停止的子流程" });
 const timeline = (page: Page) => page.getByRole("region", { name: "链路时间线" });
 
@@ -61,9 +58,9 @@ test("添加停止子流程节点：检查器只列出本链在它之前触发�
 	await expect(target(page).getByRole("option")).toHaveText(["本链在这里之前没有触发子流程"]);
 	await expect(inspector(page)).toContainText("停止子流程节点 early 没有选择子流程");
 
-	// 选中 load 后添加：接在主链末尾，能选择 spawn 触发的「监控」。
+	// 焦点在链尾 load 上按 Tab 添加：接在主链末尾，能选择 spawn 触发的「监控」。
 	await nodeCard(page, "load").click();
-	await dock(page).getByRole("button", { name: "添加节点" }).click();
+	await page.keyboard.press("Tab");
 	await addMenu(page)
 		.getByRole("option", { name: /停止子流程/ })
 		.click();

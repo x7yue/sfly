@@ -51,13 +51,13 @@ test("Shell 命令节点的输出出现在检查器的输出列表里，后续�
 		.poll(async () => ((await listed.textContent()) ?? "").split(" · ").sort())
 		.toEqual(["exit_code", "stderr", "stderr_file", "stdout", "stdout_file"]);
 
-	// check.command 是整值引用：清空后补全列出 build 的全部输出。
+	// check.command 引用了 build 的输出：清空后输入 $，补全列出 build 的全部输出。
 	await nodeCard(page, "check").click();
 	await panel.getByRole("tab", { name: "参数" }).click();
 	const command = panel.getByRole("combobox", { name: "输入 command" });
-	await expect(command).toHaveValue("nodes.build.outputs.stdout");
+	await expect(command).toHaveText("${{ nodes.build.outputs.stdout }}");
 	await command.fill("");
-	await command.focus();
+	await page.keyboard.type("$");
 	const outputs = panel
 		.getByRole("listbox", { name: "可引用的值" })
 		.getByRole("group", { name: "前序节点" })
@@ -72,7 +72,10 @@ test("Shell 命令节点的输出出现在检查器的输出列表里，后续�
 	]) {
 		await expect(outputs.filter({ hasText: option })).toHaveCount(1);
 	}
-	await command.pressSequentially("stderr_f");
+	// 由 $ 弹出的补全没有预选项：先用方向键选中唯一的匹配，再按 Enter 插入。
+	await page.keyboard.type("stderr_f");
+	await expect(outputs).toHaveCount(1);
+	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("Enter");
-	await expect(command).toHaveValue("nodes.build.outputs.stderr_file");
+	await expect(command).toHaveText("${{ nodes.build.outputs.stderr_file }}");
 });

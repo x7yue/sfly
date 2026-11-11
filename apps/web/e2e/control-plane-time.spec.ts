@@ -89,10 +89,19 @@ test("拿不到控制面时间时按浏览器时间显示", async ({ page, contr
 	// 旧版控制面、中间代理去掉了响应头：接口响应里没有控制面时间，SSE 也连不上。
 	await page.route("**/api/**", async (route) => {
 		if (route.request().headers().accept?.includes("text/event-stream")) return route.abort();
-		const response = await route.fetch();
-		const headers = { ...response.headers() };
-		delete headers[CONTROL_PLANE_TIME_HEADER];
-		await route.fulfill({ response, headers });
+		try {
+			const response = await route.fetch();
+			const headers = { ...response.headers() };
+			delete headers[CONTROL_PLANE_TIME_HEADER];
+			await route.fulfill({ response, headers });
+		} catch (error) {
+			// 页面取消了这次请求（重新查询、离开页面），或用例已经结束：这时没有响应可改，不是失败。
+			if (
+				!/disposed|Test ended|Target page, context or browser has been closed/.test(String(error))
+			) {
+				throw error;
+			}
+		}
 	});
 	await page.clock.setFixedTime(new Date(clock.now().getTime() + 60_000));
 

@@ -182,3 +182,16 @@ export async function expectFocusVisible(locator: Locator): Promise<void> {
 	});
 	expect(ring).toEqual({ focusVisible: true, outline: "solid 2px" });
 }
+
+/** 元素在页面上的位置和大小；不可见时报错。 */
+export async function box(locator: Locator) {
+	const b = await locator.boundingBox();
+	if (!b) throw new Error("元素不可见");
+	return b;
+}
+
+type Rect = { x: number; y: number; width: number; height: number };
+
+/** 两个矩形有没有重叠。 */
+export const overlap = (a: Rect, b: Rect) =>
+	a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;

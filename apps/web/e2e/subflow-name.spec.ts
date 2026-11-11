@@ -1,20 +1,21 @@
 import type { Page } from "@playwright/test";
-import { createEditorScenario, editorDocument, headOf, nodeCard } from "./editor-support";
+import {
+	addMenu,
+	createEditorScenario,
+	dock,
+	editorDocument,
+	headOf,
+	inspector,
+	nodeCard,
+	openEditor,
+} from "./editor-support";
 import { expect, test } from "./fixtures";
 import { createScenario, publishPackage } from "./support";
 
 // 子流程名称（#84，SEMANTICS §1.2）：新建子流程入口时填写，检查器里修改，名称为空或重复时警告；
 // 没有名称字段的旧版本以节点 ID 作为名称。
 
-const dock = (page: Page) => page.getByRole("toolbar", { name: "画布工具" });
-const addMenu = (page: Page) => page.getByRole("dialog", { name: "添加节点" });
-const inspector = (page: Page) => page.getByRole("complementary", { name: "检查器" });
 const region = (page: Page, name: string) => page.getByRole("region", { name: `子流程 ${name}` });
-
-async function openEditor(page: Page, id: string) {
-	await page.goto(`/orchestrations/${id}`);
-	await expect(nodeCard(page, "sub_ping")).toBeVisible();
-}
 
 test("新建子流程入口时必须填写不重复的名称；子流程区域标题显示名称", async ({
 	page,

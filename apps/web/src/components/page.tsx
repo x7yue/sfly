@@ -1,9 +1,16 @@
 import { cn } from "cn";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useState } from "react";
-import { keyChords } from "#/lib/shortcuts";
+import {
+	type KeyLabel,
+	type OperationKey,
+	operationKey,
+	type ShortcutId,
+	shortcutKeys,
+} from "#/lib/shortcuts";
 import { Button } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
+import { writeClipboard } from "./feedback/clipboard";
 import { notify } from "./feedback/notify";
 
 /**
@@ -78,11 +85,19 @@ export function SectionHeading({
 }
 
 /**
- * 快捷键的按键显示：`Ctrl+K` → <kbd>Ctrl</kbd><kbd>K</kbd>（同时按，紧挨着）；
+ * 快捷键的按键显示，`shortcut` 是注册表 id：`Ctrl+K` → <kbd>Ctrl</kbd><kbd>K</kbd>（同时按，紧挨着）；
  * `G D` → <kbd>G</kbd> 然后 <kbd>D</kbd>（依次按，中间写明「然后」）。
  */
-export function Keys({ keys, className }: { keys: string; className?: string }) {
-	const chords = keyChords(keys);
+export function Keys({ shortcut, className }: { shortcut: ShortcutId; className?: string }) {
+	return <KeyChords chords={shortcutKeys(shortcut)} className={className} />;
+}
+
+/** 操作说明里的按键（命令面板底部的「↑ ↓ 选择」）：不是快捷键，见 OperationKey。快捷键用 Keys。 */
+export function KeyHint({ keys, className }: { keys: OperationKey; className?: string }) {
+	return <KeyChords chords={[[operationKey(keys)]]} className={className} />;
+}
+
+function KeyChords({ chords, className }: { chords: KeyLabel[][]; className?: string }) {
 	return (
 		<span className={cn("inline-flex items-center gap-0.75", className)}>
 			{chords.map((chord, i) => (
@@ -133,16 +148,13 @@ export function CodeBlock({
 				size="icon-sm"
 				aria-label="复制"
 				className="absolute top-1.5 right-1.5"
-				onClick={() => {
-					void navigator.clipboard
-						.writeText(code)
-						.then(() => {
-							setCopied(true);
-							notify.success("已复制到剪贴板");
-							setTimeout(() => setCopied(false), 1500);
-						})
-						.catch(() => notify.error("复制失败", { description: "浏览器不允许访问剪贴板" }));
-				}}
+				onClick={() =>
+					writeClipboard(code, () => {
+						setCopied(true);
+						notify.success("已复制到剪贴板");
+						setTimeout(() => setCopied(false), 1500);
+					})
+				}
 			>
 				{copied ? <CheckIcon /> : <CopyIcon />}
 			</Button>

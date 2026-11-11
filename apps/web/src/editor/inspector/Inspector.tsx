@@ -11,10 +11,14 @@ import { forwardRef, type ReactNode, useMemo, useState } from "react";
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
+import { PanelWidthHandle } from "#/components/PanelWidthHandle";
 import { StatusPill } from "#/components/status";
+import { ACTION } from "#/lib/copy";
+import { usePanelWidth } from "#/lib/panel-width";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { Field, SectionTitle } from "./fields";
 import {
@@ -67,6 +71,7 @@ export const Inspector = forwardRef<
 		onEscape(): void;
 	}
 >(function Inspector({ selected, context, onCollapse, onEscape }, ref) {
+	const width = usePanelWidth();
 	return (
 		<aside
 			ref={ref}
@@ -78,7 +83,8 @@ export const Inspector = forwardRef<
 					onEscape();
 				}
 			}}
-			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex w-93 flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
+			style={{ width }}
 		>
 			{selected ? (
 				<NodeInspector
@@ -91,6 +97,7 @@ export const Inspector = forwardRef<
 			) : (
 				<ScenarioInspector context={context} onCollapse={onCollapse} />
 			)}
+			<PanelWidthHandle label={ACTION.resizeInspector} />
 		</aside>
 	);
 });
@@ -307,7 +314,7 @@ function NodeInspector({
 						.filter((e) => !e.draft && !e.field.startsWith("params."))
 						.map((e) => (
 							<p key={e.field} className="m-0 mt-2 text-xs text-danger-fg">
-								{e.field}：{e.message}
+								{fieldLabel(node, e.field)}：{e.message}
 							</p>
 						))}
 				</TabsContent>
@@ -435,7 +442,12 @@ function ScenarioInspector({
 								)}
 							>
 								<span className="min-w-0 flex-1">
-									{e.nodeId && <code className="font-mono">{e.nodeId}</code>} {e.message}
+									{e.nodeId && <code className="font-mono">{e.nodeId}</code>}{" "}
+									{fieldLabel(
+										doc.nodes.find((n) => n.id === e.nodeId),
+										e.field,
+									)}
+									：{e.message}
 								</span>
 								{e.nodeId && (
 									<button

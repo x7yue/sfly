@@ -13,7 +13,6 @@ import { Keys } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { useNickname } from "#/lib/nickname";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
-import { shortcutById } from "#/lib/shortcuts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NAV_ITEMS, type NavItem } from "./navigation";
 import { useOverlays } from "./overlays";
@@ -95,7 +94,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 				<button type="button" className={navItemClass(collapsed)} onClick={() => open("shortcuts")}>
 					<KeyboardIcon aria-hidden />
 					<span className={cn(collapsed && "sr-only")}>快捷键</span>
-					{!collapsed && <Keys keys="?" className="ml-auto" />}
+					{!collapsed && <Keys shortcut="shortcuts-help" className="ml-auto" />}
 				</button>
 			</SidebarItem>
 			<SidebarItem collapsed={collapsed} label={collapsed ? "展开侧边栏" : "折叠侧边栏"}>
@@ -109,7 +108,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 					<span className={cn(collapsed && "sr-only")}>
 						{collapsed ? "展开侧边栏" : "折叠侧边栏"}
 					</span>
-					{!collapsed && <Keys keys={shortcutById("toggle-sidebar").keys} className="ml-auto" />}
+					{!collapsed && <Keys shortcut="toggle-sidebar" className="ml-auto" />}
 				</button>
 			</SidebarItem>
 		</aside>
@@ -175,7 +174,7 @@ function Topbar() {
 			>
 				<SearchIcon aria-hidden className="size-4" />
 				搜索页面、场景、命令…
-				<Keys keys={shortcutById("command-palette").keys} className="ml-auto" />
+				<Keys shortcut="command-palette" className="ml-auto" />
 			</button>
 			{nickname && (
 				<button

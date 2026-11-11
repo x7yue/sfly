@@ -1,10 +1,16 @@
+import type { ComponentProps } from "react";
 import { describe, expect, it } from "vitest";
+import type { ToolButton } from "#/components/canvas/CanvasDock";
+import type { KeyHint, Keys } from "#/components/page";
+import type { Kbd } from "#/components/ui/kbd";
 import {
 	type KeyInput,
 	keyChords,
 	keyLabels,
 	type ShortcutDef,
 	ShortcutMatcher,
+	shortcutKeys,
+	shortcutText,
 } from "./shortcuts";
 
 const defs: ShortcutDef[] = [
@@ -83,5 +89,25 @@ describe("快捷键显示", () => {
 		expect(keyChords("G D")).toEqual([["G"], ["D"]]);
 		expect(keyChords("Ctrl+Shift+Z")).toEqual([["Ctrl", "Shift", "Z"]]);
 		expect(keyChords("←/→")).toEqual([["←/→"]]);
+	});
+
+	it("写在文字里的快捷键取自注册表", () => {
+		expect(shortcutText("canvas-paste")).toBe("Ctrl V");
+		expect(shortcutText("canvas-redo")).toBe("Ctrl Shift Z");
+		expect(shortcutText("canvas-add")).toBe("/");
+	});
+
+	it("界面上的按键只能从注册表取（类型检查拦住写死的按键）", () => {
+		// @ts-expect-error Kbd 的内容是 KeyLabel，不能写死
+		const kbd: ComponentProps<typeof Kbd>["children"] = "Ctrl S";
+		// @ts-expect-error 按钮提示的快捷键是注册表 id，不是按键文字
+		const tool: ComponentProps<typeof ToolButton>["shortcut"] = "Ctrl Z";
+		// @ts-expect-error 同上
+		const keys: ComponentProps<typeof Keys>["shortcut"] = "?";
+		// @ts-expect-error 操作说明只能用 OperationKey 里的键
+		const hint: ComponentProps<typeof KeyHint>["keys"] = "Ctrl K";
+		const fromRegistry: ComponentProps<typeof Kbd>["children"] = shortcutText("canvas-undo");
+		expect([kbd, tool, keys, hint, fromRegistry]).toHaveLength(5);
+		expect(shortcutKeys("go-agents")).toEqual([["G"], ["A"]]);
 	});
 });
