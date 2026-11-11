@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package sfly.agent.v1;
+
+import "sfly/agent/v1/files.proto";
+
+// Agent 能力 files.read（ADR 0019）：流式读取文件内容。和 AgentPeer 在同一个端口上提供，供其它 Agent 直接连接，
+// 没有认证，只应在内网使用。下载到本地路径（可续传）由发起调用的 Agent 用这个服务完成：
+// 它边收边写自己机器上的文件，连接中断后从已经收到的位置再读一次，数据不经过节点进程和控制面。
+//
+// 路径和错误的约定与 files.proto 的 AgentFiles 相同；另外 FAILED_PRECONDITION 表示路径上已经不是 expect 那个文件。
+service AgentFileRead {
+  // 读取一个文件：第一条回复带打开时的文件属性，之后每条是紧接着的一段内容，读到 length 字节或文件末尾为止。
+  rpc Read(ReadFileRequest) returns (stream ReadFileResponse);
+}
+
+message ReadFileRequest {
+  // 文件的绝对路径（跟随符号链接；目录不能读取）。
+  string path = 1;
+  // 从第几个字节开始读；超过文件末尾时没有内容。
+  uint64 offset = 2;
+  // 最多读多少字节；不设时读到文件末尾。
+  optional uint64 length = 3;
+  // 设了时，打开的文件必须是它（设备号 + inode 相同），否则以 FAILED_PRECONDITION 失败：
+  // 续传时用来确认路径上还是原来那个文件（没有被删除后重建，也没有被别的文件改名顶替）。
+  FileIdentity expect = 4;
+}
+
+// 文件标识：设备号 + inode（与 FileInfo 的 device、inode 相同）。
+message FileIdentity {
+  uint64 device = 1;
+  uint64 inode = 2;
+}
+
+message ReadFileResponse {
+  // 只在第一条回复里有：打开的文件的属性，size 是打开时的大小。
+  FileInfo file = 1;
+  // 一段内容，紧接上一段；第一条回复里可能为空。
+  bytes data = 2;
+}
