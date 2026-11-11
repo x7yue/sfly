@@ -67,6 +67,7 @@ const ROUTES = {
 		"publish",
 		"subflows",
 		"standard-nodes",
+		"cross-agent-files",
 	],
 } as const;
 

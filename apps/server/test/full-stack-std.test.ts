@@ -4,6 +4,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi, metricsApi } from "@sfly/schema";
@@ -582,6 +583,202 @@ describe("全栈：标准节点包 sfly-std", () => {
 				expect(sha256(await readFile(join(local, name))), name).toBe(sha256(data));
 			}
 			expect(await readdir(logs)).toEqual(["app.log"]);
+		} finally {
+			await source.close();
+			await sourceVenv.remove();
+		}
+	}, 300_000);
+
+	/** 一个空闲的 TCP 端口（让 Agent 重启后仍在同一个端口上等其它 Agent 连接）。 */
+	async function freePort() {
+		const server = createServer();
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const { port } = server.address() as AddressInfo;
+		await new Promise((resolve) => server.close(resolve));
+		return port;
+	}
+
+	/** 一个任务的全部日志行的文本。 */
+	async function taskLogs(api: ApiClient, taskId: string) {
+		const page = logsApi.page.response.parse(
+			await api.getJson(`/tasks/${encodeURIComponent(taskId)}/logs`),
+		);
+		return page.lines.map((l) => l.text);
+	}
+
+	it("watch_files 放在子流程里：主链在 A 上产生并轮转日志，B 上的子流程持续拉取并删除源文件，被停止子流程节点停止时记为已停止", async () => {
+		// 日志清洗的场景（ADR 0019，用户文档「跨 Agent 处理文件」）：A 是被测机器（std-watch-a），B 是 std-agent。
+		// 两台 Agent 在同一台机器上，所以「A 上的日志目录」就是这里建的临时目录，绝对路径相同。
+		const A = "std-watch-a";
+		const aVenv = await createStubVenv({ sdkOnly: true });
+		// A 上要运行主链的 shell：从 PyPI 镜像桩安装 sfly-std 的依赖。
+		const a = await startRealAgent({
+			grpcUrl: cp.grpcUrl,
+			name: A,
+			venv: aVenv.path,
+			args: ["--index-url", pypi.indexUrl],
+		});
+		try {
+			const logs = join(dir, "watch-source");
+			const local = join(dir, "watch-local");
+			await mkdir(logs, { recursive: true });
+			const id = await new ApiClient(cp).orchestrationWith({
+				default_agent: AGENT,
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "spawn", kind: "async", params: {} },
+					// 被测系统写日志并轮转两次：app.log 写满后改名为 app.log.<n>，再新建 app.log 接着写。
+					{
+						id: "produce",
+						kind: "package",
+						package: "sfly-std",
+						node: "shell",
+						agent: A,
+						inputs: {
+							command: [
+								"set -e",
+								`cd ${logs}`,
+								"printf '第一轮的日志\\n' > app.log",
+								"mv app.log app.log.1",
+								"printf '第二轮的日志\\n' > app.log",
+								"sleep 0.5",
+								"mv app.log app.log.2",
+								"printf '还在写\\n' > app.log",
+							].join("\n"),
+						},
+					},
+					// 等 B 把轮转出来的文件拉走（拉完才删除源文件），再停止子流程。
+					{
+						id: "drained",
+						kind: "package",
+						package: "sfly-std",
+						node: "shell",
+						agent: A,
+						inputs: {
+							command: `cd ${logs}; while [ -e app.log.1 ] || [ -e app.log.2 ]; do sleep 0.2; done`,
+						},
+					},
+					{ id: "stop", kind: "stop_subflow", subflow: "pull", always: true },
+					{ id: "pull", kind: "subflow_entry", name: "拉取日志", params: [] },
+					{
+						id: "watch",
+						kind: "package",
+						package: "sfly-std",
+						node: "watch_files",
+						inputs: {
+							source: A,
+							directory: logs,
+							pattern: "app.log.*",
+							stable: 1,
+							local_dir: local,
+							delete_source: true,
+						},
+					},
+				],
+				edges: [
+					{ from: "entry", to: "spawn", kind: "chain" },
+					{ from: "spawn", to: "produce", kind: "chain" },
+					{ from: "produce", to: "drained", kind: "chain" },
+					{ from: "drained", to: "stop", kind: "chain" },
+					{ from: "pull", to: "watch", kind: "chain" },
+					{ from: "spawn", to: "pull", kind: "dispatch" },
+				],
+				packages: { "sfly-std": std.version },
+			});
+			const { api, runId } = await runToEnd(id);
+
+			const run = await api.run(runId);
+			const main = run.chains.find((c) => c.chain_id === "entry");
+			const pull = run.chains.find((c) => c.chain_id === "pull");
+			const watch = pull?.nodes.find((n) => n.node_id === "watch");
+			expect(watch?.status, JSON.stringify(watch?.attempts.at(-1)?.error)).toBe("stopped");
+			expect(watch?.agent).toBe(AGENT);
+			expect(main?.nodes.find((n) => n.node_id === "produce")?.agent).toBe(A);
+			expect(main?.nodes.find((n) => n.node_id === "stop")).toMatchObject({
+				status: "success",
+				outputs: { status: "success" },
+			});
+			expect(run.status).toBe("success");
+			// 目标目录里只有完整的文件（临时文件已改名），A 上只剩还在写的 app.log。
+			expect((await readdir(local)).sort()).toEqual(["app.log.1", "app.log.2"]);
+			expect(await readFile(join(local, "app.log.1"), "utf8")).toBe("第一轮的日志\n");
+			expect(await readFile(join(local, "app.log.2"), "utf8")).toBe("第二轮的日志\n");
+			expect(await readdir(logs)).toEqual(["app.log"]);
+
+			// 指标在运行页面上可见：已拉取的文件数、字节数和速率。
+			const catalog = metricsApi.catalog.response.parse(
+				await api.getJson(`/runs/${runId}/metrics`),
+			);
+			const node = catalog.nodes.find((n) => n.node_id === "watch");
+			expect(node?.primary_metric).toBe("bytes_per_s");
+			expect(node?.attempts[0]?.metrics.map((m) => m.name).sort()).toEqual([
+				"bytes_per_s",
+				"pulled_bytes",
+				"pulled_files",
+			]);
+		} finally {
+			await a.close();
+			await aVenv.remove();
+		}
+	}, 300_000);
+
+	it("watch_files 在来源 Agent 重启（连接中断）后继续拉取：断线期间轮转出来的文件也拉到，拉过的不再拉", async () => {
+		const SOURCE = "std-watch-restart";
+		const sourceVenv = await createStubVenv({ sdkOnly: true });
+		// 固定端口：重启后还在同一个地址上，派发时下发的地址仍然有效。
+		const port = String(await freePort());
+		const start = () =>
+			startRealAgent({
+				grpcUrl: cp.grpcUrl,
+				name: SOURCE,
+				venv: sourceVenv.path,
+				env: { SFLY_LISTEN_PORT: port },
+			});
+		let source = await start();
+		try {
+			const logs = join(dir, "restart-source");
+			const local = join(dir, "restart-local");
+			await mkdir(logs, { recursive: true });
+			await writeFile(join(logs, "app.log.1"), "断线之前\n");
+			const api = new ApiClient(cp);
+			const runId = await api.triggerOk(
+				await saveChain([
+					{
+						id: "watch",
+						node: "watch_files",
+						inputs: { source: SOURCE, directory: logs, pattern: "app.log.*", local_dir: local },
+					},
+				]),
+			);
+			await eventually(
+				async () => expect(await readFile(join(local, "app.log.1"), "utf8")).toBe("断线之前\n"),
+				120_000,
+			);
+
+			// A 突然退出（连接中断），断线期间又轮转出一个文件，之后 A 在同一个端口上重新启动。
+			await source.close();
+			await writeFile(join(logs, "app.log.2"), "断线期间\n");
+			source = await start();
+			await eventually(
+				async () => expect(await readFile(join(local, "app.log.2"), "utf8")).toBe("断线期间\n"),
+				120_000,
+			);
+			await writeFile(join(logs, "app.log.3"), "重连之后\n");
+			await eventually(
+				async () => expect(await readFile(join(local, "app.log.3"), "utf8")).toBe("重连之后\n"),
+				60_000,
+			);
+			await api.cancelOk(runId);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("cancelled"), 60_000);
+
+			// 每个文件只拉了一次：重连后的快照里仍有 app.log.1，没有再拉。
+			const watch = await api.node(runId, "watch");
+			const lines = await taskLogs(api, watch.attempts[0]?.task_id as string);
+			for (const name of ["app.log.1", "app.log.2", "app.log.3"]) {
+				const pulled = lines.filter((l) => l.startsWith(`拉取了 ${join(logs, name)}（`));
+				expect(pulled, name).toHaveLength(1);
+			}
+			expect((await readdir(local)).sort()).toEqual(["app.log.1", "app.log.2", "app.log.3"]);
 		} finally {
 			await source.close();
 			await sourceVenv.remove();

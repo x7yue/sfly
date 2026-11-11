@@ -10,7 +10,8 @@
 - `_sampling.py`：持续运行的节点的 `interval`、`duration` 校验与速率计算；
 - `_logfile.py`：像 `tail -F` 一样读日志文件；
 - `_assertions.py`：`assert` 与 `http_request` 共用的断言格式；
-- `_pull.py`：从另一台 Agent 拉取文件的节点共用的下载、删除源文件与输出路径列表的截断。
+- `_pull.py`：从另一台 Agent 拉取文件的节点（`pull_files`、`watch_files`）共用的下载、
+  删除源文件与输出路径列表的截断。
 
 新增一个节点：
 
