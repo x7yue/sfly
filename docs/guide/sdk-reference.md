@@ -284,6 +284,44 @@ Agent 能力是 Agent 自身提供、节点在执行中调用的一组操作。`
 
 修改时间是那台机器的 Agent 时间，原样给出，不换算：两台机器的时钟不一定一致，判断「多久没有修改」时不要直接和本机的 `time.time()` 比较，比较同一台 Agent 上前后两次 `stat` 的结果。
 
+### 写入、上传与删除
+
+```python
+from sfly import AgentFileNotFound, AgentName, Context, node
+
+
+@node(outputs=["marker"])
+def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
+    """把 source 上的日志下载到本机清洗后，把结果放回去、删掉源文件。"""
+    ...  # 清洗，得到本机上的 cleaned.log
+    ctx.agent(source).files.upload("cleaned.log", f"{path}.cleaned")
+    marker = ctx.agent(source).files.write(f"{path}.done", b"cleaned\n")
+    try:
+        ctx.agent(source).files.delete(path)
+    except AgentFileNotFound:
+        pass  # 已经被别人删掉了
+    return {"marker": marker.path}
+```
+
+| 方法 | 说明 |
+|---|---|
+| `files.write(path, data, *, timeout=30.0)` | 把 `data` 写成那台 Agent 上的文件 `path`，返回写好的文件的 `FileInfo` |
+| `files.upload(local_path, path, *, timeout=30.0)` | 把节点所在机器上的文件 `local_path` 上传成那台 Agent 上的 `path`，返回 `FileInfo` |
+| `files.delete(path, *, timeout=30.0)` | 删除那台 Agent 上的文件 `path` |
+
+从 SDK 0.2.0 起可用，需要那台 Agent 支持能力 `files.write`（0.2.0 及以上的 Agent）。
+
+- `data` 是字节（`bytes`、`bytearray`、`memoryview`），或逐段给出字节的可迭代对象（例如生成器）：边取边发，不用先把整个文件放进内存。文本先 `encode()`；传 `str` 抛出 `TypeError`。
+- 写入和上传都先写到 `path` 所在目录里的临时文件（`.<文件名>.sfly-<随机>.tmp`），全部写完才改名为 `path`。所以 `path` 上要么是原来的文件，要么是完整的新文件，读它的人不会读到半截：
+  - `path` 已存在时整个替换，保留它的权限位；`path` 是符号链接时替换链接本身；
+  - 写到一半出错（包括生成 `data` 的代码抛出异常）、任务被取消或节点进程退出时，删除临时文件，`path` 不受影响。只有那台 Agent 自己在写的过程中退出时，临时文件才会留下来；
+  - `path` 所在的目录必须已经存在（不存在时抛出 `AgentFileNotFound`，消息写明是哪个目录），`path` 不能是目录。
+- `files.upload` 由自己所在的 Agent 读 `local_path`，直接传给那台 Agent，数据不经过节点进程，适合大文件。`local_path` 是节点所在机器上的路径，相对路径相对于节点的当前目录（任务目录）；它不存在时抛出 `AgentFileNotFound`，消息里是自己所在的 Agent。对 `ctx.agent()` 上传就是本机复制。
+- `files.delete` 只删除文件，不删除目录（目录抛出 `AgentError`，`kind` 为 `invalid`）；`path` 是符号链接时删除链接本身。文件不存在时抛出 `AgentFileNotFound`。
+- 目录没有写权限时，写入、上传、删除都抛出 `AgentPermissionDenied`。
+- `timeout`：`files.write`、`files.upload` 是对方接收每一段、写完后给出结果各自最多等多久；`files.write` 等 `data` 给出下一段不计时。`files.delete` 是整个调用。
+- 本地调试时规则相同：写到映射的目录里，`local_path` 是本机上的路径。
+
 ### 监听目录：`files.watch`
 
 ```python
@@ -304,7 +342,7 @@ def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/ap
     raise RuntimeError("监听意外结束")
 ```
 
-`files.watch` 监听目录下文件名匹配 `pattern` 的普通文件，返回一个一直进行下去的迭代器：先给出一份 `WatchSnapshot`（当前的文件），之后逐个给出 `FileEvent`。停止迭代（`break`、`return`、`close()`）时监听随之结束。从 SDK 0.2.0 起可用，那台 Agent 也要是 0.2.0 及以上。
+`files.watch` 监听目录下文件名匹配 `pattern` 的普通文件，返回一个一直进行下去的迭代器：先给出一份 `WatchSnapshot`（当前的文件），之后逐个给出 `FileEvent`。停止迭代（`break`、`return`、`close()`）时监听随之结束。从 SDK 0.2.0 起可用，需要那台 Agent 支持能力 `files.watch`（0.2.0 及以上的 Agent）。
 
 - `pattern` 的规则与 `files.list` 相同。`recursive=True` 时监听子目录，包括监听期间新建（或移进来）的子目录：新子目录里已有的文件作为 `created` 给出。
 - `WatchSnapshot(files, missed)`：`files` 是当时匹配的全部文件（`FileInfo` 的元组，顺序与 `files.list` 相同）。快照之后的变化不会漏掉，但可能和快照重复。

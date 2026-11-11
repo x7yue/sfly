@@ -9,6 +9,9 @@ Agent 回复若干行 JSON：
 - `{"data": N}` 之后紧跟 N 个原始字节：传输文件内容的方法（读取）；
 - 最后一行 `{"result": ...}` 或 `{"error": {"kind", "message", "agent"}}`，之后关闭连接。
 
+往对方传数据的方法（流式写入）在请求之后接着发 `{"data": N}` + N 个字节的帧（`Call.send_data`），
+最后发 `{"end": true}`（`Call.send_end`），再读回复。
+
 超时由 Agent 负责（`timeout_ms`，等对方回应的上限）；SDK 这边多等 `_MARGIN` 秒兜底，
 Agent 自己卡住时也不会永远等下去。任务被取消时：主线程里的调用被 SIGTERM 打断
 （执行器把它变成 `Cancelled`），后台线程里的调用由 Agent 回复 `cancelled`，同样抛出
@@ -26,6 +29,9 @@ from sfly.capabilities.errors import AgentTimeout, AgentUnreachable, error_for
 
 #: 调用的默认超时（秒）。
 DEFAULT_TIMEOUT = 30.0
+
+#: 流式写入时每帧最多发多少字节。
+MAX_DATA = 256 * 1024
 
 #: Agent 应该在 `timeout` 内回复；SDK 多等这么久才认为 Agent 自己卡住了。
 _MARGIN = 5.0
@@ -100,6 +106,27 @@ class Call:
     def close(self) -> None:
         self._file.close()
         self._conn.close()
+
+    def send_data(self, data: bytes | bytearray | memoryview) -> bool:
+        """发一段数据（流式写入）：`{"data": N}` 一行之后紧跟这 N 个字节，N 不超过 `MAX_DATA`。
+        Agent 已经结束这次调用（例如出错了）、不再接收时返回 False：接着用 `result()` 读出原因。"""
+        header = json.dumps({"data": len(data)}).encode("utf-8") + b"\n"
+        return self._send(header, data)
+
+    def send_end(self) -> bool:
+        """数据发完了（`{"end": true}`）。返回值同 `send_data`。"""
+        return self._send(b'{"end": true}\n')
+
+    def _send(self, *parts: bytes | bytearray | memoryview) -> bool:
+        try:
+            for part in parts:
+                self._conn.sendall(part)
+        except TimeoutError:
+            raise self._timed_out() from None
+        except OSError:
+            # Agent 已经回复并关闭了连接（回复还能读到）。
+            return False
+        return True
 
     def frames(self) -> Iterator[dict[str, Any]]:
         """逐帧读回复：`item`、`data`（带 `bytes`：读出的原始字节）帧原样给出；
