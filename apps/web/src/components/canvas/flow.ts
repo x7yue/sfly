@@ -103,6 +103,3 @@ export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): Orche
 		packages,
 	};
 }
-
-/** 新节点 ID 的生成规则与粘贴、创建副本共用（@sfly/orchestration）。 */
-export { uniqueNodeId } from "@sfly/orchestration";

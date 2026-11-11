@@ -1,9 +1,9 @@
 import {
 	type CopiedNode,
-	type CopyEdit,
 	checkConnection,
 	copiedNodeText,
 	copyProblem,
+	type DocumentEdit,
 	declaredOutputs,
 	disconnectEdge,
 	disconnectNode,
@@ -13,9 +13,11 @@ import {
 	insertOnEdge,
 	nodeConnections,
 	type OrchestrationWarning,
+	outgoingProblem,
 	placeCopy,
 	removeNode,
 	tidyLayout,
+	uniqueNodeId,
 } from "@sfly/orchestration";
 import {
 	agentsApi,
@@ -50,7 +52,6 @@ import {
 	toFlow,
 	toFlowEdge,
 	toFlowNode,
-	uniqueNodeId,
 } from "#/components/canvas/flow";
 import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { subflowLabels } from "#/components/canvas/node-display";
@@ -69,14 +70,13 @@ import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useV
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
 import {
 	type AddItem,
-	appendProblem,
 	freePosition,
 	idStem,
 	newDocNode,
 	newSubflowNameProblem,
 	packageGroups,
 } from "./add-node";
-import { companionSubflow, dispatchProblem } from "./add-subflow";
+import { companionSubflow } from "./add-subflow";
 import { usePackageCatalog } from "./catalog";
 import { EdgeMenu } from "./EdgeMenu";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
@@ -306,9 +306,10 @@ function Editor({
 				if (reconnect.active.current) return;
 				if (state.fromHandle?.type !== "source") return;
 				const from = state.fromHandle.id === "dispatch" ? "dispatch" : "after";
-				const problem = (from === "dispatch" ? dispatchProblem : appendProblem)(
+				const problem = outgoingProblem(
 					docRef.current,
 					state.fromNode.id,
+					from === "dispatch" ? "dispatch" : "chain",
 				);
 				if (problem) {
 					notify.warning(problem);
@@ -509,7 +510,7 @@ function Editor({
 
 	// —— 复制、粘贴、创建副本（node-clipboard）：新节点有新的 ID、不带连线，各是一步撤销 ——
 	/** 把粘贴或创建副本的结果写回画布（包版本锁定可能多了一项），选中并聚焦新节点。 */
-	const placeNode = (edit: CopyEdit<typeof doc>) => {
+	const placeNode = (edit: DocumentEdit<typeof doc, { id: string }>) => {
 		if (!edit.ok) {
 			notify.warning(edit.reason);
 			return;

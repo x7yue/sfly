@@ -1,5 +1,6 @@
+import { type DocumentEdit, rejected } from "./edit-result.js";
 import { LAYOUT_COLUMN, type LayoutDocument, NODE_SIZE, type Position } from "./layout.js";
-import { checkConnection } from "./structure.js";
+import { checkConnection, type StructureDocument } from "./structure.js";
 
 /**
  * 画布上改动链的文档操作：插入到连线上、在节点后面添加、删除并接上前后、断开入线 / 出线、改接与断开连线。
@@ -9,10 +10,12 @@ import { checkConnection } from "./structure.js";
 
 type EditEdge = LayoutDocument["edges"][number];
 
-/** 文档操作的结果：新文档，或拒绝原因。 */
-export type DocumentEdit<D> = { ok: true; doc: D } | { ok: false; reason: string };
+/** 一条连线的两端：起点和终点的节点 ID。 */
+export interface EdgeEnds {
+	from: string;
+	to: string;
+}
 
-const rejected = (reason: string) => ({ ok: false, reason }) as const;
 const isChain = (edge: EditEdge, from: string, to: string) =>
 	edge.kind === "chain" && edge.from === from && edge.to === to;
 
@@ -67,7 +70,7 @@ function withNode<D extends LayoutDocument>(
  */
 export function insertOnEdge<D extends LayoutDocument>(
 	doc: D,
-	edge: { from: string; to: string },
+	edge: EdgeEnds,
 	node: D["nodes"][number],
 ): DocumentEdit<D> {
 	const index = doc.edges.findIndex((e) => isChain(e, edge.from, edge.to));
@@ -159,7 +162,7 @@ const sameEdge = (a: EditEdge, b: EditEdge) =>
 export function reconnectEdge<D extends LayoutDocument>(
 	doc: D,
 	edge: EditEdge,
-	next: { from: string; to: string },
+	next: EdgeEnds,
 ): DocumentEdit<D> {
 	const index = doc.edges.findIndex((e) => sameEdge(e, edge));
 	if (index < 0) return rejected(`连线 ${edge.from} → ${edge.to} 不存在`);
@@ -186,4 +189,21 @@ export function disconnectNode<D extends LayoutDocument>(
 	const cut = new Set<EditEdge>(nodeConnections(doc, id)[side]);
 	if (cut.size === 0) return doc;
 	return { ...doc, edges: doc.edges.filter((e) => !cut.has(e)) };
+}
+
+/**
+ * 从节点的链端口（`chain`）或调度端口（`dispatch`）拖线到空白处、接上新节点之前的检查：
+ * 链端口已有链上出线时不行（链不能分叉；要插入节点用节点菜单或 Tab），
+ * 调度端口已有调度连线时不行（一个异步任务节点只调度一个子流程）。
+ * 链尾、游离节点、只有调度连线的异步任务节点都可以从链端口接出。可以时返回 null，否则返回原因。
+ */
+export function outgoingProblem(
+	doc: Pick<StructureDocument, "edges">,
+	id: string,
+	kind: EditEdge["kind"],
+): string | null {
+	if (!doc.edges.some((e) => e.kind === kind && e.from === id)) return null;
+	return kind === "dispatch"
+		? `异步任务节点 ${id} 已有调度连线`
+		: `节点 ${id} 已有出线，链不能分叉`;
 }
