@@ -95,13 +95,19 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `env` | 无 | 追加的环境变量（对象，值为字符串），在 Agent 的环境变量之上 |
 | `cwd` | 任务工作目录 | 工作目录，必须已经存在 |
 | `ok_exit_codes` | `[0]` | 算作成功的退出码 |
+| `save_output` | `false` | 保存完整输出：为 `true` 时把完整的标准输出和标准错误各保存为一个产物 |
 
 | 输出 | 说明 |
 |---|---|
 | `exit_code` | 退出码；命令被信号终止时为 128 + 信号值（与 shell 的 `$?` 相同） |
 | `stdout` | 标准输出的最后 64 KiB |
+| `stderr` | 标准错误的最后 64 KiB |
+| `stdout_file` | 产物 `stdout.txt`（完整的标准输出）的引用；`save_output` 为 `false` 时是空值 |
+| `stderr_file` | 产物 `stderr.txt`（完整的标准错误）的引用；`save_output` 为 `false` 时是空值 |
 
-- 标准输出和标准错误实时转为任务日志（来源分别是 stdout 和 stderr）。
+- 标准输出和标准错误实时转为任务日志（来源分别是 stdout 和 stderr），`save_output` 不影响这一点。
+- `stdout`、`stderr` 超过 64 KiB 时只保留末尾，截断点不会落在一个多字节字符中间。要完整内容时打开 `save_output`：两个产物是命令输出的原始字节，边运行边写入，命令失败、被取消时已有的内容也保留。后面的节点引用 `stdout_file`、`stderr_file` 下载产物。
+- 产物在任务结束后上传到控制面，一个任务的产物合计不能超过控制面的产物上限（默认 1 GB，超过时任务失败），随运行一起按保留期清理。
 - 退出码不在 `ok_exit_codes` 里时节点失败，错误信息是退出码、命令和标准错误的末尾（约 4 KiB）。解释器或工作目录不存在时也失败，错误信息写明是哪一个。
 - 取消或超时时，命令和它启动的全部子进程都被终止：先发 SIGTERM，宽限期过后强制杀掉。自己调用 `setsid` 脱离进程组的进程不在其中。
 - 命令退出时还在运行的后台进程（例如 `server &`）不会被终止，但它们之后的输出不再转为日志。
