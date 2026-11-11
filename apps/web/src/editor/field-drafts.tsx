@@ -50,6 +50,12 @@ export const FieldDraftsProvider = FieldDraftsContext.Provider;
 
 export const useClearFieldDrafts = () => useContext(FieldDraftsContext).clear;
 
+/** 丢掉某一个字段的草稿（字段的值被别的途径整个换掉时，例如选了一个引用）。 */
+export function useDropFieldDraft() {
+	const { set } = useContext(FieldDraftsContext);
+	return useCallback((key: string) => set(key, null), [set]);
+}
+
 /** 某个字段还没生效的输入的错误。 */
 export const useFieldDraftError = (key: string) =>
 	useContext(FieldDraftsContext).drafts.get(key)?.error;

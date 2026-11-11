@@ -19,7 +19,9 @@ import { ReferenceList } from "./ReferenceList";
 import {
 	completionGroups,
 	type InlineTrigger,
+	initialActive,
 	inlineTrigger,
+	moveActive,
 	type ReferenceChoice,
 	referenceRanges,
 } from "./reference-completion";
@@ -28,6 +30,8 @@ import {
  * 可以写引用的文本输入框（CodeMirror 6 内核）：文字和 `${{ … }}` 引用混写，值就是输入框里的文本。
  *
  * - 输入 `$`（或 `${`、`${{`）弹出引用补全，`insertReference()` 弹出同样的补全；选中后插入在光标处。
+ *   输入触发的补全不预选（`$HOME` 后按 Enter 不会误插入引用），用方向键或鼠标选中后 Enter / Tab 才插入；
+ *   `insertReference()` 触发的预选第一项。choices 为 null 的字段不能写引用，不弹补全。
  * - 文本里的引用高亮成一块，光标不会停在中间，退格一次整块删除。
  * - 高度随内容在 minLines 到 maxLines 行之间变化，超过后内部滚动；长行自动换行。
  * - 没有「模式」：显示什么完全由 value 决定；只有用户的编辑才调用 onChange。
@@ -55,8 +59,8 @@ export function ReferenceEditor({
 	label: string;
 	/** 文档里的值：纯文本，引用写作 `${{ 表达式 }}`。 */
 	value: string;
-	/** 可以引用的值（reference-completion 的 referenceChoices）。 */
-	choices: readonly ReferenceChoice[];
+	/** 可以引用的值（reference-completion 的 referenceChoices）；null：这个字段不能写引用，不弹补全。 */
+	choices: readonly ReferenceChoice[] | null;
 	placeholder?: string;
 	/** 显示为出错（红色描边、aria-invalid）。 */
 	invalid?: boolean;
@@ -70,14 +74,17 @@ export function ReferenceEditor({
 	const viewRef = useRef<EditorView | null>(null);
 	const listId = useId();
 	const [open, setOpen] = useState<Trigger | null>(null);
-	const [active, setActive] = useState(0);
+	/** 用户用方向键选中的项；null：还没选过，用补全打开时的预选（initialActive）。 */
+	const [picked, setPicked] = useState<number | null>(null);
 
 	const { groups, ordered } = useMemo(
-		() => (open ? completionGroups(choices, open.query) : { groups: [], ordered: [] }),
+		() => (open && choices ? completionGroups(choices, open.query) : { groups: [], ordered: [] }),
 		[choices, open],
 	);
+	const active = picked ?? (open ? initialActive(open) : -1);
 	// 只写了一个 $ 加文字（如 $HOME）又没有匹配的引用：多半不是在写引用，不打扰。
-	const shown = open !== null && (open.braced || open.query === "" || ordered.length > 0);
+	const shown =
+		choices !== null && open !== null && (open.braced || open.query === "" || ordered.length > 0);
 
 	const dynamic = useMemo<Extension>(
 		() => [
@@ -104,6 +111,8 @@ export function ReferenceEditor({
 	const emitted = useRef<string[]>([]);
 
 	const [editor] = useState(() => {
+		// 不能写引用的字段（choices 为 null，挂载后不变）里 `${{ … }}` 只是普通文字，不高亮。
+		const referable = choices !== null;
 		const compartment = new Compartment();
 		const choose = (view: EditorView, trigger: Trigger, choice: ReferenceChoice) => {
 			const head = view.state.selection.main.head;
@@ -129,13 +138,15 @@ export function ReferenceEditor({
 				if (ordered.length === 0) return false;
 				if (event.key === "ArrowDown" || event.key === "ArrowUp") {
 					event.preventDefault();
-					const delta = event.key === "ArrowDown" ? 1 : -1;
-					setActive((a) => (a + delta + ordered.length) % ordered.length);
+					setPicked(moveActive(active, event.key === "ArrowDown" ? 1 : -1, ordered.length));
 					return true;
 				}
 				if (event.key === "Enter" || event.key === "Tab") {
+					// 没有选中项（输入 $ 触发、还没按过方向键）：按键照常换行 / 移走焦点。
+					const choice = ordered[active];
+					if (!choice) return false;
 					event.preventDefault();
-					choose(view, open, ordered[active] as ReferenceChoice);
+					choose(view, open, choice);
 					return true;
 				}
 				return false;
@@ -151,7 +162,7 @@ export function ReferenceEditor({
 				setOpen(null);
 			} else if (update.docChanged || update.selectionSet) {
 				setOpen((previous) => nextTrigger(previous, update.state, update.docChanged));
-				if (update.docChanged) setActive(0);
+				if (update.docChanged) setPicked(null);
 			}
 		});
 		const base: Extension = [
@@ -159,7 +170,7 @@ export function ReferenceEditor({
 			history(),
 			keymap.of([...standardKeymap, ...historyKeymap]),
 			EditorView.lineWrapping,
-			referenceMarks,
+			referable ? referenceMarks : [],
 			theme,
 			listener,
 		];
@@ -214,7 +225,7 @@ export function ReferenceEditor({
 				view.focus();
 				view.dispatch({ selection: { anchor: start }, scrollIntoView: true });
 				setOpen({ start, query: "", braced: true, manual: true });
-				setActive(0);
+				setPicked(null);
 			},
 		}),
 		[],
@@ -237,7 +248,7 @@ export function ReferenceEditor({
 					className,
 				)}
 			/>
-			{shown && open && (
+			{shown && open && choices && (
 				<ReferenceList
 					id={listId}
 					className="top-full mt-1"
@@ -337,7 +348,13 @@ const theme = EditorView.theme(
 			minHeight: `calc(var(--reference-editor-min-lines) * 1lh + ${PADDING_Y})`,
 			maxHeight: `calc(var(--reference-editor-max-lines) * 1lh + ${PADDING_Y})`,
 		},
-		".cm-content": { padding: "5px 0", caretColor: "var(--fg-1)" },
+		// 内容区撑满最小高度：多行的输入框里，点在文字下面的空白处也能把光标放进去。
+		".cm-content": {
+			boxSizing: "border-box",
+			minHeight: `calc(var(--reference-editor-min-lines) * 1lh + ${PADDING_Y})`,
+			padding: "5px 0",
+			caretColor: "var(--fg-1)",
+		},
 		".cm-line": { padding: "0 9px" },
 		".cm-placeholder": { color: "var(--fg-3)" },
 		".cm-reference": {

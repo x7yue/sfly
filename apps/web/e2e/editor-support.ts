@@ -72,6 +72,77 @@ export async function createEditorScenario(cp: TestControlPlane): Promise<string
 	return createScenario(cp, "日终数据处理", editorDocument);
 }
 
+/** demo-checks 的节点类型：probe 有一个输出，typed 的输入覆盖整数、数字、布尔、枚举、JSON。 */
+export const typedNodes = [
+	{
+		name: "probe",
+		title: "探测",
+		entry: "demo_checks.http:probe",
+		inputs: { type: "object", properties: {} },
+		outputs: { type: "object", properties: { status: { type: "integer" } } },
+	},
+	{
+		name: "typed",
+		title: "各种类型",
+		entry: "demo_checks.http:typed",
+		inputs: {
+			type: "object",
+			properties: {
+				count: { type: "integer" },
+				ratio: { type: "number" },
+				strict: { type: "boolean" },
+				level: { enum: ["low", "high"] },
+				options: { type: "object" },
+				payload: { type: "array" },
+			},
+		},
+		outputs: { type: "object", properties: {} },
+	},
+];
+
+/** 主链 entry → probe → typed：typed.count 是整值引用（旧场景的写法），其余是常量。配合 typedNodes 发布的包使用。 */
+export const typedDocument = {
+	default_agent: "agent-linux",
+	nodes: [
+		{
+			id: "entry",
+			kind: "entry",
+			position: { x: 0, y: 0 },
+			params: [
+				{ name: "n", type: "number" },
+				{ name: "flag", type: "boolean" },
+			],
+		},
+		{
+			id: "probe",
+			kind: "package",
+			package: "demo-checks",
+			node: "probe",
+			position: { x: 252, y: 0 },
+			inputs: {},
+		},
+		{
+			id: "typed",
+			kind: "package",
+			package: "demo-checks",
+			node: "typed",
+			position: { x: 504, y: 0 },
+			inputs: {
+				count: "${{ nodes.probe.outputs.status }}",
+				ratio: 0.5,
+				strict: true,
+				level: "low",
+				options: { retries: 2 },
+			},
+		},
+	],
+	edges: [
+		{ from: "entry", to: "probe", kind: "chain" },
+		{ from: "probe", to: "typed", kind: "chain" },
+	],
+	packages: { "demo-checks": "1.2.0" },
+};
+
 /** 画布上的节点卡片（按节点 ID）。 */
 export const nodeCard = (page: Page, id: string) => page.locator(`[data-node-id="${id}"]`);
 

@@ -6,7 +6,13 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
-import { createEditorScenario, editorDocument, nodeCard } from "./editor-support";
+import {
+	createEditorScenario,
+	editorDocument,
+	nodeCard,
+	typedDocument,
+	typedNodes,
+} from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
 	connPoint,
@@ -553,6 +559,27 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-references.png");
 	});
 
+	test("放大编辑弹窗", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await page.getByRole("button", { name: "放大编辑 url" }).click();
+		const dialog = page.getByRole("dialog", { name: "编辑 url" });
+		const big = dialog.getByRole("combobox", { name: "输入 url（放大编辑）" });
+		await big.fill(
+			[
+				"set -euo pipefail",
+				"curl -fsS -H 'X-Token: ${{ params.api_token }}' \\",
+				"  https://example.test/snap/${{ params.biz_date }}/ > snap.json",
+				"echo $HOME",
+				"",
+			].join("\n"),
+		);
+		await page.keyboard.type("date=$");
+		await idle(page);
+		await expect(big.locator("[data-reference]")).toHaveCount(2);
+		await expect(dialog.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-zoom.png");
+	});
+
 	test("入口参数与敏感参数", async ({ page }) => {
 		await nodeCard(page, "entry").click();
 		await idle(page);
@@ -587,6 +614,23 @@ test.describe("编排画布", () => {
 		await idle(page);
 		await expect(page).toHaveScreenshot("editor-zoomed-out.png");
 	});
+});
+
+test("编排画布：非字符串参数的引用标签与 JSON 输入框", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: typedNodes });
+	const id = await createScenario(controlPlane, "各种类型的参数", typedDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "typed").click();
+	await page.getByRole("button", { name: "在 strict 中插入引用" }).click();
+	await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+	await expect(page.getByRole("group", { name: "输入 count" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-reference-chip.png");
 });
 
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {
