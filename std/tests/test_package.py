@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import zipfile
@@ -28,8 +29,15 @@ else:
 REPO = Path(__file__).resolve().parents[2]
 STD = REPO / "std"
 DOC = REPO / "docs" / "guide" / "standard-nodes.md"
+#: 构建出的 `shell` 节点类型（元信息 nodes 里的那一项）。前端端到端测试
+#: （apps/web/e2e/std-shell.spec.ts）在没有 Python 的 Playwright 镜像里运行，构建不了 sfly-std，
+#: 用这份副本发布节点包。
+SHELL_NODE_FIXTURE = REPO / "testdata" / "std-shell-node.json"
 #: 最后一个不支持指标标签的已发布平台版本（v0.0.4）；标签（#78）从它的下一个版本起才有。
 LAST_SDK_WITHOUT_LABELS = Version("0.0.4")
+#: 最后一个没有 ctx.artifacts.download 的已发布平台版本（v0.1.3）；
+#: 下载接口（#193）从它的下一个版本起才有。
+LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD = Version("0.1.3")
 
 
 @pytest.fixture(scope="module")
@@ -73,6 +81,34 @@ def test_requires_an_sdk_that_supports_metric_labels() -> None:
         assert LAST_SDK_WITHOUT_LABELS not in declared, (
             f"版本号已是 {sdk}：std/pyproject.toml 的 requires-sdk 要调成 >={sdk}（指标标签）"
         )
+
+
+def test_requires_an_sdk_that_can_download_artifacts() -> None:
+    # 0.3.0 起 shell 的 stdout_file / stderr_file、http_request 的 body_file 是给后续节点用
+    # ctx.artifacts.download 下载的（#181）：声明的最低 SDK 版本是第一个带下载接口的平台版本。
+    # 和指标标签一样，下载接口还没随平台版本发布时只能声明当前版本能满足的范围；
+    # 仓库版本号一旦越过 LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD，requires-sdk 必须同步排除它，
+    # sfly-std 0.3.0 在那个平台版本发布之后再发布（docs/agents/branching-and-release.md）。
+    pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = SpecifierSet(pyproject["tool"]["sfly"]["requires-sdk"])
+    sdk = Version(SDK_VERSION)
+
+    assert sdk in declared, f"当前 SDK {sdk} 不满足 requires-sdk {declared}"
+    if sdk > LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD:
+        assert LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD not in declared, (
+            f"版本号已是 {sdk}：std/pyproject.toml 的 requires-sdk 要调成 >={sdk}"
+            "（ctx.artifacts.download）"
+        )
+
+
+def test_the_upload_instructions_on_the_standard_nodes_page_name_the_current_version() -> None:
+    # 「上传 sfly-std」一节的命令里写的是当前版本的附件名，照着复制就能上传。
+    version = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "version"
+    ]
+    names = set(re.findall(r"sfly-std-[0-9][0-9.]*\.sflypkg", DOC.read_text(encoding="utf-8")))
+
+    assert names == {f"sfly-std-{version}.sflypkg"}
 
 
 def test_dependencies_only_have_lower_bounds(archive: Path) -> None:
@@ -187,6 +223,23 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
             assert labels == {m["name"]: m.get("labels", []) for m in node["metrics"]}, name
         else:
             assert "指标" not in tables, name
+
+
+def test_the_shell_node_fixture_for_the_web_e2e_tests_matches_the_built_package(
+    metadata: dict[str, Any],
+) -> None:
+    # 改了 shell 的参数或输出后重新生成：
+    # SFLY_UPDATE_FIXTURES=1 uv run pytest std/tests/test_package.py
+    node = next(n for n in metadata["nodes"] if n["name"] == "shell")
+    if os.environ.get("SFLY_UPDATE_FIXTURES") == "1":
+        SHELL_NODE_FIXTURE.write_text(
+            json.dumps(node, ensure_ascii=False, indent="\t") + "\n", encoding="utf-8"
+        )
+
+    assert json.loads(SHELL_NODE_FIXTURE.read_text(encoding="utf-8")) == node, (
+        f"{SHELL_NODE_FIXTURE.relative_to(REPO)} 与构建出的 shell 节点不一致，"
+        "用 SFLY_UPDATE_FIXTURES=1 重新生成，再 pnpm exec biome format --write 这个文件"
+    )
 
 
 def test_system_monitor_declares_its_metrics_charts_and_primary_metric(

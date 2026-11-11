@@ -17,10 +17,13 @@ from typing import IO, TypedDict
 from sfly import Context, node
 from sfly_std import _process
 
-#: 输出里保留的 stdout 末尾字节数。
-STDOUT_TAIL_BYTES = 64 * 1024
+#: 输出里保留的 stdout、stderr 末尾字节数。
+OUTPUT_TAIL_BYTES = 64 * 1024
 #: 失败信息里附带的 stderr 末尾字节数（从完整的一行开始）。
-STDERR_TAIL_BYTES = 4 * 1024
+ERROR_TAIL_BYTES = 4 * 1024
+#: 打开 `save_output` 时保存完整 stdout、stderr 的产物名称。
+STDOUT_ARTIFACT = "stdout.txt"
+STDERR_ARTIFACT = "stderr.txt"
 #: 命令退出后，等待仍持有输出管道的后台进程关闭管道的最长时间（秒）。
 DRAIN_TIMEOUT = 2.0
 
@@ -28,6 +31,9 @@ DRAIN_TIMEOUT = 2.0
 class ShellOutputs(TypedDict):
     exit_code: int
     stdout: str
+    stderr: str
+    stdout_file: str | None
+    stderr_file: str | None
 
 
 class CommandFailed(Exception):
@@ -36,36 +42,60 @@ class CommandFailed(Exception):
 
 class _Forward:
     """在后台线程里把管道的内容原样写到执行器自己的 stdout / stderr（Agent 实时转为日志），
-    同时保留末尾 `keep` 个字节。"""
+    同时保留末尾 OUTPUT_TAIL_BYTES 个字节；给了 `artifact` 时把读到的原始字节边读边写进这个产物。"""
 
-    def __init__(self, pipe: IO[bytes], dest: IO[bytes], keep: int) -> None:
-        self._pipe, self._dest, self._keep = pipe, dest, keep
+    def __init__(self, ctx: Context, dest: IO[bytes], artifact: str | None) -> None:
+        self._dest = dest
+        #: 保存完整内容的产物的引用；没有保存时为 None。
+        self.ref = ctx.artifacts.ref(artifact) if artifact is not None else None
+        self._path = ctx.artifacts.path(artifact) if artifact is not None else None
+        self._save: IO[bytes] | None = None
         self._tail = bytearray()
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        #: 持有它才能转发；`finish` 之后不再转发。
+        self._lock = threading.Lock()
+        self._finished = False
+        self._thread: threading.Thread | None = None
+
+    def start(self, pipe: IO[bytes]) -> None:
+        """开始转发 `pipe` 的内容。"""
+        if self._path is not None:
+            # 不带缓冲：命令还在运行、或者被取消时，已经读到的内容都在文件里。
+            self._save = self._path.open("wb", buffering=0)
+        self._thread = threading.Thread(target=self._run, args=(pipe.fileno(),), daemon=True)
         self._thread.start()
 
-    def _run(self) -> None:
-        fd = self._pipe.fileno()
+    def _run(self, fd: int) -> None:
         while chunk := os.read(fd, 65536):
-            self._dest.write(chunk)
-            self._dest.flush()
-            self._tail += chunk
-            del self._tail[: -self._keep]
+            with self._lock:
+                if self._finished:
+                    return
+                self._dest.write(chunk)
+                self._dest.flush()
+                if self._save is not None:
+                    self._save.write(chunk)
+                self._tail += chunk
+                del self._tail[:-OUTPUT_TAIL_BYTES]
 
-    def join(self, deadline: float) -> None:
+    def finish(self, deadline: float) -> None:
+        """等管道读完，最晚到 `deadline`；之后不再转发，末尾内容和产物就此不变。"""
+        assert self._thread is not None
         self._thread.join(max(0.0, deadline - time.monotonic()))
+        with self._lock:
+            self._finished = True
+            if self._save is not None:
+                self._save.close()
 
     def text(self) -> str:
         """末尾的内容；截断处落在多字节字符中间时去掉残缺的字节。"""
         tail = bytes(self._tail)
-        if len(tail) >= self._keep:
+        if len(tail) >= OUTPUT_TAIL_BYTES:
             tail = tail.lstrip(bytes(range(0x80, 0xC0)))  # UTF-8 的后续字节 10xxxxxx
         return tail.decode("utf-8", errors="replace")
 
-    def last_lines(self) -> str:
-        """末尾的内容，去掉被截断的第一行。"""
-        tail = bytes(self._tail)
-        if len(tail) >= self._keep and b"\n" in tail:
+    def last_lines(self, limit: int) -> str:
+        """末尾 `limit` 个字节的内容，去掉被截断的第一行。"""
+        tail = bytes(self._tail[-limit:])
+        if len(tail) >= limit and b"\n" in tail:
             tail = tail.split(b"\n", 1)[1]
         return tail.decode("utf-8", errors="replace").rstrip("\n")
 
@@ -78,6 +108,7 @@ def shell(
     env: dict[str, str] | None = None,
     cwd: str | None = None,
     ok_exit_codes: Sequence[int] = (0,),
+    save_output: bool = False,
 ) -> ShellOutputs:
     """执行 `<shell> -c <command>`，stdout、stderr 实时转为任务日志。
 
@@ -85,9 +116,15 @@ def shell(
     - `env`：追加的环境变量（在 Agent 的环境变量之上）；`cwd`：工作目录，默认任务工作目录；
     - `ok_exit_codes`：算作成功的退出码，默认 `[0]`；不在其中时失败，错误信息附 stderr 末尾。
 
-    输出退出码（被信号终止时为 128 + 信号值）和 stdout 的最后 64 KiB。
+    - `save_output`：保存完整输出。打开后完整的 stdout、stderr 各存成一个产物
+      （`stdout.txt`、`stderr.txt`，原始字节），命令失败时也保留。
+
+    输出退出码（被信号终止时为 128 + 信号值）、stdout 和 stderr 各自的最后 64 KiB，
+    以及两个产物的引用 `stdout_file`、`stderr_file`（没有打开 `save_output` 时为空值）。
     """
     _process.check_cwd(cwd)
+    stdout = _Forward(ctx, sys.stdout.buffer, STDOUT_ARTIFACT if save_output else None)
+    stderr = _Forward(ctx, sys.stderr.buffer, STDERR_ARTIFACT if save_output else None)
     try:
         proc = subprocess.Popen(
             [shell, "-c", command],
@@ -100,17 +137,18 @@ def shell(
     except FileNotFoundError:
         raise FileNotFoundError(f"找不到解释器 {shell}") from None
     assert proc.stdout is not None and proc.stderr is not None
-    stdout = _Forward(proc.stdout, sys.stdout.buffer, STDOUT_TAIL_BYTES)
-    stderr = _Forward(proc.stderr, sys.stderr.buffer, STDERR_TAIL_BYTES)
+    stdout.start(proc.stdout)
+    stderr.start(proc.stderr)
     try:
         # 取消或超时时这里抛出 Cancelled：平台已经向整棵进程树（执行器和命令在同一个进程组里）
         # 发了 SIGTERM，宽限期过后强制杀掉，节点不需要自己终止命令，让 Cancelled 继续往外传即可。
         returncode = proc.wait()
     finally:
-        # 命令退出后，它启动的后台进程可能还持有输出管道：最多再转发 DRAIN_TIMEOUT 秒。
+        # 命令退出后，它启动的后台进程可能还持有输出管道：最多再转发 DRAIN_TIMEOUT 秒，
+        # 之后的内容不进日志、输出和产物。
         deadline = time.monotonic() + DRAIN_TIMEOUT
-        stdout.join(deadline)
-        stderr.join(deadline)
+        stdout.finish(deadline)
+        stderr.finish(deadline)
 
     # 被信号终止时按 shell 的习惯记为 128 + 信号值。
     exit_code = returncode if returncode >= 0 else 128 - returncode
@@ -122,6 +160,12 @@ def shell(
         message = (
             f"{reason}，不在 ok_exit_codes {list(ok_exit_codes)} 中：{_process.preview(command)}"
         )
-        tail = stderr.last_lines()
+        tail = stderr.last_lines(ERROR_TAIL_BYTES)
         raise CommandFailed(f"{message}\n\nstderr 末尾：\n{tail}" if tail else message)
-    return {"exit_code": exit_code, "stdout": stdout.text()}
+    return {
+        "exit_code": exit_code,
+        "stdout": stdout.text(),
+        "stderr": stderr.text(),
+        "stdout_file": stdout.ref,
+        "stderr_file": stderr.ref,
+    }

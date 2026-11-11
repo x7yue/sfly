@@ -1,4 +1,4 @@
-"""`http_request`：发一个 HTTP 请求，断言状态码与响应 JSON，可重试直到满足。
+"""`http_request`：发一个 HTTP 请求，断言状态码与响应 JSON，可重试直到满足，可把响应体存成产物。
 
 断言格式（`expect_json`）与 `assert` 节点相同，定义在 `_assertions.py`。
 用法见开发文档「标准节点」页（docs/guide/standard-nodes.md）的 `http_request` 一节。
@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, TypedDict
 
 import httpx
@@ -26,6 +27,11 @@ from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
 BODY_OUTPUT_BYTES = 256 * 1024
 #: 输出里响应头（名字和值的字符数之和）的上限：超过时只保留前面的响应头。
 HEADERS_OUTPUT_CHARS = 64 * 1024
+#: `save_body` 打开时产物的名称。
+BODY_ARTIFACT = "body"
+#: `save_body` 打开时留在内存里的响应体开头的最大字节数；更大的响应只在产物文件里有全部内容。
+#: 输出 text 最多 256 KiB（至多这么多个字符，每个字符编码后至多 4 字节），这个开头足够算出 text。
+BODY_MEMORY_BYTES = 4 * 1024 * 1024
 #: 失败信息里附带的响应开头的最大字符数。
 RESPONSE_PREVIEW_CHARS = 1000
 
@@ -36,6 +42,7 @@ class _Required(TypedDict):
     status: int
     headers: dict[str, str]
     elapsed_ms: float
+    body_file: str | None
 
 
 class HttpResponse(_Required, total=False):
@@ -96,6 +103,7 @@ def http_request(
     until_ok: bool = False,
     wait: float = DEFAULT_WAIT,
     poll: float = DEFAULT_POLL,
+    save_body: bool = False,
 ) -> HttpResponse:
     """发一个 HTTP 请求，检查状态码（`expect_status`，默认 2xx）和响应 JSON（`expect_json`）。
 
@@ -103,7 +111,10 @@ def http_request(
     - `request_timeout`：单次请求最多等多少秒；`verify_tls`：是否校验 HTTPS 证书；
     - `expect_status`：状态码或 `1xx`～`5xx`，可以是列表；
     - `expect_json`：断言列表，格式与 `assert` 节点相同；
-    - `until_ok`：打开时，没有响应或断言不通过就每 `poll` 秒重试，直到通过或超过 `wait` 秒。
+    - `until_ok`：打开时，没有响应或断言不通过就每 `poll` 秒重试，直到通过或超过 `wait` 秒；
+    - `save_body`：打开时把响应体的原始字节存成产物 `body`（边接收边写盘），输出 `body_file`
+      是它的产物引用；重试时是最后一次响应的内容，最后一次没有收到完整的响应时没有这个产物。
+      关闭时 `body_file` 为空值。
 
     输出状态码、响应头、`json`（响应是 JSON 且序列化后不超过 256 KiB 时）或 `text`
     （序列化后最多 256 KiB，超过时只保留开头）、耗时（毫秒，也上报为指标 `elapsed_ms`）。
@@ -119,16 +130,20 @@ def http_request(
     request = _Request(
         method, url, headers, json, body.encode() if body is not None else None, request_timeout
     )
+    save_to = ctx.artifacts.path(BODY_ARTIFACT) if save_body else None
     with httpx.Client(timeout=request_timeout, verify=verify_tls) as client:
 
         def attempt() -> HttpResponse:
             """发一次请求并检查；不满足时抛出 RequestFailed / ExpectationFailed。"""
-            response, elapsed_ms = request.send(client)
+            response, elapsed_ms = request.send(client, save_to)
             ctx.metric("elapsed_ms", elapsed_ms)
-            outputs, parsed = _outputs(ctx, response, elapsed_ms)
+            parsed = _parse_json(response, needed=bool(expect_json))
+            outputs = _outputs(ctx, response, parsed, elapsed_ms)
+            if save_to is not None:
+                outputs["body_file"] = ctx.artifacts.ref(BODY_ARTIFACT)
             problem = _problem(response, parsed, statuses, expect_json)
             if problem is not None:
-                raise ExpectationFailed(f"{method} {url} 状态码 {response.status_code}，{problem}")
+                raise ExpectationFailed(f"{method} {url} 状态码 {response.status}，{problem}")
             return outputs
 
         if not until_ok:
@@ -165,13 +180,38 @@ class _Request:
     content: bytes | None
     timeout: float
 
-    def send(self, client: httpx.Client) -> tuple[httpx.Response, float]:
-        """发一次请求，返回响应和耗时（毫秒）；没有得到响应时抛出 RequestFailed。"""
+    def send(self, client: httpx.Client, save_to: Path | None) -> tuple[_Response, float]:
+        """发一次请求，返回响应和耗时（毫秒）；没有得到响应时抛出 RequestFailed。
+
+        给了 `save_to` 时响应体边接收边写进这个文件，取代上一次的内容；
+        没有收到完整的响应时（包括被取消）这个文件不存在。
+        """
         started = time.monotonic()
         try:
-            response = client.request(
-                self.method, self.url, headers=self.headers, json=self.json, content=self.content
-            )
+            if save_to is None:
+                response = _Response.in_memory(
+                    client.request(
+                        self.method,
+                        self.url,
+                        headers=self.headers,
+                        json=self.json,
+                        content=self.content,
+                    )
+                )
+            else:
+                save_to.unlink(missing_ok=True)
+                with client.stream(
+                    self.method,
+                    self.url,
+                    headers=self.headers,
+                    json=self.json,
+                    content=self.content,
+                ) as streamed:
+                    try:
+                        response = _Response.saved(streamed, save_to)
+                    except BaseException:
+                        save_to.unlink(missing_ok=True)
+                        raise
         except httpx.TimeoutException:
             raise RequestFailed(
                 f"{self.method} {self.url} 请求超时（request_timeout {self.timeout:g} 秒）"
@@ -181,28 +221,71 @@ class _Request:
         return response, round((time.monotonic() - started) * 1000, 3)
 
 
-def _outputs(ctx: Context, response: httpx.Response, elapsed_ms: float) -> tuple[HttpResponse, Any]:
-    """节点的输出，以及解析出的完整 JSON（不是 JSON 时为 _NOT_JSON）。"""
+@dataclass(frozen=True)
+class _Response:
+    """一次响应里节点要用的部分。`save_body` 打开时响应体在文件里，内存里只留开头。"""
+
+    status: int
+    headers: httpx.Headers
+    #: 响应体的字节数。
+    size: int
+    #: 响应体留在内存里的部分：`file` 为 None 时是全部，否则是开头的至多 BODY_MEMORY_BYTES 字节。
+    head: bytes
+    #: `head` 解码成的文本。
+    text: str
+    #: 存有完整响应体的文件；没有保存时为 None。
+    file: Path | None
+
+    @property
+    def head_only(self) -> bool:
+        """内存里是不是只有响应体的开头（`save_body` 打开且响应体超过 BODY_MEMORY_BYTES）。"""
+        return len(self.head) < self.size
+
+    @classmethod
+    def in_memory(cls, response: httpx.Response) -> _Response:
+        content = response.content
+        return cls(
+            response.status_code, response.headers, len(content), content, response.text, None
+        )
+
+    @classmethod
+    def saved(cls, response: httpx.Response, file: Path) -> _Response:
+        """把还没读的响应体边读边写进 `file`。"""
+        head = bytearray()
+        size = 0
+        with file.open("wb", buffering=0) as out:
+            for chunk in response.iter_bytes():
+                out.write(chunk)
+                size += len(chunk)
+                if len(head) < BODY_MEMORY_BYTES:
+                    head += chunk[: BODY_MEMORY_BYTES - len(head)]
+        text = bytes(head).decode(response.encoding or "utf-8", errors="replace")
+        return cls(response.status_code, response.headers, size, bytes(head), text, file)
+
+
+def _outputs(ctx: Context, response: _Response, parsed: Any, elapsed_ms: float) -> HttpResponse:
+    """节点的输出（不含 `body_file` 的值）；`parsed` 是 `_parse_json` 的结果。"""
     outputs: HttpResponse = {
-        "status": response.status_code,
+        "status": response.status,
         "headers": _headers(ctx, response),
         "elapsed_ms": elapsed_ms,
+        "body_file": None,
     }
-    parsed = _parse_json(response)
     if parsed is not _NOT_JSON and _fits(parsed, BODY_OUTPUT_BYTES):
         outputs["json"] = parsed
-        return outputs, parsed
+        return outputs
     text = _serialized_head(response.text, BODY_OUTPUT_BYTES)
-    if len(text) < len(response.text):
+    # 内存里只有开头时（超过 BODY_MEMORY_BYTES），这个开头一定比 256 KiB 的 text 长。
+    if len(text) < len(response.text) or response.head_only:
         ctx.log.warn(
             "响应共 %d 字节，输出 text 只保留开头 %d 个字符（JSON 序列化后 256 KiB）",
-            len(response.content),
+            response.size,
             len(text),
         )
     elif parsed is not _NOT_JSON:
         ctx.log.warn("响应是 JSON，但序列化后超过 256 KiB，改为输出 text")
     outputs["text"] = text
-    return outputs, parsed
+    return outputs
 
 
 def _fits(value: Any, limit: int) -> bool:
@@ -236,7 +319,7 @@ def _serialized_head(text: str, limit: int) -> str:
     return text[:low]
 
 
-def _headers(ctx: Context, response: httpx.Response) -> dict[str, str]:
+def _headers(ctx: Context, response: _Response) -> dict[str, str]:
     """输出的响应头：按顺序保留，名字和值的字符数之和不超过 HEADERS_OUTPUT_CHARS。"""
     headers: dict[str, str] = {}
     size = 0
@@ -258,16 +341,27 @@ def _headers(ctx: Context, response: httpx.Response) -> dict[str, str]:
 _NOT_JSON = object()
 
 
-def _parse_json(response: httpx.Response) -> Any:
-    """响应内容解析成的 JSON 值；不是 JSON 时返回 _NOT_JSON。"""
+def _parse_json(response: _Response, *, needed: bool) -> Any:
+    """响应内容解析成的 JSON 值；不是 JSON 时返回 _NOT_JSON。
+
+    内存里只有响应体的开头时，只在 `needed`（填了 `expect_json`）时才把文件整个读进来解析，
+    否则当作不是 JSON，输出截断的 text。
+    """
+    if response.head_only:
+        if not needed:
+            return _NOT_JSON
+        assert response.file is not None
+        content = response.file.read_bytes()
+    else:
+        content = response.head
     try:
-        return jsonlib.loads(response.content)
+        return jsonlib.loads(content)
     except ValueError:
         return _NOT_JSON
 
 
 def _problem(
-    response: httpx.Response,
+    response: _Response,
     parsed: Any,
     statuses: list[int | str],
     expect_json: Sequence[Assertion],
@@ -275,7 +369,7 @@ def _problem(
     """响应不满足断言的原因（接在「状态码 N，」之后）；满足时返回 None。"""
     head = response.text[:RESPONSE_PREVIEW_CHARS]
     head = f"\n\n响应开头：\n{head}" if head else ""
-    if not _status_ok(response.status_code, statuses):
+    if not _status_ok(response.status, statuses):
         expected = jsonlib.dumps(statuses, ensure_ascii=False)
         return f"不在 expect_status {expected} 中{head}"
     if not expect_json:
