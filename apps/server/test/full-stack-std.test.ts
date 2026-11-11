@@ -2,6 +2,7 @@
 // 真实的 Agent 从控制面安装它（依赖从 PyPI 镜像桩安装，不访问外网）并执行标准节点。
 // 新增标准节点的全栈场景加在这个文件里（各自一个 it）。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ import {
 	type StdPackage,
 	wheelhouse,
 } from "./support/std-package.js";
-import { publishArchive } from "./support/stub-package.js";
+import { publishArchive, publishTestPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const AGENT = "std-agent";
@@ -462,10 +463,77 @@ describe("全栈：标准节点包 sfly-std", () => {
 		expect((await api.node(runId, "check")).outputs).toEqual({ passed: true });
 	}, 180_000);
 
+	it("shell 打开 save_output 保存的完整输出，另一台 Agent 上的节点用 ctx.artifacts.download 下载，内容一致", async () => {
+		// 下游节点在测试用的节点包 sfly-download 里（testdata/download-package），由另一台 Agent 执行：
+		// 它有自己的共享 venv 和工作目录，拿不到上游 Agent 上的文件，只能从控制面下载。
+		const OTHER = "std-agent-other";
+		await publishTestPackage(cp, "testdata/download-package", "sfly-download-0.1.0.sflypkg");
+		const otherVenv = await createStubVenv({ sdkOnly: true });
+		const other = await startRealAgent({
+			grpcUrl: cp.grpcUrl,
+			name: OTHER,
+			venv: otherVenv.path,
+			args: ["--index-url", pypi.indexUrl],
+		});
+		try {
+			// 超过 64 KiB：输出里的 stdout 只有末尾，完整内容只在产物里。
+			const full = Array.from({ length: 20_000 }, (_, i) => `第 ${i + 1} 行\n`).join("");
+			const api = new ApiClient(cp);
+			const { runId } = await runToEnd(
+				await api.orchestrationWith({
+					default_agent: AGENT,
+					nodes: [
+						{ id: "entry", kind: "entry" },
+						{
+							id: "produce",
+							kind: "package",
+							package: "sfly-std",
+							node: "shell",
+							inputs: {
+								command: 'i=1; while [ $i -le 20000 ]; do echo "第 $i 行"; i=$((i+1)); done',
+								save_output: true,
+							},
+						},
+						{
+							id: "consume",
+							kind: "package",
+							package: "sfly-download",
+							node: "fetch_artifact",
+							agent: OTHER,
+							inputs: { ref: "${{ nodes.produce.outputs.stdout_file }}" },
+						},
+					],
+					edges: [
+						{ from: "entry", to: "produce", kind: "chain" },
+						{ from: "produce", to: "consume", kind: "chain" },
+					],
+					packages: { "sfly-std": std.version, "sfly-download": "0.1.0" },
+				}),
+			);
+
+			expect((await api.run(runId)).status).toBe("success");
+			const produce = await api.node(runId, "produce");
+			expect(produce.agent).toBe(AGENT);
+			const outputs = produce.outputs as { stdout: string; stdout_file: string };
+			expect(Buffer.byteLength(full)).toBeGreaterThan(64 * 1024);
+			expect(outputs.stdout.length).toBeLessThan(full.length);
+			expect(full.endsWith(outputs.stdout)).toBe(true);
+			const consume = await api.node(runId, "consume");
+			expect(consume).toMatchObject({ status: "success", agent: OTHER });
+			expect(consume.outputs).toEqual({
+				size: Buffer.byteLength(full),
+				sha256: createHash("sha256").update(full).digest("hex"),
+			});
+		} finally {
+			await other.close();
+			await otherVenv.remove();
+		}
+	}, 300_000);
+
 	it("单独上传新版本后，锁定旧版本的场景行为不变：shell → assert → collect_artifacts 在 Agent 上按锁定的版本执行，产物可以下载", async () => {
 		// 新版本把 shell 的默认解释器改成 /bin/bash：同一条命令在两个版本上的结果不同，能看出 Agent 执行的是哪个版本。
 		const next = await buildStdPackageVariant(join(dir, "dist-next"), {
-			version: "0.2.1",
+			version: "99.0.0",
 			edits: [["src/sfly_std/shell.py", 'shell: str = "/bin/sh"', 'shell: str = "/bin/bash"']],
 		});
 		// $0 是实际执行命令的解释器：不用 $BASH_VERSION 区分，有的系统上 /bin/sh 就是 bash。

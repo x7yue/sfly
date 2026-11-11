@@ -11,14 +11,21 @@ const run = promisify(execFile);
 
 /** 用真实的 sfly CLI 构建桩节点包（testdata/stub-package，sfly-stub@0.1.0），经 HTTP API 发布。 */
 export async function publishStubPackage(cp: TestControlPlane): Promise<void> {
-	const out = await mkdtemp(join(tmpdir(), "sfly-stub-pkg-"));
+	await publishTestPackage(cp, "testdata/stub-package", "sfly-stub-0.1.0.sflypkg");
+}
+
+/** 用真实的 sfly CLI 构建仓库里的一个测试节点包（`project` 相对仓库根目录，`file` 是构建出的归档名），经 HTTP API 发布。 */
+export async function publishTestPackage(
+	cp: TestControlPlane,
+	project: string,
+	file: string,
+): Promise<void> {
+	const out = await mkdtemp(join(tmpdir(), "sfly-test-pkg-"));
 	try {
-		await run(
-			"uv",
-			["run", "--locked", "--quiet", "sfly", "build", "testdata/stub-package", "--out", out],
-			{ cwd: repoRoot },
-		);
-		await publishArchive(cp, await readFile(join(out, "sfly-stub-0.1.0.sflypkg")));
+		await run("uv", ["run", "--locked", "--quiet", "sfly", "build", project, "--out", out], {
+			cwd: repoRoot,
+		});
+		await publishArchive(cp, await readFile(join(out, file)));
 	} finally {
 		await rm(out, { recursive: true, force: true });
 	}
