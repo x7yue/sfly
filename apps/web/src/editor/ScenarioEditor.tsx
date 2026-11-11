@@ -476,7 +476,7 @@ function Editor({
 		requestAnimationFrame(() => {
 			const aside = inspectorRef.current;
 			const target = aside?.querySelector<HTMLElement>(
-				'[role="tabpanel"] :is(input, select, textarea, button):not([disabled])',
+				'[role="tabpanel"] :is(input, select, textarea, button, [contenteditable="true"]):not([disabled])',
 			);
 			(target ?? aside)?.focus();
 		});

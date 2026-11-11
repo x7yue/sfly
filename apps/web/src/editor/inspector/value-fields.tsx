@@ -1,6 +1,6 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import { describeSchema } from "@sfly/orchestration";
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +12,11 @@ import {
 	Segmented,
 	wholeReference,
 } from "./fields";
+import {
+	InsertReferenceButton,
+	ReferenceEditor,
+	type ReferenceEditorHandle,
+} from "./ReferenceEditor";
 
 type JsonSchema = Record<string, unknown>;
 type ValueKind = "string" | "number" | "integer" | "boolean" | "enum" | "json";
@@ -36,8 +41,9 @@ const MODES = [
 ] as const;
 
 /**
- * 一个可以写常量或引用的值（包节点的输入、异步任务节点的子流程参数映射）：右侧切换常量 / 引用。
- * 常量按类型给出控件（字符串里也可以内嵌 `${{ … }}`）；引用模式的补全按入口参数 / 前序节点分组。
+ * 一个可以写常量或引用的值（包节点的输入）。
+ * - 字符串：一个输入框（ReferenceEditor），文字和引用混写，旁边是「插入引用」；整个值恰好是一个引用就是整值引用。
+ * - 其它类型：右侧切换常量 / 引用，常量按类型给出控件，引用模式的补全按入口参数 / 前序节点分组。
  * 不合法的常量（abc 填进整数）只记为字段草稿，不写进文档，并阻止保存（field-drafts.tsx）。
  */
 export function ValueField({
@@ -66,6 +72,7 @@ export function ValueField({
 }) {
 	const id = useId();
 	const kind = valueKind(schema);
+	const editor = useRef<ReferenceEditorHandle>(null);
 	const [mode, setMode] = useState<"constant" | "reference">(
 		wholeReference(value) !== undefined ? "reference" : "constant",
 	);
@@ -86,19 +93,34 @@ export function ValueField({
 			error={<ParsedError fieldKey={key} problems={problems} />}
 			help={help}
 			aside={
-				<Segmented
-					label={`${name} 的取值方式`}
-					value={mode}
-					options={MODES}
-					onChange={(m) => {
-						if (m === mode) return;
-						setMode(m);
-						onChange(undefined);
-					}}
-				/>
+				kind === "string" ? (
+					<InsertReferenceButton name={name} editor={editor} />
+				) : (
+					<Segmented
+						label={`${name} 的取值方式`}
+						value={mode}
+						options={MODES}
+						onChange={(m) => {
+							if (m === mode) return;
+							setMode(m);
+							onChange(undefined);
+						}}
+					/>
+				)
 			}
 		>
-			{mode === "reference" ? (
+			{kind === "string" ? (
+				<ReferenceEditor
+					ref={editor}
+					id={id}
+					label={fieldLabel}
+					value={typeof value === "string" ? value : ""}
+					choices={choices}
+					placeholder={placeholder}
+					invalid={problems.length > 0}
+					onChange={(v) => onChange(v === "" ? undefined : v)}
+				/>
+			) : mode === "reference" ? (
 				<ReferenceTextInput
 					id={id}
 					whole
@@ -106,16 +128,6 @@ export function ValueField({
 					value={typeof value === "string" ? value : ""}
 					choices={choices}
 					placeholder="输入 params. 或 nodes. 搜索"
-					invalid={problems.length > 0}
-					onChange={(v) => onChange(v === "" ? undefined : v)}
-				/>
-			) : kind === "string" ? (
-				<ReferenceTextInput
-					id={id}
-					label={fieldLabel}
-					value={typeof value === "string" ? value : ""}
-					choices={choices}
-					placeholder={placeholder}
 					invalid={problems.length > 0}
 					onChange={(v) => onChange(v === "" ? undefined : v)}
 				/>
