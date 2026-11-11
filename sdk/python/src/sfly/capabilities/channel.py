@@ -53,9 +53,16 @@ class AgentSocket:
         self._cancelled = cancelled
 
     def call(
-        self, agent: str | None, method: str, args: dict[str, Any], timeout: float | None
+        self,
+        agent: str | None,
+        method: str,
+        args: dict[str, Any],
+        timeout: float | None,
+        *,
+        margin: float = _MARGIN,
     ) -> Call:
-        """发起调用（`agent` 为 None 时是自己所在的 Agent），返回还没读回复的 `Call`。"""
+        """发起调用（`agent` 为 None 时是自己所在的 Agent），返回还没读回复的 `Call`。
+        `margin`：Agent 应该在 `timeout` 之后多久之内回复，SDK 等到这时才认为 Agent 自己卡住了。"""
         import socket
 
         if self._cancelled():
@@ -72,7 +79,7 @@ class AgentSocket:
             "timeout_ms": 0 if timeout is None else max(1, round(timeout * 1000)),
         }
         conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        conn.settimeout(None if timeout is None else timeout + _MARGIN)
+        conn.settimeout(None if timeout is None else timeout + margin)
         try:
             conn.connect(self.path)
             conn.sendall(json.dumps(request, ensure_ascii=False).encode("utf-8") + b"\n")

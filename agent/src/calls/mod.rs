@@ -126,6 +126,8 @@ pub struct Method {
 /// 一次调用：目标、参数、超时，以及流式回复的出口。
 pub struct Call<'a> {
     pub target: &'a Target,
+    /// 自己所在的 Agent（发起调用的这一台）。
+    pub host: &'a capabilities::Host,
     pub method: &'static str,
     pub args: Value,
     /// 等对方回应的上限（[`CallRequest::timeout_ms`]）。
@@ -213,16 +215,17 @@ impl Replies {
 }
 
 /// 处理一次调用：找目标、检查名单和对方的能力、执行方法，期间任务被取消或调用方断开时放弃；写完最后一帧后返回。
-/// `reader` 是请求那一行之后的连接（只用来发现调用方断开），`own` 是这台 Agent 的名称，
+/// `reader` 是请求那一行之后的连接（只用来发现调用方断开），`host` 是这台 Agent，
 /// `task` 是发起调用的任务（不在这台 Agent 上时为 None）。
 pub async fn serve(
     request: CallRequest,
     mut reader: impl AsyncRead + Unpin + Send,
     writer: impl AsyncWrite + Send + Sync + 'static,
-    own: &str,
+    host: &capabilities::Host,
     task: Option<TaskCalls>,
     peers: &Peers,
 ) {
+    let own = host.name.as_str();
     let mut out = Replies {
         writer: Box::pin(writer),
     };
@@ -258,7 +261,9 @@ pub async fn serve(
     let (input_tx, input_rx) = mpsc::channel(4);
     let mut input = Input::new(input_rx);
     let outcome = {
-        let call = run(&target, &request, timeout, peers, &mut out, &mut input);
+        let call = run(
+            &target, host, &request, timeout, peers, &mut out, &mut input,
+        );
         let cancelled = async {
             loop {
                 if cancel.borrow_and_update().is_some() || cancel.changed().await.is_err() {
@@ -280,6 +285,7 @@ pub async fn serve(
 
 async fn run(
     target: &Target,
+    host: &capabilities::Host,
     request: &CallRequest,
     timeout: Option<Duration>,
     peers: &Peers,
@@ -301,6 +307,7 @@ async fn run(
     }
     (method.call)(Call {
         target,
+        host,
         method: method.name,
         args: request.args.clone(),
         timeout,

@@ -407,10 +407,47 @@ def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/ap
 - 迭代时才开始监听：目录不存在、不是目录或没有权限时抛出异常（`AgentFileNotFound` 等）。监听期间目录本身被删除或改名时，先给出里面文件的 `deleted`，再抛出 `sfly.AgentFileNotFound`。
 - 本地调试时同样用 inotify 监听本机的目录（只支持 Linux），映射到本地目录的 Agent 也一样；没有连接，所以没有重连，节点读得太慢、内核的 inotify 队列溢出时同样重新给 `missed=True` 的快照。
 
+### 执行命令：`exec`
+
+```python
+from sfly import AgentName, Context, node
+
+
+@node(outputs=["compressed"])
+def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
+    """在 source 上压缩已经轮转出去的日志（app.log.1、app.log.2…），gzip 的输出进入这个任务的日志。"""
+    agent = ctx.agent(source)
+    rotated = [
+        f.path for f in agent.files.list(directory, "app.log.[0-9]*") if not f.path.endswith(".gz")
+    ]
+    for path in rotated:
+        code = agent.exec.run(["gzip", "-9", "--verbose", path], timeout=600)
+        if code != 0:
+            raise RuntimeError(f"压缩 {path} 失败，gzip 退出码 {code}")
+    return {"compressed": [f"{path}.gz" for path in rotated]}
+```
+
+| 方法 | 说明 |
+|---|---|
+| `exec.run(command, *, timeout, cwd=None, env=None)` | 在那台 Agent 上执行一条命令，等它结束，返回退出码（`int`） |
+
+从 SDK 0.2.0 起可用，需要那台 Agent 支持能力 `exec`（0.2.0 及以上的 Agent）。
+
+- `command` 是字符串时用 `/bin/sh -c` 执行；是字符串列表时第一项是程序（不含 `/` 时在那台 Agent 的 `PATH` 里找），其余是参数，不经过 shell。
+- 命令在那台机器上以那台 Agent 进程的身份运行。`cwd` 是工作目录（那台机器上的绝对路径），默认 `/`；`env` 是在那台 Agent 进程的环境变量之上追加的环境变量。
+- 返回退出码；被信号终止时为 128 + 信号值。退出码不是 0 不算失败，由节点自己检查。找不到程序、工作目录不存在时抛出 `AgentFileNotFound`，没有权限执行时抛出 `AgentPermissionDenied`。
+- 命令的标准输出、标准错误逐行进入**这个任务**的日志（标准输出为 info，标准错误为 error），每行前面标上来自哪台 Agent，例如 `[Agent a-01] /var/log/app/app.log.1: 91.2% -- replaced with /var/log/app/app.log.1.gz`。返回值里没有输出：要拿结果时让命令把它写进文件，再用 `files` 读出来。
+- 命令归属于调用它的任务：不占那台 Agent 的槽位，不在那台 Agent 上产生任务，运行页面上也不出现新的节点。
+- `timeout`（秒）必须给，没有默认值，不能传 `None`：它是命令最多运行多久。超过时命令连同它启动的子进程（同一个进程组里的进程）一起被结束（先 SIGTERM，那台 Agent 的宽限期过后 SIGKILL），抛出 `AgentTimeout`；超时之前的输出照常在日志里。
+- 这个任务被取消、被停止子流程节点停止、失败或正常结束时（包括在后台线程里调用、节点没等它就返回了），还在运行的命令连同子进程一起被结束；两台 Agent 之间的连接断开时也一样，调用抛出 `AgentUnreachable`。
+- 命令退出后，它留在后台的子进程也被结束，所以不能用它启动常驻进程（被测服务等）：那样的进程用标准节点 `start_process` 启动，把这个节点派到那台机器上（见[标准节点](standard-nodes.md)）。自己用 `setsid` 离开进程组的进程不在这个范围里，不要这样做。
+- 本地调试时在本机执行：`ctx.agent()` 和映射到本地目录的 Agent 都在本机运行命令，后者的工作目录落在映射的目录里（`cwd="/srv"` 是 `<目录>/srv`），命令里写的路径不换算。日志里的行标上 `[本机]` 或 `[Agent 名称]`。
+
 ### 超时、取消与错误
 
 - `timeout` 是等对方回应的上限（秒），默认 30，`None` 表示不限，必须大于 0。`files.stat` 是整个调用；`files.list` 是到第一项、以及相邻两项之间各自最多等多久。超时抛出 `sfly.AgentTimeout`。
 - `files.read` 是到第一块、以及相邻两块之间各自最多等多久；`files.download` 是相邻两次进展之间（重连的每一步各自）最多等多久。
+- `exec.run` 例外：`timeout` 必须给，是命令最多运行多久（见上文「执行命令」）。
 - 任务被取消（或超时、被停止子流程节点停止）时，正在进行的调用立即结束并抛出 `sfly.Cancelled`，在后台线程里调用也一样。节点进程退出时调用随之放弃。
 - 失败时抛出 `sfly.AgentError` 的子类，`kind` 区分原因，`agent` 是目标 Agent 的名称，消息写明是哪台 Agent。它们同时是对应的内置异常的子类，`except FileNotFoundError` 这样的写法也能捕获：
 
@@ -418,9 +455,9 @@ def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/ap
 |---|---|---|
 | `AgentUnreachable`（`ConnectionError`） | `unreachable` | 连不通：两台 Agent 之间连不上，或那台 Agent 的端口没在监听（例如端口被占用）；也包括连不上自己所在的 Agent |
 | `AgentUnsupported` | `unsupported` | 对方不支持：那台 Agent 的版本太旧，没有这项能力，要升级它 |
-| `AgentFileNotFound`（`FileNotFoundError`） | `not_found` | 文件或目录不存在 |
+| `AgentFileNotFound`（`FileNotFoundError`） | `not_found` | 文件或目录不存在；`exec.run` 找不到程序、工作目录不存在 |
 | `AgentPermissionDenied`（`PermissionError`） | `permission_denied` | 那台 Agent 进程没有权限 |
-| `AgentTimeout`（`TimeoutError`） | `timeout` | 超过 `timeout` 秒没有回应 |
+| `AgentTimeout`（`TimeoutError`） | `timeout` | 超过 `timeout` 秒没有回应；`exec.run` 的命令超过 `timeout` 秒没有结束 |
 | `AgentNotReferenced` | `not_referenced` | 那台 Agent 不是通过「Agent」类型的参数拿到的 |
 | `AgentError` | `invalid` 等 | 其它失败，例如要列出的路径不是目录 |
 

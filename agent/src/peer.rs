@@ -34,6 +34,7 @@ pub async fn serve(
     port: u16,
     public_address: Option<String>,
     identity: Identity,
+    host: capabilities::Host,
 ) -> proto::PeerEndpoint {
     let endpoint = |port: u16, listen_error: String| proto::PeerEndpoint {
         port: port.into(),
@@ -55,7 +56,11 @@ pub async fn serve(
     eprintln!("listening for other agents on port {port}");
     tokio::spawn(async move {
         let result = tonic::transport::Server::builder()
-            .add_routes(routes(identity))
+            // 定期探测调用方还在不在：两台机器之间的网络断了（连接没有正常关闭）时，最迟这么久之后放弃
+            // 进行中的调用（例如结束正在执行的命令，[`capabilities::exec`]）。
+            .http2_keepalive_interval(Some(KEEPALIVE_INTERVAL))
+            .http2_keepalive_timeout(Some(KEEPALIVE_TIMEOUT))
+            .add_routes(routes(identity, host))
             .serve_with_incoming(TcpListenerStream::new(listener))
             .await;
         if let Err(error) = result {
@@ -65,12 +70,14 @@ pub async fn serve(
     endpoint(port, String::new())
 }
 
+/// 每隔多久探测一次连过来的 Agent（HTTP/2 PING）。
+const KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+/// 探测之后最多等多久回应，过了就当连接已经断开。
+const KEEPALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// 这个端口上的全部 gRPC 服务。
-pub fn routes(identity: Identity) -> tonic::service::Routes {
+pub fn routes(identity: Identity, host: capabilities::Host) -> tonic::service::Routes {
     let mut routes = tonic::service::Routes::builder();
-    let host = capabilities::Host {
-        name: identity.name.clone(),
-    };
     routes.add_service(AgentPeerServer::new(Peer { identity }));
     capabilities::add_services(&mut routes, &host);
     routes.routes()

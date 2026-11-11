@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package sfly.agent.v1;
+
+// Agent 能力 exec（ADR 0019）：在这台 Agent 上执行一条命令。和 AgentPeer 在同一个端口上提供，供其它 Agent 直接连接，
+// 没有认证，只应在内网使用。
+//
+// 命令归属于发起调用的任务：输出回到发起调用的 Agent，由它写进那个任务的日志；不占这台 Agent 的槽位，不产生任务，
+// 不用来启动常驻进程。命令和它启动的子进程是一棵进程树（自成一个进程组），以下任何一种情况都整体结束（先 SIGTERM，
+// 宽限期过后 SIGKILL）：超过 timeout_ms；调用方放弃（取消这次调用、连接断开）；命令本身已经退出、还剩下的子进程。
+service AgentExec {
+  // 执行一条命令：先回复零到多条 output，最后一条是 exit。
+  //
+  // 错误用 gRPC 状态码区分：NOT_FOUND（找不到程序、工作目录不存在）、PERMISSION_DENIED（没有权限执行）、
+  // INVALID_ARGUMENT（命令为空、工作目录不是绝对路径、没有给超时）、DEADLINE_EXCEEDED（超过 timeout_ms，
+  // 进程树已结束），消息是给人看的一句话。
+  rpc Run(RunCommandRequest) returns (stream RunCommandResponse);
+}
+
+message RunCommandRequest {
+  // 程序和参数：第一项是程序（不含 `/` 时在这台 Agent 的 PATH 里找），不经过 shell。
+  repeated string argv = 1;
+  // 工作目录（这台机器上的绝对路径）；为空时是 `/`。
+  string cwd = 2;
+  // 在这台 Agent 进程的环境变量之上追加（同名时覆盖）的环境变量。
+  map<string, string> env = 3;
+  // 命令最多运行多久（毫秒），必须大于 0。
+  uint64 timeout_ms = 4;
+}
+
+message RunCommandResponse {
+  oneof part {
+    CommandOutput output = 1;
+    CommandExit exit = 2;
+  }
+}
+
+// 命令的一段输出（原样的字节，不按行切分）。
+message CommandOutput {
+  OutputStream stream = 1;
+  bytes data = 2;
+}
+
+// 输出来自哪个流。
+enum OutputStream {
+  OUTPUT_STREAM_UNSPECIFIED = 0;
+  OUTPUT_STREAM_STDOUT = 1;
+  OUTPUT_STREAM_STDERR = 2;
+}
+
+// 命令已经退出（之前的输出都已经发出）。
+message CommandExit {
+  // 退出码；被信号终止时为 128 + 信号值（和 shell 的习惯一致）。
+  int32 exit_code = 1;
+}

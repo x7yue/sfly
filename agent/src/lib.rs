@@ -424,7 +424,11 @@ impl Runtime {
                 referenced: held.referenced_agents.clone(),
                 cancel: held.cancel.subscribe(),
             });
-        calls::serve(request, reader, writer, &self.name, task, &self.peers).await;
+        let host = capabilities::Host {
+            name: self.name.clone(),
+            terminate_grace: self.terminate_grace,
+        };
+        calls::serve(request, reader, writer, &host, task, &self.peers).await;
     }
 
     /// 正在执行（含安装中）的任务。
@@ -874,6 +878,10 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         peer::Identity {
             name: config.name.clone(),
             version: config.version.clone(),
+        },
+        capabilities::Host {
+            name: config.name.clone(),
+            terminate_grace: config.terminate_grace,
         },
     )
     .await;
