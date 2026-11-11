@@ -263,6 +263,9 @@ Agent 能力是 Agent 自身提供、节点在执行中调用的一组操作。`
 |---|---|
 | `files.list(directory, pattern="*", *, recursive=False, timeout=30.0)` | 列出目录下文件名匹配通配符的普通文件，返回 `FileInfo` 的迭代器 |
 | `files.stat(path, *, timeout=30.0)` | 查看一个文件（或目录）的属性，返回 `FileInfo`；跟随符号链接 |
+| `files.read(path, offset=0, length=None, *, timeout=30.0)` | 从 `offset` 起流式读取文件内容，返回 `bytes` 的迭代器，见下文「读取与下载」 |
+| `files.download(path, local_path, *, timeout=30.0, progress=None)` | 把文件下载到节点所在机器上的 `local_path`，返回源文件的 `FileInfo`，见下文「读取与下载」 |
+| `files.watch(directory, pattern="*", *, recursive=False, timeout=30.0)` | 监听目录：先给出当前文件的快照，再持续给出事件（迭代器），见下文「监听目录」 |
 
 `files.list`：
 
@@ -282,6 +285,46 @@ Agent 能力是 Agent 自身提供、节点在执行中调用的一组操作。`
 | `id` | 文件标识 `FileId(device, inode)`：设备号 + inode。文件被改名（日志轮转）后不变，删除后重建会变，用来判断「还是不是同一个文件」，可以作为字典的键 |
 
 修改时间是那台机器的 Agent 时间，原样给出，不换算：两台机器的时钟不一定一致，判断「多久没有修改」时不要直接和本机的 `time.time()` 比较，比较同一台 Agent 上前后两次 `stat` 的结果。
+
+### 读取与下载：`files.read`、`files.download`
+
+```python
+import hashlib
+
+from sfly import AgentName, Context, node
+
+
+@node(outputs=["sha256", "local"])
+def pull_log(ctx: Context, source: AgentName, path: str = "/var/log/app/app.log.1") -> dict:
+    source_files = ctx.agent(source).files
+    # 流式读取：只读开头 1 MB，不用先整个下载。
+    digest = hashlib.sha256()
+    for chunk in source_files.read(path, length=1024 * 1024):
+        digest.update(chunk)
+    # 下载到本地（相对路径相对于任务目录），连接中断时自动续传。
+    info = source_files.download(path, "logs/app.log.1", timeout=60)
+    return {"sha256": digest.hexdigest(), "local": {"path": "logs/app.log.1", "size": info.size}}
+```
+
+从 SDK 0.2.0 起可用，需要那台 Agent 支持能力 `files.read`（同一版本的 Agent 都有；更旧的抛出 `AgentUnsupported`）。
+
+`files.read`：
+
+- 从第 `offset` 个字节开始，逐块（每块最多 256 KiB）给出内容，读到 `length` 字节或文件末尾为止；`length=None` 读到末尾。`offset` 超过文件末尾时没有内容，不报错。
+- 读的是迭代到那一刻文件里已有的内容：文件还在被写入时，读到当时写下的部分。只读新增的部分时，记下上次读到的位置作为下一次的 `offset`（配合 `FileInfo.id` 确认还是同一个文件）。
+- 迭代时才发起调用（参数不合法时调用 `read` 就抛出 `ValueError`）；文件不存在、是目录或没有权限时迭代时抛出异常。中途停止迭代时调用随之放弃。
+- 内容经节点所在的 Agent 交给节点进程，适合边读边处理；要把整个大文件放到本地时用 `files.download`。
+
+`files.download`：
+
+- 数据由节点所在的 Agent 从那台 Agent 读出后直接写到 `local_path`，不经过节点进程（`ctx.agent()` 时是本机上的复制）。节点进程只收到进度和结果，大文件的传输不受 Python 的速度影响。
+- `local_path` 是节点所在机器上的路径，相对路径相对于节点的工作目录（任务目录）。所在的目录不存在时一并创建；那里已有的文件被替换。
+- 先写同一目录里的临时文件（`.<文件名>.sfly-<随机>.tmp`，与 `files.write` 相同），完成、核对并落盘后才改名为 `local_path`：`local_path` 上不会出现半截文件，那里已有的文件替换后保留权限位。下载失败、任务被取消时临时文件被删除。处理本地目录的节点要跳过以 `.` 开头的文件。
+- 下载的是开始时的大小。两台 Agent 之间的连接中断（网络断开、那台 Agent 重启）时自动重连，从已经写下的位置继续，不从头开始；连续多次重连都没有进展时抛出异常（通常是 `AgentUnreachable`）。
+- 完成时再查看一次源文件，核对本地文件与源文件大小一致。源文件在下载期间被删除时抛出 `AgentFileNotFound`；被替换（例如日志轮转时被改名，路径上换成了新文件）、被截短、大小变了（还在写入）时抛出 `AgentError`，消息写明是哪一种。只下载已经不再写入的文件：判断文件是否写完是节点自己的事，平台不提供。
+- 返回下载完成时源文件的 `FileInfo`：`size` 就是本地文件的字节数，`id` 可以用来判断以后是不是同一个文件（例如只下载一次）。
+- `progress(downloaded, size)`：下载期间不时被调用（在 Agent 上大约每秒一次，本地调试时每块一次），参数是已经下载的字节数和要下载的字节数，可以用来上报进度或速率；它在调用 `download` 的线程里执行。
+- `timeout` 是相邻两次进展之间最多等多久，不是整个下载的时长：几个 GB 的文件用默认的 30 秒也可以。
 
 ### 写入、上传与删除
 
@@ -321,6 +364,49 @@ def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
 - `timeout`：`files.write`、`files.upload` 是对方接收每一段、写完后给出结果各自最多等多久；`files.write` 等 `data` 给出下一段不计时。`files.delete` 是整个调用。
 - 本地调试时规则相同：写到映射的目录里，`local_path` 是本机上的路径。
 
+### 监听目录：`files.watch`
+
+```python
+from sfly import AgentName, Context, FileId, WatchSnapshot, node
+
+
+@node(outputs=["rotated"])
+def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
+    """等 source 上的 app.log 轮转一次，输出被改名后的路径。"""
+    current: FileId | None = None
+    for item in ctx.agent(source).files.watch(directory, "app.log*"):
+        if isinstance(item, WatchSnapshot):
+            # 以快照为准：重连、事件太多来不及发出之后会再给一份（item.missed 为 True）。
+            by_path = {f.path: f.id for f in item.files}
+            current = by_path.get(f"{directory}/app.log", current)
+        elif item.kind == "moved" and item.id == current:
+            return {"rotated": item.path}
+    raise RuntimeError("监听意外结束")
+```
+
+`files.watch` 监听目录下文件名匹配 `pattern` 的普通文件，返回一个一直进行下去的迭代器：先给出一份 `WatchSnapshot`（当前的文件），之后逐个给出 `FileEvent`。停止迭代（`break`、`return`、`close()`）时监听随之结束。从 SDK 0.2.0 起可用，需要那台 Agent 支持能力 `files.watch`（0.2.0 及以上的 Agent）。
+
+- `pattern` 的规则与 `files.list` 相同。`recursive=True` 时监听子目录，包括监听期间新建（或移进来）的子目录：新子目录里已有的文件作为 `created` 给出。
+- `WatchSnapshot(files, missed)`：`files` 是当时匹配的全部文件（`FileInfo` 的元组，顺序与 `files.list` 相同）。快照之后的变化不会漏掉，但可能和快照重复。
+- `missed` 为 True 表示**可能有遗漏**：两台 Agent 之间的连接中断后自动重连、或者事件太多来不及发出（节点读得太慢，事件队列溢出）时，重新给一份快照，之前的一些事件没有送到。这时以这份快照为准，按文件标识去重，不要假设每个变化都有事件。开头的第一份快照为 False。
+- `FileEvent(kind, file, old_path)`：`file` 是事件之后这个文件的属性（`FileInfo`，`path`、`id` 也可以直接从事件上取），`old_path` 只有 `moved` 有。`kind`：
+
+| `kind` | 含义 |
+|---|---|
+| `created` | 新建，包括从监听范围之外移进来 |
+| `moved` | 在监听范围内改名（日志轮转），文件标识不变；`old_path` 是原来的路径 |
+| `closed` | 以写方式打开的文件被关闭（inotify 的 `IN_CLOSE_WRITE`）。不代表不会再被写：同一个文件可以再次打开续写 |
+| `modified` | 内容被修改。还没送到的连续几次修改合并成一个事件 |
+| `deleted` | 被删除，包括移出监听范围；`file` 是最后一次看到的属性 |
+
+- 事件描述的是「匹配 `pattern` 的文件」这个集合的变化：改名后不再匹配是 `deleted`，改名后才匹配是 `created`。
+- **平台不判断文件是否写完。** 一个日志文件算不算「不会再续写」取决于被测系统怎样轮转日志（改名后还写不写、关闭后会不会再打开），由节点自己判断，例如「已经被改名」「至少 N 秒没有 `modified`」，或者两者都要。
+- 用 inotify 实现，**只在 Linux 的本地文件系统上可靠**：NFS 等网络文件系统上看不到别的机器做的修改。
+- 递归时每个子目录占一个 inotify watch，一个用户的 watch 总数受系统上限 `/proc/sys/fs/inotify/max_user_watches` 限制，同时进行的监听数受 `max_user_instances` 限制；超过时抛出 `sfly.AgentError`，消息里写明是哪个上限。目录很多时调大上限，或者监听更深一层的目录、不递归。
+- `timeout`：开始监听时最多等这么久。之后那台 Agent 会定期发心跳，超过 `timeout` 秒（None 时 30 秒）没有任何回应就认为连接中断并自动重连，重连 `timeout` 秒还没成功时抛出 `sfly.AgentUnreachable`；`timeout=None` 时一直重连。事件之间隔多久都不算超时。
+- 迭代时才开始监听：目录不存在、不是目录或没有权限时抛出异常（`AgentFileNotFound` 等）。监听期间目录本身被删除或改名时，先给出里面文件的 `deleted`，再抛出 `sfly.AgentFileNotFound`。
+- 本地调试时同样用 inotify 监听本机的目录（只支持 Linux），映射到本地目录的 Agent 也一样；没有连接，所以没有重连，节点读得太慢、内核的 inotify 队列溢出时同样重新给 `missed=True` 的快照。
+
 ### 执行命令：`exec`
 
 ```python
@@ -359,7 +445,9 @@ def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/va
 
 ### 超时、取消与错误
 
-- `timeout` 是等对方回应的上限（秒），默认 30，`None` 表示不限，必须大于 0。`files.stat` 是整个调用；`files.list` 是到第一项、以及相邻两项之间各自最多等多久。`exec.run` 例外：`timeout` 必须给，是命令最多运行多久（见上文「执行命令」）。超时抛出 `sfly.AgentTimeout`。
+- `timeout` 是等对方回应的上限（秒），默认 30，`None` 表示不限，必须大于 0。`files.stat` 是整个调用；`files.list` 是到第一项、以及相邻两项之间各自最多等多久。超时抛出 `sfly.AgentTimeout`。
+- `files.read` 是到第一块、以及相邻两块之间各自最多等多久；`files.download` 是相邻两次进展之间（重连的每一步各自）最多等多久。
+- `exec.run` 例外：`timeout` 必须给，是命令最多运行多久（见上文「执行命令」）。
 - 任务被取消（或超时、被停止子流程节点停止）时，正在进行的调用立即结束并抛出 `sfly.Cancelled`，在后台线程里调用也一样。节点进程退出时调用随之放弃。
 - 失败时抛出 `sfly.AgentError` 的子类，`kind` 区分原因，`agent` 是目标 Agent 的名称，消息写明是哪台 Agent。它们同时是对应的内置异常的子类，`except FileNotFoundError` 这样的写法也能捕获：
 
@@ -385,6 +473,7 @@ def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/va
 
 - 本地调试（`sfly run`、`sfly.testing.run_node`）没有 Agent：`ctx.agent()` 直接操作本机的文件系统。
 - 另一台 Agent 由测试工具映射到本地目录：`run_node(..., agents={"a-01": tmp_path / "a"})` 或 `sfly run <节点> --agent a-01=./a`。那台 Agent 上的绝对路径落在这个目录里：`/var/log/app.log` 是 `<目录>/var/log/app.log`，`FileInfo.path` 仍是那台 Agent 上的写法 `/var/log/app.log`。名称要通过「Agent」类型的参数传给节点，规则和在 Agent 上一样：参数里没有的名称抛出 `AgentNotReferenced`，参数里有但没有映射的抛出 `AgentUnreachable`（消息里写明怎样映射）。
+- 本地调试时 `files.download` 的 `local_path` 就是本机上的路径，不经过映射：`download("/var/log/app.log", "out/app.log")` 把 `<目录>/var/log/app.log` 复制到工作目录下的 `out/app.log`。
 - 联调（`sfly dev`）时开发版本在本机 Agent 上运行，`ctx.agent(名称)` 照常经本机 Agent 访问其它 Agent。
 
 ## 取消与超时

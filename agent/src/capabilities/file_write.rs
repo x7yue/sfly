@@ -56,8 +56,8 @@ fn add_service(routes: &mut tonic::service::RoutesBuilder, _host: &Host) {
     routes.add_service(AgentFileWriteServer::new(FileWrite));
 }
 
-/// 传给目标 Agent 时每段最多多少字节。
-const CHUNK: usize = 256 * 1024;
+/// 传给目标 Agent 时每段最多多少字节（读取文件时每块也是这么多，见 [`super::file_read`]）。
+pub(super) const CHUNK: usize = 256 * 1024;
 
 /// `AgentFileWrite` 服务：供其它 Agent 调用，也被自己所在的 Agent 直接调用（[`Target::Local`]）。
 pub struct FileWrite;
@@ -155,20 +155,20 @@ async fn next_part(
 /// 进程内的临时文件序号：同一个目标的几次写入各用各的临时文件。
 static TEMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
-/// 目标所在目录里的临时文件：没有 [`TempFile::commit`] 就被丢弃时删除。
-struct TempFile {
+/// 目标所在目录里的临时文件：没有 [`TempFile::commit`] 就被丢弃时删除。下载（[`super::file_read`]）也用它落盘。
+pub(super) struct TempFile {
     /// 目标路径（给人看的写法，调用方给的）。
     path: String,
     target: PathBuf,
     temp: PathBuf,
-    file: tokio::fs::File,
+    pub(super) file: tokio::fs::File,
     /// 目标已经是普通文件时它的权限位：替换后保留。
     mode: Option<u32>,
     committed: bool,
 }
 
 impl TempFile {
-    async fn create(path: &str) -> Result<Self, Status> {
+    pub(super) async fn create(path: &str) -> Result<Self, Status> {
         let target = absolute(path)?;
         let (Some(dir), Some(name)) = (target.parent(), target.file_name()) else {
             return Err(Status::invalid_argument(format!("{path} 不是文件路径")));
@@ -224,7 +224,7 @@ impl TempFile {
     }
 
     /// 写完了：落盘、改名为目标路径，返回它的属性。
-    async fn commit(mut self) -> Result<FileInfo, Status> {
+    pub(super) async fn commit(mut self) -> Result<FileInfo, Status> {
         let path = self.path.clone();
         let failed = |error: std::io::Error| io_status(&error, &path);
         self.file.flush().await.map_err(failed)?;

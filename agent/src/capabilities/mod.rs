@@ -13,6 +13,8 @@
 //! 加一项能力：新建 `capabilities/<能力>.rs` 导出一个 `MODULE`，在下面加 `pub mod` 和 [`MODULES`] 里的一项。
 
 pub mod exec;
+pub mod file_read;
+pub mod file_watch;
 pub mod file_write;
 pub mod files;
 
@@ -49,7 +51,13 @@ pub struct Module {
 }
 
 /// 这个版本的 Agent 提供的能力。
-pub const MODULES: &[Module] = &[files::MODULE, file_write::MODULE, exec::MODULE];
+pub const MODULES: &[Module] = &[
+    files::MODULE,
+    file_write::MODULE,
+    file_read::MODULE,
+    file_watch::MODULE,
+    exec::MODULE,
+];
 
 /// 上报用的能力列表（Hello.capabilities、DescribeResponse.capabilities）。
 pub fn reported() -> Vec<proto::Capability> {
