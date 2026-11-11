@@ -3,8 +3,14 @@ import type { PackageMetadata } from "@sfly/schema";
 /**
  * 节点包声明的最低 SDK 版本（`requires_sdk`，#79）与 Agent 版本的比较。SDK 运行时的版本等于 Agent 版本（ADR 0010）。
  * 要求的格式由 `@sfly/schema` 的 `RequiresSdk` 限定：逗号分隔的「比较符 + 数字版本号」，按 PEP 440 的语义比较，
- * 版本号位数不同时补 0（`1.0` == `1.0.0`）。
+ * 版本号位数不同时补 0（`1.0` == `1.0.0`）。最低 Agent 版本（`requires_agent`，requires-agent.ts）用同样的比较。
  */
+
+/** 节点包的一个版本：名称和版本号（问题的说明里写明是哪个包）。 */
+export interface PackageRef {
+	name: string;
+	version: string;
+}
 
 const CLAUSE = /^(~=|==|!=|<=|>=|<|>)\s*([0-9]+(?:\.[0-9]+)*)$/;
 
@@ -43,9 +49,9 @@ function holds(version: number[], op: string, bound: number[]): boolean {
 	}
 }
 
-/** Agent 版本是否满足要求；版本号不是纯数字（无法比较）时视为不满足。 */
-export function satisfiesSdk(agentVersion: string, requirement: string): boolean {
-	const version = parse(agentVersion);
+/** 版本（Agent 版本、控制面版本）是否满足要求；版本号不是纯数字（无法比较）时视为不满足。 */
+export function satisfiesVersion(actual: string, requirement: string): boolean {
+	const version = parse(actual);
 	if (!version) return false;
 	return requirement.split(",").every((raw) => {
 		const match = CLAUSE.exec(raw.trim());
@@ -59,11 +65,11 @@ export function satisfiesSdk(agentVersion: string, requirement: string): boolean
  */
 export function sdkRequirementProblem(
 	metadata: Pick<PackageMetadata, "requires_sdk">,
-	pkg: { name: string; version: string },
+	pkg: PackageRef,
 	agent: { name: string; version: string },
 ): string | undefined {
 	const requirement = metadata.requires_sdk;
-	if (requirement === undefined || satisfiesSdk(agent.version, requirement)) return undefined;
+	if (requirement === undefined || satisfiesVersion(agent.version, requirement)) return undefined;
 	return `节点包 ${pkg.name}@${pkg.version} 需要 SDK ${requirement}，Agent ${agent.name} 的版本是 ${agent.version}：请升级 Agent`;
 }
 
@@ -73,10 +79,11 @@ export function sdkRequirementProblem(
  */
 export function controlPlaneSdkProblem(
 	metadata: Pick<PackageMetadata, "requires_sdk">,
-	pkg: { name: string; version: string },
+	pkg: PackageRef,
 	controlPlaneVersion: string,
 ): string | undefined {
 	const requirement = metadata.requires_sdk;
-	if (requirement === undefined || satisfiesSdk(controlPlaneVersion, requirement)) return undefined;
+	if (requirement === undefined || satisfiesVersion(controlPlaneVersion, requirement))
+		return undefined;
 	return `节点包 ${pkg.name}@${pkg.version} 需要 SDK ${requirement}，控制面的版本是 ${controlPlaneVersion}：Agent 会先自更新到控制面的版本再执行任务，请升级控制面`;
 }
