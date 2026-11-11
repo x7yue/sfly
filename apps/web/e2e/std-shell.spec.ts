@@ -8,7 +8,7 @@ import { createScenario, publishPackage } from "./support";
 // （testdata/std-shell-node.json，std/tests/test_package.py 保证它与 `sfly build std` 的结果一致）：
 // 这里运行在没有 Python 的 Playwright 镜像里，构建不了 sfly-std。
 
-test("Shell 命令节点的输出出现在检查器的输出列表里，后面的节点引用补全能选到它们", async ({
+test("Shell 命令节点的输出出现在检查器的输出列表里，后续节点引用补全能选到它们", async ({
 	page,
 	controlPlane,
 }) => {

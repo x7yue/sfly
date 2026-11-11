@@ -84,7 +84,7 @@ def test_requires_an_sdk_that_supports_metric_labels() -> None:
 
 
 def test_requires_an_sdk_that_can_download_artifacts() -> None:
-    # 0.3.0 起 shell 的 stdout_file / stderr_file、http_request 的 body_file 是给后面的节点用
+    # 0.3.0 起 shell 的 stdout_file / stderr_file、http_request 的 body_file 是给后续节点用
     # ctx.artifacts.download 下载的（#181）：声明的最低 SDK 版本是第一个带下载接口的平台版本。
     # 和指标标签一样，下载接口还没随平台版本发布时只能声明当前版本能满足的范围；
     # 仓库版本号一旦越过 LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD，requires-sdk 必须同步排除它，
