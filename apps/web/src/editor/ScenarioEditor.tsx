@@ -60,6 +60,7 @@ import {
 	newSubflowNameProblem,
 	packageGroups,
 } from "./add-node";
+import { companionSubflow, dispatchProblem } from "./add-subflow";
 import { usePackageCatalog } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { useEditHistory } from "./edit-history";
@@ -263,14 +264,19 @@ function Editor({
 	);
 	const [adding, setAdding] = useState<AddRequest | null>(null);
 	/**
-	 * 从没有出线的链端口（链尾、游离节点）拖线到空白处：弹出可以接上的节点菜单；拖到某个端口上但连线被拒绝时，提示原因。
+	 * 从没有出线的链端口（链尾、游离节点）拖线到空白处：弹出可以接上的节点菜单；从还没有调度连线的调度端口拖出时，
+	 * 弹出新建子流程的表单（#187）。拖到某个端口上但连线被拒绝时，提示原因。
 	 */
 	const onConnectEnd: OnConnectEnd = useCallback(
 		(event, state) => {
 			if (!state.fromNode) return;
 			if (!state.toNode) {
-				if (state.fromHandle?.type !== "source" || state.fromHandle.id === "dispatch") return;
-				const problem = appendProblem(docRef.current, state.fromNode.id);
+				if (state.fromHandle?.type !== "source") return;
+				const from = state.fromHandle.id === "dispatch" ? "dispatch" : "after";
+				const problem = (from === "dispatch" ? dispatchProblem : appendProblem)(
+					docRef.current,
+					state.fromNode.id,
+				);
 				if (problem) {
 					notify.warning(problem);
 					return;
@@ -279,7 +285,7 @@ function Editor({
 				if (!point) return;
 				const at = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
 				setAdding({
-					after: state.fromNode.id,
+					[from]: state.fromNode.id,
 					client: { x: point.clientX, y: point.clientY },
 					position: { x: at.x, y: at.y - NODE_HEIGHT / 2 },
 				});
@@ -347,7 +353,10 @@ function Editor({
 		);
 		const source = request.after ? nodes.find((n) => n.id === request.after) : undefined;
 		let position: { x: number; y: number };
-		if (source) {
+		if (request.dispatch && request.position) {
+			// 从调度端口拖出：子流程入口的调度端口就在松开鼠标的位置。
+			position = request.position;
+		} else if (source) {
 			position = request.position ?? {
 				x: source.position.x + LAYOUT_COLUMN,
 				y: source.position.y,
@@ -372,11 +381,24 @@ function Editor({
 		if (item.kind === "package" && meta.packages[item.package] !== item.version) {
 			setMeta((m) => ({ ...m, packages: { ...m.packages, [item.package]: item.version } }));
 		}
+		// 勾选了「同时新建子流程」的异步任务节点：子流程入口和调度连线一起加，同一步撤销（#187）。
+		const subflow =
+			item.kind === "async" && item.subflow !== undefined
+				? companionSubflow({ id, position }, item.subflow, nodes)
+				: undefined;
 		setNodes((ns) => [
 			...ns,
 			{ id, type: item.kind, position, data: { node: newDocNode(item, id) }, deletable: true },
+			...(subflow ? [subflow.node] : []),
 		]);
-		if (source) setEdges((es) => [...es, toFlowEdge({ from: source.id, to: id, kind: "chain" })]);
+		const added = [
+			...(source ? [toFlowEdge({ from: source.id, to: id, kind: "chain" })] : []),
+			...(request.dispatch
+				? [toFlowEdge({ from: request.dispatch, to: id, kind: "dispatch" })]
+				: []),
+			...(subflow ? [toFlowEdge(subflow.edge)] : []),
+		];
+		if (added.length > 0) setEdges((es) => [...es, ...added]);
 		setSelectedId(id);
 		requestAnimationFrame(() => {
 			// 接在来源节点右侧的新节点可能在视口外：移到中央。

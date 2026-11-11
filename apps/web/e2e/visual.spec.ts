@@ -621,6 +621,17 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-new-subflow.png");
 	});
 
+	test("添加异步任务：同时新建子流程", async ({ page }) => {
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await menu.getByRole("option", { name: /异步任务/ }).click();
+		await menu.getByRole("checkbox", { name: "同时新建子流程" }).check();
+		await menu.getByRole("textbox", { name: "子流程名称" }).fill("sub_entry");
+		await idle(page);
+		await expect(menu.getByText("子流程入口节点 sub_entry 已使用名称「sub_entry」")).toBeVisible();
+		await expect(page).toHaveScreenshot("editor-new-async.png");
+	});
+
 	test("空白处右键菜单", async ({ page }) => {
 		await page.mouse.click(200, 640, { button: "right" });
 		const menu = page.getByRole("menu", { name: "画布菜单" });
