@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@sfly/proto";
-import type { ClockOffsetView } from "@sfly/schema";
+import type { AgentEndpointView, ClockOffsetView } from "@sfly/schema";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -8,6 +8,7 @@ import {
 	type AgentStatus,
 	type AgentUpdateInfo,
 	agents,
+	type CapabilityInfo,
 	type DevPackageInfo,
 	type InstalledPackage,
 	type InstallProgress,
@@ -24,6 +25,7 @@ import {
 	clockOffsetView,
 	measureClockOffset,
 } from "./agent-clock.js";
+import { agentEndpoint } from "./agent-endpoint.js";
 
 /** proto 的 DevPackage 转成存储形式：metadata_json 解析为对象（不是 JSON 对象时为 null）。 */
 export function devPackageInfo(p: { name: string; source: string; metadataJson: string }) {
@@ -86,8 +88,11 @@ const NO_UPDATE: AgentUpdateInfo = { state: "none", remaining_tasks: 0, reason: 
 export interface AgentView {
 	name: string;
 	status: AgentStatus;
-	/** 注册信息（安装状态、开发版本与更新状态另有字段）。 */
-	info: Omit<AgentInfo, "install" | "dev_packages" | "update"> & {
+	/** 注册信息（安装状态、开发版本、更新状态、能力与地址另有字段）。 */
+	info: Omit<
+		AgentInfo,
+		"install" | "dev_packages" | "update" | "capabilities" | "peer" | "source_address"
+	> & {
 		installed_packages: InstalledPackage[];
 	};
 	last_seen_at: string;
@@ -105,6 +110,10 @@ export interface AgentView {
 	version_mismatch: boolean;
 	/** 最近一次 Heartbeat 上报的更新状态。 */
 	update: AgentUpdateInfo;
+	/** 支持的 Agent 能力及版本（ADR 0019）。 */
+	capabilities: CapabilityInfo[];
+	/** 其它 Agent 连接这台 Agent 用的地址（ADR 0019）。 */
+	endpoint: AgentEndpointView;
 }
 
 export interface RunningTaskView {
@@ -288,33 +297,40 @@ export class AgentHub {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.where(and(inArray(tasks.status, ON_AGENT), isNotNull(tasks.agentName)))
 			.orderBy(asc(tasks.seq));
-		return rows.map(({ info: { install, dev_packages, update, ...info }, ...row }) => ({
-			name: row.name,
-			status: row.status,
-			// 早于 #5 注册的记录没有 installed_packages。
-			info: { ...info, installed_packages: info.installed_packages ?? [] },
-			last_seen_at: row.lastSeenAt.toISOString(),
-			clock_offset: clockOffsetView(row.clockOffsetMs, row.clockOffsetMeasuredAt),
-			installed_packages: info.installed_packages ?? [],
-			install: install ?? null,
-			dev_packages: (dev_packages ?? []).map((p) => ({
-				...p,
-				metadata: devMetadataWithDefaultCharts(p.metadata),
-			})),
-			running_tasks: running
-				.filter((t) => t.agent === row.name)
-				.map((t) => ({
-					task_id: t.taskId,
-					run_id: t.runId,
-					orchestration_id: t.orchestrationId,
-					node_id: t.nodeId,
-					attempt: t.attempt,
-					status: t.status as RunningTaskView["status"],
-					started_at: t.startedAt?.toISOString() ?? null,
+		return rows.map(
+			({
+				info: { install, dev_packages, update, capabilities, peer, source_address, ...info },
+				...row
+			}) => ({
+				name: row.name,
+				status: row.status,
+				// 早于 #5 注册的记录没有 installed_packages。
+				info: { ...info, installed_packages: info.installed_packages ?? [] },
+				last_seen_at: row.lastSeenAt.toISOString(),
+				clock_offset: clockOffsetView(row.clockOffsetMs, row.clockOffsetMeasuredAt),
+				installed_packages: info.installed_packages ?? [],
+				install: install ?? null,
+				dev_packages: (dev_packages ?? []).map((p) => ({
+					...p,
+					metadata: devMetadataWithDefaultCharts(p.metadata),
 				})),
-			version_mismatch: this.versionMismatch(info),
-			update: update ?? NO_UPDATE,
-		}));
+				running_tasks: running
+					.filter((t) => t.agent === row.name)
+					.map((t) => ({
+						task_id: t.taskId,
+						run_id: t.runId,
+						orchestration_id: t.orchestrationId,
+						node_id: t.nodeId,
+						attempt: t.attempt,
+						status: t.status as RunningTaskView["status"],
+						started_at: t.startedAt?.toISOString() ?? null,
+					})),
+				version_mismatch: this.versionMismatch(info),
+				update: update ?? NO_UPDATE,
+				capabilities: capabilities ?? [],
+				endpoint: agentEndpoint({ peer, source_address }),
+			}),
+		);
 	}
 
 	/** 控制面启动时：库里残留的在线状态来自上一个进程，一律改为离线，等 Agent 重新连接。 */

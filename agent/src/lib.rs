@@ -6,9 +6,12 @@
 //! 任务需要的节点包版本没有安装时，先下载并安装（[`install`]）；安装与启动新任务互斥。
 //! `sfly dev` 通过本地 socket 让 Agent 加载开发版本 `包名@dev`（[`dev`]）。
 //!
+//! 其它 Agent 连接本机的端口和 Agent 能力见 [`peer`]、[`capabilities`]（ADR 0019）。
+//!
 //! 标准输出是事件流（每行一个 JSON，例如 `{"event":"welcome","name":"..."}`），日志写到标准错误。
 
 pub mod artifacts;
+pub mod capabilities;
 pub mod clock;
 pub mod dev;
 pub mod environment;
@@ -17,6 +20,7 @@ pub mod home;
 pub mod install;
 pub mod logs;
 pub mod metrics;
+pub mod peer;
 pub mod process_tree;
 pub mod retention;
 pub mod sdk;
@@ -45,8 +49,8 @@ use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
     AgentMessage, AgentUpdateState, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat,
-    Hello, InstallState, InstallStatus, InstalledPackage, RunningTask, ServerMessage, TaskAction,
-    TaskResult, Welcome, agent_message, server_message,
+    Hello, InstallState, InstallStatus, InstalledPackage, PeerEndpoint, RunningTask, ServerMessage,
+    TaskAction, TaskResult, Welcome, agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
@@ -121,6 +125,10 @@ pub struct Config {
     pub self_update: update::SelfUpdate,
     /// 本进程是不是试用中的新版本（[`update::trial`]）：main 在启动最早期创建。
     pub trial: Arc<update::Trial>,
+    /// 供其它 Agent 连接的端口（[`peer`]）；0 由系统分配。
+    pub listen_port: u16,
+    /// 安装时显式配置的对外地址（[`peer::parse_public_address`]）；没有配置时控制面用连接来源地址。
+    pub public_address: Option<String>,
 }
 
 impl Config {
@@ -150,6 +158,8 @@ impl Config {
             agent_time_offset_file: None,
             self_update: update::SelfUpdate::detect(true, None),
             trial: Arc::new(update::Trial::off()),
+            listen_port: peer::DEFAULT_LISTEN_PORT,
+            public_address: None,
         }
     }
 }
@@ -172,6 +182,8 @@ pub struct HelloContent {
     pub dev_packages: Vec<DevPackage>,
     /// 手上的任务：正在执行（含安装中）的，以及已经结束、结果还没收到 Ack 的。
     pub running_tasks: Vec<RunningTask>,
+    /// 供其它 Agent 连接的端口（[`peer::serve`] 的结果）；没有监听时为 None。
+    pub peer: Option<PeerEndpoint>,
 }
 
 /// 连接控制面，发送 Hello（带上已安装的节点包、开发版本和手上的任务）并等待 Welcome。
@@ -180,6 +192,7 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
         installed_packages,
         dev_packages,
         running_tasks,
+        peer,
     } = content;
     let mut client = AgentGatewayClient::connect(config.server.clone())
         .await
@@ -201,6 +214,8 @@ pub async fn connect(config: &Config, content: HelloContent) -> anyhow::Result<C
                 running_tasks,
                 agent_time_unix_ms: now.agent_time_ms,
                 monotonic_ms: now.monotonic_ms,
+                capabilities: capabilities::reported(),
+                peer,
             })),
         })
         .await
@@ -820,6 +835,16 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
         Ok(_) => eprintln!("sfly dev socket: {}", dev_socket.display()),
         Err(error) => eprintln!("sfly dev is unavailable: {error:#}"),
     }
+    // 端口监听不了时照常运行，只是能力不能被其它 Agent 调用（原因随 Hello 上报）。
+    let endpoint = peer::serve(
+        config.listen_port,
+        config.public_address.clone(),
+        peer::Identity {
+            name: config.name.clone(),
+            version: config.version.clone(),
+        },
+    )
+    .await;
     let mut unacked: BTreeMap<(String, u32), TaskResult> = BTreeMap::new();
     // 控制面在 Welcome 中放弃的任务：之后结束时不再上报结果。
     let mut abandoned: HashSet<(String, u32)> = HashSet::new();
@@ -858,6 +883,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             // 手上的任务：正在执行的，加上已经结束、结果还没收到 Ack 的（断线期间结束的也算）。
             // 清点已安装的包可能很慢，期间结束的任务也要算上（#132）。
             running_tasks: runtime.held_collecting(&mut results_rx, &mut unacked, &mut abandoned),
+            peer: Some(endpoint.clone()),
         };
         // 试用中的新版本每次连接计一次尝试；握手成功且环境准备完成才算健康（ADR 0014）。
         config.trial.begin();

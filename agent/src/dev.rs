@@ -1,7 +1,7 @@
 //! 开发模式（`sfly dev`）：把本地源码目录以可编辑方式装进共享 venv，注册为 `包名@dev`。
 //!
 //! - `sfly dev` 通过 Agent 的**本地 socket**（Unix domain socket，默认 `<work_dir>/agent.sock`，权限 0600）
-//!   发来请求；Agent 不对外开放任何网络端口。协议见 [`serve`]。
+//!   发来请求（不经过供其它 Agent 连接的端口 [`crate::peer`]）。协议见 [`serve`]。
 //! - 开发版本登记在 `<work_dir>/.dev/<包名>/`（`dev.json` + 可编辑 wheel 的副本），Agent 重启后仍然有效。
 //!   共享 venv 中同一个包只能有一个版本（ADR 0002）：锁定已发布版本的任务会把它切换成已发布版本，
 //!   之后的 `@dev` 任务再用登记的 wheel 装回来。

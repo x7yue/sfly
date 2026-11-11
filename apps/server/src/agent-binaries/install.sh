@@ -2,7 +2,7 @@
 # sfly Agent 一键安装脚本（ADR 0011）。由控制面 {{SFLY_URL}} 生成，地址、版本号和 sha256 已经填好：
 #
 #   curl -fsSL {{SFLY_URL}}/install.sh | sh -s -- --name <名称> [--token <令牌>] [--slots <槽位数>]
-#     [--no-auto-update] [--dev] [--no-service]
+#     [--listen-port <端口>] [--public-address <地址>] [--no-auto-update] [--dev] [--no-service]
 #
 # 识别 CPU 架构，从控制面下载 sfly Agent {{SFLY_VERSION}} 并校验 sha256，放到 $SFLY_HOME/bin（默认 ~/.sfly/bin），
 # 写入 $SFLY_HOME/agent.env；root 运行时注册系统级 systemd 服务，普通用户运行时注册用户级服务。
@@ -27,7 +27,7 @@ PYPI_MIRROR='{{PYPI_MIRROR}}'
 GITHUB_RELEASE_MIRROR='{{GITHUB_RELEASE_MIRROR}}'
 
 # agent.env 里由本脚本管理的键（重新运行时改写），其余的行原样保留。
-MANAGED_KEYS='SFLY_SERVER SFLY_CONTROL_PLANE_URL SFLY_AGENT_NAME SFLY_TOKEN SFLY_SLOTS SFLY_NO_AUTO_UPDATE SFLY_INDEX_URL SFLY_GITHUB_RELEASE_MIRROR SFLY_PYTHON_INSTALL_MIRROR SFLY_USER_AGENT'
+MANAGED_KEYS='SFLY_SERVER SFLY_CONTROL_PLANE_URL SFLY_AGENT_NAME SFLY_TOKEN SFLY_SLOTS SFLY_LISTEN_PORT SFLY_PUBLIC_ADDRESS SFLY_NO_AUTO_UPDATE SFLY_INDEX_URL SFLY_GITHUB_RELEASE_MIRROR SFLY_PYTHON_INSTALL_MIRROR SFLY_USER_AGENT'
 
 usage() {
 	cat <<EOF
@@ -39,13 +39,18 @@ usage() {
   --name <名称>      Agent 名称，全局唯一（必填；--dev 时默认 dev-<用户名>-<主机名>）
   --token <令牌>     共享注册令牌（控制面配置了 SFLY_AGENT_TOKEN 时必填；也可以用环境变量 SFLY_TOKEN）
   --slots <槽位数>   同时执行的任务上限（默认 4）
+  --listen-port <端口>
+                     供其它 Agent 连接的端口（默认 50052）；没有认证，只应在内网使用
+  --public-address <地址>
+                     其它 Agent 连接这台 Agent 用的地址（IP 地址或主机名，不带端口）；
+                     默认用控制面看到的连接来源地址，多网卡或经过地址转换时设置
   --no-auto-update   不自动更新（agent.env 写入 SFLY_NO_AUTO_UPDATE=1）
   --dev              同时安装开发用的 uv（没有时）和 sfly CLI $SFLY_VERSION（uv tool install）
   --no-service       不注册 systemd 服务（测试、容器里用），只打印前台启动命令
   -h, --help         显示本帮助
 
-重新运行时 agent.env 里的其他键保留；没有传 --token、--slots、--no-auto-update、
-没有设置下面的镜像环境变量时沿用原来的值。
+重新运行时 agent.env 里的其他键保留；没有传 --token、--slots、--listen-port、--public-address、
+--no-auto-update，没有设置下面的镜像环境变量时沿用原来的值。
 
 环境变量：
   SFLY_HOME          安装目录（默认 ~/.sfly）
@@ -142,23 +147,29 @@ parse_args() {
 	name=
 	token=${SFLY_TOKEN:-}
 	slots=
+	listen_port=
+	public_address=
 	no_auto_update=0
 	service=1
 	dev=0
 	while [ $# -gt 0 ]; do
 		case $1 in
-		--name | --token | --slots)
+		--name | --token | --slots | --listen-port | --public-address)
 			[ $# -ge 2 ] || die "$1 需要一个值"
 			case $1 in
 			--name) name=$2 ;;
 			--token) token=$2 ;;
 			--slots) slots=$2 ;;
+			--listen-port) listen_port=$2 ;;
+			--public-address) public_address=$2 ;;
 			esac
 			shift 2
 			;;
 		--name=*) name=${1#*=} && shift ;;
 		--token=*) token=${1#*=} && shift ;;
 		--slots=*) slots=${1#*=} && shift ;;
+		--listen-port=*) listen_port=${1#*=} && shift ;;
+		--public-address=*) public_address=${1#*=} && shift ;;
 		--no-auto-update) no_auto_update=1 && shift ;;
 		--no-service) service=0 && shift ;;
 		--dev) dev=1 && shift ;;
@@ -180,6 +191,27 @@ parse_args() {
 	if [ -n "$slots" ]; then
 		case $slots in '' | *[!0-9]* | 0 | 0*) die "--slots 必须是正整数：$slots" ;; esac
 	fi
+	if [ -n "$listen_port" ]; then
+		case $listen_port in
+		*[!0-9]* | 0*) die "--listen-port 必须是 1–65535 的整数：$listen_port" ;;
+		esac
+		[ "${#listen_port}" -le 5 ] && [ "$listen_port" -le 65535 ] ||
+			die "--listen-port 必须是 1–65535 的整数：$listen_port"
+	fi
+	if [ -n "$public_address" ]; then
+		valid_address "$public_address" ||
+			die "--public-address 只能是 IP 地址或主机名（不带协议和端口）：$public_address"
+	fi
+}
+
+# 对外地址的粗略检查（Agent 启动时再严格校验）：主机名或 IPv4（字母、数字、. 和 -），
+# 或 IPv6（十六进制数字、. 和至少两个 :）。带协议、端口、空白的都不行。
+valid_address() {
+	case $1 in
+	*[!0-9A-Za-z.:-]* | -* | .*) return 1 ;;
+	*:*:*) case $1 in *[!0-9A-Fa-f.:]*) return 1 ;; esac ;;
+	*:*) return 1 ;;
+	esac
 }
 
 detect_platform() {
@@ -258,11 +290,13 @@ unmanaged_lines() {
 	done <"$env_file"
 }
 
-# 写入 agent.env：本脚本管理的键按这次的参数写（没有传令牌、槽位数、--no-auto-update、没有设置镜像环境变量时
+# 写入 agent.env：本脚本管理的键按这次的参数写（没有传令牌、槽位数、端口、对外地址、--no-auto-update、没有设置镜像环境变量时
 # 沿用原来的值），其他行保留。配置文件里有令牌：只有当前用户可读。
 write_env_file() {
 	[ -n "$token" ] || token=$(env_value SFLY_TOKEN)
 	[ -n "$slots" ] || slots=$(env_value SFLY_SLOTS)
+	[ -n "$listen_port" ] || listen_port=$(env_value SFLY_LISTEN_PORT)
+	[ -n "$public_address" ] || public_address=$(env_value SFLY_PUBLIC_ADDRESS)
 	if [ "$no_auto_update" = 1 ]; then
 		no_auto_update_value=1
 	else
@@ -285,6 +319,8 @@ write_env_file() {
 			echo "SFLY_AGENT_NAME=$name"
 			if [ -n "$token" ]; then echo "SFLY_TOKEN=$token"; fi
 			if [ -n "$slots" ]; then echo "SFLY_SLOTS=$slots"; fi
+			if [ -n "$listen_port" ]; then echo "SFLY_LISTEN_PORT=$listen_port"; fi
+			if [ -n "$public_address" ]; then echo "SFLY_PUBLIC_ADDRESS=$public_address"; fi
 			if [ -n "$no_auto_update_value" ]; then echo "SFLY_NO_AUTO_UPDATE=$no_auto_update_value"; fi
 			if [ -n "$local_index_url" ]; then echo "SFLY_INDEX_URL=$local_index_url"; fi
 			if [ -n "$local_release_mirror" ]; then echo "SFLY_GITHUB_RELEASE_MIRROR=$local_release_mirror"; fi

@@ -169,6 +169,7 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 - Agent 的统一目录 `SFLY_HOME`（默认 `~/.sfly`）：`bin/`、`venv/`（共享 venv 的默认路径）、`work/`（任务工作目录的默认根目录，dev socket 默认是 `work/agent.sock`）、`agent.env`。启动时读取 `agent.env`（每行 `SFLY_*=值`，键与对应参数的环境变量同名），优先级为命令行参数 > 环境变量 > `agent.env` > 默认值；从哪个目录启动都一样。
 - 启动顺序：连接控制面、收到 Welcome → 准备 uv → 准备共享 venv → 安装 SDK 运行时 → 开始接任务。
 - 启动后主动建立 gRPC 双向流；同名 Agent 重新连接时替换旧连接。
+- 供其它 Agent 连接的端口（ADR 0019，`agent/src/peer.rs`）：Agent 在所有网卡上监听 `--listen-port`（默认 50052），提供 gRPC 服务 `AgentPeer`（`proto/sfly/agent/v1/peer.proto`，目前只有 `Describe`：名称、版本、能力），Agent 能力的操作随后续版本加入这个服务；没有认证，只应在内网使用。监听不了（端口被占用等）时照常执行任务，原因随 Hello 上报。Hello 带上能力列表（`agent/src/capabilities.rs`）、端口和安装时显式配置的对外地址 `--public-address`；控制面另记连接来源地址，对外地址取显式配置的，否则取来源地址（`apps/server/src/agents/agent-endpoint.ts`），Agent 页显示。
 - 画布上按名称选择 Agent。
 
 ### 5.2 协议（`proto/sfly/agent/v1/agent.proto` 草图）
@@ -184,7 +185,9 @@ message AgentMessage {
     Hello         hello      = 1;  // name, token, agent_version, os, arch, slots,
                                    // installed_packages, dev_packages, running_tasks,
                                    // agent_time_unix_ms、monotonic_ms：建立这次连接的「单调时钟读数 → 控制面时间」
-                                   // 对应关系并测时钟偏差（ADR 0018）
+                                   // 对应关系并测时钟偏差（ADR 0018）；
+                                   // capabilities、peer：Agent 能力及版本，供其它 Agent 连接的端口、显式配置的对外地址、
+                                   // 监听失败的原因（ADR 0019）
     Heartbeat     heartbeat  = 2;  // running_tasks：Agent 实际持有的任务，只续约这些；
                                    // update：更新状态（无 / 下载中 / 等待任务结束 / 替换中 / 失败 / 需要手动升级）；
                                    // agent_time_unix_ms、monotonic_ms：更新时钟偏差

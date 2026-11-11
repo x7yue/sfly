@@ -57,7 +57,7 @@ function AgentsPage() {
 			<Panel>
 				<QueryView
 					query={agents}
-					loading={<TableSkeleton columns={9} />}
+					loading={<TableSkeleton columns={11} />}
 					errorTitle="无法加载 Agent"
 					isEmpty={(d) => d.agents.length === 0}
 					empty={
@@ -126,6 +126,8 @@ function AgentTable({
 					<TableHead>槽位</TableHead>
 					<TableHead>版本</TableHead>
 					<TableHead>系统</TableHead>
+					<TableHead>对外地址</TableHead>
+					<TableHead>能力</TableHead>
 					<TableHead>已安装的节点包</TableHead>
 					<TableHead>被场景引用</TableHead>
 					<TableHead>最后在线</TableHead>
@@ -171,6 +173,12 @@ function updateStatus(
 	}
 }
 
+/** 其它 Agent 连接它用的 `地址:端口`（IPv6 地址加方括号）；没有端口（旧版本 Agent）时只有地址。 */
+function endpointLabel({ address, port }: AgentView["endpoint"]): string {
+	if (port === null) return address;
+	return `${address.includes(":") ? `[${address}]` : address}:${port}`;
+}
+
 function AgentRow({
 	agent,
 	controlPlaneVersion,
@@ -183,6 +191,10 @@ function AgentRow({
 	const mismatch = online && agent.version_mismatch;
 	// 时钟偏差只在达到阈值时提示（由接口判断）；离线 Agent 的偏差是断开前测的，不显示。
 	const clockOffset = online && agent.clock_offset?.exceeds_threshold ? agent.clock_offset : null;
+	// 能力不能被其它 Agent 调用的原因（端口被占用等）只对在线、监听端口的 Agent 提示：离线时本来就调用不了；
+	// 不监听端口的旧版本 Agent 也没有能力（能力列显示「无」），不再重复说明。
+	const unavailable =
+		online && agent.endpoint.port !== null ? agent.endpoint.unavailable_reason : null;
 	const installing = online && agent.install?.state === "installing";
 	const failed = agent.install?.state === "failed";
 	const packages = [
@@ -191,7 +203,7 @@ function AgentRow({
 	];
 	return (
 		<TableRow>
-			<TableCell className="font-mono font-medium">{agent.name}</TableCell>
+			<TableCell className="whitespace-nowrap font-mono font-medium">{agent.name}</TableCell>
 			<TableCell>
 				{update ? (
 					<StatusPill kind={update.kind}>{update.label}</StatusPill>
@@ -240,6 +252,27 @@ function AgentRow({
 			</TableCell>
 			<TableCell className="font-mono text-xs text-fg-2">
 				{agent.info.os || "?"}/{agent.info.arch || "?"}
+			</TableCell>
+			<TableCell className="font-mono text-xs text-fg-2">
+				{endpointLabel(agent.endpoint) || <span className="text-fg-3">—</span>}
+				{agent.endpoint.address_source === "configured" && (
+					<div className="font-sans text-2xs text-fg-3">安装时配置</div>
+				)}
+			</TableCell>
+			<TableCell className="min-w-36 max-w-60 text-xs text-fg-2">
+				<span className="font-mono">
+					{agent.capabilities.length === 0 ? (
+						<span className="text-fg-3">无</span>
+					) : (
+						agent.capabilities.map((c) => `${c.name} v${c.version}`).join("、")
+					)}
+				</span>
+				{unavailable && (
+					<>
+						<div className="text-2xs text-warn-fg">不能被其它 Agent 调用</div>
+						<div className="text-2xs text-fg-3">{unavailable}</div>
+					</>
+				)}
 			</TableCell>
 			<TableCell className="max-w-80 font-mono text-xs text-fg-2">
 				{packages.length === 0 ? <span className="text-fg-3">无</span> : packages.join("、")}

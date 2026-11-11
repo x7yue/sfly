@@ -8,6 +8,7 @@ use sfly_agent::environment::{self, EnvironmentError};
 use sfly_agent::home;
 use sfly_agent::logs::DEFAULT_TELEMETRY_QUEUE_BYTES;
 use sfly_agent::metrics::DEFAULT_METRIC_QUEUE_POINTS;
+use sfly_agent::peer;
 use sfly_agent::retention;
 use sfly_agent::update::{self, SelfUpdate, Trial, TrialFailed};
 use sfly_agent::{AGENT_VERSION, Config, DEFAULT_SLOTS, DEFAULT_TERMINATE_GRACE, run};
@@ -35,6 +36,14 @@ struct Args {
     /// 共享注册令牌。
     #[arg(long, env = "SFLY_TOKEN")]
     token: Option<String>,
+    /// 供其它 Agent 连接的端口（ADR 0019，在所有网卡上监听）；0 由系统分配。被占用时 Agent 照常执行任务，
+    /// 只是它的能力不能被其它 Agent 调用。没有认证，只应在内网使用。
+    #[arg(long, env = "SFLY_LISTEN_PORT", default_value_t = peer::DEFAULT_LISTEN_PORT)]
+    listen_port: u16,
+    /// 其它 Agent 连接这台 Agent 用的对外地址（IP 地址或主机名，不带端口）；默认用控制面看到的连接来源地址。
+    /// 机器有多块网卡或经过地址转换时设置。
+    #[arg(long, env = "SFLY_PUBLIC_ADDRESS", value_parser = peer::parse_public_address)]
+    public_address: Option<String>,
     /// 并发槽位数：同时执行的任务上限。
     #[arg(long, env = "SFLY_SLOTS", default_value_t = DEFAULT_SLOTS, value_parser = clap::value_parser!(u32).range(1..))]
     slots: u32,
@@ -235,6 +244,8 @@ async fn main() -> anyhow::Result<()> {
             home: sfly_home.clone(),
         },
         trial: std::sync::Arc::new(trial),
+        listen_port: args.listen_port,
+        public_address: args.public_address,
     };
 
     let terminate_grace = config.terminate_grace;

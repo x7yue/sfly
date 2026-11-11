@@ -181,6 +181,8 @@ describe("全栈：开发文档里的命令", () => {
 			UV_PYTHON: python,
 			UV_PYTHON_DOWNLOADS: "never",
 			SFLY_PYTHON: python,
+			// 文档里启动的 Agent 让系统分配供其它 Agent 连接的端口：并行的测试不抢默认端口 50052。
+			SFLY_LISTEN_PORT: "0",
 		};
 		const shell = DocShell.start({ cwd: home, env, dir: work });
 		let foreground: ChildProcess | undefined;
