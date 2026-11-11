@@ -162,6 +162,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 焦点环统一是 2px 青色外框（`:focus-visible`），组件不要用 `outline-none` 去掉它（输入框改用青色描边 + 光晕）。
 - 弹窗与抽屉用 `Dialog` / `Sheet`：锁定焦点、Esc 关闭、关闭后焦点回到原处；自己写的浮层也必须满足，并加端到端测试。
 - **快捷键注册表** `src/lib/shortcuts.ts` 的 `SHORTCUTS` 是唯一来源：快捷键面板（?）从它生成，页面用 `useShortcut(id, handler)` 绑定。新增快捷键先登记（分组「全局 / 编排画布 / 运行监控」、名称、按键、是否允许在输入框或弹窗中触发），再绑定；没有绑定的不要登记。写法：`Ctrl+K`（同时按）、`G D`（1 秒内依次按）；Ctrl 同时匹配 ⌘；默认焦点在输入框里或有弹窗打开时不触发。
+- 界面上显示的按键也从注册表取，不写死：按钮提示用 `ToolButton shortcut="<id>"`、菜单项用 `ContextMenuItem shortcut="<id>"`、单独显示用 `<Keys shortcut="<id>" />`，写在文字里用 `shortcutText(id)`。`Kbd` 只接受注册表给出的按键文字（`KeyLabel`），写死的按键过不了类型检查。只说明怎么操作眼前控件、不算快捷键的按键（命令面板底部的「↑ ↓ 选择」）用 `KeyHint`，可用的键限定在 `OperationKey` 里。
 
 ## 8. HTTP 契约与数据获取
 
