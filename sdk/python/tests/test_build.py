@@ -387,6 +387,31 @@ def test_build_rejects_malformed_requires_sdk(
     assert not (project / "dist").exists()
 
 
+def test_requires_agent_comes_from_tool_sfly_and_is_absent_when_not_declared(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plain = read_metadata(build(demo_project(tmp_path / "plain"), capsys))
+    assert "requires_agent" not in plain
+
+    project = demo_project(tmp_path / "declared")
+    (project / "pyproject.toml").write_text(
+        PYPROJECT + '\n[tool.sfly]\nrequires-agent = ">=0.2.0"\n', encoding="utf-8"
+    )
+    assert read_metadata(build(project, capsys))["requires_agent"] == ">=0.2.0"
+
+
+def test_build_rejects_malformed_requires_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    project = demo_project(tmp_path)
+    (project / "pyproject.toml").write_text(
+        PYPROJECT + '\n[tool.sfly]\nrequires-agent = "0.2"\n', encoding="utf-8"
+    )
+    assert main(["build", str(project)]) == 1
+    _, err = capsys.readouterr()
+    assert "requires_agent" in err
+
+
 AGENT_MODULE = """\
 from __future__ import annotations
 
