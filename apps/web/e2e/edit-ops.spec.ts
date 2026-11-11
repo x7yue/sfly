@@ -172,8 +172,9 @@ test("空白处右键菜单可用键盘操作：方向键移动、Enter 执行�
 	const menu = paneMenu(page);
 	const highlighted = menu.locator('[role="menuitem"][data-highlighted]');
 
+	// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在画布上。
 	await page.mouse.click(BLANK.x, BLANK.y, { button: "right" });
-	await expect(menu).toBeVisible();
+	await expect(menu).toBeFocused();
 	await page.keyboard.press("ArrowDown");
 	await expect(highlighted).toContainText("添加节点");
 	// 禁用的项（粘贴）也能走到（读得到原因），但 Enter 不执行。
@@ -189,7 +190,9 @@ test("空白处右键菜单可用键盘操作：方向键移动、Enter 执行�
 
 	// Enter 执行「添加节点」；添加节点菜单 Esc 关闭后焦点也回到画布。
 	await page.mouse.click(BLANK.x, BLANK.y, { button: "right" });
+	await expect(menu).toBeFocused();
 	await page.keyboard.press("ArrowDown");
+	await expect(highlighted).toContainText("添加节点");
 	await page.keyboard.press("Enter");
 	await expect(menu).toHaveCount(0);
 	await expect(addMenu(page).getByRole("combobox", { name: "搜索节点类型" })).toBeFocused();
