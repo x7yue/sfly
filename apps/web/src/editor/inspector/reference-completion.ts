@@ -2,6 +2,7 @@
 import {
 	nodeTypeOf,
 	type PackageCatalog,
+	REFERENCE,
 	type ReferenceOption,
 	referenceOptions,
 	referenceScope,
@@ -97,4 +98,30 @@ export function applyCompletion(
 		value: value.slice(0, start) + choice.text + value.slice(caret),
 		caret: start + choice.text.length,
 	};
+}
+
+/** 合并后的输入框里的补全触发位置；braced 表示已经写了 `${`（否则只有一个 `$`）。 */
+export interface InlineTrigger extends CompletionTrigger {
+	braced: boolean;
+}
+
+/** 光标前面的 `$`、`${`、`${{`，以及紧跟着已经输入的部分表达式。 */
+const INLINE_TRIGGER = /\$(\{(?:\{\s*)?)?([\w.-]*)$/;
+
+/**
+ * 合并后的输入框（ReferenceEditor）何时弹出补全：光标前面刚输入 `$`（或 `${`、`${{`）、引用还没闭合。
+ * before 是光标之前的文本；start 是选中后要被替换的起点。
+ */
+export function inlineTrigger(before: string): InlineTrigger | null {
+	const m = INLINE_TRIGGER.exec(before);
+	if (!m) return null;
+	return { start: m.index, query: m[2] ?? "", braced: m[1] !== undefined };
+}
+
+/** 文本里每个引用 `${{ … }}` 的范围。 */
+export function referenceRanges(text: string): { from: number; to: number }[] {
+	return [...text.matchAll(REFERENCE)].map((m) => ({
+		from: m.index,
+		to: m.index + m[0].length,
+	}));
 }

@@ -3,7 +3,6 @@ import {
 	documentWarnings,
 	LAYOUT_COLUMN,
 	type OrchestrationWarning,
-	SUBFLOW_TOP_GAP,
 	tidyLayout,
 } from "@sfly/orchestration";
 import {
@@ -54,9 +53,9 @@ import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useV
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
 import {
 	type AddItem,
-	appendTarget,
+	appendProblem,
+	freePosition,
 	idStem,
-	isChainTail,
 	newDocNode,
 	newSubflowNameProblem,
 	packageGroups,
@@ -66,6 +65,7 @@ import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from 
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
 import { Inspector, type InspectorContext } from "./inspector/Inspector";
+import { PaneMenu } from "./PaneMenu";
 import {
 	RunStateBadge,
 	RunStateInspector,
@@ -263,23 +263,23 @@ function Editor({
 	);
 	const [adding, setAdding] = useState<AddRequest | null>(null);
 	/**
-	 * 从链尾端口拖线到空白处：弹出可以接上的节点菜单；拖到某个端口上但连线被拒绝时，提示原因。
+	 * 从没有出线的链端口（链尾、游离节点）拖线到空白处：弹出可以接上的节点菜单；拖到某个端口上但连线被拒绝时，提示原因。
 	 */
 	const onConnectEnd: OnConnectEnd = useCallback(
 		(event, state) => {
 			if (!state.fromNode) return;
 			if (!state.toNode) {
 				if (state.fromHandle?.type !== "source" || state.fromHandle.id === "dispatch") return;
-				if (!isChainTail(docRef.current, state.fromNode.id)) {
-					notify.warning("只能在主链或子流程的链尾追加节点");
+				const problem = appendProblem(docRef.current, state.fromNode.id);
+				if (problem) {
+					notify.warning(problem);
 					return;
 				}
 				const point = "changedTouches" in event ? event.changedTouches[0] : event;
 				if (!point) return;
 				const at = flow.screenToFlowPosition({ x: point.clientX, y: point.clientY });
 				setAdding({
-					via: "drop",
-					tail: state.fromNode.id,
+					after: state.fromNode.id,
 					client: { x: point.clientX, y: point.clientY },
 					position: { x: at.x, y: at.y - NODE_HEIGHT / 2 },
 				});
@@ -333,35 +333,41 @@ function Editor({
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
 	};
 
-	// —— 添加节点：只能接在主链或子流程的链尾；子流程入口在所有节点下方开一个新的子流程区域 ——
+	// —— 添加节点：有来源节点的接在它后面，没有来源的不连线（AddRequest）——
 	const groups = useMemo(
 		() => packageGroups(packages.data?.packages, agentList, meta.packages),
 		[packages.data, agentList, meta.packages],
 	);
-	const menuTail =
-		adding?.via === "drop"
-			? adding.tail
-			: appendTarget(doc, nodes.some((n) => n.id === selectedId) ? selectedId : null);
 	const addNode = (item: AddItem) => {
-		const request = adding;
+		const request = adding ?? {};
 		setAdding(null);
-		const tail = request?.via === "drop" ? request.tail : menuTail;
 		const id = uniqueNodeId(
 			idStem(item),
 			nodes.map((n) => n.id),
 		);
-		const chained = item.kind !== "subflow_entry" && tail !== undefined;
-		const tailNode = tail ? nodes.find((n) => n.id === tail) : undefined;
-		const bottom = Math.max(0, ...nodes.map((n) => n.position.y + NODE_HEIGHT));
-		const right = Math.max(0, ...nodes.map((n) => n.position.x + LAYOUT_COLUMN));
-		const position =
-			request?.via === "drop"
-				? request.position
-				: item.kind === "subflow_entry"
-					? { x: 0, y: bottom + SUBFLOW_TOP_GAP }
-					: tailNode
-						? { x: tailNode.position.x + LAYOUT_COLUMN, y: tailNode.position.y }
-						: { x: right, y: 0 };
+		const source = request.after ? nodes.find((n) => n.id === request.after) : undefined;
+		let position: { x: number; y: number };
+		if (source) {
+			position = request.position ?? {
+				x: source.position.x + LAYOUT_COLUMN,
+				y: source.position.y,
+			};
+		} else {
+			// 没有来源：右键处，否则视口（扣掉顶栏和检查器）中心；压住已有节点时错开。
+			const wanted =
+				request.position ??
+				flow.screenToFlowPosition({
+					x: (window.innerWidth - inspectorSpace) / 2,
+					y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
+				});
+			position = freePosition(
+				{
+					x: Math.round(wanted.x - NODE_WIDTH / 2),
+					y: Math.round(wanted.y - NODE_HEIGHT / 2),
+				},
+				nodes.map((n) => n.position),
+			);
+		}
 		history.checkpoint();
 		if (item.kind === "package" && meta.packages[item.package] !== item.version) {
 			setMeta((m) => ({ ...m, packages: { ...m.packages, [item.package]: item.version } }));
@@ -370,10 +376,11 @@ function Editor({
 			...ns,
 			{ id, type: item.kind, position, data: { node: newDocNode(item, id) }, deletable: true },
 		]);
-		if (chained) setEdges((es) => [...es, toFlowEdge({ from: tail, to: id, kind: "chain" })]);
+		if (source) setEdges((es) => [...es, toFlowEdge({ from: source.id, to: id, kind: "chain" })]);
 		setSelectedId(id);
 		requestAnimationFrame(() => {
-			if (request?.via !== "drop") {
+			// 接在来源节点右侧的新节点可能在视口外：移到中央。
+			if (source && !request.position) {
 				void flow.setCenter(position.x + NODE_WIDTH / 2, position.y + NODE_HEIGHT / 2, {
 					zoom: flow.getZoom(),
 					duration: 200,
@@ -383,15 +390,20 @@ function Editor({
 		});
 	};
 	if (running && adding) setAdding(null);
-	const openAddMenu = () => setAdding({ via: "menu" });
+	/** 打开添加节点菜单；`after` 是来源节点，它已有出线时提示原因、不打开。 */
+	const openAddMenu = (request: AddRequest = {}) => {
+		const problem = request.after ? appendProblem(docRef.current, request.after) : null;
+		if (problem) notify.warning(problem);
+		else setAdding(request);
+	};
 	// 运行状态下画布只读：添加、撤销 / 重做、整理布局都不生效（工具条上也不显示）。
-	useShortcut("canvas-add", openAddMenu, !running);
+	useShortcut("canvas-add", () => openAddMenu(), !running);
 	useShortcut("canvas-undo", history.undo, !running);
 	useShortcut("canvas-redo", history.redo, !running);
-	// Tab：焦点在节点卡片上、或用鼠标点过画布空白处时打开添加节点菜单，其他时候照常切换焦点。
+	// Tab：焦点在节点卡片上（新节点接在它后面）、或用鼠标点过画布空白处时（不连线）打开添加节点菜单，其他时候照常切换焦点。
 	// 页面上没有焦点、或用键盘把焦点放到画布区域上（Tab 进入、Esc 退回）时不拦截（见 FlowCanvas 的 isPointerFocusedCanvas）：
 	// 键盘用户能用 Tab 进出画布，进入后用方向键浏览节点（components/canvas/navigation.ts）。
-	const openRef = useRef<(() => void) | null>(openAddMenu);
+	const openRef = useRef<((request?: AddRequest) => void) | null>(openAddMenu);
 	openRef.current = running ? null : openAddMenu;
 	useEffect(() => {
 		const onKeyDown = (event: KeyboardEvent) => {
@@ -400,13 +412,12 @@ function Editor({
 			const open = openRef.current;
 			if (!open || event.defaultPrevented || document.querySelector(OPEN_OVERLAY)) return;
 			const target = event.target instanceof HTMLElement ? event.target : null;
+			const card = target?.closest<HTMLElement>("[data-node-id]");
 			const onCanvas =
-				target?.closest("[data-node-id]") ||
-				target?.classList.contains("react-flow__pane") ||
-				isPointerFocusedCanvas(target);
+				card || target?.classList.contains("react-flow__pane") || isPointerFocusedCanvas(target);
 			if (!onCanvas) return;
 			event.preventDefault();
-			open();
+			open(card?.dataset.nodeId ? { after: card.dataset.nodeId } : {});
 		};
 		document.addEventListener("keydown", onKeyDown);
 		return () => document.removeEventListener("keydown", onKeyDown);
@@ -472,7 +483,7 @@ function Editor({
 		requestAnimationFrame(() => {
 			const aside = inspectorRef.current;
 			const target = aside?.querySelector<HTMLElement>(
-				'[role="tabpanel"] :is(input, select, textarea, button):not([disabled])',
+				'[role="tabpanel"] :is(input, select, textarea, button, [contenteditable="true"]):not([disabled])',
 			);
 			(target ?? aside)?.focus();
 		});
@@ -509,14 +520,27 @@ function Editor({
 					}}
 					onEnter={focusInspector}
 					inspector={{ open: inspectorOpen, onToggle: () => setInspectorOpen((o) => !o) }}
+					menu={
+						running
+							? undefined
+							: (target) => (
+									<PaneMenu
+										canUndo={history.canUndo}
+										canRedo={history.canRedo}
+										onAdd={() => openAddMenu({ client: target.client, position: target.position })}
+										onTidy={tidy}
+										onUndo={history.undo}
+										onRedo={history.redo}
+									/>
+								)
+					}
 					dockStart={
 						running ? undefined : (
 							<AddNodeMenu
 								request={adding}
-								tail={menuTail}
 								groups={groups}
 								subflowNameProblem={(name) => newSubflowNameProblem(name, doc)}
-								onOpenChange={(open) => setAdding(open ? { via: "menu" } : null)}
+								onOpenChange={(open) => setAdding(open ? {} : null)}
 								onPick={addNode}
 							/>
 						)

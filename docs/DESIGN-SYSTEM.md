@@ -90,7 +90,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - `vendor`：第三方样式（xyflow；sonner 运行时注入的样式由 `vite.config.ts` 的插件包进这一层）；
 - `components`：确实需要的组件级 CSS（尽量不用）；`utilities`：Tailwind 工具类——组件样式都在这里，所以低层的全局规则覆盖不了组件。
 
-端到端测试会检查页面上没有未分层的样式规则（`e2e/shell.spec.ts`）。不写按页面的全局样式文件（MVP 时期的 `.sf-*` 样式与 `legacy` 层已在 #44 删除）。
+端到端测试会检查页面上没有未分层的样式规则（`e2e/shell.spec.ts`）。例外：CodeMirror（`ReferenceEditor`）在运行时注入自己的样式表，不在任何层里；它只作用于编辑器内部的 `.cm-*` 元素，编辑器内部的样式写在组件的 `EditorView.theme` 里（只引用 token），外框照常用 Tailwind 类。不写按页面的全局样式文件（MVP 时期的 `.sf-*` 样式与 `legacy` 层已在 #44 删除）。
 
 ## 5. 组件清单
 
@@ -106,6 +106,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Dialog` | 模态弹窗：锁定焦点、Esc 与点遮罩关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖） |
 | `Sheet` | 抽屉（右侧，默认 460px），焦点行为同 Dialog |
 | `DropdownMenu` | 菜单（Base UI Menu） |
+| `ContextMenu` | 右键菜单（Base UI Menu，没有 Trigger）：使用方给出 `open` 与 `anchor`（屏幕坐标或元素）；`ContextMenuItem` 的 `shortcut` 从快捷键注册表取按键与名称，`disabledReason` 禁用并写明原因；关闭后焦点回到打开前的元素。画布上经 `FlowCanvas` 的 `menu` 使用 |
 | `Command` / `CommandDialog` | 命令面板（cmdk + Dialog） |
 | `Tooltip` | 悬浮提示（根部已有 `TooltipProvider`，延迟 400ms） |
 | `Table` 系列 | 表头 12px 三级文字；行悬停 3% 白；`data-state="selected"` 为中性选中 |
@@ -128,6 +129,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
 | `feedback/notify` | `notify.success / info / warning / error` |
 | `shortcuts`：`useShortcut`、`ShortcutsDialog` | 见第 7 节 |
+| `#/editor/inspector/ReferenceEditor`：`ReferenceEditor`、`InsertReferenceButton` | 可以写引用的文本输入框（CodeMirror 6 内核，只引入 `@codemirror/state`、`view`、`commands`）：输入 `$` 或点「插入引用」弹出补全，引用高亮成一块、整块删除，1 到 8 行自动增高；外观与 `Input` 一致。能写引用的字段都用它，不另写一套 |
 
 ## 6. 各状态的样式
 

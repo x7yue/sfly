@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import {
@@ -555,12 +556,15 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-inspector-wide.png");
 	});
 
-	test("引用补全", async ({ page }) => {
-		await nodeCard(page, "ping").click();
-		const host = page.getByRole("combobox", { name: "输入 host" });
-		await host.fill("");
-		await host.focus();
+	test("引用补全与引用高亮", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		const url = page.getByRole("combobox", { name: "输入 url" });
+		await url.fill(
+			"curl -H 'X-Token: ${{ params.api_token }}' https://example.test/${{ params.biz_date }}/",
+		);
+		await page.keyboard.type("$");
 		await idle(page);
+		await expect(url.locator("[data-reference]")).toHaveCount(2);
 		await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
 		await expect(page).toHaveScreenshot("editor-references.png");
 	});
@@ -588,6 +592,23 @@ test.describe("编排画布", () => {
 		await idle(page);
 		await expect(menu.getByText("子流程入口节点 sub_entry 已使用名称「sub_entry」")).toBeVisible();
 		await expect(page).toHaveScreenshot("editor-new-subflow.png");
+	});
+
+	test("空白处右键菜单", async ({ page }) => {
+		await page.mouse.click(200, 640, { button: "right" });
+		const menu = page.getByRole("menu", { name: "画布菜单" });
+		await expect(menu).toBeVisible();
+		await page.keyboard.press("ArrowDown");
+		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("添加节点");
+		await expect(page).toHaveScreenshot("editor-pane-menu.png");
+	});
+
+	test("添加节点菜单：不连线", async ({ page }) => {
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await expect(menu.getByText(/^新节点不连线/)).toBeVisible();
+		await idle(page);
+		await expect(page).toHaveScreenshot("editor-add-menu.png");
 	});
 
 	test("语义缩放", async ({ page }) => {
