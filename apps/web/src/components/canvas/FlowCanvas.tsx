@@ -18,6 +18,7 @@ import {
 import { cn } from "cn";
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useShortcut } from "#/components/shortcuts";
+import { dialogOpen, isEditable } from "#/lib/focus";
 import { ContextMenu } from "@/components/ui/context-menu";
 import { CanvasDock, type CanvasTool } from "./CanvasDock";
 import { type CanvasMenuTarget, FitViewMenuItem, menuAnchor } from "./CanvasMenu";
@@ -118,11 +119,6 @@ export interface FlowCanvasProps {
 
 /** 工具条（底部居中，高 42 + 下边距 14）占住的高度。 */
 const DOCK_SPACE = 72;
-const OPEN_DIALOG = '[role="dialog"][data-open], [role="alertdialog"][data-open]';
-
-const isEditable = (el: Element | null) =>
-	el instanceof HTMLElement &&
-	(el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
 
 export function FlowCanvas({
 	label,
@@ -352,7 +348,7 @@ export function FlowCanvas({
 			if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
 			const target = event.target instanceof Element ? event.target : null;
 			const root = wrapper.current;
-			if (!root || isEditable(target) || document.querySelector(OPEN_DIALOG)) return;
+			if (!root || isEditable(target) || dialogOpen()) return;
 			// 焦点在画布本身（空白处、节点卡片）或页面上没有焦点时才处理，工具条按钮等保持原样。
 			const onCanvas =
 				target === document.body ||

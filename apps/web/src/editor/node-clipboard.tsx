@@ -12,6 +12,7 @@ import { useEffect, useRef } from "react";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
+import { isEditable, OPEN_DIALOG } from "#/lib/focus";
 import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 import { freeCardAt, freePosition } from "./add-node";
@@ -27,12 +28,7 @@ import { freeCardAt, freePosition } from "./add-node";
  */
 
 /** 有弹窗或菜单打开时不处理复制、粘贴。 */
-const OPEN_OVERLAY =
-	'[role="dialog"][data-open], [role="alertdialog"][data-open], [role="menu"][data-open]';
-
-const isEditable = (el: Element | null) =>
-	el instanceof HTMLElement &&
-	(el.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(el.tagName));
+const OPEN_OVERLAY = `${OPEN_DIALOG}, [role="menu"][data-open]`;
 
 /** 现在这次复制、粘贴该不该交给画布：焦点不在输入框里，也没有弹窗、菜单打开着。 */
 const forCanvas = (event: ClipboardEvent) =>

@@ -50,6 +50,7 @@ import { subflowLabels } from "#/components/canvas/node-display";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
+import { dialogOpen } from "#/lib/focus";
 import { usePanelWidth } from "#/lib/panel-width";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
@@ -85,9 +86,6 @@ import {
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { documentFieldErrors, type FieldError, undeclaredInputNotes } from "./validation";
-
-/** 打开着的弹窗或弹出层（有它们时 Tab 照常切换焦点）。 */
-const OPEN_OVERLAY = '[role="dialog"][data-open], [role="alertdialog"][data-open]';
 
 /** 检查器右边距。 */
 const INSPECTOR_MARGIN = 12;
@@ -478,7 +476,8 @@ function Editor({
 			if (event.key !== "Tab" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey)
 				return;
 			const open = openRef.current;
-			if (!open || event.defaultPrevented || document.querySelector(OPEN_OVERLAY)) return;
+			// 有弹窗或弹出层打开时 Tab 照常切换焦点。
+			if (!open || event.defaultPrevented || dialogOpen()) return;
 			const target = event.target instanceof HTMLElement ? event.target : null;
 			const card = target?.closest<HTMLElement>("[data-node-id]");
 			const onCanvas =
