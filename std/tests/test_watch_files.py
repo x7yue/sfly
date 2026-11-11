@@ -432,7 +432,6 @@ def run_on_agent(work: Path, agent: Path, **inputs: Any) -> tuple[dict[str, Any]
             "local_dir": str(work / "pulled"),
             **inputs,
         },
-        "agents": [{"name": SOURCE, "address": "10.0.0.5", "port": 50052}],
     }
     (work / "task.json").write_text(json.dumps(task), encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if not k.startswith("SFLY_")}
