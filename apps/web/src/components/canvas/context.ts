@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
-import type { DocNode } from "./flow";
+import type { DocEdge, DocNode } from "./flow";
 
 /**
  * 画布组件的扩展点（FlowCanvas 的 props 经 context 传给节点卡片、连线和子流程区域）。
@@ -70,6 +70,13 @@ export interface CanvasContextValue {
 	regionMeta?: (subflowEntryId: string) => ReactNode;
 	/** 适配视图（避开悬浮控件）；右键菜单的「适配视图」用它（CanvasMenu.tsx）。 */
 	fit(): void;
+	/**
+	 * 连线中点的「＋」（EdgeInsert.tsx）：只在可编辑时给出，点它在这条链上的连线中间插入节点；
+	 * `client` 是添加节点菜单出现的屏幕坐标。
+	 */
+	insertOnEdge?: (edge: { from: string; to: string }, client: { x: number; y: number }) => void;
+	/** 打开连线菜单（在「＋」上右键时用，连线本身的右键由 FlowCanvas 处理）。 */
+	openEdgeMenu?: (edge: DocEdge, client: { x: number; y: number }) => void;
 }
 
 export const EMPTY_INFO: CanvasInfo = {

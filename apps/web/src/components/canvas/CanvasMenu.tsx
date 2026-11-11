@@ -1,6 +1,6 @@
 import { ContextMenuItem } from "@/components/ui/context-menu";
 import { useFlowCanvas } from "./context";
-import type { DocNode } from "./flow";
+import type { DocEdge, DocNode } from "./flow";
 
 /**
  * 画布右键菜单（FlowCanvas 的 `menu`）：画布负责在右键时打开菜单并让右键的对象拿到焦点，
@@ -22,11 +22,17 @@ export type CanvasMenuTarget =
 			node: DocNode;
 			/** 菜单出现的位置：鼠标右键处的屏幕坐标；键盘（Shift+F10 / 菜单键）打开时是节点卡片。 */
 			anchor: { x: number; y: number } | Element;
+	  }
+	| {
+			kind: "edge";
+			edge: DocEdge;
+			/** 右键处（或连线中点「＋」上右键处）的屏幕坐标。 */
+			client: { x: number; y: number };
 	  };
 
 /** 菜单贴着哪里出现。 */
 export const menuAnchor = (target: CanvasMenuTarget) =>
-	target.kind === "pane" ? target.client : target.anchor;
+	target.kind === "node" ? target.anchor : target.client;
 
 /** 「适配视图」：任何画布菜单里都可以放，只读画布的空白处菜单只有它。 */
 export function FitViewMenuItem() {

@@ -9,7 +9,8 @@ import type { ComponentProps } from "react";
  *   open       链尾，可以从这里拖线追加——虚线空心
  *   idle       未连接——空心
  * 调度端口（`variant="dispatch"`）是信号色描边的菱形。位置与尺寸由使用方以 style 给出。
- * 可按的范围比看到的圆点大（透明的 `::before`），拖线不必对准 9px 的圆点。
+ * 可按的范围比看到的圆点大（透明的 `::before`），拖线不必对准 9px 的圆点。已连接的端口不扩大：
+ * 它既拖不出、也接不了新的连线（链不分叉、不汇合），扩大的范围会盖住连线两端改接用的拖动区（geometry.ts 的 RECONNECT_RADIUS）。
  */
 export function BaseHandle({
 	className,
@@ -26,7 +27,7 @@ export function BaseHandle({
 			className={cn(
 				"min-h-0! min-w-0! border-[1.5px] border-canvas-port bg-canvas-bg",
 				// 命中范围比圆点大：透明的伪元素向四周各伸出 8px，外观不变。
-				"before:absolute before:-inset-2 before:rounded-full",
+				"before:absolute before:-inset-2 before:rounded-full data-[state=connected]:before:hidden",
 				variant === "chain" ? "rounded-full" : "rounded-[2px] border-canvas-edge-dispatch",
 				"data-[state=connected]:border-canvas-edge data-[state=connected]:bg-canvas-edge",
 				variant === "dispatch" && "data-[state=connected]:border-canvas-edge-dispatch",

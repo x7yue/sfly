@@ -652,6 +652,24 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-node-menu.png");
 	});
 
+	test("连线右键菜单与中点的「＋」", async ({ page }) => {
+		// 连线上离起点三成处右键：鼠标停在连线上，中点的「＋」也显示出来。
+		const at = await page.locator('[data-edge="chain:fetch->dispatch"]').evaluate((el) => {
+			const path = el as SVGPathElement;
+			const ctm = path.getScreenCTM();
+			if (!ctm) throw new Error("连线不可见");
+			const p = path.getPointAtLength(path.getTotalLength() * 0.3).matrixTransform(ctm);
+			return { x: p.x, y: p.y };
+		});
+		await page.mouse.click(at.x, at.y, { button: "right" });
+		const menu = page.getByRole("menu", { name: "连线菜单" });
+		await expect(menu).toBeVisible();
+		await expect(page.getByRole("button", { name: "在此插入节点" })).toBeVisible();
+		await page.keyboard.press("ArrowDown");
+		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("在此插入节点");
+		await expect(page).toHaveScreenshot("editor-edge-menu.png");
+	});
+
 	test("添加节点菜单：不连线", async ({ page }) => {
 		await page.getByRole("button", { name: "添加节点" }).click();
 		const menu = page.getByRole("dialog", { name: "添加节点" });

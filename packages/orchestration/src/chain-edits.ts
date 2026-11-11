@@ -2,7 +2,7 @@ import { LAYOUT_COLUMN, type LayoutDocument, NODE_SIZE, type Position } from "./
 import { checkConnection } from "./structure.js";
 
 /**
- * 画布上改动链的文档操作：插入到连线上、在节点后面添加、删除并接上前后、断开入线 / 出线。
+ * 画布上改动链的文档操作：插入到连线上、在节点后面添加、删除并接上前后、断开入线 / 出线、改接与断开连线。
  * 都是纯函数：输入文档和操作，输出新文档或拒绝原因，不改动传入的文档；连线规则沿用 checkConnection。
  * 画布只负责把手势变成操作，再把结果写回去（一次操作一步撤销）。
  */
@@ -146,6 +146,35 @@ export function nodeConnections<D extends LayoutDocument>(
 		in: doc.edges.filter((e) => e.to === id),
 		out: doc.edges.filter((e) => e.kind === "chain" && e.from === id),
 	};
+}
+
+const sameEdge = (a: EditEdge, b: EditEdge) =>
+	a.kind === b.kind && a.from === b.from && a.to === b.to;
+
+/**
+ * 改接连线（拖动连线的端点）：把一条连线（链上的或调度连线）的两端换成 `next`，连线种类不变。
+ * 校验沿用 checkConnection，把原来的连线去掉之后再查：违反规则（分叉、汇合、成环……）时拒绝。
+ * 新连线留在原来的位置，文档里连线的顺序不乱；两端都没变时原样返回。
+ */
+export function reconnectEdge<D extends LayoutDocument>(
+	doc: D,
+	edge: EditEdge,
+	next: { from: string; to: string },
+): DocumentEdit<D> {
+	const index = doc.edges.findIndex((e) => sameEdge(e, edge));
+	if (index < 0) return rejected(`连线 ${edge.from} → ${edge.to} 不存在`);
+	if (next.from === edge.from && next.to === edge.to) return { ok: true, doc };
+	const moved: EditEdge = { ...next, kind: edge.kind };
+	const rest = doc.edges.filter((_, i) => i !== index);
+	const problem = checkConnection({ ...doc, edges: rest }, moved);
+	if (problem) return rejected(problem);
+	return { ok: true, doc: { ...doc, edges: doc.edges.map((e, i) => (i === index ? moved : e)) } };
+}
+
+/** 断开一条连线（连线菜单「断开连线」）；没有这条连线时原样返回。 */
+export function disconnectEdge<D extends LayoutDocument>(doc: D, edge: EditEdge): D {
+	if (!doc.edges.some((e) => sameEdge(e, edge))) return doc;
+	return { ...doc, edges: doc.edges.filter((e) => !sameEdge(e, edge)) };
 }
 
 /** 断开节点的入线或出线（nodeConnections）；没有对应连线时原样返回。 */

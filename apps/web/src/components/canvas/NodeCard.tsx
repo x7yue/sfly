@@ -131,11 +131,11 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					style={portStyle(PORTS.in, true)}
 				/>
 			)}
+			{/* 出口可以作为连线的终点：改接连线的起点时拖到这里（#185）。普通拖线从出口出发、只能连到入口。 */}
 			<BaseHandle
 				type="source"
 				position={Position.Right}
 				id="chain"
-				isConnectableEnd={false}
 				state={port.out ? "connected" : "open"}
 				title={port.out ? undefined : "链尾：可以从这里拖线追加节点"}
 				style={portStyle(PORTS.out)}
@@ -146,7 +146,6 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					position={Position.Bottom}
 					id="dispatch"
 					variant="dispatch"
-					isConnectableEnd={false}
 					state={port.dispatch ? "connected" : "idle"}
 					style={portStyle(PORTS.dispatch, true)}
 				/>
