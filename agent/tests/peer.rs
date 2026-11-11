@@ -5,32 +5,39 @@ mod support;
 
 use serde_json::json;
 use sfly_agent::proto::agent_peer_client::AgentPeerClient;
-use sfly_agent::proto::{DescribeRequest, TaskStatus};
+use sfly_agent::proto::{DescribeRequest, Hello, TaskStatus};
 use support::{
-    AgentOptions, FakeControlPlane, SpawnAgent, agent_command, spawn_agent, stub_task, stub_venv,
+    AgentOptions, AgentProcess, FakeControlPlane, agent_command, spawn_agent, stub_task,
 };
 
-/// 系统分配一个当前空闲的端口（马上释放，交给 Agent 去监听）。
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("0.0.0.0:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+/// 让 Agent 监听一个指定的空闲端口，返回它、它的 Hello 和端口。端口是系统分配后马上释放交给 Agent 的，
+/// 中间可能被别的程序抢走：这时 Agent 上报「已被占用」，换一个端口再来。
+async fn spawn_on_a_free_port(name: &str) -> (FakeControlPlane, AgentProcess, Hello, u16) {
+    for _ in 0..5 {
+        let port = std::net::TcpListener::bind("0.0.0.0:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let cp = FakeControlPlane::start().await;
+        let mut options = AgentOptions::new(&cp.url, name);
+        options.args = vec!["--listen-port".into(), port.to_string()];
+        let agent = spawn_agent(options);
+        let hello = cp.hello(0).await;
+        let listen_error = &hello.peer.as_ref().expect("Hello.peer").listen_error;
+        if listen_error.is_empty() {
+            return (cp, agent, hello, port);
+        }
+        assert_eq!(listen_error, &format!("端口 {port} 已被占用"));
+    }
+    panic!("5 个空闲端口都在交给 Agent 之前被抢走了");
 }
 
 #[tokio::test]
 async fn listens_on_the_configured_port_and_reports_it_with_the_capabilities() {
-    let cp = FakeControlPlane::start().await;
-    let port = free_port();
-    let mut options = AgentOptions::new(&cp.url, "agent-peer");
-    options.args = vec!["--listen-port".into(), port.to_string()];
-    let _agent = spawn_agent(options);
-
-    let hello = cp.hello(0).await;
-    let peer = hello.peer.expect("Hello.peer");
+    let (_cp, _agent, hello, port) = spawn_on_a_free_port("agent-peer").await;
+    let peer = hello.peer.clone().expect("Hello.peer");
     assert_eq!(peer.port, u32::from(port));
-    assert_eq!(peer.listen_error, "");
     // 没有显式配置对外地址：由控制面取连接来源地址。
     assert_eq!(peer.public_address, "");
 
@@ -48,23 +55,39 @@ async fn listens_on_the_configured_port_and_reports_it_with_the_capabilities() {
     assert_eq!(described.capabilities, hello.capabilities);
 }
 
+/// 不配置端口时监听 50052：看命令行参数的默认值，不去真的占用本机的 50052（测试只碰自己建的东西）。
 #[tokio::test]
 async fn listens_on_port_50052_by_default() {
-    let cp = FakeControlPlane::start().await;
-    let work_dir = tempfile::tempdir().unwrap();
-    // 测试默认让系统分配端口（support::agent_command），这里去掉它，看不配置时的端口。
-    let _agent = agent_command(&work_dir.path().join("sfly-home"))
-        .env_remove("SFLY_LISTEN_PORT")
-        .args(["--server", &cp.url, "--name", "agent-default-port"])
-        .arg("--venv")
-        .arg(stub_venv())
-        .arg("--work-dir")
-        .arg(work_dir.path())
-        .spawn_agent();
-
-    // 本机的 50052 可能正被别的程序占用：不管监听成功与否，上报的都是这个端口。
-    let peer = cp.hello(0).await.peer.expect("Hello.peer");
-    assert_eq!(peer.port, 50052);
+    let home = tempfile::tempdir().unwrap();
+    let output = agent_command(home.path())
+        .arg("--help")
+        .stdout(std::process::Stdio::piped())
+        .output()
+        .await
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8_lossy(&output.stdout);
+    // `--listen-port` 这一项：从它那行到下一个选项之前（选项缩进最多 6 格，说明缩进更多）。
+    let is_option = |line: &str| {
+        let text = line.trim_start();
+        text.starts_with('-') && line.len() - text.len() <= 6
+    };
+    let lines: Vec<&str> = help.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with("--listen-port"))
+        .unwrap_or_else(|| panic!("no --listen-port in --help:\n{help}"));
+    let listen_port: Vec<&str> = lines[start + 1..]
+        .iter()
+        .take_while(|line| !is_option(line))
+        .copied()
+        .collect();
+    assert!(
+        listen_port
+            .iter()
+            .any(|line| line.trim() == "[default: 50052]"),
+        "{listen_port:?}"
+    );
 }
 
 #[tokio::test]
