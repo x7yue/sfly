@@ -14,6 +14,7 @@ RUNTIME_MODULES = [
     "sfly.capabilities.errors",
     "sfly.capabilities.files",
     "sfly.capabilities.files_list",
+    "sfly.capabilities.files_read",
     "sfly.capabilities.local",
     "sfly.context",
     "sfly.download",

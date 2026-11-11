@@ -12,6 +12,7 @@
 //!
 //! 加一项能力：新建 `capabilities/<能力>.rs` 导出一个 `MODULE`，在下面加 `pub mod` 和 [`MODULES`] 里的一项。
 
+pub mod file_read;
 pub mod files;
 
 use crate::calls::Method;
@@ -43,7 +44,7 @@ pub struct Module {
 }
 
 /// 这个版本的 Agent 提供的能力。
-pub const MODULES: &[Module] = &[files::MODULE];
+pub const MODULES: &[Module] = &[files::MODULE, file_read::MODULE];
 
 /// 上报用的能力列表（Hello.capabilities、DescribeResponse.capabilities）。
 pub fn reported() -> Vec<proto::Capability> {

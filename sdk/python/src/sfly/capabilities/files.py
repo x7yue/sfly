@@ -1,6 +1,7 @@
 """Agent 能力 files：`ctx.agent(...).files`。只用标准库（ADR 0002）。
 
 `Files` 由各组操作拼成，每组在自己的模块里（`files_list.py`：列出、查看属性）。
+`files_read.py`：读取、下载。
 加一组操作：新建模块，写一个以 `files_list.FilesBase` 为基类的类，加进 `Files` 的基类列表。
 """
 
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from sfly.capabilities.files_list import ListStat
+from sfly.capabilities.files_read import ReadDownload
 
 if TYPE_CHECKING:
     from sfly.capabilities import Agent
@@ -75,12 +77,14 @@ def absolute(path: str | os.PathLike[str]) -> str:
     return text
 
 
-class Files(ListStat):
+class Files(ListStat, ReadDownload):
     """`ctx.agent(...).files`：一台 Agent 上的文件。路径都是那台 Agent 所在机器上的绝对路径，
     权限就是那台 Agent 进程的权限。
 
     - `list(directory, pattern="*", *, recursive=False, timeout=30.0)`：列出文件（迭代器）；
     - `stat(path, *, timeout=30.0)`：查看一个文件的属性。
+    - `read(path, offset=0, length=None, *, timeout=30.0)`：流式读取（`bytes` 的迭代器）。
+    - `download(path, local_path, *, timeout=30.0, progress=None)`：下载到本地路径。
     """
 
     def __init__(self, agent: Agent) -> None:
