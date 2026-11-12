@@ -1,4 +1,5 @@
 import {
+	FEISHU_BODY_LIMIT_LABEL,
 	type FeishuNotifyNode,
 	feishuReferableInputs,
 	InvalidReferenceError,
@@ -99,7 +100,9 @@ export function prepareNotification(
 			if ("problem" in markdown) return failed(markdown.problem);
 			const card = markdownCard(title.text, markdown.text, node.color);
 			if ("error" in card) {
-				return failed("标题太长，连截断后的正文都放不下，整张卡片超过飞书请求体 20 KB 的上限");
+				return failed(
+					`标题太长，连截断后的正文都放不下，整张卡片超过飞书请求体 ${FEISHU_BODY_LIMIT_LABEL} 的上限`,
+				);
 			}
 			return sent({ title: title.text, color: node.color, markdown: markdown.text }, card.body);
 		}

@@ -2,7 +2,7 @@
  * 运行通知（GLOSSARY「运行通知」，ADR 0020、docs/SEMANTICS.md §6）：运行结束时，在写入运行最终状态的同一个事务里，
  * 读取场景当前的设置，满足触发条件就把卡片写进发送队列。卡片的结构由平台固定。
  */
-import { subflowName } from "@sfly/orchestration";
+import { FEISHU_BODY_LIMIT_LABEL, subflowName } from "@sfly/orchestration";
 import type { OrchestrationDocument, RunNotificationTrigger } from "@sfly/schema";
 import { asc, eq } from "drizzle-orm";
 import {
@@ -227,7 +227,7 @@ export async function enqueueRunNotification(
 		runUrl: input.runUrl,
 	});
 	if ("error" in card) {
-		await record("卡片超过飞书 20 KB 的上限");
+		await record(`卡片超过飞书 ${FEISHU_BODY_LIMIT_LABEL} 的上限`);
 		return;
 	}
 	await enqueueFeishuMessage(step.tx, {

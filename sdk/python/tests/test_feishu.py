@@ -1,7 +1,8 @@
-"""`sfly.feishu.card`：Markdown 卡片的请求体。
+"""`sfly.feishu`：Markdown 卡片的请求体，以及本地调试用的文本消息组装和原始消息校验。
 
-规则和用例与控制面共用（testdata/feishu-card-cases.json，apps/server/test/feishu-messages.test.ts
-跑同一组），保证节点代码里组装的卡片和画布上的「Markdown 卡片」格式一致。
+规则和用例与控制面共用（testdata/feishu-card-cases.json、feishu-text-cases.json、feishu-raw-cases.json，
+apps/server/test/feishu-messages.test.ts 跑同一组），保证节点代码里组装的卡片和本地调试打印的消息，
+与画布上的「Markdown 卡片」和控制面真正发出的请求体一致。
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import pytest
 import sfly
 from sfly import feishu
 
-CASES_FILE = Path(__file__).resolve().parents[3] / "testdata" / "feishu-card-cases.json"
+TESTDATA = Path(__file__).resolve().parents[3] / "testdata"
 
 
 def expand(value: Any) -> Any:
@@ -31,8 +32,15 @@ def expand(value: Any) -> Any:
     return value
 
 
-FILE = json.loads(CASES_FILE.read_text(encoding="utf-8"))
+def load(name: str) -> dict[str, Any]:
+    loaded: dict[str, Any] = json.loads((TESTDATA / name).read_text(encoding="utf-8"))
+    return loaded
+
+
+FILE = load("feishu-card-cases.json")
 CASES = [(case["name"], case) for case in FILE["cases"]]
+TEXT_FILE = load("feishu-text-cases.json")
+RAW_FILE = load("feishu-raw-cases.json")
 
 
 def body_bytes(body: Any) -> int:
@@ -56,6 +64,43 @@ def test_card_passes_the_shared_cases(case: dict[str, Any]) -> None:
     body = feishu.card(given["title"], given["markdown"], given["color"])
     assert body == expected["body"]
     assert body_bytes(body) <= FILE["limit_bytes"]
+
+
+def test_the_text_case_file_has_content_and_a_20_kb_limit() -> None:
+    assert len(TEXT_FILE["cases"]) > 10
+    assert TEXT_FILE["limit_bytes"] == 20 * 1024
+
+
+@pytest.mark.parametrize(
+    "case",
+    TEXT_FILE["cases"],
+    ids=[case["name"] for case in TEXT_FILE["cases"]],
+)
+def test_text_message_passes_the_shared_cases(case: dict[str, Any]) -> None:
+    given = expand(case["input"])
+    body = feishu.text_message(given["text"], given["at_all"])
+    assert body == expand(case["expected"])["body"]
+    assert body_bytes(body) <= TEXT_FILE["limit_bytes"]
+
+
+def test_the_raw_case_file_has_content_and_a_20_kb_limit() -> None:
+    assert len(RAW_FILE["cases"]) > 20
+    assert RAW_FILE["limit_bytes"] == 20 * 1024
+    assert list(feishu.MSG_TYPES) == RAW_FILE["msg_types"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    RAW_FILE["cases"],
+    ids=[case["name"] for case in RAW_FILE["cases"]],
+)
+def test_raw_message_problem_passes_the_shared_cases(case: dict[str, Any]) -> None:
+    value = expand(case["input"])["value"]
+    expected = expand(case["expected"])
+    # 合格时没有原因（原样发出的就是 value 本身）；不合格时原因逐字相等。
+    assert feishu.raw_message_problem(value) == expected.get("problem")
+    if "body" in expected:
+        assert expected["body"] == value
 
 
 def test_card_is_available_as_sfly_feishu_card_after_import_sfly_and_defaults_to_blue() -> None:

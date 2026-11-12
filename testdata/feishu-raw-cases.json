@@ -1,0 +1,507 @@
+{
+	"$comment": [
+		"飞书原始消息的校验规则与用例，和实现无关（docs/SEMANTICS.md §4.2、ADR 0020）。",
+		"控制面（apps/server/src/feishu/messages.ts 的 rawMessage）和 SDK（sdk/python/src/sfly/feishu.py 的 raw_message_problem，本地调试用）各有一份实现，都要通过这里的全部用例。",
+		"input.value 是 ctx.notify(message=...) 或飞书通知节点的原始消息（任意 JSON）；expected 是 {body} 或 {problem}：body 是原样发出的请求体（等于 input.value），problem 是不发送的原因，逐字相等。",
+		"字符串值可以写成 {\"$repeat\": 单元, \"times\": 次数, \"suffix\": 末尾} 表示「单元重复若干次再接上末尾」（suffix 可省略），用来写超长的字符串；读用例的一方先把它们展开成字符串。"
+	],
+	"rule": [
+		"只校验三件事，按顺序：是一个 JSON 对象；msg_type 是 msg_types 里的字符串之一（区分大小写）；请求体不超过 limit_bytes 字节（紧凑 JSON 按 UTF-8 编码的字节数）。不截断，不改写，不补字段。",
+		"msg_type 不合格时，原因里「现在是」后面写 msg_type 的紧凑 JSON 写法（没有多余空白，非 ASCII 字符不转义；整数值的小数写成整数，例如 1.0 显示 1）；没有这个字段时写「没有」。",
+		"太大时原因里的大小是字节数除以 1024，四舍五入到一位小数，正好在中间时向上取（20736 字节是 20.25 KB，写 20.3）。"
+	],
+	"limit_bytes": 20480,
+	"msg_types": ["text", "post", "image", "share_chat", "interactive"],
+	"cases": [
+		{
+			"name": "msg_type text 合法，原样发出",
+			"input": {
+				"value": {
+					"msg_type": "text",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"name": "msg_type post 合法，原样发出",
+			"input": {
+				"value": {
+					"msg_type": "post",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			},
+			"expected": {
+				"body": {
+					"msg_type": "post",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"name": "msg_type image 合法，原样发出",
+			"input": {
+				"value": {
+					"msg_type": "image",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			},
+			"expected": {
+				"body": {
+					"msg_type": "image",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"name": "msg_type share_chat 合法，原样发出",
+			"input": {
+				"value": {
+					"msg_type": "share_chat",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			},
+			"expected": {
+				"body": {
+					"msg_type": "share_chat",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"name": "msg_type interactive 合法，原样发出",
+			"input": {
+				"value": {
+					"msg_type": "interactive",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"content": {
+						"anything": [
+							"goes",
+							1,
+							null,
+							{
+								"nested": true
+							}
+						]
+					}
+				}
+			}
+		},
+		{
+			"name": "不改写、不补字段：没有 content 也行",
+			"input": {
+				"value": {
+					"msg_type": "text"
+				}
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text"
+				}
+			}
+		},
+		{
+			"name": "嵌套里的小数、中文和 emoji 原样",
+			"input": {
+				"value": {
+					"msg_type": "post",
+					"content": {
+						"价格": 1.5,
+						"标题": "压测 😀"
+					}
+				}
+			},
+			"expected": {
+				"body": {
+					"msg_type": "post",
+					"content": {
+						"价格": 1.5,
+						"标题": "压测 😀"
+					}
+				}
+			}
+		},
+		{
+			"name": "不是对象：数组",
+			"input": {
+				"value": []
+			},
+			"expected": {
+				"problem": "原始消息不是一个对象，需要完整的飞书请求体（JSON 对象）"
+			}
+		},
+		{
+			"name": "不是对象：字符串",
+			"input": {
+				"value": "text"
+			},
+			"expected": {
+				"problem": "原始消息不是一个对象，需要完整的飞书请求体（JSON 对象）"
+			}
+		},
+		{
+			"name": "不是对象：null",
+			"input": {
+				"value": null
+			},
+			"expected": {
+				"problem": "原始消息不是一个对象，需要完整的飞书请求体（JSON 对象）"
+			}
+		},
+		{
+			"name": "不是对象：数字",
+			"input": {
+				"value": 5
+			},
+			"expected": {
+				"problem": "原始消息不是一个对象，需要完整的飞书请求体（JSON 对象）"
+			}
+		},
+		{
+			"name": "不是对象：布尔",
+			"input": {
+				"value": true
+			},
+			"expected": {
+				"problem": "原始消息不是一个对象，需要完整的飞书请求体（JSON 对象）"
+			}
+		},
+		{
+			"name": "缺 msg_type",
+			"input": {
+				"value": {
+					"content": {}
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 没有）"
+			}
+		},
+		{
+			"name": "msg_type 不认识",
+			"input": {
+				"value": {
+					"msg_type": "audio"
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 \"audio\"）"
+			}
+		},
+		{
+			"name": "msg_type 区分大小写",
+			"input": {
+				"value": {
+					"msg_type": "Text"
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 \"Text\"）"
+			}
+		},
+		{
+			"name": "msg_type 是中文",
+			"input": {
+				"value": {
+					"msg_type": "文本"
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 \"文本\"）"
+			}
+		},
+		{
+			"name": "msg_type 里有引号",
+			"input": {
+				"value": {
+					"msg_type": "a\"b"
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 \"a\\\"b\"）"
+			}
+		},
+		{
+			"name": "msg_type 是整数",
+			"input": {
+				"value": {
+					"msg_type": 1
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 1）"
+			}
+		},
+		{
+			"name": "msg_type 写成小数 1.0：显示 1",
+			"input": {
+				"value": {
+					"msg_type": 1.0
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 1）"
+			}
+		},
+		{
+			"name": "msg_type 是小数",
+			"input": {
+				"value": {
+					"msg_type": 1.5
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 1.5）"
+			}
+		},
+		{
+			"name": "msg_type 是布尔",
+			"input": {
+				"value": {
+					"msg_type": true
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 true）"
+			}
+		},
+		{
+			"name": "msg_type 是 null",
+			"input": {
+				"value": {
+					"msg_type": null
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 null）"
+			}
+		},
+		{
+			"name": "msg_type 是数组",
+			"input": {
+				"value": {
+					"msg_type": ["text"]
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 [\"text\"]）"
+			}
+		},
+		{
+			"name": "msg_type 是对象：紧凑写法，整数值的小数去掉小数点",
+			"input": {
+				"value": {
+					"msg_type": {
+						"a": 1.0,
+						"b": [true, null],
+						"c": "文"
+					}
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 {\"a\":1,\"b\":[true,null],\"c\":\"文\"}）"
+			}
+		},
+		{
+			"name": "恰好 20 KB 可以发",
+			"input": {
+				"value": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20439
+						}
+					}
+				}
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20439
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "多一个字节：不发，也不截断",
+			"input": {
+				"value": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20440
+						}
+					}
+				}
+			},
+			"expected": {
+				"problem": "原始消息有 20.0 KB，超过飞书请求体 20 KB 的上限；原始消息不截断"
+			}
+		},
+		{
+			"name": "大小正好在一位小数的中间：向上取（20.25 → 20.3）",
+			"input": {
+				"value": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20695
+						}
+					}
+				}
+			},
+			"expected": {
+				"problem": "原始消息有 20.3 KB，超过飞书请求体 20 KB 的上限；原始消息不截断"
+			}
+		},
+		{
+			"name": "大小按 UTF-8 字节算：汉字每个 3 字节",
+			"input": {
+				"value": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "字",
+							"times": 6814
+						}
+					}
+				}
+			},
+			"expected": {
+				"problem": "原始消息有 20.0 KB，超过飞书请求体 20 KB 的上限；原始消息不截断"
+			}
+		},
+		{
+			"name": "msg_type 不合格时先说 msg_type，不说大小",
+			"input": {
+				"value": {
+					"msg_type": "audio",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20439
+						}
+					}
+				}
+			},
+			"expected": {
+				"problem": "原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一（现在是 \"audio\"）"
+			}
+		},
+		{
+			"name": "几 MB 的请求体也只报大小",
+			"input": {
+				"value": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 3000000
+						}
+					}
+				}
+			},
+			"expected": {
+				"problem": "原始消息有 2929.7 KB，超过飞书请求体 20 KB 的上限；原始消息不截断"
+			}
+		}
+	]
+}

@@ -1,9 +1,11 @@
-// 飞书请求体的组装规则：Markdown 卡片的共享用例（testdata/feishu-card-cases.json，SDK 的 sfly.feishu.card 跑同一组）
-// 和原始消息的校验（ADR 0020、docs/SEMANTICS.md §4.2）。纯函数，不需要控制面。
+// 飞书请求体的组装规则：Markdown 卡片、文本消息的截断和原始消息的校验，都逐条跑 testdata/ 下与实现无关的共享用例
+// （feishu-card-cases.json、feishu-text-cases.json、feishu-raw-cases.json；SDK 的测试跑同一组，ADR 0020、docs/SEMANTICS.md §4.2）。
+// 纯函数，不需要控制面。
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { FEISHU_BODY_LIMIT_BYTES, FEISHU_MSG_TYPES } from "@sfly/orchestration";
 import { describe, expect, it } from "vitest";
-import { markdownCard, rawMessage } from "../src/feishu/messages.js";
+import { markdownCard, rawMessage, textMessage } from "../src/feishu/messages.js";
 
 type Color = Parameters<typeof markdownCard>[2];
 
@@ -20,17 +22,24 @@ function expand(value: unknown): unknown {
 	return value;
 }
 
-const file = JSON.parse(
-	readFileSync(join(__dirname, "../../../testdata/feishu-card-cases.json"), "utf8"),
-);
-const cases = file.cases as Array<{ name: string; input: unknown; expected: unknown }>;
+interface CaseFile {
+	limit_bytes: number;
+	msg_types?: string[];
+	cases: Array<{ name: string; input: unknown; expected: unknown }>;
+}
+
+const load = (name: string): CaseFile =>
+	JSON.parse(readFileSync(join(__dirname, "../../../testdata", name), "utf8"));
+
+const file = load("feishu-card-cases.json");
+const cases = file.cases;
 
 const bytes = (body: unknown) => Buffer.byteLength(JSON.stringify(body), "utf8");
 
 describe("Markdown 卡片的组装规则（与 SDK 共用的用例）", () => {
 	it("用例文件有内容，上限是 20 KB", () => {
 		expect(cases.length).toBeGreaterThan(10);
-		expect(file.limit_bytes).toBe(20 * 1024);
+		expect(file.limit_bytes).toBe(FEISHU_BODY_LIMIT_BYTES);
 	});
 
 	it.each(cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
@@ -49,46 +58,34 @@ describe("Markdown 卡片：很长的正文", () => {
 	});
 });
 
-describe("原始消息：只校验是对象、msg_type 合法、不超过 20 KB；原样返回，不截断", () => {
-	it.each([
-		"text",
-		"post",
-		"image",
-		"share_chat",
-		"interactive",
-	])("msg_type %s 合法", (msg_type) => {
-		const message = { msg_type, content: { anything: ["goes", 1, null, { nested: true }] } };
-		expect(rawMessage(message)).toEqual({ body: message });
+describe("文本消息的组装与截断（与 SDK 共用的用例）", () => {
+	const text = load("feishu-text-cases.json");
+
+	it("用例文件有内容，上限是 20 KB", () => {
+		expect(text.cases.length).toBeGreaterThan(10);
+		expect(text.limit_bytes).toBe(FEISHU_BODY_LIMIT_BYTES);
 	});
 
-	it.each([
-		["不是对象：数组", [], "不是一个对象"],
-		["不是对象：字符串", "text", "不是一个对象"],
-		["不是对象：null", null, "不是一个对象"],
-		["不是对象：数字", 5, "不是一个对象"],
-		["缺 msg_type", { content: {} }, "msg_type"],
-		["msg_type 不认识", { msg_type: "audio" }, "msg_type"],
-		["msg_type 不是字符串", { msg_type: 1 }, "msg_type"],
-	])("%s：不合格，说明原因", (_name, message, includes) => {
-		const result = rawMessage(message);
-		expect(result).toMatchObject({ problem: expect.stringContaining(includes) });
+	it.each(text.cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
+		const input = expand(c.input) as { text: string; at_all: boolean };
+		const body = textMessage(input.text, input.at_all);
+		expect(body).toEqual((expand(c.expected) as { body: unknown }).body);
+		expect(bytes(body)).toBeLessThanOrEqual(text.limit_bytes);
+	});
+});
+
+describe("原始消息的校验（与 SDK 共用的用例）：只校验是对象、msg_type 合法、不超过 20 KB；原样返回，不截断", () => {
+	const raw = load("feishu-raw-cases.json");
+
+	it("用例文件有内容，上限是 20 KB", () => {
+		expect(raw.cases.length).toBeGreaterThan(20);
+		expect(raw.limit_bytes).toBe(FEISHU_BODY_LIMIT_BYTES);
+		expect(raw.msg_types).toEqual([...FEISHU_MSG_TYPES]);
 	});
 
-	it("恰好 20 KB 可以发；多一个字节不发，也不截断", () => {
-		const frame = { msg_type: "text", content: { text: "" } };
-		const room = 20 * 1024 - bytes(frame);
-		const exact = { msg_type: "text", content: { text: "a".repeat(room) } };
-		expect(rawMessage(exact)).toEqual({ body: exact });
-		const over = { msg_type: "text", content: { text: "a".repeat(room + 1) } };
-		expect(rawMessage(over)).toMatchObject({ problem: expect.stringContaining("20 KB") });
-	});
-
-	it("大小按 UTF-8 字节算：中文每个字 3 字节", () => {
-		const frame = { msg_type: "text", content: { text: "" } };
-		const chars = Math.floor((20 * 1024 - bytes(frame)) / 3);
-		expect(rawMessage({ ...frame, content: { text: "字".repeat(chars) } })).toHaveProperty("body");
-		expect(rawMessage({ ...frame, content: { text: "字".repeat(chars + 1) } })).toHaveProperty(
-			"problem",
-		);
+	it.each(raw.cases.map((c) => [c.name, c] as const))("%s", (_name, c) => {
+		const { value } = expand(c.input) as { value: unknown };
+		const expected = expand(c.expected) as { body: unknown } | { problem: string };
+		expect(rawMessage(value)).toEqual(expected);
 	});
 });

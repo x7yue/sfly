@@ -1,6 +1,8 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import {
 	dispatchTarget,
+	FEISHU_BODY_LIMIT_LABEL,
+	FEISHU_MSG_TYPES,
 	isTimeZone,
 	NODE_DEFAULTS,
 	type NodeTypeIo,
@@ -936,7 +938,7 @@ function FeishuCardFields({ node, choices, problemsOf, onChange }: FeishuFieldsP
 						onChange={(markdown) => onChange({ ...node, markdown })}
 					/>
 				}
-				help={`Markdown 正文，超过 20 KB 时截断。${REFERENCE_HELP}`}
+				help={`Markdown 正文，超过 ${FEISHU_BODY_LIMIT_LABEL} 时截断。${REFERENCE_HELP}`}
 			>
 				<ReferenceEditor
 					ref={markdownEditor}
@@ -970,7 +972,7 @@ function FeishuRawField({ node, choices, problemsOf, onChange }: FeishuFieldsPro
 			value={node.message}
 			choices={choices}
 			problems={problemsOf("message")}
-			help="完整的飞书请求体，原样发出，不截断；msg_type 必须是 text、post、image、share_chat、interactive 之一，整个请求体不超过 20 KB。字符串字段里可以写引用。"
+			help={`完整的飞书请求体，原样发出，不截断；msg_type 必须是 ${FEISHU_MSG_TYPES.join("、")} 之一，整个请求体不超过 ${FEISHU_BODY_LIMIT_LABEL}。字符串字段里可以写引用。`}
 			onChange={(message) => {
 				const { message: _old, ...rest } = node;
 				onChange(message === undefined ? rest : { ...rest, message });
