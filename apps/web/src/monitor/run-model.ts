@@ -248,12 +248,31 @@ export const MASK = "••••••";
  * 取消与触发的响应、重新获取——到达顺序不一定是生成顺序：运行结束前生成、结束后才到达的响应会把最终状态
  * 改回「运行中」，而运行已经结束，事件流不会再推送，界面就停在旧状态。运行结束后不会再回到运行中，
  * 所以已结束的视图不被「运行中」的视图覆盖。运行中的视图之间谁新谁旧无法判断，但没有关系：
- * 运行中事件流会继续推送，下一次变化就会纠正——进度除外，见 {@link keepNewerProgress}。
+ * 运行中事件流会继续推送，下一次变化就会纠正——进度除外，见 {@link keepNewerProgress}；运行通知的投递状态也不会回退，
+ * 见 {@link keepSettledNotification}。
  */
 export function latestRunView(current: RunView | undefined, next: RunView): RunView {
 	if (current === undefined) return next;
 	if (current.status !== "running" && next.status === "running") return current;
-	return keepNewerProgress(current, next);
+	return keepSettledNotification(current, keepNewerProgress(current, next));
+}
+
+/**
+ * 运行通知的投递状态只会从排队中变成有结果（已送达、投递失败、已丢弃），不会回到排队中（#258）。运行结束时
+ * 事件流推送的视图和重新获取的响应都带着「排队中」，而结果只在投递之后的视图里：投递之前生成、之后才到达的
+ * 响应（慢的重新获取）会把缓存里已有的结果改回排队中，要等下一次定时重新获取才纠正。所以缓存里已有结果、
+ * 新视图仍是排队中时保留缓存里的通知状态，视图的其余部分用新到的。
+ */
+function keepSettledNotification(current: RunView, next: RunView): RunView {
+	const settled = current.run_notification;
+	if (
+		settled === null ||
+		settled.status === "queued" ||
+		next.run_notification?.status !== "queued"
+	) {
+		return next;
+	}
+	return { ...next, run_notification: settled };
 }
 
 /**
