@@ -109,6 +109,36 @@ export function tidyLayout(doc: StructureDocument): Map<string, Position> {
 	return new Map(doc.nodes.map((n) => [n.id, placed.get(n.id) as Position]));
 }
 
+/** 落点与已有节点重叠时每次往右下错开的距离。 */
+const NUDGE = 32;
+
+/**
+ * 没有来源的新节点放在哪：想要的位置（视口中心、右键处）空着就用它，
+ * 压住已有节点时按固定步长往右下错开，直到不压住任何节点。位置都是卡片左上角的画布坐标。
+ */
+export function freePosition(wanted: Position, taken: readonly Position[]): Position {
+	const overlaps = (p: Position) =>
+		taken.some(
+			(t) => Math.abs(t.x - p.x) < NODE_SIZE.width && Math.abs(t.y - p.y) < NODE_SIZE.height,
+		);
+	let at = wanted;
+	while (overlaps(at)) at = { x: at.x + NUDGE, y: at.y + NUDGE };
+	return at;
+}
+
+/**
+ * 没有来源的新节点（视口中心、右键处）和粘贴的节点：卡片中心落在 `center`（画布坐标），
+ * 压住已有节点时错开（freePosition）。返回卡片左上角。
+ */
+export const freeCardAt = (center: Position, taken: readonly Position[]): Position =>
+	freePosition(
+		{
+			x: Math.round(center.x - NODE_SIZE.width / 2),
+			y: Math.round(center.y - NODE_SIZE.height / 2),
+		},
+		taken,
+	);
+
 /**
  * 缺少布局的文档：有节点没有位置时，整份文档按整理布局重新排列（不混用两种布局，免得重叠）；
  * 所有节点都有位置时原样返回。
