@@ -1,6 +1,5 @@
-import { subflowName } from "@sfly/orchestration";
-import type { RunStatus } from "@sfly/schema";
-import { shortId } from "./format";
+import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
+import type { RunNotificationState, RunStatus } from "@sfly/schema";
 
 /**
  * 界面文案（故事 79：文案集中管理，不引入 i18n 框架；规则见 docs/DESIGN-SYSTEM.md「文案」一节）。
@@ -15,8 +14,8 @@ export const TERM = {
 	version: "版本",
 	run: "运行",
 	node: "节点",
-	mainChain: "主链",
-	subflow: "子流程",
+	mainChain: MAIN_CHAIN_LABEL,
+	subflow: SUBFLOW_LABEL,
 	attempt: "尝试",
 	agent: "Agent",
 	feishuBot: "飞书机器人",
@@ -49,6 +48,30 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
 	failed: "失败",
 	cancelled: "已取消",
 };
+
+/**
+ * 飞书消息的投递结果（GLOSSARY「投递」）：机器人管理页的「最近投递」和运行详情里的运行通知都用这两个词，
+ * 失败写「投递失败」，不用「发送失败」。
+ */
+export const DELIVERY = {
+	delivered: "已送达",
+	failed: "投递失败",
+} as const;
+
+/** 运行通知的状态文字（运行详情里的一行）。 */
+export const RUN_NOTIFICATION_STATUS_LABEL: Record<RunNotificationState["status"], string> = {
+	queued: "排队中",
+	delivered: DELIVERY.delivered,
+	failed: DELIVERY.failed,
+	discarded: "已丢弃",
+	not_sent: "未发送",
+};
+
+/** 登记飞书机器人的说明里两处页面共用的句子：空状态和登记弹窗各自接上自己要补充的话。 */
+export const FEISHU_BOT_SETUP = {
+	add: "在飞书群里添加「自定义机器人」，把它的 Webhook 地址登记到这里。",
+	noSignature: "sfly 不支持签名校验，机器人的安全设置请用关键词或 IP 白名单。",
+} as const;
 
 /** 已请求取消、还在等待任务结束与清理的运行（故事 70：不显示成「运行中」）。 */
 export const CANCELLING_LABEL = "取消中";
@@ -87,25 +110,9 @@ export const MESSAGE = {
 	clipboardDenied: "浏览器不允许访问剪贴板",
 } as const;
 
-/** 名称为空的子流程显示的名称。 */
-export const UNNAMED_SUBFLOW = "未命名子流程";
-
 /**
- * 子流程的显示名称（画布、检查器、运行视图共用）：子流程名称（subflowName），
- * 没有名称字段的旧版本显示节点 ID，填了空名称时显示 {@link UNNAMED_SUBFLOW}。
+ * 链和子流程的显示名称：画布、检查器、运行视图和运行通知的卡片共用（@sfly/orchestration 的 chain-label）。
+ * `chainLabel` 是「主链」或「子流程 <名称>」，给出实例 ID 时带上实例短 ID；`subflowLabel` 是子流程的显示名称，
+ * 没有名称字段的旧版本显示节点 ID，填了空名称时显示「未命名子流程」。
  */
-export const subflowLabel = (node: { id: string; name?: string | null | undefined }): string =>
-	subflowName({ id: node.id, name: node.name ?? undefined }) || UNNAMED_SUBFLOW;
-
-/**
- * 链实例的名称：「主链」或「子流程 <名称>」（运行视图带子流程名称，没有名称时用起点节点 ID）；
- * 给出实例 ID 时带上实例短 ID（同一子流程有多个实例时区分）。
- */
-export function chainLabel(
-	chain: { chain_id: string; subflow: boolean; name?: string | null },
-	instanceId?: string,
-) {
-	if (!chain.subflow) return TERM.mainChain;
-	const name = `${TERM.subflow} ${subflowLabel({ id: chain.chain_id, name: chain.name })}`;
-	return instanceId ? `${name} · ${shortId(instanceId)}` : name;
-}
+export { chainLabel, subflowLabel } from "@sfly/orchestration";
