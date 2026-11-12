@@ -9,18 +9,18 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from sfly.cli.client import Client, segment
+from sfly.cli.client import READ_CHUNK, Client, segment
 from sfly.cli.errors import CliError
-from sfly.cli.output import format_table
-from sfly.cli.run_logs import RunIndex, RunNode, fetch_run
+from sfly.cli.files import part_file
+from sfly.cli.output import candidate_list, format_table
+from sfly.cli.run_logs import RunIndex, RunNode
+from sfly.cli.run_view import NodeRef, fetch_run
 from sfly.cli.session import Session, command, common_options
 
-_CHUNK = 64 * 1024
 # 还没开始、不会有产物的任务不用请求。
 _NO_ARTIFACTS_YET = {"queued", "skipped"}
 
@@ -47,10 +47,11 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
 
 
 class _Task:
-    def __init__(self, node: RunNode, attempt: Mapping[str, Any], label: str) -> None:
+    def __init__(self, node: RunNode, attempt: Mapping[str, Any]) -> None:
         self.node = node
         self.attempt = attempt
-        self.label = label
+        self.ref = NodeRef(node.chain, node.node_id, attempt["attempt"])
+        self.label = self.ref.format(retried=len(node.attempts) > 1)
 
     @property
     def id(self) -> str:
@@ -59,7 +60,7 @@ class _Task:
 
 def _tasks(index: RunIndex) -> list[_Task]:
     return [
-        _Task(node, attempt, index.describe(node, attempt))
+        _Task(node, attempt)
         for node in index.nodes
         if node.kind == "package"
         for attempt in node.attempts
@@ -72,17 +73,12 @@ def _select(tasks: Sequence[_Task], refs: Sequence[str] | None) -> list[_Task]:
         return list(tasks)
     chosen: list[_Task] = []
     for ref in refs:
-        found = [
-            t
-            for t in tasks
-            if ref == t.id or ref == t.node.label or ref == f"{t.node.label}#{t.attempt['attempt']}"
-        ]
+        found = [t for t in tasks if ref == t.id or t.ref.match(ref)]
         if not found:
-            listing = "\n".join(f"  {t.label}  {t.id}" for t in tasks[:30])
             raise CliError(
                 "task_not_found",
                 f"运行里没有任务 {ref}，任务写成任务 id、「链:节点」或「链:节点#尝试」，"
-                f"有产物可能的任务：\n{listing or '  （没有）'}",
+                f"有产物可能的任务：\n{candidate_list([f'{t.label}  {t.id}' for t in tasks])}",
             )
         chosen.extend(t for t in found if t not in chosen)
     return chosen
@@ -145,26 +141,21 @@ def _download(client: Client, directory: Path, row: Mapping[str, Any]) -> Path:
     if name.startswith("/") or any(part in ("", ".", "..") for part in parts):
         raise CliError("unsafe_artifact_name", f"产物名称 {name!r} 不是目录内的相对路径，没有下载")
     target: Path = directory / str(row["task_id"]) / Path(*parts)
-    temp = target.with_name(f"{target.name}.part")
     path = f"/tasks/{segment(row['task_id'])}/artifacts/{'/'.join(segment(p) for p in parts)}"
     digest = hashlib.sha256()
     size = 0
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        with client.open("GET", path) as response, temp.open("wb") as file:
-            while chunk := response.read(_CHUNK):
+        with client.open("GET", path) as response, part_file(target) as file:
+            while chunk := response.read(READ_CHUNK):
                 file.write(chunk)
                 digest.update(chunk)
                 size += len(chunk)
-        if digest.hexdigest() != row["sha256"] or size != row["size"]:
-            raise CliError(
-                "artifact_mismatch",
-                f"下载的 {name} 和列表里的不一致（sha256 {digest.hexdigest()}，{size} 字节；"
-                f"列表里是 {row['sha256']}，{row['size']} 字节），已丢弃",
-            )
-        os.replace(temp, target)
+            if digest.hexdigest() != row["sha256"] or size != row["size"]:
+                raise CliError(
+                    "artifact_mismatch",
+                    f"下载的 {name} 和列表里的不一致（sha256 {digest.hexdigest()}，{size} 字节；"
+                    f"列表里是 {row['sha256']}，{row['size']} 字节），已丢弃",
+                )
     except OSError as error:
         raise CliError("download_failed", f"下载 {name} 到 {target} 失败：{error}") from None
-    finally:
-        temp.unlink(missing_ok=True)
     return target

@@ -76,7 +76,13 @@ def via_label(name: str | None) -> str | None:
     return _VIA_LABELS.get(name, name)
 
 
-def _positive_int(text: str) -> int:
+def actor_label(name: str, via: str | None) -> str:
+    """`昵称`，经 AI 编程助手时是 `昵称 经 Claude Code`。"""
+    return f"{name} 经 {via_label(via)}" if via else name
+
+
+def positive_int(text: str) -> int:
+    """argparse 的 `type=`：正整数。"""
     try:
         value = int(text)
     except ValueError:
@@ -90,7 +96,7 @@ def add_limit_option(parser: argparse.ArgumentParser, default: int = DEFAULT_LIM
     """列表类命令的 `--limit`。"""
     parser.add_argument(
         "--limit",
-        type=_positive_int,
+        type=positive_int,
         default=default,
         help=f"最多输出多少条（默认 {default}）",
     )
@@ -101,11 +107,32 @@ def apply_limit(items: Sequence[T], limit: int) -> tuple[list[T], int]:
     return list(items[:limit]), max(len(items) - limit, 0)
 
 
-def more_note(hidden: int, total: int, noun: str) -> str | None:
-    """被截断时的提示：还有多少条、怎么看更多；没有被截断时为 None。"""
+def more_note(
+    hidden: int, total: int, noun: str, *, max_limit: int | None = None, narrow: str = ""
+) -> str | None:
+    """被截断时的提示：还有多少条、怎么看更多；没有被截断时为 None。
+    接口一次最多返回 `max_limit` 条、而总数超过它时，`--limit` 再大也看不全，
+    提示 `narrow`（缩小范围的办法）。"""
     if hidden <= 0:
         return None
-    return f"还有 {hidden} {noun}没有显示（共 {total} {noun}），加 --limit {total} 查看全部"
+    base = f"还有 {hidden} {noun}没有显示（共 {total} {noun}）"
+    if max_limit is not None and total > max_limit:
+        return f"{base}，--limit 最大 {max_limit}，更早的{narrow}"
+    return f"{base}，加 --limit {total} 查看全部"
+
+
+# 候选列表（节点、任务……）最多列出多少个。
+_MAX_CANDIDATES = 30
+
+
+def candidate_list(items: Sequence[str]) -> str:
+    """错误信息里的候选列表：每个缩进两格，去重，超过 30 个时写还有多少个；没有时写（没有）。"""
+    unique = list(dict.fromkeys(items))
+    if not unique:
+        return "  （没有）"
+    shown = "\n".join(f"  {item}" for item in unique[:_MAX_CANDIDATES])
+    more = len(unique) - _MAX_CANDIDATES
+    return shown + (f"\n  ……还有 {more} 个" if more > 0 else "")
 
 
 def format_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:

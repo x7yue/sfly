@@ -19,15 +19,14 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
-from sfly.cli.client import ApiError
-from sfly.cli.errors import CliError
+from sfly.cli.client import READ_CHUNK, ApiError
+from sfly.cli.errors import EXIT_INTERRUPTED, CliError
 from sfly.cli.output import dump_json, format_table
 from sfly.cli.routes import KIND_LABELS, Resolution, Route, closest, load_routes, resolve
 from sfly.cli.session import Session, command, common_options
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 _MAX_PROBLEMS = 10
-_CHUNK = 64 * 1024
 _STDIN = "-"
 _ACCEPT = {"stream": "text/event-stream", "download": "*/*"}
 
@@ -401,7 +400,7 @@ def _send(
     except ApiError as error:
         raise _with_details(error) from None
     except KeyboardInterrupt:
-        return 130
+        return EXIT_INTERRUPTED
     except (OSError, HTTPException) as error:
         raise CliError("read_failed", f"读取控制面的响应时出错：{error}") from None
 
@@ -410,7 +409,7 @@ def _with_details(error: ApiError) -> ApiError:
     message = f"HTTP {error.status} {error.message}"
     if error.details is not None:
         message += f"\ndetails：{dump_json(error.details)}"
-    return ApiError(error.status, error.code, message, error.details, error.next)
+    return error.replace(message=message)
 
 
 def _copy_body(session: Session, response: Any) -> int:
@@ -420,7 +419,7 @@ def _copy_body(session: Session, response: Any) -> int:
     buffer = getattr(stdout, "buffer", None)
     last = b""
     stdout.flush()
-    while chunk := response.read(_CHUNK):
+    while chunk := response.read(READ_CHUNK):
         if buffer is not None:
             buffer.write(chunk)
         else:

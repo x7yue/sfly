@@ -39,6 +39,9 @@ ADDRESS_HELP = (
 
 _AGENT_NAME_MAX = 64
 
+# 读响应（下载、事件流、接口原样输出）时每次读多少字节。
+READ_CHUNK = 64 * 1024
+
 
 def detect_ai_agent(environ: Mapping[str, str]) -> str | None:
     """当前是否在 AI 编程助手里运行，返回它的名称（规则与 gh 一致）：`AI_AGENT` 有值时用它；
@@ -88,6 +91,16 @@ class ApiError(CliError):
         super().__init__(code, message, next)
         self.status = status
         self.details = details
+
+    def replace(self, *, message: str | None = None, next: str | None = None) -> ApiError:
+        """换掉说明或下一步的副本（状态码、错误码、details 不变）；没给的字段沿用原来的。"""
+        return ApiError(
+            self.status,
+            self.code,
+            self.message if message is None else message,
+            self.details,
+            self.next if next is None else next,
+        )
 
 
 class Client:

@@ -11,22 +11,14 @@ import argparse
 import re
 from typing import Any
 
-from sfly.cli.client import ApiError, Client, segment
-from sfly.cli.errors import CliError
+from sfly.cli.client import ApiError, segment
+from sfly.cli.errors import EXIT_BY_STATUS, EXIT_INTERRUPTED, EXIT_TIMEOUT, CliError
 from sfly.cli.run_params import build_params, describe_declared
-from sfly.cli.run_summary import (
-    EXIT_BY_STATUS,
-    build_summary,
-    format_duration,
-    render_summary,
-    run_url,
-)
+from sfly.cli.run_summary import build_summary, render_summary, run_url
+from sfly.cli.run_view import fetch_run, format_duration, run_not_found
 from sfly.cli.run_wait import WaitTimeout, wait_for_run
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
-
-EXIT_TIMEOUT = 124
-EXIT_INTERRUPTED = 130
 
 
 def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -39,7 +31,7 @@ def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
         "boolean 写 true 或 false，json 按 JSON）。总是触发场景的最新版本。"
         "不加 --wait 时输出运行 id 和控制台里的运行链接；加 --wait 时一直等到运行结束，"
         "节点状态每变化一次往 stderr 写一行进度，结束后在 stdout 输出摘要"
-        "（状态、耗时、失败的节点及其错误、每个失败任务的最后 50 行日志）。"
+        "（状态、耗时、每个失败的任务及其错误和最后 50 行日志）。"
         "退出码：成功 0，运行失败 1，命令出错 2，运行被取消 3，等待超时 124，Ctrl-C 130。"
         "等待超时和 Ctrl-C 只停止等待，不取消运行。",
     )
@@ -63,7 +55,7 @@ def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
         help="等一次运行结束，输出摘要",
         description="订阅运行的实时更新，断线后自动重连。节点状态每变化一次往 stderr 写一行进度，"
         "运行结束后在 stdout 输出摘要"
-        "（状态、耗时、失败的节点及其错误、每个失败任务的最后 50 行日志）。"
+        "（状态、耗时、每个失败的任务及其错误和最后 50 行日志）。"
         "运行已经结束时直接输出摘要。"
         "退出码：成功 0，运行失败 1，命令出错 2，运行被取消 3，等待超时 124，Ctrl-C 130。"
         "等待超时和 Ctrl-C 只停止等待，不取消运行。",
@@ -156,7 +148,7 @@ def _start(session: Session, args: argparse.Namespace) -> int:
 
 
 def _wait(session: Session, args: argparse.Namespace) -> int:
-    run = _get_run(session.client, args.run)
+    run = fetch_run(session.client, args.run)
     if run["status"] != "running":
         return _finish(session, run)
     return _follow(session, args.run, args.timeout)
@@ -166,7 +158,7 @@ def _cancel(session: Session, args: argparse.Namespace) -> None:
     try:
         run = session.client.request("POST", f"/runs/{segment(args.run)}/cancel")
     except ApiError as error:
-        raise _with_next(error, args.run) from None
+        raise _run_error(error, args.run) from None
     cancel = run["cancel"] or {}
     forced = cancel.get("forced_at") is not None
     cancelling = run["status"] == "running"
@@ -198,7 +190,7 @@ def _follow(
             session.client, run_id, timeout=timeout, log=lambda line: _progress(session, line)
         )
     except WaitTimeout:
-        spent = format_duration(timeout or 0)
+        spent = format_duration(round((timeout or 0) * 1000))
         out.error(
             CliError(
                 "wait_timeout",
@@ -217,7 +209,7 @@ def _follow(
         )
         return EXIT_INTERRUPTED
     except ApiError as error:
-        raise _with_next(error, run_id) from None
+        raise _run_error(error, run_id) from None
     return _finish(session, run)
 
 
@@ -231,17 +223,11 @@ def _progress(session: Session, line: str) -> None:
     print(line, file=session.out.stderr, flush=True)
 
 
-def _get_run(client: Client, run_id: str) -> dict[str, Any]:
-    try:
-        run: dict[str, Any] = client.get(f"/runs/{segment(run_id)}")
-    except ApiError as error:
-        raise _with_next(error, run_id) from None
-    return run
-
-
-def _with_next(error: ApiError, run_id: str) -> ApiError:
-    """给运行相关的错误补上下一步：找不到运行时列出最近的运行，运行已经结束时看它的结果。"""
-    next_command = {404: "sfly run list", 409: f"sfly run show {run_id}"}.get(error.status)
-    if next_command is None or error.next:
-        return error
-    return ApiError(error.status, error.code, error.message, error.details, next_command)
+def _run_error(error: ApiError, run_id: str) -> CliError:
+    """运行相关接口的错误：运行不存在时是 `run_not_found`，运行已经结束（409）时补上下一步：
+    看它的结果。"""
+    if error.status == 404:
+        return run_not_found(run_id)
+    if error.status == 409 and not error.next:
+        return error.replace(next=f"sfly run show {run_id}")
+    return error

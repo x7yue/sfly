@@ -177,11 +177,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_publish.set_defaults(func=_publish)
 
-    p_dev = sub.add_parser("dev", help="让本机 Agent 以可编辑方式加载本地源码目录，注册为 包名@dev")
+    p_dev = sub.add_parser(
+        "dev", help="让本机 sfly Agent 以可编辑方式加载本地源码目录，注册为 包名@dev"
+    )
     p_dev.add_argument("project", nargs="?", default=".", help="项目目录（默认当前目录）")
     p_dev.add_argument(
         "--socket",
-        help="本机 Agent 的本地 socket（默认与 Agent 相同：SFLY_DEV_SOCKET，"
+        help="本机 sfly Agent 的本地 socket（默认与 Agent 相同：SFLY_DEV_SOCKET，"
         "其次工作目录 SFLY_WORK_DIR 下的 agent.sock，环境变量优先于 $SFLY_HOME/agent.env；"
         "都没有时 $SFLY_HOME/work/agent.sock）",
     )
@@ -190,8 +192,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_debug = sub.add_parser(
         "debug",
         help="本地调试：在当前项目环境里执行一个节点，打印输出、日志和指标",
-        description="在当前项目环境里用 Agent 同一个执行器执行一个节点（不经过控制面和 Agent）。"
-        "产物和工作文件放在 <项目>/.sfly/runs/<时间>-<节点>/。Ctrl-C 取消，再按一次立即杀掉。"
+        description="在当前项目环境里用 sfly Agent 同一个执行器执行一个节点"
+        "（不经过控制面和 Agent）。产物和工作文件放在 <项目>/.sfly/runs/<时间>-<节点>/。"
+        "Ctrl-C 取消，再按一次立即杀掉。"
         "退出码：成功 0，节点失败 1，参数不合法 2，取消 130。",
     )
     p_debug.add_argument("node", help="节点名（@node 的 name，默认为函数名）")

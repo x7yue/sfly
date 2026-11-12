@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 
 from sfly.cli.client import segment
-from sfly.cli.output import add_limit_option, apply_limit, format_table, more_note, via_label
+from sfly.cli.output import actor_label, add_limit_option, apply_limit, format_table, more_note
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
 
@@ -39,14 +39,9 @@ def _versions(session: Session, args: argparse.Namespace) -> None:
     ]
     if rows:
         text = format_table(
-            ["版本", "作者", "保存时间", "经"],
+            ["版本", "作者", "保存时间"],
             [
-                [
-                    str(r["number"]),
-                    r["author"],
-                    r["created_at"],
-                    f"经 {via_label(r['author_via'])}" if r["author_via"] else "",
-                ]
+                [str(r["number"]), actor_label(r["author"], r["author_via"]), r["created_at"]]
                 for r in rows
             ],
         )

@@ -143,7 +143,7 @@ def _pull(session: Session, args: argparse.Namespace) -> None:
         version = args.version
         document = client.get(f"{base}/versions/{version}")["document"]
 
-    target = _absolute(args.output or _default_file_name(scenario))
+    target = os.path.abspath(args.output or _default_file_name(scenario))
     _write_json(target, {"scenario": scenario["id"], "base_version": latest, "document": document})
 
     name = scenario["name"]
@@ -179,7 +179,7 @@ def _default_file_name(scenario: dict[str, Any]) -> str:
 
 def _push(session: Session, args: argparse.Namespace) -> None:
     client = session.client
-    target = _absolute(args.file)
+    target = os.path.abspath(args.file)
     content = _read_file(target)
     scenario_id, base_version = content.get("scenario"), content.get("base_version")
     if (
@@ -299,7 +299,7 @@ def _create(session: Session, args: argparse.Namespace) -> None:
     name = _checked_name(args.name)
     document = None
     if args.source:
-        document = _read_file(_absolute(args.source))["document"]
+        document = _read_file(os.path.abspath(args.source))["document"]
         _check_document(document)
     created = client.request(
         "POST", "/orchestrations", body={"name": name, "description": args.description}
@@ -399,10 +399,6 @@ def _checked_name(name: str) -> str:
 
 
 # —— 文件和本地校验 ——
-
-
-def _absolute(path: str) -> str:
-    return os.path.abspath(path)
 
 
 def _read_file(path: str) -> dict[str, Any]:

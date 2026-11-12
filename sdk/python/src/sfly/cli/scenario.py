@@ -11,19 +11,9 @@ from typing import Any
 from sfly.cli import scenario_edit, scenario_versions
 from sfly.cli.client import segment
 from sfly.cli.output import add_limit_option, apply_limit, dump_json, format_table, more_note
+from sfly.cli.run_view import node_type_label, subflow_label
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
-
-UNNAMED_SUBFLOW = "未命名子流程"
-
-# 内置节点在「节点类型」一列里的名称；包节点显示 `包名/节点名`。
-_BUILTIN_TYPES = {
-    "async": "异步任务",
-    "timer": "定时",
-    "sleep": "Sleep",
-    "stop_subflow": "停止子流程",
-    "feishu_notify": "飞书通知",
-}
 
 
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -39,11 +29,13 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p_list = group.add_parser(
         "list",
         parents=[common_options()],
-        help="列出场景（名称、id、最新版本号、默认 Agent）",
+        help="列出场景（名称、id、最新版本号、默认 sfly Agent）",
         description="列出没有归档的场景，按新建时间从新到旧。超过 --limit 时提示还有多少条。",
     )
     p_list.add_argument(
-        "--search", metavar="文字", help="按名称、说明或引用的 Agent 搜索（不区分大小写的子串）"
+        "--search",
+        metavar="文字",
+        help="按名称、说明或引用的 sfly Agent 搜索（不区分大小写的子串）",
     )
     p_list.add_argument("--agent", help="只列出引用了这个 Agent 的场景（默认 Agent 或节点另选的）")
     add_limit_option(p_list)
@@ -54,7 +46,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         parents=[common_options()],
         help="查看一个场景：入口参数、各链路上的节点、子流程、默认 Agent",
         description="查看场景最新版本的内容：入口参数、主链和各子流程上的节点"
-        "（节点类型、锁定的节点包版本、Agent）、默认 Agent。",
+        "（节点类型、锁定的节点包版本、sfly Agent）、默认 Agent。",
     )
     p_show.add_argument("scenario", metavar="场景", help="场景 id 或准确名称")
     p_show.set_defaults(func=command(_show))
@@ -130,7 +122,7 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
         if entry is None or entry["kind"] != "subflow_entry":
             return None
         name = entry["name"].strip() if entry.get("name") is not None else entry["id"]
-        return name or UNNAMED_SUBFLOW
+        return subflow_label(name)
 
     def node_view(node: dict[str, Any]) -> dict[str, Any]:
         view: dict[str, Any] = {
@@ -287,9 +279,7 @@ def _params_table(params: list[dict[str, Any]]) -> str:
 
 
 def _node_type(node: dict[str, Any]) -> str:
-    if node["kind"] == "package":
-        return f"{node['package']}/{node['node']}"
-    label = _BUILTIN_TYPES[node["kind"]]
+    label = node_type_label(node)
     subflow = node.get("subflow")
     if not subflow:
         return label

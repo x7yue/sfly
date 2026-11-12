@@ -9,12 +9,19 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping, Sequence
-from datetime import datetime
 from typing import Any
 
 from sfly.cli.client import ApiError, segment
-from sfly.cli.output import add_limit_option, dump_json, format_table, via_label
-from sfly.cli.run_logs import chain_label, fetch_run
+from sfly.cli.output import actor_label, add_limit_option, dump_json, format_table, more_note
+from sfly.cli.run_view import (
+    NodeRef,
+    chain_label,
+    duration_ms,
+    fetch_run,
+    format_duration,
+    node_status_label,
+    run_status_label,
+)
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
 
@@ -24,19 +31,6 @@ _MAX_RUNS = 500
 # 错误信息在文本里最多写多少行（带堆栈的错误很长），完整内容在 --json 里。
 _MAX_ERROR_LINES = 30
 _MAX_PARAMS_CHARS = 300
-
-_STATUS_LABELS = {
-    "running": "运行中",
-    "success": "成功",
-    "failed": "失败",
-    "cancelled": "已取消",
-    "pending": "等待中",
-    "queued": "排队中",
-    "dispatched": "派发中",
-    "waiting": "等待唤醒",
-    "skipped": "已跳过",
-    "stopped": "已停止",
-}
 
 
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -64,54 +58,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p_show.set_defaults(func=command(_show))
 
 
-# ---------------------------------------------------------------- 格式
-
-
-def status_label(status: str) -> str:
-    return _STATUS_LABELS.get(status, status)
-
-
-def _parse(timestamp: str) -> datetime:
-    return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-
-
-def duration_ms(start: str | None, end: str | None) -> int | None:
-    """两个控制面时间之间的毫秒数；缺任何一个时为 None。"""
-    if start is None or end is None:
-        return None
-    return round((_parse(end) - _parse(start)).total_seconds() * 1000)
-
-
-def format_duration(ms: int | None) -> str:
-    """`<1s`、`12s`、`1m05s`、`2h03m`；没有时为 `-`。"""
-    if ms is None:
-        return "-"
-    seconds = max(round(ms / 1000), 0)
-    if ms < 1000:
-        return "<1s"
-    if seconds < 60:
-        return f"{seconds}s"
-    minutes, rest = divmod(seconds, 60)
-    if minutes < 60:
-        return f"{minutes}m{rest:02d}s"
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h{minutes:02d}m"
-
-
-def actor_label(name: str, via: str | None) -> str:
-    """`昵称`，经 AI 编程助手时是 `昵称 经 Claude Code`。"""
-    return f"{name} 经 {via_label(via)}" if via else name
-
-
 # ---------------------------------------------------------------- run list
-
-
-def _run_status(run: Mapping[str, Any]) -> str:
-    return (
-        "取消中"
-        if run["status"] == "running" and run["cancelling"]
-        else status_label(run["status"])
-    )
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:
@@ -158,7 +105,7 @@ def _list(session: Session, args: argparse.Namespace) -> None:
                     r["id"],
                     r["scenario"],
                     str(r["scenario_version"]),
-                    _run_status(r),
+                    run_status_label(r["status"], cancelling=r["cancelling"]),
                     actor_label(r["triggered_by"], r["triggered_via"]),
                     r["started_at"],
                     format_duration(r["duration_ms"]),
@@ -168,16 +115,14 @@ def _list(session: Session, args: argparse.Namespace) -> None:
         )
     else:
         text = "没有符合条件的运行" if args.scenario or args.status else "还没有运行"
-    session.out.emit(rows, text, note=_more_runs_note(total - len(rows), total, requested))
-
-
-def _more_runs_note(hidden: int, total: int, requested: int) -> str | None:
-    if hidden <= 0:
-        return None
-    base = f"还有 {hidden} 次运行没有显示（共 {total} 次）"
-    if requested >= _MAX_RUNS:
-        return f"{base}，一次最多看 {_MAX_RUNS} 次，用 --scenario、--status 缩小范围"
-    return f"{base}，加 --limit {min(total, _MAX_RUNS)} 查看更多"
+    note = more_note(
+        total - len(rows),
+        total,
+        "次运行",
+        max_limit=_MAX_RUNS,
+        narrow="用 --scenario、--status 缩小范围",
+    )
+    session.out.emit(rows, text, note=note)
 
 
 # ---------------------------------------------------------------- run show
@@ -268,9 +213,9 @@ def _last_duration(node: Mapping[str, Any]) -> int | None:
 def render(view: Mapping[str, Any]) -> str:
     """`describe` 的文本形式。"""
     cancel = view["cancel"]
-    state = status_label(view["status"])
-    if view["status"] == "running" and cancel:
-        state = "取消中"
+    cancelling = cancel is not None
+    forced = cancel is not None and cancel["forced_at"] is not None
+    state = run_status_label(view["status"], cancelling=cancelling, forced=forced)
     head = f"运行 {view['id']}  {state}"
     if view["ended_at"]:
         head += f"，耗时 {format_duration(view['duration_ms'])}"
@@ -284,10 +229,10 @@ def render(view: Mapping[str, Any]) -> str:
         f"{view['started_at']} 开始" + (f"，{view['ended_at']} 结束" if view["ended_at"] else ""),
     ]
     if cancel:
-        forced = f"，{cancel['forced_at']} 强制取消" if cancel["forced_at"] else ""
+        forced_at = f"，{cancel['forced_at']} 强制取消" if cancel["forced_at"] else ""
         lines.append(
             f"取消 {actor_label(cancel['requested_by'], cancel['requested_via'])}，"
-            f"{cancel['requested_at']} 请求取消{forced}"
+            f"{cancel['requested_at']} 请求取消{forced_at}"
         )
     params = dump_json(view["params"])
     if view["params"]:
@@ -297,12 +242,13 @@ def render(view: Mapping[str, Any]) -> str:
 
     attention: list[tuple[str, Mapping[str, Any]]] = []
     for chain in view["chains"]:
-        lines.extend(["", f"链 {chain['chain']}  {status_label(chain['status'])}"])
+        state = run_status_label(chain["status"], cancelling=cancelling, forced=forced)
+        lines.extend(["", f"链 {chain['chain']}  {state}"])
         if chain["nodes"]:
             rows = [
                 [
                     n["id"],
-                    status_label(n["status"]),
+                    node_status_label(n["status"]),
                     str(len(n["attempts"])),
                     n["agent"] or "-",
                     format_duration(_last_duration(n)),
@@ -318,7 +264,7 @@ def render(view: Mapping[str, Any]) -> str:
         else:
             lines.append("  没有节点")
         attention.extend(
-            (f"{chain['chain']}:{n['id']}", n)
+            (NodeRef(chain["chain"], n["id"]).label, n)
             for n in chain["nodes"]
             if n["status"] == "failed" or len(n["attempts"]) > 1
         )
@@ -332,11 +278,11 @@ def render(view: Mapping[str, Any]) -> str:
 
 def _render_attention(label: str, node: Mapping[str, Any]) -> list[str]:
     attempts = node["attempts"]
-    lines = [f"  {label}  {status_label(node['status'])}，共 {len(attempts)} 次尝试"]
+    lines = [f"  {label}  {node_status_label(node['status'])}，共 {len(attempts)} 次尝试"]
     for attempt in attempts:
         began = attempt["started_at"] or attempt["queued_at"]
         lines.append(
-            f"    #{attempt['attempt']} {status_label(attempt['status'])}  "
+            f"    #{attempt['attempt']} {node_status_label(attempt['status'])}  "
             f"{attempt['agent'] or '-'}  {began}  {format_duration(attempt['duration_ms'])}"
         )
         error = attempt["error"]

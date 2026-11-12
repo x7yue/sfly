@@ -12,17 +12,18 @@ from sfly.cli.session import Session, command, common_options
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser(
         "agent",
-        help="查看平台上的 Agent：在线状态、版本、运行中的任务数、对外地址",
-        description="查看控制面上注册过的 Agent。默认输出精简文本，--json 输出 JSON。"
+        help="查看平台上的 sfly Agent：在线状态、版本、运行中的任务数、对外地址",
+        description="查看控制面上注册过的 sfly Agent。默认输出精简文本，--json 输出 JSON。"
         "退出码：成功 0，命令出错 2。",
     )
     group = parser.add_subparsers(dest="agent_command", required=True)
     p_list = group.add_parser(
         "list",
         parents=[common_options()],
-        help="列出 Agent：在线状态、版本、是否与控制面一致、运行中的任务数、对外地址",
-        description="列出注册过的 Agent，按名称排序。版本与控制面不一致的 Agent 不会被派新任务，"
-        "它手上的任务照常跑完。「开发包」是用 sfly dev 在这台 Agent 上加载的节点包（包名@dev）。"
+        help="列出 sfly Agent：在线状态、版本、是否与控制面一致、运行中的任务数、对外地址",
+        description="列出注册过的 sfly Agent，按名称排序。"
+        "版本与控制面不一致的 Agent 不会被派新任务，它手上的任务照常跑完。"
+        "「开发包」是用 sfly dev 在这台 Agent 上加载的节点包（包名@dev）。"
         "超过 --limit 时提示还有多少台。",
     )
     add_limit_option(p_list)
@@ -73,5 +74,5 @@ def _list(session: Session, args: argparse.Namespace) -> None:
             ],
         )
     else:
-        text = "还没有 Agent 连接过控制面"
+        text = "还没有 sfly Agent 连接过控制面"
     session.out.emit(rows, text, note=more_note(hidden, len(agents), "台 Agent"))

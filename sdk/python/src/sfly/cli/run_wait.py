@@ -18,7 +18,14 @@ from typing import IO, Any
 
 from sfly.cli.client import ApiError, Client, segment
 from sfly.cli.errors import CliError
-from sfly.cli.run_summary import format_duration, last_attempt, node_label, seconds_between
+from sfly.cli.run_view import (
+    NodeRef,
+    chain_label,
+    duration_ms,
+    format_duration,
+    last_attempt,
+    node_status_label,
+)
 
 # 控制面每 15 秒发一次心跳；这么久没有任何数据就认为连接已经断了。
 IDLE_TIMEOUT_SECONDS = 45.0
@@ -28,18 +35,6 @@ RECONNECT_MAX_SECONDS = 5.0
 # 主线程每隔多久检查一次超时。
 _POLL_SECONDS = 0.5
 
-NODE_STATUS_TEXT = {
-    "pending": "待执行",
-    "queued": "排队中",
-    "dispatched": "派发中",
-    "running": "运行中",
-    "waiting": "等待中",
-    "success": "成功",
-    "failed": "失败",
-    "skipped": "已跳过",
-    "cancelled": "已取消",
-    "stopped": "已停止",
-}
 # 节点完成后进度行里带上耗时。
 _ENDED = {"success", "failed", "cancelled", "stopped"}
 # 入口节点只是链的起点，不写进度。
@@ -153,12 +148,14 @@ class _Progress:
                     continue
                 self._seen[key] = state
                 attempt = last_attempt(node)
-                line = f"{node_label(chain, node, attempt['attempt'] if attempt else None)} "
-                line += NODE_STATUS_TEXT.get(node["status"], node["status"])
+                ref = NodeRef(
+                    chain_label(chain), node["node_id"], attempt["attempt"] if attempt else None
+                )
+                line = f"{ref.format()} {node_status_label(node['status'])}"
                 if node["status"] in _ENDED and attempt:
-                    seconds = seconds_between(attempt["started_at"], attempt["ended_at"])
-                    if seconds is not None:
-                        line += f" {format_duration(seconds)}"
+                    elapsed = duration_ms(attempt["started_at"], attempt["ended_at"])
+                    if elapsed is not None:
+                        line += f" {format_duration(elapsed)}"
                 self._write(line)
 
 

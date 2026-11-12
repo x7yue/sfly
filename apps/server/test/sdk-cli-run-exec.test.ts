@@ -3,7 +3,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
-import { FakeAgent } from "./support/fake-agent.js";
+import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { type RecordingProxy, startRecordingProxy } from "./support/recording-proxy.js";
@@ -137,7 +137,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			expect(await api.run(runId)).toMatchObject({ status: "success", triggered_by: "alice" });
 		});
 
-		it("失败：退出码 1，摘要里有失败节点的类型、尝试次数、错误和任务最后 50 行日志", async () => {
+		it("失败：退出码 1，摘要里有失败任务的节点类型、尝试次数、错误和最后 50 行日志", async () => {
 			const id = await scenario("失败场景", [echo("a"), echo("b", { retries: 1 }), echo("c")]);
 			const waiting = start("run", "start", "失败场景", "--wait");
 
@@ -163,8 +163,11 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 				`链接：${cp.httpUrl}/runs/${runId}`,
 				"",
 			]);
-			expect(result.stdout).toContain("失败的节点（1 个）：");
-			expect(result.stdout).toContain("  main:b（stub/echo，第 2 次尝试）");
+			expect(result.stdout).toContain("失败的任务（2 个）：");
+			expect(result.stdout).toContain("  main:b#1（stub/echo，第 1 次尝试）");
+			expect(result.stdout).toContain("    错误：node_error：第一次失败");
+			expect(result.stdout).toContain("    没有日志");
+			expect(result.stdout).toContain("  main:b#2（stub/echo，第 2 次尝试）");
 			expect(result.stdout).toContain("    错误：node_error：boom: 配置不对");
 			expect(result.stdout).toContain(
 				"    错误：node_error：boom: 配置不对\n\n      Traceback: x.py line 3",
@@ -194,8 +197,17 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 				url: `${cp.httpUrl}/runs/${runId}`,
 				cancelled_by: null,
 			});
-			expect(summary.failed).toHaveLength(1);
+			expect(summary.failed).toHaveLength(2);
 			expect(summary.failed[0]).toMatchObject({
+				chain: "main",
+				node: "b",
+				type: "stub/echo",
+				attempt: 1,
+				attempts: 2,
+				error: { kind: "node_error", message: "第一次失败" },
+				logs: [],
+			});
+			expect(summary.failed[1]).toMatchObject({
 				chain: "main",
 				node: "b",
 				type: "stub/echo",
@@ -204,8 +216,59 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 				task: second.taskId,
 				error: { kind: "node_error", message: "boom: 配置不对\n\nTraceback: x.py line 3" },
 			});
-			expect(summary.failed[0]?.logs).toHaveLength(50);
-			expect(summary.failed[0]?.logs[0]).toMatchObject({ level: "info", text: "日志第 11 行" });
+			expect(summary.failed[1]?.logs).toHaveLength(50);
+			expect(summary.failed[1]?.logs[0]).toMatchObject({ level: "info", text: "日志第 11 行" });
+		});
+
+		it("节点重试两次都失败：每次失败的尝试各列一项，按尝试顺序，各带自己的错误和日志", async () => {
+			const id = await scenario("重试场景", [echo("a", { retries: 2 })]);
+			const waiting = start("run", "start", "重试场景", "--wait");
+
+			const tasks: AssignedTask[] = [];
+			for (const attempt of [1, 2, 3]) {
+				const task = await assign();
+				expect(task).toMatchObject({ nodeId: "a", attempt });
+				agent.logs(task, [[1, `第 ${attempt} 次的日志`]]);
+				await agent.sync();
+				await agent.fail(task, `第 ${attempt} 次失败`);
+				tasks.push(task);
+			}
+
+			const result = await waiting.exited;
+			expect(result.code, result.stderr).toBe(1);
+			const runId = await runOf(id);
+			const out = result.stdout.split("\n");
+			expect(out).toContain("失败的任务（3 个）：");
+			expect(out.filter((line) => line.startsWith("  main:a"))).toEqual([
+				"  main:a#1（stub/echo，第 1 次尝试）",
+				"  main:a#2（stub/echo，第 2 次尝试）",
+				"  main:a#3（stub/echo，第 3 次尝试）",
+			]);
+			for (const attempt of [1, 2, 3]) {
+				expect(out).toContain(`    错误：node_error：第 ${attempt} 次失败`);
+				expect(result.stdout).toContain(`第 ${attempt} 次的日志`);
+			}
+			expect(result.stdout.indexOf("第 1 次失败")).toBeLessThan(
+				result.stdout.indexOf("第 2 次失败"),
+			);
+			expect(result.stdout.indexOf("第 2 次失败")).toBeLessThan(
+				result.stdout.indexOf("第 3 次失败"),
+			);
+
+			const json = await cli("run", "wait", runId, "--json");
+			expect(json.code, json.stderr).toBe(1);
+			const summary = JSON.parse(json.stdout) as {
+				failed: Array<Record<string, unknown> & { logs: Array<{ text: string }> }>;
+			};
+			expect(summary.failed.map((f) => [f.attempt, f.attempts, f.task])).toEqual(
+				tasks.map((t, i) => [i + 1, 3, t.taskId]),
+			);
+			expect(summary.failed.map((f) => f.error)).toEqual(
+				[1, 2, 3].map((n) => ({ kind: "node_error", message: `第 ${n} 次失败` })),
+			);
+			expect(summary.failed.map((f) => f.logs.map((line) => line.text))).toEqual(
+				[1, 2, 3].map((n) => [`第 ${n} 次的日志`]),
+			);
 		});
 
 		it("子流程里的节点失败：摘要和进度里的链写子流程的名称", async () => {
@@ -296,7 +359,7 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			expect((await api.run(runId)).status).toBe("running");
 
 			const resumed = start("run", "wait", runId);
-			await resumed.waitForStderr("main:a 运行中");
+			await resumed.waitForStderr("main:a 执行中");
 			clock.advance(5_000);
 			await agent.succeed(task);
 			const finished = await resumed.exited;
@@ -380,10 +443,11 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 		it("运行不存在时报错并提示 run list", async () => {
 			const wait = await cli("run", "wait", UNKNOWN_RUN);
 			expect(wait.code).toBe(2);
-			expect(wait.stderr).toContain("错误：run not found");
+			expect(wait.stderr).toContain(`错误：没有 id 是 ${UNKNOWN_RUN} 的运行`);
 			expect(wait.stderr).toContain("下一步：sfly run list");
 			const cancel = await cli("run", "cancel", UNKNOWN_RUN);
 			expect(cancel.code).toBe(2);
+			expect(cancel.stderr).toContain(`错误：没有 id 是 ${UNKNOWN_RUN} 的运行`);
 			expect(cancel.stderr).toContain("下一步：sfly run list");
 		});
 	});

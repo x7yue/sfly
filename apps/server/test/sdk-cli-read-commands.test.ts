@@ -235,10 +235,10 @@ describe("sfly 只读命令 → 控制面", () => {
 			expect(result.stderr).toBe("");
 			const rows = lines(result.stdout).map(cells);
 			expect(rows).toEqual([
-				["版本", "作者", "保存时间", "经"],
-				["4", "小明", expect.stringMatching(/^2026-/), "经 my-bot"],
-				["3", "小红", expect.stringMatching(/^2026-/), "经 Codex"],
-				["2", "小红", expect.stringMatching(/^2026-/), "经 Claude Code"],
+				["版本", "作者", "保存时间"],
+				["4", "小明 经 my-bot", expect.stringMatching(/^2026-/)],
+				["3", "小红 经 Codex", expect.stringMatching(/^2026-/)],
+				["2", "小红 经 Claude Code", expect.stringMatching(/^2026-/)],
 				["1", "小明", expect.stringMatching(/^2026-/)],
 			]);
 		});
@@ -487,7 +487,7 @@ describe("sfly 只读命令 → 控制面", () => {
 				[ids.r4, "冒烟场景", "1", "已取消", "小红 经 Claude Code", expect.any(String), "10s"],
 				[ids.r3, "回归场景", "1", "运行中", "小明", expect.any(String), "-"],
 				[ids.r2, "冒烟场景", "1", "成功", "小红", expect.any(String), "1m05s"],
-				[ids.r1, "回归场景", "1", "失败", "小明 经 Claude Code", expect.any(String), "7s"],
+				[ids.r1, "回归场景", "1", "失败", "小明 经 Claude Code", expect.any(String), "7.0s"],
 			]);
 		});
 
@@ -552,7 +552,7 @@ describe("sfly 只读命令 → 控制面", () => {
 			const result = await cli("run", "list", "--limit", "3");
 			const out = lines(result.stdout);
 			expect(out).toHaveLength(1 + 3 + 1);
-			expect(out.at(-1)).toBe("还有 1 次运行没有显示（共 4 次），加 --limit 4 查看更多");
+			expect(out.at(-1)).toBe("还有 1 次运行没有显示（共 4 次运行），加 --limit 4 查看全部");
 
 			const json = await cli("run", "list", "--limit", "1", "--status", "failed", "--json");
 			expect(JSON.parse(json.stdout)).toHaveLength(1);
@@ -567,7 +567,7 @@ describe("sfly 只读命令 → 控制面", () => {
 			expect(result.stderr).toBe("");
 			const out = lines(result.stdout);
 			expect(out.slice(0, 5)).toEqual([
-				`运行 ${ids.r1}  失败，耗时 7s`,
+				`运行 ${ids.r1}  失败，耗时 7.0s`,
 				`场景 回归场景（${ids.regression}），场景版本 1`,
 				`触发 小明 经 Claude Code，${iso(T0 + 1_000_000)} 开始，${iso(T0 + 1_007_000)} 结束`,
 				"",
@@ -577,7 +577,7 @@ describe("sfly 只读命令 → 控制面", () => {
 			expect(main.map(cells)).toEqual(
 				expect.arrayContaining([
 					["节点", "状态", "尝试", "Agent", "耗时"],
-					["z", "失败", "2", "agent-a", "4s"],
+					["z", "失败", "2", "agent-a", "4.0s"],
 					["a", "已跳过", "0", "agent-a", "-"],
 				]),
 			);
@@ -587,9 +587,9 @@ describe("sfly 只读命令 → 控制面", () => {
 			expect(detail).toEqual([
 				"失败或重试过的节点：",
 				"  main:z  失败，共 2 次尝试",
-				`    #1 失败  agent-a  ${iso(T0 + 1_000_000)}  3s`,
+				`    #1 失败  agent-a  ${iso(T0 + 1_000_000)}  3.0s`,
 				"      node_error：boom 1",
-				`    #2 失败  agent-a  ${iso(T0 + 1_003_000)}  4s`,
+				`    #2 失败  agent-a  ${iso(T0 + 1_003_000)}  4.0s`,
 				"      node_error：boom 2",
 				"",
 				"      Traceback (most recent call last):",
@@ -646,6 +646,9 @@ describe("sfly 只读命令 → 控制面", () => {
 			const out = lines(result.stdout);
 			expect(out[0]).toBe(`运行 ${ids.r3}  运行中`);
 			expect(out[2]).toMatch(/^触发 小明，.+ 开始$/);
+			// 节点状态的用词和界面一致：节点在执行中、还没轮到的节点待执行，运行本身是运行中。
+			expect(out.map(cells)).toContainEqual(["z", "执行中", "1", "agent-a", "-"]);
+			expect(out.map(cells)).toContainEqual(["a", "待执行", "0", "agent-a", "-"]);
 			expect(result.stdout).not.toContain("失败或重试过的节点");
 		});
 

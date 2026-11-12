@@ -40,7 +40,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         parents=[common_options()],
         help="查看一个节点包版本：每个节点类型的标题、输入（类型、默认值、是否必填）和输出",
         description="查看节点包的一个版本。不写版本时看最新版本；写了不存在的版本时报错并列出已有的版本。"
-        "用 sfly dev 加载的开发版本（包名@dev）在 Agent 上，不在这里。",
+        "用 sfly dev 加载的开发版本（包名@dev）在 sfly Agent 上，不在这里。",
     )
     p_show.add_argument("package", metavar="包[@版本]", help="包名，可以加 @版本，例如 demo@1.2.0")
     p_show.set_defaults(func=command(_show))
