@@ -1,5 +1,5 @@
 import { type NodeTypeIo, type PackageCatalog, packageKey } from "@sfly/orchestration";
-import { type AgentView, packagesApi } from "@sfly/schema";
+import { type AgentView, type FeishuBotView, packagesApi } from "@sfly/schema";
 import { useQueries } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { ApiError, apiQuery } from "#/lib/api";
@@ -74,7 +74,17 @@ export function usePackageCatalog(
  * 列表每次轮询都是新对象：名称没变时返回同一个 Set，不让静态检查跟着重算。
  */
 export function useRegisteredAgents(agents: AgentView[] | undefined): Set<string> | undefined {
-	const names = agents?.map((a) => a.name).join("\n");
+	return useNameSet(agents?.map((a) => a.name));
+}
+
+/** 已登记的飞书机器人名称（飞书通知节点的静态检查用）；列表还没加载时为 undefined（只检查有没有选择）。 */
+export function useRegisteredBots(bots: FeishuBotView[] | undefined): Set<string> | undefined {
+	return useNameSet(bots?.map((b) => b.name));
+}
+
+/** 名称列表 → Set；名称没变时返回同一个 Set。 */
+function useNameSet(list: string[] | undefined): Set<string> | undefined {
+	const names = list?.join("\n");
 	return useMemo(
 		() => (names === undefined ? undefined : new Set(names === "" ? [] : names.split("\n"))),
 		[names],

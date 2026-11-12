@@ -162,5 +162,6 @@ export const nodeTypes: Record<SfNode["data"]["node"]["kind"], typeof NodeCard> 
 	timer: NodeCard,
 	sleep: NodeCard,
 	stop_subflow: NodeCard,
+	feishu_notify: NodeCard,
 	package: NodeCard,
 };

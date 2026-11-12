@@ -13,6 +13,7 @@ import {
 } from "@sfly/orchestration";
 import {
 	agentsApi,
+	feishuBotsApi,
 	type OrchestrationHeadView,
 	type OrchestrationNode,
 	type OrchestrationView,
@@ -70,7 +71,7 @@ import {
 	packageGroups,
 } from "./add-node";
 import { companionSubflow } from "./add-subflow";
-import { usePackageCatalog, useRegisteredAgents } from "./catalog";
+import { usePackageCatalog, useRegisteredAgents, useRegisteredBots } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
@@ -194,6 +195,8 @@ function Editor({
 	const packages = useQuery(apiQuery(packagesApi.list));
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: BACKGROUND_POLL_MS });
 	const agentList = agents.data?.agents ?? [];
+	const bots = useQuery({ ...apiQuery(feishuBotsApi.list), refetchInterval: BACKGROUND_POLL_MS });
+	const botList = bots.data?.bots ?? [];
 	const titleOf = usePackageTitles();
 
 	// —— 撤销 / 重做：修改场景的操作都先记下修改前的状态（edit-history.ts） ——
@@ -207,9 +210,10 @@ function Editor({
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages, agentList);
 	const registered = useRegisteredAgents(agents.data?.agents);
+	const registeredBots = useRegisteredBots(bots.data?.bots);
 	const warnings = useMemo(
-		() => documentWarnings(doc, catalog, { agents: registered }),
-		[doc, catalog, registered],
+		() => documentWarnings(doc, catalog, { agents: registered, feishuBots: registeredBots }),
+		[doc, catalog, registered, registeredBots],
 	);
 	const notes = useMemo(() => undeclaredInputNotes(doc, catalog), [doc, catalog]);
 	const versioning = useVersionedDraft(orchestration.id, start, doc);
@@ -562,6 +566,7 @@ function Editor({
 		info,
 		packages: packages.data?.packages,
 		agents: agentList,
+		bots: botList,
 		warnings,
 		notes,
 		fieldErrors,

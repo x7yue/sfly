@@ -322,6 +322,39 @@ export const tasks = pgTable(
 	],
 );
 
+export type FeishuMessageSource = "node" | "notify" | "run_notification";
+export type FeishuMessageStatus = "queued" | "delivered" | "failed" | "discarded";
+
+/**
+ * 飞书发送队列（ADR 0020）：消息先写进这里（飞书通知节点的消息和节点成功在同一个事务里），再由控制面投递
+ * （src/feishu/feishu-delivery.ts）。同一个机器人的消息按 `seq`（入队顺序）串行投递；投递的结果只记在这里和任务日志里，
+ * 从不改变节点、任务、链或运行的状态。`bot_name` 不是外键：机器人删除后，它没有投递的消息记为已丢弃。
+ * 投递记录跟随所属运行的保留期。
+ */
+export const feishuMessages = pgTable(
+	"feishu_messages",
+	{
+		/** 入队顺序。 */
+		seq: bigserial("seq", { mode: "number" }).primaryKey(),
+		botName: text("bot_name").notNull(),
+		source: text("source").$type<FeishuMessageSource>().notNull(),
+		/** 发起这条消息的运行和任务（飞书通知节点、`ctx.notify`、运行通知的运行）；投递结果写进这个任务的日志。 */
+		runId: uuid("run_id").references(() => runs.id),
+		taskId: uuid("task_id").references(() => tasks.id),
+		/** 完整的飞书请求体。 */
+		body: jsonb("body").$type<Record<string, unknown>>().notNull(),
+		/** 入队时间（控制面时间）。 */
+		enqueuedAt: timestamptz("enqueued_at").notNull(),
+		status: text("status").$type<FeishuMessageStatus>().notNull().default("queued"),
+		attempts: integer("attempts").notNull().default(0),
+		/** 最后一次失败（或丢弃）的原因，中文，Webhook 地址已打码。 */
+		lastError: text("last_error"),
+		/** 送达、失败或丢弃的时间。 */
+		finishedAt: timestamptz("finished_at"),
+	},
+	(t) => [index("feishu_messages_queued").on(t.botName, t.seq).where(sql`${t.status} = 'queued'`)],
+);
+
 /**
  * 产物（#18）：任务结束后 Agent 通过 HTTP 上传的文件。同一任务内按名称（产物目录内的相对路径）唯一，
  * 重复上传覆盖。文件在 `<数据目录>/artifacts/<run_id>/<task_id>/<name>`（path 相对数据目录）。

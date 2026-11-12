@@ -51,6 +51,9 @@ const NODE_FIELD: Record<string, string> = {
 	tz: "时区",
 	name: "子流程名称",
 	subflow: "要停止的子流程",
+	bot: "飞书机器人",
+	text: "文本",
+	at_all: "@所有人",
 	package: "节点包",
 	node: "节点类型",
 };

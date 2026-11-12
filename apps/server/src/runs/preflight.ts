@@ -11,6 +11,7 @@ import type { Db } from "../db/database.js";
 import { agents } from "../db/schema.js";
 import { agentFor, type ChainPlan, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
+import { checkFeishuBots, type FeishuBotReference } from "../feishu/bot-checks.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
@@ -147,15 +148,22 @@ export type ParamsCheck = (
 
 /**
  * 触发时按入口参数的实际值检查：「Agent」类型的输入引用入口参数时，取到的 Agent 必须已注册（不要求在线），
- * 版本满足节点包需要的 Agent 版本（`requires_agent`，{@link checkReferencedAgents}）。
- * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过。
+ * 版本满足节点包需要的 Agent 版本（`requires_agent`，{@link checkReferencedAgents}）；
+ * 飞书通知节点引用入口参数的机器人，取到的必须是已登记的飞书机器人（{@link checkFeishuBots}）。
+ * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过
+ * （飞书通知节点在执行时再看一次，机器人不存在时不发送、节点照常成功）。
  */
 export function createParamsCheck(deps: { db: Db; packages: PackageRepository }): ParamsCheck {
 	return async (doc, plan, params) => {
 		const locked = await lockedPackages(doc, deps.packages);
 		const wanted: AgentReference[] = [];
+		const bots: FeishuBotReference[] = [];
 		for (const { chain, params: known, source } of knownParams(plan, params)) {
 			for (const node of chain.nodes) {
+				if (node.kind === "feishu_notify" && node.bot !== undefined) {
+					const bot = referencesIn(node.bot).length > 0 ? resolved(node.bot, known) : undefined;
+					if (typeof bot === "string" && bot !== "") bots.push({ nodeId: node.id, bot, source });
+				}
 				if (node.kind !== "package") continue;
 				const metadata = locked.get(node.package);
 				const type = metadata?.nodes.find((n) => n.name === node.node);
@@ -173,7 +181,10 @@ export function createParamsCheck(deps: { db: Db; packages: PackageRepository })
 				}
 			}
 		}
-		return (await checkReferencedAgents(deps.db, wanted)).problems;
+		return [
+			...(await checkReferencedAgents(deps.db, wanted)).problems,
+			...(await checkFeishuBots(deps.db, bots)),
+		];
 	};
 }
 

@@ -25,6 +25,7 @@ export const BUILTIN_OUTPUTS: Record<Exclude<OrchestrationNode["kind"], "package
 	timer: ["triggered_at", "late"],
 	sleep: ["triggered_at"],
 	stop_subflow: ["status"],
+	feishu_notify: [],
 };
 
 /**
@@ -174,6 +175,11 @@ function referableValues(node: OrchestrationNode): [string, unknown][] {
 			return Object.entries(node.params);
 		case "sleep":
 			return [["duration", node.duration]];
+		case "feishu_notify":
+			return [
+				...(node.bot === undefined ? [] : ([["bot", node.bot]] as [string, unknown][])),
+				["text", node.text],
+			];
 		default:
 			return [];
 	}

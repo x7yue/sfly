@@ -144,7 +144,7 @@ export function buildHttpApi({
 
 	registerAgentRoutes(app, { hub, engine, orchestrations });
 	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
-	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu });
+	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerRunRoutes(app, {
 		db: database.db,

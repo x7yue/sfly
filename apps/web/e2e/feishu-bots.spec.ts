@@ -1,5 +1,5 @@
 import { expect, test } from "./fixtures";
-import { createFeishuBot } from "./support";
+import { createFeishuBot, createScenario } from "./support";
 
 // 飞书机器人管理页（ADR 0020）：登记、Webhook 地址打码、替换、删除、发送测试消息。
 // 机器人的 Webhook 地址指向假的飞书服务（fixtures 的 feishu），它记录收到的请求、按测试指定的状态码和 code 应答。
@@ -192,4 +192,47 @@ test("删除：确认后从列表里消失；取消则保留", async ({ page, co
 	await dialog.getByRole("button", { name: "删除", exact: true }).click();
 	await expect(row(page, "压测群")).toHaveCount(0);
 	await expect(row(page, "告警群")).toBeVisible();
+});
+
+test("删除前列出引用这个机器人的场景：每个场景可以点开，引用它的节点也列出；删除不受影响", async ({
+	page,
+	controlPlane,
+	feishu,
+}) => {
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+	await createFeishuBot(controlPlane, "告警群", feishu.webhookUrl("b"));
+	const notify = (id: string, bot: string) => ({ id, kind: "feishu_notify", bot, text: id });
+	const scenario = await createScenario(controlPlane, "订单压测", {
+		nodes: [
+			{ id: "entry", kind: "entry", params: [] },
+			notify("start", "压测群"),
+			notify("end", "压测群"),
+		],
+		edges: [
+			{ from: "entry", to: "start", kind: "chain" },
+			{ from: "start", to: "end", kind: "chain" },
+		],
+		packages: {},
+	});
+	await page.goto("/feishu-bots");
+
+	// 没有场景引用的机器人：对话框里说明没有引用。
+	await row(page, "告警群").getByRole("button", { name: "删除" }).click();
+	const unused = page.getByRole("dialog", { name: "删除飞书机器人「告警群」？" });
+	await expect(unused).toContainText("没有场景引用这个机器人");
+	await unused.getByRole("button", { name: "取消" }).click();
+
+	await row(page, "压测群").getByRole("button", { name: "删除" }).click();
+	const dialog = page.getByRole("dialog", { name: "删除飞书机器人「压测群」？" });
+	const used = dialog.getByRole("list", { name: "引用这个机器人的场景" });
+	await expect(used.getByRole("listitem")).toHaveCount(1);
+	await expect(used.getByRole("link", { name: "订单压测" })).toHaveAttribute(
+		"href",
+		`/orchestrations/${scenario}`,
+	);
+	await expect(used).toContainText("飞书通知节点 start、飞书通知节点 end");
+	await expect(dialog).toContainText("删除后这些节点发不出消息");
+
+	await dialog.getByRole("button", { name: "删除", exact: true }).click();
+	await expect(row(page, "压测群")).toHaveCount(0);
 });

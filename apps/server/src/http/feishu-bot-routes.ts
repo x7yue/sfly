@@ -1,5 +1,7 @@
 import { feishuBotsApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { Db } from "../db/database.js";
+import { scenariosReferencingBot } from "../feishu/bot-references.js";
 import {
 	type FeishuBots,
 	testMessage,
@@ -15,12 +17,12 @@ const notFound = (reply: FastifyReply, name: string) =>
 	sendError(reply, 404, "not_found", `飞书机器人「${name}」不存在`);
 
 /**
- * 飞书机器人 API（契约见 @sfly/schema 的 feishuBotsApi，ADR 0020）：登记、列表、替换 Webhook 地址、删除，
- * 以及直接同步发一条测试消息。写操作都需要昵称。接口返回的 Webhook 地址一律是打码后的。
+ * 飞书机器人 API（契约见 @sfly/schema 的 feishuBotsApi，ADR 0020）：登记、列表、替换 Webhook 地址、
+ * 删除之前列出引用它的场景、删除，以及直接同步发一条测试消息。写操作都需要昵称。接口返回的 Webhook 地址一律是打码后的。
  */
 export function registerFeishuBotRoutes(
 	app: FastifyInstance,
-	{ bots, client }: { bots: FeishuBots; client: FeishuClient },
+	{ bots, client, db }: { bots: FeishuBots; client: FeishuClient; db: Db },
 ): void {
 	contractRoute(app, feishuBotsApi.list, async () => ({
 		bots: (await bots.list()).map(toFeishuBotView),
@@ -39,6 +41,11 @@ export function registerFeishuBotRoutes(
 		if (!requireNickname(raw, reply)) return reply;
 		const bot = await bots.replaceWebhookUrl(params.name, body.webhook_url);
 		return bot ? toFeishuBotView(bot) : notFound(reply, params.name);
+	});
+
+	contractRoute(app, feishuBotsApi.references, async ({ params }, reply) => {
+		if (!(await bots.get(params.name))) return notFound(reply, params.name);
+		return { scenarios: await scenariosReferencingBot(db, params.name) };
 	});
 
 	contractRoute(app, feishuBotsApi.remove, async ({ params }, reply, raw) => {

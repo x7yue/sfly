@@ -17,6 +17,7 @@ import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
 import { FeishuBots } from "./feishu/feishu-bots.js";
 import { FeishuClient } from "./feishu/feishu-client.js";
+import { FeishuDelivery } from "./feishu/feishu-delivery.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
@@ -81,6 +82,8 @@ export interface ControlPlaneOptions {
 	retentionSweepIntervalMs?: number;
 	/** 定时 / Sleep 节点的定时器扫描间隔（#14），默认 1 秒；是否到期只按注入的时钟判断。 */
 	timerSweepIntervalMs?: number;
+	/** 飞书发送队列的周期扫描间隔（#229，兜底：消息入队时已经立即唤醒投递），默认 1 秒。 */
+	feishuSweepIntervalMs?: number;
 	/** SSE 心跳的间隔，默认 15 秒；每次心跳带上控制面时间。 */
 	sseHeartbeatMs?: number;
 	/** 运行中任务的租约（毫秒），默认 30 秒；Agent 按它的三分之一发送心跳（#15）。 */
@@ -172,6 +175,25 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const preflight = createPreflight({ db: database.db, packages, version });
+	const logs = new TaskLogs({
+		db: database.db,
+		clock,
+		dataDir: options.dataDir,
+		limitBytes: options.logLimitBytes,
+	});
+	// 控制面直接向飞书群机器人的 Webhook 地址发请求（ADR 0020）；代理设置（HTTPS_PROXY、NO_PROXY）在这里读取。
+	const feishu = new FeishuClient();
+	const feishuBots = new FeishuBots({ db: database.db, clock });
+	const feishuDelivery = new FeishuDelivery({
+		db: database.db,
+		clock,
+		bots: feishuBots,
+		client: feishu,
+		logs,
+		onError: (error) => {
+			if (logger) console.error("feishu delivery failed:", error);
+		},
+	});
 	const engine = new Engine({
 		db: database.db,
 		clock,
@@ -182,6 +204,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 		preflight,
 		paramsCheck: createParamsCheck({ db: database.db, packages }),
+		logs,
+		feishuDelivery,
 		leaseMs: options.leaseMs,
 		sdkWheel: (agentVersion) => {
 			const wheel = sdkWheels.find((w) => w.version === agentVersion);
@@ -195,12 +219,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
 	await engine.recover();
-	const logs = new TaskLogs({
-		db: database.db,
-		clock,
-		dataDir: options.dataDir,
-		limitBytes: options.logLimitBytes,
-	});
 	const metricRetention = new MetricRetention({
 		db: database.db,
 		clock,
@@ -225,9 +243,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		retentionDays: options.retentionDays,
 	});
 	const presence = new PresenceRegistry({ clock });
-	// 控制面直接向飞书群机器人的 Webhook 地址发请求（ADR 0020）；代理设置（HTTPS_PROXY、NO_PROXY）在这里读取。
-	const feishu = new FeishuClient();
-	const feishuBots = new FeishuBots({ db: database.db, clock });
 	const api = buildHttpApi({
 		database,
 		clock,
@@ -295,6 +310,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			onError: sessionError,
 		});
 	} catch (error) {
+		feishuDelivery.close();
 		await feishu.close();
 		await api.close();
 		await database.close();
@@ -331,7 +347,15 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		periodic(options.metricFlushIntervalMs ?? 1000, () => metrics.flushDue(), fail("metric flush")),
 		// 定时 / Sleep 节点（#14）：定时器的状态全在 PG（tasks.wake_at），扫描本身无状态。
 		periodic(options.timerSweepIntervalMs ?? 1000, () => engine.wakeTimers(), fail("timer sweep")),
+		// 飞书发送队列（ADR 0020）：消息入队时已经立即唤醒投递，这里兜底（控制面重启前入队的、投递循环出错退出的）。
+		periodic(
+			options.feishuSweepIntervalMs ?? 1000,
+			() => feishuDelivery.wake(),
+			fail("feishu sweep"),
+		),
 	];
+	// 重启前还在排队的消息接着投递。
+	feishuDelivery.wake();
 
 	return {
 		httpUrl,
@@ -346,8 +370,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			await metrics.close().catch(fail("metric flush"));
 			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
 			await mutex.run(async () => {});
-			// 先中断还在等飞书响应的请求，api.close() 才不会等它们。
+			// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
+			feishuDelivery.close();
 			await feishu.close();
+			await feishuDelivery.idle();
 			await api.close();
 			await database.close();
 		},

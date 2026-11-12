@@ -5,6 +5,7 @@ export type EntryNode = Extract<OrchestrationNode, { kind: "entry" }>;
 export type SubflowEntryNode = Extract<OrchestrationNode, { kind: "subflow_entry" }>;
 export type AsyncTaskNode = Extract<OrchestrationNode, { kind: "async" }>;
 export type StopSubflowNode = Extract<OrchestrationNode, { kind: "stop_subflow" }>;
+export type FeishuNotifyNode = Extract<OrchestrationNode, { kind: "feishu_notify" }>;
 
 /** 执行用的链：从起点（入口节点或子流程入口节点）开始按顺序排列的节点。 */
 export interface ChainPlan {
@@ -29,6 +30,7 @@ const SUPPORTED_KINDS = new Set<OrchestrationNode["kind"]>([
 	"timer",
 	"sleep",
 	"stop_subflow",
+	"feishu_notify",
 ]);
 
 /**

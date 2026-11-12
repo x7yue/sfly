@@ -38,6 +38,7 @@ import {
 	agents,
 	chainInstances,
 	type ErrorKind,
+	feishuBots,
 	nodePackages,
 	ON_AGENT,
 	orchestrations,
@@ -45,11 +46,15 @@ import {
 	runs,
 	tasks,
 } from "../db/schema.js";
+import type { FeishuDelivery } from "../feishu/feishu-delivery.js";
+import { enqueueFeishuMessage } from "../feishu/feishu-queue.js";
+import { prepareNotification } from "../feishu/notify-node.js";
 import {
 	type AgentSessionHandler,
 	type RunningTaskRef,
 	runningTaskRef,
 } from "../gateway/agent-gateway.js";
+import type { TaskLogs } from "../logs/task-logs.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
 import type { Mirrors } from "../public-config.js";
@@ -61,6 +66,7 @@ import {
 	type AsyncTaskNode,
 	agentFor,
 	type ChainPlan,
+	type FeishuNotifyNode,
 	type PackageNode,
 	planRun,
 	type RunPlan,
@@ -230,6 +236,10 @@ export class Engine implements AgentSessionHandler {
 			preflight: Preflight;
 			/** 触发时按入口参数的实际值做的检查（src/runs/preflight.ts）。 */
 			paramsCheck: ParamsCheck;
+			/** 控制面自己写任务日志（飞书通知节点的告警，src/logs/task-logs.ts）。 */
+			logs: Pick<TaskLogs, "appendSystem">;
+			/** 飞书发送队列的投递；节点在事务里入队，提交后唤醒它（src/feishu/feishu-delivery.ts）。 */
+			feishuDelivery: Pick<FeishuDelivery, "wake">;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
@@ -684,11 +694,18 @@ export class Engine implements AgentSessionHandler {
 			touchedRuns: new Set(),
 			cancels: [],
 			assigns: [],
+			logs: [],
+			feishuQueued: false,
 		};
 		const result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
 		this.#publish(step.touchedRuns);
 		for (const order of step.cancels) this.#sendCancel(order);
 		for (const { conn, message } of step.assigns) conn.send(message);
+		// 日志只是记录，写不进去不影响已经提交的状态迁移。
+		for (const { taskId, level, text } of step.logs) {
+			await this.deps.logs.appendSystem(taskId, level, text).catch(() => {});
+		}
+		if (step.feishuQueued) this.deps.feishuDelivery.wake();
 		// 派发、失败等迁移可能让 Agent 有了新的排队任务或空出槽位。
 		for (const agent of step.touchedAgents) await this.#dispatch(agent);
 		return result;
@@ -787,6 +804,10 @@ export class Engine implements AgentSessionHandler {
 			if (node.kind === "async") {
 				// 失败时 #failTask 已经推进了这条链的剩余部分。
 				if (!(await this.#spawn(step, run, chain, plan, i, node))) return;
+				continue;
+			}
+			if (node.kind === "feishu_notify") {
+				await this.#notifyFeishu(step, run, chain, plan, i, node);
 				continue;
 			}
 			if (isWaitNode(node)) {
@@ -890,6 +911,57 @@ export class Engine implements AgentSessionHandler {
 			.onConflictDoNothing();
 		if (child) await this.#advance(step, run, child, 0);
 		return true;
+	}
+
+	/**
+	 * 飞书通知节点（§1.3）：解析输入、组装请求体、写进发送队列，在同一个事务里把节点记为成功（没有输出）；
+	 * 投递是之后的事，结果只写进这个节点的日志，从不改变节点和运行的状态（ADR 0020）。
+	 * 解析或组装出错、机器人不存在时节点同样成功，消息不发送，原因在节点日志里写一条 warning：通知不会成为失败的原因。
+	 */
+	async #notifyFeishu(
+		step: Step,
+		run: RunRow,
+		chain: ChainRow,
+		plan: ChainPlan,
+		index: number,
+		node: FeishuNotifyNode,
+	): Promise<void> {
+		const prepared = prepareNotification(node, await this.#scope(step.tx, chain, plan, index));
+		let problem = prepared.ok ? undefined : prepared.problem;
+		if (prepared.ok) {
+			const [bot] = await step.tx
+				.select({ name: feishuBots.name })
+				.from(feishuBots)
+				.where(eq(feishuBots.name, prepared.bot));
+			if (!bot) problem = `飞书机器人「${prepared.bot}」不存在，可能已被删除`;
+		}
+		const [task] = await step.tx
+			.insert(tasks)
+			.values({
+				...firstAttempt(run, chain, node.id, step.now),
+				status: "success",
+				inputs: prepared.inputs,
+				outputs: {},
+				startedAt: step.now,
+				endedAt: step.now,
+			})
+			.onConflictDoNothing()
+			.returning();
+		// 重放时任务已经存在：消息已经入队（或告警已经写过）。
+		if (!task) return;
+		if (prepared.ok && problem === undefined) {
+			await enqueueFeishuMessage(step.tx, {
+				botName: prepared.bot,
+				source: "node",
+				runId: run.id,
+				taskId: task.id,
+				body: prepared.body,
+				now: step.now,
+			});
+			step.feishuQueued = true;
+		} else {
+			step.logs.push({ taskId: task.id, level: "warn", text: `消息没有发送：${problem}` });
+		}
 	}
 
 	/**
@@ -1064,7 +1136,8 @@ export class Engine implements AgentSessionHandler {
 			: [];
 		const earlierOutputs = new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
 		const node = plan.nodes[index];
-		const missingAsNull = node !== undefined && isAlways(node);
+		// 飞书通知节点无论是否 always 都按 always 的规则解析（§1.3）：通知不会成为失败的原因。
+		const missingAsNull = node !== undefined && (isAlways(node) || node.kind === "feishu_notify");
 		if (missingAsNull) {
 			for (const id of earlierIds) if (!earlierOutputs.has(id)) earlierOutputs.set(id, {});
 		}

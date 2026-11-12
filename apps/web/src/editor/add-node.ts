@@ -7,7 +7,7 @@ import { DEFAULT_TZ } from "./inspector/wait-nodes";
 
 /** 添加节点菜单里的一项：内置节点，或某个节点包版本里的节点类型。 */
 export type AddItem =
-	| { kind: "timer" | "sleep" | "stop_subflow" }
+	| { kind: "timer" | "sleep" | "stop_subflow" | "feishu_notify" }
 	/** 异步任务：勾选「同时新建子流程」时带上子流程名称，一并新建子流程入口和调度连线（#187）。 */
 	| { kind: "async"; subflow?: string }
 	/** 子流程入口：新建时必须填写名称（SEMANTICS §1.2）。 */
@@ -19,6 +19,7 @@ export const BUILTIN_ITEMS: { kind: Exclude<AddItem["kind"], "package">; hint: s
 	{ kind: "timer", hint: "等到某个时刻" },
 	{ kind: "sleep", hint: "等待一段时长" },
 	{ kind: "stop_subflow", hint: "停止本链触发的子流程" },
+	{ kind: "feishu_notify", hint: "向飞书群发一条消息" },
 	{ kind: "subflow_entry", hint: "新建子流程区域" },
 ];
 
@@ -111,6 +112,9 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 		case "stop_subflow":
 			// 要停止的子流程在检查器里按名称选择（只列出合法候选）。
 			return { id, kind: "stop_subflow", always: false };
+		case "feishu_notify":
+			// 飞书机器人在检查器里选择。
+			return { id, kind: "feishu_notify", always: false, text: "", at_all: false };
 	}
 }
 

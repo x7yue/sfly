@@ -94,6 +94,7 @@ export const OrchestrationStructure = z.object({
 				"timer",
 				"sleep",
 				"stop_subflow",
+				"feishu_notify",
 				"package",
 			]),
 		}),

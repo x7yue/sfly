@@ -21,6 +21,7 @@ const NODE_KINDS = [
 	"timer",
 	"sleep",
 	"stop_subflow",
+	"feishu_notify",
 	"package",
 ] as const satisfies readonly OrchestrationNode["kind"][];
 

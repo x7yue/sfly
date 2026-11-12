@@ -10,7 +10,7 @@ import {
 	stopCandidates,
 	timerTarget,
 } from "@sfly/orchestration";
-import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
+import type { AgentView, FeishuBotView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { useId, useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { controlPlaneNow } from "#/lib/control-plane-time";
@@ -24,13 +24,15 @@ import { Switch } from "@/components/ui/switch";
 import { agentsWithDev } from "../catalog";
 import { draftKey, useParsedField } from "../field-drafts";
 import { AgentSelect } from "./AgentSelect";
+import { FeishuBotSelect } from "./FeishuBotSelect";
 import { Field, SectionTitle } from "./fields";
 import {
 	InsertReferenceButton,
 	ReferenceEditor,
 	type ReferenceEditorHandle,
 } from "./ReferenceEditor";
-import type { ReferenceChoice } from "./reference-completion";
+import { ReferenceChip, ReferencePicker } from "./ReferencePicker";
+import { type ReferenceChoice, wholeReference } from "./reference-completion";
 import { ParsedError, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
 import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
@@ -41,7 +43,8 @@ type AsyncNode = Extract<DocNode, { kind: "async" }>;
 type TimerNode = Extract<DocNode, { kind: "timer" }>;
 type SleepNode = Extract<DocNode, { kind: "sleep" }>;
 type StopSubflowNode = Extract<DocNode, { kind: "stop_subflow" }>;
-type AlwaysNode = PackageNode | TimerNode | SleepNode | StopSubflowNode;
+type FeishuNotifyNode = Extract<DocNode, { kind: "feishu_notify" }>;
+type AlwaysNode = PackageNode | TimerNode | SleepNode | StopSubflowNode | FeishuNotifyNode;
 
 /** 某个字段的静态检查警告（不阻止保存）。 */
 export type ProblemsOf = (input: string) => string[];
@@ -157,7 +160,7 @@ const SETTINGS = [
 	},
 ] as const;
 
-/** 执行设置：超时、重试次数、排队超时（包节点），always（包节点、定时、Sleep、停止子流程）。 */
+/** 执行设置：超时、重试次数、排队超时（包节点），always（包节点、定时、Sleep、停止子流程、飞书通知）。 */
 export function ExecutionSettings({
 	id,
 	node,
@@ -681,6 +684,123 @@ export function SleepForm({
 				/>
 			</div>
 		</Field>
+	);
+}
+
+/**
+ * 飞书通知节点（docs/SEMANTICS.md §1.3，ADR 0020）：已登记的飞书机器人（下拉框，也可以改为整值引用入口参数）、
+ * 文本（文字和引用混写）和「@所有人」开关。消息由控制面发出，节点立即成功。
+ */
+export function FeishuNotifyForm({
+	node,
+	bots,
+	choices,
+	problemsOf,
+	onChange,
+}: {
+	node: FeishuNotifyNode;
+	bots: readonly FeishuBotView[];
+	choices: ReferenceChoice[];
+	problemsOf: ProblemsOf;
+	onChange(node: FeishuNotifyNode): void;
+}) {
+	const botId = useId();
+	const textId = useId();
+	const atAllId = useId();
+	const editor = useRef<ReferenceEditorHandle>(null);
+	const botProblems = problemsOf("bot");
+	const textProblems = problemsOf("text");
+	// 机器人只能引用入口参数：这样触发时就能检查它是已登记的机器人。
+	const paramChoices = choices.filter((c) => c.kind === "param");
+	const setBot = (bot: string | undefined) => {
+		const { bot: _old, ...rest } = node;
+		onChange(bot === undefined ? rest : { ...rest, bot });
+	};
+	const botLabel = "飞书机器人";
+	const referenced = node.bot !== undefined && wholeReference(node.bot) !== undefined;
+	const picker = (
+		<ReferencePicker
+			name={botLabel}
+			choices={paramChoices}
+			onPick={(choice) => setBot(choice.text)}
+		/>
+	);
+	return (
+		<>
+			<Field
+				label={botLabel}
+				htmlFor={botId}
+				required
+				error={botProblems.length > 0 ? botProblems.join("；") : undefined}
+				help="在「飞书机器人」页登记；也可以引用入口参数，触发时决定发到哪个群"
+				aside={picker}
+			>
+				{referenced ? (
+					<ReferenceChip
+						label={botLabel}
+						name="机器人"
+						value={node.bot as string}
+						invalid={botProblems.length > 0}
+						onRemove={() => setBot(undefined)}
+					/>
+				) : (
+					<FeishuBotSelect
+						id={botId}
+						label={botLabel}
+						value={node.bot}
+						bots={bots}
+						emptyLabel="（选择机器人）"
+						invalid={botProblems.length > 0}
+						onChange={setBot}
+					/>
+				)}
+			</Field>
+			<Field
+				label="文本"
+				htmlFor={textId}
+				error={textProblems.length > 0 ? textProblems.join("；") : undefined}
+				aside={
+					<ReferenceActions
+						editor={editor}
+						name="文本"
+						label="文本"
+						value={node.text}
+						choices={choices}
+						placeholder="消息内容"
+						invalid={textProblems.length > 0}
+						error={textProblems.join("；")}
+						onChange={(text) => onChange({ ...node, text })}
+					/>
+				}
+				help="可以输入 $ 或点「插入引用」写入入口参数和前面节点的输出；引用缺失时显示 null"
+			>
+				<ReferenceEditor
+					ref={editor}
+					id={textId}
+					label="文本"
+					value={node.text}
+					choices={choices}
+					placeholder="消息内容"
+					invalid={textProblems.length > 0}
+					onChange={(text) => onChange({ ...node, text })}
+				/>
+			</Field>
+			<Field label="@所有人" htmlFor={atAllId}>
+				<div className="flex h-7.5 items-center gap-2.5">
+					<Switch
+						id={atAllId}
+						aria-label="@所有人"
+						checked={node.at_all}
+						onCheckedChange={(at_all) => onChange({ ...node, at_all })}
+					/>
+					<span className="text-xs text-fg-3">在正文末尾追加 @所有人</span>
+				</div>
+			</Field>
+			<p className="m-0 text-xs text-fg-3">
+				消息交给控制面的发送队列后节点立即成功；发不出去（飞书不可达、机器人不存在……）不会让节点或运行失败，
+				原因写在节点日志里。
+			</p>
+		</>
 	);
 }
 

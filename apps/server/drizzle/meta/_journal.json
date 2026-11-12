@@ -134,6 +134,13 @@
       "when": 1794455932961,
       "tag": "0018_feishu_bots",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794458113301,
+      "tag": "0019_feishu_messages",
+      "breakpoints": true
     }
   ]
 }

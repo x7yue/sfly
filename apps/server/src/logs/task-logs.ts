@@ -220,58 +220,95 @@ export class TaskLogs {
 		return this.#serial(batch.taskId, async () => {
 			const state = await this.#stateFor(batch.taskId, agentName);
 			if (!state || state.truncated) return;
-			// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。
-			state.secrets = await this.#currentSecrets(state.runId);
-			const lines: LogLineView[] = [];
-			let text = "";
-			let bytes = state.bytes;
-			let seq = state.seq;
-			let truncated = false;
-			for (const line of batch.lines) {
-				const n = Number(line.seq);
-				if (n <= seq) continue;
-				seq = n;
-				const view: LogLineView = {
-					seq: n,
+			await this.#write(
+				batch.taskId,
+				state,
+				batch.lines.map((line) => ({
+					seq: Number(line.seq),
 					time: controlPlaneTime(line.monotonicMs).toISOString(),
 					agent_time: agentTime(line.timeUnixMs),
 					source: SOURCES[line.source] ?? "stdout",
 					level: LEVELS[line.level] ?? "info",
-					text: maskSecrets(line.text, state.secrets),
-				};
-				let row = `${JSON.stringify(view)}\n`;
-				if (bytes + Buffer.byteLength(row) > this.#limit) {
-					// 放不下：这一行换成截断标记，之后的行全部丢弃。
-					view.source = "system";
-					view.level = "warn";
-					view.text = `日志超过 ${formatBytes(this.#limit)} 上限，之后的内容已被截断`;
-					row = `${JSON.stringify(view)}\n`;
-					truncated = true;
-				}
-				lines.push(view);
-				text += row;
-				bytes += Buffer.byteLength(row);
-				if (truncated) break;
-			}
-			if (lines.length === 0) return;
-			const file = join(this.deps.dataDir, state.path);
-			await mkdir(dirname(file), { recursive: true });
-			await appendFile(file, text);
-			const offset = state.bytes;
-			state.bytes = bytes;
-			state.seq = seq;
-			state.truncated = truncated;
-			await this.deps.db
-				.update(tasks)
-				.set({
-					logPath: state.path,
-					logBytes: state.bytes,
-					logSeq: state.seq,
-					logTruncated: truncated,
-				})
-				.where(eq(tasks.id, batch.taskId));
-			this.lines.publish(batch.taskId, { task_id: batch.taskId, lines, offset });
+					text: line.text,
+				})),
+			);
 		});
+	}
+
+	/**
+	 * 控制面自己写一行日志（source `system`，控制面时间取当前时钟）：飞书通知节点的解析告警和投递结果
+	 * （docs/SEMANTICS.md §1.3）。任何任务都可以写，包括没有 Agent 的内置节点；序号接在已写入的最大序号后面。
+	 * 与同一任务的其他写入串行执行；任务不存在、日志已被截断时什么也不写。
+	 */
+	appendSystem(taskId: string, level: LogLineView["level"], text: string): Promise<void> {
+		return this.#serial(taskId, async () => {
+			const state = await this.#state(taskId);
+			if (!state || state.truncated) return;
+			await this.#write(taskId, state, [
+				{
+					seq: state.seq + 1,
+					time: this.deps.clock.now().toISOString(),
+					agent_time: null,
+					source: "system",
+					level,
+					text,
+				},
+			]);
+		});
+	}
+
+	/**
+	 * 把若干行追加到任务的日志文件：序号不大于已写入的最大序号的行视为重复丢弃；secret 的值写入前打码；
+	 * 放不下的第一行换成截断标记，之后的行全部丢弃（#18）。调用方在 {@link TaskLogs.#serial} 里调用。
+	 */
+	async #write(
+		taskId: string,
+		state: TaskState,
+		entries: ReadonlyArray<Omit<LogLineView, "text"> & { text: string }>,
+	): Promise<void> {
+		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。
+		state.secrets = await this.#currentSecrets(state.runId);
+		const lines: LogLineView[] = [];
+		let text = "";
+		let bytes = state.bytes;
+		let seq = state.seq;
+		let truncated = false;
+		for (const entry of entries) {
+			if (entry.seq <= seq) continue;
+			seq = entry.seq;
+			const view: LogLineView = { ...entry, text: maskSecrets(entry.text, state.secrets) };
+			let row = `${JSON.stringify(view)}\n`;
+			if (bytes + Buffer.byteLength(row) > this.#limit) {
+				// 放不下：这一行换成截断标记，之后的行全部丢弃。
+				view.source = "system";
+				view.level = "warn";
+				view.text = `日志超过 ${formatBytes(this.#limit)} 上限，之后的内容已被截断`;
+				row = `${JSON.stringify(view)}\n`;
+				truncated = true;
+			}
+			lines.push(view);
+			text += row;
+			bytes += Buffer.byteLength(row);
+			if (truncated) break;
+		}
+		if (lines.length === 0) return;
+		const file = join(this.deps.dataDir, state.path);
+		await mkdir(dirname(file), { recursive: true });
+		await appendFile(file, text);
+		const offset = state.bytes;
+		state.bytes = bytes;
+		state.seq = seq;
+		state.truncated = truncated;
+		await this.deps.db
+			.update(tasks)
+			.set({
+				logPath: state.path,
+				logBytes: state.bytes,
+				logSeq: state.seq,
+				logTruncated: truncated,
+			})
+			.where(eq(tasks.id, taskId));
+		this.lines.publish(taskId, { task_id: taskId, lines, offset });
 	}
 
 	/** 记录最新进度（只接受任务所在 Agent 上报的）；与同一任务的日志追加串行执行。 */

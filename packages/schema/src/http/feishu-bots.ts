@@ -54,6 +54,21 @@ export const FeishuTestResult = z.object({
 	http_status: z.number().int().nullable(),
 });
 
+/**
+ * 一处引用飞书机器人的地方。`kind` 区分引用的种类：飞书通知节点（`feishu_notify_node`）；
+ * 运行通知的设置和「飞书机器人」类型的输入的常量值会随各自的功能加进来。
+ */
+export const FeishuBotReference = z.discriminatedUnion("kind", [
+	z.object({ kind: z.literal("feishu_notify_node"), node_id: z.string() }),
+]);
+
+/** 引用了某个飞书机器人的场景，和场景里引用它的地方。 */
+export const FeishuBotScenario = z.object({
+	orchestration_id: z.string(),
+	name: z.string(),
+	references: z.array(FeishuBotReference).min(1),
+});
+
 const NameParams = z.object({ name: z.string().min(1) });
 
 export const feishuBotsApi = {
@@ -93,6 +108,17 @@ export const feishuBotsApi = {
 				: undefined,
 		response: FeishuBotView,
 	}),
+	/**
+	 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里的飞书通知节点，
+	 * 按场景名排序；已归档的场景不列。机器人不存在 404 `not_found`。
+	 */
+	references: endpoint({
+		method: "GET",
+		path: "/feishu-bots/:name/references",
+		key: ["feishu-bots", "references"],
+		params: NameParams,
+		response: z.object({ scenarios: z.array(FeishuBotScenario) }),
+	}),
 	/** 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。 */
 	remove: endpoint({
 		method: "DELETE",
@@ -116,3 +142,5 @@ export const feishuBotsApi = {
 
 export type FeishuBotView = z.infer<typeof FeishuBotView>;
 export type FeishuTestResult = z.infer<typeof FeishuTestResult>;
+export type FeishuBotReference = z.infer<typeof FeishuBotReference>;
+export type FeishuBotScenario = z.infer<typeof FeishuBotScenario>;

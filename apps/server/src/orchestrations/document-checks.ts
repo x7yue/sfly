@@ -7,7 +7,7 @@ import {
 } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import type { Db } from "../db/database.js";
-import { agents } from "../db/schema.js";
+import { agents, feishuBots } from "../db/schema.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 
 /** 开发版本只在本地开发模式的 Agent 上存在，控制面不知道它的元信息，跳过相关检查。 */
@@ -32,17 +32,23 @@ export async function registeredAgents(db: Db): Promise<Set<string>> {
 	return new Set((await db.select({ name: agents.name }).from(agents)).map((r) => r.name));
 }
 
+/** 已登记的全部飞书机器人（名称）。 */
+export async function registeredFeishuBots(db: Db): Promise<Set<string>> {
+	return new Set((await db.select({ name: feishuBots.name }).from(feishuBots)).map((r) => r.name));
+}
+
 /**
- * 文档的全部静态检查（结构、包版本锁定、引用、输入，「Agent」类型的输入选的是已注册的 Agent），
- * 规则与画布共用（@sfly/orchestration）。
+ * 文档的全部静态检查（结构、包版本锁定、引用、输入，「Agent」类型的输入选的是已注册的 Agent，
+ * 飞书通知节点选的是已登记的飞书机器人），规则与画布共用（@sfly/orchestration）。
  */
 export async function checkDocument(
 	doc: OrchestrationDocument,
 	deps: { db: Db; packages: PackageRepository },
 ): Promise<OrchestrationWarning[]> {
-	const [catalog, registered] = await Promise.all([
+	const [catalog, registered, bots] = await Promise.all([
 		packageCatalogFor(doc, deps.packages),
 		registeredAgents(deps.db),
+		registeredFeishuBots(deps.db),
 	]);
-	return documentWarnings(doc, catalog, { agents: registered });
+	return documentWarnings(doc, catalog, { agents: registered, feishuBots: bots });
 }

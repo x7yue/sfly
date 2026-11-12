@@ -26,6 +26,10 @@ export interface Step {
 	cancels: CancelOrder[];
 	/** 提交后发给 Agent 的派发消息。 */
 	assigns: Array<{ conn: AgentConnection; message: ServerMessage }>;
+	/** 提交后写进任务日志的控制面日志行（source system）：日志文件不在事务里，事务回滚时不该留下它们。 */
+	logs: Array<{ taskId: string; level: "info" | "warn"; text: string }>;
+	/** 这个事务往飞书发送队列里写了消息：提交后唤醒投递（FeishuDelivery.wake）。 */
+	feishuQueued: boolean;
 }
 
 export interface CancelOrder {

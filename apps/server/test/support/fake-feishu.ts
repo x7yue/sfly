@@ -19,6 +19,8 @@ export interface FeishuReply {
 	body?: string;
 	/** 不响应：请求收到后连接一直保持打开，直到服务关闭。 */
 	hang?: true;
+	/** 收到请求后等这么久（真实时间，毫秒）再响应：用来观察同一时刻有几个请求在途（{@link FakeFeishu.maxInFlight}）。 */
+	delayMs?: number;
 }
 
 export interface FeishuRequest {
@@ -41,6 +43,8 @@ export interface FakeFeishu {
 	webhookUrl(token?: string): string;
 	/** 收到的请求，按到达顺序。 */
 	readonly requests: readonly FeishuRequest[];
+	/** 同一时刻在途请求（收到之后、响应结束之前）的最大数量；不响应的请求一直算在途。 */
+	readonly maxInFlight: number;
 	/** 作为 HTTPS 代理收到的 CONNECT 请求的目标（`主机:端口`），按到达顺序。 */
 	readonly connects: readonly string[];
 	/** 排好后面请求的应答：按到达顺序一个请求用掉一个，用完后用 {@link replyAlways} 的应答（默认 200、code 0）。 */
@@ -64,6 +68,8 @@ export async function startFakeFeishu(): Promise<FakeFeishu> {
 	const queued: FeishuReply[] = [];
 	let fallback = ok;
 	const sockets = new Set<Socket>();
+	let inFlight = 0;
+	let maxInFlight = 0;
 
 	const server = createServer((req, res) => {
 		const chunks: Buffer[] = [];
@@ -87,9 +93,16 @@ export async function startFakeFeishu(): Promise<FakeFeishu> {
 				viaProxy,
 			});
 			const reply = queued.shift() ?? fallback;
+			maxInFlight = Math.max(maxInFlight, ++inFlight);
 			if (reply.hang) return;
-			res.writeHead(reply.status ?? 200, { "content-type": "application/json; charset=utf-8" });
-			res.end(responseBody(reply));
+			const respond = () => {
+				res.writeHead(reply.status ?? 200, { "content-type": "application/json; charset=utf-8" });
+				res.end(responseBody(reply), () => {
+					inFlight--;
+				});
+			};
+			if (reply.delayMs) setTimeout(respond, reply.delayMs).unref();
+			else respond();
 		});
 	});
 	server.on("connection", (socket) => {
@@ -107,6 +120,9 @@ export async function startFakeFeishu(): Promise<FakeFeishu> {
 		origin,
 		webhookUrl: (token = "default-token") => `${origin}/open-apis/bot/v2/hook/${token}`,
 		requests,
+		get maxInFlight() {
+			return maxInFlight;
+		},
 		connects,
 		reply: (...replies) => {
 			queued.push(...replies);

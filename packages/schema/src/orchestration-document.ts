@@ -79,6 +79,21 @@ export const StopSubflowNode = z.strictObject({
 	subflow: z.string().min(1).optional(),
 });
 
+export const FeishuNotifyNode = z.strictObject({
+	...nodeBase,
+	kind: z.literal("feishu_notify"),
+	always: z.boolean().default(false),
+	/**
+	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §1.3）。
+	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝。
+	 */
+	bot: z.string().min(1).optional(),
+	/** 消息文本，支持内嵌引用。 */
+	text: z.string().default(""),
+	/** 在正文末尾追加 `<at user_id="all">所有人</at>`。 */
+	at_all: z.boolean().default(false),
+});
+
 export const PackageNode = z.strictObject({
 	...nodeBase,
 	kind: z.literal("package"),
@@ -102,6 +117,7 @@ export const OrchestrationNode = z.discriminatedUnion("kind", [
 	TimerNode,
 	SleepNode,
 	StopSubflowNode,
+	FeishuNotifyNode,
 	PackageNode,
 ]);
 

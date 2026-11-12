@@ -1,14 +1,16 @@
 import {
 	domainKey,
 	FEISHU_BOT_NAME_MAX,
+	type FeishuBotReference,
 	type FeishuBotView,
 	feishuBotsApi,
 	isHttpUrl,
 } from "@sfly/schema";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
-import { callApi } from "#/lib/api";
+import { apiQuery, callApi } from "#/lib/api";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -223,7 +225,59 @@ export function ReplaceWebhookDialog({
 	);
 }
 
-/** 删除确认。 */
+/** 一处引用的说明（场景里的哪个地方）。 */
+const referenceText = (reference: FeishuBotReference): string => {
+	switch (reference.kind) {
+		case "feishu_notify_node":
+			return `飞书通知节点 ${reference.node_id}`;
+	}
+};
+
+/** 引用这个机器人的场景：删除之前列出，让人知道删除会影响哪些场景。 */
+function BotReferences({ bot, enabled }: { bot: FeishuBotView; enabled: boolean }) {
+	const references = useQuery({
+		...apiQuery(feishuBotsApi.references, { params: { name: bot.name } }),
+		enabled,
+	});
+	if (references.isPending)
+		return <p className="m-0 text-xs text-fg-3">正在查找引用这个机器人的场景…</p>;
+	if (references.isError) {
+		return (
+			<p role="alert" className="m-0 text-xs text-danger-fg">
+				无法查找引用这个机器人的场景：{errorText(references.error)}
+			</p>
+		);
+	}
+	const { scenarios } = references.data;
+	if (scenarios.length === 0) {
+		return <p className="m-0 text-xs text-fg-2">没有场景引用这个机器人。</p>;
+	}
+	return (
+		<div className="flex flex-col gap-1.5">
+			<p className="m-0 text-xs text-fg-2">
+				下面 {scenarios.length}{" "}
+				个场景的最新版本引用了这个机器人。删除后这些节点发不出消息（飞书通知节点只在日志里留下
+				warning，不影响节点和运行的结果），保存时会有警告，触发时会被拦下。
+			</p>
+			<ul aria-label="引用这个机器人的场景" className="m-0 flex list-none flex-col gap-1 p-0">
+				{scenarios.map((s) => (
+					<li key={s.orchestration_id} className="flex flex-col text-xs">
+						<Link
+							to="/orchestrations/$id"
+							params={{ id: s.orchestration_id }}
+							className="w-fit text-fg-1 underline underline-offset-2"
+						>
+							{s.name}
+						</Link>
+						<span className="text-fg-3">{s.references.map(referenceText).join("、")}</span>
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
+/** 删除确认；先列出引用这个机器人的场景。 */
 export function DeleteBotDialog({
 	bot,
 	open,
@@ -252,6 +306,7 @@ export function DeleteBotDialog({
 						删除后，这个名称不再对应任何机器人，之后可以用同一个名称重新登记。飞书群里的机器人不受影响。
 					</DialogDescription>
 				</DialogHeader>
+				<BotReferences bot={bot} enabled={open} />
 				<DialogFooter>
 					<Button variant="ghost" onClick={() => onOpenChange(false)}>
 						取消

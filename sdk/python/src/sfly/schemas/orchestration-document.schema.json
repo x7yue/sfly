@@ -352,6 +352,56 @@
               },
               "kind": {
                 "type": "string",
+                "const": "feishu_notify"
+              },
+              "always": {
+                "default": false,
+                "type": "boolean"
+              },
+              "bot": {
+                "type": "string",
+                "minLength": 1
+              },
+              "text": {
+                "default": "",
+                "type": "string"
+              },
+              "at_all": {
+                "default": false,
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "position": {
+                "type": "object",
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "x",
+                  "y"
+                ],
+                "additionalProperties": false
+              },
+              "kind": {
+                "type": "string",
                 "const": "package"
               },
               "always": {

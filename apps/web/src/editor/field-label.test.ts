@@ -61,6 +61,16 @@ describe("字段错误的位置说明", () => {
 		const stop: OrchestrationNode = { id: "stop", kind: "stop_subflow", always: false };
 		expect(fieldLabel(stop, "subflow")).toBe("要停止的子流程");
 		expect(fieldLabel(stop, "id")).toBe("节点 ID");
+		const notify: OrchestrationNode = {
+			id: "notify",
+			kind: "feishu_notify",
+			always: false,
+			text: "",
+			at_all: false,
+		};
+		expect(fieldLabel(notify, "bot")).toBe("飞书机器人");
+		expect(fieldLabel(notify, "text")).toBe("文本");
+		expect(fieldLabel(notify, "at_all")).toBe("@所有人");
 	});
 
 	it("场景级字段", () => {
