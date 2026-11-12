@@ -158,6 +158,8 @@ export const RunView = z.object({
 	orchestration_version: z.number().int(),
 	status: RunStatus,
 	triggered_by: z.string(),
+	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
+	triggered_via: z.string().nullable(),
 	params: z.record(z.string(), z.unknown()),
 	started_at: Timestamp,
 	ended_at: Timestamp.nullable(),
@@ -165,6 +167,8 @@ export const RunView = z.object({
 	cancel: z
 		.object({
 			requested_by: z.string(),
+			/** 经哪个 AI 编程助手取消；没有时为 null。 */
+			requested_via: z.string().nullable(),
 			requested_at: Timestamp,
 			forced_at: Timestamp.nullable(),
 		})
@@ -185,6 +189,7 @@ export const RunSummary = RunView.pick({
 	orchestration_version: true,
 	status: true,
 	triggered_by: true,
+	triggered_via: true,
 	started_at: true,
 	ended_at: true,
 }).extend({

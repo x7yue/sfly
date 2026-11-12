@@ -62,6 +62,8 @@ export const OrchestrationHeadView = z.object({
 	orchestration_id: z.string(),
 	number: z.number().int(),
 	author: z.string().nullable(),
+	/** 经哪个 AI 编程助手保存；没有版本或没有经助手时为 null。 */
+	author_via: z.string().nullable(),
 	created_at: Timestamp.nullable(),
 	document: OrchestrationDocument,
 });
@@ -69,6 +71,8 @@ export const OrchestrationHeadView = z.object({
 export const VersionSummaryView = z.object({
 	number: z.number().int(),
 	author: z.string(),
+	/** 经哪个 AI 编程助手保存（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
+	author_via: z.string().nullable(),
 	created_at: Timestamp,
 });
 
@@ -78,6 +82,7 @@ export const OrchestrationVersionView = z.object({
 	orchestration_id: z.string(),
 	number: z.number().int(),
 	author: z.string(),
+	author_via: z.string().nullable(),
 	created_at: Timestamp,
 	document: OrchestrationDocument,
 });

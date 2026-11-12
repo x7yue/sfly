@@ -54,7 +54,12 @@ describe("编排版本：冲突、历史与恢复", () => {
 				message: expect.any(String),
 				details: {
 					base_version: 1,
-					head: { number: 2, author: "bob", created_at: "2026-02-01T09:30:00.000Z" },
+					head: {
+						number: 2,
+						author: "bob",
+						author_via: null,
+						created_at: "2026-02-01T09:30:00.000Z",
+					},
 				},
 			},
 		});
@@ -94,8 +99,8 @@ describe("编排版本：冲突、历史与恢复", () => {
 		expect(orchestrationsApi.versions.response.parse(history)).toEqual(history);
 		expect(history).toEqual({
 			versions: [
-				{ number: 2, author: "小明", created_at: "2026-03-02T00:00:00.000Z" },
-				{ number: 1, author: "alice", created_at: "2026-03-01T00:00:00.000Z" },
+				{ number: 2, author: "小明", author_via: null, created_at: "2026-03-02T00:00:00.000Z" },
+				{ number: 1, author: "alice", author_via: null, created_at: "2026-03-01T00:00:00.000Z" },
 			],
 		});
 		expect(

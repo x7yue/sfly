@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { ChainBars } from "#/components/chain-progress";
 import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusPill } from "#/components/status";
+import { ViaTag } from "#/components/via-tag";
 import { chainLabel } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 
@@ -57,8 +58,13 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 		col.display({
 			id: "triggered_by",
 			header: "触发人",
-			meta: { className: "max-w-40 truncate" },
-			cell: ({ row }) => row.original.triggered_by,
+			meta: { className: "max-w-56 truncate" },
+			cell: ({ row }) => (
+				<>
+					{row.original.triggered_by}
+					<ViaTag via={row.original.triggered_via} className="text-fg-3" />
+				</>
+			),
 		}),
 		col.display({
 			id: "started_at",
