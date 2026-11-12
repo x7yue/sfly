@@ -10,7 +10,7 @@ import {
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
-import { DownloadIcon } from "lucide-react";
+import { DownloadIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { nodeStatusView, StatusPill } from "#/components/status";
@@ -24,6 +24,7 @@ import {
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
+import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { attemptAgentTimes } from "./attempt-clock";
@@ -94,13 +95,16 @@ const ERROR_KIND_LABEL: Record<string, string> = {
  * 节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
  * 页签与展开状态在共享状态里（顶栏的失败摘要会切到「尝试」页签）。用户还没有展开 / 收起、拖动或切换过页签时，
  * 日志页签没有内容（选中的节点还没开始、或日志加载完是空的）就自动收起，把高度让给图表；日志到了再自动展开。
+ * fill（图表工作区收成了一行，见 chartsCompact）：展开时占满图表工作区下面的全部高度（不低于默认高度），拖动调整后用拖动的高度。
  */
 export function BottomPanel({
 	run,
 	doc,
+	fill,
 }: {
 	run: RunView;
 	doc: OrchestrationDocument | undefined;
+	fill: boolean;
 }) {
 	const selected = useMonitor((s) => s.selected);
 	const zoom = useMonitor((s) => s.zoom);
@@ -144,12 +148,13 @@ export function BottomPanel({
 	const empty = tab === "logs" && ((node !== undefined && !attempt) || logsEmpty);
 	const collapsed = panelOpen === null ? empty : !panelOpen;
 	const effective = collapsed ? COLLAPSED_HEIGHT : (height ?? DEFAULT_HEIGHT);
+	const grows = fill && !collapsed && height === null;
 	return (
 		<section
 			ref={panel}
 			aria-label="底部面板"
-			className="relative flex flex-none flex-col border-t border-border-soft bg-surface"
-			style={{ height: effective }}
+			className="relative mt-auto flex flex-none flex-col border-t border-border-soft bg-surface"
+			style={grows ? { flex: `1 0 ${DEFAULT_HEIGHT}` } : { height: effective }}
 		>
 			<ResizeHandle
 				label="调整底部面板高度"
@@ -186,7 +191,7 @@ export function BottomPanel({
 					))}
 				</div>
 				<div className="ml-auto flex items-center gap-1.5 px-2">
-					<span className="text-xs text-fg-3" data-testid="bp-scope">
+					<ScopeLabel nodeId={node?.node_id} onClear={() => actions.select(null)}>
 						{node
 							? `范围：${node.node_id}`
 							: filter
@@ -194,7 +199,7 @@ export function BottomPanel({
 								: "范围：全部节点"}
 						{node && attempt && node.attempts.length > 1 ? `（第 ${attempt.attempt} 次）` : ""}
 						{zoom && tab === "logs" ? " · 已按时间范围过滤" : ""}
-					</span>
+					</ScopeLabel>
 					{node && node.attempts.length > 1 && (
 						<Segmented
 							label="尝试"
@@ -287,6 +292,38 @@ export function BottomPanel({
 				</div>
 			)}
 		</section>
+	);
+}
+
+function ScopeLabel({
+	nodeId,
+	onClear,
+	children,
+}: {
+	nodeId: string | undefined;
+	onClear: () => void;
+	children: ReactNode;
+}) {
+	if (nodeId === undefined) {
+		return (
+			<span className="text-xs text-fg-3" data-testid="bp-scope">
+				{children}
+			</span>
+		);
+	}
+	return (
+		<span className="inline-flex h-6 items-center rounded-md border border-border bg-raised pl-2 text-xs text-fg-1">
+			<span data-testid="bp-scope">{children}</span>
+			<button
+				type="button"
+				aria-label={`清除范围，不再只看 ${nodeId}`}
+				title={`清除范围（${shortcutText("monitor-deselect")}）`}
+				onClick={onClear}
+				className="grid size-5.5 place-items-center rounded-md text-fg-3 hover:bg-raised-2 hover:text-fg-1"
+			>
+				<XIcon aria-hidden className="size-3" />
+			</button>
+		</span>
 	);
 }
 

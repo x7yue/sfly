@@ -148,8 +148,10 @@ test("点选节点：时间线行高亮，底部面板切换到该节点；尝�
 }) => {
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
-	// 默认选中执行中的节点（没有失败的节点）。
-	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
+	await expect(timeline(page).locator('[data-node-row] button[aria-pressed="true"]')).toHaveCount(
+		0,
+	);
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 
 	await nodeButton(page, "fetch").click();
 	await expect(nodeButton(page, "fetch")).toHaveAttribute("aria-pressed", "true");
@@ -186,6 +188,104 @@ test("点选节点：时间线行高亮，底部面板切换到该节点；尝�
 	await expect(io).toContainText('"token": "••••••"');
 	await expect(io).not.toContainText("s3cr3t-token");
 	await expect(io).toContainText('"status": 200');
+});
+
+test("取消选中：范围标签上的 × 与 Esc 都回到全部节点；弹窗打开时的 Esc 只关闭弹窗", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const scope = panel(page).getByTestId("bp-scope");
+	const pressed = timeline(page).locator('[data-node-row] button[aria-pressed="true"]');
+	const clear = panel(page).getByRole("button", { name: /^清除范围/ });
+
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(clear).toHaveCount(0);
+
+	await nodeButton(page, "fetch").click();
+	await expect(scope).toHaveText("范围：fetch");
+	await expect(clear).toHaveAccessibleName("清除范围，不再只看 fetch");
+	await clear.click();
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(pressed).toHaveCount(0);
+
+	await nodeButton(page, "verify").click();
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await page.keyboard.press("Escape");
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(pressed).toHaveCount(0);
+
+	await nodeButton(page, "verify").click();
+	await page.getByRole("banner").getByRole("button", { name: "取消运行" }).click();
+	const dialog = page.getByRole("dialog", { name: /取消运行/ });
+	await expect(dialog).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await page.keyboard.press("Escape");
+	await expect(scope).toHaveText("范围：全部节点");
+});
+
+test("时间线行标签在耗时旁显示节点的进度，没有进度的节点不显示，进度实时更新", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	agent.progress(tasks.probe as AssignedTask, 308, 3000);
+	agent.progress(tasks.verify as AssignedTask, 12);
+	await agent.sync();
+	await openMonitor(page, clock, runId);
+	const progress = (id: string) =>
+		timeline(page).locator(`[data-node-row="${id}"] [data-progress]`);
+
+	await expect(progress("probe")).toHaveText("308/3000");
+	await expect(progress("verify")).toHaveText("12");
+	await expect(progress("fetch")).toHaveCount(0);
+	await expect(nodeButton(page, "probe")).toHaveAccessibleName(/进度 308\/3000$/);
+	await expect(nodeButton(page, "fetch")).not.toHaveAccessibleName(/进度/);
+
+	agent.progress(tasks.probe as AssignedTask, 400, 3000);
+	await expect(progress("probe")).toHaveText("400/3000");
+});
+
+test("已结束的短运行按实际时长定轴：运行占满轨道，刻度细到 0.1 秒", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane);
+	const scenarioId = await createScenario(controlPlane, "冒烟", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const ping = await agent.nextAssign();
+	clock.advance(436);
+	await agent.succeed(ping);
+
+	await openMonitor(page, clock, runId);
+	const tl = timeline(page);
+	await expect(page.getByRole("banner").getByTestId("run-status")).toHaveText("成功");
+	const track = await tl.locator("[data-axis-track]").boundingBox();
+	const segment = await tl.locator('[data-node-row="ping"] [data-segment="ok"]').boundingBox();
+	if (!track || !segment) throw new Error("没有轨道或区段");
+	// 436ms 的运行 + 8% 空白：占轨道的 92% 左右，而不是 10 秒轴上的 4%。
+	expect(segment.width / track.width).toBeGreaterThan(0.85);
+	expect(segment.width / track.width).toBeLessThan(0.97);
+	await expect(tl.locator("[data-axis-track] span")).toHaveText([
+		"+0s",
+		"+0.1s",
+		"+0.2s",
+		"+0.3s",
+		"+0.4s",
+	]);
 });
 
 test("日志：级别筛选、点一行在时间轴上标出该时刻、实时接续、向上加载更早的日志、下载原始日志", async ({
@@ -358,7 +458,10 @@ test("时间线下沿与底部面板上沿可以拖动调整高度，双击恢�
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
 	const bp = panel(page);
-	// 默认选中的 verify 第 2 次还没有日志：底部面板自动收起；拖动后展开，双击恢复默认（又自动收起）。
+	// 打开时合并日志里有 fetch 的日志，面板是展开的；选中还没开始的 cleanup 就没有日志可看，面板自动收起。
+	await expect(bp.getByRole("button", { name: "收起" })).toBeVisible();
+	await nodeButton(page, "cleanup").click();
+	// 拖动后展开，双击恢复默认（又自动收起）。
 	await expect(bp.getByRole("button", { name: "展开" })).toBeVisible();
 	const before = (await bp.boundingBox())?.height ?? 0;
 	const handle = page.getByRole("separator", { name: "调整底部面板高度" });

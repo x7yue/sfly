@@ -40,7 +40,7 @@ import type { TimeRange } from "./timeline-model";
 import {
 	attemptsSignature,
 	seriesQuery,
-	useMetricCatalog,
+	type useMetricCatalog,
 	usePlatformMetrics,
 } from "./use-run-metrics";
 
@@ -58,15 +58,23 @@ const iso = (ms: number) => new Date(ms).toISOString();
  * 每个上报指标的包节点一组，按链上的执行顺序（运行里有失败的节点时失败的组排在最前），组标题显示状态、名称、主指标的最新值与迷你趋势、图表数与 Agent；
  * 平台自带图表是最后一组。默认只展开执行中与失败的组，打开页面时滚到第一个执行中或失败的组（或选中的节点）；
  * 选中节点时展开它的组、滚到可见处，并在组内顶部显示节点摘要。悬停、缩放、日志标记与时间线共享（monitor-state.tsx）。
+ * compact（没有任何节点有图表，见 chartsCompact）：没有工具栏，只有一行说明和折叠的平台自带图表，高度随内容，剩下的高度归底部面板。
  */
-export function ChartWorkspace({ run }: { run: RunView }) {
+export function ChartWorkspace({
+	run,
+	catalog,
+	compact,
+}: {
+	run: RunView;
+	catalog: ReturnType<typeof useMetricCatalog>;
+	compact: boolean;
+}) {
 	const { range, live, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
 	const selected = useMonitor((s) => s.selected);
 	const actions = useMonitorActions();
 	const signature = useMemo(() => attemptsSignature(run), [run]);
-	const catalog = useMetricCatalog(run.id, signature);
 	const platform = usePlatformMetrics(run.id, signature, live);
 	// 重试过的节点要看的尝试（默认最新一次）。
 	const [chosen, setChosen] = useState<Record<string, number>>({});
@@ -208,64 +216,69 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 		<section
 			ref={scroller}
 			aria-label="图表工作区"
-			className="relative min-h-60 flex-1 overflow-auto px-3 pb-7"
+			className={cn(
+				"relative overflow-auto px-3",
+				compact ? "flex-initial pt-2 pb-2.5" : "min-h-60 flex-1 pb-7",
+			)}
 		>
-			<div
-				ref={toolbar}
-				role="toolbar"
-				aria-label="图表工具栏"
-				className="sticky top-0 z-4 -mx-3 mb-2.5 flex flex-wrap items-center gap-2 border-b border-border-soft bg-bg px-3 pt-2.5 pb-2"
-			>
-				<NodeFilter
-					label={filterLabel}
-					groups={groups}
-					filter={filter}
-					hasData={(g) => groupHasData(g, seriesByGroup.get(g.key)?.loaded ?? [])}
-					onChange={(next) => changeFilter(next)}
-				/>
-				{filter && (
-					<Button variant="ghost" size="sm" onClick={() => changeFilter(null)}>
-						清除筛选
-					</Button>
-				)}
-				<span className="text-xs text-fg-3" data-testid="chart-count">
-					{shown.length} 个节点 · {chartCount} 张图表
-					{filter ? "" : ` · 共 ${groups.length} 个节点声明了图表`}
-				</span>
-				<div className="relative w-55">
-					<SearchIcon
-						aria-hidden
-						className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-fg-3"
+			{!compact && (
+				<div
+					ref={toolbar}
+					role="toolbar"
+					aria-label="图表工具栏"
+					className="sticky top-0 z-4 -mx-3 mb-2.5 flex flex-wrap items-center gap-2 border-b border-border-soft bg-bg px-3 pt-2.5 pb-2"
+				>
+					<NodeFilter
+						label={filterLabel}
+						groups={groups}
+						filter={filter}
+						hasData={(g) => groupHasData(g, seriesByGroup.get(g.key)?.loaded ?? [])}
+						onChange={(next) => changeFilter(next)}
 					/>
-					<Input
-						aria-label="搜索图表或节点"
-						placeholder="搜索图表或节点"
-						value={search}
-						onChange={(e) => {
-							setSearch(e.target.value);
-							setOpened({});
-						}}
-						className="h-6.5 pl-7 text-xs"
+					{filter && (
+						<Button variant="ghost" size="sm" onClick={() => changeFilter(null)}>
+							清除筛选
+						</Button>
+					)}
+					<span className="text-xs text-fg-3" data-testid="chart-count">
+						{shown.length} 个节点 · {chartCount} 张图表
+						{filter ? "" : ` · 共 ${groups.length} 个节点声明了图表`}
+					</span>
+					<div className="relative w-55">
+						<SearchIcon
+							aria-hidden
+							className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-fg-3"
+						/>
+						<Input
+							aria-label="搜索图表或节点"
+							placeholder="搜索图表或节点"
+							value={search}
+							onChange={(e) => {
+								setSearch(e.target.value);
+								setOpened({});
+							}}
+							className="h-6.5 pl-7 text-xs"
+						/>
+					</div>
+					<span className="flex-1" />
+					<Button variant="ghost" size="sm" onClick={() => setAll(true)}>
+						全部展开
+					</Button>
+					<Button variant="ghost" size="sm" onClick={() => setAll(false)}>
+						全部折叠
+					</Button>
+					<Segmented
+						label="图表密度"
+						value={density}
+						onChange={setDensity}
+						options={[
+							{ value: "standard", label: "标准" },
+							{ value: "compact", label: "紧凑" },
+						]}
+						className="h-6.5"
 					/>
 				</div>
-				<span className="flex-1" />
-				<Button variant="ghost" size="sm" onClick={() => setAll(true)}>
-					全部展开
-				</Button>
-				<Button variant="ghost" size="sm" onClick={() => setAll(false)}>
-					全部折叠
-				</Button>
-				<Segmented
-					label="图表密度"
-					value={density}
-					onChange={setDensity}
-					options={[
-						{ value: "standard", label: "标准" },
-						{ value: "compact", label: "紧凑" },
-					]}
-					className="h-6.5"
-				/>
-			</div>
+			)}
 
 			{catalog.error && !catalog.data ? (
 				<ErrorState
@@ -280,9 +293,11 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 					<Skeleton className="h-10 w-full" />
 				</output>
 			) : catalog.data.expired ? (
-				<Notice>这次运行的指标数据已超过保留期，已被清理。</Notice>
+				<Notice compact={compact}>这次运行的指标数据已超过保留期，已被清理。</Notice>
 			) : groups.length === 0 ? (
-				<Notice>这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。</Notice>
+				<Notice compact={compact}>
+					这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。
+				</Notice>
 			) : shown.length === 0 && !showPlatform ? (
 				<Notice>没有匹配的图表。</Notice>
 			) : null}
@@ -346,9 +361,14 @@ const requestKey = (r: SeriesRequest) => `${r.group.key}\u0000${r.metrics.join("
 
 const noSeries = (): GroupSeries => ({ primary: undefined, charts: new Map(), loaded: [] });
 
-function Notice({ children }: { children: React.ReactNode }) {
+function Notice({ children, compact }: { children: React.ReactNode; compact?: boolean }) {
 	return (
-		<div className="mb-2.5 flex items-center gap-2 rounded-xl border border-border-soft bg-surface px-4 py-6 text-sm text-fg-3">
+		<div
+			className={cn(
+				"flex items-center gap-2 text-sm text-fg-3",
+				compact ? "mb-2 px-1" : "mb-2.5 rounded-xl border border-border-soft bg-surface px-4 py-6",
+			)}
+		>
 			<BarChart3Icon aria-hidden className="size-4.5 flex-none" />
 			{children}
 		</div>
@@ -607,10 +627,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 		</div>
 	);
 	return (
-		<div
-			data-testid="node-summary"
-			className="flex flex-wrap items-center gap-6 rounded-lg border border-border-soft bg-bg px-3.5 py-2.5"
-		>
+		<div data-testid="node-summary" className="flex flex-wrap items-center gap-6 px-1 py-1">
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
 			{item("节点类型", `${entry.package}/${entry.node}@${entry.version}`)}
 			{item("Agent", node.agent ?? "—")}
@@ -786,7 +803,7 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 										className={cn(
 											"absolute inset-y-0 left-0",
 											isOnAgentStatus(status)
-												? "bg-signal"
+												? "bg-signal-soft shadow-[inset_0_0_0_1px_var(--signal-line)]"
 												: status === "failed"
 													? "bg-danger"
 													: "bg-ok/50",

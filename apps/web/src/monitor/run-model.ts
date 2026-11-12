@@ -125,16 +125,45 @@ export function logScope(
 	);
 }
 
-/** 打开运行时默认选中的节点：失败的节点，其次是执行中的节点；都没有时不选。 */
-export function focusNode(run: RunView, nodeId?: string): NodeRef | null {
-	const all = orderedChains(run).flatMap((c) =>
+const nodeRefs = (run: RunView) =>
+	orderedChains(run).flatMap((c) =>
 		c.nodes.map((n) => ({ chainInstanceId: c.id, nodeId: n.node_id, status: n.status })),
 	);
-	const pick =
-		(nodeId ? all.find((n) => n.nodeId === nodeId) : undefined) ??
-		all.find((n) => n.status === "failed") ??
-		all.find((n) => ["running", "dispatched", "waiting", "queued"].includes(n.status));
-	return pick ? { chainInstanceId: pick.chainInstanceId, nodeId: pick.nodeId } : null;
+
+const toRef = (pick: { chainInstanceId: string; nodeId: string } | undefined): NodeRef | null =>
+	pick ? { chainInstanceId: pick.chainInstanceId, nodeId: pick.nodeId } : null;
+
+/**
+ * 监控页打开运行时默认选中的节点：链接里给的节点，其次第一个失败的节点（按链的层级与节点顺序）；都没有时不选，
+ * 底部面板显示全部节点合并后的日志。执行中的节点不默认选中：会把日志范围收窄到一个可能还没输出的节点，
+ * 而别的节点正在写日志。
+ */
+export function initialSelection(run: RunView, linkedNode?: string): NodeRef | null {
+	const all = nodeRefs(run);
+	return toRef(
+		(linkedNode ? all.find((n) => n.nodeId === linkedNode) : undefined) ??
+			all.find((n) => n.status === "failed"),
+	);
+}
+
+/** 运行抽屉的摘要要看最近日志的节点：{@link initialSelection} 选中的节点，其次是还在进行的节点（运行抽屉没有「不选」）。 */
+export function focusNode(run: RunView, nodeId?: string): NodeRef | null {
+	return (
+		initialSelection(run, nodeId) ??
+		toRef(
+			nodeRefs(run).find((n) => ["running", "dispatched", "waiting", "queued"].includes(n.status)),
+		)
+	);
+}
+
+/**
+ * 节点最新一次尝试的进度（ctx.progress），如 `308/3000`；没有进度为 null。
+ * 进度只跟着尝试走，节点结束后仍保留最后一次上报的值。
+ */
+export function progressLabel(node: NodeRunView): string | null {
+	const progress = node.attempts.at(-1)?.progress;
+	if (!progress) return null;
+	return progress.total === null ? `${progress.current}` : `${progress.current}/${progress.total}`;
 }
 
 /** 失败运行的摘要：第一个失败的节点（按链的层级与节点顺序）、它的第几次尝试与错误信息的第一行。 */

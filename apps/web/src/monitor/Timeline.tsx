@@ -23,6 +23,7 @@ import {
 	isAlways,
 	nodeTitle,
 	orderedChains,
+	progressLabel,
 } from "./run-model";
 import {
 	defaultTimelineMode,
@@ -42,9 +43,10 @@ const BRUSH_MIN = 0.004;
 /** 拖选范围小于轨道宽度的这个比例时不缩放。 */
 const ZOOM_MIN = 0.01;
 
+/** 执行中的段不用实心青（只有段尾的脉冲头是实心）：长时间的运行里最大的几块不能全是饱和青。 */
 const SEGMENT_STYLE: Record<SegmentKind, string> = {
 	ok: "bg-ok/50",
-	run: "bg-signal",
+	run: "bg-signal-soft shadow-[inset_0_0_0_1px_var(--signal-line)]",
 	fail: "bg-danger",
 	cancel:
 		"bg-[repeating-linear-gradient(135deg,var(--cancelled)_0_3px,transparent_3px_6px)] shadow-[inset_0_0_0_1px_var(--cancelled)] opacity-70",
@@ -504,6 +506,7 @@ function NodeRow({
 	const decl = decls.get(node.node_id);
 	const status = nodeStatusView(node.status);
 	const span = spanOf(segments);
+	const progress = progressLabel(node);
 	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
 	const title = nodeTitle(node, decl, decls);
 	return (
@@ -516,7 +519,7 @@ function NodeRow({
 			<button
 				type="button"
 				aria-pressed={selected}
-				aria-label={`${node.node_id} ${title} ${status.label}`}
+				aria-label={`${node.node_id} ${title} ${status.label}${progress ? ` 进度 ${progress}` : ""}`}
 				onClick={() => actions.select(selected ? null : ref)}
 				title={title}
 				className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
@@ -531,7 +534,17 @@ function NodeRow({
 						always
 					</Badge>
 				)}
-				<span className="ml-auto min-w-13 flex-none text-right font-mono text-2xs text-fg-3">
+				{progress && (
+					<span data-progress className="ml-auto flex-none font-mono text-2xs text-fg-3">
+						{progress}
+					</span>
+				)}
+				<span
+					className={cn(
+						"min-w-13 flex-none text-right font-mono text-2xs text-fg-3",
+						!progress && "ml-auto",
+					)}
+				>
 					{span === null ? NODE_STATUS[node.status].notRunDuration : formatDuration(span)}
 				</span>
 			</button>
