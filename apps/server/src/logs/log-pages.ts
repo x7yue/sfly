@@ -7,8 +7,9 @@ import { type LogLineView, logLineView } from "./task-logs.js";
  * - 往后读（`after`）：从 `after` 所在的行首开始（不在行首时从下一行开始），读到凑够 `limit` 行匹配的日志为止。
  * - 往前读（`before`，默认文件末尾）：读 `before` 之前的完整行，取最后 `limit` 行匹配的日志。
  *
- * 只读完整的行（还在写入的最后半行不算）。每次最多扫描 {@link SCAN_LIMIT} 字节：筛选条件很少匹配时，
- * 一页可能不足 `limit` 行，用 `start` / `end` 接着翻页即可。
+ * 只读完整的行（还在写入的最后半行不算），给了 `until` 时只读它之前的内容。每次最多扫描 `scanLimit` 字节
+ * （默认 {@link SCAN_LIMIT}）的行，但至少读完一行：筛选条件很少匹配时，一页可能不足 `limit` 行，
+ * 用 `start` / `end` 接着翻页即可。
  */
 
 export interface LogFilter {
@@ -16,9 +17,18 @@ export interface LogFilter {
 	sources?: ReadonlySet<LogLineView["source"]>;
 }
 
+interface PageLimits {
+	limit: number;
+	filter: LogFilter;
+	/** 最多扫描多少字节的行，默认 {@link SCAN_LIMIT}。 */
+	scanLimit?: number;
+	/** 只读这个字节偏移之前的完整行（例如列出任务那一刻已写入的字节数），之后写入的不读。 */
+	until?: number;
+}
+
 export type PageRequest =
-	| { direction: "forward"; after: number; limit: number; filter: LogFilter }
-	| { direction: "backward"; before?: number; limit: number; filter: LogFilter };
+	| ({ direction: "forward"; after: number } & PageLimits)
+	| ({ direction: "backward"; before?: number } & PageLimits);
 
 export interface PagedLine extends LogLineView {
 	/** 这一行在文件中的字节偏移。 */
@@ -30,12 +40,14 @@ export interface LogPage {
 	/** 本页扫描范围 [start, end)：往前翻页用 `before=start`，往后翻页用 `after=end`。 */
 	start: number;
 	end: number;
-	/** 读取时文件中完整行的总字节数。 */
+	/** 读取时文件中完整行的总字节数（给了 `until` 时不超过它）。 */
 	size: number;
 }
 
 const CHUNK = 64 * 1024;
-const SCAN_LIMIT = 8 * 1024 * 1024;
+/** 扫描上限很小时每次读取的最小字节数：只影响读文件的次数，不影响一页的结果。 */
+const MIN_CHUNK = 4 * 1024;
+export const SCAN_LIMIT = 8 * 1024 * 1024;
 
 const matches = (line: LogLineView, filter: LogFilter) =>
 	(!filter.levels || filter.levels.has(line.level)) &&
@@ -52,10 +64,13 @@ export async function readLogPage(file: string, request: PageRequest): Promise<L
 		throw error;
 	}
 	try {
-		const size = await completeSize(handle, (await handle.stat()).size);
+		const scanLimit = request.scanLimit ?? SCAN_LIMIT;
+		const chunk = Math.min(CHUNK, Math.max(MIN_CHUNK, scanLimit));
+		const { size: fileSize } = await handle.stat();
+		const size = await completeSize(handle, Math.min(fileSize, request.until ?? fileSize), chunk);
 		return request.direction === "forward"
-			? await forward(handle, size, request)
-			: await backward(handle, size, request);
+			? await forward(handle, size, request, scanLimit, chunk)
+			: await backward(handle, size, request, scanLimit, chunk);
 	} finally {
 		await handle.close();
 	}
@@ -68,10 +83,10 @@ async function read(handle: FileHandle, position: number, length: number): Promi
 }
 
 /** 文件中完整行的总字节数（去掉末尾还没写完的半行）。 */
-async function completeSize(handle: FileHandle, size: number): Promise<number> {
+async function completeSize(handle: FileHandle, size: number, chunk: number): Promise<number> {
 	let end = size;
 	while (end > 0) {
-		const start = Math.max(0, end - CHUNK);
+		const start = Math.max(0, end - chunk);
 		const bytes = await read(handle, start, end - start);
 		const nl = bytes.lastIndexOf(0x0a);
 		if (nl >= 0) return start + nl + 1;
@@ -87,12 +102,14 @@ async function forward(
 	handle: FileHandle,
 	size: number,
 	request: Extract<PageRequest, { direction: "forward" }>,
+	scanLimit: number,
+	chunk: number,
 ): Promise<LogPage> {
 	let pos = Math.min(Math.max(0, request.after), size);
 	// 不在行首：跳到下一行行首。
 	if (pos > 0 && (await read(handle, pos - 1, 1))[0] !== 0x0a) {
 		while (pos < size) {
-			const bytes = await read(handle, pos, Math.min(CHUNK, size - pos));
+			const bytes = await read(handle, pos, Math.min(chunk, size - pos));
 			const nl = bytes.indexOf(0x0a);
 			if (nl >= 0) {
 				pos += nl + 1;
@@ -105,22 +122,21 @@ async function forward(
 	const lines: PagedLine[] = [];
 	let pending: Buffer = Buffer.alloc(0);
 	let pendingAt = pos;
-	while (pos < size && lines.length < request.limit && pos - start < SCAN_LIMIT) {
-		const bytes = await read(handle, pos, Math.min(CHUNK, size - pos));
+	// 扫描量按已经切分出的完整行算，一行比上限还长时也读完它，保证每次都有进展。
+	const full = () => lines.length >= request.limit || pendingAt - start >= scanLimit;
+	while (pos < size && !full()) {
+		const bytes = await read(handle, pos, Math.min(chunk, size - pos));
 		pos += bytes.length;
 		pending = pending.length ? Buffer.concat([pending, bytes]) : bytes;
-		let from = 0;
 		for (;;) {
-			const nl = pending.indexOf(0x0a, from);
+			const nl = pending.indexOf(0x0a);
 			if (nl < 0) break;
-			const line = parse(pending.subarray(from, nl));
-			if (matches(line, request.filter)) lines.push({ offset: pendingAt + from, ...line });
-			from = nl + 1;
-			if (lines.length >= request.limit) break;
+			const line = parse(pending.subarray(0, nl));
+			if (matches(line, request.filter)) lines.push({ offset: pendingAt, ...line });
+			pendingAt += nl + 1;
+			pending = pending.subarray(nl + 1);
+			if (full()) break;
 		}
-		pendingAt += from;
-		pending = pending.subarray(from);
-		if (lines.length >= request.limit) break;
 	}
 	return { lines, start, end: pendingAt, size };
 }
@@ -129,19 +145,22 @@ async function backward(
 	handle: FileHandle,
 	size: number,
 	request: Extract<PageRequest, { direction: "backward" }>,
+	scanLimit: number,
+	chunk: number,
 ): Promise<LogPage> {
 	let end = Math.min(Math.max(0, request.before ?? size), size);
 	// 不在行首：只取这一行之前的完整行。
 	if (end > 0 && end < size && (await read(handle, end - 1, 1))[0] !== 0x0a) {
-		end = await lineStart(handle, end);
+		end = await lineStart(handle, end, chunk);
 	}
 	const found: PagedLine[] = [];
 	let pos = end;
 	// pending 是 [pendingAt, pos 之后已读部分) 中还没切分的字节：它的开头可能是半行。
 	let pending: Buffer = Buffer.alloc(0);
 	let start = end;
-	while (start > 0 && found.length < request.limit && end - start < SCAN_LIMIT) {
-		const from = Math.max(0, pos - CHUNK);
+	const full = () => found.length >= request.limit || end - start >= scanLimit;
+	while (start > 0 && !full()) {
+		const from = Math.max(0, pos - chunk);
 		const bytes = await read(handle, from, pos - from);
 		pos = from;
 		pending = pending.length ? Buffer.concat([bytes, pending]) : bytes;
@@ -155,7 +174,7 @@ async function backward(
 			start = pos + lineFrom;
 			if (matches(line, request.filter)) found.push({ offset: start, ...line });
 			lineEnd = lineFrom;
-			if (lineEnd === 0 || found.length >= request.limit) break;
+			if (lineEnd === 0 || full()) break;
 		}
 		pending = pending.subarray(0, lineEnd);
 	}
@@ -163,10 +182,10 @@ async function backward(
 }
 
 /** `pos` 所在行的行首偏移。 */
-async function lineStart(handle: FileHandle, pos: number): Promise<number> {
+async function lineStart(handle: FileHandle, pos: number, chunk: number): Promise<number> {
 	let end = pos;
 	while (end > 0) {
-		const from = Math.max(0, end - CHUNK);
+		const from = Math.max(0, end - chunk);
 		const bytes = await read(handle, from, end - from);
 		const nl = bytes.lastIndexOf(0x0a);
 		if (nl >= 0) return from + nl + 1;

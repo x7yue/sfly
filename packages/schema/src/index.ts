@@ -5,6 +5,8 @@ import { PackageMetadata } from "./package-metadata.js";
 export * from "./http/index.js";
 export * from "./orchestration-document.js";
 export * from "./package-metadata.js";
+export * from "./run-log-order.js";
+export * from "./run-log-scope.js";
 export * from "./series.js";
 
 /** 导出给 Python CLI 使用的 JSON Schema：文件名（不含扩展名） → zod schema。 */

@@ -441,7 +441,7 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	await ws.getByRole("button", { name: "清除筛选" }).click();
 	await expect(ws.getByRole("button", { name: /节点：全部节点/ })).toBeVisible();
 	await expect(ws.locator("[data-group]")).toHaveCount(4);
-	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：未选中节点");
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 });
 
 test("只看一个节点；按名称搜索图表；紧凑密度", async ({

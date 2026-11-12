@@ -79,6 +79,10 @@ export const MESSAGE = {
 	loadFailed: (what: string) => `无法加载${what}`,
 	neverRun: "从未运行",
 	noLogs: "还没有日志。",
+	/** 监控页日志页签：任务或运行还没有结束，暂时没有日志。 */
+	logOutputPending: "还没有日志输出。",
+	/** 监控页日志页签：单个任务的日志写满上限后，控制面丢掉之后的输出。 */
+	logTruncated: "日志超过单个任务的大小上限，之后的输出已被截断。",
 	archived: "已归档",
 	copyFailed: "复制失败",
 	clipboardDenied: "浏览器不允许访问剪贴板",

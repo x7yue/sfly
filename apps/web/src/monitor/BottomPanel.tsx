@@ -5,15 +5,17 @@ import {
 	type LogLineView,
 	type NodeRunView,
 	type OrchestrationDocument,
+	type RunLogLine,
 	type RunView,
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { DownloadIcon } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
+import { MESSAGE } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
@@ -36,9 +38,12 @@ import {
 	useMonitorActions,
 	useTimeAxis,
 } from "./monitor-state";
+import { runLineKey } from "./run-log-buffer";
 import {
 	documentNodes,
 	findNode,
+	logOrigin,
+	logScope,
 	MASK,
 	orderedChains,
 	secretInputKeys,
@@ -46,6 +51,7 @@ import {
 	stoppedSubflowLabel,
 } from "./run-model";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
+import { runLogDownloadPath, useRunLogs } from "./use-run-logs";
 import { taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
 
 const TABS: [PanelTab, string][] = [
@@ -83,9 +89,11 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 
 /**
  * 底部面板（原型 bpBody）：日志、尝试、输入输出、产物四个页签，范围跟随时间线上选中的节点
- * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter）。节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
+ * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter），两者都没有时是全部节点：
+ * 日志页签把范围内节点的日志合并显示（#222、#224），点来源节点名切到这个节点的单节点日志。
+ * 节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
  * 页签与展开状态在共享状态里（顶栏的失败摘要会切到「尝试」页签）。用户还没有展开 / 收起、拖动或切换过页签时，
- * 日志页签没有内容（没选中节点、节点还没开始、或日志加载完是空的）就自动收起，把高度让给图表；日志到了再自动展开。
+ * 日志页签没有内容（选中的节点还没开始、或日志加载完是空的）就自动收起，把高度让给图表；日志到了再自动展开。
  */
 export function BottomPanel({
 	run,
@@ -108,14 +116,32 @@ export function BottomPanel({
 	const node = findNode(run, selected);
 	const [attemptId, setAttemptId] = useState<string | null>(null);
 	const refKey = selected ? `${selected.chainInstanceId}:${selected.nodeId}` : "";
+	/** 从合并视图点来源节点名选中节点时，要看的那一次尝试：换节点时默认是最近一次，这里例外。 */
+	const pendingAttempt = useRef<string | null>(null);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 换节点时回到最近一次尝试
-	useEffect(() => setAttemptId(null), [refKey]);
+	useEffect(() => {
+		setAttemptId(pendingAttempt.current);
+		pendingAttempt.current = null;
+	}, [refKey]);
+	const showOrigin = useCallback(
+		(line: RunLogLine) => {
+			pendingAttempt.current = line.task_id;
+			actions.select({ chainInstanceId: line.chain_instance_id, nodeId: line.node_id });
+		},
+		[actions],
+	);
 	const attempt =
 		node?.attempts.find((a) => a.task_id === attemptId) ?? node?.attempts.at(-1) ?? undefined;
+	/** 没有选中节点时日志页签下载的合并日志：范围与合并视图相同。 */
+	const mergedDownload = useMemo(
+		() => runLogDownloadPath(run.id, logScope(run, filter)),
+		[run, filter],
+	);
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
 	const logTimeKind = useLogTimeKind();
 
-	const empty = tab === "logs" && (!attempt || logsEmpty);
+	/** 选中的节点还没有开始：没有日志可看。其余情况（单个尝试、合并视图）由日志页签自己报告有没有内容。 */
+	const empty = tab === "logs" && ((node !== undefined && !attempt) || logsEmpty);
 	const collapsed = panelOpen === null ? empty : !panelOpen;
 	const effective = collapsed ? COLLAPSED_HEIGHT : (height ?? DEFAULT_HEIGHT);
 	return (
@@ -165,7 +191,7 @@ export function BottomPanel({
 							? `范围：${node.node_id}`
 							: filter
 								? `范围：跟随筛选（${filtered} 个节点）`
-								: "范围：未选中节点"}
+								: "范围：全部节点"}
 						{node && attempt && node.attempts.length > 1 ? `（第 ${attempt.attempt} 次）` : ""}
 						{zoom && tab === "logs" ? " · 已按时间范围过滤" : ""}
 					</span>
@@ -191,12 +217,16 @@ export function BottomPanel({
 								options={MIN_LEVELS}
 								onChange={(v) => setMinLevel(v as MinLevel)}
 							/>
-							{attempt && (
+							{(attempt || !node) && (
 								<a
 									className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
-									aria-label="下载原始日志"
-									title="下载原始日志（JSONL）"
-									href={taskLogDownloadPath(attempt.task_id)}
+									aria-label={attempt ? "下载原始日志" : "下载合并日志"}
+									title={
+										attempt
+											? "下载原始日志（JSONL）"
+											: "下载范围内全部节点合并后的日志（JSONL，不受级别筛选影响）"
+									}
+									href={attempt ? taskLogDownloadPath(attempt.task_id) : mergedDownload}
 									download
 								>
 									<DownloadIcon />
@@ -220,7 +250,7 @@ export function BottomPanel({
 				>
 					{tab === "logs" &&
 						(attempt ? (
-							<LogsTab
+							<TaskLogsTab
 								key={attempt.task_id}
 								attempt={attempt}
 								levels={levelsFrom(minLevel)}
@@ -229,8 +259,20 @@ export function BottomPanel({
 								day={run.started_at}
 								onEmpty={setLogsEmpty}
 							/>
+						) : node ? (
+							<Hint>{noAttempt(node)}</Hint>
 						) : (
-							<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的日志。"}</Hint>
+							<RunLogsTab
+								key={run.id}
+								run={run}
+								filter={filter}
+								levels={levelsFrom(minLevel)}
+								filtered={minLevel !== "all"}
+								timeKind={logTimeKind}
+								day={run.started_at}
+								onEmpty={setLogsEmpty}
+								onOrigin={showOrigin}
+							/>
 						))}
 					{tab === "attempts" && (
 						<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
@@ -282,7 +324,7 @@ function Segmented({
 	);
 }
 
-function LogsTab({
+function TaskLogsTab({
 	attempt,
 	levels,
 	filtered,
@@ -293,21 +335,122 @@ function LogsTab({
 	attempt: AttemptView;
 	levels: LogLineView["level"][];
 	filtered: boolean;
+	timeKind: LogTimeKind;
+	day: string;
+	onEmpty: (empty: boolean) => void;
+}) {
+	const logs = useTaskLogs(attempt.task_id, levels);
+	return (
+		<LogsView
+			logs={logs}
+			lineKey={seqKey}
+			truncated={logs.truncated ? MESSAGE.logTruncated : null}
+			filtered={filtered}
+			noOutput={attempt.ended_at !== null ? "这次尝试没有日志输出。" : MESSAGE.logOutputPending}
+			timeKind={timeKind}
+			day={day}
+			onEmpty={onEmpty}
+		/>
+	);
+}
+
+const seqKey = (line: LogLineView) => String(line.seq);
+
+/**
+ * 范围内节点的日志合并显示（#222）：没有节点筛选时是整次运行全部节点，有筛选时是筛选出的节点（#224）；
+ * 每行多一列来源节点，向上滚动加载更早的（#223）；级别筛选在服务端执行，范围或级别变了重新加载。
+ */
+function RunLogsTab({
+	run,
+	filter,
+	levels,
+	filtered,
+	timeKind,
+	day,
+	onEmpty,
+	onOrigin,
+}: {
+	run: RunView;
+	/** 图表工作区的节点筛选；null 是全部节点。 */
+	filter: ReadonlySet<string> | null;
+	levels: LogLineView["level"][];
+	filtered: boolean;
+	timeKind: LogTimeKind;
+	day: string;
+	onEmpty: (empty: boolean) => void;
+	onOrigin: (line: RunLogLine) => void;
+}) {
+	const scope = useMemo(() => logScope(run, filter), [run, filter]);
+	const logs = useRunLogs(run.id, scope, levels);
+	const origin = useCallback((line: RunLogLine) => logOrigin(run, line), [run]);
+	const truncated = logs.truncatedTasks.map((t) => logOrigin(run, t)).join("、");
+	return (
+		<LogsView
+			logs={logs}
+			lineKey={runLineKey}
+			origin={origin}
+			onOrigin={onOrigin}
+			truncated={truncated ? `${truncated} 的${MESSAGE.logTruncated}` : null}
+			filtered={filtered}
+			scoped={filter !== null}
+			noOutput={run.ended_at !== null ? "这次运行没有日志输出。" : MESSAGE.logOutputPending}
+			timeKind={timeKind}
+			day={day}
+			onEmpty={onEmpty}
+		/>
+	);
+}
+
+/** 日志页签的内容（单个任务与合并视图共用）：截断、旧行、读取失败的提示，按时间范围过滤，点一行标出时刻。 */
+function LogsView<L extends LogLineView>({
+	logs,
+	lineKey,
+	origin,
+	onOrigin,
+	truncated,
+	filtered,
+	scoped = false,
+	noOutput,
+	timeKind,
+	day,
+	onEmpty,
+}: {
+	logs: {
+		lines: L[];
+		loaded: boolean;
+		hasOlder: boolean;
+		loadingOlder: boolean;
+		loadOlder: () => void;
+		expired: boolean;
+		error: string | null;
+	};
+	lineKey: (line: L) => string;
+	/** 来源节点列；不给时没有这一列。 */
+	origin?: (line: L) => string;
+	/** 选中这一行的来源节点；不给时来源节点名不能点。 */
+	onOrigin?: (line: L) => void;
+	/** 截断提示；没有截断时为 null。 */
+	truncated: string | null;
+	/** 筛选了级别：没有日志时不算空（那是用户自己筛掉的），面板不自动收起。 */
+	filtered: boolean;
+	/** 只看筛选出的节点：这些节点里没有日志时仍算空（面板照常自动收起），说明文字是没有符合条件的日志。 */
+	scoped?: boolean;
+	/** 没有任何日志时的说明。 */
+	noOutput: string;
 	/** 时间列显示哪一种时间；定位和按时间范围过滤始终用控制面时间。 */
 	timeKind: LogTimeKind;
 	/** 运行开始的时刻：时间列要不要带日期按它那一天判断。 */
 	day: string;
-	/** 加载完、没有任何日志时为 true（筛选了级别时不算空：那是用户自己筛掉的）。 */
+	/** 加载完、没有任何日志时为 true。 */
 	onEmpty: (empty: boolean) => void;
 }) {
-	const logs = useTaskLogs(attempt.task_id, levels);
 	const empty = !filtered && logs.loaded && logs.lines.length === 0 && !logs.hasOlder;
 	useEffect(() => onEmpty(empty), [empty, onEmpty]);
 	useEffect(() => () => onEmpty(false), [onEmpty]);
 	const zoom = useMonitor((s) => s.zoom);
 	const marker = useMonitor((s) => s.marker);
 	const actions = useMonitorActions();
-	const [markedSeq, setMarkedSeq] = useState<number | null>(null);
+	const [markedKey, setMarkedKey] = useState<string | null>(null);
 	// 按时间范围过滤只看控制面时间（时间线是按它画的）；没有控制面时间的行不在任何范围里。
 	const lines = useMemo(
 		() =>
@@ -323,19 +466,20 @@ function LogsTab({
 	const unlocatable = useMemo(() => logs.lines.filter((l) => l.time === null).length, [logs.lines]);
 	// 标记被别处清除（或换了标记）时取消行的高亮。
 	const marked =
-		markedSeq !== null &&
+		markedKey !== null &&
 		marker !== null &&
-		logs.lines.some((l) => l.seq === markedSeq && l.time !== null && Date.parse(l.time) === marker)
-			? markedSeq
+		logs.lines.some(
+			(l) => lineKey(l) === markedKey && l.time !== null && Date.parse(l.time) === marker,
+		)
+			? markedKey
 			: null;
-	const finished = attempt.ended_at !== null;
 
 	if (!logs.loaded) return <Hint>正在加载日志…</Hint>;
 	return (
 		<div className="flex h-full flex-col">
-			{logs.truncated && (
+			{truncated && (
 				<p className="m-0 flex-none border-b border-border-soft px-3 py-1 text-xs text-warn-fg">
-					日志超过单个任务的大小上限，之后的输出已被截断。
+					{truncated}
 				</p>
 			)}
 			{unlocatable > 0 && (
@@ -357,16 +501,17 @@ function LogsTab({
 				<Hint>
 					{logs.expired
 						? "这次运行的日志已超过保留期，已被清理。"
-						: filtered || zoom
+						: filtered || scoped || zoom
 							? "没有符合条件的日志。"
-							: finished
-								? "这次尝试没有日志输出。"
-								: "还没有日志输出。"}
+							: noOutput}
 				</Hint>
 			) : (
 				<div className="min-h-0 flex-1">
 					<LogList
 						lines={lines}
+						lineKey={lineKey}
+						origin={origin}
+						onOrigin={onOrigin}
 						hasOlder={logs.hasOlder}
 						loadingOlder={logs.loadingOlder}
 						loadOlder={logs.loadOlder}
@@ -375,8 +520,9 @@ function LogsTab({
 						day={day}
 						onPick={(line) => {
 							if (line.time === null) return;
-							const same = marked === line.seq;
-							setMarkedSeq(same ? null : line.seq);
+							const key = lineKey(line);
+							const same = marked === key;
+							setMarkedKey(same ? null : key);
 							actions.mark(same ? null : Date.parse(line.time));
 						}}
 					/>
