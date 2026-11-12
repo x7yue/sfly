@@ -25,6 +25,7 @@ import {
 	type PackageMetadata,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
+import type { Actor } from "../actor.js";
 import type { ClockOffset } from "../agents/agent-clock.js";
 import {
 	type AgentConnection,
@@ -274,7 +275,7 @@ export class Engine implements AgentSessionHandler {
 	trigger(
 		orchestrationId: string,
 		provided: Record<string, unknown>,
-		triggeredBy: string,
+		actor: Actor,
 	): Promise<TriggerOutcome> {
 		return this.#event(async (step) => {
 			const [orchestration] = await step.tx
@@ -356,7 +357,8 @@ export class Engine implements AgentSessionHandler {
 					id: runId,
 					orchestrationId,
 					orchestrationVersionId: version.id,
-					triggeredBy,
+					triggeredBy: actor.nickname,
+					triggeredVia: actor.via,
 					params: filled.params,
 					status: "running",
 					startedAt: step.now,
@@ -384,7 +386,7 @@ export class Engine implements AgentSessionHandler {
 	 * 等 Agent 上报结果；排队中的普通任务和未开始的普通节点立即 cancelled；always 节点照常执行。
 	 * 运行还没结束时再次取消即强制取消：所有任务（含 always）立即 cancelled 并通知 Agent 杀掉进程树。
 	 */
-	cancel(runId: string, requestedBy: string): Promise<CancelOutcome> {
+	cancel(runId: string, actor: Actor): Promise<CancelOutcome> {
 		return this.#event(async (step) => {
 			const [run] = await step.tx.select().from(runs).where(eq(runs.id, runId)).for("update");
 			if (!run) return { ok: false, status: 404, code: "not_found", message: "run not found" };
@@ -402,7 +404,11 @@ export class Engine implements AgentSessionHandler {
 				.set(
 					force
 						? { cancelForcedAt: step.now }
-						: { cancelRequestedAt: step.now, cancelRequestedBy: requestedBy },
+						: {
+								cancelRequestedAt: step.now,
+								cancelRequestedBy: actor.nickname,
+								cancelRequestedVia: actor.via,
+							},
 				)
 				.where(eq(runs.id, runId))
 				.returning();

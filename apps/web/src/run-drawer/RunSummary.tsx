@@ -10,6 +10,7 @@ import { useMemo } from "react";
 import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { nodeStatusView, runNotificationView, StatusPill } from "#/components/status";
+import { ViaTag } from "#/components/via-tag";
 import { chainLabel as chainName, TERM } from "#/lib/copy";
 import {
 	formatClock,
@@ -79,7 +80,8 @@ export function RunSummary({ runId }: { runId: string }) {
 				</span>
 				<span className="font-mono text-fg-3">{formatDuration(elapsed)}</span>
 				<span className="ml-auto text-xs text-fg-3">
-					{run.triggered_by} 触发 · {formatDateTime(run.started_at)}
+					{run.triggered_by}
+					<ViaTag via={run.triggered_via} /> 触发 · {formatDateTime(run.started_at)}
 				</span>
 			</div>
 			{run.run_notification && <RunNotificationLine state={run.run_notification} />}

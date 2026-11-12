@@ -161,6 +161,8 @@ export const orchestrationVersions = pgTable(
 		number: integer("number").notNull(),
 		document: jsonb("document").$type<OrchestrationDocument>().notNull(),
 		author: text("author").notNull(),
+		/** 经哪个 AI 编程助手保存（请求头 x-sfly-client 里的 agent/<名称>）；只是标注，浏览器里保存的为空。 */
+		authorVia: text("author_via"),
 		createdAt: timestamptz("created_at").notNull(),
 	},
 	(t) => [unique("orchestration_versions_number").on(t.orchestrationId, t.number)],
@@ -218,6 +220,8 @@ export const runs = pgTable(
 			.notNull()
 			.references(() => orchestrationVersions.id),
 		triggeredBy: text("triggered_by").notNull(),
+		/** 经哪个 AI 编程助手触发；只是标注，浏览器里触发的为空。 */
+		triggeredVia: text("triggered_via"),
 		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
 		status: text("status").$type<RunStatus>().notNull(),
 		startedAt: timestamptz("started_at").notNull(),
@@ -225,6 +229,8 @@ export const runs = pgTable(
 		/** 第一次取消（#12）的时间和昵称；之后运行在所有链结束时标记为 cancelled。 */
 		cancelRequestedAt: timestamptz("cancel_requested_at"),
 		cancelRequestedBy: text("cancel_requested_by"),
+		/** 第一次取消经哪个 AI 编程助手发起；浏览器里取消的为空。 */
+		cancelRequestedVia: text("cancel_requested_via"),
 		/** 清理期间再次取消（强制取消）的时间：always 节点也立即终止。 */
 		cancelForcedAt: timestamptz("cancel_forced_at"),
 		/** 日志和产物超过保留期被清理的时间（#18，src/retention/retention.ts）；未清理时为空。 */

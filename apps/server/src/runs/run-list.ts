@@ -75,6 +75,7 @@ export async function listAllRuns(
 				status: run.status,
 				cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 				triggered_by: run.triggeredBy,
+				triggered_via: run.triggeredVia,
 				started_at: run.startedAt.toISOString(),
 				ended_at: run.endedAt ? run.endedAt.toISOString() : null,
 				chains: [],
