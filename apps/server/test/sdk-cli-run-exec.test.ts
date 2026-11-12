@@ -33,7 +33,7 @@ const ENTRY_PARAMS = [
 	{ name: "pin", type: "number", secret: true },
 ];
 
-describe("sfly run start / wait / cancel → 控制面", () => {
+describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	let agent: FakeAgent;
@@ -60,6 +60,8 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 			name,
 		);
 	};
+	/** 命令行进程刚启动时可能很慢（高负载下 uv 要几秒），等派发的时间放宽。 */
+	const assign = () => agent.nextAssign({ timeoutMs: 30_000 });
 	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl]);
 	const start = (...args: string[]): SflyProcess => {
 		const process = spawnSfly([...args, "--server", cp.httpUrl]);
@@ -114,10 +116,10 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 			const id = await scenario("成功场景", [echo("a"), echo("b")]);
 			const waiting = start("run", "start", "成功场景", "--wait", "--nickname", "alice");
 
-			const a = await agent.nextAssign();
+			const a = await assign();
 			clock.advance(2_000);
 			await agent.succeed(a);
-			const b = await agent.nextAssign();
+			const b = await assign();
 			clock.advance(12_000);
 			await agent.succeed(b);
 
@@ -139,9 +141,9 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 			const id = await scenario("失败场景", [echo("a"), echo("b", { retries: 1 }), echo("c")]);
 			const waiting = start("run", "start", "失败场景", "--wait");
 
-			await agent.succeed(await agent.nextAssign());
-			await agent.fail(await agent.nextAssign(), "第一次失败");
-			const second = await agent.nextAssign();
+			await agent.succeed(await assign());
+			await agent.fail(await assign(), "第一次失败");
+			const second = await assign();
 			expect(second).toMatchObject({ nodeId: "b", attempt: 2 });
 			agent.logs(
 				second,
@@ -229,8 +231,8 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 				"子流程场景",
 			);
 			const waiting = start("run", "start", "子流程场景", "--wait");
-			await agent.succeed(await agent.nextAssign());
-			const send = await agent.nextAssign();
+			await agent.succeed(await assign());
+			const send = await assign();
 			expect(send.nodeId).toBe("send");
 			await agent.fail(send, "子流程里失败");
 
@@ -247,7 +249,7 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 		it("取消：退出码 3，摘要写明是谁取消的；运行结束后再取消报 run_not_running", async () => {
 			const id = await scenario("取消场景", [echo("a")]);
 			const waiting = start("run", "start", "取消场景", "--wait");
-			const task = await agent.nextAssign();
+			const task = await assign();
 			const runId = await runOf(id);
 
 			const cancel = await cli("run", "cancel", runId, "--nickname", "carol");
@@ -281,7 +283,7 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 		it("等待超时：退出码 124，运行仍在继续，之后用 run wait 等到它结束", async () => {
 			const id = await scenario("超时场景", [echo("a")]);
 			const timedOut = start("run", "start", "超时场景", "--wait", "--timeout", "1");
-			const task = await agent.nextAssign();
+			const task = await assign();
 			const runId = await runOf(id);
 
 			const result = await timedOut.exited;
@@ -307,7 +309,7 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 		it("按 Ctrl-C 停止等待：退出码 130，运行仍在继续，提示怎么接着等、怎么取消", async () => {
 			const id = await scenario("中断场景", [echo("a")]);
 			const waiting = start("run", "start", "中断场景", "--wait");
-			const task = await agent.nextAssign();
+			const task = await assign();
 			await waiting.waitForStderr("已触发运行");
 			const runId = await runOf(id);
 
@@ -331,7 +333,7 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 			proxies.push(proxy);
 			const id = await scenario("断线场景", [echo("a")]);
 			const runId = await trigger("断线场景");
-			const task = await agent.nextAssign();
+			const task = await assign();
 
 			const waiting = spawnSfly(["run", "wait", runId, "--server", proxy.url]);
 			processes.push(waiting);
@@ -356,7 +358,7 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 			proxies.push(proxy);
 			await scenario("重连场景", [echo("a"), echo("b")]);
 			const runId = await trigger("重连场景");
-			const first = await agent.nextAssign();
+			const first = await assign();
 
 			const waiting = spawnSfly(["run", "wait", runId, "--server", proxy.url]);
 			processes.push(waiting);
@@ -364,7 +366,7 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 			proxy.dropConnections();
 			await eventually(() => expect(proxy.streamsOpened).toBe(2), 20_000);
 			await agent.succeed(first);
-			const second = await agent.nextAssign();
+			const second = await assign();
 			await agent.fail(second, "断线之后失败");
 
 			const result = await waiting.exited;
@@ -566,7 +568,7 @@ describe("sfly run start / wait / cancel → 控制面", () => {
 				{ env },
 			);
 			expect(triggered.code, triggered.stderr).toBe(0);
-			const task = await agent.nextAssign();
+			const task = await assign();
 			const runId = await runOf(id);
 			const cancelled = await sfly(
 				["run", "cancel", runId, "--server", proxy.url, "--nickname", "dana"],

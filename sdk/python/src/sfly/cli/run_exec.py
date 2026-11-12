@@ -152,8 +152,7 @@ def _start(session: Session, args: argparse.Namespace) -> int:
             note=f"等它结束：sfly run wait {run_id}",
         )
         return 0
-    _progress(session, f"已触发运行 {run_id}，链接：{url}")
-    return _follow(session, run_id, args.timeout)
+    return _follow(session, run_id, args.timeout, announce=f"已触发运行 {run_id}，链接：{url}")
 
 
 def _wait(session: Session, args: argparse.Namespace) -> int:
@@ -185,11 +184,16 @@ def _cancel(session: Session, args: argparse.Namespace) -> None:
         )
 
 
-def _follow(session: Session, run_id: str, timeout: float | None) -> int:
-    """等运行结束并输出摘要；超时和 Ctrl-C 只停止等待。"""
+def _follow(
+    session: Session, run_id: str, timeout: float | None, *, announce: str | None = None
+) -> int:
+    """等运行结束并输出摘要；超时和 Ctrl-C 只停止等待。`announce` 是等待开始前写到 stderr 的一行
+    （放在 try 里：它输出之后任何时候按 Ctrl-C 都走停止等待的提示）。"""
     out = session.out
     hint = f"取消运行：sfly run cancel {run_id}"
     try:
+        if announce:
+            _progress(session, announce)
         run = wait_for_run(
             session.client, run_id, timeout=timeout, log=lambda line: _progress(session, line)
         )
