@@ -163,8 +163,25 @@ test("飞书机器人：列表与测试结果", async ({ page, controlPlane, fei
 		feishu.webhookUrl("c3a1e9d4-0b7f-4a52-8d6e-1f2a3b4c5d6e"),
 	);
 
+	// 投递：压测群的消息送达；告警群的消息遇到 HTTP 503，在等重试（积压 1 条）；日报群还没有投递。
+	const notifyScenario = (bot: string) => ({
+		nodes: [
+			{ id: "entry", kind: "entry", params: [] },
+			{ id: "notify", kind: "feishu_notify", bot, text: "压测开始" },
+		],
+		edges: [{ from: "entry", to: "notify", kind: "chain" }],
+		packages: {},
+	});
+	feishu.replyTo("7d02c1b9-5e3a-4c88-b6f1-9e8d7c6b5a40", { status: 503 });
+	for (const bot of ["压测群", "告警群"]) {
+		const scenario = await createScenario(controlPlane, bot, notifyScenario(bot));
+		await triggerRun(controlPlane, scenario);
+	}
+
 	await page.goto("/feishu-bots");
 	const result = (name: string) => page.getByRole("row", { name: new RegExp(`^${name}`) });
+	await expect(result("压测群")).toContainText("已送达", { timeout: 15_000 });
+	await expect(result("告警群")).toContainText("投递失败", { timeout: 15_000 });
 	await result("压测群").getByRole("button", { name: "发送测试消息" }).click();
 	await expect(result("压测群")).toContainText("测试消息已送达");
 	feishu.reply({ code: 19024, msg: "Key Words Not Found" });

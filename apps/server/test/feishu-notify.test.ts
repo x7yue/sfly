@@ -170,7 +170,7 @@ describe("飞书通知节点（文本格式）与发送队列", () => {
 		await agent.disconnect();
 	});
 
-	it("飞书不可达时同样：节点成功，日志里是 warning，运行结果不变", async () => {
+	it("飞书不可达时同样：节点成功，运行结果不变；网络错误重试到期限（10 分钟）后日志里是 warning", async () => {
 		const dead = await startFakeFeishu();
 		const deadUrl = dead.webhookUrl(TOKEN);
 		await dead.close();
@@ -181,8 +181,14 @@ describe("飞书通知节点（文本格式）与发送队列", () => {
 		const node = await api.node(runId, "n");
 		expect(node.status).toBe("success");
 		expect((await api.run(runId)).status).toBe("success");
-		const line = await logLine(node, (l) => l.level === "warn" && l.text.includes("投递失败"));
-		expect(line.text).toContain("无法连接");
+		// 网络错误退避重试（#230）：推进控制面时间越过期限，才记为失败。
+		let line: LogLine | undefined;
+		await eventually(async () => {
+			clock.advance(60_000);
+			line = (await logOf(node)).find((l) => l.level === "warn" && l.text.includes("投递失败"));
+			expect(line).toBeDefined();
+		}, 15_000);
+		expect(line?.text).toContain("无法连接");
 		expect(JSON.stringify(await logOf(node))).not.toContain(TOKEN);
 	});
 
@@ -415,14 +421,13 @@ describe("飞书通知节点（文本格式）与发送队列", () => {
 	describe("投递", () => {
 		it("同一个机器人的多条消息按入队顺序串行到达：同一时刻只有一个请求在途", async () => {
 			feishu.replyAlways({ delayMs: 60 });
-			const id = await api.orchestrationWith(
-				flow([notify("m1"), notify("m2"), notify("m3"), notify("m4")]),
-			);
+			// 一共 4 条，在每秒 5 条的限速之内（限速见 feishu-delivery.test.ts）。
+			const id = await api.orchestrationWith(flow([notify("m1"), notify("m2")]));
 			await api.triggerOk(id);
 			await api.triggerOk(id);
 
-			await eventually(() => expect(feishu.requests).toHaveLength(8), 10_000);
-			expect(texts()).toEqual(["m1", "m2", "m3", "m4", "m1", "m2", "m3", "m4"]);
+			await eventually(() => expect(feishu.requests).toHaveLength(4), 10_000);
+			expect(texts()).toEqual(["m1", "m2", "m1", "m2"]);
 			expect(feishu.maxInFlight).toBe(1);
 		});
 
