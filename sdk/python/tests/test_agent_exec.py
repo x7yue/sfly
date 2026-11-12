@@ -1,4 +1,4 @@
-"""Agent 能力 exec 的本地调试（`sfly.testing.run_node`、`sfly run`）和 SDK 经本地 socket
+"""Agent 能力 exec 的本地调试（`sfly.testing.run_node`、`sfly debug`）和 SDK 经本地 socket
 发出的调用。
 
 本地调试没有 Agent：`ctx.agent()` 在本机执行命令，其它 Agent 由测试工具映射到本地目录
@@ -223,7 +223,7 @@ def test_a_timeout_is_required_and_arguments_are_checked(monkeypatch: pytest.Mon
     assert exec_.run(["true"], timeout=5) == 0
 
 
-def test_sfly_run_runs_a_command_on_an_agent_mapped_to_a_local_directory(tmp_path: Path) -> None:
+def test_sfly_debug_runs_a_command_on_an_agent_mapped_to_a_local_directory(tmp_path: Path) -> None:
     project = tmp_path / "project"
     shutil.copytree(PACKAGE, project, ignore=shutil.ignore_patterns("__pycache__", "dist"))
     source = tmp_path / "source"
@@ -232,7 +232,7 @@ def test_sfly_run_runs_a_command_on_an_agent_mapped_to_a_local_directory(tmp_pat
     done = subprocess.run(
         [
             SFLY,
-            "run",
+            "debug",
             "run_command",
             "--params",
             '{"source": "cmd-source", "command": "pwd; exit 4"}',

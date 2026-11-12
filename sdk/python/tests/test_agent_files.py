@@ -1,4 +1,4 @@
-"""Agent 能力 files 的本地调试（`sfly.testing.run_node`、`sfly run`）：没有 Agent，
+"""Agent 能力 files 的本地调试（`sfly.testing.run_node`、`sfly debug`）：没有 Agent，
 `ctx.agent()` 直接操作本机的文件系统，其它 Agent 由测试工具映射到本地目录。
 行为与 Agent 上一致（agent/tests/files.rs）。
 
@@ -132,7 +132,7 @@ def test_errors_tell_apart_missing_files_permissions_and_unreferenced_agents(
     # 参数里有但没有映射：提示怎样映射。
     error = try_stat(tmp_path, {"source": "fs-source", "path": "/x"})
     assert error["type"] == "AgentUnreachable"
-    assert "sfly run --agent fs-source=<目录>" in error["message"]
+    assert "sfly debug --agent fs-source=<目录>" in error["message"]
 
     if os.geteuid() != 0:
         (logs / "old").chmod(0)
@@ -158,7 +158,7 @@ def test_paths_must_be_absolute(tmp_path: Path) -> None:
     assert "路径必须是那台 Agent 所在机器上的绝对路径" in result.error.message
 
 
-def test_sfly_run_maps_an_agent_to_a_local_directory(tmp_path: Path) -> None:
+def test_sfly_debug_maps_an_agent_to_a_local_directory(tmp_path: Path) -> None:
     project = tmp_path / "project"
     shutil.copytree(PACKAGE, project, ignore=shutil.ignore_patterns("__pycache__", "dist"))
     source = tmp_path / "source"
@@ -167,7 +167,7 @@ def test_sfly_run_maps_an_agent_to_a_local_directory(tmp_path: Path) -> None:
     run = subprocess.run(
         [
             SFLY,
-            "run",
+            "debug",
             "stat_file",
             "--params",
             '{"source": "fs-source", "path": "/var/log/app/app.log"}',
@@ -185,7 +185,7 @@ def test_sfly_run_maps_an_agent_to_a_local_directory(tmp_path: Path) -> None:
     assert '"path": "/var/log/app/app.log"' in run.stdout
 
     bad = subprocess.run(
-        [SFLY, "run", "stat_file", "--params", '{"path": "/"}', "--agent", "fs-source"],
+        [SFLY, "debug", "stat_file", "--params", '{"path": "/"}', "--agent", "fs-source"],
         cwd=project,
         capture_output=True,
         text=True,

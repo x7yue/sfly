@@ -1,4 +1,5 @@
-"""`sfly run`：在当前项目环境里执行一个节点（本地调试）。CLI 作为子进程运行，项目是桩节点包的副本。
+"""`sfly debug`：在当前项目环境里执行一个节点（本地调试）。
+CLI 作为子进程运行，项目是桩节点包的副本。
 
 约定：输出值、指标汇总、运行目录打印到标准输出；日志实时打印到标准错误。
 退出码：成功 0，节点失败 1，参数不合法 2，取消 130。
@@ -28,9 +29,9 @@ def project(tmp_path: Path) -> Path:
     return root
 
 
-def sfly_run(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def sfly_debug(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [SFLY, "run", *args], cwd=project, capture_output=True, text=True, timeout=60
+        [SFLY, "debug", *args], cwd=project, capture_output=True, text=True, timeout=60
     )
 
 
@@ -42,12 +43,12 @@ def outputs_of(stdout: str) -> object:
 
 
 def test_success_prints_outputs_and_logs(project: Path) -> None:
-    run = sfly_run(project, "echo", "--params", '{"text": {"你好": [1, 2]}}')
+    run = sfly_debug(project, "echo", "--params", '{"text": {"你好": [1, 2]}}')
 
     assert run.returncode == 0, run.stderr
     assert outputs_of(run.stdout) == {"text": {"你好": [1, 2]}}
 
-    chatter = sfly_run(project, "chatter")
+    chatter = sfly_debug(project, "chatter")
     assert chatter.returncode == 0, chatter.stderr
     lines = chatter.stderr.splitlines()
     for level, source, message in [
@@ -61,10 +62,42 @@ def test_success_prints_outputs_and_logs(project: Path) -> None:
         )
 
 
+def test_old_run_spelling_points_to_debug_without_running_the_node(project: Path) -> None:
+    old = subprocess.run(
+        [SFLY, "run", "echo", "--params", '{"text": 1}'],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert old.returncode == 2
+    assert old.stdout == ""
+    assert "sfly debug <节点>" in old.stderr
+    assert not (project / ".sfly").exists()
+
+    options_first = subprocess.run(
+        [SFLY, "run", "--params", "{}", "echo"],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert options_first.returncode == 2
+    assert "sfly debug <节点>" in options_first.stderr
+
+
+def test_run_without_a_subcommand_is_a_usage_error(project: Path) -> None:
+    bare = subprocess.run([SFLY, "run"], cwd=project, capture_output=True, text=True, timeout=60)
+
+    assert bare.returncode == 2
+    assert bare.stdout == ""
+
+
 def test_metrics_are_summarized_as_a_table(project: Path) -> None:
     steps = [["level", 1], ["level", 3], ["level", 2], ["total", 5], ["total", 7]]
 
-    run = sfly_run(project, "metrics", "--params", json.dumps({"steps": steps}))
+    run = sfly_debug(project, "metrics", "--params", json.dumps({"steps": steps}))
 
     assert run.returncode == 0, run.stderr
     table = run.stdout.split("指标：\n", 1)[1].splitlines()
@@ -82,7 +115,7 @@ def test_metric_table_has_a_row_per_series_with_its_label_values(project: Path) 
         ["level", 2],
     ]
 
-    run = sfly_run(project, "metrics", "--params", json.dumps({"steps": steps}))
+    run = sfly_debug(project, "metrics", "--params", json.dumps({"steps": steps}))
 
     assert run.returncode == 0, run.stderr
     table = run.stdout.split("指标：\n", 1)[1].splitlines()
@@ -95,8 +128,8 @@ def test_metric_table_has_a_row_per_series_with_its_label_values(project: Path) 
 
 
 def test_artifacts_of_each_run_are_in_their_own_timestamped_directory(project: Path) -> None:
-    first = sfly_run(project, "artifacts", "--params", '{"files": {"a.txt": "第一次"}}')
-    second = sfly_run(project, "artifacts", "--params", '{"files": {"a.txt": "第二次"}}')
+    first = sfly_debug(project, "artifacts", "--params", '{"files": {"a.txt": "第一次"}}')
+    second = sfly_debug(project, "artifacts", "--params", '{"files": {"a.txt": "第二次"}}')
 
     assert first.returncode == 0 and second.returncode == 0, first.stderr + second.stderr
     runs = sorted((project / ".sfly" / "runs").iterdir())
@@ -130,7 +163,7 @@ def test_download_option_serves_a_local_file_for_an_artifact_ref(
     ref = "http://cp.invalid/tasks/t-1/artifacts/a=b.txt"
     (tmp_path / "完整输出.txt").write_text("来自上游节点", encoding="utf-8")
 
-    run = sfly_run(
+    run = sfly_debug(
         project, "fetch", "--params", json.dumps({"ref": ref}), "--download", ref, "../完整输出.txt"
     )
 
@@ -141,7 +174,7 @@ def test_download_option_serves_a_local_file_for_an_artifact_ref(
 def test_download_option_with_a_missing_file_exits_2_without_running_the_node(
     project: Path,
 ) -> None:
-    run = sfly_run(project, "echo", "--params", '{"text": 1}', "--download", "ref", "nope.bin")
+    run = sfly_debug(project, "echo", "--params", '{"text": 1}', "--download", "ref", "nope.bin")
 
     assert run.returncode == 2, run.stderr
     assert "--download" in run.stderr and "nope.bin" in run.stderr
@@ -162,8 +195,8 @@ def test_agent_inputs_take_an_agent_name(project: Path) -> None:
     # 「Agent」类型的输入（#197）：本地调试时值就是 Agent 名称，不检查它是否注册过。
     (project / "src" / "sfly_stub" / "agents.py").write_text(AGENT_NODE, encoding="utf-8")
 
-    run = sfly_run(project, "reach", "--params", '{"source": "agent-a"}')
-    wrong = sfly_run(project, "reach", "--params", '{"source": 1}')
+    run = sfly_debug(project, "reach", "--params", '{"source": "agent-a"}')
+    wrong = sfly_debug(project, "reach", "--params", '{"source": 1}')
 
     assert run.returncode == 0, run.stderr
     assert outputs_of(run.stdout) == {"source": "agent-a"}
@@ -185,8 +218,8 @@ def test_feishu_bot_inputs_take_a_bot_name(project: Path) -> None:
     # 「飞书机器人」类型的输入（#233）：本地调试时值就是机器人名称，不检查它是否登记过。
     (project / "src" / "sfly_stub" / "feishu_bots.py").write_text(FEISHU_BOT_NODE, encoding="utf-8")
 
-    run = sfly_run(project, "alert", "--params", '{"bot": "ops"}')
-    wrong = sfly_run(project, "alert", "--params", '{"bot": 1}')
+    run = sfly_debug(project, "alert", "--params", '{"bot": "ops"}')
+    wrong = sfly_debug(project, "alert", "--params", '{"bot": 1}')
 
     assert run.returncode == 0, run.stderr
     assert outputs_of(run.stdout) == {"bot": "ops"}
@@ -196,7 +229,7 @@ def test_feishu_bot_inputs_take_a_bot_name(project: Path) -> None:
 
 def test_notifications_are_printed_with_their_request_body_and_not_sent(project: Path) -> None:
     # ctx.notify（#234）：本地调试不真的发送，把要发给哪个机器人、请求体是什么打印出来。
-    run = sfly_run(project, "notify", "--params", '{"bot": "ops", "text": "指标越界"}')
+    run = sfly_debug(project, "notify", "--params", '{"bot": "ops", "text": "指标越界"}')
 
     assert run.returncode == 0, run.stderr
     body = json.dumps({"msg_type": "text", "content": {"text": "指标越界"}}, ensure_ascii=False)
@@ -210,13 +243,13 @@ def test_a_card_and_a_raw_message_are_printed_and_an_invalid_one_is_warned_about
 ) -> None:
     # ctx.notify(message=...)（#235）：sfly.feishu.card 组装的卡片同样只打印；
     # 不合格的原始消息不打印，写一行警告，节点照常成功。
-    card = sfly_run(
+    card = sfly_debug(
         project,
         "notify_card",
         "--params",
         '{"bot": "ops", "title": "压测完成", "markdown": "**QPS** 1200", "color": "green"}',
     )
-    invalid = sfly_run(
+    invalid = sfly_debug(
         project, "notify_message", "--params", '{"bot": "ops", "message": {"content": {}}}'
     )
 
@@ -249,7 +282,7 @@ def test_a_card_and_a_raw_message_are_printed_and_an_invalid_one_is_warned_about
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
     project: Path,
 ) -> None:
-    run = sfly_run(project, "task_info")
+    run = sfly_debug(project, "task_info")
 
     assert run.returncode == 0, run.stderr
     (run_dir,) = (project / ".sfly" / "runs").iterdir()
@@ -263,7 +296,7 @@ def test_background_processes_go_under_the_project_procs_dir_named_after_the_run
 
 
 def test_node_failure_exits_1_with_the_error_and_traceback(project: Path) -> None:
-    run = sfly_run(project, "fail", "--params", '{"message": "磁盘满了"}')
+    run = sfly_debug(project, "fail", "--params", '{"message": "磁盘满了"}')
 
     assert run.returncode == 1
     assert "节点失败：RuntimeError: 磁盘满了" in run.stderr
@@ -287,7 +320,7 @@ def test_node_failure_exits_1_with_the_error_and_traceback(project: Path) -> Non
 def test_invalid_params_exit_2_without_running_the_node(
     project: Path, args: list[str], message: str
 ) -> None:
-    run = sfly_run(project, *args)
+    run = sfly_debug(project, *args)
 
     assert run.returncode == 2, run.stderr
     assert message in run.stderr
@@ -300,7 +333,7 @@ def test_ctrl_c_cancels_like_the_platform(project: Path, tmp_path: Path) -> None
     ready, report = tmp_path / "ready", tmp_path / "report"
     params = json.dumps({"ready_file": str(ready), "report_file": str(report)})
     proc = subprocess.Popen(
-        [SFLY, "run", "wait_cancel", "--params", params],
+        [SFLY, "debug", "wait_cancel", "--params", params],
         cwd=project,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -324,12 +357,12 @@ def test_ctrl_c_cancels_like_the_platform(project: Path, tmp_path: Path) -> None
 def test_ctrl_c_while_printing_logs_still_cancels(project: Path) -> None:
     """Ctrl-C 恰好打断往标准错误打印日志时（#109）：仍以 130 结束，并打印取消提示。
 
-    先读到几行日志，然后停止读取标准错误：管道写满后 `sfly run` 阻塞在打印日志的 write 里，
+    先读到几行日志，然后停止读取标准错误：管道写满后 `sfly debug` 阻塞在打印日志的 write 里，
     此时发出的 SIGINT 必然在打印中途到达。
     """
     params = json.dumps({"lines": 1_000_000, "interval": 0.0001})
     proc = subprocess.Popen(
-        [SFLY, "run", "flood", "--params", params],
+        [SFLY, "debug", "flood", "--params", params],
         cwd=project,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -350,16 +383,16 @@ def test_ctrl_c_while_printing_logs_still_cancels(project: Path) -> None:
 
 
 def python_errors(stderr: str) -> list[str]:
-    """`sfly run` 自己的 Python 堆栈（节点的日志行带时间前缀，不算）。"""
+    """`sfly debug` 自己的 Python 堆栈（节点的日志行带时间前缀，不算）。"""
     starts = ("Traceback", "KeyboardInterrupt", "Exception ignored")
     return [line for line in stderr.splitlines() if line.startswith(starts)]
 
 
 def interrupt_while_printing(proc: subprocess.Popen[bytes]) -> tuple[bytes, str]:
-    """等 `sfly run` 开始往标准输出打印结果，在打印中途发 SIGINT，返回完整的标准输出和标准错误。
+    """等 `sfly debug` 开始往标准输出打印结果，在打印中途发 SIGINT，返回完整的标准输出和标准错误。
 
     标准输出只在节点结束后打印结果时写入，所以读到第一个字节就说明已经在打印结果；结果远超管道容量
-    （64 KiB）而测试暂不读取，`sfly run` 必然阻塞在打印里，此时发出的 SIGINT 必然在打印中途到达。
+    （64 KiB）而测试暂不读取，`sfly debug` 必然阻塞在打印里，此时发出的 SIGINT 必然在打印中途到达。
     """
     assert proc.stdout is not None
     first = os.read(proc.stdout.fileno(), 1)
@@ -374,7 +407,7 @@ def test_ctrl_c_while_printing_a_cancelled_result_is_ignored(project: Path, tmp_
     ready, report = tmp_path / "ready", tmp_path / "report"
     params = json.dumps({"ready_file": str(ready), "report_file": str(report), "artifacts": 3000})
     proc = subprocess.Popen(
-        [SFLY, "run", "wait_cancel", "--params", params],
+        [SFLY, "debug", "wait_cancel", "--params", params],
         cwd=project,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -398,7 +431,7 @@ def test_ctrl_c_while_printing_a_cancelled_result_is_ignored(project: Path, tmp_
 def test_ctrl_c_while_printing_a_successful_result_is_ignored(project: Path) -> None:
     """成功结束后、打印结果期间按 Ctrl-C：结果已经确定，忽略它——没有堆栈，输出完整，以 0 退出。"""
     proc = subprocess.Popen(
-        [SFLY, "run", "big", "--params", '{"size": 300000}'],
+        [SFLY, "debug", "big", "--params", '{"size": 300000}'],
         cwd=project,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

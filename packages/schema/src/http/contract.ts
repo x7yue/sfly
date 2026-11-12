@@ -22,7 +22,11 @@ import { z } from "zod";
  * 7. 控制面的每个 HTTP 路由都在契约里（控制面启动时检查，apps/server/src/http/contract-route.ts）：
  *    JSON 接口用 `endpoint`；SSE 用 `stream`（`events` 是事件名 → data 的 schema）；
  *    返回字节流的下载用 `download`。请求体是原始字节的上传（发布节点包、上传产物）用 `endpoint`，
- *    不定义 body，只约束路径参数与 JSON 响应。新增领域模块后加进 ./index.ts 的 `httpContract`。
+ *    不定义 body，加 `upload: true`，只约束路径参数与 JSON 响应。新增领域模块后加进 ./index.ts 的 `httpContract`。
+ * 8. 路由清单（route-manifest.ts，不从包入口导出，只有导出脚本用）从 `httpContract` 导出到
+ *    `sdk/python/src/sfly/schemas/routes.json`
+ *    （`pnpm gen`，`pnpm gen:check` 保证提交的是最新的），`sfly api` 用它列出接口、校验请求。
+ *    请求的 JSON Schema 按输入方向导出：refine 和转换后的约束导不出来，会记在清单的 `notes` 里。
  */
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -66,6 +70,8 @@ export interface EndpointDef extends RouteDefBase {
 	/** query key 前缀，第一段是领域名。 */
 	key: readonly string[];
 	body?: z.ZodType;
+	/** 请求体是原始字节的上传（不定义 body）：路由清单里种类写 `upload`，`sfly api` 不能直接调用。 */
+	upload?: true;
 	response: z.ZodType;
 }
 
@@ -157,6 +163,12 @@ export const CONTROL_PLANE_TIME_HEADER = "x-sfly-time";
 export const CONTROL_PLANE_TIME_EVENT = "time";
 export const ControlPlaneTimeEvent = z.object({ time: Timestamp });
 export type ControlPlaneTimeEvent = z.infer<typeof ControlPlaneTimeEvent>;
+
+/**
+ * 控制面版本：每个 HTTP 响应（含错误响应和 SSE 流）都带 {@link CONTROL_PLANE_VERSION_HEADER} 响应头，
+ * 值是控制面的版本号（Agent、SDK 与控制面同版本，ADR 0010）。`sfly` 命令行据此在版本不一致时告警。
+ */
+export const CONTROL_PLANE_VERSION_HEADER = "x-sfly-version";
 
 /**
  * 按路径模板拼出路径；路径参数用 encodeURIComponent 编码，末尾 `*` 的值按 `/` 分段、每段单独编码。

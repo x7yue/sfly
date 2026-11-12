@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { EmptyState, ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
+import { ViaTag } from "#/components/via-tag";
 import { apiQuery, callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
@@ -167,7 +168,9 @@ export function VersionHistory({
 							<span className="font-mono text-sm text-fg-1">v{pane.number}</span>
 							{pane.query.data && (
 								<span className="truncate">
-									{pane.query.data.author} · {formatDateTime(pane.query.data.created_at)}
+									{pane.query.data.author}
+									<ViaTag via={pane.query.data.author_via} /> ·{" "}
+									{formatDateTime(pane.query.data.created_at)}
 								</span>
 							)}
 							<span className="ml-auto text-fg-3">只读</span>
@@ -268,8 +271,9 @@ function VersionRow({
 					<span className="font-mono text-sm text-fg-1">v{version.number}</span>
 					{latest && <Badge>最新</Badge>}
 				</span>
-				<span className="truncate text-xs text-fg-3">
-					{version.author} · {formatDateTime(version.created_at)}
+				<span className="text-xs break-words text-fg-3">
+					{version.author}
+					<ViaTag via={version.author_via} /> · {formatDateTime(version.created_at)}
 				</span>
 			</div>
 			{!latest && (

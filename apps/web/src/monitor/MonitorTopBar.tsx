@@ -4,6 +4,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronDownIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { ViaTag } from "#/components/via-tag";
 import { apiQuery } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
@@ -70,7 +71,8 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 					<Badge className="font-mono">v{run.orchestration_version}</Badge>
 				</h1>
 				<span className="truncate text-xs text-fg-3">
-					{run.triggered_by} 触发 · 开始 {formatDateTime(run.started_at)} ·{" "}
+					{run.triggered_by}
+					<ViaTag via={run.triggered_via} /> 触发 · 开始 {formatDateTime(run.started_at)} ·{" "}
 					<span className="font-mono" data-testid="run-elapsed">
 						{live ? "已运行" : "耗时"} {formatDuration(elapsed)}
 					</span>

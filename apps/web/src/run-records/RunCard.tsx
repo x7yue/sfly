@@ -2,6 +2,7 @@ import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChainBar, doneCount } from "#/components/chain-progress";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { ViaTag } from "#/components/via-tag";
 import { chainLabel } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
@@ -62,7 +63,8 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 				</span>
 			</div>
 			<div className="text-xs text-fg-3">
-				{run.triggered_by} 触发 · 开始 {formatDateTime(run.started_at)}
+				{run.triggered_by}
+				<ViaTag via={run.triggered_via} /> 触发 · 开始 {formatDateTime(run.started_at)}
 				{failedSubflows.length > 0 && (
 					<>
 						{" · "}

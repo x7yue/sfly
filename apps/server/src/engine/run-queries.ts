@@ -87,6 +87,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		orchestration_version: version.number,
 		status: run.status,
 		triggered_by: run.triggeredBy,
+		triggered_via: run.triggeredVia,
 		params: m(run.params),
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
@@ -94,6 +95,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		cancel: run.cancelRequestedAt
 			? {
 					requested_by: run.cancelRequestedBy ?? "",
+					requested_via: run.cancelRequestedVia,
 					requested_at: run.cancelRequestedAt.toISOString(),
 					forced_at: iso(run.cancelForcedAt),
 				}
@@ -175,6 +177,7 @@ export async function listRuns(
 		status: run.status,
 		cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 		triggered_by: run.triggeredBy,
+		triggered_via: run.triggeredVia,
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
 	}));

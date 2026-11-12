@@ -238,7 +238,7 @@ class Artifacts:
 
         产物在保存它的任务结束后才上传到控制面：只能下载前面的节点保存的产物。
         下载地址在控制面上，任何一台 Agent 上的节点都能下载。本地调试时产物引用是本地文件路径，
-        直接复制；`sfly.testing.run_node(downloads=...)` 和 `sfly run --download` 可以给某个
+        直接复制；`sfly.testing.run_node(downloads=...)` 和 `sfly debug --download` 可以给某个
         引用指定本地内容。
         """
         from sfly.download import download
@@ -325,8 +325,9 @@ class TaskInfo:
       各有不同的节点 ID）；
     - `task_id`：任务 ID；`attempt`：第几次尝试（从 1 开始，重试时加 1）。
 
-    在 Agent 上取自 Agent 写的 task.json（`SFLY_TASK`）；本地调试（`sfly run`、`sfly.testing`）时
-    任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名，运行 ID 见 `sfly run` 与 `run_node` 的说明。
+    在 Agent 上取自 Agent 写的 task.json（`SFLY_TASK`）；本地调试（`sfly debug`、`sfly.testing`）时
+    任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名，
+    运行 ID 见 `sfly debug` 与 `run_node` 的说明。
     没有 task.json 时（在执行器之外直接构造 Context）都取 `local` 和 1。
     """
 
@@ -439,7 +440,7 @@ class Context:
 
         - Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`（`SFLY_PROCS`），和任务目录按同一个保留期清理，
           运行还有任务在 Agent 手上时不动；
-        - `sfly run` 时是项目下的 `.sfly/procs/<运行目录名>/`，
+        - `sfly debug` 时是项目下的 `.sfly/procs/<运行目录名>/`，
           `sfly.testing.run_node` 时是任务工作目录下的 `procs/`。
         """
         return self._procs_dir
@@ -451,7 +452,7 @@ class Context:
 
         只能访问自己所在的 Agent 和参数里选的 Agent：访问其它名称时调用抛出
         `sfly.AgentNotReferenced`。调用另一台 Agent 时由自己所在的 Agent 代为连接，
-        数据不经过控制面。本地调试（`sfly run`、`sfly.testing`）时直接操作本机的文件系统，
+        数据不经过控制面。本地调试（`sfly debug`、`sfly.testing`）时直接操作本机的文件系统，
         其它 Agent 由测试工具映射到本地目录。
         """
         from sfly.capabilities import connect
@@ -487,7 +488,7 @@ class Context:
         `text` 和 `message` 同时给或都不给，`text` 不是字符串，`at_all` 不是布尔值，
         或者发原始消息时还给了 `at_all`（它只对文本有意义）。
 
-        本地调试时不真的发送：`sfly run` 打印请求体，`sfly.testing.run_node` 的结果里
+        本地调试时不真的发送：`sfly debug` 打印请求体，`sfly.testing.run_node` 的结果里
         有 `notifications`。
         """
         if not isinstance(bot, str):

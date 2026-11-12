@@ -1,4 +1,4 @@
-import { NODE_SIZE, type Position, type StructureDocument, subflowName } from "@sfly/orchestration";
+import { type StructureDocument, subflowName } from "@sfly/orchestration";
 import type { AgentView, PackageSummary } from "@sfly/schema";
 import type { DocNode } from "#/components/canvas/flow";
 import { latestVersion } from "#/lib/package-versions";
@@ -127,33 +127,3 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 			};
 	}
 }
-
-/** 落点与已有节点重叠时每次往右下错开的距离。 */
-const NUDGE = 32;
-
-/**
- * 没有来源的新节点放在哪：想要的位置（视口中心、右键处）空着就用它，
- * 压住已有节点时按固定步长往右下错开，直到不压住任何节点。位置都是卡片左上角的画布坐标。
- */
-export function freePosition(wanted: Position, taken: readonly Position[]): Position {
-	const overlaps = (p: Position) =>
-		taken.some(
-			(t) => Math.abs(t.x - p.x) < NODE_SIZE.width && Math.abs(t.y - p.y) < NODE_SIZE.height,
-		);
-	let at = wanted;
-	while (overlaps(at)) at = { x: at.x + NUDGE, y: at.y + NUDGE };
-	return at;
-}
-
-/**
- * 没有来源的新节点（视口中心、右键处）和粘贴的节点：卡片中心落在 `center`（画布坐标），
- * 压住已有节点时错开（freePosition）。返回卡片左上角。
- */
-export const freeCardAt = (center: Position, taken: readonly Position[]): Position =>
-	freePosition(
-		{
-			x: Math.round(center.x - NODE_SIZE.width / 2),
-			y: Math.round(center.y - NODE_SIZE.height / 2),
-		},
-		taken,
-	);

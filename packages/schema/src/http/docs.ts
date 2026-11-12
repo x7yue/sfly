@@ -32,7 +32,8 @@ export const docsApi = {
 		contentType: "text/markdown; charset=utf-8",
 	}),
 	/**
-	 * 节点开发 skill 的一个文件（占位符已替换）：`SKILL.md`，以及同目录的 `reference.md`（SDK 参考页）。
+	 * 给 AI 编程助手的 skill（`sfly-node-dev`、`sfly-platform`）的一个文件（占位符已替换）：`SKILL.md`，
+	 * 以及同目录的 `reference.md`（对应的一页文档：SDK 参考页、「用命令行操作平台」页）。
 	 * 与 SDK wheel 里 `sfly init` 写进项目的内容出自同一份源文件；未知的 skill 或文件 404。
 	 */
 	skill: download({

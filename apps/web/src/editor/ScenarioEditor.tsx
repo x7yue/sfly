@@ -2,6 +2,7 @@ import {
 	checkConnection,
 	declaredOutputs,
 	documentWarnings,
+	freeCardAt,
 	insertAfter,
 	insertOnEdge,
 	nodeConnections,
@@ -62,14 +63,7 @@ import { hasDraft } from "#/versions/draft";
 import { versionConflictOf } from "#/versions/queries";
 import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useVersionedDraft";
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
-import {
-	type AddItem,
-	freeCardAt,
-	idStem,
-	newDocNode,
-	newSubflowNameProblem,
-	packageGroups,
-} from "./add-node";
+import { type AddItem, idStem, newDocNode, newSubflowNameProblem, packageGroups } from "./add-node";
 import { companionSubflow } from "./add-subflow";
 import { usePackageCatalog, useRegisteredAgents, useRegisteredBots } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";

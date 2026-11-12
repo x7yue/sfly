@@ -1,6 +1,6 @@
 # 开发文档
 
-控制面自带用户文档（`docs/guide`），由「开发文档」页渲染，文中的控制面地址和版本号会替换成当前实例的值。同一套文档还以原始 Markdown 的形式提供给 AI 工具：`/docs/<页>.md`、`/llms.txt`，以及节点开发 skill `/docs/skills/sfly-node-dev/`。
+控制面自带用户文档（`docs/guide`），由「开发文档」页渲染，文中的控制面地址和版本号会替换成当前实例的值。同一套文档还以原始 Markdown 的形式提供给 AI 工具：`/docs/<页>.md`、`/llms.txt`，以及两份 skill：节点开发 `/docs/skills/sfly-node-dev/`、操作平台 `/docs/skills/sfly-platform/`。
 
 ## Sub-features
 
@@ -21,7 +21,7 @@ Preconditions:
 
 - **进入文档。** 在任意页面运行 `find role link click --name "开发文档"`（它在 `navigation "主导航"` 里），能看到 `navigation "文档目录"`；点「快速开始」，`article "快速开始"` 里有 h1「快速开始」。截图 `doc-01-quickstart.png`。
 - **替换。** 页面里的控制面地址就是 `$HTTP_URL`，版本号是工作区版本，不会出现 `{{` 占位符。
-- **原文。** `curl -s $HTTP_URL/docs/quickstart.md | grep -c "$HTTP_URL"` 的结果大于 0；`curl -s $HTTP_URL/llms.txt` 里每页都有一行 `($HTTP_URL/docs/<slug>.md)`，还有 `sfly-node-dev/SKILL.md`。结果存到 `$RUN/evidence/doc-llms.txt`。
+- **原文。** `curl -s $HTTP_URL/docs/quickstart.md | grep -c "$HTTP_URL"` 的结果大于 0；`curl -s $HTTP_URL/llms.txt` 里每页都有一行 `($HTTP_URL/docs/<slug>.md)`，还有 `sfly-node-dev/SKILL.md` 和 `sfly-platform/SKILL.md`。结果存到 `$RUN/evidence/doc-llms.txt`。
 
 ## Gotchas
 

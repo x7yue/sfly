@@ -10,9 +10,9 @@ import type { Preflight } from "../runs/preflight.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
+import { requireActor } from "./actor.js";
 import { contractRoute, contractStream } from "./contract-route.js";
 import { sendError } from "./errors.js";
-import { requireNickname } from "./nickname.js";
 
 /** 运行（契约见 @sfly/schema 的 runsApi）：触发前预检、手动触发场景的最新版本、运行列表、查询运行状态。 */
 export function registerRunRoutes(
@@ -69,10 +69,10 @@ export function registerRunRoutes(
 	});
 
 	contractRoute(app, runsApi.trigger, async ({ params, body }, reply, request) => {
-		const triggeredBy = requireNickname(request, reply);
-		if (!triggeredBy) return reply;
+		const actor = requireActor(request, reply);
+		if (!actor) return reply;
 		if (!isUuid(params.id)) return sendError(reply, 404, "not_found", "orchestration not found");
-		const outcome = await deps.engine.trigger(params.id, body.params, triggeredBy);
+		const outcome = await deps.engine.trigger(params.id, body.params, actor);
 		if (!outcome.ok) {
 			return sendError(reply, outcome.status, outcome.code, outcome.message, outcome.details);
 		}
@@ -130,10 +130,10 @@ export function registerRunRoutes(
 
 	// 取消整个运行（#12）；运行还没结束时再次调用即强制取消。返回取消后的运行视图。
 	contractRoute(app, runsApi.cancel, async ({ params }, reply, request) => {
-		const requestedBy = requireNickname(request, reply);
-		if (!requestedBy) return reply;
+		const actor = requireActor(request, reply);
+		if (!actor) return reply;
 		if (!isUuid(params.id)) return sendError(reply, 404, "not_found", "run not found");
-		const outcome = await deps.engine.cancel(params.id, requestedBy);
+		const outcome = await deps.engine.cancel(params.id, actor);
 		if (!outcome.ok) return sendError(reply, outcome.status, outcome.code, outcome.message);
 		return (
 			(await getRunView(deps.db, params.id)) ?? sendError(reply, 404, "not_found", "run not found")

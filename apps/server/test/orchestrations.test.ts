@@ -175,6 +175,7 @@ describe("编排版本", () => {
 			orchestration_id: id,
 			number: 0,
 			author: null,
+			author_via: null,
 			created_at: null,
 			document: {
 				nodes: [{ id: "entry", kind: "entry", params: [], position: { x: 0, y: 0 } }],

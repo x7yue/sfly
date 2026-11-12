@@ -27,11 +27,17 @@ const view = (status: RunView["status"], cancelled = false): RunView => ({
 	orchestration_version: 1,
 	status,
 	triggered_by: "tester",
+	triggered_via: null,
 	params: {},
 	started_at: "2026-01-01T00:00:00.000Z",
 	ended_at: status === "running" ? null : "2026-01-01T00:00:05.000Z",
 	cancel: cancelled
-		? { requested_by: "tester", requested_at: "2026-01-01T00:00:03.000Z", forced_at: null }
+		? {
+				requested_by: "tester",
+				requested_via: null,
+				requested_at: "2026-01-01T00:00:03.000Z",
+				forced_at: null,
+			}
 		: null,
 	run_notification: null,
 	chains: [],

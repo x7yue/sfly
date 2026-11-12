@@ -100,24 +100,33 @@ def test_project_layout_from_uv_init_without_agent_instructions(
     assert [p.name for p in work.iterdir()] == ["demo-nodes"]
 
 
-def test_writes_node_dev_skill_for_codex_and_claude_code(
+def test_writes_both_skills_for_codex_and_claude_code(
     work: Path, control_plane: FakeControlPlane
 ) -> None:
     run = sfly_init(work, "demo", server=control_plane.url)
 
     assert run.returncode == 0, run.stderr
     project = work / "demo"
-    skill = project / ".agents" / "skills" / "sfly-node-dev"
-    # 内容与仓库里的用户文档源文件相同（SDK 参考即 reference.md）。
-    assert (skill / "SKILL.md").read_bytes() == (
-        GUIDE / "skills" / "sfly-node-dev" / "SKILL.md"
-    ).read_bytes()
-    assert (skill / "reference.md").read_bytes() == (GUIDE / "sdk-reference.md").read_bytes()
-    link = project / ".claude" / "skills" / "sfly-node-dev"
-    assert link.is_symlink()
-    # 相对链接：项目移动或克隆到别处后仍然有效。
-    assert not Path(os.readlink(link)).is_absolute()
-    assert link.resolve() == skill.resolve()
+    # 内容与仓库里的用户文档源文件相同（reference.md 是对应的一页文档）。
+    sources = {
+        "sfly-node-dev": {
+            "SKILL.md": GUIDE / "skills" / "sfly-node-dev" / "SKILL.md",
+            "reference.md": GUIDE / "sdk-reference.md",
+        },
+        "sfly-platform": {
+            "SKILL.md": GUIDE / "skills" / "sfly-platform" / "SKILL.md",
+            "reference.md": GUIDE / "platform-cli.md",
+        },
+    }
+    for name, files in sources.items():
+        skill = project / ".agents" / "skills" / name
+        for file, source in files.items():
+            assert (skill / file).read_bytes() == source.read_bytes(), f"{name}/{file}"
+        link = project / ".claude" / "skills" / name
+        assert link.is_symlink()
+        # 相对链接：项目移动或克隆到别处后仍然有效。
+        assert not Path(os.readlink(link)).is_absolute()
+        assert link.resolve() == skill.resolve()
 
 
 def test_without_mirrors_uses_uv_defaults(work: Path) -> None:
@@ -279,7 +288,7 @@ def test_generated_project_syncs_tests_lints_runs_and_builds(
         result = run_in(project, *command)
         assert result.returncode == 0, result.stdout + result.stderr
 
-    run = run_in(project, "sfly", "run", "countdown", "--params", '{"name": "世界"}')
+    run = run_in(project, "sfly", "debug", "countdown", "--params", '{"name": "世界"}')
     assert run.returncode == 0, run.stderr
     outputs, _ = json.JSONDecoder().raw_decode(run.stdout.split("输出：\n", 1)[1])
     assert outputs == {"greeting": "你好，世界", "ticks": 3}

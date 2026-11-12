@@ -23,12 +23,17 @@
 		{
 			"slug": "local-debug",
 			"title": "本地调试",
-			"description": "在开发机上直接执行节点：ruff、单元测试、sfly run 的输出与退出码、用 Ctrl-C 验证取消"
+			"description": "在开发机上直接执行节点：ruff、单元测试、sfly debug 的输出与退出码、用 Ctrl-C 验证取消"
 		},
 		{
 			"slug": "integration",
 			"title": "联调",
-			"description": "sfly dev 把项目以 <包名>@dev 装到本机 Agent，在真实场景里运行"
+			"description": "sfly dev 把项目以 <包名>@dev 装到本机 Agent，在真实场景里运行：在浏览器里选开发版本，或者用命令行复制场景、改成开发版本、运行并读结果（AI 编程助手自己联调的流程）"
+		},
+		{
+			"slug": "platform-cli",
+			"title": "用命令行操作平台",
+			"description": "sfly scenario、run、agent、package、api 命令：查看场景、运行、Agent 和节点包，触发、等待、取消运行，读日志和产物，pull / push 编辑场景；输出约定、退出码、控制面地址和昵称的取值顺序、「经 …」标注；AI 编程助手按 sfly-platform skill 用它们自己联调"
 		},
 		{
 			"slug": "publish",
