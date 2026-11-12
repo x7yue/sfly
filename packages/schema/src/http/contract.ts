@@ -23,7 +23,8 @@ import { z } from "zod";
  *    JSON 接口用 `endpoint`；SSE 用 `stream`（`events` 是事件名 → data 的 schema）；
  *    返回字节流的下载用 `download`。请求体是原始字节的上传（发布节点包、上传产物）用 `endpoint`，
  *    不定义 body，加 `upload: true`，只约束路径参数与 JSON 响应。新增领域模块后加进 ./index.ts 的 `httpContract`。
- * 8. 路由清单（route-manifest.ts）从 `httpContract` 导出到 `sdk/python/src/sfly/schemas/routes.json`
+ * 8. 路由清单（route-manifest.ts，不从包入口导出，只有导出脚本用）从 `httpContract` 导出到
+ *    `sdk/python/src/sfly/schemas/routes.json`
  *    （`pnpm gen`，`pnpm gen:check` 保证提交的是最新的），`sfly api` 用它列出接口、校验请求。
  *    请求的 JSON Schema 按输入方向导出：refine 和转换后的约束导不出来，会记在清单的 `notes` 里。
  */

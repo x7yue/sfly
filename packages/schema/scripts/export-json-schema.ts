@@ -2,7 +2,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildRouteManifest, exportedSchemas, httpContract, toJsonSchema } from "../src/index.js";
+import { exportedSchemas, httpContract, toJsonSchema } from "../src/index.js";
+import { buildRouteManifest } from "../src/route-manifest.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, "../../../sdk/python/src/sfly/schemas");
