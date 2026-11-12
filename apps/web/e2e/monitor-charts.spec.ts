@@ -122,7 +122,7 @@ test("每张图表只查它引用的指标；折叠的组只查组标题上的�
 	await expect(chart(page, "fetch", "吞吐").locator("[data-series] path")).toHaveCount(2);
 });
 
-test("四种图表类型与多序列图例；横轴是节点实际运行的时段并标出起止时间；运行中实时追加", async ({
+test("四种图表类型与多序列图例；横轴是节点实际运行的时段并标出起止时间；运行中实时追加；纵轴上限与最新值相同时不重复显示", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -149,8 +149,10 @@ test("四种图表类型与多序列图例；横轴是节点实际运行的时�
 	const level = chart(page, "probe", "level");
 	await expect(level.locator("[data-window]")).toHaveText("08:00:06 – 08:00:14");
 	await expect(level.locator("[data-latest]")).toHaveText("3");
+	await expect(level.locator("[data-axis-max]")).toHaveText("9");
 	agent.metrics(tasks.probe as AssignedTask, [["level", unixAt(clock0, 14), 42]]);
 	await expect(level.locator("[data-latest]")).toHaveText("42");
+	await expect(level.locator("[data-axis-max]")).toHaveCount(0);
 	await expect(group(page, "probe").locator('[data-primary-metric="level"]')).toContainText("42");
 });
 

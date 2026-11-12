@@ -22,7 +22,7 @@ import {
 import { useId, useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { ACTION, subflowLabel } from "#/lib/copy";
+import { subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,7 @@ import { FeishuBotSelect } from "./FeishuBotSelect";
 import { Field, SectionTitle } from "./fields";
 import {
 	InsertReferenceButton,
+	InsertReferenceGlyph,
 	ReferenceEditor,
 	type ReferenceEditorHandle,
 } from "./ReferenceEditor";
@@ -128,8 +129,8 @@ export function PackageParams({
 				</div>
 			))}
 			<p className="m-0 text-xs text-fg-3">
-				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>$</code> 或点「
-				{ACTION.insertReference}」可以把引用和文字混写。
+				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>$</code> 或点{" "}
+				<InsertReferenceGlyph /> 可以把引用和文字混写。
 			</p>
 			<SectionTitle>派发</SectionTitle>
 			<Field label="Agent">
@@ -713,8 +714,11 @@ const COLOR_LABELS: Record<FeishuNotifyNode["color"], string> = {
 	grey: "灰色",
 };
 
-const REFERENCE_HELP =
-	"可以输入 $ 或点「插入引用」写入入口参数和前面节点的输出；引用缺失时显示 null";
+const REFERENCE_HELP = (
+	<>
+		可以输入 $ 或点 <InsertReferenceGlyph /> 写入入口参数和前面节点的输出；引用缺失时显示 null
+	</>
+);
 
 /**
  * 飞书通知节点（docs/SEMANTICS.md §1.3、§4.2，ADR 0020）：已登记的飞书机器人（下拉框，也可以改为整值引用入口参数）、
@@ -892,7 +896,11 @@ function FeishuCardFields({ node, choices, problemsOf, onChange }: FeishuFieldsP
 				htmlFor={titleId}
 				aside={<InsertReferenceButton name="标题" editor={titleEditor} />}
 				error={titleProblems.length > 0 ? titleProblems.join("；") : undefined}
-				help="卡片顶部的标题；可以输入 $ 或点「插入引用」写入引用"
+				help={
+					<>
+						卡片顶部的标题；可以输入 $ 或点 <InsertReferenceGlyph /> 写入引用
+					</>
+				}
 			>
 				<ReferenceEditor
 					ref={titleEditor}
@@ -938,7 +946,11 @@ function FeishuCardFields({ node, choices, problemsOf, onChange }: FeishuFieldsP
 						onChange={(markdown) => onChange({ ...node, markdown })}
 					/>
 				}
-				help={`Markdown 正文，超过 ${FEISHU_BODY_LIMIT_LABEL} 时截断。${REFERENCE_HELP}`}
+				help={
+					<>
+						Markdown 正文，超过 {FEISHU_BODY_LIMIT_LABEL} 时截断。{REFERENCE_HELP}
+					</>
+				}
 			>
 				<ReferenceEditor
 					ref={markdownEditor}
