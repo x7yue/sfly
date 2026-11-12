@@ -27,7 +27,7 @@ export interface RunLogPage {
 	/** 按上面的顺序。 */
 	lines: RunLogLine[];
 	/** 日志超过大小上限被截断的任务，按运行视图里的顺序。 */
-	truncatedTasks: string[];
+	truncatedTasks: LogOrigin[];
 }
 
 /** 一个任务的日志文件，作为归并里的一条流。 */
@@ -68,7 +68,7 @@ export class RunLogs {
 		}
 		return {
 			lines: mergeBackward(streams, windows, request.limit),
-			truncatedTasks: streams.filter((s) => s.truncated).map((s) => s.origin.task_id),
+			truncatedTasks: streams.filter((s) => s.truncated).map((s) => s.origin),
 		};
 	}
 

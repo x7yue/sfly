@@ -365,8 +365,8 @@ export const RunLogPage = z.object({
 	run_id: z.string(),
 	/** 最新的 limit 行，按上面的顺序。 */
 	lines: z.array(RunLogLine),
-	/** 日志超过大小上限被截断的任务（task_id），按运行视图里的顺序。 */
-	truncated_tasks: z.array(z.string()),
+	/** 日志超过大小上限被截断的任务，按运行视图里的顺序。 */
+	truncated_tasks: z.array(LogOrigin),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
 });

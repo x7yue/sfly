@@ -243,7 +243,11 @@ describe("按运行合并读取日志", () => {
 		);
 		b.logs(s, [line(b, 1, 5_000, "s after the marker")]);
 
-		await eventually(async () => expect((await page(runId)).truncated_tasks).toEqual([z1.taskId]));
+		await eventually(async () =>
+			expect((await page(runId)).truncated_tasks).toMatchObject([
+				{ task_id: z1.taskId, node_id: "z", attempt: 1, subflow: null },
+			]),
+		);
 		const { lines } = await settled(runId, (await page(runId, "limit=1000")).lines.length);
 		const marker = lines.at(-2);
 		expect(marker).toMatchObject({ task_id: z1.taskId, source: "system", level: "warn" });
