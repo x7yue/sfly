@@ -1,11 +1,10 @@
-import { EnvHttpProxyAgent, request } from "undici";
 import { type FeishuFailure, failureFromError, failureFromResponse } from "./feishu-failure.js";
 
 /**
  * 向飞书机器人的 Webhook 地址发一次请求（ADR 0020）。这是控制面第一次主动对外发 HTTP 请求：
  *
  * - 直接访问 Webhook 地址里的主机，不写死飞书域名（私有部署的飞书也能用）；
- * - 遵循 `HTTPS_PROXY`（http 地址用 `HTTP_PROXY`）和 `NO_PROXY` 环境变量（控制面启动时读取代理设置）；
+ * - 不支持代理，控制面所在的机器要能直接访问这个主机；
  * - 单次请求超时 10 秒；
  * - 成功的条件是 HTTP 2xx 并且响应体里的 `code` 为 0，其余都是失败，失败带中文原因、下一步和能否重试
  *   （{@link FeishuFailure}）；
@@ -21,7 +20,7 @@ export type FeishuSendResult =
 	| { ok: false; failure: FeishuFailure };
 
 export class FeishuClient {
-	readonly #dispatcher = new EnvHttpProxyAgent();
+	readonly #closing = new AbortController();
 
 	/** `body` 是完整的飞书请求体（`msg_type` 和 `content`），原样序列化成 JSON 发出。 */
 	async send(
@@ -29,32 +28,31 @@ export class FeishuClient {
 		body: object,
 		{ timeoutMs = FEISHU_REQUEST_TIMEOUT_MS }: { timeoutMs?: number } = {},
 	): Promise<FeishuSendResult> {
-		const signal = AbortSignal.timeout(timeoutMs);
+		const timeout = AbortSignal.timeout(timeoutMs);
 		try {
-			const res = await request(webhookUrl, {
+			const res = await fetch(webhookUrl, {
 				method: "POST",
 				headers: { "content-type": "application/json; charset=utf-8" },
 				body: JSON.stringify(body),
-				dispatcher: this.#dispatcher,
-				signal,
+				signal: AbortSignal.any([timeout, this.#closing.signal]),
 			});
-			const failure = failureFromResponse(res.statusCode, await readText(res.body));
-			return failure ? { ok: false, failure } : { ok: true, httpStatus: res.statusCode };
+			const failure = failureFromResponse(res.status, await readText(res));
+			return failure ? { ok: false, failure } : { ok: true, httpStatus: res.status };
 		} catch (error) {
 			return {
 				ok: false,
 				failure: failureFromError(error, {
 					host: hostOf(webhookUrl),
-					timedOut: signal.aborted,
+					timedOut: timeout.aborted,
 					timeoutMs,
 				}),
 			};
 		}
 	}
 
-	/** 关闭连接池；正在进行的请求立即以网络错误结束。 */
+	/** 正在进行的请求立即以网络错误结束，之后发的请求也立即失败；控制面关闭时不用等还没响应的飞书。 */
 	async close(): Promise<void> {
-		await this.#dispatcher.destroy();
+		this.#closing.abort(new Error("飞书客户端已关闭"));
 	}
 }
 
@@ -67,16 +65,17 @@ function hostOf(webhookUrl: string): string {
 	}
 }
 
-async function readText(body: AsyncIterable<Buffer> & { destroy(): unknown }): Promise<string> {
-	const chunks: Buffer[] = [];
+async function readText(res: Response): Promise<string> {
+	if (!res.body) return "";
+	const reader = res.body.getReader();
+	const chunks: Uint8Array[] = [];
 	let size = 0;
-	for await (const chunk of body) {
-		chunks.push(chunk);
-		size += chunk.length;
-		if (size > MAX_RESPONSE_BYTES) {
-			body.destroy();
-			break;
-		}
+	while (size <= MAX_RESPONSE_BYTES) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		chunks.push(value);
+		size += value.length;
 	}
+	await reader.cancel().catch(() => {});
 	return Buffer.concat(chunks).toString("utf8");
 }

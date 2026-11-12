@@ -7,7 +7,6 @@ import type { Clock } from "../../src/clock.js";
  * 可以为每个请求指定返回的 HTTP 状态码和 `code`，也可以让它不响应。写法参照 pypi-stub.ts、release-mirror.ts。
  *
  * 飞书机器人的 Webhook 地址直接指向它（{@link FakeFeishu.webhookUrl}），生产代码不为测试留任何注入点。
- * 同一个服务也能当 HTTP 代理用：请求以绝对地址到达时记 `viaProxy`，CONNECT 隧道请求记进 `connects` 后回 502。
  */
 export interface FeishuReply {
 	/** HTTP 状态码，默认 200。 */
@@ -26,15 +25,13 @@ export interface FeishuReply {
 
 export interface FeishuRequest {
 	method: string;
-	/** Webhook 地址里的路径（请求经代理以绝对地址到达时，是绝对地址里的路径）。 */
+	/** Webhook 地址里的路径。 */
 	path: string;
 	headers: IncomingHttpHeaders;
 	/** 请求体原文。 */
 	body: string;
 	/** 请求体解析成 JSON；不是 JSON 时为 undefined。 */
 	json: unknown;
-	/** 请求以绝对地址到达（HTTP 代理的请求形式），即经过了作为代理使用的这个服务。 */
-	viaProxy: boolean;
 	/** 请求到达时 {@link FakeFeishuOptions.clock} 的读数（控制面时间）；没有给时钟时为 undefined。 */
 	at: Date | undefined;
 }
@@ -56,8 +53,6 @@ export interface FakeFeishu {
 	readonly requests: readonly FeishuRequest[];
 	/** 同一时刻在途请求（收到之后、响应结束之前）的最大数量；不响应的请求一直算在途。 */
 	readonly maxInFlight: number;
-	/** 作为 HTTPS 代理收到的 CONNECT 请求的目标（`主机:端口`），按到达顺序。 */
-	readonly connects: readonly string[];
 	/** 排好后面请求的应答：按到达顺序一个请求用掉一个，用完后用 {@link replyAlways} 的应答（默认 200、code 0）。 */
 	reply(...replies: FeishuReply[]): void;
 	/** 只给 Webhook 地址 `webhookUrl(token)` 排好后面请求的应答（优先于 {@link reply}）：多个机器人同时投递时，到达的先后不确定。 */
@@ -77,7 +72,6 @@ function responseBody(reply: FeishuReply): string {
 
 export async function startFakeFeishu({ clock }: FakeFeishuOptions = {}): Promise<FakeFeishu> {
 	const requests: FeishuRequest[] = [];
-	const connects: string[] = [];
 	const queued: FeishuReply[] = [];
 	const queuedByPath = new Map<string, FeishuReply[]>();
 	let fallback = ok;
@@ -96,18 +90,15 @@ export async function startFakeFeishu({ clock }: FakeFeishuOptions = {}): Promis
 			} catch {
 				json = undefined;
 			}
-			const target = req.url ?? "/";
-			const viaProxy = /^https?:\/\//i.test(target);
+			const path = req.url ?? "/";
 			requests.push({
 				method: req.method ?? "GET",
-				path: viaProxy ? new URL(target).pathname : target,
+				path,
 				headers: req.headers,
 				body,
 				json,
-				viaProxy,
 				at: clock?.now(),
 			});
-			const path = viaProxy ? new URL(target).pathname : target;
 			const reply = queuedByPath.get(path)?.shift() ?? queued.shift() ?? fallback;
 			maxInFlight = Math.max(maxInFlight, ++inFlight);
 			if (reply.hang) return;
@@ -125,10 +116,6 @@ export async function startFakeFeishu({ clock }: FakeFeishuOptions = {}): Promis
 		sockets.add(socket);
 		socket.on("close", () => sockets.delete(socket));
 	});
-	server.on("connect", (req, socket) => {
-		connects.push(req.url ?? "");
-		socket.end("HTTP/1.1 502 Bad Gateway\r\nconnection: close\r\ncontent-length: 0\r\n\r\n");
-	});
 	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
@@ -139,7 +126,6 @@ export async function startFakeFeishu({ clock }: FakeFeishuOptions = {}): Promis
 		get maxInFlight() {
 			return maxInFlight;
 		},
-		connects,
 		reply: (...replies) => {
 			queued.push(...replies);
 		},
