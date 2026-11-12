@@ -1,6 +1,5 @@
 import { type FeishuMessageSource, feishuMessages } from "../db/schema.js";
 import type { Tx } from "../engine/step.js";
-import { truncateTextBody } from "./body-limit.js";
 
 /** 要写进发送队列的一条消息。 */
 export interface NewFeishuMessage {
@@ -10,7 +9,7 @@ export interface NewFeishuMessage {
 	/** 发起这条消息的运行和任务；投递结果写进这个任务的日志。 */
 	runId?: string;
 	taskId?: string;
-	/** 完整的飞书请求体；文本消息超过 20 KB 时入队时截断正文（{@link truncateTextBody}）。 */
+	/** 完整的飞书请求体。 */
 	body: Record<string, unknown>;
 	/** 入队时间（控制面时间）。 */
 	now: Date;
@@ -27,7 +26,7 @@ export async function enqueueFeishuMessage(tx: Tx, message: NewFeishuMessage): P
 		source: message.source,
 		runId: message.runId ?? null,
 		taskId: message.taskId ?? null,
-		body: truncateTextBody(message.body),
+		body: message.body,
 		enqueuedAt: message.now,
 	});
 }

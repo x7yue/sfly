@@ -16,15 +16,36 @@ export const TRUNCATED_MARK = "…（已截断）";
 /** 请求体序列化之后（实际发出去的样子）的字节数。 */
 export const bodyBytes = (body: unknown): number => Buffer.byteLength(JSON.stringify(body), "utf8");
 
+const isHighSurrogate = (unit: number) => unit >= 0xd800 && unit <= 0xdbff;
+
 /**
- * 文本消息（`msg_type: text`）。`atAll` 打开时在正文末尾追加 {@link AT_ALL}；
- * 用户自己写在正文里的 at 标签原样保留。
+ * 文本消息（`msg_type: text`）。`atAll` 打开时在正文末尾追加 {@link AT_ALL}；用户自己写在正文里的 at 标签原样保留。
+ * 请求体超过 {@link FEISHU_BODY_LIMIT_BYTES} 时截断正文：留下最长的、放得下的前缀（不把一个字符切成两半），
+ * 后面接上 {@link TRUNCATED_MARK}；「@所有人」仍留在最后，截断不能让重要的提醒丢掉。
+ * 发文本格式的消息一律经过这里，原始消息（`rawMessage`）不截断。
  */
 export function textMessage(
 	text: string,
 	atAll: boolean,
 ): { msg_type: "text"; content: { text: string } } {
-	return { msg_type: "text", content: { text: atAll ? `${text}${AT_ALL}` : text } };
+	const tail = atAll ? AT_ALL : "";
+	const body = (kept: string) => ({
+		msg_type: "text" as const,
+		content: { text: `${kept}${tail}` },
+	});
+	if (bodyBytes(body(text)) <= FEISHU_BODY_LIMIT_BYTES) return body(text);
+	const prefix = (length: number) =>
+		text.slice(0, length > 0 && isHighSurrogate(text.charCodeAt(length - 1)) ? length - 1 : length);
+	const cut = (length: number) => body(`${prefix(length)}${TRUNCATED_MARK}`);
+	// 放得下的前缀越长请求体越大：二分。cut(low) 放得下、cut(high) 放不下（整段正文加上说明已经超了）。
+	let low = 0;
+	let high = text.length;
+	while (high - low > 1) {
+		const middle = (low + high) >> 1;
+		if (bodyBytes(cut(middle)) <= FEISHU_BODY_LIMIT_BYTES) low = middle;
+		else high = middle;
+	}
+	return cut(low);
 }
 
 export type CardColor = Extract<OrchestrationNode, { kind: "feishu_notify" }>["color"];
