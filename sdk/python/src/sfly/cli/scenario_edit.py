@@ -6,7 +6,8 @@
 
 `document` 就是场景文档本身。`base_version` 是编辑起点的版本号，push 时带给控制面：
 控制面上已经有更新的版本时返回 409 `version_conflict`，命令提示重新 pull、合并后再 push，
-不提供强制覆盖。没有 `position` 的节点不用写坐标：控制面保存时按画布的「整理布局」补上。
+不提供强制覆盖。没有 `position` 的节点不用写坐标：控制面保存时按画布的「整理布局」补上，
+压住已有节点时挪到附近的空位；push 成功后文件里的 `document` 换成控制面实际保存的内容。
 """
 
 from __future__ import annotations
@@ -61,9 +62,11 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         help="把 pull 下来并改过的文件保存成场景的新版本",
         description="先按场景文档的 JSON Schema 在本地校验，没通过时列出出错的位置、不发请求；"
         "通过后带着文件里的 base_version 保存新版本，输出新版本号和控制面返回的警告，"
-        "并把文件里的 base_version 更新为新版本号，方便接着改、接着 push。"
+        "并把文件里的 base_version 更新为新版本号、document 换成控制面实际保存的内容"
+        "（包括补好的坐标），方便接着改、接着 push。"
         "控制面上已经有更新的版本时报冲突（退出码 2）：重新 pull，把改动合并进去再 push，"
-        "不提供强制覆盖。没有 position 的节点由控制面按整理布局补上坐标，已有坐标的节点不动。",
+        "不提供强制覆盖。没有 position 的节点由控制面按整理布局补上坐标"
+        "（压住已有节点时挪到附近的空位），已有坐标的节点不动。",
     )
     p_push.add_argument("file", metavar="文件", help="pull 写出的 JSON 文件")
     p_push.set_defaults(func=command(_push))
@@ -202,14 +205,19 @@ def _push(session: Session, args: argparse.Namespace) -> None:
 
     note = None
     try:
-        _write_json(target, {**content, "base_version": saved["number"]})
+        _write_json(
+            target, {**content, "base_version": saved["number"], "document": saved["document"]}
+        )
     except CliError as error:
-        note = f"新版本已保存，但没能更新文件里的 base_version：{error.message}"
+        note = f"新版本已保存，但没能更新文件里的 base_version 和 document：{error.message}"
     warnings = saved["warnings"]
     lines = [f"已保存场景 {scenario_id} 的版本 {saved['number']}（文件基于版本 {base_version}）。"]
     lines.extend(_warning_lines(warnings))
     if note is None:
-        lines.append(f"文件 {target} 的 base_version 已更新为 {saved['number']}。")
+        lines.append(
+            f"文件 {target} 的 base_version 已更新为 {saved['number']}，"
+            "document 换成了控制面实际保存的内容（包括补好的坐标）。"
+        )
     session.out.emit(
         {
             "scenario": scenario_id,

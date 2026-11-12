@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
-const repoRoot = resolve(import.meta.dirname, "../../../..");
+export const repoRoot = resolve(import.meta.dirname, "../../../..");
 const execFileAsync = promisify(execFile);
 
 export interface SflyResult {
@@ -26,7 +26,7 @@ const emptyHome = mkdtempSync(join(tmpdir(), "sfly-home-"));
  * 继承的环境变量里，会影响命令行取值的都去掉：SFLY_*（地址、昵称、SFLY_HOME）、
  * AI 编程助手的标记（AI_AGENT、CLAUDECODE、CODEX_*，测试可能就跑在 AI 编程助手里）。
  */
-function cleanEnv(): Record<string, string | undefined> {
+export function cleanEnv(): Record<string, string | undefined> {
 	const env: Record<string, string | undefined> = {};
 	for (const [key, value] of Object.entries(process.env)) {
 		if (key.startsWith("SFLY_") || key.startsWith("CODEX_")) continue;
@@ -53,7 +53,7 @@ export async function sfly(args: string[], options: SflyOptions = {}): Promise<S
 }
 
 /** 并发跑测试时 uv 可能在 stderr 打等待锁的提示，那不是命令行的输出。 */
-function withoutUvNoise(stderr: string): string {
+export function withoutUvNoise(stderr: string): string {
 	return stderr
 		.split("\n")
 		.filter((line) => !line.startsWith("Blocking waiting for file lock"))
