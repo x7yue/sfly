@@ -1,5 +1,5 @@
 import type { NodeTypeMetadata, OrchestrationDocument } from "@sfly/schema";
-import { orderedInputs } from "./inputs.js";
+import { inputsOfType, isInputOfType, namesInInputs } from "./input-types.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
 
 /**
@@ -14,36 +14,25 @@ import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
 type Io = NodeTypeMetadata["inputs"];
 type JsonSchema = Record<string, unknown>;
 
-/** 输入 schema 里标记「Agent」类型的键和值（与 sdk/python/src/sfly/cli/scan.py 一致）。 */
-export const AGENT_INPUT_KEY = "x-sfly-type";
+/** 输入 schema 里标记「Agent」类型的值（`x-sfly-type`，与 sdk/python/src/sfly/cli/scan.py 一致）。 */
 export const AGENT_INPUT_TYPE = "agent";
 
-const marked = (schema: unknown) =>
-	schema !== null &&
-	typeof schema === "object" &&
-	(schema as JsonSchema)[AGENT_INPUT_KEY] === AGENT_INPUT_TYPE;
-
 /** 这个输入是不是「Agent」类型（`AgentName`，或 `AgentName | None`）。 */
-export function isAgentInput(schema: JsonSchema): boolean {
-	return marked(schema) || (Array.isArray(schema.anyOf) && schema.anyOf.some(marked));
-}
+export const isAgentInput = (schema: JsonSchema): boolean =>
+	isInputOfType(schema, AGENT_INPUT_TYPE);
 
 /** 节点类型里「Agent」类型的输入名（按参数顺序）。 */
-export function agentInputs(io: Io): string[] {
-	return orderedInputs(io)
-		.filter(([, schema]) => isAgentInput(schema))
-		.map(([name]) => name);
-}
+export const agentInputs = (io: Io): string[] => inputsOfType(io, AGENT_INPUT_TYPE);
 
 /** 已解析的输入里，「Agent」类型的输入引用的 Agent：每个值不为空的字符串一项（null、其他类型留给类型检查）。 */
 export function referencedAgents(
 	io: Io,
 	inputs: Record<string, unknown>,
 ): { input: string; agent: string }[] {
-	return agentInputs(io).flatMap((input) => {
-		const value = inputs[input];
-		return typeof value === "string" && value !== "" ? [{ input, agent: value }] : [];
-	});
+	return namesInInputs(io, inputs, AGENT_INPUT_TYPE).map(({ input, name }) => ({
+		input,
+		agent: name,
+	}));
 }
 
 export interface AgentInputWarning {

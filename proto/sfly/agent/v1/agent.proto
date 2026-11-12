@@ -243,6 +243,9 @@ message AssignTask {
   // 这个任务通过「Agent」类型的输入引用的 Agent（ADR 0019），每台一项、不重复；地址在派发时解析。
   // 节点只能调用这里列出的 Agent 和自己所在 Agent 的能力。旧版本控制面不带：没有可以调用的其它 Agent。
   repeated ReferencedAgent referenced_agents = 13;
+  // 这个任务通过「飞书机器人」类型的输入引用的飞书机器人名称（ADR 0020），不重复，按输入顺序；
+  // 不检查是否已登记（输入的值来自前面节点的输出时，派发时才知道）。节点通过它们发通知。旧版本控制面不带：没有可以发通知的机器人。
+  repeated string referenced_feishu_bots = 14;
 }
 
 // 任务通过「Agent」类型的输入引用的一台 Agent：节点收到的参数值是它的名称，调用它的能力时连接这里的地址和端口。

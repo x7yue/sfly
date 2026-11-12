@@ -5,6 +5,7 @@ import {
 	inputProblems,
 	NODE_DEFAULTS,
 	type ResolveScope,
+	referencedFeishuBots,
 	resolveInputs,
 } from "@sfly/orchestration";
 import {
@@ -1489,6 +1490,12 @@ export class Engine implements AgentSessionHandler {
 			return undefined;
 		}
 
+		// 「飞书机器人」类型的输入引用的机器人名单随任务下发（ADR 0020）。不在这里检查是否已登记：
+		// 值来自前面节点的输出时派发时才知道，而通知不能成为任务失败的原因，发送时再检查。
+		const referencedBots = type
+			? [...new Set(referencedFeishuBots(type.inputs, inputs).map((r) => r.bot))]
+			: [];
+
 		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
 		await step.tx
 			.update(tasks)
@@ -1512,6 +1519,7 @@ export class Engine implements AgentSessionHandler {
 					packageUrl: archive ? this.deps.packageArchiveUrl(node.package, packageVersion) : "",
 					artifactUploadUrl: this.deps.artifactUploadUrl(task.id),
 					referencedAgents: referenced.agents,
+					referencedFeishuBots: referencedBots,
 				},
 			},
 		});

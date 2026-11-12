@@ -1,23 +1,32 @@
-import type { FeishuBotReference, FeishuBotScenario } from "@sfly/schema";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import {
+	type NodeTypeIo,
+	nodeTypeOf,
+	packageKey,
+	referencedFeishuBots,
+	referencesIn,
+} from "@sfly/orchestration";
+import type { FeishuBotReference, FeishuBotScenario, OrchestrationDocument } from "@sfly/schema";
+import { and, asc, eq, isNull, or } from "drizzle-orm";
 import type { Db } from "../db/database.js";
-import { orchestrations, orchestrationVersions } from "../db/schema.js";
+import { nodePackages, orchestrations, orchestrationVersions } from "../db/schema.js";
 
 /**
  * 引用某个飞书机器人的场景（删除机器人之前列出，ADR 0020）：场景自己的设置和最新场景版本里引用它的地方。
  * 已归档的场景不列（不能触发，恢复之后保存和触发的检查会指出）。
  *
  * 每种引用是一个来源（{@link BOT_REFERENCE_SOURCES} 里的一项）：给定机器人名称，返回引用它的地方，按场景。
- * 加一种引用（运行通知的设置、「飞书机器人」类型的输入的常量值）就是加一个来源和契约里的一个 `kind`。
+ * 加一种引用（运行通知的设置）就是加一个来源和契约里的一个 `kind`。
  */
 type BotReferenceSource = (
 	db: Db,
 	bot: string,
 ) => Promise<ReadonlyArray<{ orchestrationId: string; reference: FeishuBotReference }>>;
 
-/** 最新场景版本里的飞书通知节点。 */
-const notifyNodes: BotReferenceSource = async (db, bot) => {
-	const heads = await db
+/** 没有归档的场景的最新版本文档。 */
+async function headDocuments(
+	db: Db,
+): Promise<{ orchestrationId: string; document: OrchestrationDocument }[]> {
+	return db
 		.select({ orchestrationId: orchestrations.id, document: orchestrationVersions.document })
 		.from(orchestrations)
 		.innerJoin(
@@ -28,7 +37,11 @@ const notifyNodes: BotReferenceSource = async (db, bot) => {
 			),
 		)
 		.where(isNull(orchestrations.archivedAt));
-	return heads.flatMap(({ orchestrationId, document }) =>
+}
+
+/** 最新场景版本里的飞书通知节点。 */
+const notifyNodes: BotReferenceSource = async (db, bot) =>
+	(await headDocuments(db)).flatMap(({ orchestrationId, document }) =>
 		document.nodes.flatMap((node) =>
 			node.kind === "feishu_notify" && node.bot === bot
 				? [
@@ -40,9 +53,54 @@ const notifyNodes: BotReferenceSource = async (db, bot) => {
 				: [],
 		),
 	);
+
+/** 最新场景版本里「飞书机器人」类型的输入的常量值（要按文档锁定的节点包版本的元信息认出这种输入）。 */
+const botInputs: BotReferenceSource = async (db, bot) => {
+	const heads = await headDocuments(db);
+	const locked = new Map<string, { name: string; version: string }>();
+	for (const { document } of heads) {
+		if (!document.nodes.some((n) => n.kind === "package")) continue;
+		for (const [name, version] of Object.entries(document.packages)) {
+			locked.set(packageKey(name, version), { name, version });
+		}
+	}
+	const rows =
+		locked.size === 0
+			? []
+			: await db
+					.select({
+						name: nodePackages.name,
+						version: nodePackages.version,
+						metadata: nodePackages.metadata,
+					})
+					.from(nodePackages)
+					.where(
+						or(
+							...[...locked.values()].map((p) =>
+								and(eq(nodePackages.name, p.name), eq(nodePackages.version, p.version)),
+							),
+						),
+					);
+	// 开发版本和已不存在的版本没有元信息，认不出这种输入。
+	const catalog = new Map<string, readonly NodeTypeIo[]>(
+		rows.map((row) => [packageKey(row.name, row.version), row.metadata.nodes]),
+	);
+	return heads.flatMap(({ orchestrationId, document }) =>
+		document.nodes.flatMap((node) => {
+			if (node.kind !== "package") return [];
+			const type = nodeTypeOf(document, node, catalog);
+			if (!type) return [];
+			return referencedFeishuBots(type.inputs, node.inputs)
+				.filter((r) => r.bot === bot && referencesIn(r.bot).length === 0)
+				.map(({ input }) => ({
+					orchestrationId,
+					reference: { kind: "feishu_bot_input" as const, node_id: node.id, input },
+				}));
+		}),
+	);
 };
 
-const BOT_REFERENCE_SOURCES: readonly BotReferenceSource[] = [notifyNodes];
+const BOT_REFERENCE_SOURCES: readonly BotReferenceSource[] = [notifyNodes, botInputs];
 
 /** 引用这个机器人的场景（按场景名排序）和场景里引用它的地方。 */
 export async function scenariosReferencingBot(db: Db, bot: string): Promise<FeishuBotScenario[]> {
