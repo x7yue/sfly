@@ -4,6 +4,7 @@ import type { SQL } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Db } from "../db/database.js";
 import { type chainInstances, type ErrorKind, type runs, tasks } from "../db/schema.js";
+import type { PendingNotifications } from "../feishu/engine-notifications.js";
 import type { ChainPlan } from "./chain.js";
 import { taskId } from "./ids.js";
 
@@ -26,10 +27,8 @@ export interface Step {
 	cancels: CancelOrder[];
 	/** 提交后发给 Agent 的派发消息。 */
 	assigns: Array<{ conn: AgentConnection; message: ServerMessage }>;
-	/** 提交后写进任务日志的控制面日志行（source system）：日志文件不在事务里，事务回滚时不该留下它们。 */
-	logs: Array<{ taskId: string; level: "info" | "warn"; text: string }>;
-	/** 这个事务往飞书发送队列里写了消息：提交后唤醒投递（FeishuDelivery.wake）。 */
-	feishuQueued: boolean;
+	/** 飞书通知在事务里留下的、提交后才能做的收尾（日志行、唤醒投递；src/feishu/engine-notifications.ts）。 */
+	notifications: PendingNotifications;
 }
 
 export interface CancelOrder {

@@ -4,9 +4,10 @@ import { z } from "zod";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { feishuBots, tasks } from "../db/schema.js";
+import { tasks } from "../db/schema.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import { isUuid } from "../util/uuid.js";
+import { feishuBotGone, registeredBots } from "./bot-checks.js";
 import type { FeishuDelivery } from "./feishu-delivery.js";
 import { enqueueFeishuMessage } from "./feishu-queue.js";
 import { rawMessage, textMessage } from "./messages.js";
@@ -95,11 +96,7 @@ export class TaskNotifications {
 				: { body: textMessage(event.text, event.at_all) };
 		if ("problem" in message) return message.problem;
 		return this.deps.db.transaction(async (tx) => {
-			const [bot] = await tx
-				.select({ name: feishuBots.name })
-				.from(feishuBots)
-				.where(eq(feishuBots.name, event.bot));
-			if (!bot) return `飞书机器人「${event.bot}」还没有登记或已被删除`;
+			if (!(await registeredBots(tx, [event.bot])).has(event.bot)) return feishuBotGone(event.bot);
 			await enqueueFeishuMessage(tx, {
 				botName: event.bot,
 				source: "notify",

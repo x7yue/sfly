@@ -14,6 +14,19 @@ export interface BotToCheck {
 	source?: string;
 }
 
+/** 这些名称里已登记的飞书机器人。触发时的检查、节点执行、`ctx.notify` 和运行通知都用它查，不各写一份。 */
+export async function registeredBots(db: Db | Tx, names: readonly string[]): Promise<Set<string>> {
+	if (names.length === 0) return new Set();
+	const rows = await db
+		.select({ name: feishuBots.name })
+		.from(feishuBots)
+		.where(inArray(feishuBots.name, [...names]));
+	return new Set(rows.map((r) => r.name));
+}
+
+/** 消息要发给的机器人不存在（还没有登记，或者已被删除）时，消息不发送的原因（中文）；写进任务日志。 */
+export const feishuBotGone = (bot: string): string => `飞书机器人「${bot}」还没有登记或已被删除`;
+
 export interface FeishuBotProblem {
 	code: "feishu_bot_not_registered";
 	message: string;
@@ -29,16 +42,7 @@ export async function checkFeishuBots(
 	db: Db | Tx,
 	references: readonly BotToCheck[],
 ): Promise<FeishuBotProblem[]> {
-	const names = [...new Set(references.map((r) => r.bot))];
-	if (names.length === 0) return [];
-	const registered = new Set(
-		(
-			await db
-				.select({ name: feishuBots.name })
-				.from(feishuBots)
-				.where(inArray(feishuBots.name, names))
-		).map((r) => r.name),
-	);
+	const registered = await registeredBots(db, [...new Set(references.map((r) => r.bot))]);
 	return references
 		.filter((r) => !registered.has(r.bot))
 		.map(({ nodeId, input, bot, source }) => ({

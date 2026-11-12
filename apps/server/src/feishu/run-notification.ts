@@ -2,19 +2,13 @@
  * 运行通知（GLOSSARY「运行通知」，ADR 0020、docs/SEMANTICS.md §6）：运行结束时，在写入运行最终状态的同一个事务里，
  * 读取场景当前的设置，满足触发条件就把卡片写进发送队列。卡片的结构由平台固定。
  */
-import { FEISHU_BODY_LIMIT_LABEL, subflowName } from "@sfly/orchestration";
+import { chainLabel, FEISHU_BODY_LIMIT_LABEL } from "@sfly/orchestration";
 import type { OrchestrationDocument, RunNotificationTrigger } from "@sfly/schema";
 import { asc, eq } from "drizzle-orm";
-import {
-	chainInstances,
-	feishuBots,
-	orchestrations,
-	type RunStatus,
-	runs,
-	tasks,
-} from "../db/schema.js";
+import { chainInstances, orchestrations, type RunStatus, runs, tasks } from "../db/schema.js";
 import { finalFailures } from "../engine/failures.js";
 import type { RunRow, Step } from "../engine/step.js";
+import { registeredBots } from "./bot-checks.js";
 import { enqueueFeishuMessage } from "./feishu-queue.js";
 import { type CardColor, type CardElement, fitCard, interactiveCard } from "./messages.js";
 
@@ -162,12 +156,12 @@ async function failedNodes(
 		.where(eq(tasks.runId, run.id));
 	const chainIndex = new Map(chains.map((c, i) => [c.id, i]));
 	const nodeIndex = new Map(document.nodes.map((n, i) => [n.id, i]));
-	const chainLabel = (chainId: string) => {
-		const chain = chains.find((c) => c.id === chainId);
-		if (!chain || chain.depth === 0) return "主链";
+	const labelOf = (chainInstanceId: string) => {
+		const chain = chains.find((c) => c.id === chainInstanceId);
+		if (!chain) return chainLabel({ chain_id: "", subflow: false });
 		const start = document.nodes.find((n) => n.id === chain.chainId);
-		const name = start?.kind === "subflow_entry" ? subflowName(start) : chain.chainId;
-		return `子流程 ${name || "未命名子流程"} · ${chain.id.slice(0, 8)}`;
+		const name = start?.kind === "subflow_entry" ? start.name : undefined;
+		return chainLabel({ chain_id: chain.chainId, subflow: chain.depth > 0, name }, chain.id);
 	};
 	return finalFailures(rows)
 		.sort(
@@ -176,7 +170,7 @@ async function failedNodes(
 				(chainIndex.get(a.chainInstanceId) ?? 0) - (chainIndex.get(b.chainInstanceId) ?? 0) ||
 				(nodeIndex.get(a.nodeId) ?? 0) - (nodeIndex.get(b.nodeId) ?? 0),
 		)
-		.map((row) => ({ chain: chainLabel(row.chainInstanceId), nodeId: row.nodeId }));
+		.map((row) => ({ chain: labelOf(row.chainInstanceId), nodeId: row.nodeId }));
 }
 
 /**
@@ -206,11 +200,8 @@ export async function enqueueRunNotification(
 			.update(runs)
 			.set({ notificationBot: bot, notificationNotSent: notSent })
 			.where(eq(runs.id, run.id));
-	const [registered] = await step.tx
-		.select({ name: feishuBots.name })
-		.from(feishuBots)
-		.where(eq(feishuBots.name, bot));
-	if (!registered) {
+	if (!(await registeredBots(step.tx, [bot])).has(bot)) {
+		// 「未发送：机器人已删除」是规格定下的说法（运行抽屉写成「「<机器人>」机器人已删除」），不用任务日志里的整句。
 		await record("机器人已删除");
 		return;
 	}
@@ -238,5 +229,5 @@ export async function enqueueRunNotification(
 		now: step.now,
 	});
 	await record(null);
-	step.feishuQueued = true;
+	step.notifications.queued = true;
 }

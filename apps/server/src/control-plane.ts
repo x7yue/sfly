@@ -15,6 +15,7 @@ import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
+import { EngineNotifications } from "./feishu/engine-notifications.js";
 import { FeishuBots } from "./feishu/feishu-bots.js";
 import { FeishuClient } from "./feishu/feishu-client.js";
 import { FeishuDelivery } from "./feishu/feishu-delivery.js";
@@ -214,9 +215,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 		preflight,
 		paramsCheck: createParamsCheck({ db: database.db, packages }),
-		logs,
-		feishuDelivery,
-		runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
+		notifications: new EngineNotifications({
+			logs,
+			delivery: feishuDelivery,
+			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
+		}),
 		leaseMs: options.leaseMs,
 		sdkWheel: (agentVersion) => {
 			const wheel = sdkWheels.find((w) => w.version === agentVersion);
