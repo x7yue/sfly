@@ -93,12 +93,7 @@ export const toView = (row: OrchestrationRow): OrchestrationView => ({
 });
 
 /** 运行通知设置在场景表里的列。 */
-const runNotifyColumns = (settings: {
-	bot?: string | null | undefined;
-	trigger?: OrchestrationRow["runNotifyTrigger"] | undefined;
-	title?: string | undefined;
-	note?: string | undefined;
-}) => ({
+const runNotifyColumns = (settings: RunNotificationChanges) => ({
 	...(settings.bot === undefined ? {} : { runNotifyBot: settings.bot }),
 	...(settings.trigger === undefined ? {} : { runNotifyTrigger: settings.trigger }),
 	...(settings.title === undefined ? {} : { runNotifyTitle: settings.title }),
