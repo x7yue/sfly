@@ -102,7 +102,7 @@ def stress(ctx: Context, qps: int, alert_bot: FeishuBot) -> dict:
 - `ctx.notify(bot, text)` 发文本；`ctx.notify(bot, message=...)` 发原始消息（完整的飞书请求体）；`sfly.feishu.card(title, markdown, color="blue")` 组装 Markdown 卡片，和画布上的「Markdown 卡片」格式一样。
 - 调用后立即返回，**投递失败永远不会抛出异常**，节点不会因为通知失败或变慢。投递结果写进这个任务的日志：送达是 info，失败或被丢弃是 warning。
 - 原始消息不合格（不是对象、`msg_type` 不对、超过 20 KB）时，不发送，任务日志里写明原因，调用也不抛异常。
-- 本地调试（`sfly run`）不真的发送，只把要发的请求体打印出来，不会骚扰群；单元测试里用 `sfly.testing.run_node` 结果的 `notifications` 断言每条消息的机器人和请求体。
+- 本地调试（`sfly debug`）不真的发送，只把要发的请求体打印出来，不会骚扰群；单元测试里用 `sfly.testing.run_node` 结果的 `notifications` 断言每条消息的机器人和请求体。
 
 完整的接口说明见 [开发节点（SDK 参考）](sdk-reference.md) 的「`ctx.notify`：飞书通知」。
 

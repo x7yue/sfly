@@ -279,7 +279,7 @@ def test_generated_project_syncs_tests_lints_runs_and_builds(
         result = run_in(project, *command)
         assert result.returncode == 0, result.stdout + result.stderr
 
-    run = run_in(project, "sfly", "run", "countdown", "--params", '{"name": "世界"}')
+    run = run_in(project, "sfly", "debug", "countdown", "--params", '{"name": "世界"}')
     assert run.returncode == 0, run.stderr
     outputs, _ = json.JSONDecoder().raw_decode(run.stdout.split("输出：\n", 1)[1])
     assert outputs == {"greeting": "你好，世界", "ticks": 3}

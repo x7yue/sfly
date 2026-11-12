@@ -1,4 +1,4 @@
-"""sfly 命令行入口：init / build / publish / dev / run / skill update / scenario。
+"""sfly 命令行入口：init / build / publish / dev / debug / run / skill update / scenario。
 
 CLI 在开发者机器上运行，可以使用 `sfly[cli]` extra 中的第三方依赖；
 这些依赖只在子命令执行时才导入，`import sfly.cli` 本身只用标准库。
@@ -82,9 +82,9 @@ def _dev(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run(args: argparse.Namespace) -> int:
+def _debug(args: argparse.Namespace) -> int:
     from sfly.cli.build import BuildError
-    from sfly.cli.run import EXIT_INVALID, RunError, run
+    from sfly.cli.debug import EXIT_INVALID, DebugError, debug
 
     try:
         downloads = {ref: Path(path).absolute() for ref, path in args.download or []}
@@ -92,9 +92,9 @@ def _run(args: argparse.Namespace) -> int:
         for spec in args.agent or []:
             name, sep, root = spec.partition("=")
             if not sep or not name or not root:
-                raise RunError(f"参数不合法：--agent 的格式是 <名称>=<目录>，收到 {spec!r}")
+                raise DebugError(f"参数不合法：--agent 的格式是 <名称>=<目录>，收到 {spec!r}")
             agents[name] = Path(root).absolute()
-        return run(
+        return debug(
             Path(args.project).resolve(),
             args.node,
             args.params,
@@ -102,7 +102,7 @@ def _run(args: argparse.Namespace) -> int:
             downloads=downloads,
             agents=agents,
         )
-    except RunError as error:
+    except DebugError as error:
         print(error, file=sys.stderr)
         return EXIT_INVALID
     except BuildError as error:
@@ -120,6 +120,15 @@ def _skill_update(args: argparse.Namespace) -> int:
         return 2 if error.usage else 1
     print(f"已更新节点开发 skill（sfly {__version__}）：{target}")
     return 0
+
+
+def _run_group_hint(first: str) -> str:
+    if first.startswith("-"):
+        return "sfly run 的第一个参数应该是子命令。本地调试已改为 sfly debug <节点>。"
+    return (
+        f"sfly run 没有子命令 {first}。"
+        f"本地调试已改为 sfly debug <节点>，原来的 sfly run {first} 请改用 sfly debug {first}。"
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -178,17 +187,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_dev.set_defaults(func=_dev)
 
-    p_run = sub.add_parser(
-        "run",
+    p_debug = sub.add_parser(
+        "debug",
         help="本地调试：在当前项目环境里执行一个节点，打印输出、日志和指标",
         description="在当前项目环境里用 Agent 同一个执行器执行一个节点（不经过控制面和 Agent）。"
         "产物和工作文件放在 <项目>/.sfly/runs/<时间>-<节点>/。Ctrl-C 取消，再按一次立即杀掉。"
         "退出码：成功 0，节点失败 1，参数不合法 2，取消 130。",
     )
-    p_run.add_argument("node", help="节点名（@node 的 name，默认为函数名）")
-    p_run.add_argument("--params", default="{}", help="节点的输入，JSON 对象（默认 {}）")
-    p_run.add_argument("--project", default=".", help="项目目录（默认当前目录）")
-    p_run.add_argument(
+    p_debug.add_argument("node", help="节点名（@node 的 name，默认为函数名）")
+    p_debug.add_argument("--params", default="{}", help="节点的输入，JSON 对象（默认 {}）")
+    p_debug.add_argument("--project", default=".", help="项目目录（默认当前目录）")
+    p_debug.add_argument(
         "--download",
         nargs=2,
         action="append",
@@ -196,20 +205,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="节点用 ctx.artifacts.download 下载这个产物引用时，得到这个本地文件的内容"
         "（不访问网络）；可以重复给出",
     )
-    p_run.add_argument(
+    p_debug.add_argument(
         "--agent",
         action="append",
         metavar="名称=目录",
         help="把一台 Agent 映射到本地目录：节点用 ctx.agent(名称) 访问它时，那台 Agent 上的绝对路径"
         "落在这个目录里；可以重复给出",
     )
-    p_run.add_argument(
+    p_debug.add_argument(
         "--grace",
         type=float,
         default=10.0,
         help="取消时从 SIGTERM 到强制杀掉的宽限期，秒（默认 10）",
     )
-    p_run.set_defaults(func=_run)
+    p_debug.set_defaults(func=_debug)
+
+    p_run = sub.add_parser(
+        "run",
+        help="操作平台上的运行",
+        description="操作平台上的运行。本地调试已改为 sfly debug <节点>。",
+    )
+    run_sub = p_run.add_subparsers(dest="run_command", metavar="子命令", required=True)
+    run_commands = run_sub.choices
 
     p_skill = sub.add_parser("skill", help="管理项目里给 AI 编程助手的节点开发 skill")
     skill_sub = p_skill.add_subparsers(dest="skill_command", required=True)
@@ -229,7 +246,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     scenario.register(sub)
 
-    args = parser.parse_args(argv)
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["run"] and len(arguments) > 1:
+        known = {*run_commands, "-h", "--help"}
+        if arguments[1] not in known:
+            print(_run_group_hint(arguments[1]), file=sys.stderr)
+            return 2
+
+    args = parser.parse_args(arguments)
     if args.command is None:
         parser.print_help()
         return 0

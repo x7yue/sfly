@@ -23,7 +23,7 @@
 		{
 			"slug": "local-debug",
 			"title": "本地调试",
-			"description": "在开发机上直接执行节点：ruff、单元测试、sfly run 的输出与退出码、用 Ctrl-C 验证取消"
+			"description": "在开发机上直接执行节点：ruff、单元测试、sfly debug 的输出与退出码、用 Ctrl-C 验证取消"
 		},
 		{
 			"slug": "integration",
