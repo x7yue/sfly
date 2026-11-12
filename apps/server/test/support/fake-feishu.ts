@@ -49,6 +49,8 @@ export interface FakeFeishu {
 	readonly connects: readonly string[];
 	/** 排好后面请求的应答：按到达顺序一个请求用掉一个，用完后用 {@link replyAlways} 的应答（默认 200、code 0）。 */
 	reply(...replies: FeishuReply[]): void;
+	/** 只给 Webhook 地址 `webhookUrl(token)` 排好后面请求的应答（优先于 {@link reply}）：多个机器人同时投递时，到达的先后不确定。 */
+	replyTo(token: string, ...replies: FeishuReply[]): void;
 	/** 排好的应答用完后的默认应答。 */
 	replyAlways(reply: FeishuReply): void;
 	close(): Promise<void>;
@@ -66,6 +68,7 @@ export async function startFakeFeishu(): Promise<FakeFeishu> {
 	const requests: FeishuRequest[] = [];
 	const connects: string[] = [];
 	const queued: FeishuReply[] = [];
+	const queuedByPath = new Map<string, FeishuReply[]>();
 	let fallback = ok;
 	const sockets = new Set<Socket>();
 	let inFlight = 0;
@@ -92,7 +95,8 @@ export async function startFakeFeishu(): Promise<FakeFeishu> {
 				json,
 				viaProxy,
 			});
-			const reply = queued.shift() ?? fallback;
+			const path = viaProxy ? new URL(target).pathname : target;
+			const reply = queuedByPath.get(path)?.shift() ?? queued.shift() ?? fallback;
 			maxInFlight = Math.max(maxInFlight, ++inFlight);
 			if (reply.hang) return;
 			const respond = () => {
@@ -126,6 +130,10 @@ export async function startFakeFeishu(): Promise<FakeFeishu> {
 		connects,
 		reply: (...replies) => {
 			queued.push(...replies);
+		},
+		replyTo: (token, ...replies) => {
+			const path = new URL(`${origin}/open-apis/bot/v2/hook/${token}`).pathname;
+			queuedByPath.set(path, [...(queuedByPath.get(path) ?? []), ...replies]);
 		},
 		replyAlways: (reply) => {
 			fallback = reply;

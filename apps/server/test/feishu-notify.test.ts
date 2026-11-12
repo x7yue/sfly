@@ -1,6 +1,7 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 // 切入点 A：飞书通知节点（文本格式）与发送队列（#229，ADR 0020、docs/SEMANTICS.md §1.3、§2.4）。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
+import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type NodeView } from "./support/api-client.js";
 import { type Node, orchestration } from "./support/chains.js";
@@ -382,6 +383,35 @@ describe("飞书通知节点（文本格式）与发送队列", () => {
 		});
 	});
 
+	describe("投递记录", () => {
+		/** 队列里这个运行的消息条数（投递记录只有这一个出口，保留期清理后没有别的地方能看到）。 */
+		const recorded = async (runId: string) => {
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				const { rows } = await client.query<{ n: string }>(
+					"select count(*) as n from feishu_messages where run_id = $1",
+					[runId],
+				);
+				return Number(rows[0]?.n);
+			} finally {
+				await client.end();
+			}
+		};
+
+		it("跟随所属运行的保留期：运行结束超过保留期后清理，之前一直保留", async () => {
+			const id = await api.orchestrationWith(flow([notify("n")]));
+			const runId = await api.triggerOk(id);
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			await eventually(async () => expect(await recorded(runId)).toBe(1));
+
+			clock.advance(29 * 24 * 60 * 60_000);
+			expect(await recorded(runId)).toBe(1);
+			clock.advance(2 * 24 * 60 * 60_000);
+			await eventually(async () => expect(await recorded(runId)).toBe(0));
+		});
+	});
+
 	describe("投递", () => {
 		it("同一个机器人的多条消息按入队顺序串行到达：同一时刻只有一个请求在途", async () => {
 			feishu.replyAlways({ delayMs: 60 });
@@ -396,18 +426,35 @@ describe("飞书通知节点（文本格式）与发送队列", () => {
 			expect(feishu.maxInFlight).toBe(1);
 		});
 
+		it("控制面重启时还没有结果的消息不记为失败，重启后接着投递", async () => {
+			feishu.reply({ hang: true });
+			const id = await api.orchestrationWith(flow([notify("n")]));
+			const runId = await api.triggerOk(id);
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+
+			await cp.restart();
+
+			await eventually(() => expect(feishu.requests).toHaveLength(2));
+			const node = await api.node(runId, "n");
+			await logLine(node, (l) => l.level === "info" && l.text.includes("已送达"));
+			expect((await logOf(node)).filter((l) => l.level === "warn")).toEqual([]);
+		});
+
 		it("一个机器人不响应时，不挡住别的机器人", async () => {
 			await api.createFeishuBot("other", feishu.webhookUrl("other-token"));
-			feishu.reply({ hang: true });
+			feishu.replyTo(TOKEN, { hang: true });
 			const id = await api.orchestrationWith(
 				flow([notify("stuck", { bot: "ops" }), notify("free", { bot: "other" })]),
 			);
 			const runId = await api.triggerOk(id);
 
-			await eventually(() => expect(texts()).toEqual(["stuck", "free"]));
+			// 两个机器人同时投递：到达的先后不确定。ops 不响应，other 的消息照常送达。
+			await eventually(() => expect([...texts()].sort()).toEqual(["free", "stuck"]));
 			const free = await api.node(runId, "free");
 			await logLine(free, (l) => l.level === "info" && l.text.includes("已送达"));
 			expect((await api.run(runId)).status).toBe("success");
+			const stuck = await api.node(runId, "stuck");
+			expect(await logOf(stuck)).toEqual([]);
 		});
 	});
 });
