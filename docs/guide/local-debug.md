@@ -12,7 +12,7 @@ uv run ruff check
 uv run pytest
 ```
 
-单元测试用 `sfly.testing.run_node` 执行节点，拿到输出、日志、进度、指标和产物，也能模拟取消，写法见 [开发节点（SDK 参考）](sdk-reference.md) 的「sfly.testing」一节和示例项目里的 `tests/test_example.py`。每个节点至少测一条成功路径和一条失败路径。
+单元测试用 `sfly.testing.run_node` 执行节点，拿到输出、日志、进度、指标、产物和 `ctx.notify` 要发的通知，也能模拟取消，写法见 [开发节点（SDK 参考）](sdk-reference.md) 的「sfly.testing」一节和示例项目里的 `tests/test_example.py`。每个节点至少测一条成功路径和一条失败路径。
 
 ## `sfly run`
 
@@ -23,7 +23,7 @@ uv run sfly run countdown --params '{"name": "世界"}'
 ```
 
 - 第一个参数是节点名（`@node` 的 `name`，默认是函数名）；`--params` 是输入，一个 JSON 对象，按类型注解校验。
-- 日志实时打印到标准错误（时间、级别、来源、消息）。
+- 日志实时打印到标准错误（时间、级别、来源、消息）。`ctx.notify` 不真的发送，同样实时打印一行：要发给哪个飞书机器人、请求体是什么。
 - 结束后在标准输出打印输出值（`输出：` 后面的 JSON）、指标汇总表（每个序列一行：次数、最后值、最小值、最大值；带标签的指标在指标名后面跟标签值，例如 `conn{host=a,port=80}`）和运行目录。
 - 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`：产物在 `artifacts/` 下，还有标准输出、标准错误的副本（`stdout.log`、`stderr.log`）。日志、进度和指标经命名管道 `events.fifo` 实时读取，不另存文件。`.sfly/` 已被 git 忽略。
 
