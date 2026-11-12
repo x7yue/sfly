@@ -5,7 +5,7 @@ import { feishuBots } from "../db/schema.js";
 import type { Tx } from "../engine/step.js";
 
 /** 节点选择的一个飞书机器人（触发时按实际值检查）。 */
-export interface FeishuBotReference {
+export interface BotToCheck {
 	nodeId: string;
 	/** 「飞书机器人」类型的输入名（#233）；飞书通知节点自己的机器人字段不写。 */
 	input?: string;
@@ -27,7 +27,7 @@ export interface FeishuBotProblem {
  */
 export async function checkFeishuBots(
 	db: Db | Tx,
-	references: readonly FeishuBotReference[],
+	references: readonly BotToCheck[],
 ): Promise<FeishuBotProblem[]> {
 	const names = [...new Set(references.map((r) => r.bot))];
 	if (names.length === 0) return [];

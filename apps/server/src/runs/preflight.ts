@@ -11,7 +11,7 @@ import type { Db } from "../db/database.js";
 import { agents } from "../db/schema.js";
 import { agentFor, type ChainPlan, planRun, type RunPlan } from "../engine/chain.js";
 import { type AgentReference, checkReferencedAgents } from "../engine/referenced-agents.js";
-import { checkFeishuBots, type FeishuBotReference } from "../feishu/bot-checks.js";
+import { type BotToCheck, checkFeishuBots } from "../feishu/bot-checks.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import { controlPlaneAgentProblem } from "../packages/requires-agent.js";
@@ -157,7 +157,7 @@ export function createParamsCheck(deps: { db: Db; packages: PackageRepository })
 	return async (doc, plan, params) => {
 		const locked = await lockedPackages(doc, deps.packages);
 		const wanted: AgentReference[] = [];
-		const bots: FeishuBotReference[] = [];
+		const bots: BotToCheck[] = [];
 		for (const { chain, params: known, source } of knownParams(plan, params)) {
 			for (const node of chain.nodes) {
 				if (node.kind === "feishu_notify" && node.bot !== undefined) {
