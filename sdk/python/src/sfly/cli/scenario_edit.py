@@ -216,6 +216,7 @@ def _push(session: Session, args: argparse.Namespace) -> None:
             "version": saved["number"],
             "base_version": base_version,
             "author": saved["author"],
+            "author_via": saved["author_via"],
             "created_at": saved["created_at"],
             "warnings": warnings,
             "file": target,

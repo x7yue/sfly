@@ -61,9 +61,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 		);
 	const versions = async (id: string) =>
 		(
-			await api.getJson<{ versions: { number: number; author: string }[] }>(
-				`/orchestrations/${id}/versions`,
-			)
+			await api.getJson<{
+				versions: { number: number; author: string; author_via: string | null }[];
+			}>(`/orchestrations/${id}/versions`)
 		).versions;
 	const detail = (id: string) =>
 		api.getJson<{ name: string; description: string; head_version: number }>(
@@ -198,7 +198,11 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			expect(first.stdout).toContain(`文件 ${file} 的 base_version 已更新为 2`);
 			expect((await readScenarioFile(file)).base_version).toBe(2);
 			expect((await head(id)).document.default_agent).toBe("agent-b");
-			expect((await versions(id))[0]).toMatchObject({ number: 2, author: "小林" });
+			expect((await versions(id))[0]).toMatchObject({
+				number: 2,
+				author: "小林",
+				author_via: null,
+			});
 
 			// 文件里的 base_version 已经是新版本，接着改接着 push。
 			edited.base_version = (await readScenarioFile(file)).base_version;
@@ -233,7 +237,11 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			expect(save).toHaveLength(1);
 			expect(save[0]?.headers["x-sfly-client"]).toBe(`sfly-cli/${cliVersion} agent/claude-code`);
 			expect(save[0]?.headers["x-sfly-nickname"]).toBe(encodeURIComponent("阿杰"));
-			expect((await versions(id))[0]).toMatchObject({ number: 2, author: "阿杰" });
+			expect((await versions(id))[0]).toMatchObject({
+				number: 2,
+				author: "阿杰",
+				author_via: "claude-code",
+			});
 		});
 
 		it("保存警告：文本里逐条列出，--json 时在 warnings 里", async () => {
@@ -270,10 +278,7 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			const id = await createScenario("推送-校验失败", sleepDocument());
 			const file = await pull(id);
 			const edited = await readScenarioFile(file);
-			edited.document.nodes.push(
-				{ id: "ghost", kind: "teleport" },
-				{ id: "wait", kind: "sleep" },
-			);
+			edited.document.nodes.push({ id: "ghost", kind: "teleport" }, { id: "wait", kind: "sleep" });
 			(edited.document.edges[0] as { kind: string }).kind = "fly";
 			await writeScenarioFile(file, edited);
 
@@ -317,7 +322,9 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 				`错误：场景已有更新的版本：版本 2 由 bob 保存于 ${saved}，你的文件基于版本 1。` +
 					"重新 pull，把你的改动合并进去再 push",
 			);
-			expect(lines[1]).toBe(`下一步：sfly scenario pull ${id} -o ${file.replace(/\.json$/, "")}.latest.json`);
+			expect(lines[1]).toBe(
+				`下一步：sfly scenario pull ${id} -o ${file.replace(/\.json$/, "")}.latest.json`,
+			);
 			expect(await readFile(file, "utf8")).toBe(before);
 			expect((await detail(id)).head_version).toBe(2);
 			expect((await head(id)).document.default_agent).toBe("theirs");
@@ -489,11 +496,31 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			expect(result.stdout).toContain("保存了版本 1");
 			expect(result.stdout).toContain("  节点 deploy 的节点包 stub 没有锁定版本");
 			expect(await detail(id)).toMatchObject({ name: "新建-来自文件", head_version: 1 });
-			expect((await versions(id))[0]).toMatchObject({ number: 1, author: "小林" });
+			expect((await versions(id))[0]).toMatchObject({
+				number: 1,
+				author: "小林",
+				author_via: null,
+			});
 			const created = await head(id);
 			expect(created.document.default_agent).toBe("from-agent");
 			expect(created.document.nodes.map((n) => n.id)).toEqual(["entry", "pause", "deploy"]);
 			expect((await head(source)).number).toBe(1);
+		});
+
+		it("经 AI 编程助手创建并保存第一个版本时，版本上记着检测到的名称", async () => {
+			const file = newFile();
+			await writeScenarioFile(file, { document: sleepDocument() });
+			const result = await sfly(
+				["scenario", "create", "--name", "新建-经助手", "--from", file, "--server", cp.httpUrl],
+				{ env: { CODEX_SANDBOX: "seatbelt", SFLY_NICKNAME: "小林" } },
+			);
+			expect(result.code, result.stderr).toBe(0);
+			const id = /（([0-9a-f-]{36})）/.exec(result.stdout)?.[1] as string;
+			expect((await versions(id))[0]).toMatchObject({
+				number: 1,
+				author: "小林",
+				author_via: "codex",
+			});
 		});
 
 		it("--from 的文件可以只有 document（不需要 scenario 和 base_version）", async () => {
@@ -510,7 +537,12 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 				.orchestrations.length;
 			const file = newFile();
 			await writeScenarioFile(file, {
-				document: { nodes: [{ id: "entry", kind: "entry" }, { id: "x", kind: "teleport" }] },
+				document: {
+					nodes: [
+						{ id: "entry", kind: "entry" },
+						{ id: "x", kind: "teleport" },
+					],
+				},
 			});
 			const result = await cli("scenario", "create", "--name", "新建-不会出现", "--from", file);
 			expect(result.code).toBe(2);
