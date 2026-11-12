@@ -290,19 +290,20 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 - 重启：运行、链实例、任务、定时器都在库里，启动时不重放；只把已经（或即将）到期的租约和排队超时顺延到一个租约之后，给 Agent 重新连接的时间。
 - 派发：任务 `queued` 后，目标 Agent 在线、版本与控制面一致且有空闲槽位时推送；超过 `queue_timeout` 仍未派发则 `env_error`。版本不一致的 Agent 照常连接、续约、上报日志和结果，只是不派新任务（ADR 0014），Agents 页显示它的更新状态。
 - 飞书通知节点：和其他内置节点一样在控制面执行。轮到它时，在同一个事务里解析输入、把消息写进 `feishu_messages`（发送队列）并把节点记为成功；提交后唤醒投递（`FeishuDelivery`）。投递每个机器人一个循环，按入队顺序串行发送，最终的结果写成这个任务的一条日志（控制面自己写的行，source `system`），不经过引擎、不改变任何状态；控制面启动和周期扫描时也会唤醒它，重启前入队的消息接着投递（ADR 0020）。可靠性的规则都在投递这一层，没有定时器：可重试的失败把下一次尝试的时间（控制面时间）记在消息上（`next_attempt_at`），队首没到点就结束这一轮，周期扫描唤醒时再看；限速（每个机器人每秒 5、每分钟 100 个请求，`SendRateLimiter`）按内存里的发送时间判断，重启后从头算；积压超过 1000 条时在每一轮开头丢弃最旧的；退避间隔、期限、限速和积压上限的取值在 `feishu/delivery-policy.ts`，文本消息超过 20 KB 的截断在组装请求体时（`feishu/messages.ts` 的 `textMessage`，文本格式的消息都经过它；原始消息不截断）。每发一次请求，结果同事务记在机器人上（`last_delivery_*`），管理页显示它和积压条数。三种格式（文本、Markdown 卡片、原始消息）的请求体由 `src/feishu/messages.ts` 组装，输入解析与出错处理在 `src/feishu/notify-node.ts`；Markdown 卡片的规则与 SDK 共用 `testdata/feishu-card-cases.json` 里的用例。
+- 运行通知：`Engine.#finishChain` 在第一次把运行记为结束的事务里（`update runs … where status = 'running'`，所以只发生一次）调用 `src/feishu/run-notification.ts` 的 `enqueueRunNotification`：读场景当前的设置，满足条件就组装卡片（和 Markdown 卡片共用 `messages.ts` 的 `interactiveCard` 和 `fitCard`）写进发送队列，并在运行上记下机器人；机器人已不存在时不入队，在运行上记下未发送的原因。卡片的「查看运行」链接只在配置了 `SFLY_PUBLIC_URL` 时给（`Engine` 的 `runUrl`）。运行详情的 `run_notification` 由 `run-queries.ts` 读队列里这个运行的消息得出，没有任务的运行通知不写日志。
 - ID 确定性生成：子流程实例 ID 和任务 ID 都由运行、链实例、节点、attempt 推导，崩溃恢复时不会重复创建。
 
 ### 6.2 数据模型
 
 | 表 | 主要字段 |
 |---|---|
-| `orchestrations` | id, name, description, head_version, created_at, archived_at（名称和说明不属于版本内容；归档后不出现在默认列表、不能触发，不物理删除） |
+| `orchestrations` | id, name, description, head_version, created_at, archived_at, run_notify_bot / run_notify_trigger / run_notify_title / run_notify_note（运行通知的设置，bot 不是外键；名称、说明和运行通知设置不属于版本内容；归档后不出现在默认列表、不能触发，不物理删除） |
 | `orchestration_versions` | id, orchestration_id, number, document（JSONB：节点、连线、参数、布局、锁定的包版本）, author, created_at；`unique(orchestration_id, number)` |
 | `node_packages` | name, version, metadata（JSONB）, file_path, sha256, published_at；`unique(name, version)` |
 | `agents` | name, info（JSONB）, status, last_seen_at |
 | `feishu_bots` | name（主键，全局唯一、不能修改）, webhook_url（明文，接口和日志里打码）, created_at, last_delivery_at / last_delivery_ok / last_delivery_error（最近一次投递：每发一次请求记一次，丢弃不算；管理页显示）（ADR 0020） |
 | `feishu_messages` | seq（主键，入队顺序）, bot_name, source, run_id, task_id, body（飞书请求体）, enqueued_at, status（queued / delivered / failed / discarded）, attempts, next_attempt_at（可重试的失败之后最早的下一次尝试）, last_error, finished_at；飞书发送队列，投递结果不改变任何节点、任务、链或运行的状态，记录跟随所属运行的保留期（ADR 0020） |
-| `runs` | id, orchestration_version_id, triggered_by, params, status, started_at, ended_at |
+| `runs` | id, orchestration_version_id, triggered_by, params, status, started_at, ended_at, notification_bot / notification_not_sent（运行通知发给哪个机器人；没进队列时的原因；消息在 `feishu_messages`，source `run_notification`） |
 | `chain_instances` | id, run_id, chain_id, parent_chain_instance_id, async_node_id, depth, params, status |
 | `tasks` | id, chain_instance_id, node_id, attempt, agent_name, status, inputs, outputs, error_kind, error_message, progress, lease_expires_at, wake_at, log_path, started_at, ended_at, start_clock_offset_ms, start_clock_offset_measured_at, end_clock_offset_ms, end_clock_offset_measured_at |
 | `artifacts` | id, task_id, name, path, size, sha256, created_at（上传时间，控制面时间）, agent_modified_at（文件在 Agent 上的修改时间，Agent 时间，可为空） |
@@ -345,7 +346,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | 路由 | 页面 | 外壳 |
 |---|---|---|
 | `/` | 控制台：运行统计与趋势、正在运行、最近失败、Agent 状态、最近发布的节点包 | 侧边栏 + 顶栏 |
-| `/orchestrations` | 场景编排：场景卡片 / 表格（缩略图、说明、Agent、最近运行），新建、复制、编辑名称和说明、归档与恢复；「运行」打开运行抽屉（入口参数、触发前检查、运行摘要） | 侧边栏 + 顶栏 |
+| `/orchestrations` | 场景编排：场景卡片 / 表格（缩略图、说明、Agent、最近运行），新建、复制、编辑名称和说明、设置运行通知、归档与恢复；「运行」打开运行抽屉（入口参数、触发前检查、运行摘要，运行结束后有运行通知的状态） | 侧边栏 + 顶栏 |
 | `/orchestrations/:id/versions` | 版本历史：任选两个版本对比、恢复旧版本 | 侧边栏 + 顶栏 |
 | `/orchestrations/:id` | 编排画布（全屏）：编辑模式（检查器、撤销重做、整理布局、本地草稿与显式保存、在线编辑者）；运行状态模式（节点叠加最近一次运行或 `?run=<id>` 指定运行的状态与主指标，日志与图表只在运行监控页） | 无 |
 | `/runs` | 运行记录：进行中的运行是卡片，历史运行是表格，可按状态、场景、编号或触发人筛选 | 侧边栏 + 顶栏 |

@@ -451,6 +451,7 @@ export type TaskProgressView = z.infer<typeof TaskProgressView>;
 export type AttemptView = z.infer<typeof AttemptView>;
 export type NodeRunView = z.infer<typeof NodeRunView>;
 export type ChainRunView = z.infer<typeof ChainRunView>;
+export type RunNotificationState = z.infer<typeof RunNotificationState>;
 export type RunView = z.infer<typeof RunView>;
 export type RunSummary = z.infer<typeof RunSummary>;
 export type ParamDeclView = z.infer<typeof ParamDeclView>;

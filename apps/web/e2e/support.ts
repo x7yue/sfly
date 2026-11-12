@@ -75,6 +75,22 @@ export async function createFeishuBot(
 	);
 }
 
+/** 配置场景的运行通知（#232；只写要改的项，其余保持不变）。 */
+export async function setRunNotification(
+	cp: TestControlPlane,
+	scenarioId: string,
+	settings: { bot?: string | null; trigger?: string; title?: string; note?: string },
+): Promise<void> {
+	await ok(
+		await cp.fetch(`/orchestrations/${scenarioId}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			body: JSON.stringify({ run_notification: settings }),
+		}),
+		"配置运行通知",
+	);
+}
+
 /** 一个使用 demo-checks 节点包的场景文档：默认 Agent 为 agent，锁定 version。 */
 export const scenarioUsing = (agent: string, version = "1.2.0") => ({
 	default_agent: agent,

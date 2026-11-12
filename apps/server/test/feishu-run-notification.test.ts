@@ -94,7 +94,8 @@ describe("运行通知", () => {
 	const status = async (runId: string, expected: string) =>
 		eventually(async () => expect((await api.run(runId)).status).toBe(expected));
 	const cards = () => feishu.requests.map((r) => r.json as Card);
-	const facts = (card: Card) => card.card.body.elements.find((e) => e.content?.includes("**场景**"));
+	const facts = (card: Card) =>
+		card.card.body.elements.find((e) => e.content?.includes("**场景**"));
 
 	/** 触发一次运行并让它以指定的结果结束（单个包节点 a）。 */
 	async function runEnding(id: string, ending: Ending): Promise<string> {

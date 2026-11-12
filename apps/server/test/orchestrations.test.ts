@@ -342,9 +342,9 @@ describe("场景的运行通知设置", () => {
 	it("新场景默认关闭运行通知：没有机器人，仅失败时触发，标题和附加说明为空", async () => {
 		const id = await api.createOrchestration("默认");
 		expect(await settingsOf(id)).toEqual(OFF);
-		const listed = await api.getJson<{ orchestrations: Array<{ id: string; run_notification: unknown }> }>(
-			"/orchestrations",
-		);
+		const listed = await api.getJson<{
+			orchestrations: Array<{ id: string; run_notification: unknown }>;
+		}>("/orchestrations");
 		expect(listed.orchestrations.find((o) => o.id === id)?.run_notification).toEqual(OFF);
 	});
 
@@ -454,4 +454,3 @@ describe("场景的运行通知设置", () => {
 		});
 	});
 });
-

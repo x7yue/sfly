@@ -100,7 +100,9 @@ export function RunNotificationDialog({
 	const noteId = useId();
 	const registered = bots.data?.bots ?? [];
 	const missing =
-		settings.bot !== null && bots.data !== undefined && !registered.some((b) => b.name === settings.bot);
+		settings.bot !== null &&
+		bots.data !== undefined &&
+		!registered.some((b) => b.name === settings.bot);
 	const set = (changes: Partial<RunNotificationSettings>) =>
 		setSettings((current) => ({ ...current, ...changes }));
 
@@ -117,7 +119,8 @@ export function RunNotificationDialog({
 					<DialogHeader>
 						<DialogTitle>运行通知</DialogTitle>
 						<DialogDescription>
-							运行结束时往选中的{TERM.feishuBot}发一张卡片，不用在链上加节点。这些设置不属于场景版本，
+							运行结束时往选中的{TERM.feishuBot}
+							发一张卡片，不用在链上加节点。这些设置不属于场景版本，
 							修改后不会生成新版本，立即生效；复制场景时一并复制。
 						</DialogDescription>
 					</DialogHeader>
@@ -134,7 +137,8 @@ export function RunNotificationDialog({
 					</Row>
 					{missing && (
 						<p role="alert" className="m-0 text-xs text-danger-fg">
-							{TERM.feishuBot}「{settings.bot}」已被删除，运行结束时不会发送通知，运行详情里记为「未发送」。
+							{TERM.feishuBot}「{settings.bot}
+							」已被删除，运行结束时不会发送通知，运行详情里记为「未发送」。
 							可以换一个机器人，或者到
 							<Link to="/feishu-bots" className="underline underline-offset-2">
 								{PAGE.feishuBots}
