@@ -201,7 +201,22 @@ export class TaskLogs {
 	/** 任务日志文件的概况；任务不存在时为 undefined。 */
 	async describe(taskId: string): Promise<TaskLogInfo | undefined> {
 		const state = await this.#state(taskId);
-		if (!state) return undefined;
+		return state && this.#info(state);
+	}
+
+	/** 一次运行全部任务的日志文件概况（任务 ID → 概况），一次查询；不放进缓存，免得挤掉正在写入的任务。 */
+	async describeRun(runId: string): Promise<Map<string, TaskLogInfo>> {
+		const rows = await this.deps.db.select().from(tasks).where(eq(tasks.runId, runId));
+		const infos = await Promise.all(
+			rows.map(async (task) => {
+				const state = (await this.#states.get(task.id)) ?? (await this.#stateOf(task));
+				return [task.id, this.#info(state)] as const;
+			}),
+		);
+		return new Map(infos);
+	}
+
+	#info(state: TaskState): TaskLogInfo {
 		return {
 			runId: state.runId,
 			nodeId: state.nodeId,
@@ -404,8 +419,10 @@ export class TaskLogs {
 			.select({ task: tasks })
 			.from(tasks)
 			.where(eq(tasks.id, taskId));
-		if (!row) return undefined;
-		const { task } = row;
+		return row && this.#stateOf(row.task);
+	}
+
+	async #stateOf(task: typeof tasks.$inferSelect): Promise<TaskState> {
 		const path = task.logPath ?? join("logs", task.runId, `${task.id}.jsonl`);
 		// 文件大小是已写入字节数的准绳（数据库更新之前控制面可能退出过）。
 		const bytes = await stat(join(this.deps.dataDir, path)).then(

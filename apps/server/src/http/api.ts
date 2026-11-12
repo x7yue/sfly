@@ -7,6 +7,7 @@ import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { UserDocs } from "../docs/user-docs.js";
 import type { Engine } from "../engine/engine.js";
+import { RunLogs } from "../logs/run-log-pages.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
@@ -147,7 +148,12 @@ export function buildHttpApi({
 		metrics: metrics.increments,
 	});
 	registerRunListRoutes(app, { db: database.db });
-	registerLogRoutes(app, { logs, sse, isPurged: (runId) => retention.isPurged(runId) });
+	registerLogRoutes(app, {
+		logs,
+		runLogs: new RunLogs({ db: database.db, logs }),
+		sse,
+		isPurged: (runId) => retention.isPurged(runId),
+	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });

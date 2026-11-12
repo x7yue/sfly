@@ -4,6 +4,7 @@ import { Transform, type TransformCallback } from "node:stream";
 import { logsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
+import type { RunLogs } from "../logs/run-log-pages.js";
 import { type LogChunk, normalizeLogRow, type TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
 import { isUuid } from "../util/uuid.js";
@@ -23,11 +24,33 @@ import { sendError } from "./errors.js";
  *   契约见 @sfly/schema 的 logsApi.page，查询参数不合法时 400 `invalid_request`。
  * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（升级之前写入的行在下载时补齐）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
+ *
+ * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的最新日志合并成一页，见 run-log-pages.ts。
  */
 export function registerLogRoutes(
 	app: FastifyInstance,
-	deps: { logs: TaskLogs; sse: Sse; isPurged: (runId: string) => Promise<boolean> },
+	deps: {
+		logs: TaskLogs;
+		runLogs: RunLogs;
+		sse: Sse;
+		isPurged: (runId: string) => Promise<boolean>;
+	},
 ): void {
+	contractRoute(app, logsApi.runPage, async ({ params, query }, reply) => {
+		const page = isUuid(params.id)
+			? await deps.runLogs.page(params.id, { limit: query.limit, filter: {} })
+			: undefined;
+		if (!page) return sendError(reply, 404, "not_found", "run not found");
+		// 清理之后文件已经不在，读出来本来就是空的；判断放在读取之后，读取期间被清理也不会返回半页。
+		const expired = await deps.isPurged(params.id);
+		return {
+			run_id: params.id,
+			lines: expired ? [] : page.lines,
+			truncated_tasks: expired ? [] : page.truncatedTasks,
+			expired,
+		};
+	});
+
 	contractRoute(app, logsApi.page, async ({ params, query }, reply) => {
 		const info = isUuid(params.id) ? await deps.logs.describe(params.id) : undefined;
 		if (!info) return sendError(reply, 404, "not_found", "task not found");
