@@ -1,5 +1,6 @@
 """sfly 节点 SDK 运行时。只能使用 Python 标准库（ADR 0002）。"""
 
+from sfly import feishu
 from sfly.capabilities import (
     Agent,
     AgentError,
@@ -43,5 +44,6 @@ __all__ = [
     "TaskInfo",
     "WatchSnapshot",
     "__version__",
+    "feishu",
     "node",
 ]

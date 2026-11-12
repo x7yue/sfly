@@ -23,9 +23,9 @@
   为 null；只有本地执行会设置），`ctx.agent(名称)` 把那台 Agent 上的路径落到映射的目录里，
   不在表里的名称不能访问（见 `sfly.capabilities.local`）；
 - 飞书通知：本地没有控制面，`ctx.notify` 不真的发送。和控制面一样只认「飞书机器人」类型的
-  输入引用的机器人，按同样的规则组装请求体（apps/server/src/feishu/messages.ts），记成
-  `Notification`；其他机器人不记，日志里写一行来源 system、级别 warn 的警告
-  （apps/server/src/feishu/task-notifications.ts）；
+  输入引用的机器人，按同样的规则组装请求体、校验原始消息（`sfly.feishu`，镜像
+  apps/server/src/feishu/messages.ts），记成 `Notification`；其他机器人、不合格的原始消息不记，
+  日志里写一行来源 system、级别 warn 的警告（apps/server/src/feishu/task-notifications.ts）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
 """
@@ -44,6 +44,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, Literal
+
+from sfly.feishu import raw_message_problem, text_message
 
 #: 取消时从 SIGTERM 到强制杀掉的默认宽限期（秒，docs/SEMANTICS.md §3.4）。
 DEFAULT_GRACE = 10.0
@@ -276,37 +278,6 @@ def referenced_feishu_bots(schema: Mapping[str, Any], inputs: Mapping[str, Any])
     return _referenced(schema, inputs, "feishu_bot")
 
 
-#: 「@所有人」：飞书文本消息里的写法。
-_AT_ALL = '<at user_id="all">所有人</at>'
-#: 飞书请求体的上限：紧凑 JSON 按 UTF-8 编码的字节数。
-_BODY_LIMIT_BYTES = 20 * 1024
-_TRUNCATED_MARK = "…（已截断）"
-
-
-def _body_bytes(body: Mapping[str, Any]) -> int:
-    return len(json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-
-
-def _text_message(text: str, at_all: bool) -> dict[str, Any]:
-    """文本消息的请求体，与控制面相同（apps/server/src/feishu/messages.ts 的 textMessage）：
-    超过 20 KB 时留下最长的、放得下的正文前缀，接上「…（已截断）」，「@所有人」仍在最后。"""
-    tail = _AT_ALL if at_all else ""
-
-    def body(kept: str) -> dict[str, Any]:
-        return {"msg_type": "text", "content": {"text": kept + tail}}
-
-    if _body_bytes(body(text)) <= _BODY_LIMIT_BYTES:
-        return body(text)
-    low, high = 0, len(text)
-    while high - low > 1:
-        middle = (low + high) // 2
-        if _body_bytes(body(text[:middle] + _TRUNCATED_MARK)) <= _BODY_LIMIT_BYTES:
-            low = middle
-        else:
-            high = middle
-    return body(text[:low] + _TRUNCATED_MARK)
-
-
 # ---- 执行 ----
 
 
@@ -488,32 +459,39 @@ class _Pump:
                     self._on_metric(point)
                 return
             if kind == "notify":
-                self._notify(
-                    ts, str(event["bot"]), str(event["text"]), bool(event.get("at_all")), batch
-                )
+                self._notify(ts, event, batch)
                 return
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
         # 不认识的内容原样记成一行 SDK 日志。
         batch.append(LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace")))
 
-    def _notify(self, ts: int, bot: str, text: str, at_all: bool, batch: list[LogLine]) -> None:
-        """一次 `ctx.notify`：与控制面相同，只认任务引用的机器人，其他的不记、写一行警告。"""
+    def _notify(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
+        """一次 `ctx.notify`：与控制面相同，只认任务引用的机器人，原始消息要合格，
+        不发送的写一行警告。"""
+        bot = str(event["bot"])
         if self._feishu_bots is not None and bot not in self._feishu_bots:
-            batch.append(
-                LogLine(
-                    ts,
-                    "system",
-                    "warn",
-                    f"ctx.notify 的消息没有发送：飞书机器人「{bot}」不是通过"
-                    "「飞书机器人」类型的参数传给这个节点的，把它声明成 sfly.FeishuBot 类型的参数",
-                )
+            return self._not_sent(
+                ts,
+                batch,
+                f"飞书机器人「{bot}」不是通过「飞书机器人」类型的参数传给这个节点的，"
+                "把它声明成 sfly.FeishuBot 类型的参数",
             )
-            return
-        notification = Notification(ts, bot, _text_message(text, at_all))
+        if "message" in event:
+            problem = raw_message_problem(event["message"])
+            if problem is not None:
+                return self._not_sent(ts, batch, problem)
+            body = event["message"]
+        else:
+            body = text_message(str(event["text"]), bool(event.get("at_all")))
+        notification = Notification(ts, bot, body)
         self._execution.notifications.append(notification)
         if self._on_notify is not None:
             self._on_notify(notification)
+
+    @staticmethod
+    def _not_sent(ts: int, batch: list[LogLine], reason: str) -> None:
+        batch.append(LogLine(ts, "system", "warn", f"ctx.notify 的消息没有发送：{reason}"))
 
 
 def _signal_group(pgid: int, sig: int) -> None:

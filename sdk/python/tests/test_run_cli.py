@@ -205,6 +205,47 @@ def test_notifications_are_printed_with_their_request_body_and_not_sent(project:
     )
 
 
+def test_a_card_and_a_raw_message_are_printed_and_an_invalid_one_is_warned_about(
+    project: Path,
+) -> None:
+    # ctx.notify(message=...)（#235）：sfly.feishu.card 组装的卡片同样只打印；
+    # 不合格的原始消息不打印，写一行警告，节点照常成功。
+    card = sfly_run(
+        project,
+        "notify_card",
+        "--params",
+        '{"bot": "ops", "title": "压测完成", "markdown": "**QPS** 1200", "color": "green"}',
+    )
+    invalid = sfly_run(
+        project, "notify_message", "--params", '{"bot": "ops", "message": {"content": {}}}'
+    )
+
+    assert card.returncode == 0, card.stderr
+    expected = json.dumps(
+        {
+            "msg_type": "interactive",
+            "card": {
+                "schema": "2.0",
+                "header": {
+                    "title": {"tag": "plain_text", "content": "压测完成"},
+                    "template": "green",
+                },
+                "body": {"elements": [{"tag": "markdown", "content": "**QPS** 1200"}]},
+            },
+        },
+        ensure_ascii=False,
+    )
+    assert any(
+        "「ops」" in line and line.endswith(expected) for line in card.stderr.splitlines()
+    ), card.stderr
+    assert invalid.returncode == 0, invalid.stderr
+    assert "通知  发给" not in invalid.stderr
+    assert any(
+        " warn  system ctx.notify 的消息没有发送：" in line and "msg_type" in line
+        for line in invalid.stderr.splitlines()
+    ), invalid.stderr
+
+
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
     project: Path,
 ) -> None:

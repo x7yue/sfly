@@ -10,7 +10,7 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from importlib import metadata
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import sfly
 from sfly import Context, Metric, node
@@ -218,6 +218,35 @@ def notify(
     ctx.notify(bot, text, at_all=at_all)
     if unlisted:
         ctx.notify(unlisted, text)
+
+
+@node(title="飞书原始消息", outputs=[])
+def notify_message(ctx: Context, bot: FeishuBot, message: Any, unlisted: str = "") -> None:
+    """ctx.notify(message=...) 测试用（#235）：把 message（任意 JSON 值，不检查）原样交给 bot；
+    unlisted 不为空时再交给它（普通字符串参数，不在任务引用的飞书机器人名单里）。
+
+    message= 从 SDK 0.3.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    ctx.log.info("发通知前")
+    ctx.notify(bot, message=message)
+    if unlisted:
+        ctx.notify(unlisted, message=message)
+
+
+@node(title="飞书卡片", outputs=[])
+def notify_card(
+    ctx: Context,
+    bot: FeishuBot,
+    title: str,
+    markdown: str,
+    color: Literal["blue", "green", "orange", "red", "grey"] = "blue",
+) -> None:
+    """sfly.feishu.card 测试用（#235）：给 bot 发一张标题、颜色和正文由参数给出的 Markdown 卡片。
+
+    sfly.feishu 从 SDK 0.3.0 起才有，在函数里才访问它：上一个 Release 的 SDK 仍然能导入本包。
+    """
+    ctx.log.info("发通知前")
+    ctx.notify(bot, message=sfly.feishu.card(title, markdown, color))
 
 
 @node(title="多路日志", outputs=[])

@@ -1,6 +1,8 @@
 // 切入点 A：ctx.notify（#234，ADR 0020、ADR 0015）。节点在执行中途发的飞书通知经 Agent 以 Notification 消息转给控制面：
 // 机器人必须在任务派发时下发的名单里（「飞书机器人」类型的输入引用的机器人）并且已登记，控制面才把它写进发送队列；
 // 否则在这个任务的日志里写一条 warning、不发送。投递结果写进这个任务的日志，不改变任务和运行的状态。
+// 发原始消息（#235，`ctx.notify(bot, message=...)`，含 sfly.feishu.card 组装的卡片）：完整的请求体原样发出，
+// 校验规则与飞书通知节点的原始消息相同，不合格的不发送、任务日志里有原因。
 // 控制面写进任务日志的行不占用 Agent 的日志序号。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 假飞书 Webhook 服务（support/fake-feishu.ts）。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
@@ -194,6 +196,100 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 		notify(runner, task, { bot: "ops", text: "ops 不在名单里" });
 		await logLine(task.taskId, (l) => l.text.includes("「ops」"));
 		expect(feishu.requests).toEqual([]);
+	});
+
+	describe("原始消息：ctx.notify(bot, message=...)", () => {
+		const CARD = {
+			msg_type: "interactive",
+			card: {
+				schema: "2.0",
+				header: { title: { tag: "plain_text", content: '压测 "A" 环境' }, template: "red" },
+				body: {
+					elements: [
+						{ tag: "markdown", content: "**P99** 超标\n请 <at id=all></at> 看一下 😀" },
+						{
+							tag: "button",
+							text: { tag: "plain_text", content: "查看" },
+							behaviors: [{ type: "open_url", default_url: "https://example.com/r/1" }],
+						},
+					],
+				},
+			},
+		};
+
+		it("原样发出完整的请求体（不改写、不补字段），投递结果写进这个任务的日志", async () => {
+			const { runId, task } = await start();
+
+			notify(runner, task, { bot: "ops", message: CARD });
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(feishu.requests[0]).toMatchObject({
+				method: "POST",
+				path: `/open-apis/bot/v2/hook/${OPS}`,
+				json: CARD,
+			});
+			const line = await logLine(task.taskId, (l) => l.text.includes("已送达"));
+			expect(line).toMatchObject({ source: "system", level: "info" });
+			expect(line.text).toContain("「ops」");
+			await runner.succeed(task);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+		});
+
+		it("字符串里含 NUL：换成 U+FFFD 后照常发送", async () => {
+			const { task } = await start();
+			notify(runner, task, {
+				bot: "ops",
+				message: { msg_type: "text", content: { text: "a\u0000b" } },
+			});
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(feishu.requests[0]?.json).toEqual({ msg_type: "text", content: { text: "a�b" } });
+		});
+
+		it.each([
+			["不是对象：数组", [{ msg_type: "text" }], "不是一个对象"],
+			["不是对象：JSON 字符串", '{"msg_type":"text"}', "不是一个对象"],
+			["没有 msg_type", { content: { text: "x" } }, "msg_type"],
+			["msg_type 不认识", { msg_type: "audio", content: {} }, "msg_type"],
+			["msg_type 不是字符串", { msg_type: 1, content: {} }, "msg_type"],
+			["超过 20 KB：不截断", { msg_type: "text", content: { text: "a".repeat(21_000) } }, "20 KB"],
+		])("%s：不发送，任务日志里写 warning 说明原因，之后的通知照常发送，任务和运行不受影响", async (_name, message, reason) => {
+			const { runId, task } = await start();
+
+			notify(runner, task, { bot: "ops", message });
+			const warning = await logLine(task.taskId, (l) => l.level === "warn");
+			expect(warning.source).toBe("system");
+			expect(warning.text).toContain("ctx.notify 的消息没有发送：");
+			expect(warning.text).toContain(reason);
+
+			notify(runner, task, { bot: "ops", text: "后一条" });
+			await logLine(task.taskId, (l) => l.text.includes("已送达"));
+			expect(feishu.requests.map((r) => r.json)).toEqual([
+				{ msg_type: "text", content: { text: "后一条" } },
+			]);
+			await runner.succeed(task);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+		});
+
+		it("机器人不在任务引用的名单里：原始消息同样不发送，提示声明成「飞书机器人」类型的参数", async () => {
+			const { task } = await start();
+
+			notify(runner, task, { bot: "dev", message: CARD });
+			const warning = await logLine(task.taskId, (l) => l.level === "warn");
+			expect(warning.text).toContain("「dev」");
+			expect(warning.text).toContain("sfly.FeishuBot");
+			expect(feishu.requests).toEqual([]);
+		});
+
+		it("同时带 text 和 message、或者都没有：内容不完整，不发送，任务日志里写 warning", async () => {
+			const { task } = await start();
+
+			notify(runner, task, { bot: "ops", text: "x", message: CARD });
+			notify(runner, task, { bot: "ops" });
+			await eventually(async () =>
+				expect((await logOf(task.taskId)).filter((l) => l.level === "warn")).toHaveLength(2),
+			);
+			expect(feishu.requests).toEqual([]);
+		});
 	});
 
 	it("投递失败：任务和运行的结果不受影响，任务日志里是 warning", async () => {
