@@ -11,6 +11,7 @@
 import { type FeishuBotView, feishuBotsApi } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { Clock } from "../src/clock.js";
 import { ApiClient, NICKNAME_HEADER, type NodeView } from "./support/api-client.js";
 import type { Node } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
@@ -25,6 +26,17 @@ const TRUNCATED = "…（已截断）";
 const AT_ALL = '<at user_id="all">所有人</at>';
 /** 飞书请求体的上限。 */
 const BODY_LIMIT = 20 * 1024;
+
+/**
+ * 请求在路上耗了时间：每个请求到达假飞书时，控制面时间先走过 `lags` 里的下一个值（用完后不再延迟）。
+ * 手动时钟不会自己走，用它模拟真实世界里请求从发出到被飞书收到的这段延迟（例如一连串请求里第一个要建连接）。
+ */
+const networkLag = (clock: ManualClock, ...lags: number[]): Clock => ({
+	now: () => {
+		clock.advance(lags.shift() ?? 0);
+		return clock.now();
+	},
+});
 
 const notify = (id: string, extra: Record<string, unknown> = {}): Node => ({
 	id,
@@ -72,7 +84,15 @@ describe("投递的可靠性", () => {
 	const texts = () =>
 		feishu.requests.map((r) => (r.json as { content: { text: string } }).content.text);
 	/** 每个请求到达时的控制面时间（毫秒）。 */
-	const arrivals = () => feishu.requests.map((r) => (r.at as Date).getTime());
+	const arrivals = (server: FakeFeishu = feishu) =>
+		server.requests.map((r) => (r.at as Date).getTime());
+	/** 飞书按到达的时刻数：任意 1 秒（含右端点）里不超过 5 个、任意 1 分钟里不超过 100 个。 */
+	const expectWithinRateLimits = (at: number[]) => {
+		for (const t of at) {
+			expect(at.filter((x) => x > t - SECOND && x <= t).length).toBeLessThanOrEqual(5);
+			expect(at.filter((x) => x > t - MINUTE && x <= t).length).toBeLessThanOrEqual(100);
+		}
+	};
 	const taskOf = (node: NodeView) => (node.attempts[0] as { task_id: string }).task_id;
 	const logOf = async (node: NodeView): Promise<LogLine[]> =>
 		(await api.getJson<{ lines: LogLine[] }>(`/tasks/${taskOf(node)}/logs`)).lines;
@@ -308,13 +328,32 @@ describe("投递的可靠性", () => {
 
 			await advancing(SECOND / 2, () => expect(feishu.requests).toHaveLength(120), 80_000);
 
-			const at = arrivals();
-			for (const t of at) {
-				expect(at.filter((x) => x > t - SECOND && x <= t).length).toBeLessThanOrEqual(5);
-				expect(at.filter((x) => x > t - MINUTE && x <= t).length).toBeLessThanOrEqual(100);
-			}
+			expectWithinRateLimits(arrivals());
 			expect(texts()).toEqual(messages(120).map((n) => n.id));
 			await backlogReaches(0);
+		});
+
+		it("请求在路上耗了时间：第 6 条到达飞书仍比第 1 条晚满 1 秒（飞书按收到请求的时刻数，限速按响应回来的时刻算）", async () => {
+			const start = clock.now().getTime();
+			const slowStart = await startFakeFeishu({ clock: networkLag(clock, SECOND / 2) });
+			try {
+				await api.createFeishuBot("slow-start", slowStart.webhookUrl(TOKEN));
+				const runId = await run(messages(6, { bot: "slow-start" }));
+				await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+
+				// 第 1 个请求发出时控制面时间是 start，飞书收到它时已经走到 start + 0.5 秒；后面 4 个紧跟着到达。
+				await backlogReaches(1, "slow-start");
+				expect(arrivals(slowStart)).toEqual(Array(5).fill(start + SECOND / 2));
+
+				await advancing(100, () => expect(slowStart.requests).toHaveLength(6));
+
+				const at = arrivals(slowStart);
+				expect((at[5] as number) - (at[0] as number)).toBeGreaterThanOrEqual(SECOND);
+				expectWithinRateLimits(at);
+				await backlogReaches(0, "slow-start");
+			} finally {
+				await slowStart.close();
+			}
 		});
 
 		it("一个机器人被限速时，别的机器人照常发送", async () => {
