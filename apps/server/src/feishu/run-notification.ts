@@ -2,7 +2,7 @@
  * 运行通知（GLOSSARY「运行通知」，ADR 0020、docs/SEMANTICS.md §6）：运行结束时，在写入运行最终状态的同一个事务里，
  * 读取场景当前的设置，满足触发条件就把卡片写进发送队列。卡片的结构由平台固定。
  */
-import { chainLabel, FEISHU_BODY_LIMIT_LABEL } from "@sfly/orchestration";
+import { chainLabel, FEISHU_BODY_LIMIT_LABEL, MAIN_CHAIN_LABEL } from "@sfly/orchestration";
 import type { OrchestrationDocument, RunNotificationTrigger } from "@sfly/schema";
 import { asc, eq } from "drizzle-orm";
 import { chainInstances, orchestrations, type RunStatus, runs, tasks } from "../db/schema.js";
@@ -158,7 +158,7 @@ async function failedNodes(
 	const nodeIndex = new Map(document.nodes.map((n, i) => [n.id, i]));
 	const labelOf = (chainInstanceId: string) => {
 		const chain = chains.find((c) => c.id === chainInstanceId);
-		if (!chain) return chainLabel({ chain_id: "", subflow: false });
+		if (!chain) return MAIN_CHAIN_LABEL;
 		const start = document.nodes.find((n) => n.id === chain.chainId);
 		const name = start?.kind === "subflow_entry" ? start.name : undefined;
 		return chainLabel({ chain_id: chain.chainId, subflow: chain.depth > 0, name }, chain.id);
