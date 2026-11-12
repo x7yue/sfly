@@ -180,7 +180,7 @@ def stress(ctx: Context, qps: int, alert_bot: FeishuBot) -> dict:
 
 - **投递失败永远不会抛出异常**：消息由控制面发出（ADR 0020），`ctx.notify` 只把它交给 Agent，不访问网络、不等结果。飞书不可达、返回错误、机器人已被删除时，节点照常执行，不会因为通知失败或变慢。只有参数类型不对（`bot`、`text` 不是字符串，`at_all` 不是布尔值）时抛出 `TypeError`。
 - `bot` 必须是通过「飞书机器人」类型的参数（`sfly.FeishuBot`，见上文）传给节点的机器人名称。其他名称（写死在代码里的、普通字符串参数传进来的）不发送，任务日志里写一条 warning，提示把它声明成 `FeishuBot` 参数；机器人没有登记时同样。
-- 请求体与飞书通知节点的「文本」格式相同：`{"msg_type": "text", "content": {"text": ...}}`。`at_all=True` 时在正文末尾加上「@所有人」；正文里自己写的 `<at user_id="ou_xxx">名字</at>` 原样发出。
+- 请求体与飞书通知节点的「文本」格式相同：`{"msg_type": "text", "content": {"text": ...}}`。`at_all=True` 时在正文末尾加上「@所有人」；正文里自己写的 `<at user_id="ou_xxx">名字</at>` 原样发出。请求体超过 20 KB 时截断正文，末尾加上「…（已截断）」，「@所有人」仍在最后。
 - 投递结果写进这个任务的日志，来源是 system：送达是 info，失败（写明原因和下一步）或被丢弃是 warning。同一个机器人的消息按调用的先后串行发出、限速（ADR 0020）。
 - Agent 和控制面断开期间，通知和日志一样在 Agent 上排队，重连后发出。
 - 本地调试不真的发送：`sfly run` 把要发给哪个机器人、请求体是什么打印出来；`sfly.testing.run_node` 的结果里有 `notifications`（见下文）。和平台一样，不是通过「飞书机器人」参数传入的机器人不记录，日志里写一条 warning。

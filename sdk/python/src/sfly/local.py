@@ -278,11 +278,33 @@ def referenced_feishu_bots(schema: Mapping[str, Any], inputs: Mapping[str, Any])
 
 #: 「@所有人」：飞书文本消息里的写法。
 _AT_ALL = '<at user_id="all">所有人</at>'
+#: 飞书请求体的上限：紧凑 JSON 按 UTF-8 编码的字节数。
+_BODY_LIMIT_BYTES = 20 * 1024
+_TRUNCATED_MARK = "…（已截断）"
+
+
+def _body_bytes(body: Mapping[str, Any]) -> int:
+    return len(json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
 
 
 def _text_message(text: str, at_all: bool) -> dict[str, Any]:
-    """文本消息的请求体，与控制面相同（apps/server/src/feishu/messages.ts 的 textMessage）。"""
-    return {"msg_type": "text", "content": {"text": text + _AT_ALL if at_all else text}}
+    """文本消息的请求体，与控制面相同（apps/server/src/feishu/messages.ts 的 textMessage）：
+    超过 20 KB 时留下最长的、放得下的正文前缀，接上「…（已截断）」，「@所有人」仍在最后。"""
+    tail = _AT_ALL if at_all else ""
+
+    def body(kept: str) -> dict[str, Any]:
+        return {"msg_type": "text", "content": {"text": kept + tail}}
+
+    if _body_bytes(body(text)) <= _BODY_LIMIT_BYTES:
+        return body(text)
+    low, high = 0, len(text)
+    while high - low > 1:
+        middle = (low + high) // 2
+        if _body_bytes(body(text[:middle] + _TRUNCATED_MARK)) <= _BODY_LIMIT_BYTES:
+            low = middle
+        else:
+            high = middle
+    return body(text[:low] + _TRUNCATED_MARK)
 
 
 # ---- 执行 ----
