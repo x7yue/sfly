@@ -1,4 +1,4 @@
-"""`sfly scenario`：查看平台上的场景（`list`、`show`）。
+"""`sfly scenario`：查看平台上的场景（`list`、`show`），编辑场景在 `scenario_edit.py`。
 
 场景的 id、名称和版本的取值与错误约定见 `scenario_lookup.py`、`session.py`、`output.py`。
 """
@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
+from sfly.cli import scenario_edit
 from sfly.cli.client import segment
 from sfly.cli.output import add_limit_option, apply_limit, dump_json, format_table, more_note
 from sfly.cli.scenario_lookup import find_scenario
@@ -28,8 +29,8 @@ _BUILTIN_TYPES = {
 def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = sub.add_parser(
         "scenario",
-        help="查看平台上的场景：列表、入口参数、链路上的节点",
-        description="查看控制面上的场景。场景用 id 或准确名称指定，"
+        help="查看和编辑平台上的场景：列表、入口参数、链路上的节点、pull / push 保存新版本",
+        description="查看和编辑控制面上的场景。场景用 id 或准确名称指定，"
         "名称对应多个场景时报错并列出候选。默认输出精简文本，--json 输出 JSON。"
         "退出码：成功 0，命令出错（参数不对、连不上控制面、场景不存在……）2。",
     )
@@ -57,6 +58,8 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     )
     p_show.add_argument("scenario", metavar="场景", help="场景 id 或准确名称")
     p_show.set_defaults(func=command(_show))
+
+    scenario_edit.register(group)
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:
