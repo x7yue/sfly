@@ -5,7 +5,7 @@ import { expect, test } from "./fixtures";
 import { openMonitor, runningScenario } from "./monitor-scenario";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
-// 没选中节点时，日志页签按控制面时间合并显示整次运行全部节点的日志（#222）。
+// 没选中节点时，日志页签按控制面时间合并显示整次运行全部节点的日志（#222），向上滚动加载更早的（#223）。
 
 const timeline = (page: Page) => page.getByRole("region", { name: "链路时间线" });
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
@@ -125,6 +125,61 @@ test("没选中节点时合并显示全部节点的日志：按控制面时间�
 	await nodeButton(page, "fetch").click();
 	await expect(scope).toHaveText("范围：全部节点");
 	await expect(rows).toHaveCount(9);
+	await expect(logs.locator("[data-log-origin]").first()).toHaveText("fetch");
+});
+
+test("合并视图向上滚动加载更早的日志，一直到运行开始", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const at = (seq: number, atMs: number, text: string) => ({
+		seq: BigInt(seq),
+		timeUnixMs: BigInt(clock0 + atMs),
+		monotonicMs: agent.monotonicAt(clock0 + atMs),
+		source: LogSource.STDOUT,
+		level: LogLevel.INFO,
+		text,
+	});
+	// fetch 的 4 行之后，probe 和 verify 第 2 次各 200 行交错输出：一共 404 行，最新一页只有最后 300 行。
+	const rows = (task: AssignedTask, name: string, from: number) =>
+		agent.logs(
+			task,
+			Array.from({ length: 200 }, (_, i) => at(i + 1, from + i * 10, `${name} line ${i + 1}`)),
+		);
+	rows(tasks.probe as AssignedTask, "probe", 13_000);
+	rows(tasks.verify as AssignedTask, "verify", 13_005);
+	await agent.sync();
+
+	await openMonitor(page, clock, runId);
+	await nodeButton(page, "verify").click();
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
+	const logs = panel(page).getByRole("log", { name: "日志" });
+	await expect(logs).toContainText("verify line 200");
+	await expect(logs).not.toContainText("开始执行");
+
+	const older = logs.getByRole("button", { name: /加载更早的日志/ });
+	await expect(older).toBeVisible();
+	// 不用 click()：它会先把按钮滚进视口，滚到顶部本身就会触发加载、按钮随即消失，点击落空。
+	await older.dispatchEvent("click");
+	// 更早的 104 行一页读完，已经到了运行开始：不再有加载更早的按钮。
+	await expect(older).toHaveCount(0);
+	await logs.evaluate((el) => {
+		el.scrollTop = 0;
+	});
+	await expect(logs.getByRole("button")).toContainText([
+		"开始执行",
+		"load config ok",
+		"retrying request (1/3): connection reset",
+		"batch committed",
+		"probe line 1",
+		"verify line 1",
+		"probe line 2",
+		"verify line 2",
+	]);
 	await expect(logs.locator("[data-log-origin]").first()).toHaveText("fetch");
 });
 

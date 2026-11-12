@@ -37,6 +37,7 @@ import {
 	useMonitorActions,
 	useTimeAxis,
 } from "./monitor-state";
+import { runLineKey } from "./run-log-buffer";
 import {
 	documentNodes,
 	findNode,
@@ -331,9 +332,8 @@ function TaskLogsTab({
 }
 
 const seqKey = (line: LogLineView) => String(line.seq);
-const taskSeqKey = (line: RunLogLine) => `${line.task_id}:${line.seq}`;
 
-/** 整次运行全部节点的日志合并显示（#222）：每行多一列来源节点。 */
+/** 整次运行全部节点的日志合并显示（#222）：每行多一列来源节点，向上滚动加载更早的（#223）。 */
 function RunLogsTab({
 	run,
 	timeKind,
@@ -350,8 +350,8 @@ function RunLogsTab({
 	const truncated = logs.truncatedTasks.map((t) => logOrigin(run, t)).join("、");
 	return (
 		<LogsView
-			logs={{ ...logs, hasOlder: false, loadingOlder: false, loadOlder: noop }}
-			lineKey={taskSeqKey}
+			logs={logs}
+			lineKey={runLineKey}
 			origin={origin}
 			truncated={truncated ? `${truncated} 的${TRUNCATED}` : null}
 			filtered={false}
@@ -362,8 +362,6 @@ function RunLogsTab({
 		/>
 	);
 }
-
-const noop = () => {};
 
 /** 日志页签的内容（单个任务与合并视图共用）：截断、旧行、读取失败的提示，按时间范围过滤，点一行标出时刻。 */
 function LogsView<L extends LogLineView>({
