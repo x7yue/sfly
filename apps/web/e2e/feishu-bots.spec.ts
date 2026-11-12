@@ -1,10 +1,14 @@
 import { expect, test } from "./fixtures";
-import { createFeishuBot, createScenario } from "./support";
+import { createFeishuBot, createScenario, triggerRun } from "./support";
 
 // 飞书机器人管理页（ADR 0020）：登记、Webhook 地址打码、替换、删除、发送测试消息。
 // 机器人的 Webhook 地址指向假的飞书服务（fixtures 的 feishu），它记录收到的请求、按测试指定的状态码和 code 应答。
+// 最近一次投递和积压条数（#230）：页面每 5 秒重新查询一次，等它们出现用较长的等待上限。
 
 const SECRET = "tok-4f9a8c71-e2b0-43d6-9a55-0a1b2c3d4e5f";
+
+// 表格各列的位置：名称、Webhook 地址、最近投递、积压、登记时间、测试结果、操作。
+const CELL = { webhook: 1, lastDelivery: 2, backlog: 3, testResult: 5 } as const;
 
 const row = (page: import("@playwright/test").Page, name: string) =>
 	page
@@ -41,11 +45,11 @@ test("登记：填名称和 Webhook 地址，列表里只显示打码的地址",
 	await expect(dialog).toBeHidden();
 	const bot = row(page, "压测群");
 	await expect(bot).toBeVisible();
-	const masked = await bot.getByRole("cell").nth(1).textContent();
+	const masked = await bot.getByRole("cell").nth(CELL.webhook).textContent();
 	expect(masked).toMatch(/^http:\/\/127\.0.*4e5f$/);
 	expect(masked).not.toContain(SECRET);
 	await expect(page.locator("body")).not.toContainText(SECRET);
-	await expect(bot.getByRole("cell").nth(3)).toHaveText("未测试");
+	await expect(bot.getByRole("cell").nth(CELL.testResult)).toHaveText("未测试");
 	// 登记后页面上的操作：header 里有「登记机器人」，列表在表格里。
 	await expect(page.getByRole("heading", { name: "飞书机器人", exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "登记机器人" })).toBeVisible();
@@ -89,7 +93,7 @@ test("发送测试消息：把一条固定文本发到 Webhook 地址里的主�
 	const bot = row(page, "压测群");
 
 	await bot.getByRole("button", { name: "发送测试消息" }).click();
-	await expect(bot.getByRole("cell").nth(3)).toHaveText("测试消息已送达");
+	await expect(bot.getByRole("cell").nth(CELL.testResult)).toHaveText("测试消息已送达");
 	expect(feishu.requests).toHaveLength(1);
 	expect(feishu.requests[0]?.path).toBe("/open-apis/bot/v2/hook/hook-1");
 	expect(feishu.requests[0]?.json).toMatchObject({
@@ -105,7 +109,7 @@ test("发送测试消息失败：飞书的错误码翻译成中文原因和下�
 }) => {
 	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl(SECRET));
 	await page.goto("/feishu-bots");
-	const result = row(page, "压测群").getByRole("cell").nth(3);
+	const result = row(page, "压测群").getByRole("cell").nth(CELL.testResult);
 	const send = row(page, "压测群").getByRole("button", { name: "发送测试消息" });
 
 	for (const [reply, expected] of [
@@ -141,7 +145,7 @@ test("发送测试消息失败：连不上主机时写出主机和下一步", as
 	await feishu.close();
 	await page.goto("/feishu-bots");
 	await row(page, "压测群").getByRole("button", { name: "发送测试消息" }).click();
-	const result = row(page, "压测群").getByRole("cell").nth(3);
+	const result = row(page, "压测群").getByRole("cell").nth(CELL.testResult);
 	await expect(result).toContainText("无法连接 127.0.0.1");
 	await expect(result).toContainText("HTTPS_PROXY");
 	await expect(result).not.toContainText("closed");
@@ -156,7 +160,7 @@ test("替换地址：弹窗里看不到原来的地址，只能整个替换；�
 	await page.goto("/feishu-bots");
 	const bot = row(page, "压测群");
 	await bot.getByRole("button", { name: "发送测试消息" }).click();
-	await expect(bot.getByRole("cell").nth(3)).toHaveText("测试消息已送达");
+	await expect(bot.getByRole("cell").nth(CELL.testResult)).toHaveText("测试消息已送达");
 
 	await bot.getByRole("button", { name: "替换地址" }).click();
 	const dialog = page.getByRole("dialog", { name: "替换「压测群」的 Webhook 地址" });
@@ -167,9 +171,9 @@ test("替换地址：弹窗里看不到原来的地址，只能整个替换；�
 	await expect(dialog).toBeHidden();
 
 	// 旧的测试结果不再适用。
-	await expect(bot.getByRole("cell").nth(3)).toHaveText("未测试");
+	await expect(bot.getByRole("cell").nth(CELL.testResult)).toHaveText("未测试");
 	await bot.getByRole("button", { name: "发送测试消息" }).click();
-	await expect(bot.getByRole("cell").nth(3)).toHaveText("测试消息已送达");
+	await expect(bot.getByRole("cell").nth(CELL.testResult)).toHaveText("测试消息已送达");
 	expect(feishu.requests.map((r) => r.path)).toEqual([
 		"/open-apis/bot/v2/hook/old-token-1234",
 		"/open-apis/bot/v2/hook/new-token-5678",
@@ -235,4 +239,112 @@ test("删除前列出引用这个机器人的场景：每个场景可以点开�
 
 	await dialog.getByRole("button", { name: "删除", exact: true }).click();
 	await expect(row(page, "压测群")).toHaveCount(0);
+});
+
+/** 一个入口 + 一个飞书通知节点的场景：运行时向这个机器人发一条消息。 */
+const notifyScenario = (bot: string) => ({
+	nodes: [
+		{ id: "entry", kind: "entry", params: [] },
+		{ id: "notify", kind: "feishu_notify", bot, text: "压测开始" },
+	],
+	edges: [{ from: "entry", to: "notify", kind: "chain" }],
+	packages: {},
+});
+const POLL_WAIT = { timeout: 15_000 };
+
+test("最近投递和积压：登记之后尚无投递；消息送达后显示已送达和时间，积压为 0", async ({
+	page,
+	controlPlane,
+	feishu,
+}) => {
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+	await page.goto("/feishu-bots");
+	const bot = row(page, "压测群");
+	await expect(bot.getByRole("cell").nth(CELL.lastDelivery)).toHaveText("尚无投递");
+	await expect(bot.getByRole("cell").nth(CELL.backlog)).toHaveText("0");
+
+	const scenario = await createScenario(controlPlane, "通知", notifyScenario("压测群"));
+	await triggerRun(controlPlane, scenario);
+
+	const last = bot.getByRole("cell").nth(CELL.lastDelivery);
+	await expect(last).toContainText("已送达", POLL_WAIT);
+	await expect(last).toContainText("01-01 08:00");
+	await expect(bot.getByRole("cell").nth(CELL.backlog)).toHaveText("0");
+	expect(feishu.requests).toHaveLength(1);
+});
+
+test("可重试的失败：最近投递是失败的原因，积压是还在排队的条数；飞书恢复后重试送达", async ({
+	page,
+	controlPlane,
+	feishu,
+	clock,
+}) => {
+	feishu.reply({ status: 503 });
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+	const scenario = await createScenario(controlPlane, "通知", notifyScenario("压测群"));
+	await triggerRun(controlPlane, scenario);
+	await page.goto("/feishu-bots");
+	const bot = row(page, "压测群");
+	const last = bot.getByRole("cell").nth(CELL.lastDelivery);
+	const backlog = bot.getByRole("cell").nth(CELL.backlog);
+
+	await expect(last).toContainText("投递失败", POLL_WAIT);
+	await expect(last).toContainText("飞书服务暂时不可用（HTTP 503）");
+	await expect(last).toContainText("下一步：");
+	await expect(backlog).toHaveText("1 条");
+
+	// 控制面时间过了退避的 1 秒：重试，这次送达。
+	clock.advance(1000);
+	await expect(last).toContainText("已送达", POLL_WAIT);
+	await expect(backlog).toHaveText("0");
+	expect(feishu.requests).toHaveLength(2);
+});
+
+test("不可重试的失败：最近投递写着中文原因和下一步，不再排队，页面上没有 Webhook 地址的令牌", async ({
+	page,
+	controlPlane,
+	feishu,
+}) => {
+	feishu.reply({ code: 19024, msg: `Key Words Not Found ${feishu.webhookUrl(SECRET)}` });
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl(SECRET));
+	const scenario = await createScenario(controlPlane, "通知", notifyScenario("压测群"));
+	await triggerRun(controlPlane, scenario);
+	await page.goto("/feishu-bots");
+	const bot = row(page, "压测群");
+	const last = bot.getByRole("cell").nth(CELL.lastDelivery);
+
+	await expect(last).toContainText("投递失败", POLL_WAIT);
+	await expect(last).toContainText("没有飞书群里这个机器人设置的关键词");
+	await expect(last).toContainText("下一步：");
+	await expect(bot.getByRole("cell").nth(CELL.backlog)).toHaveText("0");
+	await expect(page.locator("body")).not.toContainText(SECRET);
+});
+
+test("删除机器人：它还在排队的消息被丢弃，积压清零；同名重新登记后没有旧的记录", async ({
+	page,
+	controlPlane,
+	feishu,
+}) => {
+	feishu.replyAlways({ status: 503 });
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+	const scenario = await createScenario(controlPlane, "通知", notifyScenario("压测群"));
+	await triggerRun(controlPlane, scenario);
+	await page.goto("/feishu-bots");
+	await expect(row(page, "压测群").getByRole("cell").nth(CELL.backlog)).toHaveText(
+		"1 条",
+		POLL_WAIT,
+	);
+
+	await row(page, "压测群").getByRole("button", { name: "删除" }).click();
+	await page
+		.getByRole("dialog", { name: "删除飞书机器人「压测群」？" })
+		.getByRole("button", { name: "删除", exact: true })
+		.click();
+	await expect(row(page, "压测群")).toHaveCount(0);
+
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+	await page.reload();
+	const bot = row(page, "压测群");
+	await expect(bot.getByRole("cell").nth(CELL.lastDelivery)).toHaveText("尚无投递");
+	await expect(bot.getByRole("cell").nth(CELL.backlog)).toHaveText("0");
 });

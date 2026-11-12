@@ -34,11 +34,28 @@ export const FeishuWebhookUrl = z
 	.refine((value) => !/\s/.test(value), "Webhook 地址不能含空白字符")
 	.refine(isHttpUrl, "Webhook 地址必须是 http 或 https 地址");
 
+/**
+ * 一个机器人最近一次投递（ADR 0020）：控制面每向飞书发一次请求记一次（重试也算，丢弃不算），所以一条消息正在重试时，
+ * 这里已经是失败。
+ */
+export const FeishuLastDelivery = z.object({
+	/** 这次请求得到结果的时间（控制面时间）。 */
+	at: Timestamp,
+	/** 送达了吗。 */
+	ok: z.boolean(),
+	/** 没送达时的中文原因和下一步（Webhook 地址已打码）；送达时为 null。 */
+	message: z.string().nullable(),
+});
+
 export const FeishuBotView = z.object({
 	name: z.string(),
 	/** 打码后的 Webhook 地址：只露出开头和结尾。完整地址不通过任何接口返回。 */
 	webhook_url: z.string(),
 	created_at: Timestamp,
+	/** 最近一次投递；还没有投递过时为 null。 */
+	last_delivery: FeishuLastDelivery.nullable(),
+	/** 积压：还在排队、没有结果的消息条数（包括等着重试的）。 */
+	backlog: z.number().int().nonnegative(),
 });
 
 /** 「发送测试消息」的结果；失败也是 200，结果在 `ok` 里。 */
@@ -142,6 +159,7 @@ export const feishuBotsApi = {
 	}),
 };
 
+export type FeishuLastDelivery = z.infer<typeof FeishuLastDelivery>;
 export type FeishuBotView = z.infer<typeof FeishuBotView>;
 export type FeishuTestResult = z.infer<typeof FeishuTestResult>;
 export type FeishuBotReference = z.infer<typeof FeishuBotReference>;

@@ -111,11 +111,16 @@ export const agents = pgTable("agents", {
 /**
  * 飞书机器人（ADR 0020）：按名称唯一，创建后不能改名。webhook_url 明文保存（相当于一个凭据，和 secret 参数一样），
  * 只在界面和日志里打码（src/feishu/webhook-url.ts）；接口不返回完整地址。
+ * `last_delivery_*` 是最近一次投递（每发一次请求记一次，重试也算，丢弃不算）的控制面时间、是否送达和失败的原因（中文），
+ * 管理页显示它；记在机器人上，不随投递记录的保留期清理。
  */
 export const feishuBots = pgTable("feishu_bots", {
 	name: text("name").primaryKey(),
 	webhookUrl: text("webhook_url").notNull(),
 	createdAt: timestamptz("created_at").notNull(),
+	lastDeliveryAt: timestamptz("last_delivery_at"),
+	lastDeliveryOk: boolean("last_delivery_ok"),
+	lastDeliveryError: text("last_delivery_error"),
 });
 
 /**
@@ -336,7 +341,8 @@ export type FeishuMessageStatus = "queued" | "delivered" | "failed" | "discarded
  * 飞书发送队列（ADR 0020）：消息先写进这里（飞书通知节点的消息和节点成功在同一个事务里），再由控制面投递
  * （src/feishu/feishu-delivery.ts）。同一个机器人的消息按 `seq`（入队顺序）串行投递；投递的结果只记在这里和任务日志里，
  * 从不改变节点、任务、链或运行的状态。`bot_name` 不是外键：机器人删除后，它没有投递的消息记为已丢弃。
- * 投递记录跟随所属运行的保留期。
+ * 可重试的失败之后消息仍然排队：`attempts` 记已经尝试的次数，`next_attempt_at`（控制面时间）是最早的下一次尝试，
+ * 重启之后继续按它算。投递记录跟随所属运行的保留期。
  */
 export const feishuMessages = pgTable(
 	"feishu_messages",
@@ -354,6 +360,8 @@ export const feishuMessages = pgTable(
 		enqueuedAt: timestamptz("enqueued_at").notNull(),
 		status: text("status").$type<FeishuMessageStatus>().notNull().default("queued"),
 		attempts: integer("attempts").notNull().default(0),
+		/** 可重试的失败之后，最早的下一次尝试（控制面时间）；还没有失败过、或已经有结果时为空。 */
+		nextAttemptAt: timestamptz("next_attempt_at"),
 		/** 最后一次失败（或丢弃）的原因，中文，Webhook 地址已打码。 */
 		lastError: text("last_error"),
 		/** 送达、失败或丢弃的时间。 */

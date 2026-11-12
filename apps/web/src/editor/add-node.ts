@@ -114,7 +114,17 @@ export function newDocNode(item: AddItem, id: string): DocNode {
 			return { id, kind: "stop_subflow", always: false };
 		case "feishu_notify":
 			// 飞书机器人在检查器里选择。
-			return { id, kind: "feishu_notify", always: false, text: "", at_all: false };
+			return {
+				id,
+				kind: "feishu_notify",
+				always: false,
+				format: "text",
+				text: "",
+				at_all: false,
+				title: "",
+				color: "blue",
+				markdown: "",
+			};
 	}
 }
 

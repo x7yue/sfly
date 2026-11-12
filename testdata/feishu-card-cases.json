@@ -1,0 +1,677 @@
+{
+	"$comment": [
+		"飞书 Markdown 卡片的组装规则与用例，和实现无关（docs/SEMANTICS.md §4.2、ADR 0020）。",
+		"控制面（apps/server/src/feishu/messages.ts 的 markdownCard）和 SDK（sfly.feishu.card）各有一份实现，都要通过这里的全部用例。",
+		"input 是 title、markdown、color；expected 是 {body} 或 {error}：body 是完整的飞书请求体（JSON 相等，键的顺序不论），error 是 too_large。",
+		"字符串值可以写成 {\"$repeat\": 单元, \"times\": 次数, \"suffix\": 末尾} 表示「单元重复若干次再接上末尾」（suffix 可省略），用来写超长的字符串；读用例的一方先把它们展开成字符串。"
+	],
+	"rule": [
+		"请求体：{msg_type: interactive, card: {schema: 2.0, header: {title: {tag: plain_text, content: title}, template: color}, body: {elements: [{tag: markdown, content: markdown}]}}}，没有别的字段。",
+		"color 是 blue、green、orange、red、grey 之一（用法上的约束，不属于用例）。标题和正文照原样放进去：不做 Markdown 转义，不处理引用，空字符串也照常组装。",
+		"请求体的大小：紧凑 JSON（没有多余空白，非 ASCII 字符不转义成 \\u 形式）按 UTF-8 编码的字节数。上限 20480 字节（20 KB）。",
+		"没超过上限：原样返回。超过上限：截断正文，留下最长的、能放得下的前缀（按 Unicode 字符数，不把一个字符切成两半），末尾接上「…（已截断）」，使整张请求体不超过上限。",
+		"标题太长，连空前缀加「…（已截断）」都放不下时无法组装，结果是 too_large，怎么处理由调用方决定（控制面不发送这条消息，在节点日志里写 warning）。"
+	],
+	"limit_bytes": 20480,
+	"truncated_suffix": "…（已截断）",
+	"cases": [
+		{
+			"name": "标题、颜色和正文各就各位",
+			"input": {
+				"title": "压测完成",
+				"markdown": "**QPS** 1200，P99 35 ms",
+				"color": "green"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "压测完成"
+							},
+							"template": "green"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "**QPS** 1200，P99 35 ms"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "标题颜色 blue",
+			"input": {
+				"title": "颜色 blue",
+				"markdown": "正文",
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "颜色 blue"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "正文"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "标题颜色 orange",
+			"input": {
+				"title": "颜色 orange",
+				"markdown": "正文",
+				"color": "orange"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "颜色 orange"
+							},
+							"template": "orange"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "正文"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "标题颜色 red",
+			"input": {
+				"title": "颜色 red",
+				"markdown": "正文",
+				"color": "red"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "颜色 red"
+							},
+							"template": "red"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "正文"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "标题颜色 grey",
+			"input": {
+				"title": "颜色 grey",
+				"markdown": "正文",
+				"color": "grey"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "颜色 grey"
+							},
+							"template": "grey"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "正文"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "正文里的换行、引号、反斜杠、emoji 和 at 标签照原样放进 content",
+			"input": {
+				"title": "原样",
+				"markdown": "第一行\n\"引号\" \\ 反斜杠 😀\n<at id=all></at> <at id=ou_123></at>",
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "原样"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "第一行\n\"引号\" \\ 反斜杠 😀\n<at id=all></at> <at id=ou_123></at>"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "引用语法在组装时不再处理（引用在组装之前已经替换）",
+			"input": {
+				"title": "${{ params.a }}",
+				"markdown": "值：${{ nodes.b.outputs.c }}",
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "${{ params.a }}"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "值：${{ nodes.b.outputs.c }}"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "标题里的引号和换行照原样放进 content",
+			"input": {
+				"title": "带\"引号\"\n和换行的标题",
+				"markdown": "正文",
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "带\"引号\"\n和换行的标题"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "正文"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "空标题和空正文照常组装，不做特殊处理",
+			"input": {
+				"title": "",
+				"markdown": "",
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": ""
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": ""
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "请求体恰好 20480 字节：不截断",
+			"input": {
+				"title": "T",
+				"markdown": {
+					"$repeat": "a",
+					"times": 20304
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "T"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": {
+										"$repeat": "a",
+										"times": 20304
+									}
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "多一个字节：截断正文，末尾加「…（已截断）」，整张请求体不超过 20480 字节",
+			"input": {
+				"title": "T",
+				"markdown": {
+					"$repeat": "a",
+					"times": 20305
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "T"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": {
+										"$repeat": "a",
+										"times": 20286,
+										"suffix": "…（已截断）"
+									}
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "正文是中文（每个字 3 字节）：留下最长的、放得下的前缀",
+			"input": {
+				"title": "TT",
+				"markdown": {
+					"$repeat": "字",
+					"times": 10000
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "TT"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": {
+										"$repeat": "字",
+										"times": 6761,
+										"suffix": "…（已截断）"
+									}
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "引号转义后每个占 2 字节",
+			"input": {
+				"title": "TT",
+				"markdown": {
+					"$repeat": "\"",
+					"times": 20000
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "TT"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": {
+										"$repeat": "\"",
+										"times": 10142,
+										"suffix": "…（已截断）"
+									}
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "换行转义后每个占 2 字节",
+			"input": {
+				"title": "TT",
+				"markdown": {
+					"$repeat": "\n",
+					"times": 20000
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "TT"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": {
+										"$repeat": "\n",
+										"times": 10142,
+										"suffix": "…（已截断）"
+									}
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "emoji 每个占 4 字节（两个 UTF-16 单元），按 Unicode 字符截，不会切成两半",
+			"input": {
+				"title": "TT",
+				"markdown": {
+					"$repeat": "😀",
+					"times": 8000
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": "TT"
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": {
+										"$repeat": "😀",
+										"times": 5071,
+										"suffix": "…（已截断）"
+									}
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "标题占了大部分空间：正文只留得下一点",
+			"input": {
+				"title": {
+					"$repeat": "T",
+					"times": 20000
+				},
+				"markdown": {
+					"$repeat": "x",
+					"times": 1000
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": {
+									"$repeat": "T",
+									"times": 20000
+								}
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": {
+										"$repeat": "x",
+										"times": 287,
+										"suffix": "…（已截断）"
+									}
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "只剩截断标记刚好放得下：正文只剩标记",
+			"input": {
+				"title": {
+					"$repeat": "T",
+					"times": 20287
+				},
+				"markdown": {
+					"$repeat": "x",
+					"times": 100
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": {
+									"$repeat": "T",
+									"times": 20287
+								}
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": "…（已截断）"
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "连截断标记都放不下：不能组装",
+			"input": {
+				"title": {
+					"$repeat": "T",
+					"times": 20288
+				},
+				"markdown": {
+					"$repeat": "x",
+					"times": 100
+				},
+				"color": "blue"
+			},
+			"expected": {
+				"error": "too_large"
+			}
+		},
+		{
+			"name": "整张卡片没超限就不截断，哪怕标记放不下",
+			"input": {
+				"title": {
+					"$repeat": "T",
+					"times": 20288
+				},
+				"markdown": "",
+				"color": "blue"
+			},
+			"expected": {
+				"body": {
+					"msg_type": "interactive",
+					"card": {
+						"schema": "2.0",
+						"header": {
+							"title": {
+								"tag": "plain_text",
+								"content": {
+									"$repeat": "T",
+									"times": 20288
+								}
+							},
+							"template": "blue"
+						},
+						"body": {
+							"elements": [
+								{
+									"tag": "markdown",
+									"content": ""
+								}
+							]
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "标题本身就超过 20480 字节：不能组装",
+			"input": {
+				"title": {
+					"$repeat": "T",
+					"times": 30000
+				},
+				"markdown": "正文",
+				"color": "blue"
+			},
+			"expected": {
+				"error": "too_large"
+			}
+		}
+	]
+}

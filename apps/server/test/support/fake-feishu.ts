@@ -1,5 +1,6 @@
 import { createServer, type IncomingHttpHeaders } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
+import type { Clock } from "../../src/clock.js";
 
 /**
  * 假的飞书 Webhook 服务（ADR 0020）：在本机随机端口起一个 HTTP 服务，记录收到的每个请求，
@@ -34,6 +35,16 @@ export interface FeishuRequest {
 	json: unknown;
 	/** 请求以绝对地址到达（HTTP 代理的请求形式），即经过了作为代理使用的这个服务。 */
 	viaProxy: boolean;
+	/** 请求到达时 {@link FakeFeishuOptions.clock} 的读数（控制面时间）；没有给时钟时为 undefined。 */
+	at: Date | undefined;
+}
+
+export interface FakeFeishuOptions {
+	/**
+	 * 给每个收到的请求记下这个时钟的读数（{@link FeishuRequest.at}）：控制面用手动时钟计算退避和限速时，
+	 * 测试按「请求到达时的控制面时间」断言间隔，不依赖真实的流逝时间。
+	 */
+	clock?: Clock;
 }
 
 export interface FakeFeishu {
@@ -64,7 +75,7 @@ function responseBody(reply: FeishuReply): string {
 	return JSON.stringify({ code, msg: reply.msg ?? (code === 0 ? "success" : "error"), data: {} });
 }
 
-export async function startFakeFeishu(): Promise<FakeFeishu> {
+export async function startFakeFeishu({ clock }: FakeFeishuOptions = {}): Promise<FakeFeishu> {
 	const requests: FeishuRequest[] = [];
 	const connects: string[] = [];
 	const queued: FeishuReply[] = [];
@@ -94,6 +105,7 @@ export async function startFakeFeishu(): Promise<FakeFeishu> {
 				body,
 				json,
 				viaProxy,
+				at: clock?.now(),
 			});
 			const path = viaProxy ? new URL(target).pathname : target;
 			const reply = queuedByPath.get(path)?.shift() ?? queued.shift() ?? fallback;

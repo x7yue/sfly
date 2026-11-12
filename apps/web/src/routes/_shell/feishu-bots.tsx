@@ -1,4 +1,9 @@
-import { type FeishuBotView, type FeishuTestResult, feishuBotsApi } from "@sfly/schema";
+import {
+	type FeishuBotView,
+	type FeishuLastDelivery,
+	type FeishuTestResult,
+	feishuBotsApi,
+} from "@sfly/schema";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { BotIcon } from "lucide-react";
@@ -11,6 +16,7 @@ import { DeleteBotDialog, RegisterBotDialog, ReplaceWebhookDialog } from "#/feis
 import { apiQuery, callApi } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
+import { STATUS_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
 import {
 	Table,
@@ -26,9 +32,12 @@ export const Route = createFileRoute("/_shell/feishu-bots")({
 	component: FeishuBotsPage,
 });
 
-/** 飞书机器人管理页（ADR 0020）：登记、替换 Webhook 地址、删除、发送测试消息。 */
+/**
+ * 飞书机器人管理页（ADR 0020）：登记、替换 Webhook 地址、删除、发送测试消息；
+ * 每个机器人显示最近一次投递的时间和结果，以及积压（还在排队的消息）的条数，定时重新查询。
+ */
 function FeishuBotsPage() {
-	const bots = useQuery(apiQuery(feishuBotsApi.list));
+	const bots = useQuery({ ...apiQuery(feishuBotsApi.list), refetchInterval: STATUS_POLL_MS });
 	const [registering, setRegistering] = useState(false);
 	return (
 		<Page>
@@ -47,7 +56,7 @@ function FeishuBotsPage() {
 			<Panel>
 				<QueryView
 					query={bots}
-					loading={<TableSkeleton columns={5} />}
+					loading={<TableSkeleton columns={7} />}
 					errorTitle="无法加载飞书机器人"
 					isEmpty={(d) => d.bots.length === 0}
 					empty={
@@ -77,6 +86,8 @@ function BotTable({ bots }: { bots: FeishuBotView[] }) {
 				<TableRow>
 					<TableHead>名称</TableHead>
 					<TableHead>Webhook 地址</TableHead>
+					<TableHead>最近投递</TableHead>
+					<TableHead>积压</TableHead>
 					<TableHead>登记时间</TableHead>
 					<TableHead>测试结果</TableHead>
 					<TableHead>
@@ -105,6 +116,12 @@ function BotRow({ bot }: { bot: FeishuBotView }) {
 		<TableRow>
 			<TableCell className="whitespace-nowrap font-mono font-medium">{bot.name}</TableCell>
 			<TableCell className="font-mono text-xs text-fg-2">{bot.webhook_url}</TableCell>
+			<TableCell className="max-w-md text-xs whitespace-normal">
+				<LastDelivery delivery={bot.last_delivery} />
+			</TableCell>
+			<TableCell className="whitespace-nowrap">
+				<Backlog count={bot.backlog} />
+			</TableCell>
 			<TableCell className="whitespace-nowrap font-mono text-xs text-fg-3">
 				{formatDateTime(bot.created_at)}
 			</TableCell>
@@ -141,6 +158,31 @@ function BotRow({ bot }: { bot: FeishuBotView }) {
 			</TableCell>
 		</TableRow>
 	);
+}
+
+/**
+ * 最近一次投递：控制面每向飞书发一次请求记一次，所以一条消息还在重试时这里已经是失败（积压里能看到它在排队）。
+ * 失败写着中文原因和下一步。
+ */
+function LastDelivery({ delivery }: { delivery: FeishuLastDelivery | null }) {
+	if (!delivery) return <span className="text-fg-3">尚无投递</span>;
+	return (
+		<div className="flex flex-col gap-0.5">
+			<div className="flex items-center gap-2">
+				<StatusPill kind={delivery.ok ? "ok" : "failed"}>
+					{delivery.ok ? "已送达" : "投递失败"}
+				</StatusPill>
+				<span className="font-mono text-2xs text-fg-3">{formatDateTime(delivery.at)}</span>
+			</div>
+			{delivery.message && <div className="text-fg-1">{delivery.message}</div>}
+		</div>
+	);
+}
+
+/** 积压：还在排队、没有结果的消息条数（包括等着重试的）；有积压时用警告色。 */
+function Backlog({ count }: { count: number }) {
+	if (count === 0) return <span className="font-mono text-xs text-fg-3">0</span>;
+	return <StatusPill kind="warn">{count} 条</StatusPill>;
 }
 
 /** 测试消息的结果：成功，或失败的中文原因、下一步和飞书的错误码。 */

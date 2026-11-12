@@ -184,16 +184,17 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 控制面直接向飞书群机器人的 Webhook 地址发请求（ADR 0020）；代理设置（HTTPS_PROXY、NO_PROXY）在这里读取。
 	const feishu = new FeishuClient();
-	const feishuBots = new FeishuBots({ db: database.db, clock });
+	const feishuError = (error: unknown) => {
+		if (logger) console.error("feishu delivery failed:", error);
+	};
+	const feishuBots = new FeishuBots({ db: database.db, clock, logs, onError: feishuError });
 	const feishuDelivery = new FeishuDelivery({
 		db: database.db,
 		clock,
 		bots: feishuBots,
 		client: feishu,
 		logs,
-		onError: (error) => {
-			if (logger) console.error("feishu delivery failed:", error);
-		},
+		onError: feishuError,
 	});
 	const notifications = new TaskNotifications({
 		db: database.db,

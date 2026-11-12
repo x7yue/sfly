@@ -1,5 +1,5 @@
 {
-  "id": "239e7b7c-d4bf-4149-8f84-790e8934544a",
+  "id": "046f0e25-a543-495a-86bb-6eaacbcdcacc",
   "prevId": "5a0620b6-2944-4c4f-9585-79aed9b2a477",
   "version": "7",
   "dialect": "postgresql",
@@ -314,6 +314,24 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "last_delivery_at": {
+          "name": "last_delivery_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_delivery_ok": {
+          "name": "last_delivery_ok",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_delivery_error": {
+          "name": "last_delivery_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -383,6 +401,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "last_error": {
           "name": "last_error",
@@ -986,13 +1010,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "referenced_feishu_bots": {
-          "name": "referenced_feishu_bots",
-          "type": "text[]",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'"
-        },
         "outputs": {
           "name": "outputs",
           "type": "jsonb",
@@ -1080,13 +1097,6 @@
         },
         "log_seq": {
           "name": "log_seq",
-          "type": "bigint",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "log_agent_seq": {
-          "name": "log_agent_seq",
           "type": "bigint",
           "primaryKey": false,
           "notNull": true,
