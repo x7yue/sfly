@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 from typing import Any
 
-from sfly.cli import scenario_edit
+from sfly.cli import scenario_edit, scenario_versions
 from sfly.cli.client import segment
 from sfly.cli.output import add_limit_option, apply_limit, dump_json, format_table, more_note
 from sfly.cli.scenario_lookup import find_scenario
@@ -60,6 +60,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     p_show.set_defaults(func=command(_show))
 
     scenario_edit.register(group)
+    scenario_versions.register(group)
 
 
 def _list(session: Session, args: argparse.Namespace) -> None:

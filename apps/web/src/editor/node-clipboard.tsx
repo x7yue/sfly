@@ -3,6 +3,8 @@ import {
 	copiedNodeText,
 	type DocumentEdit,
 	duplicateNode,
+	freeCardAt,
+	freePosition,
 	type Position,
 	placeCopy,
 	readCopiedNode,
@@ -15,7 +17,6 @@ import { useShortcut } from "#/components/shortcuts";
 import { isEditable, OPEN_DIALOG } from "#/lib/focus";
 import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenuItem } from "@/components/ui/context-menu";
-import { freeCardAt, freePosition } from "./add-node";
 
 /**
  * 画布上单个节点的复制、粘贴、创建副本（#186）与系统剪贴板之间的接线。剪贴板里的内容与

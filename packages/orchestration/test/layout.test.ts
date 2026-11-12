@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
 	ensureLayout,
 	fillMissingPositions,
+	freeCardAt,
+	freePosition,
 	type LayoutDocument,
 	NODE_SIZE,
 	REGION_PADDING,
@@ -178,7 +180,7 @@ describe("补坐标", () => {
 	const doc: LayoutDocument = {
 		nodes: [
 			{ id: "entry", kind: "entry", position: { x: 40, y: 40 } },
-			{ id: "a", kind: "package", position: { x: 300, y: 90 } },
+			{ id: "a", kind: "package", position: { x: 300, y: 300 } },
 			{ id: "b", kind: "package" },
 			{ id: "c", kind: "package" },
 		],
@@ -188,10 +190,56 @@ describe("补坐标", () => {
 	it("没有位置的节点取整理布局的位置，已有位置的节点不动", () => {
 		expect(fillMissingPositions(doc).nodes.map((n) => [n.id, n.position])).toEqual([
 			["entry", { x: 40, y: 40 }],
-			["a", { x: 300, y: 90 }],
+			["a", { x: 300, y: 300 }],
 			["b", { x: 504, y: 0 }],
 			["c", { x: 756, y: 0 }],
 		]);
+	});
+
+	it("在已有坐标的链中间插入没坐标的节点：新节点不压住任何节点，已有坐标不变", () => {
+		const existing = [
+			{ id: "entry", kind: "entry" as const, position: { x: 0, y: 0 } },
+			{ id: "b", kind: "package" as const, position: { x: 252, y: 0 } },
+			{ id: "c", kind: "package" as const, position: { x: 504, y: 0 } },
+		];
+		const inserted: LayoutDocument = {
+			nodes: [existing[0], { id: "a", kind: "package" }, existing[1], existing[2]] as Node[],
+			edges: [chain("entry", "a"), chain("a", "b"), chain("b", "c")],
+		};
+		const filled = fillMissingPositions(inserted).nodes;
+		for (const e of existing)
+			expect(filled.find((n) => n.id === e.id)?.position).toEqual(e.position);
+		const cards = filled.map((n) => n.position as { x: number; y: number });
+		cards.forEach((p, i) => {
+			cards.slice(i + 1).forEach((q) => {
+				const apart =
+					Math.abs(p.x - q.x) >= NODE_SIZE.width || Math.abs(p.y - q.y) >= NODE_SIZE.height;
+				expect(apart).toBe(true);
+			});
+		});
+	});
+
+	it("连续缺坐标的几个节点互相也不重叠", () => {
+		const doc: LayoutDocument = {
+			nodes: [
+				{ id: "entry", kind: "entry", position: { x: 0, y: 0 } },
+				{ id: "a", kind: "package" },
+				{ id: "b", kind: "package" },
+				{ id: "c", kind: "package", position: { x: 252, y: 0 } },
+				{ id: "d", kind: "package", position: { x: 504, y: 0 } },
+			],
+			edges: [chain("entry", "a"), chain("a", "b"), chain("b", "c"), chain("c", "d")],
+		};
+		const cards = fillMissingPositions(doc).nodes.map(
+			(n) => n.position as { x: number; y: number },
+		);
+		cards.forEach((p, i) => {
+			cards.slice(i + 1).forEach((q) => {
+				const apart =
+					Math.abs(p.x - q.x) >= NODE_SIZE.width || Math.abs(p.y - q.y) >= NODE_SIZE.height;
+				expect(apart).toBe(true);
+			});
+		});
 	});
 
 	it("所有节点都有位置时原样返回", () => {
@@ -200,5 +248,32 @@ describe("补坐标", () => {
 			nodes: doc.nodes.map((n) => ({ ...n, position: n.position ?? { x: 1, y: 2 } })),
 		};
 		expect(fillMissingPositions(positioned)).toBe(positioned);
+	});
+});
+
+describe("没有来源的新节点落在哪（视口中心或右键位置）", () => {
+	// 节点卡片 208 × 112。
+	it("落点空着就用它", () => {
+		expect(freePosition({ x: 400, y: 300 }, [{ x: 0, y: 0 }])).toEqual({ x: 400, y: 300 });
+		// 贴边不算重叠。
+		expect(freePosition({ x: 208, y: 0 }, [{ x: 0, y: 0 }])).toEqual({ x: 208, y: 0 });
+	});
+
+	it("与已有节点重叠时按固定步长往右下错开，直到不压住任何节点", () => {
+		expect(freePosition({ x: 10, y: 10 }, [{ x: 0, y: 0 }])).toEqual({ x: 138, y: 138 });
+		// 错开一次后又压住另一个节点：继续错开。
+		expect(
+			freePosition({ x: 0, y: 0 }, [
+				{ x: 0, y: 0 },
+				{ x: 100, y: 100 },
+			]),
+		).toEqual({ x: 224, y: 224 });
+	});
+});
+
+describe("按卡片中心放置（视口中心、右键处、粘贴）", () => {
+	it("卡片中心落在给定的点上，坐标取整；压住已有节点时同样错开", () => {
+		expect(freeCardAt({ x: 104.4, y: 56.6 }, [])).toEqual({ x: 0, y: 1 });
+		expect(freeCardAt({ x: 104, y: 56 }, [{ x: 0, y: 0 }])).toEqual({ x: 128, y: 128 });
 	});
 });

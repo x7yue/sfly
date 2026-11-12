@@ -394,8 +394,33 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			expect(positions).toEqual({
 				entry: { x: 40, y: 40 },
 				pause: { x: 300, y: 90 },
-				tail: { x: 504, y: 0 },
+				// 整理布局给的 (504, 0) 压在 pause 上，往右下错开一步。
+				tail: { x: 536, y: 32 },
 			});
+		});
+
+		it("push 成功后文件里写回控制面实际保存的文档（含补好的坐标），再 push 同一个文件坐标不变", async () => {
+			const id = await createScenario("推送-写回坐标", sleepDocument());
+			const file = await pull(id);
+			const edited = await readScenarioFile(file);
+			edited.document.nodes.push({ id: "tail", kind: "sleep", duration: "1s" } as never);
+			edited.document.edges.push({ from: "pause", to: "tail", kind: "chain" });
+			await writeScenarioFile(file, edited);
+
+			const first = await cli("scenario", "push", file);
+			expect(first.code, first.stderr).toBe(0);
+			const pushed = await readScenarioFile(file);
+			expect(pushed.base_version).toBe(2);
+			expect(pushed.document.nodes.every((n) => n.position)).toBe(true);
+			expect(pushed.document).toEqual((await head(id)).document);
+			expect(pushed.document).toEqual((await readScenarioFile(await pull(id))).document);
+
+			const second = await cli("scenario", "push", file);
+			expect(second.code, second.stderr).toBe(0);
+			const again = await readScenarioFile(file);
+			expect(again.base_version).toBe(3);
+			expect(again.document).toEqual(pushed.document);
+			expect((await head(id)).document).toEqual(pushed.document);
 		});
 
 		it("所有节点都没有坐标时整份文档按整理布局排好；浏览器保存的带坐标的版本原样保留", async () => {
