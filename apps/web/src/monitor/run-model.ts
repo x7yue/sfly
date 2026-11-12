@@ -6,13 +6,14 @@ import type {
 	OrchestrationDocument,
 	OrchestrationNode,
 	ProgressEvent,
+	RunLogScope,
 	RunView,
 	TaskProgressView,
 } from "@sfly/schema";
 import { KIND_META } from "#/components/canvas/node-display";
 import { runStatusView, type StatusKind } from "#/components/status";
 import { chainLabel as chainName, subflowLabel, UNNAMED_SUBFLOW } from "#/lib/copy";
-import type { NodeRef } from "./monitor-state";
+import { type NodeRef, nodeKey } from "./monitor-state";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
 
@@ -105,6 +106,22 @@ export function logOrigin(run: RunView, origin: LogOrigin): string {
 	const retried = origin.attempt > 1 || (node?.attempts.length ?? 0) > 1;
 	const subflow = origin.subflow === null ? "" : `${origin.subflow || UNNAMED_SUBFLOW} / `;
 	return `${subflow}${origin.node_id}${retried ? ` #${origin.attempt}` : ""}`;
+}
+
+/**
+ * 日志页签合并视图的节点范围（#224）：节点筛选里勾选的、运行里有的节点，没有筛选时是全部节点（undefined）。
+ * 平台自带图表的键和还不在运行里的键不是节点；清空筛选是没有任何节点（空范围），不是全部节点。
+ */
+export function logScope(
+	run: RunView,
+	filter: ReadonlySet<string> | null,
+): RunLogScope | undefined {
+	if (!filter) return undefined;
+	return run.chains.flatMap((chain) =>
+		chain.nodes
+			.filter((node) => filter.has(nodeKey({ chainInstanceId: chain.id, nodeId: node.node_id })))
+			.map((node) => ({ chain_instance_id: chain.id, node_id: node.node_id })),
+	);
 }
 
 /** 打开运行时默认选中的节点：失败的节点，其次是执行中的节点；都没有时不选。 */

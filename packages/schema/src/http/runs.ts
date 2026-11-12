@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
+import { RunLogNodesParam } from "../run-log-scope.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
@@ -305,6 +306,8 @@ const ByteOffset = z.coerce.number().int().min(0);
 /** 查询参数：空字符串等于没给。 */
 const blankAsMissing = <S extends z.ZodType>(schema: S) =>
 	z.preprocess((v) => (v === "" ? undefined : v), schema.optional());
+/** 只要这些级别，逗号分隔。 */
+const LevelsParam = blankAsMissing(csv(LOG_LEVELS));
 
 export const LogPageQuery = z
 	.object({
@@ -313,8 +316,7 @@ export const LogPageQuery = z
 		/** 往后翻页：读这个字节偏移之后的行。不能与 before 同时给。 */
 		after: blankAsMissing(ByteOffset),
 		limit: z.coerce.number().int().min(1).max(MAX_LOG_PAGE_LINES).default(200),
-		/** 只要这些级别，逗号分隔。 */
-		level: blankAsMissing(csv(LOG_LEVELS)),
+		level: LevelsParam,
 		/** 只要这些来源，逗号分隔。 */
 		source: blankAsMissing(csv(LOG_SOURCES)),
 	})
@@ -355,6 +357,19 @@ export const RunLogLine = LogLineView.extend(LogOrigin.shape);
 /** 按运行分页的游标：不透明字符串，由上一页的 before / after 原样传回。 */
 const RunLogCursor = z.string();
 
+/**
+ * 按运行读取日志的范围参数：分页、实时推送（#225）、下载（#226）共用。
+ * 不给 `nodes` 是全部节点；给了空字符串是没有节点（写法与判断函数见 run-log-scope.ts）。
+ */
+export const RunLogScopeQuery = z.object({
+	nodes: RunLogNodesParam.optional(),
+});
+
+/** 按运行读取日志的级别参数：分页与实时推送共用（下载不受级别筛选影响）。 */
+export const RunLogLevelQuery = z.object({
+	level: LevelsParam,
+});
+
 export const RunLogPageQuery = z
 	.object({
 		/** 往前翻页：读这个游标之前的行。不给 before 和 after 时读最新的一页。 */
@@ -362,6 +377,8 @@ export const RunLogPageQuery = z
 		/** 往后接续：读这个游标之后的行。不能与 before 同时给。 */
 		after: blankAsMissing(RunLogCursor),
 		limit: z.coerce.number().int().min(1).max(MAX_LOG_PAGE_LINES).default(200),
+		...RunLogScopeQuery.shape,
+		...RunLogLevelQuery.shape,
 	})
 	.refine((q) => q.before === undefined || q.after === undefined, {
 		message: "before 与 after 不能同时给",
@@ -373,7 +390,11 @@ export const RunLogPageQuery = z
  * 没有控制面时间的旧行用任务开始时间。
  *
  * 游标记录每个任务读到的字节偏移：拿到这一页之后才开始的任务不在游标里，往前翻页时视为之前没有内容，往后接续时从头读。
- * 单次请求的扫描量有上限（所有任务分摊），所以一页可能不满 limit 行；这不表示读到了开头，看 `reached_start`。
+ * 单次请求的扫描量有上限（所有任务分摊），所以一页可能不满 limit 行，筛选级别时甚至可能一行都没有；
+ * 这不表示读到了开头，看 `reached_start`，没到就用 `before` 接着读。
+ *
+ * 范围（`nodes`）和级别（`level`）在服务端执行，游标只对同一组范围和级别有效：换了范围或级别要从最新一页重新读
+ * （新纳入范围的任务不在游标里，往前翻会漏掉它们）。
  */
 export const RunLogPage = z.object({
 	run_id: z.string(),

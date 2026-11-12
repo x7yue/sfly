@@ -28,6 +28,7 @@ import { sendError } from "./errors.js";
  *
  * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取（`before` / `after` 游标，#223），
  * 见 run-log-pages.ts 与 run-log-cursor.ts；游标不是这里返回的格式时 400 `invalid_request`。
+ * `nodes`（节点范围）与 `level`（级别）在服务端执行（#224），写法见 @sfly/schema 的 run-log-scope.ts。
  */
 export function registerLogRoutes(
 	app: FastifyInstance,
@@ -44,13 +45,14 @@ export function registerLogRoutes(
 		if ((query.before !== undefined && !before) || (query.after !== undefined && !after)) {
 			return sendError(reply, 400, "invalid_request", "游标不是之前返回的 before / after");
 		}
-		const { limit } = query;
+		const { limit, nodes: scope } = query;
+		const filter: LogFilter = { levels: query.level ? new Set(query.level) : undefined };
 		const page = isUuid(params.id)
 			? await deps.runLogs.page(
 					params.id,
 					after
-						? { direction: "forward", after, limit, filter: {} }
-						: { direction: "backward", before, limit, filter: {} },
+						? { direction: "forward", after, limit, filter, scope }
+						: { direction: "backward", before, limit, filter, scope },
 				)
 			: undefined;
 		if (!page) return sendError(reply, 404, "not_found", "run not found");

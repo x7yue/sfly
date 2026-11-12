@@ -1,7 +1,7 @@
 import type { LogLineView } from "@sfly/schema";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "cn";
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
 	formatClockMs,
 	formatFullDateTime,
@@ -9,6 +9,7 @@ import {
 	spansOtherDay,
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
+import { ContextMenu, type ContextMenuAnchor, ContextMenuItem } from "@/components/ui/context-menu";
 import { type LogTimeKind, logLineTime } from "./log-time-kind";
 
 const LEVEL_LABEL: Record<LogLineView["level"], string> = {
@@ -50,12 +51,15 @@ const COLUMNS = {
  * 时间列按 timeKind 显示 Agent 时间或控制面时间（ADR 0018），悬停时两种都给出；平时只显示时刻，
  * 列表里有一行显示的时间不在运行开始那天（day）时整列都带上日期。
  * 点一行把它的控制面时间标到时间轴上（onPick），标记的行高亮；没有控制面时间的行不能点：
- * 正文退到辅助色，指针是「不可用」。合并多个任务的日志时（origin），每行多一列来源节点。
+ * 正文退到辅助色，指针是「不可用」。合并多个任务的日志时（origin），每行多一列来源节点：
+ * 点来源节点名，或在行上右键 / 按 Shift+F10 / 菜单键打开菜单，选「只看……的日志」（onOrigin），都是切到这个节点；
+ * 点行的其他位置只标出时刻。
  */
 export function LogList<L extends LogLineView>({
 	lines,
 	lineKey,
 	origin,
+	onOrigin,
 	hasOlder,
 	loadingOlder,
 	loadOlder,
@@ -69,6 +73,8 @@ export function LogList<L extends LogLineView>({
 	lineKey: (line: L) => string;
 	/** 来源节点列的文字；不给时没有这一列。 */
 	origin?: (line: L) => string;
+	/** 选中这一行的来源节点（点来源节点名，或行的右键菜单）；不给时来源节点名不能点，也没有菜单。 */
+	onOrigin?: (line: L) => void;
 	hasOlder: boolean;
 	loadingOlder: boolean;
 	loadOlder: () => void;
@@ -89,6 +95,7 @@ export function LogList<L extends LogLineView>({
 		[lines, timeKind, day],
 	);
 	const formatTime = dated ? formatFullDateTimeMs : formatClockMs;
+	const [menu, setMenu] = useState<{ line: L; at: ContextMenuAnchor; open: boolean } | null>(null);
 	const box = useRef<HTMLDivElement>(null);
 	const follow = useRef(true);
 	/** 加载更早的一页之前，视口顶部那一行：加载后滚回它。 */
@@ -195,10 +202,26 @@ export function LogList<L extends LogLineView>({
 							aria-disabled={!locatable || undefined}
 							title={locatable ? "在时间轴上标出这一时刻" : NOT_LOCATABLE}
 							onClick={() => locatable && onPick(line)}
+							onContextMenu={(e) => {
+								if (!onOrigin) return;
+								e.preventDefault();
+								// 键盘触发的 contextmenu 事件（没有按右键）贴着这一行打开。
+								setMenu({
+									line,
+									at: e.button === 2 ? { x: e.clientX, y: e.clientY } : e.currentTarget,
+									open: true,
+								});
+							}}
 							onKeyDown={(e) => {
 								if (e.key === "Enter" || e.key === " ") {
 									e.preventDefault();
 									if (locatable) onPick(line);
+								} else if (
+									onOrigin &&
+									(e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))
+								) {
+									e.preventDefault();
+									setMenu({ line, at: e.currentTarget, open: true });
 								}
 							}}
 							className={cn(
@@ -224,7 +247,21 @@ export function LogList<L extends LogLineView>({
 								{LEVEL_LABEL[line.level]}
 							</span>
 							{origin && (
-								<span data-log-origin title={origin(line)} className="truncate text-fg-2">
+								// biome-ignore lint/a11y/noStaticElementInteractions: 嵌在整行的 button 里，不能再放 button；键盘用行上的菜单（Shift+F10）
+								// biome-ignore lint/a11y/useKeyWithClickEvents: 同上
+								<span
+									data-log-origin
+									title={onOrigin ? `${origin(line)}：只看这个节点的日志` : origin(line)}
+									className={cn(
+										"truncate text-fg-2",
+										onOrigin && "cursor-pointer underline-offset-2 hover:text-fg-1 hover:underline",
+									)}
+									onClick={(e) => {
+										if (!onOrigin) return;
+										e.stopPropagation();
+										onOrigin(line);
+									}}
+								>
 									{origin(line)}
 								</span>
 							)}
@@ -237,6 +274,21 @@ export function LogList<L extends LogLineView>({
 					);
 				})}
 			</div>
+			{/* 菜单渲染在 body 里（Portal），放在这里只是和列表一起挂载 */}
+			{onOrigin && origin && (
+				<ContextMenu
+					label="日志行菜单"
+					open={menu?.open ?? false}
+					anchor={menu?.at ?? null}
+					onOpenChange={(open) => setMenu((m) => m && { ...m, open })}
+				>
+					{menu && (
+						<ContextMenuItem onClick={() => onOrigin(menu.line)}>
+							只看 {origin(menu.line)} 的日志
+						</ContextMenuItem>
+					)}
+				</ContextMenu>
+			)}
 		</div>
 	);
 }

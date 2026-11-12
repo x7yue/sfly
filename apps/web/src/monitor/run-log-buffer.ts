@@ -5,6 +5,8 @@ import { MAX_LOADED_LINES } from "./log-buffer";
  * 合并视图已加载的日志（纯逻辑，单测见 run-log-buffer.test.ts）：先读最新一页，向上滚动时用 before 游标往前翻页。
  * 行的顺序由控制面决定（docs/ARCHITECTURE.md §6.3），往前翻的一页整页都在已加载的行之前，接在前面即可。
  *
+ * 范围或级别变了就换一个缓冲区、从最新一页重新读：游标只对读它时的范围和级别有效。
+ *
  * 游标对前端不透明，所以只能在页的边界上丢掉行：每一页记下读它之前的行用的游标，丢掉最早的几页之后，
  * 剩下最早那一页的游标正好能把丢掉的行重新读回来。
  */
@@ -39,6 +41,13 @@ export const runLineKey = (line: Pick<RunLogLine, "task_id" | "seq">) =>
 
 /** 往前翻页用的游标；null 表示已经读到运行的开头。 */
 export const olderCursor = (buffer: RunLogBuffer): string | null => buffer.pages[0]?.before ?? null;
+
+/**
+ * 已加载的页都没有行、前面还有内容：筛选很少匹配时，一页（单次请求的扫描量用完）可以一行都没有，
+ * 要接着往前读，直到读到行或读到开头，不能显示成没有日志。
+ */
+export const needsOlder = (buffer: RunLogBuffer): boolean =>
+	buffer.loaded && buffer.lines.length === 0 && olderCursor(buffer) !== null;
 
 const loadedPage = (page: RunLogPage, size: number): LoadedPage => ({
 	size,

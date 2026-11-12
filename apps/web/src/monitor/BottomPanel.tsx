@@ -42,6 +42,7 @@ import {
 	documentNodes,
 	findNode,
 	logOrigin,
+	logScope,
 	MASK,
 	orderedChains,
 	secretInputKeys,
@@ -88,9 +89,10 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 /**
  * 底部面板（原型 bpBody）：日志、尝试、输入输出、产物四个页签，范围跟随时间线上选中的节点
  * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter），两者都没有时是全部节点：
- * 日志页签把整次运行全部节点的日志合并显示（#222）。节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
+ * 日志页签把范围内节点的日志合并显示（#222、#224），点来源节点名切到这个节点的单节点日志。
+ * 节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
  * 页签与展开状态在共享状态里（顶栏的失败摘要会切到「尝试」页签）。用户还没有展开 / 收起、拖动或切换过页签时，
- * 日志页签没有内容（没选中节点、节点还没开始、或日志加载完是空的）就自动收起，把高度让给图表；日志到了再自动展开。
+ * 日志页签没有内容（选中的节点还没开始、或日志加载完是空的）就自动收起，把高度让给图表；日志到了再自动展开。
  */
 export function BottomPanel({
 	run,
@@ -113,16 +115,27 @@ export function BottomPanel({
 	const node = findNode(run, selected);
 	const [attemptId, setAttemptId] = useState<string | null>(null);
 	const refKey = selected ? `${selected.chainInstanceId}:${selected.nodeId}` : "";
+	/** 从合并视图点来源节点名选中节点时，要看的那一次尝试：换节点时默认是最近一次，这里例外。 */
+	const pendingAttempt = useRef<string | null>(null);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 换节点时回到最近一次尝试
-	useEffect(() => setAttemptId(null), [refKey]);
+	useEffect(() => {
+		setAttemptId(pendingAttempt.current);
+		pendingAttempt.current = null;
+	}, [refKey]);
+	const showOrigin = useCallback(
+		(line: RunLogLine) => {
+			pendingAttempt.current = line.task_id;
+			actions.select({ chainInstanceId: line.chain_instance_id, nodeId: line.node_id });
+		},
+		[actions],
+	);
 	const attempt =
 		node?.attempts.find((a) => a.task_id === attemptId) ?? node?.attempts.at(-1) ?? undefined;
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
 	const logTimeKind = useLogTimeKind();
 
-	/** 没选中节点、也没有节点筛选：日志页签合并显示全部节点。 */
-	const allNodes = !node && !filter;
-	const empty = tab === "logs" && (!(attempt || allNodes) || logsEmpty);
+	/** 选中的节点还没有开始：没有日志可看。其余情况（单个尝试、合并视图）由日志页签自己报告有没有内容。 */
+	const empty = tab === "logs" && ((node !== undefined && !attempt) || logsEmpty);
 	const collapsed = panelOpen === null ? empty : !panelOpen;
 	const effective = collapsed ? COLLAPSED_HEIGHT : (height ?? DEFAULT_HEIGHT);
 	return (
@@ -192,14 +205,12 @@ export function BottomPanel({
 								options={LOG_TIME_KINDS}
 								onChange={(v) => setLogTimeKind(v as LogTimeKind)}
 							/>
-							{!allNodes && (
-								<Segmented
-									label="日志级别"
-									value={minLevel}
-									options={MIN_LEVELS}
-									onChange={(v) => setMinLevel(v as MinLevel)}
-								/>
-							)}
+							<Segmented
+								label="日志级别"
+								value={minLevel}
+								options={MIN_LEVELS}
+								onChange={(v) => setMinLevel(v as MinLevel)}
+							/>
 							{attempt && (
 								<a
 									className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
@@ -238,16 +249,20 @@ export function BottomPanel({
 								day={run.started_at}
 								onEmpty={setLogsEmpty}
 							/>
-						) : allNodes ? (
+						) : node ? (
+							<Hint>{noAttempt(node)}</Hint>
+						) : (
 							<RunLogsTab
 								key={run.id}
 								run={run}
+								filter={filter}
+								levels={levelsFrom(minLevel)}
+								filtered={minLevel !== "all" || filter !== null}
 								timeKind={logTimeKind}
 								day={run.started_at}
 								onEmpty={setLogsEmpty}
+								onOrigin={showOrigin}
 							/>
-						) : (
-							<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的日志。"}</Hint>
 						))}
 					{tab === "attempts" && (
 						<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
@@ -333,19 +348,32 @@ function TaskLogsTab({
 
 const seqKey = (line: LogLineView) => String(line.seq);
 
-/** 整次运行全部节点的日志合并显示（#222）：每行多一列来源节点，向上滚动加载更早的（#223）。 */
+/**
+ * 范围内节点的日志合并显示（#222）：没有节点筛选时是整次运行全部节点，有筛选时是筛选出的节点（#224）；
+ * 每行多一列来源节点，向上滚动加载更早的（#223）；级别筛选在服务端执行，范围或级别变了重新加载。
+ */
 function RunLogsTab({
 	run,
+	filter,
+	levels,
+	filtered,
 	timeKind,
 	day,
 	onEmpty,
+	onOrigin,
 }: {
 	run: RunView;
+	/** 图表工作区的节点筛选；null 是全部节点。 */
+	filter: ReadonlySet<string> | null;
+	levels: LogLineView["level"][];
+	filtered: boolean;
 	timeKind: LogTimeKind;
 	day: string;
 	onEmpty: (empty: boolean) => void;
+	onOrigin: (line: RunLogLine) => void;
 }) {
-	const logs = useRunLogs(run.id);
+	const scope = useMemo(() => logScope(run, filter), [run, filter]);
+	const logs = useRunLogs(run.id, scope, levels);
 	const origin = useCallback((line: RunLogLine) => logOrigin(run, line), [run]);
 	const truncated = logs.truncatedTasks.map((t) => logOrigin(run, t)).join("、");
 	return (
@@ -353,8 +381,9 @@ function RunLogsTab({
 			logs={logs}
 			lineKey={runLineKey}
 			origin={origin}
+			onOrigin={onOrigin}
 			truncated={truncated ? `${truncated} 的${TRUNCATED}` : null}
-			filtered={false}
+			filtered={filtered}
 			noOutput={run.ended_at !== null ? "这次运行没有日志输出。" : "还没有日志输出。"}
 			timeKind={timeKind}
 			day={day}
@@ -368,6 +397,7 @@ function LogsView<L extends LogLineView>({
 	logs,
 	lineKey,
 	origin,
+	onOrigin,
 	truncated,
 	filtered,
 	noOutput,
@@ -387,9 +417,11 @@ function LogsView<L extends LogLineView>({
 	lineKey: (line: L) => string;
 	/** 来源节点列；不给时没有这一列。 */
 	origin?: (line: L) => string;
+	/** 选中这一行的来源节点；不给时来源节点名不能点。 */
+	onOrigin?: (line: L) => void;
 	/** 截断提示；没有截断时为 null。 */
 	truncated: string | null;
-	/** 筛选了级别：没有日志时不算空（那是用户自己筛掉的）。 */
+	/** 筛选了级别或节点：没有日志时不算空（那是用户自己筛掉的）。 */
 	filtered: boolean;
 	/** 没有任何日志时的说明。 */
 	noOutput: string;
@@ -467,6 +499,7 @@ function LogsView<L extends LogLineView>({
 						lines={lines}
 						lineKey={lineKey}
 						origin={origin}
+						onOrigin={onOrigin}
 						hasOlder={logs.hasOlder}
 						loadingOlder={logs.loadingOlder}
 						loadOlder={logs.loadOlder}

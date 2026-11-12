@@ -2,7 +2,14 @@
 // 通过 HTTP 读取整次运行合并后的日志：按控制面时间交错排列，每行带来源；用游标往前翻页、往后接续。
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { logsApi, type RunLogLine, type RunLogPage, runsApi } from "@sfly/schema";
+import {
+	encodeRunLogScope,
+	logsApi,
+	type RunLogLine,
+	type RunLogPage,
+	type RunLogScope,
+	runsApi,
+} from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { echo, orchestration, spawn } from "./support/chains.js";
@@ -53,9 +60,15 @@ describe("按运行合并读取日志", () => {
 	});
 
 	const setup = async (
-		options: { logLimitBytes?: number; retentionDays?: number; logScanBytes?: number } = {},
+		options: {
+			logLimitBytes?: number;
+			retentionDays?: number;
+			logScanBytes?: number;
+			doc?: typeof DOC;
+		} = {},
 	) => {
-		cp = await startTestControlPlane({ clock, leaseMs: 30 * DAY, ...options });
+		const { doc = DOC, ...controlPlane } = options;
+		cp = await startTestControlPlane({ clock, leaseMs: 30 * DAY, ...controlPlane });
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
 		const connect = async (name: AgentName) => {
@@ -66,19 +79,25 @@ describe("按运行合并读取日志", () => {
 		};
 		const a = await connect("agent-a");
 		const b = await connect("agent-b");
-		const runId = await api.triggerOk(await api.orchestrationWith(DOC));
+		const runId = await api.triggerOk(await api.orchestrationWith(doc));
 		return { a, b, runId };
 	};
 
 	/** 第 seq 行：Agent 在控制面时间 T0 + atMs 读到它（Agent 时间按这台 Agent 的偏差，单调时钟读数照实走）。 */
-	const line = (agent: FakeAgent, seq: number, atMs: number, text: string) => {
+	const line = (
+		agent: FakeAgent,
+		seq: number,
+		atMs: number,
+		text: string,
+		level = LogLevel.INFO,
+	) => {
 		const { agentT0, m0 } = AGENTS[agent.name as AgentName];
 		return {
 			seq: BigInt(seq),
 			timeUnixMs: BigInt(agentT0 + atMs),
 			monotonicMs: BigInt(m0 + atMs),
 			source: LogSource.STDOUT,
-			level: LogLevel.INFO,
+			level,
 			text,
 		};
 	};
@@ -96,23 +115,33 @@ describe("按运行合并读取日志", () => {
 	const brief = (l: RunLogLine) => [l.node_id, l.attempt, l.seq, l.text];
 	const query = (params: Record<string, string | number>) =>
 		new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
-	/** 从最新一页用 before 游标往前翻，直到读到开头；返回各页，从新到旧。 */
-	const pagesToStart = async (runId: string, limit: number, first?: RunLogPage) => {
-		const pages = [first ?? (await page(runId, query({ limit })))];
+	/** 从最新一页用 before 游标往前翻，直到读到开头；返回各页，从新到旧。extra 是每个请求都带的范围、级别参数。 */
+	const pagesToStart = async (
+		runId: string,
+		limit: number,
+		first?: RunLogPage,
+		extra: Record<string, string> = {},
+	) => {
+		const pages = [first ?? (await page(runId, query({ limit, ...extra })))];
 		for (let last = pages[0]; !last?.reached_start; last = pages.at(-1)) {
 			if (!last || pages.length > 200) throw new Error("翻不到开头");
-			pages.push(await page(runId, query({ limit, before: last.before })));
+			pages.push(await page(runId, query({ limit, ...extra, before: last.before })));
 		}
 		return pages;
 	};
 	/** 各页（从新到旧）按时间先后拼起来。 */
 	const joined = (pages: RunLogPage[]) => pages.toReversed().flatMap((p) => p.lines);
 	/** 从 after 游标往后接续，直到没有新的行；返回读到的全部行。 */
-	const linesAfter = async (runId: string, after: string, limit: number) => {
+	const linesAfter = async (
+		runId: string,
+		after: string,
+		limit: number,
+		extra: Record<string, string> = {},
+	) => {
 		const lines: RunLogLine[] = [];
 		for (let cursor = after, n = 0; ; n++) {
 			if (n > 200) throw new Error("接续不完");
-			const next = await page(runId, query({ limit, after: cursor }));
+			const next = await page(runId, query({ limit, ...extra, after: cursor }));
 			if (next.lines.length === 0) return lines;
 			lines.push(...next.lines);
 			cursor = next.after;
@@ -469,5 +498,248 @@ describe("按运行合并读取日志", () => {
 		const earliest = pages.at(-1) as RunLogPage;
 		const forward = [...earliest.lines, ...(await linesAfter(runId, earliest.after, 1000))];
 		expect(forward.map(brief)).toEqual(expected);
+	});
+	describe("范围与级别（#224）", () => {
+		/** 主链 z 失败重试一次、a；子流程 s：三个任务共 9 行，z 的两次尝试各有 warn 与 error。 */
+		const scoped = async (options: { logLimitBytes?: number; logScanBytes?: number } = {}) => {
+			const { a, b, runId } = await setup(options);
+			const z1 = await a.nextAssign();
+			const s = await b.nextAssign();
+			a.logs(z1, [
+				line(a, 1, 1_000, "z1 info"),
+				line(a, 2, 4_000, "z1 warn", LogLevel.WARN),
+				line(a, 3, 7_000, "z1 error", LogLevel.ERROR),
+			]);
+			b.logs(s, [
+				line(b, 1, 2_000, "s debug", LogLevel.DEBUG),
+				line(b, 2, 5_000, "s error", LogLevel.ERROR),
+				line(b, 3, 8_000, "s info"),
+			]);
+			await a.fail(z1, "boom");
+			const z2 = await a.nextAssign();
+			a.logs(z2, [line(a, 1, 9_000, "z2 warn", LogLevel.WARN), line(a, 2, 10_000, "z2 info")]);
+			await a.succeed(z2);
+			const at = await a.nextAssign();
+			a.logs(at, [line(a, 1, 11_000, "a warn", LogLevel.WARN)]);
+			const main = (await taskOf(runId, "z", 1)).chain.id;
+			const sub = (await taskOf(runId, "s", 1)).chain.id;
+			return { a, b, runId, main, sub };
+		};
+		const nodes = (scope: RunLogScope) => ({ nodes: encodeRunLogScope(scope) });
+		const texts = (lines: RunLogLine[]) => lines.map((l) => l.text);
+
+		it("范围：只返回指定节点每次尝试的日志（主链和子流程里的节点），其余任务的行不出现；不给范围是全部节点，空范围没有任何节点", async () => {
+			const { runId, main, sub } = await scoped();
+			const all = (await settled(runId, 9)).lines;
+
+			const z = await page(
+				runId,
+				query({ limit: 1000, ...nodes([{ chain_instance_id: main, node_id: "z" }]) }),
+			);
+			expect(texts(z.lines)).toEqual(["z1 info", "z1 warn", "z1 error", "z2 warn", "z2 info"]);
+			expect(z.lines).toEqual(all.filter((l) => l.node_id === "z"));
+			expect(z.reached_start).toBe(true);
+
+			const sAndA = await page(
+				runId,
+				query({
+					limit: 1000,
+					...nodes([
+						{ chain_instance_id: sub, node_id: "s" },
+						{ chain_instance_id: main, node_id: "a" },
+					]),
+				}),
+			);
+			expect(sAndA.lines).toEqual(all.filter((l) => l.node_id === "s" || l.node_id === "a"));
+			expect(texts(sAndA.lines)).toEqual(["s debug", "s error", "s info", "a warn"]);
+
+			// 节点 ID 相同、链实例不同：范围按「链路实例 ID + 节点 ID」，子流程里没有 z。
+			const wrongChain = await page(
+				runId,
+				query({ limit: 1000, ...nodes([{ chain_instance_id: sub, node_id: "z" }]) }),
+			);
+			expect(wrongChain).toMatchObject({ lines: [], reached_start: true, expired: false });
+			expect(await page(runId, query({ limit: 1000, ...nodes([]) }))).toMatchObject({
+				lines: [],
+				reached_start: true,
+			});
+			expect((await page(runId, query({ limit: 1000 }))).lines).toEqual(all);
+		});
+
+		it("范围里往前翻到开头、再往后接续：只涉及范围内的任务，每行恰好一次，顺序与一次读出时相同", async () => {
+			const { runId, main, sub } = await scoped();
+			const all = (await settled(runId, 9)).lines;
+			const scope = nodes([
+				{ chain_instance_id: main, node_id: "z" },
+				{ chain_instance_id: sub, node_id: "s" },
+			]);
+			const expected = all.filter((l) => l.node_id !== "a");
+			expect(expected).toHaveLength(8);
+
+			const pages = await pagesToStart(runId, 3, undefined, scope);
+			expect(pages.map((p) => p.lines.length)).toEqual([3, 3, 2]);
+			expect(joined(pages)).toEqual(expected);
+
+			const earliest = pages.at(-1) as RunLogPage;
+			expect([...earliest.lines, ...(await linesAfter(runId, earliest.after, 3, scope))]).toEqual(
+				expected,
+			);
+			expect(await linesAfter(runId, (pages[0] as RunLogPage).after, 3, scope)).toEqual([]);
+		});
+
+		it("范围外任务的截断标记不出现在截断列表和合并结果里", async () => {
+			// 每行约 150 字节，600 字节写 3 行左右：z 的第一次尝试被截断，s 没有。
+			const { a, b, runId } = await setup({ logLimitBytes: 600 });
+			const z1 = await a.nextAssign();
+			const s = await b.nextAssign();
+			a.logs(
+				z1,
+				Array.from({ length: 10 }, (_, i) => line(a, i + 1, 1_000 + i * 100, `z1 line ${i + 1}`)),
+			);
+			b.logs(s, [line(b, 1, 5_000, "s only")]);
+			await eventually(async () => expect((await page(runId)).truncated_tasks).toHaveLength(1));
+			const sub = (await taskOf(runId, "s", 1)).chain.id;
+			const main = (await taskOf(runId, "z", 1)).chain.id;
+
+			const onlyS = await page(
+				runId,
+				query({ ...nodes([{ chain_instance_id: sub, node_id: "s" }]) }),
+			);
+			expect(onlyS.truncated_tasks).toEqual([]);
+			expect(texts(onlyS.lines)).toEqual(["s only"]);
+			const onlyZ = await page(
+				runId,
+				query({ ...nodes([{ chain_instance_id: main, node_id: "z" }]) }),
+			);
+			expect(onlyZ.truncated_tasks).toMatchObject([{ task_id: z1.taskId, node_id: "z" }]);
+			expect(onlyZ.lines.some((l) => l.source === "system")).toBe(true);
+		});
+
+		it("级别：服务端只返回这些级别的行，翻页时跳过不匹配的行；可以与范围组合", async () => {
+			const { runId, main } = await scoped();
+			await settled(runId, 9);
+
+			const warnUp = await page(runId, query({ limit: 1000, level: "warn,error" }));
+			expect(texts(warnUp.lines)).toEqual(["z1 warn", "s error", "z1 error", "z2 warn", "a warn"]);
+			expect(warnUp.reached_start).toBe(true);
+			expect(texts((await page(runId, query({ limit: 1000, level: "error" }))).lines)).toEqual([
+				"s error",
+				"z1 error",
+			]);
+
+			const pages = await pagesToStart(runId, 2, undefined, { level: "warn,error" });
+			expect(pages.map((p) => p.lines.length)).toEqual([2, 2, 1]);
+			expect(texts(joined(pages))).toEqual(texts(warnUp.lines));
+
+			const both = await page(
+				runId,
+				query({
+					limit: 1000,
+					level: "warn",
+					...nodes([{ chain_instance_id: main, node_id: "z" }]),
+				}),
+			);
+			expect(texts(both.lines)).toEqual(["z1 warn", "z2 warn"]);
+
+			// 筛掉了全部行：空页，读到了开头。
+			expect(
+				await page(
+					runId,
+					query({ level: "error", ...nodes([{ chain_instance_id: main, node_id: "a" }]) }),
+				),
+			).toMatchObject({
+				lines: [],
+				reached_start: true,
+			});
+		});
+
+		it("级别很少匹配、单次扫描量用完时：页可以是空的但没读到开头，用 before 接着读，游标每次都往前走，最终读到匹配的行", async () => {
+			// 每行约 150 字节，两个任务各分到 600 字节：一次每个任务只扫得过几行。
+			const { a, b, runId } = await setup({ logScanBytes: 1_200 });
+			const z1 = await a.nextAssign();
+			const s = await b.nextAssign();
+			a.logs(z1, [
+				line(a, 1, 1_000, "z1 the only error", LogLevel.ERROR),
+				...Array.from({ length: 19 }, (_, i) => line(a, i + 2, 2_000 + i * 1_000, `z1 ${i + 2}`)),
+			]);
+			b.logs(
+				s,
+				Array.from({ length: 20 }, (_, i) => line(b, i + 1, 1_500 + i * 1_000, `s ${i + 1}`)),
+			);
+			await eventually(async () => {
+				for (const task of [z1, s]) {
+					const own = logsApi.page.response.parse(
+						await (await cp.fetch(`/tasks/${task.taskId}/logs`)).json(),
+					);
+					expect(own.lines).toHaveLength(20);
+				}
+			});
+
+			const extra = { level: "error" };
+			const pages = await pagesToStart(runId, 50, undefined, extra);
+			expect(pages.length).toBeGreaterThan(2);
+			const first = pages[0] as RunLogPage;
+			expect(first.lines).toEqual([]);
+			expect(first.reached_start).toBe(false);
+			// 每一页的 before 都与它请求时用的不同：不会原地打转。
+			const cursors = pages.map((p) => p.before);
+			expect(new Set(cursors).size).toBe(cursors.length);
+			expect(texts(joined(pages))).toEqual(["z1 the only error"]);
+			expect(pages.at(-1)?.reached_start).toBe(true);
+
+			const earliest = pages.at(-1) as RunLogPage;
+			expect(texts(await linesAfter(runId, earliest.after, 50, extra))).toEqual([]);
+		});
+
+		it("节点 ID 里有逗号、分号、冒号、百分号和中文时，范围也能准确匹配", async () => {
+			const odd = (id: string) => ({ ...echo(id), agent: "agent-a" });
+			const ids = ["a,b", "a;b", "a:b", "100%", "a%2Cb", "回放"];
+			const { a, runId } = await setup({
+				doc: orchestration([[{ id: "entry", kind: "entry" }, ...ids.map(odd)]], []),
+			});
+			for (const [i, id] of ids.entries()) {
+				const task = await a.nextAssign();
+				expect(task.nodeId).toBe(id);
+				a.logs(task, [line(a, 1, 1_000 + i * 1_000, `from ${id}`)]);
+				await a.succeed(task);
+			}
+			const all = (await settled(runId, ids.length)).lines;
+			const chain = all[0]?.chain_instance_id as string;
+			for (const id of ids) {
+				const only = await page(
+					runId,
+					query({ ...nodes([{ chain_instance_id: chain, node_id: id }]) }),
+				);
+				expect(texts(only.lines), id).toEqual([`from ${id}`]);
+			}
+			const some = await page(
+				runId,
+				query({
+					...nodes(
+						["a,b", "a:b", "回放"].map((node_id) => ({ chain_instance_id: chain, node_id })),
+					),
+				}),
+			);
+			expect(texts(some.lines)).toEqual(["from a,b", "from a:b", "from 回放"]);
+		});
+
+		it("nodes 不是约定的写法、重复给出或 level 不认识时 400", async () => {
+			const { runId, main } = await scoped();
+			for (const bad of [
+				"nodes=no-colon",
+				`nodes=${main}:`,
+				`nodes=:z`,
+				`nodes=${main}:z;`,
+				"nodes=%E0%A4%A",
+				"level=loud",
+			]) {
+				const res = await cp.fetch(`/runs/${runId}/logs?${bad}`);
+				expect(res.status, bad).toBe(400);
+				expect(await res.json(), bad).toMatchObject({ error: { code: "invalid_request" } });
+			}
+			// 同一个参数重复给出也不接受（范围只有一个 nodes）。
+			const twice = await cp.fetch(`/runs/${runId}/logs?nodes=${main}:z&nodes=${main}:a`);
+			expect(twice.status).toBe(400);
+		});
 	});
 });

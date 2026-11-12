@@ -1,16 +1,25 @@
 import type { Page } from "@playwright/test";
 import { runsApi } from "@sfly/schema";
-import { type AssignedTask, LogLevel, LogSource } from "../../server/test/support/fake-agent.js";
+import {
+	type AssignedTask,
+	type FakeAgent,
+	LogLevel,
+	LogSource,
+} from "../../server/test/support/fake-agent.js";
+import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { expect, test } from "./fixtures";
-import { openMonitor, runningScenario } from "./monitor-scenario";
+import { openMonitor, type Running, runningScenario } from "./monitor-scenario";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
-// 没选中节点时，日志页签按控制面时间合并显示整次运行全部节点的日志（#222），向上滚动加载更早的（#223）。
+// 没选中节点时，日志页签按控制面时间合并显示整次运行全部节点的日志（#222），向上滚动加载更早的（#223）；
+// 有节点筛选时只合并显示筛选出的节点，可以按级别筛选，点来源节点名切到这个节点（#224）。
 
 const timeline = (page: Page) => page.getByRole("region", { name: "链路时间线" });
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
 const nodeButton = (page: Page, id: string) =>
 	timeline(page).locator(`[data-node-row="${id}"] button`);
+const workspace = (page: Page) => page.getByRole("region", { name: "图表工作区" });
+const levelFilter = (page: Page) => panel(page).getByRole("group", { name: "日志级别" });
 /** 页面上的时刻（浏览器时区 Asia/Shanghai）：`08:00:11.000`。 */
 const clockMs = (ms: number) => new Date(ms + 8 * 3600_000).toISOString().slice(11, 23);
 /** 这些行的 Agent 时间比控制面快 3 小时 25 分 7 秒（同一天）：两种时间的时分秒不一样。 */
@@ -205,4 +214,213 @@ test("合并视图里没有任何日志时底部面板自动收起，展开后�
 	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
 	await panel(page).getByRole("button", { name: "展开" }).click();
 	await expect(panel(page).getByRole("tabpanel")).toHaveText("这次运行没有日志输出。");
+});
+
+/** Agent 在运行开始后第 atMs 毫秒（控制面时间）读到的一行。 */
+const logAt =
+	(agent: FakeAgent, clock0: number) =>
+	(seq: number, atMs: number, text: string, level = LogLevel.INFO) => ({
+		seq: BigInt(seq),
+		timeUnixMs: BigInt(clock0 + atMs),
+		monotonicMs: agent.monotonicAt(clock0 + atMs),
+		source: LogSource.STDOUT,
+		level,
+		text,
+	});
+
+/** verify 第 1 次尝试（runningScenario 里它失败了，之后重试）。 */
+async function firstVerify(
+	controlPlane: TestControlPlane,
+	runId: string,
+): Promise<{ taskId: string; attempt: number }> {
+	const run = runsApi.get.response.parse(await (await controlPlane.fetch(`/runs/${runId}`)).json());
+	const attempt = run.chains[0]?.nodes.find((n) => n.node_id === "verify")?.attempts[0];
+	if (!attempt) throw new Error("没有 verify 的第 1 次尝试");
+	return { taskId: attempt.task_id, attempt: 1 };
+}
+
+/**
+ * 在 runningScenario（fetch 的 4 行）之后，verify 第 1 次、子流程 probe、verify 第 2 次交错输出共 5 行：
+ * verify 第 1 次的第二行是 ERROR，probe 的第二行是 WARN。
+ */
+async function interleavedLogs(
+	controlPlane: TestControlPlane,
+	{ runId, agent, tasks }: Running,
+	clock0: number,
+) {
+	const at = logAt(agent, clock0);
+	agent.logs(await firstVerify(controlPlane, runId), [
+		at(1, 7_000, "verify 1 checking"),
+		at(2, 8_500, "AssertionError: 漏拦 3 笔", LogLevel.ERROR),
+	]);
+	agent.logs(tasks.probe as AssignedTask, [
+		at(1, 7_500, "probe started"),
+		at(2, 12_500, "probe tick", LogLevel.WARN),
+	]);
+	agent.logs(tasks.verify as AssignedTask, [at(1, 11_000, "verify 2 retrying")]);
+	await agent.sync();
+}
+
+test("合并视图跟随节点筛选：范围标签与日志随筛选变化，级别在服务端筛选，筛选后没有匹配时说明原因", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const running = await runningScenario(controlPlane, connectAgent, clock);
+	await interleavedLogs(controlPlane, running, clock0);
+	const { runId } = running;
+
+	await openMonitor(page, clock, runId);
+	await nodeButton(page, "verify").click();
+	const scope = panel(page).getByTestId("bp-scope");
+	const logs = panel(page).getByRole("log", { name: "日志" });
+	const rows = logs.getByRole("button");
+	const origins = logs.locator("[data-log-origin]");
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(rows).toHaveCount(9);
+
+	// 图表工作区取消子流程：没有选中节点时，日志页签只合并显示筛选出的节点。
+	await workspace(page)
+		.getByRole("button", { name: /节点：全部节点/ })
+		.click();
+	const menu = page.getByRole("dialog", { name: "按节点筛选图表" });
+	await menu.getByRole("checkbox", { name: /^子流程 sub/ }).uncheck();
+	await expect(scope).toHaveText("范围：跟随筛选（2 个节点）");
+	await expect(origins).toHaveText([
+		"fetch",
+		"fetch",
+		"fetch",
+		"fetch",
+		"verify #1",
+		"verify #1",
+		"verify #2",
+	]);
+
+	// 级别在服务端筛选：WARN 起只剩 fetch 的重试提示和 verify 第 1 次的错误。
+	await levelFilter(page).getByRole("button", { name: "WARN", exact: true }).click();
+	await expect(rows).toContainText([
+		"retrying request (1/3): connection reset",
+		"AssertionError: 漏拦 3 笔",
+	]);
+	await expect(rows).toHaveCount(2);
+	await expect(origins).toHaveText(["fetch", "verify #1"]);
+
+	// 再取消 verify（点日志级别时筛选菜单已经收起，重新打开）：筛选出的节点里没有 ERROR 级别的行，说明原因，面板不收起。
+	await workspace(page)
+		.getByRole("button", { name: /节点：已选 2 个节点/ })
+		.click();
+	await menu.getByRole("checkbox", { name: "verify" }).uncheck();
+	await expect(scope).toHaveText("范围：跟随筛选（1 个节点）");
+	await levelFilter(page).getByRole("button", { name: "ERROR", exact: true }).click();
+	await expect(panel(page).getByRole("tabpanel")).toHaveText("没有符合条件的日志。");
+	await levelFilter(page).getByRole("button", { name: "全部", exact: true }).click();
+	await expect(rows).toHaveCount(4);
+	await expect(origins).toHaveText(["fetch", "fetch", "fetch", "fetch"]);
+
+	// 清除筛选：回到全部节点，级别照旧是全部。
+	await workspace(page).getByRole("button", { name: "清除筛选" }).click();
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(rows).toHaveCount(9);
+
+	// 合并视图里按级别筛选：全部节点里只看 ERROR，只有 verify 第 1 次那一行。
+	await levelFilter(page).getByRole("button", { name: "ERROR", exact: true }).click();
+	await expect(rows).toHaveCount(1);
+	await expect(rows.first()).toContainText("AssertionError: 漏拦 3 笔");
+	await expect(origins).toHaveText(["verify #1"]);
+});
+
+test("合并视图点来源节点名，或在行上打开菜单，选中这个节点并切到它的单节点日志；点行的其他位置只标出时刻", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const running = await runningScenario(controlPlane, connectAgent, clock);
+	await interleavedLogs(controlPlane, running, clock0);
+	const { runId } = running;
+
+	await openMonitor(page, clock, runId);
+	await nodeButton(page, "verify").click();
+	const scope = panel(page).getByTestId("bp-scope");
+	const logs = panel(page).getByRole("log", { name: "日志" });
+	const rows = logs.getByRole("button");
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(rows).toHaveCount(9);
+
+	// 点行的其他位置：只标出时刻，范围不变。
+	const failure = rows.filter({ hasText: "AssertionError: 漏拦 3 笔" });
+	await failure.getByText("AssertionError: 漏拦 3 笔").click();
+	await expect(failure).toHaveAttribute("data-marked", "true");
+	await expect(scope).toHaveText("范围：全部节点");
+
+	// 点来源节点名：选中这个节点，看到的是这一行所在的那次尝试（verify 第 1 次，不是最近一次）。
+	await failure.locator("[data-log-origin]").click();
+	await expect(scope).toHaveText("范围：verify（第 1 次）");
+	await expect(rows).toContainText(["verify 1 checking", "AssertionError: 漏拦 3 笔"]);
+	await expect(rows).toHaveCount(2);
+	await expect(logs.locator("[data-log-origin]")).toHaveCount(0);
+	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
+
+	// 取消选中回到合并视图；右键行打开菜单，选「只看 …… 的日志」，子流程里的节点同样。
+	await nodeButton(page, "verify").click();
+	await expect(rows).toHaveCount(9);
+	await rows.filter({ hasText: "probe tick" }).click({ button: "right" });
+	const rowMenu = page.getByRole("menu", { name: "日志行菜单" });
+	await expect(rowMenu.getByRole("menuitem")).toHaveText("只看 sub / probe 的日志");
+	await rowMenu.getByRole("menuitem").click();
+	await expect(scope).toHaveText("范围：probe");
+	await expect(rows).toContainText(["probe started", "probe tick"]);
+	await expect(rows).toHaveCount(2);
+
+	// 键盘：行上按 Shift+F10 打开同一个菜单。
+	await nodeButton(page, "probe").click();
+	await expect(rows).toHaveCount(9);
+	await rows.filter({ hasText: "load config ok" }).focus();
+	await page.keyboard.press("Shift+F10");
+	await expect(rowMenu.getByRole("menuitem")).toHaveText("只看 fetch 的日志");
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("Enter");
+	await expect(scope).toHaveText("范围：fetch");
+	await expect(rows).toHaveCount(4);
+});
+
+test.describe("筛选很少匹配时", () => {
+	// 按运行读日志时单次请求最多扫描 2000 字节，由 4 个有日志的任务分摊：每个任务一次只读得到几行。
+	test.use({ controlPlaneOptions: { logScanBytes: 2_000 } });
+
+	test("合并视图自动接着往前读，直到读到匹配的行，不显示成没有日志", async ({
+		page,
+		controlPlane,
+		connectAgent,
+		clock,
+	}) => {
+		const clock0 = clock.now().getTime();
+		const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+		const at = logAt(agent, clock0);
+		// 唯一的 ERROR 是 verify 第 1 次的第一行，后面还有 12 行：最新一页（每个任务只读最后几行）里一行都没有。
+		agent.logs(await firstVerify(controlPlane, runId), [
+			at(1, 6_000, "AssertionError: 漏拦 3 笔", LogLevel.ERROR),
+			...Array.from({ length: 12 }, (_, i) =>
+				at(i + 2, 6_100 + i * 100, `verify 1 cleanup ${i + 1}`),
+			),
+		]);
+		agent.logs(tasks.probe as AssignedTask, [
+			at(1, 7_000, "probe started"),
+			at(2, 12_500, "probe tick"),
+		]);
+		await agent.sync();
+
+		await openMonitor(page, clock, runId);
+		await nodeButton(page, "verify").click();
+		const logs = panel(page).getByRole("log", { name: "日志" });
+		await levelFilter(page).getByRole("button", { name: "ERROR", exact: true }).click();
+		await expect(logs.getByRole("button")).toHaveCount(1);
+		await expect(logs.getByRole("button")).toContainText("AssertionError: 漏拦 3 笔");
+		await expect(panel(page).getByRole("tabpanel")).not.toContainText("没有符合条件的日志");
+		// 读到了开头：没有「加载更早的日志」。
+		await expect(logs.getByRole("button", { name: /加载更早的日志/ })).toHaveCount(0);
+	});
 });

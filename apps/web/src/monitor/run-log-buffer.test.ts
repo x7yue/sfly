@@ -1,8 +1,10 @@
 import type { RunLogLine, RunLogPage } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	emptyRunBuffer,
 	fromLatestPage,
 	keepLatest,
+	needsOlder,
 	olderCursor,
 	runLineKey,
 	withOlderPage,
@@ -84,6 +86,25 @@ describe("合并视图的日志缓冲区", () => {
 		const reloaded = withOlderPage(kept, pageOf(16));
 		expect(reloaded.lines[0]?.seq).toBe(901);
 		expect(olderCursor(reloaded)).toBe("c17");
+	});
+
+	it("筛选很少匹配时一页可以没有行：已加载的页都是空的、前面还有内容就要接着往前读，读到行或读到开头为止", () => {
+		expect(needsOlder(emptyRunBuffer)).toBe(false);
+		let b = fromLatestPage(page([], "c1"));
+		expect(b.loaded).toBe(true);
+		expect(needsOlder(b)).toBe(true);
+		b = withOlderPage(b, page([], "c2"));
+		expect(needsOlder(b)).toBe(true);
+		expect(olderCursor(b)).toBe("c2");
+		b = withOlderPage(b, page([line("a", 1)], "c3"));
+		expect(needsOlder(b)).toBe(false);
+		expect(olderCursor(b)).toBe("c3");
+
+		// 一直读到开头也没有匹配的行：不再接着读，页面显示「没有符合条件的日志」。
+		const none = withOlderPage(fromLatestPage(page([], "c1")), page([], "c2", true));
+		expect(none.lines).toEqual([]);
+		expect(needsOlder(none)).toBe(false);
+		expect(olderCursor(none)).toBeNull();
 	});
 
 	it("最新一页总是保留", () => {

@@ -3,8 +3,10 @@ import {
 	type LogOrigin,
 	type RunLogKey,
 	type RunLogLine,
+	type RunLogScope,
 	type RunLogTask,
 	runLogKey,
+	runLogScopeMatcher,
 	runLogTasks,
 } from "@sfly/schema";
 import type { Db } from "../db/database.js";
@@ -21,6 +23,9 @@ import type { TaskLogs } from "./task-logs.js";
  * 归并后取最后 limit 行；往后接续从每个任务的位置各往后读，取最前 limit 行。日志文件只追加，所以同一个游标
  * 什么时候用都读出同样的行，翻页期间写入的新行只会出现在 after 之后。
  *
+ * 范围（#224）：`scope` 是一组「链路实例 ID + 节点 ID」，只有这些节点的任务参与归并，游标、截断列表、「已读到开头」都只看它们；
+ * 不给范围是全部节点。级别筛选（`filter.levels`）在读每个文件时执行，翻页时跳过不匹配的行。游标只对同一组范围和级别有效。
+ *
  * 一次请求最多扫描 `scanBytes` 字节，由要读的任务平分。一个任务读到的部分用完、文件那一侧还有没读的内容时，
  * 这一页就停下（下一行可能就在那段没读的内容里）：一页可能不满 limit 行，游标停在实际取到的位置。
  */
@@ -28,6 +33,8 @@ import type { TaskLogs } from "./task-logs.js";
 export type RunLogRequest = {
 	limit: number;
 	filter: LogFilter;
+	/** 只读这些节点的任务；不给是运行里的全部节点。 */
+	scope?: RunLogScope;
 } & (
 	| { direction: "backward"; before?: TaskPositions }
 	| { direction: "forward"; after: TaskPositions }
@@ -68,7 +75,7 @@ export class RunLogs {
 
 	/** 一次运行的一页；运行不存在时为 undefined。 */
 	async page(runId: string, request: RunLogRequest): Promise<RunLogPage | undefined> {
-		const streams = await this.#streams(runId);
+		const streams = await this.#streams(runId, request.scope);
 		if (!streams) return undefined;
 		const forward = request.direction === "forward";
 		const from = streams.map((s) =>
@@ -117,13 +124,14 @@ export class RunLogs {
 		};
 	}
 
-	/** 运行里有日志记录的任务，按运行视图里链、节点、尝试的顺序。 */
-	async #streams(runId: string): Promise<TaskStream[] | undefined> {
+	/** 范围内、有日志记录的任务，按运行视图里链、节点、尝试的顺序。 */
+	async #streams(runId: string, scope: RunLogScope | undefined): Promise<TaskStream[] | undefined> {
 		const run = await getRunView(this.deps.db, runId);
 		if (!run) return undefined;
 		const files = await this.deps.logs.describeRun(runId);
+		const inScope = runLogScopeMatcher(scope);
 		return runLogTasks(run).flatMap((task) => {
-			const info = files.get(task.origin.task_id);
+			const info = inScope(task.origin) ? files.get(task.origin.task_id) : undefined;
 			return info
 				? [
 						{
