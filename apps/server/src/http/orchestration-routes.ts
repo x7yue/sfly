@@ -6,6 +6,7 @@ import { listOrchestrationSummaries } from "../orchestrations/orchestration-list
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import { isUuid } from "../util/uuid.js";
+import { requireActor } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 import { requireNickname } from "./nickname.js";
@@ -38,10 +39,10 @@ export function registerOrchestrationRoutes(
 	});
 
 	contractRoute(app, orchestrationsApi.copy, async ({ params, body }, reply, raw) => {
-		const author = requireNickname(raw, reply);
-		if (!author) return reply;
+		const actor = requireActor(raw, reply);
+		if (!actor) return reply;
 		const copied = isUuid(params.id)
-			? await orchestrations.copy(params.id, body.name, author)
+			? await orchestrations.copy(params.id, body.name, actor)
 			: undefined;
 		if (!copied) return notFound(reply);
 		return reply.code(201).send(copied);
@@ -83,10 +84,10 @@ export function registerOrchestrationRoutes(
 
 	// 缺 base_version、文档不合法时的错误码见契约的 requestError（base_version_required / invalid_document）。
 	contractRoute(app, orchestrationsApi.saveVersion, async ({ params, body }, reply, raw) => {
-		const author = requireNickname(raw, reply);
-		if (!author) return reply;
+		const actor = requireActor(raw, reply);
+		if (!actor) return reply;
 		const result = isUuid(params.id)
-			? await orchestrations.saveVersion(params.id, body.document, author, body.base_version)
+			? await orchestrations.saveVersion(params.id, body.document, actor, body.base_version)
 			: ({ kind: "not_found" } as const);
 		if (result.kind === "not_found") return notFound(reply);
 		if (result.kind === "conflict") {
@@ -117,12 +118,12 @@ export function registerOrchestrationRoutes(
 
 	// 恢复历史版本 = 用旧内容追加一个新版本（docs/ARCHITECTURE.md §6.4）。
 	contractRoute(app, orchestrationsApi.restoreVersion, async ({ params }, reply, raw) => {
-		const author = requireNickname(raw, reply);
-		if (!author) return reply;
+		const actor = requireActor(raw, reply);
+		if (!actor) return reply;
 		const number = Number(params.number);
 		const restored =
 			isUuid(params.id) && Number.isInteger(number)
-				? await orchestrations.restoreVersion(params.id, number, author)
+				? await orchestrations.restoreVersion(params.id, number, actor)
 				: undefined;
 		if (!restored) return versionNotFound(reply);
 		return reply

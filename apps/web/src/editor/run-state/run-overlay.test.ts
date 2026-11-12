@@ -55,6 +55,7 @@ const run = (chains: ChainRunView[]): RunView => ({
 	orchestration_version: 3,
 	status: "running",
 	triggered_by: "tester",
+	triggered_via: null,
 	params: {},
 	started_at: at(0),
 	ended_at: null,
