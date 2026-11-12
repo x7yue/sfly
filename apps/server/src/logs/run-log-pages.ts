@@ -11,23 +11,26 @@ import {
 } from "@sfly/schema";
 import type { Db } from "../db/database.js";
 import { getRunView } from "../engine/run-queries.js";
-import { type LogFilter, type LogPage, readLogPage, SCAN_LIMIT } from "./log-pages.js";
+import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
 import type { TaskPositions } from "./run-log-cursor.js";
 import type { TaskLogs } from "./task-logs.js";
 
 /**
  * 按运行合并读取日志（#220，docs/ARCHITECTURE.md §6.3）：把一次运行里每个任务的日志文件看作一条按 seq 排好的流，
- * 按 @sfly/schema 的 run-log-order.ts 定下的全序多路归并成一页。单个文件的读取沿用 log-pages.ts。
+ * 按 @sfly/schema 的 run-log-order.ts 的排序键多路归并成一页。单个文件的读取沿用 log-pages.ts。
  *
  * 分页（#223）：游标是每个任务读到的字节偏移（run-log-cursor.ts）。往前翻页从每个任务的位置各往前读，
  * 归并后取最后 limit 行；往后接续从每个任务的位置各往后读，取最前 limit 行。日志文件只追加，所以同一个游标
- * 什么时候用都读出同样的行，翻页期间写入的新行只会出现在 after 之后。
+ * 什么时候用都读出同样的行，翻页期间写入的新行只会出现在 after 之后。每个任务只读到列出任务那一刻已写入的字节数：
+ * 读取期间写入的行留给下一次请求，免得一页里只有部分任务带上它们。
  *
- * 范围（#224）：`scope` 是一组「链路实例 ID + 节点 ID」，只有这些节点的任务参与归并，游标、截断列表、「已读到开头」都只看它们；
- * 不给范围是全部节点。级别筛选（`filter.levels`）在读每个文件时执行，翻页时跳过不匹配的行。游标只对同一组范围和级别有效。
+ * 范围（#224）：`scope` 是一组「链路实例 ID + 节点 ID」，只有这些节点的任务参与归并，游标、截断列表、
+ * 「已读到开头 / 末尾」都只看它们；不给范围是全部节点。级别筛选（`filter.levels`）在读每个文件时执行，
+ * 翻页时跳过不匹配的行。游标只对同一组范围和级别有效。
  *
- * 一次请求最多扫描 `scanBytes` 字节，由要读的任务平分。一个任务读到的部分用完、文件那一侧还有没读的内容时，
- * 这一页就停下（下一行可能就在那段没读的内容里）：一页可能不满 limit 行，游标停在实际取到的位置。
+ * 一次请求最多扫描 `scanBytes` 字节（每次读取至少读完一行，可能多出一行）。第一轮每个要读的任务读一小段；
+ * 某个任务读到的行都取完了、文件那一侧还有没读的内容时，归并不能接着往下取（它没读的下一行可能排在前面），
+ * 剩下的扫描量就集中给这些任务补读，直到这一页取满或扫描量用完。用完时一页可能不满 limit 行，游标停在实际取到的位置。
  */
 
 export type RunLogRequest = {
@@ -46,22 +49,29 @@ export interface RunLogPage {
 	before: TaskPositions;
 	/** 读这一页之后的行用的位置。 */
 	after: TaskPositions;
+	/** before 之前已经没有任何行。 */
+	reachedStart: boolean;
+	/** after 之后（读取的那一刻）已经没有任何行。 */
+	reachedEnd: boolean;
 	/** 日志超过大小上限被截断的任务，按运行视图里的顺序。 */
 	truncatedTasks: LogOrigin[];
 }
 
 /** 一个任务的日志文件，作为归并里的一条流。 */
-interface TaskStream extends RunLogTask {
+interface TaskStream {
+	task: RunLogTask;
 	/** 任务的创建顺序：游标里代表这个任务。 */
 	order: number;
 	file: string;
-	/** 已写入的字节数（列出任务的那一刻）：不给游标时从这里往前读。 */
+	/** 已写入的字节数（列出任务的那一刻）：不给游标时从这里往前读，往后最多读到这里。 */
 	bytes: number;
 	truncated: boolean;
 }
 
 /** 同时打开的日志文件数的上限。 */
 const OPEN_FILES = 32;
+/** 第一轮每个任务最多扫描的字节数：一次读取的量，够看出每个任务排在最前的几行。 */
+const FIRST_SLICE = 4 * 1024;
 
 export class RunLogs {
 	constructor(
@@ -78,49 +88,37 @@ export class RunLogs {
 		const streams = await this.#streams(runId, request.scope);
 		if (!streams) return undefined;
 		const forward = request.direction === "forward";
-		const from = streams.map((s) =>
-			request.direction === "forward"
-				? (request.after.get(s.order) ?? 0)
-				: request.before
-					? (request.before.get(s.order) ?? 0)
-					: s.bytes,
-		);
-		// 在读的方向上还有内容的任务才读文件，扫描量由它们平分。
-		const pending = streams.map((s, i) => {
-			const at = from[i] as number;
-			return forward ? at < s.bytes : at > 0;
+		const lanes = streams.map((stream): Lane => {
+			const at =
+				request.direction === "forward"
+					? (request.after.get(stream.order) ?? 0)
+					: request.before
+						? (request.before.get(stream.order) ?? 0)
+						: stream.bytes;
+			return { stream, read: [], start: at, end: at, until: stream.bytes, taken: 0 };
 		});
-		const reading = Math.max(1, pending.filter(Boolean).length);
-		const scanLimit = Math.max(1, Math.floor((this.deps.scanBytes ?? SCAN_LIMIT) / reading));
-		const windows: LogPage[] = [];
-		for (let i = 0; i < streams.length; i += OPEN_FILES) {
-			const batch = streams.slice(i, i + OPEN_FILES).map((s, j) => {
-				const at = from[i + j] as number;
-				if (!pending[i + j]) return Promise.resolve({ lines: [], start: at, end: at, size: at });
-				const { limit, filter } = request;
-				return readLogPage(
-					s.file,
-					forward
-						? { direction: "forward", after: at, limit, filter, scanLimit }
-						: { direction: "backward", before: at, limit, filter, scanLimit },
-				);
+		const lines: RunLogLine[] = [];
+		let budget = this.deps.scanBytes ?? SCAN_LIMIT;
+		for (let first = true; ; first = false) {
+			const blocked = take(lanes, lines, request.limit, forward);
+			if (blocked.length === 0 || budget <= 0) break;
+			const share = Math.max(1, Math.floor(budget / blocked.length));
+			budget -= await extend(blocked, forward, {
+				limit: request.limit - lines.length,
+				filter: request.filter,
+				scanLimit: first ? Math.min(FIRST_SLICE, share) : share,
 			});
-			windows.push(...(await Promise.all(batch)));
 		}
-		const lanes = streams.map(
-			(stream, i): Lane => ({
-				stream,
-				window: windows[i] as LogPage,
-				keys: (windows[i] as LogPage).lines.map((line) => runLogKey(line, stream)),
-				taken: 0,
-			}),
-		);
-		const lines = merge(lanes, request.limit, forward);
+		if (!forward) lines.reverse();
+		const before = (lane: Lane) => (forward ? lane.start : earliestTaken(lane));
+		const after = (lane: Lane) => (forward ? nextUntaken(lane) : lane.end);
 		return {
 			lines,
-			before: positions(lanes, (lane) => (forward ? lane.window.start : earliestTaken(lane))),
-			after: positions(lanes, (lane) => (forward ? nextUntaken(lane) : lane.window.end)),
-			truncatedTasks: streams.filter((s) => s.truncated).map((s) => s.origin),
+			before: positions(lanes, before),
+			after: positions(lanes, after),
+			reachedStart: lanes.every((lane) => before(lane) === 0),
+			reachedEnd: lanes.every((lane) => after(lane) >= lane.until),
+			truncatedTasks: streams.filter((s) => s.truncated).map((s) => s.task.origin),
 		};
 	}
 
@@ -135,7 +133,7 @@ export class RunLogs {
 			return info
 				? [
 						{
-							...task,
+							task,
 							order: info.order,
 							file: info.file,
 							bytes: info.bytes,
@@ -148,67 +146,91 @@ export class RunLogs {
 }
 
 /**
- * 归并里的一条流：读到的窗口（从早到晚）和已经取走的行数。往前翻页从窗口尾部往前取，往后接续从窗口头部往后取，
- * 所以同一个任务内的行总是保持 seq 顺序。
+ * 归并里的一条流：已经读到的行（从早到晚）和已经取进这一页的行数。往前翻页从尾部往前取、补读时 start 往前移，
+ * 往后接续从头部往后取、补读时 end 往后移，所以同一个任务内的行总是保持 seq 顺序。
  */
 interface Lane {
 	stream: TaskStream;
-	window: LogPage;
-	keys: RunLogKey[];
+	read: Array<{ offset: number; line: RunLogLine; key: RunLogKey }>;
+	/** 已读的范围 [start, end)。 */
+	start: number;
+	end: number;
+	/** 往后最多读到哪里：列出任务那一刻已写入的字节数。 */
+	until: number;
 	taken: number;
 }
 
-/** 取走的行在窗口里的下标范围是 [n - taken, n)（往前）或 [0, taken)（往后）。 */
-const headIndex = (lane: Lane, forward: boolean) =>
-	forward ? lane.taken : lane.window.lines.length - 1 - lane.taken;
+/** 在读的方向上，文件里还有没读的内容。 */
+const more = (lane: Lane, forward: boolean) => (forward ? lane.end < lane.until : lane.start > 0);
 
-/** 窗口外、在读的方向上文件里还有没读的内容。 */
-const more = (lane: Lane, forward: boolean) =>
-	forward ? lane.window.end < lane.window.size : lane.window.start > 0;
+/** 往前翻页：最早取走的那一行；读到的行整个取完时是已读范围的起点（跳过扫描过但不符合筛选条件的行）；一行没取时不动。 */
+const earliestTaken = ({ read, taken, start, end }: Lane) =>
+	taken === read.length ? start : (read[read.length - taken]?.offset ?? end);
 
-/** 往前翻页：最早取走的那一行；窗口整个取完时是窗口起点（跳过扫描过但不符合筛选条件的行）；一行没取时不动。 */
-const earliestTaken = ({ window, taken }: Lane) =>
-	taken === window.lines.length
-		? window.start
-		: taken === 0
-			? window.end
-			: (window.lines[window.lines.length - taken] as LogPage["lines"][number]).offset;
-
-/** 往后接续：第一行没取走的；窗口整个取完时是窗口终点。 */
-const nextUntaken = ({ window, taken }: Lane) =>
-	taken === window.lines.length
-		? window.end
-		: (window.lines[taken] as LogPage["lines"][number]).offset;
+/** 往后接续：第一行没取走的；读到的行整个取完时是已读范围的终点。 */
+const nextUntaken = ({ read, taken, end }: Lane) => read[taken]?.offset ?? end;
 
 function positions(lanes: Lane[], at: (lane: Lane) => number): TaskPositions {
 	return new Map(lanes.map((lane) => [lane.stream.order, at(lane)]));
 }
 
-/** 每一步取各流在读的方向上最靠前的一行（往前翻页取最晚的，往后接续取最早的），按从早到晚返回。 */
-function merge(lanes: Lane[], limit: number, forward: boolean): RunLogLine[] {
-	const out: RunLogLine[] = [];
-	const done = () => (forward ? out : out.reverse());
-	while (out.length < limit) {
-		let pick: Lane | undefined;
-		let pickKey: RunLogKey | undefined;
+/**
+ * 每一步取各流在读的方向上最靠前的一行（往前翻页取最晚的，往后接续取最早的），按读的方向加进 `lines`，直到取满。
+ * 某条流读到的行已经取完、文件那一侧还有没读的内容时停下：返回这些流，补读之后才能接着取。
+ */
+function take(lanes: Lane[], lines: RunLogLine[], limit: number, forward: boolean): Lane[] {
+	while (lines.length < limit) {
+		let pick: { lane: Lane; line: RunLogLine; key: RunLogKey } | undefined;
+		const blocked: Lane[] = [];
 		for (const lane of lanes) {
-			if (lane.taken === lane.window.lines.length) {
-				if (more(lane, forward)) return done();
+			const head = lane.read[forward ? lane.taken : lane.read.length - 1 - lane.taken];
+			if (!head) {
+				if (more(lane, forward)) blocked.push(lane);
 				continue;
 			}
-			const key = lane.keys[headIndex(lane, forward)] as RunLogKey;
-			const order = pickKey ? compareRunLogKeys(key, pickKey) : 0;
-			if (!pickKey || (forward ? order < 0 : order > 0)) {
-				pick = lane;
-				pickKey = key;
-			}
+			const order = pick ? compareRunLogKeys(head.key, pick.key) : 0;
+			if (!pick || (forward ? order < 0 : order > 0)) pick = { lane, ...head };
 		}
+		if (blocked.length > 0) return blocked;
 		if (!pick) break;
-		const { offset: _, ...line } = pick.window.lines[
-			headIndex(pick, forward)
-		] as LogPage["lines"][number];
-		out.push({ ...line, ...pick.stream.origin });
-		pick.taken++;
+		lines.push(pick.line);
+		pick.lane.taken++;
 	}
-	return done();
+	return [];
+}
+
+/** 每条流在读的方向上接着读一段，返回扫描过的字节数。 */
+async function extend(
+	lanes: Lane[],
+	forward: boolean,
+	request: { limit: number; filter: LogFilter; scanLimit: number },
+): Promise<number> {
+	let scanned = 0;
+	for (let i = 0; i < lanes.length; i += OPEN_FILES) {
+		await Promise.all(
+			lanes.slice(i, i + OPEN_FILES).map(async (lane) => {
+				const { stream, until } = lane;
+				const window = await readLogPage(
+					stream.file,
+					forward
+						? { direction: "forward", after: lane.end, until, ...request }
+						: { direction: "backward", before: lane.start, until, ...request },
+				);
+				const read = window.lines.map(({ offset, ...rest }) => {
+					const line: RunLogLine = { ...rest, ...stream.task.origin, ...stream.task.order };
+					return { offset, line, key: runLogKey(line) };
+				});
+				if (forward) {
+					lane.read.push(...read);
+					lane.end = window.end;
+				} else {
+					lane.read.unshift(...read);
+					lane.start = window.start;
+				}
+				lane.until = Math.min(until, window.size);
+				scanned += window.end - window.start;
+			}),
+		);
+	}
+	return scanned;
 }

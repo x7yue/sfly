@@ -1,13 +1,15 @@
 // 切入点 A：按运行合并读取日志（#222、#223）。两台假 Agent 经 gRPC 上报日志（各自的 Agent 时间偏差不同），
 // 通过 HTTP 读取整次运行合并后的日志：按控制面时间交错排列，每行带来源；用游标往前翻页、往后接续。
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+	compareRunLogKeys,
 	encodeRunLogScope,
 	logsApi,
 	type RunLogLine,
 	type RunLogPage,
 	type RunLogScope,
+	runLogKey,
 	runsApi,
 } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -131,7 +133,7 @@ describe("按运行合并读取日志", () => {
 	};
 	/** 各页（从新到旧）按时间先后拼起来。 */
 	const joined = (pages: RunLogPage[]) => pages.toReversed().flatMap((p) => p.lines);
-	/** 从 after 游标往后接续，直到没有新的行；返回读到的全部行。 */
+	/** 从 after 游标往后接续，直到读到末尾；返回读到的全部行。 */
 	const linesAfter = async (
 		runId: string,
 		after: string,
@@ -142,11 +144,20 @@ describe("按运行合并读取日志", () => {
 		for (let cursor = after, n = 0; ; n++) {
 			if (n > 200) throw new Error("接续不完");
 			const next = await page(runId, query({ limit, ...extra, after: cursor }));
-			if (next.lines.length === 0) return lines;
 			lines.push(...next.lines);
+			if (next.reached_end) return lines;
+			expect(next.after, "没读到末尾时游标要往后走").not.toBe(cursor);
 			cursor = next.after;
 		}
 	};
+	/** 等这个任务自己的日志（按任务的接口）有 n 行：扫描量很小时合并结果一页读不完。 */
+	const ownLines = (task: { taskId: string }, n: number) =>
+		eventually(async () => {
+			const own = logsApi.page.response.parse(
+				await (await cp.fetch(`/tasks/${task.taskId}/logs`)).json(),
+			);
+			expect(own.lines).toHaveLength(n);
+		});
 	const taskOf = async (runId: string, nodeId: string, attempt: number) => {
 		const run = runsApi.get.response.parse(await (await cp.fetch(`/runs/${runId}`)).json());
 		for (const chain of run.chains) {
@@ -196,6 +207,10 @@ describe("按运行合并读取日志", () => {
 			subflow: null,
 			node_id: "z",
 			attempt: 1,
+			chain_depth: 0,
+			chain_started_at: iso(T0),
+			node_index: 2,
+			task_started_at: iso(T0),
 		});
 		expect(all.lines[1]).toMatchObject({
 			time: iso(T0 + 2_000),
@@ -255,6 +270,59 @@ describe("按运行合并读取日志", () => {
 			["s", 1, 1, "s"],
 		]);
 		expect((await page(runId, "limit=1000")).lines).toEqual(first.lines);
+	});
+
+	it("每行带上排序所需的信息：只用行本身和共用的比较函数就能排出控制面给出的顺序，不必查运行视图", async () => {
+		const { a, b, runId } = await setup();
+		const s = await b.nextAssign();
+		const z1 = await a.nextAssign({ start: false });
+		// z 第 1 次尝试是升级之前写入的旧行（没有控制面时间，按任务开始时间排），开始时间与 s 的一行相同。
+		const dir = join(cp.dataDir, "logs", runId);
+		await mkdir(dir, { recursive: true });
+		await writeFile(
+			join(dir, `${z1.taskId}.jsonl`),
+			`${JSON.stringify({ seq: 1, time: "2024-05-01T00:00:01.000Z", source: "stdout", level: "info", text: "z1 old" })}\n`,
+		);
+		clock.advance(9_000);
+		await a.started(z1);
+		await a.fail(z1, "boom");
+		const z2 = await a.nextAssign();
+		await a.succeed(z2);
+		const at = await a.nextAssign();
+		// 时间相同的行跨越主链与子流程、同一节点的两次尝试、链上不同的节点；发送的顺序与期望的顺序相反。
+		a.logs(at, [line(a, 1, 9_000, "a"), line(a, 2, 12_000, "a later")]);
+		b.logs(s, [line(b, 1, 9_000, "s"), line(b, 2, 10_000, "s later")]);
+		a.logs(z2, [line(a, 1, 9_000, "z2"), line(a, 2, 11_000, "z2 later")]);
+
+		const { lines } = await settled(runId, 7);
+		expect(lines.map((l) => l.text)).toEqual([
+			"z1 old",
+			"z2",
+			"a",
+			"s",
+			"s later",
+			"z2 later",
+			"a later",
+		]);
+		const sorted = lines
+			.toReversed()
+			.toSorted((x, y) => compareRunLogKeys(runLogKey(x), runLogKey(y)));
+		expect(sorted).toEqual(lines);
+		const main = (await taskOf(runId, "z", 1)).chain;
+		const sub = (await taskOf(runId, "s", 1)).chain;
+		expect(lines.find((l) => l.text === "z1 old")).toMatchObject({
+			time: null,
+			chain_depth: 0,
+			chain_started_at: main.started_at,
+			node_index: 2,
+			task_started_at: iso(T0 + 9_000),
+		});
+		expect(lines.find((l) => l.text === "a")).toMatchObject({ chain_depth: 0, node_index: 3 });
+		expect(lines.find((l) => l.text === "s")).toMatchObject({
+			chain_depth: 1,
+			chain_started_at: sub.started_at,
+			node_index: 1,
+		});
 	});
 
 	it("没有控制面时间的旧行：任务的第一行按任务开始时间排，之后的旧行沿用上一行的排序时间", async () => {
@@ -417,12 +485,12 @@ describe("按运行合并读取日志", () => {
 		expect(await linesAfter(runId, latest.after, 2)).toEqual(after.filter(isFresh));
 	});
 
-	it("同一任务内后一行折算出的控制面时间更早时记成与上一行相同：往前读、往后读给出同一个顺序", async () => {
+	it("同一任务内后一行折算出的控制面时间早不到 2 秒时记成与上一行相同：往前读、往后读给出同一个顺序", async () => {
 		const { a, b, runId } = await setup();
 		const z1 = await a.nextAssign();
 		const s = await b.nextAssign();
-		// z1 第 2 行折算出的控制面时间比第 1 行早 2 秒（例如重连后时钟偏差重测），比 s 的那一行也早。
-		a.logs(z1, [line(a, 1, 5_000, "z1 first"), line(a, 2, 3_000, "z1 second")]);
+		// z1 第 2 行折算出的控制面时间比第 1 行早 1.5 秒（例如重连后时钟偏差重测），比 s 的那一行也早。
+		a.logs(z1, [line(a, 1, 5_000, "z1 first"), line(a, 2, 3_500, "z1 second")]);
 		b.logs(s, [line(b, 1, 4_000, "s only")]);
 
 		const all = (await settled(runId, 3)).lines;
@@ -459,45 +527,148 @@ describe("按运行合并读取日志", () => {
 		);
 	});
 
-	it("单次请求的扫描量达到上限时先返回不满一页的结果，不算读到开头；用游标接着读完，不重复不漏行", async () => {
-		// 每行约 150 字节：两个任务各分到 600 字节左右，一次每个任务只读得到几行。
-		const { a, b, runId } = await setup({ logScanBytes: 1_200 });
+	it("同一任务内控制面时间回退超过 2 秒时保留折算出的时间：一行偏到未来之后，后面的行不会都停在那个时刻", async () => {
+		const { a, b, runId } = await setup();
 		const z1 = await a.nextAssign();
 		const s = await b.nextAssign();
+		// 第 2 行折算到了一分钟之后（偏差测量出错），第 3、4 行回到正常的时间。
+		a.logs(z1, [
+			line(a, 1, 1_000, "z1 1"),
+			line(a, 2, 60_000, "z1 2 future"),
+			line(a, 3, 3_000, "z1 3"),
+			line(a, 4, 4_000, "z1 4"),
+		]);
+		b.logs(s, [line(b, 1, 2_000, "s 1"), line(b, 2, 3_500, "s 2")]);
+
+		await eventually(async () => {
+			const own = logsApi.page.response.parse(
+				await (await cp.fetch(`/tasks/${z1.taskId}/logs`)).json(),
+			);
+			expect(own.lines.map((l) => [l.text, l.time])).toEqual([
+				["z1 1", iso(T0 + 1_000)],
+				["z1 2 future", iso(T0 + 60_000)],
+				["z1 3", iso(T0 + 3_000)],
+				["z1 4", iso(T0 + 4_000)],
+			]);
+		});
+		const all = (await settled(runId, 6)).lines;
+		expect(all.filter((l) => l.node_id === "z").map((l) => l.seq)).toEqual([1, 2, 3, 4]);
+		const once = (lines: RunLogLine[]) => lines.map((l) => `${l.task_id}:${l.seq}`).sort();
+		const pages = await pagesToStart(runId, 1);
+		expect(once(joined(pages))).toEqual(once(all));
+		expect(
+			joined(pages)
+				.filter((l) => l.node_id === "z")
+				.map((l) => l.seq),
+		).toEqual([1, 2, 3, 4]);
+		const earliest = pages.at(-1) as RunLogPage;
+		const forward = [...earliest.lines, ...(await linesAfter(runId, earliest.after, 1))];
+		expect(once(forward)).toEqual(once(all));
+		expect(forward.filter((l) => l.node_id === "z").map((l) => l.seq)).toEqual([1, 2, 3, 4]);
+	});
+
+	it("单次请求的扫描量达到上限时先返回不满一页的结果，不算读到开头或末尾；用游标接着读完，不重复不漏行", async () => {
+		// z 的行长（约 750 字节）、稀疏（每 5 秒一行）；s 的行短（约 140 字节）、密集（每 0.6 秒一行）。
+		// 同样的扫描量，s 读到的行只覆盖很短的一段时间：s 的行取完时 z 读到的行里还有更早的，这时必须停下，
+		// 不能接着取 z 的行，否则 s 还没读的、更晚的行会被挤到后面的页里。
+		const { a, b, runId } = await setup({ logScanBytes: 2_400 });
+		const z1 = await a.nextAssign();
+		const s = await b.nextAssign();
+		const zAt = (i: number) => 1_000 + i * 5_000;
+		const sAt = (i: number) => 1_250 + i * 600;
 		a.logs(
 			z1,
-			Array.from({ length: 20 }, (_, i) => line(a, i + 1, 1_000 + i * 1_000, `z1 ${i + 1}`)),
+			Array.from({ length: 8 }, (_, i) => line(a, i + 1, zAt(i), `z1 ${i + 1} ${"x".repeat(600)}`)),
 		);
 		b.logs(
 			s,
-			Array.from({ length: 20 }, (_, i) => line(b, i + 1, 1_500 + i * 1_000, `s ${i + 1}`)),
+			Array.from({ length: 60 }, (_, i) => line(b, i + 1, sAt(i), `s ${i + 1}`)),
 		);
-		const expected = Array.from({ length: 20 }, (_, i) => [
-			["z", 1, i + 1, `z1 ${i + 1}`],
-			["s", 1, i + 1, `s ${i + 1}`],
-		]).flat();
-		await eventually(async () => {
-			const own = logsApi.page.response.parse(
-				await (await cp.fetch(`/tasks/${s.taskId}/logs`)).json(),
-			);
-			expect(own.lines).toHaveLength(20);
-			expect(
-				logsApi.page.response.parse(await (await cp.fetch(`/tasks/${z1.taskId}/logs`)).json())
-					.lines,
-			).toHaveLength(20);
-		});
+		const expected = [
+			...Array.from({ length: 8 }, (_, i) => ({ at: zAt(i), l: ["z", 1, i + 1] })),
+			...Array.from({ length: 60 }, (_, i) => ({ at: sAt(i), l: ["s", 1, i + 1] })),
+		]
+			.sort((x, y) => x.at - y.at)
+			.map((x) => x.l);
+		const order = (lines: RunLogLine[]) => lines.map((l) => [l.node_id, l.attempt, l.seq]);
+		await ownLines(z1, 8);
+		await ownLines(s, 60);
 
 		const pages = await pagesToStart(runId, 1000);
 		const latest = pages[0] as RunLogPage;
 		expect(latest.lines.length).toBeGreaterThan(0);
-		expect(latest.lines.length).toBeLessThan(20);
+		expect(latest.lines.length).toBeLessThan(68);
 		expect(latest.reached_start).toBe(false);
 		expect(pages.slice(0, -1).every((p) => !p.reached_start && p.lines.length > 0)).toBe(true);
-		expect(joined(pages).map(brief)).toEqual(expected);
+		expect(order(joined(pages))).toEqual(expected);
 
 		const earliest = pages.at(-1) as RunLogPage;
+		const next = await page(runId, query({ limit: 1000, after: earliest.after }));
+		expect(next.lines.length).toBeGreaterThan(0);
+		expect(next.reached_end).toBe(false);
 		const forward = [...earliest.lines, ...(await linesAfter(runId, earliest.after, 1000))];
-		expect(forward.map(brief)).toEqual(expected);
+		expect(order(forward)).toEqual(expected);
+	});
+
+	it("一个任务日志很多、其余许多任务只有几行时，扫描量集中给读得出行的任务：每页仍然取满 limit 行", async () => {
+		const small = Array.from({ length: 20 }, (_, i) => `n${i + 1}`);
+		const onA = (id: string) => ({ ...echo(id), agent: "agent-a" });
+		// 平分时每个任务只分到不到 500 字节（三四行），只够小任务读完自己的那一行。
+		const { a, runId } = await setup({
+			logScanBytes: 10_000,
+			doc: orchestration([[{ id: "entry", kind: "entry" }, ...[...small, "hot"].map(onA)]], []),
+		});
+		for (const [i, id] of small.entries()) {
+			const task = await a.nextAssign();
+			a.logs(task, [line(a, 1, 1_000 + i * 100, `${id} only`)]);
+			await a.succeed(task);
+		}
+		const hot = await a.nextAssign();
+		a.logs(
+			hot,
+			Array.from({ length: 200 }, (_, i) => line(a, i + 1, 10_000 + i * 100, `hot ${i + 1}`)),
+		);
+		await ownLines(hot, 200);
+		const all = [
+			...small.map((id) => `${id} only`),
+			...Array.from({ length: 200 }, (_, i) => `hot ${i + 1}`),
+		];
+
+		const pages = await pagesToStart(runId, 30);
+		expect(pages.map((p) => p.lines.length)).toEqual([30, 30, 30, 30, 30, 30, 30, 10]);
+		expect(joined(pages).map((l) => l.text)).toEqual(all);
+		const earliest = pages.at(-1) as RunLogPage;
+		const forward = [...earliest.lines, ...(await linesAfter(runId, earliest.after, 30))];
+		expect(forward.map((l) => l.text)).toEqual(all);
+	});
+
+	it("只读到请求开始那一刻已写入的内容：读取期间才写进文件的行不在这一页，下一次请求才读", async () => {
+		const { a, b, runId } = await setup();
+		const z1 = await a.nextAssign();
+		const s = await b.nextAssign();
+		a.logs(z1, [line(a, 1, 1_000, "z1 1"), line(a, 2, 3_000, "z1 2")]);
+		b.logs(s, [line(b, 1, 2_000, "s 1"), line(b, 2, 4_000, "s 2")]);
+		const all = (await settled(runId, 4)).lines;
+		const start = (await pagesToStart(runId, 1000)).at(-1)?.before as string;
+
+		// 列出任务之后、读到这个文件之前写入的一行：直接追加到文件末尾，控制面这时还没记下它。
+		const written = {
+			seq: 3,
+			time: iso(T0 + 5_000),
+			agent_time: null,
+			source: "stdout",
+			level: "info",
+			text: "z1 3 written while reading",
+		};
+		await appendFile(
+			join(cp.dataDir, "logs", runId, `${z1.taskId}.jsonl`),
+			`${JSON.stringify(written)}\n`,
+		);
+
+		const forward = await page(runId, query({ limit: 1000, after: start }));
+		expect(forward.lines).toEqual(all);
+		expect(forward.reached_end).toBe(true);
+		expect((await page(runId, query({ limit: 1000 }))).lines).toEqual(all);
 	});
 	describe("范围与级别（#224）", () => {
 		/** 主链 z 失败重试一次、a；子流程 s：三个任务共 9 行，z 的两次尝试各有 warn 与 error。 */
@@ -689,6 +860,28 @@ describe("按运行合并读取日志", () => {
 
 			const earliest = pages.at(-1) as RunLogPage;
 			expect(texts(await linesAfter(runId, earliest.after, 50, extra))).toEqual([]);
+		});
+
+		it("往后接续时级别很少匹配、单次扫描量用完：页可以是空的但 reached_end 为 false，用 after 接着读到匹配的行", async () => {
+			const { a, b, runId } = await setup({ logScanBytes: 1_200 });
+			const z1 = await a.nextAssign();
+			const s = await b.nextAssign();
+			a.logs(z1, [
+				...Array.from({ length: 19 }, (_, i) => line(a, i + 1, 1_000 + i * 1_000, `z1 ${i + 1}`)),
+				line(a, 20, 20_000, "z1 the only error", LogLevel.ERROR),
+			]);
+			b.logs(
+				s,
+				Array.from({ length: 20 }, (_, i) => line(b, i + 1, 1_500 + i * 1_000, `s ${i + 1}`)),
+			);
+			await ownLines(z1, 20);
+			await ownLines(s, 20);
+
+			const extra = { level: "error" };
+			const start = (await pagesToStart(runId, 50, undefined, extra)).at(-1)?.before as string;
+			const first = await page(runId, query({ limit: 50, ...extra, after: start }));
+			expect(first).toMatchObject({ lines: [], reached_end: false });
+			expect(texts(await linesAfter(runId, start, 50, extra))).toEqual(["z1 the only error"]);
 		});
 
 		it("节点 ID 里有逗号、分号、冒号、百分号和中文时，范围也能准确匹配", async () => {

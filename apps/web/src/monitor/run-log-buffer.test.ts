@@ -23,6 +23,10 @@ const line = (task: string, seq: number): RunLogLine => ({
 	subflow: null,
 	node_id: task,
 	attempt: 1,
+	chain_depth: 0,
+	chain_started_at: "2026-01-01T00:00:00.000Z",
+	node_index: 1,
+	task_started_at: "2026-01-01T00:00:00.000Z",
 });
 
 /** 控制面返回的一页；游标对前端不透明，这里用能看出是哪一页的字符串。 */
@@ -32,6 +36,7 @@ const page = (lines: RunLogLine[], before: string, reachedStart = false): RunLog
 	before,
 	after: `after ${before}`,
 	reached_start: reachedStart,
+	reached_end: true,
 	truncated_tasks: [],
 	expired: false,
 });

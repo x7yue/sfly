@@ -1,5 +1,5 @@
-import type { Page } from "@playwright/test";
-import { runsApi } from "@sfly/schema";
+import type { Page, Request } from "@playwright/test";
+import { logsApi, runsApi } from "@sfly/schema";
 import {
 	type AssignedTask,
 	type FakeAgent,
@@ -137,7 +137,7 @@ test("没选中节点时合并显示全部节点的日志：按控制面时间�
 	await expect(logs.locator("[data-log-origin]").first()).toHaveText("fetch");
 });
 
-test("合并视图向上滚动加载更早的日志，一直到运行开始", async ({
+test("合并视图向上滚动一页页加载更早的日志，一直到运行开始：控制面返回的每行只出现一次，同一个游标只请求一次", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -145,37 +145,63 @@ test("合并视图向上滚动加载更早的日志，一直到运行开始", as
 }) => {
 	const clock0 = clock.now().getTime();
 	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
-	const at = (seq: number, atMs: number, text: string) => ({
-		seq: BigInt(seq),
-		timeUnixMs: BigInt(clock0 + atMs),
-		monotonicMs: agent.monotonicAt(clock0 + atMs),
-		source: LogSource.STDOUT,
-		level: LogLevel.INFO,
-		text,
-	});
-	// fetch 的 4 行之后，probe 和 verify 第 2 次各 200 行交错输出：一共 404 行，最新一页只有最后 300 行。
+	const at = logAt(agent, clock0);
+	// fetch 的 4 行之后，probe 和 verify 第 2 次各 500 行交错输出：一共 1004 行，最新一页 300 行，再往前翻三页。
 	const rows = (task: AssignedTask, name: string, from: number) =>
 		agent.logs(
 			task,
-			Array.from({ length: 200 }, (_, i) => at(i + 1, from + i * 10, `${name} line ${i + 1}`)),
+			Array.from({ length: 500 }, (_, i) => at(i + 1, from + i * 10, `${name} line ${i + 1}`)),
 		);
 	rows(tasks.probe as AssignedTask, "probe", 13_000);
 	rows(tasks.verify as AssignedTask, "verify", 13_005);
 	await agent.sync();
 
+	// 只看打开合并视图之后发出的请求：页面刚打开、还没默认选中节点时合并视图会短暂挂上，那次请求不算。
+	const pageRequests = new Set<Request>();
+	let recording = false;
+	page.on("request", (req) => {
+		if (recording && new URL(req.url()).pathname === `/api/runs/${runId}/logs`) {
+			pageRequests.add(req);
+		}
+	});
+	const received: string[] = [];
+	const befores: string[] = [];
+	page.on("response", async (res) => {
+		if (!pageRequests.has(res.request())) return;
+		befores.push(new URL(res.url()).searchParams.get("before") ?? "（最新一页）");
+		const body = logsApi.runPage.response.parse(await res.json());
+		received.push(...body.lines.map((l) => `${l.task_id}:${l.seq}`));
+	});
+
 	await openMonitor(page, clock, runId);
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
+	recording = true;
 	await nodeButton(page, "verify").click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 	const logs = panel(page).getByRole("log", { name: "日志" });
-	await expect(logs).toContainText("verify line 200");
+	await expect(logs).toContainText("verify line 500");
 	await expect(logs).not.toContainText("开始执行");
 
 	const older = logs.getByRole("button", { name: /加载更早的日志/ });
-	await expect(older).toBeVisible();
-	// 不用 click()：它会先把按钮滚进视口，滚到顶部本身就会触发加载、按钮随即消失，点击落空。
-	await older.dispatchEvent("click");
-	// 更早的 104 行一页读完，已经到了运行开始：不再有加载更早的按钮。
-	await expect(older).toHaveCount(0);
+	const loadingOlder = logs.getByRole("button", { name: "正在加载更早的日志…" });
+	for (let pages = 1; (await older.count()) > 0; pages++) {
+		expect(pages, "三页之内应读到运行开始").toBeLessThanOrEqual(3);
+		const before = befores.length;
+		// 滚到顶部，并在同一刻连续触发几次滚动：重新渲染之前的几次滚动也只发一次请求。
+		await logs.evaluate((el) => {
+			for (let i = 0; i < 5; i++) {
+				el.scrollTop = 0;
+				el.dispatchEvent(new Event("scroll"));
+			}
+		});
+		await expect.poll(() => befores.length).toBeGreaterThan(before);
+		await expect(loadingOlder).toHaveCount(0);
+	}
+	await expect.poll(() => received.length).toBe(1004);
+	expect(new Set(received).size).toBe(1004);
+	expect(befores).toHaveLength(4);
+	expect(new Set(befores).size).toBe(4);
+
 	await logs.evaluate((el) => {
 		el.scrollTop = 0;
 	});

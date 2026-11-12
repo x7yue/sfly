@@ -64,7 +64,8 @@ export function registerLogRoutes(
 			lines: expired ? [] : page.lines,
 			before: encodeRunLogCursor(expired ? start : page.before),
 			after: encodeRunLogCursor(expired ? start : page.after),
-			reached_start: expired || [...page.before.values()].every((offset) => offset === 0),
+			reached_start: expired || page.reachedStart,
+			reached_end: expired || page.reachedEnd,
 			truncated_tasks: expired ? [] : page.truncatedTasks,
 			expired,
 		};

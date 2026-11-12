@@ -7,8 +7,9 @@ import { type LogLineView, logLineView } from "./task-logs.js";
  * - 往后读（`after`）：从 `after` 所在的行首开始（不在行首时从下一行开始），读到凑够 `limit` 行匹配的日志为止。
  * - 往前读（`before`，默认文件末尾）：读 `before` 之前的完整行，取最后 `limit` 行匹配的日志。
  *
- * 只读完整的行（还在写入的最后半行不算）。每次最多扫描 `scanLimit` 字节（默认 {@link SCAN_LIMIT}）的行，
- * 但至少读完一行：筛选条件很少匹配时，一页可能不足 `limit` 行，用 `start` / `end` 接着翻页即可。
+ * 只读完整的行（还在写入的最后半行不算），给了 `until` 时只读它之前的内容。每次最多扫描 `scanLimit` 字节
+ * （默认 {@link SCAN_LIMIT}）的行，但至少读完一行：筛选条件很少匹配时，一页可能不足 `limit` 行，
+ * 用 `start` / `end` 接着翻页即可。
  */
 
 export interface LogFilter {
@@ -21,6 +22,8 @@ interface PageLimits {
 	filter: LogFilter;
 	/** 最多扫描多少字节的行，默认 {@link SCAN_LIMIT}。 */
 	scanLimit?: number;
+	/** 只读这个字节偏移之前的完整行（例如列出任务那一刻已写入的字节数），之后写入的不读。 */
+	until?: number;
 }
 
 export type PageRequest =
@@ -37,7 +40,7 @@ export interface LogPage {
 	/** 本页扫描范围 [start, end)：往前翻页用 `before=start`，往后翻页用 `after=end`。 */
 	start: number;
 	end: number;
-	/** 读取时文件中完整行的总字节数。 */
+	/** 读取时文件中完整行的总字节数（给了 `until` 时不超过它）。 */
 	size: number;
 }
 
@@ -63,7 +66,8 @@ export async function readLogPage(file: string, request: PageRequest): Promise<L
 	try {
 		const scanLimit = request.scanLimit ?? SCAN_LIMIT;
 		const chunk = Math.min(CHUNK, Math.max(MIN_CHUNK, scanLimit));
-		const size = await completeSize(handle, (await handle.stat()).size, chunk);
+		const { size: fileSize } = await handle.stat();
+		const size = await completeSize(handle, Math.min(fileSize, request.until ?? fileSize), chunk);
 		return request.direction === "forward"
 			? await forward(handle, size, request, scanLimit, chunk)
 			: await backward(handle, size, request, scanLimit, chunk);

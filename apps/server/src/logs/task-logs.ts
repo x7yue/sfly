@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { type AgentMessage, type LogBatch, LogLevel, LogSource, type Progress } from "@sfly/proto";
 import type { TaskProgressView } from "@sfly/schema";
 import { eq } from "drizzle-orm";
-import { recordableAgentTimeMs } from "../agents/agent-clock.js";
+import { CLOCK_OFFSET_THRESHOLD_MS, recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -29,8 +29,8 @@ import { maskSecrets, secretValues } from "./secrets.js";
  *   文本里的换行被 JSON 转义，所以一行就是一条日志：任意行首的字节偏移都是合法的分页位置。
  * - 每行带两种时间（ADR 0018）：`time` 是控制面时间，由这一行的单调时钟读数按连接的对应关系折算
  *   （旧版本 Agent 没有读数时取收到这一批的时刻）；`agent_time` 是 Agent 时间，原样保存，不做范围检查。
- *   同一个任务内 `time` 随 seq 不减：折算出的时间比上一行早时（重连后重新建立对应关系等，误差是一次网络往返的量级）
- *   记成上一行的时间，按运行合并日志的顺序（@sfly/schema 的 run-log-order.ts）因此与读取方向无关。
+ *   折算出的时间比上一行早不到 2 秒（重连后重新建立对应关系等，误差是一次网络往返的量级）时记成上一行的时间；
+ *   早得更多说明折算出了错（例如上一行偏到了未来），保留折算出的时间，免得之后的行都停在那个时刻。
  *   升级之前写入的行只有一个 `time`（当时记的是 Agent 时间）、没有 `agent_time`：读出时一律经
  *   {@link logLineView} / {@link normalizeLogRow}，按「只有 Agent 时间、控制面时间未记录」返回。
  * - 只追加。`tasks.log_bytes` 是已写入的字节数（= 文件大小），`tasks.log_seq` 是已写入的最大序号；
@@ -262,10 +262,13 @@ export class TaskLogs {
 				const n = Number(line.seq);
 				if (n <= seq) continue;
 				seq = n;
-				const timeMs = Math.max(
-					controlPlaneTime(line.monotonicMs).getTime(),
-					lastTimeMs ?? Number.NEGATIVE_INFINITY,
-				);
+				const converted = controlPlaneTime(line.monotonicMs).getTime();
+				const timeMs =
+					lastTimeMs != null &&
+					converted < lastTimeMs &&
+					lastTimeMs - converted < CLOCK_OFFSET_THRESHOLD_MS
+						? lastTimeMs
+						: converted;
 				lastTimeMs = timeMs;
 				const view: LogLineView = {
 					seq: n,

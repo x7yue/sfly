@@ -351,8 +351,22 @@ export const LogOrigin = z.object({
 	attempt: z.number().int(),
 });
 
-/** 按运行合并的一行：任务日志里的一行，加上它的来源。 */
-export const RunLogLine = LogLineView.extend(LogOrigin.shape);
+/**
+ * 合并日志里一行排序要用、行本身没有的信息（run-log-order.ts）：由控制面按这一行所在的任务填上，
+ * 所以只凭行就能和别的行比较先后（前端插入实时行时不必查运行视图）。
+ */
+export const RunLogTaskOrder = z.object({
+	/** 所在链实例的层级（主链为 0）与开始时间：控制面时间相同时，链按层级、开始时间、链实例 ID 排。 */
+	chain_depth: z.number().int(),
+	chain_started_at: Timestamp,
+	/** 节点在场景版本里这条链上的位置，从 0 开始：同一条链上按它排。 */
+	node_index: z.number().int(),
+	/** 任务开始时间（还没开始时是排队时间）：没有控制面时间的旧行按它排。 */
+	task_started_at: Timestamp,
+});
+
+/** 按运行合并的一行：任务日志里的一行，加上它的来源和排序要用的信息。 */
+export const RunLogLine = LogLineView.extend(LogOrigin.shape).extend(RunLogTaskOrder.shape);
 
 /** 按运行分页的游标：不透明字符串，由上一页的 before / after 原样传回。 */
 const RunLogCursor = z.string();
@@ -386,12 +400,12 @@ export const RunLogPageQuery = z
 
 /**
  * 一次运行全部任务的日志合并成的一页（没选中节点时的日志视图，#220）。排序规则见 docs/ARCHITECTURE.md §6.3
- * 与 run-log-order.ts：同一个任务内按 seq，不同任务之间按控制面时间归并；时间相同时按链、节点、尝试在运行视图里的顺序；
- * 没有控制面时间的旧行用任务开始时间。
+ * 与 run-log-order.ts：同一个任务内按 seq，不同任务之间按控制面时间归并；时间相同时按链、节点、尝试的固定顺序；
+ * 没有控制面时间的旧行用任务开始时间。比较先后要用的信息每行都带着（{@link RunLogTaskOrder}）。
  *
  * 游标记录每个任务读到的字节偏移：拿到这一页之后才开始的任务不在游标里，往前翻页时视为之前没有内容，往后接续时从头读。
  * 单次请求的扫描量有上限（所有任务分摊），所以一页可能不满 limit 行，筛选级别时甚至可能一行都没有；
- * 这不表示读到了开头，看 `reached_start`，没到就用 `before` 接着读。
+ * 这不表示读到了开头或末尾，看 `reached_start` / `reached_end`，没到就用 `before` / `after` 接着读。
  *
  * 范围（`nodes`）和级别（`level`）在服务端执行，游标只对同一组范围和级别有效：换了范围或级别要从最新一页重新读
  * （新纳入范围的任务不在游标里，往前翻会漏掉它们）。
@@ -406,6 +420,11 @@ export const RunLogPage = z.object({
 	after: RunLogCursor,
 	/** before 之前已经没有任何行（这一页之前就是运行的开头）。 */
 	reached_start: z.boolean(),
+	/**
+	 * after 之后已经没有任何行（读取的那一刻）。往后接续时一页同样可能不满甚至为空，没到末尾就用 after 接着读；
+	 * 之后写入的行用 after 再读或由实时推送送达。
+	 */
+	reached_end: z.boolean(),
 	/** 日志超过大小上限被截断的任务，按运行视图里的顺序。 */
 	truncated_tasks: z.array(LogOrigin),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
@@ -523,6 +542,7 @@ export type LogLineView = z.infer<typeof LogLineView>;
 export type LogPage = z.infer<typeof LogPage>;
 export type LogChunk = z.infer<typeof LogChunk>;
 export type LogOrigin = z.infer<typeof LogOrigin>;
+export type RunLogTaskOrder = z.infer<typeof RunLogTaskOrder>;
 export type RunLogLine = z.infer<typeof RunLogLine>;
 export type RunLogPage = z.infer<typeof RunLogPage>;
 export type ProgressEvent = z.infer<typeof ProgressEvent>;
