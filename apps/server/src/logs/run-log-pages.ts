@@ -28,6 +28,11 @@ import type { TaskLogs } from "./task-logs.js";
  * 「已读到开头 / 末尾」都只看它们；不给范围是全部节点。级别筛选（`filter.levels`）在读每个文件时执行，
  * 翻页时跳过不匹配的行。游标只对同一组范围和级别有效。
  *
+ * 下载（#226）：从每个任务的开头往后读，同一套取行（`take`）和补读（`extend`）一批批归并到末尾，不用游标逐页重读。
+ * 每个任务只读到调用那一刻已写入的字节数（整个下载共用这一份快照，之后写入的行不在里面）。
+ * 内存只和任务数、批量有关，和日志总量无关：每个任务读到手里还没取走的行不超过 `scanBytes` 的一份，
+ * 每批最多 {@link DOWNLOAD_BATCH} 行，取走的行随批丢掉。
+ *
  * 一次请求最多扫描 `scanBytes` 字节（每次读取至少读完一行，可能多出一行）。第一轮每个要读的任务读一小段；
  * 某个任务读到的行都取完了、文件那一侧还有没读的内容时，归并不能接着往下取（它没读的下一行可能排在前面），
  * 剩下的扫描量就集中给这些任务补读，直到这一页取满或扫描量用完。用完时一页可能不满 limit 行，游标停在实际取到的位置。
@@ -72,6 +77,8 @@ interface TaskStream {
 const OPEN_FILES = 32;
 /** 第一轮每个任务最多扫描的字节数：一次读取的量，够看出每个任务排在最前的几行。 */
 const FIRST_SLICE = 4 * 1024;
+/** 下载时每批最多取多少行。 */
+const DOWNLOAD_BATCH = 1000;
 
 export class RunLogs {
 	constructor(
@@ -88,14 +95,14 @@ export class RunLogs {
 		const streams = await this.#streams(runId, request.scope);
 		if (!streams) return undefined;
 		const forward = request.direction === "forward";
-		const lanes = streams.map((stream): Lane => {
+		const lanes = streams.map((stream) => {
 			const at =
 				request.direction === "forward"
 					? (request.after.get(stream.order) ?? 0)
 					: request.before
 						? (request.before.get(stream.order) ?? 0)
 						: stream.bytes;
-			return { stream, read: [], start: at, end: at, until: stream.bytes, taken: 0 };
+			return newLane(stream, at);
 		});
 		const lines: RunLogLine[] = [];
 		let budget = this.deps.scanBytes ?? SCAN_LIMIT;
@@ -120,6 +127,39 @@ export class RunLogs {
 			reachedEnd: lanes.every((lane) => after(lane) >= lane.until),
 			truncatedTasks: streams.filter((s) => s.truncated).map((s) => s.task.origin),
 		};
+	}
+
+	/**
+	 * 范围内的全部日志，按合并视图的顺序从头到尾，一批一批（最多 {@link DOWNLOAD_BATCH} 行）；运行不存在时为 undefined。
+	 * 读到的内容固定在这个方法返回的那一刻：之后写入的行不会出现，整个下载共用这一份快照。
+	 */
+	async readAll(
+		runId: string,
+		scope: RunLogScope | undefined,
+	): Promise<AsyncGenerator<RunLogLine[], void> | undefined> {
+		const streams = await this.#streams(runId, scope);
+		return streams && this.#batches(streams);
+	}
+
+	async *#batches(streams: TaskStream[]): AsyncGenerator<RunLogLine[], void> {
+		const scanLimit = Math.max(1, Math.floor((this.deps.scanBytes ?? SCAN_LIMIT) / streams.length));
+		let lanes = streams.map((stream) => newLane(stream, 0));
+		while (lanes.length > 0) {
+			const lines: RunLogLine[] = [];
+			for (
+				let blocked = take(lanes, lines, DOWNLOAD_BATCH, true);
+				blocked.length > 0;
+				blocked = take(lanes, lines, DOWNLOAD_BATCH, true)
+			) {
+				await extend(blocked, true, { limit: DOWNLOAD_BATCH, filter: {}, scanLimit });
+			}
+			if (lines.length > 0) yield lines;
+			for (const lane of lanes) {
+				lane.read.splice(0, lane.taken);
+				lane.taken = 0;
+			}
+			lanes = lanes.filter((lane) => lane.read.length > 0 || more(lane, true));
+		}
 	}
 
 	/** 范围内、有日志记录的任务，按运行视图里链、节点、尝试的顺序。 */
@@ -159,6 +199,15 @@ interface Lane {
 	until: number;
 	taken: number;
 }
+
+const newLane = (stream: TaskStream, at: number): Lane => ({
+	stream,
+	read: [],
+	start: at,
+	end: at,
+	until: stream.bytes,
+	taken: 0,
+});
 
 /** 在读的方向上，文件里还有没读的内容。 */
 const more = (lane: Lane, forward: boolean) => (forward ? lane.end < lane.until : lane.start > 0);

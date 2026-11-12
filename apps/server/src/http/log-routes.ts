@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { Transform, type TransformCallback } from "node:stream";
-import { logsApi } from "@sfly/schema";
+import { Readable, Transform, type TransformCallback } from "node:stream";
+import { logsApi, type RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
 import { decodeRunLogCursor, encodeRunLogCursor } from "../logs/run-log-cursor.js";
@@ -29,6 +29,8 @@ import { sendError } from "./errors.js";
  * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取（`before` / `after` 游标，#223），
  * 见 run-log-pages.ts 与 run-log-cursor.ts；游标不是这里返回的格式时 400 `invalid_request`。
  * `nodes`（节点范围）与 `level`（级别）在服务端执行（#224），写法见 @sfly/schema 的 run-log-scope.ts。
+ * `GET /runs/:id/logs/download`（#226）把范围内的整次运行日志按同样的顺序流式输出成 JSONL，不带 `level`；
+ * 过了保留期 410 `expired`，运行不存在 404。
  */
 export function registerLogRoutes(
 	app: FastifyInstance,
@@ -69,6 +71,20 @@ export function registerLogRoutes(
 			truncated_tasks: expired ? [] : page.truncatedTasks,
 			expired,
 		};
+	});
+
+	contractDownload(app, logsApi.runDownload, async ({ params, query }, reply) => {
+		const batches = isUuid(params.id)
+			? await deps.runLogs.readAll(params.id, query.nodes)
+			: undefined;
+		if (!batches) return sendError(reply, 404, "not_found", "run not found");
+		if (await deps.isPurged(params.id)) {
+			return sendError(reply, 410, "expired", "logs of this run were removed after retention");
+		}
+		return reply
+			.header("content-type", `${logsApi.runDownload.contentType}; charset=utf-8`)
+			.header("content-disposition", attachment(`run-${params.id}.log.jsonl`))
+			.send(Readable.from(jsonRows(batches)));
 	});
 
 	contractRoute(app, logsApi.page, async ({ params, query }, reply) => {
@@ -159,6 +175,26 @@ export function registerLogRoutes(
 		});
 		return undefined;
 	});
+}
+
+const downloadRow = (l: RunLogLine): RunLogDownloadRow => ({
+	seq: l.seq,
+	time: l.time,
+	agent_time: l.agent_time,
+	source: l.source,
+	level: l.level,
+	text: l.text,
+	task_id: l.task_id,
+	subflow: l.subflow,
+	node_id: l.node_id,
+	attempt: l.attempt,
+});
+
+/** 每一批行写成一块 JSONL 文本：一行一条，以换行结尾。 */
+async function* jsonRows(batches: AsyncIterable<RunLogLine[]>): AsyncGenerator<string> {
+	for await (const lines of batches) {
+		yield lines.map((l) => `${JSON.stringify(downloadRow(l))}\n`).join("");
+	}
 }
 
 /**

@@ -50,7 +50,7 @@ import {
 	stoppedSubflowLabel,
 } from "./run-model";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
-import { useRunLogs } from "./use-run-logs";
+import { runLogDownloadPath, useRunLogs } from "./use-run-logs";
 import { taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
 
 const TABS: [PanelTab, string][] = [
@@ -131,6 +131,11 @@ export function BottomPanel({
 	);
 	const attempt =
 		node?.attempts.find((a) => a.task_id === attemptId) ?? node?.attempts.at(-1) ?? undefined;
+	/** 没有选中节点时日志页签下载的合并日志：范围与合并视图相同。 */
+	const mergedDownload = useMemo(
+		() => runLogDownloadPath(run.id, logScope(run, filter)),
+		[run, filter],
+	);
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
 	const logTimeKind = useLogTimeKind();
 
@@ -211,12 +216,16 @@ export function BottomPanel({
 								options={MIN_LEVELS}
 								onChange={(v) => setMinLevel(v as MinLevel)}
 							/>
-							{attempt && (
+							{(attempt || !node) && (
 								<a
 									className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
-									aria-label="下载原始日志"
-									title="下载原始日志（JSONL）"
-									href={taskLogDownloadPath(attempt.task_id)}
+									aria-label={attempt ? "下载原始日志" : "下载合并日志"}
+									title={
+										attempt
+											? "下载原始日志（JSONL）"
+											: "下载范围内全部节点合并后的日志（JSONL，不受级别筛选影响）"
+									}
+									href={attempt ? taskLogDownloadPath(attempt.task_id) : mergedDownload}
 									download
 								>
 									<DownloadIcon />

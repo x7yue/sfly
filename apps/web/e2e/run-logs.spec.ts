@@ -1,5 +1,6 @@
-import type { Page, Request } from "@playwright/test";
-import { logsApi, runsApi } from "@sfly/schema";
+import { readFile } from "node:fs/promises";
+import type { Locator, Page, Request } from "@playwright/test";
+import { logsApi, RunLogDownloadRow, runsApi } from "@sfly/schema";
 import {
 	type AssignedTask,
 	type FakeAgent,
@@ -12,7 +13,8 @@ import { openMonitor, type Running, runningScenario } from "./monitor-scenario";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 没选中节点时，日志页签按控制面时间合并显示整次运行全部节点的日志（#222），向上滚动加载更早的（#223）；
-// 有节点筛选时只合并显示筛选出的节点，可以按级别筛选，点来源节点名切到这个节点（#224）。
+// 有节点筛选时只合并显示筛选出的节点，可以按级别筛选，点来源节点名切到这个节点（#224）；
+// 合并视图下的下载按钮下载范围内整次运行合并后的日志（#226）。
 
 const timeline = (page: Page) => page.getByRole("region", { name: "链路时间线" });
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
@@ -411,6 +413,94 @@ test("合并视图点来源节点名，或在行上打开菜单，选中这个�
 	await page.keyboard.press("Enter");
 	await expect(scope).toHaveText("范围：fetch");
 	await expect(rows).toHaveCount(4);
+});
+
+test("合并视图下的下载按钮下载范围内整次运行合并后的日志：顺序和来源与合并视图相同，跟随节点筛选，不受级别筛选影响；单节点视图下载这次尝试的原始日志", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const running = await runningScenario(controlPlane, connectAgent, clock);
+	await interleavedLogs(controlPlane, running, clock0);
+	const { runId, tasks } = running;
+
+	await openMonitor(page, clock, runId);
+	const scope = panel(page).getByTestId("bp-scope");
+	const merged = panel(page).getByRole("link", { name: "下载合并日志" });
+	const single = panel(page).getByRole("link", { name: "下载原始日志" });
+	/** 点下载按钮，读下载到的文件；文件名要带运行编号（单节点是节点 ID 与尝试序号）。 */
+	const downloaded = async (link: Locator, filename: string) => {
+		const [file] = await Promise.all([page.waitForEvent("download"), link.click()]);
+		expect(file.suggestedFilename()).toBe(filename);
+		const text = await readFile(await file.path(), "utf8");
+		expect(text.endsWith("\n")).toBe(true);
+		return text
+			.trimEnd()
+			.split("\n")
+			.map((l): unknown => JSON.parse(l));
+	};
+	/** 合并日志的一行：字段恰好是契约里的。 */
+	const mergedRows = async (filename: string) =>
+		(await downloaded(merged, filename)).map((r) => RunLogDownloadRow.strict().parse(r));
+	const brief = (rows: RunLogDownloadRow[]) =>
+		rows.map((r) => [r.subflow, r.node_id, r.attempt, r.text]);
+
+	// 默认选中 verify：单节点视图，只有原来的下载按钮。
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(merged).toHaveCount(0);
+	await expect(single).toHaveAttribute("href", `/api/tasks/${tasks.verify?.taskId}/logs/download`);
+	expect(await downloaded(single, "verify-2.log.jsonl")).toMatchObject([
+		{ seq: 1, text: "verify 2 retrying" },
+	]);
+
+	// 取消选中：合并视图。先按 ERROR 筛选，下载仍是全部级别的行，顺序与合并视图相同，每行带来源。
+	await nodeButton(page, "verify").click();
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(single).toHaveCount(0);
+	await expect(merged).toHaveAttribute("href", `/api/runs/${runId}/logs/download`);
+	await levelFilter(page).getByRole("button", { name: "ERROR", exact: true }).click();
+	await expect(panel(page).getByRole("log", { name: "日志" }).getByRole("button")).toHaveCount(1);
+	const all = await mergedRows(`run-${runId}.log.jsonl`);
+	expect(brief(all)).toEqual([
+		[null, "fetch", 1, "开始执行"],
+		[null, "fetch", 1, "load config ok"],
+		[null, "fetch", 1, "retrying request (1/3): connection reset"],
+		[null, "fetch", 1, "batch committed"],
+		[null, "verify", 1, "verify 1 checking"],
+		["sub", "probe", 1, "probe started"],
+		[null, "verify", 1, "AssertionError: 漏拦 3 笔"],
+		[null, "verify", 2, "verify 2 retrying"],
+		["sub", "probe", 1, "probe tick"],
+	]);
+	expect(new Set(all.map((r) => r.level))).toEqual(new Set(["debug", "info", "warn", "error"]));
+	expect(all[0]?.task_id).toBe(tasks.fetch?.taskId);
+
+	// 图表工作区取消子流程：下载跟随筛选，只含筛选出的节点。
+	await workspace(page)
+		.getByRole("button", { name: /节点：全部节点/ })
+		.click();
+	await page
+		.getByRole("dialog", { name: "按节点筛选图表" })
+		.getByRole("checkbox", { name: /^子流程 sub/ })
+		.uncheck();
+	await expect(scope).toHaveText("范围：跟随筛选（2 个节点）");
+	await expect(merged).toHaveAttribute(
+		"href",
+		new RegExp(`^/api/runs/${runId}/logs/download\\?nodes=`),
+	);
+	const followed = await mergedRows(`run-${runId}.log.jsonl`);
+	expect(brief(followed).map(([subflow]) => subflow)).toEqual(Array(7).fill(null));
+	expect(followed.map((r) => r.node_id)).toEqual([
+		"fetch",
+		"fetch",
+		"fetch",
+		"fetch",
+		"verify",
+		"verify",
+		"verify",
+	]);
 });
 
 test.describe("筛选很少匹配时", () => {

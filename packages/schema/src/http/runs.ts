@@ -431,6 +431,15 @@ export const RunLogPage = z.object({
 	expired: z.boolean(),
 });
 
+/**
+ * 按运行下载的合并日志（JSONL）里的一行（#226）：任务日志里的一行，加上它的来源。两种时间都有（升级之前写入的行补齐：
+ * `time` 为 null、`agent_time` 是当时记的 Agent 时间），不带排序用的字段（顺序已经体现在行的先后上）。
+ * 行的顺序与合并视图相同，见 {@link RunLogPage}。
+ */
+export const RunLogDownloadRow = LogLineView.extend(
+	LogOrigin.pick({ task_id: true, subflow: true, node_id: true, attempt: true }).shape,
+);
+
 /** 实时推送的一批行（`GET /tasks/:id/logs/events` 的 `logs` 事件）；offset 是第一行的字节偏移。 */
 export const LogChunk = z.object({
 	task_id: z.string(),
@@ -472,6 +481,16 @@ export const logsApi = {
 		params: IdParams,
 		query: RunLogPageQuery,
 		response: RunLogPage,
+	}),
+	/**
+	 * 下载一次运行（范围内）合并后的日志：JSONL，每行是 {@link RunLogDownloadRow}，顺序与合并视图相同，
+	 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`，运行不存在时 404。
+	 */
+	runDownload: download({
+		path: "/runs/:id/logs/download",
+		params: IdParams,
+		query: RunLogScopeQuery,
+		contentType: "application/x-ndjson",
 	}),
 };
 
@@ -545,5 +564,6 @@ export type LogOrigin = z.infer<typeof LogOrigin>;
 export type RunLogTaskOrder = z.infer<typeof RunLogTaskOrder>;
 export type RunLogLine = z.infer<typeof RunLogLine>;
 export type RunLogPage = z.infer<typeof RunLogPage>;
+export type RunLogDownloadRow = z.infer<typeof RunLogDownloadRow>;
 export type ProgressEvent = z.infer<typeof ProgressEvent>;
 export type ArtifactView = z.infer<typeof ArtifactView>;
