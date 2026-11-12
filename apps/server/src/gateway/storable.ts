@@ -28,13 +28,14 @@ const ESCAPED_NUL = "\\u0000";
  * | Progress | 进度说明 | tasks.progress |
  * | InstallStatus | 节点包名、版本、已安装节点包、开发版节点包 | agents.info |
  * | MetricBatch | 指标名、标签键、标签值 | metric_series、metric_segments |
+ * | Notification | event_json（键和值） | feishu_messages |
  *
  * 不处理的：
  * - LogBatch：日志写在日志文件里（每行一个 JSON，NUL 转义为 `\u0000`），不进数据库，原样保存。
  * - 任务 ID：只用来查找（含 NUL 时不是合法的 UUID，按不存在的任务处理）。
  * - Hello.token：只用来比对，不保存。InstallStatus.output：不保存。
  *
- * `*_json` 字段（TaskResult.outputs_json、DevPackage.metadata_json）是 JSON 文本，NUL 在里面写作转义 `\u0000`：
+ * `*_json` 字段（TaskResult.outputs_json、DevPackage.metadata_json、Notification.event_json）是 JSON 文本，NUL 在里面写作转义 `\u0000`：
  * 含这个转义时解析出来，把键和值里的 NUL 换掉后重新序列化；不是合法 JSON 的原样留给使用方按原来的规则处理。
  *
  * 只检查（`includes`），不含 NUL 的部分原样返回、不复制：日志批次直接返回，指标每个点只多检查名称和标签。
@@ -90,6 +91,11 @@ function storableBody(body: AgentMessage["body"]): AgentMessage["body"] {
 		}
 		case "metrics":
 			return replaced(body, metrics(body.value));
+		case "notification": {
+			const eventJson = json(body.value.eventJson);
+			if (eventJson === body.value.eventJson) return body;
+			return { ...body, value: { ...body.value, eventJson } };
+		}
 		case "started":
 		case "logs":
 		case undefined:

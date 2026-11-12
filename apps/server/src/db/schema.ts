@@ -261,6 +261,11 @@ export const tasks = pgTable(
 		status: text("status").$type<TaskStatus>().notNull(),
 		/** 派发时解析过引用的输入；排队时为空。 */
 		inputs: jsonb("inputs").$type<Record<string, unknown>>(),
+		/**
+		 * 派发时随任务下发的、「飞书机器人」类型的输入引用的机器人（AssignTask.referenced_feishu_bots，ADR 0020）：
+		 * 节点用 ctx.notify 只能发给其中的机器人。之前派发的任务为空。
+		 */
+		referencedFeishuBots: text("referenced_feishu_bots").array().notNull().default([]),
 		outputs: jsonb("outputs").$type<Record<string, unknown>>(),
 		errorKind: text("error_kind").$type<ErrorKind>(),
 		errorMessage: text("error_message"),
@@ -285,8 +290,10 @@ export const tasks = pgTable(
 		logPath: text("log_path"),
 		/** 日志文件已写入的字节数。 */
 		logBytes: bigint("log_bytes", { mode: "number" }).notNull().default(0),
-		/** 已写入的最大日志序号（序号不大于它的行视为重复）。 */
+		/** 日志文件里最后一行的序号（src/logs/task-logs.ts）。 */
 		logSeq: bigint("log_seq", { mode: "number" }).notNull().default(0),
+		/** 已写入的 Agent 日志行里最大的 Agent 序号（Agent 序号不大于它的行视为重复）。 */
+		logAgentSeq: bigint("log_agent_seq", { mode: "number" }).notNull().default(0),
 		/** 日志超过上限已被截断（#18）：写入了截断标记，之后的行都被丢弃。 */
 		logTruncated: boolean("log_truncated").notNull().default(false),
 		/**

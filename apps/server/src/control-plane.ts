@@ -18,6 +18,7 @@ import { limitOutputs } from "./engine/output-limit.js";
 import { FeishuBots } from "./feishu/feishu-bots.js";
 import { FeishuClient } from "./feishu/feishu-client.js";
 import { FeishuDelivery } from "./feishu/feishu-delivery.js";
+import { TaskNotifications } from "./feishu/task-notifications.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
@@ -194,6 +195,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			if (logger) console.error("feishu delivery failed:", error);
 		},
 	});
+	const notifications = new TaskNotifications({
+		db: database.db,
+		clock,
+		logs,
+		delivery: feishuDelivery,
+	});
 	const engine = new Engine({
 		db: database.db,
 		clock,
@@ -292,12 +299,14 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
 			hub,
-			// 日志、进度和指标不改变运行状态，不经过引擎（src/logs/task-logs.ts、src/metrics/task-metrics.ts）。
+			// 日志、进度、指标和 ctx.notify 的通知不改变运行状态，不经过引擎
+			// （src/logs/task-logs.ts、src/metrics/task-metrics.ts、src/feishu/task-notifications.ts）。
 			handler: {
 				onOnline: (conn, running) => engine.onOnline(conn, running),
 				async onMessage(conn, message) {
 					if (metrics.handles(message)) return metrics.onMessage(conn, message);
 					if (logs.handles(message)) return logs.onMessage(conn, message);
+					if (notifications.handles(message)) return notifications.onMessage(conn, message);
 					// 任务结束：先写入它的指标（Agent 在结果之前发完最后的点）。写不进去时记下来、照常处理结果：
 					// 没写入的点留在内存里，由周期写入重试有限次（src/metrics/task-metrics.ts）。
 					if (message.body.case === "result") {

@@ -482,3 +482,52 @@ def test_a_feishu_bot_input_that_is_not_a_string_is_a_config_error(
     assert result.error is not None
     assert result.error.kind == "config_error"
     assert result.error.message == "输入 bot 应为 string，实际是 1"
+
+
+def test_notifications_carry_the_bot_and_the_request_body_and_nothing_is_sent() -> None:
+    # ctx.notify（#234）：请求体与飞书通知节点的文本格式相同；本地没有控制面，不真的发送。
+    from sfly_stub import notify
+
+    result = run_node(notify, {"bot": "ops", "text": "指标越界", "at_all": True})
+    plain = run_node(notify, {"bot": "ops", "text": '请 <at user_id="ou_1">张三</at> 看'})
+
+    assert result.status == "success", result.error
+    assert [(n.bot, n.body) for n in result.notifications] == [
+        ("ops", {"msg_type": "text", "content": {"text": '指标越界<at user_id="all">所有人</at>'}}),
+    ]
+    assert [n.body for n in plain.notifications] == [
+        {"msg_type": "text", "content": {"text": '请 <at user_id="ou_1">张三</at> 看'}},
+    ]
+
+
+def test_a_bot_not_passed_as_a_feishu_bot_input_is_not_notified_and_a_warning_is_logged() -> None:
+    # 与平台相同：只能发给「飞书机器人」类型的参数传入的机器人，其余的不发送，任务日志里写 warning。
+    from sfly_stub import notify
+
+    result = run_node(notify, {"bot": "ops", "text": "x", "unlisted": "dev"})
+
+    assert result.status == "success", result.error
+    assert [n.bot for n in result.notifications] == ["ops"]
+    warnings = [line for line in result.logs if line.level == "warn"]
+    assert len(warnings) == 1, result.logs
+    assert warnings[0].source == "system"
+    assert "「dev」" in warnings[0].message
+    assert "sfly.FeishuBot" in warnings[0].message
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs"),
+    [
+        ((1, "x"), {}),
+        (("ops", None), {}),
+        (("ops", "x"), {"at_all": "yes"}),
+    ],
+)
+def test_notify_with_wrongly_typed_arguments_raises_type_error(
+    args: tuple[object, ...], kwargs: dict[str, object]
+) -> None:
+    from sfly import Context
+
+    ctx = Context(events_path=None, cancel_path=None)
+    with pytest.raises(TypeError):
+        ctx.notify(*args, **kwargs)  # type: ignore[arg-type]

@@ -1490,8 +1490,8 @@ export class Engine implements AgentSessionHandler {
 			return undefined;
 		}
 
-		// 「飞书机器人」类型的输入引用的机器人名单随任务下发（ADR 0020）。不在这里检查是否已登记：
-		// 值来自前面节点的输出时派发时才知道，而通知不能成为任务失败的原因，发送时再检查。
+		// 「飞书机器人」类型的输入引用的机器人名单随任务下发，也记在任务上：ctx.notify 只能发给其中的机器人（ADR 0020）。
+		// 不在这里检查是否已登记：值来自前面节点的输出时派发时才知道，而通知不能成为任务失败的原因，发送时再检查。
 		const referencedBots = type
 			? [...new Set(referencedFeishuBots(type.inputs, inputs).map((r) => r.bot))]
 			: [];
@@ -1499,7 +1499,12 @@ export class Engine implements AgentSessionHandler {
 		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
 		await step.tx
 			.update(tasks)
-			.set({ status: "dispatched", inputs, leaseExpiresAt: this.#leaseFrom(step.now) })
+			.set({
+				status: "dispatched",
+				inputs,
+				referencedFeishuBots: referencedBots,
+				leaseExpiresAt: this.#leaseFrom(step.now),
+			})
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
 		return create(ServerMessageSchema, {

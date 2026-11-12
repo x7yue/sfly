@@ -8,7 +8,9 @@
 //! - 任务执行中途 Agent 时间跳变（[`crate::time_jump`]）→ Agent 自己写一行提示，来源 agent、级别 warn；
 //! - `{"type":"progress"}` 只保留最新值，每个任务每秒最多发一次 `Progress`，任务结束前补发最后一次；
 //! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 单调时钟秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
-//!   任务结束前发完。
+//!   任务结束前发完；
+//! - `{"type":"notify"}`（`ctx.notify`，ADR 0020）先发出已经读到的日志，再把这一行原文放进 `Notification` 转给控制面，
+//!   Agent 不解析消息内容。
 //!
 //! 每行和每次进度带两个时间（ADR 0018）：Agent 时间（SDK 事件取 SDK 记录的时间，其余取读到的时刻），以及读到它时的
 //! 单调时钟读数（每次读取读一次时钟），控制面据此折算出控制面时间。
@@ -36,8 +38,8 @@ use tokio::time::Instant;
 use crate::clock;
 use crate::metrics::{Labels, Merger, MetricQueue};
 use crate::proto::{
-    AgentMessage, AssignTask, LogBatch, LogLevel, LogLine, LogSource, MetricBatch, Progress,
-    agent_message,
+    AgentMessage, AssignTask, LogBatch, LogLevel, LogLine, LogSource, MetricBatch, Notification,
+    Progress, agent_message,
 };
 use crate::time_jump;
 
@@ -59,10 +61,11 @@ const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 /// 断开期间默认最多排队的日志字节数。
 pub const DEFAULT_TELEMETRY_QUEUE_BYTES: usize = 64 * 1024 * 1024;
 
-/// 发往控制面的任务消息（`TaskStarted` / `LogBatch` / `Progress` / `MetricBatch`）。
+/// 发往控制面的任务消息（`TaskStarted` / `LogBatch` / `Progress` / `MetricBatch` / `Notification`）。
 /// 连接断开期间在通道里排队，重连后按顺序发送。
 ///
-/// - 日志：排队的字节数有上限，超出时丢弃新的日志批次（控制面按序号看到缺口），其他消息照常排队；
+/// - 日志和通知（`Notification`）：排队的字节数有上限，超出时丢弃新的日志批次（控制面按序号看到缺口）和通知，
+///   其他消息照常排队；
 /// - 指标：批次本身放在有界的 [`MetricQueue`] 里（超出时丢弃最早的点），通道里只放一个占位，
 ///   轮到它时取出最早的指标批次——指标仍按发出顺序排在同一任务的结果之前。
 #[derive(Clone)]
@@ -111,11 +114,14 @@ pub fn telemetry(limit: usize, metric_limit: usize) -> (Telemetry, TelemetryRece
 impl Telemetry {
     pub fn send(&self, message: AgentMessage) {
         let size = message.encoded_len();
-        let is_logs = matches!(message.body, Some(agent_message::Body::Logs(_)));
-        if is_logs && self.queued.load(Ordering::SeqCst) + size > self.limit {
+        let limited = matches!(
+            message.body,
+            Some(agent_message::Body::Logs(_) | agent_message::Body::Notification(_))
+        );
+        if limited && self.queued.load(Ordering::SeqCst) + size > self.limit {
             if !self.dropping.swap(true, Ordering::SeqCst) {
                 eprintln!(
-                    "log queue is full ({} bytes queued while disconnected): dropping new log lines",
+                    "log queue is full ({} bytes queued while disconnected): dropping new log lines and notifications",
                     self.queued.load(Ordering::SeqCst)
                 );
             }
@@ -535,6 +541,8 @@ enum Event {
         #[serde(default)]
         labels: Labels,
     },
+    /// 内容由 SDK 和控制面约定，原文转发。
+    Notify {},
 }
 
 /// 读取事件管道，把以换行结尾的完整内容按块交给 `chunks`，直到所有写端关闭（最后不完整的一行丢弃）。
@@ -691,7 +699,7 @@ impl Forwarder {
         }
     }
 
-    /// 处理事件管道里的一行；`monotonic_ms` 是读到它所在的那一块时的单调时钟读数，三种事件都用它。
+    /// 处理事件管道里的一行；`monotonic_ms` 是读到它所在的那一块时的单调时钟读数，日志、进度和指标都用它。
     fn event(&mut self, line: &[u8], monotonic_ms: i64) {
         match serde_json::from_slice::<Event>(line) {
             Ok(Event::Log { ts, level, message }) => self.pending.push(Pending {
@@ -726,6 +734,15 @@ impl Forwarder {
             }) => self
                 .metrics
                 .add(monotonic_ms, sdk_time_ms(ts), name, labels, &kind, value),
+            // 通知排在节点在它之前写的日志后面。
+            Ok(Event::Notify {}) => {
+                self.flush_lines();
+                self.send(agent_message::Body::Notification(Notification {
+                    task_id: self.task_id.clone(),
+                    attempt: self.attempt,
+                    event_json: String::from_utf8_lossy(line).into_owned(),
+                }));
+            }
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
                 time_unix_ms: clock::agent_time_ms(),

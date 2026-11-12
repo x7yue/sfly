@@ -10,9 +10,17 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from importlib import metadata
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+import sfly
 from sfly import Context, Metric, node
+
+if TYPE_CHECKING:
+    from sfly import FeishuBot
+else:
+    # 「飞书机器人」类型从 SDK 0.3.0 起才有：bundle-self-update 用上一个 Release 的 SDK 加载本包，
+    # 那里用普通字符串代替，本包的其余节点照常可用。
+    FeishuBot = getattr(sfly, "FeishuBot", str)
 
 
 @node(title="回显", outputs=["text"])
@@ -195,6 +203,21 @@ def about(ctx: Context) -> dict[str, Any]:
     """报告当前生效的节点包名与版本（安装与版本切换测试用；同一份源码可换包名和版本构建）。"""
     dist = metadata.distribution(__name__)
     return {"package": dist.metadata["Name"], "version": dist.version}
+
+
+@node(title="飞书通知", outputs=[])
+def notify(
+    ctx: Context, bot: FeishuBot, text: str, at_all: bool = False, unlisted: str = ""
+) -> None:
+    """ctx.notify 测试用（#234）：先写一行日志，再给 bot 发 text；unlisted 不为空时再发给它
+    （普通字符串参数，不在任务引用的飞书机器人名单里）。
+
+    ctx.notify 从 SDK 0.3.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    ctx.log.info("发通知前")
+    ctx.notify(bot, text, at_all=at_all)
+    if unlisted:
+        ctx.notify(unlisted, text)
 
 
 @node(title="多路日志", outputs=[])
