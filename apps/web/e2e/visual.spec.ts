@@ -814,6 +814,26 @@ test.describe("编排画布", () => {
 		await expect(page).toHaveScreenshot("editor-add-menu.png");
 	});
 
+	test("添加节点菜单：最近使用", async ({ page }) => {
+		await page.evaluate(() =>
+			window.localStorage.setItem(
+				"sfly.addNode.recent",
+				JSON.stringify([
+					"package:demo-checks/http_check",
+					"builtin:sleep",
+					"package:demo-checks/ping",
+				]),
+			),
+		);
+		await page.reload();
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await expect(menu.getByRole("group", { name: "最近使用" })).toBeVisible();
+		await idle(page);
+		await expect(page).toHaveScreenshot("editor-add-menu-recent.png");
+	});
+
 	test("语义缩放", async ({ page }) => {
 		for (let i = 0; i < 3; i++) {
 			await page.getByRole("button", { name: "缩小" }).click();

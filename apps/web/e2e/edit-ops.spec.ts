@@ -3,6 +3,7 @@ import {
 	createEditorScenario,
 	dock,
 	edge,
+	editorDocument,
 	headOf,
 	inspector,
 	nodeCard,
@@ -77,6 +78,106 @@ test("工具条「＋」：可搜索的菜单，新节点落在视口中心、�
 	};
 	expect(saved.document.nodes.map((n) => n.id)).toEqual([...existing, "http_check_1", "sleep_1"]);
 	expect(saved.document.edges).toHaveLength(5);
+});
+
+test("添加节点菜单：最近使用在第一组，最新在前，输入搜索词后消失；刷新后还在，所有场景共用；已锁定的包排在其他包前", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { name: "alpha-tools", version: "0.1.0" });
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const menu = addMenu(page);
+	const headings = () => menu.locator("[cmdk-group-heading]").allTextContents();
+	const recent = menu.getByRole("group", { name: "最近使用" });
+
+	await page.keyboard.press("/");
+	await expect(menu).toBeVisible();
+	await expect(recent).toHaveCount(0);
+	// 本场景锁定了 demo-checks：它排在按名称靠前的 alpha-tools 前面。
+	expect(await headings()).toEqual(["内置", "demo-checks @1.2.0", "alpha-tools @0.1.0"]);
+	await menu.getByRole("option", { name: /Sleep/ }).click();
+	await expect(menu).toHaveCount(0);
+	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+
+	await page.keyboard.press("/");
+	await expect(recent.getByRole("option")).toHaveText([/^Sleep/]);
+	await menu
+		.getByRole("group", { name: "demo-checks @1.2.0" })
+		.getByRole("option", { name: /HTTP 检查/ })
+		.click();
+	await expect(menu).toHaveCount(0);
+	await expect(nodeCard(page, "http_check_1")).toBeVisible();
+
+	// 鼠标停在上次点过的位置会让列表里被指着的那一项成为选中项，先挪开。
+	await page.mouse.move(2, 2);
+	await page.keyboard.press("/");
+	expect(await headings()).toEqual([
+		"最近使用",
+		"内置",
+		"demo-checks @1.2.0",
+		"alpha-tools @0.1.0",
+	]);
+	await expect(recent.getByRole("option")).toHaveText([
+		/^HTTP 检查demo-checks\/http_check$/,
+		/^Sleep/,
+	]);
+	await expect(recent.getByRole("option").first()).toHaveAttribute("aria-selected", "true");
+
+	const search = menu.getByRole("combobox", { name: "搜索节点类型" });
+	await search.fill("HTTP");
+	await expect(recent).toHaveCount(0);
+	await expect(menu.getByRole("option").first()).toContainText("HTTP 检查");
+	await search.fill("");
+	await expect(recent.getByRole("option")).toHaveCount(2);
+
+	await recent.getByRole("option", { name: /^Sleep/ }).click();
+	await expect(menu).toHaveCount(0);
+	await expect(nodeCard(page, "sleep_2")).toBeVisible();
+	await page.keyboard.press("/");
+	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
+	await search.fill("定时");
+	await page.keyboard.press("Escape");
+	await expect(menu).toHaveCount(0);
+	await page.keyboard.press("/");
+	await expect(search).toHaveValue("");
+	await expect(recent.getByRole("option")).toHaveCount(2);
+	await page.keyboard.press("Escape");
+
+	await page.reload();
+	await expect(nodeCard(page, "sub_ping")).toBeVisible();
+	await page.keyboard.press("/");
+	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
+	await page.keyboard.press("Escape");
+	const other = await createScenario(controlPlane, "另一个场景", editorDocument);
+	await openEditor(page, other);
+	await page.keyboard.press("/");
+	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
+	await page.keyboard.press("Enter");
+	await expect(addMenu(page)).toHaveCount(0);
+	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+});
+
+test("最近使用里只留还能添加的项：存的内容不对时当作没有；包里已经没有的节点丢掉", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	const store = (value: string) =>
+		page.evaluate((v) => window.localStorage.setItem("sfly.addNode.recent", v), value);
+	const recent = () => addMenu(page).getByRole("group", { name: "最近使用" });
+
+	await page.goto("/agents");
+	await store('{"not":"a list"}');
+	await openEditor(page, id);
+	await page.keyboard.press("/");
+	await expect(addMenu(page).getByRole("group", { name: "内置" })).toBeVisible();
+	await expect(recent()).toHaveCount(0);
+
+	await store(JSON.stringify(["package:demo-checks/removed", "builtin:timer", "package:gone/x"]));
+	await openEditor(page, id);
+	await page.keyboard.press("/");
+	await expect(recent().getByRole("option")).toHaveText([/^定时/]);
 });
 
 /** 画布空白处（主链下方、子流程区域左侧）。 */
