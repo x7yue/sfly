@@ -85,3 +85,40 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 		await app.close();
 	});
 });
+
+describe("请求里的 NUL 字符（#212）", () => {
+	let cp: TestControlPlane;
+	beforeAll(async () => {
+		cp = await startTestControlPlane();
+	});
+	afterAll(async () => {
+		await cp.close();
+	});
+
+	it("路径参数含 NUL 的标识不指向任何东西，返回 404 not_found", async () => {
+		for (const [method, path] of [
+			["POST", "/agents/%00/update-now"],
+			["GET", "/packages/stub/versions/%00"],
+		] as const) {
+			const res = await cp.fetch(path, { method });
+			expect(res.status, `${method} ${path}`).toBe(404);
+			expect(await res.json(), `${method} ${path}`).toMatchObject({ error: { code: "not_found" } });
+		}
+	});
+
+	it("查询参数与 JSON 请求体里含 NUL 的字符串返回 400 invalid_request", async () => {
+		const create = await cp.fetch("/orchestrations", {
+			method: "POST",
+			headers: { "content-type": "application/json", "x-sfly-nickname": "alice" },
+			body: JSON.stringify({ name: "a\u0000b" }),
+		});
+		expect(create.status).toBe(400);
+		expect(await create.json()).toMatchObject({ error: { code: "invalid_request" } });
+
+		const list = await cp.fetch("/orchestrations?q=%00", {
+			headers: { "x-sfly-nickname": "alice" },
+		});
+		expect(list.status).toBe(400);
+		expect(await list.json()).toMatchObject({ error: { code: "invalid_request" } });
+	});
+});

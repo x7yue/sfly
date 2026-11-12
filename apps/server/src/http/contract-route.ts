@@ -18,6 +18,10 @@ import { sendError } from "./errors.js";
  * `requestError` 换成更具体的错误码；details 为 zod issues，path 以 params / query / body 开头），
  * handler 拿到解析后的值。
  *
+ * NUL（`\u0000`）存不进 PostgreSQL 的文本，数据库会直接报错，所以在进 handler 之前统一拦下：
+ * 路径参数含 NUL，说明这个标识不指向任何东西，返回 404 `not_found`；查询参数与 JSON 请求体
+ * （递归遍历普通对象和数组，上传的字节流不检查）里含 NUL 的字符串，返回 400 `invalid_request`。
+ *
  * - {@link contractRoute}：JSON 接口，handler 的返回值在类型上受响应 schema 约束（运行时不再解析，
  *   响应与契约一致由测试用契约解析来保证）；也可以直接返回 `reply`（sendError 的结果、201 状态码）。
  * - {@link contractStream}：SSE，`open` 打开的流只能发送契约里声明的事件。
@@ -104,6 +108,19 @@ export function contractDownload<D extends DownloadDef>(
 	register(app, def, handler);
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	if (value === null || typeof value !== "object") return false;
+	const proto = Object.getPrototypeOf(value);
+	// Fastify 的 params / query 是原型为 null 或 Empty 的字典（普通对象的原型也满足：它的原型是 null）。
+	return proto === null || Object.getPrototypeOf(proto) === null;
+}
+
+function hasNul(value: unknown): boolean {
+	if (typeof value === "string") return value.includes("\u0000");
+	if (Array.isArray(value)) return value.some(hasNul);
+	return isPlainObject(value) && Object.values(value).some(hasNul);
+}
+
 function register<D extends RouteDef>(
 	app: FastifyInstance,
 	def: D,
@@ -113,6 +130,12 @@ function register<D extends RouteDef>(
 		method: def.method,
 		url: def.path,
 		handler: async (req, reply) => {
+			if (hasNul(req.params)) {
+				return sendError(reply, 404, "not_found", "路径参数含 NUL 字符，没有对应的资源");
+			}
+			if (hasNul(req.query) || hasNul(req.body)) {
+				return sendError(reply, 400, "invalid_request", "请求里的字符串不能含 NUL 字符（\\u0000）");
+			}
 			const issues: z.core.$ZodIssue[] = [];
 			const parsePart = (part: "params" | "query" | "body", value: unknown) => {
 				const schema = (def as { [K in typeof part]?: z.ZodType })[part];

@@ -302,6 +302,15 @@ describe("产物", () => {
 		});
 		expect(put.status).toBe(404);
 	});
+
+	it("产物名里带 NUL 时按不存在处理，返回 404 而不是 500（#212）", async () => {
+		const { task } = await setup();
+		for (const name of ["a%00b", "%00"]) {
+			const res = await cp.fetch(`/tasks/${task.taskId}/artifacts/${name}`);
+			expect(res.status, name).toBe(404);
+			expect(await res.json(), name).toMatchObject({ error: { code: "not_found" } });
+		}
+	});
 });
 
 describe("节点输出上限", () => {
