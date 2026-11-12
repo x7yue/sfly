@@ -2,7 +2,7 @@ import { EnvHttpProxyAgent, request } from "undici";
 import { type FeishuFailure, failureFromError, failureFromResponse } from "./feishu-failure.js";
 
 /**
- * 向飞书群机器人的 Webhook 地址发一次请求（ADR 0020）。这是控制面第一次主动对外发 HTTP 请求：
+ * 向飞书机器人的 Webhook 地址发一次请求（ADR 0020）。这是控制面第一次主动对外发 HTTP 请求：
  *
  * - 直接访问 Webhook 地址里的主机，不写死飞书域名（私有部署的飞书也能用）；
  * - 遵循 `HTTPS_PROXY`（http 地址用 `HTTP_PROXY`）和 `NO_PROXY` 环境变量（控制面启动时读取代理设置）；

@@ -49,7 +49,7 @@ const KNOWN_CODES: Record<number, KnownCode> = {
 	9499: {
 		reason: "飞书认为请求格式不对（错误码 9499）",
 		nextStep:
-			"发原始消息时最常见：检查请求体是不是飞书要求的 JSON，msg_type 和 content 要对应。测试消息的内容是固定的，出现它时检查 Webhook 地址是不是飞书群机器人的地址。",
+			"发原始消息时最常见：检查请求体是不是飞书要求的 JSON，msg_type 和 content 要对应。测试消息的内容是固定的，出现它时检查 Webhook 地址是不是飞书机器人的地址。",
 	},
 	11232: {
 		reason: "触发了飞书的频率限制（错误码 11232）",
@@ -114,7 +114,7 @@ export function failureFromResponse(
 			httpStatus,
 			reason: `响应不是飞书机器人的返回格式（HTTP ${httpStatus}）`,
 			nextStep:
-				"确认 Webhook 地址是飞书群机器人的地址；控制面经代理出网时，检查代理（HTTPS_PROXY、NO_PROXY）有没有把请求截走或改写。",
+				"确认 Webhook 地址是飞书机器人的地址；控制面经代理出网时，检查代理（HTTPS_PROXY、NO_PROXY）有没有把请求截走或改写。",
 			retryable: false,
 		};
 	}
