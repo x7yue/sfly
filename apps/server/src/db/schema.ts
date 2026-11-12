@@ -109,6 +109,16 @@ export const agents = pgTable("agents", {
 });
 
 /**
+ * 飞书机器人（ADR 0020）：按名称唯一，创建后不能改名。webhook_url 明文保存（相当于一个凭据，和 secret 参数一样），
+ * 只在界面和日志里打码（src/feishu/webhook-url.ts）；接口不返回完整地址。
+ */
+export const feishuBots = pgTable("feishu_bots", {
+	name: text("name").primaryKey(),
+	webhookUrl: text("webhook_url").notNull(),
+	createdAt: timestamptz("created_at").notNull(),
+});
+
+/**
  * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
  * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
  */

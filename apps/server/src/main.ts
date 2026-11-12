@@ -14,6 +14,8 @@
 //                    下发给 Agent 安装节点包依赖（可选；未设置时 Agent 用 uv 自己的配置，ADR 0012）
 //   SFLY_GITHUB_RELEASE_MIRROR GitHub Release 镜像（例如 https://mirrors.ustc.edu.cn/github-release），
 //                    下发给 Agent 安装 uv、下载 Python（可选；未设置时 Agent 用 uv 的官方来源）
+//   HTTPS_PROXY / HTTP_PROXY / NO_PROXY  控制面访问飞书机器人的 Webhook 地址时使用的代理（可选，ADR 0020）：
+//                    https 地址用 HTTPS_PROXY，http 地址用 HTTP_PROXY，NO_PROXY 里的主机不走代理；没有设置时直接连接
 //   SFLY_RETENTION_DAYS   日志和产物的保留天数（默认 30），运行结束超过这么久后自动清理
 //   SFLY_METRIC_RETENTION_DAYS 指标的保留天数（默认 30），整天超过保留期的指标分区自动删除
 //   SFLY_LOG_LIMIT_MB     单个任务日志的上限（默认 200），超出部分截断

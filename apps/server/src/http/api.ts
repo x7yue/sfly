@@ -7,6 +7,8 @@ import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { UserDocs } from "../docs/user-docs.js";
 import type { Engine } from "../engine/engine.js";
+import type { FeishuBots } from "../feishu/feishu-bots.js";
+import type { FeishuClient } from "../feishu/feishu-client.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import type { MetricQueries } from "../metrics/metric-queries.js";
 import type { TaskMetrics } from "../metrics/task-metrics.js";
@@ -25,6 +27,7 @@ import { contractRoute, guardHttpContract } from "./contract-route.js";
 import { registerDashboardRoutes } from "./dashboard-routes.js";
 import { registerDocsRoutes } from "./docs-routes.js";
 import { sendError } from "./errors.js";
+import { registerFeishuBotRoutes } from "./feishu-bot-routes.js";
 import { registerLogRoutes } from "./log-routes.js";
 import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
@@ -61,6 +64,9 @@ export interface HttpApiDeps {
 	installScript: string;
 	/** 用户文档（src/docs/user-docs.ts）。 */
 	docs: UserDocs;
+	/** 飞书机器人与向飞书发请求的客户端（src/feishu/，ADR 0020）。 */
+	feishuBots: FeishuBots;
+	feishu: FeishuClient;
 	/** 前端构建产物（src/http/web-app.ts）；不设置时不提供页面。 */
 	webApp?: WebApp;
 	/** SSE 心跳的间隔（src/sse/sse.ts）。 */
@@ -97,6 +103,8 @@ export function buildHttpApi({
 	agentBinaries,
 	installScript,
 	docs,
+	feishuBots,
+	feishu,
 	webApp,
 	sseHeartbeatMs,
 }: HttpApiDeps): FastifyInstance {
@@ -136,6 +144,7 @@ export function buildHttpApi({
 
 	registerAgentRoutes(app, { hub, engine, orchestrations });
 	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
+	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerRunRoutes(app, {
 		db: database.db,

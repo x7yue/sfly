@@ -29,6 +29,7 @@ import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
 import { stoppingRun } from "./stop-subflow-scenario";
 import {
+	createFeishuBot,
 	createScenario,
 	failApi,
 	holdApi,
@@ -143,6 +144,50 @@ test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connec
 	await expect(page).toHaveScreenshot("agents-update-now.png", {
 		mask: [page.locator('ul[aria-label="会被终止的任务"] li > span.text-xs')],
 	});
+});
+
+test("飞书机器人：列表与测试结果", async ({ page, controlPlane, feishu }) => {
+	await createFeishuBot(
+		controlPlane,
+		"压测群",
+		feishu.webhookUrl("4f9a8c71-e2b0-43d6-9a55-0a1b2c3d4e5f"),
+	);
+	await createFeishuBot(
+		controlPlane,
+		"告警群",
+		feishu.webhookUrl("7d02c1b9-5e3a-4c88-b6f1-9e8d7c6b5a40"),
+	);
+	await createFeishuBot(
+		controlPlane,
+		"日报群",
+		feishu.webhookUrl("c3a1e9d4-0b7f-4a52-8d6e-1f2a3b4c5d6e"),
+	);
+
+	await page.goto("/feishu-bots");
+	const result = (name: string) => page.getByRole("row", { name: new RegExp(`^${name}`) });
+	await result("压测群").getByRole("button", { name: "发送测试消息" }).click();
+	await expect(result("压测群")).toContainText("测试消息已送达");
+	feishu.reply({ code: 19024, msg: "Key Words Not Found" });
+	await result("告警群").getByRole("button", { name: "发送测试消息" }).click();
+	await expect(result("告警群")).toContainText("飞书错误码 19024");
+
+	await expect(page).toHaveScreenshot("feishu-bots.png");
+});
+
+test("飞书机器人：登记弹窗", async ({ page }) => {
+	await page.goto("/feishu-bots");
+	await page.getByRole("button", { name: "登记机器人" }).click();
+	const dialog = page.getByRole("dialog", { name: "登记飞书机器人" });
+	await dialog.getByLabel("名称").fill("压测群");
+	await dialog.getByLabel("Webhook 地址").fill("ftp://feishu.example/hook/1");
+	await expect(dialog).toContainText("Webhook 地址必须是 http 或 https 地址");
+	await expect(page).toHaveScreenshot("feishu-bots-register.png");
+});
+
+test("飞书机器人：还没有登记", async ({ page }) => {
+	await page.goto("/feishu-bots");
+	await expect(page.getByRole("region", { name: "还没有登记飞书机器人" })).toBeVisible();
+	await expect(page).toHaveScreenshot("feishu-bots-empty.png");
 });
 
 test("Agent 列表为空", async ({ page }) => {

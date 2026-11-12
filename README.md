@@ -74,6 +74,11 @@ docker compose up -d
 
   install.sh 和 Agent 用 curl、wget 下载时带 User-Agent `sfly-agent/<版本>`（镜像站会封禁它们的部分默认 User-Agent，[ustclug/discussions#479](https://github.com/ustclug/discussions/issues/479)），本机可以用 `SFLY_USER_AGENT`（Agent 的 `--user-agent`）换成自己机构的标识，见用户文档「安装 Agent」的「下载用的 User-Agent」。
 
+- 飞书通知（ADR 0020）：控制面直接访问飞书机器人的 Webhook 地址（不写死飞书域名），这是控制面第一次主动对外发 HTTP 请求，所以**控制面所在的机器要能访问飞书**（官方飞书是 `open.feishu.cn` 的 443 端口，私有部署的飞书按登记的地址）。Agent 不需要出网。
+  - 只能经代理出网时，给控制面设置环境变量 `HTTPS_PROXY`（http 地址用 `HTTP_PROXY`）和 `NO_PROXY`（不走代理的主机，用逗号分隔，例如私有部署的飞书）。控制面启动时读取它们；docker compose 在 `.env` 里写，会传进容器。
+  - 飞书群里的机器人开启了 IP 白名单时，填**控制面**访问飞书的出口 IP（经代理出网时是代理的出口 IP），不是 Agent 的 IP。sfly 不支持签名校验，机器人只能用关键词或 IP 白名单。
+  - 在「飞书机器人」页登记机器人后，点「发送测试消息」立即验证；失败时页面用中文写出原因和下一步。
+  - Webhook 地址相当于一个凭据：数据库里明文保存，界面和日志里只露出开头和结尾。平台没有认证（ADR 0004），能打开页面的人可以新增、替换、删除机器人，也能让它往群里发测试消息。
 - 其余配置见 `apps/server/src/main.ts` 顶部注释（保留天数与大小上限等）。
 - 需要 TLS 或统一入口时，按 Fastify 官方建议在前面加反向代理。SSE 要关闭代理缓冲；Agent 网关是 gRPC（HTTP/2），要么单独开放 50051，要么用 `grpc_pass` 转发。nginx 示例：
 

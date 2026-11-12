@@ -1,0 +1,161 @@
+import { type FeishuBotView, type FeishuTestResult, feishuBotsApi } from "@sfly/schema";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { createFileRoute } from "@tanstack/react-router";
+import { BotIcon } from "lucide-react";
+import { useState } from "react";
+import { notify } from "#/components/feedback/notify";
+import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
+import { Page, PageHeader, Panel } from "#/components/page";
+import { StatusPill } from "#/components/status";
+import { DeleteBotDialog, RegisterBotDialog, ReplaceWebhookDialog } from "#/feishu-bots/dialogs";
+import { apiQuery, callApi } from "#/lib/api";
+import { PAGE } from "#/lib/copy";
+import { formatDateTime } from "#/lib/format";
+import { Button } from "@/components/ui/button";
+import {
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
+
+export const Route = createFileRoute("/_shell/feishu-bots")({
+	staticData: { crumb: PAGE.feishuBots },
+	component: FeishuBotsPage,
+});
+
+/** 飞书机器人管理页（ADR 0020）：登记、替换 Webhook 地址、删除、发送测试消息。 */
+function FeishuBotsPage() {
+	const bots = useQuery(apiQuery(feishuBotsApi.list));
+	const [registering, setRegistering] = useState(false);
+	return (
+		<Page>
+			<PageHeader
+				title={PAGE.feishuBots}
+				count={bots.data?.bots.length}
+				actions={
+					bots.data &&
+					bots.data.bots.length > 0 && (
+						<Button variant="primary" onClick={() => setRegistering(true)}>
+							登记机器人
+						</Button>
+					)
+				}
+			/>
+			<Panel>
+				<QueryView
+					query={bots}
+					loading={<TableSkeleton columns={5} />}
+					errorTitle="无法加载飞书机器人"
+					isEmpty={(d) => d.bots.length === 0}
+					empty={
+						<EmptyState
+							icon={<BotIcon />}
+							title="还没有登记飞书机器人"
+							description="在飞书群里添加「自定义机器人」，把它的 Webhook 地址登记到这里。通知由控制面直接发给飞书，Agent 不需要访问外网。sfly 不支持签名校验，机器人的安全设置请用关键词或 IP 白名单。"
+						>
+							<Button variant="primary" onClick={() => setRegistering(true)}>
+								登记机器人
+							</Button>
+						</EmptyState>
+					}
+				>
+					{(data) => <BotTable bots={data.bots} />}
+				</QueryView>
+			</Panel>
+			<RegisterBotDialog open={registering} onOpenChange={setRegistering} />
+		</Page>
+	);
+}
+
+function BotTable({ bots }: { bots: FeishuBotView[] }) {
+	return (
+		<Table aria-label="飞书机器人列表">
+			<TableHeader>
+				<TableRow>
+					<TableHead>名称</TableHead>
+					<TableHead>Webhook 地址</TableHead>
+					<TableHead>登记时间</TableHead>
+					<TableHead>测试结果</TableHead>
+					<TableHead>
+						<span className="sr-only">操作</span>
+					</TableHead>
+				</TableRow>
+			</TableHeader>
+			<TableBody>
+				{bots.map((bot) => (
+					<BotRow key={bot.name} bot={bot} />
+				))}
+			</TableBody>
+		</Table>
+	);
+}
+
+function BotRow({ bot }: { bot: FeishuBotView }) {
+	const [replacing, setReplacing] = useState(false);
+	const [deleting, setDeleting] = useState(false);
+	// 测试结果只在这个页面里显示：不经过发送队列，也不保存。
+	const test = useMutation({
+		mutationFn: () => callApi(feishuBotsApi.test, { params: { name: bot.name } }),
+		onError: (error) => notify.error("发送测试消息失败", { description: error.message }),
+	});
+	return (
+		<TableRow>
+			<TableCell className="whitespace-nowrap font-mono font-medium">{bot.name}</TableCell>
+			<TableCell className="font-mono text-xs text-fg-2">{bot.webhook_url}</TableCell>
+			<TableCell className="whitespace-nowrap font-mono text-xs text-fg-3">
+				{formatDateTime(bot.created_at)}
+			</TableCell>
+			<TableCell className="max-w-md text-xs whitespace-normal">
+				<div aria-live="polite">
+					{test.isPending ? (
+						<StatusPill kind="running">发送中</StatusPill>
+					) : test.data ? (
+						<TestResult result={test.data} />
+					) : (
+						<span className="text-fg-3">未测试</span>
+					)}
+				</div>
+			</TableCell>
+			<TableCell className="text-right whitespace-nowrap">
+				<div className="flex justify-end gap-1.5">
+					<Button size="sm" disabled={test.isPending} onClick={() => test.mutate()}>
+						发送测试消息
+					</Button>
+					<Button size="sm" variant="ghost" onClick={() => setReplacing(true)}>
+						替换地址
+					</Button>
+					<Button size="sm" variant="ghost" onClick={() => setDeleting(true)}>
+						删除
+					</Button>
+				</div>
+				<ReplaceWebhookDialog
+					bot={bot}
+					open={replacing}
+					onOpenChange={setReplacing}
+					onReplaced={() => test.reset()}
+				/>
+				<DeleteBotDialog bot={bot} open={deleting} onOpenChange={setDeleting} />
+			</TableCell>
+		</TableRow>
+	);
+}
+
+/** 测试消息的结果：成功，或失败的中文原因、下一步和飞书的错误码。 */
+function TestResult({ result }: { result: FeishuTestResult }) {
+	if (result.ok) return <StatusPill kind="ok">{result.message}</StatusPill>;
+	const codes = [
+		result.feishu_code !== null && `飞书错误码 ${result.feishu_code}`,
+		result.http_status !== null && `HTTP ${result.http_status}`,
+	].filter(Boolean);
+	return (
+		<div className="flex flex-col gap-0.5">
+			<StatusPill kind="failed">测试失败</StatusPill>
+			<div className="text-fg-1">{result.message}</div>
+			{result.next_step && <div className="text-fg-2">下一步：{result.next_step}</div>}
+			{codes.length > 0 && <div className="font-mono text-2xs text-fg-3">{codes.join(" · ")}</div>}
+		</div>
+	);
+}

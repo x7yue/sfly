@@ -15,6 +15,8 @@ import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
+import { FeishuBots } from "./feishu/feishu-bots.js";
+import { FeishuClient } from "./feishu/feishu-client.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
@@ -223,6 +225,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		retentionDays: options.retentionDays,
 	});
 	const presence = new PresenceRegistry({ clock });
+	// 控制面直接向飞书群机器人的 Webhook 地址发请求（ADR 0020）；代理设置（HTTPS_PROXY、NO_PROXY）在这里读取。
+	const feishu = new FeishuClient();
+	const feishuBots = new FeishuBots({ db: database.db, clock });
 	const api = buildHttpApi({
 		database,
 		clock,
@@ -249,6 +254,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		agentBinaries,
 		installScript,
 		docs,
+		feishuBots,
+		feishu,
 		sseHeartbeatMs: options.sseHeartbeatMs,
 		webApp,
 	});
@@ -288,6 +295,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			onError: sessionError,
 		});
 	} catch (error) {
+		await feishu.close();
 		await api.close();
 		await database.close();
 		throw error;
@@ -338,6 +346,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			await metrics.close().catch(fail("metric flush"));
 			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
 			await mutex.run(async () => {});
+			// 先中断还在等飞书响应的请求，api.close() 才不会等它们。
+			await feishu.close();
 			await api.close();
 			await database.close();
 		},
