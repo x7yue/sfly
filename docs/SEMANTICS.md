@@ -207,7 +207,7 @@ queued / running / waiting / pending ──▶ stopped（所在子流程被停�
 7. **三种格式的请求体**（飞书请求体不能超过 20 KB，指紧凑 JSON 按 UTF-8 编码的字节数）：
    - 文本：`msg_type: text`，`at_all` 打开时在正文末尾追加 `<at user_id="all">所有人</at>`。
    - Markdown 卡片：`msg_type: interactive`，卡片 JSON 2.0：header 是标题加颜色模板，body 是一个 markdown 元素。标题和正文照原样放进去，空字符串也照常组装。请求体超过 20 KB 时截断正文：留下最长的、放得下的前缀，末尾接上「…（已截断）」；标题太长，连截断后的正文都放不下时不发送（节点日志里写 warning）。组装规则和一组与实现无关的用例在 `testdata/feishu-card-cases.json`，SDK 的 `sfly.feishu.card` 跑同一组用例。
-   - 原始消息：`message` 原样发出，不改写、不补字段。引用先于序列化解析，所以引用的值里有引号、换行也不会弄坏 JSON。只校验它是一个对象、`msg_type` 是 `text`、`post`、`image`、`share_chat`、`interactive` 之一、不超过 20 KB；不合格或超过 20 KB 时**不截断**（截断会弄坏结构），不发送，节点日志里写 warning 说明原因。图片只能用自己已有的 `image_key`。
+   - 原始消息：`message` 原样发出，不改写、不补字段。引用先于序列化解析，所以引用的值里有引号、换行也不会弄坏 JSON。只校验它是一个对象、`msg_type` 是 `text`、`post`、`image`、`share_chat`、`interactive` 之一、不超过 20 KB；不合格或超过 20 KB 时**不截断**（截断会弄坏结构），不发送，节点日志里写 warning 说明原因。图片只能用自己已有的 `image_key`。 节点代码里 `ctx.notify(bot, message=...)` 发的原始消息（含 `sfly.feishu.card` 组装的卡片）适用同样的校验，不合格的不发送，在任务日志里写 warning，不抛异常。
 
 ---
 

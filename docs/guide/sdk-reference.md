@@ -165,6 +165,7 @@ ctx.progress(3, 10, "第 3 批")
 ## `ctx.notify`：飞书通知
 
 ```python
+import sfly
 from sfly import Context, FeishuBot, node
 
 
@@ -173,19 +174,36 @@ def stress(ctx: Context, qps: int, alert_bot: FeishuBot) -> dict:
     ...
     if p99 > 500:
         ctx.notify(alert_bot, f"p99 {p99} ms，超过 500 ms", at_all=True)
+        ctx.notify(
+            alert_bot,
+            message=sfly.feishu.card("压测告警", f"**p99** {p99} ms，超过 500 ms", "red"),
+        )
     ...
 ```
 
-`ctx.notify(bot, text, *, at_all=False)` 给飞书机器人 `bot` 发一条文本消息，调用后立即返回。
+```python
+ctx.notify(bot, text, *, at_all=False)   # 发文本
+ctx.notify(bot, message=...)             # 发原始消息：完整的飞书请求体
+sfly.feishu.card(title, markdown, color="blue")   # Markdown 卡片的请求体
+```
 
-- **投递失败永远不会抛出异常**：消息由控制面发出（ADR 0020），`ctx.notify` 只把它交给 Agent，不访问网络、不等结果。飞书不可达、返回错误、机器人已被删除时，节点照常执行，不会因为通知失败或变慢。只有参数类型不对（`bot`、`text` 不是字符串，`at_all` 不是布尔值）时抛出 `TypeError`。
+`ctx.notify` 给飞书机器人 `bot` 发一条消息，调用后立即返回。`text` 和 `message` 二选一，对应飞书通知节点的三种格式（见 [飞书通知](feishu-notify.md)）：
+
+| 写法 | 发出的请求体 |
+|---|---|
+| `ctx.notify(bot, text)` | 文本：`{"msg_type": "text", "content": {"text": ...}}`。`at_all=True` 时在正文末尾加上「@所有人」；正文里自己写的 `<at user_id="ou_xxx">名字</at>` 原样发出。请求体超过 20 KB 时截断正文，末尾加上「…（已截断）」，「@所有人」仍在最后 |
+| `ctx.notify(bot, message=sfly.feishu.card(...))` | Markdown 卡片：和画布上飞书通知节点的「Markdown 卡片」格式一样 |
+| `ctx.notify(bot, message={...})` | 原始消息：你给的请求体，原样发出，不改写、不补字段。富文本（`post`）、自己设计的卡片、模板卡片都走这一种 |
+
+- **投递失败永远不会抛出异常**：消息由控制面发出（ADR 0020），`ctx.notify` 只把它交给 Agent，不访问网络、不等结果。飞书不可达、返回错误、机器人已被删除时，节点照常执行，不会因为通知失败或变慢。只有调用的写法不对时抛出 `TypeError`：`bot` 不是字符串，`text` 和 `message` 同时给或都不给，`text` 不是字符串，`at_all` 不是布尔值，发原始消息时还给了 `at_all`（它只对文本有意义，要 @所有人就写在消息里）。
 - `bot` 必须是通过「飞书机器人」类型的参数（`sfly.FeishuBot`，见上文）传给节点的机器人名称。其他名称（写死在代码里的、普通字符串参数传进来的）不发送，任务日志里写一条 warning，提示把它声明成 `FeishuBot` 参数；机器人没有登记时同样。
-- 请求体与飞书通知节点的「文本」格式相同：`{"msg_type": "text", "content": {"text": ...}}`。`at_all=True` 时在正文末尾加上「@所有人」；正文里自己写的 `<at user_id="ou_xxx">名字</at>` 原样发出。请求体超过 20 KB 时截断正文，末尾加上「…（已截断）」，「@所有人」仍在最后。
+- **原始消息的校验**与飞书通知节点的原始消息相同：只检查它是一个对象（JSON 对象，写成 `dict`）、`msg_type` 是 `text`、`post`、`image`、`share_chat`、`interactive` 之一、整个请求体不超过 20 KB（紧凑 JSON 按 UTF-8 编码的字节数）。不合格的**不发送、不截断**（截断会弄坏结构），任务日志里写一条 warning 说明原因（来源是 system，例如「ctx.notify 的消息没有发送：原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一」），`ctx.notify` 不抛异常。图片消息只能用自己已有的 `image_key`，平台不上传图片。
+- **`sfly.feishu.card(title, markdown, color="blue")`** 返回 Markdown 卡片的请求体（`msg_type: interactive`，卡片 JSON 2.0：header 是标题加颜色，正文是一个 Markdown 元素），拿去给 `message=` 就能发。`color` 是 `blue`（默认）、`green`、`orange`、`red`、`grey` 之一。标题和正文照原样放进去，不做 Markdown 转义，空字符串也照常组装；请求体超过 20 KB 时截断 Markdown 正文，末尾加上「…（已截断）」。它和控制面使用同一套组装规则和同一组用例，保证代码里发的卡片和画布上的 Markdown 卡片一样。`title`、`markdown` 不是字符串抛出 `TypeError`，`color` 不是上面五种之一、或者标题长到连截断后的正文都放不下时抛出 `ValueError`：这些是写法上的错误，开发时就会看到。
 - 投递结果写进这个任务的日志，来源是 system：送达是 info，失败（写明原因和下一步）或被丢弃是 warning。同一个机器人的消息按调用的先后串行发出、限速（ADR 0020）。
 - Agent 和控制面断开期间，通知和日志一样在 Agent 上排队，重连后发出。
-- 本地调试不真的发送：`sfly run` 把要发给哪个机器人、请求体是什么打印出来；`sfly.testing.run_node` 的结果里有 `notifications`（见下文）。和平台一样，不是通过「飞书机器人」参数传入的机器人不记录，日志里写一条 warning。
+- 本地调试不真的发送：`sfly run` 把要发给哪个机器人、请求体是什么打印出来；`sfly.testing.run_node` 的结果里有 `notifications`，原始消息和卡片的请求体都在里面（见下文）。和平台一样，不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不记录，日志里写一条 warning。
 
-这个接口从 SDK 0.3.0 起可用。用到它的节点包把 `requires-sdk` 和 `requires-agent` 都调到 `>=0.3.0`：更旧的 Agent 上没有这个接口，也不会转发通知；声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
+这个接口（包括 `message=` 和 `sfly.feishu.card`）从 SDK 0.3.0 起可用。用到它的节点包把 `requires-sdk` 和 `requires-agent` 都调到 `>=0.3.0`：更旧的 Agent 上没有这个接口，也不会转发通知；声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
 
 ## `ctx.metric`：指标
 
@@ -597,11 +615,29 @@ def test_count_lines(tmp_path: Path) -> None:
 | `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr、sdk，或 system（平台写的提示，例如 `ctx.notify` 发给了不在名单里的机器人） |
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
-| `notifications` | `Notification(ts, bot, body)` 的列表：每次 `ctx.notify` 发给的飞书机器人名称和完整的请求体，没有真的发送（不是通过「飞书机器人」参数传入的机器人不在里面）。从 SDK 0.3.0 起可用 |
+| `notifications` | `Notification(ts, bot, body)` 的列表：每次 `ctx.notify` 发给的飞书机器人名称和完整的请求体（文本、`sfly.feishu.card` 组装的卡片和原始消息都在里面，可以直接断言），没有真的发送（不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不在里面，日志里有 warning）。从 SDK 0.3.0 起可用 |
 | `artifacts` | 产物名称 → 本地文件路径 |
 | `artifacts_dir`、`work_dir` | 产物目录、工作目录 |
 
 `ts` 是 Unix 毫秒时间戳。
+
+断言节点要发的通知：`notifications` 里每一项是机器人名称和完整的请求体，不用起任何服务。
+
+```python
+import sfly
+from sfly.testing import run_node
+
+from demo.example import stress
+
+
+def test_stress_alerts_the_bot_with_a_red_card(tmp_path: Path) -> None:
+    result = run_node(stress, {"qps": 100, "alert_bot": "ops"}, work_dir=tmp_path)
+
+    assert result.status == "success", result.error
+    [notification] = result.notifications
+    assert notification.bot == "ops"
+    assert notification.body == sfly.feishu.card("压测告警", "**p99** 612 ms，超过 500 ms", "red")
+```
 
 ## 命令行 `sfly`
 

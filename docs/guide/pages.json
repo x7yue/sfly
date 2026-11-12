@@ -18,7 +18,7 @@
 		{
 			"slug": "sdk-reference",
 			"title": "开发节点（SDK 参考）",
-			"description": "@node、输入输出的类型注解、ctx 的日志、进度、指标、产物、取消，sfly.testing 与 sfly 命令行"
+			"description": "@node、输入输出的类型注解、ctx 的日志、进度、指标、产物、飞书通知 ctx.notify 与 sfly.feishu.card、取消，sfly.testing 与 sfly 命令行"
 		},
 		{
 			"slug": "local-debug",
@@ -49,6 +49,11 @@
 			"slug": "cross-agent-files",
 			"title": "跨 Agent 处理文件",
 			"description": "在一台 Agent 上处理另一台 Agent 上的文件：以日志清洗为例，清洗节点用 ctx.agent() 监听、下载、删除另一台机器上的日志，清洗放在子流程里与主链并行，判断文件不再续写的几种做法及各自的坑，以及不写代码的 watch_files"
+		},
+		{
+			"slug": "feishu-notify",
+			"title": "飞书通知",
+			"description": "把运行的关键时刻发到飞书群：登记飞书机器人、飞书通知节点的文本 / Markdown 卡片 / 原始消息三种格式、运行结束时自动发的运行通知、节点代码里的 ctx.notify 与 sfly.feishu.card、重试限速等投递规则、群安全设置（关键词、IP 白名单、签名校验）的常见错误，以及部署时的出网、代理要求"
 		}
 	]
 }

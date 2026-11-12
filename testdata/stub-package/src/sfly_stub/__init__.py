@@ -227,7 +227,6 @@ def notify_message(ctx: Context, bot: FeishuBot, message: Any, unlisted: str = "
 
     message= 从 SDK 0.3.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
     """
-    ctx.log.info("发通知前")
     ctx.notify(bot, message=message)
     if unlisted:
         ctx.notify(unlisted, message=message)
@@ -245,7 +244,6 @@ def notify_card(
 
     sfly.feishu 从 SDK 0.3.0 起才有，在函数里才访问它：上一个 Release 的 SDK 仍然能导入本包。
     """
-    ctx.log.info("发通知前")
     ctx.notify(bot, message=sfly.feishu.card(title, markdown, color))
 
 
