@@ -4,7 +4,12 @@ import { Transform, type TransformCallback } from "node:stream";
 import { logsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
-import { decodeRunLogCursor, encodeRunLogCursor } from "../logs/run-log-cursor.js";
+import {
+	decodeRunLogCursor,
+	decodeRunLogLiveCursor,
+	encodeRunLogCursor,
+	encodeRunLogLiveCursor,
+} from "../logs/run-log-cursor.js";
 import type { RunLogs } from "../logs/run-log-pages.js";
 import { type LogChunk, normalizeLogRow, type TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
@@ -29,6 +34,9 @@ import { sendError } from "./errors.js";
  * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取（`before` / `after` 游标，#223），
  * 见 run-log-pages.ts 与 run-log-cursor.ts；游标不是这里返回的格式时 400 `invalid_request`。
  * `nodes`（节点范围）与 `level`（级别）在服务端执行（#224），写法见 @sfly/schema 的 run-log-scope.ts。
+ * 实时推送（#225）：`GET /runs/:id/logs/events`，`after` 是分页返回的 `live_after`，事件 ID 是推送到的位置，
+ * 浏览器重连时 URL 里仍是第一次的 `after`，`Last-Event-ID` 是推送到的位置，按每个任务取较大者接上（RunLogs.follow）。
+ * 运行已过保留期时只保持连接、不推送（之后不会再有日志）。
  */
 export function registerLogRoutes(
 	app: FastifyInstance,
@@ -66,10 +74,51 @@ export function registerLogRoutes(
 			after: encodeRunLogCursor(expired ? start : page.after),
 			reached_start: expired || page.reachedStart,
 			reached_end: expired || page.reachedEnd,
+			live_after: encodeRunLogLiveCursor(expired ? start : page.live),
 			truncated_tasks: expired ? [] : page.truncatedTasks,
 			expired,
 		};
 	});
+
+	contractStream(
+		app,
+		deps.sse,
+		logsApi.runEvents,
+		async ({ params, query }, open, reply, request) => {
+			const after = query.after === undefined ? new Map() : decodeRunLogLiveCursor(query.after);
+			if (!after) {
+				return sendError(reply, 400, "invalid_request", "after 不是之前返回的 live_after");
+			}
+			const runId = params.id;
+			if (!isUuid(runId) || !(await deps.runLogs.exists(runId))) {
+				return sendError(reply, 404, "not_found", "run not found");
+			}
+			const purged = await deps.isPurged(runId);
+			open((stream) => {
+				if (purged) return undefined;
+				const from = new Map(after);
+				const resumed = stream.lastEventId && decodeRunLogLiveCursor(stream.lastEventId);
+				for (const [order, seq] of resumed || []) {
+					from.set(order, Math.max(seq, from.get(order) ?? 0));
+				}
+				const filter: LogFilter = { levels: query.level ? new Set(query.level) : undefined };
+				return deps.runLogs.follow(
+					runId,
+					{ scope: query.nodes, filter, after: from },
+					(event) => {
+						const id = encodeRunLogLiveCursor(event.at);
+						if (event.kind === "lines") stream.send("logs", { lines: event.lines }, id);
+						else stream.send("reload", {}, id);
+					},
+					(error) => {
+						request.log.error(error);
+						stream.close();
+					},
+				);
+			});
+			return undefined;
+		},
+	);
 
 	contractRoute(app, logsApi.page, async ({ params, query }, reply) => {
 		const info = isUuid(params.id) ? await deps.logs.describe(params.id) : undefined;

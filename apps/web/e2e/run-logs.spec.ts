@@ -12,7 +12,8 @@ import { openMonitor, type Running, runningScenario } from "./monitor-scenario";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 没选中节点时，日志页签按控制面时间合并显示整次运行全部节点的日志（#222），向上滚动加载更早的（#223）；
-// 有节点筛选时只合并显示筛选出的节点，可以按级别筛选，点来源节点名切到这个节点（#224）。
+// 有节点筛选时只合并显示筛选出的节点，可以按级别筛选，点来源节点名切到这个节点（#224）；
+// 运行执行中时实时显示新写入的行，晚到的行插到它按控制面时间应在的位置（#225）。
 
 const timeline = (page: Page) => page.getByRole("region", { name: "链路时间线" });
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
@@ -240,6 +241,94 @@ test("合并视图里没有任何日志时底部面板自动收起，展开后�
 	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
 	await panel(page).getByRole("button", { name: "展开" }).click();
 	await expect(panel(page).getByRole("tabpanel")).toHaveText("这次运行没有日志输出。");
+});
+
+test("执行中的运行：合并视图实时显示新写入的行，晚到的行按控制面时间插到它应在的位置，之后才开始的节点的行也出现", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const running = await runningScenario(controlPlane, connectAgent, clock);
+	await interleavedLogs(controlPlane, running, clock0);
+	const { runId, agent, tasks } = running;
+	const at = logAt(agent, clock0);
+
+	await openMonitor(page, clock, runId);
+	await nodeButton(page, "verify").click();
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
+	const logs = panel(page).getByRole("log", { name: "日志" });
+	const rows = logs.getByRole("button");
+	await expect(rows).toHaveCount(9);
+
+	// probe 接着输出；之后 verify 第 2 次补发一行比 probe 已显示的两行都早的（晚到的行）。
+	agent.logs(tasks.probe as AssignedTask, [at(3, 13_500, "probe tock")]);
+	await expect(rows).toHaveCount(10);
+	agent.logs(tasks.verify as AssignedTask, [at(2, 11_500, "verify 2 late")]);
+	// verify 第 2 次成功后，always 节点 cleanup 才开始执行并输出。
+	await agent.succeed(tasks.verify as AssignedTask);
+	const cleanup = await agent.nextAssign();
+	agent.logs(cleanup, [at(1, 15_000, "cleanup done")]);
+
+	await expect(rows).toHaveCount(12);
+	await expect(rows).toContainText([
+		"开始执行",
+		"load config ok",
+		"retrying request (1/3): connection reset",
+		"batch committed",
+		"verify 1 checking",
+		"probe started",
+		"AssertionError: 漏拦 3 笔",
+		"verify 2 retrying",
+		"verify 2 late",
+		"probe tick",
+		"probe tock",
+		"cleanup done",
+	]);
+	await expect(logs.locator("[data-log-origin]")).toHaveText([
+		"fetch",
+		"fetch",
+		"fetch",
+		"fetch",
+		"verify #1",
+		"sub / probe",
+		"verify #1",
+		"verify #2",
+		"verify #2",
+		"sub / probe",
+		"sub / probe",
+		"cleanup",
+	]);
+});
+
+test("执行中的运行在合并视图里还没有日志时底部面板自动收起，日志到了自动展开", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane);
+	const scenarioId = await createScenario(controlPlane, "稍后输出", scenarioUsing("agent-a"));
+	const clock0 = clock.now().getTime();
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const ping = await agent.nextAssign();
+
+	await openMonitor(page, clock, runId);
+	// 默认选中执行中的 ping；取消选中后是全部节点，还没有任何日志：自动收起。
+	await nodeButton(page, "ping").click();
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
+	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
+
+	agent.logs(ping, [logAt(agent, clock0)(1, 1_000, "ping started")]);
+	await expect(panel(page).getByRole("button", { name: "收起" })).toBeVisible();
+	await expect(panel(page).getByRole("log", { name: "日志" }).getByRole("button")).toHaveText([
+		/ping started/,
+	]);
 });
 
 /** Agent 在运行开始后第 atMs 毫秒（控制面时间）读到的一行。 */

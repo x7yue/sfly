@@ -1,5 +1,6 @@
 // 切入点 A：按运行合并读取日志（#222、#223）。两台假 Agent 经 gRPC 上报日志（各自的 Agent 时间偏差不同），
 // 通过 HTTP 读取整次运行合并后的日志：按控制面时间交错排列，每行带来源；用游标往前翻页、往后接续。
+// 实时推送（#225）用 SSE 客户端从分页给出的起点接上，按 Last-Event-ID 续传。
 import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -19,6 +20,7 @@ import { eventually } from "./support/eventually.js";
 import { agentClock, FakeAgent, LogLevel, LogSource } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
+import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /**
@@ -933,6 +935,248 @@ describe("按运行合并读取日志", () => {
 			// 同一个参数重复给出也不接受（范围只有一个 nodes）。
 			const twice = await cp.fetch(`/runs/${runId}/logs?nodes=${main}:z&nodes=${main}:a`);
 			expect(twice.status).toBe(400);
+		});
+	});
+
+	describe("实时推送（#225）", () => {
+		const streams: SseClient[] = [];
+		afterEach(() => {
+			for (const sse of streams.splice(0)) sse.close();
+		});
+
+		/** 连上按运行的实时推送；headers 可带 last-event-id 模拟浏览器重连。 */
+		const follow = async (
+			runId: string,
+			params: Record<string, string> = {},
+			headers: Record<string, string> = {},
+		) => {
+			const sse = await SseClient.open(cp, `/runs/${runId}/logs/events?${query(params)}`, headers);
+			streams.push(sse);
+			return sse;
+		};
+		/** 收 logs 事件直到凑够 n 行（按收到的先后）；返回这些行和最后一个事件的 ID。 */
+		const pushed = async (sse: SseClient, n: number) => {
+			const lines: RunLogLine[] = [];
+			let id: string | undefined;
+			while (lines.length < n) {
+				const event = await sse.next("logs");
+				lines.push(...logsApi.runEvents.events.logs.parse(event.data).lines);
+				id = event.id;
+			}
+			expect(lines).toHaveLength(n);
+			return { lines, id: id as string };
+		};
+		const keyOf = (l: RunLogLine) => `${l.task_id}:${l.seq}`;
+		/** 等这个任务的日志写到第 seq 行（行数多、扫描量小时不能用 settled）。 */
+		const written = (task: { taskId: string }, seq: number) =>
+			eventually(async () => {
+				const own = logsApi.page.response.parse(
+					await (await cp.fetch(`/tasks/${task.taskId}/logs?limit=1`)).json(),
+				);
+				expect(own.last_seq).toBe(seq);
+			});
+
+		/** 主链 entry → z（失败重试 1 次）→ spawn → a，spawn 之后才触发子流程「回放」sub → s（在 agent-b 上执行）。 */
+		const LATE_SUBFLOW = orchestration(
+			[
+				[{ id: "entry", kind: "entry" }, { ...echo("z"), retries: 1 }, spawn("spawn"), echo("a")],
+				[
+					{ id: "sub", kind: "subflow_entry", name: "回放", params: [] },
+					{ ...echo("s"), agent: "agent-b" },
+				],
+			],
+			[["spawn", "sub"]],
+		);
+
+		it("先读最新一页、再用 live_after 接上：之后写入的行都推送到（包括之后才开始的尝试和新触发的子流程），每行与分页读出的相同，合起来不重复不遗漏", async () => {
+			const { a, b, runId } = await setup({ doc: LATE_SUBFLOW });
+			const z1 = await a.nextAssign();
+			a.logs(z1, [line(a, 1, 1_000, "z1 1"), line(a, 2, 2_000, "z1 2")]);
+			const history = await settled(runId, 2);
+
+			// 读完历史、连上之前写入的一行：连上时补发。
+			a.logs(z1, [line(a, 3, 3_000, "z1 3")]);
+			await written(z1, 3);
+			const sse = await follow(runId, { after: history.live_after });
+			await a.fail(z1, "boom");
+			const z2 = await a.nextAssign();
+			a.logs(z2, [line(a, 1, 4_000, "z2 1"), line(a, 2, 6_000, "z2 2")]);
+			await a.succeed(z2);
+			const s = await b.nextAssign();
+			const at = await a.nextAssign();
+			b.logs(s, [line(b, 1, 5_000, "s 1"), line(b, 2, 8_000, "s 2")]);
+			a.logs(at, [line(a, 1, 7_000, "a 1")]);
+
+			const live = (await pushed(sse, 6)).lines;
+			const all = (await settled(runId, 8)).lines;
+			const byKey = new Map(all.map((l) => [keyOf(l), l]));
+			// 推送的每行与分页读出的同一行完全相同（来源、排序信息都一样）。
+			for (const l of live) expect(l).toEqual(byKey.get(keyOf(l)));
+			expect(new Set(live.map((l) => `${l.node_id}#${l.attempt} ${l.subflow ?? "主链"}`))).toEqual(
+				new Set(["z#1 主链", "z#2 主链", "s#1 回放", "a#1 主链"]),
+			);
+			const seen = [...history.lines, ...live].map(keyOf);
+			expect(new Set(seen).size).toBe(seen.length);
+			expect(new Set(seen)).toEqual(new Set(all.map(keyOf)));
+		});
+
+		it("范围与级别和分页相同：只推送范围内节点（包括之后的新尝试）的、这些级别的行", async () => {
+			const { a, b, runId } = await setup();
+			const z1 = await a.nextAssign();
+			const s = await b.nextAssign();
+			const main = (await taskOf(runId, "z", 1)).chain.id;
+			const params = {
+				nodes: encodeRunLogScope([{ chain_instance_id: main, node_id: "z" }]),
+				level: "warn,error",
+			};
+			const latest = await page(runId, query({ ...params, limit: 10 }));
+			const sse = await follow(runId, { ...params, after: latest.live_after });
+
+			b.logs(s, [line(b, 1, 1_000, "s error", LogLevel.ERROR)]);
+			a.logs(z1, [line(a, 1, 2_000, "z1 info"), line(a, 2, 3_000, "z1 warn", LogLevel.WARN)]);
+			await a.fail(z1, "boom");
+			const z2 = await a.nextAssign();
+			await ownLines(s, 1);
+			a.logs(z2, [
+				line(a, 1, 4_000, "z2 debug", LogLevel.DEBUG),
+				line(a, 2, 5_000, "z2 error", LogLevel.ERROR),
+			]);
+
+			expect((await pushed(sse, 2)).lines.map((l) => [l.text, l.attempt])).toEqual([
+				["z1 warn", 1],
+				["z2 error", 2],
+			]);
+			expect(sse.received.filter((e) => e.event === "logs")).toHaveLength(2);
+		});
+
+		it("断线后用 Last-Event-ID 重连：只补发断线期间写入的行（包括新的尝试），已推送的不再推送，之后照常推送", async () => {
+			const { a, b, runId } = await setup();
+			const z1 = await a.nextAssign();
+			const s = await b.nextAssign();
+			const { live_after } = await page(runId);
+			const first = await follow(runId, { after: live_after });
+			a.logs(z1, [line(a, 1, 1_000, "z1 1"), line(a, 2, 2_000, "z1 2")]);
+			b.logs(s, [line(b, 1, 3_000, "s 1")]);
+			const before = await pushed(first, 3);
+			const firstEvent = first.received.find((e) => e.event === "logs")?.id as string;
+			first.close();
+
+			a.logs(z1, [line(a, 3, 4_000, "z1 3")]);
+			b.logs(s, [line(b, 2, 5_000, "s 2"), line(b, 3, 6_000, "s 3")]);
+			await a.fail(z1, "boom");
+			const z2 = await a.nextAssign();
+			a.logs(z2, [line(a, 1, 7_000, "z2 1")]);
+			const all = (await settled(runId, 7)).lines;
+
+			// 浏览器重连时 URL 不变（仍是第一次的 after），请求头带最后收到的事件 ID。
+			const resumed = await follow(runId, { after: live_after }, { "last-event-id": before.id });
+			const missed = await pushed(resumed, 4);
+			expect(new Set(missed.lines.map(keyOf))).toEqual(
+				new Set(all.map(keyOf).filter((k) => !before.lines.map(keyOf).includes(k))),
+			);
+			a.logs(z2, [line(a, 2, 8_000, "z2 2")]);
+			expect((await pushed(resumed, 1)).lines.map((l) => l.text)).toEqual(["z2 2"]);
+
+			// 从中间的事件 ID 续传：补发的是那个事件之后的全部行。
+			const fromMiddle = await follow(
+				runId,
+				{ after: live_after },
+				{ "last-event-id": firstEvent },
+			);
+			const firstLines = logsApi.runEvents.events.logs
+				.parse(first.received.find((e) => e.event === "logs")?.data)
+				.lines.map(keyOf);
+			const rest = (await settled(runId, 8)).lines
+				.map(keyOf)
+				.filter((k) => !firstLines.includes(k));
+			expect(new Set((await pushed(fromMiddle, rest.length)).lines.map(keyOf))).toEqual(
+				new Set(rest),
+			);
+		});
+
+		it("一台 Agent 断线重连后补发的晚到行照常推送：控制面时间早于已经推送的别的任务的行，按排序键排在它们前面", async () => {
+			const { a, b, runId } = await setup();
+			const z1 = await a.nextAssign();
+			const s = await b.nextAssign();
+			const sse = await follow(runId, { after: (await page(runId)).live_after });
+			b.logs(s, [line(b, 1, 1_000, "s 1")]);
+			a.logs(z1, [line(a, 1, 2_000, "z1 1")]);
+			await pushed(sse, 2);
+
+			// agent-b 断线 10 秒，期间（第 3、5 秒）读到的两行排着队；agent-a 照常上报第 4、6 秒的行。
+			agents.splice(agents.indexOf(b), 1);
+			await b.disconnect();
+			a.logs(z1, [line(a, 2, 4_000, "z1 2"), line(a, 3, 6_000, "z1 3")]);
+			expect((await pushed(sse, 2)).lines.map((l) => l.text)).toEqual(["z1 2", "z1 3"]);
+			clock.advance(10_000);
+			const { agentT0, m0 } = AGENTS["agent-b"];
+			const back = await FakeAgent.connect(cp.grpcUrl, {
+				name: "agent-b",
+				...agentClock(agentT0 + 10_000, m0 + 10_000),
+				runningTasks: [{ taskId: s.taskId, attempt: s.attempt }],
+			});
+			agents.push(back);
+			back.logs(s, [line(back, 2, 3_000, "s 2 late"), line(back, 3, 5_000, "s 3 late")]);
+
+			const late = (await pushed(sse, 2)).lines;
+			expect(late.map((l) => [l.text, l.time])).toEqual([
+				["s 2 late", iso(T0 + 3_000)],
+				["s 3 late", iso(T0 + 5_000)],
+			]);
+			const all = (await settled(runId, 6)).lines;
+			expect(all.map((l) => l.text)).toEqual([
+				"s 1",
+				"z1 1",
+				"s 2 late",
+				"z1 2",
+				"s 3 late",
+				"z1 3",
+			]);
+			// 只凭推送的行本身就能排出这个顺序（前端插入实时行用的就是这个比较函数）。
+			const arrived = [
+				...late,
+				...(await page(runId, "limit=1000")).lines.filter((l) => !l.text.includes("late")),
+			];
+			expect(arrived.toSorted((x, y) => compareRunLogKeys(runLogKey(x), runLogKey(y)))).toEqual(
+				all,
+			);
+		});
+
+		it("连上时要补发的行超过 5000 行：不逐行补发，推送 reload，之后照常推送新写入的行；从 live_after 连上时没有要补发的", async () => {
+			const { a, runId } = await setup();
+			const z1 = await a.nextAssign();
+			a.logs(
+				z1,
+				Array.from({ length: 5_001 }, (_, i) => line(a, i + 1, 1_000 + i, `z1 ${i + 1}`)),
+			);
+			await written(z1, 5_001);
+
+			const fromStart = await follow(runId);
+			await fromStart.next("reload");
+			a.logs(z1, [line(a, 5_002, 9_000, "z1 5002")]);
+			expect((await pushed(fromStart, 1)).lines.map((l) => l.seq)).toEqual([5_002]);
+			expect(fromStart.received.filter((e) => e.event === "logs")).toHaveLength(1);
+
+			const fromLatest = await follow(runId, { after: (await page(runId)).live_after });
+			a.logs(z1, [line(a, 5_003, 9_500, "z1 5003")]);
+			expect((await pushed(fromLatest, 1)).lines.map((l) => l.seq)).toEqual([5_003]);
+			expect(fromLatest.received.filter((e) => e.event === "reload")).toHaveLength(0);
+		});
+
+		it("运行不存在时 404；after 不是 live_after（例如分页游标）时 400", async () => {
+			const { a, runId } = await setup();
+			const z1 = await a.nextAssign();
+			a.logs(z1, [line(a, 1, 1_000, "z1 1")]);
+			const latest = await settled(runId, 1);
+			expect(
+				(await cp.fetch("/runs/00000000-0000-0000-0000-000000000000/logs/events")).status,
+			).toBe(404);
+			expect((await cp.fetch("/runs/nope/logs/events")).status).toBe(404);
+			for (const bad of ["garbage", latest.after, latest.before]) {
+				const res = await cp.fetch(`/runs/${runId}/logs/events?${query({ after: bad })}`);
+				expect(res.status, bad).toBe(400);
+				expect(await res.json(), bad).toMatchObject({ error: { code: "invalid_request" } });
+			}
 		});
 	});
 });

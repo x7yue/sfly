@@ -372,6 +372,12 @@ export const RunLogLine = LogLineView.extend(LogOrigin.shape).extend(RunLogTaskO
 const RunLogCursor = z.string();
 
 /**
+ * 按运行的实时推送的位置（#225）：不透明字符串，记录范围内每个任务已经推送到的序号。
+ * 首次连接用分页返回的 `live_after`，之后每个事件的 ID 都是这个格式（浏览器重连时经 `Last-Event-ID` 带回）。
+ */
+const RunLogLiveCursor = z.string();
+
+/**
  * 按运行读取日志的范围参数：分页、实时推送（#225）、下载（#226）共用。
  * 不给 `nodes` 是全部节点；给了空字符串是没有节点（写法与判断函数见 run-log-scope.ts）。
  */
@@ -425,10 +431,24 @@ export const RunLogPage = z.object({
 	 * 之后写入的行用 after 再读或由实时推送送达。
 	 */
 	reached_end: z.boolean(),
+	/**
+	 * 实时流起点：读这一页那一刻范围内每个任务已写入的位置。最新一页的这个值就是实时推送（`runEvents`）的 `after`：
+	 * 之后写入的行（包括之后才开始的任务）都由实时推送送达，与这一页和往前翻到的页合起来不重复、不遗漏。
+	 */
+	live_after: RunLogLiveCursor,
 	/** 日志超过大小上限被截断的任务，按运行视图里的顺序。 */
 	truncated_tasks: z.array(LogOrigin),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
+});
+
+/**
+ * 按运行实时推送的一批新写入的行（`GET /runs/:id/logs/events` 的 `logs` 事件），格式与分页相同。
+ * 一批里可能有多个任务的行，同一任务内按 seq；断线后补发的行（晚到的行）可能比已推送的别的任务的行更早，
+ * 收到后按排序键（run-log-order.ts）插到对应位置。
+ */
+export const RunLogChunk = z.object({
+	lines: z.array(RunLogLine),
 });
 
 /** 实时推送的一批行（`GET /tasks/:id/logs/events` 的 `logs` 事件）；offset 是第一行的字节偏移。 */
@@ -472,6 +492,26 @@ export const logsApi = {
 		params: IdParams,
 		query: RunLogPageQuery,
 		response: RunLogPage,
+	}),
+	/**
+	 * 按运行的实时推送（SSE，#225）：范围（`nodes`）内全部任务新写入的行，包括订阅之后才开始的任务和尝试，
+	 * 只推送 `level` 里的级别；范围和级别要与读历史时相同。`after` 用最新一页的 `live_after`。
+	 *
+	 * - `logs`：一批新行；事件 ID 是推送到的位置（不透明），浏览器原生 EventSource 断线重连时经 `Last-Event-ID`
+	 *   带回，控制面只补发之后的行，不重复也不遗漏。
+	 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
+	 *
+	 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
+	 */
+	runEvents: stream({
+		path: "/runs/:id/logs/events",
+		params: IdParams,
+		query: z.object({
+			after: blankAsMissing(RunLogLiveCursor),
+			...RunLogScopeQuery.shape,
+			...RunLogLevelQuery.shape,
+		}),
+		events: { logs: RunLogChunk, reload: z.object({}) },
 	}),
 };
 
@@ -545,5 +585,6 @@ export type LogOrigin = z.infer<typeof LogOrigin>;
 export type RunLogTaskOrder = z.infer<typeof RunLogTaskOrder>;
 export type RunLogLine = z.infer<typeof RunLogLine>;
 export type RunLogPage = z.infer<typeof RunLogPage>;
+export type RunLogChunk = z.infer<typeof RunLogChunk>;
 export type ProgressEvent = z.infer<typeof ProgressEvent>;
 export type ArtifactView = z.infer<typeof ArtifactView>;
