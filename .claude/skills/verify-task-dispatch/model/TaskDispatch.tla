@@ -25,7 +25,7 @@ VARIABLES
     suspects,    \* leases.ts MissedHeartbeats：上一次心跳没上报的尝试
     conn,        \* "down" | "hello"（Agent 已发 Hello）| "welcome"（控制面已处理 onOnline、发出 Welcome）| "up"（Agent 进入 serve 循环）
     toCP,        \* Agent -> 控制面 的 gRPC 流（TaskStarted / TaskResult / Heartbeat）
-    toAgent,     \* 控制面 -> Agent 的 gRPC 流（Assign / Ack）
+    toAgent,     \* 控制面 -> Agent 的 gRPC 流（Assign / Cancel / Ack）
     ag,          \* Agent 上每次尝试：none | held（在 cancels 里，安装/准备中）| started（执行器已启动）| done（run_task 已结束）
     stopSig,     \* Agent 已对它调用 cancel_task（被告知停止）的尝试
     chan,        \* results 通道里、还没被 serve 收下的结果 <<attempt, ok>>
@@ -91,6 +91,7 @@ Dispatch(a) ==
 
 \* engine.ts onMessage：started -> #started；result -> #applyResult 后回 Ack；
 \* heartbeat -> #heartbeat（leases.ts renewHeld 带 suspects，再按 started 补记 running）。
+\* agent_lost 的尝试由 leases.ts agentLost 记下强制取消，#step 在事务提交后、#dispatch 之前发出。
 CPRecv ==
     /\ CPConnected
     /\ toCP # <<>>
@@ -112,20 +113,25 @@ CPRecv ==
                         lost    == missing \cap suspects
                     IN /\ suspects' = missing
                        /\ cp' = MarkStarted(FailAll(cp, lost), m.started)
-                       /\ UNCHANGED toAgent
+                       /\ toAgent' = IF lost = {} THEN toAgent
+                                     ELSE Append(toAgent, [type |-> "cancel", as |-> lost])
     /\ UNCHANGED <<conn, ag, stopSig, chan, unacked, abandoned, hello, welcome, okFinished>>
 
 \* leases.ts expireTasks：租约过期的 ON_AGENT 任务以 agent_lost 失败（按 retries 派回同一个 Agent）。
 \* 断线期间没有心跳，租约会过期；连接正常时只有心跳迟到才会过期（LateHeartbeats）。
+\* agentLost 同时记下强制取消，#step 提交后经 #sendCancel 发出；#sendCancel 只发给已推送 Welcome 的连接
+\*（agent-hub.ts connection），没有这样的连接时什么也不发，重连后由 Welcome 的 ABANDON 停掉。
 LeaseExpire(a) ==
     /\ cp[a] \in OnAgent
     /\ conn \in {"down", "hello"} \/ LateHeartbeats
     /\ cp' = FailAll(cp, {a})
-    /\ UNCHANGED <<suspects, conn, toCP, toAgent, ag, stopSig, chan, unacked, abandoned,
+    /\ toAgent' = IF CPConnected THEN Append(toAgent, [type |-> "cancel", as |-> {a}]) ELSE toAgent
+    /\ UNCHANGED <<suspects, conn, toCP, ag, stopSig, chan, unacked, abandoned,
                    hello, welcome, okFinished>>
 
 \* engine.ts onOnline：Hello 里上报的尝试，控制面仍在等的继续、否则放弃；
 \* 控制面认为在这个 Agent 上、Hello 里没有的立即 agent_lost；清空 suspects；发 Welcome。
+\* 这时连接还没推送 Welcome，agentLost 记下的取消不会发出（Agent 也不持有这些尝试）。
 CPOnline ==
     /\ conn = "hello"
     /\ LET mine == {b \in Attempts : cp[b] \in OnAgent}
@@ -177,18 +183,22 @@ AgentWelcome ==
     /\ UNCHANGED <<cp, suspects, toAgent, ag, chan, hello, welcome, okFinished>>
 
 \* lib.rs serve()：Assign -> Runtime::accept（进 cancels，不检查槽位）并 spawn run_task；
-\* Ack -> 从 unacked 删除。
+\* Cancel -> Runtime::cancel_task（不在 cancels 里的忽略；被杀的尝试照常上报结果）；Ack -> 从 unacked 删除。
 AgentRecv ==
     /\ conn = "up"
     /\ toAgent # <<>>
     /\ LET m == Head(toAgent) IN
         /\ toAgent' = Tail(toAgent)
-        /\ IF m.type = "assign"
-              THEN /\ ag' = [ag EXCEPT ![m.a] = "held"]
-                   /\ UNCHANGED unacked
-              ELSE /\ unacked' = {r \in unacked : r[1] # m.a}
-                   /\ UNCHANGED ag
-    /\ UNCHANGED <<cp, suspects, conn, toCP, stopSig, chan, abandoned, hello, welcome, okFinished>>
+        /\ CASE m.type = "assign" ->
+                    /\ ag' = [ag EXCEPT ![m.a] = "held"]
+                    /\ UNCHANGED <<unacked, stopSig>>
+             [] m.type = "cancel" ->
+                    /\ stopSig' = stopSig \cup (m.as \cap Holding)
+                    /\ UNCHANGED <<ag, unacked>>
+             [] m.type = "ack" ->
+                    /\ unacked' = {r \in unacked : r[1] # m.a}
+                    /\ UNCHANGED <<ag, stopSig>>
+    /\ UNCHANGED <<cp, suspects, conn, toCP, chan, abandoned, hello, welcome, okFinished>>
 
 \* lib.rs run_task -> start_task 成功、executor.rs 发出 TaskStarted（断线时丢失，靠心跳的 started 补记）。
 AgentStart(a) ==

@@ -25,5 +25,5 @@ cd "$(dirname "$model")" || exit 2
 mise exec "$JAVA" -- java -XX:+UseParallelGC -cp "$JAR" tlc2.TLC \
 	-workers auto -cleanup -metadir "$meta" -config "$cfg" "$(basename "$model")" >"$out" 2>&1
 code=$?
-rm -rf "$meta" ./*_TTrace_*.tla
+rm -rf "$meta" ./*_TTrace_*
 exit $code

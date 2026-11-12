@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # 一条命令检查任务派发协议模型：check.sh
-# - Safe：心跳不迟到、投递及时时，四条性质都必须成立（期望：无违例）。
-# - LateHeartbeats、SlowDelivery：当前代码的已知发现（期望：NoUnstoppedDuplicate 被违反）。
-#   如果它们变成无违例，说明发现已被修复：按 SKILL.md「修复发现之后」更新 skill。
+# - Safe：心跳不迟到、投递及时；LateHeartbeats：连接正常时租约也可能过期；SlowDelivery：消息可能晚于两个心跳周期。
+#   三个配置下四条性质都必须成立（期望：无违例）。
 # 完整输出（含反例）写到 $SFLY_FORMAL_OUT（默认 ~/.local/state/sfly-formal/<时间>/）。
 # 退出码：0 = 结果与 SKILL.md 记录的一致；1 = 不一致（新违例或发现消失）；2 = 工具或模型错误。
 set -uo pipefail
@@ -38,7 +37,7 @@ run() { # 配置名 期望（pass | 违反的不变式名）
 }
 
 run Safe pass
-run LateHeartbeats NoUnstoppedDuplicate
-run SlowDelivery NoUnstoppedDuplicate
+run LateHeartbeats pass
+run SlowDelivery pass
 echo "完整输出：$OUT"
 exit $status
