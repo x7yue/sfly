@@ -63,7 +63,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 
 ## 覆盖记录
 
-**同步提交：`99ff97f86e11c31a47b5fb9f312c9d6b5087f082`**（在这个提交上确认过模型与下列代码一致）。
+**同步提交：`212e3dd8f5d1df3a24f9faf922b56261005fe032`**（在这个提交上确认过模型与下列代码一致）。
 
 | 模型里的动作 | 代码 |
 |---|---|
@@ -84,7 +84,7 @@ description: 用 TLA+ 模型检查器 TLC 穷举验证 sfly 控制面与 Agent �
 判断一次改动要不要重新检查：
 
 ```sh
-git diff --stat 99ff97f86e11c31a47b5fb9f312c9d6b5087f082 -- \
+git diff --stat 212e3dd8f5d1df3a24f9faf922b56261005fe032 -- \
   apps/server/src/engine/engine.ts apps/server/src/engine/leases.ts apps/server/src/engine/failures.ts \
   apps/server/src/agents/agent-hub.ts packages/schema/src/http/runs.ts agent/src/lib.rs agent/src/executor.rs \
   proto/sfly/agent/v1/agent.proto
