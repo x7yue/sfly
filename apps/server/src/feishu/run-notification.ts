@@ -19,7 +19,7 @@ import { enqueueFeishuMessage } from "./feishu-queue.js";
 import { type CardColor, type CardElement, fitCard, interactiveCard } from "./messages.js";
 
 /** 运行结束时的状态。 */
-export type FinishedStatus = Exclude<RunStatus, "running">;
+type FinishedStatus = Exclude<RunStatus, "running">;
 
 /** 触发条件 → 哪些运行结果要发。 */
 const SENDS_ON: Record<RunNotificationTrigger, readonly FinishedStatus[]> = {
@@ -36,7 +36,7 @@ const RESULT: Record<FinishedStatus, { color: CardColor; subtitle: string }> = {
 };
 
 /** 卡片里最多列出的失败节点数，其余只写总数。 */
-export const MAX_LISTED_FAILURES = 10;
+const MAX_LISTED_FAILURES = 10;
 
 /** 失败的节点和它所在的链（链的名称与监控页一致：「主链」或「子流程 <名称> · <实例短 ID>」）。 */
 interface FailedNode {
@@ -44,7 +44,7 @@ interface FailedNode {
 	nodeId: string;
 }
 
-export interface RunNotificationFacts {
+interface RunNotificationFacts {
 	/** 卡片标题：设置里的标题，空时已换成场景名。 */
 	title: string;
 	status: FinishedStatus;
@@ -93,7 +93,7 @@ function formatElapsed(ms: number): string {
  * 开始时间和耗时、失败的链和节点（最多 {@link MAX_LISTED_FAILURES} 个）；最后是「查看运行」按钮（有链接时）。
  * 请求体超过 20 KB 时截断附加说明（{@link fitCard}）；截了还放不下返回 `too_large`。
  */
-export function runNotificationCard(facts: RunNotificationFacts) {
+function runNotificationCard(facts: RunNotificationFacts) {
 	const result = RESULT[facts.status];
 	const lines = [
 		`**场景**：${facts.scenarioName}`,
