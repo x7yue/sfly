@@ -118,3 +118,16 @@ export function ensureLayout<D extends LayoutDocument>(doc: D): D {
 	const layout = tidyLayout(doc);
 	return { ...doc, nodes: doc.nodes.map((n) => ({ ...n, position: layout.get(n.id) })) } as D;
 }
+
+/**
+ * 补坐标：没有位置的节点取整理布局给它算出的位置，已有位置的节点不动（控制面保存场景版本时用，
+ * 命令行和 API 上传的节点可以不写坐标）。所有节点都有位置时原样返回。
+ */
+export function fillMissingPositions<D extends LayoutDocument>(doc: D): D {
+	if (doc.nodes.every((n) => n.position)) return doc;
+	const layout = tidyLayout(doc);
+	return {
+		...doc,
+		nodes: doc.nodes.map((n) => (n.position ? n : { ...n, position: layout.get(n.id) })),
+	} as D;
+}

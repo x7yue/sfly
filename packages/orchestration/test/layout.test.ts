@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	ensureLayout,
+	fillMissingPositions,
 	type LayoutDocument,
 	NODE_SIZE,
 	REGION_PADDING,
@@ -170,5 +171,34 @@ describe("缺少布局的文档", () => {
 			["a", { x: 252, y: 0 }],
 			["b", { x: 504, y: 0 }],
 		]);
+	});
+});
+
+describe("补坐标", () => {
+	const doc: LayoutDocument = {
+		nodes: [
+			{ id: "entry", kind: "entry", position: { x: 40, y: 40 } },
+			{ id: "a", kind: "package", position: { x: 300, y: 90 } },
+			{ id: "b", kind: "package" },
+			{ id: "c", kind: "package" },
+		],
+		edges: [chain("entry", "a"), chain("a", "b"), chain("b", "c")],
+	};
+
+	it("没有位置的节点取整理布局的位置，已有位置的节点不动", () => {
+		expect(fillMissingPositions(doc).nodes.map((n) => [n.id, n.position])).toEqual([
+			["entry", { x: 40, y: 40 }],
+			["a", { x: 300, y: 90 }],
+			["b", { x: 504, y: 0 }],
+			["c", { x: 756, y: 0 }],
+		]);
+	});
+
+	it("所有节点都有位置时原样返回", () => {
+		const positioned: LayoutDocument = {
+			...doc,
+			nodes: doc.nodes.map((n) => ({ ...n, position: n.position ?? { x: 1, y: 2 } })),
+		};
+		expect(fillMissingPositions(positioned)).toBe(positioned);
 	});
 });
