@@ -6,7 +6,7 @@
 3. 在目标目录旁的临时目录里 `uv init --lib --python 3.13`（src 布局、`.python-version`、
    `.gitignore`、git 仓库；已在 git 仓库里时 uv 不再建仓库），再依次执行 `STEPS`：
    写入 pyproject 的 uv 配置与开发依赖、把 uv 的示例代码换成示例节点和它的单元测试、
-   写入节点开发 skill（sfly/cli/skill.py）。
+   写入两份给 AI 编程助手的 skill（节点开发、操作平台，sfly/cli/skill.py）。
 4. 全部成功后才移到目标位置；任何一步失败都删掉临时目录，不留下半成品。
 
 不生成 AGENTS.md、CLAUDE.md。模板在 `sfly/cli/templates/init/`（`*.tmpl`，
@@ -170,7 +170,7 @@ def configure_pyproject(project: NewProject) -> None:
         "[tool.sfly]",
         f"requires-sdk = {_toml('>=' + s.version)}",
         "",
-        "# 节点开发 skill 由 sfly skill update 管理：ruff 不格式化其中 Markdown 的代码块。",
+        "# skill 由 sfly skill update 管理：ruff 不格式化其中 Markdown 的代码块。",
         "[tool.ruff]",
         'extend-exclude = [".agents", ".claude"]',
         "",
@@ -199,7 +199,7 @@ def write_example(project: NewProject) -> None:
 
 
 def write_skill(project: NewProject) -> None:
-    """写入节点开发 skill（sfly.cli.skill.install）。"""
+    """写入节点开发和操作平台两份 skill（sfly.cli.skill.install）。"""
     from sfly.cli.skill import install
 
     install(project.root)

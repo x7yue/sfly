@@ -1,6 +1,6 @@
 import { docsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
-import { type DocValues, llmsTxt, renderDoc, SKILL, type UserDocs } from "../docs/user-docs.js";
+import { type DocValues, llmsTxt, renderDoc, type UserDocs } from "../docs/user-docs.js";
 import { contractDownload, contractRoute } from "./contract-route.js";
 import { sendError } from "./errors.js";
 
@@ -12,7 +12,7 @@ import { sendError } from "./errors.js";
  * |---|---|---|
  * | GET | `/docs` | 文档目录 `{ pages: [{ slug, title, description }] }` |
  * | GET | `/docs/:page.md` | 一页的 Markdown 原文，占位符已替换 |
- * | GET | `/docs/skills/sfly-node-dev/:file` | 节点开发 skill 的 `SKILL.md`、`reference.md`（SDK 参考页），占位符已替换 |
+ * | GET | `/docs/skills/:skill/:file` | skill（`sfly-node-dev`、`sfly-platform`）的 `SKILL.md`、`reference.md`（对应的一页文档：SDK 参考、命令行页），占位符已替换 |
  * | GET | `/llms.txt` | 索引：每一页原文和 skill 文件的完整地址 |
  */
 export function registerDocsRoutes(
@@ -33,7 +33,7 @@ export function registerDocsRoutes(
 	});
 
 	contractDownload(app, docsApi.skill, async ({ params }, reply) => {
-		const source = params.skill === SKILL.name ? deps.docs.skill.get(params.file) : undefined;
+		const source = deps.docs.skills.get(params.skill)?.get(params.file);
 		if (source === undefined) {
 			return sendError(reply, 404, "not_found", `skill 文件 ${params.skill}/${params.file} 不存在`);
 		}
