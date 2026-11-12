@@ -271,7 +271,7 @@ function VersionRow({
 					<span className="font-mono text-sm text-fg-1">v{version.number}</span>
 					{latest && <Badge>最新</Badge>}
 				</span>
-				<span className="truncate text-xs text-fg-3">
+				<span className="text-xs break-words text-fg-3">
 					{version.author}
 					<ViaTag via={version.author_via} /> · {formatDateTime(version.created_at)}
 				</span>
