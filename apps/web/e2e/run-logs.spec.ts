@@ -302,6 +302,54 @@ test("执行中的运行：合并视图实时显示新写入的行，晚到的�
 	]);
 });
 
+test("实时推送的行多到超过浏览器保留的 5000 行时，从最新一页重新读再接上：最新的行还在，向上滚动读得回更早的，之后的新行照常出现", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const at = logAt(agent, clock0);
+	let latestPages = 0;
+	let recording = false;
+	page.on("request", (req) => {
+		const url = new URL(req.url());
+		if (
+			recording &&
+			url.pathname === `/api/runs/${runId}/logs` &&
+			!url.searchParams.has("before")
+		) {
+			latestPages++;
+		}
+	});
+
+	await openMonitor(page, clock, runId);
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
+	recording = true;
+	await nodeButton(page, "verify").click();
+	const logs = panel(page).getByRole("log", { name: "日志" });
+	await expect(logs.getByRole("button")).toHaveCount(4);
+	await expect.poll(() => latestPages).toBe(1);
+
+	agent.logs(
+		tasks.probe as AssignedTask,
+		Array.from({ length: 5_001 }, (_, i) => at(i + 1, 13_000 + i, `probe line ${i + 1}`)),
+	);
+	await expect.poll(() => latestPages).toBe(2);
+	await expect(logs).toContainText("probe line 5001");
+	agent.logs(tasks.probe as AssignedTask, [at(5_002, 19_000, "probe line 5002")]);
+	await expect(logs).toContainText("probe line 5002");
+	expect(latestPages).toBe(2);
+
+	// 新的最新一页是第 4702–5001 行；向上滚动读回之前的一页。
+	await expect(logs).not.toContainText("probe line 4701");
+	await logs.evaluate((el) => {
+		el.scrollTop = 0;
+	});
+	await expect(logs).toContainText("probe line 4701");
+});
+
 test("执行中的运行在合并视图里还没有日志时底部面板自动收起，日志到了自动展开", async ({
 	page,
 	controlPlane,
