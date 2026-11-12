@@ -1,9 +1,15 @@
 import { subflowName } from "@sfly/orchestration";
 import type { AttemptView, ChainRunView, NodeRunView, RunSummary, RunView } from "@sfly/schema";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { clockOffsetView } from "../agents/agent-clock.js";
 import type { Db } from "../db/database.js";
-import { chainInstances, orchestrationVersions, runs, tasks } from "../db/schema.js";
+import {
+	chainInstances,
+	feishuMessages,
+	orchestrationVersions,
+	runs,
+	tasks,
+} from "../db/schema.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { agentFor, planRun } from "./chain.js";
@@ -13,6 +19,28 @@ import { groupAttempts, nodeStatus } from "./run-board.js";
 export type { AttemptView, ChainRunView as ChainView, NodeRunView as NodeView, RunView };
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
+
+/**
+ * 运行通知的状态（#232）：运行上记着发给了哪个机器人；队列里的消息给出排队中、已送达、失败、已丢弃，
+ * 没进队列的是未发送。队列里的记录过了保留期被清理后什么也不剩，返回 null。
+ */
+async function runNotificationState(
+	db: Db,
+	run: Pick<typeof runs.$inferSelect, "id" | "notificationBot" | "notificationNotSent">,
+): Promise<RunView["run_notification"]> {
+	const bot = run.notificationBot;
+	if (bot === null) return null;
+	if (run.notificationNotSent !== null) {
+		return { status: "not_sent", bot, reason: run.notificationNotSent };
+	}
+	const [message] = await db
+		.select({ status: feishuMessages.status, lastError: feishuMessages.lastError })
+		.from(feishuMessages)
+		.where(and(eq(feishuMessages.runId, run.id), eq(feishuMessages.source, "run_notification")));
+	if (!message) return null;
+	const settled = message.status === "failed" || message.status === "discarded";
+	return { status: message.status, bot, reason: settled ? message.lastError : null };
+}
 
 /**
  * 运行的只读查询：运行、链实例和每个节点的状态、输出与各次尝试。
@@ -62,6 +90,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		params: m(run.params),
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
+		run_notification: await runNotificationState(db, run),
 		cancel: run.cancelRequestedAt
 			? {
 					requested_by: run.cancelRequestedBy ?? "",

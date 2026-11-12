@@ -5,6 +5,7 @@ import {
 	ON_AGENT_STATUSES,
 	type OrchestrationDocument,
 	type PackageMetadata,
+	type RunNotificationTrigger,
 } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
@@ -109,6 +110,21 @@ export const agents = pgTable("agents", {
 });
 
 /**
+ * 飞书机器人（ADR 0020）：按名称唯一，创建后不能改名。webhook_url 明文保存（相当于一个凭据，和 secret 参数一样），
+ * 只在界面和日志里打码（src/feishu/webhook-url.ts）；接口不返回完整地址。
+ * `last_delivery_*` 是最近一次投递（每发一次请求记一次，重试也算，丢弃不算）的控制面时间、是否送达和失败的原因（中文），
+ * 管理页显示它；记在机器人上，不随投递记录的保留期清理。
+ */
+export const feishuBots = pgTable("feishu_bots", {
+	name: text("name").primaryKey(),
+	webhookUrl: text("webhook_url").notNull(),
+	createdAt: timestamptz("created_at").notNull(),
+	lastDeliveryAt: timestamptz("last_delivery_at"),
+	lastDeliveryOk: boolean("last_delivery_ok"),
+	lastDeliveryError: text("last_delivery_error"),
+});
+
+/**
  * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
  * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
  */
@@ -119,6 +135,19 @@ export const orchestrations = pgTable("orchestrations", {
 	headVersion: integer("head_version").notNull().default(0),
 	createdAt: timestamptz("created_at").notNull(),
 	archivedAt: timestamptz("archived_at"),
+	/**
+	 * 运行通知设置（GLOSSARY「运行通知」，ADR 0020）：和名称、说明一样不属于版本，运行结束时读取当前值。
+	 * bot 为空即关闭；bot 不是外键，机器人被删除后设置原样保留（运行结束时记为「未发送」）。
+	 */
+	runNotifyBot: text("run_notify_bot"),
+	runNotifyTrigger: text("run_notify_trigger")
+		.$type<RunNotificationTrigger>()
+		.notNull()
+		.default("failed"),
+	/** 卡片标题；空字符串时用场景名。 */
+	runNotifyTitle: text("run_notify_title").notNull().default(""),
+	/** 附加说明（Markdown）；空字符串即没有。 */
+	runNotifyNote: text("run_notify_note").notNull().default(""),
 });
 
 /** 编排版本：不可变，同一编排内编号唯一、递增。 */
@@ -202,6 +231,14 @@ export const runs = pgTable(
 		purgedAt: timestamptz("purged_at"),
 		/** 指标超过保留期被判定过期的时间（#32，src/metrics/metric-retention.ts）；之后摘要等接口返回「已过保留期」。 */
 		metricsPurgedAt: timestamptz("metrics_purged_at"),
+		/**
+		 * 运行通知（#232）：运行结束时场景设置选了机器人、而且满足触发条件，这里记下发给哪个机器人；
+		 * 消息本身在发送队列里（source run_notification，run_id 是这个运行），投递结果以队列为准。
+		 * 没有发运行通知时为空。
+		 */
+		notificationBot: text("notification_bot"),
+		/** 运行结束时没有把消息写进队列的原因（机器人已不存在，或卡片超过 20 KB）；写进队列了为空。 */
+		notificationNotSent: text("notification_not_sent"),
 	},
 	(t) => [index("runs_orchestration").on(t.orchestrationId), index("runs_ended_at").on(t.endedAt)],
 );
@@ -251,6 +288,11 @@ export const tasks = pgTable(
 		status: text("status").$type<TaskStatus>().notNull(),
 		/** 派发时解析过引用的输入；排队时为空。 */
 		inputs: jsonb("inputs").$type<Record<string, unknown>>(),
+		/**
+		 * 派发时随任务下发的、「飞书机器人」类型的输入引用的机器人（AssignTask.referenced_feishu_bots，ADR 0020）：
+		 * 节点用 ctx.notify 只能发给其中的机器人。之前派发的任务为空。
+		 */
+		referencedFeishuBots: text("referenced_feishu_bots").array().notNull().default([]),
 		outputs: jsonb("outputs").$type<Record<string, unknown>>(),
 		errorKind: text("error_kind").$type<ErrorKind>(),
 		errorMessage: text("error_message"),
@@ -275,8 +317,10 @@ export const tasks = pgTable(
 		logPath: text("log_path"),
 		/** 日志文件已写入的字节数。 */
 		logBytes: bigint("log_bytes", { mode: "number" }).notNull().default(0),
-		/** 已写入的最大日志序号（序号不大于它的行视为重复）。 */
+		/** 日志文件里最后一行的序号（src/logs/task-logs.ts）。 */
 		logSeq: bigint("log_seq", { mode: "number" }).notNull().default(0),
+		/** 已写入的 Agent 日志行里最大的 Agent 序号（Agent 序号不大于它的行视为重复）。 */
+		logAgentSeq: bigint("log_agent_seq", { mode: "number" }).notNull().default(0),
 		/** 日志超过上限已被截断（#18）：写入了截断标记，之后的行都被丢弃。 */
 		logTruncated: boolean("log_truncated").notNull().default(false),
 		/**
@@ -310,6 +354,42 @@ export const tasks = pgTable(
 		index("tasks_agent_status").on(t.agentName, t.status),
 		index("tasks_chain_instance").on(t.chainInstanceId),
 	],
+);
+
+export type FeishuMessageSource = "node" | "notify" | "run_notification";
+export type FeishuMessageStatus = "queued" | "delivered" | "failed" | "discarded";
+
+/**
+ * 飞书发送队列（ADR 0020）：消息先写进这里（飞书通知节点的消息和节点成功在同一个事务里），再由控制面投递
+ * （src/feishu/feishu-delivery.ts）。同一个机器人的消息按 `seq`（入队顺序）串行投递；投递的结果只记在这里和任务日志里，
+ * 从不改变节点、任务、链或运行的状态。`bot_name` 不是外键：机器人删除后，它没有投递的消息记为已丢弃。
+ * 可重试的失败之后消息仍然排队：`attempts` 记已经尝试的次数，`next_attempt_at`（控制面时间）是最早的下一次尝试，
+ * 重启之后继续按它算。投递记录跟随所属运行的保留期。
+ */
+export const feishuMessages = pgTable(
+	"feishu_messages",
+	{
+		/** 入队顺序。 */
+		seq: bigserial("seq", { mode: "number" }).primaryKey(),
+		botName: text("bot_name").notNull(),
+		source: text("source").$type<FeishuMessageSource>().notNull(),
+		/** 发起这条消息的运行和任务（飞书通知节点、`ctx.notify`、运行通知的运行）；投递结果写进这个任务的日志。 */
+		runId: uuid("run_id").references(() => runs.id),
+		taskId: uuid("task_id").references(() => tasks.id),
+		/** 完整的飞书请求体。 */
+		body: jsonb("body").$type<Record<string, unknown>>().notNull(),
+		/** 入队时间（控制面时间）。 */
+		enqueuedAt: timestamptz("enqueued_at").notNull(),
+		status: text("status").$type<FeishuMessageStatus>().notNull().default("queued"),
+		attempts: integer("attempts").notNull().default(0),
+		/** 可重试的失败之后，最早的下一次尝试（控制面时间）；还没有失败过、或已经有结果时为空。 */
+		nextAttemptAt: timestamptz("next_attempt_at"),
+		/** 最后一次失败（或丢弃）的原因，中文，Webhook 地址已打码。 */
+		lastError: text("last_error"),
+		/** 送达、失败或丢弃的时间。 */
+		finishedAt: timestamptz("finished_at"),
+	},
+	(t) => [index("feishu_messages_queued").on(t.botName, t.seq).where(sql`${t.status} = 'queued'`)],
 );
 
 /**

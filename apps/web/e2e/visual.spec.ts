@@ -29,12 +29,14 @@ import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
 import { stoppingRun } from "./stop-subflow-scenario";
 import {
+	createFeishuBot,
 	createScenario,
 	failApi,
 	holdApi,
 	publishPackage,
 	scenarioUsing,
 	seedDashboard,
+	setRunNotification,
 	triggerRun,
 } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
@@ -143,6 +145,67 @@ test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connec
 	await expect(page).toHaveScreenshot("agents-update-now.png", {
 		mask: [page.locator('ul[aria-label="会被终止的任务"] li > span.text-xs')],
 	});
+});
+
+test("飞书机器人：列表与测试结果", async ({ page, controlPlane, feishu }) => {
+	await createFeishuBot(
+		controlPlane,
+		"压测群",
+		feishu.webhookUrl("4f9a8c71-e2b0-43d6-9a55-0a1b2c3d4e5f"),
+	);
+	await createFeishuBot(
+		controlPlane,
+		"告警群",
+		feishu.webhookUrl("7d02c1b9-5e3a-4c88-b6f1-9e8d7c6b5a40"),
+	);
+	await createFeishuBot(
+		controlPlane,
+		"日报群",
+		feishu.webhookUrl("c3a1e9d4-0b7f-4a52-8d6e-1f2a3b4c5d6e"),
+	);
+
+	// 投递：压测群的消息送达；告警群的消息遇到 HTTP 503，在等重试（积压 1 条）；日报群还没有投递。
+	const notifyScenario = (bot: string) => ({
+		nodes: [
+			{ id: "entry", kind: "entry", params: [] },
+			{ id: "notify", kind: "feishu_notify", bot, text: "压测开始" },
+		],
+		edges: [{ from: "entry", to: "notify", kind: "chain" }],
+		packages: {},
+	});
+	feishu.replyTo("7d02c1b9-5e3a-4c88-b6f1-9e8d7c6b5a40", { status: 503 });
+	for (const bot of ["压测群", "告警群"]) {
+		const scenario = await createScenario(controlPlane, bot, notifyScenario(bot));
+		await triggerRun(controlPlane, scenario);
+	}
+
+	await page.goto("/feishu-bots");
+	const result = (name: string) => page.getByRole("row", { name: new RegExp(`^${name}`) });
+	await expect(result("压测群")).toContainText("已送达", { timeout: 15_000 });
+	await expect(result("告警群")).toContainText("投递失败", { timeout: 15_000 });
+	await result("压测群").getByRole("button", { name: "发送测试消息" }).click();
+	await expect(result("压测群")).toContainText("测试消息已送达");
+	feishu.reply({ code: 19024, msg: "Key Words Not Found" });
+	await result("告警群").getByRole("button", { name: "发送测试消息" }).click();
+	await expect(result("告警群")).toContainText("飞书错误码 19024");
+
+	await expect(page).toHaveScreenshot("feishu-bots.png");
+});
+
+test("飞书机器人：登记弹窗", async ({ page }) => {
+	await page.goto("/feishu-bots");
+	await page.getByRole("button", { name: "登记机器人" }).click();
+	const dialog = page.getByRole("dialog", { name: "登记飞书机器人" });
+	await dialog.getByLabel("名称").fill("压测群");
+	await dialog.getByLabel("Webhook 地址").fill("ftp://feishu.example/hook/1");
+	await expect(dialog).toContainText("Webhook 地址必须是 http 或 https 地址");
+	await expect(page).toHaveScreenshot("feishu-bots-register.png");
+});
+
+test("飞书机器人：还没有登记", async ({ page }) => {
+	await page.goto("/feishu-bots");
+	await expect(page.getByRole("region", { name: "还没有登记飞书机器人" })).toBeVisible();
+	await expect(page).toHaveScreenshot("feishu-bots-empty.png");
 });
 
 test("Agent 列表为空", async ({ page }) => {
@@ -341,6 +404,52 @@ test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, c
 	await expect(drawer).toHaveScreenshot("run-drawer-summary.png", {
 		mask: [drawer.locator('[data-slot="run-id"]')],
 	});
+});
+
+test("运行抽屉：运行通知的状态", async ({ page, controlPlane, connectAgent, feishu }) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createFeishuBot(
+		controlPlane,
+		"压测群",
+		feishu.webhookUrl("5b1c7e90-3d42-4a6f-8e0b-9c2d4f6a8b10"),
+	);
+	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	await setRunNotification(controlPlane, scenario, { bot: "压测群" });
+	feishu.reply({ code: 19024, msg: "Key Words Not Found" });
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await agent.fail(await agent.nextAssign(), "boom");
+	await expect(drawer.getByRole("group", { name: "运行通知" })).toContainText("投递失败", {
+		timeout: 15_000,
+	});
+	await expect(drawer).toHaveScreenshot("run-drawer-notification.png", {
+		mask: [drawer.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("场景的运行通知设置：机器人已被删除时的提示", async ({ page, controlPlane, feishu }) => {
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+	await createFeishuBot(controlPlane, "告警群", feishu.webhookUrl("b"));
+	const scenario = await createScenario(controlPlane, "订单压测", scenarioUsing("agent-a"));
+	await setRunNotification(controlPlane, scenario, {
+		bot: "压测群",
+		trigger: "failed_or_cancelled",
+		title: "【订单压测-A 环境】",
+		note: "环境 A，负责人 <at id=ou_1></at>",
+	});
+	await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
+		method: "DELETE",
+		headers: { "x-sfly-nickname": "tester" },
+	});
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "订单压测" }).getByLabel("更多操作").click();
+	await page.getByRole("menuitem", { name: "运行通知…" }).click();
+	const dialog = page.getByRole("dialog", { name: "运行通知" });
+	await expect(dialog.getByRole("alert")).toContainText("已被删除");
+	await expect(dialog).toHaveScreenshot("run-notification-dialog.png");
 });
 
 test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {

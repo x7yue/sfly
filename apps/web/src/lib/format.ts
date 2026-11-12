@@ -110,5 +110,5 @@ export function formatMetric(value: number): string {
 	return abs >= 100 ? value.toFixed(0) : abs >= 10 ? value.toFixed(1) : value.toFixed(2);
 }
 
-/** 运行、链实例等 ID 的短形式（前 8 位）。 */
-export const shortId = (id: string) => id.slice(0, 8);
+/** 运行、链实例等 ID 的短形式（前 8 位）；和运行通知卡片里的链名称共用同一个定义。 */
+export { shortId } from "@sfly/orchestration";

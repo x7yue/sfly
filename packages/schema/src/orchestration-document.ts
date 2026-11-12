@@ -79,6 +79,43 @@ export const StopSubflowNode = z.strictObject({
 	subflow: z.string().min(1).optional(),
 });
 
+/** 飞书通知节点的消息格式：文本、Markdown 卡片、原始消息（docs/SEMANTICS.md §4.2）。 */
+export const FeishuMessageFormat = z.enum(["text", "card", "raw"]);
+
+/** Markdown 卡片的标题颜色（飞书卡片 header 的颜色模板）。 */
+export const FeishuCardColor = z.enum(["blue", "green", "orange", "red", "grey"]);
+
+export const FeishuNotifyNode = z.strictObject({
+	...nodeBase,
+	kind: z.literal("feishu_notify"),
+	always: z.boolean().default(false),
+	/**
+	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §1.3）。
+	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝。
+	 */
+	bot: z.string().min(1).optional(),
+	/**
+	 * 消息格式，决定下面哪一组字段生效。切换格式时其他格式里填过的内容留在文档里，
+	 * 但不参与引用检查和解析，切回去还在。
+	 */
+	format: FeishuMessageFormat.default("text"),
+	/** 文本格式：消息文本，支持内嵌引用。 */
+	text: z.string().default(""),
+	/** 文本格式：在正文末尾追加 `<at user_id="all">所有人</at>`。 */
+	at_all: z.boolean().default(false),
+	/** Markdown 卡片：标题，支持内嵌引用。 */
+	title: z.string().default(""),
+	/** Markdown 卡片：标题颜色。 */
+	color: FeishuCardColor.default("blue"),
+	/** Markdown 卡片：Markdown 正文，支持内嵌引用。 */
+	markdown: z.string().default(""),
+	/**
+	 * 原始消息：完整的飞书请求体（JSON 对象），字符串字段里的引用逐个字段解析；也可以整值引用入口参数。
+	 * 可选：还没有填写时消息不发送，节点日志里写一条 warning。
+	 */
+	message: z.unknown().optional(),
+});
+
 export const PackageNode = z.strictObject({
 	...nodeBase,
 	kind: z.literal("package"),
@@ -102,6 +139,7 @@ export const OrchestrationNode = z.discriminatedUnion("kind", [
 	TimerNode,
 	SleepNode,
 	StopSubflowNode,
+	FeishuNotifyNode,
 	PackageNode,
 ]);
 

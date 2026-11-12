@@ -171,6 +171,81 @@ def test_agent_inputs_take_an_agent_name(project: Path) -> None:
     assert "输入 source 应为 string" in wrong.stderr
 
 
+FEISHU_BOT_NODE = """
+from sfly import Context, FeishuBot, node
+
+
+@node
+def alert(ctx: Context, bot: FeishuBot) -> dict:
+    return {"bot": bot}
+"""
+
+
+def test_feishu_bot_inputs_take_a_bot_name(project: Path) -> None:
+    # 「飞书机器人」类型的输入（#233）：本地调试时值就是机器人名称，不检查它是否登记过。
+    (project / "src" / "sfly_stub" / "feishu_bots.py").write_text(FEISHU_BOT_NODE, encoding="utf-8")
+
+    run = sfly_run(project, "alert", "--params", '{"bot": "ops"}')
+    wrong = sfly_run(project, "alert", "--params", '{"bot": 1}')
+
+    assert run.returncode == 0, run.stderr
+    assert outputs_of(run.stdout) == {"bot": "ops"}
+    assert wrong.returncode == 2
+    assert "输入 bot 应为 string" in wrong.stderr
+
+
+def test_notifications_are_printed_with_their_request_body_and_not_sent(project: Path) -> None:
+    # ctx.notify（#234）：本地调试不真的发送，把要发给哪个机器人、请求体是什么打印出来。
+    run = sfly_run(project, "notify", "--params", '{"bot": "ops", "text": "指标越界"}')
+
+    assert run.returncode == 0, run.stderr
+    body = json.dumps({"msg_type": "text", "content": {"text": "指标越界"}}, ensure_ascii=False)
+    assert any("「ops」" in line and line.endswith(body) for line in run.stderr.splitlines()), (
+        run.stderr
+    )
+
+
+def test_a_card_and_a_raw_message_are_printed_and_an_invalid_one_is_warned_about(
+    project: Path,
+) -> None:
+    # ctx.notify(message=...)（#235）：sfly.feishu.card 组装的卡片同样只打印；
+    # 不合格的原始消息不打印，写一行警告，节点照常成功。
+    card = sfly_run(
+        project,
+        "notify_card",
+        "--params",
+        '{"bot": "ops", "title": "压测完成", "markdown": "**QPS** 1200", "color": "green"}',
+    )
+    invalid = sfly_run(
+        project, "notify_message", "--params", '{"bot": "ops", "message": {"content": {}}}'
+    )
+
+    assert card.returncode == 0, card.stderr
+    expected = json.dumps(
+        {
+            "msg_type": "interactive",
+            "card": {
+                "schema": "2.0",
+                "header": {
+                    "title": {"tag": "plain_text", "content": "压测完成"},
+                    "template": "green",
+                },
+                "body": {"elements": [{"tag": "markdown", "content": "**QPS** 1200"}]},
+            },
+        },
+        ensure_ascii=False,
+    )
+    assert any(
+        "「ops」" in line and line.endswith(expected) for line in card.stderr.splitlines()
+    ), card.stderr
+    assert invalid.returncode == 0, invalid.stderr
+    assert "通知  发给" not in invalid.stderr
+    assert any(
+        " warn  system ctx.notify 的消息没有发送：" in line and "msg_type" in line
+        for line in invalid.stderr.splitlines()
+    ), invalid.stderr
+
+
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
     project: Path,
 ) -> None:

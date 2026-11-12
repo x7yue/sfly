@@ -10,9 +10,17 @@ import sys
 import time
 from collections.abc import Callable, Iterator
 from importlib import metadata
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 
+import sfly
 from sfly import Context, Metric, node
+
+if TYPE_CHECKING:
+    from sfly import FeishuBot
+else:
+    # 「飞书机器人」类型从 SDK 0.3.0 起才有：bundle-self-update 用上一个 Release 的 SDK 加载本包，
+    # 那里用普通字符串代替，本包的其余节点照常可用。
+    FeishuBot = getattr(sfly, "FeishuBot", str)
 
 
 @node(title="回显", outputs=["text"])
@@ -195,6 +203,48 @@ def about(ctx: Context) -> dict[str, Any]:
     """报告当前生效的节点包名与版本（安装与版本切换测试用；同一份源码可换包名和版本构建）。"""
     dist = metadata.distribution(__name__)
     return {"package": dist.metadata["Name"], "version": dist.version}
+
+
+@node(title="飞书通知", outputs=[])
+def notify(
+    ctx: Context, bot: FeishuBot, text: str, at_all: bool = False, unlisted: str = ""
+) -> None:
+    """ctx.notify 测试用（#234）：先写一行日志，再给 bot 发 text；unlisted 不为空时再发给它
+    （普通字符串参数，不在任务引用的飞书机器人名单里）。
+
+    ctx.notify 从 SDK 0.3.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    ctx.log.info("发通知前")
+    ctx.notify(bot, text, at_all=at_all)
+    if unlisted:
+        ctx.notify(unlisted, text)
+
+
+@node(title="飞书原始消息", outputs=[])
+def notify_message(ctx: Context, bot: FeishuBot, message: Any, unlisted: str = "") -> None:
+    """ctx.notify(message=...) 测试用（#235）：把 message（任意 JSON 值，不检查）原样交给 bot；
+    unlisted 不为空时再交给它（普通字符串参数，不在任务引用的飞书机器人名单里）。
+
+    message= 从 SDK 0.3.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    ctx.notify(bot, message=message)
+    if unlisted:
+        ctx.notify(unlisted, message=message)
+
+
+@node(title="飞书卡片", outputs=[])
+def notify_card(
+    ctx: Context,
+    bot: FeishuBot,
+    title: str,
+    markdown: str,
+    color: Literal["blue", "green", "orange", "red", "grey"] = "blue",
+) -> None:
+    """sfly.feishu.card 测试用（#235）：给 bot 发一张标题、颜色和正文由参数给出的 Markdown 卡片。
+
+    sfly.feishu 从 SDK 0.3.0 起才有，在函数里才访问它：上一个 Release 的 SDK 仍然能导入本包。
+    """
+    ctx.notify(bot, message=sfly.feishu.card(title, markdown, color))
 
 
 @node(title="多路日志", outputs=[])

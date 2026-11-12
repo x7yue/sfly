@@ -1,6 +1,8 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import {
 	dispatchTarget,
+	FEISHU_BODY_LIMIT_LABEL,
+	FEISHU_MSG_TYPES,
 	isTimeZone,
 	NODE_DEFAULTS,
 	type NodeTypeIo,
@@ -10,7 +12,13 @@ import {
 	stopCandidates,
 	timerTarget,
 } from "@sfly/orchestration";
-import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
+import {
+	type AgentView,
+	type FeishuBotView,
+	FeishuCardColor,
+	type OrchestrationDocument,
+	type PackageSummary,
+} from "@sfly/schema";
 import { useId, useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { controlPlaneNow } from "#/lib/control-plane-time";
@@ -20,17 +28,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { agentsWithDev } from "../catalog";
 import { draftKey, useParsedField } from "../field-drafts";
 import { AgentSelect } from "./AgentSelect";
+import { FeishuBotSelect } from "./FeishuBotSelect";
 import { Field, SectionTitle } from "./fields";
 import {
 	InsertReferenceButton,
 	ReferenceEditor,
 	type ReferenceEditorHandle,
 } from "./ReferenceEditor";
-import type { ReferenceChoice } from "./reference-completion";
+import { ReferenceChip, ReferencePicker } from "./ReferencePicker";
+import { type ReferenceChoice, wholeReference } from "./reference-completion";
 import { ParsedError, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
 import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
@@ -41,7 +52,8 @@ type AsyncNode = Extract<DocNode, { kind: "async" }>;
 type TimerNode = Extract<DocNode, { kind: "timer" }>;
 type SleepNode = Extract<DocNode, { kind: "sleep" }>;
 type StopSubflowNode = Extract<DocNode, { kind: "stop_subflow" }>;
-type AlwaysNode = PackageNode | TimerNode | SleepNode | StopSubflowNode;
+type FeishuNotifyNode = Extract<DocNode, { kind: "feishu_notify" }>;
+type AlwaysNode = PackageNode | TimerNode | SleepNode | StopSubflowNode | FeishuNotifyNode;
 
 /** 某个字段的静态检查警告（不阻止保存）。 */
 export type ProblemsOf = (input: string) => string[];
@@ -58,6 +70,7 @@ export function PackageParams({
 	problemsOf,
 	defaultAgent,
 	agents,
+	bots,
 	onChange,
 }: {
 	id: string;
@@ -68,6 +81,7 @@ export function PackageParams({
 	problemsOf: ProblemsOf;
 	defaultAgent: string | undefined;
 	agents: AgentView[];
+	bots: readonly FeishuBotView[];
 	onChange(node: PackageNode): void;
 }) {
 	const set = (name: string, value: unknown) => {
@@ -98,6 +112,7 @@ export function PackageParams({
 					value={node.inputs[name]}
 					choices={choices}
 					agents={agents}
+					bots={bots}
 					problems={problemsOf(name)}
 					onChange={(v) => set(name, v)}
 				/>
@@ -157,7 +172,7 @@ const SETTINGS = [
 	},
 ] as const;
 
-/** 执行设置：超时、重试次数、排队超时（包节点），always（包节点、定时、Sleep、停止子流程）。 */
+/** 执行设置：超时、重试次数、排队超时（包节点），always（包节点、定时、Sleep、停止子流程、飞书通知）。 */
 export function ExecutionSettings({
 	id,
 	node,
@@ -681,6 +696,288 @@ export function SleepForm({
 				/>
 			</div>
 		</Field>
+	);
+}
+
+const FORMAT_OPTIONS = [
+	{ value: "text", label: "文本" },
+	{ value: "card", label: "Markdown 卡片" },
+	{ value: "raw", label: "原始消息" },
+] as const;
+
+const COLOR_LABELS: Record<FeishuNotifyNode["color"], string> = {
+	blue: "蓝色",
+	green: "绿色",
+	orange: "橙色",
+	red: "红色",
+	grey: "灰色",
+};
+
+const REFERENCE_HELP =
+	"可以输入 $ 或点「插入引用」写入入口参数和前面节点的输出；引用缺失时显示 null";
+
+/**
+ * 飞书通知节点（docs/SEMANTICS.md §1.3、§4.2，ADR 0020）：已登记的飞书机器人（下拉框，也可以改为整值引用入口参数）、
+ * 消息格式（文本、Markdown 卡片、原始消息）和各格式自己的字段。切换格式时其他格式里填过的内容保留，只是不显示、不生效。
+ * 消息由控制面发出，节点立即成功。
+ */
+export function FeishuNotifyForm({
+	node,
+	bots,
+	choices,
+	problemsOf,
+	onChange,
+}: {
+	node: FeishuNotifyNode;
+	bots: readonly FeishuBotView[];
+	choices: ReferenceChoice[];
+	problemsOf: ProblemsOf;
+	onChange(node: FeishuNotifyNode): void;
+}) {
+	const botId = useId();
+	const botProblems = problemsOf("bot");
+	// 机器人只能引用入口参数：这样触发时就能检查它是已登记的机器人。
+	const paramChoices = choices.filter((c) => c.kind === "param");
+	const setBot = (bot: string | undefined) => {
+		const { bot: _old, ...rest } = node;
+		onChange(bot === undefined ? rest : { ...rest, bot });
+	};
+	const botLabel = "飞书机器人";
+	const referenced = node.bot !== undefined && wholeReference(node.bot) !== undefined;
+	const picker = (
+		<ReferencePicker
+			name={botLabel}
+			choices={paramChoices}
+			onPick={(choice) => setBot(choice.text)}
+		/>
+	);
+	return (
+		<>
+			<Field
+				label={botLabel}
+				htmlFor={botId}
+				required
+				error={botProblems.length > 0 ? botProblems.join("；") : undefined}
+				help="在「飞书机器人」页登记；也可以引用入口参数，触发时决定发到哪个群"
+				aside={picker}
+			>
+				{referenced ? (
+					<ReferenceChip
+						label={botLabel}
+						name="机器人"
+						value={node.bot as string}
+						invalid={botProblems.length > 0}
+						onRemove={() => setBot(undefined)}
+					/>
+				) : (
+					<FeishuBotSelect
+						id={botId}
+						label={botLabel}
+						value={node.bot}
+						bots={bots}
+						emptyLabel="（选择机器人）"
+						invalid={botProblems.length > 0}
+						onChange={setBot}
+					/>
+				)}
+			</Field>
+			<Field label="格式">
+				<Segmented
+					label="格式"
+					value={node.format}
+					options={FORMAT_OPTIONS}
+					onChange={(format) => onChange({ ...node, format })}
+				/>
+			</Field>
+			{node.format === "text" && (
+				<FeishuTextFields
+					node={node}
+					choices={choices}
+					problemsOf={problemsOf}
+					onChange={onChange}
+				/>
+			)}
+			{node.format === "card" && (
+				<FeishuCardFields
+					node={node}
+					choices={choices}
+					problemsOf={problemsOf}
+					onChange={onChange}
+				/>
+			)}
+			{node.format === "raw" && (
+				<FeishuRawField node={node} choices={choices} problemsOf={problemsOf} onChange={onChange} />
+			)}
+			<p className="m-0 text-xs text-fg-3">
+				消息交给控制面的发送队列后节点立即成功；发不出去（飞书不可达、机器人不存在……）不会让节点或运行失败，
+				原因写在节点日志里。
+			</p>
+		</>
+	);
+}
+
+interface FeishuFieldsProps {
+	node: FeishuNotifyNode;
+	choices: ReferenceChoice[];
+	problemsOf: ProblemsOf;
+	onChange(node: FeishuNotifyNode): void;
+}
+
+/** 文本格式：文本（文字和引用混写）和「@所有人」开关。 */
+function FeishuTextFields({ node, choices, problemsOf, onChange }: FeishuFieldsProps) {
+	const textId = useId();
+	const atAllId = useId();
+	const editor = useRef<ReferenceEditorHandle>(null);
+	const problems = problemsOf("text");
+	return (
+		<>
+			<Field
+				label="文本"
+				htmlFor={textId}
+				error={problems.length > 0 ? problems.join("；") : undefined}
+				aside={
+					<ReferenceActions
+						editor={editor}
+						name="文本"
+						label="文本"
+						value={node.text}
+						choices={choices}
+						placeholder="消息内容"
+						invalid={problems.length > 0}
+						error={problems.join("；")}
+						onChange={(text) => onChange({ ...node, text })}
+					/>
+				}
+				help={REFERENCE_HELP}
+			>
+				<ReferenceEditor
+					ref={editor}
+					id={textId}
+					label="文本"
+					value={node.text}
+					choices={choices}
+					placeholder="消息内容"
+					invalid={problems.length > 0}
+					onChange={(text) => onChange({ ...node, text })}
+				/>
+			</Field>
+			<Field label="@所有人" htmlFor={atAllId}>
+				<div className="flex h-7.5 items-center gap-2.5">
+					<Switch
+						id={atAllId}
+						aria-label="@所有人"
+						checked={node.at_all}
+						onCheckedChange={(at_all) => onChange({ ...node, at_all })}
+					/>
+					<span className="text-xs text-fg-3">在正文末尾追加 @所有人</span>
+				</div>
+			</Field>
+		</>
+	);
+}
+
+/** Markdown 卡片：标题、标题颜色和 Markdown 正文；标题和正文里可以写引用。 */
+function FeishuCardFields({ node, choices, problemsOf, onChange }: FeishuFieldsProps) {
+	const titleId = useId();
+	const colorId = useId();
+	const markdownId = useId();
+	const titleEditor = useRef<ReferenceEditorHandle>(null);
+	const markdownEditor = useRef<ReferenceEditorHandle>(null);
+	const titleProblems = problemsOf("title");
+	const markdownProblems = problemsOf("markdown");
+	return (
+		<>
+			<Field
+				label="标题"
+				htmlFor={titleId}
+				aside={<InsertReferenceButton name="标题" editor={titleEditor} />}
+				error={titleProblems.length > 0 ? titleProblems.join("；") : undefined}
+				help="卡片顶部的标题；可以输入 $ 或点「插入引用」写入引用"
+			>
+				<ReferenceEditor
+					ref={titleEditor}
+					id={titleId}
+					label="标题"
+					value={node.title}
+					choices={choices}
+					placeholder="卡片标题"
+					invalid={titleProblems.length > 0}
+					onChange={(title) => onChange({ ...node, title })}
+				/>
+			</Field>
+			<Field label="标题颜色" htmlFor={colorId}>
+				<NativeSelect
+					id={colorId}
+					aria-label="标题颜色"
+					value={node.color}
+					onChange={(e) =>
+						onChange({ ...node, color: e.target.value as FeishuNotifyNode["color"] })
+					}
+				>
+					{FeishuCardColor.options.map((color) => (
+						<NativeSelectOption key={color} value={color}>
+							{COLOR_LABELS[color]}
+						</NativeSelectOption>
+					))}
+				</NativeSelect>
+			</Field>
+			<Field
+				label="正文"
+				htmlFor={markdownId}
+				error={markdownProblems.length > 0 ? markdownProblems.join("；") : undefined}
+				aside={
+					<ReferenceActions
+						editor={markdownEditor}
+						name="正文"
+						label="正文"
+						value={node.markdown}
+						choices={choices}
+						placeholder="Markdown 正文"
+						invalid={markdownProblems.length > 0}
+						error={markdownProblems.join("；")}
+						onChange={(markdown) => onChange({ ...node, markdown })}
+					/>
+				}
+				help={`Markdown 正文，超过 ${FEISHU_BODY_LIMIT_LABEL} 时截断。${REFERENCE_HELP}`}
+			>
+				<ReferenceEditor
+					ref={markdownEditor}
+					id={markdownId}
+					label="正文"
+					value={node.markdown}
+					choices={choices}
+					placeholder="Markdown 正文"
+					invalid={markdownProblems.length > 0}
+					minLines={4}
+					onChange={(markdown) => onChange({ ...node, markdown })}
+				/>
+			</Field>
+		</>
+	);
+}
+
+/**
+ * 原始消息：完整的飞书请求体（JSON 对象），原样发出。用的是包节点 `json` 类型输入的同一个控件：
+ * 字符串字段里可以写引用，也可以整个值引用一个 json 类型的入口参数。
+ */
+function FeishuRawField({ node, choices, problemsOf, onChange }: FeishuFieldsProps) {
+	return (
+		<ValueField
+			nodeId={node.id}
+			name="message"
+			heading="原始消息"
+			label="原始消息"
+			schema={{ type: "object" }}
+			required
+			value={node.message}
+			choices={choices}
+			problems={problemsOf("message")}
+			help={`完整的飞书请求体，原样发出，不截断；msg_type 必须是 ${FEISHU_MSG_TYPES.join("、")} 之一，整个请求体不超过 ${FEISHU_BODY_LIMIT_LABEL}。字符串字段里可以写引用。`}
+			onChange={(message) => {
+				const { message: _old, ...rest } = node;
+				onChange(message === undefined ? rest : { ...rest, message });
+			}}
+		/>
 	);
 }
 

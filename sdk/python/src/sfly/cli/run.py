@@ -12,6 +12,8 @@ stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互�
 `--agent <名称>=<目录>` 把一台 Agent 映射到本地目录：节点用 `ctx.agent(名称)` 访问它时，
 那台 Agent 上的绝对路径落在这个目录里。`ctx.agent()`（自己所在的 Agent）就是本机。
 
+`ctx.notify` 不真的发送：和日志一起实时打印要发给哪个飞书机器人、请求体是什么。
+
 Ctrl-C 走和平台相同的取消流程：取消标记 + SIGTERM，宽限期过后强制杀掉；再按一次立即杀掉。
 节点结束后结果已经确定，打印结果期间的 Ctrl-C 被忽略，退出码按结果给出。
 
@@ -31,7 +33,15 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
-from sfly.local import DEFAULT_GRACE, Cancellation, Execution, LogLine, MetricPoint, execute
+from sfly.local import (
+    DEFAULT_GRACE,
+    Cancellation,
+    Execution,
+    LogLine,
+    MetricPoint,
+    Notification,
+    execute,
+)
 
 #: 运行目录（相对项目根目录）。
 RUNS_DIR = Path(".sfly") / "runs"
@@ -53,6 +63,12 @@ def _clock(ts: int) -> str:
 
 def _print_log(line: LogLine) -> None:
     print(f"{_clock(line.ts)} {line.level:<5} {line.source:<6} {line.message}", file=sys.stderr)
+
+
+def _print_notification(notification: Notification) -> None:
+    body = json.dumps(notification.body, ensure_ascii=False)
+    to = f"发给飞书机器人「{notification.bot}」（本地调试不发送）"
+    print(f"{_clock(notification.ts)} 通知  {to}：{body}", file=sys.stderr)
 
 
 def _say_from_signal_handler(text: str) -> None:
@@ -202,6 +218,7 @@ def run(
             grace=grace,
             cancellation=cancellation,
             on_log=_print_log,
+            on_notify=_print_notification,
             run_id=work.name,
             node_id=node,
             procs_dir=project.absolute() / PROCS_DIR / work.name,

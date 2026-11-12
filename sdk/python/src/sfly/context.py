@@ -10,7 +10,9 @@
 - `ctx.task`：当前任务的运行 ID、节点 ID、任务 ID、attempt（见 `TaskInfo`）；
 - `ctx.procs_dir`：这次运行的后台进程目录（见 `Context.procs_dir`）；
 - `ctx.agent()` / `ctx.agent(名称)`：自己所在的 Agent / 通过「Agent」类型的参数拿到的
-  另一台 Agent 的能力（见 `Context.agent`、`sfly.capabilities`）。
+  另一台 Agent 的能力（见 `Context.agent`、`sfly.capabilities`）；
+- `ctx.notify(机器人, 文本)` / `ctx.notify(机器人, message=...)`：发一条飞书通知（文本或原始消息），
+  由控制面发出，投递失败不抛异常（见 `Context.notify`、`sfly.feishu`）。
 
 取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
@@ -24,6 +26,9 @@
   （`total` 可以是 null）
 - 指标 `{"type": "metric", "ts": ..., "name": "tps", "kind": "gauge|counter", "value": 1.5}`，
   带标签时加 `"labels": {"pid": "1234"}`（值都是字符串；不带标签时没有这个字段）
+- 通知 `{"type": "notify", "ts": ..., "bot": "ops", "text": "...", "at_all": false}`，发原始消息时是
+  `{"type": "notify", "ts": ..., "bot": "ops", "message": {...}}`：Agent 不解析，
+  原样转给控制面（Notification 消息），由控制面校验、组装请求体并写进发送队列
 
 `print` 和子进程的输出不经过这里：Agent 直接读取执行器的标准输出 / 标准错误，
 与事件文件合并成同一条日志流。
@@ -454,6 +459,56 @@ class Context:
         return connect(
             name, task_id=self.task.task_id, attempt=self.task.attempt, cancelled=self.cancelled
         )
+
+    def notify(
+        self,
+        bot: str,
+        text: str | None = None,
+        *,
+        at_all: bool = False,
+        message: Mapping[str, Any] | None = None,
+    ) -> None:
+        """给飞书机器人 `bot` 发一条通知（ADR 0020），调用后立即返回。
+
+        - `ctx.notify(bot, text)` 发文本，`at_all=True` 时在正文末尾加上「@所有人」；正文里自己写的
+          `<at user_id="ou_xxx">名字</at>` 原样发出；
+        - `ctx.notify(bot, message=...)` 发原始消息：完整的飞书请求体，原样发出，富文本、自己设计的
+          卡片、模板卡片都走这一种；Markdown 卡片用 `sfly.feishu.card(...)` 组装：
+          `ctx.notify(bot, message=sfly.feishu.card("标题", "**正文**", "green"))`。
+          校验规则与飞书通知节点的原始消息格式相同：只检查它是一个对象、`msg_type` 是 text、post、
+          image、share_chat、interactive 之一、不超过 20 KB（不截断）；不合格的不发送，
+          任务日志里写一条警告说明原因，调用不抛异常；
+        - `bot` 是飞书机器人的名称，要通过「飞书机器人」类型的参数（`sfly.FeishuBot`）传给节点：
+          平台只发给任务的这种参数引用的机器人，其他名称不发送，任务日志里写一条警告。
+
+        消息由控制面发出：这里只把通知写进事件管道，由 Agent 转给控制面写进发送队列，
+        不访问网络、不等结果。**投递失败永远不会抛出异常**，节点不会因为通知失败或变慢；
+        投递结果写在这个任务的日志里。只有调用的写法不对时抛出 `TypeError`：`bot` 不是字符串，
+        `text` 和 `message` 同时给或都不给，`text` 不是字符串，`at_all` 不是布尔值，
+        或者发原始消息时还给了 `at_all`（它只对文本有意义）。
+
+        本地调试时不真的发送：`sfly run` 打印请求体，`sfly.testing.run_node` 的结果里
+        有 `notifications`。
+        """
+        if not isinstance(bot, str):
+            raise TypeError(f"ctx.notify 的 bot 必须是飞书机器人的名称（字符串），实际为 {bot!r}")
+        if text is not None and message is not None:
+            raise TypeError(
+                "ctx.notify 不能同时给 text 和 message：发文本用 text，发原始消息用 message"
+            )
+        if text is None and message is None:
+            raise TypeError("ctx.notify 需要给 text（文本）或 message（原始消息）")
+        if not isinstance(at_all, bool):
+            raise TypeError(f"ctx.notify 的 at_all 必须是 True 或 False，实际为 {at_all!r}")
+        if message is not None:
+            if at_all:
+                raise TypeError("ctx.notify 发原始消息时不能用 at_all：要 @所有人，写在消息里")
+            content: dict[str, Any] = {"message": message}
+        else:
+            if not isinstance(text, str):
+                raise TypeError(f"ctx.notify 的 text 必须是字符串，实际为 {text!r}")
+            content = {"text": text, "at_all": at_all}
+        self._events.write({"type": "notify", "ts": _now_ms(), "bot": bot, **content})
 
     def cancelled(self) -> bool:
         """任务是否已被取消（Agent 已写入取消标记）。"""

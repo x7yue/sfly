@@ -4,6 +4,7 @@ import { cn } from "cn";
 import {
 	ArchiveIcon,
 	ArchiveRestoreIcon,
+	BellIcon,
 	CopyIcon,
 	EllipsisIcon,
 	HistoryIcon,
@@ -16,7 +17,7 @@ import { createContext, type ReactNode, useContext, useRef, useState } from "rea
 import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { ACTION } from "#/lib/copy";
+import { ACTION, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration } from "#/lib/format";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +35,7 @@ import {
 	EditScenarioDialog,
 	useUnarchiveScenario,
 } from "./dialogs";
+import { RunNotificationDialog } from "./RunNotificationDialog";
 import { ScenarioThumbnail } from "./ScenarioThumbnail";
 
 /** 场景列表的卡片视图与表格视图（原型 #/scenarios：scenarioCard、表格视图、scMenu）。 */
@@ -139,7 +141,7 @@ export function ScenarioRunDrawer({ children }: { children: ReactNode }) {
 }
 
 /**
- * 卡片和表格行共用的操作：「编排」「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、归档；
+ * 卡片和表格行共用的操作：「编排」「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、运行通知、归档；
  * 已归档的场景只能恢复，或者查看它的运行记录。「运行」打开运行抽屉（ScenarioRunDrawer）。
  */
 function ScenarioActions({
@@ -152,7 +154,7 @@ function ScenarioActions({
 }) {
 	const navigate = useNavigate();
 	const more = useRef<HTMLButtonElement>(null);
-	const [dialog, setDialog] = useState<"copy" | "edit" | "archive" | null>(null);
+	const [dialog, setDialog] = useState<"copy" | "edit" | "notify" | "archive" | null>(null);
 	const openRunDrawer = useContext(RunDrawerContext);
 	const unarchive = useUnarchiveScenario();
 	const close = (open: boolean) => {
@@ -219,6 +221,10 @@ function ScenarioActions({
 						<PencilLineIcon />
 						编辑名称和说明…
 					</DropdownMenuItem>
+					<DropdownMenuItem onClick={() => setDialog("notify")}>
+						<BellIcon />
+						{TERM.runNotification}…
+					</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem
 						variant="destructive"
@@ -240,6 +246,12 @@ function ScenarioActions({
 			<EditScenarioDialog
 				scenario={scenario}
 				open={dialog === "edit"}
+				onOpenChange={close}
+				returnFocus={more}
+			/>
+			<RunNotificationDialog
+				scenario={scenario}
+				open={dialog === "notify"}
 				onOpenChange={close}
 				returnFocus={more}
 			/>

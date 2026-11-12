@@ -22,6 +22,7 @@ const NODE_KINDS = [
 	"timer",
 	"sleep",
 	"stop_subflow",
+	"feishu_notify",
 	"package",
 ] as const satisfies readonly OrchestrationNode["kind"][];
 
@@ -139,6 +140,18 @@ export const ChainRunView = z.object({
 	nodes: z.array(NodeRunView),
 });
 
+/**
+ * 运行通知的状态（GLOSSARY「运行通知」）：队列里的消息是排队中、已送达、失败、已丢弃（机器人被删除）；
+ * 运行结束时机器人已不存在的，没有进队列，是未发送。只有场景设置里选了机器人、而且满足触发条件的运行才有。
+ */
+export const RunNotificationState = z.object({
+	status: z.enum(["queued", "delivered", "failed", "discarded", "not_sent"]),
+	/** 通知发给哪个飞书机器人。 */
+	bot: z.string(),
+	/** 失败、已丢弃、未发送时的原因（中文，Webhook 地址已打码）；排队中和已送达为 null。 */
+	reason: z.string().nullable(),
+});
+
 export const RunView = z.object({
 	id: z.string(),
 	orchestration_id: z.string(),
@@ -156,6 +169,11 @@ export const RunView = z.object({
 			forced_at: Timestamp.nullable(),
 		})
 		.nullable(),
+	/**
+	 * 运行通知的状态；没有发运行通知（场景没有选机器人、不满足触发条件、运行还没结束），
+	 * 或者投递记录已过保留期被清理时为 null。
+	 */
+	run_notification: RunNotificationState.nullable(),
 	/** 按深度、开始时间排序。 */
 	chains: z.array(ChainRunView),
 });
@@ -593,6 +611,7 @@ export type TaskProgressView = z.infer<typeof TaskProgressView>;
 export type AttemptView = z.infer<typeof AttemptView>;
 export type NodeRunView = z.infer<typeof NodeRunView>;
 export type ChainRunView = z.infer<typeof ChainRunView>;
+export type RunNotificationState = z.infer<typeof RunNotificationState>;
 export type RunView = z.infer<typeof RunView>;
 export type RunSummary = z.infer<typeof RunSummary>;
 export type ParamDeclView = z.infer<typeof ParamDeclView>;

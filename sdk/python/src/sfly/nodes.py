@@ -16,20 +16,30 @@ from sfly.context import Context
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-class _AgentMarker:
-    """`AgentName` 的标记：`sfly build` 据此把输入标成「Agent」类型（schema 的 `x-sfly-type`）。"""
+class _InputTypeMarker:
+    """扩展输入类型的标记：`sfly build` 据此把输入标成对应的类型（schema 的 `x-sfly-type`）。"""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
 
     def __repr__(self) -> str:
-        return "sfly.AgentName"
+        return f"sfly.{self.name}"
 
 
-AGENT_MARKER = _AgentMarker()
+AGENT_MARKER = _InputTypeMarker("AgentName")
+FEISHU_BOT_MARKER = _InputTypeMarker("FeishuBot")
 
 #: 「Agent」类型的输入：值是 Agent 名称（运行时就是 `str`），表示节点会访问这台 Agent（ADR 0019）。
 #: 检查器里显示成 Agent 下拉框；触发前检查它是已注册的 Agent；派发时控制面把它的地址和端口随任务下发
 #: 给节点所在的 Agent，节点用 `ctx.agent(名称)` 访问它。只能直接用作节点参数的类型，
 #: 可以写成 `AgentName | None`。
 AgentName = Annotated[str, AGENT_MARKER]
+
+#: 「飞书机器人」类型的输入：值是飞书机器人的名称（运行时就是 `str`），表示节点会通过这个机器人
+#: 发飞书通知（ADR 0020）。检查器里显示成飞书机器人下拉框；触发前检查它是已登记的机器人；
+#: 派发时控制面把任务引用的机器人名单随任务下发。只能直接用作节点参数的类型，
+#: 可以写成 `FeishuBot | None`。
+FeishuBot = Annotated[str, FEISHU_BOT_MARKER]
 
 #: 函数上保存节点声明的属性名。
 NODE_ATTR = "__sfly_node__"

@@ -1,0 +1,489 @@
+{
+	"$comment": [
+		"飞书文本消息的组装规则与用例，和实现无关（docs/SEMANTICS.md §4.2、ADR 0020）。",
+		"控制面（apps/server/src/feishu/messages.ts 的 textMessage）和 SDK（sdk/python/src/sfly/feishu.py 的 text_message，本地调试用）各有一份实现，都要通过这里的全部用例。",
+		"input 是 text、at_all；expected 是 {body}：body 是完整的飞书请求体（JSON 相等，键的顺序不论）。",
+		"字符串值可以写成 {\"$repeat\": 单元, \"times\": 次数, \"suffix\": 末尾} 表示「单元重复若干次再接上末尾」（suffix 可省略），用来写超长的字符串；读用例的一方先把它们展开成字符串。"
+	],
+	"rule": [
+		"请求体：{msg_type: text, content: {text: 正文}}，没有别的字段。at_all 打开时正文末尾追加 at_all_tag；正文里自己写的 at 标签原样保留，不处理、不转义。",
+		"请求体的大小：紧凑 JSON（没有多余空白，非 ASCII 字符不转义成 \\u 形式；引号、反斜杠和 \\b \\f \\n \\r \\t 各占 2 字节，其他控制字符写成 \\u00XX 占 6 字节）按 UTF-8 编码的字节数。上限 20480 字节（20 KB）。",
+		"没超过上限：原样返回。超过上限：截断正文，留下最长的、能放得下的前缀（按 Unicode 字符数，不把一个字符切成两半），后面接上「…（已截断）」，at_all 打开时「@所有人」仍在最后，使整张请求体不超过上限。"
+	],
+	"limit_bytes": 20480,
+	"truncated_suffix": "…（已截断）",
+	"at_all_tag": "<at user_id=\"all\">所有人</at>",
+	"cases": [
+		{
+			"name": "普通文本",
+			"input": {
+				"text": "压测开始，目标 QPS 1200",
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": "压测开始，目标 QPS 1200"
+					}
+				}
+			}
+		},
+		{
+			"name": "打开「@所有人」时在正文末尾追加",
+			"input": {
+				"text": "压测开始",
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": "压测开始<at user_id=\"all\">所有人</at>"
+					}
+				}
+			}
+		},
+		{
+			"name": "正文里自己写的 at 标签原样保留",
+			"input": {
+				"text": "请 <at user_id=\"ou_xxx\">张三</at> 看一下",
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": "请 <at user_id=\"ou_xxx\">张三</at> 看一下"
+					}
+				}
+			}
+		},
+		{
+			"name": "自己写的 at 标签和「@所有人」同时存在",
+			"input": {
+				"text": "<at user_id=\"ou_xxx\">张三</at> 失败了",
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": "<at user_id=\"ou_xxx\">张三</at> 失败了<at user_id=\"all\">所有人</at>"
+					}
+				}
+			}
+		},
+		{
+			"name": "空文本",
+			"input": {
+				"text": "",
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": ""
+					}
+				}
+			}
+		},
+		{
+			"name": "空文本加「@所有人」",
+			"input": {
+				"text": "",
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": "<at user_id=\"all\">所有人</at>"
+					}
+				}
+			}
+		},
+		{
+			"name": "换行、引号和反斜杠原样放进正文",
+			"input": {
+				"text": "a\n\"b\"\\c\t",
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": "a\n\"b\"\\c\t"
+					}
+				}
+			}
+		},
+		{
+			"name": "emoji 和 Markdown 符号原样",
+			"input": {
+				"text": "**ok** 😀 `x`",
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": "**ok** 😀 `x`"
+					}
+				}
+			}
+		},
+		{
+			"name": "恰好 20 KB：不截断",
+			"input": {
+				"text": {
+					"$repeat": "a",
+					"times": 20439
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20439
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "多一个字节：截断，末尾接「…（已截断）」",
+			"input": {
+				"text": {
+					"$repeat": "a",
+					"times": 20440
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20421,
+							"suffix": "…（已截断）"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "打开「@所有人」恰好放得下：不截断",
+			"input": {
+				"text": {
+					"$repeat": "a",
+					"times": 20405
+				},
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20405,
+							"suffix": "<at user_id=\"all\">所有人</at>"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "打开「@所有人」多一个字节：截断，「@所有人」仍在最后",
+			"input": {
+				"text": {
+					"$repeat": "a",
+					"times": 20406
+				},
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20387,
+							"suffix": "…（已截断）<at user_id=\"all\">所有人</at>"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "正文几百万字符：和刚超限的结果一样",
+			"input": {
+				"text": {
+					"$repeat": "a",
+					"times": 5000000
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a",
+							"times": 20421,
+							"suffix": "…（已截断）"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "2 字节字符（é）：放不下的半个字符不留",
+			"input": {
+				"text": {
+					"$repeat": "é",
+					"times": 12000
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "é",
+							"times": 10210,
+							"suffix": "…（已截断）"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "2 字节字符（é）加「@所有人」",
+			"input": {
+				"text": {
+					"$repeat": "é",
+					"times": 12000
+				},
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "é",
+							"times": 10193,
+							"suffix": "…（已截断）<at user_id=\"all\">所有人</at>"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "3 字节字符（汉字）",
+			"input": {
+				"text": {
+					"$repeat": "字",
+					"times": 10000
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "字",
+							"times": 6807,
+							"suffix": "…（已截断）"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "3 字节字符（汉字）加「@所有人」",
+			"input": {
+				"text": {
+					"$repeat": "字",
+					"times": 10000
+				},
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "字",
+							"times": 6795,
+							"suffix": "…（已截断）<at user_id=\"all\">所有人</at>"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "4 字节字符（emoji）：不把一个字符切成两半",
+			"input": {
+				"text": {
+					"$repeat": "😀",
+					"times": 6000
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "😀",
+							"times": 5105,
+							"suffix": "…（已截断）"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "4 字节字符（emoji）加「@所有人」",
+			"input": {
+				"text": {
+					"$repeat": "😀",
+					"times": 6000
+				},
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "😀",
+							"times": 5096,
+							"suffix": "…（已截断）<at user_id=\"all\">所有人</at>"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "ASCII 和 emoji 交替",
+			"input": {
+				"text": {
+					"$repeat": "a😀",
+					"times": 5000
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a😀",
+							"times": 4084,
+							"suffix": "a…（已截断）"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "ASCII 和 emoji 交替加「@所有人」",
+			"input": {
+				"text": {
+					"$repeat": "a😀",
+					"times": 5000
+				},
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "a😀",
+							"times": 4077,
+							"suffix": "a…（已截断）<at user_id=\"all\">所有人</at>"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "引号在 JSON 里占 2 字节",
+			"input": {
+				"text": {
+					"$repeat": "\"",
+					"times": 12000
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "\"",
+							"times": 10210,
+							"suffix": "…（已截断）"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "换行在 JSON 里占 2 字节",
+			"input": {
+				"text": {
+					"$repeat": "\n",
+					"times": 12000
+				},
+				"at_all": true
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "\n",
+							"times": 10193,
+							"suffix": "…（已截断）<at user_id=\"all\">所有人</at>"
+						}
+					}
+				}
+			}
+		},
+		{
+			"name": "控制字符在 JSON 里占 6 字节",
+			"input": {
+				"text": {
+					"$repeat": "\u0001",
+					"times": 5000
+				},
+				"at_all": false
+			},
+			"expected": {
+				"body": {
+					"msg_type": "text",
+					"content": {
+						"text": {
+							"$repeat": "\u0001",
+							"times": 3403,
+							"suffix": "…（已截断）"
+						}
+					}
+				}
+			}
+		}
+	]
+}

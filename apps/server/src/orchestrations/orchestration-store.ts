@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { ensureLayout } from "@sfly/orchestration";
-import type { OrchestrationDocument, OrchestrationView } from "@sfly/schema";
+import type {
+	OrchestrationDocument,
+	OrchestrationView,
+	RunNotificationChanges,
+} from "@sfly/schema";
 import { and, count, desc, eq } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -80,6 +84,20 @@ export const toView = (row: OrchestrationRow): OrchestrationView => ({
 	head_version: row.headVersion,
 	created_at: row.createdAt.toISOString(),
 	archived_at: row.archivedAt ? row.archivedAt.toISOString() : null,
+	run_notification: {
+		bot: row.runNotifyBot,
+		trigger: row.runNotifyTrigger,
+		title: row.runNotifyTitle,
+		note: row.runNotifyNote,
+	},
+});
+
+/** 运行通知设置在场景表里的列。 */
+const runNotifyColumns = (settings: RunNotificationChanges) => ({
+	...(settings.bot === undefined ? {} : { runNotifyBot: settings.bot }),
+	...(settings.trigger === undefined ? {} : { runNotifyTrigger: settings.trigger }),
+	...(settings.title === undefined ? {} : { runNotifyTitle: settings.title }),
+	...(settings.note === undefined ? {} : { runNotifyNote: settings.note }),
 });
 
 const toSummary = (row: Pick<VersionRow, "number" | "author" | "createdAt">): VersionSummary => ({
@@ -109,16 +127,24 @@ export class OrchestrationStore {
 		return toView(row as OrchestrationRow);
 	}
 
-	/** 修改名称和说明（不属于版本内容，不产生新版本）。场景不存在时返回 undefined。 */
+	/**
+	 * 修改名称、说明和运行通知设置（不属于版本内容，不产生新版本；只改写提到的项）。
+	 * 场景不存在时返回 undefined。
+	 */
 	async update(
 		id: string,
-		changes: { name?: string | undefined; description?: string | undefined },
+		changes: {
+			name?: string | undefined;
+			description?: string | undefined;
+			run_notification?: RunNotificationChanges | undefined;
+		},
 	): Promise<OrchestrationView | undefined> {
 		const [row] = await this.deps.db
 			.update(orchestrations)
 			.set({
 				...(changes.name === undefined ? {} : { name: changes.name }),
 				...(changes.description === undefined ? {} : { description: changes.description }),
+				...runNotifyColumns(changes.run_notification ?? {}),
 			})
 			.where(eq(orchestrations.id, id))
 			.returning();
@@ -179,7 +205,7 @@ export class OrchestrationStore {
 	}
 
 	/**
-	 * 复制编排：新编排使用新名字，源编排有版本时，以源编排最新版本的内容作为第 1 版（作者为复制的人）。
+	 * 复制编排：新编排使用新名字，说明和运行通知设置一起复制，源编排有版本时，以源编排最新版本的内容作为第 1 版（作者为复制的人）。
 	 * 源编排不存在时返回 undefined。
 	 */
 	copy(sourceId: string, name: string, author: string): Promise<OrchestrationView | undefined> {
@@ -208,6 +234,11 @@ export class OrchestrationStore {
 					description: source.description,
 					headVersion: head ? 1 : 0,
 					createdAt: now,
+					// 运行通知设置跟着场景走：复制到另一个环境后只需要改机器人、标题和说明。
+					runNotifyBot: source.runNotifyBot,
+					runNotifyTrigger: source.runNotifyTrigger,
+					runNotifyTitle: source.runNotifyTitle,
+					runNotifyNote: source.runNotifyNote,
 				})
 				.returning();
 			if (head) {

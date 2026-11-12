@@ -3,13 +3,14 @@ import {
 	type ChainRunView,
 	isActiveStatus,
 	type NodeRunView,
+	type RunNotificationState,
 } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
 import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
-import { nodeStatusView, StatusPill } from "#/components/status";
-import { chainLabel as chainName } from "#/lib/copy";
+import { nodeStatusView, runNotificationView, StatusPill } from "#/components/status";
+import { chainLabel as chainName, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatDateTime,
@@ -81,6 +82,7 @@ export function RunSummary({ runId }: { runId: string }) {
 					{run.triggered_by} 触发 · {formatDateTime(run.started_at)}
 				</span>
 			</div>
+			{run.run_notification && <RunNotificationLine state={run.run_notification} />}
 			<ul aria-label="各链进度" className="m-0 flex list-none flex-col gap-1.5 p-0">
 				{chains.map((chain) => (
 					<ChainRow key={chain.id} chain={chain} />
@@ -115,6 +117,32 @@ export function RunSummary({ runId }: { runId: string }) {
 				<p className="m-0 text-xs text-fg-3">还没有日志。</p>
 			)}
 		</section>
+	);
+}
+
+/**
+ * 运行通知的状态（一行）：排队中、已送达、投递失败、已丢弃、未发送。失败、已丢弃时写原因（里面已有机器人名称），
+ * 未发送时写机器人和原因，其余写发给了哪个机器人。投递不改变运行的状态，所以这一行只是提示。
+ */
+function RunNotificationLine({ state }: { state: RunNotificationState }) {
+	const view = runNotificationView(state.status);
+	const text =
+		state.reason === null
+			? `发给「${state.bot}」`
+			: state.status === "not_sent"
+				? `「${state.bot}」${state.reason}`
+				: state.reason;
+	return (
+		<fieldset
+			aria-label={TERM.runNotification}
+			className="m-0 mb-3 flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1 border-0 p-0 text-xs"
+		>
+			<span className="shrink-0 text-fg-3">{TERM.runNotification}</span>
+			<StatusPill kind={view.kind} className="shrink-0">
+				{view.label}
+			</StatusPill>
+			<span className="min-w-48 flex-1 text-fg-2">{text}</span>
+		</fieldset>
 	);
 }
 

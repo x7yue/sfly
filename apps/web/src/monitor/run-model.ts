@@ -1,3 +1,4 @@
+import { UNNAMED_SUBFLOW_LABEL } from "@sfly/orchestration";
 import type {
 	AttemptView,
 	ChainRunView,
@@ -12,7 +13,7 @@ import type {
 } from "@sfly/schema";
 import { KIND_META } from "#/components/canvas/node-display";
 import { runStatusView, type StatusKind } from "#/components/status";
-import { chainLabel as chainName, subflowLabel, UNNAMED_SUBFLOW } from "#/lib/copy";
+import { chainLabel as chainName, subflowLabel } from "#/lib/copy";
 import { type NodeRef, nodeKey } from "./monitor-state";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
@@ -104,7 +105,7 @@ export function findNode(run: RunView, ref: NodeRef | null): NodeRunView | undef
 export function logOrigin(run: RunView, origin: LogOrigin): string {
 	const node = findNode(run, { chainInstanceId: origin.chain_instance_id, nodeId: origin.node_id });
 	const retried = origin.attempt > 1 || (node?.attempts.length ?? 0) > 1;
-	const subflow = origin.subflow === null ? "" : `${origin.subflow || UNNAMED_SUBFLOW} / `;
+	const subflow = origin.subflow === null ? "" : `${origin.subflow || UNNAMED_SUBFLOW_LABEL} / `;
 	return `${subflow}${origin.node_id}${retried ? ` #${origin.attempt}` : ""}`;
 }
 

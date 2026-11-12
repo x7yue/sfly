@@ -3,6 +3,7 @@ import { test as base, expect } from "@playwright/test";
 // 沿用控制面测试基建（apps/server/test/support）：真实控制面、假 Agent（真实 gRPC）、
 // 每个控制面独立的临时 PostgreSQL 数据库（DATABASE_URL）、手动时钟。
 import { FakeAgent, type HelloInit } from "../../server/test/support/fake-agent.js";
+import { type FakeFeishu, startFakeFeishu } from "../../server/test/support/fake-feishu.js";
 import { ManualClock } from "../../server/test/support/manual-clock.js";
 import {
 	startTestControlPlane,
@@ -31,6 +32,8 @@ export interface E2eFixtures {
 	 * `clock: false` 时是不上报时钟读数的旧版本 Agent。
 	 */
 	connectAgent: (hello: HelloInit, options?: { clock?: false }) => Promise<FakeAgent>;
+	/** 假的飞书 Webhook 服务（ADR 0020）：飞书机器人的 Webhook 地址指向它；测试结束时自动关闭。 */
+	feishu: FakeFeishu;
 	/** 浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；设为 null 时不写。 */
 	nickname: string | null;
 	/**
@@ -85,6 +88,15 @@ export const test = base.extend<E2eFixtures>({
 			return agent;
 		});
 		await Promise.all(agents.map((a) => a.disconnect()));
+	},
+	// biome-ignore lint/correctness/noEmptyPattern: Playwright 要求 fixture 的第一个参数是解构模式
+	feishu: async ({}, use) => {
+		const feishu = await startFakeFeishu();
+		try {
+			await use(feishu);
+		} finally {
+			await feishu.close();
+		}
 	},
 	nickname: ["tester", { option: true }],
 	page: async ({ page, clock, nickname }, use) => {

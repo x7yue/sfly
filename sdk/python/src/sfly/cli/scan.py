@@ -20,7 +20,15 @@ import typing
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from sfly.nodes import AGENT_MARKER, NODE_ATTR, Chart, Metric, NodeDeclaration, is_context_param
+from sfly.nodes import (
+    AGENT_MARKER,
+    FEISHU_BOT_MARKER,
+    NODE_ATTR,
+    Chart,
+    Metric,
+    NodeDeclaration,
+    is_context_param,
+)
 
 
 class ScanError(Exception):
@@ -42,16 +50,17 @@ def _is_typeddict(tp: Any) -> bool:
     return isinstance(tp, type) and issubclass(tp, dict) and hasattr(tp, "__required_keys__")
 
 
-#: 「Agent」类型的输入（`sfly.AgentName`）在输入 schema 里的标记：
-#: `{"type": "string", "x-sfly-type": "agent"}`。
-#: 控制面、画布和本地调试按它识别（packages/orchestration/src/agent-inputs.ts）。
-AGENT_SCHEMA: JsonSchema = {"type": "string", "x-sfly-type": "agent"}
+#: 扩展输入类型的标记 → 输入 schema 里 `x-sfly-type` 的值：`sfly.AgentName` 是
+#: `{"type": "string", "x-sfly-type": "agent"}`，`sfly.FeishuBot` 是
+#: `{"type": "string", "x-sfly-type": "feishu_bot"}`。
+#: 控制面、画布和本地调试按它识别（packages/orchestration/src/agent-inputs.ts、feishu-bots.ts）。
+_INPUT_TYPES = ((AGENT_MARKER, "agent"), (FEISHU_BOT_MARKER, "feishu_bot"))
 
 
-def type_schema(tp: Any, *, agent: bool = False) -> JsonSchema:
+def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     """把类型注解转换为 JSON Schema；不支持的注解抛出 ScanError。
 
-    `agent`：是不是节点参数本身的类型。`sfly.AgentName` 只能直接用作节点参数的类型
+    `param`：是不是节点参数本身的类型。`sfly.AgentName`、`sfly.FeishuBot` 只能直接用作节点参数的类型
     （或 `AgentName | None`），用在别处（列表的元素、字典的值、输出）时报错。
     """
     if tp is Any or tp is inspect.Parameter.empty or tp is object:
@@ -65,14 +74,17 @@ def type_schema(tp: Any, *, agent: bool = False) -> JsonSchema:
     args = typing.get_args(tp)
 
     if origin is typing.Annotated:
-        if any(meta is AGENT_MARKER for meta in tp.__metadata__):
-            if not agent:
-                raise ScanError("AgentName 只能直接用作节点参数的类型（可以写成 AgentName | None）")
-            return dict(AGENT_SCHEMA)
+        for marker, name in _INPUT_TYPES:
+            if any(meta is marker for meta in tp.__metadata__):
+                if not param:
+                    raise ScanError(
+                        f"{marker.name} 只能直接用作节点参数的类型（可以写成 {marker.name} | None）"
+                    )
+                return {"type": "string", "x-sfly-type": name}
         return type_schema(args[0])
     if origin is typing.Union or origin is types.UnionType:
         optional = len(args) == 2 and type(None) in args
-        members = [type_schema(a, agent=agent and optional) for a in args]
+        members = [type_schema(a, param=param and optional) for a in args]
         if any(m == {} for m in members):
             return {}
         return {"anyOf": members}
@@ -138,7 +150,7 @@ def input_schema(fn: Any, label: str) -> JsonSchema:
                 f"{where}：节点参数必须能按名称传入（不支持 *args、**kwargs、仅位置参数）"
             )
         try:
-            prop = type_schema(hints.get(param.name, inspect.Parameter.empty), agent=True)
+            prop = type_schema(hints.get(param.name, inspect.Parameter.empty), param=True)
         except ScanError as error:
             raise ScanError(f"{where}：{error}") from None
         if param.default is inspect.Parameter.empty:

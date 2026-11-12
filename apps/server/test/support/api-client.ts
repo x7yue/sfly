@@ -1,4 +1,4 @@
-import { type ClockOffsetView, runsApi } from "@sfly/schema";
+import { type ClockOffsetView, type FeishuBotView, feishuBotsApi, runsApi } from "@sfly/schema";
 import { expect } from "vitest";
 import type { TestControlPlane } from "./test-control-plane.js";
 
@@ -24,6 +24,25 @@ export class ApiClient {
 		});
 	}
 
+	patch(path: string, body: unknown, nickname = "tester"): Promise<Response> {
+		return this.cp.fetch(path, {
+			method: "PATCH",
+			headers: {
+				"content-type": "application/json",
+				[NICKNAME_HEADER]: encodeURIComponent(nickname),
+			},
+			body: JSON.stringify(body),
+		});
+	}
+
+	/** 没有请求体的 POST（带 content-type 的空请求体会被拒绝）。 */
+	postEmpty(path: string, nickname = "tester"): Promise<Response> {
+		return this.cp.fetch(path, {
+			method: "POST",
+			headers: { [NICKNAME_HEADER]: encodeURIComponent(nickname) },
+		});
+	}
+
 	async getJson<T>(path: string): Promise<T> {
 		const res = await this.get(path);
 		expect(res.status, `GET ${path}`).toBe(200);
@@ -34,6 +53,13 @@ export class ApiClient {
 		const res = await this.post("/orchestrations", { name });
 		expect(res.status).toBe(201);
 		return ((await res.json()) as { id: string }).id;
+	}
+
+	/** 登记一个飞书机器人（响应按 HTTP 契约解析）。 */
+	async createFeishuBot(name: string, webhookUrl: string): Promise<FeishuBotView> {
+		const res = await this.post("/feishu-bots", { name, webhook_url: webhookUrl });
+		expect(res.status, await res.clone().text()).toBe(201);
+		return feishuBotsApi.create.response.parse(await res.json());
 	}
 
 	/** 触发编排的最新版本。 */
@@ -163,5 +189,11 @@ export interface RunView {
 	started_at: string;
 	ended_at: string | null;
 	cancel: { requested_by: string; requested_at: string; forced_at: string | null } | null;
+	/** 运行通知的状态（#232）；没有发运行通知时为 null。 */
+	run_notification: {
+		status: "queued" | "delivered" | "failed" | "discarded" | "not_sent";
+		bot: string;
+		reason: string | null;
+	} | null;
 	chains: ChainView[];
 }

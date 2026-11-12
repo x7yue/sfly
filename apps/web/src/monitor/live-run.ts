@@ -13,6 +13,7 @@ import {
 } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { apiQuery, apiUrl } from "#/lib/api";
+import { LIVE_POLL_MS } from "#/lib/polling";
 import { openEventSource } from "#/lib/sse";
 import { applyProgress, latestRunView } from "./run-model";
 import { applyMetricIncrement, refetchSeries } from "./use-run-metrics";
@@ -27,6 +28,9 @@ const runViewKey = (runId: string) => queryKey(runsApi.get, { params: { id: runI
 export function runViewQuery(runId: string) {
 	return {
 		...apiQuery(runsApi.get, { params: { id: runId } }),
+		// 运行结束后事件流就关了，而运行通知在运行结束时才入队、之后才投递：排队中时定时重新获取，等它有结果。
+		refetchInterval: (query: { state: { data: RunView | undefined } }) =>
+			query.state.data?.run_notification?.status === "queued" ? LIVE_POLL_MS : false,
 		structuralSharing: (current: unknown, next: unknown) =>
 			replaceEqualDeep(current, latestRunView(current as RunView | undefined, next as RunView)),
 	};

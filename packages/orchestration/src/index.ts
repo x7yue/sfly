@@ -1,7 +1,10 @@
 export * from "./agent-inputs.js";
 export * from "./chain-edits.js";
+export * from "./chain-label.js";
 export * from "./diff.js";
 export type { DocumentEdit, Rejected } from "./edit-result.js";
+export * from "./feishu-bots.js";
+export * from "./feishu-notify.js";
 export * from "./inputs.js";
 export * from "./layout.js";
 export * from "./node-clipboard.js";

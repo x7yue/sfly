@@ -100,6 +100,8 @@ export async function startTestControlPlane(
 			retentionSweepIntervalMs: 20,
 			// 定时 / Sleep 节点的定时器扫描（#14）同样调快。
 			timerSweepIntervalMs: 20,
+			// 飞书发送队列的周期扫描同样调快。
+			feishuSweepIntervalMs: 20,
 			// 周期扫描调快：测试推进手动时钟后很快就能观察到效果，不用真实等待。
 			sweepIntervalMs: 20,
 			http: { host: "127.0.0.1", port: ports.http },

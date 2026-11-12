@@ -4,7 +4,7 @@ import {
 	type OrchestrationWarning,
 	type PackageCatalog,
 } from "@sfly/orchestration";
-import type { AgentView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
+import type { AgentView, FeishuBotView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { cn } from "cn";
 import { PanelRightCloseIcon, Trash2Icon } from "lucide-react";
 import { forwardRef, type ReactNode, useMemo, useState } from "react";
@@ -25,6 +25,7 @@ import { Field, SectionTitle } from "./fields";
 import {
 	AsyncMapping,
 	ExecutionSettings,
+	FeishuNotifyForm,
 	PackageParams,
 	PackageVersionField,
 	SleepForm,
@@ -43,6 +44,8 @@ export interface InspectorContext {
 	info: CanvasInfo;
 	packages: PackageSummary[] | undefined;
 	agents: AgentView[];
+	/** 已登记的飞书机器人（飞书通知节点的下拉框）。 */
+	bots: FeishuBotView[];
 	warnings: OrchestrationWarning[];
 	/** 不影响保存与触发的提醒（validation.ts 的 undeclaredInputNotes）。 */
 	notes: readonly InputNote[];
@@ -187,6 +190,7 @@ function NodeInspector({
 		...(node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : []),
 		...(node.kind === "timer" ? ["at", "tz"] : node.kind === "sleep" ? ["duration"] : []),
 		...(node.kind === "subflow_entry" ? ["name"] : node.kind === "stop_subflow" ? ["subflow"] : []),
+		...(node.kind === "feishu_notify" ? ["bot", "text", "title", "markdown", "message"] : []),
 	]);
 	const general = warnings.filter(
 		(w) => !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
@@ -196,7 +200,8 @@ function NodeInspector({
 		node.kind === "package" ||
 		node.kind === "timer" ||
 		node.kind === "sleep" ||
-		node.kind === "stop_subflow";
+		node.kind === "stop_subflow" ||
+		node.kind === "feishu_notify";
 	const paramErrors = fieldErrors.length;
 	const version = node.kind === "package" ? doc.packages[node.package] : undefined;
 
@@ -280,6 +285,7 @@ function NodeInspector({
 							problemsOf={problemsOf}
 							defaultAgent={doc.default_agent}
 							agents={context.agents}
+							bots={context.bots}
 							onChange={change}
 						/>
 					)}
@@ -308,6 +314,15 @@ function NodeInspector({
 							problems={problemsOf("subflow")}
 							onChange={change}
 							onLocate={context.onLocate}
+						/>
+					)}
+					{node.kind === "feishu_notify" && (
+						<FeishuNotifyForm
+							node={node}
+							bots={context.bots}
+							choices={choices}
+							problemsOf={problemsOf}
+							onChange={change}
 						/>
 					)}
 					{fieldErrors
@@ -339,6 +354,8 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 	sleep: "等待一段时长再继续，由控制面执行，不占用 Agent。",
 	stop_subflow:
 		"停止本链触发的某个子流程，等它完全结束（包括其中的 always 节点）后再继续；由控制面执行，不占用 Agent。",
+	feishu_notify:
+		"向飞书群里的机器人发一条消息，由控制面发出，不占用 Agent。消息交给发送队列后节点立即成功，发不出去也不影响节点和运行的结果。",
 	package: "在 Agent 上执行节点包里的函数。",
 };
 

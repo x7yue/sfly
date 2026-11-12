@@ -6,7 +6,8 @@
 //   SFLY_GRPC_HOST   Agent 网关监听地址（默认 0.0.0.0）
 //   SFLY_GRPC_PORT   Agent 网关端口（默认 50051）
 //   SFLY_AGENT_TOKEN Agent 共享注册令牌（可选；设置后令牌不对的 Agent 被拒绝）
-//   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包
+//   SFLY_PUBLIC_URL  HTTP API 对 Agent 可见的地址，Agent 从这里下载节点包；也用来拼运行通知卡片里
+//                    「查看运行」的链接（没有配置时卡片没有按钮）
 //                    （可选；默认取监听地址，监听 0.0.0.0 时用本机主机名）
 //   SFLY_PUBLIC_GRPC_URL Agent 网关对 Agent 可见的地址，install.sh 写进 agent.env
 //                    （可选；默认取 SFLY_PUBLIC_URL 的主机名加 Agent 网关的端口）

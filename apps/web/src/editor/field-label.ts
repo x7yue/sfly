@@ -26,6 +26,7 @@ export function fieldLabel(node: DocNode | undefined, field: string): string {
 		}
 	}
 	if ((head === "inputs" || head === "value") && second !== undefined) {
+		if (node.kind === "feishu_notify") return NODE_FIELD[second] ?? `输入 ${second}`;
 		return node.kind === "async" ? `子流程参数 ${second}` : `输入 ${second}`;
 	}
 	return NODE_FIELD[head] ?? field;
@@ -51,6 +52,14 @@ const NODE_FIELD: Record<string, string> = {
 	tz: "时区",
 	name: "子流程名称",
 	subflow: "要停止的子流程",
+	bot: "飞书机器人",
+	format: "格式",
+	text: "文本",
+	at_all: "@所有人",
+	title: "标题",
+	color: "标题颜色",
+	markdown: "正文",
+	message: "原始消息",
 	package: "节点包",
 	node: "节点类型",
 };

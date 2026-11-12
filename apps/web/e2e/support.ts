@@ -59,6 +59,38 @@ export async function triggerRun(cp: TestControlPlane, scenarioId: string): Prom
 	return ((await res.json()) as { id: string }).id;
 }
 
+/** 登记一个飞书机器人（Webhook 地址一般是 `feishu.webhookUrl()`，指向假的飞书服务）。 */
+export async function createFeishuBot(
+	cp: TestControlPlane,
+	name: string,
+	webhookUrl: string,
+): Promise<void> {
+	await ok(
+		await cp.fetch("/feishu-bots", {
+			method: "POST",
+			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			body: JSON.stringify({ name, webhook_url: webhookUrl }),
+		}),
+		"登记飞书机器人",
+	);
+}
+
+/** 配置场景的运行通知（#232；只写要改的项，其余保持不变）。 */
+export async function setRunNotification(
+	cp: TestControlPlane,
+	scenarioId: string,
+	settings: { bot?: string | null; trigger?: string; title?: string; note?: string },
+): Promise<void> {
+	await ok(
+		await cp.fetch(`/orchestrations/${scenarioId}`, {
+			method: "PATCH",
+			headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+			body: JSON.stringify({ run_notification: settings }),
+		}),
+		"配置运行通知",
+	);
+}
+
 /** 一个使用 demo-checks 节点包的场景文档：默认 Agent 为 agent，锁定 version。 */
 export const scenarioUsing = (agent: string, version = "1.2.0") => ({
 	default_agent: agent,

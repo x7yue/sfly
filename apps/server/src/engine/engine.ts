@@ -5,6 +5,7 @@ import {
 	inputProblems,
 	NODE_DEFAULTS,
 	type ResolveScope,
+	referencedFeishuBots,
 	resolveInputs,
 } from "@sfly/orchestration";
 import {
@@ -45,6 +46,10 @@ import {
 	runs,
 	tasks,
 } from "../db/schema.js";
+import {
+	type EngineNotifications,
+	noPendingNotifications,
+} from "../feishu/engine-notifications.js";
 import {
 	type AgentSessionHandler,
 	type RunningTaskRef,
@@ -230,6 +235,8 @@ export class Engine implements AgentSessionHandler {
 			preflight: Preflight;
 			/** 触发时按入口参数的实际值做的检查（src/runs/preflight.ts）。 */
 			paramsCheck: ParamsCheck;
+			/** 飞书通知节点和运行通知：在 step 的事务里入队，提交后写日志、唤醒投递（src/feishu/engine-notifications.ts）。 */
+			notifications: EngineNotifications;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
@@ -684,11 +691,13 @@ export class Engine implements AgentSessionHandler {
 			touchedRuns: new Set(),
 			cancels: [],
 			assigns: [],
+			notifications: noPendingNotifications(),
 		};
 		const result = await this.deps.db.transaction((tx) => handle({ ...step, tx }));
 		this.#publish(step.touchedRuns);
 		for (const order of step.cancels) this.#sendCancel(order);
 		for (const { conn, message } of step.assigns) conn.send(message);
+		await this.deps.notifications.committed(step.notifications);
 		// 派发、失败等迁移可能让 Agent 有了新的排队任务或空出槽位。
 		for (const agent of step.touchedAgents) await this.#dispatch(agent);
 		return result;
@@ -787,6 +796,11 @@ export class Engine implements AgentSessionHandler {
 			if (node.kind === "async") {
 				// 失败时 #failTask 已经推进了这条链的剩余部分。
 				if (!(await this.#spawn(step, run, chain, plan, i, node))) return;
+				continue;
+			}
+			if (node.kind === "feishu_notify") {
+				const scope = await this.#scope(step.tx, chain, plan, i);
+				await this.deps.notifications.node(step, { run, chain, node, scope });
 				continue;
 			}
 			if (isWaitNode(node)) {
@@ -1064,7 +1078,8 @@ export class Engine implements AgentSessionHandler {
 			: [];
 		const earlierOutputs = new Map(done.map((d) => [d.nodeId, d.outputs ?? {}]));
 		const node = plan.nodes[index];
-		const missingAsNull = node !== undefined && isAlways(node);
+		// 飞书通知节点无论是否 always 都按 always 的规则解析（§1.3）：通知不会成为失败的原因。
+		const missingAsNull = node !== undefined && (isAlways(node) || node.kind === "feishu_notify");
 		if (missingAsNull) {
 			for (const id of earlierIds) if (!earlierOutputs.has(id)) earlierOutputs.set(id, {});
 		}
@@ -1107,10 +1122,19 @@ export class Engine implements AgentSessionHandler {
 			: chains.some((c) => c.status === "failed")
 				? "failed"
 				: "success";
-		await step.tx
+		// 只有第一次把运行记为结束的事务发运行通知：同一个运行不会发两张卡片。
+		const [finished] = await step.tx
 			.update(runs)
 			.set({ status: runStatus, endedAt: step.now })
-			.where(eq(runs.id, run.id));
+			.where(and(eq(runs.id, run.id), eq(runs.status, "running")))
+			.returning({ id: runs.id });
+		if (!finished) return;
+		// 运行通知和运行的最终状态在同一个事务里（#232）。
+		await this.deps.notifications.runFinished(step, {
+			run,
+			status: runStatus,
+			document: await this.#document(step.tx, run.orchestrationVersionId),
+		});
 	}
 
 	/**
@@ -1416,10 +1440,21 @@ export class Engine implements AgentSessionHandler {
 			return undefined;
 		}
 
+		// 「飞书机器人」类型的输入引用的机器人名单随任务下发，也记在任务上：ctx.notify 只能发给其中的机器人（ADR 0020）。
+		// 不在这里检查是否已登记：值来自前面节点的输出时派发时才知道，而通知不能成为任务失败的原因，发送时再检查。
+		const referencedBots = type
+			? [...new Set(referencedFeishuBots(type.inputs, inputs).map((r) => r.bot))]
+			: [];
+
 		// 派发阶段（下载、安装、启动）：Agent 上报 TaskStarted 后才记为 running（#started）。
 		await step.tx
 			.update(tasks)
-			.set({ status: "dispatched", inputs, leaseExpiresAt: this.#leaseFrom(step.now) })
+			.set({
+				status: "dispatched",
+				inputs,
+				referencedFeishuBots: referencedBots,
+				leaseExpiresAt: this.#leaseFrom(step.now),
+			})
 			.where(eq(tasks.id, task.id));
 		step.touchedRuns.add(run.id);
 		return create(ServerMessageSchema, {
@@ -1439,6 +1474,7 @@ export class Engine implements AgentSessionHandler {
 					packageUrl: archive ? this.deps.packageArchiveUrl(node.package, packageVersion) : "",
 					artifactUploadUrl: this.deps.artifactUploadUrl(task.id),
 					referencedAgents: referenced.agents,
+					referencedFeishuBots: referencedBots,
 				},
 			},
 		});

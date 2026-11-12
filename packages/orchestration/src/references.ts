@@ -1,4 +1,5 @@
 import type { NodeTypeMetadata, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import { feishuReferableInputs } from "./feishu-notify.js";
 import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
 
 /**
@@ -25,6 +26,7 @@ export const BUILTIN_OUTPUTS: Record<Exclude<OrchestrationNode["kind"], "package
 	timer: ["triggered_at", "late"],
 	sleep: ["triggered_at"],
 	stop_subflow: ["status"],
+	feishu_notify: [],
 };
 
 /**
@@ -174,6 +176,11 @@ function referableValues(node: OrchestrationNode): [string, unknown][] {
 			return Object.entries(node.params);
 		case "sleep":
 			return [["duration", node.duration]];
+		case "feishu_notify":
+			return [
+				...(node.bot === undefined ? [] : ([["bot", node.bot]] as [string, unknown][])),
+				...Object.entries(feishuReferableInputs(node)),
+			];
 		default:
 			return [];
 	}

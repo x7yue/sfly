@@ -10,7 +10,8 @@
         assert [line.message for line in result.logs if line.source == "sdk"] == [...]
 
 节点和在 Agent 上一样在执行器子进程里运行（见 `sfly.local`），结果 `Execution` 里有输出、
-失败原因、日志、进度、指标和产物。用 `cancel_when` / `cancel_after` 模拟取消：节点里抛出
+失败原因、日志、进度、指标、产物和 `ctx.notify` 的通知（`notifications`：机器人名和请求体，
+不真的发送）。用 `cancel_when` / `cancel_after` 模拟取消：节点里抛出
 `sfly.Cancelled`，`finally` 里的清理代码执行，结果的 `status` 为 `cancelled`。
 """
 
@@ -31,6 +32,7 @@ from sfly.local import (
     LogLine,
     MetricPoint,
     NodeError,
+    Notification,
     Progress,
     execute,
 )
@@ -41,6 +43,7 @@ __all__ = [
     "LogLine",
     "MetricPoint",
     "NodeError",
+    "Notification",
     "Progress",
     "run_node",
 ]

@@ -4,6 +4,7 @@ import type { SQL } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Db } from "../db/database.js";
 import { type chainInstances, type ErrorKind, type runs, tasks } from "../db/schema.js";
+import type { PendingNotifications } from "../feishu/engine-notifications.js";
 import type { ChainPlan } from "./chain.js";
 import { taskId } from "./ids.js";
 
@@ -26,6 +27,8 @@ export interface Step {
 	cancels: CancelOrder[];
 	/** 提交后发给 Agent 的派发消息。 */
 	assigns: Array<{ conn: AgentConnection; message: ServerMessage }>;
+	/** 飞书通知在事务里留下的、提交后才能做的收尾（日志行、唤醒投递；src/feishu/engine-notifications.ts）。 */
+	notifications: PendingNotifications;
 }
 
 export interface CancelOrder {

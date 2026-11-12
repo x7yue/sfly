@@ -1,6 +1,7 @@
 import { NODE_DEFAULTS } from "@sfly/orchestration";
 import {
 	AlarmClockIcon,
+	BellRingIcon,
 	BoxIcon,
 	CircleStopIcon,
 	CornerDownRightIcon,
@@ -25,6 +26,7 @@ export const KIND_META: Record<DocNode["kind"], { label: string; icon: LucideIco
 	async: { label: "异步任务", icon: SplitIcon },
 	subflow_entry: { label: "子流程入口", icon: CornerDownRightIcon },
 	stop_subflow: { label: "停止子流程", icon: CircleStopIcon },
+	feishu_notify: { label: "飞书通知", icon: BellRingIcon },
 };
 
 /**
@@ -98,6 +100,10 @@ export function nodeSlot(node: DocNode): { text: string; empty: boolean } {
 			return value(node.duration);
 		case "stop_subflow":
 			return node.subflow ? value(`子流程入口 ${node.subflow}`) : empty("未选择子流程");
+		case "feishu_notify":
+			return node.bot === undefined
+				? empty("未选择飞书机器人")
+				: value(`机器人 ${summarizeValue(node.bot)}`);
 		case "package": {
 			const [first] = Object.entries(node.inputs);
 			return first

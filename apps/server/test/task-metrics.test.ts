@@ -496,7 +496,18 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["tasks", "start_clock_offset_measured_at", "timestamp with time zone"],
 	["tasks", "end_clock_offset_ms", "bigint"],
 	["tasks", "end_clock_offset_measured_at", "timestamp with time zone"],
+	["orchestrations", "run_notify_bot", "text"],
+	["orchestrations", "run_notify_trigger", "text DEFAULT 'failed' NOT NULL"],
+	["orchestrations", "run_notify_title", "text DEFAULT '' NOT NULL"],
+	["orchestrations", "run_notify_note", "text DEFAULT '' NOT NULL"],
+	["runs", "notification_bot", "text"],
+	["runs", "notification_not_sent", "text"],
+	["tasks", "referenced_feishu_bots", "text[] DEFAULT '{}' NOT NULL"],
+	["tasks", "log_agent_seq", "bigint DEFAULT 0 NOT NULL"],
 ];
+
+/** 0012 之后的迁移新建、当前代码会读的表：表名和建表的迁移文件（保存场景时的静态检查读 feishu_bots）。 */
+const LATER_TABLES: [string, string][] = [["feishu_bots", "0018_feishu_bots.sql"]];
 
 describe("迁移前的指标数据", () => {
 	let cp: TestControlPlane;
@@ -505,7 +516,8 @@ describe("迁移前的指标数据", () => {
 
 	/**
 	 * 只含加标签之前（0000–0011）的迁移的目录，模拟旧版控制面。旧版控制面阶段跑的仍是当前代码，它会读写
-	 * 之后的迁移加的列，所以在这里先补上（{@link LATER_COLUMNS}），升级前再删掉，由真正的迁移重新加上。
+	 * 之后的迁移加的列和新建的表，所以在这里先补上（{@link LATER_COLUMNS}、{@link LATER_TABLES}），升级前再删掉，
+	 * 由真正的迁移重新加上。
 	 */
 	const migrationsBeforeLabels = async () => {
 		const dir = await mkdtemp(join(tmpdir(), "sfly-migrations-"));
@@ -520,9 +532,12 @@ describe("迁移前的指标数据", () => {
 		const added = LATER_COLUMNS.map(
 			([table, column, type]) => `ALTER TABLE "${table}" ADD COLUMN "${column}" ${type};`,
 		);
+		const created = await Promise.all(
+			LATER_TABLES.map(([, file]) => readFile(join(defaultMigrationsDir, file), "utf8")),
+		);
 		await writeFile(
 			last,
-			`${await readFile(last, "utf8")}--> statement-breakpoint\n${added.join("\n")}`,
+			`${await readFile(last, "utf8")}--> statement-breakpoint\n${[...added, ...created].join("\n--> statement-breakpoint\n")}`,
 		);
 		return dir;
 	};
@@ -533,6 +548,7 @@ describe("迁移前的指标数据", () => {
 			for (const [table, column] of LATER_COLUMNS) {
 				await client.query(`alter table "${table}" drop column "${column}"`);
 			}
+			for (const [table] of LATER_TABLES) await client.query(`drop table "${table}"`);
 		} finally {
 			await client.end();
 		}

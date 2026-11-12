@@ -61,6 +61,27 @@ describe("字段错误的位置说明", () => {
 		const stop: OrchestrationNode = { id: "stop", kind: "stop_subflow", always: false };
 		expect(fieldLabel(stop, "subflow")).toBe("要停止的子流程");
 		expect(fieldLabel(stop, "id")).toBe("节点 ID");
+		const notify: OrchestrationNode = {
+			id: "notify",
+			kind: "feishu_notify",
+			always: false,
+			format: "text",
+			text: "",
+			at_all: false,
+			title: "",
+			color: "blue",
+			markdown: "",
+		};
+		expect(fieldLabel(notify, "bot")).toBe("飞书机器人");
+		expect(fieldLabel(notify, "text")).toBe("文本");
+		expect(fieldLabel(notify, "at_all")).toBe("@所有人");
+		expect(fieldLabel(notify, "format")).toBe("格式");
+		expect(fieldLabel(notify, "title")).toBe("标题");
+		expect(fieldLabel(notify, "color")).toBe("标题颜色");
+		expect(fieldLabel(notify, "markdown")).toBe("正文");
+		expect(fieldLabel(notify, "message")).toBe("原始消息");
+		// 原始消息的 JSON 草稿（输入框里还不是合法 JSON）按字段名称说明，不说「输入 message」。
+		expect(fieldLabel(notify, "value.message")).toBe("原始消息");
 	});
 
 	it("场景级字段", () => {

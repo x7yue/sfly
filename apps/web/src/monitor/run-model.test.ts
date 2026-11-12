@@ -33,6 +33,7 @@ const view = (status: RunView["status"], cancelled = false): RunView => ({
 	cancel: cancelled
 		? { requested_by: "tester", requested_at: "2026-01-01T00:00:03.000Z", forced_at: null }
 		: null,
+	run_notification: null,
 	chains: [],
 });
 

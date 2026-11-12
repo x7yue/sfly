@@ -70,6 +70,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | `T \| None`、`Optional[T]`、其他 `Union` | 任一成员 |
 | `Annotated[T, ...]` | 同 `T` |
 | `sfly.AgentName` | 「Agent」类型：Agent 名称（字符串），见下文 |
+| `sfly.FeishuBot` | 「飞书机器人」类型：飞书机器人的名称（字符串），见下文 |
 | 没有注解、`Any`、`object` | 任意 JSON 值，不校验 |
 
 - 有默认值的参数是可选输入，默认值必须能序列化为 JSON；没有默认值的是必填输入。
@@ -99,6 +100,29 @@ def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> d
 - 选的 Agent 必须已注册（不要求在线）：常量不是已注册的 Agent 时保存给出警告、触发前的预检阻断，并指出是哪个节点的哪个参数；引用入口参数时按触发时传入的实际值检查；值来自前面节点的输出时在派发时检查，没有注册过时任务以 `config_error` 失败。目标 Agent 不在线不阻断：节点运行时连不上它，访问它的那一步才会失败。
 - 派发任务时，控制面把这些 Agent 的地址和端口随任务下发给节点所在的 Agent。节点用 `ctx.agent(名称)` 访问它们（见下文「`ctx.agent()`：Agent 能力」），不用自己处理地址。地址在派发时解析：Agent 重新注册换了地址后，之后派发的任务用新地址。
 - 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是 Agent 名称，不检查它是否注册过；要访问它时把它映射到本地目录（见下文「本地调试、测试与联调」）。
+
+### 「飞书机器人」类型的输入
+
+```python
+from sfly import Context, FeishuBot, node
+
+
+@node(outputs=["passed"])
+def stress(ctx: Context, qps: int, alert_bot: FeishuBot | None = None) -> dict:
+    """alert_bot 是出问题时要通知的飞书机器人，在检查器里从已登记的机器人中选。"""
+    ...
+```
+
+把输入参数标成 `FeishuBot`，表示节点会通过这个飞书机器人发通知，不用把机器人的名称写死在代码里。`FeishuBot` 在运行时就是 `str`：节点收到的值是机器人的名称。可以写成 `FeishuBot | None`（可选参数）；不能用在列表、字典或输出里，`sfly build` 会报错。
+
+这个类型从 SDK 0.3.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.3.0`：更旧的 Agent 上没有这个类型，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
+
+- `sfly build` 在输入 schema 里标记它：`{"type": "string", "x-sfly-type": "feishu_bot"}`。
+- 画布的检查器里它是飞书机器人下拉框，列出「飞书机器人」页登记的机器人；也可以用「插入引用」改为引用入口参数，触发时再决定发到哪个群。
+- 选的机器人必须已登记：常量不是已登记的机器人时保存给出警告、触发前的预检阻断，并指出是哪个节点的哪个参数；引用入口参数时按触发时传入的实际值检查。值来自前面节点的输出时派发时不检查：机器人没有登记也照常派发，通知不会成为任务失败的原因。
+- 派发任务时，控制面把任务通过这种参数引用的机器人名单（不重复）随任务下发。节点只能向名单里的机器人发通知（见下文「`ctx.notify`：飞书通知」）。
+- 删除机器人之前，「飞书机器人」页列出引用它的场景，包含这种参数的常量值。
+- 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是机器人名称，不检查它是否登记过。
 
 ## 输出
 
@@ -137,6 +161,49 @@ ctx.progress(3, 10, "第 3 批")
 ```
 
 `current` 是当前值，`total` 是总数（未知时省略），`message` 是说明。可以频繁调用，Agent 按秒合并后上报。
+
+## `ctx.notify`：飞书通知
+
+```python
+import sfly
+from sfly import Context, FeishuBot, node
+
+
+@node(outputs=["passed"])
+def stress(ctx: Context, qps: int, alert_bot: FeishuBot) -> dict:
+    ...
+    if p99 > 500:
+        ctx.notify(alert_bot, f"p99 {p99} ms，超过 500 ms", at_all=True)
+        ctx.notify(
+            alert_bot,
+            message=sfly.feishu.card("压测告警", f"**p99** {p99} ms，超过 500 ms", "red"),
+        )
+    ...
+```
+
+```python
+ctx.notify(bot, text, *, at_all=False)   # 发文本
+ctx.notify(bot, message=...)             # 发原始消息：完整的飞书请求体
+sfly.feishu.card(title, markdown, color="blue")   # Markdown 卡片的请求体
+```
+
+`ctx.notify` 给飞书机器人 `bot` 发一条消息，调用后立即返回。`text` 和 `message` 二选一，对应飞书通知节点的三种格式（见 [飞书通知](feishu-notify.md)）：
+
+| 写法 | 发出的请求体 |
+|---|---|
+| `ctx.notify(bot, text)` | 文本：`{"msg_type": "text", "content": {"text": ...}}`。`at_all=True` 时在正文末尾加上「@所有人」；正文里自己写的 `<at user_id="ou_xxx">名字</at>` 原样发出。请求体超过 20 KB 时截断正文，末尾加上「…（已截断）」，「@所有人」仍在最后 |
+| `ctx.notify(bot, message=sfly.feishu.card(...))` | Markdown 卡片：和画布上飞书通知节点的「Markdown 卡片」格式一样 |
+| `ctx.notify(bot, message={...})` | 原始消息：你给的请求体，原样发出，不改写、不补字段。富文本（`post`）、自己设计的卡片、模板卡片都走这一种 |
+
+- **投递失败永远不会抛出异常**：消息由控制面发出（ADR 0020），`ctx.notify` 只把它交给 Agent，不访问网络、不等结果。飞书不可达、返回错误、机器人已被删除时，节点照常执行，不会因为通知失败或变慢。只有调用的写法不对时抛出 `TypeError`：`bot` 不是字符串，`text` 和 `message` 同时给或都不给，`text` 不是字符串，`at_all` 不是布尔值，发原始消息时还给了 `at_all`（它只对文本有意义，要 @所有人就写在消息里）。
+- `bot` 必须是通过「飞书机器人」类型的参数（`sfly.FeishuBot`，见上文）传给节点的机器人名称。其他名称（写死在代码里的、普通字符串参数传进来的）不发送，任务日志里写一条 warning，提示把它声明成 `FeishuBot` 参数；机器人没有登记时同样。
+- **原始消息的校验**与飞书通知节点的原始消息相同：只检查它是一个对象（JSON 对象，写成 `dict`）、`msg_type` 是 `text`、`post`、`image`、`share_chat`、`interactive` 之一、整个请求体不超过 20 KB（紧凑 JSON 按 UTF-8 编码的字节数）。不合格的**不发送、不截断**（截断会弄坏结构），任务日志里写一条 warning 说明原因（来源是 system，例如「ctx.notify 的消息没有发送：原始消息的 msg_type 必须是 text、post、image、share_chat、interactive 之一」），`ctx.notify` 不抛异常。图片消息只能用自己已有的 `image_key`，平台不上传图片。
+- **`sfly.feishu.card(title, markdown, color="blue")`** 返回 Markdown 卡片的请求体（`msg_type: interactive`，卡片 JSON 2.0：header 是标题加颜色，正文是一个 Markdown 元素），拿去给 `message=` 就能发。`color` 是 `blue`（默认）、`green`、`orange`、`red`、`grey` 之一。标题和正文照原样放进去，不做 Markdown 转义，空字符串也照常组装；请求体超过 20 KB 时截断 Markdown 正文，末尾加上「…（已截断）」。它和控制面使用同一套组装规则和同一组用例，保证代码里发的卡片和画布上的 Markdown 卡片一样。`title`、`markdown` 不是字符串抛出 `TypeError`，`color` 不是上面五种之一、或者标题长到连截断后的正文都放不下时抛出 `ValueError`：这些是写法上的错误，开发时就会看到。
+- 投递结果写进这个任务的日志，来源是 system：送达是 info，失败（写明原因和下一步）或被丢弃是 warning。同一个机器人的消息按调用的先后串行发出、限速（ADR 0020）。
+- Agent 和控制面断开期间，通知和日志一样在 Agent 上排队，重连后发出。
+- 本地调试不真的发送：`sfly run` 把要发给哪个机器人、请求体是什么打印出来；`sfly.testing.run_node` 的结果里有 `notifications`，原始消息和卡片的请求体都在里面（见下文）。和平台一样，不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不记录，日志里写一条 warning。
+
+这个接口（包括 `message=` 和 `sfly.feishu.card`）从 SDK 0.3.0 起可用。用到它的节点包把 `requires-sdk` 和 `requires-agent` 都调到 `>=0.3.0`：更旧的 Agent 上没有这个接口，也不会转发通知；声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
 
 ## `ctx.metric`：指标
 
@@ -545,13 +612,32 @@ def test_count_lines(tmp_path: Path) -> None:
 | `status` | `success`、`failed` 或 `cancelled` |
 | `outputs` | 输出（仅成功时），否则 None |
 | `error` | `NodeError(kind, message, type, traceback)`；`kind` 是 `node_error`（异常）、`config_error`（输入不合法）或 `cancelled` |
-| `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr 或 sdk |
+| `logs` | `LogLine(ts, source, level, message)` 的列表；`source` 是 stdout、stderr、sdk，或 system（平台写的提示，例如 `ctx.notify` 发给了不在名单里的机器人） |
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
+| `notifications` | `Notification(ts, bot, body)` 的列表：每次 `ctx.notify` 发给的飞书机器人名称和完整的请求体（文本、`sfly.feishu.card` 组装的卡片和原始消息都在里面，可以直接断言），没有真的发送（不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不在里面，日志里有 warning）。从 SDK 0.3.0 起可用 |
 | `artifacts` | 产物名称 → 本地文件路径 |
 | `artifacts_dir`、`work_dir` | 产物目录、工作目录 |
 
 `ts` 是 Unix 毫秒时间戳。
+
+断言节点要发的通知：`notifications` 里每一项是机器人名称和完整的请求体，不用起任何服务。
+
+```python
+import sfly
+from sfly.testing import run_node
+
+from demo.example import stress
+
+
+def test_stress_alerts_the_bot_with_a_red_card(tmp_path: Path) -> None:
+    result = run_node(stress, {"qps": 100, "alert_bot": "ops"}, work_dir=tmp_path)
+
+    assert result.status == "success", result.error
+    [notification] = result.notifications
+    assert notification.bot == "ops"
+    assert notification.body == sfly.feishu.card("压测告警", "**p99** 612 ms，超过 500 ms", "red")
+```
 
 ## 命令行 `sfly`
 
@@ -576,6 +662,7 @@ uv run sfly run countdown --params '{"name": "世界", "steps": 5}'
 - 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`（目录名也是 `ctx.task.run_id`；`ctx.procs_dir` 是 `.sfly/procs/<目录名>/`），里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。
 - `--download <产物引用> <文件>`：节点用 `ctx.artifacts.download` 下载这个产物引用时，得到这个本地文件的内容；可以重复给出。文件不存在时以 2 退出。例如 `uv run sfly run count_lines --params '{"log_file": "up"}' --download up ./server.log`。
 - `--agent <名称>=<目录>`：把一台 Agent 映射到本地目录，节点用 `ctx.agent(名称)` 访问它时，那台 Agent 上的绝对路径落在这个目录里；可以重复给出。目录不存在时以 2 退出。例如 `uv run sfly run find_logs --params '{"source": "a-01"}' --agent a-01=./fixtures/a-01`。从 SDK 0.2.0 起可用。
+- `ctx.notify` 不真的发送：和日志一起实时打印一行 `通知  发给飞书机器人「<名称>」（本地调试不发送）：<请求体 JSON>`。从 SDK 0.3.0 起可用。
 - Ctrl-C 按平台的取消流程取消（节点里抛出 `Cancelled`，宽限期后强制杀掉），再按一次立即杀掉；节点结束后、打印结果期间的 Ctrl-C 被忽略。
 - 退出码：成功 0，节点失败 1，参数不合法或找不到节点 2，取消 130。
 

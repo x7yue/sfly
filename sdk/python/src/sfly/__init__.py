@@ -1,5 +1,6 @@
 """sfly 节点 SDK 运行时。只能使用 Python 标准库（ADR 0002）。"""
 
+from sfly import feishu
 from sfly.capabilities import (
     Agent,
     AgentError,
@@ -16,7 +17,7 @@ from sfly.capabilities import (
     WatchSnapshot,
 )
 from sfly.context import ArtifactDownloadError, Cancelled, Context, TaskInfo
-from sfly.nodes import AgentName, Chart, Metric, node
+from sfly.nodes import AgentName, Chart, FeishuBot, Metric, node
 
 __version__ = "0.2.0"
 
@@ -35,6 +36,7 @@ __all__ = [
     "Cancelled",
     "Chart",
     "Context",
+    "FeishuBot",
     "FileEvent",
     "FileId",
     "FileInfo",
@@ -42,5 +44,6 @@ __all__ = [
     "TaskInfo",
     "WatchSnapshot",
     "__version__",
+    "feishu",
     "node",
 ]

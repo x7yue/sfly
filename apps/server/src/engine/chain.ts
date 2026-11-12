@@ -29,6 +29,7 @@ const SUPPORTED_KINDS = new Set<OrchestrationNode["kind"]>([
 	"timer",
 	"sleep",
 	"stop_subflow",
+	"feishu_notify",
 ]);
 
 /**

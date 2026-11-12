@@ -15,6 +15,11 @@ import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
+import { EngineNotifications } from "./feishu/engine-notifications.js";
+import { FeishuBots } from "./feishu/feishu-bots.js";
+import { FeishuClient } from "./feishu/feishu-client.js";
+import { FeishuDelivery } from "./feishu/feishu-delivery.js";
+import { TaskNotifications } from "./feishu/task-notifications.js";
 import { startAgentGateway } from "./gateway/agent-gateway.js";
 import { buildHttpApi } from "./http/api.js";
 import { loadWebApp } from "./http/web-app.js";
@@ -81,6 +86,8 @@ export interface ControlPlaneOptions {
 	retentionSweepIntervalMs?: number;
 	/** 定时 / Sleep 节点的定时器扫描间隔（#14），默认 1 秒；是否到期只按注入的时钟判断。 */
 	timerSweepIntervalMs?: number;
+	/** 飞书发送队列的周期扫描间隔（#229，兜底：消息入队时已经立即唤醒投递），默认 1 秒。 */
+	feishuSweepIntervalMs?: number;
 	/** SSE 心跳的间隔，默认 15 秒；每次心跳带上控制面时间。 */
 	sseHeartbeatMs?: number;
 	/** 运行中任务的租约（毫秒），默认 30 秒；Agent 按它的三分之一发送心跳（#15）。 */
@@ -172,6 +179,34 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	let publicGrpcUrl = "";
 	const packages = createPackageRepository({ db: database.db, clock, dataDir: options.dataDir });
 	const preflight = createPreflight({ db: database.db, packages, version });
+	const logs = new TaskLogs({
+		db: database.db,
+		clock,
+		dataDir: options.dataDir,
+		limitBytes: options.logLimitBytes,
+	});
+	// 控制面直接向飞书机器人的 Webhook 地址发请求（ADR 0020），不经代理。
+	const feishu = new FeishuClient();
+	const feishuError = (error: unknown) => {
+		if (logger) console.error("feishu delivery failed:", error);
+	};
+	const feishuBots = new FeishuBots({ db: database.db, clock, logs, onError: feishuError });
+	const feishuDelivery = new FeishuDelivery({
+		db: database.db,
+		clock,
+		bots: feishuBots,
+		client: feishu,
+		logs,
+		onError: feishuError,
+	});
+	// 运行通知卡片里「查看运行」的链接只在配置了对外地址（SFLY_PUBLIC_URL）时给：默认的监听地址不一定是用户打得开的地址。
+	const configuredUrl = options.publicHttpUrl?.replace(/\/+$/, "");
+	const notifications = new TaskNotifications({
+		db: database.db,
+		clock,
+		logs,
+		delivery: feishuDelivery,
+	});
 	const engine = new Engine({
 		db: database.db,
 		clock,
@@ -182,6 +217,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		artifactUploadUrl: (taskId) => artifactBaseUrl(publicHttpUrl, taskId),
 		preflight,
 		paramsCheck: createParamsCheck({ db: database.db, packages }),
+		notifications: new EngineNotifications({
+			logs,
+			delivery: feishuDelivery,
+			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
+		}),
 		leaseMs: options.leaseMs,
 		sdkWheel: (agentVersion) => {
 			const wheel = sdkWheels.find((w) => w.version === agentVersion);
@@ -195,12 +235,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
 	await engine.recover();
-	const logs = new TaskLogs({
-		db: database.db,
-		clock,
-		dataDir: options.dataDir,
-		limitBytes: options.logLimitBytes,
-	});
 	const metricRetention = new MetricRetention({
 		db: database.db,
 		clock,
@@ -251,6 +285,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		agentBinaries,
 		installScript,
 		docs,
+		feishuBots,
+		feishu,
 		sseHeartbeatMs: options.sseHeartbeatMs,
 		logScanBytes: options.logScanBytes,
 		webApp,
@@ -273,12 +309,14 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
 			hub,
-			// 日志、进度和指标不改变运行状态，不经过引擎（src/logs/task-logs.ts、src/metrics/task-metrics.ts）。
+			// 日志、进度、指标和 ctx.notify 的通知不改变运行状态，不经过引擎
+			// （src/logs/task-logs.ts、src/metrics/task-metrics.ts、src/feishu/task-notifications.ts）。
 			handler: {
 				onOnline: (conn, running) => engine.onOnline(conn, running),
 				async onMessage(conn, message) {
 					if (metrics.handles(message)) return metrics.onMessage(conn, message);
 					if (logs.handles(message)) return logs.onMessage(conn, message);
+					if (notifications.handles(message)) return notifications.onMessage(conn, message);
 					// 任务结束：先写入它的指标（Agent 在结果之前发完最后的点）。写不进去时记下来、照常处理结果：
 					// 没写入的点留在内存里，由周期写入重试有限次（src/metrics/task-metrics.ts）。
 					if (message.body.case === "result") {
@@ -291,6 +329,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			onError: sessionError,
 		});
 	} catch (error) {
+		feishuDelivery.close();
+		await feishu.close();
 		await api.close();
 		await database.close();
 		throw error;
@@ -326,7 +366,15 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		periodic(options.metricFlushIntervalMs ?? 1000, () => metrics.flushDue(), fail("metric flush")),
 		// 定时 / Sleep 节点（#14）：定时器的状态全在 PG（tasks.wake_at），扫描本身无状态。
 		periodic(options.timerSweepIntervalMs ?? 1000, () => engine.wakeTimers(), fail("timer sweep")),
+		// 飞书发送队列（ADR 0020）：消息入队时已经立即唤醒投递，这里兜底（控制面重启前入队的、投递循环出错退出的）。
+		periodic(
+			options.feishuSweepIntervalMs ?? 1000,
+			() => feishuDelivery.wake(),
+			fail("feishu sweep"),
+		),
 	];
+	// 重启前还在排队的消息接着投递。
+	feishuDelivery.wake();
 
 	return {
 		httpUrl,
@@ -341,6 +389,10 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			await metrics.close().catch(fail("metric flush"));
 			// 等待已排队的状态变更（例如 Agent 下线）落库后再关闭连接池。
 			await mutex.run(async () => {});
+			// 先中断还在等飞书响应的请求（中断的消息不记结果，留在队列里），api.close() 才不会等它们。
+			feishuDelivery.close();
+			await feishu.close();
+			await feishuDelivery.idle();
 			await api.close();
 			await database.close();
 		},

@@ -24,6 +24,7 @@ message AgentMessage {
     TaskResult result = 6;
     InstallStatus install = 7;
     MetricBatch metrics = 8;
+    Notification notification = 9;
   }
 }
 
@@ -243,6 +244,9 @@ message AssignTask {
   // 这个任务通过「Agent」类型的输入引用的 Agent（ADR 0019），每台一项、不重复；地址在派发时解析。
   // 节点只能调用这里列出的 Agent 和自己所在 Agent 的能力。旧版本控制面不带：没有可以调用的其它 Agent。
   repeated ReferencedAgent referenced_agents = 13;
+  // 这个任务通过「飞书机器人」类型的输入引用的飞书机器人名称（ADR 0020），不重复，按输入顺序；
+  // 不检查是否已登记（输入的值来自前面节点的输出时，派发时才知道）。节点通过它们发通知。旧版本控制面不带：没有可以发通知的机器人。
+  repeated string referenced_feishu_bots = 14;
 }
 
 // 任务通过「Agent」类型的输入引用的一台 Agent：节点收到的参数值是它的名称，调用它的能力时连接这里的地址和端口。
@@ -390,6 +394,17 @@ message MetricPoint {
   // 控制面按连接时建立的对应关系把它折算成控制面时间，序列内的顺序、去重、分区和保留期都按折算后的时间。
   // 0 表示没有上报（旧版本 Agent）：控制面时间取收到这一批的时刻。
   int64 monotonic_ms = 7;
+}
+
+// 节点调用 ctx.notify 发的一条飞书通知（ADR 0020）。Agent 从事件管道读到后转发，断线期间与日志一样排队；
+// 控制面校验（机器人必须在任务的 AssignTask.referenced_feishu_bots 里）后写进发送队列，投递结果写进这个任务的日志。
+// 控制面不回 Ack。旧版本控制面不认识这条消息，忽略它。
+message Notification {
+  string task_id = 1;
+  uint32 attempt = 2;
+  // 事件管道里的那一行通知事件原文（JSON 对象，格式见 sdk/python/src/sfly/context.py）：机器人名称和消息内容。
+  // Agent 不解析消息内容，消息格式只由 SDK 和控制面约定：新增的格式不需要升级 Agent。
+  string event_json = 3;
 }
 
 // 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。

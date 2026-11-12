@@ -442,3 +442,317 @@ def test_an_agent_input_that_is_not_a_string_is_a_config_error(
     assert result.error is not None
     assert result.error.kind == "config_error"
     assert result.error.message == "输入 source 应为 string，实际是 1"
+
+
+FEISHU_BOT_NODES = """
+from sfly import Context, FeishuBot, node
+
+
+@node
+def alert(ctx: Context, bot: FeishuBot, backup: FeishuBot | None = None) -> dict:
+    return {"bot": bot, "backup": backup, "is_str": isinstance(bot, str)}
+"""
+
+
+def test_feishu_bot_inputs_are_bot_names_and_need_no_registration_locally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 「飞书机器人」类型的输入（#233）：节点收到机器人名称字符串；
+    # 本地没有控制面，不检查机器人是否登记过。
+    (tmp_path / "feishu_nodes.py").write_text(FEISHU_BOT_NODES, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    result = run_node("feishu_nodes:alert", {"bot": "ops"})
+    both = run_node("feishu_nodes:alert", {"bot": "ops", "backup": "dev"})
+
+    assert result.status == "success", result.error
+    assert result.outputs == {"bot": "ops", "backup": None, "is_str": True}
+    assert both.outputs == {"bot": "ops", "backup": "dev", "is_str": True}
+
+
+def test_a_feishu_bot_input_that_is_not_a_string_is_a_config_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "feishu_nodes.py").write_text(FEISHU_BOT_NODES, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    result = run_node("feishu_nodes:alert", {"bot": 1})
+
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.kind == "config_error"
+    assert result.error.message == "输入 bot 应为 string，实际是 1"
+
+
+def test_notifications_carry_the_bot_and_the_request_body_and_nothing_is_sent() -> None:
+    # ctx.notify（#234）：请求体与飞书通知节点的文本格式相同；本地没有控制面，不真的发送。
+    from sfly_stub import notify
+
+    result = run_node(notify, {"bot": "ops", "text": "指标越界", "at_all": True})
+    plain = run_node(notify, {"bot": "ops", "text": '请 <at user_id="ou_1">张三</at> 看'})
+
+    assert result.status == "success", result.error
+    assert [(n.bot, n.body) for n in result.notifications] == [
+        ("ops", {"msg_type": "text", "content": {"text": '指标越界<at user_id="all">所有人</at>'}}),
+    ]
+    assert [n.body for n in plain.notifications] == [
+        {"msg_type": "text", "content": {"text": '请 <at user_id="ou_1">张三</at> 看'}},
+    ]
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["a" * 30_000, "测" * 10_000, "😀" * 8_000, '"\n' * 15_000],
+    ids=["ascii", "cjk", "emoji", "escaped"],
+)
+@pytest.mark.parametrize("at_all", [False, True])
+def test_a_body_over_20_kb_has_its_text_truncated_like_on_the_control_plane(
+    text: str, at_all: bool
+) -> None:
+    # 与控制面的文本格式相同（apps/server/src/feishu/messages.ts）：请求体（紧凑 JSON 的
+    # UTF-8 字节数）不超过 20 KB，正文尽量多地保留，末尾接「…（已截断）」，「@所有人」仍在最后。
+    import json
+
+    from sfly_stub import notify
+
+    result = run_node(notify, {"bot": "ops", "text": text, "at_all": at_all})
+
+    assert result.status == "success", result.error
+    [notification] = result.notifications
+    size = len(json.dumps(notification.body, ensure_ascii=False, separators=(",", ":")).encode())
+    assert 20 * 1024 - 16 < size <= 20 * 1024
+    sent = notification.body["content"]["text"]
+    tail = "…（已截断）" + ('<at user_id="all">所有人</at>' if at_all else "")
+    assert sent.endswith(tail)
+    assert text.startswith(sent[: -len(tail)])
+
+
+def test_a_body_of_exactly_20_kb_is_not_truncated() -> None:
+    import json
+
+    from sfly_stub import notify
+
+    overhead = len(json.dumps({"msg_type": "text", "content": {"text": ""}}, separators=(",", ":")))
+    exact = "a" * (20 * 1024 - overhead)
+    result = run_node(notify, {"bot": "ops", "text": exact})
+
+    assert [n.body["content"]["text"] for n in result.notifications] == [exact]
+
+
+def test_a_bot_not_passed_as_a_feishu_bot_input_is_not_notified_and_a_warning_is_logged() -> None:
+    # 与平台相同：只能发给「飞书机器人」类型的参数传入的机器人，其余的不发送，任务日志里写 warning。
+    from sfly_stub import notify
+
+    result = run_node(notify, {"bot": "ops", "text": "x", "unlisted": "dev"})
+
+    assert result.status == "success", result.error
+    assert [n.bot for n in result.notifications] == ["ops"]
+    warnings = [line for line in result.logs if line.level == "warn"]
+    assert len(warnings) == 1, result.logs
+    assert warnings[0].source == "system"
+    assert "「dev」" in warnings[0].message
+    assert "sfly.FeishuBot" in warnings[0].message
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs"),
+    [
+        ((1, "x"), {}),
+        (("ops", None), {}),
+        (("ops", "x"), {"at_all": "yes"}),
+    ],
+)
+def test_notify_with_wrongly_typed_arguments_raises_type_error(
+    args: tuple[object, ...], kwargs: dict[str, object]
+) -> None:
+    from sfly import Context
+
+    ctx = Context(events_path=None, cancel_path=None)
+    with pytest.raises(TypeError):
+        ctx.notify(*args, **kwargs)  # type: ignore[arg-type]
+
+
+# ---- ctx.notify(message=...)（原始消息）与 sfly.feishu.card（#235）----
+
+CUSTOM_CARD = {
+    "msg_type": "interactive",
+    "card": {
+        "schema": "2.0",
+        "header": {"title": {"tag": "plain_text", "content": '压测 "A" 环境'}, "template": "red"},
+        "body": {
+            "elements": [
+                {"tag": "markdown", "content": "**P99** 超标\n请 <at id=all></at> 看一下 😀"},
+                {
+                    "tag": "button",
+                    "text": {"tag": "plain_text", "content": "查看"},
+                    "behaviors": [{"type": "open_url", "default_url": "https://example.com/r/1"}],
+                },
+            ]
+        },
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        CUSTOM_CARD,
+        {"msg_type": "post", "content": {"post": {"zh_cn": {"title": "T", "content": [[]]}}}},
+        {"msg_type": "image", "content": {"image_key": "img_v2_abc"}},
+        {"msg_type": "share_chat", "content": {"share_chat_id": "oc_1"}},
+        {"msg_type": "text", "content": {"text": "原始消息里的 text 不追加「@所有人」"}},
+    ],
+    ids=["interactive", "post", "image", "share_chat", "text"],
+)
+def test_a_raw_message_is_recorded_exactly_as_given(message: dict[str, object]) -> None:
+    # ctx.notify(bot, message=...)：完整的飞书请求体，原样发出，不改写、不补字段
+    # （与飞书通知节点的原始消息相同）。
+    from sfly_stub import notify_message
+
+    result = run_node(notify_message, {"bot": "ops", "message": message})
+
+    assert result.status == "success", result.error
+    assert [(n.bot, n.body) for n in result.notifications] == [("ops", message)]
+    assert [line for line in result.logs if line.level == "warn"] == []
+
+
+def test_a_raw_message_of_exactly_20_kb_is_sent_and_is_not_truncated() -> None:
+    import json
+
+    from sfly_stub import notify_message
+
+    frame = {"msg_type": "text", "content": {"text": ""}}
+    overhead = len(json.dumps(frame, ensure_ascii=False, separators=(",", ":")).encode())
+    exact = {"msg_type": "text", "content": {"text": "字" * ((20 * 1024 - overhead) // 3)}}
+    exact["content"]["text"] += "a" * ((20 * 1024 - overhead) % 3)  # type: ignore[index]
+
+    result = run_node(notify_message, {"bot": "ops", "message": exact})
+
+    assert [n.body for n in result.notifications] == [exact]
+
+
+@pytest.mark.parametrize(
+    ("message", "reason"),
+    [
+        ([{"msg_type": "text"}], "不是一个对象"),
+        ('{"msg_type": "text"}', "不是一个对象"),
+        (5, "不是一个对象"),
+        ({"content": {"text": "x"}}, "msg_type"),
+        ({"msg_type": "audio", "content": {}}, "msg_type"),
+        ({"msg_type": 1, "content": {}}, "msg_type"),
+        ({"msg_type": "text", "content": {"text": "a" * (20 * 1024)}}, "20 KB"),
+        ({"msg_type": "text", "content": {"text": "字" * 7_000}}, "20 KB"),
+    ],
+    ids=[
+        "list",
+        "json-string",
+        "number",
+        "no-msg-type",
+        "unknown-msg-type",
+        "msg-type-int",
+        "ascii-20kb",
+        "cjk-20kb",
+    ],
+)
+def test_an_invalid_raw_message_is_not_sent_a_warning_is_logged_and_the_node_is_unaffected(
+    message: object, reason: str
+) -> None:
+    # 与控制面相同：只校验是对象、msg_type 是飞书支持的类型、不超过 20 KB；不合格的不发送，
+    # 不截断，任务日志里写一条 warning 说明原因，调用不抛异常、节点照常成功。
+    from sfly_stub import notify_message
+
+    result = run_node(notify_message, {"bot": "ops", "message": message})
+
+    assert result.status == "success", result.error
+    assert result.notifications == []
+    warnings = [line for line in result.logs if line.level == "warn"]
+    assert len(warnings) == 1, result.logs
+    assert warnings[0].source == "system"
+    assert warnings[0].message.startswith("ctx.notify 的消息没有发送：")
+    assert reason in warnings[0].message
+
+
+def test_a_raw_message_to_a_bot_not_passed_as_a_feishu_bot_input_is_not_recorded() -> None:
+    from sfly_stub import notify_message
+
+    message = {"msg_type": "text", "content": {"text": "x"}}
+    result = run_node(notify_message, {"bot": "ops", "message": message, "unlisted": "dev"})
+
+    assert result.status == "success", result.error
+    assert [n.bot for n in result.notifications] == ["ops"]
+    [warning] = [line for line in result.logs if line.level == "warn"]
+    assert "「dev」" in warning.message
+    assert "sfly.FeishuBot" in warning.message
+
+
+def test_card_messages_equal_what_the_canvas_markdown_card_sends() -> None:
+    # sfly.feishu.card 与控制面共用卡片用例（test_feishu.py）；这里看它经 ctx.notify 到了通知列表。
+    from sfly_stub import notify_card
+
+    result = run_node(
+        notify_card,
+        {
+            "bot": "ops",
+            "title": "压测完成",
+            "markdown": "**QPS** 1200，P99 35 ms",
+            "color": "green",
+        },
+    )
+
+    assert result.status == "success", result.error
+    assert [(n.bot, n.body) for n in result.notifications] == [
+        (
+            "ops",
+            {
+                "msg_type": "interactive",
+                "card": {
+                    "schema": "2.0",
+                    "header": {
+                        "title": {"tag": "plain_text", "content": "压测完成"},
+                        "template": "green",
+                    },
+                    "body": {
+                        "elements": [{"tag": "markdown", "content": "**QPS** 1200，P99 35 ms"}]
+                    },
+                },
+            },
+        )
+    ]
+
+
+def test_a_card_over_20_kb_is_recorded_with_its_markdown_truncated() -> None:
+    import json
+
+    from sfly_stub import notify_card
+
+    result = run_node(
+        notify_card, {"bot": "ops", "title": "标题", "markdown": "测" * 10_000, "color": "orange"}
+    )
+
+    [notification] = result.notifications
+    size = len(json.dumps(notification.body, ensure_ascii=False, separators=(",", ":")).encode())
+    assert 20 * 1024 - 3 < size <= 20 * 1024
+    sent = notification.body["card"]["body"]["elements"][0]["content"]
+    assert sent.endswith("…（已截断）")
+    assert ("测" * 10_000).startswith(sent.removesuffix("…（已截断）"))
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs", "reason"),
+    [
+        (("ops", "x"), {"message": {"msg_type": "text"}}, "不能同时"),
+        (("ops",), {}, "text"),
+        (("ops",), {"message": None}, "text"),
+        (("ops",), {"message": {"msg_type": "text"}, "at_all": True}, "at_all"),
+        ((1,), {"message": {"msg_type": "text"}}, "bot"),
+    ],
+)
+def test_notify_with_a_wrongly_shaped_call_raises_type_error(
+    args: tuple[object, ...], kwargs: dict[str, object], reason: str
+) -> None:
+    # 文本和原始消息二选一：同时给、都不给、给原始消息还带 at_all（它只对文本有意义）都是编程错误。
+    from sfly import Context
+
+    ctx = Context(events_path=None, cancel_path=None)
+    with pytest.raises(TypeError, match=reason):
+        ctx.notify(*args, **kwargs)  # type: ignore[arg-type]

@@ -25,6 +25,7 @@ export const ALWAYS_KINDS = [
 	"timer",
 	"sleep",
 	"stop_subflow",
+	"feishu_notify",
 ] as const satisfies readonly OrchestrationNode["kind"][];
 
 export const canBeAlways = (
