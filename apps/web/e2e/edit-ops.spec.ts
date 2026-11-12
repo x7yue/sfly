@@ -4,6 +4,7 @@ import {
 	dock,
 	edge,
 	headOf,
+	inspector,
 	nodeCard,
 	nodePosition,
 	openEditor,
@@ -468,6 +469,62 @@ test("通过 API 创建、缺少布局的场景打开时用整理布局得到初
 	expect(await nodePosition(page, "e")).toEqual({ x: 504, y: 214 });
 	// 补齐布局不算修改。
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+});
+
+test("Ctrl Enter 打开画布的运行抽屉：输入框里不触发，运行状态模式下不绑定；运行按钮的提示写着键位", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const drawer = page.getByRole("dialog", { name: "运行 · 日终数据处理" });
+
+	await nodeCard(page, "fetch").click();
+	await inspector(page).getByRole("textbox").first().focus();
+	await page.keyboard.press("Control+Enter");
+	await expect(drawer).toHaveCount(0);
+
+	await nodeCard(page, "fetch").click();
+	await page.keyboard.press("Control+Enter");
+	await expect(drawer.getByRole("list", { name: "触发前检查" })).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(drawer).toBeHidden();
+
+	await page.getByRole("button", { name: "运行", exact: true }).hover();
+	await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText("运行CtrlEnter");
+
+	await switchMode(page, "run");
+	await page.keyboard.press("Control+Enter");
+	await expect(drawer).toHaveCount(0);
+});
+
+test("命令面板「当前页面」列出保存和运行；没有修改时选保存会说明；运行状态模式下没有这两项", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	const pageGroup = palette.getByRole("group", { name: "当前页面" });
+
+	await page.keyboard.press("Control+k");
+	await expect(pageGroup.getByRole("option")).toHaveText([/^保存CtrlS$/, /^运行CtrlEnter$/]);
+	await pageGroup.getByRole("option", { name: /^保存/ }).click();
+	await expect(palette).toBeHidden();
+	await expect(page.getByText("没有未保存的修改")).toBeVisible();
+
+	await page.keyboard.press("Control+k");
+	await pageGroup.getByRole("option", { name: /^运行/ }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 日终数据处理" });
+	await expect(drawer).toBeVisible();
+	await page.waitForTimeout(500);
+	expect(await drawer.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+	await page.keyboard.press("Escape");
+
+	await switchMode(page, "run");
+	await page.keyboard.press("Control+k");
+	await expect(palette.getByRole("combobox", { name: "命令" })).toBeFocused();
+	await expect(pageGroup).toHaveCount(0);
 });
 
 test("运行状态下画布只读：工具条不显示添加、撤销 / 重做、整理布局，对应的快捷键不生效；空白处右键菜单只有适配视图", async ({

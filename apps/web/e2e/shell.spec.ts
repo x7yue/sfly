@@ -188,6 +188,7 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		"飞书机器人",
 		"开发文档",
 		"折叠 / 展开侧边栏",
+		"新建场景",
 	]);
 	await expect(global.getByRole("definition").nth(0)).toHaveText("CtrlK");
 	await page.keyboard.press("Escape");
@@ -212,10 +213,37 @@ test("在输入框里打字不会触发单键快捷键", async ({ page }) => {
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 	await page.keyboard.press("Control+k");
 	await expect(page.getByRole("combobox", { name: "命令" })).toBeFocused();
-	await page.keyboard.type("g p ?");
+	await page.keyboard.type("g p ? n");
 	await expect(page).toHaveURL(/\/agents$/);
 	await expect(page.getByRole("dialog", { name: "快捷键" })).toBeHidden();
-	await expect(page.getByRole("combobox", { name: "命令" })).toHaveValue("g p ?");
+	await expect(page.getByRole("dialog", { name: "新建场景" })).toBeHidden();
+	await expect(page.getByRole("combobox", { name: "命令" })).toHaveValue("g p ? n");
+});
+
+test("N 打开新建场景：在页面上打开、在弹窗的输入框里打字不再触发；命令面板里「新建场景」显示这个键", async ({
+	page,
+}) => {
+	await page.goto("/agents");
+	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
+	await page.keyboard.press("n");
+	const dialog = page.getByRole("dialog", { name: "新建场景" });
+	await expect(dialog).toBeVisible();
+	const name = dialog.getByRole("textbox", { name: "名称" });
+	await expect(name).toBeFocused();
+	await page.keyboard.type("n g s ?");
+	await expect(name).toHaveValue("n g s ?");
+	await expect(page).toHaveURL(/\/agents$/);
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+
+	await page.keyboard.press("Control+k");
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	await expect(palette.getByRole("combobox", { name: "命令" })).toBeFocused();
+	await expect(palette.getByRole("group", { name: "当前页面" })).toHaveCount(0);
+	await expect(palette.getByRole("option", { name: /新建场景/ })).toHaveText(/新建场景N/);
+	await page.keyboard.type("新建");
+	await page.keyboard.press("Enter");
+	await expect(dialog).toBeVisible();
 });
 
 test("弹窗锁定焦点，Esc 关闭后焦点回到打开它的按钮", async ({ page }) => {

@@ -5,7 +5,7 @@ import { ArrowLeftIcon, HistoryIcon, PlayIcon } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { floatGroupClass, GroupDivider } from "#/components/canvas/CanvasDock";
 import { StatusPill } from "#/components/status";
-import { shortcutText } from "#/lib/shortcuts";
+import { shortcutKeys, shortcutText } from "#/lib/shortcuts";
 import { ConflictDialog } from "#/versions/ConflictDialog";
 import type { Versioning } from "#/versions/useVersionedDraft";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -180,10 +180,22 @@ export function EditorTopRight({
 					{shortcutText("canvas-save")}
 				</Kbd>
 			</Button>
-			<Button variant={unsaved ? "default" : "primary"} onClick={onRun}>
-				<PlayIcon />
-				运行
-			</Button>
+			<Tooltip>
+				<TooltipTrigger
+					render={<Button variant={unsaved ? "default" : "primary"} onClick={onRun} />}
+				>
+					<PlayIcon />
+					运行
+				</TooltipTrigger>
+				<TooltipContent>
+					运行
+					{shortcutKeys("canvas-run")
+						.flat()
+						.map((key) => (
+							<Kbd key={key}>{key}</Kbd>
+						))}
+				</TooltipContent>
+			</Tooltip>
 			<ConflictDialog
 				open={showConflict}
 				onOpenChange={setShowConflict}

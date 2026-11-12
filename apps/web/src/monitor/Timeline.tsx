@@ -7,6 +7,7 @@ import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { formatClock, formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
+import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -105,6 +106,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 	useShortcut("monitor-toggle-timeline", () =>
 		setMode((m) => (m === "expanded" ? "summary" : "expanded")),
 	);
+	useShortcut("monitor-follow-live", actions.followLive, zoom !== null);
 
 	const isOpen = (chain: ChainRunView) => mode === "expanded" && !collapsed.has(chain.id);
 	const toggleChain = (chain: ChainRunView) => {
@@ -175,7 +177,11 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 							{formatClock(zoom.start)} – {formatClock(zoom.end)}
 						</span>
 						{!live && (
-							<Button size="sm" onClick={actions.followLive}>
+							<Button
+								size="sm"
+								title={`重置时间范围（${shortcutText("monitor-follow-live")}）`}
+								onClick={actions.followLive}
+							>
 								重置时间范围
 							</Button>
 						)}
@@ -190,7 +196,11 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 							实时跟随
 						</span>
 					) : (
-						<Button size="sm" onClick={actions.followLive}>
+						<Button
+							size="sm"
+							title={`回到实时（${shortcutText("monitor-follow-live")}）`}
+							onClick={actions.followLive}
+						>
 							回到实时
 						</Button>
 					))}

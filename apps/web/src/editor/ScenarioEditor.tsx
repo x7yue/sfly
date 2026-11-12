@@ -535,7 +535,11 @@ function Editor({
 			notify.warning(`有 ${fieldErrors.length} 处字段错误，改正后才能保存`);
 			return;
 		}
-		if (versioning.save.isPending || (!versioning.dirty && versioning.base.version > 0)) return;
+		if (versioning.save.isPending) return;
+		if (!versioning.dirty && versioning.base.version > 0) {
+			notify.info("没有未保存的修改");
+			return;
+		}
 		versioning.save.mutate(doc, {
 			onSuccess: (saved) =>
 				notify.success(
@@ -552,6 +556,7 @@ function Editor({
 		});
 	};
 	useShortcut("canvas-save", save, !running);
+	useShortcut("canvas-run", () => setTriggering(true), !running);
 
 	const selectedNode = selectedId ? shownNodes.find((n) => n.id === selectedId) : undefined;
 	const context: InspectorContext = {
