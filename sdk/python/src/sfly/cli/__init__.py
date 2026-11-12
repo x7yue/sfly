@@ -1,4 +1,4 @@
-"""sfly 命令行入口：init / build / publish / dev / run / skill update。
+"""sfly 命令行入口：init / build / publish / dev / run / skill update / scenario。
 
 CLI 在开发者机器上运行，可以使用 `sfly[cli]` extra 中的第三方依赖；
 这些依赖只在子命令执行时才导入，`import sfly.cli` 本身只用标准库。
@@ -12,9 +12,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from sfly import __version__
-from sfly.cli.home import control_plane_url, dev_socket
-
-DEFAULT_SERVER = "http://127.0.0.1:8080"
+from sfly.cli import scenario
+from sfly.cli.home import DEFAULT_SERVER, control_plane_url, dev_socket
 
 
 def _init(args: argparse.Namespace) -> int:
@@ -124,7 +123,7 @@ def _skill_update(args: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="sfly", description="sfly 节点包开发工具")
+    parser = argparse.ArgumentParser(prog="sfly", description="sfly 命令行：开发节点包、操作平台")
     parser.add_argument("--version", action="version", version=f"sfly {__version__}")
     sub = parser.add_subparsers(dest="command")
 
@@ -227,6 +226,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     p_skill_update.add_argument("--project", default=".", help="项目目录（默认当前目录）")
     p_skill_update.set_defaults(func=_skill_update)
+
+    scenario.register(sub)
 
     args = parser.parse_args(argv)
     if args.command is None:

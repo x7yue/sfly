@@ -16,6 +16,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+# 没有任何配置时的控制面地址。
+DEFAULT_SERVER = "http://127.0.0.1:8080"
 ENV_FILE = "agent.env"
 CONTROL_PLANE_KEY = "SFLY_CONTROL_PLANE_URL"
 # Agent 的默认本地 socket：$SFLY_HOME/work/agent.sock（Agent 默认工作目录下）。
@@ -50,9 +52,9 @@ def agent_env() -> dict[str, str]:
     return parse_env_file(text)
 
 
-def control_plane_url(server: str | None, default: str) -> str:
+def control_plane_url(server: str | None, default: str = DEFAULT_SERVER) -> str:
     """控制面 HTTP 地址：`--server` > `SFLY_SERVER` > `agent.env` 的 `SFLY_CONTROL_PLANE_URL`
-    > `default`。"""
+    > `default`。`sfly publish` 和操作平台的命令共用。"""
     return server or os.environ.get("SFLY_SERVER") or agent_env().get(CONTROL_PLANE_KEY) or default
 
 
