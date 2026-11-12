@@ -196,6 +196,8 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		onError: feishuError,
 	});
+	// 运行通知卡片里「查看运行」的链接只在配置了对外地址（SFLY_PUBLIC_URL）时给：默认的监听地址不一定是用户打得开的地址。
+	const configuredUrl = options.publicHttpUrl?.replace(/\/+$/, "");
 	const notifications = new TaskNotifications({
 		db: database.db,
 		clock,
@@ -214,6 +216,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		paramsCheck: createParamsCheck({ db: database.db, packages }),
 		logs,
 		feishuDelivery,
+		runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
 		leaseMs: options.leaseMs,
 		sdkWheel: (agentVersion) => {
 			const wheel = sdkWheels.find((w) => w.version === agentVersion);

@@ -5,6 +5,7 @@ import {
 	ON_AGENT_STATUSES,
 	type OrchestrationDocument,
 	type PackageMetadata,
+	type RunNotificationTrigger,
 } from "@sfly/schema";
 import { sql } from "drizzle-orm";
 import {
@@ -134,6 +135,19 @@ export const orchestrations = pgTable("orchestrations", {
 	headVersion: integer("head_version").notNull().default(0),
 	createdAt: timestamptz("created_at").notNull(),
 	archivedAt: timestamptz("archived_at"),
+	/**
+	 * 运行通知设置（GLOSSARY「运行通知」，ADR 0020）：和名称、说明一样不属于版本，运行结束时读取当前值。
+	 * bot 为空即关闭；bot 不是外键，机器人被删除后设置原样保留（运行结束时记为「未发送」）。
+	 */
+	runNotifyBot: text("run_notify_bot"),
+	runNotifyTrigger: text("run_notify_trigger")
+		.$type<RunNotificationTrigger>()
+		.notNull()
+		.default("failed"),
+	/** 卡片标题；空字符串时用场景名。 */
+	runNotifyTitle: text("run_notify_title").notNull().default(""),
+	/** 附加说明（Markdown）；空字符串即没有。 */
+	runNotifyNote: text("run_notify_note").notNull().default(""),
 });
 
 /** 编排版本：不可变，同一编排内编号唯一、递增。 */
@@ -217,6 +231,14 @@ export const runs = pgTable(
 		purgedAt: timestamptz("purged_at"),
 		/** 指标超过保留期被判定过期的时间（#32，src/metrics/metric-retention.ts）；之后摘要等接口返回「已过保留期」。 */
 		metricsPurgedAt: timestamptz("metrics_purged_at"),
+		/**
+		 * 运行通知（#232）：运行结束时场景设置选了机器人、而且满足触发条件，这里记下发给哪个机器人；
+		 * 消息本身在发送队列里（source run_notification，run_id 是这个运行），投递结果以队列为准。
+		 * 没有发运行通知时为空。
+		 */
+		notificationBot: text("notification_bot"),
+		/** 运行结束时没有把消息写进队列的原因（机器人已不存在，或卡片超过 20 KB）；写进队列了为空。 */
+		notificationNotSent: text("notification_not_sent"),
 	},
 	(t) => [index("runs_orchestration").on(t.orchestrationId), index("runs_ended_at").on(t.endedAt)],
 );

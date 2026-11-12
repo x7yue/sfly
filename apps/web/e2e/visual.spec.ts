@@ -36,6 +36,7 @@ import {
 	publishPackage,
 	scenarioUsing,
 	seedDashboard,
+	setRunNotification,
 	triggerRun,
 } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
@@ -403,6 +404,52 @@ test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, c
 	await expect(drawer).toHaveScreenshot("run-drawer-summary.png", {
 		mask: [drawer.locator('[data-slot="run-id"]')],
 	});
+});
+
+test("运行抽屉：运行通知的状态", async ({ page, controlPlane, connectAgent, feishu }) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createFeishuBot(
+		controlPlane,
+		"压测群",
+		feishu.webhookUrl("5b1c7e90-3d42-4a6f-8e0b-9c2d4f6a8b10"),
+	);
+	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	await setRunNotification(controlPlane, scenario, { bot: "压测群" });
+	feishu.reply({ code: 19024, msg: "Key Words Not Found" });
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await agent.fail(await agent.nextAssign(), "boom");
+	await expect(drawer.getByRole("group", { name: "运行通知" })).toContainText("发送失败", {
+		timeout: 15_000,
+	});
+	await expect(drawer).toHaveScreenshot("run-drawer-notification.png", {
+		mask: [drawer.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("场景的运行通知设置：机器人已被删除时的提示", async ({ page, controlPlane, feishu }) => {
+	await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+	await createFeishuBot(controlPlane, "告警群", feishu.webhookUrl("b"));
+	const scenario = await createScenario(controlPlane, "订单压测", scenarioUsing("agent-a"));
+	await setRunNotification(controlPlane, scenario, {
+		bot: "压测群",
+		trigger: "failed_or_cancelled",
+		title: "【订单压测-A 环境】",
+		note: "环境 A，负责人 <at id=ou_1></at>",
+	});
+	await controlPlane.fetch("/feishu-bots/%E5%8E%8B%E6%B5%8B%E7%BE%A4", {
+		method: "DELETE",
+		headers: { "x-sfly-nickname": "tester" },
+	});
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "订单压测" }).getByLabel("更多操作").click();
+	await page.getByRole("menuitem", { name: "运行通知…" }).click();
+	const dialog = page.getByRole("dialog", { name: "运行通知" });
+	await expect(dialog.getByRole("alert")).toContainText("已被删除");
+	await expect(dialog).toHaveScreenshot("run-notification-dialog.png");
 });
 
 test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {

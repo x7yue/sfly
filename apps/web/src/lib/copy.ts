@@ -20,6 +20,7 @@ export const TERM = {
 	attempt: "尝试",
 	agent: "Agent",
 	feishuBot: "飞书机器人",
+	runNotification: "运行通知",
 	nodePackage: "节点包",
 	metric: "指标",
 	chart: "图表",

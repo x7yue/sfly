@@ -50,45 +50,72 @@ export function textMessage(
 
 export type CardColor = Extract<OrchestrationNode, { kind: "feishu_notify" }>["color"];
 
-/** Markdown 卡片（`msg_type: interactive`，卡片 JSON 2.0）：header 是标题加颜色模板，body 是一个 markdown 元素。 */
+/** 卡片 JSON 2.0 里平台用到的元素：markdown 和打开链接的按钮。 */
+export type CardElement =
+	| { tag: "markdown"; content: string }
+	| {
+			tag: "button";
+			text: { tag: "plain_text"; content: string };
+			type: "primary" | "default";
+			behaviors: [{ type: "open_url"; default_url: string }];
+	  };
+
+/** 卡片的 header：标题、可选的副标题和颜色模板。 */
+export interface CardHeader {
+	title: string;
+	subtitle?: string;
+	color: CardColor;
+}
+
+/** 卡片消息（`msg_type: interactive`，卡片 JSON 2.0）。 */
 export type CardMessage = {
 	msg_type: "interactive";
 	card: {
 		schema: "2.0";
-		header: { title: { tag: "plain_text"; content: string }; template: CardColor };
-		body: { elements: [{ tag: "markdown"; content: string }] };
+		header: {
+			title: { tag: "plain_text"; content: string };
+			subtitle?: { tag: "plain_text"; content: string };
+			template: CardColor;
+		};
+		body: { elements: CardElement[] };
 	};
 };
 
-const card = (title: string, markdown: string, color: CardColor): CardMessage => ({
+/** 卡片的组装规则：header 加一组 body 元素。Markdown 卡片和运行通知共用，不各写一份。 */
+export const interactiveCard = (
+	{ title, subtitle, color }: CardHeader,
+	elements: CardElement[],
+): CardMessage => ({
 	msg_type: "interactive",
 	card: {
 		schema: "2.0",
-		header: { title: { tag: "plain_text", content: title }, template: color },
-		body: { elements: [{ tag: "markdown", content: markdown }] },
+		header: {
+			title: { tag: "plain_text", content: title },
+			...(subtitle === undefined ? {} : { subtitle: { tag: "plain_text", content: subtitle } }),
+			template: color,
+		},
+		body: { elements },
 	},
 });
 
 /**
- * Markdown 卡片。标题和正文照原样放进去，空字符串也照常组装。请求体超过 {@link FEISHU_BODY_LIMIT_BYTES} 时截断正文：
- * 留下最长的、放得下的前缀（按 Unicode 字符，不把一个字符切成两半），末尾接上 {@link TRUNCATED_MARK}；
- * 标题太长，连空前缀加标记都放不下时无法组装（`too_large`）。
- * 规则的细节和用例见 `testdata/feishu-card-cases.json`。
+ * 卡片里有一段可以截断的文本（`text`，Markdown 卡片的正文、运行通知的附加说明）：`build` 用给定的文本组装整张卡片。
+ * 请求体超过 {@link FEISHU_BODY_LIMIT_BYTES} 时截断这段文本：留下最长的、放得下的前缀（按 Unicode 字符，
+ * 不把一个字符切成两半），末尾接上 {@link TRUNCATED_MARK}；其余部分太大，连空前缀加标记都放不下时无法组装（`too_large`）。
  */
-export function markdownCard(
-	title: string,
-	markdown: string,
-	color: CardColor,
+export function fitCard(
+	text: string,
+	build: (text: string) => CardMessage,
 ): { body: CardMessage } | { error: "too_large" } {
-	const whole = card(title, markdown, color);
+	const whole = build(text);
 	if (bodyBytes(whole) <= FEISHU_BODY_LIMIT_BYTES) return { body: whole };
-	// 每个字符至少占一个字节，放得下的前缀不会超过上限的字符数：正文再长也只看开头这一段。
+	// 每个字符至少占一个字节，放得下的前缀不会超过上限的字符数：文本再长也只看开头这一段。
 	const chars: string[] = [];
-	for (const char of markdown) {
+	for (const char of text) {
 		chars.push(char);
 		if (chars.length >= FEISHU_BODY_LIMIT_BYTES) break;
 	}
-	const cut = (n: number) => card(title, chars.slice(0, n).join("") + TRUNCATED_MARK, color);
+	const cut = (n: number) => build(chars.slice(0, n).join("") + TRUNCATED_MARK);
 	const fits = (n: number) => bodyBytes(cut(n)) <= FEISHU_BODY_LIMIT_BYTES;
 	if (!fits(0)) return { error: "too_large" };
 	// 前缀越长请求体越大，二分找出放得下的最长前缀。
@@ -100,6 +127,17 @@ export function markdownCard(
 	}
 	return { body: cut(low) };
 }
+
+/**
+ * Markdown 卡片。标题和正文照原样放进去，空字符串也照常组装；请求体太大时截断正文（{@link fitCard}）。
+ * 规则的细节和用例见 `testdata/feishu-card-cases.json`。
+ */
+export const markdownCard = (
+	title: string,
+	markdown: string,
+	color: CardColor,
+): { body: CardMessage } | { error: "too_large" } =>
+	fitCard(markdown, (content) => interactiveCard({ title, color }, [{ tag: "markdown", content }]));
 
 /** 飞书自定义机器人接受的 `msg_type`。 */
 const MSG_TYPES = ["text", "post", "image", "share_chat", "interactive"];
