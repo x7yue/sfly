@@ -90,7 +90,7 @@ test("最近一次运行已请求取消、还在等待任务结束时，卡片�
 	await expect(row).not.toContainText("运行中");
 });
 
-test("「编排」进入编排画布，「运行」打开运行抽屉", async ({ page, controlPlane, connectAgent }) => {
+test("场景名称进入编排画布，「运行」打开运行抽屉", async ({ page, controlPlane, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);
 	const id = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
@@ -101,8 +101,50 @@ test("「编排」进入编排画布，「运行」打开运行抽屉", async ({
 	await expect(page.getByRole("dialog", { name: "运行 · 巡检" })).toBeVisible();
 	await page.keyboard.press("Escape");
 
-	await card.getByRole("button", { name: "编排" }).click();
+	await card.getByRole("link", { name: "巡检" }).click();
 	await expect(page).toHaveURL(new RegExp(`/orchestrations/${id}$`));
+});
+
+test("卡片的 Tab 停靠点：名称链接是第一个，缩略图和右上角的运行状态不重复停靠", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const busy = await createScenario(controlPlane, "日终数据处理", scenarioUsing("agent-a"));
+	await createScenario(controlPlane, "撮合压测", scenarioUsing("agent-a"));
+	await triggerRun(controlPlane, busy);
+	await agent.nextAssign();
+	await page.goto("/orchestrations");
+	await expect(page.getByRole("article")).toHaveCount(2);
+
+	const stopsIn = async (name: string) => {
+		const card = page.getByRole("article", { name });
+		await page.getByRole("heading", { name: "场景编排" }).click();
+		const stops: string[] = [];
+		for (let i = 0; i < 60; i++) {
+			await page.keyboard.press("Tab");
+			const inside = await card.evaluate((el) => el.contains(document.activeElement));
+			if (!inside && stops.length > 0) break;
+			if (inside) {
+				stops.push(
+					await page.evaluate(() => {
+						const a = document.activeElement as HTMLElement;
+						return a.getAttribute("aria-label") ?? a.textContent?.trim() ?? "";
+					}),
+				);
+			}
+		}
+		return stops;
+	};
+	expect(await stopsIn("日终数据处理")).toEqual([
+		"日终数据处理",
+		"运行中，进入运行监控",
+		"运行",
+		"更多操作",
+	]);
+	expect(await stopsIn("撮合压测")).toEqual(["撮合压测", "运行", "更多操作"]);
 });
 
 test("切换到表格视图，视图保存在地址里", async ({ page, controlPlane }) => {

@@ -35,8 +35,10 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 	await expect(page.getByTestId("canvas-run")).toContainText(runId.slice(0, 8));
 	await expect(nodeCard(page, "fetch")).toHaveAttribute("data-run", "done");
 	await expect(nodeCard(page, "fetch")).toContainText("成功");
+	await expect(nodeCard(page, "fetch")).toHaveAccessibleName("节点 fetch，HTTP 检查 成功");
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
 	await expect(nodeCard(page, "verify")).toContainText("执行中");
+	await expect(nodeCard(page, "verify")).toHaveAccessibleName(/^节点 verify，.+ 执行中$/);
 	await expect(nodeCard(page, "cleanup")).toHaveAttribute("data-run", "pending");
 	await expect(edge(page, "spawn", "verify")).toHaveAttribute("data-run", "live");
 	await expect(edge(page, "fetch", "spawn")).not.toHaveAttribute("data-run");
