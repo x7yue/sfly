@@ -65,6 +65,17 @@ def dump_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
+_VIA_LABELS = {"claude-code": "Claude Code", "codex": "Codex"}
+
+
+def via_label(name: str | None) -> str | None:
+    """「经哪个 AI 编程助手」的显示名：`claude-code` → Claude Code，`codex` → Codex，其他原样；
+    没有（None）时为 None。界面上的显示和这里一致。"""
+    if name is None:
+        return None
+    return _VIA_LABELS.get(name, name)
+
+
 def _positive_int(text: str) -> int:
     try:
         value = int(text)
