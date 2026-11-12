@@ -187,7 +187,7 @@ test.describe("运行抽屉里的运行通知状态", () => {
 		const summary = await runFromDrawer({ page, connectAgent }, "fail");
 		await expect(summary.getByTestId("summary-status")).toHaveText("失败");
 		const line = summary.getByRole("group", { name: "运行通知" });
-		await expect(line).toContainText("发送失败", { timeout: 15_000 });
+		await expect(line).toContainText("投递失败", { timeout: 15_000 });
 		await expect(line).toContainText("关键词");
 		await expect(summary.getByTestId("summary-status")).toHaveText("失败");
 	});

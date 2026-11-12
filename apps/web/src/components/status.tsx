@@ -1,6 +1,11 @@
 import type { RunNotificationState, RunStatus } from "@sfly/schema";
 import { cn } from "cn";
-import { CANCELLING_LABEL, FORCE_CANCELLING_LABEL, RUN_STATUS_LABEL } from "#/lib/copy";
+import {
+	CANCELLING_LABEL,
+	FORCE_CANCELLING_LABEL,
+	RUN_NOTIFICATION_STATUS_LABEL,
+	RUN_STATUS_LABEL,
+} from "#/lib/copy";
 import { nodeStatusDisplay } from "#/lib/node-status";
 
 /**
@@ -61,17 +66,19 @@ export function nodeStatusView(status: string): StatusView {
 		: { kind: "pending", label: status };
 }
 
-/** 运行通知的状态（运行详情里的一行）：排队中、已送达、失败、已丢弃（机器人被删除）、未发送（没进队列）。 */
-const RUN_NOTIFICATION_VIEW: Record<RunNotificationState["status"], StatusView> = {
-	queued: { kind: "pending", label: "排队中" },
-	delivered: { kind: "ok", label: "已送达" },
-	failed: { kind: "failed", label: "发送失败" },
-	discarded: { kind: "warn", label: "已丢弃" },
-	not_sent: { kind: "warn", label: "未发送" },
+/** 运行通知的状态（运行详情里的一行）：排队中、已送达、投递失败、已丢弃（机器人被删除）、未发送（没进队列）。 */
+const RUN_NOTIFICATION_KIND: Record<RunNotificationState["status"], StatusKind> = {
+	queued: "pending",
+	delivered: "ok",
+	failed: "failed",
+	discarded: "warn",
+	not_sent: "warn",
 };
 
-export const runNotificationView = (status: RunNotificationState["status"]): StatusView =>
-	RUN_NOTIFICATION_VIEW[status];
+export const runNotificationView = (status: RunNotificationState["status"]): StatusView => ({
+	kind: RUN_NOTIFICATION_KIND[status],
+	label: RUN_NOTIFICATION_STATUS_LABEL[status],
+});
 
 const TEXT: Record<StatusKind, string> = {
 	ok: "text-ok",

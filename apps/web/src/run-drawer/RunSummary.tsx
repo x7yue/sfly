@@ -121,7 +121,7 @@ export function RunSummary({ runId }: { runId: string }) {
 }
 
 /**
- * 运行通知的状态（一行）：排队中、已送达、发送失败、已丢弃、未发送。失败、已丢弃时写原因（里面已有机器人名称），
+ * 运行通知的状态（一行）：排队中、已送达、投递失败、已丢弃、未发送。失败、已丢弃时写原因（里面已有机器人名称），
  * 未发送时写机器人和原因，其余写发给了哪个机器人。投递不改变运行的状态，所以这一行只是提示。
  */
 function RunNotificationLine({ state }: { state: RunNotificationState }) {

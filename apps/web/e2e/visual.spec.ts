@@ -422,7 +422,7 @@ test("运行抽屉：运行通知的状态", async ({ page, controlPlane, connec
 	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	await agent.fail(await agent.nextAssign(), "boom");
-	await expect(drawer.getByRole("group", { name: "运行通知" })).toContainText("发送失败", {
+	await expect(drawer.getByRole("group", { name: "运行通知" })).toContainText("投递失败", {
 		timeout: 15_000,
 	});
 	await expect(drawer).toHaveScreenshot("run-drawer-notification.png", {

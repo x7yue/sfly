@@ -11,6 +11,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useId, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { apiQuery, callApi } from "#/lib/api";
+import { FEISHU_BOT_SETUP } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -77,8 +78,7 @@ function WebhookField({
 	);
 }
 
-const REGISTER_HELP =
-	"在飞书群里添加「自定义机器人」，把它的 Webhook 地址登记到这里。场景和节点按名称选择机器人。名称创建后不能修改，要换名称请新建一个再删除旧的。sfly 不支持签名校验，机器人的安全设置请用关键词或 IP 白名单。";
+const REGISTER_HELP = `${FEISHU_BOT_SETUP.add}场景和节点按名称选择机器人。名称创建后不能修改，要换名称请新建一个再删除旧的。${FEISHU_BOT_SETUP.noSignature}`;
 
 /** 登记一个飞书机器人：名称（创建后不能修改）和 Webhook 地址。 */
 export function RegisterBotDialog({

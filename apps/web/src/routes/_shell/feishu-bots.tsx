@@ -14,7 +14,7 @@ import { Page, PageHeader, Panel } from "#/components/page";
 import { StatusPill } from "#/components/status";
 import { DeleteBotDialog, RegisterBotDialog, ReplaceWebhookDialog } from "#/feishu-bots/dialogs";
 import { apiQuery, callApi } from "#/lib/api";
-import { PAGE } from "#/lib/copy";
+import { DELIVERY, FEISHU_BOT_SETUP, PAGE } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
@@ -63,7 +63,7 @@ function FeishuBotsPage() {
 						<EmptyState
 							icon={<BotIcon />}
 							title="还没有登记飞书机器人"
-							description="在飞书群里添加「自定义机器人」，把它的 Webhook 地址登记到这里。通知由控制面直接发给飞书，Agent 不需要访问外网。sfly 不支持签名校验，机器人的安全设置请用关键词或 IP 白名单。"
+							description={`${FEISHU_BOT_SETUP.add}通知由控制面直接发给飞书，Agent 不需要访问外网。${FEISHU_BOT_SETUP.noSignature}`}
 						>
 							<Button variant="primary" onClick={() => setRegistering(true)}>
 								登记机器人
@@ -170,7 +170,7 @@ function LastDelivery({ delivery }: { delivery: FeishuLastDelivery | null }) {
 		<div className="flex flex-col gap-0.5">
 			<div className="flex items-center gap-2">
 				<StatusPill kind={delivery.ok ? "ok" : "failed"}>
-					{delivery.ok ? "已送达" : "投递失败"}
+					{delivery.ok ? DELIVERY.delivered : DELIVERY.failed}
 				</StatusPill>
 				<span className="font-mono text-2xs text-fg-3">{formatDateTime(delivery.at)}</span>
 			</div>
