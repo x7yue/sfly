@@ -269,7 +269,6 @@ describe("飞书机器人的登记和测试消息", () => {
 			const request = feishu.requests[0];
 			expect(request?.method).toBe("POST");
 			expect(request?.path).toBe("/open-apis/bot/v2/hook/t1");
-			expect(request?.viaProxy).toBe(false);
 			expect(request?.headers["content-type"]).toMatch(/^application\/json/);
 			expect(request?.json).toEqual({
 				msg_type: "text",
@@ -362,12 +361,12 @@ describe("飞书机器人的登记和测试消息", () => {
 				expect(result.message).toContain(`HTTP ${status}`);
 			});
 
-			it("HTTP 2xx 但响应体不是飞书的格式（例如代理返回的网页）", async () => {
+			it("HTTP 2xx 但响应体不是飞书的格式（例如网关返回的网页）", async () => {
 				const result = await failure({ body: "<html>login</html>" });
 				expect(result.feishu_code).toBeNull();
 				expect(result.http_status).toBe(200);
 				expect(result.message).toContain("不是飞书");
-				expect(result.next_step).toContain("HTTPS_PROXY");
+				expect(result.next_step).toContain("Webhook 地址");
 			});
 
 			it("其他 HTTP 错误（例如 404 地址写错了）", async () => {
@@ -388,8 +387,8 @@ describe("飞书机器人的登记和测试消息", () => {
 			expect(result.message).toContain("无法连接");
 			expect(result.message).toContain("127.0.0.1");
 			expect(result.message).not.toContain("closed");
-			expect(result.next_step).toContain("HTTPS_PROXY");
-			expect(result.next_step).toContain("NO_PROXY");
+			expect(result.next_step).toContain("防火墙");
+			expect(result.next_step).not.toContain("PROXY");
 		});
 
 		it("超时：飞书一直不响应，10 秒后失败，不无限等待", { timeout: 30_000 }, async () => {
@@ -401,7 +400,7 @@ describe("飞书机器人的登记和测试消息", () => {
 			expect(result.http_status).toBeNull();
 			expect(result.message).toContain("10 秒");
 			expect(result.message).toContain("超时");
-			expect(result.next_step).toContain("HTTPS_PROXY");
+			expect(result.next_step).toContain("防火墙");
 			expect(feishu.requests).toHaveLength(1);
 		});
 	});

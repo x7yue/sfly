@@ -21,8 +21,7 @@ export interface FeishuFailure {
 }
 
 const DOCS = "飞书官方文档「自定义机器人使用指南」";
-const CHECK_NETWORK =
-	"确认控制面所在的机器能访问这个主机（防火墙、DNS）；只能经代理出网时，给控制面配置 HTTPS_PROXY（http 地址用 HTTP_PROXY）和 NO_PROXY 环境变量，并让代理能访问飞书。";
+const CHECK_NETWORK = "确认控制面所在的机器能访问这个主机（防火墙、DNS）。";
 
 interface KnownCode {
 	reason: string;
@@ -39,7 +38,7 @@ const KNOWN_CODES: Record<number, KnownCode> = {
 	19022: {
 		reason: "控制面的出口 IP 不在飞书群里这个机器人的 IP 白名单里",
 		nextStep:
-			"把控制面访问飞书时使用的出口 IP 加进机器人设置里的「IP 白名单」（经代理出网时填代理的出口 IP），或者改用「自定义关键词」。",
+			"把控制面访问飞书时使用的出口 IP 加进机器人设置里的「IP 白名单」，或者改用「自定义关键词」。",
 	},
 	19024: {
 		reason: "消息里没有飞书群里这个机器人设置的关键词",
@@ -114,7 +113,7 @@ export function failureFromResponse(
 			httpStatus,
 			reason: `响应不是飞书机器人的返回格式（HTTP ${httpStatus}）`,
 			nextStep:
-				"确认 Webhook 地址是飞书机器人的地址；控制面经代理出网时，检查代理（HTTPS_PROXY、NO_PROXY）有没有把请求截走或改写。",
+				"确认 Webhook 地址是飞书机器人的地址；控制面和飞书之间的网关或防火墙也可能返回了自己的页面。",
 			retryable: false,
 		};
 	}
@@ -134,7 +133,7 @@ export function failureFromResponse(
 			code: null,
 			httpStatus,
 			reason: `飞书服务暂时不可用（HTTP ${httpStatus}）`,
-			nextStep: "稍后再试；一直失败时检查控制面和飞书之间的代理或网关。",
+			nextStep: "稍后再试；一直失败时检查控制面和飞书之间的网关或防火墙。",
 			retryable: true,
 		};
 	}
@@ -196,7 +195,7 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * 没有收到飞书的响应：网络错误、代理拒绝和超时。`host` 是 Webhook 地址里的主机（不含路径和令牌），
+ * 没有收到飞书的响应：网络错误和超时。`host` 是 Webhook 地址里的主机（不含路径和令牌），
  * `timeoutMs` 是这次请求的超时时间。
  */
 export function failureFromError(
@@ -215,17 +214,6 @@ export function failureFromError(
 		};
 	}
 	const message = errorMessage(error);
-	const proxy = /Proxy response \((\d+)\)/.exec(message);
-	if (proxy) {
-		return {
-			kind: "network",
-			code: null,
-			httpStatus: null,
-			reason: `无法经代理连接 ${host}：代理拒绝了连接（HTTP ${proxy[1]}）`,
-			nextStep: `${CHECK_NETWORK}也检查 NO_PROXY 是否把这个主机排除在代理之外。`,
-			retryable: true,
-		};
-	}
 	const code = networkCode(error);
 	const detail = code ? NETWORK_CODES[code] : `网络错误（${maskWebhookUrlsIn(message)}）`;
 	return {

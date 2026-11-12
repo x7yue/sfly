@@ -147,7 +147,7 @@ test("发送测试消息失败：连不上主机时写出主机和下一步", as
 	await row(page, "压测群").getByRole("button", { name: "发送测试消息" }).click();
 	const result = row(page, "压测群").getByRole("cell").nth(CELL.testResult);
 	await expect(result).toContainText("无法连接 127.0.0.1");
-	await expect(result).toContainText("HTTPS_PROXY");
+	await expect(result).toContainText("防火墙");
 	await expect(result).not.toContainText("closed");
 });
 
