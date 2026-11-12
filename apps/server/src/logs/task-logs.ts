@@ -168,6 +168,8 @@ export interface TaskLogInfo {
 export class TaskLogs {
 	/** 新写入的日志（主题 = 任务 ID），写入文件之后发布。 */
 	readonly lines = new Topics<LogChunk>();
+	/** 同样的日志按运行发布（主题 = 运行 ID）：按运行的实时推送靠它覆盖订阅之后才产生的任务。 */
+	readonly runLines = new Topics<LogChunk>();
 	/** 进度更新（主题 = 运行 ID），写入数据库之后发布。 */
 	readonly progress = new Topics<ProgressEvent>();
 
@@ -309,7 +311,9 @@ export class TaskLogs {
 					logTruncated: truncated,
 				})
 				.where(eq(tasks.id, batch.taskId));
-			this.lines.publish(batch.taskId, { task_id: batch.taskId, lines, offset });
+			const chunk = { task_id: batch.taskId, lines, offset };
+			this.lines.publish(batch.taskId, chunk);
+			this.runLines.publish(state.runId, chunk);
 		});
 	}
 

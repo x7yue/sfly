@@ -14,6 +14,7 @@ import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./sup
 
 // 没选中节点时，日志页签按控制面时间合并显示整次运行全部节点的日志（#222），向上滚动加载更早的（#223）；
 // 有节点筛选时只合并显示筛选出的节点，可以按级别筛选，点来源节点名切到这个节点（#224）；
+// 运行执行中时实时显示新写入的行，晚到的行插到它按控制面时间应在的位置（#225）；
 // 合并视图下的下载按钮下载范围内整次运行合并后的日志（#226）。
 
 const timeline = (page: Page) => page.getByRole("region", { name: "链路时间线" });
@@ -242,6 +243,142 @@ test("合并视图里没有任何日志时底部面板自动收起，展开后�
 	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
 	await panel(page).getByRole("button", { name: "展开" }).click();
 	await expect(panel(page).getByRole("tabpanel")).toHaveText("这次运行没有日志输出。");
+});
+
+test("执行中的运行：合并视图实时显示新写入的行，晚到的行按控制面时间插到它应在的位置，之后才开始的节点的行也出现", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const running = await runningScenario(controlPlane, connectAgent, clock);
+	await interleavedLogs(controlPlane, running, clock0);
+	const { runId, agent, tasks } = running;
+	const at = logAt(agent, clock0);
+
+	await openMonitor(page, clock, runId);
+	await nodeButton(page, "verify").click();
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
+	const logs = panel(page).getByRole("log", { name: "日志" });
+	const rows = logs.getByRole("button");
+	await expect(rows).toHaveCount(9);
+
+	// probe 接着输出；之后 verify 第 2 次补发一行比 probe 已显示的两行都早的（晚到的行）。
+	agent.logs(tasks.probe as AssignedTask, [at(3, 13_500, "probe tock")]);
+	await expect(rows).toHaveCount(10);
+	agent.logs(tasks.verify as AssignedTask, [at(2, 11_500, "verify 2 late")]);
+	// verify 第 2 次成功后，always 节点 cleanup 才开始执行并输出。
+	await agent.succeed(tasks.verify as AssignedTask);
+	const cleanup = await agent.nextAssign();
+	agent.logs(cleanup, [at(1, 15_000, "cleanup done")]);
+
+	await expect(rows).toHaveCount(12);
+	await expect(rows).toContainText([
+		"开始执行",
+		"load config ok",
+		"retrying request (1/3): connection reset",
+		"batch committed",
+		"verify 1 checking",
+		"probe started",
+		"AssertionError: 漏拦 3 笔",
+		"verify 2 retrying",
+		"verify 2 late",
+		"probe tick",
+		"probe tock",
+		"cleanup done",
+	]);
+	await expect(logs.locator("[data-log-origin]")).toHaveText([
+		"fetch",
+		"fetch",
+		"fetch",
+		"fetch",
+		"verify #1",
+		"sub / probe",
+		"verify #1",
+		"verify #2",
+		"verify #2",
+		"sub / probe",
+		"sub / probe",
+		"cleanup",
+	]);
+});
+
+test("实时推送的行多到超过浏览器保留的 5000 行时，从最新一页重新读再接上：最新的行还在，向上滚动读得回更早的，之后的新行照常出现", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const at = logAt(agent, clock0);
+	let latestPages = 0;
+	let recording = false;
+	page.on("request", (req) => {
+		const url = new URL(req.url());
+		if (
+			recording &&
+			url.pathname === `/api/runs/${runId}/logs` &&
+			!url.searchParams.has("before")
+		) {
+			latestPages++;
+		}
+	});
+
+	await openMonitor(page, clock, runId);
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
+	recording = true;
+	await nodeButton(page, "verify").click();
+	const logs = panel(page).getByRole("log", { name: "日志" });
+	await expect(logs.getByRole("button")).toHaveCount(4);
+	await expect.poll(() => latestPages).toBe(1);
+
+	agent.logs(
+		tasks.probe as AssignedTask,
+		Array.from({ length: 5_001 }, (_, i) => at(i + 1, 13_000 + i, `probe line ${i + 1}`)),
+	);
+	await expect.poll(() => latestPages).toBe(2);
+	await expect(logs).toContainText("probe line 5001");
+	agent.logs(tasks.probe as AssignedTask, [at(5_002, 19_000, "probe line 5002")]);
+	await expect(logs).toContainText("probe line 5002");
+	expect(latestPages).toBe(2);
+
+	// 新的最新一页是第 4702–5001 行；向上滚动读回之前的一页。
+	await expect(logs).not.toContainText("probe line 4701");
+	await logs.evaluate((el) => {
+		el.scrollTop = 0;
+	});
+	await expect(logs).toContainText("probe line 4701");
+});
+
+test("执行中的运行在合并视图里还没有日志时底部面板自动收起，日志到了自动展开", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane);
+	const scenarioId = await createScenario(controlPlane, "稍后输出", scenarioUsing("agent-a"));
+	const clock0 = clock.now().getTime();
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const ping = await agent.nextAssign();
+
+	await openMonitor(page, clock, runId);
+	// 默认选中执行中的 ping；取消选中后是全部节点，还没有任何日志：自动收起。
+	await nodeButton(page, "ping").click();
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
+	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
+
+	agent.logs(ping, [logAt(agent, clock0)(1, 1_000, "ping started")]);
+	await expect(panel(page).getByRole("button", { name: "收起" })).toBeVisible();
+	await expect(panel(page).getByRole("log", { name: "日志" }).getByRole("button")).toHaveText([
+		/ping started/,
+	]);
 });
 
 /** Agent 在运行开始后第 atMs 毫秒（控制面时间）读到的一行。 */

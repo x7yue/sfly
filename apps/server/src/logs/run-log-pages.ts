@@ -9,11 +9,13 @@ import {
 	runLogScopeMatcher,
 	runLogTasks,
 } from "@sfly/schema";
+import { eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
+import { runs } from "../db/schema.js";
 import { getRunView } from "../engine/run-queries.js";
 import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
-import type { TaskPositions } from "./run-log-cursor.js";
-import type { TaskLogs } from "./task-logs.js";
+import type { TaskPositions, TaskSeqs } from "./run-log-cursor.js";
+import type { LogLineView, TaskLogs } from "./task-logs.js";
 
 /**
  * 按运行合并读取日志（#220，docs/ARCHITECTURE.md §6.3）：把一次运行里每个任务的日志文件看作一条按 seq 排好的流，
@@ -28,14 +30,18 @@ import type { TaskLogs } from "./task-logs.js";
  * 「已读到开头 / 末尾」都只看它们；不给范围是全部节点。级别筛选（`filter.levels`）在读每个文件时执行，
  * 翻页时跳过不匹配的行。游标只对同一组范围和级别有效。
  *
- * 下载（#226）：从每个任务的开头往后读，同一套取行（`take`）和补读（`extend`）一批批归并到末尾，不用游标逐页重读。
- * 每个任务只读到调用那一刻已写入的字节数（整个下载共用这一份快照，之后写入的行不在里面）。
+ * 下载（#226，{@link RunLogs.readAll}）：从每个任务的开头往后读，同一套取行（`take`）和补读（`extend`）一批批归并到末尾，
+ * 不用游标逐页重读。每个任务只读到调用那一刻已写入的字节数（整个下载共用这一份快照，之后写入的行不在里面）。
  * 内存只和任务数、批量有关，和日志总量无关：每个任务读到手里还没取走的行不超过 `scanBytes` 的一份，
  * 每批最多 {@link DOWNLOAD_BATCH} 行，取走的行随批丢掉。
  *
  * 一次请求最多扫描 `scanBytes` 字节（每次读取至少读完一行，可能多出一行）。第一轮每个要读的任务读一小段；
  * 某个任务读到的行都取完了、文件那一侧还有没读的内容时，归并不能接着往下取（它没读的下一行可能排在前面），
  * 剩下的扫描量就集中给这些任务补读，直到这一页取满或扫描量用完。用完时一页可能不满 limit 行，游标停在实际取到的位置。
+ *
+ * 实时推送（#225，{@link RunLogs.follow}）：每页还返回读取那一刻范围内每个任务已写入的最大序号（实时流起点）。
+ * 从最新一页的这个位置接上：先补发之后已经写入的行，再推送之后写入的，包括订阅之后才开始的任务（TaskLogs 按运行发布）。
+ * 推送到的位置也按任务记序号，断线重连时只补发更大的序号。
  */
 
 export type RunLogRequest = {
@@ -60,7 +66,23 @@ export interface RunLogPage {
 	reachedEnd: boolean;
 	/** 日志超过大小上限被截断的任务，按运行视图里的顺序。 */
 	truncatedTasks: LogOrigin[];
+	/** 实时流起点：读这一页那一刻每个任务已写入的最大序号。 */
+	live: TaskSeqs;
 }
+
+export interface RunLogFollow {
+	/** 只推送这些节点的任务；不给是运行里的全部节点。 */
+	scope?: RunLogScope;
+	filter: LogFilter;
+	/** 已经读到（或推送过）的位置：只推送每个任务更大的序号。 */
+	after: TaskSeqs;
+}
+
+/** 实时推送的一次推送，`at` 是推送到的位置。 */
+export type RunLogLiveEvent =
+	| { kind: "lines"; lines: RunLogLine[]; at: TaskSeqs }
+	/** 要补发的行太多，没有补发：从最新一页重新读。 */
+	| { kind: "reload"; at: TaskSeqs };
 
 /** 一个任务的日志文件，作为归并里的一条流。 */
 interface TaskStream {
@@ -70,6 +92,8 @@ interface TaskStream {
 	file: string;
 	/** 已写入的字节数（列出任务的那一刻）：不给游标时从这里往前读，往后最多读到这里。 */
 	bytes: number;
+	/** 已写入的最大序号（与 bytes 是同一刻的）。 */
+	seq: number;
 	truncated: boolean;
 }
 
@@ -79,6 +103,11 @@ const OPEN_FILES = 32;
 const FIRST_SLICE = 4 * 1024;
 /** 下载时每批最多取多少行。 */
 const DOWNLOAD_BATCH = 1000;
+/**
+ * 实时推送连上时最多补发的行数（按序号估算，不看级别）：超过时改为让前端从最新一页重新读，
+ * 而不是一次推几万行（浏览器最多也只保留 5000 行，SSE 也没有背压）。
+ */
+const REPLAY_LINES = 5000;
 
 export class RunLogs {
 	constructor(
@@ -89,6 +118,11 @@ export class RunLogs {
 			scanBytes?: number;
 		},
 	) {}
+
+	async exists(runId: string): Promise<boolean> {
+		const [row] = await this.deps.db.select({ id: runs.id }).from(runs).where(eq(runs.id, runId));
+		return row !== undefined;
+	}
 
 	/** 一次运行的一页；运行不存在时为 undefined。 */
 	async page(runId: string, request: RunLogRequest): Promise<RunLogPage | undefined> {
@@ -126,6 +160,7 @@ export class RunLogs {
 			reachedStart: lanes.every((lane) => before(lane) === 0),
 			reachedEnd: lanes.every((lane) => after(lane) >= lane.until),
 			truncatedTasks: streams.filter((s) => s.truncated).map((s) => s.task.origin),
+			live: new Map(streams.map((s) => [s.order, s.seq])),
 		};
 	}
 
@@ -162,8 +197,86 @@ export class RunLogs {
 		}
 	}
 
-	/** 范围内、有日志记录的任务，按运行视图里链、节点、尝试的顺序。 */
-	async #streams(runId: string, scope: RunLogScope | undefined): Promise<TaskStream[] | undefined> {
+	/**
+	 * 跟随一次运行范围内新写入的日志（实时推送）：先补发 `after` 之后已经写入的行，再推送之后写入的，
+	 * 包括订阅之后才开始的任务；只推送级别符合的行，但位置照样前进。补发的行太多时改为一次 `reload`。
+	 * 推送按到达顺序串行；出错时调用 onError，之后不再推送。返回取消函数。
+	 */
+	follow(
+		runId: string,
+		request: RunLogFollow,
+		emit: (event: RunLogLiveEvent) => void,
+		onError: (error: unknown) => void,
+	): () => void {
+		const inScope = runLogScopeMatcher(request.scope);
+		const { levels } = request.filter;
+		const shown = (line: LogLineView) => !levels || levels.has(line.level);
+		const sent = new Map(request.after);
+		/** 任务 ID → 它的流；范围外（或不在运行视图里）为 null。 */
+		const known = new Map<string, TaskStream | null>();
+		const learn = async () => {
+			const streams = (await this.#streams(runId)) ?? [];
+			for (const s of streams) known.set(s.task.origin.task_id, inScope(s.task.origin) ? s : null);
+			return streams.filter((s) => inScope(s.task.origin));
+		};
+
+		let stopped = false;
+		let queue = Promise.resolve();
+		const serial = (work: () => Promise<void>) => {
+			queue = queue
+				.then(() => (stopped ? undefined : work()))
+				.catch((error) => {
+					if (stopped) return;
+					stopped = true;
+					onError(error);
+				});
+		};
+
+		// 先排上补发再订阅（同步完成，中间不会有发布）：补发时取的快照之后写入的行，都排在补发之后按序号去重。
+		serial(async () => {
+			const streams = await learn();
+			const behind = streams.filter((s) => s.seq > (sent.get(s.order) ?? 0));
+			const missed = behind.reduce((n, s) => n + s.seq - (sent.get(s.order) ?? 0), 0);
+			if (missed > REPLAY_LINES) {
+				for (const s of behind) sent.set(s.order, s.seq);
+				emit({ kind: "reload", at: new Map(sent) });
+				return;
+			}
+			const lines: RunLogLine[] = [];
+			for (let i = 0; i < behind.length; i += OPEN_FILES) {
+				const batch = behind.slice(i, i + OPEN_FILES);
+				const read = await Promise.all(batch.map((s) => linesAfterSeq(s, sent.get(s.order) ?? 0)));
+				batch.forEach((s, j) => {
+					for (const line of read[j] ?? []) if (shown(line)) lines.push(runLogLine(s, line));
+					sent.set(s.order, s.seq);
+				});
+			}
+			if (lines.length > 0) emit({ kind: "lines", lines, at: new Map(sent) });
+		});
+		const unsubscribe = this.deps.logs.runLines.subscribe(runId, (chunk) =>
+			serial(async () => {
+				if (!known.has(chunk.task_id)) {
+					await learn();
+					if (!known.has(chunk.task_id)) known.set(chunk.task_id, null);
+				}
+				const stream = known.get(chunk.task_id);
+				if (!stream) return;
+				const fresh = chunk.lines.filter((l) => l.seq > (sent.get(stream.order) ?? 0));
+				const last = fresh.at(-1);
+				if (!last) return;
+				sent.set(stream.order, last.seq);
+				const lines = fresh.filter(shown).map((line) => runLogLine(stream, line));
+				if (lines.length > 0) emit({ kind: "lines", lines, at: new Map(sent) });
+			}),
+		);
+		return () => {
+			stopped = true;
+			unsubscribe();
+		};
+	}
+
+	/** 有日志记录的任务（不给范围是全部），按运行视图里链、节点、尝试的顺序；运行不存在时为 undefined。 */
+	async #streams(runId: string, scope?: RunLogScope): Promise<TaskStream[] | undefined> {
 		const run = await getRunView(this.deps.db, runId);
 		if (!run) return undefined;
 		const files = await this.deps.logs.describeRun(runId);
@@ -177,12 +290,39 @@ export class RunLogs {
 							order: info.order,
 							file: info.file,
 							bytes: info.bytes,
+							seq: info.seq,
 							truncated: info.truncated,
 						},
 					]
 				: [];
 		});
 	}
+}
+
+/** 任务日志里的一行 → 合并日志里的一行：加上来源和排序要用的信息。 */
+const runLogLine = (stream: TaskStream, line: LogLineView): RunLogLine => ({
+	...line,
+	...stream.task.origin,
+	...stream.task.order,
+});
+
+/** 一个任务在列出它那一刻已写入的、序号大于 afterSeq 的行，按序号；从文件尾部往前读到序号不大于 afterSeq 为止。 */
+async function linesAfterSeq(stream: TaskStream, afterSeq: number): Promise<LogLineView[]> {
+	const lines: LogLineView[] = [];
+	for (let before = stream.bytes; before > 0; ) {
+		const window = await readLogPage(stream.file, {
+			direction: "backward",
+			before,
+			until: stream.bytes,
+			limit: stream.seq - afterSeq + 1,
+			filter: {},
+		});
+		const fresh = window.lines.filter((l) => l.seq > afterSeq);
+		lines.unshift(...fresh.map(({ offset: _, ...line }) => line));
+		if (fresh.length < window.lines.length || window.lines.length === 0) break;
+		before = window.start;
+	}
+	return lines;
 }
 
 /**
@@ -266,7 +406,7 @@ async function extend(
 						: { direction: "backward", before: lane.start, until, ...request },
 				);
 				const read = window.lines.map(({ offset, ...rest }) => {
-					const line: RunLogLine = { ...rest, ...stream.task.origin, ...stream.task.order };
+					const line = runLogLine(stream, rest);
 					return { offset, line, key: runLogKey(line) };
 				});
 				if (forward) {
