@@ -41,6 +41,17 @@ const chain = (nodes: Node[]) =>
 const statuses = (run: RunView, chainIndex = 0) =>
 	Object.fromEntries(run.chains[chainIndex]?.nodes.map((n) => [n.node_id, n.status]) ?? []);
 
+/** Agent 按顺序收到的 Welcome、派发和取消指令：真实 Agent 在一条有序的流上逐条处理它们。 */
+const orders = (agent: FakeAgent) =>
+	agent.received.flatMap(({ body }) => {
+		if (body.case === "welcome") return [["welcome"]];
+		if (body.case === "assign") return [["assign", body.value.taskId, body.value.attempt]];
+		if (body.case === "cancel") {
+			return [["cancel", body.value.taskId, body.value.attempt, body.value.force]];
+		}
+		return [];
+	});
+
 describe("Agent 断线、排队超时与重启恢复", () => {
 	let cp: TestControlPlane;
 	let clock: ManualClock;
@@ -162,6 +173,29 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			await back.succeed(c);
 			expect((await api.run(runId)).status).toBe("cancelled");
 		});
+
+		it("Agent 在线时租约过期（例如首次准备环境超过租约）：先强制取消旧尝试，再派发新尝试", async () => {
+			const agent = await connect("agent-a");
+			const runId = await api.triggerOk(
+				await api.orchestrationWith(chain([{ id: "a", retries: 1 }])),
+			);
+			const first = await agent.nextAssign({ start: false });
+			clock.advance(LEASE);
+			const retry = await agent.nextAssign();
+			expect(orders(agent)).toEqual([
+				["welcome"],
+				["assign", first.taskId, 1],
+				["cancel", first.taskId, 1, true],
+				["assign", retry.taskId, 2],
+			]);
+			// 被杀掉的旧尝试上报的结果被忽略。
+			await agent.cancelled(first);
+			await agent.succeed(retry);
+			expect((await api.node(runId, "a")).attempts.map((t) => [t.status, t.error?.kind])).toEqual([
+				["failed", "agent_lost"],
+				["success", undefined],
+			]);
+		});
 	});
 
 	describe("重连后的处置", () => {
@@ -212,6 +246,8 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			expect(retry).toMatchObject({ nodeId: "a", attempt: 2 });
 			const a = await api.node(runId, "a");
 			expect(a.attempts[0]).toMatchObject({ status: "failed", error: { kind: "agent_lost" } });
+			// Agent 握手时第一条消息必须是 Welcome；它没上报的任务不用取消。
+			expect(orders(back)).toEqual([["welcome"], ["assign", retry.taskId, 2]]);
 			await back.succeed(retry);
 			expect((await api.run(runId)).status).toBe("success");
 		});
@@ -522,6 +558,21 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			// 按重试配置派回同一个 Agent。
 			expect(await agent.nextAssign()).toMatchObject({ taskId: expect.any(String), attempt: 2 });
 			expect((await api.node(kept, "a")).status).toBe("running");
+		});
+
+		it("连续两次心跳都没有上报的任务（派发消息晚到）：先强制取消，再派发新尝试", async () => {
+			const agent = await connect("agent-a");
+			await api.triggerOk(await api.orchestrationWith(chain([{ id: "a", retries: 1 }])));
+			const first = await agent.nextAssign({ start: false });
+			await agent.heartbeat([]);
+			await agent.heartbeat([]);
+			const retry = await agent.nextAssign();
+			expect(orders(agent)).toEqual([
+				["welcome"],
+				["assign", first.taskId, 1],
+				["cancel", first.taskId, 1, true],
+				["assign", retry.taskId, 2],
+			]);
 		});
 
 		it("没有上报的任务不续约，租约照常过期", async () => {
