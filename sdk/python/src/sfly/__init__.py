@@ -18,7 +18,7 @@ from sfly.capabilities import (
 from sfly.context import ArtifactDownloadError, Cancelled, Context, TaskInfo
 from sfly.nodes import AgentName, Chart, Metric, node
 
-__version__ = "0.1.3"
+__version__ = "0.2.0"
 
 __all__ = [
     "Agent",
