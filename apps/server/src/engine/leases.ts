@@ -120,15 +120,27 @@ export async function expireTasks(driver: ChainDriver, db: Db, now: Date): Promi
 	});
 }
 
-/** 任务所在的 Agent 失联：agent_lost，按重试配置派回同一个 Agent。 */
+/**
+ * 任务所在的 Agent 失联：agent_lost，按重试配置派回同一个 Agent。
+ * Agent 可能其实还连着（租约在连接正常时过期、派发消息晚到），这次尝试仍在它上面执行：同时强制取消它，
+ * 提交后先于下一次尝试的派发发出（#215）。连接已断开或还没推送 Welcome 时不发，重连时由 Welcome 的 ABANDON 停掉。
+ */
 export async function agentLost(
 	driver: ChainDriver,
 	step: Step,
 	task: TaskRow,
 	reason: string,
 ): Promise<void> {
-	// 槽位释放了：Agent 在线时可以派发它的其他排队任务。
-	if (task.agentName) step.touchedAgents.add(task.agentName);
+	if (task.agentName) {
+		// 槽位释放了：Agent 在线时可以派发它的其他排队任务。
+		step.touchedAgents.add(task.agentName);
+		step.cancels.push({
+			agentName: task.agentName,
+			taskId: task.id,
+			attempt: task.attempt,
+			force: true,
+		});
+	}
 	await driver.failTask(step, task, "agent_lost", `Agent ${task.agentName} 失联：${reason}`);
 }
 
