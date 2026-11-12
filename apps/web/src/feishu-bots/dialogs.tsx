@@ -230,6 +230,8 @@ const referenceText = (reference: FeishuBotReference): string => {
 	switch (reference.kind) {
 		case "feishu_notify_node":
 			return `飞书通知节点 ${reference.node_id}`;
+		case "feishu_bot_input":
+			return `节点 ${reference.node_id} 的输入 ${reference.input}`;
 	}
 };
 

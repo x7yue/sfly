@@ -72,11 +72,13 @@ export const FeishuTestResult = z.object({
 });
 
 /**
- * 一处引用飞书机器人的地方。`kind` 区分引用的种类：飞书通知节点（`feishu_notify_node`）；
- * 运行通知的设置和「飞书机器人」类型的输入的常量值会随各自的功能加进来。
+ * 一处引用飞书机器人的地方。`kind` 区分引用的种类：飞书通知节点（`feishu_notify_node`）、
+ * 「飞书机器人」类型的输入的常量值（`feishu_bot_input`，指出节点和输入名）；
+ * 运行通知的设置会随它的功能加进来。
  */
 export const FeishuBotReference = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("feishu_notify_node"), node_id: z.string() }),
+	z.object({ kind: z.literal("feishu_bot_input"), node_id: z.string(), input: z.string() }),
 ]);
 
 /** 引用了某个飞书机器人的场景，和场景里引用它的地方。 */

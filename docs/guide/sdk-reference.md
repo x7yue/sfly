@@ -70,6 +70,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | `T \| None`、`Optional[T]`、其他 `Union` | 任一成员 |
 | `Annotated[T, ...]` | 同 `T` |
 | `sfly.AgentName` | 「Agent」类型：Agent 名称（字符串），见下文 |
+| `sfly.FeishuBot` | 「飞书机器人」类型：飞书机器人的名称（字符串），见下文 |
 | 没有注解、`Any`、`object` | 任意 JSON 值，不校验 |
 
 - 有默认值的参数是可选输入，默认值必须能序列化为 JSON；没有默认值的是必填输入。
@@ -99,6 +100,29 @@ def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> d
 - 选的 Agent 必须已注册（不要求在线）：常量不是已注册的 Agent 时保存给出警告、触发前的预检阻断，并指出是哪个节点的哪个参数；引用入口参数时按触发时传入的实际值检查；值来自前面节点的输出时在派发时检查，没有注册过时任务以 `config_error` 失败。目标 Agent 不在线不阻断：节点运行时连不上它，访问它的那一步才会失败。
 - 派发任务时，控制面把这些 Agent 的地址和端口随任务下发给节点所在的 Agent。节点用 `ctx.agent(名称)` 访问它们（见下文「`ctx.agent()`：Agent 能力」），不用自己处理地址。地址在派发时解析：Agent 重新注册换了地址后，之后派发的任务用新地址。
 - 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是 Agent 名称，不检查它是否注册过；要访问它时把它映射到本地目录（见下文「本地调试、测试与联调」）。
+
+### 「飞书机器人」类型的输入
+
+```python
+from sfly import Context, FeishuBot, node
+
+
+@node(outputs=["passed"])
+def stress(ctx: Context, qps: int, alert_bot: FeishuBot | None = None) -> dict:
+    """alert_bot 是出问题时要通知的飞书机器人，在检查器里从已登记的机器人中选。"""
+    ...
+```
+
+把输入参数标成 `FeishuBot`，表示节点会通过这个飞书机器人发通知，不用把机器人的名称写死在代码里。`FeishuBot` 在运行时就是 `str`：节点收到的值是机器人的名称。可以写成 `FeishuBot | None`（可选参数）；不能用在列表、字典或输出里，`sfly build` 会报错。
+
+这个类型从 SDK 0.3.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.3.0`：更旧的 Agent 上没有这个类型，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
+
+- `sfly build` 在输入 schema 里标记它：`{"type": "string", "x-sfly-type": "feishu_bot"}`。
+- 画布的检查器里它是飞书机器人下拉框，列出「飞书机器人」页登记的机器人；也可以用「插入引用」改为引用入口参数，触发时再决定发到哪个群。
+- 选的机器人必须已登记：常量不是已登记的机器人时保存给出警告、触发前的预检阻断，并指出是哪个节点的哪个参数；引用入口参数时按触发时传入的实际值检查。值来自前面节点的输出时派发时不检查：机器人没有登记也照常派发，通知不会成为任务失败的原因。
+- 派发任务时，控制面把任务通过这种参数引用的机器人名单（不重复）随任务下发。节点只能向名单里的机器人发通知。
+- 删除机器人之前，「飞书机器人」页列出引用它的场景，包含这种参数的常量值。
+- 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是机器人名称，不检查它是否登记过。
 
 ## 输出
 

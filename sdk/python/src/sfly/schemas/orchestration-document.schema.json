@@ -362,6 +362,15 @@
                 "type": "string",
                 "minLength": 1
               },
+              "format": {
+                "default": "text",
+                "type": "string",
+                "enum": [
+                  "text",
+                  "card",
+                  "raw"
+                ]
+              },
               "text": {
                 "default": "",
                 "type": "string"
@@ -369,7 +378,27 @@
               "at_all": {
                 "default": false,
                 "type": "boolean"
-              }
+              },
+              "title": {
+                "default": "",
+                "type": "string"
+              },
+              "color": {
+                "default": "blue",
+                "type": "string",
+                "enum": [
+                  "blue",
+                  "green",
+                  "orange",
+                  "red",
+                  "grey"
+                ]
+              },
+              "markdown": {
+                "default": "",
+                "type": "string"
+              },
+              "message": {}
             },
             "required": [
               "id",

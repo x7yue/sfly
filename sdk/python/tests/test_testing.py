@@ -442,3 +442,43 @@ def test_an_agent_input_that_is_not_a_string_is_a_config_error(
     assert result.error is not None
     assert result.error.kind == "config_error"
     assert result.error.message == "输入 source 应为 string，实际是 1"
+
+
+FEISHU_BOT_NODES = """
+from sfly import Context, FeishuBot, node
+
+
+@node
+def alert(ctx: Context, bot: FeishuBot, backup: FeishuBot | None = None) -> dict:
+    return {"bot": bot, "backup": backup, "is_str": isinstance(bot, str)}
+"""
+
+
+def test_feishu_bot_inputs_are_bot_names_and_need_no_registration_locally(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # 「飞书机器人」类型的输入（#233）：节点收到机器人名称字符串；
+    # 本地没有控制面，不检查机器人是否登记过。
+    (tmp_path / "feishu_nodes.py").write_text(FEISHU_BOT_NODES, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    result = run_node("feishu_nodes:alert", {"bot": "ops"})
+    both = run_node("feishu_nodes:alert", {"bot": "ops", "backup": "dev"})
+
+    assert result.status == "success", result.error
+    assert result.outputs == {"bot": "ops", "backup": None, "is_str": True}
+    assert both.outputs == {"bot": "ops", "backup": "dev", "is_str": True}
+
+
+def test_a_feishu_bot_input_that_is_not_a_string_is_a_config_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "feishu_nodes.py").write_text(FEISHU_BOT_NODES, encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    result = run_node("feishu_nodes:alert", {"bot": 1})
+
+    assert result.status == "failed"
+    assert result.error is not None
+    assert result.error.kind == "config_error"
+    assert result.error.message == "输入 bot 应为 string，实际是 1"

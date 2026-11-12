@@ -1,5 +1,6 @@
 import {
 	agentInputs,
+	feishuBotInputs,
 	InvalidReferenceError,
 	referencedAgents,
 	referencesIn,
@@ -19,7 +20,8 @@ import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 
 /**
  * 不能触发的一个原因；code 与保存时的警告一致（含「Agent」类型的输入选的 Agent 没有注册过的
- * `agent_input_not_registered`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
+ * `agent_input_not_registered`，飞书通知节点和「飞书机器人」类型的输入选的机器人没有登记的
+ * `feishu_bot_not_registered`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
  * `agent_version_unsatisfied`。
  */
 export interface PreflightProblem {
@@ -47,7 +49,8 @@ async function lockedPackages(
 
 /**
  * 触发前的预检（docs/SEMANTICS.md §6）：结构、包版本锁定、引用、输入的静态检查全部通过
- * （「Agent」类型的输入的常量是已注册的 Agent），包节点派发到的 Agent 都已注册（不要求在线），
+ * （「Agent」类型的输入的常量是已注册的 Agent，飞书通知节点和「飞书机器人」类型的输入的常量是已登记的机器人），
+ * 包节点派发到的 Agent 都已注册（不要求在线），
  * 且控制面版本满足节点包需要的 SDK 版本（#79），节点所在的 Agent 和「Agent」类型的输入引用的 Agent 满足
  * 节点包需要的 Agent 版本（ADR 0019，见 requires-agent.ts）。
  * 返回全部不能触发的原因，空数组表示可以触发。未保存的草稿只存在于浏览器，由画布在触发前检查。
@@ -149,7 +152,7 @@ export type ParamsCheck = (
 /**
  * 触发时按入口参数的实际值检查：「Agent」类型的输入引用入口参数时，取到的 Agent 必须已注册（不要求在线），
  * 版本满足节点包需要的 Agent 版本（`requires_agent`，{@link checkReferencedAgents}）；
- * 飞书通知节点引用入口参数的机器人，取到的必须是已登记的飞书机器人（{@link checkFeishuBots}）。
+ * 飞书通知节点和「飞书机器人」类型的输入引用入口参数的机器人，取到的必须是已登记的飞书机器人（{@link checkFeishuBots}）。
  * 主链和子流程都检查（{@link knownParams}）；引用了前面节点输出的值要到派发时才知道，这里跳过
  * （飞书通知节点在执行时再看一次，机器人不存在时不发送、节点照常成功）。
  */
@@ -178,6 +181,13 @@ export function createParamsCheck(deps: { db: Db; packages: PackageRepository })
 					const agent = resolved(value, known);
 					if (typeof agent === "string" && agent !== "")
 						wanted.push({ nodeId: node.id, input, agent, requirement, source });
+				}
+				for (const input of feishuBotInputs(type.inputs)) {
+					const value = node.inputs[input];
+					if (typeof value !== "string" || referencesIn(value).length === 0) continue;
+					const bot = resolved(value, known);
+					if (typeof bot === "string" && bot !== "")
+						bots.push({ nodeId: node.id, input, bot, source });
 				}
 			}
 		}

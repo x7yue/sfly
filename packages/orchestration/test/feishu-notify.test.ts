@@ -55,6 +55,39 @@ describe("飞书通知节点的文档形态", () => {
 	});
 });
 
+describe("飞书通知节点的三种格式的文档形态", () => {
+	it("不写 format 就是文本；Markdown 卡片的字段有默认值：标题和正文为空，蓝色", () => {
+		expect(doc({ bot: "ops" }).nodes[1]).toMatchObject({
+			format: "text",
+			title: "",
+			color: "blue",
+			markdown: "",
+		});
+		expect(doc({ bot: "ops" }).nodes[1]).not.toHaveProperty("message");
+	});
+
+	it("Markdown 卡片：标题、颜色（blue、green、orange、red、grey）和 Markdown 正文", () => {
+		for (const color of ["blue", "green", "orange", "red", "grey"]) {
+			expect(
+				doc({ bot: "ops", format: "card", title: "完成", color, markdown: "**ok**" }).nodes[1],
+			).toMatchObject({ format: "card", title: "完成", color, markdown: "**ok**" });
+		}
+	});
+
+	it("原始消息：message 是任意 JSON 值，原样保存", () => {
+		const message = { msg_type: "text", content: { text: "${{ params.env }}" } };
+		expect(doc({ bot: "ops", format: "raw", message }).nodes[1]).toMatchObject({
+			format: "raw",
+			message,
+		});
+	});
+
+	it("拒绝未知的格式和颜色", () => {
+		expect(() => doc({ format: "post" })).toThrow();
+		expect(() => doc({ format: "card", color: "purple" })).toThrow();
+	});
+});
+
 describe("机器人必须已登记的静态检查", () => {
 	const registered = new Set(["ops", "dev"]);
 	/** bots 为 null：还不知道已登记的机器人。 */
@@ -147,5 +180,59 @@ describe("飞书通知节点里的引用", () => {
 			},
 		);
 		expect(resolved).toEqual({ text: "耗时 null" });
+	});
+
+	/** 引用检查的结果：[警告码, 输入名]。 */
+	const found = (notify: Record<string, unknown>) =>
+		documentWarnings(doc({ bot: "ops", ...notify }), catalog, {}).map((w) => [
+			w.code,
+			"input" in w ? w.input : undefined,
+		]);
+
+	it("Markdown 卡片：标题和正文里的引用都检查，颜色不能写引用", () => {
+		expect(
+			found({
+				format: "card",
+				title: "${{ params.nope }}",
+				markdown: "${{ nodes.entry.outputs.x }}",
+			}),
+		).toEqual([
+			["reference_unknown_param", "title"],
+			["reference_unknown_output", "markdown"],
+		]);
+	});
+
+	it("原始消息：message 里每个字符串字段的引用都检查，整值引用也检查", () => {
+		expect(
+			found({
+				format: "raw",
+				message: {
+					msg_type: "text",
+					content: { text: "${{ params.nope }}" },
+					extra: ["${{ params.alsoNope }}"],
+				},
+			}),
+		).toEqual([
+			["reference_unknown_param", "message"],
+			["reference_unknown_param", "message"],
+		]);
+		expect(found({ format: "raw", message: "${{ params.nope }}" })).toEqual([
+			["reference_unknown_param", "message"],
+		]);
+	});
+
+	it("只检查当前格式的字段：切换格式后，其他格式里留着的内容不产生警告", () => {
+		const stale = {
+			text: "${{ params.nope }}",
+			title: "${{ params.nope }}",
+			markdown: "${{ params.nope }}",
+			message: { a: "${{ params.nope }}" },
+		};
+		expect(found({ ...stale, format: "text" })).toEqual([["reference_unknown_param", "text"]]);
+		expect(found({ ...stale, format: "card" })).toEqual([
+			["reference_unknown_param", "title"],
+			["reference_unknown_param", "markdown"],
+		]);
+		expect(found({ ...stale, format: "raw" })).toEqual([["reference_unknown_param", "message"]]);
 	});
 });
