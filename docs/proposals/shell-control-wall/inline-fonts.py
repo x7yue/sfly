@@ -1,4 +1,6 @@
-"""把 IBM Plex Sans 与 JetBrains Mono 的拉丁子集以 data URI 内联进原型 HTML，原型因此不依赖网络和 node_modules。
+"""把 IBM Plex Sans 与 JetBrains Mono 的拉丁子集以 data URI 内联进原型 HTML。
+
+原型因此不依赖网络和 node_modules。
 
 用法：python3 -I inline-fonts.py <@fontsource 所在目录> a-adjust.html b-wall.html
 <@fontsource 所在目录> 例如 apps/web/node_modules（pnpm install 之后）。只替换
@@ -10,9 +12,9 @@ import re
 import sys
 from pathlib import Path
 
-FACES = [
-    ("IBM Plex Sans", "ibm-plex-sans", w) for w in (400, 500, 600)
-] + [("JetBrains Mono", "jetbrains-mono", w) for w in (400, 500, 600)]
+FACES = [("IBM Plex Sans", "ibm-plex-sans", w) for w in (400, 500, 600)] + [
+    ("JetBrains Mono", "jetbrains-mono", w) for w in (400, 500, 600)
+]
 
 
 def font_css(root: Path) -> str:
