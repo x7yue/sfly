@@ -117,7 +117,7 @@ export function RunNotificationDialog({
 					}}
 				>
 					<DialogHeader>
-						<DialogTitle>运行通知</DialogTitle>
+						<DialogTitle>{TERM.runNotification}</DialogTitle>
 						<DialogDescription>
 							运行结束时往选中的{TERM.feishuBot}
 							发一张卡片，不用在链上加节点。这些设置不属于场景版本，

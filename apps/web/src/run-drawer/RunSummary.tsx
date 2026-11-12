@@ -10,7 +10,7 @@ import { useMemo } from "react";
 import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { nodeStatusView, runNotificationView, StatusPill } from "#/components/status";
-import { chainLabel as chainName } from "#/lib/copy";
+import { chainLabel as chainName, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatDateTime,
@@ -134,10 +134,10 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 				: state.reason;
 	return (
 		<fieldset
-			aria-label="运行通知"
+			aria-label={TERM.runNotification}
 			className="m-0 mb-3 flex min-w-0 items-baseline gap-2.5 border-0 p-0 text-xs"
 		>
-			<span className="text-fg-3">运行通知</span>
+			<span className="text-fg-3">{TERM.runNotification}</span>
 			<StatusPill kind={view.kind}>{view.label}</StatusPill>
 			<span className="min-w-0 text-fg-2">{text}</span>
 		</fieldset>

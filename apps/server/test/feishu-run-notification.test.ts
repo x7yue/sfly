@@ -356,6 +356,17 @@ describe("运行通知", () => {
 			expect((await settled(runId))?.reason).toContain("已被删除");
 		});
 
+		it("投递记录跟随运行的保留期：清理之后运行详情里不再有运行通知，运行本身还在", async () => {
+			const id = await scenario(single(), { trigger: "always" });
+			const runId = await runEnding(id, "success");
+			await eventually(async () => expect((await settled(runId))?.status).toBe("delivered"));
+
+			clock.advance(31 * 24 * 3600 * 1000);
+
+			await eventually(async () => expect((await settled(runId)) ?? null).toBeNull());
+			expect((await api.run(runId)).status).toBe("success");
+		});
+
 		it("机器人在运行结束时已经不存在：触发不被拦截，运行详情里是「未发送：机器人已删除」", async () => {
 			await api.createFeishuBot("gone", feishu.webhookUrl("gone-token"));
 			const id = await scenario(single(), { bot: "gone", trigger: "always" });

@@ -17,7 +17,7 @@ import { createContext, type ReactNode, useContext, useRef, useState } from "rea
 import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { ACTION } from "#/lib/copy";
+import { ACTION, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration } from "#/lib/format";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
@@ -223,7 +223,7 @@ function ScenarioActions({
 					</DropdownMenuItem>
 					<DropdownMenuItem onClick={() => setDialog("notify")}>
 						<BellIcon />
-						运行通知…
+						{TERM.runNotification}…
 					</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem

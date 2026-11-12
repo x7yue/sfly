@@ -68,9 +68,11 @@ function formatTime(time: Date): string {
 	const date = `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())}`;
 	const clock = `${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}`;
 	const offset = -time.getTimezoneOffset();
-	const sign = offset < 0 ? "-" : "+";
 	const minutes = Math.abs(offset) % 60;
-	const zone = `UTC${sign}${Math.floor(Math.abs(offset) / 60)}${minutes === 0 ? "" : `:${pad(minutes)}`}`;
+	const zone =
+		offset === 0
+			? "UTC"
+			: `UTC${offset < 0 ? "-" : "+"}${Math.floor(Math.abs(offset) / 60)}${minutes === 0 ? "" : `:${pad(minutes)}`}`;
 	return `${date} ${clock} (${zone})`;
 }
 
