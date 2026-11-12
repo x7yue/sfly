@@ -65,8 +65,8 @@ def register(group: argparse._SubParsersAction[argparse.ArgumentParser]) -> None
         "并把文件里的 base_version 更新为新版本号、document 换成控制面实际保存的内容"
         "（包括补好的坐标），方便接着改、接着 push。"
         "控制面上已经有更新的版本时报冲突（退出码 2）：重新 pull，把改动合并进去再 push，"
-        "不提供强制覆盖。没有 position 的节点由控制面按整理布局补上坐标（压住已有节点时挪到附近的空位），"
-        "已有坐标的节点不动。",
+        "不提供强制覆盖。没有 position 的节点由控制面按整理布局补上坐标"
+        "（压住已有节点时挪到附近的空位），已有坐标的节点不动。",
     )
     p_push.add_argument("file", metavar="文件", help="pull 写出的 JSON 文件")
     p_push.set_defaults(func=command(_push))
