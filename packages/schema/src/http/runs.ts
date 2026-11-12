@@ -598,6 +598,7 @@ export const artifactsApi = {
 		path: "/tasks/:id/artifacts/*",
 		key: ["artifacts", "upload"],
 		params: ArtifactParams,
+		upload: true,
 		response: ArtifactView,
 	}),
 	/** 下载一个产物（attachment）；运行已过保留期被清理时 410 `expired`。 */

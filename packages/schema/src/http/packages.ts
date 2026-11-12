@@ -84,6 +84,7 @@ export const packagesApi = {
 		method: "POST",
 		path: "/packages",
 		key: ["packages", "publish"],
+		upload: true,
 		response: PackageVersionView,
 	}),
 	/** 下载归档（Agent 安装用；`x-sfly-sha256` 响应头是归档的 sha256）。 */

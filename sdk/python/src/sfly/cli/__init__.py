@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from sfly import __version__
-from sfly.cli import run_artifacts, run_exec, run_logs, scenario
+from sfly.cli import api, run_artifacts, run_exec, run_logs, scenario
 from sfly.cli.home import DEFAULT_SERVER, control_plane_url, dev_socket
 
 
@@ -248,6 +248,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_skill_update.set_defaults(func=_skill_update)
 
     scenario.register(sub)
+    api.register(sub)
 
     arguments = list(sys.argv[1:] if argv is None else argv)
     if arguments[:1] == ["run"] and len(arguments) > 1:
