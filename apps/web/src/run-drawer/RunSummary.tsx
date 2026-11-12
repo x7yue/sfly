@@ -135,11 +135,13 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 	return (
 		<fieldset
 			aria-label={TERM.runNotification}
-			className="m-0 mb-3 flex min-w-0 items-baseline gap-2.5 border-0 p-0 text-xs"
+			className="m-0 mb-3 flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1 border-0 p-0 text-xs"
 		>
-			<span className="text-fg-3">{TERM.runNotification}</span>
-			<StatusPill kind={view.kind}>{view.label}</StatusPill>
-			<span className="min-w-0 text-fg-2">{text}</span>
+			<span className="shrink-0 text-fg-3">{TERM.runNotification}</span>
+			<StatusPill kind={view.kind} className="shrink-0">
+				{view.label}
+			</StatusPill>
+			<span className="min-w-48 flex-1 text-fg-2">{text}</span>
 		</fieldset>
 	);
 }
