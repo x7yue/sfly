@@ -1,5 +1,5 @@
-// 切入点 A：按运行合并读取日志（#222）。两台假 Agent 经 gRPC 上报日志（各自的 Agent 时间偏差不同），
-// 通过 HTTP 读取整次运行合并后的最新一页：按控制面时间交错排列，每行带来源。
+// 切入点 A：按运行合并读取日志（#222、#223）。两台假 Agent 经 gRPC 上报日志（各自的 Agent 时间偏差不同），
+// 通过 HTTP 读取整次运行合并后的日志：按控制面时间交错排列，每行带来源；用游标往前翻页、往后接续。
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { logsApi, type RunLogLine, type RunLogPage, runsApi } from "@sfly/schema";
@@ -52,7 +52,9 @@ describe("按运行合并读取日志", () => {
 		await cp.close();
 	});
 
-	const setup = async (options: { logLimitBytes?: number; retentionDays?: number } = {}) => {
+	const setup = async (
+		options: { logLimitBytes?: number; retentionDays?: number; logScanBytes?: number } = {},
+	) => {
 		cp = await startTestControlPlane({ clock, leaseMs: 30 * DAY, ...options });
 		api = new ApiClient(cp);
 		await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
@@ -92,6 +94,30 @@ describe("按运行合并读取日志", () => {
 		return page(runId, "limit=1000");
 	};
 	const brief = (l: RunLogLine) => [l.node_id, l.attempt, l.seq, l.text];
+	const query = (params: Record<string, string | number>) =>
+		new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)])).toString();
+	/** 从最新一页用 before 游标往前翻，直到读到开头；返回各页，从新到旧。 */
+	const pagesToStart = async (runId: string, limit: number, first?: RunLogPage) => {
+		const pages = [first ?? (await page(runId, query({ limit })))];
+		for (let last = pages[0]; !last?.reached_start; last = pages.at(-1)) {
+			if (!last || pages.length > 200) throw new Error("翻不到开头");
+			pages.push(await page(runId, query({ limit, before: last.before })));
+		}
+		return pages;
+	};
+	/** 各页（从新到旧）按时间先后拼起来。 */
+	const joined = (pages: RunLogPage[]) => pages.toReversed().flatMap((p) => p.lines);
+	/** 从 after 游标往后接续，直到没有新的行；返回读到的全部行。 */
+	const linesAfter = async (runId: string, after: string, limit: number) => {
+		const lines: RunLogLine[] = [];
+		for (let cursor = after, n = 0; ; n++) {
+			if (n > 200) throw new Error("接续不完");
+			const next = await page(runId, query({ limit, after: cursor }));
+			if (next.lines.length === 0) return lines;
+			lines.push(...next.lines);
+			cursor = next.after;
+		}
+	};
 	const taskOf = async (runId: string, nodeId: string, attempt: number) => {
 		const run = runsApi.get.response.parse(await (await cp.fetch(`/runs/${runId}`)).json());
 		for (const chain of run.chains) {
@@ -266,18 +292,182 @@ describe("按运行合并读取日志", () => {
 		await a.succeed(await a.nextAssign());
 		await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
 
+		const before = (await page(runId)).before;
+
 		clock.advance(2 * DAY);
 		await eventually(async () => expect((await page(runId)).expired).toBe(true));
-		expect(await page(runId)).toEqual({
+		expect(await page(runId)).toMatchObject({
 			run_id: runId,
 			lines: [],
 			truncated_tasks: [],
+			reached_start: true,
+			expired: true,
+		});
+		expect(await page(runId, query({ before }))).toMatchObject({
+			lines: [],
+			reached_start: true,
 			expired: true,
 		});
 
 		expect((await cp.fetch("/runs/00000000-0000-4000-8000-000000000000/logs")).status).toBe(404);
 		expect((await cp.fetch("/runs/not-a-uuid/logs")).status).toBe(404);
-		const bad = await cp.fetch(`/runs/${runId}/logs?limit=0`);
-		expect(bad.status).toBe(400);
+		for (const bad of [
+			"limit=0",
+			"before=not-a-cursor",
+			"after=not-a-cursor",
+			query({ before, after: before }),
+		]) {
+			const res = await cp.fetch(`/runs/${runId}/logs?${bad}`);
+			expect(res.status, bad).toBe(400);
+			expect(await res.json(), bad).toMatchObject({ error: { code: "invalid_request" } });
+		}
+	});
+
+	it("用 before 往前翻到开头、再用 after 往后接续回到最新：每行恰好出现一次，顺序与一次读出全部时相同", async () => {
+		const { a, b, runId } = await setup();
+		const z1 = await a.nextAssign();
+		const s = await b.nextAssign();
+		a.logs(
+			z1,
+			Array.from({ length: 6 }, (_, i) => line(a, i + 1, 1_000 + i * 2_000, `z1 ${i + 1}`)),
+		);
+		b.logs(
+			s,
+			Array.from({ length: 7 }, (_, i) => line(b, i + 1, 2_000 + i * 1_500, `s ${i + 1}`)),
+		);
+		await a.fail(z1, "boom");
+		const z2 = await a.nextAssign();
+		a.logs(
+			z2,
+			Array.from({ length: 4 }, (_, i) => line(a, i + 1, 12_500 + i * 1_000, `z2 ${i + 1}`)),
+		);
+		const all = (await settled(runId, 17)).lines;
+
+		const pages = await pagesToStart(runId, 4);
+		expect(pages.map((p) => p.lines.length)).toEqual([4, 4, 4, 4, 1]);
+		expect(pages.map((p) => p.reached_start)).toEqual([false, false, false, false, true]);
+		expect(joined(pages)).toEqual(all);
+
+		const earliest = pages.at(-1) as RunLogPage;
+		expect([...earliest.lines, ...(await linesAfter(runId, earliest.after, 3))]).toEqual(all);
+		// 最新一页的 after 之后还没有新的行。
+		expect(await linesAfter(runId, (pages[0] as RunLogPage).after, 3)).toEqual([]);
+	});
+
+	it("翻页期间写入新行（包括晚到的行和之后才开始的任务）：已拿到的游标往前翻的结果不变，往后接续恰好拿到新写入的行", async () => {
+		const { a, b, runId } = await setup();
+		const z1 = await a.nextAssign();
+		const s = await b.nextAssign();
+		a.logs(z1, [
+			line(a, 1, 1_000, "z1 1"),
+			line(a, 2, 3_000, "z1 2"),
+			line(a, 3, 5_000, "z1 3"),
+			line(a, 4, 7_000, "z1 4"),
+		]);
+		b.logs(s, [line(b, 1, 2_000, "s 1"), line(b, 2, 4_000, "s 2"), line(b, 3, 6_000, "s 3")]);
+		const before = (await settled(runId, 7)).lines;
+		const latest = await page(runId, query({ limit: 3 }));
+		expect(latest.lines).toEqual(before.slice(-3));
+
+		// 拿到最新一页之后：s 补上一行比 z1 第 4 行还早的（晚到），z 失败后重试，新的尝试开始输出。
+		b.logs(s, [line(b, 4, 6_500, "s 4 late"), line(b, 5, 9_000, "s 5")]);
+		await a.fail(z1, "boom");
+		const z2 = await a.nextAssign();
+		a.logs(z2, [line(a, 1, 8_000, "z2 1"), line(a, 2, 10_000, "z2 2")]);
+		const after = (await settled(runId, 11)).lines;
+		const fresh = new Set([`${s.taskId}:4`, `${s.taskId}:5`, `${z2.taskId}:1`, `${z2.taskId}:2`]);
+		const isFresh = (l: RunLogLine) => fresh.has(`${l.task_id}:${l.seq}`);
+		expect(after.filter(isFresh).map(brief)).toEqual([
+			["s", 1, 4, "s 4 late"],
+			["z", 2, 1, "z2 1"],
+			["s", 1, 5, "s 5"],
+			["z", 2, 2, "z2 2"],
+		]);
+
+		expect(joined(await pagesToStart(runId, 2, latest))).toEqual(before);
+		expect(await linesAfter(runId, latest.after, 2)).toEqual(after.filter(isFresh));
+	});
+
+	it("同一任务内后一行折算出的控制面时间更早时记成与上一行相同：往前读、往后读给出同一个顺序", async () => {
+		const { a, b, runId } = await setup();
+		const z1 = await a.nextAssign();
+		const s = await b.nextAssign();
+		// z1 第 2 行折算出的控制面时间比第 1 行早 2 秒（例如重连后时钟偏差重测），比 s 的那一行也早。
+		a.logs(z1, [line(a, 1, 5_000, "z1 first"), line(a, 2, 3_000, "z1 second")]);
+		b.logs(s, [line(b, 1, 4_000, "s only")]);
+
+		const all = (await settled(runId, 3)).lines;
+		expect(all.map((l) => [l.text, l.time])).toEqual([
+			["s only", iso(T0 + 4_000)],
+			["z1 first", iso(T0 + 5_000)],
+			["z1 second", iso(T0 + 5_000)],
+		]);
+		const own = logsApi.page.response.parse(
+			await (await cp.fetch(`/tasks/${z1.taskId}/logs`)).json(),
+		);
+		expect(own.lines.map((l) => l.time)).toEqual([iso(T0 + 5_000), iso(T0 + 5_000)]);
+
+		const pages = await pagesToStart(runId, 1);
+		expect(joined(pages)).toEqual(all);
+		const earliest = pages.at(-1) as RunLogPage;
+		expect([...earliest.lines, ...(await linesAfter(runId, earliest.after, 1))]).toEqual(all);
+
+		// 控制面重启之后（任务的状态重新从数据库和日志文件读出），新的一行同样不早于文件里的最后一行。
+		await cp.restart();
+		for (const agent of agents.splice(0)) void agent.disconnect();
+		const { agentT0, m0 } = AGENTS["agent-a"];
+		const again = await FakeAgent.connect(cp.grpcUrl, {
+			name: "agent-a",
+			...agentClock(agentT0, m0),
+		});
+		agents.push(again);
+		again.logs(z1, [line(again, 3, 4_500, "z1 third")]);
+		await eventually(async () =>
+			expect((await page(runId, "limit=1000")).lines.at(-1)).toMatchObject({
+				text: "z1 third",
+				time: iso(T0 + 5_000),
+			}),
+		);
+	});
+
+	it("单次请求的扫描量达到上限时先返回不满一页的结果，不算读到开头；用游标接着读完，不重复不漏行", async () => {
+		// 每行约 150 字节：两个任务各分到 600 字节左右，一次每个任务只读得到几行。
+		const { a, b, runId } = await setup({ logScanBytes: 1_200 });
+		const z1 = await a.nextAssign();
+		const s = await b.nextAssign();
+		a.logs(
+			z1,
+			Array.from({ length: 20 }, (_, i) => line(a, i + 1, 1_000 + i * 1_000, `z1 ${i + 1}`)),
+		);
+		b.logs(
+			s,
+			Array.from({ length: 20 }, (_, i) => line(b, i + 1, 1_500 + i * 1_000, `s ${i + 1}`)),
+		);
+		const expected = Array.from({ length: 20 }, (_, i) => [
+			["z", 1, i + 1, `z1 ${i + 1}`],
+			["s", 1, i + 1, `s ${i + 1}`],
+		]).flat();
+		await eventually(async () => {
+			const own = logsApi.page.response.parse(
+				await (await cp.fetch(`/tasks/${s.taskId}/logs`)).json(),
+			);
+			expect(own.lines).toHaveLength(20);
+			expect(
+				logsApi.page.response.parse(await (await cp.fetch(`/tasks/${z1.taskId}/logs`)).json())
+					.lines,
+			).toHaveLength(20);
+		});
+
+		const pages = await pagesToStart(runId, 1000);
+		const latest = pages[0] as RunLogPage;
+		expect(latest.lines.length).toBeGreaterThan(0);
+		expect(latest.lines.length).toBeLessThan(20);
+		expect(latest.reached_start).toBe(false);
+		expect(pages.slice(0, -1).every((p) => !p.reached_start && p.lines.length > 0)).toBe(true);
+		expect(joined(pages).map(brief)).toEqual(expected);
+
+		const earliest = pages.at(-1) as RunLogPage;
+		const forward = [...earliest.lines, ...(await linesAfter(runId, earliest.after, 1000))];
+		expect(forward.map(brief)).toEqual(expected);
 	});
 });

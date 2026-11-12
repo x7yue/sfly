@@ -352,19 +352,39 @@ export const LogOrigin = z.object({
 /** 按运行合并的一行：任务日志里的一行，加上它的来源。 */
 export const RunLogLine = LogLineView.extend(LogOrigin.shape);
 
-export const RunLogPageQuery = z.object({
-	limit: z.coerce.number().int().min(1).max(MAX_LOG_PAGE_LINES).default(200),
-});
+/** 按运行分页的游标：不透明字符串，由上一页的 before / after 原样传回。 */
+const RunLogCursor = z.string();
+
+export const RunLogPageQuery = z
+	.object({
+		/** 往前翻页：读这个游标之前的行。不给 before 和 after 时读最新的一页。 */
+		before: blankAsMissing(RunLogCursor),
+		/** 往后接续：读这个游标之后的行。不能与 before 同时给。 */
+		after: blankAsMissing(RunLogCursor),
+		limit: z.coerce.number().int().min(1).max(MAX_LOG_PAGE_LINES).default(200),
+	})
+	.refine((q) => q.before === undefined || q.after === undefined, {
+		message: "before 与 after 不能同时给",
+	});
 
 /**
- * 一次运行全部任务的日志合并成的一页（没选中节点时的日志视图，#220）。排序规则见 docs/ARCHITECTURE.md §6.3：
- * 同一个任务内按 seq，不同任务之间按控制面时间归并；时间相同时按链、节点、尝试在运行视图里的顺序；
- * 没有控制面时间的旧行沿用同一任务内上一行的排序时间，任务的第一行用任务开始时间。
+ * 一次运行全部任务的日志合并成的一页（没选中节点时的日志视图，#220）。排序规则见 docs/ARCHITECTURE.md §6.3
+ * 与 run-log-order.ts：同一个任务内按 seq，不同任务之间按控制面时间归并；时间相同时按链、节点、尝试在运行视图里的顺序；
+ * 没有控制面时间的旧行用任务开始时间。
+ *
+ * 游标记录每个任务读到的字节偏移：拿到这一页之后才开始的任务不在游标里，往前翻页时视为之前没有内容，往后接续时从头读。
+ * 单次请求的扫描量有上限（所有任务分摊），所以一页可能不满 limit 行；这不表示读到了开头，看 `reached_start`。
  */
 export const RunLogPage = z.object({
 	run_id: z.string(),
-	/** 最新的 limit 行，按上面的顺序。 */
+	/** 往前翻页时是游标之前（不给游标时是全部）的最后 limit 行，往后接续时是游标之后的前 limit 行，按上面的顺序。 */
 	lines: z.array(RunLogLine),
+	/** 读这一页之前的行：下一次往前翻页的 before。 */
+	before: RunLogCursor,
+	/** 读这一页之后的行：往后接续的 after。 */
+	after: RunLogCursor,
+	/** before 之前已经没有任何行（这一页之前就是运行的开头）。 */
+	reached_start: z.boolean(),
 	/** 日志超过大小上限被截断的任务，按运行视图里的顺序。 */
 	truncated_tasks: z.array(LogOrigin),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
@@ -404,7 +424,7 @@ export const logsApi = {
 		params: IdParams,
 		contentType: "application/x-ndjson",
 	}),
-	/** 一次运行全部任务的最新日志，合并成一页；运行不存在时 404。 */
+	/** 一次运行全部任务的日志合并分页读取（最新一页，或用游标往前翻、往后接续）；运行不存在时 404。 */
 	runPage: endpoint({
 		method: "GET",
 		path: "/runs/:id/logs",

@@ -66,6 +66,8 @@ export interface HttpApiDeps {
 	webApp?: WebApp;
 	/** SSE 心跳的间隔（src/sse/sse.ts）。 */
 	sseHeartbeatMs?: number;
+	/** 按运行合并读取日志时一次请求最多扫描的字节数（src/logs/run-log-pages.ts）。 */
+	logScanBytes?: number;
 }
 
 const errorCode = (status: number): string =>
@@ -100,6 +102,7 @@ export function buildHttpApi({
 	docs,
 	webApp,
 	sseHeartbeatMs,
+	logScanBytes,
 }: HttpApiDeps): FastifyInstance {
 	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
 	const app = Fastify({ logger, rewriteUrl: (req) => stripApiPrefix(req.url ?? "/") });
@@ -150,7 +153,7 @@ export function buildHttpApi({
 	registerRunListRoutes(app, { db: database.db });
 	registerLogRoutes(app, {
 		logs,
-		runLogs: new RunLogs({ db: database.db, logs }),
+		runLogs: new RunLogs({ db: database.db, logs, scanBytes: logScanBytes }),
 		sse,
 		isPurged: (runId) => retention.isPurged(runId),
 	});

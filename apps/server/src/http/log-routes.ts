@@ -4,6 +4,7 @@ import { Transform, type TransformCallback } from "node:stream";
 import { logsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
+import { decodeRunLogCursor, encodeRunLogCursor } from "../logs/run-log-cursor.js";
 import type { RunLogs } from "../logs/run-log-pages.js";
 import { type LogChunk, normalizeLogRow, type TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
@@ -25,7 +26,8 @@ import { sendError } from "./errors.js";
  * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（升级之前写入的行在下载时补齐）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
  *
- * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的最新日志合并成一页，见 run-log-pages.ts。
+ * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取（`before` / `after` 游标，#223），
+ * 见 run-log-pages.ts 与 run-log-cursor.ts；游标不是这里返回的格式时 400 `invalid_request`。
  */
 export function registerLogRoutes(
 	app: FastifyInstance,
@@ -37,15 +39,30 @@ export function registerLogRoutes(
 	},
 ): void {
 	contractRoute(app, logsApi.runPage, async ({ params, query }, reply) => {
+		const before = query.before === undefined ? undefined : decodeRunLogCursor(query.before);
+		const after = query.after === undefined ? undefined : decodeRunLogCursor(query.after);
+		if ((query.before !== undefined && !before) || (query.after !== undefined && !after)) {
+			return sendError(reply, 400, "invalid_request", "游标不是之前返回的 before / after");
+		}
+		const { limit } = query;
 		const page = isUuid(params.id)
-			? await deps.runLogs.page(params.id, { limit: query.limit, filter: {} })
+			? await deps.runLogs.page(
+					params.id,
+					after
+						? { direction: "forward", after, limit, filter: {} }
+						: { direction: "backward", before, limit, filter: {} },
+				)
 			: undefined;
 		if (!page) return sendError(reply, 404, "not_found", "run not found");
 		// 清理之后文件已经不在，读出来本来就是空的；判断放在读取之后，读取期间被清理也不会返回半页。
 		const expired = await deps.isPurged(params.id);
+		const start = new Map<number, number>();
 		return {
 			run_id: params.id,
 			lines: expired ? [] : page.lines,
+			before: encodeRunLogCursor(expired ? start : page.before),
+			after: encodeRunLogCursor(expired ? start : page.after),
+			reached_start: expired || [...page.before.values()].every((offset) => offset === 0),
 			truncated_tasks: expired ? [] : page.truncatedTasks,
 			expired,
 		};
