@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { ensureLayout } from "@sfly/orchestration";
+import { ensureLayout, fillMissingPositions } from "@sfly/orchestration";
 import type {
 	OrchestrationDocument,
 	OrchestrationView,
@@ -279,6 +279,7 @@ export class OrchestrationStore {
 	 * 追加一个新版本，编号 = 当前最新版本号 + 1。
 	 * baseVersion 是编辑起点的版本号（新编排的第一个版本为 0），它必须等于当前最新版本号，
 	 * 否则不保存并返回 conflict（docs/ARCHITECTURE.md §6.4）。检查与追加在同一个行锁内完成。
+	 * 没有位置的节点（命令行、API 上传的文档可以不写坐标）保存时用整理布局补上，已有位置的节点不动。
 	 */
 	saveVersion(
 		orchestrationId: string,
@@ -297,7 +298,8 @@ export class OrchestrationStore {
 				const head = await versionRow(tx, orchestrationId, orchestration.headVersion);
 				return { kind: "conflict", head: head ? toSummary(head) : null };
 			}
-			return { kind: "saved", version: await this.#append(tx, orchestration, document, author) };
+			const laidOut = fillMissingPositions(document);
+			return { kind: "saved", version: await this.#append(tx, orchestration, laidOut, author) };
 		});
 	}
 
