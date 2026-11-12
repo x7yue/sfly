@@ -115,7 +115,9 @@ describe("请求里的 NUL 字符（#212）", () => {
 		expect(create.status).toBe(400);
 		expect(await create.json()).toMatchObject({ error: { code: "invalid_request" } });
 
-		const list = await cp.fetch("/orchestrations?q=%00", { headers: { "x-sfly-nickname": "alice" } });
+		const list = await cp.fetch("/orchestrations?q=%00", {
+			headers: { "x-sfly-nickname": "alice" },
+		});
 		expect(list.status).toBe(400);
 		expect(await list.json()).toMatchObject({ error: { code: "invalid_request" } });
 	});

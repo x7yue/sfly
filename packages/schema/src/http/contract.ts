@@ -14,6 +14,7 @@ import { z } from "zod";
  *    不用 transform / default / coerce——生产环境前端不解析响应，解析前后必须相同。
  * 4. 请求（params / query / body）可以用 coerce、default；控制面拿到的是解析后的值，
  *    校验失败统一返回 400 `invalid_request`，`details` 为 zod 的 issues。
+ *    含 NUL（`\u0000`）的输入由控制面在校验前统一拦下：路径参数 404 `not_found`，查询参数与 JSON 请求体 400 `invalid_request`。
  * 5. `key` 是 TanStack Query 的 query key 前缀，第一段是领域名；前端一律用 `queryKey()` 生成，
  *    失效时用 `domainKey(def)`（领域前缀，如 `["packages"]`）让该领域的查询全部重新获取。
  * 6. 错误响应统一为 `ApiErrorBody`。请求校验失败默认是 400 `invalid_request`；需要更具体的错误码时
