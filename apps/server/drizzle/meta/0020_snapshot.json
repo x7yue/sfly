@@ -1,5 +1,5 @@
 {
-  "id": "44e76ecc-3c69-45cc-b8fa-aadf9389e761",
+  "id": "046f0e25-a543-495a-86bb-6eaacbcdcacc",
   "prevId": "5a0620b6-2944-4c4f-9585-79aed9b2a477",
   "version": "7",
   "dialect": "postgresql",
@@ -314,6 +314,24 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "last_delivery_at": {
+          "name": "last_delivery_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_delivery_ok": {
+          "name": "last_delivery_ok",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_delivery_error": {
+          "name": "last_delivery_error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {},
@@ -383,6 +401,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "next_attempt_at": {
+          "name": "next_attempt_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "last_error": {
           "name": "last_error",
@@ -775,33 +799,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "run_notify_bot": {
-          "name": "run_notify_bot",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "run_notify_trigger": {
-          "name": "run_notify_trigger",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'failed'"
-        },
-        "run_notify_title": {
-          "name": "run_notify_title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "run_notify_note": {
-          "name": "run_notify_note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
         }
       },
       "indexes": {},
@@ -891,18 +888,6 @@
         "metrics_purged_at": {
           "name": "metrics_purged_at",
           "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "notification_bot": {
-          "name": "notification_bot",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "notification_not_sent": {
-          "name": "notification_not_sent",
-          "type": "text",
           "primaryKey": false,
           "notNull": false
         }

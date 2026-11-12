@@ -183,16 +183,17 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 控制面直接向飞书群机器人的 Webhook 地址发请求（ADR 0020）；代理设置（HTTPS_PROXY、NO_PROXY）在这里读取。
 	const feishu = new FeishuClient();
-	const feishuBots = new FeishuBots({ db: database.db, clock });
+	const feishuError = (error: unknown) => {
+		if (logger) console.error("feishu delivery failed:", error);
+	};
+	const feishuBots = new FeishuBots({ db: database.db, clock, logs, onError: feishuError });
 	const feishuDelivery = new FeishuDelivery({
 		db: database.db,
 		clock,
 		bots: feishuBots,
 		client: feishu,
 		logs,
-		onError: (error) => {
-			if (logger) console.error("feishu delivery failed:", error);
-		},
+		onError: feishuError,
 	});
 	// 运行通知卡片里「查看运行」的链接只在配置了对外地址（SFLY_PUBLIC_URL）时给：默认的监听地址不一定是用户打得开的地址。
 	const configuredUrl = options.publicHttpUrl?.replace(/\/+$/, "");

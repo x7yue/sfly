@@ -289,7 +289,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 - 单条消息失败：Agent 上报的字符串里的 NUL 在网关入口换成 U+FFFD（数据库存不下，SEMANTICS §2.5）。处理一条消息出错（例如写库失败）时记下错误、跳过这一条，不关闭这台 Agent 的流；任务结果写不进数据库时这次尝试以 `node_error` 结束并回 Ack，连这一步也失败（数据库不可用）才关闭流，由 Agent 重连后重发。指标写库连续失败 3 次后丢弃这个任务还没写入的点。
 - 重启：运行、链实例、任务、定时器都在库里，启动时不重放；只把已经（或即将）到期的租约和排队超时顺延到一个租约之后，给 Agent 重新连接的时间。
 - 派发：任务 `queued` 后，目标 Agent 在线、版本与控制面一致且有空闲槽位时推送；超过 `queue_timeout` 仍未派发则 `env_error`。版本不一致的 Agent 照常连接、续约、上报日志和结果，只是不派新任务（ADR 0014），Agents 页显示它的更新状态。
-- 飞书通知节点：和其他内置节点一样在控制面执行。轮到它时，在同一个事务里解析输入、把消息写进 `feishu_messages`（发送队列）并把节点记为成功；提交后唤醒投递（`FeishuDelivery`）。投递每个机器人一个循环，按入队顺序串行发送，结果写成这个任务的一条日志（控制面自己写的行，source `system`），不经过引擎、不改变任何状态；控制面启动和周期扫描时也会唤醒它，重启前入队的消息接着投递（ADR 0020）。三种格式（文本、Markdown 卡片、原始消息）的请求体由 `src/feishu/messages.ts` 组装，输入解析与出错处理在 `src/feishu/notify-node.ts`；Markdown 卡片的规则与 SDK 共用 `testdata/feishu-card-cases.json` 里的用例。
+- 飞书通知节点：和其他内置节点一样在控制面执行。轮到它时，在同一个事务里解析输入、把消息写进 `feishu_messages`（发送队列）并把节点记为成功；提交后唤醒投递（`FeishuDelivery`）。投递每个机器人一个循环，按入队顺序串行发送，最终的结果写成这个任务的一条日志（控制面自己写的行，source `system`），不经过引擎、不改变任何状态；控制面启动和周期扫描时也会唤醒它，重启前入队的消息接着投递（ADR 0020）。可靠性的规则都在投递这一层，没有定时器：可重试的失败把下一次尝试的时间（控制面时间）记在消息上（`next_attempt_at`），队首没到点就结束这一轮，周期扫描唤醒时再看；限速（每个机器人每秒 5、每分钟 100 个请求，`SendRateLimiter`）按内存里的发送时间判断，重启后从头算；积压超过 1000 条时在每一轮开头丢弃最旧的；退避间隔、期限、限速和积压上限的取值在 `feishu/delivery-policy.ts`，文本消息超过 20 KB 的截断在组装请求体时（`feishu/messages.ts` 的 `textMessage`，文本格式的消息都经过它；原始消息不截断）。每发一次请求，结果同事务记在机器人上（`last_delivery_*`），管理页显示它和积压条数。三种格式（文本、Markdown 卡片、原始消息）的请求体由 `src/feishu/messages.ts` 组装，输入解析与出错处理在 `src/feishu/notify-node.ts`；Markdown 卡片的规则与 SDK 共用 `testdata/feishu-card-cases.json` 里的用例。
 - ID 确定性生成：子流程实例 ID 和任务 ID 都由运行、链实例、节点、attempt 推导，崩溃恢复时不会重复创建。
 
 ### 6.2 数据模型
@@ -300,8 +300,8 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | `orchestration_versions` | id, orchestration_id, number, document（JSONB：节点、连线、参数、布局、锁定的包版本）, author, created_at；`unique(orchestration_id, number)` |
 | `node_packages` | name, version, metadata（JSONB）, file_path, sha256, published_at；`unique(name, version)` |
 | `agents` | name, info（JSONB）, status, last_seen_at |
-| `feishu_bots` | name（主键，全局唯一、不能修改）, webhook_url（明文，接口和日志里打码）, created_at（ADR 0020） |
-| `feishu_messages` | seq（主键，入队顺序）, bot_name, source, run_id, task_id, body（飞书请求体）, enqueued_at, status（queued / delivered / failed / discarded）, attempts, last_error, finished_at；飞书发送队列，投递结果不改变任何节点、任务、链或运行的状态，记录跟随所属运行的保留期（ADR 0020） |
+| `feishu_bots` | name（主键，全局唯一、不能修改）, webhook_url（明文，接口和日志里打码）, created_at, last_delivery_at / last_delivery_ok / last_delivery_error（最近一次投递：每发一次请求记一次，丢弃不算；管理页显示）（ADR 0020） |
+| `feishu_messages` | seq（主键，入队顺序）, bot_name, source, run_id, task_id, body（飞书请求体）, enqueued_at, status（queued / delivered / failed / discarded）, attempts, next_attempt_at（可重试的失败之后最早的下一次尝试）, last_error, finished_at；飞书发送队列，投递结果不改变任何节点、任务、链或运行的状态，记录跟随所属运行的保留期（ADR 0020） |
 | `runs` | id, orchestration_version_id, triggered_by, params, status, started_at, ended_at |
 | `chain_instances` | id, run_id, chain_id, parent_chain_instance_id, async_node_id, depth, params, status |
 | `tasks` | id, chain_instance_id, node_id, attempt, agent_name, status, inputs, outputs, error_kind, error_message, progress, lease_expires_at, wake_at, log_path, started_at, ended_at, start_clock_offset_ms, start_clock_offset_measured_at, end_clock_offset_ms, end_clock_offset_measured_at |

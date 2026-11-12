@@ -1,8 +1,10 @@
 import type { FeishuBotView, FeishuTestResult } from "@sfly/schema";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, count, eq } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { feishuBots } from "../db/schema.js";
+import { feishuBots, feishuMessages } from "../db/schema.js";
+import type { TaskLogs } from "../logs/task-logs.js";
+import { discardNote, logDiscards } from "./discards.js";
 import type { FeishuSendResult } from "./feishu-client.js";
 import { maskWebhookUrl } from "./webhook-url.js";
 
@@ -14,15 +16,23 @@ export interface FeishuBot {
 	name: string;
 	webhookUrl: string;
 	createdAt: Date;
+	/** 最近一次投递（每发一次请求记一次）；还没有投递过时为 null。 */
+	lastDelivery: { at: Date; ok: boolean; message: string | null } | null;
 }
 
 export type CreateFeishuBotResult = { kind: "created"; bot: FeishuBot } | { kind: "name_taken" };
 
-/** 接口返回的形式：Webhook 地址打码。 */
-export const toFeishuBotView = (bot: FeishuBot): FeishuBotView => ({
+/** 接口返回的形式：Webhook 地址打码；`backlog` 是这个机器人还在排队的消息条数。 */
+export const toFeishuBotView = (bot: FeishuBot, backlog: number): FeishuBotView => ({
 	name: bot.name,
 	webhook_url: maskWebhookUrl(bot.webhookUrl),
 	created_at: bot.createdAt.toISOString(),
+	last_delivery: bot.lastDelivery && {
+		at: bot.lastDelivery.at.toISOString(),
+		ok: bot.lastDelivery.ok,
+		message: bot.lastDelivery.message,
+	},
+	backlog,
 });
 
 /** 固定的测试消息：文本里带「sfly」，机器人用关键词校验时可以把它设为关键词。 */
@@ -54,11 +64,24 @@ const toBot = (row: FeishuBotRow): FeishuBot => ({
 	name: row.name,
 	webhookUrl: row.webhookUrl,
 	createdAt: row.createdAt,
+	lastDelivery:
+		row.lastDeliveryAt === null || row.lastDeliveryOk === null
+			? null
+			: { at: row.lastDeliveryAt, ok: row.lastDeliveryOk, message: row.lastDeliveryError },
 });
 
 /** 飞书机器人的存取。名称是主键：全局唯一，不能修改。 */
 export class FeishuBots {
-	constructor(private readonly deps: { db: Db; clock: Clock }) {}
+	constructor(
+		private readonly deps: {
+			db: Db;
+			clock: Clock;
+			/** 删除机器人时，丢弃的消息的结果写进发起它们的任务的日志。 */
+			logs: Pick<TaskLogs, "appendSystem">;
+			/** 写日志失败时调用：删除已经完成，不能因此让请求失败。 */
+			onError: (error: unknown) => void;
+		},
+	) {}
 
 	async list(): Promise<FeishuBot[]> {
 		const rows = await this.deps.db.select().from(feishuBots).orderBy(asc(feishuBots.name));
@@ -68,6 +91,21 @@ export class FeishuBots {
 	async get(name: string): Promise<FeishuBot | undefined> {
 		const [row] = await this.deps.db.select().from(feishuBots).where(eq(feishuBots.name, name));
 		return row && toBot(row);
+	}
+
+	/** 每个机器人还在排队的消息条数（没有排队消息的机器人不在里面）。 */
+	async backlogs(): Promise<Map<string, number>> {
+		const rows = await this.deps.db
+			.select({ bot: feishuMessages.botName, queued: count() })
+			.from(feishuMessages)
+			.where(eq(feishuMessages.status, "queued"))
+			.groupBy(feishuMessages.botName);
+		return new Map(rows.map((row) => [row.bot, row.queued]));
+	}
+
+	/** 这个机器人还在排队的消息条数。 */
+	async backlog(name: string): Promise<number> {
+		return (await this.backlogs()).get(name) ?? 0;
 	}
 
 	async create(name: string, webhookUrl: string): Promise<CreateFeishuBotResult> {
@@ -89,12 +127,30 @@ export class FeishuBots {
 		return row && toBot(row);
 	}
 
-	/** 删除；机器人不存在时返回 false。 */
+	/**
+	 * 删除；机器人不存在时返回 false。它还没有投递的消息在同一个事务里记为「已丢弃：机器人已删除」，
+	 * 提交之后把结果写进发起它们的任务的日志。
+	 */
 	async remove(name: string): Promise<boolean> {
-		const rows = await this.deps.db
-			.delete(feishuBots)
-			.where(eq(feishuBots.name, name))
-			.returning({ name: feishuBots.name });
-		return rows.length > 0;
+		const discarded = await this.deps.db.transaction(async (tx) => {
+			const removed = await tx
+				.delete(feishuBots)
+				.where(eq(feishuBots.name, name))
+				.returning({ name: feishuBots.name });
+			if (removed.length === 0) return undefined;
+			return tx
+				.update(feishuMessages)
+				.set({
+					status: "discarded",
+					lastError: discardNote("bot_removed", name),
+					nextAttemptAt: null,
+					finishedAt: this.deps.clock.now(),
+				})
+				.where(and(eq(feishuMessages.botName, name), eq(feishuMessages.status, "queued")))
+				.returning({ taskId: feishuMessages.taskId });
+		});
+		if (discarded === undefined) return false;
+		await logDiscards(this.deps.logs, discarded, "bot_removed", name).catch(this.deps.onError);
+		return true;
 	}
 }

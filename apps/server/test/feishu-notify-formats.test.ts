@@ -7,6 +7,7 @@ import type { Node } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
+import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -148,7 +149,11 @@ describe("飞书通知节点：Markdown 卡片与原始消息", () => {
 				]),
 			);
 			await api.triggerOk(id);
-			await eventually(() => expect(feishu.requests).toHaveLength(6));
+			// 同一个机器人每秒最多发 5 条（#230）：推进控制面时间越过第一秒，第 6 条才发出。
+			await eventually(() => {
+				(cp.clock as ManualClock).advance(1000);
+				expect(feishu.requests).toHaveLength(6);
+			});
 			expect(bodies().map((b) => (b as ReturnType<typeof cardBody>).card.header.template)).toEqual([
 				...colors,
 				"blue",
