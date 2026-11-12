@@ -51,10 +51,13 @@ export function ValueField({
 	agents = [],
 	problems,
 	help,
+	heading,
 	onChange,
 }: {
 	nodeId: string;
 	name: string;
+	/** 字段名称的显示：默认是等宽字体的 `name`（节点包的输入名）；内置节点的字段写成中文名称。 */
+	heading?: string;
 	label?: string;
 	schema: JsonSchema;
 	required: boolean;
@@ -90,7 +93,7 @@ export function ValueField({
 	};
 	const field = (control: React.ReactNode, aside?: React.ReactNode) => (
 		<Field
-			label={<span className="font-mono">{name}</span>}
+			label={heading ?? <span className="font-mono">{name}</span>}
 			htmlFor={id}
 			required={required}
 			type={kind === "agent" ? "Agent" : describeSchema(schema)}

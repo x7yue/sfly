@@ -190,7 +190,7 @@ function NodeInspector({
 		...(node.kind === "async" ? (dispatchTarget(doc, id)?.params.map((p) => p.name) ?? []) : []),
 		...(node.kind === "timer" ? ["at", "tz"] : node.kind === "sleep" ? ["duration"] : []),
 		...(node.kind === "subflow_entry" ? ["name"] : node.kind === "stop_subflow" ? ["subflow"] : []),
-		...(node.kind === "feishu_notify" ? ["bot", "text"] : []),
+		...(node.kind === "feishu_notify" ? ["bot", "text", "title", "markdown", "message"] : []),
 	]);
 	const general = warnings.filter(
 		(w) => !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),

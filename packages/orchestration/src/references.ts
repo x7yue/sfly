@@ -1,4 +1,5 @@
 import type { NodeTypeMetadata, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import { feishuReferableInputs } from "./feishu-notify.js";
 import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
 
 /**
@@ -178,7 +179,7 @@ function referableValues(node: OrchestrationNode): [string, unknown][] {
 		case "feishu_notify":
 			return [
 				...(node.bot === undefined ? [] : ([["bot", node.bot]] as [string, unknown][])),
-				["text", node.text],
+				...Object.entries(feishuReferableInputs(node)),
 			];
 		default:
 			return [];
