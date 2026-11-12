@@ -3,15 +3,17 @@
 // 否则在这个任务的日志里写一条 warning、不发送。投递结果写进这个任务的日志，不改变任务和运行的状态。
 // 发原始消息（#235，`ctx.notify(bot, message=...)`，含 sfly.feishu.card 组装的卡片）：完整的请求体原样发出，
 // 校验规则与飞书通知节点的原始消息相同，不合格的不发送、任务日志里有原因。
-// 控制面写进任务日志的行不占用 Agent 的日志序号。
+// 控制面写进任务日志的行不占用 Agent 的日志序号，和 Agent 上报的行一样出现在按运行合并的日志里（#220）。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 假飞书 Webhook 服务（support/fake-feishu.ts）。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
+import { logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
 import { packageArchive, packageMetadata, publishInit } from "./support/package-archive.js";
+import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const OPS = "tok-ops-6b1f0d2e";
@@ -351,5 +353,75 @@ describe("ctx.notify：节点在执行中途发飞书通知", () => {
 			[6, "a5"],
 			[7, "a6"],
 		]);
+	});
+
+	it("控制面写的行（ctx.notify 的告警和投递结果、飞书通知节点的投递结果）出现在按运行合并的日志里：分页、往前翻页、实时推送和下载都恰好一次，与 Agent 上报的行按序号排在一起", async () => {
+		const doc = scenario("ops");
+		doc.nodes.push({ id: "note", kind: "feishu_notify", bot: "ops", text: "完成" } as never);
+		doc.edges.push({ from: "alert", to: "note", kind: "chain" });
+		const runId = await api.triggerOk(await api.orchestrationWith(doc));
+		const task = await runner.nextAssign();
+		runner.logs(task, [
+			[1, "a1"],
+			[2, "a2"],
+		]);
+		await logLine(task.taskId, (l) => l.text === "a2");
+
+		const runPage = async (params: Record<string, string | number>) => {
+			const search = new URLSearchParams(Object.entries(params).map(([k, v]) => [k, String(v)]));
+			const res = await cp.fetch(`/runs/${runId}/logs?${search}`);
+			expect(res.status, await res.clone().text()).toBe(200);
+			return logsApi.runPage.response.parse(await res.json());
+		};
+		const first = await runPage({ limit: 1000 });
+		expect(first.lines.map((l) => l.text)).toEqual(["a1", "a2"]);
+		const sse = await SseClient.open(cp, `/runs/${runId}/logs/events?after=${first.live_after}`);
+		try {
+			notify(runner, task, { bot: "dev", text: "不在名单里" });
+			await logLine(task.taskId, (l) => l.level === "warn");
+			runner.logs(task, [[3, "a3"]]);
+			await logLine(task.taskId, (l) => l.text === "a3");
+			notify(runner, task, { bot: "ops", text: "发对了" });
+			await logLine(task.taskId, (l) => l.text.includes("已送达"));
+			await runner.succeed(task);
+			await eventually(async () => expect((await api.run(runId)).status).toBe("success"));
+			const noteTask = (await api.node(runId, "note")).attempts[0]?.task_id as string;
+			await logLine(noteTask, (l) => l.text.includes("已送达"));
+
+			const brief = (l: Pick<RunLogLine, "node_id" | "seq" | "source" | "text">) =>
+				`${l.node_id}#${l.seq} ${l.source === "system" ? "system" : l.text}`;
+			const expected = [
+				"alert#1 a1",
+				"alert#2 a2",
+				"alert#3 system",
+				"alert#4 a3",
+				"alert#5 system",
+				"note#1 system",
+			];
+			const all = await runPage({ limit: 1000 });
+			expect(all.lines.map(brief)).toEqual(expected);
+
+			const pages = [await runPage({ limit: 2 })];
+			for (let last = pages[0]; last && !last.reached_start; last = pages.at(-1)) {
+				pages.push(await runPage({ limit: 2, before: last.before }));
+			}
+			expect(pages.toReversed().flatMap((p) => p.lines)).toEqual(all.lines);
+
+			const live: RunLogLine[] = [];
+			while (live.length < 4) {
+				live.push(...logsApi.runEvents.events.logs.parse((await sse.next("logs")).data).lines);
+			}
+			expect(live).toEqual(all.lines.slice(2));
+
+			const res = await cp.fetch(`/runs/${runId}/logs/download`);
+			expect(res.status).toBe(200);
+			const rows = (await res.text())
+				.split("\n")
+				.filter((l) => l !== "")
+				.map((l) => RunLogDownloadRow.parse(JSON.parse(l)));
+			expect(rows.map(brief)).toEqual(expected);
+		} finally {
+			sse.close();
+		}
 	});
 });

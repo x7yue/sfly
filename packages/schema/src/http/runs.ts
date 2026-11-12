@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
+import { RunLogNodesParam } from "../run-log-scope.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
@@ -323,6 +324,8 @@ const ByteOffset = z.coerce.number().int().min(0);
 /** 查询参数：空字符串等于没给。 */
 const blankAsMissing = <S extends z.ZodType>(schema: S) =>
 	z.preprocess((v) => (v === "" ? undefined : v), schema.optional());
+/** 只要这些级别，逗号分隔。 */
+const LevelsParam = blankAsMissing(csv(LOG_LEVELS));
 
 export const LogPageQuery = z
 	.object({
@@ -331,8 +334,7 @@ export const LogPageQuery = z
 		/** 往后翻页：读这个字节偏移之后的行。不能与 before 同时给。 */
 		after: blankAsMissing(ByteOffset),
 		limit: z.coerce.number().int().min(1).max(MAX_LOG_PAGE_LINES).default(200),
-		/** 只要这些级别，逗号分隔。 */
-		level: blankAsMissing(csv(LOG_LEVELS)),
+		level: LevelsParam,
 		/** 只要这些来源，逗号分隔。 */
 		source: blankAsMissing(csv(LOG_SOURCES)),
 	})
@@ -355,6 +357,125 @@ export const LogPage = z.object({
 	truncated: z.boolean(),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
+});
+
+/** 合并日志里一行的来源：它是哪个节点的哪一次尝试（任务）输出的。 */
+export const LogOrigin = z.object({
+	task_id: z.string(),
+	chain_instance_id: z.string(),
+	/** 所在子流程的名称（与运行视图里链的 name 相同）；主链为 null。 */
+	subflow: z.string().nullable(),
+	node_id: z.string(),
+	attempt: z.number().int(),
+});
+
+/**
+ * 合并日志里一行排序要用、行本身没有的信息（run-log-order.ts）：由控制面按这一行所在的任务填上，
+ * 所以只凭行就能和别的行比较先后（前端插入实时行时不必查运行视图）。
+ */
+export const RunLogTaskOrder = z.object({
+	/** 所在链路实例的层级（主链为 0）与开始时间：控制面时间相同时，链按层级、开始时间、链路实例 ID 排。 */
+	chain_depth: z.number().int(),
+	chain_started_at: Timestamp,
+	/** 节点在场景版本里这条链上的位置，从 0 开始：同一条链上按它排。 */
+	node_index: z.number().int(),
+	/** 任务开始时间（还没开始时是排队时间）：没有控制面时间的旧行按它排。 */
+	task_started_at: Timestamp,
+});
+
+/** 按运行合并的一行：任务日志里的一行，加上它的来源和排序要用的信息。 */
+export const RunLogLine = LogLineView.extend(LogOrigin.shape).extend(RunLogTaskOrder.shape);
+
+/** 按运行分页的游标：不透明字符串，由上一页的 before / after 原样传回。 */
+const RunLogCursor = z.string();
+
+/**
+ * 按运行的实时推送的位置（#225）：不透明字符串，记录范围内每个任务已经推送到的序号。
+ * 首次连接用分页返回的 `live_after`，之后每个事件的 ID 都是这个格式（浏览器重连时经 `Last-Event-ID` 带回）。
+ */
+const RunLogLiveCursor = z.string();
+
+/**
+ * 按运行读取日志的范围参数：分页、实时推送（#225）、下载（#226）共用。
+ * 不给 `nodes` 是全部节点；给了空字符串是没有节点（写法与判断函数见 run-log-scope.ts）。
+ */
+export const RunLogScopeQuery = z.object({
+	nodes: RunLogNodesParam.optional(),
+});
+
+/** 按运行读取日志的级别参数：分页与实时推送共用（下载不受级别筛选影响）。 */
+export const RunLogLevelQuery = z.object({
+	level: LevelsParam,
+});
+
+export const RunLogPageQuery = z
+	.object({
+		/** 往前翻页：读这个游标之前的行。不给 before 和 after 时读最新的一页。 */
+		before: blankAsMissing(RunLogCursor),
+		/** 往后接续：读这个游标之后的行。不能与 before 同时给。 */
+		after: blankAsMissing(RunLogCursor),
+		limit: z.coerce.number().int().min(1).max(MAX_LOG_PAGE_LINES).default(200),
+		...RunLogScopeQuery.shape,
+		...RunLogLevelQuery.shape,
+	})
+	.refine((q) => q.before === undefined || q.after === undefined, {
+		message: "before 与 after 不能同时给",
+	});
+
+/**
+ * 一次运行全部任务的日志合并成的一页（没选中节点时的日志视图，#220）。排序规则见 docs/ARCHITECTURE.md §6.3
+ * 与 run-log-order.ts：同一个任务内按 seq，不同任务之间按控制面时间归并；时间相同时按链、节点、尝试的固定顺序；
+ * 没有控制面时间的旧行用任务开始时间。比较先后要用的信息每行都带着（{@link RunLogTaskOrder}）。
+ *
+ * 游标记录每个任务读到的字节偏移：拿到这一页之后才开始的任务不在游标里，往前翻页时视为之前没有内容，往后接续时从头读。
+ * 单次请求的扫描量有上限（所有任务分摊），所以一页可能不满 limit 行，筛选级别时甚至可能一行都没有；
+ * 这不表示读到了开头或末尾，看 `reached_start` / `reached_end`，没到就用 `before` / `after` 接着读。
+ *
+ * 范围（`nodes`）和级别（`level`）在服务端执行，游标只对同一组范围和级别有效：换了范围或级别要从最新一页重新读
+ * （新纳入范围的任务不在游标里，往前翻会漏掉它们）。
+ */
+export const RunLogPage = z.object({
+	run_id: z.string(),
+	/** 往前翻页时是游标之前（不给游标时是全部）的最后 limit 行，往后接续时是游标之后的前 limit 行，按上面的顺序。 */
+	lines: z.array(RunLogLine),
+	/** 读这一页之前的行：下一次往前翻页的 before。 */
+	before: RunLogCursor,
+	/** 读这一页之后的行：往后接续的 after。 */
+	after: RunLogCursor,
+	/** before 之前已经没有任何行（这一页之前就是运行的开头）。 */
+	reached_start: z.boolean(),
+	/**
+	 * after 之后已经没有任何行（读取的那一刻）。往后接续时一页同样可能不满甚至为空，没到末尾就用 after 接着读；
+	 * 之后写入的行用 after 再读或由实时推送送达。
+	 */
+	reached_end: z.boolean(),
+	/**
+	 * 实时流起点：读这一页那一刻范围内每个任务已写入的位置。最新一页的这个值就是实时推送（`runEvents`）的 `after`：
+	 * 之后写入的行（包括之后才开始的任务）都由实时推送送达，与这一页和往前翻到的页合起来不重复、不遗漏。
+	 */
+	live_after: RunLogLiveCursor,
+	/** 日志超过大小上限被截断的任务，按运行视图里的顺序。 */
+	truncated_tasks: z.array(LogOrigin),
+	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
+	expired: z.boolean(),
+});
+
+/**
+ * 按运行下载的合并日志（JSONL）里的一行（#226）：任务日志里的一行，加上它的来源。两种时间都有（升级之前写入的行补齐：
+ * `time` 为 null、`agent_time` 是当时记的 Agent 时间），不带排序用的字段（顺序已经体现在行的先后上）。
+ * 行的顺序与合并视图相同，见 {@link RunLogPage}。
+ */
+export const RunLogDownloadRow = LogLineView.extend(
+	LogOrigin.pick({ task_id: true, subflow: true, node_id: true, attempt: true }).shape,
+);
+
+/**
+ * 按运行实时推送的一批新写入的行（`GET /runs/:id/logs/events` 的 `logs` 事件），格式与分页相同。
+ * 一批里可能有多个任务的行，同一任务内按 seq；断线后补发的行（晚到的行）可能比已推送的别的任务的行更早，
+ * 收到后按排序键（run-log-order.ts）插到对应位置。
+ */
+export const RunLogChunk = z.object({
+	lines: z.array(RunLogLine),
 });
 
 /** 实时推送的一批行（`GET /tasks/:id/logs/events` 的 `logs` 事件）；offset 是第一行的字节偏移。 */
@@ -389,6 +510,45 @@ export const logsApi = {
 		path: "/tasks/:id/logs/download",
 		params: IdParams,
 		contentType: "application/x-ndjson",
+	}),
+	/** 一次运行全部任务的日志合并分页读取（最新一页，或用游标往前翻、往后接续）；运行不存在时 404。 */
+	runPage: endpoint({
+		method: "GET",
+		path: "/runs/:id/logs",
+		key: ["logs", "run-page"],
+		params: IdParams,
+		query: RunLogPageQuery,
+		response: RunLogPage,
+	}),
+	/**
+	 * 下载一次运行（范围内）合并后的日志：JSONL，每行是 {@link RunLogDownloadRow}，顺序与合并视图相同，
+	 * 只含请求时已写入的内容，不受级别筛选影响；运行已过保留期时 410 `expired`，运行不存在时 404。
+	 */
+	runDownload: download({
+		path: "/runs/:id/logs/download",
+		params: IdParams,
+		query: RunLogScopeQuery,
+		contentType: "application/x-ndjson",
+	}),
+	/**
+	 * 按运行的实时推送（SSE，#225）：范围（`nodes`）内全部任务新写入的行，包括订阅之后才开始的任务和尝试，
+	 * 只推送 `level` 里的级别；范围和级别要与读历史时相同。`after` 用最新一页的 `live_after`。
+	 *
+	 * - `logs`：一批新行；事件 ID 是推送到的位置（不透明），浏览器原生 EventSource 断线重连时经 `Last-Event-ID`
+	 *   带回，控制面只补发之后的行，不重复也不遗漏。
+	 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
+	 *
+	 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
+	 */
+	runEvents: stream({
+		path: "/runs/:id/logs/events",
+		params: IdParams,
+		query: z.object({
+			after: blankAsMissing(RunLogLiveCursor),
+			...RunLogScopeQuery.shape,
+			...RunLogLevelQuery.shape,
+		}),
+		events: { logs: RunLogChunk, reload: z.object({}) },
 	}),
 };
 
@@ -459,5 +619,11 @@ export type PreflightProblem = z.infer<typeof PreflightProblem>;
 export type LogLineView = z.infer<typeof LogLineView>;
 export type LogPage = z.infer<typeof LogPage>;
 export type LogChunk = z.infer<typeof LogChunk>;
+export type LogOrigin = z.infer<typeof LogOrigin>;
+export type RunLogTaskOrder = z.infer<typeof RunLogTaskOrder>;
+export type RunLogLine = z.infer<typeof RunLogLine>;
+export type RunLogPage = z.infer<typeof RunLogPage>;
+export type RunLogDownloadRow = z.infer<typeof RunLogDownloadRow>;
+export type RunLogChunk = z.infer<typeof RunLogChunk>;
 export type ProgressEvent = z.infer<typeof ProgressEvent>;
 export type ArtifactView = z.infer<typeof ArtifactView>;

@@ -47,6 +47,7 @@ export async function startTestControlPlane(
 	options: { clock?: Clock; agentToken?: string } & Pick<
 		ControlPlaneOptions,
 		| "logLimitBytes"
+		| "logScanBytes"
 		| "metricLimitBytes"
 		| "artifactLimitBytes"
 		| "retentionDays"
@@ -76,6 +77,7 @@ export async function startTestControlPlane(
 			clock,
 			agentToken: options.agentToken,
 			logLimitBytes: options.logLimitBytes,
+			logScanBytes: options.logScanBytes,
 			metricLimitBytes: options.metricLimitBytes,
 			// 指标写入扫描（#29）同样调快。
 			metricFlushIntervalMs: 20,

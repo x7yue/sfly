@@ -42,12 +42,13 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 
 	const [store] = useState(() => createMonitorStore());
 	// 第一次拿到运行视图时选中节点：链接里给的节点，否则失败的、其次执行中的节点。
+	// 在渲染里选而不是在 effect 里：底部面板第一次渲染就看到选中的节点，不会先挂上没选中节点时的合并日志、
+	// 白发一次请求之后又卸载（这时依赖这个状态的子组件还没有挂上）。
 	const selectedOnce = useRef(false);
-	useEffect(() => {
-		if (!run || selectedOnce.current) return;
+	if (run && !selectedOnce.current) {
 		selectedOnce.current = true;
 		store.select(focusNode(run, initialNode));
-	}, [run, initialNode, store]);
+	}
 
 	const name = orchestration.data?.name;
 	useRunDocumentTitle(run, name);

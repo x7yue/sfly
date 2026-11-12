@@ -1,9 +1,16 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
-import { Transform, type TransformCallback } from "node:stream";
-import { logsApi } from "@sfly/schema";
+import { Readable, Transform, type TransformCallback } from "node:stream";
+import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
+import {
+	decodeRunLogCursor,
+	decodeRunLogLiveCursor,
+	encodeRunLogCursor,
+	encodeRunLogLiveCursor,
+} from "../logs/run-log-cursor.js";
+import type { RunLogs } from "../logs/run-log-pages.js";
 import { type LogChunk, normalizeLogRow, type TaskLogs } from "../logs/task-logs.js";
 import type { Sse } from "../sse/sse.js";
 import { isUuid } from "../util/uuid.js";
@@ -23,11 +30,111 @@ import { sendError } from "./errors.js";
  *   契约见 @sfly/schema 的 logsApi.page，查询参数不合法时 400 `invalid_request`。
  * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（升级之前写入的行在下载时补齐）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
+ *
+ * 按运行（#220）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取（`before` / `after` 游标，#223），
+ * 见 run-log-pages.ts 与 run-log-cursor.ts；游标不是这里返回的格式时 400 `invalid_request`。
+ * `nodes`（节点范围）与 `level`（级别）在服务端执行（#224），写法见 @sfly/schema 的 run-log-scope.ts。
+ * 实时推送（#225）：`GET /runs/:id/logs/events`，`after` 是分页返回的 `live_after`，事件 ID 是推送到的位置，
+ * 浏览器重连时 URL 里仍是第一次的 `after`，`Last-Event-ID` 是推送到的位置，按每个任务取较大者接上（RunLogs.follow）。
+ * 运行已过保留期时只保持连接、不推送（之后不会再有日志）。
+ * `GET /runs/:id/logs/download`（#226）把范围内的整次运行日志按同样的顺序流式输出成 JSONL，不带 `level`；
+ * 过了保留期 410 `expired`，运行不存在 404。
  */
 export function registerLogRoutes(
 	app: FastifyInstance,
-	deps: { logs: TaskLogs; sse: Sse; isPurged: (runId: string) => Promise<boolean> },
+	deps: {
+		logs: TaskLogs;
+		runLogs: RunLogs;
+		sse: Sse;
+		isPurged: (runId: string) => Promise<boolean>;
+	},
 ): void {
+	contractRoute(app, logsApi.runPage, async ({ params, query }, reply) => {
+		const before = query.before === undefined ? undefined : decodeRunLogCursor(query.before);
+		const after = query.after === undefined ? undefined : decodeRunLogCursor(query.after);
+		if ((query.before !== undefined && !before) || (query.after !== undefined && !after)) {
+			return sendError(reply, 400, "invalid_request", "游标不是之前返回的 before / after");
+		}
+		const { limit, nodes: scope } = query;
+		const filter = levelFilter(query);
+		const page = isUuid(params.id)
+			? await deps.runLogs.page(
+					params.id,
+					after
+						? { direction: "forward", after, limit, filter, scope }
+						: { direction: "backward", before, limit, filter, scope },
+				)
+			: undefined;
+		if (!page) return sendError(reply, 404, "not_found", "run not found");
+		// 清理之后文件已经不在，读出来本来就是空的；判断放在读取之后，读取期间被清理也不会返回半页。
+		const expired = await deps.isPurged(params.id);
+		const start = new Map<number, number>();
+		return {
+			run_id: params.id,
+			lines: expired ? [] : page.lines,
+			before: encodeRunLogCursor(expired ? start : page.before),
+			after: encodeRunLogCursor(expired ? start : page.after),
+			reached_start: expired || page.reachedStart,
+			reached_end: expired || page.reachedEnd,
+			live_after: encodeRunLogLiveCursor(expired ? start : page.live),
+			truncated_tasks: expired ? [] : page.truncatedTasks,
+			expired,
+		};
+	});
+
+	contractDownload(app, logsApi.runDownload, async ({ params, query }, reply) => {
+		const batches = isUuid(params.id)
+			? await deps.runLogs.readAll(params.id, query.nodes)
+			: undefined;
+		if (!batches) return sendError(reply, 404, "not_found", "run not found");
+		if (await deps.isPurged(params.id)) {
+			return sendError(reply, 410, "expired", "logs of this run were removed after retention");
+		}
+		return reply
+			.header("content-type", `${logsApi.runDownload.contentType}; charset=utf-8`)
+			.header("content-disposition", attachment(`run-${params.id}.log.jsonl`))
+			.send(Readable.from(jsonRows(batches)));
+	});
+
+	contractStream(
+		app,
+		deps.sse,
+		logsApi.runEvents,
+		async ({ params, query }, open, reply, request) => {
+			const after = query.after === undefined ? new Map() : decodeRunLogLiveCursor(query.after);
+			if (!after) {
+				return sendError(reply, 400, "invalid_request", "after 不是之前返回的 live_after");
+			}
+			const runId = params.id;
+			if (!isUuid(runId) || !(await deps.runLogs.exists(runId))) {
+				return sendError(reply, 404, "not_found", "run not found");
+			}
+			const purged = await deps.isPurged(runId);
+			open((stream) => {
+				if (purged) return undefined;
+				const from = new Map(after);
+				const resumed = stream.lastEventId && decodeRunLogLiveCursor(stream.lastEventId);
+				for (const [order, seq] of resumed || []) {
+					from.set(order, Math.max(seq, from.get(order) ?? 0));
+				}
+				return deps.runLogs.follow(
+					runId,
+					{ scope: query.nodes, filter: levelFilter(query), after: from },
+					(event) => {
+						const id = encodeRunLogLiveCursor(event.at);
+						if (event.kind === "lines") stream.send("logs", { lines: event.lines }, id);
+						else stream.send("reload", {}, id);
+					},
+					(error) => {
+						request.log.error(error);
+						stream.close();
+					},
+				);
+			});
+			return undefined;
+		},
+	);
+
 	contractRoute(app, logsApi.page, async ({ params, query }, reply) => {
 		const info = isUuid(params.id) ? await deps.logs.describe(params.id) : undefined;
 		if (!info) return sendError(reply, 404, "not_found", "task not found");
@@ -116,6 +223,20 @@ export function registerLogRoutes(
 		});
 		return undefined;
 	});
+}
+
+/** 按级别筛选（不给 `level` 是不筛选）：按运行的分页与实时推送共用。 */
+const levelFilter = ({ level }: { level?: LogLineView["level"][] | undefined }): LogFilter => ({
+	levels: level ? new Set(level) : undefined,
+});
+
+/** 下载文件里每行的字段：契约里 RunLogDownloadRow 声明的，顺序也一样。 */
+const DOWNLOAD_FIELDS = Object.keys(RunLogDownloadRow.shape);
+
+async function* jsonRows(batches: AsyncIterable<RunLogLine[]>): AsyncGenerator<string> {
+	for await (const lines of batches) {
+		yield lines.map((l) => `${JSON.stringify(l, DOWNLOAD_FIELDS)}\n`).join("");
+	}
 }
 
 /**

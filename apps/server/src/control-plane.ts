@@ -70,6 +70,8 @@ export interface ControlPlaneOptions {
 	sweepIntervalMs?: number;
 	/** 单个任务日志的上限（字节），默认 200 MB；超出部分截断（#18）。 */
 	logLimitBytes?: number;
+	/** 按运行合并读取日志时一次请求最多扫描的字节数，所有任务分摊，默认 8 MB（#223）；测试里调小。 */
+	logScanBytes?: number;
 	/** 单个任务指标数据的上限（字节，按每点 28 字节折算成点数），默认 50 MB；超出后截断（#29）。 */
 	metricLimitBytes?: number;
 	/** 指标写入的扫描间隔，默认 1 秒；当前段攒了多久（约 10 秒）才写只按注入的时钟判断（#29）。 */
@@ -286,6 +288,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		feishuBots,
 		feishu,
 		sseHeartbeatMs: options.sseHeartbeatMs,
+		logScanBytes: options.logScanBytes,
 		webApp,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";

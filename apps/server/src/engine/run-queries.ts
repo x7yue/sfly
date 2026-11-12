@@ -59,7 +59,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		.select()
 		.from(chainInstances)
 		.where(eq(chainInstances.runId, runId))
-		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt));
+		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt), asc(chainInstances.id));
 	const allTasks = await db
 		.select()
 		.from(tasks)

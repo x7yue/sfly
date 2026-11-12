@@ -15,6 +15,7 @@ import {
 	tasks,
 } from "../db/schema.js";
 import { Topics } from "../sse/topics.js";
+import { readLogPage } from "./log-pages.js";
 import { maskSecrets, secretValues } from "./secrets.js";
 
 /**
@@ -28,6 +29,8 @@ import { maskSecrets, secretValues } from "./secrets.js";
  *   文本里的换行被 JSON 转义，所以一行就是一条日志：任意行首的字节偏移都是合法的分页位置。
  * - 每行带两种时间（ADR 0018）：`time` 是控制面时间，由这一行的单调时钟读数按连接的对应关系折算
  *   （旧版本 Agent 没有读数时取收到这一批的时刻）；`agent_time` 是 Agent 时间，原样保存，不做范围检查。
+ *   折算出的时间比上一行早不到 2 秒（重连后重新建立对应关系等，误差是一次网络往返的量级）时记成上一行的时间；
+ *   早得更多说明折算出了错（例如上一行偏到了未来），保留折算出的时间，免得之后的行都停在那个时刻。
  *   升级之前写入的行只有一个 `time`（当时记的是 Agent 时间）、没有 `agent_time`：读出时一律经
  *   {@link logLineView} / {@link normalizeLogRow}，按「只有 Agent 时间、控制面时间未记录」返回。
  * - 只追加。`tasks.log_bytes` 是已写入的字节数（= 文件大小），`tasks.log_seq` 是最后一行的序号。
@@ -39,7 +42,8 @@ import { maskSecrets, secretValues } from "./secrets.js";
  *   （已写入的最大 Agent 序号）的行视为重复而丢弃；写入的行的序号比上一行多出的部分等于 Agent 序号多出的部分，
  *   所以 Agent 断线排队时丢弃的行在文件里仍显示为序号缺口。
  * - 控制面自己写的行（source `system`，{@link TaskLogs.appendSystem}）取上一行的序号加 1，不占用 Agent 序号：
- *   之后 Agent 上报的行照常写入。
+ *   之后 Agent 上报的行照常写入。它的控制面时间取写入时的时钟，同样按上面的 2 秒规则与上一行比较，
+ *   所以按运行合并读取（`run-log-pages.ts`）时它和 Agent 上报的行遵守同一个「时间随序号不减」。
  * 没有控制面写的行时，两种序号相同。
  *
  * ## 进度
@@ -142,6 +146,7 @@ interface TaskState {
 	chainInstanceId: string;
 	nodeId: string;
 	attempt: number;
+	order: number;
 	agentName: string | null;
 	/** 相对数据目录。 */
 	path: string;
@@ -150,18 +155,33 @@ interface TaskState {
 	seq: number;
 	/** 已写入的最大 Agent 序号。 */
 	agentSeq: number;
+	/** 最后一行的控制面时间（毫秒）：没有行或最后一行是旧行时为 null，还没读过文件时为 undefined。 */
+	lastTimeMs: number | null | undefined;
 	truncated: boolean;
 	secrets: string[];
 }
+
+/**
+ * 一行折算出的控制面时间比上一行早不到这么多（毫秒）时，记成上一行的时间。折算误差（重连后重新建立对应关系等）
+ * 是一次网络往返的量级，远小于 2 秒；抹平它让同一任务内的时间随序号不减。早得更多说明折算出了错（例如上一行
+ * 偏到了未来）：这时也记成上一行的时间，之后的行会全部停在那个时刻，所以保留折算出的时间。
+ * 值与 ADR 0018 里「偏差不到 2 秒视为一致」（页面提示时钟偏差的阈值）相同，但两者是独立的决定：
+ * 调整那个阈值不应该改变日志怎么记。
+ */
+const TIME_REGRESSION_CLAMP_MS = 2000;
 
 /** 一个任务的日志文件概况（分页读取、下载用）。 */
 export interface TaskLogInfo {
 	runId: string;
 	nodeId: string;
 	attempt: number;
+	/** 任务的创建顺序（tasks.seq）：按运行分页的游标用它代替任务 ID。 */
+	order: number;
 	/** 日志文件的绝对路径（还没有日志时文件可能不存在）。 */
 	file: string;
-	/** 最后一行的序号。 */
+	/** 列出任务那一刻已写入的字节数：按运行读取时每个任务只读到这里。 */
+	bytes: number;
+	/** 最后一行的序号（与 bytes 是同一刻的）。 */
 	seq: number;
 	truncated: boolean;
 }
@@ -169,6 +189,8 @@ export interface TaskLogInfo {
 export class TaskLogs {
 	/** 新写入的日志（主题 = 任务 ID），写入文件之后发布。 */
 	readonly lines = new Topics<LogChunk>();
+	/** 同样的日志按运行发布（主题 = 运行 ID）：按运行的实时推送靠它覆盖订阅之后才产生的任务。 */
+	readonly runLines = new Topics<LogChunk>();
 	/** 进度更新（主题 = 运行 ID），写入数据库之后发布。 */
 	readonly progress = new Topics<ProgressEvent>();
 
@@ -213,12 +235,29 @@ export class TaskLogs {
 	/** 任务日志文件的概况；任务不存在时为 undefined。 */
 	async describe(taskId: string): Promise<TaskLogInfo | undefined> {
 		const state = await this.#state(taskId);
-		if (!state) return undefined;
+		return state && this.#info(state);
+	}
+
+	/** 一次运行全部任务的日志文件概况（任务 ID → 概况），一次查询；不放进缓存，免得挤掉正在写入的任务。 */
+	async describeRun(runId: string): Promise<Map<string, TaskLogInfo>> {
+		const rows = await this.deps.db.select().from(tasks).where(eq(tasks.runId, runId));
+		const infos = await Promise.all(
+			rows.map(async (task) => {
+				const state = (await this.#states.get(task.id)) ?? (await this.#stateOf(task));
+				return [task.id, this.#info(state)] as const;
+			}),
+		);
+		return new Map(infos);
+	}
+
+	#info(state: TaskState): TaskLogInfo {
 		return {
 			runId: state.runId,
 			nodeId: state.nodeId,
 			attempt: state.attempt,
+			order: state.order,
 			file: join(this.deps.dataDir, state.path),
+			bytes: state.bytes,
 			seq: state.seq,
 			truncated: state.truncated,
 		};
@@ -237,7 +276,7 @@ export class TaskLogs {
 				state,
 				batch.lines.map((line) => ({
 					agentSeq: Number(line.seq),
-					time: controlPlaneTime(line.monotonicMs).toISOString(),
+					timeMs: controlPlaneTime(line.monotonicMs).getTime(),
 					agent_time: agentTime(line.timeUnixMs),
 					source: SOURCES[line.source] ?? "stdout",
 					level: LEVELS[line.level] ?? "info",
@@ -259,7 +298,7 @@ export class TaskLogs {
 			await this.#write(taskId, state, [
 				{
 					agentSeq: null,
-					time: this.deps.clock.now().toISOString(),
+					timeMs: this.deps.clock.now().getTime(),
 					agent_time: null,
 					source: "system",
 					level,
@@ -271,26 +310,43 @@ export class TaskLogs {
 
 	/**
 	 * 把若干行追加到任务的日志文件，按「序号」一节分配序号：Agent 序号不大于已写入的最大 Agent 序号的行视为重复丢弃，
-	 * 控制面写的行（`agentSeq` 为 null）接在最后一行后面；secret 的值写入前打码；
-	 * 放不下的第一行换成截断标记，之后的行全部丢弃（#18）。调用方在 {@link TaskLogs.#serial} 里调用。
+	 * 控制面写的行（`agentSeq` 为 null）接在最后一行后面；控制面时间比上一行早不到 2 秒时记成上一行的时间
+	 * （{@link TIME_REGRESSION_CLAMP_MS}，两种来源的行一样）；secret 的值写入前打码；
+	 * 放不下的第一行换成截断标记，之后的行全部丢弃（#18）。写完按任务和按运行各发布一次。
+	 * 调用方在 {@link TaskLogs.#serial} 里调用。
 	 */
 	async #write(taskId: string, state: TaskState, entries: readonly NewLine[]): Promise<void> {
 		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。
 		state.secrets = await this.#currentSecrets(state.runId);
+		const file = join(this.deps.dataDir, state.path);
+		if (state.lastTimeMs === undefined) state.lastTimeMs = await lastLineTimeMs(file);
 		const lines: LogLineView[] = [];
 		let text = "";
 		let bytes = state.bytes;
 		let seq = state.seq;
 		let agentSeq = state.agentSeq;
+		let lastTimeMs = state.lastTimeMs;
 		let truncated = false;
-		for (const { agentSeq: lineAgentSeq, ...entry } of entries) {
+		for (const { agentSeq: lineAgentSeq, timeMs: converted, ...entry } of entries) {
 			if (lineAgentSeq === null) seq += 1;
 			else if (lineAgentSeq <= agentSeq) continue;
 			else {
 				seq += lineAgentSeq - agentSeq;
 				agentSeq = lineAgentSeq;
 			}
-			const view: LogLineView = { seq, ...entry, text: maskSecrets(entry.text, state.secrets) };
+			const timeMs =
+				lastTimeMs != null &&
+				converted < lastTimeMs &&
+				lastTimeMs - converted < TIME_REGRESSION_CLAMP_MS
+					? lastTimeMs
+					: converted;
+			lastTimeMs = timeMs;
+			const view: LogLineView = {
+				seq,
+				time: new Date(timeMs).toISOString(),
+				...entry,
+				text: maskSecrets(entry.text, state.secrets),
+			};
 			let row = `${JSON.stringify(view)}\n`;
 			if (bytes + Buffer.byteLength(row) > this.#limit) {
 				// 放不下：这一行换成截断标记，之后的行全部丢弃。
@@ -306,13 +362,13 @@ export class TaskLogs {
 			if (truncated) break;
 		}
 		if (lines.length === 0) return;
-		const file = join(this.deps.dataDir, state.path);
 		await mkdir(dirname(file), { recursive: true });
 		await appendFile(file, text);
 		const offset = state.bytes;
 		state.bytes = bytes;
 		state.seq = seq;
 		state.agentSeq = agentSeq;
+		state.lastTimeMs = lastTimeMs;
 		state.truncated = truncated;
 		await this.deps.db
 			.update(tasks)
@@ -324,7 +380,9 @@ export class TaskLogs {
 				logTruncated: truncated,
 			})
 			.where(eq(tasks.id, taskId));
-		this.lines.publish(taskId, { task_id: taskId, lines, offset });
+		const chunk = { task_id: taskId, lines, offset };
+		this.lines.publish(taskId, chunk);
+		this.runLines.publish(state.runId, chunk);
 	}
 
 	/** 记录最新进度（只接受任务所在 Agent 上报的）；与同一任务的日志追加串行执行。 */
@@ -457,8 +515,10 @@ export class TaskLogs {
 			.select({ task: tasks })
 			.from(tasks)
 			.where(eq(tasks.id, taskId));
-		if (!row) return undefined;
-		const { task } = row;
+		return row && this.#stateOf(row.task);
+	}
+
+	async #stateOf(task: typeof tasks.$inferSelect): Promise<TaskState> {
 		const path = task.logPath ?? join("logs", task.runId, `${task.id}.jsonl`);
 		// 文件大小是已写入字节数的准绳（数据库更新之前控制面可能退出过）。
 		const bytes = await stat(join(this.deps.dataDir, path)).then(
@@ -470,11 +530,14 @@ export class TaskLogs {
 			chainInstanceId: task.chainInstanceId,
 			nodeId: task.nodeId,
 			attempt: task.attempt,
+			order: task.seq,
 			agentName: task.agentName,
 			path,
 			bytes,
 			seq: task.logSeq,
 			agentSeq: task.logAgentSeq,
+			// 第一次写入时才读（读分页、下载不需要它）。
+			lastTimeMs: undefined,
 			// 写完截断标记、数据库还没更新时控制面可能退出过：文件已到上限也算截断。
 			truncated: task.logTruncated || bytes >= this.#limit,
 			// 占位：写入前总会先经 #currentSecrets 刷新。
@@ -483,8 +546,18 @@ export class TaskLogs {
 	}
 }
 
-/** 要写进文件的一行（还没有序号）：`agentSeq` 是 Agent 上报的序号，控制面自己写的行为 null。 */
-type NewLine = Omit<LogLineView, "seq"> & { agentSeq: number | null };
+/**
+ * 要写进文件的一行（还没有序号）：`agentSeq` 是 Agent 上报的序号，控制面自己写的行为 null；
+ * `timeMs` 是折算出（或控制面取到）的控制面时间，写入时再按 2 秒规则与上一行比较。
+ */
+type NewLine = Omit<LogLineView, "seq" | "time"> & { agentSeq: number | null; timeMs: number };
+
+/** 日志文件最后一行的控制面时间（毫秒）；没有行或最后一行是旧行时为 null。 */
+async function lastLineTimeMs(file: string): Promise<number | null> {
+	const { lines } = await readLogPage(file, { direction: "backward", limit: 1, filter: {} });
+	const time = lines[0]?.time;
+	return time ? Date.parse(time) : null;
+}
 
 /** 把一条消息里的单调时钟读数折算成控制面时间（0 = 没有读数，取收到这条消息的时刻）。 */
 export type ControlPlaneTimeOf = (monotonicMs: bigint) => Date;

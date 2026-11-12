@@ -14,6 +14,8 @@ import {
 	failureSummary,
 	focusNode,
 	latestRunView,
+	logOrigin,
+	logScope,
 	nodeTitle,
 	runDocumentTitle,
 	runFailure,
@@ -99,6 +101,109 @@ describe("子流程名称（#80 故事 1、23）", () => {
 		});
 		expect(nodeTitle(node("stop"), decls.get("stop"), decls)).toBe("停止子流程「监控」");
 		expect(nodeTitle(node("unset"), decls.get("unset"), decls)).toBe("停止子流程");
+	});
+});
+
+describe("合并日志的来源节点（#222）", () => {
+	const node = (id: string, attempts: number): NodeRunView => ({
+		node_id: id,
+		kind: "package",
+		status: "running",
+		agent: "agent-a",
+		outputs: null,
+		error: null,
+		attempts: Array.from({ length: attempts }, (_, i) => ({ attempt: i + 1 }) as AttemptView),
+	});
+	const chain = (id: string, name: string | null, nodes: NodeRunView[]): ChainRunView => ({
+		id,
+		chain_id: name === null ? "entry" : "sub",
+		name,
+		parent_chain_instance_id: name === null ? null : "main",
+		async_node_id: name === null ? null : "spawn",
+		depth: name === null ? 0 : 1,
+		status: "running",
+		params: {},
+		started_at: "2026-01-01T00:00:00.000Z",
+		ended_at: null,
+		nodes,
+	});
+	const run: RunView = {
+		...view("running"),
+		chains: [
+			chain("main", null, [node("fetch", 1), node("verify", 2)]),
+			chain("sub-1", "回放", [node("probe", 1)]),
+			chain("sub-2", "", [node("probe", 1)]),
+		],
+	};
+	const origin = (chainInstanceId: string, subflow: string | null, nodeId: string, attempt = 1) =>
+		logOrigin(run, {
+			task_id: "t",
+			chain_instance_id: chainInstanceId,
+			subflow,
+			node_id: nodeId,
+			attempt,
+		});
+
+	it("主链省略子流程名，只有一次尝试的节点省略尝试序号", () => {
+		expect(origin("main", null, "fetch")).toBe("fetch");
+		expect(origin("main", null, "verify", 1)).toBe("verify #1");
+		expect(origin("main", null, "verify", 2)).toBe("verify #2");
+		expect(origin("sub-1", "回放", "probe")).toBe("回放 / probe");
+		expect(origin("sub-2", "", "probe")).toBe("未命名子流程 / probe");
+	});
+
+	it("运行视图里还没有这次重试时，按这一行自己的尝试序号标出", () => {
+		expect(origin("main", null, "fetch", 2)).toBe("fetch #2");
+	});
+});
+
+describe("日志页签的节点范围（#224）", () => {
+	const node = (id: string): NodeRunView => ({
+		node_id: id,
+		kind: "package",
+		status: "running",
+		agent: "agent-a",
+		outputs: null,
+		error: null,
+		attempts: [],
+	});
+	const chain = (id: string, nodes: string[]): ChainRunView => ({
+		id,
+		chain_id: id,
+		name: id === "main" ? null : id,
+		parent_chain_instance_id: id === "main" ? null : "main",
+		async_node_id: null,
+		depth: id === "main" ? 0 : 1,
+		status: "running",
+		params: {},
+		started_at: "2026-01-01T00:00:00.000Z",
+		ended_at: null,
+		nodes: nodes.map(node),
+	});
+	const run: RunView = {
+		...view("running"),
+		chains: [chain("main", ["fetch", "verify"]), chain("sub-1", ["probe", "verify"])],
+	};
+
+	it("没有节点筛选时是全部节点（不给范围）", () => {
+		expect(logScope(run, null)).toBeUndefined();
+	});
+
+	it("筛选里勾选的节点，按链路实例和节点 ID 区分同名节点；平台自带图表和运行里没有的键不算", () => {
+		expect(
+			logScope(
+				run,
+				new Set(["sub-1:verify", "main:fetch", "platform", "sub-2:probe", "main:gone"]),
+			),
+		).toEqual([
+			{ chain_instance_id: "main", node_id: "fetch" },
+			{ chain_instance_id: "sub-1", node_id: "verify" },
+		]);
+	});
+
+	it("清空筛选是没有任何节点，不是全部节点", () => {
+		expect(logScope(run, new Set())).toEqual([]);
+		expect(logScope(run, new Set(["platform"]))).toEqual([]);
 	});
 });
 
