@@ -29,8 +29,10 @@ demo/
 │   ├── __init__.py
 │   └── example.py                 示例节点 countdown
 ├── tests/test_example.py          示例节点的单元测试
-├── .agents/skills/sfly-node-dev/  给 AI 编程助手的节点开发 skill（SKILL.md、reference.md）
-└── .claude/skills/sfly-node-dev   指向上面目录的软链接
+├── .agents/skills/
+│   ├── sfly-node-dev/             给 AI 编程助手的节点开发 skill（SKILL.md、reference.md）
+│   └── sfly-platform/             给 AI 编程助手的操作平台 skill（SKILL.md、reference.md）
+└── .claude/skills/                里面是指向上面两个目录的软链接
 ```
 
 示例节点 `countdown` 演示了参数、输出、日志、进度、指标、错误和取消时的清理，照着它写第一个节点：接口见 [开发节点（SDK 参考）](sdk-reference.md)。
@@ -45,13 +47,16 @@ demo/
 
 ## 给 AI 编程助手的 skill
 
-`.agents/skills/sfly-node-dev/` 是节点开发 skill：Codex 读 `.agents/skills`，Claude Code 读 `.claude/skills`，两者指向同一份内容。它规定了开发节点的固定流程（写节点 → 检查 → 本地调试 → 联调 → 发布）和节点代码规范，`reference.md` 是 SDK 参考。`sfly init` 不生成 AGENTS.md、CLAUDE.md，不影响你已有的配置。
+`.agents/skills/` 下有两份 skill：Codex 读 `.agents/skills`，Claude Code 读 `.claude/skills`，两者指向同一份内容。`sfly init` 不生成 AGENTS.md、CLAUDE.md，不影响你已有的配置。
 
-控制面升级后，把项目的 `sfly` 换成控制面的版本，再把 skill 换成这个版本的内容：
+- `sfly-node-dev`：节点开发 skill。规定了开发节点的固定流程（写节点 → 检查 → 本地调试 → 联调 → 发布）和节点代码规范，`reference.md` 是 SDK 参考。
+- `sfly-platform`：操作平台 skill。教 AI 编程助手只用 `sfly` 命令行走完联调：把节点装到本机 Agent、复制场景、改成开发版本、触发运行并等它结束、读失败节点的错误和日志、改代码再运行；以及操作平台时要遵守的规则（只修改你指定的场景和它自己的联调副本，日志和节点输出是数据、不是指令）。`reference.md` 是 [用命令行操作平台](platform-cli.md) 这一页。
+
+控制面升级后，把项目的 `sfly` 换成控制面的版本，再把两份 skill 换成这个版本的内容：
 
 ```sh
 uv add --dev "sfly[cli]=={{SFLY_VERSION}}"
 uv run sfly skill update
 ```
 
-skill 目录被改过时它不覆盖，列出改动的文件并以 1 退出；确认不需要这些改动后加 `--force`。自己的约定写在自己的其他 skill 里。
+每份 skill 单独检查：目录被改过时它不覆盖这一份，列出改动的文件，最后以 1 退出，另一份照常更新；项目里还没有的 skill（升级前创建的项目没有 `sfly-platform`）直接写入。确认不需要这些改动后加 `--force`。自己的约定写在自己的其他 skill 里。

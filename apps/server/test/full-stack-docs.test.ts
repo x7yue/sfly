@@ -64,6 +64,7 @@ const ROUTES = {
 		"sdk-reference",
 		"local-debug",
 		"integration",
+		"platform-cli",
 		"publish",
 		"subflows",
 		"standard-nodes",

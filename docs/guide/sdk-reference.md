@@ -645,12 +645,13 @@ def test_stress_alerts_the_bot_with_a_red_card(tmp_path: Path) -> None:
 
 | 命令 | 作用 |
 |---|---|
-| `sfly init <目录> [--name <包名>]` | 创建节点包项目：uv 项目、控制面的镜像与 sfly 索引配置、开发依赖、示例节点和测试、节点开发 skill。包名默认是目录名 |
+| `sfly init <目录> [--name <包名>]` | 创建节点包项目：uv 项目、控制面的镜像与 sfly 索引配置、开发依赖、示例节点和测试、两份给 AI 编程助手的 skill（节点开发、操作平台）。包名默认是目录名 |
 | `sfly debug <节点> [--params '<JSON>']` | 本地调试：在当前项目环境里执行一个节点，不经过控制面和 Agent |
 | `sfly dev [项目目录]` | 联调：把项目以 `<包名>@dev` 装到本机 Agent（通过本机 Agent 的本地 socket） |
 | `sfly build [项目目录]` | 扫描 `@node`，构建节点包 `dist/<包名>-<版本>.sflypkg` |
 | `sfly publish [项目目录或 .sflypkg]` | 发布到控制面；给项目目录时先构建 |
-| `sfly skill update [--force]` | 把项目里的节点开发 skill 换成当前 SDK 版本的内容 |
+| `sfly skill update [--force]` | 把项目里的两份 skill（节点开发、操作平台）换成当前 SDK 版本的内容 |
+| `sfly scenario`、`sfly run`、`sfly agent`、`sfly package`、`sfly api` | 操作平台：查看场景、运行、Agent、节点包，触发、等待、取消运行，读日志，pull / push 编辑场景，直接调用接口。见 [用命令行操作平台](platform-cli.md) |
 
 ### `sfly debug`
 
@@ -669,7 +670,7 @@ uv run sfly debug countdown --params '{"name": "世界", "steps": 5}'
 ### `sfly dev`
 
 - 本机要有已连上控制面的 Agent（`install.sh --dev` 安装）。
-- Agent 以可编辑方式安装本地源码，注册为 `<包名>@dev`；在场景里选这个版本和本机 Agent 运行。
+- Agent 以可编辑方式安装本地源码，注册为 `<包名>@dev`；在场景里选这个版本和本机 Agent 运行（浏览器里选，或者用命令行复制场景、改成开发版本再 `sfly run start --wait`，见 `sfly-platform` skill）。
 - 只改函数体时，下一个任务直接用新代码；改了节点的参数、输出、指标声明、依赖或增删节点后重新运行 `sfly dev`。
 
 ### `sfly publish`
@@ -678,5 +679,5 @@ uv run sfly debug countdown --params '{"name": "世界", "steps": 5}'
 
 ### `sfly skill update`
 
-- 用当前安装的 SDK 带的内容整个替换 `.agents/skills/sfly-node-dev/`（`.claude/skills/sfly-node-dev` 是指向它的软链接，不存在时一并创建）。
-- 目录内容和上次写入的不同时不覆盖，列出改动过的文件并以 1 退出；确认不需要这些改动后加 `--force`。自己的约定写在自己的其他 skill 里。
+- 用当前安装的 SDK 带的内容整个替换 `.agents/skills/sfly-node-dev/` 和 `.agents/skills/sfly-platform/`（`.claude/skills/` 下同名的软链接不存在时一并创建；项目里还没有的 skill 直接写入）。
+- 每份 skill 单独检查：目录内容和上次写入的不同时不覆盖这一份，列出改动过的文件，最后以 1 退出，另一份照常更新；确认不需要这些改动后加 `--force`。自己的约定写在自己的其他 skill 里。

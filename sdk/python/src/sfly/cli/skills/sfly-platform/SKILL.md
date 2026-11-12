@@ -1,0 +1,1 @@
+../../../../../../../docs/guide/skills/sfly-platform/SKILL.md
