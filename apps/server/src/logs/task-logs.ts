@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { type AgentMessage, type LogBatch, LogLevel, LogSource, type Progress } from "@sfly/proto";
 import type { TaskProgressView } from "@sfly/schema";
 import { eq } from "drizzle-orm";
-import { CLOCK_OFFSET_THRESHOLD_MS, recordableAgentTimeMs } from "../agents/agent-clock.js";
+import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -136,7 +136,6 @@ interface TaskState {
 	chainInstanceId: string;
 	nodeId: string;
 	attempt: number;
-	/** 任务的创建顺序（tasks.seq）。 */
 	order: number;
 	agentName: string | null;
 	/** 相对数据目录。 */
@@ -149,6 +148,15 @@ interface TaskState {
 	secrets: string[];
 }
 
+/**
+ * 一行折算出的控制面时间比上一行早不到这么多（毫秒）时，记成上一行的时间。折算误差（重连后重新建立对应关系等）
+ * 是一次网络往返的量级，远小于 2 秒；抹平它让同一任务内的时间随序号不减。早得更多说明折算出了错（例如上一行
+ * 偏到了未来）：这时也记成上一行的时间，之后的行会全部停在那个时刻，所以保留折算出的时间。
+ * 值与 ADR 0018 里「偏差不到 2 秒视为一致」（页面提示时钟偏差的阈值）相同，但两者是独立的决定：
+ * 调整那个阈值不应该改变日志怎么记。
+ */
+const TIME_REGRESSION_CLAMP_MS = 2000;
+
 /** 一个任务的日志文件概况（分页读取、下载用）。 */
 export interface TaskLogInfo {
 	runId: string;
@@ -158,9 +166,9 @@ export interface TaskLogInfo {
 	order: number;
 	/** 日志文件的绝对路径（还没有日志时文件可能不存在）。 */
 	file: string;
-	/** 已写入的字节数。 */
+	/** 列出任务那一刻已写入的字节数：按运行读取时每个任务只读到这里。 */
 	bytes: number;
-	/** 已写入的最大序号。 */
+	/** 已写入的最大序号（与 bytes 是同一刻的）。 */
 	seq: number;
 	truncated: boolean;
 }
@@ -268,7 +276,7 @@ export class TaskLogs {
 				const timeMs =
 					lastTimeMs != null &&
 					converted < lastTimeMs &&
-					lastTimeMs - converted < CLOCK_OFFSET_THRESHOLD_MS
+					lastTimeMs - converted < TIME_REGRESSION_CLAMP_MS
 						? lastTimeMs
 						: converted;
 				lastTimeMs = timeMs;

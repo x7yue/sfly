@@ -15,6 +15,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
+import { MESSAGE } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
@@ -266,7 +267,7 @@ export function BottomPanel({
 								run={run}
 								filter={filter}
 								levels={levelsFrom(minLevel)}
-								filtered={minLevel !== "all" || filter !== null}
+								filtered={minLevel !== "all"}
 								timeKind={logTimeKind}
 								day={run.started_at}
 								onEmpty={setLogsEmpty}
@@ -323,8 +324,6 @@ function Segmented({
 	);
 }
 
-const TRUNCATED = "日志超过单个任务的大小上限，之后的输出已被截断。";
-
 function TaskLogsTab({
 	attempt,
 	levels,
@@ -345,9 +344,9 @@ function TaskLogsTab({
 		<LogsView
 			logs={logs}
 			lineKey={seqKey}
-			truncated={logs.truncated ? TRUNCATED : null}
+			truncated={logs.truncated ? MESSAGE.logTruncated : null}
 			filtered={filtered}
-			noOutput={attempt.ended_at !== null ? "这次尝试没有日志输出。" : "还没有日志输出。"}
+			noOutput={attempt.ended_at !== null ? "这次尝试没有日志输出。" : MESSAGE.logOutputPending}
 			timeKind={timeKind}
 			day={day}
 			onEmpty={onEmpty}
@@ -391,9 +390,10 @@ function RunLogsTab({
 			lineKey={runLineKey}
 			origin={origin}
 			onOrigin={onOrigin}
-			truncated={truncated ? `${truncated} 的${TRUNCATED}` : null}
+			truncated={truncated ? `${truncated} 的${MESSAGE.logTruncated}` : null}
 			filtered={filtered}
-			noOutput={run.ended_at !== null ? "这次运行没有日志输出。" : "还没有日志输出。"}
+			scoped={filter !== null}
+			noOutput={run.ended_at !== null ? "这次运行没有日志输出。" : MESSAGE.logOutputPending}
 			timeKind={timeKind}
 			day={day}
 			onEmpty={onEmpty}
@@ -409,6 +409,7 @@ function LogsView<L extends LogLineView>({
 	onOrigin,
 	truncated,
 	filtered,
+	scoped = false,
 	noOutput,
 	timeKind,
 	day,
@@ -430,8 +431,10 @@ function LogsView<L extends LogLineView>({
 	onOrigin?: (line: L) => void;
 	/** 截断提示；没有截断时为 null。 */
 	truncated: string | null;
-	/** 筛选了级别或节点：没有日志时不算空（那是用户自己筛掉的）。 */
+	/** 筛选了级别：没有日志时不算空（那是用户自己筛掉的），面板不自动收起。 */
 	filtered: boolean;
+	/** 只看筛选出的节点：这些节点里没有日志时仍算空（面板照常自动收起），说明文字是没有符合条件的日志。 */
+	scoped?: boolean;
 	/** 没有任何日志时的说明。 */
 	noOutput: string;
 	/** 时间列显示哪一种时间；定位和按时间范围过滤始终用控制面时间。 */
@@ -498,7 +501,7 @@ function LogsView<L extends LogLineView>({
 				<Hint>
 					{logs.expired
 						? "这次运行的日志已超过保留期，已被清理。"
-						: filtered || zoom
+						: filtered || scoped || zoom
 							? "没有符合条件的日志。"
 							: noOutput}
 				</Hint>

@@ -1,7 +1,7 @@
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { Readable, Transform, type TransformCallback } from "node:stream";
-import { logsApi, type RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
+import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
 import { type LogFilter, readLogPage } from "../logs/log-pages.js";
 import {
@@ -56,7 +56,7 @@ export function registerLogRoutes(
 			return sendError(reply, 400, "invalid_request", "游标不是之前返回的 before / after");
 		}
 		const { limit, nodes: scope } = query;
-		const filter: LogFilter = { levels: query.level ? new Set(query.level) : undefined };
+		const filter = levelFilter(query);
 		const page = isUuid(params.id)
 			? await deps.runLogs.page(
 					params.id,
@@ -117,10 +117,9 @@ export function registerLogRoutes(
 				for (const [order, seq] of resumed || []) {
 					from.set(order, Math.max(seq, from.get(order) ?? 0));
 				}
-				const filter: LogFilter = { levels: query.level ? new Set(query.level) : undefined };
 				return deps.runLogs.follow(
 					runId,
-					{ scope: query.nodes, filter, after: from },
+					{ scope: query.nodes, filter: levelFilter(query), after: from },
 					(event) => {
 						const id = encodeRunLogLiveCursor(event.at);
 						if (event.kind === "lines") stream.send("logs", { lines: event.lines }, id);
@@ -226,23 +225,17 @@ export function registerLogRoutes(
 	});
 }
 
-const downloadRow = (l: RunLogLine): RunLogDownloadRow => ({
-	seq: l.seq,
-	time: l.time,
-	agent_time: l.agent_time,
-	source: l.source,
-	level: l.level,
-	text: l.text,
-	task_id: l.task_id,
-	subflow: l.subflow,
-	node_id: l.node_id,
-	attempt: l.attempt,
+/** 按级别筛选（不给 `level` 是不筛选）：按运行的分页与实时推送共用。 */
+const levelFilter = ({ level }: { level?: LogLineView["level"][] | undefined }): LogFilter => ({
+	levels: level ? new Set(level) : undefined,
 });
 
-/** 每一批行写成一块 JSONL 文本：一行一条，以换行结尾。 */
+/** 下载文件里每行的字段：契约里 RunLogDownloadRow 声明的，顺序也一样。 */
+const DOWNLOAD_FIELDS = Object.keys(RunLogDownloadRow.shape);
+
 async function* jsonRows(batches: AsyncIterable<RunLogLine[]>): AsyncGenerator<string> {
 	for await (const lines of batches) {
-		yield lines.map((l) => `${JSON.stringify(downloadRow(l))}\n`).join("");
+		yield lines.map((l) => `${JSON.stringify(l, DOWNLOAD_FIELDS)}\n`).join("");
 	}
 }
 

@@ -6,7 +6,7 @@ import { z } from "zod";
  * 不给范围表示全部节点，给了空列表表示没有节点。
  *
  * 查询参数 `nodes` 的写法：每条链一组，组之间用 `;`，链后面跟 `:` 和这条链上的节点，节点之间用 `,`；
- * 链实例 ID 和节点 ID 各自按 encodeURIComponent 转义，所以节点 ID 里可以有 `, ; : %` 等任意字符。
+ * 链路实例 ID 和节点 ID 各自按 encodeURIComponent 转义，所以节点 ID 里可以有 `, ; : %` 等任意字符。
  * 同一条链的节点合在一组，几百个节点的范围也只有几 KB，放得进 URL。
  *
  *   ?nodes=3f2c…:fetch,verify;9a10…:probe
@@ -69,7 +69,7 @@ export function decodeRunLogScope(text: string): RunLogScope | undefined {
 export const RunLogNodesParam = z.string().transform((text, ctx) => {
 	const scope = decodeRunLogScope(text);
 	if (!scope) {
-		ctx.addIssue({ code: "custom", message: "nodes 不是「链实例:节点,节点;…」的写法" });
+		ctx.addIssue({ code: "custom", message: "nodes 不是「链路实例 ID:节点 ID,节点 ID;…」的写法" });
 		return z.NEVER;
 	}
 	return scope;

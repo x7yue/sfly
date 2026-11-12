@@ -159,13 +159,9 @@ test("合并视图向上滚动一页页加载更早的日志，一直到运行�
 	rows(tasks.verify as AssignedTask, "verify", 13_005);
 	await agent.sync();
 
-	// 只看打开合并视图之后发出的请求：页面刚打开、还没默认选中节点时合并视图会短暂挂上，那次请求不算。
 	const pageRequests = new Set<Request>();
-	let recording = false;
 	page.on("request", (req) => {
-		if (recording && new URL(req.url()).pathname === `/api/runs/${runId}/logs`) {
-			pageRequests.add(req);
-		}
+		if (new URL(req.url()).pathname === `/api/runs/${runId}/logs`) pageRequests.add(req);
 	});
 	const received: string[] = [];
 	const befores: string[] = [];
@@ -178,7 +174,6 @@ test("合并视图向上滚动一页页加载更早的日志，一直到运行�
 
 	await openMonitor(page, clock, runId);
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
-	recording = true;
 	await nodeButton(page, "verify").click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 	const logs = panel(page).getByRole("log", { name: "日志" });
@@ -314,21 +309,15 @@ test("实时推送的行多到超过浏览器保留的 5000 行时，从最新�
 	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
 	const at = logAt(agent, clock0);
 	let latestPages = 0;
-	let recording = false;
 	page.on("request", (req) => {
 		const url = new URL(req.url());
-		if (
-			recording &&
-			url.pathname === `/api/runs/${runId}/logs` &&
-			!url.searchParams.has("before")
-		) {
+		if (url.pathname === `/api/runs/${runId}/logs` && !url.searchParams.has("before")) {
 			latestPages++;
 		}
 	});
 
 	await openMonitor(page, clock, runId);
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
-	recording = true;
 	await nodeButton(page, "verify").click();
 	const logs = panel(page).getByRole("log", { name: "日志" });
 	await expect(logs.getByRole("button")).toHaveCount(4);
@@ -379,6 +368,73 @@ test("执行中的运行在合并视图里还没有日志时底部面板自动�
 	await expect(panel(page).getByRole("log", { name: "日志" }).getByRole("button")).toHaveText([
 		/ping started/,
 	]);
+});
+
+test("合并视图筛选了节点、筛选出的节点里没有日志时底部面板自动收起（别的节点有日志也一样），日志到了自动展开；筛选了级别时不收起", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const clock0 = clock.now().getTime();
+	// fetch 有 4 行日志，verify 第 2 次、子流程的 probe 执行中，都还没有日志。
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const scope = panel(page).getByTestId("bp-scope");
+	await nodeButton(page, "verify").click();
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(panel(page).getByRole("button", { name: "收起" })).toBeVisible();
+
+	// 只看 verify：它还没有日志，别的节点有也不算，自动收起（没有展开过，说明文字留在隐藏的面板里）。
+	await workspace(page)
+		.getByRole("button", { name: /节点：全部节点/ })
+		.click();
+	const menu = page.getByRole("dialog", { name: "按节点筛选图表" });
+	await menu.getByRole("button", { name: "清空", exact: true }).click();
+	await menu.getByRole("checkbox", { name: "verify" }).check();
+	await expect(scope).toHaveText("范围：跟随筛选（1 个节点）");
+	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
+	await expect(panel(page).getByRole("tabpanel", { includeHidden: true })).toHaveText(
+		"没有符合条件的日志。",
+	);
+
+	// verify 输出了日志：自动展开。
+	agent.logs(tasks.verify as AssignedTask, [logAt(agent, clock0)(1, 11_000, "verify 2 retrying")]);
+	await expect(panel(page).getByRole("button", { name: "收起" })).toBeVisible();
+	await expect(panel(page).getByRole("log", { name: "日志" }).getByRole("button")).toHaveText([
+		/verify 2 retrying/,
+	]);
+
+	// 筛选了级别：筛掉的是用户自己要的，没有符合条件的行时面板不收起。
+	await levelFilter(page).getByRole("button", { name: "ERROR", exact: true }).click();
+	await expect(panel(page).getByRole("tabpanel")).toHaveText("没有符合条件的日志。");
+	await expect(panel(page).getByRole("button", { name: "收起" })).toBeVisible();
+});
+
+test("打开监控页时默认选中了节点：不会先挂上合并视图、白发一次合并日志的请求", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	const requested: string[] = [];
+	page.on("request", (req) => {
+		if (new URL(req.url()).pathname === `/api/runs/${runId}/logs`) requested.push(req.url());
+	});
+
+	await openMonitor(page, clock, runId);
+	// 默认选中执行中的 verify（还没有日志）：显示的是它的单节点日志。
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
+	await expect(panel(page).getByRole("tabpanel", { includeHidden: true })).toHaveText(
+		"还没有日志输出。",
+	);
+	expect(requested).toEqual([]);
+
+	// 取消选中之后才读合并日志。
+	await nodeButton(page, "verify").click();
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
+	await expect.poll(() => requested.length).toBe(1);
 });
 
 /** Agent 在运行开始后第 atMs 毫秒（控制面时间）读到的一行。 */

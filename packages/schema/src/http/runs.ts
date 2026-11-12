@@ -356,7 +356,7 @@ export const LogOrigin = z.object({
  * 所以只凭行就能和别的行比较先后（前端插入实时行时不必查运行视图）。
  */
 export const RunLogTaskOrder = z.object({
-	/** 所在链实例的层级（主链为 0）与开始时间：控制面时间相同时，链按层级、开始时间、链实例 ID 排。 */
+	/** 所在链路实例的层级（主链为 0）与开始时间：控制面时间相同时，链按层级、开始时间、链路实例 ID 排。 */
 	chain_depth: z.number().int(),
 	chain_started_at: Timestamp,
 	/** 节点在场景版本里这条链上的位置，从 0 开始：同一条链上按它排。 */

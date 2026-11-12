@@ -1,4 +1,4 @@
-import type { RunLogLine, RunLogPage } from "@sfly/schema";
+import { compareRunLogKeys, type RunLogLine, type RunLogPage, runLogKey } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	emptyRunBuffer,
@@ -58,6 +58,33 @@ const page = (lines: RunLogLine[], before: string, reachedStart = false): RunLog
 
 const keys = (b: RunLogBuffer) => b.lines.map(runLineKey);
 
+/** 固定种子的伪随机数（mulberry32）：每次运行得到同样的数据，失败时能按种子复现。 */
+function prng(seed: number): () => number {
+	let state = seed;
+	return () => {
+		state = (state + 0x6d2b79f5) | 0;
+		let t = Math.imul(state ^ (state >>> 15), 1 | state);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+function shuffle<T>(items: readonly T[], random: () => number): T[] {
+	const out = [...items];
+	for (let i = out.length - 1; i > 0; i--) {
+		const j = Math.floor(random() * (i + 1));
+		[out[i], out[j]] = [out[j] as T, out[i] as T];
+	}
+	return out;
+}
+
+/** small 是不是 big 的子序列（按顺序出现，中间可以夹别的）。 */
+function subsequence(small: readonly string[], big: readonly string[]): boolean {
+	let next = 0;
+	for (const item of big) if (item === small[next]) next++;
+	return next === small.length;
+}
+
 describe("合并视图的日志缓冲区", () => {
 	it("先读最新一页；前面还有行时可以往前翻，读到开头后不再翻", () => {
 		const latest = fromLatestPage(page([line("b", 1), line("a", 3)], "c1"));
@@ -116,6 +143,60 @@ describe("合并视图的日志缓冲区", () => {
 		// 往前翻到 a 的第 1 行（第 12 秒，比它之后的行都晚）：仍排在 a 的第 2 行前面。
 		b = withOlderPage(b, page([line("a", 1, 12_000)], "c2", true));
 		expect(keys(b)).toEqual(["b:1", "a:1", "a:2", "a:3", "b:2"]);
+	});
+
+	it("随机顺序、分批加入（有的任务控制面时间倒挂超过 2 秒）：每行只出现一次，同一任务内始终按序号，已有的行之间的先后不变；没有倒挂时就是排序键的顺序", () => {
+		const tasks = ["a", "b", "c", "d", "e"];
+		for (let seed = 1; seed <= 200; seed++) {
+			const random = prng(seed);
+			const inverted = seed % 2 === 0;
+			const all = tasks.flatMap((task) => {
+				const length = 5 + Math.floor(random() * 30);
+				let ms = 0;
+				return Array.from({ length }, (_, i) => {
+					// 同一任务的时间不减（常有几个任务在同一毫秒）；倒挂时偶尔一行偏到了几秒之后，后面的行回到原来的时刻。
+					ms += Math.floor(random() * 8) * 100;
+					const spike = inverted && random() < 0.15 ? 3_000 + Math.floor(random() * 80) * 100 : 0;
+					return line(task, i + 1, ms + spike);
+				});
+			});
+			const shuffled = shuffle(all, random);
+			let b = fromLatestPage(page([], "c0"));
+			for (let at = 0; at < shuffled.length; ) {
+				const end = at + 1 + Math.floor(random() * 9);
+				const chunk = shuffled.slice(at, end);
+				at = end;
+				const before = keys(b);
+				b = random() < 0.3 ? withOlderPage(b, page(chunk, `c${at}`)) : withLiveLines(b, chunk);
+				const after = keys(b);
+				expect(new Set(after).size, `seed ${seed}：重复的行`).toBe(after.length);
+				expect(subsequence(before, after), `seed ${seed}：已有的行的先后变了`).toBe(true);
+				for (const task of tasks) {
+					const seqs = b.lines.filter((l) => l.task_id === task).map((l) => l.seq);
+					expect(seqs, `seed ${seed}：${task} 的序号顺序`).toEqual([...seqs].sort((x, y) => x - y));
+				}
+			}
+			expect(keys(b).sort(), `seed ${seed}：行不多不少`).toEqual(all.map(runLineKey).sort());
+			if (!inverted) {
+				const sorted = [...all].sort((x, y) => compareRunLogKeys(runLogKey(x), runLogKey(y)));
+				expect(keys(b), `seed ${seed}：排序键的顺序`).toEqual(sorted.map(runLineKey));
+			}
+		}
+	});
+
+	it("缓冲区有几万行时再加入几万行：位置二分查找，不会因为每加一行就扫过整个缓冲区而慢到不能用", {
+		timeout: 3_000,
+	}, () => {
+		const tasks = ["a", "b", "c", "d"];
+		/** 第 i 行（全部 60000 行里的位置）：四个任务轮流，时间是 i。 */
+		const at = (i: number) => line(tasks[i % 4] as string, Math.floor(i / 4) + 1, i);
+		const history = Array.from({ length: 30_000 }, (_, i) => at(i));
+		// 实时推送的行接在后面，每两行里先到的是后一行（前一行晚到，要插到它前面）。
+		const live = Array.from({ length: 30_000 }, (_, i) => at(30_000 + (i ^ 1)));
+		const b = withLiveLines(fromLatestPage(page(history, "c1")), live);
+		expect(b.lines).toHaveLength(60_000);
+		expect(b.lines.at(0)).toMatchObject({ task_id: "a", seq: 1 });
+		expect(b.lines.at(-1)).toMatchObject({ task_id: "d", seq: 15_000 });
 	});
 
 	it("超过 5000 行时丢掉最早的几页、保留最新的行；剩下最早那一页的游标能把丢掉的行读回来", () => {
@@ -190,6 +271,13 @@ describe("合并视图的日志缓冲区", () => {
 		expect(b.truncatedTasks).toEqual([]);
 		b = withLiveLines(b, [line("a", 2), line("a", 3, 3, "system")]);
 		expect(b.truncatedTasks.map((t) => t.task_id)).toEqual(["a"]);
+		expect(b.truncatedTasks[0]).toEqual({
+			task_id: "a",
+			chain_instance_id: "main",
+			subflow: null,
+			node_id: "a",
+			attempt: 1,
+		});
 		b = withLiveLines(b, [line("b", 1, 4, "system")]);
 		expect(b.truncatedTasks.map((t) => t.task_id)).toEqual(["a", "b"]);
 	});

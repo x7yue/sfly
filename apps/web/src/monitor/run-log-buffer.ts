@@ -1,11 +1,11 @@
 import {
 	compareRunLogKeys,
-	type LogOrigin,
+	LogOrigin,
 	type RunLogLine,
 	type RunLogPage,
 	runLogKey,
 } from "@sfly/schema";
-import { MAX_LOADED_LINES } from "./log-buffer";
+import { isTruncationMarker, MAX_LOADED_LINES } from "./log-buffer";
 
 /**
  * 合并视图已加载的日志（纯逻辑，单测见 run-log-buffer.test.ts）：先读最新一页，再从它的 `live_after` 接上实时推送，
@@ -47,7 +47,6 @@ export const emptyRunBuffer: RunLogBuffer = {
 	expired: false,
 };
 
-/** 合并视图里一行的身份：任务加序号。 */
 export const runLineKey = (line: Pick<RunLogLine, "task_id" | "seq">) =>
 	`${line.task_id}:${line.seq}`;
 
@@ -63,39 +62,63 @@ export const needsOlder = (buffer: RunLogBuffer): boolean =>
 
 /**
  * 把 fresh 按排序键插进 lines（各自已排好），已有的行（同一任务、同一序号）不重复；返回插入后的行和新加入的行的键。
- * 位置按排序键二分查找，再夹在同一任务序号更小的行之后、序号更大的行之前。
+ * 每一行的位置按排序键二分查找，再夹在同一任务序号更小的行之后、序号更大的行之前（这两行也靠二分查找找到，
+ * 所以插入一行不必扫过整个缓冲区）。
  */
 function insert(
 	lines: RunLogLine[],
 	fresh: RunLogLine[],
 ): { lines: RunLogLine[]; added: Set<string> } {
-	const seen = new Set(lines.map(runLineKey));
-	const added = new Set<string>();
+	const byTask = new Map<string, RunLogLine[]>();
+	for (const line of lines) {
+		const mine = byTask.get(line.task_id);
+		if (mine) mine.push(line);
+		else byTask.set(line.task_id, [line]);
+	}
 	const out = [...lines];
+	const added = new Set<string>();
 	for (const line of fresh) {
-		const key = runLineKey(line);
-		if (seen.has(key)) continue;
-		seen.add(key);
-		added.add(key);
-		const sortKey = runLogKey(line);
-		let lo = 0;
-		let hi = out.length;
-		while (lo < hi) {
-			const mid = (lo + hi) >>> 1;
-			if (compareRunLogKeys(runLogKey(out[mid] as RunLogLine), sortKey) <= 0) lo = mid + 1;
-			else hi = mid;
-		}
-		let after = 0;
-		let before = out.length;
-		for (let i = 0; i < out.length; i++) {
-			const other = out[i] as RunLogLine;
-			if (other.task_id !== line.task_id) continue;
-			if (other.seq < line.seq) after = i + 1;
-			else if (before === out.length) before = i;
-		}
-		out.splice(Math.min(Math.max(lo, after), before), 0, line);
+		const mine = byTask.get(line.task_id) ?? [];
+		byTask.set(line.task_id, mine);
+		const at = partitionPoint(mine, (other) => other.seq < line.seq);
+		if (mine[at]?.seq === line.seq) continue;
+		mine.splice(at, 0, line);
+		added.add(runLineKey(line));
+		let position = insertionPoint(out, line);
+		const previous = mine[at - 1];
+		const next = mine[at + 1];
+		if (previous) position = Math.max(position, indexOfLine(out, previous) + 1);
+		if (next) position = Math.min(position, indexOfLine(out, next));
+		out.splice(position, 0, line);
 	}
 	return { lines: out, added };
+}
+
+/** 数组开头连续满足 before 的元素个数（数组按 before 划分：前面都满足、后面都不满足）。 */
+function partitionPoint<T>(items: readonly T[], before: (item: T) => boolean): number {
+	let lo = 0;
+	let hi = items.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >>> 1;
+		if (before(items[mid] as T)) lo = mid + 1;
+		else hi = mid;
+	}
+	return lo;
+}
+
+/** 按排序键，line 应插在 lines 里的哪个位置：排在所有不晚于它的行之后。 */
+function insertionPoint(lines: readonly RunLogLine[], line: RunLogLine): number {
+	const key = runLogKey(line);
+	return partitionPoint(lines, (other) => compareRunLogKeys(runLogKey(other), key) <= 0);
+}
+
+/**
+ * 缓冲区里已有的 line 的下标。行都按排序键排列时，它就是「应插入的位置」的前一个，二分查找一次就找到；
+ * 个别任务的控制面时间倒挂（§6.3）时行不在这里，再逐个找。
+ */
+function indexOfLine(lines: readonly RunLogLine[], line: RunLogLine): number {
+	const guess = insertionPoint(lines, line) - 1;
+	return lines[guess] === line ? guess : lines.indexOf(line);
 }
 
 const pageOf = (page: RunLogPage, keys: ReadonlySet<string>): LoadedPage => ({
@@ -131,9 +154,9 @@ export function withLiveLines(buffer: RunLogBuffer, fresh: RunLogLine[]): RunLog
 	const { lines, added } = insert(buffer.lines, fresh);
 	if (added.size === 0) return buffer;
 	const truncatedTasks = [...buffer.truncatedTasks];
-	for (const { source, task_id, chain_instance_id, subflow, node_id, attempt } of fresh) {
-		if (source === "system" && !truncatedTasks.some((t) => t.task_id === task_id)) {
-			truncatedTasks.push({ task_id, chain_instance_id, subflow, node_id, attempt });
+	for (const line of fresh.filter(isTruncationMarker)) {
+		if (!truncatedTasks.some((t) => t.task_id === line.task_id)) {
+			truncatedTasks.push(LogOrigin.parse(line));
 		}
 	}
 	return { ...buffer, lines, truncatedTasks };

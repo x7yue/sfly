@@ -15,7 +15,7 @@ import { runs } from "../db/schema.js";
 import { getRunView } from "../engine/run-queries.js";
 import { type LogFilter, readLogPage, SCAN_LIMIT } from "./log-pages.js";
 import type { TaskPositions, TaskSeqs } from "./run-log-cursor.js";
-import type { LogLineView, TaskLogs } from "./task-logs.js";
+import type { LogLineView, TaskLogInfo, TaskLogs } from "./task-logs.js";
 
 /**
  * 按运行合并读取日志（#220，docs/ARCHITECTURE.md §6.3）：把一次运行里每个任务的日志文件看作一条按 seq 排好的流，
@@ -54,7 +54,8 @@ export type RunLogRequest = {
 	| { direction: "forward"; after: TaskPositions }
 );
 
-export interface RunLogPage {
+/** {@link RunLogs.page} 读到的一页：和 HTTP 契约的 RunLogPage 相比，游标还是位置，没有编码。 */
+export interface RunLogPageResult {
 	lines: RunLogLine[];
 	/** 读这一页之前的行用的位置。 */
 	before: TaskPositions;
@@ -84,24 +85,15 @@ export type RunLogLiveEvent =
 	/** 要补发的行太多，没有补发：从最新一页重新读。 */
 	| { kind: "reload"; at: TaskSeqs };
 
-/** 一个任务的日志文件，作为归并里的一条流。 */
+/** 一个任务的日志文件，作为归并里的一条流：它的来源与排序信息，加上列出任务那一刻的文件概况。 */
 interface TaskStream {
 	task: RunLogTask;
-	/** 任务的创建顺序：游标里代表这个任务。 */
-	order: number;
-	file: string;
-	/** 已写入的字节数（列出任务的那一刻）：不给游标时从这里往前读，往后最多读到这里。 */
-	bytes: number;
-	/** 已写入的最大序号（与 bytes 是同一刻的）。 */
-	seq: number;
-	truncated: boolean;
+	log: TaskLogInfo;
 }
 
-/** 同时打开的日志文件数的上限。 */
 const OPEN_FILES = 32;
 /** 第一轮每个任务最多扫描的字节数：一次读取的量，够看出每个任务排在最前的几行。 */
 const FIRST_SLICE = 4 * 1024;
-/** 下载时每批最多取多少行。 */
 const DOWNLOAD_BATCH = 1000;
 /**
  * 实时推送连上时最多补发的行数（按序号估算，不看级别）：超过时改为让前端从最新一页重新读，
@@ -125,17 +117,17 @@ export class RunLogs {
 	}
 
 	/** 一次运行的一页；运行不存在时为 undefined。 */
-	async page(runId: string, request: RunLogRequest): Promise<RunLogPage | undefined> {
+	async page(runId: string, request: RunLogRequest): Promise<RunLogPageResult | undefined> {
 		const streams = await this.#streams(runId, request.scope);
 		if (!streams) return undefined;
 		const forward = request.direction === "forward";
 		const lanes = streams.map((stream) => {
-			const at =
-				request.direction === "forward"
-					? (request.after.get(stream.order) ?? 0)
-					: request.before
-						? (request.before.get(stream.order) ?? 0)
-						: stream.bytes;
+			const { order, bytes } = stream.log;
+			const at = forward
+				? (request.after.get(order) ?? 0)
+				: request.before
+					? (request.before.get(order) ?? 0)
+					: bytes;
 			return newLane(stream, at);
 		});
 		const lines: RunLogLine[] = [];
@@ -159,8 +151,8 @@ export class RunLogs {
 			after: positions(lanes, after),
 			reachedStart: lanes.every((lane) => before(lane) === 0),
 			reachedEnd: lanes.every((lane) => after(lane) >= lane.until),
-			truncatedTasks: streams.filter((s) => s.truncated).map((s) => s.task.origin),
-			live: new Map(streams.map((s) => [s.order, s.seq])),
+			truncatedTasks: streams.filter((s) => s.log.truncated).map((s) => s.task.origin),
+			live: new Map(streams.map((s) => [s.log.order, s.log.seq])),
 		};
 	}
 
@@ -190,10 +182,10 @@ export class RunLogs {
 			}
 			if (lines.length > 0) yield lines;
 			for (const lane of lanes) {
-				lane.read.splice(0, lane.taken);
+				lane.entries.splice(0, lane.taken);
 				lane.taken = 0;
 			}
-			lanes = lanes.filter((lane) => lane.read.length > 0 || more(lane, true));
+			lanes = lanes.filter((lane) => lane.entries.length > 0 || hasUnread(lane, true));
 		}
 	}
 
@@ -235,22 +227,20 @@ export class RunLogs {
 		// 先排上补发再订阅（同步完成，中间不会有发布）：补发时取的快照之后写入的行，都排在补发之后按序号去重。
 		serial(async () => {
 			const streams = await learn();
-			const behind = streams.filter((s) => s.seq > (sent.get(s.order) ?? 0));
-			const missed = behind.reduce((n, s) => n + s.seq - (sent.get(s.order) ?? 0), 0);
+			const sentSeq = (s: TaskStream) => sent.get(s.log.order) ?? 0;
+			const behind = streams.filter((s) => s.log.seq > sentSeq(s));
+			const missed = behind.reduce((n, s) => n + s.log.seq - sentSeq(s), 0);
 			if (missed > REPLAY_LINES) {
-				for (const s of behind) sent.set(s.order, s.seq);
+				for (const s of behind) sent.set(s.log.order, s.log.seq);
 				emit({ kind: "reload", at: new Map(sent) });
 				return;
 			}
+			const read = await mapOpenFiles(behind, (s) => linesAfterSeq(s, sentSeq(s)));
 			const lines: RunLogLine[] = [];
-			for (let i = 0; i < behind.length; i += OPEN_FILES) {
-				const batch = behind.slice(i, i + OPEN_FILES);
-				const read = await Promise.all(batch.map((s) => linesAfterSeq(s, sent.get(s.order) ?? 0)));
-				batch.forEach((s, j) => {
-					for (const line of read[j] ?? []) if (shown(line)) lines.push(runLogLine(s, line));
-					sent.set(s.order, s.seq);
-				});
-			}
+			behind.forEach((s, i) => {
+				for (const line of read[i] ?? []) if (shown(line)) lines.push(runLogLine(s, line));
+				sent.set(s.log.order, s.log.seq);
+			});
 			if (lines.length > 0) emit({ kind: "lines", lines, at: new Map(sent) });
 		});
 		const unsubscribe = this.deps.logs.runLines.subscribe(runId, (chunk) =>
@@ -261,10 +251,10 @@ export class RunLogs {
 				}
 				const stream = known.get(chunk.task_id);
 				if (!stream) return;
-				const fresh = chunk.lines.filter((l) => l.seq > (sent.get(stream.order) ?? 0));
+				const fresh = chunk.lines.filter((l) => l.seq > (sent.get(stream.log.order) ?? 0));
 				const last = fresh.at(-1);
 				if (!last) return;
-				sent.set(stream.order, last.seq);
+				sent.set(stream.log.order, last.seq);
 				const lines = fresh.filter(shown).map((line) => runLogLine(stream, line));
 				if (lines.length > 0) emit({ kind: "lines", lines, at: new Map(sent) });
 			}),
@@ -282,24 +272,12 @@ export class RunLogs {
 		const files = await this.deps.logs.describeRun(runId);
 		const inScope = runLogScopeMatcher(scope);
 		return runLogTasks(run).flatMap((task) => {
-			const info = inScope(task.origin) ? files.get(task.origin.task_id) : undefined;
-			return info
-				? [
-						{
-							task,
-							order: info.order,
-							file: info.file,
-							bytes: info.bytes,
-							seq: info.seq,
-							truncated: info.truncated,
-						},
-					]
-				: [];
+			const log = inScope(task.origin) ? files.get(task.origin.task_id) : undefined;
+			return log ? [{ task, log }] : [];
 		});
 	}
 }
 
-/** 任务日志里的一行 → 合并日志里的一行：加上来源和排序要用的信息。 */
 const runLogLine = (stream: TaskStream, line: LogLineView): RunLogLine => ({
 	...line,
 	...stream.task.origin,
@@ -309,12 +287,13 @@ const runLogLine = (stream: TaskStream, line: LogLineView): RunLogLine => ({
 /** 一个任务在列出它那一刻已写入的、序号大于 afterSeq 的行，按序号；从文件尾部往前读到序号不大于 afterSeq 为止。 */
 async function linesAfterSeq(stream: TaskStream, afterSeq: number): Promise<LogLineView[]> {
 	const lines: LogLineView[] = [];
-	for (let before = stream.bytes; before > 0; ) {
-		const window = await readLogPage(stream.file, {
+	const { file, bytes, seq } = stream.log;
+	for (let before = bytes; before > 0; ) {
+		const window = await readLogPage(file, {
 			direction: "backward",
 			before,
-			until: stream.bytes,
-			limit: stream.seq - afterSeq + 1,
+			until: bytes,
+			limit: seq - afterSeq + 1,
 			filter: {},
 		});
 		const fresh = window.lines.filter((l) => l.seq > afterSeq);
@@ -325,13 +304,20 @@ async function linesAfterSeq(stream: TaskStream, afterSeq: number): Promise<LogL
 	return lines;
 }
 
+/** 一条流里读到的一行：在文件里的偏移，和归并时比较先后用的排序键。 */
+interface LaneEntry {
+	offset: number;
+	line: RunLogLine;
+	key: RunLogKey;
+}
+
 /**
  * 归并里的一条流：已经读到的行（从早到晚）和已经取进这一页的行数。往前翻页从尾部往前取、补读时 start 往前移，
  * 往后接续从头部往后取、补读时 end 往后移，所以同一个任务内的行总是保持 seq 顺序。
  */
 interface Lane {
 	stream: TaskStream;
-	read: Array<{ offset: number; line: RunLogLine; key: RunLogKey }>;
+	entries: LaneEntry[];
 	/** 已读的范围 [start, end)。 */
 	start: number;
 	end: number;
@@ -342,25 +328,25 @@ interface Lane {
 
 const newLane = (stream: TaskStream, at: number): Lane => ({
 	stream,
-	read: [],
+	entries: [],
 	start: at,
 	end: at,
-	until: stream.bytes,
+	until: stream.log.bytes,
 	taken: 0,
 });
 
-/** 在读的方向上，文件里还有没读的内容。 */
-const more = (lane: Lane, forward: boolean) => (forward ? lane.end < lane.until : lane.start > 0);
+const hasUnread = (lane: Lane, forward: boolean) =>
+	forward ? lane.end < lane.until : lane.start > 0;
 
 /** 往前翻页：最早取走的那一行；读到的行整个取完时是已读范围的起点（跳过扫描过但不符合筛选条件的行）；一行没取时不动。 */
-const earliestTaken = ({ read, taken, start, end }: Lane) =>
-	taken === read.length ? start : (read[read.length - taken]?.offset ?? end);
+const earliestTaken = ({ entries, taken, start, end }: Lane) =>
+	taken === entries.length ? start : (entries[entries.length - taken]?.offset ?? end);
 
 /** 往后接续：第一行没取走的；读到的行整个取完时是已读范围的终点。 */
-const nextUntaken = ({ read, taken, end }: Lane) => read[taken]?.offset ?? end;
+const nextUntaken = ({ entries, taken, end }: Lane) => entries[taken]?.offset ?? end;
 
 function positions(lanes: Lane[], at: (lane: Lane) => number): TaskPositions {
-	return new Map(lanes.map((lane) => [lane.stream.order, at(lane)]));
+	return new Map(lanes.map((lane) => [lane.stream.log.order, at(lane)]));
 }
 
 /**
@@ -369,12 +355,12 @@ function positions(lanes: Lane[], at: (lane: Lane) => number): TaskPositions {
  */
 function take(lanes: Lane[], lines: RunLogLine[], limit: number, forward: boolean): Lane[] {
 	while (lines.length < limit) {
-		let pick: { lane: Lane; line: RunLogLine; key: RunLogKey } | undefined;
+		let pick: ({ lane: Lane } & LaneEntry) | undefined;
 		const blocked: Lane[] = [];
 		for (const lane of lanes) {
-			const head = lane.read[forward ? lane.taken : lane.read.length - 1 - lane.taken];
+			const head = lane.entries[forward ? lane.taken : lane.entries.length - 1 - lane.taken];
 			if (!head) {
-				if (more(lane, forward)) blocked.push(lane);
+				if (hasUnread(lane, forward)) blocked.push(lane);
 				continue;
 			}
 			const order = pick ? compareRunLogKeys(head.key, pick.key) : 0;
@@ -388,38 +374,44 @@ function take(lanes: Lane[], lines: RunLogLine[], limit: number, forward: boolea
 	return [];
 }
 
-/** 每条流在读的方向上接着读一段，返回扫描过的字节数。 */
 async function extend(
 	lanes: Lane[],
 	forward: boolean,
 	request: { limit: number; filter: LogFilter; scanLimit: number },
 ): Promise<number> {
-	let scanned = 0;
-	for (let i = 0; i < lanes.length; i += OPEN_FILES) {
-		await Promise.all(
-			lanes.slice(i, i + OPEN_FILES).map(async (lane) => {
-				const { stream, until } = lane;
-				const window = await readLogPage(
-					stream.file,
-					forward
-						? { direction: "forward", after: lane.end, until, ...request }
-						: { direction: "backward", before: lane.start, until, ...request },
-				);
-				const read = window.lines.map(({ offset, ...rest }) => {
-					const line = runLogLine(stream, rest);
-					return { offset, line, key: runLogKey(line) };
-				});
-				if (forward) {
-					lane.read.push(...read);
-					lane.end = window.end;
-				} else {
-					lane.read.unshift(...read);
-					lane.start = window.start;
-				}
-				lane.until = Math.min(until, window.size);
-				scanned += window.end - window.start;
-			}),
+	const scanned = await mapOpenFiles(lanes, async (lane) => {
+		const { stream, until } = lane;
+		const window = await readLogPage(
+			stream.log.file,
+			forward
+				? { direction: "forward", after: lane.end, until, ...request }
+				: { direction: "backward", before: lane.start, until, ...request },
 		);
+		const read = window.lines.map(({ offset, ...rest }) => {
+			const line = runLogLine(stream, rest);
+			return { offset, line, key: runLogKey(line) };
+		});
+		if (forward) {
+			lane.entries.push(...read);
+			lane.end = window.end;
+		} else {
+			lane.entries.unshift(...read);
+			lane.start = window.start;
+		}
+		lane.until = Math.min(until, window.size);
+		return window.end - window.start;
+	});
+	return scanned.reduce((sum, bytes) => sum + bytes, 0);
+}
+
+/** 对每一项并发地做 work（每项读一个日志文件），同时最多 {@link OPEN_FILES} 个；结果与 items 同序。 */
+async function mapOpenFiles<T, R>(
+	items: readonly T[],
+	work: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const results: R[] = [];
+	for (let i = 0; i < items.length; i += OPEN_FILES) {
+		results.push(...(await Promise.all(items.slice(i, i + OPEN_FILES).map(work))));
 	}
-	return scanned;
+	return results;
 }

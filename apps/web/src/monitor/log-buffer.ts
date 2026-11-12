@@ -27,6 +27,9 @@ export interface LogBuffer {
 /** 浏览器里最多保留的行数：实时追加超过时丢掉最早的行（仍可往前翻页重新加载）。 */
 export const MAX_LOADED_LINES = 5000;
 
+/** 控制面写满单个任务的日志上限后追加的截断标记（来源 system）。 */
+export const isTruncationMarker = (line: Pick<LogLineView, "source">) => line.source === "system";
+
 export const emptyBuffer: LogBuffer = {
 	lines: [],
 	start: 0,
@@ -104,7 +107,7 @@ export function withLive(
 		start: gap ? chunk.offset : buffer.start,
 		end: Math.max(buffer.end, offset),
 		hasOlder: gap || buffer.hasOlder,
-		truncated: buffer.truncated || chunk.lines.some((l) => l.source === "system"),
+		truncated: buffer.truncated || chunk.lines.some(isTruncationMarker),
 	};
 	if (next.lines.length > maxLines) {
 		const kept = next.lines.slice(-maxLines);

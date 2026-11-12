@@ -188,7 +188,7 @@ describe("日志页签的节点范围（#224）", () => {
 		expect(logScope(run, null)).toBeUndefined();
 	});
 
-	it("筛选里勾选的节点，按链实例和节点 ID 区分同名节点；平台自带图表和运行里没有的键不算", () => {
+	it("筛选里勾选的节点，按链路实例和节点 ID 区分同名节点；平台自带图表和运行里没有的键不算", () => {
 		expect(
 			logScope(
 				run,

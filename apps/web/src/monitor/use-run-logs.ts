@@ -21,7 +21,6 @@ import {
 	withOlderPage,
 } from "./run-log-buffer";
 
-/** 一页的行数。 */
 const PAGE = 300;
 
 /** 下载范围内整次运行合并后的日志（不受级别筛选影响）；`scope` 不给是全部节点。 */

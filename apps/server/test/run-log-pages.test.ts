@@ -327,7 +327,7 @@ describe("按运行合并读取日志", () => {
 		});
 	});
 
-	it("没有控制面时间的旧行：任务的第一行按任务开始时间排，之后的旧行沿用上一行的排序时间", async () => {
+	it("没有控制面时间的旧行（只会在文件开头）都按任务开始时间排：在这之前开始的任务的行之后、之后的行之前", async () => {
 		const { a, b, runId } = await setup();
 		const s = await b.nextAssign();
 		const z1 = await a.nextAssign({ start: false });
