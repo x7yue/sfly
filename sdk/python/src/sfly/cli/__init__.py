@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from sfly import __version__
-from sfly.cli import run_artifacts, run_logs, scenario
+from sfly.cli import run_artifacts, run_exec, run_logs, scenario
 from sfly.cli.home import DEFAULT_SERVER, control_plane_url, dev_socket
 
 
@@ -227,6 +227,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     run_sub = p_run.add_subparsers(dest="run_command", metavar="子命令", required=True)
     run_commands = run_sub.choices
+    run_exec.register(run_sub)
     run_logs.register(run_sub)
     run_artifacts.register(run_sub)
 
