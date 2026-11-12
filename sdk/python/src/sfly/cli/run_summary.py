@@ -176,7 +176,7 @@ def render_summary(summary: Mapping[str, Any]) -> str:
     cancelled = summary["cancelled_by"]
     if cancelled:
         how = "强制取消" if cancelled["forced"] else "取消"
-        lines.append(f"{cancelled['nickname']} 在 {cancelled['at']} {how}")
+        lines.append(f"由 {cancelled['nickname']} {how}（{cancelled['at']}）")
     if summary["duration_seconds"] is not None:
         lines.append(f"耗时：{format_duration(summary['duration_seconds'])}")
     lines.append(f"链接：{summary['url']}")
@@ -192,15 +192,13 @@ def _render_failed(item: Mapping[str, Any]) -> list[str]:
     tries = ""
     if item["attempt"] is not None:
         tries = f"，第 {item['attempt']} 次尝试"
-        if item["attempts"] > item["attempt"]:
-            tries += f"（共 {item['attempts']} 次）"
     label = f"{item['chain']}:{item['node']}"
     lines = [f"  {label}（{item['type']}{tries}）"]
     error = item["error"]
     if error:
         message = error["message"].rstrip().splitlines() or [""]
         lines.append(f"    错误：{error['kind']}：{message[0]}")
-        lines.extend(f"      {line}" for line in message[1:])
+        lines.extend(f"      {line}".rstrip() for line in message[1:])
     else:
         lines.append("    错误：没有错误信息")
     logs = item.get("logs") or []
@@ -209,7 +207,7 @@ def _render_failed(item: Mapping[str, Any]) -> list[str]:
         for line in logs:
             text = line["text"].rstrip("\n").split("\n")
             lines.append(f"      {line['time'] or '-'} {line['level']:<5} {text[0]}")
-            lines.extend(f"        {rest}" for rest in text[1:])
+            lines.extend(f"        {rest}".rstrip() for rest in text[1:])
     elif item.get("logs_note") is None and item.get("task"):
         lines.append("    没有日志")
     if item.get("logs_note"):
