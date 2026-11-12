@@ -509,8 +509,8 @@ def test_notifications_carry_the_bot_and_the_request_body_and_nothing_is_sent() 
 def test_a_body_over_20_kb_has_its_text_truncated_like_on_the_control_plane(
     text: str, at_all: bool
 ) -> None:
-    # 与控制面的文本格式相同（apps/server/src/feishu/messages.ts）：请求体（紧凑 JSON 的 UTF-8 字节数）不超过 20 KB，
-    # 正文尽量多地保留，末尾接「…（已截断）」，「@所有人」仍在最后。
+    # 与控制面的文本格式相同（apps/server/src/feishu/messages.ts）：请求体（紧凑 JSON 的
+    # UTF-8 字节数）不超过 20 KB，正文尽量多地保留，末尾接「…（已截断）」，「@所有人」仍在最后。
     import json
 
     from sfly_stub import notify
