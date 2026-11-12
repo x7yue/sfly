@@ -2,6 +2,7 @@ import {
 	agentInputs,
 	feishuBotInputs,
 	InvalidReferenceError,
+	notifyBotValue,
 	referencedAgents,
 	referencesIn,
 	resolveInputs,
@@ -21,7 +22,7 @@ import { controlPlaneSdkProblem } from "../packages/requires-sdk.js";
 /**
  * 不能触发的一个原因；code 与保存时的警告一致（含「Agent」类型的输入选的 Agent 没有注册过的
  * `agent_input_not_registered`，飞书通知节点和「飞书机器人」类型的输入选的机器人没有登记的
- * `feishu_bot_not_registered`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
+ * `feishu_bot_not_registered`，飞书通知节点的机器人写了不支持的引用的 `feishu_bot_reference_unsupported`），另有 `agent_not_registered`、`not_supported`、`sdk_version_unsatisfied`、
  * `agent_version_unsatisfied`。
  */
 export interface PreflightProblem {
@@ -163,8 +164,10 @@ export function createParamsCheck(deps: { db: Db; packages: PackageRepository })
 		const bots: BotToCheck[] = [];
 		for (const { chain, params: known, source } of knownParams(plan, params)) {
 			for (const node of chain.nodes) {
+				// 整值引用入口参数的才在这里按实际值查；其他写法的引用已经由静态检查（feishu_bot_reference_unsupported）阻断。
 				if (node.kind === "feishu_notify" && node.bot !== undefined) {
-					const bot = referencesIn(node.bot).length > 0 ? resolved(node.bot, known) : undefined;
+					const bot =
+						notifyBotValue(node.bot).kind === "param" ? resolved(node.bot, known) : undefined;
 					if (typeof bot === "string" && bot !== "") bots.push({ nodeId: node.id, bot, source });
 				}
 				if (node.kind !== "package") continue;

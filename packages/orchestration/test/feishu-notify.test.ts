@@ -7,6 +7,7 @@ import {
 	documentWarnings,
 	feishuBotNotRegistered,
 	feishuBotWarnings,
+	notifyBotValue,
 	type PackageCatalog,
 	referenceOptions,
 	resolveInputs,
@@ -137,6 +138,46 @@ describe("机器人必须已登记的静态检查", () => {
 				input: "bot",
 			},
 		]);
+	});
+
+	describe("机器人只能是常量名称，或整值引用入口参数", () => {
+		const unsupported = (bot: string) => [
+			{
+				code: "feishu_bot_reference_unsupported",
+				message: `节点 notify 的飞书机器人只能是已登记的机器人名称，或整个引用入口参数（\${{ params.<参数名> }}），现在是「${bot}」`,
+				node_id: "notify",
+				input: "bot",
+			},
+		];
+
+		it.each([
+			["引用前面节点的输出", "${{ nodes.load.outputs.channel }}"],
+			["引用夹在文字里", "ops-${{ params.env }}"],
+			["引用后面还有文字", "${{ params.env }}-bot"],
+			["两个引用连在一起", "${{ params.env }}${{ params.env }}"],
+			["引用没有闭合", "${{ params.env"],
+		])("%s：保存时警告，指出节点和字段", (_name, bot) => {
+			expect(warnings({ bot, text: "x" })).toEqual(unsupported(bot));
+		});
+
+		it("不依赖已登记的机器人名单：画布还在加载时也警告，而且不再说「还没有登记」", () => {
+			const bot = "${{ nodes.load.outputs.channel }}";
+			expect(warnings({ bot }, null)).toEqual(unsupported(bot));
+			expect(warnings({ bot }, new Set(["ops"]))).toEqual(unsupported(bot));
+		});
+
+		it("整值引用入口参数不警告：写不写空格都一样", () => {
+			expect(warnings({ bot: "${{ params.env }}" })).toEqual([]);
+			expect(warnings({ bot: "${{params.env}}" })).toEqual([]);
+			expect(warnings({ bot: "${{ params.env }}" }, null)).toEqual([]);
+		});
+
+		it("notifyBotValue 把机器人字段分成常量、入口参数和不支持的写法", () => {
+			expect(notifyBotValue("ops")).toEqual({ kind: "constant", name: "ops" });
+			expect(notifyBotValue("${{ params.env }}")).toEqual({ kind: "param", param: "env" });
+			expect(notifyBotValue("${{ nodes.a.outputs.b }}")).toEqual({ kind: "unsupported" });
+			expect(notifyBotValue("a${{ params.env }}")).toEqual({ kind: "unsupported" });
+		});
 	});
 
 	it("feishuBotWarnings 只看飞书通知节点", () => {

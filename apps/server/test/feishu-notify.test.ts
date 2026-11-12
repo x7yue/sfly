@@ -359,6 +359,36 @@ describe("飞书通知节点（文本格式）与发送队列", () => {
 			expect((await api.run(runId)).status).toBe("success");
 		});
 
+		it.each([
+			["引用前面节点的输出", "${{ nodes.load.outputs.v }}"],
+			["引用夹在文字里", "ops-${{ params.channel }}"],
+		])("机器人只能是常量名称或整值引用入口参数（%s）：保存时警告，触发时阻断并指出是哪个节点", async (_name, bot) => {
+			const id = await api.createOrchestration("通知");
+			const document = flow(
+				[echo("load"), notify("n", { bot })],
+				[{ name: "channel", type: "string" }],
+				{ agent: true },
+			);
+			const feishuWarnings = (await saveWarnings(id, document)).filter((w) =>
+				String(w.code).startsWith("feishu_"),
+			);
+			const message = `节点 n 的飞书机器人只能是已登记的机器人名称，或整个引用入口参数（\${{ params.<参数名> }}），现在是「${bot}」`;
+			expect(feishuWarnings).toEqual([
+				{ code: "feishu_bot_reference_unsupported", message, node_id: "n", input: "bot" },
+			]);
+
+			const res = await api.trigger(id, { channel: "ops" });
+			expect(res.status).toBe(400);
+			const body = (await res.json()) as { error: { code: string; details: unknown[] } };
+			expect(body.error.code).toBe("invalid_orchestration");
+			expect(body.error.details).toContainEqual({
+				code: "feishu_bot_reference_unsupported",
+				message,
+				node_id: "n",
+			});
+			expect(feishu.requests).toHaveLength(0);
+		});
+
 		it("子流程里的飞书通知节点引用的参数由异步任务节点传入：按映射的常量检查", async () => {
 			const id = await api.orchestrationWith(
 				orchestration(

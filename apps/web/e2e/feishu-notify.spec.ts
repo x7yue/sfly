@@ -98,7 +98,9 @@ test("机器人没有登记时字段下有警告；改选已登记的机器人�
 		controlPlane,
 		"压测通知",
 		scenario([
-			{ id: "notify", kind: "feishu_notify", position: { x: 252, y: 0 }, bot: "ghost", text: "hi" },
+			// 前面有一个带输出的节点：机器人字段也不能引用它的输出。
+			{ id: "wait", kind: "sleep", position: { x: 252, y: 0 }, duration: "5s" },
+			{ id: "notify", kind: "feishu_notify", position: { x: 504, y: 0 }, bot: "ghost", text: "hi" },
 		]),
 	);
 	await page.goto(`/orchestrations/${id}`);
@@ -113,7 +115,7 @@ test("机器人没有登记时字段下有警告；改选已登记的机器人�
 	await bot.selectOption("ops");
 	await expect(panel.getByText(warning)).toHaveCount(0);
 
-	// 改为引用：只能选入口参数，选中后显示引用标签；触发时按实际传入的值检查。
+	// 改为引用：只能选入口参数（不提供前面节点的输出），选中后显示引用标签；触发时按实际传入的值检查。
 	const list = panel.getByRole("listbox", { name: "可引用的值" });
 	await panel.getByRole("button", { name: "在 飞书机器人 中插入引用" }).click();
 	await expect(list.getByRole("group")).toHaveText([/^入口参数/]);
