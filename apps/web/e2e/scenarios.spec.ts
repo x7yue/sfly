@@ -1,5 +1,11 @@
 import { expect, test } from "./fixtures";
-import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
+import {
+	createScenario,
+	expectFocusVisible,
+	publishPackage,
+	scenarioUsing,
+	triggerRun,
+} from "./support";
 
 // 场景列表页（原型 #/scenarios）：卡片、表格、搜索筛选、更多菜单、归档与恢复、新建场景。
 
@@ -373,4 +379,78 @@ test("新建场景：自带入口节点，建好后进入编排画布；命令�
 	await page.goto("/orchestrations");
 	await expect(page.getByRole("article", { name: "登录冒烟" })).toContainText("每次发布后跑");
 	await expect(page.getByRole("article", { name: "支付冒烟" })).toContainText("1 节点");
+});
+
+test("列表页的键盘：/ 聚焦并选中搜索框，↓ 进入第一张卡片，J / K 在卡片之间移动，Enter 进入编排画布", async ({
+	page,
+	controlPlane,
+}) => {
+	await createScenario(controlPlane, "日终数据处理");
+	await createScenario(controlPlane, "日终对账");
+	await createScenario(controlPlane, "撮合压测");
+	await page.goto("/orchestrations");
+	const cards = page.locator("article[data-list-item]");
+	await expect(cards).toHaveCount(3);
+	const box = page.getByRole("searchbox", { name: "搜索场景" });
+
+	await page.keyboard.press("/");
+	await expect(box).toBeFocused();
+	await box.fill("日终");
+	await expect(cards).toHaveCount(2);
+	await page.getByRole("heading", { name: "场景编排" }).click();
+	await page.keyboard.press("/");
+	await expect(box).toBeFocused();
+	expect(
+		await box.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd]),
+	).toEqual([0, 2]);
+
+	await page.keyboard.press("ArrowDown");
+	const shown = await cards.locator("h2").allTextContents();
+	const link = (index: number) => page.getByRole("link", { name: shown[index], exact: true });
+	await expectFocusVisible(link(0));
+	await page.keyboard.press("j");
+	await expectFocusVisible(link(1));
+	await page.keyboard.press("j");
+	await expectFocusVisible(link(1));
+	await page.keyboard.press("k");
+	await expectFocusVisible(link(0));
+	await expect(cards.nth(0)).toHaveCSS("border-color", "rgb(68, 68, 68)");
+	await expect(cards.nth(1)).not.toHaveCSS("border-color", "rgb(68, 68, 68)");
+
+	const href = await link(1).getAttribute("href");
+	await page.keyboard.press("j");
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(new RegExp(`${href}$`));
+});
+
+test("列表页的键盘：焦点不在列表里时 J 去第一项、K 去最后一项；表格视图里在行之间移动；菜单打开时不抢焦点", async ({
+	page,
+	controlPlane,
+}) => {
+	await createScenario(controlPlane, "日终数据处理");
+	await createScenario(controlPlane, "撮合压测");
+	await createScenario(controlPlane, "登录巡检");
+	await page.goto("/orchestrations?view=table");
+	const table = page.getByRole("table", { name: "场景列表" });
+	const rows = table.locator("tr[data-list-item]");
+	await expect(rows).toHaveCount(3);
+	const names = await rows.locator("td:first-child a").allTextContents();
+	const link = (index: number) => table.getByRole("link", { name: names[index] });
+
+	await page.keyboard.press("k");
+	await expectFocusVisible(link(2));
+	await page.keyboard.press("k");
+	await expectFocusVisible(link(1));
+	const hovered = await rows.nth(1).evaluate((el) => getComputedStyle(el).backgroundColor);
+	const plain = await rows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor);
+	expect(hovered).not.toBe(plain);
+
+	await rows.nth(1).getByRole("button", { name: "更多操作" }).click();
+	const menu = page.getByRole("menu");
+	await expect(menu).toBeVisible();
+	await page.keyboard.press("j");
+	await expect(menu).toBeVisible();
+	expect(await menu.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+	await page.keyboard.press("Escape");
+	await expect(menu).toBeHidden();
 });

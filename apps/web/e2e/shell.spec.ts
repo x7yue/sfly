@@ -191,6 +191,11 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		"新建场景",
 	]);
 	await expect(global.getByRole("definition").nth(0)).toHaveText("CtrlK");
+	await expect(panel.getByRole("region", { name: "列表页" }).getByRole("term")).toHaveText([
+		"下一项",
+		"上一项",
+		"搜索",
+	]);
 	await page.keyboard.press("Escape");
 	await expect(panel).toBeHidden();
 
@@ -218,6 +223,17 @@ test("在输入框里打字不会触发单键快捷键", async ({ page }) => {
 	await expect(page.getByRole("dialog", { name: "快捷键" })).toBeHidden();
 	await expect(page.getByRole("dialog", { name: "新建场景" })).toBeHidden();
 	await expect(page.getByRole("combobox", { name: "命令" })).toHaveValue("g p ? n");
+	await page.keyboard.press("Escape");
+
+	await page.goto("/orchestrations");
+	const box = page.getByRole("searchbox", { name: "搜索场景" });
+	await expect(box).toBeVisible();
+	await page.keyboard.press("/");
+	await expect(box).toBeFocused();
+	await page.keyboard.type("n j k /");
+	await expect(box).toHaveValue("n j k /");
+	await expect(box).toBeFocused();
+	await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
 test("N 打开新建场景：在页面上打开、在弹窗的输入框里打字不再触发；命令面板里「新建场景」显示这个键", async ({

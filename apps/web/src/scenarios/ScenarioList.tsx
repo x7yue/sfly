@@ -255,7 +255,8 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 	return (
 		<article
 			aria-label={scenario.name}
-			className="flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface transition-colors hover:border-border-strong"
+			data-list-item
+			className="flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface transition-colors hover:border-border-strong has-[:focus-visible]:border-border-strong"
 		>
 			<div className="relative h-37 border-b border-border-soft bg-sunk bg-[radial-gradient(var(--canvas-grid)_1px,transparent_1px)] bg-size-[14px_14px]">
 				{/* 缩略图只是鼠标的大点击区，与名称链接去同一处：不进 Tab 顺序，读屏不重复读。 */}
@@ -295,8 +296,13 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 				)}
 			</div>
 			<div className="flex flex-1 flex-col gap-2 px-3.5 pt-3 pb-2.5">
-				<h2 className="m-0 truncate text-base font-semibold">
-					<Link to="/orchestrations/$id" params={{ id: scenario.id }} className="hover:underline">
+				<h2 className="-m-1 truncate p-1 text-base font-semibold">
+					<Link
+						to="/orchestrations/$id"
+						params={{ id: scenario.id }}
+						data-list-primary
+						className="hover:underline"
+					>
 						{scenario.name}
 					</Link>
 				</h2>
@@ -344,6 +350,7 @@ const tableColumns = dataColumns<OrchestrationSummary>((col) =>
 					<Link
 						to="/orchestrations/$id"
 						params={{ id: s.id }}
+						data-list-primary
 						className="inline-flex items-center gap-1.5 font-medium hover:underline"
 					>
 						<WorkflowIcon className="size-3.5 text-fg-3" />
@@ -398,6 +405,12 @@ const tableColumns = dataColumns<OrchestrationSummary>((col) =>
 /** 表格视图。 */
 export function ScenarioTable({ scenarios }: { scenarios: OrchestrationSummary[] }) {
 	return (
-		<DataTable aria-label="场景列表" columns={tableColumns} data={scenarios} rowKey={(s) => s.id} />
+		<DataTable
+			aria-label="场景列表"
+			columns={tableColumns}
+			data={scenarios}
+			rowKey={(s) => s.id}
+			rowProps={() => ({ "data-list-item": "", className: "has-[:focus-visible]:bg-fg-1/3" })}
+		/>
 	);
 }

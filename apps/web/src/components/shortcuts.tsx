@@ -97,7 +97,7 @@ export function ShortcutListener() {
 	return null;
 }
 
-const GROUPS: ShortcutGroup[] = ["全局", "编排画布", "运行监控"];
+const GROUPS: ShortcutGroup[] = ["全局", "编排画布", "运行监控", "列表页"];
 
 /** 快捷键面板（?）：内容全部来自注册表。 */
 export function ShortcutsDialog({

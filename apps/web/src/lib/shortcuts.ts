@@ -12,7 +12,7 @@
  *   （ShortcutMatcher.handle 的 isBound）。「全局」的键不能与任何分组重复，同一分组内也不能重复（单测检查）。
  */
 
-export type ShortcutGroup = "全局" | "编排画布" | "运行监控";
+export type ShortcutGroup = "全局" | "编排画布" | "运行监控" | "列表页";
 
 export interface ShortcutDef {
 	id: string;
@@ -157,6 +157,11 @@ export const SHORTCUTS = [
 		keys: "Shift+F10",
 		displayOnly: true,
 	},
+	// 列表页（场景、运行记录、节点包）：J / K 在列表项之间移动真实的键盘焦点（components/list-navigation.tsx），
+	// / 聚焦搜索框（lib/use-search-input.ts；没有搜索框的页面不绑定）。
+	{ id: "list-next", group: "列表页", label: "下一项", keys: "J" },
+	{ id: "list-prev", group: "列表页", label: "上一项", keys: "K" },
+	{ id: "list-search", group: "列表页", label: "搜索", keys: "/" },
 ] as const satisfies readonly ShortcutDef[];
 
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];
