@@ -30,7 +30,8 @@ function describeFailure({ reason, nextStep, code }: FeishuFailure): string {
  *   一个机器人不响应（单次请求最多 10 秒）不会挡住别的机器人。
  * - 可重试的失败（网络错误、超时、HTTP 429、5xx、飞书的限流错误码 11232）退避重试：间隔从 1 秒起逐次翻倍，最长 60 秒，
  *   从入队算起 10 分钟还没送达就记为失败。等着重试的消息仍然是队首，后面的消息不会越过它。其他失败只发一次就记为失败。
- * - 每个机器人每秒最多发 5 个请求、每分钟最多 100 个（重试也算）。
+ * - 每个机器人每秒最多发 5 个请求、每分钟最多 100 个（重试也算）；按请求有了结果（响应回来、失败或超时）的时刻计数，
+ *   因为飞书按收到请求的时刻数，那一刻落在发出和响应回来之间。
  * - 单个机器人排队的消息超过 1000 条时，丢弃最旧的。
  * - 退避、期限和限速都按控制面时间（注入的时钟，ADR 0018）算，没有定时器：到点与否在每次唤醒时判断。
  *   排好的下一次尝试记在队列里（`next_attempt_at`），控制面重启之后继续按它算。
@@ -157,12 +158,13 @@ export class FeishuDelivery {
 		}
 		const now = this.deps.clock.now().getTime();
 		if (!isRetryDue(message.nextAttemptAt, now)) return false;
-		if (this.#limiter.acquire(bot.name, now) > 0) return false;
+		if (this.#limiter.waitMs(bot.name, now) > 0) return false;
 
 		const result = await this.deps.client.send(bot.webhookUrl, message.body);
+		const at = this.deps.clock.now();
+		this.#limiter.record(bot.name, at.getTime());
 		if (this.#closed) return true;
 		const attempts = message.attempts + 1;
-		const at = this.deps.clock.now();
 		const name = `飞书机器人「${bot.name}」`;
 		if (result.ok) {
 			const retried = attempts > 1 ? `（第 ${attempts} 次尝试送达）` : "";

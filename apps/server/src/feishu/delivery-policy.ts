@@ -36,19 +36,24 @@ const RATE_LIMITS = [
 const LONGEST_WINDOW_MS = 60_000;
 
 /**
- * 每个机器人的发送限速（滑动窗口）：任意一个 {@link RATE_LIMITS} 的窗口里，已经发出的请求数达到上限，就要等。
- * 重试也是请求，同样计数。只记在内存里：控制面重启后从头算，多发出的那一点会被飞书的限流错误码 11232 接住，
- * 由退避重试处理。
+ * 每个机器人的发送限速（滑动窗口）：任意一个 {@link RATE_LIMITS} 的窗口里，已经有了结果的请求数达到上限，就要等。
+ * 重试也是请求，同样计数；失败和超时的请求也算，它们可能已经到了飞书。只记在内存里：控制面重启后从头算，
+ * 多发出的那一点会被飞书的限流错误码 11232 接住，由退避重试处理。
+ *
+ * 飞书按收到请求的时刻计数，我们看不到那一刻，只知道它落在发出和响应回来之间。同一个机器人的请求一个接一个地发，
+ * 所以按响应回来（或失败、超时）的时刻记：下一个请求发出时，离 5 个之前的请求结束已满 1 秒，
+ * 飞书收到它的时刻就一定比收到那个请求的时刻晚满 1 秒，不论请求在路上耗了多久。按发出的时刻记做不到这一点：
+ * 前面的请求在路上多耗的时间，会让它被飞书收到得更晚，和后面的请求挤进同一个窗口。
  */
 export class SendRateLimiter {
-	readonly #sent = new Map<string, number[]>();
+	readonly #ended = new Map<string, number[]>();
 
 	/**
-	 * 现在能给这个机器人发一个请求吗？能：记下这次发送，返回 0；不能：不记录，返回至少还要等多少毫秒。
-	 * 窗口是 `(now - windowMs, now]`；比 `now` 还晚的记录（控制面时间往回跳了）作废。
+	 * 现在能给这个机器人发一个请求吗？能返回 0，不能返回至少还要等多少毫秒。只查不记，发出去的请求由调用方在
+	 * 有了结果之后用 {@link record} 记下。窗口是 `(now - windowMs, now]`；比 `now` 还晚的记录（控制面时间往回跳了）不算。
 	 */
-	acquire(bot: string, now: number): number {
-		const times = (this.#sent.get(bot) ?? []).filter(
+	waitMs(bot: string, now: number): number {
+		const times = (this.#ended.get(bot) ?? []).filter(
 			(time) => time <= now && time > now - LONGEST_WINDOW_MS,
 		);
 		let wait = 0;
@@ -57,16 +62,14 @@ export class SendRateLimiter {
 			const blocking = inWindow[inWindow.length - max];
 			if (blocking !== undefined) wait = Math.max(wait, blocking + windowMs - now);
 		}
-		if (wait > 0) {
-			this.#store(bot, times);
-			return wait;
-		}
-		this.#store(bot, [...times, now]);
-		return 0;
+		return wait;
 	}
 
-	#store(bot: string, times: number[]): void {
-		if (times.length > 0) this.#sent.set(bot, times);
-		else this.#sent.delete(bot);
+	/** 记下这个机器人的一个请求在 `endedAt` 有了结果（响应回来、失败或超时）。比 `endedAt` 还晚的记录作废。 */
+	record(bot: string, endedAt: number): void {
+		const times = (this.#ended.get(bot) ?? []).filter(
+			(time) => time <= endedAt && time > endedAt - LONGEST_WINDOW_MS,
+		);
+		this.#ended.set(bot, [...times, endedAt]);
 	}
 }
