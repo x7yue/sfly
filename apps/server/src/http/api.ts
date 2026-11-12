@@ -1,4 +1,9 @@
-import { CONTROL_PLANE_TIME_HEADER, httpContract, systemApi } from "@sfly/schema";
+import {
+	CONTROL_PLANE_TIME_HEADER,
+	CONTROL_PLANE_VERSION_HEADER,
+	httpContract,
+	systemApi,
+} from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentHub } from "../agents/agent-hub.js";
@@ -120,10 +125,15 @@ export function buildHttpApi({
 	// 在发出响应时取时间（不是收到请求时），处理耗时不算进页面的误差里。
 	app.addHook("onSend", async (_request, reply) => {
 		reply.header(CONTROL_PLANE_TIME_HEADER, clock.now().toISOString());
+		reply.header(CONTROL_PLANE_VERSION_HEADER, publicConfig.version);
 	});
 	if (webApp) registerWebApp(app, webApp);
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
-	const sse = registerSse(app, { clock, heartbeatMs: sseHeartbeatMs });
+	const sse = registerSse(app, {
+		clock,
+		version: publicConfig.version,
+		heartbeatMs: sseHeartbeatMs,
+	});
 
 	// Fastify 自身产生的错误（未知路由、请求体过大、JSON 解析失败等）也用统一的错误格式。
 	app.setNotFoundHandler((request, reply) =>

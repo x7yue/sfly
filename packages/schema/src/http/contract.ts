@@ -159,6 +159,12 @@ export const ControlPlaneTimeEvent = z.object({ time: Timestamp });
 export type ControlPlaneTimeEvent = z.infer<typeof ControlPlaneTimeEvent>;
 
 /**
+ * 控制面版本：每个 HTTP 响应（含错误响应和 SSE 流）都带 {@link CONTROL_PLANE_VERSION_HEADER} 响应头，
+ * 值是控制面的版本号（Agent、SDK 与控制面同版本，ADR 0010）。`sfly` 命令行据此在版本不一致时告警。
+ */
+export const CONTROL_PLANE_VERSION_HEADER = "x-sfly-version";
+
+/**
  * 按路径模板拼出路径；路径参数用 encodeURIComponent 编码，末尾 `*` 的值按 `/` 分段、每段单独编码。
  */
 export function pathFor(def: Pick<RouteDef, "path">, params?: Record<string, unknown>): string {
