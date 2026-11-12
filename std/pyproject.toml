@@ -28,8 +28,8 @@ dependencies = [
 # 现在只能写当前版本能满足的范围（否则同版本的控制面阻断全部标准节点），
 # 那个版本的发版 PR 改版本号时同样调成 >=<那个版本>（std/tests/test_package.py 会要求这样做）。
 [tool.sfly]
-requires-sdk = ">=0.1.0"
-requires-agent = ">=0.1.0"
+requires-sdk = ">=0.2.0"
+requires-agent = ">=0.2.0"
 
 [build-system]
 requires = ["uv_build>=0.8,<0.14"]
