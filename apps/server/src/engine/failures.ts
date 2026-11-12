@@ -18,14 +18,22 @@ export const shouldRetry = (node: OrchestrationNode, kind: ErrorKind, attempt: n
 /** 前面的节点失败后仍然执行的节点（包节点、定时节点、Sleep 节点、停止子流程节点可以设置）。 */
 export const isAlways = (node: OrchestrationNode): boolean => "always" in node && node.always;
 
-/** 链上是否已有节点最终失败：某个节点最近一次尝试的状态是 failed。 */
-export function hasFinalFailure(
-	rows: ReadonlyArray<{ nodeId: string; attempt: number; status: TaskStatus }>,
-): boolean {
-	const latest = new Map<string, { attempt: number; status: TaskStatus }>();
+/**
+ * 最终失败的节点：每个节点最近一次尝试的状态是 failed 的那一行（按链实例和节点分组，行里没有链实例时算同一条链）。
+ */
+export function finalFailures<
+	T extends { chainInstanceId?: string; nodeId: string; attempt: number; status: TaskStatus },
+>(rows: readonly T[]): T[] {
+	const latest = new Map<string, T>();
 	for (const row of rows) {
-		const seen = latest.get(row.nodeId);
-		if (!seen || row.attempt > seen.attempt) latest.set(row.nodeId, row);
+		const key = `${row.chainInstanceId ?? ""}\0${row.nodeId}`;
+		const seen = latest.get(key);
+		if (!seen || row.attempt > seen.attempt) latest.set(key, row);
 	}
-	return [...latest.values()].some((row) => row.status === "failed");
+	return [...latest.values()].filter((row) => row.status === "failed");
 }
+
+/** 链上是否已有节点最终失败：某个节点最近一次尝试的状态是 failed。 */
+export const hasFinalFailure = (
+	rows: ReadonlyArray<{ nodeId: string; attempt: number; status: TaskStatus }>,
+): boolean => finalFailures(rows).length > 0;

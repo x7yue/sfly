@@ -77,6 +77,30 @@ describe("删除飞书机器人之前列出引用它的场景", () => {
 		expect(await references("ops")).toEqual([]);
 	});
 
+	it("场景的运行通知设置选了这个机器人的也列出来：没有版本的场景也在，和节点引用在同一个场景下一起列，已归档的不列", async () => {
+		const bare = await api.createOrchestration("只有运行通知");
+		await api.patch(`/orchestrations/${bare}`, { run_notification: { bot: "ops" } });
+		const both = await api.orchestrationWith(flow([notify("n", "ops")]), "节点加运行通知");
+		await api.patch(`/orchestrations/${both}`, { run_notification: { bot: "ops" } });
+		const other = await api.createOrchestration("选了别的机器人");
+		await api.patch(`/orchestrations/${other}`, { run_notification: { bot: "dev" } });
+		await api.createOrchestration("没开运行通知");
+		const archived = await api.createOrchestration("已归档");
+		await api.patch(`/orchestrations/${archived}`, { run_notification: { bot: "ops" } });
+		expect((await api.post(`/orchestrations/${archived}/archive`, {})).status).toBe(200);
+
+		const found = await references("ops");
+		expect(found.map((s) => s.name)).toEqual(["只有运行通知", "节点加运行通知"]);
+		expect(found.find((s) => s.name === "只有运行通知")?.references).toEqual([
+			{ kind: "run_notification" },
+		]);
+		expect(found.find((s) => s.name === "节点加运行通知")?.references).toEqual([
+			{ kind: "feishu_notify_node", node_id: "n" },
+			{ kind: "run_notification" },
+		]);
+		expect((await references("dev")).map((s) => s.name)).toEqual(["选了别的机器人"]);
+	});
+
 	it("没有场景引用时是空列表；机器人不存在时 404", async () => {
 		expect(await references("ops")).toEqual([]);
 		const res = await api.get("/feishu-bots/ghost/references");

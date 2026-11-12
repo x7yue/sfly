@@ -50,6 +50,7 @@ import {
 import type { FeishuDelivery } from "../feishu/feishu-delivery.js";
 import { enqueueFeishuMessage } from "../feishu/feishu-queue.js";
 import { prepareNotification } from "../feishu/notify-node.js";
+import { enqueueRunNotification } from "../feishu/run-notification.js";
 import {
 	type AgentSessionHandler,
 	type RunningTaskRef,
@@ -241,6 +242,8 @@ export class Engine implements AgentSessionHandler {
 			logs: Pick<TaskLogs, "appendSystem">;
 			/** 飞书发送队列的投递；节点在事务里入队，提交后唤醒它（src/feishu/feishu-delivery.ts）。 */
 			feishuDelivery: Pick<FeishuDelivery, "wake">;
+			/** 运行通知卡片里「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时返回 undefined（卡片没有按钮）。 */
+			runUrl: (runId: string) => string | undefined;
 			/** 运行中任务的租约（毫秒），默认 DEFAULT_LEASE_MS。 */
 			leaseMs?: number;
 			/** 与 Agent 版本一致的 SDK 运行时 wheel（Welcome 里告诉 Agent，#1 评审）；没有时为 undefined。 */
@@ -1181,10 +1184,20 @@ export class Engine implements AgentSessionHandler {
 			: chains.some((c) => c.status === "failed")
 				? "failed"
 				: "success";
-		await step.tx
+		// 只有第一次把运行记为结束的事务发运行通知：同一个运行不会发两张卡片。
+		const [finished] = await step.tx
 			.update(runs)
 			.set({ status: runStatus, endedAt: step.now })
-			.where(eq(runs.id, run.id));
+			.where(and(eq(runs.id, run.id), eq(runs.status, "running")))
+			.returning({ id: runs.id });
+		if (!finished) return;
+		// 运行通知和运行的最终状态在同一个事务里：读场景当前的设置，满足条件就写进发送队列（#232）。
+		await enqueueRunNotification(step, {
+			run,
+			status: runStatus,
+			document: await this.#document(step.tx, run.orchestrationVersionId),
+			runUrl: this.deps.runUrl(run.id),
+		});
 	}
 
 	/**

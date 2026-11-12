@@ -56,12 +56,13 @@ export const FeishuTestResult = z.object({
 
 /**
  * 一处引用飞书机器人的地方。`kind` 区分引用的种类：飞书通知节点（`feishu_notify_node`）、
- * 「飞书机器人」类型的输入的常量值（`feishu_bot_input`，指出节点和输入名）；
- * 运行通知的设置会随它的功能加进来。
+ * 「飞书机器人」类型的输入的常量值（`feishu_bot_input`，指出节点和输入名）、
+ * 场景设置里的运行通知（`run_notification`，场景自己的设置，不在某个节点上）。
  */
 export const FeishuBotReference = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("feishu_notify_node"), node_id: z.string() }),
 	z.object({ kind: z.literal("feishu_bot_input"), node_id: z.string(), input: z.string() }),
+	z.object({ kind: z.literal("run_notification") }),
 ]);
 
 /** 引用了某个飞书机器人的场景，和场景里引用它的地方。 */
@@ -111,8 +112,9 @@ export const feishuBotsApi = {
 		response: FeishuBotView,
 	}),
 	/**
-	 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里的飞书通知节点，
-	 * 按场景名排序；已归档的场景不列。机器人不存在 404 `not_found`。
+	 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里的飞书通知节点、
+	 * 「飞书机器人」类型的输入的常量值，以及场景设置里的运行通知，按场景名排序；已归档的场景不列。
+	 * 机器人不存在 404 `not_found`。
 	 */
 	references: endpoint({
 		method: "GET",

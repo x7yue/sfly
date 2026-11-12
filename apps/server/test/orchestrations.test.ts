@@ -323,3 +323,135 @@ describe("编排版本", () => {
 		expect(res.status).toBe(404);
 	});
 });
+
+describe("场景的运行通知设置", () => {
+	let cp: TestControlPlane;
+	let api: ApiClient;
+	beforeAll(async () => {
+		cp = await startTestControlPlane();
+		api = new ApiClient(cp);
+	});
+	afterAll(async () => {
+		await cp.close();
+	});
+
+	const OFF = { bot: null, trigger: "failed", title: "", note: "" };
+	const settingsOf = async (id: string) =>
+		(await api.getJson<{ run_notification: unknown }>(`/orchestrations/${id}`)).run_notification;
+
+	it("新场景默认关闭运行通知：没有机器人，仅失败时触发，标题和附加说明为空", async () => {
+		const id = await api.createOrchestration("默认");
+		expect(await settingsOf(id)).toEqual(OFF);
+		const listed = await api.getJson<{ orchestrations: Array<{ id: string; run_notification: unknown }> }>(
+			"/orchestrations",
+		);
+		expect(listed.orchestrations.find((o) => o.id === id)?.run_notification).toEqual(OFF);
+	});
+
+	it("通过更新场景的接口修改，立即生效，不产生新版本；没提到的设置保持不变，机器人传 null 即关闭", async () => {
+		const id = await api.orchestrationWith(docV1, "设置");
+		const patch = async (settings: unknown) => {
+			const res = await api.patch(`/orchestrations/${id}`, { run_notification: settings });
+			expect(res.status, await res.clone().text()).toBe(200);
+			return res.json();
+		};
+
+		const updated = await patch({
+			bot: "压测群",
+			trigger: "failed_or_cancelled",
+			title: "  【订单压测-A 环境】 ",
+			note: "负责人 <at id=ou_1></at>",
+		});
+		expect(updated).toMatchObject({
+			name: "设置",
+			head_version: 1,
+			run_notification: {
+				bot: "压测群",
+				trigger: "failed_or_cancelled",
+				title: "【订单压测-A 环境】",
+				note: "负责人 <at id=ou_1></at>",
+			},
+		});
+
+		await patch({ trigger: "always" });
+		expect(await settingsOf(id)).toEqual({
+			bot: "压测群",
+			trigger: "always",
+			title: "【订单压测-A 环境】",
+			note: "负责人 <at id=ou_1></at>",
+		});
+
+		await patch({ bot: null, title: "", note: "" });
+		expect(await settingsOf(id)).toEqual({ ...OFF, trigger: "always" });
+
+		// 没有产生新版本。
+		const versions = await api.getJson<{ versions: unknown[] }>(`/orchestrations/${id}/versions`);
+		expect(versions.versions).toHaveLength(1);
+		expect(await api.headVersion(id)).toBe(1);
+	});
+
+	it("名称、说明和运行通知可以一起修改；只改名称时运行通知不变", async () => {
+		const id = await api.createOrchestration("一起改");
+		const res = await api.patch(`/orchestrations/${id}`, {
+			name: "改过",
+			description: "说明",
+			run_notification: { bot: "群", trigger: "always" },
+		});
+		expect(res.status).toBe(200);
+		expect(await res.json()).toMatchObject({
+			name: "改过",
+			description: "说明",
+			run_notification: { bot: "群", trigger: "always", title: "", note: "" },
+		});
+
+		const renamed = await api.patch(`/orchestrations/${id}`, { name: "只改名" });
+		expect(await renamed.json()).toMatchObject({
+			name: "只改名",
+			run_notification: { bot: "群", trigger: "always" },
+		});
+	});
+
+	it.each([
+		["触发条件不认识", { trigger: "sometimes" }],
+		["机器人是空字符串", { bot: "" }],
+		["没有要修改的设置", {}],
+		["多了不认识的字段", { bot: "群", colour: "red" }],
+		["标题太长", { title: "长".repeat(201) }],
+		["附加说明太长", { note: "长".repeat(4001) }],
+	])("不合法的设置返回 400，不改任何东西：%s", async (_, settings) => {
+		const id = await api.createOrchestration("不合法");
+		const res = await api.patch(`/orchestrations/${id}`, { run_notification: settings });
+		expect(res.status).toBe(400);
+		expect(await res.json()).toMatchObject({ error: { code: "invalid_request" } });
+		expect(await settingsOf(id)).toEqual(OFF);
+	});
+
+	it("复制场景时复制运行通知的设置；之后各改各的", async () => {
+		const source = await api.orchestrationWith(docV1, "复制源");
+		await api.patch(`/orchestrations/${source}`, {
+			run_notification: { bot: "A 群", trigger: "always", title: "标题", note: "说明" },
+		});
+
+		const res = await api.post(`/orchestrations/${source}/copy`, { name: "复制副本" });
+		expect(res.status).toBe(201);
+		const copy = (await res.json()) as { id: string; run_notification: unknown };
+		const expected = { bot: "A 群", trigger: "always", title: "标题", note: "说明" };
+		expect(copy.run_notification).toEqual(expected);
+		expect(await settingsOf(copy.id)).toEqual(expected);
+
+		await api.patch(`/orchestrations/${copy.id}`, { run_notification: { bot: "B 群" } });
+		expect(await settingsOf(source)).toEqual(expected);
+		expect(await settingsOf(copy.id)).toEqual({ ...expected, bot: "B 群" });
+	});
+
+	it("还没有版本的场景复制时同样复制运行通知的设置", async () => {
+		const source = await api.createOrchestration("没版本的源");
+		await api.patch(`/orchestrations/${source}`, { run_notification: { bot: "A 群" } });
+		const res = await api.post(`/orchestrations/${source}/copy`, { name: "没版本的副本" });
+		expect(((await res.json()) as { run_notification: unknown }).run_notification).toEqual({
+			...OFF,
+			bot: "A 群",
+		});
+	});
+});
+

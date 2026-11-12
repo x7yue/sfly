@@ -24,6 +24,17 @@ export class ApiClient {
 		});
 	}
 
+	patch(path: string, body: unknown, nickname = "tester"): Promise<Response> {
+		return this.cp.fetch(path, {
+			method: "PATCH",
+			headers: {
+				"content-type": "application/json",
+				[NICKNAME_HEADER]: encodeURIComponent(nickname),
+			},
+			body: JSON.stringify(body),
+		});
+	}
+
 	/** 没有请求体的 POST（带 content-type 的空请求体会被拒绝）。 */
 	postEmpty(path: string, nickname = "tester"): Promise<Response> {
 		return this.cp.fetch(path, {
@@ -178,5 +189,11 @@ export interface RunView {
 	started_at: string;
 	ended_at: string | null;
 	cancel: { requested_by: string; requested_at: string; forced_at: string | null } | null;
+	/** 运行通知的状态（#232）；没有发运行通知时为 null。 */
+	run_notification: {
+		status: "queued" | "delivered" | "failed" | "discarded" | "not_sent";
+		bot: string;
+		reason: string | null;
+	} | null;
 	chains: ChainView[];
 }

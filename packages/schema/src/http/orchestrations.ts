@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { OrchestrationDocument } from "../orchestration-document.js";
 import { endpoint, Timestamp } from "./contract.js";
+import { FeishuBotName } from "./feishu-bots.js";
 
 /**
  * 场景（代码与路径里沿用 orchestration）相关接口的契约（约定见 ./contract.ts）。
@@ -11,6 +12,39 @@ import { endpoint, Timestamp } from "./contract.js";
  * 存储的文档再解析一次不会改变，满足「响应解析前后相同」的约定。
  */
 
+/**
+ * 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。
+ */
+export const RunNotificationTrigger = z.enum(["failed", "failed_or_cancelled", "always"]);
+
+/** 卡片标题和附加说明的长度上限（字符数）。 */
+export const RUN_NOTIFICATION_TITLE_MAX = 200;
+export const RUN_NOTIFICATION_NOTE_MAX = 4000;
+
+/**
+ * 场景的运行通知设置（GLOSSARY「运行通知」，ADR 0020）：和名称、说明一样是场景自己的设置，不属于场景版本，
+ * 通过更新场景的接口修改，立即生效；运行结束时读取场景当前的设置。
+ */
+export const RunNotificationSettings = z.object({
+	/** 发给哪个飞书机器人（名称）；null 即关闭。机器人可能已被删除，运行结束时记为「未发送」。 */
+	bot: z.string().nullable(),
+	trigger: RunNotificationTrigger,
+	/** 卡片标题；空字符串时用场景名。 */
+	title: z.string(),
+	/** 附加说明（Markdown，可以 @ 人），放在卡片正文的最前面；空字符串即没有。 */
+	note: z.string(),
+});
+
+/** 更新运行通知设置的请求：只写要修改的项，其余保持不变。 */
+export const RunNotificationChanges = z
+	.strictObject({
+		bot: FeishuBotName.nullable().optional(),
+		trigger: RunNotificationTrigger.optional(),
+		title: z.string().trim().max(RUN_NOTIFICATION_TITLE_MAX).optional(),
+		note: z.string().trim().max(RUN_NOTIFICATION_NOTE_MAX).optional(),
+	})
+	.refine((c) => Object.values(c).some((v) => v !== undefined), "没有要修改的运行通知设置");
+
 export const OrchestrationView = z.object({
 	id: z.string(),
 	name: z.string(),
@@ -20,6 +54,7 @@ export const OrchestrationView = z.object({
 	created_at: Timestamp,
 	/** 归档时间；没有归档时为 null。 */
 	archived_at: Timestamp.nullable(),
+	run_notification: RunNotificationSettings,
 });
 
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */
@@ -252,18 +287,26 @@ export const orchestrationsApi = {
 		body: z.strictObject({ name: Name, description: z.string().default("") }),
 		response: OrchestrationView,
 	}),
-	/** 修改名称和说明；不产生新的场景版本。 */
+	/** 修改名称、说明和运行通知设置；不产生新的场景版本，立即生效。 */
 	update: endpoint({
 		method: "PATCH",
 		path: "/orchestrations/:id",
 		key: ["orchestrations", "update"],
 		params: IdParams,
 		body: z
-			.strictObject({ name: Name.optional(), description: z.string().optional() })
-			.refine((b) => b.name !== undefined || b.description !== undefined, "没有要修改的字段"),
+			.strictObject({
+				name: Name.optional(),
+				description: z.string().optional(),
+				run_notification: RunNotificationChanges.optional(),
+			})
+			.refine(
+				(b) =>
+					b.name !== undefined || b.description !== undefined || b.run_notification !== undefined,
+				"没有要修改的字段",
+			),
 		response: OrchestrationView,
 	}),
-	/** 复制场景并取新名字：说明一起复制，源场景最新版本的内容作为第 1 版。 */
+	/** 复制场景并取新名字：说明和运行通知设置一起复制，源场景最新版本的内容作为第 1 版。 */
 	copy: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/copy",
@@ -291,6 +334,9 @@ export const orchestrationsApi = {
 };
 
 export type OrchestrationView = z.infer<typeof OrchestrationView>;
+export type RunNotificationSettings = z.infer<typeof RunNotificationSettings>;
+export type RunNotificationChanges = z.infer<typeof RunNotificationChanges>;
+export type RunNotificationTrigger = z.infer<typeof RunNotificationTrigger>;
 export type OrchestrationSummary = z.infer<typeof OrchestrationSummary>;
 export type OrchestrationStructure = z.infer<typeof OrchestrationStructure>;
 export type ReferencedAgent = z.infer<typeof ReferencedAgent>;
