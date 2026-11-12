@@ -1,6 +1,6 @@
 """Agent 能力 files.read：`files.read`（流式读取）、`files.download`（下载到本地路径）。
 
-- 本地调试（`sfly.testing.run_node`、`sfly run`）：没有 Agent，`ctx.agent()` 直接操作
+- 本地调试（`sfly.testing.run_node`、`sfly debug`）：没有 Agent，`ctx.agent()` 直接操作
   本机的文件系统，其它 Agent 由测试工具映射到本地目录；行为与 Agent 上一致
   （agent/tests/file_read.rs）。
 - 在 Agent 上：用假的 Agent 本地 socket（test_agent_channel.py 的 `FakeAgent`）检查
@@ -283,7 +283,7 @@ def test_a_cancel_right_after_the_file_is_opened_closes_it(
     assert set(os.listdir("/proc/self/fd")) == fds
 
 
-def test_sfly_run_downloads_from_a_mapped_agent(tmp_path: Path) -> None:
+def test_sfly_debug_downloads_from_a_mapped_agent(tmp_path: Path) -> None:
     project = tmp_path / "project"
     shutil.copytree(PACKAGE, project, ignore=shutil.ignore_patterns("__pycache__", "dist"))
     source = tmp_path / "source"
@@ -293,7 +293,7 @@ def test_sfly_run_downloads_from_a_mapped_agent(tmp_path: Path) -> None:
     run = subprocess.run(
         [
             SFLY,
-            "run",
+            "debug",
             "download_file",
             "--params",
             json.dumps(

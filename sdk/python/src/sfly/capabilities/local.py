@@ -1,9 +1,9 @@
-"""本地调试时的 Agent 能力（`sfly run`、`sfly.testing.run_node`）：没有 Agent，
+"""本地调试时的 Agent 能力（`sfly debug`、`sfly.testing.run_node`）：没有 Agent，
 直接操作本机的文件系统。只用标准库（ADR 0002）。
 
 - 自己所在的 Agent（`ctx.agent()`）就是本机：路径原样使用；
 - 其它 Agent 由测试工具映射到本地目录（`run_node(agents={名称: 目录})`、
-  `sfly run --agent 名称=目录`）：那台 Agent 上的绝对路径 `/var/log/app.log` 对应
+  `sfly debug --agent 名称=目录`）：那台 Agent 上的绝对路径 `/var/log/app.log` 对应
   `<目录>/var/log/app.log`，返回的路径再换回那台 Agent 上的写法；
 - 和在 Agent 上一样只能访问通过「Agent」类型的参数拿到的 Agent：参数里没有的名称抛出
   `AgentNotReferenced`，参数里有但没有映射的抛出 `AgentUnreachable`（提示怎样映射）。
@@ -67,7 +67,7 @@ class LocalAgent:
         if root is None:
             raise AgentUnreachable(
                 f"本地调试时没有 Agent {name}：用 run_node(agents={{{name!r}: 目录}}) 或 "
-                f"sfly run --agent {name}=<目录> 把它映射到本地目录",
+                f"sfly debug --agent {name}=<目录> 把它映射到本地目录",
                 agent=name,
             )
         return cls(name, root)

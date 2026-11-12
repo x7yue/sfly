@@ -1,4 +1,4 @@
-"""`sfly run`：在当前项目环境里执行一个节点（本地调试），不经过控制面和 Agent。
+"""`sfly debug`：在当前项目环境里执行一个节点（本地调试），不经过控制面和 Agent。
 
 和 Agent 用同一个执行器与本地协议（见 `sfly.local`）：节点按 `sfly build` 扫描出的元信息查找，
 参数按元信息里的输入 schema 校验。日志实时打印到标准错误；结束后把输出值、指标汇总和运行目录
@@ -53,7 +53,7 @@ EXIT_INVALID = 2
 EXIT_CANCELLED = 130
 
 
-class RunError(Exception):
+class DebugError(Exception):
     """参数不合法或找不到节点：节点没有执行。"""
 
 
@@ -149,20 +149,20 @@ def _new_run_dir(project: Path, node: str) -> Path:
         except FileExistsError:
             continue
         return path
-    raise RunError(f"无法在 {root} 下创建运行目录")
+    raise DebugError(f"无法在 {root} 下创建运行目录")
 
 
 def _parse_params(text: str) -> dict[str, Any]:
     try:
         params = json.loads(text)
     except ValueError as error:
-        raise RunError(f"参数不合法：--params 不是合法的 JSON（{error}）") from None
+        raise DebugError(f"参数不合法：--params 不是合法的 JSON（{error}）") from None
     if not isinstance(params, dict):
-        raise RunError("参数不合法：--params 必须是 JSON 对象")
+        raise DebugError("参数不合法：--params 必须是 JSON 对象")
     return params
 
 
-def run(
+def debug(
     project: Path,
     node: str,
     params_text: str,
@@ -182,19 +182,19 @@ def run(
     params = _parse_params(params_text)
     for ref, path in (downloads or {}).items():
         if not path.is_file():
-            raise RunError(f"参数不合法：--download 给产物引用 {ref} 指定的文件不存在：{path}")
+            raise DebugError(f"参数不合法：--download 给产物引用 {ref} 指定的文件不存在：{path}")
     for name, root in (agents or {}).items():
         if not root.is_dir():
-            raise RunError(f"参数不合法：--agent 给 Agent {name} 指定的目录不存在：{root}")
+            raise DebugError(f"参数不合法：--agent 给 Agent {name} 指定的目录不存在：{root}")
     meta = load_project(project)
     nodes = scan_nodes(meta)
     found = next((n for n in nodes if n["name"] == node), None)
     if found is None:
         names = "、".join(n["name"] for n in nodes)
-        raise RunError(f"找不到节点 {node}（项目 {meta.name} 里的节点：{names}）")
+        raise DebugError(f"找不到节点 {node}（项目 {meta.name} 里的节点：{names}）")
     problems = input_problems(found["inputs"], params)
     if problems:
-        raise RunError("参数不合法：" + "; ".join(problems))
+        raise DebugError("参数不合法：" + "; ".join(problems))
 
     work = _new_run_dir(project, node)
     cancellation = Cancellation()
