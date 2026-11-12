@@ -31,6 +31,20 @@ def test_every_path_the_cli_uses_is_in_the_manifest() -> None:
     )
 
 
+SMALL_MANIFEST = {
+    "routes": [
+        {"method": method, "path": path, "key": None, "kind": "endpoint"}
+        for method, path in [
+            ("GET", "/runs/:id"),
+            ("POST", "/runs/:id/cancel"),
+            ("GET", "/runs/:id/logs"),
+            ("GET", "/orchestrations/:id/head"),
+            ("POST", "/packages"),
+        ]
+    ]
+}
+
+
 def test_a_path_that_does_not_match_the_manifest_fails_the_check(tmp_path: Path) -> None:
     (tmp_path / "ok.py").write_text(
         textwrap.dedent(
@@ -63,7 +77,7 @@ def test_a_path_that_does_not_match_the_manifest_fails_the_check(tmp_path: Path)
     )
     flagged = {
         (use.file, use.method, use.path)
-        for use in mismatches(collect_paths(tmp_path), load_routes())
+        for use in mismatches(collect_paths(tmp_path), routes_from_manifest(SMALL_MANIFEST))
     }
     assert flagged == {
         ("bad.py", "GET", "/runs/x/lgos"),

@@ -62,9 +62,25 @@ def mismatches(uses: list[PathUse], routes: list[Route]) -> list[PathUse]:
 
 
 def _in_manifest(use: PathUse, routes: list[Route]) -> bool:
-    return any(
-        route.match(use.path) is not None and use.method in (None, route.method) for route in routes
-    )
+    if use.method is not None:
+        return any(
+            route.method == use.method and route.match(use.path) is not None for route in routes
+        )
+    return any(route.match(use.path) is not None or _is_prefix(use.path, route) for route in routes)
+
+
+def _is_prefix(path: str, route: Route) -> bool:
+    """只看路径时，路由模板的前几段也算对得上：`base = f"/orchestrations/{id}"` 再往后拼的写法，
+    `base` 自己不是一条路由，但是路由的前缀。"""
+    segments = route.path.split("/")
+    for count in range(2, len(segments)):
+        prefix = Route.from_json({**_PREFIX_ENTRY, "path": "/".join(segments[:count])})
+        if prefix.match(path) is not None:
+            return True
+    return False
+
+
+_PREFIX_ENTRY = {"method": "GET", "path": "/", "key": None, "kind": "endpoint"}
 
 
 class _Scanner:
