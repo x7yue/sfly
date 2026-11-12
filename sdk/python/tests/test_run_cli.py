@@ -194,6 +194,17 @@ def test_feishu_bot_inputs_take_a_bot_name(project: Path) -> None:
     assert "输入 bot 应为 string" in wrong.stderr
 
 
+def test_notifications_are_printed_with_their_request_body_and_not_sent(project: Path) -> None:
+    # ctx.notify（#234）：本地调试不真的发送，把要发给哪个机器人、请求体是什么打印出来。
+    run = sfly_run(project, "notify", "--params", '{"bot": "ops", "text": "指标越界"}')
+
+    assert run.returncode == 0, run.stderr
+    body = json.dumps({"msg_type": "text", "content": {"text": "指标越界"}}, ensure_ascii=False)
+    assert any("「ops」" in line and line.endswith(body) for line in run.stderr.splitlines()), (
+        run.stderr
+    )
+
+
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
     project: Path,
 ) -> None:

@@ -1,5 +1,5 @@
 {
-  "id": "900f48e1-6dca-46f6-ad25-88794d940e8f",
+  "id": "fdc31d17-5180-4622-873b-2a9ac0236f34",
   "prevId": "046f0e25-a543-495a-86bb-6eaacbcdcacc",
   "version": "7",
   "dialect": "postgresql",
@@ -799,33 +799,6 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
-        },
-        "run_notify_bot": {
-          "name": "run_notify_bot",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "run_notify_trigger": {
-          "name": "run_notify_trigger",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'failed'"
-        },
-        "run_notify_title": {
-          "name": "run_notify_title",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
-        },
-        "run_notify_note": {
-          "name": "run_notify_note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "''"
         }
       },
       "indexes": {},
@@ -915,18 +888,6 @@
         "metrics_purged_at": {
           "name": "metrics_purged_at",
           "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "notification_bot": {
-          "name": "notification_bot",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "notification_not_sent": {
-          "name": "notification_not_sent",
-          "type": "text",
           "primaryKey": false,
           "notNull": false
         }
@@ -1049,6 +1010,13 @@
           "primaryKey": false,
           "notNull": false
         },
+        "referenced_feishu_bots": {
+          "name": "referenced_feishu_bots",
+          "type": "text[]",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'"
+        },
         "outputs": {
           "name": "outputs",
           "type": "jsonb",
@@ -1136,6 +1104,13 @@
         },
         "log_seq": {
           "name": "log_seq",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "log_agent_seq": {
+          "name": "log_agent_seq",
           "type": "bigint",
           "primaryKey": false,
           "notNull": true,

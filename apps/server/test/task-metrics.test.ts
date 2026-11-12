@@ -502,6 +502,8 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["orchestrations", "run_notify_note", "text DEFAULT '' NOT NULL"],
 	["runs", "notification_bot", "text"],
 	["runs", "notification_not_sent", "text"],
+	["tasks", "referenced_feishu_bots", "text[] DEFAULT '{}' NOT NULL"],
+	["tasks", "log_agent_seq", "bigint DEFAULT 0 NOT NULL"],
 ];
 
 /** 0012 之后的迁移新建、当前代码会读的表：表名和建表的迁移文件（保存场景时的静态检查读 feishu_bots）。 */

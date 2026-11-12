@@ -22,6 +22,10 @@
   指向映射表 `local-agents.json`（「Agent」类型的输入引用的每台 Agent → 本地目录，没有映射的
   为 null；只有本地执行会设置），`ctx.agent(名称)` 把那台 Agent 上的路径落到映射的目录里，
   不在表里的名称不能访问（见 `sfly.capabilities.local`）；
+- 飞书通知：本地没有控制面，`ctx.notify` 不真的发送。和控制面一样只认「飞书机器人」类型的
+  输入引用的机器人，按同样的规则组装请求体（apps/server/src/feishu/messages.ts），记成
+  `Notification`；其他机器人不记，日志里写一行来源 system、级别 warn 的警告
+  （apps/server/src/feishu/task-notifications.ts）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
 """
@@ -57,7 +61,8 @@ Status = Literal["running", "success", "failed", "cancelled"]
 
 @dataclass(frozen=True)
 class LogLine:
-    """一行日志。`source`：stdout | stderr | sdk；`level`：debug | info | warn | error。"""
+    """一行日志。`source`：stdout | stderr | sdk | system（平台写的提示）；
+    `level`：debug | info | warn | error。"""
 
     ts: int
     source: str
@@ -90,6 +95,18 @@ class MetricPoint:
 
 
 @dataclass(frozen=True)
+class Notification:
+    """一次 `ctx.notify`：发给哪个飞书机器人（名称），和控制面会发出的完整请求体。
+
+    本地调试不真的发送。
+    """
+
+    ts: int
+    bot: str
+    body: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class NodeError:
     """失败原因。`kind` 与平台的错误类型相同：`node_error`（节点抛出异常、执行器异常退出）、
     `config_error`（参数校验失败）；`type` 是节点抛出的异常类名（只有 node_error 有）。"""
@@ -111,6 +128,7 @@ class Execution:
     logs: list[LogLine] = field(default_factory=list)
     progress: list[Progress] = field(default_factory=list)
     metrics: list[MetricPoint] = field(default_factory=list)
+    notifications: list[Notification] = field(default_factory=list)
 
     @property
     def artifacts_dir(self) -> Path:
@@ -227,26 +245,66 @@ def input_problems(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list
     return problems
 
 
-def _is_agent_input(schema: Mapping[str, Any]) -> bool:
-    """「Agent」类型的输入（`sfly.AgentName` 或 `AgentName | None`）：带 `x-sfly-type: agent`。"""
-    if schema.get("x-sfly-type") == "agent":
+def _has_type(schema: Mapping[str, Any], kind: str) -> bool:
+    """扩展类型的输入（例如 `sfly.AgentName` 或 `AgentName | None`）：带 `x-sfly-type: <kind>`。"""
+    if schema.get("x-sfly-type") == kind:
         return True
     members = schema.get("anyOf")
     return isinstance(members, list) and any(
-        isinstance(m, dict) and m.get("x-sfly-type") == "agent" for m in members
+        isinstance(m, dict) and m.get("x-sfly-type") == kind for m in members
     )
 
 
-def referenced_agents(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[str]:
-    """输入通过「Agent」类型的参数引用的 Agent 名称（去重，按参数顺序，空值不算）。"""
+def _referenced(schema: Mapping[str, Any], inputs: Mapping[str, Any], kind: str) -> list[str]:
     properties: Mapping[str, Any] = schema.get("properties") or {}
     names: list[str] = []
     for name, value in inputs.items():
         sub = properties.get(name)
-        if isinstance(sub, dict) and _is_agent_input(sub) and isinstance(value, str) and value:
+        if isinstance(sub, dict) and _has_type(sub, kind) and isinstance(value, str) and value:
             if value not in names:
                 names.append(value)
     return names
+
+
+def referenced_agents(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[str]:
+    """输入通过「Agent」类型的参数引用的 Agent 名称（去重，按参数顺序，空值不算）。"""
+    return _referenced(schema, inputs, "agent")
+
+
+def referenced_feishu_bots(schema: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[str]:
+    """输入通过「飞书机器人」类型的参数引用的机器人名称（去重，按参数顺序，空值不算）。"""
+    return _referenced(schema, inputs, "feishu_bot")
+
+
+#: 「@所有人」：飞书文本消息里的写法。
+_AT_ALL = '<at user_id="all">所有人</at>'
+#: 飞书请求体的上限：紧凑 JSON 按 UTF-8 编码的字节数。
+_BODY_LIMIT_BYTES = 20 * 1024
+_TRUNCATED_MARK = "…（已截断）"
+
+
+def _body_bytes(body: Mapping[str, Any]) -> int:
+    return len(json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _text_message(text: str, at_all: bool) -> dict[str, Any]:
+    """文本消息的请求体，与控制面相同（apps/server/src/feishu/messages.ts 的 textMessage）：
+    超过 20 KB 时留下最长的、放得下的正文前缀，接上「…（已截断）」，「@所有人」仍在最后。"""
+    tail = _AT_ALL if at_all else ""
+
+    def body(kept: str) -> dict[str, Any]:
+        return {"msg_type": "text", "content": {"text": kept + tail}}
+
+    if _body_bytes(body(text)) <= _BODY_LIMIT_BYTES:
+        return body(text)
+    low, high = 0, len(text)
+    while high - low > 1:
+        middle = (low + high) // 2
+        if _body_bytes(body(text[:middle] + _TRUNCATED_MARK)) <= _BODY_LIMIT_BYTES:
+            low = middle
+        else:
+            high = middle
+    return body(text[:low] + _TRUNCATED_MARK)
 
 
 # ---- 执行 ----
@@ -308,6 +366,8 @@ class _Pump:
         on_log: Callable[[LogLine], None] | None,
         on_progress: Callable[[Progress], None] | None,
         on_metric: Callable[[MetricPoint], None] | None,
+        on_notify: Callable[[Notification], None] | None,
+        feishu_bots: list[str] | None,
     ) -> None:
         self._execution = execution
         self._events = events
@@ -317,6 +377,9 @@ class _Pump:
         self._on_log = on_log
         self._on_progress = on_progress
         self._on_metric = on_metric
+        self._on_notify = on_notify
+        #: 任务引用的飞书机器人；None 表示不知道输入的类型，不检查。
+        self._feishu_bots = feishu_bots
         #: 标准错误最后的 `_STDERR_TAIL_BYTES` 字节（错误摘要用，不读 stderr.log）。
         self.stderr_tail = bytearray()
         self._start(self._read_events)
@@ -424,10 +487,33 @@ class _Pump:
                 if self._on_metric is not None:
                     self._on_metric(point)
                 return
+            if kind == "notify":
+                self._notify(
+                    ts, str(event["bot"]), str(event["text"]), bool(event.get("at_all")), batch
+                )
+                return
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
         # 不认识的内容原样记成一行 SDK 日志。
         batch.append(LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace")))
+
+    def _notify(self, ts: int, bot: str, text: str, at_all: bool, batch: list[LogLine]) -> None:
+        """一次 `ctx.notify`：与控制面相同，只认任务引用的机器人，其他的不记、写一行警告。"""
+        if self._feishu_bots is not None and bot not in self._feishu_bots:
+            batch.append(
+                LogLine(
+                    ts,
+                    "system",
+                    "warn",
+                    f"ctx.notify 的消息没有发送：飞书机器人「{bot}」不是通过"
+                    "「飞书机器人」类型的参数传给这个节点的，把它声明成 sfly.FeishuBot 类型的参数",
+                )
+            )
+            return
+        notification = Notification(ts, bot, _text_message(text, at_all))
+        self._execution.notifications.append(notification)
+        if self._on_notify is not None:
+            self._on_notify(notification)
 
 
 def _signal_group(pgid: int, sig: int) -> None:
@@ -460,6 +546,7 @@ def execute(
     on_log: Callable[[LogLine], None] | None = None,
     on_progress: Callable[[Progress], None] | None = None,
     on_metric: Callable[[MetricPoint], None] | None = None,
+    on_notify: Callable[[Notification], None] | None = None,
     on_tick: Callable[[Execution], None] | None = None,
     run_id: str = "local",
     node_id: str | None = None,
@@ -472,7 +559,7 @@ def execute(
     - `schema`：节点类型的输入 schema（`sfly build` 生成的 inputs），给出时先校验参数；
     - `pythonpath`：执行器子进程额外的模块搜索路径（放在 PYTHONPATH 最前面）；
     - `cancellation`：取消请求；`on_tick` 在执行期间定期以部分结果调用，可以在里面请求取消；
-    - `on_log` / `on_progress` / `on_metric`：每读到一条就调用（实时显示用）；
+    - `on_log` / `on_progress` / `on_metric` / `on_notify`：每读到一条就调用（实时显示用）；
     - `run_id`、`node_id`（默认取入口的函数名）：写进 task.json，节点里是 `ctx.task`；
     - `procs_dir`：后台进程目录（`ctx.procs_dir`），默认 `work_dir/procs`；
     - `downloads`：产物引用 → 本地内容（bytes / str 是内容，str 按 UTF-8；路径是本地文件）。
@@ -543,7 +630,8 @@ def execute(
         encoding="utf-8",
     )
     env["SFLY_LOCAL_AGENTS"] = str(local_agents)
-    pump = _Pump(execution, events, on_log, on_progress, on_metric)
+    feishu_bots = referenced_feishu_bots(schema, inputs) if schema is not None else None
+    pump = _Pump(execution, events, on_log, on_progress, on_metric, on_notify, feishu_bots)
     # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。
     try:
         proc = subprocess.Popen(
