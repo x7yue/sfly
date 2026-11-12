@@ -13,6 +13,7 @@
 			"!sdk/python/src/sfly/schemas",
 			"!apps/server/drizzle",
 			"!docs/prototype",
+			"!docs/proposals",
 			"!docs/perf"
 		]
 	},
