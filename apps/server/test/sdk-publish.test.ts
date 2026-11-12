@@ -1,27 +1,11 @@
 // 真实的 sfly CLI（Python，uv 运行）构建并发布节点包到测试控制面。
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { sfly } from "./support/sfly-cli.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
-
-const repoRoot = resolve(import.meta.dirname, "../../..");
-const run = promisify(execFile);
-
-async function sfly(args: string[]): Promise<{ code: number; stdout: string; stderr: string }> {
-	try {
-		const { stdout, stderr } = await run("uv", ["run", "--locked", "sfly", ...args], {
-			cwd: repoRoot,
-		});
-		return { code: 0, stdout, stderr };
-	} catch (error) {
-		const e = error as { code?: number; stdout?: string; stderr?: string };
-		return { code: e.code ?? -1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
-	}
-}
 
 describe("sfly publish → 控制面", () => {
 	let cp: TestControlPlane;

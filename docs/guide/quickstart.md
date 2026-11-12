@@ -35,7 +35,7 @@ sfly 是测试编排平台：节点包里用 `@node` 声明的 Python 函数，�
    - 完成：在项目目录里 `uv run pytest` 全部通过。已经在 `sfly init` 创建的项目里时跳过这一步。
 3. **开发**：用 `@node` 写节点，`ctx` 上报日志、进度、指标、产物。见 [开发节点（SDK 参考）](sdk-reference.md)。
    - 完成：`uv run ruff format`、`uv run ruff check`、`uv run pytest` 全部通过，每个节点都有成功路径和失败路径的单元测试。
-4. **本地调试**：`sfly run` 在开发机上直接执行节点，不经过控制面和 Agent。见 [本地调试](local-debug.md)。
+4. **本地调试**：`sfly debug` 在开发机上直接执行节点，不经过控制面和 Agent。见 [本地调试](local-debug.md)。
    - 完成：输出、日志、指标、产物符合预期；错误参数、节点抛出异常、Ctrl-C 取消各至少跑过一次。
 5. **联调**：`sfly dev` 把项目以开发版本装到本机 Agent，在真实场景里运行。节点要连真实的被测系统、或要验证和上下游节点的配合时做这一步。见 [联调](integration.md)。
    - 完成：在场景里选开发版本运行，结果符合预期。
