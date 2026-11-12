@@ -132,13 +132,16 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					打开运行详情
 				</Link>
 				{run.status === "running" && (
-					<CancelRunButton
-						size="sm"
-						runId={run.id}
-						orchestrationId={run.orchestration_id}
-						orchestrationVersion={run.orchestration_version}
-						cancelling={run.cancelling}
-					/>
+					<span className="ml-auto">
+						<CancelRunButton
+							size="sm"
+							variant="ghost"
+							runId={run.id}
+							orchestrationId={run.orchestration_id}
+							orchestrationVersion={run.orchestration_version}
+							cancelling={run.cancelling}
+						/>
+					</span>
 				)}
 			</div>
 		</article>

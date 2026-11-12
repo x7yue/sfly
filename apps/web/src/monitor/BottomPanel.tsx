@@ -632,7 +632,7 @@ function AttemptsTab({
 						</header>
 						{agentTimes && (
 							// 每一头的说明不在中间断开：换行只落在标点后面，不会剩下一个「天」字。
-							<p className="m-0 mt-1.5 text-2xs text-warn-fg">
+							<p className="m-0 mt-1.5 text-xs text-warn-fg">
 								这个任务执行期间 Agent 时间与控制面不一致：
 								{agentTimes.details.map((part, i) => (
 									<span key={part} className="whitespace-nowrap">

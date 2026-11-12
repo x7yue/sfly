@@ -51,7 +51,7 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(detail).toContainText("未被锁定");
 	await expect(detail.getByRole("table", { name: "节点类型" }).getByRole("row")).toHaveText([
 		"节点类型输入输出声明的指标标签键图表",
-		"http_checkHTTP 检查url* · methodstatus · body———（平台自带图表）",
+		"http_checkHTTP 检查url* · methodstatus · body———",
 	]);
 	const versions = detail.getByRole("table", { name: "版本" }).getByRole("row");
 	await expect(versions.nth(1)).toContainText("1.3.0");
@@ -65,8 +65,8 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(detail).toContainText("被 2 个场景锁定");
 	await expect(detail.getByRole("table", { name: "节点类型" }).getByRole("row")).toHaveText([
 		"节点类型输入输出声明的指标标签键图表",
-		"http_checkHTTP 检查url* · expectstatus———（平台自带图表）",
-		"pingpinghost*alive———（平台自带图表）",
+		"http_checkHTTP 检查url* · expectstatus———",
+		"pingpinghost*alive———",
 	]);
 	const sha = await detail.locator("dd").first().textContent();
 	expect(sha).toMatch(/^[0-9a-f]{64}$/);

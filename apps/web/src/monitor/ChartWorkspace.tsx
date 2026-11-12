@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	buildGroups,
 	type ChartGroup,
+	chartCountText,
 	failedFirst,
 	groupHasData,
 	isActive,
@@ -241,8 +242,7 @@ export function ChartWorkspace({
 						</Button>
 					)}
 					<span className="text-xs text-fg-3" data-testid="chart-count">
-						{shown.length} 个节点 · {chartCount} 张图表
-						{filter ? "" : ` · 共 ${groups.length} 个节点声明了图表`}
+						{chartCountText(shown.length, chartCount, showPlatform)}
 					</span>
 					<div className="relative w-55">
 						<SearchIcon

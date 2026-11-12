@@ -180,7 +180,8 @@ test("取消运行：确认框列出影响、点「取消运行」确认，运�
 	await page.goto("/runs");
 	const card = page.getByRole("article", { name: `运行 ${runId.slice(0, 8)}` });
 	const cancel = card.getByRole("button", { name: "取消运行" });
-	await expect(cancel).toHaveAttribute("data-variant", "default");
+	await expect(cancel).toHaveAttribute("data-variant", "ghost");
+	await expect(card.getByRole("link", { name: "打开运行详情" })).toBeVisible();
 	await cancel.click();
 	const dialog = page.getByRole("dialog", { name: `取消运行 ${runId.slice(0, 8)}？` });
 	await expect(dialog).toBeVisible();
@@ -190,6 +191,8 @@ test("取消运行：确认框列出影响、点「取消运行」确认，运�
 
 	await cancel.click();
 	await expect(dialog.getByRole("list", { name: "取消的影响" })).toContainText("check");
+	await expect(dialog.getByRole("list", { name: "取消的影响" })).not.toContainText("0 个");
+	await expect(dialog.getByRole("list", { name: "取消的影响" })).not.toContainText("always");
 	// 打开时焦点在「继续运行」（安全的默认项），点「取消运行」确认。
 	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
 	await dialog.getByRole("button", { name: "取消运行" }).click();

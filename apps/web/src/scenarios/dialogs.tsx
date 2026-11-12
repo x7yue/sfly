@@ -26,6 +26,8 @@ export function useInvalidateScenarios() {
 	return () => queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.list) });
 }
 
+const UNDO_TOAST_MS = 6000;
+
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** 名称（必填）+ 可选说明的表单弹窗。 */
@@ -228,7 +230,7 @@ export function EditScenarioDialog({
 	);
 }
 
-/** 归档确认。 */
+/** 归档确认。成功的通知带「撤销」（恢复归档），6 秒内有效。 */
 export function ArchiveScenarioDialog({
 	scenario,
 	open,
@@ -241,11 +243,15 @@ export function ArchiveScenarioDialog({
 	returnFocus?: React.RefObject<HTMLElement | null>;
 }) {
 	const invalidate = useInvalidateScenarios();
+	const unarchive = useUnarchiveScenario();
 	const archive = useMutation({
 		mutationFn: () => callApi(orchestrationsApi.archive, { params: { id: scenario.id } }),
 		onSuccess: async () => {
 			onOpenChange(false);
-			notify.success(`已归档「${scenario.name}」`);
+			notify.success(`已归档「${scenario.name}」`, {
+				duration: UNDO_TOAST_MS,
+				action: { label: "撤销", onClick: () => unarchive.mutate(scenario) },
+			});
 			await invalidate();
 		},
 		onError: (error) => notify.error("不能归档", { description: errorText(error) }),
@@ -261,7 +267,7 @@ export function ArchiveScenarioDialog({
 				</DialogHeader>
 				<DialogFooter>
 					<Button variant="ghost" onClick={() => onOpenChange(false)}>
-						取消
+						保留场景
 					</Button>
 					<Button variant="danger" disabled={archive.isPending} onClick={() => archive.mutate()}>
 						归档

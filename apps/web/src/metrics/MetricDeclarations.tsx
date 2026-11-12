@@ -27,6 +27,8 @@ const metricTitle = (m: MetricDeclaration) =>
 const metricsOf = (info: NodeMetricsInfo) => (Array.isArray(info.metrics) ? info.metrics : []);
 const chartsOf = (info: NodeMetricsInfo) => (Array.isArray(info.charts) ? info.charts : []);
 
+export const declaresNoCharts = (info: NodeMetricsInfo) => chartsOf(info).length === 0;
+
 /** 节点包管理页「声明的指标」列：指标名与单位，悬停看种类与说明。 */
 export function MetricsCell({ info }: { info: NodeMetricsInfo }) {
 	const metrics = metricsOf(info);
@@ -63,10 +65,13 @@ export function LabelKeysCell({ info }: { info: NodeMetricsInfo }) {
 	);
 }
 
-/** 节点包管理页「图表」列：图表数与主指标，下一行是各图表标题（默认生成的标出「默认」）。 */
+/**
+ * 节点包管理页「图表」列：图表数与主指标，下一行是各图表标题（默认生成的标出「默认」）；没有声明时写「—」，
+ * 含义由表格下方的说明解释一次。
+ */
 export function ChartsCell({ info }: { info: NodeMetricsInfo }) {
 	const charts = chartsOf(info);
-	if (charts.length === 0) return <span className="text-xs text-fg-3">—（平台自带图表）</span>;
+	if (charts.length === 0) return <span className="text-fg-3">—</span>;
 	return (
 		<div className="text-xs">
 			<div className="text-fg-2">

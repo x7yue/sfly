@@ -300,14 +300,9 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 						{scenario.name}
 					</Link>
 				</h2>
-				<p
-					className={cn(
-						"m-0 line-clamp-2 min-h-10 text-sm",
-						scenario.description ? "text-fg-2" : "text-fg-3",
-					)}
-				>
-					{scenario.description || "没有说明"}
-				</p>
+				{scenario.description && (
+					<p className="m-0 line-clamp-2 text-sm text-fg-2">{scenario.description}</p>
+				)}
 				<AgentChips scenario={scenario} />
 				<div className="mt-auto flex flex-wrap items-center gap-2 text-xs text-fg-3">
 					最近运行 <LastRunInfo run={run} />

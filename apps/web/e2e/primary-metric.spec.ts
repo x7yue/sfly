@@ -48,7 +48,10 @@ test("节点包管理页：没有声明指标的节点类型只有平台自带�
 	const row = page.getByRole("table", { name: "节点类型" }).getByRole("row", { name: /ping/ });
 	await expect(row.getByRole("cell").nth(3)).toHaveText("—");
 	await expect(row.getByRole("cell").nth(4)).toHaveText("—");
-	await expect(row.getByRole("cell").nth(5)).toHaveText("—（平台自带图表）");
+	await expect(row.getByRole("cell").nth(5)).toHaveText("—");
+	await expect(
+		page.getByText("没有声明图表的节点类型，运行监控里只显示平台自带图表"),
+	).toBeVisible();
 });
 
 test("检查器「说明与指标」：包节点显示节点类型声明的指标与图表；其他节点只有「说明」", async ({

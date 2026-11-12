@@ -15,7 +15,12 @@ import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
 import { compareVersions } from "#/lib/package-versions";
-import { ChartsCell, LabelKeysCell, MetricsCell } from "#/metrics/MetricDeclarations";
+import {
+	ChartsCell,
+	declaresNoCharts,
+	LabelKeysCell,
+	MetricsCell,
+} from "#/metrics/MetricDeclarations";
 import { Badge } from "@/components/ui/badge";
 import {
 	Table,
@@ -244,7 +249,7 @@ function IoList({ schema }: { schema: NodeTypeView["inputs"] }) {
 					{i > 0 && " · "}
 					{key}
 					{required && (
-						<span className="text-danger-fg" title="必填">
+						<span className="text-fg-2" title="必填">
 							*
 						</span>
 					)}
@@ -256,42 +261,49 @@ function IoList({ schema }: { schema: NodeTypeView["inputs"] }) {
 
 function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 	return (
-		<Table aria-label="节点类型">
-			<TableHeader>
-				<TableRow>
-					<TableHead>节点类型</TableHead>
-					<TableHead>输入</TableHead>
-					<TableHead>输出</TableHead>
-					<TableHead>声明的指标</TableHead>
-					<TableHead>标签键</TableHead>
-					<TableHead>图表</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{nodes.map((node) => (
-					<TableRow key={node.name}>
-						<TableCell>
-							<span className="font-mono">{node.name}</span>
-							<div className="text-xs text-fg-3">{node.title}</div>
-						</TableCell>
-						<TableCell>
-							<IoList schema={node.inputs} />
-						</TableCell>
-						<TableCell>
-							<IoList schema={node.outputs} />
-						</TableCell>
-						<TableCell>
-							<MetricsCell info={node} />
-						</TableCell>
-						<TableCell>
-							<LabelKeysCell info={node} />
-						</TableCell>
-						<TableCell>
-							<ChartsCell info={node} />
-						</TableCell>
+		<>
+			{nodes.some(declaresNoCharts) && (
+				<p className="m-0 mb-1 text-xs text-fg-3">
+					「—」表示没有声明；没有声明图表的节点类型，运行监控里只显示平台自带图表。
+				</p>
+			)}
+			<Table aria-label="节点类型">
+				<TableHeader>
+					<TableRow>
+						<TableHead>节点类型</TableHead>
+						<TableHead>输入</TableHead>
+						<TableHead>输出</TableHead>
+						<TableHead>声明的指标</TableHead>
+						<TableHead>标签键</TableHead>
+						<TableHead>图表</TableHead>
 					</TableRow>
-				))}
-			</TableBody>
-		</Table>
+				</TableHeader>
+				<TableBody>
+					{nodes.map((node) => (
+						<TableRow key={node.name}>
+							<TableCell>
+								<span className="font-mono">{node.name}</span>
+								<div className="text-xs text-fg-3">{node.title}</div>
+							</TableCell>
+							<TableCell>
+								<IoList schema={node.inputs} />
+							</TableCell>
+							<TableCell>
+								<IoList schema={node.outputs} />
+							</TableCell>
+							<TableCell>
+								<MetricsCell info={node} />
+							</TableCell>
+							<TableCell>
+								<LabelKeysCell info={node} />
+							</TableCell>
+							<TableCell>
+								<ChartsCell info={node} />
+							</TableCell>
+						</TableRow>
+					))}
+				</TableBody>
+			</Table>
+		</>
 	);
 }

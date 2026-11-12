@@ -416,7 +416,7 @@ function ScenarioInspector({
 	onCollapse(): void;
 }) {
 	const { doc, warnings, notes, fieldErrors } = context;
-	const summary = checkSummary(warnings.length, notes.length);
+	const summary = checkSummary(fieldErrors.length, warnings.length, notes.length);
 	const used = [
 		...new Set(doc.nodes.flatMap((n) => (n.kind === "package" ? [n.package] : []))),
 	].sort();
