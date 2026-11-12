@@ -285,6 +285,7 @@ function NodeInspector({
 							problemsOf={problemsOf}
 							defaultAgent={doc.default_agent}
 							agents={context.agents}
+							bots={context.bots}
 							onChange={change}
 						/>
 					)}

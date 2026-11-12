@@ -61,6 +61,7 @@ export function PackageParams({
 	problemsOf,
 	defaultAgent,
 	agents,
+	bots,
 	onChange,
 }: {
 	id: string;
@@ -71,6 +72,7 @@ export function PackageParams({
 	problemsOf: ProblemsOf;
 	defaultAgent: string | undefined;
 	agents: AgentView[];
+	bots: readonly FeishuBotView[];
 	onChange(node: PackageNode): void;
 }) {
 	const set = (name: string, value: unknown) => {
@@ -101,6 +103,7 @@ export function PackageParams({
 					value={node.inputs[name]}
 					choices={choices}
 					agents={agents}
+					bots={bots}
 					problems={problemsOf(name)}
 					onChange={(v) => set(name, v)}
 				/>

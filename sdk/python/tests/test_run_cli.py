@@ -171,6 +171,29 @@ def test_agent_inputs_take_an_agent_name(project: Path) -> None:
     assert "输入 source 应为 string" in wrong.stderr
 
 
+FEISHU_BOT_NODE = """
+from sfly import Context, FeishuBot, node
+
+
+@node
+def alert(ctx: Context, bot: FeishuBot) -> dict:
+    return {"bot": bot}
+"""
+
+
+def test_feishu_bot_inputs_take_a_bot_name(project: Path) -> None:
+    # 「飞书机器人」类型的输入（#233）：本地调试时值就是机器人名称，不检查它是否登记过。
+    (project / "src" / "sfly_stub" / "feishu_bots.py").write_text(FEISHU_BOT_NODE, encoding="utf-8")
+
+    run = sfly_run(project, "alert", "--params", '{"bot": "ops"}')
+    wrong = sfly_run(project, "alert", "--params", '{"bot": 1}')
+
+    assert run.returncode == 0, run.stderr
+    assert outputs_of(run.stdout) == {"bot": "ops"}
+    assert wrong.returncode == 2
+    assert "输入 bot 应为 string" in wrong.stderr
+
+
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
     project: Path,
 ) -> None:

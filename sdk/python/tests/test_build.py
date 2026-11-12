@@ -469,3 +469,78 @@ def test_agent_name_is_only_allowed_as_the_type_of_a_node_parameter(
     assert main(["build", str(project)]) == 1
     _, err = capsys.readouterr()
     assert "参数 sources" in err and "AgentName 只能直接用作节点参数的类型" in err
+
+
+FEISHU_BOT_MODULE = """\
+from __future__ import annotations
+
+from sfly import Context, FeishuBot, node
+
+
+@node
+def alert(ctx: Context, bot: FeishuBot, backup: FeishuBot | None = None, text: str = "") -> dict:
+    return {}
+"""
+
+
+def test_feishu_bot_inputs_are_marked_in_the_metadata(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # 「飞书机器人」类型的输入（#233）：值是机器人名称字符串，元信息里带 x-sfly-type 标记。
+    project = write_project(
+        tmp_path, {"pyproject.toml": PYPROJECT, "src/demo_checks/__init__.py": FEISHU_BOT_MODULE}
+    )
+
+    meta = read_metadata(build(project, capsys))
+
+    assert nodes_by_name(meta)["alert"]["inputs"] == {
+        "type": "object",
+        "properties": {
+            "bot": {"type": "string", "x-sfly-type": "feishu_bot"},
+            "backup": {
+                "anyOf": [{"type": "string", "x-sfly-type": "feishu_bot"}, {"type": "null"}],
+                "default": None,
+            },
+            "text": {"type": "string", "default": ""},
+        },
+        "required": ["bot"],
+        "order": ["bot", "backup", "text"],
+    }
+    errors = list(Draft202012Validator(load_schema("package-metadata")).iter_errors(meta))
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    "annotation",
+    ["list[FeishuBot]", "dict[str, FeishuBot]", "FeishuBot | int", "FeishuBot | AgentName"],
+)
+def test_feishu_bot_is_only_allowed_as_the_type_of_a_node_parameter(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], annotation: str
+) -> None:
+    module = (
+        "from __future__ import annotations\n\nfrom sfly import AgentName, FeishuBot, node\n\n"
+        f"@node\ndef alert(bots: {annotation}) -> dict:\n    return {{}}\n"
+    )
+    project = write_project(
+        tmp_path, {"pyproject.toml": PYPROJECT, "src/demo_checks/__init__.py": module}
+    )
+
+    assert main(["build", str(project)]) == 1
+    _, err = capsys.readouterr()
+    assert "参数 bots" in err and "只能直接用作节点参数的类型" in err
+
+
+def test_feishu_bot_is_not_allowed_in_the_output_type(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    module = (
+        "from __future__ import annotations\n\nfrom sfly import FeishuBot, node\n\n"
+        '@node(outputs={"bot": FeishuBot})\ndef alert() -> dict:\n    return {}\n'
+    )
+    project = write_project(
+        tmp_path, {"pyproject.toml": PYPROJECT, "src/demo_checks/__init__.py": module}
+    )
+
+    assert main(["build", str(project)]) == 1
+    _, err = capsys.readouterr()
+    assert "FeishuBot 只能直接用作节点参数的类型" in err
