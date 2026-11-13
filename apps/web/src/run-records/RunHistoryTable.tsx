@@ -23,6 +23,7 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 					to="/runs/$id"
 					params={{ id: row.original.id }}
 					data-slot="run-id"
+					data-list-primary
 					className="text-fg-1 hover:underline"
 				>
 					{shortId(row.original.id)}
@@ -99,7 +100,8 @@ export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: numbe
 			data={data}
 			rowKey={(run) => run.id}
 			rowProps={(row) => ({
-				className: "h-12 cursor-pointer whitespace-nowrap",
+				"data-list-item": "",
+				className: "h-12 cursor-pointer whitespace-nowrap has-[:focus-visible]:bg-fg-1/3",
 				onClick: (event) => {
 					if ((event.target as HTMLElement).closest("a")) return;
 					void navigate({ to: "/runs/$id", params: { id: row.original.id } });

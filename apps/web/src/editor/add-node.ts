@@ -14,7 +14,10 @@ export type AddItem =
 	| { kind: "subflow_entry"; name: string }
 	| { kind: "package"; package: string; version: string; node: string; title: string };
 
-export const BUILTIN_ITEMS: { kind: Exclude<AddItem["kind"], "package">; hint: string }[] = [
+export type BuiltinKind = Exclude<AddItem["kind"], "package">;
+export type PackageItem = Extract<AddItem, { kind: "package" }>;
+
+export const BUILTIN_ITEMS: { kind: BuiltinKind; hint: string }[] = [
 	{ kind: "async", hint: "派发一个子流程" },
 	{ kind: "timer", hint: "等到某个时刻" },
 	{ kind: "sleep", hint: "等待一段时长" },
@@ -23,16 +26,53 @@ export const BUILTIN_ITEMS: { kind: Exclude<AddItem["kind"], "package">; hint: s
 	{ kind: "subflow_entry", hint: "新建子流程区域" },
 ];
 
+export type BuiltinItem = (typeof BUILTIN_ITEMS)[number];
+
+/** 子流程入口只能由调度连线触发，不能接在链上：有来源节点时不列。 */
+export const availableBuiltins = (hasSource: boolean): BuiltinItem[] =>
+	BUILTIN_ITEMS.filter((b) => !hasSource || b.kind !== "subflow_entry");
+
 /** 菜单里按节点包分组的节点类型。 */
 export interface PackageGroup {
 	name: string;
 	version: string;
-	items: Extract<AddItem, { kind: "package" }>[];
+	items: PackageItem[];
+}
+
+/** 菜单项的 cmdk value，同时是「最近使用」里存的身份（只记身份，不记版本）。 */
+export const builtinValue = (kind: BuiltinKind) => `builtin:${kind}`;
+export const packageValue = (item: Pick<PackageItem, "package" | "node">) =>
+	`package:${item.package}/${item.node}`;
+export const itemValue = (item: AddItem) =>
+	item.kind === "package" ? packageValue(item) : builtinValue(item.kind);
+
+export const MAX_RECENT = 5;
+
+export const pushRecent = (recent: readonly string[], value: string): string[] =>
+	[value, ...recent.filter((v) => v !== value)].slice(0, MAX_RECENT);
+
+/**
+ * 「最近使用」在菜单里的项：存的身份到当前可以添加的内置节点与包节点里解析，已经不存在的
+ * （包下架、版本里没有这个节点、有来源节点时的子流程入口）丢掉。
+ */
+export function recentItems(
+	recent: readonly string[],
+	builtins: readonly BuiltinItem[],
+	groups: readonly PackageGroup[],
+): { value: string; entry: BuiltinItem | PackageItem }[] {
+	const known = new Map<string, BuiltinItem | PackageItem>([
+		...builtins.map((b) => [builtinValue(b.kind), b] as const),
+		...groups.flatMap((g) => g.items.map((item) => [packageValue(item), item] as const)),
+	]);
+	return recent.flatMap((value) => {
+		const entry = known.get(value);
+		return entry ? [{ value, entry }] : [];
+	});
 }
 
 /**
  * 可以添加的包节点：已锁定的包用锁定的版本（dev 用 Agent 上报的元信息），其他包用最新版本（按版本号）；
- * 另外列出只有 dev 版本（从未发布、某个 Agent 以开发模式加载）的包。
+ * 另外列出只有 dev 版本（从未发布、某个 Agent 以开发模式加载）的包。本场景已锁定的包排在前面，其余保持原顺序。
  */
 export function packageGroups(
 	packages: PackageSummary[] | undefined,
@@ -68,7 +108,8 @@ export function packageGroups(
 	for (const name of [...devOnly].filter((n) => !published.has(n)).sort()) {
 		group(name, "dev", devNodes(agents, name) ?? []);
 	}
-	return groups;
+	const isLocked = (g: PackageGroup) => Object.hasOwn(locked, g.name);
+	return groups.sort((a, b) => Number(isLocked(b)) - Number(isLocked(a)));
 }
 
 /**

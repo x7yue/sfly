@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures";
 import { advance, runDocument as document } from "./run-records";
-import { createScenario, holdApi, publishPackage, triggerRun } from "./support";
+import { createScenario, expectFocusVisible, holdApi, publishPackage, triggerRun } from "./support";
 
 // 运行记录页（原型 #/runs）：进行中的运行是卡片，历史运行是表格。
 
@@ -212,4 +212,41 @@ test("没有运行时显示空状态，加载时显示骨架", async ({ page }) 
 	await expect(empty).toBeVisible();
 	await empty.getByRole("link", { name: "去场景编排" }).click();
 	await expect(page).toHaveURL("/orchestrations");
+});
+
+test("列表页的键盘：/ 聚焦搜索框，↓ 与 J / K 从进行中的卡片走到历史表格的行，Enter 进入监控页", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "巡检", document());
+	const done = await triggerRun(controlPlane, scenario);
+	await agent.succeed(await agent.nextAssign());
+	await agent.succeed(await agent.nextAssign());
+	const live = await triggerRun(controlPlane, scenario);
+	await agent.nextAssign();
+
+	await page.goto("/runs");
+	const card = page.getByRole("article", { name: `运行 ${live.slice(0, 8)}` });
+	const row = page
+		.getByRole("table", { name: "历史运行" })
+		.getByRole("row", { name: new RegExp(done.slice(0, 8)) });
+	await expect(card).toBeVisible();
+	await expect(row).toBeVisible();
+
+	await page.keyboard.press("/");
+	await expect(page.getByRole("searchbox", { name: "搜索运行编号或触发人" })).toBeFocused();
+	await page.keyboard.press("ArrowDown");
+	await expectFocusVisible(card.getByRole("link", { name: "打开运行详情" }));
+	await page.keyboard.press("j");
+	await expectFocusVisible(row.getByRole("link", { name: done.slice(0, 8) }));
+	await page.keyboard.press("k");
+	await expectFocusVisible(card.getByRole("link", { name: "打开运行详情" }));
+	await page.keyboard.press("j");
+	await page.keyboard.press("j");
+	await expectFocusVisible(row.getByRole("link", { name: done.slice(0, 8) }));
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(`/runs/${done}`);
 });

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { notify } from "#/components/feedback/notify";
 import { ErrorState } from "#/components/feedback/states";
+import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
 import { dialogOpen, isEditable } from "#/lib/focus";
 import { formatDuration, shortId } from "#/lib/format";
@@ -21,7 +22,13 @@ import {
 	useMonitor,
 	useMonitorActions,
 } from "./monitor-state";
-import { failureSummary, initialSelection, runDocumentTitle, runFailure } from "./run-model";
+import {
+	failureSummary,
+	initialSelection,
+	nextFailure,
+	runDocumentTitle,
+	runFailure,
+} from "./run-model";
 import { Timeline } from "./Timeline";
 import { runExtent, visibleRange } from "./timeline-model";
 import { attemptsSignature, useMetricCatalog } from "./use-run-metrics";
@@ -114,12 +121,27 @@ function MonitorBody({ run, doc }: { run: RunView; doc: OrchestrationDocument | 
 	const catalog = useMetricCatalog(run.id, attemptsSignature(run));
 	const compact = chartsCompact(run, catalog.data);
 	useEscapeClearsSelection();
+	useNextFailureShortcut(run);
 	return (
 		<main className="flex min-h-0 flex-1 flex-col">
 			<Timeline run={run} doc={doc} />
 			<ChartWorkspace run={run} catalog={catalog} compact={compact} />
 			<BottomPanel run={run} doc={doc} fill={compact} />
 		</main>
+	);
+}
+
+function useNextFailureShortcut(run: RunView) {
+	const selected = useMonitor((s) => s.selected);
+	const actions = useMonitorActions();
+	const next = nextFailure(run, selected);
+	useShortcut(
+		"monitor-next-failure",
+		() => {
+			actions.select(next);
+			actions.showPanel("attempts");
+		},
+		next !== null,
 	);
 }
 

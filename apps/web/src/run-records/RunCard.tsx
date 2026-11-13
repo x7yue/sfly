@@ -48,7 +48,8 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 				const target = event.target as HTMLElement;
 				if (event.currentTarget.contains(target) && !target.closest("a, button")) open();
 			}}
-			className="flex cursor-pointer flex-col gap-1.5 rounded-xl border border-border-soft bg-surface px-3.5 py-3 transition-colors hover:border-border-strong"
+			data-list-item
+			className="flex cursor-pointer flex-col gap-1.5 rounded-xl border border-border-soft bg-surface px-3.5 py-3 transition-colors hover:border-border-strong has-[:focus-visible]:border-border-strong"
 		>
 			<div className="flex items-center gap-2 whitespace-nowrap">
 				<StatusPill kind={status.kind}>{status.label}</StatusPill>
@@ -128,7 +129,12 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 				</ul>
 			)}
 			<div className="flex gap-1.5 pt-1">
-				<Link to="/runs/$id" params={{ id: run.id }} className={buttonVariants({ size: "sm" })}>
+				<Link
+					to="/runs/$id"
+					params={{ id: run.id }}
+					data-list-primary
+					className={buttonVariants({ size: "sm" })}
+				>
 					打开运行详情
 				</Link>
 				{run.status === "running" && (

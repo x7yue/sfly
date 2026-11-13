@@ -58,7 +58,9 @@ export function DataTable<T extends RowData>({
 	columns: DataColumns<T>;
 	data: readonly T[];
 	rowKey: (row: T) => string;
-	rowProps?: (row: Row<Features, T>) => React.ComponentProps<typeof TableRow>;
+	rowProps?: (
+		row: Row<Features, T>,
+	) => React.ComponentProps<typeof TableRow> & { [attribute: `data-${string}`]: string };
 } & React.ComponentProps<typeof Table>) {
 	const table = useTable({
 		features,

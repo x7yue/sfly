@@ -12,6 +12,7 @@ import {
 import { z } from "zod";
 import { useOverlays } from "#/components/app-shell/overlays";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
+import { useListNavigation } from "#/components/list-navigation";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
@@ -69,6 +70,7 @@ function ScenariosPage() {
 	const agents = useQuery(apiQuery(agentsApi.list));
 	const filtered = Boolean(search.q || search.status || search.agent);
 	const searchBox = useSearchInput(search.q, (q) => setSearch({ q }));
+	useListNavigation();
 	const view = search.view ?? "card";
 
 	return (
@@ -94,8 +96,10 @@ function ScenariosPage() {
 						aria-label="搜索场景"
 						placeholder="按名称、说明或 Agent 搜索"
 						className="pl-7.5"
+						ref={searchBox.ref}
 						value={searchBox.value}
 						onChange={(e) => searchBox.onChange(e.target.value)}
+						onKeyDown={searchBox.onKeyDown}
 					/>
 				</div>
 				<Segmented

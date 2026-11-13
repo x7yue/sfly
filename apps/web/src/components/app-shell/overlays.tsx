@@ -65,6 +65,7 @@ export function GlobalOverlays({ children }: { children: React.ReactNode }) {
 	useShortcut("command-palette", () => toggle("command-palette"));
 	useShortcut("shortcuts-help", () => toggle("shortcuts"));
 	useShortcut("toggle-sidebar", toggleSidebar);
+	useShortcut("new-scenario", () => setCurrent("new-scenario"));
 
 	return (
 		<OverlayContext.Provider value={api}>

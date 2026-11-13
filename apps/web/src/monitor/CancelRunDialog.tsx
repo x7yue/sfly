@@ -10,11 +10,13 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleStopIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
+import { useShortcut } from "#/components/shortcuts";
 import { callApi } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { shortId } from "#/lib/format";
+import { shortcutText } from "#/lib/shortcuts";
 import { versionQuery } from "#/versions/queries";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,6 +53,11 @@ export function CancelRunDialog({
 	const queryClient = useQueryClient();
 	const force = run.cancel !== null;
 	const keep = useRef<HTMLButtonElement>(null);
+	// 关闭的退场动画还没结束时再次打开（C 键），弹窗还在、焦点还停在上次点的按钮上，Base UI 因为焦点已在弹窗里
+	// 不会再设初始焦点：这里每次打开都把焦点放回「继续运行」，免得 Enter 落在危险按钮上。
+	useEffect(() => {
+		if (open) keep.current?.focus();
+	}, [open]);
 	const impact = cancelImpact(run, doc);
 	const cancel = useMutation({
 		mutationFn: () => callApi(runsApi.cancel, { params: { id: run.id } }),
@@ -149,6 +156,7 @@ export function CancelRunButton({
 	size,
 	variant,
 	collapse,
+	shortcut,
 }: {
 	runId: string;
 	orchestrationId: string;
@@ -160,9 +168,12 @@ export function CancelRunButton({
 	variant?: "ghost";
 	/** 窗口窄于 1280 时只显示图标（文字留给读屏与悬停提示），监控页顶栏用。 */
 	collapse?: boolean;
+	/** 绑定这个快捷键来打开确认弹窗（监控页顶栏传；抽屉与运行卡片上的按钮不绑，同一页面只能有一个绑定）。 */
+	shortcut?: "monitor-cancel";
 }) {
 	const label = cancelling ? ACTION.forceCancel : ACTION.cancelRun;
 	const [open, setOpen] = useState(false);
+	useShortcut(shortcut ?? null, () => setOpen(true));
 	const run = useQuery({ ...runViewQuery(runId), enabled: open });
 	const version = useQuery({
 		...versionQuery(orchestrationId, orchestrationVersion),
@@ -174,7 +185,7 @@ export function CancelRunButton({
 				<Button
 					size={size}
 					variant={variant}
-					title={label}
+					title={shortcut ? `${label}（${shortcutText(shortcut)}）` : label}
 					className={COLLAPSE_BUTTON}
 					onClick={() => setOpen(true)}
 				>

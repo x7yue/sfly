@@ -13,6 +13,7 @@ import { cn } from "cn";
 import { DownloadIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResizeHandle } from "#/components/ResizeHandle";
+import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
 import { MESSAGE } from "#/lib/copy";
@@ -142,6 +143,17 @@ export function BottomPanel({
 		[run, filter],
 	);
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
+	/** E 切到只看 ERROR 之前的级别：再按一次恢复。 */
+	const levelBeforeErrors = useRef<MinLevel>("all");
+	useShortcut("monitor-errors-only", () => {
+		if (tab === "logs" && minLevel === "error") {
+			setMinLevel(levelBeforeErrors.current);
+			return;
+		}
+		if (minLevel !== "error") levelBeforeErrors.current = minLevel;
+		setMinLevel("error");
+		actions.showPanel("logs");
+	});
 	const logTimeKind = useLogTimeKind();
 
 	/** 选中的节点还没有开始：没有日志可看。其余情况（单个尝试、合并视图）由日志页签自己报告有没有内容。 */

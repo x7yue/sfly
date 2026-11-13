@@ -8,9 +8,11 @@
  *   1 秒内按完）。Ctrl 同时匹配 ⌘。符号键（`?`）不需要写 Shift。
  * - 默认焦点在输入框里、或有弹窗打开时不触发；`inInputs` / `inDialogs` 放开限制。
  *   Esc 关闭浮层由弹窗组件自己处理，这里登记只为在面板里展示（`displayOnly`）。
+ * - 不同页面分组（编排画布 / 运行监控 / 列表页）可以登记同一个键：它们属于互斥的路由，匹配时只看当前已绑定处理函数的
+ *   （ShortcutMatcher.handle 的 isBound）。「全局」的键不能与任何分组重复，同一分组内也不能重复（单测检查）。
  */
 
-export type ShortcutGroup = "全局" | "编排画布" | "运行监控";
+export type ShortcutGroup = "全局" | "编排画布" | "运行监控" | "列表页";
 
 export interface ShortcutDef {
 	id: string;
@@ -23,6 +25,8 @@ export interface ShortcutDef {
 	inDialogs?: boolean;
 	/** 只在面板里展示，由组件自身处理（例如 Esc 关闭浮层）。 */
 	displayOnly?: boolean;
+	/** 绑定了处理函数时，同时作为命令出现在命令面板的「当前页面」分组里。 */
+	palette?: true;
 }
 
 export const SHORTCUTS = [
@@ -44,6 +48,7 @@ export const SHORTCUTS = [
 	{ id: "go-feishu-bots", group: "全局", label: "飞书机器人", keys: "G F" },
 	{ id: "go-docs", group: "全局", label: "开发文档", keys: "G H" },
 	{ id: "toggle-sidebar", group: "全局", label: "折叠 / 展开侧边栏", keys: "Ctrl+B" },
+	{ id: "new-scenario", group: "全局", label: "新建场景", keys: "N" },
 	// 编排画布（全屏页）：方向键、Enter、Esc 由画布组件自己处理（components/canvas/FlowCanvas.tsx）。
 	{
 		id: "canvas-save",
@@ -51,7 +56,9 @@ export const SHORTCUTS = [
 		label: "保存",
 		keys: "Ctrl+S",
 		inInputs: true,
+		palette: true,
 	},
+	{ id: "canvas-run", group: "编排画布", label: "运行", keys: "Ctrl+Enter", palette: true },
 	{ id: "canvas-mode-edit", group: "编排画布", label: "编辑模式", keys: "E" },
 	{ id: "canvas-mode-run", group: "编排画布", label: "运行状态模式", keys: "R" },
 	{ id: "canvas-undo", group: "编排画布", label: "撤销", keys: "Ctrl+Z" },
@@ -104,6 +111,36 @@ export const SHORTCUTS = [
 	},
 	{ id: "canvas-deselect", group: "编排画布", label: "取消选中", keys: "Esc", displayOnly: true },
 	{ id: "monitor-toggle-timeline", group: "运行监控", label: "时间线汇总 / 展开节点", keys: "T" },
+	// 运行监控的命令：命令面板按这里的顺序列出，取消排在最后，Ctrl K 之后直接 Enter 不会落到它上面。
+	{
+		id: "monitor-next-failure",
+		group: "运行监控",
+		label: "下一个失败的节点",
+		keys: "F",
+		palette: true,
+	},
+	{
+		id: "monitor-errors-only",
+		group: "运行监控",
+		label: "只看 ERROR / 恢复级别",
+		keys: "E",
+		palette: true,
+	},
+	{
+		id: "monitor-follow-live",
+		group: "运行监控",
+		label: "回到实时 / 重置时间范围",
+		keys: "L",
+		palette: true,
+	},
+	{ id: "monitor-rerun", group: "运行监控", label: "再次运行", keys: "R", palette: true },
+	{
+		id: "monitor-cancel",
+		group: "运行监控",
+		label: "取消运行 / 强制终止",
+		keys: "C",
+		palette: true,
+	},
 	// 取消选中节点（monitor/MonitorPage.tsx）。
 	{
 		id: "monitor-deselect",
@@ -120,9 +157,18 @@ export const SHORTCUTS = [
 		keys: "Shift+F10",
 		displayOnly: true,
 	},
+	// 列表页（场景、运行记录、节点包）：J / K 在列表项之间移动真实的键盘焦点（components/list-navigation.tsx），
+	// / 聚焦搜索框（lib/use-search-input.ts；没有搜索框的页面不绑定）。
+	{ id: "list-next", group: "列表页", label: "下一项", keys: "J" },
+	{ id: "list-prev", group: "列表页", label: "上一项", keys: "K" },
+	{ id: "list-search", group: "列表页", label: "搜索", keys: "/" },
 ] as const satisfies readonly ShortcutDef[];
 
 export type ShortcutId = (typeof SHORTCUTS)[number]["id"];
+
+/** 登记了 `palette` 的快捷键：命令面板要给每一个配图标（CommandPalette 的 PAGE_COMMAND_ICON），少一个编译不过。 */
+export type PaletteShortcut = Extract<(typeof SHORTCUTS)[number], { palette: true }>;
+export type PaletteShortcutId = PaletteShortcut["id"];
 
 export const shortcutById = (id: ShortcutId): ShortcutDef => {
 	const def = SHORTCUTS.find((s) => s.id === id);
@@ -228,8 +274,11 @@ export class ShortcutMatcher<Id extends string = string> {
 			.map((def) => ({ id: def.id, chords: parseKeys(def.keys), def }));
 	}
 
-	/** 处理一次按键；匹配到快捷键时返回它的 id。now 为毫秒时间戳。 */
-	handle(input: KeyInput, now: number): Id | null {
+	/**
+	 * 处理一次按键；匹配到快捷键时返回它的 id。now 为毫秒时间戳。
+	 * isBound 说明某个快捷键当前有没有处理函数：没有绑定的不参与匹配，所以不同页面分组可以登记同一个键。
+	 */
+	handle(input: KeyInput, now: number, isBound: (id: Id) => boolean = () => true): Id | null {
 		if (MODIFIER_KEYS.has(input.key.toLowerCase())) return null;
 		if (now - this.#lastAt > SEQUENCE_TIMEOUT) this.#pending = [];
 		this.#lastAt = now;
@@ -237,7 +286,8 @@ export class ShortcutMatcher<Id extends string = string> {
 		// 先尝试接在已有序列后面，不行再从这个键单独开始。
 		for (const sequence of [[...this.#pending, input], [input]]) {
 			const usable = this.#defs.filter(
-				({ def, chords }) =>
+				({ id, def, chords }) =>
+					isBound(id) &&
 					chords.length >= sequence.length &&
 					(!input.editable || def.inInputs) &&
 					(!input.inDialog || def.inDialogs) &&

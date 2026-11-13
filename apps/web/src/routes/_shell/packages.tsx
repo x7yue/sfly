@@ -10,6 +10,7 @@ import { cn } from "cn";
 import { BoxIcon } from "lucide-react";
 import { z } from "zod";
 import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/feedback/states";
+import { useListNavigation } from "#/components/list-navigation";
 import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
@@ -49,6 +50,7 @@ const byVersionDesc = (versions: PackageVersionSummary[]) =>
 
 function PackagesPage() {
 	const packages = useQuery(apiQuery(packagesApi.list));
+	useListNavigation();
 	return (
 		<Page>
 			<PageHeader title={PAGE.packages} count={packages.data?.packages.length} />
@@ -106,7 +108,7 @@ function PackagesView({ packages }: { packages: PackageSummary[] }) {
 				<nav aria-label="节点包">
 					<ul className="m-0 list-none p-0">
 						{packages.map((pkg) => (
-							<li key={pkg.name}>
+							<li key={pkg.name} data-list-item className="has-[:focus-visible]:bg-raised">
 								<PackageListItem pkg={pkg} selected={pkg === selected} />
 							</li>
 						))}
@@ -127,8 +129,9 @@ function PackageListItem({ pkg, selected }: { pkg: PackageSummary; selected: boo
 			to="/packages"
 			search={{ name: pkg.name }}
 			aria-current={selected ? "true" : undefined}
+			data-list-primary
 			className={cn(
-				"block border-b border-border-soft px-3 py-2.5 text-fg-1 no-underline hover:bg-raised",
+				"block border-b border-border-soft px-3 py-2.5 text-fg-1 no-underline -outline-offset-2 hover:bg-raised",
 				// 选中为中性高亮：浅一级的表面 + 左侧白色短条
 				selected && "bg-raised shadow-[inset_2px_0_0_var(--primary)]",
 			)}

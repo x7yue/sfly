@@ -1,5 +1,11 @@
 import { expect, test } from "./fixtures";
-import { createScenario, failApi, publishPackage, scenarioUsing } from "./support";
+import {
+	createScenario,
+	expectFocusVisible,
+	failApi,
+	publishPackage,
+	scenarioUsing,
+} from "./support";
 
 // 节点包管理页（原型 #/packages）：列表 + 详情。
 
@@ -142,4 +148,32 @@ test("加载失败时显示错误，可以重试", async ({ page, controlPlane }
 	await outage.restore();
 	await page.getByRole("button", { name: "重试" }).click();
 	await expect(page.getByRole("navigation", { name: "节点包" })).toContainText("demo-checks");
+});
+
+test("列表页的键盘：J / K 在节点包之间移动，Enter 显示详情；没有搜索框，/ 不起作用", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { name: "alpha-tools", version: "0.1.0" });
+	await publishPackage(controlPlane, { version: "1.2.0" });
+	await page.goto("/packages");
+	const list = page.getByRole("navigation", { name: "节点包" });
+	const alpha = list.getByRole("link", { name: /alpha-tools/ });
+	const demo = list.getByRole("link", { name: /demo-checks/ });
+	await expect(alpha).toBeVisible();
+
+	await page.keyboard.press("/");
+	await expect(page.locator("input:focus")).toHaveCount(0);
+	await page.keyboard.press("j");
+	await expectFocusVisible(alpha);
+	await page.keyboard.press("j");
+	await expectFocusVisible(demo);
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/packages\?name=demo-checks$/);
+	await expect(page.getByRole("region", { name: "demo-checks 详情" })).toBeVisible();
+	await expectFocusVisible(demo);
+	await page.keyboard.press("k");
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/packages\?name=alpha-tools$/);
+	await expect(page.getByRole("region", { name: "alpha-tools 详情" })).toBeVisible();
 });

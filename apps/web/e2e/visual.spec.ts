@@ -636,6 +636,27 @@ test("运行监控：取消确认弹窗", async ({ page, controlPlane, connectAg
 	await expect(page).toHaveScreenshot("monitor-cancel.png", { mask: runIds(page) });
 });
 
+test("命令面板：运行监控页的「当前页面」", async ({ page, controlPlane, connectAgent, clock }) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	await agent.succeed(tasks.probe as AssignedTask);
+	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦");
+	const cleanup = await agent.nextAssign();
+	clock.advance(1000);
+	await agent.succeed(cleanup);
+	await openMonitor(page, clock, runId);
+	await chartsLoaded(page);
+	await page.keyboard.press("Control+k");
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	await expect(palette.getByRole("group", { name: "当前页面" })).toBeVisible();
+	await expect(palette.getByRole("group", { name: "运行", exact: true })).toBeVisible();
+	await expect(page).toHaveScreenshot("command-palette-monitor.png", {
+		mask: [
+			...runIds(page),
+			palette.getByRole("group", { name: "运行", exact: true }).locator(".font-mono"),
+		],
+	});
+});
+
 test.describe("编排画布", () => {
 	test.beforeEach(async ({ page, connectAgent, controlPlane }) => {
 		await twoAgents(connectAgent);
@@ -791,6 +812,26 @@ test.describe("编排画布", () => {
 		await expect(menu.getByText(/^新节点不连线/)).toBeVisible();
 		await idle(page);
 		await expect(page).toHaveScreenshot("editor-add-menu.png");
+	});
+
+	test("添加节点菜单：最近使用", async ({ page }) => {
+		await page.evaluate(() =>
+			window.localStorage.setItem(
+				"sfly.addNode.recent",
+				JSON.stringify([
+					"package:demo-checks/http_check",
+					"builtin:sleep",
+					"package:demo-checks/ping",
+				]),
+			),
+		);
+		await page.reload();
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await page.getByRole("button", { name: "添加节点" }).click();
+		const menu = page.getByRole("dialog", { name: "添加节点" });
+		await expect(menu.getByRole("group", { name: "最近使用" })).toBeVisible();
+		await idle(page);
+		await expect(page).toHaveScreenshot("editor-add-menu-recent.png");
 	});
 
 	test("语义缩放", async ({ page }) => {
