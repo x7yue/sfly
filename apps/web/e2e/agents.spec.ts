@@ -58,7 +58,6 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、对外地�
 		"demo-checks@1.2.0",
 		"2 个场景",
 		"现在",
-		"",
 	]);
 	// 离线时间按浏览器时区（测试固定为 Asia/Shanghai）显示。
 	await expect(page.getByRole("row", { name: /agent-gone/ }).getByRole("cell")).toHaveText([
@@ -72,7 +71,6 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、对外地�
 		"无",
 		"未被引用",
 		"01-01 08:01",
-		"",
 	]);
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 });
@@ -178,7 +176,7 @@ test.describe("版本不一致", () => {
 		await expect(cells("agent-current").nth(3)).toHaveText("2.0.0");
 		await expect(cells("agent-old").nth(1)).toHaveText("版本不一致");
 		await expect(cells("agent-old").nth(3)).toHaveText("1.0.0控制面 2.0.0");
-		await expect(cells("agent-waiting").nth(1)).toHaveText("更新中等待 2 个任务结束");
+		await expect(cells("agent-waiting").nth(1)).toHaveText("更新中等待 2 个任务结束立即更新");
 		await expect(cells("agent-manual").nth(1)).toHaveText(
 			"需要手动升级已指定 --no-auto-update，不自动更新",
 		);
@@ -439,11 +437,11 @@ test("能力与节点包的每一项不拆开（不在连字符处折行）；�
 	const wide = await measure(1920);
 	expect(wide.scrolls).toBe(false);
 	expect(wide.broken).toEqual([]);
-	const fixed = (widths: number[]) => widths.filter((_, i) => i !== 6 && i !== 7);
+	const flexible = [1, 6, 7];
+	const fixed = (widths: number[]) => widths.filter((_, i) => !flexible.includes(i));
+	const flex = (widths: number[]) => flexible.reduce((sum, i) => sum + (widths[i] ?? 0), 0);
 	expect(fixed(wide.widths)).toEqual(fixed(narrow.widths));
-	expect((wide.widths[6] ?? 0) + (wide.widths[7] ?? 0)).toBeGreaterThan(
-		(narrow.widths[6] ?? 0) + (narrow.widths[7] ?? 0) + 300,
-	);
+	expect(flex(wide.widths)).toBeGreaterThan(flex(narrow.widths) + 300);
 });
 
 test("立即更新失败时，原因写在确认框里，不发通知", async ({ page, connectAgent }) => {

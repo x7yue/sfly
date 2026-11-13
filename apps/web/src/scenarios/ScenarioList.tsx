@@ -43,7 +43,7 @@ import { ScenarioThumbnail } from "./ScenarioThumbnail";
 const versionLabel = (s: OrchestrationSummary) =>
 	s.head_version === 0 ? "未保存" : `v${s.head_version}`;
 
-/** 引用的 Agent 与在线状态：默认 Agent 在前；有不在线的提示任务会排队。 */
+/** 引用的 Agent 与在线状态：默认 Agent 在前；有不在线的提示任务会排队。表格里芯片不折行、提示放在芯片下面一行。 */
 function AgentChips({
 	scenario,
 	nowrap = false,
@@ -55,34 +55,42 @@ function AgentChips({
 		return <span className="text-xs text-fg-3">未选择 Agent</span>;
 	}
 	const offline = scenario.agents.filter((a) => a.status !== "online").length;
-	return (
-		<div className={cn("flex items-center gap-1.5", nowrap ? "flex-nowrap" : "flex-wrap")}>
-			{scenario.agents.map((a) => {
-				const state = a.status === "online" ? "在线" : a.status === "offline" ? "离线" : "未注册";
-				return (
-					<span
-						key={a.name}
-						title={`${a.name}${a.default ? "（默认 Agent）" : ""} · ${state}`}
-						className={cn(
-							"inline-flex h-5.5 items-center gap-1.25 rounded-md border border-border-soft bg-raised px-1.75 font-mono text-2xs",
-							a.default ? "text-fg-1" : "text-fg-2",
-							a.status !== "online" && "border-dashed text-fg-3",
-						)}
-					>
-						<StatusDot kind={a.status === "online" ? "ok" : "pending"} />
-						{a.name}
-						<span className="sr-only">
-							（{a.default ? "默认 Agent，" : ""}
-							{state}）
-						</span>
-					</span>
-				);
-			})}
-			{offline > 0 && (
-				<span className="text-xs whitespace-nowrap text-warn-fg">
-					{offline} 个不在线，任务会排队
+	const chips = scenario.agents.map((a) => {
+		const state = a.status === "online" ? "在线" : a.status === "offline" ? "离线" : "未注册";
+		return (
+			<span
+				key={a.name}
+				title={`${a.name}${a.default ? "（默认 Agent）" : ""} · ${state}`}
+				className={cn(
+					"inline-flex h-5.5 items-center gap-1.25 rounded-md border border-border-soft bg-raised px-1.75 font-mono text-2xs",
+					a.default ? "text-fg-1" : "text-fg-2",
+					a.status !== "online" && "border-dashed text-fg-3",
+				)}
+			>
+				<StatusDot kind={a.status === "online" ? "ok" : "pending"} />
+				{a.name}
+				<span className="sr-only">
+					（{a.default ? "默认 Agent，" : ""}
+					{state}）
 				</span>
-			)}
+			</span>
+		);
+	});
+	const note = offline > 0 && (
+		<span className="text-xs whitespace-nowrap text-warn-fg">{offline} 个不在线，任务会排队</span>
+	);
+	if (nowrap) {
+		return (
+			<div className="flex flex-col items-start gap-1">
+				<div className="flex flex-nowrap items-center gap-1.5">{chips}</div>
+				{note}
+			</div>
+		);
+	}
+	return (
+		<div className="flex flex-wrap items-center gap-1.5">
+			{chips}
+			{note}
 		</div>
 	);
 }

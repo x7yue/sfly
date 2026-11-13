@@ -125,7 +125,7 @@ function AgentTable({
 			<TableHeader>
 				<TableRow>
 					<TableHead width="fit">名称</TableHead>
-					<TableHead width="fit">状态</TableHead>
+					<TableHead>状态</TableHead>
 					<TableHead width="fit">槽位</TableHead>
 					<TableHead width="fit">版本</TableHead>
 					<TableHead width="fit">系统</TableHead>
@@ -134,9 +134,6 @@ function AgentTable({
 					<TableHead>已安装的节点包</TableHead>
 					<TableHead width="fit">被场景引用</TableHead>
 					<TableHead width="fit">最后在线</TableHead>
-					<TableHead width="fit">
-						<span className="sr-only">操作</span>
-					</TableHead>
 				</TableRow>
 			</TableHeader>
 			<TableBody>
@@ -223,7 +220,7 @@ function AgentRow({
 			<TableCell width="fit" className="font-mono font-medium">
 				{agent.name}
 			</TableCell>
-			<TableCell width="fit">
+			<TableCell>
 				{update ? (
 					<StatusPill kind={update.kind}>{update.label}</StatusPill>
 				) : installing ? (
@@ -236,7 +233,7 @@ function AgentRow({
 				{update?.detail && (
 					<div
 						className={cn(
-							"w-max max-w-60 text-xs whitespace-normal",
+							"max-w-60 text-xs whitespace-normal",
 							update.kind === "failed" ? "text-danger-fg" : "text-fg-3",
 						)}
 					>
@@ -259,6 +256,11 @@ function AgentRow({
 				{failed && agent.install && (
 					<div className="text-xs text-danger-fg">
 						安装 {agent.install.package}@{agent.install.version} 失败
+					</div>
+				)}
+				{canUpdateNow(agent) && (
+					<div className="mt-1.5">
+						<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
 					</div>
 				)}
 			</TableCell>
@@ -307,11 +309,6 @@ function AgentRow({
 			</TableCell>
 			<TableCell width="fit" className={cn("text-xs text-fg-3", !online && "font-mono")}>
 				{online ? "现在" : formatDateTime(agent.last_seen_at)}
-			</TableCell>
-			<TableCell width="fit" className="text-right">
-				{canUpdateNow(agent) && (
-					<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
-				)}
 			</TableCell>
 		</TableRow>
 	);

@@ -198,6 +198,7 @@ test("飞书机器人：登记弹窗", async ({ page }) => {
 	const dialog = page.getByRole("dialog", { name: "登记飞书机器人" });
 	await dialog.getByLabel("名称").fill("压测群");
 	await dialog.getByLabel("Webhook 地址").fill("ftp://feishu.example/hook/1");
+	await dialog.getByLabel("名称").focus();
 	await expect(dialog).toContainText("Webhook 地址必须是 http 或 https 地址");
 	await expect(page).toHaveScreenshot("feishu-bots-register.png");
 });
