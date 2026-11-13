@@ -4,13 +4,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-dupes=$(find docs/adr -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-*.md' -printf '%f\n' | cut -c1-4 | sort | uniq -d)
+shopt -s nullglob
+files=(docs/adr/[0-9][0-9][0-9][0-9]-*.md)
+numbers=$(printf '%s\n' "${files[@]#docs/adr/}" | cut -c1-4)
+dupes=$(sort <<<"$numbers" | uniq -d)
 if [[ -n $dupes ]]; then
 	for number in $dupes; do
 		echo "ADR 编号 $number 被多个文件使用：" >&2
-		find docs/adr -maxdepth 1 -name "$number-*.md" -printf '  %p\n' | sort >&2
+		printf '  %s\n' docs/adr/"$number"-*.md >&2
 	done
-	next=$(find docs/adr -maxdepth 1 -name '[0-9][0-9][0-9][0-9]-*.md' -printf '%f\n' | cut -c1-4 | sort -n | tail -1)
+	next=$(sort -n <<<"$numbers" | tail -1)
 	printf '把后加的那个改成 %04d，并更新引用它的地方。\n' $((10#$next + 1)) >&2
 	exit 1
 fi
