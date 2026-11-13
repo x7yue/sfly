@@ -953,7 +953,7 @@ test("保存冲突弹窗", async ({ page, controlPlane, connectAgent, clock }) =
 	await saveSecondVersion(controlPlane, id, "bob");
 	await page.keyboard.press("Control+s");
 	const dialog = page.getByRole("dialog", { name: "保存被拦截：场景已有更新的版本" });
-	await expect(dialog).toContainText("− report");
+	await expect(dialog).toContainText("+ report");
 	await page.mouse.move(700, 880);
 	await expect(page).toHaveScreenshot("editor-conflict.png");
 });
