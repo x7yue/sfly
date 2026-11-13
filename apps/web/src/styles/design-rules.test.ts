@@ -95,6 +95,10 @@ describe("设计规范", () => {
 		expect(low).toEqual([]);
 	});
 
+	it("11px 只给数字、拉丁字母与 kbd：写中文的地方至少 12px", () => {
+		expect(offending(/\btext-2xs\b.*\p{Script=Han}|\p{Script=Han}.*\btext-2xs\b/u)).toEqual([]);
+	});
+
 	it("圆角只用规定的档位（任意值只允许 2px）", () => {
 		expect(offending(/rounded(-[a-z]+)?-\[(?!2px\])/)).toEqual([]);
 	});

@@ -44,7 +44,7 @@ export function ReferenceList({
 						items.length > 0 && (
 							// biome-ignore lint/a11y/useSemanticElements: listbox 里的分组用 role=group
 							<div key={title} role="group" aria-label={title}>
-								<div className="px-2 pt-1.5 pb-0.75 text-2xs text-fg-3">{title}</div>
+								<div className="px-2 pt-1.5 pb-0.75 text-xs text-fg-3">{title}</div>
 								{items.map((c) => {
 									const index = ordered.indexOf(c);
 									return (
@@ -64,7 +64,7 @@ export function ReferenceList({
 											<span className="min-w-0 flex-1 truncate font-mono" title={c.expression}>
 												{c.expression}
 											</span>
-											<span className="flex-none text-2xs text-fg-3">{c.detail}</span>
+											<span className="flex-none text-xs text-fg-3">{c.detail}</span>
 										</div>
 									);
 								})}

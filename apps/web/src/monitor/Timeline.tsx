@@ -161,7 +161,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 				<span className="flex-1" />
 				<ul
 					aria-label="图例"
-					className="m-0 flex list-none items-center gap-3 p-0 text-2xs text-fg-3 max-xl:hidden"
+					className="m-0 flex list-none items-center gap-3 p-0 text-xs text-fg-3 max-xl:hidden"
 				>
 					{LEGEND.map((kind) => (
 						<li key={kind} className="inline-flex items-center gap-1.25">
@@ -253,7 +253,7 @@ function Axis({ range, origin }: { range: TimeRange; origin: number }) {
 			className="sticky top-0 z-3 grid h-5.5 border-b border-border-soft bg-bg"
 			style={{ gridTemplateColumns: `${LABEL_W}px 1fr` }}
 		>
-			<div className="px-3 pt-0.75 text-2xs text-fg-3">{formatClock(range.start)} 起</div>
+			<div className="px-3 pt-0.75 text-xs text-fg-3">{formatClock(range.start)} 起</div>
 			<div className="relative mr-3.5" data-axis-track>
 				{items.map((t) => (
 					<span
@@ -549,7 +549,7 @@ function NodeRow({
 			>
 				<StatusDot kind={status.kind} />
 				<span className="flex-none font-mono">{node.node_id}</span>
-				<span className="min-w-0 flex-1 truncate text-2xs text-fg-3">{title}</span>
+				<span className="min-w-0 flex-1 truncate text-xs text-fg-3">{title}</span>
 				{node.attempts.length > 1 && <Badge className="h-4 px-1">×{node.attempts.length}</Badge>}
 				{isAlways(decl) && (
 					<Badge variant="warn" className="h-4 px-1">

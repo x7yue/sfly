@@ -231,7 +231,7 @@ function AgentRow({
 				)}
 				{clockOffset && (
 					<div
-						className="text-2xs text-warn-fg"
+						className="text-xs text-warn-fg"
 						title={`Agent 时间与控制面时间不一致，测于 ${formatFullDateTime(clockOffset.measured_at)}`}
 					>
 						时间比控制面{formatClockOffset(clockOffset.offset_ms)}
@@ -248,7 +248,7 @@ function AgentRow({
 			</TableCell>
 			<TableCell className="font-mono">
 				{agent.info.agent_version || "—"}
-				{mismatch && <div className="text-2xs text-fg-3">控制面 {controlPlaneVersion}</div>}
+				{mismatch && <div className="text-xs text-fg-3">控制面 {controlPlaneVersion}</div>}
 			</TableCell>
 			<TableCell className="font-mono text-xs text-fg-2">
 				{agent.info.os || "?"}/{agent.info.arch || "?"}
@@ -256,7 +256,7 @@ function AgentRow({
 			<TableCell className="font-mono text-xs text-fg-2">
 				{endpointLabel(agent.endpoint) || <span className="text-fg-3">—</span>}
 				{agent.endpoint.address_source === "configured" && (
-					<div className="font-sans text-2xs text-fg-3">安装时配置</div>
+					<div className="font-sans text-xs text-fg-3">安装时配置</div>
 				)}
 			</TableCell>
 			<TableCell className="min-w-36 max-w-60 text-xs text-fg-2">

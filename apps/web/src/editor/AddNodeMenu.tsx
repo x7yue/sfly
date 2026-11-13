@@ -293,7 +293,7 @@ function BuiltinRow({ item }: { item: BuiltinItem }) {
 		<>
 			<KindChip kind={item.kind} />
 			<span>{KIND_META[item.kind].label}</span>
-			<span className="ml-auto text-2xs text-fg-3">{item.hint}</span>
+			<span className="ml-auto text-xs text-fg-3">{item.hint}</span>
 		</>
 	);
 }

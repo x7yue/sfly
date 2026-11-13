@@ -126,7 +126,7 @@ export function MetricDeclarations({ info }: { info: NodeMetricsInfo | null | un
 					</li>
 				))}
 			</ul>
-			<h4 className="mt-3 mb-1.5 text-2xs font-semibold text-fg-2">图表 {charts.length} 张</h4>
+			<h4 className="mt-3 mb-1.5 text-xs font-semibold text-fg-2">图表 {charts.length} 张</h4>
 			<ul aria-label="图表" className="m-0 flex list-none flex-col gap-1 p-0">
 				{charts.map((c) => (
 					<li key={c.title} className="flex items-center gap-1.5 text-xs">

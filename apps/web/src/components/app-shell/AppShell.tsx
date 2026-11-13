@@ -68,7 +68,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 				{!collapsed && (
 					<div className="leading-tight">
 						<b className="block text-base">sfly</b>
-						<span className="block text-2xs text-fg-3">测试编排平台</span>
+						<span className="block text-xs text-fg-3">测试编排平台</span>
 					</div>
 				)}
 			</div>

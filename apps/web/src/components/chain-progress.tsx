@@ -88,7 +88,7 @@ export function ChainBars({
 					/>
 				))}
 			</span>
-			{rest > 0 && <span className="text-2xs text-fg-3">+{rest} 条子流程</span>}
+			{rest > 0 && <span className="text-xs text-fg-3">+{rest} 条子流程</span>}
 		</span>
 	);
 }
