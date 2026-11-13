@@ -28,23 +28,30 @@ export * from "./runs.js";
 export * from "./system.js";
 
 /**
- * 控制面的全部 HTTP 接口（约定 7）：控制面启动时检查注册的路由与这里一一对应
- * （apps/server/src/http/contract-route.ts 的 guardHttpContract）。新增接口表时加在这里。
+ * 领域名 → 接口表（约定 7、9）。新增接口表时加在这里。领域名是 API 客户端的方法分组，
+ * 必须等于该领域 JSON 接口 key 的第一段（camelCase），所以 `runListApi.list` 归在 `runs`。
  */
-export const httpContract: readonly RouteDef[] = [
-	agentBinariesApi,
-	agentsApi,
-	artifactsApi,
-	dashboardApi,
-	docsApi,
-	feishuBotsApi,
-	logsApi,
-	metricsApi,
-	orchestrationsApi,
-	packagesApi,
-	presenceApi,
-	runListApi,
-	runsApi,
-	sdkApi,
-	systemApi,
-].flatMap((api) => Object.values(api) as RouteDef[]);
+export const httpApis = {
+	agentBinaries: agentBinariesApi,
+	agents: agentsApi,
+	artifacts: artifactsApi,
+	dashboard: dashboardApi,
+	docs: docsApi,
+	feishuBots: feishuBotsApi,
+	logs: logsApi,
+	metrics: metricsApi,
+	orchestrations: orchestrationsApi,
+	packages: packagesApi,
+	presence: presenceApi,
+	runs: { ...runListApi, ...runsApi },
+	sdk: sdkApi,
+	system: systemApi,
+} satisfies Record<string, Record<string, RouteDef>>;
+
+/**
+ * 控制面的全部 HTTP 接口（约定 7）：控制面启动时检查注册的路由与这里一一对应
+ * （apps/server/src/http/contract-route.ts 的 guardHttpContract）。
+ */
+export const httpContract: readonly RouteDef[] = Object.values(httpApis).flatMap(
+	(api): RouteDef[] => Object.values(api),
+);

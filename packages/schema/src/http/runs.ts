@@ -229,6 +229,7 @@ export const runsApi = {
 	preflight: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/preflight",
+		client: true,
 		key: ["runs", "preflight"],
 		params: IdParams,
 		response: z.object({
@@ -246,6 +247,7 @@ export const runsApi = {
 	listForOrchestration: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/runs",
+		client: true,
 		key: ["runs", "by-orchestration"],
 		params: IdParams,
 		response: z.object({ runs: z.array(RunSummary) }),
@@ -257,6 +259,7 @@ export const runsApi = {
 	trigger: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/runs",
+		client: true,
 		key: ["runs", "trigger"],
 		params: IdParams,
 		/** 入口参数；没有请求体等于 `{ params: {} }`。 */
@@ -269,6 +272,7 @@ export const runsApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/runs/:id",
+		client: true,
 		key: ["runs", "detail"],
 		params: IdParams,
 		response: RunView,
@@ -280,6 +284,7 @@ export const runsApi = {
 	cancel: endpoint({
 		method: "POST",
 		path: "/runs/:id/cancel",
+		client: true,
 		key: ["runs", "cancel"],
 		params: IdParams,
 		response: RunView,
@@ -291,6 +296,7 @@ export const runsApi = {
 	 */
 	events: stream({
 		path: "/runs/:id/events",
+		client: true,
 		params: IdParams,
 		events: { run: RunView, progress: ProgressEvent, metrics: MetricIncrement },
 	}),
@@ -495,6 +501,7 @@ export const logsApi = {
 	page: endpoint({
 		method: "GET",
 		path: "/tasks/:id/logs",
+		client: true,
 		key: ["logs", "page"],
 		params: IdParams,
 		query: LogPageQuery,
@@ -506,6 +513,7 @@ export const logsApi = {
 	 */
 	events: stream({
 		path: "/tasks/:id/logs/events",
+		client: true,
 		params: IdParams,
 		query: z.object({ after_seq: z.string().optional() }),
 		events: { logs: LogChunk },
@@ -513,6 +521,7 @@ export const logsApi = {
 	/** 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。 */
 	download: download({
 		path: "/tasks/:id/logs/download",
+		client: true,
 		params: IdParams,
 		contentType: "application/x-ndjson",
 	}),
@@ -520,6 +529,7 @@ export const logsApi = {
 	runPage: endpoint({
 		method: "GET",
 		path: "/runs/:id/logs",
+		client: true,
 		key: ["logs", "run-page"],
 		params: IdParams,
 		query: RunLogPageQuery,
@@ -531,6 +541,7 @@ export const logsApi = {
 	 */
 	runDownload: download({
 		path: "/runs/:id/logs/download",
+		client: true,
 		params: IdParams,
 		query: RunLogScopeQuery,
 		contentType: "application/x-ndjson",
@@ -547,6 +558,7 @@ export const logsApi = {
 	 */
 	runEvents: stream({
 		path: "/runs/:id/logs/events",
+		client: true,
 		params: IdParams,
 		query: z.object({
 			after: blankAsMissing(RunLogLiveCursor),
@@ -580,6 +592,7 @@ export const artifactsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/tasks/:id/artifacts",
+		client: true,
 		key: ["artifacts", "list"],
 		params: IdParams,
 		response: z.object({
@@ -596,6 +609,7 @@ export const artifactsApi = {
 	upload: endpoint({
 		method: "PUT",
 		path: "/tasks/:id/artifacts/*",
+		client: false,
 		key: ["artifacts", "upload"],
 		params: ArtifactParams,
 		upload: true,
@@ -604,6 +618,7 @@ export const artifactsApi = {
 	/** 下载一个产物（attachment）；运行已过保留期被清理时 410 `expired`。 */
 	download: download({
 		path: "/tasks/:id/artifacts/*",
+		client: true,
 		params: ArtifactParams,
 		contentType: "application/octet-stream",
 	}),

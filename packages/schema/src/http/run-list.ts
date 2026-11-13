@@ -78,6 +78,7 @@ export const runListApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/runs",
+		client: true,
 		key: ["runs", "list"],
 		query: RunListQuery,
 		response: z.object({

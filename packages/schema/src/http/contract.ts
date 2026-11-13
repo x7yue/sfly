@@ -22,11 +22,15 @@ import { z } from "zod";
  * 7. 控制面的每个 HTTP 路由都在契约里（控制面启动时检查，apps/server/src/http/contract-route.ts）：
  *    JSON 接口用 `endpoint`；SSE 用 `stream`（`events` 是事件名 → data 的 schema）；
  *    返回字节流的下载用 `download`。请求体是原始字节的上传（发布节点包、上传产物）用 `endpoint`，
- *    不定义 body，加 `upload: true`，只约束路径参数与 JSON 响应。新增领域模块后加进 ./index.ts 的 `httpContract`。
+ *    不定义 body，加 `upload: true`，只约束路径参数与 JSON 响应。新增领域模块后加进 ./index.ts 的 `httpApis`。
  * 8. 路由清单（route-manifest.ts，不从包入口导出，只有导出脚本用）从 `httpContract` 导出到
  *    `sdk/python/src/sfly/schemas/routes.json`
  *    （`pnpm gen`，`pnpm gen:check` 保证提交的是最新的），`sfly api` 用它列出接口、校验请求。
  *    请求的 JSON Schema 按输入方向导出：refine 和转换后的约束导不出来，会记在清单的 `notes` 里。
+ * 9. 每个接口都写明 `client`：是否进入 API 客户端（ADR 0022）。同一次 `pnpm gen` 从 `httpApis` 生成
+ *    API 客户端的类型和路由表（client-export.ts，写到 `packages/client/src/generated/`）：
+ *    方法按领域分组，领域名是 `httpApis` 的键，也必须等于该领域 JSON 接口 key 的第一段；
+ *    请求类型按输入方向、响应类型按输出方向，注释随类型带过去。
  */
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -50,6 +54,11 @@ interface RouteDefBase {
 	 * 不含浏览器侧的 `/api` 前缀。
 	 */
 	path: string;
+	/**
+	 * 是否进入 API 客户端（`@sfly/client`，ADR 0022）：开放给自建页面的接口为 true；
+	 * 给 Agent、安装脚本、控制台自己用的接口和上传接口为 false（上传接口标 true 时生成失败）。
+	 */
+	client: boolean;
 	params?: z.ZodType;
 	query?: z.ZodType;
 	/**

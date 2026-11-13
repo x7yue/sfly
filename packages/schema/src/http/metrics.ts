@@ -284,6 +284,7 @@ export const metricsApi = {
 	summary: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/summary",
+		client: true,
 		key: ["metrics", "summary"],
 		params: IdParams,
 		response: RunMetricSummary,
@@ -292,6 +293,7 @@ export const metricsApi = {
 	catalog: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics",
+		client: true,
 		key: ["metrics", "catalog"],
 		params: IdParams,
 		response: RunMetricCatalog,
@@ -303,6 +305,7 @@ export const metricsApi = {
 	series: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/series",
+		client: true,
 		key: ["metrics", "series"],
 		params: IdParams,
 		query: MetricSeriesQuery,
@@ -312,6 +315,7 @@ export const metricsApi = {
 	platform: endpoint({
 		method: "GET",
 		path: "/runs/:id/metrics/platform",
+		client: true,
 		key: ["metrics", "platform"],
 		params: IdParams,
 		query: PlatformMetricsQuery,
