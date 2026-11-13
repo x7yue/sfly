@@ -67,7 +67,6 @@ export interface HttpApiDeps {
 	publicConfig: PublicConfig;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
-	/** 可下载的 API 客户端安装包（src/downloads/client-tarballs.ts）。 */
 	clientTarballs: readonly ClientTarball[];
 	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
 	agentBinaries: AgentBinaries;

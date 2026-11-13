@@ -3,10 +3,9 @@ import { download, endpoint } from "./contract.js";
 
 /**
  * API 客户端安装包的契约（ADR 0022；约定见 ./contract.ts）。控制面带着与自己同版本的 `@sfly/client`
- * tarball，用户用包管理器直接装它的下载地址，和 SDK wheel（system.ts 的 `sdkApi`）的做法一致。
+ * tarball，用户用包管理器直接装它的下载地址。
  */
 
-/** 一个可下载的 API 客户端安装包（npm tarball）。 */
 export const ClientTarballView = z.object({
 	version: z.string(),
 	filename: z.string(),

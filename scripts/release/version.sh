@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # 发布版本号：Agent、SDK 运行时、控制面和 API 客户端共用一个版本号（控制面按「Agent 版本 == SDK wheel 版本」
-# 给 Agent 下发 SDK，见 apps/server/src/sdk/sdk-wheels.ts；API 客户端和控制面同版本，ADR 0022），
-# 版本号写在下面 6 个文件里。
+# 给 Agent 下发 SDK，见 apps/server/src/sdk/sdk-wheels.ts；API 客户端和控制面同版本，ADR 0022）。
 #
 #   version.sh show            列出各文件里的版本号
 #   version.sh check [vX.Y.Z]  各文件版本号一致（给出 tag 时还要与 tag 一致），否则失败
@@ -20,7 +19,6 @@ CLIENT=packages/client/package.json
 CLIENT_TS=packages/client/src/version.ts
 SEMVER='^[0-9]+\.[0-9]+\.[0-9]+$'
 
-# 各文件里的版本号：[package] / [project] 段里第一个 version 行，或 __version__ / CLIENT_VERSION，或 package.json 的 version。
 # 花括号里的命令以分号结尾、不用 sed -i：这样 GNU sed 和 macOS 的 BSD sed 都能用。
 toml_version() { sed -nE '/^\[(package|project)\]/,/^\[/{s/^version = "([^"]*)".*/\1/p;}' "$1" | head -n1; }
 edit() { sed -E "$2" "$1" >"$1.tmp" && mv "$1.tmp" "$1"; }

@@ -1,4 +1,4 @@
-// API 客户端安装包（ADR 0022）：打成包管理器可以直接安装的 tarball，控制面提供它的列表与下载，和 SDK wheel 对称。
+// API 客户端安装包（ADR 0022）：打成包管理器可以直接安装的 tarball，控制面提供它的列表与下载。
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";

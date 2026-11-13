@@ -70,7 +70,6 @@ contains "$(curl -fsS "$base/api/health")" '"status":"ok"' || fail "/api/health"
 contains "$(curl -fsS -H 'accept: text/html' "$base/")" -i '<!doctype html>' || fail "页面"
 curl -fsS "$base/api/agents" >/dev/null || fail "/api/agents"
 contains "$(curl -fsS "$base/sdk/python")" "\"version\":\"$version\"" || fail "SDK wheel $version"
-# 镜像里带着同版本的 API 客户端安装包（ADR 0022），控制面提供列表和下载。
 contains "$(curl -fsS "$base/client")" "\"version\":\"$version\"" || fail "API 客户端安装包 $version"
 tarball=sfly-client-$version.tgz
 expected=$(docker exec "$container" sha256sum "/app/client/$tarball" | cut -d ' ' -f 1) ||

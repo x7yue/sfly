@@ -2,7 +2,7 @@
 // 自带的 web/、sdk/、client/、drizzle/、docs/、agent/ 布局）；用控制面的 install.sh 安装它带的 Agent，
 // 这个 Agent 从全新的 venv 开始，从控制面下载 SDK 运行时和节点包，跑通一条链。
 // 覆盖打包最容易出问题的地方：迁移、HTTP API 与页面、用户文档、Agent 下载与 install.sh、节点包上传解压、
-// gRPC（HTTP/2）、SDK 与节点包下载、API 客户端安装包（包管理器装进空项目后能调通控制面）。
+// gRPC（HTTP/2）、SDK 与节点包下载、API 客户端安装包。
 // 只在设置 SFLY_BUNDLE_DIR 时运行：根目录 `pnpm bundle:server && pnpm test:bundle`。
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";

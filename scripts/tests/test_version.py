@@ -1,5 +1,4 @@
-"""统一版本号脚本（scripts/release/version.sh）：Agent、SDK、控制面和 API 客户端共用一个版本号，
-`check` 在任何一处不一致时失败，`set` 一次改写全部。
+"""统一版本号脚本（scripts/release/version.sh）的测试。
 
 脚本按自己所在位置找仓库根目录，所以这里把它和它管理的文件复制进临时目录运行，不碰真实文件。
 `set` 末尾刷新 Cargo.lock 和 uv.lock 要解析整个工作区，用空操作的 cargo、uv 顶替，

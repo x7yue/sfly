@@ -11,10 +11,7 @@ export interface VersionedFile {
 	file: string;
 }
 
-/**
- * 目录里文件名匹配 `pattern` 的文件（第一个捕获组是版本号），启动时扫描一次并算好 sha256；
- * 没有配置目录或目录不存在时为空，控制面照常启动。
- */
+/** 目录里文件名匹配 `pattern` 的文件，`pattern` 的第一个捕获组是版本号；没有配置目录或目录不存在时为空。 */
 export async function loadVersionedFiles(
 	dir: string | undefined,
 	pattern: RegExp,
