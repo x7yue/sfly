@@ -62,6 +62,43 @@ describe("运行视图的合并（#47）", () => {
 	});
 });
 
+describe("运行通知状态的合并（#258）", () => {
+	const notified = (status: "queued" | "delivered" | "failed" | "discarded"): RunView => ({
+		...view("failed"),
+		run_notification: {
+			status,
+			bot: "压测群",
+			reason: status === "failed" || status === "discarded" ? "投递失败的原因" : null,
+		},
+	});
+
+	it("已有结果的通知状态不被排队中的视图覆盖：投递之前生成、之后才到达的响应不改回排队中", () => {
+		for (const settled of ["delivered", "failed", "discarded"] as const) {
+			const cached = notified(settled);
+			expect(latestRunView(cached, notified("queued")).run_notification).toEqual(
+				cached.run_notification,
+			);
+		}
+	});
+
+	it("覆盖通知状态时视图的其余部分仍用新到的", () => {
+		const cached = notified("failed");
+		const next: RunView = { ...notified("queued"), orchestration_version: 2 };
+		const merged = latestRunView(cached, next);
+		expect(merged.orchestration_version).toBe(2);
+		expect(merged.run_notification).toEqual(cached.run_notification);
+	});
+
+	it("其余情况都用新到的视图：排队中变成有结果，或还没有通知状态", () => {
+		const settled = notified("delivered");
+		expect(latestRunView(notified("queued"), settled)).toBe(settled);
+		const queued = notified("queued");
+		expect(latestRunView(notified("queued"), queued)).toBe(queued);
+		expect(latestRunView(view("failed"), queued)).toBe(queued);
+		expect(latestRunView(notified("failed"), notified("failed"))).toEqual(notified("failed"));
+	});
+});
+
 describe("子流程名称（#80 故事 1、23）", () => {
 	const chain = (over: Partial<ChainRunView>): ChainRunView => ({
 		id: "6f1c2d3e-0000-4000-8000-000000000002",
