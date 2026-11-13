@@ -1,5 +1,11 @@
 import { expect, test } from "./fixtures";
-import { createScenario, failApi, publishPackage, scenarioUsing } from "./support";
+import {
+	createScenario,
+	expectFocusVisible,
+	failApi,
+	publishPackage,
+	scenarioUsing,
+} from "./support";
 
 // 节点包管理页（原型 #/packages）：列表 + 详情。
 
@@ -51,7 +57,7 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(detail).toContainText("未被锁定");
 	await expect(detail.getByRole("table", { name: "节点类型" }).getByRole("row")).toHaveText([
 		"节点类型输入输出声明的指标标签键图表",
-		"http_checkHTTP 检查url* · methodstatus · body———（平台自带图表）",
+		"http_checkHTTP 检查url* · methodstatus · body———",
 	]);
 	const versions = detail.getByRole("table", { name: "版本" }).getByRole("row");
 	await expect(versions.nth(1)).toContainText("1.3.0");
@@ -65,8 +71,8 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(detail).toContainText("被 2 个场景锁定");
 	await expect(detail.getByRole("table", { name: "节点类型" }).getByRole("row")).toHaveText([
 		"节点类型输入输出声明的指标标签键图表",
-		"http_checkHTTP 检查url* · expectstatus———（平台自带图表）",
-		"pingpinghost*alive———（平台自带图表）",
+		"http_checkHTTP 检查url* · expectstatus———",
+		"pingpinghost*alive———",
 	]);
 	const sha = await detail.locator("dd").first().textContent();
 	expect(sha).toMatch(/^[0-9a-f]{64}$/);
@@ -142,4 +148,32 @@ test("加载失败时显示错误，可以重试", async ({ page, controlPlane }
 	await outage.restore();
 	await page.getByRole("button", { name: "重试" }).click();
 	await expect(page.getByRole("navigation", { name: "节点包" })).toContainText("demo-checks");
+});
+
+test("列表页的键盘：J / K 在节点包之间移动，Enter 显示详情；没有搜索框，/ 不起作用", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { name: "alpha-tools", version: "0.1.0" });
+	await publishPackage(controlPlane, { version: "1.2.0" });
+	await page.goto("/packages");
+	const list = page.getByRole("navigation", { name: "节点包" });
+	const alpha = list.getByRole("link", { name: /alpha-tools/ });
+	const demo = list.getByRole("link", { name: /demo-checks/ });
+	await expect(alpha).toBeVisible();
+
+	await page.keyboard.press("/");
+	await expect(page.locator("input:focus")).toHaveCount(0);
+	await page.keyboard.press("j");
+	await expectFocusVisible(alpha);
+	await page.keyboard.press("j");
+	await expectFocusVisible(demo);
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/packages\?name=demo-checks$/);
+	await expect(page.getByRole("region", { name: "demo-checks 详情" })).toBeVisible();
+	await expectFocusVisible(demo);
+	await page.keyboard.press("k");
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/packages\?name=alpha-tools$/);
+	await expect(page.getByRole("region", { name: "alpha-tools 详情" })).toBeVisible();
 });

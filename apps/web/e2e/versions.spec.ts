@@ -155,9 +155,9 @@ test("保存冲突：弹窗显示对方作者和时间、与最新版本的差�
 	const { id, dialog } = await conflictOnSave(page, controlPlane, clock);
 	await expect(dialog).toContainText("你基于版本 1 编辑");
 	await expect(dialog).toContainText("bob 于 01-01 08:05 保存了版本 2");
-	await expect(dialog).toContainText("− 最新版本 2 → + 你的本地修改");
-	await expect(dialog).toContainText("+ sub_ping");
-	await expect(dialog).toContainText("− report");
+	await expect(dialog).toContainText("− 你的本地修改 → + 最新版本 2");
+	await expect(dialog).toContainText("− sub_ping");
+	await expect(dialog).toContainText("+ report");
 
 	// 焦点锁定在弹窗里。
 	for (let i = 0; i < 8; i++) {

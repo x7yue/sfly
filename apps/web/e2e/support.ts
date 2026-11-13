@@ -215,6 +215,29 @@ export async function expectFocusVisible(locator: Locator): Promise<void> {
 	expect(ring).toEqual({ focusVisible: true, outline: "solid 2px" });
 }
 
+/**
+ * 断言屏幕上 (x, y) 这一像素是焦点环的颜色（`--ring`）：计算样式里有轮廓，不等于它没被上面的元素盖住。
+ */
+export async function expectRingPainted(page: Page, at: { x: number; y: number }): Promise<void> {
+	const png = await page.screenshot({ clip: { ...at, width: 1, height: 1 } });
+	const colors = await page.evaluate(async (data) => {
+		const img = new Image();
+		img.src = `data:image/png;base64,${data}`;
+		await img.decode();
+		const ctx = document.createElement("canvas").getContext("2d");
+		if (!ctx) throw new Error("没有 2D canvas");
+		ctx.drawImage(img, 0, 0);
+		const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+		const probe = document.createElement("i");
+		probe.style.color = "var(--ring)";
+		document.body.append(probe);
+		const ring = getComputedStyle(probe).color;
+		probe.remove();
+		return { pixel: `rgb(${r}, ${g}, ${b})`, ring };
+	}, png.toString("base64"));
+	expect(colors.pixel).toBe(colors.ring);
+}
+
 /** 元素在页面上的位置和大小；不可见时报错。 */
 export async function box(locator: Locator) {
 	const b = await locator.boundingBox();

@@ -10,12 +10,18 @@ import { cn } from "cn";
 import { BoxIcon } from "lucide-react";
 import { z } from "zod";
 import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/feedback/states";
+import { useListNavigation } from "#/components/list-navigation";
 import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
 import { compareVersions } from "#/lib/package-versions";
-import { ChartsCell, LabelKeysCell, MetricsCell } from "#/metrics/MetricDeclarations";
+import {
+	ChartsCell,
+	declaresNoCharts,
+	LabelKeysCell,
+	MetricsCell,
+} from "#/metrics/MetricDeclarations";
 import { Badge } from "@/components/ui/badge";
 import {
 	Table,
@@ -44,6 +50,7 @@ const byVersionDesc = (versions: PackageVersionSummary[]) =>
 
 function PackagesPage() {
 	const packages = useQuery(apiQuery(packagesApi.list));
+	useListNavigation();
 	return (
 		<Page>
 			<PageHeader title={PAGE.packages} count={packages.data?.packages.length} />
@@ -101,7 +108,7 @@ function PackagesView({ packages }: { packages: PackageSummary[] }) {
 				<nav aria-label="节点包">
 					<ul className="m-0 list-none p-0">
 						{packages.map((pkg) => (
-							<li key={pkg.name}>
+							<li key={pkg.name} data-list-item className="has-[:focus-visible]:bg-raised">
 								<PackageListItem pkg={pkg} selected={pkg === selected} />
 							</li>
 						))}
@@ -122,8 +129,9 @@ function PackageListItem({ pkg, selected }: { pkg: PackageSummary; selected: boo
 			to="/packages"
 			search={{ name: pkg.name }}
 			aria-current={selected ? "true" : undefined}
+			data-list-primary
 			className={cn(
-				"block border-b border-border-soft px-3 py-2.5 text-fg-1 no-underline hover:bg-raised",
+				"block border-b border-border-soft px-3 py-2.5 text-fg-1 no-underline -outline-offset-2 hover:bg-raised",
 				// 选中为中性高亮：浅一级的表面 + 左侧白色短条
 				selected && "bg-raised shadow-[inset_2px_0_0_var(--primary)]",
 			)}
@@ -244,7 +252,7 @@ function IoList({ schema }: { schema: NodeTypeView["inputs"] }) {
 					{i > 0 && " · "}
 					{key}
 					{required && (
-						<span className="text-danger-fg" title="必填">
+						<span className="text-fg-2" title="必填">
 							*
 						</span>
 					)}
@@ -256,42 +264,49 @@ function IoList({ schema }: { schema: NodeTypeView["inputs"] }) {
 
 function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 	return (
-		<Table aria-label="节点类型">
-			<TableHeader>
-				<TableRow>
-					<TableHead>节点类型</TableHead>
-					<TableHead>输入</TableHead>
-					<TableHead>输出</TableHead>
-					<TableHead>声明的指标</TableHead>
-					<TableHead>标签键</TableHead>
-					<TableHead>图表</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{nodes.map((node) => (
-					<TableRow key={node.name}>
-						<TableCell>
-							<span className="font-mono">{node.name}</span>
-							<div className="text-xs text-fg-3">{node.title}</div>
-						</TableCell>
-						<TableCell>
-							<IoList schema={node.inputs} />
-						</TableCell>
-						<TableCell>
-							<IoList schema={node.outputs} />
-						</TableCell>
-						<TableCell>
-							<MetricsCell info={node} />
-						</TableCell>
-						<TableCell>
-							<LabelKeysCell info={node} />
-						</TableCell>
-						<TableCell>
-							<ChartsCell info={node} />
-						</TableCell>
+		<>
+			{nodes.some(declaresNoCharts) && (
+				<p className="m-0 mb-1 text-xs text-fg-3">
+					「—」表示没有声明；没有声明图表的节点类型，运行监控里只显示平台自带图表。
+				</p>
+			)}
+			<Table aria-label="节点类型">
+				<TableHeader>
+					<TableRow>
+						<TableHead>节点类型</TableHead>
+						<TableHead>输入</TableHead>
+						<TableHead>输出</TableHead>
+						<TableHead>声明的指标</TableHead>
+						<TableHead>标签键</TableHead>
+						<TableHead>图表</TableHead>
 					</TableRow>
-				))}
-			</TableBody>
-		</Table>
+				</TableHeader>
+				<TableBody>
+					{nodes.map((node) => (
+						<TableRow key={node.name}>
+							<TableCell>
+								<span className="font-mono">{node.name}</span>
+								<div className="text-xs text-fg-3">{node.title}</div>
+							</TableCell>
+							<TableCell>
+								<IoList schema={node.inputs} />
+							</TableCell>
+							<TableCell>
+								<IoList schema={node.outputs} />
+							</TableCell>
+							<TableCell>
+								<MetricsCell info={node} />
+							</TableCell>
+							<TableCell>
+								<LabelKeysCell info={node} />
+							</TableCell>
+							<TableCell>
+								<ChartsCell info={node} />
+							</TableCell>
+						</TableRow>
+					))}
+				</TableBody>
+			</Table>
+		</>
 	);
 }

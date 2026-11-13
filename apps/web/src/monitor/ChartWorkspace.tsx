@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	buildGroups,
 	type ChartGroup,
+	chartCountText,
 	failedFirst,
 	groupHasData,
 	isActive,
@@ -241,8 +242,7 @@ export function ChartWorkspace({
 						</Button>
 					)}
 					<span className="text-xs text-fg-3" data-testid="chart-count">
-						{shown.length} 个节点 · {chartCount} 张图表
-						{filter ? "" : ` · 共 ${groups.length} 个节点声明了图表`}
+						{chartCountText(shown.length, chartCount, showPlatform)}
 					</span>
 					<div className="relative w-55">
 						<SearchIcon
@@ -501,7 +501,7 @@ function NodeGroup({
 					<span className="flex-none font-mono font-medium">{node.node_id}</span>
 					<span className="min-w-0 truncate text-fg-2">{title}</span>
 					{group.chainName && (
-						<span className="flex-none text-2xs text-fg-3" title={chainLabel(chain)}>
+						<span className="flex-none text-xs text-fg-3" title={chainLabel(chain)}>
 							{group.chainName}
 						</span>
 					)}
@@ -622,7 +622,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 	const progress = latest?.progress;
 	const item = (label: string, value: React.ReactNode) => (
 		<div className="min-w-0">
-			<div className="text-2xs text-fg-3">{label}</div>
+			<div className="text-xs text-fg-3">{label}</div>
 			<div className="font-mono text-xs">{value}</div>
 		</div>
 	);
@@ -635,7 +635,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			{item("尝试", node.attempts.length)}
 			{progress && (
 				<div className="min-w-45">
-					<div className="text-2xs text-fg-3">进度</div>
+					<div className="text-xs text-fg-3">进度</div>
 					<div className="font-mono text-xs">
 						{progress.current}
 						{progress.total === null ? "" : ` / ${progress.total}`}
@@ -647,7 +647,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			)}
 			{node.error && (
 				<div className="min-w-0">
-					<div className="text-2xs text-fg-3">错误</div>
+					<div className="text-xs text-fg-3">错误</div>
 					<div className="flex items-center gap-1.5 text-xs">
 						<Badge variant="danger">{node.error.kind}</Badge>
 						<span className="truncate text-danger-fg">{node.error.message.split("\n\n")[0]}</span>

@@ -27,7 +27,7 @@ export function Field({
 		<div className="mb-3 grid grid-cols-[96px_1fr] items-start gap-x-2.5 gap-y-1.5">
 			<label htmlFor={htmlFor} className="min-w-0 truncate pt-1.5 text-sm text-fg-2">
 				{label}
-				{required && <span className="ml-0.5 text-danger-fg">*</span>}
+				{required && <span className="ml-0.5 text-fg-2">*</span>}
 				{type && <span className="block font-mono text-2xs text-fg-3">{type}</span>}
 			</label>
 			<div className="relative flex min-w-0 flex-col gap-1.25">

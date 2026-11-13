@@ -1,6 +1,5 @@
 import { Maximize2Icon } from "lucide-react";
 import { type ReactNode, type RefObject, useRef, useState } from "react";
-import { ACTION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -12,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import {
 	InsertReferenceButton,
+	InsertReferenceGlyph,
 	ReferenceEditor,
 	type ReferenceEditorHandle,
 } from "./ReferenceEditor";
@@ -75,9 +75,12 @@ export function ZoomEditor({
 							编辑 <span className="font-mono">{name}</span>
 						</DialogTitle>
 						<DialogDescription>
-							{choices
-								? `修改立即生效，可以撤销。输入 $ 或点「${ACTION.insertReference}」插入引用。`
-								: "修改立即生效，可以撤销。"}
+							修改立即生效，可以撤销。
+							{choices && (
+								<>
+									输入 $ 或点 <InsertReferenceGlyph /> 插入引用。
+								</>
+							)}
 						</DialogDescription>
 					</DialogHeader>
 					<div ref={body} className="flex min-w-0 items-start gap-1.5">

@@ -25,6 +25,9 @@
 	--base-gray-700: #444444;
 	--base-gray-650: #4a4a4a;
 	--base-gray-600: #5a5a5a;
+	--base-gray-575: #636363;
+	--base-gray-550: #6b6b6b;
+	--base-gray-525: #707070;
 	--base-gray-500: #7a7a7a;
 	--base-gray-450: #8e8e8e;
 	--base-gray-440: #969696;
@@ -52,17 +55,20 @@
 
 	/* 表面：从低到高 */
 	--sunk: var(--base-gray-925); /* 输入框、代码块、凹陷区 */
+	--inset: var(--sunk); /* 面板里的井（图表卡、代码块、日志区）；bg 只做页面底色 */
 	--bg: var(--base-gray-900); /* 页面底色 */
 	--surface: var(--base-gray-875); /* 面板、侧边栏、卡片、弹窗 */
 	--raised: var(--base-gray-850); /* 按钮、菜单、面板内分组 */
 	--raised-2: var(--base-gray-800); /* 悬停、选中的段与行 */
 	--track: var(--base-gray-750); /* 槽位条、进度条、开关的空槽 */
-	--scrim: rgb(0 0 0 / 0.55); /* 弹窗与抽屉背后的遮罩 */
+	--scrim: color-mix(in srgb, var(--base-black) 55%, transparent); /* 弹窗与抽屉背后的遮罩 */
 
-	/* 描边 */
+	/* 描边：面板与分隔线的三级描边有意安静；表单控件（输入框、下拉、勾选框、开关、分段）的边界单独一档，
+	   在 surface 与 raised 上都 ≥ 3:1，未勾选的勾选框和空输入框也看得见 */
 	--border: var(--base-gray-775);
 	--border-soft: var(--base-gray-825);
 	--border-strong: var(--base-gray-700);
+	--border-control: var(--base-gray-525);
 
 	/* 文字三级（对 --bg / --surface / --raised / --raised-2 的对比度均 ≥ 4.5:1；fg-3 在 raised-2 上 4.6:1） */
 	--fg-1: var(--base-gray-100);
@@ -77,30 +83,43 @@
 	/* 信号色（青）：只用于执行中、键盘焦点环、调度连线 */
 	--signal: var(--base-cyan-400);
 	--signal-fg: var(--base-cyan-300); /* 青色文字（执行中的计数等） */
-	--signal-line: rgb(44 196 240 / 0.55);
-	--signal-soft: rgb(44 196 240 / 0.14);
+	/* -line 是描边（在 surface 上 ≥ 3:1），-soft 是带文字的淡底（≈ 1.15:1）；signal-soft 是执行中的淡底，故意强一档（1.3:1） */
+	--signal-line: color-mix(in srgb, var(--signal) 55%, transparent);
+	--signal-soft: color-mix(in srgb, var(--signal) 14%, transparent);
 
 	/* 选中：中性高亮（不用青色） */
 	--selected: var(--base-gray-200);
 	--selected-bg: var(--base-gray-800);
-	--selected-ring: rgb(255 255 255 / 0.08);
+	--selected-ring: color-mix(in srgb, var(--base-white) 8%, transparent);
+	/* 文字选区：中性高亮（不用青色），fg-1 在上面 8.3:1 */
+	--selection-bg: color-mix(in srgb, var(--base-white) 18%, transparent);
 
-	/* 状态色：绿=成功，红=失败，琥珀=等待与警告，青=执行中，灰=待执行/跳过，灰虚线=已取消 */
+	/* 状态色（docs/DESIGN-SYSTEM.md §6.1）：绿=成功，红=失败，琥珀=等待与警告，青=执行中，灰阶=待执行 / 排队 / 跳过 / 取消 / 停止。
+	   不带 -fg 的给标记、描边与色块；状态文字用 -fg（成功的绿本身就够亮） */
 	--ok: var(--base-green-400);
-	--ok-soft: rgb(91 214 154 / 0.08);
-	--ok-line: rgb(91 214 154 / 0.3);
+	--ok-soft: color-mix(in srgb, var(--ok) 8%, transparent);
+	--ok-line: color-mix(in srgb, var(--ok) 50%, transparent);
 	--warn: var(--base-amber-400);
 	--warn-fg: var(--base-amber-200);
-	--warn-soft: rgb(240 168 58 / 0.08);
-	--warn-line: rgb(240 168 58 / 0.38);
+	--warn-soft: color-mix(in srgb, var(--warn) 8%, transparent);
+	--warn-line: color-mix(in srgb, var(--warn) 50%, transparent);
 	--danger: var(--base-red-400);
 	--danger-fg: var(--base-red-300); /* 红色文字（深底上可读） */
-	--danger-soft: rgb(239 83 80 / 0.07);
-	--danger-line: rgb(239 83 80 / 0.4);
+	--danger-soft: color-mix(in srgb, var(--danger) 13%, transparent);
+	--danger-line: color-mix(in srgb, var(--danger) 72%, transparent);
 	--pending: var(--base-gray-450);
 	--skipped: var(--base-gray-500);
 	--cancelled: var(--base-gray-425);
-	--stopped: var(--base-gray-350); /* 实心方块，与取消（虚线）、跳过（淡灰空心）区分 */
+	--stopped: var(--base-gray-350);
+
+	/* 状态面积色：有面积的状态色块只用这一组，每种状态一档。
+	   成功、停止、排队之间靠色差分不开的，状态表（components/status.tsx）用高度与描边再分一次 */
+	--ok-fill: color-mix(in srgb, var(--ok) 50%, transparent);
+	--warn-fill: color-mix(in srgb, var(--warn) 35%, transparent);
+	--danger-fill: var(--danger);
+	--signal-fill: var(--signal-soft);
+	--stopped-fill: color-mix(in srgb, var(--stopped) 60%, transparent);
+	--pending-fill: var(--track);
 
 	/* 日志级别：INFO 不上色 */
 	--log-debug: var(--fg-3);
@@ -113,7 +132,7 @@
 	--chart-2: var(--base-steel-300);
 	--chart-3: var(--base-gray-425);
 	--chart-4: var(--base-steel-500);
-	--chart-grid: rgb(255 255 255 / 0.05);
+	--chart-grid: color-mix(in srgb, var(--base-white) 5%, transparent);
 
 	/* 阴影：带偏移和模糊，不用零偏移彩色发光 */
 	--elevation-float: 0 10px 30px -10px rgb(0 0 0 / 0.7), 0 2px 6px -2px rgb(0 0 0 / 0.4);
@@ -121,8 +140,16 @@
 	/* 可滚动区域顶部的内阴影（内容从上沿下面滚过） */
 	--elevation-inset-top: inset 0 8px 8px -8px rgb(0 0 0 / 0.8);
 
-	/* 动效 */
-	--motion-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+	--motion-fast: 100ms; /* 退场、悬停、按下 */
+	--motion-base: 150ms; /* 浮层与提示进场、选中、颜色变化 */
+	--motion-slow: 200ms; /* 抽屉、画布视口 */
+	--motion-ease-out: cubic-bezier(0.2, 0.7, 0.2, 1); /* 进场与状态变化 */
+	--motion-ease-in: cubic-bezier(0.4, 0, 1, 1); /* 退场 */
+	--pulse-period: 1.6s;
+
+	/* 浏览器自绘的界面：滚动条滑块不依赖轨道颜色也看得清（对 surface 3.8:1） */
+	--scrollbar-thumb: var(--base-gray-500);
+	--scrollbar-track: transparent;
 
 	/* 外壳尺寸 */
 	--sidebar-width: 208px;
@@ -149,20 +176,20 @@
 
 	/* ── 3. 画布专用 ── */
 	--canvas-bg: var(--bg);
-	--canvas-grid: rgb(255 255 255 / 0.06);
+	--canvas-grid: color-mix(in srgb, var(--base-white) 6%, transparent);
 	--canvas-node-bg: var(--raised);
 	--canvas-node-border: var(--border);
 	--canvas-node-selected: var(--selected);
 	--canvas-node-selected-ring: var(--selected-ring);
-	--canvas-port: var(--base-gray-600);
-	--canvas-edge: var(--base-gray-650);
+	--canvas-port: var(--base-gray-550); /* 可拖动的控件：对画布 3.3:1 */
+	--canvas-edge: var(--base-gray-575);
 	--canvas-edge-selected: var(--selected); /* 选中节点相关连线：灰色虚线流动 */
 	--canvas-edge-live: var(--signal); /* 进入执行中节点的连线 */
 	--canvas-edge-dispatch: var(--signal); /* 调度连线（虚线） */
 	--canvas-subflow: var(--base-violet-400); /* 紫色只用于子流程区域 */
 	--canvas-subflow-fg: var(--base-violet-200);
-	--canvas-subflow-line: rgb(180 163 248 / 0.45);
-	--canvas-subflow-soft: rgb(180 163 248 / 0.07);
+	--canvas-subflow-line: color-mix(in srgb, var(--canvas-subflow) 52%, transparent);
+	--canvas-subflow-soft: color-mix(in srgb, var(--canvas-subflow) 7%, transparent);
 	--canvas-run-running: var(--signal);
 	--canvas-run-failed: var(--danger);
 	--canvas-run-cancelled: var(--cancelled); /* 虚线 */
@@ -170,5 +197,26 @@
 	/* 已完成的节点「下沉」：卡片底色与画布相同、描边变淡，文字对比度不降（不用不透明度） */
 	--canvas-run-done-bg: var(--canvas-bg);
 	--canvas-run-done-border: var(--border-soft);
-	--canvas-minimap-mask: rgb(0 0 0 / 0.35); /* 小地图上视口以外的遮罩 */
+	--canvas-minimap-mask: color-mix(
+		in srgb,
+		var(--base-black) 35%,
+		transparent
+	); /* 小地图上视口以外的遮罩 */
+}
+
+/* 系统要求更高对比度时：安静的描边、辅助文字、网格与连线各加强一档（只加强已经达标的默认值） */
+@media (prefers-contrast: more) {
+	:root {
+		--border: var(--base-gray-600);
+		--border-soft: var(--base-gray-650);
+		--border-strong: var(--base-gray-500);
+		--border-control: var(--base-gray-425);
+		--fg-3: var(--fg-2);
+		--chart-grid: color-mix(in srgb, var(--base-white) 12%, transparent);
+		--canvas-grid: color-mix(in srgb, var(--base-white) 12%, transparent);
+		--canvas-edge: var(--base-gray-500);
+		--canvas-port: var(--base-gray-450);
+		--selected-ring: color-mix(in srgb, var(--base-white) 20%, transparent);
+		--scrollbar-thumb: var(--fg-2);
+	}
 }

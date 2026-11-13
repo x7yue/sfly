@@ -60,7 +60,7 @@ function SubflowNameField({
 
 /** 菜单底部的说明行：这次添加的节点接在哪、连什么线。 */
 export function FormFooter({ children }: { children: ReactNode }) {
-	return <p className="m-0 border-t border-border-soft px-3 py-2 text-2xs text-fg-3">{children}</p>;
+	return <p className="m-0 border-t border-border-soft px-3 py-2 text-xs text-fg-3">{children}</p>;
 }
 
 /**

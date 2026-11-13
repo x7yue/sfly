@@ -1,6 +1,12 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { dialogOpen, isEditable } from "#/lib/focus";
-import { SHORTCUTS, type ShortcutGroup, type ShortcutId, ShortcutMatcher } from "#/lib/shortcuts";
+import {
+	type PaletteShortcut,
+	SHORTCUTS,
+	type ShortcutGroup,
+	type ShortcutId,
+	ShortcutMatcher,
+} from "#/lib/shortcuts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Keys } from "./page";
 
@@ -10,27 +16,56 @@ import { Keys } from "./page";
  *   useShortcut("go-agents", () => navigate({ to: "/agents" }));
  *
  * 同一个快捷键被多处绑定时，最后挂载的生效（例如全屏页覆盖全局行为），卸载后恢复上一个。
- * 全局只有一个 keydown 监听（ShortcutListener，挂在根路由）。
+ * `enabled` 为 false（或 id 传 null）时不绑定：键不被拦截，登记了 `palette` 的快捷键也不出现在命令面板里。
+ * 全局只有一个 keydown 监听（ShortcutListener，挂在根路由），只匹配当前绑定了处理函数的快捷键。
  */
 
-type Handler = (event: KeyboardEvent) => void;
+type Handler = () => void;
 const handlers = new Map<ShortcutId, Handler[]>();
 
-export function useShortcut(id: ShortcutId, handler: Handler, enabled = true) {
+const isBound = (id: ShortcutId) => (handlers.get(id)?.length ?? 0) > 0;
+
+const bindingListeners = new Set<() => void>();
+let paletteCommands: readonly PaletteShortcut[] = [];
+
+function bindingsChanged() {
+	paletteCommands = SHORTCUTS.filter((s): s is PaletteShortcut => "palette" in s && isBound(s.id));
+	for (const listener of bindingListeners) listener();
+}
+
+export function useShortcut(id: ShortcutId | null, handler: Handler, enabled = true) {
 	const ref = useRef(handler);
 	ref.current = handler;
 	useEffect(() => {
-		if (!enabled) return;
-		const entry: Handler = (event) => ref.current(event);
-		const stack = handlers.get(id) ?? [];
-		handlers.set(id, [...stack, entry]);
+		if (id === null || !enabled) return;
+		const entry: Handler = () => ref.current();
+		handlers.set(id, [...(handlers.get(id) ?? []), entry]);
+		bindingsChanged();
 		return () => {
 			handlers.set(
 				id,
 				(handlers.get(id) ?? []).filter((h) => h !== entry),
 			);
+			bindingsChanged();
 		};
 	}, [id, enabled]);
+}
+
+/** 当前页面绑定了处理函数、并且登记了 `palette` 的快捷键（注册表顺序）：命令面板的「当前页面」分组。 */
+export function usePaletteCommands(): readonly PaletteShortcut[] {
+	return useSyncExternalStore(
+		(listener) => {
+			bindingListeners.add(listener);
+			return () => bindingListeners.delete(listener);
+		},
+		() => paletteCommands,
+		() => paletteCommands,
+	);
+}
+
+/** 执行快捷键的处理函数（命令面板的命令）：与按键分发同一个规则，最后挂载的生效；没有绑定时什么也不做。 */
+export function runShortcut(id: ShortcutId) {
+	handlers.get(id)?.at(-1)?.();
 }
 
 /** 全局快捷键监听；挂在根路由一次。 */
@@ -50,11 +85,11 @@ export function ShortcutListener() {
 					inDialog: dialogOpen(),
 				},
 				performance.now(),
+				isBound,
 			);
-			const handler = id ? handlers.get(id)?.at(-1) : undefined;
-			if (!handler) return;
+			if (!id) return;
 			event.preventDefault();
-			handler(event);
+			runShortcut(id);
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
@@ -62,7 +97,7 @@ export function ShortcutListener() {
 	return null;
 }
 
-const GROUPS: ShortcutGroup[] = ["全局", "编排画布", "运行监控"];
+const GROUPS: ShortcutGroup[] = ["全局", "编排画布", "运行监控", "列表页"];
 
 /** 快捷键面板（?）：内容全部来自注册表。 */
 export function ShortcutsDialog({

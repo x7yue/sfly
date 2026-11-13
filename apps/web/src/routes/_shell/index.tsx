@@ -94,7 +94,7 @@ function Stats({ data }: { data: DashboardView }) {
 			<StatCard
 				label={
 					<>
-						<StatusDot kind="running" className="text-signal" />
+						{runs.running > 0 && <StatusDot kind="running" className="text-signal" />}
 						运行中
 					</>
 				}
@@ -107,18 +107,14 @@ function Stats({ data }: { data: DashboardView }) {
 				value={runs.success}
 				// 数值为 0 时不着色：颜色只在有成功 / 失败时传达信号。
 				valueClassName={runs.success > 0 ? "text-ok" : undefined}
-				detail={
-					<Sparkline values={hourly.map((h) => h.success)} className="mt-1.5 w-full text-ok" />
-				}
+				detail={<TrendSpark values={hourly.map((h) => h.success)} activeClassName="text-ok" />}
 			/>
 			<StatCard
 				name="失败"
 				value={runs.failed}
 				valueClassName={runs.failed > 0 ? "text-danger-fg" : undefined}
 				unit={runs.failed_subflows > 0 ? `含 ${runs.failed_subflows} 个子流程` : undefined}
-				detail={
-					<Sparkline values={hourly.map((h) => h.failed)} className="mt-1.5 w-full text-danger" />
-				}
+				detail={<TrendSpark values={hourly.map((h) => h.failed)} activeClassName="text-danger" />}
 			/>
 			<StatCard
 				name="成功率"
@@ -152,10 +148,26 @@ function Stats({ data }: { data: DashboardView }) {
 	);
 }
 
+function TrendSpark({
+	values,
+	activeClassName,
+}: {
+	values: readonly number[];
+	activeClassName: string;
+}) {
+	const empty = values.every((v) => v === 0);
+	return (
+		<Sparkline
+			values={values}
+			className={cn("mt-1.5 w-full", empty ? "text-fg-3" : activeClassName)}
+		/>
+	);
+}
+
 /** 与前 24 小时的成功率对比：`较前 24 小时 −3.1%`。 */
 function rateChange(current: number | null, previous: number | null): string {
 	if (current === null) return "最近 24 小时没有结束的运行";
-	if (previous === null) return "前 24 小时没有结束的运行";
+	if (previous === null) return "前 24 小时没有可比数据";
 	const diff = (current - previous) * 100;
 	const sign = diff > 0 ? "+" : diff < 0 ? "−" : "±";
 	return `较前 24 小时 ${sign}${Math.abs(diff).toFixed(1)}%`;

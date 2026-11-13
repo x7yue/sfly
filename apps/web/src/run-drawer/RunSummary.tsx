@@ -90,7 +90,7 @@ export function RunSummary({ runId }: { runId: string }) {
 					<ChainRow key={chain.id} chain={chain} />
 				))}
 			</ul>
-			<h3 className="mt-4.5 mb-2.5 text-2xs font-semibold tracking-wide text-fg-2">正在执行</h3>
+			<h3 className="mt-4.5 mb-2.5 text-xs font-semibold tracking-wide text-fg-2">正在执行</h3>
 			{active.length === 0 ? (
 				<p className="m-0 text-xs text-fg-3">
 					{run.status === "running" ? "没有正在执行的节点。" : `运行已结束：${status.label}。`}
@@ -109,7 +109,7 @@ export function RunSummary({ runId }: { runId: string }) {
 					))}
 				</ul>
 			)}
-			<h3 className="mt-4.5 mb-2.5 flex items-center text-2xs font-semibold tracking-wide text-fg-2">
+			<h3 className="mt-4.5 mb-2.5 flex items-center text-xs font-semibold tracking-wide text-fg-2">
 				最新日志
 				{focus && <span className="ml-auto font-mono font-normal text-fg-3">{focus.node_id}</span>}
 			</h3>
@@ -222,7 +222,7 @@ function ActiveNode({
 							<i className="block h-full bg-signal" style={{ width: `${ratio * 100}%` }} />
 						</div>
 					)}
-					<div className="mt-1 truncate font-mono text-2xs text-fg-3">
+					<div className="mt-1 truncate font-mono text-xs text-fg-3">
 						{progress.total !== null
 							? `${progress.current} / ${progress.total}`
 							: String(progress.current)}
@@ -261,7 +261,7 @@ function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 	return (
 		<ol
 			aria-label="最新日志"
-			className="m-0 list-none overflow-hidden rounded-lg border border-border-soft bg-sunk px-2.5 py-2 font-mono text-2xs leading-5"
+			className="m-0 list-none overflow-hidden rounded-lg border border-border-soft bg-sunk px-2.5 py-2 font-mono text-xs leading-5"
 		>
 			{lines.map((line) => {
 				const level = LEVEL[line.level] ?? { label: line.level, className: "" };

@@ -106,3 +106,9 @@ export function failedFirst(groups: readonly ChartGroup[]): readonly ChartGroup[
  */
 export const chartsCompact = (run: RunView, catalog: Pick<RunMetricCatalog, "nodes"> | undefined) =>
 	catalog !== undefined && buildGroups(run, catalog.nodes).length === 0;
+
+export function chartCountText(nodes: number, charts: number, platform: boolean): string {
+	if (charts === 0) return "没有图表";
+	if (nodes === 0) return `${charts} 张平台自带图表`;
+	return `${charts} 张图表，来自 ${nodes} 个节点${platform ? "和平台自带" : ""}`;
+}

@@ -61,7 +61,10 @@ export function ConflictDialog({
 		refetchOnMount: "always",
 	});
 	const fresh = latest.data ?? null;
-	const diff = useMemo(() => (fresh ? diffDocuments(fresh.document, doc) : null), [fresh, doc]);
+	const loadLatestDiff = useMemo(
+		() => (fresh ? diffDocuments(doc, fresh.document) : null),
+		[fresh, doc],
+	);
 	const [copyName, setCopyName] = useState("");
 	useEffect(() => {
 		if (open) setCopyName(`${orchestration.name}（我的修改）`);
@@ -114,11 +117,11 @@ export function ConflictDialog({
 						<p role="alert" className="m-0 text-sm text-danger-fg">
 							读取最新版本失败：{latest.error.message}
 						</p>
-					) : diff && fresh ? (
+					) : loadLatestDiff && fresh ? (
 						<DocumentDiffView
-							diff={diff}
-							beforeLabel={`最新版本 ${fresh.number}`}
-							afterLabel="你的本地修改"
+							diff={loadLatestDiff}
+							beforeLabel="你的本地修改"
+							afterLabel={`最新版本 ${fresh.number}`}
 						/>
 					) : (
 						<p className="m-0 text-sm text-fg-3">正在读取最新版本…</p>
