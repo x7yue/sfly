@@ -613,12 +613,17 @@ function SegmentBar({
 				chainRow ? "top-2.25" : "top-1.75",
 				SEGMENT_STYLE[seg.kind],
 				selected && "outline-[1.5px] outline-offset-1 outline-selected",
-				seg.live &&
-					seg.kind === "run" &&
-					"after:absolute after:-top-0.5 after:-right-0.75 after:h-4 after:w-1.5 after:animate-status-pulse after:rounded-[2px] after:bg-signal",
 			)}
 			style={{ left: `${left}%`, width: `max(${Math.max(0.25, right - left)}%, 2px)` }}
-		/>
+		>
+			{seg.live && seg.kind === "run" && (
+				<i
+					aria-hidden
+					data-pulse-head
+					className="pulse-ring absolute -top-0.5 -right-0.75 h-4 w-1.5 rounded-[2px] bg-signal text-signal"
+				/>
+			)}
+		</span>
 	);
 }
 

@@ -51,7 +51,7 @@ test("卡片显示缩略图、名称、说明、版本与节点数、Agent 在�
 	await expect(card).toContainText("最近运行");
 	await expect(card).toContainText("tester");
 	// 缩略图按最近一次运行着色：入口节点已完成，ping 执行中。
-	await expect(card.locator('rect[data-node="entry"]')).toHaveAttribute("data-state", "done");
+	await expect(card.locator('rect[data-node="entry"]')).toHaveAttribute("data-state", "ok");
 	await expect(card.locator('rect[data-node="ping"]')).toHaveAttribute("data-state", "running");
 
 	const offline = page.getByRole("article", { name: "撮合压测" });
