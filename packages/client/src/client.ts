@@ -21,7 +21,7 @@ export interface ClientOptions {
 	baseUrl: string;
 	/** 默认用全局 fetch。 */
 	fetch?: FetchLike;
-	/** 每个响应带回的控制面时间（ISO 8601），原样交给回调。 */
+	/** 每个响应和事件流带回的控制面时间（ISO 8601），原样交给回调。 */
 	onControlPlaneTime?: (time: string) => void;
 }
 

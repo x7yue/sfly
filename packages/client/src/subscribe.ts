@@ -14,15 +14,6 @@ const EVENT_STREAM = "text/event-stream";
 const FIRST_RETRY_MS = 1_000;
 const MAX_RETRY_MS = 15_000;
 
-/**
- * 一次订阅的状态：
- *
- *   connecting ──2xx 事件流──▶ open ──流结束或读取失败──▶ waiting ──间隔到了──▶ connecting
- *       ├──连不上、5xx──────────────────────────────────▶ waiting
- *       └──4xx、不是事件流──▶ closed（onError）        任何状态 ──关闭函数──▶ closed
- *
- * 重连间隔是流里 `retry:` 给的值（没有时 1 秒），连续失败时翻倍、最多 15 秒，连上后从头算。
- */
 type State =
 	| { readonly phase: "connecting" }
 	| { readonly phase: "open"; readonly body: ReadableStream<Uint8Array> }
@@ -56,7 +47,7 @@ export function subscribe(
 
 	const stop = (error: ApiError): State => {
 		controller.abort();
-		report(() => options.onError?.(error));
+		callIsolated(() => options.onError?.(error));
 		return CLOSED;
 	};
 
@@ -72,11 +63,11 @@ export function subscribe(
 			return;
 		}
 		if (message.event === CONTROL_PLANE_TIME_EVENT) {
-			exchange.noteTime((data as { time?: unknown } | null)?.time);
+			callIsolated(() => exchange.noteTime((data as { time?: unknown } | null)?.time));
 			return;
 		}
 		const handler = handlers[message.event];
-		if (handler) report(() => handler(data));
+		if (handler) callIsolated(() => handler(data));
 	};
 
 	const step = async (state: State): Promise<State> => {
@@ -92,7 +83,10 @@ export function subscribe(
 					});
 				} catch (error) {
 					if (signal.aborted) return CLOSED;
-					if (!(error instanceof ApiError)) throw error;
+					if (!(error instanceof ApiError)) {
+						controller.abort();
+						throw error;
+					}
 					return error.status === 0 || error.status >= 500 ? WAITING : stop(error);
 				}
 				if (!res.body || !res.headers.get("content-type")?.startsWith(EVENT_STREAM)) {
@@ -107,7 +101,7 @@ export function subscribe(
 					);
 				}
 				failures = 0;
-				report(() => options.onOpen?.());
+				callIsolated(() => options.onOpen?.());
 				return { phase: "open", body: res.body };
 			}
 			case "open":
@@ -128,8 +122,7 @@ export function subscribe(
 	return () => controller.abort();
 }
 
-/** 调用方的回调抛出的错误不影响订阅，像事件监听器一样另行报告。 */
-function report(callback: () => void): void {
+function callIsolated(callback: () => void): void {
 	try {
 		callback();
 	} catch (error) {
@@ -151,7 +144,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
 	});
 }
 
-/** 按 text/event-stream 的格式（WHATWG HTML 9.2）逐条读出消息，空行结束一条。 */
+/** https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation */
 async function readMessages(
 	body: ReadableStream<Uint8Array>,
 	receive: (message: Message) => void,

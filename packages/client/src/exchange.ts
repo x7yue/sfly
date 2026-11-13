@@ -36,7 +36,6 @@ export interface SendInit extends CallOptions {
 export interface Exchange {
 	send(route: RouteRef, input: RouteInput | undefined, init: SendInit): Promise<ResponseLike>;
 	url(route: RouteRef, input: RouteInput | undefined): string;
-	/** 控制面时间的唯一入口：响应头里的和事件流里的都经过这里交给回调。 */
 	noteTime(time: unknown): void;
 }
 

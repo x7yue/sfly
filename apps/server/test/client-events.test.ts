@@ -12,8 +12,7 @@ import type { TestControlPlane } from "./support/test-control-plane.js";
 
 const AGENT = "agent-a";
 const MISSING_RUN = "00000000-0000-0000-0000-000000000000";
-/** 控制面建议的重连间隔是 3 秒，等重连的条件留出余量。 */
-const RECONNECT_MS = 10_000;
+const RECONNECT_TIMEOUT_MS = 10_000;
 const LIFECYCLE = ["pending", "queued", "dispatched", "running", "success"];
 
 const statusOf = (view: RunView | undefined, node: string) =>
@@ -44,17 +43,13 @@ describe("API 客户端订阅事件流", () => {
 		const runId = await api.triggerOk(scenarioId);
 		return { runId, task: await agent.nextAssign() };
 	};
-	/**
-	 * 等过一次断线重连的间隔：另开一条订阅，切断它，等它重连上。
-	 * 被测的订阅如果还会重连，到这时也已经重连了（它断开得更早，间隔不比这条长）。
-	 */
-	const reconnectIntervalPassed = async (runId: string) => {
+	const witnessReconnected = async (runId: string) => {
 		const { proxy, client: witness } = await proxied();
 		let opens = 0;
 		track(witness.runs.events({ params: { id: runId } }, {}, { onOpen: () => opens++ }));
 		await eventually(() => expect(opens).toBe(1));
 		proxy.cut();
-		await eventually(() => expect(opens).toBe(2), RECONNECT_MS);
+		await eventually(() => expect(opens).toBe(2), RECONNECT_TIMEOUT_MS);
 	};
 
 	beforeEach(async () => {
@@ -188,7 +183,7 @@ describe("API 客户端订阅事件流", () => {
 		await eventually(async () => {
 			expect((await client.logs.page({ params: { id: task.taskId } })).last_seq).toBe(4);
 		});
-		await eventually(() => expect(proxy.requests).toHaveLength(2), RECONNECT_MS);
+		await eventually(() => expect(proxy.requests).toHaveLength(2), RECONNECT_TIMEOUT_MS);
 		expect(opens).toBe(1);
 		proxy.release();
 		await eventually(() => expect(opens).toBe(2));
@@ -217,7 +212,7 @@ describe("API 客户端订阅事件流", () => {
 		proxy.cut();
 		await agent.succeed(a);
 		const b = await agent.nextAssign();
-		await eventually(() => expect(proxy.requests).toHaveLength(2), RECONNECT_MS);
+		await eventually(() => expect(proxy.requests).toHaveLength(2), RECONNECT_TIMEOUT_MS);
 		expect(statusOf(views.at(-1), "a")).toBe("running");
 		proxy.release();
 		await eventually(() => {
@@ -244,7 +239,7 @@ describe("API 客户端订阅事件流", () => {
 
 		close();
 		close();
-		await eventually(() => expect(proxy.open).toBe(0));
+		await eventually(() => expect(proxy.inFlight).toBe(0));
 		const seen = received.length;
 		const progress: number[] = [];
 		let witnessOpens = 0;
@@ -258,10 +253,10 @@ describe("API 客户端订阅事件流", () => {
 		await eventually(() => expect(witnessOpens).toBe(1));
 		agent.progress(task, 1, 2);
 		await eventually(() => expect(progress).toEqual([1]));
-		await reconnectIntervalPassed(runId);
+		await witnessReconnected(runId);
 
 		expect(received).toHaveLength(seen);
-		expect(proxy.requests).toHaveLength(1);
+		expect(proxy.requests, "更晚断开的见证订阅已经重连，被关闭的订阅没有跟着重连").toHaveLength(1);
 		expect(opens).toBe(1);
 	});
 
@@ -273,11 +268,11 @@ describe("API 客户端订阅事件流", () => {
 		await eventually(() => expect(opens).toBe(1));
 
 		proxy.cut();
-		await eventually(() => expect(proxy.open).toBe(0));
+		await eventually(() => expect(proxy.inFlight).toBe(0));
 		close();
-		await reconnectIntervalPassed(runId);
+		await witnessReconnected(runId);
 
-		expect(proxy.requests).toHaveLength(1);
+		expect(proxy.requests, "更晚断开的见证订阅已经重连，被关闭的订阅没有跟着重连").toHaveLength(1);
 		expect(opens).toBe(1);
 	});
 
@@ -318,13 +313,13 @@ describe("API 客户端订阅事件流", () => {
 			),
 		);
 		await eventually(() => expect(errors).toHaveLength(2));
-		await reconnectIntervalPassed(runId);
+		await witnessReconnected(runId);
 
 		expect(errors.map((e) => [e.status, e.code, e.method, e.path]).sort()).toEqual([
 			[200, "invalid_response", "GET", `/runs/${runId}`],
 			[404, "not_found", "GET", `/runs/${MISSING_RUN}/events`],
 		]);
-		expect(proxy.requests).toHaveLength(2);
+		expect(proxy.requests, "更晚断开的见证订阅已经重连，停止的订阅没有重试").toHaveLength(2);
 		expect(opens).toBe(0);
 	});
 });
