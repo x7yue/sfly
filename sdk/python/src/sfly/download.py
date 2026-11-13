@@ -18,7 +18,7 @@ from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from sfly.context import ArtifactDownloadError, Cancelled
+from sfly.context import ArtifactDownloadError, cancelled_error
 
 #: 每次读写的块大小：内存占用与产物大小无关。
 _CHUNK = 64 * 1024
@@ -85,7 +85,7 @@ def _write(
         with part.open("wb") as out:
             for chunk in chunks():
                 if cancelled():
-                    raise Cancelled("任务已取消，下载中止")
+                    raise cancelled_error("任务已取消，下载中止")
                 out.write(chunk)
         os.replace(part, target)
     finally:
@@ -117,7 +117,7 @@ def _sleep(seconds: float, cancelled: Callable[[], bool]) -> None:
     deadline = time.monotonic() + seconds
     while (left := deadline - time.monotonic()) > 0:
         if cancelled():
-            raise Cancelled("任务已取消，下载中止")
+            raise cancelled_error("任务已取消，下载中止")
         time.sleep(min(left, _CANCEL_POLL))
 
 

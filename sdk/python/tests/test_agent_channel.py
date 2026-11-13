@@ -217,6 +217,84 @@ def test_a_cancelled_reply_raises_cancelled(
     agent.close()
 
 
+def test_a_sigterm_after_a_cancelled_reply_does_not_interrupt_the_cleanup(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """取消时 Agent 既回复 cancelled 又发 SIGTERM。回复先到时节点已经在 `except Cancelled`
+    里清理，随后送达的 SIGTERM 不再抛第二次。"""
+    from sfly.context import on_sigterm
+
+    agent = FakeAgent(
+        short_dir / "agent.sock",
+        lambda _: [frame({"error": {"kind": "cancelled", "message": "任务已取消，调用已放弃"}})],
+    )
+    ctx = context(short_dir, monkeypatch)
+    cleaned = False
+
+    with pytest.raises(sfly.Cancelled, match="调用已放弃"):
+        try:
+            ctx.agent("fs-source").files.stat("/x")
+        except sfly.Cancelled:
+            on_sigterm(signal.SIGTERM, None)
+            cleaned = True
+            raise
+    assert cleaned
+    agent.close()
+
+
+def test_a_sigterm_after_the_cancel_marker_stopped_a_call_does_not_interrupt_the_cleanup(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Agent 先写取消标记再发 SIGTERM：两者之间发起的调用因为标记抛出 `Cancelled`，
+    SIGTERM 不再抛第二次。"""
+    from sfly.context import on_sigterm
+
+    ctx = context(short_dir, monkeypatch)
+    (short_dir / "cancel").touch()
+    cleaned = False
+
+    with pytest.raises(sfly.Cancelled, match="任务已取消"):
+        try:
+            ctx.agent("fs-source").files.stat("/x")
+        except sfly.Cancelled:
+            on_sigterm(signal.SIGTERM, None)
+            cleaned = True
+            raise
+    assert cleaned
+
+
+def test_a_cancelled_reply_in_a_background_thread_leaves_sigterm_to_the_main_thread(
+    short_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """后台线程里的调用收到 cancelled 回复，主线程还没有被告知取消：
+    SIGTERM 照常在主线程里抛出 `Cancelled`。"""
+    from sfly.context import on_sigterm
+
+    agent = FakeAgent(
+        short_dir / "agent.sock",
+        lambda _: [frame({"error": {"kind": "cancelled", "message": "任务已取消，调用已放弃"}})],
+    )
+    ctx = context(short_dir, monkeypatch)
+    raised: list[BaseException] = []
+
+    def call() -> None:
+        try:
+            ctx.agent("fs-source").files.stat("/x")
+        except sfly.Cancelled as error:
+            raised.append(error)
+
+    thread = threading.Thread(target=call)
+    thread.start()
+    thread.join(10)
+    assert len(raised) == 1
+
+    with pytest.raises(sfly.Cancelled, match="SIGTERM"):
+        on_sigterm(signal.SIGTERM, None)
+    # 主线程已经收到过：再来一次 SIGTERM 不再抛。
+    on_sigterm(signal.SIGTERM, None)
+    agent.close()
+
+
 def test_an_agent_that_is_gone_is_unreachable(
     short_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
