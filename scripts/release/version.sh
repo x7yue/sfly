@@ -18,7 +18,9 @@ SERVER=apps/server/package.json
 SEMVER='^[0-9]+\.[0-9]+\.[0-9]+$'
 
 # 各文件里的版本号：[package] / [project] 段里第一个 version 行，或 __version__，或 package.json 的 version。
-toml_version() { sed -nE '/^\[(package|project)\]/,/^\[/{s/^version = "([^"]*)".*/\1/p}' "$1" | head -n1; }
+# 花括号里的命令以分号结尾、不用 sed -i：这样 GNU sed 和 macOS 的 BSD sed 都能用。
+toml_version() { sed -nE '/^\[(package|project)\]/,/^\[/{s/^version = "([^"]*)".*/\1/p;}' "$1" | head -n1; }
+edit() { sed -E "$2" "$1" >"$1.tmp" && mv "$1.tmp" "$1"; }
 read_versions() {
 	printf '%s\t%s\n' \
 		"$CARGO" "$(toml_version "$CARGO")" \
@@ -42,7 +44,7 @@ cmd_check() {
 	local file version failed=0
 	while IFS=$'\t' read -r file version; do
 		[[ -z $expected ]] && expected=$version
-		if [[ $version != "$expected" ]]; then
+		if [[ -z $version || $version != "$expected" ]]; then
 			echo "$file 的版本号是 '$version'，应为 '$expected'" >&2
 			failed=1
 		fi
@@ -64,9 +66,9 @@ cmd_set() {
 		echo "版本号必须是 X.Y.Z（不支持预发布版本）：$version" >&2
 		exit 1
 	fi
-	sed -i -E '/^\[package\]/,/^\[/{s/^version = "[^"]*"/version = "'"$version"'"/}' "$CARGO"
-	sed -i -E '/^\[project\]/,/^\[/{s/^version = "[^"]*"/version = "'"$version"'"/}' "$PYPROJECT"
-	sed -i -E 's/^__version__ = "[^"]*"/__version__ = "'"$version"'"/' "$PYINIT"
+	edit "$CARGO" '/^\[package\]/,/^\[/{s/^version = "[^"]*"/version = "'"$version"'"/;}'
+	edit "$PYPROJECT" '/^\[project\]/,/^\[/{s/^version = "[^"]*"/version = "'"$version"'"/;}'
+	edit "$PYINIT" 's/^__version__ = "[^"]*"/__version__ = "'"$version"'"/'
 	# shellcheck disable=SC2016 # 单引号里是 JS 代码，$1 是正则替换的分组引用
 	node -e '
 		const fs = require("node:fs");
