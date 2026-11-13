@@ -2,6 +2,8 @@ import { ApiError, errorFromResponse } from "./errors.js";
 import { CONTROL_PLANE_TIME_HEADER } from "./generated/protocol.js";
 import { type CallOptions, type RouteInput, type RouteRef, requestPath } from "./route.js";
 
+const NICKNAME_HEADER = "x-sfly-nickname";
+
 /** 客户端调用 fetch 时用到的部分：全局 fetch、undici 的 fetch 和测试替身都符合。 */
 export type FetchLike = (url: string, init: FetchInit) => Promise<ResponseLike>;
 
@@ -21,9 +23,13 @@ export interface ResponseLike {
 	text(): Promise<string>;
 }
 
+/** 固定的昵称，或每次请求时取值的函数；空白算没有。 */
+export type Nickname = string | (() => string | null | undefined);
+
 export interface ExchangeConfig {
 	baseUrl: string;
 	fetch: FetchLike;
+	nickname?: Nickname;
 	onControlPlaneTime: (time: string) => void;
 }
 
@@ -39,9 +45,30 @@ export interface Exchange {
 export function createExchange(config: ExchangeConfig): Exchange {
 	const baseUrl = normalizeBaseUrl(config.baseUrl);
 
-	const headersFor = (input: RouteInput | undefined, init: SendInit): Record<string, string> => {
+	const nicknameNow = (): string | undefined => {
+		const value = typeof config.nickname === "function" ? config.nickname() : config.nickname;
+		return value?.trim() || undefined;
+	};
+
+	const headersFor = (
+		route: RouteRef,
+		input: RouteInput | undefined,
+		init: SendInit,
+	): Record<string, string> => {
 		const headers: Record<string, string> = { accept: init.accept };
 		if (input?.body !== undefined) headers["content-type"] = "application/json";
+		const nickname = nicknameNow();
+		if (nickname !== undefined) {
+			headers[NICKNAME_HEADER] = encodeURIComponent(nickname);
+		} else if (route.method !== "GET") {
+			throw new ApiError({
+				status: 400,
+				code: "nickname_required",
+				message: "写操作需要昵称：创建客户端时给 nickname",
+				method: route.method,
+				path: requestPath(route, input),
+			});
+		}
 		return headers;
 	};
 
@@ -55,11 +82,12 @@ export function createExchange(config: ExchangeConfig): Exchange {
 
 	const send = async (route: RouteRef, input: RouteInput | undefined, init: SendInit) => {
 		const path = requestPath(route, input);
+		const headers = headersFor(route, input, init);
 		let res: ResponseLike;
 		try {
 			res = await config.fetch(`${baseUrl}${path}`, {
 				method: route.method,
-				headers: headersFor(input, init),
+				headers,
 				body: input?.body === undefined ? undefined : JSON.stringify(input.body),
 				signal: init.signal,
 				keepalive: init.keepalive,
