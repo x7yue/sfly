@@ -145,6 +145,39 @@
     },
     {
       "method": "GET",
+      "path": "/client",
+      "key": [
+        "client-package",
+        "list"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/client/:version/:filename",
+      "key": null,
+      "kind": "download",
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "filename"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
       "path": "/dashboard",
       "key": [
         "dashboard",
