@@ -1,6 +1,10 @@
 import { ApiError, errorFromResponse } from "./errors.js";
-import { CONTROL_PLANE_TIME_HEADER } from "./generated/protocol.js";
+import { CONTROL_PLANE_TIME_HEADER, CONTROL_PLANE_VERSION_HEADER } from "./generated/protocol.js";
 import { type CallOptions, type RouteInput, type RouteRef, requestPath } from "./route.js";
+import { CLIENT_VERSION } from "./version.js";
+
+const NICKNAME_HEADER = "x-sfly-nickname";
+const CLIENT_HEADER = "x-sfly-client";
 
 /** 客户端调用 fetch 时用到的部分：全局 fetch、undici 的 fetch 和测试替身都符合。 */
 export type FetchLike = (url: string, init: FetchInit) => Promise<ResponseLike>;
@@ -22,10 +26,22 @@ export interface ResponseLike {
 	text(): Promise<string>;
 }
 
+/** 固定的昵称，或每次请求时取值的函数；空白算没有。 */
+export type Nickname = string | (() => string | null | undefined);
+
+export interface VersionMismatch {
+	clientVersion: string;
+	controlPlaneVersion: string;
+	/** 写明两边版本和处理办法的一句话。 */
+	message: string;
+}
+
 export interface ExchangeConfig {
 	baseUrl: string;
 	fetch: FetchLike;
+	nickname?: Nickname;
 	onControlPlaneTime: (time: string) => void;
+	onVersionMismatch: (mismatch: VersionMismatch) => void;
 }
 
 export interface SendInit extends CallOptions {
@@ -42,9 +58,35 @@ export interface Exchange {
 export function createExchange(config: ExchangeConfig): Exchange {
 	const baseUrl = normalizeBaseUrl(config.baseUrl);
 
-	const headersFor = (input: RouteInput | undefined, init: SendInit): Record<string, string> => {
-		const headers: Record<string, string> = { accept: init.accept };
+	let versionWarned = false;
+
+	const nicknameNow = (): string | undefined => {
+		const value = typeof config.nickname === "function" ? config.nickname() : config.nickname;
+		return value?.trim() || undefined;
+	};
+
+	const headersFor = (
+		route: RouteRef,
+		input: RouteInput | undefined,
+		init: SendInit,
+	): Record<string, string> => {
+		const headers: Record<string, string> = {
+			accept: init.accept,
+			[CLIENT_HEADER]: `sfly-client/${CLIENT_VERSION}`,
+		};
 		if (input?.body !== undefined) headers["content-type"] = "application/json";
+		const nickname = nicknameNow();
+		if (nickname !== undefined) {
+			headers[NICKNAME_HEADER] = encodeURIComponent(nickname);
+		} else if (route.method !== "GET") {
+			throw new ApiError({
+				status: 400,
+				code: "nickname_required",
+				message: "写操作需要昵称：创建客户端时给 nickname",
+				method: route.method,
+				path: requestPath(route, input),
+			});
+		}
 		return headers;
 	};
 
@@ -54,6 +96,14 @@ export function createExchange(config: ExchangeConfig): Exchange {
 
 	const observe = (res: ResponseLike): void => {
 		noteTime(res.headers.get(CONTROL_PLANE_TIME_HEADER));
+		const controlPlaneVersion = res.headers.get(CONTROL_PLANE_VERSION_HEADER);
+		if (!controlPlaneVersion || controlPlaneVersion === CLIENT_VERSION || versionWarned) return;
+		versionWarned = true;
+		config.onVersionMismatch({
+			clientVersion: CLIENT_VERSION,
+			controlPlaneVersion,
+			message: `警告：sfly API 客户端（${CLIENT_VERSION}）与控制面（${controlPlaneVersion}）版本不一致，接口可能对不上。请从控制面重新安装 API 客户端。`,
+		});
 	};
 
 	const url = (route: RouteRef, input: RouteInput | undefined) =>
@@ -61,11 +111,12 @@ export function createExchange(config: ExchangeConfig): Exchange {
 
 	const send = async (route: RouteRef, input: RouteInput | undefined, init: SendInit) => {
 		const path = requestPath(route, input);
+		const headers = { ...headersFor(route, input, init), ...init.headers };
 		let res: ResponseLike;
 		try {
 			res = await config.fetch(`${baseUrl}${path}`, {
 				method: route.method,
-				headers: { ...headersFor(input, init), ...init.headers },
+				headers,
 				body: input?.body === undefined ? undefined : JSON.stringify(input.body),
 				signal: init.signal,
 				keepalive: init.keepalive,

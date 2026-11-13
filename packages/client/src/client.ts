@@ -1,5 +1,11 @@
 import { ApiError } from "./errors.js";
-import { createExchange, type FetchLike, type ResponseLike } from "./exchange.js";
+import {
+	createExchange,
+	type FetchLike,
+	type Nickname,
+	type ResponseLike,
+	type VersionMismatch,
+} from "./exchange.js";
 import { type Api, routes } from "./generated/routes.js";
 import {
 	type CallOptions,
@@ -23,6 +29,16 @@ export interface ClientOptions {
 	fetch?: FetchLike;
 	/** 每个响应和事件流带回的控制面时间（ISO 8601），原样交给回调。 */
 	onControlPlaneTime?: (time: string) => void;
+	/**
+	 * 写操作的昵称（运行记录里的触发人）：固定值，或每次请求时取值的函数，空白算没有。
+	 * 非 GET 的请求没有昵称时，在发请求之前抛出错误码 `nickname_required` 的 ApiError；读操作不受影响。
+	 */
+	nickname?: Nickname;
+	/**
+	 * 控制面和客户端的版本不一致时，每个客户端实例调用一次；请求照常进行。
+	 * 默认 `console.warn(mismatch.message)`。
+	 */
+	onVersionMismatch?: (mismatch: VersionMismatch) => void;
 }
 
 /** 按路由描述调用任何接口：生成的方法建立在它上面，控制台用契约里的 zod 定义调用它。 */
@@ -52,7 +68,9 @@ export function createClient(options: ClientOptions): Client {
 	const exchange = createExchange({
 		baseUrl: options.baseUrl,
 		fetch: options.fetch ?? ((url, init) => globalThis.fetch(url, init)),
+		nickname: options.nickname,
 		onControlPlaneTime: options.onControlPlaneTime ?? (() => {}),
+		onVersionMismatch: options.onVersionMismatch ?? ((mismatch) => console.warn(mismatch.message)),
 	});
 
 	function request(

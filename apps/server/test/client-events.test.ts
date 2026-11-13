@@ -1,4 +1,10 @@
-import type { ApiError, Client, RunView, Unsubscribe } from "@sfly/client";
+import {
+	type ApiError,
+	CLIENT_VERSION,
+	type Client,
+	type RunView,
+	type Unsubscribe,
+} from "@sfly/client";
 import { runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -155,7 +161,7 @@ describe("API 客户端订阅事件流", () => {
 		});
 	});
 
-	it("中途断开后自动重连：重连请求带着最后一条消息的 id，断线期间和之后写的日志都到达，不丢也不重复；连上和每次重连各回调一次", async () => {
+	it("中途断开后自动重连：重连请求带着最后一条消息的 id 和 x-sfly-client，断线期间和之后写的日志都到达，不丢也不重复；连上和每次重连各回调一次", async () => {
 		const { task } = await startRun();
 		const { proxy, client: viaProxy } = await proxied();
 		const seqs: number[] = [];
@@ -191,6 +197,10 @@ describe("API 客户端订阅事件流", () => {
 		agent.logs(task, [[5, "五"]]);
 		await eventually(() => expect(seqs).toEqual([1, 2, 3, 4, 5]));
 		expect(proxy.requests.map((r) => r.headers["last-event-id"])).toEqual([undefined, "2"]);
+		expect(proxy.requests.map((r) => r.headers["x-sfly-client"])).toEqual([
+			`sfly-client/${CLIENT_VERSION}`,
+			`sfly-client/${CLIENT_VERSION}`,
+		]);
 		expect(opens).toBe(2);
 	});
 
