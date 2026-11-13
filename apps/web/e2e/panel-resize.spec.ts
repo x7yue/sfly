@@ -130,10 +130,15 @@ test("适配视图和定位节点按检查器的实际宽度避让", async ({ pa
 	await drawer.getByRole("button", { name: "前往 ping" }).click();
 	await expect(nodeCard(page, "ping")).toHaveAttribute("aria-pressed", "true");
 	await expectClear("ping");
-	// 定位后节点在空出来的区域中间，而不是贴着检查器。
-	const node = await box(nodeCard(page, "ping"));
-	const free = (await box(inspector(page))).x;
-	expect(Math.abs(node.x + node.width / 2 - free / 2)).toBeLessThan(40);
+	// 定位后节点在空出来的区域中间，而不是贴着检查器。视口要用 200ms 平移过去：上面的「不被挡住」在平移
+	// 开始前就成立了，所以位置也放进等待条件，不在半路量一次就下结论（#281）。
+	await expect
+		.poll(async () => {
+			const node = await box(nodeCard(page, "ping"));
+			const free = (await box(inspector(page))).x;
+			return Math.abs(node.x + node.width / 2 - free / 2);
+		})
+		.toBeLessThan(40);
 });
 
 test("运行状态模式的检查器使用同一个宽度，也可以调宽", async ({
