@@ -8,7 +8,10 @@
 export type ClientErrorCode = "network_error" | "http_error" | "invalid_response";
 
 export interface ApiErrorInit {
-	/** HTTP 状态；没有收到响应时为 0。 */
+	/**
+	 * HTTP 状态：收到响应时是响应的状态。`network_error` 没有收到响应，为 0；`nickname_required` 的请求没有发出，
+	 * 沿用控制面对同一问题回复的 400。
+	 */
 	status: number;
 	code: ClientErrorCode | (string & {});
 	message: string;
