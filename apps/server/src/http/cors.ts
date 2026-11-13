@@ -1,9 +1,19 @@
-import { CONTROL_PLANE_TIME_HEADER, CONTROL_PLANE_VERSION_HEADER } from "@sfly/schema";
+import {
+	CLIENT_HEADER,
+	CONTROL_PLANE_TIME_HEADER,
+	CONTROL_PLANE_VERSION_HEADER,
+	NICKNAME_HEADER,
+} from "@sfly/schema";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 
 const ENV_NAME = "SFLY_CORS_ORIGINS";
 const ALLOWED_METHODS = "GET, POST, PUT, PATCH, DELETE";
-const ALLOWED_REQUEST_HEADERS = "content-type, x-sfly-nickname, x-sfly-client, last-event-id";
+const ALLOWED_REQUEST_HEADERS = [
+	"content-type",
+	NICKNAME_HEADER,
+	CLIENT_HEADER,
+	"last-event-id",
+].join(", ");
 const EXPOSED_RESPONSE_HEADERS = `${CONTROL_PLANE_VERSION_HEADER}, ${CONTROL_PLANE_TIME_HEADER}`;
 /** 每个请求都带 `x-sfly-client`，都要预检；让浏览器缓存预检结果，名单改动十分钟内生效。 */
 const PREFLIGHT_MAX_AGE_SECONDS = 600;

@@ -1,9 +1,12 @@
-import { type ClockOffsetView, type FeishuBotView, feishuBotsApi, runsApi } from "@sfly/schema";
+import {
+	type ClockOffsetView,
+	type FeishuBotView,
+	feishuBotsApi,
+	NICKNAME_HEADER,
+	runsApi,
+} from "@sfly/schema";
 import { expect } from "vitest";
 import type { TestControlPlane } from "./test-control-plane.js";
-
-/** 昵称请求头：值按 encodeURIComponent 编码（浏览器请求头只能放 Latin-1）。 */
-export const NICKNAME_HEADER = "x-sfly-nickname";
 
 /** 测试里调用控制面 HTTP API 的小封装。 */
 export class ApiClient {

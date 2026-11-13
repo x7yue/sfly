@@ -8,11 +8,11 @@
 // - 要「恰好推进到下一次重试的时刻」时，先等控制面记下上一次的结果（管理页上的「最近一次投递」，和排下一次重试在同一个事务里），
 //   再推进时钟，这样间隔是确定的；
 // - 「不会发出」这类否定的结论，靠同一个机器人按顺序串行投递来证明：后面的消息到了，前面该重试的早就重试过了。
-import { type FeishuBotView, feishuBotsApi } from "@sfly/schema";
+import { type FeishuBotView, feishuBotsApi, NICKNAME_HEADER } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { Clock } from "../src/clock.js";
-import { ApiClient, NICKNAME_HEADER, type NodeView } from "./support/api-client.js";
+import { ApiClient, type NodeView } from "./support/api-client.js";
 import type { Node } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
 import { type FakeFeishu, type FeishuReply, startFakeFeishu } from "./support/fake-feishu.js";

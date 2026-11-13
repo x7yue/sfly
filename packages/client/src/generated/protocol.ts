@@ -16,4 +16,16 @@ export const CONTROL_PLANE_TIME_HEADER = "x-sfly-time";
  */
 export const CONTROL_PLANE_VERSION_HEADER = "x-sfly-version";
 
+/**
+ * 昵称请求头（ADR 0004：只用于显示，不做鉴权）。值按 encodeURIComponent 编码，这样中文昵称也能放进请求头。
+ * 写操作必须带它，没有时控制面回复 400 `nickname_required`。
+ */
+export const NICKNAME_HEADER = "x-sfly-nickname";
+
+/**
+ * 客户端标识请求头：API 客户端是 `sfly-client/<版本>`，命令行是 `sfly-cli/<版本>`，命令行检测到自己运行在
+ * AI 编程助手里时再追加 ` agent/<AI 编程助手名称>`。和昵称一样不做校验，只用于标注。
+ */
+export const CLIENT_HEADER = "x-sfly-client";
+
 export const CONTROL_PLANE_TIME_EVENT = "time";

@@ -2,9 +2,11 @@ import { z } from "zod";
 import { harvestDocs } from "./client-docs.js";
 import { declaration, docLines, type Json, refsOf, typeText } from "./client-emit.js";
 import {
+	CLIENT_HEADER,
 	CONTROL_PLANE_TIME_EVENT,
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
+	NICKNAME_HEADER,
 	type RouteDef,
 } from "./http/contract.js";
 
@@ -39,6 +41,8 @@ const LOW_LEVEL = new Set(["request", "url", "subscribe"]);
 const PROTOCOL = {
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
+	NICKNAME_HEADER,
+	CLIENT_HEADER,
 	CONTROL_PLANE_TIME_EVENT,
 };
 const HEADER = "// 由 HTTP 契约（packages/schema/src/http）生成，不要手改：pnpm gen。\n\n";
