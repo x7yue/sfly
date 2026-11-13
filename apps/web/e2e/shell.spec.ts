@@ -120,6 +120,45 @@ test("命令面板：Ctrl K 后马上输入，字落在搜索框里，回车执�
 	await expect(page).toHaveURL(/\/packages$/);
 });
 
+test("命令面板刚打开时，输入框的 aria-activedescendant 就指向高亮的那一项；输入停顿后读出匹配到几条结果", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
+	await page.keyboard.press("Control+k");
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	const input = palette.getByRole("combobox", { name: "命令" });
+	await expect(input).toBeVisible();
+	await expect(input).toHaveAttribute("aria-activedescendant", /.+/);
+	const current = await input.getAttribute("aria-activedescendant");
+	await expect(palette.locator(`[id="${current}"]`)).toHaveAttribute("aria-selected", "true");
+	await expect(palette.getByRole("option").first()).toHaveAttribute("aria-selected", "true");
+
+	const status = palette.getByRole("status");
+	await expect(status).toBeEmpty();
+	await page.keyboard.type("节点包");
+	await expect(status).toHaveText("1 条结果");
+	await page.keyboard.type("没有这样的命令");
+	await expect(status).toHaveText("没有匹配的结果");
+});
+
+test("主滚动区预留滚动条槽，页面之间内容宽度不跳；侧栏品牌与当前页面包屑不靠 500 字重", async ({
+	page,
+}) => {
+	await page.goto("/agents");
+	await expect(page.locator("#main")).toHaveCSS("scrollbar-gutter", "stable");
+	const width = async (path: string) => {
+		await page.goto(path);
+		await expect(page.locator("#main h1")).toBeVisible();
+		return page
+			.locator("#main > div")
+			.evaluate((el) => Math.round(el.getBoundingClientRect().width));
+	};
+	expect(await width("/agents")).toBe(await width("/runs"));
+	await expect(page.getByText("sfly", { exact: true }).first()).toHaveCSS("font-weight", "600");
+	await expect(breadcrumb(page).locator('[aria-current="page"]')).toHaveCSS("font-weight", "400");
+});
+
 test("命令面板：「运行」分组跳转到最近的运行；「运行场景」打开运行抽屉", async ({
 	page,
 	controlPlane,
@@ -180,6 +219,7 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		"命令面板",
 		"快捷键面板",
 		"关闭浮层",
+		"跳到通知",
 		"控制台",
 		"场景编排",
 		"运行记录",

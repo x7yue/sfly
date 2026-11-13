@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { BoxIcon } from "lucide-react";
+import { Fragment } from "react";
 import { z } from "zod";
 import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { useListNavigation } from "#/components/list-navigation";
@@ -103,9 +104,12 @@ function PackagesView({ packages }: { packages: PackageSummary[] }) {
 	const search = Route.useSearch();
 	const selected = packages.find((p) => p.name === search.name) ?? packages[0];
 	return (
-		<div className="grid grid-cols-[300px_1fr] items-start gap-3.5">
-			<Panel>
-				<nav aria-label="节点包">
+		<div className="grid grid-cols-[clamp(220px,22%,300px)_minmax(0,1fr)] items-start gap-3.5">
+			<Panel className="sticky top-5">
+				<nav
+					aria-label="节点包"
+					className="max-h-[calc(100dvh-var(--topbar-height)-2.5rem)] overflow-y-auto overscroll-contain"
+				>
 					<ul className="m-0 list-none p-0">
 						{packages.map((pkg) => (
 							<li key={pkg.name} data-list-item className="has-[:focus-visible]:bg-raised">
@@ -131,9 +135,8 @@ function PackageListItem({ pkg, selected }: { pkg: PackageSummary; selected: boo
 			aria-current={selected ? "true" : undefined}
 			data-list-primary
 			className={cn(
-				"block border-b border-border-soft px-3 py-2.5 text-fg-1 no-underline -outline-offset-2 hover:bg-raised",
-				// 选中为中性高亮：浅一级的表面 + 左侧白色短条
-				selected && "bg-raised shadow-[inset_2px_0_0_var(--primary)]",
+				"block border-b border-border-soft px-3 py-2.5 text-fg-1 no-underline -outline-offset-2",
+				selected ? "selected-row hover:bg-selected-bg" : "hover:bg-raised",
 			)}
 		>
 			<span className="flex items-center gap-2">
@@ -197,16 +200,16 @@ function PackageDetail({ pkg, version }: { pkg: PackageSummary; version: string 
 			<Table aria-label="版本">
 				<TableHeader>
 					<TableRow>
-						<TableHead>版本</TableHead>
-						<TableHead>发布时间</TableHead>
-						<TableHead>sha256</TableHead>
-						<TableHead>场景锁定</TableHead>
+						<TableHead width="fit">版本</TableHead>
+						<TableHead width="fit">发布时间</TableHead>
+						<TableHead width="fit">sha256</TableHead>
+						<TableHead width="grow">场景锁定</TableHead>
 					</TableRow>
 				</TableHeader>
 				<TableBody>
 					{versions.map((v) => (
 						<TableRow key={v.version} data-state={v === current ? "selected" : undefined}>
-							<TableCell className="font-mono">
+							<TableCell width="fit" className="font-mono">
 								<Link
 									to="/packages"
 									search={{ name: pkg.name, version: v.version }}
@@ -216,13 +219,13 @@ function PackageDetail({ pkg, version }: { pkg: PackageSummary; version: string 
 									{v.version}
 								</Link>
 							</TableCell>
-							<TableCell className="font-mono text-xs text-fg-2">
+							<TableCell width="fit" className="font-mono text-xs text-fg-2">
 								{formatDateTime(v.published_at)}
 							</TableCell>
-							<TableCell className="font-mono text-xs text-fg-3" title={v.sha256}>
+							<TableCell width="fit" className="font-mono text-xs text-fg-3" title={v.sha256}>
 								{v.sha256.slice(0, 12)}…
 							</TableCell>
-							<TableCell className="text-xs text-fg-2">
+							<TableCell width="grow" className="text-xs text-fg-2">
 								{lockedText(v.locked_orchestrations)}
 							</TableCell>
 						</TableRow>
@@ -242,21 +245,25 @@ function ioKeys(schema: NodeTypeView["inputs"]): { key: string; required: boolea
 	return keys.map((key) => ({ key, required: required.has(key) }));
 }
 
+/** 「·」跟在前一项后面、与它同属一个 `nowrap` 单元：换行只发生在单元之间，「·」不会落在行首。 */
 function IoList({ schema }: { schema: NodeTypeView["inputs"] }) {
 	const keys = ioKeys(schema);
 	if (keys.length === 0) return <span className="text-fg-3">—</span>;
 	return (
 		<span className="font-mono text-xs text-fg-2">
 			{keys.map(({ key, required }, i) => (
-				<span key={key}>
-					{i > 0 && " · "}
-					{key}
-					{required && (
-						<span className="text-fg-2" title="必填">
-							*
-						</span>
-					)}
-				</span>
+				<Fragment key={key}>
+					{i > 0 && " "}
+					<span className="whitespace-nowrap">
+						{key}
+						{required && (
+							<span className="text-fg-2" title="必填">
+								*
+							</span>
+						)}
+						{i < keys.length - 1 && " ·"}
+					</span>
+				</Fragment>
 			))}
 		</span>
 	);
@@ -273,7 +280,7 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 			<Table aria-label="节点类型">
 				<TableHeader>
 					<TableRow>
-						<TableHead>节点类型</TableHead>
+						<TableHead width="fit">节点类型</TableHead>
 						<TableHead>输入</TableHead>
 						<TableHead>输出</TableHead>
 						<TableHead>声明的指标</TableHead>
@@ -284,7 +291,7 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 				<TableBody>
 					{nodes.map((node) => (
 						<TableRow key={node.name}>
-							<TableCell>
+							<TableCell width="fit">
 								<span className="font-mono">{node.name}</span>
 								<div className="text-xs text-fg-3">{node.title}</div>
 							</TableCell>

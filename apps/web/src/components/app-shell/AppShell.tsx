@@ -36,7 +36,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 			<Sidebar collapsed={collapsed} />
 			<div className="flex min-w-0 flex-col overflow-hidden">
 				<Topbar />
-				<main id="main" className="flex-1 overflow-auto">
+				{/* 滚动条槽始终预留：页面之间有没有滚动条，内容宽度和右上角的按钮都不跳 */}
+				<main id="main" className="flex-1 overflow-auto [scrollbar-gutter:stable]">
 					{children}
 				</main>
 			</div>
@@ -67,7 +68,7 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 				</span>
 				{!collapsed && (
 					<div className="leading-tight">
-						<b className="block text-base">sfly</b>
+						<span className="block text-base font-semibold">sfly</span>
 						<span className="block text-xs text-fg-3">测试编排平台</span>
 					</div>
 				)}
@@ -128,11 +129,10 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 	);
 }
 
-/** 侧边栏项：选中为中性高亮（浅一级的表面 + 左侧白色短条），不用青色。 */
 const navItemClass = (collapsed: boolean) =>
 	cn(
 		"relative flex h-8.5 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-sm whitespace-nowrap text-fg-2 no-underline hover:bg-raised hover:text-fg-1 [&_svg]:size-4 [&_svg]:flex-none",
-		"aria-[current=page]:bg-raised-2 aria-[current=page]:text-fg-1 aria-[current=page]:before:absolute aria-[current=page]:before:inset-y-2 aria-[current=page]:before:-left-2 aria-[current=page]:before:w-0.5 aria-[current=page]:before:rounded-sm aria-[current=page]:before:bg-primary",
+		"aria-[current=page]:bg-selected-bg aria-[current=page]:text-fg-1 aria-[current=page]:before:absolute aria-[current=page]:before:inset-y-2 aria-[current=page]:before:-left-2 aria-[current=page]:before:w-0.5 aria-[current=page]:before:rounded-sm aria-[current=page]:before:bg-primary",
 		collapsed && "justify-center px-0",
 	);
 
@@ -169,9 +169,9 @@ function Topbar() {
 						<li key={crumb} className="flex items-center gap-1.5">
 							<ChevronRightIcon aria-hidden className="size-3.5" />
 							{i === crumbs.length - 1 ? (
-								<b aria-current="page" className="font-medium text-fg-1">
+								<span aria-current="page" className="text-fg-1">
 									{crumb}
-								</b>
+								</span>
 							) : (
 								crumb
 							)}

@@ -454,3 +454,210 @@ test("列表页的键盘：焦点不在列表里时 J 去第一项、K 去最后
 	await page.keyboard.press("Escape");
 	await expect(menu).toBeHidden();
 });
+
+test("卡片的最小宽度 340px，屏幕越大卡片不会更窄；「最近运行」始终一行，卡片窄到 360px 以下先去掉触发人", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	for (const name of ["甲", "乙", "丙", "丁", "戊"]) {
+		const id = await createScenario(controlPlane, name, scenarioUsing("agent-a"));
+		await triggerRun(controlPlane, id);
+		await agent.succeed(await agent.nextAssign());
+	}
+	const cards = page.locator("article[data-list-item]");
+	const lastRun = (card: ReturnType<typeof cards.nth>) =>
+		card.locator("div", { hasText: /^最近运行/ }).last();
+
+	const widths: number[] = [];
+	for (const width of [1280, 1440, 1920]) {
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto("/orchestrations");
+		await expect(cards).toHaveCount(5);
+		const [card] = await cards.evaluateAll((all) =>
+			all.map((a) => a.getBoundingClientRect().width),
+		);
+		widths.push(card ?? 0);
+		for (let i = 0; i < 5; i++) {
+			const height = await lastRun(cards.nth(i)).evaluate(
+				(el) => el.getBoundingClientRect().height,
+			);
+			expect(height).toBeLessThanOrEqual(20);
+		}
+	}
+	expect(Math.min(...widths)).toBeGreaterThanOrEqual(340);
+
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await page.goto("/orchestrations");
+	const grid = page.locator("#main .grid").first();
+	const first = cards.first();
+	await grid.evaluate((el) => {
+		el.style.width = "1090px";
+	});
+	expect((await first.boundingBox())?.width ?? 0).toBeLessThan(360);
+	await expect(first.getByText("tester")).toBeHidden();
+	await expect(first.getByText("成功")).toBeVisible();
+	await grid.evaluate((el) => {
+		el.style.width = "1300px";
+	});
+	expect((await first.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(360);
+	await expect(first.getByText("tester")).toBeVisible();
+});
+
+test("表格：场景列吃掉多出来的宽度，其余列按内容收紧；场景名被截断时悬停显示全文", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const longName = `撮合压测 · 高并发下单 · A 环境 · ${"很长的名称".repeat(14)}`;
+	await createScenario(controlPlane, longName, scenarioUsing("agent-a"));
+	await createScenario(controlPlane, "短名称", scenarioUsing("agent-a"));
+
+	const columns = async (width: number) => {
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto("/orchestrations?view=table");
+		const table = page.getByRole("table", { name: "场景列表" });
+		await expect(table.getByRole("row")).toHaveCount(3);
+		return table
+			.getByRole("columnheader")
+			.evaluateAll((all) => all.map((th) => Math.round(th.getBoundingClientRect().width)));
+	};
+	const narrow = await columns(1280);
+	const wide = await columns(1920);
+	expect(wide[0]).toBeGreaterThan((narrow[0] ?? 0) + 500);
+	expect(wide.slice(1)).toEqual(narrow.slice(1));
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/orchestrations?view=table");
+	const link = page.getByRole("link", { name: longName });
+	await expect(link).toHaveAttribute("data-truncated", "true");
+	const tip = page.locator('[data-slot="tooltip-content"]');
+	await link.hover();
+	await expect(tip).toContainText(longName);
+	await page.mouse.move(0, 0);
+	await expect(tip).toHaveCount(0);
+	await link.focus();
+	await expect(tip).toContainText(longName);
+	await expect(page.getByRole("row", { name: /短名称/ }).locator("[data-truncated]")).toHaveCount(
+		0,
+	);
+});
+
+test("新建场景：名称为空也能提交，错误写在名称下并把焦点放回输入框；服务端拒绝的原因写在弹窗里，不发通知", async ({
+	page,
+}) => {
+	await page.route("**/api/orchestrations", async (route) => {
+		if (route.request().method() !== "POST") return route.continue();
+		await route.fulfill({
+			status: 409,
+			contentType: "application/json",
+			body: JSON.stringify({ error: { code: "name_taken", message: "场景名称已存在" } }),
+		});
+	});
+	await page.goto("/orchestrations");
+	await expect(page.getByRole("heading", { name: "场景编排", level: 1 })).toBeVisible();
+	await page.keyboard.press("n");
+	const dialog = page.getByRole("dialog", { name: "新建场景" });
+	const name = dialog.getByLabel("名称");
+	const submit = dialog.getByRole("button", { name: "新建", exact: true });
+	await expect(name).toHaveAttribute("aria-required", "true");
+	await expect(submit).toBeEnabled();
+	await expect(dialog.getByText("填写场景名称")).toHaveCount(0);
+
+	await page.keyboard.press("Tab");
+	await expect(dialog.getByText("填写场景名称")).toHaveCount(0);
+	await submit.click();
+	const problem = dialog.getByText("填写场景名称");
+	await expect(problem).toBeVisible();
+	await expect(name).toBeFocused();
+	await expect(name).toHaveAttribute("aria-invalid", "true");
+	await expect(name).toHaveAttribute("aria-describedby", (await problem.getAttribute("id")) ?? "");
+
+	await name.fill("重名的场景");
+	await expect(problem).toBeHidden();
+	await submit.click();
+	await expect(dialog.getByRole("alert")).toHaveText("场景名称已存在");
+	await expect(dialog).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});
+
+test("在「已归档」里恢复之后焦点落到下一张卡片，最后一张恢复后回到页面标题", async ({
+	page,
+	controlPlane,
+}) => {
+	const ids = [] as string[];
+	for (const name of ["甲", "乙"]) ids.push(await createScenario(controlPlane, name));
+	for (const id of ids) {
+		const res = await controlPlane.fetch(`/orchestrations/${id}/archive`, {
+			method: "POST",
+			headers: { "x-sfly-nickname": "tester" },
+		});
+		expect(res.ok).toBe(true);
+	}
+	await page.goto("/orchestrations?archived=true");
+	const cards = page.locator("article[data-list-item]");
+	await expect(cards).toHaveCount(2);
+	const [first, second] = await cards.evaluateAll((all) => all.map((a) => a.ariaLabel ?? ""));
+
+	await page.getByRole("article", { name: first }).getByRole("button", { name: "恢复" }).focus();
+	await page.keyboard.press("Enter");
+	await expect(page.getByRole("article", { name: first })).toBeHidden();
+	await expect(
+		page.getByRole("article", { name: second }).locator("[data-list-primary]"),
+	).toBeFocused();
+
+	await page.getByRole("article", { name: second }).getByRole("button", { name: "恢复" }).focus();
+	await page.keyboard.press("Enter");
+	await expect(page.getByRole("region", { name: "没有已归档的场景" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "已归档的场景", level: 1 })).toBeFocused();
+});
+
+test("归档服务端拒绝时，原因写在确认框里，不发通知", async ({ page, controlPlane }) => {
+	const id = await createScenario(controlPlane, "旧场景");
+	await page.route(`**/api/orchestrations/${id}/archive`, (route) =>
+		route.fulfill({
+			status: 409,
+			contentType: "application/json",
+			body: JSON.stringify({ error: { code: "running", message: "场景有运行中的运行" } }),
+		}),
+	);
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "旧场景" }).getByLabel("更多操作").click();
+	await page.getByRole("menuitem", { name: /归档/ }).click();
+	const confirm = page.getByRole("dialog", { name: "归档「旧场景」？" });
+	await confirm.getByRole("button", { name: "归档", exact: true }).click();
+	await expect(confirm.getByRole("alert")).toHaveText("不能归档：场景有运行中的运行");
+	await expect(confirm).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});
+
+test("最近运行里执行中的状态标签脉冲一处（卡片与表格各一个），缩略图角标和其余状态点静止", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const busy = await createScenario(controlPlane, "跑着的场景", scenarioUsing("agent-a"));
+	await createScenario(controlPlane, "空闲的场景", scenarioUsing("agent-a"));
+	await triggerRun(controlPlane, busy);
+	await agent.nextAssign();
+	const pulses = () =>
+		page.evaluate(
+			() =>
+				document
+					.getAnimations()
+					.filter((a) => a instanceof CSSAnimation && a.animationName === "status-pulse").length,
+		);
+
+	await page.goto("/orchestrations");
+	await expect(page.getByRole("article", { name: "跑着的场景" })).toContainText("运行中");
+	expect(await pulses()).toBe(1);
+	await page.goto("/orchestrations?view=table");
+	await expect(page.getByRole("row", { name: /跑着的场景/ })).toContainText("运行中");
+	expect(await pulses()).toBe(1);
+});

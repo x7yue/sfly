@@ -8,19 +8,21 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { apiQuery, callApi } from "#/lib/api";
 import { FEISHU_BOT_SETUP } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { FormAlert, FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -36,45 +38,51 @@ function useInvalidateBots() {
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
-/** Webhook 地址的输入提示：已经填了但不是 http 或 https 地址。 */
-const urlProblem = (url: string): string | undefined => {
+const urlProblem = (url: string): { text: string; immediate: boolean } | undefined => {
 	const value = url.trim();
-	if (value === "") return undefined;
-	if (/\s/.test(value)) return "Webhook 地址不能含空白字符";
-	return isHttpUrl(value) ? undefined : "Webhook 地址必须是 http 或 https 地址";
+	if (value === "") return { text: "填写 Webhook 地址", immediate: false };
+	if (/\s/.test(value)) return { text: "Webhook 地址不能含空白字符", immediate: true };
+	return isHttpUrl(value)
+		? undefined
+		: { text: "Webhook 地址必须是 http 或 https 地址", immediate: false };
 };
 
 function WebhookField({
 	value,
 	onChange,
 	label,
+	submitted,
 	autoFocus,
+	inputRef,
 }: {
 	value: string;
 	onChange: (value: string) => void;
 	label: string;
+	submitted: boolean;
 	autoFocus?: boolean;
+	inputRef?: React.Ref<HTMLInputElement>;
 }) {
-	const id = useId();
+	const [left, setLeft] = useState(false);
 	const problem = urlProblem(value);
+	const shown = problem && (problem.immediate || left || submitted) ? problem.text : undefined;
 	return (
-		<div className="flex flex-col gap-1">
-			<label htmlFor={id} className="text-xs text-fg-2">
-				{label}
-			</label>
-			<Input
-				id={id}
-				value={value}
-				onChange={(e) => onChange(e.target.value)}
-				placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…"
-				autoComplete="off"
-				spellCheck={false}
-				autoFocus={autoFocus}
-				aria-invalid={problem !== undefined}
-				className="font-mono"
-			/>
-			{problem && <p className="m-0 text-xs text-danger-fg">{problem}</p>}
-		</div>
+		<FormField label={label} required error={shown}>
+			{(control) => (
+				<Input
+					{...control}
+					ref={inputRef}
+					type="url"
+					value={value}
+					onChange={(e) => onChange(e.target.value)}
+					onBlur={() => setLeft(true)}
+					placeholder="https://open.feishu.cn/open-apis/bot/v2/hook/…"
+					autoComplete="off"
+					spellCheck={false}
+					autoFocus={autoFocus}
+					className="font-mono"
+				/>
+			)}
+		</FormField>
 	);
 }
 
@@ -84,69 +92,86 @@ const REGISTER_HELP = `${FEISHU_BOT_SETUP.add}场景和节点按名称选择机�
 export function RegisterBotDialog({
 	open,
 	onOpenChange,
+	focusAfter,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	focusAfter: (name: string) => HTMLElement | null;
 }) {
 	const [name, setName] = useState("");
 	const [url, setUrl] = useState("");
+	const [submitted, setSubmitted] = useState(false);
+	const nameInput = useRef<HTMLInputElement>(null);
+	const urlInput = useRef<HTMLInputElement>(null);
+	const registered = useRef<string | null>(null);
 	const invalidate = useInvalidateBots();
-	const nameId = useId();
 	const register = useMutation({
 		mutationFn: (body: { name: string; webhook_url: string }) =>
 			callApi(feishuBotsApi.create, { body }),
 		onSuccess: async (created) => {
+			registered.current = created.name;
+			await invalidate();
 			onOpenChange(false);
 			notify.success(`已登记飞书机器人「${created.name}」`);
-			await invalidate();
 		},
 	});
 	useEffect(() => {
 		if (open) {
 			setName("");
 			setUrl("");
+			setSubmitted(false);
+			registered.current = null;
 			register.reset();
 		}
 	}, [open, register.reset]);
-	const valid = name.trim() !== "" && url.trim() !== "" && urlProblem(url) === undefined;
+	const nameProblem = name.trim() === "" ? "填写机器人名称" : undefined;
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent>
+			<DialogContent
+				finalFocus={() => (registered.current ? focusAfter(registered.current) : null)}
+			>
 				<form
-					className="flex flex-col gap-3"
+					noValidate
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (valid) register.mutate({ name: name.trim(), webhook_url: url.trim() });
+						setSubmitted(true);
+						if (nameProblem) nameInput.current?.focus();
+						else if (urlProblem(url)) urlInput.current?.focus();
+						else register.mutate({ name: name.trim(), webhook_url: url.trim() });
 					}}
 				>
 					<DialogHeader>
 						<DialogTitle>登记飞书机器人</DialogTitle>
 						<DialogDescription>{REGISTER_HELP}</DialogDescription>
 					</DialogHeader>
-					<div className="flex flex-col gap-1">
-						<label htmlFor={nameId} className="text-xs text-fg-2">
-							名称
-						</label>
-						<Input
-							id={nameId}
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							maxLength={FEISHU_BOT_NAME_MAX}
-							autoComplete="off"
-							autoFocus
+					<DialogBody>
+						<FormField label="名称" required error={submitted ? nameProblem : undefined}>
+							{(control) => (
+								<Input
+									{...control}
+									ref={nameInput}
+									value={name}
+									onChange={(e) => setName(e.target.value)}
+									maxLength={FEISHU_BOT_NAME_MAX}
+									autoComplete="off"
+									autoFocus
+								/>
+							)}
+						</FormField>
+						<WebhookField
+							value={url}
+							onChange={setUrl}
+							label="Webhook 地址"
+							submitted={submitted}
+							inputRef={urlInput}
 						/>
-					</div>
-					<WebhookField value={url} onChange={setUrl} label="Webhook 地址" />
-					{register.isError && (
-						<p role="alert" className="m-0 text-xs text-danger-fg">
-							{errorText(register.error)}
-						</p>
-					)}
+						{register.isError && <FormAlert>{errorText(register.error)}</FormAlert>}
+					</DialogBody>
 					<DialogFooter>
 						<Button variant="ghost" onClick={() => onOpenChange(false)}>
 							取消
 						</Button>
-						<Button type="submit" variant="primary" disabled={!valid || register.isPending}>
+						<Button type="submit" variant="primary" disabled={register.isPending}>
 							登记
 						</Button>
 					</DialogFooter>
@@ -170,6 +195,8 @@ export function ReplaceWebhookDialog({
 	onReplaced: () => void;
 }) {
 	const [url, setUrl] = useState("");
+	const [submitted, setSubmitted] = useState(false);
+	const urlInput = useRef<HTMLInputElement>(null);
 	const invalidate = useInvalidateBots();
 	const replace = useMutation({
 		mutationFn: (webhook_url: string) =>
@@ -184,18 +211,20 @@ export function ReplaceWebhookDialog({
 	useEffect(() => {
 		if (open) {
 			setUrl("");
+			setSubmitted(false);
 			replace.reset();
 		}
 	}, [open, replace.reset]);
-	const valid = url.trim() !== "" && urlProblem(url) === undefined;
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
 				<form
-					className="flex flex-col gap-3"
+					noValidate
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (valid) replace.mutate(url.trim());
+						setSubmitted(true);
+						if (urlProblem(url)) urlInput.current?.focus();
+						else replace.mutate(url.trim());
 					}}
 				>
 					<DialogHeader>
@@ -205,17 +234,22 @@ export function ReplaceWebhookDialog({
 							<span className="font-mono">{bot.webhook_url}</span>
 						</DialogDescription>
 					</DialogHeader>
-					<WebhookField value={url} onChange={setUrl} label="新的 Webhook 地址" autoFocus />
-					{replace.isError && (
-						<p role="alert" className="m-0 text-xs text-danger-fg">
-							{errorText(replace.error)}
-						</p>
-					)}
+					<DialogBody>
+						<WebhookField
+							value={url}
+							onChange={setUrl}
+							label="新的 Webhook 地址"
+							submitted={submitted}
+							autoFocus
+							inputRef={urlInput}
+						/>
+						{replace.isError && <FormAlert>{errorText(replace.error)}</FormAlert>}
+					</DialogBody>
 					<DialogFooter>
 						<Button variant="ghost" onClick={() => onOpenChange(false)}>
 							取消
 						</Button>
-						<Button type="submit" variant="primary" disabled={!valid || replace.isPending}>
+						<Button type="submit" variant="primary" disabled={replace.isPending}>
 							替换
 						</Button>
 					</DialogFooter>
@@ -302,8 +336,10 @@ export function DeleteBotDialog({
 			notify.success(`已删除飞书机器人「${bot.name}」`);
 			await invalidate();
 		},
-		onError: (error) => notify.error("删除失败", { description: errorText(error) }),
 	});
+	useEffect(() => {
+		if (open) remove.reset();
+	}, [open, remove.reset]);
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent>
@@ -313,7 +349,10 @@ export function DeleteBotDialog({
 						删除后，这个名称不再对应任何机器人，之后可以用同一个名称重新登记。飞书群里的机器人不受影响。
 					</DialogDescription>
 				</DialogHeader>
-				<BotReferences bot={bot} enabled={open} />
+				<DialogBody>
+					<BotReferences bot={bot} enabled={open} />
+					{remove.isError && <FormAlert>删除失败：{errorText(remove.error)}</FormAlert>}
+				</DialogBody>
 				<DialogFooter>
 					<Button variant="ghost" onClick={() => onOpenChange(false)}>
 						取消

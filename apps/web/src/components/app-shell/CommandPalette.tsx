@@ -1,6 +1,7 @@
 import { orchestrationsApi, runListApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { useCommandState } from "cmdk";
 import {
 	CircleStopIcon,
 	CircleXIcon,
@@ -17,6 +18,7 @@ import {
 	UserPenIcon,
 	WorkflowIcon,
 } from "lucide-react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { KeyHint, Keys } from "#/components/page";
 import { runShortcut, usePaletteCommands } from "#/components/shortcuts";
 import { runStatusView } from "#/components/status";
@@ -112,7 +114,8 @@ export function CommandPalette({
 		<CommandDialog open={open} onOpenChange={onOpenChange}>
 			<CommandRoot>
 				<CommandInput placeholder="搜索页面、场景，或输入命令…" aria-label="命令" />
-				<CommandList>
+				<ResultsStatus />
+				<CommandList className="overscroll-contain">
 					<CommandEmpty>没有匹配的结果</CommandEmpty>
 					{pageCommands.length > 0 && (
 						<CommandGroup heading="当前页面">
@@ -261,9 +264,58 @@ const RECENT_RUNS = 20;
 const substring = (_value: string, search: string, keywords?: string[]) =>
 	(keywords ?? []).join(" ").toLowerCase().includes(search.trim().toLowerCase()) ? 1 : 0;
 
+/**
+ * cmdk 首次渲染时在自己的布局副作用里选中第一项，那时 aria-selected 还没渲染，
+ * aria-activedescendant 因此为空：读屏用户要按一次方向键才知道当前项。
+ * 第一项渲染好后补一次「End、Home」让 cmdk 重算当前项：这两个键按位置选，
+ * 方向键要从 DOM 里的当前项出发，连按会绕到最后一项。
+ */
+function useAnnounceCurrentItem(root: RefObject<HTMLDivElement | null>) {
+	useEffect(() => {
+		let frame = 0;
+		let tries = 0;
+		const sync = () => {
+			const input = root.current?.querySelector("[cmdk-input]");
+			if (!root.current?.querySelector('[cmdk-item][aria-selected="true"]')) {
+				if (++tries < 30) frame = requestAnimationFrame(sync);
+				return;
+			}
+			if (input?.getAttribute("aria-activedescendant")) return;
+			for (const key of ["End", "Home"]) {
+				input?.dispatchEvent(
+					new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+				);
+			}
+		};
+		frame = requestAnimationFrame(sync);
+		return () => cancelAnimationFrame(frame);
+	}, [root]);
+}
+
+/** CommandEmpty 是 presentation，读屏不会读出，所以结果数和「没有匹配的结果」都由这里读。 */
+function ResultsStatus() {
+	const search = useCommandState((state) => state.search);
+	const count = useCommandState((state) => state.filtered.count);
+	const [text, setText] = useState("");
+	useEffect(() => {
+		if (!search.trim()) {
+			setText("");
+			return;
+		}
+		const timer = setTimeout(
+			() => setText(count === 0 ? "没有匹配的结果" : `${count} 条结果`),
+			300,
+		);
+		return () => clearTimeout(timer);
+	}, [search, count]);
+	return <output className="sr-only">{text}</output>;
+}
+
 function CommandRoot({ children }: { children: React.ReactNode }) {
+	const root = useRef<HTMLDivElement>(null);
+	useAnnounceCurrentItem(root);
 	return (
-		<Command filter={substring} loop label="命令面板">
+		<Command ref={root} filter={substring} loop label="命令面板">
 			{children}
 		</Command>
 	);

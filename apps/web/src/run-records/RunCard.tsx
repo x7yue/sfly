@@ -12,18 +12,10 @@ import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { useMetricCatalog } from "#/monitor/use-run-metrics";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { Truncate } from "@/components/ui/truncate";
 
 /** 卡片上最多列出的当前节点数。 */
 const MAX_ACTIVE = 3;
-
-/** 当前节点的状态点：排队为空心灰圈，等待唤醒为琥珀，其余（派发中、执行中）为青色。 */
-const ACTIVE_DOT = {
-	queued: { kind: "pending", color: "text-pending" },
-	waiting: { kind: "warn", color: "text-warn" },
-	running: { kind: "running", color: "text-signal" },
-} as const;
-const activeDot = (status: string) =>
-	ACTIVE_DOT[status as keyof typeof ACTIVE_DOT] ?? ACTIVE_DOT.running;
 
 /**
  * 进行中的运行（原型 runCard）：场景、版本、已运行时长、各链进度、失败的子流程、
@@ -52,8 +44,10 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 			className="flex cursor-pointer flex-col gap-1.5 rounded-xl border border-border-soft bg-surface px-3.5 py-3 transition-colors hover:border-border-strong has-[:focus-visible]:border-border-strong"
 		>
 			<div className="flex items-center gap-2 whitespace-nowrap">
-				<StatusPill kind={status.kind}>{status.label}</StatusPill>
-				<b className="truncate font-medium">{run.orchestration_name}</b>
+				<StatusPill kind={status.kind} pulse>
+					{status.label}
+				</StatusPill>
+				<Truncate className="font-semibold">{run.orchestration_name}</Truncate>
 				<Badge className="font-mono">v{run.orchestration_version}</Badge>
 				<span data-slot="run-id" className="font-mono text-xs text-fg-3">
 					{shortId(run.id)}
@@ -97,10 +91,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 							key={`${node.chain_instance_id}/${node.node_id}`}
 							className="flex items-center gap-2 text-sm whitespace-nowrap"
 						>
-							<StatusDot
-								kind={activeDot(node.status).kind}
-								className={activeDot(node.status).color}
-							/>
+							<StatusDot kind={nodeStatusView(node.status).kind} />
 							<span className="font-mono">{node.node_id}</span>
 							<span className="text-xs text-fg-3">{nodeStatusView(node.status).label}</span>
 							<NodePrimaryMetric

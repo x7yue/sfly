@@ -196,3 +196,71 @@ test("加载中显示骨架，加载失败显示错误详情，重试后恢复",
 	await error.getByRole("button", { name: "重试" }).click();
 	await expect(panel(page, "正在运行")).toBeVisible();
 });
+
+test("运行趋势：柱子与图例的颜色和形状取自状态表（成功实心、失败实心高对比、取消虚线空心），堆叠的段之间留缝", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await seedDashboard({ page, controlPlane, connectAgent, clock });
+	await page.goto("/");
+	const trend = panel(page, "运行趋势");
+	const chart = trend.getByRole("img", { name: /^最近 24 小时/ });
+	await expect(chart).toHaveAttribute("data-viz", "true");
+
+	const ok = chart.locator("rect.fill-ok-fill");
+	const failed = chart.locator("rect.fill-danger-fill");
+	await expect(ok).toHaveCount(1);
+	await expect(failed).toHaveCount(1);
+	const [good, bad] = await Promise.all(
+		[ok, failed].map((rect) =>
+			rect.evaluate((el) => ({
+				y: Number(el.getAttribute("y")),
+				height: Number(el.getAttribute("height")),
+			})),
+		),
+	);
+	expect((good?.y ?? 0) - ((bad?.y ?? 0) + (bad?.height ?? 0))).toBeGreaterThanOrEqual(1);
+
+	const swatch = (label: string) => trend.getByText(label, { exact: true }).locator("b");
+	await expect(swatch("成功")).toHaveClass(/bg-ok-fill/);
+	await expect(swatch("失败")).toHaveClass(/bg-danger-fill/);
+	await expect(swatch("取消")).toHaveCSS("border-top-style", "dashed");
+	await expect(swatch("取消")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+});
+
+test("正在运行：每个运行的状态标签脉冲一处；当前节点按状态表着色（执行中青色、排队中灰色）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 1 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "排队的场景", scenarioUsing("agent-a"));
+	await triggerRun(controlPlane, scenario);
+	await agent.nextAssign();
+	await triggerRun(controlPlane, scenario);
+
+	await page.goto("/");
+	const rows = panel(page, "正在运行").getByRole("link", { name: /排队的场景/ });
+	await expect(rows).toHaveCount(2);
+	const nodeColors = await rows.evaluateAll((all) =>
+		all.map((row) => {
+			const node = [...row.querySelectorAll("span.font-mono")].find(
+				(el) => el.textContent === "ping",
+			);
+			return { color: node ? getComputedStyle(node).color : "", text: row.textContent ?? "" };
+		}),
+	);
+	const running = nodeColors.find((n) => !n.text.includes("（排队）"));
+	const queued = nodeColors.find((n) => n.text.includes("（排队）"));
+	expect(running?.color).not.toBe(queued?.color);
+	const pulses = await page.evaluate(
+		() =>
+			document
+				.getAnimations()
+				.filter((a) => a instanceof CSSAnimation && a.animationName === "status-pulse").length,
+	);
+	expect(pulses).toBe(2);
+});

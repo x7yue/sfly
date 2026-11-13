@@ -33,7 +33,7 @@ test("状态标记每种状态一个形状，默认静止；强制颜色模式�
 	const outline = (dot: typeof running) =>
 		dot.locator("svg").evaluate((svg) => svg.innerHTML.replaceAll(/\s+/g, ""));
 	expect(await outline(running)).not.toBe(await outline(failed.first()));
-	expect(await pulses(page)).toBe(0);
+	expect(await pulses(page)).toBe(1);
 
 	await page.emulateMedia({ forcedColors: "active" });
 	const forced = await failed
@@ -142,10 +142,7 @@ test("减少动效：浮层只淡入淡出、加载图标放慢而不停、颜�
 	await page.keyboard.press("Control+k");
 	const palette = page.getByRole("dialog");
 	await expect(palette).toBeVisible();
-	const scale = await palette.evaluate((el) =>
-		getComputedStyle(el).getPropertyValue("--tw-enter-scale"),
-	);
-	expect(scale.trim()).toBe("1");
+	expect(await palette.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
 	await page.keyboard.press("Escape");
 	await expect(palette).toBeHidden();
 

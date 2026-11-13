@@ -1,18 +1,20 @@
 import { domainKey, type OrchestrationView, orchestrationsApi } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { FormAlert, FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -25,8 +27,6 @@ export function useInvalidateScenarios() {
 	const queryClient = useQueryClient();
 	return () => queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.list) });
 }
-
-const UNDO_TOAST_MS = 6000;
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -41,6 +41,8 @@ function NameDescriptionDialog({
 	withDescription = true,
 	submitLabel,
 	pending,
+	error,
+	onOpen,
 	onSubmit,
 	returnFocus,
 }: {
@@ -53,61 +55,74 @@ function NameDescriptionDialog({
 	withDescription?: boolean;
 	submitLabel: string;
 	pending: boolean;
+	error: unknown;
+	onOpen: () => void;
 	onSubmit: (values: { name: string; description: string }) => void;
 	/** 关闭后焦点回到的元素（从菜单里打开时，菜单项已经不在了）。 */
 	returnFocus?: React.RefObject<HTMLElement | null> | undefined;
 }) {
 	const [name, setName] = useState(initialName);
 	const [text, setText] = useState(initialDescription ?? "");
+	const [submitted, setSubmitted] = useState(false);
+	const nameInput = useRef<HTMLInputElement>(null);
 	useEffect(() => {
 		if (open) {
 			setName(initialName);
 			setText(initialDescription ?? "");
+			setSubmitted(false);
+			onOpen();
 		}
-	}, [open, initialName, initialDescription]);
-	const nameId = useId();
-	const descId = useId();
+	}, [open, initialName, initialDescription, onOpen]);
+	const nameError = name.trim() ? undefined : "填写场景名称";
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent finalFocus={returnFocus}>
 				<form
-					className="flex flex-col gap-3"
+					noValidate
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (name.trim()) onSubmit({ name: name.trim(), description: text.trim() });
+						setSubmitted(true);
+						if (nameError) nameInput.current?.focus();
+						else onSubmit({ name: name.trim(), description: text.trim() });
 					}}
 				>
 					<DialogHeader>
 						<DialogTitle>{title}</DialogTitle>
 						<DialogDescription>{description}</DialogDescription>
 					</DialogHeader>
-					<label htmlFor={nameId} className="flex flex-col gap-1 text-xs text-fg-2">
-						名称
-						<Input
-							id={nameId}
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							maxLength={120}
-							autoFocus
-						/>
-					</label>
-					{withDescription && (
-						<label htmlFor={descId} className="flex flex-col gap-1 text-xs text-fg-2">
-							说明
-							<Textarea
-								id={descId}
-								value={text}
-								onChange={(e) => setText(e.target.value)}
-								placeholder="这个场景测什么、在哪个环境跑（可选）"
-								rows={3}
-							/>
-						</label>
-					)}
+					<DialogBody>
+						<FormField label="名称" required error={submitted ? nameError : undefined}>
+							{(control) => (
+								<Input
+									{...control}
+									ref={nameInput}
+									value={name}
+									onChange={(e) => setName(e.target.value)}
+									maxLength={120}
+									autoFocus
+								/>
+							)}
+						</FormField>
+						{withDescription && (
+							<FormField label="说明">
+								{(control) => (
+									<Textarea
+										{...control}
+										value={text}
+										onChange={(e) => setText(e.target.value)}
+										placeholder="这个场景测什么、在哪个环境跑（可选）"
+										rows={3}
+									/>
+								)}
+							</FormField>
+						)}
+						{error !== null && error !== undefined && <FormAlert>{errorText(error)}</FormAlert>}
+					</DialogBody>
 					<DialogFooter>
 						<Button variant="ghost" onClick={() => onOpenChange(false)}>
 							取消
 						</Button>
-						<Button type="submit" variant="primary" disabled={!name.trim() || pending}>
+						<Button type="submit" variant="primary" disabled={pending}>
 							{submitLabel}
 						</Button>
 					</DialogFooter>
@@ -136,7 +151,6 @@ export function NewScenarioDialog({
 			await invalidate();
 			navigate({ to: "/orchestrations/$id", params: { id: created.id } });
 		},
-		onError: (error) => notify.error("新建场景失败", { description: errorText(error) }),
 	});
 	return (
 		<NameDescriptionDialog
@@ -147,6 +161,8 @@ export function NewScenarioDialog({
 			initialName=""
 			submitLabel="新建"
 			pending={create.isPending}
+			error={create.error}
+			onOpen={create.reset}
 			onSubmit={(values) => create.mutate(values)}
 		/>
 	);
@@ -173,7 +189,6 @@ export function CopyScenarioDialog({
 			notify.success(`已复制为「${copied.name}」`);
 			await invalidate();
 		},
-		onError: (error) => notify.error("复制失败", { description: errorText(error) }),
 	});
 	return (
 		<NameDescriptionDialog
@@ -185,6 +200,8 @@ export function CopyScenarioDialog({
 			withDescription={false}
 			submitLabel="复制"
 			pending={copy.isPending}
+			error={copy.error}
+			onOpen={copy.reset}
 			returnFocus={returnFocus}
 			onSubmit={({ name }) => copy.mutate(name)}
 		/>
@@ -212,7 +229,6 @@ export function EditScenarioDialog({
 			notify.success("已保存名称和说明");
 			await invalidate();
 		},
-		onError: (error) => notify.error("保存失败", { description: errorText(error) }),
 	});
 	return (
 		<NameDescriptionDialog
@@ -224,13 +240,14 @@ export function EditScenarioDialog({
 			initialDescription={scenario.description}
 			submitLabel="保存"
 			pending={update.isPending}
+			error={update.error}
+			onOpen={update.reset}
 			returnFocus={returnFocus}
 			onSubmit={(values) => update.mutate(values)}
 		/>
 	);
 }
 
-/** 归档确认。成功的通知带「撤销」（恢复归档），6 秒内有效。 */
 export function ArchiveScenarioDialog({
 	scenario,
 	open,
@@ -249,13 +266,14 @@ export function ArchiveScenarioDialog({
 		onSuccess: async () => {
 			onOpenChange(false);
 			notify.success(`已归档「${scenario.name}」`, {
-				duration: UNDO_TOAST_MS,
 				action: { label: "撤销", onClick: () => unarchive.mutate(scenario) },
 			});
 			await invalidate();
 		},
-		onError: (error) => notify.error("不能归档", { description: errorText(error) }),
 	});
+	useEffect(() => {
+		if (open) archive.reset();
+	}, [open, archive.reset]);
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent finalFocus={returnFocus}>
@@ -265,6 +283,7 @@ export function ArchiveScenarioDialog({
 						归档后场景不再出现在列表里，也不能运行；历史运行仍可回看。可以随时在「已归档」里恢复。
 					</DialogDescription>
 				</DialogHeader>
+				{archive.isError && <FormAlert>不能归档：{errorText(archive.error)}</FormAlert>}
 				<DialogFooter>
 					<Button variant="ghost" onClick={() => onOpenChange(false)}>
 						保留场景
