@@ -1,13 +1,18 @@
 import type { EdgeChange, NodeChange } from "@xyflow/react";
 import { type Dispatch, type SetStateAction, useCallback, useRef, useState } from "react";
 import type { DocMeta, SfEdge, SfNode } from "#/components/canvas/flow";
+import type { FieldDraft } from "./field-drafts";
 import { UndoStack } from "./history";
 
-/** 撤销的单位：画布上的节点、连线和场景级设置（默认 Agent、包版本锁定）。 */
+/**
+ * 撤销的单位：画布上的节点、连线、场景级设置（默认 Agent、包版本锁定），以及输入框里还没生效的草稿。
+ * 草稿跟着快照走：撤销到某个时刻后，输入框、顶栏的检查结果和节点卡片说的是同一件事。
+ */
 export interface EditSnapshot {
 	nodes: SfNode[];
 	edges: SfEdge[];
 	meta: DocMeta;
+	drafts: ReadonlyMap<string, FieldDraft>;
 }
 
 /**
@@ -21,6 +26,7 @@ export function useEditHistory(
 		nodes: Dispatch<SetStateAction<SfNode[]>>;
 		edges: Dispatch<SetStateAction<SfEdge[]>>;
 		meta: Dispatch<SetStateAction<DocMeta>>;
+		drafts(drafts: ReadonlyMap<string, FieldDraft>): void;
 	},
 	apply: { nodes(changes: NodeChange<SfNode>[]): void; edges(changes: EdgeChange<SfEdge>[]): void },
 ) {
@@ -52,6 +58,7 @@ export function useEditHistory(
 		set.nodes(snapshot.nodes);
 		set.edges(snapshot.edges);
 		set.meta(snapshot.meta);
+		set.drafts(snapshot.drafts);
 		setVersion((v) => v + 1);
 		return true;
 	}, []);

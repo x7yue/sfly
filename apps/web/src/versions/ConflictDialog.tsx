@@ -15,6 +15,7 @@ import { formatDateTime } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
@@ -112,21 +113,23 @@ export function ConflictDialog({
 						不做自动合并：可以放弃本地修改并载入最新版本，或者把本地修改另存为新场景。
 					</DialogDescription>
 				</DialogHeader>
-				<div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-border-soft bg-sunk px-3 py-2.5">
-					{latest.error ? (
-						<p role="alert" className="m-0 text-sm text-danger-fg">
-							读取最新版本失败：{latest.error.message}
-						</p>
-					) : loadLatestDiff && fresh ? (
-						<DocumentDiffView
-							diff={loadLatestDiff}
-							beforeLabel="你的本地修改"
-							afterLabel={`最新版本 ${fresh.number}`}
-						/>
-					) : (
-						<p className="m-0 text-sm text-fg-3">正在读取最新版本…</p>
-					)}
-				</div>
+				<DialogBody>
+					<div className="rounded-lg border border-border-soft bg-sunk px-3 py-2.5">
+						{latest.error ? (
+							<p role="alert" className="m-0 text-sm text-danger-fg">
+								读取最新版本失败：{latest.error.message}
+							</p>
+						) : loadLatestDiff && fresh ? (
+							<DocumentDiffView
+								diff={loadLatestDiff}
+								beforeLabel="你的本地修改"
+								afterLabel={`最新版本 ${fresh.number}`}
+							/>
+						) : (
+							<p className="m-0 text-sm text-fg-3">正在读取最新版本…</p>
+						)}
+					</div>
+				</DialogBody>
 				<form
 					className="flex items-center gap-2"
 					onSubmit={(e) => {

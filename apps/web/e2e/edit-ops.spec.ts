@@ -349,11 +349,13 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 	await closeWithEscape();
 	await expect(addButton).toBeFocused();
 
-	// 焦点在工具条按钮上时 Tab 照常切换焦点。
+	// 焦点在工具条按钮上时 Tab 照常切换焦点：工具条是一个停靠点，Tab 离开工具条，而不是走到下一个按钮。
 	await dock(page).getByRole("button", { name: "指针" }).focus();
 	await page.keyboard.press("Tab");
 	await expect(addMenu(page)).toHaveCount(0);
-	await expect(dock(page).getByRole("button", { name: "抓手" })).toBeFocused();
+	expect(
+		await page.evaluate(() => document.activeElement?.closest('[role="toolbar"]') === null),
+	).toBe(true);
 
 	// 焦点在链尾节点上按 Tab：新节点接在它后面，放在它右侧同一行。
 	await nodeCard(page, "ping").click();

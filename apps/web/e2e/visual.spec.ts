@@ -676,6 +676,7 @@ test.describe("编排画布", () => {
 	test("选中节点与检查器", async ({ page }) => {
 		await nodeCard(page, "fetch").click();
 		await page.getByRole("textbox", { name: "输入 expect" }).fill("abc");
+		await page.getByRole("textbox", { name: "输入 expect" }).blur();
 		await idle(page);
 		await expect(page.getByText("1 处字段错误")).toBeVisible();
 		await expect(page).toHaveScreenshot("editor-inspector.png");

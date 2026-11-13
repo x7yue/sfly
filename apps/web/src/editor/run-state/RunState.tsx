@@ -7,18 +7,16 @@ import { floatGroupClass } from "#/components/canvas/CanvasDock";
 import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
-import { ZOOM_TEXT_11 } from "#/components/canvas/zoom-text";
-import { PanelWidthHandle } from "#/components/PanelWidthHandle";
+import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { nodeStatusView, StatusPill } from "#/components/status";
-import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
-import { usePanelWidth } from "#/lib/panel-width";
 import { useNow } from "#/lib/use-now";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { chainRunStatus, runStatus } from "#/monitor/run-model";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { InspectorWidthHandle, useInspectorWidth } from "../inspector/inspector-width";
 import { OnlineEditors } from "../OnlineEditors";
 import { errorSummary, type NodeRunSummary, nodeElapsed, type RunOverlay } from "./run-overlay";
 import type { CanvasRun } from "./use-canvas-run";
@@ -51,7 +49,7 @@ export function useRunDecorations(
 					return {
 						run: "pending",
 						status: (
-							<StatusPill kind="pending" className={ZOOM_TEXT_11}>
+							<StatusPill kind="pending" className={ZOOM_TEXT_12}>
 								{ended ? "未执行" : "待执行"}
 							</StatusPill>
 						),
@@ -70,7 +68,7 @@ export function useRunDecorations(
 						/>
 					) : undefined,
 					status: (
-						<StatusPill kind={s.kind} className={ZOOM_TEXT_11}>
+						<StatusPill kind={s.kind} className={ZOOM_TEXT_12}>
 							{s.label}
 						</StatusPill>
 					),
@@ -90,7 +88,7 @@ export function useRunDecorations(
 					<span className="inline-flex items-center gap-1.5">
 						{instances.length > 1 && <span>{instances.length} 个实例 ·</span>}
 						{shown && (
-							<StatusPill kind={shown.kind} className={ZOOM_TEXT_11}>
+							<StatusPill kind={shown.kind} className={ZOOM_TEXT_12}>
 								{shown.label}
 							</StatusPill>
 						)}
@@ -183,7 +181,7 @@ export const RunStateInspector = forwardRef<
 		onEscape(): void;
 	}
 >(function RunStateInspector({ state, selected, info, onCollapse, onEscape }, ref) {
-	const width = usePanelWidth();
+	const width = useInspectorWidth();
 	return (
 		<aside
 			ref={ref}
@@ -210,7 +208,7 @@ export const RunStateInspector = forwardRef<
 			) : (
 				<RunOverview state={state} onCollapse={onCollapse} />
 			)}
-			<PanelWidthHandle label={ACTION.resizeInspector} />
+			<InspectorWidthHandle />
 		</aside>
 	);
 });
