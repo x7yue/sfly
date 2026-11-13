@@ -57,7 +57,6 @@ export function ReferenceEditor({
 	onBlur,
 }: {
 	ref?: Ref<ReferenceEditorHandle>;
-	/** 字段（fields.tsx 的 Field）交给控件的属性：id、aria-describedby、aria-invalid 等，原样写在输入区上。 */
 	control?: Partial<FieldControl>;
 	/** 无障碍名称。 */
 	label: string;
@@ -73,7 +72,6 @@ export function ReferenceEditor({
 	/** 加在外框上（字体、字号等）。 */
 	className?: string;
 	onChange(value: string): void;
-	/** 输入区失去焦点。 */
 	onBlur?(): void;
 }) {
 	const parent = useRef<HTMLDivElement>(null);
@@ -290,7 +288,6 @@ export function ReferenceEditor({
 	);
 }
 
-/** Field 交给控件的属性，转成 CodeMirror 输入区上的属性（值是字符串，没有值的不写）。 */
 function attributesOf(
 	attributes: Record<string, string | boolean | undefined>,
 ): Record<string, string> {

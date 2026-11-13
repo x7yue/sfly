@@ -58,7 +58,9 @@ test("添加异步任务时勾选「同时新建子流程」：名称为空或�
 	await expect(edge(page, "dispatch:async_1->subflow_1")).toHaveCount(1);
 	// 没有来源：异步任务节点不接到链上。
 	await expect(page.locator('[data-edge^="chain:"][data-edge*="async_1"]')).toHaveCount(0);
-	await expect(region(page, "压测监控")).toContainText("async_1");
+	// 只有一个节点的子流程区域很窄：标题栏只写名字，不写由谁触发（谁触发看调度连线）。
+	await expect(region(page, "压测监控")).toContainText("压测监控");
+	await expect(region(page, "压测监控")).not.toContainText("触发");
 
 	// 子流程入口在异步任务节点下方，不压住任何节点。
 	const asyncBox = await box(nodeCard(page, "async_1"));
@@ -231,7 +233,9 @@ test("从调度端口拖线到空白处：填写子流程名称后新建子流�
 	await expect(menu).toHaveCount(0);
 	await expect(edge(page, "dispatch:async_1->subflow_1")).toHaveCount(1);
 	await expect(nodeCard(page, "subflow_1")).toBeFocused();
-	await expect(region(page, "压测监控")).toContainText("async_1");
+	// 只有一个节点的子流程区域很窄：标题栏只写名字，不写由谁触发（谁触发看调度连线）。
+	await expect(region(page, "压测监控")).toContainText("压测监控");
+	await expect(region(page, "压测监控")).not.toContainText("触发");
 	await expect(nodeCard(page, "async_1")).not.toContainText("警告");
 	// 子流程入口的调度端口就在松开鼠标的位置。
 	const inPort = await box(

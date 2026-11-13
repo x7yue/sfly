@@ -38,10 +38,12 @@ import {
 	LOD_THRESHOLD,
 	MAX_ZOOM,
 	MIN_ZOOM,
+	MINIMAP_SIZE,
 	NODE_HEIGHT,
 	NODE_WIDTH,
 	RECONNECT_RADIUS,
 } from "./geometry";
+import { VIEWPORT_MS, viewportDuration } from "./motion";
 import { nodeTypes } from "./NodeCard";
 import { isNavigationKey, navigateChain } from "./navigation";
 import { SubflowRegions } from "./SubflowRegions";
@@ -213,7 +215,7 @@ export function FlowCanvas({
 		[area],
 	);
 	const fit = useCallback(() => {
-		void flow.fitView({ ...fitOptions, duration: 200 });
+		void flow.fitView({ ...fitOptions, duration: viewportDuration(VIEWPORT_MS) });
 	}, [flow, fitOptions]);
 	const canEdit = editable && tool === "pointer";
 
@@ -314,7 +316,7 @@ export function FlowCanvas({
 					y: cy - (ny + NODE_HEIGHT / 2) * zoom,
 					zoom,
 				},
-				{ duration: 200 },
+				{ duration: viewportDuration(VIEWPORT_MS) },
 			);
 		},
 		[flow, area],
@@ -509,14 +511,18 @@ export function FlowCanvas({
 							pannable
 							zoomable
 							className="m-0! mb-3.5! ml-3! overflow-hidden rounded-xl border border-border-soft shadow-float"
-							style={{ width: 188, height: 118 }}
+							style={{ ...MINIMAP_SIZE }}
 							bgColor="var(--surface)"
 							maskColor="var(--canvas-minimap-mask)"
 							maskStrokeColor="var(--fg-3)"
 							maskStrokeWidth={2}
 							nodeBorderRadius={12}
-							nodeColor={(n) => minimapColor(decorateNode?.(n.id, n.data.node)?.run)}
-							nodeStrokeColor={(n) => (n.id === selectedId ? "var(--selected)" : "transparent")}
+							nodeColor={(n) => minimapLook(decorateNode?.(n.id, n.data.node)?.run).fill}
+							nodeStrokeColor={(n) =>
+								n.id === selectedId
+									? "var(--selected)"
+									: minimapLook(decorateNode?.(n.id, n.data.node)?.run).stroke
+							}
 							nodeStrokeWidth={8}
 						/>
 					)}
@@ -555,20 +561,20 @@ const MENU_LABEL: Record<CanvasMenuTarget["kind"], string> = {
 };
 
 /** 小地图上节点的颜色：编辑模式统一灰色，运行状态（#41）按状态着色。 */
-function minimapColor(run: NodeDecoration["run"]): string {
+function minimapLook(run: NodeDecoration["run"]): { fill: string; stroke: string } {
 	switch (run) {
 		case "running":
-			return "var(--canvas-run-running)";
+			return { fill: "var(--signal-fill)", stroke: "var(--signal-line)" };
 		case "failed":
-			return "var(--canvas-run-failed)";
+			return { fill: "var(--danger-fill)", stroke: "transparent" };
 		case "done":
-			return "var(--ok)";
+			return { fill: "var(--ok-fill)", stroke: "transparent" };
 		case "waiting":
-			return "var(--warn)";
+			return { fill: "var(--warn-fill)", stroke: "var(--warn-line)" };
 		case "stopped":
-			return "var(--canvas-run-stopped)";
+			return { fill: "var(--stopped-fill)", stroke: "var(--stopped)" };
 		default:
-			return "var(--canvas-edge)";
+			return { fill: "var(--canvas-edge)", stroke: "transparent" };
 	}
 }
 

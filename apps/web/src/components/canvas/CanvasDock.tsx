@@ -1,3 +1,4 @@
+import { Toolbar } from "@base-ui/react/toolbar";
 import { useReactFlow, useStore } from "@xyflow/react";
 import { cn } from "cn";
 import {
@@ -14,6 +15,7 @@ import { type ShortcutId, shortcutText } from "#/lib/shortcuts";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MAX_ZOOM, MIN_ZOOM } from "./geometry";
+import { viewportDuration } from "./motion";
 
 /** 悬浮控件组（原型 `.grp`）：半透明表面 + 浮起阴影。 */
 export const floatGroupClass =
@@ -43,11 +45,11 @@ export function ToolButton({
 		<Tooltip>
 			<TooltipTrigger
 				render={
-					<button
-						type="button"
+					<Toolbar.Button
 						aria-label={label}
 						aria-pressed={pressed}
 						disabled={disabled}
+						focusableWhenDisabled={false}
 						onClick={onClick}
 						className={cn(
 							"grid size-7.5 cursor-pointer place-items-center rounded-md text-fg-2 hover:bg-raised hover:text-fg-1 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent [&_svg]:size-4",
@@ -100,8 +102,8 @@ export function CanvasDock({
 		// 两侧的占位等宽时工具条居中；右侧占位不小于 clearRight，放不下就把工具条往左推。
 		<div className="pointer-events-none absolute inset-x-0 bottom-3.5 z-10 flex">
 			<span className="min-w-0 flex-1" />
-			<div
-				role="toolbar"
+			{/* Base UI 的工具条：整条只有一个 Tab 停靠点，← → 在按钮之间移动；禁用的按钮不参与。 */}
+			<Toolbar.Root
 				aria-label="画布工具"
 				className={cn(floatGroupClass, "pointer-events-auto relative flex-none")}
 			>
@@ -165,7 +167,7 @@ export function CanvasDock({
 						<PanelRightIcon />
 					</ToolButton>
 				)}
-			</div>
+			</Toolbar.Root>
 			<span className="flex-1" style={{ minWidth: clearRight }} />
 		</div>
 	);
@@ -184,9 +186,10 @@ function useZoomSteps() {
 	const pending = useRef<{ zoom: number; until: number } | null>(null);
 	return (factor: number) => {
 		const now = performance.now();
+		const duration = viewportDuration(ZOOM_DURATION);
 		const from = pending.current && now < pending.current.until ? pending.current.zoom : getZoom();
 		const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, from * factor));
-		pending.current = { zoom, until: now + ZOOM_DURATION };
-		void zoomTo(zoom, { duration: ZOOM_DURATION });
+		pending.current = { zoom, until: now + duration };
+		void zoomTo(zoom, { duration });
 	};
 }

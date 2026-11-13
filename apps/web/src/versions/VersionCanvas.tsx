@@ -7,7 +7,7 @@ import type { CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import { FlowCanvas } from "#/components/canvas/FlowCanvas";
 import { toFlow } from "#/components/canvas/flow";
 import { subflowLabels } from "#/components/canvas/node-display";
-import { LOD_HIDDEN, ZOOM_TEXT_11 } from "#/components/canvas/zoom-text";
+import { LOD_HIDDEN, ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 
@@ -73,7 +73,7 @@ export function VersionCanvas({
 			return {
 				mark,
 				status: (
-					<StatusPill kind={kind} className={ZOOM_TEXT_11}>
+					<StatusPill kind={kind} className={ZOOM_TEXT_12}>
 						{/* 缩小视图时只留色点：差异已由描边颜色与上方的差异列表说明，把宽度让给节点 ID。 */}
 						<span className={LOD_HIDDEN}>{label}</span>
 					</StatusPill>

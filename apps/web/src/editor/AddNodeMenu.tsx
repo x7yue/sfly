@@ -1,3 +1,4 @@
+import { Toolbar } from "@base-ui/react/toolbar";
 import type { Position } from "@sfly/orchestration";
 import { cn } from "cn";
 import { PlusIcon } from "lucide-react";
@@ -60,7 +61,7 @@ function KindChip({ kind }: { kind: AddItem["kind"] }) {
 	const Icon = KIND_META[kind].icon;
 	return (
 		<span aria-hidden className={cn(KIND_CHIP, "text-2xs")}>
-			<Icon strokeWidth={2} />
+			<Icon />
 		</span>
 	);
 }
@@ -154,13 +155,17 @@ export function AddNodeMenu({
 			<Tooltip>
 				<TooltipTrigger
 					render={
-						<PopoverTrigger
+						<Toolbar.Button
 							render={
-								<button
-									type="button"
-									ref={trigger}
-									aria-label="添加节点"
-									className="grid size-8 cursor-pointer place-items-center rounded-full border border-border-strong bg-raised-2 text-fg-1 hover:bg-raised [&_svg]:size-4"
+								<PopoverTrigger
+									render={
+										<button
+											type="button"
+											ref={trigger}
+											aria-label="添加节点"
+											className="grid size-8 cursor-pointer place-items-center rounded-full border border-border-strong bg-raised-2 text-fg-1 hover:bg-raised [&_svg]:size-4"
+										/>
+									}
 								/>
 							}
 						/>

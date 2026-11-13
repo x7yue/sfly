@@ -16,14 +16,10 @@ export interface FieldError {
 	message: string;
 	/** 来自还没生效的输入（字段草稿），错误已显示在输入框下面。 */
 	draft?: boolean;
-	/**
-	 * 来自边输入边改的文本框（参数名、定时时刻、等待时长）：输入到一半的文字多半还不合法，
-	 * 字段交互过（失焦、保存被拦下）才给用户看，见 field-drafts.tsx。字段草稿也是这一类。
-	 */
+	/** 来自边输入边改的文本框：输入到一半多半还不合法，字段交互过才给用户看（field-drafts.tsx）。 */
 	typed?: boolean;
 }
 
-/** 边输入边改的文本框的字段路径。 */
 const TYPED_FIELD = /^(params\.\d+\.name|at|duration)$/;
 
 const PARAM_NAME_MESSAGE = "参数名只能包含字母、数字和下划线，不能以数字开头";

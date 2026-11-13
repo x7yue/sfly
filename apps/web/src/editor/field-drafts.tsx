@@ -5,9 +5,6 @@ import { createContext, useCallback, useContext, useMemo, useState } from "react
  * 但在用户改正之前要一直显示在输入框里（切换节点、页签后也不丢）并阻止保存。
  * 按 `节点 ID/字段` 记在编辑器里；值合法后清除，删除节点时一并清除。
  *
- * 草稿是编辑状态的一部分：撤销 / 重做把节点、连线、场景设置和草稿一起换成同一个时刻的样子
- * （edit-history.ts 的 EditSnapshot），输入框跟着草稿走，不会留着撤销前的文字。
- *
  * 错误什么时候给用户看：输入到一半的文字多半还不是合法的值，边输入边报错只会打扰。字段第一次失焦、
  * 或保存被字段错误拦下之后，它才算「交互过」（touched），此后每次输入都立即校验，改对了立即消失。
  * 阻止保存的判断不看这个：没交互过的错误同样拦着保存，只是还没显示、也不计入顶栏的错误条数。
@@ -36,7 +33,6 @@ const FieldStateContext = createContext<FieldStateValue>({
 
 export const draftKey = (nodeId: string, field: string) => `${nodeId}/${field}`;
 
-/** 字段错误对应的字段的键（场景级字段没有节点）。 */
 export const fieldErrorKey = (error: { nodeId?: string | undefined; field: string }) =>
 	draftKey(error.nodeId ?? "", error.field);
 
@@ -144,7 +140,6 @@ export function useParsedField<T>({
 	};
 	return {
 		text: draft?.text ?? typed,
-		/** 草稿的错误，交互过才有。 */
 		error: draft && touched.has(key) ? draft.error : undefined,
 		change,
 		blur: () => touch(key),

@@ -96,7 +96,6 @@ export function ReferenceChip({
 }: {
 	/** × 按钮（引用刚生成时把焦点放到这里）。 */
 	ref?: React.Ref<HTMLButtonElement>;
-	/** 字段（Field）交给控件的属性。 */
 	control?: FieldControl;
 	/** 无障碍名称（与类型控件相同，如「输入 expect」）。 */
 	label: string;

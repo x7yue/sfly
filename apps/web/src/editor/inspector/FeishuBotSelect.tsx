@@ -16,9 +16,7 @@ export function FeishuBotSelect({
 	emptyLabel,
 	onChange,
 }: {
-	/** 检查器的字段（Field）交给控件的属性。 */
 	control?: FieldControl;
-	/** 检查器之外（运行通知对话框）直接给 id 与出错标记。 */
 	id?: string;
 	invalid?: boolean;
 	label: string;

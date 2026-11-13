@@ -11,10 +11,7 @@ import { forwardRef, type ReactNode, useEffect, useMemo, useState } from "react"
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
-import { PanelWidthHandle } from "#/components/PanelWidthHandle";
 import { StatusPill } from "#/components/status";
-import { ACTION } from "#/lib/copy";
-import { usePanelWidth } from "#/lib/panel-width";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -23,6 +20,7 @@ import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { AgentSelect } from "./AgentSelect";
 import { FIELD_LIST_CLASS, Field, focusField, SectionTitle } from "./fields";
+import { InspectorWidthHandle, useInspectorWidth } from "./inspector-width";
 import {
 	AsyncMapping,
 	ExecutionSettings,
@@ -44,7 +42,6 @@ export interface FocusRequest {
 	nonce: number;
 }
 
-/** 字段所在的页签：执行设置在「执行」页，其余在「参数」页。 */
 const tabOfField = (key: string): Tab =>
 	/^[^/]*\/(timeout|retries|queue_timeout)$/.test(key) ? "exec" : "params";
 
@@ -60,9 +57,7 @@ export interface InspectorContext {
 	warnings: OrchestrationWarning[];
 	/** 不影响保存与触发的提醒（validation.ts 的 undeclaredInputNotes）。 */
 	notes: readonly InputNote[];
-	/** 要给用户看的阻止保存的字段错误（文档校验 + 还没生效的输入，交互过的字段才算，见 field-drafts.tsx）。 */
-	fieldErrors: FieldError[];
-	/** 保存被字段错误拦下：定位到的字段（节点、页签、输入框由检查器自己切换与聚焦）。 */
+	shownFieldErrors: FieldError[];
 	focusRequest: FocusRequest | null;
 	onChangeNode(id: string, node: DocNode): void;
 	onDefaultAgent(agent: string | undefined): void;
@@ -87,7 +82,7 @@ export const Inspector = forwardRef<
 		onEscape(): void;
 	}
 >(function Inspector({ selected, context, onCollapse, onEscape }, ref) {
-	const width = usePanelWidth();
+	const width = useInspectorWidth();
 	return (
 		<aside
 			ref={ref}
@@ -113,7 +108,7 @@ export const Inspector = forwardRef<
 			) : (
 				<ScenarioInspector context={context} onCollapse={onCollapse} />
 			)}
-			<PanelWidthHandle label={ACTION.resizeInspector} />
+			<InspectorWidthHandle />
 		</aside>
 	);
 });
@@ -201,7 +196,7 @@ function NodeInspector({
 	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
 	const choices = useMemo(() => referenceChoices(doc, id, catalog), [doc, id, catalog]);
 	const warnings = context.warnings.filter((w) => w.node_id === id);
-	const fieldErrors = context.fieldErrors.filter((e) => e.nodeId === id);
+	const fieldErrors = context.shownFieldErrors.filter((e) => e.nodeId === id);
 	const problemsOf = (input: string) =>
 		warnings.filter((w) => "input" in w && w.input === input).map((w) => w.message);
 	// 有对应字段的警告显示在字段下面，其余显示在参数页顶部。
@@ -233,7 +228,6 @@ function NodeInspector({
 				row={
 					<>
 						<span className="font-mono text-fg-2">{id}</span>
-						{/* 锁定的版本在包名后面，截断时只截包名与节点名，版本号始终看得见。 */}
 						<span className="flex min-w-0">
 							<span className="truncate">
 								· {meta.label}
@@ -446,7 +440,7 @@ function ScenarioInspector({
 	context: InspectorContext;
 	onCollapse(): void;
 }) {
-	const { doc, warnings, notes, fieldErrors } = context;
+	const { doc, warnings, notes, shownFieldErrors: fieldErrors } = context;
 	const summary = checkSummary(fieldErrors.length, warnings.length, notes.length);
 	const used = [
 		...new Set(doc.nodes.flatMap((n) => (n.kind === "package" ? [n.package] : []))),

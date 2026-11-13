@@ -15,7 +15,6 @@ export function AgentSelect({
 	slots = true,
 	onChange,
 }: {
-	/** 字段（Field）交给控件的属性。 */
 	control?: FieldControl;
 	label: string;
 	value: string | undefined;

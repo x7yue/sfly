@@ -833,7 +833,7 @@ test("检查器：字符串输入框随内容增高，最多 8 行；无效的�
 	expect(head.document.nodes.find((n) => n.id === "fetch")?.inputs).toEqual({});
 });
 
-test("字段校验失败时不能保存：按钮禁用，Ctrl S 把焦点放到出错的字段；改正后可以保存", async ({
+test("字段校验失败时不能保存：保存按钮和 Ctrl S 都把焦点放到出错的字段；改正后可以保存", async ({
 	page,
 	controlPlane,
 }) => {
@@ -849,7 +849,6 @@ test("字段校验失败时不能保存：按钮禁用，Ctrl S 把焦点放到�
 	await expect(page.getByText("1 处字段错误")).toBeVisible();
 	await expect(page.getByRole("button", { name: "1 处字段错误" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "检查通过" })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: /保存/ })).toBeDisabled();
 	await page.keyboard.press("Control+s");
 	await expect(expectInput).toBeFocused();
 
@@ -875,7 +874,12 @@ test("字段校验失败时不能保存：按钮禁用，Ctrl S 把焦点放到�
 	await name.fill("1st");
 	await name.blur();
 	await expect(panel.getByText("参数名只能包含字母、数字和下划线，不能以数字开头")).toBeVisible();
-	await expect(page.getByRole("button", { name: /保存/ })).toBeDisabled();
+	// 保存按钮不因校验禁用：点它不保存，焦点到出错的字段。
+	await expect(page.getByRole("button", { name: /保存/ })).toBeEnabled();
+	await nodeCard(page, "fetch").click();
+	await page.getByRole("button", { name: /保存/ }).click();
+	await expect(name).toBeFocused();
+	await expect(page.getByText("已保存为版本 2")).toHaveCount(0);
 	await name.fill("biz_date");
 
 	await page.getByRole("button", { name: /保存/ }).click();

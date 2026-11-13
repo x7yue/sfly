@@ -2,7 +2,6 @@ import {
 	checkConnection,
 	declaredOutputs,
 	documentWarnings,
-	freeCardAt,
 	insertAfter,
 	insertOnEdge,
 	nodeConnections,
@@ -47,13 +46,14 @@ import {
 	toFlowEdge,
 	toFlowNode,
 } from "#/components/canvas/flow";
-import { NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
+import { INSPECTOR_MARGIN, NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
+import { VIEWPORT_MS, viewportDuration } from "#/components/canvas/motion";
 import { subflowLabels } from "#/components/canvas/node-display";
+import { subflowRegions } from "#/components/canvas/SubflowRegions";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
 import { dialogOpen } from "#/lib/focus";
-import { usePanelWidth } from "#/lib/panel-width";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
 import { shortcutText } from "#/lib/shortcuts";
@@ -70,7 +70,9 @@ import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from 
 import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, fieldErrorKey, useFieldDraftStore } from "./field-drafts";
+import { freeCardSpot } from "./free-spot";
 import { type FocusRequest, Inspector, type InspectorContext } from "./inspector/Inspector";
+import { useInspectorWidth } from "./inspector/inspector-width";
 import { useNodeClipboard } from "./node-clipboard";
 import { useReconnect } from "./reconnect";
 import {
@@ -83,7 +85,6 @@ import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
 import { documentFieldErrors, type FieldError, undeclaredInputNotes } from "./validation";
 
 /** 检查器右边距。 */
-const INSPECTOR_MARGIN = 12;
 
 /**
  * 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布铺满视口，控件悬浮——左上场景名 / 版本 / 检查状态 /
@@ -176,7 +177,7 @@ function Editor({
 	});
 	const [selectedId, setSelectedId] = useState<string | null>(initialNode ?? null);
 	const [inspectorOpen, setInspectorOpen] = useState(true);
-	const inspectorWidth = usePanelWidth();
+	const inspectorWidth = useInspectorWidth();
 	/** 检查器（实际宽度 + 右边距）占住的宽度：适配视图与定位节点时避开。 */
 	const inspectorSpace = inspectorOpen ? inspectorWidth + INSPECTOR_MARGIN : 0;
 	const [triggering, setTriggering] = useState(false);
@@ -201,6 +202,7 @@ function Editor({
 	);
 
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
+	const regionBoxes = useMemo(() => subflowRegions(nodes, edges).map((r) => r.box), [nodes, edges]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages, agentList);
 	const registered = useRegisteredAgents(agents.data?.agents);
@@ -228,7 +230,6 @@ function Editor({
 		});
 		return [...documentFieldErrors(doc), ...pending];
 	}, [doc, drafts.drafts]);
-	// 给用户看的字段错误：字段交互过（失焦、保存被拦下）才算，输入到一半的不提示（field-drafts.tsx）。
 	const shownErrors = useMemo(
 		() => fieldErrors.filter((e) => !(e.draft || e.typed) || drafts.touched.has(fieldErrorKey(e))),
 		[fieldErrors, drafts.touched],
@@ -364,7 +365,7 @@ function Editor({
 				void flow.setCenter(
 					node.position.x + NODE_WIDTH / 2 + inspectorSpace / 2 / zoom,
 					node.position.y + NODE_HEIGHT / 2,
-					{ zoom, duration: 200 },
+					{ zoom, duration: viewportDuration(VIEWPORT_MS) },
 				);
 			}
 		},
@@ -432,9 +433,10 @@ function Editor({
 			};
 		} else {
 			// 没有来源：右键处，否则视口中心；压住已有节点时错开。
-			const position = freeCardAt(
+			const position = freeCardSpot(
 				request.position ?? viewportCenter(),
 				nodes.map((n) => n.position),
+				regionBoxes,
 			);
 			next = { nodes: [...nodes, toFlowNode(newDocNode(item, id), position)], edges };
 		}
@@ -460,7 +462,7 @@ function Editor({
 			if (request.kind === "after" && !request.position) {
 				void flow.setCenter(position.x + NODE_WIDTH / 2, position.y + NODE_HEIGHT / 2, {
 					zoom: flow.getZoom(),
-					duration: 200,
+					duration: viewportDuration(VIEWPORT_MS),
 				});
 			}
 			focusNewCard(id);
@@ -522,6 +524,7 @@ function Editor({
 		enabled: !running,
 		doc,
 		nodes,
+		regions: regionBoxes,
 		selectedId,
 		viewportCenter,
 		toFlowPosition: (client) => flow.screenToFlowPosition(client),
@@ -539,11 +542,10 @@ function Editor({
 	const save = () => {
 		const first = fieldErrors[0];
 		if (first) {
-			// 把所有错误亮出来，焦点直接到第一个出错的字段，不用自己去找是哪个节点、哪个页签。
 			drafts.touch(fieldErrors.map(fieldErrorKey));
 			setInspectorOpen(true);
-			if (first.nodeId) locate(first.nodeId);
-			else setSelectedId(null);
+			if (first.nodeId === undefined) setSelectedId(null);
+			else if (first.nodeId !== selectedId) locate(first.nodeId);
 			setFocusRequest({ key: fieldErrorKey(first), nonce: Date.now() });
 			return;
 		}
@@ -580,7 +582,7 @@ function Editor({
 		bots: botList,
 		warnings,
 		notes,
-		fieldErrors: shownErrors,
+		shownFieldErrors: shownErrors,
 		focusRequest,
 		onChangeNode: updateNode,
 		onDefaultAgent: (agent) => {
@@ -637,7 +639,6 @@ function Editor({
 							editors={editors}
 							doc={doc}
 							versioning={versioning}
-							fieldErrors={shownErrors.length}
 							onSave={save}
 							onRun={() => setTriggering(true)}
 							onReload={onReload}

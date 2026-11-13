@@ -1,14 +1,17 @@
 /**
  * 画布内文字的字号（语义缩放）：画布容器上有 `--canvas-zoom`（当前缩放比例）和 `data-lod`
  * （低于 LOD_THRESHOLD 时为 true）。字号取 max(原字号, 屏幕最小字号 ÷ 缩放比例)，
- * 缩小视图时文字在世界坐标里放大，屏幕上始终不小于 11px（geometry.ts 的 MIN_SCREEN_TEXT）。
+ * 缩小视图时文字在世界坐标里放大，屏幕上始终不小于最小字号：数字与拉丁字母 11px，中文 12px。
+ * 单位是 rem，跟着浏览器的字号设置走。
  *
  * Tailwind 只能识别源码里完整写出的类名，所以这里逐个写死。
  */
-export const ZOOM_TEXT_11 = "text-[length:max(11px,calc(11px/var(--canvas-zoom)))]";
-export const ZOOM_TEXT_12 = "text-[length:max(12px,calc(11px/var(--canvas-zoom)))]";
-/** 卡片标题：语义缩放时在屏幕上约 12px。 */
-export const ZOOM_TEXT_TITLE = "text-[length:max(13px,calc(12px/var(--canvas-zoom)))]";
+/** 只有数字与拉丁字母的文字（标签）：11px。 */
+export const ZOOM_TEXT_11 = "text-[length:max(0.6875rem,calc(0.6875rem/var(--canvas-zoom)))]";
+/** 含中文的文字（卡片头部、状态、连线标签、区域标题、摘要槽）：12px。 */
+export const ZOOM_TEXT_12 = "text-[length:max(0.75rem,calc(0.75rem/var(--canvas-zoom)))]";
+/** 卡片标题：13px，语义缩放时在屏幕上约 12px。 */
+export const ZOOM_TEXT_TITLE = "text-[length:max(0.8125rem,calc(0.75rem/var(--canvas-zoom)))]";
 /** 语义缩放时隐藏的细节（摘要槽、标签、种类名）。 */
 export const LOD_HIDDEN = "in-data-[lod=true]:hidden";
 /**

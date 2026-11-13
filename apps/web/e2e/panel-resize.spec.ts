@@ -28,7 +28,7 @@ async function openWithInspector(page: Page, id: string, node = "sub_ping") {
 	await expect(inspector(page)).toBeVisible();
 }
 
-test("检查器：拖动左边缘调宽，限制在 372px 到视口宽度的 60%；刷新、换场景后保持；窗口缩小时收回；双击恢复默认", async ({
+test("检查器：拖动左边缘调宽，限制在 372px 到「视口宽度的 60% 与视口宽度减 742px 里小的那个」；刷新、换场景后保持；窗口缩小时收回；双击恢复默认", async ({
 	page,
 	controlPlane,
 }) => {
@@ -43,9 +43,9 @@ test("检查器：拖动左边缘调宽，限制在 372px 到视口宽度的 60%
 	const b = await box(inspector(page));
 	expect(Math.round(b.x + b.width)).toBe(1440 - 12);
 
-	// 上限：视口宽度（1440）的 60%；下限 372。
+	// 上限：视口宽度（1440）减去给画布留的 742px（小地图、工具条与间距）是 698，比 60%（864）小；下限 372。
 	await drag(page, inspectorHandle(page), -900);
-	await expect.poll(() => widthOf(inspector(page))).toBe(864);
+	await expect.poll(() => widthOf(inspector(page))).toBe(698);
 	await drag(page, inspectorHandle(page), 900);
 	await expect.poll(() => widthOf(inspector(page))).toBe(372);
 
@@ -57,9 +57,9 @@ test("检查器：拖动左边缘调宽，限制在 372px 到视口宽度的 60%
 	await openWithInspector(page, other, "ping");
 	expect(await widthOf(inspector(page))).toBe(672);
 
-	// 窗口缩小：按上限（1000 的 60%）收回；放大后回到保存的宽度。
+	// 窗口缩小：按上限收回（1000 宽时上限不到下限，用下限）；放大后回到保存的宽度。
 	await page.setViewportSize({ width: 1000, height: 800 });
-	await expect.poll(() => widthOf(inspector(page))).toBe(600);
+	await expect.poll(() => widthOf(inspector(page))).toBe(372);
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await expect.poll(() => widthOf(inspector(page))).toBe(672);
 
@@ -107,7 +107,7 @@ test("适配视图和定位节点按检查器的实际宽度避让", async ({ pa
 	});
 	await openWithInspector(page, id, "ping");
 	await drag(page, inspectorHandle(page), -900);
-	await expect.poll(() => widthOf(inspector(page))).toBe(864);
+	await expect.poll(() => widthOf(inspector(page))).toBe(698);
 
 	const expectClear = async (nodeId: string) => {
 		await expect

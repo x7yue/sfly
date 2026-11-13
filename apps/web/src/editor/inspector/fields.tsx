@@ -4,8 +4,7 @@ import type { FieldControlProps } from "@/components/ui/form-field";
 import { useTouchFields } from "../field-drafts";
 
 /**
- * 检查器里一组字段的容器：三条轨道，所有字段共用。名称列随最长的名称伸缩，最宽占容器的 40%，更长的名称折行而不是截断；
- * 控件占中间一列，右侧按钮（「插入引用」「放大编辑」）单独一列，有按钮的字段的控件右沿因此对齐。
+ * 检查器里一组字段的容器：所有字段共用三条轨道（名称、控件、右侧按钮），有按钮的字段的控件右沿因此对齐。
  * 字段本身是子网格（subgrid），所以必须是它的直接子元素；其余子元素（小节标题、说明、警告）占满整行。
  * 直接把这组类名放在页签面板上，或者用 `FieldList`。
  */
@@ -16,13 +15,12 @@ export function FieldList({ className, children }: { className?: string; childre
 	return <div className={cn(FIELD_LIST_CLASS, className)}>{children}</div>;
 }
 
-/** 交给字段里控件的属性（与 `FormField` 的一致）；`data-field-key` 让保存被拦下时能找到出错的输入框。 */
-export type FieldControl = FieldControlProps & { "data-field-key": string | undefined };
+/** 交给字段里控件的属性（与 `FormField` 的一致）；`data-field-key` 让保存被拦下时找到出错的输入框。 */
+export type FieldControl = FieldControlProps & { "data-field-key"?: string | undefined };
 
-/** 名称末尾几个字符与必填星号绑在一起：折行时星号不会落单、也不会被截掉。 */
-const TAIL = 3;
+/** 名称末尾这几个字符与必填星号绑在一起不折行，折行时星号不会落单。 */
+const CHARS_KEPT_WITH_STAR = 3;
 
-/** 在下划线、点号、连字符后留出折行的机会，参数名折成 `mib_per_` / `second`，而不是在字母中间断开。 */
 function Breakable({ text }: { text: string }) {
 	let offset = 0;
 	return text.split(/(?<=[_.-])/).map((part) => {
@@ -38,8 +36,8 @@ function Breakable({ text }: { text: string }) {
 }
 
 function LabelText({ text, required }: { text: string; required: boolean | undefined }) {
-	const head = text.slice(0, -TAIL);
-	const tail = text.slice(-TAIL);
+	const head = text.slice(0, -CHARS_KEPT_WITH_STAR);
+	const tail = text.slice(-CHARS_KEPT_WITH_STAR);
 	return (
 		<>
 			<Breakable text={head} />
@@ -61,9 +59,9 @@ function LabelText({ text, required }: { text: string; required: boolean | undef
  *     {(control) => <Input {...control} value={…} />}
  *   </Field>
  *
- * 错误与说明用 `aria-describedby` 关联到控件，有错误时控件带 `aria-invalid`；名称元素的 id 是 `${control.id}-label`
- * （控件自己没有 aria-label 时用 `aria-labelledby` 指过来，例如开关）。`error` 只传要给用户看的错误：
- * 输入到一半的错误等字段交互过再给（field-drafts.tsx）。`id` 默认自动生成；使用方要在别处找到控件时自己传。
+ * 名称元素的 id 是 `${control.id}-label`（控件自己没有 aria-label 时用 `aria-labelledby` 指过来，例如开关）。
+ * `error` 只传要给用户看的错误：输入到一半的错误等字段交互过再给（field-drafts.tsx）。
+ * `id` 默认自动生成；使用方要在别处找到控件时自己传。
  */
 export function Field({
 	label,
@@ -78,7 +76,6 @@ export function Field({
 	children,
 }: {
 	label: string;
-	/** 名称是标识符（参数名、包名）：等宽字体。 */
 	mono?: boolean;
 	required?: boolean;
 	type?: string;
@@ -86,7 +83,6 @@ export function Field({
 	help?: ReactNode;
 	aside?: ReactNode;
 	id?: string;
-	/** 这个字段的草稿键（field-drafts.tsx 的 draftKey）。 */
 	fieldKey?: string;
 	children: ReactNode | ((control: FieldControl) => ReactNode);
 }) {
@@ -119,6 +115,7 @@ export function Field({
 				)}
 			>
 				<LabelText text={label} required={required} />
+				{/* 类型说明最多撑到 96px：它不该把名称列撑宽、把控件挤窄 */}
 				{type && <span className="block max-w-24 font-mono text-2xs text-fg-3">{type}</span>}
 			</label>
 			<div className={cn("min-w-0", !aside && "col-span-2")}>
@@ -143,10 +140,7 @@ export function Field({
 	);
 }
 
-/**
- * 把焦点放到某个字段的控件上（保存被字段错误拦下、定位到出错的字段）。字段所在的节点和页签可能刚刚才渲染，
- * 找不到时等几帧再找；返回取消函数。
- */
+/** 把焦点放到某个字段的控件上。字段所在的节点和页签可能刚刚才渲染，找不到时等几帧再找；返回取消函数。 */
 export function focusField(key: string): () => void {
 	let frame = 0;
 	let tries = 0;

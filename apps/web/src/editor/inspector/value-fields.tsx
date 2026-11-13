@@ -144,7 +144,6 @@ interface ValueProps {
 	name: string;
 	label: string;
 	placeholder: string;
-	/** 要显示在字段下面的错误（没生效的输入的错误、静态检查的警告）。 */
 	errors: string[];
 	choices: ReferenceChoice[];
 	value: unknown;
@@ -339,7 +338,6 @@ function TypedValue({
 	);
 }
 
-/** 字段下面的错误，每条一行。 */
 export function Problems({ problems }: { problems: string[] }) {
 	if (problems.length === 0) return null;
 	return (

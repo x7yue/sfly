@@ -13,11 +13,13 @@ import { ResizeHandle } from "./ResizeHandle";
 export function PanelWidthHandle({
 	label,
 	min = INSPECTOR_MIN_WIDTH,
+	reserve = 0,
 }: {
 	label: string;
 	min?: number;
+	reserve?: number;
 }) {
-	const width = usePanelWidth(min);
+	const width = usePanelWidth(min, reserve);
 	return (
 		<ResizeHandle
 			label={label}
@@ -25,7 +27,7 @@ export function PanelWidthHandle({
 			size={width}
 			measure={() => width}
 			min={min}
-			max={() => Math.max(min, maxPanelWidth(window.innerWidth))}
+			max={() => Math.max(min, maxPanelWidth(window.innerWidth, reserve))}
 			onResize={setPanelWidth}
 			onReset={() => setPanelWidth(null)}
 		/>

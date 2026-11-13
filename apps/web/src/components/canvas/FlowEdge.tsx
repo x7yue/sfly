@@ -4,7 +4,7 @@ import { useFlowCanvas } from "./context";
 import { EdgeInsertButton, useEdgeHover } from "./EdgeInsert";
 import type { SfEdge } from "./flow";
 import { PORTS } from "./geometry";
-import { ZOOM_TEXT_11 } from "./zoom-text";
+import { ZOOM_TEXT_12 } from "./zoom-text";
 
 type Point = [number, number];
 
@@ -60,7 +60,8 @@ export function edgePath(
 
 /**
  * 链连线与调度连线。端点 = 节点位置 + geometry.ts 的端口偏移。选中节点相关的连线（或选中的连线本身）
- * 灰色虚线流动；decorateEdge 给出的运行状态：live 青色实线、failed 红色。
+ * 改成选中色，虚线流动两个周期后停住；decorateEdge 给出的运行状态：live 青色实线、failed 红色，
+ * 选中时只加粗，颜色保持：执行信号不被选中覆盖。线宽不随视图缩放：缩小到 0.3 时屏幕上仍是 1.5px。
  * 可编辑时，悬停链上的连线在中点出现「＋」（EdgeInsert.tsx）；连线时（拖线、改接）不出现。
  */
 export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdge>) {
@@ -85,12 +86,17 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 				data-highlighted={highlighted}
 				data-run={run}
 				className={cn(
-					"fill-none stroke-canvas-edge stroke-[1.5]",
+					"fill-none stroke-canvas-edge stroke-[length:max(1.5px,calc(1.5px/var(--canvas-zoom)))]",
 					kind === "dispatch" && "stroke-signal-line [stroke-dasharray:4_4]",
-					run === "live" && "stroke-canvas-edge-live stroke-[1.75] [stroke-dasharray:none]",
+					run === "live" &&
+						"stroke-canvas-edge-live stroke-[length:max(1.75px,calc(1.75px/var(--canvas-zoom)))] [stroke-dasharray:none]",
 					run === "failed" && "stroke-canvas-run-failed opacity-70",
 					highlighted &&
-						"animate-edge-flow stroke-canvas-edge-selected opacity-100 [stroke-dasharray:6_5]",
+						!run &&
+						"stroke-canvas-edge-selected opacity-100 [stroke-dasharray:6_5] motion-safe:[animation:edge-flow_1s_linear_2]",
+					highlighted &&
+						run &&
+						"stroke-[length:max(2.25px,calc(2.25px/var(--canvas-zoom)))] opacity-100",
 				)}
 			/>
 			{/* 加宽的透明路径，便于点选连线 */}
@@ -116,7 +122,7 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 					<div
 						className={cn(
 							"absolute rounded-md border border-signal-line bg-canvas-bg px-1.75 font-mono leading-4 whitespace-nowrap text-signal-fg",
-							ZOOM_TEXT_11,
+							ZOOM_TEXT_12,
 						)}
 						style={{ transform: `translate(8px, -50%) translate(${mid[0]}px, ${mid[1]}px)` }}
 					>
