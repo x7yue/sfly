@@ -29,7 +29,7 @@ import { z } from "zod";
  *    请求的 JSON Schema 按输入方向导出：refine 和转换后的约束导不出来，会记在清单的 `notes` 里。
  * 9. 每个接口都写明 `client`：是否进入 API 客户端（ADR 0022）。同一次 `pnpm gen` 从 `httpApis` 生成
  *    API 客户端的类型和路由表（client-export.ts，写到 `packages/client/src/generated/`）：
- *    方法按领域分组，领域名是 `httpApis` 的键，也必须等于该领域 JSON 接口 key 的第一段；
+ *    方法按领域分组，领域名是 `httpApis` 的键，必须等于该领域 JSON 接口 key 第一段的驼峰写法（`feishu-bots` → `feishuBots`）；
  *    请求类型按输入方向、响应类型按输出方向，注释随类型带过去。
  */
 
