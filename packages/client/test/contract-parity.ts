@@ -1,0 +1,67 @@
+// 由 HTTP 契约（packages/schema/src/http）生成，不要手改：pnpm gen。
+// 生成的类型与契约自己的 z.input / z.output 一致：请求不宽于 z.input，响应与事件和 z.output 相同。
+
+import type * as C from "@sfly/schema";
+import type { z } from "zod";
+import type { Api } from "../src/generated/routes.js";
+
+type Apis = typeof C.httpApis;
+type Within<A, B> = [A] extends [B] ? true : false;
+type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
+type Expect<T extends true> = T;
+
+export type ContractParity = [
+	Expect<Equal<Api["agents"]["list"]["output"], z.output<Apis["agents"]["list"]["response"]>>>,
+	Expect<Within<NonNullable<Api["artifacts"]["list"]["input"]["params"]>, NonNullable<z.input<Apis["artifacts"]["list"]["params"]>>>>,
+	Expect<Equal<Api["artifacts"]["list"]["output"], z.output<Apis["artifacts"]["list"]["response"]>>>,
+	Expect<Within<NonNullable<Api["artifacts"]["download"]["input"]["params"]>, NonNullable<z.input<Apis["artifacts"]["download"]["params"]>>>>,
+	Expect<Equal<Api["dashboard"]["get"]["output"], z.output<Apis["dashboard"]["get"]["response"]>>>,
+	Expect<Equal<Api["feishuBots"]["list"]["output"], z.output<Apis["feishuBots"]["list"]["response"]>>>,
+	Expect<Within<NonNullable<Api["feishuBots"]["references"]["input"]["params"]>, NonNullable<z.input<Apis["feishuBots"]["references"]["params"]>>>>,
+	Expect<Equal<Api["feishuBots"]["references"]["output"], z.output<Apis["feishuBots"]["references"]["response"]>>>,
+	Expect<Within<NonNullable<Api["logs"]["page"]["input"]["params"]>, NonNullable<z.input<Apis["logs"]["page"]["params"]>>>>,
+	Expect<Within<NonNullable<Api["logs"]["page"]["input"]["query"]>, NonNullable<z.input<Apis["logs"]["page"]["query"]>>>>,
+	Expect<Equal<Api["logs"]["page"]["output"], z.output<Apis["logs"]["page"]["response"]>>>,
+	Expect<Within<NonNullable<Api["logs"]["download"]["input"]["params"]>, NonNullable<z.input<Apis["logs"]["download"]["params"]>>>>,
+	Expect<Within<NonNullable<Api["logs"]["runPage"]["input"]["params"]>, NonNullable<z.input<Apis["logs"]["runPage"]["params"]>>>>,
+	Expect<Within<NonNullable<Api["logs"]["runPage"]["input"]["query"]>, NonNullable<z.input<Apis["logs"]["runPage"]["query"]>>>>,
+	Expect<Equal<Api["logs"]["runPage"]["output"], z.output<Apis["logs"]["runPage"]["response"]>>>,
+	Expect<Within<NonNullable<Api["logs"]["runDownload"]["input"]["params"]>, NonNullable<z.input<Apis["logs"]["runDownload"]["params"]>>>>,
+	Expect<Within<NonNullable<Api["logs"]["runDownload"]["input"]["query"]>, NonNullable<z.input<Apis["logs"]["runDownload"]["query"]>>>>,
+	Expect<Within<NonNullable<Api["metrics"]["summary"]["input"]["params"]>, NonNullable<z.input<Apis["metrics"]["summary"]["params"]>>>>,
+	Expect<Equal<Api["metrics"]["summary"]["output"], z.output<Apis["metrics"]["summary"]["response"]>>>,
+	Expect<Within<NonNullable<Api["metrics"]["catalog"]["input"]["params"]>, NonNullable<z.input<Apis["metrics"]["catalog"]["params"]>>>>,
+	Expect<Equal<Api["metrics"]["catalog"]["output"], z.output<Apis["metrics"]["catalog"]["response"]>>>,
+	Expect<Within<NonNullable<Api["metrics"]["series"]["input"]["params"]>, NonNullable<z.input<Apis["metrics"]["series"]["params"]>>>>,
+	Expect<Within<NonNullable<Api["metrics"]["series"]["input"]["query"]>, NonNullable<z.input<Apis["metrics"]["series"]["query"]>>>>,
+	Expect<Equal<Api["metrics"]["series"]["output"], z.output<Apis["metrics"]["series"]["response"]>>>,
+	Expect<Within<NonNullable<Api["metrics"]["platform"]["input"]["params"]>, NonNullable<z.input<Apis["metrics"]["platform"]["params"]>>>>,
+	Expect<Within<NonNullable<Api["metrics"]["platform"]["input"]["query"]>, NonNullable<z.input<Apis["metrics"]["platform"]["query"]>>>>,
+	Expect<Equal<Api["metrics"]["platform"]["output"], z.output<Apis["metrics"]["platform"]["response"]>>>,
+	Expect<Within<NonNullable<Api["orchestrations"]["list"]["input"]["query"]>, NonNullable<z.input<Apis["orchestrations"]["list"]["query"]>>>>,
+	Expect<Equal<Api["orchestrations"]["list"]["output"], z.output<Apis["orchestrations"]["list"]["response"]>>>,
+	Expect<Within<NonNullable<Api["orchestrations"]["get"]["input"]["params"]>, NonNullable<z.input<Apis["orchestrations"]["get"]["params"]>>>>,
+	Expect<Equal<Api["orchestrations"]["get"]["output"], z.output<Apis["orchestrations"]["get"]["response"]>>>,
+	Expect<Within<NonNullable<Api["orchestrations"]["head"]["input"]["params"]>, NonNullable<z.input<Apis["orchestrations"]["head"]["params"]>>>>,
+	Expect<Equal<Api["orchestrations"]["head"]["output"], z.output<Apis["orchestrations"]["head"]["response"]>>>,
+	Expect<Within<NonNullable<Api["orchestrations"]["versions"]["input"]["params"]>, NonNullable<z.input<Apis["orchestrations"]["versions"]["params"]>>>>,
+	Expect<Equal<Api["orchestrations"]["versions"]["output"], z.output<Apis["orchestrations"]["versions"]["response"]>>>,
+	Expect<Within<NonNullable<Api["orchestrations"]["version"]["input"]["params"]>, NonNullable<z.input<Apis["orchestrations"]["version"]["params"]>>>>,
+	Expect<Equal<Api["orchestrations"]["version"]["output"], z.output<Apis["orchestrations"]["version"]["response"]>>>,
+	Expect<Equal<Api["packages"]["list"]["output"], z.output<Apis["packages"]["list"]["response"]>>>,
+	Expect<Within<NonNullable<Api["packages"]["get"]["input"]["params"]>, NonNullable<z.input<Apis["packages"]["get"]["params"]>>>>,
+	Expect<Equal<Api["packages"]["get"]["output"], z.output<Apis["packages"]["get"]["response"]>>>,
+	Expect<Within<NonNullable<Api["packages"]["version"]["input"]["params"]>, NonNullable<z.input<Apis["packages"]["version"]["params"]>>>>,
+	Expect<Equal<Api["packages"]["version"]["output"], z.output<Apis["packages"]["version"]["response"]>>>,
+	Expect<Within<NonNullable<Api["packages"]["nodeType"]["input"]["params"]>, NonNullable<z.input<Apis["packages"]["nodeType"]["params"]>>>>,
+	Expect<Equal<Api["packages"]["nodeType"]["output"], z.output<Apis["packages"]["nodeType"]["response"]>>>,
+	Expect<Within<NonNullable<Api["runs"]["list"]["input"]["query"]>, NonNullable<z.input<Apis["runs"]["list"]["query"]>>>>,
+	Expect<Equal<Api["runs"]["list"]["output"], z.output<Apis["runs"]["list"]["response"]>>>,
+	Expect<Within<NonNullable<Api["runs"]["preflight"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["preflight"]["params"]>>>>,
+	Expect<Equal<Api["runs"]["preflight"]["output"], z.output<Apis["runs"]["preflight"]["response"]>>>,
+	Expect<Within<NonNullable<Api["runs"]["listForOrchestration"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["listForOrchestration"]["params"]>>>>,
+	Expect<Equal<Api["runs"]["listForOrchestration"]["output"], z.output<Apis["runs"]["listForOrchestration"]["response"]>>>,
+	Expect<Within<NonNullable<Api["runs"]["get"]["input"]["params"]>, NonNullable<z.input<Apis["runs"]["get"]["params"]>>>>,
+	Expect<Equal<Api["runs"]["get"]["output"], z.output<Apis["runs"]["get"]["response"]>>>,
+	Expect<Equal<Api["system"]["health"]["output"], z.output<Apis["system"]["health"]["response"]>>>,
+];

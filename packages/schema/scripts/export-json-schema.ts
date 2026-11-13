@@ -1,20 +1,32 @@
-// 把 zod schema 导出为 JSON Schema、把 HTTP 契约导出为路由清单，写入 Python SDK 的包数据目录。
+// 从契约导出全部生成物：给 Python SDK 的 JSON Schema 与路由清单，给 API 客户端（packages/client）的类型与路由表。
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { exportedSchemas, httpContract, toJsonSchema } from "../src/index.js";
+import { buildClientExport } from "../src/client-export.js";
+import * as contract from "../src/index.js";
 import { buildRouteManifest } from "../src/route-manifest.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const outDir = join(here, "../../../sdk/python/src/sfly/schemas");
-mkdirSync(outDir, { recursive: true });
 
-for (const [name, schema] of Object.entries(exportedSchemas)) {
-	const file = join(outDir, `${name}.schema.json`);
-	writeFileSync(file, `${JSON.stringify(toJsonSchema(schema), null, 2)}\n`);
+const write = (file: string, text: string) => {
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, text);
 	console.log(`wrote ${file}`);
-}
+};
 
-const routesFile = join(outDir, "routes.json");
-writeFileSync(routesFile, `${JSON.stringify(buildRouteManifest(httpContract), null, 2)}\n`);
-console.log(`wrote ${routesFile}`);
+const sdkDir = join(here, "../../../sdk/python/src/sfly/schemas");
+for (const [name, schema] of Object.entries(contract.exportedSchemas)) {
+	write(
+		join(sdkDir, `${name}.schema.json`),
+		`${JSON.stringify(contract.toJsonSchema(schema), null, 2)}\n`,
+	);
+}
+write(
+	join(sdkDir, "routes.json"),
+	`${JSON.stringify(buildRouteManifest(contract.httpContract), null, 2)}\n`,
+);
+
+const clientDir = join(here, "../../client");
+for (const [file, text] of Object.entries(buildClientExport(contract.httpApis, contract))) {
+	write(join(clientDir, file), text);
+}
