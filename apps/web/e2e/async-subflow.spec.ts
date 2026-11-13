@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import {
 	addMenu,
 	createEditorScenario,
@@ -161,8 +161,22 @@ test("从调度端口拖线到空白处：填写子流程名称后新建子流�
 
 	const dispatchPort = (nodeId: string) =>
 		nodeCard(page, nodeId).locator('.react-flow__handle[data-handleid="dispatch"].source');
+	/** 等端口停在一个位置上再拖：刚加的节点会用一段动画移到视口中央，半路量到的起点和松开时的视口对不上。 */
+	const settledBox = async (locator: Locator) => {
+		let last = "";
+		await expect
+			.poll(async () => {
+				const b = await box(locator);
+				const now = `${Math.round(b.x)},${Math.round(b.y)}`;
+				const same = now === last;
+				last = now;
+				return same;
+			})
+			.toBe(true);
+		return box(locator);
+	};
 	const dragToBlank = async (nodeId: string) => {
-		const from = await box(dispatchPort(nodeId));
+		const from = await settledBox(dispatchPort(nodeId));
 		const x = from.x + from.width / 2;
 		const y = from.y + from.height / 2;
 		await page.mouse.move(x, y);
@@ -211,7 +225,7 @@ test("从调度端口拖线到空白处：填写子流程名称后新建子流�
 	await expect(nodeCard(page, "async_1")).toBeFocused();
 	await expect(nodeCard(page, "subflow_1")).toHaveCount(0);
 
-	await dragToBlank("async_1");
+	const placed = await dragToBlank("async_1");
 	await subflowName(page).fill("压测监控");
 	await subflowName(page).press("Enter");
 	await expect(menu).toHaveCount(0);
@@ -223,8 +237,8 @@ test("从调度端口拖线到空白处：填写子流程名称后新建子流�
 	const inPort = await box(
 		nodeCard(page, "subflow_1").locator('.react-flow__handle[data-handleid="dispatch"].target'),
 	);
-	expect(Math.abs(inPort.x + inPort.width / 2 - drop.x)).toBeLessThan(3);
-	expect(Math.abs(inPort.y + inPort.height / 2 - drop.y)).toBeLessThan(3);
+	expect(Math.abs(inPort.x + inPort.width / 2 - placed.x)).toBeLessThan(3);
+	expect(Math.abs(inPort.y + inPort.height / 2 - placed.y)).toBeLessThan(3);
 
 	// 一步撤销：子流程入口和调度连线一起回去，异步任务节点还在。
 	await page.keyboard.press("Control+z");
