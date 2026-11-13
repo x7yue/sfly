@@ -1,8 +1,7 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * 浏览器昵称：第一次打开页面时填写，保存在 localStorage；API 客户端把它放进每个请求的
- * `x-sfly-nickname` 请求头（./api.ts）。只用于显示，不做鉴权。
+ * 浏览器昵称：第一次打开页面时填写，保存在 localStorage。只用于显示，不做鉴权。
  */
 const STORAGE_KEY = "sfly.nickname";
 

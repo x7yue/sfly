@@ -6,7 +6,6 @@ import {
 	type EndpointResponse,
 	queryKey,
 	type RouteDef,
-	type StreamDef,
 } from "@sfly/schema";
 import { queryOptions } from "@tanstack/react-query";
 import { observeControlPlaneTime } from "./control-plane-time";
@@ -14,10 +13,11 @@ import { getNickname } from "./nickname";
 
 export { ApiError };
 
+const API_BASE = "/api";
+
 /**
- * 控制面 HTTP API 客户端，建立在 API 客户端（@sfly/client）之上。浏览器请求同源的 `/api/*`：生产环境由控制面直接处理（去掉前缀后
+ * 控制面 HTTP API 客户端。浏览器请求同源的 `/api/*`：生产环境由控制面直接处理（去掉前缀后
  * 按原路由处理，见 apps/server/src/http/web-app.ts），开发时由 vite 原样代理到控制面（vite.config.ts）。
- * 请求带上浏览器昵称（./nickname.ts）；每个响应带回控制面时间，页面上的"现在"由它得出（./control-plane-time.ts）。
  *
  * 所有请求都走契约（@sfly/schema 的 http 模块，ADR 0007），没有手写的接口函数和类型：
  *
@@ -30,15 +30,10 @@ export { ApiError };
  * 类型由契约推导，开发环境（vite dev）下响应会按契约解析，不符合时抛出 code 为
  * `contract_violation` 的 ApiError（页面上显示为错误状态，details 是 zod issues）。
  */
-const API_BASE = "/api";
-
 export const apiClient = createClient({
 	baseUrl: API_BASE,
 	nickname: getNickname,
 	onControlPlaneTime: observeControlPlaneTime,
-	// 控制台和控制面同源、随同一个版本发布；版本不一致只出现在升级前打开的标签页，刷新即可，
-	// 默认提示的「重新安装 API 客户端」对控制台不适用。
-	onVersionMismatch: () => {},
 });
 
 /** 按契约调用接口（约定见 packages/schema/src/http/contract.ts）。 */
@@ -55,10 +50,7 @@ export type InputArgs<E extends RouteDef> = keyof EndpointInput<E> extends never
 	: [EndpointInput<E>];
 
 /** 浏览器访问的完整路径（带 `/api` 前缀与查询参数）：下载链接用。 */
-export function apiUrl<D extends DownloadDef | StreamDef>(
-	def: D,
-	...[input]: InputArgs<D>
-): string {
+export function apiUrl<D extends DownloadDef>(def: D, ...[input]: InputArgs<D>): string {
 	return apiClient.url(def, input as RouteInput | undefined);
 }
 

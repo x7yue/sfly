@@ -24,7 +24,7 @@ const sendHeartbeat = (orchestrationId: string, sessionId: string) =>
 		// 心跳失败（控制面重启等）不打扰用户，下一次心跳或 SSE 重连后自动恢复。
 	});
 
-/** 关闭页面或离开编辑页面时主动离开（presenceApi.leave）：keepalive 让页面卸载后请求仍会发出。 */
+/** keepalive：页面卸载后请求仍会发出。 */
 const sendLeave = (orchestrationId: string, sessionId: string) => {
 	const input: EndpointInput<typeof presenceApi.leave> = {
 		params: { id: orchestrationId },

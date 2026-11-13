@@ -1,7 +1,7 @@
 import type { RouteInput } from "@sfly/client";
 import type { EndpointInput, StreamDef, StreamEvents } from "@sfly/schema";
 import { useEffect, useRef } from "react";
-import { apiClient, apiUrl, type InputArgs } from "./api";
+import { apiClient } from "./api";
 
 /** 事件名 → 处理函数；data 的类型由契约推导。 */
 export type SseHandlers<S extends StreamDef> = {
@@ -11,7 +11,7 @@ export type SseHandlers<S extends StreamDef> = {
 type AnyHandlers = Record<string, ((data: unknown) => void) | undefined>;
 
 /**
- * 订阅控制面的 SSE 流（契约里的 `stream` 定义，API 客户端的事件流订阅，断线后自动重连）：
+ * 订阅控制面的 SSE 流（契约里的 `stream` 定义，断线后自动重连）：
  *
  *   useEventSource(runsApi.events, running ? { params: { id } } : null, { run: (view) => … });
  *
@@ -32,25 +32,24 @@ export function useEventSource<S extends StreamDef>(
 	handlersRef.current = handlers;
 	const onOpenRef = useRef(onOpen);
 	onOpenRef.current = onOpen;
-	const inputRef = useRef(input);
-	inputRef.current = input;
-	const url = input === null ? null : apiUrl(def, ...([input] as InputArgs<S>));
+	const inputKey = input === null ? null : JSON.stringify(input);
 	const events = Object.keys(handlers).sort().join("\n");
 
 	useEffect(() => {
-		const current = inputRef.current;
-		if (url === null || current === null) return;
+		if (inputKey === null) return;
 		const forward: AnyHandlers = {};
 		for (const event of events.split("\n").filter(Boolean)) {
 			forward[event] = (data) => (handlersRef.current as AnyHandlers)[event]?.(data);
 		}
-		return openEventSource(def, current, forward as SseHandlers<S>, () => onOpenRef.current?.());
-	}, [url, events, def]);
+		return openEventSource(def, JSON.parse(inputKey), forward as SseHandlers<S>, () =>
+			onOpenRef.current?.(),
+		);
+	}, [inputKey, events, def]);
 }
 
 /**
  * 打开一条 SSE 连接（不依赖组件，useEventSource 与跨组件共用的连接都用它）：按事件名分发已解析的 data
- * （开发环境下按契约校验，不符合时在控制台报错并丢弃）；控制面时间事件由 API 客户端处理，不分发。返回关闭函数。
+ * （开发环境下按契约校验，不符合时在控制台报错并丢弃）。返回关闭函数。
  */
 export function openEventSource<S extends StreamDef>(
 	def: S,
