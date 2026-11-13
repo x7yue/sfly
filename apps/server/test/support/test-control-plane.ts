@@ -55,6 +55,7 @@ export async function startTestControlPlane(
 		| "leaseMs"
 		| "sseHeartbeatMs"
 		| "sdkWheelDir"
+		| "clientPackageDir"
 		| "webDir"
 		| "docsDir"
 		| "version"
@@ -87,6 +88,7 @@ export async function startTestControlPlane(
 			leaseMs: options.leaseMs,
 			sseHeartbeatMs: options.sseHeartbeatMs,
 			sdkWheelDir: options.sdkWheelDir,
+			clientPackageDir: options.clientPackageDir,
 			webDir: options.webDir,
 			docsDir: options.docsDir,
 			version: options.version,

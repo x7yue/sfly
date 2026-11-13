@@ -11,6 +11,7 @@ import type { ArtifactStore } from "../artifacts/artifact-store.js";
 import type { Clock } from "../clock.js";
 import type { Database } from "../db/database.js";
 import type { UserDocs } from "../docs/user-docs.js";
+import type { ClientTarball } from "../downloads/client-tarballs.js";
 import type { Engine } from "../engine/engine.js";
 import type { FeishuBots } from "../feishu/feishu-bots.js";
 import type { FeishuClient } from "../feishu/feishu-client.js";
@@ -29,6 +30,7 @@ import { registerSse } from "../sse/sse.js";
 import { registerAgentBinaryRoutes } from "./agent-binary-routes.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
+import { registerClientPackageRoutes } from "./client-package-routes.js";
 import { contractRoute, guardHttpContract } from "./contract-route.js";
 import { registerDashboardRoutes } from "./dashboard-routes.js";
 import { registerDocsRoutes } from "./docs-routes.js";
@@ -65,6 +67,8 @@ export interface HttpApiDeps {
 	publicConfig: PublicConfig;
 	/** 可下载的 SDK 运行时 wheel。 */
 	sdkWheels: readonly SdkWheel[];
+	/** 可下载的 API 客户端安装包（src/downloads/client-tarballs.ts）。 */
+	clientTarballs: readonly ClientTarball[];
 	/** 可下载的 Agent 二进制与 install.sh 模板（src/agent-binaries/）。 */
 	agentBinaries: AgentBinaries;
 	installScript: string;
@@ -108,6 +112,7 @@ export function buildHttpApi({
 	agentToken,
 	publicConfig,
 	sdkWheels,
+	clientTarballs,
 	agentBinaries,
 	installScript,
 	docs,
@@ -181,6 +186,7 @@ export function buildHttpApi({
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });
 	registerSdkRoutes(app, { wheels: sdkWheels, publicConfig });
+	registerClientPackageRoutes(app, { tarballs: clientTarballs, publicConfig });
 	registerAgentBinaryRoutes(app, { binaries: agentBinaries, installScript, publicConfig });
 	registerDocsRoutes(app, {
 		docs,

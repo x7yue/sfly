@@ -1,5 +1,6 @@
 import { agentBinariesApi } from "./agent-binaries.js";
 import { agentsApi } from "./agents.js";
+import { clientPackageApi } from "./client-package.js";
 import type { RouteDef } from "./contract.js";
 import { dashboardApi } from "./dashboard.js";
 import { docsApi } from "./docs.js";
@@ -14,6 +15,7 @@ import { sdkApi, systemApi } from "./system.js";
 
 export * from "./agent-binaries.js";
 export * from "./agents.js";
+export * from "./client-package.js";
 export * from "./clock-offset.js";
 export * from "./contract.js";
 export * from "./dashboard.js";
@@ -31,6 +33,7 @@ export const httpApis = {
 	agentBinaries: agentBinariesApi,
 	agents: agentsApi,
 	artifacts: artifactsApi,
+	clientPackage: clientPackageApi,
 	dashboard: dashboardApi,
 	docs: docsApi,
 	feishuBots: feishuBotsApi,
