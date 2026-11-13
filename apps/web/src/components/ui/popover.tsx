@@ -1,5 +1,6 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 import { cn } from "cn";
+import { MENU_SURFACE, POPUP_MOTION } from "@/components/ui/overlay";
 
 /**
  * 弹出层（Base UI Popover）：Esc 与点外面关闭，关闭后焦点回到打开前的元素。
@@ -39,7 +40,9 @@ function PopoverContent({
 				<PopoverPrimitive.Popup
 					data-slot="popover-content"
 					className={cn(
-						"z-50 max-h-(--available-height) origin-(--transform-origin) overflow-hidden rounded-lg border border-border-strong bg-raised text-fg-1 shadow-pop outline-none duration-100 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+						"z-50 max-h-(--available-height) origin-(--transform-origin) overflow-hidden",
+						MENU_SURFACE,
+						POPUP_MOTION,
 						className,
 					)}
 					{...props}
