@@ -3,11 +3,15 @@ import { createExchange, type FetchLike, type ResponseLike } from "./exchange.js
 import { type Api, routes } from "./generated/routes.js";
 import {
 	type CallOptions,
+	type Handlers,
 	type Methods,
 	type RouteInput,
 	type RouteRef,
 	requestPath,
+	type SubscribeOptions,
+	type Unsubscribe,
 } from "./route.js";
+import { subscribe } from "./subscribe.js";
 
 export interface ClientOptions {
 	/**
@@ -33,6 +37,13 @@ export interface LowLevel {
 	request(route: RouteRef, input?: RouteInput, options?: CallOptions): Promise<unknown>;
 	/** 接口的地址，不发请求。 */
 	url(route: RouteRef, input?: RouteInput): string;
+	/** 订阅事件流：按事件名分发给处理函数（不校验形状），断线自动重连；返回关闭函数。 */
+	subscribe(
+		route: RouteRef & { readonly kind: "stream" },
+		input: RouteInput | undefined,
+		handlers: Handlers<Record<string, unknown>>,
+		options?: SubscribeOptions,
+	): Unsubscribe;
 }
 
 export type Client = LowLevel & Methods<Api>;
@@ -75,12 +86,28 @@ export function createClient(options: ClientOptions): Client {
 			});
 		}
 	}
-	const low: LowLevel = { request, url: exchange.url };
+	const low: LowLevel = {
+		request,
+		url: exchange.url,
+		subscribe: (route, input, handlers, options) =>
+			subscribe(exchange, route, input, handlers, options),
+	};
 
-	const bind = (route: RouteRef & { readonly kind: "endpoint" | "download" }) => {
+	const bind = (
+		route:
+			| (RouteRef & { readonly kind: "endpoint" })
+			| (RouteRef & { readonly kind: "stream" })
+			| (RouteRef & { readonly kind: "download" }),
+	) => {
 		switch (route.kind) {
 			case "endpoint":
 				return (input?: RouteInput, call?: CallOptions) => low.request(route, input, call);
+			case "stream":
+				return (
+					input: RouteInput,
+					handlers: Handlers<Record<string, unknown>>,
+					options?: SubscribeOptions,
+				) => low.subscribe(route, input, handlers, options);
 			case "download":
 				return (input?: RouteInput) => low.url(route, input);
 		}

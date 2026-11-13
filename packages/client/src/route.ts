@@ -1,3 +1,5 @@
+import type { ApiError } from "./errors.js";
+
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 /**
@@ -35,10 +37,32 @@ export interface Endpoint<I, O> {
 	output: O;
 }
 
+export interface Stream<I, E> {
+	kind: "stream";
+	input: I;
+	events: E;
+}
+
 export interface Download<I> {
 	kind: "download";
 	input: I;
 }
+
+/** 事件名 → 处理函数，只写关心的事件。 */
+export type Handlers<E> = { readonly [K in keyof E]?: (data: E[K]) => void };
+
+export interface SubscribeOptions {
+	/** 每次连上都调用，首次和每次重连各一次：在这里重新拉取完整数据。 */
+	onOpen?: () => void;
+	/**
+	 * 订阅停止、不再重连时调用：控制面回了 4xx（例如运行不存在），或响应不是事件流。
+	 * 断线、连不上和 5xx 会自动重连，不经过这里。
+	 */
+	onError?: (error: ApiError) => void;
+}
+
+/** 断开连接，不再重连；可以重复调用。 */
+export type Unsubscribe = () => void;
 
 type KindOf<R> = R extends { kind: infer K extends NonNullable<RouteRef["kind"]> } ? K : never;
 
@@ -53,9 +77,11 @@ type Args<I> = Partial<I> extends I ? [input?: I] : [input: I];
 export type Method<R> =
 	R extends Endpoint<infer I, infer O>
 		? (...args: [...Args<I>, options?: CallOptions]) => Promise<O>
-		: R extends Download<infer I>
-			? (...args: Args<I>) => string
-			: never;
+		: R extends Stream<infer I, infer E>
+			? (input: I, handlers: Handlers<E>, options?: SubscribeOptions) => Unsubscribe
+			: R extends Download<infer I>
+				? (...args: Args<I>) => string
+				: never;
 
 export type Methods<A> = {
 	readonly [D in keyof A]: { readonly [N in keyof A[D]]: Method<A[D][N]> };

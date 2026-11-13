@@ -1,6 +1,6 @@
 // 由 HTTP 契约（packages/schema/src/http）生成，不要手改：pnpm gen。
 
-import type { Download, Endpoint, RouteTable } from "../route.js";
+import type { Download, Endpoint, RouteTable, Stream } from "../route.js";
 import type {
 	AgentView,
 	ArtifactView,
@@ -8,8 +8,10 @@ import type {
 	FeishuBotScenario,
 	FeishuBotView,
 	ListOrchestrationsQuery,
+	LogChunk,
 	LogPage,
 	LogPageQuery,
+	MetricIncrement,
 	MetricSeries,
 	MetricSeriesQuery,
 	NodeName,
@@ -25,9 +27,12 @@ import type {
 	PlatformMetrics,
 	PlatformMetricsQuery,
 	PreflightProblem,
+	ProgressEvent,
 	ReferencedAgent,
 	RunListItem,
 	RunListQuery,
+	RunLogChunk,
+	RunLogNodesParam,
 	RunLogPage,
 	RunLogPageQuery,
 	RunLogScopeQuery,
@@ -144,6 +149,25 @@ export interface Api {
 			LogPage
 		>;
 		/**
+		 * `GET /tasks/:id/logs/events`
+		 *
+		 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
+		 * （从分页的 last_seq 接上，浏览器重连时按 Last-Event-ID 续传）。
+		 */
+		events: Stream<
+			{
+				params: {
+					id: string;
+				};
+				query?: {
+					after_seq?: string;
+				};
+			},
+			{
+				logs: LogChunk;
+			}
+		>;
+		/**
 		 * `GET /tasks/:id/logs/download`
 		 *
 		 * 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。
@@ -181,6 +205,34 @@ export interface Api {
 					id: string;
 				};
 				query?: RunLogScopeQuery;
+			}
+		>;
+		/**
+		 * `GET /runs/:id/logs/events`
+		 *
+		 * 按运行的实时推送（SSE，#225）：范围（`nodes`）内全部任务新写入的行，包括订阅之后才开始的任务和尝试，
+		 * 只推送 `level` 里的级别；范围和级别要与读历史时相同。`after` 用最新一页的 `live_after`。
+		 *
+		 * - `logs`：一批新行；事件 ID 是推送到的位置（不透明），浏览器原生 EventSource 断线重连时经 `Last-Event-ID`
+		 *   带回，控制面只补发之后的行，不重复也不遗漏。
+		 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
+		 *
+		 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
+		 */
+		runEvents: Stream<
+			{
+				params: {
+					id: string;
+				};
+				query?: {
+					after?: string;
+					nodes?: RunLogNodesParam;
+					level?: string;
+				};
+			},
+			{
+				logs: RunLogChunk;
+				reload: Record<string, never>;
 			}
 		>;
 	};
@@ -440,6 +492,25 @@ export interface Api {
 			},
 			RunView
 		>;
+		/**
+		 * `GET /runs/:id/events`
+		 *
+		 * 运行的实时推送（SSE）：连上时和运行或任何节点的状态变化时推送完整的运行视图（`run`），
+		 * 任务进度更新时推送 `progress`（只含这一个任务的最新进度），执行中的任务新上报的指标点推送 `metrics`
+		 * （每个任务每秒最多一条；断线期间错过的点用指标序列查询补齐）。
+		 */
+		events: Stream<
+			{
+				params: {
+					id: string;
+				};
+			},
+			{
+				run: RunView;
+				progress: ProgressEvent;
+				metrics: MetricIncrement;
+			}
+		>;
 	};
 	system: {
 		/**
@@ -475,9 +546,11 @@ export const routes = {
 	},
 	logs: {
 		page: { method: "GET", path: "/tasks/:id/logs", kind: "endpoint" },
+		events: { method: "GET", path: "/tasks/:id/logs/events", kind: "stream" },
 		download: { method: "GET", path: "/tasks/:id/logs/download", kind: "download" },
 		runPage: { method: "GET", path: "/runs/:id/logs", kind: "endpoint" },
 		runDownload: { method: "GET", path: "/runs/:id/logs/download", kind: "download" },
+		runEvents: { method: "GET", path: "/runs/:id/logs/events", kind: "stream" },
 	},
 	metrics: {
 		summary: { method: "GET", path: "/runs/:id/metrics/summary", kind: "endpoint" },
@@ -503,6 +576,7 @@ export const routes = {
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },
 		listForOrchestration: { method: "GET", path: "/orchestrations/:id/runs", kind: "endpoint" },
 		get: { method: "GET", path: "/runs/:id", kind: "endpoint" },
+		events: { method: "GET", path: "/runs/:id/events", kind: "stream" },
 	},
 	system: {
 		health: { method: "GET", path: "/health", kind: "endpoint" },

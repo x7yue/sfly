@@ -35,7 +35,7 @@ export type ClientExport = Record<
 	string
 >;
 
-const LOW_LEVEL = new Set(["request", "url"]);
+const LOW_LEVEL = new Set(["request", "url", "subscribe"]);
 const PROTOCOL = {
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
@@ -63,7 +63,6 @@ function selectClientRoutes(apis: Record<string, Record<string, RouteDef>>): Cli
 			}
 			const kind = "kind" in def ? def.kind : "endpoint";
 			if (def.method !== "GET") continue;
-			if (kind === "stream") continue;
 			routes.push({ domain, name, kind, def });
 		}
 	}

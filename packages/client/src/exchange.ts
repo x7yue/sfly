@@ -17,6 +17,7 @@ export interface ResponseLike {
 	readonly ok: boolean;
 	readonly status: number;
 	readonly headers: { get(name: string): string | null };
+	readonly body: ReadableStream<Uint8Array> | null;
 	json(): Promise<unknown>;
 	text(): Promise<string>;
 }
@@ -29,11 +30,14 @@ export interface ExchangeConfig {
 
 export interface SendInit extends CallOptions {
 	accept: string;
+	headers?: Readonly<Record<string, string>>;
 }
 
 export interface Exchange {
 	send(route: RouteRef, input: RouteInput | undefined, init: SendInit): Promise<ResponseLike>;
 	url(route: RouteRef, input: RouteInput | undefined): string;
+	/** 控制面时间的唯一入口：响应头里的和事件流里的都经过这里交给回调。 */
+	noteTime(time: unknown): void;
 }
 
 export function createExchange(config: ExchangeConfig): Exchange {
@@ -45,9 +49,12 @@ export function createExchange(config: ExchangeConfig): Exchange {
 		return headers;
 	};
 
+	const noteTime = (time: unknown): void => {
+		if (typeof time === "string" && time !== "") config.onControlPlaneTime(time);
+	};
+
 	const observe = (res: ResponseLike): void => {
-		const time = res.headers.get(CONTROL_PLANE_TIME_HEADER);
-		if (time) config.onControlPlaneTime(time);
+		noteTime(res.headers.get(CONTROL_PLANE_TIME_HEADER));
 	};
 
 	const url = (route: RouteRef, input: RouteInput | undefined) =>
@@ -59,7 +66,7 @@ export function createExchange(config: ExchangeConfig): Exchange {
 		try {
 			res = await config.fetch(`${baseUrl}${path}`, {
 				method: route.method,
-				headers: headersFor(input, init),
+				headers: { ...headersFor(input, init), ...init.headers },
 				body: input?.body === undefined ? undefined : JSON.stringify(input.body),
 				signal: init.signal,
 				keepalive: init.keepalive,
@@ -81,7 +88,7 @@ export function createExchange(config: ExchangeConfig): Exchange {
 		return res;
 	};
 
-	return { send, url };
+	return { send, url, noteTime };
 }
 
 function normalizeBaseUrl(baseUrl: string): string {

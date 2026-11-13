@@ -18,7 +18,6 @@ describe("API 客户端的方法来自契约里标了 client 的接口", () => {
 			Object.entries(table)
 				.filter(([, def]) => def.client)
 				.filter(([, def]) => def.method === "GET")
-				.filter(([, def]) => !("kind" in def) || def.kind !== "stream")
 				.map(([name]) => `${domain}.${name}`),
 		);
 		expect(methodsOf(client).sort()).toEqual(flagged.sort());

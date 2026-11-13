@@ -502,6 +502,31 @@ export interface ListOrchestrationsQuery {
 	archived?: string;
 }
 
+/** 实时推送的一批行（`GET /tasks/:id/logs/events` 的 `logs` 事件）；offset 是第一行的字节偏移。 */
+export interface LogChunk {
+	task_id: string;
+	lines: LogLineView[];
+	offset: number;
+}
+
+/**
+ * 一行日志，带两种时间（ADR 0018）。日志文件是 JSONL，每行就是这个对象（字段顺序也相同：页面按它算字节偏移）；
+ * 升级之前写入的行只有一个 `time`，读出时它是 `agent_time`，`time` 为 null。
+ */
+export interface LogLineView {
+	/** 任务内从 1 开始递增的序号，用来排序和去重。 */
+	seq: number;
+	/** 控制面时间：这一行在 Agent 上被读到时的控制面时间，时间线定位和按时间范围筛选用它；未记录时为 null。 */
+	time: Timestamp | null;
+	/** Agent 时间：原样保存，不做范围检查，只用于展示和对照；没有上报时为 null。 */
+	agent_time: Timestamp | null;
+	/** agent：Agent 自己写入的提示行（Agent 时间跳变）；system：控制面写入的截断标记。 */
+	source: "stdout" | "stderr" | "sdk" | "agent" | "system";
+	level: "debug" | "info" | "warn" | "error";
+	/** secret 参数的值已替换成掩码。 */
+	text: string;
+}
+
 /** 合并日志里一行的来源：它是哪个节点的哪一次尝试（任务）输出的。 */
 export interface LogOrigin {
 	task_id: string;
@@ -584,6 +609,18 @@ export interface MetricDeclaration {
 }
 
 /**
+ * 运行事件流 `GET /runs/:id/events` 上的 `metrics` 事件：一个执行中任务新收到的点（Agent 每秒最多一批）。
+ * 断线期间错过的点用序列查询补齐。
+ */
+export interface MetricIncrement {
+	task_id: string;
+	chain_instance_id: string;
+	node_id: string;
+	attempt: number;
+	points: MetricPointView[];
+}
+
+/**
  * 序列的标签（#78）：键 → 值。一个任务里，一个指标在一组确定的标签值下的全部点构成一个序列；
  * 不带标签的序列为 `{}`。
  */
@@ -591,6 +628,20 @@ export type MetricLabels = Record<string, string>;
 
 /** 指标名：标识符。 */
 export type MetricName = string;
+
+/** 一个合并后的点（每个序列每秒一个）。 */
+export interface MetricPointView {
+	name: MetricName;
+	labels: MetricLabels;
+	/** 这个点在 Agent 上发生的时刻对应的控制面时间（按秒取整），同一序列严格递增。 */
+	time: Timestamp;
+	/** 这个点的 Agent 时间：被测机器上的时间，可能与 `time` 相差很远，也可能倒退。 */
+	agent_time: Timestamp;
+	value: number;
+	/** 这一秒内的最小、最大值（counter 与 value 相同）。 */
+	min: number;
+	max: number;
+}
 
 /**
  * 序列查询的结果：查询的每个指标的全部序列（按指标的查询顺序，同一指标按标签排序），每个序列的非空桶按时间升序。
@@ -926,6 +977,15 @@ export interface PreflightProblem {
 	node_id?: string;
 }
 
+/** 运行事件流上的 `progress` 事件：一个任务的最新进度。 */
+export interface ProgressEvent {
+	run_id: string;
+	chain_instance_id: string;
+	node_id: string;
+	task_id: string;
+	progress: TaskProgressView;
+}
+
 /** 场景引用的 Agent；unknown：还没有注册过（从没连接过控制面）。 */
 export interface ReferencedAgent {
 	name: string;
@@ -1004,6 +1064,15 @@ export interface RunListQuery {
 	/** 运行编号前缀或触发人（包含，不区分大小写）。 */
 	q?: string;
 	limit?: number;
+}
+
+/**
+ * 按运行实时推送的一批新写入的行（`GET /runs/:id/logs/events` 的 `logs` 事件），格式与分页相同。
+ * 一批里可能有多个任务的行，同一任务内按 seq；断线后补发的行（晚到的行）可能比已推送的别的任务的行更早，
+ * 收到后按排序键（run-log-order.ts）插到对应位置。
+ */
+export interface RunLogChunk {
+	lines: RunLogLine[];
 }
 
 /** 按运行合并的一行：任务日志里的一行，加上它的来源和排序要用的信息。 */
