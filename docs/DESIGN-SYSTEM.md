@@ -37,7 +37,7 @@
 | 描边 | `border`、`border-soft`、`border-strong` | 控件 / 面板内分隔 / 浮层 |
 | 文字 | `fg-1`、`fg-2`、`fg-3` | 正文 / 次要 / 辅助（对 `bg`、`surface`、`raised`、`raised-2` 都 ≥ 4.5:1；不再叠加不透明度） |
 | 主操作 | `primary`、`primary-hover`、`primary-foreground` | 白色按钮 |
-| 信号（青） | `signal`、`signal-fg`、`signal-line`、`signal-soft` | 执行中、键盘焦点环（`ring`）、调度连线 |
+| 信号（青） | `signal`、`signal-fg`、`signal-line`、`signal-soft` | 执行中、键盘焦点环（`ring`）、调度连线；`signal-soft`（淡底）与 `signal-line`（描边）用于执行中的区段，见 2.4 |
 | 选中 | `selected`、`selected-bg`、`selected-ring` | 中性高亮 |
 | 状态 | `ok`、`warn`(`-fg`)、`danger`(`-fg`)，各带 `-soft` / `-line`；`pending`、`skipped`、`cancelled`、`stopped` | 见第 5 节 |
 | 日志 | `log-debug`、`log-info`、`log-warn`、`log-error` | INFO 不上色 |
@@ -54,6 +54,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 - **白色是每屏唯一的主操作**：`<Button variant="primary">` 每屏最多一个（如「新建场景」）；其余按钮用默认（中性）或 `ghost`。Logo 与头像的白底不是操作。
 - **青色只用于执行中、键盘焦点环、调度连线**。不要用青色表示选中、链接或强调。
+- **执行中的区段是淡底加内描边，不是实心青色**：时间线段、链路进度段（`chain-progress`）、场景缩略图节点、平台图表里的节点耗时条用 `signal-soft` 底加 1px `signal-line` 内描边（`shadow-[inset_0_0_0_1px_var(--signal-line)]`；缩略图是 SVG，用 `fill-signal-soft stroke-signal`），与成功（`ok/50`）、失败（`danger`）等色块同一量级。实心 `signal` 只给状态点、时间线段尾的脉冲头和焦点环；脉冲是唯一的光晕动画，「减少动效」时由 `app.css` base 层停止。
 - **选中是中性高亮**：`raised` / `raised-2` 底 + 左侧 2px 白色短条（`shadow-[inset_2px_0_0_var(--primary)]`），画布上是 `selected` 描边 + `selected-ring`，相关连线灰色虚线流动。
 - 绿色 = 成功，红色 = 失败，琥珀色 = 等待与警告（含安装中）。
 - **已取消**用中性灰虚线圈，与跳过（淡灰空心圈）、待执行（灰空心圈）区分。

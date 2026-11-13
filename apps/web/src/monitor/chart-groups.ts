@@ -6,6 +6,7 @@ import {
 	isOnAgentStatus,
 	type MetricSeries,
 	type NodeRunView,
+	type RunMetricCatalog,
 	type RunView,
 } from "@sfly/schema";
 import { nodeStatusView, type StatusKind } from "#/components/status";
@@ -98,3 +99,10 @@ export function failedFirst(groups: readonly ChartGroup[]): readonly ChartGroup[
 	if (!groups.some(isFailed)) return groups;
 	return [...groups.filter(isFailed), ...groups.filter((g) => !isFailed(g))];
 }
+
+/**
+ * 图表工作区要不要收成一行：指标目录已经到了，而运行里没有任何节点有图表可显示（没有节点上报指标，或数据已过保留期）。
+ * 目录还没到时按「有图表」处理，版面不会先收起又展开。
+ */
+export const chartsCompact = (run: RunView, catalog: Pick<RunMetricCatalog, "nodes"> | undefined) =>
+	catalog !== undefined && buildGroups(run, catalog.nodes).length === 0;

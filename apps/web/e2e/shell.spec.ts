@@ -72,6 +72,25 @@ test("命令面板：Ctrl K 打开，搜索并跳转到页面或场景", async (
 	await expect(page).toHaveURL(new RegExp(`/orchestrations/${scenarioId}$`));
 });
 
+test("命令面板：Ctrl K 后马上输入，字落在搜索框里，回车执行匹配的那一条（#280）", async ({
+	page,
+}) => {
+	await page.goto("/agents");
+	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
+	// 机器忙的时候一帧可能很长：让每一帧都晚到 300ms，打开面板和下一帧之间按下的键也要进搜索框。
+	await page.evaluate(() => {
+		const raf = window.requestAnimationFrame.bind(window);
+		window.requestAnimationFrame = (callback) =>
+			raf(() => {
+				setTimeout(() => callback(performance.now()), 300);
+			});
+	});
+	await page.keyboard.press("Control+k");
+	await page.keyboard.type("节点包");
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/packages$/);
+});
+
 test("命令面板：「运行」分组跳转到最近的运行；「运行场景」打开运行抽屉", async ({
 	page,
 	controlPlane,

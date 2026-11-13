@@ -125,16 +125,45 @@ export function logScope(
 	);
 }
 
-/** 打开运行时默认选中的节点：失败的节点，其次是执行中的节点；都没有时不选。 */
-export function focusNode(run: RunView, nodeId?: string): NodeRef | null {
-	const all = orderedChains(run).flatMap((c) =>
+const nodeRefs = (run: RunView) =>
+	orderedChains(run).flatMap((c) =>
 		c.nodes.map((n) => ({ chainInstanceId: c.id, nodeId: n.node_id, status: n.status })),
 	);
-	const pick =
-		(nodeId ? all.find((n) => n.nodeId === nodeId) : undefined) ??
-		all.find((n) => n.status === "failed") ??
-		all.find((n) => ["running", "dispatched", "waiting", "queued"].includes(n.status));
-	return pick ? { chainInstanceId: pick.chainInstanceId, nodeId: pick.nodeId } : null;
+
+const toRef = (pick: { chainInstanceId: string; nodeId: string } | undefined): NodeRef | null =>
+	pick ? { chainInstanceId: pick.chainInstanceId, nodeId: pick.nodeId } : null;
+
+/**
+ * 监控页打开运行时默认选中的节点：链接里给的节点，其次第一个失败的节点（按链的层级与节点顺序）；都没有时不选，
+ * 底部面板显示全部节点合并后的日志。执行中的节点不默认选中：会把日志范围收窄到一个可能还没输出的节点，
+ * 而别的节点正在写日志。
+ */
+export function initialSelection(run: RunView, linkedNode?: string): NodeRef | null {
+	const all = nodeRefs(run);
+	return toRef(
+		(linkedNode ? all.find((n) => n.nodeId === linkedNode) : undefined) ??
+			all.find((n) => n.status === "failed"),
+	);
+}
+
+/** 运行抽屉的摘要要看最近日志的节点：{@link initialSelection} 选中的节点，其次是还在进行的节点（运行抽屉没有「不选」）。 */
+export function focusNode(run: RunView, nodeId?: string): NodeRef | null {
+	return (
+		initialSelection(run, nodeId) ??
+		toRef(
+			nodeRefs(run).find((n) => ["running", "dispatched", "waiting", "queued"].includes(n.status)),
+		)
+	);
+}
+
+/**
+ * 节点最新一次尝试的进度（ctx.progress），如 `308/3000`；没有进度为 null。
+ * 进度只跟着尝试走，节点结束后仍保留最后一次上报的值。
+ */
+export function progressLabel(node: NodeRunView): string | null {
+	const progress = node.attempts.at(-1)?.progress;
+	if (!progress) return null;
+	return progress.total === null ? `${progress.current}` : `${progress.current}/${progress.total}`;
 }
 
 /** 失败运行的摘要：第一个失败的节点（按链的层级与节点顺序）、它的第几次尝试与错误信息的第一行。 */
@@ -248,12 +277,31 @@ export const MASK = "••••••";
  * 取消与触发的响应、重新获取——到达顺序不一定是生成顺序：运行结束前生成、结束后才到达的响应会把最终状态
  * 改回「运行中」，而运行已经结束，事件流不会再推送，界面就停在旧状态。运行结束后不会再回到运行中，
  * 所以已结束的视图不被「运行中」的视图覆盖。运行中的视图之间谁新谁旧无法判断，但没有关系：
- * 运行中事件流会继续推送，下一次变化就会纠正——进度除外，见 {@link keepNewerProgress}。
+ * 运行中事件流会继续推送，下一次变化就会纠正——进度除外，见 {@link keepNewerProgress}；运行通知的投递状态也不会回退，
+ * 见 {@link keepSettledNotification}。
  */
 export function latestRunView(current: RunView | undefined, next: RunView): RunView {
 	if (current === undefined) return next;
 	if (current.status !== "running" && next.status === "running") return current;
-	return keepNewerProgress(current, next);
+	return keepSettledNotification(current, keepNewerProgress(current, next));
+}
+
+/**
+ * 运行通知的投递状态只会从排队中变成有结果（已送达、投递失败、已丢弃），不会回到排队中（#258）。运行结束时
+ * 事件流推送的视图和重新获取的响应都带着「排队中」，而结果只在投递之后的视图里：投递之前生成、之后才到达的
+ * 响应（慢的重新获取）会把缓存里已有的结果改回排队中，要等下一次定时重新获取才纠正。所以缓存里已有结果、
+ * 新视图仍是排队中时保留缓存里的通知状态，视图的其余部分用新到的。
+ */
+function keepSettledNotification(current: RunView, next: RunView): RunView {
+	const settled = current.run_notification;
+	if (
+		settled === null ||
+		settled.status === "queued" ||
+		next.run_notification?.status !== "queued"
+	) {
+		return next;
+	}
+	return { ...next, run_notification: settled };
 }
 
 /**

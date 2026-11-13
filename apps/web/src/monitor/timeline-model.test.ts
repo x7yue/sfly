@@ -183,10 +183,24 @@ describe("时间范围", () => {
 		expect(runExtent(run, s(103))).toEqual({ start: s(100), end: s(110) });
 	});
 
-	it("已结束：从开始到结束", () => {
-		expect(runExtent({ started_at: at(100), ended_at: at(400) }, s(9999))).toEqual({
+	it("已结束：按实际时长定轴，末端留 8% 空白；不受「现在」影响", () => {
+		const ended = { started_at: at(100), ended_at: at(400) };
+		expect(runExtent(ended, s(9999))).toEqual({ start: s(100), end: s(424) });
+		expect(runExtent(ended, s(401))).toEqual({ start: s(100), end: s(424) });
+	});
+
+	it("已结束的短运行不套 10 秒下限：436ms 的运行占轨道的 92%", () => {
+		const start = s(100);
+		const short = { started_at: at(100), ended_at: new Date(start + 436).toISOString() };
+		const extent = runExtent(short, s(9999));
+		expect(extent).toEqual({ start, end: start + 471 });
+		expect(436 / (extent.end - extent.start)).toBeCloseTo(0.926, 3);
+	});
+
+	it("已结束的零时长运行按 100ms 定轴，轴不会缩成一点", () => {
+		expect(runExtent({ started_at: at(100), ended_at: at(100) }, s(9999))).toEqual({
 			start: s(100),
-			end: s(400),
+			end: s(100) + 108,
 		});
 	});
 
@@ -218,6 +232,26 @@ describe("刻度", () => {
 			{ at: s(140), label: "+40s" },
 			{ at: s(150), label: "+50s" },
 			{ at: s(160), label: "+1m" },
+		]);
+	});
+
+	it("不足 1 秒的运行用 0.1 / 0.2 / 0.5 秒的步长，标注带小数秒", () => {
+		const range = { start: s(100), end: s(100) + 471 };
+		expect(ticks(range, { origin: s(100) }).map((t) => t.label)).toEqual([
+			"+0s",
+			"+0.1s",
+			"+0.2s",
+			"+0.3s",
+			"+0.4s",
+		]);
+		const short = { start: s(100), end: s(100) + 2700 };
+		expect(ticks(short, { origin: s(100) }).map((t) => t.label)).toEqual([
+			"+0s",
+			"+0.5s",
+			"+1s",
+			"+1.5s",
+			"+2s",
+			"+2.5s",
 		]);
 	});
 
