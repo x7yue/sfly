@@ -56,7 +56,7 @@ test("卡片显示缩略图、名称、说明、版本与节点数、Agent 在�
 	const empty = page.getByRole("article", { name: "空场景" });
 	await expect(empty).toContainText("未保存");
 	await expect(empty).toContainText("1 节点");
-	await expect(empty).toContainText("没有说明");
+	await expect(empty).not.toContainText("没有说明");
 
 	await card.getByRole("link", { name: "运行中，进入运行监控" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
@@ -283,6 +283,34 @@ test("归档后从列表消失，在「已归档」里恢复；有运行中的�
 
 	await archived.click();
 	await expect(page.getByRole("article", { name: "旧场景" })).toBeVisible();
+});
+
+test("归档确认框的放弃按钮叫「保留场景」；归档成功的通知里可以「撤销」，场景回到列表", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "旧场景", scenarioUsing("agent-a"));
+
+	await page.goto("/orchestrations");
+	const card = page.getByRole("article", { name: "旧场景" });
+	await card.getByLabel("更多操作").click();
+	await page.getByRole("menuitem", { name: /归档/ }).click();
+	const confirm = page.getByRole("dialog", { name: "归档「旧场景」？" });
+	await expect(confirm.getByRole("button", { name: "取消", exact: true })).toHaveCount(0);
+	await confirm.getByRole("button", { name: "保留场景" }).click();
+	await expect(confirm).toBeHidden();
+	await expect(card).toBeVisible();
+
+	await card.getByLabel("更多操作").click();
+	await page.getByRole("menuitem", { name: /归档/ }).click();
+	await confirm.getByRole("button", { name: "归档" }).click();
+	await expect(card).toBeHidden();
+	await page.getByRole("button", { name: "撤销" }).click();
+	await expect(page.getByText("已恢复「旧场景」")).toBeVisible();
+	await expect(card).toBeVisible();
 });
 
 test("已归档场景的历史运行仍可回看：卡片与表格行的「查看运行记录」，运行记录的场景筛选里标注「已归档」", async ({

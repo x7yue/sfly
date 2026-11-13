@@ -31,6 +31,35 @@ test("侧边栏在七个一级页面之间切换，当前页高亮，面包屑�
 	}
 });
 
+test("侧边栏项右侧平时是计数，悬停或键盘聚焦时换成跳转快捷键，折叠后不显示", async ({
+	page,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await page.goto("/");
+	const agents = sidebar(page).getByRole("link", { name: "Agent 管理" });
+	const count = agents.getByText("1/1");
+	const keys = agents.locator("span[aria-hidden]:has(kbd)");
+	await expect(count).toBeVisible();
+	await expect(count).toHaveCSS("opacity", "1");
+	await expect(keys).toHaveText("G然后A");
+	await expect(keys).toHaveCSS("opacity", "0");
+
+	await agents.hover();
+	await expect(keys).toHaveCSS("opacity", "1");
+	await expect(count).toHaveCSS("opacity", "0");
+
+	await page.mouse.move(700, 500);
+	const docs = sidebar(page).getByRole("link", { name: "开发文档" });
+	await expect(docs.locator("span[aria-hidden]:has(kbd)")).toHaveCSS("opacity", "0");
+	await docs.focus();
+	await expect(docs.locator("span[aria-hidden]:has(kbd)")).toHaveText("G然后H");
+	await expect(docs.locator("span[aria-hidden]:has(kbd)")).toHaveCSS("opacity", "1");
+
+	await page.getByRole("button", { name: "折叠侧边栏" }).click();
+	await expect(sidebar(page).locator("kbd")).toHaveCount(0);
+});
+
 test("侧边栏可以折叠成一列图标，刷新后保持", async ({ page }) => {
 	await page.goto("/agents");
 	await page.getByRole("button", { name: "折叠侧边栏" }).click();

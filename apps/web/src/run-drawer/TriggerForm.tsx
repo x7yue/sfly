@@ -336,7 +336,7 @@ function ParamField({
 			<label id={labelId} htmlFor={id} className="min-w-0 truncate pt-1.5 text-sm text-fg-2">
 				<span className="font-mono">{param.name}</span>
 				{param.required && (
-					<span aria-hidden className="ml-0.5 text-danger-fg">
+					<span aria-hidden className="ml-0.5 text-fg-2">
 						*
 					</span>
 				)}

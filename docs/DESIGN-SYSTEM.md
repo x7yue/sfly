@@ -58,6 +58,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - **选中是中性高亮**：`raised` / `raised-2` 底 + 左侧 2px 白色短条（`shadow-[inset_2px_0_0_var(--primary)]`），画布上是 `selected` 描边 + `selected-ring`，相关连线灰色虚线流动。
 - 绿色 = 成功，红色 = 失败，琥珀色 = 等待与警告（含安装中）。
 - **已取消**用中性灰虚线圈，与跳过（淡灰空心圈）、待执行（灰空心圈）区分。
+- **没有信号就不着色**：数值为 0 的统计、全零的趋势线用中性色；「运行中」标签的脉冲点只在有运行时出现。必填标记（`*`）用中性 `fg-2`，红色只给错误。保存状态里只有需要处理的才带点（保存被拦截红、未保存琥珀），「已保存」是纯文字。
 - **已停止**用中性灰实心小方块（画布卡片灰色描边、进度条与时间线实心灰段），与已取消、已跳过区分：停止是场景的正常流程，不用警示色。
 - **紫色只用于子流程区域**（`canvas-subflow*`），语义层没有紫色。
 - **日志 INFO 不上色**（`log-info` = 正文色），只有 WARN / ERROR 着色，DEBUG 用辅助文字色。
@@ -118,7 +119,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 | 组件 | 说明 |
 |---|---|
-| `app-shell/AppShell` | 外壳：侧边栏（导航来自 `navigation.ts`，可折叠，状态存 localStorage）、顶栏（面包屑来自路由 `staticData.crumb`、Ctrl K 搜索入口、昵称） |
+| `app-shell/AppShell` | 外壳：侧边栏（导航来自 `navigation.ts`，可折叠，状态存 localStorage；项右侧平时是计数，悬停或键盘聚焦时在同一位置换成跳转快捷键 `Keys`，折叠后不显示）、顶栏（面包屑来自路由 `staticData.crumb`、Ctrl K 搜索入口、昵称） |
 | `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、运行抽屉、通知；`useOverlays().open("shortcuts")`、`useOverlays().runScenario(场景)` |
 | `app-shell/CommandPalette` | 「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」五组；新命令加在 `commands` 里 |
 | `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
@@ -146,13 +147,13 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `failed` | 红色实心点 | 失败 |
 | `warn` | 琥珀实心点 | 等待、警告、安装中 |
 | `pending` | 灰色空心圈 | 待执行、离线 |
-| `skipped` | 淡灰空心圈（70% 不透明） | 已跳过 |
+| `skipped` | 淡灰空心圈（70% 不透明）；文字用 `fg-3`（淡灰对比度不够，只留给圆圈）。待执行的文字同样用 `fg-3` | 已跳过 |
 | `cancelled` | 灰色**虚线**圈 | 已取消 |
 | `stopped` | 灰色实心小方块（停止符号） | 已停止（子流程被停止子流程节点停止，不算失败） |
 
 ### 6.2 空、加载、错误、禁用
 
-- **空**：`EmptyState`——图标方块、14px 标题、说明、下一步操作（按钮或 `CodeBlock` 命令示例），放在 `Panel` 里。
+- **空**：`EmptyState`——图标方块、14px 标题、说明（最宽 40em，居中）、下一步操作（按钮或 `CodeBlock` 命令示例），放在 `Panel` 里。
 - **加载**：`TableSkeleton`（按表格列数画骨架，`role=status` 名称「加载中」）；首次加载才显示，后台刷新不闪。
 - **错误**：`ErrorState`——红色描边块，标题「无法加载 …」、原因、一行错误详情（`GET /api/agents → 503 code`）、「重试」与「复制错误详情」（含 details）。已有数据时后台刷新失败不替换页面。查询默认失败后再重试 2 次（间隔 1 秒），4xx 不重试（`src/router.tsx`）。
 - **禁用**：40% 不透明、`cursor-not-allowed`，不换颜色。

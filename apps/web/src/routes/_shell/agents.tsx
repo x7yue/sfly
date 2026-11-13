@@ -217,7 +217,7 @@ function AgentRow({
 				{update?.detail && (
 					<div
 						className={cn(
-							"max-w-60 text-2xs",
+							"max-w-60 text-xs",
 							update.kind === "failed" ? "text-danger-fg" : "text-fg-3",
 						)}
 					>
@@ -269,8 +269,8 @@ function AgentRow({
 				</span>
 				{unavailable && (
 					<>
-						<div className="text-2xs text-warn-fg">不能被其它 Agent 调用</div>
-						<div className="text-2xs text-fg-3">{unavailable}</div>
+						<div className="text-xs whitespace-nowrap text-warn-fg">不能被其它 Agent 调用</div>
+						<div className="text-xs text-fg-3">{unavailable}</div>
 					</>
 				)}
 			</TableCell>

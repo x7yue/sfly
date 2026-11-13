@@ -91,6 +91,13 @@ const TEXT: Record<StatusKind, string> = {
 	stopped: "text-stopped",
 };
 
+/** 状态文字的颜色：灰阶里偏淡的两种（待执行、已跳过）文字用辅助文字色，保证在所有表面上 ≥ 4.5:1；淡灰只留给圆圈。 */
+const LABEL_TEXT: Record<StatusKind, string> = {
+	...TEXT,
+	pending: "text-fg-3",
+	skipped: "text-fg-3",
+};
+
 const DOT: Record<StatusKind, string> = {
 	ok: "size-1.75 bg-current",
 	running: "size-1.75 bg-current animate-status-pulse",
@@ -127,7 +134,7 @@ export function StatusPill({
 			data-status={kind}
 			className={cn(
 				"inline-flex items-center gap-1.5 text-xs whitespace-nowrap",
-				TEXT[kind],
+				LABEL_TEXT[kind],
 				className,
 			)}
 		>

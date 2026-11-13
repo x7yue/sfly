@@ -40,6 +40,7 @@ test("全屏画布：不带侧边栏，控件悬浮，打开时适配视图并�
 	await expect(page.getByRole("button", { name: "检查通过" })).toBeVisible();
 	await expect(page.getByRole("group", { name: "模式" })).toBeVisible();
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+	await expect(page.getByText("已保存", { exact: true })).not.toHaveAttribute("data-status");
 	await expect(page.getByRole("link", { name: "版本历史" })).toHaveAttribute(
 		"href",
 		`/orchestrations/${id}/versions`,
@@ -840,6 +841,8 @@ test("字段校验失败时不能保存：按钮禁用，Ctrl S 提示；改正�
 	await expect(panel.getByText("需要整数")).toBeVisible();
 	await expect(expectInput).toHaveAttribute("aria-invalid", "true");
 	await expect(page.getByText("1 处字段错误")).toBeVisible();
+	await expect(page.getByRole("button", { name: "1 处字段错误" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "检查通过" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: /保存/ })).toBeDisabled();
 	await page.keyboard.press("Control+s");
 	await expect(page.getByText("有 1 处字段错误，改正后才能保存")).toBeVisible();
@@ -858,6 +861,7 @@ test("字段校验失败时不能保存：按钮禁用，Ctrl S 提示；改正�
 	await panel.getByRole("tab", { name: "参数" }).click();
 	await expectInput.fill("404");
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
+	await expect(page.getByRole("button", { name: "检查通过" })).toBeVisible();
 
 	await nodeCard(page, "entry").click();
 	const name = panel.getByRole("textbox", { name: "参数名称" }).first();

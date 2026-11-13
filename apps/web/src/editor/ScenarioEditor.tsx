@@ -599,6 +599,7 @@ function Editor({
 					version={
 						readyRun && running ? readyRun.run.orchestration_version : versioning.base.version
 					}
+					fieldErrors={fieldErrors.length}
 					warnings={warnings.length}
 					notes={notes.length}
 					onShowChecks={() => {

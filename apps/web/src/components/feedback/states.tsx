@@ -43,7 +43,9 @@ export function EmptyState({
 				</div>
 			)}
 			<h3 className="m-0 mb-1.5 text-base font-semibold text-fg-1">{title}</h3>
-			{description && <p className="m-0 mb-4 text-sm">{description}</p>}
+			{description && (
+				<p className="mx-auto mt-0 mb-4 max-w-[40em] text-sm text-balance">{description}</p>
+			)}
 			{children}
 		</section>
 	);

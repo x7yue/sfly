@@ -20,6 +20,7 @@ import { toggleSidebar, useSidebarCollapsed } from "./sidebar-state";
 
 /**
  * 中后台外壳（原型 shell()）：左侧可折叠的侧边栏 + 顶栏（面包屑、全局搜索入口、昵称）+ 可滚动的内容区。
+ * 导航项右侧平时显示计数（Agent 在线数），悬停或键盘聚焦时换成跳转快捷键（占同一个位置，不挤宽）。
  * 由 routes/_shell.tsx 使用；全屏页（编排画布、运行监控）不放在 _shell 下面，不带外壳。
  * 面包屑来自各路由的 `staticData.crumb`。
  */
@@ -77,13 +78,25 @@ function Sidebar({ collapsed }: { collapsed: boolean }) {
 						<Link
 							to={item.to}
 							activeOptions={{ exact: item.to === "/" }}
-							className={navItemClass(collapsed)}
+							className={cn("group", navItemClass(collapsed))}
 							activeProps={{ "aria-current": "page" }}
 						>
 							<item.icon aria-hidden />
 							<span className={cn(collapsed && "sr-only")}>{item.label}</span>
-							{!collapsed && counts[item.to] && (
-								<span className="ml-auto font-mono text-2xs text-fg-3">{counts[item.to]}</span>
+							{!collapsed && (
+								<span className="ml-auto grid justify-items-end">
+									{counts[item.to] && (
+										<span className="col-start-1 row-start-1 font-mono text-2xs text-fg-3 group-hover:opacity-0 group-focus-visible:opacity-0">
+											{counts[item.to]}
+										</span>
+									)}
+									<span
+										aria-hidden
+										className="col-start-1 row-start-1 opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"
+									>
+										<Keys shortcut={item.shortcut} />
+									</span>
+								</span>
 							)}
 						</Link>
 					</SidebarItem>

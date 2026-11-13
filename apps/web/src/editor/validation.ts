@@ -91,11 +91,16 @@ export function undeclaredInputNotes(
 	return notes;
 }
 
-/** 编辑器顶栏与检查器「检查」标题旁的检查结果：警告优先，没有警告时带上提醒条数。 */
+/**
+ * 编辑器顶栏与检查器「检查」标题旁的检查结果，唯一的判断来源：字段错误（不能保存）最先，
+ * 然后是警告，没有警告时带上提醒条数。
+ */
 export function checkSummary(
+	fieldErrors: number,
 	warnings: number,
 	notes: number,
-): { kind: "warn" | "ok"; label: string } {
+): { kind: "failed" | "warn" | "ok"; label: string } {
+	if (fieldErrors > 0) return { kind: "failed", label: `${fieldErrors} 处字段错误` };
 	if (warnings > 0) return { kind: "warn", label: `${warnings} 条警告` };
 	return { kind: "ok", label: notes > 0 ? `检查通过 · ${notes} 条提醒` : "检查通过" };
 }

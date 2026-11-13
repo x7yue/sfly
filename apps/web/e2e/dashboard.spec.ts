@@ -155,6 +155,30 @@ test("没有数据时各模块显示空状态", async ({ page }) => {
 	await expect(stat(page, "成功率")).toContainText("—");
 });
 
+test("没有数据时：运行中标签没有脉冲点，成功与失败的趋势线是中性色；有数据时才着状态色", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const color = (locator: ReturnType<typeof stat>) =>
+		locator.evaluate((el) => getComputedStyle(el).color);
+	await page.goto("/");
+	await expect(stat(page, "运行中")).toContainText("0");
+	await expect(stat(page, "运行中").locator(".animate-status-pulse")).toHaveCount(0);
+	const neutral = await color(stat(page, "成功").getByText("成功", { exact: true }));
+	await expect(stat(page, "成功").locator("[data-sparkline]")).toBeVisible();
+	expect(await color(stat(page, "成功").locator("[data-sparkline]"))).toBe(neutral);
+	expect(await color(stat(page, "失败").locator("[data-sparkline]"))).toBe(neutral);
+
+	await seedDashboard({ page, controlPlane, connectAgent, clock });
+	await page.goto("/");
+	await expect(stat(page, "运行中").locator(".animate-status-pulse")).toHaveCount(1);
+	await expect(stat(page, "成功").locator("[data-sparkline]")).toBeVisible();
+	expect(await color(stat(page, "成功").locator("[data-sparkline]"))).not.toBe(neutral);
+	expect(await color(stat(page, "失败").locator("[data-sparkline]"))).not.toBe(neutral);
+});
+
 test("加载中显示骨架，加载失败显示错误详情，重试后恢复", async ({ page }) => {
 	const hold = await holdApi(page, "/dashboard");
 	await page.goto("/");

@@ -37,6 +37,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
 				classNames: {
 					toast: "font-sans! text-sm! shadow-pop!",
 					description: "text-xs! text-fg-2!",
+					actionButton: "bg-raised! text-fg-1! border! border-border! hover:bg-raised-2!",
 				},
 			}}
 			{...props}

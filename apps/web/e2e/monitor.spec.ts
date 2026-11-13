@@ -558,6 +558,7 @@ test("取消：确认弹窗列出影响，默认焦点在「继续运行」；�
 	await expect(impact).toContainText("verify、probe");
 	await expect(impact).toContainText("always 节点照常执行清理");
 	await expect(impact).toContainText("cleanup");
+	await expect(impact).not.toContainText("0 个");
 	// 不用输入运行编号：焦点默认在「继续运行」，误按 Enter 不会取消。
 	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
 	await dialog.getByRole("button", { name: "取消运行" }).click();

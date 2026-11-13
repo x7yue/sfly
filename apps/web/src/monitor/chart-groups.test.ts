@@ -1,6 +1,6 @@
 import type { CatalogNode, ChainRunView, RunView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { chartsCompact } from "./chart-groups";
+import { chartCountText, chartsCompact } from "./chart-groups";
 
 const CHAIN = "6f1c2d3e-0000-4000-8000-000000000001";
 const TASK = "6f1c2d3e-0000-4000-8000-0000000000a1";
@@ -89,5 +89,14 @@ describe("图表工作区收成一行的条件", () => {
 			charts: [{ title: "延迟", type: "line", metrics: ["latency_ms"], default: false }],
 		});
 		expect(chartsCompact(run, { nodes: [charted] })).toBe(false);
+	});
+});
+
+describe("chartCountText", () => {
+	it("写清图表来自哪里，零值不出现在文字里", () => {
+		expect(chartCountText(3, 12, true)).toBe("12 张图表，来自 3 个节点和平台自带");
+		expect(chartCountText(1, 1, false)).toBe("1 张图表，来自 1 个节点");
+		expect(chartCountText(0, 4, true)).toBe("4 张平台自带图表");
+		expect(chartCountText(0, 0, false)).toBe("没有图表");
 	});
 });

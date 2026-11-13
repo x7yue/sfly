@@ -91,9 +91,10 @@ describe("提醒：节点类型没有声明的输入", () => {
 		expect(undeclaredInputNotes(doc, new Map())).toEqual([]);
 	});
 
-	it("检查结果：警告优先，没有警告时带上提醒条数", () => {
-		expect(checkSummary(2, 1)).toEqual({ kind: "warn", label: "2 条警告" });
-		expect(checkSummary(0, 1)).toEqual({ kind: "ok", label: "检查通过 · 1 条提醒" });
-		expect(checkSummary(0, 0)).toEqual({ kind: "ok", label: "检查通过" });
+	it("检查结果：字段错误最先，其次警告，没有警告时带上提醒条数", () => {
+		expect(checkSummary(0, 2, 1)).toEqual({ kind: "warn", label: "2 条警告" });
+		expect(checkSummary(0, 0, 1)).toEqual({ kind: "ok", label: "检查通过 · 1 条提醒" });
+		expect(checkSummary(0, 0, 0)).toEqual({ kind: "ok", label: "检查通过" });
+		expect(checkSummary(1, 2, 1)).toEqual({ kind: "failed", label: "1 处字段错误" });
 	});
 });
