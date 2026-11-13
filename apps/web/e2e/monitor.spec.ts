@@ -8,7 +8,13 @@ import {
 } from "../../server/test/support/fake-agent.js";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import { logLine, openMonitor, runningScenario } from "./monitor-scenario";
-import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
+import {
+	createScenario,
+	expectFocusVisible,
+	publishPackage,
+	scenarioUsing,
+	triggerRun,
+} from "./support";
 
 // 运行监控页（原型 #/monitor/:runId）：顶栏、链路时间线、底部面板、取消。
 
@@ -188,6 +194,49 @@ test("点选节点：时间线行高亮，底部面板切换到该节点；尝�
 	await expect(io).toContainText('"token": "••••••"');
 	await expect(io).not.toContainText("s3cr3t-token");
 	await expect(io).toContainText('"status": 200');
+});
+
+test("时间线的键盘与读屏：链与节点是嵌套列表；有重试的节点一行只有一个停靠点，每次尝试写在说明里", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const tl = timeline(page);
+	await expect(tl).toMatchAriaSnapshot(`
+		- list:
+		  - listitem:
+		    - button /主链/
+		    - list:
+		      - listitem:
+		        - button /^entry /
+		      - listitem:
+		        - button /^fetch /
+		      - listitem:
+		        - button /^spawn /
+		      - listitem:
+		        - button /^verify /
+		      - listitem:
+		        - button /^cleanup /
+		  - listitem:
+		    - button /子流程 sub/
+	`);
+
+	// runningScenario 里 verify 失败过一次、正在重试：轨道上有两段。
+	await expect(tl.locator('[data-node-row="verify"] [data-segment]')).not.toHaveCount(0);
+	await expect(nodeButton(page, "verify")).toHaveAccessibleDescription(
+		/^第 1 次：失败的尝试 \S+；第 2 次：执行中 \S+$/,
+	);
+	await nodeButton(page, "spawn").focus();
+	await page.keyboard.press("Tab");
+	await expectFocusVisible(nodeButton(page, "verify"));
+	await page.keyboard.press("Tab");
+	await expect(nodeButton(page, "cleanup")).toBeFocused();
+	await page.keyboard.press("Shift+Tab");
+	await page.keyboard.press("Enter");
+	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("取消选中：范围标签上的 × 与 Esc 都回到全部节点；弹窗打开时的 Esc 只关闭弹窗", async ({

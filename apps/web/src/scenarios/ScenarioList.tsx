@@ -10,7 +10,6 @@ import {
 	HistoryIcon,
 	PencilLineIcon,
 	PlayIcon,
-	SquarePenIcon,
 	WorkflowIcon,
 } from "lucide-react";
 import { createContext, type ReactNode, useContext, useRef, useState } from "react";
@@ -90,7 +89,7 @@ function LastRunInfo({ run, className }: { run: LastRun | null; className?: stri
 	return (
 		<span className={cn("inline-flex flex-wrap items-center gap-2", className)}>
 			{run.status === "running" ? (
-				<Link to="/runs/$id" params={{ id: run.id }} aria-label="进入运行监控">
+				<Link to="/runs/$id" params={{ id: run.id }} aria-label={`${status.label}，进入运行监控`}>
 					{pill}
 				</Link>
 			) : (
@@ -141,17 +140,11 @@ export function ScenarioRunDrawer({ children }: { children: ReactNode }) {
 }
 
 /**
- * 卡片和表格行共用的操作：「编排」「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、运行通知、归档；
+ * 卡片和表格行共用的操作：「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、运行通知、归档；
  * 已归档的场景只能恢复，或者查看它的运行记录。「运行」打开运行抽屉（ScenarioRunDrawer）。
+ * 进入编排画布用场景名称的链接，这里不放去同一处的按钮。
  */
-function ScenarioActions({
-	scenario,
-	compact = false,
-}: {
-	scenario: OrchestrationSummary;
-	/** 表格里不显示「编排」按钮（名称就是链接）。 */
-	compact?: boolean;
-}) {
+function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 	const navigate = useNavigate();
 	const more = useRef<HTMLButtonElement>(null);
 	const [dialog, setDialog] = useState<"copy" | "edit" | "notify" | "archive" | null>(null);
@@ -183,16 +176,6 @@ function ScenarioActions({
 	}
 	return (
 		<>
-			{!compact && (
-				<Button
-					size="sm"
-					render={<Link to="/orchestrations/$id" params={{ id: scenario.id }} />}
-					nativeButton={false}
-				>
-					<SquarePenIcon />
-					编排
-				</Button>
-			)}
 			<Button size="sm" onClick={(e) => openRunDrawer(scenario, e.currentTarget)}>
 				<PlayIcon />
 				运行
@@ -204,7 +187,7 @@ function ScenarioActions({
 				>
 					<EllipsisIcon />
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end" className="w-48">
+				<DropdownMenuContent className="w-48">
 					<DropdownMenuItem
 						onClick={() =>
 							navigate({ to: "/orchestrations/$id/versions", params: { id: scenario.id } })
@@ -275,11 +258,13 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 			className="flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface transition-colors hover:border-border-strong"
 		>
 			<div className="relative h-37 border-b border-border-soft bg-sunk bg-[radial-gradient(var(--canvas-grid)_1px,transparent_1px)] bg-size-[14px_14px]">
+				{/* 缩略图只是鼠标的大点击区，与名称链接去同一处：不进 Tab 顺序，读屏不重复读。 */}
 				<Link
 					to="/orchestrations/$id"
 					params={{ id: scenario.id }}
 					title="打开编排画布"
-					aria-label={`打开「${scenario.name}」的编排画布`}
+					tabIndex={-1}
+					aria-hidden
 					className="absolute inset-x-3 top-9 bottom-2.5"
 				>
 					<ScenarioThumbnail structure={scenario.structure} nodeStates={run?.node_states ?? null} />
@@ -291,15 +276,17 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 						{scenario.subflow_count > 0 && ` · ${scenario.subflow_count} 子流程`}
 					</Badge>
 				</div>
+				{/* 与「最近运行」里的状态链接重复：键盘和读屏用那一个。 */}
 				{run && live && (
 					<Link
 						to="/runs/$id"
 						params={{ id: run.id }}
+						tabIndex={-1}
+						aria-hidden
 						className={cn(
 							"absolute top-2.25 right-2.5 inline-flex h-5 items-center rounded-md border bg-raised-2 px-1.75",
 							live.kind === "running" ? "border-signal-line" : "border-border",
 						)}
-						aria-label={`${live.label}，进入运行监控`}
 					>
 						<StatusPill kind={live.kind} className="text-2xs">
 							{live.label}
@@ -406,7 +393,7 @@ const tableColumns = dataColumns<OrchestrationSummary>((col) =>
 			header: () => <span className="sr-only">操作</span>,
 			cell: ({ row }) => (
 				<div className="flex items-center justify-end gap-1.5">
-					<ScenarioActions scenario={row.original} compact />
+					<ScenarioActions scenario={row.original} />
 				</div>
 			),
 		}),

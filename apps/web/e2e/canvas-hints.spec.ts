@@ -51,6 +51,7 @@ test("警告徽标：用方向键把焦点移到节点上时显示警告，焦�
 
 	await page.keyboard.press("ArrowRight");
 	await expect(nodeCard(page, "ping")).toBeFocused();
+	await expect(nodeCard(page, "ping")).toHaveAccessibleName("节点 ping 2 警告");
 	const tip = page.getByRole("tooltip");
 	await expect(tip.getByRole("listitem")).toHaveText(PING_WARNINGS);
 

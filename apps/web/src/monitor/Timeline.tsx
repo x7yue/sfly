@@ -338,7 +338,7 @@ function Rows({
 			}}
 			onPointerCancel={() => setBrush(null)}
 		>
-			{children}
+			<ul className="m-0 list-none p-0">{children}</ul>
 			<div
 				ref={lines}
 				aria-hidden
@@ -412,7 +412,7 @@ function ChainRows({
 	const end = chain.ended_at ? Date.parse(chain.ended_at) : now;
 	const indent = chain.depth * 14;
 	return (
-		<>
+		<li>
 			<div
 				data-chain-row={chain.id}
 				className="grid h-7.5 items-center border-b border-fg-1/3 bg-fg-1/2"
@@ -446,7 +446,7 @@ function ChainRows({
 						{formatDuration(end - Date.parse(chain.started_at))}
 					</span>
 				</button>
-				<div className="relative mr-3.5 h-full">
+				<div aria-hidden className="relative mr-3.5 h-full">
 					{chain.depth > 0 && (
 						<DispatchLine
 							at={Date.parse(chain.started_at)}
@@ -468,20 +468,23 @@ function ChainRows({
 					)}
 				</div>
 			</div>
-			{open &&
-				chain.nodes.map((node, i) => (
-					<NodeRow
-						key={node.node_id}
-						chain={chain}
-						node={node}
-						segments={segments[i] ?? []}
-						range={range}
-						decls={decls}
-						indent={indent}
-						selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
-					/>
-				))}
-		</>
+			{open && (
+				<ul className="m-0 list-none p-0">
+					{chain.nodes.map((node, i) => (
+						<NodeRow
+							key={node.node_id}
+							chain={chain}
+							node={node}
+							segments={segments[i] ?? []}
+							range={range}
+							decls={decls}
+							indent={indent}
+							selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
+						/>
+					))}
+				</ul>
+			)}
+		</li>
 	);
 }
 
@@ -510,7 +513,7 @@ function NodeRow({
 	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
 	const title = nodeTitle(node, decl, decls);
 	return (
-		<div
+		<li
 			data-node-row={node.node_id}
 			data-selected={selected || undefined}
 			className="grid h-6.5 items-center border-b border-fg-1/3 data-selected:bg-fg-1/5"
@@ -520,6 +523,15 @@ function NodeRow({
 				type="button"
 				aria-pressed={selected}
 				aria-label={`${node.node_id} ${title} ${status.label}${progress ? ` 进度 ${progress}` : ""}`}
+				// 轨道上的区段只给鼠标（悬停看详情、点选节点），每次尝试写在这里：一行只有一个停靠点。
+				aria-description={
+					segments
+						.map(
+							(seg) =>
+								`第 ${seg.attempt} 次：${SEGMENT_LABEL[seg.kind]} ${formatDuration(seg.end - seg.start)}`,
+						)
+						.join("；") || undefined
+				}
 				onClick={() => actions.select(selected ? null : ref)}
 				title={title}
 				className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
@@ -548,7 +560,7 @@ function NodeRow({
 					{span === null ? NODE_STATUS[node.status].notRunDuration : formatDuration(span)}
 				</span>
 			</button>
-			<div className="relative mr-3.5 h-full">
+			<div aria-hidden className="relative mr-3.5 h-full">
 				{segments.map((seg) => (
 					<SegmentBar
 						key={`${seg.taskId}:${seg.kind}`}
@@ -559,7 +571,7 @@ function NodeRow({
 					/>
 				))}
 			</div>
-		</div>
+		</li>
 	);
 }
 
@@ -576,23 +588,12 @@ function SegmentBar({
 	selected: boolean;
 	chainRow?: boolean;
 }) {
-	const actions = useMonitorActions();
 	if (seg.end < range.start || seg.start > range.end) return null;
 	const left = Math.max(0, fractionOf(seg.start, range)) * 100;
 	const right = Math.min(1, fractionOf(seg.end, range)) * 100;
 	return (
-		// 鼠标点选由行容器按坐标处理（拖选时指针被容器捕获）；这里让键盘也能选中某次尝试（Enter / 空格）。
-		// 不用 button 元素：按钮选择器（节点行的标签按钮）保持唯一。链汇总行的区段与节点行重复，不进 Tab 顺序。
-		// biome-ignore lint/a11y/useSemanticElements: 见上
+		// 点选由行容器按坐标处理（拖选时指针被容器捕获）。
 		<span
-			role="button"
-			tabIndex={chainRow ? -1 : 0}
-			aria-label={`${node.nodeId} 第 ${seg.attempt} 次（${SEGMENT_LABEL[seg.kind]}）`}
-			onKeyDown={(e) => {
-				if (e.key !== "Enter" && e.key !== " ") return;
-				e.preventDefault();
-				actions.select(node);
-			}}
 			data-segment={seg.kind}
 			data-chain={node.chainInstanceId}
 			data-node={node.nodeId}
@@ -602,7 +603,6 @@ function SegmentBar({
 				chainRow ? "top-2.25" : "top-1.75",
 				SEGMENT_STYLE[seg.kind],
 				selected && "outline-[1.5px] outline-offset-1 outline-selected",
-				"focus-visible:outline-2 focus-visible:outline-signal",
 				seg.live &&
 					seg.kind === "run" &&
 					"after:absolute after:-top-0.5 after:-right-0.75 after:h-4 after:w-1.5 after:animate-status-pulse after:rounded-[2px] after:bg-signal",
