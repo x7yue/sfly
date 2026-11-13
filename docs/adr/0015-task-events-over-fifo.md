@@ -1,6 +1,6 @@
 # 任务事件经 FIFO 交给 Agent，不再写普通文件
 
-节点里的 SDK 把 `ctx.log`、`ctx.progress`、`ctx.metric` 逐行写到环境变量 `SFLY_EVENTS` 给出的路径。这个路径原来是工作目录里的普通文件 `events.jsonl`，Agent 记住偏移量轮询读取新增内容；已读部分从不删除，高频上报指标时每小时增长约 28 MB，压测 72 分钟写满磁盘，`ctx.metric()` 也因写盘失败让节点失败（#69）。现在由 Agent（以及本地调试 `sfly debug`）在工作目录里创建命名管道 `events.fifo`，先打开读端并自己持有一个写端，再启动执行器：数据只在内核缓冲区里，读走即释放，不占磁盘，有数据时立即可读。SDK 仍按路径以追加方式打开写入，代码不变，所以旧版本的 SDK 运行时也能用；管道写满时写端阻塞等待（Agent 把容量调到 `/proc/sys/fs/pipe-max-size`），不丢事件。调研见 `docs/research/task-event-channel.md`。
+节点里的 SDK 把 `ctx.log`、`ctx.progress`、`ctx.metric` 逐行写到环境变量 `SFLY_EVENTS` 给出的路径。这个路径原来是工作目录里的普通文件 `events.jsonl`，Agent 记住偏移量轮询读取新增内容；已读部分从不删除，高频上报指标时每小时增长约 28 MB，压测 72 分钟写满磁盘，`ctx.metric()` 也因写盘失败让节点失败（#69）。现在由 Agent（以及本地调试 `sfly run`）在工作目录里创建命名管道 `events.fifo`，先打开读端并自己持有一个写端，再启动执行器：数据只在内核缓冲区里，读走即释放，不占磁盘，有数据时立即可读。SDK 仍按路径以追加方式打开写入，代码不变，所以旧版本的 SDK 运行时也能用；管道写满时写端阻塞等待（Agent 把容量调到 `/proc/sys/fs/pipe-max-size`），不丢事件。调研见 `docs/research/task-event-channel.md`。
 
 ## Considered Options
 
