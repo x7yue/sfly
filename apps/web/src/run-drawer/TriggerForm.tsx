@@ -12,7 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { AlertTriangleIcon, CheckIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
@@ -126,6 +126,7 @@ function ParamsForm({
 			onTriggered(run);
 		},
 	});
+	const formElement = useRef<HTMLFormElement>(null);
 	const form = useForm({
 		defaultValues: initialValues(decls, options.initialParams),
 		// 第一次提交之前不打扰；提交过一次之后随输入重新校验。
@@ -134,6 +135,12 @@ function ParamsForm({
 		onSubmit: ({ value }) => {
 			if (checks.blocked) return;
 			trigger.mutate(toParams(decls, value));
+		},
+		// 校验没通过：把焦点放到第一个出错的字段（等错误渲染出来再找），读屏用户知道错在哪里。
+		onSubmitInvalid: () => {
+			requestAnimationFrame(() =>
+				formElement.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(),
+			);
 		},
 	});
 
@@ -145,6 +152,7 @@ function ParamsForm({
 
 	return (
 		<form
+			ref={formElement}
 			id={formId}
 			noValidate
 			onSubmit={(e) => {
@@ -158,19 +166,22 @@ function ParamsForm({
 				<span className="ml-auto font-normal text-fg-3">{decls.length} 个</span>
 			</SectionTitle>
 			{decls.length === 0 && <p className="m-0 mb-3 text-xs text-fg-3">入口节点没有声明参数。</p>}
-			{decls.map((p) => (
-				<form.Field key={p.name} name={p.name}>
-					{(field) => (
-						<ParamField
-							param={p}
-							value={field.state.value}
-							error={errorText(field.state.meta.errors)}
-							onChange={(v) => field.handleChange(v)}
-							onBlur={field.handleBlur}
-						/>
-					)}
-				</form.Field>
-			))}
+			{/* 标签列的宽度在这里定一次，所有参数共用：输入框的左右沿对齐 */}
+			<div className="mb-3 grid grid-cols-[fit-content(40%)_minmax(0,1fr)] items-start gap-x-2.5 gap-y-3">
+				{decls.map((p) => (
+					<form.Field key={p.name} name={p.name}>
+						{(field) => (
+							<ParamField
+								param={p}
+								value={field.state.value}
+								error={errorText(field.state.meta.errors)}
+								onChange={(v) => field.handleChange(v)}
+								onBlur={field.handleBlur}
+							/>
+						)}
+					</form.Field>
+				))}
+			</div>
 			<SectionTitle>触发前检查</SectionTitle>
 			<ul
 				aria-label="触发前检查"
@@ -239,6 +250,20 @@ function RunningNotice({ orchestrationId }: { orchestrationId: string }) {
 		</output>
 	);
 }
+
+/** 只在下划线后断行，不在单词中间断开；用 <wbr>，它不进读屏名称与复制的文字。 */
+const breakableName = (name: string) =>
+	name.split("_").map((part, i, parts) => (
+		// biome-ignore lint/suspicious/noArrayIndexKey: 参数名按下划线切成的片段，位置就是身份
+		<span key={i}>
+			{part}
+			{i < parts.length - 1 && (
+				<>
+					_<wbr />
+				</>
+			)}
+		</span>
+	));
 
 function ParamField({
 	param,
@@ -332,9 +357,9 @@ function ParamField({
 		);
 	}
 	return (
-		<div className="mb-3 grid grid-cols-[96px_minmax(0,1fr)] items-start gap-x-2.5 gap-y-1.5">
-			<label id={labelId} htmlFor={id} className="min-w-0 truncate pt-1.5 text-sm text-fg-2">
-				<span className="font-mono">{param.name}</span>
+		<div className="col-span-full grid grid-cols-subgrid items-start">
+			<label id={labelId} htmlFor={id} className="min-w-0 pt-1.5 text-sm wrap-anywhere text-fg-2">
+				<span className="font-mono">{breakableName(param.name)}</span>
 				{param.required && (
 					<span aria-hidden className="ml-0.5 text-fg-2">
 						*
