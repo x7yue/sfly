@@ -1,12 +1,18 @@
-import type { AttemptView, NodeRunView } from "@sfly/schema";
+import type { AttemptView, ChainRunView, NodeRunView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	attentionRow,
 	defaultTimelineMode,
+	LIVE_HEADROOM,
+	liveSpan,
 	nodeSegments,
 	runExtent,
 	ticks,
+	timelineContentHeight,
 	visibleRange,
 	zoomFromFractions,
+	zoomStep,
+	zoomToSegments,
 } from "./timeline-model";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
@@ -178,9 +184,41 @@ describe("节点的时间线区段", () => {
 describe("时间范围", () => {
 	const run = { started_at: at(100), ended_at: null };
 
-	it("运行中：从开始到现在；不足 10 秒时按 10 秒显示", () => {
-		expect(runExtent(run, s(160))).toEqual({ start: s(100), end: s(160) });
+	it("运行中：右端在「现在」之后留 20% 余量，取整到一级跨度；不足 10 秒时按 10 秒", () => {
 		expect(runExtent(run, s(103))).toEqual({ start: s(100), end: s(110) });
+		expect(runExtent(run, s(160))).toEqual({ start: s(100), end: s(190) });
+		expect(runExtent(run, s(100))).toEqual({ start: s(100), end: s(110) });
+		expect(runExtent(run, s(50))).toEqual({ start: s(100), end: s(110) });
+	});
+
+	it("运行中：「现在」不越过轴的 1/1.2，轴的两端就一动不动，每秒只有「现在」在推进", () => {
+		const ends = new Set<number>();
+		for (let elapsed = 31; elapsed <= 37; elapsed++) {
+			const extent = runExtent(run, s(100 + elapsed));
+			ends.add(extent.end);
+			expect((elapsed * 1000) / (extent.end - extent.start)).toBeLessThanOrEqual(
+				1 / (1 + LIVE_HEADROOM),
+			);
+		}
+		expect([...ends]).toEqual([s(145)]);
+	});
+
+	it("运行中：前十分钟里扩轴的次数很少，每次最多把区段压缩到原来的 2/3", () => {
+		let previous = liveSpan(0);
+		const jumps: number[] = [];
+		for (let elapsed = 1; elapsed <= 600; elapsed++) {
+			const span = liveSpan(elapsed * 1000);
+			if (span !== previous) {
+				jumps.push(span / 1000);
+				expect(previous / span).toBeGreaterThanOrEqual(2 / 3);
+			}
+			previous = span;
+		}
+		expect(jumps).toEqual([15, 20, 30, 45, 60, 90, 120, 180, 240, 300, 450, 600, 900]);
+	});
+
+	it("运行中：超过一天时按整天取整", () => {
+		expect(liveSpan(80_000_000)).toBe(2 * 86_400_000);
 	});
 
 	it("已结束：按实际时长定轴，末端留 8% 空白；不受「现在」影响", () => {
@@ -211,6 +249,40 @@ describe("时间范围", () => {
 			start: s(110),
 			end: s(120),
 		});
+	});
+
+	it("放大与缩小以当前范围的中点为中心，贴到整个运行的边缘时平移回来", () => {
+		const extent = { start: s(0), end: s(100) };
+		expect(zoomStep({ start: s(20), end: s(60) }, 0.5, extent)).toEqual({
+			start: s(30),
+			end: s(50),
+		});
+		expect(zoomStep({ start: s(20), end: s(60) }, 2, extent)).toEqual({ start: s(0), end: s(80) });
+		expect(zoomStep({ start: s(70), end: s(100) }, 2, extent)).toEqual({
+			start: s(40),
+			end: s(100),
+		});
+		expect(zoomStep({ start: s(40), end: s(40.5) }, 0.5, extent)).toEqual({
+			start: s(39.75),
+			end: s(40.75),
+		});
+	});
+
+	it("缩小到覆盖整个运行时清除缩放（null）", () => {
+		const extent = { start: s(0), end: s(100) };
+		expect(zoomStep({ start: s(20), end: s(80) }, 2, extent)).toBeNull();
+	});
+
+	it("缩放到一个节点：取它所有区段的起止，两端各留 5%", () => {
+		const extent = { start: s(0), end: s(1000) };
+		const segments = [
+			{ kind: "queue", start: s(100), end: s(110), live: false, attempt: 1, taskId: "a" },
+			{ kind: "fail", start: s(110), end: s(190), live: false, attempt: 1, taskId: "a" },
+			{ kind: "run", start: s(200), end: s(300), live: true, attempt: 2, taskId: "b" },
+		] as const;
+		expect(zoomToSegments(segments, extent)).toEqual({ start: s(90), end: s(310) });
+		expect(zoomToSegments([], extent)).toBeNull();
+		expect(zoomToSegments(segments, { start: s(100), end: s(300) })).toBeNull();
 	});
 
 	it("拖选的两端（轨道宽度的比例，顺序不限）换算成时间范围，最短 1 秒", () => {
@@ -309,5 +381,36 @@ describe("时间线的默认显示模式", () => {
 	it("链实例多于 6 条，或展开后多于 24 行时默认汇总", () => {
 		expect(defaultTimelineMode(7, 7)).toBe("summary");
 		expect(defaultTimelineMode(1, 24)).toBe("summary");
+	});
+});
+
+describe("时间线要保证看得见的行", () => {
+	const node = (node_id: string, status: NodeRunView["status"]) =>
+		({ node_id, status }) as NodeRunView;
+	const chain = (id: string, nodes: NodeRunView[]) => ({ id, nodes }) as ChainRunView;
+	const main = chain("main", [node("a", "success"), node("b", "running"), node("c", "pending")]);
+	const sub = chain("sub", [node("x", "failed")]);
+
+	it("是按链的顺序第一个正在执行或失败的节点", () => {
+		expect(attentionRow([main, sub], () => true)).toEqual({ chainId: "main", nodeId: "b" });
+		expect(attentionRow([chain("done", [node("a", "success")]), sub], () => true)).toEqual({
+			chainId: "sub",
+			nodeId: "x",
+		});
+	});
+
+	it("所在的链收起（汇总模式）时是链的汇总行", () => {
+		expect(attentionRow([main, sub], () => false)).toEqual({ chainId: "main", nodeId: null });
+	});
+
+	it("等待、排队、待执行、成功的节点不算；没有时为 null", () => {
+		const quiet = chain("q", [node("a", "waiting"), node("b", "queued"), node("c", "pending")]);
+		expect(attentionRow([quiet], () => true)).toBeNull();
+	});
+
+	it("主体的内容高度是刻度行加每条链一行，展开的链再加每个节点一行，最后留 8px 空白", () => {
+		expect(timelineContentHeight([main, sub], () => true)).toBe(22 + 30 + 3 * 26 + 30 + 26 + 8);
+		expect(timelineContentHeight([main, sub], () => false)).toBe(22 + 30 + 30 + 8);
+		expect(timelineContentHeight([], () => true)).toBe(22 + 8);
 	});
 });

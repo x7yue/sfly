@@ -175,9 +175,9 @@ test("没有控制面时间的旧日志行：时间列显示未记录，不能�
 	const track = await timeline(page).locator('[data-node-row="fetch"] > div').boundingBox();
 	if (!track) throw new Error("没有轨道");
 	const y = track.y + track.height / 2;
-	await page.mouse.move(track.x + track.width * 0.6, y);
+	await page.mouse.move(track.x + track.width * (8.4 / 20), y);
 	await page.mouse.down();
-	await page.mouse.move(track.x + track.width * 0.99, y, { steps: 5 });
+	await page.mouse.move(track.x + track.width * (13.9 / 20), y, { steps: 5 });
 	await page.mouse.up();
 	await expect(panel(page).getByTestId("bp-scope")).toContainText("已按时间范围过滤");
 	await expect(fresh).toBeVisible();

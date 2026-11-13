@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import {
 	applyProgress,
 	chainLabel,
+	chainLabelParts,
 	documentNodes,
 	failureSummary,
 	focusNode,
@@ -122,6 +123,14 @@ describe("子流程名称（#80 故事 1、23）", () => {
 		expect(chainLabel(chain({}))).toBe("子流程 监控 · 6f1c2d3e");
 		expect(chainLabel(chain({ name: "" }))).toBe("子流程 未命名子流程 · 6f1c2d3e");
 		expect(chainLabel(chain({ depth: 0, name: null, chain_id: "entry" }))).toBe("主链");
+	});
+
+	it("链名拆成名称和实例短 ID 两段，拼起来与完整链名一致", () => {
+		const sub = chain({});
+		expect(chainLabelParts(sub)).toEqual({ name: "子流程 监控", id: "6f1c2d3e" });
+		expect(`${chainLabelParts(sub).name} · ${chainLabelParts(sub).id}`).toBe(chainLabel(sub));
+		const main = chain({ depth: 0, name: null, chain_id: "entry" });
+		expect(chainLabelParts(main)).toEqual({ name: "主链", id: null });
 	});
 
 	it("停止子流程节点的说明文字是它要停止的子流程名称", () => {

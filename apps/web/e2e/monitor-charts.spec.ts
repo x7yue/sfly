@@ -248,8 +248,8 @@ test("序列超过 10 个时默认只显示时间范围内平均值最高的 10 
 	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h02"]);
 	await expect(byConn.locator('[data-series="h02"]')).toHaveCount(0);
 
-	// 拖选到最后几秒：h02 在这段里的平均值超过 h03，h03 改为置灰。
-	await brush(page, 0.55, 1, "ping");
+	// 拖选到最后几秒（运行了 10 秒，轴取 15 秒：5.5–10 秒）：h02 在这段里的平均值超过 h03，h03 改为置灰。
+	await brush(page, 5.5 / 15, 10 / 15, "ping");
 	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h03"]);
 	await expect(byConn.locator("[data-series]")).toHaveCount(10);
 	await timeline(page).getByRole("button", { name: "回到实时" }).click();
@@ -614,18 +614,18 @@ test("悬停联动：图表上的竖线与读数跨图表和时间线按时间�
 	await expect(chart(page, "probe", "level").locator("[data-hover-reading]")).toHaveText(
 		"08:00:10  9",
 	);
-	// 时间线上的竖线在 10.5 / 14 处。
+	// 时间线上的竖线在 10.5 / 20 处（运行了 14 秒，时间轴取 20 秒）。
 	const track = await timeline(page).locator('[data-node-row="fetch"] > div').boundingBox();
 	const line = await timeline(page).locator("[data-hover-line]").boundingBox();
 	if (!track || !line) throw new Error("没有竖线");
-	expect((line.x - track.x) / track.width).toBeCloseTo(10.5 / 14, 1);
+	expect((line.x - track.x) / track.width).toBeCloseTo(10.5 / 20, 1);
 
 	// 移到顶栏上（离开所有图表与时间线）。
 	await page.mouse.move(plot.x + plot.width / 2, 8);
 	await expect(page.locator("[data-chart-hover]")).toHaveCount(0);
 
 	// 在时间线上悬停，图表上出现竖线。
-	await page.mouse.move(track.x + track.width * (12.5 / 14), track.y + track.height / 2);
+	await page.mouse.move(track.x + track.width * (12.5 / 20), track.y + track.height / 2);
 	await expect(verifyLevel.locator("[data-hover-reading]")).toHaveText("08:00:12  6");
 	await expect(chart(page, "probe", "level").locator("[data-chart-hover]")).toHaveCount(1);
 });
@@ -648,8 +648,8 @@ test("时间线拖选的范围作用于图表；日志标记显示在图表上�
 	);
 	await expect(group(page, "verify").getByTestId("node-summary")).toContainText("2");
 
-	// 拖选 50%–100%（08:00:07 – 08:00:14）：probe 的横轴截到这一段，fetch（2–6 秒）在这段里没有数据。
-	await brush(page, 0.5, 1);
+	// 拖选 7–14 秒（轴取 20 秒，即 35%–70%）：probe 的横轴截到这一段，fetch（2–6 秒）在这段里没有数据。
+	await brush(page, 7 / 20, 14 / 20);
 	await expect(timeline(page).getByTestId("zoom-range")).toHaveText("08:00:07 – 08:00:14");
 	await expect(probeLevel.locator("[data-window]")).toHaveText("08:00:07 – 08:00:14");
 

@@ -1,7 +1,7 @@
 import { type RunView, runsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, ChevronDownIcon, PlayIcon, WorkflowIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CancelRunButton } from "./CancelRunDialog";
 import { useMonitorActions, useTimeAxis } from "./monitor-state";
+import { toggleMotionPaused, useMotionPaused } from "./motion-pause";
 import {
 	chainLabel,
 	chainRunStatus,
@@ -44,9 +45,19 @@ const MAX_CHAIN_BADGES = 4;
  * 运行切换（同场景的其他运行）、运行状态、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
  * 在画布中查看、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。
+ * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
  */
-export function MonitorTopBar({ run, name }: { run: RunView; name: string | undefined }) {
+export function MonitorTopBar({
+	run,
+	name,
+	failureInBanner,
+}: {
+	run: RunView;
+	name: string | undefined;
+	failureInBanner: boolean;
+}) {
 	const { now, live } = useTimeAxis();
+	const paused = useMotionPaused();
 	const navigate = useNavigate();
 	const [rerunOpen, setRerunOpen] = useState(false);
 	useShortcut("monitor-rerun", () => setRerunOpen(true), run.status !== "running");
@@ -75,7 +86,8 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 				</h1>
 				<span className="truncate text-xs text-fg-3">
 					{run.triggered_by}
-					<ViaTag via={run.triggered_via} /> 触发 · 开始 {formatDateTime(run.started_at)} ·{" "}
+					<ViaTag via={run.triggered_via} /> 触发 · 开始{" "}
+					<span className="font-mono">{formatDateTime(run.started_at)}</span> ·{" "}
 					<span className="font-mono" data-testid="run-elapsed">
 						{live ? "已运行" : "耗时"} {formatDuration(elapsed)}
 					</span>
@@ -85,11 +97,11 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 			<RunSwitcher run={run} />
 			{/* output 即 role="status"（礼貌播报）：运行状态变化时读屏会读出来。 */}
 			<output data-testid="run-status" aria-live="polite" className="flex-none">
-				<StatusPill kind={status.kind} className="text-sm">
+				<StatusPill kind={status.kind} pulse={!paused} className="text-sm">
 					{status.label}
 				</StatusPill>
 			</output>
-			{failure && <FailureSummary failure={failure} />}
+			{failure && !failureInBanner && <FailureSummary failure={failure} />}
 			<ul
 				aria-label="各链状态"
 				className="m-0 flex min-w-0 shrink-[4] list-none gap-1.5 overflow-hidden p-0 max-xl:hidden"
@@ -119,6 +131,19 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 				)}
 			</ul>
 			<span className="min-w-0 flex-1" />
+			{live && (
+				<Button
+					variant="ghost"
+					size="icon"
+					aria-label="暂停动效"
+					aria-pressed={paused}
+					title={paused ? "动效已暂停，点击恢复执行中的脉冲" : "暂停执行中的脉冲动效"}
+					className="aria-pressed:bg-raised-2 aria-pressed:text-fg-1"
+					onClick={toggleMotionPaused}
+				>
+					<PauseIcon />
+				</Button>
+			)}
 			<Link
 				to="/orchestrations/$id"
 				params={{ id: run.orchestration_id }}

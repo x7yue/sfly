@@ -109,13 +109,13 @@ test("没选中节点时合并显示全部节点的日志：按控制面时间�
 	await retrying.click();
 	await expect(timeline(page).locator("[data-marker-line]")).toHaveCount(0);
 
-	// 在时间线上框选后半段：合并视图只留下这段时间里的行。
+	// 在时间线上框选 9.8–13.9 秒（轴取 20 秒）：合并视图只留下这段时间里的行。
 	const track = await timeline(page).locator('[data-node-row="fetch"] > div').boundingBox();
 	if (!track) throw new Error("没有轨道");
 	const y = track.y + track.height / 2;
-	await page.mouse.move(track.x + track.width * 0.7, y);
+	await page.mouse.move(track.x + track.width * (9.8 / 20), y);
 	await page.mouse.down();
-	await page.mouse.move(track.x + track.width * 0.99, y, { steps: 5 });
+	await page.mouse.move(track.x + track.width * (13.9 / 20), y, { steps: 5 });
 	await page.mouse.up();
 	await expect(scope).toHaveText("范围：全部节点 · 已按时间范围过滤");
 	await expect(rows).toContainText(["verify 2 retrying", "probe tick"]);
