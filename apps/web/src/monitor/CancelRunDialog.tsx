@@ -227,7 +227,7 @@ function Impact({
 }) {
 	return (
 		<li className="flex gap-2.5 rounded-md border border-border-soft bg-bg px-3 py-2">
-			<span aria-hidden className={warn ? "text-warn" : "text-fg-3"}>
+			<span aria-hidden className={warn ? "text-warn-fg" : "text-fg-3"}>
 				{warn ? "!" : "•"}
 			</span>
 			<div className="min-w-0">

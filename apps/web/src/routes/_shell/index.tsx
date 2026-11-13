@@ -115,7 +115,9 @@ function Stats({ data }: { data: DashboardView }) {
 				value={runs.failed}
 				valueClassName={runs.failed > 0 ? "text-danger-fg" : undefined}
 				unit={runs.failed_subflows > 0 ? `含 ${runs.failed_subflows} 个子流程` : undefined}
-				detail={<TrendSpark values={hourly.map((h) => h.failed)} activeClassName="text-danger" />}
+				detail={
+					<TrendSpark values={hourly.map((h) => h.failed)} activeClassName={STATUS.failed.tone} />
+				}
 			/>
 			<StatCard
 				name="成功率"

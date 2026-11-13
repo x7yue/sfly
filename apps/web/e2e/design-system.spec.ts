@@ -1,8 +1,10 @@
 import type { Page } from "@playwright/test";
+import { openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor, runningScenario } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createScenario, publishPackage, seedDashboard } from "./support";
+import { twoVersions } from "./versions-support";
 
 const RING = "rgb(44, 196, 240)";
 
@@ -219,6 +221,28 @@ test("减少动效：浮层只淡入淡出、加载图标放慢而不停、颜�
 		"transition-duration",
 		"0.15s",
 	);
+});
+
+test("中文的小标题靠 600 字重而不是 500（雅黑没有 500）：快捷键分组、画布子流程名、版本差异小标题", async ({
+	page,
+	controlPlane,
+	clock,
+}) => {
+	const id = await twoVersions(controlPlane, clock);
+	await page.goto(`/orchestrations/${id}/versions`);
+	await expect(page.getByRole("region", { name: "差异" })).toBeVisible();
+	await expect(
+		page.getByRole("region", { name: "差异" }).getByRole("heading", { level: 4 }).first(),
+	).toHaveCSS("font-weight", "600");
+
+	await openEditor(page, id, "report");
+	const region = page.getByRole("region", { name: "子流程 sub_entry" });
+	await expect(region.getByText("sub_entry", { exact: true })).toHaveCSS("font-weight", "600");
+
+	await page.keyboard.press("?");
+	await expect(
+		page.getByRole("dialog", { name: "快捷键" }).getByRole("heading", { level: 4 }).first(),
+	).toHaveCSS("font-weight", "600");
 });
 
 test("键盘焦点环一出现就是青色，不随颜色过渡先灰后青", async ({ page }) => {

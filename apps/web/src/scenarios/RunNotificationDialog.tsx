@@ -104,7 +104,7 @@ export function RunNotificationDialog({
 						<FormField label={TERM.feishuBot}>
 							{(control) => (
 								<FeishuBotSelect
-									id={control.id}
+									control={control}
 									label={TERM.feishuBot}
 									value={settings.bot ?? undefined}
 									bots={registered}

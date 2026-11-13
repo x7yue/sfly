@@ -535,6 +535,11 @@ test("时间线下沿与底部面板上沿可以拖动调整高度，双击恢�
 	await expect(bp.getByRole("button", { name: "展开" })).toBeVisible();
 	const before = (await bp.boundingBox())?.height ?? 0;
 	const handle = page.getByRole("separator", { name: "调整底部面板高度" });
+	// 默认高度也有值：读屏读到的是量出来的高度，上限是窗口高度（900）的 70%。
+	await expect(handle).toHaveAttribute("aria-valuemax", "630");
+	expect(Math.abs(Number(await handle.getAttribute("aria-valuenow")) - before)).toBeLessThanOrEqual(
+		2,
+	);
 	const box = await handle.boundingBox();
 	if (!box) throw new Error("没有拖动条");
 	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);

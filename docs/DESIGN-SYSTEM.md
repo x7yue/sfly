@@ -45,7 +45,7 @@
 | | `-line`、`-soft` | 描边（在 `surface` 上 ≥ 3:1）；带文字的淡底（≈ 1.15:1，`signal-soft` 是执行中的淡底，故意强一档 1.3:1） |
 | | `ok-fill`、`warn-fill`、`danger-fill`、`signal-fill`、`stopped-fill`、`pending-fill` | 状态面积色：进度段、缩略图节点、时间线区段、趋势柱、小地图只用这一组，每种状态一档，不另写 `bg-ok/50` 这样的透明度 |
 | 日志 | `log-debug`、`log-info`、`log-warn`、`log-error` | INFO 不上色 |
-| 图表 | `chart-1` … `chart-4`、`chart-grid` | 多序列线色（中性灰与灰蓝，按序使用）、网格线；状态色只用于节点状态 |
+| 图表 | `chart-1` … `chart-4`、`chart-grid` | 多序列线色（中性灰与灰蓝，按序使用，明度依次拉开：线在 `bg` 与 `surface` 上 ≥ 3:1，两两色差在三种色觉缺陷下 OKLab ΔE ≥ 7，`design-rules.test.ts` 检查）、网格线；状态色只用于节点状态 |
 | 阴影 | `shadow-float`、`shadow-pop`、`shadow-inset-top` | 悬浮控件 / 弹窗、菜单 / 可滚动区域顶部的内阴影 |
 | 动效 | `--motion-fast` 100ms、`--motion-base` 150ms、`--motion-slow` 200ms；`--motion-ease-out`（`ease-out`、`ease-standard`）、`--motion-ease-in`（`ease-in`）；`--pulse-period` | 见第 11 节；`transition-*` 不写时长与缓动时默认就是 base + ease-out |
 | 滚动条 | `--scrollbar-thumb`、`--scrollbar-track` | `:root` 的 `scrollbar-color`；不设 `scrollbar-width` |
@@ -69,7 +69,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - **执行中的区段是淡底加描边，不是实心青色**：时间线段、链路进度段、场景缩略图节点、平台图表里的节点耗时条按状态表画（`STATUS.running.area`：`signal-fill` 底加 1px `signal-line` 描边），与成功、失败等色块同一量级。实心 `signal` 只给状态标记、时间线段尾的脉冲头和焦点环。
 - **选中是中性高亮**：`selected-bg` 底 + 左侧 2px 白色短条（工具类 `selected-row`），画布上是 `selected` 描边 + `selected-ring`，相关连线灰色虚线流动。文字选区是中性的 `selection-bg`。
 - 绿色 = 成功，红色 = 失败，**琥珀色只有三个意思：等待中（定时 / Sleep）、警告、安装中**。排队中（在等 Agent 的槽位）是中性灰；日志定位标记线、被标记的日志行、节点的 `always` 标签这类不是警告的东西也不用琥珀（用中性的 `selected`）。
-- 状态文字用 `-fg`：`text-warn-fg`、`text-signal-fg`、`text-danger-fg`；不带 `-fg` 的 `text-warn` / `text-signal` 只用于图标与标记（currentColor 着色）。
+- 状态文字与图标用 `-fg`：`text-warn-fg`、`text-signal-fg`、`text-danger-fg`；不带 `-fg` 的 `text-warn` / `text-signal` / `text-danger` 只写在状态表（`components/status.tsx`）里，别处要标记色时取 `STATUS[kind].tone`（`design-rules.test.ts` 检查）。
 - **没有信号就不着色**：数值为 0 的统计、全零的趋势线用中性色；「运行中」统计前的执行中状态点只在有运行时出现。必填标记（`*`）用中性 `fg-2`，红色只给错误。保存状态里只有需要处理的才带点（保存被拦截红、未保存琥珀），「已保存」是纯文字。
 - **已停止**用中性灰实心小方块（画布卡片灰色描边、进度条与时间线灰色带描边的矮段），与已取消、已跳过区分：停止是场景的正常流程，不用警示色。
 - **紫色只用于子流程区域**（`canvas-subflow*`），语义层没有紫色。
@@ -131,7 +131,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Command` / `CommandDialog` | 命令面板（cmdk + Dialog，点遮罩随时关闭）；结果列表的无障碍名称是「结果」 |
 | `Tooltip` | 悬浮提示（根部已有 `TooltipProvider`，延迟 400ms）；在相邻触发器之间移动时新提示直接出现、旧提示直接消失（`data-instant` 不做过渡） |
 | `Truncate` | 单行截断，见 6.5 |
-| `Table` 系列 | 表头 12px 三级文字（不加粗），吸在最近的滚动区顶端（列表页是外壳的主区域），行进入视野时让开表头的高度；行悬停 3% 白；`data-state="selected"` 为中性选中。`scroll`：默认 `"none"`（不包滚动容器，表头才吸得住）；可能比容器宽的内容表格（文档里的表）传 `"x"`。列宽见 6.5 |
+| `Table` 系列 | 表头 12px 三级文字（不加粗），吸在最近的滚动区顶端（列表页是外壳的主区域），行进入视野时让开表头的高度；行悬停 3% 白；`data-state="selected"` 是 `selected-row`（与节点包列表、版本历史的选中项一致）。`scroll`：默认 `"none"`（不包滚动容器，表头才吸得住）；可能比容器宽的内容表格（文档里的表）传 `"x"`。列宽见 6.5 |
 | `Kbd`、`Skeleton`、`Separator`、`Toaster` | 按键、骨架、分隔线、通知容器（右下角，见 6.3） |
 
 ### 应用组件 `components/`
@@ -146,7 +146,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `status`：`STATUS`、`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView`、`alignPulses` | 状态语法与槽位，见 6.1；运行 / 链 / 节点状态的种类与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，颜色、形状、动效只从 `STATUS` 取，不另写映射表。节点状态在各处的显示规则（种类、画布运行状态、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状；每段的颜色、描边与高低取自 `STATUS[kind].area`） |
 | `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |
-| `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限视口宽度的 60%；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
+| `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认；`role="separator"`，`aria-valuemin` / `aria-valuemax` / `aria-valuenow` 是量出来的值（默认大小也有值），操作说明放在 `aria-describedby` 里，不只写在 `title`。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限是视口宽度的 60%；检查器的上限还要给画布留出小地图、工具条与间距（`INSPECTOR_CANVAS_RESERVE`），取两者里小的，拖到最宽也不会让工具条压住小地图；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
 | `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它；行的属性（点击、样式、`data-*` 标记）由 `rowProps` 给出 |
 | `list-navigation`：`useListNavigation`、`focusFirstListItem` | 列表页的行导航，见第 7 节 |
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |

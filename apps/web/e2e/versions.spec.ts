@@ -29,10 +29,11 @@ test("版本历史：版本号、作者、时间；默认并排只读对比最�
 	await expect(versionRow(page, 1)).toContainText("tester");
 	await expect(versionRow(page, 1)).toContainText("01-01 08:00");
 
-	// 选中态是中性高亮，不用青色实底。
+	// 选中态是中性高亮（selected-row，#2e2e2e），不用青色实底；按下的 A / B 小按钮用 track 底，在选中行上看得出按下。
 	const pickedB = versionRow(page, 2).getByRole("button", { name: "把版本 2 放在右侧（B）" });
 	await expect(pickedB).toHaveAttribute("aria-pressed", "true");
-	await expect(pickedB).toHaveCSS("background-color", "rgb(46, 46, 46)");
+	await expect(versionRow(page, 2)).toHaveCSS("background-color", "rgb(46, 46, 46)");
+	await expect(pickedB).toHaveCSS("background-color", "rgb(58, 58, 58)");
 	await expect(versionRow(page, 2)).not.toHaveCSS("background-color", "rgb(44, 196, 240)");
 
 	const a = pane(page, 1);

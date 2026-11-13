@@ -48,7 +48,7 @@
 	--base-violet-200: #dcd3fd;
 	--base-violet-400: #b4a3f8;
 	--base-steel-300: #8aa4c0;
-	--base-steel-500: #6f8fae;
+	--base-steel-600: #456e97;
 
 	/* ── 2. 语义 ── */
 	color-scheme: dark;
@@ -127,11 +127,12 @@
 	--log-warn: var(--warn-fg);
 	--log-error: var(--danger-fg);
 
-	/* 图表：多序列的线色（中性灰与灰蓝，不用状态色）、网格线 */
+	/* 图表：多序列的线色（中性灰与灰蓝，不用状态色）、网格线。
+	   明度依次拉开（OKLCH L 0.87 / 0.71 / 0.58 / 0.53），在 bg 与 surface 上都 ≥ 3:1，两两色差在三种色觉缺陷下仍 ≥ 7（design-rules.test.ts） */
 	--chart-1: var(--base-gray-200);
 	--chart-2: var(--base-steel-300);
-	--chart-3: var(--base-gray-425);
-	--chart-4: var(--base-steel-500);
+	--chart-3: var(--base-gray-500);
+	--chart-4: var(--base-steel-600);
 	--chart-grid: color-mix(in srgb, var(--base-white) 5%, transparent);
 
 	/* 阴影：带偏移和模糊，不用零偏移彩色发光 */
