@@ -1,5 +1,11 @@
 import { ApiError } from "./errors.js";
-import { createExchange, type FetchLike, type Nickname, type ResponseLike } from "./exchange.js";
+import {
+	createExchange,
+	type FetchLike,
+	type Nickname,
+	type ResponseLike,
+	type VersionMismatch,
+} from "./exchange.js";
 import { type Api, routes } from "./generated/routes.js";
 import {
 	type CallOptions,
@@ -24,6 +30,11 @@ export interface ClientOptions {
 	 * 非 GET 的请求没有昵称时，在发请求之前抛出错误码 `nickname_required` 的 ApiError；读操作不受影响。
 	 */
 	nickname?: Nickname;
+	/**
+	 * 控制面和客户端的版本不一致时，每个客户端实例调用一次；请求照常进行。
+	 * 默认 `console.warn(mismatch.message)`。
+	 */
+	onVersionMismatch?: (mismatch: VersionMismatch) => void;
 }
 
 /** 按路由描述调用任何接口：生成的方法建立在它上面，控制台用契约里的 zod 定义调用它。 */
@@ -48,6 +59,7 @@ export function createClient(options: ClientOptions): Client {
 		fetch: options.fetch ?? ((url, init) => globalThis.fetch(url, init)),
 		nickname: options.nickname,
 		onControlPlaneTime: options.onControlPlaneTime ?? (() => {}),
+		onVersionMismatch: options.onVersionMismatch ?? ((mismatch) => console.warn(mismatch.message)),
 	});
 
 	function request(

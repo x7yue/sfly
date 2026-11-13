@@ -1,5 +1,5 @@
 import { ApiError, errorFromResponse } from "./errors.js";
-import { CONTROL_PLANE_TIME_HEADER } from "./generated/protocol.js";
+import { CONTROL_PLANE_TIME_HEADER, CONTROL_PLANE_VERSION_HEADER } from "./generated/protocol.js";
 import { type CallOptions, type RouteInput, type RouteRef, requestPath } from "./route.js";
 import { CLIENT_VERSION } from "./version.js";
 
@@ -28,11 +28,19 @@ export interface ResponseLike {
 /** 固定的昵称，或每次请求时取值的函数；空白算没有。 */
 export type Nickname = string | (() => string | null | undefined);
 
+export interface VersionMismatch {
+	clientVersion: string;
+	controlPlaneVersion: string;
+	/** 写明两边版本和处理办法的一句话。 */
+	message: string;
+}
+
 export interface ExchangeConfig {
 	baseUrl: string;
 	fetch: FetchLike;
 	nickname?: Nickname;
 	onControlPlaneTime: (time: string) => void;
+	onVersionMismatch: (mismatch: VersionMismatch) => void;
 }
 
 export interface SendInit extends CallOptions {
@@ -46,6 +54,8 @@ export interface Exchange {
 
 export function createExchange(config: ExchangeConfig): Exchange {
 	const baseUrl = normalizeBaseUrl(config.baseUrl);
+
+	let versionWarned = false;
 
 	const nicknameNow = (): string | undefined => {
 		const value = typeof config.nickname === "function" ? config.nickname() : config.nickname;
@@ -80,6 +90,14 @@ export function createExchange(config: ExchangeConfig): Exchange {
 	const observe = (res: ResponseLike): void => {
 		const time = res.headers.get(CONTROL_PLANE_TIME_HEADER);
 		if (time) config.onControlPlaneTime(time);
+		const controlPlaneVersion = res.headers.get(CONTROL_PLANE_VERSION_HEADER);
+		if (!controlPlaneVersion || controlPlaneVersion === CLIENT_VERSION || versionWarned) return;
+		versionWarned = true;
+		config.onVersionMismatch({
+			clientVersion: CLIENT_VERSION,
+			controlPlaneVersion,
+			message: `警告：sfly API 客户端（${CLIENT_VERSION}）与控制面（${controlPlaneVersion}）版本不一致，接口可能对不上。请从控制面重新安装 API 客户端。`,
+		});
 	};
 
 	const url = (route: RouteRef, input: RouteInput | undefined) =>

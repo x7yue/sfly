@@ -3,9 +3,11 @@ import {
 	ApiError,
 	CLIENT_VERSION,
 	type ClientOptions,
+	createClient,
 	type OrchestrationDocumentInput,
+	type VersionMismatch,
 } from "@sfly/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
 	type FinishedRun,
 	observedClient,
@@ -310,5 +312,93 @@ describe("API 客户端的写操作", () => {
 				);
 			}
 		});
+	});
+});
+
+describe("控制面版本和客户端版本不一致时警告", () => {
+	const started: TestControlPlane[] = [];
+	afterEach(async () => {
+		vi.restoreAllMocks();
+		await Promise.all(started.splice(0).map((cp) => cp.close()));
+	});
+	async function controlPlane(version?: string) {
+		const { cp } = await startClientControlPlane(version === undefined ? {} : { version });
+		started.push(cp);
+		return cp;
+	}
+
+	it("每个客户端实例回调恰好一次，带两边的版本和重新安装的办法，请求照常进行", async () => {
+		const cp = await controlPlane("9.9.9");
+		const mismatches: VersionMismatch[] = [];
+		const client = createClient({
+			baseUrl: cp.httpUrl,
+			nickname: NICKNAME,
+			onVersionMismatch: (mismatch) => mismatches.push(mismatch),
+		});
+
+		expect((await client.system.health()).status).toBe("ok");
+		await Promise.all([client.orchestrations.list(), client.orchestrations.list()]);
+		const created = await client.orchestrations.create({ body: { name: "照常写入" } });
+		expect(created.name).toBe("照常写入");
+		const failure = await rejection(client.orchestrations.get({ params: { id: randomUUID() } }));
+		expect(failure).toBeInstanceOf(ApiError);
+
+		expect(mismatches).toHaveLength(1);
+		const [mismatch] = mismatches;
+		expect(mismatch).toMatchObject({ clientVersion: CLIENT_VERSION, controlPlaneVersion: "9.9.9" });
+		expect(mismatch?.message).toContain(CLIENT_VERSION);
+		expect(mismatch?.message).toContain("9.9.9");
+		expect(mismatch?.message).toContain("重新安装");
+	});
+
+	it("不同的客户端实例各警告一次", async () => {
+		const cp = await controlPlane("9.9.9");
+		const counts = [0, 0];
+		const clients = counts.map((_, i) =>
+			createClient({
+				baseUrl: cp.httpUrl,
+				onVersionMismatch: () => {
+					counts[i] = (counts[i] ?? 0) + 1;
+				},
+			}),
+		);
+		for (const client of clients) {
+			await client.system.health();
+			await client.system.health();
+		}
+		expect(counts).toEqual([1, 1]);
+	});
+
+	it("没有给回调时默认 console.warn，同样只警告一次", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const cp = await controlPlane("9.9.9");
+		const client = createClient({ baseUrl: cp.httpUrl });
+		await client.system.health();
+		await client.orchestrations.list();
+
+		expect(warn).toHaveBeenCalledTimes(1);
+		const [message] = warn.mock.calls[0] ?? [];
+		expect(message).toContain(CLIENT_VERSION);
+		expect(message).toContain("9.9.9");
+	});
+
+	it("版本一致时不警告", async () => {
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		const cp = await controlPlane();
+		expect(cp.version).toBe(CLIENT_VERSION);
+		const mismatches: VersionMismatch[] = [];
+		const client = createClient({
+			baseUrl: cp.httpUrl,
+			nickname: NICKNAME,
+			onVersionMismatch: (mismatch) => mismatches.push(mismatch),
+		});
+		await client.system.health();
+		await client.orchestrations.create({ body: { name: "版本一致" } });
+		await rejection(client.orchestrations.get({ params: { id: randomUUID() } }));
+		const defaulted = createClient({ baseUrl: cp.httpUrl });
+		await defaulted.system.health();
+
+		expect(mismatches).toEqual([]);
+		expect(warn).not.toHaveBeenCalled();
 	});
 });
