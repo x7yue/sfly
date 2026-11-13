@@ -10,10 +10,10 @@ import {
 } from "@sfly/schema";
 import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
-import { BarChart3Icon, ChevronDownIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
+import { BarChart3Icon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
-import { StatusPill } from "#/components/status";
+import { STATUS, StatusPill } from "#/components/status";
 import { formatDuration } from "#/lib/format";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
@@ -219,7 +219,8 @@ export function ChartWorkspace({
 			aria-label="图表工作区"
 			className={cn(
 				"relative overflow-auto px-3",
-				compact ? "flex-initial pt-2 pb-2.5" : "min-h-60 flex-1 pb-7",
+				// 高度按内容取：图表少的时候多出来的高度归底部面板（日志），图表多的时候这里滚动。
+				compact ? "flex-initial pt-2 pb-2.5" : "min-h-60 flex-initial pb-7",
 			)}
 		>
 			{!compact && (
@@ -396,7 +397,8 @@ function GroupShell({
 	open,
 	onToggle,
 	header,
-	actions,
+	attempts,
+	only,
 	children,
 }: {
 	groupKey: string;
@@ -405,7 +407,8 @@ function GroupShell({
 	open: boolean;
 	onToggle: (open: boolean) => void;
 	header: React.ReactNode;
-	actions?: React.ReactNode;
+	attempts?: React.ReactNode;
+	only?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	return (
@@ -423,15 +426,18 @@ function GroupShell({
 					className="flex h-8 min-w-0 flex-1 items-center gap-2 pl-3 text-left text-sm whitespace-nowrap"
 				>
 					<span className="grid w-3.5 flex-none place-items-center text-fg-3">
-						{open ? (
-							<ChevronDownIcon className="size-3.5" />
-						) : (
-							<ChevronRightIcon className="size-3.5" />
-						)}
+						<ChevronRightIcon
+							className="size-3.5 transition-[rotate] duration-(--motion-base) ease-(--motion-ease-out) motion-reduce:transition-none"
+							style={{ rotate: open ? "90deg" : "0deg" }}
+						/>
 					</span>
 					{header}
 				</button>
-				{actions}
+				{/* 右侧两栏的位置固定（没有尝试选择器、没有「只看」时留空），各组的右侧信息竖着对齐 */}
+				<div className="flex flex-none items-center gap-2">
+					<div className="w-34">{attempts}</div>
+					<div className="w-11">{only}</div>
+				</div>
 			</div>
 			{open && children}
 		</section>
@@ -499,7 +505,7 @@ function NodeGroup({
 				<>
 					<StatusPill kind={status.kind}>{status.label}</StatusPill>
 					<span className="flex-none font-mono font-medium">{node.node_id}</span>
-					<span className="min-w-0 truncate text-fg-2">{title}</span>
+					<span className="min-w-0 truncate font-mono text-fg-2">{title}</span>
 					{group.chainName && (
 						<span className="flex-none text-xs text-fg-3" title={chainLabel(chain)}>
 							{group.chainName}
@@ -513,39 +519,39 @@ function NodeGroup({
 					)}
 					<span className="flex-1" />
 					<DataLossBadges loss={loss} />
-					<span className="flex-none text-xs text-fg-3">{charts.length} 张图表</span>
-					<span className="flex-none font-mono text-2xs text-fg-3">{node.agent ?? ""}</span>
+					<span className={GROUP_COUNT}>{charts.length} 张图表</span>
+					<span className={GROUP_AGENT}>{node.agent ?? ""}</span>
 				</>
 			}
-			actions={
-				<>
-					{entry.attempts.length > 1 && (
-						<NativeSelect
-							aria-label={`${node.node_id} 的尝试`}
-							title="切换查看这个节点的每次尝试"
-							className="w-34 flex-none [&_select]:h-6.5 [&_select]:text-xs"
-							value={String(attempt.attempt)}
-							onChange={(e) => onAttempt(Number(e.target.value))}
-						>
-							{entry.attempts.map((a, i) => (
-								<NativeSelectOption key={a.task_id} value={String(a.attempt)}>
-									第 {a.attempt} 次{i === entry.attempts.length - 1 ? "（最新）" : ""}
-								</NativeSelectOption>
-							))}
-						</NativeSelect>
-					)}
-					{onlyThis && (
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={onlyThis}
-							aria-label={`只看 ${node.node_id}`}
-							title="只看这个节点的图表"
-						>
-							只看
-						</Button>
-					)}
-				</>
+			attempts={
+				entry.attempts.length > 1 && (
+					<NativeSelect
+						aria-label={`${node.node_id} 的尝试`}
+						title="切换查看这个节点的每次尝试"
+						className="w-full [&_select]:h-6.5 [&_select]:text-xs"
+						value={String(attempt.attempt)}
+						onChange={(e) => onAttempt(Number(e.target.value))}
+					>
+						{entry.attempts.map((a, i) => (
+							<NativeSelectOption key={a.task_id} value={String(a.attempt)}>
+								第 {a.attempt} 次{i === entry.attempts.length - 1 ? "（最新）" : ""}
+							</NativeSelectOption>
+						))}
+					</NativeSelect>
+				)
+			}
+			only={
+				onlyThis && (
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={onlyThis}
+						aria-label={`只看 ${node.node_id}`}
+						title="只看这个节点的图表"
+					>
+						只看
+					</Button>
+				)
 			}
 		>
 			<div
@@ -557,6 +563,7 @@ function NodeGroup({
 						<NodeSummary group={group} now={now} />
 					</div>
 				)}
+				<LossNotes loss={loss} />
 				{charts.map((chart) => {
 					const result = series.charts.get(chart.title);
 					return (
@@ -570,6 +577,8 @@ function NodeGroup({
 							window={window}
 							empty={empty(result?.isPending ?? true)}
 							dense={dense}
+							// 只有一张图表时不横贯整行：1920 宽下 1870 × 150 的一条线看不出斜率
+							className={charts.length === 1 ? "max-w-[max(50%,720px)]" : undefined}
 							truncated={loss.truncated}
 							notice={
 								loss.series_capped && chart.metrics.some((m) => labeled.has(m)) ? (
@@ -584,10 +593,18 @@ function NodeGroup({
 	);
 }
 
+/** 组标题右侧两栏的宽度固定：几张图表、在哪台 Agent 上，各组竖着对齐。 */
+const GROUP_COUNT = "w-16 flex-none text-right text-xs text-fg-3";
+const GROUP_AGENT = "w-28 flex-none truncate text-right font-mono text-2xs text-fg-3";
+
+const LOSS_TRUNCATED = "指标数据超过单个任务的上限，之后的点已被丢弃";
+const LOSS_SERIES_CAPPED = `序列数超过单个任务的上限（${MAX_SERIES} 个），之后新出现的序列的点已被丢弃，已有序列照常上报`;
+const LOSS_DROPPED = "被丢弃的点：Agent 断线期间排队超过上限、标签与声明不一致或序列超限";
+
 /** 「序列超限」提示（组标题与引用了带标签指标的图表上，与「截断」提示一致）。 */
 const SERIES_CAPPED = {
 	variant: "warn",
-	title: `序列数超过单个任务的上限（${MAX_SERIES} 个），之后新出现的序列的点已被丢弃，已有序列照常上报`,
+	title: LOSS_SERIES_CAPPED,
 	children: "序列超限",
 } as const;
 
@@ -596,20 +613,37 @@ function DataLossBadges({ loss }: { loss: MetricDataLoss }) {
 	return (
 		<>
 			{loss.truncated && (
-				<Badge variant="warn" title="指标数据超过单个任务的上限，之后的点已被丢弃">
+				<Badge variant="warn" title={LOSS_TRUNCATED}>
 					数据已截断
 				</Badge>
 			)}
 			{loss.series_capped && <Badge {...SERIES_CAPPED} />}
 			{loss.dropped_points > 0 && (
-				<Badge
-					variant="warn"
-					title="被丢弃的点：Agent 断线期间排队超过上限、标签与声明不一致或序列超限"
-				>
+				<Badge variant="warn" title={LOSS_DROPPED}>
 					丢弃 {loss.dropped_points} 个点
 				</Badge>
 			)}
 		</>
+	);
+}
+
+/** 数据缺失的说明：会影响怎么读图表，不能只放在悬停提示里（键盘、触屏拿不到），写在分组的图表上方。 */
+function LossNotes({ loss }: { loss: MetricDataLoss }) {
+	const notes = [
+		loss.truncated && LOSS_TRUNCATED,
+		loss.series_capped && LOSS_SERIES_CAPPED,
+		loss.dropped_points > 0 && `${LOSS_DROPPED}（共 ${loss.dropped_points} 个）`,
+	].filter((note): note is string => note !== false);
+	if (notes.length === 0) return null;
+	return (
+		<ul
+			aria-label="指标数据缺失说明"
+			className="col-span-full m-0 flex list-none flex-col gap-0.5 p-0 text-xs text-warn-fg"
+		>
+			{notes.map((note) => (
+				<li key={note}>{note}</li>
+			))}
+		</ul>
 	);
 }
 
@@ -705,12 +739,13 @@ function PlatformGroup({
 			header={
 				<>
 					<Badge>平台</Badge>
-					<span className="font-medium">平台自带图表</span>
+					<span className="font-semibold">平台自带图表</span>
 					<span className="min-w-0 truncate text-xs text-fg-3">
 						节点耗时 · 槽位 · 并发 · 重试，不需要节点注册
 					</span>
 					<span className="flex-1" />
-					<span className="text-xs text-fg-3">{PLATFORM_CHARTS} 张图表</span>
+					<span className={GROUP_COUNT}>{PLATFORM_CHARTS} 张图表</span>
+					<span aria-hidden className={GROUP_AGENT} />
 				</>
 			}
 		>
@@ -767,7 +802,7 @@ function PlatformGroup({
 	);
 }
 
-/** 节点耗时 Top 10：条长为总耗时（含排队与等待），斜纹部分是排队与等待。 */
+/** 节点耗时 Top 10：条长为总耗时（含排队与等待）。 */
 function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | undefined }) {
 	const statusOf = new Map(
 		run.chains.flatMap((c) => c.nodes.map((n) => [`${c.id}:${n.node_id}`, n.status])),
@@ -791,29 +826,42 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 					{data ? "还没有节点开始执行。" : "正在加载…"}
 				</p>
 			) : (
-				<ol className="m-0 mt-1.5 grid list-none grid-cols-[140px_1fr_64px] items-center gap-x-2.5 gap-y-1 p-0 text-xs">
+				<ol
+					data-viz
+					className="m-0 mt-1.5 grid list-none grid-cols-[140px_1fr_64px] items-center gap-x-2.5 gap-y-1 p-0 text-xs"
+				>
 					{nodes.map((n) => {
 						const status = statusOf.get(`${n.chain_instance_id}:${n.node_id}`) ?? "";
-						const waited = n.queue_ms + n.wait_ms;
+						const bar =
+							STATUS[isOnAgentStatus(status) ? "running" : status === "failed" ? "failed" : "ok"]
+								.area;
+						const queued = STATUS.queued.area;
+						const waiting = STATUS.warn.area;
 						return (
 							<li key={`${n.chain_instance_id}:${n.node_id}`} className="contents">
 								<span className="truncate font-mono text-fg-2">{n.node_id}</span>
 								<span className="relative h-2.5 overflow-hidden rounded-[2px] bg-track">
 									<i
 										className={cn(
-											"absolute inset-y-0 left-0",
-											isOnAgentStatus(status)
-												? "bg-signal-soft shadow-[inset_0_0_0_1px_var(--signal-line)]"
-												: status === "failed"
-													? "bg-danger"
-													: "bg-ok/50",
+											"absolute left-0 rounded-[2px]",
+											bar.tall ? "inset-y-0" : "inset-y-0.75",
+											bar.box,
 										)}
 										style={{ width: `${(n.duration_ms / max) * 100}%` }}
 									/>
-									{waited > 0 && (
+									{n.queue_ms > 0 && (
 										<i
-											className="absolute inset-y-0 left-0 bg-[repeating-linear-gradient(135deg,var(--warn-line)_0_3px,var(--warn-soft)_3px_6px)]"
-											style={{ width: `${(waited / max) * 100}%` }}
+											className={cn("absolute inset-y-0.75 left-0 rounded-[2px]", queued.box)}
+											style={{ width: `${(n.queue_ms / max) * 100}%` }}
+										/>
+									)}
+									{n.wait_ms > 0 && (
+										<i
+											className={cn("absolute inset-y-0 rounded-[2px]", waiting.box)}
+											style={{
+												left: `${(n.queue_ms / max) * 100}%`,
+												width: `${(n.wait_ms / max) * 100}%`,
+											}}
 										/>
 									)}
 								</span>

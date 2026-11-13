@@ -14,6 +14,7 @@ import type {
 import { KIND_META } from "#/components/canvas/node-display";
 import { runStatusView, type StatusKind } from "#/components/status";
 import { chainLabel as chainName, subflowLabel } from "#/lib/copy";
+import { shortId } from "#/lib/format";
 import { type NodeRef, nodeKey, sameNode } from "./monitor-state";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
@@ -52,6 +53,15 @@ export function orderedChains(run: RunView): ChainRunView[] {
 /** 链实例的名称：主链，或「子流程 <名称> · <实例短 ID>」。 */
 export const chainLabel = (chain: ChainRunView) =>
 	chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name }, chain.id);
+
+/** 链实例名称的两段：中文名称与实例短 ID（等宽字体）；主链没有短 ID。拼起来是 {@link chainLabel}。 */
+export function chainLabelParts(chain: ChainRunView): { name: string; id: string | null } {
+	const subflow = chain.depth > 0;
+	return {
+		name: chainName({ chain_id: chain.chain_id, subflow, name: chain.name }),
+		id: subflow ? shortId(chain.id) : null,
+	};
+}
 
 /** 节点 ID → 文档里的节点（标题、always 标记、引用了哪些参数）。 */
 export const documentNodes = (doc: OrchestrationDocument | undefined) =>

@@ -91,7 +91,7 @@ test("执行中的脉冲只动 scale 与 opacity，后出现的脉冲与已有�
 	await expect.poll(() => pulses(page)).toBe(0);
 });
 
-test("运行监控：时间线上执行中的段尾在脉冲，其余状态点静止，所有脉冲同一相位", async ({
+test("运行监控：每个执行中的节点只在时间线上的段尾脉冲一处，加顶栏运行状态这一处整体脉冲，所有脉冲同一相位", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -99,7 +99,10 @@ test("运行监控：时间线上执行中的段尾在脉冲，其余状态点�
 }) => {
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
-	const heads = page.getByRole("region", { name: "链路时间线" }).locator("[data-pulse-head]");
+	// 节点行里的脉冲头（链汇总行里还有一份静止的，不脉冲）。
+	const heads = page
+		.getByRole("region", { name: "链路时间线" })
+		.locator("[data-node-row] [data-pulse-head]");
 	await expect(heads.first()).toBeVisible();
 	const count = await heads.count();
 	const owners = () =>
@@ -111,15 +114,24 @@ test("运行监控：时间线上执行中的段尾在脉冲，其余状态点�
 				)
 				.map((a) => {
 					const effect = a.effect as KeyframeEffect;
+					const target = effect.target instanceof HTMLElement ? effect.target : null;
 					return {
-						head: effect.target instanceof HTMLElement && "pulseHead" in effect.target.dataset,
+						head: !!target && "pulseHead" in target.dataset,
+						dot: !!target && "statusDot" in target.dataset,
+						inRow: !!target?.closest("[data-node-row]"),
+						inTopBar: !!target?.closest("header"),
 						phase: Math.round(Number(a.currentTime) % 1600),
 					};
 				}),
 		);
-	await expect.poll(async () => (await owners()).filter((o) => o.head).length).toBe(count);
+	await expect.poll(async () => (await owners()).length).toBe(count + 1);
+	const all = await owners();
+	expect(all.filter((o) => o.head && o.inRow)).toHaveLength(count);
+	// 其余只有顶栏的运行状态标签：状态点（时间线行标签、链路标签、切换运行按钮）默认静止。
+	expect(all.filter((o) => !o.head)).toEqual([
+		expect.objectContaining({ dot: true, inTopBar: true }),
+	]);
 	await expect.poll(async () => new Set((await owners()).map((o) => o.phase)).size).toBe(1);
-	expect((await owners()).every((o) => o.head)).toBe(true);
 });
 
 test("减少动效：浮层只淡入淡出、加载图标放慢而不停、颜色过渡照常", async ({ page }) => {

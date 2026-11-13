@@ -621,6 +621,8 @@ test("命令面板「当前页面」列出保存和运行；没有修改时选�
 	await page.waitForTimeout(500);
 	expect(await drawer.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 	await page.keyboard.press("Escape");
+	// 抽屉的退场动画里焦点还在它的输入框里，等它走完再按 R，免得按键写进输入框。
+	await expect(drawer).toHaveCount(0);
 
 	await switchMode(page, "run");
 	await page.keyboard.press("Control+k");
