@@ -157,7 +157,12 @@ test("页头有没有右侧按钮，标题都在同一高度", async ({ page, co
 
 test("提示在相邻按钮之间切换时新提示直接出现，不与旧提示叠着做淡入淡出", async ({ page }) => {
 	await page.goto("/agents");
+	await expect(page.getByRole("heading", { name: "Agent 管理", level: 1 })).toBeVisible();
 	await page.keyboard.press("Control+b");
+	await expect(page.getByRole("complementary", { name: "侧边栏" })).toHaveAttribute(
+		"data-collapsed",
+		"true",
+	);
 	const nav = page.getByRole("navigation", { name: "主导航" });
 	const links = nav.getByRole("link");
 	await links.nth(0).hover();
