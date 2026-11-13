@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	ApiError,
 	CLIENT_VERSION,
@@ -317,12 +320,19 @@ describe("API 客户端的写操作", () => {
 
 describe("控制面版本和客户端版本不一致时警告", () => {
 	const started: TestControlPlane[] = [];
+	const cleanups: Array<() => Promise<void>> = [];
 	afterEach(async () => {
 		vi.restoreAllMocks();
 		await Promise.all(started.splice(0).map((cp) => cp.close()));
+		await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 	});
-	async function controlPlane(version?: string) {
-		const { cp } = await startClientControlPlane(version === undefined ? {} : { version });
+	async function controlPlane(
+		version?: string,
+		options: Parameters<typeof startClientControlPlane>[0] = {},
+	) {
+		const { cp } = await startClientControlPlane(
+			version === undefined ? options : { ...options, version },
+		);
 		started.push(cp);
 		return cp;
 	}
@@ -349,6 +359,41 @@ describe("控制面版本和客户端版本不一致时警告", () => {
 		expect(mismatch?.message).toContain(CLIENT_VERSION);
 		expect(mismatch?.message).toContain("9.9.9");
 		expect(mismatch?.message).toContain("重新安装");
+	});
+
+	it("地址是绝对地址时，警告里的 npm install 命令指向这个控制面真正提供的安装包", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "sfly-client-warning-"));
+		cleanups.push(() => rm(dir, { recursive: true, force: true }));
+		await writeFile(join(dir, "sfly-client-9.9.9.tgz"), "安装包内容");
+		const cp = await controlPlane("9.9.9", { clientPackageDir: dir });
+		const mismatches: VersionMismatch[] = [];
+		const client = createClient({
+			baseUrl: cp.httpUrl,
+			onVersionMismatch: (mismatch) => mismatches.push(mismatch),
+		});
+
+		await client.system.health();
+
+		const url = `${cp.httpUrl}/client/9.9.9/sfly-client-9.9.9.tgz`;
+		expect(mismatches[0]?.message).toContain(`npm install ${url}`);
+		expect(await (await fetch(url)).text()).toBe("安装包内容");
+	});
+
+	it("地址是路径（同源页面）时没有可复制的地址，只写重新安装的办法", async () => {
+		const cp = await controlPlane("9.9.9");
+		const mismatches: VersionMismatch[] = [];
+		const client = createClient({
+			baseUrl: "/api",
+			fetch: (url, init) => fetch(`${cp.httpUrl}${url.replace(/^\/api/, "")}`, init),
+			onVersionMismatch: (mismatch) => mismatches.push(mismatch),
+		});
+
+		await client.system.health();
+
+		expect(mismatches).toHaveLength(1);
+		expect(mismatches[0]?.message).toContain("9.9.9");
+		expect(mismatches[0]?.message).toContain("重新安装");
+		expect(mismatches[0]?.message).not.toContain("npm install");
 	});
 
 	it("不同的客户端实例各警告一次", async () => {

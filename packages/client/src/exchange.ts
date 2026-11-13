@@ -34,7 +34,7 @@ export type Nickname = string | (() => string | null | undefined);
 export interface VersionMismatch {
 	clientVersion: string;
 	controlPlaneVersion: string;
-	/** 写明两边版本和处理办法的一句话。 */
+	/** 写明两边版本和处理办法的一句话；地址是绝对地址时处理办法是从这个控制面重新安装的 npm 命令。 */
 	message: string;
 }
 
@@ -101,10 +101,14 @@ export function createExchange(config: ExchangeConfig): Exchange {
 		const controlPlaneVersion = res.headers.get(CONTROL_PLANE_VERSION_HEADER);
 		if (!controlPlaneVersion || controlPlaneVersion === CLIENT_VERSION || versionWarned) return;
 		versionWarned = true;
+		const version = encodeURIComponent(controlPlaneVersion);
+		const reinstall = baseUrl.startsWith("http")
+			? `请从控制面重新安装 API 客户端：npm install ${baseUrl}/client/${version}/sfly-client-${version}.tgz`
+			: "请从控制面重新安装 API 客户端。";
 		config.onVersionMismatch({
 			clientVersion: CLIENT_VERSION,
 			controlPlaneVersion,
-			message: `警告：sfly API 客户端（${CLIENT_VERSION}）与控制面（${controlPlaneVersion}）版本不一致，接口可能对不上。请从控制面重新安装 API 客户端。`,
+			message: `警告：sfly API 客户端（${CLIENT_VERSION}）与控制面（${controlPlaneVersion}）版本不一致，接口可能对不上。${reinstall}`,
 		});
 	};
 
