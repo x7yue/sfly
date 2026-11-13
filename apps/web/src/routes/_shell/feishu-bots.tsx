@@ -32,6 +32,9 @@ export const Route = createFileRoute("/_shell/feishu-bots")({
 	component: FeishuBotsPage,
 });
 
+const botRowPrimary = (name: string) =>
+	document.querySelector<HTMLElement>(`[data-bot="${CSS.escape(name)}"] [data-list-primary]`);
+
 /**
  * 飞书机器人管理页（ADR 0020）：登记、替换 Webhook 地址、删除、发送测试消息；
  * 每个机器人显示最近一次投递的时间和结果，以及积压（还在排队的消息）的条数，定时重新查询。
@@ -74,7 +77,11 @@ function FeishuBotsPage() {
 					{(data) => <BotTable bots={data.bots} />}
 				</QueryView>
 			</Panel>
-			<RegisterBotDialog open={registering} onOpenChange={setRegistering} />
+			<RegisterBotDialog
+				open={registering}
+				onOpenChange={setRegistering}
+				focusAfter={botRowPrimary}
+			/>
 		</Page>
 	);
 }
@@ -84,13 +91,13 @@ function BotTable({ bots }: { bots: FeishuBotView[] }) {
 		<Table aria-label="飞书机器人列表">
 			<TableHeader>
 				<TableRow>
-					<TableHead>名称</TableHead>
-					<TableHead>Webhook 地址</TableHead>
+					<TableHead width="fit">名称</TableHead>
+					<TableHead width="fit">Webhook 地址</TableHead>
 					<TableHead>最近投递</TableHead>
-					<TableHead>积压</TableHead>
-					<TableHead>登记时间</TableHead>
+					<TableHead width="fit">积压</TableHead>
+					<TableHead width="fit">登记时间</TableHead>
 					<TableHead>测试结果</TableHead>
-					<TableHead>
+					<TableHead width="fit">
 						<span className="sr-only">操作</span>
 					</TableHead>
 				</TableRow>
@@ -113,19 +120,23 @@ function BotRow({ bot }: { bot: FeishuBotView }) {
 		onError: (error) => notify.error("发送测试消息失败", { description: error.message }),
 	});
 	return (
-		<TableRow>
-			<TableCell className="whitespace-nowrap font-mono font-medium">{bot.name}</TableCell>
-			<TableCell className="font-mono text-xs text-fg-2">{bot.webhook_url}</TableCell>
-			<TableCell className="max-w-md text-xs whitespace-normal">
+		<TableRow data-list-item="" data-bot={bot.name}>
+			<TableCell width="fit" className="font-mono font-semibold">
+				{bot.name}
+			</TableCell>
+			<TableCell width="fit" className="font-mono text-xs text-fg-2">
+				{bot.webhook_url}
+			</TableCell>
+			<TableCell className="text-xs">
 				<LastDelivery delivery={bot.last_delivery} />
 			</TableCell>
-			<TableCell className="whitespace-nowrap">
+			<TableCell width="fit">
 				<Backlog count={bot.backlog} />
 			</TableCell>
-			<TableCell className="whitespace-nowrap font-mono text-xs text-fg-3">
+			<TableCell width="fit" className="font-mono text-xs text-fg-3">
 				{formatDateTime(bot.created_at)}
 			</TableCell>
-			<TableCell className="max-w-md text-xs whitespace-normal">
+			<TableCell className="text-xs">
 				<div aria-live="polite">
 					{test.isPending ? (
 						<StatusPill kind="running">发送中</StatusPill>
@@ -136,9 +147,14 @@ function BotRow({ bot }: { bot: FeishuBotView }) {
 					)}
 				</div>
 			</TableCell>
-			<TableCell className="text-right whitespace-nowrap">
+			<TableCell width="fit" className="text-right">
 				<div className="flex justify-end gap-1.5">
-					<Button size="sm" disabled={test.isPending} onClick={() => test.mutate()}>
+					<Button
+						size="sm"
+						data-list-primary
+						disabled={test.isPending}
+						onClick={() => test.mutate()}
+					>
 						发送测试消息
 					</Button>
 					<Button size="sm" variant="ghost" onClick={() => setReplacing(true)}>

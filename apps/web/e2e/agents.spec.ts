@@ -360,3 +360,119 @@ test("加载中显示骨架，加载失败显示错误详情，重试后恢复",
 	await expect(page.getByRole("row", { name: /agent-a/ })).toBeVisible();
 	await expect(error).toBeHidden();
 });
+
+const ITEMS = [
+	"files.write v1",
+	"files.watch v1",
+	"demo-checks@1.2.0",
+	"sfly-stub@0.1.0",
+	"sfly-std@0.3.1",
+];
+
+test("能力与节点包的每一项不拆开（不在连字符处折行）；表格放不下时横向滚动，放得下时余量不平摊给各列", async ({
+	page,
+	connectAgent,
+}) => {
+	await connectAgent({
+		name: "agent-linux",
+		agentVersion: "1.2.3",
+		os: "linux",
+		arch: "x86_64",
+		capabilities: [
+			{ name: "files", version: 1 },
+			{ name: "files.write", version: 1 },
+			{ name: "files.read", version: 1 },
+			{ name: "files.watch", version: 1 },
+			{ name: "exec", version: 1 },
+		],
+		installedPackages: [
+			{ name: "demo-checks", version: "1.2.0" },
+			{ name: "sfly-stub", version: "0.1.0" },
+			{ name: "sfly-std", version: "0.3.1" },
+		],
+		peer: { port: 50052, publicAddress: "10.20.30.40" },
+	});
+
+	const measure = async (width: number) => {
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto("/agents");
+		const table = page.getByRole("table", { name: "Agent 列表" });
+		await expect(table.getByRole("row")).toHaveCount(2);
+		const widths = await table
+			.getByRole("columnheader")
+			.evaluateAll((all) => all.map((th) => Math.round(th.getBoundingClientRect().width)));
+		const scrolls = await page
+			.locator('[data-slot="table-container"]')
+			.evaluate((el) => el.scrollWidth > el.clientWidth);
+		const broken = await table
+			.getByRole("row")
+			.nth(1)
+			.getByRole("cell")
+			.evaluateAll((cells, items) => {
+				const lineOf = (cell: Element, index: number) => {
+					const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
+					let seen = 0;
+					for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+						const text = node as Text;
+						if (index < seen + text.length) {
+							const range = document.createRange();
+							range.setStart(text, index - seen);
+							range.setEnd(text, index - seen + 1);
+							return range.getBoundingClientRect().top;
+						}
+						seen += text.length;
+					}
+					return Number.NaN;
+				};
+				return items.filter((item) =>
+					cells.some((cell) => {
+						const at = (cell.textContent ?? "").indexOf(item);
+						return at >= 0 && lineOf(cell, at) !== lineOf(cell, at + item.length - 1);
+					}),
+				);
+			}, ITEMS);
+		return { widths, scrolls, broken };
+	};
+	const narrow = await measure(1280);
+	expect(narrow.scrolls).toBe(true);
+	expect(narrow.broken).toEqual([]);
+	const wide = await measure(1920);
+	expect(wide.scrolls).toBe(false);
+	expect(wide.broken).toEqual([]);
+	const fixed = (widths: number[]) => widths.filter((_, i) => i !== 6 && i !== 7);
+	expect(fixed(wide.widths)).toEqual(fixed(narrow.widths));
+	expect((wide.widths[6] ?? 0) + (wide.widths[7] ?? 0)).toBeGreaterThan(
+		(narrow.widths[6] ?? 0) + (narrow.widths[7] ?? 0) + 300,
+	);
+});
+
+test("立即更新失败时，原因写在确认框里，不发通知", async ({ page, connectAgent }) => {
+	const agent = await connectAgent({
+		name: "agent-waiting",
+		agentVersion: "1.2.2",
+		os: "linux",
+		arch: "x86_64",
+	});
+	agent.send({
+		case: "heartbeat",
+		value: {
+			runningTasks: [],
+			update: { state: AgentUpdateState.WAITING_FOR_TASKS, remainingTasks: 2 },
+		},
+	});
+	await agent.sync();
+	await page.route("**/api/agents/agent-waiting/update-now", (route) =>
+		route.fulfill({
+			status: 503,
+			contentType: "application/json",
+			body: JSON.stringify({ error: { code: "unavailable", message: "Agent 没有应答" } }),
+		}),
+	);
+	await page.goto("/agents");
+	await page.getByRole("button", { name: "立即更新" }).click();
+	const dialog = page.getByRole("dialog", { name: /立即更新/ });
+	await dialog.getByRole("button", { name: "立即更新" }).click();
+	await expect(dialog.getByRole("alert")).toHaveText("立即更新失败：Agent 没有应答");
+	await expect(dialog).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});

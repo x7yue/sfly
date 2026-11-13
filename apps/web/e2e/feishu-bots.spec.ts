@@ -55,7 +55,7 @@ test("登记：填名称和 Webhook 地址，列表里只显示打码的地址",
 	await expect(page.getByRole("button", { name: "登记机器人" })).toBeVisible();
 });
 
-test("登记：名称重复时弹窗不关闭，显示中文错误；地址不是 http 或 https 时不能提交", async ({
+test("登记：输入过程中不报错，离开输入框才提示；提交按钮一直可点，空着提交时错误写在字段下并把焦点放回去；名称重复的原因写在弹窗里、不发通知", async ({
 	page,
 	controlPlane,
 	feishu,
@@ -65,22 +65,88 @@ test("登记：名称重复时弹窗不关闭，显示中文错误；地址不�
 	await page.getByRole("button", { name: "登记机器人" }).click();
 	const dialog = page.getByRole("dialog", { name: "登记飞书机器人" });
 	const submit = dialog.getByRole("button", { name: "登记", exact: true });
-
-	await dialog.getByLabel("名称").fill("压测群");
-	await dialog.getByLabel("Webhook 地址").fill("ftp://feishu.example/hook/1");
-	await expect(dialog).toContainText("Webhook 地址必须是 http 或 https 地址");
-	await expect(submit).toBeDisabled();
-
-	await dialog.getByLabel("Webhook 地址").fill(feishu.webhookUrl("b"));
+	const name = dialog.getByLabel("名称");
+	const webhook = dialog.getByLabel("Webhook 地址");
 	await expect(submit).toBeEnabled();
+	await expect(webhook).toHaveAttribute("type", "url");
+
+	await name.fill("压测群");
+	await webhook.pressSequentially("h");
+	await expect(webhook).not.toHaveAttribute("aria-invalid", "true");
+	await expect(dialog).not.toContainText("必须是 http 或 https 地址");
+	await webhook.pressSequentially("ttp://x");
+	await expect(dialog).not.toContainText("必须是 http 或 https 地址");
+
+	await webhook.fill("ftp://feishu.example/hook/1");
+	await name.focus();
+	const problem = dialog.getByText("Webhook 地址必须是 http 或 https 地址");
+	await expect(problem).toBeVisible();
+	await expect(webhook).toHaveAttribute("aria-invalid", "true");
+	await expect(webhook).toHaveAttribute(
+		"aria-describedby",
+		(await problem.getAttribute("id")) ?? "",
+	);
+	await expect(submit).toBeEnabled();
+
+	await webhook.fill(feishu.webhookUrl("b"));
+	await expect(problem).toBeHidden();
+	await expect(webhook).not.toHaveAttribute("aria-invalid", "true");
+	await webhook.fill("http://feishu.example/hook 1");
+	await expect(dialog).toContainText("Webhook 地址不能含空白字符");
+
+	await name.fill("");
+	await webhook.fill("");
+	await submit.click();
+	await expect(dialog.getByText("填写机器人名称")).toBeVisible();
+	await expect(name).toBeFocused();
+	await name.fill("压测群");
+	await submit.click();
+	await expect(dialog.getByText("填写 Webhook 地址")).toBeVisible();
+	await expect(webhook).toBeFocused();
+
+	await webhook.fill(feishu.webhookUrl("b"));
 	await submit.click();
 	await expect(dialog.getByRole("alert")).toHaveText("飞书机器人「压测群」已存在，名称不能重复");
 	await expect(dialog).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 
-	await dialog.getByLabel("名称").fill("告警群");
+	await name.fill("告警群");
 	await submit.click();
 	await expect(dialog).toBeHidden();
 	await expect(page.getByRole("table", { name: "飞书机器人列表" }).getByRole("row")).toHaveCount(3);
+});
+
+test("登记之后焦点落到新的那一行；删除之后焦点落到相邻的一行，最后一行删掉后回到页面标题", async ({
+	page,
+	feishu,
+}) => {
+	await page.goto("/feishu-bots");
+	const register = async (button: string, bot: string, hook: string) => {
+		await page.getByRole("button", { name: button }).click();
+		const dialog = page.getByRole("dialog", { name: "登记飞书机器人" });
+		await dialog.getByLabel("名称").fill(bot);
+		await dialog.getByLabel("Webhook 地址").fill(feishu.webhookUrl(hook));
+		await dialog.getByRole("button", { name: "登记", exact: true }).click();
+		await expect(dialog).toBeHidden();
+		await expect(row(page, bot).getByRole("button", { name: "发送测试消息" })).toBeFocused();
+	};
+	await register("登记机器人", "压测群", "a");
+	await register("登记机器人", "告警群", "b");
+
+	await row(page, "压测群").getByRole("button", { name: "删除" }).click();
+	await page
+		.getByRole("dialog", { name: "删除飞书机器人「压测群」？" })
+		.getByRole("button", { name: "删除", exact: true })
+		.click();
+	await expect(row(page, "压测群")).toHaveCount(0);
+	await expect(row(page, "告警群").getByRole("button", { name: "发送测试消息" })).toBeFocused();
+
+	await row(page, "告警群").getByRole("button", { name: "删除" }).click();
+	await page
+		.getByRole("dialog", { name: "删除飞书机器人「告警群」？" })
+		.getByRole("button", { name: "删除", exact: true })
+		.click();
+	await expect(page.getByRole("heading", { name: "飞书机器人", level: 1 })).toBeFocused();
 });
 
 test("发送测试消息：把一条固定文本发到 Webhook 地址里的主机，结果立即显示在这一行", async ({

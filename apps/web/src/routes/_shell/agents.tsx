@@ -14,6 +14,7 @@ import { STATUS_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogHeader,
@@ -104,7 +105,9 @@ function ConnectHelp({ command }: { command: string }) {
 						」。
 					</DialogDescription>
 				</DialogHeader>
-				<CodeBlock code={command} />
+				<DialogBody>
+					<CodeBlock code={command} />
+				</DialogBody>
 			</DialogContent>
 		</Dialog>
 	);
@@ -118,20 +121,20 @@ function AgentTable({
 	controlPlaneVersion: string;
 }) {
 	return (
-		<Table aria-label="Agent 列表">
+		<Table aria-label="Agent 列表" scroll="x">
 			<TableHeader>
 				<TableRow>
-					<TableHead>名称</TableHead>
-					<TableHead>状态</TableHead>
-					<TableHead>槽位</TableHead>
-					<TableHead>版本</TableHead>
-					<TableHead>系统</TableHead>
-					<TableHead>对外地址</TableHead>
+					<TableHead width="fit">名称</TableHead>
+					<TableHead width="fit">状态</TableHead>
+					<TableHead width="fit">槽位</TableHead>
+					<TableHead width="fit">版本</TableHead>
+					<TableHead width="fit">系统</TableHead>
+					<TableHead width="fit">对外地址</TableHead>
 					<TableHead>能力</TableHead>
 					<TableHead>已安装的节点包</TableHead>
-					<TableHead>被场景引用</TableHead>
-					<TableHead>最后在线</TableHead>
-					<TableHead>
+					<TableHead width="fit">被场景引用</TableHead>
+					<TableHead width="fit">最后在线</TableHead>
+					<TableHead width="fit">
 						<span className="sr-only">操作</span>
 					</TableHead>
 				</TableRow>
@@ -142,6 +145,20 @@ function AgentTable({
 				))}
 			</TableBody>
 		</Table>
+	);
+}
+
+/** 每项 `nowrap`：浏览器会在连字符处折行，`sfly-stub@0.1.0` 会被拆成两行。 */
+function IdentifierList({ items }: { items: readonly string[] }) {
+	return (
+		<span className="font-mono">
+			{items.map((item, i) => (
+				<span key={item} className="whitespace-nowrap">
+					{item}
+					{i < items.length - 1 && "、"}
+				</span>
+			))}
+		</span>
 	);
 }
 
@@ -203,8 +220,10 @@ function AgentRow({
 	];
 	return (
 		<TableRow>
-			<TableCell className="whitespace-nowrap font-mono font-medium">{agent.name}</TableCell>
-			<TableCell>
+			<TableCell width="fit" className="font-mono font-medium">
+				{agent.name}
+			</TableCell>
+			<TableCell width="fit">
 				{update ? (
 					<StatusPill kind={update.kind}>{update.label}</StatusPill>
 				) : installing ? (
@@ -217,7 +236,7 @@ function AgentRow({
 				{update?.detail && (
 					<div
 						className={cn(
-							"max-w-60 text-xs",
+							"w-max max-w-60 text-xs whitespace-normal",
 							update.kind === "failed" ? "text-danger-fg" : "text-fg-3",
 						)}
 					>
@@ -243,30 +262,28 @@ function AgentRow({
 					</div>
 				)}
 			</TableCell>
-			<TableCell>
+			<TableCell width="fit">
 				<SlotBar used={agent.running_tasks.length} total={agent.info.slots} />
 			</TableCell>
-			<TableCell className="font-mono">
+			<TableCell width="fit" className="font-mono">
 				{agent.info.agent_version || "—"}
 				{mismatch && <div className="text-xs text-fg-3">控制面 {controlPlaneVersion}</div>}
 			</TableCell>
-			<TableCell className="font-mono text-xs text-fg-2">
+			<TableCell width="fit" className="font-mono text-xs text-fg-2">
 				{agent.info.os || "?"}/{agent.info.arch || "?"}
 			</TableCell>
-			<TableCell className="font-mono text-xs text-fg-2">
+			<TableCell width="fit" className="font-mono text-xs text-fg-2">
 				{endpointLabel(agent.endpoint) || <span className="text-fg-3">—</span>}
 				{agent.endpoint.address_source === "configured" && (
 					<div className="font-sans text-xs text-fg-3">安装时配置</div>
 				)}
 			</TableCell>
-			<TableCell className="min-w-36 max-w-60 text-xs text-fg-2">
-				<span className="font-mono">
-					{agent.capabilities.length === 0 ? (
-						<span className="text-fg-3">无</span>
-					) : (
-						agent.capabilities.map((c) => `${c.name} v${c.version}`).join("、")
-					)}
-				</span>
+			<TableCell className="text-xs text-fg-2">
+				{agent.capabilities.length === 0 ? (
+					<span className="text-fg-3">无</span>
+				) : (
+					<IdentifierList items={agent.capabilities.map((c) => `${c.name} v${c.version}`)} />
+				)}
 				{unavailable && (
 					<>
 						<div className="text-xs whitespace-nowrap text-warn-fg">不能被其它 Agent 调用</div>
@@ -274,20 +291,24 @@ function AgentRow({
 					</>
 				)}
 			</TableCell>
-			<TableCell className="max-w-80 font-mono text-xs text-fg-2">
-				{packages.length === 0 ? <span className="text-fg-3">无</span> : packages.join("、")}
-			</TableCell>
 			<TableCell className="text-xs text-fg-2">
+				{packages.length === 0 ? (
+					<span className="text-fg-3">无</span>
+				) : (
+					<IdentifierList items={packages} />
+				)}
+			</TableCell>
+			<TableCell width="fit" className="text-xs text-fg-2">
 				{agent.referencing_orchestrations > 0 ? (
 					`${agent.referencing_orchestrations} 个场景`
 				) : (
 					<span className="text-fg-3">未被引用</span>
 				)}
 			</TableCell>
-			<TableCell className={cn("text-xs text-fg-3", !online && "font-mono")}>
+			<TableCell width="fit" className={cn("text-xs text-fg-3", !online && "font-mono")}>
 				{online ? "现在" : formatDateTime(agent.last_seen_at)}
 			</TableCell>
-			<TableCell className="text-right">
+			<TableCell width="fit" className="text-right">
 				{canUpdateNow(agent) && (
 					<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
 				)}
