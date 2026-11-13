@@ -7,6 +7,7 @@ import { runStatusView, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
 import { chainLabel } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { Truncate } from "@/components/ui/truncate";
 
 /** 表格里最多画几条链，其余只计数，保证行高一致。 */
 const MAX_TABLE_CHAINS = 2;
@@ -17,7 +18,7 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 		col.display({
 			id: "id",
 			header: "运行",
-			meta: { className: "font-mono" },
+			meta: { width: "fit", className: "font-mono" },
 			cell: ({ row }) => (
 				<Link
 					to="/runs/$id"
@@ -33,12 +34,13 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 		col.display({
 			id: "scenario",
 			header: "场景",
-			meta: { className: "max-w-60 truncate" },
-			cell: ({ row }) => row.original.orchestration_name,
+			meta: { width: "grow" },
+			cell: ({ row }) => <Truncate>{row.original.orchestration_name}</Truncate>,
 		}),
 		col.display({
 			id: "status",
 			header: "状态",
+			meta: { width: "fit" },
 			cell: ({ row }) => (
 				<StatusPill kind={runStatusView(row.original.status).kind}>
 					{statusText(row.original)}
@@ -48,18 +50,19 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 		col.display({
 			id: "progress",
 			header: "进度",
+			meta: { width: "fit" },
 			cell: ({ row }) => <ChainBars chains={row.original.chains} max={MAX_TABLE_CHAINS} />,
 		}),
 		col.display({
 			id: "version",
 			header: "版本",
-			meta: { className: "font-mono" },
+			meta: { width: "fit", className: "font-mono" },
 			cell: ({ row }) => `v${row.original.orchestration_version}`,
 		}),
 		col.display({
 			id: "triggered_by",
 			header: "触发人",
-			meta: { className: "max-w-56 truncate" },
+			meta: { width: "fit" },
 			cell: ({ row }) => (
 				<>
 					{row.original.triggered_by}
@@ -70,13 +73,13 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 		col.display({
 			id: "started_at",
 			header: "开始",
-			meta: { className: "font-mono text-xs text-fg-2" },
+			meta: { width: "fit", className: "font-mono text-xs text-fg-2" },
 			cell: ({ row }) => formatDateTime(row.original.started_at),
 		}),
 		col.display({
 			id: "duration",
 			header: "耗时",
-			meta: { className: "text-right font-mono", headClassName: "text-right" },
+			meta: { width: "fit", className: "text-right font-mono", headClassName: "text-right" },
 			cell: ({ row }) => {
 				const run = row.original;
 				const end = run.ended_at ? Date.parse(run.ended_at) : run.now;

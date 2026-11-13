@@ -125,15 +125,15 @@ test("下拉菜单的禁用项不降整项透明度，原因读得清；菜单�
 	await expect(item).toHaveCSS("opacity", "1");
 });
 
-test("列表表格的表头吸在页面主区域顶端；表头不加粗", async ({ page, connectAgent }) => {
+test("列表表格的表头吸在页面主区域顶端；表头不加粗", async ({ page, controlPlane }) => {
 	for (const name of ["a1", "a2", "a3", "a4", "a5", "a6", "a7", "a8"]) {
-		await connectAgent({ name: `agent-${name}` });
+		await createScenario(controlPlane, `场景-${name}`);
 	}
 	await page.setViewportSize({ width: 1280, height: 400 });
-	await page.goto("/agents");
-	const table = page.getByRole("table", { name: "Agent 列表" });
+	await page.goto("/orchestrations?view=table");
+	const table = page.getByRole("table", { name: "场景列表" });
 	await expect(table.getByRole("row")).toHaveCount(9);
-	const head = table.getByRole("columnheader", { name: "名称" });
+	const head = table.getByRole("columnheader", { name: "场景" });
 	await expect(head).toHaveCSS("font-weight", "400");
 	const main = page.locator("#main");
 	await main.evaluate((el) => el.scrollTo(0, 260));

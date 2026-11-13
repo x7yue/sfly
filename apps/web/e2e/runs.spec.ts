@@ -1,6 +1,13 @@
 import { expect, test } from "./fixtures";
 import { advance, runDocument as document } from "./run-records";
-import { createScenario, expectFocusVisible, holdApi, publishPackage, triggerRun } from "./support";
+import {
+	createScenario,
+	expectFocusVisible,
+	holdApi,
+	publishPackage,
+	scenarioUsing,
+	triggerRun,
+} from "./support";
 
 // 运行记录页（原型 #/runs）：进行中的运行是卡片，历史运行是表格。
 
@@ -249,4 +256,95 @@ test("列表页的键盘：/ 聚焦搜索框，↓ 与 J / K 从进行中的卡�
 	await expectFocusVisible(row.getByRole("link", { name: done.slice(0, 8) }));
 	await page.keyboard.press("Enter");
 	await expect(page).toHaveURL(`/runs/${done}`);
+});
+
+test("历史运行表：场景列吃掉多出来的宽度，其余列按内容收紧，宽屏上编号、状态、开始、耗时聚在一起；场景名被截断时悬停显示全文", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent", slots: 4 });
+	await publishPackage(controlPlane);
+	const longName = `撮合压测 · 高并发下单 · A 环境 · ${"很长的名称".repeat(14)}`;
+	const scenario = await createScenario(controlPlane, longName, document());
+	await triggerRun(controlPlane, scenario);
+	await agent.succeed(await agent.nextAssign());
+	await agent.succeed(await agent.nextAssign());
+
+	const columns = async (width: number) => {
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto("/runs");
+		const table = page.getByRole("table", { name: "历史运行" });
+		await expect(table.getByRole("row")).toHaveCount(2);
+		return table
+			.getByRole("columnheader")
+			.evaluateAll((all) => all.map((th) => Math.round(th.getBoundingClientRect().width)));
+	};
+	const narrow = await columns(1280);
+	const wide = await columns(1920);
+	expect(wide[1]).toBeGreaterThan((narrow[1] ?? 0) + 500);
+	expect([wide[0], ...wide.slice(2)]).toEqual([narrow[0], ...narrow.slice(2)]);
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/runs");
+	const name = page.locator('[data-slot="truncate"]').first();
+	await expect(name).toHaveAttribute("data-truncated", "true");
+	await name.hover();
+	await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(longName);
+});
+
+test("进行中的卡片：运行的状态标签脉冲一处，当前节点的状态点静止，排队中的节点是灰色半实心圈（不是琥珀）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 1 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "排队的场景", scenarioUsing("agent-a"));
+	const running = await triggerRun(controlPlane, scenario);
+	await agent.nextAssign();
+	const queued = await triggerRun(controlPlane, scenario);
+
+	await page.goto("/runs");
+	const runningCard = page.getByRole("article", { name: `运行 ${running.slice(0, 8)}` });
+	const queuedCard = page.getByRole("article", { name: `运行 ${queued.slice(0, 8)}` });
+	await expect(runningCard.getByRole("listitem")).toContainText("执行中");
+	await expect(queuedCard.getByRole("listitem")).toContainText("排队中");
+
+	await expect(runningCard.getByRole("listitem").locator("[data-status-dot]")).toHaveAttribute(
+		"data-status-dot",
+		"running",
+	);
+	await expect(queuedCard.getByRole("listitem").locator("[data-status-dot]")).toHaveAttribute(
+		"data-status-dot",
+		"queued",
+	);
+	const dots = (card: typeof runningCard) =>
+		card.locator("li [data-status-dot]").evaluateAll((all) =>
+			all.map((dot) => ({
+				kind: dot.getAttribute("data-status-dot"),
+				color: getComputedStyle(dot).color,
+				pulses: dot.getAnimations({ subtree: true }).length,
+			})),
+		);
+	const [queuedDot] = await dots(queuedCard);
+	expect(queuedDot?.pulses).toBe(0);
+	const grey = await page.evaluate(() => {
+		const probe = window.document.createElement("i");
+		probe.className = "text-pending";
+		window.document.body.append(probe);
+		const color = getComputedStyle(probe).color;
+		probe.remove();
+		return color;
+	});
+	expect(queuedDot?.color).toBe(grey);
+
+	const pulses = await page.evaluate(
+		() =>
+			window.document
+				.getAnimations()
+				.filter((a) => a instanceof CSSAnimation && a.animationName === "status-pulse").length,
+	);
+	expect(pulses).toBe(2);
+	expect((await dots(runningCard))[0]?.pulses).toBe(0);
 });
