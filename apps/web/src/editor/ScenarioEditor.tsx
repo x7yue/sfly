@@ -69,8 +69,8 @@ import { usePackageCatalog, useRegisteredAgents, useRegisteredBots } from "./cat
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
-import { FieldDraftsProvider, useFieldDraftStore } from "./field-drafts";
-import { Inspector, type InspectorContext } from "./inspector/Inspector";
+import { FieldDraftsProvider, fieldErrorKey, useFieldDraftStore } from "./field-drafts";
+import { type FocusRequest, Inspector, type InspectorContext } from "./inspector/Inspector";
 import { useNodeClipboard } from "./node-clipboard";
 import { useReconnect } from "./reconnect";
 import {
@@ -195,8 +195,8 @@ function Editor({
 
 	// —— 撤销 / 重做：修改场景的操作都先记下修改前的状态（edit-history.ts） ——
 	const history = useEditHistory(
-		{ nodes, edges, meta },
-		{ nodes: setNodes, edges: setEdges, meta: setMeta },
+		{ nodes, edges, meta, drafts: drafts.drafts },
+		{ nodes: setNodes, edges: setEdges, meta: setMeta, drafts: drafts.replace },
 		{ nodes: onNodesChange, edges: onEdgesChange },
 	);
 
@@ -228,6 +228,12 @@ function Editor({
 		});
 		return [...documentFieldErrors(doc), ...pending];
 	}, [doc, drafts.drafts]);
+	// 给用户看的字段错误：字段交互过（失焦、保存被拦下）才算，输入到一半的不提示（field-drafts.tsx）。
+	const shownErrors = useMemo(
+		() => fieldErrors.filter((e) => !(e.draft || e.typed) || drafts.touched.has(fieldErrorKey(e))),
+		[fieldErrors, drafts.touched],
+	);
+	const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
 
 	const info: CanvasInfo = useMemo(
 		() => ({
@@ -531,8 +537,14 @@ function Editor({
 	});
 
 	const save = () => {
-		if (fieldErrors.length > 0) {
-			notify.warning(`有 ${fieldErrors.length} 处字段错误，改正后才能保存`);
+		const first = fieldErrors[0];
+		if (first) {
+			// 把所有错误亮出来，焦点直接到第一个出错的字段，不用自己去找是哪个节点、哪个页签。
+			drafts.touch(fieldErrors.map(fieldErrorKey));
+			setInspectorOpen(true);
+			if (first.nodeId) locate(first.nodeId);
+			else setSelectedId(null);
+			setFocusRequest({ key: fieldErrorKey(first), nonce: Date.now() });
 			return;
 		}
 		if (versioning.save.isPending) return;
@@ -568,7 +580,8 @@ function Editor({
 		bots: botList,
 		warnings,
 		notes,
-		fieldErrors,
+		fieldErrors: shownErrors,
+		focusRequest,
 		onChangeNode: updateNode,
 		onDefaultAgent: (agent) => {
 			history.checkpoint();
@@ -604,7 +617,7 @@ function Editor({
 					version={
 						readyRun && running ? readyRun.run.orchestration_version : versioning.base.version
 					}
-					fieldErrors={fieldErrors.length}
+					fieldErrors={shownErrors.length}
 					warnings={warnings.length}
 					notes={notes.length}
 					onShowChecks={() => {
@@ -624,7 +637,7 @@ function Editor({
 							editors={editors}
 							doc={doc}
 							versioning={versioning}
-							fieldErrors={fieldErrors.length}
+							fieldErrors={shownErrors.length}
 							onSave={save}
 							onRun={() => setTriggering(true)}
 							onReload={onReload}

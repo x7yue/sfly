@@ -3,13 +3,14 @@ import { BracesIcon, XIcon } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { ACTION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
+import type { FieldControl } from "./fields";
 import { ReferenceList } from "./ReferenceList";
 import { completionGroups, moveActive, type ReferenceChoice } from "./reference-completion";
 
 /**
  * 非字符串参数（数字、布尔、枚举、JSON）旁的「插入引用」按钮：点它弹出引用补全，选中的引用成为整个值（整值引用）。
  * 键盘：焦点在按钮上时 ↑ ↓ 选择，Enter 确认，Esc 关闭。补全列表与 ReferenceEditor 用的是同一个，
- * 定位在最近的 relative 祖先（Field 的控件列）里、控件的正下方。
+ * 定位在最近的 relative 祖先（Field）里、控件的正下方。
  */
 export function ReferencePicker({
 	name,
@@ -87,29 +88,33 @@ export function ReferencePicker({
  */
 export function ReferenceChip({
 	ref,
+	control,
 	label,
 	name,
 	value,
-	invalid,
 	onRemove,
 }: {
 	/** × 按钮（引用刚生成时把焦点放到这里）。 */
 	ref?: React.Ref<HTMLButtonElement>;
+	/** 字段（Field）交给控件的属性。 */
+	control?: FieldControl;
 	/** 无障碍名称（与类型控件相同，如「输入 expect」）。 */
 	label: string;
 	name: string;
 	/** 完整的引用 `${{ 表达式 }}`。 */
 	value: string;
-	invalid?: boolean;
 	onRemove(): void;
 }) {
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: 一个值和它的移除按钮，不是表单分组
 		<div
+			id={control?.id}
+			aria-describedby={control?.["aria-describedby"]}
+			data-field-key={control?.["data-field-key"]}
 			role="group"
 			aria-label={label}
 			data-slot="reference-chip"
-			data-invalid={invalid || undefined}
+			data-invalid={control?.["aria-invalid"]}
 			className={cn(
 				"flex h-7.5 min-w-0 items-center gap-1 rounded-md border border-border-strong bg-raised-2 pr-0.5 pl-2 data-invalid:border-danger",
 			)}

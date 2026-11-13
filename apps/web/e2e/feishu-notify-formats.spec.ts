@@ -131,6 +131,7 @@ test("原始消息：写完整的请求体，字符串字段里的引用逐个�
 	// 还不是合法的 JSON：字段下有提示，保存不会生效。
 	const message = field(page, "原始消息");
 	await message.fill('{"msg_type": "text", "content": {');
+	await message.blur();
 	await expect(panel.getByText("不是合法的 JSON")).toBeVisible();
 
 	await message.fill(

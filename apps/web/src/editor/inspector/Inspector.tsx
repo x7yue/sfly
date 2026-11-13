@@ -7,7 +7,7 @@ import {
 import type { AgentView, FeishuBotView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { cn } from "cn";
 import { PanelRightCloseIcon, Trash2Icon } from "lucide-react";
-import { forwardRef, type ReactNode, useMemo, useState } from "react";
+import { forwardRef, type ReactNode, useEffect, useMemo, useState } from "react";
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
@@ -18,10 +18,11 @@ import { usePanelWidth } from "#/lib/panel-width";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { AgentSelect } from "./AgentSelect";
-import { Field, SectionTitle } from "./fields";
+import { FIELD_LIST_CLASS, Field, focusField, SectionTitle } from "./fields";
 import {
 	AsyncMapping,
 	ExecutionSettings,
@@ -37,6 +38,16 @@ import {
 import { ParamsEditor } from "./ParamsEditor";
 import { referenceChoices } from "./reference-completion";
 
+/** 把焦点放到某个字段：`key` 是字段的草稿键（field-drafts.tsx），每次请求的 `nonce` 不同。 */
+export interface FocusRequest {
+	key: string;
+	nonce: number;
+}
+
+/** 字段所在的页签：执行设置在「执行」页，其余在「参数」页。 */
+const tabOfField = (key: string): Tab =>
+	/^[^/]*\/(timeout|retries|queue_timeout)$/.test(key) ? "exec" : "params";
+
 /** 检查器需要的场景级上下文。 */
 export interface InspectorContext {
 	doc: OrchestrationDocument;
@@ -49,8 +60,10 @@ export interface InspectorContext {
 	warnings: OrchestrationWarning[];
 	/** 不影响保存与触发的提醒（validation.ts 的 undeclaredInputNotes）。 */
 	notes: readonly InputNote[];
-	/** 阻止保存的字段错误（文档校验 + 还没生效的输入）。 */
+	/** 要给用户看的阻止保存的字段错误（文档校验 + 还没生效的输入，交互过的字段才算，见 field-drafts.tsx）。 */
 	fieldErrors: FieldError[];
+	/** 保存被字段错误拦下：定位到的字段（节点、页签、输入框由检查器自己切换与聚焦）。 */
+	focusRequest: FocusRequest | null;
 	onChangeNode(id: string, node: DocNode): void;
 	onDefaultAgent(agent: string | undefined): void;
 	onLock(name: string, version: string): void;
@@ -176,7 +189,14 @@ function NodeInspector({
 	onCollapse(): void;
 }) {
 	const { doc, catalog, info } = context;
-	const [tab, setTab] = useState<Tab>("params");
+	const request =
+		context.focusRequest?.key.startsWith(`${id}/`) === true ? context.focusRequest : null;
+	const [tab, setTab] = useState<Tab>(() => (request ? tabOfField(request.key) : "params"));
+	useEffect(() => {
+		if (!request) return;
+		setTab(tabOfField(request.key));
+		return focusField(request.key);
+	}, [request]);
 	const meta = KIND_META[node.kind];
 	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
 	const choices = useMemo(() => referenceChoices(doc, id, catalog), [doc, id, catalog]);
@@ -213,13 +233,19 @@ function NodeInspector({
 				row={
 					<>
 						<span className="font-mono text-fg-2">{id}</span>
-						<span className="truncate">
-							· {meta.label}
+						{/* 锁定的版本在包名后面，截断时只截包名与节点名，版本号始终看得见。 */}
+						<span className="flex min-w-0">
+							<span className="truncate">
+								· {meta.label}
+								{node.kind === "package" && (
+									<span className="font-mono">
+										{" "}
+										· {node.package}/{node.node}
+									</span>
+								)}
+							</span>
 							{node.kind === "package" && (
-								<span className="font-mono">
-									{" "}
-									· {node.package}/{node.node}@{version ?? "未锁定"}
-								</span>
+								<span className="flex-none font-mono">@{version ?? "未锁定"}</span>
 							)}
 						</span>
 					</>
@@ -252,7 +278,7 @@ function NodeInspector({
 					{hasExec && <TabsTrigger value="exec">执行</TabsTrigger>}
 					<TabsTrigger value="doc">{node.kind === "package" ? "说明与指标" : "说明"}</TabsTrigger>
 				</TabsList>
-				<TabsContent value="params" className="overflow-auto px-3.5 py-3">
+				<TabsContent value="params" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
 					{general.length > 0 && <WarningList warnings={general} />}
 					{(node.kind === "entry" || node.kind === "subflow_entry") && (
 						<>
@@ -328,13 +354,18 @@ function NodeInspector({
 					{fieldErrors
 						.filter((e) => !e.draft && !e.field.startsWith("params."))
 						.map((e) => (
-							<p key={e.field} className="m-0 mt-2 text-xs text-danger-fg">
+							<p
+								key={e.field}
+								data-field-key={fieldErrorKey(e)}
+								tabIndex={-1}
+								className="m-0 mt-2 text-xs text-danger-fg outline-offset-2"
+							>
 								{fieldLabel(node, e.field)}：{e.message}
 							</p>
 						))}
 				</TabsContent>
 				{hasExec && (
-					<TabsContent value="exec" className="overflow-auto px-3.5 py-3">
+					<TabsContent value="exec" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
 						<ExecutionSettings id={id} node={node} onChange={change} />
 					</TabsContent>
 				)}
@@ -423,20 +454,23 @@ function ScenarioInspector({
 	return (
 		<>
 			<Header onCollapse={onCollapse} title="场景设置" row={<span>未选中节点</span>} />
-			<div className="min-h-0 flex-1 overflow-auto px-3.5 py-3">
+			<div className={cn(FIELD_LIST_CLASS, "min-h-0 flex-1 overflow-auto px-3.5 py-3")}>
 				<Field label="默认 Agent" help="未单独选择 Agent 的包节点都派发到这里">
-					<AgentSelect
-						label="默认 Agent"
-						value={doc.default_agent}
-						agents={context.agents}
-						emptyLabel="（未设置）"
-						onChange={context.onDefaultAgent}
-					/>
+					{(control) => (
+						<AgentSelect
+							control={control}
+							label="默认 Agent"
+							value={doc.default_agent}
+							agents={context.agents}
+							emptyLabel="（未设置）"
+							onChange={context.onDefaultAgent}
+						/>
+					)}
 				</Field>
 				<SectionTitle>节点包版本</SectionTitle>
 				{used.length === 0 && <p className="m-0 text-xs text-fg-3">还没有使用任何节点包。</p>}
 				{used.map((name) => (
-					<Field key={name} label={<span className="font-mono">{name}</span>}>
+					<Field key={name} label={name} mono>
 						<PackageVersionField
 							name={name}
 							locked={doc.packages[name]}

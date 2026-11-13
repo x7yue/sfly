@@ -4,10 +4,10 @@ import type { AgentView, FeishuBotView } from "@sfly/schema";
 import { useEffect, useId, useRef } from "react";
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
-import { draftKey, useDropFieldDraft, useFieldDraftError, useParsedField } from "../field-drafts";
+import { draftKey, useDropFieldDraft, useFieldErrors, useParsedField } from "../field-drafts";
 import { AgentSelect } from "./AgentSelect";
 import { FeishuBotSelect } from "./FeishuBotSelect";
-import { Field } from "./fields";
+import { Field, type FieldControl } from "./fields";
 import { ReferenceEditor, type ReferenceEditorHandle } from "./ReferenceEditor";
 import { ReferenceChip, ReferencePicker } from "./ReferencePicker";
 import { type ReferenceChoice, wholeReference } from "./reference-completion";
@@ -97,24 +97,27 @@ export function ValueField({
 				: "可选";
 	const fieldLabel = label ?? `输入 ${name}`;
 	const key = draftKey(nodeId, `value.${name}`);
+	const errors = useFieldErrors(key, problems);
 	const common = {
 		id,
 		name,
 		label: fieldLabel,
 		placeholder,
-		problems,
+		errors,
 		// 「Agent」「飞书机器人」类型的参数插入引用时只列入口参数（#197、#233「也可以改为引用入口参数」）：
 		// 这样的值在触发前就能检查是已注册的 Agent、已登记的机器人。手写的上游输出引用也允许，到派发时才检查（sdk-reference）。
 		choices: NAME_TYPES[kind] ? choices.filter((c) => c.kind === "param") : choices,
 		onChange,
 	};
-	const field = (control: React.ReactNode, aside?: React.ReactNode) => (
+	const field = (control: (c: FieldControl) => React.ReactNode, aside?: React.ReactNode) => (
 		<Field
-			label={heading ?? <span className="font-mono">{name}</span>}
-			htmlFor={id}
+			id={id}
+			fieldKey={key}
+			label={heading ?? name}
+			mono={heading === undefined}
 			required={required}
 			type={NAME_TYPES[kind] ?? describeSchema(schema)}
-			error={<ParsedError fieldKey={key} problems={problems} />}
+			error={errors.length > 0 ? <Problems problems={errors} /> : undefined}
 			help={help}
 			aside={aside}
 		>
@@ -141,20 +144,23 @@ interface ValueProps {
 	name: string;
 	label: string;
 	placeholder: string;
-	problems: string[];
+	/** 要显示在字段下面的错误（没生效的输入的错误、静态检查的警告）。 */
+	errors: string[];
 	choices: ReferenceChoice[];
 	value: unknown;
 	onChange(value: unknown): void;
 	/** 把控件和右侧的按钮放进字段的版式里。 */
-	render(control: React.ReactNode, aside?: React.ReactNode): React.ReactNode;
+	render(
+		control: (control: FieldControl) => React.ReactNode,
+		aside?: React.ReactNode,
+	): React.ReactNode;
 }
 
 function StringValue({
-	id,
 	name,
 	label,
 	placeholder,
-	problems,
+	errors,
 	choices,
 	value,
 	onChange,
@@ -162,19 +168,20 @@ function StringValue({
 }: ValueProps) {
 	const editor = useRef<ReferenceEditorHandle>(null);
 	const text = typeof value === "string" ? value : "";
-	const invalid = problems.length > 0;
+	const invalid = errors.length > 0;
 	const change = (v: string) => onChange(v === "" ? undefined : v);
 	return render(
-		<ReferenceEditor
-			ref={editor}
-			id={id}
-			label={label}
-			value={text}
-			choices={choices}
-			placeholder={placeholder}
-			invalid={invalid}
-			onChange={change}
-		/>,
+		(control) => (
+			<ReferenceEditor
+				ref={editor}
+				control={control}
+				label={label}
+				value={text}
+				choices={choices}
+				placeholder={placeholder}
+				onChange={change}
+			/>
+		),
 		<ReferenceActions
 			editor={editor}
 			name={name}
@@ -183,7 +190,7 @@ function StringValue({
 			choices={choices}
 			placeholder={placeholder}
 			invalid={invalid}
-			error={<Problems problems={problems} />}
+			error={<Problems problems={errors} />}
 			onChange={change}
 		/>,
 	);
@@ -200,7 +207,7 @@ function TypedValue({
 	name,
 	label,
 	placeholder,
-	problems,
+	errors,
 	choices,
 	value,
 	onChange,
@@ -223,7 +230,6 @@ function TypedValue({
 		if (referenced) chip.current?.focus();
 		else document.getElementById(id)?.focus();
 	}, [referenced, id]);
-	const invalid = problems.length > 0;
 	const picker = (
 		<ReferencePicker
 			name={name}
@@ -237,14 +243,16 @@ function TypedValue({
 	);
 	if (referenced) {
 		return render(
-			<ReferenceChip
-				ref={chip}
-				label={label}
-				name={name}
-				value={value as string}
-				invalid={invalid}
-				onRemove={() => onChange(undefined)}
-			/>,
+			(control) => (
+				<ReferenceChip
+					ref={chip}
+					control={control}
+					label={label}
+					name={name}
+					value={value as string}
+					onRemove={() => onChange(undefined)}
+				/>
+			),
 			picker,
 		);
 	}
@@ -256,7 +264,7 @@ function TypedValue({
 				name={name}
 				label={label}
 				placeholder={placeholder}
-				problems={problems}
+				errors={errors}
 				choices={choices}
 				value={value}
 				onChange={onChange}
@@ -266,73 +274,73 @@ function TypedValue({
 	}
 	if (kind === "agent") {
 		return render(
-			<AgentSelect
-				id={id}
-				label={label}
-				value={typeof value === "string" ? value : undefined}
-				agents={agents}
-				emptyLabel={`（${placeholder}）`}
-				slots={false}
-				invalid={invalid}
-				onChange={onChange}
-			/>,
+			(control) => (
+				<AgentSelect
+					control={control}
+					label={label}
+					value={typeof value === "string" ? value : undefined}
+					agents={agents}
+					emptyLabel={`（${placeholder}）`}
+					slots={false}
+					onChange={onChange}
+				/>
+			),
 			picker,
 		);
 	}
 	if (kind === "feishu_bot") {
 		return render(
-			<FeishuBotSelect
-				id={id}
-				label={label}
-				value={typeof value === "string" ? value : undefined}
-				bots={bots}
-				emptyLabel={`（${placeholder}）`}
-				invalid={invalid}
-				onChange={onChange}
-			/>,
+			(control) => (
+				<FeishuBotSelect
+					control={control}
+					label={label}
+					value={typeof value === "string" ? value : undefined}
+					bots={bots}
+					emptyLabel={`（${placeholder}）`}
+					onChange={onChange}
+				/>
+			),
 			picker,
 		);
 	}
 	if (kind === "boolean" || kind === "enum") {
 		return render(
-			<NativeSelect
-				id={id}
-				aria-label={label}
-				value={value === undefined ? "" : JSON.stringify(value)}
-				onChange={(e) => onChange(e.target.value === "" ? undefined : JSON.parse(e.target.value))}
-			>
-				<NativeSelectOption value="">（{placeholder}）</NativeSelectOption>
-				{(kind === "boolean" ? [true, false] : (schema.enum as unknown[])).map((c) => (
-					<NativeSelectOption key={JSON.stringify(c)} value={JSON.stringify(c)}>
-						{JSON.stringify(c)}
-					</NativeSelectOption>
-				))}
-			</NativeSelect>,
+			(control) => (
+				<NativeSelect
+					{...control}
+					aria-label={label}
+					value={value === undefined ? "" : JSON.stringify(value)}
+					onChange={(e) => onChange(e.target.value === "" ? undefined : JSON.parse(e.target.value))}
+				>
+					<NativeSelectOption value="">（{placeholder}）</NativeSelectOption>
+					{(kind === "boolean" ? [true, false] : (schema.enum as unknown[])).map((c) => (
+						<NativeSelectOption key={JSON.stringify(c)} value={JSON.stringify(c)}>
+							{JSON.stringify(c)}
+						</NativeSelectOption>
+					))}
+				</NativeSelect>
+			),
 			picker,
 		);
 	}
 	return render(
-		<NumberValue
-			id={id}
-			fieldKey={fieldKey}
-			integer={kind === "integer"}
-			label={label}
-			placeholder={placeholder}
-			value={value}
-			invalid={invalid}
-			onChange={onChange}
-		/>,
+		(control) => (
+			<NumberValue
+				control={control}
+				fieldKey={fieldKey}
+				integer={kind === "integer"}
+				label={label}
+				placeholder={placeholder}
+				value={value}
+				onChange={onChange}
+			/>
+		),
 		picker,
 	);
 }
 
-/** 字段下方的错误：先是不合法的输入（阻止保存），再是静态检查的警告。 */
-export function ParsedError({ fieldKey, problems }: { fieldKey: string; problems: string[] }) {
-	const error = useFieldDraftError(fieldKey);
-	return <Problems problems={[...(error ? [error] : []), ...problems]} />;
-}
-
-function Problems({ problems }: { problems: string[] }) {
+/** 字段下面的错误，每条一行。 */
+export function Problems({ problems }: { problems: string[] }) {
 	if (problems.length === 0) return null;
 	return (
 		<>
@@ -350,12 +358,11 @@ function Problems({ problems }: { problems: string[] }) {
  * 「插入引用」把引用插在光标处（JSON 的字符串值里可以内嵌引用）；整个文本恰好是一个引用时就是整值引用，显示为引用标签。
  */
 function JsonValue({
-	id,
 	fieldKey,
 	name,
 	label,
 	placeholder,
-	problems,
+	errors,
 	choices,
 	value,
 	onChange,
@@ -369,20 +376,20 @@ function JsonValue({
 		parse: parseJson,
 		onChange,
 	});
-	const invalid = problems.length > 0 || field.error !== undefined;
 	const hint = `${placeholder}（JSON）`;
 	return render(
-		<ReferenceEditor
-			ref={editor}
-			id={id}
-			label={label}
-			value={field.text}
-			choices={choices}
-			placeholder={hint}
-			invalid={invalid}
-			minLines={3}
-			onChange={field.change}
-		/>,
+		(control) => (
+			<ReferenceEditor
+				ref={editor}
+				control={control}
+				label={label}
+				value={field.text}
+				choices={choices}
+				placeholder={hint}
+				minLines={3}
+				onChange={field.change}
+			/>
+		),
 		<ReferenceActions
 			editor={editor}
 			name={name}
@@ -390,31 +397,30 @@ function JsonValue({
 			value={field.text}
 			choices={choices}
 			placeholder={hint}
-			invalid={invalid}
-			error={<ParsedError fieldKey={fieldKey} problems={problems} />}
+			invalid={errors.length > 0}
+			error={<Problems problems={errors} />}
 			onChange={field.change}
+			onTouch={field.blur}
 		/>,
 	);
 }
 
 /** 数字、整数常量：文本解析成功才写进文档。 */
 function NumberValue({
-	id,
+	control,
 	fieldKey,
 	integer,
 	label,
 	placeholder,
 	value,
-	invalid,
 	onChange,
 }: {
-	id: string;
+	control: FieldControl;
 	fieldKey: string;
 	integer: boolean;
 	label: string;
 	placeholder: string;
 	value: unknown;
-	invalid: boolean;
 	onChange(value: unknown): void;
 }) {
 	const field = useParsedField<unknown>({
@@ -426,9 +432,8 @@ function NumberValue({
 	});
 	return (
 		<Input
-			id={id}
+			{...control}
 			aria-label={label}
-			aria-invalid={invalid || field.error !== undefined || undefined}
 			inputMode="decimal"
 			className="font-mono text-xs"
 			placeholder={placeholder}

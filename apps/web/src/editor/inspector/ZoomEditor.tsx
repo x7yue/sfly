@@ -3,6 +3,7 @@ import { type ReactNode, type RefObject, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
@@ -35,6 +36,8 @@ interface ZoomEditorProps {
 	/** 显示在输入框下面的错误与警告。 */
 	error?: ReactNode;
 	onChange(value: string): void;
+	/** 输入框失去焦点、或弹窗关闭：这个字段交互完了，错误可以显示。 */
+	onTouch?(): void;
 }
 
 export function ZoomEditor({
@@ -46,6 +49,7 @@ export function ZoomEditor({
 	invalid,
 	error,
 	onChange,
+	onTouch,
 }: ZoomEditorProps) {
 	const [open, setOpen] = useState(false);
 	const body = useRef<HTMLDivElement>(null);
@@ -62,7 +66,13 @@ export function ZoomEditor({
 			>
 				<Maximize2Icon />
 			</Button>
-			<Dialog open={open} onOpenChange={setOpen}>
+			<Dialog
+				open={open}
+				onOpenChange={(next) => {
+					setOpen(next);
+					if (!next) onTouch?.();
+				}}
+			>
 				<DialogContent
 					// 补全列表在输入框下方展开，可以超出弹窗的下边缘。
 					className="top-[8vh] max-h-none w-[960px] overflow-visible"
@@ -83,24 +93,28 @@ export function ZoomEditor({
 							)}
 						</DialogDescription>
 					</DialogHeader>
-					<div ref={body} className="flex min-w-0 items-start gap-1.5">
-						<div className="min-w-0 flex-1">
-							<ReferenceEditor
-								ref={editor}
-								label={`${label}（放大编辑）`}
-								value={value}
-								choices={choices}
-								placeholder={placeholder}
-								invalid={invalid}
-								minLines={18}
-								maxLines={26}
-								className="text-sm"
-								onChange={onChange}
-							/>
+					{/* 补全列表要能超出弹窗的下边缘，主体不滚动、不裁剪。 */}
+					<DialogBody className="overflow-visible">
+						<div ref={body} className="flex min-w-0 items-start gap-1.5">
+							<div className="min-w-0 flex-1">
+								<ReferenceEditor
+									ref={editor}
+									label={`${label}（放大编辑）`}
+									value={value}
+									choices={choices}
+									placeholder={placeholder}
+									invalid={invalid}
+									minLines={18}
+									maxLines={26}
+									className="text-sm"
+									onChange={onChange}
+									onBlur={onTouch}
+								/>
+							</div>
+							{choices && <InsertReferenceButton name={name} editor={editor} />}
 						</div>
-						{choices && <InsertReferenceButton name={name} editor={editor} />}
-					</div>
-					{error && <div className="text-xs text-danger-fg">{error}</div>}
+						{error && <div className="text-xs text-danger-fg">{error}</div>}
+					</DialogBody>
 					<DialogFooter>
 						<Button onClick={() => setOpen(false)}>完成</Button>
 					</DialogFooter>

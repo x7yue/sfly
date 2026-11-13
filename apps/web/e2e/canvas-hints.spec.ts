@@ -67,7 +67,9 @@ test("字段错误写参数名和位置，不写内部路径", async ({ page, co
 
 	await nodeCard(page, "entry").click();
 	const panel = inspector(page);
-	await panel.getByRole("textbox", { name: "参数名称" }).nth(1).fill("1st");
+	const name = panel.getByRole("textbox", { name: "参数名称" }).nth(1);
+	await name.fill("1st");
+	await name.blur();
 	await expect(page.getByText("1 处字段错误")).toBeVisible();
 
 	// 场景设置的「检查」列出字段错误：节点 ID、参数名加第几个、哪一项。
