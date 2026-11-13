@@ -123,6 +123,7 @@ export const dashboardApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/dashboard",
+		client: true,
 		key: ["dashboard", "get"],
 		response: DashboardView,
 	}),

@@ -207,6 +207,7 @@ export const orchestrationsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/orchestrations",
+		client: true,
 		key: ["orchestrations", "list"],
 		query: ListOrchestrationsQuery,
 		response: z.object({
@@ -218,6 +219,7 @@ export const orchestrationsApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id",
+		client: true,
 		key: ["orchestrations", "detail"],
 		params: IdParams,
 		response: OrchestrationView,
@@ -226,6 +228,7 @@ export const orchestrationsApi = {
 	head: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/head",
+		client: true,
 		key: ["orchestrations", "head"],
 		params: IdParams,
 		response: OrchestrationHeadView,
@@ -239,6 +242,7 @@ export const orchestrationsApi = {
 	saveVersion: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/versions",
+		client: true,
 		key: ["orchestrations", "save-version"],
 		params: IdParams,
 		body: z.object({
@@ -261,6 +265,7 @@ export const orchestrationsApi = {
 	versions: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/versions",
+		client: true,
 		key: ["orchestrations", "versions"],
 		params: IdParams,
 		response: z.object({ versions: z.array(VersionSummaryView) }),
@@ -269,6 +274,7 @@ export const orchestrationsApi = {
 	version: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/versions/:number",
+		client: true,
 		key: ["orchestrations", "version"],
 		params: VersionParams,
 		response: OrchestrationVersionView,
@@ -280,6 +286,7 @@ export const orchestrationsApi = {
 	restoreVersion: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/versions/:number/restore",
+		client: true,
 		key: ["orchestrations", "restore-version"],
 		params: VersionParams,
 		response: SavedVersionView,
@@ -288,6 +295,7 @@ export const orchestrationsApi = {
 	create: endpoint({
 		method: "POST",
 		path: "/orchestrations",
+		client: true,
 		key: ["orchestrations", "create"],
 		body: z.strictObject({ name: Name, description: z.string().default("") }),
 		response: OrchestrationView,
@@ -296,6 +304,7 @@ export const orchestrationsApi = {
 	update: endpoint({
 		method: "PATCH",
 		path: "/orchestrations/:id",
+		client: true,
 		key: ["orchestrations", "update"],
 		params: IdParams,
 		body: z
@@ -315,6 +324,7 @@ export const orchestrationsApi = {
 	copy: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/copy",
+		client: true,
 		key: ["orchestrations", "copy"],
 		params: IdParams,
 		body: z.strictObject({ name: Name }),
@@ -324,6 +334,7 @@ export const orchestrationsApi = {
 	archive: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/archive",
+		client: true,
 		key: ["orchestrations", "archive"],
 		params: IdParams,
 		response: OrchestrationView,
@@ -332,6 +343,7 @@ export const orchestrationsApi = {
 	unarchive: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/unarchive",
+		client: true,
 		key: ["orchestrations", "unarchive"],
 		params: IdParams,
 		response: OrchestrationView,

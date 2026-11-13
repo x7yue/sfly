@@ -55,7 +55,9 @@ export async function startTestControlPlane(
 		| "leaseMs"
 		| "sseHeartbeatMs"
 		| "sdkWheelDir"
+		| "clientPackageDir"
 		| "webDir"
+		| "corsOrigins"
 		| "docsDir"
 		| "version"
 		| "publicHttpUrl"
@@ -87,7 +89,9 @@ export async function startTestControlPlane(
 			leaseMs: options.leaseMs,
 			sseHeartbeatMs: options.sseHeartbeatMs,
 			sdkWheelDir: options.sdkWheelDir,
+			clientPackageDir: options.clientPackageDir,
 			webDir: options.webDir,
+			corsOrigins: options.corsOrigins,
 			docsDir: options.docsDir,
 			version: options.version,
 			publicHttpUrl: options.publicHttpUrl,

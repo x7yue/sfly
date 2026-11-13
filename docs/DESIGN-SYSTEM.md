@@ -260,8 +260,9 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 约定的完整说明在 `packages/schema/src/http/contract.ts` 顶部，要点：
 
-- 每个接口在 `@sfly/schema` 的 `http/<领域>.ts` 中用 `endpoint({ method, path, key, params?, query?, body?, response })` 定义；数据 schema 用名词（`AgentView`），接口表用 `<领域>Api`（`agentsApi.list`）。SSE 用 `stream({ path, params?, query?, events })`，字节流下载用 `download({ path, params?, contentType })`。
-- 控制面的**每个** HTTP 路由都在契约里：`httpContract`（`http/index.ts`）列出全部接口表，控制面启动时 `guardHttpContract` 检查注册的路由与它一一对应，多一个少一个都启动失败。
+- 每个接口在 `@sfly/schema` 的 `http/<领域>.ts` 中用 `endpoint({ method, path, client, key, params?, query?, body?, response })` 定义；数据 schema 用名词（`AgentView`），接口表用 `<领域>Api`（`agentsApi.list`）。SSE 用 `stream({ path, client, params?, query?, events })`，字节流下载用 `download({ path, client, params?, contentType })`。
+- `client` 写明接口是否进入 API 客户端（`@sfly/client`，ADR 0022）：开放给自建页面的为 true，给 Agent、安装脚本、控制台自己用的和上传接口为 false。`pnpm gen` 从契约生成 API 客户端的类型和路由表。
+- 控制面的**每个** HTTP 路由都在契约里：`httpApis`（`http/index.ts`）按领域列出全部接口表，`httpContract` 由它展开；控制面启动时 `guardHttpContract` 检查注册的路由与它一一对应，多一个少一个都启动失败。
 - 响应 schema 用 `z.object`，不写 transform / default / coerce（生产环境前端不解析响应）；请求部分可以用。字段 snake_case，时间用 `Timestamp`。
 - 控制面用 `contractRoute(app, agentsApi.list, handler)`（`apps/server/src/http/contract-route.ts`）注册，SSE 用 `contractStream`（只能发送契约里声明的事件），下载用 `contractDownload`：请求不符合契约返回 400 `invalid_request`（需要更具体的错误码时在契约里写 `requestError`，例如保存版本的 `base_version_required` / `invalid_document`），handler 的返回值受响应类型约束；控制面测试用 `xxxApi.yyy.response.parse(body)` 校验实际响应。
 - 前端：`useQuery(apiQuery(agentsApi.list))`、`callApi(packagesApi.version, { params })`、`useEventSource(runsApi.events, { params }, handlers)`、`apiUrl(logsApi.download, { params })`（下载链接）。没有手写的接口函数和类型。query key 一律由 `queryKey()` 生成（`[...key, { params?, query? }]`），失效按领域前缀：`invalidateQueries({ queryKey: domainKey(packagesApi.list) })`。开发环境下响应不符合契约时抛出 `contract_violation`，页面显示为错误状态。

@@ -5,11 +5,12 @@
 //   drizzle/                 数据库迁移
 //   web/                     前端构建产物（apps/web/dist）
 //   sdk/                     与本版本一致的 SDK 运行时 wheel（apps/server/dist/sdk）
+//   client/                  与本版本一致的 API 客户端安装包（apps/server/dist/client，ADR 0022）
 //   docs/                    用户文档（docs/guide，ADR 0013）
 //   agent/<架构>/sfly-agent   同版本的 x86_64 / aarch64 Agent（ADR 0011），取自 out/agent/ 里的发布包
 //   install.sh               一键安装脚本的模板（src/agent-binaries/install.sh）
 //
-// 需要先构建前端和 SDK wheel；根目录的 `pnpm bundle:server` 会依次完成这两步和打包。
+// 需要先构建前端、SDK wheel 和 API 客户端安装包；根目录的 `pnpm bundle:server` 会依次完成这几步和打包。
 // Agent 发布包由 `pnpm pack:agents`（scripts/release/pack-agent.sh）生成；发布流程从草稿 Release 下载。
 // 产物与 CPU 架构无关（依赖都是纯 JS），镜像直接复制这个目录（apps/server/Dockerfile）。
 //
@@ -31,6 +32,7 @@ const withAgents = !args["without-agents"];
 const outDir = resolve(repoRoot, args["out-dir"] ?? join("out", "server"));
 const webDist = join(repoRoot, "apps", "web", "dist");
 const sdkDist = join(serverDir, "dist", "sdk");
+const clientDist = join(serverDir, "dist", "client");
 const agentDist = join(repoRoot, "out", "agent");
 const { version } = packageJson;
 /** 运行时的 Node 主版本：仓库根目录的 .node-version（镜像的基础镜像也由它决定）。 */
@@ -53,6 +55,14 @@ if (!sdkFiles.includes(wheel)) {
 	);
 }
 
+const clientTarball = `sfly-client-${version}.tgz`;
+const clientFiles = await readdir(clientDist).catch(() => [] as string[]);
+if (!clientFiles.includes(clientTarball)) {
+	fail(
+		`${clientDist}/${clientTarball} 不存在（版本须与控制面 ${version} 一致），先运行 pnpm --filter @sfly/server build`,
+	);
+}
+
 const agentFiles = await readdir(agentDist).catch(() => [] as string[]);
 const agentPackages = (withAgents ? (["x86_64", "aarch64"] as const) : []).map((arch) => {
 	const name = `sfly-agent-${version}-${arch}-unknown-linux-musl.tar.gz`;
@@ -64,6 +74,7 @@ const agentPackages = (withAgents ? (["x86_64", "aarch64"] as const) : []).map((
 
 await rm(outDir, { recursive: true, force: true });
 await mkdir(join(outDir, "sdk"), { recursive: true });
+await mkdir(join(outDir, "client"), { recursive: true });
 
 await build({
 	entryPoints: [join(serverDir, "src", "main.ts")],
@@ -88,6 +99,7 @@ await cp(join(serverDir, "drizzle"), join(outDir, "drizzle"), { recursive: true 
 await cp(webDist, join(outDir, "web"), { recursive: true });
 await cp(join(repoRoot, "docs", "guide"), join(outDir, "docs"), { recursive: true });
 await cp(join(sdkDist, wheel), join(outDir, "sdk", wheel));
+await cp(join(clientDist, clientTarball), join(outDir, "client", clientTarball));
 await cp(join(serverDir, "src", "agent-binaries", "install.sh"), join(outDir, "install.sh"));
 for (const { arch, file } of agentPackages) {
 	const dir = join(outDir, "agent", arch);

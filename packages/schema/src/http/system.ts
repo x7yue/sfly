@@ -19,6 +19,7 @@ export const systemApi = {
 	health: endpoint({
 		method: "GET",
 		path: "/health",
+		client: true,
 		key: ["system", "health"],
 		response: z.object({ status: Health, database: Health, time: Timestamp }),
 	}),
@@ -29,12 +30,14 @@ export const sdkApi = {
 	wheels: endpoint({
 		method: "GET",
 		path: "/sdk/python",
+		client: false,
 		key: ["sdk", "wheels"],
 		response: z.object({ wheels: z.array(SdkWheelView) }),
 	}),
 	/** 下载一个 wheel；版本或文件名不存在时 404。 */
 	wheel: download({
 		path: "/sdk/python/:version/:filename",
+		client: false,
 		params: z.object({ version: z.string(), filename: z.string() }),
 		contentType: "application/octet-stream",
 	}),
@@ -42,7 +45,12 @@ export const sdkApi = {
 	 * sfly 简单索引（PEP 503）的根页面：只有 `sfly` 一个项目。开发机从这里装 `sfly`
 	 * （`install.sh --dev`、`sfly init` 写入的显式索引），不会从 PyPI 镜像装到同名的其他包。
 	 */
-	index: download({ path: "/simple/", raw: true, contentType: "text/html; charset=utf-8" }),
+	index: download({
+		path: "/simple/",
+		raw: true,
+		contentType: "text/html; charset=utf-8",
+		client: false,
+	}),
 	/**
 	 * `sfly init` 写进新项目 `pyproject.toml` 的配置：`sfly[cli]` 锁定的控制面版本、sfly 简单索引，
 	 * 以及控制面统一配置的镜像（ADR 0012，未配置时为 null，项目用 uv 的默认来源）。
@@ -50,6 +58,7 @@ export const sdkApi = {
 	projectSettings: endpoint({
 		method: "GET",
 		path: "/sdk/project-settings",
+		client: false,
 		key: ["sdk", "project-settings"],
 		response: z.object({
 			version: z.string(),
@@ -64,6 +73,7 @@ export const sdkApi = {
 	/** 索引的项目页：与控制面同版本的 SDK wheel（链接带 `#sha256=`）；`sfly` 以外的项目 404。 */
 	indexProject: download({
 		path: "/simple/:project/",
+		client: false,
 		raw: true,
 		params: z.object({ project: z.string() }),
 		contentType: "text/html; charset=utf-8",

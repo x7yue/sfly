@@ -22,7 +22,7 @@
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试 |
 | `pnpm proto:breaking` | buf breaking 检查 |
 | `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main`、`spec/**`、`impl/**`，PR，以及手动触发；`impl/**` 与手动触发供实现分支在合并前跑 CI） |
-| `pnpm test:e2e` | 构建前端并运行 Playwright 端到端测试与视觉回归（`apps/web/e2e`；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
+| `pnpm test:e2e` | 构建 API 客户端和前端并运行 Playwright 端到端测试与视觉回归（`apps/web/e2e`；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
 | `pnpm test:e2e:docker` | 在 Playwright 官方镜像中运行（与 CI 相同，视觉基线以它为准；加 `--update-snapshots` 更新基线） |
 | `pnpm test:e2e:stress <spec:行号>` | 复现 e2e 偶发失败：限制在 2 个 CPU 上重复运行（默认 40 次），修复后用同一命令确认失败降到 0。CI 上失败的用例是 check run 注释：`gh api repos/x7yue/sfly/check-runs/<job id>/annotations` |
 | `pnpm test:stress [-n 次数] <命令>` | 复现其他测试的偶发失败：限制在 2 个 CPU 上把同一条测试命令重复运行（默认 30 次），失败那几次的输出留在临时目录。例如 `pnpm test:stress cargo test --locked -p sfly-agent --test retention` |
@@ -60,7 +60,7 @@ docker login ghcr.io                 # 私有镜像：用有 read:packages 权�
 docker compose up -d
 ```
 
-- 镜像里是打成单文件的控制面、前端产物、数据库迁移和同版本的 SDK 运行时 wheel；以 `node` 用户运行，数据（节点包、日志、产物）在卷 `/data`，启动时自动执行迁移，健康检查请求 `/api/health`。
+- 镜像里是打成单文件的控制面、前端产物、数据库迁移、同版本的 SDK 运行时 wheel 和 API 客户端安装包；以 `node` 用户运行，数据（节点包、日志、产物）在卷 `/data`，启动时自动执行迁移，健康检查请求 `/api/health`。
 - 无法访问 ghcr.io 时，用 Release 附件里的离线镜像：`gunzip -c sfly-server-X.Y.Z-linux-amd64.tar.gz | docker load`。
 - 控制面是单进程设计，**同一个数据库只能运行一个实例**；控制面与 Agent 要升级到同一版本（镜像只带同版本的 SDK wheel）。
 - 镜像（ADR 0012）：控制面统一配置 PyPI 镜像 `SFLY_PYPI_MIRROR` 和 GitHub Release 镜像 `SFLY_GITHUB_RELEASE_MIRROR`，在握手时下发给所有 Agent：Agent 从 GitHub Release 镜像安装 uv、下载 Python，从 PyPI 镜像安装节点包依赖。两项都没有默认值，不配置时 Agent 用 uv 的官方来源。内网用中科大镜像时：
@@ -80,6 +80,7 @@ docker compose up -d
   - 消息先存在数据库里，控制面重启后接着投递。发不出去时（网络错误、超时、飞书限流或服务不可用）退避重试，从入队算起 10 分钟还没送达就放弃；每个机器人每秒最多发 5 条、每分钟最多 100 条，积压超过 1000 条时丢弃最旧的。「飞书机器人」页显示每个机器人最近一次投递的时间和结果，以及积压的条数，据此发现某个群发不出去。
   - 运行通知卡片上的「查看运行」按钮用 `SFLY_PUBLIC_URL` 拼出链接（`<SFLY_PUBLIC_URL>/runs/<运行 ID>`），所以要让用户在群里点得开，就把 `SFLY_PUBLIC_URL` 配成浏览器能访问的控制面地址；没有配置时卡片不显示按钮。
   - Webhook 地址相当于一个凭据：数据库里明文保存，界面和日志里只露出开头和结尾。平台没有认证（ADR 0004），能打开页面的人可以新增、替换、删除机器人，也能让它往群里发测试消息。
+- 跨域（ADR 0022）：用户自建的页面托管在别的来源，浏览器调用控制面前先预检。控制面默认允许所有来源（不带凭据）；设置 `SFLY_CORS_ORIGINS`（逗号分隔的来源，例如 `https://dash.example.com,http://localhost:5173`）后只允许名单里的来源，名单外的页面被浏览器拦下。没有登录时，「允许所有来源」意味着内网用户在浏览器里打开的任何网页都能调用他访问得到的控制面，包括触发和取消运行；不放心时收窄成名单。控制台自己的页面同源，命令行和 Agent 不经浏览器，都不受影响。自建页面托管在公网、控制面在内网时 Chrome 另有限制（页面要是 HTTPS，用户要允许访问本地网络），见用户文档「用 API 客户端做自己的页面」。
 - 其余配置见 `apps/server/src/main.ts` 顶部注释（保留天数与大小上限等）。
 - 需要 TLS 或统一入口时，按 Fastify 官方建议在前面加反向代理。SSE 要关闭代理缓冲；Agent 网关是 gRPC（HTTP/2），要么单独开放 50051，要么用 `grpc_pass` 转发。nginx 示例：
 

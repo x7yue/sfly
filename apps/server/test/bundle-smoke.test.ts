@@ -1,11 +1,11 @@
 // 打包后的控制面冒烟（ADR 0010、0011）：用 node 运行 out/server/main.mjs，不设置目录类环境变量（验证单文件包
-// 自带的 web/、sdk/、drizzle/、docs/、agent/ 布局）；用控制面的 install.sh 安装它带的 Agent，
+// 自带的 web/、sdk/、client/、drizzle/、docs/、agent/ 布局）；用控制面的 install.sh 安装它带的 Agent，
 // 这个 Agent 从全新的 venv 开始，从控制面下载 SDK 运行时和节点包，跑通一条链。
 // 覆盖打包最容易出问题的地方：迁移、HTTP API 与页面、用户文档、Agent 下载与 install.sh、节点包上传解压、
-// gRPC（HTTP/2）、SDK 与节点包下载。
+// gRPC（HTTP/2）、SDK 与节点包下载、API 客户端安装包。
 // 只在设置 SFLY_BUNDLE_DIR 时运行：根目录 `pnpm bundle:server && pnpm test:bundle`。
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { arch, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -14,6 +14,8 @@ import packageJson from "../package.json" with { type: "json" };
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { type BundledServer, startBundledServer } from "./support/bundled-server.js";
+import { shellBlocks } from "./support/doc-commands.js";
+import { typecheckPageExamples } from "./support/doc-examples.js";
 import { eventually } from "./support/eventually.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
@@ -63,6 +65,52 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 		const { wheels } = await api.getJson<{ wheels: Array<{ version: string }> }>("/sdk/python");
 		expect(wheels.map((w) => w.version)).toEqual([version]);
 	});
+
+	it.each([
+		["npm", ["install", "--no-audit", "--no-fund"]],
+		["pnpm", ["add"]],
+	])(
+		"提供同版本的 API 客户端安装包，%s 按用户文档里的地址装进空项目后导入并调通健康检查，文档的示例代码对着装好的包通过类型检查",
+		async (manager, install) => {
+			const { tarballs } = await api.getJson<{ tarballs: Array<{ version: string; url: string }> }>(
+				"/client",
+			);
+			expect(tarballs.map((t) => t.version)).toEqual([version]);
+			const doc = await (await fetchPath("/docs/api-client.md")).text();
+			const command = shellBlocks(doc)
+				.flatMap((block) => block.split("\n"))
+				.find((line) => line.startsWith(`${manager} `));
+			const url = command?.split(" ").at(-1) ?? "";
+			expect(url).toBe(tarballs[0]?.url);
+
+			const project = await mkdtemp(join(tmpdir(), "sfly-client-project-"));
+			const run = (command: string, args: string[]) =>
+				promisify(execFile)(command, args, {
+					cwd: project,
+					env: { PATH: process.env.PATH, HOME: process.env.HOME },
+				});
+			try {
+				await writeFile(
+					join(project, "package.json"),
+					JSON.stringify({ name: "dashboard", private: true, type: "module" }),
+				);
+				await run(manager, [...install, url]);
+				await writeFile(
+					join(project, "check.mjs"),
+					`import { createClient } from "@sfly/client";
+const client = createClient({ baseUrl: ${JSON.stringify(server.httpUrl)} });
+console.log(JSON.stringify(await client.system.health()));
+`,
+				);
+				const { stdout } = await run("node", ["check.mjs"]);
+				expect(JSON.parse(stdout)).toMatchObject({ status: "ok", database: "ok" });
+				expect(typecheckPageExamples(doc, "api-client.md", project)).toEqual([]);
+			} finally {
+				await rm(project, { recursive: true, force: true });
+			}
+		},
+		120_000,
+	);
 
 	it("自带的用户文档：原文替换了控制面地址和版本，llms.txt 列出全部页面", async () => {
 		const page = await fetchPath("/docs/quickstart.md");

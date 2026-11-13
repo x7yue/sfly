@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * HTTP API 契约（ADR 0007）：每个接口在这里用 zod 定义一份请求与响应 schema，
  * 控制面用它校验请求、约束响应（apps/server/src/http/contract-route.ts），
- * 前端用它推导类型、拼路径、生成 query key，并在开发环境校验响应（apps/web/src/lib/api.ts）。
+ * 前端用它推导类型、生成 query key，经 API 客户端（@sfly/client）调用，并在开发环境校验响应（apps/web/src/lib/api.ts）。
  *
  * 约定（新增接口照此编写，见 docs/DESIGN-SYSTEM.md「HTTP 契约」一节）：
  *
@@ -22,11 +22,15 @@ import { z } from "zod";
  * 7. 控制面的每个 HTTP 路由都在契约里（控制面启动时检查，apps/server/src/http/contract-route.ts）：
  *    JSON 接口用 `endpoint`；SSE 用 `stream`（`events` 是事件名 → data 的 schema）；
  *    返回字节流的下载用 `download`。请求体是原始字节的上传（发布节点包、上传产物）用 `endpoint`，
- *    不定义 body，加 `upload: true`，只约束路径参数与 JSON 响应。新增领域模块后加进 ./index.ts 的 `httpContract`。
+ *    不定义 body，加 `upload: true`，只约束路径参数与 JSON 响应。新增领域模块后加进 ./index.ts 的 `httpApis`。
  * 8. 路由清单（route-manifest.ts，不从包入口导出，只有导出脚本用）从 `httpContract` 导出到
  *    `sdk/python/src/sfly/schemas/routes.json`
  *    （`pnpm gen`，`pnpm gen:check` 保证提交的是最新的），`sfly api` 用它列出接口、校验请求。
  *    请求的 JSON Schema 按输入方向导出：refine 和转换后的约束导不出来，会记在清单的 `notes` 里。
+ * 9. 每个接口都写明 `client`：是否进入 API 客户端（ADR 0022）。同一次 `pnpm gen` 从 `httpApis` 生成
+ *    API 客户端的类型和路由表（client-export.ts，写到 `packages/client/src/generated/`）：
+ *    方法按领域分组，领域名是 `httpApis` 的键，必须等于该领域 JSON 接口 key 第一段的驼峰写法（`feishu-bots` → `feishuBots`）；
+ *    请求类型按输入方向、响应类型按输出方向，注释随类型带过去。
  */
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -50,6 +54,11 @@ interface RouteDefBase {
 	 * 不含浏览器侧的 `/api` 前缀。
 	 */
 	path: string;
+	/**
+	 * 是否进入 API 客户端（`@sfly/client`，ADR 0022）：开放给自建页面的接口为 true；
+	 * 给 Agent、安装脚本、控制台自己用的接口和上传接口为 false（上传接口标 true 时生成失败）。
+	 */
+	client: boolean;
 	params?: z.ZodType;
 	query?: z.ZodType;
 	/**
@@ -171,18 +180,16 @@ export type ControlPlaneTimeEvent = z.infer<typeof ControlPlaneTimeEvent>;
 export const CONTROL_PLANE_VERSION_HEADER = "x-sfly-version";
 
 /**
- * 按路径模板拼出路径；路径参数用 encodeURIComponent 编码，末尾 `*` 的值按 `/` 分段、每段单独编码。
+ * 昵称请求头（ADR 0004：只用于显示，不做鉴权）。值按 encodeURIComponent 编码，这样中文昵称也能放进请求头。
+ * 写操作必须带它，没有时控制面回复 400 `nickname_required`。
  */
-export function pathFor(def: Pick<RouteDef, "path">, params?: Record<string, unknown>): string {
-	const value = (name: string) => {
-		const v = params?.[name];
-		if (v === undefined || v === null) throw new Error(`缺少路径参数 ${name}（${def.path}）`);
-		return String(v);
-	};
-	return def.path
-		.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_, name: string) => encodeURIComponent(value(name)))
-		.replace(/\*$/, () => value("*").split("/").map(encodeURIComponent).join("/"));
-}
+export const NICKNAME_HEADER = "x-sfly-nickname";
+
+/**
+ * 客户端标识请求头：API 客户端是 `sfly-client/<版本>`，命令行是 `sfly-cli/<版本>`，命令行检测到自己运行在
+ * AI 编程助手里时再追加 ` agent/<AI 编程助手名称>`。和昵称一样不做校验，只用于标注。
+ */
+export const CLIENT_HEADER = "x-sfly-client";
 
 /** 领域前缀（query key 的第一段）：让这个领域的查询全部失效时用，例如 `domainKey(runsApi.get)` → `["runs"]`。 */
 export const domainKey = (def: EndpointDef) => [def.key[0] as string] as const;
