@@ -35,6 +35,18 @@ describe("API 客户端的方法来自契约里标了 client 的接口", () => {
 	});
 });
 
+describe("控制面地址", () => {
+	it("可以是 http(s) 地址或同源路径，末尾的 / 不算；别的写法在创建时报错", () => {
+		const route = { method: "GET", path: "/runs/:id" } as const;
+		const input = { params: { id: "r 1" } };
+		expect(createClient({ baseUrl: "http://sfly.internal:8080/" }).url(route, input)).toBe(
+			"http://sfly.internal:8080/runs/r%201",
+		);
+		expect(createClient({ baseUrl: "/api" }).url(route, input)).toBe("/api/runs/r%201");
+		expect(() => createClient({ baseUrl: "sfly.internal:8080" })).toThrow(TypeError);
+	});
+});
+
 describe("API 客户端查询测试控制面", () => {
 	let cp: TestControlPlane;
 	let client: Client;
