@@ -92,3 +92,52 @@ test("未知的文档页显示错误，可以回到目录里的页面", async ({
 		.click();
 	await expect(page.getByRole("article", { name: "安装 Agent" })).toBeVisible();
 });
+
+test.describe("排版", () => {
+	test.use({
+		controlPlaneOptions: {
+			docsDir: fileURLToPath(new URL("./docs-typography-fixture", import.meta.url)),
+		},
+	});
+
+	test("标题 22 / 16 / 14 / 13 拉开层级，标题里的代码按标题缩一档、没有底色块；正文最宽 42em、行高 22px，代码块和表格用满宽", async ({
+		page,
+	}) => {
+		await page.goto("/docs/typography");
+		const doc = page.getByRole("article", { name: "排版" });
+		await expect(doc.getByRole("heading", { level: 1 })).toBeVisible();
+
+		const style = (selector: string, property: string) =>
+			doc
+				.locator(selector)
+				.first()
+				.evaluate((el, name) => getComputedStyle(el).getPropertyValue(name), property);
+		expect(await style("h1", "font-size")).toBe("22px");
+		expect(await style("h2", "font-size")).toBe("16px");
+		expect(await style("h3", "font-size")).toBe("14px");
+		expect(await style("h4", "font-size")).toBe("13px");
+		for (const heading of ["h1", "h2", "h3", "h4"]) {
+			expect(await style(heading, "font-weight")).toBe("600");
+		}
+
+		expect(await style("h2 code", "font-size")).toBe("14px");
+		expect(await style("h2 code", "background-color")).toBe("rgba(0, 0, 0, 0)");
+		expect(await style("p code", "font-size")).toBe("12px");
+		expect(await style("p code", "background-color")).not.toBe("rgba(0, 0, 0, 0)");
+
+		const paragraph = doc.locator("p").first();
+		expect(await style("p", "line-height")).toBe("22px");
+		expect(await style("p", "text-wrap-style")).toBe("pretty");
+		expect(await style("li", "line-height")).toBe("22px");
+		const text = Math.round((await paragraph.boundingBox())?.width ?? 0);
+		expect(text).toBeLessThanOrEqual(546);
+		expect(
+			Math.round((await doc.locator("blockquote").boundingBox())?.width ?? 0),
+		).toBeLessThanOrEqual(546);
+		const code = Math.round(
+			(await doc.locator('[data-slot="code-block"]').boundingBox())?.width ?? 0,
+		);
+		expect(code).toBeGreaterThan(text + 100);
+		await expect(doc.locator('[data-slot="table-container"]')).toHaveCSS("overflow-x", "auto");
+	});
+});
