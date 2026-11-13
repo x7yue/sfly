@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 控制面镜像冒烟：用 out/server（先运行 `pnpm bundle:server`）构建本机架构（linux/amd64 或 linux/arm64）的镜像，
 # 不靠模拟运行别的架构（开发机有 x86_64 也有 arm64）；连本机 PostgreSQL 的
-# 临时数据库启动容器，检查健康检查转为 healthy、页面、API、SDK wheel、两个架构的 Agent 与 install.sh、
+# 临时数据库启动容器，检查健康检查转为 healthy、页面、API、SDK wheel、API 客户端安装包、两个架构的 Agent 与 install.sh、
 # 非 root 运行、数据卷可写。
 #   scripts/release/image-smoke.sh [镜像标签，默认 sfly-server:smoke]
 # 需要 docker 和 psql；DATABASE_URL 指向的服务器需要建库权限（与测试相同）。
@@ -70,6 +70,13 @@ contains "$(curl -fsS "$base/api/health")" '"status":"ok"' || fail "/api/health"
 contains "$(curl -fsS -H 'accept: text/html' "$base/")" -i '<!doctype html>' || fail "页面"
 curl -fsS "$base/api/agents" >/dev/null || fail "/api/agents"
 contains "$(curl -fsS "$base/sdk/python")" "\"version\":\"$version\"" || fail "SDK wheel $version"
+# 镜像里带着同版本的 API 客户端安装包（ADR 0022），控制面提供列表和下载。
+contains "$(curl -fsS "$base/client")" "\"version\":\"$version\"" || fail "API 客户端安装包 $version"
+tarball=sfly-client-$version.tgz
+expected=$(docker exec "$container" sha256sum "/app/client/$tarball" | cut -d ' ' -f 1) ||
+	fail "镜像里没有 /app/client/$tarball"
+actual=$(curl -fsS "$base/client/$version/$tarball" | sha256sum | cut -d ' ' -f 1)
+[[ $actual == "$expected" ]] || fail "下载的 API 客户端安装包与镜像里的不同"
 # 镜像里带着两个架构的同版本 Agent（ADR 0011），控制面提供下载和 install.sh。
 binaries=$(curl -fsS "$base/agent/binaries")
 for arch in x86_64 aarch64; do

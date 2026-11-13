@@ -7,7 +7,7 @@
 	"scripts": {
 		"dev": "tsx watch src/main.ts",
 		"start": "tsx src/main.ts",
-		"build": "rm -rf dist/sdk && uv build --wheel --quiet --out-dir dist/sdk ../../sdk/python",
+		"build": "rm -rf dist/sdk dist/client && uv build --wheel --quiet --out-dir dist/sdk ../../sdk/python && pnpm --filter @sfly/client run tarball \"$PWD/dist/client\"",
 		"bundle": "tsx scripts/bundle.ts",
 		"perf": "node --import tsx perf/main.ts",
 		"perf:soak": "node --import tsx perf/main.ts --soak",
