@@ -16,8 +16,9 @@ export { ApiError };
 const API_BASE = "/api";
 
 /**
- * 控制面 HTTP API 客户端。浏览器请求同源的 `/api/*`：生产环境由控制面直接处理（去掉前缀后
- * 按原路由处理，见 apps/server/src/http/web-app.ts），开发时由 vite 原样代理到控制面（vite.config.ts）。
+ * 控制台的请求层，建立在 API 客户端（@sfly/client）之上。浏览器请求同源的 `/api/*`：生产环境由控制面
+ * 直接处理（去掉前缀后按原路由处理，见 apps/server/src/http/web-app.ts），开发时由 vite 原样代理到控制面
+ * （vite.config.ts）。
  *
  * 所有请求都走契约（@sfly/schema 的 http 模块，ADR 0007），没有手写的接口函数和类型：
  *
@@ -36,6 +37,8 @@ export const apiClient = createClient({
 	onControlPlaneTime: observeControlPlaneTime,
 });
 
+const routeInput = (input: unknown) => input as RouteInput | undefined;
+
 /** 按契约调用接口（约定见 packages/schema/src/http/contract.ts）。 */
 export function callApi<E extends EndpointDef>(
 	def: E,
@@ -51,14 +54,14 @@ export type InputArgs<E extends RouteDef> = keyof EndpointInput<E> extends never
 
 /** 浏览器访问的完整路径（带 `/api` 前缀与查询参数）：下载链接用。 */
 export function apiUrl<D extends DownloadDef>(def: D, ...[input]: InputArgs<D>): string {
-	return apiClient.url(def, input as RouteInput | undefined);
+	return apiClient.url(def, routeInput(input));
 }
 
 async function send<E extends EndpointDef>(
 	def: E,
 	input: EndpointInput<E> | undefined,
 ): Promise<EndpointResponse<E>> {
-	const data = await apiClient.request(def, input as RouteInput | undefined);
+	const data = await apiClient.request(def, routeInput(input));
 	if (import.meta.env.DEV) {
 		const parsed = def.response.safeParse(data);
 		if (!parsed.success) {
@@ -68,7 +71,7 @@ async function send<E extends EndpointDef>(
 				message: `响应不符合接口契约（${def.method} ${def.path}）`,
 				details: parsed.error.issues,
 				method: def.method,
-				path: apiClient.url(def, input as RouteInput | undefined).slice(API_BASE.length),
+				path: apiClient.url(def, routeInput(input)).slice(API_BASE.length),
 			});
 		}
 	}
@@ -94,6 +97,6 @@ export function apiTextQuery<D extends DownloadDef>(def: D, ...[input]: InputArg
 	const { params, query } = (input ?? {}) as { params?: unknown; query?: unknown };
 	return queryOptions({
 		queryKey: ["download", def.path, { params, query }] as const,
-		queryFn: async () => (await apiClient.request(def, input as RouteInput | undefined)).text(),
+		queryFn: async () => (await apiClient.request(def, routeInput(input))).text(),
 	});
 }
