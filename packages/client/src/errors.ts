@@ -3,7 +3,7 @@
  *
  * - `network_error`：没有收到响应（控制面不可达、连接被断开、浏览器拦下跨域请求），status 为 0。
  * - `http_error`：错误响应不是控制面的错误格式（例如代理返回的页面），details 是响应体。
- * - `invalid_response`：JSON 接口的成功响应不是 JSON。
+ * - `invalid_response`：成功响应的格式不对（JSON 接口的不是 JSON，事件流的不是 `text/event-stream`）。
  */
 export type ClientErrorCode = "network_error" | "http_error" | "invalid_response";
 
