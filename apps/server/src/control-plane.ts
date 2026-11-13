@@ -117,6 +117,11 @@ export interface ControlPlaneOptions {
 	version?: string;
 	/** 前端构建产物目录（apps/web 的 vite build 输出）；不设置时只提供 API，不提供页面。 */
 	webDir?: string;
+	/**
+	 * 允许跨域调用 API 的来源名单（形如 `https://dash.example.com`，src/http/cors.ts 的 parseCorsOrigins 解析环境变量
+	 * `SFLY_CORS_ORIGINS` 得到）；不设置时允许所有来源（ADR 0022）。
+	 */
+	corsOrigins?: readonly string[];
 	/** 数据库迁移目录；默认取源码中的 apps/server/drizzle，打包后的控制面需要指定。 */
 	migrationsDir?: string;
 }
@@ -295,6 +300,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		sseHeartbeatMs: options.sseHeartbeatMs,
 		logScanBytes: options.logScanBytes,
 		webApp,
+		corsOrigins: options.corsOrigins,
 	});
 	const httpHost = options.http?.host ?? "127.0.0.1";
 	await api.listen({ host: httpHost, port: options.http?.port ?? 0 });

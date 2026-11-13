@@ -57,6 +57,7 @@ export async function startTestControlPlane(
 		| "sdkWheelDir"
 		| "clientPackageDir"
 		| "webDir"
+		| "corsOrigins"
 		| "docsDir"
 		| "version"
 		| "publicHttpUrl"
@@ -90,6 +91,7 @@ export async function startTestControlPlane(
 			sdkWheelDir: options.sdkWheelDir,
 			clientPackageDir: options.clientPackageDir,
 			webDir: options.webDir,
+			corsOrigins: options.corsOrigins,
 			docsDir: options.docsDir,
 			version: options.version,
 			publicHttpUrl: options.publicHttpUrl,
