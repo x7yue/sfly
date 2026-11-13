@@ -17,7 +17,6 @@ import {
 	useMonitorActions,
 	useTimeAxis,
 } from "./monitor-state";
-import { useMotionPaused } from "./motion-pause";
 import {
 	chainLabelParts,
 	chainRunStatus,
@@ -102,7 +101,6 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 	const zoom = useMonitor((s) => s.zoom);
 	const selected = useMonitor((s) => s.selected);
 	const actions = useMonitorActions();
-	const paused = useMotionPaused();
 	// 链或节点很多时默认汇总（打开页面时定一次，之后以用户的切换为准）。
 	const [mode, setMode] = useState(() =>
 		defaultTimelineMode(
@@ -153,6 +151,9 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 		[selectedNode, now],
 	);
 	const zoomTo = (next: TimeRange | null) => (next ? actions.zoom(next) : actions.followLive());
+	const canZoomToNode = selectedNode !== undefined && selectedSegments.length > 0;
+	const zoomToNode = () => zoomTo(zoomToSegments(selectedSegments, extent));
+	useShortcut("monitor-zoom-node", zoomToNode, canZoomToNode);
 
 	return (
 		<section
@@ -251,13 +252,13 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 					>
 						<ZoomOutIcon />
 					</Button>
-					{selectedNode && selectedSegments.length > 0 && (
+					{selectedNode && canZoomToNode && (
 						<Button
 							variant="ghost"
 							size="icon-sm"
 							aria-label={`缩放到所选节点 ${selectedNode.node_id}`}
-							title={`缩放到所选节点 ${selectedNode.node_id}`}
-							onClick={() => zoomTo(zoomToSegments(selectedSegments, extent))}
+							title={`缩放到所选节点 ${selectedNode.node_id}（${shortcutText("monitor-zoom-node")}）`}
+							onClick={zoomToNode}
 						>
 							<CrosshairIcon />
 						</Button>
@@ -315,7 +316,6 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 								range={range}
 								now={now}
 								decls={decls}
-								paused={paused}
 								attentionNode={attention?.chainId === chain.id ? attention.nodeId : undefined}
 								onToggle={() => toggleChain(chain)}
 							/>
@@ -518,7 +518,6 @@ function ChainRows({
 	range,
 	now,
 	decls,
-	paused,
 	attentionNode,
 	onToggle,
 }: {
@@ -529,7 +528,6 @@ function ChainRows({
 	range: TimeRange;
 	now: number;
 	decls: ReturnType<typeof documentNodes>;
-	paused: boolean;
 	/**
 	 * 要保证看得见的那一行（attentionRow）在这条链里时：节点 ID，链收起时是 null；不在这条链里是 undefined。
 	 */
@@ -604,7 +602,7 @@ function ChainRows({
 								selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
 								chainRow
 								// 展开时每个节点自己的行有脉冲头，汇总行不再画一份。
-								pulse={!open && !paused}
+								pulse={!open}
 							/>
 						)),
 					)}
@@ -621,7 +619,6 @@ function ChainRows({
 							range={range}
 							decls={decls}
 							indent={indent}
-							paused={paused}
 							attention={attentionNode === node.node_id}
 							selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
 						/>
@@ -639,7 +636,6 @@ function NodeRow({
 	range,
 	decls,
 	indent,
-	paused,
 	attention,
 	selected,
 }: {
@@ -649,7 +645,6 @@ function NodeRow({
 	range: TimeRange;
 	decls: ReturnType<typeof documentNodes>;
 	indent: number;
-	paused: boolean;
 	attention: boolean;
 	selected: boolean;
 }) {
@@ -724,7 +719,6 @@ function NodeRow({
 						range={range}
 						node={ref}
 						selected={selected}
-						pulse={!paused}
 					/>
 				))}
 			</div>
@@ -734,7 +728,7 @@ function NodeRow({
 
 /**
  * 一段区段：外层是满高的点击热区，里面按状态表画可见的形状。
- * 执行中的段在段尾有一个脉冲头：每个执行中的节点在一屏里只脉冲这一处（pulse 为 false 时不脉冲：暂停动效，或者这是汇总行）。
+ * 执行中的段在段尾有一个脉冲头：每个执行中的节点在一屏里只脉冲这一处（`pulse` 关掉时不画光环：这是汇总行；暂停动效由 app.css 统一处理）。
  */
 function SegmentBar({
 	seg,
@@ -742,14 +736,14 @@ function SegmentBar({
 	node,
 	selected,
 	chainRow,
-	pulse,
+	pulse = true,
 }: {
 	seg: Segment;
 	range: TimeRange;
 	node: NodeRef;
 	selected: boolean;
 	chainRow?: boolean;
-	pulse: boolean;
+	pulse?: boolean;
 }) {
 	if (seg.end < range.start || seg.start > range.end) return null;
 	const left = Math.max(0, fractionOf(seg.start, range)) * 100;
@@ -779,7 +773,8 @@ function SegmentBar({
 					aria-hidden
 					data-pulse-head
 					className={cn(
-						"absolute -top-0.5 -right-0.75 h-4 w-1.5 rounded-[2px] bg-signal text-signal",
+						"absolute -top-0.5 -right-0.75 h-4 w-1.5 rounded-[2px] bg-signal",
+						STATUS.running.tone,
 						pulse && "pulse-ring",
 					)}
 				/>

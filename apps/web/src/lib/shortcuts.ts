@@ -135,6 +135,13 @@ export const SHORTCUTS = [
 		keys: "L",
 		palette: true,
 	},
+	{
+		id: "monitor-zoom-node",
+		group: "运行监控",
+		label: "缩放到所选节点",
+		keys: "Z",
+		palette: true,
+	},
 	{ id: "monitor-rerun", group: "运行监控", label: "再次运行", keys: "R", palette: true },
 	{
 		id: "monitor-cancel",

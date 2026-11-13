@@ -134,6 +134,58 @@ test("运行监控：每个执行中的节点只在时间线上的段尾脉冲�
 	await expect.poll(async () => new Set((await owners()).map((o) => o.phase)).size).toBe(1);
 });
 
+test("暂停动效是全站的：命令面板里切换，控制台与列表页的脉冲停下、骨架屏不再呼吸、加载图标放慢，刷新后仍然暂停", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await runningScenario(controlPlane, connectAgent, clock);
+	await page.goto("/");
+	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
+	const running = page.getByRole("link", { name: /运行中/ }).first();
+	await expect(running).toBeVisible();
+	await expect.poll(() => pulses(page)).toBeGreaterThan(0);
+	const html = page.locator("html");
+	await expect(html).not.toHaveAttribute("data-motion", "paused");
+
+	const toggle = async (name: string) => {
+		await page.keyboard.press("Control+k");
+		await expect(page.getByRole("combobox", { name: "命令" })).toBeFocused();
+		await page.keyboard.type("动效");
+		await page.getByRole("option", { name }).click();
+	};
+	await toggle("暂停动效");
+	await expect(html).toHaveAttribute("data-motion", "paused");
+	await expect.poll(() => pulses(page)).toBe(0);
+	const motion = () =>
+		page.evaluate(() => {
+			const spin = document.createElement("i");
+			spin.className = "animate-spin";
+			const skeleton = document.createElement("i");
+			skeleton.className = "animate-pulse";
+			document.body.append(spin, skeleton);
+			const result = {
+				spin: getComputedStyle(spin).animationDuration,
+				skeleton: getComputedStyle(skeleton).animationName,
+			};
+			spin.remove();
+			skeleton.remove();
+			return result;
+		});
+	expect(await motion()).toEqual({ spin: "3s", skeleton: "none" });
+
+	await page.goto("/runs");
+	await expect(page.getByRole("heading", { name: "运行记录" })).toBeVisible();
+	await expect(html).toHaveAttribute("data-motion", "paused");
+	await expect.poll(() => pulses(page)).toBe(0);
+
+	await toggle("恢复动效");
+	await expect(html).not.toHaveAttribute("data-motion", "paused");
+	await expect.poll(() => pulses(page)).toBeGreaterThan(0);
+	expect(await motion()).toEqual({ spin: "1s", skeleton: "pulse" });
+});
+
 test("减少动效：浮层只淡入淡出、加载图标放慢而不停、颜色过渡照常", async ({ page }) => {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.goto("/agents");

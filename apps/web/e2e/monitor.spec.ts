@@ -876,6 +876,7 @@ test("命令面板「当前页面」：已结束的失败运行是下一个失�
 	await expect(pageGroup.getByRole("option")).toHaveText([
 		/^下一个失败的节点F$/,
 		/^只看 ERROR \/ 恢复级别E$/,
+		/^缩放到所选节点Z$/,
 		/^再次运行R$/,
 	]);
 

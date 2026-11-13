@@ -5,11 +5,13 @@ import { useCommandState } from "cmdk";
 import {
 	CircleStopIcon,
 	CircleXIcon,
+	CrosshairIcon,
 	HistoryIcon,
 	KeyboardIcon,
 	ListFilterIcon,
 	type LucideIcon,
 	PanelLeftIcon,
+	PauseIcon,
 	PlayIcon,
 	PlusIcon,
 	RadioIcon,
@@ -25,6 +27,7 @@ import { runStatusView } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { shortId } from "#/lib/format";
+import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import type { PaletteShortcutId } from "#/lib/shortcuts";
 import {
 	Command,
@@ -73,6 +76,7 @@ export function CommandPalette({
 		enabled: open,
 	});
 	const scenarios = orchestrations.data?.orchestrations ?? [];
+	const motionPaused = useMotionPaused();
 
 	const run = (action: () => void) => {
 		onOpenChange(false);
@@ -107,6 +111,13 @@ export function CommandPalette({
 			label: "修改昵称",
 			icon: UserPenIcon,
 			perform: () => openOverlay("nickname"),
+		},
+		{
+			id: "motion",
+			label: motionPaused ? "恢复动效" : "暂停动效",
+			keywords: ["暂停动效", "恢复动效", "脉冲"],
+			icon: motionPaused ? PlayIcon : PauseIcon,
+			perform: toggleMotionPaused,
 		},
 	];
 
@@ -213,7 +224,7 @@ export function CommandPalette({
 							<CommandItem
 								key={c.id}
 								value={`command:${c.id}`}
-								keywords={[c.label]}
+								keywords={"keywords" in c ? c.keywords : [c.label]}
 								onSelect={() => run(c.perform)}
 							>
 								<c.icon />
@@ -251,6 +262,7 @@ const PAGE_COMMAND_ICON: Record<PaletteShortcutId, LucideIcon> = {
 	"monitor-next-failure": CircleXIcon,
 	"monitor-errors-only": ListFilterIcon,
 	"monitor-follow-live": RadioIcon,
+	"monitor-zoom-node": CrosshairIcon,
 	"monitor-rerun": RotateCcwIcon,
 	"monitor-cancel": CircleStopIcon,
 	"canvas-save": SaveIcon,
