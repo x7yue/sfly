@@ -11,7 +11,7 @@
 		"gen": "pnpm gen:proto && pnpm gen:schema",
 		"gen:proto": "buf generate",
 		"gen:schema": "pnpm --filter @sfly/schema export",
-		"gen:check": "pnpm gen && bash scripts/check-clean.sh packages/proto/src/gen sdk/python/src/sfly/schemas",
+		"gen:check": "pnpm gen && bash scripts/check-clean.sh packages/proto/src/gen sdk/python/src/sfly/schemas packages/client/src/generated packages/client/test/contract-parity.ts",
 		"lint": "pnpm lint:ts && pnpm lint:proto && pnpm lint:rust && pnpm lint:py && pnpm lint:node && pnpm lint:docs",
 		"lint:ts": "biome check .",
 		"lint:proto": "buf lint && buf format --diff --exit-code",

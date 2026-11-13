@@ -33,8 +33,8 @@ colors:
   subflow-fg: "#dcd3fd"
   chart-1: "#d4d4d4"
   chart-2: "#8aa4c0"
-  chart-3: "#9a9a9a"
-  chart-4: "#6f8fae"
+  chart-3: "#7a7a7a"
+  chart-4: "#456e97"
 typography:
   page-title:
     fontFamily: "IBM Plex Sans, PingFang SC, Noto Sans CJK SC, Microsoft YaHei UI, sans-serif"
@@ -180,7 +180,7 @@ sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，
 - **槽** (`track`)：进度条、槽位条的空槽。
 - **描边** (`border`、`border-soft`、`border-strong`)：面板与分隔线 / 面板内分隔 / 浮层，有意安静；表单控件（输入框、下拉、勾选框、开关、分段）的边界单独用 `border-control`，在所在表面上 ≥ 3:1。
 - **文字三级** (`fg-1` 正文、`fg-2` 次要、`fg-3` 辅助)：三级在 bg 到 raised-2 的所有表面上都 ≥ 4.5:1。
-- **图表线** (`chart-1` … `chart-4`)：中性灰与灰蓝，按序使用；图表线不用状态色。
+- **图表线** (`chart-1` … `chart-4`)：中性灰与灰蓝，按序使用，明度依次拉开（两两色差在三种色觉缺陷下都够大），线型再把它们分开；图表线不用状态色。
 
 ### Named Rules
 **The Scarce Cyan Rule.** 青色只表示执行中、键盘焦点、调度连线。不用青色表示选中、链接、强调或品牌；实心青色只给状态点、脉冲头和焦点环，长时间运行里面积最大的执行中色块不能是饱和青。

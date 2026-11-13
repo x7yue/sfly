@@ -70,7 +70,7 @@ function DropdownMenuLabel({ className, ...props }: MenuPrimitive.GroupLabel.Pro
 /**
  * 菜单项。
  * - `disabledReason`：做不了的原因。给了就禁用，原因显示在文字下面（也读给读屏用户）。
- * - `variant="danger"`：归档、删除等破坏性操作（`"destructive"` 是旧名字，同义）。
+ * - `variant="danger"`：归档、删除等破坏性操作。
  */
 function DropdownMenuItem({
 	className,
@@ -80,7 +80,7 @@ function DropdownMenuItem({
 	children,
 	...props
 }: MenuPrimitive.Item.Props & {
-	variant?: MenuItemVariant | "destructive";
+	variant?: MenuItemVariant;
 	disabledReason?: string | null | undefined;
 }) {
 	const reason = disabledReason || undefined;
@@ -88,7 +88,7 @@ function DropdownMenuItem({
 		<MenuPrimitive.Item
 			data-slot="dropdown-menu-item"
 			disabled={disabled || reason !== undefined}
-			className={menuItemClass(variant === "destructive" ? "danger" : variant, className)}
+			className={menuItemClass(variant, className)}
 			{...props}
 		>
 			<MenuItemText reason={reason}>{children}</MenuItemText>

@@ -11,6 +11,7 @@ import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
+import { runViewTransition } from "#/lib/view-transition";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { chainRunStatus, runStatus } from "#/monitor/run-model";
@@ -120,7 +121,9 @@ export function RunStateBadge({ state }: { state: CanvasRun }) {
 			const end = run.ended_at ? Date.parse(run.ended_at) : now;
 			body = (
 				<>
-					<StatusPill kind={s.kind}>{s.label}</StatusPill>
+					<StatusPill kind={s.kind} className="vt-run-state">
+						{s.label}
+					</StatusPill>
 					<span className="font-mono text-xs">{shortId(run.id)}</span>
 					<span className="font-mono text-xs text-fg-3">
 						{formatDuration(end - Date.parse(run.started_at))}
@@ -157,6 +160,7 @@ export function RunTopRight({
 				<Link
 					to="/runs/$id"
 					params={{ id: run.id }}
+					viewTransition={runViewTransition("to-monitor")}
 					className={buttonVariants({ variant: "primary" })}
 				>
 					<ActivityIcon />
@@ -315,6 +319,7 @@ function NodeRunInspector({
 						to="/runs/$id"
 						params={{ id: run.id }}
 						search={{ node: id }}
+						viewTransition={runViewTransition("to-monitor")}
 						className={buttonVariants()}
 					>
 						在监控页中打开 {id}

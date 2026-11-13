@@ -193,6 +193,25 @@ test("缩放不只能拖选：放大、缩小、缩放到所选节点都可以�
 	await tl.getByRole("button", { name: "回到实时" }).click();
 	await expect(zoomRange).toHaveCount(0);
 
+	// 同一件事也有快捷键 Z（运行监控分组、命令面板）：选中节点时才绑定。
+	await expect(tl.getByRole("button", { name: "缩放到所选节点 verify" })).toHaveAttribute(
+		"title",
+		"缩放到所选节点 verify（Z）",
+	);
+	await page.keyboard.press("z");
+	await expect(zoomRange).toBeVisible();
+	await page.keyboard.press("l");
+	await expect(zoomRange).toHaveCount(0);
+	await page.keyboard.press("Control+k");
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	await expect(
+		palette
+			.getByRole("group", { name: "当前页面" })
+			.getByRole("option", { name: /缩放到所选节点/ }),
+	).toHaveText(/Z$/);
+	await page.keyboard.press("Escape");
+	await expect(palette).toBeHidden();
+
 	// Esc 只放弃拖选，不清除选中的节点。
 	const track = await tl.locator('[data-node-row="fetch"] > div').boundingBox();
 	if (!track) throw new Error("没有轨道");

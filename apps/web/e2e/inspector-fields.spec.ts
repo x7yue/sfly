@@ -166,3 +166,35 @@ test("开关旁边的文字也是开关的一部分：点文字就能切换", as
 	await panel.getByText("敏感", { exact: true }).click();
 	await expect(secret).toBeChecked();
 });
+
+test("检查器的标题最多两行、不截成一行；工具条里的场景名太长时截断并在悬停时给出全文；小节标题不靠 500 字重", async ({
+	page,
+	controlPlane,
+}) => {
+	const nodeTitle = "上传发布包到制品库并校验签名与摘要之后再通知下游系统开始灰度发布的节点";
+	const scenarioName =
+		"每日凌晨定时执行的跨机房制品同步与校验任务（含灰度发布与回滚演练的完整流程）";
+	await publishPackage(controlPlane, { nodes: [{ ...uploadNodes[0], title: nodeTitle }] });
+	const id = await createScenario(controlPlane, scenarioName, uploadDocument);
+	await openEditor(page, id, "upload");
+	await nodeCard(page, "upload").click();
+
+	const panel = inspector(page);
+	const title = panel.getByRole("heading", { level: 2 });
+	await expect(title).toHaveText(nodeTitle);
+	const { height, lineHeight, overflowing } = await title.evaluate((el) => ({
+		height: el.getBoundingClientRect().height,
+		lineHeight: Number.parseFloat(getComputedStyle(el).lineHeight),
+		overflowing: el.scrollWidth > el.clientWidth,
+	}));
+	expect(height).toBeGreaterThan(lineHeight * 1.5);
+	expect(height).toBeLessThanOrEqual(lineHeight * 2 + 1);
+	expect(overflowing).toBe(false);
+	await expect(panel.getByRole("heading", { level: 3 }).first()).toHaveCSS("font-weight", "600");
+
+	const name = page.getByRole("heading", { level: 1 }).locator('[data-slot="truncate"]');
+	await expect(name).toHaveAttribute("data-truncated", "true");
+	await expect(page.getByRole("heading", { level: 1 })).toHaveText(scenarioName);
+	await name.hover();
+	await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText(scenarioName);
+});

@@ -21,12 +21,14 @@ export const docsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/docs",
+		client: false,
 		key: ["docs", "list"],
 		response: z.object({ pages: z.array(DocPageView) }),
 	}),
 	/** 一页的 Markdown 原文（占位符已替换）；未知页 404。 */
 	page: download({
 		path: "/docs/:page.md",
+		client: false,
 		raw: true,
 		params: z.object({ page: z.string() }),
 		contentType: "text/markdown; charset=utf-8",
@@ -38,12 +40,18 @@ export const docsApi = {
 	 */
 	skill: download({
 		path: "/docs/skills/:skill/:file",
+		client: false,
 		raw: true,
 		params: z.object({ skill: z.string(), file: z.string() }),
 		contentType: "text/markdown; charset=utf-8",
 	}),
 	/** llms.txt 索引：列出每一页原文的完整地址。 */
-	llms: download({ path: "/llms.txt", raw: true, contentType: "text/plain; charset=utf-8" }),
+	llms: download({
+		path: "/llms.txt",
+		raw: true,
+		contentType: "text/plain; charset=utf-8",
+		client: false,
+	}),
 };
 
 export type DocPageView = z.infer<typeof DocPageView>;

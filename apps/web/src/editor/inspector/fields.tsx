@@ -159,7 +159,7 @@ export function focusField(key: string): () => void {
 /** 检查器里的小节标题（原型 `.sec-h`）。 */
 export function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
 	return (
-		<h3 className="mt-4 mb-2 flex items-center gap-2 text-xs font-medium text-fg-3 first:mt-0">
+		<h3 className="mt-4 mb-2 flex items-center gap-2 text-xs font-semibold text-fg-3 first:mt-0">
 			{children}
 			{aside && <span className="ml-auto font-normal">{aside}</span>}
 		</h3>

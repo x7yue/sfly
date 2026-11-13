@@ -44,6 +44,14 @@ describe("设计规范", () => {
 		).toEqual([]);
 	});
 
+	it("状态色的 text-warn、text-signal、text-danger 只写在状态表里，别处用 -fg（文字、图标）或 STATUS 的 tone", () => {
+		expect(
+			offending(/(^|[^-\w])text-(warn|signal|danger)(?![-\w])/).filter(
+				(at) => !at.startsWith("components/status.tsx"),
+			),
+		).toEqual([]);
+	});
+
 	it("文字三级在 bg 到 raised-2 的每个表面上对比度 ≥ 4.5:1", () => {
 		const low = ["--fg-1", "--fg-2", "--fg-3"].flatMap((text) =>
 			SURFACES.flatMap((surface) =>
@@ -75,6 +83,22 @@ describe("设计规范", () => {
 		expect(low).toEqual([]);
 		expect(contrast("--canvas-port", "--canvas-bg")).toBeGreaterThanOrEqual(3);
 		expect(contrast("--scrollbar-thumb", "--surface")).toBeGreaterThanOrEqual(3);
+	});
+
+	it("图表线色在 bg 与 surface 上 ≥ 3:1，两两色差在三种色觉缺陷下 OKLab ΔE ≥ 7", () => {
+		const lines = ["--chart-1", "--chart-2", "--chart-3", "--chart-4"];
+		expect(
+			lines.flatMap((line) =>
+				["--bg", "--surface"].flatMap((s) => (contrast(line, s) < 3 ? [`${line} on ${s}`] : [])),
+			),
+		).toEqual([]);
+		const close = lines.flatMap((a, i) =>
+			lines.slice(i + 1).flatMap((b) => {
+				const worst = Math.min(...VISION.map((see) => deltaE(see(rgbOf(a)), see(rgbOf(b)))));
+				return worst < 7 ? [`${a} / ${b} ΔE ${worst.toFixed(1)}`] : [];
+			}),
+		);
+		expect(close).toEqual([]);
 	});
 
 	it("文字选区是中性高亮，选中的正文仍然 ≥ 4.5:1", () => {

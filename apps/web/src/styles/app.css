@@ -12,8 +12,6 @@
 @layer theme, base, vendor, components, utilities;
 
 @import "tailwindcss";
-/* 以下两个文件只含 @utility / @custom-variant / @keyframes，由 Tailwind 放进 utilities 层 */
-@import "tw-animate-css";
 @import "./shadcn-variants.css";
 @import "./tokens.css" layer(theme);
 @import "./fonts.css" layer(base);
@@ -192,7 +190,7 @@
 	}
 }
 
-/* 光环画在元素自己的 ::after 上，所以元素要自己定位（relative / absolute）、不能是伪元素。只动 scale 与 opacity（合成器完成，不重绘）。减少动效时不动：执行中的形状本身与成功不同。 */
+/* 光环画在元素自己的 ::after 上，所以元素要自己定位（relative / absolute）、不能是伪元素。只动 scale 与 opacity（合成器完成，不重绘）。减少动效、或用户在 <html data-motion="paused"> 上暂停了动效（lib/motion-pause.ts）时不动：执行中的形状本身与成功不同。 */
 @utility pulse-ring {
 	&::after {
 		content: "";
@@ -207,13 +205,14 @@
 			animation: status-pulse var(--pulse-period) var(--motion-ease-out) infinite;
 		}
 	}
+	:root[data-motion="paused"] &::after {
+		animation: none;
+	}
 }
 
-/* 画布上选中节点相关连线的虚线流动（虚线周期 6 + 5）；减少动效时连线静止，虚线本身已经说明了关联 */
-@utility animate-edge-flow {
-	@media (prefers-reduced-motion: no-preference) {
-		animation: edge-flow 1s linear infinite;
-	}
+/* 编排画布的运行状态与运行监控两页各有一个：运行状态标签在两页之间移动（过渡见文件末尾、lib/view-transition.ts） */
+@utility vt-run-state {
+	view-transition-name: run-state;
 }
 
 @utility selected-row {
@@ -242,6 +241,11 @@
 		}
 		@media (prefers-reduced-motion: no-preference) {
 			--animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+		}
+		/* 用户暂停了动效（lib/motion-pause.ts）：持续循环的停下，加载图标同样放慢 */
+		&[data-motion="paused"] {
+			--animate-spin: spin 3s linear infinite;
+			--animate-pulse: none;
 		}
 	}
 	html,
@@ -273,21 +277,12 @@
 	}
 	/*
 	 * 减少动效：去掉位移、缩放和持续循环，保留淡入淡出与颜色变化（docs/DESIGN-SYSTEM.md「动效」）。
-	 * 循环动画（脉冲、连线流动、骨架屏）在各自的定义里只在不减少动效时启用；这里只处理浮层：
-	 * tw-animate 的进出场与 Base UI 的 starting / ending style 过渡只剩透明度。
+	 * 循环动画（脉冲、骨架屏）在各自的定义里只在不减少动效时启用（用户暂停动效时也停，见上面的 :root）；
+	 * 画布连线的流动只有两个周期（FlowEdge）；这里只处理浮层：
+	 * Base UI 的 starting / ending style 过渡只剩透明度。
 	 */
 	@media (prefers-reduced-motion: reduce) {
 		/* biome-ignore-start lint/complexity/noImportantStyles: base 层的 !important 才压得过工具类给的位移与缩放 */
-		* {
-			--tw-enter-scale: 1 !important;
-			--tw-exit-scale: 1 !important;
-			--tw-enter-rotate: 0 !important;
-			--tw-exit-rotate: 0 !important;
-			--tw-enter-translate-x: 0 !important;
-			--tw-enter-translate-y: 0 !important;
-			--tw-exit-translate-x: 0 !important;
-			--tw-exit-translate-y: 0 !important;
-		}
 		[data-starting-style],
 		[data-ending-style] {
 			translate: none !important;
@@ -320,5 +315,56 @@
 			background-color: var(--bg);
 			color: var(--fg-1);
 		}
+	}
+}
+
+/*
+ * 编排画布的运行状态 ↔ 运行监控（lib/view-transition.ts 按方向给出 type）：整页淡入淡出并朝前进的方向平移 12px，
+ * 运行状态标签（vt-run-state）移动到另一页的位置。只有这一对入口发起过渡，减少动效时不发起，所以这里不再写降级。
+ */
+@layer components {
+	@keyframes view-leave-left {
+		to {
+			opacity: 0;
+			translate: -12px 0;
+		}
+	}
+	@keyframes view-enter-from-right {
+		from {
+			opacity: 0;
+			translate: 12px 0;
+		}
+	}
+	@keyframes view-leave-right {
+		to {
+			opacity: 0;
+			translate: 12px 0;
+		}
+	}
+	@keyframes view-enter-from-left {
+		from {
+			opacity: 0;
+			translate: -12px 0;
+		}
+	}
+	html:active-view-transition-type(to-monitor, to-canvas)::view-transition-group(root) {
+		animation-duration: var(--motion-base);
+		animation-timing-function: var(--motion-ease-out);
+	}
+	html:active-view-transition-type(to-monitor, to-canvas)::view-transition-group(run-state) {
+		animation-duration: var(--motion-slow);
+		animation-timing-function: var(--motion-ease-out);
+	}
+	html:active-view-transition-type(to-monitor)::view-transition-old(root) {
+		animation-name: view-leave-left;
+	}
+	html:active-view-transition-type(to-monitor)::view-transition-new(root) {
+		animation-name: view-enter-from-right;
+	}
+	html:active-view-transition-type(to-canvas)::view-transition-old(root) {
+		animation-name: view-leave-right;
+	}
+	html:active-view-transition-type(to-canvas)::view-transition-new(root) {
+		animation-name: view-enter-from-left;
 	}
 }

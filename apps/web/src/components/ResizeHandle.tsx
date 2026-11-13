@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useRef, useState } from "react";
+import { useId, useLayoutEffect, useRef, useState } from "react";
 
 type Edge = "top" | "bottom" | "left";
 
@@ -38,6 +38,15 @@ export function ResizeHandle({
 }) {
 	const drag = useRef<{ at: number; size: number } | null>(null);
 	const [active, setActive] = useState(false);
+	const hintId = useId();
+	const [reading, setReading] = useState({ now: min, max: min });
+	const refresh = () =>
+		setReading((prev) => {
+			const next = { now: Math.round(measure()), max: Math.round(max()) };
+			return prev.now === next.now && prev.max === next.max ? prev : next;
+		});
+	// 大小取决于布局，React 不跟踪：每次渲染后量一次，窗口缩放后聚焦时再量一次。
+	useLayoutEffect(refresh);
 	const clamp = (s: number) => Math.round(Math.max(min, Math.min(max(), s)));
 	const horizontal = edge === "left";
 	const sign = edge === "bottom" ? 1 : -1;
@@ -49,7 +58,10 @@ export function ResizeHandle({
 			role="separator"
 			aria-orientation={horizontal ? "vertical" : "horizontal"}
 			aria-label={label}
-			aria-valuenow={size ?? undefined}
+			aria-valuemin={min}
+			aria-valuemax={Math.max(min, reading.max)}
+			aria-valuenow={Math.min(Math.max(min, reading.now), Math.max(min, reading.max))}
+			aria-describedby={hintId}
 			tabIndex={0}
 			title={`${label}（双击恢复默认）`}
 			data-active={active || undefined}
@@ -74,6 +86,7 @@ export function ResizeHandle({
 				setActive(false);
 			}}
 			onDoubleClick={onReset}
+			onFocus={refresh}
 			onKeyDown={(e) => {
 				if (e.key === shrinkKey || e.key === growKey) {
 					e.preventDefault();
@@ -86,6 +99,9 @@ export function ResizeHandle({
 				}
 			}}
 		>
+			<span id={hintId} className="sr-only">
+				{`${horizontal ? "左右" : "上下"}方向键每次调整 16 像素，双击或按 Enter 恢复默认`}
+			</span>
 			<span
 				aria-hidden
 				className={cn(

@@ -54,12 +54,24 @@ def control_plane(sfly_wheel: Path, pypi_mirror: StaticServer) -> Iterator[FakeC
     server.close()
 
 
+@pytest.fixture(autouse=True)
+def _cancelled_once_per_test() -> Iterator[None]:
+    """执行器进程里一次取消只抛一次 `Cancelled`（`sfly.context.cancelled_error`）；
+    测试在同一个进程里多次「收到取消」，每个用例从没有抛出过开始。"""
+    from sfly.context import _Sigterm
+
+    _Sigterm.raised = False
+    yield
+    _Sigterm.raised = False
+
+
 @pytest.fixture
 def sigterm_after(monkeypatch: pytest.MonkeyPatch) -> Callable[[Any, str], None]:
     """`sigterm_after(对象, 名称)`：之后调用 `对象.名称(...)` 时，在它返回之后、调用方拿到结果之前
     「收到 SIGTERM」：调用执行器装的处理函数（`sfly.context.on_sigterm`），和真实的信号落在这里
-    一样。用来检查拿到资源（文件描述符、临时文件、子进程）和登记好清理之间被取消时不留下东西。"""
-    from sfly.context import on_sigterm
+    一样。用来检查拿到资源（文件描述符、临时文件、子进程）和登记好清理之间被取消时不留下东西。
+    每次都当作一次新的取消：一个用例里先后检查几种操作时，各自都收到 `Cancelled`。"""
+    from sfly.context import _Sigterm, on_sigterm
 
     def patch(owner: Any, name: str) -> None:
         # 模块里没有定义的名字（例如 `open`）取内置的。
@@ -67,6 +79,7 @@ def sigterm_after(monkeypatch: pytest.MonkeyPatch) -> Callable[[Any, str], None]
 
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             result = real(*args, **kwargs)
+            _Sigterm.raised = False
             on_sigterm(signal.SIGTERM, None)
             return result
 

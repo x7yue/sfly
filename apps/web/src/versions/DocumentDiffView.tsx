@@ -96,7 +96,7 @@ export function DocumentDiffView({
 function DiffSection({ title, children }: { title: string; children: React.ReactNode }) {
 	return (
 		<section aria-label={title}>
-			<h4 className="m-0 mb-1 text-xs font-medium text-fg-3">{title}</h4>
+			<h4 className="m-0 mb-1 text-xs font-semibold text-fg-3">{title}</h4>
 			{children}
 		</section>
 	);

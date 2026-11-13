@@ -69,6 +69,10 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 			reply.hijack();
 			const res = reply.raw;
 			const time = () => clock.now().toISOString();
+			// hijack 之后 Fastify 不再发送 reply 上已经设置的响应头（例如 onRequest 里设置的跨域头）。
+			for (const [name, value] of Object.entries(reply.getHeaders())) {
+				if (value !== undefined) res.setHeader(name, value);
+			}
 			res.writeHead(200, {
 				[CONTROL_PLANE_TIME_HEADER]: time(),
 				[CONTROL_PLANE_VERSION_HEADER]: options.version,

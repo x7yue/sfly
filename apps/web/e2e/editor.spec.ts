@@ -225,7 +225,8 @@ test("Tab 顺序：先经过顶栏再进入画布，画布只有画布区域一�
 	);
 
 	await page.keyboard.press("Shift+F10");
-	await expect(nodeMenu(page)).toBeVisible();
+	// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则 Esc 会落在节点上。
+	await expect(nodeMenu(page)).toBeFocused();
 	await page.keyboard.press("Escape");
 	await expectFocusVisible(nodeCard(page, "fetch"));
 	await page.keyboard.press("Escape");

@@ -79,6 +79,11 @@ test("检查器调宽手柄可以用键盘：聚焦后左右方向键调整，En
 	const handle = inspectorHandle(page);
 	await handle.focus();
 	await expect(handle).toBeFocused();
+	// 读屏拿到范围与当前值（默认大小也有值），以及怎么用的说明。
+	await expect(handle).toHaveAttribute("aria-valuemin", "372");
+	await expect(handle).toHaveAttribute("aria-valuemax", "698");
+	await expect(handle).toHaveAttribute("aria-valuenow", "372");
+	await expect(handle).toHaveAccessibleDescription(/方向键.*双击或按 Enter 恢复默认/);
 	await page.keyboard.press("ArrowLeft");
 	await page.keyboard.press("ArrowLeft");
 	await expect.poll(() => widthOf(inspector(page))).toBe(404);
@@ -92,6 +97,7 @@ test("检查器调宽手柄可以用键盘：聚焦后左右方向键调整，En
 	await page.keyboard.press("ArrowLeft");
 	await page.keyboard.press("Enter");
 	await expect.poll(() => widthOf(inspector(page))).toBe(372);
+	await expect(handle).toHaveAttribute("aria-valuenow", "372");
 	await expect(handle).toBeFocused();
 	// 方向键调宽时不切换画布上的选中节点。
 	await expect(nodeCard(page, "entry")).toHaveAttribute("aria-pressed", "false");

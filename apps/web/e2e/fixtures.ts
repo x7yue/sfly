@@ -40,7 +40,7 @@ export interface E2eFixtures {
 	 * 覆盖控制面的选项：对外地址、版本号（默认是实际监听地址和 package.json 的版本；视觉回归里固定它们，
 	 * 文档里替换出来的地址、版本号才不随端口和发版变化）、用户文档目录（默认仓库的 docs/guide）和单任务的指标上限
 	 * （字节，每点 28 字节；调小后用来触发「截断」）、按运行读日志时单次请求的扫描量上限（字节；调小后
-	 * 筛选很少匹配时一页读不到行，用来触发「接着往前读」）。
+	 * 筛选很少匹配时一页读不到行，用来触发「接着往前读」）、允许跨域调用的来源名单（`SFLY_CORS_ORIGINS`，不设置时允许所有来源）。
 	 */
 	controlPlaneOptions: {
 		publicHttpUrl?: string;
@@ -48,6 +48,7 @@ export interface E2eFixtures {
 		docsDir?: string;
 		metricLimitBytes?: number;
 		logScanBytes?: number;
+		corsOrigins?: readonly string[];
 	};
 }
 

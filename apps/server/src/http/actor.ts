@@ -1,12 +1,7 @@
+import { CLIENT_HEADER } from "@sfly/schema";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Actor } from "../actor.js";
 import { requireNickname } from "./nickname.js";
-
-/**
- * 客户端标识请求头：`sfly-cli/<版本> agent/<AI 编程助手名称>`，`agent/` 部分只在命令行
- * 检测到自己运行在 AI 编程助手里时才有。和昵称一样不做校验，只用于标注。
- */
-export const CLIENT_HEADER = "x-sfly-client";
 
 const AGENT_PREFIX = "agent/";
 

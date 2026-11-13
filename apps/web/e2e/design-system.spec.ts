@@ -1,8 +1,10 @@
 import type { Page } from "@playwright/test";
+import { openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor, runningScenario } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createScenario, publishPackage, seedDashboard } from "./support";
+import { twoVersions } from "./versions-support";
 
 const RING = "rgb(44, 196, 240)";
 
@@ -33,7 +35,7 @@ test("状态标记每种状态一个形状，默认静止；强制颜色模式�
 	const outline = (dot: typeof running) =>
 		dot.locator("svg").evaluate((svg) => svg.innerHTML.replaceAll(/\s+/g, ""));
 	expect(await outline(running)).not.toBe(await outline(failed.first()));
-	expect(await pulses(page)).toBe(0);
+	expect(await pulses(page)).toBe(1);
 
 	await page.emulateMedia({ forcedColors: "active" });
 	const forced = await failed
@@ -134,6 +136,58 @@ test("运行监控：每个执行中的节点只在时间线上的段尾脉冲�
 	await expect.poll(async () => new Set((await owners()).map((o) => o.phase)).size).toBe(1);
 });
 
+test("暂停动效是全站的：命令面板里切换，控制台与列表页的脉冲停下、骨架屏不再呼吸、加载图标放慢，刷新后仍然暂停", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await runningScenario(controlPlane, connectAgent, clock);
+	await page.goto("/");
+	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
+	const running = page.getByRole("link", { name: /运行中/ }).first();
+	await expect(running).toBeVisible();
+	await expect.poll(() => pulses(page)).toBeGreaterThan(0);
+	const html = page.locator("html");
+	await expect(html).not.toHaveAttribute("data-motion", "paused");
+
+	const toggle = async (name: string) => {
+		await page.keyboard.press("Control+k");
+		await expect(page.getByRole("combobox", { name: "命令" })).toBeFocused();
+		await page.keyboard.type("动效");
+		await page.getByRole("option", { name }).click();
+	};
+	await toggle("暂停动效");
+	await expect(html).toHaveAttribute("data-motion", "paused");
+	await expect.poll(() => pulses(page)).toBe(0);
+	const motion = () =>
+		page.evaluate(() => {
+			const spin = document.createElement("i");
+			spin.className = "animate-spin";
+			const skeleton = document.createElement("i");
+			skeleton.className = "animate-pulse";
+			document.body.append(spin, skeleton);
+			const result = {
+				spin: getComputedStyle(spin).animationDuration,
+				skeleton: getComputedStyle(skeleton).animationName,
+			};
+			spin.remove();
+			skeleton.remove();
+			return result;
+		});
+	expect(await motion()).toEqual({ spin: "3s", skeleton: "none" });
+
+	await page.goto("/runs");
+	await expect(page.getByRole("heading", { name: "运行记录" })).toBeVisible();
+	await expect(html).toHaveAttribute("data-motion", "paused");
+	await expect.poll(() => pulses(page)).toBe(0);
+
+	await toggle("恢复动效");
+	await expect(html).not.toHaveAttribute("data-motion", "paused");
+	await expect.poll(() => pulses(page)).toBeGreaterThan(0);
+	expect(await motion()).toEqual({ spin: "1s", skeleton: "pulse" });
+});
+
 test("减少动效：浮层只淡入淡出、加载图标放慢而不停、颜色过渡照常", async ({ page }) => {
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.goto("/agents");
@@ -142,10 +196,7 @@ test("减少动效：浮层只淡入淡出、加载图标放慢而不停、颜�
 	await page.keyboard.press("Control+k");
 	const palette = page.getByRole("dialog");
 	await expect(palette).toBeVisible();
-	const scale = await palette.evaluate((el) =>
-		getComputedStyle(el).getPropertyValue("--tw-enter-scale"),
-	);
-	expect(scale.trim()).toBe("1");
+	expect(await palette.evaluate((el) => getComputedStyle(el).animationName)).toBe("none");
 	await page.keyboard.press("Escape");
 	await expect(palette).toBeHidden();
 
@@ -170,6 +221,28 @@ test("减少动效：浮层只淡入淡出、加载图标放慢而不停、颜�
 		"transition-duration",
 		"0.15s",
 	);
+});
+
+test("中文的小标题靠 600 字重而不是 500（雅黑没有 500）：快捷键分组、画布子流程名、版本差异小标题", async ({
+	page,
+	controlPlane,
+	clock,
+}) => {
+	const id = await twoVersions(controlPlane, clock);
+	await page.goto(`/orchestrations/${id}/versions`);
+	await expect(page.getByRole("region", { name: "差异" })).toBeVisible();
+	await expect(
+		page.getByRole("region", { name: "差异" }).getByRole("heading", { level: 4 }).first(),
+	).toHaveCSS("font-weight", "600");
+
+	await openEditor(page, id, "report");
+	const region = page.getByRole("region", { name: "子流程 sub_entry" });
+	await expect(region.getByText("sub_entry", { exact: true })).toHaveCSS("font-weight", "600");
+
+	await page.keyboard.press("?");
+	await expect(
+		page.getByRole("dialog", { name: "快捷键" }).getByRole("heading", { level: 4 }).first(),
+	).toHaveCSS("font-weight", "600");
 });
 
 test("键盘焦点环一出现就是青色，不随颜色过渡先灰后青", async ({ page }) => {

@@ -19,6 +19,23 @@ const asyncForm = (page: Page) => addMenu(page).getByRole("form", { name: "添�
 const withSubflow = (page: Page) =>
 	asyncForm(page).getByRole("checkbox", { name: "同时新建子流程" });
 const subflowName = (page: Page) => addMenu(page).getByRole("textbox", { name: "子流程名称" });
+/**
+ * 等元素停在一个位置上再量：刚加的节点会用一段动画移到视口中央，半路量到的端口位置和按下鼠标时对不上，
+ * 拖线会落空或落在别处。
+ */
+async function settledBox(locator: Locator) {
+	let last = "";
+	await expect
+		.poll(async () => {
+			const b = await box(locator);
+			const now = `${Math.round(b.x)},${Math.round(b.y)}`;
+			const same = now === last;
+			last = now;
+			return same;
+		})
+		.toBe(true);
+	return box(locator);
+}
 
 test("添加异步任务时勾选「同时新建子流程」：名称为空或重名时不新建；得到两个节点和调度连线，没有来源时不连到链上；一步撤销", async ({
 	page,
@@ -163,20 +180,6 @@ test("从调度端口拖线到空白处：填写子流程名称后新建子流�
 
 	const dispatchPort = (nodeId: string) =>
 		nodeCard(page, nodeId).locator('.react-flow__handle[data-handleid="dispatch"].source');
-	/** 等端口停在一个位置上再拖：刚加的节点会用一段动画移到视口中央，半路量到的起点和松开时的视口对不上。 */
-	const settledBox = async (locator: Locator) => {
-		let last = "";
-		await expect
-			.poll(async () => {
-				const b = await box(locator);
-				const now = `${Math.round(b.x)},${Math.round(b.y)}`;
-				const same = now === last;
-				last = now;
-				return same;
-			})
-			.toBe(true);
-		return box(locator);
-	};
 	const dragToBlank = async (nodeId: string) => {
 		const from = await settledBox(dispatchPort(nodeId));
 		const x = from.x + from.width / 2;
@@ -266,7 +269,7 @@ test("从调度端口拖线新建的子流程不计入添加节点菜单的「�
 	await page.keyboard.press("Enter");
 	await expect(nodeCard(page, "async_1")).toBeFocused();
 
-	const from = await box(
+	const from = await settledBox(
 		nodeCard(page, "async_1").locator('.react-flow__handle[data-handleid="dispatch"].source'),
 	);
 	const x = from.x + from.width / 2;

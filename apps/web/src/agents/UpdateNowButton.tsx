@@ -9,19 +9,21 @@ import {
 	runsApi,
 } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { FormAlert } from "@/components/ui/form-field";
 
 /**
  * 能「立即更新」的 Agent（ADR 0014）：在线、版本与控制面不一致，并且确实在更新流程中（下载中或等待任务结束）。
@@ -62,16 +64,18 @@ export function UpdateNowButton({
 			]) {
 				void queryClient.invalidateQueries({ queryKey: key });
 			}
+			setOpen(false);
 			notify.info(`已通知 ${agent.name} 立即更新`, {
 				description:
 					terminated_tasks.length > 0
 						? `终止了 ${terminated_tasks.length} 个任务，它们以 agent_lost 失败。`
 						: undefined,
 			});
-			setOpen(false);
 		},
-		onError: (error) => notify.error("立即更新失败", { description: error.message }),
 	});
+	useEffect(() => {
+		if (open) update.reset();
+	}, [open, update.reset]);
 
 	return (
 		<>
@@ -92,30 +96,30 @@ export function UpdateNowButton({
 							失败，配置了重试的节点会在更新后的 Agent 上重新执行。
 						</DialogDescription>
 					</DialogHeader>
-					{tasks.length === 0 ? (
-						<p className="text-sm text-fg-2">Agent 手上没有任务，确认后立即更新。</p>
-					) : (
-						<div className="flex flex-col gap-1.5 text-sm">
-							<div className="text-fg-2">会被终止的 {tasks.length} 个任务：</div>
-							<ul
-								aria-label="会被终止的任务"
-								className="m-0 flex max-h-60 list-none flex-col gap-1.5 overflow-auto p-0"
-							>
-								{tasks.map((task) => (
-									<li
-										key={`${task.task_id}:${task.attempt}`}
-										className="flex items-baseline gap-2 rounded-md border border-border-soft bg-bg px-3 py-1.5"
-									>
-										<span className="font-mono">{task.node_id}</span>
-										<span className="text-xs text-fg-3">
-											运行 <span className="font-mono">{shortId(task.run_id)}</span> · 第{" "}
-											{task.attempt} 次尝试 · {task.status === "running" ? "执行中" : "派发中"}
-										</span>
-									</li>
-								))}
-							</ul>
-						</div>
-					)}
+					<DialogBody>
+						{tasks.length === 0 ? (
+							<p className="m-0 text-sm text-fg-2">Agent 手上没有任务，确认后立即更新。</p>
+						) : (
+							<div className="flex flex-col gap-1.5 text-sm">
+								<div className="text-fg-2">会被终止的 {tasks.length} 个任务：</div>
+								<ul aria-label="会被终止的任务" className="m-0 flex list-none flex-col gap-1.5 p-0">
+									{tasks.map((task) => (
+										<li
+											key={`${task.task_id}:${task.attempt}`}
+											className="flex items-baseline gap-2 rounded-md border border-border-soft bg-bg px-3 py-1.5"
+										>
+											<span className="font-mono">{task.node_id}</span>
+											<span className="text-xs text-fg-3">
+												运行 <span className="font-mono">{shortId(task.run_id)}</span> · 第{" "}
+												{task.attempt} 次尝试 · {task.status === "running" ? "执行中" : "派发中"}
+											</span>
+										</li>
+									))}
+								</ul>
+							</div>
+						)}
+						{update.isError && <FormAlert>立即更新失败：{update.error.message}</FormAlert>}
+					</DialogBody>
 					<DialogFooter>
 						<Button variant="ghost" onClick={() => setOpen(false)}>
 							取消

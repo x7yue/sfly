@@ -119,7 +119,7 @@ export function ShortcutsDialog({
 						if (items.length === 0) return null;
 						return (
 							<section key={group} aria-label={group}>
-								<h4 className="mt-1 mb-1 text-xs font-medium text-fg-3">{group}</h4>
+								<h4 className="mt-1 mb-1 text-xs font-semibold text-fg-3">{group}</h4>
 								<dl className="m-0 grid grid-cols-3 gap-x-6">
 									{items.map((s) => (
 										<div

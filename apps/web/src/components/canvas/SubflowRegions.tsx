@@ -89,7 +89,7 @@ export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdg
 							)}
 						>
 							<span className="flex-none">子流程</span>
-							<span className="min-w-0 truncate font-medium text-canvas-subflow">{r.name}</span>
+							<span className="min-w-0 truncate font-semibold text-canvas-subflow">{r.name}</span>
 							{meta && (
 								<span className="pointer-events-auto ml-auto min-w-0 shrink-100 truncate text-fg-3">
 									{meta}

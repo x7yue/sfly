@@ -70,12 +70,17 @@ const ROUTES = {
 		"standard-nodes",
 		"cross-agent-files",
 		"feishu-notify",
+		"api-client",
 	],
 } as const;
 
 /** 测试环境里运行不了的代码块。 */
 const SKIP: Array<{ when: (block: string) => boolean; reason: string }> = [
 	{ when: (b) => /^\s*(systemctl|journalctl|loginctl)\b/m.test(b), reason: "需要 systemd" },
+	{
+		when: (b) => /^(npm install|pnpm add) /m.test(b),
+		reason: "需要 Node.js 和包管理器：bundle-smoke.test.ts 用页面里的地址把 API 客户端装进空项目",
+	},
 ];
 
 /** 文档写明会失败的代码块：退出码和输出。 */
