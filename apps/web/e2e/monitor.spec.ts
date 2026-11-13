@@ -158,8 +158,8 @@ test("拖选缩放：缩放后暂停实时跟随并显示「回到实时」，�
 
 	await expect(tl.getByRole("button", { name: "回到实时" })).toBeVisible();
 	await expect(tl.getByText("实时跟随")).toHaveCount(0);
-	// 运行开始于 08:00:00（东八区），总长 14 秒：拖选 10%–50% 即 08:00:01 – 08:00:07。
-	await expect(tl.getByTestId("zoom-range")).toHaveText("08:00:01 – 08:00:07");
+	// 运行开始于 08:00:00（东八区），已运行 14 秒、时间轴取 20 秒：拖选 10%–50% 即 08:00:02 – 08:00:10。
+	await expect(tl.getByTestId("zoom-range")).toHaveText("08:00:02 – 08:00:10");
 	expect(await tl.locator("[data-axis-track] span").allTextContents()).not.toEqual(ticksBefore);
 
 	await tl.getByRole("button", { name: "回到实时" }).click();
@@ -894,7 +894,7 @@ test("命令面板「当前页面」：已结束的失败运行是下一个失�
 	expect(await rerun.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 });
 
-test("失败的运行：默认选中失败的节点，顶栏有失败摘要；再次运行沿用上次的参数（敏感参数除外）进入新运行；运行切换列出同场景的运行", async ({
+test("失败的运行：默认选中失败的节点，页内横幅写失败摘要（可收起，收起后回到顶栏）；再次运行沿用上次的参数（敏感参数除外）进入新运行；运行切换列出同场景的运行", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -915,16 +915,28 @@ test("失败的运行：默认选中失败的节点，顶栏有失败摘要；�
 	await expect(timeline(page).getByText("实时跟随")).toHaveCount(0);
 	await expect(page).toHaveTitle("✕ 失败 · 日终数据处理 · sfly");
 
-	// 失败摘要：第一个失败的节点、第几次尝试、错误信息的第一行；点击切到它的「尝试」页签。
-	const failure = header.getByTestId("run-failure");
-	await expect(failure).toHaveText("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
-	await failure.click();
+	const banner = page.getByRole("region", { name: "运行失败" });
+	await expect(banner.getByTestId("run-failure")).toHaveText(
+		"失败于 verify（第 2 次）· AssertionError: 仍然漏拦",
+	);
+	await expect(header.getByTestId("run-failure")).toHaveCount(0);
+	await banner.getByRole("button", { name: "查看失败节点" }).click();
 	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
 		"aria-selected",
 		"true",
 	);
 	await expect(panel(page).getByRole("article", { name: "verify 第 2 次尝试" })).toContainText(
 		"仍然漏拦",
+	);
+	await banner.getByRole("button", { name: "收起" }).click();
+	await expect(banner).toHaveCount(0);
+	const failure = header.getByTestId("run-failure");
+	await expect(failure).toHaveText("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
+	await panel(page).getByRole("tab", { name: "日志" }).click();
+	await failure.click();
+	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
+		"aria-selected",
+		"true",
 	);
 
 	await header.getByRole("button", { name: "再次运行" }).click();

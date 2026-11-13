@@ -37,19 +37,19 @@ test("浏览器时间比控制面快 613 天：监控页的已运行时长和执
 	await page.goto(`/runs/${runId}`);
 	const elapsed = page.getByRole("banner").getByTestId("run-elapsed");
 	await expect(elapsed).toHaveText("已运行 14.0s");
-	// 时间轴的范围是运行开始到现在（14 秒）："现在"线在最右端，执行中的条带占 9s–14s。
-	await expect(page.locator("[data-now-line]")).toHaveAttribute("style", /left: 100%/);
+	// 运行开始后 14 秒：时间轴取 20 秒（右端留余量），"现在"线在 70%，执行中的条带占 9s–14s。
+	await expect(page.locator("[data-now-line]")).toHaveAttribute("style", /left: 70%/);
 	await expect
 		.poll(async () => (await segmentSpan(page, "verify", "run")).left)
-		.toBeCloseTo(9 / 14, 2);
-	expect((await segmentSpan(page, "verify", "run")).right).toBeCloseTo(1, 2);
+		.toBeCloseTo(9 / 20, 2);
+	expect((await segmentSpan(page, "verify", "run")).right).toBeCloseTo(14 / 20, 2);
 
 	// 控制面时间过去 10 秒，浏览器时间不动：页面从心跳里跟上。
 	await advance(clock, agent, 10_000);
 	await expect(elapsed).toHaveText("已运行 24.0s");
 	await expect
 		.poll(async () => (await segmentSpan(page, "verify", "run")).left)
-		.toBeCloseTo(9 / 24, 2);
+		.toBeCloseTo(9 / 30, 2);
 });
 
 test("浏览器时间比控制面快 613 天：运行记录、场景列表和运行抽屉里的时长也按控制面时间算", async ({

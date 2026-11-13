@@ -1,10 +1,8 @@
 import type { RunView } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { PlayIcon } from "lucide-react";
-import { useCallback, useId, useState } from "react";
-import { notify } from "#/components/feedback/notify";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { PanelWidthHandle } from "#/components/PanelWidthHandle";
-import { shortId } from "#/lib/format";
 import { usePanelWidth } from "#/lib/panel-width";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { useLiveRun } from "#/monitor/live-run";
@@ -45,16 +43,18 @@ export interface RunDrawerProps extends TriggerOptions {
  * 显示运行摘要（各链进度、正在执行的节点、最新日志，实时更新），可以打开运行详情或取消运行。
  * 用于场景卡片的「运行」、编排画布的「运行」与监控页的「再次运行」。
  * 焦点锁定在抽屉里，Esc 关闭，关闭后焦点回到打开它的按钮；抽屉随页面卸载，离开页面即关闭。
+ * 打开时焦点先落在正文上（不是页脚的「取消」：再按一次 Enter 抽屉就关了）。
  */
 /** 运行抽屉的默认宽度，也是它的下限。 */
 const DRAWER_MIN_WIDTH = 460;
 
 export function RunDrawer({ open, onOpenChange, finalFocus, ...props }: RunDrawerProps) {
 	const width = usePanelWidth(DRAWER_MIN_WIDTH);
+	const body = useRef<HTMLDivElement>(null);
 	return (
 		<Sheet open={open} onOpenChange={onOpenChange}>
-			<SheetContent showCloseButton finalFocus={finalFocus} style={{ width }}>
-				<DrawerBody {...props} onClose={() => onOpenChange(false)} />
+			<SheetContent showCloseButton finalFocus={finalFocus} initialFocus={body} style={{ width }}>
+				<DrawerBody {...props} bodyRef={body} onClose={() => onOpenChange(false)} />
 				<PanelWidthHandle label="调整运行抽屉宽度" min={DRAWER_MIN_WIDTH} />
 			</SheetContent>
 		</Sheet>
@@ -70,9 +70,14 @@ function DrawerBody({
 	onTriggered,
 	onClose,
 	onLocate,
+	bodyRef,
 	...local
-}: Omit<RunDrawerProps, "open" | "onOpenChange" | "finalFocus"> & { onClose: () => void }) {
+}: Omit<RunDrawerProps, "open" | "onOpenChange" | "finalFocus"> & {
+	onClose: () => void;
+	bodyRef: React.RefObject<HTMLDivElement | null>;
+}) {
 	const formId = useId();
+	const submit = useRef<HTMLButtonElement>(null);
 	const [runId, setRunId] = useState<string | null>(null);
 	const [form, setForm] = useState<{
 		canSubmit: boolean;
@@ -80,8 +85,22 @@ function DrawerBody({
 		version: number | null;
 	}>({ canSubmit: false, pending: false, version: null });
 	const onState = useCallback((s: typeof form) => setForm(s), []);
+	// 检查加载完与「焦点落到正文上」谁先谁后都不一定：两件事都发生、焦点还在正文上（用户没有挪走）时才移交一次。
+	const handedOver = useRef(false);
+	const handOverFocus = () => {
+		const holder = bodyRef.current;
+		if (handedOver.current || form.version === null || !holder) return;
+		if (document.activeElement !== holder) return;
+		const first = holder.querySelector<HTMLElement>(
+			'[data-slot="input"], [data-slot="textarea"], [data-slot="switch"]',
+		);
+		const target = first ?? (form.canSubmit ? submit.current : null);
+		if (!target) return;
+		handedOver.current = true;
+		target.focus();
+	};
+	useEffect(handOverFocus);
 	const triggered = (run: RunView) => {
-		notify.success(`已触发运行 ${shortId(run.id)}`);
 		if (onTriggered) {
 			onTriggered(run);
 			onClose();
@@ -114,7 +133,13 @@ function DrawerBody({
 					{description || (runId ? "运行已触发，实时显示进度。" : "填写入口参数，检查通过后触发。")}
 				</SheetDescription>
 			</SheetHeader>
-			<div className="min-h-0 flex-1 overflow-auto px-4.5 py-3.5">
+			{/* biome-ignore lint/a11y/noStaticElementInteractions: 正文只是打开时的初始焦点落点（tabIndex -1），onFocus 把焦点转交给第一个参数，不是交互控件 */}
+			<div
+				ref={bodyRef}
+				tabIndex={-1}
+				onFocus={(event) => event.target === event.currentTarget && handOverFocus()}
+				className="min-h-0 flex-1 overflow-auto px-4.5 py-3.5 focus:outline-hidden"
+			>
 				{runId ? (
 					<RunSummary runId={runId} />
 				) : (
@@ -135,6 +160,7 @@ function DrawerBody({
 						<SheetClose render={<Button variant="ghost" />}>取消</SheetClose>
 						<span className="flex-1" />
 						<Button
+							ref={submit}
 							type="submit"
 							form={formId}
 							variant="primary"

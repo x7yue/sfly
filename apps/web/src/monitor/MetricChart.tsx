@@ -21,12 +21,13 @@ import type { TimeRange } from "./timeline-model";
 
 /**
  * 一张指标图表（原型 chartHTML / plotSVG）：折线、面积、柱状、数值卡四种类型，多序列时显示图例。
- * 每个序列（指标名 + 标签，#78）一条线，颜色按序列在这张图表里首次出现的顺序在 4 种主题色里轮换（之后不变）；
+ * 每个序列（指标名 + 标签，#78）一条线，颜色与线型按序列在这张图表里首次出现的顺序轮换（之后不变），
+ * 颜色相近的序列靠线型分开；
  * 点图例项显示或隐藏这条线，序列多于 10 个时默认只显示横轴范围内平均值最高的 10 个（charts.ts 的 defaultShown），
  * 只在用户改时间范围或出现新序列时重新挑选（pickShown）。
  * 标题栏的最新值见 charts.ts 的 latestLine：多条线且没有唯一的合计时不显示数值，读数在悬停提示里。
  * 横轴由调用方给出（节点实际运行的时段与时间线范围的交集，见 charts.ts 的 chartWindow）。
- * 悬停时把时刻写进共享状态（时间线和其他图表同步显示竖线与读数），日志标记画成琥珀色虚线。
+ * 悬停时把时刻写进共享状态（时间线和其他图表同步显示竖线与读数），日志标记画成中性色虚线。
  */
 
 export type ChartType = "line" | "area" | "bar" | "stat";
@@ -43,10 +44,11 @@ export interface ChartLine {
 
 const lineKey = (line: ChartLine) => line.key ?? line.name;
 
-/** 截取到横轴范围、带上身份与颜色的序列。 */
+/** 截取到横轴范围、带上身份、颜色与线型的序列。 */
 interface DrawnLine extends ChartLine {
 	key: string;
 	color: string;
+	dash: string | undefined;
 }
 
 /** 多序列的线色（token chart-1 … chart-4，按颜色序号循环）。 */
@@ -56,7 +58,23 @@ export const SERIES_COLORS = [
 	"var(--chart-3)",
 	"var(--chart-4)",
 ];
+/** 多序列的线型（SVG 的 stroke-dasharray，与线色同一个序号）：灰色的线色相近，线型把它们分开。 */
+export const SERIES_DASH: readonly (string | undefined)[] = [
+	undefined,
+	undefined,
+	"5 3",
+	"1.5 2.5",
+];
 const seriesColor = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length] as string;
+const seriesDash = (i: number) => SERIES_DASH[i % SERIES_DASH.length];
+
+function SeriesSwatch({ color, dash }: { color: string; dash: string | undefined }) {
+	return (
+		<svg aria-hidden="true" width={12} height={4} className="flex-none overflow-visible">
+			<line x1={0} x2={12} y1={2} y2={2} stroke={color} strokeWidth={2} strokeDasharray={dash} />
+		</svg>
+	);
+}
 
 const W = 300;
 
@@ -72,6 +90,7 @@ export function MetricChart({
 	truncated,
 	notice,
 	footnote,
+	className,
 }: {
 	title: string;
 	type: ChartType;
@@ -87,6 +106,7 @@ export function MetricChart({
 	/** 标题旁的其他提示（例如「序列超限」），排在「已截断」之后。 */
 	notice?: React.ReactNode;
 	footnote?: React.ReactNode;
+	className?: string;
 }) {
 	const span = bucketSeconds * 1000;
 	// 颜色序号按序列首次出现的顺序分配（显示或隐藏别的序列、运行中插入新序列时都不变）。
@@ -100,6 +120,7 @@ export function MetricChart({
 						...l,
 						key: lineKey(l),
 						color: seriesColor(slots.get(lineKey(l)) ?? 0),
+						dash: seriesDash(slots.get(lineKey(l)) ?? 0),
 						buckets: l.buckets.filter((b) => {
 							const t = bucketStartMs(b);
 							return t + span > window.start && t <= window.end;
@@ -130,7 +151,10 @@ export function MetricChart({
 		<figure
 			aria-label={title}
 			data-chart={title}
-			className="relative m-0 min-w-0 rounded-lg border border-border-soft bg-bg px-2.5 pt-2 pb-1.5"
+			className={cn(
+				"relative m-0 min-w-0 rounded-lg border border-border-soft bg-bg px-2.5 pt-2 pb-1.5",
+				className,
+			)}
 		>
 			<figcaption className="flex items-baseline gap-2 text-xs whitespace-nowrap">
 				<span className="min-w-0 truncate text-fg-2">{title}</span>
@@ -208,11 +232,7 @@ export function MetricChart({
 										onClick={() => toggle(l.key)}
 										className="inline-flex items-center gap-1 rounded-sm hover:text-fg-1 aria-[pressed=false]:opacity-45"
 									>
-										<i
-											aria-hidden
-											className="inline-block h-0.5 w-2.5"
-											style={{ background: isShown(l.key) ? l.color : "var(--fg-3)" }}
-										/>
+										<SeriesSwatch color={isShown(l.key) ? l.color : "var(--fg-3)"} dash={l.dash} />
 										{l.name}
 									</button>
 								))}
@@ -422,6 +442,7 @@ const Paths = memo(function Paths({
 							fill="none"
 							stroke={stroke}
 							strokeWidth={1.4}
+							strokeDasharray={mini ? undefined : line.dash}
 							vectorEffect="non-scaling-stroke"
 						/>
 					</g>
@@ -474,11 +495,7 @@ function HoverValues({
 			)}
 			{values.map(({ line, bucket }) => (
 				<span key={line.key} data-hover-value className="flex items-center gap-1.5">
-					<i
-						aria-hidden
-						className="inline-block h-0.5 w-2.5 flex-none"
-						style={{ background: line.color }}
-					/>
+					<SeriesSwatch color={line.color} dash={line.dash} />
 					<span className="min-w-0 truncate text-fg-2">{line.name}</span>
 					<span className="ml-auto pl-2 font-mono text-fg-1">{formatReading(bucket)}</span>
 				</span>
@@ -503,7 +520,7 @@ function Cursor({ window, height }: { window: TimeRange; height: number }) {
 					x2={x(marker)}
 					y1={0}
 					y2={height}
-					stroke="var(--warn)"
+					stroke="var(--fg-1)"
 					strokeDasharray="3 3"
 					vectorEffect="non-scaling-stroke"
 				/>

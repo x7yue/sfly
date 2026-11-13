@@ -9,7 +9,7 @@ import { cn } from "cn";
 import { useMemo } from "react";
 import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
-import { nodeStatusView, runNotificationView, StatusPill } from "#/components/status";
+import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
 import { chainLabel as chainName, TERM } from "#/lib/copy";
 import {
@@ -26,7 +26,14 @@ import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { useLiveRun } from "#/monitor/live-run";
 import { logLineTime, useLogTimeKind } from "#/monitor/log-time-kind";
-import { chainLabel, findNode, focusNode, orderedChains, runStatus } from "#/monitor/run-model";
+import {
+	chainLabel,
+	chainLabelParts,
+	findNode,
+	focusNode,
+	orderedChains,
+	runStatus,
+} from "#/monitor/run-model";
 import { attemptsSignature, useMetricCatalog } from "#/monitor/use-run-metrics";
 import { useTaskLogs } from "#/monitor/use-task-logs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -81,7 +88,8 @@ export function RunSummary({ runId }: { runId: string }) {
 				<span className="font-mono text-fg-3">{formatDuration(elapsed)}</span>
 				<span className="ml-auto text-xs text-fg-3">
 					{run.triggered_by}
-					<ViaTag via={run.triggered_via} /> 触发 · {formatDateTime(run.started_at)}
+					<ViaTag via={run.triggered_via} /> 触发 ·{" "}
+					<span className="font-mono">{formatDateTime(run.started_at)}</span>
 				</span>
 			</div>
 			{run.run_notification && <RunNotificationLine state={run.run_notification} />}
@@ -150,10 +158,17 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 
 function ChainRow({ chain }: { chain: ChainRunView }) {
 	const done = doneCount(chain.nodes);
+	const label = chainLabelParts(chain);
 	return (
 		<li className="flex items-center gap-2.5 text-xs">
 			<span className="w-36 truncate text-fg-2" title={chainLabel(chain)}>
-				{chainLabel(chain)}
+				{label.name}
+				{label.id && (
+					<>
+						{" · "}
+						<span className="font-mono">{label.id}</span>
+					</>
+				)}
 			</span>
 			<ChainBar
 				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name })}
@@ -217,9 +232,18 @@ function ActiveNode({
 							aria-valuemin={0}
 							aria-valuemax={progress.total ?? undefined}
 							aria-valuenow={progress.current}
-							className="h-1 overflow-hidden rounded-[2px] bg-track"
+							data-viz
+							className="relative h-2 overflow-hidden rounded-[2px] bg-track"
 						>
-							<i className="block h-full bg-signal" style={{ width: `${ratio * 100}%` }} />
+							{/* 进度每次轮询才推进一步：用 clip-path 过渡，不跳变 */}
+							<i
+								aria-hidden
+								className={cn(
+									"absolute inset-0 rounded-[2px] transition-[clip-path] duration-700 ease-linear motion-reduce:transition-none",
+									STATUS.running.area.box,
+								)}
+								style={{ clipPath: `inset(0 ${(1 - ratio) * 100}% 0 0)` }}
+							/>
 						</div>
 					)}
 					<div className="mt-1 truncate font-mono text-xs text-fg-3">

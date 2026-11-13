@@ -21,6 +21,7 @@ import { versionQuery } from "#/versions/queries";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
@@ -98,33 +99,37 @@ export function CancelRunDialog({
 					</DialogDescription>
 				</DialogHeader>
 				{impact.running.length + impact.always.length + impact.cancelled.length > 0 && (
-					<ul aria-label="取消的影响" className="m-0 flex list-none flex-col gap-2 p-0 text-sm">
-						{impact.running.length > 0 &&
-							(force ? (
+					<DialogBody>
+						<ul aria-label="取消的影响" className="m-0 flex list-none flex-col gap-2 p-0 text-sm">
+							{impact.running.length > 0 &&
+								(force ? (
+									<Impact
+										title={`执行中的 ${impact.running.length} 个任务立即终止`}
+										ids={ids(impact.running)}
+									/>
+								) : (
+									<Impact
+										title={`执行中的 ${impact.running.length} 个任务先优雅终止`}
+										ids={ids(impact.running)}
+										note="宽限期过后强制杀掉整棵进程树"
+									/>
+								))}
+							{!force && impact.always.length > 0 && (
 								<Impact
-									title={`执行中的 ${impact.running.length} 个任务立即终止`}
-									detail={ids(impact.running)}
+									title="always 节点照常执行清理"
+									ids={ids(impact.always)}
+									note="清理期间可以再次取消以强制终止"
+									warn
 								/>
-							) : (
+							)}
+							{!force && impact.cancelled.length > 0 && (
 								<Impact
-									title={`执行中的 ${impact.running.length} 个任务先优雅终止`}
-									detail={`${ids(impact.running)} · 宽限期过后强制杀掉整棵进程树`}
+									title={`未开始的 ${impact.cancelled.length} 个节点标记为已取消`}
+									ids={ids(impact.cancelled)}
 								/>
-							))}
-						{!force && impact.always.length > 0 && (
-							<Impact
-								title="always 节点照常执行清理"
-								detail={`${ids(impact.always)} · 清理期间可以再次取消以强制终止`}
-								warn
-							/>
-						)}
-						{!force && impact.cancelled.length > 0 && (
-							<Impact
-								title={`未开始的 ${impact.cancelled.length} 个节点标记为已取消`}
-								detail={ids(impact.cancelled)}
-							/>
-						)}
-					</ul>
+							)}
+						</ul>
+					</DialogBody>
 				)}
 				<DialogFooter>
 					<Button ref={keep} variant="ghost" onClick={() => onOpenChange(false)}>
@@ -209,7 +214,17 @@ export function CancelRunButton({
 	);
 }
 
-function Impact({ title, detail, warn }: { title: string; detail: string; warn?: boolean }) {
+function Impact({
+	title,
+	ids,
+	note,
+	warn,
+}: {
+	title: string;
+	ids: string;
+	note?: string;
+	warn?: boolean;
+}) {
 	return (
 		<li className="flex gap-2.5 rounded-md border border-border-soft bg-bg px-3 py-2">
 			<span aria-hidden className={warn ? "text-warn" : "text-fg-3"}>
@@ -217,7 +232,10 @@ function Impact({ title, detail, warn }: { title: string; detail: string; warn?:
 			</span>
 			<div className="min-w-0">
 				<div>{title}</div>
-				<div className="font-mono text-xs break-all text-fg-3">{detail}</div>
+				<div className="text-xs wrap-anywhere text-fg-3">
+					<span className="font-mono">{ids}</span>
+					{note && <> · {note}</>}
+				</div>
 			</div>
 		</li>
 	);
