@@ -16,7 +16,8 @@
 
 取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
-宽限期（默认 10 秒）过后整棵进程树被强制杀掉。在后台线程里可以轮询 `ctx.cancelled()`。
+宽限期（默认 10 秒）过后整棵进程树被强制杀掉。一次取消，主线程里只抛一次 `Cancelled`：
+清理代码不会被再打断一次。在后台线程里可以轮询 `ctx.cancelled()`。
 
 日志和进度都追加写入本地协议的事件文件 `SFLY_EVENTS`
 （JSONL，每行一个事件，Agent 持续读取新增内容）：
@@ -72,19 +73,36 @@ class Cancelled(BaseException):
 
 
 class _Sigterm:
-    """主线程里 `DeferCancel` 的嵌套层数，和推迟期间是否收到了 SIGTERM。"""
+    """主线程里 `DeferCancel` 的嵌套层数、推迟期间是否收到了 SIGTERM，
+    以及主线程里是否已经抛出过 `Cancelled`。"""
 
     main = _thread.get_ident()
     depth = 0
     pending = False
+    raised = False
+
+
+def cancelled_error(message: str) -> Cancelled:
+    """SDK 自己发现任务已取消（取消标记、Agent 回复 `cancelled`）时要抛出的 `Cancelled`。
+
+    取消时这些和 SIGTERM 几乎同时到，谁先到不一定。主线程里先由 SDK 抛出时记下来，随后送达的
+    SIGTERM 不再抛第二次：节点的 `except Cancelled` / `finally` 已经在执行，再抛一次会把清理打断。
+    """
+    if _thread.get_ident() == _Sigterm.main:
+        _Sigterm.raised = True
+    return Cancelled(message)
 
 
 def on_sigterm(signum: int, frame: object) -> None:
     """执行器装的 SIGTERM 处理函数（只在主线程里执行）：在节点代码里抛出 `Cancelled`；
-    正在 `DeferCancel` 里时推迟到离开它。"""
+    正在 `DeferCancel` 里时推迟到离开它。主线程里已经抛出过 `Cancelled` 时什么都不做
+    （见 `cancelled_error`）：一次取消，节点只收到一次 `Cancelled`。"""
+    if _Sigterm.raised:
+        return
     if _Sigterm.depth:
         _Sigterm.pending = True
         return
+    _Sigterm.raised = True
     raise Cancelled("任务被终止（SIGTERM）")
 
 
@@ -117,7 +135,9 @@ class DeferCancel:
         _Sigterm.depth -= 1
         if _Sigterm.depth == 0 and _Sigterm.pending:
             _Sigterm.pending = False
-            raise Cancelled("任务被终止（SIGTERM）")
+            if not _Sigterm.raised:
+                _Sigterm.raised = True
+                raise Cancelled("任务被终止（SIGTERM）")
 
 
 class ArtifactDownloadError(Exception):

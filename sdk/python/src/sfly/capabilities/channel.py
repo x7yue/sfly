@@ -13,9 +13,9 @@ Agent 回复若干行 JSON：
 最后发 `{"end": true}`（`Call.send_end`），再读回复。
 
 超时由 Agent 负责（`timeout_ms`，等对方回应的上限）；SDK 这边多等 `REPLY_MARGIN` 秒兜底，
-Agent 自己卡住时也不会永远等下去。任务被取消时：主线程里的调用被 SIGTERM 打断
-（执行器把它变成 `Cancelled`），后台线程里的调用由 Agent 回复 `cancelled`，同样抛出
-`Cancelled`。关掉连接（`close()`、提前停止迭代）即放弃调用，Agent 随之放弃。
+Agent 自己卡住时也不会永远等下去。任务被取消时：Agent 回复 `cancelled`，调用抛出 `Cancelled`；
+主线程里的调用同时会被 SIGTERM 打断（执行器把它变成 `Cancelled`），两者谁先到都只抛一次
+（`sfly.context.cancelled_error`）。关掉连接（`close()`、提前停止迭代）即放弃调用，Agent 随之放弃。
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from sfly.capabilities.errors import AgentTimeout, AgentUnreachable, error_for
-from sfly.context import Cancelled
+from sfly.context import cancelled_error
 
 #: 调用的默认超时（秒）。
 DEFAULT_TIMEOUT = 30.0
@@ -69,7 +69,7 @@ class AgentSocket:
         import socket
 
         if self._cancelled():
-            raise Cancelled("任务已取消")
+            raise cancelled_error("任务已取消")
         if margin is None:
             margin = REPLY_MARGIN
         request = {
