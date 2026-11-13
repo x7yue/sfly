@@ -40,6 +40,8 @@ export const SHORTCUTS = [
 	},
 	{ id: "shortcuts-help", group: "全局", label: "快捷键面板", keys: "?" },
 	{ id: "close-overlay", group: "全局", label: "关闭浮层", keys: "Esc", displayOnly: true },
+	// Alt+T 是 sonner 自带的热键，不是我们绑定的。
+	{ id: "focus-notifications", group: "全局", label: "跳到通知", keys: "Alt+T", displayOnly: true },
 	{ id: "go-dashboard", group: "全局", label: "控制台", keys: "G D" },
 	{ id: "go-scenarios", group: "全局", label: "场景编排", keys: "G S" },
 	{ id: "go-runs", group: "全局", label: "运行记录", keys: "G R" },

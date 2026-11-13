@@ -12,8 +12,6 @@
 @layer theme, base, vendor, components, utilities;
 
 @import "tailwindcss";
-/* 以下两个文件只含 @utility / @custom-variant / @keyframes，由 Tailwind 放进 utilities 层 */
-@import "tw-animate-css";
 @import "./shadcn-variants.css";
 @import "./tokens.css" layer(theme);
 @import "./fonts.css" layer(base);
@@ -274,20 +272,10 @@
 	/*
 	 * 减少动效：去掉位移、缩放和持续循环，保留淡入淡出与颜色变化（docs/DESIGN-SYSTEM.md「动效」）。
 	 * 循环动画（脉冲、连线流动、骨架屏）在各自的定义里只在不减少动效时启用；这里只处理浮层：
-	 * tw-animate 的进出场与 Base UI 的 starting / ending style 过渡只剩透明度。
+	 * Base UI 的 starting / ending style 过渡只剩透明度。
 	 */
 	@media (prefers-reduced-motion: reduce) {
 		/* biome-ignore-start lint/complexity/noImportantStyles: base 层的 !important 才压得过工具类给的位移与缩放 */
-		* {
-			--tw-enter-scale: 1 !important;
-			--tw-exit-scale: 1 !important;
-			--tw-enter-rotate: 0 !important;
-			--tw-exit-rotate: 0 !important;
-			--tw-enter-translate-x: 0 !important;
-			--tw-enter-translate-y: 0 !important;
-			--tw-exit-translate-x: 0 !important;
-			--tw-exit-translate-y: 0 !important;
-		}
 		[data-starting-style],
 		[data-ending-style] {
 			translate: none !important;

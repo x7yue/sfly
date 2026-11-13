@@ -1,15 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { setNickname, useNickname } from "#/lib/nickname";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
+import { FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 
 /**
@@ -27,9 +29,15 @@ export function NicknameDialog({
 	const required = nickname === null;
 	const visible = required || open;
 	const [value, setValue] = useState("");
+	const [submitted, setSubmitted] = useState(false);
+	const input = useRef<HTMLInputElement>(null);
 	useEffect(() => {
-		if (visible) setValue(nickname ?? "");
+		if (visible) {
+			setValue(nickname ?? "");
+			setSubmitted(false);
+		}
 	}, [visible, nickname]);
+	const problem = value.trim() ? undefined : "填写昵称";
 
 	return (
 		<Dialog
@@ -41,11 +49,15 @@ export function NicknameDialog({
 		>
 			<DialogContent className="w-[400px]" showCloseButton={!required}>
 				<form
-					className="flex flex-col gap-3"
+					noValidate
 					onSubmit={(e) => {
 						e.preventDefault();
+						setSubmitted(true);
+						if (problem) {
+							input.current?.focus();
+							return;
+						}
 						const next = value.trim();
-						if (!next) return;
 						setNickname(next);
 						if (!required) notify.success(`昵称已改为 ${next}`);
 						onOpenChange(false);
@@ -57,20 +69,27 @@ export function NicknameDialog({
 							昵称会标记你保存的场景版本和触发的运行，只保存在这个浏览器里。
 						</DialogDescription>
 					</DialogHeader>
-					<Input
-						aria-label="昵称"
-						value={value}
-						onChange={(e) => setValue(e.target.value)}
-						placeholder="昵称"
-						maxLength={40}
-					/>
+					<DialogBody>
+						<FormField label="昵称" required error={submitted ? problem : undefined}>
+							{(control) => (
+								<Input
+									{...control}
+									ref={input}
+									value={value}
+									onChange={(e) => setValue(e.target.value)}
+									placeholder="昵称"
+									maxLength={40}
+								/>
+							)}
+						</FormField>
+					</DialogBody>
 					<DialogFooter>
 						{!required && (
 							<Button variant="ghost" onClick={() => onOpenChange(false)}>
 								取消
 							</Button>
 						)}
-						<Button type="submit" variant="primary" disabled={!value.trim()}>
+						<Button type="submit" variant="primary">
 							{required ? "开始使用" : "保存"}
 						</Button>
 					</DialogFooter>
