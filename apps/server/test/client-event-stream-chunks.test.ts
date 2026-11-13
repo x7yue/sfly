@@ -1,5 +1,3 @@
-// 事件流解析按 HTML 的 event-stream 规则（行以 \r\n、\r 或 \n 结束），与响应体怎么分块无关。
-// 分块是网络给的，控制面的测试代理分不出来，所以这里用 fetch 替身返回手工分好块的流。
 import { createClient, type FetchLike } from "@sfly/client";
 import { describe, expect, it } from "vitest";
 

@@ -85,11 +85,12 @@ export function errorSummary(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-/** `http_error` 的 details 是不属于控制面的响应体（例如代理的 502 页面），不写进错误详情。 */
+const isForeignErrorResponse = (error: ApiError) => error.code === "http_error";
+
 function errorDetailsText(error: unknown): string {
 	const lines = [errorSummary(error)];
 	if (error instanceof Error) lines.push(error.message);
-	if (error instanceof ApiError && error.code !== "http_error" && error.details !== undefined) {
+	if (error instanceof ApiError && !isForeignErrorResponse(error) && error.details !== undefined) {
 		lines.push(JSON.stringify(error.details, null, 2));
 	}
 	return lines.join("\n");
