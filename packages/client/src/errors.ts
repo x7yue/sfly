@@ -45,7 +45,6 @@ const isErrorBody = (
 	return typeof error?.code === "string" && typeof error.message === "string";
 };
 
-/** 非 2xx 响应的 ApiError：响应体是控制面的错误格式时取其中的错误码、说明和详情。 */
 export async function errorFromResponse(
 	res: { status: number; text(): Promise<string> },
 	method: string,

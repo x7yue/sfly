@@ -39,7 +39,7 @@ export type Client = LowLevel & Methods<Api>;
 
 export function createClient(options: ClientOptions): Client {
 	const exchange = createExchange({
-		baseUrl: normalizeBaseUrl(options.baseUrl),
+		baseUrl: options.baseUrl,
 		fetch: options.fetch ?? ((url, init) => globalThis.fetch(url, init)),
 		onControlPlaneTime: options.onControlPlaneTime ?? (() => {}),
 	});
@@ -92,11 +92,4 @@ export function createClient(options: ClientOptions): Client {
 		]),
 	);
 	return { ...domains, ...low } as Client;
-}
-
-function normalizeBaseUrl(baseUrl: string): string {
-	if (baseUrl === "" || !/^(https?:\/\/[^/?#]+)?(\/[^?#]*)?$/.test(baseUrl)) {
-		throw new TypeError(`baseUrl 要是 http(s) 地址或以 / 开头的路径：${baseUrl}`);
-	}
-	return baseUrl.replace(/\/+$/, "");
 }

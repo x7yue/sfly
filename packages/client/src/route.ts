@@ -29,14 +29,12 @@ export interface CallOptions {
 	keepalive?: boolean;
 }
 
-/** JSON 接口：输入是 params、query、body，返回响应体。 */
 export interface Endpoint<I, O> {
 	kind: "endpoint";
 	input: I;
 	output: O;
 }
 
-/** 下载：客户端只给出地址，不发请求。 */
 export interface Download<I> {
 	kind: "download";
 	input: I;
@@ -44,7 +42,6 @@ export interface Download<I> {
 
 type KindOf<R> = R extends { kind: infer K extends NonNullable<RouteRef["kind"]> } ? K : never;
 
-/** 生成的路由表与生成的 `Api` 一一对应：同样的领域、接口名和种类。 */
 export type RouteTable<A> = {
 	readonly [D in keyof A]: {
 		readonly [N in keyof A[D]]: RouteRef & { readonly kind: KindOf<A[D][N]> };
@@ -53,7 +50,6 @@ export type RouteTable<A> = {
 
 type Args<I> = Partial<I> extends I ? [input?: I] : [input: I];
 
-/** 一个接口在客户端上的方法。 */
 export type Method<R> =
 	R extends Endpoint<infer I, infer O>
 		? (...args: [...Args<I>, options?: CallOptions]) => Promise<O>
@@ -61,7 +57,6 @@ export type Method<R> =
 			? (...args: Args<I>) => string
 			: never;
 
-/** 领域 → 接口名 → 方法。 */
 export type Methods<A> = {
 	readonly [D in keyof A]: { readonly [N in keyof A[D]]: Method<A[D][N]> };
 };
@@ -84,6 +79,5 @@ function searchOf(query: RouteInput["query"]): string {
 	return entries.length === 0 ? "" : `?${new URLSearchParams(entries)}`;
 }
 
-/** 相对控制面地址的请求路径（含查询参数）：请求、下载地址和 ApiError.path 都用它。 */
 export const requestPath = (route: RouteRef, input: RouteInput | undefined): string =>
 	`${fillPath(route, input?.params)}${searchOf(input?.query)}`;

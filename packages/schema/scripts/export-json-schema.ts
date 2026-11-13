@@ -1,4 +1,3 @@
-// 从契约导出全部生成物：给 Python SDK 的 JSON Schema 与路由清单，给 API 客户端（packages/client）的类型与路由表。
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";

@@ -1,4 +1,3 @@
-// 发布物没有运行时依赖：dist 里只有带 .js 扩展名的相对导入，package.json 不声明依赖。
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

@@ -1,28 +1,22 @@
 /**
  * 契约源码里的注释：zod 在运行时不保留 JSDoc，TypeScript 的类型检查器保留。`z.output<typeof RunView>`
  * 解析出的对象类型的属性仍指向契约里写的属性（经过 pick、extend、展开也一样），注释随之可读。
- * client-export.ts 用 zod 的 JSON Schema 生成结构、用这里的注释补文档，两者按名字和属性路径对上：
- * 对不上的路径只少一条注释，不会生成错的类型。
  */
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { ITEM, VALUE } from "./client-emit.js";
 
 const schemaDir = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 export interface DocRequest {
-	/** 根的名字 → 类型表达式，可以用 `z` 和契约命名空间 `C`，例如 `z.output<typeof C.RunView>`。 */
 	roots: ReadonlyMap<string, string>;
-	/** 是具名类型的根：遍历其他根遇到它们就停下，它们的注释记在自己名下。 */
-	named: ReadonlySet<string>;
+	stopAt: ReadonlySet<string>;
 }
 
 export interface Docs {
-	/** `<根>:<属性路径用 . 连接>` → 注释；数组元素是 `[]`，记录的值是 `{}`。 */
-	fields: ReadonlyMap<string, string>;
-	/** `<领域>.<接口名>` → 接口的注释。 */
+	field(root: string, path: readonly string[]): string | undefined;
 	routes: ReadonlyMap<string, string>;
-	/** 契约导出的名字 → 声明上的注释。 */
 	exports: ReadonlyMap<string, string>;
 }
 
@@ -76,7 +70,8 @@ export function harvestDocs(request: DocRequest): Docs {
 		ts.displayPartsToString(symbol.getDocumentationComment(checker)).trim();
 
 	const rootType = (key: string) => aliases.get(`Root${keys.indexOf(key)}`) as ts.Type;
-	const namedTypes = new Set([...request.named].map(rootType));
+	const stopAt = new Set([...request.stopAt].map(rootType));
+	const fieldKey = (root: string, path: readonly string[]) => `${root}:${path.join(".")}`;
 	const fields = new Map<string, string>();
 	const walk = (root: string, type: ts.Type, path: readonly string[]): void => {
 		if (path.length > 24) return;
@@ -86,17 +81,17 @@ export function harvestDocs(request: DocRequest): Docs {
 		}
 		if (checker.isArrayType(type)) {
 			const [item] = checker.getTypeArguments(type as ts.TypeReference);
-			if (item) walk(root, item, [...path, "[]"]);
+			if (item) walk(root, item, [...path, ITEM]);
 			return;
 		}
 		if (!(type.flags & ts.TypeFlags.Object)) return;
-		if (path.length > 0 && namedTypes.has(type)) return;
+		if (path.length > 0 && stopAt.has(type)) return;
 		const index = type.getStringIndexType();
-		if (index) walk(root, index, [...path, "{}"]);
+		if (index) walk(root, index, [...path, VALUE]);
 		for (const property of type.getProperties()) {
 			const at = [...path, property.name];
 			const text = comment(property);
-			if (text) fields.set(`${root}:${at.join(".")}`, text);
+			if (text) fields.set(fieldKey(root, at), text);
 			walk(root, checker.getTypeOfSymbol(property), at);
 		}
 	};
@@ -116,5 +111,5 @@ export function harvestDocs(request: DocRequest): Docs {
 		const text = comment(target);
 		if (text) exports.set(symbol.name, text);
 	}
-	return { fields, routes, exports };
+	return { field: (root, path) => fields.get(fieldKey(root, path)), routes, exports };
 }

@@ -1,10 +1,3 @@
-/**
- * JSON Schema（`z.toJSONSchema` 产出的那部分）→ TypeScript 类型文本，供 client-export.ts 生成 API 客户端的类型。
- *
- * 遇到不认识的关键字或结构就抛错：每个关键字要么翻译成类型，要么在「只约束取值、不影响类型」的名单里。
- * zod 新出的写法让生成停下来，而不是悄悄把发布出去的类型放宽。
- */
-
 export type Json = Record<string, unknown>;
 
 const VALUE_ONLY = new Set([
@@ -51,6 +44,9 @@ const STRUCTURAL = new Set([
 	"not",
 ]);
 
+export const ITEM = "[]";
+export const VALUE = "{}";
+
 export class UnsupportedSchema extends Error {
 	constructor(where: string, reason: string) {
 		super(`${where}: ${reason}`);
@@ -59,9 +55,7 @@ export class UnsupportedSchema extends Error {
 }
 
 export interface EmitOptions {
-	/** `$defs` 里的名字 → 要输出的 TypeScript 名字。 */
 	refName: (id: string) => string;
-	/** 属性的注释，按所在类型内的属性路径查（数组元素是 `[]`，记录的值是 `{}`）。 */
 	doc?: (path: readonly string[]) => string | undefined;
 }
 
@@ -94,7 +88,6 @@ function union(parts: string[]): string {
 	return unique.includes("unknown") ? "unknown" : unique.join(" | ");
 }
 
-/** 一个 schema 的类型。`indent` 是类型所在行的缩进，`path` 是它在所属类型内的属性路径。 */
 export function typeText(
 	schema: unknown,
 	options: EmitOptions,
@@ -165,7 +158,7 @@ export function typeText(
 }
 
 function arrayText(json: Json, options: EmitOptions, indent: string, path: readonly string[]) {
-	const item = (child: unknown) => typeText(child, options, indent, [...path, "[]"]);
+	const item = (child: unknown) => typeText(child, options, indent, [...path, ITEM]);
 	if (Array.isArray(json.prefixItems)) {
 		const head = json.prefixItems.map(item);
 		const rest =
@@ -186,7 +179,7 @@ function objectText(json: Json, options: EmitOptions, indent: string, path: read
 	const keys = json.propertyNames as Json | undefined;
 	const inner = `${indent}\t`;
 	const valueText = (child: unknown, childIndent: string) =>
-		typeText(child, options, childIndent, [...path, "{}"]);
+		typeText(child, options, childIndent, [...path, VALUE]);
 
 	if (keys !== undefined) {
 		if (names.length > 0) throw new UnsupportedSchema(where, "propertyNames next to properties");
@@ -227,14 +220,12 @@ function objectText(json: Json, options: EmitOptions, indent: string, path: read
 	return `{\n${lines.join("\n")}\n${indent}}`;
 }
 
-/** 一段注释写成 JSDoc 行。 */
 export function docLines(doc: string, indent: string): string[] {
 	const lines = doc.split("\n").map((line) => line.replaceAll("*/", "*\\/"));
 	if (lines.length === 1) return [`${indent}/** ${lines[0]} */`];
 	return [`${indent}/**`, ...lines.map((line) => `${indent} * ${line}`.trimEnd()), `${indent} */`];
 }
 
-/** 一个具名类型的声明：有具名属性的对象写成 interface，其余写成 type。 */
 export function declaration(name: string, schema: Json, options: EmitOptions, doc?: string) {
 	const head = doc ? `${docLines(doc, "").join("\n")}\n` : "";
 	const text = typeText(schema, options);
@@ -248,7 +239,6 @@ export function declaration(name: string, schema: Json, options: EmitOptions, do
 		: `${head}export type ${name} = ${text};\n`;
 }
 
-/** schema 直接引用的 `$defs` 名字。 */
 export function refsOf(schema: unknown, found = new Set<string>()): Set<string> {
 	if (Array.isArray(schema)) for (const item of schema) refsOf(item, found);
 	else if (schema && typeof schema === "object") {

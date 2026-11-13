@@ -1,5 +1,3 @@
-// API 客户端（@sfly/client）对着真实的测试控制面：用真实的 fetch，不替换；
-// 请求头经 recording-proxy.ts、断线经 tcp-proxy.ts 观察时，把 baseUrl 指向代理。
 import { type Client, type ClientOptions, createClient } from "@sfly/client";
 import { expect } from "vitest";
 import { ApiClient } from "./api-client.js";
@@ -10,18 +8,18 @@ import { startTestControlPlane, type TestControlPlane } from "./test-control-pla
 
 export interface ObservedClient {
 	client: Client;
-	/** 客户端交给时间回调的每个控制面时间，按收到的顺序。 */
-	times: string[];
+	controlPlaneTimes: string[];
 }
 
-/** 创建 API 客户端，记下它交给回调的控制面时间；options 里给了回调时以 options 为准。 */
 export function observedClient(options: ClientOptions): ObservedClient {
-	const times: string[] = [];
-	const client = createClient({ onControlPlaneTime: (time) => times.push(time), ...options });
-	return { client, times };
+	const controlPlaneTimes: string[] = [];
+	const client = createClient({
+		onControlPlaneTime: (time) => controlPlaneTimes.push(time),
+		...options,
+	});
+	return { client, controlPlaneTimes };
 }
 
-/** 启动测试控制面，返回它和一个指向它的 API 客户端。 */
 export async function startClientControlPlane(
 	options: Parameters<typeof startTestControlPlane>[0] = {},
 ): Promise<ObservedClient & { cp: TestControlPlane }> {
@@ -34,19 +32,12 @@ export interface FinishedRun {
 	runId: string;
 	taskId: string;
 	chainInstanceId: string;
-	/** 产物目录内的相对路径和内容。 */
 	artifact: { name: string; body: string };
-	/** 任务写下的日志行。 */
 	logLines: string[];
 }
 
 const SEED_AGENT = "agent-a";
 
-/**
- * 准备一次结束了的运行，供查询读取：节点包 `probe@1.0.0`（声明指标 `tps`），
- * 场景「巡检」（入口参数 env，默认 staging）以 env=prod 触发，假 Agent 写日志、上报指标、上传产物后成功。
- * 经原始 HTTP 准备，不经过被测的 API 客户端。
- */
 export async function seedFinishedRun(cp: TestControlPlane): Promise<FinishedRun> {
 	const api = new ApiClient(cp);
 	await publishPackage(cp, "probe", "1.0.0", {

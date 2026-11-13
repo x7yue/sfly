@@ -1,13 +1,3 @@
-/**
- * 从 HTTP 契约生成 API 客户端（`@sfly/client`，ADR 0022）的类型和路由表（契约约定 9），
- * 由 scripts/export-json-schema.ts 写进 `packages/client`。
- *
- * 结构来自 `z.toJSONSchema`：请求（params、query、body）按输入方向，响应和事件按输出方向；
- * 契约导出的每个 zod schema 按导出名登记，于是它们成为互相引用的具名类型（`RunView`）。
- * 同一个具名 schema 两个方向不同时（直接或经它引用的类型），输入方向另起名 `<名字>Input`。
- * 注释来自 client-docs.ts。写不出忠实类型的情况（JSON Schema 表达不了、emitter 不认识的关键字、
- * 未命名的递归、名字冲突）一律抛错，不写任何文件。
- */
 import { z } from "zod";
 import { harvestDocs } from "./client-docs.js";
 import { declaration, docLines, type Json, refsOf, typeText } from "./client-emit.js";
@@ -30,15 +20,13 @@ interface ClientRoute {
 
 interface Part {
 	route: ClientRoute;
-	/** `params` / `query` / `body` / `response` / `events.<事件名>`。 */
-	part: string;
+	part: "params" | "query" | "body" | "response" | "events";
+	event?: string;
 	schema: z.ZodType;
 	io: Io;
-	/** 请求部分可以省略：query 接受 `{}`、body 接受没有请求体。 */
 	optional: boolean;
 }
 
-/** 生成的文件内容（路径相对 `packages/client`）。 */
 export type ClientExport = Record<
 	| "src/generated/types.ts"
 	| "src/generated/routes.ts"
@@ -47,7 +35,7 @@ export type ClientExport = Record<
 	string
 >;
 
-const LOW_LEVEL = new Set(["request", "url", "subscribe"]);
+const LOW_LEVEL = new Set(["request", "url"]);
 const PROTOCOL = {
 	CONTROL_PLANE_TIME_HEADER,
 	CONTROL_PLANE_VERSION_HEADER,
@@ -57,7 +45,8 @@ const HEADER = "// 由 HTTP 契约（packages/schema/src/http）生成，不要�
 
 const camel = (text: string) => text.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
 const isVoid = (schema: z.ZodType) => schema._zod.def.type === "undefined";
-const partId = (p: Part) => `${p.route.domain}.${p.route.name}.${p.part}`;
+const partId = (p: Part) =>
+	`${p.route.domain}.${p.route.name}.${p.event === undefined ? p.part : `events.${p.event}`}`;
 const at = (domain: string, name: string) => `[${JSON.stringify(domain)}][${JSON.stringify(name)}]`;
 
 function selectClientRoutes(apis: Record<string, Record<string, RouteDef>>): ClientRoute[] {
@@ -85,7 +74,7 @@ function partsOf(routes: readonly ClientRoute[]): Part[] {
 	const parts: Part[] = [];
 	for (const route of routes) {
 		const def = route.def;
-		const add = (part: string, schema: z.ZodType, io: Io, optional = false) =>
+		const add = (part: Part["part"], schema: z.ZodType, io: Io, optional = false) =>
 			parts.push({ route, part, schema, io, optional });
 		if (def.params) add("params", def.params, "input");
 		if (def.query) add("query", def.query, "input", def.query.safeParse({}).success);
@@ -95,7 +84,7 @@ function partsOf(routes: readonly ClientRoute[]): Part[] {
 		if ("response" in def) add("response", def.response, "output");
 		if ("events" in def) {
 			for (const [event, schema] of Object.entries(def.events)) {
-				add(`events.${event}`, schema, "output");
+				parts.push({ route, part: "events", event, schema, io: "output", optional: false });
 			}
 		}
 	}
@@ -120,7 +109,6 @@ function convert(
 	return { roots: new Map(wanted.map((p) => [partId(p), properties[partId(p)] as Json])), defs };
 }
 
-/** 两个方向都用到、形状不同（直接或经引用）的具名 schema：输入方向用 `<名字>Input`。 */
 function inputVariants(input: Converted, output: Converted): Set<string> {
 	const variants = new Set<string>();
 	for (const [id, def] of Object.entries(input.defs)) {
@@ -180,27 +168,27 @@ export function buildClientExport(
 		});
 
 	const roots = new Map<string, string>();
-	const named = new Set<string>();
+	const stopAt = new Set<string>();
 	for (const id of Object.keys(output.defs)) {
 		roots.set(id, `z.output<typeof C.${id}>`);
-		named.add(id);
+		stopAt.add(id);
 	}
 	for (const id of Object.keys(input.defs)) {
 		const name = nameFor("input")(id);
 		if (roots.has(name)) continue;
 		roots.set(name, `NonNullable<z.input<typeof C.${id}>>`);
-		named.add(name);
+		stopAt.add(name);
 	}
 	const contractPart = (p: Part) => {
 		const route = `(typeof C.httpApis)${at(p.route.domain, p.route.name)}`;
 		if (p.io === "input") return `NonNullable<z.input<${route}[${JSON.stringify(p.part)}]>>`;
 		if (p.part === "response") return `z.output<${route}["response"]>`;
-		return `z.output<${route}["events"][${JSON.stringify(p.part.slice("events.".length))}]>`;
+		return `z.output<${route}["events"][${JSON.stringify(p.event)}]>`;
 	};
 	for (const p of parts) if (!isVoid(p.schema)) roots.set(partId(p), contractPart(p));
-	const docs = harvestDocs({ roots, named });
+	const docs = harvestDocs({ roots, stopAt });
 	const docFor = (root: string) => (path: readonly string[]) => {
-		const text = docs.fields.get(`${root}:${path.join(".")}`);
+		const text = docs.field(root, path);
 		return text === undefined ? undefined : plain(text);
 	};
 	const exportDoc = (id: string) => {
@@ -253,8 +241,8 @@ export function buildClientExport(
 				args.push(typeOf(own.find((p) => p.part === "response") as Part, "\t\t\t"));
 			} else if (route.kind === "stream") {
 				const events = own
-					.filter((p) => p.part.startsWith("events."))
-					.map((p) => `\t\t\t\t${p.part.slice("events.".length)}: ${typeOf(p, "\t\t\t\t")};`);
+					.filter((p) => p.part === "events")
+					.map((p) => `\t\t\t\t${p.event}: ${typeOf(p, "\t\t\t\t")};`);
 				args.push(`{\n${events.join("\n")}\n\t\t\t}`);
 			}
 			const routeDoc = docs.routes.get(`${domain}.${route.name}`);
@@ -310,7 +298,7 @@ export function buildClientExport(
 		if (isVoid(p.schema)) return [];
 		if (p.part === "response")
 			return [`Equal<${generated}["output"], z.output<${route}["response"]>>`];
-		const event = JSON.stringify(p.part.slice("events.".length));
+		const event = JSON.stringify(p.event);
 		return [`Equal<${generated}["events"][${event}], z.output<${route}["events"][${event}]>>`];
 	});
 	const parityFile = [

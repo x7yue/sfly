@@ -27,10 +27,6 @@ export * from "./run-list.js";
 export * from "./runs.js";
 export * from "./system.js";
 
-/**
- * 领域名 → 接口表（约定 7、9）。新增接口表时加在这里。领域名是 API 客户端的方法分组，
- * 必须等于该领域 JSON 接口 key 的第一段（camelCase），所以 `runListApi.list` 归在 `runs`。
- */
 export const httpApis = {
 	agentBinaries: agentBinariesApi,
 	agents: agentsApi,

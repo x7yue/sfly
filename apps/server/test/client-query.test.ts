@@ -1,4 +1,3 @@
-// API 客户端（@sfly/client）的查询：经公开接口对着真实的测试控制面，fetch 不替换。
 import { type Client, createClient, type RunView } from "@sfly/client";
 import { httpApis, logsApi, runsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, expectTypeOf, it } from "vitest";
@@ -39,12 +38,12 @@ describe("API 客户端的方法来自契约里标了 client 的接口", () => {
 describe("API 客户端查询测试控制面", () => {
 	let cp: TestControlPlane;
 	let client: Client;
-	let times: string[];
+	let controlPlaneTimes: string[];
 	let seeded: FinishedRun;
 	let idle: string;
 
 	beforeAll(async () => {
-		({ cp, client, times } = await startClientControlPlane());
+		({ cp, client, controlPlaneTimes } = await startClientControlPlane());
 		seeded = await seedFinishedRun(cp);
 		const api = new ApiClient(cp);
 		await (await FakeAgent.connect(cp.grpcUrl, { name: "agent-b" })).disconnect();
@@ -148,13 +147,13 @@ describe("API 客户端查询测试控制面", () => {
 		const { artifacts } = await client.artifacts.list({ params: { id: seeded.taskId } });
 		expect(artifacts.map((a) => a.name)).toEqual([seeded.artifact.name]);
 
-		const before = times.length;
+		const before = controlPlaneTimes.length;
 		const artifactUrl = client.artifacts.download({
 			params: { id: seeded.taskId, "*": seeded.artifact.name },
 		});
 		const taskLogUrl = client.logs.download({ params: { id: seeded.taskId } });
 		const runLogUrl = client.logs.runDownload({ params: { id: seeded.runId } });
-		expect(times).toHaveLength(before);
+		expect(controlPlaneTimes).toHaveLength(before);
 
 		for (const url of [artifactUrl, taskLogUrl, runLogUrl]) {
 			expect(new URL(url).origin).toBe(new URL(cp.httpUrl).origin);
@@ -199,10 +198,10 @@ describe("API 客户端查询测试控制面", () => {
 	});
 
 	it("必填的输入不能省略：类型检查报错，运行时抛出 TypeError 而不发请求", async () => {
-		const before = times.length;
+		const before = controlPlaneTimes.length;
 		// @ts-expect-error runs.get 必须给 params.id
 		await expect(client.runs.get()).rejects.toThrow(TypeError);
-		expect(times).toHaveLength(before);
+		expect(controlPlaneTimes).toHaveLength(before);
 	});
 
 	it("底层入口按路由描述调用：契约定义、没有方法的接口、下载", async () => {
