@@ -14,7 +14,7 @@ import type { Versioning } from "./useVersionedDraft";
 
 function Banner({ children }: { children: React.ReactNode }) {
 	return (
-		<output className="flex items-center gap-2 rounded-lg border border-warn-line bg-surface px-3 py-2 text-xs text-fg-2 shadow-float [&>svg]:size-4 [&>svg]:flex-none [&>svg]:text-warn">
+		<output className="flex items-center gap-2 rounded-lg border border-warn-line bg-surface px-3 py-2 text-xs text-fg-2 shadow-float [&>svg]:size-4 [&>svg]:flex-none [&>svg]:text-warn-fg">
 			{children}
 		</output>
 	);

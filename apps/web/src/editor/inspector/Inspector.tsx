@@ -135,7 +135,7 @@ function Header({
 					</Button>
 				</span>
 			</div>
-			<h2 className="mt-1.5 mb-0.5 truncate text-base font-semibold">{title}</h2>
+			<h2 className="mt-1.5 mb-0.5 line-clamp-2 text-base font-semibold wrap-anywhere">{title}</h2>
 		</div>
 	);
 }

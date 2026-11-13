@@ -392,7 +392,7 @@ const CHECK_ICON: Record<
 	{ icon: React.ReactNode; className: string; label: string }
 > = {
 	ok: { icon: <CheckIcon />, className: "bg-ok-soft text-ok", label: "通过" },
-	warn: { icon: <AlertTriangleIcon />, className: "bg-warn-soft text-warn", label: "提醒" },
+	warn: { icon: <AlertTriangleIcon />, className: "bg-warn-soft text-warn-fg", label: "提醒" },
 	blocked: { icon: <XIcon />, className: "bg-danger-soft text-danger-fg", label: "不通过" },
 };
 

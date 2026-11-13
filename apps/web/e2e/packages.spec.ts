@@ -1,3 +1,4 @@
+import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import {
 	createScenario,
@@ -176,6 +177,33 @@ test("列表页的键盘：J / K 在节点包之间移动，Enter 显示详情�
 	await page.keyboard.press("Enter");
 	await expect(page).toHaveURL(/\/packages\?name=alpha-tools$/);
 	await expect(page.getByRole("region", { name: "alpha-tools 详情" })).toBeVisible();
+});
+
+test("选中的包与选中的版本都是中性高亮加左侧白条，悬停时仍是选中的样子", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { version: "1.2.0" });
+	await publishPackage(controlPlane, { version: "1.3.0" });
+	await page.goto("/packages?name=demo-checks");
+	const detail = page.getByRole("region", { name: "demo-checks 详情" });
+	const item = page.getByRole("navigation", { name: "节点包" }).getByRole("link", {
+		name: /demo-checks/,
+	});
+	const row = detail.getByRole("table", { name: "版本" }).locator('tr[data-state="selected"]');
+	await expect(row).toHaveCount(1);
+	const look = (el: Locator) =>
+		el.evaluate((node) => {
+			const style = getComputedStyle(node);
+			return { background: style.backgroundColor, shadow: style.boxShadow };
+		});
+	const selected = await look(item);
+	expect(selected.shadow).not.toBe("none");
+	expect(await look(row)).toEqual(selected);
+	await row.hover();
+	expect(await look(row)).toEqual(selected);
+	await item.hover();
+	expect(await look(item)).toEqual(selected);
 });
 
 test("包列表宽 22%（夹在 220 到 300px 之间）并吸在页面顶部；输入输出折行时分隔点只在行尾，不会落在行首", async ({

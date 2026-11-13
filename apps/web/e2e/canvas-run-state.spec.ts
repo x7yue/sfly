@@ -128,6 +128,45 @@ test("从监控页「在画布中查看」带入该运行（不是最近一次�
 	);
 });
 
+test("画布的运行状态与运行监控之间的入口有定向的页面过渡，运行状态标签在两页之间移动；减少动效时直接切换", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	type Recorded = { vt: (string[] | null)[] };
+	const transitions = () => page.evaluate(() => (window as unknown as Recorded).vt.splice(0));
+	const pill = (testId: string) => page.getByTestId(testId).locator("[data-status]").first();
+
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(pill("canvas-run")).toHaveCSS("view-transition-name", "run-state");
+	await page.evaluate(() => {
+		const w = window as unknown as Recorded;
+		w.vt = [];
+		const start = document.startViewTransition.bind(document);
+		document.startViewTransition = ((options?: { types?: string[] }) => {
+			w.vt.push(options?.types ?? null);
+			return start(options as never);
+		}) as typeof document.startViewTransition;
+	});
+
+	await page.getByRole("link", { name: "打开运行监控" }).click();
+	await expect(page).toHaveURL(`/runs/${runId}`);
+	await expect(pill("run-status")).toHaveCSS("view-transition-name", "run-state");
+	expect(await transitions()).toEqual([["to-monitor"]]);
+
+	await page.getByRole("banner").getByRole("link", { name: "在画布中查看" }).click();
+	await expect(page).toHaveURL(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(page.getByTestId("canvas-run")).toContainText(runId.slice(0, 8));
+	expect(await transitions()).toEqual([["to-canvas"]]);
+
+	await page.emulateMedia({ reducedMotion: "reduce" });
+	await page.getByRole("link", { name: "打开运行监控" }).click();
+	await expect(page).toHaveURL(`/runs/${runId}`);
+	expect(await transitions()).toEqual([]);
+});
+
 test("场景还没有运行过：运行状态模式给出提示，节点不叠加状态", async ({ page, controlPlane }) => {
 	await publishPackage(controlPlane);
 	const scenarioId = await createScenario(controlPlane, "空场景", MONITOR_SCENARIO);

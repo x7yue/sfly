@@ -11,6 +11,7 @@ import type { Versioning } from "#/versions/useVersionedDraft";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Truncate } from "@/components/ui/truncate";
 import { OnlineEditors } from "./OnlineEditors";
 import { checkSummary } from "./validation";
 
@@ -57,7 +58,9 @@ export function EditorTopLeft({
 			>
 				<ArrowLeftIcon />
 			</Link>
-			<h1 className="m-0 max-w-80 truncate px-1 text-sm font-semibold">{orchestration.name}</h1>
+			<h1 className="m-0 max-w-80 min-w-0 px-1 text-sm font-semibold">
+				<Truncate>{orchestration.name}</Truncate>
+			</h1>
 			<span className="font-mono text-xs text-fg-3">
 				{version === 0 ? "未保存过" : `v${version}`}
 			</span>

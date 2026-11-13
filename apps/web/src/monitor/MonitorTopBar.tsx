@@ -9,7 +9,9 @@ import { ViaTag } from "#/components/via-tag";
 import { apiQuery } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import { shortcutText } from "#/lib/shortcuts";
+import { runViewTransition } from "#/lib/view-transition";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -23,7 +25,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CancelRunButton } from "./CancelRunDialog";
 import { useMonitorActions, useTimeAxis } from "./monitor-state";
-import { toggleMotionPaused, useMotionPaused } from "./motion-pause";
 import {
 	chainLabel,
 	chainRunStatus,
@@ -97,7 +98,7 @@ export function MonitorTopBar({
 			<RunSwitcher run={run} />
 			{/* output 即 role="status"（礼貌播报）：运行状态变化时读屏会读出来。 */}
 			<output data-testid="run-status" aria-live="polite" className="flex-none">
-				<StatusPill kind={status.kind} pulse={!paused} className="text-sm">
+				<StatusPill kind={status.kind} pulse className="vt-run-state text-sm">
 					{status.label}
 				</StatusPill>
 			</output>
@@ -131,13 +132,13 @@ export function MonitorTopBar({
 				)}
 			</ul>
 			<span className="min-w-0 flex-1" />
-			{live && (
+			{(live || paused) && (
 				<Button
 					variant="ghost"
 					size="icon"
 					aria-label="暂停动效"
 					aria-pressed={paused}
-					title={paused ? "动效已暂停，点击恢复执行中的脉冲" : "暂停执行中的脉冲动效"}
+					title={paused ? "动效已暂停（全站），点击恢复" : "暂停全站的脉冲动效"}
 					className="aria-pressed:bg-raised-2 aria-pressed:text-fg-1"
 					onClick={toggleMotionPaused}
 				>
@@ -148,6 +149,7 @@ export function MonitorTopBar({
 				to="/orchestrations/$id"
 				params={{ id: run.orchestration_id }}
 				search={{ run: run.id }}
+				viewTransition={runViewTransition("to-canvas")}
 				title="在画布中查看"
 				className={buttonVariants({ className: COLLAPSE_BUTTON })}
 			>

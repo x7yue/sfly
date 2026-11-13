@@ -233,7 +233,7 @@ function PickButton({
 			onClick={onClick}
 			className={cn(
 				"grid size-6 cursor-pointer place-items-center rounded-sm font-mono text-2xs text-fg-3 hover:bg-raised hover:text-fg-1",
-				pressed && "bg-raised-2 text-fg-1 hover:bg-raised-2",
+				pressed && "bg-track text-fg-1 hover:bg-track",
 			)}
 		>
 			{side}
@@ -264,7 +264,7 @@ function VersionRow({
 			aria-current={picked || undefined}
 			className={cn(
 				"group flex items-center gap-2 rounded-md px-2 py-1.5",
-				picked ? "bg-raised shadow-[inset_2px_0_0_var(--primary)]" : "hover:bg-raised",
+				picked ? "selected-row" : "hover:bg-raised",
 			)}
 		>
 			<div className="flex min-w-0 flex-1 flex-col">

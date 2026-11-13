@@ -8,7 +8,6 @@ import type { FieldControl } from "./fields";
  */
 export function FeishuBotSelect({
 	control,
-	id,
 	invalid,
 	label,
 	value,
@@ -17,7 +16,6 @@ export function FeishuBotSelect({
 	onChange,
 }: {
 	control?: FieldControl;
-	id?: string;
 	invalid?: boolean;
 	label: string;
 	value: string | undefined;
@@ -28,7 +26,6 @@ export function FeishuBotSelect({
 	return (
 		<NativeSelect
 			{...control}
-			id={id ?? control?.id}
 			aria-label={label}
 			aria-invalid={invalid || control?.["aria-invalid"]}
 			value={value ?? ""}
