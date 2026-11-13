@@ -360,7 +360,7 @@ test("打开空白处菜单不读剪贴板，点「粘贴」才读：不是节�
 	await expect.poll(() => nodeIds(page)).toEqual(ORIGINAL_IDS);
 });
 
-test("没有 Clipboard API 时（http 访问）菜单里的「粘贴」禁用并说明，Ctrl+C / Ctrl+V 照常可用", async ({
+test("没有 Clipboard API 时（http 访问）菜单里的「复制」照样能用，「粘贴」禁用并说明，Ctrl+C / Ctrl+V 照常可用", async ({
 	page,
 	controlPlane,
 }) => {
@@ -371,13 +371,18 @@ test("没有 Clipboard API 时（http 访问）菜单里的「粘贴」禁用并
 	await openEditor(page, id, "sub_ping");
 	const blank = { x: 200, y: 640 };
 
-	// 菜单里的「复制」用不了：提示改按 Ctrl C。
+	// 菜单里的「复制」改用浏览器的复制命令，照样写进剪贴板。
 	await nodeCard(page, "ping").click({ button: "right" });
 	await nodeMenu(page)
 		.getByRole("menuitem", { name: /^复制\s*Ctrl\s*C$/ })
 		.click();
-	await expect(page.getByText("复制失败")).toBeVisible();
-	await expect(page.getByText("浏览器不允许访问剪贴板，可以按 Ctrl C 复制")).toBeVisible();
+	await expect(page.getByText("已复制节点 ping")).toBeVisible();
+	await expect(page.getByText("复制失败")).toHaveCount(0);
+	const reader = await page.context().newPage();
+	await reader.goto("/agents");
+	expect(await reader.evaluate(() => navigator.clipboard.readText())).toContain('"ping"');
+	await reader.close();
+	await page.bringToFront();
 
 	await page.mouse.click(blank.x, blank.y, { button: "right" });
 	const paste = paneMenu(page).getByRole("menuitem", { name: /粘贴/ });
@@ -389,7 +394,7 @@ test("没有 Clipboard API 时（http 访问）菜单里的「粘贴」禁用并
 	// 按键复制、粘贴走浏览器的 copy / paste 事件，不需要 Clipboard API。
 	await nodeCard(page, "ping").click();
 	await page.keyboard.press("Control+c");
-	await expect(page.getByText("已复制节点 ping")).toBeVisible();
+	await expect(page.getByText("已复制节点 ping").last()).toBeVisible();
 	await page.mouse.move(blank.x, blank.y);
 	await page.keyboard.press("Control+v");
 	await expect(nodeCard(page, "ping_1")).toBeFocused();

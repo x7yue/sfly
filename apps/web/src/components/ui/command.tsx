@@ -54,7 +54,7 @@ function CommandDialog({
 	}, []);
 
 	return (
-		<Dialog {...props}>
+		<Dialog pointerDismiss="always" {...props}>
 			<DialogContent
 				className={cn("w-[620px] gap-0 p-0", className)}
 				showCloseButton={showCloseButton}
@@ -89,7 +89,7 @@ function CommandInput({
 			<CommandPrimitive.Input
 				data-slot="command-input"
 				className={cn(
-					"h-12 w-full bg-transparent text-base text-fg-1 outline-none placeholder:text-fg-3 disabled:cursor-not-allowed disabled:opacity-40",
+					"h-12 w-full bg-transparent text-base text-fg-1 outline-none placeholder:text-fg-3 focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-40",
 					className,
 				)}
 				{...props}
@@ -98,10 +98,15 @@ function CommandInput({
 	);
 }
 
-function CommandList({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.List>) {
+function CommandList({
+	className,
+	label = "结果",
+	...props
+}: React.ComponentProps<typeof CommandPrimitive.List>) {
 	return (
 		<CommandPrimitive.List
 			data-slot="command-list"
+			label={label}
 			className={cn(
 				"max-h-[380px] scroll-py-1.5 overflow-x-hidden overflow-y-auto p-1.5 outline-none",
 				className,

@@ -13,7 +13,7 @@ const badgeVariants = cva(
 			variant: {
 				default: "border-border bg-raised-2 text-fg-2",
 				ok: "border-ok-line bg-ok-soft text-ok",
-				warn: "border-warn-line bg-warn-soft text-warn",
+				warn: "border-warn-line bg-warn-soft text-warn-fg",
 				danger: "border-danger-line bg-danger-soft text-danger-fg",
 			},
 		},

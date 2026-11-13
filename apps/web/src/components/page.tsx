@@ -44,8 +44,12 @@ export function PageHeader({
 	actions?: React.ReactNode;
 }) {
 	return (
-		<div className="mb-3.5 flex items-center gap-2.5">
-			<h1 className="m-0 text-lg font-semibold">{title}</h1>
+		// 至少一个控件高：有没有右侧按钮，标题都在同一位置
+		<div className="mb-3.5 flex min-h-7.5 items-center gap-2.5">
+			{/* focus-recovery 的兜底落点 */}
+			<h1 tabIndex={-1} className="m-0 text-lg font-semibold">
+				{title}
+			</h1>
 			{count !== undefined && <span className="font-mono text-xs text-fg-3">{count}</span>}
 			{description && <span className="text-sm text-fg-3">{description}</span>}
 			<span className="flex-1" />
@@ -54,10 +58,13 @@ export function PageHeader({
 	);
 }
 
+/**
+ * 面板。圆角用 overflow: clip 裁：它不是滚动容器，里面的表头可以吸在页面主区域的顶端（`Table` 的表头是 sticky）。
+ */
 export function Panel({ className, ...props }: React.ComponentProps<"section">) {
 	return (
 		<section
-			className={cn("overflow-hidden rounded-lg border border-border-soft bg-surface", className)}
+			className={cn("overflow-clip rounded-lg border border-border-soft bg-surface", className)}
 			{...props}
 		/>
 	);
@@ -76,7 +83,7 @@ export function SectionHeading({
 	return (
 		<Heading
 			className={cn(
-				"mt-4 mb-2 flex items-center gap-2 text-xs font-medium text-fg-3 after:h-px after:flex-1 after:bg-border-soft",
+				"mt-4 mb-2 flex items-center gap-2 text-xs text-fg-3 after:h-px after:flex-1 after:bg-border-soft",
 				className,
 			)}
 			{...props}
