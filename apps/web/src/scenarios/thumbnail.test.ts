@@ -87,7 +87,7 @@ describe("场景缩略图布局", () => {
 			old: "success",
 		});
 		expect(Object.fromEntries(t.nodes.map((n) => [n.id, n.state]))).toEqual({
-			entry: "done",
+			entry: "ok",
 			a: "running",
 			b: "failed",
 			c: "cancelled",
@@ -95,7 +95,7 @@ describe("场景缩略图布局", () => {
 		});
 	});
 
-	it("每个节点状态的颜色：排队算待执行，准备中算执行中，成功算完成", () => {
+	it("每个节点状态的种类与状态徽标一致：准备中算执行中，排队是中性的排队（不是等待）", () => {
 		const statuses = [
 			"pending",
 			"queued",
@@ -113,11 +113,11 @@ describe("场景缩略图布局", () => {
 		expect(Object.fromEntries(t.nodes.map((n) => [n.id, n.state]))).toEqual({
 			entry: "pending",
 			pending: "pending",
-			queued: "pending",
+			queued: "queued",
 			dispatched: "running",
 			running: "running",
-			waiting: "waiting",
-			success: "done",
+			waiting: "warn",
+			success: "ok",
 			failed: "failed",
 			skipped: "skipped",
 			cancelled: "cancelled",

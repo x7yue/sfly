@@ -11,6 +11,7 @@ colors:
   border: "#333333"
   border-soft: "#2b2b2b"
   border-strong: "#444444"
+  border-control: "#707070"
   fg-1: "#ececec"
   fg-2: "#a8a8a8"
   fg-3: "#969696"
@@ -27,6 +28,7 @@ colors:
   pending: "#8e8e8e"
   cancelled: "#9a9a9a"
   stopped: "#a8a8a8"
+  skipped: "#7a7a7a"
   subflow: "#b4a3f8"
   subflow-fg: "#dcd3fd"
   chart-1: "#d4d4d4"
@@ -35,37 +37,37 @@ colors:
   chart-4: "#6f8fae"
 typography:
   page-title:
-    fontFamily: "IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif"
+    fontFamily: "IBM Plex Sans, PingFang SC, Noto Sans CJK SC, Microsoft YaHei UI, sans-serif"
     fontSize: "16px"
     fontWeight: 600
     lineHeight: "24px"
   section-title:
-    fontFamily: "IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif"
+    fontFamily: "IBM Plex Sans, PingFang SC, Noto Sans CJK SC, Microsoft YaHei UI, sans-serif"
     fontSize: "14px"
     fontWeight: 600
     lineHeight: "20px"
   body:
-    fontFamily: "IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif"
+    fontFamily: "IBM Plex Sans, PingFang SC, Noto Sans CJK SC, Microsoft YaHei UI, sans-serif"
     fontSize: "13px"
     fontWeight: 400
     lineHeight: "20px"
   caption:
-    fontFamily: "IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif"
+    fontFamily: "IBM Plex Sans, PingFang SC, Noto Sans CJK SC, Microsoft YaHei UI, sans-serif"
     fontSize: "12px"
     fontWeight: 400
     lineHeight: "18px"
   label:
-    fontFamily: "IBM Plex Sans, PingFang SC, Microsoft YaHei, sans-serif"
+    fontFamily: "IBM Plex Sans, PingFang SC, Noto Sans CJK SC, Microsoft YaHei UI, sans-serif"
     fontSize: "11px"
     fontWeight: 500
     lineHeight: "16px"
   stat:
-    fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, monospace"
+    fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, PingFang SC, Noto Sans CJK SC, Microsoft YaHei UI, monospace"
     fontSize: "22px"
     fontWeight: 600
     lineHeight: "28px"
   mono:
-    fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, monospace"
+    fontFamily: "JetBrains Mono, SFMono-Regular, Consolas, PingFang SC, Noto Sans CJK SC, Microsoft YaHei UI, monospace"
     fontSize: "12px"
     fontWeight: 400
     lineHeight: "18px"
@@ -105,15 +107,21 @@ components:
     textColor: "{colors.fg-1}"
   button-danger-solid:
     backgroundColor: "{colors.danger}"
-    textColor: "#ffffff"
+    textColor: "{colors.primary-foreground}"
     rounded: "{rounded.md}"
     height: "30px"
+  button-danger-solid-hover:
+    backgroundColor: "{colors.danger-fg}"
   input:
     backgroundColor: "{colors.sunk}"
     textColor: "{colors.fg-1}"
+    borderColor: "{colors.border-control}"
     rounded: "{rounded.md}"
     height: "30px"
     padding: "0 10px"
+  switch-on:
+    backgroundColor: "{colors.selected}"
+    thumbColor: "{colors.primary-foreground}"
   panel:
     backgroundColor: "{colors.surface}"
     rounded: "{rounded.lg}"
@@ -146,7 +154,7 @@ sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，
 **Key Characteristics:**
 - 只做深色，炭灰无色偏的五级表面台阶
 - 青色是稀缺信号：执行中、焦点环、调度连线，别无他用
-- 严格的状态语法：颜色 + 形状共同编码（实心点 / 空心圈 / 虚线圈 / 实心方块）
+- 严格的状态语法：颜色 + 形状共同编码，每种状态一个形状（圆点 / 点加外圈 / 菱形 / 三角 / 空心圈 / 半实心圈 / 斜杠圈 / 虚线圈 / 方块），不看颜色、不看动画也能分辨
 - IDE 级密度，数字一律等宽
 - 节点卡片是贯穿全产品的基本单元（画布、运行画布、版本对比、缩略图）
 
@@ -158,18 +166,19 @@ sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，
 - **控制台白** (`primary`)：每屏唯一的主操作按钮（如「新建场景」「触发运行」），以及选中项左侧 2px 短条。白色就是「下一步做这个」。
 
 ### Secondary
-- **执行中青** (`signal`，文字用 `signal-fg`)：执行中的状态点（带脉冲）、画布描边、进入执行中节点的连线、调度连线、键盘焦点环。执行中的时间线段、链路进度段、场景缩略图节点这类有面积的色块用淡底 `signal-soft` 加 1px `signal-line` 内描边，只有时间线段尾的脉冲头是实心青色。
+- **执行中青** (`signal`，文字用 `signal-fg`)：执行中的状态标记（点加外圈）、画布描边、进入执行中节点的连线、调度连线、键盘焦点环。执行中的时间线段、链路进度段、场景缩略图节点这类有面积的色块用淡底 `signal-fill` 加 1px `signal-line` 描边，只有时间线段尾的脉冲头是实心青色。
 - **子流程紫** (`subflow`，文字用 `subflow-fg`)：只用于画布上子流程区域的描边、标题与淡底；语义层没有紫色。
 
 ### Tertiary（状态色）
-- **成功绿** (`ok`)、**失败红** (`danger`，深底上的文字用 `danger-fg`)、**等待琥珀** (`warn`，文字用 `warn-fg`)：节点与运行状态、日志 WARN / ERROR、校验警告。各自带 `-soft`（淡底）与 `-line`（描边）透明变体。
-- **灰阶状态**：待执行 (`pending`，空心圈)、已取消 (`cancelled`，虚线圈)、已停止 (`stopped`，实心方块)——停止是正常流程，不用警示色。
+- **成功绿** (`ok`)、**失败红** (`danger`，深底上的文字用 `danger-fg`)、**等待琥珀** (`warn`，文字用 `warn-fg`)：节点与运行状态、日志 WARN / ERROR、校验警告。各自带 `-soft`（带文字的淡底，≈ 1.15:1）、`-line`（描边，在面板上 ≥ 3:1）与 `-fill`（进度段、缩略图、时间线这类面积色块，每种状态固定一档）。状态文字一律用 `-fg` 变体，不带 `-fg` 的只给标记、描边与色块。
+- **琥珀只有三个意思**：等待中（定时 / Sleep 节点）、警告、安装中。排队中是「轮到了，在等 Agent 的槽位」，不是要人处理的等待，用中性灰。
+- **灰阶状态**：待执行 (`pending`，空心圈)、排队中（灰，半实心圈）、已跳过 (`skipped`，斜杠圈)、已取消 (`cancelled`，虚线圈)、已停止 (`stopped`，实心方块)——停止是正常流程，不用警示色。
 
 ### Neutral
 - **凹陷** (`sunk`)：输入框、代码块、日志区。
 - **页面** (`bg`) / **面板** (`surface`) / **抬起** (`raised`) / **悬停与选中** (`raised-2`)：从低到高的表面台阶。
 - **槽** (`track`)：进度条、槽位条的空槽。
-- **描边** (`border`、`border-soft`、`border-strong`)：控件 / 面板内分隔 / 浮层。
+- **描边** (`border`、`border-soft`、`border-strong`)：面板与分隔线 / 面板内分隔 / 浮层，有意安静；表单控件（输入框、下拉、勾选框、开关、分段）的边界单独用 `border-control`，在所在表面上 ≥ 3:1。
 - **文字三级** (`fg-1` 正文、`fg-2` 次要、`fg-3` 辅助)：三级在 bg 到 raised-2 的所有表面上都 ≥ 4.5:1。
 - **图表线** (`chart-1` … `chart-4`)：中性灰与灰蓝，按序使用；图表线不用状态色。
 
@@ -180,8 +189,8 @@ sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，
 
 ## Typography
 
-**Body Font:** IBM Plex Sans（400 / 500 / 600），中文回退系统字体
-**Mono Font:** JetBrains Mono，用于数值、ID、版本号、命令、日志
+**Body Font:** IBM Plex Sans（400 / 500 / 600），中文回退到写明的系统黑体（苹方、Noto Sans CJK、微软雅黑 UI）
+**Mono Font:** JetBrains Mono，用于数值、ID、版本号、命令、日志；中文同样回退到黑体（不交给系统挑「等宽中文」，Windows 上那是新宋体），关闭编程连字（`>=`、`!=`、`->` 照原样显示）
 
 **Character:** Plex 的工程气质配 JetBrains Mono 的等宽数字，像带刻度的仪器面板；没有展示字体，标题靠字重和小步长字号区分。
 
@@ -190,11 +199,12 @@ sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，
 - **Page title** (600, 16px, 24px)：页面标题。
 - **Section title** (600, 14px, 20px)：区块、弹窗、空状态标题。
 - **Body** (400, 13px, 20px)：正文、按钮、输入框、菜单项（body 默认）。
-- **Caption** (400, 12px, 18px)：表头、说明、字段说明、次要信息、表格里的等宽数据。
-- **Label** (500, 11px, 16px)：最小字号，只给徽标、计数、kbd、分组标题；不用于成句的说明。
+- **Caption** (400, 12px, 18px)：表头、说明、字段说明、次要信息、表格里的等宽数据；中文的最小字号。
+- **Label** (500, 11px, 16px)：最小字号，只给数字、拉丁字母与 kbd（计数、刻度、ID、按键）；有中文就用 12px。
 
 ### Named Rules
-**The Fixed Scale Rule.** 只有 11 / 12 / 13 / 14 / 16 / 22 六档字号，不写任意值。
+**The Fixed Scale Rule.** 只有 11 / 12 / 13 / 14 / 16 / 22 六档字号，不写任意值（实现用 rem，上面是默认根字号下的像素值）。
+**The CJK Weight Rule.** 中文的层级不靠 500：微软雅黑只有 400 与 700，500 在 Windows 上和正文一样。要比旁边醒目，用颜色台阶（`fg-1` 对 `fg-2` / `fg-3`）或 600。
 **The Tabular Rule.** 所有数字等宽（body 已设 `tabular-nums`）；ID、版本、耗时、命令用等宽字体。
 
 ## Layout
@@ -207,7 +217,7 @@ sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，
 
 ### Named Rules
 **The Tonal Depth Rule.** 页面上的层级用 sunk → bg → surface → raised → raised-2 表达；阴影只属于浮层。
-**The No-Glow Rule.** 不用零偏移的彩色发光；执行中的脉冲是唯一的光晕动画。
+**The No-Glow Rule.** 不用零偏移的彩色发光；执行中的脉冲是唯一的光晕动画。一屏内每个执行中对象只在一处脉冲（它的前沿：时间线的段尾、运行的状态标签），状态点默认静止。输入框聚焦时的 3px `signal-soft` 光晕是唯一的静态例外，只给可输入的控件。
 
 ## Shapes
 
@@ -220,22 +230,24 @@ sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，
 - **Default:** `raised` 底、`border` 描边、`fg-1` 文字，悬停变 `raised-2`。
 - **Primary:** 白底黑字，每屏一个。
 - **Ghost:** 透明底、`fg-2` 文字，用于工具条与次要操作。
-- **Danger / Danger-solid:** 只在确认弹窗等危险操作处。
-- **Focus / Disabled:** 全局 2px 青色焦点环；禁用 40% 不透明、不换色。
+- **Danger / Danger-solid:** 只在确认弹窗等危险操作处。`danger-solid` 和白色主按钮一样是实心底配深色字（5.3:1），悬停换成更亮的 `danger-fg` 底。
+- **Pressed:** 每个状态看起来都不同：中性按钮按下比静止深一档（`surface`），ghost 按下 `raised-2`，白色与红色按钮按下回到底色以下一档；不用缩放。
+- **Focus / Disabled:** 全局 2px 青色焦点环（即时出现，不随颜色过渡）；禁用 40% 不透明、不换色。
 
 ### Inputs / Fields
-- **Style:** `sunk` 底、`border` 描边、6px 圆角、30px 高。
-- **Focus:** 青色描边 + 光晕。
+- **Style:** `sunk` 底、`border-control` 描边（≥ 3:1）、6px 圆角、30px 高。
+- **Focus:** 青色描边 + 光晕（No-Glow 规则的明确例外）；强制颜色模式下另有系统颜色的轮廓。
+- **Checkbox / Switch:** 勾选、打开都是中性高亮（`selected` 底、深色对勾或圆点），不用绿色——「必填 = 是」不是「成功」。
 - **Error:** 红色描边，字段下方 12px `danger-fg` 说明。
 
 ### Cards / Containers
 - **Panel:** `surface` 底、`border-soft` 描边、8px 圆角，无阴影；小节标题右侧延伸一条分隔线。
 
 ### Navigation
-- 侧栏项 34px 高、8px 圆角、`fg-2` 文字；悬停 `raised`；当前页 `raised-2` 底 + 左侧 2px 白色短条 + `fg-1` 文字。快捷键以 kbd 显示在项右侧（依次按的写「G 然后 D」）。
+- 侧栏项 34px 高、8px 圆角、`fg-2` 文字；悬停 `raised`；当前页 `selected-bg` 底 + 左侧 2px 白色短条 + `fg-1` 文字（强制颜色模式下换成系统高亮描边）。快捷键以 kbd 显示在项右侧（依次按的写「G 然后 D」）。
 
 ### Status Pill / Dot（签名组件）
-颜色 + 形状共同编码运行与节点状态：成功绿实心点、执行中青实心点（脉冲）、失败红实心点、等待琥珀实心点、待执行灰空心圈、已跳过淡灰空心圈、已取消灰虚线圈、已停止灰实心方块。颜色与文字只从统一的状态表取。
+颜色 + 形状共同编码运行与节点状态，每种状态一个 8px 形状：成功绿实心圆点、执行中青色圆点加外圈、失败红实心菱形、等待琥珀实心三角、待执行灰空心圈、排队中灰半实心圈、已跳过灰斜杠圈、已取消灰虚线圈、已停止灰实心方块。形状用 currentColor 画，红绿色觉缺陷、强制颜色模式、减少动效下都能分辨。状态点默认静止，只在执行中对象的前沿脉冲一处。有面积的状态色块（进度段、缩略图节点、时间线区段）同样按状态表画：执行中、失败、等待满高，其余矮一档。颜色、形状与文字只从统一的状态表（`components/status.tsx` 的 `STATUS`）取。
 
 ### Node Card（签名组件）
 `raised` 底、8px 圆角的节点卡片：头部是种类图标（lucide 线性图标，缩小视图时也保留）、节点 ID、种类名（标题已说明种类时省略）和状态位（只在有警告或运行状态时出现），中间是标题，底部是 `sunk` 摘要槽（配置摘要或主指标迷你趋势；还没有配置时用辅助文字、非等宽）。运行状态叠加在描边上（执行中青、失败红、已取消虚线、已停止灰）；已完成与已跳过的节点「下沉」到画布底色，待执行、已取消、已停止的标题换成次要文字色——退后的状态都不用不透明度，文字对比度不降。版本对比里被删除的节点是红色虚线描边加删除线标题。
@@ -254,5 +266,6 @@ sfly 的界面是一间深夜值守的控制室：整面炭灰、没有色偏，
 - **Don't** 在一屏放第二个白色实心按钮。
 - **Don't** 给图表线、零值统计或装饰着状态色。
 - **Don't** 写规定以外的字号、圆角或色值（组件里不写色值）。
-- **Don't** 用 11px 写成句的说明文字。
+- **Don't** 用 11px 写中文（11px 只给数字、拉丁字母与 kbd）。
+- **Don't** 让状态只靠颜色或只靠动画表达。
 - **Don't** 做浅色主题或移动端布局（产品约束：只做深色、只支持桌面）。

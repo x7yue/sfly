@@ -216,7 +216,7 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 					>
 						<ArchiveIcon />
 						归档…
-						{running && <span className="ml-auto text-2xs text-fg-3">运行中不可归档</span>}
+						{running && <span className="ml-auto text-xs text-fg-3">运行中不可归档</span>}
 					</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
@@ -289,7 +289,7 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 							live.kind === "running" ? "border-signal-line" : "border-border",
 						)}
 					>
-						<StatusPill kind={live.kind} className="text-2xs">
+						<StatusPill kind={live.kind} className="text-xs">
 							{live.label}
 						</StatusPill>
 					</Link>
@@ -317,7 +317,7 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 			<footer className="flex items-center gap-1.5 border-t border-border-soft px-3.5 py-2.5">
 				<ScenarioActions scenario={scenario} />
 				<span className="flex-1" />
-				<span className="text-2xs text-fg-3">
+				<span className="text-xs text-fg-3">
 					{scenario.archived_at
 						? `归档于 ${formatDateTime(scenario.archived_at)}`
 						: `更新于 ${formatDateTime(scenario.updated_at)}`}

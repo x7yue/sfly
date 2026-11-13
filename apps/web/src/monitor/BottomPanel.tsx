@@ -654,7 +654,7 @@ function AttemptsTab({
 								))}
 							</p>
 						)}
-						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-2xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
+						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
 							<dt>排队</dt>
 							<dd className="m-0">{formatClock(a.queued_at)}</dd>
 							<dt>开始</dt>
@@ -694,7 +694,7 @@ function AttemptsTab({
 								</div>
 								<p className="m-0 mt-1 text-danger-fg">{error.message || "（没有错误信息）"}</p>
 								{error.stack && (
-									<pre className="m-0 mt-1.5 max-h-40 overflow-auto rounded-md bg-sunk p-2 font-mono text-2xs whitespace-pre text-fg-2">
+									<pre className="m-0 mt-1.5 max-h-40 overflow-auto rounded-md bg-sunk p-2 font-mono text-xs whitespace-pre text-fg-2">
 										{error.stack}
 									</pre>
 								)}
@@ -823,7 +823,7 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 						</div>
 					</div>
 					{/* 主列是文件在 Agent 上的修改时间（Agent 时间），上传时间是控制面时间（ADR 0018）。 */}
-					<div className="grid shrink-0 grid-cols-[auto_auto] gap-x-2 text-2xs text-fg-3">
+					<div className="grid shrink-0 grid-cols-[auto_auto] gap-x-2 text-xs text-fg-3">
 						<span>Agent 修改</span>
 						<span
 							title="文件在 Agent 上的修改时间（Agent 时间）"

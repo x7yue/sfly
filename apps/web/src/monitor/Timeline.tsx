@@ -161,7 +161,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 				<span className="flex-1" />
 				<ul
 					aria-label="图例"
-					className="m-0 flex list-none items-center gap-3 p-0 text-2xs text-fg-3 max-xl:hidden"
+					className="m-0 flex list-none items-center gap-3 p-0 text-xs text-fg-3 max-xl:hidden"
 				>
 					{LEGEND.map((kind) => (
 						<li key={kind} className="inline-flex items-center gap-1.25">
@@ -253,7 +253,7 @@ function Axis({ range, origin }: { range: TimeRange; origin: number }) {
 			className="sticky top-0 z-3 grid h-5.5 border-b border-border-soft bg-bg"
 			style={{ gridTemplateColumns: `${LABEL_W}px 1fr` }}
 		>
-			<div className="px-3 pt-0.75 text-2xs text-fg-3">{formatClock(range.start)} 起</div>
+			<div className="px-3 pt-0.75 text-xs text-fg-3">{formatClock(range.start)} 起</div>
 			<div className="relative mr-3.5" data-axis-track>
 				{items.map((t) => (
 					<span
@@ -549,7 +549,7 @@ function NodeRow({
 			>
 				<StatusDot kind={status.kind} />
 				<span className="flex-none font-mono">{node.node_id}</span>
-				<span className="min-w-0 flex-1 truncate text-2xs text-fg-3">{title}</span>
+				<span className="min-w-0 flex-1 truncate text-xs text-fg-3">{title}</span>
 				{node.attempts.length > 1 && <Badge className="h-4 px-1">×{node.attempts.length}</Badge>}
 				{isAlways(decl) && (
 					<Badge variant="warn" className="h-4 px-1">
@@ -613,12 +613,17 @@ function SegmentBar({
 				chainRow ? "top-2.25" : "top-1.75",
 				SEGMENT_STYLE[seg.kind],
 				selected && "outline-[1.5px] outline-offset-1 outline-selected",
-				seg.live &&
-					seg.kind === "run" &&
-					"after:absolute after:-top-0.5 after:-right-0.75 after:h-4 after:w-1.5 after:animate-status-pulse after:rounded-[2px] after:bg-signal",
 			)}
 			style={{ left: `${left}%`, width: `max(${Math.max(0.25, right - left)}%, 2px)` }}
-		/>
+		>
+			{seg.live && seg.kind === "run" && (
+				<i
+					aria-hidden
+					data-pulse-head
+					className="pulse-ring absolute -top-0.5 -right-0.75 h-4 w-1.5 rounded-[2px] bg-signal text-signal"
+				/>
+			)}
+		</span>
 	);
 }
 

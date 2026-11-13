@@ -156,7 +156,7 @@ export function MetricChart({
 					) : (
 						<span className="ml-auto font-mono text-sm font-semibold text-fg-1" data-latest>
 							{latest === undefined ? "—" : formatMetric(latest)}
-							<small className="ml-0.5 text-2xs font-normal text-fg-3">{unit}</small>
+							<small className="ml-0.5 text-xs font-normal text-fg-3">{unit}</small>
 						</span>
 					))}
 			</figcaption>
@@ -194,7 +194,7 @@ export function MetricChart({
 						height={dense ? 56 : 96}
 						latestText={latest === undefined ? undefined : formatMetric(latest)}
 					/>
-					<div className="mt-0.5 flex items-start gap-x-2.5 text-2xs text-fg-3">
+					<div className="mt-0.5 flex items-start gap-x-2.5 text-xs text-fg-3">
 						{inWindow.length > 1 && (
 							// 序列很多时图例最多 4 行，其余滚动查看。
 							<div className="flex max-h-16 min-w-0 flex-1 flex-wrap gap-x-2.5 overflow-y-auto">
@@ -463,7 +463,7 @@ function HoverValues({
 	return (
 		<span
 			data-hover-values
-			className="pointer-events-none absolute top-1 z-3 flex max-w-60 flex-col rounded-md border border-border-strong bg-raised px-2 py-1 text-2xs whitespace-nowrap shadow-pop"
+			className="pointer-events-none absolute top-1 z-3 flex max-w-60 flex-col rounded-md border border-border-strong bg-raised px-2 py-1 text-xs whitespace-nowrap shadow-pop"
 			style={side}
 		>
 			{times && (

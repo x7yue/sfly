@@ -224,7 +224,7 @@ export function CommandPalette({
 						))}
 					</CommandGroup>
 				</CommandList>
-				<footer className="flex gap-3.5 border-t border-border-soft px-3.5 py-2 text-2xs text-fg-3">
+				<footer className="flex gap-3.5 border-t border-border-soft px-3.5 py-2 text-xs text-fg-3">
 					<span className="inline-flex items-center gap-1">
 						<KeyHint keys="↑" />
 						<KeyHint keys="↓" />

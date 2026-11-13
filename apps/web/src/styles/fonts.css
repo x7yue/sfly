@@ -1,13 +1,11 @@
 /*
- * 字体随前端打包（@fontsource，构建时复制进 dist），离线的内网环境也能用；只取拉丁字符子集，
- * 中文回退到系统字体（见 app.css 的 --font-sans）。只用 400 / 500 / 600 三个字重。
+ * 字体随前端打包（@fontsource，构建时复制进 dist），离线的内网环境也能用。按字重整包导入：每个子集都带
+ * unicode-range，浏览器只下载页面上真正用到的子集（界面是中文加 ASCII，实际只有 latin）；中文字符不在
+ * 任何子集的范围里，直接回退到 app.css 字体栈里的中文黑体。只用 400 / 500 / 600 三个字重。
  */
-@import "@fontsource/ibm-plex-sans/latin-400.css";
-@import "@fontsource/ibm-plex-sans/latin-500.css";
-@import "@fontsource/ibm-plex-sans/latin-600.css";
-@import "@fontsource/ibm-plex-sans/latin-ext-400.css";
-@import "@fontsource/ibm-plex-sans/latin-ext-500.css";
-@import "@fontsource/ibm-plex-sans/latin-ext-600.css";
-@import "@fontsource/jetbrains-mono/latin-400.css";
-@import "@fontsource/jetbrains-mono/latin-500.css";
-@import "@fontsource/jetbrains-mono/latin-600.css";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+@import "@fontsource/jetbrains-mono/600.css";

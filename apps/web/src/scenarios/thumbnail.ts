@@ -1,4 +1,5 @@
 import type { LastRunNodeStatus, OrchestrationStructure } from "@sfly/schema";
+import type { StatusKind } from "#/components/status";
 import { NODE_STATUS } from "#/lib/node-status";
 
 /**
@@ -9,24 +10,14 @@ import { NODE_STATUS } from "#/lib/node-status";
 
 export const THUMB_WIDTH = 300;
 
-/** 缩略图上的节点状态（决定颜色；节点状态对应哪一种见 lib/node-status）。 */
-export type ThumbState =
-	| "pending"
-	| "running"
-	| "done"
-	| "failed"
-	| "cancelled"
-	| "skipped"
-	| "stopped"
-	| "waiting";
-
 export interface ThumbNode {
 	id: string;
 	x: number;
 	y: number;
 	w: number;
 	h: number;
-	state: ThumbState;
+	/** 最近一次运行里这个节点的状态种类（颜色与形状见 components/status 的 STATUS）。 */
+	state: StatusKind;
 }
 
 export interface ThumbLine {
@@ -86,7 +77,7 @@ export function layoutThumbnail(
 			if (!next.has(e.from)) next.set(e.from, e.to);
 		} else dispatchOf.set(e.to, e.from);
 	}
-	const state = (id: string): ThumbState => NODE_STATUS[nodeStates?.[id] ?? "pending"].thumb;
+	const state = (id: string): StatusKind => NODE_STATUS[nodeStates?.[id] ?? "pending"].kind;
 
 	const entry = structure.nodes.find((n) => n.kind === "entry");
 	const main = entry ? chainFrom(entry.id, next) : [];

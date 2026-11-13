@@ -105,7 +105,7 @@ export function NodeFilter({
 							<fieldset key={chain.id} aria-label={label} className="m-0 border-0 p-0 py-0.5">
 								<Row name={label} checked={keys.every(checked)} onChange={(on) => toggle(keys, on)}>
 									<b className="font-medium">{label}</b>
-									<span className="ml-auto text-2xs text-fg-3">{members.length} 个节点</span>
+									<span className="ml-auto text-xs text-fg-3">{members.length} 个节点</span>
 								</Row>
 								{members.map((g) => (
 									<Row
@@ -137,7 +137,7 @@ export function NodeFilter({
 						onChange={(on) => toggle([PLATFORM_KEY], on)}
 					>
 						<b className="font-medium">平台自带图表</b>
-						<span className="ml-auto text-2xs text-fg-3">4 张</span>
+						<span className="ml-auto text-xs text-fg-3">4 张</span>
 					</Row>
 				</div>
 				<div className="flex items-center gap-2 text-xs">

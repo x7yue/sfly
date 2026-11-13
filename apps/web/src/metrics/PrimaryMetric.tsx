@@ -123,10 +123,10 @@ export function PrimaryMetric({
 	return (
 		<div data-primary-metric={name} className={cn("flex items-end gap-3", className)}>
 			<div className="min-w-0 flex-none">
-				<div className="text-2xs text-fg-3">{name}（主指标）</div>
+				<div className="text-xs text-fg-3">{name}（主指标）</div>
 				<div className="font-mono text-lg font-semibold">
 					{valueText(last)}
-					{unit && <small className="ml-1 text-2xs font-normal text-fg-3">{unit}</small>}
+					{unit && <small className="ml-1 text-xs font-normal text-fg-3">{unit}</small>}
 				</div>
 			</div>
 			{spark(34, "min-w-0 flex-1")}

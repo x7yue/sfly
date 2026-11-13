@@ -152,7 +152,7 @@ function ContextMenuItem({
 		>
 			<span className="flex min-w-0 flex-col">
 				<span>{children ?? (shortcut ? shortcutById(shortcut).label : null)}</span>
-				{reason && <span className="text-2xs">{reason}</span>}
+				{reason && <span className="text-xs">{reason}</span>}
 			</span>
 			{shortcut && <ShortcutKeys id={shortcut} />}
 		</MenuPrimitive.Item>
@@ -191,7 +191,7 @@ function ContextMenuSubTrigger({
 		>
 			<span className="flex min-w-0 flex-col">
 				<span>{children}</span>
-				{reason && <span className="text-2xs">{reason}</span>}
+				{reason && <span className="text-xs">{reason}</span>}
 			</span>
 			<ChevronRightIcon className="ml-auto text-fg-3" />
 		</MenuPrimitive.SubmenuTrigger>

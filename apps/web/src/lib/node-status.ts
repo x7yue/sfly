@@ -1,29 +1,20 @@
 import type { LastRunNodeStatus, NodeStatus } from "@sfly/schema";
 import type { NodeRunState } from "#/components/canvas/context";
-import type { ChainBarSegment } from "#/components/chain-progress";
 import type { StatusKind } from "#/components/status";
 import type { SegmentKind } from "#/monitor/timeline-model";
-import type { ThumbState } from "#/scenarios/thumbnail";
 
 /**
- * 节点状态在界面上的显示规则，各处都从这张表读取：状态徽标（components/status）、链路进度条
- * （components/chain-progress）、编排画布的运行状态叠加（editor/run-state）、场景缩略图
- * （scenarios/thumbnail）、运行监控页的时间线与底部面板（monitor）。
+ * 节点状态在界面上的显示规则，各处都从这张表读取：状态徽标、链路进度条与场景缩略图、
+ * 编排画布的运行状态叠加（editor/run-state）、运行监控页的时间线与底部面板（monitor）。
  *
  * 新增节点状态只改这里：表的类型是 Record<NodeStatus, …>，漏写一项类型检查就会报错。
- * 每一列的取值是对应组件自己的样式种类，具体颜色在那个组件里按种类定义（配色见 docs/DESIGN-SYSTEM.md）。
  */
 export interface NodeStatusDisplay {
 	/** 中文标签。 */
 	label: string;
-	/** 状态徽标（StatusPill / StatusDot）的样式。 */
-	badge: StatusKind;
+	kind: StatusKind;
 	/** 编排画布运行状态：节点卡片、小地图与连线。 */
 	canvas: NodeRunState;
-	/** 场景卡片缩略图上节点的颜色。 */
-	thumb: ThumbState;
-	/** 链路进度条上的一段。 */
-	bar: ChainBarSegment;
 	/** 在链路进度里算已完成（「主链 2/3」的分子）。 */
 	done: boolean;
 	/**
@@ -40,10 +31,8 @@ export interface NodeStatusDisplay {
 export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	pending: {
 		label: "待执行",
-		badge: "pending",
+		kind: "pending",
 		canvas: "pending",
-		thumb: "pending",
-		bar: "empty",
 		done: false,
 		segment: "run",
 		notRun: "还没有开始执行。",
@@ -51,10 +40,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	},
 	queued: {
 		label: "排队中",
-		badge: "warn",
-		canvas: "waiting",
-		thumb: "pending",
-		bar: "empty",
+		kind: "queued",
+		canvas: "pending",
 		done: false,
 		segment: "run",
 		notRun: "还没有开始执行。",
@@ -63,10 +50,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	// 已派发给 Agent，还在下载、安装节点包或启动执行器。
 	dispatched: {
 		label: "准备中",
-		badge: "running",
+		kind: "running",
 		canvas: "running",
-		thumb: "running",
-		bar: "running",
 		done: false,
 		segment: "run",
 		notRun: "还没有开始执行。",
@@ -74,10 +59,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	},
 	running: {
 		label: "执行中",
-		badge: "running",
+		kind: "running",
 		canvas: "running",
-		thumb: "running",
-		bar: "running",
 		done: false,
 		segment: "run",
 		notRun: "还没有开始执行。",
@@ -85,10 +68,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	},
 	waiting: {
 		label: "等待中",
-		badge: "warn",
+		kind: "warn",
 		canvas: "waiting",
-		thumb: "waiting",
-		bar: "waiting",
 		done: false,
 		segment: "wait",
 		notRun: "还没有开始执行。",
@@ -96,10 +77,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	},
 	success: {
 		label: "成功",
-		badge: "ok",
+		kind: "ok",
 		canvas: "done",
-		thumb: "done",
-		bar: "ok",
 		done: true,
 		segment: "ok",
 		notRun: "还没有开始执行。",
@@ -107,10 +86,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	},
 	failed: {
 		label: "失败",
-		badge: "failed",
+		kind: "failed",
 		canvas: "failed",
-		thumb: "failed",
-		bar: "failed",
 		done: false,
 		segment: "fail",
 		notRun: "还没有开始执行。",
@@ -118,10 +95,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	},
 	skipped: {
 		label: "已跳过",
-		badge: "skipped",
+		kind: "skipped",
 		canvas: "skipped",
-		thumb: "skipped",
-		bar: "skipped",
 		done: true,
 		segment: "run",
 		notRun: "已跳过，没有执行。",
@@ -129,10 +104,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	},
 	cancelled: {
 		label: "已取消",
-		badge: "cancelled",
+		kind: "cancelled",
 		canvas: "cancelled",
-		thumb: "cancelled",
-		bar: "cancelled",
 		done: false,
 		segment: "cancel",
 		notRun: "在开始前被取消，没有执行。",
@@ -141,10 +114,8 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	// 所在子流程被停止子流程节点停止（docs/SEMANTICS.md §4.1）：场景的正常流程，不算失败，链路进度里算已完成。
 	stopped: {
 		label: "已停止",
-		badge: "stopped",
+		kind: "stopped",
 		canvas: "stopped",
-		thumb: "stopped",
-		bar: "stopped",
 		done: true,
 		segment: "stop",
 		notRun: "子流程被停止，没有执行。",

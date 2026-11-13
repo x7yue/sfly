@@ -33,7 +33,7 @@ export function OnlineEditors({ names }: { names: readonly string[] }) {
 							key={name}
 							aria-hidden
 							className={cn(
-								"grid size-5.5 place-items-center rounded-full border border-surface bg-raised-2 text-2xs font-semibold text-fg-1",
+								"grid size-5.5 place-items-center rounded-full border border-surface bg-raised-2 text-xs font-semibold text-fg-1",
 								i > 0 && "-ml-1.5",
 							)}
 						>
