@@ -155,9 +155,10 @@ async function readMessages(
 	let message: Message = { event: "message" };
 	for (;;) {
 		const { done, value } = await reader.read();
-		if (done) return;
-		const lines = (rest + decoder.decode(value, { stream: true })).split(/\r\n|\r|\n/);
-		rest = lines.pop() ?? "";
+		const text = rest + decoder.decode(value, { stream: !done });
+		const heldCr = !done && text.endsWith("\r") ? "\r" : "";
+		const lines = text.slice(0, text.length - heldCr.length).split(/\r\n|\r|\n/);
+		rest = (lines.pop() ?? "") + heldCr;
 		for (const line of lines) {
 			if (line === "") {
 				receive(message);
@@ -174,5 +175,6 @@ async function readMessages(
 			} else if (field === "id" && !value.includes("\0")) message.id = value;
 			else if (field === "retry" && /^\d+$/.test(value)) message.retry = Number(value);
 		}
+		if (done) return;
 	}
 }
