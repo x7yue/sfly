@@ -30,5 +30,7 @@ curl -fsSL <控制面地址>/install.sh | sh -s -- --name <名称>
 
 **SDK**：\`sfly-${version}-py3-none-any.whl\`（开发者安装 CLI：\`pip install "./sfly-${version}-py3-none-any.whl[cli]"\`）。
 
+**API 客户端**：控制面镜像带着同版本的安装包，在自建页面的项目里运行 \`npm install <控制面地址>/client/${version}/sfly-client-${version}.tgz\`，见控制面开发文档里的「用 API 客户端做自己的页面」。有不兼容的变化时，列在下面的「API 客户端的不兼容变化」里。
+
 校验下载的文件：\`sha256sum -c SHA256SUMS --ignore-missing\`。
 EOF
