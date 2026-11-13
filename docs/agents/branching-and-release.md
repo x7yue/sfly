@@ -26,6 +26,9 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 - 标题用祈使句：squash 合入后它就是 `main` 上的提交标题（GitHub 自动追加 ` (#编号)`），各提交的信息成为正文。
 - 加上分类标签，Release 说明按它分组（`.github/release.yml`）：`enhancement` 新功能、`bug` 修复、`documentation` 文档；其余归入「其他」。
+- 让 API 客户端生成的类型（`packages/client/src/generated/`）出现不兼容变化的 PR，另加标签 `breaking-change`，并在描述里写明变了什么、自建页面要怎么改。Release 说明把带这个标签的 PR 放在最前面的「API 客户端的不兼容变化」里：1.0 之前不保证跨版本兼容（ADR 0022），用户要在升级前知道要改什么。
+  - 不兼容的变化：删除或改名领域、方法、字段、事件；请求里新增必填的字段，或者可选的字段变成必填；字段的类型变了，或者响应里的枚举多了值（页面里穷举它的代码要跟着改）；响应里去掉字段，或者字段从总有值变成可能为空。只新增方法、可选的请求字段或响应字段不算。
+  - 生成的类型提交在仓库里，看 PR 的 diff 里 `packages/client/src/generated/` 的变化来判断。
 - 用 `gh pr merge <编号> --auto --squash` 合入：CI 通过后自动合入并删除分支，不用守着 CI。
 
 ### 关键路径的改动要贴 `pnpm perf` 结果

@@ -3,6 +3,8 @@ changelog:
   exclude:
     labels: [duplicate, invalid, wontfix]
   categories:
+    - title: API 客户端的不兼容变化
+      labels: [breaking-change]
     - title: 新功能
       labels: [enhancement]
     - title: 修复
