@@ -4,9 +4,6 @@ import { openPage } from "./cross-origin-page";
 import { START_TIME } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing } from "./support";
 
-// 自建页面（ADR 0022）：页面托管在另一个来源，用构建好的 API 客户端（packages/client/dist）直接调用控制面。
-// 浏览器负责跨域：每个请求都带 x-sfly-client，都要先预检；响应头要在 Access-Control-Expose-Headers 里才读得到。
-
 const NICKNAME = "小明";
 
 interface Subscription {
@@ -14,7 +11,6 @@ interface Subscription {
 	stop: () => void;
 }
 
-/** 在页面里订阅一次运行的事件流，记下收到的运行状态。 */
 function subscribeToRun(
 	page: Page,
 	baseUrl: string,
@@ -37,7 +33,6 @@ function subscribeToRun(
 const latestStatus = (subscription: JSHandle<Subscription>) =>
 	subscription.evaluate(({ statuses }) => statuses.at(-1));
 
-/** 在页面里读场景列表、带昵称触发一次运行。 */
 function readThenTrigger(page: Page, baseUrl: string, scenarioId: string) {
 	return page.evaluate(
 		async ({ baseUrl, scenarioId, nickname }) => {
