@@ -14,6 +14,8 @@ import packageJson from "../package.json" with { type: "json" };
 import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { type BundledServer, startBundledServer } from "./support/bundled-server.js";
+import { shellBlocks } from "./support/doc-commands.js";
+import { typecheckExamples } from "./support/doc-examples.js";
 import { eventually } from "./support/eventually.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
@@ -68,12 +70,18 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 		["npm", ["install", "--no-audit", "--no-fund"]],
 		["pnpm", ["add"]],
 	])(
-		"提供同版本的 API 客户端安装包，%s 把下载地址装进空项目后导入并调通健康检查",
+		"提供同版本的 API 客户端安装包，%s 按用户文档里的地址装进空项目后导入并调通健康检查，文档的示例代码对着装好的包通过类型检查",
 		async (manager, install) => {
 			const { tarballs } = await api.getJson<{ tarballs: Array<{ version: string; url: string }> }>(
 				"/client",
 			);
 			expect(tarballs.map((t) => t.version)).toEqual([version]);
+			const doc = await (await fetchPath("/docs/api-client.md")).text();
+			const command = shellBlocks(doc)
+				.flatMap((block) => block.split("\n"))
+				.find((line) => line.startsWith(`${manager} `));
+			const url = command?.split(" ").at(-1) ?? "";
+			expect(url).toBe(tarballs[0]?.url);
 
 			const project = await mkdtemp(join(tmpdir(), "sfly-client-project-"));
 			const run = (command: string, args: string[]) =>
@@ -86,7 +94,7 @@ describe.skipIf(!bundleDir)("打包后的控制面", () => {
 					join(project, "package.json"),
 					JSON.stringify({ name: "dashboard", private: true, type: "module" }),
 				);
-				await run(manager, [...install, (tarballs[0] as { url: string }).url]);
+				await run(manager, [...install, url]);
 				await writeFile(
 					join(project, "check.mjs"),
 					`import { createClient } from "@sfly/client";
@@ -96,6 +104,7 @@ console.log(JSON.stringify(await client.system.health()));
 				);
 				const { stdout } = await run("node", ["check.mjs"]);
 				expect(JSON.parse(stdout)).toMatchObject({ status: "ok", database: "ok" });
+				expect(typecheckExamples(doc, "api-client.md", project)).toEqual([]);
 			} finally {
 				await rm(project, { recursive: true, force: true });
 			}
