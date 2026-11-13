@@ -21,6 +21,7 @@
 	],
 	"scripts": {
 		"build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/check-dist.mjs",
+		"tarball": "node scripts/tarball.mjs",
 		"typecheck": "tsc -p ."
 	},
 	"devDependencies": {
