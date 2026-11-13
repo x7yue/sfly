@@ -402,7 +402,7 @@ const RunLogCursor = z.string();
 
 /**
  * 按运行的实时推送的位置（#225）：不透明字符串，记录范围内每个任务已经推送到的序号。
- * 首次连接用分页返回的 `live_after`，之后每个事件的 ID 都是这个格式（浏览器重连时经 `Last-Event-ID` 带回）。
+ * 首次连接用分页返回的 `live_after`，之后每个事件的 ID 都是这个格式（断线重连时经 `Last-Event-ID` 请求头带回）。
  */
 const RunLogLiveCursor = z.string();
 
@@ -509,7 +509,7 @@ export const logsApi = {
 	}),
 	/**
 	 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
-	 * （从分页的 last_seq 接上，浏览器重连时按 Last-Event-ID 续传）。
+	 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。
 	 */
 	events: stream({
 		path: "/tasks/:id/logs/events",
@@ -550,8 +550,8 @@ export const logsApi = {
 	 * 按运行的实时推送（SSE，#225）：范围（`nodes`）内全部任务新写入的行，包括订阅之后才开始的任务和尝试，
 	 * 只推送 `level` 里的级别；范围和级别要与读历史时相同。`after` 用最新一页的 `live_after`。
 	 *
-	 * - `logs`：一批新行；事件 ID 是推送到的位置（不透明），浏览器原生 EventSource 断线重连时经 `Last-Event-ID`
-	 *   带回，控制面只补发之后的行，不重复也不遗漏。
+	 * - `logs`：一批新行；事件 ID 是推送到的位置（不透明），断线重连时经 `Last-Event-ID` 请求头带回
+	 *   （API 客户端的订阅自动带上），控制面只补发之后的行，不重复也不遗漏。
 	 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
 	 *
 	 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。

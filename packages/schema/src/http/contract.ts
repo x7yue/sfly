@@ -3,7 +3,7 @@ import { z } from "zod";
 /**
  * HTTP API 契约（ADR 0007）：每个接口在这里用 zod 定义一份请求与响应 schema，
  * 控制面用它校验请求、约束响应（apps/server/src/http/contract-route.ts），
- * 前端用它推导类型、拼路径、生成 query key，并在开发环境校验响应（apps/web/src/lib/api.ts）。
+ * 前端用它推导类型、生成 query key，经 API 客户端（@sfly/client）调用，并在开发环境校验响应（apps/web/src/lib/api.ts）。
  *
  * 约定（新增接口照此编写，见 docs/DESIGN-SYSTEM.md「HTTP 契约」一节）：
  *
@@ -178,20 +178,6 @@ export type ControlPlaneTimeEvent = z.infer<typeof ControlPlaneTimeEvent>;
  * 值是控制面的版本号（Agent、SDK 与控制面同版本，ADR 0010）。`sfly` 命令行据此在版本不一致时告警。
  */
 export const CONTROL_PLANE_VERSION_HEADER = "x-sfly-version";
-
-/**
- * 按路径模板拼出路径；路径参数用 encodeURIComponent 编码，末尾 `*` 的值按 `/` 分段、每段单独编码。
- */
-export function pathFor(def: Pick<RouteDef, "path">, params?: Record<string, unknown>): string {
-	const value = (name: string) => {
-		const v = params?.[name];
-		if (v === undefined || v === null) throw new Error(`缺少路径参数 ${name}（${def.path}）`);
-		return String(v);
-	};
-	return def.path
-		.replace(/:([A-Za-z_][A-Za-z0-9_]*)/g, (_, name: string) => encodeURIComponent(value(name)))
-		.replace(/\*$/, () => value("*").split("/").map(encodeURIComponent).join("/"));
-}
 
 /** 领域前缀（query key 的第一段）：让这个领域的查询全部失效时用，例如 `domainKey(runsApi.get)` → `["runs"]`。 */
 export const domainKey = (def: EndpointDef) => [def.key[0] as string] as const;
