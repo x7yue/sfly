@@ -9,10 +9,9 @@ How every subagent sets up its worktree, runs heavy commands and pushes when sev
 
 ## Heavy commands
 
-The full test suite, the pre-push hook, `pnpm test:e2e*` and `pnpm perf` slow each other down when they overlap. That produces timing flakes, and `pnpm perf` numbers go wrong (a 4-minute soak once reported a backlog that wasn't there). Run one at a time, queued on a single lock file that all subagents share:
+The full test suite, `pnpm test:e2e*` and `pnpm perf` slow each other down when they overlap. That produces timing flakes, and `pnpm perf` numbers go wrong (a 4-minute soak once reported a backlog that wasn't there). Run one at a time, queued on a single lock file that all subagents share:
 
 ```bash
-flock -o <lock file> git push -u origin <branch>
 flock -o <lock file> pnpm test
 ```
 
@@ -39,9 +38,8 @@ Tests create Unix sockets, and a socket path longer than 108 bytes fails with `A
 
 ## Pushing
 
-- A push from a worktree runs the full check (about 5 minutes).
-- Save each push attempt to its own log (`git push … 2>&1 | tee <log>`). A flaky failure needs the first attempt's assertion diff, and a retry replaces what the terminal shows.
-- When the pre-push check already passed and only the network dropped, retry with `--no-verify`; CI runs the full check again.
+- A push from a worktree runs the pre-push hook: version, generated code, lint and typecheck. It does not run tests; CI does, on branches that have a PR (a draft counts).
+- When the pre-push check already passed and only the network dropped, retry with `--no-verify`.
 
 ## CI and merging
 

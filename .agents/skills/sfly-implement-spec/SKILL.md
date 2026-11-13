@@ -30,7 +30,7 @@ Communication to and from subagents should be sparse. Communicate primarily thro
    - runs long checks (full test suites, e2e, `pnpm perf`) in the foreground and ends its turn only with its final report: every early stop wakes the orchestrator with nothing to act on;
    - merges the integration branch tip into its own branch before reporting done
 
-5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**. Push the integration branch after a batch of merges rather than after each one: every push runs the full pre-push check.
+5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**. Push the integration branch after a batch of merges rather than after each one: every push to a branch with a PR starts a CI run.
 
 6. If this changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. This allows for maximum concurrency.
 
