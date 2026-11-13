@@ -121,17 +121,18 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Input` | `sunk` 底、`border-control` 描边，聚焦时青色描边 + `focus-glow` 光晕（强制颜色模式下另有透明轮廓兜底，`focus:outline-hidden`），`aria-invalid` 时红色描边 |
 | `Textarea`、`NativeSelect` | 多行输入、原生下拉选择，外观与 `Input` 一致 |
 | `Checkbox` | 勾选框：原生 `input`，16px、`sunk` 底、`border-control` 描边；勾选后中性高亮（`selected` 底 + 深色对勾），不用青色 |
-| `Switch` | 开关：30 × 18、`border-control` 描边；关闭 `track` 底 + 灰色圆点，打开 `selected` 底 + 深色圆点（与勾选框一致，不用绿色）；强制颜色模式下用系统颜色画 |
+| `Switch` | 开关：30 × 18、`border-control` 描边；关闭 `track` 底 + 灰色圆点，打开 `selected` 底 + 深色圆点（与勾选框一致，不用绿色）；强制颜色模式下用系统颜色画。旁边有文字时写 `label="必填"`：开关和文字包在同一个 `<label>` 里，点文字也切换，文字就是开关的名称（不再另写 `aria-label`）；长说明放在旁边，用 `aria-describedby` 关联 |
+| `FormField`、`FormAlert` | 表单字段：标签（必填加中性的 `*`）、控件、帮助、错误；错误与帮助用 `aria-describedby` 关联、出错时控件 `aria-invalid`（控件经 render 函数拿到这些属性）。`FormAlert` 是提交失败的服务端错误（`role="alert"`），写在弹窗里、提交按钮上方。见 6.4 |
 | `Segmented` | 分段选择（筛选、视图切换）：`fieldset` + `aria-pressed` 按钮，`border-control` 描边，当前项中性高亮（`raised-2` 底加一圈 `border-strong` 内描边）；只有图标的选项给 `label` |
 | `Badge` | `default` / `ok` / `warn` / `danger`；版本号、计数等（12px） |
-| `Dialog` | 模态弹窗：锁定焦点、Esc 与点遮罩关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖） |
-| `Sheet` | 抽屉（右侧，默认 460px），焦点行为同 Dialog |
-| `DropdownMenu` | 菜单（Base UI Menu） |
-| `ContextMenu` | 右键菜单（Base UI Menu，没有 Trigger）：使用方给出 `open` 与 `anchor`（屏幕坐标或元素）；`ContextMenuItem` 的 `shortcut` 从快捷键注册表取按键与名称，`disabledReason` 禁用并写明原因；关闭后焦点回到打开前的元素。画布上经 `FlowCanvas` 的 `menu` 使用 |
-| `Command` / `CommandDialog` | 命令面板（cmdk + Dialog） |
-| `Tooltip` | 悬浮提示（根部已有 `TooltipProvider`，延迟 400ms） |
-| `Table` 系列 | 表头 12px 三级文字；行悬停 3% 白；`data-state="selected"` 为中性选中 |
-| `Kbd`、`Skeleton`、`Separator`、`Toaster` | 按键、骨架、分隔线、通知容器 |
+| `Dialog` | 模态弹窗：锁定焦点、Esc 关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖），最高 76vh。三段：`DialogHeader`、`DialogBody`、`DialogFooter`，内容变高时只有 `DialogBody` 滚动（上下还有内容时边缘出现阴影），标题与按钮一直看得见；外层包 `<form>` 也照样分三段（form 不占版面）。没用 `DialogBody` 的弹窗过高时整个弹窗滚动，按钮行贴在底边。点遮罩关闭由 `pointerDismiss` 决定：默认 `"pristine"`，在弹窗里输入过任何东西后点遮罩不再关闭（Esc 与「取消」照常），搜索类弹窗（命令面板）`"always"`，`"never"` 只能用按钮或 Esc。`DialogDescription` 是决定后果的说明：13px 正文、二级文字 |
+| `Sheet` | 抽屉（右侧，默认 460px），焦点与点遮罩关闭的规则同 Dialog |
+| `DropdownMenu` / `ContextMenu` | 下拉菜单（有 Trigger）与右键菜单（没有 Trigger，使用方给出 `open` 与 `anchor`：屏幕坐标或元素）是同一种菜单，外观与词汇都来自 `menu-item.tsx`：当前项 `raised-2` 底；`variant="danger"` 只把文字换成 `danger-fg`，高亮底色不变红；`disabledReason` 禁用并把原因写在文字下面一行（12px、三级文字，也读给读屏用户），禁用项不降整项不透明度，只有文字退到三级、图标与按键 40%。两者都不是模态：打开时页面照常滚动，点外面一下就作用到点到的地方。`ContextMenuItem` 的 `shortcut` 从快捷键注册表取按键与名称；关闭后焦点回到打开前的元素。画布上经 `FlowCanvas` 的 `menu` 使用 |
+| `Command` / `CommandDialog` | 命令面板（cmdk + Dialog，点遮罩随时关闭）；结果列表的无障碍名称是「结果」 |
+| `Tooltip` | 悬浮提示（根部已有 `TooltipProvider`，延迟 400ms）；在相邻触发器之间移动时新提示直接出现、旧提示直接消失（`data-instant` 不做过渡） |
+| `Truncate` | 单行截断，见 6.5 |
+| `Table` 系列 | 表头 12px 三级文字（不加粗），吸在最近的滚动区顶端（列表页是外壳的主区域），行进入视野时让开表头的高度；行悬停 3% 白；`data-state="selected"` 为中性选中。`scroll`：默认 `"none"`（不包滚动容器，表头才吸得住）；可能比容器宽的内容表格（文档里的表）传 `"x"`。列宽见 6.5 |
+| `Kbd`、`Skeleton`、`Separator`、`Toaster` | 按键、骨架、分隔线、通知容器（右下角，见 6.3） |
 
 ### 应用组件 `components/`
 
@@ -140,7 +141,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `app-shell/AppShell` | 外壳：侧边栏（导航来自 `navigation.ts`，可折叠，状态存 localStorage；项右侧平时是计数，悬停或键盘聚焦时在同一位置换成跳转快捷键 `Keys`，折叠后不显示）、顶栏（面包屑来自路由 `staticData.crumb`、Ctrl K 搜索入口、昵称） |
 | `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、运行抽屉、通知；`useOverlays().open("shortcuts")`、`useOverlays().runScenario(场景)` |
 | `app-shell/CommandPalette` | 「当前页面」「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」六组。「当前页面」是当前页面已绑定、并在注册表里带 `palette` 的快捷键（取消运行、保存……），名称与按键取自注册表，页面状态变了（运行结束、没有失败节点）就自动出现或消失，为空时整组不渲染；其余命令加在 `commands` 里 |
-| `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
+| `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`PageHeader` 固定一个控件高（有没有右侧按钮标题都在同一位置），标题 h1 可以被程序聚焦（焦点去向的兜底，见第 7 节）；`Panel` 用 `overflow: clip` 裁圆角，不是滚动容器（里面的表头才能吸顶）；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
 | `#/docs/Markdown` | 用户文档（ADR 0013）的 Markdown 渲染：代码块用 `CodeBlock`（```prompt 代码块是给人读、复制给 AI 编程助手的提示词，自动换行、正文字体；其余代码块不换行），表格用 `ui/table`，`<slug>.md` 链接换成文档页 |
 | `status`：`STATUS`、`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView`、`alignPulses` | 状态语法与槽位，见 6.1；运行 / 链 / 节点状态的种类与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，颜色、形状、动效只从 `STATUS` 取，不另写映射表。节点状态在各处的显示规则（种类、画布运行状态、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状；每段的颜色、描边与高低取自 `STATUS[kind].area`） |
@@ -149,7 +150,10 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它；行的属性（点击、样式、`data-*` 标记）由 `rowProps` 给出 |
 | `list-navigation`：`useListNavigation`、`focusFirstListItem` | 列表页的行导航，见第 7 节 |
 | `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
-| `feedback/notify` | `notify.success / info / warning / error` |
+| `feedback/notify` | `notify.success / info / warning / error`，见 6.3 |
+| `feedback/banner`：`Banner` | 页内横幅（`danger` / `warn` / `info`），见 6.3 |
+| `feedback/clipboard`：`writeClipboard` | 复制：先用 Clipboard API，内网 http 下没有它或被拒绝时改用浏览器的复制命令；两条路都失败才提示「复制失败」。在点击处理函数里同步调用 |
+| `focus-recovery`：`useFocusRecovery` | 焦点所在的元素被移走时的去向，见第 7 节；根路由挂载一次 |
 | `shortcuts`：`useShortcut`、`ShortcutsDialog` | 见第 7 节 |
 | `#/editor/inspector/ReferenceEditor`：`ReferenceEditor`、`InsertReferenceButton` | 可以写引用的文本输入框（CodeMirror 6 内核，只引入 `@codemirror/state`、`view`、`commands`）：输入 `$` 或点「插入引用」弹出补全，引用高亮成一块、整块删除，1 到 8 行自动增高；外观与 `Input` 一致。能写引用的字段都用它，不另写一套；`choices` 传 `null` 时是不能写引用的多行输入框（入口参数的默认值）。`$` 触发的补全不预选，方向键或鼠标选中后 `Enter` / `Tab` 才插入 |
 | `#/editor/inspector/ReferencePicker`：`ReferencePicker`、`ReferenceChip` | 非字符串参数（数字、布尔、枚举、JSON）：「插入引用」按钮选一个引用作为整个值；值是整值引用时用引用标签代替类型控件，点 × 回到类型控件。没有「常量 / 引用」切换，显示什么由值决定 |
@@ -197,10 +201,47 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 ### 6.3 空、加载、错误、禁用
 
 - **空**：`EmptyState`——图标方块、14px 标题、说明（最宽 40em，居中）、下一步操作（按钮或 `CodeBlock` 命令示例），放在 `Panel` 里。
-- **加载**：`TableSkeleton`（按表格列数画骨架，`role=status` 名称「加载中」）；首次加载才显示，后台刷新不闪。
+- **加载**：`TableSkeleton`（按表格列数画骨架，`role=status` 名称「加载中」）；首次加载才显示，后台刷新不闪；出现前先等 200ms，加载在 200ms 内完成时不闪骨架。
 - **错误**：`ErrorState`——红色描边块，标题「无法加载 …」、原因、一行错误详情（`GET /api/agents → 503 code`）、「重试」与「复制错误详情」（含 details）。已有数据时后台刷新失败不替换页面。查询默认失败后再重试 2 次（间隔 1 秒），4xx 不重试（`src/router.tsx`）。
 - **禁用**：40% 不透明、`cursor-not-allowed`，不换颜色。
-- **通知**：右下角，不盖住页面顶栏；成功 / 信息 2.6 秒、警告 5.2 秒后消失。运行失败这类需要立刻注意的信息不用通知，用页内横幅。
+- **通知**：见下面的「通知与横幅」。
+
+**通知与横幅**。两者分工按信息要不要留在原处、要不要立刻注意：
+
+| | 通知（`notify`） | 页内横幅（`Banner`） | 弹窗里的错误（`FormAlert`） |
+|---|---|---|---|
+| 用于 | 刚做完的操作的回执：已保存、已复制、已归档（带「撤销」） | 页面状态里需要立刻注意的事：运行失败、连接断开、数据可能过期 | 弹窗里的提交被服务端拒绝（重名、地址无效） |
+| 位置 | 右下角（不盖住全屏页顶栏中间的运行状态与失败摘要） | 它影响的区域顶部，跟着页面滚动 | 弹窗里、提交按钮上方 |
+| 消失 | 成功 / 信息 2.6 秒，警告 5.2 秒；失败的、带操作的（「撤销」）不自动消失，有关闭按钮 | 状态解除时由页面移除，不自己计时；`onDismiss` 只是收起 | 下次提交时清掉 |
+| 读屏 | 通知区域「通知（Alt+T 跳到这里）」；Alt+T 把焦点移进去 | `announce` 时读一次（失败用 alert）；页面已有状态播报（运行监控的 `<output>`）时不要再开 | `role="alert"` |
+
+- 通知里的信息在别处也要看得到：「撤销」在「已归档」里也能做，运行结果在监控页顶栏一直显示。
+- 弹窗打开时不发通知（会被遮罩挡住、读屏也读不到），错误写在弹窗里。
+- 横幅颜色之外靠图标形状区分：失败八边形、警告三角、信息圆形。
+
+### 6.4 表单与校验
+
+- 提交按钮只在提交进行中禁用，不用禁用来拦校验：禁用的按钮不能聚焦，键盘和读屏用户不知道为什么点不了。
+- 第一次提交之前不显示错误；提交时校验，失败就在字段下写明原因（`FormField` 的 `error`），焦点放到第一个出错的字段；之后随输入更新错误。必填字段标签后加中性的 `*`，控件带 `aria-required`。
+- 服务端拒绝时用 `FormAlert` 写在弹窗里、提交按钮上方，弹窗不关闭，不发通知。
+- 表单弹窗输入过内容后点遮罩不关闭（`Dialog` 默认如此），Esc 与「取消」照常关闭。
+- 运行抽屉的入口参数表单（`run-drawer/TriggerForm`）是参照实现。
+
+### 6.5 长文本、截断与列宽
+
+- **标题不截成一行**：面板里的标题（卡片、检查器）最多两行，`line-clamp-2`；放不下的部分在详情页或悬停里看。
+- **工具条里的标题、表格与列表里的名称**：用 `Truncate` 单行截断。真的被截断时，悬停或键盘聚焦都会用提示显示全文（只有 `title` 不行：键盘和触屏拿不到）；截断的是链接、按钮本身时传 `render={<Link …/>}`，提示跟着它的聚焦出现；普通文字被截断时自己可以 Tab 到。全文始终在 DOM 里，读屏、页内查找、复制拿到的都是全文，不在脚本里截字符串。
+- **标识符保留结尾**：包名@版本、文件名这类最有区分度的在末尾，`Truncate keepEnd={n}` 让结尾 n 个字符始终可见、省略号落在中间。
+- **标识符不折行**：等宽的标识符（包名@版本、地址、运行编号）不在连字符处折成两行，宁可截断；整段的路径、堆栈要换行时用 `overflow-wrap: anywhere`（`wrap-anywhere`），不用 `break-all`（它把普通单词也从中间切开）。
+- **列表表格的列宽**（`TableHead` / `TableCell` 的 `width`，DataTable 写在列的 `meta.width`）：编号、状态、进度、版本、触发人、时间、耗时、操作这类列用 `"fit"`（按内容收紧、不折行）；场景名、说明、错误信息这类列用 `"grow"`（吃掉剩下的宽度，里面用 `Truncate`），每张表只有一列 `"grow"`。宽屏上余量都给 `"grow"` 列，数值列聚在一起，不平摊到每一列。
+
+### 6.6 浮层体系
+
+浮层继续用 Base UI（Dialog、Popover、Menu、Tooltip）、cmdk、sonner，不迁移到原生 `<dialog>`、`popover`、CSS anchor positioning、`interestfor`（2026-11 设计评审的评估结论）：
+
+- Base UI 已经做到原生 `<dialog>` 给的东西：页面其余部分对读屏不可见、焦点锁定、Esc 关闭、焦点归还（还能用 `finalFocus` 指定菜单项已经不在时的去处），菜单靠近视口边缘会翻转；`popover` 的声明式开关用不上（开关状态在 React 里）；anchor positioning 达不到碰撞翻转；`interestfor`、`closedby`、`focusgroup` 的浏览器支持还不够。改用原生要重写受控打开、`finalFocus`、退场动画，收益小于成本。
+- 原生的几条行为在组件层吸收：表单弹窗输入过后不能点外面关闭（对应 `closedby="none"`，见 `Dialog` 的 `pointerDismiss`）；带操作的通知不自动消失；通知区域与命令列表用中文名称；进出场用 Base UI 的 `data-starting-style` / `data-ending-style` 加 CSS 过渡（作用同 `@starting-style`，退场等过渡结束再卸载，可以中途反向），不用关键帧。
+- 以后真的改用原生 `<dialog>` / `popover` 的组件，再按原生方案加 `overlay` 与 `transition-behavior: allow-discrete`。
 
 ## 7. 键盘、焦点与快捷键
 
@@ -208,6 +249,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 画布节点卡片的焦点环 `outline-offset` 是 3px：读作「框在卡片外面」，与执行中节点的青色描边区分开。
 - 编排画布只有一个 Tab 停靠点：画布区域。进入后方向键沿链选中节点，焦点跟着移到节点卡片上；Esc 取消选中、焦点回到画布区域。节点卡片与连线都不进 Tab 顺序（React Flow 的 `nodesFocusable` / `edgesFocusable` 关闭）。顶栏控件在 DOM 里排在画布之前，工具条与检查器在画布之后。
 - 弹窗与抽屉用 `Dialog` / `Sheet`：锁定焦点、Esc 关闭、关闭后焦点回到原处；自己写的浮层也必须满足，并加端到端测试。
+- **焦点所在的元素被移走时**（归档、恢复、删除了它所在的列表项，空状态被列表替换），焦点不留在 body 上（`useFocusRecovery`，根路由挂载，不用逐页接）：它在列表项（`data-list-item`）里就交给下一项的主链接，没有下一项交给上一项；列表空了、或它不在列表项里，交给页面标题（`PageHeader` 的 h1）。弹窗、菜单关闭时焦点先回到打开它的元素，那个元素随后被移走也照这个规则处理。只管外壳页的主区域，全屏页（画布、运行监控）自己管焦点；用户自己点空白处让焦点离开时不处理。新增内容（登记了第一个机器人）后要把焦点放到新的那一项时，页面自己聚焦它。
 - **快捷键注册表** `src/lib/shortcuts.ts` 的 `SHORTCUTS` 是唯一来源：快捷键面板（?）从它生成，页面用 `useShortcut(id, handler, enabled)` 绑定（`enabled` 为 false 时不绑定，键不被拦截）。新增快捷键先登记（分组「全局 / 编排画布 / 运行监控 / 列表页」、名称、按键、是否允许在输入框或弹窗中触发），再绑定；没有绑定的不要登记。写法：`Ctrl+K`（同时按）、`G D`（1 秒内依次按）；Ctrl 同时匹配 ⌘；默认焦点在输入框里或有弹窗打开时不触发。
 - 不同页面分组（编排画布、运行监控、列表页）可以登记同一个键（画布与监控页的 `E`、`R`，画布与列表页的 `/`），因为它们属于互斥的路由：按键只匹配当前已绑定处理函数的那一个。「全局」的键不能与任何分组重复，同一分组内也不能重复（`shortcuts.test.ts` 检查）。
 - **列表页行导航**（分组「列表页」）：场景列表（卡片与表格视图）、运行记录（进行中的卡片与历史表格）、节点包列表是「列表页」。`J` / `K` 把真实的键盘焦点移到下一项 / 上一项的主链接上（Enter 走链接本来的行为，不循环；焦点不在任何一项里时 J 去第一项、K 去最后一项），`/` 聚焦并选中搜索框的文字，搜索框里按 ↓ 进入第一项。实现基于 DOM、不保存状态：每项容器写 `data-list-item`、主链接写 `data-list-primary`，页面调用一次 `useListNavigation()`；搜索框用 `useSearchInput`（返回 `ref` 与 `onKeyDown`，`/` 与 ↓ 在里面接好）。焦点环就是全局的键盘焦点环；所在的行或卡片另加与悬停相同的中性强调（表格行 `has-[:focus-visible]:bg-fg-1/3`，卡片 `has-[:focus-visible]:border-border-strong`），只写在带 `data-list-item` 的行上，`selected` 样式留给真正的选中。Agent 页与飞书机器人页没有可打开的目标，不接入；导航键不是命令，不进命令面板。
@@ -254,6 +296,6 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - **减少动效**（`prefers-reduced-motion: reduce`）：去掉位移、缩放、视口平移和持续循环的动画，保留淡入淡出与颜色变化，状态信息不能只靠动画表达。不用全局把时长压成 0 的写法，按动效逐个处理，规则写在动效定义旁边：
   - 循环动画只在 `prefers-reduced-motion: no-preference` 下启用：执行中的脉冲（`pulse-ring`）、画布选中连线的流动（`animate-edge-flow`）、骨架屏的明暗呼吸（`animate-pulse`）。静止时它们的形状已经说明了状态。
   - 加载图标（`animate-spin`）放慢到 3 秒一圈，不停下来。
-  - 浮层的进出场（tw-animate 的 `zoom-*`、`slide-*`，Base UI 的 `data-starting-style` / `data-ending-style` 位移）只剩淡入淡出（`app.css` base 层）。
+  - 浮层的进出场（`components/ui/overlay.ts` 的 `POPUP_MOTION`：Base UI 的 `data-starting-style` / `data-ending-style` 加过渡）只剩淡入淡出：缩放写在 `motion-safe:` 里，抽屉的位移由 `app.css` base 层清掉。进场 `--motion-base`、退场 `--motion-fast`；通知进出场 `--motion-slow`，堆叠时高度变化不做过渡。
   - 颜色、底色、描边的过渡照常。
 

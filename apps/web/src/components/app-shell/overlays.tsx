@@ -1,5 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { createContext, useContext, useMemo, useState } from "react";
+import { useFocusRecovery } from "#/components/focus-recovery";
 import { ShortcutListener, ShortcutsDialog, useShortcut } from "#/components/shortcuts";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { NewScenarioDialog } from "#/scenarios/dialogs";
@@ -14,7 +15,8 @@ import { toggleSidebar } from "./sidebar-state";
  * 全局浮层：命令面板、快捷键面板、昵称弹窗、新建场景弹窗、运行抽屉（命令面板的「运行场景」）与通知容器，
  * 挂在根路由，外壳页和全屏页都能用。
  * 同一时间只打开一个；任何组件用 `useOverlays().open("shortcuts")` 打开。
- * 弹窗（Base UI Dialog）负责锁定焦点、Esc 关闭，并在关闭后把焦点还给打开前的元素。
+ * 弹窗（Base UI Dialog）负责锁定焦点、Esc 关闭，并在关闭后把焦点还给打开前的元素；
+ * 焦点所在的元素被移走（归档、删除列表项）时由 useFocusRecovery 交给相邻的一项。
  */
 export type Overlay = "command-palette" | "shortcuts" | "nickname" | "new-scenario";
 
@@ -62,6 +64,7 @@ export function GlobalOverlays({ children }: { children: React.ReactNode }) {
 	const toggle = (overlay: Overlay) => setCurrent((c) => (c === overlay ? null : overlay));
 	const setOpen = (overlay: Overlay) => (open: boolean) => setCurrent(open ? overlay : null);
 
+	useFocusRecovery();
 	useShortcut("command-palette", () => toggle("command-palette"));
 	useShortcut("shortcuts-help", () => toggle("shortcuts"));
 	useShortcut("toggle-sidebar", toggleSidebar);
