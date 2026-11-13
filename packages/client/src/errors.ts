@@ -2,16 +2,18 @@
  * 客户端自己给出的错误码；其余错误码来自控制面的 `{ error: { code } }`。
  *
  * - `network_error`：没有收到响应（控制面不可达、连接被断开、浏览器拦下跨域请求），status 为 0。
+ * - `nickname_required`：写操作（非 GET）没有昵称，请求没有发出，status 为 400。控制面对没有昵称的写操作回复同一个错误码。
  * - `http_error`：错误响应不是控制面的错误格式（例如代理返回的页面），details 是响应体。
  * - `invalid_response`：成功响应的格式不对（JSON 接口的不是 JSON，事件流的不是 `text/event-stream`）。
  */
-export type ClientErrorCode = "network_error" | "http_error" | "invalid_response";
+export type ClientErrorCode =
+	| "network_error"
+	| "nickname_required"
+	| "http_error"
+	| "invalid_response";
 
 export interface ApiErrorInit {
-	/**
-	 * HTTP 状态：收到响应时是响应的状态。`network_error` 没有收到响应，为 0；`nickname_required` 的请求没有发出，
-	 * 沿用控制面对同一问题回复的 400。
-	 */
+	/** HTTP 状态：收到响应时是响应的状态；客户端自己给出的错误码没有响应，取值见 {@link ClientErrorCode}。 */
 	status: number;
 	code: ClientErrorCode | (string & {});
 	message: string;
