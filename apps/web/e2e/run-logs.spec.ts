@@ -590,6 +590,8 @@ test("合并视图点来源节点名，或在行上打开菜单，选中这个�
 	await rows.filter({ hasText: "load config ok" }).focus();
 	await page.keyboard.press("Shift+F10");
 	await expect(rowMenu.getByRole("menuitem")).toHaveText("只看 fetch 的日志");
+	// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在日志行上（移到下一行）。
+	await expect(rowMenu).toBeFocused();
 	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("Enter");
 	await expect(scope).toHaveText("范围：fetch");

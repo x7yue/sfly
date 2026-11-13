@@ -67,6 +67,8 @@ test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节
 	// 键盘：Shift+F10 打开同样的菜单（贴着节点卡片），方向键移动，Esc 关闭后焦点回到节点。
 	await page.keyboard.press("Shift+F10");
 	await expect(menu.getByRole("menuitem")).toHaveText(items);
+	// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则按键会落在节点上。
+	await expect(menu).toBeFocused();
 	await page.keyboard.press("ArrowDown");
 	await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("在后面添加节点");
 	await page.keyboard.press("Escape");
@@ -74,7 +76,7 @@ test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节
 	await expect(nodeCard(page, "fetch")).toBeFocused();
 	// 菜单键同理。
 	await page.keyboard.press("ContextMenu");
-	await expect(menu).toBeVisible();
+	await expect(menu).toBeFocused();
 	await page.keyboard.press("Escape");
 	await expect(nodeCard(page, "fetch")).toBeFocused();
 
