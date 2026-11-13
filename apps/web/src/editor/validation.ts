@@ -16,7 +16,11 @@ export interface FieldError {
 	message: string;
 	/** 来自还没生效的输入（字段草稿），错误已显示在输入框下面。 */
 	draft?: boolean;
+	/** 来自边输入边改的文本框：输入到一半多半还不合法，字段交互过才给用户看（field-drafts.tsx）。 */
+	typed?: boolean;
 }
+
+const TYPED_FIELD = /^(params\.\d+\.name|at|duration)$/;
 
 const PARAM_NAME_MESSAGE = "参数名只能包含字母、数字和下划线，不能以数字开头";
 
@@ -34,10 +38,12 @@ export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
 		for (const issue of parsed.error.issues) {
 			const [head, index, ...rest] = issue.path;
 			const node = head === "nodes" && typeof index === "number" ? doc.nodes[index] : undefined;
+			const field = (node ? rest : issue.path).map(String).join(".");
 			errors.push({
 				nodeId: node?.id,
-				field: (node ? rest : issue.path).map(String).join("."),
+				field,
 				message: messageOf(issue.path, issue.code, issue.message),
+				typed: TYPED_FIELD.test(field),
 			});
 		}
 	}
@@ -50,6 +56,7 @@ export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
 					nodeId: node.id,
 					field: `params.${i}.name`,
 					message: `参数名 ${p.name} 重复`,
+					typed: true,
 				});
 			}
 			seen.add(p.name);

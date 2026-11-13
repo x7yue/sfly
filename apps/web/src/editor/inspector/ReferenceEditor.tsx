@@ -16,6 +16,7 @@ import {
 } from "react";
 import { ACTION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
+import type { FieldControl } from "./fields";
 import { ReferenceList } from "./ReferenceList";
 import {
 	completionGroups,
@@ -43,7 +44,7 @@ import {
  */
 export function ReferenceEditor({
 	ref,
-	id,
+	control,
 	label,
 	value,
 	choices,
@@ -53,9 +54,10 @@ export function ReferenceEditor({
 	maxLines = 8,
 	className,
 	onChange,
+	onBlur,
 }: {
 	ref?: Ref<ReferenceEditorHandle>;
-	id?: string;
+	control?: Partial<FieldControl>;
 	/** 无障碍名称。 */
 	label: string;
 	/** 文档里的值：纯文本，引用写作 `${{ 表达式 }}`。 */
@@ -70,6 +72,7 @@ export function ReferenceEditor({
 	/** 加在外框上（字体、字号等）。 */
 	className?: string;
 	onChange(value: string): void;
+	onBlur?(): void;
 }) {
 	const parent = useRef<HTMLDivElement>(null);
 	const viewRef = useRef<EditorView | null>(null);
@@ -87,10 +90,28 @@ export function ReferenceEditor({
 	const shown =
 		choices !== null && open !== null && (open.braced || open.query === "" || ordered.length > 0);
 
+	const controlId = control?.id;
+	const ariaInvalid = control?.["aria-invalid"];
+	const describedBy = control?.["aria-describedby"];
+	const ariaRequired = control?.["aria-required"];
+	const fieldKey = control?.["data-field-key"];
+	const fieldAttributes = useMemo(
+		() =>
+			attributesOf({
+				id: controlId,
+				"aria-invalid": ariaInvalid,
+				"aria-describedby": describedBy,
+				"aria-required": ariaRequired,
+				"data-field-key": fieldKey,
+			}),
+		[controlId, ariaInvalid, describedBy, ariaRequired, fieldKey],
+	);
+	const invalidShown = invalid || ariaInvalid === true;
+
 	const dynamic = useMemo<Extension>(
 		() => [
 			EditorView.contentAttributes.of({
-				...(id ? { id } : {}),
+				...fieldAttributes,
 				role: "combobox",
 				"aria-label": label,
 				"aria-haspopup": "listbox",
@@ -101,12 +122,12 @@ export function ReferenceEditor({
 			}),
 			placeholderText ? placeholder(placeholderText) : [],
 		],
-		[id, label, invalid, placeholderText, shown, listId],
+		[fieldAttributes, label, invalid, placeholderText, shown, listId],
 	);
 
 	// CodeMirror 的扩展只在挂载时建一次，回调通过这个 ref 读到最新的 props 与状态。
-	const live = useRef({ open: shown ? open : null, ordered, active, onChange, dynamic });
-	live.current = { open: shown ? open : null, ordered, active, onChange, dynamic };
+	const live = useRef({ open: shown ? open : null, ordered, active, onChange, onBlur, dynamic });
+	live.current = { open: shown ? open : null, ordered, active, onChange, onBlur, dynamic };
 
 	/** 已经交给 onChange、value 还没跟上的文本：连续输入时 value 会滞后一两次渲染，不能当成外部修改。 */
 	const emitted = useRef<string[]>([]);
@@ -161,6 +182,7 @@ export function ReferenceEditor({
 			}
 			if (update.focusChanged && !update.view.hasFocus) {
 				setOpen(null);
+				live.current.onBlur?.();
 			} else if (update.docChanged || update.selectionSet) {
 				setOpen((previous) => nextTrigger(previous, update.state, update.docChanged));
 				if (update.docChanged) setPicked(null);
@@ -237,7 +259,7 @@ export function ReferenceEditor({
 			<div
 				ref={parent}
 				data-slot="reference-editor"
-				data-invalid={invalid || undefined}
+				data-invalid={invalidShown || undefined}
 				style={
 					{
 						"--reference-editor-min-lines": minLines,
@@ -245,7 +267,7 @@ export function ReferenceEditor({
 					} as CSSProperties
 				}
 				className={cn(
-					"w-full min-w-0 cursor-text overflow-hidden rounded-md border border-border bg-sunk font-mono text-xs text-fg-1 transition-colors focus-within:border-signal focus-within:shadow-[0_0_0_3px_var(--signal-soft)] data-invalid:border-danger",
+					"w-full min-w-0 cursor-text overflow-hidden rounded-md border border-border-control bg-sunk font-mono text-xs text-fg-1 transition-colors focus-within:border-signal focus-within:shadow-[0_0_0_3px_var(--signal-soft)] data-invalid:border-danger",
 					className,
 				)}
 			/>
@@ -263,6 +285,16 @@ export function ReferenceEditor({
 				/>
 			)}
 		</div>
+	);
+}
+
+function attributesOf(
+	attributes: Record<string, string | boolean | undefined>,
+): Record<string, string> {
+	return Object.fromEntries(
+		Object.entries(attributes).flatMap(([name, value]) =>
+			value === undefined ? [] : [[name, String(value)]],
+		),
 	);
 }
 

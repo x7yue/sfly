@@ -80,7 +80,7 @@ export function EdgeInsertButton({
 					onMenu({ x: event.clientX, y: event.clientY });
 				}}
 			>
-				<PlusIcon strokeWidth={2} />
+				<PlusIcon />
 			</button>
 		</EdgeLabelRenderer>
 	);

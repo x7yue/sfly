@@ -30,7 +30,7 @@ export const PORTS = {
 export { REGION_PADDING };
 
 /**
- * 缩放范围。下限 0.3：再小时语义缩放后的标题（屏幕上 11–12px）在卡片里放不下；
+ * 缩放范围。下限 0.3：再小时语义缩放后的标题（屏幕上 12px）在卡片里放不下；
  * 打开时自动适配视图最多放大到 1。
  */
 export const MIN_ZOOM = 0.3;
@@ -39,15 +39,23 @@ export const FIT_MAX_ZOOM = 1;
 
 /**
  * 语义缩放阈值：缩放比例低于它时卡片只保留 ID、标题和状态。高于它时文字也会随缩小而在世界坐标里放大
- * （zoom-text.ts），屏幕上不小于 11px；阈值取在放大后的文字还放得进卡片的位置。
+ * （zoom-text.ts），屏幕上不小于 11px（数字与拉丁字母）、12px（中文）；阈值取在放大后的文字还放得进卡片的位置。
  */
 export const LOD_THRESHOLD = 0.75;
 
-/** 画布上任何文字在屏幕上的最小字号（px）。 */
-export const MIN_SCREEN_TEXT = 11;
-
 /** 悬浮控件与视口边缘的间距。 */
 export const FLOAT_GAP = 12;
+
+export const MINIMAP_SIZE = { width: 188, height: 118 } as const;
+
+/** 底部工具条在编辑模式下的宽度（量出来的），e2e（panel-resize.spec.ts）检查它不会超过这个值。 */
+export const DOCK_WIDTH = 506;
+
+export const INSPECTOR_MARGIN = 12;
+
+/** 检查器最宽时要给画布留出的宽度：除了检查器，画布至少要放下小地图、工具条和间距，否则工具条会压住小地图。 */
+export const INSPECTOR_CANVAS_RESERVE =
+	FLOAT_GAP + MINIMAP_SIZE.width + FLOAT_GAP + DOCK_WIDTH + FLOAT_GAP + INSPECTOR_MARGIN;
 
 /** 视口四周被悬浮控件占住的区域（px）：适配视图、键盘定位节点时避开。 */
 export interface CanvasInsets {

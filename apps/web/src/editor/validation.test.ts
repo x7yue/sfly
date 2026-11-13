@@ -42,8 +42,9 @@ describe("保存前的字段校验", () => {
 				nodeId: "entry",
 				field: "params.0.name",
 				message: "参数名只能包含字母、数字和下划线，不能以数字开头",
+				typed: true,
 			},
-			{ nodeId: "entry", field: "params.2.name", message: "参数名 url 重复" },
+			{ nodeId: "entry", field: "params.2.name", message: "参数名 url 重复", typed: true },
 		]);
 	});
 
@@ -56,7 +57,17 @@ describe("保存前的字段校验", () => {
 			],
 		};
 		expect(documentFieldErrors(doc)).toEqual([
-			{ nodeId: "wait", field: "duration", message: "不能为空" },
+			{ nodeId: "wait", field: "duration", message: "不能为空", typed: true },
+		]);
+	});
+
+	it("别的字段的错误不是边输入边改的文本框：不等字段交互过，一出现就显示", () => {
+		const doc: OrchestrationDocument = {
+			...base,
+			default_agent: "",
+		};
+		expect(documentFieldErrors(doc)).toEqual([
+			{ nodeId: undefined, field: "default_agent", message: "不能为空", typed: false },
 		]);
 	});
 });

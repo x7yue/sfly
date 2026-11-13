@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
@@ -125,9 +126,9 @@ export function VersionHistory({
 	const comparing = panes.length > 1;
 
 	return (
-		<Page>
+		<Page className="flex min-h-full flex-col">
 			<PageHeader title={name} count={list.length} description="版本历史" actions={editorLink} />
-			<div className="grid grid-cols-[300px_minmax(0,1fr)] gap-3">
+			<div className="grid flex-none grid-cols-[300px_minmax(0,1fr)] gap-3">
 				<Panel className="max-h-60 overflow-y-auto">
 					<ul aria-label="版本" className="m-0 list-none p-1">
 						{list.map((v) => (
@@ -160,7 +161,7 @@ export function VersionHistory({
 					)}
 				</Panel>
 			</div>
-			<div className={cn("mt-3 grid gap-3", comparing ? "grid-cols-2" : "grid-cols-1")}>
+			<div className={cn("mt-3 grid flex-1 gap-3", comparing ? "grid-cols-2" : "grid-cols-1")}>
 				{panes.map((pane) => (
 					<Panel key={pane.side} className="flex flex-col">
 						<div className="flex h-10 items-center gap-2 border-b border-border-soft px-3 text-xs text-fg-2">
@@ -175,7 +176,7 @@ export function VersionHistory({
 							)}
 							<span className="ml-auto text-fg-3">只读</span>
 						</div>
-						<div className="relative h-[max(360px,calc(100vh-420px))]">
+						<div className="relative min-h-90 flex-1">
 							{pane.query.data ? (
 								<VersionCanvas
 									label={`版本 ${pane.number}（只读）`}
@@ -354,15 +355,19 @@ function RestoreDialog({
 								）的内容生成新的版本 {next}。历史版本保持不变。
 							</DialogDescription>
 						</DialogHeader>
-						{draftExists && (
-							<p className="m-0 text-sm text-warn">
-								本浏览器中有这个场景未保存的修改，恢复后会被放弃。
-							</p>
-						)}
-						{restore.error && (
-							<p role="alert" className="m-0 text-sm text-danger-fg">
-								恢复失败：{restore.error.message}
-							</p>
+						{(draftExists || restore.error) && (
+							<DialogBody>
+								{draftExists && (
+									<p className="m-0 text-sm text-warn-fg">
+										本浏览器中有这个场景未保存的修改，恢复后会被放弃。
+									</p>
+								)}
+								{restore.error && (
+									<p role="alert" className="m-0 text-sm text-danger-fg">
+										恢复失败：{restore.error.message}
+									</p>
+								)}
+							</DialogBody>
 						)}
 						<DialogFooter>
 							<Button variant="ghost" onClick={onClose}>

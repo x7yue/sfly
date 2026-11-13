@@ -1,5 +1,5 @@
 import { chainMembers } from "@sfly/orchestration";
-import { ViewportPortal } from "@xyflow/react";
+import { useStore, ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
 import { useMemo } from "react";
 import { subflowLabel } from "#/lib/copy";
@@ -47,37 +47,58 @@ export function subflowRegions(nodes: SfNode[], edges: SfEdge[]): Region[] {
 	return out;
 }
 
+/** 标题栏左右各留 14px（`left-3.5`）。 */
+const HEADER_INSET = 14;
+
+/** 默认的元信息（谁触发、几个节点）放得下需要多宽，单位是标题栏的字号：窄于它就整段去掉，把空间留给名字。 */
+const META_FITS_EM = 24;
+
 /**
  * 子流程区域（原型 `.region`）：紫色虚线框，标题行写子流程名称和触发它的异步任务节点。
- * 标题行右侧可以由 FlowCanvas 的 regionMeta 替换（运行状态，#41）。画在节点和连线下面。
+ * 标题行右侧可以由 FlowCanvas 的 regionMeta 替换（运行状态，#41）；区域窄到放不下默认的元信息时，
+ * 先整段去掉它，名字最后才截断（运行状态的内容不去掉，它收缩到截断）。画在节点和连线下面。
  */
 export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdge[] }) {
 	const { regionMeta } = useFlowCanvas();
 	const regions = useMemo(() => subflowRegions(nodes, edges), [nodes, edges]);
+	// 用 JS 算而不是容器查询：标题栏的字号随缩放变，Chromium 不会因为容器的字号变了重新计算依赖 em 的容器查询。
+	const zoom = useStore((s) => s.transform[2]);
+	const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+	const fontPx = Math.max(0.75 * rem, (0.75 * rem) / zoom);
 	return (
 		<ViewportPortal>
-			{regions.map((r) => (
-				<section
-					key={r.id}
-					aria-label={`子流程 ${r.name}`}
-					className="pointer-events-none absolute -z-10 rounded-xl border border-dashed border-canvas-subflow-line bg-canvas-subflow-soft"
-					style={{ left: r.box.x, top: r.box.y, width: r.box.w, height: r.box.h }}
-				>
-					<div
-						className={cn(
-							"absolute top-2.25 right-3.5 left-3.5 flex items-center gap-2 whitespace-nowrap text-canvas-subflow-fg",
-							ZOOM_TEXT_12,
-						)}
+			{regions.map((r) => {
+				const custom = regionMeta?.(r.id);
+				const fits = r.box.w - 2 * HEADER_INSET >= META_FITS_EM * fontPx;
+				const meta =
+					custom ??
+					(fits
+						? `${r.trigger ? `由 ${r.trigger} 触发` : "没有异步任务节点触发"} · ${r.count} 个节点`
+						: null);
+				return (
+					<section
+						key={r.id}
+						aria-label={`子流程 ${r.name}`}
+						className="pointer-events-none absolute -z-10 rounded-xl border border-dashed border-canvas-subflow-line bg-canvas-subflow-soft"
+						style={{ left: r.box.x, top: r.box.y, width: r.box.w, height: r.box.h }}
 					>
-						<span>子流程</span>
-						<span className="truncate font-medium text-canvas-subflow">{r.name}</span>
-						<span className="pointer-events-auto ml-auto truncate text-fg-3">
-							{regionMeta?.(r.id) ??
-								`${r.trigger ? `由 ${r.trigger} 触发` : "没有异步任务节点触发"} · ${r.count} 个节点`}
-						</span>
-					</div>
-				</section>
-			))}
+						<div
+							className={cn(
+								"absolute top-2.25 right-3.5 left-3.5 flex items-center gap-2 whitespace-nowrap text-canvas-subflow-fg",
+								ZOOM_TEXT_12,
+							)}
+						>
+							<span className="flex-none">子流程</span>
+							<span className="min-w-0 truncate font-medium text-canvas-subflow">{r.name}</span>
+							{meta && (
+								<span className="pointer-events-auto ml-auto min-w-0 shrink-100 truncate text-fg-3">
+									{meta}
+								</span>
+							)}
+						</div>
+					</section>
+				);
+			})}
 		</ViewportPortal>
 	);
 }
