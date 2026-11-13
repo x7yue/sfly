@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 发布版本号：Agent、SDK 运行时和控制面共用一个版本号（控制面按「Agent 版本 == SDK wheel 版本」
-# 给 Agent 下发 SDK，见 apps/server/src/sdk/sdk-wheels.ts），版本号写在下面 4 个文件里。
+# 发布版本号：Agent、SDK 运行时、控制面和 API 客户端共用一个版本号（控制面按「Agent 版本 == SDK wheel 版本」
+# 给 Agent 下发 SDK，见 apps/server/src/sdk/sdk-wheels.ts；API 客户端和控制面同版本，ADR 0022）。
 #
 #   version.sh show            列出各文件里的版本号
 #   version.sh check [vX.Y.Z]  各文件版本号一致（给出 tag 时还要与 tag 一致），否则失败
@@ -15,9 +15,10 @@ CARGO=agent/Cargo.toml
 PYPROJECT=sdk/python/pyproject.toml
 PYINIT=sdk/python/src/sfly/__init__.py
 SERVER=apps/server/package.json
+CLIENT=packages/client/package.json
+CLIENT_TS=packages/client/src/version.ts
 SEMVER='^[0-9]+\.[0-9]+\.[0-9]+$'
 
-# 各文件里的版本号：[package] / [project] 段里第一个 version 行，或 __version__，或 package.json 的 version。
 # 花括号里的命令以分号结尾、不用 sed -i：这样 GNU sed 和 macOS 的 BSD sed 都能用。
 toml_version() { sed -nE '/^\[(package|project)\]/,/^\[/{s/^version = "([^"]*)".*/\1/p;}' "$1" | head -n1; }
 edit() { sed -E "$2" "$1" >"$1.tmp" && mv "$1.tmp" "$1"; }
@@ -26,7 +27,9 @@ read_versions() {
 		"$CARGO" "$(toml_version "$CARGO")" \
 		"$PYPROJECT" "$(toml_version "$PYPROJECT")" \
 		"$PYINIT" "$(sed -nE 's/^__version__ = "([^"]*)".*/\1/p' "$PYINIT")" \
-		"$SERVER" "$(node -p "require('./$SERVER').version")"
+		"$SERVER" "$(node -p "require('./$SERVER').version")" \
+		"$CLIENT" "$(node -p "require('./$CLIENT').version")" \
+		"$CLIENT_TS" "$(sed -nE 's/^export const CLIENT_VERSION = "([^"]*)".*/\1/p' "$CLIENT_TS")"
 }
 
 cmd_show() { read_versions; }
@@ -69,18 +72,21 @@ cmd_set() {
 	edit "$CARGO" '/^\[package\]/,/^\[/{s/^version = "[^"]*"/version = "'"$version"'"/;}'
 	edit "$PYPROJECT" '/^\[project\]/,/^\[/{s/^version = "[^"]*"/version = "'"$version"'"/;}'
 	edit "$PYINIT" 's/^__version__ = "[^"]*"/__version__ = "'"$version"'"/'
+	edit "$CLIENT_TS" 's/^(export const CLIENT_VERSION = ")[^"]*"/\1'"$version"'"/'
 	# shellcheck disable=SC2016 # 单引号里是 JS 代码，$1 是正则替换的分组引用
 	node -e '
 		const fs = require("node:fs");
-		const [file, version] = process.argv.slice(1);
-		const text = fs.readFileSync(file, "utf8");
-		fs.writeFileSync(file, text.replace(/("version":\s*)"[^"]*"/, `$1"${version}"`));
-	' "$SERVER" "$version"
+		const [version, ...files] = process.argv.slice(1);
+		for (const file of files) {
+			const text = fs.readFileSync(file, "utf8");
+			fs.writeFileSync(file, text.replace(/("version":\s*)"[^"]*"/, `$1"${version}"`));
+		}
+	' "$version" "$SERVER" "$CLIENT"
 	# 工作区成员的版本号变化只影响锁文件里的对应条目，不需要联网。
 	cargo update --offline --workspace --quiet
 	uv lock --offline --quiet
 	cmd_check >/dev/null
-	echo "版本号已改为 $version："
+	echo "版本号已改为 ${version}："
 	read_versions
 }
 

@@ -13,6 +13,7 @@ import { ArtifactStore, artifactBaseUrl } from "./artifacts/artifact-store.js";
 import { type Clock, systemClock } from "./clock.js";
 import { openDatabase } from "./db/database.js";
 import { loadUserDocs } from "./docs/user-docs.js";
+import { loadClientTarballs } from "./downloads/client-tarballs.js";
 import { Engine } from "./engine/engine.js";
 import { limitOutputs } from "./engine/output-limit.js";
 import { EngineNotifications } from "./feishu/engine-notifications.js";
@@ -94,6 +95,8 @@ export interface ControlPlaneOptions {
 	leaseMs?: number;
 	/** SDK 运行时 wheel 所在目录（src/sdk/sdk-wheels.ts）；不设置时不提供 SDK 下载。 */
 	sdkWheelDir?: string;
+	/** API 客户端安装包所在目录（src/downloads/client-tarballs.ts）；不设置或目录不存在时不提供下载。 */
+	clientPackageDir?: string;
 	/**
 	 * PyPI 镜像（简单索引地址，例如 `https://mirrors.ustc.edu.cn/pypi/simple`），在 Welcome 里下发给 Agent 安装节点包依赖（ADR 0012）。
 	 * 没有默认值：不设置时 Agent 用 uv 自己的配置。
@@ -151,6 +154,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		throw error;
 	}
 	const sdkWheels = await loadSdkWheels(options.sdkWheelDir);
+	const clientTarballs = await loadClientTarballs(options.clientPackageDir);
 	let docs: Awaited<ReturnType<typeof loadUserDocs>>;
 	try {
 		docs = await loadUserDocs(options.docsDir);
@@ -282,6 +286,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			mirrors,
 		},
 		sdkWheels,
+		clientTarballs,
 		agentBinaries,
 		installScript,
 		docs,
