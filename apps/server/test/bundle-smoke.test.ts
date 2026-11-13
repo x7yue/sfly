@@ -15,7 +15,7 @@ import { repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { type BundledServer, startBundledServer } from "./support/bundled-server.js";
 import { shellBlocks } from "./support/doc-commands.js";
-import { typecheckExamples } from "./support/doc-examples.js";
+import { typecheckPageExamples } from "./support/doc-examples.js";
 import { eventually } from "./support/eventually.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
@@ -104,7 +104,7 @@ console.log(JSON.stringify(await client.system.health()));
 				);
 				const { stdout } = await run("node", ["check.mjs"]);
 				expect(JSON.parse(stdout)).toMatchObject({ status: "ok", database: "ok" });
-				expect(typecheckExamples(doc, "api-client.md", project)).toEqual([]);
+				expect(typecheckPageExamples(doc, "api-client.md", project)).toEqual([]);
 			} finally {
 				await rm(project, { recursive: true, force: true });
 			}

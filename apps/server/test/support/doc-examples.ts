@@ -4,13 +4,11 @@ import { join } from "node:path";
 import ts from "typescript";
 import { repoRoot } from "./agent-binary.js";
 
-/** 用户文档里一段 ```ts 示例代码：`line` 是代码第一行在 Markdown 里的行号（从 1 开始）。 */
 export interface ExampleBlock {
-	line: number;
+	firstMarkdownLine: number;
 	code: string;
 }
 
-/** 页面里的 ```ts 代码块，按出现顺序；列表里缩进的代码块去掉缩进。 */
 export function typeScriptBlocks(markdown: string): ExampleBlock[] {
 	const lines = markdown.split("\n");
 	const blocks: ExampleBlock[] = [];
@@ -23,14 +21,13 @@ export function typeScriptBlocks(markdown: string): ExampleBlock[] {
 		const body = lines
 			.slice(i + 1, end)
 			.map((l) => (l.startsWith(indent) ? l.slice(indent.length) : l));
-		blocks.push({ line: i + 2, code: body.join("\n") });
+		blocks.push({ firstMarkdownLine: i + 2, code: body.join("\n") });
 		i = end;
 	}
 	return blocks;
 }
 
-/** 读者项目常见的严格设置：浏览器页面，没有 Node 的类型。 */
-const COMPILER_OPTIONS = {
+const BROWSER_PAGE_COMPILER_OPTIONS = {
 	target: "ES2022",
 	module: "ESNext",
 	moduleResolution: "Bundler",
@@ -42,21 +39,27 @@ const COMPILER_OPTIONS = {
 	skipLibCheck: true,
 };
 
-/**
- * 像读者那样从上往下照抄：页面的 ```ts 代码块按顺序拼成 `project` 目录里的一个模块，从那里解析 `@sfly/client`，
- * 返回这个模块的类型错误，每条写明在 `page` 的第几行。
- */
-export function typecheckExamples(markdown: string, page: string, project: string): string[] {
+export function typecheckPageExamples(
+	markdown: string,
+	pageName: string,
+	projectDir: string,
+): string[] {
 	const blocks = typeScriptBlocks(markdown);
-	const offsets: Array<{ start: number; line: number }> = [];
+	const offsets: Array<{ generatedLine: number; markdownLine: number }> = [];
 	let source = "";
 	for (const block of blocks) {
-		offsets.push({ start: source.split("\n").length - 1, line: block.line });
+		offsets.push({
+			generatedLine: source.split("\n").length - 1,
+			markdownLine: block.firstMarkdownLine,
+		});
 		source += `${block.code}\n`;
 	}
-	const file = join(project, `${page.replace(/\.md$/, "")}.examples.ts`);
+	const file = join(projectDir, `${pageName.replace(/\.md$/, "")}.examples.ts`);
 	ts.sys.writeFile(file, source);
-	const { options, errors } = ts.convertCompilerOptionsFromJson(COMPILER_OPTIONS, project);
+	const { options, errors } = ts.convertCompilerOptionsFromJson(
+		BROWSER_PAGE_COMPILER_OPTIONS,
+		projectDir,
+	);
 	if (errors.length > 0)
 		throw new Error(ts.flattenDiagnosticMessageText(errors[0]?.messageText, "\n"));
 	const program = ts.createProgram([file], options);
@@ -64,12 +67,12 @@ export function typecheckExamples(markdown: string, page: string, project: strin
 		const message = ts.flattenDiagnosticMessageText(d.messageText, "\n");
 		if (d.file?.fileName !== file || d.start === undefined) return message;
 		const generated = d.file.getLineAndCharacterOfPosition(d.start).line;
-		const block = offsets.findLast((o) => o.start <= generated);
-		return `${page}:${block ? block.line + generated - block.start : "?"}: ${message}`;
+		const block = offsets.findLast((o) => o.generatedLine <= generated);
+		const line = block ? block.markdownLine + generated - block.generatedLine : "?";
+		return `${pageName}:${line}: ${message}`;
 	});
 }
 
-/** 一个临时的读者项目：`node_modules/@sfly/client` 指向仓库里的 API 客户端。 */
 export async function workspaceClientProject(): Promise<{ dir: string; close(): Promise<void> }> {
 	const dir = await mkdtemp(join(tmpdir(), "sfly-doc-examples-"));
 	await mkdir(join(dir, "node_modules", "@sfly"), { recursive: true });

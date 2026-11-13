@@ -1,5 +1,3 @@
-// 用户文档「用 API 客户端做自己的页面」（#270）：安装命令指向控制面提供的同版本安装包，
-// 示例代码照页面顺序抄下来，对着 API 客户端能通过类型检查。
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { repoRoot } from "./support/agent-binary.js";
 import { shellBlocks } from "./support/doc-commands.js";
 import {
-	typecheckExamples,
+	typecheckPageExamples,
 	typeScriptBlocks,
 	workspaceClientProject,
 } from "./support/doc-examples.js";
@@ -87,7 +85,7 @@ describe("API 客户端的文档页", () => {
 
 	it("每段示例代码按页面顺序拼成一个模块，对着 API 客户端通过类型检查", () => {
 		expect(typeScriptBlocks(source).length).toBeGreaterThanOrEqual(8);
-		expect(typecheckExamples(source, PAGE, project.dir)).toEqual([]);
+		expect(typecheckPageExamples(source, PAGE, project.dir)).toEqual([]);
 	}, 60_000);
 
 	it("示例里的方法名和 API 客户端对不上时，类型检查报错并指出页面上的行", () => {
@@ -95,7 +93,7 @@ describe("API 客户端的文档页", () => {
 		const line = source.split("\n").findIndex((l) => l.includes(call)) + 1;
 		expect(line).toBeGreaterThan(0);
 		const wrong = source.replace(call, "client.runs.start(");
-		expect(typecheckExamples(wrong, PAGE, project.dir)).toEqual([
+		expect(typecheckPageExamples(wrong, PAGE, project.dir)).toEqual([
 			expect.stringMatching(new RegExp(`^${PAGE}:${line}: Property 'start' does not exist`)),
 		]);
 	}, 60_000);
