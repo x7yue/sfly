@@ -62,7 +62,7 @@ function AgentChips({
 				key={a.name}
 				title={`${a.name}${a.default ? "（默认 Agent）" : ""} · ${state}`}
 				className={cn(
-					"inline-flex h-5.5 items-center gap-1.25 rounded-md border border-border-soft bg-raised px-1.75 font-mono text-2xs",
+					"inline-flex h-5.5 items-center gap-1.25 rounded-md border border-border-soft bg-raised px-1.75 font-mono text-2xs whitespace-nowrap",
 					a.default ? "text-fg-1" : "text-fg-2",
 					a.status !== "online" && "border-dashed text-fg-3",
 				)}
