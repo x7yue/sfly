@@ -1,8 +1,10 @@
 import { ApiError, errorFromResponse } from "./errors.js";
 import { CONTROL_PLANE_TIME_HEADER } from "./generated/protocol.js";
 import { type CallOptions, type RouteInput, type RouteRef, requestPath } from "./route.js";
+import { CLIENT_VERSION } from "./version.js";
 
 const NICKNAME_HEADER = "x-sfly-nickname";
+const CLIENT_HEADER = "x-sfly-client";
 
 /** 客户端调用 fetch 时用到的部分：全局 fetch、undici 的 fetch 和测试替身都符合。 */
 export type FetchLike = (url: string, init: FetchInit) => Promise<ResponseLike>;
@@ -55,7 +57,10 @@ export function createExchange(config: ExchangeConfig): Exchange {
 		input: RouteInput | undefined,
 		init: SendInit,
 	): Record<string, string> => {
-		const headers: Record<string, string> = { accept: init.accept };
+		const headers: Record<string, string> = {
+			accept: init.accept,
+			[CLIENT_HEADER]: `sfly-client/${CLIENT_VERSION}`,
+		};
 		if (input?.body !== undefined) headers["content-type"] = "application/json";
 		const nickname = nicknameNow();
 		if (nickname !== undefined) {

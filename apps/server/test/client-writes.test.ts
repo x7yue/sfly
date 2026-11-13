@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { ApiError, type ClientOptions, type OrchestrationDocumentInput } from "@sfly/client";
+import {
+	ApiError,
+	CLIENT_VERSION,
+	type ClientOptions,
+	type OrchestrationDocumentInput,
+} from "@sfly/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	type FinishedRun,
@@ -13,6 +18,7 @@ import { type RecordingProxy, startRecordingProxy } from "./support/recording-pr
 import type { TestControlPlane } from "./support/test-control-plane.js";
 
 const NICKNAME = "小明";
+const CLIENT_TAG = `sfly-client/${CLIENT_VERSION}`;
 
 const document = (env: string): OrchestrationDocumentInput => ({
 	nodes: [{ id: "entry", kind: "entry", params: [{ name: "env", type: "string", default: env }] }],
@@ -276,6 +282,32 @@ describe("API 客户端的写操作", () => {
 			expect(proxy.requests.map((r) => r.method)).toEqual(["GET", "GET"]);
 			for (const request of proxy.requests) {
 				expect(request.headers["x-sfly-nickname"]).toBeUndefined();
+			}
+		});
+	});
+
+	describe("x-sfly-client", () => {
+		it("每个请求都带 sfly-client/<版本>：读、写、下载、失败的请求，有昵称或没有昵称", async () => {
+			const withNickname = await through({ nickname: NICKNAME });
+			const without = await through();
+			expect(CLIENT_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+
+			await withNickname.client.system.health();
+			await withNickname.client.runs.trigger({ params: { id: seeded.scenarioId } });
+			await withNickname.client.request(
+				{ method: "GET", path: "/runs/:id/logs/download", kind: "download" },
+				{ params: { id: seeded.runId } },
+			);
+			await rejection(withNickname.client.orchestrations.get({ params: { id: randomUUID() } }));
+			await without.client.orchestrations.list();
+			await rejection(without.client.runs.cancel({ params: { id: seeded.runId } }));
+
+			expect(withNickname.proxy.requests).toHaveLength(4);
+			expect(without.proxy.requests).toHaveLength(1);
+			for (const request of [...withNickname.proxy.requests, ...without.proxy.requests]) {
+				expect(request.headers["x-sfly-client"], `${request.method} ${request.path}`).toBe(
+					CLIENT_TAG,
+				);
 			}
 		});
 	});
