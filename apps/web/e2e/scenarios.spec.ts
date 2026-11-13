@@ -1,5 +1,11 @@
 import { expect, test } from "./fixtures";
-import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
+import {
+	createScenario,
+	expectFocusVisible,
+	publishPackage,
+	scenarioUsing,
+	triggerRun,
+} from "./support";
 
 // 场景列表页（原型 #/scenarios）：卡片、表格、搜索筛选、更多菜单、归档与恢复、新建场景。
 
@@ -45,7 +51,7 @@ test("卡片显示缩略图、名称、说明、版本与节点数、Agent 在�
 	await expect(card).toContainText("最近运行");
 	await expect(card).toContainText("tester");
 	// 缩略图按最近一次运行着色：入口节点已完成，ping 执行中。
-	await expect(card.locator('rect[data-node="entry"]')).toHaveAttribute("data-state", "done");
+	await expect(card.locator('rect[data-node="entry"]')).toHaveAttribute("data-state", "ok");
 	await expect(card.locator('rect[data-node="ping"]')).toHaveAttribute("data-state", "running");
 
 	const offline = page.getByRole("article", { name: "撮合压测" });
@@ -56,7 +62,7 @@ test("卡片显示缩略图、名称、说明、版本与节点数、Agent 在�
 	const empty = page.getByRole("article", { name: "空场景" });
 	await expect(empty).toContainText("未保存");
 	await expect(empty).toContainText("1 节点");
-	await expect(empty).toContainText("没有说明");
+	await expect(empty).not.toContainText("没有说明");
 
 	await card.getByRole("link", { name: "运行中，进入运行监控" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
@@ -90,7 +96,7 @@ test("最近一次运行已请求取消、还在等待任务结束时，卡片�
 	await expect(row).not.toContainText("运行中");
 });
 
-test("「编排」进入编排画布，「运行」打开运行抽屉", async ({ page, controlPlane, connectAgent }) => {
+test("场景名称进入编排画布，「运行」打开运行抽屉", async ({ page, controlPlane, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);
 	const id = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
@@ -101,8 +107,50 @@ test("「编排」进入编排画布，「运行」打开运行抽屉", async ({
 	await expect(page.getByRole("dialog", { name: "运行 · 巡检" })).toBeVisible();
 	await page.keyboard.press("Escape");
 
-	await card.getByRole("button", { name: "编排" }).click();
+	await card.getByRole("link", { name: "巡检" }).click();
 	await expect(page).toHaveURL(new RegExp(`/orchestrations/${id}$`));
+});
+
+test("卡片的 Tab 停靠点：名称链接是第一个，缩略图和右上角的运行状态不重复停靠", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const busy = await createScenario(controlPlane, "日终数据处理", scenarioUsing("agent-a"));
+	await createScenario(controlPlane, "撮合压测", scenarioUsing("agent-a"));
+	await triggerRun(controlPlane, busy);
+	await agent.nextAssign();
+	await page.goto("/orchestrations");
+	await expect(page.getByRole("article")).toHaveCount(2);
+
+	const stopsIn = async (name: string) => {
+		const card = page.getByRole("article", { name });
+		await page.getByRole("heading", { name: "场景编排" }).click();
+		const stops: string[] = [];
+		for (let i = 0; i < 60; i++) {
+			await page.keyboard.press("Tab");
+			const inside = await card.evaluate((el) => el.contains(document.activeElement));
+			if (!inside && stops.length > 0) break;
+			if (inside) {
+				stops.push(
+					await page.evaluate(() => {
+						const a = document.activeElement as HTMLElement;
+						return a.getAttribute("aria-label") ?? a.textContent?.trim() ?? "";
+					}),
+				);
+			}
+		}
+		return stops;
+	};
+	expect(await stopsIn("日终数据处理")).toEqual([
+		"日终数据处理",
+		"运行中，进入运行监控",
+		"运行",
+		"更多操作",
+	]);
+	expect(await stopsIn("撮合压测")).toEqual(["撮合压测", "运行", "更多操作"]);
 });
 
 test("切换到表格视图，视图保存在地址里", async ({ page, controlPlane }) => {
@@ -243,6 +291,34 @@ test("归档后从列表消失，在「已归档」里恢复；有运行中的�
 	await expect(page.getByRole("article", { name: "旧场景" })).toBeVisible();
 });
 
+test("归档确认框的放弃按钮叫「保留场景」；归档成功的通知里可以「撤销」，场景回到列表", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "旧场景", scenarioUsing("agent-a"));
+
+	await page.goto("/orchestrations");
+	const card = page.getByRole("article", { name: "旧场景" });
+	await card.getByLabel("更多操作").click();
+	await page.getByRole("menuitem", { name: /归档/ }).click();
+	const confirm = page.getByRole("dialog", { name: "归档「旧场景」？" });
+	await expect(confirm.getByRole("button", { name: "取消", exact: true })).toHaveCount(0);
+	await confirm.getByRole("button", { name: "保留场景" }).click();
+	await expect(confirm).toBeHidden();
+	await expect(card).toBeVisible();
+
+	await card.getByLabel("更多操作").click();
+	await page.getByRole("menuitem", { name: /归档/ }).click();
+	await confirm.getByRole("button", { name: "归档" }).click();
+	await expect(card).toBeHidden();
+	await page.getByRole("button", { name: "撤销" }).click();
+	await expect(page.getByText("已恢复「旧场景」")).toBeVisible();
+	await expect(card).toBeVisible();
+});
+
 test("已归档场景的历史运行仍可回看：卡片与表格行的「查看运行记录」，运行记录的场景筛选里标注「已归档」", async ({
 	page,
 	controlPlane,
@@ -303,4 +379,78 @@ test("新建场景：自带入口节点，建好后进入编排画布；命令�
 	await page.goto("/orchestrations");
 	await expect(page.getByRole("article", { name: "登录冒烟" })).toContainText("每次发布后跑");
 	await expect(page.getByRole("article", { name: "支付冒烟" })).toContainText("1 节点");
+});
+
+test("列表页的键盘：/ 聚焦并选中搜索框，↓ 进入第一张卡片，J / K 在卡片之间移动，Enter 进入编排画布", async ({
+	page,
+	controlPlane,
+}) => {
+	await createScenario(controlPlane, "日终数据处理");
+	await createScenario(controlPlane, "日终对账");
+	await createScenario(controlPlane, "撮合压测");
+	await page.goto("/orchestrations");
+	const cards = page.locator("article[data-list-item]");
+	await expect(cards).toHaveCount(3);
+	const box = page.getByRole("searchbox", { name: "搜索场景" });
+
+	await page.keyboard.press("/");
+	await expect(box).toBeFocused();
+	await box.fill("日终");
+	await expect(cards).toHaveCount(2);
+	await page.getByRole("heading", { name: "场景编排" }).click();
+	await page.keyboard.press("/");
+	await expect(box).toBeFocused();
+	expect(
+		await box.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd]),
+	).toEqual([0, 2]);
+
+	await page.keyboard.press("ArrowDown");
+	const shown = await cards.locator("h2").allTextContents();
+	const link = (index: number) => page.getByRole("link", { name: shown[index], exact: true });
+	await expectFocusVisible(link(0));
+	await page.keyboard.press("j");
+	await expectFocusVisible(link(1));
+	await page.keyboard.press("j");
+	await expectFocusVisible(link(1));
+	await page.keyboard.press("k");
+	await expectFocusVisible(link(0));
+	await expect(cards.nth(0)).toHaveCSS("border-color", "rgb(68, 68, 68)");
+	await expect(cards.nth(1)).not.toHaveCSS("border-color", "rgb(68, 68, 68)");
+
+	const href = await link(1).getAttribute("href");
+	await page.keyboard.press("j");
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(new RegExp(`${href}$`));
+});
+
+test("列表页的键盘：焦点不在列表里时 J 去第一项、K 去最后一项；表格视图里在行之间移动；菜单打开时不抢焦点", async ({
+	page,
+	controlPlane,
+}) => {
+	await createScenario(controlPlane, "日终数据处理");
+	await createScenario(controlPlane, "撮合压测");
+	await createScenario(controlPlane, "登录巡检");
+	await page.goto("/orchestrations?view=table");
+	const table = page.getByRole("table", { name: "场景列表" });
+	const rows = table.locator("tr[data-list-item]");
+	await expect(rows).toHaveCount(3);
+	const names = await rows.locator("td:first-child a").allTextContents();
+	const link = (index: number) => table.getByRole("link", { name: names[index] });
+
+	await page.keyboard.press("k");
+	await expectFocusVisible(link(2));
+	await page.keyboard.press("k");
+	await expectFocusVisible(link(1));
+	const hovered = await rows.nth(1).evaluate((el) => getComputedStyle(el).backgroundColor);
+	const plain = await rows.nth(0).evaluate((el) => getComputedStyle(el).backgroundColor);
+	expect(hovered).not.toBe(plain);
+
+	await rows.nth(1).getByRole("button", { name: "更多操作" }).click();
+	const menu = page.getByRole("menu");
+	await expect(menu).toBeVisible();
+	await page.keyboard.press("j");
+	await expect(menu).toBeVisible();
+	expect(await menu.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+	await page.keyboard.press("Escape");
+	await expect(menu).toBeHidden();
 });

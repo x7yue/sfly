@@ -14,7 +14,7 @@ import type {
 import { KIND_META } from "#/components/canvas/node-display";
 import { runStatusView, type StatusKind } from "#/components/status";
 import { chainLabel as chainName, subflowLabel } from "#/lib/copy";
-import { type NodeRef, nodeKey } from "./monitor-state";
+import { type NodeRef, nodeKey, sameNode } from "./monitor-state";
 
 /** 运行监控页对运行视图的整理：状态显示、链实例的层级顺序、节点标题与取消的影响。 */
 
@@ -191,6 +191,16 @@ export function runFailure(run: RunView): RunFailure | null {
 		};
 	}
 	return null;
+}
+
+/**
+ * 下一个失败的节点（F）：失败的节点按链的层级与节点顺序（与 {@link runFailure} 一致）排成一圈，选中的是其中一个时
+ * 取它后面的一个，到末尾回到第一个；选中的不是失败节点（或没有选中）时从第一个开始。没有失败的节点为 null。
+ */
+export function nextFailure(run: RunView, selected: NodeRef | null): NodeRef | null {
+	const failed = nodeRefs(run).filter((n) => n.status === "failed");
+	const at = failed.findIndex((n) => sameNode(n, selected));
+	return toRef(failed[at + 1] ?? failed[0]);
 }
 
 /** 失败的那次尝试：「（第 2 次）」；节点没有尝试记录时为空。 */

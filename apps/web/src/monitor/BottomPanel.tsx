@@ -13,6 +13,7 @@ import { cn } from "cn";
 import { DownloadIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResizeHandle } from "#/components/ResizeHandle";
+import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
 import { MESSAGE } from "#/lib/copy";
@@ -142,6 +143,17 @@ export function BottomPanel({
 		[run, filter],
 	);
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
+	/** E 切到只看 ERROR 之前的级别：再按一次恢复。 */
+	const levelBeforeErrors = useRef<MinLevel>("all");
+	useShortcut("monitor-errors-only", () => {
+		if (tab === "logs" && minLevel === "error") {
+			setMinLevel(levelBeforeErrors.current);
+			return;
+		}
+		if (minLevel !== "error") levelBeforeErrors.current = minLevel;
+		setMinLevel("error");
+		actions.showPanel("logs");
+	});
 	const logTimeKind = useLogTimeKind();
 
 	/** 选中的节点还没有开始：没有日志可看。其余情况（单个尝试、合并视图）由日志页签自己报告有没有内容。 */
@@ -632,7 +644,7 @@ function AttemptsTab({
 						</header>
 						{agentTimes && (
 							// 每一头的说明不在中间断开：换行只落在标点后面，不会剩下一个「天」字。
-							<p className="m-0 mt-1.5 text-2xs text-warn-fg">
+							<p className="m-0 mt-1.5 text-xs text-warn-fg">
 								这个任务执行期间 Agent 时间与控制面不一致：
 								{agentTimes.details.map((part, i) => (
 									<span key={part} className="whitespace-nowrap">
@@ -642,7 +654,7 @@ function AttemptsTab({
 								))}
 							</p>
 						)}
-						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-2xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
+						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
 							<dt>排队</dt>
 							<dd className="m-0">{formatClock(a.queued_at)}</dd>
 							<dt>开始</dt>
@@ -682,7 +694,7 @@ function AttemptsTab({
 								</div>
 								<p className="m-0 mt-1 text-danger-fg">{error.message || "（没有错误信息）"}</p>
 								{error.stack && (
-									<pre className="m-0 mt-1.5 max-h-40 overflow-auto rounded-md bg-sunk p-2 font-mono text-2xs whitespace-pre text-fg-2">
+									<pre className="m-0 mt-1.5 max-h-40 overflow-auto rounded-md bg-sunk p-2 font-mono text-xs whitespace-pre text-fg-2">
 										{error.stack}
 									</pre>
 								)}
@@ -811,7 +823,7 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 						</div>
 					</div>
 					{/* 主列是文件在 Agent 上的修改时间（Agent 时间），上传时间是控制面时间（ADR 0018）。 */}
-					<div className="grid shrink-0 grid-cols-[auto_auto] gap-x-2 text-2xs text-fg-3">
+					<div className="grid shrink-0 grid-cols-[auto_auto] gap-x-2 text-xs text-fg-3">
 						<span>Agent 修改</span>
 						<span
 							title="文件在 Agent 上的修改时间（Agent 时间）"

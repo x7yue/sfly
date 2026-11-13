@@ -7,6 +7,7 @@ import {
 	type KeyInput,
 	keyChords,
 	keyLabels,
+	SHORTCUTS,
 	type ShortcutDef,
 	ShortcutMatcher,
 	shortcutKeys,
@@ -75,6 +76,60 @@ describe("快捷键匹配", () => {
 		expect(m.handle(key("g"), 0)).toBeNull();
 		expect(m.handle(key("Shift", { shiftKey: true }), 100)).toBeNull();
 		expect(m.handle(key("d"), 200)).toBe("go-dashboard");
+	});
+});
+
+describe("只匹配已绑定的快捷键", () => {
+	const pages: ShortcutDef[] = [
+		{ id: "canvas-mode-run", group: "编排画布", label: "运行状态模式", keys: "R" },
+		{ id: "monitor-rerun", group: "运行监控", label: "再次运行", keys: "R" },
+		{ id: "go-dashboard", group: "全局", label: "控制台", keys: "G D" },
+	];
+	const bound =
+		(...ids: string[]) =>
+		(id: string) =>
+			ids.includes(id);
+
+	it("不同页面分组登记同一个键时，按键属于当前已绑定的那一个", () => {
+		const m = new ShortcutMatcher(pages);
+		expect(m.handle(key("r"), 0, bound("monitor-rerun"))).toBe("monitor-rerun");
+		expect(m.handle(key("r"), 10, bound("canvas-mode-run"))).toBe("canvas-mode-run");
+	});
+
+	it("没有绑定的快捷键不匹配，也不会让序列停在半路", () => {
+		const m = new ShortcutMatcher(pages);
+		expect(m.handle(key("r"), 0, bound())).toBeNull();
+		expect(m.handle(key("g"), 100, bound())).toBeNull();
+		expect(m.handle(key("d"), 200, bound())).toBeNull();
+		expect(m.handle(key("g"), 300, bound("go-dashboard"))).toBeNull();
+		expect(m.handle(key("d"), 400, bound("go-dashboard"))).toBe("go-dashboard");
+	});
+});
+
+describe("快捷键注册表", () => {
+	const live = SHORTCUTS.filter((s) => !("displayOnly" in s));
+	const sameKeys = (a: ShortcutDef, b: ShortcutDef) =>
+		a.keys.toLowerCase() === b.keys.toLowerCase();
+	const clashes = (items: readonly ShortcutDef[]) =>
+		items.flatMap((a, i) =>
+			items
+				.slice(i + 1)
+				.filter((b) => sameKeys(a, b))
+				.map((b) => `${a.id} 与 ${b.id}（${a.keys}）`),
+		);
+
+	it("「全局」的键不与任何分组重复：全局快捷键在每个页面都生效", () => {
+		const global = live.filter((s) => s.group === "全局");
+		const others = live.filter((s) => s.group !== "全局");
+		expect(global.flatMap((g) => others.filter((o) => sameKeys(g, o)).map((o) => o.id))).toEqual(
+			[],
+		);
+	});
+
+	it("同一分组内的键不重复（不同页面分组之间可以重复：它们是互斥的路由）", () => {
+		for (const group of new Set(live.map((s) => s.group))) {
+			expect(clashes(live.filter((s) => s.group === group))).toEqual([]);
+		}
 	});
 });
 

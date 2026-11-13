@@ -55,7 +55,7 @@ function Row({
 				{label}
 			</label>
 			{children}
-			{hint && <p className="m-0 text-2xs text-fg-3">{hint}</p>}
+			{hint && <p className="m-0 text-xs text-fg-3">{hint}</p>}
 		</div>
 	);
 }

@@ -135,17 +135,17 @@ test("有来源时异步任务节点接在来源之后，子流程照样连好�
 	await expect(nodeCard(page, "subflow_1")).toHaveCount(0);
 	await expect(page.locator('[data-edge^="dispatch:async_1"]')).toHaveCount(0);
 
+	// 刚添加过异步任务，它同时出现在「最近使用」里：这里点「内置」分组里的那一项。
+	const builtinAsync = addMenu(page)
+		.getByRole("group", { name: "内置" })
+		.getByRole("option", { name: /异步任务/ });
 	// 「返回」回到节点列表。
 	await page.keyboard.press("/");
-	await addMenu(page)
-		.getByRole("option", { name: /异步任务/ })
-		.click();
+	await builtinAsync.click();
 	await asyncForm(page).getByRole("button", { name: "返回" }).click();
 	await expect(addMenu(page).getByRole("combobox", { name: "搜索节点类型" })).toBeFocused();
 	// 在表单里按 Esc 关闭：焦点回到打开菜单前的节点。
-	await addMenu(page)
-		.getByRole("option", { name: /异步任务/ })
-		.click();
+	await builtinAsync.click();
 	await expect(withSubflow(page)).toBeFocused();
 	await page.keyboard.press("Escape");
 	await expect(addMenu(page)).toHaveCount(0);
@@ -233,4 +233,37 @@ test("从调度端口拖线到空白处：填写子流程名称后新建子流�
 	await expect(nodeCard(page, "async_1")).toBeVisible();
 	await page.keyboard.press("Control+Shift+z");
 	await expect(edge(page, "dispatch:async_1->subflow_1")).toHaveCount(1);
+});
+
+test("从调度端口拖线新建的子流程不计入添加节点菜单的「最近使用」，同一菜单里选的异步任务计入", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	await nodeCard(page, "ping").click();
+	await page.keyboard.press("Tab");
+	await page.keyboard.type("异步");
+	await page.keyboard.press("Enter");
+	await page.keyboard.press("Enter");
+	await expect(nodeCard(page, "async_1")).toBeFocused();
+
+	const from = await box(
+		nodeCard(page, "async_1").locator('.react-flow__handle[data-handleid="dispatch"].source'),
+	);
+	const x = from.x + from.width / 2;
+	const y = from.y + from.height / 2;
+	await page.mouse.move(x, y);
+	await page.mouse.down();
+	await page.mouse.move(x + 40, y + 60, { steps: 4 });
+	await page.mouse.move(x + 80, y + 150, { steps: 4 });
+	await page.mouse.up();
+	await subflowName(page).fill("压测监控");
+	await subflowName(page).press("Enter");
+	await expect(nodeCard(page, "subflow_1")).toBeFocused();
+
+	await page.keyboard.press("/");
+	await expect(
+		addMenu(page).getByRole("group", { name: "最近使用" }).getByRole("option"),
+	).toHaveText([/^异步任务/]);
 });

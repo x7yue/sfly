@@ -52,9 +52,7 @@ test("按节点分组，顺序与链上执行顺序一致；默认只展开执�
 	await openMonitor(page, clock, runId);
 	const ws = workspace(page);
 
-	await expect(ws.getByTestId("chart-count")).toHaveText(
-		"3 个节点 · 12 张图表 · 共 3 个节点声明了图表",
-	);
+	await expect(ws.getByTestId("chart-count")).toHaveText("12 张图表，来自 3 个节点和平台自带");
 	await expect
 		.poll(() => groupOrder(page))
 		.toEqual(["fetch 的图表", "verify 的图表", "probe 的图表", "平台自带图表"]);
@@ -124,7 +122,7 @@ test("每张图表只查它引用的指标；折叠的组只查组标题上的�
 	await expect(chart(page, "fetch", "吞吐").locator("[data-series] path")).toHaveCount(2);
 });
 
-test("四种图表类型与多序列图例；横轴是节点实际运行的时段并标出起止时间；运行中实时追加", async ({
+test("四种图表类型与多序列图例；横轴是节点实际运行的时段并标出起止时间；运行中实时追加；纵轴上限与最新值相同时不重复显示", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -151,8 +149,10 @@ test("四种图表类型与多序列图例；横轴是节点实际运行的时�
 	const level = chart(page, "probe", "level");
 	await expect(level.locator("[data-window]")).toHaveText("08:00:06 – 08:00:14");
 	await expect(level.locator("[data-latest]")).toHaveText("3");
+	await expect(level.locator("[data-axis-max]")).toHaveText("9");
 	agent.metrics(tasks.probe as AssignedTask, [["level", unixAt(clock0, 14), 42]]);
 	await expect(level.locator("[data-latest]")).toHaveText("42");
+	await expect(level.locator("[data-axis-max]")).toHaveCount(0);
 	await expect(group(page, "probe").locator('[data-primary-metric="level"]')).toContainText("42");
 });
 
@@ -406,7 +406,7 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
 	const ws = workspace(page);
-	await expect(ws.getByTestId("chart-count")).toContainText("3 个节点");
+	await expect(ws.getByTestId("chart-count")).toContainText("来自 3 个节点");
 
 	await ws.getByRole("button", { name: /节点：全部节点/ }).click();
 	const menu = page.getByRole("dialog", { name: "按节点筛选图表" });
@@ -414,7 +414,7 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	await menu.getByRole("checkbox", { name: /^子流程 sub/ }).uncheck();
 	await expect(group(page, "probe")).toHaveCount(0);
 	await expect(ws.getByRole("button", { name: /节点：已选 2 个节点/ })).toBeVisible();
-	await expect(ws.getByTestId("chart-count")).toHaveText("2 个节点 · 10 张图表");
+	await expect(ws.getByTestId("chart-count")).toHaveText("10 张图表，来自 2 个节点和平台自带");
 
 	// 搜索节点，单独勾选。
 	await menu.getByRole("textbox", { name: "搜索节点 ID 或名称" }).fill("pro");
@@ -518,9 +518,7 @@ test("只看一个节点；按名称搜索图表；紧凑密度", async ({
 	await ws.getByRole("textbox", { name: "搜索图表或节点" }).fill("吞吐");
 	await expect.poll(() => groupOrder(page)).toEqual(["fetch 的图表"]);
 	await expect(group(page, "fetch").getByRole("figure")).toHaveCount(1);
-	await expect(ws.getByTestId("chart-count")).toHaveText(
-		"1 个节点 · 1 张图表 · 共 3 个节点声明了图表",
-	);
+	await expect(ws.getByTestId("chart-count")).toHaveText("1 张图表，来自 1 个节点");
 	await ws.getByRole("textbox", { name: "搜索图表或节点" }).fill("");
 
 	const plot = chart(page, "verify", "level").locator("svg[data-plot]");

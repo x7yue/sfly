@@ -113,7 +113,7 @@ export interface FlowCanvasProps {
 	>;
 	dockStart?: ReactNode;
 	dockTools?: ReactNode;
-	/** 悬浮在画布上的控件（左上、右上的控件组、检查器……）。 */
+	/** 悬浮在画布上、Tab 顺序排在画布与工具条之后的控件（检查器）；要先于画布获得焦点的（顶栏）放在 FlowCanvas 前面。 */
 	children?: ReactNode;
 }
 
@@ -418,8 +418,10 @@ export function FlowCanvas({
 				data-tool={tool}
 				style={{ "--canvas-zoom": 1 } as React.CSSProperties}
 				className={cn(
-					// 画布铺满视口：焦点环画在内侧（DESIGN-SYSTEM §7）。
+					// 画布铺满视口，焦点环画在内侧（DESIGN-SYSTEM §7）。React Flow、工具条和检查器会盖住画布区域自己的轮廓，
+					// 所以焦点环再画在最上层的 ::after 上。
 					"absolute inset-0 overflow-hidden bg-canvas-bg -outline-offset-2",
+					"after:pointer-events-none after:absolute after:inset-0 after:z-20 focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring",
 					"[&_.react-flow__viewport-portal]:pointer-events-none",
 					"data-[tool=hand]:[&_.react-flow__pane]:cursor-grab data-[tool=hand]:[&_.react-flow__node]:cursor-grab",
 				)}
@@ -475,6 +477,8 @@ export function FlowCanvas({
 					edgesReconnectable={canEdit}
 					reconnectRadius={RECONNECT_RADIUS}
 					{...(canEdit ? (reconnect ?? {}) : {})}
+					// 键盘焦点只有一种走法：Tab 停在画布区域，方向键选中节点并把焦点移到节点卡片上。
+					nodesFocusable={false}
 					edgesFocusable={false}
 					elementsSelectable
 					selectNodesOnDrag={false}

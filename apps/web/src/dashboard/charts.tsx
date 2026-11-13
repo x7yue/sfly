@@ -78,7 +78,7 @@ export function TrendChart({ hours }: { hours: DashboardHour[] }) {
 					.map((h) => (
 						<span key={h.start}>{formatHourMinute(h.start)}</span>
 					))}
-				<span>现在</span>
+				<span className="text-xs">现在</span>
 			</div>
 		</div>
 	);

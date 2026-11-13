@@ -3,11 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronDownIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
+import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
 import { apiQuery } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { shortcutText } from "#/lib/shortcuts";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -47,6 +49,7 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 	const { now, live } = useTimeAxis();
 	const navigate = useNavigate();
 	const [rerunOpen, setRerunOpen] = useState(false);
+	useShortcut("monitor-rerun", () => setRerunOpen(true), run.status !== "running");
 	const chains = orderedChains(run);
 	const status = runStatus(run);
 	const failure = run.status === "failed" ? runFailure(run) : null;
@@ -133,11 +136,12 @@ export function MonitorTopBar({ run, name }: { run: RunView; name: string | unde
 					orchestrationVersion={run.orchestration_version}
 					cancelling={run.cancel !== null}
 					collapse
+					shortcut="monitor-cancel"
 				/>
 			) : (
 				<Button
 					variant="primary"
-					title={ACTION.rerun}
+					title={`${ACTION.rerun}（${shortcutText("monitor-rerun")}）`}
 					className={COLLAPSE_BUTTON}
 					onClick={() => setRerunOpen(true)}
 				>

@@ -201,7 +201,7 @@ function SectionTitle({ children, first }: { children: React.ReactNode; first?: 
 	return (
 		<h3
 			className={cn(
-				"mb-2.5 flex items-center text-2xs font-semibold tracking-wide text-fg-2",
+				"mb-2.5 flex items-center text-xs font-semibold tracking-wide text-fg-2",
 				first ? "mt-0" : "mt-4.5",
 			)}
 		>
@@ -336,11 +336,11 @@ function ParamField({
 			<label id={labelId} htmlFor={id} className="min-w-0 truncate pt-1.5 text-sm text-fg-2">
 				<span className="font-mono">{param.name}</span>
 				{param.required && (
-					<span aria-hidden className="ml-0.5 text-danger-fg">
+					<span aria-hidden className="ml-0.5 text-fg-2">
 						*
 					</span>
 				)}
-				<span className="block font-mono text-2xs text-fg-3">
+				<span className="block font-mono text-xs text-fg-3">
 					{param.type}
 					{param.secret && " · 敏感"}
 				</span>

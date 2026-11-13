@@ -297,6 +297,17 @@ export function InsertReferenceButton({
 	);
 }
 
+/** 说明文字里指代「插入引用」按钮：画出按钮上的同一个图标，读屏读作按钮的名称。 */
+export function InsertReferenceGlyph() {
+	return (
+		<BracesIcon
+			role="img"
+			aria-label={ACTION.insertReference}
+			className="inline size-3.5 align-[-0.2em]"
+		/>
+	);
+}
+
 /** 补全的触发位置；manual 表示由「插入引用」打开（光标前没有 `$`）。 */
 interface Trigger extends InlineTrigger {
 	manual: boolean;

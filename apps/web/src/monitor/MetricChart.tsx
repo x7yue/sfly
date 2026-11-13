@@ -156,7 +156,7 @@ export function MetricChart({
 					) : (
 						<span className="ml-auto font-mono text-sm font-semibold text-fg-1" data-latest>
 							{latest === undefined ? "—" : formatMetric(latest)}
-							<small className="ml-0.5 text-2xs font-normal text-fg-3">{unit}</small>
+							<small className="ml-0.5 text-xs font-normal text-fg-3">{unit}</small>
 						</span>
 					))}
 			</figcaption>
@@ -192,8 +192,9 @@ export function MetricChart({
 						window={shown}
 						bucketSeconds={bucketSeconds}
 						height={dense ? 56 : 96}
+						latestText={latest === undefined ? undefined : formatMetric(latest)}
 					/>
-					<div className="mt-0.5 flex items-start gap-x-2.5 text-2xs text-fg-3">
+					<div className="mt-0.5 flex items-start gap-x-2.5 text-xs text-fg-3">
 						{inWindow.length > 1 && (
 							// 序列很多时图例最多 4 行，其余滚动查看。
 							<div className="flex max-h-16 min-w-0 flex-1 flex-wrap gap-x-2.5 overflow-y-auto">
@@ -262,6 +263,8 @@ interface PlotProps {
 	mini?: boolean;
 	/** 只画一条线时的颜色（默认按序列）。 */
 	color?: string;
+	/** 标题栏显示的最新值：纵轴上限与它相同时不再在绘图区里重复一遍。 */
+	latestText?: string;
 }
 
 /** 纵轴范围（含每个桶的最小、最大值）：柱状、面积与迷你趋势从 0 起；上方留 12%。 */
@@ -273,10 +276,11 @@ const yScale = (type: PlotProps["type"], lines: readonly DrawnLine[], mini?: boo
  * 鼠标在绘图区上、画了多条线时，悬停提示列出每条线在那一刻的值。
  */
 function Plot(props: PlotProps) {
-	const { type, lines, window, height, mini, bucketSeconds } = props;
+	const { type, lines, window, height, mini, bucketSeconds, latestText } = props;
 	const actions = useMonitorActions();
 	const [pointerInside, setPointerInside] = useState(false);
 	const scale = useMemo(() => yScale(type, lines, mini), [type, lines, mini]);
+	const maxText = formatMetric(scale.max);
 	return (
 		// span：迷你趋势放在分组标题的按钮里，按钮里只能有短语内容。
 		<span className="relative block">
@@ -303,9 +307,12 @@ function Plot(props: PlotProps) {
 				<Paths {...props} scale={scale} />
 				<Cursor window={window} height={height} />
 			</svg>
-			{!mini && (
-				<span className="pointer-events-none absolute top-0.5 right-0.5 font-mono text-2xs text-fg-3">
-					{formatMetric(scale.max)}
+			{!mini && maxText !== latestText && (
+				<span
+					data-axis-max
+					className="pointer-events-none absolute top-0.5 right-0.5 rounded-sm bg-bg px-0.5 font-mono text-2xs text-fg-3"
+				>
+					{maxText}
 				</span>
 			)}
 			{pointerInside && !mini && (
@@ -456,7 +463,7 @@ function HoverValues({
 	return (
 		<span
 			data-hover-values
-			className="pointer-events-none absolute top-1 z-3 flex max-w-60 flex-col rounded-md border border-border-strong bg-raised px-2 py-1 text-2xs whitespace-nowrap shadow-pop"
+			className="pointer-events-none absolute top-1 z-3 flex max-w-60 flex-col rounded-md border border-border-strong bg-raised px-2 py-1 text-xs whitespace-nowrap shadow-pop"
 			style={side}
 		>
 			{times && (

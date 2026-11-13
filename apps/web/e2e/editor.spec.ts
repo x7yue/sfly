@@ -1,5 +1,5 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import {
 	createEditorScenario,
 	dock,
@@ -8,12 +8,19 @@ import {
 	headOf,
 	inspector,
 	nodeCard,
+	nodeMenu,
 	openEditor,
 	typedDocument,
 	typedNodes,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { box, createScenario, expectFocusVisible, publishPackage } from "./support";
+import {
+	box,
+	createScenario,
+	expectFocusVisible,
+	expectRingPainted,
+	publishPackage,
+} from "./support";
 
 // 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布与检查器。
 
@@ -33,6 +40,7 @@ test("全屏画布：不带侧边栏，控件悬浮，打开时适配视图并�
 	await expect(page.getByRole("button", { name: "检查通过" })).toBeVisible();
 	await expect(page.getByRole("group", { name: "模式" })).toBeVisible();
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+	await expect(page.getByText("已保存", { exact: true })).not.toHaveAttribute("data-status");
 	await expect(page.getByRole("link", { name: "版本历史" })).toHaveAttribute(
 		"href",
 		`/orchestrations/${id}/versions`,
@@ -175,6 +183,55 @@ test("语义缩放：缩小后卡片只留关键信息，屏幕上的文字不�
 
 	await page.keyboard.press("0");
 	await expect.poll(() => zoomLevel(page)).toBeGreaterThan(30);
+});
+
+async function tabUntil(page: Page, target: Locator, limit = 40) {
+	for (let presses = 1; presses <= limit; presses++) {
+		await page.keyboard.press("Tab");
+		if (await target.evaluate((el) => el === document.activeElement)) return presses;
+	}
+	throw new Error(`按了 ${limit} 次 Tab 还没到`);
+}
+
+test("Tab 顺序：先经过顶栏再进入画布，画布只有画布区域一个停靠点，节点不在 Tab 顺序里", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const canvas = page.getByRole("region", { name: /^编排画布/ });
+
+	// 顶栏在画布前面：「运行」是第 6 个停靠点（返回、检查状态、两个模式按钮、版本历史、运行；保存不可用时跳过）。
+	expect(await tabUntil(page, page.getByRole("button", { name: "运行", exact: true }))).toBe(6);
+	await page.keyboard.press("Tab");
+	await expectFocusVisible(canvas);
+	// 画布区域铺满视口，焦点环在内侧的 2px：要画在 React Flow 与悬浮控件上面才看得见。
+	await expectRingPainted(page, { x: 1, y: 450 });
+	await expectRingPainted(page, { x: 720, y: 898 });
+	await page.keyboard.press("Tab");
+	await expect(dock(page).getByRole("button", { name: "添加节点" })).toBeFocused();
+	await page.keyboard.press("Shift+Tab");
+	await expectFocusVisible(canvas);
+
+	await page.keyboard.press("ArrowRight");
+	await expectFocusVisible(nodeCard(page, "entry"));
+	await expect(nodeCard(page, "entry")).toHaveAccessibleName("节点 entry，入口");
+	await page.keyboard.press("ArrowRight");
+	await expectFocusVisible(nodeCard(page, "fetch"));
+	await expect(nodeCard(page, "fetch")).toHaveAccessibleName("节点 fetch，HTTP 检查");
+	await expect(nodeCard(page, "sub_entry")).toHaveAccessibleName("节点 sub_entry，子流程入口");
+	await expect(page.getByRole("img", { name: "调度连线：从 dispatch 到 sub_entry" })).toHaveCount(
+		1,
+	);
+
+	await page.keyboard.press("Shift+F10");
+	await expect(nodeMenu(page)).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expectFocusVisible(nodeCard(page, "fetch"));
+	await page.keyboard.press("Escape");
+	await expectFocusVisible(canvas);
+	await page.keyboard.press("Tab");
+	await expect(dock(page).getByRole("button", { name: "添加节点" })).toBeFocused();
 });
 
 test("键盘浏览：方向键沿链切换，↓ / ↑ 进出子流程，Enter 到检查器，Esc 取消选中；方向键不移动节点", async ({
@@ -784,6 +841,8 @@ test("字段校验失败时不能保存：按钮禁用，Ctrl S 提示；改正�
 	await expect(panel.getByText("需要整数")).toBeVisible();
 	await expect(expectInput).toHaveAttribute("aria-invalid", "true");
 	await expect(page.getByText("1 处字段错误")).toBeVisible();
+	await expect(page.getByRole("button", { name: "1 处字段错误" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "检查通过" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: /保存/ })).toBeDisabled();
 	await page.keyboard.press("Control+s");
 	await expect(page.getByText("有 1 处字段错误，改正后才能保存")).toBeVisible();
@@ -802,6 +861,7 @@ test("字段校验失败时不能保存：按钮禁用，Ctrl S 提示；改正�
 	await panel.getByRole("tab", { name: "参数" }).click();
 	await expectInput.fill("404");
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
+	await expect(page.getByRole("button", { name: "检查通过" })).toBeVisible();
 
 	await nodeCard(page, "entry").click();
 	const name = panel.getByRole("textbox", { name: "参数名称" }).first();

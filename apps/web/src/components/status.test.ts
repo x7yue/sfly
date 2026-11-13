@@ -14,7 +14,7 @@ describe("状态显示（各页面共用一张表）", () => {
 	it("每个节点状态的样式与中文标签", () => {
 		expect(Object.fromEntries(NodeStatus.options.map((s) => [s, nodeStatusView(s)]))).toEqual({
 			pending: { kind: "pending", label: "待执行" },
-			queued: { kind: "warn", label: "排队中" },
+			queued: { kind: "queued", label: "排队中" },
 			dispatched: { kind: "running", label: "准备中" },
 			running: { kind: "running", label: "执行中" },
 			waiting: { kind: "warn", label: "等待中" },

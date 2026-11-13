@@ -535,7 +535,11 @@ function Editor({
 			notify.warning(`有 ${fieldErrors.length} 处字段错误，改正后才能保存`);
 			return;
 		}
-		if (versioning.save.isPending || (!versioning.dirty && versioning.base.version > 0)) return;
+		if (versioning.save.isPending) return;
+		if (!versioning.dirty && versioning.base.version > 0) {
+			notify.info("没有未保存的修改");
+			return;
+		}
 		versioning.save.mutate(doc, {
 			onSuccess: (saved) =>
 				notify.success(
@@ -552,6 +556,7 @@ function Editor({
 		});
 	};
 	useShortcut("canvas-save", save, !running);
+	useShortcut("canvas-run", () => setTriggering(true), !running);
 
 	const selectedNode = selectedId ? shownNodes.find((n) => n.id === selectedId) : undefined;
 	const context: InspectorContext = {
@@ -594,6 +599,46 @@ function Editor({
 	return (
 		<FieldDraftsProvider value={drafts.value}>
 			<div className="fixed inset-0 bg-canvas-bg">
+				<EditorTopLeft
+					orchestration={orchestration}
+					version={
+						readyRun && running ? readyRun.run.orchestration_version : versioning.base.version
+					}
+					fieldErrors={fieldErrors.length}
+					warnings={warnings.length}
+					notes={notes.length}
+					onShowChecks={() => {
+						setSelectedId(null);
+						setInspectorOpen(true);
+					}}
+					mode={mode}
+					onMode={setMode}
+					runState={<RunStateBadge state={runState} />}
+				/>
+				{running ? (
+					<RunTopRight run={readyRun?.run} editors={editors} />
+				) : (
+					<>
+						<EditorTopRight
+							orchestration={orchestration}
+							editors={editors}
+							doc={doc}
+							versioning={versioning}
+							fieldErrors={fieldErrors.length}
+							onSave={save}
+							onRun={() => setTriggering(true)}
+							onReload={onReload}
+						/>
+						<div className="absolute top-15.5 left-3 z-10 max-w-[560px]">
+							<DraftBanner
+								orchestration={orchestration}
+								doc={doc}
+								versioning={versioning}
+								onReload={onReload}
+							/>
+						</div>
+					</>
+				)}
 				<FlowCanvas
 					label={`编排画布：${orchestration.name}`}
 					editable={!running}
@@ -687,45 +732,6 @@ function Editor({
 						)
 					}
 				>
-					<EditorTopLeft
-						orchestration={orchestration}
-						version={
-							readyRun && running ? readyRun.run.orchestration_version : versioning.base.version
-						}
-						warnings={warnings.length}
-						notes={notes.length}
-						onShowChecks={() => {
-							setSelectedId(null);
-							setInspectorOpen(true);
-						}}
-						mode={mode}
-						onMode={setMode}
-						runState={<RunStateBadge state={runState} />}
-					/>
-					{running ? (
-						<RunTopRight run={readyRun?.run} editors={editors} />
-					) : (
-						<>
-							<EditorTopRight
-								orchestration={orchestration}
-								editors={editors}
-								doc={doc}
-								versioning={versioning}
-								fieldErrors={fieldErrors.length}
-								onSave={save}
-								onRun={() => setTriggering(true)}
-								onReload={onReload}
-							/>
-							<div className="absolute top-15.5 left-3 z-10 max-w-[560px]">
-								<DraftBanner
-									orchestration={orchestration}
-									doc={doc}
-									versioning={versioning}
-									onReload={onReload}
-								/>
-							</div>
-						</>
-					)}
 					{inspectorOpen && running && (
 						<RunStateInspector
 							ref={inspectorRef}

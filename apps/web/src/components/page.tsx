@@ -103,7 +103,7 @@ function KeyChords({ chords, className }: { chords: KeyLabel[][]; className?: st
 			{chords.map((chord, i) => (
 				// biome-ignore lint/suspicious/noArrayIndexKey: 同一快捷键里可能有重复的键
 				<span key={i} className="inline-flex items-center gap-0.75">
-					{i > 0 && <span className="px-0.5 text-2xs text-fg-3">然后</span>}
+					{i > 0 && <span className="px-0.5 text-xs text-fg-3">然后</span>}
 					{chord.map((k, j) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: 同上
 						<Kbd key={j}>{k}</Kbd>
