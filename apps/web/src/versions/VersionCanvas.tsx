@@ -95,6 +95,7 @@ export function VersionCanvas({
 				insets={{ top: 0, right: 0, bottom: 0, left: 0 }}
 				decorateNode={decorateNode}
 				initialMinimap={false}
+				refitOnResize
 			/>
 		</ReactFlowProvider>
 	);

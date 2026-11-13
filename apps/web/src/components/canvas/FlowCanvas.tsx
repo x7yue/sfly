@@ -96,6 +96,11 @@ export interface FlowCanvasProps {
 	/** 打开时是否显示小地图（默认显示；版本对比的窄画布默认收起）。 */
 	initialMinimap?: boolean;
 	/**
+	 * 画布容器变大变小时重新适配视图，直到用户在画布上点击、滚轮或按键（默认只在打开时和窗口变化时适配）。
+	 * 版本对比用：两个版本的数据先后到达，上方的差异摘要出现后画布变矮，先打开的那个要跟着重新居中。
+	 */
+	refitOnResize?: boolean;
+	/**
 	 * 右键菜单的内容（`ContextMenuItem` 等，见 ui/context-menu），按右键的对象给出；
 	 * 不给时空白处的菜单只有「适配视图」（只读画布），节点上不弹菜单。
 	 * 节点菜单用鼠标右键或焦点在节点上按 Shift+F10 / 菜单键打开。
@@ -142,6 +147,7 @@ export function FlowCanvas({
 	onEnter,
 	inspector,
 	initialMinimap = true,
+	refitOnResize = false,
 	menu,
 	onDeleteNode,
 	onInsertOnEdge,
@@ -289,6 +295,24 @@ export function FlowCanvas({
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
 	}, [flow]);
+	const touched = useRef(false);
+	const touch = () => {
+		touched.current = true;
+	};
+	useEffect(() => {
+		const el = wrapper.current;
+		if (!refitOnResize || !el) return;
+		let initial = true;
+		const observer = new ResizeObserver(() => {
+			if (initial) {
+				initial = false;
+				return;
+			}
+			if (!touched.current) void flow.fitView(fitRef.current);
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [flow, refitOnResize]);
 
 	/** 节点不在可见区域（扣掉悬浮控件）里时，把它移到可见区域中央。 */
 	const reveal = useCallback(
@@ -416,6 +440,9 @@ export function FlowCanvas({
 				onBlur={(e) => {
 					if (e.target === e.currentTarget) delete e.currentTarget.dataset.pointerFocus;
 				}}
+				onPointerDownCapture={touch}
+				onWheelCapture={touch}
+				onKeyDownCapture={touch}
 				data-lod={false}
 				data-tool={tool}
 				style={{ "--canvas-zoom": 1 } as React.CSSProperties}
