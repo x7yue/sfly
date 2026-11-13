@@ -32,6 +32,7 @@ import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
 import { registerClientPackageRoutes } from "./client-package-routes.js";
 import { contractRoute, guardHttpContract } from "./contract-route.js";
+import { registerCors } from "./cors.js";
 import { registerDashboardRoutes } from "./dashboard-routes.js";
 import { registerDocsRoutes } from "./docs-routes.js";
 import { sendError } from "./errors.js";
@@ -78,6 +79,8 @@ export interface HttpApiDeps {
 	feishu: FeishuClient;
 	/** 前端构建产物（src/http/web-app.ts）；不设置时不提供页面。 */
 	webApp?: WebApp;
+	/** 允许跨域调用的来源名单（src/http/cors.ts）；不设置时允许所有来源。 */
+	corsOrigins?: readonly string[];
 	/** SSE 心跳的间隔（src/sse/sse.ts）。 */
 	sseHeartbeatMs?: number;
 	/** 按运行合并读取日志时一次请求最多扫描的字节数（src/logs/run-log-pages.ts）。 */
@@ -118,6 +121,7 @@ export function buildHttpApi({
 	feishuBots,
 	feishu,
 	webApp,
+	corsOrigins,
 	sseHeartbeatMs,
 	logScanBytes,
 }: HttpApiDeps): FastifyInstance {
@@ -132,6 +136,7 @@ export function buildHttpApi({
 		reply.header(CONTROL_PLANE_VERSION_HEADER, publicConfig.version);
 	});
 	if (webApp) registerWebApp(app, webApp);
+	registerCors(app, { origins: corsOrigins });
 	// SSE 推送（docs/ARCHITECTURE.md：运行状态、日志、在线编辑者），用法见 src/sse/sse.ts。
 	const sse = registerSse(app, {
 		clock,

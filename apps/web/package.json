@@ -10,7 +10,7 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"typecheck": "tsc -p . && tsc -p e2e",
-		"test:e2e": "vite build && playwright test",
+		"test:e2e": "pnpm --filter @sfly/client build && vite build && playwright test",
 		"test": "vitest run"
 	},
 	"dependencies": {

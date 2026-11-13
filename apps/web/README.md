@@ -11,7 +11,7 @@ sfly 的前端：纯 SPA（TanStack Router + TanStack Query、shadcn/ui on Base 
 | `pnpm dev` | vite 开发服务器（端口 3000，`/api` 代理到 `SFLY_API_URL`，默认 `http://127.0.0.1:8080`） |
 | `pnpm build` | 生成 `dist/`（路由树 `src/routeTree.gen.ts` 在构建时生成） |
 | `pnpm test` | 纯逻辑模块的 vitest 单测 |
-| `pnpm test:e2e` | 构建后运行 Playwright 端到端测试（`e2e/`，不含视觉回归） |
+| `pnpm test:e2e` | 构建 API 客户端和前端后运行 Playwright 端到端测试（`e2e/`，不含视觉回归） |
 | `pnpm typecheck` | 源码与 e2e 的类型检查 |
 
 视觉回归只在 Playwright 官方镜像里比对：在仓库根目录运行 `pnpm test:e2e:docker`（加 `--update-snapshots` 更新 `e2e/__screenshots__` 的基线）。

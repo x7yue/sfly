@@ -23,6 +23,8 @@ services:
       # 留空时 Agent 用 uv 的官方来源；中科大镜像的写法见 .env.example。
       SFLY_PYPI_MIRROR: ${SFLY_PYPI_MIRROR:-}
       SFLY_GITHUB_RELEASE_MIRROR: ${SFLY_GITHUB_RELEASE_MIRROR:-}
+      # 允许跨域调用 API 的来源（ADR 0022）；留空时允许所有来源，写法见 .env.example。
+      SFLY_CORS_ORIGINS: ${SFLY_CORS_ORIGINS:-}
     ports:
       - "${SFLY_HTTP_PORT:-8080}:8080" # 页面、API、SSE、节点包与 SDK 下载
       - "${SFLY_GRPC_PORT:-50051}:50051" # Agent 网关（gRPC，HTTP/2）

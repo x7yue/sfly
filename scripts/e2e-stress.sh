@@ -11,7 +11,7 @@ if [[ $# -eq 0 ]]; then
 	echo "用法：pnpm test:e2e:stress <spec[:行号]>... [playwright 参数]" >&2
 	exit 2
 fi
-pnpm --dir "$root" --filter @sfly/web build >/dev/null
+pnpm --dir "$root" --filter @sfly/client --filter @sfly/web build >/dev/null
 cd "$root/apps/web"
 # 后面的参数覆盖前面的默认值（例如 --repeat-each=100）。
 exec taskset -c 0,1 npx playwright test --repeat-each=40 --workers=4 --reporter=line "$@"
