@@ -62,6 +62,8 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 `canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-run-running` / `-failed` / `-cancelled` / `-stopped` / `-done-bg` / `-done-border`（已完成的节点下沉，不降文字对比度）、`--canvas-minimap-mask`（小地图视口外遮罩）。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
 
+画布里的文字随缩放比例放大，屏幕上不小于最小字号，只有两档：数字与拉丁字母 11px，含中文 12px；卡片标题 13px，缩小视图时仍约 12px。写法固定用 `components/canvas/zoom-text.ts` 的 `ZOOM_TEXT_11`、`ZOOM_TEXT_12`、`ZOOM_TEXT_TITLE`，不另写字号。
+
 ### 2.4 配色规则
 
 - **白色是每屏唯一的主操作**：`<Button variant="primary">` 每屏最多一个（如「新建场景」）；其余按钮用默认（中性）或 `ghost`。Logo 与头像的白底不是操作。
@@ -193,6 +195,8 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 已取消是矮的空心虚线框（不再是斜纹）；排队是矮的灰色斜纹；等待是满高的琥珀底加描边，三者形状互不相同。
 - 图例按同样的形状画。时间线轨道与图例色块加 `data-viz`（见 6.2）。
 
+**时间轴的跨度**（`monitor/timeline-model.ts`）：运行中的轴不随「现在」每秒伸缩。跨度只取一级一级的固定值（10 秒起，到一天，相邻两级相差 25% 到 50%），取已用时长加 20% 余量后向上的那一级；「现在」线越过轴的 1 / 1.2 才扩到下一级，两次扩轴之间区段与刻度纹丝不动，只有「现在」线向右推进，扩轴时一次到位。已结束的运行按实际时长定轴，末端留 8% 的空白，短运行也铺满轨道。
+
 ### 6.2 强制颜色与高对比度
 
 - **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态标记是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-pressed="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边；数据图形（链路进度、缩略图、槽位条、时间线轨道与图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
@@ -216,6 +220,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | 读屏 | 通知区域「通知（Alt+T 跳到这里）」；Alt+T 把焦点移进去 | `announce` 时读一次（失败用 alert）；页面已有状态播报（运行监控的 `<output>`）时不要再开 | `role="alert"` |
 
 - 通知里的信息在别处也要看得到：「撤销」在「已归档」里也能做，运行结果在监控页顶栏一直显示。
+- **运行失败不发通知**：运行监控页在时间线上方显示页内横幅「运行失败」（带「查看失败节点」，可以收起，收起后失败摘要回到顶栏）；成功与取消才在页面上看着结束时发一次回执通知。
 - 弹窗打开时不发通知（会被遮罩挡住、读屏也读不到），错误写在弹窗里。
 - 横幅颜色之外靠图标形状区分：失败八边形、警告三角、信息圆形。
 
@@ -225,6 +230,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 第一次提交之前不显示错误；提交时校验，失败就在字段下写明原因（`FormField` 的 `error`），焦点放到第一个出错的字段；之后随输入更新错误。必填字段标签后加中性的 `*`，控件带 `aria-required`。
 - 服务端拒绝时用 `FormAlert` 写在弹窗里、提交按钮上方，弹窗不关闭，不发通知。
 - 表单弹窗输入过内容后点遮罩不关闭（`Dialog` 默认如此），Esc 与「取消」照常关闭。
+- 编排画布检查器里的字段没有「提交」：输入到一半不报错，字段第一次失焦（交互过）才显示错误，之后随输入更新；错误文字与控件用 `aria-describedby` 关联，读屏能读到。保存被字段错误拦下时把焦点放到最先出错的字段。
 - 运行抽屉的入口参数表单（`run-drawer/TriggerForm`）是参照实现。
 
 ### 6.5 长文本、截断与列宽
@@ -247,7 +253,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 - 焦点环统一是 2px 青色外框（`:focus-visible`，在 `components` 层，第三方库的样式去不掉它），组件不要用 `outline-none` 去掉它（输入框改用青色描边 + 光晕，并用 `focus:outline-hidden` 给强制颜色模式留轮廓）。所有元素平时的 `outline-color` 就是焦点色（base 层），所以带 `transition-colors` 的元素聚焦时焦点环也是即时出现、不会先灰后青。
 - 画布节点卡片的焦点环 `outline-offset` 是 3px：读作「框在卡片外面」，与执行中节点的青色描边区分开。
-- 编排画布只有一个 Tab 停靠点：画布区域。进入后方向键沿链选中节点，焦点跟着移到节点卡片上；Esc 取消选中、焦点回到画布区域。节点卡片与连线都不进 Tab 顺序（React Flow 的 `nodesFocusable` / `edgesFocusable` 关闭）。顶栏控件在 DOM 里排在画布之前，工具条与检查器在画布之后。
+- 编排画布只有一个 Tab 停靠点：画布区域。进入后方向键沿链选中节点，焦点跟着移到节点卡片上；Esc 取消选中、焦点回到画布区域。节点卡片与连线都不进 Tab 顺序（React Flow 的 `nodesFocusable` / `edgesFocusable` 关闭）。顶栏控件在 DOM 里排在画布之前，工具条与检查器在画布之后。底部的画布工具条同样只有一个 Tab 停靠点：← → 在按钮之间移动，禁用的按钮不参与。
 - 弹窗与抽屉用 `Dialog` / `Sheet`：锁定焦点、Esc 关闭、关闭后焦点回到原处；自己写的浮层也必须满足，并加端到端测试。
 - **焦点所在的元素被移走时**（归档、恢复、删除了它所在的列表项，空状态被列表替换），焦点不留在 body 上（`useFocusRecovery`，根路由挂载，不用逐页接）：它在列表项（`data-list-item`）里就交给下一项的主链接，没有下一项交给上一项；列表空了、或它不在列表项里，交给页面标题（`PageHeader` 的 h1）。弹窗、菜单关闭时焦点先回到打开它的元素，那个元素随后被移走也照这个规则处理。只管外壳页的主区域，全屏页（画布、运行监控）自己管焦点；用户自己点空白处让焦点离开时不处理。新增内容（登记了第一个机器人）后要把焦点放到新的那一项时，页面自己聚焦它。
 - **快捷键注册表** `src/lib/shortcuts.ts` 的 `SHORTCUTS` 是唯一来源：快捷键面板（?）从它生成，页面用 `useShortcut(id, handler, enabled)` 绑定（`enabled` 为 false 时不绑定，键不被拦截）。新增快捷键先登记（分组「全局 / 编排画布 / 运行监控 / 列表页」、名称、按键、是否允许在输入框或弹窗中触发），再绑定；没有绑定的不要登记。写法：`Ctrl+K`（同时按）、`G D`（1 秒内依次按）；Ctrl 同时匹配 ⌘；默认焦点在输入框里或有弹窗打开时不触发。
