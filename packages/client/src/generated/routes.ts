@@ -5,8 +5,11 @@ import type {
 	AgentView,
 	ArtifactView,
 	DashboardView,
+	FeishuBotName,
 	FeishuBotScenario,
 	FeishuBotView,
+	FeishuTestResult,
+	FeishuWebhookUrl,
 	ListOrchestrationsQuery,
 	LogPage,
 	LogPageQuery,
@@ -14,6 +17,7 @@ import type {
 	MetricSeriesQuery,
 	NodeName,
 	NodeTypeView,
+	OrchestrationDocumentInput,
 	OrchestrationHeadView,
 	OrchestrationSummary,
 	OrchestrationVersionView,
@@ -33,8 +37,11 @@ import type {
 	RunLogScopeQuery,
 	RunMetricCatalog,
 	RunMetricSummary,
+	RunNotificationChanges,
 	RunSummary,
 	RunView,
+	RunningTaskView,
+	SavedVersionView,
 	Timestamp,
 	VersionSummaryView,
 } from "./types.js";
@@ -52,6 +59,25 @@ export interface Api {
 				agents: AgentView[];
 				/** 控制面版本，也就是 Agent 的目标版本。 */
 				control_plane_version: string;
+			}
+		>;
+		/**
+		 * `POST /agents/:name/update-now`
+		 *
+		 * 立即更新（ADR 0014）：让正在更新（下载中或等待任务结束）的在线 Agent 不再等手上的任务跑完。这些任务立即以 agent_lost 失败、按重试配置重新排队
+		 * （Agent 更新后重新连上再派发），Agent 按取消流程终止它们后立即替换自己。返回被终止的任务。
+		 * Agent 不存在 404 `not_found`；不在线 409 `agent_offline`；版本一致 409 `version_matches`；
+		 * 上报了需要手动升级 409 `manual_upgrade_required`（它不会自更新，终止任务没有意义）；
+		 * 不在更新流程中（更新失败、正在替换、没有上报更新状态的旧 Agent）409 `not_updating`。
+		 */
+		updateNow: Endpoint<
+			{
+				params: {
+					name: string;
+				};
+			},
+			{
+				terminated_tasks: RunningTaskView[];
 			}
 		>;
 	};
@@ -111,6 +137,37 @@ export interface Api {
 			}
 		>;
 		/**
+		 * `POST /feishu-bots`
+		 *
+		 * 登记一个飞书机器人（201，需要昵称请求头）。名称已被占用 409 `name_taken`。
+		 */
+		create: Endpoint<
+			{
+				body: {
+					name: FeishuBotName;
+					webhook_url: FeishuWebhookUrl;
+				};
+			},
+			FeishuBotView
+		>;
+		/**
+		 * `PATCH /feishu-bots/:name`
+		 *
+		 * 替换 Webhook 地址（需要昵称请求头）。名称创建后不能修改：请求里带 `name` 返回 400 `name_immutable`。
+		 * 机器人不存在 404 `not_found`。
+		 */
+		replaceWebhook: Endpoint<
+			{
+				params: {
+					name: string;
+				};
+				body: {
+					webhook_url: FeishuWebhookUrl;
+				};
+			},
+			FeishuBotView
+		>;
+		/**
 		 * `GET /feishu-bots/:name/references`
 		 *
 		 * 引用这个机器人的场景（删除之前列出，删除不受它影响）：最新场景版本里的飞书通知节点、
@@ -126,6 +183,33 @@ export interface Api {
 			{
 				scenarios: FeishuBotScenario[];
 			}
+		>;
+		/**
+		 * `DELETE /feishu-bots/:name`
+		 *
+		 * 删除（204，需要昵称请求头）。机器人不存在 404 `not_found`。
+		 */
+		remove: Endpoint<
+			{
+				params: {
+					name: string;
+				};
+			},
+			void
+		>;
+		/**
+		 * `POST /feishu-bots/:name/test`
+		 *
+		 * 发送测试消息：不经过发送队列，直接同步向 Webhook 地址发一条固定文本（单次超时 10 秒），
+		 * 把飞书的结果翻译成中文返回。机器人不存在 404 `not_found`。
+		 */
+		test: Endpoint<
+			{
+				params: {
+					name: string;
+				};
+			},
+			FeishuTestResult
 		>;
 	};
 	logs: {
@@ -284,6 +368,26 @@ export interface Api {
 			OrchestrationHeadView
 		>;
 		/**
+		 * `POST /orchestrations/:id/versions`
+		 *
+		 * 保存（追加）一个版本，返回 201。需要昵称请求头。base_version 是编辑起点的版本号，
+		 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
+		 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
+		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
+		 */
+		saveVersion: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					document: OrchestrationDocumentInput;
+					base_version: number;
+				};
+			},
+			SavedVersionView
+		>;
+		/**
 		 * `GET /orchestrations/:id/versions`
 		 *
 		 * 版本历史：按版本号从新到旧列出版本号、作者和时间。
@@ -311,6 +415,95 @@ export interface Api {
 				};
 			},
 			OrchestrationVersionView
+		>;
+		/**
+		 * `POST /orchestrations/:id/versions/:number/restore`
+		 *
+		 * 恢复历史版本：用它的内容追加一个新版本（不改写历史），返回 201 与保存相同的响应。需要昵称请求头。
+		 * 恢复不检查编辑起点：恢复后其他人基于旧版本的保存会得到 409。
+		 */
+		restoreVersion: Endpoint<
+			{
+				params: {
+					id: string;
+					number: string;
+				};
+			},
+			SavedVersionView
+		>;
+		/**
+		 * `POST /orchestrations`
+		 *
+		 * 新建场景（自带入口节点：还没有版本时编辑起点是只含入口节点的初始文档）。
+		 */
+		create: Endpoint<
+			{
+				body: {
+					name: string;
+					description?: string;
+				};
+			},
+			OrchestrationView
+		>;
+		/**
+		 * `PATCH /orchestrations/:id`
+		 *
+		 * 修改名称、说明和运行通知设置；不产生新的场景版本，立即生效。
+		 */
+		update: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					name?: string;
+					description?: string;
+					run_notification?: RunNotificationChanges;
+				};
+			},
+			OrchestrationView
+		>;
+		/**
+		 * `POST /orchestrations/:id/copy`
+		 *
+		 * 复制场景并取新名字：说明和运行通知设置一起复制，源场景最新版本的内容作为第 1 版。
+		 */
+		copy: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					name: string;
+				};
+			},
+			OrchestrationView
+		>;
+		/**
+		 * `POST /orchestrations/:id/archive`
+		 *
+		 * 归档；有运行中的运行时返回 409 run_in_progress。
+		 */
+		archive: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			OrchestrationView
+		>;
+		/**
+		 * `POST /orchestrations/:id/unarchive`
+		 *
+		 * 恢复已归档的场景。
+		 */
+		unarchive: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			OrchestrationView
 		>;
 	};
 	packages: {
@@ -428,11 +621,42 @@ export interface Api {
 			}
 		>;
 		/**
+		 * `POST /orchestrations/:id/runs`
+		 *
+		 * 触发场景的最新版本（201）。预检不通过时 400 `invalid_orchestration`（details 是原因列表），
+		 * 参数不对时 400 `invalid_params`。
+		 */
+		trigger: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body?: {
+					params?: Record<string, unknown>;
+				};
+			},
+			RunView
+		>;
+		/**
 		 * `GET /runs/:id`
 		 *
 		 * 运行视图；实时更新见 `runs.events`。
 		 */
 		get: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			RunView
+		>;
+		/**
+		 * `POST /runs/:id/cancel`
+		 *
+		 * 取消整个运行（所有链）；清理期间再次调用即强制取消。返回取消后的运行视图；
+		 * 已结束时 409 `run_not_running`。
+		 */
+		cancel: Endpoint<
 			{
 				params: {
 					id: string;
@@ -461,6 +685,7 @@ export interface Api {
 export const routes = {
 	agents: {
 		list: { method: "GET", path: "/agents", kind: "endpoint" },
+		updateNow: { method: "POST", path: "/agents/:name/update-now", kind: "endpoint" },
 	},
 	artifacts: {
 		list: { method: "GET", path: "/tasks/:id/artifacts", kind: "endpoint" },
@@ -471,7 +696,11 @@ export const routes = {
 	},
 	feishuBots: {
 		list: { method: "GET", path: "/feishu-bots", kind: "endpoint" },
+		create: { method: "POST", path: "/feishu-bots", kind: "endpoint" },
+		replaceWebhook: { method: "PATCH", path: "/feishu-bots/:name", kind: "endpoint" },
 		references: { method: "GET", path: "/feishu-bots/:name/references", kind: "endpoint" },
+		remove: { method: "DELETE", path: "/feishu-bots/:name", kind: "endpoint" },
+		test: { method: "POST", path: "/feishu-bots/:name/test", kind: "endpoint" },
 	},
 	logs: {
 		page: { method: "GET", path: "/tasks/:id/logs", kind: "endpoint" },
@@ -489,8 +718,15 @@ export const routes = {
 		list: { method: "GET", path: "/orchestrations", kind: "endpoint" },
 		get: { method: "GET", path: "/orchestrations/:id", kind: "endpoint" },
 		head: { method: "GET", path: "/orchestrations/:id/head", kind: "endpoint" },
+		saveVersion: { method: "POST", path: "/orchestrations/:id/versions", kind: "endpoint" },
 		versions: { method: "GET", path: "/orchestrations/:id/versions", kind: "endpoint" },
 		version: { method: "GET", path: "/orchestrations/:id/versions/:number", kind: "endpoint" },
+		restoreVersion: { method: "POST", path: "/orchestrations/:id/versions/:number/restore", kind: "endpoint" },
+		create: { method: "POST", path: "/orchestrations", kind: "endpoint" },
+		update: { method: "PATCH", path: "/orchestrations/:id", kind: "endpoint" },
+		copy: { method: "POST", path: "/orchestrations/:id/copy", kind: "endpoint" },
+		archive: { method: "POST", path: "/orchestrations/:id/archive", kind: "endpoint" },
+		unarchive: { method: "POST", path: "/orchestrations/:id/unarchive", kind: "endpoint" },
 	},
 	packages: {
 		list: { method: "GET", path: "/packages", kind: "endpoint" },
@@ -502,7 +738,9 @@ export const routes = {
 		list: { method: "GET", path: "/runs", kind: "endpoint" },
 		preflight: { method: "GET", path: "/orchestrations/:id/preflight", kind: "endpoint" },
 		listForOrchestration: { method: "GET", path: "/orchestrations/:id/runs", kind: "endpoint" },
+		trigger: { method: "POST", path: "/orchestrations/:id/runs", kind: "endpoint" },
 		get: { method: "GET", path: "/runs/:id", kind: "endpoint" },
+		cancel: { method: "POST", path: "/runs/:id/cancel", kind: "endpoint" },
 	},
 	system: {
 		health: { method: "GET", path: "/health", kind: "endpoint" },

@@ -13,11 +13,10 @@ describe("API 客户端的方法来自契约里标了 client 的接口", () => {
 			typeof table === "object" ? Object.keys(table).map((name) => `${domain}.${name}`) : [],
 		);
 
-	it("客户端的方法正是契约里标了 client 的只读接口和下载", () => {
+	it("客户端的方法正是契约里标了 client 的接口和下载，事件流除外", () => {
 		const flagged = Object.entries(httpApis).flatMap(([domain, table]) =>
 			Object.entries(table)
 				.filter(([, def]) => def.client)
-				.filter(([, def]) => def.method === "GET")
 				.filter(([, def]) => !("kind" in def) || def.kind !== "stream")
 				.map(([name]) => `${domain}.${name}`),
 		);

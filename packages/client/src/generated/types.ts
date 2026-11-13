@@ -96,6 +96,18 @@ export interface AsyncTaskNode {
 	params: Record<string, unknown>;
 }
 
+export interface AsyncTaskNodeInput {
+	id: string;
+	/** 布局属于版本内容。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	kind: "async";
+	/** 子流程参数映射：子流程入口参数名 → 值。 */
+	params?: Record<string, unknown>;
+}
+
 export interface AttemptView {
 	task_id: string;
 	attempt: number;
@@ -334,6 +346,14 @@ export interface DevPackageView {
 	metadata: Record<string, unknown> | null;
 }
 
+/** 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。 */
+export interface DocumentWarningView {
+	code: string;
+	message: string;
+	node_id?: string;
+	input?: string;
+}
+
 export interface Edge {
 	from: string;
 	to: string;
@@ -352,11 +372,25 @@ export interface EntryNode {
 	params: ParamDeclaration[];
 }
 
+export interface EntryNodeInput {
+	id: string;
+	/** 布局属于版本内容。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	kind: "entry";
+	params?: ParamDeclarationInput[];
+}
+
 /** 错误：kind 是错误类型（node_error、timeout、agent_lost、env_error、config_error）；message 可能带堆栈（空行之后）。 */
 export interface ErrorView {
 	kind: string;
 	message: string;
 }
+
+/** 机器人名称：去掉首尾空白后 1 到 `FEISHU_BOT_NAME_MAX` 个字符。 */
+export type FeishuBotName = string;
 
 /**
  * 一处引用飞书机器人的地方。`kind` 区分引用的种类：飞书通知节点（`feishu_notify_node`）、
@@ -446,6 +480,58 @@ export interface FeishuNotifyNode {
 	 */
 	message?: unknown;
 }
+
+export interface FeishuNotifyNodeInput {
+	id: string;
+	/** 布局属于版本内容。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	kind: "feishu_notify";
+	always?: boolean;
+	/**
+	 * 飞书机器人的名称：常量，或整值引用入口参数（docs/SEMANTICS.md §1.3）。
+	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝。
+	 */
+	bot?: string;
+	/**
+	 * 消息格式，决定下面哪一组字段生效。切换格式时其他格式里填过的内容留在文档里，
+	 * 但不参与引用检查和解析，切回去还在。
+	 */
+	format?: FeishuMessageFormat;
+	/** 文本格式：消息文本，支持内嵌引用。 */
+	text?: string;
+	/** 文本格式：在正文末尾追加 `<at user_id="all">所有人</at>`。 */
+	at_all?: boolean;
+	/** Markdown 卡片：标题，支持内嵌引用。 */
+	title?: string;
+	/** Markdown 卡片：标题颜色。 */
+	color?: FeishuCardColor;
+	/** Markdown 卡片：Markdown 正文，支持内嵌引用。 */
+	markdown?: string;
+	/**
+	 * 原始消息：完整的飞书请求体（JSON 对象），字符串字段里的引用逐个字段解析；也可以整值引用入口参数。
+	 * 可选：还没有填写时消息不发送，节点日志里写一条 warning。
+	 */
+	message?: unknown;
+}
+
+/** 「发送测试消息」的结果；失败也是 200，结果在 `ok` 里。 */
+export interface FeishuTestResult {
+	ok: boolean;
+	/** 一句话说明结果：成功是「测试消息已送达」，失败是中文原因（Webhook 地址已打码）。 */
+	message: string;
+	/** 失败时的下一步（中文）；成功时为 null。 */
+	next_step: string | null;
+	/** 飞书返回的错误码；成功，或者没有收到飞书的响应（网络错误、超时）时为 null。 */
+	feishu_code: number | null;
+	/** 收到响应时的 HTTP 状态码；网络错误和超时为 null。 */
+	http_status: number | null;
+}
+
+/** Webhook 地址：必须是 http 或 https 地址，不含空白字符。 */
+export type FeishuWebhookUrl = string;
 
 /** 最近一次节点包安装状态（Agent 上报 InstallStatus）。 */
 export interface InstallProgressView {
@@ -704,6 +790,14 @@ export interface OrchestrationDocument {
 	packages: Record<PackageName, string>;
 }
 
+export interface OrchestrationDocumentInput {
+	default_agent?: string;
+	nodes: OrchestrationNodeInput[];
+	edges?: Edge[];
+	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
+	packages?: Record<PackageName, string>;
+}
+
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */
 export interface OrchestrationHeadView {
 	orchestration_id: string;
@@ -716,6 +810,8 @@ export interface OrchestrationHeadView {
 }
 
 export type OrchestrationNode = EntryNode | SubflowEntryNode | AsyncTaskNode | TimerNode | SleepNode | StopSubflowNode | FeishuNotifyNode | PackageNode;
+
+export type OrchestrationNodeInput = EntryNodeInput | SubflowEntryNodeInput | AsyncTaskNodeInput | TimerNodeInput | SleepNodeInput | StopSubflowNodeInput | FeishuNotifyNodeInput | PackageNodeInput;
 
 /** 缩略图用的结构：最新版本（没有版本时是只含入口节点的初始文档）的节点与连线，不含参数与布局。 */
 export interface OrchestrationStructure {
@@ -802,6 +898,27 @@ export interface PackageNode {
 	queue_timeout?: number;
 }
 
+export interface PackageNodeInput {
+	id: string;
+	/** 布局属于版本内容。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	kind: "package";
+	always?: boolean;
+	package: PackageName;
+	node: NodeName;
+	/** 未设置时使用编排的默认 Agent。 */
+	agent?: string;
+	inputs?: Record<string, unknown>;
+	/** 秒。 */
+	timeout?: number;
+	retries?: number;
+	/** 秒。 */
+	queue_timeout?: number;
+}
+
 export interface PackageSummary {
 	name: string;
 	/** 按发布时间从新到旧。 */
@@ -862,6 +979,14 @@ export interface ParamDeclaration {
 	default?: unknown;
 	required: boolean;
 	secret: boolean;
+}
+
+export interface ParamDeclarationInput {
+	name: string;
+	type: ParamType;
+	default?: unknown;
+	required?: boolean;
+	secret?: boolean;
 }
 
 /**
@@ -1115,6 +1240,14 @@ export interface RunMetricSummary {
 	tasks: TaskMetricSummary[];
 }
 
+/** 更新运行通知设置的请求：只写要修改的项，其余保持不变。 */
+export interface RunNotificationChanges {
+	bot?: FeishuBotName | null;
+	trigger?: RunNotificationTrigger;
+	title?: string;
+	note?: string;
+}
+
 /**
  * 场景的运行通知设置（GLOSSARY「运行通知」，ADR 0020）：和名称、说明一样是场景自己的设置，不属于场景版本，
  * 通过更新场景的接口修改，立即生效；运行结束时读取场景当前的设置。
@@ -1202,6 +1335,17 @@ export interface RunningTaskView {
 	started_at: Timestamp | null;
 }
 
+export interface SavedVersionView {
+	id: string;
+	orchestration_id: string;
+	number: number;
+	author: string;
+	author_via: string | null;
+	created_at: Timestamp;
+	document: OrchestrationDocument;
+	warnings: DocumentWarningView[];
+}
+
 export interface SleepNode {
 	id: string;
 	/** 布局属于版本内容。 */
@@ -1215,6 +1359,19 @@ export interface SleepNode {
 	duration: string;
 }
 
+export interface SleepNodeInput {
+	id: string;
+	/** 布局属于版本内容。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	kind: "sleep";
+	always?: boolean;
+	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
+	duration: string;
+}
+
 export interface StopSubflowNode {
 	id: string;
 	/** 布局属于版本内容。 */
@@ -1224,6 +1381,22 @@ export interface StopSubflowNode {
 	};
 	kind: "stop_subflow";
 	always: boolean;
+	/**
+	 * 要停止的子流程：子流程入口的节点 ID（画布里按名称选择，改名不影响引用，docs/SEMANTICS.md §4.1）。
+	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝（§1.2）。
+	 */
+	subflow?: string;
+}
+
+export interface StopSubflowNodeInput {
+	id: string;
+	/** 布局属于版本内容。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	kind: "stop_subflow";
+	always?: boolean;
 	/**
 	 * 要停止的子流程：子流程入口的节点 ID（画布里按名称选择，改名不影响引用，docs/SEMANTICS.md §4.1）。
 	 * 可选：画布新建的节点还没有选择；没有选择时保存只警告、触发时拒绝（§1.2）。
@@ -1245,6 +1418,22 @@ export interface SubflowEntryNode {
 	 */
 	name?: string;
 	params: ParamDeclaration[];
+}
+
+export interface SubflowEntryNodeInput {
+	id: string;
+	/** 布局属于版本内容。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	kind: "subflow_entry";
+	/**
+	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
+	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（§1.2）。
+	 */
+	name?: string;
+	params?: ParamDeclarationInput[];
 }
 
 /** 一个任务（一次尝试）的指标摘要。 */
@@ -1297,6 +1486,20 @@ export interface TimerNode {
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
 	at: string;
 	tz: string;
+}
+
+export interface TimerNodeInput {
+	id: string;
+	/** 布局属于版本内容。 */
+	position?: {
+		x: number;
+		y: number;
+	};
+	kind: "timer";
+	always?: boolean;
+	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
+	at: string;
+	tz?: string;
 }
 
 /** 时间：ISO 8601 字符串（控制面用 `Date#toISOString()` 输出）。 */

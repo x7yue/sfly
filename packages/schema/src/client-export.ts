@@ -62,7 +62,6 @@ function selectClientRoutes(apis: Record<string, Record<string, RouteDef>>): Cli
 				throw new Error(`${domain}.${name}: 上传接口不能进入 API 客户端`);
 			}
 			const kind = "kind" in def ? def.kind : "endpoint";
-			if (def.method !== "GET") continue;
 			if (kind === "stream") continue;
 			routes.push({ domain, name, kind, def });
 		}
