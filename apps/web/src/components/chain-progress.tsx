@@ -27,7 +27,7 @@ export type ChainBarSegment =
 
 const SEGMENT: Record<ChainBarSegment, string> = {
 	ok: "bg-ok/70",
-	running: "bg-signal",
+	running: "bg-signal-soft shadow-[inset_0_0_0_1px_var(--signal-line)]",
 	failed: "bg-danger",
 	waiting: "bg-warn/45",
 	skipped: "shadow-[inset_0_0_0_1px_var(--border-strong)]",

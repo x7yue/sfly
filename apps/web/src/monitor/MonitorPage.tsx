@@ -1,21 +1,30 @@
-import { orchestrationsApi, type RunView } from "@sfly/schema";
+import { type OrchestrationDocument, orchestrationsApi, type RunView } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { notify } from "#/components/feedback/notify";
 import { ErrorState } from "#/components/feedback/states";
 import { apiQuery } from "#/lib/api";
+import { dialogOpen, isEditable } from "#/lib/focus";
 import { formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { versionQuery } from "#/versions/queries";
 import { Skeleton } from "@/components/ui/skeleton";
 import { BottomPanel } from "./BottomPanel";
 import { ChartWorkspace } from "./ChartWorkspace";
+import { chartsCompact } from "./chart-groups";
 import { useLiveRun } from "./live-run";
 import { MonitorTopBar } from "./MonitorTopBar";
-import { createMonitorStore, MonitorProvider, type TimeAxis } from "./monitor-state";
-import { failureSummary, focusNode, runDocumentTitle, runFailure } from "./run-model";
+import {
+	createMonitorStore,
+	MonitorProvider,
+	type TimeAxis,
+	useMonitor,
+	useMonitorActions,
+} from "./monitor-state";
+import { failureSummary, initialSelection, runDocumentTitle, runFailure } from "./run-model";
 import { Timeline } from "./Timeline";
 import { runExtent, visibleRange } from "./timeline-model";
+import { attemptsSignature, useMetricCatalog } from "./use-run-metrics";
 
 /**
  * 运行监控页（原型 #/monitor/:runId，全屏）：顶栏、链路时间线、图表工作区（#42）、底部面板。
@@ -41,13 +50,13 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 	});
 
 	const [store] = useState(() => createMonitorStore());
-	// 第一次拿到运行视图时选中节点：链接里给的节点，否则失败的、其次执行中的节点。
+	// 第一次拿到运行视图时选中节点（规则见 initialSelection）。
 	// 在渲染里选而不是在 effect 里：底部面板第一次渲染就看到选中的节点，不会先挂上没选中节点时的合并日志、
 	// 白发一次请求之后又卸载（这时依赖这个状态的子组件还没有挂上）。
 	const selectedOnce = useRef(false);
 	if (run && !selectedOnce.current) {
 		selectedOnce.current = true;
-		store.select(focusNode(run, initialNode));
+		store.select(initialSelection(run, initialNode));
 	}
 
 	const name = orchestration.data?.name;
@@ -94,14 +103,43 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 			{/* 规格最小宽度 1280；更窄时顶栏收成图标按钮，到 1024 仍不裁切操作。 */}
 			<div className="fixed inset-0 flex min-w-[1024px] flex-col bg-bg">
 				<MonitorTopBar run={run} name={name} />
-				<main className="flex min-h-0 flex-1 flex-col">
-					<Timeline run={run} doc={doc} />
-					<ChartWorkspace run={run} />
-					<BottomPanel run={run} doc={doc} />
-				</main>
+				<MonitorBody run={run} doc={doc} />
 			</div>
 		</MonitorProvider>
 	);
+}
+
+/** 图表工作区要不要收成一行（chartsCompact）依赖指标目录，所以目录在这里取、传给图表工作区。 */
+function MonitorBody({ run, doc }: { run: RunView; doc: OrchestrationDocument | undefined }) {
+	const catalog = useMetricCatalog(run.id, attemptsSignature(run));
+	const compact = chartsCompact(run, catalog.data);
+	useEscapeClearsSelection();
+	return (
+		<main className="flex min-h-0 flex-1 flex-col">
+			<Timeline run={run} doc={doc} />
+			<ChartWorkspace run={run} catalog={catalog} compact={compact} />
+			<BottomPanel run={run} doc={doc} fill={compact} />
+		</main>
+	);
+}
+
+const OPEN_MENU = '[role="menu"][data-open]';
+
+/** 焦点在输入框里、有弹窗或菜单打开时 Esc 是它们的，不处理。 */
+function useEscapeClearsSelection() {
+	const selected = useMonitor((s) => s.selected);
+	const actions = useMonitorActions();
+	useEffect(() => {
+		if (!selected) return;
+		const onKeyDown = (event: KeyboardEvent) => {
+			if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
+			if (isEditable(event.target) || dialogOpen() || document.querySelector(OPEN_MENU)) return;
+			event.preventDefault();
+			actions.select(null);
+		};
+		document.addEventListener("keydown", onKeyDown);
+		return () => document.removeEventListener("keydown", onKeyDown);
+	}, [selected, actions]);
 }
 
 /** 浏览器标签页标题：「● 运行中 · 日终数据处理 · sfly」；离开页面时恢复原来的标题。 */

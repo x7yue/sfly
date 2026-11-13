@@ -104,6 +104,14 @@ export const SHORTCUTS = [
 	},
 	{ id: "canvas-deselect", group: "编排画布", label: "取消选中", keys: "Esc", displayOnly: true },
 	{ id: "monitor-toggle-timeline", group: "运行监控", label: "时间线汇总 / 展开节点", keys: "T" },
+	// 取消选中节点（monitor/MonitorPage.tsx）。
+	{
+		id: "monitor-deselect",
+		group: "运行监控",
+		label: "取消选中节点",
+		keys: "Esc",
+		displayOnly: true,
+	},
 	// 日志行菜单（monitor/LogList.tsx）：合并视图里焦点在日志行上时打开，菜单键同样可以。
 	{
 		id: "monitor-log-row-menu",

@@ -70,17 +70,28 @@ function executionKind(kind: NodeRunView["kind"], status: AttemptView["status"])
 	return WAIT_KINDS.has(kind) && (segment === "ok" || segment === "run") ? "wait" : segment;
 }
 
-/** 时间轴最短显示的时长：刚开始的运行也有可读的刻度。 */
+/** 运行中时间轴最短显示的时长：刚开始的运行也有可读的刻度。 */
 export const MIN_SPAN = 10_000;
 
-/** 运行占的时间：从开始到结束（运行中到现在），至少 {@link MIN_SPAN}。 */
+/** 已结束的运行在轨道末端留的空白（占实际时长的比例）：最后一段不贴着轨道边缘。 */
+export const END_PADDING = 0.08;
+
+/** 已结束的运行时间轴最短显示的时长：只防止零时长的运行把轴缩成一点。 */
+export const MIN_ENDED_SPAN = 100;
+
+/**
+ * 运行占的时间轴：运行中从开始到现在（至少 {@link MIN_SPAN}）；
+ * 已结束的按实际时长定轴并留 {@link END_PADDING} 的空白，短运行也铺满轨道，而不是缩在 10 秒轴的左端。
+ */
 export function runExtent(
 	run: { started_at: string; ended_at: string | null },
 	now: number,
 ): TimeRange {
 	const start = Date.parse(run.started_at);
-	const end = time(run.ended_at) ?? now;
-	return { start, end: Math.max(end, start + MIN_SPAN) };
+	const ended = time(run.ended_at);
+	if (ended === null) return { start, end: Math.max(now, start + MIN_SPAN) };
+	const span = Math.max(ended - start, MIN_ENDED_SPAN);
+	return { start, end: start + span + Math.round(span * END_PADDING) };
 }
 
 /**
@@ -111,7 +122,8 @@ const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
 const STEPS = [
-	1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400,
+	0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200,
+	86400,
 ].map((n) => n * SECOND);
 
 /** 超过这个时长的范围用当地时钟时间标刻度，否则用相对运行开始的偏移。 */
@@ -133,13 +145,15 @@ export interface TickOptions {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** 偏移标注：`+0s`、`+45s`、`+2m`、`+2m 30s`、`+1h 05m`。 */
+/** 偏移标注：`+0s`、`+0.2s`、`+45s`、`+2m`、`+2m 30s`、`+1h 05m`。 */
 function offsetLabel(ms: number): string {
-	const total = Math.round(ms / SECOND);
-	if (total < 60) return `+${total}s`;
+	const tenths = Math.round(ms / 100);
+	const fraction = tenths % 10 === 0 ? "" : `.${tenths % 10}`;
+	const total = Math.floor(tenths / 10);
+	if (total < 60) return `+${total}${fraction}s`;
 	const m = Math.floor(total / 60);
 	const sec = total % 60;
-	if (m < 60) return sec === 0 ? `+${m}m` : `+${m}m ${pad(sec)}s`;
+	if (m < 60) return sec === 0 && !fraction ? `+${m}m` : `+${m}m ${pad(sec)}${fraction}s`;
 	return `+${Math.floor(m / 60)}h ${pad(m % 60)}m`;
 }
 
