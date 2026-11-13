@@ -18,25 +18,19 @@ export interface CrossOriginFixtures {
 	controlPlaneProxy: StreamingProxy;
 }
 
+// biome-ignore lint/correctness/noEmptyPattern: Playwright 要求 fixture 的第一个参数是解构模式
+const pageHostFixture = async ({}, use: (host: PageHost) => Promise<void>) => {
+	const host = await startPageHost();
+	try {
+		await use(host);
+	} finally {
+		await host.close();
+	}
+};
+
 export const test = base.extend<CrossOriginFixtures>({
-	// biome-ignore lint/correctness/noEmptyPattern: Playwright 要求 fixture 的第一个参数是解构模式
-	pageHost: async ({}, use) => {
-		const host = await startPageHost();
-		try {
-			await use(host);
-		} finally {
-			await host.close();
-		}
-	},
-	// biome-ignore lint/correctness/noEmptyPattern: Playwright 要求 fixture 的第一个参数是解构模式
-	foreignPageHost: async ({}, use) => {
-		const host = await startPageHost();
-		try {
-			await use(host);
-		} finally {
-			await host.close();
-		}
-	},
+	pageHost: pageHostFixture,
+	foreignPageHost: pageHostFixture,
 	restrictCorsToPage: [false, { option: true }],
 	controlPlaneVersion: [undefined, { option: true }],
 	controlPlaneOptions: async (
