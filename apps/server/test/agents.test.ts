@@ -49,6 +49,8 @@ describe("Agent 注册", () => {
 					installed_packages: [],
 				},
 				last_seen_at: "2026-01-01T00:00:00.000Z",
+				// 假 Agent 连上后立即发出第一次心跳：已准备好环境。
+				preparing_since: null,
 				clock_offset: null,
 				installed_packages: [],
 				install: null,

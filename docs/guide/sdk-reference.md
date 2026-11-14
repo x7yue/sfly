@@ -88,7 +88,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | `dict[str, T]`、`Mapping[str, T]` | 对象（键必须是 `str`） |
 | TypedDict | 有固定键的对象（非 `total` 的键可选） |
 | `T \| None`、`Optional[T]`、其他 `Union` | 任一成员 |
-| `Annotated[T, ...]` | 同 `T` |
+| `Annotated[T, ...]` | 同 `T`；例外是 `Doc`：它给这个输入写说明，见下文「输入的说明：`Doc`」 |
 | `sfly.AgentName` | 「Agent」类型：Agent 名称（字符串），见下文 |
 | `sfly.FeishuBot` | 「飞书机器人」类型：飞书机器人的名称（字符串），见下文 |
 | 没有注解、`Any`、`object` | 任意 JSON 值，不校验 |
@@ -96,6 +96,36 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 - 有默认值的参数是可选输入，默认值必须能序列化为 JSON；没有默认值的是必填输入。
 - 派发任务前按 schema 校验：缺少必填输入、或声明了的输入类型不符时，任务以 `config_error` 失败，节点不会执行。没有声明的输入不检查。
 - 不支持的注解（例如自定义类）让 `sfly build` 报错。
+
+### 输入的说明：`Doc`
+
+```python
+from typing import Annotated
+
+from sfly import Context, Doc, node
+
+
+@node
+def http_check(
+    ctx: Context,
+    url: Annotated[str, Doc("请求地址，带协议")],
+    expect: Annotated[int, Doc("期望的状态码")] = 200,
+    verify_tls: bool = True,
+) -> dict:
+    ...
+```
+
+用 `Annotated[类型, Doc("…")]` 给输入写说明。`sfly build` 把它写成这个输入 schema 的 `description`，画布的检查器在输入框下面显示完整的说明，节点包管理页悬停在输入的名字上也能看到，`sfly package show` 的「说明」列里也有。参数的标签仍然是参数名，说明是帮助文字。说明跟着参数走，改参数名不会丢。
+
+- 写给搭场景的人看：这个输入是什么意思、单位是什么、怎么填。不要重复参数名和类型。
+- 必须是非空字符串，首尾空白不保存，最多 500 个 Unicode 字符（不是字节）。可以换行，检查器里照样显示成多行。
+- 写在参数注解的最外层，一个注解里只能有一个：可选参数写成 `Annotated[str | None, Doc("…")] = None`，不要写成 `Annotated[str, Doc("…")] | None` 或 `list[Annotated[str, Doc("…")]]`。`Annotated` 里的其他元数据照旧不起作用，`Doc` 是唯一的例外。
+- 任务上下文 `ctx` 不是输入，不能写 `Doc`。
+- 「Agent」类型和「飞书机器人」类型的输入也能写：`Annotated[AgentName, Doc("…")]`。
+- 没写说明不报错、不警告：旧版本的节点包和没写说明的输入，在画布上照旧显示。
+- `Doc` 写错时，`sfly build` 报错并指出节点和参数，例如 `节点 demo_checks.http_check 的参数 url：Doc 必须是非空字符串，收到 ''`。`sfly dev`、`sfly debug` 和 `sfly.testing.run_node` 用同一套扫描，结果一样。报错的情况：不是非空字符串、同一个注解里有两个、写在 `ctx` 上、写在 `list[...]`、`|` 等的里面、超过 500 个字符。
+
+这个写法从 SDK 0.4.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.4.0`：节点运行时要从 `sfly` 导入 `Doc`，更旧的 Agent 上没有它，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
 
 ### 「Agent」类型的输入
 

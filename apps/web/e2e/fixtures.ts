@@ -29,9 +29,13 @@ export interface E2eFixtures {
 	/**
 	 * 连接一个假 Agent（默认上报控制面的版本，时钟与控制面一致：指标点的控制面时间就是给出的 Unix 秒，
 	 * 见 FakeAgent.connect 的 clock 选项）；测试结束时自动断开。要模拟 Agent 时间不一致，在 hello 里写 agentTimeUnixMs；
-	 * `clock: false` 时是不上报时钟读数的旧版本 Agent。
+	 * `clock: false` 时是不上报时钟读数的旧版本 Agent。`preparing: true` 时停在准备环境，调用 `agent.ready()` 才准备好
+	 * （见 FakeAgent.connect）。
 	 */
-	connectAgent: (hello: HelloInit, options?: { clock?: false }) => Promise<FakeAgent>;
+	connectAgent: (
+		hello: HelloInit,
+		options?: { clock?: false; preparing?: boolean },
+	) => Promise<FakeAgent>;
 	/** 假的飞书 Webhook 服务（ADR 0020）：飞书机器人的 Webhook 地址指向它；测试结束时自动关闭。 */
 	feishu: FakeFeishu;
 	/** 浏览器里的昵称（预先写入 localStorage，跳过昵称弹窗）；设为 null 时不写。 */
@@ -83,7 +87,7 @@ export const test = base.extend<E2eFixtures>({
 			const agent = await FakeAgent.connect(
 				controlPlane.grpcUrl,
 				{ agentVersion: controlPlane.version, ...hello },
-				options.clock === false ? {} : { clock },
+				{ ...(options.clock === false ? {} : { clock }), preparing: options.preparing },
 			);
 			agents.push(agent);
 			return agent;

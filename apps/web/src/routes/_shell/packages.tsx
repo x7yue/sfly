@@ -1,3 +1,4 @@
+import { schemaDescription } from "@sfly/orchestration";
 import {
 	type NodeTypeView,
 	type PackageSummary,
@@ -33,6 +34,7 @@ import {
 	TableHeader,
 	TableRow,
 } from "@/components/ui/table";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /** 选中的包与版本放在查询参数里，可以直接分享链接；不传时选第一个包的最新版本。 */
 const PackagesSearch = z.object({
@@ -240,10 +242,39 @@ function PackageDetail({ pkg, version }: { pkg: PackageSummary; version: string 
 const lockedText = (n: number) => (n > 0 ? `被 ${n} 个场景锁定` : "未被锁定");
 
 /** 输入或输出的键，按 schema 里的 order（函数参数顺序）排列；必填的输入带 *。 */
-function ioKeys(schema: NodeTypeView["inputs"]): { key: string; required: boolean }[] {
+function ioKeys(
+	schema: NodeTypeView["inputs"],
+): { key: string; required: boolean; description: string | undefined }[] {
 	const keys = schema.order ?? Object.keys(schema.properties);
 	const required = new Set(schema.required ?? []);
-	return keys.map((key) => ({ key, required: required.has(key) }));
+	return keys.map((key) => ({
+		key,
+		required: required.has(key),
+		description: schemaDescription(schema.properties[key]),
+	}));
+}
+
+/** 有说明的名字：悬停或键盘聚焦显示说明（只有 `title` 的话键盘和触屏拿不到）；没有说明的名字就是文字。 */
+function IoName({ name, description }: { name: string; description: string | undefined }) {
+	if (description === undefined) return name;
+	return (
+		<Tooltip>
+			<TooltipTrigger
+				render={
+					<span
+						// biome-ignore lint/a11y/noNoninteractiveTabindex: 说明只在悬停或聚焦时出现，键盘用户要能 Tab 到名字上
+						tabIndex={0}
+						className="cursor-help underline decoration-fg-3 decoration-dotted underline-offset-2"
+					/>
+				}
+			>
+				{name}
+			</TooltipTrigger>
+			<TooltipContent className="max-w-md whitespace-pre-line wrap-anywhere">
+				{description}
+			</TooltipContent>
+		</Tooltip>
+	);
 }
 
 /** 「·」跟在前一项后面、与它同属一个 `nowrap` 单元：换行只发生在单元之间，「·」不会落在行首。 */
@@ -252,11 +283,11 @@ function IoList({ schema }: { schema: NodeTypeView["inputs"] }) {
 	if (keys.length === 0) return <span className="text-fg-3">—</span>;
 	return (
 		<span className="font-mono text-xs text-fg-2">
-			{keys.map(({ key, required }, i) => (
+			{keys.map(({ key, required, description }, i) => (
 				<Fragment key={key}>
 					{i > 0 && " "}
 					<span className="whitespace-nowrap">
-						{key}
+						<IoName name={key} description={description} />
 						{required && (
 							<span className="text-fg-2" title="必填">
 								*

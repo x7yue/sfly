@@ -130,7 +130,7 @@ export function Field({
 						</p>
 					)}
 					{help && (
-						<p id={helpId} className="m-0 text-xs text-fg-3">
+						<p id={helpId} className="m-0 text-xs wrap-anywhere whitespace-pre-line text-fg-3">
 							{help}
 						</p>
 					)}

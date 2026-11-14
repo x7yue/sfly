@@ -344,6 +344,8 @@ export const RunningTaskSchema: GenMessage<RunningTask> = /*@__PURE__*/
 
 /**
  * Agent 周期发送，为它手上的任务续约租约；租约过期的任务以 agent_lost 失败（按重试配置派回同一个 Agent）。
+ * 收到 Welcome 之后 Agent 先准备环境（uv、共享 venv、SDK 运行时），这期间不发心跳；准备好、开始接收任务时立即发一次，
+ * 之后每个心跳周期发一次。Welcome 之后的第一次心跳表示 Agent 已准备好环境，控制面从这时起才给它派发任务。
  *
  * @generated from message sfly.agent.v1.Heartbeat
  */
@@ -518,7 +520,8 @@ export const InstalledPackageSchema: GenMessage<InstalledPackage> = /*@__PURE__*
   messageDesc(file_sfly_agent_v1_agent, 10);
 
 /**
- * 控制面对 Hello 的回应，表示连接已被接受。
+ * 控制面对 Hello 的回应，表示连接已被接受。Agent 收到后先准备环境，准备好时发出第一次 Heartbeat；
+ * 在此之前控制面不派发任务（取消等其它消息照常发送，Agent 准备好后按顺序处理）。
  *
  * @generated from message sfly.agent.v1.Welcome
  */

@@ -152,6 +152,12 @@ export const ReferencedAgent = z.object({
 	status: z.enum(["online", "offline", "unknown"]),
 });
 
+/** 运行前检查里引用的 Agent：在线的 Agent 正在准备环境时，带上开始准备的控制面时间。 */
+export const PreflightAgent = ReferencedAgent.extend({
+	/** 这次连接发出 Welcome 的控制面时间；已准备好、不在线或没有注册过时为 null（任务派发要等 Agent 准备好）。 */
+	preparing_since: Timestamp.nullable(),
+});
+
 export const LastRun = z.object({
 	id: z.string(),
 	status: RunStatus,
@@ -357,6 +363,7 @@ export type RunNotificationTrigger = z.infer<typeof RunNotificationTrigger>;
 export type OrchestrationSummary = z.infer<typeof OrchestrationSummary>;
 export type OrchestrationStructure = z.infer<typeof OrchestrationStructure>;
 export type ReferencedAgent = z.infer<typeof ReferencedAgent>;
+export type PreflightAgent = z.infer<typeof PreflightAgent>;
 export type LastRun = z.infer<typeof LastRun>;
 export type LastRunNodeStatus = z.infer<typeof NodeRunStatus>;
 export type OrchestrationHeadView = z.infer<typeof OrchestrationHeadView>;

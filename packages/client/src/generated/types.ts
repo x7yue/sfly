@@ -45,6 +45,11 @@ export interface AgentView {
 	};
 	/** 在线时是本次连接（或最近一次上报）的时间，离线时是最后在线的时间。 */
 	last_seen_at: Timestamp;
+	/**
+	 * 在线 Agent 正在准备环境（收到 Welcome 之后、第一次心跳之前，不接任务）时，这次连接发出 Welcome 的控制面时间（ADR 0018）；
+	 * 已准备好或离线时为 null。只记在控制面内存里，跟着连接走。
+	 */
+	preparing_since: Timestamp | null;
 	/** Agent 共享 venv 中已安装的节点包。 */
 	installed_packages: InstalledPackageView[];
 	/** 本次连接还没有安装过节点包时为 null。 */
@@ -1112,6 +1117,16 @@ export interface PlatformMetrics {
 /** 平台自带图表的查询参数。 */
 export interface PlatformMetricsQuery {
 	points?: number;
+}
+
+/** 运行前检查里引用的 Agent：在线的 Agent 正在准备环境时，带上开始准备的控制面时间。 */
+export interface PreflightAgent {
+	name: string;
+	/** 场景的默认 Agent。 */
+	default: boolean;
+	status: "online" | "offline" | "unknown";
+	/** 这次连接发出 Welcome 的控制面时间；已准备好、不在线或没有注册过时为 null（任务派发要等 Agent 准备好）。 */
+	preparing_since: Timestamp | null;
 }
 
 /** 不能触发的一个原因。 */

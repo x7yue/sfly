@@ -863,6 +863,41 @@ test("编排画布：非字符串参数的引用标签与 JSON 输入框", async
 	await expect(page).toHaveScreenshot("editor-reference-chip.png");
 });
 
+test("编排画布：检查器参数标签页里输入的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	const described = {
+		count: "重试的次数，0 表示不重试",
+		ratio: "采样比例，0 到 1 之间；超出范围按最近的边界取",
+		level: "low 只记录失败，high 记录每次请求",
+	} as const;
+	await publishPackage(controlPlane, {
+		nodes: typedNodes.map((node) =>
+			node.name === "typed"
+				? {
+						...node,
+						inputs: {
+							...node.inputs,
+							properties: Object.fromEntries(
+								Object.entries(node.inputs.properties).map(([name, schema]) => [
+									name,
+									name in described
+										? { ...schema, description: described[name as keyof typeof described] }
+										: schema,
+								]),
+							),
+						},
+					}
+				: node,
+		),
+	});
+	const id = await createScenario(controlPlane, "带说明的参数", typedDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "typed").click();
+	await expect(page.getByText(described.ratio)).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-input-docs.png");
+});
+
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {
 	await twoAgents(connectAgent);
 	await publishPackage(controlPlane, metricPackage());

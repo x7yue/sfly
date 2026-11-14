@@ -175,7 +175,7 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | `sfly run list [--scenario …] [--status …]` / `sfly run show <运行>` | 最近的运行；各链各节点的状态和失败节点每次尝试的错误 |
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level …] [--tail N] [--before/--after 游标] [--all 文件]` | 整次运行按控制面时间合并后的日志，默认最后 200 行，截断时写明用游标继续读；`--all` 下载 JSONL |
 | `sfly run artifacts <运行> [--task …] [--download 目录]` | 列出各任务的产物，按 sha256 校验后下载 |
-| `sfly agent list` | 在线状态、版本、是否与控制面一致、运行中的任务数、对外地址、开发包 |
+| `sfly agent list` | 在线状态（准备环境中的写明已多久，时长用响应的 `x-sfly-time` 作为「现在」）、版本、是否与控制面一致、运行中的任务数、对外地址、开发包 |
 | `sfly package list` / `sfly package show <包>[@版本]` | 节点包的版本；节点类型的标题、输入（类型、默认值、是否必填）和输出 |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` | 直接调用上面没有覆盖的接口，发请求前按随 SDK 打包的路由清单校验；`--list` 列出路由清单 |
 
@@ -210,7 +210,8 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 
 - Agent 配置项：`name`（全局唯一）、控制面地址、可选的共享注册令牌、并发槽位数 `slots`（默认 4）、共享 venv 路径、PyPI 镜像地址。
 - Agent 的统一目录 `SFLY_HOME`（默认 `~/.sfly`）：`bin/`、`venv/`（共享 venv 的默认路径）、`work/`（任务工作目录的默认根目录，dev socket 默认是 `work/agent.sock`）、`agent.env`。启动时读取 `agent.env`（每行 `SFLY_*=值`，键与对应参数的环境变量同名），优先级为命令行参数 > 环境变量 > `agent.env` > 默认值；从哪个目录启动都一样。
-- 启动顺序：连接控制面、收到 Welcome → 准备 uv → 准备共享 venv → 安装 SDK 运行时 → 开始接任务。
+- 启动顺序：连接控制面、收到 Welcome → 准备环境（准备 uv → 准备共享 venv → 安装 SDK 运行时）→ 立即发一次心跳、开始接任务。每次连上都要准备环境，环境已就绪时只做几项检查。
+- 「开始接任务」以 Welcome 之后的第一次心跳为界：控制面收到它才把这条连接记为已准备好，从这时起给它派发；准备环境期间 Agent 不发心跳，算在线，排队的任务留在队列里。已准备好只记在控制面内存里，跟着连接走，断开就没了。
 - 启动后主动建立 gRPC 双向流；同名 Agent 重新连接时替换旧连接。
 - 供其它 Agent 连接的端口（ADR 0019，`agent/src/peer.rs`）：Agent 在所有网卡上监听 `--listen-port`（默认 50052），提供 gRPC 服务 `AgentPeer`（`proto/sfly/agent/v1/peer.proto` 的 `Describe`：名称、版本、能力）和每项 Agent 能力各自的服务（例如 `files.proto` 的 `AgentFiles`）；没有认证，只应在内网使用。监听不了（端口被占用等）时照常执行任务，原因随 Hello 上报。Hello 带上能力列表（`agent/src/capabilities/`）、端口和安装时显式配置的对外地址 `--public-address`；控制面另记连接来源地址，对外地址取显式配置的，否则取来源地址（`apps/server/src/agents/agent-endpoint.ts`），Agent 页显示。
 - 画布上按名称选择 Agent。
@@ -233,7 +234,8 @@ message AgentMessage {
                                    // 监听失败的原因（ADR 0019）
     Heartbeat     heartbeat  = 2;  // running_tasks：Agent 实际持有的任务，只续约这些；
                                    // update：更新状态（无 / 下载中 / 等待任务结束 / 替换中 / 失败 / 需要手动升级）；
-                                   // agent_time_unix_ms、monotonic_ms：更新时钟偏差
+                                   // agent_time_unix_ms、monotonic_ms：更新时钟偏差；
+                                   // Welcome 之后的第一次表示 Agent 已准备好环境，控制面从这时起派发
     TaskStarted   started    = 3;  // 执行器子进程真正启动：任务从派发阶段进入 running
     LogBatch      logs       = 4;  // task_id, [seq, ts, stream, level, text]
     Progress      progress   = 5;  // task_id, current, total, message（合并为每秒最多一次）
@@ -329,11 +331,11 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 - 推进由事件驱动：任务结果、定时器到期、Agent 上下线、用户取消。
 - 定时器：等待中节点的到期时间存在库里，按秒扫描；控制面重启后从库中恢复。
 - 派发阶段：任务推送给 Agent 后先处于 `dispatched`（Agent 在下载、安装节点包或启动执行器），Agent 上报 `TaskStarted` 后才是 `running`；超时和耗时都从 `running` 开始计算，与 Agent 的计时起点一致。
-- 租约：心跳携带 Agent 实际持有的任务（`Heartbeat.running_tasks`），控制面只续约这些；控制面认为在这个 Agent 上、但连续两次心跳都没上报的任务以 `agent_lost` 失败。租约过期同样视为 `agent_lost`，按节点的 `retries` 决定是否重新派发。以 `agent_lost` 失败时 Agent 可能其实还连着、还在执行这次尝试（例如首次准备环境超过租约，或派发消息晚到）：控制面先发强制取消，再派发下一次尝试，同一个节点不会在 Agent 上同时跑两份；连接已断开时由重连时的 Welcome 放弃它。租约默认 30 秒，Welcome 告诉 Agent 每 10 秒（租约的三分之一，`Welcome.heartbeat_interval_ms`）心跳一次。
+- 租约：心跳携带 Agent 实际持有的任务（`Heartbeat.running_tasks`），控制面只续约这些；控制面认为在这个 Agent 上、但连续两次心跳都没上报的任务以 `agent_lost` 失败。租约过期同样视为 `agent_lost`，按节点的 `retries` 决定是否重新派发。Agent 准备好环境之前不派发，准备环境再久也不会让任务的租约过期。以 `agent_lost` 失败时 Agent 可能其实还连着、还在执行这次尝试（例如派发消息晚到）：控制面先发强制取消，再派发下一次尝试，同一个节点不会在 Agent 上同时跑两份；连接已断开时由重连时的 Welcome 放弃它。租约默认 30 秒，Welcome 告诉 Agent 每 10 秒（租约的三分之一，`Welcome.heartbeat_interval_ms`）心跳一次。
 - 重连：Agent 在 Hello 中上报手上的任务（正在执行的，以及结果还没收到 Ack 的），控制面在 Welcome 中逐个答复继续或放弃（放弃的任务被立即杀掉、结果丢弃）；控制面认为在这个 Agent 上运行、但 Hello 里没有的任务立即以 `agent_lost` 失败。
 - 单条消息失败：Agent 上报的字符串里的 NUL 在网关入口换成 U+FFFD（数据库存不下，SEMANTICS §2.5）。处理一条消息出错（例如写库失败）时记下错误、跳过这一条，不关闭这台 Agent 的流；任务结果写不进数据库时这次尝试以 `node_error` 结束并回 Ack，连这一步也失败（数据库不可用）才关闭流，由 Agent 重连后重发。指标写库连续失败 3 次后丢弃这个任务还没写入的点。
 - 重启：运行、链实例、任务、定时器都在库里，启动时不重放；只把已经（或即将）到期的租约和排队超时顺延到一个租约之后，给 Agent 重新连接的时间。
-- 派发：任务 `queued` 后，目标 Agent 在线、版本与控制面一致且有空闲槽位时推送；超过 `queue_timeout` 仍未派发则 `env_error`。版本不一致的 Agent 照常连接、续约、上报日志和结果，只是不派新任务（ADR 0014），Agents 页显示它的更新状态。
+- 派发：任务 `queued` 后，目标 Agent 在线并已准备好环境、版本与控制面一致且有空闲槽位时推送；超过 `queue_timeout` 仍未派发则 `env_error`。版本不一致的 Agent 照常连接、续约、上报日志和结果，只是不派新任务（ADR 0014），Agents 页显示它的更新状态。
 - 飞书通知节点：和其他内置节点一样在控制面执行。轮到它时，在同一个事务里解析输入、把消息写进 `feishu_messages`（发送队列）并把节点记为成功；提交后唤醒投递（`FeishuDelivery`）。投递每个机器人一个循环，按入队顺序串行发送，最终的结果写成这个任务的一条日志（控制面自己写的行，source `system`），不经过引擎、不改变任何状态；控制面启动和周期扫描时也会唤醒它，重启前入队的消息接着投递（ADR 0020）。可靠性的规则都在投递这一层，没有定时器：可重试的失败把下一次尝试的时间（控制面时间）记在消息上（`next_attempt_at`），队首没到点就结束这一轮，周期扫描唤醒时再看；限速（每个机器人每秒 5、每分钟 100 个请求，`SendRateLimiter`）按内存里每个请求有了结果（响应回来、失败或超时）的时刻判断：飞书按收到请求的时刻数，那一刻落在发出和响应回来之间，同一个机器人的请求一个接一个地发，按结束的时刻记才能保证两次收到之间不少于一个窗口，重启后从头算；积压超过 1000 条时在每一轮开头丢弃最旧的；退避间隔、期限、限速和积压上限的取值在 `feishu/delivery-policy.ts`，文本消息超过 20 KB 的截断在组装请求体时（`feishu/messages.ts` 的 `textMessage`，文本格式的消息都经过它；原始消息不截断）。每发一次请求，结果同事务记在机器人上（`last_delivery_*`），管理页显示它和积压条数。三种格式（文本、Markdown 卡片、原始消息）的请求体由 `src/feishu/messages.ts` 组装，输入解析与出错处理在 `src/feishu/notify-node.ts`；Markdown 卡片的规则与 SDK 共用 `testdata/feishu-card-cases.json` 里的用例。
 - 运行通知：`Engine.#finishChain` 在第一次把运行记为结束的事务里（`update runs … where status = 'running'`，所以只发生一次）调用 `src/feishu/run-notification.ts` 的 `enqueueRunNotification`：读场景当前的设置，满足条件就组装卡片（和 Markdown 卡片共用 `messages.ts` 的 `interactiveCard` 和 `fitCard`）写进发送队列，并在运行上记下机器人；机器人已不存在时不入队，在运行上记下未发送的原因。卡片的「查看运行」链接只在配置了 `SFLY_PUBLIC_URL` 时给（`Engine` 的 `runUrl`）。运行详情的 `run_notification` 由 `run-queries.ts` 读队列里这个运行的消息得出，没有任务的运行通知不写日志。
 - `ctx.notify`：Agent 把节点写进事件管道的通知原样放进 `Notification` 转来，控制面不经过引擎处理（`TaskNotifications`）：只接受任务所在 Agent 发来的；机器人在派发时记在任务上的名单里（`tasks.referenced_feishu_bots`，与 `AssignTask.referenced_feishu_bots` 相同）并且已登记时，写进发送队列、唤醒投递，投递结果同样写进这个任务的日志。请求体按事件里的内容组装：带 `text`（和 `at_all`）的按飞书通知节点的文本格式（`textMessage`）；带 `message` 的是原始消息（`sfly.feishu.card` 组装的卡片也走这一种），经 `rawMessage` 校验（对象、`msg_type`、不超过 20 KB，不截断）后原样入队；`text` 和 `message` 恰好有一个，其余内容不完整。不能发送的（机器人不在名单里或没登记、原始消息不合格、内容不完整）在这个任务的日志里写一条 warning，不发送。
