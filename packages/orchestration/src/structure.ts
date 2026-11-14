@@ -61,6 +61,12 @@ export const MAX_NESTING_DEPTH = 3;
 
 const isStart = (node: StructureNode) => node.kind === "entry" || node.kind === "subflow_entry";
 
+/** 警告里写节点：「显示名称（节点 ID）」；节点不存在时只写 ID。 */
+const nameOf = (byId: Map<string, StructureNode>, id: string): string => {
+	const node = byId.get(id);
+	return node ? nodeNameWithId(node) : id;
+};
+
 /** 按连线种类索引的出线 / 入线。只统计两端都存在的连线。 */
 function indexEdges(doc: StructureDocument) {
 	const byId = new Map(doc.nodes.map((n) => [n.id, n]));
@@ -112,7 +118,7 @@ export function checkConnection(doc: StructureDocument, edge: StructureEdge): st
 		}
 		const trigger = (into.dispatch.get(to.id) ?? [])[0];
 		if (trigger !== undefined)
-			return `子流程入口节点 ${nodeNameWithId(to)} 已被异步任务节点 ${trigger} 触发`;
+			return `子流程入口节点 ${nodeNameWithId(to)} 已被异步任务节点 ${nameOf(byId, trigger)} 触发`;
 		return null;
 	}
 
@@ -148,7 +154,11 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	for (const edge of doc.edges) {
 		for (const id of [edge.from, edge.to]) {
 			if (!byId.has(id))
-				warn("unknown_node", `连线 ${edge.from} → ${edge.to} 指向不存在的节点 ${id}`, id);
+				warn(
+					"unknown_node",
+					`连线 ${nameOf(byId, edge.from)} → ${nameOf(byId, edge.to)} 指向不存在的节点 ${id}`,
+					id,
+				);
 		}
 	}
 	for (const edge of doc.edges) {
@@ -156,7 +166,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		if (!isValidDispatch(byId, edge)) {
 			warn(
 				"invalid_dispatch",
-				`调度连线 ${edge.from} → ${edge.to} 必须从异步任务节点连到子流程入口节点`,
+				`调度连线 ${nameOf(byId, edge.from)} → ${nameOf(byId, edge.to)} 必须从异步任务节点连到子流程入口节点`,
 				edge.from,
 			);
 		}
@@ -301,7 +311,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		if (trigger !== undefined) {
 			warn(
 				"stop_subflow_before_trigger",
-				`停止子流程节点 ${nodeNameWithId(node)} 在触发子流程「${name}」的异步任务节点 ${trigger} 之前`,
+				`停止子流程节点 ${nodeNameWithId(node)} 在触发子流程「${name}」的异步任务节点 ${nameOf(byId, trigger)} 之前`,
 				node.id,
 				"subflow",
 			);
