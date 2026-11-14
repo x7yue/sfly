@@ -174,7 +174,7 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | `sfly run list [--scenario …] [--status …]` / `sfly run show <运行>` | 最近的运行；各链各节点的状态和失败节点每次尝试的错误 |
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level …] [--tail N] [--before/--after 游标] [--all 文件]` | 整次运行按控制面时间合并后的日志，默认最后 200 行，截断时写明用游标继续读；`--all` 下载 JSONL |
 | `sfly run artifacts <运行> [--task …] [--download 目录]` | 列出各任务的产物，按 sha256 校验后下载 |
-| `sfly agent list` | 在线状态、版本、是否与控制面一致、运行中的任务数、对外地址、开发包 |
+| `sfly agent list` | 在线状态（准备环境中的写明已多久，时长用响应的 `x-sfly-time` 作为「现在」）、版本、是否与控制面一致、运行中的任务数、对外地址、开发包 |
 | `sfly package list` / `sfly package show <包>[@版本]` | 节点包的版本；节点类型的标题、输入（类型、默认值、是否必填）和输出 |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` | 直接调用上面没有覆盖的接口，发请求前按随 SDK 打包的路由清单校验；`--list` 列出路由清单 |
 

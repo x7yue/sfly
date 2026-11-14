@@ -32,7 +32,7 @@ uv run sfly api --list runs
 | `sfly run show <运行>` | 各条链、各个节点的状态；失败或重试过的节点写出每次尝试的错误 |
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level 级别] [--tail N] [--before 游标] [--after 游标] [--all 文件]` | 运行的日志，按控制面时间合并各节点、各次尝试 |
 | `sfly run artifacts <运行> [--task 任务] [--download 目录]` | 列出各任务的产物，可以下载 |
-| `sfly agent list` | 每台 Agent 是否在线、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包 |
+| `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
 | `sfly package list` / `sfly package show <包>[@版本]` | 节点包和它们的版本；一个版本里每个节点类型的标题、输入（类型、默认值、是否必填）和输出 |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` | 直接调用上面没有覆盖的接口；`--list` 列出全部接口 |
 
