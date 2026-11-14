@@ -37,7 +37,10 @@ class CheckOutputs(TypedDict):
 
 @node(
     title="HTTP 检查",
-    metrics=[Metric("latency_ms", unit="ms"), Metric("requests", kind="counter")],
+    metrics=[
+        Metric("latency_ms", unit="ms", description="从发出请求到收完响应的耗时"),
+        Metric("requests", kind="counter", description="已发出的请求数"),
+    ],
     charts=[Chart("延迟", type="line", metrics=["latency_ms"])],
     primary_metric="latency_ms",
 )
@@ -61,7 +64,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 函数的文档字符串就是节点类型的说明：`sfly build` 去掉缩进后整段写进元信息里这个节点类型的 `description`，会显示在画布上：
 
 - 「添加节点」菜单和节点包管理页：在节点类型的标题下面显示第一段，帮人挑对节点；
-- 检查器的「说明」页：按纯文本显示全文，不渲染 Markdown，空行分隔的段落原样保留。
+- 检查器的「说明与指标」页：按纯文本显示全文，不渲染 Markdown，空行分隔的段落原样保留。
 
 ```python
 @node(title="HTTP 检查")
@@ -72,7 +75,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
     """
 ```
 
-- 第一段写这个节点做什么，一两句话；后面的段落写副作用、什么情况下失败。输入和输出的名字、类型画布上已经有，不用在这里重复。
+- 按三部分写：第一段一句话说明这个节点做什么；然后写副作用：会创建什么资源，由哪个节点清理，清理节点要不要设成 always 节点，没有副作用时省略这一部分；最后写什么情况下失败。输入和输出的名字、类型画布上已经有，含义和单位写在各自的 `Doc` 里，不要在这里重复。
 - 最长 4000 个 Unicode 字符（emoji 算一个），超过时 `sfly build` 报错并指出是哪个节点。没有文档字符串（或只有空白）时不写这个字段，也不报错；已发布的旧版本节点包没有说明，照旧显示。
 - 控制面要先升级：节点类型的 `description` 是元信息新增的字段，旧版本的控制面严格检查元信息，会以「元信息校验失败」拒绝带文档字符串的节点包。用新版 SDK 构建、发布之前，先把控制面升级到同一个版本；Agent 把元信息当作 JSON 原样转发，不受影响。
 
@@ -130,12 +133,22 @@ def http_check(
 ### 「Agent」类型的输入
 
 ```python
-from sfly import AgentName, Context, node
+from typing import Annotated, TypedDict
+
+from sfly import AgentName, Context, Doc, node
 
 
-@node(outputs=["files"])
-def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> dict:
-    """source 是日志所在的 Agent，节点在另一台 Agent 上清洗它的日志。"""
+class CleanOutputs(TypedDict):
+    files: Annotated[list[str], Doc("清洗过的日志文件的路径")]
+
+
+@node(title="清洗轮转日志")
+def clean(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    backup: Annotated[AgentName | None, Doc("存放备份的 Agent，不填就不备份")] = None,
+) -> CleanOutputs:
+    """清洗另一台 Agent 上轮转出来的日志。"""
     logs = list(ctx.agent(source).files.list("/var/log/app", "app.log.*"))
     ctx.log.info("Agent %s 上有 %d 个轮转出来的日志", source, len(logs))
     ...
@@ -154,12 +167,22 @@ def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> d
 ### 「飞书机器人」类型的输入
 
 ```python
-from sfly import Context, FeishuBot, node
+from typing import Annotated, TypedDict
+
+from sfly import Context, Doc, FeishuBot, node
 
 
-@node(outputs=["passed"])
-def stress(ctx: Context, qps: int, alert_bot: FeishuBot | None = None) -> dict:
-    """alert_bot 是出问题时要通知的飞书机器人，在检查器里从已登记的机器人中选。"""
+class StressOutputs(TypedDict):
+    passed: Annotated[bool, Doc("压测是否达到目标 QPS")]
+
+
+@node(title="压测接口")
+def stress(
+    ctx: Context,
+    qps: Annotated[int, Doc("目标每秒请求数")],
+    alert_bot: Annotated[FeishuBot | None, Doc("压测不达标时通知的飞书机器人")] = None,
+) -> StressOutputs:
+    """压测一个接口，不达标时通知飞书群。"""
     ...
 ```
 
@@ -197,7 +220,7 @@ class CheckOutputs(TypedDict):
 
 输出字段也用 `Annotated[类型, Doc("…")]` 写说明，规则和输入的 `Doc` 一样（见上文「输入的说明：`Doc`」）：写在字段注解的最外层，一个注解里只能有一个，必须是非空字符串，首尾空白不保存，最多 500 个 Unicode 字符，没写不报错。`sfly build` 把它写成这个输出 schema 的 `description`。
 
-搭场景的人在四个地方看到它：检查器「说明」标签页里的「输出 | 说明」表、引用补全里这个输出的后面、节点包管理页悬停在输出的名字上，以及 `sfly package show` 输出表的「说明」列。没写说明的输出，这些地方照旧只显示名字和类型。
+搭场景的人在四个地方看到它：检查器「说明与指标」标签页里的「输出 | 说明」表、引用补全里这个输出的后面、节点包管理页悬停在输出的名字上，以及 `sfly package show` 输出表的「说明」列。没写说明的输出，这些地方照旧只显示名字和类型。
 
 - 写给要引用这个输出的人看：它装的是什么、单位是什么、什么情况下是空。不要重复字段名和类型。
 - `NotRequired[...]`、`Required[...]` 包在 `Annotated` 外面或里面都行：`NotRequired[Annotated[int, Doc("…")]]`。
