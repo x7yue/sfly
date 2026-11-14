@@ -92,7 +92,7 @@ describe("失效的运行预设", () => {
 			await api.saveVersion(id, scenario(declared({ host: null })));
 			expect(await status(id, preset.id)).toEqual({
 				status: "invalid",
-				problems: [{ param: "host", reason: "missing" }],
+				problems: [{ param: "host", reason: "missing", message: "参数 host 已不存在" }],
 			});
 
 			// 改名等于删掉旧名称：预设里的参数名不会跟着变。
@@ -103,8 +103,8 @@ describe("失效的运行预设", () => {
 			expect(await status(id, preset.id)).toEqual({
 				status: "invalid",
 				problems: [
-					{ param: "host", reason: "missing" },
-					{ param: "port", reason: "missing" },
+					{ param: "host", reason: "missing", message: "参数 host 已不存在" },
+					{ param: "port", reason: "missing", message: "参数 port 已不存在" },
 				],
 			});
 
@@ -127,8 +127,16 @@ describe("失效的运行预设", () => {
 			expect(await status(id, preset.id)).toEqual({
 				status: "invalid",
 				problems: [
-					{ param: "options", reason: "type_mismatch" },
-					{ param: "port", reason: "type_mismatch" },
+					{
+						param: "options",
+						reason: "type_mismatch",
+						message: "参数 options 保存的值不符合现在的类型（number）",
+					},
+					{
+						param: "port",
+						reason: "type_mismatch",
+						message: "参数 port 保存的值不符合现在的类型（string）",
+					},
 				],
 			});
 		});
@@ -158,7 +166,11 @@ describe("失效的运行预设", () => {
 			);
 			expect(preflight.presets).toEqual(await listPresets(api, id));
 			expect(preflight.presets).toMatchObject([
-				{ id: preset.id, status: "invalid", problems: [{ param: "port", reason: "missing" }] },
+				{
+					id: preset.id,
+					status: "invalid",
+					problems: [{ param: "port", reason: "missing", message: "参数 port 已不存在" }],
+				},
 			]);
 		});
 
@@ -170,7 +182,7 @@ describe("失效的运行预设", () => {
 			expect(renamed).toMatchObject({
 				name: "旧集群",
 				status: "invalid",
-				problems: [{ param: "host", reason: "missing" }],
+				problems: [{ param: "host", reason: "missing", message: "参数 host 已不存在" }],
 			});
 
 			const fixed = await updatePresetOk(api, id, preset.id, {

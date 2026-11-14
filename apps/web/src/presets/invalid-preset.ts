@@ -8,20 +8,15 @@ import { draftFromPreset, type PresetDraft } from "./preset-form";
  * 预设是不是失效、为什么，只看控制面算出来的 `status` 和 `problems`，这里不重新判断。
  */
 
-/** 「不符合现在的类型（number）」；参数的声明找不到时不写类型。 */
+/** 「不符合现在的类型（number）」：重新填写的提示里用；参数的声明找不到时不写类型。 */
 const mismatchText = (param: string, decls: ParamDeclView[]) => {
 	const type = decls.find((p) => p.name === param)?.type;
 	return `不符合现在的类型${type ? `（${type}）` : ""}`;
 };
 
-/** 一个问题写成一句话：哪个参数、什么原因；类型不对时写明它现在的类型。 */
-export function problemText(problem: PresetProblemView, decls: ParamDeclView[]): string {
-	if (problem.reason === "missing") return `参数 ${problem.param} 已不存在`;
-	return `参数 ${problem.param} 保存的值${mismatchText(problem.param, decls)}`;
-}
-
-export const problemsText = (problems: PresetProblemView[], decls: ParamDeclView[]) =>
-	problems.map((p) => problemText(p, decls)).join("；");
+/** 失效的原因：控制面给每个问题写好了一句话（`message`），这里只用「；」连起来，不自己拼。 */
+export const problemsText = (problems: PresetProblemView[]) =>
+	problems.map((p) => p.message).join("；");
 
 /**
  * 「再次运行」时原来的预设用不了的提示：已被删除，或者已失效（写明原因）；预设可用、原来没用预设时是 null。
@@ -30,13 +25,12 @@ export const problemsText = (problems: PresetProblemView[], decls: ParamDeclView
  */
 export function unusablePresetNotice(
 	presets: readonly PresetView[],
-	decls: ParamDeclView[],
 	ran: { id: string; name: string } | null,
 ): string | null {
 	if (!ran || usablePreset(presets, ran.id)) return null;
 	const preset = presets.find((p) => p.id === ran.id);
 	return preset
-		? `预设 ${preset.name} 已失效：${problemsText(preset.problems, decls)}`
+		? `预设 ${preset.name} 已失效：${problemsText(preset.problems)}`
 		: `预设 ${ran.name} 已删除`;
 }
 

@@ -161,7 +161,8 @@ describe("打开抽屉时默认选哪个预设", () => {
 		description: "",
 		params: [],
 		status,
-		problems: status === "ok" ? [] : [{ param: "host", reason: "missing" }],
+		problems:
+			status === "ok" ? [] : [{ param: "host", reason: "missing", message: "参数 host 已不存在" }],
 		updated_by: "tester",
 		updated_at: "2026-11-05T08:00:00.000Z",
 	});

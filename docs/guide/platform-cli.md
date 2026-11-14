@@ -147,7 +147,7 @@ sfly api POST /orchestrations/<场景 id>/presets --body '{"name": "压测 A 集
         verbose  ******
   ```
 
-  失效的运行预设（预设参数在最新版本里已不存在，或保存的值不符合它现在的类型）写明原因，不能用来触发；在控制台里改好之后恢复可用。`--json` 里是同样的内容：`presets` 数组，每项有 `id`、`name`、`description`、`status`（`ok` 或 `invalid`）、`problems`（每项 `{param, reason}`，`reason` 是 `missing` 或 `type_mismatch`）和 `params`（每项 `{name, secret, value}`）。
+  失效的运行预设（预设参数在最新版本里已不存在，或保存的值不符合它现在的类型）写明原因，不能用来触发；在控制台里改好之后恢复可用。`--json` 里是同样的内容：`presets` 数组，每项有 `id`、`name`、`description`、`status`（`ok` 或 `invalid`）、`problems`（每项 `{param, reason, message}`，`reason` 是 `missing` 或 `type_mismatch`，`message` 是写好的一句话）和 `params`（每项 `{name, secret, value}`）。
 - **触发**：`sfly run start <场景> --preset 压测 A 集群 --param duration=60`。预设按名称找，名称要和预设完全一致（区分大小写）。预设参数由控制面填入预设保存的值，`--param`、`--params` 只给其余的参数，转换规则不变；`--wait`、`--timeout` 照常。
   - 名称找不到时报错并列出这个场景的全部运行预设，预设已失效时报错并写明原因和怎么修；两种情况都是退出码 2，不触发运行。
   - 预设参数不能改：给 secret 预设参数传了任何值（和预设里的相同也一样），给其他预设参数传了和预设不同的值，控制面都拒绝，错误里写明参数名和预设名，退出码 2，不触发运行。去掉这个 `--param` 或 `--params` 里的项，预设会填上保存的值。

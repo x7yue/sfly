@@ -124,7 +124,7 @@ def _start(session: Session, args: argparse.Namespace) -> int:
         )
     declared = preflight["params"]
     preset = (
-        find_preset(scenario, preflight["presets"], declared, args.preset)
+        find_preset(scenario, preflight["presets"], args.preset)
         if args.preset is not None
         else None
     )

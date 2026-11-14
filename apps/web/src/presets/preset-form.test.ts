@@ -179,7 +179,13 @@ describe("运行预设的编辑表单", () => {
 						{ name: "pin", secret: true, value: "******" },
 					],
 					status: "invalid",
-					problems: [{ param: "pin", reason: "type_mismatch" }],
+					problems: [
+						{
+							param: "pin",
+							reason: "type_mismatch",
+							message: "参数 pin 保存的值不符合现在的类型（number）",
+						},
+					],
 				};
 				const draft = draftFromPreset(invalid, decls);
 				expect(draft.keptSecrets).toEqual(["token"]);

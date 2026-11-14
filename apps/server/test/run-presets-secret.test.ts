@@ -329,7 +329,13 @@ describe("secret 预设参数", () => {
 			const [stale] = await listPresets(api, id);
 			expect(stale).toMatchObject({
 				status: "invalid",
-				problems: [{ param: "token", reason: "type_mismatch" }],
+				problems: [
+					{
+						param: "token",
+						reason: "type_mismatch",
+						message: "参数 token 保存的值不符合现在的类型（number）",
+					},
+				],
 			});
 			expect(JSON.stringify(stale)).not.toContain(SECRET);
 

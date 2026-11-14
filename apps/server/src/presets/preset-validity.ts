@@ -35,3 +35,21 @@ export function presetProblems(
 	}
 	return problems.sort((a, b) => (a.param < b.param ? -1 : 1));
 }
+
+/** 一个问题写成一句话：哪个参数、什么问题；类型不对时写明它现在的类型。预设视图里每个问题的 `message` 就是它。 */
+export function describePresetProblem(
+	{ param, reason }: PresetProblem,
+	declarations: readonly ParamDeclaration[],
+): string {
+	if (reason === "missing") return `参数 ${param} 已不存在`;
+	const type = declarations.find((d) => d.name === param)?.type;
+	return `参数 ${param} 保存的值不符合现在的类型${type ? `（${type}）` : ""}`;
+}
+
+/** 失效的原因写成一句话（409 `preset_invalid` 和保存版本时的警告用）：各个问题的说明用「；」连起来。 */
+export function describePresetProblems(
+	problems: readonly PresetProblem[],
+	declarations: readonly ParamDeclaration[],
+): string {
+	return problems.map((p) => describePresetProblem(p, declarations)).join("；");
+}

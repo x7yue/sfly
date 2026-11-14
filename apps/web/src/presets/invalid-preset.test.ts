@@ -29,18 +29,26 @@ const invalid: PresetView = {
 	],
 	status: "invalid",
 	problems: [
-		{ param: "dry_run", reason: "type_mismatch" },
-		{ param: "region", reason: "missing" },
-		{ param: "steps", reason: "type_mismatch" },
-		{ param: "zone", reason: "missing" },
+		{
+			param: "dry_run",
+			reason: "type_mismatch",
+			message: "参数 dry_run 保存的值不符合现在的类型（boolean）",
+		},
+		{ param: "region", reason: "missing", message: "参数 region 已不存在" },
+		{
+			param: "steps",
+			reason: "type_mismatch",
+			message: "参数 steps 保存的值不符合现在的类型（number）",
+		},
+		{ param: "zone", reason: "missing", message: "参数 zone 已不存在" },
 	],
 	updated_by: "小红",
 	updated_at: "2026-01-01T00:00:00.000Z",
 };
 
 describe("失效的运行预设的原因", () => {
-	it("每个问题写明是哪个参数、什么原因；类型不对时写明现在的类型", () => {
-		expect(problemsText(invalid.problems, decls)).toBe(
+	it("显示控制面给每个问题写好的一句话，用「；」连起来，不自己拼", () => {
+		expect(problemsText(invalid.problems)).toBe(
 			[
 				"参数 dry_run 保存的值不符合现在的类型（boolean）",
 				"参数 region 已不存在",
@@ -56,8 +64,8 @@ describe("再次运行时原来的预设用不了的提示", () => {
 	const usable: PresetView = { ...invalid, status: "ok", problems: [] };
 
 	it("预设已被删除：写预设已删除，名称是运行记下的", () => {
-		expect(unusablePresetNotice([], decls, ran)).toBe("预设 压测 A（触发时） 已删除");
-		expect(unusablePresetNotice([{ ...usable, id: "p2", name: ran.name }], decls, ran)).toBe(
+		expect(unusablePresetNotice([], ran)).toBe("预设 压测 A（触发时） 已删除");
+		expect(unusablePresetNotice([{ ...usable, id: "p2", name: ran.name }], ran)).toBe(
 			"预设 压测 A（触发时） 已删除",
 		);
 	});
@@ -65,16 +73,14 @@ describe("再次运行时原来的预设用不了的提示", () => {
 	it("预设已失效：写明失效的原因，名称是预设现在的名称", () => {
 		const preset: PresetView = {
 			...invalid,
-			problems: [{ param: "region", reason: "missing" }],
+			problems: [{ param: "region", reason: "missing", message: "参数 region 已不存在" }],
 		};
-		expect(unusablePresetNotice([preset], decls, ran)).toBe(
-			"预设 压测 A 已失效：参数 region 已不存在",
-		);
+		expect(unusablePresetNotice([preset], ran)).toBe("预设 压测 A 已失效：参数 region 已不存在");
 	});
 
 	it("预设可用，或者原来没用预设：没有提示", () => {
-		expect(unusablePresetNotice([usable], decls, ran)).toBeNull();
-		expect(unusablePresetNotice([usable], decls, null)).toBeNull();
+		expect(unusablePresetNotice([usable], ran)).toBeNull();
+		expect(unusablePresetNotice([usable], null)).toBeNull();
 	});
 });
 

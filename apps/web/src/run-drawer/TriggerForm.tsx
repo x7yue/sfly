@@ -207,11 +207,7 @@ function ParamsForm({
 	};
 
 	// 「再次运行」原来的预设选不了（已删除、已失效）：写明原因。预设之后被修好或删除，提示随之更新。
-	const rerunNotice = unusablePresetNotice(
-		preflight.presets,
-		decls,
-		options.rerunOf?.preset ?? null,
-	);
+	const rerunNotice = unusablePresetNotice(preflight.presets, options.rerunOf?.preset ?? null);
 	const blocked = checks.blocked;
 	const pending = trigger.isPending;
 	useEffect(() => {
@@ -233,7 +229,6 @@ function ParamsForm({
 			{(decls.length > 0 || preflight.presets.length > 0) && (
 				<PresetSelect
 					presets={preflight.presets}
-					decls={decls}
 					value={preset?.id ?? null}
 					onChange={selectPreset}
 					onManage={() => onManage({ kind: "list" })}

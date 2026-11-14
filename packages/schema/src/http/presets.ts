@@ -55,7 +55,13 @@ export const PresetParamView = z.object({
 export const PresetProblemView = z.object({
 	/** 有问题的预设参数的名称。 */
 	param: z.string(),
+	/** 给代码按原因分支用；要显示给人看，用 `message`。 */
 	reason: z.enum(["missing", "type_mismatch"]),
+	/**
+	 * 写成一句话的原因：哪个参数、什么问题，类型不对时写明它现在的类型，例如「参数 host 已不存在」。
+	 * 控制台和命令行都直接显示它，409 `preset_invalid` 和 `preset_invalidated` 警告的消息里也是同样的写法。
+	 */
+	message: z.string(),
 });
 
 export const PresetView = z.object({

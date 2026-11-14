@@ -1,4 +1,4 @@
-import type { ParamDeclView, PresetView } from "@sfly/schema";
+import type { PresetView } from "@sfly/schema";
 import { useId } from "react";
 import { problemsText } from "#/presets/invalid-preset";
 import { Button } from "@/components/ui/button";
@@ -14,7 +14,6 @@ const MANAGE = "manage";
  */
 export function PresetSelect({
 	presets,
-	decls,
 	value,
 	onChange,
 	onManage,
@@ -22,8 +21,6 @@ export function PresetSelect({
 	selectRef,
 }: {
 	presets: readonly PresetView[];
-	/** 预检返回的入口参数声明，失效的原因里写明参数现在的类型。 */
-	decls: ParamDeclView[];
 	/** 选中的预设 ID；不使用预设时为 null。 */
 	value: string | null;
 	onChange: (presetId: string | null) => void;
@@ -61,7 +58,7 @@ export function PresetSelect({
 						disabled={preset.status === "invalid"}
 					>
 						{preset.status === "invalid"
-							? `${preset.name} · 已失效：${problemsText(preset.problems, decls)}`
+							? `${preset.name} · 已失效：${problemsText(preset.problems)}`
 							: preset.name}
 					</NativeSelectOption>
 				))}

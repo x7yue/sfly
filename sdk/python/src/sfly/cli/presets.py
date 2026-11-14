@@ -3,7 +3,8 @@
 - `sfly run start --preset 名称`：在场景预检返回的预设里按准确名称找，找不到、已失效时报错，不触发；
 - `sfly scenario show` 的「运行预设」一节。
 
-预设是不是失效、为什么失效都是控制面算好的（`status`、`problems`），命令行只转述，不重新判断。
+预设是不是失效、为什么失效都是控制面算好的：`status`、`problems`（每个问题的 `message`
+是写好的一句话），命令行只转述，不重新判断、不重新拼。
 secret 预设参数的值由控制面打码（`******`），命令行原样显示，读不到原值。
 创建、修改、删除预设没有专门的命令，用 `sfly api`（`sfly api --list presets` 列出接口）。
 """
@@ -18,34 +19,19 @@ from sfly.cli.errors import CliError
 from sfly.cli.output import candidate_list, dump_json, format_table
 
 Preset = dict[str, Any]
-Declaration = dict[str, Any]
 
 _LOCKED_HINT = (
     "去掉 --param 或 --params 里的这个参数，预设会填上它保存的值；要用别的值就不要加 --preset。"
 )
 
 
-def problems_text(problems: Sequence[dict[str, str]], declared: Sequence[Declaration]) -> str:
-    """失效的原因写成一句话：哪个参数、什么问题；类型不对时写明它现在的类型。
-    与控制面 `preset_invalid` 的消息、控制台里的写法一致。"""
-    types = {d["name"]: d["type"] for d in declared}
-    found = []
-    for problem in problems:
-        name = problem["param"]
-        if problem["reason"] == "missing":
-            found.append(f"参数 {name} 已不存在")
-        else:
-            current = f"（{types[name]}）" if name in types else ""
-            found.append(f"参数 {name} 保存的值不符合现在的类型{current}")
-    return "；".join(found)
+def problems_text(problems: Sequence[dict[str, str]]) -> str:
+    """失效的原因：控制面给每个问题写好了一句话（`message`），用「；」连起来，
+    和控制台、`preset_invalid` 的消息里的写法一致。"""
+    return "；".join(problem["message"] for problem in problems)
 
 
-def find_preset(
-    scenario: dict[str, Any],
-    presets: Sequence[Preset],
-    declared: Sequence[Declaration],
-    name: str,
-) -> Preset:
+def find_preset(scenario: dict[str, Any], presets: Sequence[Preset], name: str) -> Preset:
     """`--preset` 指定的运行预设：在场景的运行预设（预检的 `presets`）里按准确名称找，区分大小写。
     找不到时抛 `preset_not_found`，列出这个场景的全部预设；已失效时抛 `preset_invalid`，
     写明原因。"""
@@ -62,7 +48,7 @@ def find_preset(
                 f"或者 sfly api POST /orchestrations/{scenario_id}/presets",
                 next="sfly api --list presets",
             )
-        listed = candidate_list([_listed(p, declared) for p in presets])
+        listed = candidate_list([_listed(p) for p in presets])
         raise CliError(
             "preset_not_found",
             f"场景「{scenario['name']}」没有名称是「{name}」的运行预设。"
@@ -70,7 +56,7 @@ def find_preset(
             next=show,
         )
     if found["status"] == "invalid":
-        reasons = problems_text(found["problems"], declared)
+        reasons = problems_text(found["problems"])
         raise CliError(
             "preset_invalid",
             f"运行预设「{name}」已失效，不能用来触发：{reasons}\n"
@@ -81,10 +67,10 @@ def find_preset(
     return found
 
 
-def _listed(preset: Preset, declared: Sequence[Declaration]) -> str:
+def _listed(preset: Preset) -> str:
     if preset["status"] == "ok":
         return str(preset["name"])
-    return f"{preset['name']}（已失效：{problems_text(preset['problems'], declared)}）"
+    return f"{preset['name']}（已失效：{problems_text(preset['problems'])}）"
 
 
 def with_next_step(error: ApiError, scenario_id: str) -> ApiError:
@@ -114,13 +100,12 @@ def preset_view(preset: Preset) -> dict[str, Any]:
     }
 
 
-def render_presets(presets: Sequence[dict[str, Any]], declared: Sequence[Declaration]) -> list[str]:
-    """`scenario show` 的「运行预设」一节。`presets` 是 `preset_view` 的结果，
-    `declared` 是主链的入口参数（失效的原因要写参数现在的类型）。"""
+def render_presets(presets: Sequence[dict[str, Any]]) -> list[str]:
+    """`scenario show` 的「运行预设」一节。`presets` 是 `preset_view` 的结果。"""
     lines = ["运行预设："]
     for preset in presets:
         usable = preset["status"] == "ok"
-        state = "可用" if usable else f"已失效：{problems_text(preset['problems'], declared)}"
+        state = "可用" if usable else f"已失效：{problems_text(preset['problems'])}"
         lines.append(f"  {preset['name']}  {state}")
         if preset["description"]:
             first, *rest = preset["description"].splitlines() or [""]

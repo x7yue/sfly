@@ -412,7 +412,7 @@ describe("sfly 运行预设 → 控制面", { timeout: 60_000 }, () => {
 					name: PRESET_B,
 					description: "",
 					status: "invalid",
-					problems: [{ param: "verbose", reason: "missing" }],
+					problems: [{ param: "verbose", reason: "missing", message: "参数 verbose 已不存在" }],
 					params: [
 						{ name: "options", secret: false, value: { mode: "fast" } },
 						{ name: "verbose", secret: true, value: UNMASKED },

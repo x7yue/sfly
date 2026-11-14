@@ -149,7 +149,6 @@ export function RunPresetsDialog({
 						scenarioName={scenario.name}
 						archived={scenario.archived_at != null}
 						presets={presets}
-						decls={decls}
 						canCreate={head.data !== undefined && decls.length > 0}
 						noParams={head.data !== undefined && decls.length === 0}
 						focusKey={focusKey}
@@ -168,7 +167,6 @@ function PresetList({
 	scenarioName,
 	archived,
 	presets,
-	decls,
 	canCreate,
 	noParams,
 	focusKey,
@@ -180,7 +178,6 @@ function PresetList({
 	scenarioName: string;
 	archived: boolean;
 	presets: UseQueryResult<{ presets: PresetView[] }>;
-	decls: ParamDeclView[];
 	canCreate: boolean;
 	noParams: boolean;
 	/** 从别的屏回到列表时要放回焦点的按钮（见 RunPresetsDialog）；没有时不动。 */
@@ -251,7 +248,7 @@ function PresetList({
 									</div>
 									{preset.status === "invalid" && (
 										<div className="mt-1 text-xs wrap-anywhere text-danger-fg">
-											{problemsText(preset.problems, decls)}
+											{problemsText(preset.problems)}
 											。失效的预设不能用来触发运行，编辑并改好之后恢复可用。
 										</div>
 									)}
@@ -389,7 +386,7 @@ function PresetForm({
 			<DialogBody>
 				{preset?.status === "invalid" && (
 					<p role="note" className="m-0 text-xs text-danger-fg">
-						这个运行预设已失效，不能用来触发运行：{problemsText(preset.problems, decls)}。
+						这个运行预设已失效，不能用来触发运行：{problemsText(preset.problems)}。
 						改好下面标出的地方，保存之后恢复可用。
 					</p>
 				)}

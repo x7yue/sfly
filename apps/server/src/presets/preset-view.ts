@@ -1,7 +1,7 @@
 import type { ParamDeclaration, PresetParamView, PresetView } from "@sfly/schema";
 import type { runPresets } from "../db/schema.js";
 import { SECRET_MASK } from "../logs/secrets.js";
-import { presetProblems } from "./preset-validity.js";
+import { describePresetProblem, presetProblems } from "./preset-validity.js";
 
 export type PresetRow = typeof runPresets.$inferSelect;
 
@@ -49,7 +49,7 @@ export function toPresetView(
 			paramView(name, row.values[name], declared.get(name)),
 		),
 		status: problems.length === 0 ? "ok" : "invalid",
-		problems,
+		problems: problems.map((p) => ({ ...p, message: describePresetProblem(p, declarations) })),
 		updated_by: row.updatedBy,
 		updated_at: row.updatedAt.toISOString(),
 	};

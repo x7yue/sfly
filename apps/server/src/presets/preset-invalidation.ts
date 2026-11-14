@@ -1,26 +1,8 @@
-import {
-	type DocumentWarningView,
-	type ParamDeclaration,
-	PRESET_INVALIDATED_WARNING,
-} from "@sfly/schema";
+import { type DocumentWarningView, PRESET_INVALIDATED_WARNING } from "@sfly/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrationVersions, runPresets } from "../db/schema.js";
-import { entryParams, type PresetProblem, presetProblems } from "./preset-validity.js";
-
-/** 失效的原因写成一句话：哪个参数、什么问题；类型不对时写明它现在的类型。 */
-export function describePresetProblems(
-	problems: readonly PresetProblem[],
-	declarations: readonly ParamDeclaration[],
-): string {
-	return problems
-		.map(({ param, reason }) => {
-			if (reason === "missing") return `参数 ${param} 已不存在`;
-			const type = declarations.find((d) => d.name === param)?.type;
-			return `参数 ${param} 保存的值不符合现在的类型${type ? `（${type}）` : ""}`;
-		})
-		.join("；");
-}
+import { describePresetProblems, entryParams, presetProblems } from "./preset-validity.js";
 
 /**
  * 保存（或恢复）出场景的新版本以后，原来可用、对照新版本会失效的运行预设各给出一条警告

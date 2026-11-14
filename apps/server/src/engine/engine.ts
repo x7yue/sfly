@@ -58,9 +58,8 @@ import {
 } from "../gateway/agent-gateway.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
-import { describePresetProblems } from "../presets/preset-invalidation.js";
 import { findPreset, PRESET_NOT_FOUND } from "../presets/preset-store.js";
-import { presetProblems } from "../presets/preset-validity.js";
+import { describePresetProblems, presetProblems } from "../presets/preset-validity.js";
 import { type PresetRow, presetParamNames } from "../presets/preset-view.js";
 import type { Mirrors } from "../public-config.js";
 import type { ParamsCheck, Preflight } from "../runs/preflight.js";

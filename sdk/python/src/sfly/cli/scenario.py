@@ -230,7 +230,7 @@ def render(view: dict[str, Any]) -> str:
     )
     lines.append(f"默认 Agent：{view['default_agent'] or '未设置'}")
     if view["presets"]:
-        lines.extend(["", *render_presets(view["presets"], view["params"])])
+        lines.extend(["", *render_presets(view["presets"])])
     lines.append("")
     lines.extend(_render_chain("主链", view["params"], view["nodes"]))
     for subflow in view["subflows"]:
