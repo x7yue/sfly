@@ -390,6 +390,7 @@ function MappedParam({
 			fieldKey={fieldKey}
 			required={param.required}
 			type={param.type}
+			help={param.description}
 			error={invalid ? <Problems problems={errors} /> : undefined}
 			aside={
 				<ReferenceActions

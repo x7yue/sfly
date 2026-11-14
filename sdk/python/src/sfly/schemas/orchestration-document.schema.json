@@ -38,7 +38,6 @@
                 "const": "entry"
               },
               "params": {
-                "default": [],
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -64,6 +63,11 @@
                     "secret": {
                       "default": false,
                       "type": "boolean"
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "pattern": "^[^\\r\\n]*(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -111,7 +115,6 @@
                 "type": "string"
               },
               "params": {
-                "default": [],
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -137,6 +140,11 @@
                     "secret": {
                       "default": false,
                       "type": "boolean"
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "pattern": "^[^\\r\\n]*(?![\\s\\S])"
                     }
                   },
                   "required": [

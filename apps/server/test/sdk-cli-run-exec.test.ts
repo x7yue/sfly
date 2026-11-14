@@ -25,11 +25,11 @@ const echo = (id: string, extra: Record<string, unknown> = {}): Node => ({
 });
 
 const ENTRY_PARAMS = [
-	{ name: "host", type: "string", required: true },
+	{ name: "host", type: "string", required: true, description: "目标主机，不带端口" },
 	{ name: "retries", type: "number", default: 3 },
 	{ name: "verbose", type: "boolean" },
 	{ name: "options", type: "json" },
-	{ name: "token", type: "string", secret: true },
+	{ name: "token", type: "string", secret: true, description: "访问令牌" },
 	{ name: "pin", type: "number", secret: true },
 ];
 
@@ -596,9 +596,9 @@ describe("sfly run start / wait / cancel → 控制面", { timeout: 60_000 }, ()
 			expect(result.stdout).toBe("");
 			for (const text of expected) expect(result.stderr).toContain(text);
 			expect(result.stderr).toContain("声明的参数：");
-			expect(result.stderr).toContain("host     string   必填");
+			expect(result.stderr).toContain("host     string   目标主机，不带端口，必填");
 			expect(result.stderr).toContain("retries  number   默认 3");
-			expect(result.stderr).toContain("token    string   secret");
+			expect(result.stderr).toContain("token    string   访问令牌，secret");
 			expect(result.stderr).toContain(`下一步：sfly scenario show ${scenarioId}`);
 			expect(await runsOf(scenarioId)).toEqual([]);
 		});

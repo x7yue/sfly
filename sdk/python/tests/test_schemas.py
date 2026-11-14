@@ -131,3 +131,42 @@ def test_orchestration_document_with_defaults_omitted_passes() -> None:
 def test_orchestration_document_rejects_unknown_node_kind() -> None:
     doc = {"nodes": [{"id": "x", "kind": "foreach"}]}
     assert not validator("orchestration-document").is_valid(doc)
+
+
+def entry_document(kind: str, description: str) -> dict[str, Any]:
+    node: dict[str, Any] = {
+        "id": "entry",
+        "kind": kind,
+        "params": [{"name": "host", "type": "string", "description": description}],
+    }
+    if kind == "subflow_entry":
+        node["name"] = "report"
+    return {"nodes": [node]}
+
+
+@pytest.mark.parametrize("kind", ["entry", "subflow_entry"])
+@pytest.mark.parametrize(
+    ("description", "valid"),
+    [
+        ("目标主机", True),
+        ("  首尾有空白，保存时会去掉  ", True),
+        ("   ", True),
+        ("\u00a0\ufeff\u0085", True),
+        ("", True),
+        ("😀" * 200, True),
+        ("字" * 200, True),
+        ("😀" * 201, False),
+        ("字" * 201, False),
+        ("👨‍👩‍👧" * 40, True),
+        ("👨‍👩‍👧" * 41, False),
+        ("第一行\n第二行", False),
+        ("第一行\r\n第二行", False),
+        ("末尾有换行\n", False),
+    ],
+)
+def test_param_description_is_one_line_of_at_most_200_unicode_characters(
+    kind: str, description: str, valid: bool
+) -> None:
+    """长度按码点计，和控制面（zod）一致；结尾换行也要拒绝（Python 的 `$` 会放过它）。"""
+    doc = entry_document(kind, description)
+    assert validator("orchestration-document").is_valid(doc) is valid

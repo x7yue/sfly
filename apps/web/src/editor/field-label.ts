@@ -35,6 +35,7 @@ export function fieldLabel(node: DocNode | undefined, field: string): string {
 const PARAM_ITEM: Record<string, string> = {
 	name: "名称",
 	type: "类型",
+	description: "说明",
 	default: "默认值",
 	required: "必填",
 	secret: "敏感",
