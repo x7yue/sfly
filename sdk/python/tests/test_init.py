@@ -307,6 +307,11 @@ def test_generated_project_syncs_tests_lints_runs_and_builds(
         "steps": True,
         "interval": True,
     }
+    outputs_meta = meta["nodes"][0]["outputs"]["properties"]
+    assert {name: bool(prop.get("description")) for name, prop in outputs_meta.items()} == {
+        "greeting": True,
+        "ticks": True,
+    }
 
     # 项目 venv 里装的是 SDK wheel：skill 文件从 wheel 里读取；ruff format 不动 skill 目录。
     update = run_in(project, "sfly", "skill", "update")

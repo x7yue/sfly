@@ -25,6 +25,7 @@ import { AgentSelect } from "./AgentSelect";
 import { DisplayNameField, isNamedNode } from "./DisplayNameField";
 import { FIELD_LIST_CLASS, Field, focusField, SectionTitle } from "./fields";
 import { InspectorWidthHandle, useInspectorWidth } from "./inspector-width";
+import { NodeOutputs } from "./NodeOutputs";
 import {
 	AsyncMapping,
 	ExecutionSettings,
@@ -404,7 +405,8 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: InspectorContext }) {
 	const { doc, catalog } = context;
 	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
-	const outputs = type ? Object.keys(type.outputs.properties) : undefined;
+	const outputs =
+		type && Object.keys(type.outputs.properties).length > 0 ? type.outputs : undefined;
 	return (
 		<>
 			{/* 节点类型的说明是节点函数的文档字符串，按纯文本显示全文；没有说明时是通用的那句。 */}
@@ -430,17 +432,16 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 								onLock={context.onLock}
 							/>
 						</dd>
-						<dt className="text-fg-3">输出</dt>
-						<dd className="m-0 min-w-0 font-mono text-xs">
-							{outputs === undefined
-								? "—"
-								: outputs.length === 0
-									? "没有输出"
-									: outputs.join(" · ")}
-						</dd>
+						{!outputs && (
+							<>
+								<dt className="text-fg-3">输出</dt>
+								<dd className="m-0 min-w-0 font-mono text-xs">{type ? "没有输出" : "—"}</dd>
+							</>
+						)}
 					</>
 				)}
 			</dl>
+			{outputs && <NodeOutputs outputs={outputs} />}
 			{node.kind === "package" && (
 				<>
 					<SectionTitle>声明的指标与图表</SectionTitle>

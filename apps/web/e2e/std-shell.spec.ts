@@ -46,9 +46,9 @@ test("Shell 命令节点的输出出现在检查器的输出列表里，后续�
 	await nodeCard(page, "build").click();
 	await panel.getByRole("tab", { name: "说明与指标" }).click();
 	// 输出的先后不是声明的顺序（节点类型存进数据库后键的顺序不保留），这里只看有哪些。
-	const listed = panel.getByRole("definition").filter({ hasText: "exit_code" });
+	const listed = panel.getByRole("table", { name: "输出" }).locator("tbody td:first-child");
 	await expect
-		.poll(async () => ((await listed.textContent()) ?? "").split(" · ").sort())
+		.poll(async () => (await listed.allTextContents()).sort())
 		.toEqual(["exit_code", "stderr", "stderr_file", "stdout", "stdout_file"]);
 
 	// check.command 引用了 build 的输出：清空后输入 $，补全列出 build 的全部输出。

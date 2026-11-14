@@ -54,7 +54,7 @@ export function ReferenceList({
 											tabIndex={-1}
 											aria-selected={index === active}
 											className={cn(
-												"flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-raised-2",
+												"grid cursor-pointer grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-xs hover:bg-raised-2",
 												index === active && "bg-raised-2",
 											)}
 											onMouseDown={(e) => e.preventDefault()}
@@ -64,7 +64,15 @@ export function ReferenceList({
 											<span className="min-w-0 flex-1 truncate font-mono" title={c.expression}>
 												{c.expression}
 											</span>
-											<span className="flex-none text-xs text-fg-3">{c.detail}</span>
+											<span className="text-xs text-fg-3">{c.detail}</span>
+											{c.description && (
+												<span
+													className="col-span-2 mt-0.5 line-clamp-2 text-xs text-fg-3"
+													title={c.description}
+												>
+													{c.description}
+												</span>
+											)}
 										</div>
 									);
 								})}
