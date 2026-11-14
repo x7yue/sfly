@@ -6,6 +6,7 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
+import { annotated, annotationBand } from "./annotation-support";
 import {
 	createEditorScenario,
 	editorDocument,
@@ -773,7 +774,8 @@ test.describe("编排画布", () => {
 	test("空白处右键菜单", async ({ page }) => {
 		await page.mouse.click(200, 640, { button: "right" });
 		const menu = page.getByRole("menu", { name: "画布菜单" });
-		await expect(menu).toBeVisible();
+		// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在画布上（选中入口节点、关掉菜单）。
+		await expect(menu).toBeFocused();
 		await page.keyboard.press("ArrowDown");
 		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("添加节点");
 		await expect(page).toHaveScreenshot("editor-pane-menu.png");
@@ -801,8 +803,9 @@ test.describe("编排画布", () => {
 		});
 		await page.mouse.click(at.x, at.y, { button: "right" });
 		const menu = page.getByRole("menu", { name: "连线菜单" });
-		await expect(menu).toBeVisible();
 		await expect(page.getByRole("button", { name: "在此插入节点" })).toBeVisible();
+		// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在画布上。
+		await expect(menu).toBeFocused();
 		await page.keyboard.press("ArrowDown");
 		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("在此插入节点");
 		await expect(page).toHaveScreenshot("editor-edge-menu.png");
@@ -996,6 +999,51 @@ test.describe("编排画布：节点的备注", () => {
 		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
 		await page.mouse.move(700, 760);
 		await expect(page).toHaveScreenshot("editor-node-notes-zoomed-out.png");
+	});
+});
+
+test.describe("编排画布：注释框", () => {
+	test.beforeEach(async ({ page, controlPlane, connectAgent }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		const id = await createScenario(
+			controlPlane,
+			"带注释框的场景",
+			annotated([
+				{
+					id: "annotation_1",
+					title: "派发对账",
+					note: "异步任务和它调度的子流程入口一起看",
+					nodes: ["dispatch", "sub_entry"],
+				},
+				{
+					id: "annotation_2",
+					title: "收尾：通知和对账子流程",
+					nodes: ["ping"],
+					subflows: ["sub_entry"],
+				},
+				{ id: "annotation_3", title: "拉取快照", nodes: ["entry", "fetch"] },
+			]),
+		);
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("注释框和子流程区域交叠，选中其中一个", async ({ page }) => {
+		await annotationBand(page, "派发对账").click();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-annotations.png");
+	});
+
+	test("缩小后的标题", async ({ page }) => {
+		for (let i = 0; i < 3; i++) {
+			await page.getByRole("button", { name: "缩小" }).click();
+			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
+		}
+		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-annotations-zoomed-out.png");
 	});
 });
 

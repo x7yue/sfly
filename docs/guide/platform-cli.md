@@ -18,7 +18,7 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent，节点表下面是这条链的备注）、默认 Agent |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent，节点表下面是这条链的备注）、默认 Agent，最后是注释框（标题、成员、备注） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存 |
 | `sfly scenario push <文件>` | 本地校验后保存成新的场景版本 |
@@ -142,12 +142,14 @@ sfly scenario pull 回归 -o 回归.json
 sfly scenario push 回归.json
 ```
 
-- pull 写出的文件是 `{"scenario": <场景 id>, "base_version": <版本号>, "document": {…}}`：`document` 就是场景文档（`default_agent`、`nodes`、`edges`、`packages`），和控制面保存的内容相同；`base_version` 是 pull 时的最新版本号。`--version N` 拉取旧版本时 `base_version` 仍是最新版本号，push 就相当于以旧版本为起点再保存一次。
+- pull 写出的文件是 `{"scenario": <场景 id>, "base_version": <版本号>, "document": {…}}`：`document` 就是场景文档（`default_agent`、`nodes`、`edges`、`packages`、`annotations`），和控制面保存的内容相同；`base_version` 是 pull 时的最新版本号。`--version N` 拉取旧版本时 `base_version` 仍是最新版本号，push 就相当于以旧版本为起点再保存一次。
 - push 先按场景文档的 JSON Schema 在本地校验，出错时列出出错的位置，不发请求。通过后带着 `base_version` 保存新版本，输出新版本号和控制面给出的警告（引用的 Agent 或节点包不存在、必填参数缺失等）；成功后文件里的 `base_version` 更新为新版本号、`document` 换成控制面实际保存的内容，可以接着改、接着 push。
 - 入口节点和子流程入口节点的参数可以写 `description`：一行说明，最长 200 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存。触发表单、异步任务节点的参数映射表单和命令行的参数表（`scenario show`、`run start` 参数出错时）都会显示它；它不影响执行。超长或带换行时 push 的本地校验报出位置，例如 `nodes/0/params/1/description`（节点 entry）。
 - 除子流程入口节点外，每个节点都可以写 `display_name`：一行显示名称（例如「创建测试用户」），最长 40 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存，不要求唯一。控制台的节点卡片拿它当标题，`scenario show` 的节点表在「节点」后面有一列「显示名称」（没有写 `-`），`--json` 里节点的 `display_name` 就是它（没有时不出现这个字段）；它不影响执行，引用和日志仍然以节点 ID 为准。子流程入口节点没有这个字段：子流程名称（`name`）就是它的显示名称。超长或带换行时 push 的本地校验报出位置，例如 `nodes/3/display_name`（节点 build）。
 - 每个节点（包括入口节点和子流程入口节点）都可以写 `note`：多行备注，说明这个节点在场景里做什么、为什么这样配置，最长 2000 个 Unicode 字符（一个 emoji 算一个，换行也算一个），去掉首尾空白后为空就不保存；它不影响执行。画布上节点卡片的头部有备注图标，版本对比和 `scenario show` 也会列出它。超长时 push 的本地校验报出位置，例如 `nodes/1/note`（节点 deploy）。
 - `scenario show` 在每条链（主链、各子流程、没有连进任何链的节点）的节点表下面列出这条链的备注，没有备注的链不加这一段：每条是 `<节点 ID>：<备注>`，多行备注的后面几行缩进到第一行备注文字的位置；入口节点和子流程入口节点不在节点表里，它们的备注排在这一段最前面。`--json` 里节点带 `note`，入口节点的备注在 `entry_note`（主链的写在最外层，同时带上入口节点的 `entry`；子流程的写在这个子流程的对象里），没有备注的节点不出现这个字段。
+- 顶层的 `annotations` 是注释框的数组（没有时是 `[]`），给一组节点和子流程画框、写上它们合起来做什么。每项有 `id`（注释框之间唯一，画布新建的是 `annotation_1` 这样的）、`title`（必填，一行，1 到 40 个 Unicode 字符，去掉首尾空白）、`note`（可选，多行，最长 2000 个 Unicode 字符，去掉首尾空白后为空就不保存）、`nodes`（成员节点的节点 ID）、`subflows`（成员子流程的入口节点 ID，不是子流程名称，子流程改名不影响），后两个默认是空数组。不用写坐标和大小：画布按成员算出框的范围，所以新加注释框、改成员都不用动 `position`。它不影响执行。`id` 重复时本地校验认不出来，push 被控制面拒绝，报出重复的那一项的位置，例如 `document/annotations/1/id: 注释框 ID annotation_1 重复`（第 2 个注释框），不保存新版本。
+- `scenario show` 的最后一段「注释框」列出每个注释框：第一行是 `<标题>（<ID>）`，下一行是成员（节点写「显示名称（节点 ID）」，没有显示名称时只写节点 ID；子流程写名称，例如 `节点：创建测试用户（create_user_1）、pause；子流程：report`，没有成员时写 `成员：无`），再下面是备注，多行备注的后面几行缩进到第一行备注文字的位置；成员 ID 在场景里不存在时原样写出。没有注释框的场景没有这一段。`--json` 里 `annotations` 一直在（没有时是空数组），每项是文档里的 `id`、`title`、`note`（没有备注时不出现）、`nodes`、`subflows`。
 - 新加的节点不用写 `position`：控制面保存时按画布「整理布局」的算法给没有坐标的节点排好位置（压住已有节点时挪到附近的空位），已经有坐标的节点不动。
 - 别人在你 pull 之后保存了新版本时，push 报版本冲突（退出码 2），写明最新版本号、作者和保存时间，提示重新 pull、把你的改动合并进去再 push。没有强制覆盖的选项。命令行不会成为在线编辑者：浏览器里正在编辑同一个场景的人保存时，会收到界面已有的冲突提示。
 - `scenario copy` 复制场景（说明和运行通知设置一并复制）。联调副本的说明要改成讲联调：`scenario rename <副本> --description …`，第一行写「联调 <包名>，由 <昵称> 的 AI 编程助手创建」，后面接原场景的说明；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。

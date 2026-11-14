@@ -1537,6 +1537,48 @@
                   "type": "string",
                   "minLength": 1
                 }
+              },
+              "annotations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "maxLength": 40,
+                      "pattern": "^(?=[\\s\\S]*[^\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff])[^\\r\\n]*(?![\\s\\S])"
+                    },
+                    "note": {
+                      "type": "string",
+                      "maxLength": 2000
+                    },
+                    "nodes": {
+                      "default": [],
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "subflows": {
+                      "default": [],
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
@@ -1557,6 +1599,21 @@
         ]
       },
       "notes": [
+        {
+          "part": "body",
+          "path": "document.annotations[].note",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "body",
+          "path": "document.annotations[].title",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "body",
+          "path": "document.annotations",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验"
+        },
         {
           "part": "body",
           "path": "document.nodes[].oneOf.0.params[].description",

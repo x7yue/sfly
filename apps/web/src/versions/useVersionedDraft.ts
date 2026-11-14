@@ -36,7 +36,11 @@ interface Base {
 /** 按画布的方式规整文档（补齐布局、去掉没用到的包锁定），让“未修改”的判断不受这些差别影响。 */
 const asCanvasDocument = (doc: OrchestrationDocument): OrchestrationDocument => {
 	const { nodes, edges } = toFlow(doc);
-	return fromFlow(nodes, edges, { default_agent: doc.default_agent, packages: doc.packages });
+	return fromFlow(nodes, edges, {
+		default_agent: doc.default_agent,
+		packages: doc.packages,
+		annotations: doc.annotations,
+	});
 };
 
 export function startEditing(

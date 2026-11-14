@@ -76,6 +76,38 @@ export interface AgentView {
 	endpoint: AgentEndpointView;
 }
 
+/**
+ * 注释框：给一组节点和子流程画的框，带标题和备注，说明它们合起来在场景里做什么。属于版本内容，只记成员、
+ * 不存坐标和大小，框的范围由成员算出（@sfly/orchestration 的 annotationBoxes，ADR 0023）；
+ * 只用于显示，不影响执行（docs/SEMANTICS.md §1.6）。
+ */
+export interface Annotation {
+	/** 注释框之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `annotation_1`。 */
+	id: string;
+	title: string;
+	note?: string;
+	/** 成员节点的节点 ID。 */
+	nodes: string[];
+	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
+	subflows: string[];
+}
+
+/**
+ * 注释框：给一组节点和子流程画的框，带标题和备注，说明它们合起来在场景里做什么。属于版本内容，只记成员、
+ * 不存坐标和大小，框的范围由成员算出（@sfly/orchestration 的 annotationBoxes，ADR 0023）；
+ * 只用于显示，不影响执行（docs/SEMANTICS.md §1.6）。
+ */
+export interface AnnotationInput {
+	/** 注释框之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `annotation_1`。 */
+	id: string;
+	title: string;
+	note?: string;
+	/** 成员节点的节点 ID。 */
+	nodes?: string[];
+	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
+	subflows?: string[];
+}
+
 export interface ArtifactView {
 	/** 产物目录内的相对路径（`/` 分隔）。 */
 	name: string;
@@ -867,6 +899,7 @@ export interface OrchestrationDocument {
 	edges: Edge[];
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages: Record<PackageName, string>;
+	annotations: Annotation[];
 }
 
 export interface OrchestrationDocumentInput {
@@ -875,6 +908,7 @@ export interface OrchestrationDocumentInput {
 	edges?: Edge[];
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages?: Record<PackageName, string>;
+	annotations?: AnnotationInput[];
 }
 
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */
