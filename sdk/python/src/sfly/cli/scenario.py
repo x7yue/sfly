@@ -19,6 +19,7 @@ from sfly.cli.output import (
     more_note,
 )
 from sfly.cli.run_view import node_type_label, subflow_label
+from sfly.cli.scenario_annotations import annotation_views, render_annotations
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
 
@@ -101,7 +102,8 @@ def _show(session: Session, args: argparse.Namespace) -> None:
     scenario = find_scenario(session.client, args.scenario, command="sfly scenario show")
     head = session.client.get(f"/orchestrations/{segment(scenario['id'])}/head")
     view = describe(scenario, head)
-    session.out.emit(view, render(view))
+    annotations = render_annotations(view["annotations"], head["document"])
+    session.out.emit(view, "\n".join([render(view), *annotations]))
 
 
 def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
@@ -220,6 +222,7 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
         "nodes": main_nodes,
         "subflows": subflows,
         "unlinked": unlinked,
+        "annotations": annotation_views(document),
     }
 
 
