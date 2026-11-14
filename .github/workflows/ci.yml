@@ -2,7 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, "spec/**", "impl/**"]
+    # 分支上的提交由 PR 触发（草稿 PR 也触发）；没有 PR 的分支要跑 CI 时手动触发。
+    # 同一个提交不再因为 push 和 pull_request 各跑一遍。
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -14,12 +16,70 @@ concurrency:
 permissions:
   contents: read
 
-# 每一步都只调用仓库根目录的统一命令（与本地完全一致，见 package.json scripts）。
+env:
+  CARGO_TERM_COLOR: always
+
+# 每一步都只调用仓库根目录的统一命令（与本地完全一致，见 package.json scripts）；全部步骤合起来就是 `pnpm check`。
+# 按语言拆成并行的 job：总时长由最长的一个决定，而不是各项相加。
+# 只用 GitHub 托管的 runner：仓库公开后任何人都能提 PR，PR 里的代码不能跑在自己的机器上。
+#
+# Rust 缓存（Swatinem/rust-cache）只有 main 写：GitHub 的缓存按分支隔离，PR 和其他分支只能读 main 的缓存，
+# 各自写的只有自己用得上，会把仓库 10GB 的缓存额度占满、挤掉 main 的缓存。每个 job 编译的东西不同，各用一个 shared-key。
 jobs:
-  check:
-    # 只用 GitHub 托管的 runner：仓库公开后任何人都能提 PR，PR 里的代码不能跑在自己的机器上。
+  # Agent：格式、clippy 与测试。
+  rust:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # 版本取自 package.json 的 packageManager
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sfly-test
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: astral-sh/setup-uv@v6 # Agent 的测试用 uv 建节点包环境；Python 版本取自 .python-version
+
+      - name: Lint
+        run: pnpm lint:rust
+      - name: Test
+        run: pnpm test:rust
+
+  # Python SDK、标准节点包 sfly-std（std/tests，含节点包元信息检查）与仓库脚本的测试。
+  py:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install
+        run: uv sync --locked --all-packages
+      - name: Lint
+        run: pnpm lint:py
+      - name: Typecheck
+        run: pnpm typecheck:py
+      - name: Test
+        run: pnpm test:py
+
+  # 版本号、生成代码、协议兼容性，以及 TypeScript 的 lint、类型检查与测试。
+  # 控制面的测试含验收场景 S1–S3（apps/server/test/acceptance-s*.test.ts，真实控制面 + Agent + SDK），
+  # 所以这里也要 Rust（测试自己构建 debug 版 Agent）和 uv。
+  ts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:18
@@ -35,33 +95,26 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      CARGO_TERM_COLOR: always
       DATABASE_URL: postgres://sfly:sfly@127.0.0.1:5432/sfly
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # buf breaking 需要基线提交
 
-      - uses: pnpm/action-setup@v4 # 版本取自 package.json 的 packageManager
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-          # 打包后的控制面带两个架构的 musl Agent（ADR 0011）；aarch64 用 rust-lld 交叉编译。
-          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
-      # 只有 main 写缓存：GitHub 的缓存按分支隔离，PR 和其他分支只能读 main 的缓存，各自写的只有自己用得上，
-      # 每份约 500MB，会把仓库 10GB 的缓存额度占满、挤掉 main 的缓存。Release 的 agent job 用同一个 shared-key 读它。
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: sfly
+          shared-key: sfly-server
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: arduino/setup-protoc@v3 # agent/build.rs 需要 protoc
+      - uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: astral-sh/setup-uv@v6 # Python 版本取自 .python-version
+      - uses: astral-sh/setup-uv@v6
 
       - name: Install
         run: pnpm bootstrap
@@ -70,21 +123,62 @@ jobs:
       - name: Generated code is up to date
         run: pnpm gen:check
       - name: Lint
-        run: pnpm lint
+        run: pnpm lint:ts && pnpm lint:proto && pnpm lint:node && pnpm lint:docs
       - name: Typecheck
-        run: pnpm typecheck
+        run: pnpm typecheck:ts
       - name: Protobuf breaking check
         run: pnpm proto:breaking
         env:
           PROTO_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
-      # 含验收场景 S1–S3（apps/server/test/acceptance-s*.test.ts，真实控制面 + Agent + SDK），
-      # 以及标准节点包 sfly-std 的测试与节点包元信息检查（std/tests）。
       - name: Test
-        run: pnpm test
+        run: pnpm test:ts
+
+  # 发布用的单文件控制面和镜像（ADR 0010、0011）：用打包后的控制面提供的 install.sh 安装 Agent 并跑通一条链，
+  # 上一个 Release 的 Agent 在它上面跑完任务后自更新，镜像能启动、通过健康检查并带着两个架构的 Agent。
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: sfly
+          POSTGRES_PASSWORD: sfly
+          POSTGRES_DB: sfly
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sfly"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://sfly:sfly@127.0.0.1:5432/sfly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # 打包后的控制面带两个架构的 musl Agent（ADR 0011）；aarch64 用 rust-lld 交叉编译。
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      # Release 的 agent job 用同一个 shared-key 读这份缓存。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: sfly
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install
+        run: pnpm bootstrap
       - name: Build
         run: pnpm build
-      # 发布用的单文件控制面和镜像（ADR 0010、0011）：用打包后的控制面提供的 install.sh 安装 Agent 并跑通一条链，
-      # 上一个 Release 的 Agent 在它上面跑完任务后自更新，镜像能启动、通过健康检查并带着两个架构的 Agent。
       - name: Pack agents
         run: pnpm pack:agents
       - name: Bundle control plane
@@ -98,6 +192,21 @@ jobs:
         run: pnpm test:bundle
       - name: Image smoke test
         run: pnpm test:image
+
+  # main 的规则集要求名为 check 与 e2e 的检查通过（docs/agents/branching-and-release.md）：
+  # 上面四个 job 全部成功才算 check 通过，拆分或合并 job 时不用改规则集。
+  check:
+    if: ${{ always() }}
+    needs: [rust, py, ts, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: All checks passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "rust py ts package: $RESULTS"
+          [[ $RESULTS == "success success success success" ]]
 
   # 前端端到端测试与视觉回归（apps/web/e2e）：在 Playwright 官方镜像中运行，与本机
   # `pnpm test:e2e:docker` 使用同一镜像（浏览器和字体一致，视觉基线才可比）。

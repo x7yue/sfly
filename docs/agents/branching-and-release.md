@@ -13,14 +13,21 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 
 | 前缀 | 用途 |
 |---|---|
-| `spec/<issue>-<描述>` | 大功能的规格与实现（推送时也运行 CI） |
-| `impl/<描述>` | 大功能拆出的实现分支（推送时也运行 CI，供合并前验证） |
+| `spec/<issue>-<描述>` | 大功能的规格与实现 |
+| `impl/<描述>` | 大功能拆出的实现分支 |
 | `design/<描述>` | 设计文档、原型、ADR |
 | `fix/<issue>-<描述>` | 修复缺陷 |
 | `chore/<描述>` | 工具链、CI、开发环境、文档 |
 | `release/X.Y.Z` | 只改版本号，为发版做准备 |
 
 Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面的前缀：`git push -u origin HEAD:<前缀>/<描述>`。
+
+## CI 什么时候运行
+
+- PR（草稿也算）的每次推送、`main` 上的每个提交。分支上只推送、没有 PR 时不运行：要在合并前验证就开一个草稿 PR，
+  或手动触发（`gh workflow run ci.yml --ref <分支>`）。
+- 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
+- `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
 
 ## PR
 
