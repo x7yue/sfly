@@ -490,7 +490,9 @@ export function FlowCanvas({
 					"data-[tool=hand]:[&_.react-flow__pane]:cursor-grab data-[tool=hand]:[&_.react-flow__node]:cursor-grab",
 					// 框选的矩形用中性的选中色；框选结束后 React Flow 画在选中节点外面的可拖动矩形不要
 					// （它盖住框里没选中的节点；整组拖动直接拖任意一个选中的节点）。
-					"[--xy-selection-background-color:var(--selected-ring)] [--xy-selection-border:1px_dashed_var(--selected)] [&_.react-flow__nodesselection]:hidden",
+					// 类名里的下划线在 Tailwind 的任意值里会变成空格，要转义成 \_。
+					"[--xy-selection-background-color:var(--selected-ring)] [--xy-selection-border:1px_dashed_var(--selected)]",
+					String.raw`[&_.react-flow\_\_nodesselection]:hidden`,
 				)}
 			>
 				<p id={hintId} hidden>

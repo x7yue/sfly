@@ -75,10 +75,14 @@ test("指针工具下 Shift 拖动空白处是框选；不按键拖动空白处�
 	await expect(multiHeading(page, 2)).toBeVisible();
 	expect(await entry()).toEqual(start);
 
-	// 不按键拖动空白处：平移视图，不框选。
+	// 框选之后，框里的节点照样能点（没有盖在上面的选区矩形）。
+	await nodeCard(page, "dispatch").click();
+	await expect.poll(() => selectedIn(page)).toEqual(["dispatch"]);
+
+	// 不按键拖动空白处（拖过 fetch）：平移视图，不框选，选中不变。
 	await drag(page, around.from, { x: around.from.x + 160, y: around.from.y + 70 });
 	await expect.poll(async () => (await entry()).x).toBeGreaterThan(start.x + 100);
-	expect(await selectedIn(page)).not.toContain("entry");
+	expect(await selectedIn(page)).toEqual(["dispatch"]);
 
 	// 抓手工具下按住 Shift 拖动也是平移。
 	await page.keyboard.press("Escape");
@@ -262,7 +266,7 @@ test.describe("多选时复制、创建副本", () => {
 
 		await nodeCard(page, "fetch").click();
 		await nodeCard(page, "ping").click({ modifiers: ["ControlOrMeta"] });
-		await page.keyboard.press("Control+c");
+		await page.keyboard.press("ControlOrMeta+c");
 		await expect(page.getByText("不能一次复制多个节点")).toBeVisible();
 		expect(await clipboard(page)).toBe("原来的内容");
 
