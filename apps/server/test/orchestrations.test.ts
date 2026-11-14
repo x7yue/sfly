@@ -181,6 +181,7 @@ describe("编排版本", () => {
 				nodes: [{ id: "entry", kind: "entry", params: [], position: { x: 0, y: 0 } }],
 				edges: [],
 				packages: {},
+				annotations: [],
 			},
 		});
 

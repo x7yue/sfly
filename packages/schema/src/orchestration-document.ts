@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalLine, optionalMultiline } from "./display-text.js";
+import { optionalLine, optionalMultiline, requiredLine } from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
 
 /**
@@ -12,8 +12,11 @@ export const ParamType = z.enum(["string", "number", "boolean", "json"]);
 /** 参数说明的长度上限（Unicode 字符数）。 */
 export const PARAM_DESCRIPTION_MAX = 200;
 
-/** 节点备注的长度上限（Unicode 字符数）。 */
+/** 备注（节点的、注释框的）的长度上限（Unicode 字符数）。 */
 export const NODE_NOTE_MAX = 2000;
+
+/** 注释框标题的长度上限（Unicode 字符数）。 */
+export const ANNOTATION_TITLE_MAX = 40;
 
 export const ParamDeclaration = z.strictObject({
 	name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
@@ -180,6 +183,32 @@ export const Edge = z.strictObject({
 	kind: z.enum(["chain", "dispatch"]),
 });
 
+/**
+ * 注释框：给一组节点和子流程画的框，带标题和备注，说明它们合起来在场景里做什么。属于版本内容，只记成员、
+ * 不存坐标和大小，框的范围由成员算出（@sfly/orchestration 的 annotationBoxes，ADR 0023）；
+ * 只用于显示，不影响执行（docs/SEMANTICS.md §1.6）。
+ */
+export const Annotation = z.strictObject({
+	/** 注释框之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `annotation_1`。 */
+	id: z.string().min(1),
+	title: requiredLine(ANNOTATION_TITLE_MAX),
+	note: optionalMultiline(NODE_NOTE_MAX),
+	/** 成员节点的节点 ID。 */
+	nodes: z.array(z.string().min(1)).default([]),
+	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
+	subflows: z.array(z.string().min(1)).default([]),
+});
+
+const Annotations = z.array(Annotation).superRefine((annotations, ctx) => {
+	const seen = new Set<string>();
+	for (const [i, { id }] of annotations.entries()) {
+		if (seen.has(id)) {
+			ctx.addIssue({ code: "custom", path: [i, "id"], message: `注释框 ID ${id} 重复` });
+		}
+		seen.add(id);
+	}
+});
+
 export const OrchestrationDocument = z
 	.strictObject({
 		default_agent: z.string().min(1).optional(),
@@ -187,8 +216,10 @@ export const OrchestrationDocument = z
 		edges: z.array(Edge).default([]),
 		/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 		packages: z.record(PackageName, z.string().min(1)).default({}),
+		annotations: Annotations.default([]),
 	})
 	.meta({ title: "sfly 编排文档" });
 
 export type OrchestrationDocument = z.infer<typeof OrchestrationDocument>;
 export type OrchestrationNode = z.infer<typeof OrchestrationNode>;
+export type Annotation = z.infer<typeof Annotation>;

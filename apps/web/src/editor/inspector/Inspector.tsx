@@ -1,19 +1,31 @@
 import {
 	dispatchTarget,
+	nameWithId,
 	nodeCardText,
 	nodeNameWithId,
 	nodeTypeOf,
 	type OrchestrationWarning,
 	type PackageCatalog,
 } from "@sfly/orchestration";
-import type { AgentView, FeishuBotView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
+import type {
+	AgentView,
+	Annotation,
+	FeishuBotView,
+	OrchestrationDocument,
+	PackageSummary,
+} from "@sfly/schema";
 import { cn } from "cn";
-import { PanelRightCloseIcon, Trash2Icon } from "lucide-react";
-import { forwardRef, type ReactNode, useEffect, useMemo, useState } from "react";
+import { Trash2Icon } from "lucide-react";
+import { forwardRef, useEffect, useMemo, useState } from "react";
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
-import { type CanvasSelection, multipleNodes, soleNode } from "#/components/canvas/selection";
+import {
+	type CanvasSelection,
+	multipleNodes,
+	selectedAnnotation,
+	soleNode,
+} from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
@@ -22,8 +34,10 @@ import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { AgentSelect } from "./AgentSelect";
+import { AnnotationInspector } from "./AnnotationInspector";
 import { DisplayNameField, isNamedNode } from "./DisplayNameField";
 import { FIELD_LIST_CLASS, Field, FieldList, focusField, SectionTitle } from "./fields";
+import { Header } from "./InspectorHeader";
 import { InspectorWidthHandle, useInspectorWidth } from "./inspector-width";
 import { NodeOutputs } from "./NodeOutputs";
 import {
@@ -72,11 +86,18 @@ export interface InspectorContext {
 	onLocate(id: string): void;
 	/** 删除节点（多选时是整组，算一步撤销）。 */
 	onDelete(ids: readonly string[]): void;
+	/** 改注释框；同一个字段（`field`）的连续修改合成一步撤销。 */
+	onChangeAnnotation(annotation: Annotation, field?: string): void;
+	/** 删除注释框，成员节点不动。 */
+	onDeleteAnnotation(id: string): void;
+	/** 选中注释框（检查结果里的「前往」）。 */
+	onLocateAnnotation(id: string): void;
 }
 
 /**
  * 右侧检查器（原型 `.insp`，可收起）。选中一个节点时：标题区 + 页签（参数 / 执行 / 说明）；
- * 选中多个节点时：「已选 N 个节点」和对这组节点的操作；没有选中节点时：场景级设置（默认 Agent、节点包版本、检查结果）。
+ * 选中多个节点时：「已选 N 个节点」和对这组节点的操作；选中注释框时：标题、备注和成员（AnnotationInspector）；
+ * 什么都没选时：场景级设置（默认 Agent、节点包版本、检查结果）。
  * 包节点的「说明」页叫「说明与指标」，带上节点类型声明的指标与图表（#43）。
  */
 export const Inspector = forwardRef<
@@ -96,6 +117,8 @@ export const Inspector = forwardRef<
 	const id = soleNode(selection);
 	const node = id === null ? undefined : nodeOf(id);
 	const group = multipleNodes(selection);
+	const annotationId = selectedAnnotation(selection);
+	const annotation = context.doc.annotations.find((a) => a.id === annotationId);
 	return (
 		<aside
 			ref={ref}
@@ -110,7 +133,14 @@ export const Inspector = forwardRef<
 			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
 			style={{ width }}
 		>
-			{id !== null && node ? (
+			{annotation ? (
+				<AnnotationInspector
+					key={annotation.id}
+					annotation={annotation}
+					context={context}
+					onCollapse={onCollapse}
+				/>
+			) : id !== null && node ? (
 				<NodeInspector key={id} id={id} node={node} context={context} onCollapse={onCollapse} />
 			) : group ? (
 				<GroupInspector ids={group} context={context} onCollapse={onCollapse} />
@@ -121,33 +151,6 @@ export const Inspector = forwardRef<
 		</aside>
 	);
 });
-
-function Header({
-	row,
-	title,
-	actions,
-	onCollapse,
-}: {
-	row: ReactNode;
-	title: string;
-	actions?: ReactNode;
-	onCollapse(): void;
-}) {
-	return (
-		<div className="flex-none border-b border-border-soft px-3.5 pt-3 pb-2.5">
-			<div className="flex items-center gap-1.75 text-xs text-fg-3">
-				{row}
-				<span className="ml-auto flex items-center">
-					{actions}
-					<Button variant="ghost" size="icon-sm" aria-label="收起检查器" onClick={onCollapse}>
-						<PanelRightCloseIcon />
-					</Button>
-				</span>
-			</div>
-			<h2 className="mt-1.5 mb-0.5 line-clamp-2 text-base font-semibold wrap-anywhere">{title}</h2>
-		</div>
-	);
-}
 
 function WarningList({
 	warnings,
@@ -494,6 +497,8 @@ function GroupInspector({
 	);
 }
 
+const ANNOTATION_FIELD_LABEL: Record<string, string> = { title: "标题", note: "备注" };
+
 /** 没有选中节点时：场景级设置与检查结果。 */
 function ScenarioInspector({
 	context,
@@ -543,24 +548,34 @@ function ScenarioInspector({
 					<ul className="m-0 mb-3 flex list-none flex-col gap-1 p-0">
 						{fieldErrors.map((e) => {
 							const node = doc.nodes.find((n) => n.id === e.nodeId);
+							const annotation = doc.annotations.find((a) => a.id === e.annotationId);
+							const { annotationId, nodeId } = e;
 							return (
 								<li
-									key={`${e.nodeId}:${e.field}`}
+									key={`${nodeId}:${annotationId}:${e.field}`}
 									className={cn(
 										"flex items-start gap-2 rounded-md border border-danger-line bg-danger-soft px-2.5 py-1.5 text-xs text-danger-fg",
 									)}
 								>
 									<span className="min-w-0 flex-1">
-										{e.nodeId && (
-											<code className="font-mono">{node ? nodeNameWithId(node) : e.nodeId}</code>
-										)}{" "}
-										{fieldLabel(node, e.field)}：{e.message}
+										{nodeId && (
+											<code className="font-mono">{node ? nodeNameWithId(node) : nodeId}</code>
+										)}
+										{annotationId && <>注释框 {nameWithId(annotationId, annotation?.title)}</>}{" "}
+										{annotationId
+											? (ANNOTATION_FIELD_LABEL[e.field] ?? e.field)
+											: fieldLabel(node, e.field)}
+										：{e.message}
 									</span>
-									{e.nodeId && (
+									{(nodeId || annotationId) && (
 										<button
 											type="button"
 											className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
-											onClick={() => context.onLocate(e.nodeId as string)}
+											onClick={() =>
+												annotationId
+													? context.onLocateAnnotation(annotationId)
+													: context.onLocate(nodeId as string)
+											}
 										>
 											前往
 										</button>

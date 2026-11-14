@@ -140,14 +140,18 @@ export function Field({
 	);
 }
 
-/** 把焦点放到某个字段的控件上。字段所在的节点和页签可能刚刚才渲染，找不到时等几帧再找；返回取消函数。 */
-export function focusField(key: string): () => void {
+/**
+ * 把焦点放到某个字段的控件上。字段所在的节点和页签可能刚刚才渲染，找不到时等几帧再找；返回取消函数。
+ * `select`：输入框里的文字整段选中（新建注释框后直接输入就替换掉默认标题）。
+ */
+export function focusField(key: string, { select = false } = {}): () => void {
 	let frame = 0;
 	let tries = 0;
 	const tick = () => {
 		const el = document.querySelector<HTMLElement>(`[data-field-key="${CSS.escape(key)}"]`);
 		if (el) {
 			el.focus();
+			if (select && el instanceof HTMLInputElement) el.select();
 		} else if (++tries < 20) {
 			frame = requestAnimationFrame(tick);
 		}
