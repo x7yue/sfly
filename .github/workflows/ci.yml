@@ -9,8 +9,10 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
   # main 上每个提交都要跑完：发布前会检查 tag 指向的提交在 main 上的 CI 已通过（release.yml）。
+  # 所以 main 上按提交分组：同一组里只留一个排队的运行，共用一组时，连着合入两个 PR，
+  # 前一个提交还在排队的运行会被后一个顶掉（取消）。PR 和其他分支的新推送取消旧的运行。
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
