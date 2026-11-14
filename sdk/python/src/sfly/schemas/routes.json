@@ -970,6 +970,10 @@
                           ],
                           "additionalProperties": false
                         },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
                         "display_name": {
                           "type": "string",
                           "maxLength": 40,
@@ -1049,6 +1053,10 @@
                           ],
                           "additionalProperties": false
                         },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
                         "kind": {
                           "type": "string",
                           "const": "subflow_entry"
@@ -1126,6 +1134,10 @@
                           ],
                           "additionalProperties": false
                         },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
                         "display_name": {
                           "type": "string",
                           "maxLength": 40,
@@ -1172,6 +1184,10 @@
                             "y"
                           ],
                           "additionalProperties": false
+                        },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 2000
                         },
                         "display_name": {
                           "type": "string",
@@ -1225,6 +1241,10 @@
                           ],
                           "additionalProperties": false
                         },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
                         "display_name": {
                           "type": "string",
                           "maxLength": 40,
@@ -1273,6 +1293,10 @@
                           ],
                           "additionalProperties": false
                         },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 2000
+                        },
                         "display_name": {
                           "type": "string",
                           "maxLength": 40,
@@ -1319,6 +1343,10 @@
                             "y"
                           ],
                           "additionalProperties": false
+                        },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 2000
                         },
                         "display_name": {
                           "type": "string",
@@ -1403,6 +1431,10 @@
                             "y"
                           ],
                           "additionalProperties": false
+                        },
+                        "note": {
+                          "type": "string",
+                          "maxLength": 2000
                         },
                         "display_name": {
                           "type": "string",
@@ -1533,6 +1565,11 @@
         {
           "part": "body",
           "path": "document.nodes[].oneOf.0.display_name",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "body",
+          "path": "document.nodes[].oneOf.0.note",
           "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
         }
       ]

@@ -2,6 +2,7 @@ import { nodeCardText, nodeDisplayName } from "@sfly/orchestration";
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
 import { type CSSProperties, useId } from "react";
+import { NoteIcon } from "#/components/note-icon";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeader, BaseNodeHeaderTitle } from "@/components/ui/base-node";
 import { useFlowCanvas } from "./context";
@@ -30,6 +31,8 @@ const portStyle = (at: { x: number; y: number }, rotate = false): CSSProperties 
 export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const { info, ports, decorateNode } = useFlowCanvas();
 	const { node } = data;
+	// 只有空白等于没写（保存时就不保存），不画图标。
+	const note = node.note?.trim();
 	const meta = KIND_META[node.kind];
 	const { title, caption } = nodeCardText(node, info);
 	const named = nodeDisplayName(node) !== undefined;
@@ -42,6 +45,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const isStart = node.kind === "entry" || node.kind === "subflow_entry";
 	const cardId = useId();
 	const statusId = useId();
+	const noteId = useId();
 
 	return (
 		<BaseNode
@@ -51,6 +55,8 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			id={cardId}
 			aria-label={[`节点 ${id}`, caption, title !== id && title].filter(Boolean).join("，")}
 			aria-labelledby={`${cardId} ${statusId}`}
+			// 备注是描述：读屏用户用方向键切到节点时跟在名称后面读到（图标本身不可聚焦，见 NoteIcon）。
+			aria-describedby={note ? noteId : undefined}
 			aria-pressed={selected}
 			data-node-id={id}
 			data-run={decoration?.run}
@@ -101,6 +107,16 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					>
 						{caption}
 					</span>
+				)}
+				{note && (
+					<NoteIcon
+						note={note}
+						host="[data-node-id]"
+						textId={noteId}
+						// 警告徽标的提示在上面，键盘聚焦到同时有警告和备注的卡片时两个提示不叠在一起。
+						side={!decoration?.status && warnings.length > 0 ? "bottom" : "top"}
+						className="flex-none"
+					/>
 				)}
 				<span id={statusId} className="ml-auto flex-none">
 					{decoration?.status ??

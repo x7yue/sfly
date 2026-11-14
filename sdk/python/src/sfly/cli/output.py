@@ -138,15 +138,17 @@ def candidate_list(items: Sequence[str]) -> str:
 def format_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
     """对齐的文本表格：列之间两个空格，按显示宽度对齐（中文占两格），行尾不留空白。"""
     table = [list(headers), *map(list, rows)]
-    widths = [max(_width(row[i]) for row in table) for i in range(len(headers))]
+    widths = [max(display_width(row[i]) for row in table) for i in range(len(headers))]
     lines = []
     for row in table:
         cells = [
-            cell + " " * (width - _width(cell)) for cell, width in zip(row, widths, strict=True)
+            cell + " " * (width - display_width(cell))
+            for cell, width in zip(row, widths, strict=True)
         ]
         lines.append("  ".join(cells).rstrip())
     return "\n".join(lines)
 
 
-def _width(text: str) -> int:
+def display_width(text: str) -> int:
+    """终端里的显示宽度：中文等全角字符占两格。"""
     return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)

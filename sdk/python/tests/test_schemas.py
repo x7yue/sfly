@@ -170,3 +170,39 @@ def test_param_description_is_one_line_of_at_most_200_unicode_characters(
     """长度按码点计，和控制面（zod）一致；结尾换行也要拒绝（Python 的 `$` 会放过它）。"""
     doc = entry_document(kind, description)
     assert validator("orchestration-document").is_valid(doc) is valid
+
+
+NODES_OF_EVERY_KIND: list[dict[str, Any]] = [
+    {"id": "entry", "kind": "entry"},
+    {"id": "sub", "kind": "subflow_entry", "name": "report"},
+    {"id": "spawn", "kind": "async"},
+    {"id": "at", "kind": "timer", "at": "10:00:00"},
+    {"id": "pause", "kind": "sleep", "duration": "5s"},
+    {"id": "stop", "kind": "stop_subflow", "subflow": "sub"},
+    {"id": "notify", "kind": "feishu_notify"},
+    {"id": "work", "kind": "package", "package": "stub", "node": "echo"},
+]
+
+
+@pytest.mark.parametrize("node", NODES_OF_EVERY_KIND, ids=lambda node: node["kind"])
+@pytest.mark.parametrize(
+    ("note", "valid"),
+    [
+        ("先建用户\n再查订单", True),
+        ("  首尾有空白，保存时会去掉  ", True),
+        ("   ", True),
+        ("", True),
+        ("😀" * 2000, True),
+        ("字" * 2000, True),
+        ("😀" * 2001, False),
+        ("字" * 2001, False),
+        ("字" * 1999 + "\n", True),
+        ("字" * 2000 + "\n", False),
+    ],
+)
+def test_node_note_is_multiline_of_at_most_2000_unicode_characters(
+    node: dict[str, Any], note: str, valid: bool
+) -> None:
+    """所有节点种类都认 `note`；长度按码点计（换行也算一个），和控制面（zod）一致。"""
+    doc = {"nodes": [{**node, "note": note}]}
+    assert validator("orchestration-document").is_valid(doc) is valid

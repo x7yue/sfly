@@ -23,7 +23,7 @@ import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { AgentSelect } from "./AgentSelect";
 import { DisplayNameField, isNamedNode } from "./DisplayNameField";
-import { FIELD_LIST_CLASS, Field, focusField, SectionTitle } from "./fields";
+import { FIELD_LIST_CLASS, Field, FieldList, focusField, SectionTitle } from "./fields";
 import { InspectorWidthHandle, useInspectorWidth } from "./inspector-width";
 import { NodeOutputs } from "./NodeOutputs";
 import {
@@ -38,6 +38,7 @@ import {
 	SubflowTrigger,
 	TimerForm,
 } from "./node-forms";
+import { NoteField } from "./node-note";
 import { ParamsEditor } from "./ParamsEditor";
 import { referenceChoices } from "./reference-completion";
 
@@ -266,15 +267,23 @@ function NodeInspector({
 					)
 				}
 			/>
-			{isNamedNode(node) && (
-				<DisplayNameField
+			<FieldList className="flex-none border-b border-border-soft px-3.5 pt-3">
+				{isNamedNode(node) && (
+					<DisplayNameField
+						id={id}
+						node={node}
+						placeholder={nodeCardText({ ...node, display_name: undefined }, info).title}
+						error={displayNameError}
+						onChange={change}
+					/>
+				)}
+				<NoteField
 					id={id}
-					node={node}
-					placeholder={nodeCardText({ ...node, display_name: undefined }, info).title}
-					error={displayNameError}
-					onChange={change}
+					note={node.note}
+					error={fieldErrors.find((e) => e.field === "note")?.message}
+					onChange={(note) => change({ ...node, note })}
 				/>
-			)}
+			</FieldList>
 			<Tabs
 				value={tab}
 				onValueChange={(v) => setTab(v as Tab)}
@@ -364,7 +373,13 @@ function NodeInspector({
 						/>
 					)}
 					{fieldErrors
-						.filter((e) => !e.draft && !e.field.startsWith("params.") && e.field !== "display_name")
+						.filter(
+							(e) =>
+								!e.draft &&
+								!e.field.startsWith("params.") &&
+								e.field !== "display_name" &&
+								e.field !== "note",
+						)
 						.map((e) => (
 							<p
 								key={e.field}
