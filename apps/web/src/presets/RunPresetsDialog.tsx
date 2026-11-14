@@ -1,17 +1,17 @@
 import {
-	domainKey,
 	orchestrationsApi,
 	type ParamDeclView,
 	PRESET_DESCRIPTION_MAX,
 	type PresetView,
 	presetsApi,
 } from "@sfly/schema";
-import { type UseQueryResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type UseQueryResult, useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { ErrorState } from "#/components/feedback/states";
 import { apiQuery, callApi } from "#/lib/api";
 import { TERM } from "#/lib/copy";
+import { formatDateTime } from "#/lib/format";
 import { ParamField } from "#/run-drawer/ParamField";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -28,12 +28,17 @@ import { FormAlert, FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { CopyPresetForm } from "./CopyPresetForm";
+import { DeletePresetConfirm } from "./DeletePresetConfirm";
+import { useInvalidatePresets } from "./invalidate";
 import {
 	draftErrors,
+	draftFromPreset,
 	emptyDraft,
 	hasErrors,
 	type PresetDraft,
 	presetable,
+	removedParams,
 	toggleParam,
 	toPresetBody,
 } from "./preset-form";
@@ -43,9 +48,17 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 /** 预设参数的值在列表里怎么写：字符串原样，其余按 JSON。 */
 const valueText = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value));
 
+/** 管理对话框里的一屏：列表，新建或编辑的表单（给了 `preset` 就是编辑），复制，删除确认。 */
+type View =
+	| { kind: "list" }
+	| { kind: "form"; preset?: PresetView }
+	| { kind: "copy"; preset: PresetView }
+	| { kind: "delete"; preset: PresetView };
+
 /**
- * 运行预设（GLOSSARY「运行预设」，ADR 0023）：列出场景的预设、新建预设。预设是场景的设置，不属于场景版本，
- * 修改后立即生效；参数按名称对照最新版本的入口参数。列表和编辑表单是同一个弹窗里的两屏。
+ * 运行预设（GLOSSARY「运行预设」，ADR 0023）：列出场景的预设，新建、编辑、复制、删除。预设是场景的设置，
+ * 不属于场景版本，修改后立即生效，场景归档期间也能修改；参数按名称对照最新版本的入口参数。
+ * 列表、编辑表单、复制和删除确认是同一个弹窗里的几屏。
  */
 export function RunPresetsDialog({
 	scenario,
@@ -53,17 +66,18 @@ export function RunPresetsDialog({
 	onOpenChange,
 	returnFocus,
 }: {
-	scenario: { id: string; name: string };
+	scenario: { id: string; name: string; archived_at?: string | null };
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	returnFocus?: React.RefObject<HTMLElement | null>;
 }) {
-	const [view, setView] = useState<"list" | "create">("list");
-	const [returned, setReturned] = useState(false);
+	const [view, setView] = useState<View>({ kind: "list" });
+	/** 回到列表时焦点放回哪个按钮：`create`，或 `edit:<预设 id>`、`copy:<预设 id>`、`delete:<预设 id>`。 */
+	const [focusKey, setFocusKey] = useState<string | null>(null);
 	useEffect(() => {
 		if (open) {
-			setView("list");
-			setReturned(false);
+			setView({ kind: "list" });
+			setFocusKey(null);
 		}
 	}, [open]);
 	const presets = useQuery({
@@ -76,24 +90,49 @@ export function RunPresetsDialog({
 	});
 	const entry = head.data?.document.nodes.find((n) => n.kind === "entry");
 	const decls: ParamDeclView[] = entry?.kind === "entry" ? entry.params : [];
-	const back = () => {
-		setView("list");
-		setReturned(true);
+	const toList = (focus: string) => {
+		setView({ kind: "list" });
+		setFocusKey(focus);
 	};
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
 			<DialogContent finalFocus={returnFocus} className="w-150">
-				{view === "create" ? (
-					<PresetForm orchestrationId={scenario.id} decls={decls} onCancel={back} onSaved={back} />
+				{view.kind === "form" ? (
+					<PresetForm
+						key={view.preset?.id ?? "new"}
+						orchestrationId={scenario.id}
+						decls={decls}
+						preset={view.preset}
+						onCancel={() => toList(view.preset ? `edit:${view.preset.id}` : "create")}
+						onSaved={() => toList(view.preset ? `edit:${view.preset.id}` : "create")}
+					/>
+				) : view.kind === "copy" ? (
+					<CopyPresetForm
+						orchestrationId={scenario.id}
+						preset={view.preset}
+						onCancel={() => toList(`copy:${view.preset.id}`)}
+						onCopied={() => toList(`copy:${view.preset.id}`)}
+					/>
+				) : view.kind === "delete" ? (
+					<DeletePresetConfirm
+						orchestrationId={scenario.id}
+						preset={view.preset}
+						onCancel={() => toList(`delete:${view.preset.id}`)}
+						onDeleted={() => toList("create")}
+					/>
 				) : (
 					<PresetList
 						scenarioName={scenario.name}
+						archived={scenario.archived_at != null}
 						presets={presets}
 						canCreate={head.data !== undefined && decls.length > 0}
 						noParams={head.data !== undefined && decls.length === 0}
-						focusCreate={returned}
-						onCreate={() => setView("create")}
+						focusKey={focusKey}
+						onCreate={() => setView({ kind: "form" })}
+						onEdit={(preset) => setView({ kind: "form", preset })}
+						onCopy={(preset) => setView({ kind: "copy", preset })}
+						onDelete={(preset) => setView({ kind: "delete", preset })}
 					/>
 				)}
 			</DialogContent>
@@ -103,24 +142,38 @@ export function RunPresetsDialog({
 
 function PresetList({
 	scenarioName,
+	archived,
 	presets,
 	canCreate,
 	noParams,
-	focusCreate,
+	focusKey,
 	onCreate,
+	onEdit,
+	onCopy,
+	onDelete,
 }: {
 	scenarioName: string;
+	archived: boolean;
 	presets: UseQueryResult<{ presets: PresetView[] }>;
 	canCreate: boolean;
 	noParams: boolean;
-	/** 从编辑表单回到列表：焦点放回「新建预设」。 */
-	focusCreate: boolean;
+	/** 从别的屏回到列表时要放回焦点的按钮（见 RunPresetsDialog）；没有时不动。 */
+	focusKey: string | null;
 	onCreate: () => void;
+	onEdit: (preset: PresetView) => void;
+	onCopy: (preset: PresetView) => void;
+	onDelete: (preset: PresetView) => void;
 }) {
-	const create = useRef<HTMLButtonElement>(null);
+	const buttons = useRef(new Map<string, HTMLButtonElement>());
+	const keyed = (key: string) => (el: HTMLButtonElement | null) => {
+		if (el) buttons.current.set(key, el);
+		else buttons.current.delete(key);
+	};
 	useEffect(() => {
-		if (focusCreate) create.current?.focus();
-	}, [focusCreate]);
+		if (focusKey === null) return;
+		// 删掉的预设没有按钮了：焦点落到「新建预设」。
+		(buttons.current.get(focusKey) ?? buttons.current.get("create"))?.focus();
+	}, [focusKey]);
 	const list = presets.data?.presets;
 	return (
 		<>
@@ -129,6 +182,7 @@ function PresetList({
 				<DialogDescription>
 					「{scenarioName}」保存的几套入口参数。触发运行时选用一套，预设参数取它保存的值、不能修改，
 					其余参数照常填写。预设不属于场景版本，修改后不会生成新版本，立即生效。
+					{archived && "场景已归档：运行预设原样保留，也能修改；恢复场景后照常使用。"}
 				</DialogDescription>
 			</DialogHeader>
 			<DialogBody>
@@ -152,14 +206,50 @@ function PresetList({
 						{list.map((preset) => (
 							<li
 								key={preset.id}
-								className="rounded-lg border border-border-soft px-3 py-2 text-sm"
+								className="flex items-start gap-3 rounded-lg border border-border-soft px-3 py-2 text-sm"
 							>
-								<div className="font-medium text-fg-1">{preset.name}</div>
-								{preset.description && (
-									<div className="text-xs text-fg-3">{preset.description}</div>
-								)}
-								<div className="mt-1 font-mono text-xs wrap-anywhere text-fg-2">
-									{preset.params.map((p) => `${p.name} = ${valueText(p.value)}`).join(" · ")}
+								<div className="min-w-0 flex-1">
+									<div className="font-medium wrap-anywhere text-fg-1">{preset.name}</div>
+									{preset.description && (
+										<div className="text-xs wrap-anywhere text-fg-3">{preset.description}</div>
+									)}
+									<div className="mt-1 font-mono text-xs wrap-anywhere text-fg-2">
+										{preset.params.map((p) => `${p.name} = ${valueText(p.value)}`).join(" · ")}
+									</div>
+									<div className="mt-1 text-xs text-fg-3">
+										最后修改 {preset.updated_by} ·{" "}
+										<span className="font-mono">{formatDateTime(preset.updated_at)}</span>
+									</div>
+								</div>
+								<div className="flex shrink-0 gap-1">
+									<Button
+										size="sm"
+										variant="ghost"
+										ref={keyed(`edit:${preset.id}`)}
+										aria-label={`编辑 ${preset.name}`}
+										disabled={!canCreate}
+										onClick={() => onEdit(preset)}
+									>
+										编辑
+									</Button>
+									<Button
+										size="sm"
+										variant="ghost"
+										ref={keyed(`copy:${preset.id}`)}
+										aria-label={`复制 ${preset.name}`}
+										onClick={() => onCopy(preset)}
+									>
+										复制
+									</Button>
+									<Button
+										size="sm"
+										variant="ghost"
+										ref={keyed(`delete:${preset.id}`)}
+										aria-label={`删除 ${preset.name}`}
+										onClick={() => onDelete(preset)}
+									>
+										删除
+									</Button>
 								</div>
 							</li>
 						))}
@@ -172,7 +262,7 @@ function PresetList({
 				)}
 			</DialogBody>
 			<DialogFooter>
-				<Button ref={create} variant="primary" disabled={!canCreate} onClick={onCreate}>
+				<Button ref={keyed("create")} variant="primary" disabled={!canCreate} onClick={onCreate}>
 					新建预设
 				</Button>
 			</DialogFooter>
@@ -180,35 +270,46 @@ function PresetList({
 	);
 }
 
-/** 新建预设的表单：名称、说明，最新版本的每个入口参数一行，勾选「预设」的参数要填上固定的值。 */
+/**
+ * 新建或编辑预设的表单：名称、说明，最新版本的每个入口参数一行，勾选「预设」的参数要填上固定的值。
+ * 给了 `preset` 是编辑：带着它现在的内容，保存时预设参数的完整清单就是勾选的参数。
+ */
 function PresetForm({
 	orchestrationId,
 	decls,
+	preset,
 	onCancel,
 	onSaved,
 }: {
 	orchestrationId: string;
 	decls: ParamDeclView[];
+	preset?: PresetView | undefined;
 	onCancel: () => void;
 	onSaved: () => void;
 }) {
-	const queryClient = useQueryClient();
+	const invalidate = useInvalidatePresets();
 	const form = useRef<HTMLFormElement>(null);
 	const nameInput = useRef<HTMLInputElement>(null);
-	const [draft, setDraft] = useState<PresetDraft>(emptyDraft);
+	const [draft, setDraft] = useState<PresetDraft>(() =>
+		preset ? draftFromPreset(preset, decls) : emptyDraft(),
+	);
 	const [submitted, setSubmitted] = useState(false);
 	useEffect(() => {
 		nameInput.current?.focus();
 	}, []);
+	const gone = preset ? removedParams(preset, decls) : [];
 	const save = useMutation({
-		mutationFn: (value: PresetDraft) =>
-			callApi(presetsApi.create, {
-				params: { id: orchestrationId },
-				body: toPresetBody(value, decls),
-			}),
-		onSuccess: async (preset) => {
-			notify.success(`已新建运行预设「${preset.name}」`);
-			await queryClient.invalidateQueries({ queryKey: domainKey(presetsApi.list) });
+		mutationFn: (value: PresetDraft) => {
+			const body = toPresetBody(value, decls);
+			return preset
+				? callApi(presetsApi.update, { params: { id: orchestrationId, presetId: preset.id }, body })
+				: callApi(presetsApi.create, { params: { id: orchestrationId }, body });
+		},
+		onSuccess: async (saved) => {
+			notify.success(
+				preset ? `已保存运行预设「${saved.name}」` : `已新建运行预设「${saved.name}」`,
+			);
+			await invalidate();
 			onSaved();
 		},
 	});
@@ -232,7 +333,10 @@ function PresetForm({
 			}}
 		>
 			<DialogHeader>
-				<DialogTitle>新建{TERM.runPreset}</DialogTitle>
+				<DialogTitle>
+					{preset ? "编辑" : "新建"}
+					{TERM.runPreset}
+				</DialogTitle>
 				<DialogDescription>
 					勾选「预设」的参数由预设固定，触发时不能修改；没勾选的参数触发时照常填写。
 				</DialogDescription>
@@ -295,6 +399,11 @@ function PresetForm({
 				{errors.params && (
 					<p role="alert" className="m-0 text-xs text-danger-fg">
 						{errors.params}
+					</p>
+				)}
+				{gone.length > 0 && (
+					<p role="note" className="m-0 text-xs text-warn-fg">
+						这个预设里的 {gone.join("、")} 已不在入口参数里，保存之后就不再属于这个预设。
 					</p>
 				)}
 				{save.isError && <FormAlert>{errorText(save.error)}</FormAlert>}

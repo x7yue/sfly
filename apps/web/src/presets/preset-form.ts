@@ -3,6 +3,7 @@ import {
 	PresetDescription,
 	PresetName,
 	type PresetParamInput,
+	type PresetView,
 } from "@sfly/schema";
 import { type FieldValue, fieldSchema, fieldValue, toParamValue } from "#/run-drawer/trigger-form";
 
@@ -19,6 +20,21 @@ export interface PresetDraft {
 }
 
 export const emptyDraft = (): PresetDraft => ({ name: "", description: "", values: {} });
+
+/** 编辑已有的预设：表单带着它现在的名称、说明和预设参数（值换成表单里的写法），没固定的参数不勾选。 */
+export function draftFromPreset(preset: PresetView, decls: ParamDeclView[]): PresetDraft {
+	const values: Record<string, FieldValue> = {};
+	for (const p of decls) {
+		const fixed = preset.params.find((q) => q.name === p.name);
+		if (fixed) values[p.name] = fieldValue(p, fixed.value);
+	}
+	return { name: preset.name, description: preset.description, values };
+}
+
+/** 预设里已经不在入口参数里的预设参数（参数被删除或改名）：编辑表单里没有它们的位置，保存时会丢掉。 */
+export function removedParams(preset: PresetView, decls: ParamDeclView[]): string[] {
+	return preset.params.filter((q) => !decls.some((p) => p.name === q.name)).map((q) => q.name);
+}
 
 /** 能不能设为预设参数：secret 参数暂不支持。 */
 export const presetable = (p: ParamDeclView) => p.secret !== true;
@@ -60,7 +76,7 @@ export function draftErrors(draft: PresetDraft, decls: ParamDeclView[]): DraftEr
 	return errors;
 }
 
-/** 已通过校验的表单内容 → 新建预设的请求体；预设参数按声明顺序。 */
+/** 已通过校验的表单内容 → 新建或修改预设的请求体（预设参数的完整清单）；预设参数按声明顺序。 */
 export function toPresetBody(
 	draft: PresetDraft,
 	decls: ParamDeclView[],

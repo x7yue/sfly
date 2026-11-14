@@ -1,6 +1,14 @@
-import type { ParamDeclView } from "@sfly/schema";
+import type { ParamDeclView, PresetView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { draftErrors, emptyDraft, hasErrors, toggleParam, toPresetBody } from "./preset-form";
+import {
+	draftErrors,
+	draftFromPreset,
+	emptyDraft,
+	hasErrors,
+	removedParams,
+	toggleParam,
+	toPresetBody,
+} from "./preset-form";
 
 const decls: ParamDeclView[] = [
 	{ name: "host", type: "string", required: true },
@@ -67,6 +75,57 @@ describe("运行预设的编辑表单", () => {
 				{ name: "dry_run", value: false },
 				{ name: "options", value: { rounds: [1] } },
 			],
+		});
+	});
+
+	describe("编辑已有的预设", () => {
+		const preset: PresetView = {
+			id: "p1",
+			name: "压测 A",
+			description: "A 集群",
+			params: [
+				{ name: "host", secret: false, value: "10.0.0.8" },
+				{ name: "steps", secret: false, value: 50 },
+				{ name: "dry_run", secret: false, value: true },
+				{ name: "options", secret: false, value: { rounds: [1] } },
+			],
+			updated_by: "小红",
+			updated_at: "2026-01-01T00:00:00.000Z",
+		};
+
+		it("表单带着预设现在的名称、说明和预设参数，值换成表单里的写法；没固定的参数不勾选", () => {
+			const draft = draftFromPreset(preset, decls);
+			expect(draft).toEqual({
+				name: "压测 A",
+				description: "A 集群",
+				values: {
+					host: "10.0.0.8",
+					steps: "50",
+					dry_run: true,
+					options: '{"rounds":[1]}',
+				},
+			});
+			expect(hasErrors(draftErrors(draft, decls))).toBe(false);
+			// 原样保存：请求体和预设现在的内容一致。
+			expect(toPresetBody(draft, decls)).toEqual({
+				name: "压测 A",
+				description: "A 集群",
+				params: preset.params.map(({ name, value }) => ({ name, value })),
+			});
+		});
+
+		it("预设里已经不在入口参数里的参数不进表单：列出来，保存时会丢掉", () => {
+			const old: PresetView = {
+				...preset,
+				params: [
+					{ name: "gone", secret: false, value: 1 },
+					{ name: "host", secret: false, value: "h" },
+					{ name: "also_gone", secret: false, value: 2 },
+				],
+			};
+			expect(removedParams(old, decls)).toEqual(["gone", "also_gone"]);
+			expect(Object.keys(draftFromPreset(old, decls).values)).toEqual(["host"]);
+			expect(removedParams(preset, decls)).toEqual([]);
 		});
 	});
 });

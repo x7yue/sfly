@@ -163,7 +163,8 @@ export function ScenarioRunDrawer({ children }: { children: ReactNode }) {
 
 /**
  * 卡片和表格行共用的操作：「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、运行通知、运行预设、归档；
- * 已归档的场景只能恢复，或者查看它的运行记录。「运行」打开运行抽屉（ScenarioRunDrawer）。
+ * 已归档的场景只能恢复，或者查看它的运行记录，「更多」菜单里只有运行预设（预设在归档期间原样保留，也能修改）。
+ * 「运行」打开运行抽屉（ScenarioRunDrawer）。
  * 进入编排画布用场景名称的链接，这里不放去同一处的按钮。
  */
 function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
@@ -178,6 +179,14 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 		if (!open) setDialog(null);
 	};
 	const running = scenario.last_run?.status === "running";
+	const presets = (
+		<RunPresetsDialog
+			scenario={scenario}
+			open={dialog === "presets"}
+			onOpenChange={close}
+			returnFocus={more}
+		/>
+	);
 
 	if (scenario.archived_at) {
 		// 已归档的场景不能再运行，历史运行仍可回看（故事 26）。
@@ -203,6 +212,21 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 					<HistoryIcon />
 					{ACTION.viewRuns}
 				</Link>
+				<DropdownMenu>
+					<DropdownMenuTrigger
+						ref={more}
+						render={<Button variant="ghost" size="icon-sm" aria-label="更多操作" />}
+					>
+						<EllipsisIcon />
+					</DropdownMenuTrigger>
+					<DropdownMenuContent className="w-48">
+						<DropdownMenuItem onClick={() => setDialog("presets")}>
+							<SlidersHorizontalIcon />
+							{TERM.runPreset}…
+						</DropdownMenuItem>
+					</DropdownMenuContent>
+				</DropdownMenu>
+				{presets}
 			</>
 		);
 	}
@@ -273,12 +297,7 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 				onOpenChange={close}
 				returnFocus={more}
 			/>
-			<RunPresetsDialog
-				scenario={scenario}
-				open={dialog === "presets"}
-				onOpenChange={close}
-				returnFocus={more}
-			/>
+			{presets}
 			<ArchiveScenarioDialog
 				scenario={scenario}
 				open={dialog === "archive"}
