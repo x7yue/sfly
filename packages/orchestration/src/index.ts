@@ -12,6 +12,7 @@ export * from "./node-config.js";
 export * from "./node-id.js";
 export * from "./reference-syntax.js";
 export * from "./references.js";
+export * from "./remove-nodes.js";
 export * from "./resolve.js";
 export * from "./structure.js";
 export * from "./timing.js";
