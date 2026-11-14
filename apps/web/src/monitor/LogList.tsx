@@ -50,6 +50,8 @@ const COLUMNS = {
  * 日志行（虚拟滚动）：停在底部时跟随新行（实时跟随），滚到顶部时加载更早的一页（加载后视口内容不跳动）。
  * 时间列按 timeKind 显示 Agent 时间或控制面时间（ADR 0018），悬停时两种都给出；平时只显示时刻，
  * 列表里有一行显示的时间不在运行开始那天（day）时整列都带上日期。
+ * 整个列表是一个 Tab 停靠点（漫游焦点），Tab 不必穿过几十上百行：进来落在上次停留的行（没有就是视口里第一行），
+ * 行间用方向键、PageUp / PageDown、Home / End 移动。
  * 点一行把它的控制面时间标到时间轴上（onPick），标记的行高亮；没有控制面时间的行不能点：
  * 正文退到辅助色，指针是「不可用」。合并多个任务的日志时（origin），每行多一列来源节点：
  * 点来源节点名，或在行上右键 / 按 Shift+F10 / 菜单键打开菜单，选「只看……的日志」（onOrigin），都是切到这个节点；
@@ -97,6 +99,10 @@ export function LogList<L extends LogLineView>({
 	const formatTime = dated ? formatFullDateTimeMs : formatClockMs;
 	const [menu, setMenu] = useState<{ line: L; at: ContextMenuAnchor; open: boolean } | null>(null);
 	const box = useRef<HTMLDivElement>(null);
+	/** 停靠点所在的行；它不在渲染范围里时停靠点落在视口里的第一行。 */
+	const [stopKey, setStopKey] = useState<string | null>(null);
+	/** 键盘移动后要聚焦的行（虚拟列表里它可能还没渲染，渲染后再聚焦）。 */
+	const pendingFocus = useRef<number | null>(null);
 	const follow = useRef(true);
 	/** 加载更早的一页之前，视口顶部那一行：加载后滚回它。 */
 	const anchor = useRef<{ key: string; offset: number } | null>(null);
@@ -150,6 +156,40 @@ export function LogList<L extends LogLineView>({
 	}, [lines, lineKey, virtualizer]);
 
 	const items = virtualizer.getVirtualItems();
+	const firstShown = virtualizer.range?.startIndex ?? items[0]?.index ?? 0;
+	const stopRendered =
+		stopKey !== null &&
+		items.some((i) => lines[i.index] && lineKey(lines[i.index] as L) === stopKey);
+	const tabStop = stopRendered
+		? stopKey
+		: lines[firstShown]
+			? lineKey(lines[firstShown] as L)
+			: null;
+
+	useLayoutEffect(() => {
+		const index = pendingFocus.current;
+		if (index === null) return;
+		const row = box.current?.querySelector<HTMLElement>(`[data-index="${index}"]`);
+		if (!row) return;
+		pendingFocus.current = null;
+		row.focus();
+	});
+
+	const moveTo = (index: number) => {
+		const target = Math.max(0, Math.min(lines.length - 1, index));
+		const line = lines[target];
+		if (!line) return;
+		setStopKey(lineKey(line));
+		pendingFocus.current = target;
+		virtualizer.scrollToIndex(target, { align: "auto" });
+		const rendered = box.current?.querySelector<HTMLElement>(`[data-index="${target}"]`);
+		if (rendered) {
+			pendingFocus.current = null;
+			rendered.focus();
+		}
+	};
+	const page = Math.max(1, (virtualizer.range?.endIndex ?? 0) - firstShown - 1);
+
 	return (
 		<div
 			ref={box}
@@ -198,10 +238,12 @@ export function LogList<L extends LogLineView>({
 							data-source={line.source}
 							data-marked={marked === lineKey(line) || undefined}
 							role="button"
-							tabIndex={0}
+							tabIndex={lineKey(line) === tabStop ? 0 : -1}
 							aria-disabled={!locatable || undefined}
+							aria-description={locatable ? undefined : NOT_LOCATABLE}
 							title={locatable ? "在时间轴上标出这一时刻" : NOT_LOCATABLE}
 							onClick={() => locatable && onPick(line)}
+							onFocus={() => setStopKey(lineKey(line))}
 							onContextMenu={(e) => {
 								if (!onOrigin) return;
 								e.preventDefault();
@@ -213,7 +255,18 @@ export function LogList<L extends LogLineView>({
 								});
 							}}
 							onKeyDown={(e) => {
-								if (e.key === "Enter" || e.key === " ") {
+								const step: Record<string, number> = {
+									ArrowDown: item.index + 1,
+									ArrowUp: item.index - 1,
+									PageDown: item.index + page,
+									PageUp: item.index - page,
+									Home: 0,
+									End: lines.length - 1,
+								};
+								if (e.key in step) {
+									e.preventDefault();
+									moveTo(step[e.key] as number);
+								} else if (e.key === "Enter" || e.key === " ") {
 									e.preventDefault();
 									if (locatable) onPick(line);
 								} else if (
@@ -225,10 +278,10 @@ export function LogList<L extends LogLineView>({
 								}
 							}}
 							className={cn(
-								"absolute top-0 left-0 grid w-full gap-2 px-3 leading-5 break-all whitespace-pre-wrap",
+								"absolute top-0 left-0 grid w-full gap-2 px-3 leading-5 wrap-anywhere whitespace-pre-wrap",
 								COLUMNS[dated ? "dated" : "clock"][origin ? "origin" : "plain"],
 								locatable ? "cursor-pointer hover:bg-fg-1/3" : "cursor-not-allowed",
-								"data-marked:bg-warn-soft",
+								"data-marked:selected-row",
 							)}
 							style={{ transform: `translateY(${item.start}px)` }}
 						>

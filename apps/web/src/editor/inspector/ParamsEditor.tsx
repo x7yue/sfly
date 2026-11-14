@@ -1,6 +1,6 @@
 import type { OrchestrationNode } from "@sfly/schema";
 import { EyeIcon, EyeOffIcon, PlusIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Switch } from "@/components/ui/switch";
-import { draftKey, useClearFieldDrafts, useParsedField } from "../field-drafts";
+import { draftKey, useClearFieldDrafts, useParsedField, useTouchFields } from "../field-drafts";
 import type { FieldError } from "../validation";
 import { ReferenceEditor } from "./ReferenceEditor";
 import { ZoomEditor } from "./ZoomEditor";
@@ -44,12 +44,14 @@ export function ParamsEditor({
 		onChange(params.map((p, i) => (i === index ? { ...p, ...patch } : p)));
 	const [confirming, setConfirming] = useState<number | null>(null);
 	const clearDrafts = useClearFieldDrafts();
+	const touch = useTouchFields();
 	const pending = confirming === null ? undefined : params[confirming];
 
 	return (
 		<div className="flex flex-col gap-2">
 			{params.length === 0 && <p className="m-0 text-xs text-fg-3">还没有参数。</p>}
 			{params.map((param, index) => {
+				const nameKey = draftKey(nodeId, `params.${index}.name`);
 				const nameError = errors.find((e) => e.field === `params.${index}.name`)?.message;
 				return (
 					<fieldset
@@ -62,11 +64,14 @@ export function ParamsEditor({
 							<Input
 								aria-label="参数名称"
 								aria-invalid={nameError ? true : undefined}
+								aria-describedby={nameError ? `${nameKey}-error` : undefined}
+								data-field-key={nameKey}
 								className="font-mono text-xs"
 								value={param.name}
 								placeholder="名称"
 								spellCheck={false}
 								onChange={(e) => update(index, { name: e.target.value })}
+								onBlur={() => touch(nameKey)}
 							/>
 							<NativeSelect
 								aria-label="参数类型"
@@ -95,7 +100,11 @@ export function ParamsEditor({
 								<Trash2Icon />
 							</Button>
 						</div>
-						{nameError && <p className="m-0 text-xs text-danger-fg">{nameError}</p>}
+						{nameError && (
+							<p id={`${nameKey}-error`} className="m-0 text-xs text-danger-fg">
+								{nameError}
+							</p>
+						)}
 						<DefaultValue
 							// 换类型时重建输入框（旧的文本和草稿不再适用）
 							key={param.type}
@@ -103,25 +112,19 @@ export function ParamsEditor({
 							param={param}
 							onChange={(value) => update(index, { default: value })}
 						/>
-						<div className="flex items-center gap-4 text-xs text-fg-2">
-							<span className="flex items-center gap-2">
-								<Switch
-									aria-label="必填"
-									checked={param.required}
-									onCheckedChange={(required) => update(index, { required })}
-								/>
-								<span aria-hidden>必填</span>
-							</span>
-							<span className="flex items-center gap-2">
-								<Switch
-									aria-label="敏感"
-									checked={param.secret}
-									onCheckedChange={(secret) =>
-										secret ? update(index, { secret }) : setConfirming(index)
-									}
-								/>
-								<span aria-hidden>敏感</span>
-							</span>
+						<div className="flex items-center gap-4">
+							<Switch
+								label="必填"
+								checked={param.required}
+								onCheckedChange={(required) => update(index, { required })}
+							/>
+							<Switch
+								label="敏感"
+								checked={param.secret}
+								onCheckedChange={(secret) =>
+									secret ? update(index, { secret }) : setConfirming(index)
+								}
+							/>
 						</div>
 					</fieldset>
 				);
@@ -207,6 +210,7 @@ function DefaultValue({
 	param: Param;
 	onChange(value: unknown): void;
 }) {
+	const errorId = useId();
 	const [revealed, setRevealed] = useState(false);
 	useEffect(() => {
 		if (!revealed) return;
@@ -236,13 +240,18 @@ function DefaultValue({
 	}
 	const placeholder = param.type === "json" ? "默认值（JSON，可选）" : "默认值（可选）";
 	const label = `参数 ${param.name} 的默认值`;
+	const control = {
+		"aria-invalid": field.error ? true : undefined,
+		"aria-describedby": field.error ? errorId : undefined,
+		"data-field-key": fieldKey,
+	} as const;
 	return (
 		<div className="flex flex-col gap-1.25">
 			<div className="flex gap-1.5">
 				{param.secret ? (
 					<Input
+						{...control}
 						aria-label="默认值"
-						aria-invalid={field.error ? true : undefined}
 						type={revealed ? "text" : "password"}
 						autoComplete="off"
 						className={param.type === "string" ? undefined : "font-mono text-xs"}
@@ -250,17 +259,19 @@ function DefaultValue({
 						value={field.text}
 						spellCheck={false}
 						onChange={(e) => field.change(e.target.value)}
+						onBlur={field.blur}
 					/>
 				) : (
 					<div className="min-w-0 flex-1">
 						<ReferenceEditor
+							control={control}
 							label="默认值"
 							value={field.text}
 							choices={null}
 							placeholder={placeholder}
-							invalid={field.error !== undefined}
 							minLines={param.type === "json" ? 3 : 1}
 							onChange={field.change}
+							onBlur={field.blur}
 						/>
 					</div>
 				)}
@@ -284,11 +295,16 @@ function DefaultValue({
 							invalid={field.error !== undefined}
 							error={field.error}
 							onChange={field.change}
+							onTouch={field.blur}
 						/>
 					)
 				)}
 			</div>
-			{field.error && <p className="m-0 text-xs text-danger-fg">{field.error}</p>}
+			{field.error && (
+				<p id={errorId} className="m-0 text-xs text-danger-fg">
+					{field.error}
+				</p>
+			)}
 		</div>
 	);
 }

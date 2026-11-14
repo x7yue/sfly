@@ -1,6 +1,6 @@
 # sfly 架构设计
 
-> 状态：草案 · 2026-11-04（随 #25 更新：「编排」作名词改为「场景」，前端改为由控制面托管的 SPA）
+> 状态：草案 · 2026-11-13（随 #263 更新：开放 HTTP API 和 API 客户端，用户用它开发自建页面）
 > 术语见 `GLOSSARY.md`，执行语义见 `docs/SEMANTICS.md`，关键决策见 `docs/adr/`。
 
 ---
@@ -15,6 +15,7 @@ sfly 是内网测试用的自动化任务编排平台：用户在画布上把节
 - 手动触发运行，执行链和异步子流程，定时节点和 Sleep 节点
 - Python SDK 开发节点包，发布到平台，由 Agent 下载并安装
 - 实时日志、进度、节点指标与图表、产物
+- 开放现有的 HTTP API，提供 TypeScript 的 API 客户端 `@sfly/client`：用户用它开发自己托管的自建页面（看板、按参数触发场景的页面）和程序（ADR 0022）
 
 **范围外（明确不做）**
 
@@ -25,6 +26,7 @@ sfly 是内网测试用的自动化任务编排平台：用户在画布上把节
 - Cron 触发、Webhook 触发、周期任务
 - 资源锁、Agent 标签匹配和自动选择 Agent
 - 密钥服务、自定义指标面板、跨场景复用子流程
+- 托管或展示用户的自建页面、进程内插件；为自建页面新增接口（事件推送和对外的 Webhook、跨运行的指标查询、运行列表的时间范围和翻页）
 
 平台与被测系统的业务领域无关。原型中的交易链路节点（Git、柜台、策略、下单等）都属于用户自己用 SDK 开发的节点包。
 
@@ -52,6 +54,7 @@ flowchart LR
     PROC["任务子进程<br/>Python 执行器"]
   end
   CLI["sfly CLI（Python）"]
+  PAGE["自建页面（用户托管）<br/>API 客户端 @sfly/client"]
 
   WEB -- "HTTP（同源 /api）" --> API
   SSE -- SSE --> WEB
@@ -67,6 +70,7 @@ flowchart LR
   AG -- "启动 / 终止" --> PROC
   PROC -- "JSONL 事件（命名管道）· stdout/stderr" --> AG
   CLI -- "HTTP：发布节点包" --> API
+  PAGE -- "HTTP 跨域（根路径）· SSE" --> API
 ```
 
 | 组件 | 技术 | 职责 |
@@ -77,7 +81,8 @@ flowchart LR
 | 文件存储 | 控制面本地磁盘 | 节点包文件、任务日志、产物 |
 | Agent | Rust、tokio、tonic | 连接控制面、安装节点包、执行任务、转发日志/进度/结果；以 musl 静态二进制发布（ADR 0010） |
 | SDK 运行时 | Python，**只用标准库** | 在任务子进程中加载并调用节点函数 |
-| SDK CLI | Python | 生成节点元信息、构建并发布节点包、本地开发模式 |
+| SDK CLI | Python | 生成节点元信息、构建并发布节点包、本地开发模式、操作平台（场景等，#238） |
+| API 客户端 | TypeScript，ESM 与类型声明，没有运行时依赖 | 自建页面和用户程序调用 HTTP API：带类型的接口调用、断线自动重连的事件流订阅、下载地址的拼接、统一的错误类型；控制台的请求层也建立在它上面（ADR 0022） |
 
 前端只负责页面，不写业务逻辑；引擎需要常驻进程（Agent 长连接、定时器、故障恢复），所以控制面独立部署。
 
@@ -93,6 +98,7 @@ sdk/python          Python SDK 运行时 + CLI（uv）
 proto/              Agent ↔ 控制面的 protobuf 契约（buf 管理，breaking 检查）
 packages/schema     场景文档、节点包元信息与 HTTP 接口契约的 schema（zod，导出 JSON Schema 供 Python CLI 校验）
 packages/orchestration  场景文档的纯逻辑（链结构、引用与静态检查、整理布局），前端与控制面共用
+packages/client     API 客户端 @sfly/client（ADR 0022）：类型和路由表从 HTTP 契约生成，构建成 ESM 与类型声明，打成控制面提供下载的安装包
 docs/               架构、语义规范、ADR；docs/guide 是用户文档（ADR 0013：前端「开发文档」、控制面原文与 /llms.txt、SDK 里的 skill 都出自它）
 ```
 
@@ -100,7 +106,7 @@ docs/               架构、语义规范、ADR；docs/guide 是用户文档（A
 - 三份契约，各有唯一来源：
   - **线上协议**（Agent ↔ 控制面）：`proto/`，生成 TS（protobuf-es）和 Rust（prost/tonic）代码。
   - **文档格式**（场景文档、节点包元信息）：`packages/schema`，前端和控制面直接使用；Python CLI 使用导出的 JSON Schema。
-  - **HTTP 接口**（浏览器、CLI、Agent ↔ 控制面）：`packages/schema/src/http`（ADR 0007），见第 7 节。
+  - **HTTP 接口**（浏览器、CLI、Agent ↔ 控制面）：`packages/schema/src/http`（ADR 0007），见第 7 节。它同时导出一份路由清单（`sdk/python/src/sfly/schemas/routes.json`，随 SDK 打包，`pnpm gen:check` 保证最新），`sfly api` 用它列出和校验接口。API 客户端的类型和路由表是这份契约的又一份生成物（`packages/client/src/generated/`，见 7.4 节）。
 
 ---
 
@@ -146,8 +152,44 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | `sfly build` | 扫描 `@node`，生成 `sfly-package.json`（含 `[tool.sfly] requires-sdk` 声明的 SDK 版本，没写时为构建时 SDK 版本的下限；以及 `requires-agent` 声明的 Agent 版本，没写时没有），构建 wheel，打包成 `.sflypkg` |
 | `sfly publish` | 上传到控制面；控制面校验元信息，`包名@版本` 已存在时拒绝 |
 | `sfly dev <path>` | 让本机 Agent 以可编辑方式安装本地源码目录，注册为 `包名@dev` |
+| `sfly debug <节点>` | 本地调试：在当前项目环境里用 Agent 同一个执行器执行节点，不经过控制面和 Agent |
 
 `sfly dev` 通过 Agent 的本地 Unix socket（`--dev-socket`，默认 `$SFLY_HOME/work/agent.sock`，只在本机可访问）通知 Agent；这是 CLI 与本机 Agent 之间的本地接口，不经过控制面。`sfly publish` 的控制面地址按 `--server` > `SFLY_SERVER` > `$SFLY_HOME/agent.env` 的 `SFLY_CONTROL_PLANE_URL` 取值。
+
+**操作平台的命令（#238）**：人和 AI 编程助手用同一套命令，经控制面根路径上的 HTTP 接口（与 `sfly publish` 相同）查看和操作平台。
+
+| 命令 | 作用 |
+|---|---|
+| `sfly scenario list` | 列出没有归档的场景（名称、id、最新版本号、默认 Agent），可用 `--search` 按名称搜索、`--agent` 按 Agent 筛选 |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数、主链和子流程上的节点（节点类型、锁定的节点包版本、Agent）、默认 Agent |
+| `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
+| `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）写成 `{"scenario", "base_version", "document"}` 的 JSON 文件；`base_version` 总是最新版本号 |
+| `sfly scenario push <文件>` | 先按随 SDK 打包的场景文档 JSON Schema 在本地校验，再带 `base_version` 保存新版本（沿用场景版本的乐观锁，冲突退出码 2，没有强制覆盖）；控制面给没有坐标的节点补坐标；成功后把文件里的 `base_version` 和 `document` 更新为保存的结果 |
+| `sfly scenario create --name … [--description …] [--from 文件]` | 新建场景，给了文件就保存第一个版本 |
+| `sfly scenario copy <场景> --name …` | 复制场景，源场景最新版本的内容作为副本的第 1 版（联调时改副本） |
+| `sfly scenario rename <场景> [--name …] [--description …]` | 修改名称和说明，不产生场景版本 |
+| `sfly run start <场景> [--param 名=值]… [--params JSON] [--wait] [--timeout …]` | 先预检（有问题时列出并退出码 2，不触发），参数按入口节点声明的类型转换，触发最新版本；`--wait` 订阅运行的 SSE（断线自动重连，以接口返回的最新状态为准）等到结束，stderr 写进度，stdout 输出摘要（状态、耗时、失败节点的错误、每个失败任务的最后 50 行日志） |
+| `sfly run wait <运行> [--timeout …]` | 等已有的运行结束；超时（124）和 Ctrl-C（130）只停止等待，不取消运行 |
+| `sfly run cancel <运行>` | 取消运行；运行已结束时报 `run_not_running` |
+| `sfly run list [--scenario …] [--status …]` / `sfly run show <运行>` | 最近的运行；各链各节点的状态和失败节点每次尝试的错误 |
+| `sfly run logs <运行> [--failed] [--node 链:节点] [--level …] [--tail N] [--before/--after 游标] [--all 文件]` | 整次运行按控制面时间合并后的日志，默认最后 200 行，截断时写明用游标继续读；`--all` 下载 JSONL |
+| `sfly run artifacts <运行> [--task …] [--download 目录]` | 列出各任务的产物，按 sha256 校验后下载 |
+| `sfly agent list` | 在线状态、版本、是否与控制面一致、运行中的任务数、对外地址、开发包 |
+| `sfly package list` / `sfly package show <包>[@版本]` | 节点包的版本；节点类型的标题、输入（类型、默认值、是否必填）和输出 |
+| `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` | 直接调用上面没有覆盖的接口，发请求前按随 SDK 打包的路由清单校验；`--list` 列出路由清单 |
+
+`sfly run` 的退出码：0 成功，1 运行失败，3 运行被取消，124 等待超时，130 Ctrl-C，2 命令本身出错（其余命令只有 0 和 2）。旧写法 `sfly run <节点>` 报错并提示改用 `sfly debug`（退出码 2）。
+
+**给 AI 编程助手的 skill**：`sfly init` 把两份 skill 写进项目的 `.agents/skills/`（`.claude/skills/` 下是软链接）：节点开发 `sfly-node-dev`（`reference.md` 是 SDK 参考页），和操作平台 `sfly-platform`（联调闭环的步骤和操作规则，`reference.md` 是「用命令行操作平台」页）。两份的源文件都在 `docs/guide/`（ADR 0013），控制面经 `/docs/skills/<名称>/…` 提供原文并列在 `/llms.txt`，SDK 里 `sfly/cli/skills/` 下是指向源文件的软链接。`sfly skill update` 把两份换成当前 SDK 版本的内容，每份各自做哈希检查，改过的不覆盖（`--force` 才覆盖）。
+
+所有操作平台的命令共用同一套约定，实现在 `sdk/python/src/sfly/cli/` 的小模块里，新命令直接复用，不各写一份：
+
+- **请求（`client.py`）**：只用标准库。控制面地址按 `--server` > `SFLY_SERVER` > `$SFLY_HOME/agent.env` 的 `SFLY_CONTROL_PLANE_URL` > 默认地址取值（`home.control_plane_url`，`sfly publish` 共用）；昵称按 `--nickname` > `SFLY_NICKNAME` > 系统用户名取值，放进 `x-sfly-nickname`（URL 编码，只读请求也带，控制面不依赖它）；每个请求带 `x-sfly-client: sfly-cli/<版本>`，检测到在 AI 编程助手里运行时追加 ` agent/<名称>`（`AI_AGENT` 有值用它；`CLAUDECODE` 是 `claude-code`；`CODEX_` 开头的环境变量是 `codex`），检测结果不改变输出格式。
+- **版本告警**：控制面在所有 HTTP 响应（含错误响应和 SSE 流）上带 `x-sfly-version`（`CONTROL_PLANE_VERSION_HEADER`）；与命令行版本不一致时命令行在 stderr 告警一次，写明升级方法（重新运行 `install.sh --dev`，或 `uv add --dev "sfly[cli]==<控制面版本>"`），命令照常执行。
+- **输出（`output.py`）**：默认精简文本，`--json` 输出一行精简 JSON（列表是数组、单个对象是对象）。错误写到 stderr，文本是「错误：原因」加可选的「下一步：命令」，`--json` 时是 `{"error": {"code", "message", "next"}}`，`code` 沿用控制面的错误码（命令行自己的错误用 `unreachable`、`scenario_not_found` 这样的短名）；退出码 2。所有命令都不弹交互式确认。
+- **列表上限**：列表类命令默认最多输出 50 条（`--limit` 可调），超出时文本的最后一行写明还有多少条、怎么看更多；`--json` 时提示写到 stderr，stdout 保持纯 JSON。
+- **指定场景（`scenario_lookup.py`）**：写 id 或准确名称；先按 id 找，找不到再按名称找；名称对应多个场景时报错并列出每个候选的 id 和最新版本号；已归档的场景不参与名称匹配。
+- **外壳（`session.py`）**：`common_options()` 给命令加上 `--server`、`--nickname`、`--json`；`command(handler)` 创建请求客户端和输出，把 `CliError` 输出成错误并以退出码 2 结束，handler 可以返回自己的退出码。
 
 开发机上的 `sfly` CLI 从控制面的 sfly 简单索引安装：`GET /simple/`（PEP 503）只有 `sfly` 一个项目，`/simple/sfly/` 只列出与控制面同版本的 SDK wheel（链接带 `#sha256=`），其他项目 404，所以不会从 PyPI 镜像装到同名的其他包。`install.sh --dev` 在安装 Agent 之外用一次性的镜像环境变量装好 uv（没有时），再 `uv tool install --index sfly=<控制面>/simple/ 'sfly[cli]==<控制面版本>'`（其余依赖走 PyPI 镜像）；重新运行即升级到控制面的版本。
 
@@ -256,7 +298,7 @@ flowchart TD
 - Agent 能力的调用（ADR 0019）：每次调用一个连接，SDK 发一行 JSON（任务 ID、attempt、目标 Agent、方法、参数、超时），Agent 回复若干行 JSON（流式的项、最后是结果或错误）后关闭连接。Agent 按任务的 `referenced_agents` 检查目标，对自己直接调用本机服务的实现，对另一台 Agent 用 gRPC 客户端连到它的端口（连接复用，调用前用 `Describe` 确认名称和能力）。任务被取消、节点进程退出（连接关闭）时 Agent 放弃调用。协议见 `agent/src/calls/mod.rs`。
 - 建立在 Agent 能力之上的标准节点（`std/src/sfly_std/`，下载、删除源文件共用 `_pull.py`）：`pull_files` 列出后逐个下载；`watch_files` 在后台线程里读 `files.watch` 的快照和事件、放进本地队列，主线程逐个下载（节点下载大文件时事件不在 Agent 上堆积溢出）。它按「文件标识 + 大小」去重、每份快照（包括重连后 `missed` 的）为准，「至少 N 秒没有修改」用本机的单调时钟计时、下载前再 `stat` 一次比较，不拿另一台 Agent 的修改时间和本机时间比；监听的连接中断、重连超时后隔一会儿重新开始监听，只有第一次就连不上时失败。
 
-- 事件管道：Agent 先以非阻塞方式打开读端、自己持有一个写端（没有写者时读端读到 EOF），再启动执行器；容量调到 `/proc/sys/fs/pipe-max-size`。数据只在内核缓冲区里，有数据时立即读取；写满时 SDK 的写入阻塞等待，不丢事件。执行器退出后 Agent 关掉自己的写端，把剩余数据读完（后台子进程还持有写端时最多等 2 秒）。本地调试（`sfly run`、`sfly.testing`）用同样的做法。
+- 事件管道：Agent 先以非阻塞方式打开读端、自己持有一个写端（没有写者时读端读到 EOF），再启动执行器；容量调到 `/proc/sys/fs/pipe-max-size`。数据只在内核缓冲区里，有数据时立即读取；写满时 SDK 的写入阻塞等待，不丢事件。执行器退出后 Agent 关掉自己的写端，把剩余数据读完（后台子进程还持有写端时最多等 2 秒）。本地调试（`sfly debug`、`sfly.testing`）用同样的做法。
 - 标准输出 / 标准错误：Agent 读出、还没转发的内容也有上限（与事件管道一样最多排 16 块）；转发跟不上时 Agent 暂停读取，管道写满后节点写标准输出 / 标准错误阻塞等待，不丢日志，Agent 内存不随节点的输出量增长。
 - 工作目录 `work/<task_id>/` 里还有 `task.json`、`output.json`、`artifacts/`、取消标记，以及 Agent 写的标准输出 / 标准错误副本 `stdout.log` / `stderr.log`：每个文件 8 MiB，超过后改名为 `.1`（覆盖旧的 `.1`）再新建，每个流最多 16 MiB，写失败时忽略。执行器异常退出时，错误摘要附带的标准错误末尾（8 KiB）取自 Agent 内存，不读 `stderr.log`。
 - `task.json` 里有 `task_id`、`attempt`、`run_id`、`node_id`，SDK 据此提供 `ctx.task`；本地调试时任务 ID 是 `local`、attempt 是 1。`agents` 是任务通过「Agent」类型的输入引用的 Agent（`AssignTask.referenced_agents`：名称、地址、端口、不能调用的原因）。SDK 不读它：节点用 `ctx.agent(名称)` 调用另一台 Agent 时，寻址和名单检查都在 Agent 里（ADR 0019）；本地调试时引用的 Agent 和它们映射到的本地目录在 `SFLY_LOCAL_AGENTS` 里。任务通过「飞书机器人」类型的输入引用的机器人名称随任务下发（`AssignTask.referenced_feishu_bots`，不重复，不检查是否已登记，ADR 0020），供节点发通知时检查。
@@ -301,12 +343,12 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | 表 | 主要字段 |
 |---|---|
 | `orchestrations` | id, name, description, head_version, created_at, archived_at, run_notify_bot / run_notify_trigger / run_notify_title / run_notify_note（运行通知的设置，bot 不是外键；名称、说明和运行通知设置不属于版本内容；归档后不出现在默认列表、不能触发，不物理删除） |
-| `orchestration_versions` | id, orchestration_id, number, document（JSONB：节点、连线、参数、布局、锁定的包版本）, author, created_at；`unique(orchestration_id, number)` |
+| `orchestration_versions` | id, orchestration_id, number, document（JSONB：节点、连线、参数、布局、锁定的包版本）, author, author_via（经哪个 AI 编程助手保存，可空）, created_at；`unique(orchestration_id, number)` |
 | `node_packages` | name, version, metadata（JSONB）, file_path, sha256, published_at；`unique(name, version)` |
 | `agents` | name, info（JSONB）, status, last_seen_at |
 | `feishu_bots` | name（主键，全局唯一、不能修改）, webhook_url（明文，接口和日志里打码）, created_at, last_delivery_at / last_delivery_ok / last_delivery_error（最近一次投递：每发一次请求记一次，丢弃不算；管理页显示）（ADR 0020） |
 | `feishu_messages` | seq（主键，入队顺序）, bot_name, source, run_id, task_id, body（飞书请求体）, enqueued_at, status（queued / delivered / failed / discarded）, attempts, next_attempt_at（可重试的失败之后最早的下一次尝试）, last_error, finished_at；飞书发送队列，投递结果不改变任何节点、任务、链或运行的状态，记录跟随所属运行的保留期（ADR 0020） |
-| `runs` | id, orchestration_version_id, triggered_by, params, status, started_at, ended_at, notification_bot / notification_not_sent（运行通知发给哪个机器人；没进队列时的原因；消息在 `feishu_messages`，source `run_notification`） |
+| `runs` | id, orchestration_version_id, triggered_by, triggered_via（经哪个 AI 编程助手触发，可空）, cancel_requested_via（第一次取消经哪个 AI 编程助手，可空）, params, status, started_at, ended_at, notification_bot / notification_not_sent（运行通知发给哪个机器人；没进队列时的原因；消息在 `feishu_messages`，source `run_notification`） |
 | `chain_instances` | id, run_id, chain_id, parent_chain_instance_id, async_node_id, depth, params, status |
 | `tasks` | id, chain_instance_id, node_id, attempt, agent_name, status, inputs, referenced_feishu_bots, outputs, error_kind, error_message, progress, lease_expires_at, wake_at, log_path, log_seq, log_agent_seq, started_at, ended_at, start_clock_offset_ms, start_clock_offset_measured_at, end_clock_offset_ms, end_clock_offset_measured_at |
 | `artifacts` | id, task_id, name, path, size, sha256, created_at（上传时间，控制面时间）, agent_modified_at（文件在 Agent 上的修改时间，Agent 时间，可为空） |
@@ -317,7 +359,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 | 数据 | 存储 | 读取 |
 |---|---|---|
-| 日志 | 每个任务一个文件（磁盘），元数据在 PG；单个任务上限 200 MB，超出后截断并写入截断标记（来源 `system`）；任务执行中途 Agent 时间跳变超过 2 秒时，Agent 自己往日志里写一行提示（来源 `agent`，ADR 0018）。每行带两种时间：`time` 是控制面时间（Agent 读到这一行时打单调时钟读数，控制面按连接的对应关系折算；旧版本 Agent 没有读数时取收到的时刻），`agent_time` 是 Agent 时间，原样保存；同一任务内折算出的 `time` 比上一行早不到 2 秒（ADR 0018 的一致性阈值；重连后重新建立对应关系等，量级是一次网络往返）时记成上一行的时间，早得更多时保留折算出的时间（说明折算出了错，例如上一行偏到了未来；一律记成上一行的时间的话，之后的行会全部停在那个时刻），所以同一任务内 `time` 通常随序号不减，个别任务会有超过 2 秒的倒挂；顺序和去重只按序号。序号由控制面分配，逐行递增：Agent 上报的行按 Agent 自己的序号去重（`tasks.log_agent_seq`），比上一行多出的部分等于 Agent 序号多出的部分，断线时丢弃的行仍显示为缺口；控制面自己写的行（source `system`：截断标记、飞书通知的告警和投递结果）接在最后一行后面，不占用 Agent 的序号，控制面时间取写入的时刻，同样按上面的 2 秒规则记，也和 Agent 上报的行一样按运行发布，出现在按运行读取、实时推送和下载里。升级之前写入的行只有 Agent 时间，读出时控制面时间为空 | 按偏移量分页读取 + 下载日志文件（每行都带两种时间）；SSE 推送新增行（`after_seq` 从分页读到的位置接上）；前端先加载历史再接实时流，按 `seq` 去重；时间列默认显示 Agent 时间，可以切换成控制面时间（选择存在浏览器本地），点一行在时间线上定位、按时间范围过滤只用控制面时间，没有控制面时间的旧行不能定位；实时流与历史之间有缺口时从实时流处往前翻页；浏览器最多保留 5000 行，更早的向上滚动重新加载。按运行读取（#220，没选中节点时的日志视图）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取，每行是任务日志的一行加上来源（`task_id`、链路实例 ID、子流程名、`node_id`、`attempt`）。排序键（`@sfly/schema` 的 `run-log-order.ts`，分页、实时推送、下载和前端插入实时行共用同一个比较函数）：先按排序时间，即控制面时间，没有控制面时间的旧行用任务开始时间（旧行是升级之前写入的，升级之后追加的行都带控制面时间，而日志文件只追加，所以旧行一定是文件开头连续的一段；因此「任务的第一行用任务开始时间、之后的旧行沿用上一行的排序时间」与「每个旧行都用任务开始时间」结果相同，后者不必往前找上一行）；相同时按链（层级、链开始时间、链路实例 ID）、节点在场景版本这条链上的位置、尝试序号，这些都不随运行的推进而改变（之后才出现的尝试和子流程实例不影响已有的行之间的先后）；再按 `seq`。每行都带着排序键里行本身没有的部分（`chain_depth`、`chain_started_at`、`node_index`、`task_started_at`），只凭行就能比较先后，不必查运行视图。每个任务的文件是一条按 `seq` 排好的流，不同任务之间按排序键多路归并，同一任务内永远按 `seq`，单个文件沿用按偏移量的分页读取：任务的排序键随 `seq` 不减时，从尾部往前和从头部往后归并得到同一个顺序；有超过 2 秒倒挂的任务（以及 2 秒规则之前写入的文件里残留的毫秒级倒挂），在倒挂附近与别的任务交错的位置可能随读取方向不同，翻页时每行仍恰好出现一次。分页游标（#223）是不透明字符串，内容是每个任务在自己文件里读到的字节偏移组成的向量（任务用创建顺序 `tasks.seq` 代替 ID，偏移为 0 的不写，每个任务十来个字符，几百个任务时几 KB；游标放在查询参数里，而控制面的请求头上限是 Node.js 默认的 16 KB（URL 也算在内），游标里的任务上到一千多个时请求会被拒绝（431），所以按几百个任务以内设计）：不给游标时读最新的 `limit` 行，`before` 从每个任务的位置各往前读、归并后取最后 `limit` 行，`after` 从每个任务的位置各往后读、取最前 `limit` 行；每页返回新的 `before`、`after`、`reached_start`（`before` 之前已经没有任何行）和 `reached_end`（读取的那一刻 `after` 之后已经没有任何行）。每个任务只读到列出任务那一刻已写入的字节数，读取期间写入的行留给下一次请求（不然一页里只有部分任务带上新行，与别的任务的相对位置会错）。拿到游标之后才开始的任务不在游标里，往前翻页时视为之前没有内容，往后接续时从头读；文件只追加，同一个游标什么时候用都读出同样的行，翻页期间写入的行（包括晚到的行）只出现在 `after` 之后。单次请求的扫描量有上限（默认 8 MB）：第一轮每个要读的任务读一小段（4 KB，任务很多时按上限平分）；某个任务读到的行都取完了、文件那一侧还有没读的内容时，归并不能接着往下取（它没读的下一行可能排在前面），剩下的扫描量就集中给这些任务补读，直到取满一页或扫描量用完。用完时这一页就停下，不会漏掉夹在中间的行，所以一页可能不满 `limit` 行，这不表示读到了开头或末尾。每次读取至少读完一行，可能比分到的量多出一行，所以实际扫描量不超过「上限 + 要读的任务数 × 一行」：任务很多或单行很长时，实际上限是设定值与「任务数 × 一行」中较大者的量级。范围与级别（#224）：分页、实时推送和下载共用同一个范围参数 `nodes`（`@sfly/schema` 的 `run-log-scope.ts`：一组「链路实例 ID + 节点 ID」，范围内每个节点的每次尝试都算；同一条链的节点合成一组写进查询参数，几百个节点也放得进 URL；不给是全部节点，给空字符串是没有节点），分页另有 `level`（逗号分隔；下载不受级别影响）。两者都在服务端执行：范围外的任务不参与归并，游标、截断列表和 `reached_start` 都只看范围内的任务；级别在读每个文件时筛选，翻页时跳过不匹配的行。游标只对读它时的范围和级别有效，换了范围或级别要从最新一页重新读（新纳入范围的任务不在游标里，往前翻会漏掉它们）。带级别筛选时，某个任务在分到的扫描量里一行都没有匹配、文件那一侧还有内容，这一页是空的但 `reached_start`（往后接续时是 `reached_end`）为 false（游标照常往前走）：前端在已加载的页都没有行时自动接着往前读，直到读到匹配的行或读到开头，不会显示成没有日志。前端合并视图向上滚动时用 `before` 往前翻页。实时推送（#225）：`GET /runs/:id/logs/events` 与分页用同一组 `nodes`、`level`，推送范围内全部任务新写入的行（格式与分页相同），包括订阅之后才开始的任务和尝试（`TaskLogs` 写入后除了按任务，也按运行发布；推送方第一次见到某个任务时查一次运行视图，取它的来源和排序信息）。每页另返回 `live_after`（实时流起点：读这一页那一刻范围内每个任务已写入的最大 `seq`），前端读完最新一页后从它接上。推送到的位置按任务记序号，写法与分页游标相同（任务的创建顺序加数，几百个任务时几 KB），开头的标记不同，两种游标不能混用；每个事件的 ID 就是推送到的位置：浏览器原生 EventSource 断线重连时经 `Last-Event-ID` 带回，控制面对每个任务取它与 URL 里 `after` 的较大者，先补发之后已经写入的行，再推送新写入的，按 `seq` 去重，与历史合起来不重复也不遗漏；级别不符的行不推送，但位置照样前进。连上时要补发的行（按序号估算）超过 5000 行（浏览器保留的上限）时不逐行补发（SSE 没有背压），推送 `reload`，前端从最新一页重新读再接上。前端合并视图的缓冲区始终按排序键排列：往前翻的页和推送的行都按排序键插到对应位置，按「`task_id` + `seq`」去重；同一任务内插入位置夹在序号更小和更大的行之间，所以有倒挂的任务也保持 `seq` 顺序。晚到的行比已加载的最早一行还早时同样加入，成为第一行，之后往前翻到的页插到它前后。超过 5000 行时整页丢掉最早的历史页（每页记下自己加入的行，丢掉的行用剩下最早那一页的 `before` 读回）；推送的行往前翻页读不回来，所以不丢，它们多到只剩最新一页也超过上限时，断开推送、重新读最新一页再接上（推送过的行都已写进日志文件，在新的一页里，或往前翻得到）。按运行下载（#226）：`GET /runs/:id/logs/download` 把范围内的整次运行日志流式输出成 JSONL，用同一个范围参数 `nodes`、不带 `level`（不受级别筛选影响）；每行是 `{seq, time, agent_time, source, level, text, task_id, subflow, node_id, attempt}`（两种时间都有，升级之前写入的行补齐；不带排序用的字段，顺序已经体现在行的先后上），文件名 `run-<运行 ID>.log.jsonl`；运行已过保留期时 410 `expired`，运行不存在时 404。顺序与合并视图相同：从每个任务的开头往后读，用与分页同一套取行、补读（同一个排序键和比较函数，不另写一套归并），所以与往后接续（`after`）读到的顺序一致；与往前翻页读到的顺序之间的差别同上（有超过 2 秒倒挂的任务，倒挂附近与别的任务交错的位置可能不同）。只包含请求那一刻已写入的内容：请求开始时取一次每个任务已写入的字节数，整个下载都只读到这里，下载期间写入的行不在文件里（分页每次请求各取一次，下载不能这样，否则后面的批会带上下载开始之后写入的行）。下载不用游标逐页重读：每个任务读到手里还没取走的行不超过单次请求扫描量上限（默认 8 MB）按任务数平分的一份，每批最多取 1000 行，取走的行随批丢掉，所以内存只和任务数、批量有关，和日志总量无关（单个任务最多 200 MB、任务可以有几百个，也不会随之增长）。前端合并视图的下载按钮下载这个文件，范围与合并视图相同 |
+| 日志 | 每个任务一个文件（磁盘），元数据在 PG；单个任务上限 200 MB，超出后截断并写入截断标记（来源 `system`）；任务执行中途 Agent 时间跳变超过 2 秒时，Agent 自己往日志里写一行提示（来源 `agent`，ADR 0018）。每行带两种时间：`time` 是控制面时间（Agent 读到这一行时打单调时钟读数，控制面按连接的对应关系折算；旧版本 Agent 没有读数时取收到的时刻），`agent_time` 是 Agent 时间，原样保存；同一任务内折算出的 `time` 比上一行早不到 2 秒（ADR 0018 的一致性阈值；重连后重新建立对应关系等，量级是一次网络往返）时记成上一行的时间，早得更多时保留折算出的时间（说明折算出了错，例如上一行偏到了未来；一律记成上一行的时间的话，之后的行会全部停在那个时刻），所以同一任务内 `time` 通常随序号不减，个别任务会有超过 2 秒的倒挂；顺序和去重只按序号。序号由控制面分配，逐行递增：Agent 上报的行按 Agent 自己的序号去重（`tasks.log_agent_seq`），比上一行多出的部分等于 Agent 序号多出的部分，断线时丢弃的行仍显示为缺口；控制面自己写的行（source `system`：截断标记、飞书通知的告警和投递结果）接在最后一行后面，不占用 Agent 的序号，控制面时间取写入的时刻，同样按上面的 2 秒规则记，也和 Agent 上报的行一样按运行发布，出现在按运行读取、实时推送和下载里。升级之前写入的行只有 Agent 时间，读出时控制面时间为空 | 按偏移量分页读取 + 下载日志文件（每行都带两种时间）；SSE 推送新增行（`after_seq` 从分页读到的位置接上）；前端先加载历史再接实时流，按 `seq` 去重；时间列默认显示 Agent 时间，可以切换成控制面时间（选择存在浏览器本地），点一行在时间线上定位、按时间范围过滤只用控制面时间，没有控制面时间的旧行不能定位；实时流与历史之间有缺口时从实时流处往前翻页；浏览器最多保留 5000 行，更早的向上滚动重新加载。按运行读取（#220，没选中节点时的日志视图）：`GET /runs/:id/logs` 把一次运行全部任务的日志合并分页读取，每行是任务日志的一行加上来源（`task_id`、链路实例 ID、子流程名、`node_id`、`attempt`）。排序键（`@sfly/schema` 的 `run-log-order.ts`，分页、实时推送、下载和前端插入实时行共用同一个比较函数）：先按排序时间，即控制面时间，没有控制面时间的旧行用任务开始时间（旧行是升级之前写入的，升级之后追加的行都带控制面时间，而日志文件只追加，所以旧行一定是文件开头连续的一段；因此「任务的第一行用任务开始时间、之后的旧行沿用上一行的排序时间」与「每个旧行都用任务开始时间」结果相同，后者不必往前找上一行）；相同时按链（层级、链开始时间、链路实例 ID）、节点在场景版本这条链上的位置、尝试序号，这些都不随运行的推进而改变（之后才出现的尝试和子流程实例不影响已有的行之间的先后）；再按 `seq`。每行都带着排序键里行本身没有的部分（`chain_depth`、`chain_started_at`、`node_index`、`task_started_at`），只凭行就能比较先后，不必查运行视图。每个任务的文件是一条按 `seq` 排好的流，不同任务之间按排序键多路归并，同一任务内永远按 `seq`，单个文件沿用按偏移量的分页读取：任务的排序键随 `seq` 不减时，从尾部往前和从头部往后归并得到同一个顺序；有超过 2 秒倒挂的任务（以及 2 秒规则之前写入的文件里残留的毫秒级倒挂），在倒挂附近与别的任务交错的位置可能随读取方向不同，翻页时每行仍恰好出现一次。分页游标（#223）是不透明字符串，内容是每个任务在自己文件里读到的字节偏移组成的向量（任务用创建顺序 `tasks.seq` 代替 ID，偏移为 0 的不写，每个任务十来个字符，几百个任务时几 KB；游标放在查询参数里，而控制面的请求头上限是 Node.js 默认的 16 KB（URL 也算在内），游标里的任务上到一千多个时请求会被拒绝（431），所以按几百个任务以内设计）：不给游标时读最新的 `limit` 行，`before` 从每个任务的位置各往前读、归并后取最后 `limit` 行，`after` 从每个任务的位置各往后读、取最前 `limit` 行；每页返回新的 `before`、`after`、`reached_start`（`before` 之前已经没有任何行）和 `reached_end`（读取的那一刻 `after` 之后已经没有任何行）。每个任务只读到列出任务那一刻已写入的字节数，读取期间写入的行留给下一次请求（不然一页里只有部分任务带上新行，与别的任务的相对位置会错）。拿到游标之后才开始的任务不在游标里，往前翻页时视为之前没有内容，往后接续时从头读；文件只追加，同一个游标什么时候用都读出同样的行，翻页期间写入的行（包括晚到的行）只出现在 `after` 之后。单次请求的扫描量有上限（默认 8 MB）：第一轮每个要读的任务读一小段（4 KB，任务很多时按上限平分）；某个任务读到的行都取完了、文件那一侧还有没读的内容时，归并不能接着往下取（它没读的下一行可能排在前面），剩下的扫描量就集中给这些任务补读，直到取满一页或扫描量用完。用完时这一页就停下，不会漏掉夹在中间的行，所以一页可能不满 `limit` 行，这不表示读到了开头或末尾。每次读取至少读完一行，可能比分到的量多出一行，所以实际扫描量不超过「上限 + 要读的任务数 × 一行」：任务很多或单行很长时，实际上限是设定值与「任务数 × 一行」中较大者的量级。范围与级别（#224）：分页、实时推送和下载共用同一个范围参数 `nodes`（`@sfly/schema` 的 `run-log-scope.ts`：一组「链路实例 ID + 节点 ID」，范围内每个节点的每次尝试都算；同一条链的节点合成一组写进查询参数，几百个节点也放得进 URL；不给是全部节点，给空字符串是没有节点），分页另有 `level`（逗号分隔；下载不受级别影响）。两者都在服务端执行：范围外的任务不参与归并，游标、截断列表和 `reached_start` 都只看范围内的任务；级别在读每个文件时筛选，翻页时跳过不匹配的行。游标只对读它时的范围和级别有效，换了范围或级别要从最新一页重新读（新纳入范围的任务不在游标里，往前翻会漏掉它们）。带级别筛选时，某个任务在分到的扫描量里一行都没有匹配、文件那一侧还有内容，这一页是空的但 `reached_start`（往后接续时是 `reached_end`）为 false（游标照常往前走）：前端在已加载的页都没有行时自动接着往前读，直到读到匹配的行或读到开头，不会显示成没有日志。前端合并视图向上滚动时用 `before` 往前翻页。实时推送（#225）：`GET /runs/:id/logs/events` 与分页用同一组 `nodes`、`level`，推送范围内全部任务新写入的行（格式与分页相同），包括订阅之后才开始的任务和尝试（`TaskLogs` 写入后除了按任务，也按运行发布；推送方第一次见到某个任务时查一次运行视图，取它的来源和排序信息）。每页另返回 `live_after`（实时流起点：读这一页那一刻范围内每个任务已写入的最大 `seq`），前端读完最新一页后从它接上。推送到的位置按任务记序号，写法与分页游标相同（任务的创建顺序加数，几百个任务时几 KB），开头的标记不同，两种游标不能混用；每个事件的 ID 就是推送到的位置：前端（API 客户端的订阅）断线重连时经 `Last-Event-ID` 带回，控制面对每个任务取它与 URL 里 `after` 的较大者，先补发之后已经写入的行，再推送新写入的，按 `seq` 去重，与历史合起来不重复也不遗漏；级别不符的行不推送，但位置照样前进。连上时要补发的行（按序号估算）超过 5000 行（浏览器保留的上限）时不逐行补发（SSE 没有背压），推送 `reload`，前端从最新一页重新读再接上。前端合并视图的缓冲区始终按排序键排列：往前翻的页和推送的行都按排序键插到对应位置，按「`task_id` + `seq`」去重；同一任务内插入位置夹在序号更小和更大的行之间，所以有倒挂的任务也保持 `seq` 顺序。晚到的行比已加载的最早一行还早时同样加入，成为第一行，之后往前翻到的页插到它前后。超过 5000 行时整页丢掉最早的历史页（每页记下自己加入的行，丢掉的行用剩下最早那一页的 `before` 读回）；推送的行往前翻页读不回来，所以不丢，它们多到只剩最新一页也超过上限时，断开推送、重新读最新一页再接上（推送过的行都已写进日志文件，在新的一页里，或往前翻得到）。按运行下载（#226）：`GET /runs/:id/logs/download` 把范围内的整次运行日志流式输出成 JSONL，用同一个范围参数 `nodes`、不带 `level`（不受级别筛选影响）；每行是 `{seq, time, agent_time, source, level, text, task_id, subflow, node_id, attempt}`（两种时间都有，升级之前写入的行补齐；不带排序用的字段，顺序已经体现在行的先后上），文件名 `run-<运行 ID>.log.jsonl`；运行已过保留期时 410 `expired`，运行不存在时 404。顺序与合并视图相同：从每个任务的开头往后读，用与分页同一套取行、补读（同一个排序键和比较函数，不另写一套归并），所以与往后接续（`after`）读到的顺序一致；与往前翻页读到的顺序之间的差别同上（有超过 2 秒倒挂的任务，倒挂附近与别的任务交错的位置可能不同）。只包含请求那一刻已写入的内容：请求开始时取一次每个任务已写入的字节数，整个下载都只读到这里，下载期间写入的行不在文件里（分页每次请求各取一次，下载不能这样，否则后面的批会带上下载开始之后写入的行）。下载不用游标逐页重读：每个任务读到手里还没取走的行不超过单次请求扫描量上限（默认 8 MB）按任务数平分的一份，每批最多取 1000 行，取走的行随批丢掉，所以内存只和任务数、批量有关，和日志总量无关（单个任务最多 200 MB、任务可以有几百个，也不会随之增长）。前端合并视图的下载按钮下载这个文件，范围与合并视图相同 |
 | 进度 | `tasks.progress` 只保留最新值，同样带控制面时间和 Agent 时间 | 通过 SSE 推送，显示在节点卡片上 |
 | 指标 | PG 按天分区的分段表 `metric_segments`（ADR 0009；一段最多 120 点、行内压缩，当前段约每 10 秒重写一次，任务结束立即写入）+ 摘要表 `metric_series`，两者都以「任务 × 指标名 × 标签（`labels` jsonb，不带标签为 `{}`）」区分序列；点按控制面时间（Agent 的单调时钟读数按连接的对应关系折算，ADR 0018）排序、去重和分区，每个点另存 Agent 时间（段里的 `agent_offsets`：每点「Agent 时间 − 控制面时间」，全段相同时只存一个元素），对 Agent 时间不做范围检查；标签键与节点类型声明不一致的点被丢弃并计入任务的丢弃数；单个任务上限约 50 MB（所有序列合计）（`SFLY_METRIC_LIMIT_MB`，按每点 28 字节折算），超出后截断；单个任务最多 1000 个序列（固定，不带标签的指标各算 1 个并预留名额），SDK 先执行一次（新序列的点丢弃，每个指标写一次警告），控制面兜底：新序列的点丢弃并计入丢弃数、任务记「序列超限」标记（`tasks.metric_series_capped`），已有序列照常写入，与 50 MB 上限互不影响 | `GET /runs/:id/metrics/summary`：每个任务每个序列（带 `labels`）的点数、最小、最大、平均、最新值、首尾的控制面时间与 Agent 时间，以及截断标记 `truncated` 和序列超限标记 `series_capped`；`GET /runs/:id/metrics`：运行的指标目录（每个包节点的指标声明、含默认图表的图表定义、主指标，每次尝试的摘要、截断标记和序列超限标记；图表定义来自锁定的节点包版本，dev 版本取任务所在 Agent 当前加载的声明）；`GET /runs/:id/metrics/series`：一个节点（默认最新一次尝试）按时间范围（控制面时间）和目标点数降采样的序列（带 `truncated`、`series_capped`；每项 `{name, labels, buckets}`，每个序列分别降采样，按指标名查询时返回这个指标的全部序列），每个桶给出起始的控制面时间 `time`、桶里最后一个点的 Agent 时间 `agent_time`、最小、最大（尖峰可见）、平均、最新值（升级之前存下的数据没有控制面时间，`time` 为 null），整段落在一个桶内时直接用段摘要，内存中尚未写库的点也包括在内；运行事件流的 `metrics` 事件推送执行中任务新收到的点（每个点带 `labels`、控制面时间 `time` 和 Agent 时间 `agent_time`），断线后用序列接口补齐；`GET /runs/:id/metrics/platform`：平台自带图表（节点耗时、重试次数、排队与等待时长，并发任务数与 Agent 槽位占用），全部由任务记录推导，不另存数据；运行结束超过指标保留期后摘要、目录与序列接口返回 `expired: true`（不含数据），平台自带图表不受影响 |
 | 产物 | 磁盘；单个任务的产物总大小默认上限 1 GB（`SFLY_ARTIFACT_LIMIT_MB`），超出时上传返回 413 | 通过输出中的引用下载（运行视图里显示为下载链接） |
@@ -329,10 +371,22 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 1. 编辑中的内容是浏览器本地草稿（localStorage），刷新不丢失。同一浏览器的多个标签页共用一份草稿：另一个标签页改写了草稿时，当前标签页停止写草稿并提示，由用户选择载入那份草稿或直接保存。
 2. 点击"保存"时提交 `base_version`；如果服务器上的最新版本已经不同，返回 **409**。
 3. 发生冲突时可以：查看差异（节点、参数、连线）、放弃本地修改并载入最新版本、另存为新场景。不做自动合并。
-4. 布局属于版本内容；只有点击保存才生成新版本。校验错误不阻止保存，只显示警告；触发运行时必须全部通过。
+4. 布局属于版本内容；只有点击保存才生成新版本。命令行（`sfly scenario push`）和 API 上传的文档里，没有 `position` 的节点由控制面在保存时用「整理布局」同一套算法补上坐标，已有坐标的节点不动；补的位置压住已有节点时，用画布「添加节点」找空位的同一套逻辑挪到附近的空位（浏览器保存的节点都有坐标，不受影响）。`sfly scenario push` 成功后把控制面实际保存的文档（含补好的坐标）写回文件，再 push 同一个文件不会重新补坐标。校验错误不阻止保存，只显示警告；触发运行时必须全部通过。
 5. 历史版本只读，可以查看和对比；"恢复"会用旧内容生成一个新版本。
 6. **在线编辑者提示**：打开编辑页面的浏览器每 10 秒发送一次心跳（带昵称），控制面在内存中维护每个场景的在线编辑者（30 秒无心跳即移除），通过 SSE 推送；画布上显示"Bob 正在编辑"（自己的其他标签页显示为"你（其他标签页）"）。关闭页面时浏览器主动离开（`POST /orchestrations/:id/presence/leave`），立即从名单移除。
-7. 身份：首次打开页面时填写昵称，保存在浏览器中，每个请求通过请求头携带；只用于显示，不做鉴权。
+7. 身份：首次打开页面时填写昵称，保存在浏览器中，每个请求通过请求头携带；只用于显示，不做鉴权。命令行（`sfly`）的请求另带 `x-sfly-client: sfly-cli/<版本> agent/<AI 编程助手名称>`，`agent/` 部分只在命令行检测到自己运行在 AI 编程助手里时才有。控制面把 `agent/` 后面的名称记在这个请求触发的运行（`runs.triggered_via`）、第一次取消请求（`runs.cancel_requested_via`）和保存的场景版本（`orchestration_versions.author_via`）上，只保存名称、不保存命令行版本号；接口返回 `triggered_via`、`cancel.requested_via`、`author_via`，界面在触发人、版本作者旁显示「经 Claude Code」（`claude-code` 显示为 Claude Code，`codex` 显示为 Codex，其他名称原样显示）。没有这个请求头、或没有 `agent/` 部分（浏览器的请求就是这样）时为空。**这只是标注，不是鉴权**：和昵称一样不做校验，任何人都能伪造请求头，它只帮人回溯一次操作经过了哪个 AI 编程助手，不能当作权限依据（ADR 0004 的昵称同理）。
+
+### 6.5 开放的 HTTP API 与 API 客户端（ADR 0022）
+
+平台的扩展方式是开放现有的 HTTP API：用户用 API 客户端 `@sfly/client` 写自建页面，自己托管。平台不为自建页面新增接口，也不托管、不展示它们。用户文档是「用 API 客户端做自己的页面」（`docs/guide/api-client.md`）。
+
+- **哪些接口进入 API 客户端**由契约里每个接口的 `client` 标记决定（见 7.4 节）：场景、预检、运行、日志、指标、产物、Agent、节点包、飞书机器人、控制台统计、健康检查。给 Agent 和安装脚本用的接口、上传、项目设置、用户文档原文、在线编辑者和安装包下载不进入。
+- **API 客户端**：`createClient({ baseUrl, nickname, fetch, onVersionMismatch, onControlPlaneTime })`。按领域分组的方法从生成的路由表绑定，领域名和方法名沿用契约；底层的 `request` / `url` / `subscribe` 接受任何 `{ method, path, kind }` 形状的路由，控制台用契约里的 zod 定义调用它们。只有 `exchange.ts` 调用 `fetch`：拼地址和请求头（`x-sfly-client: sfly-client/<版本>`；昵称在创建时可以不给，但每个非 GET 请求都要，包括控制面本身不检查昵称的 `agents.updateNow`，没有时在发请求之前抛出 `nickname_required`。ADR 0022 写的「初始化时要求填昵称」按规格改成了这条规则），响应头里的控制面时间交给 `onControlPlaneTime`，版本和自己不一致时每个客户端警告一次。事件流用 `fetch` 读流（浏览器和 Node.js 相同，不用 EventSource）：断线、连不上和 5xx 时带着最后一条消息的 id 重连，4xx 时停止。所有失败抛出 `ApiError`，连不上时错误码 `network_error`。不校验响应、不重试 JSON 调用、不缓存。
+- **安装包**：`pnpm --filter @sfly/client run tarball <目录>` 构建并打成 `sfly-client-<版本>.tgz`（`scripts/check-dist.mjs` 检查发布物没有运行时依赖）。`pnpm --filter @sfly/server build` 把它放进 `apps/server/dist/client`，打包控制面时随之进入产物和 Docker 镜像（ADR 0010）。控制面从 `SFLY_CLIENT_DIR`（默认就是这个目录，打包后是 `main.mjs` 旁边的 `client/`）提供 `GET /client`（列出可下载的版本）和 `GET /client/<版本>/<文件名>`，和 SDK wheel 的两个接口对称；目录不存在时列表为空，控制面照常启动。用户用包管理器直接从下载地址安装。
+- **版本**：API 客户端和控制面同一个版本号，由 `pnpm release:version` 统一管理和检查（`packages/client/package.json` 与 `src/version.ts`）。1.0 之前不保证跨版本兼容；让生成的类型出现不兼容变化的 PR 加标签 `breaking-change` 并在描述里写明，Release 说明把它们单独列出（`docs/agents/branching-and-release.md`）。
+- **跨域**（`src/http/cors.ts`）：所有 API 路由（根路径和 `/api` 前缀）回应跨域请求和预检，托管控制台静态文件的路径不带跨域头。默认允许所有来源（`Access-Control-Allow-Origin: *`），不带凭据；环境变量 `SFLY_CORS_ORIGINS`（逗号分隔的来源）设置后只对名单里的来源回应允许，并带 `Vary: Origin`，名单里有一项不是来源时启动失败。允许的请求头是 `content-type`、`x-sfly-nickname`、`x-sfly-client`、`last-event-id`，对页面暴露 `x-sfly-version`、`x-sfly-time`；每个请求都带 `x-sfly-client`，都要预检，所以预检结果让浏览器缓存 600 秒。预检在 `onRequest` 钩子里答复；事件流的响应绕过 `onSend`，在打开事件流时把已经设置的跨域头一并写进响应头。没有登录时，「允许所有来源」意味着内网用户打开的任何网页都能调用他访问得到的控制面。
+- **公网页面访问内网的控制面**：Chrome 142 起的「本地网络访问」要求公网页面是 HTTPS，并在第一次访问内网地址时请用户授权；控制面不需要 `Access-Control-Allow-Private-Network`（2026-11 在 Chrome 157 上核实，结论和应对办法写在用户文档里）。
+- 控制面的其余环境变量见 `apps/server/src/main.ts` 顶部注释。
 
 ---
 
@@ -353,7 +407,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 | `/orchestrations/:id/versions` | 版本历史：任选两个版本对比、恢复旧版本 | 侧边栏 + 顶栏 |
 | `/orchestrations/:id` | 编排画布（全屏）：编辑模式（检查器、撤销重做、整理布局、本地草稿与显式保存、在线编辑者）；运行状态模式（节点叠加最近一次运行或 `?run=<id>` 指定运行的状态与主指标，日志与图表只在运行监控页） | 无 |
 | `/runs` | 运行记录：进行中的运行是卡片，历史运行是表格，可按状态、场景、编号或触发人筛选 | 侧边栏 + 顶栏 |
-| `/runs/:id` | 运行监控（全屏）：链路时间线、按节点分组的图表工作区、底部面板（日志 / 尝试 / 输入输出 / 产物），三者共用一条时间轴；底部面板的范围是选中的节点，没选中时跟随图表工作区的节点筛选，两者都没有时是全部节点；没选中节点时日志页签把范围内节点的日志按控制面时间合并显示，每行标出来源节点，可以按级别筛选（服务端执行），点来源节点名（或行上的右键菜单）选中这个节点并切到它的单节点日志（看的是这一行所在的那次尝试），向上滚动一直加载到运行开始；运行执行中时实时显示新输出（包括之后才开始的节点），断线后补发的行按控制面时间插到对应的位置；日志页签的下载按钮：没选中节点时下载范围内整次运行合并后的日志（JSONL，跟随节点筛选，不受级别筛选影响），选中节点时下载这次尝试的原始日志 | 无 |
+| `/runs/:id` | 运行监控（全屏）：链路时间线、按节点分组的图表工作区、底部面板（日志 / 尝试 / 输入输出 / 产物），三者共用一条时间轴；底部面板的范围是选中的节点（范围显示成带 × 的标签，点 × 或按 Esc 取消选中），没选中时跟随图表工作区的节点筛选，两者都没有时是全部节点；打开页面时只默认选中链接里指定的节点或第一个失败的节点，执行中的节点不默认选中；时间线节点行在耗时旁显示这个节点最新一次尝试的进度（`current/total`，没有进度的节点不显示）；已结束的运行时间轴按实际时长定轴并在末端留 8% 空白，运行中至少显示 10 秒；没有任何节点上报指标时图表工作区收成一行说明和折叠的平台自带图表，剩下的高度给底部面板；没选中节点时日志页签把范围内节点的日志按控制面时间合并显示，每行标出来源节点，可以按级别筛选（服务端执行），点来源节点名（或行上的右键菜单）选中这个节点并切到它的单节点日志（看的是这一行所在的那次尝试），向上滚动一直加载到运行开始；运行执行中时实时显示新输出（包括之后才开始的节点），断线后补发的行按控制面时间插到对应的位置；日志页签的下载按钮：没选中节点时下载范围内整次运行合并后的日志（JSONL，跟随节点筛选，不受级别筛选影响），选中节点时下载这次尝试的原始日志 | 无 |
 | `/agents`、`/packages` | Agent 管理（版本与更新状态、「立即更新」）、节点包管理（列表 + 详情，含节点类型的指标与图表声明） | 侧边栏 + 顶栏 |
 | `/feishu-bots` | 飞书机器人管理：登记、替换 Webhook 地址（只显示打码的地址）、删除、发送测试消息（ADR 0020） | 侧边栏 + 顶栏 |
 | `/docs`、`/docs/:page` | 开发文档：渲染 `docs/guide` 的用户文档（ADR 0013），代码块带复制按钮；`/docs` 显示第一页 | 侧边栏 + 顶栏 |
@@ -364,12 +418,13 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 - `components/ui/`：shadcn/ui 组件（Base UI 原语，ADR 0008），从官方注册表拉取后由仓库自己维护；`components/app-shell/` 外壳与全局浮层；`components/canvas/` 唯一的画布组件（`FlowCanvas`，编辑、运行状态、版本对比共用，几何常量只在 `geometry.ts`）；`components/feedback/` 空 / 加载 / 错误状态与通知。
 - 按页面的功能模块：`dashboard/`、`scenarios/`、`run-drawer/`、`editor/`（编排画布与检查器）、`versions/`（本地草稿、保存冲突、版本对比）、`monitor/`（运行监控）、`run-records/`、`metrics/`（主指标与指标声明）、`agents/`（「立即更新」按钮与确认框）、`feishu-bots/`（飞书机器人的弹窗和测试消息结果）、`docs/`（开发文档页与 Markdown 渲染）。
-- `lib/`：`api.ts`（契约客户端）、`sse.ts`（契约里的 SSE 推送）、`control-plane-time.ts` 与 `use-now.ts`（页面上的"现在"是控制面时间，ADR 0018：控制面在每个响应的 `x-sfly-time` 响应头和每条 SSE 流的 `time` 心跳事件里带上自己的当前时间，页面记下它与浏览器时间的差值；需要"现在"的地方用 `controlPlaneNow()` / `useNow()`，不直接用 `Date.now()`）、`shortcuts.ts`、`presence.ts`、`nickname.ts`、`format.ts`、`node-status.ts`（节点状态的显示规则表，徽标、画布、缩略图、进度条、时间线都从这里读；每列的取值类型由对应组件定义并在组件里配样式，这里只 `import type`，组件再引入这张表，所以只有类型层面的双向引用）。
+- `lib/`：`api.ts`（按契约调用，建立在 API 客户端 `@sfly/client` 之上）、`sse.ts`（契约里的 SSE 推送，用 API 客户端的事件流订阅）、`control-plane-time.ts` 与 `use-now.ts`（页面上的"现在"是控制面时间，ADR 0018：控制面在每个响应的 `x-sfly-time` 响应头和每条 SSE 流的 `time` 心跳事件里带上自己的当前时间，页面记下它与浏览器时间的差值；需要"现在"的地方用 `controlPlaneNow()` / `useNow()`，不直接用 `Date.now()`）、`shortcuts.ts`、`presence.ts`、`nickname.ts`、`format.ts`、`node-status.ts`（节点状态的显示规则表，徽标、画布、缩略图、进度条、时间线都从这里读；每列的取值类型由对应组件定义并在组件里配样式，这里只 `import type`，组件再引入这张表，所以只有类型层面的双向引用）。
 - 样式：Tailwind v4 + CSS 变量，三层设计 token（基础色阶 / 语义 / 画布专用），所有样式都在明确的 CSS layer 里，没有按页面手写的全局样式文件；token、配色规则、字号、组件清单与各状态样式见 `docs/DESIGN-SYSTEM.md`。
 
 ### 7.4 HTTP 契约（ADR 0007）
 
 - 接口的请求与响应 schema 在 `@sfly/schema` 的 `http/` 模块中用 zod 定义：JSON 接口用 `endpoint`，SSE 用 `stream`（事件名 → data 的 schema），字节流下载用 `download`；`httpContract` 列出全部接口。
+- 每个接口都要写 `client`（是否进入 API 客户端，ADR 0022）。`pnpm gen` 从契约生成 API 客户端的类型和路由表（`packages/client/src/generated/`：请求类型按输入方向，有默认值的字段可以省略；响应类型按输出方向；契约里的说明随之进入类型声明），以及按 `z.input` / `z.output` 检查生成的类型的 `packages/client/test/contract-parity.ts`（`pnpm typecheck` 运行）。生成物提交进仓库，接口的每次变化都出现在 PR 的 diff 里，`pnpm gen:check` 保证它们是最新的。
 - 控制面用 `contractRoute` / `contractStream` / `contractDownload` 注册路由，按契约校验请求（不符合时 400 `invalid_request`，个别接口用更具体的错误码，例如保存版本的 `base_version_required` / `invalid_document`），响应在类型上受契约约束；启动时检查注册的路由与 `httpContract` 一一对应，控制面没有契约以外的 HTTP 接口。
 - 前端的类型全部由契约推导（没有手写的接口类型副本），请求用 `callApi` / `apiQuery`，SSE 用 `useEventSource(def, input, handlers)`；query key 一律由 `queryKey()` 生成，失效按领域前缀（`domainKey()`）；开发环境下校验响应与 SSE 事件。
 

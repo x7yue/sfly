@@ -1,6 +1,6 @@
-import { type EndpointInput, type OnlineEditorView, pathFor, presenceApi } from "@sfly/schema";
+import { type EndpointInput, type OnlineEditorView, presenceApi } from "@sfly/schema";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { API_BASE, callApi } from "./api";
+import { apiClient, callApi } from "./api";
 import { useNickname } from "./nickname";
 import { useEventSource } from "./sse";
 
@@ -24,19 +24,13 @@ const sendHeartbeat = (orchestrationId: string, sessionId: string) =>
 		// 心跳失败（控制面重启等）不打扰用户，下一次心跳或 SSE 重连后自动恢复。
 	});
 
-/**
- * 关闭页面或离开编辑页面时主动离开（presenceApi.leave）。用 keepalive 的 fetch 而不是 callApi：
- * 页面卸载后请求仍会发出。
- */
+/** keepalive：页面卸载后请求仍会发出。 */
 const sendLeave = (orchestrationId: string, sessionId: string) => {
-	const { leave } = presenceApi;
-	const body: EndpointInput<typeof leave>["body"] = { session_id: sessionId };
-	void fetch(`${API_BASE}${pathFor(leave, { id: orchestrationId })}`, {
-		method: leave.method,
-		keepalive: true,
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify(body),
-	}).catch(() => {
+	const input: EndpointInput<typeof presenceApi.leave> = {
+		params: { id: orchestrationId },
+		body: { session_id: sessionId },
+	};
+	void apiClient.request(presenceApi.leave, input, { keepalive: true }).catch(() => {
 		// 离开失败时控制面 30 秒无心跳后自动移除。
 	});
 };

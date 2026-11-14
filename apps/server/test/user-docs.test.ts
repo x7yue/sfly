@@ -78,7 +78,7 @@ describe("用户文档", () => {
 	});
 });
 
-describe("节点开发 skill 的原文", () => {
+describe("给 AI 编程助手的 skill 的原文", () => {
 	let dir: string;
 	let cp: TestControlPlane;
 
@@ -87,15 +87,21 @@ describe("节点开发 skill 的原文", () => {
 		await writeFile(
 			join(dir, "pages.json"),
 			JSON.stringify({
-				pages: [{ slug: "sdk-reference", title: "SDK 参考", description: "接口" }],
+				pages: [
+					{ slug: "sdk-reference", title: "SDK 参考", description: "接口" },
+					{ slug: "platform-cli", title: "用命令行操作平台", description: "命令" },
+				],
 			}),
 		);
 		await writeFile(join(dir, "sdk-reference.md"), "# SDK 参考\n\n版本 {{SFLY_VERSION}}\n");
-		await mkdir(join(dir, "skills", "sfly-node-dev"), { recursive: true });
-		await writeFile(
-			join(dir, "skills", "sfly-node-dev", "SKILL.md"),
-			"---\nname: sfly-node-dev\n---\n\n见 [reference.md](reference.md)，控制面 {{SFLY_URL}}\n",
-		);
+		await writeFile(join(dir, "platform-cli.md"), "# 用命令行操作平台\n\n控制面 {{SFLY_URL}}\n");
+		for (const name of ["sfly-node-dev", "sfly-platform"]) {
+			await mkdir(join(dir, "skills", name), { recursive: true });
+			await writeFile(
+				join(dir, "skills", name, "SKILL.md"),
+				`---\nname: ${name}\n---\n\n见 [reference.md](reference.md)，控制面 {{SFLY_URL}}\n`,
+			);
+		}
 		cp = await startTestControlPlane({ docsDir: dir, version: "1.2.3" });
 	});
 	afterAll(async () => {
@@ -103,26 +109,33 @@ describe("节点开发 skill 的原文", () => {
 		await rm(dir, { recursive: true, force: true });
 	});
 
-	it("SKILL.md 与 reference.md（即 SDK 参考页）在同一个目录下，占位符已替换", async () => {
-		const skill = await cp.fetch("/docs/skills/sfly-node-dev/SKILL.md");
-		expect(skill.status).toBe(200);
-		expect(skill.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
-		expect(await skill.text()).toBe(
-			`---\nname: sfly-node-dev\n---\n\n见 [reference.md](reference.md)，控制面 ${cp.httpUrl}\n`,
-		);
-		const reference = await cp.fetch("/docs/skills/sfly-node-dev/reference.md");
-		expect(reference.status).toBe(200);
-		expect(await reference.text()).toBe("# SDK 参考\n\n版本 1.2.3\n");
+	it("SKILL.md 与 reference.md（对应的一页文档）在同一个目录下，占位符已替换", async () => {
+		for (const name of ["sfly-node-dev", "sfly-platform"]) {
+			const skill = await cp.fetch(`/docs/skills/${name}/SKILL.md`);
+			expect(skill.status, name).toBe(200);
+			expect(skill.headers.get("content-type")).toBe("text/markdown; charset=utf-8");
+			expect(await skill.text()).toBe(
+				`---\nname: ${name}\n---\n\n见 [reference.md](reference.md)，控制面 ${cp.httpUrl}\n`,
+			);
+		}
+		const nodeDev = await cp.fetch("/docs/skills/sfly-node-dev/reference.md");
+		expect(nodeDev.status).toBe(200);
+		expect(await nodeDev.text()).toBe("# SDK 参考\n\n版本 1.2.3\n");
+		const platform = await cp.fetch("/docs/skills/sfly-platform/reference.md");
+		expect(platform.status).toBe(200);
+		expect(await platform.text()).toBe(`# 用命令行操作平台\n\n控制面 ${cp.httpUrl}\n`);
 		// 浏览器经 /api 前缀读取同一份内容。
-		expect((await cp.fetch("/api/docs/skills/sfly-node-dev/reference.md")).status).toBe(200);
+		expect((await cp.fetch("/api/docs/skills/sfly-platform/reference.md")).status).toBe(200);
 		expect((await cp.fetch("/docs/skills/sfly-node-dev/other.md")).status).toBe(404);
 		expect((await cp.fetch("/docs/skills/other/SKILL.md")).status).toBe(404);
 	});
 
-	it("/llms.txt 列出 skill 的原文地址", async () => {
+	it("/llms.txt 列出每份 skill 的原文地址", async () => {
 		const text = await (await cp.fetch("/llms.txt")).text();
-		expect(text).toContain(`(${cp.httpUrl}/docs/skills/sfly-node-dev/SKILL.md)`);
-		expect(text).toContain(`(${cp.httpUrl}/docs/skills/sfly-node-dev/reference.md)`);
+		for (const name of ["sfly-node-dev", "sfly-platform"]) {
+			expect(text).toContain(`(${cp.httpUrl}/docs/skills/${name}/SKILL.md)`);
+			expect(text).toContain(`(${cp.httpUrl}/docs/skills/${name}/reference.md)`);
+		}
 	});
 });
 
@@ -141,20 +154,27 @@ describe("仓库里的用户文档", () => {
 			}
 			// skill 的原文与 SDK wheel 里的内容出自同一份源文件（sdk/python/tests/test_skill.py）。
 			const guide = join(repoRoot, "docs", "guide");
-			for (const [file, source] of [
-				["SKILL.md", join(guide, "skills", "sfly-node-dev", "SKILL.md")],
-				["reference.md", join(guide, "sdk-reference.md")],
+			for (const [skill, reference] of [
+				["sfly-node-dev", "sdk-reference.md"],
+				["sfly-platform", "platform-cli.md"],
 			] as const) {
-				const res = await cp.fetch(`/docs/skills/sfly-node-dev/${file}`);
-				expect(res.status, file).toBe(200);
-				expect(await res.text(), file).toBe(await readFile(source, "utf8"));
+				for (const [file, source] of [
+					["SKILL.md", join(guide, "skills", skill, "SKILL.md")],
+					["reference.md", join(guide, reference)],
+				] as const) {
+					const res = await cp.fetch(`/docs/skills/${skill}/${file}`);
+					expect(res.status, `${skill}/${file}`).toBe(200);
+					expect(await res.text(), `${skill}/${file}`).toBe(await readFile(source, "utf8"));
+				}
+				expect(index).toContain(`(${cp.httpUrl}/docs/skills/${skill}/SKILL.md)`);
+				expect(index).toContain(`(${cp.httpUrl}/docs/skills/${skill}/reference.md)`);
 			}
 		} finally {
 			await cp.close();
 		}
 	});
 
-	it("按「安装 → 初始化 → 开发 → 本地调试 → 联调 → 发布 → 编排子流程 → 标准节点 → 跨 Agent 处理文件 → 飞书通知」排列全部页面，llms.txt 逐页列出，页面之间的链接都指向登记的页面", async () => {
+	it("按「安装 → 初始化 → 开发 → 本地调试 → 联调 → 用命令行操作平台 → 发布 → 编排子流程 → 标准节点 → 跨 Agent 处理文件 → 飞书通知 → 用 API 客户端做自己的页面」排列全部页面，llms.txt 逐页列出，页面之间的链接都指向登记的页面", async () => {
 		const cp = await startTestControlPlane({ docsDir: join(repoRoot, "docs", "guide") });
 		try {
 			const { pages } = docsApi.list.response.parse(await (await cp.fetch("/docs")).json());
@@ -165,11 +185,13 @@ describe("仓库里的用户文档", () => {
 				["sdk-reference", "开发节点（SDK 参考）"],
 				["local-debug", "本地调试"],
 				["integration", "联调"],
+				["platform-cli", "用命令行操作平台"],
 				["publish", "发布"],
 				["subflows", "子流程与停止子流程"],
 				["standard-nodes", "标准节点"],
 				["cross-agent-files", "跨 Agent 处理文件"],
 				["feishu-notify", "飞书通知"],
+				["api-client", "用 API 客户端做自己的页面"],
 			]);
 			const index = await (await cp.fetch("/llms.txt")).text();
 			for (const { slug, title } of pages) {

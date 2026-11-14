@@ -1,10 +1,4 @@
-import {
-	type MetricIncrement,
-	type ProgressEvent,
-	queryKey,
-	type RunView,
-	runsApi,
-} from "@sfly/schema";
+import { queryKey, type RunView, runsApi } from "@sfly/schema";
 import {
 	type QueryClient,
 	replaceEqualDeep,
@@ -12,7 +6,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { apiQuery, apiUrl } from "#/lib/api";
+import { apiQuery } from "#/lib/api";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { openEventSource } from "#/lib/sse";
 import { applyProgress, latestRunView } from "./run-model";
@@ -82,20 +76,15 @@ function acquire(client: QueryClient, runId: string): () => void {
 	let connection = byRun.get(runId);
 	if (!connection) {
 		const key = runViewKey(runId);
-		const handlers: Record<string, (data: unknown) => void> = {
-			run: (view) => writeRunView(client, view as RunView),
-			progress: (event) =>
-				client.setQueryData(key, (old: RunView | undefined) =>
-					applyProgress(old, event as ProgressEvent),
-				),
-			metrics: (increment) =>
-				void applyMetricIncrement(client, runId, increment as MetricIncrement),
-		};
 		const close = openEventSource(
 			runsApi.events,
-			apiUrl(runsApi.events, { params: { id: runId } }),
-			Object.keys(handlers),
-			(event, data) => handlers[event]?.(data),
+			{ params: { id: runId } },
+			{
+				run: (view) => writeRunView(client, view),
+				progress: (event) =>
+					client.setQueryData(key, (old: RunView | undefined) => applyProgress(old, event)),
+				metrics: (increment) => void applyMetricIncrement(client, runId, increment),
+			},
 			() => void refetchSeries(client, runId),
 		);
 		connection = { users: 0, close };

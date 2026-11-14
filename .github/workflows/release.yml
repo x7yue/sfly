@@ -89,7 +89,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      # 读 main 上 CI 的缓存（ci.yml 的 check 同样构建两个 musl 目标），不写：
+      # 读 main 上 CI 的缓存（ci.yml 的 package 同样构建两个 musl 目标），不写：
       # tag 上写的缓存只有同一个 tag 能读，下次发版用不上。
       - uses: Swatinem/rust-cache@v2
         with:

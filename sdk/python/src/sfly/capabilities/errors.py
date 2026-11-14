@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from sfly.context import Cancelled
+from sfly.context import cancelled_error
 
 
 class Kind:
@@ -115,7 +115,7 @@ _BY_KIND: dict[str, type[AgentError]] = {
 def error_for(kind: str, message: str, agent: str | None) -> BaseException:
     """按 Agent 回复的错误原因构造异常；`cancelled` 是 `sfly.Cancelled`。"""
     if kind == Kind.CANCELLED:
-        return Cancelled(message)
+        return cancelled_error(message)
     cls = _BY_KIND.get(kind)
     if cls is None:
         return AgentError(message, agent=agent, kind=kind or Kind.FAILED)

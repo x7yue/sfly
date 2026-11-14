@@ -17,7 +17,7 @@ sfly init demo-checks --server {{SFLY_URL}} --version {{SFLY_VERSION}} --with-a-
 
 | 命令 | 作用 |
 |---|---|
-| `sfly run` | 本地调试一个节点 |
+| `sfly debug` | 本地调试一个节点 |
 | `sfly dev` | 在本机 Agent 上联调 |
 
 ### 更多

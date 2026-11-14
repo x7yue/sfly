@@ -10,7 +10,6 @@ import {
 	HistoryIcon,
 	PencilLineIcon,
 	PlayIcon,
-	SquarePenIcon,
 	WorkflowIcon,
 } from "lucide-react";
 import { createContext, type ReactNode, useContext, useRef, useState } from "react";
@@ -29,6 +28,7 @@ import {
 	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Truncate } from "@/components/ui/truncate";
 import {
 	ArchiveScenarioDialog,
 	CopyScenarioDialog,
@@ -43,39 +43,54 @@ import { ScenarioThumbnail } from "./ScenarioThumbnail";
 const versionLabel = (s: OrchestrationSummary) =>
 	s.head_version === 0 ? "未保存" : `v${s.head_version}`;
 
-/** 引用的 Agent 与在线状态：默认 Agent 在前；有不在线的提示任务会排队。 */
-function AgentChips({ scenario }: { scenario: OrchestrationSummary }) {
+/** 引用的 Agent 与在线状态：默认 Agent 在前；有不在线的提示任务会排队。表格里芯片不折行、提示放在芯片下面一行。 */
+function AgentChips({
+	scenario,
+	nowrap = false,
+}: {
+	scenario: OrchestrationSummary;
+	nowrap?: boolean;
+}) {
 	if (scenario.agents.length === 0) {
 		return <span className="text-xs text-fg-3">未选择 Agent</span>;
 	}
 	const offline = scenario.agents.filter((a) => a.status !== "online").length;
+	const chips = scenario.agents.map((a) => {
+		const state = a.status === "online" ? "在线" : a.status === "offline" ? "离线" : "未注册";
+		return (
+			<span
+				key={a.name}
+				title={`${a.name}${a.default ? "（默认 Agent）" : ""} · ${state}`}
+				className={cn(
+					"inline-flex h-5.5 items-center gap-1.25 rounded-md border border-border-soft bg-raised px-1.75 font-mono text-2xs whitespace-nowrap",
+					a.default ? "text-fg-1" : "text-fg-2",
+					a.status !== "online" && "border-dashed text-fg-3",
+				)}
+			>
+				<StatusDot kind={a.status === "online" ? "ok" : "pending"} />
+				{a.name}
+				<span className="sr-only">
+					（{a.default ? "默认 Agent，" : ""}
+					{state}）
+				</span>
+			</span>
+		);
+	});
+	const note = offline > 0 && (
+		<span className="text-xs whitespace-nowrap text-warn-fg">{offline} 个不在线，任务会排队</span>
+	);
+	if (nowrap) {
+		return (
+			<div className="flex flex-col items-start gap-1">
+				<div className="flex flex-nowrap items-center gap-1.5">{chips}</div>
+				{note}
+			</div>
+		);
+	}
 	return (
 		<div className="flex flex-wrap items-center gap-1.5">
-			{scenario.agents.map((a) => {
-				const state = a.status === "online" ? "在线" : a.status === "offline" ? "离线" : "未注册";
-				return (
-					<span
-						key={a.name}
-						title={`${a.name}${a.default ? "（默认 Agent）" : ""} · ${state}`}
-						className={cn(
-							"inline-flex h-5.5 items-center gap-1.25 rounded-md border border-border-soft bg-raised px-1.75 font-mono text-2xs",
-							a.default ? "text-fg-1" : "text-fg-2",
-							a.status !== "online" && "border-dashed text-fg-3",
-						)}
-					>
-						<StatusDot
-							kind={a.status === "online" ? "ok" : "pending"}
-							className={a.status === "online" ? "text-ok" : "text-pending"}
-						/>
-						{a.name}
-						<span className="sr-only">
-							（{a.default ? "默认 Agent，" : ""}
-							{state}）
-						</span>
-					</span>
-				);
-			})}
-			{offline > 0 && <span className="text-xs text-warn">{offline} 个不在线，任务会排队</span>}
+			{chips}
+			{note}
 		</div>
 	);
 }
@@ -86,18 +101,22 @@ function LastRunInfo({ run, className }: { run: LastRun | null; className?: stri
 	// 取消后等待清理的运行显示为「取消中」（故事 70）。
 	const status = runStatusView(run.status, { cancelling: run.cancelling });
 	const end = run.ended_at ? new Date(run.ended_at).getTime() : controlPlaneNow();
-	const pill = <StatusPill kind={status.kind}>{status.label}</StatusPill>;
+	const pill = (
+		<StatusPill kind={status.kind} pulse>
+			{status.label}
+		</StatusPill>
+	);
 	return (
-		<span className={cn("inline-flex flex-wrap items-center gap-2", className)}>
+		<span className={cn("inline-flex flex-nowrap items-center gap-2 whitespace-nowrap", className)}>
 			{run.status === "running" ? (
-				<Link to="/runs/$id" params={{ id: run.id }} aria-label="进入运行监控">
+				<Link to="/runs/$id" params={{ id: run.id }} aria-label={`${status.label}，进入运行监控`}>
 					{pill}
 				</Link>
 			) : (
 				pill
 			)}
 			<span className="font-mono">{formatDateTime(run.started_at)}</span>
-			<span>{run.triggered_by}</span>
+			<span className="@max-[22.5rem]/scenario:hidden">{run.triggered_by}</span>
 			<span className="font-mono">{formatDuration(end - new Date(run.started_at).getTime())}</span>
 		</span>
 	);
@@ -141,17 +160,11 @@ export function ScenarioRunDrawer({ children }: { children: ReactNode }) {
 }
 
 /**
- * 卡片和表格行共用的操作：「编排」「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、运行通知、归档；
+ * 卡片和表格行共用的操作：「运行」常驻，「更多」菜单含版本历史、复制、编辑名称和说明、运行通知、归档；
  * 已归档的场景只能恢复，或者查看它的运行记录。「运行」打开运行抽屉（ScenarioRunDrawer）。
+ * 进入编排画布用场景名称的链接，这里不放去同一处的按钮。
  */
-function ScenarioActions({
-	scenario,
-	compact = false,
-}: {
-	scenario: OrchestrationSummary;
-	/** 表格里不显示「编排」按钮（名称就是链接）。 */
-	compact?: boolean;
-}) {
+function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 	const navigate = useNavigate();
 	const more = useRef<HTMLButtonElement>(null);
 	const [dialog, setDialog] = useState<"copy" | "edit" | "notify" | "archive" | null>(null);
@@ -166,7 +179,15 @@ function ScenarioActions({
 		// 已归档的场景不能再运行，历史运行仍可回看（故事 26）。
 		return (
 			<>
-				<Button size="sm" disabled={unarchive.isPending} onClick={() => unarchive.mutate(scenario)}>
+				{/* 用 aria-disabled 而不是 disabled：被禁用的按钮会丢掉焦点，卡片随后被移走时焦点就没有去处了。 */}
+				<Button
+					size="sm"
+					aria-disabled={unarchive.isPending || undefined}
+					className="aria-disabled:opacity-40"
+					onClick={() => {
+						if (!unarchive.isPending) unarchive.mutate(scenario);
+					}}
+				>
 					<ArchiveRestoreIcon />
 					恢复
 				</Button>
@@ -183,16 +204,6 @@ function ScenarioActions({
 	}
 	return (
 		<>
-			{!compact && (
-				<Button
-					size="sm"
-					render={<Link to="/orchestrations/$id" params={{ id: scenario.id }} />}
-					nativeButton={false}
-				>
-					<SquarePenIcon />
-					编排
-				</Button>
-			)}
 			<Button size="sm" onClick={(e) => openRunDrawer(scenario, e.currentTarget)}>
 				<PlayIcon />
 				运行
@@ -204,7 +215,7 @@ function ScenarioActions({
 				>
 					<EllipsisIcon />
 				</DropdownMenuTrigger>
-				<DropdownMenuContent align="end" className="w-48">
+				<DropdownMenuContent className="w-48">
 					<DropdownMenuItem
 						onClick={() =>
 							navigate({ to: "/orchestrations/$id/versions", params: { id: scenario.id } })
@@ -227,13 +238,12 @@ function ScenarioActions({
 					</DropdownMenuItem>
 					<DropdownMenuSeparator />
 					<DropdownMenuItem
-						variant="destructive"
-						disabled={running}
+						variant="danger"
+						disabledReason={running ? "运行中不可归档" : null}
 						onClick={() => setDialog("archive")}
 					>
 						<ArchiveIcon />
 						归档…
-						{running && <span className="ml-auto text-2xs text-fg-3">运行中不可归档</span>}
 					</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
@@ -272,14 +282,17 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 	return (
 		<article
 			aria-label={scenario.name}
-			className="flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface transition-colors hover:border-border-strong"
+			data-list-item
+			className="@container/scenario flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface transition-colors hover:border-border-strong has-[:focus-visible]:border-border-strong"
 		>
 			<div className="relative h-37 border-b border-border-soft bg-sunk bg-[radial-gradient(var(--canvas-grid)_1px,transparent_1px)] bg-size-[14px_14px]">
+				{/* 缩略图只是鼠标的大点击区，与名称链接去同一处：不进 Tab 顺序，读屏不重复读。 */}
 				<Link
 					to="/orchestrations/$id"
 					params={{ id: scenario.id }}
 					title="打开编排画布"
-					aria-label={`打开「${scenario.name}」的编排画布`}
+					tabIndex={-1}
+					aria-hidden
 					className="absolute inset-x-3 top-9 bottom-2.5"
 				>
 					<ScenarioThumbnail structure={scenario.structure} nodeStates={run?.node_states ?? null} />
@@ -291,45 +304,47 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 						{scenario.subflow_count > 0 && ` · ${scenario.subflow_count} 子流程`}
 					</Badge>
 				</div>
+				{/* 与「最近运行」里的状态链接重复：键盘和读屏用那一个。 */}
 				{run && live && (
 					<Link
 						to="/runs/$id"
 						params={{ id: run.id }}
+						tabIndex={-1}
+						aria-hidden
 						className={cn(
 							"absolute top-2.25 right-2.5 inline-flex h-5 items-center rounded-md border bg-raised-2 px-1.75",
 							live.kind === "running" ? "border-signal-line" : "border-border",
 						)}
-						aria-label={`${live.label}，进入运行监控`}
 					>
-						<StatusPill kind={live.kind} className="text-2xs">
+						<StatusPill kind={live.kind} className="text-xs">
 							{live.label}
 						</StatusPill>
 					</Link>
 				)}
 			</div>
 			<div className="flex flex-1 flex-col gap-2 px-3.5 pt-3 pb-2.5">
-				<h2 className="m-0 truncate text-base font-semibold">
-					<Link to="/orchestrations/$id" params={{ id: scenario.id }} className="hover:underline">
+				<h2 className="-m-1 line-clamp-2 p-1 text-base font-semibold">
+					<Link
+						to="/orchestrations/$id"
+						params={{ id: scenario.id }}
+						data-list-primary
+						className="hover:underline"
+					>
 						{scenario.name}
 					</Link>
 				</h2>
-				<p
-					className={cn(
-						"m-0 line-clamp-2 min-h-10 text-sm",
-						scenario.description ? "text-fg-2" : "text-fg-3",
-					)}
-				>
-					{scenario.description || "没有说明"}
-				</p>
+				{scenario.description && (
+					<p className="m-0 line-clamp-2 text-sm text-fg-2">{scenario.description}</p>
+				)}
 				<AgentChips scenario={scenario} />
-				<div className="mt-auto flex flex-wrap items-center gap-2 text-xs text-fg-3">
+				<div className="mt-auto flex flex-nowrap items-center gap-2 text-xs whitespace-nowrap text-fg-3">
 					最近运行 <LastRunInfo run={run} />
 				</div>
 			</div>
 			<footer className="flex items-center gap-1.5 border-t border-border-soft px-3.5 py-2.5">
 				<ScenarioActions scenario={scenario} />
 				<span className="flex-1" />
-				<span className="text-2xs text-fg-3">
+				<span className="text-xs text-fg-3">
 					{scenario.archived_at
 						? `归档于 ${formatDateTime(scenario.archived_at)}`
 						: `更新于 ${formatDateTime(scenario.updated_at)}`}
@@ -339,10 +354,10 @@ function ScenarioCard({ scenario }: { scenario: OrchestrationSummary }) {
 	);
 }
 
-/** 卡片视图：自适应列数，每张最小 316px。 */
+/** 最小 340px：再窄「最近运行」一行放不下，LastRunInfo 在卡片窄于 360px 时先去掉触发人。 */
 export function ScenarioCards({ scenarios }: { scenarios: OrchestrationSummary[] }) {
 	return (
-		<div className="grid grid-cols-[repeat(auto-fill,minmax(316px,1fr))] gap-3.5">
+		<div className="grid grid-cols-[repeat(auto-fill,minmax(340px,1fr))] gap-3.5">
 			{scenarios.map((s) => (
 				<ScenarioCard key={s.id} scenario={s} />
 			))}
@@ -356,57 +371,60 @@ const tableColumns = dataColumns<OrchestrationSummary>((col) =>
 		col.display({
 			id: "name",
 			header: "场景",
-			meta: { className: "max-w-90" },
+			meta: { width: "grow" },
 			cell: ({ row: { original: s } }) => (
 				<>
-					<Link
-						to="/orchestrations/$id"
-						params={{ id: s.id }}
-						className="inline-flex items-center gap-1.5 font-medium hover:underline"
-					>
-						<WorkflowIcon className="size-3.5 text-fg-3" />
-						{s.name}
-					</Link>
-					<div className="truncate text-xs text-fg-3">{s.description || "没有说明"}</div>
+					<span className="flex items-center gap-1.5">
+						<WorkflowIcon aria-hidden className="size-3.5 flex-none text-fg-3" />
+						<Truncate
+							render={<Link to="/orchestrations/$id" params={{ id: s.id }} data-list-primary />}
+							className="font-semibold hover:underline"
+						>
+							{s.name}
+						</Truncate>
+					</span>
+					<Truncate className="text-xs text-fg-3">{s.description || "没有说明"}</Truncate>
 				</>
 			),
 		}),
 		col.display({
 			id: "last_run",
 			header: "最近运行",
-			meta: { className: "text-xs whitespace-nowrap text-fg-2" },
-			cell: ({ row }) => <LastRunInfo run={row.original.last_run} className="flex-nowrap" />,
+			meta: { width: "fit", className: "text-xs text-fg-2" },
+			cell: ({ row }) => <LastRunInfo run={row.original.last_run} />,
 		}),
 		col.display({
 			id: "agents",
 			header: "Agent",
-			cell: ({ row }) => <AgentChips scenario={row.original} />,
+			meta: { width: "fit" },
+			cell: ({ row }) => <AgentChips scenario={row.original} nowrap />,
 		}),
 		col.display({
 			id: "version",
 			header: "版本",
-			meta: { className: "font-mono whitespace-nowrap" },
+			meta: { width: "fit", className: "font-mono" },
 			cell: ({ row }) => versionLabel(row.original),
 		}),
 		col.display({
 			id: "nodes",
 			header: "节点",
-			meta: { className: "text-xs whitespace-nowrap text-fg-2" },
+			meta: { width: "fit", className: "text-xs text-fg-2" },
 			cell: ({ row: { original: s } }) =>
 				`${s.node_count}${s.subflow_count > 0 ? ` · ${s.subflow_count} 子流程` : ""}`,
 		}),
 		col.display({
 			id: "updated",
 			header: "更新",
-			meta: { className: "font-mono text-xs whitespace-nowrap text-fg-3" },
+			meta: { width: "fit", className: "font-mono text-xs text-fg-3" },
 			cell: ({ row: { original: s } }) => formatDateTime(s.archived_at ?? s.updated_at),
 		}),
 		col.display({
 			id: "actions",
 			header: () => <span className="sr-only">操作</span>,
+			meta: { width: "fit" },
 			cell: ({ row }) => (
 				<div className="flex items-center justify-end gap-1.5">
-					<ScenarioActions scenario={row.original} compact />
+					<ScenarioActions scenario={row.original} />
 				</div>
 			),
 		}),
@@ -416,6 +434,12 @@ const tableColumns = dataColumns<OrchestrationSummary>((col) =>
 /** 表格视图。 */
 export function ScenarioTable({ scenarios }: { scenarios: OrchestrationSummary[] }) {
 	return (
-		<DataTable aria-label="场景列表" columns={tableColumns} data={scenarios} rowKey={(s) => s.id} />
+		<DataTable
+			aria-label="场景列表"
+			columns={tableColumns}
+			data={scenarios}
+			rowKey={(s) => s.id}
+			rowProps={() => ({ "data-list-item": "", className: "has-[:focus-visible]:bg-fg-1/3" })}
+		/>
 	);
 }

@@ -1,4 +1,8 @@
-import { CONTROL_PLANE_TIME_EVENT, CONTROL_PLANE_TIME_HEADER } from "@sfly/schema";
+import {
+	CONTROL_PLANE_TIME_EVENT,
+	CONTROL_PLANE_TIME_HEADER,
+	CONTROL_PLANE_VERSION_HEADER,
+} from "@sfly/schema";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Clock } from "../clock.js";
 
@@ -25,6 +29,8 @@ export type SseSetup = (stream: SseStream) => (() => void) | undefined;
 export interface SseOptions {
 	/** 控制面时间的来源：每条流在连上时和每次心跳都把它发给页面。 */
 	clock: Clock;
+	/** 控制面版本：每条流的响应头都带上它（{@link CONTROL_PLANE_VERSION_HEADER}）。 */
+	version: string;
 	/** 心跳的间隔（带控制面时间，也防止代理断开空闲连接），默认 15 秒。 */
 	heartbeatMs?: number;
 	/** 建议浏览器断线后多久重连，默认 3 秒。 */
@@ -34,7 +40,7 @@ export interface SseOptions {
 /**
  * 控制面的 SSE 推送（运行状态、日志、在线编辑者共用）。
  *
- * 用 `registerSse(app, { clock })` 创建，路由里 `sse.open(request, reply, setup)` 把请求变成 SSE 流。
+ * 用 `registerSse(app, { clock, version })` 创建，路由里 `sse.open(request, reply, setup)` 把请求变成 SSE 流。
  * 每条流在连上时和每次心跳都发一条控制面时间事件（@sfly/schema 的 CONTROL_PLANE_TIME_EVENT）。
  * 控制面关闭时（Fastify preClose）结束所有打开的流，避免长连接拖住 `app.close()`。
  */
@@ -63,8 +69,13 @@ export function registerSse(app: FastifyInstance, options: SseOptions): Sse {
 			reply.hijack();
 			const res = reply.raw;
 			const time = () => clock.now().toISOString();
+			// hijack 之后 Fastify 不再发送 reply 上已经设置的响应头（例如 onRequest 里设置的跨域头）。
+			for (const [name, value] of Object.entries(reply.getHeaders())) {
+				if (value !== undefined) res.setHeader(name, value);
+			}
 			res.writeHead(200, {
 				[CONTROL_PLANE_TIME_HEADER]: time(),
+				[CONTROL_PLANE_VERSION_HEADER]: options.version,
 				"content-type": "text/event-stream; charset=utf-8",
 				"cache-control": "no-cache, no-transform",
 				connection: "keep-alive",

@@ -62,7 +62,7 @@ function DocsNav({ pages, current }: { pages: readonly DocPageView[]; current: s
 					aria-current={p.slug === current ? "page" : undefined}
 					className={cn(
 						"rounded-md px-2.5 py-1.5 text-sm text-fg-2 hover:bg-raised hover:text-fg-1",
-						"aria-[current=page]:bg-raised aria-[current=page]:text-fg-1 aria-[current=page]:shadow-[inset_2px_0_0_var(--primary)]",
+						"aria-[current=page]:selected-row aria-[current=page]:text-fg-1 aria-[current=page]:hover:bg-selected-bg",
 					)}
 				>
 					{p.title}

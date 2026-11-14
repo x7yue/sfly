@@ -49,6 +49,7 @@ export const packagesApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/packages",
+		client: true,
 		key: ["packages", "list"],
 		response: z.object({ packages: z.array(PackageSummary) }),
 	}),
@@ -56,6 +57,7 @@ export const packagesApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/packages/:name",
+		client: true,
 		key: ["packages", "detail"],
 		params: z.object({ name: PackageName }),
 		response: PackageSummary,
@@ -64,6 +66,7 @@ export const packagesApi = {
 	version: endpoint({
 		method: "GET",
 		path: "/packages/:name/versions/:version",
+		client: true,
 		key: ["packages", "version"],
 		params: VersionParams,
 		response: PackageVersionView,
@@ -72,6 +75,7 @@ export const packagesApi = {
 	nodeType: endpoint({
 		method: "GET",
 		path: "/packages/:name/versions/:version/nodes/:node",
+		client: true,
 		key: ["packages", "node-type"],
 		params: VersionParams.extend({ node: NodeName }),
 		response: NodeTypeView,
@@ -83,12 +87,15 @@ export const packagesApi = {
 	publish: endpoint({
 		method: "POST",
 		path: "/packages",
+		client: false,
 		key: ["packages", "publish"],
+		upload: true,
 		response: PackageVersionView,
 	}),
 	/** 下载归档（Agent 安装用；`x-sfly-sha256` 响应头是归档的 sha256）。 */
 	archive: download({
 		path: "/packages/:name/versions/:version/archive",
+		client: false,
 		params: z.object({ name: z.string(), version: z.string() }),
 		contentType: "application/octet-stream",
 	}),

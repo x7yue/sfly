@@ -31,6 +31,35 @@ test("侧边栏在七个一级页面之间切换，当前页高亮，面包屑�
 	}
 });
 
+test("侧边栏项右侧平时是计数，悬停或键盘聚焦时换成跳转快捷键，折叠后不显示", async ({
+	page,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await page.goto("/");
+	const agents = sidebar(page).getByRole("link", { name: "Agent 管理" });
+	const count = agents.getByText("1/1");
+	const keys = agents.locator("span[aria-hidden]:has(kbd)");
+	await expect(count).toBeVisible();
+	await expect(count).toHaveCSS("opacity", "1");
+	await expect(keys).toHaveText("G然后A");
+	await expect(keys).toHaveCSS("opacity", "0");
+
+	await agents.hover();
+	await expect(keys).toHaveCSS("opacity", "1");
+	await expect(count).toHaveCSS("opacity", "0");
+
+	await page.mouse.move(700, 500);
+	const docs = sidebar(page).getByRole("link", { name: "开发文档" });
+	await expect(docs.locator("span[aria-hidden]:has(kbd)")).toHaveCSS("opacity", "0");
+	await docs.focus();
+	await expect(docs.locator("span[aria-hidden]:has(kbd)")).toHaveText("G然后H");
+	await expect(docs.locator("span[aria-hidden]:has(kbd)")).toHaveCSS("opacity", "1");
+
+	await page.getByRole("button", { name: "折叠侧边栏" }).click();
+	await expect(sidebar(page).locator("kbd")).toHaveCount(0);
+});
+
 test("侧边栏可以折叠成一列图标，刷新后保持", async ({ page }) => {
 	await page.goto("/agents");
 	await page.getByRole("button", { name: "折叠侧边栏" }).click();
@@ -70,6 +99,64 @@ test("命令面板：Ctrl K 打开，搜索并跳转到页面或场景", async (
 	).toHaveText(["日终数据处理"]);
 	await page.keyboard.press("Enter");
 	await expect(page).toHaveURL(new RegExp(`/orchestrations/${scenarioId}$`));
+});
+
+test("命令面板：Ctrl K 后马上输入，字落在搜索框里，回车执行匹配的那一条（#280）", async ({
+	page,
+}) => {
+	await page.goto("/agents");
+	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
+	// 机器忙的时候一帧可能很长：让每一帧都晚到 300ms，打开面板和下一帧之间按下的键也要进搜索框。
+	await page.evaluate(() => {
+		const raf = window.requestAnimationFrame.bind(window);
+		window.requestAnimationFrame = (callback) =>
+			raf(() => {
+				setTimeout(() => callback(performance.now()), 300);
+			});
+	});
+	await page.keyboard.press("Control+k");
+	await page.keyboard.type("节点包");
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/packages$/);
+});
+
+test("命令面板刚打开时，输入框的 aria-activedescendant 就指向高亮的那一项；输入停顿后读出匹配到几条结果", async ({
+	page,
+}) => {
+	await page.goto("/");
+	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
+	await page.keyboard.press("Control+k");
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	const input = palette.getByRole("combobox", { name: "命令" });
+	await expect(input).toBeVisible();
+	await expect(input).toHaveAttribute("aria-activedescendant", /.+/);
+	const current = await input.getAttribute("aria-activedescendant");
+	await expect(palette.locator(`[id="${current}"]`)).toHaveAttribute("aria-selected", "true");
+	await expect(palette.getByRole("option").first()).toHaveAttribute("aria-selected", "true");
+
+	const status = palette.getByRole("status");
+	await expect(status).toBeEmpty();
+	await page.keyboard.type("节点包");
+	await expect(status).toHaveText("1 条结果");
+	await page.keyboard.type("没有这样的命令");
+	await expect(status).toHaveText("没有匹配的结果");
+});
+
+test("主滚动区预留滚动条槽，页面之间内容宽度不跳；侧栏品牌与当前页面包屑不靠 500 字重", async ({
+	page,
+}) => {
+	await page.goto("/agents");
+	await expect(page.locator("#main")).toHaveCSS("scrollbar-gutter", "stable");
+	const width = async (path: string) => {
+		await page.goto(path);
+		await expect(page.locator("#main h1")).toBeVisible();
+		return page
+			.locator("#main > div")
+			.evaluate((el) => Math.round(el.getBoundingClientRect().width));
+	};
+	expect(await width("/agents")).toBe(await width("/runs"));
+	await expect(page.getByText("sfly", { exact: true }).first()).toHaveCSS("font-weight", "600");
+	await expect(breadcrumb(page).locator('[aria-current="page"]')).toHaveCSS("font-weight", "400");
 });
 
 test("命令面板：「运行」分组跳转到最近的运行；「运行场景」打开运行抽屉", async ({
@@ -132,6 +219,7 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		"命令面板",
 		"快捷键面板",
 		"关闭浮层",
+		"跳到通知",
 		"控制台",
 		"场景编排",
 		"运行记录",
@@ -140,8 +228,14 @@ test("快捷键面板（?）列出注册表里的快捷键，列出的跳转快�
 		"飞书机器人",
 		"开发文档",
 		"折叠 / 展开侧边栏",
+		"新建场景",
 	]);
 	await expect(global.getByRole("definition").nth(0)).toHaveText("CtrlK");
+	await expect(panel.getByRole("region", { name: "列表页" }).getByRole("term")).toHaveText([
+		"下一项",
+		"上一项",
+		"搜索",
+	]);
 	await page.keyboard.press("Escape");
 	await expect(panel).toBeHidden();
 
@@ -164,10 +258,48 @@ test("在输入框里打字不会触发单键快捷键", async ({ page }) => {
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 	await page.keyboard.press("Control+k");
 	await expect(page.getByRole("combobox", { name: "命令" })).toBeFocused();
-	await page.keyboard.type("g p ?");
+	await page.keyboard.type("g p ? n");
 	await expect(page).toHaveURL(/\/agents$/);
 	await expect(page.getByRole("dialog", { name: "快捷键" })).toBeHidden();
-	await expect(page.getByRole("combobox", { name: "命令" })).toHaveValue("g p ?");
+	await expect(page.getByRole("dialog", { name: "新建场景" })).toBeHidden();
+	await expect(page.getByRole("combobox", { name: "命令" })).toHaveValue("g p ? n");
+	await page.keyboard.press("Escape");
+
+	await page.goto("/orchestrations");
+	const box = page.getByRole("searchbox", { name: "搜索场景" });
+	await expect(box).toBeVisible();
+	await page.keyboard.press("/");
+	await expect(box).toBeFocused();
+	await page.keyboard.type("n j k /");
+	await expect(box).toHaveValue("n j k /");
+	await expect(box).toBeFocused();
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("N 打开新建场景：在页面上打开、在弹窗的输入框里打字不再触发；命令面板里「新建场景」显示这个键", async ({
+	page,
+}) => {
+	await page.goto("/agents");
+	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
+	await page.keyboard.press("n");
+	const dialog = page.getByRole("dialog", { name: "新建场景" });
+	await expect(dialog).toBeVisible();
+	const name = dialog.getByRole("textbox", { name: "名称" });
+	await expect(name).toBeFocused();
+	await page.keyboard.type("n g s ?");
+	await expect(name).toHaveValue("n g s ?");
+	await expect(page).toHaveURL(/\/agents$/);
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+
+	await page.keyboard.press("Control+k");
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	await expect(palette.getByRole("combobox", { name: "命令" })).toBeFocused();
+	await expect(palette.getByRole("group", { name: "当前页面" })).toHaveCount(0);
+	await expect(palette.getByRole("option", { name: /新建场景/ })).toHaveText(/新建场景N/);
+	await page.keyboard.type("新建");
+	await page.keyboard.press("Enter");
+	await expect(dialog).toBeVisible();
 });
 
 test("弹窗锁定焦点，Esc 关闭后焦点回到打开它的按钮", async ({ page }) => {

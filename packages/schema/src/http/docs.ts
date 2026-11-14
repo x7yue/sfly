@@ -21,28 +21,37 @@ export const docsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/docs",
+		client: false,
 		key: ["docs", "list"],
 		response: z.object({ pages: z.array(DocPageView) }),
 	}),
 	/** 一页的 Markdown 原文（占位符已替换）；未知页 404。 */
 	page: download({
 		path: "/docs/:page.md",
+		client: false,
 		raw: true,
 		params: z.object({ page: z.string() }),
 		contentType: "text/markdown; charset=utf-8",
 	}),
 	/**
-	 * 节点开发 skill 的一个文件（占位符已替换）：`SKILL.md`，以及同目录的 `reference.md`（SDK 参考页）。
+	 * 给 AI 编程助手的 skill（`sfly-node-dev`、`sfly-platform`）的一个文件（占位符已替换）：`SKILL.md`，
+	 * 以及同目录的 `reference.md`（对应的一页文档：SDK 参考页、「用命令行操作平台」页）。
 	 * 与 SDK wheel 里 `sfly init` 写进项目的内容出自同一份源文件；未知的 skill 或文件 404。
 	 */
 	skill: download({
 		path: "/docs/skills/:skill/:file",
+		client: false,
 		raw: true,
 		params: z.object({ skill: z.string(), file: z.string() }),
 		contentType: "text/markdown; charset=utf-8",
 	}),
 	/** llms.txt 索引：列出每一页原文的完整地址。 */
-	llms: download({ path: "/llms.txt", raw: true, contentType: "text/plain; charset=utf-8" }),
+	llms: download({
+		path: "/llms.txt",
+		raw: true,
+		contentType: "text/plain; charset=utf-8",
+		client: false,
+	}),
 };
 
 export type DocPageView = z.infer<typeof DocPageView>;

@@ -1,7 +1,7 @@
 // 切入点 A：飞书机器人的登记和测试消息（#228，ADR 0020）。真实控制面 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
-import { type FeishuBotView, feishuBotsApi } from "@sfly/schema";
+import { type FeishuBotView, feishuBotsApi, NICKNAME_HEADER } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ApiClient, NICKNAME_HEADER } from "./support/api-client.js";
+import { ApiClient } from "./support/api-client.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 

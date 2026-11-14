@@ -1,11 +1,6 @@
+import { NICKNAME_HEADER } from "@sfly/schema";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { sendError } from "./errors.js";
-
-/**
- * 浏览器昵称请求头（ADR 0004：只用于显示，不做鉴权）。
- * 值按 encodeURIComponent 编码，这样中文昵称也能放进请求头。
- */
-export const NICKNAME_HEADER = "x-sfly-nickname";
 
 /** 读取请求里的昵称；没有或为空时返回 undefined。 */
 export function nicknameOf(request: FastifyRequest): string | undefined {

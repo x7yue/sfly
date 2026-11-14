@@ -1,7 +1,15 @@
 import type { Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
-import { connPoint, labeledRun, openMonitor, runningScenario, unixAt } from "./monitor-scenario";
+import {
+	connPoint,
+	labeledRun,
+	logLine,
+	openMonitor,
+	runningScenario,
+	unixAt,
+} from "./monitor-scenario";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 运行监控页的图表工作区（原型 #/monitor/:runId 的中间区域）：按节点分组的指标图表、筛选、只看、
 // 悬停联动、拖选缩放、实时追加、选中节点。
@@ -44,9 +52,7 @@ test("按节点分组，顺序与链上执行顺序一致；默认只展开执�
 	await openMonitor(page, clock, runId);
 	const ws = workspace(page);
 
-	await expect(ws.getByTestId("chart-count")).toHaveText(
-		"3 个节点 · 12 张图表 · 共 3 个节点声明了图表",
-	);
+	await expect(ws.getByTestId("chart-count")).toHaveText("12 张图表，来自 3 个节点和平台自带");
 	await expect
 		.poll(() => groupOrder(page))
 		.toEqual(["fetch 的图表", "verify 的图表", "probe 的图表", "平台自带图表"]);
@@ -116,7 +122,7 @@ test("每张图表只查它引用的指标；折叠的组只查组标题上的�
 	await expect(chart(page, "fetch", "吞吐").locator("[data-series] path")).toHaveCount(2);
 });
 
-test("四种图表类型与多序列图例；横轴是节点实际运行的时段并标出起止时间；运行中实时追加", async ({
+test("四种图表类型与多序列图例；横轴是节点实际运行的时段并标出起止时间；运行中实时追加；纵轴上限与最新值相同时不重复显示", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -143,8 +149,10 @@ test("四种图表类型与多序列图例；横轴是节点实际运行的时�
 	const level = chart(page, "probe", "level");
 	await expect(level.locator("[data-window]")).toHaveText("08:00:06 – 08:00:14");
 	await expect(level.locator("[data-latest]")).toHaveText("3");
+	await expect(level.locator("[data-axis-max]")).toHaveText("9");
 	agent.metrics(tasks.probe as AssignedTask, [["level", unixAt(clock0, 14), 42]]);
 	await expect(level.locator("[data-latest]")).toHaveText("42");
+	await expect(level.locator("[data-axis-max]")).toHaveCount(0);
 	await expect(group(page, "probe").locator('[data-primary-metric="level"]')).toContainText("42");
 });
 
@@ -240,8 +248,8 @@ test("序列超过 10 个时默认只显示时间范围内平均值最高的 10 
 	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h02"]);
 	await expect(byConn.locator('[data-series="h02"]')).toHaveCount(0);
 
-	// 拖选到最后几秒：h02 在这段里的平均值超过 h03，h03 改为置灰。
-	await brush(page, 0.55, 1, "ping");
+	// 拖选到最后几秒（运行了 10 秒，轴取 15 秒：5.5–10 秒）：h02 在这段里的平均值超过 h03，h03 改为置灰。
+	await brush(page, 5.5 / 15, 10 / 15, "ping");
 	await expect(byConn.locator("[data-legend][aria-pressed=false]")).toHaveText(["h01", "h03"]);
 	await expect(byConn.locator("[data-series]")).toHaveCount(10);
 	await timeline(page).getByRole("button", { name: "回到实时" }).click();
@@ -398,7 +406,7 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
 	const ws = workspace(page);
-	await expect(ws.getByTestId("chart-count")).toContainText("3 个节点");
+	await expect(ws.getByTestId("chart-count")).toContainText("来自 3 个节点");
 
 	await ws.getByRole("button", { name: /节点：全部节点/ }).click();
 	const menu = page.getByRole("dialog", { name: "按节点筛选图表" });
@@ -406,7 +414,7 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	await menu.getByRole("checkbox", { name: /^子流程 sub/ }).uncheck();
 	await expect(group(page, "probe")).toHaveCount(0);
 	await expect(ws.getByRole("button", { name: /节点：已选 2 个节点/ })).toBeVisible();
-	await expect(ws.getByTestId("chart-count")).toHaveText("2 个节点 · 10 张图表");
+	await expect(ws.getByTestId("chart-count")).toHaveText("10 张图表，来自 2 个节点和平台自带");
 
 	// 搜索节点，单独勾选。
 	await menu.getByRole("textbox", { name: "搜索节点 ID 或名称" }).fill("pro");
@@ -434,6 +442,8 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	await expect(menu).toBeHidden();
 
 	// 没有选中节点时，底部面板的范围跟随筛选；有选中节点时跟随选中。
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：跟随筛选（2 个节点）");
+	await timeline(page).locator('[data-node-row="verify"] button').click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
 	await timeline(page).locator('[data-node-row="verify"] button').click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：跟随筛选（2 个节点）");
@@ -442,6 +452,49 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	await expect(ws.getByRole("button", { name: /节点：全部节点/ })).toBeVisible();
 	await expect(ws.locator("[data-group]")).toHaveCount(4);
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
+});
+
+test("没有节点上报指标：图表工作区只剩一行说明和折叠的平台自带图表，剩下的高度给底部面板", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane);
+	const scenarioId = await createScenario(controlPlane, "无指标", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const ping = await agent.nextAssign();
+	agent.logs(ping, [logLine(clock, 1, "ping started")]);
+	await agent.sync();
+
+	await openMonitor(page, clock, runId);
+	const ws = workspace(page);
+	const platform = ws.getByRole("region", { name: "平台自带图表" });
+	await expect(ws).toContainText("这次运行没有节点上报指标");
+	await expect(ws.getByRole("toolbar", { name: "图表工具栏" })).toHaveCount(0);
+	await expect(platform.getByRole("button", { expanded: false })).toBeVisible();
+	await expect(panel(page).getByRole("log", { name: "日志" })).toContainText("ping started");
+
+	const collapsed = { ws: await ws.boundingBox(), bp: await panel(page).boundingBox() };
+	if (!collapsed.ws || !collapsed.bp) throw new Error("没有版面");
+	// 底部面板占满剩下的高度，比默认的 28% 大得多。
+	expect(collapsed.ws.height).toBeLessThan(150);
+	expect(collapsed.bp.y - (collapsed.ws.y + collapsed.ws.height)).toBeLessThan(2);
+	expect(collapsed.bp.y + collapsed.bp.height).toBeCloseTo(page.viewportSize()?.height ?? 0, -1);
+	expect(collapsed.bp.height).toBeGreaterThan(400);
+
+	// 底部面板让出高度，但不低于默认高度。
+	await platform.getByRole("button", { expanded: false }).click();
+	await expect(platform.getByRole("figure", { name: "并发任务数" })).toBeVisible();
+	const expanded = { ws: await ws.boundingBox(), bp: await panel(page).boundingBox() };
+	if (!expanded.ws || !expanded.bp) throw new Error("没有版面");
+	expect(expanded.ws.height).toBeGreaterThan(collapsed.ws.height + 150);
+	expect(expanded.bp.height).toBeLessThan(collapsed.bp.height);
+	expect(expanded.bp.height).toBeGreaterThanOrEqual(230);
 });
 
 test("只看一个节点；按名称搜索图表；紧凑密度", async ({
@@ -465,9 +518,7 @@ test("只看一个节点；按名称搜索图表；紧凑密度", async ({
 	await ws.getByRole("textbox", { name: "搜索图表或节点" }).fill("吞吐");
 	await expect.poll(() => groupOrder(page)).toEqual(["fetch 的图表"]);
 	await expect(group(page, "fetch").getByRole("figure")).toHaveCount(1);
-	await expect(ws.getByTestId("chart-count")).toHaveText(
-		"1 个节点 · 1 张图表 · 共 3 个节点声明了图表",
-	);
+	await expect(ws.getByTestId("chart-count")).toHaveText("1 张图表，来自 1 个节点");
 	await ws.getByRole("textbox", { name: "搜索图表或节点" }).fill("");
 
 	const plot = chart(page, "verify", "level").locator("svg[data-plot]");
@@ -563,18 +614,18 @@ test("悬停联动：图表上的竖线与读数跨图表和时间线按时间�
 	await expect(chart(page, "probe", "level").locator("[data-hover-reading]")).toHaveText(
 		"08:00:10  9",
 	);
-	// 时间线上的竖线在 10.5 / 14 处。
+	// 时间线上的竖线在 10.5 / 20 处（运行了 14 秒，时间轴取 20 秒）。
 	const track = await timeline(page).locator('[data-node-row="fetch"] > div').boundingBox();
 	const line = await timeline(page).locator("[data-hover-line]").boundingBox();
 	if (!track || !line) throw new Error("没有竖线");
-	expect((line.x - track.x) / track.width).toBeCloseTo(10.5 / 14, 1);
+	expect((line.x - track.x) / track.width).toBeCloseTo(10.5 / 20, 1);
 
 	// 移到顶栏上（离开所有图表与时间线）。
 	await page.mouse.move(plot.x + plot.width / 2, 8);
 	await expect(page.locator("[data-chart-hover]")).toHaveCount(0);
 
 	// 在时间线上悬停，图表上出现竖线。
-	await page.mouse.move(track.x + track.width * (12.5 / 14), track.y + track.height / 2);
+	await page.mouse.move(track.x + track.width * (12.5 / 20), track.y + track.height / 2);
 	await expect(verifyLevel.locator("[data-hover-reading]")).toHaveText("08:00:12  6");
 	await expect(chart(page, "probe", "level").locator("[data-chart-hover]")).toHaveCount(1);
 });
@@ -590,14 +641,15 @@ test("时间线拖选的范围作用于图表；日志标记显示在图表上�
 	const probeLevel = chart(page, "probe", "level");
 	await expect(probeLevel.locator("[data-window]")).toHaveText("08:00:06 – 08:00:14");
 
-	// 选中执行中的 verify（默认）：组内顶部显示节点摘要。
+	await expect(group(page, "verify").getByTestId("node-summary")).toHaveCount(0);
+	await timeline(page).locator('[data-node-row="verify"] button').click();
 	await expect(group(page, "verify").getByTestId("node-summary")).toContainText(
 		"demo-checks/ping@1.2.0",
 	);
 	await expect(group(page, "verify").getByTestId("node-summary")).toContainText("2");
 
-	// 拖选 50%–100%（08:00:07 – 08:00:14）：probe 的横轴截到这一段，fetch（2–6 秒）在这段里没有数据。
-	await brush(page, 0.5, 1);
+	// 拖选 7–14 秒（轴取 20 秒，即 35%–70%）：probe 的横轴截到这一段，fetch（2–6 秒）在这段里没有数据。
+	await brush(page, 7 / 20, 14 / 20);
 	await expect(timeline(page).getByTestId("zoom-range")).toHaveText("08:00:07 – 08:00:14");
 	await expect(probeLevel.locator("[data-window]")).toHaveText("08:00:07 – 08:00:14");
 

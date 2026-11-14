@@ -158,6 +158,8 @@ export const RunView = z.object({
 	orchestration_version: z.number().int(),
 	status: RunStatus,
 	triggered_by: z.string(),
+	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
+	triggered_via: z.string().nullable(),
 	params: z.record(z.string(), z.unknown()),
 	started_at: Timestamp,
 	ended_at: Timestamp.nullable(),
@@ -165,6 +167,8 @@ export const RunView = z.object({
 	cancel: z
 		.object({
 			requested_by: z.string(),
+			/** 经哪个 AI 编程助手取消；没有时为 null。 */
+			requested_via: z.string().nullable(),
 			requested_at: Timestamp,
 			forced_at: Timestamp.nullable(),
 		})
@@ -185,6 +189,7 @@ export const RunSummary = RunView.pick({
 	orchestration_version: true,
 	status: true,
 	triggered_by: true,
+	triggered_via: true,
 	started_at: true,
 	ended_at: true,
 }).extend({
@@ -224,6 +229,7 @@ export const runsApi = {
 	preflight: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/preflight",
+		client: true,
 		key: ["runs", "preflight"],
 		params: IdParams,
 		response: z.object({
@@ -241,6 +247,7 @@ export const runsApi = {
 	listForOrchestration: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/runs",
+		client: true,
 		key: ["runs", "by-orchestration"],
 		params: IdParams,
 		response: z.object({ runs: z.array(RunSummary) }),
@@ -252,6 +259,7 @@ export const runsApi = {
 	trigger: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/runs",
+		client: true,
 		key: ["runs", "trigger"],
 		params: IdParams,
 		/** 入口参数；没有请求体等于 `{ params: {} }`。 */
@@ -264,6 +272,7 @@ export const runsApi = {
 	get: endpoint({
 		method: "GET",
 		path: "/runs/:id",
+		client: true,
 		key: ["runs", "detail"],
 		params: IdParams,
 		response: RunView,
@@ -275,6 +284,7 @@ export const runsApi = {
 	cancel: endpoint({
 		method: "POST",
 		path: "/runs/:id/cancel",
+		client: true,
 		key: ["runs", "cancel"],
 		params: IdParams,
 		response: RunView,
@@ -286,6 +296,7 @@ export const runsApi = {
 	 */
 	events: stream({
 		path: "/runs/:id/events",
+		client: true,
 		params: IdParams,
 		events: { run: RunView, progress: ProgressEvent, metrics: MetricIncrement },
 	}),
@@ -391,7 +402,7 @@ const RunLogCursor = z.string();
 
 /**
  * 按运行的实时推送的位置（#225）：不透明字符串，记录范围内每个任务已经推送到的序号。
- * 首次连接用分页返回的 `live_after`，之后每个事件的 ID 都是这个格式（浏览器重连时经 `Last-Event-ID` 带回）。
+ * 首次连接用分页返回的 `live_after`，之后每个事件的 ID 都是这个格式（断线重连时经 `Last-Event-ID` 请求头带回）。
  */
 const RunLogLiveCursor = z.string();
 
@@ -490,6 +501,7 @@ export const logsApi = {
 	page: endpoint({
 		method: "GET",
 		path: "/tasks/:id/logs",
+		client: true,
 		key: ["logs", "page"],
 		params: IdParams,
 		query: LogPageQuery,
@@ -497,10 +509,11 @@ export const logsApi = {
 	}),
 	/**
 	 * 日志的实时推送（SSE）：事件 `logs` 是新写入的一批行，`after_seq` 是已经读到的最大序号
-	 * （从分页的 last_seq 接上，浏览器重连时按 Last-Event-ID 续传）。
+	 * （从分页的 last_seq 接上，断线重连时按 `Last-Event-ID` 请求头续传）。
 	 */
 	events: stream({
 		path: "/tasks/:id/logs/events",
+		client: true,
 		params: IdParams,
 		query: z.object({ after_seq: z.string().optional() }),
 		events: { logs: LogChunk },
@@ -508,6 +521,7 @@ export const logsApi = {
 	/** 下载原始日志（JSONL，只含请求时已写入的内容）；运行已过保留期时 410 `expired`。 */
 	download: download({
 		path: "/tasks/:id/logs/download",
+		client: true,
 		params: IdParams,
 		contentType: "application/x-ndjson",
 	}),
@@ -515,6 +529,7 @@ export const logsApi = {
 	runPage: endpoint({
 		method: "GET",
 		path: "/runs/:id/logs",
+		client: true,
 		key: ["logs", "run-page"],
 		params: IdParams,
 		query: RunLogPageQuery,
@@ -526,6 +541,7 @@ export const logsApi = {
 	 */
 	runDownload: download({
 		path: "/runs/:id/logs/download",
+		client: true,
 		params: IdParams,
 		query: RunLogScopeQuery,
 		contentType: "application/x-ndjson",
@@ -534,14 +550,15 @@ export const logsApi = {
 	 * 按运行的实时推送（SSE，#225）：范围（`nodes`）内全部任务新写入的行，包括订阅之后才开始的任务和尝试，
 	 * 只推送 `level` 里的级别；范围和级别要与读历史时相同。`after` 用最新一页的 `live_after`。
 	 *
-	 * - `logs`：一批新行；事件 ID 是推送到的位置（不透明），浏览器原生 EventSource 断线重连时经 `Last-Event-ID`
-	 *   带回，控制面只补发之后的行，不重复也不遗漏。
+	 * - `logs`：一批新行；事件 ID 是推送到的位置（不透明），断线重连时经 `Last-Event-ID` 请求头带回
+	 *   （API 客户端的订阅自动带上），控制面只补发之后的行，不重复也不遗漏。
 	 * - `reload`：要补发的行太多（超过浏览器保留的 5000 行），不逐行补发：从最新一页重新读，再用新的 `live_after` 连接。
 	 *
 	 * 运行不存在时 404，`after` 不是 `live_after` 或事件 ID 时 400。
 	 */
 	runEvents: stream({
 		path: "/runs/:id/logs/events",
+		client: true,
 		params: IdParams,
 		query: z.object({
 			after: blankAsMissing(RunLogLiveCursor),
@@ -575,6 +592,7 @@ export const artifactsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/tasks/:id/artifacts",
+		client: true,
 		key: ["artifacts", "list"],
 		params: IdParams,
 		response: z.object({
@@ -591,13 +609,16 @@ export const artifactsApi = {
 	upload: endpoint({
 		method: "PUT",
 		path: "/tasks/:id/artifacts/*",
+		client: false,
 		key: ["artifacts", "upload"],
 		params: ArtifactParams,
+		upload: true,
 		response: ArtifactView,
 	}),
 	/** 下载一个产物（attachment）；运行已过保留期被清理时 410 `expired`。 */
 	download: download({
 		path: "/tasks/:id/artifacts/*",
+		client: true,
 		params: ArtifactParams,
 		contentType: "application/octet-stream",
 	}),

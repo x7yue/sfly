@@ -55,6 +55,7 @@ const run = (chains: ChainRunView[]): RunView => ({
 	orchestration_version: 3,
 	status: "running",
 	triggered_by: "tester",
+	triggered_via: null,
 	params: {},
 	started_at: at(0),
 	ended_at: null,
@@ -76,7 +77,7 @@ const main = chain({
 });
 
 describe("画布运行状态叠加", () => {
-	it("节点按运行里的状态叠加；准备中算执行中，排队算等待，成功算完成", () => {
+	it("节点按运行里的状态叠加；准备中算执行中，排队算待执行（中性，不是琥珀的等待），成功算完成", () => {
 		const overlay = runOverlay(
 			run([
 				chain({
@@ -101,7 +102,7 @@ describe("画布运行状态叠加", () => {
 		expect(states).toEqual([
 			"done",
 			"running",
-			"waiting",
+			"pending",
 			"failed",
 			"skipped",
 			"cancelled",

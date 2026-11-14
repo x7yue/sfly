@@ -3,7 +3,9 @@ import {
 	createEditorScenario,
 	dock,
 	edge,
+	editorDocument,
 	headOf,
+	inspector,
 	nodeCard,
 	nodePosition,
 	openEditor,
@@ -76,6 +78,106 @@ test("工具条「＋」：可搜索的菜单，新节点落在视口中心、�
 	};
 	expect(saved.document.nodes.map((n) => n.id)).toEqual([...existing, "http_check_1", "sleep_1"]);
 	expect(saved.document.edges).toHaveLength(5);
+});
+
+test("添加节点菜单：最近使用在第一组，最新在前，输入搜索词后消失；刷新后还在，所有场景共用；已锁定的包排在其他包前", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { name: "alpha-tools", version: "0.1.0" });
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const menu = addMenu(page);
+	const headings = () => menu.locator("[cmdk-group-heading]").allTextContents();
+	const recent = menu.getByRole("group", { name: "最近使用" });
+
+	await page.keyboard.press("/");
+	await expect(menu).toBeVisible();
+	await expect(recent).toHaveCount(0);
+	// 本场景锁定了 demo-checks：它排在按名称靠前的 alpha-tools 前面。
+	expect(await headings()).toEqual(["内置", "demo-checks @1.2.0", "alpha-tools @0.1.0"]);
+	await menu.getByRole("option", { name: /Sleep/ }).click();
+	await expect(menu).toHaveCount(0);
+	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+
+	await page.keyboard.press("/");
+	await expect(recent.getByRole("option")).toHaveText([/^Sleep/]);
+	await menu
+		.getByRole("group", { name: "demo-checks @1.2.0" })
+		.getByRole("option", { name: /HTTP 检查/ })
+		.click();
+	await expect(menu).toHaveCount(0);
+	await expect(nodeCard(page, "http_check_1")).toBeVisible();
+
+	// 鼠标停在上次点过的位置会让列表里被指着的那一项成为选中项，先挪开。
+	await page.mouse.move(2, 2);
+	await page.keyboard.press("/");
+	expect(await headings()).toEqual([
+		"最近使用",
+		"内置",
+		"demo-checks @1.2.0",
+		"alpha-tools @0.1.0",
+	]);
+	await expect(recent.getByRole("option")).toHaveText([
+		/^HTTP 检查demo-checks\/http_check$/,
+		/^Sleep/,
+	]);
+	await expect(recent.getByRole("option").first()).toHaveAttribute("aria-selected", "true");
+
+	const search = menu.getByRole("combobox", { name: "搜索节点类型" });
+	await search.fill("HTTP");
+	await expect(recent).toHaveCount(0);
+	await expect(menu.getByRole("option").first()).toContainText("HTTP 检查");
+	await search.fill("");
+	await expect(recent.getByRole("option")).toHaveCount(2);
+
+	await recent.getByRole("option", { name: /^Sleep/ }).click();
+	await expect(menu).toHaveCount(0);
+	await expect(nodeCard(page, "sleep_2")).toBeVisible();
+	await page.keyboard.press("/");
+	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
+	await search.fill("定时");
+	await page.keyboard.press("Escape");
+	await expect(menu).toHaveCount(0);
+	await page.keyboard.press("/");
+	await expect(search).toHaveValue("");
+	await expect(recent.getByRole("option")).toHaveCount(2);
+	await page.keyboard.press("Escape");
+
+	await page.reload();
+	await expect(nodeCard(page, "sub_ping")).toBeVisible();
+	await page.keyboard.press("/");
+	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
+	await page.keyboard.press("Escape");
+	const other = await createScenario(controlPlane, "另一个场景", editorDocument);
+	await openEditor(page, other);
+	await page.keyboard.press("/");
+	await expect(recent.getByRole("option")).toHaveText([/^Sleep/, /^HTTP 检查/]);
+	await page.keyboard.press("Enter");
+	await expect(addMenu(page)).toHaveCount(0);
+	await expect(nodeCard(page, "sleep_1")).toBeVisible();
+});
+
+test("最近使用里只留还能添加的项：存的内容不对时当作没有；包里已经没有的节点丢掉", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	const store = (value: string) =>
+		page.evaluate((v) => window.localStorage.setItem("sfly.addNode.recent", v), value);
+	const recent = () => addMenu(page).getByRole("group", { name: "最近使用" });
+
+	await page.goto("/agents");
+	await store('{"not":"a list"}');
+	await openEditor(page, id);
+	await page.keyboard.press("/");
+	await expect(addMenu(page).getByRole("group", { name: "内置" })).toBeVisible();
+	await expect(recent()).toHaveCount(0);
+
+	await store(JSON.stringify(["package:demo-checks/removed", "builtin:timer", "package:gone/x"]));
+	await openEditor(page, id);
+	await page.keyboard.press("/");
+	await expect(recent().getByRole("option")).toHaveText([/^定时/]);
 });
 
 /** 画布空白处（主链下方、子流程区域左侧）。 */
@@ -247,11 +349,13 @@ test("Tab 或 / 打开节点搜索；Esc 关闭后焦点回到原处", async ({ 
 	await closeWithEscape();
 	await expect(addButton).toBeFocused();
 
-	// 焦点在工具条按钮上时 Tab 照常切换焦点。
+	// 焦点在工具条按钮上时 Tab 照常切换焦点：工具条是一个停靠点，Tab 离开工具条，而不是走到下一个按钮。
 	await dock(page).getByRole("button", { name: "指针" }).focus();
 	await page.keyboard.press("Tab");
 	await expect(addMenu(page)).toHaveCount(0);
-	await expect(dock(page).getByRole("button", { name: "抓手" })).toBeFocused();
+	expect(
+		await page.evaluate(() => document.activeElement?.closest('[role="toolbar"]') === null),
+	).toBe(true);
 
 	// 焦点在链尾节点上按 Tab：新节点接在它后面，放在它右侧同一行。
 	await nodeCard(page, "ping").click();
@@ -468,6 +572,64 @@ test("通过 API 创建、缺少布局的场景打开时用整理布局得到初
 	expect(await nodePosition(page, "e")).toEqual({ x: 504, y: 214 });
 	// 补齐布局不算修改。
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+});
+
+test("Ctrl Enter 打开画布的运行抽屉：输入框里不触发，运行状态模式下不绑定；运行按钮的提示写着键位", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const drawer = page.getByRole("dialog", { name: "运行 · 日终数据处理" });
+
+	await nodeCard(page, "fetch").click();
+	await inspector(page).getByRole("textbox").first().focus();
+	await page.keyboard.press("Control+Enter");
+	await expect(drawer).toHaveCount(0);
+
+	await nodeCard(page, "fetch").click();
+	await page.keyboard.press("Control+Enter");
+	await expect(drawer.getByRole("list", { name: "触发前检查" })).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(drawer).toBeHidden();
+
+	await page.getByRole("button", { name: "运行", exact: true }).hover();
+	await expect(page.locator('[data-slot="tooltip-content"]')).toHaveText("运行CtrlEnter");
+
+	await switchMode(page, "run");
+	await page.keyboard.press("Control+Enter");
+	await expect(drawer).toHaveCount(0);
+});
+
+test("命令面板「当前页面」列出保存和运行；没有修改时选保存会说明；运行状态模式下没有这两项", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	const pageGroup = palette.getByRole("group", { name: "当前页面" });
+
+	await page.keyboard.press("Control+k");
+	await expect(pageGroup.getByRole("option")).toHaveText([/^保存CtrlS$/, /^运行CtrlEnter$/]);
+	await pageGroup.getByRole("option", { name: /^保存/ }).click();
+	await expect(palette).toBeHidden();
+	await expect(page.getByText("没有未保存的修改")).toBeVisible();
+
+	await page.keyboard.press("Control+k");
+	await pageGroup.getByRole("option", { name: /^运行/ }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 日终数据处理" });
+	await expect(drawer).toBeVisible();
+	await page.waitForTimeout(500);
+	expect(await drawer.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+	await page.keyboard.press("Escape");
+	// 抽屉的退场动画里焦点还在它的输入框里，等它走完再按 R，免得按键写进输入框。
+	await expect(drawer).toHaveCount(0);
+
+	await switchMode(page, "run");
+	await page.keyboard.press("Control+k");
+	await expect(palette.getByRole("combobox", { name: "命令" })).toBeFocused();
+	await expect(pageGroup).toHaveCount(0);
 });
 
 test("运行状态下画布只读：工具条不显示添加、撤销 / 重做、整理布局，对应的快捷键不生效；空白处右键菜单只有适配视图", async ({

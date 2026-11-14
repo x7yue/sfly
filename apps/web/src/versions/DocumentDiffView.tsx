@@ -96,14 +96,17 @@ export function DocumentDiffView({
 function DiffSection({ title, children }: { title: string; children: React.ReactNode }) {
 	return (
 		<section aria-label={title}>
-			<h4 className="m-0 mb-1 text-xs font-medium text-fg-3">{title}</h4>
+			<h4 className="m-0 mb-1 text-xs font-semibold text-fg-3">{title}</h4>
 			{children}
 		</section>
 	);
 }
 
 function Row({ indent = false, children }: { indent?: boolean; children: React.ReactNode }) {
-	return <div className={indent ? "py-0.5 pl-4 break-all" : "py-0.5 break-all"}>{children}</div>;
+	// 在空格处折行，只有一个串长到放不下一行时才在串内断开：路径、参数名不被拦腰截成两个词。
+	return (
+		<div className={indent ? "py-0.5 pl-4 wrap-anywhere" : "py-0.5 wrap-anywhere"}>{children}</div>
+	);
 }
 
 const Ins = ({ children }: { children: React.ReactNode }) => (

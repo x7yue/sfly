@@ -10,13 +10,17 @@ import { describe, expect, it } from "vitest";
 import {
 	applyProgress,
 	chainLabel,
+	chainLabelParts,
 	documentNodes,
 	failureSummary,
 	focusNode,
+	initialSelection,
 	latestRunView,
 	logOrigin,
 	logScope,
+	nextFailure,
 	nodeTitle,
+	progressLabel,
 	runDocumentTitle,
 	runFailure,
 } from "./run-model";
@@ -27,11 +31,17 @@ const view = (status: RunView["status"], cancelled = false): RunView => ({
 	orchestration_version: 1,
 	status,
 	triggered_by: "tester",
+	triggered_via: null,
 	params: {},
 	started_at: "2026-01-01T00:00:00.000Z",
 	ended_at: status === "running" ? null : "2026-01-01T00:00:05.000Z",
 	cancel: cancelled
-		? { requested_by: "tester", requested_at: "2026-01-01T00:00:03.000Z", forced_at: null }
+		? {
+				requested_by: "tester",
+				requested_via: null,
+				requested_at: "2026-01-01T00:00:03.000Z",
+				forced_at: null,
+			}
 		: null,
 	run_notification: null,
 	chains: [],
@@ -56,6 +66,43 @@ describe("运行视图的合并（#47）", () => {
 	});
 });
 
+describe("运行通知状态的合并（#258）", () => {
+	const notified = (status: "queued" | "delivered" | "failed" | "discarded"): RunView => ({
+		...view("failed"),
+		run_notification: {
+			status,
+			bot: "压测群",
+			reason: status === "failed" || status === "discarded" ? "投递失败的原因" : null,
+		},
+	});
+
+	it("已有结果的通知状态不被排队中的视图覆盖：投递之前生成、之后才到达的响应不改回排队中", () => {
+		for (const settled of ["delivered", "failed", "discarded"] as const) {
+			const cached = notified(settled);
+			expect(latestRunView(cached, notified("queued")).run_notification).toEqual(
+				cached.run_notification,
+			);
+		}
+	});
+
+	it("覆盖通知状态时视图的其余部分仍用新到的", () => {
+		const cached = notified("failed");
+		const next: RunView = { ...notified("queued"), orchestration_version: 2 };
+		const merged = latestRunView(cached, next);
+		expect(merged.orchestration_version).toBe(2);
+		expect(merged.run_notification).toEqual(cached.run_notification);
+	});
+
+	it("其余情况都用新到的视图：排队中变成有结果，或还没有通知状态", () => {
+		const settled = notified("delivered");
+		expect(latestRunView(notified("queued"), settled)).toBe(settled);
+		const queued = notified("queued");
+		expect(latestRunView(notified("queued"), queued)).toBe(queued);
+		expect(latestRunView(view("failed"), queued)).toBe(queued);
+		expect(latestRunView(notified("failed"), notified("failed"))).toEqual(notified("failed"));
+	});
+});
+
 describe("子流程名称（#80 故事 1、23）", () => {
 	const chain = (over: Partial<ChainRunView>): ChainRunView => ({
 		id: "6f1c2d3e-0000-4000-8000-000000000002",
@@ -76,6 +123,14 @@ describe("子流程名称（#80 故事 1、23）", () => {
 		expect(chainLabel(chain({}))).toBe("子流程 监控 · 6f1c2d3e");
 		expect(chainLabel(chain({ name: "" }))).toBe("子流程 未命名子流程 · 6f1c2d3e");
 		expect(chainLabel(chain({ depth: 0, name: null, chain_id: "entry" }))).toBe("主链");
+	});
+
+	it("链名拆成名称和实例短 ID 两段，拼起来与完整链名一致", () => {
+		const sub = chain({});
+		expect(chainLabelParts(sub)).toEqual({ name: "子流程 监控", id: "6f1c2d3e" });
+		expect(`${chainLabelParts(sub).name} · ${chainLabelParts(sub).id}`).toBe(chainLabel(sub));
+		const main = chain({ depth: 0, name: null, chain_id: "entry" });
+		expect(chainLabelParts(main)).toEqual({ name: "主链", id: null });
 	});
 
 	it("停止子流程节点的说明文字是它要停止的子流程名称", () => {
@@ -365,8 +420,127 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 	});
 
 	it("打开失败的运行默认选中第一个失败的节点；链接里给了节点时用链接里的", () => {
-		expect(focusNode(failed)).toEqual({ chainInstanceId: "main", nodeId: "verify" });
-		expect(focusNode(failed, "fetch")).toEqual({ chainInstanceId: "main", nodeId: "fetch" });
+		expect(initialSelection(failed)).toEqual({ chainInstanceId: "main", nodeId: "verify" });
+		expect(initialSelection(failed, "fetch")).toEqual({ chainInstanceId: "main", nodeId: "fetch" });
+	});
+
+	describe("下一个失败的节点（F）", () => {
+		const ref = (chainInstanceId: string, nodeId: string) => ({ chainInstanceId, nodeId });
+		const withTwoInMain: RunView = {
+			...failed,
+			chains: failed.chains.map((c) =>
+				c.id === "main"
+					? { ...c, nodes: [...c.nodes, node("report", "failed", [attempt(1, "failed", "boom")])] }
+					: c,
+			),
+		};
+
+		it("按链的层级与节点顺序依次取下一个，到末尾回到第一个", () => {
+			expect(nextFailure(withTwoInMain, ref("main", "verify"))).toEqual(ref("main", "report"));
+			expect(nextFailure(withTwoInMain, ref("main", "report"))).toEqual(ref("child", "probe"));
+			expect(nextFailure(withTwoInMain, ref("child", "probe"))).toEqual(ref("main", "verify"));
+		});
+
+		it("没有选中、或选中的不是失败的节点时，从第一个失败的节点开始", () => {
+			expect(nextFailure(withTwoInMain, null)).toEqual(ref("main", "verify"));
+			expect(nextFailure(withTwoInMain, ref("main", "fetch"))).toEqual(ref("main", "verify"));
+		});
+
+		it("只有一个失败的节点时回到它自己；没有失败的节点时为 null", () => {
+			const single: RunView = { ...failed, chains: failed.chains.filter((c) => c.id === "main") };
+			expect(nextFailure(single, ref("main", "verify"))).toEqual(ref("main", "verify"));
+			expect(nextFailure(view("success"), null)).toBeNull();
+		});
+	});
+
+	describe("运行中的运行", () => {
+		const running = (status: RunView["status"]): RunView => ({
+			...view(status),
+			chains: [
+				chain("main", 0, [
+					node("fetch", "success", [attempt(1, "success")]),
+					node("load", "running", [{ ...attempt(1, "running"), ended_at: null }]),
+					node("report", "pending"),
+				]),
+			],
+		});
+
+		it("没有链接节点也没有失败的节点：不默认选中，日志显示全部节点合并后的内容", () => {
+			expect(initialSelection(running("running"))).toBeNull();
+		});
+
+		it("链接里的节点优先；运行里没有这个节点时当作没给", () => {
+			expect(initialSelection(running("running"), "load")).toEqual({
+				chainInstanceId: "main",
+				nodeId: "load",
+			});
+			expect(initialSelection(running("running"), "不存在的节点")).toBeNull();
+		});
+
+		it("运行中已有失败的节点时选中它，而不是还在执行的节点", () => {
+			const run = running("running");
+			const [main] = run.chains;
+			if (!main) throw new Error("没有主链");
+			const withFailure: RunView = {
+				...run,
+				chains: [
+					{
+						...main,
+						nodes: [...main.nodes, node("verify", "failed", [attempt(1, "failed", "boom")])],
+					},
+				],
+			};
+			expect(initialSelection(withFailure)).toEqual({ chainInstanceId: "main", nodeId: "verify" });
+		});
+
+		it("运行抽屉的摘要仍然回退到执行中的节点", () => {
+			expect(focusNode(running("running"))).toEqual({ chainInstanceId: "main", nodeId: "load" });
+		});
+	});
+
+	describe("节点的进度", () => {
+		const progress = (current: number, total: number | null) => ({
+			current,
+			total,
+			message: "",
+			time: null,
+			agent_time: null,
+		});
+		const withProgress = (...attempts: AttemptView[]) => node("noise", "running", attempts);
+
+		it("有总数时是 current/total，总数未知时只有当前值", () => {
+			expect(
+				progressLabel(withProgress({ ...attempt(1, "running"), progress: progress(308, 3000) })),
+			).toBe("308/3000");
+			expect(
+				progressLabel(withProgress({ ...attempt(1, "running"), progress: progress(12, null) })),
+			).toBe("12");
+		});
+
+		it("没有进度的节点（没有尝试、没有上报）为 null", () => {
+			expect(progressLabel(node("report", "pending"))).toBeNull();
+			expect(progressLabel(withProgress(attempt(1, "running")))).toBeNull();
+		});
+
+		it("取最新一次尝试的进度，不沿用之前尝试的", () => {
+			const retried = withProgress(
+				{ ...attempt(1, "failed"), progress: progress(2999, 3000) },
+				attempt(2, "running"),
+			);
+			expect(progressLabel(retried)).toBeNull();
+			const resumed = withProgress(
+				{ ...attempt(1, "failed"), progress: progress(2999, 3000) },
+				{ ...attempt(2, "running"), progress: progress(5, 3000) },
+			);
+			expect(progressLabel(resumed)).toBe("5/3000");
+		});
+
+		it("节点结束后仍显示最后一次上报的进度", () => {
+			const done = node("noise", "success", [
+				{ ...attempt(1, "success"), progress: progress(3000, 3000) },
+			]);
+			expect(progressLabel(done)).toBe("3000/3000");
+		});
 	});
 
 	it("标签页标题带运行状态与场景名", () => {

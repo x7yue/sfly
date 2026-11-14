@@ -3,6 +3,12 @@ import { cn } from "cn";
 import { ChevronRightIcon } from "lucide-react";
 import { createContext, type ReactNode, useContext, useMemo, useRef } from "react";
 import { Kbd } from "@/components/ui/kbd";
+import {
+	MENU_POPUP_CLASS,
+	MenuItemText,
+	type MenuItemVariant,
+	menuItemClass,
+} from "@/components/ui/menu-item";
 import { type ShortcutId, shortcutById, shortcutKeys } from "@/lib/shortcuts";
 
 /**
@@ -90,10 +96,7 @@ function ContextMenu({
 							if (picked.current) return false;
 							return opener.current?.isConnected ? opener.current : false;
 						}}
-						className={cn(
-							"z-50 max-h-(--available-height) min-w-52 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-border-strong bg-raised p-1 text-fg-1 shadow-pop duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-							className,
-						)}
+						className={cn(MENU_POPUP_CLASS, "min-w-52", className)}
 					>
 						<PickContext.Provider value={pick}>{children}</PickContext.Provider>
 					</MenuPrimitive.Popup>
@@ -102,9 +105,6 @@ function ContextMenu({
 		</MenuPrimitive.Root>
 	);
 }
-
-const ITEM_CLASS =
-	"flex cursor-default items-center gap-3 rounded-md px-2 py-1 text-sm outline-hidden select-none data-highlighted:bg-raised-2 data-disabled:cursor-not-allowed data-disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4";
 
 /** 菜单项右侧的快捷键（来自注册表）。 */
 function ShortcutKeys({ id }: { id: ShortcutId }) {
@@ -138,7 +138,7 @@ function ContextMenuItem({
 }: MenuPrimitive.Item.Props & {
 	shortcut?: ShortcutId;
 	disabledReason?: string | null | undefined;
-	variant?: "default" | "danger";
+	variant?: MenuItemVariant;
 }) {
 	const pick = useContext(PickContext);
 	const reason = disabledReason || undefined;
@@ -146,14 +146,13 @@ function ContextMenuItem({
 		<MenuPrimitive.Item
 			data-slot="context-menu-item"
 			disabled={disabled || reason !== undefined}
-			className={cn(ITEM_CLASS, variant === "danger" && "text-danger-fg", className)}
+			className={menuItemClass(variant, className)}
 			onClick={(event) => pick(() => onClick?.(event))}
 			{...props}
 		>
-			<span className="flex min-w-0 flex-col">
-				<span>{children ?? (shortcut ? shortcutById(shortcut).label : null)}</span>
-				{reason && <span className="text-2xs">{reason}</span>}
-			</span>
+			<MenuItemText reason={reason}>
+				{children ?? (shortcut ? shortcutById(shortcut).label : null)}
+			</MenuItemText>
 			{shortcut && <ShortcutKeys id={shortcut} />}
 		</MenuPrimitive.Item>
 	);
@@ -186,13 +185,10 @@ function ContextMenuSubTrigger({
 		<MenuPrimitive.SubmenuTrigger
 			data-slot="context-menu-sub-trigger"
 			disabled={disabled || reason !== undefined}
-			className={cn(ITEM_CLASS, "data-popup-open:bg-raised-2", className)}
+			className={menuItemClass("default", className)}
 			{...props}
 		>
-			<span className="flex min-w-0 flex-col">
-				<span>{children}</span>
-				{reason && <span className="text-2xs">{reason}</span>}
-			</span>
+			<MenuItemText reason={reason}>{children}</MenuItemText>
 			<ChevronRightIcon className="ml-auto text-fg-3" />
 		</MenuPrimitive.SubmenuTrigger>
 	);
@@ -209,10 +205,7 @@ function ContextMenuSubContent({ className, ...props }: MenuPrimitive.Popup.Prop
 			>
 				<MenuPrimitive.Popup
 					data-slot="context-menu-sub-content"
-					className={cn(
-						"z-50 max-h-(--available-height) min-w-40 origin-(--transform-origin) overflow-x-hidden overflow-y-auto rounded-lg border border-border-strong bg-raised p-1 text-fg-1 shadow-pop duration-100 outline-none data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-						className,
-					)}
+					className={cn(MENU_POPUP_CLASS, "min-w-40", className)}
 					{...props}
 				/>
 			</MenuPrimitive.Positioner>

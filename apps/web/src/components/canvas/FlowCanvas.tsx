@@ -38,10 +38,12 @@ import {
 	LOD_THRESHOLD,
 	MAX_ZOOM,
 	MIN_ZOOM,
+	MINIMAP_SIZE,
 	NODE_HEIGHT,
 	NODE_WIDTH,
 	RECONNECT_RADIUS,
 } from "./geometry";
+import { VIEWPORT_MS, viewportDuration } from "./motion";
 import { nodeTypes } from "./NodeCard";
 import { isNavigationKey, navigateChain } from "./navigation";
 import { SubflowRegions } from "./SubflowRegions";
@@ -94,6 +96,11 @@ export interface FlowCanvasProps {
 	/** 打开时是否显示小地图（默认显示；版本对比的窄画布默认收起）。 */
 	initialMinimap?: boolean;
 	/**
+	 * 画布容器变大变小时重新适配视图，直到用户在画布上点击、滚轮或按键（默认只在打开时和窗口变化时适配）。
+	 * 版本对比用：两个版本的数据先后到达，上方的差异摘要出现后画布变矮，先打开的那个要跟着重新居中。
+	 */
+	refitOnResize?: boolean;
+	/**
 	 * 右键菜单的内容（`ContextMenuItem` 等，见 ui/context-menu），按右键的对象给出；
 	 * 不给时空白处的菜单只有「适配视图」（只读画布），节点上不弹菜单。
 	 * 节点菜单用鼠标右键或焦点在节点上按 Shift+F10 / 菜单键打开。
@@ -113,7 +120,7 @@ export interface FlowCanvasProps {
 	>;
 	dockStart?: ReactNode;
 	dockTools?: ReactNode;
-	/** 悬浮在画布上的控件（左上、右上的控件组、检查器……）。 */
+	/** 悬浮在画布上、Tab 顺序排在画布与工具条之后的控件（检查器）；要先于画布获得焦点的（顶栏）放在 FlowCanvas 前面。 */
 	children?: ReactNode;
 }
 
@@ -140,6 +147,7 @@ export function FlowCanvas({
 	onEnter,
 	inspector,
 	initialMinimap = true,
+	refitOnResize = false,
 	menu,
 	onDeleteNode,
 	onInsertOnEdge,
@@ -213,7 +221,7 @@ export function FlowCanvas({
 		[area],
 	);
 	const fit = useCallback(() => {
-		void flow.fitView({ ...fitOptions, duration: 200 });
+		void flow.fitView({ ...fitOptions, duration: viewportDuration(VIEWPORT_MS) });
 	}, [flow, fitOptions]);
 	const canEdit = editable && tool === "pointer";
 
@@ -287,6 +295,24 @@ export function FlowCanvas({
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
 	}, [flow]);
+	const touched = useRef(false);
+	const touch = () => {
+		touched.current = true;
+	};
+	useEffect(() => {
+		const el = wrapper.current;
+		if (!refitOnResize || !el) return;
+		let initial = true;
+		const observer = new ResizeObserver(() => {
+			if (initial) {
+				initial = false;
+				return;
+			}
+			if (!touched.current) void flow.fitView(fitRef.current);
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [flow, refitOnResize]);
 
 	/** 节点不在可见区域（扣掉悬浮控件）里时，把它移到可见区域中央。 */
 	const reveal = useCallback(
@@ -314,7 +340,7 @@ export function FlowCanvas({
 					y: cy - (ny + NODE_HEIGHT / 2) * zoom,
 					zoom,
 				},
-				{ duration: 200 },
+				{ duration: viewportDuration(VIEWPORT_MS) },
 			);
 		},
 		[flow, area],
@@ -414,12 +440,17 @@ export function FlowCanvas({
 				onBlur={(e) => {
 					if (e.target === e.currentTarget) delete e.currentTarget.dataset.pointerFocus;
 				}}
+				onPointerDownCapture={touch}
+				onWheelCapture={touch}
+				onKeyDownCapture={touch}
 				data-lod={false}
 				data-tool={tool}
 				style={{ "--canvas-zoom": 1 } as React.CSSProperties}
 				className={cn(
-					// 画布铺满视口：焦点环画在内侧（DESIGN-SYSTEM §7）。
+					// 画布铺满视口，焦点环画在内侧（DESIGN-SYSTEM §7）。React Flow、工具条和检查器会盖住画布区域自己的轮廓，
+					// 所以焦点环再画在最上层的 ::after 上。
 					"absolute inset-0 overflow-hidden bg-canvas-bg -outline-offset-2",
+					"after:pointer-events-none after:absolute after:inset-0 after:z-20 focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring",
 					"[&_.react-flow__viewport-portal]:pointer-events-none",
 					"data-[tool=hand]:[&_.react-flow__pane]:cursor-grab data-[tool=hand]:[&_.react-flow__node]:cursor-grab",
 				)}
@@ -475,6 +506,8 @@ export function FlowCanvas({
 					edgesReconnectable={canEdit}
 					reconnectRadius={RECONNECT_RADIUS}
 					{...(canEdit ? (reconnect ?? {}) : {})}
+					// 键盘焦点只有一种走法：Tab 停在画布区域，方向键选中节点并把焦点移到节点卡片上。
+					nodesFocusable={false}
 					edgesFocusable={false}
 					elementsSelectable
 					selectNodesOnDrag={false}
@@ -505,14 +538,18 @@ export function FlowCanvas({
 							pannable
 							zoomable
 							className="m-0! mb-3.5! ml-3! overflow-hidden rounded-xl border border-border-soft shadow-float"
-							style={{ width: 188, height: 118 }}
+							style={{ ...MINIMAP_SIZE }}
 							bgColor="var(--surface)"
 							maskColor="var(--canvas-minimap-mask)"
 							maskStrokeColor="var(--fg-3)"
 							maskStrokeWidth={2}
 							nodeBorderRadius={12}
-							nodeColor={(n) => minimapColor(decorateNode?.(n.id, n.data.node)?.run)}
-							nodeStrokeColor={(n) => (n.id === selectedId ? "var(--selected)" : "transparent")}
+							nodeColor={(n) => minimapLook(decorateNode?.(n.id, n.data.node)?.run).fill}
+							nodeStrokeColor={(n) =>
+								n.id === selectedId
+									? "var(--selected)"
+									: minimapLook(decorateNode?.(n.id, n.data.node)?.run).stroke
+							}
 							nodeStrokeWidth={8}
 						/>
 					)}
@@ -551,20 +588,20 @@ const MENU_LABEL: Record<CanvasMenuTarget["kind"], string> = {
 };
 
 /** 小地图上节点的颜色：编辑模式统一灰色，运行状态（#41）按状态着色。 */
-function minimapColor(run: NodeDecoration["run"]): string {
+function minimapLook(run: NodeDecoration["run"]): { fill: string; stroke: string } {
 	switch (run) {
 		case "running":
-			return "var(--canvas-run-running)";
+			return { fill: "var(--signal-fill)", stroke: "var(--signal-line)" };
 		case "failed":
-			return "var(--canvas-run-failed)";
+			return { fill: "var(--danger-fill)", stroke: "transparent" };
 		case "done":
-			return "var(--ok)";
+			return { fill: "var(--ok-fill)", stroke: "transparent" };
 		case "waiting":
-			return "var(--warn)";
+			return { fill: "var(--warn-fill)", stroke: "var(--warn-line)" };
 		case "stopped":
-			return "var(--canvas-run-stopped)";
+			return { fill: "var(--stopped-fill)", stroke: "var(--stopped)" };
 		default:
-			return "var(--canvas-edge)";
+			return { fill: "var(--canvas-edge)", stroke: "transparent" };
 	}
 }
 

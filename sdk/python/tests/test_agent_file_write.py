@@ -1,4 +1,4 @@
-"""Agent 能力 files.write 的本地调试（`sfly.testing.run_node`、`sfly run`）和 SDK 发出的数据帧。
+"""Agent 能力 files.write 的本地调试（`sfly.testing.run_node`、`sfly debug`）和 SDK 发出的数据帧。
 
 本地调试没有 Agent：`ctx.agent()` 直接写本机的文件系统，其它 Agent 由测试工具映射到
 本地目录，行为与 Agent 上一致（agent/tests/file_write.rs）。经本地 socket 发出的请求和数据帧
@@ -202,7 +202,7 @@ def test_errors_tell_apart_missing_directories_directories_and_permissions(tmp_p
         assert sorted(os.listdir(locked)) == ["app.log"]
 
 
-def test_sfly_run_writes_to_an_agent_mapped_to_a_local_directory(tmp_path: Path) -> None:
+def test_sfly_debug_writes_to_an_agent_mapped_to_a_local_directory(tmp_path: Path) -> None:
     project = tmp_path / "project"
     shutil.copytree(PACKAGE, project, ignore=shutil.ignore_patterns("__pycache__", "dist"))
     source = tmp_path / "source"
@@ -211,7 +211,7 @@ def test_sfly_run_writes_to_an_agent_mapped_to_a_local_directory(tmp_path: Path)
     done = subprocess.run(
         [
             SFLY,
-            "run",
+            "debug",
             "write_file",
             "--params",
             '{"source": "fs-source", "path": "/srv/done.flag", "text": "ok"}',

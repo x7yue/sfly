@@ -10,10 +10,10 @@ import {
 } from "@sfly/schema";
 import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
-import { BarChart3Icon, ChevronDownIcon, ChevronRightIcon, SearchIcon } from "lucide-react";
+import { BarChart3Icon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
-import { StatusPill } from "#/components/status";
+import { STATUS, StatusPill } from "#/components/status";
 import { formatDuration } from "#/lib/format";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	buildGroups,
 	type ChartGroup,
+	chartCountText,
 	failedFirst,
 	groupHasData,
 	isActive,
@@ -40,7 +41,7 @@ import type { TimeRange } from "./timeline-model";
 import {
 	attemptsSignature,
 	seriesQuery,
-	useMetricCatalog,
+	type useMetricCatalog,
 	usePlatformMetrics,
 } from "./use-run-metrics";
 
@@ -58,15 +59,23 @@ const iso = (ms: number) => new Date(ms).toISOString();
  * 每个上报指标的包节点一组，按链上的执行顺序（运行里有失败的节点时失败的组排在最前），组标题显示状态、名称、主指标的最新值与迷你趋势、图表数与 Agent；
  * 平台自带图表是最后一组。默认只展开执行中与失败的组，打开页面时滚到第一个执行中或失败的组（或选中的节点）；
  * 选中节点时展开它的组、滚到可见处，并在组内顶部显示节点摘要。悬停、缩放、日志标记与时间线共享（monitor-state.tsx）。
+ * compact（没有任何节点有图表，见 chartsCompact）：没有工具栏，只有一行说明和折叠的平台自带图表，高度随内容，剩下的高度归底部面板。
  */
-export function ChartWorkspace({ run }: { run: RunView }) {
+export function ChartWorkspace({
+	run,
+	catalog,
+	compact,
+}: {
+	run: RunView;
+	catalog: ReturnType<typeof useMetricCatalog>;
+	compact: boolean;
+}) {
 	const { range, live, now } = useTimeAxis();
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
 	const selected = useMonitor((s) => s.selected);
 	const actions = useMonitorActions();
 	const signature = useMemo(() => attemptsSignature(run), [run]);
-	const catalog = useMetricCatalog(run.id, signature);
 	const platform = usePlatformMetrics(run.id, signature, live);
 	// 重试过的节点要看的尝试（默认最新一次）。
 	const [chosen, setChosen] = useState<Record<string, number>>({});
@@ -208,64 +217,69 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 		<section
 			ref={scroller}
 			aria-label="图表工作区"
-			className="relative min-h-60 flex-1 overflow-auto px-3 pb-7"
+			className={cn(
+				"relative overflow-auto px-3",
+				// 高度按内容取：图表少的时候多出来的高度归底部面板（日志），图表多的时候这里滚动。
+				compact ? "flex-initial pt-2 pb-2.5" : "min-h-60 flex-initial pb-7",
+			)}
 		>
-			<div
-				ref={toolbar}
-				role="toolbar"
-				aria-label="图表工具栏"
-				className="sticky top-0 z-4 -mx-3 mb-2.5 flex flex-wrap items-center gap-2 border-b border-border-soft bg-bg px-3 pt-2.5 pb-2"
-			>
-				<NodeFilter
-					label={filterLabel}
-					groups={groups}
-					filter={filter}
-					hasData={(g) => groupHasData(g, seriesByGroup.get(g.key)?.loaded ?? [])}
-					onChange={(next) => changeFilter(next)}
-				/>
-				{filter && (
-					<Button variant="ghost" size="sm" onClick={() => changeFilter(null)}>
-						清除筛选
-					</Button>
-				)}
-				<span className="text-xs text-fg-3" data-testid="chart-count">
-					{shown.length} 个节点 · {chartCount} 张图表
-					{filter ? "" : ` · 共 ${groups.length} 个节点声明了图表`}
-				</span>
-				<div className="relative w-55">
-					<SearchIcon
-						aria-hidden
-						className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-fg-3"
+			{!compact && (
+				<div
+					ref={toolbar}
+					role="toolbar"
+					aria-label="图表工具栏"
+					className="sticky top-0 z-4 -mx-3 mb-2.5 flex flex-wrap items-center gap-2 border-b border-border-soft bg-bg px-3 pt-2.5 pb-2"
+				>
+					<NodeFilter
+						label={filterLabel}
+						groups={groups}
+						filter={filter}
+						hasData={(g) => groupHasData(g, seriesByGroup.get(g.key)?.loaded ?? [])}
+						onChange={(next) => changeFilter(next)}
 					/>
-					<Input
-						aria-label="搜索图表或节点"
-						placeholder="搜索图表或节点"
-						value={search}
-						onChange={(e) => {
-							setSearch(e.target.value);
-							setOpened({});
-						}}
-						className="h-6.5 pl-7 text-xs"
+					{filter && (
+						<Button variant="ghost" size="sm" onClick={() => changeFilter(null)}>
+							清除筛选
+						</Button>
+					)}
+					<span className="text-xs text-fg-3" data-testid="chart-count">
+						{chartCountText(shown.length, chartCount, showPlatform)}
+					</span>
+					<div className="relative w-55">
+						<SearchIcon
+							aria-hidden
+							className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-fg-3"
+						/>
+						<Input
+							aria-label="搜索图表或节点"
+							placeholder="搜索图表或节点"
+							value={search}
+							onChange={(e) => {
+								setSearch(e.target.value);
+								setOpened({});
+							}}
+							className="h-6.5 pl-7 text-xs"
+						/>
+					</div>
+					<span className="flex-1" />
+					<Button variant="ghost" size="sm" onClick={() => setAll(true)}>
+						全部展开
+					</Button>
+					<Button variant="ghost" size="sm" onClick={() => setAll(false)}>
+						全部折叠
+					</Button>
+					<Segmented
+						label="图表密度"
+						value={density}
+						onChange={setDensity}
+						options={[
+							{ value: "standard", label: "标准" },
+							{ value: "compact", label: "紧凑" },
+						]}
+						className="h-6.5"
 					/>
 				</div>
-				<span className="flex-1" />
-				<Button variant="ghost" size="sm" onClick={() => setAll(true)}>
-					全部展开
-				</Button>
-				<Button variant="ghost" size="sm" onClick={() => setAll(false)}>
-					全部折叠
-				</Button>
-				<Segmented
-					label="图表密度"
-					value={density}
-					onChange={setDensity}
-					options={[
-						{ value: "standard", label: "标准" },
-						{ value: "compact", label: "紧凑" },
-					]}
-					className="h-6.5"
-				/>
-			</div>
+			)}
 
 			{catalog.error && !catalog.data ? (
 				<ErrorState
@@ -280,9 +294,11 @@ export function ChartWorkspace({ run }: { run: RunView }) {
 					<Skeleton className="h-10 w-full" />
 				</output>
 			) : catalog.data.expired ? (
-				<Notice>这次运行的指标数据已超过保留期，已被清理。</Notice>
+				<Notice compact={compact}>这次运行的指标数据已超过保留期，已被清理。</Notice>
 			) : groups.length === 0 ? (
-				<Notice>这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。</Notice>
+				<Notice compact={compact}>
+					这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。
+				</Notice>
 			) : shown.length === 0 && !showPlatform ? (
 				<Notice>没有匹配的图表。</Notice>
 			) : null}
@@ -346,9 +362,14 @@ const requestKey = (r: SeriesRequest) => `${r.group.key}\u0000${r.metrics.join("
 
 const noSeries = (): GroupSeries => ({ primary: undefined, charts: new Map(), loaded: [] });
 
-function Notice({ children }: { children: React.ReactNode }) {
+function Notice({ children, compact }: { children: React.ReactNode; compact?: boolean }) {
 	return (
-		<div className="mb-2.5 flex items-center gap-2 rounded-xl border border-border-soft bg-surface px-4 py-6 text-sm text-fg-3">
+		<div
+			className={cn(
+				"flex items-center gap-2 text-sm text-fg-3",
+				compact ? "mb-2 px-1" : "mb-2.5 rounded-xl border border-border-soft bg-surface px-4 py-6",
+			)}
+		>
 			<BarChart3Icon aria-hidden className="size-4.5 flex-none" />
 			{children}
 		</div>
@@ -376,7 +397,8 @@ function GroupShell({
 	open,
 	onToggle,
 	header,
-	actions,
+	attempts,
+	only,
 	children,
 }: {
 	groupKey: string;
@@ -385,7 +407,8 @@ function GroupShell({
 	open: boolean;
 	onToggle: (open: boolean) => void;
 	header: React.ReactNode;
-	actions?: React.ReactNode;
+	attempts?: React.ReactNode;
+	only?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	return (
@@ -403,15 +426,18 @@ function GroupShell({
 					className="flex h-8 min-w-0 flex-1 items-center gap-2 pl-3 text-left text-sm whitespace-nowrap"
 				>
 					<span className="grid w-3.5 flex-none place-items-center text-fg-3">
-						{open ? (
-							<ChevronDownIcon className="size-3.5" />
-						) : (
-							<ChevronRightIcon className="size-3.5" />
-						)}
+						<ChevronRightIcon
+							className="size-3.5 transition-[rotate] duration-(--motion-base) ease-(--motion-ease-out) motion-reduce:transition-none"
+							style={{ rotate: open ? "90deg" : "0deg" }}
+						/>
 					</span>
 					{header}
 				</button>
-				{actions}
+				{/* 右侧两栏的位置固定（没有尝试选择器、没有「只看」时留空），各组的右侧信息竖着对齐 */}
+				<div className="flex flex-none items-center gap-2">
+					<div className="w-34">{attempts}</div>
+					<div className="w-11">{only}</div>
+				</div>
 			</div>
 			{open && children}
 		</section>
@@ -479,9 +505,9 @@ function NodeGroup({
 				<>
 					<StatusPill kind={status.kind}>{status.label}</StatusPill>
 					<span className="flex-none font-mono font-medium">{node.node_id}</span>
-					<span className="min-w-0 truncate text-fg-2">{title}</span>
+					<span className="min-w-0 truncate font-mono text-fg-2">{title}</span>
 					{group.chainName && (
-						<span className="flex-none text-2xs text-fg-3" title={chainLabel(chain)}>
+						<span className="flex-none text-xs text-fg-3" title={chainLabel(chain)}>
 							{group.chainName}
 						</span>
 					)}
@@ -493,39 +519,39 @@ function NodeGroup({
 					)}
 					<span className="flex-1" />
 					<DataLossBadges loss={loss} />
-					<span className="flex-none text-xs text-fg-3">{charts.length} 张图表</span>
-					<span className="flex-none font-mono text-2xs text-fg-3">{node.agent ?? ""}</span>
+					<span className={GROUP_COUNT}>{charts.length} 张图表</span>
+					<span className={GROUP_AGENT}>{node.agent ?? ""}</span>
 				</>
 			}
-			actions={
-				<>
-					{entry.attempts.length > 1 && (
-						<NativeSelect
-							aria-label={`${node.node_id} 的尝试`}
-							title="切换查看这个节点的每次尝试"
-							className="w-34 flex-none [&_select]:h-6.5 [&_select]:text-xs"
-							value={String(attempt.attempt)}
-							onChange={(e) => onAttempt(Number(e.target.value))}
-						>
-							{entry.attempts.map((a, i) => (
-								<NativeSelectOption key={a.task_id} value={String(a.attempt)}>
-									第 {a.attempt} 次{i === entry.attempts.length - 1 ? "（最新）" : ""}
-								</NativeSelectOption>
-							))}
-						</NativeSelect>
-					)}
-					{onlyThis && (
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={onlyThis}
-							aria-label={`只看 ${node.node_id}`}
-							title="只看这个节点的图表"
-						>
-							只看
-						</Button>
-					)}
-				</>
+			attempts={
+				entry.attempts.length > 1 && (
+					<NativeSelect
+						aria-label={`${node.node_id} 的尝试`}
+						title="切换查看这个节点的每次尝试"
+						className="w-full [&_select]:h-6.5 [&_select]:text-xs"
+						value={String(attempt.attempt)}
+						onChange={(e) => onAttempt(Number(e.target.value))}
+					>
+						{entry.attempts.map((a, i) => (
+							<NativeSelectOption key={a.task_id} value={String(a.attempt)}>
+								第 {a.attempt} 次{i === entry.attempts.length - 1 ? "（最新）" : ""}
+							</NativeSelectOption>
+						))}
+					</NativeSelect>
+				)
+			}
+			only={
+				onlyThis && (
+					<Button
+						variant="ghost"
+						size="sm"
+						onClick={onlyThis}
+						aria-label={`只看 ${node.node_id}`}
+						title="只看这个节点的图表"
+					>
+						只看
+					</Button>
+				)
 			}
 		>
 			<div
@@ -537,6 +563,7 @@ function NodeGroup({
 						<NodeSummary group={group} now={now} />
 					</div>
 				)}
+				<LossNotes loss={loss} />
 				{charts.map((chart) => {
 					const result = series.charts.get(chart.title);
 					return (
@@ -550,6 +577,8 @@ function NodeGroup({
 							window={window}
 							empty={empty(result?.isPending ?? true)}
 							dense={dense}
+							// 只有一张图表时不横贯整行：1920 宽下 1870 × 150 的一条线看不出斜率
+							className={charts.length === 1 ? "max-w-[max(50%,720px)]" : undefined}
 							truncated={loss.truncated}
 							notice={
 								loss.series_capped && chart.metrics.some((m) => labeled.has(m)) ? (
@@ -564,10 +593,18 @@ function NodeGroup({
 	);
 }
 
+/** 组标题右侧两栏的宽度固定：几张图表、在哪台 Agent 上，各组竖着对齐。 */
+const GROUP_COUNT = "w-16 flex-none text-right text-xs text-fg-3";
+const GROUP_AGENT = "w-28 flex-none truncate text-right font-mono text-2xs text-fg-3";
+
+const LOSS_TRUNCATED = "指标数据超过单个任务的上限，之后的点已被丢弃";
+const LOSS_SERIES_CAPPED = `序列数超过单个任务的上限（${MAX_SERIES} 个），之后新出现的序列的点已被丢弃，已有序列照常上报`;
+const LOSS_DROPPED = "被丢弃的点：Agent 断线期间排队超过上限、标签与声明不一致或序列超限";
+
 /** 「序列超限」提示（组标题与引用了带标签指标的图表上，与「截断」提示一致）。 */
 const SERIES_CAPPED = {
 	variant: "warn",
-	title: `序列数超过单个任务的上限（${MAX_SERIES} 个），之后新出现的序列的点已被丢弃，已有序列照常上报`,
+	title: LOSS_SERIES_CAPPED,
 	children: "序列超限",
 } as const;
 
@@ -576,20 +613,37 @@ function DataLossBadges({ loss }: { loss: MetricDataLoss }) {
 	return (
 		<>
 			{loss.truncated && (
-				<Badge variant="warn" title="指标数据超过单个任务的上限，之后的点已被丢弃">
+				<Badge variant="warn" title={LOSS_TRUNCATED}>
 					数据已截断
 				</Badge>
 			)}
 			{loss.series_capped && <Badge {...SERIES_CAPPED} />}
 			{loss.dropped_points > 0 && (
-				<Badge
-					variant="warn"
-					title="被丢弃的点：Agent 断线期间排队超过上限、标签与声明不一致或序列超限"
-				>
+				<Badge variant="warn" title={LOSS_DROPPED}>
 					丢弃 {loss.dropped_points} 个点
 				</Badge>
 			)}
 		</>
+	);
+}
+
+/** 数据缺失的说明：会影响怎么读图表，不能只放在悬停提示里（键盘、触屏拿不到），写在分组的图表上方。 */
+function LossNotes({ loss }: { loss: MetricDataLoss }) {
+	const notes = [
+		loss.truncated && LOSS_TRUNCATED,
+		loss.series_capped && LOSS_SERIES_CAPPED,
+		loss.dropped_points > 0 && `${LOSS_DROPPED}（共 ${loss.dropped_points} 个）`,
+	].filter((note): note is string => note !== false);
+	if (notes.length === 0) return null;
+	return (
+		<ul
+			aria-label="指标数据缺失说明"
+			className="col-span-full m-0 flex list-none flex-col gap-0.5 p-0 text-xs text-warn-fg"
+		>
+			{notes.map((note) => (
+				<li key={note}>{note}</li>
+			))}
+		</ul>
 	);
 }
 
@@ -602,15 +656,12 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 	const progress = latest?.progress;
 	const item = (label: string, value: React.ReactNode) => (
 		<div className="min-w-0">
-			<div className="text-2xs text-fg-3">{label}</div>
+			<div className="text-xs text-fg-3">{label}</div>
 			<div className="font-mono text-xs">{value}</div>
 		</div>
 	);
 	return (
-		<div
-			data-testid="node-summary"
-			className="flex flex-wrap items-center gap-6 rounded-lg border border-border-soft bg-bg px-3.5 py-2.5"
-		>
+		<div data-testid="node-summary" className="flex flex-wrap items-center gap-6 px-1 py-1">
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
 			{item("节点类型", `${entry.package}/${entry.node}@${entry.version}`)}
 			{item("Agent", node.agent ?? "—")}
@@ -618,7 +669,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			{item("尝试", node.attempts.length)}
 			{progress && (
 				<div className="min-w-45">
-					<div className="text-2xs text-fg-3">进度</div>
+					<div className="text-xs text-fg-3">进度</div>
 					<div className="font-mono text-xs">
 						{progress.current}
 						{progress.total === null ? "" : ` / ${progress.total}`}
@@ -630,7 +681,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			)}
 			{node.error && (
 				<div className="min-w-0">
-					<div className="text-2xs text-fg-3">错误</div>
+					<div className="text-xs text-fg-3">错误</div>
 					<div className="flex items-center gap-1.5 text-xs">
 						<Badge variant="danger">{node.error.kind}</Badge>
 						<span className="truncate text-danger-fg">{node.error.message.split("\n\n")[0]}</span>
@@ -688,12 +739,13 @@ function PlatformGroup({
 			header={
 				<>
 					<Badge>平台</Badge>
-					<span className="font-medium">平台自带图表</span>
+					<span className="font-semibold">平台自带图表</span>
 					<span className="min-w-0 truncate text-xs text-fg-3">
 						节点耗时 · 槽位 · 并发 · 重试，不需要节点注册
 					</span>
 					<span className="flex-1" />
-					<span className="text-xs text-fg-3">{PLATFORM_CHARTS} 张图表</span>
+					<span className={GROUP_COUNT}>{PLATFORM_CHARTS} 张图表</span>
+					<span aria-hidden className={GROUP_AGENT} />
 				</>
 			}
 		>
@@ -750,7 +802,7 @@ function PlatformGroup({
 	);
 }
 
-/** 节点耗时 Top 10：条长为总耗时（含排队与等待），斜纹部分是排队与等待。 */
+/** 节点耗时 Top 10：条长为总耗时（含排队与等待）。 */
 function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | undefined }) {
 	const statusOf = new Map(
 		run.chains.flatMap((c) => c.nodes.map((n) => [`${c.id}:${n.node_id}`, n.status])),
@@ -774,29 +826,42 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 					{data ? "还没有节点开始执行。" : "正在加载…"}
 				</p>
 			) : (
-				<ol className="m-0 mt-1.5 grid list-none grid-cols-[140px_1fr_64px] items-center gap-x-2.5 gap-y-1 p-0 text-xs">
+				<ol
+					data-viz
+					className="m-0 mt-1.5 grid list-none grid-cols-[140px_1fr_64px] items-center gap-x-2.5 gap-y-1 p-0 text-xs"
+				>
 					{nodes.map((n) => {
 						const status = statusOf.get(`${n.chain_instance_id}:${n.node_id}`) ?? "";
-						const waited = n.queue_ms + n.wait_ms;
+						const bar =
+							STATUS[isOnAgentStatus(status) ? "running" : status === "failed" ? "failed" : "ok"]
+								.area;
+						const queued = STATUS.queued.area;
+						const waiting = STATUS.warn.area;
 						return (
 							<li key={`${n.chain_instance_id}:${n.node_id}`} className="contents">
 								<span className="truncate font-mono text-fg-2">{n.node_id}</span>
 								<span className="relative h-2.5 overflow-hidden rounded-[2px] bg-track">
 									<i
 										className={cn(
-											"absolute inset-y-0 left-0",
-											isOnAgentStatus(status)
-												? "bg-signal"
-												: status === "failed"
-													? "bg-danger"
-													: "bg-ok/50",
+											"absolute left-0 rounded-[2px]",
+											bar.tall ? "inset-y-0" : "inset-y-0.75",
+											bar.box,
 										)}
 										style={{ width: `${(n.duration_ms / max) * 100}%` }}
 									/>
-									{waited > 0 && (
+									{n.queue_ms > 0 && (
 										<i
-											className="absolute inset-y-0 left-0 bg-[repeating-linear-gradient(135deg,var(--warn-line)_0_3px,var(--warn-soft)_3px_6px)]"
-											style={{ width: `${(waited / max) * 100}%` }}
+											className={cn("absolute inset-y-0.75 left-0 rounded-[2px]", queued.box)}
+											style={{ width: `${(n.queue_ms / max) * 100}%` }}
+										/>
+									)}
+									{n.wait_ms > 0 && (
+										<i
+											className={cn("absolute inset-y-0 rounded-[2px]", waiting.box)}
+											style={{
+												left: `${(n.queue_ms / max) * 100}%`,
+												width: `${(n.wait_ms / max) * 100}%`,
+											}}
 										/>
 									)}
 								</span>

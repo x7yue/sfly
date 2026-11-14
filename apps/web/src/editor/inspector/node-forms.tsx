@@ -22,7 +22,7 @@ import {
 import { useId, useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { ACTION, subflowLabel } from "#/lib/copy";
+import { subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,18 +31,19 @@ import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select"
 import { Segmented } from "@/components/ui/segmented";
 import { Switch } from "@/components/ui/switch";
 import { agentsWithDev } from "../catalog";
-import { draftKey, useParsedField } from "../field-drafts";
+import { draftKey, useFieldErrors, useParsedField } from "../field-drafts";
 import { AgentSelect } from "./AgentSelect";
 import { FeishuBotSelect } from "./FeishuBotSelect";
 import { Field, SectionTitle } from "./fields";
 import {
 	InsertReferenceButton,
+	InsertReferenceGlyph,
 	ReferenceEditor,
 	type ReferenceEditorHandle,
 } from "./ReferenceEditor";
 import { ReferenceChip, ReferencePicker } from "./ReferencePicker";
 import { type ReferenceChoice, wholeReference } from "./reference-completion";
-import { ParsedError, ValueField } from "./value-fields";
+import { Problems, ValueField } from "./value-fields";
 import { mappedText, mappedValue } from "./value-text";
 import { DEFAULT_TZ, describeDuration } from "./wait-nodes";
 import { ReferenceActions } from "./ZoomEditor";
@@ -128,21 +129,24 @@ export function PackageParams({
 				</div>
 			))}
 			<p className="m-0 text-xs text-fg-3">
-				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>$</code> 或点「
-				{ACTION.insertReference}」可以把引用和文字混写。
+				引用在派发时解析；整值引用保持原类型。字符串里输入 <code>$</code> 或点{" "}
+				<InsertReferenceGlyph /> 可以把引用和文字混写。
 			</p>
-			<SectionTitle>Agent</SectionTitle>
-			<Field label="执行机器">
-				<AgentSelect
-					label="节点 Agent"
-					value={node.agent}
-					agents={agents}
-					emptyLabel={`跟随默认（${defaultAgent ?? "未设置"}）`}
-					onChange={(agent) => {
-						const { agent: _old, ...rest } = node;
-						onChange(agent ? { ...rest, agent } : rest);
-					}}
-				/>
+			<SectionTitle>派发</SectionTitle>
+			<Field label="Agent">
+				{(control) => (
+					<AgentSelect
+						control={control}
+						label="节点 Agent"
+						value={node.agent}
+						agents={agents}
+						emptyLabel={`跟随默认（${defaultAgent ?? "未设置"}）`}
+						onChange={(agent) => {
+							const { agent: _old, ...rest } = node;
+							onChange(agent ? { ...rest, agent } : rest);
+						}}
+					/>
+				)}
 			</Field>
 		</>
 	);
@@ -198,14 +202,22 @@ export function ExecutionSettings({
 					/>
 				))}
 			<Field label="always">
-				<div className="flex h-7.5 items-center gap-2.5">
-					<Switch
-						aria-label="always"
-						checked={node.always}
-						onCheckedChange={(always) => onChange({ ...node, always })}
-					/>
-					<span className="text-xs text-fg-3">前面失败或运行被取消时仍执行</span>
-				</div>
+				{(control) => (
+					<div className="flex h-7.5 items-center">
+						<Switch
+							id={control.id}
+							aria-labelledby={`${control.id}-label`}
+							aria-describedby={`${control.id}-help`}
+							label={
+								<span id={`${control.id}-help`} className="text-xs text-fg-3">
+									前面失败或运行被取消时仍执行
+								</span>
+							}
+							checked={node.always}
+							onCheckedChange={(always) => onChange({ ...node, always })}
+						/>
+					</div>
+				)}
 			</Field>
 			{node.kind !== "package" && (
 				<p className="m-0 text-xs text-fg-3">由控制面执行，不占用 Agent 槽位。</p>
@@ -225,7 +237,6 @@ function SettingField({
 	value: number | undefined;
 	onChange(value: number | undefined): void;
 }) {
-	const id = useId();
 	const field = useParsedField<number | undefined>({
 		key: fieldKey,
 		value,
@@ -241,16 +252,17 @@ function SettingField({
 		onChange,
 	});
 	return (
-		<Field label={setting.label} htmlFor={id} error={field.error} help={setting.help}>
-			<Input
-				id={id}
-				inputMode="numeric"
-				aria-invalid={field.error ? true : undefined}
-				className="font-mono text-xs"
-				placeholder={setting.placeholder}
-				value={field.text}
-				onChange={(e) => field.change(e.target.value)}
-			/>
+		<Field label={setting.label} fieldKey={fieldKey} error={field.error} help={setting.help}>
+			{(control) => (
+				<Input
+					{...control}
+					inputMode="numeric"
+					className="font-mono text-xs"
+					placeholder={setting.placeholder}
+					value={field.text}
+					onChange={(e) => field.change(e.target.value)}
+				/>
+			)}
 		</Field>
 	);
 }
@@ -357,7 +369,6 @@ function MappedParam({
 	problems: string[];
 	onChange(value: unknown): void;
 }) {
-	const id = useId();
 	const editor = useRef<ReferenceEditorHandle>(null);
 	// 输入框里保留用户写的文本：1.0 保存为数字 1，但不把正在输入的文本改写掉。
 	const field = useParsedField<unknown>({
@@ -370,14 +381,16 @@ function MappedParam({
 	const label = `子流程参数 ${param.name}`;
 	const placeholder =
 		param.default !== undefined ? `默认 ${mappedText(param.default)}` : param.type;
-	const invalid = problems.length > 0;
+	const errors = useFieldErrors(fieldKey, problems);
+	const invalid = errors.length > 0;
 	return (
 		<Field
-			label={<span className="font-mono">{param.name}</span>}
-			htmlFor={id}
+			label={param.name}
+			mono
+			fieldKey={fieldKey}
 			required={param.required}
 			type={param.type}
-			error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
+			error={invalid ? <Problems problems={errors} /> : undefined}
 			aside={
 				<ReferenceActions
 					editor={editor}
@@ -388,21 +401,22 @@ function MappedParam({
 					choices={choices}
 					placeholder={placeholder}
 					invalid={invalid}
-					error={invalid ? <ParsedError fieldKey={fieldKey} problems={problems} /> : undefined}
+					error={invalid ? <Problems problems={errors} /> : undefined}
 					onChange={field.change}
 				/>
 			}
 		>
-			<ReferenceEditor
-				ref={editor}
-				id={id}
-				label={label}
-				value={field.text}
-				choices={choices}
-				placeholder={placeholder}
-				invalid={invalid}
-				onChange={field.change}
-			/>
+			{(control) => (
+				<ReferenceEditor
+					ref={editor}
+					control={control}
+					label={label}
+					value={field.text}
+					choices={choices}
+					placeholder={placeholder}
+					onChange={field.change}
+				/>
+			)}
 		</Field>
 	);
 }
@@ -422,21 +436,20 @@ export function SubflowNameField({
 	problems: string[];
 	onChange(node: SubflowEntryNode): void;
 }) {
-	const inputId = useId();
 	return (
 		<Field
 			label="子流程名称"
-			htmlFor={inputId}
 			required
 			error={problems.length > 0 ? problems.join("；") : undefined}
 			help="场景内唯一；停止子流程节点按名称选择子流程，改名不影响引用"
 		>
-			<Input
-				id={inputId}
-				aria-invalid={problems.length > 0 || undefined}
-				value={node.name ?? id}
-				onChange={(e) => onChange({ ...node, name: e.target.value })}
-			/>
+			{(control) => (
+				<Input
+					{...control}
+					value={node.name ?? id}
+					onChange={(e) => onChange({ ...node, name: e.target.value })}
+				/>
+			)}
 		</Field>
 	);
 }
@@ -460,7 +473,6 @@ export function StopSubflowField({
 	onChange(node: StopSubflowNode): void;
 	onLocate(id: string): void;
 }) {
-	const selectId = useId();
 	const entries = new Map(
 		doc.nodes.flatMap((n) => (n.kind === "subflow_entry" ? [[n.id, n] as const] : [])),
 	);
@@ -478,40 +490,42 @@ export function StopSubflowField({
 		<>
 			<Field
 				label="要停止的子流程"
-				htmlFor={selectId}
 				required
 				error={problems.length > 0 ? problems.join("；") : undefined}
 				help="只列出本链在这个节点之前触发的子流程（含它们触发的子流程）；改名不影响引用"
 			>
-				<div className="flex items-center gap-2">
-					<NativeSelect
-						id={selectId}
-						className="min-w-0 flex-1"
-						aria-invalid={problems.length > 0 || undefined}
-						value={current ?? ""}
-						onChange={(e) => {
-							const { subflow: _old, ...rest } = node;
-							onChange(e.target.value === "" ? rest : { ...rest, subflow: e.target.value });
-						}}
-					>
-						<NativeSelectOption value="">
-							{candidates.length === 0 ? "本链在这里之前没有触发子流程" : "选择子流程"}
-						</NativeSelectOption>
-						{candidates.map((c) => (
-							<NativeSelectOption key={c.id} value={c.id}>
-								{subflowLabel(c)}
+				{(control) => (
+					<div className="flex items-center gap-2">
+						<NativeSelect
+							{...control}
+							className="min-w-0 flex-1"
+							value={current ?? ""}
+							onChange={(e) => {
+								const { subflow: _old, ...rest } = node;
+								onChange(e.target.value === "" ? rest : { ...rest, subflow: e.target.value });
+							}}
+						>
+							<NativeSelectOption value="">
+								{candidates.length === 0 ? "本链在这里之前没有触发子流程" : "选择子流程"}
 							</NativeSelectOption>
-						))}
-						{stale && (
-							<NativeSelectOption value={current}>{label(current)}（不能停止）</NativeSelectOption>
+							{candidates.map((c) => (
+								<NativeSelectOption key={c.id} value={c.id}>
+									{subflowLabel(c)}
+								</NativeSelectOption>
+							))}
+							{stale && (
+								<NativeSelectOption value={current}>
+									{label(current)}（不能停止）
+								</NativeSelectOption>
+							)}
+						</NativeSelect>
+						{current !== undefined && entries.has(current) && (
+							<Button size="sm" variant="ghost" onClick={() => onLocate(current)}>
+								定位
+							</Button>
 						)}
-					</NativeSelect>
-					{current !== undefined && entries.has(current) && (
-						<Button size="sm" variant="ghost" onClick={() => onLocate(current)}>
-							定位
-						</Button>
-					)}
-				</div>
+					</div>
+				)}
 			</Field>
 			<p className="m-0 text-xs text-fg-3">
 				运行到这里时停止这个子流程：任务按取消的方式终止，未开始的节点记为已停止，always
@@ -584,8 +598,6 @@ export function TimerForm({
 	problemsOf: ProblemsOf;
 	onChange(node: TimerNode): void;
 }) {
-	const atId = useId();
-	const tzId = useId();
 	const tzList = useId();
 	const atProblems = problemsOf("at");
 	const tzProblems = problemsOf("tz");
@@ -596,7 +608,7 @@ export function TimerForm({
 		<>
 			<Field
 				label="触发时刻"
-				htmlFor={atId}
+				fieldKey={draftKey(node.id, "at")}
 				error={atProblems.length > 0 ? atProblems.join("；") : undefined}
 				help={
 					target
@@ -606,42 +618,47 @@ export function TimerForm({
 						: "HH:MM:SS，或 2026-01-02T09:30:00 这样的日期时间"
 				}
 			>
-				<div className="flex flex-col gap-1.5">
-					<Input
-						id={atId}
-						aria-invalid={atProblems.length > 0 || target === null || undefined}
-						className="h-9 font-mono text-base"
-						value={node.at}
-						spellCheck={false}
-						onChange={(e) => onChange({ ...node, at: e.target.value })}
-					/>
-					<Presets
-						label="常用时刻"
-						values={TIME_PRESETS}
-						onPick={(at) => onChange({ ...node, at })}
-					/>
-				</div>
+				{(control) => (
+					<div className="flex flex-col gap-1.5">
+						<Input
+							{...control}
+							aria-invalid={control["aria-invalid"] || target === null || undefined}
+							className="h-9 font-mono text-base"
+							value={node.at}
+							spellCheck={false}
+							onChange={(e) => onChange({ ...node, at: e.target.value })}
+						/>
+						<Presets
+							label="常用时刻"
+							values={TIME_PRESETS}
+							onPick={(at) => onChange({ ...node, at })}
+						/>
+					</div>
+				)}
 			</Field>
 			<Field
 				label="时区"
-				htmlFor={tzId}
 				error={tzProblems.length > 0 ? tzProblems.join("；") : undefined}
 				help={`IANA 时区名，默认 ${DEFAULT_TZ}`}
 			>
-				<Input
-					id={tzId}
-					list={tzList}
-					aria-invalid={!tzValid || undefined}
-					className="font-mono text-xs"
-					value={node.tz}
-					spellCheck={false}
-					onChange={(e) => onChange({ ...node, tz: e.target.value })}
-				/>
-				<datalist id={tzList}>
-					{COMMON_TZ.map((tz) => (
-						<option key={tz} value={tz} />
-					))}
-				</datalist>
+				{(control) => (
+					<>
+						<Input
+							{...control}
+							list={tzList}
+							aria-invalid={control["aria-invalid"] || !tzValid || undefined}
+							className="font-mono text-xs"
+							value={node.tz}
+							spellCheck={false}
+							onChange={(e) => onChange({ ...node, tz: e.target.value })}
+						/>
+						<datalist id={tzList}>
+							{COMMON_TZ.map((tz) => (
+								<option key={tz} value={tz} />
+							))}
+						</datalist>
+					</>
+				)}
 			</Field>
 		</>
 	);
@@ -659,7 +676,6 @@ export function SleepForm({
 	problemsOf: ProblemsOf;
 	onChange(node: SleepNode): void;
 }) {
-	const id = useId();
 	const editor = useRef<ReferenceEditorHandle>(null);
 	const problems = problemsOf("duration");
 	const hasReference = referencesIn(node.duration).length > 0;
@@ -667,7 +683,7 @@ export function SleepForm({
 	return (
 		<Field
 			label="等待时长"
-			htmlFor={id}
+			fieldKey={draftKey(node.id, "duration")}
 			aside={<InsertReferenceButton name="等待时长" editor={editor} />}
 			error={problems.length > 0 ? problems.join("；") : undefined}
 			help={
@@ -678,23 +694,25 @@ export function SleepForm({
 						: "单位：ms、s、m、h、d，可以组合，如 1h30m"
 			}
 		>
-			<div className="flex flex-col gap-1.5">
-				<ReferenceEditor
-					ref={editor}
-					id={id}
-					label="等待时长"
-					value={node.duration}
-					choices={choices}
-					placeholder="30s、10m 或 ${{ params.<名称> }}"
-					invalid={problems.length > 0 || (!hasReference && ms === null)}
-					onChange={(duration) => onChange({ ...node, duration })}
-				/>
-				<Presets
-					label="常用时长"
-					values={DURATION_PRESETS}
-					onPick={(duration) => onChange({ ...node, duration })}
-				/>
-			</div>
+			{(control) => (
+				<div className="flex flex-col gap-1.5">
+					<ReferenceEditor
+						ref={editor}
+						control={control}
+						label="等待时长"
+						value={node.duration}
+						choices={choices}
+						placeholder="30s、10m 或 ${{ params.<名称> }}"
+						invalid={!hasReference && ms === null}
+						onChange={(duration) => onChange({ ...node, duration })}
+					/>
+					<Presets
+						label="常用时长"
+						values={DURATION_PRESETS}
+						onPick={(duration) => onChange({ ...node, duration })}
+					/>
+				</div>
+			)}
 		</Field>
 	);
 }
@@ -713,8 +731,11 @@ const COLOR_LABELS: Record<FeishuNotifyNode["color"], string> = {
 	grey: "灰色",
 };
 
-const REFERENCE_HELP =
-	"可以输入 $ 或点「插入引用」写入入口参数和前面节点的输出；引用缺失时显示 null";
+const REFERENCE_HELP = (
+	<>
+		可以输入 $ 或点 <InsertReferenceGlyph /> 写入入口参数和前面节点的输出；引用缺失时显示 null
+	</>
+);
 
 /**
  * 飞书通知节点（docs/SEMANTICS.md §1.3、§4.2，ADR 0020）：已登记的飞书机器人（下拉框，也可以改为整值引用入口参数）、
@@ -734,7 +755,6 @@ export function FeishuNotifyForm({
 	problemsOf: ProblemsOf;
 	onChange(node: FeishuNotifyNode): void;
 }) {
-	const botId = useId();
 	const botProblems = problemsOf("bot");
 	// 机器人只能引用入口参数：这样触发时就能检查它是已登记的机器人。
 	const paramChoices = choices.filter((c) => c.kind === "param");
@@ -755,31 +775,31 @@ export function FeishuNotifyForm({
 		<>
 			<Field
 				label={botLabel}
-				htmlFor={botId}
 				required
 				error={botProblems.length > 0 ? botProblems.join("；") : undefined}
 				help="在「飞书机器人」页登记；也可以引用入口参数，触发时决定发到哪个群"
 				aside={picker}
 			>
-				{referenced ? (
-					<ReferenceChip
-						label={botLabel}
-						name="机器人"
-						value={node.bot as string}
-						invalid={botProblems.length > 0}
-						onRemove={() => setBot(undefined)}
-					/>
-				) : (
-					<FeishuBotSelect
-						id={botId}
-						label={botLabel}
-						value={node.bot}
-						bots={bots}
-						emptyLabel="（选择机器人）"
-						invalid={botProblems.length > 0}
-						onChange={setBot}
-					/>
-				)}
+				{(control) =>
+					referenced ? (
+						<ReferenceChip
+							control={control}
+							label={botLabel}
+							name="机器人"
+							value={node.bot as string}
+							onRemove={() => setBot(undefined)}
+						/>
+					) : (
+						<FeishuBotSelect
+							control={control}
+							label={botLabel}
+							value={node.bot}
+							bots={bots}
+							emptyLabel="（选择机器人）"
+							onChange={setBot}
+						/>
+					)
+				}
 			</Field>
 			<Field label="格式">
 				<Segmented
@@ -825,15 +845,12 @@ interface FeishuFieldsProps {
 
 /** 文本格式：文本（文字和引用混写）和「@所有人」开关。 */
 function FeishuTextFields({ node, choices, problemsOf, onChange }: FeishuFieldsProps) {
-	const textId = useId();
-	const atAllId = useId();
 	const editor = useRef<ReferenceEditorHandle>(null);
 	const problems = problemsOf("text");
 	return (
 		<>
 			<Field
 				label="文本"
-				htmlFor={textId}
 				error={problems.length > 0 ? problems.join("；") : undefined}
 				aside={
 					<ReferenceActions
@@ -850,27 +867,35 @@ function FeishuTextFields({ node, choices, problemsOf, onChange }: FeishuFieldsP
 				}
 				help={REFERENCE_HELP}
 			>
-				<ReferenceEditor
-					ref={editor}
-					id={textId}
-					label="文本"
-					value={node.text}
-					choices={choices}
-					placeholder="消息内容"
-					invalid={problems.length > 0}
-					onChange={(text) => onChange({ ...node, text })}
-				/>
-			</Field>
-			<Field label="@所有人" htmlFor={atAllId}>
-				<div className="flex h-7.5 items-center gap-2.5">
-					<Switch
-						id={atAllId}
-						aria-label="@所有人"
-						checked={node.at_all}
-						onCheckedChange={(at_all) => onChange({ ...node, at_all })}
+				{(control) => (
+					<ReferenceEditor
+						ref={editor}
+						control={control}
+						label="文本"
+						value={node.text}
+						choices={choices}
+						placeholder="消息内容"
+						onChange={(text) => onChange({ ...node, text })}
 					/>
-					<span className="text-xs text-fg-3">在正文末尾追加 @所有人</span>
-				</div>
+				)}
+			</Field>
+			<Field label="@所有人">
+				{(control) => (
+					<div className="flex h-7.5 items-center">
+						<Switch
+							id={control.id}
+							aria-labelledby={`${control.id}-label`}
+							aria-describedby={`${control.id}-help`}
+							label={
+								<span id={`${control.id}-help`} className="text-xs text-fg-3">
+									在正文末尾追加 @所有人
+								</span>
+							}
+							checked={node.at_all}
+							onCheckedChange={(at_all) => onChange({ ...node, at_all })}
+						/>
+					</div>
+				)}
 			</Field>
 		</>
 	);
@@ -878,9 +903,6 @@ function FeishuTextFields({ node, choices, problemsOf, onChange }: FeishuFieldsP
 
 /** Markdown 卡片：标题、标题颜色和 Markdown 正文；标题和正文里可以写引用。 */
 function FeishuCardFields({ node, choices, problemsOf, onChange }: FeishuFieldsProps) {
-	const titleId = useId();
-	const colorId = useId();
-	const markdownId = useId();
 	const titleEditor = useRef<ReferenceEditorHandle>(null);
 	const markdownEditor = useRef<ReferenceEditorHandle>(null);
 	const titleProblems = problemsOf("title");
@@ -889,41 +911,46 @@ function FeishuCardFields({ node, choices, problemsOf, onChange }: FeishuFieldsP
 		<>
 			<Field
 				label="标题"
-				htmlFor={titleId}
 				aside={<InsertReferenceButton name="标题" editor={titleEditor} />}
 				error={titleProblems.length > 0 ? titleProblems.join("；") : undefined}
-				help="卡片顶部的标题；可以输入 $ 或点「插入引用」写入引用"
+				help={
+					<>
+						卡片顶部的标题；可以输入 $ 或点 <InsertReferenceGlyph /> 写入引用
+					</>
+				}
 			>
-				<ReferenceEditor
-					ref={titleEditor}
-					id={titleId}
-					label="标题"
-					value={node.title}
-					choices={choices}
-					placeholder="卡片标题"
-					invalid={titleProblems.length > 0}
-					onChange={(title) => onChange({ ...node, title })}
-				/>
+				{(control) => (
+					<ReferenceEditor
+						ref={titleEditor}
+						control={control}
+						label="标题"
+						value={node.title}
+						choices={choices}
+						placeholder="卡片标题"
+						onChange={(title) => onChange({ ...node, title })}
+					/>
+				)}
 			</Field>
-			<Field label="标题颜色" htmlFor={colorId}>
-				<NativeSelect
-					id={colorId}
-					aria-label="标题颜色"
-					value={node.color}
-					onChange={(e) =>
-						onChange({ ...node, color: e.target.value as FeishuNotifyNode["color"] })
-					}
-				>
-					{FeishuCardColor.options.map((color) => (
-						<NativeSelectOption key={color} value={color}>
-							{COLOR_LABELS[color]}
-						</NativeSelectOption>
-					))}
-				</NativeSelect>
+			<Field label="标题颜色">
+				{(control) => (
+					<NativeSelect
+						{...control}
+						aria-label="标题颜色"
+						value={node.color}
+						onChange={(e) =>
+							onChange({ ...node, color: e.target.value as FeishuNotifyNode["color"] })
+						}
+					>
+						{FeishuCardColor.options.map((color) => (
+							<NativeSelectOption key={color} value={color}>
+								{COLOR_LABELS[color]}
+							</NativeSelectOption>
+						))}
+					</NativeSelect>
+				)}
 			</Field>
 			<Field
 				label="正文"
-				htmlFor={markdownId}
 				error={markdownProblems.length > 0 ? markdownProblems.join("；") : undefined}
 				aside={
 					<ReferenceActions
@@ -938,19 +965,24 @@ function FeishuCardFields({ node, choices, problemsOf, onChange }: FeishuFieldsP
 						onChange={(markdown) => onChange({ ...node, markdown })}
 					/>
 				}
-				help={`Markdown 正文，超过 ${FEISHU_BODY_LIMIT_LABEL} 时截断。${REFERENCE_HELP}`}
+				help={
+					<>
+						Markdown 正文，超过 {FEISHU_BODY_LIMIT_LABEL} 时截断。{REFERENCE_HELP}
+					</>
+				}
 			>
-				<ReferenceEditor
-					ref={markdownEditor}
-					id={markdownId}
-					label="正文"
-					value={node.markdown}
-					choices={choices}
-					placeholder="Markdown 正文"
-					invalid={markdownProblems.length > 0}
-					minLines={4}
-					onChange={(markdown) => onChange({ ...node, markdown })}
-				/>
+				{(control) => (
+					<ReferenceEditor
+						ref={markdownEditor}
+						control={control}
+						label="正文"
+						value={node.markdown}
+						choices={choices}
+						placeholder="Markdown 正文"
+						minLines={4}
+						onChange={(markdown) => onChange({ ...node, markdown })}
+					/>
+				)}
 			</Field>
 		</>
 	);

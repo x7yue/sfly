@@ -9,7 +9,8 @@ import { cn } from "cn";
 import { useMemo } from "react";
 import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
-import { nodeStatusView, runNotificationView, StatusPill } from "#/components/status";
+import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
+import { ViaTag } from "#/components/via-tag";
 import { chainLabel as chainName, TERM } from "#/lib/copy";
 import {
 	formatClock,
@@ -25,7 +26,14 @@ import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { useLiveRun } from "#/monitor/live-run";
 import { logLineTime, useLogTimeKind } from "#/monitor/log-time-kind";
-import { chainLabel, findNode, focusNode, orderedChains, runStatus } from "#/monitor/run-model";
+import {
+	chainLabel,
+	chainLabelParts,
+	findNode,
+	focusNode,
+	orderedChains,
+	runStatus,
+} from "#/monitor/run-model";
 import { attemptsSignature, useMetricCatalog } from "#/monitor/use-run-metrics";
 import { useTaskLogs } from "#/monitor/use-task-logs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -79,7 +87,9 @@ export function RunSummary({ runId }: { runId: string }) {
 				</span>
 				<span className="font-mono text-fg-3">{formatDuration(elapsed)}</span>
 				<span className="ml-auto text-xs text-fg-3">
-					{run.triggered_by} 触发 · {formatDateTime(run.started_at)}
+					{run.triggered_by}
+					<ViaTag via={run.triggered_via} /> 触发 ·{" "}
+					<span className="font-mono">{formatDateTime(run.started_at)}</span>
 				</span>
 			</div>
 			{run.run_notification && <RunNotificationLine state={run.run_notification} />}
@@ -88,7 +98,7 @@ export function RunSummary({ runId }: { runId: string }) {
 					<ChainRow key={chain.id} chain={chain} />
 				))}
 			</ul>
-			<h3 className="mt-4.5 mb-2.5 text-2xs font-semibold tracking-wide text-fg-2">正在执行</h3>
+			<h3 className="mt-4.5 mb-2.5 text-xs font-semibold tracking-wide text-fg-2">正在执行</h3>
 			{active.length === 0 ? (
 				<p className="m-0 text-xs text-fg-3">
 					{run.status === "running" ? "没有正在执行的节点。" : `运行已结束：${status.label}。`}
@@ -107,7 +117,7 @@ export function RunSummary({ runId }: { runId: string }) {
 					))}
 				</ul>
 			)}
-			<h3 className="mt-4.5 mb-2.5 flex items-center text-2xs font-semibold tracking-wide text-fg-2">
+			<h3 className="mt-4.5 mb-2.5 flex items-center text-xs font-semibold tracking-wide text-fg-2">
 				最新日志
 				{focus && <span className="ml-auto font-mono font-normal text-fg-3">{focus.node_id}</span>}
 			</h3>
@@ -148,10 +158,17 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 
 function ChainRow({ chain }: { chain: ChainRunView }) {
 	const done = doneCount(chain.nodes);
+	const label = chainLabelParts(chain);
 	return (
 		<li className="flex items-center gap-2.5 text-xs">
 			<span className="w-36 truncate text-fg-2" title={chainLabel(chain)}>
-				{chainLabel(chain)}
+				{label.name}
+				{label.id && (
+					<>
+						{" · "}
+						<span className="font-mono">{label.id}</span>
+					</>
+				)}
 			</span>
 			<ChainBar
 				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name })}
@@ -215,12 +232,21 @@ function ActiveNode({
 							aria-valuemin={0}
 							aria-valuemax={progress.total ?? undefined}
 							aria-valuenow={progress.current}
-							className="h-1 overflow-hidden rounded-[2px] bg-track"
+							data-viz
+							className="relative h-2 overflow-hidden rounded-[2px] bg-track"
 						>
-							<i className="block h-full bg-signal" style={{ width: `${ratio * 100}%` }} />
+							{/* 进度每次轮询才推进一步：用 clip-path 过渡，不跳变 */}
+							<i
+								aria-hidden
+								className={cn(
+									"absolute inset-0 rounded-[2px] transition-[clip-path] duration-700 ease-linear motion-reduce:transition-none",
+									STATUS.running.area.box,
+								)}
+								style={{ clipPath: `inset(0 ${(1 - ratio) * 100}% 0 0)` }}
+							/>
 						</div>
 					)}
-					<div className="mt-1 truncate font-mono text-2xs text-fg-3">
+					<div className="mt-1 truncate font-mono text-xs text-fg-3">
 						{progress.total !== null
 							? `${progress.current} / ${progress.total}`
 							: String(progress.current)}
@@ -259,7 +285,7 @@ function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 	return (
 		<ol
 			aria-label="最新日志"
-			className="m-0 list-none overflow-hidden rounded-lg border border-border-soft bg-sunk px-2.5 py-2 font-mono text-2xs leading-5"
+			className="m-0 list-none overflow-hidden rounded-lg border border-border-soft bg-sunk px-2.5 py-2 font-mono text-xs leading-5"
 		>
 			{lines.map((line) => {
 				const level = LEVEL[line.level] ?? { label: line.level, className: "" };

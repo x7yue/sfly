@@ -23,12 +23,17 @@
 		{
 			"slug": "local-debug",
 			"title": "本地调试",
-			"description": "在开发机上直接执行节点：ruff、单元测试、sfly run 的输出与退出码、用 Ctrl-C 验证取消"
+			"description": "在开发机上直接执行节点：ruff、单元测试、sfly debug 的输出与退出码、用 Ctrl-C 验证取消"
 		},
 		{
 			"slug": "integration",
 			"title": "联调",
-			"description": "sfly dev 把项目以 <包名>@dev 装到本机 Agent，在真实场景里运行"
+			"description": "sfly dev 把项目以 <包名>@dev 装到本机 Agent，在真实场景里运行：在浏览器里选开发版本，或者用命令行复制场景、改成开发版本、运行并读结果（AI 编程助手自己联调的流程）"
+		},
+		{
+			"slug": "platform-cli",
+			"title": "用命令行操作平台",
+			"description": "sfly scenario、run、agent、package、api 命令：查看场景、运行、Agent 和节点包，触发、等待、取消运行，读日志和产物，pull / push 编辑场景；输出约定、退出码、控制面地址和昵称的取值顺序、「经 …」标注；AI 编程助手按 sfly-platform skill 用它们自己联调"
 		},
 		{
 			"slug": "publish",
@@ -54,6 +59,11 @@
 			"slug": "feishu-notify",
 			"title": "飞书通知",
 			"description": "把运行的关键时刻发到飞书群：登记飞书机器人、飞书通知节点的文本 / Markdown 卡片 / 原始消息三种格式、运行结束时自动发的运行通知、节点代码里的 ctx.notify 与 sfly.feishu.card、重试限速等投递规则、群安全设置（关键词、IP 白名单、签名校验）的常见错误，以及部署时的出网要求"
+		},
+		{
+			"slug": "api-client",
+			"title": "用 API 客户端做自己的页面",
+			"description": "用 TypeScript 的 API 客户端 @sfly/client 写自己托管的看板和触发页面：从控制面安装、创建客户端、各领域的方法、查询场景和运行、预检并触发、订阅运行的事件流、读日志、下载产物、错误处理与错误码、控制面时间，跨域与 SFLY_CORS_ORIGINS、公网页面访问内网控制面时 Chrome 的本地网络访问限制、版本与兼容，以及做不到的事"
 		}
 	]
 }

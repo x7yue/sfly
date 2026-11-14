@@ -1,5 +1,5 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import {
 	createEditorScenario,
 	dock,
@@ -8,12 +8,19 @@ import {
 	headOf,
 	inspector,
 	nodeCard,
+	nodeMenu,
 	openEditor,
 	typedDocument,
 	typedNodes,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { box, createScenario, expectFocusVisible, publishPackage } from "./support";
+import {
+	box,
+	createScenario,
+	expectFocusVisible,
+	expectRingPainted,
+	publishPackage,
+} from "./support";
 
 // 全屏编排画布（原型 #/editor/:id 的编辑模式）：画布与检查器。
 
@@ -33,6 +40,7 @@ test("全屏画布：不带侧边栏，控件悬浮，打开时适配视图并�
 	await expect(page.getByRole("button", { name: "检查通过" })).toBeVisible();
 	await expect(page.getByRole("group", { name: "模式" })).toBeVisible();
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+	await expect(page.getByText("已保存", { exact: true })).not.toHaveAttribute("data-status");
 	await expect(page.getByRole("link", { name: "版本历史" })).toHaveAttribute(
 		"href",
 		`/orchestrations/${id}/versions`,
@@ -175,6 +183,56 @@ test("语义缩放：缩小后卡片只留关键信息，屏幕上的文字不�
 
 	await page.keyboard.press("0");
 	await expect.poll(() => zoomLevel(page)).toBeGreaterThan(30);
+});
+
+async function tabUntil(page: Page, target: Locator, limit = 40) {
+	for (let presses = 1; presses <= limit; presses++) {
+		await page.keyboard.press("Tab");
+		if (await target.evaluate((el) => el === document.activeElement)) return presses;
+	}
+	throw new Error(`按了 ${limit} 次 Tab 还没到`);
+}
+
+test("Tab 顺序：先经过顶栏再进入画布，画布只有画布区域一个停靠点，节点不在 Tab 顺序里", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const canvas = page.getByRole("region", { name: /^编排画布/ });
+
+	// 顶栏在画布前面：「运行」是第 6 个停靠点（返回、检查状态、两个模式按钮、版本历史、运行；保存不可用时跳过）。
+	expect(await tabUntil(page, page.getByRole("button", { name: "运行", exact: true }))).toBe(6);
+	await page.keyboard.press("Tab");
+	await expectFocusVisible(canvas);
+	// 画布区域铺满视口，焦点环在内侧的 2px：要画在 React Flow 与悬浮控件上面才看得见。
+	await expectRingPainted(page, { x: 1, y: 450 });
+	await expectRingPainted(page, { x: 720, y: 898 });
+	await page.keyboard.press("Tab");
+	await expect(dock(page).getByRole("button", { name: "添加节点" })).toBeFocused();
+	await page.keyboard.press("Shift+Tab");
+	await expectFocusVisible(canvas);
+
+	await page.keyboard.press("ArrowRight");
+	await expectFocusVisible(nodeCard(page, "entry"));
+	await expect(nodeCard(page, "entry")).toHaveAccessibleName("节点 entry，入口");
+	await page.keyboard.press("ArrowRight");
+	await expectFocusVisible(nodeCard(page, "fetch"));
+	await expect(nodeCard(page, "fetch")).toHaveAccessibleName("节点 fetch，HTTP 检查");
+	await expect(nodeCard(page, "sub_entry")).toHaveAccessibleName("节点 sub_entry，子流程入口");
+	await expect(page.getByRole("img", { name: "调度连线：从 dispatch 到 sub_entry" })).toHaveCount(
+		1,
+	);
+
+	await page.keyboard.press("Shift+F10");
+	// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则 Esc 会落在节点上。
+	await expect(nodeMenu(page)).toBeFocused();
+	await page.keyboard.press("Escape");
+	await expectFocusVisible(nodeCard(page, "fetch"));
+	await page.keyboard.press("Escape");
+	await expectFocusVisible(canvas);
+	await page.keyboard.press("Tab");
+	await expect(dock(page).getByRole("button", { name: "添加节点" })).toBeFocused();
 });
 
 test("键盘浏览：方向键沿链切换，↓ / ↑ 进出子流程，Enter 到检查器，Esc 取消选中；方向键不移动节点", async ({
@@ -411,6 +469,7 @@ test("检查器：非字符串参数没有模式切换；「插入引用」选�
 
 	// 整数框里没生效的输入（abc）被引用整个换掉，不再阻止保存。
 	await count.fill("abc");
+	await count.blur();
 	await expect(page.getByText("1 处字段错误")).toBeVisible();
 	const insert = panel.getByRole("button", { name: "在 count 中插入引用" });
 	await insert.click();
@@ -449,6 +508,7 @@ test("检查器：非字符串参数没有模式切换；「插入引用」选�
 	await expect(options.locator(".cm-line")).toHaveText(["{", '"retries": 2', "}"]);
 	await expect(options).toHaveCSS("font-family", /JetBrains Mono/);
 	await options.fill('{"date": "');
+	await options.blur();
 	await expect(panel.getByText("不是合法的 JSON")).toBeVisible();
 	await panel.getByRole("button", { name: "在 options 中插入引用" }).click();
 	await list.getByRole("option", { name: /params\.n/ }).click();
@@ -541,6 +601,7 @@ test("异步任务参数映射、Sleep 时长、入口参数默认值用同一�
 	await bizDate.getByLabel("参数类型").selectOption("number");
 	const numeric = bizDate.getByRole("combobox", { name: "默认值" });
 	await numeric.fill("abc");
+	await numeric.blur();
 	await expect(bizDate.getByText("需要数字")).toBeVisible();
 	await numeric.fill("7");
 	await expect(bizDate.getByText("需要数字")).toHaveCount(0);
@@ -701,8 +762,10 @@ test("放大编辑 JSON 字段：写了一半的 JSON 在弹窗里提示，不�
 	const big = dialog.getByRole("combobox", { name: "输入 options（放大编辑）" });
 	await expect(big.locator(".cm-line")).toHaveText(["{", '"retries": 2', "}"]);
 	await big.fill('{"retries": 3,');
+	await big.blur();
 	await expect(dialog.getByText("不是合法的 JSON")).toBeVisible();
 	await expect(page.getByText("1 处字段错误")).toBeVisible();
+	await big.focus();
 	await page.keyboard.type(' "host": "${{ params.n }}"}');
 	await expect(dialog.getByText("不是合法的 JSON")).toHaveCount(0);
 	await expect(big.locator("[data-reference]")).toHaveText(["${{ params.n }}"]);
@@ -771,7 +834,7 @@ test("检查器：字符串输入框随内容增高，最多 8 行；无效的�
 	expect(head.document.nodes.find((n) => n.id === "fetch")?.inputs).toEqual({});
 });
 
-test("字段校验失败时不能保存：按钮禁用，Ctrl S 提示；改正后可以保存", async ({
+test("字段校验失败时不能保存：保存按钮和 Ctrl S 都把焦点放到出错的字段；改正后可以保存", async ({
 	page,
 	controlPlane,
 }) => {
@@ -781,12 +844,14 @@ test("字段校验失败时不能保存：按钮禁用，Ctrl S 提示；改正�
 	const panel = inspector(page);
 	const expectInput = panel.getByRole("textbox", { name: "输入 expect" });
 	await expectInput.fill("abc");
+	await expectInput.blur();
 	await expect(panel.getByText("需要整数")).toBeVisible();
 	await expect(expectInput).toHaveAttribute("aria-invalid", "true");
 	await expect(page.getByText("1 处字段错误")).toBeVisible();
-	await expect(page.getByRole("button", { name: /保存/ })).toBeDisabled();
+	await expect(page.getByRole("button", { name: "1 处字段错误" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "检查通过" })).toHaveCount(0);
 	await page.keyboard.press("Control+s");
-	await expect(page.getByText("有 1 处字段错误，改正后才能保存")).toBeVisible();
+	await expect(expectInput).toBeFocused();
 
 	// 切换节点后错误仍在（没生效的输入不丢），回来时还显示。
 	await nodeCard(page, "entry").click();
@@ -796,24 +861,64 @@ test("字段校验失败时不能保存：按钮禁用，Ctrl S 提示；改正�
 	// 执行页的超时也要是正整数；参数名不合法同样阻止保存。
 	await panel.getByRole("tab", { name: "执行" }).click();
 	await panel.getByLabel("超时", { exact: true }).fill("0");
+	await panel.getByLabel("超时", { exact: true }).blur();
 	await expect(panel.getByText("需要正整数")).toBeVisible();
 	await expect(page.getByText("2 处字段错误")).toBeVisible();
 	await panel.getByLabel("超时", { exact: true }).fill("30");
 	await panel.getByRole("tab", { name: "参数" }).click();
 	await expectInput.fill("404");
 	await expect(page.getByText("有未保存的修改")).toBeVisible();
+	await expect(page.getByRole("button", { name: "检查通过" })).toBeVisible();
 
 	await nodeCard(page, "entry").click();
 	const name = panel.getByRole("textbox", { name: "参数名称" }).first();
 	await name.fill("1st");
+	await name.blur();
 	await expect(panel.getByText("参数名只能包含字母、数字和下划线，不能以数字开头")).toBeVisible();
-	await expect(page.getByRole("button", { name: /保存/ })).toBeDisabled();
+	// 保存按钮不因校验禁用：点它不保存，焦点到出错的字段。
+	await expect(page.getByRole("button", { name: /保存/ })).toBeEnabled();
+	await nodeCard(page, "fetch").click();
+	await page.getByRole("button", { name: /保存/ }).click();
+	await expect(name).toBeFocused();
+	await expect(page.getByText("已保存为版本 2")).toHaveCount(0);
 	await name.fill("biz_date");
 
 	await page.getByRole("button", { name: /保存/ }).click();
 	await expect(page.getByText("已保存为版本 2")).toBeVisible();
 	const fetch = (await headOf(controlPlane, id)).document.nodes.find((n) => n.id === "fetch");
 	expect(fetch).toMatchObject({ inputs: { expect: 404 }, timeout: 30 });
+});
+
+test("撤销到已保存的状态：字段、顶栏和节点卡片说的是同一件事；重做回到撤销前", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	await nodeCard(page, "fetch").click();
+	const panel = inspector(page);
+	const expectInput = panel.getByRole("textbox", { name: "输入 expect" });
+	await expect(expectInput).toHaveValue("");
+
+	// 1 和 1. 是合法的整数，写进了文档；1.5 起不是，只留在输入框里。
+	await expectInput.click();
+	await page.keyboard.type("1.5x");
+	await expectInput.blur();
+	await expect(expectInput).toHaveValue("1.5x");
+	await expect(page.getByRole("button", { name: "1 处字段错误" })).toBeVisible();
+
+	await page.keyboard.press("Control+z");
+	await expect(expectInput).toHaveValue("");
+	await expect(expectInput).not.toHaveAttribute("aria-invalid");
+	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
+	await expect(page.getByText("处字段错误")).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "检查通过" })).toBeVisible();
+	await expect(nodeCard(page, "fetch")).not.toContainText("expect");
+
+	await page.keyboard.press("Control+Shift+z");
+	await expect(expectInput).toHaveValue("1.5x");
+	await expect(page.getByRole("button", { name: "1 处字段错误" })).toBeVisible();
+	await expect(panel.getByText("需要整数")).toBeVisible();
 });
 
 test("敏感参数的默认值隐藏显示，可以临时显示；取消「敏感」需要二次确认", async ({

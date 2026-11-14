@@ -125,6 +125,7 @@ export const agentsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/agents",
+		client: true,
 		key: ["agents", "list"],
 		response: z.object({
 			agents: z.array(AgentView),
@@ -142,6 +143,7 @@ export const agentsApi = {
 	updateNow: endpoint({
 		method: "POST",
 		path: "/agents/:name/update-now",
+		client: true,
 		key: ["agents", "update-now"],
 		params: z.object({ name: z.string().min(1) }),
 		response: z.object({ terminated_tasks: z.array(RunningTaskView) }),

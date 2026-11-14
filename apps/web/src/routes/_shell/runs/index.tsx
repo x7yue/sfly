@@ -4,6 +4,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { PlayIcon, SearchIcon } from "lucide-react";
 import { z } from "zod";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
+import { useListNavigation } from "#/components/list-navigation";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { MESSAGE, PAGE } from "#/lib/copy";
@@ -44,6 +45,7 @@ function RunsPage() {
 		refetchInterval: LIVE_POLL_MS,
 		placeholderData: keepPreviousData,
 	});
+	useListNavigation();
 	const counts = runs.data?.counts;
 	const total = counts && counts.running + counts.success + counts.failed + counts.cancelled;
 	const filtered = search.status !== undefined || !!search.scenario || !!search.q;
@@ -183,8 +185,10 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 					aria-label="搜索运行编号或触发人"
 					placeholder="运行编号、触发人"
 					className="pl-7.5"
+					ref={searchBox.ref}
 					value={searchBox.value}
 					onChange={(event) => searchBox.onChange(event.target.value)}
+					onKeyDown={searchBox.onKeyDown}
 				/>
 			</span>
 		</div>

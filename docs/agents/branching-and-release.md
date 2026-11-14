@@ -13,8 +13,8 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 
 | 前缀 | 用途 |
 |---|---|
-| `spec/<issue>-<描述>` | 大功能的规格与实现（推送时也运行 CI） |
-| `impl/<描述>` | 大功能拆出的实现分支（推送时也运行 CI，供合并前验证） |
+| `spec/<issue>-<描述>` | 大功能的规格与实现 |
+| `impl/<描述>` | 大功能拆出的实现分支 |
 | `design/<描述>` | 设计文档、原型、ADR |
 | `fix/<issue>-<描述>` | 修复缺陷 |
 | `chore/<描述>` | 工具链、CI、开发环境、文档 |
@@ -22,10 +22,22 @@ GitHub 上的规则集（`gh api repos/x7yue/sfly/rulesets`）强制执行下面
 
 Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面的前缀：`git push -u origin HEAD:<前缀>/<描述>`。
 
+## CI 什么时候运行
+
+- PR（草稿也算）的每次推送、`main` 上的每个提交。分支上只推送、没有 PR 时不运行：要在合并前验证就开一个草稿 PR，
+  或手动触发（`gh workflow run ci.yml --ref <分支>`）。
+- PR 有新的推送时，上一次推送还没跑完的 CI 被取消；`main` 上每个提交的 CI 都跑完，连着合入几个 PR 也不会互相取消。
+- 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
+- `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
+- CI 失败时先用 `pnpm ci:failures <运行 ID>` 看失败的测试和断言差异，不用下载完整日志。
+
 ## PR
 
 - 标题用祈使句：squash 合入后它就是 `main` 上的提交标题（GitHub 自动追加 ` (#编号)`），各提交的信息成为正文。
 - 加上分类标签，Release 说明按它分组（`.github/release.yml`）：`enhancement` 新功能、`bug` 修复、`documentation` 文档；其余归入「其他」。
+- 让 API 客户端生成的类型（`packages/client/src/generated/`）出现不兼容变化的 PR，另加标签 `breaking-change`，并在描述里写明变了什么、自建页面要怎么改。Release 说明把带这个标签的 PR 放在最前面的「API 客户端的不兼容变化」里：1.0 之前不保证跨版本兼容（ADR 0022），用户要在升级前知道要改什么。
+  - 不兼容的变化：删除或改名领域、方法、字段、事件；请求里新增必填的字段，或者可选的字段变成必填；字段的类型变了，或者响应里的枚举多了值（页面里穷举它的代码要跟着改）；响应里去掉字段，或者字段从总有值变成可能为空。只新增方法、可选的请求字段或响应字段不算。
+  - 生成的类型提交在仓库里，看 PR 的 diff 里 `packages/client/src/generated/` 的变化来判断。
 - 用 `gh pr merge <编号> --auto --squash` 合入：CI 通过后自动合入并删除分支，不用守着 CI。
 
 ### 关键路径的改动要贴 `pnpm perf` 结果

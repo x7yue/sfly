@@ -96,6 +96,7 @@ export const feishuBotsApi = {
 	list: endpoint({
 		method: "GET",
 		path: "/feishu-bots",
+		client: true,
 		key: ["feishu-bots", "list"],
 		response: z.object({ bots: z.array(FeishuBotView) }),
 	}),
@@ -105,6 +106,7 @@ export const feishuBotsApi = {
 	create: endpoint({
 		method: "POST",
 		path: "/feishu-bots",
+		client: true,
 		key: ["feishu-bots", "create"],
 		body: z.object({ name: FeishuBotName, webhook_url: FeishuWebhookUrl }),
 		response: FeishuBotView,
@@ -116,6 +118,7 @@ export const feishuBotsApi = {
 	replaceWebhook: endpoint({
 		method: "PATCH",
 		path: "/feishu-bots/:name",
+		client: true,
 		key: ["feishu-bots", "replace-webhook"],
 		params: NameParams,
 		body: z.strictObject({ webhook_url: FeishuWebhookUrl }),
@@ -136,6 +139,7 @@ export const feishuBotsApi = {
 	references: endpoint({
 		method: "GET",
 		path: "/feishu-bots/:name/references",
+		client: true,
 		key: ["feishu-bots", "references"],
 		params: NameParams,
 		response: z.object({ scenarios: z.array(FeishuBotScenario) }),
@@ -144,6 +148,7 @@ export const feishuBotsApi = {
 	remove: endpoint({
 		method: "DELETE",
 		path: "/feishu-bots/:name",
+		client: true,
 		key: ["feishu-bots", "remove"],
 		params: NameParams,
 		response: z.undefined(),
@@ -155,6 +160,7 @@ export const feishuBotsApi = {
 	test: endpoint({
 		method: "POST",
 		path: "/feishu-bots/:name/test",
+		client: true,
 		key: ["feishu-bots", "test"],
 		params: NameParams,
 		response: FeishuTestResult,

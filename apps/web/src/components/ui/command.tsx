@@ -2,6 +2,7 @@ import { Command as CommandPrimitive } from "cmdk";
 import { cn } from "cn";
 import { SearchIcon } from "lucide-react";
 import type * as React from "react";
+import { useCallback, useRef } from "react";
 import {
 	Dialog,
 	DialogContent,
@@ -34,11 +35,35 @@ function CommandDialog({
 	showCloseButton?: boolean;
 	children: React.ReactNode;
 }) {
+	/** 打开面板前焦点所在的元素：Esc 关闭后回到这里。 */
+	const opener = useRef<HTMLElement | null>(null);
+	/** 已经处理过的弹窗（每次打开都是新的弹窗元素）。 */
+	const seen = useRef(new WeakSet<Element>());
+	/**
+	 * 弹窗一挂载就把焦点交给搜索框（React 提交阶段同步执行）。弹窗自己的初始焦点要等下一帧
+	 * （Base UI 的 FloatingFocusManager 用 requestAnimationFrame），按 Ctrl K 后紧接着输入的字
+	 * 会落在背后的页面上丢掉，回车就执行了过滤前的第一条命令（#280，添加节点菜单的 #123 是同一个问题）。
+	 * 这样一来 Base UI 记下的「打开前的焦点」成了搜索框本身，所以先在这里记下打开前的焦点，关闭时由 finalFocus 交还。
+	 */
+	const focusSearch = useCallback((popup: HTMLElement | null) => {
+		if (!popup || seen.current.has(popup)) return;
+		seen.current.add(popup);
+		const active = document.activeElement;
+		opener.current = active instanceof HTMLElement ? active : null;
+		popup.querySelector<HTMLInputElement>("[cmdk-input]")?.focus({ preventScroll: true });
+	}, []);
+
 	return (
-		<Dialog {...props}>
+		<Dialog pointerDismiss="always" {...props}>
 			<DialogContent
 				className={cn("w-[620px] gap-0 p-0", className)}
 				showCloseButton={showCloseButton}
+				ref={focusSearch}
+				// 打开前页面上没有焦点时按 Base UI 的默认行为处理。
+				finalFocus={() => {
+					const back = opener.current;
+					return back?.isConnected && back !== document.body ? back : true;
+				}}
 			>
 				{/* 标题只给读屏器（作为弹窗的名称），放在弹窗内部，关闭时不留在页面上。 */}
 				<DialogHeader className="sr-only">
@@ -64,7 +89,7 @@ function CommandInput({
 			<CommandPrimitive.Input
 				data-slot="command-input"
 				className={cn(
-					"h-12 w-full bg-transparent text-base text-fg-1 outline-none placeholder:text-fg-3 disabled:cursor-not-allowed disabled:opacity-40",
+					"h-12 w-full bg-transparent text-base text-fg-1 outline-none placeholder:text-fg-3 focus:outline-hidden disabled:cursor-not-allowed disabled:opacity-40",
 					className,
 				)}
 				{...props}
@@ -73,10 +98,15 @@ function CommandInput({
 	);
 }
 
-function CommandList({ className, ...props }: React.ComponentProps<typeof CommandPrimitive.List>) {
+function CommandList({
+	className,
+	label = "结果",
+	...props
+}: React.ComponentProps<typeof CommandPrimitive.List>) {
 	return (
 		<CommandPrimitive.List
 			data-slot="command-list"
+			label={label}
 			className={cn(
 				"max-h-[380px] scroll-py-1.5 overflow-x-hidden overflow-y-auto p-1.5 outline-none",
 				className,
@@ -107,7 +137,7 @@ function CommandGroup({
 		<CommandPrimitive.Group
 			data-slot="command-group"
 			className={cn(
-				"overflow-hidden text-fg-1 **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:pt-2 **:[[cmdk-group-heading]]:pb-1 **:[[cmdk-group-heading]]:text-2xs **:[[cmdk-group-heading]]:text-fg-3",
+				"overflow-hidden text-fg-1 **:[[cmdk-group-heading]]:px-2.5 **:[[cmdk-group-heading]]:pt-2 **:[[cmdk-group-heading]]:pb-1 **:[[cmdk-group-heading]]:text-xs **:[[cmdk-group-heading]]:text-fg-3",
 				className,
 			)}
 			{...props}

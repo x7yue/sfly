@@ -1,6 +1,6 @@
 """本地执行：不经过控制面和 Agent，在开发机上执行一个节点（本地调试）。只用标准库（ADR 0002）。
 
-`sfly.testing` 和 `sfly run` 共用这里。和 Agent 一样按本地协议（docs/ARCHITECTURE.md §5.4）
+`sfly.testing` 和 `sfly debug` 共用这里。和 Agent 一样按本地协议（docs/ARCHITECTURE.md §5.4）
 启动执行器子进程 `python -u -m sfly.runner`，只把读取事件、存放产物的一端换成本地实现：
 
 - 事件：和 Agent 一样经工作目录里的命名管道 `events.fifo` 读取（ADR 0015），不写事件文件；
@@ -14,7 +14,8 @@
   （agent/src/logs.rs）；进度和指标保留每一次上报（Agent 上报前按秒合并）；
 - 任务信息与后台进程目录：task.json 里任务 ID 是 `local`、attempt 是 1，
   运行 ID 和节点 ID 由调用方给出；
-  `SFLY_PROCS` 默认是工作目录下的 `procs/`（`sfly run` 改为项目下的 `.sfly/procs/<运行目录名>/`）；
+  `SFLY_PROCS` 默认是工作目录下的 `procs/`
+  （`sfly debug` 改为项目下的 `.sfly/procs/<运行目录名>/`）；
 - 下载产物：本地没有控制面，`SFLY_DOWNLOADS` 指向下载内容表 `downloads.json`
   （产物引用 → 本地文件路径，只有本地执行会设置），`ctx.artifacts.download` 遇到表里的引用时
   直接复制对应的文件；本地保存的产物的引用是本地文件路径，不用登记就能下载；

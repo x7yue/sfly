@@ -1,6 +1,6 @@
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
-import type { CSSProperties } from "react";
+import { type CSSProperties, useId } from "react";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeader, BaseNodeHeaderTitle } from "@/components/ui/base-node";
 import { useFlowCanvas } from "./context";
@@ -39,12 +39,17 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const slot = nodeSlot(node);
 	const KindIcon = meta.icon;
 	const isStart = node.kind === "entry" || node.kind === "subflow_entry";
+	const cardId = useId();
+	const statusId = useId();
 
 	return (
 		<BaseNode
 			role="button"
 			tabIndex={-1}
-			aria-label={`${id} · ${title} · ${meta.label}`}
+			// 名称：「节点 ID，种类，标题」（aria-label，由自己的 id 引用）接上右上角的状态（运行状态、警告、差异标记）。
+			id={cardId}
+			aria-label={[`节点 ${id}`, caption, title !== id && title].filter(Boolean).join("，")}
+			aria-labelledby={`${cardId} ${statusId}`}
 			aria-pressed={selected}
 			data-node-id={id}
 			data-run={decoration?.run}
@@ -52,6 +57,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			style={{ width: NODE_WIDTH, height: NODE_HEIGHT, borderRadius: NODE_RADIUS }}
 			className={cn(
 				"flex flex-col px-3 py-2.5",
+				"focus-visible:outline-offset-3",
 				"data-[run=running]:border-canvas-run-running data-[run=failed]:border-canvas-run-failed",
 				// 退后的状态（待执行、已跳过、已取消、已停止、已删除）不用不透明度，标题换成次要文字色：
 				// 文字对比度不降（DESIGN-SYSTEM §2.2），状态由描边与状态徽标区分。
@@ -72,7 +78,6 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 							className={cn(
 								"h-4.75 rounded-sm border border-border bg-raised-2 px-1.5 font-mono leading-4.25 text-fg-2",
 								ZOOM_TEXT_11,
-								tag === "always" && "border-warn-line text-warn-fg",
 							)}
 						>
 							{tag}
@@ -80,20 +85,24 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					))}
 				</div>
 			)}
-			<BaseNodeHeader className={cn("text-fg-3", ZOOM_TEXT_11)}>
+			{/* 头部与标题重复了名称，读屏不再读一遍；右上角的状态隐藏了照样进名称（被 aria-labelledby 直接引用）。 */}
+			<BaseNodeHeader aria-hidden className={cn("text-fg-3", ZOOM_TEXT_12)}>
 				<span aria-hidden title={meta.label} className={KIND_CHIP}>
-					<KindIcon strokeWidth={2} />
+					<KindIcon />
 				</span>
 				<span className="truncate font-mono text-fg-2">{id}</span>
 				{caption && <span className={cn("flex-none", LOD_HIDDEN)}>{caption}</span>}
-				<span className="ml-auto flex-none">
+				<span id={statusId} className="ml-auto flex-none">
 					{decoration?.status ??
-						(warnings.length > 0 && <WarningBadge warnings={warnings} className={ZOOM_TEXT_11} />)}
+						(warnings.length > 0 && <WarningBadge warnings={warnings} className={ZOOM_TEXT_12} />)}
 				</span>
 			</BaseNodeHeader>
 			{/* 行高 1.6：中文回退字体（Noto Sans CJK 等）的字形高约 1.45em、下划线更低，标题是 truncate（溢出隐藏），
 			    行高再小时缩小视图后字形底部会被裁掉。 */}
-			<BaseNodeHeaderTitle className={cn("mt-1.5 mb-1.25 leading-[1.6]", ZOOM_TEXT_TITLE)}>
+			<BaseNodeHeaderTitle
+				aria-hidden
+				className={cn("mt-1.5 mb-1.25 leading-[1.6]", ZOOM_TEXT_TITLE)}
+			>
 				{title}
 			</BaseNodeHeaderTitle>
 			<div

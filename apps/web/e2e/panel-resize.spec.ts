@@ -28,7 +28,7 @@ async function openWithInspector(page: Page, id: string, node = "sub_ping") {
 	await expect(inspector(page)).toBeVisible();
 }
 
-test("检查器：拖动左边缘调宽，限制在 372px 到视口宽度的 60%；刷新、换场景后保持；窗口缩小时收回；双击恢复默认", async ({
+test("检查器：拖动左边缘调宽，限制在 372px 到「视口宽度的 60% 与视口宽度减 742px 里小的那个」；刷新、换场景后保持；窗口缩小时收回；双击恢复默认", async ({
 	page,
 	controlPlane,
 }) => {
@@ -43,9 +43,9 @@ test("检查器：拖动左边缘调宽，限制在 372px 到视口宽度的 60%
 	const b = await box(inspector(page));
 	expect(Math.round(b.x + b.width)).toBe(1440 - 12);
 
-	// 上限：视口宽度（1440）的 60%；下限 372。
+	// 上限：视口宽度（1440）减去给画布留的 742px（小地图、工具条与间距）是 698，比 60%（864）小；下限 372。
 	await drag(page, inspectorHandle(page), -900);
-	await expect.poll(() => widthOf(inspector(page))).toBe(864);
+	await expect.poll(() => widthOf(inspector(page))).toBe(698);
 	await drag(page, inspectorHandle(page), 900);
 	await expect.poll(() => widthOf(inspector(page))).toBe(372);
 
@@ -57,9 +57,9 @@ test("检查器：拖动左边缘调宽，限制在 372px 到视口宽度的 60%
 	await openWithInspector(page, other, "ping");
 	expect(await widthOf(inspector(page))).toBe(672);
 
-	// 窗口缩小：按上限（1000 的 60%）收回；放大后回到保存的宽度。
+	// 窗口缩小：按上限收回（1000 宽时上限不到下限，用下限）；放大后回到保存的宽度。
 	await page.setViewportSize({ width: 1000, height: 800 });
-	await expect.poll(() => widthOf(inspector(page))).toBe(600);
+	await expect.poll(() => widthOf(inspector(page))).toBe(372);
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await expect.poll(() => widthOf(inspector(page))).toBe(672);
 
@@ -79,6 +79,11 @@ test("检查器调宽手柄可以用键盘：聚焦后左右方向键调整，En
 	const handle = inspectorHandle(page);
 	await handle.focus();
 	await expect(handle).toBeFocused();
+	// 读屏拿到范围与当前值（默认大小也有值），以及怎么用的说明。
+	await expect(handle).toHaveAttribute("aria-valuemin", "372");
+	await expect(handle).toHaveAttribute("aria-valuemax", "698");
+	await expect(handle).toHaveAttribute("aria-valuenow", "372");
+	await expect(handle).toHaveAccessibleDescription(/方向键.*双击或按 Enter 恢复默认/);
 	await page.keyboard.press("ArrowLeft");
 	await page.keyboard.press("ArrowLeft");
 	await expect.poll(() => widthOf(inspector(page))).toBe(404);
@@ -92,6 +97,7 @@ test("检查器调宽手柄可以用键盘：聚焦后左右方向键调整，En
 	await page.keyboard.press("ArrowLeft");
 	await page.keyboard.press("Enter");
 	await expect.poll(() => widthOf(inspector(page))).toBe(372);
+	await expect(handle).toHaveAttribute("aria-valuenow", "372");
 	await expect(handle).toBeFocused();
 	// 方向键调宽时不切换画布上的选中节点。
 	await expect(nodeCard(page, "entry")).toHaveAttribute("aria-pressed", "false");
@@ -107,7 +113,7 @@ test("适配视图和定位节点按检查器的实际宽度避让", async ({ pa
 	});
 	await openWithInspector(page, id, "ping");
 	await drag(page, inspectorHandle(page), -900);
-	await expect.poll(() => widthOf(inspector(page))).toBe(864);
+	await expect.poll(() => widthOf(inspector(page))).toBe(698);
 
 	const expectClear = async (nodeId: string) => {
 		await expect
@@ -130,10 +136,15 @@ test("适配视图和定位节点按检查器的实际宽度避让", async ({ pa
 	await drawer.getByRole("button", { name: "前往 ping" }).click();
 	await expect(nodeCard(page, "ping")).toHaveAttribute("aria-pressed", "true");
 	await expectClear("ping");
-	// 定位后节点在空出来的区域中间，而不是贴着检查器。
-	const node = await box(nodeCard(page, "ping"));
-	const free = (await box(inspector(page))).x;
-	expect(Math.abs(node.x + node.width / 2 - free / 2)).toBeLessThan(40);
+	// 定位后节点在空出来的区域中间，而不是贴着检查器。视口要用 200ms 平移过去：上面的「不被挡住」在平移
+	// 开始前就成立了，所以位置也放进等待条件，不在半路量一次就下结论（#281）。
+	await expect
+		.poll(async () => {
+			const node = await box(nodeCard(page, "ping"));
+			const free = (await box(inspector(page))).x;
+			return Math.abs(node.x + node.width / 2 - free / 2);
+		})
+		.toBeLessThan(40);
 });
 
 test("运行状态模式的检查器使用同一个宽度，也可以调宽", async ({

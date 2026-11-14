@@ -8,7 +8,13 @@ import {
 } from "../../server/test/support/fake-agent.js";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import { logLine, openMonitor, runningScenario } from "./monitor-scenario";
-import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
+import {
+	createScenario,
+	expectFocusVisible,
+	publishPackage,
+	scenarioUsing,
+	triggerRun,
+} from "./support";
 
 // 运行监控页（原型 #/monitor/:runId）：顶栏、链路时间线、底部面板、取消。
 
@@ -16,6 +22,35 @@ const timeline = (page: Page) => page.getByRole("region", { name: "链路时间�
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
 const nodeButton = (page: Page, id: string) =>
 	timeline(page).locator(`[data-node-row="${id}"] button`);
+
+/** 在时间线的 fetch 行上拖选轨道宽度的 from 到 to（0 到 1）：缩放时间范围。 */
+async function dragZoom(page: Page, from: number, to: number) {
+	const track = await timeline(page).locator('[data-node-row="fetch"] > div').boundingBox();
+	if (!track) throw new Error("没有轨道");
+	const y = track.y + track.height / 2;
+	await page.mouse.move(track.x + track.width * from, y);
+	await page.mouse.down();
+	await page.mouse.move(track.x + track.width * ((from + to) / 2), y, { steps: 5 });
+	await expect(timeline(page).locator("[data-brush]")).toBeVisible();
+	await page.mouse.move(track.x + track.width * to, y, { steps: 5 });
+	await page.mouse.up();
+}
+
+/** 运行结束：probe 与 verify 都失败（两个失败的节点，主链在前、子流程在后），cleanup 成功。 */
+async function failedRun(
+	controlPlane: Parameters<typeof runningScenario>[0],
+	connectAgent: E2eFixtures["connectAgent"],
+	clock: Parameters<typeof runningScenario>[2],
+) {
+	const running = await runningScenario(controlPlane, connectAgent, clock);
+	const { agent, tasks } = running;
+	await agent.fail(tasks.probe as AssignedTask, "TimeoutError: probe 超时", ErrorKind.NODE_ERROR);
+	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦", ErrorKind.NODE_ERROR);
+	const cleanup = await agent.nextAssign();
+	clock.advance(1000);
+	await agent.succeed(cleanup);
+	return running;
+}
 
 test("顶栏：场景名、版本、触发人、已运行时长、各链状态；运行中只有取消", async ({
 	page,
@@ -119,20 +154,12 @@ test("拖选缩放：缩放后暂停实时跟随并显示「回到实时」，�
 	await expect(tl.getByText("实时跟随")).toBeVisible();
 	const ticksBefore = await tl.locator("[data-axis-track] span").allTextContents();
 
-	const track = await tl.locator('[data-node-row="fetch"] > div').boundingBox();
-	if (!track) throw new Error("没有轨道");
-	const y = track.y + track.height / 2;
-	await page.mouse.move(track.x + track.width * 0.1, y);
-	await page.mouse.down();
-	await page.mouse.move(track.x + track.width * 0.3, y, { steps: 5 });
-	await expect(tl.locator("[data-brush]")).toBeVisible();
-	await page.mouse.move(track.x + track.width * 0.5, y, { steps: 5 });
-	await page.mouse.up();
+	await dragZoom(page, 0.1, 0.5);
 
 	await expect(tl.getByRole("button", { name: "回到实时" })).toBeVisible();
 	await expect(tl.getByText("实时跟随")).toHaveCount(0);
-	// 运行开始于 08:00:00（东八区），总长 14 秒：拖选 10%–50% 即 08:00:01 – 08:00:07。
-	await expect(tl.getByTestId("zoom-range")).toHaveText("08:00:01 – 08:00:07");
+	// 运行开始于 08:00:00（东八区），已运行 14 秒、时间轴取 20 秒：拖选 10%–50% 即 08:00:02 – 08:00:10。
+	await expect(tl.getByTestId("zoom-range")).toHaveText("08:00:02 – 08:00:10");
 	expect(await tl.locator("[data-axis-track] span").allTextContents()).not.toEqual(ticksBefore);
 
 	await tl.getByRole("button", { name: "回到实时" }).click();
@@ -148,8 +175,10 @@ test("点选节点：时间线行高亮，底部面板切换到该节点；尝�
 }) => {
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
-	// 默认选中执行中的节点（没有失败的节点）。
-	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
+	await expect(timeline(page).locator('[data-node-row] button[aria-pressed="true"]')).toHaveCount(
+		0,
+	);
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 
 	await nodeButton(page, "fetch").click();
 	await expect(nodeButton(page, "fetch")).toHaveAttribute("aria-pressed", "true");
@@ -186,6 +215,147 @@ test("点选节点：时间线行高亮，底部面板切换到该节点；尝�
 	await expect(io).toContainText('"token": "••••••"');
 	await expect(io).not.toContainText("s3cr3t-token");
 	await expect(io).toContainText('"status": 200');
+});
+
+test("时间线的键盘与读屏：链与节点是嵌套列表；有重试的节点一行只有一个停靠点，每次尝试写在说明里", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const tl = timeline(page);
+	await expect(tl).toMatchAriaSnapshot(`
+		- list:
+		  - listitem:
+		    - button /主链/
+		    - list:
+		      - listitem:
+		        - button /^entry /
+		      - listitem:
+		        - button /^fetch /
+		      - listitem:
+		        - button /^spawn /
+		      - listitem:
+		        - button /^verify /
+		      - listitem:
+		        - button /^cleanup /
+		  - listitem:
+		    - button /子流程 sub/
+	`);
+
+	// runningScenario 里 verify 失败过一次、正在重试：轨道上有两段。
+	await expect(tl.locator('[data-node-row="verify"] [data-segment]')).not.toHaveCount(0);
+	await expect(nodeButton(page, "verify")).toHaveAccessibleDescription(
+		/^第 1 次：失败的尝试 \S+；第 2 次：执行中 \S+$/,
+	);
+	await nodeButton(page, "spawn").focus();
+	await page.keyboard.press("Tab");
+	await expectFocusVisible(nodeButton(page, "verify"));
+	await page.keyboard.press("Tab");
+	await expect(nodeButton(page, "cleanup")).toBeFocused();
+	await page.keyboard.press("Shift+Tab");
+	await page.keyboard.press("Enter");
+	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("取消选中：范围标签上的 × 与 Esc 都回到全部节点；弹窗打开时的 Esc 只关闭弹窗", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const scope = panel(page).getByTestId("bp-scope");
+	const pressed = timeline(page).locator('[data-node-row] button[aria-pressed="true"]');
+	const clear = panel(page).getByRole("button", { name: /^清除范围/ });
+
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(clear).toHaveCount(0);
+
+	await nodeButton(page, "fetch").click();
+	await expect(scope).toHaveText("范围：fetch");
+	await expect(clear).toHaveAccessibleName("清除范围，不再只看 fetch");
+	await clear.click();
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(pressed).toHaveCount(0);
+
+	await nodeButton(page, "verify").click();
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await page.keyboard.press("Escape");
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(pressed).toHaveCount(0);
+
+	await nodeButton(page, "verify").click();
+	await page.getByRole("banner").getByRole("button", { name: "取消运行" }).click();
+	const dialog = page.getByRole("dialog", { name: /取消运行/ });
+	await expect(dialog).toBeVisible();
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await page.keyboard.press("Escape");
+	await expect(scope).toHaveText("范围：全部节点");
+});
+
+test("时间线行标签在耗时旁显示节点的进度，没有进度的节点不显示，进度实时更新", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	agent.progress(tasks.probe as AssignedTask, 308, 3000);
+	agent.progress(tasks.verify as AssignedTask, 12);
+	await agent.sync();
+	await openMonitor(page, clock, runId);
+	const progress = (id: string) =>
+		timeline(page).locator(`[data-node-row="${id}"] [data-progress]`);
+
+	await expect(progress("probe")).toHaveText("308/3000");
+	await expect(progress("verify")).toHaveText("12");
+	await expect(progress("fetch")).toHaveCount(0);
+	await expect(nodeButton(page, "probe")).toHaveAccessibleName(/进度 308\/3000$/);
+	await expect(nodeButton(page, "fetch")).not.toHaveAccessibleName(/进度/);
+
+	agent.progress(tasks.probe as AssignedTask, 400, 3000);
+	await expect(progress("probe")).toHaveText("400/3000");
+});
+
+test("已结束的短运行按实际时长定轴：运行占满轨道，刻度细到 0.1 秒", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane);
+	const scenarioId = await createScenario(controlPlane, "冒烟", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const ping = await agent.nextAssign();
+	clock.advance(436);
+	await agent.succeed(ping);
+
+	await openMonitor(page, clock, runId);
+	const tl = timeline(page);
+	await expect(page.getByRole("banner").getByTestId("run-status")).toHaveText("成功");
+	const track = await tl.locator("[data-axis-track]").boundingBox();
+	const segment = await tl.locator('[data-node-row="ping"] [data-segment="ok"]').boundingBox();
+	if (!track || !segment) throw new Error("没有轨道或区段");
+	// 436ms 的运行 + 8% 空白：占轨道的 92% 左右，而不是 10 秒轴上的 4%。
+	expect(segment.width / track.width).toBeGreaterThan(0.85);
+	expect(segment.width / track.width).toBeLessThan(0.97);
+	await expect(tl.locator("[data-axis-track] span")).toHaveText([
+		"+0s",
+		"+0.1s",
+		"+0.2s",
+		"+0.3s",
+		"+0.4s",
+	]);
 });
 
 test("日志：级别筛选、点一行在时间轴上标出该时刻、实时接续、向上加载更早的日志、下载原始日志", async ({
@@ -358,10 +528,18 @@ test("时间线下沿与底部面板上沿可以拖动调整高度，双击恢�
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
 	const bp = panel(page);
-	// 默认选中的 verify 第 2 次还没有日志：底部面板自动收起；拖动后展开，双击恢复默认（又自动收起）。
+	// 打开时合并日志里有 fetch 的日志，面板是展开的；选中还没开始的 cleanup 就没有日志可看，面板自动收起。
+	await expect(bp.getByRole("button", { name: "收起" })).toBeVisible();
+	await nodeButton(page, "cleanup").click();
+	// 拖动后展开，双击恢复默认（又自动收起）。
 	await expect(bp.getByRole("button", { name: "展开" })).toBeVisible();
 	const before = (await bp.boundingBox())?.height ?? 0;
 	const handle = page.getByRole("separator", { name: "调整底部面板高度" });
+	// 默认高度也有值：读屏读到的是量出来的高度，上限是窗口高度（900）的 70%。
+	await expect(handle).toHaveAttribute("aria-valuemax", "630");
+	expect(Math.abs(Number(await handle.getAttribute("aria-valuenow")) - before)).toBeLessThanOrEqual(
+		2,
+	);
 	const box = await handle.boundingBox();
 	if (!box) throw new Error("没有拖动条");
 	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
@@ -406,6 +584,7 @@ test("取消：确认弹窗列出影响，默认焦点在「继续运行」；�
 	await expect(impact).toContainText("verify、probe");
 	await expect(impact).toContainText("always 节点照常执行清理");
 	await expect(impact).toContainText("cleanup");
+	await expect(impact).not.toContainText("0 个");
 	// 不用输入运行编号：焦点默认在「继续运行」，误按 Enter 不会取消。
 	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
 	await dialog.getByRole("button", { name: "取消运行" }).click();
@@ -437,7 +616,291 @@ test("取消：确认弹窗列出影响，默认焦点在「继续运行」；�
 	await expect(header.getByRole("button", { name: /取消运行|强制终止/ })).toHaveCount(0);
 });
 
-test("失败的运行：默认选中失败的节点，顶栏有失败摘要；再次运行沿用上次的参数（敏感参数除外）进入新运行；运行切换列出同场景的运行", async ({
+test("C 打开取消确认弹窗，默认焦点在「继续运行」；清理期间同一个键是强制终止；运行结束后不再绑定", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const header = page.getByRole("banner");
+	await expect(header.getByRole("button", { name: "取消运行" })).toHaveAttribute(
+		"title",
+		"取消运行（C）",
+	);
+
+	await page.keyboard.press("r");
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+
+	await page.keyboard.press("c");
+	const dialog = page.getByRole("dialog", { name: /取消运行/ });
+	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+
+	await page.keyboard.press("c");
+	await dialog.getByRole("button", { name: "取消运行" }).click();
+	for (let i = 0; i < 2; i++) await agent.nextCancel();
+	await agent.cancelled(tasks.verify as AssignedTask);
+	await agent.cancelled(tasks.probe as AssignedTask);
+	const cleanup = await agent.nextAssign();
+	await expect(header.getByTestId("run-status")).toHaveText("取消中");
+
+	await page.keyboard.press("c");
+	const force = page.getByRole("dialog", { name: /强制终止运行/ });
+	await expect(force.getByRole("button", { name: "继续运行" })).toBeFocused();
+	await force.getByRole("button", { name: "强制终止" }).click();
+	expect(await agent.nextCancel()).toMatchObject({ taskId: cleanup.taskId, force: true });
+	await expect(header.getByTestId("run-status")).toHaveText("已取消");
+
+	await page.keyboard.press("c");
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("取消弹窗关闭的退场动画还没结束时再按 C：重新打开，焦点回到「继续运行」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	// 退场动画平时只有 100 毫秒；拉长到按键一定落在退场期间。
+	await page.addStyleTag({
+		content: '[data-slot="dialog-content"] { animation-duration: 3s !important; }',
+	});
+
+	await page.keyboard.press("c");
+	const dialog = page.getByRole("dialog", { name: /取消运行/ });
+	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
+	await page.keyboard.press("Tab");
+	await expect(dialog.getByRole("button", { name: "取消运行" })).toBeFocused();
+	await page.keyboard.press("Escape");
+	await expect(dialog).toHaveAttribute("data-closed", "");
+
+	await page.keyboard.press("c");
+	await expect(dialog).toHaveAttribute("data-open", "");
+	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
+});
+
+test("R 在运行结束后打开「再次运行」抽屉，沿用上次的参数", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await failedRun(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const header = page.getByRole("banner");
+	await expect(header.getByTestId("run-status")).toHaveText("失败");
+	await expect(header.getByRole("button", { name: "再次运行" })).toHaveAttribute(
+		"title",
+		"再次运行（R）",
+	);
+
+	await page.keyboard.press("r");
+	const rerun = page.getByRole("dialog", { name: "再次运行 · 日终数据处理" });
+	await expect(rerun.getByRole("textbox", { name: /^region/ })).toHaveValue("cn-east");
+	await page.keyboard.press("Escape");
+	await expect(rerun).toBeHidden();
+});
+
+test("F 依次选中失败的节点并切到「尝试」页签，到末尾回到第一个；没有失败的节点时不绑定", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await failedRun(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const scope = panel(page).getByTestId("bp-scope");
+	const attemptsTab = panel(page).getByRole("tab", { name: "尝试" });
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(attemptsTab).toHaveAttribute("aria-selected", "false");
+
+	await page.keyboard.press("f");
+	await expect(scope).toHaveText("范围：probe");
+	await expect(nodeButton(page, "probe")).toHaveAttribute("aria-pressed", "true");
+	await expect(attemptsTab).toHaveAttribute("aria-selected", "true");
+
+	await page.keyboard.press("f");
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
+
+	await nodeButton(page, "fetch").click();
+	await page.keyboard.press("f");
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+});
+
+test("没有失败的节点时 F 不起作用", async ({ page, controlPlane, connectAgent, clock }) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	await page.keyboard.press("f");
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
+	await expect(panel(page).getByRole("tab", { name: "日志" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+});
+
+test("E 切到日志页签并只看 ERROR，再按一次恢复原来的级别", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const probe = tasks.probe as AssignedTask;
+	agent.logs(probe, [
+		logLine(clock, 1, "probe info line", LogLevel.INFO),
+		logLine(clock, 2, "probe warn line", LogLevel.WARN),
+		logLine(clock, 3, "probe error line", LogLevel.ERROR),
+	]);
+	await agent.sync();
+	await openMonitor(page, clock, runId, "probe");
+	const logs = panel(page).getByRole("log", { name: "日志" });
+	const level = (name: string) => panel(page).getByRole("button", { name, exact: true });
+	await expect(logs).toContainText("probe info line");
+
+	await page.keyboard.press("e");
+	await expect(level("ERROR")).toHaveAttribute("aria-pressed", "true");
+	await expect(logs).toContainText("probe error line");
+	await expect(logs).not.toContainText("probe warn line");
+	await page.keyboard.press("e");
+	await expect(level("全部")).toHaveAttribute("aria-pressed", "true");
+	await expect(logs).toContainText("probe info line");
+
+	await level("WARN").click();
+	await expect(logs).not.toContainText("probe info line");
+	await panel(page).getByRole("tab", { name: "尝试" }).click();
+	await page.keyboard.press("e");
+	await expect(panel(page).getByRole("tab", { name: "日志" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await expect(level("ERROR")).toHaveAttribute("aria-pressed", "true");
+	await expect(logs).not.toContainText("probe warn line");
+	await page.keyboard.press("e");
+	await expect(level("WARN")).toHaveAttribute("aria-pressed", "true");
+	await expect(logs).toContainText("probe warn line");
+	await expect(logs).not.toContainText("probe info line");
+});
+
+test("L 回到实时（运行中）或重置时间范围（已结束）；没有缩放时不绑定", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const tl = timeline(page);
+	await page.keyboard.press("l");
+	await expect(tl.getByText("实时跟随")).toBeVisible();
+
+	await dragZoom(page, 0.1, 0.5);
+	await expect(tl.getByTestId("zoom-range")).toBeVisible();
+	await expect(tl.getByRole("button", { name: "回到实时" })).toHaveAttribute(
+		"title",
+		"回到实时（L）",
+	);
+	await page.keyboard.press("l");
+	await expect(tl.getByText("实时跟随")).toBeVisible();
+	await expect(tl.getByTestId("zoom-range")).toHaveCount(0);
+});
+
+test("L 在已结束的运行里重置时间范围", async ({ page, controlPlane, connectAgent, clock }) => {
+	const { runId } = await failedRun(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const tl = timeline(page);
+	await dragZoom(page, 0.1, 0.5);
+	await expect(tl.getByRole("button", { name: "重置时间范围" })).toHaveAttribute(
+		"title",
+		"重置时间范围（L）",
+	);
+	await page.keyboard.press("l");
+	await expect(tl.getByTestId("zoom-range")).toHaveCount(0);
+	await expect(tl.getByRole("button", { name: "重置时间范围" })).toHaveCount(0);
+});
+
+test("命令面板「当前页面」列出此刻可用的快捷键，选「取消运行」后确认弹窗拿到焦点并一直保持", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	const pageGroup = palette.getByRole("group", { name: "当前页面" });
+
+	await page.keyboard.press("Control+k");
+	await expect(palette.getByRole("combobox", { name: "命令" })).toBeFocused();
+	await expect(pageGroup.getByRole("option")).toHaveText([
+		/^只看 ERROR \/ 恢复级别E$/,
+		/^取消运行 \/ 强制终止C$/,
+	]);
+	await expect(pageGroup.getByRole("option").first()).toHaveAttribute("aria-selected", "true");
+
+	await page.keyboard.type("取消");
+	await page.keyboard.press("Enter");
+	await expect(palette).toBeHidden();
+	const dialog = page.getByRole("dialog", { name: /取消运行/ });
+	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
+	await page.waitForTimeout(500);
+	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
+	await page.keyboard.press("Escape");
+	await expect(dialog).toBeHidden();
+
+	await dragZoom(page, 0.1, 0.5);
+	await page.keyboard.press("Control+k");
+	await expect(pageGroup.getByRole("option")).toHaveText([
+		/^只看 ERROR \/ 恢复级别E$/,
+		/^回到实时 \/ 重置时间范围L$/,
+		/^取消运行 \/ 强制终止C$/,
+	]);
+	await page.keyboard.type("实时");
+	await page.keyboard.press("Enter");
+	await expect(timeline(page).getByText("实时跟随")).toBeVisible();
+	await expect(timeline(page).getByTestId("zoom-range")).toHaveCount(0);
+});
+
+test("命令面板「当前页面」：已结束的失败运行是下一个失败的节点、只看 ERROR、再次运行", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await failedRun(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	await page.keyboard.press("Control+k");
+	const pageGroup = page
+		.getByRole("dialog", { name: "命令面板" })
+		.getByRole("group", { name: "当前页面" });
+	await expect(pageGroup.getByRole("option")).toHaveText([
+		/^下一个失败的节点F$/,
+		/^只看 ERROR \/ 恢复级别E$/,
+		/^缩放到所选节点Z$/,
+		/^再次运行R$/,
+	]);
+
+	await pageGroup.getByRole("option", { name: /下一个失败的节点/ }).click();
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：probe");
+	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+
+	await page.keyboard.press("Control+k");
+	await pageGroup.getByRole("option", { name: /再次运行/ }).click();
+	const rerun = page.getByRole("dialog", { name: "再次运行 · 日终数据处理" });
+	await expect(rerun).toBeVisible();
+	await page.waitForTimeout(500);
+	expect(await rerun.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+});
+
+test("失败的运行：默认选中失败的节点，页内横幅写失败摘要（可收起，收起后回到顶栏）；再次运行沿用上次的参数（敏感参数除外）进入新运行；运行切换列出同场景的运行", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -458,16 +921,28 @@ test("失败的运行：默认选中失败的节点，顶栏有失败摘要；�
 	await expect(timeline(page).getByText("实时跟随")).toHaveCount(0);
 	await expect(page).toHaveTitle("✕ 失败 · 日终数据处理 · sfly");
 
-	// 失败摘要：第一个失败的节点、第几次尝试、错误信息的第一行；点击切到它的「尝试」页签。
-	const failure = header.getByTestId("run-failure");
-	await expect(failure).toHaveText("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
-	await failure.click();
+	const banner = page.getByRole("region", { name: "运行失败" });
+	await expect(banner.getByTestId("run-failure")).toHaveText(
+		"失败于 verify（第 2 次）· AssertionError: 仍然漏拦",
+	);
+	await expect(header.getByTestId("run-failure")).toHaveCount(0);
+	await banner.getByRole("button", { name: "查看失败节点" }).click();
 	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
 		"aria-selected",
 		"true",
 	);
 	await expect(panel(page).getByRole("article", { name: "verify 第 2 次尝试" })).toContainText(
 		"仍然漏拦",
+	);
+	await banner.getByRole("button", { name: "收起" }).click();
+	await expect(banner).toHaveCount(0);
+	const failure = header.getByTestId("run-failure");
+	await expect(failure).toHaveText("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
+	await panel(page).getByRole("tab", { name: "日志" }).click();
+	await failure.click();
+	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
+		"aria-selected",
+		"true",
 	);
 
 	await header.getByRole("button", { name: "再次运行" }).click();

@@ -2,9 +2,9 @@
  * 样式入口（docs/DESIGN-SYSTEM.md「CSS layer」）。所有样式都在下面声明的层里，没有未分层的规则：
  *
  *   theme      Tailwind 主题变量 + 设计 token（./tokens.css）
- *   base       Tailwind preflight + 本文件的元素基础样式（body、kbd、焦点环、减少动效）
- *   vendor     第三方库自带的样式（xyflow）
- *   components 自己写的组件级 CSS（尽量不用；组件样式写在 TSX 的 Tailwind 类里）
+ *   base       Tailwind preflight + 本文件的元素基础样式（body、选区、滚动条、等宽字、减少动效）
+ *   vendor     第三方库自带的样式（xyflow、sonner）
+ *   components 全局焦点环、强制颜色模式的降级；自己写的组件级 CSS（尽量不用；组件样式写在 TSX 的 Tailwind 类里）
  *   utilities  Tailwind 工具类——组件的样式都在这一层，所以低层的全局规则覆盖不了组件
  *
  * 后声明的层优先级更高，与选择器权重无关。
@@ -12,8 +12,6 @@
 @layer theme, base, vendor, components, utilities;
 
 @import "tailwindcss";
-/* 以下两个文件只含 @utility / @custom-variant / @keyframes，由 Tailwind 放进 utilities 层 */
-@import "tw-animate-css";
 @import "./shadcn-variants.css";
 @import "./tokens.css" layer(theme);
 @import "./fonts.css" layer(base);
@@ -32,6 +30,7 @@
 	--color-black: var(--base-black);
 
 	--color-sunk: var(--sunk);
+	--color-inset: var(--inset);
 	--color-bg: var(--bg);
 	--color-surface: var(--surface);
 	--color-raised: var(--raised);
@@ -41,6 +40,7 @@
 	--color-border: var(--border);
 	--color-border-soft: var(--border-soft);
 	--color-border-strong: var(--border-strong);
+	--color-border-control: var(--border-control);
 	--color-fg-1: var(--fg-1);
 	--color-fg-2: var(--fg-2);
 	--color-fg-3: var(--fg-3);
@@ -69,6 +69,12 @@
 	--color-skipped: var(--skipped);
 	--color-cancelled: var(--cancelled);
 	--color-stopped: var(--stopped);
+	--color-ok-fill: var(--ok-fill);
+	--color-warn-fill: var(--warn-fill);
+	--color-danger-fill: var(--danger-fill);
+	--color-signal-fill: var(--signal-fill);
+	--color-stopped-fill: var(--stopped-fill);
+	--color-pending-fill: var(--pending-fill);
 	--color-log-debug: var(--log-debug);
 	--color-log-info: var(--log-info);
 	--color-log-warn: var(--log-warn);
@@ -118,27 +124,35 @@
 	--color-canvas-run-done-bg: var(--canvas-run-done-bg);
 	--color-canvas-run-done-border: var(--canvas-run-done-border);
 
-	/* 字体：界面无衬线（中文回退系统字体）；数值、ID、命令用等宽 */
+	/*
+	 * 字体：界面无衬线，数值、ID、命令用等宽。两套都写明中文黑体：中文是全角，不需要等宽中文，
+	 * 等宽栈落到通用族 monospace 时，Windows 会挑新宋体。等宽字关掉编程连字（>= != -> 照原样显示）。
+	 */
 	--font-*: initial;
 	--font-sans:
-		"IBM Plex Sans", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans CJK SC", "Microsoft YaHei",
-		system-ui, sans-serif;
-	--font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+		"IBM Plex Sans", "PingFang SC", "HarmonyOS Sans SC", "Noto Sans CJK SC", "Source Han Sans SC",
+		"Noto Sans SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+	--font-mono:
+		"JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", "PingFang SC",
+		"HarmonyOS Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans SC",
+		"Microsoft YaHei UI", "Microsoft YaHei", monospace;
+	--font-mono--font-feature-settings: "liga" 0, "calt" 0;
 
-	/* 字号：正文 13、辅助 12、最小 11；标题 14 / 16；统计数字 22 */
+	/* 字号：正文 13、辅助 12、最小 11；标题 14 / 16；统计数字 22（默认根字号 16px 下的像素值）。
+	   用 rem：用户调大浏览器默认字号时，文字与按 rem 计的间距一起放大 */
 	--text-*: initial;
-	--text-2xs: 11px;
-	--text-2xs--line-height: 16px;
-	--text-xs: 12px;
-	--text-xs--line-height: 18px;
-	--text-sm: 13px;
-	--text-sm--line-height: 20px;
-	--text-base: 14px;
-	--text-base--line-height: 20px;
-	--text-lg: 16px;
-	--text-lg--line-height: 24px;
-	--text-2xl: 22px;
-	--text-2xl--line-height: 28px;
+	--text-2xs: 0.6875rem;
+	--text-2xs--line-height: 1rem;
+	--text-xs: 0.75rem;
+	--text-xs--line-height: 1.125rem;
+	--text-sm: 0.8125rem;
+	--text-sm--line-height: 1.25rem;
+	--text-base: 0.875rem;
+	--text-base--line-height: 1.25rem;
+	--text-lg: 1rem;
+	--text-lg--line-height: 1.5rem;
+	--text-2xl: 1.375rem;
+	--text-2xl--line-height: 1.75rem;
 
 	/* 圆角：4 / 6 / 8 / 12 */
 	--radius-*: initial;
@@ -152,32 +166,87 @@
 	--shadow-pop: var(--elevation-pop);
 	--shadow-inset-top: var(--elevation-inset-top);
 
-	--ease-standard: var(--motion-ease);
+	--ease-standard: var(--motion-ease-out);
+	--ease-out: var(--motion-ease-out);
+	--ease-in: var(--motion-ease-in);
+	--default-transition-duration: var(--motion-base);
+	--default-transition-timing-function: var(--motion-ease-out);
 
-	/* 画布上选中节点相关连线的虚线流动（虚线周期 6 + 5），减少动效时由 base 层停止 */
-	--animate-edge-flow: edge-flow 1s linear infinite;
 	@keyframes edge-flow {
 		to {
 			stroke-dashoffset: -11;
 		}
 	}
-
-	/* 执行中圆点的脉冲（青色），减少动效时由 base 层停止 */
-	--animate-status-pulse: status-pulse 1.6s infinite;
 	@keyframes status-pulse {
-		0% {
-			box-shadow: 0 0 0 0 var(--signal-line);
+		from {
+			opacity: 0.7;
+			scale: 1;
 		}
 		70%,
-		100% {
-			box-shadow: 0 0 0 6px transparent;
+		to {
+			opacity: 0;
+			scale: 2.4;
 		}
 	}
+}
+
+/* 光环画在元素自己的 ::after 上，所以元素要自己定位（relative / absolute）、不能是伪元素。只动 scale 与 opacity（合成器完成，不重绘）。减少动效、或用户在 <html data-motion="paused"> 上暂停了动效（lib/motion-pause.ts）时不动：执行中的形状本身与成功不同。 */
+@utility pulse-ring {
+	&::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		border-radius: inherit;
+		background-color: currentColor;
+		opacity: 0;
+		scale: 1;
+		pointer-events: none;
+		@media (prefers-reduced-motion: no-preference) {
+			animation: status-pulse var(--pulse-period) var(--motion-ease-out) infinite;
+		}
+	}
+	:root[data-motion="paused"] &::after {
+		animation: none;
+	}
+}
+
+/* 编排画布的运行状态与运行监控两页各有一个：运行状态标签在两页之间移动（过渡见文件末尾、lib/view-transition.ts） */
+@utility vt-run-state {
+	view-transition-name: run-state;
+}
+
+@utility selected-row {
+	background-color: var(--selected-bg);
+	box-shadow: inset 2px 0 0 var(--primary);
+}
+
+/* 输入框聚焦的青色光晕：No-Glow 规则唯一的静态例外（DESIGN.md），只给可输入的控件 */
+@utility focus-glow {
+	box-shadow: 0 0 0 3px var(--signal-soft);
 }
 
 @layer base {
 	* {
 		border-color: var(--border);
+		/* 平时就是焦点色：聚焦时只切换 outline-style，transition-colors 不会让焦点环先灰后青 */
+		outline-color: var(--ring);
+	}
+	:root {
+		scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+		/* 加载图标一直转（减少动效时放慢，不停下来，免得看起来像卡死） */
+		--animate-spin: spin 1s linear infinite;
+		--animate-pulse: none;
+		@media (prefers-reduced-motion: reduce) {
+			--animate-spin: spin 3s linear infinite;
+		}
+		@media (prefers-reduced-motion: no-preference) {
+			--animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+		}
+		/* 用户暂停了动效（lib/motion-pause.ts）：持续循环的停下，加载图标同样放慢 */
+		&[data-motion="paused"] {
+			--animate-spin: spin 3s linear infinite;
+			--animate-pulse: none;
+		}
 	}
 	html,
 	body,
@@ -190,27 +259,112 @@
 		color: var(--fg-1);
 		font-family: var(--font-sans);
 		font-size: var(--text-sm);
-		line-height: 1.5;
+		/* 13px 时正好是 token 的 20px；无单位，子元素继承比例 */
+		line-height: calc(20 / 13);
 		/* 数字一律等宽 */
 		font-variant-numeric: tabular-nums;
 		-webkit-font-smoothing: antialiased;
 	}
+	::selection {
+		background: var(--selection-bg);
+		color: var(--fg-1);
+	}
+	code,
+	kbd,
+	pre,
+	samp {
+		font-variant-ligatures: none;
+	}
+	/*
+	 * 减少动效：去掉位移、缩放和持续循环，保留淡入淡出与颜色变化（docs/DESIGN-SYSTEM.md「动效」）。
+	 * 循环动画（脉冲、骨架屏）在各自的定义里只在不减少动效时启用（用户暂停动效时也停，见上面的 :root）；
+	 * 画布连线的流动只有两个周期（FlowEdge）；这里只处理浮层：
+	 * Base UI 的 starting / ending style 过渡只剩透明度。
+	 */
+	@media (prefers-reduced-motion: reduce) {
+		/* biome-ignore-start lint/complexity/noImportantStyles: base 层的 !important 才压得过工具类给的位移与缩放 */
+		[data-starting-style],
+		[data-ending-style] {
+			translate: none !important;
+		}
+		/* biome-ignore-end lint/complexity/noImportantStyles: 同上 */
+	}
+}
+
+/* 第三方样式会去掉自己元素的焦点轮廓（xyflow 的节点、sonner 的通知都写了 outline: none），焦点环放在 vendor 之上；
+   组件的工具类仍能调整它（画布的内侧焦点环、输入框的描边加光晕）。 */
+@layer components {
 	:focus-visible {
 		outline: 2px solid var(--ring);
 		outline-offset: 1px;
 	}
-	::selection {
-		background: var(--signal-soft);
-	}
-	@media (prefers-reduced-motion: reduce) {
-		*,
-		*::before,
-		*::after {
-			/* biome-ignore-start lint/complexity/noImportantStyles: 减少动效必须压过组件里的动画与过渡 */
-			animation-duration: 0.001ms !important;
-			animation-iteration-count: 1 !important;
-			transition-duration: 0.001ms !important;
-			/* biome-ignore-end lint/complexity/noImportantStyles: 同上 */
+
+	/*
+	 * 强制颜色模式（Windows 高对比度）：浏览器换掉作者的颜色、去掉 box-shadow 与渐变。
+	 * 状态标记是 currentColor 画的 SVG，形状语法照样可读，不需要处理；这里只补靠底色或阴影表达的东西。
+	 */
+	@media (forced-colors: active) {
+		/* 当前项、选中项从底色与左侧白条换成描边（:where 不加权重，键盘焦点环仍然优先） */
+		:where([aria-current="page"], [aria-pressed="true"], [data-state="selected"], .selected-row) {
+			outline: 2px solid Highlight;
+			outline-offset: -2px;
 		}
+		/* 进度段、缩略图、槽位条是数据图形，颜色与形状一起是信息：保留作者颜色，垫一块自己的深色底 */
+		[data-viz] {
+			forced-color-adjust: none;
+			background-color: var(--bg);
+			color: var(--fg-1);
+		}
+	}
+}
+
+/*
+ * 编排画布的运行状态 ↔ 运行监控（lib/view-transition.ts 按方向给出 type）：整页淡入淡出并朝前进的方向平移 12px，
+ * 运行状态标签（vt-run-state）移动到另一页的位置。只有这一对入口发起过渡，减少动效时不发起，所以这里不再写降级。
+ */
+@layer components {
+	@keyframes view-leave-left {
+		to {
+			opacity: 0;
+			translate: -12px 0;
+		}
+	}
+	@keyframes view-enter-from-right {
+		from {
+			opacity: 0;
+			translate: 12px 0;
+		}
+	}
+	@keyframes view-leave-right {
+		to {
+			opacity: 0;
+			translate: 12px 0;
+		}
+	}
+	@keyframes view-enter-from-left {
+		from {
+			opacity: 0;
+			translate: -12px 0;
+		}
+	}
+	html:active-view-transition-type(to-monitor, to-canvas)::view-transition-group(root) {
+		animation-duration: var(--motion-base);
+		animation-timing-function: var(--motion-ease-out);
+	}
+	html:active-view-transition-type(to-monitor, to-canvas)::view-transition-group(run-state) {
+		animation-duration: var(--motion-slow);
+		animation-timing-function: var(--motion-ease-out);
+	}
+	html:active-view-transition-type(to-monitor)::view-transition-old(root) {
+		animation-name: view-leave-left;
+	}
+	html:active-view-transition-type(to-monitor)::view-transition-new(root) {
+		animation-name: view-enter-from-right;
+	}
+	html:active-view-transition-type(to-canvas)::view-transition-old(root) {
+		animation-name: view-leave-right;
+	}
+	html:active-view-transition-type(to-canvas)::view-transition-new(root) {
+		animation-name: view-enter-from-left;
 	}
 }

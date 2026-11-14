@@ -1,0 +1,2234 @@
+{
+  "description": "sfly 控制面的 HTTP 接口清单，由 packages/schema 的 HTTP 契约导出（不要手改，pnpm gen 重新生成）。params、query、body 是请求的 JSON Schema（draft 2020-12，按输入方向导出）；query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。notes 记录 JSON Schema 表达不了的约束（自定义校验、转换），那些只由控制面校验。",
+  "routes": [
+    {
+      "method": "GET",
+      "path": "/agent/binaries",
+      "key": [
+        "agent-binaries",
+        "list"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/agent/binaries/:version/:arch",
+      "key": null,
+      "kind": "download",
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "arch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "arch"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/install.sh",
+      "key": null,
+      "kind": "download",
+      "content_type": "text/plain; charset=utf-8",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/agents",
+      "key": [
+        "agents",
+        "list"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/agents/:name/update-now",
+      "key": [
+        "agents",
+        "update-now"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/artifacts",
+      "key": [
+        "artifacts",
+        "list"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "PUT",
+      "path": "/tasks/:id/artifacts/*",
+      "key": [
+        "artifacts",
+        "upload"
+      ],
+      "kind": "upload",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "*": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "*"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/artifacts/*",
+      "key": null,
+      "kind": "download",
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "*": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "*"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/client",
+      "key": [
+        "client-package",
+        "list"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/client/:version/:filename",
+      "key": null,
+      "kind": "download",
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "filename"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/dashboard",
+      "key": [
+        "dashboard",
+        "get"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/docs",
+      "key": [
+        "docs",
+        "list"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/docs/:page.md",
+      "key": null,
+      "kind": "download",
+      "content_type": "text/markdown; charset=utf-8",
+      "params": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "page"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/docs/skills/:skill/:file",
+      "key": null,
+      "kind": "download",
+      "content_type": "text/markdown; charset=utf-8",
+      "params": {
+        "type": "object",
+        "properties": {
+          "skill": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "skill",
+          "file"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/llms.txt",
+      "key": null,
+      "kind": "download",
+      "content_type": "text/plain; charset=utf-8",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/feishu-bots",
+      "key": [
+        "feishu-bots",
+        "list"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/feishu-bots",
+      "key": [
+        "feishu-bots",
+        "create"
+      ],
+      "kind": "endpoint",
+      "body": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "webhook_url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "name",
+          "webhook_url"
+        ]
+      },
+      "notes": [
+        {
+          "part": "body",
+          "path": "webhook_url",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Webhook 地址不能含空白字符"
+        },
+        {
+          "part": "body",
+          "path": "webhook_url",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Webhook 地址必须是 http 或 https 地址"
+        }
+      ]
+    },
+    {
+      "method": "PATCH",
+      "path": "/feishu-bots/:name",
+      "key": [
+        "feishu-bots",
+        "replace-webhook"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "webhook_url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          }
+        },
+        "required": [
+          "webhook_url"
+        ],
+        "additionalProperties": false
+      },
+      "notes": [
+        {
+          "part": "body",
+          "path": "webhook_url",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Webhook 地址不能含空白字符"
+        },
+        {
+          "part": "body",
+          "path": "webhook_url",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：Webhook 地址必须是 http 或 https 地址"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/feishu-bots/:name/references",
+      "key": [
+        "feishu-bots",
+        "references"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/feishu-bots/:name",
+      "key": [
+        "feishu-bots",
+        "remove"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/feishu-bots/:name/test",
+      "key": [
+        "feishu-bots",
+        "test"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/logs",
+      "key": [
+        "logs",
+        "page"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "after": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "limit": {
+            "default": 200,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "level": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "source",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "level",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "after",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "before",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：before 与 after 不能同时给"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/logs/events",
+      "key": null,
+      "kind": "stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "after_seq": {
+            "type": "string"
+          }
+        }
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/logs/download",
+      "key": null,
+      "kind": "download",
+      "content_type": "application/x-ndjson",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/logs",
+      "key": [
+        "logs",
+        "run-page"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "string"
+          },
+          "after": {
+            "type": "string"
+          },
+          "limit": {
+            "default": 200,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "nodes": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          }
+        }
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "level",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "nodes",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "after",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "before",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：before 与 after 不能同时给"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/logs/download",
+      "key": null,
+      "kind": "download",
+      "content_type": "application/x-ndjson",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "nodes": {
+            "type": "string"
+          }
+        }
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "nodes",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/logs/events",
+      "key": null,
+      "kind": "stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string"
+          },
+          "nodes": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          }
+        }
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "level",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "nodes",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "after",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/metrics/summary",
+      "key": [
+        "metrics",
+        "summary"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/metrics",
+      "key": [
+        "metrics",
+        "catalog"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/metrics/series",
+      "key": [
+        "metrics",
+        "series"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "chain_instance_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "node_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "metrics": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "to": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+          },
+          "points": {
+            "default": 300,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000
+          }
+        },
+        "required": [
+          "chain_instance_id",
+          "node_id"
+        ],
+        "additionalProperties": false
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "metrics",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：from 不能晚于 to"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/metrics/platform",
+      "key": [
+        "metrics",
+        "platform"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "default": 120,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000
+          }
+        },
+        "additionalProperties": false
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/orchestrations",
+      "key": [
+        "orchestrations",
+        "list"
+      ],
+      "kind": "endpoint",
+      "query": {
+        "type": "object",
+        "properties": {
+          "q": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "success",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "agent": {
+            "type": "string",
+            "minLength": 1
+          },
+          "archived": {
+            "type": "string"
+          }
+        }
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "archived",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/orchestrations/:id",
+      "key": [
+        "orchestrations",
+        "detail"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/orchestrations/:id/head",
+      "key": [
+        "orchestrations",
+        "head"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/versions",
+      "key": [
+        "orchestrations",
+        "save-version"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "document": {
+            "type": "object",
+            "properties": {
+              "default_agent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "nodes": {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "entry"
+                        },
+                        "params": {
+                          "default": [],
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "string",
+                                  "number",
+                                  "boolean",
+                                  "json"
+                                ]
+                              },
+                              "default": {},
+                              "required": {
+                                "default": false,
+                                "type": "boolean"
+                              },
+                              "secret": {
+                                "default": false,
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "type"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "subflow_entry"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "params": {
+                          "default": [],
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                              },
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "string",
+                                  "number",
+                                  "boolean",
+                                  "json"
+                                ]
+                              },
+                              "default": {},
+                              "required": {
+                                "default": false,
+                                "type": "boolean"
+                              },
+                              "secret": {
+                                "default": false,
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "type"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "async"
+                        },
+                        "params": {
+                          "default": {},
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "timer"
+                        },
+                        "always": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "at": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "tz": {
+                          "default": "Asia/Shanghai",
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "at"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "sleep"
+                        },
+                        "always": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "duration": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "duration"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "stop_subflow"
+                        },
+                        "always": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "subflow": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "feishu_notify"
+                        },
+                        "always": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "bot": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "format": {
+                          "default": "text",
+                          "type": "string",
+                          "enum": [
+                            "text",
+                            "card",
+                            "raw"
+                          ]
+                        },
+                        "text": {
+                          "default": "",
+                          "type": "string"
+                        },
+                        "at_all": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "title": {
+                          "default": "",
+                          "type": "string"
+                        },
+                        "color": {
+                          "default": "blue",
+                          "type": "string",
+                          "enum": [
+                            "blue",
+                            "green",
+                            "orange",
+                            "red",
+                            "grey"
+                          ]
+                        },
+                        "markdown": {
+                          "default": "",
+                          "type": "string"
+                        },
+                        "message": {}
+                      },
+                      "required": [
+                        "id",
+                        "kind"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "position": {
+                          "type": "object",
+                          "properties": {
+                            "x": {
+                              "type": "number"
+                            },
+                            "y": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "x",
+                            "y"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "kind": {
+                          "type": "string",
+                          "const": "package"
+                        },
+                        "always": {
+                          "default": false,
+                          "type": "boolean"
+                        },
+                        "package": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                        },
+                        "node": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+                        },
+                        "agent": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "inputs": {
+                          "default": {},
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "timeout": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "retries": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "queue_timeout": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "kind",
+                        "package",
+                        "node"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              },
+              "edges": {
+                "default": [],
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "to": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "chain",
+                        "dispatch"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "from",
+                    "to",
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "packages": {
+                "default": {},
+                "type": "object",
+                "propertyNames": {
+                  "type": "string",
+                  "pattern": "^[a-z0-9][a-z0-9_-]*$"
+                },
+                "additionalProperties": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "nodes"
+            ],
+            "additionalProperties": false,
+            "title": "sfly 编排文档"
+          },
+          "base_version": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "document",
+          "base_version"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/orchestrations/:id/versions",
+      "key": [
+        "orchestrations",
+        "versions"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/orchestrations/:id/versions/:number",
+      "key": [
+        "orchestrations",
+        "version"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "number": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "number"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/versions/:number/restore",
+      "key": [
+        "orchestrations",
+        "restore-version"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "number": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "number"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations",
+      "key": [
+        "orchestrations",
+        "create"
+      ],
+      "kind": "endpoint",
+      "body": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "default": "",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "notes": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/orchestrations/:id",
+      "key": [
+        "orchestrations",
+        "update"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": {
+            "type": "string"
+          },
+          "run_notification": {
+            "type": "object",
+            "properties": {
+              "bot": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "trigger": {
+                "type": "string",
+                "enum": [
+                  "failed",
+                  "failed_or_cancelled",
+                  "always"
+                ]
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 200
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 4000
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "notes": [
+        {
+          "part": "body",
+          "path": "run_notification",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：没有要修改的运行通知设置"
+        },
+        {
+          "part": "body",
+          "path": "",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：没有要修改的字段"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/copy",
+      "key": [
+        "orchestrations",
+        "copy"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/archive",
+      "key": [
+        "orchestrations",
+        "archive"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/unarchive",
+      "key": [
+        "orchestrations",
+        "unarchive"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/packages",
+      "key": [
+        "packages",
+        "list"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/packages/:name",
+      "key": [
+        "packages",
+        "detail"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/packages/:name/versions/:version",
+      "key": [
+        "packages",
+        "version"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/packages/:name/versions/:version/nodes/:node",
+      "key": [
+        "packages",
+        "node-type"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$"
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1
+          },
+          "node": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "node"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/packages",
+      "key": [
+        "packages",
+        "publish"
+      ],
+      "kind": "upload",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/packages/:name/versions/:version/archive",
+      "key": null,
+      "kind": "download",
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/presence",
+      "key": [
+        "presence",
+        "heartbeat"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "session_id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/presence/leave",
+      "key": [
+        "presence",
+        "leave"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "session_id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/orchestrations/:id/presence/events",
+      "key": null,
+      "kind": "stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/runs",
+      "key": [
+        "runs",
+        "list"
+      ],
+      "kind": "endpoint",
+      "query": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "success",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "orchestration_id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "q": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "limit": {
+            "default": 200,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          }
+        }
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "q",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "orchestration_id",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "status",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/orchestrations/:id/preflight",
+      "key": [
+        "runs",
+        "preflight"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/orchestrations/:id/runs",
+      "key": [
+        "runs",
+        "by-orchestration"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/runs",
+      "key": [
+        "runs",
+        "trigger"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "default": {
+          "params": {}
+        },
+        "type": "object",
+        "properties": {
+          "params": {
+            "default": {},
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          }
+        },
+        "additionalProperties": false
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id",
+      "key": [
+        "runs",
+        "detail"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/runs/:id/cancel",
+      "key": [
+        "runs",
+        "cancel"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/events",
+      "key": null,
+      "kind": "stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/sdk/python",
+      "key": [
+        "sdk",
+        "wheels"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/sdk/python/:version/:filename",
+      "key": null,
+      "kind": "download",
+      "content_type": "application/octet-stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "filename": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "filename"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/simple/",
+      "key": null,
+      "kind": "download",
+      "content_type": "text/html; charset=utf-8",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/sdk/project-settings",
+      "key": [
+        "sdk",
+        "project-settings"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/simple/:project/",
+      "key": null,
+      "kind": "download",
+      "content_type": "text/html; charset=utf-8",
+      "params": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "key": [
+        "system",
+        "health"
+      ],
+      "kind": "endpoint",
+      "notes": []
+    }
+  ]
+}

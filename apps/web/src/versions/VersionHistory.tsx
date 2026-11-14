@@ -8,12 +8,14 @@ import { useMemo, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { EmptyState, ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
+import { ViaTag } from "#/components/via-tag";
 import { apiQuery, callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
@@ -124,9 +126,9 @@ export function VersionHistory({
 	const comparing = panes.length > 1;
 
 	return (
-		<Page>
+		<Page className="flex min-h-full flex-col">
 			<PageHeader title={name} count={list.length} description="版本历史" actions={editorLink} />
-			<div className="grid grid-cols-[300px_minmax(0,1fr)] gap-3">
+			<div className="grid flex-none grid-cols-[300px_minmax(0,1fr)] gap-3">
 				<Panel className="max-h-60 overflow-y-auto">
 					<ul aria-label="版本" className="m-0 list-none p-1">
 						{list.map((v) => (
@@ -159,7 +161,7 @@ export function VersionHistory({
 					)}
 				</Panel>
 			</div>
-			<div className={cn("mt-3 grid gap-3", comparing ? "grid-cols-2" : "grid-cols-1")}>
+			<div className={cn("mt-3 grid flex-1 gap-3", comparing ? "grid-cols-2" : "grid-cols-1")}>
 				{panes.map((pane) => (
 					<Panel key={pane.side} className="flex flex-col">
 						<div className="flex h-10 items-center gap-2 border-b border-border-soft px-3 text-xs text-fg-2">
@@ -167,12 +169,14 @@ export function VersionHistory({
 							<span className="font-mono text-sm text-fg-1">v{pane.number}</span>
 							{pane.query.data && (
 								<span className="truncate">
-									{pane.query.data.author} · {formatDateTime(pane.query.data.created_at)}
+									{pane.query.data.author}
+									<ViaTag via={pane.query.data.author_via} /> ·{" "}
+									{formatDateTime(pane.query.data.created_at)}
 								</span>
 							)}
 							<span className="ml-auto text-fg-3">只读</span>
 						</div>
-						<div className="relative h-[max(360px,calc(100vh-420px))]">
+						<div className="relative min-h-90 flex-1">
 							{pane.query.data ? (
 								<VersionCanvas
 									label={`版本 ${pane.number}（只读）`}
@@ -229,7 +233,7 @@ function PickButton({
 			onClick={onClick}
 			className={cn(
 				"grid size-6 cursor-pointer place-items-center rounded-sm font-mono text-2xs text-fg-3 hover:bg-raised hover:text-fg-1",
-				pressed && "bg-raised-2 text-fg-1 hover:bg-raised-2",
+				pressed && "bg-track text-fg-1 hover:bg-track",
 			)}
 		>
 			{side}
@@ -260,7 +264,7 @@ function VersionRow({
 			aria-current={picked || undefined}
 			className={cn(
 				"group flex items-center gap-2 rounded-md px-2 py-1.5",
-				picked ? "bg-raised shadow-[inset_2px_0_0_var(--primary)]" : "hover:bg-raised",
+				picked ? "selected-row" : "hover:bg-raised",
 			)}
 		>
 			<div className="flex min-w-0 flex-1 flex-col">
@@ -268,8 +272,9 @@ function VersionRow({
 					<span className="font-mono text-sm text-fg-1">v{version.number}</span>
 					{latest && <Badge>最新</Badge>}
 				</span>
-				<span className="truncate text-xs text-fg-3">
-					{version.author} · {formatDateTime(version.created_at)}
+				<span className="text-xs break-words text-fg-3">
+					{version.author}
+					<ViaTag via={version.author_via} /> · {formatDateTime(version.created_at)}
 				</span>
 			</div>
 			{!latest && (
@@ -350,15 +355,19 @@ function RestoreDialog({
 								）的内容生成新的版本 {next}。历史版本保持不变。
 							</DialogDescription>
 						</DialogHeader>
-						{draftExists && (
-							<p className="m-0 text-sm text-warn">
-								本浏览器中有这个场景未保存的修改，恢复后会被放弃。
-							</p>
-						)}
-						{restore.error && (
-							<p role="alert" className="m-0 text-sm text-danger-fg">
-								恢复失败：{restore.error.message}
-							</p>
+						{(draftExists || restore.error) && (
+							<DialogBody>
+								{draftExists && (
+									<p className="m-0 text-sm text-warn-fg">
+										本浏览器中有这个场景未保存的修改，恢复后会被放弃。
+									</p>
+								)}
+								{restore.error && (
+									<p role="alert" className="m-0 text-sm text-danger-fg">
+										恢复失败：{restore.error.message}
+									</p>
+								)}
+							</DialogBody>
 						)}
 						<DialogFooter>
 							<Button variant="ghost" onClick={onClose}>

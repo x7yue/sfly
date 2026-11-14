@@ -63,12 +63,6 @@ test("没选中节点时合并显示全部节点的日志：按控制面时间�
 	await openMonitor(page, clock, runId);
 	const scope = panel(page).getByTestId("bp-scope");
 	const logs = panel(page).getByRole("log", { name: "日志" });
-	// 默认选中执行中的 verify：只看它这一次尝试，没有来源节点列。
-	await expect(scope).toHaveText("范围：verify（第 2 次）");
-	await expect(logs.getByRole("button")).toHaveCount(1);
-	await expect(logs.locator("[data-log-origin]")).toHaveCount(0);
-
-	await nodeButton(page, "verify").click();
 	await expect(scope).toHaveText("范围：全部节点");
 	const rows = logs.getByRole("button");
 	await expect(rows).toContainText([
@@ -115,13 +109,13 @@ test("没选中节点时合并显示全部节点的日志：按控制面时间�
 	await retrying.click();
 	await expect(timeline(page).locator("[data-marker-line]")).toHaveCount(0);
 
-	// 在时间线上框选后半段：合并视图只留下这段时间里的行。
+	// 在时间线上框选 9.8–13.9 秒（轴取 20 秒）：合并视图只留下这段时间里的行。
 	const track = await timeline(page).locator('[data-node-row="fetch"] > div').boundingBox();
 	if (!track) throw new Error("没有轨道");
 	const y = track.y + track.height / 2;
-	await page.mouse.move(track.x + track.width * 0.7, y);
+	await page.mouse.move(track.x + track.width * (9.8 / 20), y);
 	await page.mouse.down();
-	await page.mouse.move(track.x + track.width * 0.99, y, { steps: 5 });
+	await page.mouse.move(track.x + track.width * (13.9 / 20), y, { steps: 5 });
 	await page.mouse.up();
 	await expect(scope).toHaveText("范围：全部节点 · 已按时间范围过滤");
 	await expect(rows).toContainText(["verify 2 retrying", "probe tick"]);
@@ -129,12 +123,16 @@ test("没选中节点时合并显示全部节点的日志：按控制面时间�
 	await timeline(page).getByRole("button", { name: "回到实时" }).click();
 	await expect(rows).toHaveCount(9);
 
-	// 选中 fetch：只看它，没有来源节点列；再点一次取消选中，回到合并视图。
+	await nodeButton(page, "verify").click();
+	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(rows).toHaveCount(1);
+	await expect(logs.locator("[data-log-origin]")).toHaveCount(0);
+
 	await nodeButton(page, "fetch").click();
 	await expect(scope).toHaveText("范围：fetch");
 	await expect(rows).toHaveCount(4);
 	await expect(logs.locator("[data-log-origin]")).toHaveCount(0);
-	await nodeButton(page, "fetch").click();
+	await panel(page).getByRole("button", { name: "清除范围，不再只看 fetch" }).click();
 	await expect(scope).toHaveText("范围：全部节点");
 	await expect(rows).toHaveCount(9);
 	await expect(logs.locator("[data-log-origin]").first()).toHaveText("fetch");
@@ -173,8 +171,6 @@ test("合并视图向上滚动一页页加载更早的日志，一直到运行�
 	});
 
 	await openMonitor(page, clock, runId);
-	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
-	await nodeButton(page, "verify").click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 	const logs = panel(page).getByRole("log", { name: "日志" });
 	await expect(logs).toContainText("verify line 500");
@@ -253,7 +249,6 @@ test("执行中的运行：合并视图实时显示新写入的行，晚到的�
 	const at = logAt(agent, clock0);
 
 	await openMonitor(page, clock, runId);
-	await nodeButton(page, "verify").click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 	const logs = panel(page).getByRole("log", { name: "日志" });
 	const rows = logs.getByRole("button");
@@ -317,8 +312,7 @@ test("实时推送的行多到超过浏览器保留的 5000 行时，从最新�
 	});
 
 	await openMonitor(page, clock, runId);
-	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
-	await nodeButton(page, "verify").click();
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 	const logs = panel(page).getByRole("log", { name: "日志" });
 	await expect(logs.getByRole("button")).toHaveCount(4);
 	await expect.poll(() => latestPages).toBe(1);
@@ -358,8 +352,6 @@ test("执行中的运行在合并视图里还没有日志时底部面板自动�
 	const ping = await agent.nextAssign();
 
 	await openMonitor(page, clock, runId);
-	// 默认选中执行中的 ping；取消选中后是全部节点，还没有任何日志：自动收起。
-	await nodeButton(page, "ping").click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 	await expect(panel(page).getByRole("button", { name: "展开" })).toBeVisible();
 
@@ -381,7 +373,6 @@ test("合并视图筛选了节点、筛选出的节点里没有日志时底部�
 	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
 	const scope = panel(page).getByTestId("bp-scope");
-	await nodeButton(page, "verify").click();
 	await expect(scope).toHaveText("范围：全部节点");
 	await expect(panel(page).getByRole("button", { name: "收起" })).toBeVisible();
 
@@ -411,7 +402,7 @@ test("合并视图筛选了节点、筛选出的节点里没有日志时底部�
 	await expect(panel(page).getByRole("button", { name: "收起" })).toBeVisible();
 });
 
-test("打开监控页时默认选中了节点：不会先挂上合并视图、白发一次合并日志的请求", async ({
+test("打开监控页时链接里给了节点：不会先挂上合并视图、白发一次合并日志的请求；点范围标签上的 × 才读合并日志", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -423,8 +414,7 @@ test("打开监控页时默认选中了节点：不会先挂上合并视图、�
 		if (new URL(req.url()).pathname === `/api/runs/${runId}/logs`) requested.push(req.url());
 	});
 
-	await openMonitor(page, clock, runId);
-	// 默认选中执行中的 verify（还没有日志）：显示的是它的单节点日志。
+	await openMonitor(page, clock, runId, "verify");
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
 	await expect(panel(page).getByRole("tabpanel", { includeHidden: true })).toHaveText(
 		"还没有日志输出。",
@@ -432,7 +422,7 @@ test("打开监控页时默认选中了节点：不会先挂上合并视图、�
 	expect(requested).toEqual([]);
 
 	// 取消选中之后才读合并日志。
-	await nodeButton(page, "verify").click();
+	await panel(page).getByRole("button", { name: "清除范围，不再只看 verify" }).click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：全部节点");
 	await expect.poll(() => requested.length).toBe(1);
 });
@@ -494,7 +484,6 @@ test("合并视图跟随节点筛选：范围标签与日志随筛选变化，�
 	const { runId } = running;
 
 	await openMonitor(page, clock, runId);
-	await nodeButton(page, "verify").click();
 	const scope = panel(page).getByTestId("bp-scope");
 	const logs = panel(page).getByRole("log", { name: "日志" });
 	const rows = logs.getByRole("button");
@@ -564,7 +553,6 @@ test("合并视图点来源节点名，或在行上打开菜单，选中这个�
 	const { runId } = running;
 
 	await openMonitor(page, clock, runId);
-	await nodeButton(page, "verify").click();
 	const scope = panel(page).getByTestId("bp-scope");
 	const logs = panel(page).getByRole("log", { name: "日志" });
 	const rows = logs.getByRole("button");
@@ -602,6 +590,8 @@ test("合并视图点来源节点名，或在行上打开菜单，选中这个�
 	await rows.filter({ hasText: "load config ok" }).focus();
 	await page.keyboard.press("Shift+F10");
 	await expect(rowMenu.getByRole("menuitem")).toHaveText("只看 fetch 的日志");
+	// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在日志行上（移到下一行）。
+	await expect(rowMenu).toBeFocused();
 	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("Enter");
 	await expect(scope).toHaveText("范围：fetch");
@@ -640,7 +630,11 @@ test("合并视图下的下载按钮下载范围内整次运行合并后的日�
 	const brief = (rows: RunLogDownloadRow[]) =>
 		rows.map((r) => [r.subflow, r.node_id, r.attempt, r.text]);
 
-	// 默认选中 verify：单节点视图，只有原来的下载按钮。
+	await expect(scope).toHaveText("范围：全部节点");
+	await expect(single).toHaveCount(0);
+	await expect(merged).toBeVisible();
+
+	await nodeButton(page, "verify").click();
 	await expect(scope).toHaveText("范围：verify（第 2 次）");
 	await expect(merged).toHaveCount(0);
 	await expect(single).toHaveAttribute("href", `/api/tasks/${tasks.verify?.taskId}/logs/download`);
@@ -723,7 +717,6 @@ test.describe("筛选很少匹配时", () => {
 		await agent.sync();
 
 		await openMonitor(page, clock, runId);
-		await nodeButton(page, "verify").click();
 		const logs = panel(page).getByRole("log", { name: "日志" });
 		await levelFilter(page).getByRole("button", { name: "ERROR", exact: true }).click();
 		await expect(logs.getByRole("button")).toHaveCount(1);

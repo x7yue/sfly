@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { ensureLayout } from "@sfly/orchestration";
+import { ensureLayout, fillMissingPositions } from "@sfly/orchestration";
 import type {
 	OrchestrationDocument,
 	OrchestrationView,
 	RunNotificationChanges,
 } from "@sfly/schema";
 import { and, count, desc, eq } from "drizzle-orm";
+import type { Actor } from "../actor.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runs } from "../db/schema.js";
@@ -17,6 +18,8 @@ export interface OrchestrationVersionView {
 	orchestration_id: string;
 	number: number;
 	author: string;
+	/** 经哪个 AI 编程助手保存；浏览器里保存的为 null。 */
+	author_via: string | null;
 	created_at: string;
 	document: OrchestrationDocument;
 }
@@ -26,6 +29,7 @@ export interface OrchestrationHeadView {
 	orchestration_id: string;
 	number: number;
 	author: string | null;
+	author_via: string | null;
 	created_at: string | null;
 	document: OrchestrationDocument;
 }
@@ -34,6 +38,7 @@ export interface OrchestrationHeadView {
 export interface VersionSummary {
 	number: number;
 	author: string;
+	author_via: string | null;
 	created_at: string;
 }
 
@@ -100,9 +105,12 @@ const runNotifyColumns = (settings: RunNotificationChanges) => ({
 	...(settings.note === undefined ? {} : { runNotifyNote: settings.note }),
 });
 
-const toSummary = (row: Pick<VersionRow, "number" | "author" | "createdAt">): VersionSummary => ({
+const toSummary = (
+	row: Pick<VersionRow, "number" | "author" | "authorVia" | "createdAt">,
+): VersionSummary => ({
 	number: row.number,
 	author: row.author,
+	author_via: row.authorVia,
 	created_at: row.createdAt.toISOString(),
 });
 
@@ -111,6 +119,7 @@ export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
 	orchestration_id: row.orchestrationId,
 	number: row.number,
 	author: row.author,
+	author_via: row.authorVia,
 	created_at: row.createdAt.toISOString(),
 	document: row.document,
 });
@@ -199,6 +208,7 @@ export class OrchestrationStore {
 			orchestration_id: id,
 			number: version?.number ?? 0,
 			author: version?.author ?? null,
+			author_via: version?.author_via ?? null,
 			created_at: version?.created_at ?? null,
 			document: version?.document ?? initialDocument(),
 		};
@@ -208,7 +218,7 @@ export class OrchestrationStore {
 	 * 复制编排：新编排使用新名字，说明和运行通知设置一起复制，源编排有版本时，以源编排最新版本的内容作为第 1 版（作者为复制的人）。
 	 * 源编排不存在时返回 undefined。
 	 */
-	copy(sourceId: string, name: string, author: string): Promise<OrchestrationView | undefined> {
+	copy(sourceId: string, name: string, actor: Actor): Promise<OrchestrationView | undefined> {
 		return this.deps.db.transaction(async (tx) => {
 			const [source] = await tx
 				.select()
@@ -247,7 +257,8 @@ export class OrchestrationStore {
 					orchestrationId: id,
 					number: 1,
 					document: head.document,
-					author,
+					author: actor.nickname,
+					authorVia: actor.via,
 					createdAt: now,
 				});
 			}
@@ -279,11 +290,12 @@ export class OrchestrationStore {
 	 * 追加一个新版本，编号 = 当前最新版本号 + 1。
 	 * baseVersion 是编辑起点的版本号（新编排的第一个版本为 0），它必须等于当前最新版本号，
 	 * 否则不保存并返回 conflict（docs/ARCHITECTURE.md §6.4）。检查与追加在同一个行锁内完成。
+	 * 没有位置的节点（命令行、API 上传的文档可以不写坐标）保存时用整理布局补上，已有位置的节点不动。
 	 */
 	saveVersion(
 		orchestrationId: string,
 		document: OrchestrationDocument,
-		author: string,
+		actor: Actor,
 		baseVersion: number,
 	): Promise<SaveVersionResult> {
 		return this.deps.db.transaction(async (tx): Promise<SaveVersionResult> => {
@@ -297,7 +309,8 @@ export class OrchestrationStore {
 				const head = await versionRow(tx, orchestrationId, orchestration.headVersion);
 				return { kind: "conflict", head: head ? toSummary(head) : null };
 			}
-			return { kind: "saved", version: await this.#append(tx, orchestration, document, author) };
+			const laidOut = fillMissingPositions(document);
+			return { kind: "saved", version: await this.#append(tx, orchestration, laidOut, actor) };
 		});
 	}
 
@@ -308,6 +321,7 @@ export class OrchestrationStore {
 			.select({
 				number: orchestrationVersions.number,
 				author: orchestrationVersions.author,
+				authorVia: orchestrationVersions.authorVia,
 				createdAt: orchestrationVersions.createdAt,
 			})
 			.from(orchestrationVersions)
@@ -323,7 +337,7 @@ export class OrchestrationStore {
 	restoreVersion(
 		orchestrationId: string,
 		number: number,
-		author: string,
+		actor: Actor,
 	): Promise<OrchestrationVersionView | undefined> {
 		return this.deps.db.transaction(async (tx) => {
 			const [orchestration] = await tx
@@ -334,7 +348,7 @@ export class OrchestrationStore {
 			if (!orchestration) return undefined;
 			const source = await versionRow(tx, orchestrationId, number);
 			if (!source) return undefined;
-			return this.#append(tx, orchestration, source.document, author);
+			return this.#append(tx, orchestration, source.document, actor);
 		});
 	}
 
@@ -343,7 +357,7 @@ export class OrchestrationStore {
 		tx: Tx,
 		orchestration: OrchestrationRow,
 		document: OrchestrationDocument,
-		author: string,
+		actor: Actor,
 	): Promise<OrchestrationVersionView> {
 		const number = orchestration.headVersion + 1;
 		const [row] = await tx
@@ -353,7 +367,8 @@ export class OrchestrationStore {
 				orchestrationId: orchestration.id,
 				number,
 				document,
-				author,
+				author: actor.nickname,
+				authorVia: actor.via,
 				createdAt: this.deps.clock.now(),
 			})
 			.returning();

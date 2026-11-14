@@ -15,7 +15,7 @@ import { ChainBars } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { Sparkline } from "#/components/sparkline";
-import { SlotBar, StatusDot, StatusPill } from "#/components/status";
+import { nodeStatusView, SlotBar, STATUS, StatusDot, StatusPill } from "#/components/status";
 import { TrendChart, TrendLegend } from "#/dashboard/charts";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
+import { Truncate } from "@/components/ui/truncate";
 
 export const Route = createFileRoute("/_shell/")({
 	staticData: { crumb: PAGE.dashboard },
@@ -94,7 +95,7 @@ function Stats({ data }: { data: DashboardView }) {
 			<StatCard
 				label={
 					<>
-						<StatusDot kind="running" className="text-signal" />
+						{runs.running > 0 && <StatusDot kind="running" />}
 						运行中
 					</>
 				}
@@ -107,9 +108,7 @@ function Stats({ data }: { data: DashboardView }) {
 				value={runs.success}
 				// 数值为 0 时不着色：颜色只在有成功 / 失败时传达信号。
 				valueClassName={runs.success > 0 ? "text-ok" : undefined}
-				detail={
-					<Sparkline values={hourly.map((h) => h.success)} className="mt-1.5 w-full text-ok" />
-				}
+				detail={<TrendSpark values={hourly.map((h) => h.success)} activeClassName="text-ok" />}
 			/>
 			<StatCard
 				name="失败"
@@ -117,7 +116,7 @@ function Stats({ data }: { data: DashboardView }) {
 				valueClassName={runs.failed > 0 ? "text-danger-fg" : undefined}
 				unit={runs.failed_subflows > 0 ? `含 ${runs.failed_subflows} 个子流程` : undefined}
 				detail={
-					<Sparkline values={hourly.map((h) => h.failed)} className="mt-1.5 w-full text-danger" />
+					<TrendSpark values={hourly.map((h) => h.failed)} activeClassName={STATUS.failed.tone} />
 				}
 			/>
 			<StatCard
@@ -138,7 +137,7 @@ function Stats({ data }: { data: DashboardView }) {
 							"全部在线"
 						)
 					) : (
-						<span className="text-warn">{offline.map((a) => a.name).join("、")} 离线</span>
+						<span className="text-warn-fg">{offline.map((a) => a.name).join("、")} 离线</span>
 					)
 				}
 			/>
@@ -152,10 +151,26 @@ function Stats({ data }: { data: DashboardView }) {
 	);
 }
 
+function TrendSpark({
+	values,
+	activeClassName,
+}: {
+	values: readonly number[];
+	activeClassName: string;
+}) {
+	const empty = values.every((v) => v === 0);
+	return (
+		<Sparkline
+			values={values}
+			className={cn("mt-1.5 w-full", empty ? "text-fg-3" : activeClassName)}
+		/>
+	);
+}
+
 /** 与前 24 小时的成功率对比：`较前 24 小时 −3.1%`。 */
 function rateChange(current: number | null, previous: number | null): string {
 	if (current === null) return "最近 24 小时没有结束的运行";
-	if (previous === null) return "前 24 小时没有结束的运行";
+	if (previous === null) return "前 24 小时没有可比数据";
 	const diff = (current - previous) * 100;
 	const sign = diff > 0 ? "+" : diff < 0 ? "−" : "±";
 	return `较前 24 小时 ${sign}${Math.abs(diff).toFixed(1)}%`;
@@ -252,6 +267,8 @@ function RunningPanel({ runs, now }: { runs: DashboardRunningRun[]; now: number 
 	);
 }
 
+const ACTIVE_SUFFIX: Partial<Record<string, string>> = { queued: "（排队）", waiting: "（等待）" };
+
 function RunningRow({ run, now }: { run: DashboardRunningRun; now: number }) {
 	const current = run.chains.flatMap((c) =>
 		c.nodes
@@ -265,9 +282,11 @@ function RunningRow({ run, now }: { run: DashboardRunningRun; now: number }) {
 					{run.cancelling ? (
 						<StatusPill kind="cancelled">取消中</StatusPill>
 					) : (
-						<StatusPill kind="running">运行中</StatusPill>
+						<StatusPill kind="running" pulse>
+							运行中
+						</StatusPill>
 					)}
-					<b className="truncate font-medium">{run.orchestration_name}</b>
+					<b className="truncate font-semibold">{run.orchestration_name}</b>
 					<span data-slot="run-id" className="font-mono text-xs text-fg-3">
 						{shortId(run.id)}
 					</span>
@@ -285,15 +304,10 @@ function RunningRow({ run, now }: { run: DashboardRunningRun; now: number }) {
 							{current.map((n, i) => (
 								<span key={n.key}>
 									{i > 0 && "、"}
-									<span
-										className={cn(
-											"font-mono",
-											n.status === "queued" ? "text-fg-2" : "text-signal-fg",
-										)}
-									>
+									<span className={cn("font-mono", STATUS[nodeStatusView(n.status).kind].text)}>
 										{n.node_id}
 									</span>
-									{n.status === "queued" && "（排队）"}
+									{ACTIVE_SUFFIX[n.status]}
 								</span>
 							))}
 						</span>
@@ -329,7 +343,7 @@ function FailureRow({ failure }: { failure: DashboardFailure }) {
 					<StatusPill kind="failed">
 						{failure.subflow ? `子流程失败 · ${failure.chain_id}` : "失败"}
 					</StatusPill>
-					<b className="truncate font-medium">{failure.orchestration_name}</b>
+					<b className="truncate font-semibold">{failure.orchestration_name}</b>
 					<span data-slot="run-id" className="font-mono text-xs text-fg-3">
 						{shortId(failure.run_id)}
 					</span>
@@ -383,27 +397,22 @@ function AgentsPanel({ agents }: { agents: DashboardAgent[] }) {
 					<TableBody>
 						{agents.map((agent) => (
 							<TableRow key={agent.name}>
-								<TableCell className="font-mono">
+								<TableCell width="fit" className="font-mono">
 									<span className="inline-flex items-center gap-2">
 										<StatusDot
 											kind={
 												agent.status === "offline" ? "pending" : agent.installing ? "warn" : "ok"
 											}
-											className={
-												agent.status === "offline"
-													? "text-pending"
-													: agent.installing
-														? "text-warn"
-														: "text-ok"
-											}
 										/>
 										{agent.name}
 									</span>
 								</TableCell>
-								<TableCell>
+								<TableCell width="fit">
 									<SlotBar used={agent.used_slots} total={agent.slots} />
 								</TableCell>
-								<TableCell className="text-xs text-fg-3">{agentState(agent)}</TableCell>
+								<TableCell width="grow" className="text-xs text-fg-3">
+									<AgentState agent={agent} />
+								</TableCell>
 							</TableRow>
 						))}
 					</TableBody>
@@ -413,16 +422,20 @@ function AgentsPanel({ agents }: { agents: DashboardAgent[] }) {
 	);
 }
 
-function agentState(agent: DashboardAgent): React.ReactNode {
-	if (agent.status === "offline") return `离线 · ${formatDateTime(agent.last_seen_at)}`;
+function AgentState({ agent }: { agent: DashboardAgent }) {
+	const state = agentState(agent);
+	return <Truncate className={state.className}>{state.text}</Truncate>;
+}
+
+function agentState(agent: DashboardAgent): { text: string; className?: string } {
+	if (agent.status === "offline") return { text: `离线 · ${formatDateTime(agent.last_seen_at)}` };
 	if (agent.installing) {
-		return (
-			<span className="text-warn">
-				正在安装 {agent.installing.package}@{agent.installing.version}
-			</span>
-		);
+		return {
+			text: `正在安装 ${agent.installing.package}@${agent.installing.version}`,
+			className: "text-warn-fg",
+		};
 	}
-	return "在线";
+	return { text: "在线" };
 }
 
 // —— 最近发布的节点包 ——
@@ -437,7 +450,7 @@ function PackagesPanel({ packages }: { packages: DashboardView["recent_packages"
 					<TableBody>
 						{packages.map((p) => (
 							<TableRow key={`${p.name}@${p.version}`}>
-								<TableCell className="font-mono">
+								<TableCell width="fit" className="font-mono">
 									<Link
 										to="/packages"
 										search={{ name: p.name, version: p.version }}
@@ -446,12 +459,17 @@ function PackagesPanel({ packages }: { packages: DashboardView["recent_packages"
 										{p.name}
 									</Link>
 								</TableCell>
-								<TableCell className="font-mono">{p.version}</TableCell>
-								<TableCell className="text-xs text-fg-3">
-									{formatDateTime(p.published_at)} ·{" "}
-									{p.locked_orchestrations > 0
-										? `${p.locked_orchestrations} 个场景锁定`
-										: "未被锁定"}
+								<TableCell width="fit" className="font-mono">
+									{p.version}
+								</TableCell>
+								<TableCell width="grow" className="text-xs text-fg-3">
+									<Truncate>
+										{`${formatDateTime(p.published_at)} · ${
+											p.locked_orchestrations > 0
+												? `${p.locked_orchestrations} 个场景锁定`
+												: "未被锁定"
+										}`}
+									</Truncate>
 								</TableCell>
 							</TableRow>
 						))}

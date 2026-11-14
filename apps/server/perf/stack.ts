@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { promisify } from "node:util";
-import { type AttemptView, logsApi, metricsApi, runsApi } from "@sfly/schema";
+import { type AttemptView, logsApi, metricsApi, NICKNAME_HEADER, runsApi } from "@sfly/schema";
 import { type BundledServer, startBundledServer } from "../test/support/bundled-server.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "../test/support/real-agent.js";
 import { createTestDatabase, type TestDatabase } from "../test/support/test-database.js";
@@ -64,9 +64,6 @@ export function existingArtifacts(repoRoot: string): Artifacts {
 	}
 	return artifacts;
 }
-
-/** 昵称请求头（与 test/support/api-client.ts 相同；那个模块引入了 vitest，这里不能用）。 */
-const NICKNAME_HEADER = "x-sfly-nickname";
 
 /** 不依赖 vitest 的 HTTP API 客户端（test/support/api-client.ts 用 expect 断言，只能在测试里用）。 */
 export class PerfApi {

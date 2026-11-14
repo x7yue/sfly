@@ -1,4 +1,5 @@
 import {
+	freePosition,
 	NODE_SIZE,
 	type Position,
 	SUBFLOW_INDENT,
@@ -6,7 +7,7 @@ import {
 	uniqueNodeId,
 } from "@sfly/orchestration";
 import { type DocEdge, type SfNode, toFlowNode } from "#/components/canvas/flow";
-import { freePosition, idStem, newDocNode } from "./add-node";
+import { idStem, newDocNode } from "./add-node";
 
 /**
  * 新建子流程一步完成（#187）：添加异步任务节点时顺手建好子流程，或从异步任务节点的调度端口拖线到空白处新建子流程入口。

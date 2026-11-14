@@ -11,6 +11,8 @@
 			"!**/routeTree.gen.ts",
 			"!packages/proto/src/gen",
 			"!sdk/python/src/sfly/schemas",
+			"!packages/client/src/generated",
+			"!packages/client/test/contract-parity.ts",
 			"!apps/server/drizzle",
 			"!docs/prototype",
 			"!docs/proposals",

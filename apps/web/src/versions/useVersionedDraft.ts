@@ -154,6 +154,7 @@ export function useVersionedDraft(
 					orchestration_id: orchestrationId,
 					number: saved.number,
 					author: saved.author,
+					author_via: saved.author_via,
 					created_at: saved.created_at,
 					document: saved.document,
 				} satisfies OrchestrationHeadView,

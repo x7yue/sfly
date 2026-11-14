@@ -1,0 +1,35 @@
+{
+	"name": "@sfly/client",
+	"version": "0.3.0",
+	"private": true,
+	"type": "module",
+	"description": "sfly 的 API 客户端：自建页面和程序调用控制面 HTTP API 的 TypeScript 包（ADR 0022），没有运行时依赖",
+	"sideEffects": false,
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"publishConfig": {
+		"exports": {
+			".": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			}
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"engines": {
+		"node": ">=22"
+	},
+	"scripts": {
+		"build": "rm -rf dist && tsc -p tsconfig.build.json && node scripts/check-dist.mjs",
+		"tarball": "node scripts/tarball.mjs",
+		"typecheck": "tsc -p ."
+	},
+	"devDependencies": {
+		"@sfly/schema": "workspace:*",
+		"typescript": "^6.0.2",
+		"zod": "4.6.7"
+	}
+}

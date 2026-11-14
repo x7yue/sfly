@@ -1,4 +1,4 @@
-import { endpoint, httpContract, pathFor } from "@sfly/schema";
+import { endpoint, httpContract } from "@sfly/schema";
 import Fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -6,13 +6,7 @@ import { guardHttpContract } from "../src/http/contract-route.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 /** 每个路径参数都填 x（`*` 也是），用来确认路由存在，不关心业务结果。 */
-const samplePath = (path: string) =>
-	pathFor(
-		{ path },
-		Object.fromEntries(
-			[...path.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)|\*/g)].map((m) => [m[1] ?? "*", "x"]),
-		),
-	);
+const samplePath = (path: string) => path.replace(/:[A-Za-z_][A-Za-z0-9_]*|\*$/g, "x");
 
 describe("HTTP 契约覆盖控制面的全部路由", () => {
 	let cp: TestControlPlane;
@@ -77,6 +71,7 @@ describe("HTTP 契约覆盖控制面的全部路由", () => {
 		const missing = endpoint({
 			method: "GET",
 			path: "/missing",
+			client: false,
 			key: ["test", "missing"],
 			response: z.object({}),
 		});

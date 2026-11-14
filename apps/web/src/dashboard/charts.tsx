@@ -1,21 +1,25 @@
 import type { DashboardHour } from "@sfly/schema";
 import { cn } from "cn";
+import { runStatusView, STATUS } from "#/components/status";
 import { formatHourMinute } from "#/lib/format";
 
 /** 控制台的小图：按小时的堆叠柱（原型 trend）；迷你趋势与各链进度条见 components/sparkline、chain-progress。 */
 
-const SERIES = [
-	{ key: "success", label: "成功", fill: "fill-ok/60", swatch: "bg-ok/60" },
-	{ key: "failed", label: "失败", fill: "fill-danger", swatch: "bg-danger" },
-	{ key: "cancelled", label: "取消", fill: "fill-cancelled", swatch: "bg-cancelled" },
-] as const;
+const LABEL = { success: "成功", failed: "失败", cancelled: "取消" } as const;
+const SERIES = (Object.keys(LABEL) as (keyof typeof LABEL)[]).map((key) => ({
+	key,
+	label: LABEL[key],
+	area: STATUS[runStatusView(key).kind].area,
+}));
+
+const SEGMENT_GAP = 1;
 
 export function TrendLegend() {
 	return (
-		<span className="flex gap-3 text-xs text-fg-3">
+		<span data-viz className="flex gap-3 text-xs text-fg-3">
 			{SERIES.map((s) => (
 				<span key={s.key} className="inline-flex items-center gap-1.5">
-					<b aria-hidden className={cn("size-2 rounded-[2px]", s.swatch)} />
+					<b aria-hidden className={cn("size-2.5 rounded-[2px]", s.area.box)} />
 					{s.label}
 				</span>
 			))}
@@ -38,6 +42,7 @@ export function TrendChart({ hours }: { hours: DashboardHour[] }) {
 				aria-label={summary}
 				viewBox={`0 0 ${W} ${H}`}
 				preserveAspectRatio="none"
+				data-viz
 				className="block h-35 w-full"
 			>
 				{[30, 60, 90].map((y) => (
@@ -56,15 +61,16 @@ export function TrendChart({ hours }: { hours: DashboardHour[] }) {
 								const h = (hour[s.key] / max) * (H - 16);
 								if (h <= 0) return null;
 								y -= h;
+								const stacked = y + h < H - 2;
 								return (
 									<rect
 										key={s.key}
 										x={i * slot + 2}
 										y={y}
 										width={slot - 4}
-										height={h}
+										height={stacked ? Math.max(h - SEGMENT_GAP, 1) : h}
 										rx={1.5}
-										className={s.fill}
+										className={cn(s.area.svg, "[vector-effect:non-scaling-stroke]")}
 									/>
 								);
 							})}
@@ -78,7 +84,7 @@ export function TrendChart({ hours }: { hours: DashboardHour[] }) {
 					.map((h) => (
 						<span key={h.start}>{formatHourMinute(h.start)}</span>
 					))}
-				<span>现在</span>
+				<span className="text-xs">现在</span>
 			</div>
 		</div>
 	);

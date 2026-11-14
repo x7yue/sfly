@@ -16,7 +16,8 @@
 
 取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
-宽限期（默认 10 秒）过后整棵进程树被强制杀掉。在后台线程里可以轮询 `ctx.cancelled()`。
+宽限期（默认 10 秒）过后整棵进程树被强制杀掉。一次取消，主线程里只抛一次 `Cancelled`：
+清理代码不会被再打断一次。在后台线程里可以轮询 `ctx.cancelled()`。
 
 日志和进度都追加写入本地协议的事件文件 `SFLY_EVENTS`
 （JSONL，每行一个事件，Agent 持续读取新增内容）：
@@ -72,19 +73,36 @@ class Cancelled(BaseException):
 
 
 class _Sigterm:
-    """主线程里 `DeferCancel` 的嵌套层数，和推迟期间是否收到了 SIGTERM。"""
+    """主线程里 `DeferCancel` 的嵌套层数、推迟期间是否收到了 SIGTERM，
+    以及主线程里是否已经抛出过 `Cancelled`。"""
 
     main = _thread.get_ident()
     depth = 0
     pending = False
+    raised = False
+
+
+def cancelled_error(message: str) -> Cancelled:
+    """SDK 自己发现任务已取消（取消标记、Agent 回复 `cancelled`）时要抛出的 `Cancelled`。
+
+    取消时这些和 SIGTERM 几乎同时到，谁先到不一定。主线程里先由 SDK 抛出时记下来，随后送达的
+    SIGTERM 不再抛第二次：节点的 `except Cancelled` / `finally` 已经在执行，再抛一次会把清理打断。
+    """
+    if _thread.get_ident() == _Sigterm.main:
+        _Sigterm.raised = True
+    return Cancelled(message)
 
 
 def on_sigterm(signum: int, frame: object) -> None:
     """执行器装的 SIGTERM 处理函数（只在主线程里执行）：在节点代码里抛出 `Cancelled`；
-    正在 `DeferCancel` 里时推迟到离开它。"""
+    正在 `DeferCancel` 里时推迟到离开它。主线程里已经抛出过 `Cancelled` 时什么都不做
+    （见 `cancelled_error`）：一次取消，节点只收到一次 `Cancelled`。"""
+    if _Sigterm.raised:
+        return
     if _Sigterm.depth:
         _Sigterm.pending = True
         return
+    _Sigterm.raised = True
     raise Cancelled("任务被终止（SIGTERM）")
 
 
@@ -117,7 +135,9 @@ class DeferCancel:
         _Sigterm.depth -= 1
         if _Sigterm.depth == 0 and _Sigterm.pending:
             _Sigterm.pending = False
-            raise Cancelled("任务被终止（SIGTERM）")
+            if not _Sigterm.raised:
+                _Sigterm.raised = True
+                raise Cancelled("任务被终止（SIGTERM）")
 
 
 class ArtifactDownloadError(Exception):
@@ -238,7 +258,7 @@ class Artifacts:
 
         产物在保存它的任务结束后才上传到控制面：只能下载前面的节点保存的产物。
         下载地址在控制面上，任何一台 Agent 上的节点都能下载。本地调试时产物引用是本地文件路径，
-        直接复制；`sfly.testing.run_node(downloads=...)` 和 `sfly run --download` 可以给某个
+        直接复制；`sfly.testing.run_node(downloads=...)` 和 `sfly debug --download` 可以给某个
         引用指定本地内容。
         """
         from sfly.download import download
@@ -325,8 +345,9 @@ class TaskInfo:
       各有不同的节点 ID）；
     - `task_id`：任务 ID；`attempt`：第几次尝试（从 1 开始，重试时加 1）。
 
-    在 Agent 上取自 Agent 写的 task.json（`SFLY_TASK`）；本地调试（`sfly run`、`sfly.testing`）时
-    任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名，运行 ID 见 `sfly run` 与 `run_node` 的说明。
+    在 Agent 上取自 Agent 写的 task.json（`SFLY_TASK`）；本地调试（`sfly debug`、`sfly.testing`）时
+    任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名，
+    运行 ID 见 `sfly debug` 与 `run_node` 的说明。
     没有 task.json 时（在执行器之外直接构造 Context）都取 `local` 和 1。
     """
 
@@ -439,7 +460,7 @@ class Context:
 
         - Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`（`SFLY_PROCS`），和任务目录按同一个保留期清理，
           运行还有任务在 Agent 手上时不动；
-        - `sfly run` 时是项目下的 `.sfly/procs/<运行目录名>/`，
+        - `sfly debug` 时是项目下的 `.sfly/procs/<运行目录名>/`，
           `sfly.testing.run_node` 时是任务工作目录下的 `procs/`。
         """
         return self._procs_dir
@@ -451,7 +472,7 @@ class Context:
 
         只能访问自己所在的 Agent 和参数里选的 Agent：访问其它名称时调用抛出
         `sfly.AgentNotReferenced`。调用另一台 Agent 时由自己所在的 Agent 代为连接，
-        数据不经过控制面。本地调试（`sfly run`、`sfly.testing`）时直接操作本机的文件系统，
+        数据不经过控制面。本地调试（`sfly debug`、`sfly.testing`）时直接操作本机的文件系统，
         其它 Agent 由测试工具映射到本地目录。
         """
         from sfly.capabilities import connect
@@ -487,7 +508,7 @@ class Context:
         `text` 和 `message` 同时给或都不给，`text` 不是字符串，`at_all` 不是布尔值，
         或者发原始消息时还给了 `at_all`（它只对文本有意义）。
 
-        本地调试时不真的发送：`sfly run` 打印请求体，`sfly.testing.run_node` 的结果里
+        本地调试时不真的发送：`sfly debug` 打印请求体，`sfly.testing.run_node` 的结果里
         有 `notifications`。
         """
         if not isinstance(bot, str):

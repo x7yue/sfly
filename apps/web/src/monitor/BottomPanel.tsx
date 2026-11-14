@@ -10,9 +10,10 @@ import {
 } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
-import { DownloadIcon } from "lucide-react";
+import { DownloadIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResizeHandle } from "#/components/ResizeHandle";
+import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
 import { MESSAGE } from "#/lib/copy";
@@ -24,8 +25,10 @@ import {
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
+import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { attemptAgentTimes } from "./attempt-clock";
 import { LogList } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
@@ -94,6 +97,7 @@ const ERROR_KIND_LABEL: Record<string, string> = {
  * 节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
  * 页签与展开状态在共享状态里（顶栏的失败摘要会切到「尝试」页签）。用户还没有展开 / 收起、拖动或切换过页签时，
  * 日志页签没有内容（选中的节点还没开始、或日志加载完是空的）就自动收起，把高度让给图表；日志到了再自动展开。
+ * 展开时占满图表工作区下面的全部高度（不低于默认高度），拖动调整后用拖动的高度。
  */
 export function BottomPanel({
 	run,
@@ -138,18 +142,30 @@ export function BottomPanel({
 		[run, filter],
 	);
 	const [minLevel, setMinLevel] = useState<MinLevel>("all");
+	/** E 切到只看 ERROR 之前的级别：再按一次恢复。 */
+	const levelBeforeErrors = useRef<MinLevel>("all");
+	useShortcut("monitor-errors-only", () => {
+		if (tab === "logs" && minLevel === "error") {
+			setMinLevel(levelBeforeErrors.current);
+			return;
+		}
+		if (minLevel !== "error") levelBeforeErrors.current = minLevel;
+		setMinLevel("error");
+		actions.showPanel("logs");
+	});
 	const logTimeKind = useLogTimeKind();
 
 	/** 选中的节点还没有开始：没有日志可看。其余情况（单个尝试、合并视图）由日志页签自己报告有没有内容。 */
 	const empty = tab === "logs" && ((node !== undefined && !attempt) || logsEmpty);
 	const collapsed = panelOpen === null ? empty : !panelOpen;
 	const effective = collapsed ? COLLAPSED_HEIGHT : (height ?? DEFAULT_HEIGHT);
+	const grows = !collapsed && height === null;
 	return (
 		<section
 			ref={panel}
 			aria-label="底部面板"
-			className="relative flex flex-none flex-col border-t border-border-soft bg-surface"
-			style={{ height: effective }}
+			className="relative mt-auto flex min-h-0 flex-none flex-col border-t border-border-soft bg-surface"
+			style={grows ? { flex: `1 0 ${DEFAULT_HEIGHT}` } : { height: effective }}
 		>
 			<ResizeHandle
 				label="调整底部面板高度"
@@ -168,125 +184,157 @@ export function BottomPanel({
 					setHeight(null);
 				}}
 			/>
-			<div className="flex h-9 flex-none items-center border-b border-border-soft pl-1.5">
-				<div role="tablist" aria-label="底部面板" className="flex h-full">
-					{TABS.map(([value, label]) => (
-						<button
-							key={value}
-							type="button"
-							role="tab"
-							id={`bp-tab-${value}`}
-							aria-selected={tab === value}
-							aria-controls="bp-panel"
-							onClick={() => actions.showPanel(value)}
-							className="relative h-full px-3 text-sm text-fg-3 hover:text-fg-1 aria-selected:text-fg-1 aria-selected:after:absolute aria-selected:after:right-2 aria-selected:after:bottom-0 aria-selected:after:left-2 aria-selected:after:h-0.5 aria-selected:after:bg-primary"
-						>
-							{label}
-						</button>
-					))}
-				</div>
-				<div className="ml-auto flex items-center gap-1.5 px-2">
-					<span className="text-xs text-fg-3" data-testid="bp-scope">
-						{node
-							? `范围：${node.node_id}`
-							: filter
-								? `范围：跟随筛选（${filtered} 个节点）`
-								: "范围：全部节点"}
-						{node && attempt && node.attempts.length > 1 ? `（第 ${attempt.attempt} 次）` : ""}
-						{zoom && tab === "logs" ? " · 已按时间范围过滤" : ""}
-					</span>
-					{node && node.attempts.length > 1 && (
-						<Segmented
-							label="尝试"
-							value={attempt?.task_id ?? ""}
-							options={node.attempts.map((a) => [a.task_id, `第 ${a.attempt} 次`])}
-							onChange={setAttemptId}
-						/>
-					)}
-					{tab === "logs" && (
-						<>
-							<Segmented
-								label="日志时间"
-								value={logTimeKind}
-								options={LOG_TIME_KINDS}
-								onChange={(v) => setLogTimeKind(v as LogTimeKind)}
-							/>
-							<Segmented
-								label="日志级别"
-								value={minLevel}
-								options={MIN_LEVELS}
-								onChange={(v) => setMinLevel(v as MinLevel)}
-							/>
-							{(attempt || !node) && (
-								<a
-									className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
-									aria-label={attempt ? "下载原始日志" : "下载合并日志"}
-									title={
-										attempt
-											? "下载原始日志（JSONL）"
-											: "下载范围内全部节点合并后的日志（JSONL，不受级别筛选影响）"
-									}
-									href={attempt ? taskLogDownloadPath(attempt.task_id) : mergedDownload}
-									download
-								>
-									<DownloadIcon />
-								</a>
-							)}
-						</>
-					)}
-					<Button variant="ghost" size="sm" onClick={() => actions.setPanelOpen(collapsed)}>
-						{collapsed ? "展开" : "收起"}
-					</Button>
-				</div>
-			</div>
-			{/* 自动收起时内容仍然挂着（隐藏）：日志到了能自动展开。 */}
-			{(!collapsed || panelOpen === null) && (
-				<div
-					id="bp-panel"
-					role="tabpanel"
-					aria-labelledby={`bp-tab-${tab}`}
-					hidden={collapsed}
-					className="min-h-0 flex-1 overflow-hidden shadow-inset-top"
-				>
-					{tab === "logs" &&
-						(attempt ? (
-							<TaskLogsTab
-								key={attempt.task_id}
-								attempt={attempt}
-								levels={levelsFrom(minLevel)}
-								filtered={minLevel !== "all"}
-								timeKind={logTimeKind}
-								day={run.started_at}
-								onEmpty={setLogsEmpty}
-							/>
-						) : node ? (
-							<Hint>{noAttempt(node)}</Hint>
-						) : (
-							<RunLogsTab
-								key={run.id}
-								run={run}
-								filter={filter}
-								levels={levelsFrom(minLevel)}
-								filtered={minLevel !== "all"}
-								timeKind={logTimeKind}
-								day={run.started_at}
-								onEmpty={setLogsEmpty}
-								onOrigin={showOrigin}
-							/>
+			<Tabs
+				value={tab}
+				onValueChange={(value) => actions.showPanel(value as PanelTab)}
+				className="contents"
+			>
+				<div className="flex h-9 flex-none items-center border-b border-border-soft pl-1.5">
+					<TabsList aria-label="底部面板" className="h-full gap-0 border-b-0 px-0">
+						{TABS.map(([value, label]) => (
+							<TabsTrigger
+								key={value}
+								value={value}
+								className="relative -mb-0 h-full gap-0 border-b-0 px-3 pt-0 pb-0 text-fg-3 data-active:border-transparent data-active:text-fg-1 data-active:after:absolute data-active:after:right-2 data-active:after:bottom-0 data-active:after:left-2 data-active:after:h-0.5 data-active:after:bg-primary"
+							>
+								{label}
+							</TabsTrigger>
 						))}
-					{tab === "attempts" && (
-						<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
-					)}
-					{tab === "io" && <IoTab node={node} attempt={attempt} doc={doc} />}
-					{tab === "artifacts" &&
-						(attempt ? (
-							<ArtifactsTab attempt={attempt} />
-						) : (
-							<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的产物。"}</Hint>
-						))}
+					</TabsList>
+					<div className="ml-auto flex items-center gap-1.5 px-2">
+						<ScopeLabel nodeId={node?.node_id} onClear={() => actions.select(null)}>
+							{node
+								? `范围：${node.node_id}`
+								: filter
+									? `范围：跟随筛选（${filtered} 个节点）`
+									: "范围：全部节点"}
+							{node && attempt && node.attempts.length > 1 ? `（第 ${attempt.attempt} 次）` : ""}
+							{zoom && tab === "logs" ? " · 已按时间范围过滤" : ""}
+						</ScopeLabel>
+						{node && node.attempts.length > 1 && (
+							<Segmented
+								label="尝试"
+								value={attempt?.task_id ?? ""}
+								options={node.attempts.map((a) => [a.task_id, `第 ${a.attempt} 次`])}
+								onChange={setAttemptId}
+							/>
+						)}
+						{tab === "logs" && (
+							<>
+								<Segmented
+									label="日志时间"
+									value={logTimeKind}
+									options={LOG_TIME_KINDS}
+									onChange={(v) => setLogTimeKind(v as LogTimeKind)}
+								/>
+								<Segmented
+									label="日志级别"
+									value={minLevel}
+									options={MIN_LEVELS}
+									onChange={(v) => setMinLevel(v as MinLevel)}
+								/>
+								{(attempt || !node) && (
+									<a
+										className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
+										aria-label={attempt ? "下载原始日志" : "下载合并日志"}
+										title={
+											attempt
+												? "下载原始日志（JSONL）"
+												: "下载范围内全部节点合并后的日志（JSONL，不受级别筛选影响）"
+										}
+										href={attempt ? taskLogDownloadPath(attempt.task_id) : mergedDownload}
+										download
+									>
+										<DownloadIcon />
+									</a>
+								)}
+							</>
+						)}
+						<Button variant="ghost" size="sm" onClick={() => actions.setPanelOpen(collapsed)}>
+							{collapsed ? "展开" : "收起"}
+						</Button>
+					</div>
 				</div>
-			)}
+				{/* 自动收起时内容仍然挂着（隐藏）：日志到了能自动展开。 */}
+				{(!collapsed || panelOpen === null) && (
+					<TabsContent
+						value={tab}
+						hidden={collapsed}
+						tabIndex={-1}
+						className="overflow-hidden shadow-inset-top"
+					>
+						{tab === "logs" &&
+							(attempt ? (
+								<TaskLogsTab
+									key={attempt.task_id}
+									attempt={attempt}
+									levels={levelsFrom(minLevel)}
+									filtered={minLevel !== "all"}
+									timeKind={logTimeKind}
+									day={run.started_at}
+									onEmpty={setLogsEmpty}
+								/>
+							) : node ? (
+								<Hint>{noAttempt(node)}</Hint>
+							) : (
+								<RunLogsTab
+									key={run.id}
+									run={run}
+									filter={filter}
+									levels={levelsFrom(minLevel)}
+									filtered={minLevel !== "all"}
+									timeKind={logTimeKind}
+									day={run.started_at}
+									onEmpty={setLogsEmpty}
+									onOrigin={showOrigin}
+								/>
+							))}
+						{tab === "attempts" && (
+							<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
+						)}
+						{tab === "io" && <IoTab node={node} attempt={attempt} doc={doc} />}
+						{tab === "artifacts" &&
+							(attempt ? (
+								<ArtifactsTab attempt={attempt} />
+							) : (
+								<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的产物。"}</Hint>
+							))}
+					</TabsContent>
+				)}
+			</Tabs>
 		</section>
+	);
+}
+
+function ScopeLabel({
+	nodeId,
+	onClear,
+	children,
+}: {
+	nodeId: string | undefined;
+	onClear: () => void;
+	children: ReactNode;
+}) {
+	if (nodeId === undefined) {
+		return (
+			<span className="text-xs text-fg-3" data-testid="bp-scope">
+				{children}
+			</span>
+		);
+	}
+	return (
+		<span className="inline-flex h-6 items-center rounded-md border border-border bg-raised pl-2 text-xs text-fg-1">
+			<span data-testid="bp-scope">{children}</span>
+			<button
+				type="button"
+				aria-label={`清除范围，不再只看 ${nodeId}`}
+				title={`清除范围（${shortcutText("monitor-deselect")}）`}
+				onClick={onClear}
+				className="grid size-5.5 place-items-center rounded-md text-fg-3 hover:bg-raised-2 hover:text-fg-1"
+			>
+				<XIcon aria-hidden className="size-3" />
+			</button>
+		</span>
 	);
 }
 
@@ -586,7 +634,7 @@ function AttemptsTab({
 					>
 						<header className="flex items-center gap-2">
 							<span className="font-mono">{n.node_id}</span>
-							<b className="font-medium">第 {a.attempt} 次</b>
+							<b className="font-semibold">第 {a.attempt} 次</b>
 							<StatusPill kind={status.kind}>{status.label}</StatusPill>
 							<span className="ml-auto font-mono text-2xs text-fg-3">
 								{a.agent ?? "控制面"} · {a.started_at ? formatClock(a.started_at) : "未开始"} ·{" "}
@@ -595,7 +643,7 @@ function AttemptsTab({
 						</header>
 						{agentTimes && (
 							// 每一头的说明不在中间断开：换行只落在标点后面，不会剩下一个「天」字。
-							<p className="m-0 mt-1.5 text-2xs text-warn-fg">
+							<p className="m-0 mt-1.5 text-xs text-warn-fg">
 								这个任务执行期间 Agent 时间与控制面不一致：
 								{agentTimes.details.map((part, i) => (
 									<span key={part} className="whitespace-nowrap">
@@ -605,7 +653,7 @@ function AttemptsTab({
 								))}
 							</p>
 						)}
-						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-2xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
+						<dl className="m-0 mt-1.5 grid grid-cols-[48px_1fr] gap-x-2 font-mono text-xs text-fg-2 [&_dt]:font-sans [&_dt]:text-fg-3">
 							<dt>排队</dt>
 							<dd className="m-0">{formatClock(a.queued_at)}</dd>
 							<dt>开始</dt>
@@ -645,7 +693,7 @@ function AttemptsTab({
 								</div>
 								<p className="m-0 mt-1 text-danger-fg">{error.message || "（没有错误信息）"}</p>
 								{error.stack && (
-									<pre className="m-0 mt-1.5 max-h-40 overflow-auto rounded-md bg-sunk p-2 font-mono text-2xs whitespace-pre text-fg-2">
+									<pre className="m-0 mt-1.5 max-h-80 overflow-auto rounded-md bg-sunk p-2 font-mono text-xs leading-5 wrap-anywhere whitespace-pre-wrap text-fg-2">
 										{error.stack}
 									</pre>
 								)}
@@ -729,7 +777,7 @@ function IoTab({
 	return (
 		<div className="grid h-full grid-cols-2 gap-2.5 overflow-auto p-3">
 			<div className="min-w-0">
-				<h3 className="m-0 mb-1.5 text-xs font-medium text-fg-3">输入（已解析，敏感值已打码）</h3>
+				<h3 className="m-0 mb-1.5 text-xs font-semibold text-fg-3">输入（已解析，敏感值已打码）</h3>
 				{inputs ? (
 					<JsonBlock value={inputs} />
 				) : (
@@ -737,7 +785,7 @@ function IoTab({
 				)}
 			</div>
 			<div className="min-w-0">
-				<h3 className="m-0 mb-1.5 text-xs font-medium text-fg-3">输出</h3>
+				<h3 className="m-0 mb-1.5 text-xs font-semibold text-fg-3">输出</h3>
 				{attempt.outputs ? (
 					<JsonBlock value={attempt.outputs} />
 				) : (
@@ -774,7 +822,7 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 						</div>
 					</div>
 					{/* 主列是文件在 Agent 上的修改时间（Agent 时间），上传时间是控制面时间（ADR 0018）。 */}
-					<div className="grid shrink-0 grid-cols-[auto_auto] gap-x-2 text-2xs text-fg-3">
+					<div className="grid shrink-0 grid-cols-[auto_auto] gap-x-2 text-xs text-fg-3">
 						<span>Agent 修改</span>
 						<span
 							title="文件在 Agent 上的修改时间（Agent 时间）"

@@ -109,6 +109,36 @@ export function tidyLayout(doc: StructureDocument): Map<string, Position> {
 	return new Map(doc.nodes.map((n) => [n.id, placed.get(n.id) as Position]));
 }
 
+/** 落点与已有节点重叠时每次往右下错开的距离。 */
+const NUDGE = 32;
+
+/**
+ * 没有来源的新节点放在哪：想要的位置（视口中心、右键处）空着就用它，
+ * 压住已有节点时按固定步长往右下错开，直到不压住任何节点。位置都是卡片左上角的画布坐标。
+ */
+export function freePosition(wanted: Position, taken: readonly Position[]): Position {
+	const overlaps = (p: Position) =>
+		taken.some(
+			(t) => Math.abs(t.x - p.x) < NODE_SIZE.width && Math.abs(t.y - p.y) < NODE_SIZE.height,
+		);
+	let at = wanted;
+	while (overlaps(at)) at = { x: at.x + NUDGE, y: at.y + NUDGE };
+	return at;
+}
+
+/**
+ * 没有来源的新节点（视口中心、右键处）和粘贴的节点：卡片中心落在 `center`（画布坐标），
+ * 压住已有节点时错开（freePosition）。返回卡片左上角。
+ */
+export const freeCardAt = (center: Position, taken: readonly Position[]): Position =>
+	freePosition(
+		{
+			x: Math.round(center.x - NODE_SIZE.width / 2),
+			y: Math.round(center.y - NODE_SIZE.height / 2),
+		},
+		taken,
+	);
+
 /**
  * 缺少布局的文档：有节点没有位置时，整份文档按整理布局重新排列（不混用两种布局，免得重叠）；
  * 所有节点都有位置时原样返回。
@@ -117,4 +147,25 @@ export function ensureLayout<D extends LayoutDocument>(doc: D): D {
 	if (doc.nodes.every((n) => n.position)) return doc;
 	const layout = tidyLayout(doc);
 	return { ...doc, nodes: doc.nodes.map((n) => ({ ...n, position: layout.get(n.id) })) } as D;
+}
+
+/**
+ * 补坐标：没有位置的节点取整理布局给它算出的位置，已有位置的节点不动（控制面保存场景版本时用，
+ * 命令行和 API 上传的节点可以不写坐标）。整理布局是按整份文档重排的结果，在已有坐标的链中间插入节点时
+ * 它给的位置可能正好是某个已有节点的位置：压住已有节点（或本次已经放好的节点）时，
+ * 用画布「添加节点」的同一套逻辑（freePosition）错开到附近的空位。所有节点都有位置时原样返回。
+ */
+export function fillMissingPositions<D extends LayoutDocument>(doc: D): D {
+	if (doc.nodes.every((n) => n.position)) return doc;
+	const layout = tidyLayout(doc);
+	const taken: Position[] = doc.nodes.flatMap((n) => (n.position ? [n.position] : []));
+	return {
+		...doc,
+		nodes: doc.nodes.map((n) => {
+			if (n.position) return n;
+			const position = freePosition(layout.get(n.id) as Position, taken);
+			taken.push(position);
+			return { ...n, position };
+		}),
+	} as D;
 }

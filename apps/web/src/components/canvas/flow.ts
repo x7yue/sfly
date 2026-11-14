@@ -35,6 +35,8 @@ export function toFlowEdge(edge: DocEdge): SfEdge {
 		targetHandle: edge.kind,
 		type: "sf",
 		data: { kind: edge.kind },
+		// 不给时 React Flow 用英文的「Edge from A to B」。
+		ariaLabel: `${edge.kind === "dispatch" ? "调度连线" : "连线"}：从 ${edge.from} 到 ${edge.to}`,
 	};
 }
 

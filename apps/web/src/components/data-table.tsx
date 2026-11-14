@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-table";
 import type * as React from "react";
 import {
+	type ColumnWidth,
 	Table,
 	TableBody,
 	TableCell,
@@ -33,6 +34,8 @@ export interface DataColumnMeta {
 	className?: string;
 	/** 表头的类名（默认同 className 里的对齐方式之外不加）。 */
 	headClassName?: string;
+	/** 列宽的角色：fit 按内容收紧、grow 吃掉剩下的宽度（见 `ui/table`）。 */
+	width?: ColumnWidth;
 }
 
 const features = tableFeatures({ columnMeta: {} as DataColumnMeta });
@@ -58,7 +61,9 @@ export function DataTable<T extends RowData>({
 	columns: DataColumns<T>;
 	data: readonly T[];
 	rowKey: (row: T) => string;
-	rowProps?: (row: Row<Features, T>) => React.ComponentProps<typeof TableRow>;
+	rowProps?: (
+		row: Row<Features, T>,
+	) => React.ComponentProps<typeof TableRow> & { [attribute: `data-${string}`]: string };
 } & React.ComponentProps<typeof Table>) {
 	const table = useTable({
 		features,
@@ -72,7 +77,11 @@ export function DataTable<T extends RowData>({
 				{table.getHeaderGroups().map((group) => (
 					<TableRow key={group.id}>
 						{group.headers.map((header) => (
-							<TableHead key={header.id} className={header.column.columnDef.meta?.headClassName}>
+							<TableHead
+								key={header.id}
+								width={header.column.columnDef.meta?.width}
+								className={header.column.columnDef.meta?.headClassName}
+							>
 								{header.isPlaceholder ? null : <table.FlexRender header={header} />}
 							</TableHead>
 						))}
@@ -83,7 +92,11 @@ export function DataTable<T extends RowData>({
 				{table.getRowModel().rows.map((row) => (
 					<TableRow key={row.id} {...rowProps?.(row)}>
 						{row.getAllCells().map((cell) => (
-							<TableCell key={cell.id} className={cell.column.columnDef.meta?.className}>
+							<TableCell
+								key={cell.id}
+								width={cell.column.columnDef.meta?.width}
+								className={cell.column.columnDef.meta?.className}
+							>
 								<table.FlexRender cell={cell} />
 							</TableCell>
 						))}

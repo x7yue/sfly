@@ -323,3 +323,126 @@ test("编排画布的「运行」打开同一个抽屉，「前往」在画布�
 	await expect(drawer).toHaveCount(0);
 	await expect(runButton).toBeFocused();
 });
+
+test("打开抽屉时焦点不落在「取消」上：检查加载完后交给第一个参数，没有参数就交给「触发运行」，再按 Enter 直接触发", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
+	await createScenario(controlPlane, "冒烟", scenarioUsing("agent-a"));
+	await page.goto("/orchestrations");
+
+	const inspect = page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" });
+	await inspect.focus();
+	await page.keyboard.press("Enter");
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await expect(drawer.getByRole("textbox", { name: /^host/ })).toBeFocused();
+	await expect(drawer.getByRole("button", { name: "取消" })).not.toBeFocused();
+	await page.keyboard.press("Escape");
+	await expect(drawer).toHaveCount(0);
+	await expect(inspect).toBeFocused();
+
+	const smoke = page.getByRole("article", { name: "冒烟" }).getByRole("button", { name: "运行" });
+	await smoke.focus();
+	await page.keyboard.press("Enter");
+	const quick = page.getByRole("dialog", { name: "运行 · 冒烟" });
+	await expect(quick.getByRole("button", { name: "触发运行" })).toBeFocused();
+	await page.keyboard.press("Enter");
+	await agent.nextAssign();
+	await expect(quick.getByTestId("summary-status")).toHaveText("运行中");
+	// 触发成功后抽屉里就地显示运行摘要，不再发「已触发运行」的通知。
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});
+
+test("提交没有通过校验时，焦点移到第一个出错的字段", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await expect(drawer.getByRole("textbox", { name: /^host/ })).toBeFocused();
+
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await expect(drawer.getByRole("textbox", { name: /^host/ })).toHaveAttribute(
+		"aria-invalid",
+		"true",
+	);
+	await expect(drawer.getByRole("textbox", { name: /^host/ })).toBeFocused();
+	await drawer.getByRole("textbox", { name: /^host/ }).fill("10.0.0.8");
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await expect(drawer.getByRole("textbox", { name: /^api_token / })).toBeFocused();
+});
+
+test("入口参数名不被截断：长参数名折行、必填星号还在，输入框左沿对齐", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const params = [
+		{ name: "release_file", type: "string", required: true },
+		{ name: "request_timeout_ms", type: "number", default: 3000 },
+		{ name: "queue_timeout_seconds_for_the_slow_consumers", type: "number", default: 30 },
+		{ name: "dry_run", type: "boolean", default: false },
+	];
+	await createScenario(controlPlane, "长参数名", {
+		...PARAM_SCENARIO,
+		nodes: PARAM_SCENARIO.nodes.map((n) => (n.id === "entry" ? { ...n, params } : n)),
+	});
+	await page.goto("/orchestrations");
+	await page
+		.getByRole("article", { name: "长参数名" })
+		.getByRole("button", { name: "运行" })
+		.click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 长参数名" });
+	await expect(drawer.getByRole("textbox", { name: /^release_file/ })).toBeVisible();
+
+	const labels = drawer.locator("form label");
+	const clipped = await labels.evaluateAll((els) =>
+		els.filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent),
+	);
+	expect(clipped).toEqual([]);
+	await expect(labels.first()).toContainText("release_file*");
+	await expect(labels.nth(2)).toContainText("queue_timeout_seconds_for_the_slow_consumers");
+	const formWidth = await drawer.locator("form").evaluate((el) => el.getBoundingClientRect().width);
+	const widths = await labels.evaluateAll((els) =>
+		els.map((el) => el.getBoundingClientRect().width),
+	);
+	expect(Math.max(...widths)).toBeLessThanOrEqual(formWidth * 0.4 + 1);
+	const lefts = await drawer
+		.locator('form [data-slot="input"]')
+		.evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().left)));
+	expect(new Set(lefts).size).toBe(1);
+});
+
+test("摘要里节点的进度条随轮询平滑推进（clip-path 过渡），按进度占比露出", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	const task = await agent.nextAssign();
+	agent.progress(task, 25, 100, "第 25 步");
+	const bar = drawer.getByRole("progressbar", { name: "ping 进度" });
+	await expect(bar).toHaveAttribute("aria-valuenow", "25");
+	const fill = bar.locator("i");
+	await expect(fill).toHaveCSS("clip-path", /inset\(0px 75% 0px 0px\)/);
+	await expect(fill).toHaveCSS("transition-property", "clip-path");
+	agent.progress(task, 80, 100, "第 80 步");
+	await expect(fill).toHaveCSS("clip-path", /inset\(0px 20% 0px 0px\)/);
+});

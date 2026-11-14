@@ -5,12 +5,13 @@ import { ArrowLeftIcon, HistoryIcon, PlayIcon } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { floatGroupClass, GroupDivider } from "#/components/canvas/CanvasDock";
 import { StatusPill } from "#/components/status";
-import { shortcutText } from "#/lib/shortcuts";
+import { shortcutKeys, shortcutText } from "#/lib/shortcuts";
 import { ConflictDialog } from "#/versions/ConflictDialog";
 import type { Versioning } from "#/versions/useVersionedDraft";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Truncate } from "@/components/ui/truncate";
 import { OnlineEditors } from "./OnlineEditors";
 import { checkSummary } from "./validation";
 
@@ -27,6 +28,7 @@ export const TOP_GROUP_SPACE = 54;
 export function EditorTopLeft({
 	orchestration,
 	version,
+	fieldErrors,
 	warnings,
 	notes,
 	onShowChecks,
@@ -36,6 +38,8 @@ export function EditorTopLeft({
 }: {
 	orchestration: OrchestrationView;
 	version: number;
+	/** 阻止保存的字段错误条数（检查结果里最先显示）。 */
+	fieldErrors: number;
 	warnings: number;
 	/** 不影响保存与触发的提醒条数（validation.ts 的 undeclaredInputNotes）。 */
 	notes: number;
@@ -44,7 +48,7 @@ export function EditorTopLeft({
 	onMode(mode: EditorMode): void;
 	runState?: ReactNode;
 }) {
-	const summary = checkSummary(warnings, notes);
+	const summary = checkSummary(fieldErrors, warnings, notes);
 	return (
 		<div className={cn(floatGroupClass, "top-3 left-3")}>
 			<Link
@@ -54,7 +58,9 @@ export function EditorTopLeft({
 			>
 				<ArrowLeftIcon />
 			</Link>
-			<h1 className="m-0 max-w-80 truncate px-1 text-sm font-semibold">{orchestration.name}</h1>
+			<h1 className="m-0 max-w-80 min-w-0 px-1 text-sm font-semibold">
+				<Truncate>{orchestration.name}</Truncate>
+			</h1>
 			<span className="font-mono text-xs text-fg-3">
 				{version === 0 ? "未保存过" : `v${version}`}
 			</span>
@@ -102,7 +108,9 @@ export function EditorTopLeft({
 }
 
 /**
- * 右上控件组：在线编辑者、未保存状态（与字段错误）、版本历史、保存（Ctrl S）、运行。
+ * 右上控件组：在线编辑者、保存状态、版本历史、保存（Ctrl S）、运行。保存状态只有需要处理的才带点：
+ * 保存被拦截（红）、没有保存的修改或还没有保存过版本（琥珀，此时白色主操作是保存）；已保存是纯文字。
+ * 字段错误属于检查结果，显示在左上控件组；保存按钮不因字段错误禁用，点它会把焦点放到出错的字段（ScenarioEditor 的 save）。
  * 白色主操作只有一个：有未保存的修改时是保存，否则是运行。保存被拦截（409）时弹出冲突对话框。
  */
 export function EditorTopRight({
@@ -110,7 +118,6 @@ export function EditorTopRight({
 	editors,
 	doc,
 	versioning,
-	fieldErrors,
 	onSave,
 	onRun,
 	onReload,
@@ -120,7 +127,6 @@ export function EditorTopRight({
 	editors: readonly string[];
 	doc: OrchestrationDocument;
 	versioning: Versioning;
-	fieldErrors: number;
 	onSave(): void;
 	onRun(): void;
 	onReload(head: OrchestrationHeadView): void;
@@ -134,18 +140,16 @@ export function EditorTopRight({
 	return (
 		<div className={cn(floatGroupClass, "top-3 right-3")}>
 			<OnlineEditors names={editors} />
-			{fieldErrors > 0 ? (
-				<StatusPill kind="failed" className="px-1">
-					{fieldErrors} 处字段错误
-				</StatusPill>
-			) : conflict ? (
+			{conflict ? (
 				<button type="button" className="cursor-pointer px-1" onClick={() => setShowConflict(true)}>
 					<StatusPill kind="failed">保存被拦截</StatusPill>
 				</button>
-			) : (
-				<StatusPill kind={dirty ? "warn" : "pending"} className="px-1">
-					{dirty ? "有未保存的修改" : base.version === 0 ? "还没有保存过版本" : "已保存"}
+			) : unsaved ? (
+				<StatusPill kind="warn" className="px-1">
+					{dirty ? "有未保存的修改" : "还没有保存过版本"}
 				</StatusPill>
+			) : (
+				<span className="px-1 text-xs whitespace-nowrap text-fg-3">已保存</span>
 			)}
 			<Tooltip>
 				<TooltipTrigger
@@ -164,7 +168,7 @@ export function EditorTopRight({
 			</Tooltip>
 			<Button
 				variant={unsaved ? "primary" : "default"}
-				disabled={save.isPending || fieldErrors > 0 || (!dirty && base.version > 0)}
+				disabled={save.isPending || (!dirty && base.version > 0)}
 				onClick={onSave}
 			>
 				{save.isPending ? "保存中…" : "保存"}
@@ -177,10 +181,22 @@ export function EditorTopRight({
 					{shortcutText("canvas-save")}
 				</Kbd>
 			</Button>
-			<Button variant={unsaved ? "default" : "primary"} onClick={onRun}>
-				<PlayIcon />
-				运行
-			</Button>
+			<Tooltip>
+				<TooltipTrigger
+					render={<Button variant={unsaved ? "default" : "primary"} onClick={onRun} />}
+				>
+					<PlayIcon />
+					运行
+				</TooltipTrigger>
+				<TooltipContent>
+					运行
+					{shortcutKeys("canvas-run")
+						.flat()
+						.map((key) => (
+							<Kbd key={key}>{key}</Kbd>
+						))}
+				</TooltipContent>
+			</Tooltip>
 			<ConflictDialog
 				open={showConflict}
 				onOpenChange={setShowConflict}

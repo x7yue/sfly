@@ -35,7 +35,7 @@ export function EmptyState({
 	return (
 		<section
 			aria-label={title}
-			className={cn("px-5 py-14 text-center text-fg-2 [&_svg]:size-5", className)}
+			className={cn("px-5 py-14 text-center text-fg-2 [&_svg]:size-4", className)}
 		>
 			{icon && (
 				<div className="mx-auto mb-3.5 grid size-11 place-items-center rounded-xl border border-border bg-raised text-fg-3">
@@ -43,17 +43,26 @@ export function EmptyState({
 				</div>
 			)}
 			<h3 className="m-0 mb-1.5 text-base font-semibold text-fg-1">{title}</h3>
-			{description && <p className="m-0 mb-4 text-sm">{description}</p>}
+			{description && (
+				<p className="mx-auto mt-0 mb-4 max-w-[40em] text-sm text-balance">{description}</p>
+			)}
 			{children}
 		</section>
 	);
 }
 
-/** 表格形状的加载骨架（原型 stateBlock('loading')）：rows 行 × columns 列。 */
+/**
+ * 表格形状的加载骨架（原型 stateBlock('loading')）：rows 行 × columns 列。
+ * 出现前先等 200ms：本地加载往往不到 200ms 就完成，骨架一闪而过比直接显示内容更像卡了一下。
+ */
 export function TableSkeleton({ columns, rows = 5 }: { columns: number; rows?: number }) {
 	const widths = ["70%", "40%", "55%", "30%", "45%", "35%", "50%"];
 	return (
-		<output aria-label={MESSAGE.loading} aria-busy="true" className="block">
+		<output
+			aria-label={MESSAGE.loading}
+			aria-busy="true"
+			className="block transition-opacity delay-200 duration-(--motion-base) starting:opacity-0"
+		>
 			<table className="w-full">
 				<tbody>
 					{Array.from({ length: rows }, (_, r) => (
@@ -83,10 +92,12 @@ export function errorSummary(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
+const isForeignErrorResponse = (error: ApiError) => error.code === "http_error";
+
 function errorDetailsText(error: unknown): string {
 	const lines = [errorSummary(error)];
 	if (error instanceof Error) lines.push(error.message);
-	if (error instanceof ApiError && error.details !== undefined) {
+	if (error instanceof ApiError && !isForeignErrorResponse(error) && error.details !== undefined) {
 		lines.push(JSON.stringify(error.details, null, 2));
 	}
 	return lines.join("\n");

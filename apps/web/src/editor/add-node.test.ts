@@ -1,10 +1,18 @@
+import type { PackageSummary } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
+	availableBuiltins,
 	BUILTIN_ITEMS,
-	freeCardAt,
-	freePosition,
+	builtinValue,
+	itemValue,
+	MAX_RECENT,
 	newDocNode,
 	newSubflowNameProblem,
+	type PackageGroup,
+	packageGroups,
+	packageValue,
+	pushRecent,
+	recentItems,
 } from "./add-node";
 
 describe("新建子流程入口时填写的名称", () => {
@@ -68,29 +76,87 @@ describe("新建飞书通知节点", () => {
 	});
 });
 
-describe("没有来源的新节点落在哪（视口中心或右键位置）", () => {
-	// 节点卡片 208 × 112。
-	it("落点空着就用它", () => {
-		expect(freePosition({ x: 400, y: 300 }, [{ x: 0, y: 0 }])).toEqual({ x: 400, y: 300 });
-		// 贴边不算重叠。
-		expect(freePosition({ x: 208, y: 0 }, [{ x: 0, y: 0 }])).toEqual({ x: 208, y: 0 });
+describe("添加节点菜单的分组与「最近使用」", () => {
+	const pkg = (name: string, version: string, nodes: string[]): PackageSummary => ({
+		name,
+		versions: [
+			{
+				version,
+				sha256: "0".repeat(64),
+				size: 1,
+				published_at: "2026-01-01T00:00:00.000Z",
+				nodes: nodes.map((n) => ({ name: n, title: n })),
+				locked_orchestrations: 0,
+			},
+		],
+	});
+	const packages = [
+		pkg("alpha-tools", "0.1.0", ["scan"]),
+		pkg("demo-checks", "1.2.0", ["ping", "http_check"]),
+		pkg("zeta", "2.0.0", ["probe"]),
+	];
+
+	it("本场景已锁定的包排在前面，其余保持原顺序", () => {
+		const names = (locked: Record<string, string>) =>
+			packageGroups(packages, [], locked).map((g) => g.name);
+		expect(names({})).toEqual(["alpha-tools", "demo-checks", "zeta"]);
+		expect(names({ zeta: "2.0.0" })).toEqual(["zeta", "alpha-tools", "demo-checks"]);
+		expect(names({ zeta: "2.0.0", "demo-checks": "1.2.0" })).toEqual([
+			"demo-checks",
+			"zeta",
+			"alpha-tools",
+		]);
 	});
 
-	it("与已有节点重叠时按固定步长往右下错开，直到不压住任何节点", () => {
-		expect(freePosition({ x: 10, y: 10 }, [{ x: 0, y: 0 }])).toEqual({ x: 138, y: 138 });
-		// 错开一次后又压住另一个节点：继续错开。
+	it("最近使用：新的在最前，重复的移到最前不重复出现，最多保留 5 项", () => {
+		expect(pushRecent(["builtin:sleep", "builtin:timer"], "builtin:timer")).toEqual([
+			"builtin:timer",
+			"builtin:sleep",
+		]);
+		const many = ["a", "b", "c", "d", "e"].reduce<string[]>((list, v) => pushRecent(list, v), []);
+		expect(many).toEqual(["e", "d", "c", "b", "a"]);
+		expect(pushRecent(many, "f")).toHaveLength(MAX_RECENT);
+		expect(pushRecent(many, "f")).toEqual(["f", "e", "d", "c", "b"]);
+	});
+
+	it("身份只记内置种类或包名与节点名，不记版本", () => {
+		expect(itemValue({ kind: "sleep" })).toBe("builtin:sleep");
 		expect(
-			freePosition({ x: 0, y: 0 }, [
-				{ x: 0, y: 0 },
-				{ x: 100, y: 100 },
-			]),
-		).toEqual({ x: 224, y: 224 });
+			itemValue({
+				kind: "package",
+				package: "demo-checks",
+				version: "1.2.0",
+				node: "ping",
+				title: "p",
+			}),
+		).toBe("package:demo-checks/ping");
 	});
-});
 
-describe("按卡片中心放置（视口中心、右键处、粘贴）", () => {
-	it("卡片中心落在给定的点上，坐标取整；压住已有节点时同样错开", () => {
-		expect(freeCardAt({ x: 104.4, y: 56.6 }, [])).toEqual({ x: 0, y: 1 });
-		expect(freeCardAt({ x: 104, y: 56 }, [{ x: 0, y: 0 }])).toEqual({ x: 128, y: 128 });
+	it("最近使用按当前可以添加的节点解析：包下架、版本里没有这个节点的项丢掉", () => {
+		const groups: PackageGroup[] = packageGroups(packages, [], {});
+		const recent = [
+			packageValue({ package: "demo-checks", node: "ping" }),
+			builtinValue("sleep"),
+			packageValue({ package: "gone", node: "x" }),
+			packageValue({ package: "demo-checks", node: "removed_in_this_version" }),
+		];
+		const items = recentItems(recent, availableBuiltins(false), groups);
+		expect(items.map((i) => i.value)).toEqual(["package:demo-checks/ping", "builtin:sleep"]);
+		expect(items[0]?.entry).toMatchObject({
+			kind: "package",
+			package: "demo-checks",
+			node: "ping",
+		});
+		expect(items[1]?.entry.kind).toBe("sleep");
+	});
+
+	it("有来源节点时不列子流程入口，最近使用里的子流程入口也随之丢掉", () => {
+		expect(availableBuiltins(false).map((b) => b.kind)).toContain("subflow_entry");
+		expect(availableBuiltins(true).map((b) => b.kind)).not.toContain("subflow_entry");
+		const recent = [builtinValue("subflow_entry"), builtinValue("async")];
+		expect(recentItems(recent, availableBuiltins(false), []).map((i) => i.value)).toEqual(recent);
+		expect(recentItems(recent, availableBuiltins(true), []).map((i) => i.value)).toEqual([
+			"builtin:async",
+		]);
 	});
 });

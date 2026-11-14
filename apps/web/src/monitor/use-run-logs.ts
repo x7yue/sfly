@@ -48,7 +48,7 @@ export interface RunLogs {
  * 运行、范围或级别变化时从最新一页重新读：游标只对同一组范围和级别有效。
  * 筛选很少匹配时一页可以一行都没有，这时自动接着往前读，直到读到行或读到开头；读取失败就停下，由用户点击重试。
  * 实时推送的行太多（或断线太久、控制面让重新读）时，断开实时推送、重新读最新一页再接上，读到之前照常显示已有的行。
- * 断线重连由浏览器的 EventSource 自己带上 Last-Event-ID 完成。状态的合并规则在 run-log-buffer.ts（有单测）。
+ * 状态的合并规则在 run-log-buffer.ts（有单测）。
  */
 export function useRunLogs(
 	runId: string,

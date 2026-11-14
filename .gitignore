@@ -27,8 +27,12 @@ Thumbs.db
 logs/
 !/apps/server/src/logs/
 tmp/
-# sfly run / sfly.testing 的本地运行目录（例如 std/.sfly）
+# sfly debug / sfly.testing 的本地运行目录（例如 std/.sfly）
 .sfly/
+# Impeccable（设计评审插件）在本机写的缓存与设置；.impeccable/design.json 是设计系统，要提交。
+# 插件把它们登记在 .git/info/exclude，biome 不读那里，所以写在这里。
+/.impeccable/hook.*.json
+/.impeccable/config.local.json
 # 控制面默认数据目录（SFLY_DATA_DIR）
 data/
 .cache/

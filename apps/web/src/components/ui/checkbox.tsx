@@ -15,12 +15,12 @@ function Checkbox({ className, ...props }: Omit<React.ComponentProps<"input">, "
 		>
 			<input
 				type="checkbox"
-				className="peer m-0 size-4 cursor-pointer appearance-none rounded-sm border border-border bg-sunk transition-colors hover:border-border-strong checked:border-selected checked:bg-selected disabled:cursor-not-allowed disabled:opacity-40"
+				className="peer m-0 size-4 cursor-pointer appearance-none rounded-sm border border-border-control bg-sunk transition-colors hover:border-fg-3 checked:border-selected checked:bg-selected disabled:cursor-not-allowed disabled:opacity-40"
 				{...props}
 			/>
 			<CheckIcon
 				aria-hidden
-				strokeWidth={3}
+				strokeWidth={2}
 				className="pointer-events-none absolute size-3 text-primary-foreground opacity-0 peer-checked:opacity-100 peer-disabled:opacity-40"
 			/>
 		</span>

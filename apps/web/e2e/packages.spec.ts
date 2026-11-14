@@ -1,5 +1,12 @@
+import type { Locator } from "@playwright/test";
 import { expect, test } from "./fixtures";
-import { createScenario, failApi, publishPackage, scenarioUsing } from "./support";
+import {
+	createScenario,
+	expectFocusVisible,
+	failApi,
+	publishPackage,
+	scenarioUsing,
+} from "./support";
 
 // 节点包管理页（原型 #/packages）：列表 + 详情。
 
@@ -51,7 +58,7 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(detail).toContainText("未被锁定");
 	await expect(detail.getByRole("table", { name: "节点类型" }).getByRole("row")).toHaveText([
 		"节点类型输入输出声明的指标标签键图表",
-		"http_checkHTTP 检查url* · methodstatus · body———（平台自带图表）",
+		"http_checkHTTP 检查url* · methodstatus · body———",
 	]);
 	const versions = detail.getByRole("table", { name: "版本" }).getByRole("row");
 	await expect(versions.nth(1)).toContainText("1.3.0");
@@ -65,8 +72,8 @@ test("列表 + 详情：版本、发布时间、sha256、被锁定的场景数�
 	await expect(detail).toContainText("被 2 个场景锁定");
 	await expect(detail.getByRole("table", { name: "节点类型" }).getByRole("row")).toHaveText([
 		"节点类型输入输出声明的指标标签键图表",
-		"http_checkHTTP 检查url* · expectstatus———（平台自带图表）",
-		"pingpinghost*alive———（平台自带图表）",
+		"http_checkHTTP 检查url* · expectstatus———",
+		"pingpinghost*alive———",
 	]);
 	const sha = await detail.locator("dd").first().textContent();
 	expect(sha).toMatch(/^[0-9a-f]{64}$/);
@@ -142,4 +149,148 @@ test("加载失败时显示错误，可以重试", async ({ page, controlPlane }
 	await outage.restore();
 	await page.getByRole("button", { name: "重试" }).click();
 	await expect(page.getByRole("navigation", { name: "节点包" })).toContainText("demo-checks");
+});
+
+test("列表页的键盘：J / K 在节点包之间移动，Enter 显示详情；没有搜索框，/ 不起作用", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { name: "alpha-tools", version: "0.1.0" });
+	await publishPackage(controlPlane, { version: "1.2.0" });
+	await page.goto("/packages");
+	const list = page.getByRole("navigation", { name: "节点包" });
+	const alpha = list.getByRole("link", { name: /alpha-tools/ });
+	const demo = list.getByRole("link", { name: /demo-checks/ });
+	await expect(alpha).toBeVisible();
+
+	await page.keyboard.press("/");
+	await expect(page.locator("input:focus")).toHaveCount(0);
+	await page.keyboard.press("j");
+	await expectFocusVisible(alpha);
+	await page.keyboard.press("j");
+	await expectFocusVisible(demo);
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/packages\?name=demo-checks$/);
+	await expect(page.getByRole("region", { name: "demo-checks 详情" })).toBeVisible();
+	await expectFocusVisible(demo);
+	await page.keyboard.press("k");
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/\/packages\?name=alpha-tools$/);
+	await expect(page.getByRole("region", { name: "alpha-tools 详情" })).toBeVisible();
+});
+
+test("选中的包与选中的版本都是中性高亮加左侧白条，悬停时仍是选中的样子", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane, { version: "1.2.0" });
+	await publishPackage(controlPlane, { version: "1.3.0" });
+	await page.goto("/packages?name=demo-checks");
+	const detail = page.getByRole("region", { name: "demo-checks 详情" });
+	const item = page.getByRole("navigation", { name: "节点包" }).getByRole("link", {
+		name: /demo-checks/,
+	});
+	const row = detail.getByRole("table", { name: "版本" }).locator('tr[data-state="selected"]');
+	await expect(row).toHaveCount(1);
+	const look = (el: Locator) =>
+		el.evaluate((node) => {
+			const style = getComputedStyle(node);
+			return { background: style.backgroundColor, shadow: style.boxShadow };
+		});
+	const selected = await look(item);
+	expect(selected.shadow).not.toBe("none");
+	expect(await look(row)).toEqual(selected);
+	await row.hover();
+	expect(await look(row)).toEqual(selected);
+	await item.hover();
+	expect(await look(item)).toEqual(selected);
+});
+
+test("包列表宽 22%（夹在 220 到 300px 之间）并吸在页面顶部；输入输出折行时分隔点只在行尾，不会落在行首", async ({
+	page,
+	controlPlane,
+}) => {
+	const inputs = [
+		"ready_file",
+		"report_file",
+		"seconds",
+		"artifacts",
+		"release_file",
+		"request_timeout_ms",
+		"response_body_file",
+		"queue_timeout",
+		"retry_backoff_ms",
+		"max_attempts",
+	];
+	await publishPackage(controlPlane, {
+		nodes: Array.from({ length: 14 }, (_, i) => ({
+			name: `wait_cancel_${i}`,
+			title: "等待取消",
+			entry: `demo_checks.wait:wait_cancel_${i}`,
+			inputs: {
+				type: "object",
+				properties: Object.fromEntries(inputs.map((key) => [key, { type: "string" }])),
+				required: ["ready_file", "report_file"],
+				order: inputs,
+			},
+			outputs: { type: "object", properties: { status: {}, body: {} }, order: ["status", "body"] },
+		})),
+	});
+	await publishPackage(controlPlane, { name: "alpha-tools", version: "0.1.0" });
+
+	const listPanel = page
+		.getByRole("navigation", { name: "节点包" })
+		.locator("xpath=ancestor::section[1]");
+	const main = page.locator("#main");
+	const widths: number[] = [];
+	for (const width of [1280, 1920]) {
+		await page.setViewportSize({ width, height: 420 });
+		await page.goto("/packages?name=demo-checks");
+		await expect(page.getByRole("table", { name: "节点类型" })).toBeVisible();
+		widths.push(Math.round((await listPanel.boundingBox())?.width ?? 0));
+	}
+	expect(widths).toEqual([220, 300]);
+
+	await page.setViewportSize({ width: 1280, height: 420 });
+	await page.goto("/packages?name=demo-checks");
+	await expect(page.getByRole("table", { name: "节点类型" })).toBeVisible();
+	await main.evaluate((el) => el.scrollTo(0, 400));
+	expect(await main.evaluate((el) => el.scrollTop)).toBeGreaterThan(300);
+	const [mainTop, listTop] = await Promise.all([
+		main.evaluate((el) => el.getBoundingClientRect().top),
+		listPanel.evaluate((el) => el.getBoundingClientRect().top),
+	]);
+	expect(Math.round(listTop - mainTop)).toBe(20);
+
+	const lines = await page
+		.getByRole("table", { name: "节点类型" })
+		.getByRole("row")
+		.nth(1)
+		.getByRole("cell")
+		.nth(1)
+		.locator("span.whitespace-nowrap")
+		.evaluateAll((items) =>
+			items.map((item) => {
+				const texts: Text[] = [];
+				const walker = document.createTreeWalker(item, NodeFilter.SHOW_TEXT);
+				for (let node = walker.nextNode(); node; node = walker.nextNode()) texts.push(node as Text);
+				const lineOf = (node: Text | undefined, offset: number) => {
+					if (!node) return Number.NaN;
+					const range = document.createRange();
+					range.setStart(node, offset);
+					range.setEnd(node, offset + 1);
+					return Math.round(range.getBoundingClientRect().top);
+				};
+				const last = texts.at(-1);
+				return {
+					first: lineOf(texts[0], 0),
+					last: lineOf(last, (last?.length ?? 1) - 1),
+					text: item.textContent ?? "",
+				};
+			}),
+		);
+	expect(lines.length).toBe(inputs.length);
+	expect(new Set(lines.map((l) => l.first)).size).toBeGreaterThan(1);
+	expect(lines.every((l) => l.first === l.last)).toBe(true);
+	expect(lines.slice(0, -1).every((l) => l.text.endsWith(" ·"))).toBe(true);
 });

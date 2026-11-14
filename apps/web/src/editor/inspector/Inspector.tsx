@@ -7,21 +7,20 @@ import {
 import type { AgentView, FeishuBotView, OrchestrationDocument, PackageSummary } from "@sfly/schema";
 import { cn } from "cn";
 import { PanelRightCloseIcon, Trash2Icon } from "lucide-react";
-import { forwardRef, type ReactNode, useMemo, useState } from "react";
+import { forwardRef, type ReactNode, useEffect, useMemo, useState } from "react";
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
-import { PanelWidthHandle } from "#/components/PanelWidthHandle";
 import { StatusPill } from "#/components/status";
-import { ACTION } from "#/lib/copy";
-import { usePanelWidth } from "#/lib/panel-width";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { AgentSelect } from "./AgentSelect";
-import { Field, SectionTitle } from "./fields";
+import { FIELD_LIST_CLASS, Field, focusField, SectionTitle } from "./fields";
+import { InspectorWidthHandle, useInspectorWidth } from "./inspector-width";
 import {
 	AsyncMapping,
 	ExecutionSettings,
@@ -37,6 +36,15 @@ import {
 import { ParamsEditor } from "./ParamsEditor";
 import { referenceChoices } from "./reference-completion";
 
+/** 把焦点放到某个字段：`key` 是字段的草稿键（field-drafts.tsx），每次请求的 `nonce` 不同。 */
+export interface FocusRequest {
+	key: string;
+	nonce: number;
+}
+
+const tabOfField = (key: string): Tab =>
+	/^[^/]*\/(timeout|retries|queue_timeout)$/.test(key) ? "exec" : "params";
+
 /** 检查器需要的场景级上下文。 */
 export interface InspectorContext {
 	doc: OrchestrationDocument;
@@ -49,8 +57,8 @@ export interface InspectorContext {
 	warnings: OrchestrationWarning[];
 	/** 不影响保存与触发的提醒（validation.ts 的 undeclaredInputNotes）。 */
 	notes: readonly InputNote[];
-	/** 阻止保存的字段错误（文档校验 + 还没生效的输入）。 */
-	fieldErrors: FieldError[];
+	shownFieldErrors: FieldError[];
+	focusRequest: FocusRequest | null;
 	onChangeNode(id: string, node: DocNode): void;
 	onDefaultAgent(agent: string | undefined): void;
 	onLock(name: string, version: string): void;
@@ -74,7 +82,7 @@ export const Inspector = forwardRef<
 		onEscape(): void;
 	}
 >(function Inspector({ selected, context, onCollapse, onEscape }, ref) {
-	const width = usePanelWidth();
+	const width = useInspectorWidth();
 	return (
 		<aside
 			ref={ref}
@@ -100,7 +108,7 @@ export const Inspector = forwardRef<
 			) : (
 				<ScenarioInspector context={context} onCollapse={onCollapse} />
 			)}
-			<PanelWidthHandle label={ACTION.resizeInspector} />
+			<InspectorWidthHandle />
 		</aside>
 	);
 });
@@ -127,7 +135,7 @@ function Header({
 					</Button>
 				</span>
 			</div>
-			<h2 className="mt-1.5 mb-0.5 truncate text-base font-semibold">{title}</h2>
+			<h2 className="mt-1.5 mb-0.5 line-clamp-2 text-base font-semibold wrap-anywhere">{title}</h2>
 		</div>
 	);
 }
@@ -176,12 +184,19 @@ function NodeInspector({
 	onCollapse(): void;
 }) {
 	const { doc, catalog, info } = context;
-	const [tab, setTab] = useState<Tab>("params");
+	const request =
+		context.focusRequest?.key.startsWith(`${id}/`) === true ? context.focusRequest : null;
+	const [tab, setTab] = useState<Tab>(() => (request ? tabOfField(request.key) : "params"));
+	useEffect(() => {
+		if (!request) return;
+		setTab(tabOfField(request.key));
+		return focusField(request.key);
+	}, [request]);
 	const meta = KIND_META[node.kind];
 	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
 	const choices = useMemo(() => referenceChoices(doc, id, catalog), [doc, id, catalog]);
 	const warnings = context.warnings.filter((w) => w.node_id === id);
-	const fieldErrors = context.fieldErrors.filter((e) => e.nodeId === id);
+	const fieldErrors = context.shownFieldErrors.filter((e) => e.nodeId === id);
 	const problemsOf = (input: string) =>
 		warnings.filter((w) => "input" in w && w.input === input).map((w) => w.message);
 	// 有对应字段的警告显示在字段下面，其余显示在参数页顶部。
@@ -213,13 +228,18 @@ function NodeInspector({
 				row={
 					<>
 						<span className="font-mono text-fg-2">{id}</span>
-						<span className="truncate">
-							· {meta.label}
+						<span className="flex min-w-0">
+							<span className="truncate">
+								· {meta.label}
+								{node.kind === "package" && (
+									<span className="font-mono">
+										{" "}
+										· {node.package}/{node.node}
+									</span>
+								)}
+							</span>
 							{node.kind === "package" && (
-								<span className="font-mono">
-									{" "}
-									· {node.package}/{node.node}@{version ?? "未锁定"}
-								</span>
+								<span className="flex-none font-mono">@{version ?? "未锁定"}</span>
 							)}
 						</span>
 					</>
@@ -252,7 +272,7 @@ function NodeInspector({
 					{hasExec && <TabsTrigger value="exec">执行</TabsTrigger>}
 					<TabsTrigger value="doc">{node.kind === "package" ? "说明与指标" : "说明"}</TabsTrigger>
 				</TabsList>
-				<TabsContent value="params" className="overflow-auto px-3.5 py-3">
+				<TabsContent value="params" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
 					{general.length > 0 && <WarningList warnings={general} />}
 					{(node.kind === "entry" || node.kind === "subflow_entry") && (
 						<>
@@ -328,13 +348,18 @@ function NodeInspector({
 					{fieldErrors
 						.filter((e) => !e.draft && !e.field.startsWith("params."))
 						.map((e) => (
-							<p key={e.field} className="m-0 mt-2 text-xs text-danger-fg">
+							<p
+								key={e.field}
+								data-field-key={fieldErrorKey(e)}
+								tabIndex={-1}
+								className="m-0 mt-2 text-xs text-danger-fg outline-offset-2"
+							>
 								{fieldLabel(node, e.field)}：{e.message}
 							</p>
 						))}
 				</TabsContent>
 				{hasExec && (
-					<TabsContent value="exec" className="overflow-auto px-3.5 py-3">
+					<TabsContent value="exec" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
 						<ExecutionSettings id={id} node={node} onChange={change} />
 					</TabsContent>
 				)}
@@ -415,28 +440,31 @@ function ScenarioInspector({
 	context: InspectorContext;
 	onCollapse(): void;
 }) {
-	const { doc, warnings, notes, fieldErrors } = context;
-	const summary = checkSummary(warnings.length, notes.length);
+	const { doc, warnings, notes, shownFieldErrors: fieldErrors } = context;
+	const summary = checkSummary(fieldErrors.length, warnings.length, notes.length);
 	const used = [
 		...new Set(doc.nodes.flatMap((n) => (n.kind === "package" ? [n.package] : []))),
 	].sort();
 	return (
 		<>
 			<Header onCollapse={onCollapse} title="场景设置" row={<span>未选中节点</span>} />
-			<div className="min-h-0 flex-1 overflow-auto px-3.5 py-3">
+			<div className={cn(FIELD_LIST_CLASS, "min-h-0 flex-1 overflow-auto px-3.5 py-3")}>
 				<Field label="默认 Agent" help="未单独选择 Agent 的包节点都派发到这里">
-					<AgentSelect
-						label="默认 Agent"
-						value={doc.default_agent}
-						agents={context.agents}
-						emptyLabel="（未设置）"
-						onChange={context.onDefaultAgent}
-					/>
+					{(control) => (
+						<AgentSelect
+							control={control}
+							label="默认 Agent"
+							value={doc.default_agent}
+							agents={context.agents}
+							emptyLabel="（未设置）"
+							onChange={context.onDefaultAgent}
+						/>
+					)}
 				</Field>
 				<SectionTitle>节点包版本</SectionTitle>
 				{used.length === 0 && <p className="m-0 text-xs text-fg-3">还没有使用任何节点包。</p>}
 				{used.map((name) => (
-					<Field key={name} label={<span className="font-mono">{name}</span>}>
+					<Field key={name} label={name} mono>
 						<PackageVersionField
 							name={name}
 							locked={doc.packages[name]}

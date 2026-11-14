@@ -1,4 +1,4 @@
-import type { AttemptView, NodeRunView } from "@sfly/schema";
+import type { AttemptView, ChainRunView, NodeRunView } from "@sfly/schema";
 import { NODE_STATUS } from "#/lib/node-status";
 
 /**
@@ -70,21 +70,56 @@ function executionKind(kind: NodeRunView["kind"], status: AttemptView["status"])
 	return WAIT_KINDS.has(kind) && (segment === "ok" || segment === "run") ? "wait" : segment;
 }
 
-/** 时间轴最短显示的时长：刚开始的运行也有可读的刻度。 */
-export const MIN_SPAN = 10_000;
+const SECOND = 1000;
+const MINUTE = 60 * SECOND;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 
-/** 运行占的时间：从开始到结束（运行中到现在），至少 {@link MIN_SPAN}。 */
+/**
+ * 运行中时间轴的跨度只取这一级一级的值（10 秒起，到一天）：相邻两级相差 25% 到 50%，扩轴时区段最多压缩到原来的 2/3；
+ * 只有最后一级（12 小时到一天）是翻倍，压缩一半。
+ */
+const LIVE_SPANS = [
+	10, 15, 20, 30, 45, 60, 90, 120, 180, 240, 300, 450, 600, 900, 1200, 1800, 2700, 3600, 5400, 7200,
+	10800, 14400, 21600, 28800, 43200, 86400,
+].map((n) => n * SECOND);
+
+/** 运行中时间轴的右端在「现在」之后预留的余量（占已用时长的比例）。 */
+export const LIVE_HEADROOM = 0.2;
+
+/**
+ * 运行中时间轴的跨度：已用时长加 {@link LIVE_HEADROOM} 的余量，向上取到 {@link LIVE_SPANS} 里的一级。
+ * 「现在」越过轴的 1 / (1 + 余量) 才进下一级，两次扩轴之间区段与刻度纹丝不动，只有「现在」线向右推进；
+ * 扩轴约每经过 25% 到 50% 的已用时长发生一次。
+ */
+export function liveSpan(elapsed: number): number {
+	const wanted = Math.max(elapsed, 0) * (1 + LIVE_HEADROOM);
+	return LIVE_SPANS.find((span) => span >= wanted) ?? Math.ceil(wanted / DAY) * DAY;
+}
+
+/** 已结束的运行在轨道末端留的空白（占实际时长的比例）：最后一段不贴着轨道边缘。 */
+export const END_PADDING = 0.08;
+
+/** 已结束的运行时间轴最短显示的时长：只防止零时长的运行把轴缩成一点。 */
+export const MIN_ENDED_SPAN = 100;
+
+/**
+ * 运行占的时间轴：运行中从开始起 {@link liveSpan}（右端有余量，不随「现在」每秒移动）；
+ * 已结束的按实际时长定轴并留 {@link END_PADDING} 的空白，短运行也铺满轨道，而不是缩在 10 秒轴的左端。
+ */
 export function runExtent(
 	run: { started_at: string; ended_at: string | null },
 	now: number,
 ): TimeRange {
 	const start = Date.parse(run.started_at);
-	const end = time(run.ended_at) ?? now;
-	return { start, end: Math.max(end, start + MIN_SPAN) };
+	const ended = time(run.ended_at);
+	if (ended === null) return { start, end: start + liveSpan(now - start) };
+	const span = Math.max(ended - start, MIN_ENDED_SPAN);
+	return { start, end: start + span + Math.round(span * END_PADDING) };
 }
 
 /**
- * 时间轴显示的范围：没有缩放时是整个运行（运行中即「实时跟随」，右端随现在推进）；
+ * 时间轴显示的范围：没有缩放时是整个运行（运行中即「实时跟随」，「现在」线在轴上向右推进）；
  * 缩放后固定在选中的范围，直到「回到实时」（清除缩放）。
  */
 export function visibleRange(extent: TimeRange, zoom: TimeRange | null): TimeRange {
@@ -103,15 +138,38 @@ export function zoomFromFractions(range: TimeRange, a: number, b: number): TimeR
 	return { start, end: Math.max(end, start + MIN_ZOOM) };
 }
 
+/**
+ * 放大（factor < 1）或缩小（factor > 1）：以当前范围的中点为中心，跨度乘 factor（至少 {@link MIN_ZOOM}），
+ * 超出整个运行的部分平移回来；结果覆盖整个运行时返回 null（清除缩放，运行中即回到实时）。
+ */
+export function zoomStep(range: TimeRange, factor: number, extent: TimeRange): TimeRange | null {
+	const full = extent.end - extent.start;
+	const span = Math.min(full, Math.max((range.end - range.start) * factor, MIN_ZOOM));
+	if (span >= full) return null;
+	const center = (range.start + range.end) / 2;
+	const start = Math.min(extent.end - span, Math.max(extent.start, center - span / 2));
+	return { start, end: start + span };
+}
+
+/** 缩放到一个节点时，在它所有区段的两端各留的余量（占区段总跨度的比例）。 */
+export const NODE_ZOOM_MARGIN = 0.05;
+
+/** 缩放到一个节点：范围取它所有区段的起止（执行中的延伸到现在）并各留 {@link NODE_ZOOM_MARGIN}；没有区段为 null，覆盖整个运行也为 null。 */
+export function zoomToSegments(segments: readonly Segment[], extent: TimeRange): TimeRange | null {
+	if (segments.length === 0) return null;
+	const first = Math.min(...segments.map((s) => s.start));
+	const last = Math.max(...segments.map((s) => s.end));
+	const margin = (last - first) * NODE_ZOOM_MARGIN;
+	return zoomStep({ start: first - margin, end: last + margin }, 1, extent);
+}
+
 /** 时间在范围中的位置（0–1，可能超出）。 */
 export const fractionOf = (t: number, range: TimeRange) =>
 	(t - range.start) / (range.end - range.start);
 
-const SECOND = 1000;
-const MINUTE = 60 * SECOND;
-const HOUR = 60 * MINUTE;
 const STEPS = [
-	1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400,
+	0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200,
+	86400,
 ].map((n) => n * SECOND);
 
 /** 超过这个时长的范围用当地时钟时间标刻度，否则用相对运行开始的偏移。 */
@@ -133,13 +191,15 @@ export interface TickOptions {
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
-/** 偏移标注：`+0s`、`+45s`、`+2m`、`+2m 30s`、`+1h 05m`。 */
+/** 偏移标注：`+0s`、`+0.2s`、`+45s`、`+2m`、`+2m 30s`、`+1h 05m`。 */
 function offsetLabel(ms: number): string {
-	const total = Math.round(ms / SECOND);
-	if (total < 60) return `+${total}s`;
+	const tenths = Math.round(ms / 100);
+	const fraction = tenths % 10 === 0 ? "" : `.${tenths % 10}`;
+	const total = Math.floor(tenths / 10);
+	if (total < 60) return `+${total}${fraction}s`;
 	const m = Math.floor(total / 60);
 	const sec = total % 60;
-	if (m < 60) return sec === 0 ? `+${m}m` : `+${m}m ${pad(sec)}s`;
+	if (m < 60) return sec === 0 && !fraction ? `+${m}m` : `+${m}m ${pad(sec)}${fraction}s`;
 	return `+${Math.floor(m / 60)}h ${pad(m % 60)}m`;
 }
 
@@ -166,6 +226,49 @@ export function ticks(range: TimeRange, options: TickOptions): Tick[] {
 		out.push({ at: t, label: step < MINUTE ? `${hm}:${pad(local.getUTCSeconds())}` : hm });
 	}
 	return out;
+}
+
+const ATTENTION_STATUSES: ReadonlySet<NodeRunView["status"]> = new Set([
+	"dispatched",
+	"running",
+	"failed",
+]);
+
+/**
+ * 时间线要保证看得见的那一行：按链的顺序第一个正在执行或失败的节点；它所在的链收起（汇总模式）时是链的汇总行
+ * （nodeId 为 null）。没有这样的节点为 null。
+ */
+export function attentionRow(
+	chains: readonly ChainRunView[],
+	isOpen: (chain: ChainRunView) => boolean,
+): { chainId: string; nodeId: string | null } | null {
+	for (const chain of chains) {
+		const node = chain.nodes.find((n) => ATTENTION_STATUSES.has(n.status));
+		if (node) return { chainId: chain.id, nodeId: isOpen(chain) ? node.node_id : null };
+	}
+	return null;
+}
+
+/** 时间线行的高度，单位 px。 */
+export const AXIS_HEIGHT = 22;
+export const CHAIN_ROW_HEIGHT = 30;
+export const NODE_ROW_HEIGHT = 26;
+/**
+ * 最后一行下面留的空白：执行中段尾的脉冲光环会放大到超出行高，没有这块空白它会撑出一截滚动，
+ * 行不多、主体刚好放下全部行时滚动条就随脉冲一闪一闪。
+ */
+export const ROWS_BOTTOM_PADDING = 8;
+
+/** 时间线主体的内容高度；主体的最大高度据此定：行不多时全部露出，不让正在执行的节点藏到折叠线下面。 */
+export function timelineContentHeight<C extends { nodes: readonly unknown[] }>(
+	chains: readonly C[],
+	isOpen: (chain: C) => boolean,
+): number {
+	return chains.reduce(
+		(height, chain) =>
+			height + CHAIN_ROW_HEIGHT + (isOpen(chain) ? chain.nodes.length * NODE_ROW_HEIGHT : 0),
+		AXIS_HEIGHT + ROWS_BOTTOM_PADDING,
+	);
 }
 
 /** 时间线默认用汇总模式的阈值：链实例多于这么多条，或展开后的行（链 + 节点）多于这么多行。 */

@@ -49,7 +49,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `name` | 函数名 | 节点名，场景和 `sfly run` 用它引用节点 |
+| `name` | 函数名 | 节点名，场景和 `sfly debug` 用它引用节点 |
 | `title` | 节点名 | 画布上显示的名称 |
 | `outputs` | 从返回类型读取 | 输出键：键名列表，或 键名 → 类型注解 的字典 |
 | `metrics` | 无 | 指标声明（`Metric`），最多 50 个 |
@@ -96,10 +96,10 @@ def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> d
 这个类型从 SDK 0.2.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.2.0`：更旧的 Agent 上没有这个类型，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
 
 - `sfly build` 在输入 schema 里标记它：`{"type": "string", "x-sfly-type": "agent"}`。
-- 画布的检查器里它是 Agent 下拉框，列出已注册的 Agent 及在线状态；也可以用「插入引用」改为引用入口参数。
+- 画布的检查器里它是 Agent 下拉框，列出已注册的 Agent 及在线状态；也可以点右侧的 `{}`（插入引用）改为引用入口参数。
 - 选的 Agent 必须已注册（不要求在线）：常量不是已注册的 Agent 时保存给出警告、触发前的预检阻断，并指出是哪个节点的哪个参数；引用入口参数时按触发时传入的实际值检查；值来自前面节点的输出时在派发时检查，没有注册过时任务以 `config_error` 失败。目标 Agent 不在线不阻断：节点运行时连不上它，访问它的那一步才会失败。
 - 派发任务时，控制面把这些 Agent 的地址和端口随任务下发给节点所在的 Agent。节点用 `ctx.agent(名称)` 访问它们（见下文「`ctx.agent()`：Agent 能力」），不用自己处理地址。地址在派发时解析：Agent 重新注册换了地址后，之后派发的任务用新地址。
-- 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是 Agent 名称，不检查它是否注册过；要访问它时把它映射到本地目录（见下文「本地调试、测试与联调」）。
+- 本地调试（`sfly debug`、`sfly.testing.run_node`）照常接受这种参数，值就是 Agent 名称，不检查它是否注册过；要访问它时把它映射到本地目录（见下文「本地调试、测试与联调」）。
 
 ### 「飞书机器人」类型的输入
 
@@ -118,11 +118,11 @@ def stress(ctx: Context, qps: int, alert_bot: FeishuBot | None = None) -> dict:
 这个类型从 SDK 0.3.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.3.0`：更旧的 Agent 上没有这个类型，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
 
 - `sfly build` 在输入 schema 里标记它：`{"type": "string", "x-sfly-type": "feishu_bot"}`。
-- 画布的检查器里它是飞书机器人下拉框，列出「飞书机器人」页登记的机器人；也可以用「插入引用」改为引用入口参数，触发时再决定发到哪个群。
+- 画布的检查器里它是飞书机器人下拉框，列出「飞书机器人」页登记的机器人；也可以点右侧的 `{}`（插入引用）改为引用入口参数，触发时再决定发到哪个群。
 - 选的机器人必须已登记：常量不是已登记的机器人时保存给出警告、触发前的预检阻断，并指出是哪个节点的哪个参数；引用入口参数时按触发时传入的实际值检查。值来自前面节点的输出时派发时不检查：机器人没有登记也照常派发，通知不会成为任务失败的原因。
 - 派发任务时，控制面把任务通过这种参数引用的机器人名单（不重复）随任务下发。节点只能向名单里的机器人发通知（见下文「`ctx.notify`：飞书通知」）。
 - 删除机器人之前，「飞书机器人」页列出引用它的场景，包含这种参数的常量值。
-- 本地调试（`sfly run`、`sfly.testing.run_node`）照常接受这种参数，值就是机器人名称，不检查它是否登记过。
+- 本地调试（`sfly debug`、`sfly.testing.run_node`）照常接受这种参数，值就是机器人名称，不检查它是否登记过。
 
 ## 输出
 
@@ -201,7 +201,7 @@ sfly.feishu.card(title, markdown, color="blue")   # Markdown 卡片的请求体
 - **`sfly.feishu.card(title, markdown, color="blue")`** 返回 Markdown 卡片的请求体（`msg_type: interactive`，卡片 JSON 2.0：header 是标题加颜色，正文是一个 Markdown 元素），拿去给 `message=` 就能发。`color` 是 `blue`（默认）、`green`、`orange`、`red`、`grey` 之一。标题和正文照原样放进去，不做 Markdown 转义，空字符串也照常组装；请求体超过 20 KB 时截断 Markdown 正文，末尾加上「…（已截断）」。它和控制面使用同一套组装规则和同一组用例，保证代码里发的卡片和画布上的 Markdown 卡片一样。`title`、`markdown` 不是字符串抛出 `TypeError`，`color` 不是上面五种之一、或者标题长到连截断后的正文都放不下时抛出 `ValueError`：这些是写法上的错误，开发时就会看到。
 - 投递结果写进这个任务的日志，来源是 system：送达是 info，失败（写明原因和下一步）或被丢弃是 warning。同一个机器人的消息按调用的先后串行发出、限速（ADR 0020）。
 - Agent 和控制面断开期间，通知和日志一样在 Agent 上排队，重连后发出。
-- 本地调试不真的发送：`sfly run` 把要发给哪个机器人、请求体是什么打印出来；`sfly.testing.run_node` 的结果里有 `notifications`，原始消息和卡片的请求体都在里面（见下文）。和平台一样，不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不记录，日志里写一条 warning。
+- 本地调试不真的发送：`sfly debug` 把要发给哪个机器人、请求体是什么打印出来；`sfly.testing.run_node` 的结果里有 `notifications`，原始消息和卡片的请求体都在里面（见下文）。和平台一样，不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不记录，日志里写一条 warning。
 
 这个接口（包括 `message=` 和 `sfly.feishu.card`）从 SDK 0.3.0 起可用。用到它的节点包把 `requires-sdk` 和 `requires-agent` 都调到 `>=0.3.0`：更旧的 Agent 上没有这个接口，也不会转发通知；声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
 
@@ -224,7 +224,7 @@ ctx.metric("conn_latency_ms", 8.2, labels={"host": "db-1", "port": 5432})
 - 声明了标签键的指标，每个点都要给全这些键；没声明标签键的指标不能带标签。标签值是不超过 128 个字符的非空字符串，数字自动转成字符串。
 - `ctx.metric` 可以随意频繁调用：Agent 按「序列 × 秒」合并，每秒最多上报一次（`gauge` 取这一秒最后一个值并带最小、最大值，`counter` 取这一秒结束时的值）。
 - 以下点被丢弃，并写一条 warn 日志（每个指标名、每种原因只写一次）：未声明的指标名、非有限数值（NaN、无穷大）、缺少声明过的标签键、带了未声明的标签键、给没声明标签键的指标带标签、标签值为空或超过 128 个字符。
-- **序列上限**：每个任务所有指标合计最多 1000 个序列，不带标签的指标各算 1 个（预先占好名额，总是能上报）。这个数固定，不能配置。超出后不再建立新序列：新序列的点被丢弃，每个指标写一条 warn 日志；已经有的序列照常上报。控制面也按同一上限兜底，被拒的点计入任务的丢弃数，运行监控页显示「序列超限」。本地调试（`sfly run`、`sfly.testing`）的行为相同。标签值用来区分少量对象（进程、网卡、连接），不要用请求 ID、时间戳这类取值很多的值。序列上限和单任务约 50 MB 的点数上限互不影响。
+- **序列上限**：每个任务所有指标合计最多 1000 个序列，不带标签的指标各算 1 个（预先占好名额，总是能上报）。这个数固定，不能配置。超出后不再建立新序列：新序列的点被丢弃，每个指标写一条 warn 日志；已经有的序列照常上报。控制面也按同一上限兜底，被拒的点计入任务的丢弃数，运行监控页显示「序列超限」。本地调试（`sfly debug`、`sfly.testing`）的行为相同。标签值用来区分少量对象（进程、网卡、连接），不要用请求 ID、时间戳这类取值很多的值。序列上限和单任务约 50 MB 的点数上限互不影响。
 
 ## `ctx.artifacts`：产物
 
@@ -276,7 +276,7 @@ def count_lines(ctx: Context, log_file: str) -> dict:
 - 任务被取消时下载立即停止，抛出 `sfly.Cancelled`。在后台线程里下载时，在两次读取之间停止（最长等一次读取超时）。
 - 产物在保存它的任务结束后才上传：只能下载前面的节点保存的产物，不能下载本任务刚保存的（本地调试时可以，因为引用就是本地文件）。
 - 下载直接访问控制面，不经过保存产物的那台 Agent：任何一台 Agent 上的节点都能下载。
-- 本地调试没有控制面。本地保存的产物的引用是本地文件路径，`download` 直接复制；要测试「下载上游节点给的引用」时，给这个引用指定本地内容：`run_node(downloads={引用: 内容})` 或 `sfly run --download <引用> <文件>`（见下文），节点下载它时得到这份内容，不访问网络。
+- 本地调试没有控制面。本地保存的产物的引用是本地文件路径，`download` 直接复制；要测试「下载上游节点给的引用」时，给这个引用指定本地内容：`run_node(downloads={引用: 内容})` 或 `sfly debug --download <引用> <文件>`（见下文），节点下载它时得到这份内容，不访问网络。
 
 ## `ctx.task` 与 `ctx.procs_dir`：任务信息与后台进程目录
 
@@ -292,7 +292,7 @@ log.parent.mkdir(parents=True, exist_ok=True)
 
 - `ctx.procs_dir` 是这次运行的**后台进程目录**：节点启动的、节点结束后还要继续运行的进程，把日志等文件放在这里。它不在任务目录里，任务目录被清理或任务重试时不受影响；同一次运行的任务共用一个目录（用节点 ID 区分文件名）。目录不一定已经存在，使用前自己创建。
 - 在 Agent 上是 `$SFLY_HOME/procs/<运行 ID>/`，和任务目录按同一个保留期清理（运行还有任务在 Agent 上时不动），见「安装 Agent」。0.0.4 之前的 Agent 不提供这个目录，SDK 取同样的位置，但旧 Agent 不会清理它。
-- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly run` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
+- 本地调试时任务 ID 是 `local`、attempt 是 1、节点 ID 是节点名。`sfly debug` 的运行 ID 是运行目录名，后台进程目录是项目下的 `.sfly/procs/<运行目录名>/`；`run_node` 的运行 ID 是 `local`，后台进程目录是工作目录下的 `procs/`。
 
 ## `ctx.agent()`：Agent 能力
 
@@ -544,8 +544,8 @@ def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/va
 
 ### 本地调试、测试与联调
 
-- 本地调试（`sfly run`、`sfly.testing.run_node`）没有 Agent：`ctx.agent()` 直接操作本机的文件系统。
-- 另一台 Agent 由测试工具映射到本地目录：`run_node(..., agents={"a-01": tmp_path / "a"})` 或 `sfly run <节点> --agent a-01=./a`。那台 Agent 上的绝对路径落在这个目录里：`/var/log/app.log` 是 `<目录>/var/log/app.log`，`FileInfo.path` 仍是那台 Agent 上的写法 `/var/log/app.log`。名称要通过「Agent」类型的参数传给节点，规则和在 Agent 上一样：参数里没有的名称抛出 `AgentNotReferenced`，参数里有但没有映射的抛出 `AgentUnreachable`（消息里写明怎样映射）。
+- 本地调试（`sfly debug`、`sfly.testing.run_node`）没有 Agent：`ctx.agent()` 直接操作本机的文件系统。
+- 另一台 Agent 由测试工具映射到本地目录：`run_node(..., agents={"a-01": tmp_path / "a"})` 或 `sfly debug <节点> --agent a-01=./a`。那台 Agent 上的绝对路径落在这个目录里：`/var/log/app.log` 是 `<目录>/var/log/app.log`，`FileInfo.path` 仍是那台 Agent 上的写法 `/var/log/app.log`。名称要通过「Agent」类型的参数传给节点，规则和在 Agent 上一样：参数里没有的名称抛出 `AgentNotReferenced`，参数里有但没有映射的抛出 `AgentUnreachable`（消息里写明怎样映射）。
 - 本地调试时 `files.download` 的 `local_path` 就是本机上的路径，不经过映射：`download("/var/log/app.log", "out/app.log")` 把 `<目录>/var/log/app.log` 复制到工作目录下的 `out/app.log`。
 - 联调（`sfly dev`）时开发版本在本机 Agent 上运行，`ctx.agent(名称)` 照常经本机 Agent 访问其它 Agent。
 
@@ -645,23 +645,24 @@ def test_stress_alerts_the_bot_with_a_red_card(tmp_path: Path) -> None:
 
 | 命令 | 作用 |
 |---|---|
-| `sfly init <目录> [--name <包名>]` | 创建节点包项目：uv 项目、控制面的镜像与 sfly 索引配置、开发依赖、示例节点和测试、节点开发 skill。包名默认是目录名 |
-| `sfly run <节点> [--params '<JSON>']` | 本地调试：在当前项目环境里执行一个节点，不经过控制面和 Agent |
+| `sfly init <目录> [--name <包名>]` | 创建节点包项目：uv 项目、控制面的镜像与 sfly 索引配置、开发依赖、示例节点和测试、两份给 AI 编程助手的 skill（节点开发、操作平台）。包名默认是目录名 |
+| `sfly debug <节点> [--params '<JSON>']` | 本地调试：在当前项目环境里执行一个节点，不经过控制面和 Agent |
 | `sfly dev [项目目录]` | 联调：把项目以 `<包名>@dev` 装到本机 Agent（通过本机 Agent 的本地 socket） |
 | `sfly build [项目目录]` | 扫描 `@node`，构建节点包 `dist/<包名>-<版本>.sflypkg` |
 | `sfly publish [项目目录或 .sflypkg]` | 发布到控制面；给项目目录时先构建 |
-| `sfly skill update [--force]` | 把项目里的节点开发 skill 换成当前 SDK 版本的内容 |
+| `sfly skill update [--force]` | 把项目里的两份 skill（节点开发、操作平台）换成当前 SDK 版本的内容 |
+| `sfly scenario`、`sfly run`、`sfly agent`、`sfly package`、`sfly api` | 操作平台：查看场景、运行、Agent、节点包，触发、等待、取消运行，读日志，pull / push 编辑场景，直接调用接口。见 [用命令行操作平台](platform-cli.md) |
 
-### `sfly run`
+### `sfly debug`
 
 ```sh
-uv run sfly run countdown --params '{"name": "世界", "steps": 5}'
+uv run sfly debug countdown --params '{"name": "世界", "steps": 5}'
 ```
 
 - 日志实时打印到标准错误；结束后在标准输出打印输出值（`输出：` 后的 JSON）、指标汇总表和运行目录。指标汇总表每个序列一行，带标签的指标在指标名后面跟标签值，例如 `conn_latency_ms{host=db-1,port=5432}`。
 - 每次运行一个新目录 `.sfly/runs/<时间>-<节点>/`（目录名也是 `ctx.task.run_id`；`ctx.procs_dir` 是 `.sfly/procs/<目录名>/`），里面有产物（`artifacts/`）、标准输出 / 标准错误的副本（`stdout.log`、`stderr.log`）；日志、进度和指标经命名管道 `events.fifo` 读取，不另存文件。
-- `--download <产物引用> <文件>`：节点用 `ctx.artifacts.download` 下载这个产物引用时，得到这个本地文件的内容；可以重复给出。文件不存在时以 2 退出。例如 `uv run sfly run count_lines --params '{"log_file": "up"}' --download up ./server.log`。
-- `--agent <名称>=<目录>`：把一台 Agent 映射到本地目录，节点用 `ctx.agent(名称)` 访问它时，那台 Agent 上的绝对路径落在这个目录里；可以重复给出。目录不存在时以 2 退出。例如 `uv run sfly run find_logs --params '{"source": "a-01"}' --agent a-01=./fixtures/a-01`。从 SDK 0.2.0 起可用。
+- `--download <产物引用> <文件>`：节点用 `ctx.artifacts.download` 下载这个产物引用时，得到这个本地文件的内容；可以重复给出。文件不存在时以 2 退出。例如 `uv run sfly debug count_lines --params '{"log_file": "up"}' --download up ./server.log`。
+- `--agent <名称>=<目录>`：把一台 Agent 映射到本地目录，节点用 `ctx.agent(名称)` 访问它时，那台 Agent 上的绝对路径落在这个目录里；可以重复给出。目录不存在时以 2 退出。例如 `uv run sfly debug find_logs --params '{"source": "a-01"}' --agent a-01=./fixtures/a-01`。从 SDK 0.2.0 起可用。
 - `ctx.notify` 不真的发送：和日志一起实时打印一行 `通知  发给飞书机器人「<名称>」（本地调试不发送）：<请求体 JSON>`。从 SDK 0.3.0 起可用。
 - Ctrl-C 按平台的取消流程取消（节点里抛出 `Cancelled`，宽限期后强制杀掉），再按一次立即杀掉；节点结束后、打印结果期间的 Ctrl-C 被忽略。
 - 退出码：成功 0，节点失败 1，参数不合法或找不到节点 2，取消 130。
@@ -669,7 +670,7 @@ uv run sfly run countdown --params '{"name": "世界", "steps": 5}'
 ### `sfly dev`
 
 - 本机要有已连上控制面的 Agent（`install.sh --dev` 安装）。
-- Agent 以可编辑方式安装本地源码，注册为 `<包名>@dev`；在场景里选这个版本和本机 Agent 运行。
+- Agent 以可编辑方式安装本地源码，注册为 `<包名>@dev`；在场景里选这个版本和本机 Agent 运行（浏览器里选，或者用命令行复制场景、改成开发版本再 `sfly run start --wait`，见 `sfly-platform` skill）。
 - 只改函数体时，下一个任务直接用新代码；改了节点的参数、输出、指标声明、依赖或增删节点后重新运行 `sfly dev`。
 
 ### `sfly publish`
@@ -678,5 +679,5 @@ uv run sfly run countdown --params '{"name": "世界", "steps": 5}'
 
 ### `sfly skill update`
 
-- 用当前安装的 SDK 带的内容整个替换 `.agents/skills/sfly-node-dev/`（`.claude/skills/sfly-node-dev` 是指向它的软链接，不存在时一并创建）。
-- 目录内容和上次写入的不同时不覆盖，列出改动过的文件并以 1 退出；确认不需要这些改动后加 `--force`。自己的约定写在自己的其他 skill 里。
+- 用当前安装的 SDK 带的内容整个替换 `.agents/skills/sfly-node-dev/` 和 `.agents/skills/sfly-platform/`（`.claude/skills/` 下同名的软链接不存在时一并创建；项目里还没有的 skill 直接写入）。
+- 每份 skill 单独检查：目录内容和上次写入的不同时不覆盖这一份，列出改动过的文件，最后以 1 退出，另一份照常更新；确认不需要这些改动后加 `--force`。自己的约定写在自己的其他 skill 里。

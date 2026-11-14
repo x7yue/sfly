@@ -1,3 +1,4 @@
+import { Toolbar } from "@base-ui/react/toolbar";
 import type { Position } from "@sfly/orchestration";
 import { cn } from "cn";
 import { PlusIcon } from "lucide-react";
@@ -16,7 +17,19 @@ import {
 import { Kbd } from "@/components/ui/kbd";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { type AddItem, BUILTIN_ITEMS, type PackageGroup } from "./add-node";
+import {
+	type AddItem,
+	availableBuiltins,
+	type BuiltinItem,
+	type BuiltinKind,
+	builtinValue,
+	itemValue,
+	type PackageGroup,
+	type PackageItem,
+	packageValue,
+	recentItems,
+} from "./add-node";
+import { readRecentNodes, rememberRecentNode } from "./recent-nodes";
 import { AsyncForm, FormFooter, SubflowNameForm } from "./subflow-forms";
 
 /** 菜单出现在哪、新节点放在哪。 */
@@ -48,7 +61,7 @@ function KindChip({ kind }: { kind: AddItem["kind"] }) {
 	const Icon = KIND_META[kind].icon;
 	return (
 		<span aria-hidden className={cn(KIND_CHIP, "text-2xs")}>
-			<Icon strokeWidth={2} />
+			<Icon />
 		</span>
 	);
 }
@@ -57,6 +70,7 @@ function KindChip({ kind }: { kind: AddItem["kind"] }) {
  * 添加节点菜单（原型 #/editor 的 addMenu）：可搜索；内置节点与各节点包的节点类型分组列出。
  * 「＋」按钮本身放在工具条最左侧（FlowCanvas 的 dockStart）；拖线到空白处、空白处右键时菜单出现在鼠标的位置。
  * 有来源节点时不列子流程入口（子流程入口只能由调度连线触发，不能接在链上）。菜单底部写明这次是接在谁之后还是不连线。
+ * 「最近使用」所有场景共用，只在搜索框为空时显示；从调度连线新建的子流程不计入。
  * 选择子流程入口后菜单换成填写子流程名称的表单（名称必填、场景内唯一，SEMANTICS §1.2）；选择异步任务后换成
  * 可以勾选「同时新建子流程」的表单（#187）。表单在 subflow-forms.tsx。
  */
@@ -101,6 +115,9 @@ export function AddNodeMenu({
 	/** 选了子流程入口或异步任务之后，菜单换成对应的表单。 */
 	const [form, setForm] = useState<"subflow" | "async" | null>(null);
 	if (request === null && form !== null) setForm(null);
+	const [query, setQuery] = useState("");
+	if (request === null && query !== "") setQuery("");
+	const [recent, setRecent] = useState(readRecentNodes);
 	// 每次打开时清掉上一次「选了节点」的标记：Tab、拖线、右键打开不经过 Popover 的 onOpenChange，
 	// 不清掉的话上一次选过节点后再打开、按 Esc 关闭，焦点就回不到打开前的位置。
 	const wasOpen = useRef(false);
@@ -115,10 +132,17 @@ export function AddNodeMenu({
 		: undefined;
 	const pick = (item: AddItem) => {
 		picked.current = true;
+		if (!dispatch) setRecent(rememberRecentNode(itemValue(item)));
 		onPick(item);
 	};
-	// 子流程入口只能由调度连线触发，不能接在链上。
-	const builtins = BUILTIN_ITEMS.filter((b) => !after || b.kind !== "subflow_entry");
+	const pickBuiltin = (kind: BuiltinKind) =>
+		kind === "async"
+			? setForm("async")
+			: kind === "subflow_entry"
+				? setForm("subflow")
+				: pick({ kind });
+	const builtins = availableBuiltins(after !== undefined);
+	const recents = query === "" ? recentItems(recent, builtins, groups) : [];
 
 	return (
 		<Popover
@@ -131,13 +155,17 @@ export function AddNodeMenu({
 			<Tooltip>
 				<TooltipTrigger
 					render={
-						<PopoverTrigger
+						<Toolbar.Button
 							render={
-								<button
-									type="button"
-									ref={trigger}
-									aria-label="添加节点"
-									className="grid size-8 cursor-pointer place-items-center rounded-full border border-border-strong bg-raised-2 text-fg-1 hover:bg-raised [&_svg]:size-4"
+								<PopoverTrigger
+									render={
+										<button
+											type="button"
+											ref={trigger}
+											aria-label="添加节点"
+											className="grid size-8 cursor-pointer place-items-center rounded-full border border-border-strong bg-raised-2 text-fg-1 hover:bg-raised [&_svg]:size-4"
+										/>
+									}
 								/>
 							}
 						/>
@@ -200,26 +228,43 @@ export function AddNodeMenu({
 					/>
 				) : (
 					<Command loop className="bg-transparent">
-						<CommandInput ref={focusFirst} placeholder="搜索节点类型…" aria-label="搜索节点类型" />
+						<CommandInput
+							ref={focusFirst}
+							value={query}
+							onValueChange={setQuery}
+							placeholder="搜索节点类型…"
+							aria-label="搜索节点类型"
+						/>
 						<CommandList className="max-h-[min(360px,var(--available-height))]">
 							<CommandEmpty>没有匹配的节点类型</CommandEmpty>
+							{recents.length > 0 && (
+								<CommandGroup heading="最近使用">
+									{recents.map(({ value, entry }) => (
+										<CommandItem
+											key={value}
+											value={`recent:${value}`}
+											onSelect={() =>
+												entry.kind === "package" ? pick(entry) : pickBuiltin(entry.kind)
+											}
+										>
+											{entry.kind === "package" ? (
+												<PackageRow item={entry} detail={`${entry.package}/${entry.node}`} />
+											) : (
+												<BuiltinRow item={entry} />
+											)}
+										</CommandItem>
+									))}
+								</CommandGroup>
+							)}
 							<CommandGroup heading="内置">
 								{builtins.map((b) => (
 									<CommandItem
 										key={b.kind}
-										value={`builtin:${b.kind}`}
+										value={builtinValue(b.kind)}
 										keywords={[KIND_META[b.kind].label, b.kind, b.hint]}
-										onSelect={() =>
-											b.kind === "async"
-												? setForm("async")
-												: b.kind === "subflow_entry"
-													? setForm("subflow")
-													: pick({ kind: b.kind })
-										}
+										onSelect={() => pickBuiltin(b.kind)}
 									>
-										<KindChip kind={b.kind} />
-										<span>{KIND_META[b.kind].label}</span>
-										<span className="ml-auto text-2xs text-fg-3">{b.hint}</span>
+										<BuiltinRow item={b} />
 									</CommandItem>
 								))}
 							</CommandGroup>
@@ -228,15 +273,11 @@ export function AddNodeMenu({
 									{g.items.map((item) => (
 										<CommandItem
 											key={item.node}
-											value={`package:${g.name}/${item.node}`}
+											value={packageValue(item)}
 											keywords={[item.title, item.node, g.name]}
 											onSelect={() => pick(item)}
 										>
-											<KindChip kind="package" />
-											<span className="truncate">{item.title}</span>
-											<span className="ml-auto truncate font-mono text-2xs text-fg-3">
-												{item.node}
-											</span>
+											<PackageRow item={item} detail={item.node} />
 										</CommandItem>
 									))}
 								</CommandGroup>
@@ -249,6 +290,27 @@ export function AddNodeMenu({
 				)}
 			</PopoverContent>
 		</Popover>
+	);
+}
+
+function BuiltinRow({ item }: { item: BuiltinItem }) {
+	return (
+		<>
+			<KindChip kind={item.kind} />
+			<span>{KIND_META[item.kind].label}</span>
+			<span className="ml-auto text-xs text-fg-3">{item.hint}</span>
+		</>
+	);
+}
+
+/** detail 是右侧的等宽说明：在包分组里是节点名，在「最近使用」里是 包名/节点名。 */
+function PackageRow({ item, detail }: { item: PackageItem; detail: string }) {
+	return (
+		<>
+			<KindChip kind="package" />
+			<span className="truncate">{item.title}</span>
+			<span className="ml-auto truncate font-mono text-2xs text-fg-3">{detail}</span>
+		</>
 	);
 }
 

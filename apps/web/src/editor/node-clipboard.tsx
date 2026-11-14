@@ -15,7 +15,7 @@ import { useShortcut } from "#/components/shortcuts";
 import { isEditable, OPEN_DIALOG } from "#/lib/focus";
 import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenuItem } from "@/components/ui/context-menu";
-import { freeCardAt, freePosition } from "./add-node";
+import { type Box, freeCardSpot, freeSpot } from "./free-spot";
 
 /**
  * 画布上单个节点的复制、粘贴、创建副本（#186）与系统剪贴板之间的接线。剪贴板里的内容与
@@ -110,6 +110,7 @@ export function useNodeClipboard({
 	enabled,
 	doc,
 	nodes,
+	regions,
 	selectedId,
 	viewportCenter,
 	toFlowPosition,
@@ -119,6 +120,7 @@ export function useNodeClipboard({
 	doc: OrchestrationDocument;
 	/** 画布上的节点：新节点避开它们；选中的节点还在不在。 */
 	nodes: readonly { id: string; position: Position }[];
+	regions: readonly Box[];
 	selectedId: string | null;
 	/** 视口中心（画布坐标）：粘贴时没有位置就放在这里。 */
 	viewportCenter(): Position;
@@ -148,7 +150,7 @@ export function useNodeClipboard({
 		duplicate(id) {
 			const origin = nodes.find((n) => n.id === id)?.position ?? { x: 0, y: 0 };
 			const wanted = { x: Math.round(origin.x), y: Math.round(origin.y) };
-			place(duplicateNode(doc, id, freePosition(wanted, positions())));
+			place(duplicateNode(doc, id, freeSpot(wanted, positions(), regions)));
 		},
 		copy(id) {
 			const text = textOf(id);
@@ -156,7 +158,7 @@ export function useNodeClipboard({
 			writeClipboard(text, () => copiedNotice(id), `可以按 ${shortcutText("canvas-copy")} 复制`);
 		},
 		paste(copied, at) {
-			place(placeCopy(doc, copied, freeCardAt(at ?? viewportCenter(), positions())));
+			place(placeCopy(doc, copied, freeCardSpot(at ?? viewportCenter(), positions(), regions)));
 		},
 	};
 

@@ -99,6 +99,15 @@ export const ACTION = {
 	resizeInspector: "调整检查器宽度",
 } as const;
 
+/** AI 编程助手的显示名，键是请求头 `x-sfly-client` 里 `agent/<名称>` 的名称（用 Map，避免 `constructor` 这类名称取到对象自带的属性）。 */
+const ASSISTANT_NAME = new Map([
+	["claude-code", "Claude Code"],
+	["codex", "Codex"],
+]);
+
+/** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
+export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`;
+
 /** 通用的加载 / 错误 / 空状态文字。 */
 export const MESSAGE = {
 	loading: "加载中",

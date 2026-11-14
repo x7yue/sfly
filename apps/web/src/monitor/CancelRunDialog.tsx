@@ -10,15 +10,18 @@ import {
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleStopIcon } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
+import { useShortcut } from "#/components/shortcuts";
 import { callApi } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
 import { shortId } from "#/lib/format";
+import { shortcutText } from "#/lib/shortcuts";
 import { versionQuery } from "#/versions/queries";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
+	DialogBody,
 	DialogContent,
 	DialogDescription,
 	DialogFooter,
@@ -29,8 +32,7 @@ import { runViewQuery, writeRunView } from "./live-run";
 import { cancelImpact } from "./run-model";
 import { COLLAPSE_BUTTON, COLLAPSE_LABEL } from "./top-bar";
 
-const ids = (nodes: { node_id: string }[]) =>
-	nodes.length === 0 ? "—" : [...new Set(nodes.map((n) => n.node_id))].join("、");
+const ids = (nodes: { node_id: string }[]) => [...new Set(nodes.map((n) => n.node_id))].join("、");
 
 /**
  * 取消运行的确认弹窗（原型 ovCancel，docs/SEMANTICS.md §3.4）：列出影响，点「取消运行」确认。
@@ -52,6 +54,11 @@ export function CancelRunDialog({
 	const queryClient = useQueryClient();
 	const force = run.cancel !== null;
 	const keep = useRef<HTMLButtonElement>(null);
+	// 关闭的退场动画还没结束时再次打开（C 键），弹窗还在、焦点还停在上次点的按钮上，Base UI 因为焦点已在弹窗里
+	// 不会再设初始焦点：这里每次打开都把焦点放回「继续运行」，免得 Enter 落在危险按钮上。
+	useEffect(() => {
+		if (open) keep.current?.focus();
+	}, [open]);
 	const impact = cancelImpact(run, doc);
 	const cancel = useMutation({
 		mutationFn: () => callApi(runsApi.cancel, { params: { id: run.id } }),
@@ -91,30 +98,39 @@ export function CancelRunDialog({
 							: "这会同时取消主链和全部子流程实例。"}
 					</DialogDescription>
 				</DialogHeader>
-				<ul aria-label="取消的影响" className="m-0 flex list-none flex-col gap-2 p-0 text-sm">
-					{force ? (
-						<Impact
-							title={`执行中的 ${impact.running.length} 个任务立即终止`}
-							detail={ids(impact.running)}
-						/>
-					) : (
-						<>
-							<Impact
-								title={`执行中的 ${impact.running.length} 个任务先优雅终止`}
-								detail={`${ids(impact.running)} · 宽限期过后强制杀掉整棵进程树`}
-							/>
-							<Impact
-								title="always 节点照常执行清理"
-								detail={`${ids(impact.always)} · 清理期间可以再次取消以强制终止`}
-								warn
-							/>
-							<Impact
-								title={`未开始的 ${impact.cancelled.length} 个节点标记为已取消`}
-								detail={ids(impact.cancelled)}
-							/>
-						</>
-					)}
-				</ul>
+				{impact.running.length + impact.always.length + impact.cancelled.length > 0 && (
+					<DialogBody>
+						<ul aria-label="取消的影响" className="m-0 flex list-none flex-col gap-2 p-0 text-sm">
+							{impact.running.length > 0 &&
+								(force ? (
+									<Impact
+										title={`执行中的 ${impact.running.length} 个任务立即终止`}
+										ids={ids(impact.running)}
+									/>
+								) : (
+									<Impact
+										title={`执行中的 ${impact.running.length} 个任务先优雅终止`}
+										ids={ids(impact.running)}
+										note="宽限期过后强制杀掉整棵进程树"
+									/>
+								))}
+							{!force && impact.always.length > 0 && (
+								<Impact
+									title="always 节点照常执行清理"
+									ids={ids(impact.always)}
+									note="清理期间可以再次取消以强制终止"
+									warn
+								/>
+							)}
+							{!force && impact.cancelled.length > 0 && (
+								<Impact
+									title={`未开始的 ${impact.cancelled.length} 个节点标记为已取消`}
+									ids={ids(impact.cancelled)}
+								/>
+							)}
+						</ul>
+					</DialogBody>
+				)}
 				<DialogFooter>
 					<Button ref={keep} variant="ghost" onClick={() => onOpenChange(false)}>
 						{ACTION.keepRunning}
@@ -134,7 +150,7 @@ export function CancelRunDialog({
 
 /**
  * 运行进行中的「取消运行」（清理期间为「强制终止」）按钮与确认弹窗：监控页顶栏、运行抽屉、运行记录卡片共用。
- * 按钮是中性样式，危险强调留在确认弹窗里；运行视图与绑定版本的文档（列出 always 节点）在打开时读取，
+ * 按钮是中性样式（与别的操作并排时用 ghost），危险强调留在确认弹窗里；运行视图与绑定版本的文档（列出 always 节点）在打开时读取，
  * 与监控页同一份缓存。
  */
 export function CancelRunButton({
@@ -143,7 +159,9 @@ export function CancelRunButton({
 	orchestrationVersion,
 	cancelling,
 	size,
+	variant,
 	collapse,
+	shortcut,
 }: {
 	runId: string;
 	orchestrationId: string;
@@ -151,11 +169,16 @@ export function CancelRunButton({
 	/** 已请求取消、运行还没结束（按钮变成「强制终止」）。 */
 	cancelling: boolean;
 	size?: "sm";
+	/** 与别的操作并排时降低权重（运行记录卡片上与「打开运行详情」并排）。 */
+	variant?: "ghost";
 	/** 窗口窄于 1280 时只显示图标（文字留给读屏与悬停提示），监控页顶栏用。 */
 	collapse?: boolean;
+	/** 绑定这个快捷键来打开确认弹窗（监控页顶栏传；抽屉与运行卡片上的按钮不绑，同一页面只能有一个绑定）。 */
+	shortcut?: "monitor-cancel";
 }) {
 	const label = cancelling ? ACTION.forceCancel : ACTION.cancelRun;
 	const [open, setOpen] = useState(false);
+	useShortcut(shortcut ?? null, () => setOpen(true));
 	const run = useQuery({ ...runViewQuery(runId), enabled: open });
 	const version = useQuery({
 		...versionQuery(orchestrationId, orchestrationVersion),
@@ -164,12 +187,18 @@ export function CancelRunButton({
 	return (
 		<>
 			{collapse ? (
-				<Button size={size} title={label} className={COLLAPSE_BUTTON} onClick={() => setOpen(true)}>
+				<Button
+					size={size}
+					variant={variant}
+					title={shortcut ? `${label}（${shortcutText(shortcut)}）` : label}
+					className={COLLAPSE_BUTTON}
+					onClick={() => setOpen(true)}
+				>
 					<CircleStopIcon className="xl:hidden" />
 					<span className={COLLAPSE_LABEL}>{label}</span>
 				</Button>
 			) : (
-				<Button size={size} onClick={() => setOpen(true)}>
+				<Button size={size} variant={variant} onClick={() => setOpen(true)}>
 					{label}
 				</Button>
 			)}
@@ -185,15 +214,28 @@ export function CancelRunButton({
 	);
 }
 
-function Impact({ title, detail, warn }: { title: string; detail: string; warn?: boolean }) {
+function Impact({
+	title,
+	ids,
+	note,
+	warn,
+}: {
+	title: string;
+	ids: string;
+	note?: string;
+	warn?: boolean;
+}) {
 	return (
 		<li className="flex gap-2.5 rounded-md border border-border-soft bg-bg px-3 py-2">
-			<span aria-hidden className={warn ? "text-warn" : "text-fg-3"}>
+			<span aria-hidden className={warn ? "text-warn-fg" : "text-fg-3"}>
 				{warn ? "!" : "•"}
 			</span>
 			<div className="min-w-0">
 				<div>{title}</div>
-				<div className="font-mono text-xs break-all text-fg-3">{detail}</div>
+				<div className="text-xs wrap-anywhere text-fg-3">
+					<span className="font-mono">{ids}</span>
+					{note && <> · {note}</>}
+				</div>
 			</div>
 		</li>
 	);

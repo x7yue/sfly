@@ -27,6 +27,7 @@ export const presenceApi = {
 	heartbeat: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presence",
+		client: false,
 		key: ["presence", "heartbeat"],
 		params: IdParams,
 		body: SessionBody,
@@ -39,6 +40,7 @@ export const presenceApi = {
 	leave: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/presence/leave",
+		client: false,
 		key: ["presence", "leave"],
 		params: IdParams,
 		body: SessionBody,
@@ -47,6 +49,7 @@ export const presenceApi = {
 	/** 名单的实时推送（SSE）：连上时先发一次，之后名单变化时再发（事件 `editors`）。 */
 	events: stream({
 		path: "/orchestrations/:id/presence/events",
+		client: false,
 		params: IdParams,
 		events: { editors: EditorsEvent },
 	}),

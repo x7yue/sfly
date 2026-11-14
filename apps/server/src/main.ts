@@ -22,6 +22,12 @@
 //   SFLY_METRIC_LIMIT_MB  单个任务指标数据的上限（默认 50，按点数折算），超出后停止写入
 //   SFLY_SDK_DIR     SDK 运行时 wheel 所在目录（默认 apps/server/dist/sdk，由 `pnpm --filter @sfly/server build` 生成）；
 //                    Agent 从控制面下载与自身版本一致的 SDK 装进共享 venv
+//   SFLY_CLIENT_DIR  API 客户端安装包（@sfly/client 的 tarball）所在目录（默认 apps/server/dist/client，由
+//                    `pnpm --filter @sfly/server build` 生成）；控制面提供 GET /client 和同版本安装包的下载（ADR 0022）。
+//                    目录不存在时不提供下载，控制面照常启动
+//   SFLY_CORS_ORIGINS 允许跨域调用 API 的来源，逗号分隔，例如 https://dash.example.com,http://localhost:5173（可选）。
+//                    自建页面托管在别的来源时，浏览器靠它才调得通控制面（ADR 0022）；设置后只有名单里的来源能调用，
+//                    没有设置（或写 *）时允许所有来源，不带凭据。控制台自己的页面同源，不受影响
 //   SFLY_WEB_DIR     前端构建产物目录（默认 apps/web/dist，由 `pnpm --filter @sfly/web build` 生成）；
 //                    控制面在 HTTP 端口上同时提供页面（ADR 0006）。未设置且默认目录不存在时只提供 API
 //   SFLY_MIGRATIONS_DIR 数据库迁移目录（默认 apps/server/drizzle）
@@ -30,7 +36,7 @@
 //                    默认取仓库的 cargo 构建产物：target/<架构>-unknown-linux-musl/release/sfly-agent，
 //                    本机架构没有 musl 构建时依次用 target/release、target/debug 下的 sfly-agent
 // 打包成单文件后（scripts/bundle.ts，ADR 0010），上面几个目录的默认值改为 main.mjs 旁边的
-// sdk/、web/、drizzle/、docs/、agent/；install.sh 模板是 main.mjs 旁边的 install.sh。
+// sdk/、client/、web/、drizzle/、docs/、agent/；install.sh 模板是 main.mjs 旁边的 install.sh。
 import { existsSync } from "node:fs";
 import { arch } from "node:os";
 import { join } from "node:path";
@@ -40,6 +46,7 @@ import packageJson from "../package.json" with { type: "json" };
 import type { AgentBinaryFiles } from "./agent-binaries/agent-binaries.js";
 import { startControlPlane } from "./control-plane.js";
 import { defaultMigrationsDir } from "./db/database.js";
+import { parseCorsOrigins } from "./http/cors.js";
 
 /** 打包成单文件时由 esbuild 定义为 true（scripts/bundle.ts）；源码运行时未定义。 */
 declare const SFLY_BUNDLED: boolean | undefined;
@@ -49,6 +56,7 @@ const defaults = bundled
 	? {
 			webDir: fromHere("./web"),
 			sdkDir: fromHere("./sdk"),
+			clientDir: fromHere("./client"),
 			migrationsDir: fromHere("./drizzle"),
 			docsDir: fromHere("./docs"),
 			agentDir: fromHere("./agent"),
@@ -57,6 +65,7 @@ const defaults = bundled
 	: {
 			webDir: fromHere("../../web/dist"),
 			sdkDir: fromHere("../dist/sdk"),
+			clientDir: fromHere("../dist/client"),
 			migrationsDir: defaultMigrationsDir,
 			docsDir: fromHere("../../../docs/guide"),
 			agentDir: undefined,
@@ -114,7 +123,9 @@ const controlPlane = await startControlPlane({
 	artifactLimitBytes: mb("SFLY_ARTIFACT_LIMIT_MB"),
 	metricLimitBytes: mb("SFLY_METRIC_LIMIT_MB"),
 	sdkWheelDir: env.SFLY_SDK_DIR || defaults.sdkDir,
+	clientPackageDir: env.SFLY_CLIENT_DIR || defaults.clientDir,
 	webDir,
+	corsOrigins: parseCorsOrigins(env.SFLY_CORS_ORIGINS),
 	docsDir: env.SFLY_DOCS_DIR || defaults.docsDir,
 	agentBinaries: agentBinaries(env.SFLY_AGENT_DIR || defaults.agentDir),
 	installScriptFile: defaults.installScriptFile,
