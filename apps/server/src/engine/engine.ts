@@ -537,7 +537,7 @@ export class Engine implements AgentSessionHandler {
 	/**
 	 * Agent 握手完成（#15）：逐个处置它在 Hello 中上报的任务——控制面仍在等这次尝试（running 且派给它）就继续并续约，
 	 * 否则放弃；控制面认为在它上面运行、但 Hello 里没有的任务立即以 agent_lost 失败。
-	 * 然后推送 Welcome、重发取消指令、派发排队中的任务。
+	 * 然后推送 Welcome、重发取消指令。Agent 接着准备环境，准备好（Welcome 之后的第一次心跳）才派发排队中的任务（#219）。
 	 */
 	onOnline(conn: AgentConnection, held: RunningTaskRef[]): Promise<void> {
 		return this.deps.mutex.run(async () => {
@@ -583,9 +583,9 @@ export class Engine implements AgentSessionHandler {
 						},
 					},
 				}),
+				this.deps.clock.now(),
 			);
 			await this.#resendCancels(conn);
-			await this.#dispatch(conn.name);
 		});
 	}
 
@@ -661,7 +661,11 @@ export class Engine implements AgentSessionHandler {
 		} else if (message.body.case === "heartbeat") {
 			const { runningTasks, update } = message.body.value;
 			const held = runningTasks.map(runningTaskRef);
-			await this.#event((step) => this.#heartbeat(step, conn.name, held));
+			await this.#event(async (step) => {
+				await this.#heartbeat(step, conn.name, held);
+				// Welcome 之后的第一次心跳：Agent 已准备好环境，提交后立即派发排队中的任务（#219）。
+				if (conn.heartbeat()) step.touchedAgents.add(conn.name);
+			});
 			// 不带更新状态的心跳（旧版本 Agent）不改变已保存的状态。
 			const state = update && UPDATE_STATES[update.state];
 			if (update && state) {
@@ -1348,12 +1352,13 @@ export class Engine implements AgentSessionHandler {
 	}
 
 	/**
-	 * 把排队中的任务派发给在线的 Agent，直到槽位用满。调用方需持有锁。
+	 * 把排队中的任务派发给已准备好环境的 Agent，直到槽位用满。调用方需持有锁。
+	 * 准备环境期间（Welcome 之后、第一次心跳之前）不派发，任务留在队列里、不计租约（#219）。
 	 * 版本与控制面不一致的 Agent 不派新任务（ADR 0014），任务留在队列里，等它更新后重新连上再派。
 	 */
 	async #dispatch(agentName: string): Promise<void> {
 		const conn = this.deps.hub.connection(agentName);
-		if (!conn || this.deps.hub.versionMismatch(conn.info)) return;
+		if (!conn?.ready || this.deps.hub.versionMismatch(conn.info)) return;
 		await this.#step(async (step) => {
 			const [running] = await step.tx
 				.select({ n: count() })
