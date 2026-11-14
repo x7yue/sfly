@@ -99,7 +99,14 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				<span className="truncate font-mono text-fg-2">{id}</span>
 				{caption && <span className={cn("flex-none", LOD_HIDDEN)}>{caption}</span>}
 				{note && (
-					<NoteIcon note={note} host="[data-node-id]" textId={noteId} className="flex-none" />
+					<NoteIcon
+						note={note}
+						host="[data-node-id]"
+						textId={noteId}
+						// 警告徽标的提示在上面，键盘聚焦到同时有警告和备注的卡片时两个提示不叠在一起。
+						side={!decoration?.status && warnings.length > 0 ? "bottom" : "top"}
+						className="flex-none"
+					/>
 				)}
 				<span id={statusId} className="ml-auto flex-none">
 					{decoration?.status ??

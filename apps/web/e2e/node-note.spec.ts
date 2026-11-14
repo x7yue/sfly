@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import type { Page } from "@playwright/test";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import {
@@ -11,7 +12,7 @@ import {
 	openEditor,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { box } from "./support";
+import { box, createScenario, overlap, publishPackage } from "./support";
 
 // 节点的备注（#308）：搭场景的人在检查器里写多行备注，卡片头部出现备注图标，悬停或聚焦时显示全文；
 // 备注属于场景版本，复制、粘贴、版本对比都带着它。
@@ -191,6 +192,33 @@ test("长备注：焦点在节点上时用 PageDown、PageUp、Home、End 滚动
 	await expect.poll(scrolled).toBe(0);
 	await expect(nodeCard(page, "fetch")).toBeFocused();
 	await expect(tooltip(page)).toBeVisible();
+});
+
+test("同时有警告和备注的节点：键盘聚焦到它时两个提示都显示，不叠在一起", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "警告加备注", {
+		...editorDocument,
+		nodes: editorDocument.nodes.map((n) =>
+			n.id === "ping" ? { ...n, inputs: { host: "${{ nodes.nope.outputs.x }}" }, note: NOTE } : n,
+		),
+	});
+	await openEditor(page, id);
+	await nodeCard(page, "dispatch").click();
+	await page.mouse.move(5, 300);
+
+	await page.keyboard.press("ArrowRight");
+	await expect(nodeCard(page, "ping")).toBeFocused();
+	await expect(tooltip(page)).toHaveCount(2);
+	await expect(tooltip(page).filter({ hasText: "引用了不存在的节点 nope" })).toBeVisible();
+	await expect(tooltip(page).filter({ hasText: "超时设为 600 秒" })).toBeVisible();
+	const [warnings, note] = [
+		await box(tooltip(page).filter({ hasText: "引用了不存在的节点 nope" })),
+		await box(tooltip(page).filter({ hasText: "超时设为 600 秒" })),
+	];
+	expect(overlap(warnings, note)).toBe(false);
 });
 
 test("缩放：缩小到只留关键信息后图标还在，悬停显示的全文不随画布缩小", async ({
