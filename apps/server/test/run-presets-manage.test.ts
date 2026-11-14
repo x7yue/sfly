@@ -10,6 +10,7 @@ import { publishPackage } from "./support/package-archive.js";
 import {
 	copyPreset,
 	copyPresetOk,
+	createPreset,
 	createPresetOk,
 	deletePreset,
 	errorOf,
@@ -146,6 +147,29 @@ describe("运行预设的维护", () => {
 			expect(await fields([])).toEqual(["body.params"]);
 
 			expect(await listPresets(api, id)).toEqual([preset]);
+		});
+
+		it("最新版本的入口节点没有声明参数时，给了 params 的修改被拒绝，原因按修改来写，不说「新建」；新建的原因照旧", async () => {
+			const { id, preset } = await sceneWithPreset();
+			await api.saveVersion(id, scenario([]));
+
+			const update = await updatePreset(api, id, preset.id, {
+				params: [{ name: "host", value: "b.example" }],
+			});
+			expect(update.status).toBe(400);
+			const rejected = (await update.json()) as { error: { code: string; message: string } };
+			expect(rejected.error.code).toBe("invalid_preset");
+			expect(rejected.error.message).toContain("入口节点没有声明参数");
+			expect(rejected.error.message).not.toContain("新建");
+
+			const create = await createPreset(api, id, {
+				name: "新预设",
+				params: [{ name: "host", value: "h" }],
+			});
+			expect(create.status).toBe(400);
+			expect(((await create.json()) as { error: { message: string } }).error.message).toContain(
+				"入口节点没有声明参数，不能新建运行预设",
+			);
 		});
 
 		it("名称和说明的规则同新建；没有要修改的字段时 400 invalid_preset", async () => {

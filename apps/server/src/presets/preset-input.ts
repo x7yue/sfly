@@ -16,19 +16,19 @@ export interface PresetIssue {
  * （docs/SEMANTICS.md §6「运行预设」）：至少一个；不重复；已声明且符合类型（{@link presetProblems}）；
  * 有值，字符串不为空。secret 参数和其他参数一样检查。通过时返回「参数名 → 值」。
  *
- * `saved` 是这个预设现在保存的值（新建时没有）。`{name, keep: true}` 沿用其中 secret 参数的值：
+ * `saved` 是这个预设现在保存的值，修改时给，新建时没有（错误的原因按新建还是修改来写）。`{name, keep: true}` 沿用其中 secret 参数的值：
  * 参数必须是 secret，预设里必须已经有值；沿用的值也照常检查，对不上新类型时要重新给值。
  */
 export function checkPresetParams(
 	params: readonly PresetParamInput[],
 	declarations: readonly ParamDeclaration[],
-	saved: Record<string, unknown> = {},
+	saved?: Record<string, unknown>,
 ): { values: Record<string, unknown> } | { issues: PresetIssue[] } {
 	const issues: PresetIssue[] = [];
 	const at = (path: Array<string | number>, message: string) =>
 		issues.push({ code: "custom", path: ["body", "params", ...path], message });
 	if (declarations.length === 0) {
-		at([], "入口节点没有声明参数，不能新建运行预设");
+		at([], `入口节点没有声明参数，不能${saved ? "修改运行预设的参数" : "新建运行预设"}`);
 		return { issues };
 	}
 	if (params.length === 0) {
@@ -60,11 +60,11 @@ export function checkPresetParams(
 			at([i, "keep"], `参数 ${name} 不是 secret 参数，不能沿用原值，要给一个值`);
 			return;
 		}
-		if (kept && !Object.hasOwn(saved, name)) {
+		if (kept && !Object.hasOwn(saved ?? {}, name)) {
 			at([i, "keep"], `参数 ${name} 在这个预设里还没有值，不能沿用原值，要给一个值`);
 			return;
 		}
-		const value = kept ? saved[name] : param.value;
+		const value = kept ? saved?.[name] : param.value;
 		const [problem] = presetProblems({ [name]: value }, declarations);
 		if (value === undefined || value === null) at([i, field], `参数 ${name} 要填一个值`);
 		else if (problem?.reason === "type_mismatch") {
