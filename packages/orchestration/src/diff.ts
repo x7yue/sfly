@@ -3,7 +3,7 @@ import { subflowName } from "./chain-label.js";
 
 /**
  * 两份编排文档的差异：用于保存冲突时对比本地修改与最新版本、对比任意两个历史版本。
- * 只列出差异，不做合并。节点按 ID 对应，连线按（起点、终点、种类）对应。
+ * 只列出差异，不做合并。节点、注释框按 ID 对应，连线按（起点、终点、种类）对应。
  */
 
 /**
@@ -15,6 +15,7 @@ export interface DiffableDocument {
 	nodes: readonly ({ readonly id: string; readonly kind: string } & object)[];
 	edges?: readonly DiffEdge[];
 	packages?: Readonly<Record<string, string>>;
+	annotations?: readonly ({ readonly id: string; readonly title: string } & object)[];
 }
 
 /** 一项字段的变化；before/after 为 undefined 表示该项不存在。 */
@@ -40,6 +41,16 @@ export interface DiffEdge {
 	readonly kind: string;
 }
 
+export interface AnnotationRef {
+	id: string;
+	title: string;
+}
+
+/** 两边都有的注释框改了什么：`title`、`note`、`nodes`（成员节点）、`subflows`（成员子流程）。 */
+export interface AnnotationChange extends AnnotationRef {
+	changes: FieldChange[];
+}
+
 export interface DocumentDiff {
 	/** 编排级设置：默认 Agent、锁定的包版本。 */
 	settings: FieldChange[];
@@ -47,14 +58,18 @@ export interface DocumentDiff {
 	edges: { added: DiffEdge[]; removed: DiffEdge[] };
 	/** 两边都有、只是位置变了的节点 ID（布局也是版本内容）。 */
 	moved: string[];
+	/** 注释框（标题是修改后的）。 */
+	annotations: { added: AnnotationRef[]; removed: AnnotationRef[]; changed: AnnotationChange[] };
 }
 
 type Node = Record<string, unknown> & { id: string; kind: string };
+type NormalAnnotation = Record<string, unknown> & AnnotationRef;
 interface NormalDoc {
 	default_agent?: unknown;
 	nodes: Node[];
 	edges: DiffEdge[];
 	packages: Record<string, unknown>;
+	annotations: NormalAnnotation[];
 }
 
 /** 没有名称字段的旧版本子流程入口以节点 ID 作为名称（ADR 0016），按显示的名称比较。 */
@@ -72,6 +87,7 @@ function normalize(doc: DiffableDocument): NormalDoc {
 		nodes: (d.nodes ?? []).map(withSubflowName),
 		edges: [...(d.edges ?? [])],
 		packages: d.packages ?? {},
+		annotations: d.annotations ?? [],
 	};
 }
 
@@ -133,6 +149,34 @@ function nodeChanges(before: Node, after: Node): FieldChange[] {
 	return changes;
 }
 
+/** 注释框的字段：标题、备注、成员，按 before 中的顺序，再接 after 新增的。 */
+function annotationChanges(before: NormalAnnotation, after: NormalAnnotation): FieldChange[] {
+	const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].filter(
+		(k) => k !== "id",
+	);
+	return keys
+		.filter((k) => !equal(before[k], after[k]))
+		.map((k) => ({ path: k, before: before[k], after: after[k] }));
+}
+
+const annotationRef = (a: NormalAnnotation): AnnotationRef => ({ id: a.id, title: a.title });
+
+function diffAnnotations(before: NormalAnnotation[], after: NormalAnnotation[]) {
+	const beforeById = new Map(before.map((a) => [a.id, a]));
+	const afterById = new Map(after.map((a) => [a.id, a]));
+	const changed: AnnotationChange[] = [];
+	for (const a of before) {
+		const other = afterById.get(a.id);
+		const changes = other ? annotationChanges(a, other) : [];
+		if (other && changes.length > 0) changed.push({ ...annotationRef(other), changes });
+	}
+	return {
+		added: after.filter((a) => !beforeById.has(a.id)).map(annotationRef),
+		removed: before.filter((a) => !afterById.has(a.id)).map(annotationRef),
+		changed,
+	};
+}
+
 const edgeKey = (e: DiffEdge) => `${e.kind}:${e.from}->${e.to}`;
 const nodeRef = (n: Node): NodeRef => ({ id: n.id, kind: n.kind });
 
@@ -175,6 +219,7 @@ export function diffDocuments(before: DiffableDocument, after: DiffableDocument)
 			removed: b.edges.filter((e) => !afterEdges.has(edgeKey(e))).map(plainEdge),
 		},
 		moved,
+		annotations: diffAnnotations(b.annotations, a.annotations),
 	};
 }
 
@@ -187,6 +232,9 @@ export function isEmptyDiff(diff: DocumentDiff, options: { ignoreLayout?: boolea
 		diff.nodes.changed.length === 0 &&
 		diff.edges.added.length === 0 &&
 		diff.edges.removed.length === 0 &&
+		diff.annotations.added.length === 0 &&
+		diff.annotations.removed.length === 0 &&
+		diff.annotations.changed.length === 0 &&
 		(options.ignoreLayout === true || diff.moved.length === 0)
 	);
 }

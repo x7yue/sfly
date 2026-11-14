@@ -1,3 +1,4 @@
+import { type AnnotatedDocument, withoutRemovedMembers } from "./annotations.js";
 import { removeNode } from "./chain-edits.js";
 import { type DocumentEdit, rejected } from "./edit-result.js";
 import type { LayoutDocument } from "./layout.js";
@@ -5,8 +6,9 @@ import type { LayoutDocument } from "./layout.js";
 /**
  * 删除一组节点（画布多选后删除）：按节点在文档里的顺序逐个 removeNode，每个都按单个删除的规则接上前后，
  * 结果与选中的先后无关。删不了的节点（入口节点）跳过，原因写在 `skipped`；一个都删不了时拒绝。
+ * 注释框同步更新（withoutRemovedMembers），和删除是同一个结果，画布上算一步撤销。
  */
-export function removeNodes<D extends LayoutDocument>(
+export function removeNodes<D extends LayoutDocument & AnnotatedDocument>(
 	doc: D,
 	ids: readonly string[],
 ): DocumentEdit<D, { removed: string[]; skipped: { id: string; reason: string }[] }> {
@@ -24,5 +26,9 @@ export function removeNodes<D extends LayoutDocument>(
 		}
 	}
 	if (removed.length === 0) return rejected(skipped[0]?.reason ?? "没有要删除的节点");
+	if (next.annotations) {
+		const annotations = withoutRemovedMembers(next.annotations, removed);
+		if (annotations !== next.annotations) next = { ...next, annotations };
+	}
 	return { ok: true, doc: next, removed, skipped };
 }
