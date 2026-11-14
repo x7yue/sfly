@@ -155,6 +155,105 @@ sfly scenario push 回归.json
 - 别人在你 pull 之后保存了新版本时，push 报版本冲突（退出码 2），写明最新版本号、作者和保存时间，提示重新 pull、把你的改动合并进去再 push。没有强制覆盖的选项。命令行不会成为在线编辑者：浏览器里正在编辑同一个场景的人保存时，会收到界面已有的冲突提示。
 - `scenario copy` 复制场景（说明和运行通知设置一并复制）。联调副本的说明要改成讲联调：`scenario rename <副本> --description …`，第一行写「联调 <包名>，由 <昵称> 的 AI 编程助手创建」，后面接原场景的说明；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。
 
+下面是一份写全了说明的场景文档：显示名称、备注、注释框，入口参数和子流程入口参数的说明。保存成文件，用 `scenario create --name 下单回归 --from 文件` 就能新建场景；这份文件只有 `document`，`scenario push` 用的文件还要带 pull 写出的 `scenario` 和 `base_version`。示例里的节点包 `shop-test` 是虚构的，用在自己的场景里时换成控制面上有的节点包和版本。
+
+```json
+{
+  "document": {
+    "default_agent": "test-agent",
+    "nodes": [
+      {
+        "id": "entry",
+        "kind": "entry",
+        "display_name": "开始",
+        "params": [
+          {"name": "host", "type": "string", "required": true, "description": "被测服务的主机名，不带端口"},
+          {"name": "sku", "type": "string", "default": "demo-sku", "description": "要下单的商品编号"}
+        ]
+      },
+      {
+        "id": "create_user",
+        "kind": "package",
+        "package": "shop-test",
+        "node": "create_user",
+        "display_name": "创建测试用户",
+        "inputs": {"name": "regression-user"}
+      },
+      {
+        "id": "place_order",
+        "kind": "package",
+        "package": "shop-test",
+        "node": "place_order",
+        "display_name": "下单",
+        "note": "超时设为 600 秒：测试环境冷启动后，第一单要 5 分钟才有响应。\n不设重试：下单不是幂等的，超时后重试会重复下单。",
+        "timeout": 600,
+        "inputs": {"user": "regression-user", "sku": "demo-sku", "quantity": 1}
+      },
+      {
+        "id": "delete_user",
+        "kind": "package",
+        "package": "shop-test",
+        "node": "delete_user",
+        "display_name": "删除测试用户",
+        "note": "设为 always：下单失败也要删，否则测试用户越积越多。",
+        "always": true,
+        "inputs": {"name": "regression-user"}
+      },
+      {
+        "id": "spawn_report",
+        "kind": "async",
+        "display_name": "触发汇报",
+        "params": {"user": "regression-user"}
+      },
+      {
+        "id": "report",
+        "kind": "subflow_entry",
+        "name": "汇报",
+        "note": "由「触发汇报」派发，把这次下单的结果发给值班同学。",
+        "params": [
+          {"name": "user", "type": "string", "required": true, "description": "这次下单用的测试用户名"}
+        ]
+      },
+      {
+        "id": "send_report",
+        "kind": "package",
+        "package": "shop-test",
+        "node": "send_report",
+        "display_name": "发送汇报",
+        "inputs": {"channel": "oncall"}
+      }
+    ],
+    "edges": [
+      {"from": "entry", "to": "create_user", "kind": "chain"},
+      {"from": "create_user", "to": "place_order", "kind": "chain"},
+      {"from": "place_order", "to": "delete_user", "kind": "chain"},
+      {"from": "delete_user", "to": "spawn_report", "kind": "chain"},
+      {"from": "spawn_report", "to": "report", "kind": "dispatch"},
+      {"from": "report", "to": "send_report", "kind": "chain"}
+    ],
+    "packages": {"shop-test": "0.3.0"},
+    "annotations": [
+      {
+        "id": "annotation_1",
+        "title": "造数据、下单、清理",
+        "note": "三个节点合起来跑一次完整的下单。前提：测试环境里没有同名测试用户。",
+        "nodes": ["create_user", "place_order", "delete_user"],
+        "subflows": []
+      },
+      {
+        "id": "annotation_2",
+        "title": "汇报",
+        "note": "下单链跑完后异步发汇报，汇报失败不影响下单结果。",
+        "nodes": ["spawn_report"],
+        "subflows": ["report"]
+      }
+    ]
+  }
+}
+```
+
+示例里的写法：除子流程入口外每个节点都有 `display_name`；`place_order` 和 `delete_user` 的配置有不明显的原因，写在 `note` 里；`annotation_1` 框起合起来做一件事的三个节点；`annotation_2` 用 `subflows` 框起整个子流程（写子流程入口节点的 ID `report`），不逐个列 `send_report`；入口参数和子流程入口参数都有 `description`。
+
 ## 直接调用接口
 
 `sfly api` 调用上面的命令没有覆盖的接口，例如运行的节点输出和指标摘要：
