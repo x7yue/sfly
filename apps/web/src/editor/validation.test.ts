@@ -1,7 +1,12 @@
 import { type PackageCatalog, packageKey } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { checkSummary, documentFieldErrors, undeclaredInputNotes } from "./validation";
+import {
+	checkSummary,
+	documentFieldErrors,
+	undeclaredInputNotes,
+	warningsSummary,
+} from "./validation";
 
 const base: OrchestrationDocument = {
 	nodes: [
@@ -134,5 +139,19 @@ describe("提醒：节点类型没有声明的输入", () => {
 		expect(checkSummary(0, 0, 1)).toEqual({ kind: "ok", label: "检查通过 · 1 条提醒" });
 		expect(checkSummary(0, 0, 0)).toEqual({ kind: "ok", label: "检查通过" });
 		expect(checkSummary(1, 2, 1)).toEqual({ kind: "failed", label: "1 处字段错误" });
+	});
+
+	it("保存后的提示：只有注释框的警告时说明不影响触发运行；混着时说清有几条要处理", () => {
+		const annotation = {
+			code: "annotation_no_members",
+			message: "…",
+			annotation_id: "annotation_1",
+		};
+		const other = { code: "orphan_node", message: "…", node_id: "stray" };
+		expect(warningsSummary([other, other])).toBe("2 条警告，触发运行前需要处理");
+		expect(warningsSummary([annotation])).toBe("1 条警告，不影响触发运行");
+		expect(warningsSummary([annotation, other, annotation])).toBe(
+			"3 条警告，其中 1 条触发运行前需要处理",
+		);
 	});
 });

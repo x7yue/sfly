@@ -1,5 +1,6 @@
 import {
 	agentInputs,
+	blocksTrigger,
 	feishuBotInputs,
 	InvalidReferenceError,
 	notifyBotValue,
@@ -65,11 +66,14 @@ export function createPreflight(deps: {
 	version: string;
 }): Preflight {
 	return async (doc) => {
-		const problems: PreflightProblem[] = (await checkDocument(doc, deps)).map((w) => ({
-			code: w.code,
-			message: w.message,
-			...(w.node_id ? { node_id: w.node_id } : {}),
-		}));
+		// 注释框的警告只提示，不阻断触发（docs/SEMANTICS.md §1.6）。
+		const problems: PreflightProblem[] = (await checkDocument(doc, deps))
+			.filter(blocksTrigger)
+			.map((w) => ({
+				code: w.code,
+				message: w.message,
+				...(w.node_id ? { node_id: w.node_id } : {}),
+			}));
 
 		const wanted = new Map<string, string>();
 		for (const node of doc.nodes) {

@@ -1,5 +1,6 @@
 import {
 	dispatchTarget,
+	isAnnotationWarning,
 	nameWithId,
 	nodeCardText,
 	nodeNameWithId,
@@ -157,29 +158,41 @@ export const Inspector = forwardRef<
 function WarningList({
 	warnings,
 	onLocate,
+	onLocateAnnotation,
 }: {
-	warnings: readonly { message: string; node_id?: string }[];
+	warnings: readonly { message: string; node_id?: string; annotation_id?: string }[];
 	onLocate?: (id: string) => void;
+	/** 注释框的警告（带 `annotation_id`）的「前往」：选中这个注释框。 */
+	onLocateAnnotation?: (id: string) => void;
 }) {
 	return (
 		<ul className="m-0 mb-3 flex list-none flex-col gap-1 p-0">
-			{warnings.map((w) => (
-				<li
-					key={`${w.node_id ?? ""}:${w.message}`}
-					className="flex items-start gap-2 rounded-md border border-warn-line bg-warn-soft px-2.5 py-1.5 text-xs text-warn-fg"
-				>
-					<span className="min-w-0 flex-1">{w.message}</span>
-					{onLocate && w.node_id && (
-						<button
-							type="button"
-							className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
-							onClick={() => onLocate(w.node_id as string)}
-						>
-							前往
-						</button>
-					)}
-				</li>
-			))}
+			{warnings.map((w) => {
+				const { annotation_id: annotationId, node_id: nodeId } = w;
+				const locate =
+					annotationId !== undefined
+						? onLocateAnnotation && (() => onLocateAnnotation(annotationId))
+						: nodeId !== undefined && onLocate
+							? () => onLocate(nodeId)
+							: undefined;
+				return (
+					<li
+						key={`${annotationId ?? ""}:${nodeId ?? ""}:${w.message}`}
+						className="flex items-start gap-2 rounded-md border border-warn-line bg-warn-soft px-2.5 py-1.5 text-xs text-warn-fg"
+					>
+						<span className="min-w-0 flex-1">{w.message}</span>
+						{locate && (
+							<button
+								type="button"
+								className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
+								onClick={locate}
+							>
+								前往
+							</button>
+						)}
+					</li>
+				);
+			})}
 		</ul>
 	);
 }
@@ -592,13 +605,19 @@ function ScenarioInspector({
 					</ul>
 				)}
 				{warnings.length > 0 ? (
-					<WarningList warnings={warnings} onLocate={context.onLocate} />
+					<WarningList
+						warnings={warnings}
+						onLocate={context.onLocate}
+						onLocateAnnotation={context.onLocateAnnotation}
+					/>
 				) : (
 					<p className="m-0 mb-3 text-xs text-ok">结构、包版本和引用检查都通过了。</p>
 				)}
 				{notes.length > 0 && <WarningList warnings={notes} onLocate={context.onLocate} />}
 				<p className="m-0 text-xs text-fg-3">
-					警告不阻止保存，触发运行时必须全部通过；提醒不影响运行；字段错误（红色）改正后才能保存。
+					警告不阻止保存，触发运行时必须全部通过
+					{warnings.some(isAnnotationWarning) && "（注释框的警告除外，它不影响运行）"}
+					；提醒不影响运行；字段错误（红色）改正后才能保存。
 				</p>
 			</div>
 		</>

@@ -104,7 +104,12 @@ import {
 	useRunDecorations,
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
-import { documentFieldErrors, type FieldError, undeclaredInputNotes } from "./validation";
+import {
+	documentFieldErrors,
+	type FieldError,
+	undeclaredInputNotes,
+	warningsSummary,
+} from "./validation";
 
 /** 检查器右边距。 */
 
@@ -673,9 +678,7 @@ function Editor({
 			onSuccess: (saved) =>
 				notify.success(
 					`已保存为版本 ${saved.number}`,
-					saved.warnings.length > 0
-						? { description: `${saved.warnings.length} 条警告，触发运行前需要处理` }
-						: undefined,
+					saved.warnings.length > 0 ? { description: warningsSummary(saved.warnings) } : undefined,
 				),
 			onError: (error) => {
 				if (!versionConflictOf(error)) {

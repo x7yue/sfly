@@ -403,12 +403,16 @@ export interface DevPackageView {
 	metadata: Record<string, unknown> | null;
 }
 
-/** 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。 */
+/**
+ * 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。
+ * 注释框的警告带 `annotation_id`，指出是哪个注释框；它们也不阻断触发。
+ */
 export interface DocumentWarningView {
 	code: string;
 	message: string;
 	node_id?: string;
 	input?: string;
+	annotation_id?: string;
 }
 
 export interface Edge {

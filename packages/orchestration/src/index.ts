@@ -1,5 +1,6 @@
 export * from "./agent-inputs.js";
 export * from "./annotation-members.js";
+export * from "./annotation-warnings.js";
 export * from "./annotations.js";
 export * from "./chain-edits.js";
 export * from "./chain-label.js";
