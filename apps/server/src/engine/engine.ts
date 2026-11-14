@@ -1377,7 +1377,7 @@ export class Engine implements AgentSessionHandler {
 				// 周期扫描还没来得及处理的排队超时任务不再派发。
 				if (task.queueExpiresAt && task.queueExpiresAt <= step.now) {
 					// 派发只发给已准备好的连接，所以这里一定不是在准备环境。
-					await queueTimedOut(this.#driver, step, task, false);
+					await queueTimedOut(this.#driver, step, task, "unavailable");
 					continue;
 				}
 				const message = await this.#prepareAssign(step, conn, task);

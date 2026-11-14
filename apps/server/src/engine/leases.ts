@@ -120,7 +120,7 @@ export async function expireTasks(
 		for (const task of due) {
 			if (task.status === "queued") {
 				const preparing = task.agentName !== null && isPreparing(task.agentName);
-				await queueTimedOut(driver, step, task, preparing);
+				await queueTimedOut(driver, step, task, preparing ? "preparing" : "unavailable");
 			} else await agentLost(driver, step, task, "任务租约已过期");
 		}
 		return due.length;
@@ -152,23 +152,30 @@ export async function agentLost(
 }
 
 /**
- * 排队超时：env_error，不重试（§3.3）。`preparing`：超时那一刻任务的 Agent 在线、还在准备环境
- * （Welcome 之后、第一次心跳之前，#219），报错写明这个原因，不再写成不在线或没有空闲槽位。
+ * 排队超时那一刻任务的 Agent 为什么没接：preparing 是在线、还在准备环境（Welcome 之后、第一次心跳之前，#219），
+ * unavailable 是不在线或没有空闲槽位。
  */
+export type QueueTimeoutCause = "preparing" | "unavailable";
+
+const QUEUE_TIMEOUT_REASONS: Record<QueueTimeoutCause, string> = {
+	preparing: "一直在准备环境",
+	unavailable: "不在线或没有空闲槽位",
+};
+
+/** 排队超时：env_error，不重试（§3.3）；报错写明 Agent 没接的原因。 */
 export async function queueTimedOut(
 	driver: ChainDriver,
 	step: Step,
 	task: TaskRow,
-	preparing: boolean,
+	cause: QueueTimeoutCause,
 ): Promise<void> {
 	const seconds = Math.round(
 		((task.queueExpiresAt?.getTime() ?? 0) - task.queuedAt.getTime()) / 1000,
 	);
-	const reason = preparing ? "一直在准备环境" : "不在线或没有空闲槽位";
 	await driver.failTask(
 		step,
 		task,
 		"env_error",
-		`排队超过 ${seconds} 秒仍未派发：Agent ${task.agentName} ${reason}`,
+		`排队超过 ${seconds} 秒仍未派发：Agent ${task.agentName} ${QUEUE_TIMEOUT_REASONS[cause]}`,
 	);
 }
