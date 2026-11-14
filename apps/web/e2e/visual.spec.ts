@@ -964,6 +964,13 @@ test.describe("编排画布：显示名称", () => {
 		await expect(page).toHaveScreenshot("editor-display-names.png");
 	});
 
+	test("原地改名：输入框占着卡片标题的位置，卡片大小不变", async ({ page }) => {
+		await nodeCard(page, "fetch").locator('[data-slot="base-node-title"]').dblclick();
+		await expect(nodeCard(page, "fetch").getByRole("textbox", { name: "显示名称" })).toBeFocused();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-rename-in-place.png");
+	});
+
 	test("语义缩放：缩小后显示名称仍然看得清", async ({ page }) => {
 		for (let i = 0; i < 3; i++) {
 			await page.getByRole("button", { name: "缩小" }).click();

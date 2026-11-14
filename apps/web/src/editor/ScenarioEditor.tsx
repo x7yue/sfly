@@ -5,6 +5,7 @@ import {
 	insertAfter,
 	insertOnEdge,
 	nodeConnections,
+	nodeDisplayName,
 	type OrchestrationWarning,
 	outgoingProblem,
 	removeNode,
@@ -33,7 +34,7 @@ import {
 import { Redo2Icon, Undo2Icon, Wand2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolButton } from "#/components/canvas/CanvasDock";
-import type { CanvasInfo } from "#/components/canvas/context";
+import type { CanvasInfo, NodeRename } from "#/components/canvas/context";
 import { FlowCanvas, isPointerFocusedCanvas } from "#/components/canvas/FlowCanvas";
 import {
 	applyDocument,
@@ -79,6 +80,7 @@ import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, fieldErrorKey, useFieldDraftStore } from "./field-drafts";
 import { freeCardSpot } from "./free-spot";
+import { isNamedNode } from "./inspector/DisplayNameField";
 import { type FocusRequest, Inspector, type InspectorContext } from "./inspector/Inspector";
 import { useInspectorWidth } from "./inspector/inspector-width";
 import { useNodeClipboard } from "./node-clipboard";
@@ -397,6 +399,38 @@ function Editor({
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
 	};
 
+	// —— 原地改显示名称：双击卡片标题、F2、节点菜单的「重命名」；子流程入口节点没有显示名称 ——
+	const [renamingId, setRenamingId] = useState<string | null>(null);
+	const startRename = (id: string) => {
+		const node = nodes.find((n) => n.id === id)?.data.node;
+		if (running || !node || !isNamedNode(node)) return;
+		setRenamingId(id);
+	};
+	const commitRename = (id: string, text: string) => {
+		setRenamingId(null);
+		const node = nodes.find((n) => n.id === id)?.data.node;
+		if (!node || !isNamedNode(node)) return;
+		const name = text.trim() || undefined;
+		if (name === nodeDisplayName(node)) return;
+		// 不带 key：不和前后的输入合并，一次改名是一步撤销。
+		history.checkpoint();
+		setNodes((ns) =>
+			ns.map((n) => (n.id === id ? { ...n, data: { node: { ...node, display_name: name } } } : n)),
+		);
+	};
+	const renameHandlers = useRef({ startRename, commitRename });
+	renameHandlers.current = { startRename, commitRename };
+	// 卡片从 context 取它：只在正在编辑的节点变化时换一个新对象，其余渲染不会让每张卡片重画。
+	const rename = useMemo<NodeRename>(
+		() => ({
+			active: renamingId,
+			start: (id) => renameHandlers.current.startRename(id),
+			commit: (id, text) => renameHandlers.current.commitRename(id, text),
+			cancel: () => setRenamingId(null),
+		}),
+		[renamingId],
+	);
+
 	// —— 添加节点：有来源节点的接在它后面，没有来源的不连线（AddRequest）——
 	const groups = useMemo(
 		() => packageGroups(packages.data?.packages, agentList, meta.packages),
@@ -481,6 +515,14 @@ function Editor({
 	useShortcut("canvas-add", () => openAddMenu({ kind: "free" }), !running);
 	useShortcut("canvas-undo", history.undo, !running);
 	useShortcut("canvas-redo", history.redo, !running);
+	useShortcut(
+		"canvas-rename",
+		() => {
+			const id = soleNode(shownSelection);
+			if (id) startRename(id);
+		},
+		!running,
+	);
 	// Tab：焦点在节点卡片上（新节点接在它后面）、或用鼠标点过画布空白处时（不连线）打开添加节点菜单，其他时候照常切换焦点。
 	// 页面上没有焦点、或用键盘把焦点放到画布区域上（Tab 进入、Esc 退回）时不拦截（见 FlowCanvas 的 isPointerFocusedCanvas）：
 	// 键盘用户能用 Tab 进出画布，进入后用方向键浏览节点（components/canvas/navigation.ts）。
@@ -678,6 +720,7 @@ function Editor({
 							: (edge, client) =>
 									openAddMenu({ kind: "after", after: edge.from, before: edge.to, client })
 					}
+					rename={running ? undefined : rename}
 					reconnect={running ? undefined : reconnect.handlers}
 					menu={(target) => (
 						<EditorMenu
@@ -697,6 +740,7 @@ function Editor({
 											openAddMenu,
 											applyEdit,
 											deleteNode,
+											startRename,
 											clipboard,
 											tidy,
 											undo: history.undo,
