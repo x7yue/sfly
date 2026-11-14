@@ -1,5 +1,6 @@
 import type { NodeTypeMetadata, OrchestrationDocument } from "@sfly/schema";
 import { inputsOfType, isInputOfType, namesInInputs } from "./input-types.js";
+import { nodeNameWithId } from "./node-display.js";
 import { PARAM_PATH, WHOLE_REFERENCE } from "./reference-syntax.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
 
@@ -51,10 +52,11 @@ export interface FeishuBotWarning {
 
 /**
  * 选择的机器人没有登记过时的说明（静态检查、触发时按实际值检查共用）。
+ * `node` 是节点的名字：节点 ID，静态检查写成「显示名称（节点 ID）」（{@link nodeNameWithId}）。
  * `input` 是节点的输入名（「飞书机器人」类型的输入）；飞书通知节点自己的机器人字段不写。
  */
-export function feishuBotNotRegistered(nodeId: string, bot: string, input?: string): string {
-	const where = input === undefined ? `节点 ${nodeId}` : `节点 ${nodeId} 的输入 ${input}`;
+export function feishuBotNotRegistered(node: string, bot: string, input?: string): string {
+	const where = input === undefined ? `节点 ${node}` : `节点 ${node} 的输入 ${input}`;
 	return `${where} 选择的飞书机器人「${bot}」还没有登记`;
 }
 
@@ -76,11 +78,11 @@ export function notifyBotValue(bot: string): NotifyBotValue {
 }
 
 /** 机器人字段写了不支持的引用时的说明（规格：机器人是常量名称，或者整值引用入口参数）。 */
-export const feishuBotReferenceUnsupported = (nodeId: string, bot: string): string =>
-	`节点 ${nodeId} 的飞书机器人只能是已登记的机器人名称，或整个引用入口参数（\${{ params.<参数名> }}），现在是「${bot}」`;
+export const feishuBotReferenceUnsupported = (node: string, bot: string): string =>
+	`节点 ${node} 的飞书机器人只能是已登记的机器人名称，或整个引用入口参数（\${{ params.<参数名> }}），现在是「${bot}」`;
 
 /** 飞书通知节点还没有选择机器人时的说明。 */
-export const feishuBotUnset = (nodeId: string): string => `节点 ${nodeId} 没有选择飞书机器人`;
+export const feishuBotUnset = (node: string): string => `节点 ${node} 没有选择飞书机器人`;
 
 /**
  * 飞书通知节点的机器人检查：没有选择；写了不支持的引用（{@link notifyBotValue}）；常量不是已登记的机器人
@@ -96,7 +98,7 @@ export function feishuBotWarnings(
 		if (node.bot === undefined) {
 			warnings.push({
 				code: "feishu_bot_unset",
-				message: feishuBotUnset(node.id),
+				message: feishuBotUnset(nodeNameWithId(node)),
 				node_id: node.id,
 				input: "bot",
 			});
@@ -106,14 +108,14 @@ export function feishuBotWarnings(
 		if (value.kind === "unsupported") {
 			warnings.push({
 				code: "feishu_bot_reference_unsupported",
-				message: feishuBotReferenceUnsupported(node.id, node.bot),
+				message: feishuBotReferenceUnsupported(nodeNameWithId(node), node.bot),
 				node_id: node.id,
 				input: "bot",
 			});
 		} else if (value.kind === "constant" && bots && !bots.has(value.name)) {
 			warnings.push({
 				code: "feishu_bot_not_registered",
-				message: feishuBotNotRegistered(node.id, value.name),
+				message: feishuBotNotRegistered(nodeNameWithId(node), value.name),
 				node_id: node.id,
 				input: "bot",
 			});
@@ -140,7 +142,7 @@ export function feishuBotInputWarnings(
 			if (referencesIn(bot).length > 0 || bots.has(bot)) continue;
 			warnings.push({
 				code: "feishu_bot_not_registered",
-				message: feishuBotNotRegistered(node.id, bot, input),
+				message: feishuBotNotRegistered(nodeNameWithId(node), bot, input),
 				node_id: node.id,
 				input,
 			});

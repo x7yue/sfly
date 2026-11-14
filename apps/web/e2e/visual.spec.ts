@@ -992,6 +992,47 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	});
 });
 
+/** 几个节点有显示名称：一个正常，一个 40 个字符（卡片上被截断），一个是异步任务。 */
+const displayNamedDocument = {
+	...editorDocument,
+	nodes: editorDocument.nodes.map((node) => {
+		const names: Record<string, string> = {
+			fetch: "创建测试用户",
+			dispatch: "派发对账子流程",
+			ping: "一二三四五六七八九十".repeat(4),
+		};
+		return node.id in names ? { ...node, display_name: names[node.id] } : node;
+	}),
+};
+
+test.describe("编排画布：显示名称", () => {
+	test.beforeEach(async ({ page, connectAgent, controlPlane }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		const id = await createScenario(controlPlane, "日终数据处理", displayNamedDocument);
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("卡片标题、头部的原标题、被截断的名称与检查器顶部的输入框", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await expect(page.getByRole("textbox", { name: "显示名称" })).toHaveValue("创建测试用户");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-display-names.png");
+	});
+
+	test("语义缩放：缩小后显示名称仍然看得清", async ({ page }) => {
+		for (let i = 0; i < 3; i++) {
+			await page.getByRole("button", { name: "缩小" }).click();
+			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
+		}
+		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-display-names-zoomed-out.png");
+	});
+});
+
 test("运行监控：子流程被停止（停止子流程节点的尝试）", async ({
 	page,
 	controlPlane,

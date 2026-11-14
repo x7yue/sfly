@@ -1,4 +1,5 @@
 import type { OrchestrationDocument } from "@sfly/schema";
+import { nodeNameWithId } from "./node-display.js";
 import { referencesIn } from "./references.js";
 
 /**
@@ -170,7 +171,7 @@ export function timingWarnings(doc: Pick<OrchestrationDocument, "nodes">): Timin
 			if (!isTimerAt(node.at)) {
 				warnings.push({
 					code: "timer_at_invalid",
-					message: `定时节点 ${node.id} 的时刻 "${node.at}" 无效：需要 HH:MM:SS 或完整的日期时间（如 2026-01-02T09:30:00）`,
+					message: `定时节点 ${nodeNameWithId(node)} 的时刻 "${node.at}" 无效：需要 HH:MM:SS 或完整的日期时间（如 2026-01-02T09:30:00）`,
 					node_id: node.id,
 					input: "at",
 				});
@@ -178,7 +179,7 @@ export function timingWarnings(doc: Pick<OrchestrationDocument, "nodes">): Timin
 			if (!isTimeZone(node.tz)) {
 				warnings.push({
 					code: "timer_tz_invalid",
-					message: `定时节点 ${node.id} 的时区 "${node.tz}" 无效：需要 IANA 时区名（如 Asia/Shanghai）`,
+					message: `定时节点 ${nodeNameWithId(node)} 的时区 "${node.tz}" 无效：需要 IANA 时区名（如 Asia/Shanghai）`,
 					node_id: node.id,
 					input: "tz",
 				});
@@ -187,7 +188,7 @@ export function timingWarnings(doc: Pick<OrchestrationDocument, "nodes">): Timin
 			if (referencesIn(node.duration).length === 0 && parseDuration(node.duration) === null) {
 				warnings.push({
 					code: "sleep_duration_invalid",
-					message: `Sleep 节点 ${node.id} 的时长 "${node.duration}" 无效：例如 30s、10m、1h、1h30m`,
+					message: `Sleep 节点 ${nodeNameWithId(node)} 的时长 "${node.duration}" 无效：例如 30s、10m、1h、1h30m`,
 					node_id: node.id,
 					input: "duration",
 				});
