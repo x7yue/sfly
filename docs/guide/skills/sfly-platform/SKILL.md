@@ -35,7 +35,7 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
    完成：联调副本存在，`uv run sfly scenario show <联调副本>` 列出了要联调的节点。
 4. **改成开发版本和本机 Agent**（复制来的副本）：`uv run sfly scenario pull <副本> -o <文件>`，在文件的 `document` 里把 `packages["<包名>"]` 改成 `"dev"`，`default_agent` 和节点上单独写了的 `agent` 改成本机 Agent；新增节点照文件里已有的节点写，不用写坐标。再 `uv run sfly scenario push <文件>`。
    完成：push 输出新版本号且没有警告；有警告就按警告改完再 push。
-5. **运行**：`uv run sfly run start <联调副本> --wait --timeout 90s`，入口参数用 `--param 名=值`。进度写在 stderr，运行结束后 stdout 是摘要。`--timeout` 取比你的命令工具的超时更短的值。
+5. **运行**：`uv run sfly run start <联调副本> --wait --timeout 90s`，入口参数用 `--param 名=值`；场景有运行预设时（`uv run sfly scenario show <联调副本>` 列出），`--preset 名称` 带上用户维护好的参数组合，预设参数不用再给。进度写在 stderr，运行结束后 stdout 是摘要。`--timeout` 取比你的命令工具的超时更短的值。
    完成：命令退出，按下表处理退出码。
 6. **按退出码决定下一步**：
 

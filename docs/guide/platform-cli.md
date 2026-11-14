@@ -18,18 +18,18 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数、主链和子流程上的节点（节点类型、锁定的节点包版本、Agent）、默认 Agent |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数、主链和子流程上的节点（节点类型、锁定的节点包版本、Agent）、默认 Agent，以及场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码） |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存 |
 | `sfly scenario push <文件>` | 本地校验后保存成新的场景版本 |
 | `sfly scenario create --name 名称 [--description 说明] [--from 文件]` | 新建场景；给了文件就用其中的场景文档保存第一个版本 |
 | `sfly scenario copy <场景> --name 新名称` | 复制场景，源场景最新版本的内容作为副本的第 1 版 |
 | `sfly scenario rename <场景> [--name 名称] [--description 说明]` | 修改名称和说明；它们不属于场景版本，不产生新版本 |
-| `sfly run start <场景> [--param 名=值]… [--params JSON] [--wait] [--timeout 时长]` | 触发场景的最新版本；`--wait` 等到运行结束并输出摘要 |
+| `sfly run start <场景> [--preset 名称] [--param 名=值]… [--params JSON] [--wait] [--timeout 时长]` | 触发场景的最新版本；`--preset` 按运行预设触发；`--wait` 等到运行结束并输出摘要 |
 | `sfly run wait <运行> [--timeout 时长]` | 等一次已经触发的运行结束，输出摘要 |
 | `sfly run cancel <运行>` | 取消运行；运行还没结束时再取消一次就是强制取消 |
 | `sfly run list [--scenario 场景] [--status 状态]` | 最近的运行，开始得晚的在前 |
-| `sfly run show <运行>` | 各条链、各个节点的状态；失败或重试过的节点写出每次尝试的错误 |
+| `sfly run show <运行>` | 各条链、各个节点的状态；失败或重试过的节点写出每次尝试的错误；用了运行预设的运行写明预设的名称 |
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level 级别] [--tail N] [--before 游标] [--after 游标] [--all 文件]` | 运行的日志，按控制面时间合并各节点、各次尝试 |
 | `sfly run artifacts <运行> [--task 任务] [--download 目录]` | 列出各任务的产物，可以下载 |
 | `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
@@ -72,7 +72,7 @@ uv run sfly api --list runs
 |---|---|
 | 0 | 成功 |
 | 1 | 运行失败（`run start --wait`、`run wait`） |
-| 2 | 命令本身出错：参数不对、连不上控制面、场景或运行不存在、预检没通过、保存版本冲突…… |
+| 2 | 命令本身出错：参数不对、连不上控制面、场景或运行不存在、预检没通过、运行预设不存在或已失效、保存版本冲突…… |
 | 3 | 运行被取消（`run start --wait`、`run wait`） |
 | 124 | 等待超时（`--timeout`）：运行仍在继续，没有被取消 |
 | 130 | 等待时按了 Ctrl-C：运行仍在继续，没有被取消 |
@@ -86,6 +86,7 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
 - 先预检场景：引用的 Agent 没有注册过、锁定的节点包版本或节点类型不存在、Agent 的版本不满足节点包的要求这类问题会全部列出，退出码 2，不触发运行。
 - Agent 不在线、或刚连上还在准备环境（见 [安装 Agent](install-agent.md)）时也能触发：任务排队，Agent 准备好之后再执行。排队超过节点的 `queue_timeout`（默认 10 分钟）还没派发时任务以 `env_error` 失败，不重试，错误写明原因：「排队超过 N 秒仍未派发：Agent X 一直在准备环境」是那台 Agent 一直在准备环境，去查它的环境准备（下载 Python、安装 SDK）；「Agent X 不在线或没有空闲槽位」是它不在线，或槽位一直被占满。
 - 入口参数用 `--param 名=值` 给出，可以重复；值按入口节点声明的类型转换：string 原样保留，number 按数字，boolean 写 `true` 或 `false`，json 按 JSON 解析。整个参数对象也可以用 `--params '<JSON>'` 一次给出，两种写法同时出现时 `--param` 覆盖同名项。参数名没有声明、值转换失败、必填的参数没有给时报错并列出声明的参数，退出码 2。secret 参数和其他参数一样传入，输出里不回显它的值。
+- 场景保存了运行预设时，用 `--preset 名称` 按预设触发，见下面的「运行预设」。
 - 总是触发场景的最新版本，不支持指定场景版本。
 - 不加 `--wait` 时立即输出运行 id 和控制台里的运行链接，退出码 0；之后用 `sfly run wait <运行>` 等它结束。
 - 加 `--wait` 时一直等到运行结束（`--timeout 时长` 限制等待时长，例如 `90s`、`5m`、`1h`）。节点状态每变化一次往 stderr 写一行进度；运行结束后 stdout 输出摘要，退出码表示结果。`run wait` 对已经触发的运行做同样的事，运行已经结束时直接输出摘要。
@@ -119,6 +120,38 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
 
 - 等待时和控制面的连接断开会自动重连、继续等待，重连后以控制面返回的最新状态为准，不会漏掉运行的结束。
 - 等待超时（124）和 Ctrl-C（130）只是停止等待，运行继续执行。用 `sfly run wait <运行>` 接着等，用 `sfly run cancel <运行>` 取消。再次 `sfly run start` 会触发一次新的运行。
+
+## 运行预设
+
+场景可以保存几套固定的入口参数，叫运行预设。预设固定的那部分参数叫预设参数：用预设触发运行时，预设参数一定取预设里保存的值、不能改，其余参数照常给出。预设是场景的设置，不属于场景版本，在控制台场景列表的「运行预设…」里维护。命令行只做两件日常要做的事：按预设触发运行，和查看预设；需要创建、修改、复制、删除预设时用 `sfly api`（`sfly api --list presets` 列出这些接口）：
+
+```text
+sfly api POST /orchestrations/<场景 id>/presets --body '{"name": "压测 A 集群", "params": [{"name": "host", "value": "a.example"}]}'
+```
+
+- **查看**：`sfly scenario show <场景>` 在默认 Agent 之后多一节「运行预设」，按名称排序，每个预设写名称、是否可用、说明和预设参数的值；secret 预设参数的值打码成 `******`，命令行读不到原值。场景没有运行预设时没有这一节。
+
+  ```text
+  运行预设：
+    压测 A 集群  可用
+      说明：A 集群的压测参数
+      预设参数：
+        参数   值
+        host   "a.example"
+        port   9000
+        token  ******
+    压测 B 集群  已失效：参数 verbose 已不存在
+      预设参数：
+        参数     值
+        options  {"mode":"fast"}
+        verbose  ******
+  ```
+
+  失效的运行预设（预设参数在最新版本里已不存在，或保存的值不符合它现在的类型）写明原因，不能用来触发；在控制台里改好之后恢复可用。`--json` 里是同样的内容：`presets` 数组，每项有 `id`、`name`、`description`、`status`（`ok` 或 `invalid`）、`problems`（每项 `{param, reason}`，`reason` 是 `missing` 或 `type_mismatch`）和 `params`（每项 `{name, secret, value}`）。
+- **触发**：`sfly run start <场景> --preset 压测 A 集群 --param duration=60`。预设按名称找，名称要和预设完全一致（区分大小写）。预设参数由控制面填入预设保存的值，`--param`、`--params` 只给其余的参数，转换规则不变；`--wait`、`--timeout` 照常。
+  - 名称找不到时报错并列出这个场景的全部运行预设，预设已失效时报错并写明原因和怎么修；两种情况都是退出码 2，不触发运行。
+  - 预设参数不能改：给 secret 预设参数传了任何值（和预设里的相同也一样），给其他预设参数传了和预设不同的值，控制面都拒绝，错误里写明参数名和预设名，退出码 2，不触发运行。去掉这个 `--param` 或 `--params` 里的项，预设会填上保存的值。
+- **回看**：`sfly run show <运行>` 在场景下面多一行「预设 <名称>」，是触发时预设的名称，之后预设改名、删除都不影响；`--json` 里的 `preset` 是 `{id, name, params}`（`params` 是预设参数的名单），没用预设时是 `null`。
 
 ## 读日志和产物
 
