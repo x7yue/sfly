@@ -1,5 +1,6 @@
 import {
 	dispatchTarget,
+	nodeCardText,
 	nodeTypeOf,
 	type OrchestrationWarning,
 	type PackageCatalog,
@@ -10,7 +11,7 @@ import { PanelRightCloseIcon, Trash2Icon } from "lucide-react";
 import { forwardRef, type ReactNode, useEffect, useMemo, useState } from "react";
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
-import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
+import { KIND_META } from "#/components/canvas/node-display";
 import { StatusPill } from "#/components/status";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
@@ -224,7 +225,7 @@ function NodeInspector({
 		<>
 			<Header
 				onCollapse={onCollapse}
-				title={nodeTitle(node, info)}
+				title={nodeCardText(node, info).title}
 				row={
 					<>
 						<span className="font-mono text-fg-2">{id}</span>

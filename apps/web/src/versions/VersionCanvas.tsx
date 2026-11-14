@@ -1,15 +1,13 @@
-import type { DocumentDiff } from "@sfly/orchestration";
-import { type OrchestrationDocument, packagesApi } from "@sfly/schema";
-import { useQuery } from "@tanstack/react-query";
+import { type DocumentDiff, subflowLabels } from "@sfly/orchestration";
+import type { OrchestrationDocument } from "@sfly/schema";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useCallback, useMemo, useState } from "react";
 import type { CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import { FlowCanvas } from "#/components/canvas/FlowCanvas";
 import { toFlow } from "#/components/canvas/flow";
-import { subflowLabels } from "#/components/canvas/node-display";
+import { usePackageTitles } from "#/components/canvas/package-titles";
 import { LOD_HIDDEN, ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { type StatusKind, StatusPill } from "#/components/status";
-import { apiQuery } from "#/lib/api";
 
 export type NodeMark = NonNullable<NodeDecoration["mark"]>;
 
@@ -42,28 +40,20 @@ export function VersionCanvas({
 	document: OrchestrationDocument;
 	marks?: ReadonlyMap<string, NodeMark>;
 }) {
-	const packages = useQuery(apiQuery(packagesApi.list));
+	const titleOf = usePackageTitles();
 	const flow = useMemo(() => toFlow(document), [document]);
 	const [selectedId, setSelectedId] = useState<string | null>(null);
 
-	const info: CanvasInfo = useMemo(() => {
-		const titles = new Map<string, string>();
-		for (const pkg of packages.data?.packages ?? []) {
-			for (const v of pkg.versions) {
-				for (const n of v.nodes) {
-					const key = `${pkg.name}/${n.name}`;
-					if (!titles.has(key)) titles.set(key, n.title);
-				}
-			}
-		}
-		return {
+	const info: CanvasInfo = useMemo(
+		() => ({
 			defaultAgent: document.default_agent,
-			titleOf: (pkg, node) => titles.get(`${pkg}/${node}`),
+			titleOf,
 			packages: document.packages,
 			subflowLabelOf: subflowLabels(document),
 			warnings: new Map(),
-		};
-	}, [document, packages.data]);
+		}),
+		[document, titleOf],
+	);
 
 	const decorateNode = useCallback(
 		(id: string): NodeDecoration | undefined => {
