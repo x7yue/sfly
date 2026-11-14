@@ -8,6 +8,7 @@ import { FakeAgent } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
+import { createPresetOk, renamePresetInDb, triggerWithPreset } from "./support/presets.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 // 卡片里的时间按控制面所在的时区显示：固定成东八区，期望值才与运行测试的机器无关。
@@ -234,6 +235,46 @@ describe("运行通知", () => {
 			expect(card.card.body.elements[0]).toBe(facts(card));
 			const text = card.card.body.elements.map((e) => e.content ?? e.tag).join("\n");
 			expect(text.includes("失败的节点")).toBe(ending === "failed");
+		});
+
+		it("用了运行预设的运行：场景名下面有「预设」一行，写触发时的名称；没用预设的运行没有这一行", async () => {
+			const document = flow([echo("a")]);
+			document.nodes[0] = {
+				id: "entry",
+				kind: "entry",
+				params: [{ name: "host", type: "string", required: true }],
+			};
+			const id = await scenario(document, { trigger: "always" }, "订单压测");
+			const preset = await createPresetOk(api, id, {
+				name: "压测 A 集群",
+				params: [{ name: "host", value: "a.example" }],
+			});
+
+			const res = await triggerWithPreset(api, id, preset.id);
+			expect(res.status, await res.clone().text()).toBe(201);
+			const presetRun = ((await res.json()) as { id: string }).id;
+			// 预设在运行结束之前改了名，卡片上仍是触发时的名称。
+			await renamePresetInDb(cp, preset.id, "改过的名字");
+			await agent.succeed(await agent.nextAssign());
+			await status(presetRun, "success");
+
+			const plainRun = await api.triggerOk(id, { host: "h" });
+			await agent.succeed(await agent.nextAssign());
+			await status(plainRun, "success");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(2));
+			const lines = (card: Card | undefined) =>
+				(card ? facts(card)?.content : undefined)?.split("\n");
+			expect(lines(cards()[0])?.slice(0, 3)).toEqual([
+				"**场景**：订单压测",
+				"**预设**：压测 A 集群",
+				`**运行编号**：${presetRun.slice(0, 8)}`,
+			]);
+			expect(lines(cards()[1])?.slice(0, 2)).toEqual([
+				"**场景**：订单压测",
+				`**运行编号**：${plainRun.slice(0, 8)}`,
+			]);
+			expect(lines(cards()[1])?.some((line) => line.includes("预设"))).toBe(false);
 		});
 
 		it("失败的节点带上所在的链：子流程写子流程名称和实例短 ID", async () => {

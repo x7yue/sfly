@@ -163,6 +163,9 @@ export const RunPresetView = z.object({
 	params: z.array(z.string()),
 });
 
+/** 运行列表里一个运行用的运行预设：只有 ID 和触发时的名称（列表不带预设参数的名单）。 */
+export const RunListPreset = RunPresetView.pick({ id: true, name: true });
+
 export const RunView = z.object({
 	id: z.string(),
 	orchestration_id: z.string(),
@@ -206,6 +209,8 @@ export const RunSummary = RunView.pick({
 	started_at: true,
 	ended_at: true,
 }).extend({
+	/** 触发时选用的运行预设；没有用预设时为 null。 */
+	preset: RunListPreset.nullable(),
 	/** 已请求取消、还在等待任务结束与清理（status 仍是 running，界面显示「取消中」）。 */
 	cancelling: z.boolean(),
 });
@@ -658,6 +663,7 @@ export type NodeRunView = z.infer<typeof NodeRunView>;
 export type ChainRunView = z.infer<typeof ChainRunView>;
 export type RunNotificationState = z.infer<typeof RunNotificationState>;
 export type RunPresetView = z.infer<typeof RunPresetView>;
+export type RunListPreset = z.infer<typeof RunListPreset>;
 export type RunView = z.infer<typeof RunView>;
 export type RunSummary = z.infer<typeof RunSummary>;
 export type ParamDeclView = z.infer<typeof ParamDeclView>;

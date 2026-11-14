@@ -1,6 +1,8 @@
 import { type PresetView, presetsApi } from "@sfly/schema";
+import pg from "pg";
 import { expect } from "vitest";
 import type { ApiClient } from "./api-client.js";
+import type { TestControlPlane } from "./test-control-plane.js";
 
 /** 新建运行预设的请求体（presetsApi.create）；`params` 里的 value 可以省略，用来测缺值。 */
 export interface PresetBody {
@@ -59,4 +61,36 @@ export async function invalidPresetFields(res: Response): Promise<string[]> {
 	const error = await errorOf(res);
 	expect(error.code).toBe("invalid_preset");
 	return (error.details as Array<{ path: Array<string | number> }>).map((i) => i.path.join("."));
+}
+
+/** 直接在库里改一个预设的名称，模拟预设在运行触发之后被改名。 */
+export function renamePresetInDb(
+	cp: Pick<TestControlPlane, "database">,
+	presetId: string,
+	name: string,
+): Promise<void> {
+	return withClient(cp, (c) =>
+		c.query("UPDATE run_presets SET name = $1 WHERE id = $2", [name, presetId]),
+	);
+}
+
+/** 直接在库里删掉一个预设，模拟预设在运行触发之后被删除。 */
+export function deletePresetInDb(
+	cp: Pick<TestControlPlane, "database">,
+	presetId: string,
+): Promise<void> {
+	return withClient(cp, (c) => c.query("DELETE FROM run_presets WHERE id = $1", [presetId]));
+}
+
+async function withClient(
+	cp: Pick<TestControlPlane, "database">,
+	run: (client: pg.Client) => Promise<unknown>,
+): Promise<void> {
+	const client = new pg.Client({ connectionString: cp.database.url });
+	await client.connect();
+	try {
+		await run(client);
+	} finally {
+		await client.end();
+	}
 }

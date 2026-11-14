@@ -3,6 +3,7 @@ import { and, count, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
 import { loadRunBoards } from "../engine/run-board.js";
+import { runListPreset } from "../presets/run-preset.js";
 
 export interface RunListFilter {
 	status?: RunStatus;
@@ -76,6 +77,7 @@ export async function listAllRuns(
 				cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 				triggered_by: run.triggeredBy,
 				triggered_via: run.triggeredVia,
+				preset: runListPreset(run),
 				started_at: run.startedAt.toISOString(),
 				ended_at: run.endedAt ? run.endedAt.toISOString() : null,
 				chains: [],

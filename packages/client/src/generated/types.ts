@@ -1220,12 +1220,22 @@ export interface RunListItem {
 	triggered_by: string;
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: string | null;
+	/** 触发时选用的运行预设；没有用预设时为 null。 */
+	preset: RunListPreset | null;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
 	/** 按深度、开始时间排序。 */
 	chains: RunListChain[];
 	active_nodes: RunListActiveNode[];
 	failures: RunListFailure[];
+}
+
+/** 运行列表里一个运行用的运行预设：只有 ID 和触发时的名称（列表不带预设参数的名单）。 */
+export interface RunListPreset {
+	/** 预设的 ID；预设可能已被删除。 */
+	id: string;
+	/** 触发时预设的名称。 */
+	name: string;
 }
 
 export interface RunListQuery {
@@ -1416,6 +1426,8 @@ export interface RunSummary {
 	triggered_via: string | null;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
+	/** 触发时选用的运行预设；没有用预设时为 null。 */
+	preset: RunListPreset | null;
 	/** 已请求取消、还在等待任务结束与清理（status 仍是 running，界面显示「取消中」）。 */
 	cancelling: boolean;
 }
