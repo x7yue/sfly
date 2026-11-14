@@ -4,8 +4,9 @@
 apps/web/src/lib/node-status.ts；名称为空的子流程写「未命名子流程」（packages/orchestration 的
 chain-label.ts）。命令行里的 `链:节点` 都由这里写出、也由这里认回去，所以 `scenario show`、
 `run show`、`run logs --node`、进度行里的写法互相对得上。节点的显示名称只跟在运行输出里的 `链:节点`
-后面（摘要、进度行、`run show`），写成 `链:节点「显示名称」`；要拼进下一条命令的 `链:节点` 和
-`run logs` 的每一行不带名称。
+后面（摘要、进度行、`run show`、`run artifacts`），写成 `链:节点「显示名称」`；要拼进下一条命令的
+`链:节点` 和 `run logs` 的每一行不带名称。`scenario show` 不是运行输出，节点写成
+「显示名称（节点 ID）」（`name_with_id`）。
 """
 
 from __future__ import annotations
@@ -107,9 +108,19 @@ def display_name_of(node: Mapping[str, Any]) -> dict[str, str]:
 
 
 def with_display_name(text: str, display_name: str | None) -> str:
-    """命令行里节点 ID 在前、显示名称在后：`main:create_user_1「创建测试用户」`；没有名称时原样。
-    （命令行的输出常被拿去拼下一条命令，所以和界面里「显示名称（节点 ID）」的顺序相反。）"""
+    """运行输出（`run start --wait`、`run wait`、`run show`、`run artifacts`）里节点 ID 在前、
+    显示名称在后：`main:create_user_1「创建测试用户」`；没有名称时原样。运行输出常被拿去拼下一条
+    命令，所以和界面里「显示名称（节点 ID）」的顺序相反。`scenario show` 不是运行输出，写
+    「显示名称（节点 ID）」，用 `name_with_id`；`run logs` 的每一行不带名称。"""
     return f"{text}「{display_name}」" if display_name else text
+
+
+def name_with_id(node_id: str, display_name: str | None) -> str:
+    """`scenario show` 里写节点的名字：「显示名称（节点 ID）」；没有名称、只有空白或名称就是
+    节点 ID 时只写节点 ID（对应 TS 的 `nameWithId`）。运行输出的写法是 `with_display_name`，
+    节点 ID 在前。"""
+    name = (display_name or "").strip()
+    return f"{name}（{node_id}）" if name and name != node_id else node_id
 
 
 def last_attempt(node: Mapping[str, Any]) -> dict[str, Any] | None:

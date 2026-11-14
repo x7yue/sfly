@@ -137,6 +137,123 @@ describe("警告里的节点写成「显示名称（节点 ID）」", () => {
 		expect(messages(doc, "subflow_name_empty")).toEqual(["子流程入口节点 blank 没有填写名称"]);
 	});
 
+	it("引用：被引用的节点写成「显示名称（节点 ID）」", () => {
+		const fetch = (id: string, url: string, displayName?: string) => ({
+			id,
+			kind: "package",
+			package: "demo",
+			node: "fetch",
+			inputs: { url },
+			...(displayName === undefined ? {} : { display_name: displayName }),
+		});
+		const doc = OrchestrationDocument.parse({
+			default_agent: "linux",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				fetch("first", "x", "造数据"),
+				fetch("second", "${{ nodes.first.outputs.nope }}", "查结果"),
+				fetch("third", "${{ nodes.fourth.outputs.body }}"),
+				fetch("fourth", "x", "清理"),
+			],
+			edges: [
+				{ from: "entry", to: "first", kind: "chain" },
+				{ from: "first", to: "second", kind: "chain" },
+				{ from: "second", to: "third", kind: "chain" },
+				{ from: "third", to: "fourth", kind: "chain" },
+			],
+			packages: { demo: "1.0.0" },
+		});
+		expect(messages(doc, "reference_unknown_output")).toEqual([
+			"节点 查结果（second） 的输入 url 引用的输出键 nope 没有在节点 造数据（first） 的节点类型中声明",
+		]);
+		expect(messages(doc, "reference_not_earlier")).toEqual([
+			"节点 third 的输入 url 引用的节点 清理（fourth） 不在本链上它的前面",
+		]);
+	});
+
+	describe("异步任务节点和子流程", () => {
+		const subflowDocument = (extra: object[] = [], edges: object[] = []) =>
+			OrchestrationDocument.parse({
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "spawn", kind: "async", display_name: "派发汇报", params: { extra: "1" } },
+					{
+						id: "sub",
+						kind: "subflow_entry",
+						name: "汇报",
+						params: [{ name: "run", type: "string", required: true }],
+					},
+					...extra,
+				],
+				edges: [
+					{ from: "entry", to: "spawn", kind: "chain" },
+					{ from: "spawn", to: "sub", kind: "dispatch" },
+					...edges,
+				],
+			});
+
+		it("子流程参数的警告写出子流程名称和入口节点 ID", () => {
+			expect(messages(subflowDocument(), "subflow_param_unknown")).toEqual([
+				"节点 派发汇报（spawn） 映射的参数 extra 不是子流程 汇报（sub） 声明的参数",
+			]);
+			expect(messages(subflowDocument(), "subflow_param_missing")).toEqual([
+				"节点 派发汇报（spawn） 没有映射子流程 汇报（sub） 的必填参数 run",
+			]);
+		});
+
+		it("停止子流程节点排在触发它的异步任务节点之前：异步任务节点写出显示名称", () => {
+			const doc = OrchestrationDocument.parse({
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "stop", kind: "stop_subflow", subflow: "sub" },
+					{ id: "spawn", kind: "async", display_name: "派发汇报" },
+					{ id: "sub", kind: "subflow_entry", name: "汇报" },
+				],
+				edges: [
+					{ from: "entry", to: "stop", kind: "chain" },
+					{ from: "stop", to: "spawn", kind: "chain" },
+					{ from: "spawn", to: "sub", kind: "dispatch" },
+				],
+			});
+			expect(messages(doc, "stop_subflow_before_trigger")).toEqual([
+				"停止子流程节点 stop 在触发子流程「汇报」的异步任务节点 派发汇报（spawn） 之前",
+			]);
+		});
+
+		it("再连一条调度连线被拒绝的原因：已经触发它的异步任务节点写出显示名称", () => {
+			const doc = subflowDocument([{ id: "again", kind: "async" }]);
+			expect(checkConnection(doc, { from: "again", to: "sub", kind: "dispatch" })).toBe(
+				"子流程入口节点 汇报（sub） 已被异步任务节点 派发汇报（spawn） 触发",
+			);
+		});
+
+		it("调度连线不合规：两端写出显示名称", () => {
+			const doc = subflowDocument(
+				[{ id: "wait", kind: "sleep", duration: "5s", display_name: "等一等" }],
+				[{ from: "wait", to: "sub", kind: "dispatch" }],
+			);
+			expect(messages(doc, "invalid_dispatch")).toEqual([
+				"调度连线 等一等（wait） → 汇报（sub） 必须从异步任务节点连到子流程入口节点",
+			]);
+		});
+	});
+
+	it("连线指向不存在的节点：存在的一端写出显示名称，不存在的一端写节点 ID", () => {
+		const doc = OrchestrationDocument.parse({
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "wait", kind: "sleep", duration: "5s", display_name: "等一等" },
+			],
+			edges: [
+				{ from: "entry", to: "wait", kind: "chain" },
+				{ from: "wait", to: "ghost", kind: "chain" },
+			],
+		});
+		expect(messages(doc, "unknown_node")).toEqual([
+			"连线 等一等（wait） → ghost 指向不存在的节点 ghost",
+		]);
+	});
+
 	it("连线被拒绝的原因也写出显示名称", () => {
 		const doc = document();
 		expect(checkConnection(doc, { from: "fetch_1", to: "notify_1", kind: "chain" })).toBe(

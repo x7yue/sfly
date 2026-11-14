@@ -984,6 +984,7 @@
                           "const": "entry"
                         },
                         "params": {
+                          "default": [],
                           "type": "array",
                           "items": {
                             "type": "object",
@@ -1065,6 +1066,7 @@
                           "type": "string"
                         },
                         "params": {
+                          "default": [],
                           "type": "array",
                           "items": {
                             "type": "object",

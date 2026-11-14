@@ -1,3 +1,4 @@
+import type { AnnotationMemberIds } from "./annotation-members.js";
 import { type LayoutDocument, NODE_SIZE, type Position, REGION_PADDING } from "./layout.js";
 import { chainMembers } from "./structure.js";
 
@@ -23,13 +24,9 @@ export interface SubflowRegion {
 	box: Box;
 }
 
-/** 注释框的成员（场景文档 `annotations` 里的一项，只读取画框要用的部分）。 */
-export interface AnnotationMembers {
+/** 注释框的成员加上它的 ID（场景文档 `annotations` 里的一项，只读取画框要用的部分）。 */
+export interface AnnotationMembers extends AnnotationMemberIds {
 	readonly id: string;
-	/** 成员节点的节点 ID。 */
-	readonly nodes: readonly string[];
-	/** 成员子流程：子流程入口的节点 ID。 */
-	readonly subflows: readonly string[];
 }
 
 /** 带注释框的文档。 */

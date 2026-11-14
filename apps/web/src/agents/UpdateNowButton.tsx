@@ -11,6 +11,7 @@ import {
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { notify } from "#/components/feedback/notify";
+import { NodeName } from "#/components/node-name";
 import { callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { Button } from "@/components/ui/button";
@@ -108,7 +109,7 @@ export function UpdateNowButton({
 											key={`${task.task_id}:${task.attempt}`}
 											className="flex items-baseline gap-2 rounded-md border border-border-soft bg-bg px-3 py-1.5"
 										>
-											<span className="font-mono">{task.node_id}</span>
+											<NodeName node={task} />
 											<span className="text-xs text-fg-3">
 												运行 <span className="font-mono">{shortId(task.run_id)}</span> · 第{" "}
 												{task.attempt} 次尝试 · {task.status === "running" ? "执行中" : "派发中"}

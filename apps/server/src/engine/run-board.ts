@@ -35,6 +35,12 @@ export function subflowNameOf(
 	return start?.kind === "subflow_entry" ? subflowName(start) : undefined;
 }
 
+/** 运行绑定版本里节点的显示名称（同运行视图里节点的 `display_name`）；没有这个节点或没有名称时为 undefined。 */
+export function nodeNameIn(document: OrchestrationDocument, nodeId: string): string | undefined {
+	const node = document.nodes.find((n) => n.id === nodeId);
+	return node && nodeNameBeforeId(node);
+}
+
 export interface BoardNode {
 	node_id: string;
 	/** 运行绑定版本里的显示名称（子流程入口节点是子流程名称）；没有时为 undefined。 */

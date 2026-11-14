@@ -14,6 +14,9 @@ class CountdownOutputs(TypedDict):
     ticks: Annotated[int, Doc("实际倒数的步数")]
 
 
+# 除 ctx 以外的参数都是输入，类型注解决定画布上的参数表单，`Doc` 是表单里的说明；输出由返回类型
+# （TypedDict）声明。文档字符串是节点类型的说明，会显示在画布上，写给搭场景的人看：
+# 做什么、会留下什么副作用、什么情况下失败。
 @node(
     title="倒计时问候",
     metrics=[Metric("remaining", unit="步", kind="gauge", description="剩余步数")],
@@ -27,7 +30,7 @@ def countdown(
 ) -> CountdownOutputs:
     """倒数 steps 步（每步 interval 秒）后问候 name。
 
-    除 ctx 以外的参数都是输入，类型注解决定参数表单；输出由返回类型（TypedDict）声明。
+    没有副作用，只写日志和指标。steps 小于 1 时失败。
     """
     if steps < 1:
         # 失败就抛异常，消息里写清原因和参数值。

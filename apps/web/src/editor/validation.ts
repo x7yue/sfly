@@ -3,6 +3,7 @@ import {
 	nodeNameWithId,
 	nodeTypeOf,
 	type PackageCatalog,
+	type WarningShape,
 } from "@sfly/orchestration";
 import { OrchestrationDocument } from "@sfly/schema";
 
@@ -13,11 +14,7 @@ import { OrchestrationDocument } from "@sfly/schema";
  *
  * 输入框里还没生效的值（例如在整数输入里填了 abc）不在文档里，由 field-drafts.tsx 另外记录。
  */
-export interface FieldError {
-	/** 出错的节点；场景级字段、注释框的字段为 undefined。 */
-	nodeId?: string;
-	/** 出错的注释框（标题、备注）。 */
-	annotationId?: string;
+interface FieldErrorAt {
 	/** 节点（或注释框）内的字段路径，例如 `params.0.name`、`duration`、`inputs.steps`、`title`。 */
 	field: string;
 	message: string;
@@ -26,6 +23,17 @@ export interface FieldError {
 	/** 来自边输入边改的文本框：输入到一半多半还不合法，字段交互过才给用户看（field-drafts.tsx）。 */
 	typed?: boolean;
 }
+
+/**
+ * 字段错误出在哪个对象上，三选一：节点（`nodeId`）、注释框（`annotationId`，标题、备注），
+ * 或者都没有（场景级字段）。节点和注释框不会同时出现，靠 `nodeId`、`annotationId` 是否为 undefined 区分。
+ */
+export type FieldError = FieldErrorAt &
+	(
+		| { nodeId: string; annotationId?: undefined }
+		| { annotationId: string; nodeId?: undefined }
+		| { nodeId?: undefined; annotationId?: undefined }
+	);
 
 const TYPED_FIELD = /^(params\.\d+\.name|at|duration)$/;
 
@@ -48,13 +56,14 @@ export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
 			const node = head === "nodes" ? doc.nodes[at] : undefined;
 			const annotation = head === "annotations" ? doc.annotations[at] : undefined;
 			const field = (node || annotation ? rest : issue.path).map(String).join(".");
-			errors.push({
-				nodeId: node?.id,
-				annotationId: annotation?.id,
+			const error = {
 				field,
 				message: messageOf(issue.path, issue.code, issue.message),
 				typed: TYPED_FIELD.test(field),
-			});
+			};
+			if (node) errors.push({ ...error, nodeId: node.id });
+			else if (annotation) errors.push({ ...error, annotationId: annotation.id });
+			else errors.push(error);
 		}
 	}
 	for (const node of doc.nodes) {
@@ -123,7 +132,7 @@ export function checkSummary(
 }
 
 /** 保存成功后提示里对警告的说明：注释框的警告不影响触发运行（blocksTrigger），其余要在触发运行前处理。 */
-export function warningsSummary(warnings: readonly object[]): string {
+export function warningsSummary(warnings: readonly WarningShape[]): string {
 	const blocking = warnings.filter(blocksTrigger).length;
 	if (blocking === 0) return `${warnings.length} 条警告，不影响触发运行`;
 	if (blocking === warnings.length) return `${warnings.length} 条警告，触发运行前需要处理`;
