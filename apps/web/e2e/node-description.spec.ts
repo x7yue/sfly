@@ -108,10 +108,14 @@ test("检查器「说明」页：按纯文本显示节点类型说明的全文�
 
 	await nodeCard(page, "fetch").click();
 	await panel.getByRole("tab", { name: /说明/ }).click();
-	const text = panel.getByText("请求一个地址并检查状态码。");
-	// 全文，段落之间的空行保留；Markdown 记号原样显示，不渲染成粗体。
-	await expect(text).toBeVisible();
-	expect(await text.innerText()).toBe(DESCRIPTION);
+	const first = panel.getByText("请求一个地址并检查状态码。");
+	// 全文，和菜单、节点包管理页同一条规则：空行分段，段内的折行并成一个空格；Markdown 记号原样显示，不渲染成粗体。
+	await expect(first).toBeVisible();
+	expect(await first.innerText()).toBe(FIRST_PARAGRAPH);
+	expect(await panel.getByText("失败时重试 3 次，每次间隔 1 秒。").innerText()).toBe(
+		"失败时重试 3 次，每次间隔 1 秒。",
+	);
+	expect(await panel.getByText("星号原样显示。").innerText()).toBe("**不渲染**：星号原样显示。");
 	await expect(panel.locator("strong")).toHaveCount(0);
 	await expect(panel.getByText(GENERIC)).toHaveCount(0);
 

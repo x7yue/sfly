@@ -13,6 +13,7 @@ import {
 	nodeCard,
 	typedDocument,
 	typedNodes,
+	zoomOut,
 } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
@@ -993,10 +994,7 @@ test.describe("编排画布：节点的备注", () => {
 	});
 
 	test("缩小后图标仍在", async ({ page }) => {
-		for (let i = 0; i < 3; i++) {
-			await page.getByRole("button", { name: "缩小" }).click();
-			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
-		}
+		await zoomOut(page, 3);
 		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
 		await page.mouse.move(700, 760);
 		await expect(page).toHaveScreenshot("editor-node-notes-zoomed-out.png");
@@ -1038,10 +1036,7 @@ test.describe("编排画布：注释框", () => {
 	});
 
 	test("缩小后的标题", async ({ page }) => {
-		for (let i = 0; i < 3; i++) {
-			await page.getByRole("button", { name: "缩小" }).click();
-			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
-		}
+		await zoomOut(page, 3);
 		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
 		await page.mouse.move(700, 760);
 		await expect(page).toHaveScreenshot("editor-annotations-zoomed-out.png");
@@ -1149,10 +1144,7 @@ test.describe("编排画布：显示名称", () => {
 	});
 
 	test("语义缩放：缩小后显示名称仍然看得清", async ({ page }) => {
-		for (let i = 0; i < 3; i++) {
-			await page.getByRole("button", { name: "缩小" }).click();
-			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
-		}
+		await zoomOut(page, 3);
 		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
 		await page.mouse.move(700, 760);
 		await expect(page).toHaveScreenshot("editor-display-names-zoomed-out.png");

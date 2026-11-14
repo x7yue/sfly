@@ -2,6 +2,7 @@ import { copyProblem, disconnectEdge, disconnectNode, nodeConnections } from "@s
 import type { OrchestrationDocument } from "@sfly/schema";
 import { type CanvasMenuTarget, FitViewMenuItem } from "#/components/canvas/CanvasMenu";
 import type { DocNode } from "#/components/canvas/flow";
+import { ACTION } from "#/lib/copy";
 import { ContextMenuItem } from "@/components/ui/context-menu";
 import type { AddRequest } from "./AddNodeMenu";
 import { type AnnotationMenuActions, AnnotationMenuItems } from "./annotation-menu";
@@ -59,7 +60,7 @@ export function EditorMenu({
 	if (target.kind === "nodes") {
 		return edit ? (
 			<ContextMenuItem onClick={() => edit.addAnnotationAround(target.ids)}>
-				添加注释框
+				{ACTION.addAnnotation}
 			</ContextMenuItem>
 		) : null;
 	}

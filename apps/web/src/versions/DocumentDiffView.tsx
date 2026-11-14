@@ -1,6 +1,7 @@
 import type { AnnotationChange, DocumentDiff, FieldChange } from "@sfly/orchestration";
 import { isEmptyDiff } from "@sfly/orchestration";
 import { KIND_META } from "#/components/canvas/node-display";
+import { ANNOTATION_FIELD_LABEL, TERM } from "#/lib/copy";
 
 /**
  * 两份场景文档的差异列表：场景设置、节点（新增 / 删除 / 修改的字段）、连线、注释框、布局。
@@ -82,7 +83,7 @@ export function DocumentDiffView({
 				</DiffSection>
 			)}
 			{annotations.added.length + annotations.removed.length + annotations.changed.length > 0 && (
-				<DiffSection title="注释框">
+				<DiffSection title={TERM.annotation}>
 					{annotations.added.map((a) => (
 						<Row key={`+${a.id}`}>
 							<Ins>
@@ -172,13 +173,6 @@ function ChangeRow({
 	);
 }
 
-const ANNOTATION_FIELD_LABEL: Record<string, string> = {
-	title: "标题",
-	note: "备注",
-	nodes: "成员节点",
-	subflows: "成员子流程",
-};
-
 /** 成员列表写成「a、b」，没有成员写「（无）」。 */
 function annotationChange(change: AnnotationChange["changes"][number]): FieldChange {
 	const members = (value: unknown) => (Array.isArray(value) ? value.join("、") || "（无）" : value);
@@ -191,7 +185,7 @@ const kindLabel = (kind: string) => KIND_META[kind as keyof typeof KIND_META]?.l
 
 const FIELD_LABEL: Record<string, string> = {
 	default_agent: "默认 Agent",
-	display_name: "显示名称",
+	display_name: TERM.displayName,
 	name: "名称",
 	agent: "Agent",
 	always: "always",
@@ -205,7 +199,7 @@ const FIELD_LABEL: Record<string, string> = {
 	tz: "时区",
 	duration: "时长",
 	subflow: "要停止的子流程",
-	note: "备注",
+	note: TERM.note,
 };
 
 function fieldLabel(path: string): string {

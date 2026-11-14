@@ -79,7 +79,7 @@ import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useV
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
 import { type AddItem, idStem, newDocNode, newSubflowNameProblem, packageGroups } from "./add-node";
 import { companionSubflow } from "./add-subflow";
-import { newAnnotation, updateAnnotation, withNode, withoutMember } from "./annotations";
+import { leaveAnnotation, newAnnotation, updateAnnotation, withNode } from "./annotations";
 import { usePackageCatalog, useRegisteredAgents, useRegisteredBots } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { EditorMenu } from "./EditorMenu";
@@ -687,8 +687,9 @@ function Editor({
 			},
 		});
 	};
-	// 正在原地改名时保存：输入框里没确认的名称要先进文档。卡片拿到焦点，输入框失焦就是确认（NodeTitleEditor，
-	// 和 Enter 同一步撤销）；确认落进文档的那次渲染之后才保存，用的是带新名称的文档。
+	// 正在原地改名时保存（Ctrl+S 或点保存按钮）：输入框里没确认的名称要先进文档。卡片拿到焦点，输入框失焦就是确认
+	// （NodeTitleEditor，和 Enter 同一步撤销）；确认落进文档的那次渲染之后才保存，用的是带新名称的文档。
+	// 点按钮时鼠标按下那一刻输入框就失焦确认了，按钮点下去时已经没在改名，直接保存。
 	const [savePending, setSavePending] = useState(false);
 	const saveShortcut = () => {
 		const card = renamingId === null ? null : cardOf(renamingId);
@@ -739,12 +740,13 @@ function Editor({
 		onLocateAnnotation: locateAnnotation,
 	};
 
+	/** 焦点移到检查器里第一个可操作的控件：当前页签里的，没有页签的检查器（多选）里标了 `data-focus-start` 的区域里的。 */
 	const focusInspector = () => {
 		setInspectorOpen(true);
 		requestAnimationFrame(() => {
 			const aside = inspectorRef.current;
 			const target = aside?.querySelector<HTMLElement>(
-				'[role="tabpanel"] :is(input, select, textarea, button, [contenteditable="true"]):not([disabled])',
+				':is([role="tabpanel"], [data-focus-start]) :is(input, select, textarea, button, [contenteditable="true"]):not([disabled])',
 			);
 			(target ?? aside)?.focus();
 		});
@@ -786,7 +788,8 @@ function Editor({
 							editors={editors}
 							doc={doc}
 							versioning={versioning}
-							onSave={save}
+							renaming={renamingId !== null}
+							onSave={saveShortcut}
 							onRun={() => setTriggering(true)}
 							onReload={onReload}
 						/>
@@ -858,15 +861,13 @@ function Editor({
 											addAnnotationAround,
 											annotations: (nodeId) => ({
 												annotations: meta.annotations,
-												onAdd: () => addAnnotation({ nodes: [nodeId], subflows: [] }),
+												onAdd: () => addAnnotationAround([nodeId]),
 												onJoin: (id) =>
 													changeAnnotations((list) =>
 														updateAnnotation(list, id, (a) => withNode(a, nodeId)),
 													),
 												onLeave: (id) =>
-													changeAnnotations((list) =>
-														updateAnnotation(list, id, (a) => withoutMember(a, nodeId)),
-													),
+													changeAnnotations((list) => leaveAnnotation(list, id, nodeId)),
 											}),
 										}
 							}

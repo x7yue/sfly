@@ -11,13 +11,14 @@ import {
 	addMenu,
 	createEditorScenario,
 	dock,
+	editorDocument,
 	inspector,
 	nodeCard,
 	nodeMenu,
 	openEditor,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { box } from "./support";
+import { box, createScenario } from "./support";
 
 // 从多选新建注释框（#315）：检查器「已选 N 个节点」和多选里节点的右键菜单都有「添加注释框」；
 // 子流程的节点全被选中就记为子流程成员，只选中一部分就按节点成员记；新建后选中注释框并聚焦标题，一步撤销。
@@ -176,7 +177,9 @@ test("只选中子流程的一部分节点：只记节点成员；往这个子�
 	await expect(memberList(page).getByRole("listitem")).toHaveText([/fetch/, /sub_ping/]);
 
 	const frame = annotationFrame(page, "annotation_1");
-	expect(frames(await box(frame), await box(nodeCard(page, "sub_ping")))).toBe(true);
+	await expect
+		.poll(async () => frames(await box(frame), await box(nodeCard(page, "sub_ping"))))
+		.toBe(true);
 	const first = await sizeInCards(page, "annotation_1", "sub_ping");
 
 	await nodeCard(page, "sub_ping").click({ button: "right" });
@@ -184,10 +187,13 @@ test("只选中子流程的一部分节点：只记节点成员；往这个子�
 	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
 	await expect(nodeCard(page, "sleep_1")).toBeVisible();
 	// 框只按成员算，sub_ping 是节点成员：框的大小（以卡片为单位）不变，新节点不在框里。
-	const after = await sizeInCards(page, "annotation_1", "sub_ping");
-	expect(after.width).toBeCloseTo(first.width, 1);
-	expect(after.height).toBeCloseTo(first.height, 1);
-	expect(frames(await box(frame), await box(nodeCard(page, "sleep_1")))).toBe(false);
+	const sizeOf = async (dimension: "width" | "height") =>
+		(await sizeInCards(page, "annotation_1", "sub_ping"))[dimension];
+	await expect.poll(() => sizeOf("width")).toBeCloseTo(first.width, 1);
+	await expect.poll(() => sizeOf("height")).toBeCloseTo(first.height, 1);
+	await expect
+		.poll(async () => frames(await box(frame), await box(nodeCard(page, "sleep_1"))))
+		.toBe(false);
 
 	await save(page, 2);
 	expect(await savedAnnotations(controlPlane, id)).toEqual([
@@ -251,4 +257,45 @@ test("只用键盘：多选里的节点按 Shift+F10 打开菜单，保持多选
 
 	await expect(annotationTitleBox(page)).toBeFocused();
 	await expect(memberList(page).getByRole("listitem")).toHaveText([/fetch/, /dispatch/]);
+});
+
+/** editorDocument 去掉子流程里的 sub_ping：子流程 sub_entry 只剩入口节点。 */
+const entryOnlySubflow = {
+	...editorDocument,
+	nodes: editorDocument.nodes.filter((n) => n.id !== "sub_ping"),
+	edges: editorDocument.edges.filter((e) => e.to !== "sub_ping"),
+};
+
+test("子流程只有入口节点时，单个节点右键「添加注释框」记为子流程成员，和多选新建一致", async ({
+	page,
+	controlPlane,
+}) => {
+	await createEditorScenario(controlPlane);
+	const id = await createScenario(controlPlane, "只有入口的子流程", entryOnlySubflow);
+	await openEditor(page, id, "sub_entry");
+
+	await nodeCard(page, "sub_entry").click({ button: "right" });
+	await nodeMenu(page).getByRole("menuitem", { name: "添加注释框" }).click();
+	await expect(annotationBand(page, "注释框 1")).toHaveAttribute("aria-pressed", "true");
+	await expect(memberList(page).getByRole("listitem")).toHaveText([/子流程 sub_entry/]);
+	await save(page, 2);
+	expect(await savedAnnotations(controlPlane, id)).toEqual([
+		{ id: "annotation_1", title: "注释框 1", nodes: [], subflows: ["sub_entry"] },
+	]);
+});
+
+test("子流程里还有别的节点时，右键子流程入口新建的注释框仍记入口为节点成员", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+
+	await nodeCard(page, "sub_entry").click({ button: "right" });
+	await nodeMenu(page).getByRole("menuitem", { name: "添加注释框" }).click();
+	await expect(annotationBand(page, "注释框 1")).toHaveAttribute("aria-pressed", "true");
+	await save(page, 2);
+	expect(await savedAnnotations(controlPlane, id)).toEqual([
+		{ id: "annotation_1", title: "注释框 1", nodes: ["sub_entry"], subflows: [] },
+	]);
 });

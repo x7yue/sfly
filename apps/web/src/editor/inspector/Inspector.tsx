@@ -3,6 +3,7 @@ import {
 	isAnnotationWarning,
 	nameWithId,
 	nodeCardText,
+	nodeDefaultTitle,
 	nodeNameWithId,
 	nodeTypeOf,
 	type OrchestrationWarning,
@@ -28,6 +29,8 @@ import {
 	soleNode,
 } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
+import { ACTION, ANNOTATION_FIELD_LABEL } from "#/lib/copy";
+import { descriptionParagraphs } from "#/lib/node-description";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -290,7 +293,7 @@ function NodeInspector({
 					<DisplayNameField
 						id={id}
 						node={node}
-						placeholder={nodeCardText({ ...node, display_name: undefined }, info).title}
+						placeholder={nodeDefaultTitle(node, info)}
 						error={displayNameError}
 						onChange={change}
 					/>
@@ -442,10 +445,17 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 		type && Object.keys(type.outputs.properties).length > 0 ? type.outputs : undefined;
 	return (
 		<>
-			{/* 节点类型的说明是节点函数的文档字符串，按纯文本显示全文；没有说明时是通用的那句。 */}
-			<p className="m-0 mb-3 whitespace-pre-wrap text-xs text-fg-2">
-				{(node.kind === "package" && type?.description) || KIND_DOC[node.kind]}
-			</p>
+			{/* 节点类型的说明是节点函数的文档字符串，按纯文本显示全文，分段规则和「添加节点」菜单一致；没有说明时是通用的那句。 */}
+			<div className="mb-3 flex flex-col gap-2 text-xs text-fg-2">
+				{descriptionParagraphs(
+					(node.kind === "package" && type?.description) || KIND_DOC[node.kind],
+				).map((paragraph, i) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: 静态文本，同一段话可能重复，只能按位置区分
+					<p key={i} className="m-0">
+						{paragraph}
+					</p>
+				))}
+			</div>
 			<dl className="m-0 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1.75 text-sm">
 				<dt className="text-fg-3">节点 ID</dt>
 				<dd className="m-0 min-w-0 truncate font-mono">{id}</dd>
@@ -499,11 +509,14 @@ function GroupInspector({
 	return (
 		<>
 			<Header onCollapse={onCollapse} title={`已选 ${ids.length} 个节点`} row={<span>多选</span>} />
-			<div className={cn(FIELD_LIST_CLASS, "min-h-0 flex-1 overflow-auto px-3.5 py-3")}>
+			<div
+				data-focus-start=""
+				className={cn(FIELD_LIST_CLASS, "min-h-0 flex-1 overflow-auto px-3.5 py-3")}
+			>
 				<div className="flex flex-wrap gap-2">
 					<Button size="sm" onClick={() => context.onAddAnnotation(ids)}>
 						<SquareDashedIcon />
-						添加注释框
+						{ACTION.addAnnotation}
 					</Button>
 					<Button size="sm" onClick={() => context.onDelete(ids)}>
 						<Trash2Icon />
@@ -515,8 +528,6 @@ function GroupInspector({
 		</>
 	);
 }
-
-const ANNOTATION_FIELD_LABEL: Record<string, string> = { title: "标题", note: "备注" };
 
 /** 没有选中节点时：场景级设置与检查结果。 */
 function ScenarioInspector({

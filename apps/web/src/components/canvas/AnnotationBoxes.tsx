@@ -1,4 +1,4 @@
-import { annotationBoxes, type LayoutDocument, REGION_PADDING } from "@sfly/orchestration";
+import { type AnnotationBox, type LayoutDocument, REGION_PADDING } from "@sfly/orchestration";
 import type { Annotation } from "@sfly/schema";
 import { type NodeChange, ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
@@ -13,21 +13,22 @@ const BAND_BOTTOM = REGION_PADDING.top - 8;
 
 /**
  * 注释框（GLOSSARY「注释框」）：中性实线框加标题带，画在子流程区域和节点下面，后添加的画在上层。
- * 范围由成员算出（@sfly/orchestration 的 annotationBoxes），一个有效成员都没有的不画。
+ * 范围由成员算出（@sfly/orchestration 的 annotationBoxes，由画布算好传进来），一个有效成员都没有的不画。
  * 标题带只有标题和（有备注时）备注图标；给了 `onSelect` 时（可编辑的画布）点标题带选中注释框，
  * 给了 `onMove` 时拖动标题带整组移动成员（子流程成员的全部节点）。鼠标在标题带上时通过 `onHover` 报告，
  * 只读的画布也一样：框不挡鼠标，悬停只认标题带。
  */
 export function AnnotationBoxes({
 	layout,
-	annotations,
+	boxes,
 	selected,
 	onSelect,
 	onHover,
 	onMove,
 }: {
+	/** 拖动标题带时按它找成员现在的位置。 */
 	layout: LayoutDocument;
-	annotations: readonly Annotation[];
+	boxes: readonly AnnotationBox<Annotation>[];
 	/** 选中的注释框 ID。 */
 	selected: string | null;
 	onSelect?: (id: string) => void;
@@ -36,7 +37,6 @@ export function AnnotationBoxes({
 	/** 拖动标题带移动成员：和 React Flow 拖动节点一样用位置变化报告，拖动中 `dragging` 为 true，松手时为 false。 */
 	onMove?: (changes: NodeChange<SfNode>[]) => void;
 }) {
-	const boxes = useMemo(() => annotationBoxes({ ...layout, annotations }), [layout, annotations]);
 	const positions = useMemo(
 		() => new Map(layout.nodes.flatMap((n) => (n.position ? [[n.id, n.position] as const] : []))),
 		[layout],

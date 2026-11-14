@@ -1,4 +1,5 @@
 import type { DocNode } from "#/components/canvas/flow";
+import { TERM } from "#/lib/copy";
 import { Input } from "@/components/ui/input";
 import { draftKey } from "../field-drafts";
 import { Field } from "./fields";
@@ -27,7 +28,7 @@ export function DisplayNameField({
 	onChange(node: NamedNode): void;
 }) {
 	return (
-		<Field label="显示名称" error={error} fieldKey={draftKey(id, "display_name")}>
+		<Field label={TERM.displayName} error={error} fieldKey={draftKey(id, "display_name")}>
 			{(control) => (
 				<Input
 					{...control}

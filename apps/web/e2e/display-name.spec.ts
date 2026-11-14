@@ -8,6 +8,7 @@ import {
 	inspector,
 	nodeCard,
 	openEditor,
+	zoomOut,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { box, createScenario, publishPackage } from "./support";
@@ -113,20 +114,27 @@ test("显示名称放不下时在卡片上截断，卡片尺寸不变，悬停�
 	await nameBox(page).fill(LONG);
 	const title = titleOf(fetch);
 	await expect(title).toHaveText(LONG);
-	const after = await box(fetch);
-	expect([after.width, after.height]).toEqual([before.width, before.height]);
-	expect(
-		await title.evaluate((el) => ({
-			clipped: el.scrollWidth > el.clientWidth,
-			overflow: getComputedStyle(el).textOverflow,
-		})),
-	).toEqual({ clipped: true, overflow: "ellipsis" });
+	await expect
+		.poll(async () => {
+			const after = await box(fetch);
+			return [after.width, after.height];
+		})
+		.toEqual([before.width, before.height]);
+	await expect
+		.poll(() =>
+			title.evaluate((el) => ({
+				clipped: el.scrollWidth > el.clientWidth,
+				overflow: getComputedStyle(el).textOverflow,
+			})),
+		)
+		.toEqual({ clipped: true, overflow: "ellipsis" });
 	await expect(title).toHaveAttribute("title", LONG);
 	await expect(fetch).toHaveAttribute("aria-label", `节点 fetch，HTTP 检查，${LONG}`);
 
 	// 短的显示名称没有被截断。
 	await nameBox(page).fill(NAME);
-	expect(await title.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+	await expect(title).toHaveText(NAME);
+	await expect.poll(() => title.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
 });
 
 test("画布缩小到语义缩放时，显示名称仍然显示、字号不小于最小字号", async ({
@@ -137,10 +145,7 @@ test("画布缩小到语义缩放时，显示名称仍然显示、字号不小�
 	await openEditor(page, id);
 	await nodeCard(page, "fetch").click();
 	await nameBox(page).fill(NAME);
-	for (let i = 0; i < 3; i++) {
-		await page.getByRole("button", { name: "缩小" }).click();
-		await page.waitForTimeout(300);
-	}
+	await zoomOut(page, 3);
 	await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
 	const title = titleOf(nodeCard(page, "fetch"));
 	await expect(title).toHaveText(NAME);

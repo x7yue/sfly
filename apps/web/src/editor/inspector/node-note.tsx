@@ -1,3 +1,4 @@
+import { TERM } from "#/lib/copy";
 import { Textarea } from "@/components/ui/textarea";
 import { draftKey } from "../field-drafts";
 import { Field } from "./fields";
@@ -19,7 +20,7 @@ export function NoteField({
 	onChange(note: string | undefined): void;
 }) {
 	return (
-		<Field label="备注" error={error} fieldKey={draftKey(id, "note")}>
+		<Field label={TERM.note} error={error} fieldKey={draftKey(id, "note")}>
 			{(control) => (
 				<Textarea
 					{...control}
