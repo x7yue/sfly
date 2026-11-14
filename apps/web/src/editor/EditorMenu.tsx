@@ -5,6 +5,7 @@ import type { DocNode } from "#/components/canvas/flow";
 import type { AddRequest } from "./AddNodeMenu";
 import { type AnnotationMenuActions, AnnotationMenuItems } from "./annotation-menu";
 import { EdgeMenu } from "./EdgeMenu";
+import { isNamedNode } from "./inspector/DisplayNameField";
 import { NodeMenu, type NodeMenuEdit } from "./NodeMenu";
 import { type NodeClipboard, NodeCopyItems } from "./node-clipboard";
 import { PaneMenu } from "./PaneMenu";
@@ -19,6 +20,8 @@ export interface EditorMenuActions {
 	/** 把文档操作的结果写回画布（一步撤销）。 */
 	applyEdit(next: Pick<OrchestrationDocument, "nodes" | "edges">): void;
 	deleteNodes(ids: readonly string[]): void;
+	/** 原地改显示名称（节点菜单的「重命名」）。 */
+	startRename(id: string): void;
 	clipboard: NodeClipboard;
 	tidy(): void;
 	undo(): void;
@@ -88,6 +91,8 @@ function nodeMenuEdit(edit: EditorMenuActions, id: string, node: DocNode): NodeM
 	return {
 		connections: { in: connections.in.length, out: connections.out.length },
 		onAddAfter: () => edit.openAddMenu({ kind: "after", after: id }),
+		onRename: () => edit.startRename(id),
+		renameProblem: isNamedNode(node) ? null : "子流程入口节点的名称是子流程名称，在检查器里修改",
 		clipboardItems: copyProblem(node) ? undefined : (
 			<NodeCopyItems
 				onDuplicate={() => edit.clipboard.duplicate(id)}

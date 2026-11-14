@@ -9,11 +9,11 @@ from __future__ import annotations
 import os
 import signal
 from collections.abc import Callable
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
 import psutil
 
-from sfly import Context, node
+from sfly import Context, Doc, node
 from sfly_std import _process, _supervise
 from sfly_std._waiting import poll_until
 
@@ -22,8 +22,14 @@ KILL_WAIT = 5.0
 
 
 class StopProcessOutputs(TypedDict):
-    was_running: bool
-    exit_code: int | None
+    was_running: Annotated[bool, Doc("开始停止时进程是否还在运行")]
+    exit_code: Annotated[
+        int | None,
+        Doc(
+            "进程的退出码：被信号终止时为 128 + 信号值（SIGTERM 为 143，被 SIGKILL 强制杀掉为 137）"
+            "；拿不到时为 null"
+        ),
+    ]
 
 
 class StopFailed(Exception):
@@ -43,13 +49,22 @@ def _members(pgid: int) -> list[int]:
 
 
 @node(title="停止后台进程")
-def stop_process(ctx: Context, pid: int | None = None, grace: float = 10) -> StopProcessOutputs:
-    """终止 `pid` 所在的整个进程组：先发 SIGTERM，`grace` 秒（默认 10）后仍未退出的发 SIGKILL。
+def stop_process(
+    ctx: Context,
+    pid: Annotated[
+        int | None,
+        Doc("要停止的进程号，通常引用 start_process 的输出 pid；为空时什么也不做、直接成功"),
+    ] = None,
+    grace: Annotated[float, Doc("从 SIGTERM 到 SIGKILL 的宽限期（秒）")] = 10,
+) -> StopProcessOutputs:
+    """停止 start_process 启动的后台进程：终止 pid 所在的整个进程组。
 
-    进程已经不在（或 `pid` 为空，例如上游的 `start_process` 没有成功）时直接成功，
-    适合放在 always 节点里清理。输出 `was_running`（开始时进程是否在运行）和 `exit_code`：
-    进程由同一次运行里的 `start_process` 启动时能拿到它的退出码（被信号终止时为 128 + 信号值，
-    被 SIGKILL 杀掉为 137），拿不到时为 null。
+    副作用：先发 SIGTERM，宽限期过后还没退出的发 SIGKILL。
+    进程组里的子进程一起终止，自己脱离进程组的进程不在其中。
+    进程已经不在、或 pid 为空（例如上游的 start_process 没有成功）时什么也不做，直接成功，
+    所以适合设为 always 节点来清理。
+
+    失败：宽限期加 SIGKILL 之后进程仍然没有退出（例如卡在不可中断的磁盘读写里）时失败。
     """
     if pid is None:
         ctx.log.info("没有给出 pid，不需要停止")
