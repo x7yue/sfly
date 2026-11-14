@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { StatusPill } from "#/components/status";
+import { useHostKeyboardFocus } from "#/lib/host-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
@@ -16,20 +17,7 @@ export function WarningBadge({
 }) {
 	const badge = useRef<HTMLSpanElement>(null);
 	const [hovered, setHovered] = useState(false);
-	const [focused, setFocused] = useState(false);
-	useEffect(() => {
-		const card = badge.current?.closest<HTMLElement>("[data-node-id]");
-		if (!card) return;
-		const onFocus = () => setFocused(card.matches(":focus-visible"));
-		const onBlur = () => setFocused(false);
-		onFocus();
-		card.addEventListener("focus", onFocus);
-		card.addEventListener("blur", onBlur);
-		return () => {
-			card.removeEventListener("focus", onFocus);
-			card.removeEventListener("blur", onBlur);
-		};
-	}, []);
+	const focused = useHostKeyboardFocus(badge, "[data-node-id]");
 
 	return (
 		<Tooltip open={hovered || focused} onOpenChange={setHovered}>

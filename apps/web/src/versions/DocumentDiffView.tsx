@@ -109,11 +109,12 @@ function Row({ indent = false, children }: { indent?: boolean; children: React.R
 	);
 }
 
+// 保留值里的换行（备注是多行文字）。
 const Ins = ({ children }: { children: React.ReactNode }) => (
-	<ins className="font-mono text-ok no-underline">{children}</ins>
+	<ins className="font-mono whitespace-pre-wrap text-ok no-underline">{children}</ins>
 );
 const Del = ({ children }: { children: React.ReactNode }) => (
-	<del className="font-mono text-danger-fg">{children}</del>
+	<del className="font-mono whitespace-pre-wrap text-danger-fg">{children}</del>
 );
 
 function ChangeRow({ change, indent = false }: { change: FieldChange; indent?: boolean }) {
@@ -146,6 +147,7 @@ const FIELD_LABEL: Record<string, string> = {
 	tz: "时区",
 	duration: "时长",
 	subflow: "要停止的子流程",
+	note: "备注",
 };
 
 function fieldLabel(path: string): string {

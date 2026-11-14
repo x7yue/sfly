@@ -35,6 +35,7 @@ import {
 	SubflowTrigger,
 	TimerForm,
 } from "./node-forms";
+import { NoteField } from "./node-note";
 import { ParamsEditor } from "./ParamsEditor";
 import { referenceChoices } from "./reference-completion";
 
@@ -258,6 +259,11 @@ function NodeInspector({
 					)
 				}
 			/>
+			<NoteField
+				note={node.note}
+				error={fieldErrors.find((e) => e.field === "note")?.message}
+				onChange={(note) => change({ ...node, note })}
+			/>
 			<Tabs
 				value={tab}
 				onValueChange={(v) => setTab(v as Tab)}
@@ -347,7 +353,7 @@ function NodeInspector({
 						/>
 					)}
 					{fieldErrors
-						.filter((e) => !e.draft && !e.field.startsWith("params."))
+						.filter((e) => !e.draft && !e.field.startsWith("params.") && e.field !== "note")
 						.map((e) => (
 							<p
 								key={e.field}

@@ -898,6 +898,49 @@ test("编排画布：检查器参数标签页里输入的说明", async ({ page,
 	await expect(page).toHaveScreenshot("editor-inspector-input-docs.png");
 });
 
+test.describe("编排画布：节点的备注", () => {
+	const notes = {
+		fetch: "每天 8 点拉取快照\n超时设为 600 秒：镜像很大，冷启动要 5 分钟",
+		ping: "先确认 fetch 的结果",
+	};
+	test.beforeEach(async ({ page, controlPlane, connectAgent }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		const id = await createScenario(controlPlane, "带备注的场景", {
+			...editorDocument,
+			nodes: editorDocument.nodes.map((n) =>
+				n.id === "fetch" || n.id === "ping" ? { ...n, note: notes[n.id] } : n,
+			),
+		});
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("卡片头部的备注图标，检查器顶部的备注", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await expect(page.getByRole("textbox", { name: "备注" })).toHaveValue(notes.fetch);
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-node-notes.png");
+	});
+
+	test("悬停备注图标显示全文", async ({ page }) => {
+		await nodeCard(page, "fetch").locator('[data-slot="note-icon"]').hover();
+		await expect(page.getByRole("tooltip")).toHaveText(notes.fetch);
+		await expect(page).toHaveScreenshot("editor-node-note-tooltip.png");
+	});
+
+	test("缩小后图标仍在", async ({ page }) => {
+		for (let i = 0; i < 3; i++) {
+			await page.getByRole("button", { name: "缩小" }).click();
+			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
+		}
+		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-node-notes-zoomed-out.png");
+	});
+});
+
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {
 	await twoAgents(connectAgent);
 	await publishPackage(controlPlane, metricPackage());
