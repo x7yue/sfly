@@ -202,6 +202,26 @@ test("只用键盘：Shift+F10 新建注释框、输入标题，Esc 回到画布
 	await expect(memberList(page).getByRole("listitem")).toHaveText([/fetch/, /dispatch/]);
 });
 
+test("选中注释框后按 Enter，焦点移到检查器里的标题输入框；Esc 回到画布", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await scenarioWith(controlPlane, [
+		{ id: "annotation_1", title: "主链后半段", nodes: ["dispatch", "ping"] },
+	]);
+	await openEditor(page, id);
+	await annotationBand(page, "主链后半段").click();
+	await expect(annotationBand(page, "主链后半段")).toHaveAttribute("aria-pressed", "true");
+
+	// 用键盘：焦点在画布区域上，注释框是选中的。
+	const canvas = page.getByRole("region", { name: /^编排画布/ });
+	await canvas.focus();
+	await page.keyboard.press("Enter");
+	await expect(annotationTitleBox(page)).toBeFocused();
+	await page.keyboard.press("Escape");
+	await expect(canvas).toBeFocused();
+});
+
 test("检查器：逐个移出成员、跳到成员，删除注释框时成员节点不动；添加、修改、删除都能撤销和重做", async ({
 	page,
 	controlPlane,

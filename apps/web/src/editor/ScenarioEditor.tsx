@@ -740,7 +740,10 @@ function Editor({
 		onLocateAnnotation: locateAnnotation,
 	};
 
-	/** 焦点移到检查器里第一个可操作的控件：当前页签里的，没有页签的检查器（多选）里标了 `data-focus-start` 的区域里的。 */
+	/**
+	 * 焦点移到检查器里第一个可操作的控件：当前页签里的；没有页签的检查器（多选、注释框）里标了 `data-focus-start`
+	 * 的区域里的（多选是「添加注释框」，注释框是标题输入框），标题区的收起、删除按钮不算。
+	 */
 	const focusInspector = () => {
 		setInspectorOpen(true);
 		requestAnimationFrame(() => {

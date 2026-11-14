@@ -83,7 +83,7 @@ export function AnnotationInspector({
 					</Button>
 				}
 			/>
-			<FieldList className="flex-none border-b border-border-soft px-3.5 pt-3">
+			<FieldList data-focus-start="" className="flex-none border-b border-border-soft px-3.5 pt-3">
 				<Field
 					label="标题"
 					required

@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Truncate } from "@/components/ui/truncate";
 import {
 	buildGroups,
 	type ChartGroup,
@@ -403,8 +404,8 @@ function useWidth(ref: React.RefObject<HTMLElement | null>) {
 
 /**
  * 分组的外框：标题行（展开按钮、备注图标、其余信息、尝试选择与「只看」）和展开后的内容。
- * 展开按钮里是 `title`；备注图标是自己的按钮，不能嵌在展开按钮里，所以放在按钮后面，
- * 标题行其余的信息（`header`）点了也展开或收起。
+ * 展开按钮里是 `title`（`titleText` 是它的全文：里面的名字被截断时，悬停或聚焦展开按钮就显示）；
+ * 备注图标是自己的按钮，不能嵌在展开按钮里，所以放在按钮后面，标题行其余的信息（`header`）点了也展开或收起。
  */
 function GroupShell({
 	groupKey,
@@ -413,6 +414,7 @@ function GroupShell({
 	open,
 	onToggle,
 	title,
+	titleText,
 	note,
 	header,
 	attempts,
@@ -425,6 +427,7 @@ function GroupShell({
 	open: boolean;
 	onToggle: (open: boolean) => void;
 	title: React.ReactNode;
+	titleText: string;
 	note?: React.ReactNode;
 	header: React.ReactNode;
 	attempts?: React.ReactNode;
@@ -439,11 +442,16 @@ function GroupShell({
 			className="mb-2.5 rounded-xl border border-border-soft bg-surface data-selected:border-selected"
 		>
 			<div className="flex items-center gap-2 py-1 pr-2">
-				<button
-					type="button"
-					aria-expanded={open}
-					onClick={() => onToggle(!open)}
-					className="flex h-8 min-w-0 items-center gap-2 pl-3 text-left text-sm whitespace-nowrap"
+				<Truncate
+					label={titleText}
+					render={
+						<button
+							type="button"
+							aria-expanded={open}
+							onClick={() => onToggle(!open)}
+							className="flex h-8 min-w-0 items-center gap-2 pl-3 text-left text-sm whitespace-nowrap"
+						/>
+					}
 				>
 					<span className="grid w-3.5 flex-none place-items-center text-fg-3">
 						<ChevronRightIcon
@@ -452,7 +460,7 @@ function GroupShell({
 						/>
 					</span>
 					{title}
-				</button>
+				</Truncate>
 				{note}
 				{/* biome-ignore lint/a11y/noStaticElementInteractions: 只是把点击区扩大到整行，键盘用左边的展开按钮 */}
 				{/* biome-ignore lint/a11y/useKeyWithClickEvents: 同上 */}
@@ -537,9 +545,10 @@ function NodeGroup({
 			title={
 				<>
 					<StatusPill kind={status.kind}>{status.label}</StatusPill>
-					<NodeName node={node} className="font-medium" inControl />
+					<NodeName node={node} className="font-medium" />
 				</>
 			}
+			titleText={name}
 			note={note && <NoteIcon note={note} className="flex-none text-sm" />}
 			header={
 				<>
@@ -780,6 +789,7 @@ function PlatformGroup({
 					<span className="font-semibold">平台自带图表</span>
 				</>
 			}
+			titleText="平台自带图表"
 			header={
 				<>
 					<span className="min-w-0 truncate text-xs text-fg-3">

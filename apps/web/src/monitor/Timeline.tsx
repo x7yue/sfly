@@ -12,6 +12,7 @@ import { NODE_STATUS } from "#/lib/node-status";
 import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Truncate } from "@/components/ui/truncate";
 import {
 	type NodeRef,
 	sameNode,
@@ -694,31 +695,34 @@ function NodeRow({
 			className="grid scroll-mt-5.5 items-center border-b border-fg-1/3 data-selected:bg-fg-1/5"
 			style={{ height: NODE_ROW_HEIGHT, gridTemplateColumns: `${LABEL_W} 1fr` }}
 		>
-			<button
-				type="button"
-				aria-pressed={selected}
-				aria-label={`${name} ${title} ${status.label}${progress ? ` 进度 ${progress}` : ""}`}
-				// 轨道上的区段只给鼠标（悬停看详情、点选节点），每次尝试写在这里：一行只有一个停靠点。
-				aria-description={
-					segments
-						.map(
-							(seg) =>
-								`第 ${seg.attempt} 次：${SEGMENT_LABEL[seg.kind]} ${formatDuration(seg.end - seg.start)}`,
-						)
-						.join("；") || undefined
+			{/* 行上的节点名和说明被截断时，悬停或聚焦这个按钮就显示全文（按钮是唯一的停靠点，里面的 Truncate 只截断）。 */}
+			<Truncate
+				label={name === node.node_id ? title : `${name} · ${title}`}
+				render={
+					<button
+						type="button"
+						aria-pressed={selected}
+						aria-label={`${name} ${title} ${status.label}${progress ? ` 进度 ${progress}` : ""}`}
+						// 轨道上的区段只给鼠标（悬停看详情、点选节点），每次尝试写在这里：一行只有一个停靠点。
+						aria-description={
+							segments
+								.map(
+									(seg) =>
+										`第 ${seg.attempt} 次：${SEGMENT_LABEL[seg.kind]} ${formatDuration(seg.end - seg.start)}`,
+								)
+								.join("；") || undefined
+						}
+						onClick={() => actions.select(selected ? null : ref)}
+						className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
+						style={{ paddingLeft: 30 + indent }}
+					/>
 				}
-				onClick={() => actions.select(selected ? null : ref)}
-				title={name === node.node_id ? title : `${name} · ${title}`}
-				className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
-				style={{ paddingLeft: 30 + indent }}
 			>
 				<StatusDot kind={status.kind} />
-				<NodeName node={node} inControl />
-				<span
-					className={cn("min-w-0 flex-1 truncate text-xs text-fg-3", packageNode && "font-mono")}
-				>
+				<NodeName node={node} />
+				<Truncate className={cn("flex-1 text-xs text-fg-3", packageNode && "font-mono")}>
 					{shortTitle}
-				</span>
+				</Truncate>
 				{node.attempts.length > 1 && <Badge className="h-4 px-1">×{node.attempts.length}</Badge>}
 				{isAlways(decl) && (
 					<Badge variant="warn" className="h-4 px-1">
@@ -738,7 +742,7 @@ function NodeRow({
 				>
 					{span === null ? NODE_STATUS[node.status].notRunDuration : formatDuration(span)}
 				</span>
-			</button>
+			</Truncate>
 			<div aria-hidden data-viz className="relative mr-3.5 h-full">
 				{segments.map((seg) => (
 					<SegmentBar
