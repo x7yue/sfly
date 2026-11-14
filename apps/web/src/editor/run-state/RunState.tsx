@@ -1,3 +1,4 @@
+import { nodeCardText } from "@sfly/orchestration";
 import type { RunMetricCatalog, RunView } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
@@ -6,7 +7,7 @@ import { forwardRef, type ReactNode, useMemo } from "react";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
 import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
-import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
+import { KIND_META } from "#/components/canvas/node-display";
 import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { nodeStatusView, StatusPill } from "#/components/status";
@@ -283,7 +284,7 @@ function NodeRunInspector({
 						</span>
 					</>
 				}
-				title={nodeTitle(node, info)}
+				title={nodeCardText(node, info).title}
 				onCollapse={onCollapse}
 			/>
 			<div className="min-h-0 flex-1 overflow-auto px-3.5 py-3 text-sm">

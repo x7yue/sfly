@@ -8,6 +8,7 @@ import {
 	type OrchestrationWarning,
 	outgoingProblem,
 	removeNodes,
+	subflowLabels,
 	tidyLayout,
 	uniqueNodeId,
 } from "@sfly/orchestration";
@@ -48,7 +49,7 @@ import {
 } from "#/components/canvas/flow";
 import { INSPECTOR_MARGIN, NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { VIEWPORT_MS, viewportDuration } from "#/components/canvas/motion";
-import { subflowLabels } from "#/components/canvas/node-display";
+import { usePackageTitles } from "#/components/canvas/package-titles";
 import { subflowRegions } from "#/components/canvas/SubflowRegions";
 import {
 	type CanvasSelection,
@@ -145,22 +146,6 @@ function focusNewCard(id: string, frames = 30) {
 
 const edgeKindOf = (c: Connection | Edge): EdgeKind =>
 	c.sourceHandle === "dispatch" ? "dispatch" : "chain";
-
-function usePackageTitles(): (pkg: string, node: string) => string | undefined {
-	const packages = useQuery(apiQuery(packagesApi.list));
-	return useMemo(() => {
-		const titles = new Map<string, string>();
-		for (const pkg of packages.data?.packages ?? []) {
-			for (const v of pkg.versions) {
-				for (const n of v.nodes) {
-					const key = `${pkg.name}/${n.name}`;
-					if (!titles.has(key)) titles.set(key, n.title);
-				}
-			}
-		}
-		return (pkg, node) => titles.get(`${pkg}/${node}`);
-	}, [packages.data]);
-}
 
 function Editor({
 	orchestration,

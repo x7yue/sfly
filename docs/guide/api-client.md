@@ -80,7 +80,7 @@ for (const item of runs) {
 - `orchestrations.list` 列出没有归档的场景，按新建时间从新到旧。`q` 按名称、说明或引用的 Agent 搜索，`status` 按最近一次运行的状态筛选，`agent` 只看引用了这个 Agent 的场景。每一项带着最近一次运行和各节点的状态（`last_run`）、引用的 Agent 和它们是否在线（`agents`），看板画场景卡片只要这一次请求。
 - `runs.list` 列出所有场景的运行，按开始时间从新到旧，最多 `limit` 条（默认 200，最多 500）。可以按 `status`、`orchestration_id` 筛选，`q` 按运行编号前缀或触发人搜索。`counts` 是各状态的运行数。
 - `runs.get` 读一次运行的完整视图：各条链、各个节点的状态，每次尝试的错误和输出。
-- 控制台统计用 `dashboard.get`，Agent 的在线状态和版本用 `agents.list`，一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。
+- 控制台统计用 `dashboard.get`，Agent 的在线状态和版本用 `agents.list`（`preparing_since` 不为空表示 Agent 在线但还在准备环境、不接任务），一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。
 - 时间字段都是控制面时间，格式是 ISO 8601 字符串。
 - 控制台里运行监控页的地址是 `{{SFLY_URL}}/runs/<运行 id>`，看板上需要深入排查时链接过去。
 
@@ -103,7 +103,7 @@ const run = await client.runs.trigger({
 console.log(`已触发：{{SFLY_URL}}/runs/${run.id}`);
 ```
 
-- `runs.preflight` 返回最新的场景版本号、入口参数的声明（名称、类型、默认值、是否必填、是否 secret）、不能触发的原因（为空表示可以触发），以及锁定的节点包版本和引用的 Agent 是否在线。Agent 不在线不阻止触发，任务会排队。触发页面可以按 `params` 生成表单，按 `problems` 提示问题。
+- `runs.preflight` 返回最新的场景版本号、入口参数的声明（名称、类型、默认值、是否必填、是否 secret）、不能触发的原因（为空表示可以触发），以及锁定的节点包版本和引用的 Agent 是否在线。`agents` 里每台 Agent 的 `status` 是 `online`、`offline` 或 `unknown`（还没有注册过），`preparing_since` 是它这次连接开始准备环境的时间，准备好、不在线或没有注册过时为 `null`。Agent 不在线、正在准备环境都不阻止触发：任务会排队，Agent 上线或准备好环境后再执行。触发页面可以按 `params` 生成表单，按 `problems` 提示问题。
 - `runs.trigger` 触发场景的最新版本，不能指定版本。参数按入口参数声明的类型给：`number` 给数字，`boolean` 给 `true` 或 `false`，`json` 给对象、数组这类 JSON 值。返回新运行的运行视图。
 - 预检没通过时触发失败，错误码 `invalid_orchestration`，`details` 是原因列表；参数不对时错误码 `invalid_params`。
 - 取消运行用 `runs.cancel({ params: { id } })`。清理期间再取消一次就是强制取消。运行已经结束时错误码 `run_not_running`。

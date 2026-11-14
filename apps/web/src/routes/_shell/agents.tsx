@@ -9,8 +9,9 @@ import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { SlotBar, type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
-import { formatClockOffset, formatDateTime, formatFullDateTime } from "#/lib/format";
+import { formatClockOffset, formatDateTime, formatElapsed, formatFullDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { useNow } from "#/lib/use-now";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -193,6 +194,16 @@ function endpointLabel({ address, port }: AgentView["endpoint"]): string {
 	return `${address.includes(":") ? `[${address}]` : address}:${port}`;
 }
 
+/** 准备环境中的标记：「准备环境中 · 已 2 分 10 秒」。时长按控制面时间算，每秒走一次（ADR 0018）。 */
+function PreparingBadge({ since }: { since: string }) {
+	const now = useNow(true);
+	return (
+		<div className="text-xs text-fg-2">
+			准备环境中 · 已 {formatElapsed(now - new Date(since).getTime())}
+		</div>
+	);
+}
+
 function AgentRow({
 	agent,
 	controlPlaneVersion,
@@ -202,6 +213,7 @@ function AgentRow({
 }) {
 	const online = agent.status === "online";
 	const update = online ? updateStatus(agent) : undefined;
+	const preparingSince = online ? agent.preparing_since : null;
 	const mismatch = online && agent.version_mismatch;
 	// 时钟偏差只在达到阈值时提示（由接口判断）；离线 Agent 的偏差是断开前测的，不显示。
 	const clockOffset = online && agent.clock_offset?.exceeds_threshold ? agent.clock_offset : null;
@@ -230,6 +242,7 @@ function AgentRow({
 				) : (
 					<StatusPill kind="pending">离线</StatusPill>
 				)}
+				{preparingSince && <PreparingBadge since={preparingSince} />}
 				{update?.detail && (
 					<div
 						className={cn(

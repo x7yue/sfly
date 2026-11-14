@@ -282,3 +282,40 @@ async fn heartbeats_list_the_tasks_the_agent_holds() {
     );
     assert_no_orphan_after_dropping(agent, pid).await;
 }
+
+/// #219：控制面把 Welcome 之后的第一次心跳当作 Agent 已准备好环境，从那时起才派发。
+/// Agent 准备好、进入收发循环时立即发这次心跳，不等心跳周期；重连时它带上重连前手上的任务，顺带续约。
+#[tokio::test]
+async fn first_heartbeat_is_sent_as_soon_as_the_agent_is_ready_and_lists_held_tasks() {
+    let cp = FakeControlPlane::start().await;
+    // 心跳周期远长于测试：收到的心跳只能是准备好时立即发出的那一次。
+    cp.set_heartbeat_interval(Duration::from_secs(3600));
+    let agent = spawn_agent(AgentOptions::new(&cp.url, "agent-ready-beat"));
+    let heartbeat_in = |session: usize| {
+        move |all: &[support::Received]| {
+            all.iter().find_map(|r| match &r.message.body {
+                Some(agent_message::Body::Heartbeat(h)) if r.session == session => Some(h.clone()),
+                _ => None,
+            })
+        }
+    };
+    let first = cp.wait_for("heartbeat once ready", heartbeat_in(0)).await;
+    assert!(first.running_tasks.is_empty());
+
+    let dir = tempfile::tempdir().unwrap();
+    let ready = dir.path().join("ready");
+    cp.assign(stub_task(
+        "task-running",
+        "wait_cancel",
+        json!({ "ready_file": ready, "report_file": dir.path().join("report") }),
+    ))
+    .await;
+    let pid: u32 = wait_for_file(&ready).await.trim().parse().unwrap();
+    cp.end_session();
+
+    let after_reconnect = cp
+        .wait_for("heartbeat once ready again", heartbeat_in(1))
+        .await;
+    assert_eq!(after_reconnect.running_tasks, vec![held("task-running")]);
+    assert_no_orphan_after_dropping(agent, pid).await;
+}

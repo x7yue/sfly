@@ -1,5 +1,6 @@
 import { type MetricIncrement, runsApi } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
+import type { AgentHub } from "../agents/agent-hub.js";
 import type { Db } from "../db/database.js";
 import type { Engine } from "../engine/engine.js";
 import { getRunView, listRuns } from "../engine/run-queries.js";
@@ -19,6 +20,7 @@ export function registerRunRoutes(
 	app: FastifyInstance,
 	deps: {
 		db: Db;
+		hub: AgentHub;
 		engine: Engine;
 		orchestrations: OrchestrationStore;
 		preflight: Preflight;
@@ -58,7 +60,10 @@ export function registerRunRoutes(
 			params: entry?.kind === "entry" ? entry.params : [],
 			problems: await deps.preflight(head.document),
 			packages: head.document.packages,
-			agents: await referencedAgentStatus(deps.db, head.document),
+			agents: (await referencedAgentStatus(deps.db, head.document)).map((agent) => ({
+				...agent,
+				preparing_since: deps.hub.preparingSince(agent.name)?.toISOString() ?? null,
+			})),
 		};
 	});
 

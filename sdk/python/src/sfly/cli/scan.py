@@ -11,6 +11,7 @@ import enum
 import importlib
 import inspect
 import json
+import operator
 import pkgutil
 import re
 import sys
@@ -25,6 +26,7 @@ from sfly.nodes import (
     FEISHU_BOT_MARKER,
     NODE_ATTR,
     Chart,
+    Doc,
     Metric,
     NodeDeclaration,
     is_context_param,
@@ -57,6 +59,52 @@ def _is_typeddict(tp: Any) -> bool:
 _INPUT_TYPES = ((AGENT_MARKER, "agent"), (FEISHU_BOT_MARKER, "feishu_bot"))
 
 
+#: 输入（和输出字段）的说明最多这么多个 Unicode 字符；Python 的 `len` 数的就是 Unicode 字符。
+MAX_DOC_LENGTH = 500
+
+
+def _doc_text(doc: Doc) -> str:
+    text = doc.documentation
+    if not isinstance(text, str) or not text.strip():
+        raise ScanError(f"Doc 必须是非空字符串，收到 {text!r}")
+    text = text.strip()
+    if len(text) > MAX_DOC_LENGTH:
+        raise ScanError(f"说明超过 {MAX_DOC_LENGTH} 个字符（{len(text)} 个），请写短一些")
+    return text
+
+
+def has_doc(hint: Any) -> bool:
+    """注解最外层的 `Annotated` 里有没有 `Doc`（不检查内容）。"""
+    return typing.get_origin(hint) is typing.Annotated and any(
+        isinstance(meta, Doc) for meta in hint.__metadata__
+    )
+
+
+def _annotated(tp: Any, metadata: Sequence[Any]) -> Any:
+    """`Annotated[tp, *metadata]`（元数据个数不定，没法直接写成下标）。"""
+    return operator.getitem(typing.Annotated, (tp, *metadata))
+
+
+def split_doc(hint: Any) -> tuple[Any, str | None]:
+    """读取注解最外层 `Annotated[T, Doc("…")]` 里的说明，返回（去掉 `Doc` 的注解，说明）。
+
+    没写 `Doc` 时原样返回注解和 None。写错时抛出 ScanError，消息不带位置，由调用方加上
+    节点和参数（输出字段）的名字：`Doc` 不是非空字符串、同一个注解里有两个 `Doc`、
+    说明超过 `MAX_DOC_LENGTH` 个字符。说明去掉首尾空白。
+    去掉 `Doc` 之后，`type_schema` 再遇到 `Doc` 就是写在了内层（`list[...]`、`|` 里面），
+    会报错而不是悄悄丢掉。
+    """
+    if not has_doc(hint):
+        return hint, None
+    inner, *_ = typing.get_args(hint)
+    docs = [meta for meta in hint.__metadata__ if isinstance(meta, Doc)]
+    others = [meta for meta in hint.__metadata__ if not isinstance(meta, Doc)]
+    if len(docs) > 1:
+        raise ScanError(f"同一个注解里有 {len(docs)} 个 Doc，只能写一个")
+    text = _doc_text(docs[0])
+    return (_annotated(inner, others) if others else inner), text
+
+
 def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     """把类型注解转换为 JSON Schema；不支持的注解抛出 ScanError。
 
@@ -74,6 +122,11 @@ def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     args = typing.get_args(tp)
 
     if origin is typing.Annotated:
+        if has_doc(tp):
+            raise ScanError(
+                "Doc 只能写在注解的最外层，不能写在 list[...]、| 等的里面；"
+                '例如 Annotated[str | None, Doc("…")]'
+            )
         for marker, name in _INPUT_TYPES:
             if any(meta is marker for meta in tp.__metadata__):
                 if not param:
@@ -139,6 +192,8 @@ def input_schema(fn: Any, label: str) -> JsonSchema:
     hints = typing.get_type_hints(fn, include_extras=True)
     params = list(inspect.signature(fn).parameters.values())
     if params and is_context_param(params[0], hints.get(params[0].name)):
+        if has_doc(hints.get(params[0].name)):
+            raise ScanError(f"{label} 的参数 {params[0].name}：任务上下文不是输入，不能写 Doc")
         params = params[1:]
 
     properties: dict[str, JsonSchema] = {}
@@ -150,9 +205,12 @@ def input_schema(fn: Any, label: str) -> JsonSchema:
                 f"{where}：节点参数必须能按名称传入（不支持 *args、**kwargs、仅位置参数）"
             )
         try:
-            prop = type_schema(hints.get(param.name, inspect.Parameter.empty), param=True)
+            hint, doc = split_doc(hints.get(param.name, inspect.Parameter.empty))
+            prop = type_schema(hint, param=True)
         except ScanError as error:
             raise ScanError(f"{where}：{error}") from None
+        if doc is not None:
+            prop["description"] = doc
         if param.default is inspect.Parameter.empty:
             required.append(param.name)
         else:
@@ -283,6 +341,22 @@ def _label_keys(metric: Metric) -> list[str]:
     return keys
 
 
+#: 节点类型说明（函数的文档字符串）最长多少个 Unicode 字符
+#: （与 packages/schema 的 NODE_DESCRIPTION_MAX 一致）。
+MAX_NODE_DESCRIPTION = 4000
+
+
+def node_description(fn: Any, label: str) -> str | None:
+    """函数的文档字符串去掉缩进后整段作为节点类型的说明；没有文档字符串或只有空白时返回 None。"""
+    description = inspect.cleandoc(fn.__doc__).strip() if fn.__doc__ else ""
+    if len(description) > MAX_NODE_DESCRIPTION:
+        raise ScanError(
+            f"{label}：文档字符串（节点类型的说明）最长 {MAX_NODE_DESCRIPTION} 个字符，"
+            f"实际 {len(description)} 个"
+        )
+    return description or None
+
+
 def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
     qualname: str = fn.__qualname__
     label = f"节点 {fn.__module__}.{qualname}"
@@ -293,9 +367,11 @@ def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
         declarations = metric_declarations(decl)
     except ScanError as error:
         raise ScanError(f"{label}：{error}") from None
+    description = node_description(fn, label)
     return {
         "name": name,
         "title": decl.title or name,
+        **({"description": description} if description else {}),
         "entry": f"{fn.__module__}:{qualname}",
         "inputs": input_schema(fn, label),
         "outputs": output_schema(fn, decl, label),

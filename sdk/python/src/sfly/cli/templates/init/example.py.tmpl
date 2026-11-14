@@ -4,9 +4,9 @@
 """
 
 import time
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from sfly import Context, Metric, node
+from sfly import Context, Doc, Metric, node
 
 
 class CountdownOutputs(TypedDict):
@@ -20,7 +20,10 @@ class CountdownOutputs(TypedDict):
     primary_metric="remaining",
 )
 def countdown(
-    ctx: Context, name: str, steps: int = 3, interval: float = 0.1
+    ctx: Context,
+    name: Annotated[str, Doc("要问候的对象")],
+    steps: Annotated[int, Doc("倒数的步数，至少 1")] = 3,
+    interval: Annotated[float, Doc("每步等待的秒数")] = 0.1,
 ) -> CountdownOutputs:
     """倒数 steps 步（每步 interval 秒）后问候 name。
 

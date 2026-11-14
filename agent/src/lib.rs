@@ -51,9 +51,9 @@ use environment::{Mirrors, Setup};
 use install::Installer;
 use proto::agent_gateway_client::AgentGatewayClient;
 use proto::{
-    AgentMessage, AgentUpdateState, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat,
-    Hello, InstallState, InstallStatus, InstalledPackage, PeerEndpoint, RunningTask, ServerMessage,
-    TaskAction, TaskResult, Welcome, agent_message, server_message,
+    AgentMessage, AssignTask, CancelTask, DevPackage, ErrorKind, Heartbeat, Hello, InstallState,
+    InstallStatus, InstalledPackage, PeerEndpoint, RunningTask, ServerMessage, TaskAction,
+    TaskResult, Welcome, agent_message, server_message,
 };
 use venv::{Installed, SharedVenv};
 
@@ -1129,13 +1129,12 @@ async fn serve(
             .send(result_message(result.clone()))
             .await?;
     }
-    // 需要更新时立即上报一次，不等第一个心跳周期，界面上马上能看到。
-    if updater.status().state() != AgentUpdateState::None {
-        connection
-            .outbound
-            .send(heartbeat_message(runtime.held(unacked), &mut status))
-            .await?;
-    }
+    // 准备好环境、开始接收任务：立即发一次心跳，不等第一个心跳周期。控制面把 Welcome 之后的第一次心跳当作
+    // 已准备好，从这时起才派发（#219）；它同时为重连前手上的任务续约，需要更新时界面上也马上能看到更新状态。
+    connection
+        .outbound
+        .send(heartbeat_message(runtime.held(unacked), &mut status))
+        .await?;
     loop {
         // 排空：手上的任务（含还没交给这里的结果）都结束、结果都被 Ack 后替换并 execve（成功时不返回）。
         let remaining = runtime.held(unacked).len() + results.len();

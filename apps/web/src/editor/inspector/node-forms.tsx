@@ -9,6 +9,7 @@ import {
 	orderedInputs,
 	parseDuration,
 	referencesIn,
+	schemaDescription,
 	stopCandidates,
 	timerTarget,
 } from "@sfly/orchestration";
@@ -115,6 +116,7 @@ export function PackageParams({
 					agents={agents}
 					bots={bots}
 					problems={problemsOf(name)}
+					help={schemaDescription(schema)}
 					onChange={(v) => set(name, v)}
 				/>
 			))}
