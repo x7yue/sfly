@@ -2,6 +2,7 @@ import type { EdgeEnds, Position } from "@sfly/orchestration";
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
 import type { DocEdge, DocNode } from "./flow";
+import { type CanvasSelection, NO_SELECTION } from "./selection";
 
 /**
  * 画布组件的扩展点（FlowCanvas 的 props 经 context 传给节点卡片、连线和子流程区域）。
@@ -60,7 +61,7 @@ export interface PortState {
 
 export interface CanvasContextValue {
 	info: CanvasInfo;
-	selectedId: string | null;
+	selection: CanvasSelection;
 	ports: ReadonlyMap<string, PortState>;
 	decorateNode?: (id: string, node: DocNode) => NodeDecoration | undefined;
 	decorateEdge?: (edge: {
@@ -90,7 +91,7 @@ export const EMPTY_INFO: CanvasInfo = {
 
 export const FlowCanvasContext = createContext<CanvasContextValue>({
 	info: EMPTY_INFO,
-	selectedId: null,
+	selection: NO_SELECTION,
 	ports: new Map(),
 	fit: () => {},
 });
