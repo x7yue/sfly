@@ -59,7 +59,7 @@ import {
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
 import { describePresetProblems } from "../presets/preset-invalidation.js";
-import { findPreset } from "../presets/preset-store.js";
+import { findPreset, PRESET_NOT_FOUND } from "../presets/preset-store.js";
 import { presetProblems } from "../presets/preset-validity.js";
 import { type PresetRow, presetParamNames } from "../presets/preset-view.js";
 import type { Mirrors } from "../public-config.js";
@@ -342,12 +342,7 @@ export class Engine implements AgentSessionHandler {
 					? await findPreset(step.tx, orchestrationId, request.preset)
 					: undefined;
 				if (!preset) {
-					return {
-						ok: false,
-						status: 404,
-						code: "preset_not_found",
-						message: "这个场景没有这个运行预设",
-					};
+					return { ok: false, ...PRESET_NOT_FOUND };
 				}
 				const invalid = presetProblems(preset.values, plan.main.entry.params);
 				if (invalid.length > 0) {

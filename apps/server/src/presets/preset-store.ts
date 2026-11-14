@@ -10,8 +10,15 @@ import { checkPresetParams, type PresetIssue } from "./preset-input.js";
 import { entryParams } from "./preset-validity.js";
 import { type PresetRow, toPresetView } from "./preset-view.js";
 
+/** 404 `preset_not_found`：预设不存在，或者不属于这个场景。触发运行（Engine）和预设的接口共用同一条。 */
+export const PRESET_NOT_FOUND = {
+	status: 404,
+	code: "preset_not_found",
+	message: "这个场景没有这个运行预设",
+} as const;
+
 /** 预设的写入没有成功的原因；`not_found` 是场景或预设不存在（预设不属于这个场景也算）。 */
-type PresetRejection =
+export type PresetRejection =
 	| { kind: "not_found" }
 	| { kind: "invalid"; issues: PresetIssue[] }
 	| { kind: "name_taken" };
@@ -81,6 +88,27 @@ function isNameTaken(error: unknown): boolean {
 	return false;
 }
 
+type PresetFields = Pick<typeof runPresets.$inferInsert, "name" | "description" | "values">;
+
+/** 一个新预设的行：新的 ID，创建时间和最后修改时间是这一次写入，最后修改人是写入的人。新建、复制预设和复制场景共用。 */
+function newPresetRow(
+	orchestrationId: string,
+	fields: PresetFields,
+	actor: Actor,
+	now: Date,
+): typeof runPresets.$inferInsert {
+	return {
+		id: randomUUID(),
+		orchestrationId,
+		name: fields.name,
+		description: fields.description,
+		values: fields.values,
+		createdAt: now,
+		updatedAt: now,
+		updatedBy: actor.nickname,
+	};
+}
+
 /** 插入一个预设；名称已被场景里的另一个预设占用时返回 undefined。 */
 async function insertPreset(
 	tx: Tx,
@@ -107,18 +135,7 @@ export async function copyPresets(
 ): Promise<void> {
 	const rows = await tx.select().from(runPresets).where(eq(runPresets.orchestrationId, sourceId));
 	if (rows.length === 0) return;
-	await tx.insert(runPresets).values(
-		rows.map((row) => ({
-			id: randomUUID(),
-			orchestrationId: targetId,
-			name: row.name,
-			description: row.description,
-			values: row.values,
-			createdAt: now,
-			updatedAt: now,
-			updatedBy: actor.nickname,
-		})),
-	);
+	await tx.insert(runPresets).values(rows.map((row) => newPresetRow(targetId, row, actor, now)));
 }
 
 /**
@@ -165,17 +182,11 @@ export class PresetStore {
 			if (!head) return { kind: "not_found" };
 			const checked = checkPresetParams(input.params, head.declarations);
 			if ("issues" in checked) return { kind: "invalid", issues: checked.issues };
-			const now = this.deps.clock.now();
-			const row = await insertPreset(tx, {
-				id: randomUUID(),
-				orchestrationId,
-				name: input.name,
-				description: input.description,
-				values: checked.values,
-				createdAt: now,
-				updatedAt: now,
-				updatedBy: actor.nickname,
-			});
+			const fields = { name: input.name, description: input.description, values: checked.values };
+			const row = await insertPreset(
+				tx,
+				newPresetRow(orchestrationId, fields, actor, this.deps.clock.now()),
+			);
 			if (!row) return { kind: "name_taken" };
 			return { kind: "created", preset: toPresetView(row, head.declarations) };
 		});
@@ -233,17 +244,11 @@ export class PresetStore {
 			const head = await lockedHead(tx, orchestrationId);
 			const source = head && (await findPreset(tx, orchestrationId, presetId));
 			if (!head || !source) return { kind: "not_found" };
-			const now = this.deps.clock.now();
-			const row = await insertPreset(tx, {
-				id: randomUUID(),
-				orchestrationId,
-				name,
-				description: source.description,
-				values: source.values,
-				createdAt: now,
-				updatedAt: now,
-				updatedBy: actor.nickname,
-			});
+			const fields = { name, description: source.description, values: source.values };
+			const row = await insertPreset(
+				tx,
+				newPresetRow(orchestrationId, fields, actor, this.deps.clock.now()),
+			);
 			if (!row) return { kind: "name_taken" };
 			return { kind: "copied", preset: toPresetView(row, head.declarations) };
 		});

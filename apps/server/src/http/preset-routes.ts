@@ -1,7 +1,11 @@
 import { presetsApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { PresetIssue } from "../presets/preset-input.js";
-import type { PresetStore } from "../presets/preset-store.js";
+import {
+	PRESET_NOT_FOUND,
+	type PresetRejection,
+	type PresetStore,
+} from "../presets/preset-store.js";
 import { isUuid } from "../util/uuid.js";
 import { requireActor } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
@@ -12,7 +16,7 @@ const notFound = (reply: FastifyReply) =>
 	sendError(reply, 404, "not_found", "orchestration not found");
 
 const presetNotFound = (reply: FastifyReply) =>
-	sendError(reply, 404, "preset_not_found", "这个场景没有这个运行预设");
+	sendError(reply, PRESET_NOT_FOUND.status, PRESET_NOT_FOUND.code, PRESET_NOT_FOUND.message);
 
 const invalidPreset = (reply: FastifyReply, issues: PresetIssue[]) =>
 	sendError(
@@ -32,6 +36,26 @@ const nameTaken = (reply: FastifyReply, name: string) =>
 	);
 
 /**
+ * 写预设被拒绝时的响应，新建、修改、复制共用：`missing` 是「不存在」怎么回复（新建时是场景不存在，其余是预设不存在），
+ * `name` 是占用了名称的那个。
+ */
+function rejected(
+	reply: FastifyReply,
+	rejection: PresetRejection,
+	missing: (reply: FastifyReply) => FastifyReply,
+	name: string,
+): FastifyReply {
+	switch (rejection.kind) {
+		case "not_found":
+			return missing(reply);
+		case "invalid":
+			return invalidPreset(reply, rejection.issues);
+		case "name_taken":
+			return nameTaken(reply, name);
+	}
+}
+
+/**
  * 运行预设（契约见 @sfly/schema 的 presetsApi，ADR 0023）：列出、新建、修改、复制、删除。
  * 写操作需要昵称，昵称记为最后修改人；场景归档期间也能写。预设是场景的设置，不产生新的场景版本。
  */
@@ -49,32 +73,19 @@ export function registerPresetRoutes(
 		if (!actor) return reply;
 		if (!isUuid(params.id)) return notFound(reply);
 		const result = await presets.create(params.id, body, actor);
-		switch (result.kind) {
-			case "not_found":
-				return notFound(reply);
-			case "invalid":
-				return invalidPreset(reply, result.issues);
-			case "name_taken":
-				return nameTaken(reply, body.name);
-			case "created":
-				return reply.code(201).send(result.preset);
-		}
+		return result.kind === "created"
+			? reply.code(201).send(result.preset)
+			: rejected(reply, result, notFound, body.name);
 	});
+
 	contractRoute(app, presetsApi.update, async ({ params, body }, reply, raw) => {
 		const actor = requireActor(raw, reply);
 		if (!actor) return reply;
 		if (!isUuid(params.id) || !isUuid(params.presetId)) return presetNotFound(reply);
 		const result = await presets.update(params.id, params.presetId, body, actor);
-		switch (result.kind) {
-			case "not_found":
-				return presetNotFound(reply);
-			case "invalid":
-				return invalidPreset(reply, result.issues);
-			case "name_taken":
-				return nameTaken(reply, body.name ?? "");
-			case "updated":
-				return result.preset;
-		}
+		return result.kind === "updated"
+			? result.preset
+			: rejected(reply, result, presetNotFound, body.name ?? "");
 	});
 
 	contractRoute(app, presetsApi.copy, async ({ params, body }, reply, raw) => {
@@ -82,16 +93,9 @@ export function registerPresetRoutes(
 		if (!actor) return reply;
 		if (!isUuid(params.id) || !isUuid(params.presetId)) return presetNotFound(reply);
 		const result = await presets.copy(params.id, params.presetId, body.name, actor);
-		switch (result.kind) {
-			case "not_found":
-				return presetNotFound(reply);
-			case "invalid":
-				return invalidPreset(reply, result.issues);
-			case "name_taken":
-				return nameTaken(reply, body.name);
-			case "copied":
-				return reply.code(201).send(result.preset);
-		}
+		return result.kind === "copied"
+			? reply.code(201).send(result.preset)
+			: rejected(reply, result, presetNotFound, body.name);
 	});
 
 	contractRoute(app, presetsApi.remove, async ({ params }, reply, raw) => {
