@@ -11,6 +11,7 @@ from typing import Any
 from sfly.cli import scenario_edit, scenario_versions
 from sfly.cli.client import segment
 from sfly.cli.output import add_limit_option, apply_limit, dump_json, format_table, more_note
+from sfly.cli.presets import preset_view, render_presets
 from sfly.cli.run_view import node_type_label, subflow_label
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
@@ -46,7 +47,8 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         parents=[common_options()],
         help="查看一个场景：入口参数、各链路上的节点、子流程、默认 Agent",
         description="查看场景最新版本的内容：入口参数、主链和各子流程上的节点"
-        "（节点类型、锁定的节点包版本、sfly Agent）、默认 Agent。",
+        "（节点类型、锁定的节点包版本、sfly Agent）、默认 Agent，"
+        "以及场景的运行预设（名称、说明、是否可用、预设参数和值，secret 打码）。",
     )
     p_show.add_argument("scenario", metavar="场景", help="场景 id 或准确名称")
     p_show.set_defaults(func=command(_show))
@@ -92,14 +94,19 @@ def _list(session: Session, args: argparse.Namespace) -> None:
 
 def _show(session: Session, args: argparse.Namespace) -> None:
     scenario = find_scenario(session.client, args.scenario, command="sfly scenario show")
-    head = session.client.get(f"/orchestrations/{segment(scenario['id'])}/head")
-    view = describe(scenario, head)
+    scenario_path = f"/orchestrations/{segment(scenario['id'])}"
+    head = session.client.get(f"{scenario_path}/head")
+    presets = session.client.get(f"{scenario_path}/presets")["presets"]
+    view = describe(scenario, head, presets)
     session.out.emit(view, render(view))
 
 
-def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
-    """`scenario show --json` 的内容：场景的基本信息、入口参数、主链和各子流程上的节点。
-    `head` 是 `GET /orchestrations/:id/head`（最新版本，还没有版本时是初始文档）。"""
+def describe(
+    scenario: dict[str, Any], head: dict[str, Any], presets: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """`scenario show --json` 的内容：场景的基本信息、运行预设、入口参数、主链和各子流程上的节点。
+    `head` 是 `GET /orchestrations/:id/head`（最新版本，还没有版本时是初始文档），
+    `presets` 是 `GET /orchestrations/:id/presets` 的 `presets`。"""
     document = head["document"]
     nodes: dict[str, dict[str, Any]] = {n["id"]: n for n in document["nodes"]}
     default_agent = document.get("default_agent")
@@ -201,6 +208,7 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
         if saved
         else None,
         "default_agent": default_agent,
+        "presets": [preset_view(p) for p in presets],
         "params": params(main),
         "nodes": main_nodes,
         "subflows": subflows,
@@ -221,6 +229,8 @@ def render(view: dict[str, Any]) -> str:
         else "最新版本：还没有保存过版本（下面是初始文档）"
     )
     lines.append(f"默认 Agent：{view['default_agent'] or '未设置'}")
+    if view["presets"]:
+        lines.extend(["", *render_presets(view["presets"], view["params"])])
     lines.append("")
     lines.extend(_render_chain("主链", view["params"], view["nodes"]))
     for subflow in view["subflows"]:

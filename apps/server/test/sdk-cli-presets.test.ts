@@ -1,11 +1,18 @@
-// 运行预设在命令行里（#330，ADR 0023）：sfly run start --preset。
+// 运行预设在命令行里（#330，ADR 0023）：sfly run start --preset、scenario show 与 run show 里的预设。
 // 真实的 sfly 进程对测试控制面；预设用 HTTP API 创建，运行由假 Agent 接收。
 import { runsApi } from "@sfly/schema";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
-import { createPresetOk, deletePreset, PRESET_PARAMS, presetScenario } from "./support/presets.js";
+import {
+	createPresetOk,
+	deletePreset,
+	PRESET_PARAMS,
+	presetScenario,
+	renamePresetInDb,
+	triggerWithPreset,
+} from "./support/presets.js";
 import { startRecordingProxy } from "./support/recording-proxy.js";
 import { sfly } from "./support/sfly-cli.js";
 import { type SflyProcess, spawnSfly } from "./support/sfly-process.js";
@@ -14,6 +21,7 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 const PRESET_A = "压测 A 集群";
 const PRESET_B = "压测 B 集群";
 const SECRET = "tok-from-preset";
+const UNMASKED = "******";
 const LOCKED_HINT =
 	"去掉 --param 或 --params 里的这个参数，预设会填上它保存的值；要用别的值就不要加 --preset。";
 
@@ -346,6 +354,117 @@ describe("sfly 运行预设 → 控制面", { timeout: 60_000 }, () => {
 				].join("\n"),
 			);
 			expect(await runsOf(id)).toEqual([]);
+		});
+	});
+
+	describe("scenario show", () => {
+		/** 文本里从「运行预设：」开始、到下一个空行之前的行。 */
+		const section = (stdout: string) => {
+			const lines = stdout.split("\n");
+			const start = lines.indexOf("运行预设：");
+			expect(start, stdout).toBeGreaterThan(-1);
+			return lines.slice(start, lines.indexOf("", start));
+		};
+
+		it("文本：「运行预设」一节写名称、说明、是否可用（失效时写原因）、预设参数和值，secret 打码", async () => {
+			const { name } = await sceneWithAAndInvalidB("显示预设");
+			const result = await cli("scenario", "show", name);
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stderr).toBe("");
+			expect(section(result.stdout)).toEqual([
+				"运行预设：",
+				`  ${PRESET_A}  可用`,
+				"    说明：A 集群的压测参数",
+				"    预设参数：",
+				"      参数   值",
+				'      host   "a.example"',
+				"      port   9000",
+				`      token  ${UNMASKED}`,
+				`  ${PRESET_B}  已失效：参数 verbose 已不存在`,
+				"    预设参数：",
+				"      参数     值",
+				'      options  {"mode":"fast"}',
+				`      verbose  ${UNMASKED}`,
+			]);
+			expect(result.stdout).not.toContain(SECRET);
+		});
+
+		it("--json：presets 里有同样的字段，secret 的值是 ******", async () => {
+			const { name, preset, b } = await sceneWithAAndInvalidB("预设的 JSON");
+			const result = await cli("scenario", "show", name, "--json");
+			expect(result.code, result.stderr).toBe(0);
+			expect(result.stdout).not.toContain(SECRET);
+			expect(JSON.parse(result.stdout).presets).toEqual([
+				{
+					id: preset.id,
+					name: PRESET_A,
+					description: "A 集群的压测参数",
+					status: "ok",
+					problems: [],
+					params: [
+						{ name: "host", secret: false, value: "a.example" },
+						{ name: "port", secret: false, value: 9000 },
+						{ name: "token", secret: true, value: UNMASKED },
+					],
+				},
+				{
+					id: b.id,
+					name: PRESET_B,
+					description: "",
+					status: "invalid",
+					problems: [{ param: "verbose", reason: "missing" }],
+					params: [
+						{ name: "options", secret: false, value: { mode: "fast" } },
+						{ name: "verbose", secret: true, value: UNMASKED },
+					],
+				},
+			]);
+		});
+
+		it("没有运行预设的场景：文本里没有这一节，--json 里是空数组", async () => {
+			const { name } = await scene("没有预设可看");
+			const text = await cli("scenario", "show", name);
+			expect(text.code, text.stderr).toBe(0);
+			expect(text.stdout).not.toContain("运行预设");
+			const json = await cli("scenario", "show", name, "--json");
+			expect(JSON.parse(json.stdout).presets).toEqual([]);
+		});
+	});
+
+	describe("run show", () => {
+		it("文本写一行「预设 <名称>」，--json 带 preset；预设改名之后仍是触发时的名称", async () => {
+			const { id, preset } = await sceneWithA("运行里的预设");
+			const triggered = await triggerWithPreset(api, id, preset.id, { verbose: true });
+			expect(triggered.status, await triggered.clone().text()).toBe(201);
+			const { id: runId } = (await triggered.json()) as { id: string };
+
+			const text = await cli("run", "show", runId);
+			expect(text.code, text.stderr).toBe(0);
+			const lines = text.stdout.split("\n");
+			expect(lines[1]).toMatch(/^场景 .+，场景版本 1$/);
+			expect(lines[2]).toBe(`预设 ${PRESET_A}`);
+			expect(lines[3]).toMatch(/^触发 tester，/);
+			expect(text.stdout).not.toContain(SECRET);
+
+			await renamePresetInDb(cp, preset.id, "改过的名称");
+			const json = await cli("run", "show", runId, "--json");
+			expect(json.code, json.stderr).toBe(0);
+			expect(json.stdout).not.toContain(SECRET);
+			expect(JSON.parse(json.stdout).preset).toEqual({
+				id: preset.id,
+				name: PRESET_A,
+				params: ["host", "port", "token"],
+			});
+		});
+
+		it("没用预设的运行没有这一行，--json 里的 preset 是 null", async () => {
+			const { id } = await sceneWithA("没用预设");
+			const runId = await api.triggerOk(id, { host: "h" });
+			const text = await cli("run", "show", runId);
+			expect(text.code, text.stderr).toBe(0);
+			expect(text.stdout.split("\n").some((line) => line.startsWith("预设 "))).toBe(false);
+			const json = await cli("run", "show", runId, "--json");
+			expect(JSON.parse(json.stdout).preset).toBeNull();
 		});
 	});
 });

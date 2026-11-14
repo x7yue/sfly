@@ -1,6 +1,7 @@
 """运行预设（GLOSSARY「运行预设」，ADR 0023）在命令行里的取用和显示。
 
-- `sfly run start --preset 名称`：在场景预检返回的预设里按准确名称找，找不到、已失效时报错，不触发。
+- `sfly run start --preset 名称`：在场景预检返回的预设里按准确名称找，找不到、已失效时报错，不触发；
+- `sfly scenario show` 的「运行预设」一节。
 
 预设是不是失效、为什么失效都是控制面算好的（`status`、`problems`），命令行只转述，不重新判断。
 secret 预设参数的值由控制面打码（`******`），命令行原样显示，读不到原值。
@@ -14,7 +15,7 @@ from typing import Any
 
 from sfly.cli.client import ApiError
 from sfly.cli.errors import CliError
-from sfly.cli.output import candidate_list
+from sfly.cli.output import candidate_list, dump_json, format_table
 
 Preset = dict[str, Any]
 Declaration = dict[str, Any]
@@ -95,3 +96,44 @@ def with_next_step(error: ApiError, scenario_id: str) -> ApiError:
     if error.code in ("preset_not_found", "preset_invalid"):
         return error.replace(next=show)
     return error
+
+
+def preset_view(preset: Preset) -> dict[str, Any]:
+    """`scenario show --json` 里的一个运行预设：控制面给的名称、说明、状态、失效原因和预设参数
+    （secret 的值已经打码）。"""
+    return {
+        "id": preset["id"],
+        "name": preset["name"],
+        "description": preset["description"],
+        "status": preset["status"],
+        "problems": preset["problems"],
+        "params": [
+            {"name": p["name"], "secret": p["secret"], "value": p["value"]}
+            for p in preset["params"]
+        ],
+    }
+
+
+def render_presets(presets: Sequence[dict[str, Any]], declared: Sequence[Declaration]) -> list[str]:
+    """`scenario show` 的「运行预设」一节。`presets` 是 `preset_view` 的结果，
+    `declared` 是主链的入口参数（失效的原因要写参数现在的类型）。"""
+    lines = ["运行预设："]
+    for preset in presets:
+        usable = preset["status"] == "ok"
+        state = "可用" if usable else f"已失效：{problems_text(preset['problems'], declared)}"
+        lines.append(f"  {preset['name']}  {state}")
+        if preset["description"]:
+            first, *rest = preset["description"].splitlines() or [""]
+            lines.append(f"    说明：{first}")
+            lines.extend(f"    {line}" for line in rest)
+        lines.append("    预设参数：")
+        table = format_table(
+            ["参数", "值"], [[p["name"], _value_text(p)] for p in preset["params"]]
+        )
+        lines.extend(f"      {line}" for line in table.splitlines())
+    return lines
+
+
+def _value_text(param: dict[str, Any]) -> str:
+    """secret 参数控制面给的已经是打码的值，原样写；其他参数写 JSON，字符串和数字不会混淆。"""
+    return str(param["value"]) if param["secret"] else dump_json(param["value"])
