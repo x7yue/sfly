@@ -6,11 +6,11 @@ import {
 	presetsApi,
 } from "@sfly/schema";
 import { type UseQueryResult, useMutation, useQuery } from "@tanstack/react-query";
+import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { notify } from "#/components/feedback/notify";
-import { ErrorState } from "#/components/feedback/states";
+import { QueryView, TableSkeleton } from "#/components/feedback/states";
 import { apiQuery, callApi } from "#/lib/api";
-import { TERM } from "#/lib/copy";
+import { MESSAGE, TERM } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { ParamField } from "#/run-drawer/ParamField";
 import { Badge } from "@/components/ui/badge";
@@ -27,7 +27,6 @@ import {
 } from "@/components/ui/dialog";
 import { FormAlert, FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { CopyPresetForm } from "./CopyPresetForm";
 import { DeletePresetConfirm } from "./DeletePresetConfirm";
@@ -60,11 +59,12 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 const valueText = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value));
 
 /**
- * 管理对话框里的一屏：列表，新建或编辑的表单（给了 `preset` 就是编辑；新建时给了 `draft` 就带着它，
- * 运行抽屉的「存为预设」），复制，删除确认。
+ * 管理对话框里的一屏：列表（刚做完一次保存、复制或删除时带着 `receipt`，写在列表上方），
+ * 新建或编辑的表单（给了 `preset` 就是编辑；新建时给了 `draft` 就带着它，运行抽屉的「存为预设」），复制，删除确认。
+ * 弹窗打开时不发通知（docs/DESIGN-SYSTEM.md「通知与横幅」），操作的结果就写在回到的这一屏上。
  */
 type View =
-	| { kind: "list" }
+	| { kind: "list"; receipt?: string }
 	| { kind: "form"; preset?: PresetView; draft?: PresetDraft }
 	| { kind: "copy"; preset: PresetView }
 	| { kind: "delete"; preset: PresetView };
@@ -112,8 +112,8 @@ export function RunPresetsDialog({
 	});
 	const entry = head.data?.document.nodes.find((n) => n.kind === "entry");
 	const decls: ParamDeclView[] = entry?.kind === "entry" ? entry.params : [];
-	const toList = (focus: string) => {
-		setView({ kind: "list" });
+	const toList = (focus: string, receipt?: string) => {
+		setView({ kind: "list", ...(receipt && { receipt }) });
 		setFocusKey(focus);
 	};
 
@@ -128,27 +128,30 @@ export function RunPresetsDialog({
 						preset={view.preset}
 						draft={view.draft}
 						onCancel={() => toList(view.preset ? `edit:${view.preset.id}` : "create")}
-						onSaved={() => toList(view.preset ? `edit:${view.preset.id}` : "create")}
+						onSaved={(receipt) =>
+							toList(view.preset ? `edit:${view.preset.id}` : "create", receipt)
+						}
 					/>
 				) : view.kind === "copy" ? (
 					<CopyPresetForm
 						orchestrationId={scenario.id}
 						preset={view.preset}
 						onCancel={() => toList(`copy:${view.preset.id}`)}
-						onCopied={() => toList(`copy:${view.preset.id}`)}
+						onCopied={(receipt) => toList(`copy:${view.preset.id}`, receipt)}
 					/>
 				) : view.kind === "delete" ? (
 					<DeletePresetConfirm
 						orchestrationId={scenario.id}
 						preset={view.preset}
 						onCancel={() => toList(`delete:${view.preset.id}`)}
-						onDeleted={() => toList("create")}
+						onDeleted={(receipt) => toList("create", receipt)}
 					/>
 				) : (
 					<PresetList
 						scenarioName={scenario.name}
 						archived={scenario.archived_at != null}
 						presets={presets}
+						receipt={view.receipt}
 						canCreate={head.data !== undefined && decls.length > 0}
 						noParams={head.data !== undefined && decls.length === 0}
 						focusKey={focusKey}
@@ -167,6 +170,7 @@ function PresetList({
 	scenarioName,
 	archived,
 	presets,
+	receipt,
 	canCreate,
 	noParams,
 	focusKey,
@@ -178,6 +182,8 @@ function PresetList({
 	scenarioName: string;
 	archived: boolean;
 	presets: UseQueryResult<{ presets: PresetView[] }>;
+	/** 刚做完的保存、复制或删除的结果。 */
+	receipt: string | undefined;
 	canCreate: boolean;
 	noParams: boolean;
 	/** 从别的屏回到列表时要放回焦点的按钮（见 RunPresetsDialog）；没有时不动。 */
@@ -197,7 +203,6 @@ function PresetList({
 		// 删掉的预设没有按钮了：焦点落到「新建预设」。
 		(buttons.current.get(focusKey) ?? buttons.current.get("create"))?.focus();
 	}, [focusKey]);
-	const list = presets.data?.presets;
 	return (
 		<>
 			<DialogHeader>
@@ -209,88 +214,91 @@ function PresetList({
 				</DialogDescription>
 			</DialogHeader>
 			<DialogBody>
-				{presets.error && !list ? (
-					<ErrorState
-						title="无法读取运行预设"
-						error={presets.error}
-						onRetry={() => void presets.refetch()}
-					/>
-				) : !list ? (
-					<output aria-label="正在加载" className="flex flex-col gap-2">
-						<Skeleton className="h-12 w-full" />
-						<Skeleton className="h-12 w-full" />
+				{receipt && (
+					<output className="mb-3 flex items-center gap-1.5 text-xs text-ok [&_svg]:size-3.5 [&_svg]:flex-none">
+						<CheckIcon aria-hidden />
+						{receipt}
 					</output>
-				) : list.length === 0 ? (
-					<p className="m-0 text-sm text-fg-3">
-						还没有运行预设。新建一个，触发时一步选定这套参数。
-					</p>
-				) : (
-					<ul aria-label={TERM.runPreset} className="m-0 flex list-none flex-col gap-2 p-0">
-						{list.map((preset) => (
-							<li
-								key={preset.id}
-								className="flex items-start gap-3 rounded-lg border border-border-soft px-3 py-2 text-sm"
-							>
-								<div className="min-w-0 flex-1">
-									<div className="font-medium wrap-anywhere text-fg-1">
-										{preset.name}
-										{preset.status === "invalid" && (
-											<Badge variant="danger" className="ml-2 align-middle">
-												已失效
-											</Badge>
-										)}
-									</div>
-									{preset.description && (
-										<div className="text-xs wrap-anywhere text-fg-3">{preset.description}</div>
-									)}
-									<div className="mt-1 font-mono text-xs wrap-anywhere text-fg-2">
-										{preset.params.map((p) => `${p.name} = ${valueText(p.value)}`).join(" · ")}
-									</div>
-									{preset.status === "invalid" && (
-										<div className="mt-1 text-xs wrap-anywhere text-danger-fg">
-											{problemsText(preset.problems)}
-											。失效的预设不能用来触发运行，编辑并改好之后恢复可用。
-										</div>
-									)}
-									<div className="mt-1 text-xs text-fg-3">
-										最后修改 {preset.updated_by} ·{" "}
-										<span className="font-mono">{formatDateTime(preset.updated_at)}</span>
-									</div>
-								</div>
-								<div className="flex shrink-0 gap-1">
-									<Button
-										size="sm"
-										variant="ghost"
-										ref={keyed(`edit:${preset.id}`)}
-										aria-label={`编辑 ${preset.name}`}
-										disabled={!canCreate}
-										onClick={() => onEdit(preset)}
-									>
-										编辑
-									</Button>
-									<Button
-										size="sm"
-										variant="ghost"
-										ref={keyed(`copy:${preset.id}`)}
-										aria-label={`复制 ${preset.name}`}
-										onClick={() => onCopy(preset)}
-									>
-										复制
-									</Button>
-									<Button
-										size="sm"
-										variant="ghost"
-										ref={keyed(`delete:${preset.id}`)}
-										aria-label={`删除 ${preset.name}`}
-										onClick={() => onDelete(preset)}
-									>
-										删除
-									</Button>
-								</div>
-							</li>
-						))}
-					</ul>
 				)}
+				<QueryView
+					query={presets}
+					loading={<TableSkeleton columns={1} rows={2} />}
+					errorTitle={MESSAGE.loadFailed(TERM.runPreset)}
+					isEmpty={({ presets: list }) => list.length === 0}
+					empty={
+						<p className="m-0 text-sm text-fg-3">
+							还没有运行预设。新建一个，触发时一步选定这套参数。
+						</p>
+					}
+				>
+					{({ presets: list }) => (
+						<ul aria-label={TERM.runPreset} className="m-0 flex list-none flex-col gap-2 p-0">
+							{list.map((preset) => (
+								<li
+									key={preset.id}
+									className="flex items-start gap-3 rounded-lg border border-border-soft px-3 py-2 text-sm"
+								>
+									<div className="min-w-0 flex-1">
+										<div className="font-medium wrap-anywhere text-fg-1">
+											{preset.name}
+											{preset.status === "invalid" && (
+												<Badge variant="danger" className="ml-2 align-middle">
+													已失效
+												</Badge>
+											)}
+										</div>
+										{preset.description && (
+											<div className="text-xs wrap-anywhere text-fg-3">{preset.description}</div>
+										)}
+										<div className="mt-1 font-mono text-xs wrap-anywhere text-fg-2">
+											{preset.params.map((p) => `${p.name} = ${valueText(p.value)}`).join(" · ")}
+										</div>
+										{preset.status === "invalid" && (
+											<div className="mt-1 text-xs wrap-anywhere text-danger-fg">
+												{problemsText(preset.problems)}
+												。失效的预设不能用来触发运行，编辑并改好之后恢复可用。
+											</div>
+										)}
+										<div className="mt-1 text-xs text-fg-3">
+											最后修改 {preset.updated_by} ·{" "}
+											<span className="font-mono">{formatDateTime(preset.updated_at)}</span>
+										</div>
+									</div>
+									<div className="flex shrink-0 gap-1">
+										<Button
+											size="sm"
+											variant="ghost"
+											ref={keyed(`edit:${preset.id}`)}
+											aria-label={`编辑 ${preset.name}`}
+											disabled={!canCreate}
+											onClick={() => onEdit(preset)}
+										>
+											编辑
+										</Button>
+										<Button
+											size="sm"
+											variant="ghost"
+											ref={keyed(`copy:${preset.id}`)}
+											aria-label={`复制 ${preset.name}`}
+											onClick={() => onCopy(preset)}
+										>
+											复制
+										</Button>
+										<Button
+											size="sm"
+											variant="ghost"
+											ref={keyed(`delete:${preset.id}`)}
+											aria-label={`删除 ${preset.name}`}
+											onClick={() => onDelete(preset)}
+										>
+											删除
+										</Button>
+									</div>
+								</li>
+							))}
+						</ul>
+					)}
+				</QueryView>
 				{noParams && (
 					<p className="m-0 mt-3 text-xs text-fg-3">
 						入口节点没有声明参数，不能新建运行预设。先在编排画布里给入口节点加上参数并保存。
@@ -324,7 +332,8 @@ function PresetForm({
 	/** 新建时表单一开始就带着的内容（运行抽屉的「存为预设」）；没有时是空表单。 */
 	draft?: PresetDraft | undefined;
 	onCancel: () => void;
-	onSaved: () => void;
+	/** 保存成功以后回到列表；`receipt` 是写在列表上的结果。 */
+	onSaved: (receipt: string) => void;
 }) {
 	const invalidate = useInvalidatePresets();
 	const form = useRef<HTMLFormElement>(null);
@@ -346,11 +355,8 @@ function PresetForm({
 				: callApi(presetsApi.create, { params: { id: orchestrationId }, body });
 		},
 		onSuccess: async (saved) => {
-			notify.success(
-				preset ? `已保存运行预设「${saved.name}」` : `已新建运行预设「${saved.name}」`,
-			);
 			await invalidate();
-			onSaved();
+			onSaved(preset ? `已保存运行预设「${saved.name}」` : `已新建运行预设「${saved.name}」`);
 		},
 	});
 	// 第一次提交之前不显示错误；之后随输入更新。

@@ -1,7 +1,6 @@
 import { PresetName, type PresetView, presetsApi } from "@sfly/schema";
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
 import { TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
@@ -28,7 +27,8 @@ export function CopyPresetForm({
 	orchestrationId: string;
 	preset: PresetView;
 	onCancel: () => void;
-	onCopied: () => void;
+	/** 复制成功以后回到列表；`receipt` 是写在列表上的结果。 */
+	onCopied: (receipt: string) => void;
 }) {
 	const invalidate = useInvalidatePresets();
 	const nameInput = useRef<HTMLInputElement>(null);
@@ -44,9 +44,8 @@ export function CopyPresetForm({
 				body: { name: value },
 			}),
 		onSuccess: async (copied) => {
-			notify.success(`已复制为运行预设「${copied.name}」`);
 			await invalidate();
-			onCopied();
+			onCopied(`已复制为运行预设「${copied.name}」`);
 		},
 	});
 	const parsed = PresetName.safeParse(name);

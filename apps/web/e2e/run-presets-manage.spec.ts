@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "./fixtures";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createRunPreset, listRunPresets } from "./run-presets-support";
-import { createScenario, publishPackage } from "./support";
+import { createScenario, failApi, holdApi, publishPackage } from "./support";
 
 // 运行预设的维护（#323，ADR 0023）：在管理对话框里编辑、复制、删除预设；场景归档期间也能编辑。
 
@@ -74,6 +74,10 @@ test("编辑运行预设：列表写着最后由谁、什么时候修改；改�
 	await form.getByRole("switch", { name: "dry_run" }).click();
 	await form.getByRole("button", { name: "保存" }).click();
 	await expect(form).toBeHidden();
+
+	// 弹窗打开时不发通知：结果写在弹窗里。
+	await expect(dialog.getByText("已保存运行预设「压测 B 集群」")).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 
 	// 立即生效：列表里是新的内容，最后修改人是自己。
 	const list = dialog.getByRole("list", { name: "运行预设" });
@@ -148,6 +152,8 @@ test("复制运行预设：取一个新名称，值一起复制，名称重复�
 	await copy.getByLabel("名称").fill("压测 B 集群");
 	await copy.getByRole("button", { name: "复制" }).click();
 	await expect(copy).toBeHidden();
+	await expect(dialog.getByText("已复制为运行预设「压测 B 集群」")).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await expect(list.getByRole("listitem")).toHaveCount(2);
 	const copied = list.getByRole("listitem").filter({ hasText: "压测 B 集群" });
 	await expect(copied).toContainText("A 集群");
@@ -161,12 +167,16 @@ test("复制运行预设：取一个新名称，值一起复制，名称重复�
 	const confirm = page.getByRole("dialog", { name: "删除运行预设「压测 B 集群」？" });
 	await expect(confirm).toContainText("已有运行上记下的预设名不受影响");
 	await confirm.getByRole("button", { name: "取消" }).click();
+	// 放弃以后不留下刚才的回执。
+	await expect(dialog.getByText("已复制为运行预设")).toBeHidden();
 	await expect(list.getByRole("listitem")).toHaveCount(2);
 	await expect(dialog.getByRole("button", { name: "删除 压测 B 集群" })).toBeFocused();
 
 	await dialog.getByRole("button", { name: "删除 压测 B 集群" }).click();
 	await confirm.getByRole("button", { name: "删除" }).click();
 	await expect(confirm).toBeHidden();
+	await expect(dialog.getByText("已删除运行预设「压测 B 集群」")).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 	await expect(list.getByRole("listitem")).toHaveCount(1);
 	await expect(list).not.toContainText("压测 B 集群");
 	expect((await listRunPresets(controlPlane, id)).map((p) => p.name)).toEqual(["压测 A 集群"]);
@@ -226,4 +236,39 @@ test("场景归档期间也能编辑运行预设：已归档的卡片有「更�
 		.click();
 	await dialog.getByRole("button", { name: "关闭" }).click();
 	await expect(card.getByRole("button", { name: "更多操作" })).toBeFocused();
+});
+
+test("管理对话框读预设：加载中显示骨架，加载失败写「无法加载运行预设」和错误详情，重试后恢复", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
+	await createRunPreset(controlPlane, id, {
+		name: "压测 A 集群",
+		params: [{ name: "host", value: "10.0.0.8" }],
+	});
+	await page.goto("/orchestrations");
+
+	const hold = await holdApi(page, `/orchestrations/${id}/presets`);
+	const dialog = await openPresets(page, "巡检");
+	await expect(dialog.getByRole("status", { name: "加载中" })).toBeVisible();
+	hold.release();
+	await expect(dialog.getByRole("listitem").filter({ hasText: "压测 A 集群" })).toBeVisible();
+	await dialog.getByRole("button", { name: "关闭" }).click();
+	await expect(dialog).toBeHidden();
+
+	await page.unrouteAll();
+	const outage = await failApi(page, `/orchestrations/${id}/presets`);
+	await page.reload();
+	await openPresets(page, "巡检");
+	const error = dialog.getByRole("alert");
+	await expect(error).toContainText("无法加载运行预设");
+	await expect(error).toContainText("控制面暂时不可用");
+	await expect(error).toContainText(`GET /api/orchestrations/${id}/presets → 503 unavailable`);
+
+	await outage.restore();
+	await error.getByRole("button", { name: "重试" }).click();
+	await expect(dialog.getByRole("listitem").filter({ hasText: "压测 A 集群" })).toBeVisible();
+	await expect(error).toBeHidden();
 });

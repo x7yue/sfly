@@ -42,6 +42,8 @@ test("从场景列表新建运行预设，在运行抽屉里选中它：预设�
 	await host.fill("10.0.0.8");
 	await form.getByRole("button", { name: "保存" }).click();
 	await expect(form).toBeHidden();
+	await expect(dialog.getByText("已新建运行预设「压测 A 集群」")).toBeVisible();
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 
 	const presets = dialog.getByRole("list", { name: "运行预设" });
 	await expect(presets.getByRole("listitem")).toHaveCount(1);

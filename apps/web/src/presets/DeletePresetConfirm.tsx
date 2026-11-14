@@ -1,6 +1,5 @@
 import { type PresetView, presetsApi } from "@sfly/schema";
 import { useMutation } from "@tanstack/react-query";
-import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,16 +24,16 @@ export function DeletePresetConfirm({
 	orchestrationId: string;
 	preset: PresetView;
 	onCancel: () => void;
-	onDeleted: () => void;
+	/** 删除成功以后回到列表；`receipt` 是写在列表上的结果。 */
+	onDeleted: (receipt: string) => void;
 }) {
 	const invalidate = useInvalidatePresets();
 	const remove = useMutation({
 		mutationFn: () =>
 			callApi(presetsApi.remove, { params: { id: orchestrationId, presetId: preset.id } }),
 		onSuccess: async () => {
-			notify.success(`已删除运行预设「${preset.name}」`);
 			await invalidate();
-			onDeleted();
+			onDeleted(`已删除运行预设「${preset.name}」`);
 		},
 	});
 	return (
