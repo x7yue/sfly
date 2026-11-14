@@ -1095,6 +1095,16 @@ export interface PlatformMetricsQuery {
 	points?: number;
 }
 
+/** 运行前检查里引用的 Agent：在线的 Agent 正在准备环境时，带上开始准备的控制面时间。 */
+export interface PreflightAgent {
+	name: string;
+	/** 场景的默认 Agent。 */
+	default: boolean;
+	status: "online" | "offline" | "unknown";
+	/** 这次连接发出 Welcome 的控制面时间；已准备好、不在线或没有注册过时为 null（任务派发要等 Agent 准备好）。 */
+	preparing_since: Timestamp | null;
+}
+
 /** 不能触发的一个原因。 */
 export interface PreflightProblem {
 	code: string;
