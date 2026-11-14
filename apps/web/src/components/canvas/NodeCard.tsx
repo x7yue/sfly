@@ -1,3 +1,4 @@
+import { nodeCardText } from "@sfly/orchestration";
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
 import { type CSSProperties, useId } from "react";
@@ -6,7 +7,7 @@ import { BaseNode, BaseNodeHeader, BaseNodeHeaderTitle } from "@/components/ui/b
 import { useFlowCanvas } from "./context";
 import type { SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
-import { KIND_META, kindCaption, nodeSlot, nodeTags, nodeTitle } from "./node-display";
+import { KIND_META, nodeSlot, nodeTags } from "./node-display";
 import { WarningBadge } from "./WarningBadge";
 import { KIND_CHIP, LOD_HIDDEN, ZOOM_TEXT_11, ZOOM_TEXT_12, ZOOM_TEXT_TITLE } from "./zoom-text";
 
@@ -30,12 +31,11 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const { info, ports, decorateNode } = useFlowCanvas();
 	const { node } = data;
 	const meta = KIND_META[node.kind];
-	const title = nodeTitle(node, info);
+	const { title, caption } = nodeCardText(node, info);
 	const warnings = info.warnings.get(id) ?? [];
 	const decoration = decorateNode?.(id, node);
 	const port = ports.get(id) ?? { in: false, out: false, dispatch: false };
 	const tags = nodeTags(node);
-	const caption = kindCaption(node, title);
 	const slot = nodeSlot(node);
 	const KindIcon = meta.icon;
 	const isStart = node.kind === "entry" || node.kind === "subflow_entry";
