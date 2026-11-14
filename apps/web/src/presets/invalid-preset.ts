@@ -1,8 +1,8 @@
 import type { ParamDeclView, PresetProblemView, PresetView } from "@sfly/schema";
 import { PRESET_INVALID_LABEL } from "#/lib/copy";
 import { valueText } from "#/lib/format";
-import { usablePreset } from "#/run-drawer/trigger-form";
 import { draftFromPreset, type PresetDraft } from "./preset-form";
+import { usablePreset } from "./preset-selection";
 
 /**
  * 失效的运行预设（GLOSSARY「失效的运行预设」）在控制台里怎么写、怎么修的纯逻辑（有单测）：

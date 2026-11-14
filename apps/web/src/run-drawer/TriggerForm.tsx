@@ -22,6 +22,12 @@ import { useNickname } from "#/lib/nickname";
 import { writeRunView } from "#/monitor/live-run";
 import { unusablePresetNotice } from "#/presets/invalid-preset";
 import { draftFromFormValues } from "#/presets/preset-form";
+import {
+	initialPresetId,
+	type RerunSource,
+	switchPreset,
+	usablePreset,
+} from "#/presets/preset-selection";
 import { type OpeningView, RunPresetsDialog } from "#/presets/RunPresetsDialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,16 +36,7 @@ import { readLastPreset, rememberPreset } from "./last-preset";
 import { ParamField } from "./ParamField";
 import { PresetSelect } from "./PresetSelect";
 import { SectionTitle } from "./SectionTitle";
-import {
-	initialPresetId,
-	initialValues,
-	lockedValue,
-	paramsSchema,
-	type RerunSource,
-	switchPreset,
-	toParams,
-	usablePreset,
-} from "./trigger-form";
+import { initialValues, lockedValue, paramsSchema, toParams } from "./trigger-form";
 
 export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
