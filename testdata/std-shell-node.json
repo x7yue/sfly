@@ -1,6 +1,7 @@
 {
 	"name": "shell",
 	"title": "Shell 命令",
+	"description": "执行 `<shell> -c <command>`，stdout、stderr 实时转为任务日志。\n\n- `shell`：解释器，默认 `/bin/sh`，也可以是 `/bin/bash`、`python3` 等任何接受 `-c` 的程序；\n- `env`：追加的环境变量（在 Agent 的环境变量之上）；`cwd`：工作目录，默认任务工作目录；\n- `ok_exit_codes`：算作成功的退出码，默认 `[0]`；不在其中时失败，错误信息附 stderr 末尾。\n\n- `save_output`：保存完整输出。打开后完整的 stdout、stderr 各存成一个产物\n  （`stdout.txt`、`stderr.txt`，原始字节），命令失败时也保留。\n\n输出退出码（被信号终止时为 128 + 信号值）、stdout 和 stderr 各自的最后 64 KiB，\n以及两个产物的引用 `stdout_file`、`stderr_file`（没有打开 `save_output` 时为空值）。",
 	"entry": "sfly_std.shell:shell",
 	"inputs": {
 		"type": "object",
