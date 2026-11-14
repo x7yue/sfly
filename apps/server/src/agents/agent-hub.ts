@@ -44,6 +44,17 @@ export function devPackageInfo(p: { name: string; source: string; metadataJson: 
 /** 每个 Agent 默认的并发槽位数（docs/SEMANTICS.md 默认值）。 */
 export const DEFAULT_SLOTS = 4;
 
+/**
+ * 连接的阶段（#219）：
+ * - registered：已注册，还没推送 Welcome（#15：Welcome 带着对重连前任务的处置，之前不能向它派发或取消）；
+ * - preparing：已推送 Welcome，Agent 在准备环境（since 是推送 Welcome 的控制面时间），可以发取消等指令，不派发；
+ * - ready：Welcome 之后收到了第一次心跳，Agent 已准备好环境，开始派发。
+ */
+type ConnectionPhase =
+	| { readonly name: "registered" }
+	| { readonly name: "preparing"; readonly since: Date }
+	| { readonly name: "ready" };
+
 /** 一个已完成握手的 Agent 连接。 */
 export class AgentConnection {
 	constructor(
@@ -54,17 +65,34 @@ export class AgentConnection {
 		readonly clock: ConnectionClock,
 	) {}
 
-	/** 已推送 Welcome（#15：Welcome 带着对重连前任务的处置，之前不能向它派发或取消）。 */
-	#welcomed = false;
+	#phase: ConnectionPhase = { name: "registered" };
 
+	/** 已推送 Welcome：可以发取消等指令。 */
 	get welcomed(): boolean {
-		return this.#welcomed;
+		return this.#phase.name !== "registered";
 	}
 
-	/** 推送 Welcome，之后连接才可用于派发。 */
-	welcome(message: ServerMessage): void {
+	/** Agent 已准备好环境：可以派发。 */
+	get ready(): boolean {
+		return this.#phase.name === "ready";
+	}
+
+	/** Agent 开始准备环境的控制面时间（推送 Welcome 的时刻）；还没推送 Welcome 或已准备好时为 undefined。 */
+	get preparingSince(): Date | undefined {
+		return this.#phase.name === "preparing" ? this.#phase.since : undefined;
+	}
+
+	/** 推送 Welcome（控制面时间 `at`），Agent 开始准备环境。 */
+	welcome(message: ServerMessage, at: Date): void {
 		this.send(message);
-		this.#welcomed = true;
+		this.#phase = { name: "preparing", since: at };
+	}
+
+	/** Agent 发来心跳：Welcome 之后的第一次表示它已准备好环境。返回这次是否刚刚准备好。 */
+	heartbeat(): boolean {
+		if (this.#phase.name !== "preparing") return false;
+		this.#phase = { name: "ready" };
+		return true;
 	}
 
 	/** 推送一条消息；连接已关闭时返回 false。 */
@@ -96,6 +124,8 @@ export interface AgentView {
 		installed_packages: InstalledPackage[];
 	};
 	last_seen_at: string;
+	/** 在线 Agent 正在准备环境时，这次连接发出 Welcome 的控制面时间；已准备好或离线时为 null。 */
+	preparing_since: string | null;
 	/** 最近一次测得的时钟偏差；未知（旧版本 Agent）时为 null。 */
 	clock_offset: ClockOffsetView | null;
 	/** Agent 共享 venv 中已安装的节点包（Agent 在 Hello 中上报）。 */
@@ -158,10 +188,15 @@ export class AgentHub {
 		return info.agent_version !== this.deps.version;
 	}
 
-	/** 当前在线（已收到 Welcome）的连接。 */
+	/** 当前在线（已推送 Welcome，含准备环境中）的连接。 */
 	connection(name: string): AgentConnection | undefined {
 		const conn = this.#connections.get(name);
 		return conn && !conn.closed && conn.welcomed ? conn : undefined;
+	}
+
+	/** 在线 Agent 开始准备环境的控制面时间（这次连接推送 Welcome 的时刻）；已准备好或离线时为 undefined。 */
+	preparingSince(name: string): Date | undefined {
+		return this.connection(name)?.preparingSince;
 	}
 
 	/** 现在的控制面时间：网关在收到消息时取它，作为这条消息的收到时刻。 */
@@ -307,6 +342,7 @@ export class AgentHub {
 				// 早于 #5 注册的记录没有 installed_packages。
 				info: { ...info, installed_packages: info.installed_packages ?? [] },
 				last_seen_at: row.lastSeenAt.toISOString(),
+				preparing_since: this.preparingSince(row.name)?.toISOString() ?? null,
 				clock_offset: clockOffsetView(row.clockOffsetMs, row.clockOffsetMeasuredAt),
 				installed_packages: info.installed_packages ?? [],
 				install: install ?? null,

@@ -7,8 +7,8 @@ const passed: Preflight = {
 	problems: [],
 	packages: { "demo-checks": "1.2.0", stub: "0.1.0" },
 	agents: [
-		{ name: "agent-a", default: true, status: "online" },
-		{ name: "agent-b", default: false, status: "online" },
+		{ name: "agent-a", default: true, status: "online", preparing_since: null },
+		{ name: "agent-b", default: false, status: "online", preparing_since: null },
 	],
 };
 
@@ -30,8 +30,8 @@ describe("触发前检查清单", () => {
 		const p: Preflight = {
 			...passed,
 			agents: [
-				{ name: "agent-a", default: true, status: "offline" },
-				{ name: "agent-b", default: false, status: "online" },
+				{ name: "agent-a", default: true, status: "offline", preparing_since: null },
+				{ name: "agent-b", default: false, status: "online", preparing_since: null },
 			],
 		};
 		expect(preflightChecks(p).blocked).toBe(false);
@@ -40,6 +40,43 @@ describe("触发前检查清单", () => {
 			"warn",
 			"agent-a 当前不在线",
 			"任务会排队，Agent 上线后再执行",
+		]);
+	});
+
+	it("Agent 在准备环境只是提醒（任务会等它准备好），不阻止触发；同时有不在线的 Agent 时两条都给", () => {
+		const preparing: Preflight = {
+			...passed,
+			agents: [
+				{
+					name: "agent-a",
+					default: true,
+					status: "online",
+					preparing_since: "2026-01-01T00:00:00Z",
+				},
+				{ name: "agent-b", default: false, status: "online", preparing_since: null },
+			],
+		};
+		expect(preflightChecks(preparing).blocked).toBe(false);
+		expect(summary(preparing).slice(2)).toEqual([
+			["agents", "warn", "agent-a 正在准备环境", "任务会等它准备好再执行"],
+		]);
+
+		const both: Preflight = {
+			...passed,
+			agents: [
+				{
+					name: "agent-a",
+					default: true,
+					status: "online",
+					preparing_since: "2026-01-01T00:00:00Z",
+				},
+				{ name: "agent-b", default: false, status: "offline", preparing_since: null },
+			],
+		};
+		expect(preflightChecks(both).blocked).toBe(false);
+		expect(summary(both).slice(2)).toEqual([
+			["agents", "warn", "agent-b 当前不在线", "任务会排队，Agent 上线后再执行"],
+			["agents", "warn", "agent-a 正在准备环境", "任务会等它准备好再执行"],
 		]);
 	});
 
@@ -52,7 +89,7 @@ describe("触发前检查清单", () => {
 				{ code: "agent_not_registered", message: "Agent ghost 还没有注册过", node_id: "b" },
 				{ code: "not_supported", message: "只支持一条主链" },
 			],
-			agents: [{ name: "ghost", default: true, status: "unknown" }],
+			agents: [{ name: "ghost", default: true, status: "unknown", preparing_since: null }],
 		};
 		const checks = preflightChecks(p);
 		expect(checks.blocked).toBe(true);

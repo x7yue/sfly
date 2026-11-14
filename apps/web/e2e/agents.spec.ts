@@ -75,6 +75,40 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、对外地�
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
 });
 
+test("准备环境中：在线旁边显示「准备环境中 · 已 N 分 N 秒」，版本、槽位、最后在线照常，发出心跳后标记消失", async ({
+	page,
+	connectAgent,
+	clock,
+}) => {
+	const preparing = await connectAgent(
+		{ name: "agent-prep", agentVersion: "1.2.3", slots: 2 },
+		{ preparing: true },
+	);
+	await connectAgent({ name: "agent-ready", agentVersion: "1.2.3" });
+	clock.advance(130_000);
+
+	await page.goto("/agents");
+	const row = (name: string) => page.getByRole("row", { name: new RegExp(name) });
+	const status = (name: string) => row(name).getByRole("cell").nth(1);
+	await expect(status("agent-prep")).toHaveText("在线准备环境中 · 已 2 分 10 秒");
+	await expect(status("agent-ready")).toHaveText("在线");
+	// 准备期间照常显示版本、槽位和最后在线。
+	const cell = (index: number) => row("agent-prep").getByRole("cell").nth(index);
+	await expect(cell(2)).toHaveText("0/2");
+	await expect(cell(3)).toHaveText("1.2.3");
+	await expect(cell(9)).toHaveText("现在");
+
+	// 时长按控制面时间走：控制面时间过了一分钟，页面不用刷新列表就变了。
+	clock.advance(60_000);
+	await expect(status("agent-prep")).toHaveText("在线准备环境中 · 已 3 分 10 秒", {
+		timeout: 15_000,
+	});
+
+	// 准备好（发出第一次心跳）：列表刷新后标记消失，仍然在线。
+	await preparing.ready();
+	await expect(status("agent-prep")).toHaveText("在线", { timeout: 15_000 });
+});
+
 test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒时不显示，心跳测到新的偏差后更新", async ({
 	page,
 	connectAgent,
