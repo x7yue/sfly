@@ -1,9 +1,9 @@
-import type { DocumentDiff, FieldChange } from "@sfly/orchestration";
+import type { AnnotationChange, DocumentDiff, FieldChange } from "@sfly/orchestration";
 import { isEmptyDiff } from "@sfly/orchestration";
 import { KIND_META } from "#/components/canvas/node-display";
 
 /**
- * 两份场景文档的差异列表：场景设置、节点（新增 / 删除 / 修改的字段）、连线、布局。
+ * 两份场景文档的差异列表：场景设置、节点（新增 / 删除 / 修改的字段）、连线、注释框、布局。
  * 旧值划线（红），新值绿色；版本对比与保存冲突弹窗共用。
  */
 export function DocumentDiffView({
@@ -18,7 +18,7 @@ export function DocumentDiffView({
 	if (isEmptyDiff(diff)) {
 		return <p className="m-0 text-sm text-fg-3">两边内容相同。</p>;
 	}
-	const nodes = diff.nodes;
+	const { nodes, annotations } = diff;
 	return (
 		<div className="flex flex-col gap-3 text-sm">
 			<p className="m-0 text-xs text-fg-3">
@@ -81,6 +81,40 @@ export function DocumentDiffView({
 					))}
 				</DiffSection>
 			)}
+			{annotations.added.length + annotations.removed.length + annotations.changed.length > 0 && (
+				<DiffSection title="注释框">
+					{annotations.added.map((a) => (
+						<Row key={`+${a.id}`}>
+							<Ins>
+								+ {a.title}（{a.id}）
+							</Ins>
+						</Row>
+					))}
+					{annotations.removed.map((a) => (
+						<Row key={`-${a.id}`}>
+							<Del>
+								− {a.title}（{a.id}）
+							</Del>
+						</Row>
+					))}
+					{annotations.changed.map((a) => (
+						<div key={`~${a.id}`}>
+							<Row>
+								<span className="text-fg-1">{a.title}</span>
+								<span className="font-mono text-fg-3">（{a.id}）</span>
+							</Row>
+							{a.changes.map((c) => (
+								<ChangeRow
+									key={c.path}
+									change={annotationChange(c)}
+									label={ANNOTATION_FIELD_LABEL[c.path] ?? c.path}
+									indent
+								/>
+							))}
+						</div>
+					))}
+				</DiffSection>
+			)}
 			{diff.moved.length > 0 && (
 				<DiffSection title="布局">
 					<Row>
@@ -117,10 +151,18 @@ const Del = ({ children }: { children: React.ReactNode }) => (
 	<del className="font-mono whitespace-pre-wrap text-danger-fg">{children}</del>
 );
 
-function ChangeRow({ change, indent = false }: { change: FieldChange; indent?: boolean }) {
+function ChangeRow({
+	change,
+	indent = false,
+	label,
+}: {
+	change: FieldChange;
+	indent?: boolean;
+	label?: string;
+}) {
 	return (
 		<Row indent={indent}>
-			<span className="text-fg-2">{fieldLabel(change.path)}</span>{" "}
+			<span className="text-fg-2">{label ?? fieldLabel(change.path)}</span>{" "}
 			{change.before !== undefined && <Del>{formatValue(change.before)}</Del>}
 			{change.before !== undefined && change.after !== undefined && " → "}
 			{change.after !== undefined && <Ins>{formatValue(change.after)}</Ins>}
@@ -128,6 +170,21 @@ function ChangeRow({ change, indent = false }: { change: FieldChange; indent?: b
 			{change.before === undefined && <span className="text-fg-3">（新增）</span>}
 		</Row>
 	);
+}
+
+const ANNOTATION_FIELD_LABEL: Record<string, string> = {
+	title: "标题",
+	note: "备注",
+	nodes: "成员节点",
+	subflows: "成员子流程",
+};
+
+/** 成员列表写成「a、b」，没有成员写「（无）」。 */
+function annotationChange(change: AnnotationChange["changes"][number]): FieldChange {
+	const members = (value: unknown) => (Array.isArray(value) ? value.join("、") || "（无）" : value);
+	return change.path === "nodes" || change.path === "subflows"
+		? { ...change, before: members(change.before), after: members(change.after) }
+		: change;
 }
 
 const kindLabel = (kind: string) => KIND_META[kind as keyof typeof KIND_META]?.label ?? kind;

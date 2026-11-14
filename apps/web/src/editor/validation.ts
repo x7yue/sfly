@@ -9,9 +9,11 @@ import { OrchestrationDocument } from "@sfly/schema";
  * 输入框里还没生效的值（例如在整数输入里填了 abc）不在文档里，由 field-drafts.tsx 另外记录。
  */
 export interface FieldError {
-	/** 出错的节点；场景级字段为 undefined。 */
+	/** 出错的节点；场景级字段、注释框的字段为 undefined。 */
 	nodeId?: string;
-	/** 节点内的字段路径，例如 `params.0.name`、`duration`、`inputs.steps`。 */
+	/** 出错的注释框（标题、备注）。 */
+	annotationId?: string;
+	/** 节点（或注释框）内的字段路径，例如 `params.0.name`、`duration`、`inputs.steps`、`title`。 */
 	field: string;
 	message: string;
 	/** 来自还没生效的输入（字段草稿），错误已显示在输入框下面。 */
@@ -37,10 +39,13 @@ export function documentFieldErrors(doc: OrchestrationDocument): FieldError[] {
 	if (!parsed.success) {
 		for (const issue of parsed.error.issues) {
 			const [head, index, ...rest] = issue.path;
-			const node = head === "nodes" && typeof index === "number" ? doc.nodes[index] : undefined;
-			const field = (node ? rest : issue.path).map(String).join(".");
+			const at = typeof index === "number" ? index : -1;
+			const node = head === "nodes" ? doc.nodes[at] : undefined;
+			const annotation = head === "annotations" ? doc.annotations[at] : undefined;
+			const field = (node || annotation ? rest : issue.path).map(String).join(".");
 			errors.push({
 				nodeId: node?.id,
+				annotationId: annotation?.id,
 				field,
 				message: messageOf(issue.path, issue.code, issue.message),
 				typed: TYPED_FIELD.test(field),

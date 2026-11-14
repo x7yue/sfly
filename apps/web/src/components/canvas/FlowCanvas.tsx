@@ -1,4 +1,5 @@
 import type { EdgeEnds, Position } from "@sfly/orchestration";
+import type { Annotation } from "@sfly/schema";
 import {
 	Background,
 	BackgroundVariant,
@@ -21,6 +22,7 @@ import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { useShortcut } from "#/components/shortcuts";
 import { dialogOpen, isEditable } from "#/lib/focus";
 import { ContextMenu } from "@/components/ui/context-menu";
+import { AnnotationBoxes } from "./AnnotationBoxes";
 import { CanvasDock, type CanvasTool } from "./CanvasDock";
 import { type CanvasMenuTarget, FitViewMenuItem, menuAnchor } from "./CanvasMenu";
 import {
@@ -31,7 +33,7 @@ import {
 	type PortState,
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
-import { type DocEdge, docEdgeOf, edgeId, type SfEdge, type SfNode } from "./flow";
+import { type DocEdge, docEdgeOf, edgeId, layoutOf, type SfEdge, type SfNode } from "./flow";
 import {
 	type CanvasInsets,
 	FIT_MAX_ZOOM,
@@ -53,6 +55,8 @@ import {
 	isNodeSelected,
 	latestNode,
 	NO_SELECTION,
+	selectAnnotation,
+	selectedAnnotation,
 	selectNode,
 	selectNodes,
 	soleNode,
@@ -63,10 +67,11 @@ import {
 /**
  * 可配置的编排画布（#35；以 xyflow 官方 React Flow UI 组件为起点）：铺满容器，控件悬浮在上面。
  *
- * 画布本身负责：节点卡片、连线、子流程区域、语义缩放（--canvas-zoom / data-lod，见 zoom-text.ts）、
+ * 画布本身负责：节点卡片、连线、子流程区域、注释框、语义缩放（--canvas-zoom / data-lod，见 zoom-text.ts）、
  * 打开时与窗口变化时自动适配视图（避开 `insets` 指出的悬浮控件）、底部工具条、左下小地图、
  * 键盘浏览（方向键沿链切换、↓/↑ 进出子流程、Enter 交给 onEnter、Esc 取消选中；不用方向键移动节点）、
- * 可编辑时的多选（指针工具下 Shift 拖动框选、Ctrl/⌘ 点击加选减选、点子流程区域标题选中整个子流程）。
+ * 可编辑时的多选（指针工具下 Shift 拖动框选、Ctrl/⌘ 点击加选减选、点子流程区域标题选中整个子流程）、
+ * 点注释框的标题带选中注释框。
  *
  * 使用方负责：节点与连线的状态（受控）、选中状态（受控，见 selection.ts）、右侧检查器和其他悬浮控件（children）。
  *
@@ -87,6 +92,8 @@ export interface FlowCanvasProps {
 	label: string;
 	nodes: SfNode[];
 	edges: SfEdge[];
+	/** 场景文档里的注释框（范围由成员算出）。 */
+	annotations?: readonly Annotation[];
 	info: CanvasInfo;
 	/** 选中了什么（只含画布上有的节点）。 */
 	selection: CanvasSelection;
@@ -138,6 +145,8 @@ export interface FlowCanvasProps {
 	children?: ReactNode;
 }
 
+const NO_ANNOTATIONS: readonly Annotation[] = [];
+
 /** 工具条（底部居中，高 42 + 下边距 14）占住的高度。 */
 const DOCK_SPACE = 72;
 
@@ -145,6 +154,7 @@ export function FlowCanvas({
 	label,
 	nodes,
 	edges,
+	annotations = NO_ANNOTATIONS,
 	info,
 	selection,
 	onSelect,
@@ -258,6 +268,8 @@ export function FlowCanvas({
 		(ids: readonly string[]) => onSelect(selectNodes(ids)),
 		[onSelect],
 	);
+	const pickAnnotation = useCallback((id: string) => onSelect(selectAnnotation(id)), [onSelect]);
+	const layout = useMemo(() => layoutOf(shownNodes, edges), [shownNodes, edges]);
 
 	// —— 右键菜单：关闭时保留对象，退场动画期间内容不变 ——
 	const [menuState, setMenuState] = useState<{ target: CanvasMenuTarget; open: boolean } | null>(
@@ -573,7 +585,14 @@ export function FlowCanvas({
 					ariaLabelConfig={{ "minimap.ariaLabel": "小地图" }}
 				>
 					<ZoomVariables target={wrapper} />
+					<AnnotationBoxes
+						layout={layout}
+						annotations={annotations}
+						selected={selectedAnnotation(selection)}
+						onSelect={editable ? pickAnnotation : undefined}
+					/>
 					<SubflowRegions
+						layout={layout}
 						nodes={shownNodes}
 						edges={edges}
 						onSelect={editable ? selectSubflow : undefined}

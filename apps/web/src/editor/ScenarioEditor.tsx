@@ -9,10 +9,12 @@ import {
 	outgoingProblem,
 	removeNodes,
 	subflowLabels,
+	subflowRegions,
 	tidyLayout,
 	uniqueNodeId,
 } from "@sfly/orchestration";
 import {
+	type Annotation,
 	agentsApi,
 	feishuBotsApi,
 	type OrchestrationHeadView,
@@ -50,12 +52,13 @@ import {
 import { INSPECTOR_MARGIN, NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { VIEWPORT_MS, viewportDuration } from "#/components/canvas/motion";
 import { usePackageTitles } from "#/components/canvas/package-titles";
-import { subflowRegions } from "#/components/canvas/SubflowRegions";
 import {
 	type CanvasSelection,
+	keepAnnotation,
 	keepNodes,
 	latestNode,
 	NO_SELECTION,
+	selectAnnotation,
 	selectNode,
 	soleNode,
 } from "#/components/canvas/selection";
@@ -74,12 +77,19 @@ import { type EditStart, startEditing, useVersionedDraft } from "#/versions/useV
 import { AddNodeMenu, type AddRequest } from "./AddNodeMenu";
 import { type AddItem, idStem, newDocNode, newSubflowNameProblem, packageGroups } from "./add-node";
 import { companionSubflow } from "./add-subflow";
+import { newAnnotation, updateAnnotation, withNode, withoutMember } from "./annotations";
 import { usePackageCatalog, useRegisteredAgents, useRegisteredBots } from "./catalog";
 import { type EditorMode, EditorTopLeft, EditorTopRight, TOP_GROUP_SPACE } from "./EditorChrome";
 import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
-import { FieldDraftsProvider, fieldErrorKey, useFieldDraftStore } from "./field-drafts";
+import {
+	annotationFieldKey,
+	FieldDraftsProvider,
+	fieldErrorKey,
+	useFieldDraftStore,
+} from "./field-drafts";
 import { freeCardSpot } from "./free-spot";
+import { focusField } from "./inspector/fields";
 import { type FocusRequest, Inspector, type InspectorContext } from "./inspector/Inspector";
 import { useInspectorWidth } from "./inspector/inspector-width";
 import { useNodeClipboard } from "./node-clipboard";
@@ -167,6 +177,8 @@ function Editor({
 	const [meta, setMeta] = useState<DocMeta>({
 		default_agent: start.document.default_agent,
 		packages: start.document.packages,
+		// 加入注释框之前存下的本地草稿里没有这个字段。
+		annotations: start.document.annotations ?? [],
 	});
 	const [selection, setSelection] = useState<CanvasSelection>(() =>
 		initialNode ? selectNode(initialNode) : NO_SELECTION,
@@ -197,7 +209,7 @@ function Editor({
 	);
 
 	const doc = useMemo(() => fromFlow(nodes, edges, meta), [nodes, edges, meta]);
-	const regionBoxes = useMemo(() => subflowRegions(nodes, edges).map((r) => r.box), [nodes, edges]);
+	const regionBoxes = useMemo(() => subflowRegions(doc).map((r) => r.box), [doc]);
 	// 结构、包版本锁定、引用的静态检查，与控制面保存时返回的警告是同一套规则。
 	const catalog = usePackageCatalog(meta.packages, agentList);
 	const registered = useRegisteredAgents(agents.data?.agents);
@@ -265,11 +277,22 @@ function Editor({
 	const running = mode === "run";
 	const shownNodes = running && runFlow ? runFlow.nodes : nodes;
 	const shownEdges = running && runFlow ? runFlow.edges : edges;
-	// 选中的节点可能不在画布上：撤销了添加、运行绑定的版本里没有它。
-	const visibleSelection = keepNodes(selection, (id) => shownNodes.some((n) => n.id === id));
-	// 运行状态下画布只读、不能多选：编辑时选中的一组节点只显示最近选中的那个，切回编辑模式还是原来那组。
+	const shownAnnotations =
+		running && runFlow && readyRun?.doc ? readyRun.doc.annotations : meta.annotations;
+	// 选中的节点或注释框可能不在画布上：撤销了添加、运行绑定的版本里没有它。
+	const visibleSelection = keepAnnotation(
+		keepNodes(selection, (id) => shownNodes.some((n) => n.id === id)),
+		(id) => shownAnnotations.some((a) => a.id === id),
+	);
+	// 运行状态下画布只读、不能多选也不能选中注释框：编辑时选中的一组节点只显示最近选中的那个，
+	// 切回编辑模式还是原来那组。
 	const shownSelection = useMemo(
-		() => (running ? latestNode(visibleSelection) : visibleSelection),
+		() =>
+			running
+				? visibleSelection.kind === "annotation"
+					? NO_SELECTION
+					: latestNode(visibleSelection)
+				: visibleSelection,
 		[running, visibleSelection],
 	);
 	const nodeOf = (id: string) => shownNodes.find((n) => n.id === id)?.data.node;
@@ -379,12 +402,46 @@ function Editor({
 			x: (window.innerWidth - inspectorSpace) / 2,
 			y: (window.innerHeight + TOP_GROUP_SPACE) / 2,
 		});
-	/** 把文档操作（@sfly/orchestration 的 chain-edits）的结果写回画布，算一步撤销。 */
-	const applyEdit = (next: Pick<typeof doc, "nodes" | "edges">) => {
+	/**
+	 * 把文档操作（@sfly/orchestration 的 chain-edits、removeNodes）的结果写回画布，算一步撤销；
+	 * 删除节点时同步更新过的注释框一起写回。
+	 */
+	const applyEdit = (
+		next: Pick<typeof doc, "nodes" | "edges"> & { annotations?: readonly Annotation[] },
+	) => {
 		const applied = applyDocument(nodes, edges, next);
 		history.checkpoint();
 		setNodes(applied.nodes);
 		setEdges(applied.edges);
+		const { annotations } = next;
+		if (annotations && annotations !== meta.annotations) {
+			setMeta((m) => ({ ...m, annotations: [...annotations] }));
+		}
+	};
+	/** 改注释框，算一步撤销；`key` 相同的连续修改（同一个注释框的标题输入）合成一步。 */
+	const changeAnnotations = (
+		update: (annotations: readonly Annotation[]) => Annotation[],
+		key?: string,
+	) => {
+		history.checkpoint(key);
+		setMeta((m) => ({ ...m, annotations: update(m.annotations) }));
+	};
+	/** 新建只含这个节点的注释框：选中它，标题输入框拿到焦点（默认标题整段选中）。 */
+	const addAnnotation = (nodeId: string) => {
+		const created = newAnnotation(meta.annotations, { nodes: [nodeId], subflows: [] });
+		changeAnnotations((list) => [...list, created]);
+		setSelection(selectAnnotation(created.id));
+		setInspectorOpen(true);
+		focusField(annotationFieldKey(created.id, "title"), { select: true });
+	};
+	const deleteAnnotation = (id: string) => {
+		changeAnnotations((list) => list.filter((a) => a.id !== id));
+		setSelection(NO_SELECTION);
+	};
+	/** 选中注释框（检查结果里的「前往」）。 */
+	const locateAnnotation = (id: string) => {
+		setSelection(selectAnnotation(id));
+		setInspectorOpen(true);
 	};
 	/**
 	 * 删除节点（Delete 键、节点菜单、检查器的删除按钮；多选时是整组）：每个都是恰好一进一出时前后自动接上，
@@ -551,6 +608,11 @@ function Editor({
 		if (first) {
 			drafts.touch(fieldErrors.map(fieldErrorKey));
 			setInspectorOpen(true);
+			if (first.annotationId !== undefined) {
+				setSelection(selectAnnotation(first.annotationId));
+				focusField(fieldErrorKey(first));
+				return;
+			}
 			if (first.nodeId === undefined) setSelection(NO_SELECTION);
 			else if (first.nodeId !== soleNode(selection)) locate(first.nodeId);
 			setFocusRequest({ key: fieldErrorKey(first), nonce: Date.now() });
@@ -601,6 +663,13 @@ function Editor({
 		},
 		onLocate: locate,
 		onDelete: deleteNodes,
+		onChangeAnnotation: (next, field) =>
+			changeAnnotations(
+				(list) => updateAnnotation(list, next.id, () => next),
+				field && `annotation:${next.id}:${field}`,
+			),
+		onDeleteAnnotation: deleteAnnotation,
+		onLocateAnnotation: locateAnnotation,
 	};
 
 	const focusInspector = () => {
@@ -613,9 +682,13 @@ function Editor({
 			(target ?? aside)?.focus();
 		});
 	};
+	/** 检查器里按 Esc：焦点回到选中的节点上；选中的是注释框时回到画布区域（再用方向键浏览节点）。 */
 	const focusCanvasNode = () => {
 		const id = soleNode(shownSelection);
 		if (id) cardOf(id)?.focus();
+		else if (shownSelection.kind === "annotation") {
+			document.querySelector<HTMLElement>("[data-canvas-region]")?.focus();
+		}
 	};
 
 	return (
@@ -665,6 +738,7 @@ function Editor({
 					editable={!running}
 					nodes={shownNodes}
 					edges={shownEdges}
+					annotations={shownAnnotations}
 					info={running ? runInfo : info}
 					{...(running ? decorations : {})}
 					selection={shownSelection}
@@ -712,6 +786,18 @@ function Editor({
 											tidy,
 											undo: history.undo,
 											redo: history.redo,
+											annotations: (nodeId) => ({
+												annotations: meta.annotations,
+												onAdd: () => addAnnotation(nodeId),
+												onJoin: (id) =>
+													changeAnnotations((list) =>
+														updateAnnotation(list, id, (a) => withNode(a, nodeId)),
+													),
+												onLeave: (id) =>
+													changeAnnotations((list) =>
+														updateAnnotation(list, id, (a) => withoutMember(a, nodeId)),
+													),
+											}),
 										}
 							}
 						/>
