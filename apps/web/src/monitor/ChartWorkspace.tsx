@@ -39,7 +39,7 @@ import { balancedColumns, chartLines, chartWindow } from "./charts";
 import { MetricChart } from "./MetricChart";
 import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
-import { chainLabel, documentNodes } from "./run-model";
+import { chainLabel, documentNodes, findNode } from "./run-model";
 import type { TimeRange } from "./timeline-model";
 import {
 	attemptsSignature,
@@ -834,7 +834,7 @@ function PlatformGroup({
 						{data
 							? data.nodes
 									.filter((n) => n.retries > 0)
-									.map((n) => `${n.node_id} ×${n.retries}`)
+									.map((n) => `${platformNodeName(run, n)} ×${n.retries}`)
 									.join("、") || "没有重试"
 							: empty}
 					</div>
@@ -843,6 +843,12 @@ function PlatformGroup({
 		</GroupShell>
 	);
 }
+
+/** 平台自带图表里的一个节点在运行视图里的样子（带显示名称）；运行视图里还没有时只有节点 ID。 */
+const platformNode = (run: RunView, n: { chain_instance_id: string; node_id: string }) =>
+	findNode(run, { chainInstanceId: n.chain_instance_id, nodeId: n.node_id }) ?? n;
+const platformNodeName = (run: RunView, n: { chain_instance_id: string; node_id: string }) =>
+	runNodeName(platformNode(run, n));
 
 /** 节点耗时 Top 10：条长为总耗时（含排队与等待）。 */
 function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | undefined }) {
@@ -881,7 +887,7 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 						const waiting = STATUS.warn.area;
 						return (
 							<li key={`${n.chain_instance_id}:${n.node_id}`} className="contents">
-								<span className="truncate font-mono text-fg-2">{n.node_id}</span>
+								<NodeName node={platformNode(run, n)} className="truncate text-fg-2" />
 								<span className="relative h-2.5 overflow-hidden rounded-[2px] bg-track">
 									<i
 										className={cn(

@@ -10,6 +10,7 @@ import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
 import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
+import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
@@ -329,7 +330,7 @@ function NodeRunInspector({
 						viewTransition={runViewTransition("to-monitor")}
 						className={buttonVariants()}
 					>
-						在监控页中打开 {id}
+						在监控页中打开 {runNodeName(view)}
 					</Link>
 				)}
 			</div>

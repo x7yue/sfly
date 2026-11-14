@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor } from "./monitor-scenario";
 import {
@@ -52,6 +53,7 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 	await page.goto("/");
 	const running = dashboardPanel(page, "正在运行").getByRole("link", { name: /日终对账/ });
 	await expect(running).toContainText("执行中：核对结果（verify）");
+	await expect(running.getByRole("img", { name: /^子流程 压测监控 \d\/2$/ })).toBeVisible();
 	const failures = dashboardPanel(page, "最近失败").getByRole("link");
 	await expect(failures).toHaveCount(1);
 	await expect(failures.first()).toContainText("子流程失败 · 压测监控");
@@ -60,15 +62,22 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 	await page.goto("/runs");
 	const card = page.getByRole("article", { name: `运行 ${runId.slice(0, 8)}` });
 	await expect(card.getByRole("listitem")).toHaveText([/^核对结果（verify）执行中/]);
+	await expect(card).toContainText("子流程 压测监控 失败");
+	await expect(card.getByRole("img", { name: /^子流程 压测监控 \d\/2$/ })).toBeVisible();
+	await card.getByRole("button", { name: "取消运行" }).click();
+	const cancel = page.getByRole("dialog", { name: `取消运行 ${runId.slice(0, 8)}？` });
+	await expect(cancel.getByRole("list", { name: "取消的影响" })).toContainText(
+		"执行中的 1 个任务先优雅终止核对结果（verify）",
+	);
+	await cancel.getByRole("button", { name: "继续运行" }).click();
+	await expect(cancel).toBeHidden();
 
 	await agent.fail(verify, "AssertionError: 仍然差 3 笔");
-	const history = page.getByRole("table", { name: "历史运行" });
-	await expect(
-		history
-			.getByRole("row", { name: new RegExp(runId.slice(0, 8)) })
-			.getByRole("cell")
-			.nth(2),
-	).toHaveText("失败 · 核对结果（verify）");
+	const row = page
+		.getByRole("table", { name: "历史运行" })
+		.getByRole("row", { name: new RegExp(runId.slice(0, 8)) });
+	await expect(row.getByRole("cell").nth(2)).toHaveText("失败 · 核对结果（verify）");
+	await expect(row.getByRole("img", { name: /^子流程 压测监控 \d\/2$/ })).toBeVisible();
 });
 
 test("运行监控页：顶栏、失败横幅、时间线、尝试列表、范围标签、图表组标题与备注、节点筛选、合并日志的来源节点", async ({
@@ -152,6 +161,17 @@ test("运行监控页：顶栏、失败横幅、时间线、尝试列表、范�
 	await search.fill("探测");
 	await expect(filter.getByRole("checkbox", { name: "探测延迟（probe）" })).toBeVisible();
 	await expect(filter.getByRole("checkbox", { name: /fetch|verify/ })).toHaveCount(0);
+	await page.keyboard.press("Escape");
+
+	// 平台自带图表里的节点。
+	const platform = workspace(page).getByRole("region", { name: "平台自带图表" });
+	await platform.getByRole("button", { expanded: false }).click();
+	await expect(platform.getByRole("figure", { name: "节点耗时 Top 10" })).toContainText(
+		"拉取订单（fetch）",
+	);
+	await expect(platform.getByRole("figure", { name: "重试次数" })).toContainText(
+		"核对结果（verify） ×1",
+	);
 });
 
 test("改了显示名称之后，旧运行仍显示它绑定版本里的名称", async ({
@@ -187,17 +207,23 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 		"拉取全部订单（fetch）",
 	);
 
+	// 画布的运行状态模式显示旧运行绑定的那一版。
+	await page.goto(`/orchestrations/${scenarioId}?run=${oldRun}`);
+	await nodeCard(page, "fetch").click();
+	await expect(inspector(page).getByRole("heading", { name: "拉取订单" })).toBeVisible();
+	await expect(
+		inspector(page).getByRole("link", { name: "在监控页中打开 拉取订单（fetch）" }),
+	).toBeVisible();
+
 	await page.goto("/runs");
 	await expect(
 		page.getByRole("article", { name: `运行 ${newRun.slice(0, 8)}` }).getByRole("listitem"),
 	).toHaveText([/^拉取全部订单（fetch）执行中/]);
-	await expect(
-		page
-			.getByRole("table", { name: "历史运行" })
-			.getByRole("row", { name: new RegExp(oldRun.slice(0, 8)) })
-			.getByRole("cell")
-			.nth(2),
-	).toHaveText("失败 · 核对结果（verify）");
+	const oldRow = page
+		.getByRole("table", { name: "历史运行" })
+		.getByRole("row", { name: new RegExp(oldRun.slice(0, 8)) });
+	await expect(oldRow.getByRole("cell").nth(2)).toHaveText("失败 · 核对结果（verify）");
+	await expect(oldRow.getByRole("img", { name: /^子流程 压测监控 / })).toBeVisible();
 
 	await page.goto("/");
 	await expect(
