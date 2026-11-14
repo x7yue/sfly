@@ -43,7 +43,7 @@ export const hasErrors = (errors: DraftErrors) =>
 	errors.params !== undefined ||
 	Object.keys(errors.values).length > 0;
 
-/** 校验草稿：勾选的参数必须填值（字符串不能为空），数字与 JSON 要格式正确。 */
+/** 校验表单内容：勾选的参数必须填值（字符串不能为空），数字与 JSON 要格式正确。 */
 export function draftErrors(draft: PresetDraft, decls: ParamDeclView[]): DraftErrors {
 	const errors: DraftErrors = { values: {} };
 	const name = PresetName.safeParse(draft.name);
@@ -60,7 +60,7 @@ export function draftErrors(draft: PresetDraft, decls: ParamDeclView[]): DraftEr
 	return errors;
 }
 
-/** 已通过校验的草稿 → 新建预设的请求体；预设参数按声明顺序。 */
+/** 已通过校验的表单内容 → 新建预设的请求体；预设参数按声明顺序。 */
 export function toPresetBody(
 	draft: PresetDraft,
 	decls: ParamDeclView[],

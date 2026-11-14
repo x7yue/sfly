@@ -47,6 +47,7 @@ const client = createClient({
 | 领域 | 方法 |
 |---|---|
 | `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`create`、`update`、`copy`、`archive`、`unarchive` |
+| `presets`（运行预设） | `list`、`create` |
 | `runs`（运行） | `list`、`listForOrchestration`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
 | `metrics`（指标） | `summary`、`catalog`、`series`、`platform` |
@@ -103,9 +104,23 @@ const run = await client.runs.trigger({
 console.log(`已触发：{{SFLY_URL}}/runs/${run.id}`);
 ```
 
-- `runs.preflight` 返回最新的场景版本号、入口参数的声明（名称、类型、默认值、是否必填、是否 secret）、不能触发的原因（为空表示可以触发），以及锁定的节点包版本和引用的 Agent 是否在线。`agents` 里每台 Agent 的 `status` 是 `online`、`offline` 或 `unknown`（还没有注册过），`preparing_since` 是它这次连接开始准备环境的时间，准备好、不在线或没有注册过时为 `null`。Agent 不在线、正在准备环境都不阻止触发：任务会排队，Agent 上线或准备好环境后再执行。触发页面可以按 `params` 生成表单，按 `problems` 提示问题。
+按运行预设触发：从预检返回的 `presets` 里按名称找到预设，把它的 ID 放进 `preset`，`params` 只给其余的参数。
+
+```ts
+const preset = check.presets.find((p) => p.name === "压测 A 集群");
+if (!preset) throw new Error("没有这个运行预设");
+const presetRun = await client.runs.trigger({
+	params: { id: scenario.id },
+	body: { preset: preset.id, params: { rounds: 3 } },
+});
+console.log(presetRun.preset?.name, presetRun.preset?.params);
+```
+
+- `runs.preflight` 返回最新的场景版本号、入口参数的声明（名称、类型、默认值、是否必填、是否 secret）、不能触发的原因（为空表示可以触发），锁定的节点包版本和引用的 Agent 是否在线，以及场景的运行预设（`presets`，按名称排序，和 `presets.list` 相同）。`agents` 里每台 Agent 的 `status` 是 `online`、`offline` 或 `unknown`（还没有注册过），`preparing_since` 是它这次连接开始准备环境的时间，准备好、不在线或没有注册过时为 `null`。Agent 不在线、正在准备环境都不阻止触发：任务会排队，Agent 上线或准备好环境后再执行。触发页面可以按 `params` 生成表单，按 `problems` 提示问题。
 - `runs.trigger` 触发场景的最新版本，不能指定版本。参数按入口参数声明的类型给：`number` 给数字，`boolean` 给 `true` 或 `false`，`json` 给对象、数组这类 JSON 值。返回新运行的运行视图。
 - 预检没通过时触发失败，错误码 `invalid_orchestration`，`details` 是原因列表；参数不对时错误码 `invalid_params`。
+- 运行预设固定了一部分参数的值（预设参数），带上 `preset` 时控制面用预设的值填入它们，`params` 里不用再给。给了和预设不同的值时触发失败，错误码 `preset_param_locked`，`details` 是 `{ param, preset }`（参数名和预设名）；给相同的值照常触发。预设不存在或不属于这个场景时错误码 `preset_not_found`。运行视图的 `preset` 记着触发时预设的 ID、名称和预设参数的名单，没用预设时为 `null`。
+- 新建运行预设用 `presets.create({ params: { id }, body: { name, description, params: [{ name, value }] } })`，列出用 `presets.list`。值按参数声明的类型给，至少一个参数；不符合时错误码 `invalid_preset`，`details` 指出是哪个字段、什么原因，名称重复时错误码 `preset_name_taken`。
 - 取消运行用 `runs.cancel({ params: { id } })`。清理期间再取消一次就是强制取消。运行已经结束时错误码 `run_not_running`。
 
 ## 订阅运行
@@ -325,6 +340,6 @@ API 客户端只开放平台现有的接口，下面这些没有：
 - **没有事件推送和对外的 Webhook。** 只能订阅一次运行的事件流。要发现新的运行，定时查询 `runs.list`。要把运行结果发到飞书群，用场景的运行通知或飞书通知节点，见 [飞书通知](feishu-notify.md)。
 - **不能跨运行查询指标。** 指标只能按一次运行查询（`metrics.summary`、`metrics.series`）。要看多次运行的趋势，逐次查询后自己汇总。
 - **运行列表不能按时间范围查询，也不能翻页。** `runs.list` 只返回最新的最多 500 条，`runs.listForOrchestration` 最多 200 条。
-- 没有运行预设，入口参数也没有说明和可选项。
+- 入口参数没有说明和可选项。
 - 不能上传：发布节点包用 `sfly publish`，见 [发布](publish.md)。
 - 没有登录和权限，身份只是昵称。
