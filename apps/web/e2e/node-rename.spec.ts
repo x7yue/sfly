@@ -345,6 +345,34 @@ test("输入法组字时 Enter、Esc 只是选字，不确认也不取消；点�
 	await expect(page.getByRole("dialog", { name: "添加节点" })).toHaveCount(0);
 });
 
+test("在输入框里改名后直接按 Ctrl+S：先按确认处理，保存下来的版本里是新名称，改名仍是一步撤销", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const fetch = nodeCard(page, "fetch");
+
+	await titleOf(fetch).dblclick();
+	await renameBox(fetch).fill(NAME);
+	await renameBox(fetch).press("Control+s");
+	await expect(page.getByText("已保存为版本 2")).toBeVisible();
+	const nodes = (await headOf(controlPlane, id)).document.nodes as Record<string, unknown>[];
+	expect(nodes.find((n) => n.id === "fetch")?.display_name).toBe(NAME);
+	await expect(renameBox(fetch)).toHaveCount(0);
+	await expect(titleOf(fetch)).toHaveText(NAME);
+	await expect(fetch).toBeFocused();
+	await expect(unsaved(page)).toHaveCount(0);
+
+	// 确认和 Enter 一样是一步撤销：撤销一次回到没有显示名称。
+	await undo(page).click();
+	await expect(titleOf(fetch)).toHaveText("HTTP 检查");
+	await redo(page).click();
+	await expect(titleOf(fetch)).toHaveText(NAME);
+	await page.reload();
+	await expect(titleOf(nodeCard(page, "fetch"))).toHaveText(NAME);
+});
+
 test("子流程入口节点不能原地改名：它的名称是子流程名称，在检查器里改；菜单里的「重命名」禁用并说明原因", async ({
 	page,
 	controlPlane,

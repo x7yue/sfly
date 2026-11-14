@@ -618,7 +618,24 @@ function Editor({
 			},
 		});
 	};
-	useShortcut("canvas-save", save, !running);
+	// 正在原地改名时保存：输入框里没确认的名称要先进文档。卡片拿到焦点，输入框失焦就是确认（NodeTitleEditor，
+	// 和 Enter 同一步撤销）；确认落进文档的那次渲染之后才保存，用的是带新名称的文档。
+	const [savePending, setSavePending] = useState(false);
+	const saveShortcut = () => {
+		const card = renamingId === null ? null : cardOf(renamingId);
+		if (!card) {
+			save();
+			return;
+		}
+		card.focus({ preventScroll: true });
+		setSavePending(true);
+	};
+	useEffect(() => {
+		if (!savePending || renamingId !== null) return;
+		setSavePending(false);
+		save();
+	});
+	useShortcut("canvas-save", saveShortcut, !running);
 	useShortcut("canvas-run", () => setTriggering(true), !running);
 
 	const context: InspectorContext = {
