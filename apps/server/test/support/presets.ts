@@ -35,11 +35,14 @@ export function presetScenario(params: Array<Record<string, unknown>> = PRESET_P
 	};
 }
 
-/** 新建运行预设的请求体（presetsApi.create）；`params` 里的 value 可以省略，用来测缺值。 */
+/** 请求体里的一个预设参数：`{name, value}`；secret 参数沿用原值时写成 `{name, keep: true}`。`value` 可以省略，用来测缺值。 */
+export type PresetParamBody = { name: string; value?: unknown; keep?: true };
+
+/** 新建运行预设的请求体（presetsApi.create）。 */
 export interface PresetBody {
 	name: string;
 	description?: string;
-	params: Array<{ name: string; value?: unknown }>;
+	params: PresetParamBody[];
 }
 
 /** 新建运行预设。 */
@@ -68,7 +71,7 @@ export async function createPresetOk(
 export interface PresetChanges {
 	name?: string;
 	description?: string;
-	params?: Array<{ name: string; value?: unknown }>;
+	params?: PresetParamBody[];
 }
 
 /** 修改运行预设。 */

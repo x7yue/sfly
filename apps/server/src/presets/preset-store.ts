@@ -186,7 +186,8 @@ export class PresetStore {
 
 	/**
 	 * 修改运行预设：没有 `params` 时只改名称和说明（失效的预设也可以改名）；给了 `params` 时它是预设参数的完整清单，
-	 * 和新建时按同样的规则对照最新版本检查。后保存的覆盖先保存的，只记下最后修改人和时间（ADR 0023）。
+	 * 和新建时按同样的规则对照最新版本检查，secret 参数的 `keep` 沿用预设现在保存的值（它在预设行加锁之后才读，
+	 * 同时修改的请求依次执行）。后保存的覆盖先保存的，只记下最后修改人和时间（ADR 0023）。
 	 */
 	async update(
 		orchestrationId: string,
@@ -197,12 +198,11 @@ export class PresetStore {
 		try {
 			return await this.deps.db.transaction(async (tx): Promise<UpdatePresetResult> => {
 				const head = await lockedHead(tx, orchestrationId);
-				if (!head || !(await findPreset(tx, orchestrationId, presetId, { lock: true }))) {
-					return { kind: "not_found" };
-				}
+				const saved = head && (await findPreset(tx, orchestrationId, presetId, { lock: true }));
+				if (!head || !saved) return { kind: "not_found" };
 				let values: Record<string, unknown> | undefined;
 				if (changes.params !== undefined) {
-					const checked = checkPresetParams(changes.params, head.declarations);
+					const checked = checkPresetParams(changes.params, head.declarations, saved.values);
 					if ("issues" in checked) return { kind: "invalid", issues: checked.issues };
 					values = checked.values;
 				}

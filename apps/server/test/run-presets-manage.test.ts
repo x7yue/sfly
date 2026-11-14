@@ -1,8 +1,7 @@
 // 运行预设的维护（#323，ADR 0023）：修改、复制、删除，复制场景时一并复制，归档期间也能维护。
 // HTTP API + 假 Agent + 真实 PostgreSQL。
 import { randomUUID } from "node:crypto";
-import { runsApi } from "@sfly/schema";
-import pg from "pg";
+import { presetsApi, runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -187,9 +186,10 @@ describe("运行预设的维护", () => {
 
 			const renamed = await updatePresetOk(api, id, preset.id, { name: "旧集群" });
 			expect(renamed.name).toBe("旧集群");
+			// 已删除的参数原来是不是 secret 无从判断，值照 secret 打码（#324）。
 			expect(renamed.params).toEqual([
 				{ name: "port", secret: false, value: 9000 },
-				{ name: "host", secret: false, value: "a.example" },
+				{ name: "host", secret: true, value: "******" },
 			]);
 
 			const fixed = await updatePresetOk(api, id, preset.id, {
@@ -286,23 +286,24 @@ describe("运行预设的维护", () => {
 			expect(run.params).toMatchObject({ host: "a.example", port: 9000, verbose: true });
 		});
 
-		it("secret 参数的值也一起复制", async () => {
+		it("secret 参数的值也一起复制：按副本触发用的是同一个值，响应里只有掩码", async () => {
 			const { id, preset } = await sceneWithPreset();
-			// 接口这一版还不能设 secret 预设参数（#324），直接在表里写一个。
-			const client = new pg.Client({ connectionString: cp.database.url });
-			await client.connect();
-			try {
-				await client.query(
-					`UPDATE run_presets SET values = values || '{"token": "tok-secret"}' WHERE id = $1`,
-					[preset.id],
-				);
-			} finally {
-				await client.end();
-			}
+			const withSecret = await updatePresetOk(api, id, preset.id, {
+				params: [
+					{ name: "host", value: "a.example" },
+					{ name: "token", value: "tok-secret" },
+				],
+			});
 
-			const copy = await copyPresetOk(api, id, preset.id, "副本");
-			const res = await triggerWithPreset(api, id, copy.id, {});
+			const res = await copyPreset(api, id, withSecret.id, "副本");
 			expect(res.status, await res.clone().text()).toBe(201);
+			const text = await res.text();
+			expect(text).not.toContain("tok-secret");
+			const copy = presetsApi.copy.response.parse(JSON.parse(text));
+			expect(copy.params).toEqual(withSecret.params);
+
+			const trigger = await triggerWithPreset(api, id, copy.id, {});
+			expect(trigger.status, await trigger.clone().text()).toBe(201);
 			expect((await (await connect("agent-a")).nextAssign()).inputs).toMatchObject({
 				host: "a.example",
 				token: "tok-secret",

@@ -142,8 +142,6 @@ describe("运行预设", () => {
 				]),
 			).toEqual(["body.params.1.name"]);
 			expect(await fields([])).toEqual(["body.params"]);
-			// 这一版还不支持 secret 参数（#324）。
-			expect(await fields([{ name: "token", value: "t" }])).toEqual(["body.params.0.name"]);
 
 			// json 接受任何值，不做类型转换。
 			const json = await createPresetOk(api, id, {

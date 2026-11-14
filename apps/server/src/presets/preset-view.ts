@@ -1,6 +1,7 @@
 import type { ParamDeclaration, PresetParamView, PresetView } from "@sfly/schema";
 import type { z } from "zod";
 import type { runPresets } from "../db/schema.js";
+import { SECRET_MASK } from "../logs/secrets.js";
 
 type Declaration = z.infer<typeof ParamDeclaration>;
 export type PresetRow = typeof runPresets.$inferSelect;
@@ -21,11 +22,13 @@ export function presetParamNames(
 }
 
 /**
- * 一个预设参数的视图。所有接口返回的预设都经过这里：secret 参数的值要在这里换成打码后的值，
- * 任何接口都不返回原值（ADR 0023「secret 预设参数」）。
+ * 一个预设参数的视图。所有接口返回的预设都经过这里：secret 参数的值在这里换成打码后的值，
+ * 任何接口都不返回原值（ADR 0023「secret 预设参数」）。是不是 secret 以最新版本的声明为准，
+ * 已经不在声明里的参数（预设失效了）原来是不是 secret 无从判断，同样打码。
  */
 function paramView(name: string, value: unknown, decl: Declaration | undefined): PresetParamView {
-	return { name, secret: decl?.secret === true, value };
+	const secret = decl === undefined || decl.secret === true;
+	return { name, secret, value: secret ? SECRET_MASK : value };
 }
 
 /** 运行预设的视图（@sfly/schema 的 PresetView），对照最新版本入口参数的声明。 */

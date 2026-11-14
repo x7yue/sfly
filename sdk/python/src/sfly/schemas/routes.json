@@ -2018,11 +2018,14 @@
                 "name": {
                   "type": "string"
                 },
-                "value": {}
+                "value": {},
+                "keep": {
+                  "type": "boolean",
+                  "const": true
+                }
               },
               "required": [
-                "name",
-                "value"
+                "name"
               ],
               "additionalProperties": false
             }
@@ -2081,11 +2084,14 @@
                 "name": {
                   "type": "string"
                 },
-                "value": {}
+                "value": {},
+                "keep": {
+                  "type": "boolean",
+                  "const": true
+                }
               },
               "required": [
-                "name",
-                "value"
+                "name"
               ],
               "additionalProperties": false
             }

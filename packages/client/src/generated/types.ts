@@ -1133,18 +1133,29 @@ export type PresetDescription = string;
 /** 预设名称：去掉首尾空白后 1 到 `PRESET_NAME_MAX` 个字符，场景内唯一（区分大小写）。 */
 export type PresetName = string;
 
-/** 新建预设时的一个预设参数：参数名和固定的值。 */
+/**
+ * 请求体里的一个预设参数：`{name, value}` 是参数名和固定的值；`{name, keep: true}` 沿用这个预设里这个 secret 参数原来的值
+ * （接口不返回 secret 的原值，修改时不重新输入就写它），不能和 `value` 一起给。`keep` 只能用在最新版本里声明为 secret、
+ * 并且这个预设里已经有值的参数上（所以新建时不能用）。两项都没有给时 400 `invalid_preset`，指出缺的是 `value`。
+ */
 export interface PresetParamInput {
 	name: string;
-	value: unknown;
+	value?: unknown;
+	keep?: true;
 }
 
-/** 预设里的一个预设参数。 */
+/**
+ * 预设里的一个预设参数。secret 的值不会返回：`value` 是打码后的 `******`，要沿用它就在修改时写 `{name, keep: true}`
+ * （`PresetParamInput`），要换掉它就重新给值。
+ */
 export interface PresetParamView {
 	name: string;
-	/** 最新版本里这个参数是不是 secret。 */
+	/**
+	 * 值是不是打码的 secret：最新版本里这个参数声明为 secret，或者它已不在入口参数里
+	 * （原来是不是 secret 无从判断，按 secret 处理）。以最新版本的声明为准，保存之后才变成 secret 的参数同样打码。
+	 */
 	secret: boolean;
-	/** 固定的值。 */
+	/** 固定的值；secret 时是 `******`。 */
 	value: unknown;
 }
 

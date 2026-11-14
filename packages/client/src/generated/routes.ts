@@ -638,9 +638,10 @@ export interface Api {
 		 * `POST /orchestrations/:id/presets`
 		 *
 		 * 新建运行预设（201，需要昵称请求头，昵称记为最后修改人）。`params` 是预设参数的完整清单，
-		 * 对照最新版本检查：参数已声明、不是 secret、值符合类型（不做类型转换，`json` 接受任何值）、字符串不为空，
-		 * 至少一个参数，不能重复。不通过时 400 `invalid_preset`，details 是 zod 格式的问题清单（`path` 指出字段，
-		 * `message` 写明原因）；入口节点没有声明参数（包括场景还没有版本）时同样是 `invalid_preset`。
+		 * 对照最新版本检查：参数已声明、值符合类型（不做类型转换，`json` 接受任何值）、字符串不为空，
+		 * 至少一个参数，不能重复；secret 参数也能设为预设参数，值明文保存，所有响应里只返回打码后的值。
+		 * 不通过时 400 `invalid_preset`，details 是 zod 格式的问题清单（`path` 指出字段，`message` 写明原因）；
+		 * 入口节点没有声明参数（包括场景还没有版本）时同样是 `invalid_preset`；新建时没有原值可沿用，用 `keep` 也是 `invalid_preset`。
 		 * 名称在场景内已被占用时 409 `preset_name_taken`。场景不存在时 404 `not_found`。
 		 */
 		create: Endpoint<
@@ -661,7 +662,9 @@ export interface Api {
 		 *
 		 * 修改运行预设（需要昵称请求头，昵称和时间记为最后修改人）：立即生效，不产生新的场景版本；
 		 * 两个人同时改时后保存的覆盖先保存的，不做冲突检测。请求体见 `PresetChanges`：没有 `params` 时只改名称和说明；
-		 * 给了 `params` 时 400 `invalid_preset` 的规则同新建。请求体不符合要求（含没有任何要修改的字段）同样是 400 `invalid_preset`。
+		 * 给了 `params` 时 400 `invalid_preset` 的规则同新建；其中 secret 参数不重新输入时写 `{name, keep: true}` 沿用原值，
+		 * `keep` 用在非 secret 参数上，或者这个预设里原来没有值的参数上，同样是 `invalid_preset`。
+		 * 请求体不符合要求（含没有任何要修改的字段）同样是 400 `invalid_preset`。
 		 * 新名称被场景里别的预设占用时 409 `preset_name_taken`。预设不存在或不属于这个场景时 404 `preset_not_found`。
 		 * 场景归档期间也能修改。
 		 */

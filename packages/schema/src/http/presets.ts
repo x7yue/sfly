@@ -27,12 +27,18 @@ export const PresetDescription = z
 	.trim()
 	.max(PRESET_DESCRIPTION_MAX, `说明不能超过 ${PRESET_DESCRIPTION_MAX} 个字符`);
 
-/** 预设里的一个预设参数。 */
+/**
+ * 预设里的一个预设参数。secret 的值不会返回：`value` 是打码后的 `******`，要沿用它就在修改时写 `{name, keep: true}`
+ * （{@link PresetParamInput}），要换掉它就重新给值。
+ */
 export const PresetParamView = z.object({
 	name: z.string(),
-	/** 最新版本里这个参数是不是 secret。 */
+	/**
+	 * 值是不是打码的 secret：最新版本里这个参数声明为 secret，或者它已不在入口参数里
+	 * （原来是不是 secret 无从判断，按 secret 处理）。以最新版本的声明为准，保存之后才变成 secret 的参数同样打码。
+	 */
 	secret: z.boolean(),
-	/** 固定的值。 */
+	/** 固定的值；secret 时是 `******`。 */
 	value: z.unknown(),
 });
 
@@ -47,8 +53,16 @@ export const PresetView = z.object({
 	updated_at: Timestamp,
 });
 
-/** 新建预设时的一个预设参数：参数名和固定的值。 */
-export const PresetParamInput = z.strictObject({ name: z.string(), value: z.unknown() });
+/**
+ * 请求体里的一个预设参数：`{name, value}` 是参数名和固定的值；`{name, keep: true}` 沿用这个预设里这个 secret 参数原来的值
+ * （接口不返回 secret 的原值，修改时不重新输入就写它），不能和 `value` 一起给。`keep` 只能用在最新版本里声明为 secret、
+ * 并且这个预设里已经有值的参数上（所以新建时不能用）。两项都没有给时 400 `invalid_preset`，指出缺的是 `value`。
+ */
+export const PresetParamInput = z.strictObject({
+	name: z.string(),
+	value: z.unknown().optional(),
+	keep: z.literal(true).optional(),
+});
 
 const IdParams = z.object({ id: z.string().min(1) });
 const PresetIdParams = z.object({ id: z.string().min(1), presetId: z.string().min(1) });
@@ -80,9 +94,10 @@ export const presetsApi = {
 	}),
 	/**
 	 * 新建运行预设（201，需要昵称请求头，昵称记为最后修改人）。`params` 是预设参数的完整清单，
-	 * 对照最新版本检查：参数已声明、不是 secret、值符合类型（不做类型转换，`json` 接受任何值）、字符串不为空，
-	 * 至少一个参数，不能重复。不通过时 400 `invalid_preset`，details 是 zod 格式的问题清单（`path` 指出字段，
-	 * `message` 写明原因）；入口节点没有声明参数（包括场景还没有版本）时同样是 `invalid_preset`。
+	 * 对照最新版本检查：参数已声明、值符合类型（不做类型转换，`json` 接受任何值）、字符串不为空，
+	 * 至少一个参数，不能重复；secret 参数也能设为预设参数，值明文保存，所有响应里只返回打码后的值。
+	 * 不通过时 400 `invalid_preset`，details 是 zod 格式的问题清单（`path` 指出字段，`message` 写明原因）；
+	 * 入口节点没有声明参数（包括场景还没有版本）时同样是 `invalid_preset`；新建时没有原值可沿用，用 `keep` 也是 `invalid_preset`。
 	 * 名称在场景内已被占用时 409 `preset_name_taken`。场景不存在时 404 `not_found`。
 	 */
 	create: endpoint({
@@ -102,7 +117,9 @@ export const presetsApi = {
 	/**
 	 * 修改运行预设（需要昵称请求头，昵称和时间记为最后修改人）：立即生效，不产生新的场景版本；
 	 * 两个人同时改时后保存的覆盖先保存的，不做冲突检测。请求体见 {@link PresetChanges}：没有 `params` 时只改名称和说明；
-	 * 给了 `params` 时 400 `invalid_preset` 的规则同新建。请求体不符合要求（含没有任何要修改的字段）同样是 400 `invalid_preset`。
+	 * 给了 `params` 时 400 `invalid_preset` 的规则同新建；其中 secret 参数不重新输入时写 `{name, keep: true}` 沿用原值，
+	 * `keep` 用在非 secret 参数上，或者这个预设里原来没有值的参数上，同样是 `invalid_preset`。
+	 * 请求体不符合要求（含没有任何要修改的字段）同样是 400 `invalid_preset`。
 	 * 新名称被场景里别的预设占用时 409 `preset_name_taken`。预设不存在或不属于这个场景时 404 `preset_not_found`。
 	 * 场景归档期间也能修改。
 	 */
