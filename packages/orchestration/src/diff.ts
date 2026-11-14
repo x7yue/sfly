@@ -1,5 +1,5 @@
 import { OrchestrationDocument } from "@sfly/schema";
-import { subflowName } from "./structure.js";
+import { subflowName } from "./chain-label.js";
 
 /**
  * 两份编排文档的差异：用于保存冲突时对比本地修改与最新版本、对比任意两个历史版本。

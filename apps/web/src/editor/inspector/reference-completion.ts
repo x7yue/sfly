@@ -1,5 +1,6 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import {
+	nodeNameWithId,
 	nodeTypeOf,
 	type PackageCatalog,
 	REFERENCE,
@@ -22,7 +23,7 @@ export interface ReferenceChoice extends ReferenceOption {
 
 /**
  * 节点 id 可以引用的值（本链的入口参数、前序节点的输出），带上来源说明：
- * 参数的类型（敏感参数标出），输出的类型与所属节点。
+ * 参数的类型（敏感参数标出），输出的类型与所属节点（写成「显示名称（节点 ID）」）。
  */
 export function referenceChoices(
 	doc: OrchestrationDocument,
@@ -42,7 +43,7 @@ export function referenceChoices(
 				? nodeTypeOf(doc, source, catalog)?.outputs.properties[o.key]
 				: undefined;
 		const type = typeof schema?.type === "string" ? `${schema.type} · ` : "";
-		return { ...o, detail: `${type}${o.node_id}` };
+		return { ...o, detail: `${type}${source ? nodeNameWithId(source) : o.node_id}` };
 	});
 }
 

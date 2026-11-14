@@ -1,4 +1,6 @@
 import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import { subflowName } from "./chain-label.js";
+import { nodeNameWithId } from "./node-display.js";
 
 /**
  * 编排的结构规则（docs/SEMANTICS.md §1.2）。保存时只产生警告，触发时必须全部通过。
@@ -10,6 +12,8 @@ export interface StructureDocument {
 		id: string;
 		kind: OrchestrationNode["kind"];
 		agent?: string | undefined;
+		/** 显示名称（子流程入口节点没有，用 `name`）。 */
+		display_name?: string | undefined;
 		/** 子流程入口的名称。 */
 		name?: string | undefined;
 		/** 停止子流程节点要停止的子流程（子流程入口的节点 ID）。 */
@@ -54,13 +58,6 @@ export interface StructureWarning {
 
 /** 子流程嵌套深度上限（主链为第 0 层）。 */
 export const MAX_NESTING_DEPTH = 3;
-
-/**
- * 子流程的名称（GLOSSARY「子流程」）：子流程入口节点上填写的名称，去掉首尾空白；
- * 没有名称字段的旧版本以节点 ID 作为名称（ADR 0016）。填了空名称时为空字符串。
- */
-export const subflowName = (node: { id: string; name?: string | undefined }): string =>
-	node.name === undefined ? node.id : node.name.trim();
 
 const isStart = (node: StructureNode) => node.kind === "entry" || node.kind === "subflow_entry";
 
@@ -111,18 +108,21 @@ export function checkConnection(doc: StructureDocument, edge: StructureEdge): st
 		if (from.kind !== "async") return "调度连线只能从异步任务节点连出";
 		if (to.kind !== "subflow_entry") return "调度连线只能连到子流程入口节点";
 		if ((out.dispatch.get(from.id) ?? []).length > 0) {
-			return `异步任务节点 ${from.id} 已有调度连线`;
+			return `异步任务节点 ${nodeNameWithId(from)} 已有调度连线`;
 		}
 		const trigger = (into.dispatch.get(to.id) ?? [])[0];
-		if (trigger !== undefined) return `子流程入口节点 ${to.id} 已被异步任务节点 ${trigger} 触发`;
+		if (trigger !== undefined)
+			return `子流程入口节点 ${nodeNameWithId(to)} 已被异步任务节点 ${trigger} 触发`;
 		return null;
 	}
 
 	if (from.id === to.id) return "节点不能连到自己";
 	if (to.kind === "entry") return "入口节点不能有入线";
 	if (to.kind === "subflow_entry") return "子流程入口节点只能由调度连线触发";
-	if ((out.chain.get(from.id) ?? []).length > 0) return `节点 ${from.id} 已有出线，链不能分叉`;
-	if ((into.chain.get(to.id) ?? []).length > 0) return `节点 ${to.id} 已有入线，链不能汇合`;
+	if ((out.chain.get(from.id) ?? []).length > 0)
+		return `节点 ${nodeNameWithId(from)} 已有出线，链不能分叉`;
+	if ((into.chain.get(to.id) ?? []).length > 0)
+		return `节点 ${nodeNameWithId(to)} 已有入线，链不能汇合`;
 	if (reaches(out.chain, to.id, from.id)) return "连线会形成环";
 	return null;
 }
@@ -164,12 +164,12 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 
 	for (const node of doc.nodes) {
 		if (count(out.chain, node.id) > 1) {
-			warn("multiple_outgoing", `节点 ${node.id} 有多条出线，链不能分叉`, node.id);
+			warn("multiple_outgoing", `节点 ${nodeNameWithId(node)} 有多条出线，链不能分叉`, node.id);
 		}
 	}
 	for (const node of doc.nodes) {
 		if (!isStart(node) && count(into.chain, node.id) > 1) {
-			warn("multiple_incoming", `节点 ${node.id} 有多条入线，链不能汇合`, node.id);
+			warn("multiple_incoming", `节点 ${nodeNameWithId(node)} 有多条入线，链不能汇合`, node.id);
 		}
 	}
 	for (const node of doc.nodes) {
@@ -177,8 +177,8 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 			warn(
 				"entry_incoming",
 				node.kind === "entry"
-					? `入口节点 ${node.id} 不能有入线`
-					: `子流程入口节点 ${node.id} 不能有链上的入线`,
+					? `入口节点 ${nodeNameWithId(node)} 不能有入线`
+					: `子流程入口节点 ${nodeNameWithId(node)} 不能有链上的入线`,
 				node.id,
 			);
 		}
@@ -198,7 +198,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	};
 	for (const node of doc.nodes) if (!state.has(node.id)) visit(node.id);
 	for (const node of doc.nodes) {
-		if (cyclic.has(node.id)) warn("cycle", `链在节点 ${node.id} 处形成环`, node.id);
+		if (cyclic.has(node.id)) warn("cycle", `链在节点 ${nodeNameWithId(node)} 处形成环`, node.id);
 	}
 
 	const validDispatch = (id: string, direction: "out" | "into") =>
@@ -214,20 +214,32 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		if (node.kind !== "async") continue;
 		const n = validDispatch(node.id, "out").length;
 		if (n === 0) {
-			warn("async_without_dispatch", `异步任务节点 ${node.id} 没有连到子流程入口节点`, node.id);
+			warn(
+				"async_without_dispatch",
+				`异步任务节点 ${nodeNameWithId(node)} 没有连到子流程入口节点`,
+				node.id,
+			);
 		} else if (n > 1) {
-			warn("async_multiple_dispatch", `异步任务节点 ${node.id} 只能连一个子流程入口节点`, node.id);
+			warn(
+				"async_multiple_dispatch",
+				`异步任务节点 ${nodeNameWithId(node)} 只能连一个子流程入口节点`,
+				node.id,
+			);
 		}
 	}
 	for (const node of doc.nodes) {
 		if (node.kind !== "subflow_entry") continue;
 		const n = validDispatch(node.id, "into").length;
 		if (n === 0) {
-			warn("subflow_not_triggered", `子流程入口节点 ${node.id} 没有被异步任务节点触发`, node.id);
+			warn(
+				"subflow_not_triggered",
+				`子流程入口节点 ${nodeNameWithId(node)} 没有被异步任务节点触发`,
+				node.id,
+			);
 		} else if (n > 1) {
 			warn(
 				"subflow_multiple_triggers",
-				`子流程入口节点 ${node.id} 只能被一个异步任务节点触发`,
+				`子流程入口节点 ${nodeNameWithId(node)} 只能被一个异步任务节点触发`,
 				node.id,
 			);
 		}
@@ -263,14 +275,19 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 	for (const node of doc.nodes) {
 		if (node.kind !== "stop_subflow") continue;
 		if (!node.subflow) {
-			warn("stop_subflow_unset", `停止子流程节点 ${node.id} 没有选择子流程`, node.id, "subflow");
+			warn(
+				"stop_subflow_unset",
+				`停止子流程节点 ${nodeNameWithId(node)} 没有选择子流程`,
+				node.id,
+				"subflow",
+			);
 			continue;
 		}
 		const target = byId.get(node.subflow);
 		if (target?.kind !== "subflow_entry") {
 			warn(
 				"stop_subflow_unknown",
-				`停止子流程节点 ${node.id} 要停止的子流程 ${node.subflow} 不存在`,
+				`停止子流程节点 ${nodeNameWithId(node)} 要停止的子流程 ${node.subflow} 不存在`,
 				node.id,
 				"subflow",
 			);
@@ -284,14 +301,14 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		if (trigger !== undefined) {
 			warn(
 				"stop_subflow_before_trigger",
-				`停止子流程节点 ${node.id} 在触发子流程「${name}」的异步任务节点 ${trigger} 之前`,
+				`停止子流程节点 ${nodeNameWithId(node)} 在触发子流程「${name}」的异步任务节点 ${trigger} 之前`,
 				node.id,
 				"subflow",
 			);
 		} else {
 			warn(
 				"stop_subflow_out_of_scope",
-				`停止子流程节点 ${node.id} 只能停止本链触发的子流程，「${name}」不是`,
+				`停止子流程节点 ${nodeNameWithId(node)} 只能停止本链触发的子流程，「${name}」不是`,
 				node.id,
 				"subflow",
 			);
@@ -317,7 +334,7 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		if (node.kind === "subflow_entry" && depth !== undefined && depth > MAX_NESTING_DEPTH) {
 			warn(
 				"nesting_too_deep",
-				`子流程 ${node.id} 嵌套在第 ${depth} 层，最多 ${MAX_NESTING_DEPTH} 层`,
+				`子流程 ${nodeNameWithId(node)} 嵌套在第 ${depth} 层，最多 ${MAX_NESTING_DEPTH} 层`,
 				node.id,
 			);
 		}
@@ -333,12 +350,17 @@ export function structureWarnings(doc: StructureDocument): StructureWarning[] {
 		stack.push(...(out.chain.get(id) ?? []));
 	}
 	for (const node of doc.nodes) {
-		if (!onChain.has(node.id)) warn("orphan_node", `节点 ${node.id} 不在任何链上`, node.id);
+		if (!onChain.has(node.id))
+			warn("orphan_node", `节点 ${nodeNameWithId(node)} 不在任何链上`, node.id);
 	}
 
 	for (const node of doc.nodes) {
 		if (node.kind === "package" && !node.agent && !doc.default_agent) {
-			warn("missing_agent", `节点 ${node.id} 没有选择 Agent，场景也没有默认 Agent`, node.id);
+			warn(
+				"missing_agent",
+				`节点 ${nodeNameWithId(node)} 没有选择 Agent，场景也没有默认 Agent`,
+				node.id,
+			);
 		}
 	}
 	return warnings;

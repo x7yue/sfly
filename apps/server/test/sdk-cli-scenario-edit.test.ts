@@ -393,6 +393,108 @@ describe("sfly scenario pull / push / create / copy / rename → 控制面", () 
 			expect(direct.status).toBe(400);
 		});
 
+		it("带显示名称的文档能 push：名称去掉首尾空白后保存，空白的名称不保存，pull 回来的文件一致", async () => {
+			const id = await createScenario("推送-显示名称", sleepDocument());
+			const file = await pull(id);
+			const edited = await readScenarioFile(file);
+			edited.document.nodes = [
+				{ ...edited.document.nodes[0], display_name: "   " },
+				{ ...edited.document.nodes[1], display_name: "  等缓存刷新  " },
+			] as unknown as ScenarioFile["document"]["nodes"];
+			await writeScenarioFile(file, edited);
+
+			const result = await cli("scenario", "push", file);
+			expect(result.code, result.stderr).toBe(0);
+			const nodes = (await head(id)).document.nodes;
+			expect(nodes[0]).not.toHaveProperty("display_name");
+			expect(nodes[1]).toMatchObject({ id: "pause", display_name: "等缓存刷新" });
+			expect((await readScenarioFile(file)).document.nodes).toEqual(nodes);
+			expect((await readScenarioFile(await pull(id))).document.nodes).toEqual(nodes);
+		});
+
+		it("显示名称最长 40 个字符：40 个 emoji 能 push，41 个本地校验报出位置，控制面的判断相同", async () => {
+			const emoji = "😀";
+			const id = await createScenario("推送-名称长度", sleepDocument());
+			const file = await pull(id);
+			const edited = await readScenarioFile(file);
+			const pause = edited.document.nodes[1] as Record<string, unknown>;
+			pause.display_name = emoji.repeat(40);
+			await writeScenarioFile(file, edited);
+			const fits = await cli("scenario", "push", file);
+			expect(fits.code, fits.stderr).toBe(0);
+			expect((await head(id)).document.nodes[1]).toMatchObject({ display_name: emoji.repeat(40) });
+
+			const tooLong = await readScenarioFile(file);
+			(tooLong.document.nodes[1] as Record<string, unknown>).display_name = emoji.repeat(41);
+			await writeScenarioFile(file, tooLong);
+			const seen = await startRecordingProxy(cp.httpUrl);
+			proxies.push(seen);
+			const rejected = await sfly(["scenario", "push", file, "--server", seen.url]);
+			expect(rejected.code).toBe(2);
+			expect(rejected.stdout).toBe("");
+			expect(rejected.stderr).toContain("没有通过校验");
+			expect(rejected.stderr).toContain("nodes/1/display_name");
+			expect(rejected.stderr).toContain("节点 pause");
+			expect(seen.requests).toEqual([]);
+
+			const direct = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: await api.headVersion(id),
+				document: tooLong.document,
+			});
+			expect(direct.status).toBe(400);
+			expect(await direct.json()).toMatchObject({ error: { code: "invalid_document" } });
+			expect(await api.headVersion(id)).toBe(2);
+		});
+
+		it("显示名称只能写一行：带换行的名称本地校验报出位置，控制面同样拒绝", async () => {
+			const id = await createScenario("推送-名称换行", sleepDocument());
+			const file = await pull(id);
+			const edited = await readScenarioFile(file);
+			(edited.document.nodes[1] as Record<string, unknown>).display_name = "第一行\n第二行";
+			await writeScenarioFile(file, edited);
+
+			const seen = await startRecordingProxy(cp.httpUrl);
+			proxies.push(seen);
+			const rejected = await sfly(["scenario", "push", file, "--server", seen.url]);
+			expect(rejected.code).toBe(2);
+			expect(rejected.stderr).toContain("nodes/1/display_name");
+			expect(seen.requests).toEqual([]);
+
+			const direct = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: 1,
+				document: edited.document,
+			});
+			expect(direct.status).toBe(400);
+		});
+
+		it("子流程入口节点没有显示名称这个字段：写了本地校验报出位置，控制面同样拒绝", async () => {
+			const id = await createScenario("推送-子流程入口名称", sleepDocument());
+			const file = await pull(id);
+			const edited = await readScenarioFile(file);
+			edited.document.nodes.push({
+				id: "sub",
+				kind: "subflow_entry",
+				name: "report",
+				display_name: "不该有",
+				params: [],
+			} as unknown as ScenarioFile["document"]["nodes"][number]);
+			await writeScenarioFile(file, edited);
+
+			const seen = await startRecordingProxy(cp.httpUrl);
+			proxies.push(seen);
+			const rejected = await sfly(["scenario", "push", file, "--server", seen.url]);
+			expect(rejected.code).toBe(2);
+			expect(rejected.stderr).toContain("nodes/2");
+			expect(rejected.stderr).toContain("display_name");
+			expect(seen.requests).toEqual([]);
+
+			const direct = await api.post(`/orchestrations/${id}/versions`, {
+				base_version: 1,
+				document: edited.document,
+			});
+			expect(direct.status).toBe(400);
+		});
+
 		it("别人在 pull 之后保存了新版本：报冲突，写明最新版本、作者和时间，不保存，文件不变", async () => {
 			const id = await createScenario("推送-冲突", sleepDocument());
 			const file = await pull(id);
