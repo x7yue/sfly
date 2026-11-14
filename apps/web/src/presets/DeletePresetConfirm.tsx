@@ -1,6 +1,7 @@
 import { type PresetView, presetsApi } from "@sfly/schema";
 import { useMutation } from "@tanstack/react-query";
 import { callApi } from "#/lib/api";
+import { errorText } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import {
 	DialogBody,
@@ -11,8 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { FormAlert } from "@/components/ui/form-field";
 import { useInvalidatePresets } from "./invalidate";
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** 删除运行预设的确认。管理对话框里的一屏；已有运行上记下的预设名不受影响。 */
 export function DeletePresetConfirm({

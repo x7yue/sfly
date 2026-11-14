@@ -1,12 +1,32 @@
 import { describe, expect, it } from "vitest";
 import {
+	errorText,
 	formatClockOffset,
 	formatDuration,
 	formatElapsed,
 	formatFullDateTime,
 	formatFullDateTimeMs,
 	spansOtherDay,
+	valueText,
 } from "./format";
+
+describe("valueText", () => {
+	it("字符串原样，其余按 JSON，字符串和数字不会混淆", () => {
+		expect(valueText("10.0.0.8")).toBe("10.0.0.8");
+		expect(valueText("50")).toBe("50");
+		expect(valueText(50)).toBe("50");
+		expect(valueText(true)).toBe("true");
+		expect(valueText({ mode: "fast" })).toBe('{"mode":"fast"}');
+		expect(valueText(null)).toBe("null");
+	});
+});
+
+describe("errorText", () => {
+	it("错误取它的说明，其他值转成文字", () => {
+		expect(errorText(new Error("名称不能重复"))).toBe("名称不能重复");
+		expect(errorText("断网了")).toBe("断网了");
+	});
+});
 
 describe("formatDuration", () => {
 	it("按量级选单位", () => {

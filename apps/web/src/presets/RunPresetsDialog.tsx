@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { QueryView, TableSkeleton } from "#/components/feedback/states";
 import { apiQuery, callApi } from "#/lib/api";
 import { MESSAGE, PRESET_INVALID_LABEL, TERM } from "#/lib/copy";
-import { formatDateTime } from "#/lib/format";
+import { errorText, formatDateTime, valueText } from "#/lib/format";
 import { ParamField } from "#/run-drawer/ParamField";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,11 +52,6 @@ import {
 	toggleParam,
 	toPresetBody,
 } from "./preset-form";
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
-
-/** 预设参数的值在列表里怎么写：字符串原样，其余按 JSON。 */
-const valueText = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value));
 
 /**
  * 管理对话框里的一屏：列表（刚做完一次保存、复制或删除时带着 `receipt`，写在列表上方），

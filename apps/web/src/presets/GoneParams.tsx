@@ -1,8 +1,6 @@
+import { valueText } from "#/lib/format";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { Repair } from "./invalid-preset";
-
-/** 值在列表里怎么写：字符串原样，其余按 JSON。 */
-const valueText = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value));
 
 /**
  * 编辑失效的运行预设时，已不存在的预设参数（参数被删除或改名）单独列在这里：和别的预设参数一样有「预设」勾选框，

@@ -1,5 +1,6 @@
 import type { ParamDeclView, PresetProblemView, PresetView } from "@sfly/schema";
 import { PRESET_INVALID_LABEL } from "#/lib/copy";
+import { valueText } from "#/lib/format";
 import { usablePreset } from "#/run-drawer/trigger-form";
 import { draftFromPreset, type PresetDraft } from "./preset-form";
 
@@ -35,9 +36,6 @@ export function unusablePresetNotice(
 		: `预设 ${ran.name} 已删除`;
 }
 
-/** 保存的值在提示里怎么写：字符串原样，其余按 JSON。 */
-const savedText = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value));
-
 /** 编辑预设时还没修好的地方；新建、或者预设可用时是空的。 */
 export interface Repair {
 	/** 已不存在的预设参数（参数被删除或改名）：名称和保存的值，按预设里的顺序。 */
@@ -62,7 +60,7 @@ export function repairOf(preset: PresetView, decls: ParamDeclView[]): Repair {
 			.filter((p) => mismatched.has(p.name))
 			.map((p) => [
 				p.name,
-				`保存的值 ${savedText(p.value)} ${mismatchText(p.name, decls)}，请重新填写`,
+				`保存的值 ${valueText(p.value)} ${mismatchText(p.name, decls)}，请重新填写`,
 			]),
 	);
 	return {

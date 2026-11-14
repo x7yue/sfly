@@ -120,5 +120,13 @@ export function formatMetric(value: number): string {
 	return abs >= 100 ? value.toFixed(0) : abs >= 10 ? value.toFixed(1) : value.toFixed(2);
 }
 
+/** 一个值在界面上怎么写：字符串原样，其余按 JSON（预设参数的值、保存的值）。 */
+export const valueText = (value: unknown): string =>
+	typeof value === "string" ? value : JSON.stringify(value);
+
+/** 错误写成一句话，放进弹窗里的 `FormAlert`。 */
+export const errorText = (error: unknown): string =>
+	error instanceof Error ? error.message : String(error);
+
 /** 运行、链实例等 ID 的短形式（前 8 位）；和运行通知卡片里的链名称共用同一个定义。 */
 export { shortId } from "@sfly/orchestration";

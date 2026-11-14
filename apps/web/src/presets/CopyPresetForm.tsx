@@ -3,6 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { callApi } from "#/lib/api";
 import { TERM } from "#/lib/copy";
+import { errorText } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import {
 	DialogBody,
@@ -14,8 +15,6 @@ import {
 import { FormAlert, FormField } from "@/components/ui/form-field";
 import { Input } from "@/components/ui/input";
 import { useInvalidatePresets } from "./invalidate";
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** 复制运行预设：取一个新名称，说明和预设参数（包括 secret 的值）由控制面原样复制。管理对话框里的一屏。 */
 export function CopyPresetForm({
