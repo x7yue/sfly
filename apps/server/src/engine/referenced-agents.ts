@@ -21,6 +21,8 @@ export interface AgentRequirement {
 /** 节点的一个「Agent」类型的输入引用的 Agent。 */
 export interface AgentReference {
 	nodeId: string;
+	/** 问题的说明里节点的写法：「显示名称（节点 ID）」（`nodeNameWithId`）；不给时写节点 ID。 */
+	node?: string;
 	input: string;
 	agent: string;
 	requirement: AgentRequirement;
@@ -52,11 +54,11 @@ export async function checkReferencedAgents(
 		.where(inArray(agents.name, names));
 	const infos = new Map(rows.map((r) => [r.name, r.info]));
 	const problems = references.flatMap(
-		({ nodeId, input, agent, requirement, source }): ReferencedAgentProblem[] => {
+		({ nodeId, node = nodeId, input, agent, requirement, source }): ReferencedAgentProblem[] => {
 			const from = source === undefined ? "" : `（${source}）`;
 			const info = infos.get(agent);
 			if (info === undefined) {
-				const message = `${agentNotRegistered(nodeId, input, agent)}${from}`;
+				const message = `${agentNotRegistered(node, input, agent)}${from}`;
 				return [{ code: "agent_input_not_registered", message, node_id: nodeId }];
 			}
 			const outdated = referencedAgentProblem(requirement.metadata, requirement.pkg, input, {
@@ -64,7 +66,7 @@ export async function checkReferencedAgents(
 				version: info.agent_version,
 			});
 			if (outdated === undefined) return [];
-			const message = `节点 ${nodeId}：${outdated}${from}`;
+			const message = `节点 ${node}：${outdated}${from}`;
 			return [{ code: "agent_version_unsatisfied", message, node_id: nodeId }];
 		},
 	);
