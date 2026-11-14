@@ -393,7 +393,10 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 		type && Object.keys(type.outputs.properties).length > 0 ? type.outputs : undefined;
 	return (
 		<>
-			<p className="m-0 mb-3 text-xs text-fg-2">{KIND_DOC[node.kind]}</p>
+			{/* 节点类型的说明是节点函数的文档字符串，按纯文本显示全文；没有说明时是通用的那句。 */}
+			<p className="m-0 mb-3 whitespace-pre-wrap text-xs text-fg-2">
+				{(node.kind === "package" && type?.description) || KIND_DOC[node.kind]}
+			</p>
 			<dl className="m-0 grid grid-cols-[88px_1fr] gap-x-3 gap-y-1.75 text-sm">
 				<dt className="text-fg-3">节点 ID</dt>
 				<dd className="m-0 min-w-0 truncate font-mono">{id}</dd>
