@@ -5,7 +5,6 @@ import {
 	draftFromPreset,
 	emptyDraft,
 	hasErrors,
-	removedParams,
 	toggleParam,
 	toPresetBody,
 } from "./preset-form";
@@ -116,7 +115,7 @@ describe("运行预设的编辑表单", () => {
 			});
 		});
 
-		it("预设里已经不在入口参数里的参数不进表单：列出来，保存时会丢掉", () => {
+		it("预设里已经不在入口参数里的参数不进表单", () => {
 			const old: PresetView = {
 				...preset,
 				params: [
@@ -125,9 +124,7 @@ describe("运行预设的编辑表单", () => {
 					{ name: "also_gone", secret: false, value: 2 },
 				],
 			};
-			expect(removedParams(old, decls)).toEqual(["gone", "also_gone"]);
 			expect(Object.keys(draftFromPreset(old, decls).values)).toEqual(["host"]);
-			expect(removedParams(preset, decls)).toEqual([]);
 		});
 	});
 });

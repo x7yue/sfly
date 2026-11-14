@@ -13,6 +13,7 @@ import { apiQuery, callApi } from "#/lib/api";
 import { TERM } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { ParamField } from "#/run-drawer/ParamField";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -30,15 +31,25 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { CopyPresetForm } from "./CopyPresetForm";
 import { DeletePresetConfirm } from "./DeletePresetConfirm";
+import { GoneParams } from "./GoneParams";
+import {
+	hasRepairErrors,
+	keepGone,
+	noRepair,
+	problemsText,
+	type Repair,
+	refilled,
+	repairDraft,
+	repairErrors,
+	repairOf,
+} from "./invalid-preset";
 import { useInvalidatePresets } from "./invalidate";
 import {
 	draftErrors,
-	draftFromPreset,
 	emptyDraft,
 	hasErrors,
 	type PresetDraft,
 	presetable,
-	removedParams,
 	toggleParam,
 	toPresetBody,
 } from "./preset-form";
@@ -126,6 +137,7 @@ export function RunPresetsDialog({
 						scenarioName={scenario.name}
 						archived={scenario.archived_at != null}
 						presets={presets}
+						decls={decls}
 						canCreate={head.data !== undefined && decls.length > 0}
 						noParams={head.data !== undefined && decls.length === 0}
 						focusKey={focusKey}
@@ -144,6 +156,7 @@ function PresetList({
 	scenarioName,
 	archived,
 	presets,
+	decls,
 	canCreate,
 	noParams,
 	focusKey,
@@ -155,6 +168,7 @@ function PresetList({
 	scenarioName: string;
 	archived: boolean;
 	presets: UseQueryResult<{ presets: PresetView[] }>;
+	decls: ParamDeclView[];
 	canCreate: boolean;
 	noParams: boolean;
 	/** 从别的屏回到列表时要放回焦点的按钮（见 RunPresetsDialog）；没有时不动。 */
@@ -209,13 +223,26 @@ function PresetList({
 								className="flex items-start gap-3 rounded-lg border border-border-soft px-3 py-2 text-sm"
 							>
 								<div className="min-w-0 flex-1">
-									<div className="font-medium wrap-anywhere text-fg-1">{preset.name}</div>
+									<div className="font-medium wrap-anywhere text-fg-1">
+										{preset.name}
+										{preset.status === "invalid" && (
+											<Badge variant="danger" className="ml-2 align-middle">
+												已失效
+											</Badge>
+										)}
+									</div>
 									{preset.description && (
 										<div className="text-xs wrap-anywhere text-fg-3">{preset.description}</div>
 									)}
 									<div className="mt-1 font-mono text-xs wrap-anywhere text-fg-2">
 										{preset.params.map((p) => `${p.name} = ${valueText(p.value)}`).join(" · ")}
 									</div>
+									{preset.status === "invalid" && (
+										<div className="mt-1 text-xs wrap-anywhere text-danger-fg">
+											{problemsText(preset.problems, decls)}
+											。失效的预设不能用来触发运行，编辑并改好之后恢复可用。
+										</div>
+									)}
 									<div className="mt-1 text-xs text-fg-3">
 										最后修改 {preset.updated_by} ·{" "}
 										<span className="font-mono">{formatDateTime(preset.updated_at)}</span>
@@ -291,13 +318,14 @@ function PresetForm({
 	const form = useRef<HTMLFormElement>(null);
 	const nameInput = useRef<HTMLInputElement>(null);
 	const [draft, setDraft] = useState<PresetDraft>(() =>
-		preset ? draftFromPreset(preset, decls) : emptyDraft(),
+		preset ? repairDraft(preset, decls) : emptyDraft(),
 	);
+	// 编辑失效的预设时还没修好的地方：已不存在的参数要取消勾选，类型不对的值要重新填写。
+	const [repair, setRepair] = useState<Repair>(() => (preset ? repairOf(preset, decls) : noRepair));
 	const [submitted, setSubmitted] = useState(false);
 	useEffect(() => {
 		nameInput.current?.focus();
 	}, []);
-	const gone = preset ? removedParams(preset, decls) : [];
 	const save = useMutation({
 		mutationFn: (value: PresetDraft) => {
 			const body = toPresetBody(value, decls);
@@ -315,6 +343,8 @@ function PresetForm({
 	});
 	// 第一次提交之前不显示错误；之后随输入更新。
 	const errors = submitted ? draftErrors(draft, decls) : { values: {} };
+	// 要修的地方一打开就标出来，不等提交。
+	const unrepaired = repairErrors(repair, draft);
 
 	return (
 		<form
@@ -323,7 +353,7 @@ function PresetForm({
 			onSubmit={(e) => {
 				e.preventDefault();
 				setSubmitted(true);
-				if (hasErrors(draftErrors(draft, decls))) {
+				if (hasErrors(draftErrors(draft, decls)) || hasRepairErrors(unrepaired)) {
 					requestAnimationFrame(() =>
 						form.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(),
 					);
@@ -342,6 +372,12 @@ function PresetForm({
 				</DialogDescription>
 			</DialogHeader>
 			<DialogBody>
+				{preset?.status === "invalid" && (
+					<p role="note" className="m-0 text-xs text-danger-fg">
+						这个运行预设已失效，不能用来触发运行：{problemsText(preset.problems, decls)}。
+						改好下面标出的地方，保存之后恢复可用。
+					</p>
+				)}
 				<FormField label="名称" required error={errors.name}>
 					{(control) => (
 						<Input
@@ -363,6 +399,11 @@ function PresetForm({
 						/>
 					)}
 				</FormField>
+				<GoneParams
+					repair={repair}
+					error={submitted ? unrepaired.gone : undefined}
+					onKeep={(name, keep) => setRepair(keepGone(repair, name, keep))}
+				/>
 				<div className="grid grid-cols-[auto_fit-content(40%)_minmax(0,1fr)] items-start gap-x-2.5 gap-y-3">
 					<div className="col-span-full grid grid-cols-subgrid text-xs text-fg-3">
 						<span>预设</span>
@@ -376,19 +417,23 @@ function PresetForm({
 								key={p.name}
 								param={p}
 								value={draft.values[p.name] ?? (p.type === "boolean" ? false : "")}
-								error={errors.values[p.name]}
+								error={unrepaired.values[p.name] ?? errors.values[p.name]}
 								disabled={!checked}
 								help={presetable(p) ? undefined : "secret 参数暂不支持设为预设参数"}
-								onChange={(value) =>
-									setDraft({ ...draft, values: { ...draft.values, [p.name]: value } })
-								}
+								onChange={(value) => {
+									setDraft({ ...draft, values: { ...draft.values, [p.name]: value } });
+									setRepair(refilled(repair, p.name));
+								}}
 								leading={
 									<span className="pt-2">
 										<Checkbox
 											aria-label={`预设 ${p.name}`}
 											checked={checked}
 											disabled={!presetable(p)}
-											onChange={(e) => setDraft(toggleParam(draft, p, e.target.checked))}
+											onChange={(e) => {
+												setDraft(toggleParam(draft, p, e.target.checked));
+												setRepair(refilled(repair, p.name));
+											}}
 										/>
 									</span>
 								}
@@ -399,11 +444,6 @@ function PresetForm({
 				{errors.params && (
 					<p role="alert" className="m-0 text-xs text-danger-fg">
 						{errors.params}
-					</p>
-				)}
-				{gone.length > 0 && (
-					<p role="note" className="m-0 text-xs text-warn-fg">
-						这个预设里的 {gone.join("、")} 已不在入口参数里，保存之后就不再属于这个预设。
 					</p>
 				)}
 				{save.isError && <FormAlert>{errorText(save.error)}</FormAlert>}

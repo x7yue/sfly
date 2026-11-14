@@ -11,6 +11,7 @@ import { Page, PageHeader, Panel } from "#/components/page";
 import { ViaTag } from "#/components/via-tag";
 import { apiQuery, callApi } from "#/lib/api";
 import { formatDateTime } from "#/lib/format";
+import { notifyInvalidatedPresets, splitPresetWarnings } from "#/presets/invalidated-toast";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -333,6 +334,7 @@ function RestoreDialog({
 			});
 			void queryClient.invalidateQueries({ queryKey: domainKey(orchestrationsApi.get) });
 			onRestored(from, saved.number);
+			notifyInvalidatedPresets(splitPresetWarnings(saved.warnings).presets);
 		},
 	});
 	return (

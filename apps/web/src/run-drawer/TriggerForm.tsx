@@ -111,7 +111,8 @@ function ParamsForm({
 	const decls = preflight.params;
 	const checks = preflightChecks(preflight, options);
 	const [presetId, setPresetId] = useState<string | null>(null);
-	const preset = preflight.presets.find((p) => p.id === presetId);
+	// 失效的运行预设不能用：选中之后预设才失效（预检刷新）时，当作没有选。
+	const preset = preflight.presets.find((p) => p.id === presetId && p.status === "ok");
 	// 选中预设时，预设参数取预设的值、不能修改，只提交其余参数和预设（控制面填入预设的值）。
 	const locked = new Map(preset?.params.map((p) => [p.name, p.value]));
 	const editable = decls.filter((p) => !locked.has(p.name));
@@ -163,7 +164,12 @@ function ParamsForm({
 		>
 			<RunningNotice orchestrationId={orchestrationId} />
 			{preflight.presets.length > 0 && (
-				<PresetSelect presets={preflight.presets} value={presetId} onChange={setPresetId} />
+				<PresetSelect
+					presets={preflight.presets}
+					decls={decls}
+					value={preset?.id ?? null}
+					onChange={setPresetId}
+				/>
 			)}
 			<SectionTitle first>
 				入口参数

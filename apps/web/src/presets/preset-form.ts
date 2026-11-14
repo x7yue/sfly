@@ -31,11 +31,6 @@ export function draftFromPreset(preset: PresetView, decls: ParamDeclView[]): Pre
 	return { name: preset.name, description: preset.description, values };
 }
 
-/** 预设里已经不在入口参数里的预设参数（参数被删除或改名）：编辑表单里没有它们的位置，保存时会丢掉。 */
-export function removedParams(preset: PresetView, decls: ParamDeclView[]): string[] {
-	return preset.params.filter((q) => !decls.some((p) => p.name === q.name)).map((q) => q.name);
-}
-
 /** 能不能设为预设参数：secret 参数暂不支持。 */
 export const presetable = (p: ParamDeclView) => p.secret !== true;
 
