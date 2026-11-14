@@ -161,6 +161,31 @@ def stress(ctx: Context, qps: int, alert_bot: FeishuBot | None = None) -> dict:
 - 后续节点可以引用输出里的值；大块数据存成产物，输出里放产物引用。
 - 输出里的 NUL 字符（`\x00`）保存时换成 U+FFFD（�），后续节点引用到的是替换后的值；错误信息、进度说明和指标标签也是这样（docs/SEMANTICS.md §2.5）。二进制内容存成产物。
 
+### 输出的说明：`Doc`
+
+```python
+from typing import Annotated, TypedDict
+
+from sfly import Doc
+
+
+class CheckOutputs(TypedDict):
+    status: Annotated[int, Doc("HTTP 状态码")]
+    body_file: Annotated[str | None, Doc("响应体保存的文件；响应没有正文时为 None")]
+    elapsed_ms: float
+```
+
+输出字段也用 `Annotated[类型, Doc("…")]` 写说明，规则和输入的 `Doc` 一样（见上文「输入的说明：`Doc`」）：写在字段注解的最外层，一个注解里只能有一个，必须是非空字符串，首尾空白不保存，最多 500 个 Unicode 字符，没写不报错。`sfly build` 把它写成这个输出 schema 的 `description`。
+
+搭场景的人在四个地方看到它：检查器「说明」标签页里的「输出 | 说明」表、引用补全里这个输出的后面、节点包管理页悬停在输出的名字上，以及 `sfly package show` 输出表的「说明」列。没写说明的输出，这些地方照旧只显示名字和类型。
+
+- 写给要引用这个输出的人看：它装的是什么、单位是什么、什么情况下是空。不要重复字段名和类型。
+- `NotRequired[...]`、`Required[...]` 包在 `Annotated` 外面或里面都行：`NotRequired[Annotated[int, Doc("…")]]`。
+- 用 `@node(outputs={...})` 声明输出时，字典的值也能这样写：`outputs={"rows": Annotated[int, Doc("写入的行数")]}`。键名列表的写法没有地方写说明。
+- `Doc` 写错时 `sfly build` 报错并指出节点和输出，例如 `节点 demo_checks.http_check 的输出 status：Doc 必须是非空字符串，收到 ''`。`sfly dev`、`sfly debug` 用同一套扫描，结果一样（`sfly.testing.run_node` 只检查输入，不检查输出）。
+
+和输入的 `Doc` 同一个版本（SDK 0.4.0）起可用，`requires-sdk` 的要求也一样。
+
 ## 失败
 
 节点抛出的任何异常都让任务以 `node_error` 失败：错误消息形如 `ValueError: steps 必须大于 0，收到 0`，并附带 traceback。`node_error` 按场景里配置的重试次数重试，每次重试是一个新任务。消息里写清原因和相关参数值。

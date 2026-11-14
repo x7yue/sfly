@@ -10,8 +10,8 @@ from sfly import Context, Doc, Metric, node
 
 
 class CountdownOutputs(TypedDict):
-    greeting: str
-    ticks: int
+    greeting: Annotated[str, Doc("问候语")]
+    ticks: Annotated[int, Doc("实际倒数的步数")]
 
 
 @node(
