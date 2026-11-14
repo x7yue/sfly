@@ -59,12 +59,20 @@ const errorText = (error: unknown) => (error instanceof Error ? error.message : 
 /** 预设参数的值在列表里怎么写：字符串原样，其余按 JSON。 */
 const valueText = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value));
 
-/** 管理对话框里的一屏：列表，新建或编辑的表单（给了 `preset` 就是编辑），复制，删除确认。 */
+/**
+ * 管理对话框里的一屏：列表，新建或编辑的表单（给了 `preset` 就是编辑；新建时给了 `draft` 就带着它，
+ * 运行抽屉的「存为预设」），复制，删除确认。
+ */
 type View =
 	| { kind: "list" }
-	| { kind: "form"; preset?: PresetView }
+	| { kind: "form"; preset?: PresetView; draft?: PresetDraft }
 	| { kind: "copy"; preset: PresetView }
 	| { kind: "delete"; preset: PresetView };
+
+/** 打开对话框时的第一屏：列表，或者直接是带着 `draft` 的新建表单。 */
+export type OpeningView = { kind: "list" } | { kind: "form"; draft: PresetDraft };
+
+const LIST_VIEW: OpeningView = { kind: "list" };
 
 /**
  * 运行预设（GLOSSARY「运行预设」，ADR 0023）：列出场景的预设，新建、编辑、复制、删除。预设是场景的设置，
@@ -76,21 +84,24 @@ export function RunPresetsDialog({
 	open,
 	onOpenChange,
 	returnFocus,
+	openingView = LIST_VIEW,
 }: {
 	scenario: { id: string; name: string; archived_at?: string | null };
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	returnFocus?: React.RefObject<HTMLElement | null>;
+	/** 打开时的第一屏；每次打开都从它开始。 */
+	openingView?: OpeningView;
 }) {
-	const [view, setView] = useState<View>({ kind: "list" });
+	const [view, setView] = useState<View>(openingView);
 	/** 回到列表时焦点放回哪个按钮：`create`，或 `edit:<预设 id>`、`copy:<预设 id>`、`delete:<预设 id>`。 */
 	const [focusKey, setFocusKey] = useState<string | null>(null);
 	useEffect(() => {
 		if (open) {
-			setView({ kind: "list" });
+			setView(openingView);
 			setFocusKey(null);
 		}
-	}, [open]);
+	}, [open, openingView]);
 	const presets = useQuery({
 		...apiQuery(presetsApi.list, { params: { id: scenario.id } }),
 		enabled: open,
@@ -115,6 +126,7 @@ export function RunPresetsDialog({
 						orchestrationId={scenario.id}
 						decls={decls}
 						preset={view.preset}
+						draft={view.draft}
 						onCancel={() => toList(view.preset ? `edit:${view.preset.id}` : "create")}
 						onSaved={() => toList(view.preset ? `edit:${view.preset.id}` : "create")}
 					/>
@@ -305,12 +317,15 @@ function PresetForm({
 	orchestrationId,
 	decls,
 	preset,
+	draft: initialDraft,
 	onCancel,
 	onSaved,
 }: {
 	orchestrationId: string;
 	decls: ParamDeclView[];
 	preset?: PresetView | undefined;
+	/** 新建时表单一开始就带着的内容（运行抽屉的「存为预设」）；没有时是空表单。 */
+	draft?: PresetDraft | undefined;
 	onCancel: () => void;
 	onSaved: () => void;
 }) {
@@ -318,7 +333,7 @@ function PresetForm({
 	const form = useRef<HTMLFormElement>(null);
 	const nameInput = useRef<HTMLInputElement>(null);
 	const [draft, setDraft] = useState<PresetDraft>(() =>
-		preset ? repairDraft(preset, decls) : emptyDraft(),
+		preset ? repairDraft(preset, decls) : (initialDraft ?? emptyDraft()),
 	);
 	// 编辑失效的预设时还没修好的地方：已不存在的参数要取消勾选，类型不对的值要重新填写。
 	const [repair, setRepair] = useState<Repair>(() => (preset ? repairOf(preset, decls) : noRepair));

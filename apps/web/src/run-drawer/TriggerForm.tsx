@@ -2,6 +2,7 @@ import {
 	domainKey,
 	orchestrationsApi,
 	type PreflightProblem,
+	type PresetView,
 	type RunView,
 	runListApi,
 	runsApi,
@@ -18,12 +19,24 @@ import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { useNickname } from "#/lib/nickname";
 import { writeRunView } from "#/monitor/live-run";
+import { draftFromFormValues } from "#/presets/preset-form";
+import { type OpeningView, RunPresetsDialog } from "#/presets/RunPresetsDialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type CheckRow, type LocalState, type Preflight, preflightChecks } from "./checks";
+import { readLastPreset, rememberPreset } from "./last-preset";
 import { ParamField } from "./ParamField";
 import { PresetSelect } from "./PresetSelect";
-import { initialValues, lockedValue, paramsSchema, toParams } from "./trigger-form";
+import {
+	type FieldValue,
+	initialPresetId,
+	initialValues,
+	lockedValue,
+	paramsSchema,
+	switchPreset,
+	toParams,
+	usablePreset,
+} from "./trigger-form";
 
 export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
@@ -39,12 +52,15 @@ export interface TriggerOptions extends LocalState {
  */
 export function TriggerForm({
 	orchestrationId,
+	scenarioName,
 	formId,
 	options,
 	onTriggered,
 	onState,
 }: {
 	orchestrationId: string;
+	/** 场景名称，管理预设的对话框里写。 */
+	scenarioName: string;
 	formId: string;
 	options: TriggerOptions;
 	onTriggered: (run: RunView) => void;
@@ -56,6 +72,9 @@ export function TriggerForm({
 		staleTime: 0,
 		gcTime: 0,
 	});
+	// 管理预设的对话框：列表，或者「存为预设」时直接是带着现在填的值的新建表单。
+	const [manage, setManage] = useState<OpeningView | null>(null);
+	const presetSelect = useRef<HTMLSelectElement>(null);
 
 	useEffect(() => {
 		if (!preflight.data) onState({ canSubmit: false, pending: false, version: null });
@@ -80,14 +99,26 @@ export function TriggerForm({
 		);
 	}
 	return (
-		<ParamsForm
-			orchestrationId={orchestrationId}
-			formId={formId}
-			preflight={preflight.data}
-			options={options}
-			onTriggered={onTriggered}
-			onState={onState}
-		/>
+		<>
+			<ParamsForm
+				orchestrationId={orchestrationId}
+				formId={formId}
+				preflight={preflight.data}
+				options={options}
+				onTriggered={onTriggered}
+				onState={onState}
+				onManage={setManage}
+				presetSelect={presetSelect}
+			/>
+			{/* 在表单外面：对话框里的提交事件会沿 React 树冒泡到外层的 <form>，不能让它触发运行。 */}
+			<RunPresetsDialog
+				scenario={{ id: orchestrationId, name: scenarioName }}
+				open={manage !== null}
+				onOpenChange={(open) => !open && setManage(null)}
+				returnFocus={presetSelect}
+				openingView={manage ?? undefined}
+			/>
+		</>
 	);
 }
 
@@ -98,6 +129,8 @@ function ParamsForm({
 	options,
 	onTriggered,
 	onState,
+	onManage,
+	presetSelect,
 }: {
 	orchestrationId: string;
 	formId: string;
@@ -105,21 +138,29 @@ function ParamsForm({
 	options: TriggerOptions;
 	onTriggered: (run: RunView) => void;
 	onState: (state: { canSubmit: boolean; pending: boolean; version: number | null }) => void;
+	/** 打开管理预设的对话框。 */
+	onManage: (view: OpeningView) => void;
+	/** 预设选择框；对话框关闭后焦点回到它。 */
+	presetSelect: React.RefObject<HTMLSelectElement | null>;
 }) {
 	const queryClient = useQueryClient();
 	const nickname = useNickname();
 	const decls = preflight.params;
 	const checks = preflightChecks(preflight, options);
-	const [presetId, setPresetId] = useState<string | null>(null);
-	// 失效的运行预设不能用：选中之后预设才失效（预检刷新）时，当作没有选。
-	const preset = preflight.presets.find((p) => p.id === presetId && p.status === "ok");
+	const [presetId, setPresetId] = useState<string | null>(() =>
+		initialPresetId(preflight.presets, readLastPreset(orchestrationId)),
+	);
+	// 失效的运行预设不能用：选中之后预设才失效（预检刷新）或被删除时，当作没有选。
+	const preset = usablePreset(preflight.presets, presetId);
 	// 选中预设时，预设参数取预设的值、不能修改，只提交其余参数和预设（控制面填入预设的值）。
-	const locked = new Map(preset?.params.map((p) => [p.name, p.value]));
+	const lockedBy = (p: PresetView | undefined) => new Map(p?.params.map((q) => [q.name, q.value]));
+	const locked = lockedBy(preset);
 	const editable = decls.filter((p) => !locked.has(p.name));
 	const trigger = useMutation({
 		mutationFn: (body: { params: Record<string, unknown>; preset?: string }) =>
 			callApi(runsApi.trigger, { params: { id: orchestrationId }, body }),
-		onSuccess: (run) => {
+		onSuccess: (run, body) => {
+			if (body.preset) rememberPreset(orchestrationId, body.preset);
 			writeRunView(queryClient, run);
 			// 运行列表与场景卡片上的最近运行。
 			void queryClient.invalidateQueries({ queryKey: domainKey(runsApi.get) });
@@ -146,6 +187,19 @@ function ParamsForm({
 		},
 	});
 
+	// 换预设：前后都能编辑的字段保留已经填的值，其余回到默认值（见 switchPreset）。
+	const selectPreset = (id: string | null) => {
+		const next = usablePreset(preflight.presets, id);
+		const values = switchPreset(decls, form.state.values, locked, lockedBy(next));
+		for (const p of decls) {
+			const value = values[p.name];
+			if (value !== undefined && value !== form.state.values[p.name]) {
+				form.setFieldValue(p.name, value as FieldValue);
+			}
+		}
+		setPresetId(next?.id ?? null);
+	};
+
 	const blocked = checks.blocked;
 	const pending = trigger.isPending;
 	useEffect(() => {
@@ -163,12 +217,17 @@ function ParamsForm({
 			}}
 		>
 			<RunningNotice orchestrationId={orchestrationId} />
-			{preflight.presets.length > 0 && (
+			{(decls.length > 0 || preflight.presets.length > 0) && (
 				<PresetSelect
 					presets={preflight.presets}
 					decls={decls}
 					value={preset?.id ?? null}
-					onChange={setPresetId}
+					onChange={selectPreset}
+					onManage={() => onManage({ kind: "list" })}
+					onSaveAs={() =>
+						onManage({ kind: "form", draft: draftFromFormValues(decls, form.state.values) })
+					}
+					selectRef={presetSelect}
 				/>
 			)}
 			<SectionTitle first>

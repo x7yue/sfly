@@ -32,3 +32,30 @@ export async function listRunPresets(
 	const res = await cp.fetch(`/orchestrations/${scenarioId}/presets`);
 	return ((await res.json()) as { presets: PresetView[] }).presets;
 }
+
+/** 删除运行预设。 */
+export async function deleteRunPreset(
+	cp: TestControlPlane,
+	scenarioId: string,
+	presetId: string,
+): Promise<void> {
+	const res = await cp.fetch(`/orchestrations/${scenarioId}/presets/${presetId}`, {
+		method: "DELETE",
+		headers: { "x-sfly-nickname": encodeURIComponent("tester") },
+	});
+	if (res.status !== 204) throw new Error(`删除运行预设：HTTP ${res.status} ${await res.text()}`);
+}
+
+/** 另存一个场景版本（编辑起点是第 1 版）。 */
+export async function saveScenarioVersion(
+	cp: TestControlPlane,
+	scenarioId: string,
+	document: unknown,
+): Promise<void> {
+	const res = await cp.fetch(`/orchestrations/${scenarioId}/versions`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: JSON.stringify({ base_version: 1, document }),
+	});
+	if (res.status !== 201) throw new Error(`保存场景版本：HTTP ${res.status} ${await res.text()}`);
+}

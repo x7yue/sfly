@@ -57,7 +57,7 @@ test("从场景列表新建运行预设，在运行抽屉里选中它：预设�
 	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
 	const select = drawer.getByRole("combobox", { name: "运行预设" });
 	await expect(select).toHaveValue("");
-	await expect(select.getByRole("option")).toHaveText(["不使用预设", "压测 A 集群"]);
+	await expect(select.getByRole("option")).toHaveText(["不使用预设", "压测 A 集群", "管理预设…"]);
 	await select.selectOption({ label: "压测 A 集群" });
 	const lockedHost = drawer.getByRole("textbox", { name: /^host / });
 	await expect(lockedHost).toHaveValue("10.0.0.8");

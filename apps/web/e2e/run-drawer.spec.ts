@@ -455,7 +455,7 @@ test("入口参数名不被截断：长参数名折行、必填星号还在，�
 	const drawer = page.getByRole("dialog", { name: "运行 · 长参数名" });
 	await expect(drawer.getByRole("textbox", { name: /^release_file/ })).toBeVisible();
 
-	const labels = drawer.locator("form label");
+	const labels = drawer.locator("form label").filter({ hasNotText: "运行预设" });
 	const clipped = await labels.evaluateAll((els) =>
 		els.filter((el) => el.scrollWidth > el.clientWidth).map((el) => el.textContent),
 	);

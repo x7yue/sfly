@@ -1,9 +1,8 @@
 import type { Page } from "@playwright/test";
-import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
-import { createRunPreset, listRunPresets } from "./run-presets-support";
+import { createRunPreset, listRunPresets, saveScenarioVersion } from "./run-presets-support";
 import { createScenario, publishPackage } from "./support";
 
 // 失效的运行预设（#326，ADR 0023）：画布保存时的警告、运行抽屉里不能选、在管理对话框里修好以后恢复可用。
@@ -15,16 +14,6 @@ const withParams = (params: Array<Record<string, unknown>>) => ({
 });
 const ENTRY_PARAMS = PARAM_SCENARIO.nodes[0]?.params as Array<Record<string, unknown>>;
 const without = (name: string) => ENTRY_PARAMS.filter((p) => p.name !== name);
-
-/** 另存一个场景版本（编辑起点是第 1 版）。 */
-async function saveVersion(cp: TestControlPlane, id: string, document: unknown) {
-	const res = await cp.fetch(`/orchestrations/${id}/versions`, {
-		method: "POST",
-		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
-		body: JSON.stringify({ base_version: 1, document }),
-	});
-	if (res.status !== 201) throw new Error(`保存场景版本：HTTP ${res.status} ${await res.text()}`);
-}
 
 /** 打开场景卡片「更多」菜单里的「运行预设…」。 */
 async function openPresets(page: Page, scenario: string) {
@@ -103,7 +92,7 @@ test("运行抽屉里失效的运行预设能看到但不能选，旁边写明�
 		name: "单机",
 		params: [{ name: "host", value: "10.0.0.9" }],
 	});
-	await saveVersion(
+	await saveScenarioVersion(
 		controlPlane,
 		id,
 		withParams(
@@ -180,7 +169,7 @@ test("管理对话框里已不存在的预设参数单独列出，取消勾选�
 			{ name: "steps", value: 50 },
 		],
 	});
-	await saveVersion(controlPlane, id, withParams(without("dry_run")));
+	await saveScenarioVersion(controlPlane, id, withParams(without("dry_run")));
 	await page.goto("/orchestrations");
 
 	const dialog = await openPresets(page, "巡检");
