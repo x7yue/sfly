@@ -16,6 +16,7 @@ import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
+import { firstParagraph } from "#/lib/node-description";
 import { compareVersions } from "#/lib/package-versions";
 import {
 	ChartsCell,
@@ -294,6 +295,11 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 							<TableCell width="fit">
 								<span className="font-mono">{node.name}</span>
 								<div className="text-xs text-fg-3">{node.title}</div>
+								{firstParagraph(node.description) && (
+									<p className="m-0 mt-1 w-72 whitespace-normal text-xs text-fg-2">
+										{firstParagraph(node.description)}
+									</p>
+								)}
 							</TableCell>
 							<TableCell>
 								<IoList schema={node.inputs} />

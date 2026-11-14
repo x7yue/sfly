@@ -5,6 +5,7 @@ import { PlusIcon } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { KIND_META } from "#/components/canvas/node-display";
 import { KIND_CHIP } from "#/components/canvas/zoom-text";
+import { firstParagraph } from "#/lib/node-description";
 import { shortcutKeys, shortcutText } from "#/lib/shortcuts";
 import {
 	Command,
@@ -305,10 +306,18 @@ function BuiltinRow({ item }: { item: BuiltinItem }) {
 
 /** detail 是右侧的等宽说明：在包分组里是节点名，在「最近使用」里是 包名/节点名。 */
 function PackageRow({ item, detail }: { item: PackageItem; detail: string }) {
+	const summary = firstParagraph(item.description);
 	return (
 		<>
 			<KindChip kind="package" />
-			<span className="truncate">{item.title}</span>
+			{summary ? (
+				<span className="flex min-w-0 flex-col gap-0.5">
+					<span className="truncate">{item.title}</span>
+					<span className="line-clamp-2 text-xs text-fg-3">{summary}</span>
+				</span>
+			) : (
+				<span className="truncate">{item.title}</span>
+			)}
 			<span className="ml-auto truncate font-mono text-2xs text-fg-3">{detail}</span>
 		</>
 	);
