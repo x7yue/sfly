@@ -174,7 +174,7 @@ describe("Agent 断线、排队超时与重启恢复", () => {
 			expect((await api.run(runId)).status).toBe("cancelled");
 		});
 
-		it("Agent 在线时租约过期（例如首次准备环境超过租约）：先强制取消旧尝试，再派发新尝试", async () => {
+		it("Agent 在线时租约过期（例如派发消息晚到）：先强制取消旧尝试，再派发新尝试", async () => {
 			const agent = await connect("agent-a");
 			const runId = await api.triggerOk(
 				await api.orchestrationWith(chain([{ id: "a", retries: 1 }])),

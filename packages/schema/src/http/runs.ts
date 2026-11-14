@@ -4,7 +4,7 @@ import { RunLogNodesParam } from "../run-log-scope.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
-import { ReferencedAgent } from "./orchestrations.js";
+import { PreflightAgent } from "./orchestrations.js";
 
 /**
  * 运行、任务日志与产物接口的契约（约定见 ./contract.ts）。
@@ -226,7 +226,7 @@ export const PreflightProblem = z.object({
 export const runsApi = {
 	/**
 	 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发），
-	 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线不阻止触发，任务会排队）。
+	 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队）。
 	 */
 	preflight: endpoint({
 		method: "GET",
@@ -241,8 +241,8 @@ export const runsApi = {
 			problems: z.array(PreflightProblem),
 			/** 最新版本锁定的节点包版本（包名 → 版本）；没有版本时为空。 */
 			packages: z.record(z.string(), z.string()),
-			/** 最新版本引用的 Agent 与在线状态，默认 Agent 在前；没有版本时为空。 */
-			agents: z.array(ReferencedAgent),
+			/** 最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。 */
+			agents: z.array(PreflightAgent),
 		}),
 	}),
 	/** 一个场景的运行，按开始时间从新到旧（最多 200 条）。 */

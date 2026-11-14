@@ -2,7 +2,7 @@ import type { EndpointResponse, PreflightProblem, runsApi } from "@sfly/schema";
 
 /**
  * 运行抽屉的触发前检查清单（纯逻辑，有单测）：把预检结果（GET /orchestrations/:id/preflight）整理成
- * 「结构与引用」「包版本锁定」「Agent 是否在线」几行；有阻断项的行不能触发，Agent 不在线只提醒（任务会排队）。
+ * 「结构与引用」「包版本锁定」「Agent 是否在线」几行；有阻断项的行不能触发，Agent 不在线、在准备环境只提醒（任务会排队）。
  * 场景还没有版本、已归档时只列这一条原因；从画布打开时另外检查本地未保存的修改与画布版本是否最新。
  */
 
@@ -109,14 +109,26 @@ export function preflightChecks(
 
 	const agentProblems = problems.filter((p) => AGENT_CODES.has(p.code));
 	const offline = preflight.agents.filter((a) => a.status === "offline");
-	if (agentProblems.length === 0 && offline.length > 0) {
-		rows.push({
-			key: "agents",
-			state: "warn",
-			title: `${offline.map((a) => a.name).join("、")} 当前不在线`,
-			detail: "任务会排队，Agent 上线后再执行",
-			problems: [],
-		});
+	const preparing = preflight.agents.filter((a) => a.preparing_since !== null);
+	if (agentProblems.length === 0 && (offline.length > 0 || preparing.length > 0)) {
+		if (offline.length > 0) {
+			rows.push({
+				key: "agents",
+				state: "warn",
+				title: `${offline.map((a) => a.name).join("、")} 当前不在线`,
+				detail: "任务会排队，Agent 上线后再执行",
+				problems: [],
+			});
+		}
+		if (preparing.length > 0) {
+			rows.push({
+				key: "agents",
+				state: "warn",
+				title: `${preparing.map((a) => a.name).join("、")} 正在准备环境`,
+				detail: "任务会等它准备好再执行",
+				problems: [],
+			});
+		}
 	} else {
 		rows.push(
 			row(

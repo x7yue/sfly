@@ -80,7 +80,7 @@ describe("运行视图", () => {
 				],
 				problems: [],
 				packages: { stub: "1.0.0" },
-				agents: [{ name: "agent-a", default: true, status: "online" }],
+				agents: [{ name: "agent-a", default: true, status: "online", preparing_since: null }],
 			});
 		});
 
@@ -98,8 +98,8 @@ describe("运行视图", () => {
 				`/orchestrations/${id}/preflight`,
 			);
 			expect(referenced).toEqual([
-				{ name: "agent-a", default: true, status: "online" },
-				{ name: "ghost", default: false, status: "unknown" },
+				{ name: "agent-a", default: true, status: "online", preparing_since: null },
+				{ name: "ghost", default: false, status: "unknown", preparing_since: null },
 			]);
 			const found = problems.map((p) => [p.code, p.node_id]);
 			expect(found).toEqual(

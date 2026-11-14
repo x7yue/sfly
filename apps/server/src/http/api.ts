@@ -171,6 +171,7 @@ export function buildHttpApi({
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerRunRoutes(app, {
 		db: database.db,
+		hub,
 		engine,
 		orchestrations,
 		preflight,

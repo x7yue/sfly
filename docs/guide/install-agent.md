@@ -46,6 +46,8 @@ Agent 连上控制面后出现在 [Agent 管理](/agents) 页面。首次启动�
 2. 用 Python 3.13 创建共享 venv（`~/.sfly/venv`），Python 从 Python 下载镜像（默认由 GitHub Release 镜像推导）下载。之后不会主动升级 Python。
 3. 从控制面安装 SDK 运行时，然后开始接任务。
 
+这段时间叫「准备环境」，每次 Agent 连上控制面都会先走一遍（环境已经就绪时只是几项检查，很快结束）。准备环境期间 Agent 算在线，但不接任务：派给它的任务留在队列里，不占槽位，准备好之后按排队顺序派发，不会因为准备环境慢而失败。[Agent 管理](/agents) 页面上，状态「在线」旁边显示「准备环境中 · 已 2 分 10 秒」，时长从 Agent 连上控制面算起，按控制面的时间计算；准备好之后标记消失。`sfly agent list` 的状态列写「在线（准备环境中，已 2 分 10 秒）」，`--json` 里的 `preparing_since` 是开始准备环境的时间。准备了很久还没有结束时，到那台机器上看 Agent 的日志（见下面的「服务」），多半卡在下载 uv 或 Python，检查镜像和网络。准备环境失败时 Agent 退出，页面上显示离线。
+
 ## 服务
 
 用普通用户运行安装脚本时注册用户级服务（`~/.config/systemd/user/sfly-agent.service`），用 root 或 `sudo` 运行时注册系统级服务（`/etc/systemd/system/sfly-agent.service`）。查看用户级服务的状态和日志：

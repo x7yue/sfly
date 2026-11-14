@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	formatClockOffset,
 	formatDuration,
+	formatElapsed,
 	formatFullDateTime,
 	formatFullDateTimeMs,
 	spansOtherDay,
@@ -43,6 +44,20 @@ describe("formatClockOffset", () => {
 		expect(formatClockOffset(613 * DAY + 3 * HOUR)).toBe("快 613 天");
 		// Agent 时间被改到 1970 年。
 		expect(formatClockOffset(-20_154 * DAY)).toBe("慢 20154 天");
+	});
+});
+
+describe("formatElapsed", () => {
+	it("不到 1 分钟只写秒，之后写分和秒，超过 1 小时写小时和分", () => {
+		expect(formatElapsed(0)).toBe("0 秒");
+		expect(formatElapsed(45_999)).toBe("45 秒");
+		expect(formatElapsed(130_000)).toBe("2 分 10 秒");
+		expect(formatElapsed(59 * 60_000 + 59_000)).toBe("59 分 59 秒");
+		expect(formatElapsed(3_720_000)).toBe("1 小时 2 分");
+	});
+
+	it("时钟误差造成的负值按 0 秒算", () => {
+		expect(formatElapsed(-1500)).toBe("0 秒");
 	});
 });
 
