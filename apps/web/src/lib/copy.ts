@@ -109,6 +109,9 @@ const ASSISTANT_NAME = new Map([
 /** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
 export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`;
 
+/** 「预设：压测 A 集群」：运行详情、运行记录里这个运行用的运行预设（触发时记下的名称）。 */
+export const presetLabel = (name: string) => `预设：${name}`;
+
 /** 通用的加载 / 错误 / 空状态文字。 */
 export const MESSAGE = {
 	loading: "加载中",

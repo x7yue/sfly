@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { CancelRunButton } from "./CancelRunDialog";
 import { useMonitorActions, useTimeAxis } from "./monitor-state";
+import { RunPresetInfo } from "./RunPresetInfo";
 import {
 	chainLabel,
 	chainRunStatus,
@@ -102,6 +103,7 @@ export function MonitorTopBar({
 					{status.label}
 				</StatusPill>
 			</output>
+			{run.preset && <RunPresetInfo preset={run.preset} />}
 			{failure && !failureInBanner && <FailureSummary failure={failure} />}
 			<ul
 				aria-label="各链状态"

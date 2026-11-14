@@ -10,9 +10,9 @@ import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { useMetricCatalog } from "#/monitor/use-run-metrics";
+import { ScenarioWithPreset } from "#/presets/ScenarioWithPreset";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
-import { Truncate } from "@/components/ui/truncate";
 
 /** 卡片上最多列出的当前节点数。 */
 const MAX_ACTIVE = 3;
@@ -47,7 +47,11 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 				<StatusPill kind={status.kind} pulse>
 					{status.label}
 				</StatusPill>
-				<Truncate className="font-semibold">{run.orchestration_name}</Truncate>
+				<ScenarioWithPreset
+					name={run.orchestration_name}
+					preset={run.preset}
+					className="font-semibold"
+				/>
 				<Badge className="font-mono">v{run.orchestration_version}</Badge>
 				<span data-slot="run-id" className="font-mono text-xs text-fg-3">
 					{shortId(run.id)}

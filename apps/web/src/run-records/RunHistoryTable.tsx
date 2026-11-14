@@ -7,7 +7,7 @@ import { runStatusView, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
 import { chainLabel } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
-import { Truncate } from "@/components/ui/truncate";
+import { ScenarioWithPreset } from "#/presets/ScenarioWithPreset";
 
 /** 表格里最多画几条链，其余只计数，保证行高一致。 */
 const MAX_TABLE_CHAINS = 2;
@@ -35,7 +35,9 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 			id: "scenario",
 			header: "场景",
 			meta: { width: "grow" },
-			cell: ({ row }) => <Truncate>{row.original.orchestration_name}</Truncate>,
+			cell: ({ row }) => (
+				<ScenarioWithPreset name={row.original.orchestration_name} preset={row.original.preset} />
+			),
 		}),
 		col.display({
 			id: "status",
