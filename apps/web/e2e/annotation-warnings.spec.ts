@@ -55,6 +55,7 @@ test("校验面板列出注释框的警告，写出注释框和成员；点「�
 	for (const messages of Object.values(MESSAGES)) {
 		for (const message of messages) await expect(warning(message)).toBeVisible();
 	}
+	await expect(inspector(page)).toContainText("注释框的警告除外，它不影响运行");
 	// 节点卡片上没有警告标记：问题出在注释框上。
 	await expect(nodeCard(page, "ping")).not.toContainText("警告");
 

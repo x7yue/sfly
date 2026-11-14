@@ -1,5 +1,6 @@
 import {
 	dispatchTarget,
+	isAnnotationWarning,
 	nameWithId,
 	nodeCardText,
 	nodeNameWithId,
@@ -614,7 +615,9 @@ function ScenarioInspector({
 				)}
 				{notes.length > 0 && <WarningList warnings={notes} onLocate={context.onLocate} />}
 				<p className="m-0 text-xs text-fg-3">
-					警告不阻止保存，触发运行时必须全部通过（注释框的警告除外，它不影响运行）；提醒不影响运行；字段错误（红色）改正后才能保存。
+					警告不阻止保存，触发运行时必须全部通过
+					{warnings.some(isAnnotationWarning) && "（注释框的警告除外，它不影响运行）"}
+					；提醒不影响运行；字段错误（红色）改正后才能保存。
 				</p>
 			</div>
 		</>
