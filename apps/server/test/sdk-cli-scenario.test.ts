@@ -336,11 +336,13 @@ describe("sfly scenario list / show → 控制面", () => {
 				entry_note: "从这里开始",
 			});
 
-			const plain = JSON.parse((await cli("scenario", "show", ids.twinA as string, "--json")).stdout);
+			const plain = JSON.parse(
+				(await cli("scenario", "show", ids.twinA as string, "--json")).stdout,
+			);
 			expect(plain).not.toHaveProperty("entry_display_name");
-			expect(
-				(await cli("scenario", "show", ids.twinA as string)).stdout.split("\n"),
-			).toContain("主链");
+			expect((await cli("scenario", "show", ids.twinA as string)).stdout.split("\n")).toContain(
+				"主链",
+			);
 		});
 
 		it("还没有保存过版本的场景显示初始文档", async () => {
