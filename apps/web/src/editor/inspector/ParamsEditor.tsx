@@ -25,7 +25,8 @@ type ParamType = Param["type"];
 export const REVEAL_MS = 5000;
 
 /**
- * 入口节点 / 子流程入口节点的参数声明：名称、类型、默认值、必填、敏感。
+ * 入口节点 / 子流程入口节点的参数声明：名称、类型、说明、默认值、必填、敏感。
+ * 说明是一行文字，触发表单、子流程参数映射表单和命令行的参数表里显示；不影响执行。
  * 敏感参数的默认值默认隐藏，可以临时显示 5 秒；取消「敏感」需要二次确认。
  * 名称不合法、重复（errors）与默认值解析失败（字段草稿）都会阻止保存。
  */
@@ -53,6 +54,10 @@ export function ParamsEditor({
 			{params.map((param, index) => {
 				const nameKey = draftKey(nodeId, `params.${index}.name`);
 				const nameError = errors.find((e) => e.field === `params.${index}.name`)?.message;
+				const descriptionKey = draftKey(nodeId, `params.${index}.description`);
+				const descriptionError = errors.find(
+					(e) => e.field === `params.${index}.description`,
+				)?.message;
 				return (
 					<fieldset
 						// biome-ignore lint/suspicious/noArrayIndexKey: 参数名可以编辑，没有稳定的键
@@ -103,6 +108,22 @@ export function ParamsEditor({
 						{nameError && (
 							<p id={`${nameKey}-error`} className="m-0 text-xs text-danger-fg">
 								{nameError}
+							</p>
+						)}
+						<Input
+							aria-label="说明"
+							aria-invalid={descriptionError ? true : undefined}
+							aria-describedby={descriptionError ? `${descriptionKey}-error` : undefined}
+							data-field-key={descriptionKey}
+							value={param.description ?? ""}
+							placeholder="说明（可选，一行）"
+							onChange={(e) =>
+								update(index, { description: e.target.value === "" ? undefined : e.target.value })
+							}
+						/>
+						{descriptionError && (
+							<p id={`${descriptionKey}-error`} className="m-0 text-xs text-danger-fg">
+								{descriptionError}
 							</p>
 						)}
 						<DefaultValue

@@ -24,6 +24,7 @@ describe("字段错误的位置说明", () => {
 		expect(fieldLabel(entry, "params.0.name")).toBe("参数 1st（第 1 个）的名称");
 		expect(fieldLabel(entry, "params.0.default")).toBe("参数 1st（第 1 个）的默认值");
 		expect(fieldLabel(entry, "params.0.type")).toBe("参数 1st（第 1 个）的类型");
+		expect(fieldLabel(entry, "params.0.description")).toBe("参数 1st（第 1 个）的说明");
 	});
 
 	it("还没有名字的参数只说第几个", () => {

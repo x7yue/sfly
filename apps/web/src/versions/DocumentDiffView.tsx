@@ -166,8 +166,15 @@ function formatValue(value: unknown): string {
 		!Array.isArray(value)
 	) {
 		// 入口参数声明
-		const p = value as { type: string; required?: boolean; secret?: boolean; default?: unknown };
+		const p = value as {
+			type: string;
+			required?: boolean;
+			secret?: boolean;
+			default?: unknown;
+			description?: string;
+		};
 		const flags = [p.type, p.required ? "必填" : "可选", ...(p.secret ? ["敏感"] : [])];
+		if (p.description !== undefined) flags.push(`说明「${p.description}」`);
 		if (p.default !== undefined) flags.push(`默认 ${JSON.stringify(p.default)}`);
 		return flags.join(" · ");
 	}
