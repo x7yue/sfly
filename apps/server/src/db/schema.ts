@@ -150,6 +150,28 @@ export const orchestrations = pgTable("orchestrations", {
 	runNotifyNote: text("run_notify_note").notNull().default(""),
 });
 
+/**
+ * 运行预设（GLOSSARY「运行预设」，ADR 0023）：场景的设置，不属于版本。values 是「参数名 → 值」，
+ * 键就是预设参数的名单；名称在同一个场景内唯一（区分大小写）。场景不物理删除，不需要级联。
+ */
+export const runPresets = pgTable(
+	"run_presets",
+	{
+		id: uuid("id").primaryKey(),
+		orchestrationId: uuid("orchestration_id")
+			.notNull()
+			.references(() => orchestrations.id),
+		name: text("name").notNull(),
+		description: text("description").notNull().default(""),
+		values: jsonb("values").$type<Record<string, unknown>>().notNull(),
+		createdAt: timestamptz("created_at").notNull(),
+		updatedAt: timestamptz("updated_at").notNull(),
+		/** 最后修改人的昵称。 */
+		updatedBy: text("updated_by").notNull(),
+	},
+	(t) => [unique("run_presets_name").on(t.orchestrationId, t.name)],
+);
+
 /** 编排版本：不可变，同一编排内编号唯一、递增。 */
 export const orchestrationVersions = pgTable(
 	"orchestration_versions",
@@ -223,6 +245,13 @@ export const runs = pgTable(
 		/** 经哪个 AI 编程助手触发；只是标注，浏览器里触发的为空。 */
 		triggeredVia: text("triggered_via"),
 		params: jsonb("params").$type<Record<string, unknown>>().notNull(),
+		/**
+		 * 触发时选用的运行预设：ID（不是外键，预设删除后仍保留）、触发时的名称、预设参数的名单。
+		 * 不用预设时三列都为空。
+		 */
+		presetId: uuid("preset_id"),
+		presetName: text("preset_name"),
+		presetParams: jsonb("preset_params").$type<string[]>(),
 		status: text("status").$type<RunStatus>().notNull(),
 		startedAt: timestamptz("started_at").notNull(),
 		endedAt: timestamptz("ended_at"),

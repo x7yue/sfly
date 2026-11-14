@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type { ParamDeclaration } from "@sfly/schema";
 import type { z } from "zod";
 
@@ -18,6 +19,22 @@ export function matchesParamType(type: Declaration["type"], value: unknown): boo
 		case "json":
 			return true;
 	}
+}
+
+/**
+ * 用运行预设的值填入预设参数（ADR 0023「锁定由控制面执行」），之后照常补默认值、检查类型（{@link fillParams}）。
+ * 传入的值里给预设参数传了和预设不同的值（按 JSON 深比较）时返回那个参数名；相同的值照常接受。
+ */
+export function withPresetValues(
+	provided: Record<string, unknown>,
+	presetValues: Record<string, unknown>,
+): { params: Record<string, unknown> } | { locked: string } {
+	for (const [name, value] of Object.entries(presetValues)) {
+		if (Object.hasOwn(provided, name) && !isDeepStrictEqual(provided[name], value)) {
+			return { locked: name };
+		}
+	}
+	return { params: { ...provided, ...presetValues } };
 }
 
 /**

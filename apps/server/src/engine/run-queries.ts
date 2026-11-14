@@ -89,6 +89,10 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		triggered_by: run.triggeredBy,
 		triggered_via: run.triggeredVia,
 		params: m(run.params),
+		preset:
+			run.presetId === null
+				? null
+				: { id: run.presetId, name: run.presetName ?? "", params: run.presetParams ?? [] },
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
 		run_notification: await runNotificationState(db, run),

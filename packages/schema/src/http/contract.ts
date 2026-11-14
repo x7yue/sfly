@@ -35,10 +35,10 @@ import { z } from "zod";
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-/** 请求校验失败时的错误码与说明。 */
+/** 请求校验失败时的错误码与说明；不给说明时用校验失败的概要（哪个字段、什么原因）。 */
 export interface RequestErrorInfo {
 	code: string;
-	message: string;
+	message?: string;
 }
 
 /** 未解析的原始请求（控制面收到的 params / query / body）。 */

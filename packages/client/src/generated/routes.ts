@@ -32,6 +32,10 @@ import type {
 	PlatformMetricsQuery,
 	PreflightAgent,
 	PreflightProblem,
+	PresetDescription,
+	PresetName,
+	PresetParamInput,
+	PresetView,
 	ProgressEvent,
 	RunListItem,
 	RunListQuery,
@@ -613,6 +617,45 @@ export interface Api {
 			NodeTypeView
 		>;
 	};
+	presets: {
+		/**
+		 * `GET /orchestrations/:id/presets`
+		 *
+		 * 场景的运行预设，按名称排序。场景不存在时 404 `not_found`。
+		 */
+		list: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			{
+				presets: PresetView[];
+			}
+		>;
+		/**
+		 * `POST /orchestrations/:id/presets`
+		 *
+		 * 新建运行预设（201，需要昵称请求头，昵称记为最后修改人）。`params` 是预设参数的完整清单，
+		 * 对照最新版本检查：参数已声明、不是 secret、值符合类型（不做类型转换，`json` 接受任何值）、字符串不为空，
+		 * 至少一个参数，不能重复。不通过时 400 `invalid_preset`，details 是 zod 格式的问题清单（`path` 指出字段，
+		 * `message` 写明原因）；入口节点没有声明参数（包括场景还没有版本）时同样是 `invalid_preset`。
+		 * 名称在场景内已被占用时 409 `preset_name_taken`。场景不存在时 404 `not_found`。
+		 */
+		create: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					name: PresetName;
+					description?: PresetDescription;
+					params: PresetParamInput[];
+				};
+			},
+			PresetView
+		>;
+	};
 	runs: {
 		/**
 		 * `GET /runs`
@@ -638,7 +681,8 @@ export interface Api {
 		 * `GET /orchestrations/:id/preflight`
 		 *
 		 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发），
-		 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队）。
+		 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队），
+		 * 和场景的运行预设。
 		 */
 		preflight: Endpoint<
 			{
@@ -655,6 +699,8 @@ export interface Api {
 				packages: Record<string, string>;
 				/** 最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。 */
 				agents: PreflightAgent[];
+				/** 场景的运行预设，按名称排序（与 presetsApi.list 相同）。 */
+				presets: PresetView[];
 			}
 		>;
 		/**
@@ -677,6 +723,10 @@ export interface Api {
 		 *
 		 * 触发场景的最新版本（201）。预检不通过时 400 `invalid_orchestration`（details 是原因列表），
 		 * 参数不对时 400 `invalid_params`。
+		 *
+		 * 带上 `preset`（运行预设的 ID）时，预设参数取预设保存的值，`params` 只需要给其余的参数；预设在触发的事务里读取，
+		 * 之后修改预设不影响这次运行。`params` 里给预设参数传了不同的值（按 JSON 深比较）时 400 `preset_param_locked`
+		 * （details 是 `{ param, preset }`：参数名和预设名），传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`。
 		 */
 		trigger: Endpoint<
 			{
@@ -685,6 +735,8 @@ export interface Api {
 				};
 				body?: {
 					params?: Record<string, unknown>;
+					/** 运行预设的 ID；不给就是不用预设。 */
+					preset?: string;
 				};
 			},
 			RunView
@@ -806,6 +858,10 @@ export const routes = {
 		get: { method: "GET", path: "/packages/:name", kind: "endpoint" },
 		version: { method: "GET", path: "/packages/:name/versions/:version", kind: "endpoint" },
 		nodeType: { method: "GET", path: "/packages/:name/versions/:version/nodes/:node", kind: "endpoint" },
+	},
+	presets: {
+		list: { method: "GET", path: "/orchestrations/:id/presets", kind: "endpoint" },
+		create: { method: "POST", path: "/orchestrations/:id/presets", kind: "endpoint" },
 	},
 	runs: {
 		list: { method: "GET", path: "/runs", kind: "endpoint" },

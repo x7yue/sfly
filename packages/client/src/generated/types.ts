@@ -1117,6 +1117,38 @@ export interface PreflightProblem {
 	node_id?: string;
 }
 
+/** 预设说明：不超过 `PRESET_DESCRIPTION_MAX` 个字符。 */
+export type PresetDescription = string;
+
+/** 预设名称：去掉首尾空白后 1 到 `PRESET_NAME_MAX` 个字符，场景内唯一（区分大小写）。 */
+export type PresetName = string;
+
+/** 新建预设时的一个预设参数：参数名和固定的值。 */
+export interface PresetParamInput {
+	name: string;
+	value: unknown;
+}
+
+/** 预设里的一个预设参数。 */
+export interface PresetParamView {
+	name: string;
+	/** 最新版本里这个参数是不是 secret。 */
+	secret: boolean;
+	/** 固定的值。 */
+	value: unknown;
+}
+
+export interface PresetView {
+	id: string;
+	name: string;
+	description: string;
+	/** 预设参数，按最新版本入口参数的声明顺序。 */
+	params: PresetParamView[];
+	/** 最后修改人的昵称。 */
+	updated_by: string;
+	updated_at: Timestamp;
+}
+
 /** 运行事件流上的 `progress` 事件：一个任务的最新进度。 */
 export interface ProgressEvent {
 	run_id: string;
@@ -1361,6 +1393,16 @@ export interface RunNotificationState {
 /** 运行通知的触发条件（GLOSSARY「运行通知」）：仅失败、失败和取消、总是（成功、失败、取消都发）。 */
 export type RunNotificationTrigger = "failed" | "failed_or_cancelled" | "always";
 
+/** 运行用的运行预设，记的是触发时的情况：预设之后改名、删除都不影响。 */
+export interface RunPresetView {
+	/** 预设的 ID；预设可能已被删除。 */
+	id: string;
+	/** 触发时预设的名称。 */
+	name: string;
+	/** 预设参数的名单：这些参数的值来自预设。 */
+	params: string[];
+}
+
 export type RunStatus = "running" | "success" | "failed" | "cancelled";
 
 /** 运行列表里的一项。 */
@@ -1387,6 +1429,8 @@ export interface RunView {
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: string | null;
 	params: Record<string, unknown>;
+	/** 触发时选用的运行预设；没有用预设时为 null。 */
+	preset: RunPresetView | null;
 	started_at: Timestamp;
 	ended_at: Timestamp | null;
 	/** 取消请求；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。 */

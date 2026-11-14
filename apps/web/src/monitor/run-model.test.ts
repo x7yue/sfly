@@ -43,6 +43,7 @@ const view = (status: RunView["status"], cancelled = false): RunView => ({
 				forced_at: null,
 			}
 		: null,
+	preset: null,
 	run_notification: null,
 	chains: [],
 });
