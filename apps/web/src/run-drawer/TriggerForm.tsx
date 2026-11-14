@@ -164,7 +164,7 @@ function ParamsForm({
 		mutationFn: (body: { params: Record<string, unknown>; preset?: string }) =>
 			callApi(runsApi.trigger, { params: { id: orchestrationId }, body }),
 		onSuccess: (run, body) => {
-			if (body.preset) rememberPreset(orchestrationId, body.preset);
+			rememberPreset(orchestrationId, body.preset ?? null);
 			writeRunView(queryClient, run);
 			// 运行列表与场景卡片上的最近运行。
 			void queryClient.invalidateQueries({ queryKey: domainKey(runsApi.get) });

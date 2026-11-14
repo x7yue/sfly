@@ -114,6 +114,45 @@ test("触发时用了某个预设，重新打开这个场景的抽屉默认选�
 	await expect(presetSelect(drawer).getByRole("option", { name: /^压测 B 集群/ })).toBeDisabled();
 });
 
+test("记住的是最近一次的选择：不使用预设触发以后，下次打开抽屉回到不使用预设", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a", slots: 4 });
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "巡检", PARAM_SCENARIO);
+	const presetA = await createRunPreset(controlPlane, id, {
+		name: "压测 A 集群",
+		params: [{ name: "host", value: "10.0.0.8" }],
+	});
+	await page.goto("/orchestrations");
+
+	let drawer = await openDrawer(page);
+	await presetSelect(drawer).selectOption({ label: "压测 A 集群" });
+	await field(drawer, "api_token").fill("tok-live");
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await expect(drawer.getByTestId("summary-status")).toHaveText("运行中");
+	await page.keyboard.press("Escape");
+	await expect(drawer).toBeHidden();
+
+	drawer = await openDrawer(page);
+	await expect(presetSelect(drawer)).toHaveValue(presetA);
+
+	// 这一次不使用预设：触发成功以后，记住的不再是预设 A。
+	await presetSelect(drawer).selectOption({ label: "不使用预设" });
+	await field(drawer, "host").fill("10.0.0.9");
+	await field(drawer, "api_token").fill("tok-live");
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await expect(drawer.getByTestId("summary-status")).toHaveText("运行中");
+	await page.keyboard.press("Escape");
+	await expect(drawer).toBeHidden();
+
+	drawer = await openDrawer(page);
+	await expect(presetSelect(drawer)).toHaveValue("");
+	await expect(field(drawer, "host")).not.toHaveAttribute("readonly", "");
+});
+
 test("切换预设时，前后都能编辑的字段保留已经填的值，原来锁定的字段解锁后回到默认值，secret 预设参数的打码值不会变成可编辑的内容", async ({
 	page,
 	controlPlane,
