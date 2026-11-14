@@ -5,6 +5,7 @@ import {
 	annotationWarnings,
 	blocksTrigger,
 	documentWarnings,
+	isAnnotationWarning,
 	type OrchestrationWarning,
 } from "../src/index.js";
 
@@ -167,5 +168,23 @@ describe("documentWarnings 带上注释框的警告，不阻断触发", () => {
 		expect(verdicts).toContainEqual(["annotation_no_members", false]);
 		const only: AnnotationWarning[] = annotationWarnings(doc);
 		expect(only.some(blocksTrigger)).toBe(false);
+	});
+
+	it("isAnnotationWarning 按 annotation_id 区分：从混合的警告里挑出注释框的警告，类型也收窄", () => {
+		const mixed: OrchestrationWarning[] = documentWarnings(
+			OrchestrationDocument.parse({
+				...doc,
+				nodes: [...doc.nodes, { id: "stray", kind: "sleep", duration: "5s" }],
+			}),
+			new Map(),
+		);
+		const annotation: AnnotationWarning[] = mixed.filter(isAnnotationWarning);
+		expect(annotation).toEqual(annotationWarnings(doc));
+		expect(mixed.filter((w) => !isAnnotationWarning(w)).map((w) => w.code)).toEqual([
+			"orphan_node",
+		]);
+		// 接口返回的警告（DocumentWarningView）形状相同。
+		expect(isAnnotationWarning({ message: "m", annotation_id: "annotation_1" })).toBe(true);
+		expect(isAnnotationWarning({ message: "m", node_id: "a" })).toBe(false);
 	});
 });

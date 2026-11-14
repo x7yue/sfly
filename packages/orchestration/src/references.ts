@@ -193,7 +193,7 @@ export function referenceWarnings(
 	catalog: PackageCatalog,
 ): ReferenceWarning[] {
 	const warnings: ReferenceWarning[] = [];
-	const ids = new Set(doc.nodes.map((n) => n.id));
+	const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
 	for (const node of doc.nodes) {
 		const values = referableValues(node);
 		if (values.length === 0) continue;
@@ -227,16 +227,20 @@ export function referenceWarnings(
 				}
 				const [, target, key] = output as unknown as [string, string, string];
 				const targetNode = earlierById.get(target);
-				if (!ids.has(target)) {
+				const declaredNode = nodeById.get(target);
+				if (!declaredNode) {
 					warn("reference_unknown_node", `${where} 引用了不存在的节点 ${target}`);
 				} else if (!targetNode) {
-					warn("reference_not_earlier", `${where} 引用的节点 ${target} 不在本链上它的前面`);
+					warn(
+						"reference_not_earlier",
+						`${where} 引用的节点 ${nodeNameWithId(declaredNode)} 不在本链上它的前面`,
+					);
 				} else {
 					const declared = declaredOutputs(doc, targetNode, catalog);
 					if (declared && !declared.includes(key)) {
 						warn(
 							"reference_unknown_output",
-							`${where} 引用的输出键 ${key} 没有在节点 ${target} 的节点类型中声明`,
+							`${where} 引用的输出键 ${key} 没有在节点 ${nodeNameWithId(targetNode)} 的节点类型中声明`,
 						);
 					}
 				}
@@ -309,7 +313,7 @@ export function subflowParamWarnings(doc: OrchestrationDocument): ReferenceWarni
 			if (declared.has(name)) continue;
 			warnings.push({
 				code: "subflow_param_unknown",
-				message: `节点 ${nodeNameWithId(node)} 映射的参数 ${name} 不是子流程 ${subflow.id} 声明的参数`,
+				message: `节点 ${nodeNameWithId(node)} 映射的参数 ${name} 不是子流程 ${nodeNameWithId(subflow)} 声明的参数`,
 				node_id: node.id,
 				input: name,
 			});
@@ -319,7 +323,7 @@ export function subflowParamWarnings(doc: OrchestrationDocument): ReferenceWarni
 				continue;
 			warnings.push({
 				code: "subflow_param_missing",
-				message: `节点 ${nodeNameWithId(node)} 没有映射子流程 ${subflow.id} 的必填参数 ${param.name}`,
+				message: `节点 ${nodeNameWithId(node)} 没有映射子流程 ${nodeNameWithId(subflow)} 的必填参数 ${param.name}`,
 				node_id: node.id,
 				input: param.name,
 			});

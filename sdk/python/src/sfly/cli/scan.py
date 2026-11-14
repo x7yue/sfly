@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import enum
+import functools
 import importlib
 import inspect
 import json
@@ -31,6 +32,7 @@ from sfly.nodes import (
     NodeDeclaration,
     is_context_param,
 )
+from sfly.schemas import load_schema
 
 
 class ScanError(Exception):
@@ -376,18 +378,22 @@ def _label_keys(metric: Metric) -> list[str]:
     return keys
 
 
-#: 节点类型说明（函数的文档字符串）最长多少个 Unicode 字符
-#: （与 packages/schema 的 NODE_DESCRIPTION_MAX 一致）。
-MAX_NODE_DESCRIPTION = 4000
+@functools.cache
+def max_node_description() -> int:
+    """节点类型说明（函数的文档字符串）最长多少个 Unicode 字符。上限只在 packages/schema 的
+    `NODE_DESCRIPTION_MAX` 里定义，这里读导出的元信息 JSON Schema。"""
+    schema = load_schema("package-metadata")
+    limit: int = schema["properties"]["nodes"]["items"]["properties"]["description"]["maxLength"]
+    return limit
 
 
 def node_description(fn: Any, label: str) -> str | None:
     """函数的文档字符串去掉缩进后整段作为节点类型的说明；没有文档字符串或只有空白时返回 None。"""
     description = inspect.cleandoc(fn.__doc__).strip() if fn.__doc__ else ""
-    if len(description) > MAX_NODE_DESCRIPTION:
+    limit = max_node_description()
+    if len(description) > limit:
         raise ScanError(
-            f"{label}：文档字符串（节点类型的说明）最长 {MAX_NODE_DESCRIPTION} 个字符，"
-            f"实际 {len(description)} 个"
+            f"{label}：文档字符串（节点类型的说明）最长 {limit} 个字符，实际 {len(description)} 个"
         )
     return description or None
 

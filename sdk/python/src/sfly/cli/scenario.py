@@ -18,7 +18,7 @@ from sfly.cli.output import (
     format_table,
     more_note,
 )
-from sfly.cli.run_view import node_type_label, subflow_label
+from sfly.cli.run_view import name_with_id, node_type_label, subflow_label
 from sfly.cli.scenario_annotations import annotation_views, render_annotations
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
@@ -190,7 +190,7 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
             "name": subflow_name(n["id"]),
             "entry": n["id"],
             "triggered_by": subflow_triggered_by.get(n["id"]),
-            **_entry_note(n),
+            **_entry_fields(n),
             "params": params(n),
             "nodes": chain(n),
         }
@@ -202,6 +202,7 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
         for n in document["nodes"]
         if n["id"] not in on_a_chain and n["kind"] not in ("entry", "subflow_entry")
     ]
+    main_entry = _entry_fields(main)
     saved = head["number"] > 0
     return {
         "id": scenario["id"],
@@ -217,7 +218,7 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
         if saved
         else None,
         "default_agent": default_agent,
-        **({"entry": main["id"], **_entry_note(main)} if main and main.get("note") else {}),
+        **({"entry": main["id"], **main_entry} if main and main_entry else {}),
         "params": params(main),
         "nodes": main_nodes,
         "subflows": subflows,
@@ -240,8 +241,13 @@ def render(view: dict[str, Any]) -> str:
     )
     lines.append(f"默认 Agent：{view['default_agent'] or '未设置'}")
     lines.append("")
+    main_title = "主链"
+    if "entry_display_name" in view:
+        main_title += f"（入口 {name_with_id(view['entry'], view['entry_display_name'])}）"
     lines.extend(
-        _render_chain("主链", view["params"], view["nodes"], _entry_notes(view.get("entry"), view))
+        _render_chain(
+            main_title, view["params"], view["nodes"], _entry_notes(view.get("entry"), view)
+        )
     )
     for subflow in view["subflows"]:
         trigger = (
@@ -284,9 +290,17 @@ def _render_chain(
     return lines
 
 
-def _entry_note(entry: dict[str, Any] | None) -> dict[str, str]:
-    """入口节点的备注：入口不在节点表里，备注放在链上的 `entry_note`。"""
-    return {"entry_note": entry["note"]} if entry and entry.get("note") else {}
+def _entry_fields(entry: dict[str, Any] | None) -> dict[str, str]:
+    """入口节点的显示名称和备注：入口不在节点表里，放在链上的 `entry_display_name`、`entry_note`
+    （子流程入口节点没有显示名称，子流程名称就是它的显示名称）。"""
+    if entry is None:
+        return {}
+    fields = {}
+    if entry.get("display_name"):
+        fields["entry_display_name"] = entry["display_name"]
+    if entry.get("note"):
+        fields["entry_note"] = entry["note"]
+    return fields
 
 
 def _entry_notes(entry_id: str | None, chain: dict[str, Any]) -> list[tuple[str, str]]:

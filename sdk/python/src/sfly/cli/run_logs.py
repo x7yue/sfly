@@ -93,6 +93,7 @@ class RunNode:
     node_id: str
     kind: str
     attempts: tuple[dict[str, Any], ...]
+    display_name: str | None = None
 
     @property
     def ref(self) -> NodeRef:
@@ -116,6 +117,7 @@ class RunIndex:
                 node["node_id"],
                 node["kind"],
                 tuple(node["attempts"]),
+                node.get("display_name"),
             )
             for chain in run["chains"]
             for node in chain["nodes"]

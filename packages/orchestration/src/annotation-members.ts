@@ -1,12 +1,11 @@
+import type { Annotation } from "@sfly/schema";
 import { chainMembers, type StructureDocument } from "./structure.js";
 
-/** 新建注释框时记下的成员（场景文档 `annotations` 一项里的 `nodes` 和 `subflows`）。 */
-export interface AnnotationMemberIds {
-	/** 成员节点的节点 ID。 */
-	nodes: string[];
-	/** 成员子流程：子流程入口的节点 ID。 */
-	subflows: string[];
-}
+/**
+ * 注释框的成员：场景文档 `annotations` 一项里的 `nodes`（成员节点的节点 ID）和 `subflows`
+ * （成员子流程，子流程入口的节点 ID）。字段只在 `Annotation` 里定义，用到这一组的地方都用这个类型。
+ */
+export type AnnotationMemberIds = Pick<Annotation, "nodes" | "subflows">;
 
 /**
  * 从选中的一组节点新建注释框时，哪些记为子流程成员、哪些记为节点成员（#278）：

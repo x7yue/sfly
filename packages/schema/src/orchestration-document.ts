@@ -53,11 +53,18 @@ const nodeBase = {
  */
 const displayName = { display_name: optionalLine(DISPLAY_NAME_MAX) };
 
+/**
+ * 参数声明列表，没写时是空列表。用 `prefault` 而不是 `default`：参数声明里有「去掉首尾空白」的转换，
+ * zod 导出输入形态的 JSON Schema 时会把转换外层的 `default` 当成只属于输出而丢掉，`prefault` 的值会留下，
+ * 解析结果一样。
+ */
+const paramDeclarations = z.array(ParamDeclaration).prefault([]);
+
 export const EntryNode = z.strictObject({
 	...nodeBase,
 	...displayName,
 	kind: z.literal("entry"),
-	params: z.array(ParamDeclaration).default([]),
+	params: paramDeclarations,
 });
 
 export const SubflowEntryNode = z.strictObject({
@@ -68,7 +75,7 @@ export const SubflowEntryNode = z.strictObject({
 	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（§1.2）。
 	 */
 	name: z.string().optional(),
-	params: z.array(ParamDeclaration).default([]),
+	params: paramDeclarations,
 });
 
 export const AsyncTaskNode = z.strictObject({

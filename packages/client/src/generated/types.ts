@@ -1523,6 +1523,8 @@ export interface RunningTaskView {
 	run_id: string;
 	orchestration_id: string;
 	node_id: string;
+	/** 运行绑定的场景版本里这个节点的显示名称（子流程入口节点是子流程名称）；没有时不给。 */
+	display_name?: string;
 	attempt: number;
 	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
 	status: "dispatched" | "running";

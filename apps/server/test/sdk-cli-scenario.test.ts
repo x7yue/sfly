@@ -316,6 +316,35 @@ describe("sfly scenario list / show → 控制面", () => {
 			});
 		});
 
+		it("入口节点的显示名称：主链标题写成「入口 显示名称（节点 ID）」，--json 带 entry 和 entry_display_name；没有显示名称的入口照旧", async () => {
+			const id = await createScenario("入口有名称", {
+				...simpleDocument,
+				nodes: [
+					{ id: "entry", kind: "entry", display_name: "支付入口", note: "从这里开始" },
+					...simpleDocument.nodes.slice(1),
+				],
+			});
+			const text = await cli("scenario", "show", id);
+			expect(text.code, text.stderr).toBe(0);
+			expect(text.stdout).toContain("\n主链（入口 支付入口（entry））\n  入口参数：无\n");
+			expect(text.stdout).toContain("    entry：从这里开始");
+
+			const json = JSON.parse((await cli("scenario", "show", id, "--json")).stdout);
+			expect(json).toMatchObject({
+				entry: "entry",
+				entry_display_name: "支付入口",
+				entry_note: "从这里开始",
+			});
+
+			const plain = JSON.parse(
+				(await cli("scenario", "show", ids.twinA as string, "--json")).stdout,
+			);
+			expect(plain).not.toHaveProperty("entry_display_name");
+			expect((await cli("scenario", "show", ids.twinA as string)).stdout.split("\n")).toContain(
+				"主链",
+			);
+		});
+
 		it("还没有保存过版本的场景显示初始文档", async () => {
 			const result = await cli("scenario", "show", ids.empty as string);
 			expect(result.code, result.stderr).toBe(0);
