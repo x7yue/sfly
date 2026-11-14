@@ -263,12 +263,23 @@ ctx.progress(3, 10, "第 3 批")
 ## `ctx.notify`：飞书通知
 
 ```python
+from typing import Annotated, TypedDict
+
 import sfly
-from sfly import Context, FeishuBot, node
+from sfly import Context, Doc, FeishuBot, node
 
 
-@node(outputs=["passed"])
-def stress(ctx: Context, qps: int, alert_bot: FeishuBot) -> dict:
+class StressOutputs(TypedDict):
+    passed: Annotated[bool, Doc("压测是否达到目标 QPS")]
+
+
+@node(title="压测接口")
+def stress(
+    ctx: Context,
+    qps: Annotated[int, Doc("目标每秒请求数")],
+    alert_bot: Annotated[FeishuBot, Doc("压测不达标时通知的飞书机器人")],
+) -> StressOutputs:
+    """压测一个接口，不达标时通知飞书群。"""
     ...
     if p99 > 500:
         ctx.notify(alert_bot, f"p99 {p99} ms，超过 500 ms", at_all=True)
@@ -344,13 +355,21 @@ return {"report": ref}
 
 ```python
 from pathlib import Path
+from typing import Annotated, TypedDict
 
-from sfly import Context, node
+from sfly import Context, Doc, node
 
 
-@node(outputs=["lines"])
-def count_lines(ctx: Context, log_file: str) -> dict:
-    """log_file 是前面的节点输出的产物引用。"""
+class CountOutputs(TypedDict):
+    lines: Annotated[int, Doc("日志的行数")]
+
+
+@node(title="统计日志行数")
+def count_lines(
+    ctx: Context,
+    log_file: Annotated[str, Doc("日志的产物引用，由前面的节点输出")],
+) -> CountOutputs:
+    """下载一个日志产物，统计它有多少行。"""
     path = ctx.artifacts.download(log_file, "downloads/server.log")
     with path.open("rb") as f:
         return {"lines": sum(1 for _ in f)}
@@ -396,12 +415,23 @@ log.parent.mkdir(parents=True, exist_ok=True)
 ## `ctx.agent()`：Agent 能力
 
 ```python
-from sfly import AgentFileNotFound, AgentName, Context, node
+from typing import Annotated, Any, TypedDict
+
+from sfly import AgentFileNotFound, AgentName, Context, Doc, node
 
 
-@node(outputs=["logs", "current_size"])
-def find_logs(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
-    """source 是日志所在的 Agent；这个节点派到另一台 Agent 上运行。"""
+class FindOutputs(TypedDict):
+    logs: Annotated[list[dict[str, Any]], Doc("匹配 app.log* 的文件，每项有 path、size、inode")]
+    current_size: Annotated[int | None, Doc("app.log 当前的字节数；文件不存在时为 None")]
+
+
+@node(title="查找轮转日志")
+def find_logs(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    directory: Annotated[str, Doc("日志目录，source 所在机器上的绝对路径")] = "/var/log/app",
+) -> FindOutputs:
+    """列出另一台 Agent 上的日志文件，和当前 app.log 的大小。"""
     logs = [
         {"path": f.path, "size": f.size, "inode": f.id.inode}
         for f in ctx.agent(source).files.list(directory, "app.log*", recursive=True)
@@ -456,12 +486,23 @@ Agent 能力是 Agent 自身提供、节点在执行中调用的一组操作。`
 
 ```python
 import hashlib
+from typing import Annotated, Any, TypedDict
 
-from sfly import AgentName, Context, node
+from sfly import AgentName, Context, Doc, node
 
 
-@node(outputs=["sha256", "local"])
-def pull_log(ctx: Context, source: AgentName, path: str = "/var/log/app/app.log.1") -> dict:
+class PullOutputs(TypedDict):
+    sha256: Annotated[str, Doc("日志前 1 MB 的 sha256")]
+    local: Annotated[dict[str, Any], Doc("下载到本机的文件，有 path 和 size")]
+
+
+@node(title="拉取日志")
+def pull_log(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    path: Annotated[str, Doc("日志在 source 上的绝对路径")] = "/var/log/app/app.log.1",
+) -> PullOutputs:
+    """计算另一台 Agent 上一个日志前 1 MB 的 sha256，再把整个日志下载到本机。"""
     source_files = ctx.agent(source).files
     # 流式读取：只读开头 1 MB，不用先整个下载。
     digest = hashlib.sha256()
@@ -497,12 +538,25 @@ def pull_log(ctx: Context, source: AgentName, path: str = "/var/log/app/app.log.
 ### 写入、上传与删除
 
 ```python
-from sfly import AgentFileNotFound, AgentName, Context, node
+from typing import Annotated, TypedDict
+
+from sfly import AgentFileNotFound, AgentName, Context, Doc, node
 
 
-@node(outputs=["marker"])
-def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
-    """把 source 上的日志下载到本机清洗后，把结果放回去、删掉源文件。"""
+class CleanLogOutputs(TypedDict):
+    marker: Annotated[str, Doc("写在 source 上的完成标记文件的路径")]
+
+
+@node(title="清洗并回写日志")
+def clean_log(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    path: Annotated[str, Doc("要清洗的日志在 source 上的绝对路径")],
+) -> CleanLogOutputs:
+    """把另一台 Agent 上的日志下载到本机清洗，再把结果放回去。
+
+    会在那台 Agent 上写入 .cleaned 和 .done 文件，并删除原日志。
+    """
     ...  # 清洗，得到本机上的 cleaned.log
     ctx.agent(source).files.upload("cleaned.log", f"{path}.cleaned")
     marker = ctx.agent(source).files.write(f"{path}.done", b"cleaned\n")
@@ -535,12 +589,25 @@ def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
 ### 监听目录：`files.watch`
 
 ```python
-from sfly import AgentName, Context, FileId, WatchSnapshot, node
+from typing import Annotated, TypedDict
+
+from sfly import AgentName, Context, Doc, FileId, WatchSnapshot, node
 
 
-@node(outputs=["rotated"])
-def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
-    """等 source 上的 app.log 轮转一次，输出被改名后的路径。"""
+class RotationOutputs(TypedDict):
+    rotated: Annotated[str, Doc("app.log 被改名后的路径")]
+
+
+@node(title="等待日志轮转")
+def wait_rotation(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    directory: Annotated[str, Doc("日志目录，source 所在机器上的绝对路径")] = "/var/log/app",
+) -> RotationOutputs:
+    """等另一台 Agent 上的 app.log 轮转一次。
+
+    监听意外结束时失败。
+    """
     current: FileId | None = None
     for item in ctx.agent(source).files.watch(directory, "app.log*"):
         if isinstance(item, WatchSnapshot):
@@ -578,12 +645,25 @@ def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/ap
 ### 执行命令：`exec`
 
 ```python
-from sfly import AgentName, Context, node
+from typing import Annotated, TypedDict
+
+from sfly import AgentName, Context, Doc, node
 
 
-@node(outputs=["compressed"])
-def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
-    """在 source 上压缩已经轮转出去的日志（app.log.1、app.log.2…），gzip 的输出进入这个任务的日志。"""
+class CompressOutputs(TypedDict):
+    compressed: Annotated[list[str], Doc("压缩后的文件路径")]
+
+
+@node(title="压缩轮转日志")
+def compress_rotated_logs(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    directory: Annotated[str, Doc("日志目录，source 所在机器上的绝对路径")] = "/var/log/app",
+) -> CompressOutputs:
+    """压缩另一台 Agent 上已经轮转出去的日志（app.log.1、app.log.2…）。
+
+    原文件被替换成 .gz，gzip 的输出进入这个任务的日志。任何一个 gzip 退出码不是 0 时失败。
+    """
     agent = ctx.agent(source)
     rotated = [
         f.path for f in agent.files.list(directory, "app.log.[0-9]*") if not f.path.endswith(".gz")
