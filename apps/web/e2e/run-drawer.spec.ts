@@ -274,9 +274,6 @@ test("引用的 Agent 在准备环境时提醒任务会等它准备好，仍可�
 	await expect(checks).toContainText("agent-a 正在准备环境");
 	await expect(checks).toContainText("任务会等它准备好再执行");
 	await expect(checks).not.toContainText("不在线");
-	await page.screenshot({
-		path: "/Users/x7yue/.local/share/sfly/spec-294/297/run-drawer-preparing.png",
-	});
 	await expect(drawer.getByRole("button", { name: "触发运行" })).toBeEnabled();
 
 	await drawer.getByRole("button", { name: "触发运行" }).click();
@@ -308,9 +305,6 @@ test("同时有不在线和准备环境中的 Agent 时，两种提醒都写", a
 	await expect(checks).toContainText("agent-b 当前不在线");
 	await expect(checks).toContainText("agent-a 正在准备环境");
 	await expect(drawer.getByRole("button", { name: "触发运行" })).toBeEnabled();
-	await page.screenshot({
-		path: "/Users/x7yue/.local/share/sfly/spec-294/297/run-drawer-preparing-and-offline.png",
-	});
 });
 
 test("敏感参数默认隐藏，可以临时显示 5 秒", async ({ page, controlPlane, connectAgent }) => {
