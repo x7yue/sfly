@@ -5,6 +5,8 @@
   和 `sfly publish` 共用 `home.control_plane_url`；
 - 昵称：`--nickname` > `SFLY_NICKNAME` > 系统登录用户名，放进 `x-sfly-nickname`（URL 编码）；
 - 每个请求都带 `x-sfly-client: sfly-cli/<版本>`；在 AI 编程助手里运行时再追加 ` agent/<名称>`；
+- 控制面在所有响应上带 `x-sfly-time`（控制面的当前时间，ADR 0018）；
+  `Client.control_plane_time` 是最近一次响应带来的，命令里要算「已多久」时用它，不用本机时间；
 - 控制面在所有响应上带 `x-sfly-version`；与命令行版本不一致时在 stderr 告警一次，命令照常执行；
 - 连不上控制面抛 `CliError("unreachable", …)`，控制面返回错误抛 `ApiError`（沿用控制面的错误码）。
 """
@@ -20,6 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
+from datetime import datetime
 from email.message import Message
 from http.client import HTTPException, HTTPResponse
 from typing import IO, Any
@@ -31,6 +34,7 @@ from sfly.cli.home import control_plane_url
 CLIENT_HEADER = "x-sfly-client"
 NICKNAME_HEADER = "x-sfly-nickname"
 VERSION_HEADER = "x-sfly-version"
+TIME_HEADER = "x-sfly-time"
 
 # 控制面不可达、版本告警提示里引用的取值说明。
 ADDRESS_HELP = (
@@ -119,6 +123,8 @@ class Client:
         self.timeout = timeout
         self._stderr = stderr
         self._warned_version = False
+        self.control_plane_time: datetime | None = None
+        """最近一次响应的 `x-sfly-time`（控制面时间）；还没有响应或响应不带它时为 None。"""
 
     @classmethod
     def from_options(
@@ -218,7 +224,12 @@ class Client:
         )
 
     def _observe(self, headers: Message[str, str]) -> None:
-        """控制面版本和命令行不一致时在 stderr 告警一次（命令照常执行）。"""
+        """记下控制面时间；控制面版本和命令行不一致时在 stderr 告警一次（命令照常执行）。"""
+        if sent := headers.get(TIME_HEADER):
+            try:
+                self.control_plane_time = datetime.fromisoformat(sent.replace("Z", "+00:00"))
+            except ValueError:
+                pass
         server_version = headers.get(VERSION_HEADER)
         if not server_version or server_version == __version__ or self._warned_version:
             return

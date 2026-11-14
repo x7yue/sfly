@@ -37,8 +37,8 @@ export interface AgentGatewayServer {
 /** 网关把握手之后的事件交给它处理（引擎）。 */
 export interface AgentSessionHandler {
 	/**
-	 * 握手完成：处置 Agent 手上的任务（Hello.running_tasks）并推送 Welcome（`conn.welcome()`），
-	 * 然后开始派发任务。
+	 * 握手完成：处置 Agent 手上的任务（Hello.running_tasks）并推送 Welcome（`conn.welcome()`）。
+	 * 派发等 Agent 准备好环境：Welcome 之后的第一次心跳（`conn.heartbeat()`）。
 	 */
 	onOnline(conn: AgentConnection, runningTasks: RunningTaskRef[]): Promise<void>;
 	/**
@@ -137,7 +137,11 @@ function gatewayService(options: AgentGatewayOptions): ServiceImpl<typeof AgentG
 				try {
 					const running = hello.runningTasks.map(runningTaskRef);
 					if (options.handler) await options.handler.onOnline(conn, running);
-					else conn.welcome(create(ServerMessageSchema, { body: { case: "welcome", value: {} } }));
+					else
+						conn.welcome(
+							create(ServerMessageSchema, { body: { case: "welcome", value: {} } }),
+							options.hub.now(),
+						);
 					for (;;) {
 						const next = await inbound.next();
 						if (next.done || conn.closed) break;
