@@ -3,6 +3,7 @@ import type { ChainRunView, NodeRunView, OrchestrationDocument, RunView } from "
 import { cn } from "cn";
 import { ChevronRightIcon, CrosshairIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { NodeName, type RunNodeName, runNodeName } from "#/components/node-name";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, STATUS, StatusDot, type StatusKind } from "#/components/status";
@@ -46,7 +47,7 @@ import {
 	zoomToSegments,
 } from "./timeline-model";
 
-/** 标签列宽度，所有行共用这一个变量；节点 ID 不截断，说明文字在剩余宽度里截断。 */
+/** 标签列宽度，所有行共用这一个变量；节点 ID 不截断，显示名称和说明文字在剩余宽度里截断（先截说明）。 */
 const LABEL_W = "var(--label-w)";
 /** 拖动超过轨道宽度的这个比例才算拖选（否则是点击）。 */
 const BRUSH_MIN = 0.004;
@@ -261,8 +262,8 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 						<Button
 							variant="ghost"
 							size="icon-sm"
-							aria-label={`缩放到所选节点 ${selectedNode.node_id}`}
-							title={`缩放到所选节点 ${selectedNode.node_id}（${shortcutText("monitor-zoom-node")}）`}
+							aria-label={`缩放到所选节点 ${runNodeName(selectedNode)}`}
+							title={`缩放到所选节点 ${runNodeName(selectedNode)}（${shortcutText("monitor-zoom-node")}）`}
 							onClick={zoomToNode}
 						>
 							<CrosshairIcon />
@@ -320,6 +321,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 								open={open}
 								range={range}
 								now={now}
+								dispatcher={dispatcherOf(run, chain)}
 								decls={decls}
 								display={display}
 								attentionNode={attention?.chainId === chain.id ? attention.nodeId : undefined}
@@ -517,12 +519,23 @@ function Rows({
 	);
 }
 
+/** 派发子流程实例的异步任务节点（在父链实例上）；主链为 null。 */
+function dispatcherOf(run: RunView, chain: ChainRunView): RunNodeName | null {
+	if (chain.async_node_id === null) return null;
+	const ref = {
+		chainInstanceId: chain.parent_chain_instance_id ?? "",
+		nodeId: chain.async_node_id,
+	};
+	return findNode(run, ref) ?? { node_id: chain.async_node_id };
+}
+
 function ChainRows({
 	chain,
 	cancelling,
 	open,
 	range,
 	now,
+	dispatcher,
 	decls,
 	display,
 	attentionNode,
@@ -534,6 +547,8 @@ function ChainRows({
 	open: boolean;
 	range: TimeRange;
 	now: number;
+	/** 派发这个子流程实例的异步任务节点；主链为 null。 */
+	dispatcher: RunNodeName | null;
 	decls: ReturnType<typeof documentNodes>;
 	display: NodeDisplayLookup;
 	/**
@@ -560,7 +575,7 @@ function ChainRows({
 					type="button"
 					aria-expanded={open}
 					onClick={onToggle}
-					title={chain.depth > 0 ? `由 ${chain.async_node_id} 派发` : undefined}
+					title={dispatcher ? `由 ${runNodeName(dispatcher)} 派发` : undefined}
 					className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
 					style={{ paddingLeft: 12 + indent }}
 				>
@@ -583,9 +598,9 @@ function ChainRows({
 							</>
 						)}
 					</b>
-					{chain.async_node_id && (
+					{dispatcher && (
 						<span className="min-w-0 truncate font-mono text-2xs text-fg-3 @max-[1100px]:hidden">
-							← {chain.async_node_id}
+							← {runNodeName(dispatcher)}
 						</span>
 					)}
 					<span className="ml-auto min-w-13 flex-none text-right font-mono text-2xs text-fg-3">
@@ -597,7 +612,7 @@ function ChainRows({
 						<DispatchLine
 							at={Date.parse(chain.started_at)}
 							range={range}
-							from={chain.async_node_id}
+							from={dispatcher ? runNodeName(dispatcher) : null}
 						/>
 					)}
 					{chain.nodes.map((node, i) =>
@@ -607,6 +622,7 @@ function ChainRows({
 								seg={seg}
 								range={range}
 								node={{ chainInstanceId: chain.id, nodeId: node.node_id }}
+								name={runNodeName(node)}
 								selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
 								chainRow
 								// 展开时每个节点自己的行有脉冲头，汇总行不再画一份。
@@ -665,7 +681,8 @@ function NodeRow({
 	const span = spanOf(segments);
 	const progress = progressLabel(node);
 	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
-	const title = nodeOutsideCardText(decl ?? node, display);
+	const name = runNodeName(node);
+	const title = nodeOutsideCardText(decl, node.kind, display);
 	// 包节点的说明是「包/节点类型」，同一次运行里包名几乎都一样：行上只留区分度高的节点类型，完整的在悬停提示与读屏名称里。
 	const packageNode = decl?.kind === "package";
 	const shortTitle = packageNode ? decl.node : title;
@@ -680,7 +697,7 @@ function NodeRow({
 			<button
 				type="button"
 				aria-pressed={selected}
-				aria-label={`${node.node_id} ${title} ${status.label}${progress ? ` 进度 ${progress}` : ""}`}
+				aria-label={`${name} ${title} ${status.label}${progress ? ` 进度 ${progress}` : ""}`}
 				// 轨道上的区段只给鼠标（悬停看详情、点选节点），每次尝试写在这里：一行只有一个停靠点。
 				aria-description={
 					segments
@@ -691,12 +708,12 @@ function NodeRow({
 						.join("；") || undefined
 				}
 				onClick={() => actions.select(selected ? null : ref)}
-				title={title}
+				title={name === node.node_id ? title : `${name} · ${title}`}
 				className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
 				style={{ paddingLeft: 30 + indent }}
 			>
 				<StatusDot kind={status.kind} />
-				<span className="flex-none font-mono">{node.node_id}</span>
+				<NodeName node={node} />
 				<span
 					className={cn("min-w-0 flex-1 truncate text-xs text-fg-3", packageNode && "font-mono")}
 				>
@@ -729,6 +746,7 @@ function NodeRow({
 						seg={seg}
 						range={range}
 						node={ref}
+						name={name}
 						selected={selected}
 					/>
 				))}
@@ -745,6 +763,7 @@ function SegmentBar({
 	seg,
 	range,
 	node,
+	name,
 	selected,
 	chainRow,
 	pulse = true,
@@ -752,6 +771,8 @@ function SegmentBar({
 	seg: Segment;
 	range: TimeRange;
 	node: NodeRef;
+	/** 悬停提示里的节点：「显示名称（节点 ID）」。 */
+	name: string;
 	selected: boolean;
 	chainRow?: boolean;
 	pulse?: boolean;
@@ -766,7 +787,7 @@ function SegmentBar({
 			data-segment={seg.kind}
 			data-chain={node.chainInstanceId}
 			data-node={node.nodeId}
-			title={`${node.nodeId} · 第 ${seg.attempt} 次 · ${SEGMENT_LABEL[seg.kind]} · ${formatDuration(seg.end - seg.start)}`}
+			title={`${name} · 第 ${seg.attempt} 次 · ${SEGMENT_LABEL[seg.kind]} · ${formatDuration(seg.end - seg.start)}`}
 			className={cn("absolute h-3 min-w-0.5 cursor-pointer", chainRow ? "top-2.25" : "top-1.75")}
 			style={{ left: `${left}%`, width: `max(${Math.max(0.25, right - left)}%, 2px)` }}
 		>

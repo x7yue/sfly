@@ -91,43 +91,54 @@ export function nodeCardText(
 }
 
 /**
+ * 卡片以外写在节点 ID 前面的名字：去掉首尾空白的显示名称；没有、只有空白或者就是节点 ID 时为 undefined。
+ */
+export function nameBeforeId(id: string, displayName: string | undefined): string | undefined {
+	const name = displayName?.trim();
+	return name && name !== id ? name : undefined;
+}
+
+/**
  * 卡片以外写节点的名字：「显示名称（节点 ID）」；没有显示名称时只写节点 ID。
  * 命令行里节点 ID 在前（`sfly` 的输出常被拿去拼下一条命令），由命令行自己按这条规则写，不用这个函数。
  */
 export function nameWithId(id: string, displayName: string | undefined): string {
-	const name = displayName?.trim();
-	return name && name !== id ? `${name}（${id}）` : id;
+	const name = nameBeforeId(id, displayName);
+	return name ? `${name}（${id}）` : id;
 }
 
-/**
- * {@link nameWithId} 读节点的显示名称；子流程入口节点没有显示名称，用子流程名称
- * （没有名称字段的旧版本只写节点 ID）。接受只有 `id` 和 `kind` 的节点，运行里的节点也能用。
- */
-export function nodeNameWithId(node: {
+type NamedNode = {
 	id: string;
 	kind: string;
 	display_name?: string | undefined;
 	name?: string | undefined;
-}): string {
-	return nameWithId(
-		node.id,
-		node.kind === "subflow_entry" ? subflowLabel(node) : nodeDisplayName(node),
-	);
-}
+};
+
+/**
+ * {@link nameBeforeId} 读节点的显示名称；子流程入口节点没有显示名称，用子流程名称
+ * （没有名称字段的旧版本没有名字）。控制面把它作为运行里节点的 `display_name`。
+ */
+export const nodeNameBeforeId = (node: NamedNode): string | undefined =>
+	nameBeforeId(node.id, node.kind === "subflow_entry" ? subflowLabel(node) : nodeDisplayName(node));
+
+/** {@link nameWithId} 读节点（{@link nodeNameBeforeId}）。接受只有 `id` 和 `kind` 的节点。 */
+export const nodeNameWithId = (node: NamedNode): string =>
+	nameWithId(node.id, nodeNameBeforeId(node));
 
 /**
  * 卡片以外的写法（运行监控页时间线）：包节点是 `包名/节点类型名`，停止子流程节点带上它要停止的子流程名称
- * （看得出在等哪个子流程），其余是种类名。运行里的节点在场景里已经没有声明时只给种类，写种类名。
+ * （看得出在等哪个子流程），其余是种类名。`declared` 是场景里的声明；运行里的节点在场景里查不到声明时
+ * 只按运行里的种类 `kind` 写种类名。
  */
 export function nodeOutsideCardText(
-	node: OrchestrationNode | { kind: NodeKind },
+	declared: OrchestrationNode | undefined,
+	kind: NodeKind,
 	lookup: NodeDisplayLookup,
 ): string {
-	const declared = "id" in node ? node : undefined;
 	if (declared?.kind === "package") return `${declared.package}/${declared.node}`;
 	if (declared?.kind === "stop_subflow" && declared.subflow) {
 		const target = lookup.subflowLabelOf?.(declared.subflow);
 		if (target) return `${NODE_KIND_LABEL.stop_subflow}「${target}」`;
 	}
-	return NODE_KIND_LABEL[node.kind];
+	return NODE_KIND_LABEL[declared?.kind ?? kind];
 }

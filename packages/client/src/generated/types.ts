@@ -292,9 +292,16 @@ export interface DashboardChain {
 	chain_id: string;
 	/** 子流程实例（不是主链）。 */
 	subflow: boolean;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name?: string;
 	status: string;
 	nodes: {
 		node_id: string;
+		/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+		display_name?: string;
 		status: string;
 	}[];
 }
@@ -309,8 +316,15 @@ export interface DashboardFailure {
 	chain_instance_id: string;
 	chain_id: string;
 	subflow: boolean;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name?: string;
 	/** 最先失败的节点（最后一次尝试失败）；没有失败节点时（例如校验失败）为 null。 */
 	node_id: string | null;
+	/** 失败节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
 	error: {
 		kind: string;
 		message: string;
@@ -858,6 +872,8 @@ export type NodeName = string;
 
 export interface NodeRunView {
 	node_id: string;
+	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
 	kind: "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "stop_subflow" | "feishu_notify" | "package";
 	/**
 	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
@@ -1223,6 +1239,8 @@ export type RequiresSdk = string;
 export interface RunListActiveNode {
 	chain_instance_id: string;
 	node_id: string;
+	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
 	status: string;
 	/** 最新进度；没有上报过时为 null。 */
 	progress: {
@@ -1238,6 +1256,11 @@ export interface RunListChain {
 	chain_id: string;
 	/** 子流程实例（不是主链）。 */
 	subflow: boolean;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name?: string;
 	status: "running" | "success" | "failed" | "cancelled";
 	nodes: {
 		node_id: string;
@@ -1250,8 +1273,15 @@ export interface RunListFailure {
 	chain_instance_id: string;
 	chain_id: string;
 	subflow: boolean;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name?: string;
 	/** 链上第一个失败的节点；没有失败节点时（例如参数校验失败）为 null。 */
 	node_id: string | null;
+	/** 失败节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
 }
 
 export interface RunListItem {

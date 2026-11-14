@@ -1,11 +1,11 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
-import { ChainBars } from "#/components/chain-progress";
+import { ChainBars, listChainLabel } from "#/components/chain-progress";
 import { DataTable, dataColumns } from "#/components/data-table";
+import { runNodeName } from "#/components/node-name";
 import { runStatusView, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { chainLabel } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { Truncate } from "@/components/ui/truncate";
 
@@ -120,6 +120,7 @@ function statusText(run: RunListItem): string {
 	if (run.status !== "failed") return label;
 	const failure = run.failures.find((f) => !f.subflow) ?? run.failures[0];
 	if (!failure?.node_id) return label;
-	const where = failure.subflow ? `${chainLabel(failure)} / ` : "";
-	return `${label} · ${where}${failure.node_id}`;
+	const where = failure.subflow ? `${listChainLabel(failure)} / ` : "";
+	const node = runNodeName({ node_id: failure.node_id, display_name: failure.display_name });
+	return `${label} · ${where}${node}`;
 }

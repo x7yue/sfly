@@ -108,6 +108,8 @@ export const AttemptView = z.object({
 
 export const NodeRunView = z.object({
 	node_id: z.string(),
+	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name: z.string().optional(),
 	kind: z.enum(NODE_KINDS),
 	/**
 	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
