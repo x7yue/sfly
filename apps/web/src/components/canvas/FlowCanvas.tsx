@@ -28,6 +28,7 @@ import {
 	type CanvasInfo,
 	FlowCanvasContext,
 	type NodeDecoration,
+	type NodeRename,
 	type PortState,
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
@@ -76,6 +77,7 @@ import {
  * - `menu`：右键菜单的内容（CanvasMenu.tsx）；不给时空白处的菜单只有「适配视图」，节点没有菜单；
  *   连线菜单只在可编辑时打开（只读时右键连线等同于右键空白处）；
  * - `onInsertOnEdge`：悬停链上的连线时中点的「＋」；`reconnect`：拖动连线的端点改接（都只在可编辑时生效）；
+ * - `rename`：双击卡片标题原地改显示名称（只在 `editable` 时生效；状态在使用方，F2 和菜单也从那里进入）；
  * - `onDeleteNodes`：删除选中的节点（Delete 键）交给使用方，由它决定连线怎么处理（删除并接上前后）；
  * - `dockStart` / `dockTools`：工具条上的「＋ 添加节点」与撤销 / 重做 / 整理布局（#39）；
  * - `onNodesChange` / `onEdgesChange` / `onConnect`：编辑操作，撤销栈（#39）可以包在外面。
@@ -127,6 +129,8 @@ export interface FlowCanvasProps {
 	onDeleteNodes?(ids: readonly string[]): void;
 	/** 点了链上连线中点的「＋」：在这条连线中间插入节点；`client` 是添加节点菜单出现的屏幕坐标。 */
 	onInsertOnEdge?(edge: EdgeEnds, client: Position): void;
+	/** 原地改显示名称（双击卡片标题）；不给时标题不响应双击。 */
+	rename?: NodeRename;
 	/** 拖动连线的端点改接（React Flow 的重连手势）。 */
 	reconnect?: Pick<
 		ReactFlowProps<SfNode, SfEdge>,
@@ -165,6 +169,7 @@ export function FlowCanvas({
 	menu,
 	onDeleteNodes,
 	onInsertOnEdge,
+	rename,
 	reconnect,
 	dockStart,
 	dockTools,
@@ -308,6 +313,7 @@ export function FlowCanvas({
 			regionMeta,
 			fit,
 			...(canEdit && onInsertOnEdge ? { insertOnEdge: onInsertOnEdge, openEdgeMenu } : {}),
+			...(editable && rename ? { rename } : {}),
 		}),
 		[
 			info,
@@ -320,6 +326,8 @@ export function FlowCanvas({
 			canEdit,
 			onInsertOnEdge,
 			openEdgeMenu,
+			editable,
+			rename,
 		],
 	);
 	const fitRef = useRef(fitOptions);
@@ -379,6 +387,11 @@ export function FlowCanvas({
 		},
 		[flow, area],
 	);
+	// F2 和菜单进入原地编辑时，节点可能在检查器下面或视口外：先移进可见区域。
+	const renaming = editable ? rename?.active : null;
+	useEffect(() => {
+		if (renaming) reveal(renaming);
+	}, [renaming, reveal]);
 
 	/** 打开节点菜单：先让节点卡片拿到焦点（菜单关闭后焦点回到它）并选中它。 */
 	const openNodeMenu = (id: string, at?: Position) => {
