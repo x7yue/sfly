@@ -124,6 +124,8 @@ export interface AgentView {
 		installed_packages: InstalledPackage[];
 	};
 	last_seen_at: string;
+	/** 在线 Agent 正在准备环境时，这次连接发出 Welcome 的控制面时间；已准备好或离线时为 null。 */
+	preparing_since: string | null;
 	/** 最近一次测得的时钟偏差；未知（旧版本 Agent）时为 null。 */
 	clock_offset: ClockOffsetView | null;
 	/** Agent 共享 venv 中已安装的节点包（Agent 在 Hello 中上报）。 */
@@ -340,6 +342,7 @@ export class AgentHub {
 				// 早于 #5 注册的记录没有 installed_packages。
 				info: { ...info, installed_packages: info.installed_packages ?? [] },
 				last_seen_at: row.lastSeenAt.toISOString(),
+				preparing_since: this.preparingSince(row.name)?.toISOString() ?? null,
 				clock_offset: clockOffsetView(row.clockOffsetMs, row.clockOffsetMeasuredAt),
 				installed_packages: info.installed_packages ?? [],
 				install: install ?? null,
