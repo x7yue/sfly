@@ -23,7 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { type CheckRow, type LocalState, type Preflight, preflightChecks } from "./checks";
 import { ParamField } from "./ParamField";
 import { PresetSelect } from "./PresetSelect";
-import { fieldValue, initialValues, paramsSchema, toParams } from "./trigger-form";
+import { initialValues, lockedValue, paramsSchema, toParams } from "./trigger-form";
 
 export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
@@ -177,7 +177,7 @@ function ParamsForm({
 						<ParamField
 							key={p.name}
 							param={p}
-							value={fieldValue(p, locked.get(p.name))}
+							value={lockedValue(p, locked.get(p.name))}
 							lockedBy={preset.name}
 						/>
 					) : (

@@ -24,10 +24,10 @@ test("从场景列表新建运行预设，在运行抽屉里选中它：预设�
 	const form = page.getByRole("dialog", { name: "新建运行预设" });
 	await form.getByLabel("名称").fill("压测 A 集群");
 	await form.getByLabel("说明").fill("A 集群，跑 50 步");
-	// 没勾选的参数不能编辑；secret 参数这一版还不能设为预设参数。
+	// 没勾选的参数不能编辑；secret 参数同样可以勾选（#324）。
 	await expect(form.getByRole("textbox", { name: /^steps / })).toBeDisabled();
-	await expect(form.getByRole("checkbox", { name: "预设 api_token" })).toBeDisabled();
-	await expect(form).toContainText("暂不支持");
+	await expect(form.getByRole("textbox", { name: /^api_token / })).toBeDisabled();
+	await expect(form.getByRole("checkbox", { name: "预设 api_token" })).toBeEnabled();
 
 	// 勾选时先填上默认值。
 	await form.getByRole("checkbox", { name: "预设 steps" }).check();

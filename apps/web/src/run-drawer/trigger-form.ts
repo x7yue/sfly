@@ -20,6 +20,13 @@ export function fieldValue(p: ParamDeclView, value: unknown): FieldValue {
 	return p.type === "json" ? JSON.stringify(value) : String(value);
 }
 
+/**
+ * 运行预设锁定的参数在表单里的值：secret 参数是接口返回的打码值，原样显示（不按类型换算）；其余按类型换算。
+ */
+export function lockedValue(p: ParamDeclView, value: unknown): FieldValue {
+	return p.secret ? String(value) : fieldValue(p, value);
+}
+
 function initialValue(p: ParamDeclView, initial?: Record<string, unknown>): FieldValue {
 	return fieldValue(
 		p,

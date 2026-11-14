@@ -6,6 +6,7 @@ import {
 	emptyDraft,
 	hasErrors,
 	removedParams,
+	replaceSecret,
 	toggleParam,
 	toPresetBody,
 } from "./preset-form";
@@ -16,6 +17,8 @@ const decls: ParamDeclView[] = [
 	{ name: "dry_run", type: "boolean", default: true },
 	{ name: "options", type: "json", default: { mode: "fast" } },
 	{ name: "name", type: "string" },
+	{ name: "token", type: "string", secret: true },
+	{ name: "pin", type: "number", secret: true },
 ];
 const param = (name: string) => decls.find((p) => p.name === name) as ParamDeclView;
 
@@ -45,6 +48,7 @@ describe("运行预设的编辑表单", () => {
 				name: "名".repeat(41),
 				description: "",
 				values: { host: " ", steps: "三", options: "{", name: "" },
+				kept: [],
 			},
 			decls,
 		);
@@ -52,7 +56,7 @@ describe("运行预设的编辑表单", () => {
 			name: "名称不能超过 40 个字符",
 			values: { host: "必填", steps: "需要一个数字", options: "不是合法的 JSON", name: "必填" },
 		});
-		const ok = { name: " 压测 A ", description: "", values: { steps: "50" } };
+		const ok = { name: " 压测 A ", description: "", values: { steps: "50" }, kept: [] };
 		expect(hasErrors(draftErrors(ok, decls))).toBe(false);
 	});
 
@@ -63,6 +67,7 @@ describe("运行预设的编辑表单", () => {
 					name: " 压测 A ",
 					description: " A 集群 ",
 					values: { options: '{"rounds":[1]}', host: "10.0.0.8", steps: "50", dry_run: false },
+					kept: [],
 				},
 				decls,
 			),
@@ -104,6 +109,7 @@ describe("运行预设的编辑表单", () => {
 					dry_run: true,
 					options: '{"rounds":[1]}',
 				},
+				kept: [],
 			});
 			expect(hasErrors(draftErrors(draft, decls))).toBe(false);
 			// 原样保存：请求体和预设现在的内容一致。
@@ -111,6 +117,70 @@ describe("运行预设的编辑表单", () => {
 				name: "压测 A",
 				description: "A 集群",
 				params: preset.params.map(({ name, value }) => ({ name, value })),
+			});
+		});
+
+		describe("secret 参数", () => {
+			const secretPreset: PresetView = {
+				...preset,
+				params: [
+					{ name: "host", secret: false, value: "10.0.0.8" },
+					{ name: "token", secret: true, value: "******" },
+				],
+			};
+
+			it("预设里已有值的 secret 参数沿用原值：表单里是空的，勾选，不用重新输入就能通过校验", () => {
+				const draft = draftFromPreset(secretPreset, decls);
+				expect(draft.values).toEqual({ host: "10.0.0.8", token: "" });
+				expect(draft.kept).toEqual(["token"]);
+				expect(hasErrors(draftErrors(draft, decls))).toBe(false);
+			});
+
+			it("沿用原值的 secret 参数提交 keep，不带值；点「替换」后要重新填，提交新值", () => {
+				const draft = draftFromPreset(secretPreset, decls);
+				expect(toPresetBody(draft, decls).params).toEqual([
+					{ name: "host", value: "10.0.0.8" },
+					{ name: "token", keep: true },
+				]);
+
+				const replacing = replaceSecret(draft, "token");
+				expect(replacing.kept).toEqual([]);
+				expect(replacing.values.token).toBe("");
+				expect(draftErrors(replacing, decls).values).toEqual({ token: "必填" });
+				const typed = { ...replacing, values: { ...replacing.values, token: "tok-new" } };
+				expect(hasErrors(draftErrors(typed, decls))).toBe(false);
+				expect(toPresetBody(typed, decls).params).toContainEqual({
+					name: "token",
+					value: "tok-new",
+				});
+			});
+
+			it("取消勾选再勾选，原值已经不在了：当作新勾选，要重新填；非字符串的 secret 参数按类型换算", () => {
+				const draft = draftFromPreset(secretPreset, decls);
+				const unchecked = toggleParam(draft, param("token"), false);
+				expect(unchecked.kept).toEqual([]);
+				expect(unchecked.values).not.toHaveProperty("token");
+				const rechecked = toggleParam(unchecked, param("token"), true);
+				expect(rechecked.kept).toEqual([]);
+				expect(draftErrors(rechecked, decls).values).toEqual({ token: "必填" });
+
+				const pin = toggleParam(emptyDraft(), param("pin"), true);
+				const typed = { ...pin, values: { pin: "4242" } };
+				expect(toPresetBody(typed, decls).params).toEqual([{ name: "pin", value: 4242 }]);
+			});
+
+			it("保存之后才变成 secret 的参数同样沿用原值；不再是 secret 的参数是普通参数，值带进表单", () => {
+				const turned = draftFromPreset(
+					{ ...preset, params: [{ name: "host", secret: true, value: "******" }] },
+					decls.map((p) => (p.name === "host" ? { ...p, secret: true } : p)),
+				);
+				expect(turned.kept).toEqual(["host"]);
+				const stopped = draftFromPreset(
+					{ ...preset, params: [{ name: "token", secret: false, value: "visible" }] },
+					decls.map((p) => (p.name === "token" ? { ...p, secret: false } : p)),
+				);
+				expect(stopped.kept).toEqual([]);
+				expect(stopped.values).toEqual({ token: "visible" });
 			});
 		});
 

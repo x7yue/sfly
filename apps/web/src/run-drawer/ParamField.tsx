@@ -1,7 +1,7 @@
 import type { ParamDeclView } from "@sfly/schema";
 import { cn } from "cn";
 import { EyeIcon, EyeOffIcon, LockIcon } from "lucide-react";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
@@ -47,6 +47,8 @@ export function ParamField({
 	disabled = false,
 	help = defaultHelp(param),
 	leading,
+	kept = false,
+	onReplace,
 }: {
 	param: ParamDeclView;
 	value: FieldValue | undefined;
@@ -61,6 +63,9 @@ export function ParamField({
 	help?: string | null;
 	/** 标签前面的一格，例如预设编辑表单的「预设」勾选框。 */
 	leading?: React.ReactNode;
+	/** 沿用预设里原来的 secret 值（预设编辑表单）：控件显示「已填写」，点「替换」（`onReplace`）才重新输入。 */
+	kept?: boolean;
+	onReplace?: () => void;
 }) {
 	const id = useId();
 	const labelId = `${id}-label`;
@@ -72,6 +77,12 @@ export function ParamField({
 		const timer = setTimeout(() => setRevealed(false), REVEAL_MS);
 		return () => clearTimeout(timer);
 	}, [revealed]);
+	// 点「替换」之后控件换成输入框：焦点跟过去，直接输入新值。
+	const wasKept = useRef(kept);
+	useEffect(() => {
+		if (wasKept.current && !kept) document.getElementById(id)?.focus();
+		wasKept.current = kept;
+	}, [kept, id]);
 
 	const locked = lockedBy !== undefined;
 	const helpText = locked ? `由预设 ${lockedBy} 固定` : help;
@@ -87,8 +98,29 @@ export function ParamField({
 	const change = (next: FieldValue) => onChange?.(next);
 	const blur = () => onBlur?.();
 	const hidden = param.secret && !revealed;
+	// 锁定的 secret 参数拿到的已经是打码后的值，不论类型都显示成一个只读的密码框。
+	const masked = locked && param.secret;
 	let control: React.ReactNode;
-	if (param.type === "boolean") {
+	if (kept) {
+		control = (
+			<div className="flex gap-1.5">
+				<Input
+					{...aria}
+					value="已填写"
+					readOnly
+					className="border-border-soft bg-transparent text-fg-2"
+				/>
+				<Button
+					variant="ghost"
+					size="sm"
+					aria-label={`替换 ${param.name}`}
+					onClick={() => onReplace?.()}
+				>
+					替换
+				</Button>
+			</div>
+		);
+	} else if (param.type === "boolean" && !masked) {
 		control = (
 			<div className="flex h-7.5 items-center gap-2">
 				<Switch
@@ -103,7 +135,7 @@ export function ParamField({
 				<span className="font-mono text-xs text-fg-2">{value === true ? "true" : "false"}</span>
 			</div>
 		);
-	} else if (param.type === "json") {
+	} else if (param.type === "json" && !masked) {
 		control = (
 			<Textarea
 				{...aria}

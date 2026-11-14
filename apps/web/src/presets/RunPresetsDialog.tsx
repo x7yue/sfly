@@ -37,8 +37,8 @@ import {
 	emptyDraft,
 	hasErrors,
 	type PresetDraft,
-	presetable,
 	removedParams,
+	replaceSecret,
 	toggleParam,
 	toPresetBody,
 } from "./preset-form";
@@ -378,7 +378,8 @@ function PresetForm({
 								value={draft.values[p.name] ?? (p.type === "boolean" ? false : "")}
 								error={errors.values[p.name]}
 								disabled={!checked}
-								help={presetable(p) ? undefined : "secret 参数暂不支持设为预设参数"}
+								kept={draft.kept.includes(p.name)}
+								onReplace={() => setDraft(replaceSecret(draft, p.name))}
 								onChange={(value) =>
 									setDraft({ ...draft, values: { ...draft.values, [p.name]: value } })
 								}
@@ -387,7 +388,6 @@ function PresetForm({
 										<Checkbox
 											aria-label={`预设 ${p.name}`}
 											checked={checked}
-											disabled={!presetable(p)}
 											onChange={(e) => setDraft(toggleParam(draft, p, e.target.checked))}
 										/>
 									</span>
