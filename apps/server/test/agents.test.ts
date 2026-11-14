@@ -138,6 +138,40 @@ describe("Agent 注册", () => {
 		expect((await listAgents(cp))[0]?.running_tasks).toEqual([]);
 	});
 
+	it("Agent 列表里的任务带节点的显示名称（取自运行绑定的版本，之后改名不影响），没有显示名称的节点不带", async () => {
+		cp = await startTestControlPlane();
+		const api = new ApiClient(cp);
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agents.push(agent);
+		await publishPackage(cp, "stub", "1.0.0", { echo: [] });
+		const document = (name: string) => ({
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "a", kind: "package", package: "stub", node: "echo", display_name: name },
+				{ id: "b", kind: "package", package: "stub", node: "echo" },
+			],
+			edges: [
+				{ from: "entry", to: "a", kind: "chain" },
+				{ from: "a", to: "b", kind: "chain" },
+			],
+			packages: { stub: "1.0.0" },
+		});
+		const orchestrationId = await api.orchestrationWith(document("创建测试用户"));
+		await api.triggerOk(orchestrationId);
+		const first = await agent.nextAssign();
+		await api.saveVersion(orchestrationId, document("改过的名字"));
+
+		const [running] = await listAgents(cp);
+		expect(running?.running_tasks).toMatchObject([{ node_id: "a", display_name: "创建测试用户" }]);
+
+		await agent.succeed(first, {});
+		await agent.nextAssign();
+		const [next] = await listAgents(cp);
+		expect(next?.running_tasks).toMatchObject([{ node_id: "b" }]);
+		expect(next?.running_tasks[0]).not.toHaveProperty("display_name");
+	});
+
 	it("Agent 列表返回被多少个场景引用：最新版本里的默认 Agent 或节点另选的 Agent", async () => {
 		cp = await startTestControlPlane();
 		const api = new ApiClient(cp);

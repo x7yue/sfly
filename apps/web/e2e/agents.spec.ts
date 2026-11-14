@@ -235,9 +235,13 @@ test.describe("版本不一致", () => {
 	}) => {
 		await publishPackage(controlPlane);
 		const current = await connectAgent({ name: "agent-a", slots: 2 });
+		const named = scenarioUsing("agent-a");
 		const first = await triggerRun(
 			controlPlane,
-			await createScenario(controlPlane, "巡检", scenarioUsing("agent-a")),
+			await createScenario(controlPlane, "巡检", {
+				...named,
+				nodes: named.nodes.map((n) => (n.id === "ping" ? { ...n, display_name: "探测主机" } : n)),
+			}),
 		);
 		const second = await triggerRun(
 			controlPlane,
@@ -276,8 +280,11 @@ test.describe("版本不一致", () => {
 		let dialog = await open();
 		const terminated = dialog.getByRole("list", { name: "会被终止的任务" }).getByRole("listitem");
 		await expect(terminated).toHaveCount(2);
-		await expect(terminated.nth(0)).toContainText("ping");
+		// 有显示名称的节点写成「显示名称（节点 ID）」，没有的只写节点 ID。
+		await expect(terminated.nth(0)).toContainText("探测主机（ping）");
 		await expect(terminated.nth(0)).toContainText(first.slice(0, 8));
+		await expect(terminated.nth(1)).toContainText("ping");
+		await expect(terminated.nth(1)).not.toContainText("（");
 		await expect(terminated.nth(1)).toContainText(second.slice(0, 8));
 		await expect(dialog).toContainText("agent_lost");
 		await expect(dialog).toContainText("2.0.0");

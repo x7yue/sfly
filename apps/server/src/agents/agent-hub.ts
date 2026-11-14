@@ -1,5 +1,5 @@
 import type { ServerMessage } from "@sfly/proto";
-import type { AgentEndpointView, ClockOffsetView } from "@sfly/schema";
+import type { AgentEndpointView, ClockOffsetView, OrchestrationDocument } from "@sfly/schema";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -13,9 +13,11 @@ import {
 	type InstalledPackage,
 	type InstallProgress,
 	ON_AGENT,
+	orchestrationVersions,
 	runs,
 	tasks,
 } from "../db/schema.js";
+import { nodeNameIn } from "../engine/run-board.js";
 import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
@@ -151,11 +153,39 @@ export interface RunningTaskView {
 	run_id: string;
 	orchestration_id: string;
 	node_id: string;
+	/** 运行绑定的版本里这个节点的显示名称；没有时没有这个字段。 */
+	display_name?: string;
 	attempt: number;
 	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
 	status: "dispatched" | "running";
 	/** 执行器启动的时间；派发阶段为 null。 */
 	started_at: string | null;
+}
+
+/** 派发给 Agent、还没结束的任务的视图；显示名称取自运行绑定的版本 `document`。 */
+export function runningTaskView(
+	t: {
+		taskId: string;
+		runId: string;
+		orchestrationId: string;
+		nodeId: string;
+		attempt: number;
+		status: string;
+		startedAt: Date | null;
+	},
+	document: OrchestrationDocument,
+): RunningTaskView {
+	const displayName = nodeNameIn(document, t.nodeId);
+	return {
+		task_id: t.taskId,
+		run_id: t.runId,
+		orchestration_id: t.orchestrationId,
+		node_id: t.nodeId,
+		...(displayName === undefined ? {} : { display_name: displayName }),
+		attempt: t.attempt,
+		status: t.status as RunningTaskView["status"],
+		started_at: t.startedAt?.toISOString() ?? null,
+	};
 }
 
 /**
@@ -327,9 +357,11 @@ export class AgentHub {
 				attempt: tasks.attempt,
 				status: tasks.status,
 				startedAt: tasks.startedAt,
+				document: orchestrationVersions.document,
 			})
 			.from(tasks)
 			.innerJoin(runs, eq(runs.id, tasks.runId))
+			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 			.where(and(inArray(tasks.status, ON_AGENT), isNotNull(tasks.agentName)))
 			.orderBy(asc(tasks.seq));
 		return rows.map(
@@ -352,15 +384,7 @@ export class AgentHub {
 				})),
 				running_tasks: running
 					.filter((t) => t.agent === row.name)
-					.map((t) => ({
-						task_id: t.taskId,
-						run_id: t.runId,
-						orchestration_id: t.orchestrationId,
-						node_id: t.nodeId,
-						attempt: t.attempt,
-						status: t.status as RunningTaskView["status"],
-						started_at: t.startedAt?.toISOString() ?? null,
-					})),
+					.map((t) => runningTaskView(t, t.document)),
 				version_mismatch: this.versionMismatch(info),
 				update: update ?? NO_UPDATE,
 				capabilities: capabilities ?? [],
