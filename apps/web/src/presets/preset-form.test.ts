@@ -233,13 +233,25 @@ describe("把运行抽屉里填的值存为预设", () => {
 		pin: "",
 	};
 
-	it("填了值的参数默认勾上，没动过默认值、留空的参数不勾", () => {
+	it("填了值的参数默认勾上，包括还是默认值、没动过的；留空的参数不勾", () => {
 		const draft = draftFromFormValues(decls, filled);
-		expect(Object.keys(draft.values).sort()).toEqual(["dry_run", "host", "token"]);
+		expect(Object.keys(draft.values).sort()).toEqual([
+			"dry_run",
+			"host",
+			"options",
+			"steps",
+			"token",
+		]);
 		expect(draft.values.host).toBe("10.0.0.8");
-		expect(draft.values.dry_run).toBe(false);
+		expect(draft.values.steps).toBe("3");
+		expect(draft.values.options).toBe('{"mode":"fast"}');
 		expect(draft.name).toBe("");
 		expect(draft.description).toBe("");
+	});
+
+	it("布尔参数的开关总有一个值（开或关），都勾上", () => {
+		expect(draftFromFormValues(decls, { ...filled, dry_run: false }).values.dry_run).toBe(false);
+		expect(draftFromFormValues(decls, { ...filled, dry_run: true }).values.dry_run).toBe(true);
 	});
 
 	it("改过默认值的参数勾上，值带过来", () => {

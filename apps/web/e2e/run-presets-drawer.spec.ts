@@ -207,13 +207,14 @@ test("用「存为预设」保存抽屉里填的值：填了值的参数默认�
 	await field(drawer, "api_token").fill("tok-typed");
 	await drawer.getByRole("button", { name: "存为预设" }).click();
 
-	// 管理对话框直接打开新建表单：填了值的参数勾上并带着值，没动过的 dry_run 不勾；secret 参数勾上但要重新输入。
+	// 管理对话框直接打开新建表单：填了值的参数勾上并带着值，没动过、还是默认值的 dry_run 也有值，同样勾上；secret 参数勾上但要重新输入。
 	const form = page.getByRole("dialog", { name: "新建运行预设" });
 	await expect(form.getByRole("checkbox", { name: "预设 host" })).toBeChecked();
 	await expect(field(form, "host")).toHaveValue("10.0.0.8");
 	await expect(form.getByRole("checkbox", { name: "预设 steps" })).toBeChecked();
 	await expect(field(form, "steps")).toHaveValue("50");
-	await expect(form.getByRole("checkbox", { name: "预设 dry_run" })).not.toBeChecked();
+	await expect(form.getByRole("checkbox", { name: "预设 dry_run" })).toBeChecked();
+	await expect(form.getByRole("switch", { name: "dry_run" })).not.toBeChecked();
 	await expect(form.getByRole("checkbox", { name: "预设 api_token" })).toBeChecked();
 	await expect(field(form, "api_token")).toHaveValue("");
 
@@ -247,6 +248,7 @@ test("用「存为预设」保存抽屉里填的值：填了值的参数默认�
 	expect(saved?.params.map((p) => [p.name, p.value])).toEqual([
 		["host", "10.0.0.8"],
 		["steps", 50],
+		["dry_run", false],
 		["api_token", "******"],
 	]);
 	// 保存预设只是保存，没有触发运行。
