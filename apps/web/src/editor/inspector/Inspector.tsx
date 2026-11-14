@@ -12,6 +12,7 @@ import { forwardRef, type ReactNode, useEffect, useMemo, useState } from "react"
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
+import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
@@ -69,21 +70,26 @@ export interface InspectorContext {
 }
 
 /**
- * 右侧检查器（原型 `.insp`，可收起）。选中节点时：标题区 + 页签（参数 / 执行 / 说明）；
+ * 右侧检查器（原型 `.insp`，可收起）。选中一个节点时：标题区 + 页签（参数 / 执行 / 说明）；
  * 没有选中节点时：场景级设置（默认 Agent、节点包版本、检查结果）。
  * 包节点的「说明」页叫「说明与指标」，带上节点类型声明的指标与图表（#43）。
  */
 export const Inspector = forwardRef<
 	HTMLElement,
 	{
-		selected: { id: string; node: DocNode } | null;
+		/** 画布上选中了什么（只含画布上有的节点）。 */
+		selection: CanvasSelection;
+		/** 画布上节点的内容。 */
+		nodeOf(id: string): DocNode | undefined;
 		context: InspectorContext;
 		onCollapse(): void;
 		/** 在检查器里按 Esc（没有被补全列表等消费）：焦点回到画布。 */
 		onEscape(): void;
 	}
->(function Inspector({ selected, context, onCollapse, onEscape }, ref) {
+>(function Inspector({ selection, nodeOf, context, onCollapse, onEscape }, ref) {
 	const width = useInspectorWidth();
+	const id = soleNode(selection);
+	const node = id === null ? undefined : nodeOf(id);
 	return (
 		<aside
 			ref={ref}
@@ -98,14 +104,8 @@ export const Inspector = forwardRef<
 			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
 			style={{ width }}
 		>
-			{selected ? (
-				<NodeInspector
-					key={selected.id}
-					id={selected.id}
-					node={selected.node}
-					context={context}
-					onCollapse={onCollapse}
-				/>
+			{id !== null && node ? (
+				<NodeInspector key={id} id={id} node={node} context={context} onCollapse={onCollapse} />
 			) : (
 				<ScenarioInspector context={context} onCollapse={onCollapse} />
 			)}

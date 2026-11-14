@@ -51,6 +51,13 @@ import { INSPECTOR_MARGIN, NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/g
 import { VIEWPORT_MS, viewportDuration } from "#/components/canvas/motion";
 import { usePackageTitles } from "#/components/canvas/package-titles";
 import { subflowRegions } from "#/components/canvas/SubflowRegions";
+import {
+	type CanvasSelection,
+	keepNodes,
+	NO_SELECTION,
+	selectNode,
+	soleNode,
+} from "#/components/canvas/selection";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
@@ -160,7 +167,9 @@ function Editor({
 		default_agent: start.document.default_agent,
 		packages: start.document.packages,
 	});
-	const [selectedId, setSelectedId] = useState<string | null>(initialNode ?? null);
+	const [selection, setSelection] = useState<CanvasSelection>(() =>
+		initialNode ? selectNode(initialNode) : NO_SELECTION,
+	);
 	const [inspectorOpen, setInspectorOpen] = useState(true);
 	const inspectorWidth = useInspectorWidth();
 	/** 检查器（实际宽度 + 右边距）占住的宽度：适配视图与定位节点时避开。 */
@@ -255,6 +264,9 @@ function Editor({
 	const running = mode === "run";
 	const shownNodes = running && runFlow ? runFlow.nodes : nodes;
 	const shownEdges = running && runFlow ? runFlow.edges : edges;
+	// 选中的节点可能不在画布上：撤销了添加、运行绑定的版本里没有它。
+	const shownSelection = keepNodes(selection, (id) => shownNodes.some((n) => n.id === id));
+	const nodeOf = (id: string) => shownNodes.find((n) => n.id === id)?.data.node;
 
 	// —— 连线：只允许单入单出，规则与控制面共用（@sfly/orchestration） ——
 	const docRef = useRef(doc);
@@ -338,11 +350,10 @@ function Editor({
 		[connectionProblem, flow, reconnect],
 	);
 
-	const select = useCallback((id: string | null) => setSelectedId(id), []);
 	/** 选中并定位到某个节点（检查结果、调度关系、触发预检里的「前往」）。 */
 	const locate = useCallback(
 		(id: string) => {
-			setSelectedId(id);
+			setSelection(selectNode(id));
 			const node = flow.getNode(id);
 			if (node) {
 				// 定位到没被检查器占住的那部分画布的中间。
@@ -377,7 +388,7 @@ function Editor({
 			return;
 		}
 		drafts.clear(`${id}/`);
-		if (selectedId === id) setSelectedId(null);
+		setSelection((s) => keepNodes(s, (n) => n !== id));
 		applyEdit(edit.doc);
 	};
 	const updateNode = (id: string, node: DocNode) => {
@@ -441,7 +452,7 @@ function Editor({
 		}
 		setNodes(next.nodes);
 		setEdges(next.edges);
-		setSelectedId(id);
+		setSelection(selectNode(id));
 		requestAnimationFrame(() => {
 			// 接在来源节点右侧的新节点可能在视口外：移到中央。
 			if (request.kind === "after" && !request.position) {
@@ -510,7 +521,7 @@ function Editor({
 		doc,
 		nodes,
 		regions: regionBoxes,
-		selectedId,
+		selection: shownSelection,
 		viewportCenter,
 		toFlowPosition: (client) => flow.screenToFlowPosition(client),
 		// 包版本锁定可能多了一项；选中并聚焦新节点。
@@ -519,7 +530,7 @@ function Editor({
 			if (edit.doc.packages !== doc.packages) {
 				setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
 			}
-			setSelectedId(edit.id);
+			setSelection(selectNode(edit.id));
 			requestAnimationFrame(() => focusNewCard(edit.id));
 		},
 	});
@@ -529,8 +540,8 @@ function Editor({
 		if (first) {
 			drafts.touch(fieldErrors.map(fieldErrorKey));
 			setInspectorOpen(true);
-			if (first.nodeId === undefined) setSelectedId(null);
-			else if (first.nodeId !== selectedId) locate(first.nodeId);
+			if (first.nodeId === undefined) setSelection(NO_SELECTION);
+			else if (first.nodeId !== soleNode(selection)) locate(first.nodeId);
 			setFocusRequest({ key: fieldErrorKey(first), nonce: Date.now() });
 			return;
 		}
@@ -557,7 +568,6 @@ function Editor({
 	useShortcut("canvas-save", save, !running);
 	useShortcut("canvas-run", () => setTriggering(true), !running);
 
-	const selectedNode = selectedId ? shownNodes.find((n) => n.id === selectedId) : undefined;
 	const context: InspectorContext = {
 		doc,
 		catalog,
@@ -593,7 +603,8 @@ function Editor({
 		});
 	};
 	const focusCanvasNode = () => {
-		if (selectedId) cardOf(selectedId)?.focus();
+		const id = soleNode(shownSelection);
+		if (id) cardOf(id)?.focus();
 	};
 
 	return (
@@ -608,7 +619,7 @@ function Editor({
 					warnings={warnings.length}
 					notes={notes.length}
 					onShowChecks={() => {
-						setSelectedId(null);
+						setSelection(NO_SELECTION);
 						setInspectorOpen(true);
 					}}
 					mode={mode}
@@ -645,8 +656,8 @@ function Editor({
 					edges={shownEdges}
 					info={running ? runInfo : info}
 					{...(running ? decorations : {})}
-					selectedId={selectedNode ? selectedId : null}
-					onSelect={select}
+					selection={shownSelection}
+					onSelect={setSelection}
 					onNodesChange={running ? runFlow?.onNodesChange : history.onNodesChange}
 					onEdgesChange={running ? undefined : history.onEdgesChange}
 					onConnect={running ? undefined : onConnect}
@@ -735,7 +746,8 @@ function Editor({
 						<RunStateInspector
 							ref={inspectorRef}
 							state={runState}
-							selected={selectedNode ? { id: selectedNode.id, node: selectedNode.data.node } : null}
+							selection={shownSelection}
+							nodeOf={nodeOf}
 							info={runInfo}
 							onCollapse={() => setInspectorOpen(false)}
 							onEscape={focusCanvasNode}
@@ -744,7 +756,8 @@ function Editor({
 					{inspectorOpen && !running && (
 						<Inspector
 							ref={inspectorRef}
-							selected={selectedNode ? { id: selectedNode.id, node: selectedNode.data.node } : null}
+							selection={shownSelection}
+							nodeOf={nodeOf}
 							context={context}
 							onCollapse={() => setInspectorOpen(false)}
 							onEscape={focusCanvasNode}
