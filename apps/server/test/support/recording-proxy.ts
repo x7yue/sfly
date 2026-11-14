@@ -17,15 +17,21 @@ const HOP_BY_HOP = ["connection", "keep-alive", "transfer-encoding", "content-le
 
 /**
  * 记录请求再原样转给 target 的代理：测试里用来观察命令行实际发出的请求头、区分命令行连的是哪个地址。
- * 只转发有完整响应体的普通请求（不处理流式响应）。
+ * 只转发有完整响应体的普通请求（不处理流式响应）。`before` 在转发每个请求之前执行，
+ * 测试用它在两个请求之间改动控制面的状态（例如预检之后、触发之前删掉运行预设）。
  */
-export async function startRecordingProxy(target: string): Promise<RecordingProxy> {
+export async function startRecordingProxy(
+	target: string,
+	before?: (request: RecordedRequest) => Promise<void>,
+): Promise<RecordingProxy> {
 	const requests: RecordedRequest[] = [];
 	const server = createServer((req, res) => {
 		void (async () => {
 			const chunks: Buffer[] = [];
 			for await (const chunk of req) chunks.push(chunk as Buffer);
-			requests.push({ method: req.method ?? "GET", path: req.url ?? "/", headers: req.headers });
+			const recorded = { method: req.method ?? "GET", path: req.url ?? "/", headers: req.headers };
+			requests.push(recorded);
+			await before?.(recorded);
 			const headers = new Headers();
 			for (const [key, value] of Object.entries(req.headers)) {
 				if (HOP_BY_HOP.includes(key) || value === undefined) continue;

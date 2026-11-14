@@ -12,6 +12,7 @@ import {
 } from "../db/schema.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
+import { runListPreset, runPresetView } from "../presets/run-preset.js";
 import { agentFor, planRun } from "./chain.js";
 import { groupAttempts, nodeStatus } from "./run-board.js";
 
@@ -89,6 +90,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		triggered_by: run.triggeredBy,
 		triggered_via: run.triggeredVia,
 		params: m(run.params),
+		preset: runPresetView(run),
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
 		run_notification: await runNotificationState(db, run),
@@ -178,6 +180,7 @@ export async function listRuns(
 		cancelling: run.status === "running" && run.cancelRequestedAt !== null,
 		triggered_by: run.triggeredBy,
 		triggered_via: run.triggeredVia,
+		preset: runListPreset(run),
 		started_at: run.startedAt.toISOString(),
 		ended_at: iso(run.endedAt),
 	}));

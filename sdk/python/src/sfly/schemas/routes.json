@@ -1957,6 +1957,226 @@
     },
     {
       "method": "GET",
+      "path": "/orchestrations/:id/presets",
+      "key": [
+        "presets",
+        "list"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/presets",
+      "key": [
+        "presets",
+        "create"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "description": {
+            "default": "",
+            "type": "string",
+            "maxLength": 200
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "value": {},
+                "keep": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "name",
+          "params"
+        ],
+        "additionalProperties": false
+      },
+      "notes": []
+    },
+    {
+      "method": "PATCH",
+      "path": "/orchestrations/:id/presets/:presetId",
+      "key": [
+        "presets",
+        "update"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "presetId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "presetId"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 200
+          },
+          "params": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "value": {},
+                "keep": {
+                  "type": "boolean",
+                  "const": true
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "notes": [
+        {
+          "part": "body",
+          "path": "",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：没有要修改的字段"
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/orchestrations/:id/presets/:presetId/copy",
+      "key": [
+        "presets",
+        "copy"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "presetId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "presetId"
+        ]
+      },
+      "body": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "additionalProperties": false
+      },
+      "notes": []
+    },
+    {
+      "method": "DELETE",
+      "path": "/orchestrations/:id/presets/:presetId",
+      "key": [
+        "presets",
+        "remove"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "presetId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "presetId"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
       "path": "/runs",
       "key": [
         "runs",
@@ -2084,6 +2304,9 @@
               "type": "string"
             },
             "additionalProperties": {}
+          },
+          "preset": {
+            "type": "string"
           }
         },
         "additionalProperties": false

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { endpoint, Timestamp } from "./contract.js";
+import { RunListPreset } from "./runs.js";
 
 /**
  * 跨场景的运行列表（运行记录页，约定见 ./contract.ts）。每一项带上各链的进度摘要、
@@ -62,6 +63,8 @@ export const RunListItem = z.object({
 	triggered_by: z.string(),
 	/** 经哪个 AI 编程助手触发；没有时为 null。 */
 	triggered_via: z.string().nullable(),
+	/** 触发时选用的运行预设；没有用预设时为 null。 */
+	preset: RunListPreset.nullable(),
 	started_at: Timestamp,
 	ended_at: Timestamp.nullable(),
 	/** 按深度、开始时间排序。 */

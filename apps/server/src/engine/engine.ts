@@ -58,6 +58,10 @@ import {
 } from "../gateway/agent-gateway.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
+import { describePresetProblems } from "../presets/preset-invalidation.js";
+import { findPreset } from "../presets/preset-store.js";
+import { presetProblems } from "../presets/preset-validity.js";
+import { type PresetRow, presetParamNames } from "../presets/preset-view.js";
 import type { Mirrors } from "../public-config.js";
 import type { ParamsCheck, Preflight } from "../runs/preflight.js";
 import { Topics } from "../sse/topics.js";
@@ -82,7 +86,7 @@ import {
 	queueTimedOut,
 	renewHeld,
 } from "./leases.js";
-import { fillParams } from "./params.js";
+import { fillParams, withPresetValues } from "./params.js";
 import { resolveReferencedAgents } from "./referenced-agents.js";
 import {
 	type CancelOrder,
@@ -271,10 +275,14 @@ export class Engine implements AgentSessionHandler {
 		failTask: (step, task, kind, message) => this.#failTask(step, task, kind, message),
 	};
 
-	/** 手动触发场景的最新版本。 */
+	/**
+	 * 手动触发场景的最新版本。带上运行预设（`preset` 是它的 ID）时，在这个事务里读取预设，预设已失效就拒绝（409 `preset_invalid`），
+	 * 否则用它的值填入预设参数（docs/SEMANTICS.md §6「运行预设」），之后的参数检查和不用预设时相同；
+	 * 运行上记下预设的 ID、名称和预设参数的名单。
+	 */
 	trigger(
 		orchestrationId: string,
-		provided: Record<string, unknown>,
+		request: { params: Record<string, unknown>; preset?: string | undefined },
 		actor: Actor,
 	): Promise<TriggerOutcome> {
 		return this.#event(async (step) => {
@@ -327,6 +335,42 @@ export class Engine implements AgentSessionHandler {
 					details,
 				};
 			}
+			let provided = request.params;
+			let preset: PresetRow | undefined;
+			if (request.preset !== undefined) {
+				preset = isUuid(request.preset)
+					? await findPreset(step.tx, orchestrationId, request.preset)
+					: undefined;
+				if (!preset) {
+					return {
+						ok: false,
+						status: 404,
+						code: "preset_not_found",
+						message: "这个场景没有这个运行预设",
+					};
+				}
+				const invalid = presetProblems(preset.values, plan.main.entry.params);
+				if (invalid.length > 0) {
+					return {
+						ok: false,
+						status: 409,
+						code: "preset_invalid",
+						message: `运行预设「${preset.name}」已失效，不能用来触发：${describePresetProblems(invalid, plan.main.entry.params)}`,
+						details: invalid,
+					};
+				}
+				const fixed = withPresetValues(request.params, preset.values, plan.main.entry.params);
+				if ("locked" in fixed) {
+					return {
+						ok: false,
+						status: 400,
+						code: "preset_param_locked",
+						message: `参数 ${fixed.locked} 由运行预设「${preset.name}」固定，请求里不要给它传值`,
+						details: { param: fixed.locked, preset: preset.name },
+					};
+				}
+				provided = fixed.params;
+			}
 			const filled = fillParams(plan.main.entry.params, provided);
 			if ("errors" in filled) {
 				return {
@@ -360,6 +404,9 @@ export class Engine implements AgentSessionHandler {
 					triggeredBy: actor.nickname,
 					triggeredVia: actor.via,
 					params: filled.params,
+					presetId: preset?.id ?? null,
+					presetName: preset?.name ?? null,
+					presetParams: preset ? presetParamNames(preset.values, plan.main.entry.params) : null,
 					status: "running",
 					startedAt: step.now,
 				})

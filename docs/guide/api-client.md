@@ -47,6 +47,7 @@ const client = createClient({
 | 领域 | 方法 |
 |---|---|
 | `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`create`、`update`、`copy`、`archive`、`unarchive` |
+| `presets`（运行预设） | `list`、`create`、`update`、`copy`、`remove` |
 | `runs`（运行） | `list`、`listForOrchestration`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
 | `metrics`（指标） | `summary`、`catalog`、`series`、`platform` |
@@ -103,9 +104,26 @@ const run = await client.runs.trigger({
 console.log(`已触发：{{SFLY_URL}}/runs/${run.id}`);
 ```
 
-- `runs.preflight` 返回最新的场景版本号、入口参数的声明（名称、类型、默认值、是否必填、是否 secret）、不能触发的原因（为空表示可以触发），以及锁定的节点包版本和引用的 Agent 是否在线。`agents` 里每台 Agent 的 `status` 是 `online`、`offline` 或 `unknown`（还没有注册过），`preparing_since` 是它这次连接开始准备环境的时间，准备好、不在线或没有注册过时为 `null`。Agent 不在线、正在准备环境都不阻止触发：任务会排队，Agent 上线或准备好环境后再执行。触发页面可以按 `params` 生成表单，按 `problems` 提示问题。
+按运行预设触发：从预检返回的 `presets` 里按名称找到预设，把它的 ID 放进 `preset`，`params` 只给其余的参数。
+
+```ts
+const preset = check.presets.find((p) => p.name === "压测 A 集群");
+if (!preset) throw new Error("没有这个运行预设");
+const presetRun = await client.runs.trigger({
+	params: { id: scenario.id },
+	body: { preset: preset.id, params: { rounds: 3 } },
+});
+console.log(presetRun.preset?.name, presetRun.preset?.params);
+```
+
+- `runs.preflight` 返回最新的场景版本号、入口参数的声明（名称、类型、默认值、是否必填、是否 secret）、不能触发的原因（为空表示可以触发），锁定的节点包版本和引用的 Agent 是否在线，以及场景的运行预设（`presets`，按名称排序，和 `presets.list` 相同）。`agents` 里每台 Agent 的 `status` 是 `online`、`offline` 或 `unknown`（还没有注册过），`preparing_since` 是它这次连接开始准备环境的时间，准备好、不在线或没有注册过时为 `null`。Agent 不在线、正在准备环境都不阻止触发：任务会排队，Agent 上线或准备好环境后再执行。触发页面可以按 `params` 生成表单，按 `problems` 提示问题。
 - `runs.trigger` 触发场景的最新版本，不能指定版本。参数按入口参数声明的类型给：`number` 给数字，`boolean` 给 `true` 或 `false`，`json` 给对象、数组这类 JSON 值。返回新运行的运行视图。
 - 预检没通过时触发失败，错误码 `invalid_orchestration`，`details` 是原因列表；参数不对时错误码 `invalid_params`。
+- 运行预设固定了一部分参数的值（预设参数），带上 `preset` 时控制面用预设的值填入它们，`params` 里不用再给。给 secret 预设参数传了任何值（和预设里的值相同也一样）、给其他预设参数传了和预设不同的值时触发失败，错误码 `preset_param_locked`，`details` 是 `{ param, preset }`（参数名和预设名）；给其他预设参数传相同的值照常触发。预设不存在或不属于这个场景时错误码 `preset_not_found`；预设已失效时错误码 `preset_invalid`，`details` 是问题清单（每项 `{ param, reason }`），不产生运行。运行视图的 `preset` 记着触发时预设的 ID、名称和预设参数的名单，没用预设时为 `null`。
+- 失效的运行预设：最新版本里预设参数已不存在（`reason` 是 `missing`），或保存的值不符合它现在的类型（`type_mismatch`）时，预设失效，不能用来触发；最新版本新增参数，参数的默认值、是否必填、是否敏感有变化，都不影响预设。`presets.list` 和 `runs.preflight` 返回的每个预设带 `status`（`ok` 或 `invalid`）和 `problems`（每项 `{ param, reason }`），触发页面可以据此禁用失效的预设、写明原因。保存场景版本时，会让预设失效的改动在响应的 `warnings` 里各有一条 `code` 为 `preset_invalidated` 的警告，写明预设名和原因，不阻止保存。失效的预设可以只改名称和说明；改好预设参数（`presets.update` 给出完整清单，对照最新版本通过）以后恢复可用。
+- 新建运行预设用 `presets.create({ params: { id }, body: { name, description, params: [{ name, value }] } })`，列出用 `presets.list`。值按参数声明的类型给，至少一个参数；不符合时错误码 `invalid_preset`，`details` 指出是哪个字段、什么原因，名称重复时错误码 `preset_name_taken`。
+- secret 参数也能设为预设参数，值明文保存，但所有响应里都只返回打码后的值：预设视图里这个参数的 `secret` 是 `true`，`value` 是 `******`。是不是 secret 以最新版本的声明为准。修改时不想重新输入的 secret 参数写成 `{ name, keep: true }`，沿用预设里原来的值，例如 `params: [{ name: "host", value: "b.example" }, { name: "api_token", keep: true }]`；`keep` 只能用在最新版本里声明为 secret、预设里已经有值的参数上（新建时没有原值，不能用），否则错误码 `invalid_preset`。
+- 修改、复制、删除运行预设用 `presets.update`、`presets.copy`、`presets.remove`，路径参数是 `{ id, presetId }`。`update` 的请求体只写要改的项，至少一项：没有 `params` 时只改名称和说明（失效的预设也可以改名），给了 `params` 时它是预设参数的完整清单，规则和新建相同；`copy` 的请求体是 `{ name }`（新名称），说明和预设参数原样复制；`remove` 没有返回值。预设不存在或不属于这个场景时错误码 `preset_not_found`，名称重复时 `preset_name_taken`。预设可以随时修改，场景归档期间也一样，改了立即生效；已经开始的运行不受影响。复制场景时预设一并复制。
 - 取消运行用 `runs.cancel({ params: { id } })`。清理期间再取消一次就是强制取消。运行已经结束时错误码 `run_not_running`。
 
 ## 订阅运行
@@ -325,6 +343,6 @@ API 客户端只开放平台现有的接口，下面这些没有：
 - **没有事件推送和对外的 Webhook。** 只能订阅一次运行的事件流。要发现新的运行，定时查询 `runs.list`。要把运行结果发到飞书群，用场景的运行通知或飞书通知节点，见 [飞书通知](feishu-notify.md)。
 - **不能跨运行查询指标。** 指标只能按一次运行查询（`metrics.summary`、`metrics.series`）。要看多次运行的趋势，逐次查询后自己汇总。
 - **运行列表不能按时间范围查询，也不能翻页。** `runs.list` 只返回最新的最多 500 条，`runs.listForOrchestration` 最多 200 条。
-- 没有运行预设，入口参数也没有说明和可选项。
+- 入口参数没有说明和可选项。
 - 不能上传：发布节点包用 `sfly publish`，见 [发布](publish.md)。
 - 没有登录和权限，身份只是昵称。

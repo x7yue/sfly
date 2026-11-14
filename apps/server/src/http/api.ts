@@ -22,6 +22,7 @@ import type { TaskMetrics } from "../metrics/task-metrics.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
 import type { PresenceRegistry } from "../presence/presence-registry.js";
+import type { PresetStore } from "../presets/preset-store.js";
 import type { PublicConfig } from "../public-config.js";
 import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
@@ -42,6 +43,7 @@ import { registerMetricRoutes } from "./metric-routes.js";
 import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
+import { registerPresetRoutes } from "./preset-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
@@ -53,6 +55,8 @@ export interface HttpApiDeps {
 	logger: boolean;
 	hub: AgentHub;
 	orchestrations: OrchestrationStore;
+	/** 运行预设（src/presets/，ADR 0023）。 */
+	presets: PresetStore;
 	engine: Engine;
 	packages: PackageRepository;
 	presence: PresenceRegistry;
@@ -102,6 +106,7 @@ export function buildHttpApi({
 	logger,
 	hub,
 	orchestrations,
+	presets,
 	engine,
 	packages,
 	presence,
@@ -169,11 +174,13 @@ export function buildHttpApi({
 	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
+	registerPresetRoutes(app, { presets });
 	registerRunRoutes(app, {
 		db: database.db,
 		hub,
 		engine,
 		orchestrations,
+		presets,
 		preflight,
 		sse,
 		progress: logs.progress,

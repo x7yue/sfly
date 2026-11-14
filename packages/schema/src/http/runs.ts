@@ -5,6 +5,7 @@ import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
 import { PreflightAgent } from "./orchestrations.js";
+import { PresetView } from "./presets.js";
 
 /**
  * 运行、任务日志与产物接口的契约（约定见 ./contract.ts）。
@@ -152,6 +153,19 @@ export const RunNotificationState = z.object({
 	reason: z.string().nullable(),
 });
 
+/** 运行用的运行预设，记的是触发时的情况：预设之后改名、删除都不影响。 */
+export const RunPresetView = z.object({
+	/** 预设的 ID；预设可能已被删除。 */
+	id: z.string(),
+	/** 触发时预设的名称。 */
+	name: z.string(),
+	/** 预设参数的名单：这些参数的值来自预设。 */
+	params: z.array(z.string()),
+});
+
+/** 运行列表里一个运行用的运行预设：只有 ID 和触发时的名称（列表不带预设参数的名单）。 */
+export const RunListPreset = RunPresetView.pick({ id: true, name: true });
+
 export const RunView = z.object({
 	id: z.string(),
 	orchestration_id: z.string(),
@@ -161,6 +175,8 @@ export const RunView = z.object({
 	/** 经哪个 AI 编程助手触发（请求头 `x-sfly-client` 里的 `agent/<名称>`）；没有时为 null。只是标注，不是鉴权。 */
 	triggered_via: z.string().nullable(),
 	params: z.record(z.string(), z.unknown()),
+	/** 触发时选用的运行预设；没有用预设时为 null。 */
+	preset: RunPresetView.nullable(),
 	started_at: Timestamp,
 	ended_at: Timestamp.nullable(),
 	/** 取消请求；没有被取消时为 null。forced_at：清理期间再次取消（强制取消）的时间。 */
@@ -193,6 +209,8 @@ export const RunSummary = RunView.pick({
 	started_at: true,
 	ended_at: true,
 }).extend({
+	/** 触发时选用的运行预设；没有用预设时为 null。 */
+	preset: RunListPreset.nullable(),
 	/** 已请求取消、还在等待任务结束与清理（status 仍是 running，界面显示「取消中」）。 */
 	cancelling: z.boolean(),
 });
@@ -224,7 +242,8 @@ export const PreflightProblem = z.object({
 export const runsApi = {
 	/**
 	 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发），
-	 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队）。
+	 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队），
+	 * 和场景的运行预设。
 	 */
 	preflight: endpoint({
 		method: "GET",
@@ -241,6 +260,8 @@ export const runsApi = {
 			packages: z.record(z.string(), z.string()),
 			/** 最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。 */
 			agents: z.array(PreflightAgent),
+			/** 场景的运行预设，按名称排序（与 presetsApi.list 相同），`status` 对照这次检查用的最新版本。 */
+			presets: z.array(PresetView),
 		}),
 	}),
 	/** 一个场景的运行，按开始时间从新到旧（最多 200 条）。 */
@@ -255,6 +276,11 @@ export const runsApi = {
 	/**
 	 * 触发场景的最新版本（201）。预检不通过时 400 `invalid_orchestration`（details 是原因列表），
 	 * 参数不对时 400 `invalid_params`。
+	 *
+	 * 带上 `preset`（运行预设的 ID）时，预设参数取预设保存的值，`params` 只需要给其余的参数；预设在触发的事务里读取，
+	 * 之后修改预设不影响这次运行。`params` 里给 secret 预设参数传了任何值（即使和预设相同，以免调用方猜测原值），或给其他预设参数传了不同的值
+	 * （按 JSON 深比较）时 400 `preset_param_locked`（details 是 `{ param, preset }`：参数名和预设名），其他预设参数传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`；预设已失效（对照最新版本，见 PresetView 的 `status`）
+	 * 时 409 `preset_invalid`（details 是问题清单，每项 `{ param, reason }`），不产生运行。
 	 */
 	trigger: endpoint({
 		method: "POST",
@@ -262,9 +288,13 @@ export const runsApi = {
 		client: true,
 		key: ["runs", "trigger"],
 		params: IdParams,
-		/** 入口参数；没有请求体等于 `{ params: {} }`。 */
+		/** 入口参数和选用的运行预设；没有请求体等于 `{ params: {} }`。 */
 		body: z
-			.strictObject({ params: z.record(z.string(), z.unknown()).default({}) })
+			.strictObject({
+				params: z.record(z.string(), z.unknown()).default({}),
+				/** 运行预设的 ID；不给就是不用预设。 */
+				preset: z.string().optional(),
+			})
 			.default({ params: {} }),
 		response: RunView,
 	}),
@@ -633,6 +663,8 @@ export type AttemptView = z.infer<typeof AttemptView>;
 export type NodeRunView = z.infer<typeof NodeRunView>;
 export type ChainRunView = z.infer<typeof ChainRunView>;
 export type RunNotificationState = z.infer<typeof RunNotificationState>;
+export type RunPresetView = z.infer<typeof RunPresetView>;
+export type RunListPreset = z.infer<typeof RunListPreset>;
 export type RunView = z.infer<typeof RunView>;
 export type RunSummary = z.infer<typeof RunSummary>;
 export type ParamDeclView = z.infer<typeof ParamDeclView>;
