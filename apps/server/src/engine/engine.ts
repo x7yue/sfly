@@ -1376,7 +1376,8 @@ export class Engine implements AgentSessionHandler {
 				if (free <= 0) break;
 				// 周期扫描还没来得及处理的排队超时任务不再派发。
 				if (task.queueExpiresAt && task.queueExpiresAt <= step.now) {
-					await queueTimedOut(this.#driver, step, task);
+					// 派发只发给已准备好的连接，所以这里一定不是在准备环境。
+					await queueTimedOut(this.#driver, step, task, false);
 					continue;
 				}
 				const message = await this.#prepareAssign(step, conn, task);
@@ -1504,6 +1505,11 @@ export class Engine implements AgentSessionHandler {
 
 	/** 周期扫描：租约过期（agent_lost）与排队超时（env_error），返回失败的任务数（leases.ts）。 */
 	expireTasks(): Promise<number> {
-		return expireTasks(this.#driver, this.deps.db, this.deps.clock.now());
+		return expireTasks(
+			this.#driver,
+			this.deps.db,
+			this.deps.clock.now(),
+			(agentName) => this.deps.hub.preparingSince(agentName) !== undefined,
+		);
 	}
 }
