@@ -64,6 +64,7 @@ const NODE_FIELD: Record<string, string> = {
 	message: "原始消息",
 	package: "节点包",
 	node: "节点类型",
+	note: "备注",
 };
 
 const EDGE_END: Record<string, string> = { from: "起点", to: "终点", kind: "类型" };

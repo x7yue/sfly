@@ -44,6 +44,11 @@ describe("字段错误的位置说明", () => {
 		expect(fieldLabel(pkg, "agent")).toBe("节点 Agent");
 	});
 
+	it("每种节点的备注字段都叫「备注」", () => {
+		expect(fieldLabel(pkg, "note")).toBe("备注");
+		expect(fieldLabel(entry, "note")).toBe("备注");
+	});
+
 	it("异步任务节点的映射是子流程参数", () => {
 		const async: OrchestrationNode = { id: "dispatch", kind: "async", params: {} };
 		expect(fieldLabel(async, "params.date")).toBe("子流程参数 date");

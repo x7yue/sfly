@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { optionalLine } from "./display-text.js";
+import { optionalLine, optionalMultiline } from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
 
 /**
@@ -11,6 +11,9 @@ export const ParamType = z.enum(["string", "number", "boolean", "json"]);
 
 /** 参数说明的长度上限（Unicode 字符数）。 */
 export const PARAM_DESCRIPTION_MAX = 200;
+
+/** 节点备注的长度上限（Unicode 字符数）。 */
+export const NODE_NOTE_MAX = 2000;
 
 export const ParamDeclaration = z.strictObject({
 	name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
@@ -37,6 +40,8 @@ const nodeBase = {
 	id: z.string().min(1),
 	/** 布局属于版本内容。 */
 	position: Position.optional(),
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note: optionalMultiline(NODE_NOTE_MAX),
 };
 
 /**

@@ -33,6 +33,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "display_name": {
                 "type": "string",
                 "maxLength": 40,
@@ -112,6 +116,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "kind": {
                 "type": "string",
                 "const": "subflow_entry"
@@ -189,6 +197,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "display_name": {
                 "type": "string",
                 "maxLength": 40,
@@ -235,6 +247,10 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
               },
               "display_name": {
                 "type": "string",
@@ -288,6 +304,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "display_name": {
                 "type": "string",
                 "maxLength": 40,
@@ -336,6 +356,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "display_name": {
                 "type": "string",
                 "maxLength": 40,
@@ -382,6 +406,10 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
               },
               "display_name": {
                 "type": "string",
@@ -466,6 +494,10 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
               },
               "display_name": {
                 "type": "string",
