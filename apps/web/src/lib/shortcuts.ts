@@ -89,6 +89,9 @@ export const SHORTCUTS = [
 	{ id: "canvas-copy", group: "编排画布", label: "复制节点", keys: "Ctrl+C", displayOnly: true },
 	{ id: "canvas-paste", group: "编排画布", label: "粘贴节点", keys: "Ctrl+V", displayOnly: true },
 	{ id: "canvas-duplicate", group: "编排画布", label: "创建副本", keys: "Ctrl+D" },
+	// 原地改显示名称（editor/ScenarioEditor.tsx）：选中的恰好是一个可以起显示名称的节点时生效；双击卡片标题、
+	// 节点菜单的「重命名」同样进入原地编辑（components/canvas/NodeTitleEditor.tsx）。
+	{ id: "canvas-rename", group: "编排画布", label: "重命名节点", keys: "F2" },
 	// 节点菜单（components/canvas/FlowCanvas.tsx）：焦点在节点卡片上时打开，菜单键同样可以。
 	{
 		id: "canvas-node-menu",
