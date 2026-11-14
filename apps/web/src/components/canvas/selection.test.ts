@@ -3,9 +3,14 @@ import {
 	type CanvasSelection,
 	isNodeSelected,
 	keepNodes,
+	latestNode,
+	multipleNodes,
 	NO_SELECTION,
 	selectNode,
+	selectNodes,
 	soleNode,
+	toggleNode,
+	withSelectChanges,
 } from "./selection";
 
 const two: CanvasSelection = { kind: "nodes", ids: ["fetch", "report"] };
@@ -39,5 +44,54 @@ describe("画布的选中状态", () => {
 	it("只筛节点：选中的注释框和什么都没选保持原样", () => {
 		expect(keepNodes(annotation, () => false)).toBe(annotation);
 		expect(keepNodes(NO_SELECTION, () => false)).toBe(NO_SELECTION);
+	});
+
+	it("一组节点里的 ID 不重复，空的一组就是什么都没选", () => {
+		expect(selectNodes(["fetch", "report", "fetch"])).toEqual(two);
+		expect(selectNodes([])).toEqual(NO_SELECTION);
+	});
+
+	it("选中多个节点时才有「已选 N 个节点」", () => {
+		expect(multipleNodes(two)).toEqual(["fetch", "report"]);
+		expect(multipleNodes(selectNode("fetch"))).toBeNull();
+		expect(multipleNodes(annotation)).toBeNull();
+		expect(multipleNodes(NO_SELECTION)).toBeNull();
+	});
+
+	it("Ctrl/⌘ + 点击：没选中的加到最后，选中的去掉，去光了就是什么都没选", () => {
+		expect(toggleNode(selectNode("fetch"), "report")).toEqual(two);
+		expect(toggleNode(two, "fetch")).toEqual(selectNode("report"));
+		expect(toggleNode(selectNode("fetch"), "fetch")).toEqual(NO_SELECTION);
+		expect(toggleNode(NO_SELECTION, "fetch")).toEqual(selectNode("fetch"));
+		expect(toggleNode(annotation, "fetch")).toEqual(selectNode("fetch"));
+	});
+
+	it("框选报告的变化：新选中的排到最后，取消的去掉，已经在组里的不重复", () => {
+		const changes = [
+			{ id: "fetch", selected: false },
+			{ id: "ping", selected: true },
+			{ id: "report", selected: true },
+		];
+		expect(withSelectChanges(two, changes)).toEqual({ kind: "nodes", ids: ["report", "ping"] });
+		expect(withSelectChanges(NO_SELECTION, [{ id: "ping", selected: true }])).toEqual(
+			selectNode("ping"),
+		);
+		expect(
+			withSelectChanges(two, [
+				{ id: "fetch", selected: false },
+				{ id: "report", selected: false },
+			]),
+		).toEqual(NO_SELECTION);
+		expect(withSelectChanges(annotation, [{ id: "ping", selected: true }])).toEqual(
+			selectNode("ping"),
+		);
+	});
+
+	it("多选收成单选时留下最近选中的节点；其余原样", () => {
+		expect(latestNode(two)).toEqual(selectNode("report"));
+		const one = selectNode("fetch");
+		expect(latestNode(one)).toBe(one);
+		expect(latestNode(annotation)).toBe(annotation);
+		expect(latestNode(NO_SELECTION)).toBe(NO_SELECTION);
 	});
 });
