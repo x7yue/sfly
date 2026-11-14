@@ -266,6 +266,8 @@ describe("运行预设的维护", () => {
 				name: "压测 A 集群 副本",
 				description: "A 集群",
 				params: preset.params,
+				status: "ok",
+				problems: [],
 				updated_by: "小明",
 				updated_at: "2026-01-01T00:01:00.000Z",
 			});

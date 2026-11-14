@@ -66,6 +66,8 @@ describe("运行预设", () => {
 					{ name: "port", secret: false, value: 9000 },
 					{ name: "options", secret: false, value: { mode: "fast" } },
 				],
+				status: "ok",
+				problems: [],
 				updated_by: "小红",
 				updated_at: "2026-01-01T00:00:00.000Z",
 			});

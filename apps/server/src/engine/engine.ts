@@ -58,7 +58,9 @@ import {
 } from "../gateway/agent-gateway.js";
 import { agentRequirementProblem } from "../packages/requires-agent.js";
 import { sdkRequirementProblem } from "../packages/requires-sdk.js";
+import { describePresetProblems } from "../presets/preset-invalidation.js";
 import { findPreset } from "../presets/preset-store.js";
+import { presetProblems } from "../presets/preset-validity.js";
 import { type PresetRow, presetParamNames } from "../presets/preset-view.js";
 import type { Mirrors } from "../public-config.js";
 import type { ParamsCheck, Preflight } from "../runs/preflight.js";
@@ -274,8 +276,9 @@ export class Engine implements AgentSessionHandler {
 	};
 
 	/**
-	 * 手动触发场景的最新版本。带上运行预设（`preset` 是它的 ID）时，在这个事务里读取预设，用它的值填入预设参数
-	 * （docs/SEMANTICS.md §6「运行预设」），之后的参数检查和不用预设时相同；运行上记下预设的 ID、名称和预设参数的名单。
+	 * 手动触发场景的最新版本。带上运行预设（`preset` 是它的 ID）时，在这个事务里读取预设，预设已失效就拒绝（409 `preset_invalid`），
+	 * 否则用它的值填入预设参数（docs/SEMANTICS.md §6「运行预设」），之后的参数检查和不用预设时相同；
+	 * 运行上记下预设的 ID、名称和预设参数的名单。
 	 */
 	trigger(
 		orchestrationId: string,
@@ -344,6 +347,16 @@ export class Engine implements AgentSessionHandler {
 						status: 404,
 						code: "preset_not_found",
 						message: "这个场景没有这个运行预设",
+					};
+				}
+				const invalid = presetProblems(preset.values, plan.main.entry.params);
+				if (invalid.length > 0) {
+					return {
+						ok: false,
+						status: 409,
+						code: "preset_invalid",
+						message: `运行预设「${preset.name}」已失效，不能用来触发：${describePresetProblems(invalid, plan.main.entry.params)}`,
+						details: invalid,
 					};
 				}
 				const fixed = withPresetValues(request.params, preset.values);

@@ -244,6 +244,10 @@ export const orchestrationsApi = {
 	 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 	 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
 	 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
+	 *
+	 * 响应里的 `warnings` 只提示，不阻止保存。除了文档本身的静态检查，原来可用、对照新版本会失效的运行预设
+	 * （GLOSSARY「失效的运行预设」）各有一条，`code` 是 `preset_invalidated`，没有 `node_id`，`message` 写明预设名和原因；
+	 * 原来就已失效的预设不重复警告。
 	 */
 	saveVersion: endpoint({
 		method: "POST",

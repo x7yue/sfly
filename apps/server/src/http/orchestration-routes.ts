@@ -1,10 +1,11 @@
-import { orchestrationsApi } from "@sfly/schema";
+import { type OrchestrationVersionView, orchestrationsApi } from "@sfly/schema";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { Db } from "../db/database.js";
 import { checkDocument } from "../orchestrations/document-checks.js";
 import { listOrchestrationSummaries } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
 import type { PackageRepository } from "../packages/package-repository.js";
+import { presetInvalidatedWarnings } from "../presets/preset-invalidation.js";
 import { isUuid } from "../util/uuid.js";
 import { requireActor } from "./actor.js";
 import { contractRoute } from "./contract-route.js";
@@ -26,6 +27,12 @@ export function registerOrchestrationRoutes(
 		packages,
 	}: { db: Db; orchestrations: OrchestrationStore; packages: PackageRepository },
 ): void {
+	/** 保存或恢复出新版本时返回的警告：文档的静态检查，加上会让运行预设失效的改动。 */
+	const saveWarnings = async (saved: OrchestrationVersionView) => [
+		...(await checkDocument(saved.document, { db, packages })),
+		...(await presetInvalidatedWarnings(db, saved.orchestration_id, saved.number)),
+	];
+
 	contractRoute(app, orchestrationsApi.create, async ({ body }, reply, raw) => {
 		if (!requireNickname(raw, reply)) return reply;
 		return reply.code(201).send(await orchestrations.create(body.name, body.description));
@@ -102,10 +109,10 @@ export function registerOrchestrationRoutes(
 			);
 		}
 		const saved = result.version;
-		// 结构、包版本锁定和引用的问题只产生警告，不阻止保存（docs/SEMANTICS.md §1.2、§2.4）。
-		// 先设状态码再返回响应：响应在类型上受契约约束。
+		// 结构、包版本锁定和引用的问题，以及会让运行预设失效的改动，只产生警告，不阻止保存
+		// （docs/SEMANTICS.md §1.2、§2.4、§6）。先设状态码再返回响应：响应在类型上受契约约束。
 		reply.code(201);
-		return { ...saved, warnings: await checkDocument(saved.document, { db, packages }) };
+		return { ...saved, warnings: await saveWarnings(saved) };
 	});
 
 	contractRoute(app, orchestrationsApi.versions, async ({ params }, reply) => {
@@ -126,9 +133,7 @@ export function registerOrchestrationRoutes(
 				? await orchestrations.restoreVersion(params.id, number, actor)
 				: undefined;
 		if (!restored) return versionNotFound(reply);
-		return reply
-			.code(201)
-			.send({ ...restored, warnings: await checkDocument(restored.document, { db, packages }) });
+		return reply.code(201).send({ ...restored, warnings: await saveWarnings(restored) });
 	});
 
 	contractRoute(app, orchestrationsApi.version, async ({ params }, reply) => {

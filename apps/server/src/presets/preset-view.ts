@@ -1,6 +1,7 @@
 import type { ParamDeclaration, PresetParamView, PresetView } from "@sfly/schema";
 import type { z } from "zod";
 import type { runPresets } from "../db/schema.js";
+import { presetProblems } from "./preset-validity.js";
 
 type Declaration = z.infer<typeof ParamDeclaration>;
 export type PresetRow = typeof runPresets.$inferSelect;
@@ -31,6 +32,7 @@ function paramView(name: string, value: unknown, decl: Declaration | undefined):
 /** 运行预设的视图（@sfly/schema 的 PresetView），对照最新版本入口参数的声明。 */
 export function toPresetView(row: PresetRow, declarations: readonly Declaration[]): PresetView {
 	const declared = new Map(declarations.map((d) => [d.name, d]));
+	const problems = presetProblems(row.values, declarations);
 	return {
 		id: row.id,
 		name: row.name,
@@ -38,6 +40,8 @@ export function toPresetView(row: PresetRow, declarations: readonly Declaration[
 		params: presetParamNames(row.values, declarations).map((name) =>
 			paramView(name, row.values[name], declared.get(name)),
 		),
+		status: problems.length === 0 ? "ok" : "invalid",
+		problems,
 		updated_by: row.updatedBy,
 		updated_at: row.updatedAt.toISOString(),
 	};

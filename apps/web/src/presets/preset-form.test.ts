@@ -89,6 +89,8 @@ describe("运行预设的编辑表单", () => {
 				{ name: "dry_run", secret: false, value: true },
 				{ name: "options", secret: false, value: { rounds: [1] } },
 			],
+			status: "ok",
+			problems: [],
 			updated_by: "小红",
 			updated_at: "2026-01-01T00:00:00.000Z",
 		};

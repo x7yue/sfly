@@ -27,6 +27,12 @@ export const PresetDescription = z
 	.trim()
 	.max(PRESET_DESCRIPTION_MAX, `说明不能超过 ${PRESET_DESCRIPTION_MAX} 个字符`);
 
+/**
+ * 保存场景版本时，原来可用、对照新版本会失效的运行预设各给出一条警告（orchestrationsApi.saveVersion 的 `warnings`），
+ * 警告的 `code` 是这个值。
+ */
+export const PRESET_INVALIDATED_WARNING = "preset_invalidated";
+
 /** 预设里的一个预设参数。 */
 export const PresetParamView = z.object({
 	name: z.string(),
@@ -36,12 +42,26 @@ export const PresetParamView = z.object({
 	value: z.unknown(),
 });
 
+/**
+ * 预设和最新版本对不上的一处（GLOSSARY「失效的运行预设」）：`missing` 是预设参数已不存在（被删除或改名），
+ * `type_mismatch` 是保存的值不符合它现在的类型。
+ */
+export const PresetProblemView = z.object({
+	/** 有问题的预设参数的名称。 */
+	param: z.string(),
+	reason: z.enum(["missing", "type_mismatch"]),
+});
+
 export const PresetView = z.object({
 	id: z.string(),
 	name: z.string(),
 	description: z.string(),
-	/** 预设参数，按最新版本入口参数的声明顺序。 */
+	/** 预设参数，按最新版本入口参数的声明顺序；已不在声明里的排在后面。 */
 	params: z.array(PresetParamView),
+	/** `invalid` 是失效的运行预设：不能用来触发运行（409 `preset_invalid`），改好之后恢复 `ok`。 */
+	status: z.enum(["ok", "invalid"]),
+	/** 失效的原因，按参数名称排序；`status` 为 `ok` 时为空。 */
+	problems: z.array(PresetProblemView),
 	/** 最后修改人的昵称。 */
 	updated_by: z.string(),
 	updated_at: Timestamp,
@@ -69,7 +89,10 @@ export const PresetChanges = z
 	);
 
 export const presetsApi = {
-	/** 场景的运行预设，按名称排序。场景不存在时 404 `not_found`。 */
+	/**
+	 * 场景的运行预设，按名称排序。每个预设的 `status` 和 `problems` 对照场景最新版本入口节点的参数声明：
+	 * 预设参数已不存在或保存的值不符合现在的类型时是失效的运行预设。场景不存在时 404 `not_found`。
+	 */
 	list: endpoint({
 		method: "GET",
 		path: "/orchestrations/:id/presets",
@@ -147,5 +170,6 @@ export const presetsApi = {
 
 export type PresetChanges = z.infer<typeof PresetChanges>;
 export type PresetParamView = z.infer<typeof PresetParamView>;
+export type PresetProblemView = z.infer<typeof PresetProblemView>;
 export type PresetView = z.infer<typeof PresetView>;
 export type PresetParamInput = z.infer<typeof PresetParamInput>;

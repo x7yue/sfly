@@ -431,6 +431,10 @@ export interface Api {
 		 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 		 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
 		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
+		 *
+		 * 响应里的 `warnings` 只提示，不阻止保存。除了文档本身的静态检查，原来可用、对照新版本会失效的运行预设
+		 * （GLOSSARY「失效的运行预设」）各有一条，`code` 是 `preset_invalidated`，没有 `node_id`，`message` 写明预设名和原因；
+		 * 原来就已失效的预设不重复警告。
 		 */
 		saveVersion: Endpoint<
 			{
@@ -622,7 +626,8 @@ export interface Api {
 		/**
 		 * `GET /orchestrations/:id/presets`
 		 *
-		 * 场景的运行预设，按名称排序。场景不存在时 404 `not_found`。
+		 * 场景的运行预设，按名称排序。每个预设的 `status` 和 `problems` 对照场景最新版本入口节点的参数声明：
+		 * 预设参数已不存在或保存的值不符合现在的类型时是失效的运行预设。场景不存在时 404 `not_found`。
 		 */
 		list: Endpoint<
 			{
@@ -753,7 +758,7 @@ export interface Api {
 				packages: Record<string, string>;
 				/** 最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。 */
 				agents: PreflightAgent[];
-				/** 场景的运行预设，按名称排序（与 presetsApi.list 相同）。 */
+				/** 场景的运行预设，按名称排序（与 presetsApi.list 相同），`status` 对照这次检查用的最新版本。 */
 				presets: PresetView[];
 			}
 		>;
@@ -780,7 +785,8 @@ export interface Api {
 		 *
 		 * 带上 `preset`（运行预设的 ID）时，预设参数取预设保存的值，`params` 只需要给其余的参数；预设在触发的事务里读取，
 		 * 之后修改预设不影响这次运行。`params` 里给预设参数传了不同的值（按 JSON 深比较）时 400 `preset_param_locked`
-		 * （details 是 `{ param, preset }`：参数名和预设名），传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`。
+		 * （details 是 `{ param, preset }`：参数名和预设名），传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`；预设已失效（对照最新版本，见 PresetView 的 `status`）
+		 * 时 409 `preset_invalid`（details 是问题清单，每项 `{ param, reason }`），不产生运行。
 		 */
 		trigger: Endpoint<
 			{
