@@ -98,6 +98,10 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				"data-[run=skipped]:border-canvas-run-done-border data-[run=skipped]:bg-canvas-run-done-bg data-[run=skipped]:text-fg-2",
 				"data-[run=stopped]:border-canvas-run-stopped data-[run=stopped]:text-fg-2",
 				"data-[mark=added]:border-ok data-[mark=changed]:border-warn",
+				// 选中或悬停注释框时（FlowCanvas 给节点外层加类名）：成员描边加光晕，框里的非成员「下沉」到画布底色、
+				// 标题换成次要文字色，和退后的运行状态一样不用不透明度，文字对比度不降。
+				"in-[.annotation-member]:border-canvas-node-selected in-[.annotation-member]:shadow-[0_0_0_2px_var(--canvas-node-selected-ring)]",
+				"in-[.annotation-dim]:border-canvas-run-done-border in-[.annotation-dim]:bg-canvas-run-done-bg in-[.annotation-dim]:text-fg-2",
 				"data-[mark=removed]:border-dashed data-[mark=removed]:border-danger data-[mark=removed]:text-fg-2 data-[mark=removed]:[&_[data-slot=base-node-title]]:line-through",
 			)}
 		>

@@ -1048,6 +1048,33 @@ test.describe("编排画布：注释框", () => {
 	});
 });
 
+test.describe("编排画布：注释框的成员", () => {
+	test.beforeEach(async ({ page, controlPlane, connectAgent }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		// fetch 和 ping 是成员，夹在中间的 dispatch 不是；子流程在框外。
+		const id = await createScenario(
+			controlPlane,
+			"带注释框的场景",
+			annotated([{ id: "annotation_1", title: "首尾两步", nodes: ["fetch", "ping"] }]),
+		);
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("选中注释框：成员高亮，框里夹着的非成员节点变淡", async ({ page }) => {
+		await annotationBand(page, "首尾两步").click();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-annotation-members-selected.png");
+	});
+
+	test("悬停注释框的标题带（没有选中）", async ({ page }) => {
+		await annotationBand(page, "首尾两步").hover();
+		await expect(page).toHaveScreenshot("editor-annotation-members-hovered.png");
+	});
+});
+
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {
 	await twoAgents(connectAgent);
 	await publishPackage(controlPlane, metricPackage());
