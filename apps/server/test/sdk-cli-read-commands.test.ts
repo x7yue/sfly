@@ -316,6 +316,7 @@ describe("sfly 只读命令 → 控制面", () => {
 				version_matches: true,
 				running_tasks: 2,
 				slots: 4,
+				preparing_since: null,
 				address: "10.0.0.5:9100",
 				dev_packages: ["demo-dev"],
 				last_seen_at: expect.any(String),
@@ -680,5 +681,76 @@ describe("sfly 只读命令 → 控制面", () => {
 			expect(missing.code).toBe(2);
 			expect(missing.stderr).toBe("错误：没有 id 是 nope 的运行\n下一步：sfly run list\n");
 		});
+	});
+});
+
+// Agent 准备环境期间（#219）：状态列写明准备了多久，时长按控制面时间算，准备好后只写「在线」。
+describe("sfly agent list：准备环境中的 Agent", () => {
+	let cp: TestControlPlane;
+	let preparing: FakeAgent;
+	let ready: FakeAgent;
+	const clock = new ManualClock(iso(T0));
+	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl]);
+	/** 各 Agent 的状态列。 */
+	const statuses = async () => {
+		const result = await cli("agent", "list");
+		expect(result.code, result.stderr).toBe(0);
+		return Object.fromEntries(
+			lines(result.stdout)
+				.slice(1)
+				.map((line) => {
+					const [name, status] = cells(line);
+					return [name, status];
+				}),
+		);
+	};
+
+	beforeAll(async () => {
+		cp = await startTestControlPlane({ clock });
+		const gone = await FakeAgent.connect(cp.grpcUrl, { name: "agent-gone" });
+		await gone.disconnect();
+		ready = await FakeAgent.connect(cp.grpcUrl, { name: "agent-ready" });
+		preparing = await FakeAgent.connect(cp.grpcUrl, { name: "agent-prep" }, { preparing: true });
+	});
+	afterAll(async () => {
+		await Promise.all([ready.disconnect(), preparing.disconnect()]);
+		await cp.close();
+	});
+
+	it("在线且准备环境中时状态列写「在线（准备环境中，已 2 分 10 秒）」，其他 Agent 不变", async () => {
+		clock.advance(45_000);
+		expect((await statuses())["agent-prep"]).toBe("在线（准备环境中，已 45 秒）");
+		clock.advance(85_000);
+		expect(await statuses()).toEqual({
+			"agent-gone": "离线",
+			"agent-prep": "在线（准备环境中，已 2 分 10 秒）",
+			"agent-ready": "在线",
+		});
+	});
+
+	it("准备了一个多小时：写小时和分钟", async () => {
+		clock.advance(60 * 60_000);
+		expect((await statuses())["agent-prep"]).toBe("在线（准备环境中，已 1 小时 2 分）");
+	});
+
+	it("--json 每行带 preparing_since：准备环境中是发出 Welcome 的时刻，准备好或离线时为 null", async () => {
+		const result = await cli("agent", "list", "--json");
+		expect(result.code, result.stderr).toBe(0);
+		const rows = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+		expect(rows.map((r) => [r.name, r.status, r.preparing_since])).toEqual([
+			["agent-gone", "offline", null],
+			["agent-prep", "online", iso(T0)],
+			["agent-ready", "online", null],
+		]);
+	});
+
+	it("准备好之后状态列只写「在线」，preparing_since 为 null", async () => {
+		await preparing.ready();
+		expect((await statuses())["agent-prep"]).toBe("在线");
+		const rows = JSON.parse((await cli("agent", "list", "--json")).stdout) as Array<{
+			name: string;
+			preparing_since: unknown;
+		}>;
+		expect(rows.find((r) => r.name === "agent-prep")?.preparing_since).toBeNull();
 	});
 });

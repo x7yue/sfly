@@ -258,6 +258,55 @@ test("引用的 Agent 不在线时提示任务会排队，仍可触发；已有�
 	await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
+test("引用的 Agent 在准备环境时提醒任务会等它准备好，仍可触发，准备好后任务照常派发", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" }, { preparing: true });
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	const checks = drawer.getByRole("list", { name: "触发前检查" });
+	await expect(checks).toContainText("agent-a 正在准备环境");
+	await expect(checks).toContainText("任务会等它准备好再执行");
+	await expect(checks).not.toContainText("不在线");
+	await expect(drawer.getByRole("button", { name: "触发运行" })).toBeEnabled();
+
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+	await expect(drawer.getByRole("region", { name: "运行摘要" })).toBeVisible();
+	await agent.expectNoAssign();
+	await agent.ready();
+	expect((await agent.nextAssign()).nodeId).toBe("ping");
+});
+
+test("同时有不在线和准备环境中的 Agent 时，两种提醒都写", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "agent-a" }, { preparing: true });
+	const gone = await connectAgent({ name: "agent-b" });
+	await gone.disconnect();
+	await publishPackage(controlPlane);
+	const doc = scenarioUsing("agent-a");
+	await createScenario(controlPlane, "巡检", {
+		...doc,
+		nodes: doc.nodes.map((n) => (n.id === "ping" ? { ...n, agent: "agent-b" } : n)),
+	});
+
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	const checks = drawer.getByRole("list", { name: "触发前检查" });
+	await expect(checks).toContainText("agent-b 当前不在线");
+	await expect(checks).toContainText("agent-a 正在准备环境");
+	await expect(drawer.getByRole("button", { name: "触发运行" })).toBeEnabled();
+});
+
 test("敏感参数默认隐藏，可以临时显示 5 秒", async ({ page, controlPlane, connectAgent }) => {
 	await connectAgent({ name: "agent-a" });
 	await publishPackage(controlPlane);

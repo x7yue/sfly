@@ -63,4 +63,8 @@ mutant lease-expired-no-cancel LateHeartbeats NoUnstoppedDuplicate \
 mutant heartbeat-lost-no-cancel SlowDelivery NoUnstoppedDuplicate \
 	'                       /\ toAgent'"'"' = IF lost = {} THEN toAgent' \
 	'                       /\ toAgent'"'"' = IF TRUE THEN toAgent'
+# engine.ts #dispatch：不等 Agent 准备好环境（Welcome 之后的第一次心跳）就派发（#219）。
+mutant dispatch-before-ready Safe AssignOnlyWhenReady \
+	$'    /\\ ready\n    /\\ cp[a] = "queued"' \
+	$'    /\\ cp[a] = "queued"'
 exit $status

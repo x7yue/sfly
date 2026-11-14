@@ -45,6 +45,11 @@ export interface AgentView {
 	};
 	/** 在线时是本次连接（或最近一次上报）的时间，离线时是最后在线的时间。 */
 	last_seen_at: Timestamp;
+	/**
+	 * 在线 Agent 正在准备环境（收到 Welcome 之后、第一次心跳之前，不接任务）时，这次连接发出 Welcome 的控制面时间（ADR 0018）；
+	 * 已准备好或离线时为 null。只记在控制面内存里，跟着连接走。
+	 */
+	preparing_since: Timestamp | null;
 	/** Agent 共享 venv 中已安装的节点包。 */
 	installed_packages: InstalledPackageView[];
 	/** 本次连接还没有安装过节点包时为 null。 */
@@ -828,6 +833,11 @@ export type NodeStatus = "queued" | "dispatched" | "running" | "waiting" | "succ
 export interface NodeTypeView {
 	name: NodeName;
 	title: string;
+	/**
+	 * 节点类型的说明：节点函数的文档字符串（去掉缩进，可以多段），显示在「添加节点」菜单（第一段）、
+	 * 节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。
+	 */
+	description?: string;
 	/** 入口：`module:function`。 */
 	entry: string;
 	inputs: IoSchema;
@@ -989,9 +999,11 @@ export interface PackageVersionSummary {
 	sha256: string;
 	size: number;
 	published_at: Timestamp;
+	/** 节点类型摘要，「添加节点」菜单用；`description` 是节点类型的完整说明，没有文档字符串时没有这个字段。 */
 	nodes: {
 		name: string;
 		title: string;
+		description?: string;
 	}[];
 	/** 有多少个场景的最新版本锁定了这个版本。 */
 	locked_orchestrations: number;
@@ -1113,6 +1125,16 @@ export interface PlatformMetrics {
 /** 平台自带图表的查询参数。 */
 export interface PlatformMetricsQuery {
 	points?: number;
+}
+
+/** 运行前检查里引用的 Agent：在线的 Agent 正在准备环境时，带上开始准备的控制面时间。 */
+export interface PreflightAgent {
+	name: string;
+	/** 场景的默认 Agent。 */
+	default: boolean;
+	status: "online" | "offline" | "unknown";
+	/** 这次连接发出 Welcome 的控制面时间；已准备好、不在线或没有注册过时为 null（任务派发要等 Agent 准备好）。 */
+	preparing_since: Timestamp | null;
 }
 
 /** 不能触发的一个原因。 */

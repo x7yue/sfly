@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalMultiline } from "./display-text.js";
 
 /** 节点包名：小写字母、数字、`-`、`_`，以字母或数字开头。 */
 export const PackageName = z
@@ -59,10 +60,19 @@ export const ChartDeclaration = z.strictObject({
 	metrics: z.array(MetricName).min(1),
 });
 
+/** 节点类型说明的长度上限（Unicode 字符数）；`sfly build` 按同一个上限检查。 */
+export const NODE_DESCRIPTION_MAX = 4000;
+
 export const NodeTypeMetadata = z
 	.strictObject({
 		name: NodeName,
 		title: z.string().min(1),
+		// 这一层是严格对象：带说明的包发布到没有这个字段的旧控制面会被拒绝，升级说明里要写明。
+		/**
+		 * 节点类型的说明：节点函数的文档字符串（去掉缩进，可以多段），显示在「添加节点」菜单（第一段）、
+		 * 节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。
+		 */
+		description: optionalMultiline(NODE_DESCRIPTION_MAX),
 		/** 入口：`module:function`。 */
 		entry: z.string().regex(/^[A-Za-z_][\w.]*:[A-Za-z_]\w*$/, "入口必须形如 module:function"),
 		inputs: IoSchema,

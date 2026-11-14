@@ -65,6 +65,16 @@ export function formatDuration(ms: number): string {
 	return `${Math.floor(h / 24)}d ${pad(h % 24)}h`;
 }
 
+/** 已经过了多久：`45 秒`、`2 分 10 秒`、`1 小时 2 分`（超过一小时不再写秒）。 */
+export function formatElapsed(ms: number): string {
+	const total = Math.floor(Math.max(0, ms) / 1000);
+	const seconds = total % 60;
+	const minutes = Math.floor(total / 60);
+	if (minutes === 0) return `${seconds} 秒`;
+	if (minutes < 60) return `${minutes} 分 ${seconds} 秒`;
+	return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
 const CLOCK_OFFSET_UNITS: Array<[ms: number, unit: string]> = [
 	[86_400_000, "天"],
 	[3_600_000, "小时"],
