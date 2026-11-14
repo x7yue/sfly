@@ -13,6 +13,7 @@ from typing import Any
 
 from sfly.cli.client import ApiError, segment
 from sfly.cli.errors import EXIT_BY_STATUS, EXIT_INTERRUPTED, EXIT_TIMEOUT, CliError
+from sfly.cli.presets import find_preset, with_next_step
 from sfly.cli.run_params import build_params, describe_declared
 from sfly.cli.run_summary import build_summary, render_summary, run_url
 from sfly.cli.run_view import fetch_run, format_duration, run_not_found
@@ -29,6 +30,8 @@ def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
         description="先预检场景：有问题时列出问题并退出，不触发。入口参数用 --param 名=值 或 "
         "--params JSON 给出，值按入口节点声明的类型转换（string 原样，number 按数字，"
         "boolean 写 true 或 false，json 按 JSON）。总是触发场景的最新版本。"
+        "--preset 按运行预设触发：预设参数取预设保存的值，不用再给；给了不同的值"
+        "（secret 预设参数给任何值）控制面拒绝，名称不存在或预设已失效时也报错，都不触发。"
         "不加 --wait 时输出运行 id 和控制台里的运行链接；加 --wait 时一直等到运行结束，"
         "节点状态每变化一次往 stderr 写一行进度，结束后在 stdout 输出摘要"
         "（状态、耗时、每个失败的任务及其错误和最后 50 行日志）。"
@@ -44,6 +47,12 @@ def register(run_sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> No
     )
     p_start.add_argument(
         "--params", metavar="JSON", help="入口参数的 JSON 对象，json 类型的参数用它传"
+    )
+    p_start.add_argument(
+        "--preset",
+        metavar="名称",
+        help="运行预设的名称（要完全一致，sfly scenario show 列出场景的运行预设）；"
+        "预设参数由控制面填入预设保存的值，--param、--params 只给其余的参数",
     )
     p_start.add_argument("--wait", action="store_true", help="等到运行结束，再输出摘要")
     _add_timeout_option(p_start)
@@ -114,11 +123,18 @@ def _start(session: Session, args: argparse.Namespace) -> int:
             next=show,
         )
     declared = preflight["params"]
-    params = build_params(declared, args.param or [], args.params, next_command=show)
+    preset = (
+        find_preset(scenario, preflight["presets"], declared, args.preset)
+        if args.preset is not None
+        else None
+    )
+    body: dict[str, Any] = {
+        "params": build_params(declared, args.param or [], args.params, next_command=show)
+    }
+    if preset:
+        body["preset"] = preset["id"]
     try:
-        run = client.request(
-            "POST", f"/orchestrations/{segment(scenario_id)}/runs", body={"params": params}
-        )
+        run = client.request("POST", f"/orchestrations/{segment(scenario_id)}/runs", body=body)
     except ApiError as error:
         if error.code == "invalid_params":
             raise CliError(
@@ -126,7 +142,7 @@ def _start(session: Session, args: argparse.Namespace) -> int:
                 f"入口参数不对：{error.message}\n{describe_declared(declared)}",
                 next=show,
             ) from None
-        raise
+        raise with_next_step(error, scenario_id) from None
 
     run_id: str = run["id"]
     url = run_url(client, run_id)
