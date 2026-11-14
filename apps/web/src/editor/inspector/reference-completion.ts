@@ -6,6 +6,7 @@ import {
 	type ReferenceOption,
 	referenceOptions,
 	referenceScope,
+	schemaDescription,
 	WHOLE_REFERENCE,
 } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
@@ -15,9 +16,10 @@ import type { OrchestrationDocument } from "@sfly/schema";
  * 何时弹出补全、按「入口参数」「前序节点」分组与过滤、键盘选择。
  */
 
-/** 一个引用补全项，带上来源说明（类型、所属节点）。 */
+/** 一个引用补全项，带上来源说明（类型、所属节点）；输出还带节点包写的说明（`Doc`），没写就没有。 */
 export interface ReferenceChoice extends ReferenceOption {
 	detail: string;
+	description?: string | undefined;
 }
 
 /**
@@ -42,7 +44,7 @@ export function referenceChoices(
 				? nodeTypeOf(doc, source, catalog)?.outputs.properties[o.key]
 				: undefined;
 		const type = typeof schema?.type === "string" ? `${schema.type} · ` : "";
-		return { ...o, detail: `${type}${o.node_id}` };
+		return { ...o, detail: `${type}${o.node_id}`, description: schemaDescription(schema) };
 	});
 }
 

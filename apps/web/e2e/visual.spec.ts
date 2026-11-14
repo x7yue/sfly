@@ -898,6 +898,64 @@ test("编排画布：检查器参数标签页里输入的说明", async ({ page,
 	await expect(page).toHaveScreenshot("editor-inspector-input-docs.png");
 });
 
+/** demo-checks：http_check 的输出有的写了说明，有的没写。 */
+const documentedOutputs = [
+	{
+		name: "http_check",
+		title: "HTTP 检查",
+		entry: "demo_checks.http:http_check",
+		inputs: {
+			type: "object",
+			properties: { url: { type: "string" }, expect: { type: "integer", default: 200 } },
+			required: ["url"],
+			order: ["url", "expect"],
+		},
+		outputs: {
+			type: "object",
+			properties: {
+				status: { type: "integer", description: "HTTP 状态码" },
+				report: {
+					type: "string",
+					description: "检查报告的文字，包含每一步的耗时；响应超时时只有失败原因，没有耗时",
+				},
+				body_file: { type: "string" },
+			},
+		},
+	},
+	{
+		name: "ping",
+		title: "ping",
+		entry: "demo_checks.http:ping_host",
+		inputs: { type: "object", properties: { host: { type: "string" } }, required: ["host"] },
+		outputs: { type: "object", properties: { alive: {} } },
+	},
+];
+
+test("编排画布：检查器「说明与指标」里输出的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: documentedOutputs });
+	const id = await createScenario(controlPlane, "日终数据处理", editorDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "fetch").click();
+	await page.getByRole("tab", { name: "说明与指标" }).click();
+	await expect(page.getByRole("table", { name: "输出" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-output-docs.png");
+});
+
+test("编排画布：引用补全里输出的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: documentedOutputs });
+	const id = await createScenario(controlPlane, "日终数据处理", editorDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "ping").click();
+	await page.getByRole("combobox", { name: "输入 host" }).fill("");
+	await page.keyboard.type("$");
+	await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-reference-output-docs.png");
+});
+
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {
 	await twoAgents(connectAgent);
 	await publishPackage(controlPlane, metricPackage());
