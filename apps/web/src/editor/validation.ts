@@ -1,4 +1,9 @@
-import { nodeNameWithId, nodeTypeOf, type PackageCatalog } from "@sfly/orchestration";
+import {
+	blocksTrigger,
+	nodeNameWithId,
+	nodeTypeOf,
+	type PackageCatalog,
+} from "@sfly/orchestration";
 import { OrchestrationDocument } from "@sfly/schema";
 
 /**
@@ -115,4 +120,12 @@ export function checkSummary(
 	if (fieldErrors > 0) return { kind: "failed", label: `${fieldErrors} 处字段错误` };
 	if (warnings > 0) return { kind: "warn", label: `${warnings} 条警告` };
 	return { kind: "ok", label: notes > 0 ? `检查通过 · ${notes} 条提醒` : "检查通过" };
+}
+
+/** 保存成功后提示里对警告的说明：注释框的警告不影响触发运行（blocksTrigger），其余要在触发运行前处理。 */
+export function warningsSummary(warnings: readonly object[]): string {
+	const blocking = warnings.filter(blocksTrigger).length;
+	if (blocking === 0) return `${warnings.length} 条警告，不影响触发运行`;
+	if (blocking === warnings.length) return `${warnings.length} 条警告，触发运行前需要处理`;
+	return `${warnings.length} 条警告，其中 ${blocking} 条触发运行前需要处理`;
 }
