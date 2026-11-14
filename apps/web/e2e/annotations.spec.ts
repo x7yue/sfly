@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { dropDocumentFields } from "../../server/test/support/legacy-document.js";
 import {
 	annotated,
 	annotationBand,
@@ -28,6 +29,16 @@ import { box, createScenario, publishPackage, triggerRun } from "./support";
 // 点标题带选中，在检查器里改标题、备注、成员，删除注释框；删节点时同步更新；运行状态和版本查看里也显示。
 
 const NOTE = "先建用户再查订单\n订单号由 fetch 生成";
+
+/** editorDocument 去掉必填的入口参数（给了默认值），不填参数也能触发运行。 */
+const triggerable = {
+	...editorDocument,
+	nodes: editorDocument.nodes.map((n) =>
+		n.id === "entry"
+			? { ...n, params: [{ name: "biz_date", type: "string", default: "2026-01-01" }] }
+			: n,
+	),
+};
 
 const openMenu = async (page: Page, id: string) => {
 	await nodeCard(page, id).click({ button: "right" });
@@ -366,14 +377,6 @@ test("运行状态模式和版本查看画布显示注释框（只读，标题�
 		slots: 2,
 		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
 	});
-	const triggerable = {
-		...editorDocument,
-		nodes: editorDocument.nodes.map((n) =>
-			n.id === "entry"
-				? { ...n, params: [{ name: "biz_date", type: "string", default: "2026-01-01" }] }
-				: n,
-		),
-	};
 	const v1 = annotated(
 		[
 			{ id: "annotation_1", title: "造测试数据", nodes: ["fetch"] },
@@ -430,4 +433,43 @@ test("运行状态模式和版本查看画布显示注释框（只读，标题�
 		1,
 	);
 	await expect(page.getByRole("button", { name: /^选中注释框/ })).toHaveCount(0);
+});
+
+test("运行绑定的是升级前保存的版本（库里的文档没有 annotations）：选中注释框后切到运行状态，页面照常显示", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({
+		name: "agent-linux",
+		slots: 2,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane);
+	const id = await createScenario(controlPlane, "日终数据处理", triggerable);
+	await triggerRun(controlPlane, id);
+	const res = await controlPlane.fetch(`/orchestrations/${id}/versions`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "bob" },
+		body: JSON.stringify({
+			base_version: 1,
+			document: annotated(
+				[{ id: "annotation_1", title: "造测试数据", nodes: ["fetch"] }],
+				triggerable,
+			),
+		}),
+	});
+	expect(res.status, await res.text()).toBe(201);
+	await dropDocumentFields(controlPlane, id, ["annotations"], 1);
+
+	await openEditor(page, id);
+	await annotationBand(page, "造测试数据").click();
+	await switchMode(page, "run");
+	// 运行绑定的第 1 版（没有注释框）加载出来、节点叠加上运行状态之后，页面还在。
+	await expect(annotationFrame(page, "annotation_1")).toHaveCount(0);
+	await expect(nodeCard(page, "fetch")).toHaveAttribute("data-run");
+	await expect(page.getByText("Something went wrong")).toHaveCount(0);
+
+	await switchMode(page, "edit");
+	await expect(annotationBand(page, "造测试数据")).toHaveAttribute("aria-pressed", "true");
 });
