@@ -38,14 +38,14 @@ export interface NodeDecoration {
 
 export type EdgeDecoration = "live" | "failed";
 
-/** 节点卡片需要的画布级信息。 */
+/** 节点卡片需要的画布级信息；`titleOf` 和 `subflowLabelOf` 同时是节点显示规则（nodeCardText）要查的信息。 */
 export interface CanvasInfo {
 	defaultAgent: string | undefined;
 	/** 包节点类型的标题（来自节点包元信息）。 */
 	titleOf(pkg: string, node: string): string | undefined;
 	/** 包名 → 锁定的版本。 */
 	packages: Readonly<Record<string, string>>;
-	/** 子流程入口节点 ID → 子流程的显示名称（node-display 的 subflowLabel）；不是子流程入口时为 undefined。 */
+	/** 子流程入口节点 ID → 子流程的显示名称（@sfly/orchestration 的 subflowLabels）；不是子流程入口时为 undefined。 */
 	subflowLabelOf(id: string): string | undefined;
 	/** 节点 ID → 静态检查警告（编辑模式）。 */
 	warnings: ReadonlyMap<string, readonly { message: string }[]>;
