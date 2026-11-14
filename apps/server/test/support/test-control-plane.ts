@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,17 @@ import {
 } from "../../src/control-plane.js";
 import { ManualClock } from "./manual-clock.js";
 import { createTestDatabase, type TestDatabase } from "./test-database.js";
+
+// 控制面的测试和端到端测试都经这里启动控制面。Node 低于 .node-version 时，undici 与 Node 自带的 fetch 不兼容，
+// 每个请求都只报 `fetch failed`（invalid onRequestStart method），看不出是版本问题：先检查版本。
+const requiredNode = Number(
+	readFileSync(new URL("../../../../.node-version", import.meta.url), "utf8").trim(),
+);
+if (Number(process.versions.node.split(".")[0]) < requiredNode) {
+	throw new Error(
+		`测试需要 Node ${requiredNode}（.node-version），当前是 ${process.versions.node}：先切换 Node 版本（例如 nvm use ${requiredNode}）`,
+	);
+}
 
 export interface TestControlPlane {
 	/** 当前实例；restart() 之后会换成新实例。 */

@@ -125,7 +125,7 @@ jobs:
       - name: Generated code is up to date
         run: pnpm gen:check
       - name: Lint
-        run: pnpm lint:ts && pnpm lint:proto && pnpm lint:node && pnpm lint:docs
+        run: pnpm lint:ts && pnpm lint:proto && pnpm lint:node && pnpm lint:docs && pnpm lint:actions
       - name: Typecheck
         run: pnpm typecheck:ts
       - name: Protobuf breaking check
