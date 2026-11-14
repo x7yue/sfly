@@ -33,6 +33,24 @@ export async function listRunPresets(
 	return ((await res.json()) as { presets: PresetView[] }).presets;
 }
 
+/** 修改运行预设（只改给出的字段；`params` 是预设参数的完整清单）。 */
+export async function updateRunPreset(
+	cp: TestControlPlane,
+	scenarioId: string,
+	presetId: string,
+	changes: { name?: string; params?: Array<{ name: string; value: unknown }> },
+): Promise<void> {
+	const res = await cp.fetch(`/orchestrations/${scenarioId}/presets/${presetId}`, {
+		method: "PATCH",
+		headers: {
+			"content-type": "application/json",
+			"x-sfly-nickname": encodeURIComponent("tester"),
+		},
+		body: JSON.stringify(changes),
+	});
+	if (res.status !== 200) throw new Error(`修改运行预设：HTTP ${res.status} ${await res.text()}`);
+}
+
 /** 删除运行预设。 */
 export async function deleteRunPreset(
 	cp: TestControlPlane,

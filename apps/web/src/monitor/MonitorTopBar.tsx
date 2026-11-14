@@ -184,7 +184,7 @@ export function MonitorTopBar({
 				title="再次运行"
 				orchestrationId={run.orchestration_id}
 				name={name ?? "场景"}
-				initialParams={run.params}
+				rerunOf={run}
 				onTriggered={(next) => navigate({ to: "/runs/$id", params: { id: next.id } })}
 			/>
 		</header>

@@ -13,12 +13,14 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { AlertTriangleIcon, CheckIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Banner } from "#/components/feedback/banner";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { useNickname } from "#/lib/nickname";
 import { writeRunView } from "#/monitor/live-run";
+import { unusablePresetNotice } from "#/presets/invalid-preset";
 import { draftFromFormValues } from "#/presets/preset-form";
 import { type OpeningView, RunPresetsDialog } from "#/presets/RunPresetsDialog";
 import { Button } from "@/components/ui/button";
@@ -32,6 +34,7 @@ import {
 	initialValues,
 	lockedValue,
 	paramsSchema,
+	type RerunSource,
 	switchPreset,
 	toParams,
 	usablePreset,
@@ -40,12 +43,15 @@ import {
 export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
 	onLocate?: (nodeId: string) => void;
-	/** 表单初始值（再次运行时为上次运行的参数；敏感参数不沿用，需要重新填写）。 */
-	initialParams?: Record<string, unknown>;
+	/**
+	 * 「再次运行」的来源运行：入口参数用它的值预填（敏感参数不沿用，需要重新填写），预设选中它用的预设
+	 * （预设用不了时在表单上方写明原因），不看浏览器里记住的预设。不给时是直接运行。
+	 */
+	rerunOf?: RerunSource;
 }
 
 /**
- * 运行抽屉的表单阶段（原型 drawerHTML 的 form）：已有运行中的提示、运行预设（场景有预设时）、入口参数（按入口节点的声明生成，
+ * 运行抽屉的表单阶段（原型 drawerHTML 的 form）：已有运行中的提示、「再次运行」原来的预设用不了的提示、运行预设（场景有预设时）、入口参数（按入口节点的声明生成，
  * TanStack Form + zod 校验；选中预设时预设参数只读）、触发前检查清单、触发人。底部的「取消」「触发运行」由 RunDrawer 渲染，
  * 通过 formId 提交。触发成功后调用 onTriggered。
  */
@@ -147,7 +153,7 @@ function ParamsForm({
 	const decls = preflight.params;
 	const checks = preflightChecks(preflight, options);
 	const [presetId, setPresetId] = useState<string | null>(() =>
-		initialPresetId(preflight.presets, readLastPreset(orchestrationId)),
+		initialPresetId(preflight.presets, readLastPreset(orchestrationId), options.rerunOf),
 	);
 	// 失效的运行预设不能用：选中之后预设才失效（预检刷新）或被删除时，当作没有选。
 	const preset = usablePreset(preflight.presets, presetId);
@@ -170,7 +176,7 @@ function ParamsForm({
 	});
 	const formElement = useRef<HTMLFormElement>(null);
 	const form = useForm({
-		defaultValues: initialValues(decls, options.initialParams),
+		defaultValues: initialValues(decls, options.rerunOf?.params),
 		// 第一次提交之前不打扰；提交过一次之后随输入重新校验。
 		validationLogic: revalidateLogic(),
 		validators: { onDynamic: paramsSchema(editable) },
@@ -200,6 +206,12 @@ function ParamsForm({
 		setPresetId(next?.id ?? null);
 	};
 
+	// 「再次运行」原来的预设选不了（已删除、已失效）：写明原因。预设之后被修好或删除，提示随之更新。
+	const rerunNotice = unusablePresetNotice(
+		preflight.presets,
+		decls,
+		options.rerunOf?.preset ?? null,
+	);
 	const blocked = checks.blocked;
 	const pending = trigger.isPending;
 	useEffect(() => {
@@ -217,6 +229,7 @@ function ParamsForm({
 			}}
 		>
 			<RunningNotice orchestrationId={orchestrationId} />
+			{rerunNotice && <Banner tone="warn" title={rerunNotice} announce className="mb-3" />}
 			{(decls.length > 0 || preflight.presets.length > 0) && (
 				<PresetSelect
 					presets={preflight.presets}
