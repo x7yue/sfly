@@ -1,4 +1,4 @@
-import { nodeCardText } from "@sfly/orchestration";
+import { nodeCardText, nodeDisplayName } from "@sfly/orchestration";
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
 import { type CSSProperties, useId } from "react";
@@ -91,7 +91,12 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					<KindIcon />
 				</span>
 				<span className="truncate font-mono text-fg-2">{id}</span>
-				{caption && <span className={cn("flex-none", LOD_HIDDEN)}>{caption}</span>}
+				{caption && (
+					// 原来的标题可以很长（子流程名称、节点类型标题）：放不下时它先让出一点，主要由节点 ID 让位。
+					<span className={cn("min-w-0 shrink-[0.25] truncate", LOD_HIDDEN)} title={caption}>
+						{caption}
+					</span>
+				)}
 				<span id={statusId} className="ml-auto flex-none">
 					{decoration?.status ??
 						(warnings.length > 0 && <WarningBadge warnings={warnings} className={ZOOM_TEXT_12} />)}
@@ -101,6 +106,8 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			    行高再小时缩小视图后字形底部会被裁掉。 */}
 			<BaseNodeHeaderTitle
 				aria-hidden
+				// 显示名称放不下时截断：悬停给出全文（读屏用的全文在 aria-label 里）。
+				title={nodeDisplayName(node) === undefined ? undefined : title}
 				className={cn("mt-1.5 mb-1.25 leading-[1.6]", ZOOM_TEXT_TITLE)}
 			>
 				{title}

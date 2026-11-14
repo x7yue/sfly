@@ -70,8 +70,10 @@ function cardCaption(kind: NodeKind, title: string): string | undefined {
 	return title.includes(label) ? undefined : label;
 }
 
-/** 去掉首尾空白之后的显示名称；没写或只有空白时为 undefined。 */
-const displayNameOf = (node: OrchestrationNode | { display_name?: string | undefined }) =>
+/** 节点的显示名称（去掉首尾空白）；没写、只有空白、子流程入口节点（没有这个字段）时为 undefined。 */
+export const nodeDisplayName = (
+	node: OrchestrationNode | { display_name?: string | undefined },
+): string | undefined =>
 	("display_name" in node ? node.display_name?.trim() : undefined) || undefined;
 
 /**
@@ -83,7 +85,7 @@ export function nodeCardText(
 	lookup: NodeDisplayLookup,
 ): { title: string; caption: string | undefined } {
 	const title = cardTitle(node, lookup);
-	const named = displayNameOf(node);
+	const named = nodeDisplayName(node);
 	if (named !== undefined) return { title: named, caption: title };
 	return { title, caption: cardCaption(node.kind, title) };
 }
@@ -109,7 +111,7 @@ export function nodeNameWithId(node: {
 }): string {
 	return nameWithId(
 		node.id,
-		node.kind === "subflow_entry" ? subflowLabel(node) : displayNameOf(node),
+		node.kind === "subflow_entry" ? subflowLabel(node) : nodeDisplayName(node),
 	);
 }
 

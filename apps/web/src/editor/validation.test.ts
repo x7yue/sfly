@@ -21,6 +21,21 @@ describe("保存前的字段校验", () => {
 		expect(documentFieldErrors(base)).toEqual([]);
 	});
 
+	it("显示名称超过 40 个字符或带换行时指出所在节点和字段；空白的显示名称不算错", () => {
+		const withName = (display_name: string): OrchestrationDocument => ({
+			...base,
+			nodes: base.nodes.map((n) => (n.id === "wait" ? { ...n, display_name } : n)),
+		});
+		expect(documentFieldErrors(withName("😀".repeat(40)))).toEqual([]);
+		expect(documentFieldErrors(withName("   "))).toEqual([]);
+		expect(documentFieldErrors(withName("😀".repeat(41)))).toEqual([
+			{ nodeId: "wait", field: "display_name", message: "最多 40 个字符", typed: false },
+		]);
+		expect(documentFieldErrors(withName("第一行\n第二行"))).toEqual([
+			{ nodeId: "wait", field: "display_name", message: "只能写一行", typed: false },
+		]);
+	});
+
 	it("参数名不合法或重复时指出所在节点和字段", () => {
 		const doc: OrchestrationDocument = {
 			...base,
@@ -100,6 +115,17 @@ describe("提醒：节点类型没有声明的输入", () => {
 			{ node_id: "fetch", input: "token", message: "fetch 的输入 token 没有在节点类型中声明" },
 		]);
 		expect(undeclaredInputNotes(doc, new Map())).toEqual([]);
+	});
+
+	it("提醒里的节点写成「显示名称（节点 ID）」", () => {
+		const loaded = new Map([[packageKey("demo", "1.0.0"), [type]]]) as unknown as PackageCatalog;
+		const named: OrchestrationDocument = {
+			...doc,
+			nodes: doc.nodes.map((n) => (n.id === "fetch" ? { ...n, display_name: "探测站点" } : n)),
+		};
+		expect(undeclaredInputNotes(named, loaded)[0]?.message).toBe(
+			"探测站点（fetch） 的输入 token 没有在节点类型中声明",
+		);
 	});
 
 	it("检查结果：字段错误最先，其次警告，没有警告时带上提醒条数", () => {

@@ -1,4 +1,4 @@
-import { nodeTypeOf, type PackageCatalog } from "@sfly/orchestration";
+import { nodeNameWithId, nodeTypeOf, type PackageCatalog } from "@sfly/orchestration";
 import { OrchestrationDocument } from "@sfly/schema";
 
 /**
@@ -90,7 +90,7 @@ export function undeclaredInputNotes(
 				notes.push({
 					node_id: node.id,
 					input,
-					message: `${node.id} 的输入 ${input} 没有在节点类型中声明`,
+					message: `${nodeNameWithId(node)} 的输入 ${input} 没有在节点类型中声明`,
 				});
 			}
 		}
