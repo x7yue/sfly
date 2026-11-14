@@ -25,6 +25,7 @@ import {
 	runningScenario,
 	unixAt,
 } from "./monitor-scenario";
+import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
 import { stoppingRun } from "./stop-subflow-scenario";
@@ -1090,6 +1091,26 @@ test("运行监控：子流程被停止（停止子流程节点的尝试）", as
 	await expect(page.getByRole("banner").getByTestId("run-status")).toHaveText("成功");
 	await page.mouse.move(700, 870);
 	await expect(page).toHaveScreenshot("monitor-stopped.png", { mask: runIds(page) });
+});
+
+test("运行监控：显示名称与备注图标（名称放不下时截断显示名称，节点 ID 完整）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, scenarioId } = await namedScenario(controlPlane, connectAgent, {
+		...FIRST,
+		verify: "核对结果：对比订单库与支付流水的差异，超过阈值时报警",
+	});
+	const runId = await triggerRun(controlPlane, scenarioId);
+	await driveToRetry(agent, clock, await agent.nextAssign());
+	await openMonitor(page, clock, runId, "verify");
+	await page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }).click();
+	await expect(page.getByRole("article", { name: /第 2 次尝试$/ })).toBeVisible();
+	await chartsLoaded(page);
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-display-names.png", { mask: runIds(page) });
 });
 
 test("编排画布：运行状态（子流程被停止）", async ({ page, controlPlane, connectAgent, clock }) => {

@@ -1,3 +1,4 @@
+import { nameBeforeId } from "@sfly/orchestration";
 import {
 	type AttemptView,
 	artifactsApi,
@@ -203,16 +204,16 @@ export function BottomPanel({
 						))}
 					</TabsList>
 					<div className="ml-auto flex items-center gap-1.5 px-2">
-						<ScopeLabel node={node} onClear={() => actions.select(null)}>
-							{[
-								node
-									? `范围：${runNodeName(node)}`
-									: filter
-										? `范围：跟随筛选（${filtered} 个节点）`
-										: "范围：全部节点",
-								node && attempt && node.attempts.length > 1 ? `（第 ${attempt.attempt} 次）` : "",
-								zoom && tab === "logs" ? " · 已按时间范围过滤" : "",
-							].join("")}
+						<ScopeLabel
+							node={node}
+							suffix={
+								(node && attempt && node.attempts.length > 1
+									? `（第 ${attempt.attempt} 次）`
+									: "") + (zoom && tab === "logs" ? " · 已按时间范围过滤" : "")
+							}
+							onClear={() => actions.select(null)}
+						>
+							{filter ? `范围：跟随筛选（${filtered} 个节点）` : "范围：全部节点"}
 						</ScopeLabel>
 						{node && node.attempts.length > 1 && (
 							<Segmented
@@ -309,26 +310,43 @@ export function BottomPanel({
 	);
 }
 
+/**
+ * 底部面板的范围：选中节点时是「范围：显示名称（节点 ID）」加上 `suffix`（第几次尝试、按时间范围过滤），
+ * 放不下时只截断显示名称；没有选中节点时是 `children`（全部节点或跟随筛选）加上 `suffix`。
+ */
 function ScopeLabel({
 	node,
+	suffix,
 	onClear,
 	children,
 }: {
 	node: NodeRunView | undefined;
+	suffix: string;
 	onClear: () => void;
-	children: string;
+	children: ReactNode;
 }) {
 	if (node === undefined) {
 		return (
 			<span className="text-xs text-fg-3" data-testid="bp-scope">
 				{children}
+				{suffix}
 			</span>
 		);
 	}
+	const name = nameBeforeId(node.node_id, node.display_name);
 	return (
 		<span className="inline-flex h-6 max-w-96 min-w-0 items-center rounded-md border border-border bg-raised pl-2 text-xs text-fg-1">
-			<span data-testid="bp-scope" className="min-w-0 truncate" title={children}>
-				{children}
+			<span
+				data-testid="bp-scope"
+				className="flex min-w-0 whitespace-nowrap"
+				title={`范围：${runNodeName(node)}${suffix}`}
+			>
+				范围：
+				{name && <span className="min-w-0 truncate">{name}</span>}
+				<span className="flex-none">
+					{name ? `（${node.node_id}）` : node.node_id}
+					{suffix}
+				</span>
 			</span>
 			<button
 				type="button"
@@ -641,7 +659,7 @@ function AttemptsTab({
 							<NodeName node={n} />
 							<b className="flex-none font-semibold">第 {a.attempt} 次</b>
 							<StatusPill kind={status.kind}>{status.label}</StatusPill>
-							<span className="ml-auto font-mono text-2xs text-fg-3">
+							<span className="ml-auto flex-none font-mono text-2xs text-fg-3">
 								{a.agent ?? "控制面"} · {a.started_at ? formatClock(a.started_at) : "未开始"} ·{" "}
 								{a.started_at ? formatDuration(end - Date.parse(a.started_at)) : "—"}
 							</span>
