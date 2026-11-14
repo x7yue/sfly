@@ -1,4 +1,5 @@
 import type { ParamDeclView, PresetProblemView, PresetView } from "@sfly/schema";
+import { PRESET_INVALID_LABEL } from "#/lib/copy";
 import { usablePreset } from "#/run-drawer/trigger-form";
 import { draftFromPreset, type PresetDraft } from "./preset-form";
 
@@ -30,7 +31,7 @@ export function unusablePresetNotice(
 	if (!ran || usablePreset(presets, ran.id)) return null;
 	const preset = presets.find((p) => p.id === ran.id);
 	return preset
-		? `预设 ${preset.name} 已失效：${problemsText(preset.problems)}`
+		? `预设 ${preset.name} ${PRESET_INVALID_LABEL}：${problemsText(preset.problems)}`
 		: `预设 ${ran.name} 已删除`;
 }
 

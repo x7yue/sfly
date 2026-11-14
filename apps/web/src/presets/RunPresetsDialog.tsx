@@ -10,7 +10,7 @@ import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { QueryView, TableSkeleton } from "#/components/feedback/states";
 import { apiQuery, callApi } from "#/lib/api";
-import { MESSAGE, TERM } from "#/lib/copy";
+import { MESSAGE, PRESET_INVALID_LABEL, TERM } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { ParamField } from "#/run-drawer/ParamField";
 import { Badge } from "@/components/ui/badge";
@@ -243,7 +243,7 @@ function PresetList({
 											{preset.name}
 											{preset.status === "invalid" && (
 												<Badge variant="danger" className="ml-2 align-middle">
-													已失效
+													{PRESET_INVALID_LABEL}
 												</Badge>
 											)}
 										</div>

@@ -112,6 +112,9 @@ export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`
 /** 「预设：压测 A 集群」：运行详情、运行记录里这个运行用的运行预设（触发时记下的名称）。 */
 export const presetLabel = (name: string) => `预设：${name}`;
 
+/** 失效的运行预设（GLOSSARY）的状态词：运行抽屉的选择框、管理对话框的列表、「再次运行」的提示里都写它。 */
+export const PRESET_INVALID_LABEL = "已失效";
+
 /** 通用的加载 / 错误 / 空状态文字。 */
 export const MESSAGE = {
 	loading: "加载中",

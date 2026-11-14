@@ -1,5 +1,6 @@
 import type { PresetView } from "@sfly/schema";
 import { useId } from "react";
+import { PRESET_INVALID_LABEL, TERM } from "#/lib/copy";
 import { problemsText } from "#/presets/invalid-preset";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
@@ -34,7 +35,7 @@ export function PresetSelect({
 		<div className="mb-4.5 flex flex-col gap-2.5">
 			<div className="flex items-center justify-between gap-2">
 				<label htmlFor={id} className="text-xs font-semibold tracking-wide text-fg-2">
-					运行预设
+					{TERM.runPreset}
 				</label>
 				{value === null && (
 					<Button variant="link" size="sm" className="text-xs" onClick={onSaveAs}>
@@ -58,7 +59,7 @@ export function PresetSelect({
 						disabled={preset.status === "invalid"}
 					>
 						{preset.status === "invalid"
-							? `${preset.name} · 已失效：${problemsText(preset.problems)}`
+							? `${preset.name} · ${PRESET_INVALID_LABEL}：${problemsText(preset.problems)}`
 							: preset.name}
 					</NativeSelectOption>
 				))}
