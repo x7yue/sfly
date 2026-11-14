@@ -146,7 +146,7 @@ sfly scenario push 回归.json
 - 入口节点和子流程入口节点的参数可以写 `description`：一行说明，最长 200 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存。触发表单、异步任务节点的参数映射表单和命令行的参数表（`scenario show`、`run start` 参数出错时）都会显示它；它不影响执行。超长或带换行时 push 的本地校验报出位置，例如 `nodes/0/params/1/description`（节点 entry）。
 - 新加的节点不用写 `position`：控制面保存时按画布「整理布局」的算法给没有坐标的节点排好位置（压住已有节点时挪到附近的空位），已经有坐标的节点不动。
 - 别人在你 pull 之后保存了新版本时，push 报版本冲突（退出码 2），写明最新版本号、作者和保存时间，提示重新 pull、把你的改动合并进去再 push。没有强制覆盖的选项。命令行不会成为在线编辑者：浏览器里正在编辑同一个场景的人保存时，会收到界面已有的冲突提示。
-- `scenario copy` 复制场景（说明和运行通知设置一并复制）；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。
+- `scenario copy` 复制场景（说明和运行通知设置一并复制）。联调副本的说明要改成讲联调：`scenario rename <副本> --description …`，第一行写「联调 <包名>，由 <昵称> 的 AI 编程助手创建」，后面接原场景的说明；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。
 
 ## 直接调用接口
 
@@ -166,4 +166,4 @@ sfly api POST /runs/<运行 id>/cancel
 
 ## 联调
 
-用命令行联调的步骤（复制场景、改成开发版本和本机 Agent、运行并按退出码和摘要改到成功）见 [联调](integration.md) 的「用命令行联调」；AI 编程助手按 `sfly-platform` skill 自己做完这些步骤。
+用命令行联调的步骤（复制场景并写明副本的用途、改成开发版本和本机 Agent、运行并按退出码和摘要改到成功）见 [联调](integration.md) 的「用命令行联调」；AI 编程助手按 `sfly-platform` skill 自己做完这些步骤。
