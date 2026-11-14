@@ -11,7 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { AlertTriangleIcon, CheckIcon, XIcon } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
@@ -22,7 +22,8 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type CheckRow, type LocalState, type Preflight, preflightChecks } from "./checks";
 import { ParamField } from "./ParamField";
-import { initialValues, paramsSchema, toParams } from "./trigger-form";
+import { PresetSelect } from "./PresetSelect";
+import { fieldValue, initialValues, paramsSchema, toParams } from "./trigger-form";
 
 export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
@@ -32,8 +33,8 @@ export interface TriggerOptions extends LocalState {
 }
 
 /**
- * 运行抽屉的表单阶段（原型 drawerHTML 的 form）：已有运行中的提示、入口参数（按入口节点的声明生成，
- * TanStack Form + zod 校验）、触发前检查清单、触发人。底部的「取消」「触发运行」由 RunDrawer 渲染，
+ * 运行抽屉的表单阶段（原型 drawerHTML 的 form）：已有运行中的提示、运行预设（场景有预设时）、入口参数（按入口节点的声明生成，
+ * TanStack Form + zod 校验；选中预设时预设参数只读）、触发前检查清单、触发人。底部的「取消」「触发运行」由 RunDrawer 渲染，
  * 通过 formId 提交。触发成功后调用 onTriggered。
  */
 export function TriggerForm({
@@ -109,9 +110,14 @@ function ParamsForm({
 	const nickname = useNickname();
 	const decls = preflight.params;
 	const checks = preflightChecks(preflight, options);
+	const [presetId, setPresetId] = useState<string | null>(null);
+	const preset = preflight.presets.find((p) => p.id === presetId);
+	// 选中预设时，预设参数取预设的值、不能修改，只提交其余参数和预设（控制面填入预设的值）。
+	const locked = new Map(preset?.params.map((p) => [p.name, p.value]));
+	const editable = decls.filter((p) => !locked.has(p.name));
 	const trigger = useMutation({
-		mutationFn: (params: Record<string, unknown>) =>
-			callApi(runsApi.trigger, { params: { id: orchestrationId }, body: { params } }),
+		mutationFn: (body: { params: Record<string, unknown>; preset?: string }) =>
+			callApi(runsApi.trigger, { params: { id: orchestrationId }, body }),
 		onSuccess: (run) => {
 			writeRunView(queryClient, run);
 			// 运行列表与场景卡片上的最近运行。
@@ -125,10 +131,11 @@ function ParamsForm({
 		defaultValues: initialValues(decls, options.initialParams),
 		// 第一次提交之前不打扰；提交过一次之后随输入重新校验。
 		validationLogic: revalidateLogic(),
-		validators: { onDynamic: paramsSchema(decls) },
+		validators: { onDynamic: paramsSchema(editable) },
 		onSubmit: ({ value }) => {
 			if (checks.blocked) return;
-			trigger.mutate(toParams(decls, value));
+			const params = toParams(editable, value);
+			trigger.mutate(preset ? { params, preset: preset.id } : { params });
 		},
 		// 校验没通过：把焦点放到第一个出错的字段（等错误渲染出来再找），读屏用户知道错在哪里。
 		onSubmitInvalid: () => {
@@ -155,6 +162,9 @@ function ParamsForm({
 			}}
 		>
 			<RunningNotice orchestrationId={orchestrationId} />
+			{preflight.presets.length > 0 && (
+				<PresetSelect presets={preflight.presets} value={presetId} onChange={setPresetId} />
+			)}
 			<SectionTitle first>
 				入口参数
 				<span className="ml-auto font-normal text-fg-3">{decls.length} 个</span>
@@ -162,19 +172,28 @@ function ParamsForm({
 			{decls.length === 0 && <p className="m-0 mb-3 text-xs text-fg-3">入口节点没有声明参数。</p>}
 			{/* 标签列的宽度在这里定一次，所有参数共用：输入框的左右沿对齐 */}
 			<div className="mb-3 grid grid-cols-[fit-content(40%)_minmax(0,1fr)] items-start gap-x-2.5 gap-y-3">
-				{decls.map((p) => (
-					<form.Field key={p.name} name={p.name}>
-						{(field) => (
-							<ParamField
-								param={p}
-								value={field.state.value}
-								error={errorText(field.state.meta.errors)}
-								onChange={(v) => field.handleChange(v)}
-								onBlur={field.handleBlur}
-							/>
-						)}
-					</form.Field>
-				))}
+				{decls.map((p) =>
+					preset && locked.has(p.name) ? (
+						<ParamField
+							key={p.name}
+							param={p}
+							value={fieldValue(p, locked.get(p.name))}
+							lockedBy={preset.name}
+						/>
+					) : (
+						<form.Field key={p.name} name={p.name}>
+							{(field) => (
+								<ParamField
+									param={p}
+									value={field.state.value}
+									error={errorText(field.state.meta.errors)}
+									onChange={(v) => field.handleChange(v)}
+									onBlur={field.handleBlur}
+								/>
+							)}
+						</form.Field>
+					),
+				)}
 			</div>
 			<SectionTitle>触发前检查</SectionTitle>
 			<ul

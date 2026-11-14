@@ -1,5 +1,6 @@
 import type { ParamDeclView } from "@sfly/schema";
-import { EyeIcon, EyeOffIcon } from "lucide-react";
+import { cn } from "cn";
+import { EyeIcon, EyeOffIcon, LockIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,9 +25,17 @@ const breakableName = (name: string) =>
 		</span>
 	));
 
+const defaultHelp = (param: ParamDeclView): string | null =>
+	param.secret
+		? "界面和日志中都会打码"
+		: param.default !== undefined && param.type !== "boolean"
+			? `默认 ${JSON.stringify(param.default)}`
+			: null;
+
 /**
  * 一个入口参数的表单行：标签（名称、类型、是否敏感）与按类型渲染的控件，加上错误和帮助文字。
- * 外层是两列的网格（标签列、控件列），这一行占满整行（subgrid）。
+ * 运行抽屉和运行预设的编辑表单共用。外层是网格，这一行占满整行（subgrid）：标签列、控件列，
+ * 给了 `leading` 时最前面再多一列，外层网格要按列数排好。
  */
 export function ParamField({
 	param,
@@ -34,12 +43,24 @@ export function ParamField({
 	error,
 	onChange,
 	onBlur,
+	lockedBy,
+	disabled = false,
+	help = defaultHelp(param),
+	leading,
 }: {
 	param: ParamDeclView;
 	value: FieldValue | undefined;
-	error: string | undefined;
-	onChange: (value: FieldValue) => void;
-	onBlur: () => void;
+	error?: string | undefined;
+	onChange?: (value: FieldValue) => void;
+	onBlur?: () => void;
+	/** 由这个运行预设固定：控件只读、标签带锁的图标，帮助文字写「由预设 <名称> 固定」。 */
+	lockedBy?: string | undefined;
+	/** 不能编辑（预设编辑表单里没有勾选的参数）。 */
+	disabled?: boolean;
+	/** 代替默认的帮助文字（默认值或打码说明）；null 不显示。 */
+	help?: string | null;
+	/** 标签前面的一格，例如预设编辑表单的「预设」勾选框。 */
+	leading?: React.ReactNode;
 }) {
 	const id = useId();
 	const labelId = `${id}-label`;
@@ -52,18 +73,19 @@ export function ParamField({
 		return () => clearTimeout(timer);
 	}, [revealed]);
 
-	const help = param.secret
-		? "界面和日志中都会打码"
-		: param.default !== undefined && param.type !== "boolean"
-			? `默认 ${JSON.stringify(param.default)}`
-			: null;
-	const describedBy = [error ? errorId : null, help ? helpId : null].filter(Boolean).join(" ");
+	const locked = lockedBy !== undefined;
+	const helpText = locked ? `由预设 ${lockedBy} 固定` : help;
+	const describedBy = [error ? errorId : null, helpText ? helpId : null].filter(Boolean).join(" ");
 	const aria = {
 		id,
 		"aria-invalid": error ? true : undefined,
 		"aria-describedby": describedBy || undefined,
-		"aria-required": param.required || undefined,
+		"aria-required": (!locked && param.required) || undefined,
 	};
+	// 锁定的值只看不改：去掉输入框的底色，和能填写的字段区分开。
+	const lockedLook = locked ? "border-border-soft bg-transparent text-fg-2" : undefined;
+	const change = (next: FieldValue) => onChange?.(next);
+	const blur = () => onBlur?.();
 	const hidden = param.secret && !revealed;
 	let control: React.ReactNode;
 	if (param.type === "boolean") {
@@ -73,8 +95,10 @@ export function ParamField({
 					{...aria}
 					aria-labelledby={labelId}
 					checked={value === true}
-					onCheckedChange={(checked) => onChange(checked)}
-					onBlur={onBlur}
+					readOnly={locked}
+					disabled={disabled}
+					onCheckedChange={(checked) => change(checked)}
+					onBlur={blur}
 				/>
 				<span className="font-mono text-xs text-fg-2">{value === true ? "true" : "false"}</span>
 			</div>
@@ -85,10 +109,12 @@ export function ParamField({
 				{...aria}
 				rows={3}
 				spellCheck={false}
-				className="font-mono text-xs"
+				className={cn("font-mono text-xs", lockedLook)}
 				value={String(value ?? "")}
-				onChange={(e) => onChange(e.target.value)}
-				onBlur={onBlur}
+				readOnly={locked}
+				disabled={disabled}
+				onChange={(e) => change(e.target.value)}
+				onBlur={blur}
 			/>
 		);
 	} else {
@@ -100,12 +126,14 @@ export function ParamField({
 					inputMode={param.type === "number" ? "decimal" : undefined}
 					autoComplete="off"
 					spellCheck={false}
-					className={param.type === "number" || param.secret ? "font-mono" : undefined}
+					className={cn((param.type === "number" || param.secret) && "font-mono", lockedLook)}
 					value={String(value ?? "")}
-					onChange={(e) => onChange(e.target.value)}
-					onBlur={onBlur}
+					readOnly={locked}
+					disabled={disabled}
+					onChange={(e) => change(e.target.value)}
+					onBlur={blur}
 				/>
-				{param.secret && (
+				{param.secret && !locked && !disabled && (
 					<Button
 						variant="ghost"
 						size="icon"
@@ -121,13 +149,15 @@ export function ParamField({
 	}
 	return (
 		<div className="col-span-full grid grid-cols-subgrid items-start">
+			{leading}
 			<label id={labelId} htmlFor={id} className="min-w-0 pt-1.5 text-sm wrap-anywhere text-fg-2">
 				<span className="font-mono">{breakableName(param.name)}</span>
-				{param.required && (
+				{param.required && !locked && (
 					<span aria-hidden className="ml-0.5 text-fg-2">
 						*
 					</span>
 				)}
+				{locked && <LockIcon aria-hidden className="ml-1 inline size-3 align-baseline text-fg-3" />}
 				<span className="block font-mono text-xs text-fg-3">
 					{param.type}
 					{param.secret && " · 敏感"}
@@ -140,9 +170,9 @@ export function ParamField({
 						{error}
 					</p>
 				)}
-				{help && (
+				{helpText && (
 					<p id={helpId} className="m-0 text-xs text-fg-3">
-						{help}
+						{helpText}
 					</p>
 				)}
 			</div>
