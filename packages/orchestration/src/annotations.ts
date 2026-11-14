@@ -102,6 +102,24 @@ export function annotationBoxes<A extends AnnotationMembers>(
 }
 
 /**
+ * 框里的非成员节点：卡片中心落在框内、又不是这个注释框的成员，按节点在文档里的顺序。
+ * 成员不挨在一起时框里会夹着别的节点，选中或悬停注释框时把它们变淡，人才看得清框的到底是哪些。
+ */
+export function nonMembersInside(
+	doc: LayoutDocument,
+	{ members, box }: Pick<AnnotationBox, "members" | "box">,
+): string[] {
+	const framed = new Set(members);
+	return doc.nodes.flatMap(({ id, position }) => {
+		if (!position || framed.has(id)) return [];
+		const cx = position.x + NODE_SIZE.width / 2;
+		const cy = position.y + NODE_SIZE.height / 2;
+		const inside = cx >= box.x && cx <= box.x + box.w && cy >= box.y && cy <= box.y + box.h;
+		return inside ? [id] : [];
+	});
+}
+
+/**
  * 删掉节点之后的注释框：删掉的节点从所有注释框的 `nodes` 里去掉，删掉的子流程入口从 `subflows` 里去掉；
  * 因此变得没有成员的注释框一起删掉（本来就没有成员的不动）。没有变化时返回原来的数组。
  */

@@ -1,4 +1,9 @@
-import type { EdgeEnds, Position } from "@sfly/orchestration";
+import {
+	annotationBoxes,
+	type EdgeEnds,
+	nonMembersInside,
+	type Position,
+} from "@sfly/orchestration";
 import type { Annotation } from "@sfly/schema";
 import {
 	Background,
@@ -72,7 +77,8 @@ import {
  * 打开时与窗口变化时自动适配视图（避开 `insets` 指出的悬浮控件）、底部工具条、左下小地图、
  * 键盘浏览（方向键沿链切换、↓/↑ 进出子流程、Enter 交给 onEnter、Esc 取消选中；不用方向键移动节点）、
  * 可编辑时的多选（指针工具下 Shift 拖动框选、Ctrl/⌘ 点击加选减选、点子流程区域标题选中整个子流程）、
- * 点注释框的标题带选中注释框。
+ * 点注释框的标题带选中注释框，拖动标题带整组移动成员；选中或悬停注释框（标题带上，只读也一样）时
+ * 成员高亮、框里的非成员节点变淡（NodeCard 按节点外层的 `annotation-member` / `annotation-dim` 类名画）。
  *
  * 使用方负责：节点与连线的状态（受控）、选中状态（受控，见 selection.ts）、右侧检查器和其他悬浮控件（children）。
  *
@@ -210,15 +216,37 @@ export function FlowCanvas({
 		return map;
 	}, [edges]);
 
+	// 画布上的节点和连线（只留结构和位置）：子流程区域和注释框的范围由它算出，选中、悬停不会让它重算。
+	const layout = useMemo(() => layoutOf(nodes, edges), [nodes, edges]);
+	const boxes = useMemo(() => annotationBoxes({ ...layout, annotations }), [layout, annotations]);
+	// 强调哪个注释框：鼠标停在标题带上的，没有就是选中的。
+	const [hoveredAnnotation, setHoveredAnnotation] = useState<string | null>(null);
+	const emphasized = hoveredAnnotation ?? selectedAnnotation(selection);
+	const emphasis = useMemo(() => {
+		const found = boxes.find((b) => b.annotation.id === emphasized);
+		if (!found) return undefined;
+		return {
+			members: new Set(found.members),
+			dimmed: new Set(nonMembersInside(layout, found)),
+		};
+	}, [boxes, emphasized, layout]);
+
 	// 选中由使用方控制。React Flow 自己的 select 变化只在框选时采用（框到哪些节点由它算），
 	// 点击的选中由 onNodeClick 决定，其他时候（拖动没选中的节点、点连线）的 select 变化不往外传。
 	const shownNodes = useMemo(
 		() =>
 			nodes.map((n) => {
 				const selected = isNodeSelected(selection, n.id);
-				return n.selected === selected ? n : { ...n, selected };
+				const className = emphasis?.members.has(n.id)
+					? "annotation-member"
+					: emphasis?.dimmed.has(n.id)
+						? "annotation-dim"
+						: undefined;
+				return n.selected === selected && n.className === className
+					? n
+					: { ...n, selected, className };
 			}),
-		[nodes, selection],
+		[nodes, selection, emphasis],
 	);
 	/** 正在框选：按下鼠标起到松开为止（React Flow 在这期间才有 userSelectionRect）。 */
 	const boxSelecting = useCallback(() => store.getState().userSelectionRect !== null, [store]);
@@ -274,7 +302,6 @@ export function FlowCanvas({
 		[onSelect],
 	);
 	const pickAnnotation = useCallback((id: string) => onSelect(selectAnnotation(id)), [onSelect]);
-	const layout = useMemo(() => layoutOf(shownNodes, edges), [shownNodes, edges]);
 
 	// —— 右键菜单：关闭时保留对象，退场动画期间内容不变 ——
 	const [menuState, setMenuState] = useState<{ target: CanvasMenuTarget; open: boolean } | null>(
@@ -603,6 +630,8 @@ export function FlowCanvas({
 						annotations={annotations}
 						selected={selectedAnnotation(selection)}
 						onSelect={editable ? pickAnnotation : undefined}
+						onHover={setHoveredAnnotation}
+						onMove={canEdit ? onNodesChange : undefined}
 					/>
 					<SubflowRegions
 						layout={layout}
