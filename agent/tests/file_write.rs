@@ -6,6 +6,7 @@
 
 mod support;
 
+use std::io::ErrorKind;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::Path;
 use std::time::Duration;
@@ -51,33 +52,47 @@ fn has_temp_file(dir: &Path) -> bool {
         .any(|n| n.starts_with('.') && n.ends_with(".tmp"))
 }
 
-async fn send_data(stream: &mut BufReader<UnixStream>, bytes: &[u8]) {
+/// 发一段数据：`{"data": N}` 一行之后紧跟这 N 个字节。
+/// Agent 已经结束这次调用、关闭了连接时返回 false，回复照样读得到（同 SDK 的 `Call.send_data`）。
+async fn send_data(stream: &mut BufReader<UnixStream>, bytes: &[u8]) -> bool {
     let mut frame = json!({ "data": bytes.len() }).to_string().into_bytes();
     frame.push(b'\n');
-    let socket = stream.get_mut();
-    socket.write_all(&frame).await.unwrap();
-    socket.write_all(bytes).await.unwrap();
+    frame.extend_from_slice(bytes);
+    send(stream, &frame).await
 }
 
-async fn send_end(stream: &mut BufReader<UnixStream>) {
-    stream
-        .get_mut()
-        .write_all(b"{\"end\":true}\n")
-        .await
-        .unwrap();
+/// 数据发完了（`{"end": true}`）。返回值同 `send_data`。
+async fn send_end(stream: &mut BufReader<UnixStream>) -> bool {
+    send(stream, b"{\"end\":true}\n").await
+}
+
+async fn send(stream: &mut BufReader<UnixStream>, bytes: &[u8]) -> bool {
+    let Err(error) = stream.get_mut().write_all(bytes).await else {
+        return true;
+    };
+    let closed = matches!(
+        error.kind(),
+        ErrorKind::BrokenPipe | ErrorKind::ConnectionReset
+    );
+    assert!(closed, "send to the agent: {error}");
+    false
 }
 
 /// 流式写入：发出请求，把 `chunks` 逐段发过去，读完回复。
+/// 出错时 Agent 不等数据发完就回复并关闭连接（例如目标目录不存在），这时不再往下发。
 async fn write(socket: &Path, task: &str, agent: &str, path: &Path, chunks: &[&[u8]]) -> Reply {
     let mut stream = open_call(
         socket,
         &request(task, agent, "files.write", json!({ "path": path })),
     )
     .await;
+    let mut open = true;
     for chunk in chunks {
-        send_data(&mut stream, chunk).await;
+        open = open && send_data(&mut stream, chunk).await;
     }
-    send_end(&mut stream).await;
+    if open {
+        send_end(&mut stream).await;
+    }
     read_reply(&mut stream).await
 }
 
@@ -281,7 +296,7 @@ async fn a_write_that_breaks_off_leaves_nothing_at_the_target() {
             ),
         )
         .await;
-        send_data(&mut stream, &content(256 * 1024)).await;
+        assert!(send_data(&mut stream, &content(256 * 1024)).await);
         wait_until("the write to start on source", || {
             has_temp_file(there.path())
         })
@@ -337,7 +352,7 @@ async fn cancelling_the_task_mid_write_leaves_nothing_at_the_target() {
         ),
     )
     .await;
-    send_data(&mut stream, &content(64 * 1024)).await;
+    assert!(send_data(&mut stream, &content(64 * 1024)).await);
     wait_until("the write to start on source", || {
         has_temp_file(there.path())
     })
