@@ -1,4 +1,5 @@
 import type { NodeTypeMetadata, OrchestrationDocument } from "@sfly/schema";
+import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
 
 /**
@@ -18,6 +19,15 @@ export function orderedInputs(io: Io): [string, JsonSchema][] {
 		.map((entry, i) => ({ entry, key: rank.get(entry[0]) ?? rank.size + i }))
 		.sort((a, b) => a.key - b.key)
 		.map((e) => e.entry);
+}
+
+/**
+ * 输入或输出的说明：节点包用 `Annotated[类型, Doc("…")]` 写的，元信息里是这一项 schema 的 `description`。
+ * 没写、写的不是字符串时为 undefined（旧版本的节点包都没有）。
+ */
+export function schemaDescription(schema: JsonSchema | undefined): string | undefined {
+	const text = schema?.description;
+	return typeof text === "string" && text !== "" ? text : undefined;
 }
 
 const show = (value: unknown) => JSON.stringify(value) ?? String(value);
@@ -137,7 +147,7 @@ export function inputWarnings(doc: OrchestrationDocument, catalog: PackageCatalo
 		for (const input of missingInputs(type.inputs, node.inputs)) {
 			warnings.push({
 				code: "input_required",
-				message: `节点 ${node.id} 的必填输入 ${input} 没有填写`,
+				message: `节点 ${nodeNameWithId(node)} 的必填输入 ${input} 没有填写`,
 				node_id: node.id,
 				input,
 			});
@@ -148,7 +158,7 @@ export function inputWarnings(doc: OrchestrationDocument, catalog: PackageCatalo
 			if (!problem) continue;
 			warnings.push({
 				code: "input_type_mismatch",
-				message: `节点 ${node.id} 的${problem}`,
+				message: `节点 ${nodeNameWithId(node)} 的${problem}`,
 				node_id: node.id,
 				input,
 			});

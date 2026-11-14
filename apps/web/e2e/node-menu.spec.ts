@@ -46,6 +46,7 @@ test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节
 		"在后面添加节点Tab",
 		"创建副本CtrlD",
 		"复制CtrlC",
+		"重命名F2",
 		"复制节点 ID",
 		"复制输出引用",
 		"断开入线",
@@ -84,6 +85,7 @@ test("节点右键和 Shift+F10 打开同一个菜单，关闭后焦点回到节
 	await openMenu(page, "entry");
 	await expect(menu.getByRole("menuitem")).toHaveText([
 		"在后面添加节点Tab",
+		"重命名F2",
 		"复制节点 ID",
 		"复制输出引用这个节点没有声明输出",
 		"断开入线这个节点没有入线",
@@ -128,7 +130,14 @@ test("复制节点 ID；「复制输出引用」列出节点类型声明的每�
 	await page.keyboard.press("Shift+F10");
 	await expect(nodeMenu(page)).toBeFocused();
 	const highlighted = nodeMenu(page).locator('[role="menuitem"][data-highlighted]');
-	for (const item of ["在后面添加节点", "创建副本", "复制", "复制节点 ID", "复制输出引用"]) {
+	for (const item of [
+		"在后面添加节点",
+		"创建副本",
+		"复制",
+		"重命名",
+		"复制节点 ID",
+		"复制输出引用",
+	]) {
 		await page.keyboard.press("ArrowDown");
 		await expect(highlighted).toContainText(item);
 	}

@@ -10,7 +10,14 @@ from typing import Any
 
 from sfly.cli import scenario_edit, scenario_versions
 from sfly.cli.client import segment
-from sfly.cli.output import add_limit_option, apply_limit, dump_json, format_table, more_note
+from sfly.cli.output import (
+    add_limit_option,
+    apply_limit,
+    display_width,
+    dump_json,
+    format_table,
+    more_note,
+)
 from sfly.cli.run_view import node_type_label, subflow_label
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
@@ -46,7 +53,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         parents=[common_options()],
         help="查看一个场景：入口参数、各链路上的节点、子流程、默认 Agent",
         description="查看场景最新版本的内容：入口参数、主链和各子流程上的节点"
-        "（节点类型、锁定的节点包版本、sfly Agent）、默认 Agent。",
+        "（显示名称、节点类型、锁定的节点包版本、sfly Agent）、默认 Agent。",
     )
     p_show.add_argument("scenario", metavar="场景", help="场景 id 或准确名称")
     p_show.set_defaults(func=command(_show))
@@ -130,6 +137,8 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
             "kind": node["kind"],
             "always": node.get("always", False),
         }
+        if node.get("display_name"):
+            view["display_name"] = node["display_name"]
         if node["kind"] == "package":
             view["package"] = node["package"]
             view["node"] = node["node"]
@@ -139,6 +148,8 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
             view["subflow"] = subflow_name(triggers.get(node["id"]))
         elif node["kind"] == "stop_subflow":
             view["subflow"] = subflow_name(node.get("subflow"))
+        if node.get("note"):
+            view["note"] = node["note"]
         return view
 
     on_a_chain: set[str] = set()
@@ -162,9 +173,11 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
                 "required": p["required"],
                 "secret": p["secret"],
             }
-            # secret 参数的默认值不输出。
+            # secret 参数的默认值不输出；说明照常输出。
             if "default" in p and not p["secret"]:
                 item["default"] = p["default"]
+            if p.get("description"):
+                item["description"] = p["description"]
             result.append(item)
         return result
 
@@ -175,6 +188,7 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
             "name": subflow_name(n["id"]),
             "entry": n["id"],
             "triggered_by": subflow_triggered_by.get(n["id"]),
+            **_entry_note(n),
             "params": params(n),
             "nodes": chain(n),
         }
@@ -201,6 +215,7 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
         if saved
         else None,
         "default_agent": default_agent,
+        **({"entry": main["id"], **_entry_note(main)} if main and main.get("note") else {}),
         "params": params(main),
         "nodes": main_nodes,
         "subflows": subflows,
@@ -222,7 +237,9 @@ def render(view: dict[str, Any]) -> str:
     )
     lines.append(f"默认 Agent：{view['default_agent'] or '未设置'}")
     lines.append("")
-    lines.extend(_render_chain("主链", view["params"], view["nodes"]))
+    lines.extend(
+        _render_chain("主链", view["params"], view["nodes"], _entry_notes(view.get("entry"), view))
+    )
     for subflow in view["subflows"]:
         trigger = (
             f"，由 {subflow['triggered_by']} 触发" if subflow["triggered_by"] else "，没有被触发"
@@ -233,16 +250,21 @@ def render(view: dict[str, Any]) -> str:
                 f"子流程 {subflow['name']}（入口 {subflow['entry']}{trigger}）",
                 subflow["params"],
                 subflow["nodes"],
+                _entry_notes(subflow["entry"], subflow),
             )
         )
     if view["unlinked"]:
         lines.extend(["", "没有连进任何链的节点："])
         lines.extend(_indent(_nodes_table(view["unlinked"])))
+        lines.extend(_notes_section(_notes_of(view["unlinked"])))
     return "\n".join(lines)
 
 
 def _render_chain(
-    title: str, params: list[dict[str, Any]], nodes: list[dict[str, Any]]
+    title: str,
+    params: list[dict[str, Any]],
+    nodes: list[dict[str, Any]],
+    entry_notes: list[tuple[str, str]],
 ) -> list[str]:
     lines = [title]
     if params:
@@ -255,6 +277,34 @@ def _render_chain(
         lines.extend(_indent(_nodes_table(nodes), 2))
     else:
         lines.append("  节点：无")
+    lines.extend(_notes_section([*entry_notes, *_notes_of(nodes)]))
+    return lines
+
+
+def _entry_note(entry: dict[str, Any] | None) -> dict[str, str]:
+    """入口节点的备注：入口不在节点表里，备注放在链上的 `entry_note`。"""
+    return {"entry_note": entry["note"]} if entry and entry.get("note") else {}
+
+
+def _entry_notes(entry_id: str | None, chain: dict[str, Any]) -> list[tuple[str, str]]:
+    return [(entry_id, chain["entry_note"])] if entry_id and "entry_note" in chain else []
+
+
+def _notes_of(nodes: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    return [(n["id"], n["note"]) for n in nodes if "note" in n]
+
+
+def _notes_section(notes: list[tuple[str, str]]) -> list[str]:
+    """这条链的备注：`<节点 ID>：<备注>`，多行备注的后面几行缩进到第一行备注文字的位置。"""
+    if not notes:
+        return []
+    lines = ["  备注："]
+    for node_id, note in notes:
+        label = f"{node_id}："
+        align = " " * display_width(label)
+        first, *rest = note.splitlines()
+        lines.append(f"    {label}{first}")
+        lines.extend(f"    {align}{line}" if line else "" for line in rest)
     return lines
 
 
@@ -264,7 +314,7 @@ def _indent(text: str, levels: int = 1) -> list[str]:
 
 def _params_table(params: list[dict[str, Any]]) -> str:
     def notes(p: dict[str, Any]) -> str:
-        found = []
+        found = [p["description"]] if p.get("description") else []
         if p["required"]:
             found.append("必填")
         if "default" in p:
@@ -293,9 +343,10 @@ def _nodes_table(nodes: list[dict[str, Any]]) -> str:
         rows.append(
             [
                 n["id"],
+                n.get("display_name", "-"),
                 _node_type(n),
                 (n["package_version"] or "-") if is_package else "-",
                 (n["agent"] or "-") if is_package else "-",
             ]
         )
-    return format_table(["节点", "节点类型", "包版本", "Agent"], rows)
+    return format_table(["节点", "显示名称", "节点类型", "包版本", "Agent"], rows)

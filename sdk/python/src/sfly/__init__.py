@@ -17,7 +17,7 @@ from sfly.capabilities import (
     WatchSnapshot,
 )
 from sfly.context import ArtifactDownloadError, Cancelled, Context, TaskInfo
-from sfly.nodes import AgentName, Chart, FeishuBot, Metric, node
+from sfly.nodes import AgentName, Chart, Doc, FeishuBot, Metric, node
 
 __version__ = "0.3.0"
 
@@ -36,6 +36,7 @@ __all__ = [
     "Cancelled",
     "Chart",
     "Context",
+    "Doc",
     "FeishuBot",
     "FileEvent",
     "FileId",

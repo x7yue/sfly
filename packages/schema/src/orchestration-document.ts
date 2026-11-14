@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalLine, optionalMultiline } from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
 
 /**
@@ -8,13 +9,27 @@ import { NodeName, PackageName } from "./package-metadata.js";
 
 export const ParamType = z.enum(["string", "number", "boolean", "json"]);
 
+/** 参数说明的长度上限（Unicode 字符数）。 */
+export const PARAM_DESCRIPTION_MAX = 200;
+
+/** 节点备注的长度上限（Unicode 字符数）。 */
+export const NODE_NOTE_MAX = 2000;
+
 export const ParamDeclaration = z.strictObject({
 	name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
 	type: ParamType,
 	default: z.unknown().optional(),
 	required: z.boolean().default(false),
 	secret: z.boolean().default(false),
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description: optionalLine(PARAM_DESCRIPTION_MAX),
 });
+
+/** 节点显示名称的长度上限（Unicode 字符数）。 */
+export const DISPLAY_NAME_MAX = 40;
 
 /** 节点输入值：常量或含 `${{ ... }}` 引用的字符串，原样保存，派发时解析。 */
 const InputValues = z.record(z.string(), z.unknown());
@@ -25,10 +40,19 @@ const nodeBase = {
 	id: z.string().min(1),
 	/** 布局属于版本内容。 */
 	position: Position.optional(),
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note: optionalMultiline(NODE_NOTE_MAX),
 };
+
+/**
+ * 显示名称：一行短名字，卡片标题和其他显示节点的地方优先显示它。属于版本内容，和 `position` 一样（ADR 0023）；
+ * 只用于显示，不参与引用、派发和校验（docs/SEMANTICS.md §1.4）。子流程入口节点没有它：子流程名称（`name`）就是显示名称。
+ */
+const displayName = { display_name: optionalLine(DISPLAY_NAME_MAX) };
 
 export const EntryNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("entry"),
 	params: z.array(ParamDeclaration).default([]),
 });
@@ -46,6 +70,7 @@ export const SubflowEntryNode = z.strictObject({
 
 export const AsyncTaskNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("async"),
 	/** 子流程参数映射：子流程入口参数名 → 值。 */
 	params: InputValues.default({}),
@@ -53,6 +78,7 @@ export const AsyncTaskNode = z.strictObject({
 
 export const TimerNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("timer"),
 	always: z.boolean().default(false),
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
@@ -62,6 +88,7 @@ export const TimerNode = z.strictObject({
 
 export const SleepNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("sleep"),
 	always: z.boolean().default(false),
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
@@ -70,6 +97,7 @@ export const SleepNode = z.strictObject({
 
 export const StopSubflowNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("stop_subflow"),
 	always: z.boolean().default(false),
 	/**
@@ -87,6 +115,7 @@ export const FeishuCardColor = z.enum(["blue", "green", "orange", "red", "grey"]
 
 export const FeishuNotifyNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("feishu_notify"),
 	always: z.boolean().default(false),
 	/**
@@ -118,6 +147,7 @@ export const FeishuNotifyNode = z.strictObject({
 
 export const PackageNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("package"),
 	always: z.boolean().default(false),
 	package: PackageName,

@@ -33,12 +33,20 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+              },
               "kind": {
                 "type": "string",
                 "const": "entry"
               },
               "params": {
-                "default": [],
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -64,6 +72,11 @@
                     "secret": {
                       "default": false,
                       "type": "boolean"
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "pattern": "^[^\\r\\n]*(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -102,6 +115,10 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
               },
               "kind": {
                 "type": "string",
@@ -111,7 +128,6 @@
                 "type": "string"
               },
               "params": {
-                "default": [],
                 "type": "array",
                 "items": {
                   "type": "object",
@@ -137,6 +153,11 @@
                     "secret": {
                       "default": false,
                       "type": "boolean"
+                    },
+                    "description": {
+                      "type": "string",
+                      "maxLength": 200,
+                      "pattern": "^[^\\r\\n]*(?![\\s\\S])"
                     }
                   },
                   "required": [
@@ -175,6 +196,15 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
               },
               "kind": {
                 "type": "string",
@@ -217,6 +247,15 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
               },
               "kind": {
                 "type": "string",
@@ -265,6 +304,15 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+              },
               "kind": {
                 "type": "string",
                 "const": "sleep"
@@ -308,6 +356,15 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+              },
               "kind": {
                 "type": "string",
                 "const": "stop_subflow"
@@ -349,6 +406,15 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
               },
               "kind": {
                 "type": "string",
@@ -428,6 +494,15 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
               },
               "kind": {
                 "type": "string",

@@ -9,7 +9,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, TypeVar, overload
+from typing import Annotated, Any, Literal, TypeVar, get_args, get_origin, overload
 
 from sfly.context import Context
 
@@ -40,6 +40,25 @@ AgentName = Annotated[str, AGENT_MARKER]
 #: 派发时控制面把任务引用的机器人名单随任务下发。只能直接用作节点参数的类型，
 #: 可以写成 `FeishuBot | None`。
 FeishuBot = Annotated[str, FEISHU_BOT_MARKER]
+
+
+@dataclass(frozen=True)
+class Doc:
+    """输入的说明，写在类型注解里：`Annotated[str, Doc("请求地址，带协议")]`。
+
+    `sfly build` 把它写成这个输入 schema 的 `description`，画布的检查器在输入框下面显示它。
+    `Annotated[T, ...]` 里的其他元数据照旧不起作用，`Doc` 是例外。
+
+    - 只能写在参数注解的最外层，一个注解里只能有一个；不能写在任务上下文 `ctx` 上。
+    - 必须是非空字符串，首尾空白不保存；最多 500 个 Unicode 字符。
+    - 没写说明不报错。
+
+    这里只记录文字，不检查：写错的 `Doc` 由 `sfly build`（`sfly dev`、`sfly debug` 同样）
+    报错并指出节点和参数。
+    """
+
+    documentation: str
+
 
 #: 函数上保存节点声明的属性名。
 NODE_ATTR = "__sfly_node__"
@@ -149,7 +168,10 @@ def node(
 
 
 def is_context_param(param: inspect.Parameter, hint: Any) -> bool:
-    """节点函数的首个参数是否为任务上下文：注解为 `Context`，或名为 `ctx` 且没有注解。"""
+    """节点函数的首个参数是否为任务上下文：注解为 `Context`（可以包在 `Annotated` 里），
+    或名为 `ctx` 且没有注解。"""
+    if get_origin(hint) is Annotated:
+        hint = get_args(hint)[0]
     if hint is Context:
         return True
     return param.name == "ctx" and param.annotation is inspect.Parameter.empty

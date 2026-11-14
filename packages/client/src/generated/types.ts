@@ -96,6 +96,9 @@ export interface AsyncTaskNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "async";
 	/** 子流程参数映射：子流程入口参数名 → 值。 */
 	params: Record<string, unknown>;
@@ -108,6 +111,9 @@ export interface AsyncTaskNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "async";
 	/** 子流程参数映射：子流程入口参数名 → 值。 */
 	params?: Record<string, unknown>;
@@ -373,6 +379,9 @@ export interface EntryNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "entry";
 	params: ParamDeclaration[];
 }
@@ -384,6 +393,9 @@ export interface EntryNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "entry";
 	params?: ParamDeclarationInput[];
 }
@@ -457,6 +469,9 @@ export interface FeishuNotifyNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "feishu_notify";
 	always: boolean;
 	/**
@@ -493,6 +508,9 @@ export interface FeishuNotifyNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "feishu_notify";
 	always?: boolean;
 	/**
@@ -827,6 +845,11 @@ export type NodeStatus = "queued" | "dispatched" | "running" | "waiting" | "succ
 export interface NodeTypeView {
 	name: NodeName;
 	title: string;
+	/**
+	 * 节点类型的说明：节点函数的文档字符串（去掉缩进，可以多段），显示在「添加节点」菜单（第一段）、
+	 * 节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。
+	 */
+	description?: string;
 	/** 入口：`module:function`。 */
 	entry: string;
 	inputs: IoSchema;
@@ -940,6 +963,9 @@ export interface PackageNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "package";
 	always: boolean;
 	package: PackageName;
@@ -961,6 +987,9 @@ export interface PackageNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "package";
 	always?: boolean;
 	package: PackageName;
@@ -986,9 +1015,11 @@ export interface PackageVersionSummary {
 	sha256: string;
 	size: number;
 	published_at: Timestamp;
+	/** 节点类型摘要，「添加节点」菜单用；`description` 是节点类型的完整说明，没有文档字符串时没有这个字段。 */
 	nodes: {
 		name: string;
 		title: string;
+		description?: string;
 	}[];
 	/** 有多少个场景的最新版本锁定了这个版本。 */
 	locked_orchestrations: number;
@@ -1027,6 +1058,8 @@ export interface ParamDeclView {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
+	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	description?: string;
 }
 
 export interface ParamDeclaration {
@@ -1035,6 +1068,11 @@ export interface ParamDeclaration {
 	default?: unknown;
 	required: boolean;
 	secret: boolean;
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description?: string;
 }
 
 export interface ParamDeclarationInput {
@@ -1043,6 +1081,11 @@ export interface ParamDeclarationInput {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description?: string;
 }
 
 /**
@@ -1437,6 +1480,9 @@ export interface SleepNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "sleep";
 	always: boolean;
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
@@ -1450,6 +1496,9 @@ export interface SleepNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "sleep";
 	always?: boolean;
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
@@ -1463,6 +1512,9 @@ export interface StopSubflowNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "stop_subflow";
 	always: boolean;
 	/**
@@ -1479,6 +1531,9 @@ export interface StopSubflowNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "stop_subflow";
 	always?: boolean;
 	/**
@@ -1495,6 +1550,8 @@ export interface SubflowEntryNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
 	kind: "subflow_entry";
 	/**
 	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
@@ -1511,6 +1568,8 @@ export interface SubflowEntryNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
 	kind: "subflow_entry";
 	/**
 	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
@@ -1565,6 +1624,9 @@ export interface TimerNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "timer";
 	always: boolean;
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
@@ -1579,6 +1641,9 @@ export interface TimerNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "timer";
 	always?: boolean;
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */

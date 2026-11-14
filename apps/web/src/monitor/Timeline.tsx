@@ -1,3 +1,4 @@
+import { type NodeDisplayLookup, nodeOutsideCardText, subflowLabels } from "@sfly/orchestration";
 import type { ChainRunView, NodeRunView, OrchestrationDocument, RunView } from "@sfly/schema";
 import { cn } from "cn";
 import { ChevronRightIcon, CrosshairIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react";
@@ -23,7 +24,6 @@ import {
 	documentNodes,
 	findNode,
 	isAlways,
-	nodeTitle,
 	orderedChains,
 	progressLabel,
 } from "./run-model";
@@ -113,6 +113,11 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 	const body = useRef<HTMLDivElement>(null);
 	const chains = useMemo(() => orderedChains(run), [run]);
 	const decls = useMemo(() => documentNodes(doc), [doc]);
+	// 运行监控页没有节点包元信息：包节点写 `包名/节点类型名`，不查节点类型的标题。
+	const display = useMemo<NodeDisplayLookup>(
+		() => ({ subflowLabelOf: subflowLabels({ nodes: doc?.nodes ?? [] }) }),
+		[doc],
+	);
 	const nodeCount = run.chains.reduce((n, c) => n + c.nodes.length, 0);
 	useShortcut("monitor-toggle-timeline", () =>
 		setMode((m) => (m === "expanded" ? "summary" : "expanded")),
@@ -316,6 +321,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 								range={range}
 								now={now}
 								decls={decls}
+								display={display}
 								attentionNode={attention?.chainId === chain.id ? attention.nodeId : undefined}
 								onToggle={() => toggleChain(chain)}
 							/>
@@ -518,6 +524,7 @@ function ChainRows({
 	range,
 	now,
 	decls,
+	display,
 	attentionNode,
 	onToggle,
 }: {
@@ -528,6 +535,7 @@ function ChainRows({
 	range: TimeRange;
 	now: number;
 	decls: ReturnType<typeof documentNodes>;
+	display: NodeDisplayLookup;
 	/**
 	 * 要保证看得见的那一行（attentionRow）在这条链里时：节点 ID，链收起时是 null；不在这条链里是 undefined。
 	 */
@@ -618,6 +626,7 @@ function ChainRows({
 							segments={segments[i] ?? []}
 							range={range}
 							decls={decls}
+							display={display}
 							indent={indent}
 							attention={attentionNode === node.node_id}
 							selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
@@ -635,6 +644,7 @@ function NodeRow({
 	segments,
 	range,
 	decls,
+	display,
 	indent,
 	attention,
 	selected,
@@ -644,6 +654,7 @@ function NodeRow({
 	segments: Segment[];
 	range: TimeRange;
 	decls: ReturnType<typeof documentNodes>;
+	display: NodeDisplayLookup;
 	indent: number;
 	attention: boolean;
 	selected: boolean;
@@ -654,7 +665,7 @@ function NodeRow({
 	const span = spanOf(segments);
 	const progress = progressLabel(node);
 	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
-	const title = nodeTitle(node, decl, decls);
+	const title = nodeOutsideCardText(decl ?? node, display);
 	// 包节点的说明是「包/节点类型」，同一次运行里包名几乎都一样：行上只留区分度高的节点类型，完整的在悬停提示与读屏名称里。
 	const packageNode = decl?.kind === "package";
 	const shortTitle = packageNode ? decl.node : title;

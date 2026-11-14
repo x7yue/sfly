@@ -109,11 +109,12 @@ function Row({ indent = false, children }: { indent?: boolean; children: React.R
 	);
 }
 
+// 保留值里的换行（备注是多行文字）。
 const Ins = ({ children }: { children: React.ReactNode }) => (
-	<ins className="font-mono text-ok no-underline">{children}</ins>
+	<ins className="font-mono whitespace-pre-wrap text-ok no-underline">{children}</ins>
 );
 const Del = ({ children }: { children: React.ReactNode }) => (
-	<del className="font-mono text-danger-fg">{children}</del>
+	<del className="font-mono whitespace-pre-wrap text-danger-fg">{children}</del>
 );
 
 function ChangeRow({ change, indent = false }: { change: FieldChange; indent?: boolean }) {
@@ -133,6 +134,7 @@ const kindLabel = (kind: string) => KIND_META[kind as keyof typeof KIND_META]?.l
 
 const FIELD_LABEL: Record<string, string> = {
 	default_agent: "默认 Agent",
+	display_name: "显示名称",
 	name: "名称",
 	agent: "Agent",
 	always: "always",
@@ -146,6 +148,7 @@ const FIELD_LABEL: Record<string, string> = {
 	tz: "时区",
 	duration: "时长",
 	subflow: "要停止的子流程",
+	note: "备注",
 };
 
 function fieldLabel(path: string): string {
@@ -166,8 +169,15 @@ function formatValue(value: unknown): string {
 		!Array.isArray(value)
 	) {
 		// 入口参数声明
-		const p = value as { type: string; required?: boolean; secret?: boolean; default?: unknown };
+		const p = value as {
+			type: string;
+			required?: boolean;
+			secret?: boolean;
+			default?: unknown;
+			description?: string;
+		};
 		const flags = [p.type, p.required ? "必填" : "可选", ...(p.secret ? ["敏感"] : [])];
+		if (p.description !== undefined) flags.push(`说明「${p.description}」`);
 		if (p.default !== undefined) flags.push(`默认 ${JSON.stringify(p.default)}`);
 		return flags.join(" · ");
 	}

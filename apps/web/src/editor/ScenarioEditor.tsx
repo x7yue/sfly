@@ -5,9 +5,11 @@ import {
 	insertAfter,
 	insertOnEdge,
 	nodeConnections,
+	nodeDisplayName,
 	type OrchestrationWarning,
 	outgoingProblem,
-	removeNode,
+	removeNodes,
+	subflowLabels,
 	tidyLayout,
 	uniqueNodeId,
 } from "@sfly/orchestration";
@@ -32,7 +34,7 @@ import {
 import { Redo2Icon, Undo2Icon, Wand2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ToolButton } from "#/components/canvas/CanvasDock";
-import type { CanvasInfo } from "#/components/canvas/context";
+import type { CanvasInfo, NodeRename } from "#/components/canvas/context";
 import { FlowCanvas, isPointerFocusedCanvas } from "#/components/canvas/FlowCanvas";
 import {
 	applyDocument,
@@ -48,8 +50,16 @@ import {
 } from "#/components/canvas/flow";
 import { INSPECTOR_MARGIN, NODE_HEIGHT, NODE_WIDTH } from "#/components/canvas/geometry";
 import { VIEWPORT_MS, viewportDuration } from "#/components/canvas/motion";
-import { subflowLabels } from "#/components/canvas/node-display";
+import { usePackageTitles } from "#/components/canvas/package-titles";
 import { subflowRegions } from "#/components/canvas/SubflowRegions";
+import {
+	type CanvasSelection,
+	keepNodes,
+	latestNode,
+	NO_SELECTION,
+	selectNode,
+	soleNode,
+} from "#/components/canvas/selection";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
@@ -71,6 +81,7 @@ import { EditorMenu } from "./EditorMenu";
 import { useEditHistory } from "./edit-history";
 import { FieldDraftsProvider, fieldErrorKey, useFieldDraftStore } from "./field-drafts";
 import { freeCardSpot } from "./free-spot";
+import { isNamedNode } from "./inspector/DisplayNameField";
 import { type FocusRequest, Inspector, type InspectorContext } from "./inspector/Inspector";
 import { useInspectorWidth } from "./inspector/inspector-width";
 import { useNodeClipboard } from "./node-clipboard";
@@ -138,22 +149,6 @@ function focusNewCard(id: string, frames = 30) {
 const edgeKindOf = (c: Connection | Edge): EdgeKind =>
 	c.sourceHandle === "dispatch" ? "dispatch" : "chain";
 
-function usePackageTitles(): (pkg: string, node: string) => string | undefined {
-	const packages = useQuery(apiQuery(packagesApi.list));
-	return useMemo(() => {
-		const titles = new Map<string, string>();
-		for (const pkg of packages.data?.packages ?? []) {
-			for (const v of pkg.versions) {
-				for (const n of v.nodes) {
-					const key = `${pkg.name}/${n.name}`;
-					if (!titles.has(key)) titles.set(key, n.title);
-				}
-			}
-		}
-		return (pkg, node) => titles.get(`${pkg}/${node}`);
-	}, [packages.data]);
-}
-
 function Editor({
 	orchestration,
 	start,
@@ -175,7 +170,9 @@ function Editor({
 		default_agent: start.document.default_agent,
 		packages: start.document.packages,
 	});
-	const [selectedId, setSelectedId] = useState<string | null>(initialNode ?? null);
+	const [selection, setSelection] = useState<CanvasSelection>(() =>
+		initialNode ? selectNode(initialNode) : NO_SELECTION,
+	);
 	const [inspectorOpen, setInspectorOpen] = useState(true);
 	const inspectorWidth = useInspectorWidth();
 	/** 检查器（实际宽度 + 右边距）占住的宽度：适配视图与定位节点时避开。 */
@@ -270,6 +267,14 @@ function Editor({
 	const running = mode === "run";
 	const shownNodes = running && runFlow ? runFlow.nodes : nodes;
 	const shownEdges = running && runFlow ? runFlow.edges : edges;
+	// 选中的节点可能不在画布上：撤销了添加、运行绑定的版本里没有它。
+	const visibleSelection = keepNodes(selection, (id) => shownNodes.some((n) => n.id === id));
+	// 运行状态下画布只读、不能多选：编辑时选中的一组节点只显示最近选中的那个，切回编辑模式还是原来那组。
+	const shownSelection = useMemo(
+		() => (running ? latestNode(visibleSelection) : visibleSelection),
+		[running, visibleSelection],
+	);
+	const nodeOf = (id: string) => shownNodes.find((n) => n.id === id)?.data.node;
 
 	// —— 连线：只允许单入单出，规则与控制面共用（@sfly/orchestration） ——
 	const docRef = useRef(doc);
@@ -353,11 +358,10 @@ function Editor({
 		[connectionProblem, flow, reconnect],
 	);
 
-	const select = useCallback((id: string | null) => setSelectedId(id), []);
 	/** 选中并定位到某个节点（检查结果、调度关系、触发预检里的「前往」）。 */
 	const locate = useCallback(
 		(id: string) => {
-			setSelectedId(id);
+			setSelection(selectNode(id));
 			const node = flow.getNode(id);
 			if (node) {
 				// 定位到没被检查器占住的那部分画布的中间。
@@ -384,22 +388,59 @@ function Editor({
 		setNodes(applied.nodes);
 		setEdges(applied.edges);
 	};
-	/** 删除节点（Delete 键、节点菜单、检查器的删除按钮）：恰好一进一出时前后自动接上。 */
-	const deleteNode = (id: string) => {
-		const edit = removeNode(doc, id);
+	/**
+	 * 删除节点（Delete 键、节点菜单、检查器的删除按钮；多选时是整组）：每个都是恰好一进一出时前后自动接上，
+	 * 入口节点跳过；整组算一步撤销。
+	 */
+	const deleteNodes = (ids: readonly string[]) => {
+		const edit = removeNodes(doc, ids);
 		if (!edit.ok) {
 			notify.warning(edit.reason);
 			return;
 		}
-		drafts.clear(`${id}/`);
-		if (selectedId === id) setSelectedId(null);
+		for (const id of edit.removed) drafts.clear(`${id}/`);
+		setSelection((s) => keepNodes(s, (n) => !edit.removed.includes(n)));
 		applyEdit(edit.doc);
+		const reasons = [...new Set(edit.skipped.map((s) => s.reason))];
+		if (reasons.length > 0) notify.warning(`${reasons.join("；")}，已跳过`);
 	};
 	const updateNode = (id: string, node: DocNode) => {
 		// 同一个节点上连续的输入合并为一步撤销。
 		history.checkpoint(`node:${id}`);
 		setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, data: { node } } : n)));
 	};
+
+	// —— 原地改显示名称：双击卡片标题、F2、节点菜单的「重命名」；子流程入口节点没有显示名称 ——
+	const [renamingId, setRenamingId] = useState<string | null>(null);
+	const startRename = (id: string) => {
+		const node = nodes.find((n) => n.id === id)?.data.node;
+		if (running || !node || !isNamedNode(node)) return;
+		setRenamingId(id);
+	};
+	const commitRename = (id: string, text: string) => {
+		setRenamingId(null);
+		const node = nodes.find((n) => n.id === id)?.data.node;
+		if (!node || !isNamedNode(node)) return;
+		const name = text.trim() || undefined;
+		if (name === nodeDisplayName(node)) return;
+		// 不带 key：不和前后的输入合并，一次改名是一步撤销。
+		history.checkpoint();
+		setNodes((ns) =>
+			ns.map((n) => (n.id === id ? { ...n, data: { node: { ...node, display_name: name } } } : n)),
+		);
+	};
+	const renameHandlers = useRef({ startRename, commitRename });
+	renameHandlers.current = { startRename, commitRename };
+	// 卡片从 context 取它：只在正在编辑的节点变化时换一个新对象，其余渲染不会让每张卡片重画。
+	const rename = useMemo<NodeRename>(
+		() => ({
+			active: renamingId,
+			start: (id) => renameHandlers.current.startRename(id),
+			commit: (id, text) => renameHandlers.current.commitRename(id, text),
+			cancel: () => setRenamingId(null),
+		}),
+		[renamingId],
+	);
 
 	// —— 添加节点：有来源节点的接在它后面，没有来源的不连线（AddRequest）——
 	const groups = useMemo(
@@ -456,7 +497,7 @@ function Editor({
 		}
 		setNodes(next.nodes);
 		setEdges(next.edges);
-		setSelectedId(id);
+		setSelection(selectNode(id));
 		requestAnimationFrame(() => {
 			// 接在来源节点右侧的新节点可能在视口外：移到中央。
 			if (request.kind === "after" && !request.position) {
@@ -485,6 +526,14 @@ function Editor({
 	useShortcut("canvas-add", () => openAddMenu({ kind: "free" }), !running);
 	useShortcut("canvas-undo", history.undo, !running);
 	useShortcut("canvas-redo", history.redo, !running);
+	useShortcut(
+		"canvas-rename",
+		() => {
+			const id = soleNode(shownSelection);
+			if (id) startRename(id);
+		},
+		!running,
+	);
 	// Tab：焦点在节点卡片上（新节点接在它后面）、或用鼠标点过画布空白处时（不连线）打开添加节点菜单，其他时候照常切换焦点。
 	// 页面上没有焦点、或用键盘把焦点放到画布区域上（Tab 进入、Esc 退回）时不拦截（见 FlowCanvas 的 isPointerFocusedCanvas）：
 	// 键盘用户能用 Tab 进出画布，进入后用方向键浏览节点（components/canvas/navigation.ts）。
@@ -525,7 +574,7 @@ function Editor({
 		doc,
 		nodes,
 		regions: regionBoxes,
-		selectedId,
+		selection: shownSelection,
 		viewportCenter,
 		toFlowPosition: (client) => flow.screenToFlowPosition(client),
 		// 包版本锁定可能多了一项；选中并聚焦新节点。
@@ -534,7 +583,7 @@ function Editor({
 			if (edit.doc.packages !== doc.packages) {
 				setMeta((m) => ({ ...m, packages: { ...m.packages, ...edit.doc.packages } }));
 			}
-			setSelectedId(edit.id);
+			setSelection(selectNode(edit.id));
 			requestAnimationFrame(() => focusNewCard(edit.id));
 		},
 	});
@@ -544,8 +593,8 @@ function Editor({
 		if (first) {
 			drafts.touch(fieldErrors.map(fieldErrorKey));
 			setInspectorOpen(true);
-			if (first.nodeId === undefined) setSelectedId(null);
-			else if (first.nodeId !== selectedId) locate(first.nodeId);
+			if (first.nodeId === undefined) setSelection(NO_SELECTION);
+			else if (first.nodeId !== soleNode(selection)) locate(first.nodeId);
 			setFocusRequest({ key: fieldErrorKey(first), nonce: Date.now() });
 			return;
 		}
@@ -569,10 +618,26 @@ function Editor({
 			},
 		});
 	};
-	useShortcut("canvas-save", save, !running);
+	// 正在原地改名时保存：输入框里没确认的名称要先进文档。卡片拿到焦点，输入框失焦就是确认（NodeTitleEditor，
+	// 和 Enter 同一步撤销）；确认落进文档的那次渲染之后才保存，用的是带新名称的文档。
+	const [savePending, setSavePending] = useState(false);
+	const saveShortcut = () => {
+		const card = renamingId === null ? null : cardOf(renamingId);
+		if (!card) {
+			save();
+			return;
+		}
+		card.focus({ preventScroll: true });
+		setSavePending(true);
+	};
+	useEffect(() => {
+		if (!savePending || renamingId !== null) return;
+		setSavePending(false);
+		save();
+	});
+	useShortcut("canvas-save", saveShortcut, !running);
 	useShortcut("canvas-run", () => setTriggering(true), !running);
 
-	const selectedNode = selectedId ? shownNodes.find((n) => n.id === selectedId) : undefined;
 	const context: InspectorContext = {
 		doc,
 		catalog,
@@ -594,7 +659,7 @@ function Editor({
 			setMeta((m) => ({ ...m, packages: { ...m.packages, [name]: version } }));
 		},
 		onLocate: locate,
-		onDelete: deleteNode,
+		onDelete: deleteNodes,
 	};
 
 	const focusInspector = () => {
@@ -608,7 +673,8 @@ function Editor({
 		});
 	};
 	const focusCanvasNode = () => {
-		if (selectedId) cardOf(selectedId)?.focus();
+		const id = soleNode(shownSelection);
+		if (id) cardOf(id)?.focus();
 	};
 
 	return (
@@ -623,7 +689,7 @@ function Editor({
 					warnings={warnings.length}
 					notes={notes.length}
 					onShowChecks={() => {
-						setSelectedId(null);
+						setSelection(NO_SELECTION);
 						setInspectorOpen(true);
 					}}
 					mode={mode}
@@ -660,8 +726,8 @@ function Editor({
 					edges={shownEdges}
 					info={running ? runInfo : info}
 					{...(running ? decorations : {})}
-					selectedId={selectedNode ? selectedId : null}
-					onSelect={select}
+					selection={shownSelection}
+					onSelect={setSelection}
 					onNodesChange={running ? runFlow?.onNodesChange : history.onNodesChange}
 					onEdgesChange={running ? undefined : history.onEdgesChange}
 					onConnect={running ? undefined : onConnect}
@@ -675,13 +741,14 @@ function Editor({
 					}}
 					onEnter={focusInspector}
 					inspector={{ open: inspectorOpen, onToggle: () => setInspectorOpen((o) => !o) }}
-					onDeleteNode={running ? undefined : deleteNode}
+					onDeleteNodes={running ? undefined : deleteNodes}
 					onInsertOnEdge={
 						running
 							? undefined
 							: (edge, client) =>
 									openAddMenu({ kind: "after", after: edge.from, before: edge.to, client })
 					}
+					rename={running ? undefined : rename}
 					reconnect={running ? undefined : reconnect.handlers}
 					menu={(target) => (
 						<EditorMenu
@@ -700,7 +767,8 @@ function Editor({
 											canRedo: history.canRedo,
 											openAddMenu,
 											applyEdit,
-											deleteNode,
+											deleteNodes,
+											startRename,
 											clipboard,
 											tidy,
 											undo: history.undo,
@@ -750,7 +818,8 @@ function Editor({
 						<RunStateInspector
 							ref={inspectorRef}
 							state={runState}
-							selected={selectedNode ? { id: selectedNode.id, node: selectedNode.data.node } : null}
+							selection={shownSelection}
+							nodeOf={nodeOf}
 							info={runInfo}
 							onCollapse={() => setInspectorOpen(false)}
 							onEscape={focusCanvasNode}
@@ -759,7 +828,8 @@ function Editor({
 					{inspectorOpen && !running && (
 						<Inspector
 							ref={inspectorRef}
-							selected={selectedNode ? { id: selectedNode.id, node: selectedNode.data.node } : null}
+							selection={shownSelection}
+							nodeOf={nodeOf}
 							context={context}
 							onCollapse={() => setInspectorOpen(false)}
 							onEscape={focusCanvasNode}

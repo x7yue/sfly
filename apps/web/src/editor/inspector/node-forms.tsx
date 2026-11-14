@@ -9,6 +9,7 @@ import {
 	orderedInputs,
 	parseDuration,
 	referencesIn,
+	schemaDescription,
 	stopCandidates,
 	timerTarget,
 } from "@sfly/orchestration";
@@ -115,6 +116,7 @@ export function PackageParams({
 					agents={agents}
 					bots={bots}
 					problems={problemsOf(name)}
+					help={schemaDescription(schema)}
 					onChange={(v) => set(name, v)}
 				/>
 			))}
@@ -390,6 +392,7 @@ function MappedParam({
 			fieldKey={fieldKey}
 			required={param.required}
 			type={param.type}
+			help={param.description}
 			error={invalid ? <Problems problems={errors} /> : undefined}
 			aside={
 				<ReferenceActions

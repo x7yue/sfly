@@ -1,5 +1,6 @@
 import type { NodeTypeMetadata, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import { feishuReferableInputs } from "./feishu-notify.js";
+import { nodeNameWithId } from "./node-display.js";
 import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
 
 /**
@@ -8,7 +9,7 @@ import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
  */
 
 /** 节点类型中用到的元信息：输入 schema 生成参数表单，输出键用于补全和引用检查。 */
-export type NodeTypeIo = Pick<NodeTypeMetadata, "name" | "inputs" | "outputs">;
+export type NodeTypeIo = Pick<NodeTypeMetadata, "name" | "inputs" | "outputs" | "description">;
 
 /**
  * 节点包目录：`packageKey(包名, 版本)` → 该版本的节点类型。
@@ -200,7 +201,7 @@ export function referenceWarnings(
 		const params = new Set(start?.params.map((p) => p.name) ?? []);
 		const earlierById = new Map(earlier.map((n) => [n.id, n]));
 		for (const [input, value] of values) {
-			const where = `节点 ${node.id} 的输入 ${input}`;
+			const where = `节点 ${nodeNameWithId(node)} 的输入 ${input}`;
 			const warn = (code: ReferenceWarningCode, message: string) =>
 				warnings.push({ code, message, node_id: node.id, input });
 			for (const path of referencesIn(value)) {
@@ -257,7 +258,7 @@ export function packageWarnings(
 		if (version === undefined) {
 			warnings.push({
 				code: "package_not_locked",
-				message: `节点 ${node.id} 的节点包 ${node.package} 没有锁定版本`,
+				message: `节点 ${nodeNameWithId(node)} 的节点包 ${node.package} 没有锁定版本`,
 				node_id: node.id,
 			});
 			continue;
@@ -266,7 +267,7 @@ export function packageWarnings(
 		if (types === null) {
 			warnings.push({
 				code: "package_version_missing",
-				message: `节点 ${node.id} 锁定的节点包版本 ${node.package}@${version} 不存在`,
+				message: `节点 ${nodeNameWithId(node)} 锁定的节点包版本 ${node.package}@${version} 不存在`,
 				node_id: node.id,
 			});
 		} else if (types && !types.some((t) => t.name === node.node)) {
@@ -308,7 +309,7 @@ export function subflowParamWarnings(doc: OrchestrationDocument): ReferenceWarni
 			if (declared.has(name)) continue;
 			warnings.push({
 				code: "subflow_param_unknown",
-				message: `节点 ${node.id} 映射的参数 ${name} 不是子流程 ${subflow.id} 声明的参数`,
+				message: `节点 ${nodeNameWithId(node)} 映射的参数 ${name} 不是子流程 ${subflow.id} 声明的参数`,
 				node_id: node.id,
 				input: name,
 			});
@@ -318,7 +319,7 @@ export function subflowParamWarnings(doc: OrchestrationDocument): ReferenceWarni
 				continue;
 			warnings.push({
 				code: "subflow_param_missing",
-				message: `节点 ${node.id} 没有映射子流程 ${subflow.id} 的必填参数 ${param.name}`,
+				message: `节点 ${nodeNameWithId(node)} 没有映射子流程 ${subflow.id} 的必填参数 ${param.name}`,
 				node_id: node.id,
 				input: param.name,
 			});

@@ -1,4 +1,4 @@
-import { NODE_DEFAULTS } from "@sfly/orchestration";
+import { NODE_DEFAULTS, NODE_KIND_LABEL } from "@sfly/orchestration";
 import {
 	AlarmClockIcon,
 	BellRingIcon,
@@ -10,8 +10,6 @@ import {
 	PlayIcon,
 	SplitIcon,
 } from "lucide-react";
-import { subflowLabel } from "#/lib/copy";
-import type { CanvasInfo } from "./context";
 import type { DocNode } from "./flow";
 
 /**
@@ -19,55 +17,15 @@ import type { DocNode } from "./flow";
  * 取代原型里需要记忆的两字母代号。
  */
 export const KIND_META: Record<DocNode["kind"], { label: string; icon: LucideIcon }> = {
-	entry: { label: "入口", icon: PlayIcon },
-	package: { label: "包节点", icon: BoxIcon },
-	timer: { label: "定时", icon: AlarmClockIcon },
-	sleep: { label: "Sleep", icon: HourglassIcon },
-	async: { label: "异步任务", icon: SplitIcon },
-	subflow_entry: { label: "子流程入口", icon: CornerDownRightIcon },
-	stop_subflow: { label: "停止子流程", icon: CircleStopIcon },
-	feishu_notify: { label: "飞书通知", icon: BellRingIcon },
+	entry: { label: NODE_KIND_LABEL.entry, icon: PlayIcon },
+	package: { label: NODE_KIND_LABEL.package, icon: BoxIcon },
+	timer: { label: NODE_KIND_LABEL.timer, icon: AlarmClockIcon },
+	sleep: { label: NODE_KIND_LABEL.sleep, icon: HourglassIcon },
+	async: { label: NODE_KIND_LABEL.async, icon: SplitIcon },
+	subflow_entry: { label: NODE_KIND_LABEL.subflow_entry, icon: CornerDownRightIcon },
+	stop_subflow: { label: NODE_KIND_LABEL.stop_subflow, icon: CircleStopIcon },
+	feishu_notify: { label: NODE_KIND_LABEL.feishu_notify, icon: BellRingIcon },
 };
-
-/**
- * 卡片头部 ID 旁的种类名：包节点不显示（标题就是节点类型），标题已经说明种类时也不重复
- * （入口节点标题「入口」、异步任务节点标题「异步任务」）。
- */
-export function kindCaption(node: DocNode, title: string): string | undefined {
-	if (node.kind === "package") return undefined;
-	const { label } = KIND_META[node.kind];
-	return title.includes(label) ? undefined : label;
-}
-
-/** 文档里子流程入口节点 ID → 显示名称的查找（CanvasInfo.subflowLabelOf）。 */
-export function subflowLabels(doc: {
-	nodes: readonly { id: string; kind: string; name?: string | undefined }[];
-}): (id: string) => string | undefined {
-	const labels = new Map(
-		doc.nodes.filter((n) => n.kind === "subflow_entry").map((n) => [n.id, subflowLabel(n)]),
-	);
-	return (id) => labels.get(id);
-}
-
-export function nodeTitle(node: DocNode, info: CanvasInfo): string {
-	switch (node.kind) {
-		case "subflow_entry":
-			return subflowLabel(node);
-		case "package":
-			return info.titleOf(node.package, node.node) ?? node.node;
-		case "timer":
-			return `等到 ${node.at}`;
-		case "sleep":
-			return `等待 ${node.duration}`;
-		case "stop_subflow":
-			// 卡片标题显示要停止的子流程名称（故事 9）；目标不存在时显示节点 ID，由校验面板提示。
-			return node.subflow
-				? `停止「${info.subflowLabelOf(node.subflow) ?? node.subflow}」`
-				: KIND_META.stop_subflow.label;
-		default:
-			return KIND_META[node.kind].label;
-	}
-}
 
 const summarizeValue = (value: unknown): string => {
 	if (typeof value === "string") {

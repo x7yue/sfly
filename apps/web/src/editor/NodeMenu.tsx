@@ -19,6 +19,10 @@ export interface NodeMenuEdit {
 	/** 入线、出线各有几条（@sfly/orchestration 的 nodeConnections）。 */
 	connections: { in: number; out: number };
 	onAddAfter(): void;
+	/** 原地改显示名称（卡片标题变成输入框）。 */
+	onRename(): void;
+	/** 不能改显示名称的原因（子流程入口节点）；可以改时为 null。 */
+	renameProblem: string | null;
 	onDisconnect(side: "in" | "out"): void;
 	onDelete(): void;
 	/**
@@ -30,7 +34,7 @@ export interface NodeMenuEdit {
 
 /**
  * 节点的右键菜单（鼠标右键，或焦点在节点上按 Shift+F10 / 菜单键）。顺序：在后面添加节点、
- * （创建副本、复制）、复制节点 ID、复制输出引用、断开入线、断开出线、删除。
+ * （创建副本、复制）、重命名、复制节点 ID、复制输出引用、断开入线、断开出线、删除。
  * 入口节点没有「删除」；做不了的项禁用并写明原因。快捷键文字来自注册表。
  */
 export function NodeMenu({
@@ -52,6 +56,13 @@ export function NodeMenu({
 						在后面添加节点
 					</ContextMenuItem>
 					{edit.clipboardItems}
+					<ContextMenuItem
+						shortcut="canvas-rename"
+						disabledReason={edit.renameProblem}
+						onClick={edit.onRename}
+					>
+						重命名
+					</ContextMenuItem>
 					<ContextMenuSeparator />
 				</>
 			)}

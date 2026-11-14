@@ -126,7 +126,8 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> dict:
 ```
 
 - 输入：从函数参数的类型注解生成元信息。
-- 输出：函数的返回值（JSON 对象，上限 1 MB）；返回值的键在装饰器或返回类型注解中声明，用于画布补全和保存时的引用检查。
+- 节点类型的说明：函数的文档字符串去掉缩进后整段写进元信息里节点类型的可选字段 `description`（最长 4000 个 Unicode 字符，超过时 `sfly build` 报错；没有文档字符串就不写）。「添加节点」菜单和节点包管理页显示第一段，检查器的「说明」页显示全文；节点包列表接口里的节点摘要也带 `description`。节点类型这一层是严格对象，带说明的包发布到旧版本的控制面会被拒绝，所以要先升级控制面；Agent 把元信息当 JSON 原样转发，不受影响。
+- 输出：函数的返回值（JSON 对象，上限 1 MB）；返回值的键在装饰器或返回类型注解中声明，用于画布补全和保存时的引用检查。输出 TypedDict 字段注解里的 `Annotated[T, Doc("…")]` 写成这个输出 schema 的 `description`（规则和输入一样，最长 500 个字符），检查器「说明」页的输出表、引用补全、节点包管理页和 `sfly package show` 显示它。
 - 指标与图表：`@node(metrics=[Metric("tps", unit="笔/s"), Metric("rejected", kind="counter")], charts=[Chart("TPS", type="line", metrics=["tps"])], primary_metric="tps")`。`Metric` 可以声明标签键（`Metric("conn_tps", labels=["host"])`，#78），每组标签值是一个序列。`sfly build` 校验：每个节点类型最多 50 个指标、20 张图表，指标名不重复，每个指标最多 3 个标签键（命名规则同指标名、不重复），图表引用和主指标必须是已声明的指标；主指标不能带标签键，`stat`、`bar` 图表不能引用带标签的指标（`line`、`area` 可以混用），控制面发布时用 zod 镜像做同样的交叉校验。没被任何图表引用的指标由节点包查询 API 补上默认图表（`default: true`；带标签的指标和 gauge → 折线，不带标签的 counter → 数值卡）。
 - 失败：抛出异常。
 - `ctx`：日志、进度、指标（`ctx.metric(name, value, labels={...})`：未声明的指标名、非有限数值、标签键与声明不一致或标签值为空、超过 128 个字符的点被丢弃并写警告日志；每个任务最多 1000 个序列，超出后新序列的点被丢弃，每个指标警告一次）、产物、取消检查（`ctx.cancelled()`）。
@@ -161,7 +162,7 @@ sfly-package.json     元信息：包名、版本、Python 版本要求、节点
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list` | 列出没有归档的场景（名称、id、最新版本号、默认 Agent），可用 `--search` 按名称搜索、`--agent` 按 Agent 筛选 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数、主链和子流程上的节点（节点类型、锁定的节点包版本、Agent）、默认 Agent |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（显示名称、节点类型、锁定的节点包版本、Agent，节点表下面是这条链的备注）、默认 Agent |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）写成 `{"scenario", "base_version", "document"}` 的 JSON 文件；`base_version` 总是最新版本号 |
 | `sfly scenario push <文件>` | 先按随 SDK 打包的场景文档 JSON Schema 在本地校验，再带 `base_version` 保存新版本（沿用场景版本的乐观锁，冲突退出码 2，没有强制覆盖）；控制面给没有坐标的节点补坐标；成功后把文件里的 `base_version` 和 `document` 更新为保存的结果 |

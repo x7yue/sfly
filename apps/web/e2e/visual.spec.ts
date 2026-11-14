@@ -863,6 +863,142 @@ test("编排画布：非字符串参数的引用标签与 JSON 输入框", async
 	await expect(page).toHaveScreenshot("editor-reference-chip.png");
 });
 
+test("编排画布：检查器参数标签页里输入的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	const described = {
+		count: "重试的次数，0 表示不重试",
+		ratio: "采样比例，0 到 1 之间；超出范围按最近的边界取",
+		level: "low 只记录失败，high 记录每次请求",
+	} as const;
+	await publishPackage(controlPlane, {
+		nodes: typedNodes.map((node) =>
+			node.name === "typed"
+				? {
+						...node,
+						inputs: {
+							...node.inputs,
+							properties: Object.fromEntries(
+								Object.entries(node.inputs.properties).map(([name, schema]) => [
+									name,
+									name in described
+										? { ...schema, description: described[name as keyof typeof described] }
+										: schema,
+								]),
+							),
+						},
+					}
+				: node,
+		),
+	});
+	const id = await createScenario(controlPlane, "带说明的参数", typedDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "typed").click();
+	await expect(page.getByText(described.ratio)).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-input-docs.png");
+});
+
+/** demo-checks：http_check 的输出有的写了说明，有的没写。 */
+const documentedOutputs = [
+	{
+		name: "http_check",
+		title: "HTTP 检查",
+		entry: "demo_checks.http:http_check",
+		inputs: {
+			type: "object",
+			properties: { url: { type: "string" }, expect: { type: "integer", default: 200 } },
+			required: ["url"],
+			order: ["url", "expect"],
+		},
+		outputs: {
+			type: "object",
+			properties: {
+				status: { type: "integer", description: "HTTP 状态码" },
+				report: {
+					type: "string",
+					description: "检查报告的文字，包含每一步的耗时；响应超时时只有失败原因，没有耗时",
+				},
+				body_file: { type: "string" },
+			},
+		},
+	},
+	{
+		name: "ping",
+		title: "ping",
+		entry: "demo_checks.http:ping_host",
+		inputs: { type: "object", properties: { host: { type: "string" } }, required: ["host"] },
+		outputs: { type: "object", properties: { alive: {} } },
+	},
+];
+
+test("编排画布：检查器「说明与指标」里输出的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: documentedOutputs });
+	const id = await createScenario(controlPlane, "日终数据处理", editorDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "fetch").click();
+	await page.getByRole("tab", { name: "说明与指标" }).click();
+	await expect(page.getByRole("table", { name: "输出" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-output-docs.png");
+});
+
+test("编排画布：引用补全里输出的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: documentedOutputs });
+	const id = await createScenario(controlPlane, "日终数据处理", editorDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "ping").click();
+	await page.getByRole("combobox", { name: "输入 host" }).fill("");
+	await page.keyboard.type("$");
+	await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-reference-output-docs.png");
+});
+
+test.describe("编排画布：节点的备注", () => {
+	const notes = {
+		fetch: "每天 8 点拉取快照\n超时设为 600 秒：镜像很大，冷启动要 5 分钟",
+		ping: "先确认 fetch 的结果",
+	};
+	test.beforeEach(async ({ page, controlPlane, connectAgent }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		const id = await createScenario(controlPlane, "带备注的场景", {
+			...editorDocument,
+			nodes: editorDocument.nodes.map((n) =>
+				n.id === "fetch" || n.id === "ping" ? { ...n, note: notes[n.id] } : n,
+			),
+		});
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("卡片头部的备注图标，检查器顶部的备注", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await expect(page.getByRole("textbox", { name: "备注" })).toHaveValue(notes.fetch);
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-node-notes.png");
+	});
+
+	test("悬停备注图标显示全文", async ({ page }) => {
+		await nodeCard(page, "fetch").locator('[data-slot="note-icon"]').hover();
+		await expect(page.getByRole("tooltip")).toHaveText(notes.fetch);
+		await expect(page).toHaveScreenshot("editor-node-note-tooltip.png");
+	});
+
+	test("缩小后图标仍在", async ({ page }) => {
+		for (let i = 0; i < 3; i++) {
+			await page.getByRole("button", { name: "缩小" }).click();
+			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
+		}
+		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-node-notes-zoomed-out.png");
+	});
+});
+
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {
 	await twoAgents(connectAgent);
 	await publishPackage(controlPlane, metricPackage());
@@ -896,6 +1032,54 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 			page.getByTestId("canvas-run").locator(".font-mono").first(),
 			page.getByTestId("run-summary").locator("dd").first(),
 		],
+	});
+});
+
+/** 几个节点有显示名称：一个正常，一个 40 个字符（卡片上被截断），一个是异步任务。 */
+const displayNamedDocument = {
+	...editorDocument,
+	nodes: editorDocument.nodes.map((node) => {
+		const names: Record<string, string> = {
+			fetch: "创建测试用户",
+			dispatch: "派发对账子流程",
+			ping: "一二三四五六七八九十".repeat(4),
+		};
+		return node.id in names ? { ...node, display_name: names[node.id] } : node;
+	}),
+};
+
+test.describe("编排画布：显示名称", () => {
+	test.beforeEach(async ({ page, connectAgent, controlPlane }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		const id = await createScenario(controlPlane, "日终数据处理", displayNamedDocument);
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("卡片标题、头部的原标题、被截断的名称与检查器顶部的输入框", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await expect(page.getByRole("textbox", { name: "显示名称" })).toHaveValue("创建测试用户");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-display-names.png");
+	});
+
+	test("原地改名：输入框占着卡片标题的位置，卡片大小不变", async ({ page }) => {
+		await nodeCard(page, "fetch").locator('[data-slot="base-node-title"]').dblclick();
+		await expect(nodeCard(page, "fetch").getByRole("textbox", { name: "显示名称" })).toBeFocused();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-rename-in-place.png");
+	});
+
+	test("语义缩放：缩小后显示名称仍然看得清", async ({ page }) => {
+		for (let i = 0; i < 3; i++) {
+			await page.getByRole("button", { name: "缩小" }).click();
+			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
+		}
+		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-display-names-zoomed-out.png");
 	});
 });
 

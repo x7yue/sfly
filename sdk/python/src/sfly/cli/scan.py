@@ -11,6 +11,7 @@ import enum
 import importlib
 import inspect
 import json
+import operator
 import pkgutil
 import re
 import sys
@@ -25,6 +26,7 @@ from sfly.nodes import (
     FEISHU_BOT_MARKER,
     NODE_ATTR,
     Chart,
+    Doc,
     Metric,
     NodeDeclaration,
     is_context_param,
@@ -57,6 +59,52 @@ def _is_typeddict(tp: Any) -> bool:
 _INPUT_TYPES = ((AGENT_MARKER, "agent"), (FEISHU_BOT_MARKER, "feishu_bot"))
 
 
+#: 输入（和输出字段）的说明最多这么多个 Unicode 字符；Python 的 `len` 数的就是 Unicode 字符。
+MAX_DOC_LENGTH = 500
+
+
+def _doc_text(doc: Doc) -> str:
+    text = doc.documentation
+    if not isinstance(text, str) or not text.strip():
+        raise ScanError(f"Doc 必须是非空字符串，收到 {text!r}")
+    text = text.strip()
+    if len(text) > MAX_DOC_LENGTH:
+        raise ScanError(f"说明超过 {MAX_DOC_LENGTH} 个字符（{len(text)} 个），请写短一些")
+    return text
+
+
+def has_doc(hint: Any) -> bool:
+    """注解最外层的 `Annotated` 里有没有 `Doc`（不检查内容）。"""
+    return typing.get_origin(hint) is typing.Annotated and any(
+        isinstance(meta, Doc) for meta in hint.__metadata__
+    )
+
+
+def _annotated(tp: Any, metadata: Sequence[Any]) -> Any:
+    """`Annotated[tp, *metadata]`（元数据个数不定，没法直接写成下标）。"""
+    return operator.getitem(typing.Annotated, (tp, *metadata))
+
+
+def split_doc(hint: Any) -> tuple[Any, str | None]:
+    """读取注解最外层 `Annotated[T, Doc("…")]` 里的说明，返回（去掉 `Doc` 的注解，说明）。
+
+    没写 `Doc` 时原样返回注解和 None。写错时抛出 ScanError，消息不带位置，由调用方加上
+    节点和参数（输出字段）的名字：`Doc` 不是非空字符串、同一个注解里有两个 `Doc`、
+    说明超过 `MAX_DOC_LENGTH` 个字符。说明去掉首尾空白。
+    去掉 `Doc` 之后，`type_schema` 再遇到 `Doc` 就是写在了内层（`list[...]`、`|` 里面），
+    会报错而不是悄悄丢掉。
+    """
+    if not has_doc(hint):
+        return hint, None
+    inner, *_ = typing.get_args(hint)
+    docs = [meta for meta in hint.__metadata__ if isinstance(meta, Doc)]
+    others = [meta for meta in hint.__metadata__ if not isinstance(meta, Doc)]
+    if len(docs) > 1:
+        raise ScanError(f"同一个注解里有 {len(docs)} 个 Doc，只能写一个")
+    text = _doc_text(docs[0])
+    return (_annotated(inner, others) if others else inner), text
+
+
 def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     """把类型注解转换为 JSON Schema；不支持的注解抛出 ScanError。
 
@@ -74,6 +122,11 @@ def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     args = typing.get_args(tp)
 
     if origin is typing.Annotated:
+        if has_doc(tp):
+            raise ScanError(
+                "Doc 只能写在注解的最外层，不能写在 list[...]、| 等的里面；"
+                '例如 Annotated[str | None, Doc("…")]'
+            )
         for marker, name in _INPUT_TYPES:
             if any(meta is marker for meta in tp.__metadata__):
                 if not param:
@@ -113,12 +166,51 @@ def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     raise ScanError(f"不支持的类型注解：{tp!r}")
 
 
-def _typeddict_schema(tp: Any) -> JsonSchema:
-    hints = typing.get_type_hints(tp)
-    schema: JsonSchema = {
-        "type": "object",
-        "properties": {key: type_schema(hint) for key, hint in hints.items()},
-    }
+#: TypedDict 字段注解上的限定符，可以包在 `Annotated` 外面或里面。
+#: `get_type_hints` 带 extras 时保留它们。
+_FIELD_QUALIFIERS = frozenset({"Required", "NotRequired", "ReadOnly"})
+
+
+def _is_field_qualifier(hint: Any) -> bool:
+    # 按名字认：Python 3.10 上 `NotRequired` 来自 typing_extensions，3.13 之前的 `ReadOnly` 也是。
+    return getattr(typing.get_origin(hint), "_name", None) in _FIELD_QUALIFIERS
+
+
+def _without_field_qualifiers(hint: Any) -> Any:
+    """去掉 `Required`、`NotRequired`、`ReadOnly`，`Annotated` 包在它们外面还是里面都行。"""
+    while True:
+        if _is_field_qualifier(hint):
+            hint = typing.get_args(hint)[0]
+            continue
+        if typing.get_origin(hint) is typing.Annotated:
+            inner, *_ = typing.get_args(hint)
+            if _is_field_qualifier(inner):
+                hint = _annotated(typing.get_args(inner)[0], hint.__metadata__)
+                continue
+        return hint
+
+
+def _properties(fields: Mapping[str, Any], where: str = "字段") -> dict[str, JsonSchema]:
+    """输出（TypedDict 或 `@node(outputs={...})`）各字段的 schema。
+
+    字段注解最外层的 `Doc` 写成 `description`；出错时消息前面加上 `{where} {字段名}：`。
+    """
+    properties: dict[str, JsonSchema] = {}
+    for key, hint in fields.items():
+        try:
+            hint, doc = split_doc(_without_field_qualifiers(hint))
+            prop = type_schema(hint)
+        except ScanError as error:
+            raise ScanError(f"{where} {key}：{error}") from None
+        if doc is not None:
+            prop["description"] = doc
+        properties[key] = prop
+    return properties
+
+
+def _typeddict_schema(tp: Any, where: str = "字段") -> JsonSchema:
+    hints = typing.get_type_hints(tp, include_extras=True)
+    schema: JsonSchema = {"type": "object", "properties": _properties(hints, where)}
     required = [key for key in hints if key in tp.__required_keys__]
     if required:
         schema["required"] = required
@@ -139,6 +231,8 @@ def input_schema(fn: Any, label: str) -> JsonSchema:
     hints = typing.get_type_hints(fn, include_extras=True)
     params = list(inspect.signature(fn).parameters.values())
     if params and is_context_param(params[0], hints.get(params[0].name)):
+        if has_doc(hints.get(params[0].name)):
+            raise ScanError(f"{label} 的参数 {params[0].name}：任务上下文不是输入，不能写 Doc")
         params = params[1:]
 
     properties: dict[str, JsonSchema] = {}
@@ -150,9 +244,12 @@ def input_schema(fn: Any, label: str) -> JsonSchema:
                 f"{where}：节点参数必须能按名称传入（不支持 *args、**kwargs、仅位置参数）"
             )
         try:
-            prop = type_schema(hints.get(param.name, inspect.Parameter.empty), param=True)
+            hint, doc = split_doc(hints.get(param.name, inspect.Parameter.empty))
+            prop = type_schema(hint, param=True)
         except ScanError as error:
             raise ScanError(f"{where}：{error}") from None
+        if doc is not None:
+            prop["description"] = doc
         if param.default is inspect.Parameter.empty:
             required.append(param.name)
         else:
@@ -168,20 +265,16 @@ def input_schema(fn: Any, label: str) -> JsonSchema:
 
 
 def output_schema(fn: Any, decl: NodeDeclaration, label: str) -> JsonSchema:
-    try:
-        if decl.outputs is not None:
-            if isinstance(decl.outputs, Mapping):
-                props = {key: type_schema(tp) for key, tp in decl.outputs.items()}
-            elif isinstance(decl.outputs, str):
-                raise ScanError("outputs 应为键名列表或 键名 → 类型 的字典")
-            else:
-                props = {key: {} for key in decl.outputs}
-            return {"type": "object", "properties": props}
-        returns = typing.get_type_hints(fn).get("return")
-        if _is_typeddict(returns):
-            return _typeddict_schema(returns)
-    except ScanError as error:
-        raise ScanError(f"{label} 的输出：{error}") from None
+    where = f"{label} 的输出"
+    if decl.outputs is not None:
+        if isinstance(decl.outputs, Mapping):
+            return {"type": "object", "properties": _properties(decl.outputs, where)}
+        if isinstance(decl.outputs, str):
+            raise ScanError(f"{where}：outputs 应为键名列表或 键名 → 类型 的字典")
+        return {"type": "object", "properties": {key: {} for key in decl.outputs}}
+    returns = typing.get_type_hints(fn).get("return")
+    if _is_typeddict(returns):
+        return _typeddict_schema(returns, where)
     return {"type": "object", "properties": {}}
 
 
@@ -283,6 +376,22 @@ def _label_keys(metric: Metric) -> list[str]:
     return keys
 
 
+#: 节点类型说明（函数的文档字符串）最长多少个 Unicode 字符
+#: （与 packages/schema 的 NODE_DESCRIPTION_MAX 一致）。
+MAX_NODE_DESCRIPTION = 4000
+
+
+def node_description(fn: Any, label: str) -> str | None:
+    """函数的文档字符串去掉缩进后整段作为节点类型的说明；没有文档字符串或只有空白时返回 None。"""
+    description = inspect.cleandoc(fn.__doc__).strip() if fn.__doc__ else ""
+    if len(description) > MAX_NODE_DESCRIPTION:
+        raise ScanError(
+            f"{label}：文档字符串（节点类型的说明）最长 {MAX_NODE_DESCRIPTION} 个字符，"
+            f"实际 {len(description)} 个"
+        )
+    return description or None
+
+
 def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
     qualname: str = fn.__qualname__
     label = f"节点 {fn.__module__}.{qualname}"
@@ -293,9 +402,11 @@ def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
         declarations = metric_declarations(decl)
     except ScanError as error:
         raise ScanError(f"{label}：{error}") from None
+    description = node_description(fn, label)
     return {
         "name": name,
         "title": decl.title or name,
+        **({"description": description} if description else {}),
         "entry": f"{fn.__module__}:{qualname}",
         "inputs": input_schema(fn, label),
         "outputs": output_schema(fn, decl, label),

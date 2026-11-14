@@ -35,6 +35,7 @@ export function fieldLabel(node: DocNode | undefined, field: string): string {
 const PARAM_ITEM: Record<string, string> = {
 	name: "名称",
 	type: "类型",
+	description: "说明",
 	default: "默认值",
 	required: "必填",
 	secret: "敏感",
@@ -42,6 +43,7 @@ const PARAM_ITEM: Record<string, string> = {
 
 /** 节点上的单个字段：名称与检查器里的字段标签一致。 */
 const NODE_FIELD: Record<string, string> = {
+	display_name: "显示名称",
 	agent: "节点 Agent",
 	timeout: "超时",
 	retries: "重试次数",
@@ -62,6 +64,7 @@ const NODE_FIELD: Record<string, string> = {
 	message: "原始消息",
 	package: "节点包",
 	node: "节点类型",
+	note: "备注",
 };
 
 const EDGE_END: Record<string, string> = { from: "起点", to: "终点", kind: "类型" };

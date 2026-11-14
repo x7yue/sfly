@@ -1,12 +1,15 @@
+import { nodeCardText, nodeDisplayName } from "@sfly/orchestration";
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
-import { type CSSProperties, useId } from "react";
+import { type CSSProperties, useCallback, useId, useRef } from "react";
+import { NoteIcon } from "#/components/note-icon";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeader, BaseNodeHeaderTitle } from "@/components/ui/base-node";
 import { useFlowCanvas } from "./context";
 import type { SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
-import { KIND_META, kindCaption, nodeSlot, nodeTags, nodeTitle } from "./node-display";
+import { NodeTitleEditor } from "./NodeTitleEditor";
+import { KIND_META, nodeSlot, nodeTags } from "./node-display";
 import { WarningBadge } from "./WarningBadge";
 import { KIND_CHIP, LOD_HIDDEN, ZOOM_TEXT_11, ZOOM_TEXT_12, ZOOM_TEXT_TITLE } from "./zoom-text";
 
@@ -21,36 +24,64 @@ const portStyle = (at: { x: number; y: number }, rotate = false): CSSProperties 
 });
 
 /**
+ * 双击标题：原生监听挂在标题上，先于画布的双击缩放（xyflow 的 d3-zoom 监听在更外层）拦下事件。
+ * React 的事件委托在根节点上，等它收到时缩放已经发生。`onDoubleClick` 为 undefined（只读画布）时不拦。
+ */
+function useTitleDoubleClick(onDoubleClick: (() => void) | undefined) {
+	const latest = useRef(onDoubleClick);
+	latest.current = onDoubleClick;
+	return useCallback((el: HTMLElement | null) => {
+		if (!el) return;
+		const handle = (event: MouseEvent) => {
+			if (!latest.current) return;
+			event.stopPropagation();
+			latest.current();
+		};
+		el.addEventListener("dblclick", handle);
+		return () => el.removeEventListener("dblclick", handle);
+	}, []);
+}
+
+/**
  * 节点卡片（原型 `.n`，以 React Flow UI 的 BaseNode / BaseHandle 为起点）：种类图标、ID、种类名（标题没说明种类时）、状态，
  * 标题，底部摘要槽；右上角标签（always、另选的 Agent、重试）。端口常显：左侧链入口，右侧链出口，
  * 异步任务节点底部的调度出口；子流程入口节点左侧接收调度连线。
  * 叠加的运行状态、主指标、差异标记来自 FlowCanvas 的 decorateNode（见 context.ts）。
  */
 export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
-	const { info, ports, decorateNode } = useFlowCanvas();
+	const { info, ports, decorateNode, rename } = useFlowCanvas();
 	const { node } = data;
+	// 只有空白等于没写（保存时就不保存），不画图标。
+	const note = node.note?.trim();
 	const meta = KIND_META[node.kind];
-	const title = nodeTitle(node, info);
+	const { title, caption } = nodeCardText(node, info);
+	const named = nodeDisplayName(node) !== undefined;
 	const warnings = info.warnings.get(id) ?? [];
 	const decoration = decorateNode?.(id, node);
 	const port = ports.get(id) ?? { in: false, out: false, dispatch: false };
 	const tags = nodeTags(node);
-	const caption = kindCaption(node, title);
 	const slot = nodeSlot(node);
 	const KindIcon = meta.icon;
 	const isStart = node.kind === "entry" || node.kind === "subflow_entry";
 	const cardId = useId();
 	const statusId = useId();
+	const noteId = useId();
+	// 子流程入口节点没有显示名称，不进入原地编辑。
+	const editing = rename?.active === id && node.kind !== "subflow_entry";
+	const titleRef = useTitleDoubleClick(rename ? () => rename.start(id) : undefined);
 
 	return (
 		<BaseNode
-			role="button"
+			// 原地编辑标题时卡片是一组：按钮里不能放输入框。
+			role={editing ? "group" : "button"}
 			tabIndex={-1}
 			// 名称：「节点 ID，种类，标题」（aria-label，由自己的 id 引用）接上右上角的状态（运行状态、警告、差异标记）。
 			id={cardId}
 			aria-label={[`节点 ${id}`, caption, title !== id && title].filter(Boolean).join("，")}
 			aria-labelledby={`${cardId} ${statusId}`}
-			aria-pressed={selected}
+			// 备注是描述：读屏用户用方向键切到节点时跟在名称后面读到（图标本身不可聚焦，见 NoteIcon）。
+			aria-describedby={note ? noteId : undefined}
+			aria-pressed={editing ? undefined : selected}
 			data-node-id={id}
 			data-run={decoration?.run}
 			data-mark={decoration?.mark}
@@ -91,7 +122,26 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 					<KindIcon />
 				</span>
 				<span className="truncate font-mono text-fg-2">{id}</span>
-				{caption && <span className={cn("flex-none", LOD_HIDDEN)}>{caption}</span>}
+				{caption && (
+					// 有显示名称时头部写的是原来的标题，可以很长（子流程名称、节点类型标题）：放不下时它让出一点，
+					// 主要由节点 ID 让位。没有显示名称时写的是种类名，不截断。
+					<span
+						className={cn(named ? "min-w-0 shrink-[0.25] truncate" : "flex-none", LOD_HIDDEN)}
+						title={named ? caption : undefined}
+					>
+						{caption}
+					</span>
+				)}
+				{note && (
+					<NoteIcon
+						note={note}
+						host="[data-node-id]"
+						textId={noteId}
+						// 警告徽标的提示在上面，键盘聚焦到同时有警告和备注的卡片时两个提示不叠在一起。
+						side={!decoration?.status && warnings.length > 0 ? "bottom" : "top"}
+						className="flex-none"
+					/>
+				)}
 				<span id={statusId} className="ml-auto flex-none">
 					{decoration?.status ??
 						(warnings.length > 0 && <WarningBadge warnings={warnings} className={ZOOM_TEXT_12} />)}
@@ -99,12 +149,25 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			</BaseNodeHeader>
 			{/* 行高 1.6：中文回退字体（Noto Sans CJK 等）的字形高约 1.45em、下划线更低，标题是 truncate（溢出隐藏），
 			    行高再小时缩小视图后字形底部会被裁掉。 */}
-			<BaseNodeHeaderTitle
-				aria-hidden
-				className={cn("mt-1.5 mb-1.25 leading-[1.6]", ZOOM_TEXT_TITLE)}
-			>
-				{title}
-			</BaseNodeHeaderTitle>
+			{editing && rename ? (
+				<NodeTitleEditor
+					id={id}
+					initial={nodeDisplayName(node) ?? ""}
+					placeholder={nodeCardText({ ...node, display_name: undefined }, info).title}
+					onCommit={(text) => rename.commit(id, text)}
+					onCancel={rename.cancel}
+				/>
+			) : (
+				<BaseNodeHeaderTitle
+					ref={titleRef}
+					aria-hidden
+					// 显示名称放不下时截断：悬停给出全文（读屏用的全文在 aria-label 里）。
+					title={named ? title : undefined}
+					className={cn("mt-1.5 mb-1.25 leading-[1.6]", ZOOM_TEXT_TITLE)}
+				>
+					{title}
+				</BaseNodeHeaderTitle>
+			)}
 			<div
 				data-empty={(!decoration?.slot && slot.empty) || undefined}
 				className={cn(

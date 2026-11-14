@@ -50,11 +50,31 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `name` | 函数名 | 节点名，场景和 `sfly debug` 用它引用节点 |
-| `title` | 节点名 | 画布上显示的名称 |
+| `title` | 节点名 | 画布上显示的名称。写成说明用途的名称（例如「HTTP 检查」「重启服务并等待就绪」），不要照抄函数名或写缩写 |
 | `outputs` | 从返回类型读取 | 输出键：键名列表，或 键名 → 类型注解 的字典 |
 | `metrics` | 无 | 指标声明（`Metric`），最多 50 个 |
 | `charts` | 无 | 图表声明（`Chart`），最多 20 张 |
 | `primary_metric` | 无 | 主指标名，必须是已声明、不带标签键的指标，显示在紧凑位置 |
+
+### 节点类型的说明
+
+函数的文档字符串就是节点类型的说明：`sfly build` 去掉缩进后整段写进元信息里这个节点类型的 `description`，会显示在画布上：
+
+- 「添加节点」菜单和节点包管理页：在节点类型的标题下面显示第一段，帮人挑对节点；
+- 检查器的「说明」页：按纯文本显示全文，不渲染 Markdown，空行分隔的段落原样保留。
+
+```python
+@node(title="HTTP 检查")
+def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
+    """请求一个地址，检查返回的状态码是否符合预期。
+
+    只发一次 GET 请求，不跟随重定向。连接超时或状态码不符时失败，失败不会重试。
+    """
+```
+
+- 第一段写这个节点做什么，一两句话；后面的段落写副作用、什么情况下失败。输入和输出的名字、类型画布上已经有，不用在这里重复。
+- 最长 4000 个 Unicode 字符（emoji 算一个），超过时 `sfly build` 报错并指出是哪个节点。没有文档字符串（或只有空白）时不写这个字段，也不报错；已发布的旧版本节点包没有说明，照旧显示。
+- 控制面要先升级：节点类型的 `description` 是元信息新增的字段，旧版本的控制面严格检查元信息，会以「元信息校验失败」拒绝带文档字符串的节点包。用新版 SDK 构建、发布之前，先把控制面升级到同一个版本；Agent 把元信息当作 JSON 原样转发，不受影响。
 
 ## 输入
 
@@ -68,7 +88,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | `dict[str, T]`、`Mapping[str, T]` | 对象（键必须是 `str`） |
 | TypedDict | 有固定键的对象（非 `total` 的键可选） |
 | `T \| None`、`Optional[T]`、其他 `Union` | 任一成员 |
-| `Annotated[T, ...]` | 同 `T` |
+| `Annotated[T, ...]` | 同 `T`；例外是 `Doc`：它给这个输入写说明，见下文「输入的说明：`Doc`」 |
 | `sfly.AgentName` | 「Agent」类型：Agent 名称（字符串），见下文 |
 | `sfly.FeishuBot` | 「飞书机器人」类型：飞书机器人的名称（字符串），见下文 |
 | 没有注解、`Any`、`object` | 任意 JSON 值，不校验 |
@@ -76,6 +96,36 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 - 有默认值的参数是可选输入，默认值必须能序列化为 JSON；没有默认值的是必填输入。
 - 派发任务前按 schema 校验：缺少必填输入、或声明了的输入类型不符时，任务以 `config_error` 失败，节点不会执行。没有声明的输入不检查。
 - 不支持的注解（例如自定义类）让 `sfly build` 报错。
+
+### 输入的说明：`Doc`
+
+```python
+from typing import Annotated
+
+from sfly import Context, Doc, node
+
+
+@node
+def http_check(
+    ctx: Context,
+    url: Annotated[str, Doc("请求地址，带协议")],
+    expect: Annotated[int, Doc("期望的状态码")] = 200,
+    verify_tls: bool = True,
+) -> dict:
+    ...
+```
+
+用 `Annotated[类型, Doc("…")]` 给输入写说明。`sfly build` 把它写成这个输入 schema 的 `description`，画布的检查器在输入框下面显示完整的说明，节点包管理页悬停在输入的名字上也能看到，`sfly package show` 的「说明」列里也有。参数的标签仍然是参数名，说明是帮助文字。说明跟着参数走，改参数名不会丢。
+
+- 写给搭场景的人看：这个输入是什么意思、单位是什么、怎么填。不要重复参数名和类型。
+- 必须是非空字符串，首尾空白不保存，最多 500 个 Unicode 字符（不是字节）。可以换行，检查器里照样显示成多行。
+- 写在参数注解的最外层，一个注解里只能有一个：可选参数写成 `Annotated[str | None, Doc("…")] = None`，不要写成 `Annotated[str, Doc("…")] | None` 或 `list[Annotated[str, Doc("…")]]`。`Annotated` 里的其他元数据照旧不起作用，`Doc` 是唯一的例外。
+- 任务上下文 `ctx` 不是输入，不能写 `Doc`。
+- 「Agent」类型和「飞书机器人」类型的输入也能写：`Annotated[AgentName, Doc("…")]`。
+- 没写说明不报错、不警告：旧版本的节点包和没写说明的输入，在画布上照旧显示。
+- `Doc` 写错时，`sfly build` 报错并指出节点和参数，例如 `节点 demo_checks.http_check 的参数 url：Doc 必须是非空字符串，收到 ''`。`sfly dev`、`sfly debug` 和 `sfly.testing.run_node` 用同一套扫描，结果一样。报错的情况：不是非空字符串、同一个注解里有两个、写在 `ctx` 上、写在 `list[...]`、`|` 等的里面、超过 500 个字符。
+
+这个写法从 SDK 0.4.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.4.0`：节点运行时要从 `sfly` 导入 `Doc`，更旧的 Agent 上没有它，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
 
 ### 「Agent」类型的输入
 
@@ -130,6 +180,31 @@ def stress(ctx: Context, qps: int, alert_bot: FeishuBot | None = None) -> dict:
 - 返回值必须是 dict，序列化为 JSON 后不超过 1 MB；返回 `None` 视为空对象。不满足时任务失败。
 - 后续节点可以引用输出里的值；大块数据存成产物，输出里放产物引用。
 - 输出里的 NUL 字符（`\x00`）保存时换成 U+FFFD（�），后续节点引用到的是替换后的值；错误信息、进度说明和指标标签也是这样（docs/SEMANTICS.md §2.5）。二进制内容存成产物。
+
+### 输出的说明：`Doc`
+
+```python
+from typing import Annotated, TypedDict
+
+from sfly import Doc
+
+
+class CheckOutputs(TypedDict):
+    status: Annotated[int, Doc("HTTP 状态码")]
+    body_file: Annotated[str | None, Doc("响应体保存的文件；响应没有正文时为 None")]
+    elapsed_ms: float
+```
+
+输出字段也用 `Annotated[类型, Doc("…")]` 写说明，规则和输入的 `Doc` 一样（见上文「输入的说明：`Doc`」）：写在字段注解的最外层，一个注解里只能有一个，必须是非空字符串，首尾空白不保存，最多 500 个 Unicode 字符，没写不报错。`sfly build` 把它写成这个输出 schema 的 `description`。
+
+搭场景的人在四个地方看到它：检查器「说明」标签页里的「输出 | 说明」表、引用补全里这个输出的后面、节点包管理页悬停在输出的名字上，以及 `sfly package show` 输出表的「说明」列。没写说明的输出，这些地方照旧只显示名字和类型。
+
+- 写给要引用这个输出的人看：它装的是什么、单位是什么、什么情况下是空。不要重复字段名和类型。
+- `NotRequired[...]`、`Required[...]` 包在 `Annotated` 外面或里面都行：`NotRequired[Annotated[int, Doc("…")]]`。
+- 用 `@node(outputs={...})` 声明输出时，字典的值也能这样写：`outputs={"rows": Annotated[int, Doc("写入的行数")]}`。键名列表的写法没有地方写说明。
+- `Doc` 写错时 `sfly build` 报错并指出节点和输出，例如 `节点 demo_checks.http_check 的输出 status：Doc 必须是非空字符串，收到 ''`。`sfly dev`、`sfly debug` 用同一套扫描，结果一样（`sfly.testing.run_node` 只检查输入，不检查输出）。
+
+和输入的 `Doc` 同一个版本（SDK 0.4.0）起可用，`requires-sdk` 的要求也一样。
 
 ## 失败
 
@@ -215,6 +290,7 @@ ctx.metric("conn_latency_ms", 8.2, labels={"host": "db-1", "port": 5432})
 ```
 
 - 指标要先在 `@node(metrics=...)` 里声明再上报。指标名是标识符（字母、数字、下划线，不以数字开头），不能重复。
+- `description`：一句话写这个指标量的是什么、怎么统计（例如「每秒成交的笔数，只算成功的订单」），单位另有 `unit`，不用重复。它显示在节点包管理页「声明的指标」列的悬停提示里，以及检查器「说明与指标」页的指标列表里；没写不报错。
 - `kind`：`gauge` 是瞬时值（例如延迟、队列长度），`counter` 是累计值（例如已发送的请求数，上报当前累计值）。
 - `Chart.type`：`line`、`area`、`bar`、`stat`；`metrics` 列出至少一个已声明的指标。没有被任何图表引用的指标由平台生成默认图表：瞬时值画折线，累计值画数值卡，带标签的指标一律画折线。
 - `labels`：标签键，用来在一个节点里同时上报多个对象的同一个指标（例如每个连接、每个进程）。最多 3 个键，命名规则同指标名，不能重复；`sfly build` 检查这些规则。
