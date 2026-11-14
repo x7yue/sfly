@@ -278,8 +278,8 @@ export const runsApi = {
 	 * 参数不对时 400 `invalid_params`。
 	 *
 	 * 带上 `preset`（运行预设的 ID）时，预设参数取预设保存的值，`params` 只需要给其余的参数；预设在触发的事务里读取，
-	 * 之后修改预设不影响这次运行。`params` 里给预设参数传了不同的值（按 JSON 深比较）时 400 `preset_param_locked`
-	 * （details 是 `{ param, preset }`：参数名和预设名），传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`；预设已失效（对照最新版本，见 PresetView 的 `status`）
+	 * 之后修改预设不影响这次运行。`params` 里给 secret 预设参数传了任何值（即使和预设相同，以免调用方猜测原值），或给其他预设参数传了不同的值
+	 * （按 JSON 深比较）时 400 `preset_param_locked`（details 是 `{ param, preset }`：参数名和预设名），其他预设参数传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`；预设已失效（对照最新版本，见 PresetView 的 `status`）
 	 * 时 409 `preset_invalid`（details 是问题清单，每项 `{ param, reason }`），不产生运行。
 	 */
 	trigger: endpoint({
