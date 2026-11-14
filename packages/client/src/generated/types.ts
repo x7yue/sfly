@@ -1159,12 +1159,26 @@ export interface PresetParamView {
 	value: unknown;
 }
 
+/**
+ * 预设和最新版本对不上的一处（GLOSSARY「失效的运行预设」）：`missing` 是预设参数已不存在（被删除或改名），
+ * `type_mismatch` 是保存的值不符合它现在的类型。
+ */
+export interface PresetProblemView {
+	/** 有问题的预设参数的名称。 */
+	param: string;
+	reason: "missing" | "type_mismatch";
+}
+
 export interface PresetView {
 	id: string;
 	name: string;
 	description: string;
-	/** 预设参数，按最新版本入口参数的声明顺序。 */
+	/** 预设参数，按最新版本入口参数的声明顺序；已不在声明里的排在后面。 */
 	params: PresetParamView[];
+	/** `invalid` 是失效的运行预设：不能用来触发运行（409 `preset_invalid`），改好之后恢复 `ok`。 */
+	status: "ok" | "invalid";
+	/** 失效的原因，按参数名称排序；`status` 为 `ok` 时为空。 */
+	problems: PresetProblemView[];
 	/** 最后修改人的昵称。 */
 	updated_by: string;
 	updated_at: Timestamp;

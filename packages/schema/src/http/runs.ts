@@ -260,7 +260,7 @@ export const runsApi = {
 			packages: z.record(z.string(), z.string()),
 			/** 最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。 */
 			agents: z.array(PreflightAgent),
-			/** 场景的运行预设，按名称排序（与 presetsApi.list 相同）。 */
+			/** 场景的运行预设，按名称排序（与 presetsApi.list 相同），`status` 对照这次检查用的最新版本。 */
 			presets: z.array(PresetView),
 		}),
 	}),
@@ -279,7 +279,8 @@ export const runsApi = {
 	 *
 	 * 带上 `preset`（运行预设的 ID）时，预设参数取预设保存的值，`params` 只需要给其余的参数；预设在触发的事务里读取，
 	 * 之后修改预设不影响这次运行。`params` 里给预设参数传了不同的值（按 JSON 深比较）时 400 `preset_param_locked`
-	 * （details 是 `{ param, preset }`：参数名和预设名），传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`。
+	 * （details 是 `{ param, preset }`：参数名和预设名），传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`；预设已失效（对照最新版本，见 PresetView 的 `status`）
+	 * 时 409 `preset_invalid`（details 是问题清单，每项 `{ param, reason }`），不产生运行。
 	 */
 	trigger: endpoint({
 		method: "POST",

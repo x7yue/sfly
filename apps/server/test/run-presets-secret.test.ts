@@ -320,6 +320,37 @@ describe("secret 预设参数", () => {
 			).toEqual(["body.params.0.keep"]);
 		});
 
+		it("类型变了、保存的值对不上的 secret 参数不能沿用：keep 返回 invalid_preset，重新输入以后预设恢复可用", async () => {
+			const { id, preset } = await sceneWithSecretPreset();
+			await api.saveVersion(
+				id,
+				scenario(PRESET_PARAMS.map((p) => (p.name === "token" ? { ...p, type: "number" } : p))),
+			);
+			const [stale] = await listPresets(api, id);
+			expect(stale).toMatchObject({
+				status: "invalid",
+				problems: [{ param: "token", reason: "type_mismatch" }],
+			});
+			expect(JSON.stringify(stale)).not.toContain(SECRET);
+
+			const keep = await updatePreset(api, id, preset.id, {
+				params: [
+					{ name: "host", value: "a.example" },
+					{ name: "token", keep: true },
+				],
+			});
+			expect(await invalidPresetFields(keep)).toEqual(["body.params.1.keep"]);
+
+			const fixed = await updatePresetOk(api, id, preset.id, {
+				params: [
+					{ name: "host", value: "a.example" },
+					{ name: "token", value: 4242 },
+				],
+			});
+			expect(fixed.status).toBe("ok");
+			expect(await inputsOf(id, preset.id)).toMatchObject({ token: 4242 });
+		});
+
 		it("已不在入口参数里的预设参数，值也不返回：原来是不是 secret 已经无从判断", async () => {
 			const { id } = await sceneWithSecretPreset();
 			await api.saveVersion(id, scenario(PRESET_PARAMS.filter((p) => p.name !== "token")));

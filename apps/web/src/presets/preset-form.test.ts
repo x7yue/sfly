@@ -5,7 +5,6 @@ import {
 	draftFromPreset,
 	emptyDraft,
 	hasErrors,
-	removedParams,
 	replaceSecret,
 	toggleParam,
 	toPresetBody,
@@ -48,7 +47,7 @@ describe("运行预设的编辑表单", () => {
 				name: "名".repeat(41),
 				description: "",
 				values: { host: " ", steps: "三", options: "{", name: "" },
-				kept: [],
+				keptSecrets: [],
 			},
 			decls,
 		);
@@ -56,7 +55,7 @@ describe("运行预设的编辑表单", () => {
 			name: "名称不能超过 40 个字符",
 			values: { host: "必填", steps: "需要一个数字", options: "不是合法的 JSON", name: "必填" },
 		});
-		const ok = { name: " 压测 A ", description: "", values: { steps: "50" }, kept: [] };
+		const ok = { name: " 压测 A ", description: "", values: { steps: "50" }, keptSecrets: [] };
 		expect(hasErrors(draftErrors(ok, decls))).toBe(false);
 	});
 
@@ -67,7 +66,7 @@ describe("运行预设的编辑表单", () => {
 					name: " 压测 A ",
 					description: " A 集群 ",
 					values: { options: '{"rounds":[1]}', host: "10.0.0.8", steps: "50", dry_run: false },
-					kept: [],
+					keptSecrets: [],
 				},
 				decls,
 			),
@@ -94,6 +93,8 @@ describe("运行预设的编辑表单", () => {
 				{ name: "dry_run", secret: false, value: true },
 				{ name: "options", secret: false, value: { rounds: [1] } },
 			],
+			status: "ok",
+			problems: [],
 			updated_by: "小红",
 			updated_at: "2026-01-01T00:00:00.000Z",
 		};
@@ -109,7 +110,7 @@ describe("运行预设的编辑表单", () => {
 					dry_run: true,
 					options: '{"rounds":[1]}',
 				},
-				kept: [],
+				keptSecrets: [],
 			});
 			expect(hasErrors(draftErrors(draft, decls))).toBe(false);
 			// 原样保存：请求体和预设现在的内容一致。
@@ -132,7 +133,7 @@ describe("运行预设的编辑表单", () => {
 			it("预设里已有值的 secret 参数沿用原值：表单里是空的，勾选，不用重新输入就能通过校验", () => {
 				const draft = draftFromPreset(secretPreset, decls);
 				expect(draft.values).toEqual({ host: "10.0.0.8", token: "" });
-				expect(draft.kept).toEqual(["token"]);
+				expect(draft.keptSecrets).toEqual(["token"]);
 				expect(hasErrors(draftErrors(draft, decls))).toBe(false);
 			});
 
@@ -144,7 +145,7 @@ describe("运行预设的编辑表单", () => {
 				]);
 
 				const replacing = replaceSecret(draft, "token");
-				expect(replacing.kept).toEqual([]);
+				expect(replacing.keptSecrets).toEqual([]);
 				expect(replacing.values.token).toBe("");
 				expect(draftErrors(replacing, decls).values).toEqual({ token: "必填" });
 				const typed = { ...replacing, values: { ...replacing.values, token: "tok-new" } };
@@ -158,10 +159,10 @@ describe("运行预设的编辑表单", () => {
 			it("取消勾选再勾选，原值已经不在了：当作新勾选，要重新填；非字符串的 secret 参数按类型换算", () => {
 				const draft = draftFromPreset(secretPreset, decls);
 				const unchecked = toggleParam(draft, param("token"), false);
-				expect(unchecked.kept).toEqual([]);
+				expect(unchecked.keptSecrets).toEqual([]);
 				expect(unchecked.values).not.toHaveProperty("token");
 				const rechecked = toggleParam(unchecked, param("token"), true);
-				expect(rechecked.kept).toEqual([]);
+				expect(rechecked.keptSecrets).toEqual([]);
 				expect(draftErrors(rechecked, decls).values).toEqual({ token: "必填" });
 
 				const pin = toggleParam(emptyDraft(), param("pin"), true);
@@ -169,22 +170,38 @@ describe("运行预设的编辑表单", () => {
 				expect(toPresetBody(typed, decls).params).toEqual([{ name: "pin", value: 4242 }]);
 			});
 
+			it("保存的值不符合现在类型的 secret 参数没有可沿用的值：表单里留空，要重新输入", () => {
+				const invalid: PresetView = {
+					...secretPreset,
+					params: [
+						{ name: "token", secret: true, value: "******" },
+						{ name: "pin", secret: true, value: "******" },
+					],
+					status: "invalid",
+					problems: [{ param: "pin", reason: "type_mismatch" }],
+				};
+				const draft = draftFromPreset(invalid, decls);
+				expect(draft.keptSecrets).toEqual(["token"]);
+				expect(draft.values).toEqual({ token: "", pin: "" });
+				expect(draftErrors(draft, decls).values).toEqual({ pin: "必填" });
+			});
+
 			it("保存之后才变成 secret 的参数同样沿用原值；不再是 secret 的参数是普通参数，值带进表单", () => {
 				const turned = draftFromPreset(
 					{ ...preset, params: [{ name: "host", secret: true, value: "******" }] },
 					decls.map((p) => (p.name === "host" ? { ...p, secret: true } : p)),
 				);
-				expect(turned.kept).toEqual(["host"]);
+				expect(turned.keptSecrets).toEqual(["host"]);
 				const stopped = draftFromPreset(
 					{ ...preset, params: [{ name: "token", secret: false, value: "visible" }] },
 					decls.map((p) => (p.name === "token" ? { ...p, secret: false } : p)),
 				);
-				expect(stopped.kept).toEqual([]);
+				expect(stopped.keptSecrets).toEqual([]);
 				expect(stopped.values).toEqual({ token: "visible" });
 			});
 		});
 
-		it("预设里已经不在入口参数里的参数不进表单：列出来，保存时会丢掉", () => {
+		it("预设里已经不在入口参数里的参数不进表单", () => {
 			const old: PresetView = {
 				...preset,
 				params: [
@@ -193,9 +210,7 @@ describe("运行预设的编辑表单", () => {
 					{ name: "also_gone", secret: false, value: 2 },
 				],
 			};
-			expect(removedParams(old, decls)).toEqual(["gone", "also_gone"]);
 			expect(Object.keys(draftFromPreset(old, decls).values)).toEqual(["host"]);
-			expect(removedParams(preset, decls)).toEqual([]);
 		});
 	});
 });
