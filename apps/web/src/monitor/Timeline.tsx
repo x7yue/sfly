@@ -713,7 +713,7 @@ function NodeRow({
 				style={{ paddingLeft: 30 + indent }}
 			>
 				<StatusDot kind={status.kind} />
-				<NodeName node={node} />
+				<NodeName node={node} inControl />
 				<span
 					className={cn("min-w-0 flex-1 truncate text-xs text-fg-3", packageNode && "font-mono")}
 				>

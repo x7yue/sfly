@@ -321,34 +321,35 @@ function NodeTypeTable({ nodes }: { nodes: NodeTypeView[] }) {
 					</TableRow>
 				</TableHeader>
 				<TableBody>
-					{nodes.map((node) => (
-						<TableRow key={node.name}>
-							<TableCell width="fit">
-								<span className="font-mono">{node.name}</span>
-								<div className="text-xs text-fg-3">{node.title}</div>
-								{firstParagraph(node.description) && (
-									<p className="m-0 mt-1 w-72 whitespace-normal text-xs text-fg-2">
-										{firstParagraph(node.description)}
-									</p>
-								)}
-							</TableCell>
-							<TableCell>
-								<IoList schema={node.inputs} />
-							</TableCell>
-							<TableCell>
-								<IoList schema={node.outputs} />
-							</TableCell>
-							<TableCell>
-								<MetricsCell info={node} />
-							</TableCell>
-							<TableCell>
-								<LabelKeysCell info={node} />
-							</TableCell>
-							<TableCell>
-								<ChartsCell info={node} />
-							</TableCell>
-						</TableRow>
-					))}
+					{nodes.map((node) => {
+						const summary = firstParagraph(node.description);
+						return (
+							<TableRow key={node.name}>
+								<TableCell width="fit">
+									<span className="font-mono">{node.name}</span>
+									<div className="text-xs text-fg-3">{node.title}</div>
+									{summary && (
+										<p className="m-0 mt-1 w-72 whitespace-normal text-xs text-fg-2">{summary}</p>
+									)}
+								</TableCell>
+								<TableCell>
+									<IoList schema={node.inputs} />
+								</TableCell>
+								<TableCell>
+									<IoList schema={node.outputs} />
+								</TableCell>
+								<TableCell>
+									<MetricsCell info={node} />
+								</TableCell>
+								<TableCell>
+									<LabelKeysCell info={node} />
+								</TableCell>
+								<TableCell>
+									<ChartsCell info={node} />
+								</TableCell>
+							</TableRow>
+						);
+					})}
 				</TableBody>
 			</Table>
 		</>

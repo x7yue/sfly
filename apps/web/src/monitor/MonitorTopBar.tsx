@@ -207,7 +207,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 			}}
 			className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
 		>
-			失败于 <NodeName node={failure.node} className="text-fg-1" />
+			失败于 <NodeName node={failure.node} className="text-fg-1" inControl />
 			{failureAttempt(failure)}
 			{failure.message && (
 				<span className="text-danger-fg">

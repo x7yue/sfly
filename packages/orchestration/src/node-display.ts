@@ -40,7 +40,11 @@ export function subflowLabels(doc: {
 	return (id) => labels.get(id);
 }
 
-function cardTitle(node: OrchestrationNode, lookup: NodeDisplayLookup): string {
+/**
+ * 不带显示名称时的卡片标题（节点类型标题、「等待 30s」、子流程名称……）：清掉显示名称后卡片上写的就是它，
+ * 所以改名输入框和检查器的显示名称输入框拿它做占位提示。
+ */
+export function nodeDefaultTitle(node: OrchestrationNode, lookup: NodeDisplayLookup): string {
 	switch (node.kind) {
 		case "subflow_entry":
 			return subflowLabel(node);
@@ -84,7 +88,7 @@ export function nodeCardText(
 	node: OrchestrationNode,
 	lookup: NodeDisplayLookup,
 ): { title: string; caption: string | undefined } {
-	const title = cardTitle(node, lookup);
+	const title = nodeDefaultTitle(node, lookup);
 	const named = nodeDisplayName(node);
 	if (named !== undefined) return { title: named, caption: title };
 	return { title, caption: cardCaption(node.kind, title) };

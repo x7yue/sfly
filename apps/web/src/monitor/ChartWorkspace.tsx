@@ -537,7 +537,7 @@ function NodeGroup({
 			title={
 				<>
 					<StatusPill kind={status.kind}>{status.label}</StatusPill>
-					<NodeName node={node} className="font-medium" />
+					<NodeName node={node} className="font-medium" inControl />
 				</>
 			}
 			note={note && <NoteIcon note={note} className="flex-none text-sm" />}
