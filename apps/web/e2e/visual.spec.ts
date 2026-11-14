@@ -774,7 +774,8 @@ test.describe("编排画布", () => {
 	test("空白处右键菜单", async ({ page }) => {
 		await page.mouse.click(200, 640, { button: "right" });
 		const menu = page.getByRole("menu", { name: "画布菜单" });
-		await expect(menu).toBeVisible();
+		// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在画布上（选中入口节点、关掉菜单）。
+		await expect(menu).toBeFocused();
 		await page.keyboard.press("ArrowDown");
 		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("添加节点");
 		await expect(page).toHaveScreenshot("editor-pane-menu.png");
@@ -802,8 +803,9 @@ test.describe("编排画布", () => {
 		});
 		await page.mouse.click(at.x, at.y, { button: "right" });
 		const menu = page.getByRole("menu", { name: "连线菜单" });
-		await expect(menu).toBeVisible();
 		await expect(page.getByRole("button", { name: "在此插入节点" })).toBeVisible();
+		// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在画布上。
+		await expect(menu).toBeFocused();
 		await page.keyboard.press("ArrowDown");
 		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("在此插入节点");
 		await expect(page).toHaveScreenshot("editor-edge-menu.png");
