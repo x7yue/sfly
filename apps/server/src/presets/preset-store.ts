@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ParamDeclaration, PresetChanges, PresetParamInput, PresetView } from "@sfly/schema";
 import { and, asc, eq } from "drizzle-orm";
-import type { z } from "zod";
 import type { Actor } from "../actor.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -10,8 +9,6 @@ import type { Tx } from "../engine/step.js";
 import { checkPresetParams, type PresetIssue } from "./preset-input.js";
 import { entryParams } from "./preset-validity.js";
 import { type PresetRow, toPresetView } from "./preset-view.js";
-
-type Declaration = z.infer<typeof ParamDeclaration>;
 
 /** 预设的写入没有成功的原因；`not_found` 是场景或预设不存在（预设不属于这个场景也算）。 */
 type PresetRejection =
@@ -27,7 +24,7 @@ export type CopyPresetResult = { kind: "copied"; preset: PresetView } | PresetRe
 async function headDeclarations(
 	tx: Tx | Db,
 	orchestration: Pick<typeof orchestrations.$inferSelect, "id" | "headVersion">,
-): Promise<Declaration[]> {
+): Promise<ParamDeclaration[]> {
 	if (orchestration.headVersion === 0) return [];
 	const [version] = await tx
 		.select({ document: orchestrationVersions.document })
@@ -66,7 +63,7 @@ export async function findPreset(
 async function lockedHead(
 	tx: Tx,
 	orchestrationId: string,
-): Promise<{ declarations: Declaration[] } | undefined> {
+): Promise<{ declarations: ParamDeclaration[] } | undefined> {
 	const [orchestration] = await tx
 		.select()
 		.from(orchestrations)
@@ -134,7 +131,7 @@ export class PresetStore {
 	/** 场景的运行预设，按名称排序，对照给出的入口参数声明（预检传入它这次检查用的最新版本）。 */
 	async viewsFor(
 		orchestrationId: string,
-		declarations: readonly Declaration[],
+		declarations: readonly ParamDeclaration[],
 	): Promise<PresetView[]> {
 		const rows = await this.deps.db
 			.select()

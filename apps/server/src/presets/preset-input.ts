@@ -1,8 +1,5 @@
 import type { ParamDeclaration, PresetParamInput } from "@sfly/schema";
-import type { z } from "zod";
 import { presetProblems } from "./preset-validity.js";
-
-type Declaration = z.infer<typeof ParamDeclaration>;
 
 /**
  * `invalid_preset` 的 details 里的一项：和请求校验失败时的 zod issue 同一种格式，
@@ -24,7 +21,7 @@ export interface PresetIssue {
  */
 export function checkPresetParams(
 	params: readonly PresetParamInput[],
-	declarations: readonly Declaration[],
+	declarations: readonly ParamDeclaration[],
 	saved: Record<string, unknown> = {},
 ): { values: Record<string, unknown> } | { issues: PresetIssue[] } {
 	const issues: PresetIssue[] = [];

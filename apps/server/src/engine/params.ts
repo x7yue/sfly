@@ -1,14 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ParamDeclaration } from "@sfly/schema";
-import type { z } from "zod";
-
-type Declaration = z.infer<typeof ParamDeclaration>;
 
 /**
  * 值是否符合参数声明的类型（docs/SEMANTICS.md §2.1）：不做类型转换，`json` 接受任何值。
  * 触发时补参数和判断运行预设是否可用（src/presets/preset-validity.ts）用的都是它。
  */
-export function matchesParamType(type: Declaration["type"], value: unknown): boolean {
+export function matchesParamType(type: ParamDeclaration["type"], value: unknown): boolean {
 	switch (type) {
 		case "string":
 			return typeof value === "string";
@@ -30,7 +27,7 @@ export function matchesParamType(type: Declaration["type"], value: unknown): boo
 export function withPresetValues(
 	provided: Record<string, unknown>,
 	presetValues: Record<string, unknown>,
-	declarations: Declaration[],
+	declarations: ParamDeclaration[],
 ): { params: Record<string, unknown> } | { locked: string } {
 	const secrets = new Set(declarations.filter((d) => d.secret).map((d) => d.name));
 	for (const [name, value] of Object.entries(presetValues)) {
@@ -45,7 +42,7 @@ export function withPresetValues(
  * 缺少必填参数、传入未声明的参数或类型不符时返回错误。没有值的可选参数为 null。
  */
 export function fillParams(
-	declarations: Declaration[],
+	declarations: ParamDeclaration[],
 	provided: Record<string, unknown>,
 ): { params: Record<string, unknown> } | { errors: string[] } {
 	const errors: string[] = [];

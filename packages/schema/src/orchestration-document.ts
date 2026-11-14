@@ -160,5 +160,6 @@ export const OrchestrationDocument = z
 	})
 	.meta({ title: "sfly 编排文档" });
 
+export type ParamDeclaration = z.infer<typeof ParamDeclaration>;
 export type OrchestrationDocument = z.infer<typeof OrchestrationDocument>;
 export type OrchestrationNode = z.infer<typeof OrchestrationNode>;

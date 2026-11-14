@@ -1,8 +1,5 @@
 import type { OrchestrationDocument, ParamDeclaration } from "@sfly/schema";
-import type { z } from "zod";
 import { matchesParamType } from "../engine/params.js";
-
-type Declaration = z.infer<typeof ParamDeclaration>;
 
 /**
  * 预设参数和最新版本对不上的一处（GLOSSARY「失效的运行预设」）：`missing` 是参数已不存在（被删除或改名），
@@ -14,7 +11,7 @@ export interface PresetProblem {
 }
 
 /** 场景版本入口节点的参数声明；没有入口节点时为空。 */
-export function entryParams(document: OrchestrationDocument): Declaration[] {
+export function entryParams(document: OrchestrationDocument): ParamDeclaration[] {
 	const entry = document.nodes.find((n) => n.kind === "entry");
 	return entry?.kind === "entry" ? entry.params : [];
 }
@@ -27,7 +24,7 @@ export function entryParams(document: OrchestrationDocument): Declaration[] {
  */
 export function presetProblems(
 	values: Record<string, unknown>,
-	declarations: readonly Declaration[],
+	declarations: readonly ParamDeclaration[],
 ): PresetProblem[] {
 	const declared = new Map(declarations.map((d) => [d.name, d]));
 	const problems: PresetProblem[] = [];

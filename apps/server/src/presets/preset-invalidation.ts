@@ -4,17 +4,14 @@ import {
 	PRESET_INVALIDATED_WARNING,
 } from "@sfly/schema";
 import { and, asc, eq, inArray } from "drizzle-orm";
-import type { z } from "zod";
 import type { Db } from "../db/database.js";
 import { orchestrationVersions, runPresets } from "../db/schema.js";
 import { entryParams, type PresetProblem, presetProblems } from "./preset-validity.js";
 
-type Declaration = z.infer<typeof ParamDeclaration>;
-
 /** 失效的原因写成一句话：哪个参数、什么问题；类型不对时写明它现在的类型。 */
 export function describePresetProblems(
 	problems: readonly PresetProblem[],
-	declarations: readonly Declaration[],
+	declarations: readonly ParamDeclaration[],
 ): string {
 	return problems
 		.map(({ param, reason }) => {
