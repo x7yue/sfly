@@ -25,14 +25,14 @@
 ## `@node`
 
 ```python
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from sfly import Chart, Context, Metric, node
+from sfly import Chart, Context, Doc, Metric, node
 
 
 class CheckOutputs(TypedDict):
-    status: int
-    report: str
+    status: Annotated[int, Doc("HTTP 状态码")]
+    report: Annotated[str, Doc("检查结果的文字报告")]
 
 
 @node(
@@ -44,7 +44,15 @@ class CheckOutputs(TypedDict):
     charts=[Chart("延迟", type="line", metrics=["latency_ms"])],
     primary_metric="latency_ms",
 )
-def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
+def http_check(
+    ctx: Context,
+    url: Annotated[str, Doc("请求地址，带协议")],
+    expect: Annotated[int, Doc("期望的状态码")] = 200,
+) -> CheckOutputs:
+    """请求一个地址，检查返回的状态码是否符合预期。
+
+    只发一次 GET 请求，不跟随重定向。连接超时或状态码不符时失败，失败不会重试。
+    """
     ...
 ```
 
@@ -68,7 +76,11 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 
 ```python
 @node(title="HTTP 检查")
-def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
+def http_check(
+    ctx: Context,
+    url: Annotated[str, Doc("请求地址，带协议")],
+    expect: Annotated[int, Doc("期望的状态码")] = 200,
+) -> CheckOutputs:
     """请求一个地址，检查返回的状态码是否符合预期。
 
     只发一次 GET 请求，不跟随重定向。连接超时或状态码不符时失败，失败不会重试。
@@ -103,18 +115,26 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 ### 输入的说明：`Doc`
 
 ```python
-from typing import Annotated
+from typing import Annotated, TypedDict
 
 from sfly import Context, Doc, node
 
 
-@node
+class CheckOutputs(TypedDict):
+    status: Annotated[int, Doc("HTTP 状态码")]
+
+
+@node(title="HTTP 检查")
 def http_check(
     ctx: Context,
     url: Annotated[str, Doc("请求地址，带协议")],
     expect: Annotated[int, Doc("期望的状态码")] = 200,
-    verify_tls: bool = True,
-) -> dict:
+    verify_tls: Annotated[bool, Doc("是否校验服务端证书；自签名证书的测试环境设为 false")] = True,
+) -> CheckOutputs:
+    """请求一个地址，检查返回的状态码是否符合预期。
+
+    只发一次 GET 请求，不跟随重定向。连接超时或状态码不符时失败，失败不会重试。
+    """
     ...
 ```
 

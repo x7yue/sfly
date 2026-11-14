@@ -3,6 +3,7 @@ import {
 	blocksTrigger,
 	feishuBotInputs,
 	InvalidReferenceError,
+	nodeNameWithId,
 	notifyBotValue,
 	referencedAgents,
 	referencesIn,
@@ -92,11 +93,13 @@ export function createPreflight(deps: {
 					).map((r) => r.name)
 				: [],
 		);
+		const nodeById = new Map(doc.nodes.map((n) => [n.id, n]));
 		for (const [nodeId, agent] of wanted) {
 			if (registered.has(agent)) continue;
+			const node = nodeById.get(nodeId);
 			problems.push({
 				code: "agent_not_registered",
-				message: `节点 ${nodeId} 派发到的 Agent ${agent} 还没有注册过`,
+				message: `节点 ${node ? nodeNameWithId(node) : nodeId} 派发到的 Agent ${agent} 还没有注册过`,
 				node_id: nodeId,
 			});
 		}
@@ -113,7 +116,7 @@ export function createPreflight(deps: {
 			if (sdk) {
 				problems.push({
 					code: "sdk_version_unsatisfied",
-					message: `节点 ${node.id}：${sdk}`,
+					message: `节点 ${nodeNameWithId(node)}：${sdk}`,
 					node_id: node.id,
 				});
 			}
@@ -121,7 +124,7 @@ export function createPreflight(deps: {
 			if (own) {
 				problems.push({
 					code: "agent_version_unsatisfied",
-					message: `节点 ${node.id}：${own}`,
+					message: `节点 ${nodeNameWithId(node)}：${own}`,
 					node_id: node.id,
 				});
 			}
@@ -129,7 +132,13 @@ export function createPreflight(deps: {
 			if (!type || metadata.requires_agent === undefined) continue;
 			for (const { input, agent } of referencedAgents(type.inputs, node.inputs)) {
 				if (referencesIn(agent).length > 0) continue;
-				constants.push({ nodeId: node.id, input, agent, requirement: { metadata, pkg } });
+				constants.push({
+					nodeId: node.id,
+					node: nodeNameWithId(node),
+					input,
+					agent,
+					requirement: { metadata, pkg },
+				});
 			}
 		}
 		// 没有注册过的常量已经由静态检查（agent_input_not_registered）指出，这里只看版本。
@@ -172,7 +181,8 @@ export function createParamsCheck(deps: { db: Db; packages: PackageRepository })
 				if (node.kind === "feishu_notify" && node.bot !== undefined) {
 					const bot =
 						notifyBotValue(node.bot).kind === "param" ? resolved(node.bot, known) : undefined;
-					if (typeof bot === "string" && bot !== "") bots.push({ nodeId: node.id, bot, source });
+					if (typeof bot === "string" && bot !== "")
+						bots.push({ nodeId: node.id, node: nodeNameWithId(node), bot, source });
 				}
 				if (node.kind !== "package") continue;
 				const metadata = locked.get(node.package);
@@ -187,14 +197,21 @@ export function createParamsCheck(deps: { db: Db; packages: PackageRepository })
 					if (typeof value !== "string" || referencesIn(value).length === 0) continue;
 					const agent = resolved(value, known);
 					if (typeof agent === "string" && agent !== "")
-						wanted.push({ nodeId: node.id, input, agent, requirement, source });
+						wanted.push({
+							nodeId: node.id,
+							node: nodeNameWithId(node),
+							input,
+							agent,
+							requirement,
+							source,
+						});
 				}
 				for (const input of feishuBotInputs(type.inputs)) {
 					const value = node.inputs[input];
 					if (typeof value !== "string" || referencesIn(value).length === 0) continue;
 					const bot = resolved(value, known);
 					if (typeof bot === "string" && bot !== "")
-						bots.push({ nodeId: node.id, input, bot, source });
+						bots.push({ nodeId: node.id, node: nodeNameWithId(node), input, bot, source });
 				}
 			}
 		}
@@ -238,7 +255,7 @@ function knownParams(plan: RunPlan, params: Record<string, unknown>): KnownParam
 				{
 					chain: subflow,
 					params: passed,
-					source: `取自子流程的参数，由异步任务节点 ${node.id} 传入`,
+					source: `取自子流程的参数，由异步任务节点 ${nodeNameWithId(node)} 传入`,
 				},
 				new Set([...path, subflow.entry.id]),
 			);
