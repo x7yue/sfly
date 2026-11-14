@@ -3,7 +3,11 @@ import type { z } from "zod";
 
 type Declaration = z.infer<typeof ParamDeclaration>;
 
-function matchesType(type: Declaration["type"], value: unknown): boolean {
+/**
+ * 值是否符合参数声明的类型（docs/SEMANTICS.md §2.1）：不做类型转换，`json` 接受任何值。
+ * 触发时补参数和判断运行预设是否可用（src/presets/preset-validity.ts）用的都是它。
+ */
+export function matchesParamType(type: Declaration["type"], value: unknown): boolean {
 	switch (type) {
 		case "string":
 			return typeof value === "string";
@@ -38,7 +42,7 @@ export function fillParams(
 			params[decl.name] = null;
 			continue;
 		}
-		if (!matchesType(decl.type, value)) {
+		if (!matchesParamType(decl.type, value)) {
 			errors.push(`param ${decl.name} must be of type ${decl.type}`);
 		}
 		params[decl.name] = value;

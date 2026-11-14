@@ -1,7 +1,6 @@
 import {
 	domainKey,
 	orchestrationsApi,
-	type ParamDeclView,
 	type PreflightProblem,
 	type RunView,
 	runListApi,
@@ -11,8 +10,8 @@ import { revalidateLogic, useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
-import { AlertTriangleIcon, CheckIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { AlertTriangleIcon, CheckIcon, XIcon } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
@@ -20,15 +19,10 @@ import { shortId } from "#/lib/format";
 import { useNickname } from "#/lib/nickname";
 import { writeRunView } from "#/monitor/live-run";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { type CheckRow, type LocalState, type Preflight, preflightChecks } from "./checks";
-import { type FieldValue, initialValues, paramsSchema, toParams } from "./trigger-form";
-
-/** 敏感参数临时显示的时长。 */
-const REVEAL_MS = 5000;
+import { ParamField } from "./ParamField";
+import { initialValues, paramsSchema, toParams } from "./trigger-form";
 
 export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
@@ -248,142 +242,6 @@ function RunningNotice({ orchestrationId }: { orchestrationId: string }) {
 				查看
 			</Link>
 		</output>
-	);
-}
-
-/** 只在下划线后断行，不在单词中间断开；用 <wbr>，它不进读屏名称与复制的文字。 */
-const breakableName = (name: string) =>
-	name.split("_").map((part, i, parts) => (
-		// biome-ignore lint/suspicious/noArrayIndexKey: 参数名按下划线切成的片段，位置就是身份
-		<span key={i}>
-			{part}
-			{i < parts.length - 1 && (
-				<>
-					_<wbr />
-				</>
-			)}
-		</span>
-	));
-
-function ParamField({
-	param,
-	value,
-	error,
-	onChange,
-	onBlur,
-}: {
-	param: ParamDeclView;
-	value: FieldValue | undefined;
-	error: string | undefined;
-	onChange: (value: FieldValue) => void;
-	onBlur: () => void;
-}) {
-	const id = useId();
-	const labelId = `${id}-label`;
-	const helpId = `${id}-help`;
-	const errorId = `${id}-error`;
-	const [revealed, setRevealed] = useState(false);
-	useEffect(() => {
-		if (!revealed) return;
-		const timer = setTimeout(() => setRevealed(false), REVEAL_MS);
-		return () => clearTimeout(timer);
-	}, [revealed]);
-
-	const help = param.secret
-		? "界面和日志中都会打码"
-		: param.default !== undefined && param.type !== "boolean"
-			? `默认 ${JSON.stringify(param.default)}`
-			: null;
-	const describedBy = [error ? errorId : null, help ? helpId : null].filter(Boolean).join(" ");
-	const aria = {
-		id,
-		"aria-invalid": error ? true : undefined,
-		"aria-describedby": describedBy || undefined,
-		"aria-required": param.required || undefined,
-	};
-	const hidden = param.secret && !revealed;
-	let control: React.ReactNode;
-	if (param.type === "boolean") {
-		control = (
-			<div className="flex h-7.5 items-center gap-2">
-				<Switch
-					{...aria}
-					aria-labelledby={labelId}
-					checked={value === true}
-					onCheckedChange={(checked) => onChange(checked)}
-					onBlur={onBlur}
-				/>
-				<span className="font-mono text-xs text-fg-2">{value === true ? "true" : "false"}</span>
-			</div>
-		);
-	} else if (param.type === "json") {
-		control = (
-			<Textarea
-				{...aria}
-				rows={3}
-				spellCheck={false}
-				className="font-mono text-xs"
-				value={String(value ?? "")}
-				onChange={(e) => onChange(e.target.value)}
-				onBlur={onBlur}
-			/>
-		);
-	} else {
-		control = (
-			<div className="flex gap-1.5">
-				<Input
-					{...aria}
-					type={hidden ? "password" : "text"}
-					inputMode={param.type === "number" ? "decimal" : undefined}
-					autoComplete="off"
-					spellCheck={false}
-					className={param.type === "number" || param.secret ? "font-mono" : undefined}
-					value={String(value ?? "")}
-					onChange={(e) => onChange(e.target.value)}
-					onBlur={onBlur}
-				/>
-				{param.secret && (
-					<Button
-						variant="ghost"
-						size="icon"
-						aria-label={revealed ? `隐藏 ${param.name}` : `临时显示 ${param.name} 5 秒`}
-						title={revealed ? "隐藏" : "临时显示 5 秒"}
-						onClick={() => setRevealed((r) => !r)}
-					>
-						{revealed ? <EyeOffIcon /> : <EyeIcon />}
-					</Button>
-				)}
-			</div>
-		);
-	}
-	return (
-		<div className="col-span-full grid grid-cols-subgrid items-start">
-			<label id={labelId} htmlFor={id} className="min-w-0 pt-1.5 text-sm wrap-anywhere text-fg-2">
-				<span className="font-mono">{breakableName(param.name)}</span>
-				{param.required && (
-					<span aria-hidden className="ml-0.5 text-fg-2">
-						*
-					</span>
-				)}
-				<span className="block font-mono text-xs text-fg-3">
-					{param.type}
-					{param.secret && " · 敏感"}
-				</span>
-			</label>
-			<div className="flex min-w-0 flex-col gap-1.25">
-				{control}
-				{error && (
-					<p id={errorId} className="m-0 text-xs text-danger-fg">
-						{error}
-					</p>
-				)}
-				{help && (
-					<p id={helpId} className="m-0 text-xs text-fg-3">
-						{help}
-					</p>
-				)}
-			</div>
-		</div>
 	);
 }
 
