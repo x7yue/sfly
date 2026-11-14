@@ -8,7 +8,7 @@ import { OUTPUT_PATH, PARAM_PATH, REFERENCE } from "./reference-syntax.js";
  */
 
 /** 节点类型中用到的元信息：输入 schema 生成参数表单，输出键用于补全和引用检查。 */
-export type NodeTypeIo = Pick<NodeTypeMetadata, "name" | "inputs" | "outputs">;
+export type NodeTypeIo = Pick<NodeTypeMetadata, "name" | "inputs" | "outputs" | "description">;
 
 /**
  * 节点包目录：`packageKey(包名, 版本)` → 该版本的节点类型。
