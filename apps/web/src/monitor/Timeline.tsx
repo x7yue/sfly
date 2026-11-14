@@ -665,7 +665,7 @@ function NodeRow({
 	const span = spanOf(segments);
 	const progress = progressLabel(node);
 	const ref = { chainInstanceId: chain.id, nodeId: node.node_id };
-	const title = nodeOutsideCardText(decl ?? node, display);
+	const title = nodeOutsideCardText(decl, node.kind, display);
 	// 包节点的说明是「包/节点类型」，同一次运行里包名几乎都一样：行上只留区分度高的节点类型，完整的在悬停提示与读屏名称里。
 	const packageNode = decl?.kind === "package";
 	const shortTitle = packageNode ? decl.node : title;

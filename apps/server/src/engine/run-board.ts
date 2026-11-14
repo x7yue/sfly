@@ -1,4 +1,5 @@
-import type { NodeStatus, OrchestrationDocument } from "@sfly/schema";
+import { nodeNameBeforeId } from "@sfly/orchestration";
+import type { NodeStatus, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import { asc, inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { type ChainStatus, chainInstances, type TaskProgress, tasks } from "../db/schema.js";
@@ -27,6 +28,8 @@ export const nodeStatus = (rows: readonly { status: NodeStatus }[]): NodeStatus 
 
 export interface BoardNode {
 	node_id: string;
+	/** 运行绑定版本里的显示名称（子流程入口节点是子流程名称）；没有时为 undefined。 */
+	display_name: string | undefined;
 	status: NodeStatus;
 	/** 最后一次尝试的最新进度。 */
 	progress: TaskProgress | null;
@@ -74,7 +77,7 @@ export async function loadRunBoards(
 		.orderBy(asc(tasks.attempt));
 	const attemptsOf = groupAttempts(taskRows);
 
-	const plans = new Map<string, (chainId: string) => string[]>();
+	const plans = new Map<string, (chainId: string) => readonly OrchestrationNode[]>();
 	const versionOf = new Map(items.map((r) => [r.id, r]));
 	const nodesOf = (runId: string) => {
 		const item = versionOf.get(runId);
@@ -83,18 +86,18 @@ export async function loadRunBoards(
 		if (!plan) {
 			const planned = planRun(item.document);
 			plan = (chainId) =>
-				("errors" in planned ? undefined : planned.chains.get(chainId)?.nodes.map((n) => n.id)) ??
-				[];
+				("errors" in planned ? undefined : planned.chains.get(chainId)?.nodes) ?? [];
 			plans.set(item.versionId, plan);
 		}
 		return plan;
 	};
 
 	for (const chain of chains) {
-		const nodes = nodesOf(chain.runId)(chain.chainId).map((nodeId) => {
-			const rows = attemptsOf(chain.id, nodeId);
+		const nodes = nodesOf(chain.runId)(chain.chainId).map((node) => {
+			const rows = attemptsOf(chain.id, node.id);
 			return {
-				node_id: nodeId,
+				node_id: node.id,
+				display_name: nodeNameBeforeId(node),
 				status: nodeStatus(rows),
 				progress: rows.at(-1)?.progress ?? null,
 			};

@@ -4,6 +4,7 @@ import {
 	type NodeDisplayLookup,
 	nameWithId,
 	nodeCardText,
+	nodeNameBeforeId,
 	nodeNameWithId,
 	nodeOutsideCardText,
 	subflowLabels,
@@ -199,42 +200,45 @@ describe("「显示名称（节点 ID）」：卡片以外写节点的名字", (
 			"未命名子流程（blank）",
 		);
 	});
+
+	it("写在节点 ID 前面的名字（控制面给运行里的节点补上的 display_name）", () => {
+		expect(nodeNameBeforeId(node({ kind: "sleep", id: "wait", display_name: " 等库 " }))).toBe(
+			"等库",
+		);
+		expect(nodeNameBeforeId(node({ kind: "sleep", id: "wait" }))).toBeUndefined();
+		expect(nodeNameBeforeId(node({ kind: "subflow_entry", id: "mon", name: "监控" }))).toBe("监控");
+		expect(nodeNameBeforeId(node({ kind: "subflow_entry", id: "legacy" }))).toBeUndefined();
+	});
 });
 
 describe("卡片以外的写法", () => {
+	const outside = (n: OrchestrationNode) => nodeOutsideCardText(n, n.kind, lookup);
+
 	it("包节点写 `包名/节点类型名`，不查节点类型的标题", () => {
 		const shell = node({ kind: "package", package: "std", node: "shell" });
-		expect(nodeOutsideCardText(shell, lookup)).toBe("std/shell");
+		expect(outside(shell)).toBe("std/shell");
 	});
 
 	it("停止子流程节点写出要停止的子流程名称；没有选择或目标不在场景里时只写种类名", () => {
-		expect(nodeOutsideCardText(node({ kind: "stop_subflow", subflow: "mon" }), lookup)).toBe(
-			"停止子流程「监控」",
-		);
-		expect(nodeOutsideCardText(node({ kind: "stop_subflow" }), lookup)).toBe("停止子流程");
-		expect(nodeOutsideCardText(node({ kind: "stop_subflow", subflow: "removed" }), lookup)).toBe(
-			"停止子流程",
-		);
-		expect(nodeOutsideCardText(node({ kind: "stop_subflow", subflow: "sleep_1" }), lookup)).toBe(
-			"停止子流程",
-		);
+		expect(outside(node({ kind: "stop_subflow", subflow: "mon" }))).toBe("停止子流程「监控」");
+		expect(outside(node({ kind: "stop_subflow" }))).toBe("停止子流程");
+		expect(outside(node({ kind: "stop_subflow", subflow: "removed" }))).toBe("停止子流程");
+		expect(outside(node({ kind: "stop_subflow", subflow: "sleep_1" }))).toBe("停止子流程");
 	});
 
 	it("其余节点写种类名，不写等待时长、时间点和子流程名称", () => {
-		expect(nodeOutsideCardText(node({ kind: "sleep", duration: "30s" }), lookup)).toBe("Sleep");
-		expect(nodeOutsideCardText(node({ kind: "timer", at: "09:30:00" }), lookup)).toBe("定时");
-		expect(
-			nodeOutsideCardText(node({ kind: "subflow_entry", id: "mon", name: "监控" }), lookup),
-		).toBe("子流程入口");
-		expect(nodeOutsideCardText(node({ kind: "feishu_notify" }), lookup)).toBe("飞书通知");
-		expect(nodeOutsideCardText(node({ kind: "async" }), lookup)).toBe("异步任务");
-		expect(nodeOutsideCardText(node({ kind: "entry" }), lookup)).toBe("入口");
+		expect(outside(node({ kind: "sleep", duration: "30s" }))).toBe("Sleep");
+		expect(outside(node({ kind: "timer", at: "09:30:00" }))).toBe("定时");
+		expect(outside(node({ kind: "subflow_entry", id: "mon", name: "监控" }))).toBe("子流程入口");
+		expect(outside(node({ kind: "feishu_notify" }))).toBe("飞书通知");
+		expect(outside(node({ kind: "async" }))).toBe("异步任务");
+		expect(outside(node({ kind: "entry" }))).toBe("入口");
 	});
 
 	it("场景里已经没有这个节点、只知道种类时写种类名", () => {
-		expect(nodeOutsideCardText({ kind: "package" }, lookup)).toBe("包节点");
-		expect(nodeOutsideCardText({ kind: "stop_subflow" }, lookup)).toBe("停止子流程");
-		expect(nodeOutsideCardText({ kind: "sleep" }, lookup)).toBe("Sleep");
+		expect(nodeOutsideCardText(undefined, "package", lookup)).toBe("包节点");
+		expect(nodeOutsideCardText(undefined, "stop_subflow", lookup)).toBe("停止子流程");
+		expect(nodeOutsideCardText(undefined, "sleep", lookup)).toBe("Sleep");
 	});
 });
 

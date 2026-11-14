@@ -84,24 +84,26 @@ export async function listAllRuns(
 			};
 			for (const chain of boards.get(run.id) ?? []) {
 				const subflow = chain.depth > 0;
-				const nodes = chain.nodes.map(({ node_id, status, progress }) => {
+				const nodes = chain.nodes.map(({ node_id, display_name, status, progress }) => {
 					if (isActiveStatus(status)) {
 						item.active_nodes.push({
 							chain_instance_id: chain.id,
 							node_id,
+							display_name,
 							status,
 							progress: progress ? { current: progress.current, total: progress.total } : null,
 						});
 					}
 					return { node_id, status };
 				});
-				const failedNode = nodes.find((n) => n.status === "failed");
+				const failedNode = chain.nodes.find((n) => n.status === "failed");
 				if (chain.status === "failed" || failedNode) {
 					item.failures.push({
 						chain_instance_id: chain.id,
 						chain_id: chain.chain_id,
 						subflow,
 						node_id: failedNode?.node_id ?? null,
+						display_name: failedNode?.display_name,
 					});
 				}
 				item.chains.push({

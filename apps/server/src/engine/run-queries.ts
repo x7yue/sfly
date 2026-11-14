@@ -1,4 +1,4 @@
-import { subflowName } from "@sfly/orchestration";
+import { nodeNameBeforeId, subflowName } from "@sfly/orchestration";
 import type { AttemptView, ChainRunView, NodeRunView, RunSummary, RunView } from "@sfly/schema";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { clockOffsetView } from "../agents/agent-clock.js";
@@ -143,6 +143,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 				const last = attempts.at(-1);
 				return {
 					node_id: node.id,
+					display_name: nodeNameBeforeId(node),
 					kind: node.kind,
 					status: nodeStatus(rows),
 					agent: node.kind === "package" ? agentFor(document, node) : null,
