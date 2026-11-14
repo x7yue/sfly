@@ -138,7 +138,7 @@ def test_requires_an_sdk_that_has_doc() -> None:
     # 标准节点用 Annotated[类型, Doc("…")] 写输入、输出的说明（#317），更旧的 SDK 导入标准节点包时
     # 就失败。和下载接口一样，Doc 还没随平台版本发布时只能声明当前版本能满足的范围（否则同版本的
     # 控制面在预检时阻断全部标准节点）；仓库版本号一旦越过 LAST_SDK_WITHOUT_DOC，requires-sdk
-    # 必须同步排除它，下一次发布 sfly-std 在那个平台版本发布之后（docs/agents/branching-and-release.md）。
+    # 必须同步排除它，下一次发布 sfly-std 在那个平台版本发布之后（见 branching-and-release.md）。
     pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
     declared = SpecifierSet(pyproject["tool"]["sfly"]["requires-sdk"])
     sdk = Version(SDK_VERSION)

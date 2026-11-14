@@ -57,7 +57,11 @@ test("Shell 命令节点的输出出现在检查器的输出列表里，后续�
 	const documented = panel.getByRole("table", { name: "输出" }).locator("tbody td:nth-child(2)");
 	await expect
 		.poll(async () => (await documented.allTextContents()).sort())
-		.toEqual(Object.values(outputs).map((output) => output.description).sort());
+		.toEqual(
+			Object.values(outputs)
+				.map((output) => output.description)
+				.sort(),
+		);
 
 	// check.command 引用了 build 的输出：清空后输入 $，补全列出 build 的全部输出。
 	await nodeCard(page, "check").click();
