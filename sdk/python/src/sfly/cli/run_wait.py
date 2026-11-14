@@ -25,6 +25,7 @@ from sfly.cli.run_view import (
     format_duration,
     last_attempt,
     node_status_label,
+    with_display_name,
 )
 
 # 控制面每 15 秒发一次心跳；这么久没有任何数据就认为连接已经断了。
@@ -131,7 +132,8 @@ class _Feed(threading.Thread):
 
 
 class _Progress:
-    """节点状态每变化一次写一行：`链:节点[#尝试] 状态 [耗时]`，例如 `main:deploy 成功 12s`。"""
+    """节点状态每变化一次写一行：`链:节点[#尝试][「显示名称」] 状态 [耗时]`，
+    例如 `main:deploy「部署服务」 成功 12s`。"""
 
     def __init__(self, write: Callable[[str], None]) -> None:
         self._write = write
@@ -151,7 +153,8 @@ class _Progress:
                 ref = NodeRef(
                     chain_label(chain), node["node_id"], attempt["attempt"] if attempt else None
                 )
-                line = f"{ref.format()} {node_status_label(node['status'])}"
+                named = with_display_name(ref.format(), node.get("display_name"))
+                line = f"{named} {node_status_label(node['status'])}"
                 if node["status"] in _ENDED and attempt:
                     elapsed = duration_ms(attempt["started_at"], attempt["ended_at"])
                     if elapsed is not None:
