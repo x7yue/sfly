@@ -58,9 +58,18 @@ class WatchFilesOutputs(TypedDict):
 @node(
     title="持续拉取文件",
     metrics=[
-        Metric("pulled_files", kind="counter", description="已经拉取的文件数"),
-        Metric("pulled_bytes", "B", kind="counter", description="已经拉取的文件的总字节数"),
-        Metric("bytes_per_s", "B/s", description="当前的拉取速率（含正在拉取的文件）"),
+        Metric("pulled_files", kind="counter", description="累计拉下来的文件数"),
+        Metric(
+            "pulled_bytes",
+            "B",
+            kind="counter",
+            description="累计拉下来的文件的总字节数（一个文件拉完才计入）",
+        ),
+        Metric(
+            "bytes_per_s",
+            "B/s",
+            description="当前的拉取速率：每秒传输的字节数，含正在拉取的文件已经下载的部分",
+        ),
     ],
     primary_metric="bytes_per_s",
 )

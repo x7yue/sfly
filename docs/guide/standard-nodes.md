@@ -206,17 +206,21 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 没有输出。
 
-| 指标 | 单位 | 说明 |
-|---|---|---|
-| `cpu_percent`（主指标） | % | CPU 使用率，所有核的平均 |
-| `mem_used_percent` | % | 已用内存占总内存的比例 |
-| `mem_used_bytes` | B | 已用内存：总内存减去可用内存（available），不含可以回收的缓存 |
-| `load1` | | 1 分钟平均负载 |
-| `disk_used_percent` | % | `disk_path` 所在文件系统的已用空间比例 |
-| `disk_read_bytes_per_s`、`disk_write_bytes_per_s` | B/s | 磁盘每秒读取、写入的字节数 |
-| `net_rx_bytes_per_s`、`net_tx_bytes_per_s` | B/s | 网卡每秒接收、发送的字节数 |
-| `disk_read_bytes_per_s_by_disk`、`disk_write_bytes_per_s_by_disk` | B/s | 每块整块磁盘每秒读取、写入的字节数，标签 `disk` |
-| `net_rx_bytes_per_s_by_nic`、`net_tx_bytes_per_s_by_nic` | B/s | 每块网卡每秒接收、发送的字节数，标签 `nic` |
+| 指标 | 单位 | 标签 | 说明 |
+|---|---|---|---|
+| `cpu_percent`（主指标） | % | | CPU 使用率，所有核的平均 |
+| `mem_used_percent` | % | | 已用内存占总内存的比例 |
+| `mem_used_bytes` | B | | 已用内存：总内存减去可用内存（available），不含可以回收的缓存 |
+| `load1` | | | 1 分钟平均负载 |
+| `disk_used_percent` | % | | disk_path 所在文件系统的已用空间比例 |
+| `disk_read_bytes_per_s` | B/s | | 磁盘每秒读取的字节数 |
+| `disk_write_bytes_per_s` | B/s | | 磁盘每秒写入的字节数 |
+| `net_rx_bytes_per_s` | B/s | | 网卡每秒接收的字节数 |
+| `net_tx_bytes_per_s` | B/s | | 网卡每秒发送的字节数 |
+| `disk_read_bytes_per_s_by_disk` | B/s | `disk` | 每块磁盘（整块，不含分区）每秒读取的字节数 |
+| `disk_write_bytes_per_s_by_disk` | B/s | `disk` | 每块磁盘（整块，不含分区）每秒写入的字节数 |
+| `net_rx_bytes_per_s_by_nic` | B/s | `nic` | 每块网卡（含回环网卡 lo）每秒接收的字节数 |
+| `net_tx_bytes_per_s_by_nic` | B/s | `nic` | 每块网卡（含回环网卡 lo）每秒发送的字节数 |
 
 - 第一次采样在开始后一个 `interval`：CPU 使用率和各项速率都是两次采样之间的平均值。
 - 默认图表：CPU 使用率、内存使用率、已用内存、负载、磁盘空间使用率、磁盘读写、网络收发、磁盘读写（按磁盘）、网络收发（按网卡）各一张。
@@ -256,20 +260,20 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `samples` | 采样了多少次 |
 | `processes_csv` | 产物 processes.csv 的引用 |
 
-| 指标 | 单位 | 说明 |
-|---|---|---|
-| `cpu_percent`（主指标） | % | CPU 占用之和，一个核满载为 100 |
-| `rss_bytes` | B | 常驻内存之和 |
-| `threads` | | 线程数之和 |
-| `open_fds` | | 打开的文件描述符数之和 |
-| `io_read_bytes_per_s` | B/s | 磁盘读取速率之和 |
-| `io_write_bytes_per_s` | B/s | 磁盘写入速率之和 |
-| `cpu_percent_by_process` | % | 每个进程的 CPU 占用，标签 `pid`、`name` |
-| `rss_bytes_by_process` | B | 每个进程的常驻内存，标签 `pid`、`name` |
-| `threads_by_process` | | 每个进程的线程数，标签 `pid`、`name` |
-| `open_fds_by_process` | | 每个进程打开的文件描述符数，标签 `pid`、`name` |
-| `io_read_bytes_per_s_by_process` | B/s | 每个进程的磁盘读取速率，标签 `pid`、`name` |
-| `io_write_bytes_per_s_by_process` | B/s | 每个进程的磁盘写入速率，标签 `pid`、`name` |
+| 指标 | 单位 | 标签 | 说明 |
+|---|---|---|---|
+| `cpu_percent`（主指标） | % | | 所有进程的 CPU 占用之和（一个核满载为 100） |
+| `rss_bytes` | B | | 所有进程的常驻内存之和 |
+| `threads` | | | 所有进程的线程数之和 |
+| `open_fds` | | | 所有进程打开的文件描述符数之和 |
+| `io_read_bytes_per_s` | B/s | | 所有进程的磁盘读取速率之和 |
+| `io_write_bytes_per_s` | B/s | | 所有进程的磁盘写入速率之和 |
+| `cpu_percent_by_process` | % | `pid`、`name` | 每个进程的 CPU 占用（一个核满载为 100） |
+| `rss_bytes_by_process` | B | `pid`、`name` | 每个进程的常驻内存 |
+| `threads_by_process` | | `pid`、`name` | 每个进程的线程数 |
+| `open_fds_by_process` | | `pid`、`name` | 每个进程打开的文件描述符数（读不到的进程不上报） |
+| `io_read_bytes_per_s_by_process` | B/s | `pid`、`name` | 每个进程的磁盘读取速率（读不到的进程不上报） |
+| `io_write_bytes_per_s_by_process` | B/s | `pid`、`name` | 每个进程的磁盘写入速率（读不到的进程不上报） |
 
 | `processes.csv` 的列 | 说明 |
 |---|---|
@@ -420,7 +424,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 指标 | 单位 | 说明 |
 |---|---|---|
 | `lines_per_s`（主指标） | 行/s | 每秒新增的行数 |
-| `fail_matches` | | 累计匹配 `fail_on` 的行数 |
+| `fail_matches` | | 累计匹配 fail_on 的行数 |
 
 - 每 0.2 秒检查一次新内容，指标每秒上报一次。文件还不存在时等它出现，出现后从头转发。
 - 文件被轮转（改名后新建，路径指向另一个文件）时，先转发旧文件剩下的内容，再从头跟随新文件；文件被截断（例如 logrotate 的 copytruncate）时从头跟随。两次检查之间被截断又写到超过原来长度的情况分辨不出来。

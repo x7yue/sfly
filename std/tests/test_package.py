@@ -218,12 +218,6 @@ def _node_sections() -> dict[str, tuple[str, str]]:
     }
 
 
-def _labels(cell: str) -> list[str]:
-    """指标说明末尾的「标签 `a`、`b`」里的标签键；没有时为空。"""
-    m = re.search(r"，标签 ((?:`[a-z_][a-z0-9_]*`、?)+)$", cell)
-    return _names(m[1]) if m else []
-
-
 def test_the_overview_lists_every_node_with_its_title(metadata: dict[str, Any]) -> None:
     overview = DOC.read_text(encoding="utf-8").split("\n## 节点一览\n", 1)[1].split("\n## ", 1)[0]
     header, rows = _tables(overview)["类别"]
@@ -238,7 +232,7 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
     metadata: dict[str, Any],
 ) -> None:
     # 每节的结构一致：标题与节点标题相同；参数表、输出表（没有输出时写明「没有输出。」）、
-    # 指标表（有指标时，含单位、标出主指标，带标签的指标在说明末尾写「标签 `键`、`键`」）
+    # 指标表（有指标时，含单位、标出主指标；有带标签的指标时多一列「标签」，写标签键）
     # 与构建出的元信息逐项对应。
     sections = _node_sections()
     for node in metadata["nodes"]:
@@ -263,13 +257,15 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
 
         if node["metrics"]:
             header, rows = tables["指标"]
-            assert header == ["指标", "单位", "说明"], name
+            labeled = any(m.get("labels") for m in node["metrics"])
+            assert header == ["指标", "单位", *(["标签"] if labeled else []), "说明"], name
             units = {n: row[1] for row in rows for n in _names(row[0])}
             assert units == {m["name"]: m.get("unit", "") for m in node["metrics"]}, name
             primary = [n for row in rows if "（主指标）" in row[0] for n in _names(row[0])]
             assert primary == [node["primary_metric"]], name
-            labels = {n: _labels(row[2]) for row in rows for n in _names(row[0])}
-            assert labels == {m["name"]: m.get("labels", []) for m in node["metrics"]}, name
+            if labeled:
+                labels = {n: _names(row[2]) for row in rows for n in _names(row[0])}
+                assert labels == {m["name"]: m.get("labels", []) for m in node["metrics"]}, name
         else:
             assert "指标" not in tables, name
 
@@ -277,8 +273,9 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
 def test_every_parameter_and_output_description_matches_the_standard_nodes_page(
     metadata: dict[str, Any],
 ) -> None:
-    # 说明以代码里的 Doc 为准（#317）：参数表、输出表「说明」列的文字，与元信息里这个输入、输出的
-    # 说明一字不差。画布按纯文本显示说明，所以表格里不写 Markdown。
+    # 说明以代码为准（#317）：参数表、输出表、指标表「说明」列的文字，与元信息里这个输入、输出、
+    # 指标的说明一字不差（一行写了几个名字时，每个名字的说明都要和这一格一样）。
+    # 画布按纯文本显示说明，所以表格里不写 Markdown。
     sections = _node_sections()
     for node in metadata["nodes"]:
         tables = _tables(sections[node["name"]][1])
@@ -293,18 +290,31 @@ def test_every_parameter_and_output_description_matches_the_standard_nodes_page(
                     description = schema["properties"][name].get("description")
                     assert row[column], f"{where}：「说明」列是空的"
                     assert description == row[column], where
+        if node["metrics"]:
+            header, rows = tables["指标"]
+            column = header.index("说明")
+            descriptions = {m["name"]: m.get("description") for m in node["metrics"]}
+            for row in rows:
+                for name in _names(row[0]):
+                    where = f"{node['name']} 的指标 {name}"
+                    assert row[column], f"{where}：「说明」列是空的"
+                    assert descriptions[name] == row[column], where
 
 
 def test_descriptions_are_plain_text(metadata: dict[str, Any]) -> None:
-    # 节点、输入、输出的说明在画布上按纯文本显示（不渲染 Markdown）：反引号和链接会原样出现。
+    # 节点、输入、输出、指标的说明在画布上按纯文本显示（不渲染 Markdown）：反引号和链接会原样出现。
     markdown = re.compile(r"`|\]\(")
     for node in metadata["nodes"]:
         schemas = [node["inputs"], node["outputs"]]
-        texts = [(node["name"], node.get("description"))] + [
-            (f"{node['name']} 的 {name}", prop.get("description"))
-            for schema in schemas
-            for name, prop in schema.get("properties", {}).items()
-        ]
+        texts = (
+            [(node["name"], node.get("description"))]
+            + [
+                (f"{node['name']} 的 {name}", prop.get("description"))
+                for schema in schemas
+                for name, prop in schema.get("properties", {}).items()
+            ]
+            + [(f"{node['name']} 的 {m['name']}", m.get("description")) for m in node["metrics"]]
+        )
         for where, text in texts:
             assert text is None or not markdown.search(text), f"{where} 的说明里有 Markdown"
 

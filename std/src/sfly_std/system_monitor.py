@@ -100,9 +100,13 @@ def _counters(reading: Reading, nic: str | None, disk: str | None) -> Counters:
 @node(
     title="系统监控",
     metrics=[
-        Metric("cpu_percent", "%", description="CPU 使用率（所有核的平均）"),
+        Metric("cpu_percent", "%", description="CPU 使用率，所有核的平均"),
         Metric("mem_used_percent", "%", description="已用内存占总内存的比例"),
-        Metric("mem_used_bytes", "B", description="已用内存：总内存减去可用内存"),
+        Metric(
+            "mem_used_bytes",
+            "B",
+            description="已用内存：总内存减去可用内存（available），不含可以回收的缓存",
+        ),
         Metric("load1", "", description="1 分钟平均负载"),
         Metric("disk_used_percent", "%", description="disk_path 所在文件系统的已用空间比例"),
         Metric("disk_read_bytes_per_s", "B/s", description="磁盘每秒读取的字节数"),
@@ -124,13 +128,13 @@ def _counters(reading: Reading, nic: str | None, disk: str | None) -> Counters:
         Metric(
             "disk_read_bytes_per_s_by_disk",
             "B/s",
-            description="每块整块磁盘（不含分区）每秒读取的字节数",
+            description="每块磁盘（整块，不含分区）每秒读取的字节数",
             labels=["disk"],
         ),
         Metric(
             "disk_write_bytes_per_s_by_disk",
             "B/s",
-            description="每块整块磁盘（不含分区）每秒写入的字节数",
+            description="每块磁盘（整块，不含分区）每秒写入的字节数",
             labels=["disk"],
         ),
     ],

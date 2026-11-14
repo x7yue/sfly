@@ -34,7 +34,7 @@ class FailOnMatched(Exception):
     title="跟随日志",
     metrics=[
         Metric("lines_per_s", unit="行/s", description="每秒新增的行数"),
-        Metric("fail_matches", kind="counter", description="匹配 fail_on 的行数"),
+        Metric("fail_matches", kind="counter", description="累计匹配 fail_on 的行数"),
     ],
     primary_metric="lines_per_s",
 )

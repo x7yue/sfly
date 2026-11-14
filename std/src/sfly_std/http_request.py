@@ -107,7 +107,7 @@ def _status_ok(status: int, patterns: list[int | str]) -> bool:
 
 @node(
     title="HTTP 请求",
-    metrics=[Metric("elapsed_ms", unit="ms", description="请求耗时")],
+    metrics=[Metric("elapsed_ms", unit="ms", description="每次请求的耗时")],
     primary_metric="elapsed_ms",
 )
 def http_request(
