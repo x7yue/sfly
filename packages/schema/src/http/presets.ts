@@ -51,6 +51,22 @@ export const PresetView = z.object({
 export const PresetParamInput = z.strictObject({ name: z.string(), value: z.unknown() });
 
 const IdParams = z.object({ id: z.string().min(1) });
+const PresetIdParams = z.object({ id: z.string().min(1), presetId: z.string().min(1) });
+
+/**
+ * 修改预设的请求体：只写要改的项，至少一项。没有 `params` 就不改预设参数（只改名称或说明，失效的预设也可以改名）；
+ * 给了 `params` 时它是预设参数的完整清单，和新建时按同样的规则检查。
+ */
+export const PresetChanges = z
+	.strictObject({
+		name: PresetName.optional(),
+		description: PresetDescription.optional(),
+		params: z.array(PresetParamInput).optional(),
+	})
+	.refine(
+		(b) => b.name !== undefined || b.description !== undefined || b.params !== undefined,
+		"没有要修改的字段",
+	);
 
 export const presetsApi = {
 	/** 场景的运行预设，按名称排序。场景不存在时 404 `not_found`。 */
@@ -83,8 +99,53 @@ export const presetsApi = {
 		requestError: () => ({ code: "invalid_preset" }),
 		response: PresetView,
 	}),
+	/**
+	 * 修改运行预设（需要昵称请求头，昵称和时间记为最后修改人）：立即生效，不产生新的场景版本；
+	 * 两个人同时改时后保存的覆盖先保存的，不做冲突检测。请求体见 {@link PresetChanges}：没有 `params` 时只改名称和说明；
+	 * 给了 `params` 时 400 `invalid_preset` 的规则同新建。请求体不符合要求（含没有任何要修改的字段）同样是 400 `invalid_preset`。
+	 * 新名称被场景里别的预设占用时 409 `preset_name_taken`。预设不存在或不属于这个场景时 404 `preset_not_found`。
+	 * 场景归档期间也能修改。
+	 */
+	update: endpoint({
+		method: "PATCH",
+		path: "/orchestrations/:id/presets/:presetId",
+		client: true,
+		key: ["presets", "update"],
+		params: PresetIdParams,
+		body: PresetChanges,
+		requestError: () => ({ code: "invalid_preset" }),
+		response: PresetView,
+	}),
+	/**
+	 * 复制运行预设（201，需要昵称请求头）：在控制面复制，说明和预设参数（包括 secret 的值）不变，新的 ID，
+	 * 请求体里是新名称（规则同新建），最后修改人记为复制的人。新名称已被占用时 409 `preset_name_taken`，
+	 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能复制。
+	 */
+	copy: endpoint({
+		method: "POST",
+		path: "/orchestrations/:id/presets/:presetId/copy",
+		client: true,
+		key: ["presets", "copy"],
+		params: PresetIdParams,
+		body: z.strictObject({ name: PresetName }),
+		requestError: () => ({ code: "invalid_preset" }),
+		response: PresetView,
+	}),
+	/**
+	 * 删除运行预设（204，需要昵称请求头）。已有运行上记下的预设 ID、名称和预设参数的名单不受影响。
+	 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能删除。
+	 */
+	remove: endpoint({
+		method: "DELETE",
+		path: "/orchestrations/:id/presets/:presetId",
+		client: true,
+		key: ["presets", "remove"],
+		params: PresetIdParams,
+		response: z.undefined(),
+	}),
 };
 
+export type PresetChanges = z.infer<typeof PresetChanges>;
 export type PresetParamView = z.infer<typeof PresetParamView>;
 export type PresetView = z.infer<typeof PresetView>;
 export type PresetParamInput = z.infer<typeof PresetParamInput>;

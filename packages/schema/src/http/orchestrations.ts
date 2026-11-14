@@ -326,7 +326,7 @@ export const orchestrationsApi = {
 			),
 		response: OrchestrationView,
 	}),
-	/** 复制场景并取新名字：说明和运行通知设置一起复制，源场景最新版本的内容作为第 1 版。 */
+	/** 复制场景并取新名字：说明、运行通知设置和运行预设（包括 secret 的值）一起复制，源场景最新版本的内容作为第 1 版。 */
 	copy: endpoint({
 		method: "POST",
 		path: "/orchestrations/:id/copy",

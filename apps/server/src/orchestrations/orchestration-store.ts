@@ -10,6 +10,7 @@ import type { Actor } from "../actor.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runs } from "../db/schema.js";
+import { copyPresets } from "../presets/preset-store.js";
 
 export type { OrchestrationView };
 
@@ -215,7 +216,7 @@ export class OrchestrationStore {
 	}
 
 	/**
-	 * 复制编排：新编排使用新名字，说明和运行通知设置一起复制，源编排有版本时，以源编排最新版本的内容作为第 1 版（作者为复制的人）。
+	 * 复制编排：新编排使用新名字，说明、运行通知设置和运行预设一起复制，源编排有版本时，以源编排最新版本的内容作为第 1 版（作者为复制的人）。
 	 * 源编排不存在时返回 undefined。
 	 */
 	copy(sourceId: string, name: string, actor: Actor): Promise<OrchestrationView | undefined> {
@@ -262,6 +263,7 @@ export class OrchestrationStore {
 					createdAt: now,
 				});
 			}
+			await copyPresets(tx, sourceId, id, actor, now);
 			return toView(row as OrchestrationRow);
 		});
 	}

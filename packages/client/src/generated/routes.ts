@@ -32,6 +32,7 @@ import type {
 	PlatformMetricsQuery,
 	PreflightAgent,
 	PreflightProblem,
+	PresetChanges,
 	PresetDescription,
 	PresetName,
 	PresetParamInput,
@@ -522,7 +523,7 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/copy`
 		 *
-		 * 复制场景并取新名字：说明和运行通知设置一起复制，源场景最新版本的内容作为第 1 版。
+		 * 复制场景并取新名字：说明、运行通知设置和运行预设（包括 secret 的值）一起复制，源场景最新版本的内容作为第 1 版。
 		 */
 		copy: Endpoint<
 			{
@@ -654,6 +655,59 @@ export interface Api {
 				};
 			},
 			PresetView
+		>;
+		/**
+		 * `PATCH /orchestrations/:id/presets/:presetId`
+		 *
+		 * 修改运行预设（需要昵称请求头，昵称和时间记为最后修改人）：立即生效，不产生新的场景版本；
+		 * 两个人同时改时后保存的覆盖先保存的，不做冲突检测。请求体见 `PresetChanges`：没有 `params` 时只改名称和说明；
+		 * 给了 `params` 时 400 `invalid_preset` 的规则同新建。请求体不符合要求（含没有任何要修改的字段）同样是 400 `invalid_preset`。
+		 * 新名称被场景里别的预设占用时 409 `preset_name_taken`。预设不存在或不属于这个场景时 404 `preset_not_found`。
+		 * 场景归档期间也能修改。
+		 */
+		update: Endpoint<
+			{
+				params: {
+					id: string;
+					presetId: string;
+				};
+				body: PresetChanges;
+			},
+			PresetView
+		>;
+		/**
+		 * `POST /orchestrations/:id/presets/:presetId/copy`
+		 *
+		 * 复制运行预设（201，需要昵称请求头）：在控制面复制，说明和预设参数（包括 secret 的值）不变，新的 ID，
+		 * 请求体里是新名称（规则同新建），最后修改人记为复制的人。新名称已被占用时 409 `preset_name_taken`，
+		 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能复制。
+		 */
+		copy: Endpoint<
+			{
+				params: {
+					id: string;
+					presetId: string;
+				};
+				body: {
+					name: PresetName;
+				};
+			},
+			PresetView
+		>;
+		/**
+		 * `DELETE /orchestrations/:id/presets/:presetId`
+		 *
+		 * 删除运行预设（204，需要昵称请求头）。已有运行上记下的预设 ID、名称和预设参数的名单不受影响。
+		 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能删除。
+		 */
+		remove: Endpoint<
+			{
+				params: {
+					id: string;
+					presetId: string;
+				};
+			},
+			void
 		>;
 	};
 	runs: {
@@ -862,6 +916,9 @@ export const routes = {
 	presets: {
 		list: { method: "GET", path: "/orchestrations/:id/presets", kind: "endpoint" },
 		create: { method: "POST", path: "/orchestrations/:id/presets", kind: "endpoint" },
+		update: { method: "PATCH", path: "/orchestrations/:id/presets/:presetId", kind: "endpoint" },
+		copy: { method: "POST", path: "/orchestrations/:id/presets/:presetId/copy", kind: "endpoint" },
+		remove: { method: "DELETE", path: "/orchestrations/:id/presets/:presetId", kind: "endpoint" },
 	},
 	runs: {
 		list: { method: "GET", path: "/runs", kind: "endpoint" },

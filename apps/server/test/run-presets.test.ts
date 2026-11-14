@@ -1,6 +1,5 @@
 // 运行预设（#322，ADR 0023）：新建预设的检查、按预设触发、触发前检查与运行详情里的预设。
 // HTTP API + 假 Agent + 真实 PostgreSQL。
-// biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { randomUUID } from "node:crypto";
 import { runsApi } from "@sfly/schema";
 import pg from "pg";
@@ -14,36 +13,10 @@ import {
 	errorOf,
 	invalidPresetFields,
 	listPresets,
+	presetScenario as scenario,
 	triggerWithPreset,
 } from "./support/presets.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
-
-const PARAMS = [
-	{ name: "host", type: "string", required: true },
-	{ name: "port", type: "number", default: 80 },
-	{ name: "verbose", type: "boolean", default: false },
-	{ name: "options", type: "json" },
-	{ name: "token", type: "string", secret: true },
-];
-
-/** 入口节点（声明 params）+ 一个把入口参数都传下去的包节点。 */
-function scenario(params: Array<Record<string, unknown>> = PARAMS) {
-	return {
-		default_agent: "agent-a",
-		nodes: [
-			{ id: "entry", kind: "entry", params },
-			{
-				id: "a",
-				kind: "package",
-				package: "stub",
-				node: "echo",
-				inputs: Object.fromEntries(params.map((p) => [p.name, `\${{ params.${p.name} }}`])),
-			},
-		],
-		edges: [{ from: "entry", to: "a", kind: "chain" }],
-		packages: { stub: "1.0.0" },
-	};
-}
 
 describe("运行预设", () => {
 	let cp: TestControlPlane;

@@ -1117,6 +1117,16 @@ export interface PreflightProblem {
 	node_id?: string;
 }
 
+/**
+ * 修改预设的请求体：只写要改的项，至少一项。没有 `params` 就不改预设参数（只改名称或说明，失效的预设也可以改名）；
+ * 给了 `params` 时它是预设参数的完整清单，和新建时按同样的规则检查。
+ */
+export interface PresetChanges {
+	name?: PresetName;
+	description?: PresetDescription;
+	params?: PresetParamInput[];
+}
+
 /** 预设说明：不超过 `PRESET_DESCRIPTION_MAX` 个字符。 */
 export type PresetDescription = string;
 
