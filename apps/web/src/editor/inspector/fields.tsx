@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { Fragment, type ReactNode, useId } from "react";
+import { type ComponentProps, Fragment, type ReactNode, useId } from "react";
 import type { FieldControlProps } from "@/components/ui/form-field";
 import { useTouchFields } from "../field-drafts";
 
@@ -11,8 +11,12 @@ import { useTouchFields } from "../field-drafts";
 export const FIELD_LIST_CLASS =
 	"grid grid-cols-[fit-content(40%)_minmax(0,1fr)_auto] content-start [&>*]:col-span-full";
 
-export function FieldList({ className, children }: { className?: string; children: ReactNode }) {
-	return <div className={cn(FIELD_LIST_CLASS, className)}>{children}</div>;
+export function FieldList({ className, children, ...props }: ComponentProps<"div">) {
+	return (
+		<div className={cn(FIELD_LIST_CLASS, className)} {...props}>
+			{children}
+		</div>
+	);
 }
 
 /** 交给字段里控件的属性（与 `FormField` 的一致）；`data-field-key` 让保存被拦下时找到出错的输入框。 */

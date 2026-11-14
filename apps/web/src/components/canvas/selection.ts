@@ -55,6 +55,7 @@ export function toggleNode(selection: CanvasSelection, id: string): CanvasSelect
 
 /**
  * 框选过程中画布逐步报告的变化（节点 `id` 变成选中或不选中）：新选中的排到最后，取消的去掉。
+ * 框选一开始 React Flow 就把原来选中的节点都报告为取消选中，所以框选的结果是替换原来的选中，不是加进去。
  * 选中的是注释框时从空的一组开始。
  */
 export function withSelectChanges(

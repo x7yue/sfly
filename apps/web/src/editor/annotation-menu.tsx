@@ -1,16 +1,17 @@
 import type { Annotation } from "@sfly/schema";
+import { ACTION } from "#/lib/copy";
 import {
 	ContextMenuItem,
 	ContextMenuSub,
 	ContextMenuSubContent,
 	ContextMenuSubTrigger,
 } from "@/components/ui/context-menu";
-import { hasMember, memberCount } from "./annotations";
+import { hasMember } from "./annotations";
 
 /** 节点菜单里和注释框有关的操作（编辑模式）。 */
 export interface AnnotationMenuActions {
 	annotations: readonly Annotation[];
-	/** 新建只含这个节点的注释框。 */
+	/** 新建只含这个节点的注释框；成员的记法和多选新建一致（只有入口节点的子流程记为子流程成员）。 */
 	onAdd(): void;
 	onJoin(annotationId: string): void;
 	onLeave(annotationId: string): void;
@@ -27,7 +28,7 @@ function AnnotationLabel({ annotation }: { annotation: Annotation }) {
 
 /**
  * 节点菜单的「添加注释框」「加入注释框 ▸」「移出注释框 ▸」。加入列出还不包含这个节点的注释框；
- * 移出列出包含它的注释框，它是唯一的成员时不能移出（注释框不能没有成员，要删掉注释框用检查器）。
+ * 移出列出包含它的注释框，它是最后一个成员时注释框一起删除（和删节点一样）。
  */
 export function AnnotationMenuItems({
 	nodeId,
@@ -40,7 +41,7 @@ export function AnnotationMenuItems({
 	const containing = actions.annotations.filter((a) => hasMember(a, nodeId));
 	return (
 		<>
-			<ContextMenuItem onClick={actions.onAdd}>添加注释框</ContextMenuItem>
+			<ContextMenuItem onClick={actions.onAdd}>{ACTION.addAnnotation}</ContextMenuItem>
 			<ContextMenuSub>
 				<ContextMenuSubTrigger disabledReason={joinable.length > 0 ? null : "没有可以加入的注释框"}>
 					加入注释框
@@ -61,11 +62,7 @@ export function AnnotationMenuItems({
 				</ContextMenuSubTrigger>
 				<ContextMenuSubContent aria-label="移出注释框">
 					{containing.map((a) => (
-						<ContextMenuItem
-							key={a.id}
-							disabledReason={memberCount(a) === 1 ? "它是这个注释框唯一的成员" : null}
-							onClick={() => actions.onLeave(a.id)}
-						>
+						<ContextMenuItem key={a.id} onClick={() => actions.onLeave(a.id)}>
 							<AnnotationLabel annotation={a} />
 						</ContextMenuItem>
 					))}

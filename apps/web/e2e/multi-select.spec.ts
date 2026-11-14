@@ -95,6 +95,30 @@ test("指针工具下 Shift 拖动空白处是框选；不按键拖动空白处�
 	expect(await selectedIn(page)).toEqual([]);
 });
 
+test("已有选中时再 Shift 框选：换成框到的节点，不是加进原来的选中", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+
+	await nodeCard(page, "fetch").click();
+	await nodeCard(page, "sub_ping").click({ modifiers: ["ControlOrMeta"] });
+	await expect.poll(() => selectedIn(page)).toEqual(["fetch", "sub_ping"]);
+
+	// 框住 dispatch 和 ping：原来选中的 fetch、sub_ping 不再选中。
+	const around = await aroundCards(page, "dispatch", "ping");
+	await drag(page, around.from, around.to, "Shift");
+	await expect.poll(() => selectedIn(page)).toEqual(["dispatch", "ping"]);
+	await expect(multiHeading(page, 2)).toBeVisible();
+
+	// 新框里有原来选中的节点时，它仍然选中，没框到的 ping 不再选中。
+	const again = await aroundCards(page, "fetch", "dispatch");
+	await drag(page, again.from, again.to, "Shift");
+	await expect.poll(() => selectedIn(page)).toEqual(["dispatch", "fetch"]);
+	await expect(multiHeading(page, 2)).toBeVisible();
+});
+
 test("Ctrl/⌘ + 点击节点加选、减选；不按键点击只选中这一个", async ({ page, controlPlane }) => {
 	const id = await createEditorScenario(controlPlane);
 	await openEditor(page, id);
@@ -122,6 +146,17 @@ test("Ctrl/⌘ + 点击节点加选、减选；不按键点击只选中这一个
 	await expect.poll(() => selectedIn(page)).toEqual(["fetch", "ping"]);
 	await nodeCard(page, "ping").click();
 	await expect.poll(() => selectedIn(page)).toEqual(["ping"]);
+});
+
+test("多选时按 Enter，焦点移到检查器里第一个可操作的控件", async ({ page, controlPlane }) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+
+	await nodeCard(page, "fetch").click();
+	await nodeCard(page, "dispatch").click({ modifiers: ["ControlOrMeta"] });
+	await expect(multiHeading(page, 2)).toBeVisible();
+	await page.keyboard.press("Enter");
+	await expect(inspector(page).getByRole("button", { name: "添加注释框" })).toBeFocused();
 });
 
 test("点子流程区域的标题，选中这个子流程链上的全部节点", async ({ page, controlPlane }) => {
@@ -153,16 +188,20 @@ test("拖动多选中的任意一个节点，整组一起移动，一步撤销",
 	await nodeCard(page, "dispatch").click({ modifiers: ["ControlOrMeta"] });
 	const card = await box(nodeCard(page, "dispatch"));
 	await drag(page, { x: card.x + 60, y: card.y + 50 }, { x: card.x + 140, y: card.y + 170 });
-	await expect.poll(() => position("dispatch")).not.toEqual(before.dispatch);
-	const moved = { fetch: await position("fetch"), dispatch: await position("dispatch") };
 	const shift = (from: { x: number; y: number }, to: { x: number; y: number }) => ({
 		x: Math.round(to.x - from.x),
 		y: Math.round(to.y - from.y),
 	});
-	expect(shift(before.fetch, moved.fetch)).toEqual(shift(before.dispatch, moved.dispatch));
-	expect(shift(before.fetch, moved.fetch).y).toBeGreaterThan(50);
-	expect(await position("ping")).toEqual(before.ping);
-	expect(await selectedIn(page)).toEqual(["dispatch", "fetch"]);
+	// 整组移动同样的距离：fetch 和 dispatch 都往下挪了不止 50 个单位，挪的距离一样。
+	await expect
+		.poll(async () => {
+			const fetch = shift(before.fetch, await position("fetch"));
+			const dispatch = shift(before.dispatch, await position("dispatch"));
+			return fetch.x === dispatch.x && fetch.y === dispatch.y ? fetch.y : null;
+		})
+		.toBeGreaterThan(50);
+	await expect.poll(() => position("ping")).toEqual(before.ping);
+	await expect.poll(() => selectedIn(page)).toEqual(["dispatch", "fetch"]);
 
 	await undo.click();
 	await expect.poll(() => position("fetch")).toEqual(before.fetch);

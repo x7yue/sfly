@@ -4,6 +4,7 @@ import {
 	type NodeDisplayLookup,
 	nameWithId,
 	nodeCardText,
+	nodeDefaultTitle,
 	nodeNameBeforeId,
 	nodeNameWithId,
 	nodeOutsideCardText,
@@ -168,6 +169,24 @@ describe("有显示名称时卡片上的写法", () => {
 			title: "监控",
 			caption: "子流程入口",
 		});
+	});
+});
+
+describe("不带显示名称时的标题", () => {
+	it("有显示名称也写原来的标题：清掉名称后卡片上写的就是它", () => {
+		const shell = { kind: "package", package: "std", node: "shell" } as const;
+		expect(nodeDefaultTitle(node({ ...shell, display_name: "创建测试用户" }), lookup)).toBe(
+			"Shell 命令",
+		);
+		expect(
+			nodeDefaultTitle(node({ kind: "sleep", duration: "30s", display_name: "歇一会" }), lookup),
+		).toBe("等待 30s");
+		expect(nodeDefaultTitle(node({ kind: "async", display_name: "触发对账" }), lookup)).toBe(
+			"异步任务",
+		);
+		expect(nodeDefaultTitle(node({ kind: "subflow_entry", id: "mon", name: "监控" }), lookup)).toBe(
+			"监控",
+		);
 	});
 });
 

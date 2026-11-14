@@ -1,9 +1,10 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor } from "./monitor-scenario";
 import {
 	driveToRetry,
+	FIRST,
 	NOTE,
 	namedDocument,
 	namedScenario,
@@ -234,4 +235,85 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 		/失败.*失败节点 核对结果（verify）/,
 		/子流程失败 · 压测监控.*失败节点 探测延迟（probe）/,
 	]);
+});
+
+const LONG = "一二三四五六七八九十".repeat(4);
+const tooltips = (page: Page) => page.locator('[data-slot="tooltip-content"]');
+
+test("运行监控页：名称被截断时，悬停或聚焦时间线行、图表组标题、顶栏失败摘要的按钮就显示全文；按钮是唯一的停靠点，不弹第二个提示", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, scenarioId } = await namedScenario(controlPlane, connectAgent, {
+		...FIRST,
+		fetch: LONG,
+		verify: LONG,
+	});
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const verify = await driveToRetry(agent, clock, await agent.nextAssign());
+	await agent.fail(verify, "AssertionError: 仍然差 3 笔");
+	await page.setViewportSize({ width: 1024, height: 900 });
+	await openMonitor(page, clock, runId);
+	await expect(page.getByTestId("run-failure")).toBeVisible();
+
+	/** 悬停和键盘聚焦都显示 `text`，只有这一个提示；离开之后消失。 */
+	const showsOnHoverAndFocus = async (button: Locator, text: string | RegExp) => {
+		await expect(button).not.toHaveAttribute("title");
+		// 按钮里没有别的可聚焦的元素：被截断的名字只是文字。
+		await expect(button.locator("a, button, input, select, textarea, [tabindex]")).toHaveCount(0);
+		await button.hover();
+		await expect(tooltips(page)).toHaveCount(1);
+		await expect(tooltips(page)).toContainText(text);
+		await page.mouse.move(0, 0);
+		await expect(tooltips(page)).toHaveCount(0);
+		// 按过键之后聚焦才算键盘聚焦（focus-visible），鼠标点过别处之后程序聚焦不算。
+		await page.keyboard.press("Shift");
+		await button.focus();
+		await expect(tooltips(page)).toHaveCount(1);
+		await expect(tooltips(page)).toContainText(text);
+		await button.blur();
+		await expect(tooltips(page)).toHaveCount(0);
+	};
+
+	// 时间线行：名字被截断，读屏名称仍是完整的「名称（ID） 说明 状态」。
+	const row = (id: string) => timeline(page).locator(`[data-node-row="${id}"] button`);
+	await expect(row("fetch")).toHaveAccessibleName(
+		new RegExp(`^${LONG}（fetch） demo-checks/http_check 成功`),
+	);
+	await showsOnHoverAndFocus(row("fetch"), `${LONG}（fetch） · demo-checks/http_check`);
+	// 没被截断的行不弹提示。
+	await row("entry").focus();
+	await expect(tooltips(page)).toHaveCount(0);
+	await row("entry").blur();
+
+	// 顶栏的失败摘要：提示是完整的摘要加一句操作说明，按钮的无障碍描述是那句说明。
+	await page
+		.getByRole("region", { name: "运行失败" })
+		.getByRole("button", { name: "收起" })
+		.click();
+	const failure = page.getByRole("banner").getByTestId("run-failure");
+	await expect(failure).toHaveAccessibleDescription("点击查看这个节点的尝试");
+	await failure.evaluate((el) => {
+		el.style.maxWidth = "240px";
+	});
+	await showsOnHoverAndFocus(failure, `失败于 ${LONG}（verify）（第 2 次）`);
+	await expect(failure).toHaveText(/^失败于 一二三/);
+	await failure.evaluate((el) => {
+		el.style.maxWidth = "";
+	});
+
+	// 图表组标题：展开按钮是触发器，名称放得下时不弹提示，被截断时（这里把按钮收窄）弹出全文。
+	const toggle = workspace(page)
+		.getByRole("region", { name: `${LONG}（fetch） 的图表` })
+		.locator("button[aria-expanded]");
+	await expect(toggle).toHaveAccessibleName(`成功 ${LONG} （fetch）`);
+	await toggle.focus();
+	await expect(tooltips(page)).toHaveCount(0);
+	await toggle.blur();
+	await toggle.evaluate((el) => {
+		el.style.maxWidth = "200px";
+	});
+	await showsOnHoverAndFocus(toggle, `${LONG}（fetch）`);
 });

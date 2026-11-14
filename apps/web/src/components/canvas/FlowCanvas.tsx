@@ -9,6 +9,7 @@ import {
 	Background,
 	BackgroundVariant,
 	type EdgeChange,
+	getViewportForBounds,
 	type IsValidConnection,
 	MiniMap,
 	type NodeChange,
@@ -18,12 +19,22 @@ import {
 	type OnNodesChange,
 	ReactFlow,
 	type ReactFlowProps,
+	type Rect,
 	useReactFlow,
 	useStore,
 	useStoreApi,
 } from "@xyflow/react";
 import { cn } from "cn";
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useId,
+	useLayoutEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useShortcut } from "#/components/shortcuts";
 import { dialogOpen, isEditable } from "#/lib/focus";
 import { ContextMenu } from "@/components/ui/context-menu";
@@ -157,6 +168,18 @@ export interface FlowCanvasProps {
 }
 
 const NO_ANNOTATIONS: readonly Annotation[] = [];
+
+/** 一组矩形的外接矩形。 */
+function unionOf(rects: readonly Rect[]): Rect {
+	const x = Math.min(...rects.map((r) => r.x));
+	const y = Math.min(...rects.map((r) => r.y));
+	return {
+		x,
+		y,
+		width: Math.max(...rects.map((r) => r.x + r.width)) - x,
+		height: Math.max(...rects.map((r) => r.y + r.height)) - y,
+	};
+}
 
 /** 工具条（底部居中，高 42 + 下边距 14）占住的高度。 */
 const DOCK_SPACE = 72;
@@ -294,9 +317,40 @@ export function FlowCanvas({
 		}),
 		[area],
 	);
-	const fit = useCallback(() => {
-		void flow.fitView({ ...fitOptions, duration: viewportDuration(VIEWPORT_MS) });
-	}, [flow, fitOptions]);
+	// 适配视图把节点和注释框的范围一起放进视口：框的范围由成员算出，比节点的外接框大（子流程成员的框更大），
+	// 只按节点算的话，节点贴着适配的边距时，框的外沿会伸到视口或检查器、工具条下面去。
+	// 范围按布局里的位置和卡片的固定大小算，不等 React Flow 量出节点尺寸。
+	const extent = useRef({ layout, boxes });
+	extent.current = { layout, boxes };
+	const fitTo = useCallback(
+		(duration: number) => {
+			const { layout: current, boxes: framed } = extent.current;
+			const rects = [
+				...current.nodes.flatMap(({ position: p }) =>
+					p ? [{ x: p.x, y: p.y, width: NODE_WIDTH, height: NODE_HEIGHT }] : [],
+				),
+				...framed.map(({ box: b }) => ({ x: b.x, y: b.y, width: b.w, height: b.h })),
+			];
+			if (rects.length === 0) return;
+			const { width, height } = store.getState();
+			const { minZoom, maxZoom, padding } = fitOptions;
+			void flow.setViewport(
+				getViewportForBounds(unionOf(rects), width, height, minZoom, maxZoom, padding),
+				{ duration },
+			);
+		},
+		[flow, store, fitOptions],
+	);
+	const fit = useCallback(() => fitTo(viewportDuration(VIEWPORT_MS)), [fitTo]);
+	const fitToRef = useRef(fitTo);
+	fitToRef.current = fitTo;
+	// 打开画布：视口（缩放平移）建好之后适配一次（没有动画）；这时节点还没量完尺寸，React Flow 把它们藏着，不会闪一下。
+	const fitted = useRef(false);
+	useLayoutEffect(() => {
+		if (!flow.viewportInitialized || fitted.current) return;
+		fitted.current = true;
+		fitToRef.current(0);
+	}, [flow.viewportInitialized]);
 	const canEdit = editable && tool === "pointer";
 	const selectSubflow = useCallback(
 		(ids: readonly string[]) => onSelect(selectNodes(ids)),
@@ -370,13 +424,11 @@ export function FlowCanvas({
 			rename,
 		],
 	);
-	const fitRef = useRef(fitOptions);
-	fitRef.current = fitOptions;
 	useEffect(() => {
-		const onResize = () => void flow.fitView(fitRef.current);
+		const onResize = () => fitToRef.current(0);
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
-	}, [flow]);
+	}, []);
 	const touched = useRef(false);
 	const touch = () => {
 		touched.current = true;
@@ -390,11 +442,11 @@ export function FlowCanvas({
 				initial = false;
 				return;
 			}
-			if (!touched.current) void flow.fitView(fitRef.current);
+			if (!touched.current) fitToRef.current(0);
 		});
 		observer.observe(el);
 		return () => observer.disconnect();
-	}, [flow, refitOnResize]);
+	}, [refitOnResize]);
 
 	/** 节点不在可见区域（扣掉悬浮控件）里时，把它移到可见区域中央。 */
 	const reveal = useCallback(
@@ -619,12 +671,11 @@ export function FlowCanvas({
 					selectNodesOnDrag={false}
 					deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
 					// 加选、减选由 onNodeClick 按点击时的 Ctrl/⌘ 处理：React Flow 的多选键只翻转它自己的 selected，
-					// 这里的选中是受控的。框选只在可编辑、指针工具下：抓手工具下按住 Shift 拖动仍是平移。
+					// 这里的选中是受控的。Shift 框选是替换：React Flow 一开始框选就把原来选中的节点报告为取消选中
+					// （withSelectChanges 照着改），只有 Ctrl/⌘ + 点击是加选。框选只在可编辑、指针工具下：抓手工具下按住 Shift 拖动仍是平移。
 					multiSelectionKeyCode={null}
 					selectionKeyCode={canEdit ? "Shift" : null}
 					disableKeyboardA11y
-					fitView
-					fitViewOptions={fitOptions}
 					minZoom={MIN_ZOOM}
 					maxZoom={MAX_ZOOM}
 					colorMode="dark"
@@ -634,7 +685,7 @@ export function FlowCanvas({
 					<ZoomVariables target={wrapper} />
 					<AnnotationBoxes
 						layout={layout}
-						annotations={annotations}
+						boxes={boxes}
 						selected={selectedAnnotation(selection)}
 						onSelect={editable ? pickAnnotation : undefined}
 						onHover={setHoveredAnnotation}

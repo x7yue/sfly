@@ -1,9 +1,11 @@
 import { nodeNameWithId, subflowLabel } from "@sfly/orchestration";
 import { ANNOTATION_TITLE_MAX, type Annotation } from "@sfly/schema";
 import { Trash2Icon, XIcon } from "lucide-react";
+import { TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Truncate } from "@/components/ui/truncate";
 import { memberCount } from "../annotations";
 import { annotationFieldKey } from "../field-drafts";
 import { Field, FieldList, SectionTitle } from "./fields";
@@ -20,7 +22,7 @@ interface Member {
 
 /**
  * 选中注释框时的检查器：标题、备注、成员列表（逐个移出、前往成员），删除注释框（成员节点不动）。
- * 标题和备注的连续输入各合成一步撤销；注释框不能没有成员，只剩一个时不能移出。
+ * 标题和备注的连续输入各合成一步撤销；移出最后一个成员时注释框一起删除（和删节点一样，一步撤销能恢复）。
  * 输入框带 `data-field-key`（annotationFieldKey）：新建后、保存被字段错误拦下时，编辑器用它把焦点放过来。
  */
 export function AnnotationInspector({
@@ -58,7 +60,6 @@ export function AnnotationInspector({
 			};
 		}),
 	];
-	const lastOne = memberCount(annotation) <= 1;
 
 	return (
 		<>
@@ -67,7 +68,7 @@ export function AnnotationInspector({
 				title={annotation.title.trim() || id}
 				row={
 					<>
-						<span>注释框</span>
+						<span>{TERM.annotation}</span>
 						<span className="font-mono text-fg-2">{id}</span>
 					</>
 				}
@@ -82,7 +83,7 @@ export function AnnotationInspector({
 					</Button>
 				}
 			/>
-			<FieldList className="flex-none border-b border-border-soft px-3.5 pt-3">
+			<FieldList data-focus-start="" className="flex-none border-b border-border-soft px-3.5 pt-3">
 				<Field
 					label="标题"
 					required
@@ -98,7 +99,7 @@ export function AnnotationInspector({
 						/>
 					)}
 				</Field>
-				<Field label="备注" error={errorOf("note")} fieldKey={annotationFieldKey(id, "note")}>
+				<Field label={TERM.note} error={errorOf("note")} fieldKey={annotationFieldKey(id, "note")}>
 					{(control) => (
 						<Textarea
 							{...control}
@@ -123,7 +124,7 @@ export function AnnotationInspector({
 							key={i}
 							className="flex items-center gap-1 rounded-md bg-raised py-0.5 pr-0.5 pl-2.5 text-sm"
 						>
-							<span className="min-w-0 flex-1 truncate">{m.label}</span>
+							<Truncate className="flex-1">{m.label}</Truncate>
 							<Button
 								variant="ghost"
 								size="sm"
@@ -137,8 +138,11 @@ export function AnnotationInspector({
 								variant="ghost"
 								size="icon-sm"
 								aria-label={`移出 ${m.label}`}
-								disabled={lastOne}
-								onClick={() => change(m.remove(annotation))}
+								onClick={() => {
+									const rest = m.remove(annotation);
+									if (memberCount(rest) === 0) context.onDeleteAnnotation(id);
+									else change(rest);
+								}}
 							>
 								<XIcon />
 							</Button>
@@ -146,8 +150,7 @@ export function AnnotationInspector({
 					))}
 				</ul>
 				<p className="m-0 mt-2 text-xs text-fg-3">
-					{lastOne && "注释框至少要有一个成员。"}
-					用节点的右键菜单把节点加入或移出注释框；删除注释框时，里面的节点不动。
+					用节点的右键菜单把节点加入或移出注释框。移出最后一个成员时注释框一起删除；删除注释框时，里面的节点不动。
 				</p>
 			</div>
 		</>

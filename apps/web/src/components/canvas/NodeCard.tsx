@@ -1,4 +1,4 @@
-import { nodeCardText, nodeDisplayName } from "@sfly/orchestration";
+import { nodeCardText, nodeDefaultTitle, nodeDisplayName } from "@sfly/orchestration";
 import { type NodeProps, Position } from "@xyflow/react";
 import { cn } from "cn";
 import { type CSSProperties, useCallback, useId, useRef } from "react";
@@ -157,7 +157,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				<NodeTitleEditor
 					id={id}
 					initial={nodeDisplayName(node) ?? ""}
-					placeholder={nodeCardText({ ...node, display_name: undefined }, info).title}
+					placeholder={nodeDefaultTitle(node, info)}
 					onCommit={(text) => rename.commit(id, text)}
 					onCancel={rename.cancel}
 				/>

@@ -31,6 +31,7 @@ import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Truncate } from "@/components/ui/truncate";
 import { attemptAgentTimes } from "./attempt-clock";
 import { LogList } from "./LogList";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
@@ -336,13 +337,9 @@ function ScopeLabel({
 	const name = nameBeforeId(node.node_id, node.display_name);
 	return (
 		<span className="inline-flex h-6 max-w-96 min-w-0 items-center rounded-md border border-border bg-raised pl-2 text-xs text-fg-1">
-			<span
-				data-testid="bp-scope"
-				className="flex min-w-0 whitespace-nowrap"
-				title={`范围：${runNodeName(node)}${suffix}`}
-			>
+			<span data-testid="bp-scope" className="flex min-w-0 whitespace-nowrap">
 				范围：
-				{name && <span className="min-w-0 truncate">{name}</span>}
+				{name && <Truncate>{name}</Truncate>}
 				<span className="flex-none">
 					{name ? `（${node.node_id}）` : node.node_id}
 					{suffix}

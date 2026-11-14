@@ -1,6 +1,7 @@
 import { cn } from "cn";
 import { StickyNoteIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { TERM } from "#/lib/copy";
 import { useHostKeyboardFocus } from "#/lib/host-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -90,7 +91,7 @@ export function NoteIcon({
 						host ? (
 							<span {...trigger} aria-hidden />
 						) : (
-							<button type="button" {...trigger} aria-label="备注" aria-describedby={noteId} />
+							<button type="button" {...trigger} aria-label={TERM.note} aria-describedby={noteId} />
 						)
 					}
 				>

@@ -8,6 +8,7 @@ import {
 	nodeCard,
 	nodeMenu,
 	openEditor,
+	settleViewport,
 	switchMode,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
@@ -107,8 +108,8 @@ test("双击标题不触发画布的双击缩放；双击空白处仍然缩放",
 	const settled = await viewport(page);
 	await titleOf(nodeCard(page, "fetch")).dblclick();
 	await expect(renameBox(nodeCard(page, "fetch"))).toBeFocused();
-	// 缩放的动画不到半秒：等它本该结束的时候，视口没有动。
-	await page.waitForTimeout(600);
+	// 双击缩放的动画在双击的那一刻就开始：等视口动画停下，视口没有动。
+	await settleViewport(page);
 	expect(await viewport(page)).toBe(settled);
 
 	// 抓手工具下节点不能拖动、不挡画布的双击缩放，双击标题同样只改名。
@@ -117,7 +118,7 @@ test("双击标题不触发画布的双击缩放；双击空白处仍然缩放",
 	await expect(page.locator("[data-tool]")).toHaveAttribute("data-tool", "hand");
 	await titleOf(nodeCard(page, "ping")).dblclick();
 	await expect(renameBox(nodeCard(page, "ping"))).toBeFocused();
-	await page.waitForTimeout(600);
+	await settleViewport(page);
 	expect(await viewport(page)).toBe(settled);
 });
 
@@ -371,6 +372,27 @@ test("在输入框里改名后直接按 Ctrl+S：先按确认处理，保存下�
 	await expect(titleOf(fetch)).toHaveText(NAME);
 	await page.reload();
 	await expect(titleOf(nodeCard(page, "fetch"))).toHaveText(NAME);
+});
+
+test("在输入框里改名后直接点「保存」按钮：一次点击就先确认名称再保存，保存下来的版本里是新名称", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createEditorScenario(controlPlane);
+	await openEditor(page, id);
+	const fetch = nodeCard(page, "fetch");
+
+	await titleOf(fetch).dblclick();
+	await renameBox(fetch).fill(NAME);
+	// 用鼠标点按钮所在的位置：Playwright 的 click 会等按钮可点，而用户不会等。
+	const save = await box(page.getByRole("button", { name: /保存/ }));
+	await page.mouse.click(save.x + save.width / 2, save.y + save.height / 2);
+	await expect(page.getByText("已保存为版本 2")).toBeVisible();
+	const nodes = (await headOf(controlPlane, id)).document.nodes as Record<string, unknown>[];
+	expect(nodes.find((n) => n.id === "fetch")?.display_name).toBe(NAME);
+	await expect(renameBox(fetch)).toHaveCount(0);
+	await expect(titleOf(fetch)).toHaveText(NAME);
+	await expect(unsaved(page)).toHaveCount(0);
 });
 
 test("子流程入口节点不能原地改名：它的名称是子流程名称，在检查器里改；菜单里的「重命名」禁用并说明原因", async ({

@@ -45,6 +45,9 @@ const openMenu = async (page: Page, id: string) => {
 	await expect(nodeMenu(page)).toBeVisible();
 	return nodeMenu(page);
 };
+/** 卡片整个落在注释框里：成员变化之后框要到下一次渲染才更新，断言时用 `expect.poll` 等它。 */
+const framesCard = (page: Page, annotation: string, card: string) => async () =>
+	frames(await box(annotationFrame(page, annotation)), await box(nodeCard(page, card)));
 const joinMenu = (page: Page) => page.getByRole("menu", { name: "加入注释框" });
 const leaveMenu = (page: Page) => page.getByRole("menu", { name: "移出注释框" });
 
@@ -95,8 +98,8 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 	await expect(inspector(page).getByRole("heading", { name: "造测试数据" })).toBeVisible();
 	await expect(annotationBand(page, "造测试数据")).toBeVisible();
 	const frame = annotationFrame(page, "annotation_1");
-	expect(frames(await box(frame), await box(nodeCard(page, "fetch")))).toBe(true);
-	expect(frames(await box(frame), await box(nodeCard(page, "ping")))).toBe(false);
+	await expect.poll(framesCard(page, "annotation_1", "fetch")).toBe(true);
+	await expect.poll(framesCard(page, "annotation_1", "ping")).toBe(false);
 	await expect(memberList(page).getByRole("listitem")).toHaveText([/fetch/]);
 
 	// 加入：ping 进来，框从 fetch 一直包到 ping（中间的 dispatch 不是成员，但落在框里）。
@@ -108,7 +111,7 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 		.click();
 	await expect(nodeMenu(page)).toHaveCount(0);
 	for (const node of ["fetch", "dispatch", "ping"]) {
-		expect(frames(await box(frame), await box(nodeCard(page, node)))).toBe(true);
+		await expect.poll(framesCard(page, "annotation_1", node)).toBe(true);
 	}
 	// ping 已经在里面了：没有别的注释框可以加入；能从这个注释框移出。
 	menu = await openMenu(page, "ping");
@@ -124,16 +127,22 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 	await leaveMenu(page)
 		.getByRole("menuitem", { name: /造测试数据/ })
 		.click();
-	expect(frames(await box(frame), await box(nodeCard(page, "fetch")))).toBe(false);
-	expect(frames(await box(frame), await box(nodeCard(page, "ping")))).toBe(true);
-	// 唯一的成员不能移出（要删掉注释框用检查器里的删除）。
+	await expect.poll(framesCard(page, "annotation_1", "fetch")).toBe(false);
+	await expect.poll(framesCard(page, "annotation_1", "ping")).toBe(true);
+	// 移出最后一个成员：和删节点一样，注释框一起删除，节点不动；一步撤销恢复。
+	const ping = await box(nodeCard(page, "ping"));
 	menu = await openMenu(page, "ping");
 	await menu.getByRole("menuitem", { name: /^移出注释框/ }).click();
-	await expect(leaveMenu(page).getByRole("menuitem")).toHaveText([
-		"造测试数据annotation_1它是这个注释框唯一的成员",
-	]);
-	await page.keyboard.press("Escape");
-	await page.keyboard.press("Escape");
+	await expect(leaveMenu(page).getByRole("menuitem")).toHaveText(["造测试数据annotation_1"]);
+	await expect(leaveMenu(page).getByRole("menuitem")).toBeEnabled();
+	await leaveMenu(page)
+		.getByRole("menuitem", { name: /造测试数据/ })
+		.click();
+	await expect(frame).toHaveCount(0);
+	expect(await box(nodeCard(page, "ping"))).toEqual(ping);
+	await dock(page).getByRole("button", { name: "撤销" }).click();
+	await expect(frame).toBeVisible();
+	await expect.poll(framesCard(page, "annotation_1", "ping")).toBe(true);
 
 	// 点标题带选中注释框，写备注：标题带上出现备注图标，悬停显示全文。
 	await nodeCard(page, "entry").click();
@@ -152,7 +161,7 @@ test("从节点菜单新建注释框，标题输入框拿到焦点；加入、�
 	]);
 	await page.reload();
 	await expect(annotationBand(page, "造测试数据")).toBeVisible();
-	expect(frames(await box(frame), await box(nodeCard(page, "ping")))).toBe(true);
+	await expect.poll(framesCard(page, "annotation_1", "ping")).toBe(true);
 	await expect(frame.locator('[data-slot="note-icon"]')).toHaveCount(1);
 	await annotationBand(page, "造测试数据").click();
 	await expect(annotationNoteBox(page)).toHaveValue(NOTE);
@@ -193,6 +202,26 @@ test("只用键盘：Shift+F10 新建注释框、输入标题，Esc 回到画布
 	await expect(memberList(page).getByRole("listitem")).toHaveText([/fetch/, /dispatch/]);
 });
 
+test("选中注释框后按 Enter，焦点移到检查器里的标题输入框；Esc 回到画布", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await scenarioWith(controlPlane, [
+		{ id: "annotation_1", title: "主链后半段", nodes: ["dispatch", "ping"] },
+	]);
+	await openEditor(page, id);
+	await annotationBand(page, "主链后半段").click();
+	await expect(annotationBand(page, "主链后半段")).toHaveAttribute("aria-pressed", "true");
+
+	// 用键盘：焦点在画布区域上，注释框是选中的。
+	const canvas = page.getByRole("region", { name: /^编排画布/ });
+	await canvas.focus();
+	await page.keyboard.press("Enter");
+	await expect(annotationTitleBox(page)).toBeFocused();
+	await page.keyboard.press("Escape");
+	await expect(canvas).toBeFocused();
+});
+
 test("检查器：逐个移出成员、跳到成员，删除注释框时成员节点不动；添加、修改、删除都能撤销和重做", async ({
 	page,
 	controlPlane,
@@ -224,8 +253,16 @@ test("检查器：逐个移出成员、跳到成员，删除注释框时成员�
 	await expect(memberList(page).getByRole("listitem")).toHaveText([/ping/, /子流程 sub_entry/]);
 	await memberList(page).getByRole("button", { name: "移出 子流程 sub_entry" }).click();
 	await expect(memberList(page).getByRole("listitem")).toHaveText([/ping/]);
-	// 最后一个成员不能移出。
-	await expect(memberList(page).getByRole("button", { name: "移出 ping" })).toBeDisabled();
+	// 移出最后一个成员：注释框一起删除，检查器回到场景设置，节点不动；一步撤销恢复。
+	const lastPing = await box(nodeCard(page, "ping"));
+	await expect(memberList(page).getByRole("button", { name: "移出 ping" })).toBeEnabled();
+	await memberList(page).getByRole("button", { name: "移出 ping" }).click();
+	await expect(annotationFrame(page, "annotation_1")).toHaveCount(0);
+	await expect(inspector(page).getByRole("heading", { name: "场景设置" })).toBeVisible();
+	expect(await box(nodeCard(page, "ping"))).toEqual(lastPing);
+	await dock(page).getByRole("button", { name: "撤销" }).click();
+	await annotationBand(page, "主链后半段").click();
+	await expect(memberList(page).getByRole("listitem")).toHaveText([/ping/]);
 
 	// 撤销、重做成员的修改。
 	await dock(page).getByRole("button", { name: "撤销" }).click();
@@ -372,6 +409,28 @@ test("缩小画布：标题带的文字跟着语义缩放，屏幕上不小于 1
 	const fontPx = await title.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
 	expect(fontPx * (await zoom())).toBeGreaterThanOrEqual(12 - 0.01);
 	await expect(title).toBeVisible();
+});
+
+test("打开画布时适配视图把注释框的范围也算进去：外沿不被检查器、视口和工具条挡住", async ({
+	page,
+	controlPlane,
+}) => {
+	// 子流程成员的框在子流程区域外面再留一圈，右边比最右的节点宽出 48 个单位：按节点算的话，
+	// 节点刚好贴着适配的边距，框的右沿就伸到检查器下面去了。
+	const id = await scenarioWith(controlPlane, [
+		{ id: "annotation_1", title: "对账子流程", subflows: ["sub_entry"] },
+	]);
+	await openEditor(page, id);
+
+	const [frame, panel, tools] = [
+		await box(annotationFrame(page, "annotation_1")),
+		await box(inspector(page)),
+		await box(dock(page)),
+	];
+	expect(frame.x, "框的左沿").toBeGreaterThanOrEqual(0);
+	expect(frame.y, "框的上沿").toBeGreaterThanOrEqual(0);
+	expect(frame.x + frame.width, "框的右沿").toBeLessThanOrEqual(panel.x);
+	expect(frame.y + frame.height, "框的下沿").toBeLessThanOrEqual(tools.y);
 });
 
 test("运行状态模式和版本查看画布显示注释框（只读，标题带不能点）；版本对比列出注释框的新增、删除和修改", async ({
