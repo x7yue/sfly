@@ -47,7 +47,7 @@ const client = createClient({
 | 领域 | 方法 |
 |---|---|
 | `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`create`、`update`、`copy`、`archive`、`unarchive` |
-| `presets`（运行预设） | `list`、`create` |
+| `presets`（运行预设） | `list`、`create`、`update`、`copy`、`remove` |
 | `runs`（运行） | `list`、`listForOrchestration`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
 | `metrics`（指标） | `summary`、`catalog`、`series`、`platform` |
@@ -121,6 +121,7 @@ console.log(presetRun.preset?.name, presetRun.preset?.params);
 - 预检没通过时触发失败，错误码 `invalid_orchestration`，`details` 是原因列表；参数不对时错误码 `invalid_params`。
 - 运行预设固定了一部分参数的值（预设参数），带上 `preset` 时控制面用预设的值填入它们，`params` 里不用再给。给了和预设不同的值时触发失败，错误码 `preset_param_locked`，`details` 是 `{ param, preset }`（参数名和预设名）；给相同的值照常触发。预设不存在或不属于这个场景时错误码 `preset_not_found`。运行视图的 `preset` 记着触发时预设的 ID、名称和预设参数的名单，没用预设时为 `null`。
 - 新建运行预设用 `presets.create({ params: { id }, body: { name, description, params: [{ name, value }] } })`，列出用 `presets.list`。值按参数声明的类型给，至少一个参数；不符合时错误码 `invalid_preset`，`details` 指出是哪个字段、什么原因，名称重复时错误码 `preset_name_taken`。
+- 修改、复制、删除运行预设用 `presets.update`、`presets.copy`、`presets.remove`，路径参数是 `{ id, presetId }`。`update` 的请求体只写要改的项，至少一项：没有 `params` 时只改名称和说明（失效的预设也可以改名），给了 `params` 时它是预设参数的完整清单，规则和新建相同；`copy` 的请求体是 `{ name }`（新名称），说明和预设参数原样复制；`remove` 没有返回值。预设不存在或不属于这个场景时错误码 `preset_not_found`，名称重复时 `preset_name_taken`。预设可以随时修改，场景归档期间也一样，改了立即生效；已经开始的运行不受影响。复制场景时预设一并复制。
 - 取消运行用 `runs.cancel({ params: { id } })`。清理期间再取消一次就是强制取消。运行已经结束时错误码 `run_not_running`。
 
 ## 订阅运行
