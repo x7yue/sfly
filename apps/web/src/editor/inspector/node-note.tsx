@@ -1,31 +1,33 @@
-import { FormField } from "@/components/ui/form-field";
 import { Textarea } from "@/components/ui/textarea";
+import { draftKey } from "../field-drafts";
+import { Field } from "./fields";
 
 /**
  * 检查器顶部的「备注」：多行说明，写这个节点在场景里做什么、为什么这样配置。所有节点种类都有。
- * 保存时去掉首尾空白，只有空白等于没写；超过上限的错误显示在输入框下面（文档校验给出，字段错误阻止保存）。
+ * 输入框里是原样输入的文字，只有空白当作没写；保存时去掉首尾空白（@sfly/schema 的 optionalMultiline）。
+ * 超过上限的错误显示在输入框下面（字段错误阻止保存）。必须放在 `FieldList` 里（检查器顶部和显示名称一起）。
  */
 export function NoteField({
+	id,
 	note,
 	error,
 	onChange,
 }: {
+	id: string;
 	note: string | undefined;
 	error: string | undefined;
 	onChange(note: string | undefined): void;
 }) {
 	return (
-		<div className="flex-none border-b border-border-soft px-3.5 py-2.5">
-			<FormField label="备注" error={error}>
-				{(control) => (
-					<Textarea
-						{...control}
-						value={note ?? ""}
-						placeholder="这个节点做什么、为什么这样配置（可选）"
-						onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
-					/>
-				)}
-			</FormField>
-		</div>
+		<Field label="备注" error={error} fieldKey={draftKey(id, "note")}>
+			{(control) => (
+				<Textarea
+					{...control}
+					value={note ?? ""}
+					placeholder="这个节点做什么、为什么这样配置（可选）"
+					onChange={(e) => onChange(e.target.value === "" ? undefined : e.target.value)}
+				/>
+			)}
+		</Field>
 	);
 }

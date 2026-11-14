@@ -37,6 +37,11 @@
                 "type": "string",
                 "maxLength": 2000
               },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+              },
               "kind": {
                 "type": "string",
                 "const": "entry"
@@ -196,6 +201,11 @@
                 "type": "string",
                 "maxLength": 2000
               },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+              },
               "kind": {
                 "type": "string",
                 "const": "async"
@@ -241,6 +251,11 @@
               "note": {
                 "type": "string",
                 "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
               },
               "kind": {
                 "type": "string",
@@ -293,6 +308,11 @@
                 "type": "string",
                 "maxLength": 2000
               },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+              },
               "kind": {
                 "type": "string",
                 "const": "sleep"
@@ -340,6 +360,11 @@
                 "type": "string",
                 "maxLength": 2000
               },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+              },
               "kind": {
                 "type": "string",
                 "const": "stop_subflow"
@@ -385,6 +410,11 @@
               "note": {
                 "type": "string",
                 "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
               },
               "kind": {
                 "type": "string",
@@ -468,6 +498,11 @@
               "note": {
                 "type": "string",
                 "maxLength": 2000
+              },
+              "display_name": {
+                "type": "string",
+                "maxLength": 40,
+                "pattern": "^[^\\r\\n]*(?![\\s\\S])"
               },
               "kind": {
                 "type": "string",

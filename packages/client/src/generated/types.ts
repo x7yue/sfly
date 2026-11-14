@@ -96,8 +96,9 @@ export interface AsyncTaskNode {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "async";
 	/** 子流程参数映射：子流程入口参数名 → 值。 */
 	params: Record<string, unknown>;
@@ -110,8 +111,9 @@ export interface AsyncTaskNodeInput {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "async";
 	/** 子流程参数映射：子流程入口参数名 → 值。 */
 	params?: Record<string, unknown>;
@@ -377,8 +379,9 @@ export interface EntryNode {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "entry";
 	params: ParamDeclaration[];
 }
@@ -390,8 +393,9 @@ export interface EntryNodeInput {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "entry";
 	params?: ParamDeclarationInput[];
 }
@@ -465,8 +469,9 @@ export interface FeishuNotifyNode {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "feishu_notify";
 	always: boolean;
 	/**
@@ -503,8 +508,9 @@ export interface FeishuNotifyNodeInput {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "feishu_notify";
 	always?: boolean;
 	/**
@@ -957,8 +963,9 @@ export interface PackageNode {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "package";
 	always: boolean;
 	package: PackageName;
@@ -980,8 +987,9 @@ export interface PackageNodeInput {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "package";
 	always?: boolean;
 	package: PackageName;
@@ -1472,8 +1480,9 @@ export interface SleepNode {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "sleep";
 	always: boolean;
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
@@ -1487,8 +1496,9 @@ export interface SleepNodeInput {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "sleep";
 	always?: boolean;
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
@@ -1502,8 +1512,9 @@ export interface StopSubflowNode {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "stop_subflow";
 	always: boolean;
 	/**
@@ -1520,8 +1531,9 @@ export interface StopSubflowNodeInput {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "stop_subflow";
 	always?: boolean;
 	/**
@@ -1538,7 +1550,7 @@ export interface SubflowEntryNode {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
 	kind: "subflow_entry";
 	/**
@@ -1556,7 +1568,7 @@ export interface SubflowEntryNodeInput {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
 	kind: "subflow_entry";
 	/**
@@ -1612,8 +1624,9 @@ export interface TimerNode {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "timer";
 	always: boolean;
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
@@ -1628,8 +1641,9 @@ export interface TimerNodeInput {
 		x: number;
 		y: number;
 	};
-	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.3）。 */
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
 	note?: string;
+	display_name?: string;
 	kind: "timer";
 	always?: boolean;
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */

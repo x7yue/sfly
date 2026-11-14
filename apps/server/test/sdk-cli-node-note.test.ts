@@ -83,6 +83,12 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 	};
 	const noteOf = (document: ScenarioFile["document"], id: string) =>
 		document.nodes.find((n) => n.id === id)?.note;
+	/** 给文件里的节点写上备注。 */
+	const setNote = (content: ScenarioFile, id: string, note: string) => {
+		const node = content.document.nodes.find((n) => n.id === id);
+		if (!node) throw new Error(`文件里没有节点 ${id}`);
+		node.note = note;
+	};
 
 	beforeAll(async () => {
 		cliVersion = (await sfly(["--version"])).stdout.trim().replace(/^sfly /, "");
@@ -112,10 +118,10 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 					"主链",
 					"  入口参数：无",
 					"  节点：",
-					"    节点    节点类型                  包版本  Agent",
-					"    deploy  stub/echo                 1.0.0   agent-b",
-					"    spawn   异步任务 → 子流程 report  -       -",
-					"    pause   Sleep                     -       -",
+					"    节点    显示名称  节点类型                  包版本  Agent",
+					"    deploy  -         stub/echo                 1.0.0   agent-b",
+					"    spawn   -         异步任务 → 子流程 report  -       -",
+					"    pause   -         Sleep                     -       -",
 					"  备注：",
 					"    entry：整个场景的说明：先发布，再等灰度",
 					"    deploy：发布到测试环境",
@@ -127,15 +133,15 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 					"子流程 report（入口 sub，由 spawn 触发）",
 					"  入口参数：无",
 					"  节点：",
-					"    节点  节点类型   包版本  Agent",
-					"    send  stub/echo  1.0.0   agent-a",
+					"    节点  显示名称  节点类型   包版本  Agent",
+					"    send  -         stub/echo  1.0.0   agent-a",
 					"  备注：",
 					"    sub：报告子流程：汇总并发给值班同学",
 					"    send：只发一次",
 					"",
 					"没有连进任何链的节点：",
-					"  节点   节点类型  包版本  Agent",
-					"  loose  定时      -       -",
+					"  节点   显示名称  节点类型  包版本  Agent",
+					"  loose  -         定时      -       -",
 					"  备注：",
 					"    loose：还没接进任何链",
 					"           接好之后删掉",
@@ -179,8 +185,8 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 		it("带备注的文档能 push：备注去掉首尾空白后保存，空备注不保存；push 之后 show 能看到", async () => {
 			const id = await createScenario("推送备注", plainDocument);
 			const { file, content } = await pull(id);
-			content.document.nodes[1] = { ...content.document.nodes[1], note: "  先建用户\n再查订单\n" };
-			content.document.nodes[0] = { ...content.document.nodes[0], note: "   " };
+			setNote(content, "a", "  先建用户\n再查订单\n");
+			setNote(content, "entry", "   ");
 			await writeFile(file, JSON.stringify(content, null, 2));
 
 			const result = await cli("scenario", "push", file);
@@ -195,14 +201,14 @@ describe("sfly scenario show / push：节点的备注 → 控制面", () => {
 		it("备注最长 2000 个字符：2000 个 emoji 能 push，2001 个本地校验报出位置，控制面的判断相同", async () => {
 			const id = await createScenario("推送备注长度", plainDocument);
 			const { file, content } = await pull(id);
-			content.document.nodes[1] = { ...content.document.nodes[1], note: EMOJI.repeat(2000) };
+			setNote(content, "a", EMOJI.repeat(2000));
 			await writeFile(file, JSON.stringify(content, null, 2));
 			const fits = await cli("scenario", "push", file);
 			expect(fits.code, fits.stderr).toBe(0);
 			expect(noteOf((await head(id)).document, "a")).toBe(EMOJI.repeat(2000));
 
 			const tooLong = (await pull(id)).content;
-			tooLong.document.nodes[1] = { ...tooLong.document.nodes[1], note: EMOJI.repeat(2001) };
+			setNote(tooLong, "a", EMOJI.repeat(2001));
 			await writeFile(file, JSON.stringify(tooLong, null, 2));
 			const seen = await startRecordingProxy(cp.httpUrl);
 			proxies.push(seen);

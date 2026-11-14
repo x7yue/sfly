@@ -211,4 +211,26 @@ describe("编排文档差异", () => {
 		]);
 		expect(isEmptyDiff(diffDocuments(withSubflow(), withSubflow("sub")))).toBe(true);
 	});
+	it("只改显示名称也算有修改：列出前后的名称；去掉首尾空白后相同的写法不算", () => {
+		const named = (display_name?: string) => ({
+			...base,
+			nodes: base.nodes.map((n) => (n.id === "check" ? { ...n, display_name } : n)),
+		});
+		const diff = diffDocuments(named("创建测试用户"), named("查询测试用户"));
+		expect(isEmptyDiff(diff)).toBe(false);
+		expect(isEmptyDiff(diff, { ignoreLayout: true })).toBe(false);
+		expect(diff.nodes.changed).toEqual([
+			{
+				id: "check",
+				kind: "package",
+				changes: [{ path: "display_name", before: "创建测试用户", after: "查询测试用户" }],
+			},
+		]);
+		expect(diff.moved).toEqual([]);
+		expect(diffDocuments(named(), named("创建测试用户")).nodes.changed[0]?.changes).toEqual([
+			{ path: "display_name", before: undefined, after: "创建测试用户" },
+		]);
+		expect(isEmptyDiff(diffDocuments(named("创建测试用户"), named(" 创建测试用户 ")))).toBe(true);
+		expect(isEmptyDiff(diffDocuments(named(), named("   ")))).toBe(true);
+	});
 });

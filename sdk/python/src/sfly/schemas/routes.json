@@ -974,6 +974,11 @@
                           "type": "string",
                           "maxLength": 2000
                         },
+                        "display_name": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+                        },
                         "kind": {
                           "type": "string",
                           "const": "entry"
@@ -1133,6 +1138,11 @@
                           "type": "string",
                           "maxLength": 2000
                         },
+                        "display_name": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+                        },
                         "kind": {
                           "type": "string",
                           "const": "async"
@@ -1178,6 +1188,11 @@
                         "note": {
                           "type": "string",
                           "maxLength": 2000
+                        },
+                        "display_name": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
                         },
                         "kind": {
                           "type": "string",
@@ -1230,6 +1245,11 @@
                           "type": "string",
                           "maxLength": 2000
                         },
+                        "display_name": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+                        },
                         "kind": {
                           "type": "string",
                           "const": "sleep"
@@ -1277,6 +1297,11 @@
                           "type": "string",
                           "maxLength": 2000
                         },
+                        "display_name": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+                        },
                         "kind": {
                           "type": "string",
                           "const": "stop_subflow"
@@ -1322,6 +1347,11 @@
                         "note": {
                           "type": "string",
                           "maxLength": 2000
+                        },
+                        "display_name": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
                         },
                         "kind": {
                           "type": "string",
@@ -1405,6 +1435,11 @@
                         "note": {
                           "type": "string",
                           "maxLength": 2000
+                        },
+                        "display_name": {
+                          "type": "string",
+                          "maxLength": 40,
+                          "pattern": "^[^\\r\\n]*(?![\\s\\S])"
                         },
                         "kind": {
                           "type": "string",
@@ -1525,6 +1560,11 @@
         {
           "part": "body",
           "path": "document.nodes[].oneOf.0.params[].description",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "body",
+          "path": "document.nodes[].oneOf.0.display_name",
           "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
         },
         {

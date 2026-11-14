@@ -1,6 +1,7 @@
 import {
 	dispatchTarget,
 	nodeCardText,
+	nodeNameWithId,
 	nodeTypeOf,
 	type OrchestrationWarning,
 	type PackageCatalog,
@@ -12,7 +13,7 @@ import { forwardRef, type ReactNode, useEffect, useMemo, useState } from "react"
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
-import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
+import { type CanvasSelection, multipleNodes, soleNode } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,8 @@ import { fieldErrorKey } from "../field-drafts";
 import { fieldLabel } from "../field-label";
 import { checkSummary, type FieldError, type InputNote } from "../validation";
 import { AgentSelect } from "./AgentSelect";
-import { FIELD_LIST_CLASS, Field, focusField, SectionTitle } from "./fields";
+import { DisplayNameField, isNamedNode } from "./DisplayNameField";
+import { FIELD_LIST_CLASS, Field, FieldList, focusField, SectionTitle } from "./fields";
 import { InspectorWidthHandle, useInspectorWidth } from "./inspector-width";
 import {
 	AsyncMapping,
@@ -67,12 +69,13 @@ export interface InspectorContext {
 	onLock(name: string, version: string): void;
 	/** 选中并定位到另一个节点。 */
 	onLocate(id: string): void;
-	onDelete(id: string): void;
+	/** 删除节点（多选时是整组，算一步撤销）。 */
+	onDelete(ids: readonly string[]): void;
 }
 
 /**
  * 右侧检查器（原型 `.insp`，可收起）。选中一个节点时：标题区 + 页签（参数 / 执行 / 说明）；
- * 没有选中节点时：场景级设置（默认 Agent、节点包版本、检查结果）。
+ * 选中多个节点时：「已选 N 个节点」和对这组节点的操作；没有选中节点时：场景级设置（默认 Agent、节点包版本、检查结果）。
  * 包节点的「说明」页叫「说明与指标」，带上节点类型声明的指标与图表（#43）。
  */
 export const Inspector = forwardRef<
@@ -91,6 +94,7 @@ export const Inspector = forwardRef<
 	const width = useInspectorWidth();
 	const id = soleNode(selection);
 	const node = id === null ? undefined : nodeOf(id);
+	const group = multipleNodes(selection);
 	return (
 		<aside
 			ref={ref}
@@ -107,6 +111,8 @@ export const Inspector = forwardRef<
 		>
 			{id !== null && node ? (
 				<NodeInspector key={id} id={id} node={node} context={context} onCollapse={onCollapse} />
+			) : group ? (
+				<GroupInspector ids={group} context={context} onCollapse={onCollapse} />
 			) : (
 				<ScenarioInspector context={context} onCollapse={onCollapse} />
 			)}
@@ -213,6 +219,7 @@ function NodeInspector({
 		(w) => !("input" in w && w.input !== undefined && fieldInputs.has(w.input)),
 	);
 	const change = (next: DocNode) => context.onChangeNode(id, next);
+	const displayNameError = fieldErrors.find((e) => e.field === "display_name")?.message;
 	const hasExec =
 		node.kind === "package" ||
 		node.kind === "timer" ||
@@ -252,18 +259,30 @@ function NodeInspector({
 							variant="ghost"
 							size="icon-sm"
 							aria-label="删除节点"
-							onClick={() => context.onDelete(id)}
+							onClick={() => context.onDelete([id])}
 						>
 							<Trash2Icon />
 						</Button>
 					)
 				}
 			/>
-			<NoteField
-				note={node.note}
-				error={fieldErrors.find((e) => e.field === "note")?.message}
-				onChange={(note) => change({ ...node, note })}
-			/>
+			<FieldList className="flex-none border-b border-border-soft px-3.5 pt-3">
+				{isNamedNode(node) && (
+					<DisplayNameField
+						id={id}
+						node={node}
+						placeholder={nodeCardText({ ...node, display_name: undefined }, info).title}
+						error={displayNameError}
+						onChange={change}
+					/>
+				)}
+				<NoteField
+					id={id}
+					note={node.note}
+					error={fieldErrors.find((e) => e.field === "note")?.message}
+					onChange={(note) => change({ ...node, note })}
+				/>
+			</FieldList>
 			<Tabs
 				value={tab}
 				onValueChange={(v) => setTab(v as Tab)}
@@ -353,7 +372,13 @@ function NodeInspector({
 						/>
 					)}
 					{fieldErrors
-						.filter((e) => !e.draft && !e.field.startsWith("params.") && e.field !== "note")
+						.filter(
+							(e) =>
+								!e.draft &&
+								!e.field.startsWith("params.") &&
+								e.field !== "display_name" &&
+								e.field !== "note",
+						)
 						.map((e) => (
 							<p
 								key={e.field}
@@ -442,6 +467,32 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 	);
 }
 
+/** 选中多个节点时：选了几个，和对这组节点的操作。 */
+function GroupInspector({
+	ids,
+	context,
+	onCollapse,
+}: {
+	ids: readonly string[];
+	context: InspectorContext;
+	onCollapse(): void;
+}) {
+	return (
+		<>
+			<Header onCollapse={onCollapse} title={`已选 ${ids.length} 个节点`} row={<span>多选</span>} />
+			<div className={cn(FIELD_LIST_CLASS, "min-h-0 flex-1 overflow-auto px-3.5 py-3")}>
+				<div className="flex flex-wrap gap-2">
+					<Button size="sm" onClick={() => context.onDelete(ids)}>
+						<Trash2Icon />
+						删除选中的节点
+					</Button>
+				</div>
+				<p className="m-0 text-xs text-fg-3">拖动其中任意一个节点，整组一起移动。</p>
+			</div>
+		</>
+	);
+}
+
 /** 没有选中节点时：场景级设置与检查结果。 */
 function ScenarioInspector({
 	context,
@@ -489,32 +540,33 @@ function ScenarioInspector({
 				</SectionTitle>
 				{fieldErrors.length > 0 && (
 					<ul className="m-0 mb-3 flex list-none flex-col gap-1 p-0">
-						{fieldErrors.map((e) => (
-							<li
-								key={`${e.nodeId}:${e.field}`}
-								className={cn(
-									"flex items-start gap-2 rounded-md border border-danger-line bg-danger-soft px-2.5 py-1.5 text-xs text-danger-fg",
-								)}
-							>
-								<span className="min-w-0 flex-1">
-									{e.nodeId && <code className="font-mono">{e.nodeId}</code>}{" "}
-									{fieldLabel(
-										doc.nodes.find((n) => n.id === e.nodeId),
-										e.field,
+						{fieldErrors.map((e) => {
+							const node = doc.nodes.find((n) => n.id === e.nodeId);
+							return (
+								<li
+									key={`${e.nodeId}:${e.field}`}
+									className={cn(
+										"flex items-start gap-2 rounded-md border border-danger-line bg-danger-soft px-2.5 py-1.5 text-xs text-danger-fg",
 									)}
-									：{e.message}
-								</span>
-								{e.nodeId && (
-									<button
-										type="button"
-										className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
-										onClick={() => context.onLocate(e.nodeId as string)}
-									>
-										前往
-									</button>
-								)}
-							</li>
-						))}
+								>
+									<span className="min-w-0 flex-1">
+										{e.nodeId && (
+											<code className="font-mono">{node ? nodeNameWithId(node) : e.nodeId}</code>
+										)}{" "}
+										{fieldLabel(node, e.field)}：{e.message}
+									</span>
+									{e.nodeId && (
+										<button
+											type="button"
+											className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
+											onClick={() => context.onLocate(e.nodeId as string)}
+										>
+											前往
+										</button>
+									)}
+								</li>
+							);
+						})}
 					</ul>
 				)}
 				{warnings.length > 0 ? (

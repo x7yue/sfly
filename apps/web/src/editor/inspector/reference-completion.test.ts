@@ -76,6 +76,25 @@ describe("引用补全", () => {
 		expect(referenceChoices(doc, "fetch", catalog).map((c) => c.kind)).toEqual(["param", "param"]);
 	});
 
+	it("前序节点有显示名称时，来源写成「显示名称（节点 ID）」；引用本身仍以节点 ID 为键", () => {
+		const named: OrchestrationDocument = {
+			...doc,
+			nodes: doc.nodes.map((n) =>
+				n.id === "fetch" || n.id === "wait" ? { ...n, display_name: "探测站点" } : n,
+			),
+		};
+		expect(referenceChoices(named, "ping", catalog).map((c) => [c.expression, c.detail])).toEqual([
+			["params.url", "string"],
+			["params.token", "string · 敏感"],
+			["nodes.fetch.outputs.status", "integer · 探测站点（fetch）"],
+			["nodes.fetch.outputs.body", "string · 探测站点（fetch）"],
+			["nodes.wait.outputs.triggered_at", "探测站点（wait）"],
+		]);
+		expect(referenceChoices(named, "ping", catalog)[2]?.text).toBe(
+			"${{ nodes.fetch.outputs.status }}",
+		);
+	});
+
 	it("按「入口参数」「前序节点」分组，按表达式子串过滤（不区分大小写）", () => {
 		const all = completionGroups(choices, "");
 		expect(all.groups.map((g) => [g.title, g.choices.length])).toEqual([

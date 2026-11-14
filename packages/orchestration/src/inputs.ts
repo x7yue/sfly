@@ -1,4 +1,5 @@
 import type { NodeTypeMetadata, OrchestrationDocument } from "@sfly/schema";
+import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
 
 /**
@@ -146,7 +147,7 @@ export function inputWarnings(doc: OrchestrationDocument, catalog: PackageCatalo
 		for (const input of missingInputs(type.inputs, node.inputs)) {
 			warnings.push({
 				code: "input_required",
-				message: `节点 ${node.id} 的必填输入 ${input} 没有填写`,
+				message: `节点 ${nodeNameWithId(node)} 的必填输入 ${input} 没有填写`,
 				node_id: node.id,
 				input,
 			});
@@ -157,7 +158,7 @@ export function inputWarnings(doc: OrchestrationDocument, catalog: PackageCatalo
 			if (!problem) continue;
 			warnings.push({
 				code: "input_type_mismatch",
-				message: `节点 ${node.id} 的${problem}`,
+				message: `节点 ${nodeNameWithId(node)} 的${problem}`,
 				node_id: node.id,
 				input,
 			});
