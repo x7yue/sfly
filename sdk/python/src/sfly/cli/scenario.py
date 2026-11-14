@@ -162,9 +162,11 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
                 "required": p["required"],
                 "secret": p["secret"],
             }
-            # secret 参数的默认值不输出。
+            # secret 参数的默认值不输出；说明照常输出。
             if "default" in p and not p["secret"]:
                 item["default"] = p["default"]
+            if p.get("description"):
+                item["description"] = p["description"]
             result.append(item)
         return result
 
@@ -264,7 +266,7 @@ def _indent(text: str, levels: int = 1) -> list[str]:
 
 def _params_table(params: list[dict[str, Any]]) -> str:
     def notes(p: dict[str, Any]) -> str:
-        found = []
+        found = [p["description"]] if p.get("description") else []
         if p["required"]:
             found.append("必填")
         if "default" in p:

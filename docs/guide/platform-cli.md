@@ -18,7 +18,7 @@ uv run sfly api --list runs
 | 命令 | 作用 |
 |---|---|
 | `sfly scenario list [--search 文字] [--agent Agent]` | 列出没有归档的场景：名称、id、最新版本号、默认 Agent；`--search` 按名称、说明或引用的 Agent 搜索 |
-| `sfly scenario show <场景>` | 场景最新版本的入口参数、主链和子流程上的节点（节点类型、锁定的节点包版本、Agent）、默认 Agent |
+| `sfly scenario show <场景>` | 场景最新版本的入口参数（含参数说明）、主链和子流程上的节点（节点类型、锁定的节点包版本、Agent）、默认 Agent |
 | `sfly scenario versions <场景>` | 场景版本：版本号、作者、保存时间，经 AI 编程助手保存的写「经 …」 |
 | `sfly scenario pull <场景> [-o 文件] [--version N]` | 把最新版本（或第 N 版）下载成 JSON 文件，改完用 `push` 保存 |
 | `sfly scenario push <文件>` | 本地校验后保存成新的场景版本 |
@@ -84,7 +84,7 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
 ```
 
 - 先预检场景：引用的 Agent 没有注册过、锁定的节点包版本或节点类型不存在、Agent 的版本不满足节点包的要求这类问题会全部列出，退出码 2，不触发运行。
-- 入口参数用 `--param 名=值` 给出，可以重复；值按入口节点声明的类型转换：string 原样保留，number 按数字，boolean 写 `true` 或 `false`，json 按 JSON 解析。整个参数对象也可以用 `--params '<JSON>'` 一次给出，两种写法同时出现时 `--param` 覆盖同名项。参数名没有声明、值转换失败、必填的参数没有给时报错并列出声明的参数，退出码 2。secret 参数和其他参数一样传入，输出里不回显它的值。
+- 入口参数用 `--param 名=值` 给出，可以重复；值按入口节点声明的类型转换：string 原样保留，number 按数字，boolean 写 `true` 或 `false`，json 按 JSON 解析。整个参数对象也可以用 `--params '<JSON>'` 一次给出，两种写法同时出现时 `--param` 覆盖同名项。参数名没有声明、值转换失败、必填的参数没有给时报错并列出声明的参数（参数表的「说明」列最前面是搭场景的人写的参数说明），退出码 2。secret 参数和其他参数一样传入，输出里不回显它的值。
 - 总是触发场景的最新版本，不支持指定场景版本。
 - 不加 `--wait` 时立即输出运行 id 和控制台里的运行链接，退出码 0；之后用 `sfly run wait <运行>` 等它结束。
 - 加 `--wait` 时一直等到运行结束（`--timeout 时长` 限制等待时长，例如 `90s`、`5m`、`1h`）。节点状态每变化一次往 stderr 写一行进度；运行结束后 stdout 输出摘要，退出码表示结果。`run wait` 对已经触发的运行做同样的事，运行已经结束时直接输出摘要。
@@ -143,6 +143,7 @@ sfly scenario push 回归.json
 
 - pull 写出的文件是 `{"scenario": <场景 id>, "base_version": <版本号>, "document": {…}}`：`document` 就是场景文档（`default_agent`、`nodes`、`edges`、`packages`），和控制面保存的内容相同；`base_version` 是 pull 时的最新版本号。`--version N` 拉取旧版本时 `base_version` 仍是最新版本号，push 就相当于以旧版本为起点再保存一次。
 - push 先按场景文档的 JSON Schema 在本地校验，出错时列出出错的位置，不发请求。通过后带着 `base_version` 保存新版本，输出新版本号和控制面给出的警告（引用的 Agent 或节点包不存在、必填参数缺失等）；成功后文件里的 `base_version` 更新为新版本号、`document` 换成控制面实际保存的内容，可以接着改、接着 push。
+- 入口节点和子流程入口节点的参数可以写 `description`：一行说明，最长 200 个 Unicode 字符（一个 emoji 算一个），不能换行，去掉首尾空白后为空就不保存。触发表单、异步任务节点的参数映射表单和命令行的参数表（`scenario show`、`run start` 参数出错时）都会显示它；它不影响执行。超长或带换行时 push 的本地校验报出位置，例如 `nodes/0/params/1/description`（节点 entry）。
 - 新加的节点不用写 `position`：控制面保存时按画布「整理布局」的算法给没有坐标的节点排好位置（压住已有节点时挪到附近的空位），已经有坐标的节点不动。
 - 别人在你 pull 之后保存了新版本时，push 报版本冲突（退出码 2），写明最新版本号、作者和保存时间，提示重新 pull、把你的改动合并进去再 push。没有强制覆盖的选项。命令行不会成为在线编辑者：浏览器里正在编辑同一个场景的人保存时，会收到界面已有的冲突提示。
 - `scenario copy` 复制场景（说明和运行通知设置一并复制）；`scenario create --from 文件` 用文件里的 `document` 新建场景并保存第一个版本（文件里不需要 `scenario` 和 `base_version`）。

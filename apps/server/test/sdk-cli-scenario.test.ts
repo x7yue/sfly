@@ -14,9 +14,15 @@ const paymentDocument = {
 			id: "entry",
 			kind: "entry",
 			params: [
-				{ name: "host", type: "string", required: true },
+				{ name: "host", type: "string", required: true, description: "目标主机，不带端口" },
 				{ name: "retries", type: "number", default: 3 },
-				{ name: "token", type: "string", secret: true, default: "hunter2" },
+				{
+					name: "token",
+					type: "string",
+					secret: true,
+					default: "hunter2",
+					description: "访问令牌",
+				},
 			],
 		},
 		{ id: "deploy", kind: "package", package: "stub", node: "echo", agent: "agent-b" },
@@ -27,7 +33,7 @@ const paymentDocument = {
 			id: "sub",
 			kind: "subflow_entry",
 			name: "report",
-			params: [{ name: "run", type: "string", required: true }],
+			params: [{ name: "run", type: "string", required: true, description: "上游运行 ID" }],
 		},
 		{ id: "send", kind: "package", package: "stub", node: "echo" },
 		{ id: "loose", kind: "timer", at: "10:00:00" },
@@ -196,9 +202,9 @@ describe("sfly scenario list / show → 控制面", () => {
 				"主链",
 				"  入口参数：",
 				"    参数     类型    说明",
-				"    host     string  必填",
+				"    host     string  目标主机，不带端口，必填",
 				"    retries  number  默认 3",
-				"    token    string  secret",
+				"    token    string  访问令牌，secret",
 				"  节点：",
 				"    节点    节点类型                  包版本  Agent",
 				"    deploy  stub/echo                 1.0.0   agent-b",
@@ -209,7 +215,7 @@ describe("sfly scenario list / show → 控制面", () => {
 				"子流程 report（入口 sub，由 spawn 触发）",
 				"  入口参数：",
 				"    参数  类型    说明",
-				"    run   string  必填",
+				"    run   string  上游运行 ID，必填",
 				"  节点：",
 				"    节点  节点类型   包版本  Agent",
 				"    send  stub/echo  1.0.0   agent-a",
@@ -239,9 +245,21 @@ describe("sfly scenario list / show → 控制面", () => {
 				version: { number: 1, author: "tester", created_at: SAVED_AT },
 				default_agent: "agent-a",
 				params: [
-					{ name: "host", type: "string", required: true, secret: false },
+					{
+						name: "host",
+						type: "string",
+						required: true,
+						secret: false,
+						description: "目标主机，不带端口",
+					},
 					{ name: "retries", type: "number", required: false, secret: false, default: 3 },
-					{ name: "token", type: "string", required: false, secret: true },
+					{
+						name: "token",
+						type: "string",
+						required: false,
+						secret: true,
+						description: "访问令牌",
+					},
 				],
 				nodes: [
 					{
@@ -262,7 +280,15 @@ describe("sfly scenario list / show → 控制面", () => {
 						name: "report",
 						entry: "sub",
 						triggered_by: "spawn",
-						params: [{ name: "run", type: "string", required: true, secret: false }],
+						params: [
+							{
+								name: "run",
+								type: "string",
+								required: true,
+								secret: false,
+								description: "上游运行 ID",
+							},
+						],
 						nodes: [
 							{
 								id: "send",
