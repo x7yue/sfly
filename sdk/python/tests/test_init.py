@@ -301,6 +301,12 @@ def test_generated_project_syncs_tests_lints_runs_and_builds(
         assert "demo-0.1.0-py3-none-any.whl" in zf.namelist()
     assert list(Draft202012Validator(load_schema("package-metadata")).iter_errors(meta)) == []
     assert [n["name"] for n in meta["nodes"]] == ["countdown"]
+    inputs = meta["nodes"][0]["inputs"]["properties"]
+    assert {name: bool(prop.get("description")) for name, prop in inputs.items()} == {
+        "name": True,
+        "steps": True,
+        "interval": True,
+    }
 
     # 项目 venv 里装的是 SDK wheel：skill 文件从 wheel 里读取；ruff format 不动 skill 目录。
     update = run_in(project, "sfly", "skill", "update")
