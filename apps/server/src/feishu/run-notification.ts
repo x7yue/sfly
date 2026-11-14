@@ -8,6 +8,7 @@ import { asc, eq } from "drizzle-orm";
 import { chainInstances, orchestrations, type RunStatus, runs, tasks } from "../db/schema.js";
 import { finalFailures } from "../engine/failures.js";
 import type { RunRow, Step } from "../engine/step.js";
+import { runListPreset } from "../presets/run-preset.js";
 import { registeredBots } from "./bot-checks.js";
 import { enqueueFeishuMessage } from "./feishu-queue.js";
 import { type CardColor, type CardElement, fitCard, interactiveCard } from "./messages.js";
@@ -45,6 +46,8 @@ interface RunNotificationFacts {
 	/** 附加说明（Markdown），可以为空。 */
 	note: string;
 	scenarioName: string;
+	/** 触发时选用的运行预设的名称（预设之后改名也不变）；没有用预设时为 undefined。 */
+	presetName: string | undefined;
 	runId: string;
 	triggeredBy: string;
 	startedAt: Date;
@@ -83,14 +86,16 @@ function formatElapsed(ms: number): string {
 }
 
 /**
- * 运行通知的卡片：header 是标题，颜色和副标题表示结果；body 依次是附加说明（有的话）、场景名、运行编号、触发人、
- * 开始时间和耗时、失败的链和节点（最多 {@link MAX_LISTED_FAILURES} 个）；最后是「查看运行」按钮（有链接时）。
+ * 运行通知的卡片：header 是标题，颜色和副标题表示结果；body 依次是附加说明（有的话）、场景名、预设（用了运行预设时）、
+ * 运行编号、触发人、开始时间和耗时、失败的链和节点（最多 {@link MAX_LISTED_FAILURES} 个）；
+ * 最后是「查看运行」按钮（有链接时）。
  * 请求体超过 20 KB 时截断附加说明（{@link fitCard}）；截了还放不下返回 `too_large`。
  */
 function runNotificationCard(facts: RunNotificationFacts) {
 	const result = RESULT[facts.status];
 	const lines = [
 		`**场景**：${facts.scenarioName}`,
+		...(facts.presetName === undefined ? [] : [`**预设**：${facts.presetName}`]),
 		`**运行编号**：${facts.runId.slice(0, 8)}`,
 		`**触发人**：${facts.triggeredBy}`,
 		`**开始时间**：${formatTime(facts.startedAt)}`,
@@ -210,6 +215,7 @@ export async function enqueueRunNotification(
 		status,
 		note: scenario.runNotifyNote,
 		scenarioName: scenario.name,
+		presetName: runListPreset(run)?.name,
 		runId: run.id,
 		triggeredBy: run.triggeredBy,
 		startedAt: run.startedAt,

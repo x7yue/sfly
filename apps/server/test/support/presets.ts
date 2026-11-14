@@ -1,7 +1,9 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { type PresetView, presetsApi } from "@sfly/schema";
+import pg from "pg";
 import { expect } from "vitest";
 import type { ApiClient } from "./api-client.js";
+import type { TestControlPlane } from "./test-control-plane.js";
 
 /** 运行预设测试用的入口参数：必填字符串、有默认值的数字和布尔、json、secret 字符串。 */
 export const PRESET_PARAMS: Array<Record<string, unknown>> = [
@@ -159,4 +161,36 @@ export async function invalidPresetFields(res: Response): Promise<string[]> {
 	const error = await errorOf(res);
 	expect(error.code).toBe("invalid_preset");
 	return (error.details as Array<{ path: Array<string | number> }>).map((i) => i.path.join("."));
+}
+
+/** 直接在库里改一个预设的名称，模拟预设在运行触发之后被改名。 */
+export function renamePresetInDb(
+	cp: Pick<TestControlPlane, "database">,
+	presetId: string,
+	name: string,
+): Promise<void> {
+	return withClient(cp, (c) =>
+		c.query("UPDATE run_presets SET name = $1 WHERE id = $2", [name, presetId]),
+	);
+}
+
+/** 直接在库里删掉一个预设，模拟预设在运行触发之后被删除。 */
+export function deletePresetInDb(
+	cp: Pick<TestControlPlane, "database">,
+	presetId: string,
+): Promise<void> {
+	return withClient(cp, (c) => c.query("DELETE FROM run_presets WHERE id = $1", [presetId]));
+}
+
+async function withClient(
+	cp: Pick<TestControlPlane, "database">,
+	run: (client: pg.Client) => Promise<unknown>,
+): Promise<void> {
+	const client = new pg.Client({ connectionString: cp.database.url });
+	await client.connect();
+	try {
+		await run(client);
+	} finally {
+		await client.end();
+	}
 }
