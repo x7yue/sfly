@@ -15,6 +15,7 @@
 			"!packages/client/test/contract-parity.ts",
 			"!apps/server/drizzle",
 			"!docs/prototype",
+			"!docs/proposals",
 			"!docs/perf"
 		]
 	},
