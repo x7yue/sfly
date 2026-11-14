@@ -103,7 +103,7 @@ const run = await client.runs.trigger({
 console.log(`已触发：{{SFLY_URL}}/runs/${run.id}`);
 ```
 
-- `runs.preflight` 返回最新的场景版本号、入口参数的声明（名称、类型、默认值、是否必填、是否 secret）、不能触发的原因（为空表示可以触发），以及锁定的节点包版本和引用的 Agent 是否在线。Agent 不在线不阻止触发，任务会排队。触发页面可以按 `params` 生成表单，按 `problems` 提示问题。
+- `runs.preflight` 返回最新的场景版本号、入口参数的声明（名称、类型、默认值、是否必填、是否 secret）、不能触发的原因（为空表示可以触发），以及锁定的节点包版本和引用的 Agent 是否在线。`agents` 里每台 Agent 的 `status` 是 `online`、`offline` 或 `unknown`（还没有注册过），`preparing_since` 是它这次连接开始准备环境的时间，准备好、不在线或没有注册过时为 `null`。Agent 不在线、正在准备环境都不阻止触发：任务会排队，Agent 上线或准备好环境后再执行。触发页面可以按 `params` 生成表单，按 `problems` 提示问题。
 - `runs.trigger` 触发场景的最新版本，不能指定版本。参数按入口参数声明的类型给：`number` 给数字，`boolean` 给 `true` 或 `false`，`json` 给对象、数组这类 JSON 值。返回新运行的运行视图。
 - 预检没通过时触发失败，错误码 `invalid_orchestration`，`details` 是原因列表；参数不对时错误码 `invalid_params`。
 - 取消运行用 `runs.cancel({ params: { id } })`。清理期间再取消一次就是强制取消。运行已经结束时错误码 `run_not_running`。
