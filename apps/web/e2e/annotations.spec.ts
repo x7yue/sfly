@@ -361,9 +361,16 @@ test("缩小画布：标题带的文字跟着语义缩放，屏幕上不小于 1
 	const title = annotationBand(page, "造测试数据").getByText("造测试数据");
 	for (let i = 0; i < 12; i++) await dock(page).getByRole("button", { name: "缩小" }).click();
 	await expect(page.getByRole("status", { name: "缩放比例" })).toHaveText("30%");
-	const zoom = 0.3;
+	// 屏幕字号 = 字号 × 画布实际的缩放比例（--canvas-zoom）；等缩放动画停在 30% 再量。
+	const zoom = () =>
+		title.evaluate((el) =>
+			Number(
+				getComputedStyle(el.closest("[data-lod]") as Element).getPropertyValue("--canvas-zoom"),
+			),
+		);
+	await expect.poll(zoom).toBeCloseTo(0.3, 5);
 	const fontPx = await title.evaluate((el) => Number.parseFloat(getComputedStyle(el).fontSize));
-	expect(fontPx * zoom).toBeGreaterThanOrEqual(12 - 0.01);
+	expect(fontPx * (await zoom())).toBeGreaterThanOrEqual(12 - 0.01);
 	await expect(title).toBeVisible();
 });
 
