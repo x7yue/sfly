@@ -311,14 +311,21 @@ function PackageRow({ item, detail }: { item: PackageItem; detail: string }) {
 		<>
 			<KindChip kind="package" />
 			{summary ? (
-				<span className="flex min-w-0 flex-col gap-0.5">
+				<span className="flex min-w-0 flex-1 flex-col gap-0.5">
 					<span className="truncate">{item.title}</span>
 					<span className="line-clamp-2 text-xs text-fg-3">{summary}</span>
 				</span>
 			) : (
 				<span className="truncate">{item.title}</span>
 			)}
-			<span className="ml-auto truncate font-mono text-2xs text-fg-3">{detail}</span>
+			<span
+				className={cn(
+					"ml-auto truncate font-mono text-2xs text-fg-3",
+					summary && "max-w-[40%] shrink-0",
+				)}
+			>
+				{detail}
+			</span>
 		</>
 	);
 }
