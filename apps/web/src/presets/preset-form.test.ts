@@ -2,6 +2,7 @@ import type { ParamDeclView, PresetView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	draftErrors,
+	draftFromFormValues,
 	draftFromPreset,
 	emptyDraft,
 	hasErrors,
@@ -212,5 +213,45 @@ describe("运行预设的编辑表单", () => {
 			};
 			expect(Object.keys(draftFromPreset(old, decls).values)).toEqual(["host"]);
 		});
+	});
+});
+
+describe("把运行抽屉里填的值存为预设", () => {
+	const filled = {
+		host: "10.0.0.8",
+		steps: "3",
+		dry_run: false,
+		options: '{"mode":"fast"}',
+		name: "",
+		token: "tok-typed",
+		pin: "",
+	};
+
+	it("填了值的参数默认勾上，没动过默认值、留空的参数不勾", () => {
+		const draft = draftFromFormValues(decls, filled);
+		expect(Object.keys(draft.values).sort()).toEqual(["dry_run", "host", "token"]);
+		expect(draft.values.host).toBe("10.0.0.8");
+		expect(draft.values.dry_run).toBe(false);
+		expect(draft.name).toBe("");
+		expect(draft.description).toBe("");
+	});
+
+	it("改过默认值的参数勾上，值带过来", () => {
+		const draft = draftFromFormValues(decls, {
+			...filled,
+			steps: "50",
+			options: '{"mode":"slow"}',
+		});
+		expect(draft.values.steps).toBe("50");
+		expect(draft.values.options).toBe('{"mode":"slow"}');
+	});
+
+	it("secret 参数勾上但不带值，要重新输入", () => {
+		const draft = draftFromFormValues(decls, filled);
+		expect(draft.values.token).toBe("");
+		expect(draft.keptSecrets).toEqual([]);
+		expect(draftErrors(draft, decls).values).toEqual({ token: "必填" });
+		const retyped = { ...draft, name: "压测 A", values: { ...draft.values, token: "tok-again" } };
+		expect(hasErrors(draftErrors(retyped, decls))).toBe(false);
 	});
 });

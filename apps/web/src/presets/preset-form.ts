@@ -5,7 +5,13 @@ import {
 	type PresetParamInput,
 	type PresetView,
 } from "@sfly/schema";
-import { type FieldValue, fieldSchema, fieldValue, toParamValue } from "#/run-drawer/trigger-form";
+import {
+	type FieldValue,
+	type FormValues,
+	fieldSchema,
+	fieldValue,
+	toParamValue,
+} from "#/run-drawer/trigger-form";
 
 /**
  * 运行预设编辑表单的纯逻辑（有单测）：勾选哪些参数作为预设参数、它们的值、校验与请求体。
@@ -52,6 +58,27 @@ export function draftFromPreset(preset: PresetView, decls: ParamDeclView[]): Pre
 		}
 	}
 	return { name: preset.name, description: preset.description, values, keptSecrets };
+}
+
+/** 运行抽屉里这个参数填了值：不是空，也不是还没动过的默认值（布尔参数的开关也一样：只有拨过才算）。 */
+const isFilled = (p: ParamDeclView, value: FieldValue | undefined): boolean => {
+	if (toParamValue(p, value) === undefined) return false;
+	const text = (v: FieldValue | undefined) => (typeof v === "string" ? v.trim() : v);
+	return text(value) !== text(fieldValue(p, p.default));
+};
+
+/**
+ * 把运行抽屉里（不使用预设时）填的值存为预设：填了值的参数默认勾上、值带过来；secret 参数也勾上，但值要重新输入
+ * （表单里留空，不填保存不了）。名称和说明由用户来写。
+ */
+export function draftFromFormValues(decls: ParamDeclView[], values: FormValues): PresetDraft {
+	const filled = decls.filter((p) => isFilled(p, values[p.name]));
+	return {
+		...emptyDraft(),
+		values: Object.fromEntries(
+			filled.map((p) => [p.name, p.secret ? "" : (values[p.name] ?? fieldValue(p, undefined))]),
+		),
+	};
 }
 
 /** 点「替换」：不再沿用这个 secret 参数的原值，表单里重新输入。 */
