@@ -365,6 +365,50 @@ describe("secret 预设参数", () => {
 		});
 	});
 
+	describe("触发时锁定", () => {
+		it("secret 预设参数在 params 里给了值就 400 preset_param_locked、不创建运行，相同的值也一样；非 secret 的预设参数传相同的值照常触发", async () => {
+			const { id, preset } = await sceneWithSecretPreset();
+			const runs = async () =>
+				(await api.getJson<{ runs: unknown[] }>(`/orchestrations/${id}/runs`)).runs;
+
+			for (const token of [SECRET, "tok-guess"]) {
+				const res = await triggerWithPreset(api, id, preset.id, { token });
+				expect(res.status).toBe(400);
+				const body = await res.clone().text();
+				expect(await errorOf(res)).toMatchObject({
+					code: "preset_param_locked",
+					details: { param: "token", preset: "压测 A 集群" },
+				});
+				expect(body).not.toContain(SECRET);
+				expect(body).not.toContain("tok-guess");
+			}
+			expect(await runs()).toEqual([]);
+
+			expect(await inputsOf(id, preset.id, { host: "a.example" })).toMatchObject({
+				host: "a.example",
+				token: SECRET,
+			});
+			expect(await runs()).toHaveLength(1);
+		});
+
+		it("是不是 secret 以最新版本的声明为准：保存之后才变成 secret 的预设参数，传相同的值也被拒绝", async () => {
+			const id = await api.orchestrationWith(scenario());
+			const preset = await createPresetOk(api, id, {
+				name: "p",
+				params: [{ name: "host", value: "a.example" }],
+			});
+			expect((await triggerWithPreset(api, id, preset.id, { host: "a.example" })).status).toBe(201);
+
+			await api.saveVersion(
+				id,
+				scenario(PRESET_PARAMS.map((p) => (p.name === "host" ? { ...p, secret: true } : p))),
+			);
+			const res = await triggerWithPreset(api, id, preset.id, { host: "a.example" });
+			expect(res.status).toBe(400);
+			expect((await errorOf(res)).code).toBe("preset_param_locked");
+		});
+	});
+
 	describe("复制", () => {
 		it("复制预设之后，按新预设触发用的是同一个 secret 值", async () => {
 			const { id, preset } = await sceneWithSecretPreset();

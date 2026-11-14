@@ -169,6 +169,7 @@ def describe(run: Mapping[str, Any], scenario_name: str | None) -> dict[str, Any
         "status": run["status"],
         "triggered_by": run["triggered_by"],
         "triggered_via": run["triggered_via"],
+        "preset": run["preset"],
         "params": run["params"],
         "started_at": run["started_at"],
         "ended_at": run["ended_at"],
@@ -222,12 +223,13 @@ def render(view: Mapping[str, Any]) -> str:
     scenario = (
         f"{view['scenario']}（{view['scenario_id']}）" if view["scenario"] else view["scenario_id"]
     )
-    lines = [
-        head,
-        f"场景 {scenario}，场景版本 {view['scenario_version']}",
+    lines = [head, f"场景 {scenario}，场景版本 {view['scenario_version']}"]
+    if view["preset"]:
+        lines.append(f"预设 {view['preset']['name']}")
+    lines.append(
         f"触发 {actor_label(view['triggered_by'], view['triggered_via'])}，"
-        f"{view['started_at']} 开始" + (f"，{view['ended_at']} 结束" if view["ended_at"] else ""),
-    ]
+        f"{view['started_at']} 开始" + (f"，{view['ended_at']} 结束" if view["ended_at"] else "")
+    )
     if cancel:
         forced_at = f"，{cancel['forced_at']} 强制取消" if cancel["forced_at"] else ""
         lines.append(

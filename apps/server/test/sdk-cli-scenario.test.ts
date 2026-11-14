@@ -238,6 +238,7 @@ describe("sfly scenario list / show → 控制面", () => {
 				head_version: 1,
 				version: { number: 1, author: "tester", created_at: SAVED_AT },
 				default_agent: "agent-a",
+				presets: [],
 				params: [
 					{ name: "host", type: "string", required: true, secret: false },
 					{ name: "retries", type: "number", required: false, secret: false, default: 3 },

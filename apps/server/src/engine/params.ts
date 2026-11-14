@@ -23,16 +23,19 @@ export function matchesParamType(type: Declaration["type"], value: unknown): boo
 
 /**
  * 用运行预设的值填入预设参数（ADR 0023「锁定由控制面执行」），之后照常补默认值、检查类型（{@link fillParams}）。
- * 传入的值里给预设参数传了和预设不同的值（按 JSON 深比较）时返回那个参数名；相同的值照常接受。
+ * 传入的值里给 secret 预设参数（以 `declarations` 为准）传了任何值、或给其他预设参数传了和预设不同的值（按 JSON 深比较）时
+ * 返回那个参数名；其他预设参数传相同的值照常接受。
+ * secret 即使传相同的值也拒绝：否则调用方可以反复猜，从接受还是拒绝推断出原值。
  */
 export function withPresetValues(
 	provided: Record<string, unknown>,
 	presetValues: Record<string, unknown>,
+	declarations: Declaration[],
 ): { params: Record<string, unknown> } | { locked: string } {
+	const secrets = new Set(declarations.filter((d) => d.secret).map((d) => d.name));
 	for (const [name, value] of Object.entries(presetValues)) {
-		if (Object.hasOwn(provided, name) && !isDeepStrictEqual(provided[name], value)) {
-			return { locked: name };
-		}
+		if (!Object.hasOwn(provided, name)) continue;
+		if (secrets.has(name) || !isDeepStrictEqual(provided[name], value)) return { locked: name };
 	}
 	return { params: { ...provided, ...presetValues } };
 }

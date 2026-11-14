@@ -359,13 +359,13 @@ export class Engine implements AgentSessionHandler {
 						details: invalid,
 					};
 				}
-				const fixed = withPresetValues(request.params, preset.values);
+				const fixed = withPresetValues(request.params, preset.values, plan.main.entry.params);
 				if ("locked" in fixed) {
 					return {
 						ok: false,
 						status: 400,
 						code: "preset_param_locked",
-						message: `参数 ${fixed.locked} 由运行预设「${preset.name}」固定，不能传别的值`,
+						message: `参数 ${fixed.locked} 由运行预设「${preset.name}」固定，请求里不要给它传值`,
 						details: { param: fixed.locked, preset: preset.name },
 					};
 				}
