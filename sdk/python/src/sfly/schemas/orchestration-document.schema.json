@@ -33,6 +33,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "kind": {
                 "type": "string",
                 "const": "entry"
@@ -106,6 +110,10 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
               },
               "kind": {
                 "type": "string",
@@ -184,6 +192,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "kind": {
                 "type": "string",
                 "const": "async"
@@ -225,6 +237,10 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
               },
               "kind": {
                 "type": "string",
@@ -273,6 +289,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "kind": {
                 "type": "string",
                 "const": "sleep"
@@ -316,6 +336,10 @@
                 ],
                 "additionalProperties": false
               },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
+              },
               "kind": {
                 "type": "string",
                 "const": "stop_subflow"
@@ -357,6 +381,10 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
               },
               "kind": {
                 "type": "string",
@@ -436,6 +464,10 @@
                   "y"
                 ],
                 "additionalProperties": false
+              },
+              "note": {
+                "type": "string",
+                "maxLength": 2000
               },
               "kind": {
                 "type": "string",
