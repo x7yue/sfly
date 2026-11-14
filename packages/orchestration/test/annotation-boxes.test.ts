@@ -41,7 +41,12 @@ const doc: LayoutDocument = {
 };
 
 const boxOf = (members: Parameters<typeof annotation>[0]) =>
-	annotationBoxes({ ...doc, annotations: [annotation(members)] });
+	annotationBoxes({ ...doc, annotations: [annotation(members)] }).map(
+		({ annotation, ...rest }) => ({
+			id: annotation.id,
+			...rest,
+		}),
+	);
 
 // 留白：左右 24，上 44（标题行），下 20。
 describe("由成员算出注释框的范围", () => {
@@ -104,6 +109,6 @@ describe("由成员算出注释框的范围", () => {
 			...doc,
 			annotations: [annotation({ nodes: ["fetch"] }, "b"), annotation({ nodes: ["entry"] }, "a")],
 		});
-		expect(boxes.map((b) => b.id)).toEqual(["b", "a"]);
+		expect(boxes.map((b) => b.annotation.id)).toEqual(["b", "a"]);
 	});
 });

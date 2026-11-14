@@ -33,12 +33,12 @@ export interface AnnotationMembers {
 }
 
 /** 带注释框的文档。 */
-export interface AnnotatedDocument {
-	readonly annotations?: readonly AnnotationMembers[] | undefined;
+export interface AnnotatedDocument<A extends AnnotationMembers = AnnotationMembers> {
+	readonly annotations?: readonly A[] | undefined;
 }
 
-export interface AnnotationBox {
-	id: string;
+export interface AnnotationBox<A extends AnnotationMembers = AnnotationMembers> {
+	annotation: A;
 	/** 框住的节点：成员节点和成员子流程链上的全部节点，按节点在文档里的顺序。 */
 	members: string[];
 	box: Box;
@@ -77,7 +77,9 @@ export function subflowRegions(doc: LayoutDocument): SubflowRegion[] {
  * 注释框的范围，按 `annotations` 里的顺序（后面的画在上层）。成员里不存在的节点和子流程跳过，
  * 一个有效成员都没有的注释框不在结果里（不画）。
  */
-export function annotationBoxes(doc: LayoutDocument & AnnotatedDocument): AnnotationBox[] {
+export function annotationBoxes<A extends AnnotationMembers>(
+	doc: LayoutDocument & AnnotatedDocument<A>,
+): AnnotationBox<A>[] {
 	const positions = positionsOf(doc);
 	const regions = new Map(subflowRegions(doc).map((r) => [r.entry, r]));
 	return (doc.annotations ?? []).flatMap((annotation) => {
@@ -91,7 +93,7 @@ export function annotationBoxes(doc: LayoutDocument & AnnotatedDocument): Annota
 		const framed = new Set([...nodes.map((n) => n.id), ...subflows.flatMap((r) => r.members)]);
 		return [
 			{
-				id: annotation.id,
+				annotation,
 				members: doc.nodes.flatMap((n) => (framed.has(n.id) ? [n.id] : [])),
 				box: paddedBounds(rects),
 			},

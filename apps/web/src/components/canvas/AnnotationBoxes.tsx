@@ -27,12 +27,10 @@ export function AnnotationBoxes({
 	onSelect?: (id: string) => void;
 }) {
 	const boxes = useMemo(() => annotationBoxes({ ...layout, annotations }), [layout, annotations]);
-	const byId = useMemo(() => new Map(annotations.map((a) => [a.id, a])), [annotations]);
 	return (
 		<ViewportPortal>
-			{boxes.map(({ id, box }) => {
-				const annotation = byId.get(id);
-				if (!annotation) return null;
+			{boxes.map(({ annotation, box }) => {
+				const { id } = annotation;
 				return (
 					<section
 						key={id}
