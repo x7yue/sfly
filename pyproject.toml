@@ -18,6 +18,13 @@ dev = [
 [tool.uv]
 default-groups = ["dev"]
 
+# uv.lock 里记录的是 PyPI 的地址；用户级配置换了默认源（镜像）时，--locked 会因为锁文件里的源不在配置里而失败。
+# 在项目里声明 PyPI：项目级的源排在用户级的前面，解析和校验都用它。
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
@@ -39,6 +46,8 @@ files = ["sdk/python/src", "sdk/python/tests", "sdk/python/benchmarks", "std/src
 # sdk/python/tests 里的测试从 indexes.py 导入共用的桩，std/tests 里的从 named_sleep.py 导入。
 mypy_path = "testdata/stub-package/src:testdata/agent-files-package/src:sdk/python/tests:std/tests"
 python_version = "3.10"
+# 节点在 Agent 上运行，Agent 只支持 Linux：按 Linux 检查（与 CI 一致），macOS 上没有的属性（fcntl.F_SETPIPE_SZ 等）不误报。
+platform = "linux"
 
 [tool.pytest.ini_options]
 testpaths = ["sdk/python/tests", "std/tests", "scripts/tests"]

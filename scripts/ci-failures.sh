@@ -13,8 +13,11 @@ fi
 run=$1
 shift
 
+# 制表符和 ESC 用 $'…' 写成真实字符：macOS 的 sed 不认 \t、\x1b。
+tab=$'\t'
+esc=$'\x1b'
 log=$(gh run view "$run" --log-failed "$@" |
-	sed -E 's/^[^\t]*\t[^\t]*\t[0-9TZ:.-]+ //; s/\x1b\[[0-9;]*m//g; s/\^\[\[[0-9;]*m//g')
+	sed -E "s/^[^${tab}]*${tab}[^${tab}]*${tab}[0-9TZ:.-]+ //; s/${esc}\[[0-9;]*m//g; s/\^\[\[[0-9;]*m//g")
 
 blocks=$(awk '
 	# vitest：「Failed Tests N」到汇总行

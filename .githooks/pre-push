@@ -21,6 +21,13 @@ if [[ ! -d node_modules ]]; then
 	echo "pre-push：这个工作区还没装依赖（新建的 worktree 要单独装），先运行 pnpm bootstrap" >&2
 	exit 1
 fi
+# Node 低于 .node-version 时，pnpm 的版本警告会混进生成代码插件的输出，gen:check 报的是看不出原因的 protobuf 解析错误。
+required=$(tr -d '[:space:]' <.node-version)
+current=$(node -p 'process.versions.node')
+if ((${current%%.*} < required)); then
+	echo "pre-push：需要 Node $required（.node-version），当前是 $current：先切换 Node 版本（例如 nvm use $required）" >&2
+	exit 1
+fi
 echo "pre-push：运行 gen:check、lint、typecheck（跳过：git push --no-verify）" >&2
 pnpm release:version check >/dev/null
 pnpm gen:check
