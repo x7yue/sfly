@@ -1,5 +1,5 @@
 // 切入点 A：运行里的节点带上显示名称（#313）。运行视图、运行列表和控制台统计从运行绑定的场景版本里补上
-// display_name（子流程入口节点是子流程名称），控制台的子流程失败带上子流程名称。
+// display_name（子流程入口节点是子流程名称），运行列表和控制台里的子流程链和失败带上子流程名称。
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL；响应按契约解析。
 import { dashboardApi, runListApi, runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -99,10 +99,24 @@ describe("运行里的节点带上显示名称", () => {
 		const [listed] = await list();
 		expect(listed?.active_nodes).toMatchObject([{ node_id: "check", display_name: "核对结果" }]);
 		expect(listed?.failures).toEqual([
-			{ chain_instance_id: expect.any(String), chain_id: "sub", subflow: true, node_id: "probe" },
+			{
+				chain_instance_id: expect.any(String),
+				chain_id: "sub",
+				subflow: true,
+				subflow_name: "压测监控",
+				node_id: "probe",
+			},
+		]);
+		expect(listed?.chains.map((c) => [c.chain_id, c.subflow_name])).toEqual([
+			["entry", undefined],
+			["sub", "压测监控"],
 		]);
 
 		const stats = await dashboard();
+		expect(stats.running_runs[0]?.chains.map((c) => [c.chain_id, c.subflow_name])).toEqual([
+			["entry", undefined],
+			["sub", "压测监控"],
+		]);
 		expect(stats.running_runs[0]?.chains[0]?.nodes).toEqual([
 			{ node_id: "entry", status: "success" },
 			{ node_id: "spawn", display_name: "派发监控", status: "success" },
@@ -128,6 +142,8 @@ describe("运行里的节点带上显示名称", () => {
 		expect(runs.find((r) => r.id === next.runId)?.active_nodes).toMatchObject([
 			{ node_id: "check", display_name: "复核结果" },
 		]);
+		expect(runs.find((r) => r.id === runId)?.chains[1]?.subflow_name).toBe("压测监控");
+		expect(runs.find((r) => r.id === next.runId)?.chains[1]?.subflow_name).toBe("延迟监控");
 		const failures = (await dashboard()).recent_failures;
 		expect(failures.filter((f) => f.run_id === runId)).toMatchObject([
 			{ subflow: false, node_id: "check", display_name: "核对结果" },

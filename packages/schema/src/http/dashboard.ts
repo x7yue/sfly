@@ -41,6 +41,11 @@ export const DashboardChain = z.object({
 	chain_id: z.string(),
 	/** 子流程实例（不是主链）。 */
 	subflow: z.boolean(),
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name: z.string().optional(),
 	status: z.string(),
 	nodes: z.array(
 		z.object({
@@ -76,7 +81,7 @@ export const DashboardFailure = z.object({
 	subflow: z.boolean(),
 	/**
 	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
-	 * 取自运行绑定的场景版本；主链失败时不给。
+	 * 取自运行绑定的场景版本；主链不给。
 	 */
 	subflow_name: z.string().optional(),
 	/** 最先失败的节点（最后一次尝试失败）；没有失败节点时（例如校验失败）为 null。 */

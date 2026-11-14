@@ -131,6 +131,7 @@ export async function dashboardView({
 				id: chain.id,
 				chain_id: chain.chain_id,
 				subflow: chain.depth > 0,
+				subflow_name: chain.subflow_name,
 				status: chain.status,
 				nodes: chain.nodes.map((n) => ({
 					node_id: n.node_id,

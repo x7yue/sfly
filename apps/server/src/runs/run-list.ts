@@ -102,6 +102,7 @@ export async function listAllRuns(
 						chain_instance_id: chain.id,
 						chain_id: chain.chain_id,
 						subflow,
+						subflow_name: chain.subflow_name,
 						node_id: failedNode?.node_id ?? null,
 						display_name: failedNode?.display_name,
 					});
@@ -110,6 +111,7 @@ export async function listAllRuns(
 					id: chain.id,
 					chain_id: chain.chain_id,
 					subflow,
+					subflow_name: chain.subflow_name,
 					status: chain.status,
 					nodes,
 				});

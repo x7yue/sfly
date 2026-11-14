@@ -1,4 +1,4 @@
-import { nodeNameBeforeId } from "@sfly/orchestration";
+import { nodeNameBeforeId, subflowName } from "@sfly/orchestration";
 import type { NodeStatus, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import { asc, inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
@@ -26,6 +26,15 @@ export function groupAttempts<T extends { chainInstanceId: string; nodeId: strin
 export const nodeStatus = (rows: readonly { status: NodeStatus }[]): NodeStatus =>
 	rows.at(-1)?.status ?? "pending";
 
+/** 链实例的子流程名称（链起点是子流程入口节点时，取自文档）；主链为 undefined。 */
+export function subflowNameOf(
+	document: OrchestrationDocument,
+	chainId: string,
+): string | undefined {
+	const start = document.nodes.find((n) => n.id === chainId);
+	return start?.kind === "subflow_entry" ? subflowName(start) : undefined;
+}
+
 export interface BoardNode {
 	node_id: string;
 	/** 运行绑定版本里的显示名称（子流程入口节点是子流程名称）；没有时为 undefined。 */
@@ -38,6 +47,8 @@ export interface BoardNode {
 export interface BoardChain {
 	id: string;
 	chain_id: string;
+	/** 运行绑定版本里的子流程名称（同运行视图里链实例的 name）；主链为 undefined。 */
+	subflow_name: string | undefined;
 	depth: number;
 	status: ChainStatus;
 	nodes: BoardNode[];
@@ -102,9 +113,11 @@ export async function loadRunBoards(
 				progress: rows.at(-1)?.progress ?? null,
 			};
 		});
+		const document = versionOf.get(chain.runId)?.document;
 		boards.get(chain.runId)?.push({
 			id: chain.id,
 			chain_id: chain.chainId,
+			subflow_name: document && subflowNameOf(document, chain.chainId),
 			depth: chain.depth,
 			status: chain.status,
 			nodes,
