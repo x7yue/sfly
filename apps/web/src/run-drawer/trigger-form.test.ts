@@ -178,6 +178,34 @@ describe("打开抽屉时默认选哪个预设", () => {
 		expect(initialPresetId([], "a")).toBeNull();
 	});
 
+	describe("再次运行", () => {
+		const ran = (id: string | null) => ({
+			params: {},
+			preset: id === null ? null : { id, name: `${id}（触发时的名称）`, params: [] },
+		});
+
+		it("上一次用的预设可用：选中它，优先于记住的预设", () => {
+			const presets = [preset("a", "ok"), preset("c", "ok")];
+			expect(initialPresetId(presets, "c", ran("a"))).toBe("a");
+			expect(initialPresetId(presets, null, ran("a"))).toBe("a");
+		});
+
+		it("上一次没用预设：不使用预设，记住的预设不顶替", () => {
+			expect(initialPresetId([preset("a", "ok")], "a", ran(null))).toBeNull();
+		});
+
+		it("上一次用的预设已删除或已失效：不使用预设，记住的预设不顶替", () => {
+			const presets = [preset("b", "invalid"), preset("c", "ok")];
+			expect(initialPresetId(presets, "c", ran("gone"))).toBeNull();
+			expect(initialPresetId(presets, "c", ran("b"))).toBeNull();
+		});
+
+		it("按预设的 ID 对上，名称相同但 ID 不同的预设不算", () => {
+			const other = { ...preset("other", "ok"), name: "a（触发时的名称）" };
+			expect(initialPresetId([other], null, ran("a"))).toBeNull();
+		});
+	});
+
 	it("只有可用的预设能选中", () => {
 		expect(usablePreset(presets, "a")?.id).toBe("a");
 		expect(usablePreset(presets, "b")).toBeUndefined();

@@ -1,4 +1,4 @@
-import type { ParamDeclView, PresetView } from "@sfly/schema";
+import type { ParamDeclView, PresetView, RunView } from "@sfly/schema";
 import { z } from "zod";
 
 /**
@@ -8,6 +8,9 @@ import { z } from "zod";
  * 运行预设的选用也在这里：能不能选（{@link usablePreset}）、打开抽屉时默认选哪个（{@link initialPresetId}）、
  * 换预设时表单里的字段怎么变（{@link switchPreset}）。
  */
+
+/** 「再次运行」的来源：上一次运行用的参数和预设（RunView 里的这两项）。 */
+export type RerunSource = Pick<RunView, "params" | "preset">;
 
 export type FieldValue = string | boolean;
 export type FormValues = Record<string, FieldValue>;
@@ -107,14 +110,18 @@ export function usablePreset(
 }
 
 /**
- * 打开抽屉时默认选中哪个预设：浏览器里记住的最近一次用的预设，它已被删除、已失效或者没有记住时是 null（不使用预设）。
+ * 打开抽屉时默认选中哪个预设，选不了（已被删除、已失效或者没有）时是 null（不使用预设）。
+ * 直接运行时想选的是浏览器里记住的最近一次用的预设；「再次运行」时是上一次运行用的预设（按 ID 对上，不按名称），
+ * 上一次没用预设就是不使用预设，不看记住的预设：记住的是别的运行用的。
  * 「默认选哪个预设」只在这里决定，别处不再各写一遍。
  */
 export function initialPresetId(
 	presets: readonly PresetView[],
 	remembered: string | null,
+	rerunOf?: RerunSource,
 ): string | null {
-	return usablePreset(presets, remembered)?.id ?? null;
+	const wanted = rerunOf ? (rerunOf.preset?.id ?? null) : remembered;
+	return usablePreset(presets, wanted)?.id ?? null;
 }
 
 /**

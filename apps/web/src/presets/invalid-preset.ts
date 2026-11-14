@@ -1,4 +1,5 @@
 import type { ParamDeclView, PresetProblemView, PresetView } from "@sfly/schema";
+import { usablePreset } from "#/run-drawer/trigger-form";
 import { draftFromPreset, type PresetDraft } from "./preset-form";
 
 /**
@@ -21,6 +22,23 @@ export function problemText(problem: PresetProblemView, decls: ParamDeclView[]):
 
 export const problemsText = (problems: PresetProblemView[], decls: ParamDeclView[]) =>
 	problems.map((p) => problemText(p, decls)).join("；");
+
+/**
+ * 「再次运行」时原来的预设用不了的提示：已被删除，或者已失效（写明原因）；预设可用、原来没用预设时是 null。
+ * 能不能用和 {@link usablePreset} 一致；预设还在时写它现在的名称（选择框和管理对话框里都是这个名称），
+ * 已被删除时只剩运行记下的名称。
+ */
+export function unusablePresetNotice(
+	presets: readonly PresetView[],
+	decls: ParamDeclView[],
+	ran: { id: string; name: string } | null,
+): string | null {
+	if (!ran || usablePreset(presets, ran.id)) return null;
+	const preset = presets.find((p) => p.id === ran.id);
+	return preset
+		? `预设 ${preset.name} 已失效：${problemsText(preset.problems, decls)}`
+		: `预设 ${ran.name} 已删除`;
+}
 
 /** 保存的值在提示里怎么写：字符串原样，其余按 JSON。 */
 const savedText = (value: unknown) => (typeof value === "string" ? value : JSON.stringify(value));

@@ -7,6 +7,7 @@ import {
 	repairDraft,
 	repairErrors,
 	repairOf,
+	unusablePresetNotice,
 } from "./invalid-preset";
 
 const decls: ParamDeclView[] = [
@@ -47,6 +48,33 @@ describe("失效的运行预设的原因", () => {
 				"参数 zone 已不存在",
 			].join("；"),
 		);
+	});
+});
+
+describe("再次运行时原来的预设用不了的提示", () => {
+	const ran = { id: "p1", name: "压测 A（触发时）" };
+	const usable: PresetView = { ...invalid, status: "ok", problems: [] };
+
+	it("预设已被删除：写预设已删除，名称是运行记下的", () => {
+		expect(unusablePresetNotice([], decls, ran)).toBe("预设 压测 A（触发时） 已删除");
+		expect(unusablePresetNotice([{ ...usable, id: "p2", name: ran.name }], decls, ran)).toBe(
+			"预设 压测 A（触发时） 已删除",
+		);
+	});
+
+	it("预设已失效：写明失效的原因，名称是预设现在的名称", () => {
+		const preset: PresetView = {
+			...invalid,
+			problems: [{ param: "region", reason: "missing" }],
+		};
+		expect(unusablePresetNotice([preset], decls, ran)).toBe(
+			"预设 压测 A 已失效：参数 region 已不存在",
+		);
+	});
+
+	it("预设可用，或者原来没用预设：没有提示", () => {
+		expect(unusablePresetNotice([usable], decls, ran)).toBeNull();
+		expect(unusablePresetNotice([usable], decls, null)).toBeNull();
 	});
 });
 
