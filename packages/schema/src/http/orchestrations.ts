@@ -87,12 +87,16 @@ export const OrchestrationVersionView = z.object({
 	document: OrchestrationDocument,
 });
 
-/** 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。 */
+/**
+ * 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。
+ * 注释框的警告带 `annotation_id`，指出是哪个注释框；它们也不阻断触发。
+ */
 export const DocumentWarningView = z.object({
 	code: z.string(),
 	message: z.string(),
 	node_id: z.string().optional(),
 	input: z.string().optional(),
+	annotation_id: z.string().optional(),
 });
 
 export const SavedVersionView = z.object({
