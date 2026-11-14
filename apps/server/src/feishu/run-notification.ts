@@ -2,7 +2,13 @@
  * 运行通知（GLOSSARY「运行通知」，ADR 0020、docs/SEMANTICS.md §6）：运行结束时，在写入运行最终状态的同一个事务里，
  * 读取场景当前的设置，满足触发条件就把卡片写进发送队列。卡片的结构由平台固定。
  */
-import { chainLabel, FEISHU_BODY_LIMIT_LABEL, MAIN_CHAIN_LABEL } from "@sfly/orchestration";
+import {
+	chainLabel,
+	FEISHU_BODY_LIMIT_LABEL,
+	MAIN_CHAIN_LABEL,
+	nameWithId,
+	nodeNameBeforeId,
+} from "@sfly/orchestration";
 import type { OrchestrationDocument, RunNotificationTrigger } from "@sfly/schema";
 import { asc, eq } from "drizzle-orm";
 import { chainInstances, orchestrations, type RunStatus, runs, tasks } from "../db/schema.js";
@@ -32,10 +38,13 @@ const RESULT: Record<FinishedStatus, { color: CardColor; subtitle: string }> = {
 /** 卡片里最多列出的失败节点数，其余只写总数。 */
 const MAX_LISTED_FAILURES = 10;
 
-/** 失败的节点和它所在的链（链的名称与监控页一致：「主链」或「子流程 <名称> · <实例短 ID>」）。 */
+/**
+ * 失败的节点和它所在的链（链的名称与监控页一致：「主链」或「子流程 <名称> · <实例短 ID>」）。
+ * `node` 已经按「显示名称（节点 ID）」写好（没有显示名称时只有节点 ID）。
+ */
 interface FailedNode {
 	chain: string;
-	nodeId: string;
+	node: string;
 }
 
 interface RunNotificationFacts {
@@ -107,7 +116,7 @@ function runNotificationCard(facts: RunNotificationFacts) {
 							facts.failures.length > listed.length
 								? `**失败的节点**（共 ${facts.failures.length} 个，只列出前 ${listed.length} 个）`
 								: "**失败的节点**",
-							...listed.map((f) => `- ${f.chain}：${f.nodeId}`),
+							...listed.map((f) => `- ${f.chain}：${f.node}`),
 						].join("\n"),
 					},
 				];
@@ -156,6 +165,7 @@ async function failedNodes(
 		.where(eq(tasks.runId, run.id));
 	const chainIndex = new Map(chains.map((c, i) => [c.id, i]));
 	const nodeIndex = new Map(document.nodes.map((n, i) => [n.id, i]));
+	const declared = new Map(document.nodes.map((n) => [n.id, n]));
 	const labelOf = (chainInstanceId: string) => {
 		const chain = chains.find((c) => c.id === chainInstanceId);
 		if (!chain) return MAIN_CHAIN_LABEL;
@@ -170,7 +180,13 @@ async function failedNodes(
 				(chainIndex.get(a.chainInstanceId) ?? 0) - (chainIndex.get(b.chainInstanceId) ?? 0) ||
 				(nodeIndex.get(a.nodeId) ?? 0) - (nodeIndex.get(b.nodeId) ?? 0),
 		)
-		.map((row) => ({ chain: labelOf(row.chainInstanceId), nodeId: row.nodeId }));
+		.map((row) => {
+			const node = declared.get(row.nodeId);
+			return {
+				chain: labelOf(row.chainInstanceId),
+				node: node ? nameWithId(row.nodeId, nodeNameBeforeId(node)) : row.nodeId,
+			};
+		});
 }
 
 /**

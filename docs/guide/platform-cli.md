@@ -29,7 +29,7 @@ uv run sfly api --list runs
 | `sfly run wait <运行> [--timeout 时长]` | 等一次已经触发的运行结束，输出摘要 |
 | `sfly run cancel <运行>` | 取消运行；运行还没结束时再取消一次就是强制取消 |
 | `sfly run list [--scenario 场景] [--status 状态]` | 最近的运行，开始得晚的在前 |
-| `sfly run show <运行>` | 各条链、各个节点的状态；失败或重试过的节点写出每次尝试的错误 |
+| `sfly run show <运行>` | 各条链、各个节点的状态（节点有显示名称时，写在节点 ID 后面）；失败或重试过的节点写出每次尝试的错误 |
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level 级别] [--tail N] [--before 游标] [--after 游标] [--all 文件]` | 运行的日志，按控制面时间合并各节点、各次尝试 |
 | `sfly run artifacts <运行> [--task 任务] [--download 目录]` | 列出各任务的产物，可以下载 |
 | `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
@@ -90,12 +90,13 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
 - 不加 `--wait` 时立即输出运行 id 和控制台里的运行链接，退出码 0；之后用 `sfly run wait <运行>` 等它结束。
 - 加 `--wait` 时一直等到运行结束（`--timeout 时长` 限制等待时长，例如 `90s`、`5m`、`1h`）。节点状态每变化一次往 stderr 写一行进度；运行结束后 stdout 输出摘要，退出码表示结果。`run wait` 对已经触发的运行做同样的事，运行已经结束时直接输出摘要。
 - 摘要有：运行 id、状态、耗时（控制面时间）、控制台里的运行链接，以及每个失败的任务（所在的链和节点、节点类型、第几次尝试、错误）和它最后 50 行日志，节点重试过、几次都失败时每次失败的尝试各列一项；被取消的运行写明是谁取消的。`--json` 时摘要是一个对象，字段相同。要读更早的日志用 `sfly run logs`。
+- 摘要、进度行和 `sfly run show` 的节点表里，节点写成「链:节点 ID」，节点有显示名称时紧跟着写「显示名称」：`main:probe「探测接口」`。节点 ID 在前，因为这些输出常被拿去拼下一条命令（`--node main:probe`）或交给 AI 解析；没有显示名称的节点只写节点 ID。名称取自这次运行锁定的场景版本，之后改了场景里的显示名称不影响已有的运行。`--json` 里失败的任务（摘要）和节点（`run show`）带 `display_name`，没有显示名称时不出现这个字段。`sfly run logs` 每一行的格式不变，不带显示名称。
 - 一次失败的运行，stderr 里的进度和 stdout 里的摘要（节选）是这样的：
 
   ```text
   已触发运行 331168f8-611c-46a6-9259-6830dbd7412b，链接：http://<控制面地址>/runs/331168f8-611c-46a6-9259-6830dbd7412b
-  main:probe 执行中
-  main:probe 失败 0.1s
+  main:probe「探测接口」 执行中
+  main:probe「探测接口」 失败 0.1s
   ```
 
   ```text
@@ -104,7 +105,7 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
   链接：http://<控制面地址>/runs/331168f8-611c-46a6-9259-6830dbd7412b
 
   失败的任务（1 个）：
-    main:probe（loop-demo/probe，第 1 次尝试）
+    main:probe「探测接口」（loop-demo/probe，第 1 次尝试）
       错误：node_error：RuntimeError: api.test 返回 503
 
         Traceback (most recent call last):
