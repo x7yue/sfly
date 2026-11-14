@@ -32,7 +32,7 @@ uv run sfly api --list runs
 | `sfly run show <运行>` | 各条链、各个节点的状态；失败或重试过的节点写出每次尝试的错误 |
 | `sfly run logs <运行> [--failed] [--node 链:节点] [--level 级别] [--tail N] [--before 游标] [--after 游标] [--all 文件]` | 运行的日志，按控制面时间合并各节点、各次尝试 |
 | `sfly run artifacts <运行> [--task 任务] [--download 目录]` | 列出各任务的产物，可以下载 |
-| `sfly agent list` | 每台 Agent 是否在线、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包 |
+| `sfly agent list` | 每台 Agent 是否在线（刚连上、还在准备环境的写「在线（准备环境中，已 2 分 10 秒）」，这期间任务排队等它）、版本是否与控制面一致、运行中的任务数、对外地址、用 `sfly dev` 加载的开发包；`--json` 里的 `preparing_since` 是开始准备环境的时间，准备好或离线时为 null |
 | `sfly package list` / `sfly package show <包>[@版本]` | 节点包和它们的版本；一个版本里每个节点类型的标题、输入（类型、默认值、是否必填）和输出 |
 | `sfly api <METHOD> <路径> [--query 名=值]… [--body JSON 或 @文件]` / `sfly api --list` | 直接调用上面没有覆盖的接口；`--list` 列出全部接口 |
 
@@ -84,6 +84,7 @@ sfly run start 回归 --param host=api.test --wait --timeout 5m
 ```
 
 - 先预检场景：引用的 Agent 没有注册过、锁定的节点包版本或节点类型不存在、Agent 的版本不满足节点包的要求这类问题会全部列出，退出码 2，不触发运行。
+- Agent 不在线、或刚连上还在准备环境（见 [安装 Agent](install-agent.md)）时也能触发：任务排队，Agent 准备好之后再执行。排队超过节点的 `queue_timeout`（默认 10 分钟）还没派发时任务以 `env_error` 失败，不重试，错误写明原因：「排队超过 N 秒仍未派发：Agent X 一直在准备环境」是那台 Agent 一直在准备环境，去查它的环境准备（下载 Python、安装 SDK）；「Agent X 不在线或没有空闲槽位」是它不在线，或槽位一直被占满。
 - 入口参数用 `--param 名=值` 给出，可以重复；值按入口节点声明的类型转换：string 原样保留，number 按数字，boolean 写 `true` 或 `false`，json 按 JSON 解析。整个参数对象也可以用 `--params '<JSON>'` 一次给出，两种写法同时出现时 `--param` 覆盖同名项。参数名没有声明、值转换失败、必填的参数没有给时报错并列出声明的参数，退出码 2。secret 参数和其他参数一样传入，输出里不回显它的值。
 - 总是触发场景的最新版本，不支持指定场景版本。
 - 不加 `--wait` 时立即输出运行 id 和控制台里的运行链接，退出码 0；之后用 `sfly run wait <运行>` 等它结束。

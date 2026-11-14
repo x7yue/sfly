@@ -30,6 +30,9 @@ export const DEFAULT_AGENT_VERSION = packageJson.version;
 
 const keyOf = (t: TaskRef) => `${t.taskId}:${t.attempt}`;
 
+/** {@link FakeAgent.sync} 上报的不存在的任务：控制面忽略它，只回 Ack。 */
+const SYNC_TASK_ID = "00000000-0000-4000-8000-000000000000";
+
 /** 可推送的异步队列，作为双向流的请求流。 */
 class Outbox<T> implements AsyncIterable<T> {
 	#items: T[] = [];
@@ -109,7 +112,8 @@ export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
 /**
  * 可编程的假 Agent：用真实的 gRPC 协议（HTTP/2）连上控制面的 Agent 网关。
  *
- * - `FakeAgent.connect()` 建立双向流、发送 Hello 并等待 Welcome；
+ * - `FakeAgent.connect()` 建立双向流、发送 Hello、等待 Welcome，再像准备好环境的 Agent 一样立即发一次心跳
+ *   （{@link FakeAgent.ready}）；`preparing: true` 时停在准备环境；
  * - `send()` 发送任意 AgentMessage；
  * - `next()` / `received` 观察控制面推送的消息；
  * - `close()` 正常结束请求流，`disconnect()` 模拟断线（直接中断连接）。
@@ -120,7 +124,8 @@ export type HelloInit = MessageInitShape<typeof HelloSchema> & { name: string };
  * 后续票据在这里继续加可编程行为（延迟、断线重连等）。
  */
 export class FakeAgent {
-	readonly received: ServerMessage[] = [];
+	/** 控制面推送的全部消息，含 {@link sync} 自己用的 Ack。 */
+	#received: ServerMessage[] = [];
 	#outbox = new Outbox<AgentMessage>();
 	#abort = new AbortController();
 	#waiters: Waiter[] = [];
@@ -137,7 +142,7 @@ export class FakeAgent {
 		this.#closed = (async () => {
 			try {
 				for await (const message of responses) {
-					this.received.push(message);
+					this.#received.push(message);
 					this.#dispatch();
 				}
 			} catch (error) {
@@ -152,7 +157,8 @@ export class FakeAgent {
 	}
 
 	/**
-	 * 连接网关，发送 Hello，等待 Welcome 后返回。
+	 * 连接网关，发送 Hello，等待 Welcome，再准备好环境（{@link ready}）后返回。
+	 * `preparing: true` 时收到 Welcome 就返回，停在准备环境：控制面不给它派发，直到调用 {@link ready}。
 	 *
 	 * `clock` 传控制面的时钟（测试里的手动时钟）时，这是一台时钟与控制面一致的新版本 Agent：Hello 带上 Agent 时间
 	 * 和单调时钟读数，之后 {@link FakeAgent.metrics} 的点自动带上与它的 Unix 秒对应的单调时钟读数，
@@ -161,7 +167,7 @@ export class FakeAgent {
 	static async connect(
 		grpcUrl: string,
 		hello: HelloInit,
-		options: { timeoutMs?: number; clock?: { now(): Date } } = {},
+		options: { timeoutMs?: number; clock?: { now(): Date }; preparing?: boolean } = {},
 	): Promise<FakeAgent> {
 		const now = options.clock?.now().getTime();
 		const agent = await FakeAgent.connectRaw(
@@ -181,7 +187,24 @@ export class FakeAgent {
 		if (now !== undefined) {
 			agent.#monotonicShiftMs = Number(hello.monotonicMs ?? SYNCED_MONOTONIC_MS) - now;
 		}
+		// 控制面让它继续的任务仍在它手上，之后的心跳照常上报。
+		const continued = agent.dispositions;
+		for (const t of hello.runningTasks ?? []) {
+			const task = { taskId: t.taskId ?? "", attempt: t.attempt ?? 0 };
+			if (continued[task.taskId] === "abandon") continue;
+			agent.#held.set(keyOf(task), task);
+			if (t.started) agent.#started.add(keyOf(task));
+		}
+		if (!options.preparing) await agent.ready();
 		return agent;
+	}
+
+	/**
+	 * 准备好环境：像真实 Agent 进入收发循环时那样立即发一次心跳（带上手上的任务），并等到控制面处理完它。
+	 * 控制面把 Welcome 之后的第一次心跳当作 Agent 已准备好，从这时起才给它派发任务。
+	 */
+	ready(): Promise<void> {
+		return this.heartbeat();
 	}
 
 	/** 单调时钟读数 − 控制面时间（毫秒）；只有用 `clock` 选项连接的才有。 */
@@ -251,6 +274,13 @@ export class FakeAgent {
 		});
 	}
 
+	/** 控制面推送的消息（按到达顺序，不含 {@link sync} 自己用的 Ack）。 */
+	get received(): ServerMessage[] {
+		return this.#received.filter(
+			(m) => !(m.body.case === "ack" && m.body.value.taskId === SYNC_TASK_ID),
+		);
+	}
+
 	/** 握手时收到的 Welcome（#15：含对 Hello.running_tasks 的处置）。 */
 	get welcome(): Welcome {
 		const message = this.received.find((m) => m.body.case === "welcome");
@@ -315,7 +345,7 @@ export class FakeAgent {
 	 */
 	async sync(): Promise<void> {
 		await this.report({
-			taskId: "00000000-0000-4000-8000-000000000000",
+			taskId: SYNC_TASK_ID,
 			attempt: ++this.#syncs,
 			status: TaskStatus.SUCCESS,
 		});
@@ -509,15 +539,15 @@ export class FakeAgent {
 		const pending: Waiter[] = [];
 		for (const waiter of this.#waiters) {
 			let found = -1;
-			for (let i = 0; i < this.received.length; i++) {
-				if (!this.#consumed.has(i) && waiter.predicate(this.received[i] as ServerMessage)) {
+			for (let i = 0; i < this.#received.length; i++) {
+				if (!this.#consumed.has(i) && waiter.predicate(this.#received[i] as ServerMessage)) {
 					found = i;
 					break;
 				}
 			}
 			if (found >= 0) {
 				this.#consumed.add(found);
-				waiter.resolve(this.received[found] as ServerMessage);
+				waiter.resolve(this.#received[found] as ServerMessage);
 			} else if (this.#ended) {
 				waiter.reject(this.#error ?? new Error("stream ended"));
 			} else {

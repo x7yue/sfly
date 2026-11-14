@@ -98,7 +98,12 @@ export async function renewHeld(
  * 周期扫描（control-plane.ts）：租约过期的运行中任务以 agent_lost 失败（按重试配置派回同一个 Agent），
  * 排队超时的任务以 env_error 失败（不重试）。返回失败的任务数。
  */
-export async function expireTasks(driver: ChainDriver, db: Db, now: Date): Promise<number> {
+export async function expireTasks(
+	driver: ChainDriver,
+	db: Db,
+	now: Date,
+	isPreparing: (agentName: string) => boolean,
+): Promise<number> {
 	const expired = (n: Date) =>
 		or(
 			and(inArray(tasks.status, ON_AGENT), lte(tasks.leaseExpiresAt, n)),
@@ -113,8 +118,10 @@ export async function expireTasks(driver: ChainDriver, db: Db, now: Date): Promi
 			.orderBy(asc(tasks.seq))
 			.for("update");
 		for (const task of due) {
-			if (task.status === "queued") await queueTimedOut(driver, step, task);
-			else await agentLost(driver, step, task, "任务租约已过期");
+			if (task.status === "queued") {
+				const preparing = task.agentName !== null && isPreparing(task.agentName);
+				await queueTimedOut(driver, step, task, preparing ? "preparing" : "unavailable");
+			} else await agentLost(driver, step, task, "任务租约已过期");
 		}
 		return due.length;
 	});
@@ -144,8 +151,24 @@ export async function agentLost(
 	await driver.failTask(step, task, "agent_lost", `Agent ${task.agentName} 失联：${reason}`);
 }
 
-/** 排队超时：env_error，不重试（§3.3）。 */
-export async function queueTimedOut(driver: ChainDriver, step: Step, task: TaskRow): Promise<void> {
+/**
+ * 排队超时那一刻任务的 Agent 为什么没接：preparing 是在线、还在准备环境（Welcome 之后、第一次心跳之前，#219），
+ * unavailable 是不在线或没有空闲槽位。
+ */
+export type QueueTimeoutCause = "preparing" | "unavailable";
+
+const QUEUE_TIMEOUT_REASONS: Record<QueueTimeoutCause, string> = {
+	preparing: "一直在准备环境",
+	unavailable: "不在线或没有空闲槽位",
+};
+
+/** 排队超时：env_error，不重试（§3.3）；报错写明 Agent 没接的原因。 */
+export async function queueTimedOut(
+	driver: ChainDriver,
+	step: Step,
+	task: TaskRow,
+	cause: QueueTimeoutCause,
+): Promise<void> {
 	const seconds = Math.round(
 		((task.queueExpiresAt?.getTime() ?? 0) - task.queuedAt.getTime()) / 1000,
 	);
@@ -153,6 +176,6 @@ export async function queueTimedOut(driver: ChainDriver, step: Step, task: TaskR
 		step,
 		task,
 		"env_error",
-		`排队超过 ${seconds} 秒仍未派发：Agent ${task.agentName} 不在线或没有空闲槽位`,
+		`排队超过 ${seconds} 秒仍未派发：Agent ${task.agentName} ${QUEUE_TIMEOUT_REASONS[cause]}`,
 	);
 }

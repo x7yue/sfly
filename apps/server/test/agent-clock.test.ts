@@ -5,7 +5,7 @@ import { openDatabase } from "../src/db/database.js";
 import { type AgentGatewayServer, startAgentGateway } from "../src/gateway/agent-gateway.js";
 import { Mutex } from "../src/util/mutex.js";
 import { eventually } from "./support/eventually.js";
-import { agentClock, FakeAgent } from "./support/fake-agent.js";
+import { agentClock, FakeAgent, type HelloInit } from "./support/fake-agent.js";
 import { ManualClock } from "./support/manual-clock.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 import { createTestDatabase, type TestDatabase } from "./support/test-database.js";
@@ -157,10 +157,12 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 		if (!conn) throw new Error(`agent ${name} is not connected`);
 		return conn;
 	};
+	// 没有引擎的网关不处理 Agent 发来的消息、不回 Ack，等不到准备好的心跳被处理：Agent 停在准备环境。
+	const connect = (hello: HelloInit) => FakeAgent.connect(gateway.url, hello, { preparing: true });
 
 	it("按收到 Hello 时的控制面时间和单调时钟读数折算，早于连接的读数落在连接之前", async () => {
 		agents.push(
-			await FakeAgent.connect(gateway.url, {
+			await connect({
 				name: "agent-a",
 				// Agent 时间快 613 天，不影响折算。
 				...agentClock(START_MS + 613 * DAY, 50_000),
@@ -175,7 +177,7 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 	});
 
 	it("同一次连接内折算结果不变：心跳带来新的读数、Agent 时间跳变、控制面时间流逝都不影响", async () => {
-		const agent = await FakeAgent.connect(gateway.url, {
+		const agent = await connect({
 			name: "agent-a",
 			...agentClock(START_MS, 50_000),
 		});
@@ -196,16 +198,14 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 	});
 
 	it("重新连接后按新的 Hello 重新建立对应关系", async () => {
-		const first = await FakeAgent.connect(gateway.url, {
+		const first = await connect({
 			name: "agent-a",
 			...agentClock(START_MS, 50_000),
 		});
 		await first.disconnect();
 		clock.advance(60_000);
 		// 机器重启过：单调时钟从头开始。
-		agents.push(
-			await FakeAgent.connect(gateway.url, { name: "agent-a", ...agentClock(START_MS, 1_000) }),
-		);
+		agents.push(await connect({ name: "agent-a", ...agentClock(START_MS, 1_000) }));
 
 		expect(connection("agent-a").clock.occurredAt(2_000)?.toISOString()).toBe(
 			"2025-03-07T00:01:01.000Z",
@@ -213,7 +213,7 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 	});
 
 	it("旧版本 Agent 的连接没有对应关系：没法折算，控制面时间兜底为收到消息的时刻", async () => {
-		agents.push(await FakeAgent.connect(gateway.url, { name: "agent-old" }));
+		agents.push(await connect({ name: "agent-old" }));
 		const conn = connection("agent-old");
 		clock.advance(5_000);
 		const receivedAt = clock.now();
@@ -226,9 +226,7 @@ describe("单调时钟读数折算成控制面时间（#172）", () => {
 	});
 
 	it("新版本 Agent 的消息没带读数（0）时同样兜底为收到消息的时刻，带读数时不用兜底", async () => {
-		agents.push(
-			await FakeAgent.connect(gateway.url, { name: "agent-a", ...agentClock(START_MS, 50_000) }),
-		);
+		agents.push(await connect({ name: "agent-a", ...agentClock(START_MS, 50_000) }));
 		clock.advance(5_000);
 		const conn = connection("agent-a");
 
