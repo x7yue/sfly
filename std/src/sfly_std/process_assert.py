@@ -6,11 +6,11 @@
 from __future__ import annotations
 
 import os
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
 import psutil
 
-from sfly import Context, node
+from sfly import Context, Doc, node
 from sfly_std import _process
 
 #: 失败信息里最多列出多少个进程。
@@ -20,9 +20,12 @@ PIDS_LIMIT = 1000
 
 
 class ProcessAssertOutputs(TypedDict):
-    passed: bool
-    count: int
-    pids: list[int]
+    passed: Annotated[bool, Doc("通过时为 true")]
+    count: Annotated[int, Doc("匹配的进程数")]
+    pids: Annotated[
+        list[int],
+        Doc("匹配的进程号，从小到大；最多列出 1000 个（超过时写一条警告日志，count 仍是全部数量）"),
+    ]
 
 
 class ProcessAssertionFailed(Exception):
@@ -32,21 +35,22 @@ class ProcessAssertionFailed(Exception):
 @node(title="进程断言")
 def process_assert(
     ctx: Context,
-    pid: int | None = None,
-    name: str | None = None,
-    match: str | None = None,
-    running: bool = True,
-    count: int | None = None,
+    pid: Annotated[int | None, Doc("进程号，通常引用 start_process 的输出 pid")] = None,
+    name: Annotated[str | None, Doc("进程名（可执行文件名，例如 nginx，必须完全一致）")] = None,
+    match: Annotated[
+        str | None, Doc("命令行（各参数以空格连接）的正则表达式，部分匹配即可")
+    ] = None,
+    running: Annotated[bool, Doc("应至少有一个匹配的进程；为 false 时应一个都没有")] = True,
+    count: Annotated[
+        int | None, Doc("应恰好有这么多个匹配的进程；给出时代替 running 的检查")
+    ] = None,
 ) -> ProcessAssertOutputs:
-    """检查一次匹配的进程，不等待。
+    """检查一次进程：在不在、有几个。只检查当下这一次，不等待。
 
-    - 条件：`pid`（进程号）、`name`（进程名，完全相同）、`match`（命令行正则，部分匹配即可），
-      至少给出一个；同时给出几个时，进程要全部满足；
-    - `running`（默认 true）：应至少有一个匹配的进程；为 false 时应一个都没有；
-    - `count`：应恰好有这么多个匹配的进程（给出时代替 `running` 的检查）。
+    副作用：没有，只读取执行这个节点的 Agent 所在机器上的进程列表。
 
-    通过时输出 `passed`（true）、匹配的进程数 `count` 和进程号 `pids`（从小到大，最多 1000 个）；
-    不通过时失败，写明期望与实际，并列出匹配到的进程。
+    失败：检查不通过时失败，错误信息写明期望与实际，并列出匹配到的进程。
+    pid、name、match 一个都没给时也失败。
     """
     targets = _process.targets(pid, name, match)
     if count is not None and count < 0:

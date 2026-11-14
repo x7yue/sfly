@@ -12,11 +12,11 @@ import os
 import sys
 import time
 from collections.abc import Iterable
-from typing import NamedTuple
+from typing import Annotated, NamedTuple
 
 import psutil
 
-from sfly import Chart, Context, Metric, node
+from sfly import Chart, Context, Doc, Metric, node
 from sfly_std._sampling import rate, validate_duration, validate_interval
 
 
@@ -149,17 +149,30 @@ def _counters(reading: Reading, nic: str | None, disk: str | None) -> Counters:
 )
 def system_monitor(
     ctx: Context,
-    interval: float = 1,
-    duration: float | None = None,
-    disk_path: str = "/",
-    nic: str | None = None,
-    disk: str | None = None,
+    interval: Annotated[float, Doc("采样间隔（秒），必须大于 0")] = 1,
+    duration: Annotated[
+        float | None,
+        Doc("监控多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消"),
+    ] = None,
+    disk_path: Annotated[
+        str, Doc("统计哪个文件系统的空间使用率：给出其中的任意路径，必须已经存在")
+    ] = "/",
+    nic: Annotated[
+        str | None, Doc("统计哪块网卡的收发速率，例如 eth0；合计包含回环网卡 lo")
+    ] = None,
+    disk: Annotated[
+        str | None,
+        Doc("统计哪块磁盘的读写速率，例如 nvme0n1 或 /dev/sda；合计只算整块磁盘，不重复计入分区"),
+    ] = None,
 ) -> None:
-    """每 `interval` 秒（默认 1）采样一次本机的资源使用情况并上报为指标。
+    """按采样间隔上报执行它的 Agent 所在机器的 CPU、内存、负载、磁盘和网络指标。
 
-    `duration` 秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消。
-    `disk_path`（默认 `/`）决定统计哪个文件系统的空间使用率；`nic`、`disk` 指定统计哪块网卡、
-    哪块磁盘的速率，不指定时取全部网卡、全部磁盘的合计。
+    副作用：只读取系统信息，不改动机器。
+    不设置 duration 时一直运行，直到被停止子流程节点停止或运行被取消，
+    所以要放在子流程里和压测同时运行。
+    被停止时记为「已停止」，不算失败，已经上报的指标都保留。
+
+    失败：指定的网卡、磁盘或 disk_path 不存在时立即失败，错误信息列出本机有哪些网卡、磁盘。
     """
     validate_interval(interval)
     validate_duration(duration)

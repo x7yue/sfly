@@ -7,6 +7,10 @@ import { createScenario, publishPackage } from "./support";
 // 标准节点 shell 的输出在编排画布上的展示（#181）。节点类型取自构建出的 sfly-std
 // （testdata/std-shell-node.json，std/tests/test_package.py 保证它与 `sfly build std` 的结果一致）：
 // 这里运行在没有 Python 的 Playwright 镜像里，构建不了 sfly-std。
+// 输出的说明就是代码里 Doc 写的（#317），检查器和引用补全显示的文字取自这份副本。
+
+const outputs = shellNode.outputs.properties;
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("Shell 命令节点的输出出现在检查器的输出列表里，后续节点引用补全能选到它们", async ({
 	page,
@@ -50,6 +54,10 @@ test("Shell 命令节点的输出出现在检查器的输出列表里，后续�
 	await expect
 		.poll(async () => (await listed.allTextContents()).sort())
 		.toEqual(["exit_code", "stderr", "stderr_file", "stdout", "stdout_file"]);
+	const documented = panel.getByRole("table", { name: "输出" }).locator("tbody td:nth-child(2)");
+	await expect
+		.poll(async () => (await documented.allTextContents()).sort())
+		.toEqual(Object.values(outputs).map((output) => output.description).sort());
 
 	// check.command 引用了 build 的输出：清空后输入 $，补全列出 build 的全部输出。
 	await nodeCard(page, "check").click();
@@ -58,23 +66,26 @@ test("Shell 命令节点的输出出现在检查器的输出列表里，后续�
 	await expect(command).toHaveText("${{ nodes.build.outputs.stdout }}");
 	await command.fill("");
 	await page.keyboard.type("$");
-	const outputs = panel
+	const options = panel
 		.getByRole("listbox", { name: "可引用的值" })
 		.getByRole("group", { name: "前序节点" })
 		.getByRole("option");
-	await expect(outputs).toHaveCount(5);
-	for (const option of [
-		/^nodes\.build\.outputs\.exit_code\s*integer · build$/,
-		/^nodes\.build\.outputs\.stdout\s*string · build$/,
-		/^nodes\.build\.outputs\.stderr\s*string · build$/,
-		/^nodes\.build\.outputs\.stdout_file\s*build$/,
-		/^nodes\.build\.outputs\.stderr_file\s*build$/,
-	]) {
-		await expect(outputs.filter({ hasText: option })).toHaveCount(1);
+	await expect(options).toHaveCount(5);
+	for (const [name, type] of [
+		["exit_code", "integer · "],
+		["stdout", "string · "],
+		["stderr", "string · "],
+		["stdout_file", ""],
+		["stderr_file", ""],
+	] as const) {
+		const option = new RegExp(
+			`^nodes\\.build\\.outputs\\.${name}\\s*${type}build\\s*${escaped(outputs[name].description)}$`,
+		);
+		await expect(options.filter({ hasText: option })).toHaveCount(1);
 	}
 	// 由 $ 弹出的补全没有预选项：先用方向键选中唯一的匹配，再按 Enter 插入。
 	await page.keyboard.type("stderr_f");
-	await expect(outputs).toHaveCount(1);
+	await expect(options).toHaveCount(1);
 	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("Enter");
 	await expect(command).toHaveText("${{ nodes.build.outputs.stderr_file }}");

@@ -12,11 +12,11 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 import httpx
 
-from sfly import Context, Metric, node
+from sfly import Context, Doc, Metric, node
 from sfly_std import _waiting
 from sfly_std._assertions import Assertion, check, describe, validate
 from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
@@ -39,15 +39,36 @@ Method = Literal["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
 
 
 class _Required(TypedDict):
-    status: int
-    headers: dict[str, str]
-    elapsed_ms: float
-    body_file: str | None
+    status: Annotated[int, Doc("状态码")]
+    headers: Annotated[
+        dict[str, str],
+        Doc(
+            "响应头（对象）。名字都是小写；同名的多个响应头用逗号加空格连起来。"
+            "名字和值合计超过 64 KiB 时只保留前面的响应头（写一条警告日志）"
+        ),
+    ]
+    elapsed_ms: Annotated[float, Doc("最后一次请求的耗时（毫秒）")]
+    body_file: Annotated[
+        str | None,
+        Doc(
+            "save_body 打开时是产物 body 的产物引用，后续节点可以引用它下载完整的响应体；"
+            "关闭时为空值"
+        ),
+    ]
 
 
 class HttpResponse(_Required, total=False):
-    json: Any
-    text: str
+    json: Annotated[
+        Any,
+        Doc("响应内容是 JSON、且解析后的值写进输出（JSON 序列化）后不超过 256 KiB 时，解析后的值"),
+    ]
+    text: Annotated[
+        str,
+        Doc(
+            "响应内容不是 JSON，或输出 json 超过 256 KiB 时的文本，写进输出后最多 256 KiB，"
+            "超过时只保留开头（截断、或 JSON 改为输出 text 时写一条警告日志）"
+        ),
+    ]
 
 
 class ExpectationFailed(Exception):
@@ -91,34 +112,50 @@ def _status_ok(status: int, patterns: list[int | str]) -> bool:
 )
 def http_request(
     ctx: Context,
-    url: str,
-    method: Method = "GET",
-    headers: dict[str, str] | None = None,
-    json: Any = None,
-    body: str | None = None,
-    request_timeout: float = 30,
-    verify_tls: bool = True,
-    expect_status: int | str | Sequence[int | str] = "2xx",
-    expect_json: Sequence[Assertion] = (),
-    until_ok: bool = False,
-    wait: float = DEFAULT_WAIT,
-    poll: float = DEFAULT_POLL,
-    save_body: bool = False,
+    url: Annotated[str, Doc("请求地址，以 http:// 或 https:// 开头")],
+    method: Annotated[Method, Doc("GET、POST、PUT、PATCH、DELETE、HEAD、OPTIONS")] = "GET",
+    headers: Annotated[dict[str, str] | None, Doc("请求头（对象，值为字符串）")] = None,
+    json: Annotated[
+        Any, Doc("JSON 请求体（任意 JSON 值），自动加上 Content-Type: application/json")
+    ] = None,
+    body: Annotated[
+        str | None,
+        Doc("文本请求体，按 UTF-8 发送；需要时在 headers 里写 Content-Type。与 json 只能填一个"),
+    ] = None,
+    request_timeout: Annotated[float, Doc("单次请求最多等多少秒（连接、发送、等响应）")] = 30,
+    verify_tls: Annotated[bool, Doc("是否校验 HTTPS 证书；被测环境用自签证书时设为 false")] = True,
+    expect_status: Annotated[
+        int | str | Sequence[int | str],
+        Doc('算作成功的状态码：状态码（例如 404）或 "1xx"～"5xx"，可以是列表，例如 [200, "3xx"]'),
+    ] = "2xx",
+    expect_json: Annotated[
+        Sequence[Assertion], Doc("对响应 JSON 的断言列表，格式与 assert 节点的 assertions 相同")
+    ] = (),
+    until_ok: Annotated[
+        bool,
+        Doc(
+            "打开时，没有得到响应（连接失败、超时）或断言不通过就每 poll 秒重试一次，"
+            "直到通过或超过 wait 秒"
+        ),
+    ] = False,
+    wait: Annotated[float, Doc("until_ok 时最多等多少秒")] = DEFAULT_WAIT,
+    poll: Annotated[float, Doc("until_ok 时的重试间隔（秒）")] = DEFAULT_POLL,
+    save_body: Annotated[
+        bool,
+        Doc("保存响应体：打开时把响应体的原始字节存成产物 body，输出 body_file 给出它的产物引用"),
+    ] = False,
 ) -> HttpResponse:
-    """发一个 HTTP 请求，检查状态码（`expect_status`，默认 2xx）和响应 JSON（`expect_json`）。
+    """发一个 HTTP 请求，检查状态码和响应 JSON，可以重试直到满足。
 
-    - `json` 作为 JSON 请求体发送，`body` 作为 UTF-8 文本发送，只能填一个；不跟随重定向；
-    - `request_timeout`：单次请求最多等多少秒；`verify_tls`：是否校验 HTTPS 证书；
-    - `expect_status`：状态码或 `1xx`～`5xx`，可以是列表；
-    - `expect_json`：断言列表，格式与 `assert` 节点相同；
-    - `until_ok`：打开时，没有响应或断言不通过就每 `poll` 秒重试，直到通过或超过 `wait` 秒；
-    - `save_body`：打开时把响应体的原始字节存成产物 `body`（边接收边写盘），输出 `body_file`
-      是它的产物引用；重试时是最后一次响应的内容，最后一次没有收到完整的响应时没有这个产物。
-      关闭时 `body_file` 为空值。
+    副作用：请求本身对被测服务的影响，例如 POST 可能创建数据。
+    请求头和请求体在运行页面上对所有人可见，不要直接写密钥。
+    打开 save_body 时，完整的响应体保存为产物 body。
+    不跟随重定向；走 Agent 的 HTTP_PROXY、HTTPS_PROXY、NO_PROXY 环境变量设置的代理。
 
-    输出状态码、响应头、`json`（响应是 JSON 且序列化后不超过 256 KiB 时）或 `text`
-    （序列化后最多 256 KiB，超过时只保留开头）、耗时（毫秒，也上报为指标 `elapsed_ms`）。
-    不满足时失败，错误信息带上状态码和不通过的断言。
+    失败：没有得到响应（连接被拒绝、请求超时、证书校验失败）时失败。
+    状态码不在 expect_status 里，或 expect_json 的断言不通过时失败，错误信息写明请求方法、
+    地址和状态码。
+    打开 until_ok 时会重试，超过 wait 秒仍不满足才失败，错误信息是请求次数和最后一次不满足的原因。
     """
     if json is not None and body is not None:
         raise ValueError("json 和 body 只能填一个")

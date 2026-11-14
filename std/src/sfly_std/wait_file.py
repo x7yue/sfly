@@ -8,27 +8,33 @@ from __future__ import annotations
 import os
 import stat
 import time
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from sfly import Context, node
+from sfly import Context, Doc, node
 from sfly_std._waiting import DEFAULT_POLL, DEFAULT_WAIT, poll_until
 
 
 class WaitFileOutputs(TypedDict):
-    size: int
+    size: Annotated[int, Doc("成功时文件的大小（字节）")]
 
 
 @node(title="等待文件")
 def wait_file(
     ctx: Context,
-    path: str,
-    stable: float = 0,
-    wait: float = DEFAULT_WAIT,
-    poll: float = DEFAULT_POLL,
+    path: Annotated[str, Doc("文件路径；相对路径相对于任务工作目录")],
+    stable: Annotated[
+        float, Doc("文件出现后，还要等它的大小和修改时间连续这么多秒不变；为 0 时出现就成功")
+    ] = 0,
+    wait: Annotated[float, Doc("最多等多少秒")] = DEFAULT_WAIT,
+    poll: Annotated[float, Doc("检查间隔（秒）")] = DEFAULT_POLL,
 ) -> WaitFileOutputs:
-    """每 `poll` 秒（默认 1）检查一次 `path`（相对路径相对任务工作目录），是文件就成功；
-    `stable` 大于 0 时还要等文件的大小和修改时间连续 `stable` 秒不变（例如等对方写完报告）。
-    `wait` 秒（默认 300）内没等到时失败。输出成功时文件的大小 `size`（字节）。"""
+    """等一个文件出现，可以要求它保持若干秒不变，例如等对方把报告写完。
+
+    副作用：没有，只是每隔 poll 秒检查一次。
+
+    失败：wait 秒内没等到时失败，错误信息写明当时的情况：「文件不存在」或「文件仍在变化」。
+    只等普通文件：路径是目录时一直等到超时。
+    """
     if stable < 0:
         raise ValueError(f"stable 不能为负数，实际为 {stable:g}")
     # 上一次看到的 (大小, 修改时间) 和从什么时候起没再变过。

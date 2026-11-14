@@ -7,14 +7,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, TypedDict
+from typing import Annotated, Any, TypedDict
 
-from sfly import node
+from sfly import Doc, node
 from sfly_std._assertions import Assertion, check, describe
 
 
 class AssertOutputs(TypedDict):
-    passed: bool
+    passed: Annotated[bool, Doc("全部通过时为 true")]
 
 
 class AssertionFailed(Exception):
@@ -22,12 +22,28 @@ class AssertionFailed(Exception):
 
 
 @node(name="assert", title="断言")
-def assert_(actual: Any, assertions: Sequence[Assertion]) -> AssertOutputs:
-    """对 `actual`（通常是整值引用的上游输出）逐条检查 `assertions`。
+def assert_(
+    actual: Annotated[
+        Any,
+        Doc(
+            "要检查的值，通常整个值就是一个引用（引用上游节点的输出，保持原类型）；"
+            "也可以是包含多个引用的对象"
+        ),
+    ],
+    assertions: Annotated[
+        Sequence[Assertion],
+        Doc('断言列表，至少一条；每条是 {"path": ..., "op": ..., "value": ...}'),
+    ],
+) -> AssertOutputs:
+    """对一个值逐条做断言：数值、文本、JSON 都用同一个节点检查。
+    每条断言用 path 取出值的一部分，再用 op 和 value 比较。
 
-    每条断言取 `path`（JSONPath 子集：`$.a.b[0]`、`["键"]`、`[*]`，默认 `$` 即整个值）处的值，
-    用 `op` 与 `value` 比较：eq、ne、gt、ge、lt、le、contains、matches、exists、len_eq。
-    全部通过时输出 `passed`（true）；有不通过的时失败，逐条列出路径、期望值和实际值。
+    副作用：没有，只检查传入的值。
+
+    失败：有断言不通过时失败，错误信息逐条列出不通过的断言：第几条、具体路径、期望和实际值。
+    路径不存在时，除 exists 外的断言都不通过。
+    断言写错时（路径无法解析、缺少 value、value 类型不对、正则不合法、有未知的键）也失败，
+    错误信息写明是第几条，不检查任何断言。
     """
     if not assertions:
         raise ValueError("assertions 至少要有一条")

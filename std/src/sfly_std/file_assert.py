@@ -8,14 +8,14 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from sfly import node
+from sfly import Doc, node
 from sfly_std import _params
 
 
 class FileAssertOutputs(TypedDict):
-    passed: bool
+    passed: Annotated[bool, Doc("全部通过时为 true")]
 
 
 class FileAssertionFailed(Exception):
@@ -24,23 +24,34 @@ class FileAssertionFailed(Exception):
 
 @node(title="文件断言")
 def file_assert(
-    path: str,
-    exists: bool = True,
-    min_size: int | None = None,
-    max_size: int | None = None,
-    min_lines: int | None = None,
-    max_lines: int | None = None,
-    matches: str | None = None,
+    path: Annotated[str, Doc("文件路径；相对路径相对任务工作目录，通常写绝对路径")],
+    exists: Annotated[
+        bool, Doc("文件应存在；为 false 时应不存在，这时不能再给大小、行数、内容的检查")
+    ] = True,
+    min_size: Annotated[int | None, Doc("文件大小（字节）的下限，含边界")] = None,
+    max_size: Annotated[int | None, Doc("文件大小（字节）的上限，含边界")] = None,
+    min_lines: Annotated[
+        int | None, Doc("文件行数的下限，含边界；最后一行没有换行符也算一行，空文件是 0 行")
+    ] = None,
+    max_lines: Annotated[
+        int | None, Doc("文件行数的上限，含边界；最后一行没有换行符也算一行，空文件是 0 行")
+    ] = None,
+    matches: Annotated[
+        str | None,
+        Doc(
+            "内容（按 UTF-8 解码）应匹配的正则表达式：在任意位置匹配即可，"
+            "多行模式（^ 和 $ 匹配每一行的开头和结尾）"
+        ),
+    ] = None,
 ) -> FileAssertOutputs:
-    """检查一次 `path` 的状态，不等待。
+    """检查一次文件的状态：存在或不存在、大小、行数、内容匹配正则。只检查当下这一次，不等待。
 
-    - `exists`（默认 true）：文件应存在；为 false 时应不存在，不能再给其他检查；
-    - `min_size` / `max_size`：大小（字节）的下限 / 上限，含边界；
-    - `min_lines` / `max_lines`：行数的下限 / 上限，含边界（最后一行没有换行符也算一行）；
-    - `matches`：内容（按 UTF-8）应匹配的正则表达式，在任意位置匹配，
-      多行模式（`^` `$` 匹配每一行）。
+    副作用：没有，只读取文件。
+    检查行数和内容会把整个文件读进内存，不要用于很大的文件。
 
-    全部通过时输出 `passed`（true）；有不通过的时失败，逐项列出期望与实际。
+    失败：有检查不通过时失败，错误信息逐项列出不通过的检查和实际值。
+    给了大小、行数或内容的检查而路径是目录时也失败。
+    要等文件出现用 wait_file。
     """
     given = {
         "min_size": min_size,

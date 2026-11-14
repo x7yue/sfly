@@ -38,6 +38,8 @@ LAST_SDK_WITHOUT_LABELS = Version("0.0.4")
 #: 最后一个没有 ctx.artifacts.download 的已发布平台版本（v0.1.3）；
 #: 下载接口（#193）从它的下一个版本起才有。
 LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD = Version("0.1.3")
+#: 最后一个没有 sfly.Doc 的已发布平台版本（v0.3.0）；Doc（#303）从它的下一个版本起才有。
+LAST_SDK_WITHOUT_DOC = Version("0.3.0")
 #: 最后一个没有 Agent 能力 files（files.list、files.read、files.write）的已发布平台版本（v0.1.3）；
 #: 它们（#198–#200，ADR 0019）和 SDK 的 ctx.agent() 从它的下一个版本起才有。
 LAST_AGENT_WITHOUT_FILE_CAPABILITIES = Version("0.1.3")
@@ -129,6 +131,22 @@ def test_requires_an_sdk_that_can_download_artifacts() -> None:
         assert LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD not in declared, (
             f"版本号已是 {sdk}：std/pyproject.toml 的 requires-sdk 要调成 >={sdk}"
             "（ctx.artifacts.download）"
+        )
+
+
+def test_requires_an_sdk_that_has_doc() -> None:
+    # 标准节点用 Annotated[类型, Doc("…")] 写输入、输出的说明（#317），更旧的 SDK 导入标准节点包时
+    # 就失败。和下载接口一样，Doc 还没随平台版本发布时只能声明当前版本能满足的范围（否则同版本的
+    # 控制面在预检时阻断全部标准节点）；仓库版本号一旦越过 LAST_SDK_WITHOUT_DOC，requires-sdk
+    # 必须同步排除它，下一次发布 sfly-std 在那个平台版本发布之后（docs/agents/branching-and-release.md）。
+    pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = SpecifierSet(pyproject["tool"]["sfly"]["requires-sdk"])
+    sdk = Version(SDK_VERSION)
+
+    assert sdk in declared, f"当前 SDK {sdk} 不满足 requires-sdk {declared}"
+    if sdk > LAST_SDK_WITHOUT_DOC:
+        assert LAST_SDK_WITHOUT_DOC not in declared, (
+            f"版本号已是 {sdk}：std/pyproject.toml 的 requires-sdk 要调成 >={sdk}（sfly.Doc）"
         )
 
 
@@ -254,6 +272,46 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
             assert labels == {m["name"]: m.get("labels", []) for m in node["metrics"]}, name
         else:
             assert "指标" not in tables, name
+
+
+def test_every_parameter_and_output_description_matches_the_standard_nodes_page(
+    metadata: dict[str, Any],
+) -> None:
+    # 说明以代码里的 Doc 为准（#317）：参数表、输出表「说明」列的文字，与元信息里这个输入、输出的
+    # 说明一字不差。画布按纯文本显示说明，所以表格里不写 Markdown。
+    sections = _node_sections()
+    for node in metadata["nodes"]:
+        tables = _tables(sections[node["name"]][1])
+        for kind, schema in (("参数", node["inputs"]), ("输出", node["outputs"])):
+            if kind not in tables:
+                continue
+            header, rows = tables[kind]
+            column = header.index("说明")
+            for row in rows:
+                for name in _names(row[0]):
+                    where = f"{node['name']} 的{kind} {name}"
+                    description = schema["properties"][name].get("description")
+                    assert row[column], f"{where}：「说明」列是空的"
+                    assert description == row[column], where
+
+
+def test_descriptions_are_plain_text(metadata: dict[str, Any]) -> None:
+    # 节点、输入、输出的说明在画布上按纯文本显示（不渲染 Markdown）：反引号和链接会原样出现。
+    markdown = re.compile(r"`|\]\(")
+    for node in metadata["nodes"]:
+        schemas = [node["inputs"], node["outputs"]]
+        texts = [(node["name"], node.get("description"))] + [
+            (f"{node['name']} 的 {name}", prop.get("description"))
+            for schema in schemas
+            for name, prop in schema.get("properties", {}).items()
+        ]
+        for where, text in texts:
+            assert text is None or not markdown.search(text), f"{where} 的说明里有 Markdown"
+
+
+def test_every_node_has_a_description(metadata: dict[str, Any]) -> None:
+    # 节点函数的文档字符串就是节点类型的说明，显示在「添加节点」菜单和检查器里。
+    assert [n["name"] for n in metadata["nodes"] if not n.get("description")] == []
 
 
 def test_the_shell_node_fixture_for_the_web_e2e_tests_matches_the_built_package(

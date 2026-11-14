@@ -6,14 +6,14 @@
 from __future__ import annotations
 
 import socket
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from sfly import node
+from sfly import Doc, node
 from sfly_std import _params
 
 
 class PortAssertOutputs(TypedDict):
-    passed: bool
+    passed: Annotated[bool, Doc("通过时为 true")]
 
 
 class PortAssertionFailed(Exception):
@@ -22,17 +22,18 @@ class PortAssertionFailed(Exception):
 
 @node(title="端口断言")
 def port_assert(
-    port: int,
-    host: str = "127.0.0.1",
-    reachable: bool = True,
-    connect_timeout: float = 3,
+    port: Annotated[int, Doc("端口号")],
+    host: Annotated[str, Doc("主机名或 IP 地址")] = "127.0.0.1",
+    reachable: Annotated[bool, Doc("应能连接；为 false 时应不能连接（连接被拒绝或超时）")] = True,
+    connect_timeout: Annotated[float, Doc("这一次连接最多等多少秒，超时算不能连接")] = 3,
 ) -> PortAssertOutputs:
-    """尝试连接一次 `host:port`（TCP），不等待、不重试。
+    """尝试连接一次 TCP 端口，检查能连或不能连。只检查当下这一次，不等待、不重试。
 
-    - `reachable`（默认 true）：应能连接；为 false 时应不能连接（连接被拒绝或超时）；
-    - `connect_timeout`：这一次连接最多等多少秒（默认 3），超时算不能连接。
+    副作用：没有，只从执行这个节点的 Agent 发起一次连接。
 
-    主机名解析不到时无论 `reachable` 是什么都失败（多半是写错了）。通过时输出 `passed`（true）。
+    失败：检查不通过时失败，错误信息写明地址、期望与实际。
+    主机名解析不到时，无论 reachable 是什么都失败：多半是主机名写错了。
+    要等端口可以连接用 wait_port。
     """
     _params.port(port)
     if connect_timeout <= 0:

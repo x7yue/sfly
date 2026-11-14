@@ -95,19 +95,19 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `command` | 必填 | 要执行的命令 |
-| `shell` | `/bin/sh` | 解释器：`/bin/bash`、`python3` 等任何接受 `-c <命令>` 的程序 |
+| `shell` | `/bin/sh` | 解释器：/bin/bash、python3 等任何能用 -c 执行一段命令的程序 |
 | `env` | 无 | 追加的环境变量（对象，值为字符串），在 Agent 的环境变量之上 |
 | `cwd` | 任务工作目录 | 工作目录，必须已经存在 |
 | `ok_exit_codes` | `[0]` | 算作成功的退出码 |
-| `save_output` | `false` | 保存完整输出：为 `true` 时把完整的标准输出和标准错误各保存为一个产物 |
+| `save_output` | `false` | 保存完整输出：为 true 时把完整的标准输出和标准错误各保存为一个产物 |
 
 | 输出 | 说明 |
 |---|---|
-| `exit_code` | 退出码；命令被信号终止时为 128 + 信号值（与 shell 的 `$?` 相同） |
+| `exit_code` | 退出码；命令被信号终止时为 128 + 信号值（与 shell 的 $? 相同） |
 | `stdout` | 标准输出的最后 64 KiB |
 | `stderr` | 标准错误的最后 64 KiB |
-| `stdout_file` | 产物 `stdout.txt`（完整的标准输出）的引用；`save_output` 为 `false` 时是空值 |
-| `stderr_file` | 产物 `stderr.txt`（完整的标准错误）的引用；`save_output` 为 `false` 时是空值 |
+| `stdout_file` | 产物 stdout.txt（完整的标准输出）的引用；save_output 为 false 时是空值 |
+| `stderr_file` | 产物 stderr.txt（完整的标准错误）的引用；save_output 为 false 时是空值 |
 
 - 标准输出和标准错误实时转为任务日志（来源分别是 stdout 和 stderr），`save_output` 不影响这一点。
 - `stdout`、`stderr` 超过 64 KiB 时只保留末尾，截断点不会落在一个多字节字符中间。要完整内容时打开 `save_output`：两个产物是命令输出的原始字节，边运行边写入，命令失败、被取消时已有的内容也保留。后续节点引用 `stdout_file`、`stderr_file`，用 SDK 的 `ctx.artifacts.download` 下载（见 [开发节点](sdk-reference.md) 的「下载产物」）；产物在控制面上，后续节点在哪一台 Agent 上执行都能下载。
@@ -137,15 +137,15 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `command` | 必填 | 要执行的命令 |
-| `shell` | `/bin/sh` | 解释器，与 `shell` 节点相同 |
+| `shell` | `/bin/sh` | 解释器，与 shell 节点相同 |
 | `env` | 无 | 追加的环境变量（对象，值为字符串），在 Agent 的环境变量之上 |
 | `cwd` | 任务工作目录 | 工作目录，必须已经存在 |
-| `log_file` | `$SFLY_HOME/procs/<运行 ID>/<节点 ID>.log` | 进程的标准输出和标准错误追加写入的文件；相对路径相对于 `cwd`，目录不存在时自动创建 |
+| `log_file` | `$SFLY_HOME/procs/<运行 ID>/<节点 ID>.log` | 进程的标准输出和标准错误追加写入的文件；相对路径相对于 cwd，目录不存在时自动创建 |
 
 | 输出 | 说明 |
 |---|---|
-| `pid` | 进程号：交给 `stop_process`、`process_monitor` 等节点 |
-| `log_file` | 日志文件的绝对路径：交给 `wait_log_line`、`follow_log`、`collect_artifacts` 等节点 |
+| `pid` | 进程号：交给 stop_process、process_monitor 等节点 |
+| `log_file` | 日志文件的绝对路径：交给 wait_log_line、follow_log、collect_artifacts 等节点 |
 
 - 进程在新的会话和进程组里，不属于任务的进程树：节点结束、任务被取消或超时都不会终止它，运行结束后也不会自动停止，**一定要配一个 `stop_process`**（见下一节的例子）。
 - 进程的输出不转为任务日志，只写进 `log_file`。默认位置不在任务目录里：任务目录被清理时不受影响，和任务目录按同一个保留期清理（运行还有任务在这个 Agent 上时不动，后台进程还在写日志时不会被删，见 [安装 Agent](install-agent.md)）。同一个节点重试时追加到同一个文件。
@@ -170,7 +170,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `pid` | 无 | 要停止的进程号，通常引用 `start_process` 的输出 `pid`；为空时什么也不做、直接成功 |
+| `pid` | 无 | 要停止的进程号，通常引用 start_process 的输出 pid；为空时什么也不做、直接成功 |
 | `grace` | `10` | 从 SIGTERM 到 SIGKILL 的宽限期（秒） |
 
 | 输出 | 说明 |
@@ -201,8 +201,8 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `interval` | `1` | 采样间隔（秒），必须大于 0 |
 | `duration` | 无 | 监控多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消 |
 | `disk_path` | `/` | 统计哪个文件系统的空间使用率：给出其中的任意路径，必须已经存在 |
-| `nic` | 全部网卡合计 | 统计哪块网卡的收发速率，例如 `eth0`；合计包含回环网卡 `lo` |
-| `disk` | 全部磁盘合计 | 统计哪块磁盘的读写速率，例如 `nvme0n1` 或 `/dev/sda`；合计只算整块磁盘，不重复计入分区 |
+| `nic` | 全部网卡合计 | 统计哪块网卡的收发速率，例如 eth0；合计包含回环网卡 lo |
+| `disk` | 全部磁盘合计 | 统计哪块磁盘的读写速率，例如 nvme0n1 或 /dev/sda；合计只算整块磁盘，不重复计入分区 |
 
 没有输出。
 
@@ -242,19 +242,19 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `pid` | 无 | 进程号，或进程号的列表；通常引用 `start_process` 的输出 `pid` |
-| `name` | 无 | 进程名（可执行文件名，例如 `nginx`，必须完全一致），或进程名的列表 |
+| `pid` | 无 | 进程号，或进程号的列表；通常引用 start_process 的输出 pid |
+| `name` | 无 | 进程名（可执行文件名，例如 nginx，必须完全一致），或进程名的列表 |
 | `match` | 无 | 命令行（各参数以空格连接）的正则表达式，部分匹配即可，或正则的列表 |
 | `include_children` | `true` | 是否连同目标的全部子孙进程一起统计 |
 | `wait_for_process` | `60` | 开始时最多等多少秒让每个目标都出现 |
 | `interval` | `1` | 采样间隔（秒） |
 | `duration` | 无 | 监控多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消 |
-| `on_exit` | `fail` | 目标进程退出时：`fail` 让节点失败，`succeed` 让节点成功结束 |
+| `on_exit` | `fail` | 目标进程退出时：fail 让节点失败，succeed 让节点成功结束 |
 
 | 输出 | 说明 |
 |---|---|
 | `samples` | 采样了多少次 |
-| `processes_csv` | 产物 `processes.csv` 的引用 |
+| `processes_csv` | 产物 processes.csv 的引用 |
 
 | 指标 | 单位 | 说明 |
 |---|---|---|
@@ -377,8 +377,8 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `path` | 必填 | 日志文件路径；相对路径相对于任务工作目录 |
-| `pattern` | 必填 | Python 正则表达式，匹配行内任意位置（`re.search`）；要匹配整行用 `^...$` |
-| `read_from` | `end` | 从哪里开始看：`end` 只看节点开始之后新写入的内容，`start` 从文件开头看起 |
+| `pattern` | 必填 | Python 正则表达式，匹配行内任意位置（re.search）；要匹配整行用 ^...$ |
+| `read_from` | `end` | 从哪里开始看：end 只看节点开始之后新写入的内容，start 从文件开头看起 |
 | `wait` | `300` | 最多等多少秒 |
 | `poll` | `1` | 检查间隔（秒） |
 
@@ -409,13 +409,13 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `path` | 必填 | 日志文件路径；相对路径相对于任务工作目录 |
-| `read_from` | `end` | 从哪里开始跟随：`end` 从节点开始时的文件末尾，`start` 先转发文件里已有的内容 |
-| `fail_on` | `[]` | 正则表达式列表（`re.search`）：有一行匹配其中任意一个时节点失败 |
+| `read_from` | `end` | 从哪里开始跟随：end 从节点开始时的文件末尾，start 先转发文件里已有的内容 |
+| `fail_on` | `[]` | 正则表达式列表（re.search）：有一行匹配其中任意一个时节点失败 |
 | `duration` | 无 | 跟随多少秒后成功结束；不设置时一直跟随，直到被停止子流程节点停止或运行被取消 |
 
 | 输出 | 说明 |
 |---|---|
-| `lines` | 转发的总行数（`duration` 到期时才有输出） |
+| `lines` | 转发的总行数（duration 到期时才有输出） |
 
 | 指标 | 单位 | 说明 |
 |---|---|---|
@@ -441,14 +441,14 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `paths` | 必填 | 通配符列表，都是相对 `base_dir` 的路径，例如 `["*.log", "reports/**/*.html", "screenshots"]` |
-| `base_dir` | 任务工作目录 | 在哪个目录下匹配，通常写被测系统或前面的 `shell` 写结果的绝对路径 |
-| `archive` | `false` | 为 `true` 时把匹配到的文件打成一个 zip 产物 `artifacts.zip`，不再逐个保存 |
+| `paths` | 必填 | 通配符列表，都是相对 base_dir 的路径，例如 *.log 或目录 screenshots |
+| `base_dir` | 任务工作目录 | 在哪个目录下匹配，通常写被测系统或前面的 shell 写结果的绝对路径 |
+| `archive` | `false` | 为 true 时把匹配到的文件打成一个 zip 产物 artifacts.zip，不再逐个保存 |
 | `required` | `true` | 一个文件都没匹配到时是否让节点失败 |
 
 | 输出 | 说明 |
 |---|---|
-| `refs` | 产物名称（相对 `base_dir` 的路径，`/` 分隔）→ 产物引用；`archive` 为 `true` 时只有 `artifacts.zip` 一项；没有匹配到文件时为空对象 |
+| `refs` | 产物名称（相对 base_dir 的路径，/ 分隔）→ 产物引用；archive 为 true 时只有 artifacts.zip 一项；没有匹配到文件时为空对象 |
 
 - 通配符：`*` 匹配一段路径里的任意字符（不跨目录，以 `.` 开头的文件也匹配），`?` 匹配一个字符，`[abc]` 匹配其中一个字符，`**` 匹配任意层子目录（包括零层：`**/*.log` 也匹配 `base_dir` 下直接的 `.log` 文件）。
 - 匹配到目录时收集其中的全部文件（含子目录）。多个通配符匹配到同一个文件时只收集一次。
@@ -478,13 +478,13 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `source` | 必填 | 来源 Agent：文件在哪一台 Agent 上（「Agent」类型的参数，检查器里从已注册的 Agent 中选） |
 | `directory` | 必填 | 来源 Agent 所在机器上的目录，绝对路径 |
 | `local_dir` | 必填 | 拉到哪个本地目录：执行这个节点的 Agent 所在机器上的路径，相对路径相对于任务工作目录；不存在时自动创建 |
-| `pattern` | `*` | 文件名的通配符，只匹配文件名（不含目录），例如 `app.log.*` |
-| `recursive` | `false` | 为 `true` 时也拉取子目录里匹配的文件，在 `local_dir` 下保留子目录结构 |
-| `delete_source` | `false` | 为 `true` 时每拉完一个文件就删除来源 Agent 上的这个源文件 |
+| `pattern` | `*` | 文件名的通配符，只匹配文件名（不含目录），例如 app.log.* |
+| `recursive` | `false` | 为 true 时也拉取子目录里匹配的文件，在 local_dir 下保留子目录结构 |
+| `delete_source` | `false` | 为 true 时每拉完一个文件就删除来源 Agent 上的这个源文件 |
 
 | 输出 | 说明 |
 |---|---|
-| `files` | 拉下来的文件的本地绝对路径，按拉取的顺序；最多列出 1000 个（序列化后最多 256 KiB），更多时只列出前面的，以 `count` 为准 |
+| `files` | 拉下来的文件的本地绝对路径，按拉取的顺序；最多列出 1000 个（序列化后最多 256 KiB），更多时只列出前面的，以 count 为准 |
 | `count` | 拉下来的文件数 |
 | `total_bytes` | 拉下来的文件的总字节数 |
 
@@ -522,14 +522,14 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | `source` | 必填 | 来源 Agent：文件在哪一台 Agent 上（「Agent」类型的参数，检查器里从已注册的 Agent 中选） |
 | `directory` | 必填 | 来源 Agent 所在机器上要监听的目录，绝对路径；不含子目录 |
 | `local_dir` | 必填 | 拉到哪个本地目录：执行这个节点的 Agent 所在机器上的路径，相对路径相对于任务工作目录；不存在时自动创建 |
-| `pattern` | `*` | 文件名的通配符，只匹配文件名（不含目录），例如 `app.log.*` |
+| `pattern` | `*` | 文件名的通配符，只匹配文件名（不含目录），例如 app.log.* |
 | `stable` | 无 | 文件至少这么多秒没有修改才拉；不设置（或为 0）时一出现就拉 |
-| `delete_source` | `false` | 为 `true` 时每拉完一个文件就删除来源 Agent 上的这个源文件 |
+| `delete_source` | `false` | 为 true 时每拉完一个文件就删除来源 Agent 上的这个源文件 |
 | `duration` | 无 | 运行多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消 |
 
 | 输出 | 说明 |
 |---|---|
-| `count` | 拉下来的文件数（`duration` 到期时才有输出） |
+| `count` | 拉下来的文件数（duration 到期时才有输出） |
 | `total_bytes` | 拉下来的文件的总字节数 |
 
 | 指标 | 单位 | 说明 |
@@ -571,28 +571,28 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `url` | 必填 | 请求地址，`http://` 或 `https://` |
-| `method` | `GET` | `GET`、`POST`、`PUT`、`PATCH`、`DELETE`、`HEAD`、`OPTIONS` |
+| `url` | 必填 | 请求地址，以 http:// 或 https:// 开头 |
+| `method` | `GET` | GET、POST、PUT、PATCH、DELETE、HEAD、OPTIONS |
 | `headers` | 无 | 请求头（对象，值为字符串） |
-| `json` | 无 | JSON 请求体（任意 JSON 值），自动加上 `Content-Type: application/json` |
-| `body` | 无 | 文本请求体，按 UTF-8 发送；需要时在 `headers` 里写 `Content-Type`。与 `json` 只能填一个 |
+| `json` | 无 | JSON 请求体（任意 JSON 值），自动加上 Content-Type: application/json |
+| `body` | 无 | 文本请求体，按 UTF-8 发送；需要时在 headers 里写 Content-Type。与 json 只能填一个 |
 | `request_timeout` | `30` | 单次请求最多等多少秒（连接、发送、等响应） |
-| `verify_tls` | `true` | 是否校验 HTTPS 证书；被测环境用自签证书时设为 `false` |
-| `expect_status` | `"2xx"` | 算作成功的状态码：状态码（例如 `404`）或 `"1xx"`～`"5xx"`，可以是列表，例如 `[200, "3xx"]` |
-| `expect_json` | 无 | 对响应 JSON 的断言列表，格式与 `assert` 节点的 `assertions` 相同（见 `assert` 一节） |
-| `until_ok` | `false` | 打开时，没有得到响应（连接失败、超时）或断言不通过就每 `poll` 秒重试一次，直到通过或超过 `wait` 秒 |
-| `wait` | `300` | `until_ok` 时最多等多少秒 |
-| `poll` | `1` | `until_ok` 时的重试间隔（秒） |
-| `save_body` | `false` | 保存响应体：打开时把响应体的原始字节存成产物 `body`，输出 `body_file` 给出它的产物引用 |
+| `verify_tls` | `true` | 是否校验 HTTPS 证书；被测环境用自签证书时设为 false |
+| `expect_status` | `"2xx"` | 算作成功的状态码：状态码（例如 404）或 "1xx"～"5xx"，可以是列表，例如 [200, "3xx"] |
+| `expect_json` | 无 | 对响应 JSON 的断言列表，格式与 assert 节点的 assertions 相同 |
+| `until_ok` | `false` | 打开时，没有得到响应（连接失败、超时）或断言不通过就每 poll 秒重试一次，直到通过或超过 wait 秒 |
+| `wait` | `300` | until_ok 时最多等多少秒 |
+| `poll` | `1` | until_ok 时的重试间隔（秒） |
+| `save_body` | `false` | 保存响应体：打开时把响应体的原始字节存成产物 body，输出 body_file 给出它的产物引用 |
 
 | 输出 | 说明 |
 |---|---|
 | `status` | 状态码 |
-| `headers` | 响应头（对象）。名字都是小写；同名的多个响应头用 `, ` 连起来。名字和值合计超过 64 KiB 时只保留前面的响应头（写一条警告日志） |
+| `headers` | 响应头（对象）。名字都是小写；同名的多个响应头用逗号加空格连起来。名字和值合计超过 64 KiB 时只保留前面的响应头（写一条警告日志） |
 | `json` | 响应内容是 JSON、且解析后的值写进输出（JSON 序列化）后不超过 256 KiB 时，解析后的值 |
-| `text` | 响应内容不是 JSON 或 `json` 超过 256 KiB 时的文本，写进输出后最多 256 KiB，超过时只保留开头（截断、或 JSON 改为输出 `text` 时写一条警告日志） |
+| `text` | 响应内容不是 JSON，或输出 json 超过 256 KiB 时的文本，写进输出后最多 256 KiB，超过时只保留开头（截断、或 JSON 改为输出 text 时写一条警告日志） |
 | `elapsed_ms` | 最后一次请求的耗时（毫秒） |
-| `body_file` | `save_body` 打开时是产物 `body` 的产物引用，后续节点可以引用它下载完整的响应体；关闭时为空值 |
+| `body_file` | save_body 打开时是产物 body 的产物引用，后续节点可以引用它下载完整的响应体；关闭时为空值 |
 
 | 指标 | 单位 | 说明 |
 |---|---|---|
@@ -647,7 +647,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `actual` | 必填 | 要检查的值，通常整个值就是一个引用（引用上游节点的输出，保持原类型）；也可以是包含多个引用的对象 |
-| `assertions` | 必填 | 断言列表，至少一条；每条是 `{"path": ..., "op": ..., "value": ...}` |
+| `assertions` | 必填 | 断言列表，至少一条；每条是 {"path": ..., "op": ..., "value": ...} |
 
 每条断言的写法：
 
@@ -668,7 +668,7 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 | 输出 | 说明 |
 |---|---|
-| `passed` | 全部通过时为 `true` |
+| `passed` | 全部通过时为 true |
 
 - 有断言不通过时节点失败，错误信息逐条列出不通过的断言：第几条、具体路径、期望和实际值。例如 `第 2 条：$.items[1].status 应 eq "ok"，实际是 "error"`；值太长时只显示开头。
 - 路径里有通配时，每个匹配到的值都要满足；一个都没匹配到时不通过（`exists` 为 `false` 时通过）。
@@ -707,14 +707,16 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `path` | 必填 | 文件路径；相对路径相对任务工作目录，通常写绝对路径 |
-| `exists` | `true` | 文件应存在；为 `false` 时应不存在，这时不能再给下面的检查 |
-| `min_size` / `max_size` | 无 | 大小（字节）的下限 / 上限，含边界 |
-| `min_lines` / `max_lines` | 无 | 行数的下限 / 上限，含边界；最后一行没有换行符也算一行，空文件是 0 行 |
-| `matches` | 无 | 内容（按 UTF-8 解码）应匹配的正则表达式：在任意位置匹配即可，多行模式（`^` `$` 匹配每一行的开头和结尾） |
+| `exists` | `true` | 文件应存在；为 false 时应不存在，这时不能再给大小、行数、内容的检查 |
+| `min_size` | 无 | 文件大小（字节）的下限，含边界 |
+| `max_size` | 无 | 文件大小（字节）的上限，含边界 |
+| `min_lines` | 无 | 文件行数的下限，含边界；最后一行没有换行符也算一行，空文件是 0 行 |
+| `max_lines` | 无 | 文件行数的上限，含边界；最后一行没有换行符也算一行，空文件是 0 行 |
+| `matches` | 无 | 内容（按 UTF-8 解码）应匹配的正则表达式：在任意位置匹配即可，多行模式（^ 和 $ 匹配每一行的开头和结尾） |
 
 | 输出 | 说明 |
 |---|---|
-| `passed` | 全部通过时为 `true` |
+| `passed` | 全部通过时为 true |
 
 - 不通过时节点失败，错误信息逐项列出不通过的检查和实际值，例如 `/var/log/app/error.log 的 2 项检查中 1 项不通过：- 大小应 ≤ 0 字节，实际是 512 字节`。
 - 给了大小、行数或内容的检查而路径是目录时节点失败。检查行数和内容会把整个文件读进内存，不要用于很大的文件。
@@ -742,17 +744,17 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `pid` | 无 | 进程号，通常引用 `start_process` 的输出 `pid` |
-| `name` | 无 | 进程名（可执行文件名，例如 `nginx`，必须完全一致） |
+| `pid` | 无 | 进程号，通常引用 start_process 的输出 pid |
+| `name` | 无 | 进程名（可执行文件名，例如 nginx，必须完全一致） |
 | `match` | 无 | 命令行（各参数以空格连接）的正则表达式，部分匹配即可 |
-| `running` | `true` | 应至少有一个匹配的进程；为 `false` 时应一个都没有 |
-| `count` | 无 | 应恰好有这么多个匹配的进程；给出时代替 `running` 的检查 |
+| `running` | `true` | 应至少有一个匹配的进程；为 false 时应一个都没有 |
+| `count` | 无 | 应恰好有这么多个匹配的进程；给出时代替 running 的检查 |
 
 | 输出 | 说明 |
 |---|---|
-| `passed` | 通过时为 `true` |
+| `passed` | 通过时为 true |
 | `count` | 匹配的进程数 |
-| `pids` | 匹配的进程号，从小到大；最多列出 1000 个（超过时写一条警告日志，`count` 仍是全部数量） |
+| `pids` | 匹配的进程号，从小到大；最多列出 1000 个（超过时写一条警告日志，count 仍是全部数量） |
 
 - `pid`、`name`、`match` 至少给一个；同时给几个时，进程要全部满足（例如 `name` 为 `python`、`match` 为 `server\.py`）。
 - 僵尸进程（已退出、还没被父进程回收）不算在运行。执行这个节点的进程自己不参与匹配。
@@ -778,12 +780,12 @@ curl -fsS -H 'content-type: application/octet-stream' --data-binary @sfly-std-0.
 |---|---|---|
 | `port` | 必填 | 端口号 |
 | `host` | `127.0.0.1` | 主机名或 IP 地址 |
-| `reachable` | `true` | 应能连接；为 `false` 时应不能连接（连接被拒绝或超时） |
+| `reachable` | `true` | 应能连接；为 false 时应不能连接（连接被拒绝或超时） |
 | `connect_timeout` | `3` | 这一次连接最多等多少秒，超时算不能连接 |
 
 | 输出 | 说明 |
 |---|---|
-| `passed` | 通过时为 `true` |
+| `passed` | 通过时为 true |
 
 - 不通过时节点失败，错误信息写明地址、期望与实际，例如 `127.0.0.1:8080 应能连接，实际连接失败：[Errno 111] Connection refused`。
 - 主机名解析不到时无论 `reachable` 是什么都失败：多半是主机名写错了，不能当成「不能连接」而通过。

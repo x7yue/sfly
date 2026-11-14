@@ -12,9 +12,9 @@ import sys
 import threading
 import time
 from collections.abc import Sequence
-from typing import IO, TypedDict
+from typing import IO, Annotated, TypedDict
 
-from sfly import Context, node
+from sfly import Context, Doc, node
 from sfly_std import _process
 
 #: 输出里保留的 stdout、stderr 末尾字节数。
@@ -29,11 +29,15 @@ DRAIN_TIMEOUT = 2.0
 
 
 class ShellOutputs(TypedDict):
-    exit_code: int
-    stdout: str
-    stderr: str
-    stdout_file: str | None
-    stderr_file: str | None
+    exit_code: Annotated[int, Doc("退出码；命令被信号终止时为 128 + 信号值（与 shell 的 $? 相同）")]
+    stdout: Annotated[str, Doc("标准输出的最后 64 KiB")]
+    stderr: Annotated[str, Doc("标准错误的最后 64 KiB")]
+    stdout_file: Annotated[
+        str | None, Doc("产物 stdout.txt（完整的标准输出）的引用；save_output 为 false 时是空值")
+    ]
+    stderr_file: Annotated[
+        str | None, Doc("产物 stderr.txt（完整的标准错误）的引用；save_output 为 false 时是空值")
+    ]
 
 
 class CommandFailed(Exception):
@@ -103,24 +107,29 @@ class _Forward:
 @node(title="Shell 命令")
 def shell(
     ctx: Context,
-    command: str,
-    shell: str = "/bin/sh",
-    env: dict[str, str] | None = None,
-    cwd: str | None = None,
-    ok_exit_codes: Sequence[int] = (0,),
-    save_output: bool = False,
+    command: Annotated[str, Doc("要执行的命令")],
+    shell: Annotated[
+        str, Doc("解释器：/bin/bash、python3 等任何能用 -c 执行一段命令的程序")
+    ] = "/bin/sh",
+    env: Annotated[
+        dict[str, str] | None, Doc("追加的环境变量（对象，值为字符串），在 Agent 的环境变量之上")
+    ] = None,
+    cwd: Annotated[str | None, Doc("工作目录，必须已经存在")] = None,
+    ok_exit_codes: Annotated[Sequence[int], Doc("算作成功的退出码")] = (0,),
+    save_output: Annotated[
+        bool, Doc("保存完整输出：为 true 时把完整的标准输出和标准错误各保存为一个产物")
+    ] = False,
 ) -> ShellOutputs:
-    """执行 `<shell> -c <command>`，stdout、stderr 实时转为任务日志。
+    """执行一段命令，输出退出码、标准输出和标准错误。
 
-    - `shell`：解释器，默认 `/bin/sh`，也可以是 `/bin/bash`、`python3` 等任何接受 `-c` 的程序；
-    - `env`：追加的环境变量（在 Agent 的环境变量之上）；`cwd`：工作目录，默认任务工作目录；
-    - `ok_exit_codes`：算作成功的退出码，默认 `[0]`；不在其中时失败，错误信息附 stderr 末尾。
+    副作用：命令做什么，就有什么副作用。
+    标准输出和标准错误实时转为任务日志。
+    打开 save_output 时，完整的标准输出和标准错误各保存为一个产物。
+    命令退出时还在运行的后台进程不会被终止。
 
-    - `save_output`：保存完整输出。打开后完整的 stdout、stderr 各存成一个产物
-      （`stdout.txt`、`stderr.txt`，原始字节），命令失败时也保留。
-
-    输出退出码（被信号终止时为 128 + 信号值）、stdout 和 stderr 各自的最后 64 KiB，
-    以及两个产物的引用 `stdout_file`、`stderr_file`（没有打开 `save_output` 时为空值）。
+    失败：退出码不在 ok_exit_codes 里时失败，错误信息是退出码、命令和标准错误的末尾。
+    解释器或工作目录不存在时也失败。
+    任务被取消或超时时，命令和它启动的全部子进程都会被终止。
     """
     _process.check_cwd(cwd)
     stdout = _Forward(ctx, sys.stdout.buffer, STDOUT_ARTIFACT if save_output else None)

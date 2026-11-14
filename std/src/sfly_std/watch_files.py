@@ -19,7 +19,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
 from sfly import (
     Agent,
@@ -30,6 +30,7 @@ from sfly import (
     AgentTimeout,
     AgentUnreachable,
     Context,
+    Doc,
     FileEvent,
     FileId,
     FileInfo,
@@ -50,8 +51,8 @@ MAX_BACKOFF = 10.0
 
 
 class WatchFilesOutputs(TypedDict):
-    count: int
-    total_bytes: int
+    count: Annotated[int, Doc("拉下来的文件数（duration 到期时才有输出）")]
+    total_bytes: Annotated[int, Doc("拉下来的文件的总字节数")]
 
 
 @node(
@@ -65,24 +66,44 @@ class WatchFilesOutputs(TypedDict):
 )
 def watch_files(
     ctx: Context,
-    source: AgentName,
-    directory: str,
-    local_dir: str,
-    pattern: str = "*",
-    stable: float | None = None,
-    delete_source: bool = False,
-    duration: float | None = None,
+    source: Annotated[
+        AgentName,
+        Doc(
+            "来源 Agent：文件在哪一台 Agent 上（「Agent」类型的参数，"
+            "检查器里从已注册的 Agent 中选）"
+        ),
+    ],
+    directory: Annotated[str, Doc("来源 Agent 所在机器上要监听的目录，绝对路径；不含子目录")],
+    local_dir: Annotated[
+        str,
+        Doc(
+            "拉到哪个本地目录：执行这个节点的 Agent 所在机器上的路径，相对路径相对于任务工作目录；"
+            "不存在时自动创建"
+        ),
+    ],
+    pattern: Annotated[str, Doc("文件名的通配符，只匹配文件名（不含目录），例如 app.log.*")] = "*",
+    stable: Annotated[
+        float | None, Doc("文件至少这么多秒没有修改才拉；不设置（或为 0）时一出现就拉")
+    ] = None,
+    delete_source: Annotated[
+        bool, Doc("为 true 时每拉完一个文件就删除来源 Agent 上的这个源文件")
+    ] = False,
+    duration: Annotated[
+        float | None,
+        Doc("运行多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消"),
+    ] = None,
 ) -> WatchFilesOutputs:
-    """持续把 Agent `source` 上目录 `directory` 下文件名匹配 `pattern` 的文件
-    拉到本地目录 `local_dir`：启动时已有的和之后出现的都拉，每个文件（文件标识 + 大小）只拉一次。
+    """持续监听另一台 Agent 上的一个目录，把匹配通配符的文件拉到本地目录，每个文件只拉一次。
 
-    - `stable`：文件至少这么多秒没有修改才拉；不设置时一出现就拉（`pattern` 应只匹配不再写入的文件，
-      例如轮转后的 `app.log.*`）；
-    - `delete_source`：每拉完一个文件就删除源文件；
-    - `duration`：运行多少秒后成功结束，输出拉取的文件数 `count` 和总字节数 `total_bytes`；
-      不设置时一直运行，直到被停止子流程节点停止或运行被取消。
+    副作用：在 local_dir 里创建文件，目录不存在时自动创建，同名的已有文件被替换。
+    启动时已有的和之后出现的文件都拉；每个文件先写到临时文件，下载完成后才改名，不会留下半截文件。
+    delete_source 打开时，每拉完一个文件就删除来源 Agent 上的源文件，只删拉成功的。
+    一直运行到 duration 到期，或被停止子流程节点停止、运行被取消。
+    被停止时记为「已停止」，不算失败，已经拉完的文件保留。
+    平台不判断文件是否写完：按被测系统怎样轮转日志来选 pattern 和 stable。
 
-    指标 `pulled_files`、`pulled_bytes`（累计）和 `bytes_per_s`（当前速率，主指标）。
+    失败：第一次就连不上来源 Agent、directory 不存在或没有权限时立即失败。
+    之后连接中断不失败，写一条警告日志，一直重试到连上。
     """
     if not local_dir:
         raise ValueError("local_dir 不能为空")
