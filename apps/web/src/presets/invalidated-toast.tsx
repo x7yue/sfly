@@ -23,6 +23,5 @@ export function notifyInvalidatedPresets(warnings: DocumentWarningView[]) {
 				))}
 			</ul>
 		),
-		duration: 10_000,
 	});
 }
