@@ -1,5 +1,5 @@
-// 运行预设在命令行里（#330，ADR 0023）：sfly run start --preset、scenario show 与 run show 里的预设。
-// 真实的 sfly 进程对测试控制面；预设用 HTTP API 创建，运行由假 Agent 接收。
+// 运行预设在命令行里（#330，ADR 0023）：sfly run start --preset、scenario show 与 run show 里的预设、
+// sfly api 的预设接口。真实的 sfly 进程对测试控制面；预设用 HTTP API 创建，运行由假 Agent 接收。
 import { runsApi } from "@sfly/schema";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -465,6 +465,33 @@ describe("sfly 运行预设 → 控制面", { timeout: 60_000 }, () => {
 			expect(text.stdout.split("\n").some((line) => line.startsWith("预设 "))).toBe(false);
 			const json = await cli("run", "show", runId, "--json");
 			expect(JSON.parse(json.stdout).preset).toBeNull();
+		});
+	});
+
+	describe("api --list", () => {
+		it("能看到预设的接口：路由清单由 HTTP 契约导出，不用手写", async () => {
+			const result = await cli("api", "--list", "presets");
+			expect(result.code, result.stderr).toBe(0);
+			const rows = result.stdout.split("\n").map((line) => line.split(/\s+/).slice(0, 2).join(" "));
+			for (const route of [
+				"GET /orchestrations/:id/presets",
+				"POST /orchestrations/:id/presets",
+				"PATCH /orchestrations/:id/presets/:presetId",
+				"POST /orchestrations/:id/presets/:presetId/copy",
+				"DELETE /orchestrations/:id/presets/:presetId",
+			]) {
+				expect(rows, route).toContain(route);
+			}
+
+			const json = await cli("api", "--list", "presets", "--json");
+			const listed = JSON.parse(json.stdout) as Array<{ key: string[] }>;
+			expect(listed.map((r) => r.key.join("."))).toEqual([
+				"presets.list",
+				"presets.create",
+				"presets.update",
+				"presets.copy",
+				"presets.remove",
+			]);
 		});
 	});
 });
