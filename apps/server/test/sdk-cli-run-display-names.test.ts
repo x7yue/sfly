@@ -204,6 +204,62 @@ describe("sfly 运行输出里的显示名称 → 控制面", { timeout: 60_000 
 		});
 	});
 
+	describe("run artifacts", () => {
+		const upload = async (task: { artifactUploadUrl: string }, name: string, body: string) => {
+			const res = await fetch(`${task.artifactUploadUrl}${name}`, {
+				method: "PUT",
+				headers: { "content-type": "application/octet-stream" },
+				body,
+			});
+			expect(res.status).toBe(201);
+		};
+
+		it("任务列写成 链:节点#尝试「显示名称」，没有显示名称的节点不变；--json 的每一行带 display_name", async () => {
+			const id = await scenario("产物场景");
+			const waiting = start("run", "start", "产物场景", "--wait");
+			const first = await assign();
+			await upload(first, "report.txt", "one");
+			await agent.fail(first, "第一次失败");
+			const second = await assign();
+			await upload(second, "report.txt", "two");
+			await agent.succeed(second, { v: "ok" });
+			const last = await assign();
+			await upload(last, "b.txt", "bee");
+			await agent.succeed(last, { v: "ok" });
+			expect((await waiting.exited).code).toBe(0);
+			const runId = await runOf(id);
+
+			const text = await cli("run", "artifacts", runId);
+			expect(text.code, text.stderr).toBe(0);
+			expect(
+				lines(text.stdout)
+					.map(cells)
+					.map((row) => row.slice(0, 3)),
+			).toEqual([
+				["任务", "名称", "大小"],
+				["main:a#1「创建测试用户」", "report.txt", "3 字节"],
+				["main:a#2「创建测试用户」", "report.txt", "3 字节"],
+				["main:b", "b.txt", "3 字节"],
+			]);
+
+			const json = JSON.parse((await cli("run", "artifacts", runId, "--json")).stdout) as Array<
+				Record<string, unknown>
+			>;
+			expect(json.map((r) => [r.node, r.attempt, r.display_name])).toEqual([
+				["a", 1, "创建测试用户"],
+				["a", 2, "创建测试用户"],
+				["b", 1, undefined],
+			]);
+			expect(json[2]).not.toHaveProperty("display_name");
+
+			// 要拼进下一条命令的 链:节点#尝试 不带名称。
+			const missing = await cli("run", "artifacts", runId, "--task", "main:nope");
+			expect(missing.code).toBe(2);
+			expect(missing.stderr).toContain("main:a#1");
+			expect(missing.stderr).not.toContain("创建测试用户");
+		});
+	});
+
 	describe("run logs", () => {
 		it("每一行的格式不变：时间 级别 链:节点#尝试 内容，不带显示名称", async () => {
 			const { runId, waiting } = await failedRun("日志场景");
