@@ -28,7 +28,6 @@ import { readLastPreset, rememberPreset } from "./last-preset";
 import { ParamField } from "./ParamField";
 import { PresetSelect } from "./PresetSelect";
 import {
-	type FieldValue,
 	initialPresetId,
 	initialValues,
 	lockedValue,
@@ -153,8 +152,9 @@ function ParamsForm({
 	// 失效的运行预设不能用：选中之后预设才失效（预检刷新）或被删除时，当作没有选。
 	const preset = usablePreset(preflight.presets, presetId);
 	// 选中预设时，预设参数取预设的值、不能修改，只提交其余参数和预设（控制面填入预设的值）。
-	const lockedBy = (p: PresetView | undefined) => new Map(p?.params.map((q) => [q.name, q.value]));
-	const locked = lockedBy(preset);
+	const lockedParams = (p: PresetView | undefined) =>
+		new Map(p?.params.map((q) => [q.name, q.value]));
+	const locked = lockedParams(preset);
 	const editable = decls.filter((p) => !locked.has(p.name));
 	const trigger = useMutation({
 		mutationFn: (body: { params: Record<string, unknown>; preset?: string }) =>
@@ -190,11 +190,11 @@ function ParamsForm({
 	// 换预设：前后都能编辑的字段保留已经填的值，其余回到默认值（见 switchPreset）。
 	const selectPreset = (id: string | null) => {
 		const next = usablePreset(preflight.presets, id);
-		const values = switchPreset(decls, form.state.values, locked, lockedBy(next));
+		const values = switchPreset(decls, form.state.values, locked, lockedParams(next));
 		for (const p of decls) {
 			const value = values[p.name];
 			if (value !== undefined && value !== form.state.values[p.name]) {
-				form.setFieldValue(p.name, value as FieldValue);
+				form.setFieldValue(p.name, value);
 			}
 		}
 		setPresetId(next?.id ?? null);

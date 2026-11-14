@@ -89,7 +89,7 @@ test("触发时用了某个预设，重新打开这个场景的抽屉默认选�
 	]);
 	await expect(field(drawer, "host")).not.toHaveAttribute("readonly", "");
 
-	// 换一个预设触发之后记住的是它；它失效（steps 改了类型的版本不影响 B，换成 host 被删掉的版本）以后同样回到不使用预设。
+	// 换一个预设触发，记住的就是它；新版本删掉 host 让它失效以后，同样回到不使用预设。
 	await presetSelect(drawer).selectOption({ label: "压测 B 集群" });
 	await field(drawer, "api_token").fill("tok-live");
 	await drawer.getByRole("button", { name: "触发运行" }).click();
@@ -168,7 +168,7 @@ test("切换预设时，前后都能编辑的字段保留已经填的值，原�
 	await expect(dryRun).toBeChecked();
 	await expect(token).toHaveValue("tok-typed");
 
-	// 预设 A 换成预设 B：host 在 B 里不固定，原来锁定的 host 回到默认值；两个预设都没固定的字段保留。
+	// host 在预设 B 里能编辑：从不使用预设换到 B 保留已填的值，从固定了它的预设 A 换到 B 回到默认值。
 	await host.fill("typed-again");
 	await select.selectOption({ label: "压测 B 集群" });
 	await expect(host).toHaveValue("typed-again");
