@@ -1022,6 +1022,8 @@ export interface ParamDeclView {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
+	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	description?: string;
 }
 
 export interface ParamDeclaration {
@@ -1030,6 +1032,11 @@ export interface ParamDeclaration {
 	default?: unknown;
 	required: boolean;
 	secret: boolean;
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description?: string;
 }
 
 export interface ParamDeclarationInput {
@@ -1038,6 +1045,11 @@ export interface ParamDeclarationInput {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description?: string;
 }
 
 /**

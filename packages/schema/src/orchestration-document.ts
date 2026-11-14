@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalLine } from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
 
 /**
@@ -8,12 +9,20 @@ import { NodeName, PackageName } from "./package-metadata.js";
 
 export const ParamType = z.enum(["string", "number", "boolean", "json"]);
 
+/** 参数说明的长度上限（Unicode 字符数）。 */
+export const PARAM_DESCRIPTION_MAX = 200;
+
 export const ParamDeclaration = z.strictObject({
 	name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
 	type: ParamType,
 	default: z.unknown().optional(),
 	required: z.boolean().default(false),
 	secret: z.boolean().default(false),
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description: optionalLine(PARAM_DESCRIPTION_MAX),
 });
 
 /** 节点输入值：常量或含 `${{ ... }}` 引用的字符串，原样保存，派发时解析。 */
