@@ -1,51 +1,27 @@
-import { chainMembers } from "@sfly/orchestration";
+import { type LayoutDocument, type SubflowRegion, subflowRegions } from "@sfly/orchestration";
 import { useStore, ViewportPortal } from "@xyflow/react";
 import { cn } from "cn";
 import { useMemo } from "react";
 import { subflowLabel } from "#/lib/copy";
 import { useFlowCanvas } from "./context";
 import type { SfEdge, SfNode } from "./flow";
-import { NODE_HEIGHT, NODE_WIDTH, REGION_PADDING } from "./geometry";
 import { ZOOM_TEXT_12 } from "./zoom-text";
 
-interface Region {
-	id: string;
+interface Region extends SubflowRegion {
 	/** 子流程名称（subflowLabel）。 */
 	name: string;
 	trigger: string | undefined;
-	/** 子流程链上的节点（子流程入口在最前，按链上顺序；不含它下级的子流程）。 */
-	members: string[];
-	box: { x: number; y: number; w: number; h: number };
 }
 
-/** 每个子流程（子流程入口节点及它链上的节点）的外接框，四周按 REGION_PADDING 留白。 */
-export function subflowRegions(nodes: SfNode[], edges: SfEdge[]): Region[] {
-	const byId = new Map(nodes.map((n) => [n.id, n]));
-	const members = chainMembers({
-		nodes: nodes.map((n) => ({ id: n.id, kind: n.data.node.kind })),
-		edges: edges.map((e) => ({ from: e.source, to: e.target, kind: e.data?.kind ?? "chain" })),
+/** 每个子流程的区域（@sfly/orchestration 的 subflowRegions），带上名称和触发它的异步任务节点。 */
+function namedRegions(layout: LayoutDocument, nodes: SfNode[], edges: SfEdge[]): Region[] {
+	const byId = new Map(nodes.map((n) => [n.id, n.data.node]));
+	return subflowRegions(layout).flatMap((r) => {
+		const entry = byId.get(r.entry);
+		if (entry?.kind !== "subflow_entry") return [];
+		const trigger = edges.find((e) => e.target === r.entry && e.data?.kind === "dispatch")?.source;
+		return [{ ...r, name: subflowLabel(entry), trigger }];
 	});
-	const out: Region[] = [];
-	for (const [start, ids] of members) {
-		const entry = byId.get(start)?.data.node;
-		if (entry?.kind !== "subflow_entry") continue;
-		const at = ids.flatMap((id) => {
-			const n = byId.get(id);
-			return n ? [n.position] : [];
-		});
-		const x = Math.min(...at.map((p) => p.x)) - REGION_PADDING.left;
-		const y = Math.min(...at.map((p) => p.y)) - REGION_PADDING.top;
-		const x1 = Math.max(...at.map((p) => p.x)) + NODE_WIDTH + REGION_PADDING.right;
-		const y1 = Math.max(...at.map((p) => p.y)) + NODE_HEIGHT + REGION_PADDING.bottom;
-		out.push({
-			id: start,
-			name: subflowLabel(entry),
-			trigger: edges.find((e) => e.target === start && e.data?.kind === "dispatch")?.source,
-			members: ids,
-			box: { x, y, w: x1 - x, h: y1 - y },
-		});
-	}
-	return out;
 }
 
 /** 标题栏左右各留 14px（`left-3.5`）。 */
@@ -61,16 +37,19 @@ const META_FITS_EM = 24;
  * 给了 `onSelect` 时（可编辑的画布）标题可以点，点了选中子流程链上的全部节点。
  */
 export function SubflowRegions({
+	layout,
 	nodes,
 	edges,
 	onSelect,
 }: {
+	/** 画布上的节点和连线（flow.ts 的 layoutOf）。 */
+	layout: LayoutDocument;
 	nodes: SfNode[];
 	edges: SfEdge[];
 	onSelect?: (ids: readonly string[]) => void;
 }) {
 	const { regionMeta } = useFlowCanvas();
-	const regions = useMemo(() => subflowRegions(nodes, edges), [nodes, edges]);
+	const regions = useMemo(() => namedRegions(layout, nodes, edges), [layout, nodes, edges]);
 	// 用 JS 算而不是容器查询：标题栏的字号随缩放变，Chromium 不会因为容器的字号变了重新计算依赖 em 的容器查询。
 	const zoom = useStore((s) => s.transform[2]);
 	const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
@@ -78,7 +57,7 @@ export function SubflowRegions({
 	return (
 		<ViewportPortal>
 			{regions.map((r) => {
-				const custom = regionMeta?.(r.id);
+				const custom = regionMeta?.(r.entry);
 				const fits = r.box.w - 2 * HEADER_INSET >= META_FITS_EM * fontPx;
 				const meta =
 					custom ??
@@ -87,7 +66,7 @@ export function SubflowRegions({
 						: null);
 				return (
 					<section
-						key={r.id}
+						key={r.entry}
 						aria-label={`子流程 ${r.name}`}
 						className="pointer-events-none absolute -z-10 rounded-xl border border-dashed border-canvas-subflow-line bg-canvas-subflow-soft"
 						style={{ left: r.box.x, top: r.box.y, width: r.box.w, height: r.box.h }}

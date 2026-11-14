@@ -29,7 +29,7 @@ const MARK_STATUS: Record<NodeMark, { kind: StatusKind; label: string }> = {
 };
 
 /**
- * 只读画布：查看某个场景版本（复用编排画布 FlowCanvas，`editable={false}`），显示子流程区域；
+ * 只读画布：查看某个场景版本（复用编排画布 FlowCanvas，`editable={false}`），显示子流程区域和注释框；
  * marks 给节点加差异标记（卡片描边 + 右上角状态文字）。可以平移、缩放、选中节点，不能修改。
  */
 export function VersionCanvas({
@@ -80,6 +80,7 @@ export function VersionCanvas({
 				label={label}
 				nodes={flow.nodes}
 				edges={flow.edges}
+				annotations={document.annotations}
 				info={info}
 				selection={selection}
 				onSelect={setSelection}

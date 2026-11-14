@@ -40,6 +40,7 @@ const doc: OrchestrationDocument = {
 		{ from: "wait", to: "ping", kind: "chain" },
 	],
 	packages: { demo: "1.0.0" },
+	annotations: [],
 } as OrchestrationDocument;
 
 const io = (outputs: Record<string, { type: string }>) => ({

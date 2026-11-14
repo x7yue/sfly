@@ -14,6 +14,7 @@ const base: OrchestrationDocument = {
 	],
 	edges: [{ from: "entry", to: "wait", kind: "chain" }],
 	packages: {},
+	annotations: [],
 };
 
 describe("保存前的字段校验", () => {

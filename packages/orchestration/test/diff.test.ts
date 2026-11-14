@@ -46,6 +46,7 @@ describe("编排文档差异", () => {
 			nodes: { added: [], removed: [], changed: [] },
 			edges: { added: [], removed: [] },
 			moved: [],
+			annotations: { added: [], removed: [], changed: [] },
 		});
 	});
 
@@ -75,6 +76,7 @@ describe("编排文档差异", () => {
 				removed: [{ from: "check", to: "notify", kind: "chain" }],
 			},
 			moved: [],
+			annotations: { added: [], removed: [], changed: [] },
 		});
 	});
 
@@ -138,6 +140,7 @@ describe("编排文档差异", () => {
 			},
 			edges: { added: [], removed: [] },
 			moved: [],
+			annotations: { added: [], removed: [], changed: [] },
 		});
 	});
 

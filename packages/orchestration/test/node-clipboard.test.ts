@@ -36,12 +36,14 @@ const source: OrchestrationDocument = {
 		{ from: "fetch", to: "sleep_1", kind: "chain" },
 	],
 	packages: { "demo-checks": "1.2.0" },
+	annotations: [],
 };
 
 const target: OrchestrationDocument = {
 	nodes: [{ id: "entry", kind: "entry", position: { x: 0, y: 0 }, params: [] }],
 	edges: [],
 	packages: {},
+	annotations: [],
 };
 
 function copied(doc: OrchestrationDocument, id: string): CopiedNode {
