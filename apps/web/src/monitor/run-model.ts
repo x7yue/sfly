@@ -11,6 +11,7 @@ import type {
 	RunView,
 	TaskProgressView,
 } from "@sfly/schema";
+import { type RunNodeName, runNodeName } from "#/components/node-name";
 import { runStatusView, type StatusKind } from "#/components/status";
 import { chainLabel as chainName } from "#/lib/copy";
 import { shortId } from "#/lib/format";
@@ -83,14 +84,16 @@ export function findNode(run: RunView, ref: NodeRef | null): NodeRunView | undef
 }
 
 /**
- * 合并日志里一行的来源节点（#220）：「子流程名 / 节点 ID #尝试序号」。主链省略子流程名；节点只有一次尝试时
- * 省略尝试序号（运行视图里还没有新的尝试时，按这一行自己的序号判断）。
+ * 合并日志里一行的来源节点（#220）：「子流程名 / 显示名称（节点 ID） #尝试序号」。主链省略子流程名；
+ * 显示名称取自运行视图（日志行只带节点 ID）；节点只有一次尝试时省略尝试序号（运行视图里还没有新的尝试时，
+ * 按这一行自己的序号判断）。
  */
 export function logOrigin(run: RunView, origin: LogOrigin): string {
 	const node = findNode(run, { chainInstanceId: origin.chain_instance_id, nodeId: origin.node_id });
 	const retried = origin.attempt > 1 || (node?.attempts.length ?? 0) > 1;
 	const subflow = origin.subflow === null ? "" : `${origin.subflow || UNNAMED_SUBFLOW_LABEL} / `;
-	return `${subflow}${origin.node_id}${retried ? ` #${origin.attempt}` : ""}`;
+	const name = runNodeName(node ?? { node_id: origin.node_id });
+	return `${subflow}${name}${retried ? ` #${origin.attempt}` : ""}`;
 }
 
 /**
@@ -153,7 +156,7 @@ export function progressLabel(node: NodeRunView): string | null {
 /** 失败运行的摘要：第一个失败的节点（按链的层级与节点顺序）、它的第几次尝试与错误信息的第一行。 */
 export interface RunFailure {
 	ref: NodeRef;
-	nodeId: string;
+	node: RunNodeName;
 	/** 失败的那次尝试的序号；节点没有尝试记录时为 null。 */
 	attempt: number | null;
 	/** 错误信息的第一行（不含堆栈）；没有错误信息时为空字符串。 */
@@ -169,7 +172,7 @@ export function runFailure(run: RunView): RunFailure | null {
 		const error = node.error ?? attempt?.error ?? null;
 		return {
 			ref: { chainInstanceId: chain.id, nodeId: node.node_id },
-			nodeId: node.node_id,
+			node: { node_id: node.node_id, display_name: node.display_name },
 			attempt: attempt?.attempt ?? null,
 			message: (error?.message ?? "").trim().split("\n")[0]?.trim() ?? "",
 		};
@@ -196,12 +199,12 @@ export const failureMessageSeparator = (failure: RunFailure): string =>
 	failure.attempt === null ? " · " : "· ";
 
 /**
- * 失败摘要：「失败于 verify（第 2 次）· AssertionError: 仍然漏拦」。
+ * 失败摘要：「失败于 核对结果（verify）（第 2 次）· AssertionError: 仍然漏拦」。
  * 监控页顶栏（悬停提示）与运行结束的通知共用这一份文字。
  */
 export function failureSummary(failure: RunFailure): string {
 	const message = failure.message ? `${failureMessageSeparator(failure)}${failure.message}` : "";
-	return `失败于 ${failure.nodeId}${failureAttempt(failure)}${message}`;
+	return `失败于 ${runNodeName(failure.node)}${failureAttempt(failure)}${message}`;
 }
 
 /** 浏览器标签页标题前的状态符号（标题只能是文字）。 */

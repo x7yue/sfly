@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { ChainBars } from "#/components/chain-progress";
 import { DataTable, dataColumns } from "#/components/data-table";
+import { runNodeName } from "#/components/node-name";
 import { runStatusView, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
 import { chainLabel } from "#/lib/copy";
@@ -121,5 +122,6 @@ function statusText(run: RunListItem): string {
 	const failure = run.failures.find((f) => !f.subflow) ?? run.failures[0];
 	if (!failure?.node_id) return label;
 	const where = failure.subflow ? `${chainLabel(failure)} / ` : "";
-	return `${label} · ${where}${failure.node_id}`;
+	const node = runNodeName({ node_id: failure.node_id, display_name: failure.display_name });
+	return `${label} · ${where}${node}`;
 }

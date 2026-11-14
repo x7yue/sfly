@@ -12,6 +12,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { DownloadIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { NodeName, runNodeName } from "#/components/node-name";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
@@ -202,14 +203,16 @@ export function BottomPanel({
 						))}
 					</TabsList>
 					<div className="ml-auto flex items-center gap-1.5 px-2">
-						<ScopeLabel nodeId={node?.node_id} onClear={() => actions.select(null)}>
-							{node
-								? `范围：${node.node_id}`
-								: filter
-									? `范围：跟随筛选（${filtered} 个节点）`
-									: "范围：全部节点"}
-							{node && attempt && node.attempts.length > 1 ? `（第 ${attempt.attempt} 次）` : ""}
-							{zoom && tab === "logs" ? " · 已按时间范围过滤" : ""}
+						<ScopeLabel node={node} onClear={() => actions.select(null)}>
+							{[
+								node
+									? `范围：${runNodeName(node)}`
+									: filter
+										? `范围：跟随筛选（${filtered} 个节点）`
+										: "范围：全部节点",
+								node && attempt && node.attempts.length > 1 ? `（第 ${attempt.attempt} 次）` : "",
+								zoom && tab === "logs" ? " · 已按时间范围过滤" : "",
+							].join("")}
 						</ScopeLabel>
 						{node && node.attempts.length > 1 && (
 							<Segmented
@@ -307,15 +310,15 @@ export function BottomPanel({
 }
 
 function ScopeLabel({
-	nodeId,
+	node,
 	onClear,
 	children,
 }: {
-	nodeId: string | undefined;
+	node: NodeRunView | undefined;
 	onClear: () => void;
-	children: ReactNode;
+	children: string;
 }) {
-	if (nodeId === undefined) {
+	if (node === undefined) {
 		return (
 			<span className="text-xs text-fg-3" data-testid="bp-scope">
 				{children}
@@ -323,11 +326,13 @@ function ScopeLabel({
 		);
 	}
 	return (
-		<span className="inline-flex h-6 items-center rounded-md border border-border bg-raised pl-2 text-xs text-fg-1">
-			<span data-testid="bp-scope">{children}</span>
+		<span className="inline-flex h-6 max-w-96 min-w-0 items-center rounded-md border border-border bg-raised pl-2 text-xs text-fg-1">
+			<span data-testid="bp-scope" className="min-w-0 truncate" title={children}>
+				{children}
+			</span>
 			<button
 				type="button"
-				aria-label={`清除范围，不再只看 ${nodeId}`}
+				aria-label={`清除范围，不再只看 ${runNodeName(node)}`}
 				title={`清除范围（${shortcutText("monitor-deselect")}）`}
 				onClick={onClear}
 				className="grid size-5.5 place-items-center rounded-md text-fg-3 hover:bg-raised-2 hover:text-fg-1"
@@ -338,7 +343,7 @@ function ScopeLabel({
 	);
 }
 
-const noAttempt = (node: NodeRunView) => `${node.node_id} ${NODE_STATUS[node.status].notRun}`;
+const noAttempt = (node: NodeRunView) => `${runNodeName(node)} ${NODE_STATUS[node.status].notRun}`;
 
 function Hint({ children }: { children: ReactNode }) {
 	return <p className="m-0 p-4 text-sm text-fg-3">{children}</p>;
@@ -626,15 +631,15 @@ function AttemptsTab({
 				return (
 					<article
 						key={a.task_id}
-						aria-label={`${n.node_id} 第 ${a.attempt} 次尝试`}
+						aria-label={`${runNodeName(n)} 第 ${a.attempt} 次尝试`}
 						className={cn(
 							"rounded-lg border bg-bg p-2.5 text-xs",
 							a.error ? "border-danger-line" : "border-border-soft",
 						)}
 					>
 						<header className="flex items-center gap-2">
-							<span className="font-mono">{n.node_id}</span>
-							<b className="font-semibold">第 {a.attempt} 次</b>
+							<NodeName node={n} />
+							<b className="flex-none font-semibold">第 {a.attempt} 次</b>
 							<StatusPill kind={status.kind}>{status.label}</StatusPill>
 							<span className="ml-auto font-mono text-2xs text-fg-3">
 								{a.agent ?? "控制面"} · {a.started_at ? formatClock(a.started_at) : "未开始"} ·{" "}

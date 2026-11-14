@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
+import { NodeName } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
@@ -206,7 +207,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 			}}
 			className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
 		>
-			失败于 <span className="font-mono text-fg-1">{failure.nodeId}</span>
+			失败于 <NodeName node={failure.node} className="text-fg-1" />
 			{failureAttempt(failure)}
 			{failure.message && (
 				<span className="text-danger-fg">

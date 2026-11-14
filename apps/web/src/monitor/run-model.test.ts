@@ -371,7 +371,7 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 	it("第一个失败的节点、最后一次失败的尝试、错误信息的第一行（不含堆栈）", () => {
 		expect(runFailure(failed)).toEqual({
 			ref: { chainInstanceId: "main", nodeId: "verify" },
-			nodeId: "verify",
+			node: { node_id: "verify" },
 			attempt: 2,
 			message: "AssertionError: 仍然漏拦",
 		});

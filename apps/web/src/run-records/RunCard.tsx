@@ -1,6 +1,7 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ChainBar, doneCount } from "#/components/chain-progress";
+import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
 import { chainLabel } from "#/lib/copy";
@@ -92,8 +93,10 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 							className="flex items-center gap-2 text-sm whitespace-nowrap"
 						>
 							<StatusDot kind={nodeStatusView(node.status).kind} />
-							<span className="font-mono">{node.node_id}</span>
-							<span className="text-xs text-fg-3">{nodeStatusView(node.status).label}</span>
+							<NodeName node={node} />
+							<span className="flex-none text-xs text-fg-3">
+								{nodeStatusView(node.status).label}
+							</span>
 							<NodePrimaryMetric
 								runId={run.id}
 								entry={catalogEntry(catalog.data, node.chain_instance_id, node.node_id)}
