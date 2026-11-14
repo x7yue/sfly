@@ -160,7 +160,7 @@ describe("sfly scenario show / push：注释框 → 控制面", () => {
 					`最新版本：1，tester 保存于 ${SAVED_AT}`,
 					"默认 Agent：agent-a",
 					"",
-					"主链",
+					"主链（入口 开始（entry））",
 					"  入口参数：无",
 					"  节点：",
 					"    节点    显示名称  节点类型                  包版本  Agent",

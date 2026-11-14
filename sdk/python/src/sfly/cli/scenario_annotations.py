@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from sfly.cli.output import display_width
-from sfly.cli.run_view import subflow_label
+from sfly.cli.run_view import name_with_id, subflow_label
 
 _NOTE_LABEL = "备注："
 
@@ -64,12 +64,7 @@ def _member_names(document: dict[str, Any]) -> tuple[dict[str, str], dict[str, s
             name = node["name"].strip() if node.get("name") is not None else node["id"]
             subflow_names[node["id"]] = subflow_label(name)
             # 子流程入口节点没有显示名称，写子流程名称，和控制台的 nodeNameWithId 一样。
-            node_names[node["id"]] = _name_with_id(node["id"], subflow_names[node["id"]])
+            node_names[node["id"]] = name_with_id(node["id"], subflow_names[node["id"]])
         else:
-            node_names[node["id"]] = _name_with_id(node["id"], node.get("display_name"))
+            node_names[node["id"]] = name_with_id(node["id"], node.get("display_name"))
     return node_names, subflow_names
-
-
-def _name_with_id(node_id: str, name: str | None) -> str:
-    """「名称（节点 ID）」；没有名称或名称就是节点 ID 时只写节点 ID（对应 TS 的 `nameWithId`）。"""
-    return f"{name}（{node_id}）" if name and name != node_id else node_id
