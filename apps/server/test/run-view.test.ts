@@ -81,6 +81,7 @@ describe("运行视图", () => {
 				problems: [],
 				packages: { stub: "1.0.0" },
 				agents: [{ name: "agent-a", default: true, status: "online", preparing_since: null }],
+				presets: [],
 			});
 		});
 
