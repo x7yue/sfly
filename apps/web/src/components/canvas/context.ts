@@ -59,6 +59,18 @@ export interface PortState {
 	dispatch: boolean;
 }
 
+/** 卡片标题的原地编辑（改显示名称）：状态在使用方，FlowCanvas 只在可编辑时把它交给节点卡片。 */
+export interface NodeRename {
+	/** 正在原地编辑的节点；没有时为 null。 */
+	active: string | null;
+	/** 进入原地编辑；不能起显示名称的节点（子流程入口）什么也不做。 */
+	start(id: string): void;
+	/** 确认（Enter、失焦）：`text` 是输入框里的原文，空白表示清除显示名称。 */
+	commit(id: string, text: string): void;
+	/** 取消（Esc）：不改场景。 */
+	cancel(): void;
+}
+
 export interface CanvasContextValue {
 	info: CanvasInfo;
 	selection: CanvasSelection;
@@ -79,6 +91,8 @@ export interface CanvasContextValue {
 	insertOnEdge?: (edge: EdgeEnds, client: Position) => void;
 	/** 打开连线菜单（在「＋」上右键时用，连线本身的右键由 FlowCanvas 处理）。 */
 	openEdgeMenu?: (edge: DocEdge, client: Position) => void;
+	/** 原地改显示名称：只在可编辑时给出（只读画布的卡片标题不响应双击）。 */
+	rename?: NodeRename;
 }
 
 export const EMPTY_INFO: CanvasInfo = {
