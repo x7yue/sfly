@@ -179,6 +179,13 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 		if (!open) setDialog(null);
 	};
 	const running = scenario.last_run?.status === "running";
+	// 归档的场景和没归档的场景「更多操作」菜单里都有这一项。
+	const presetsItem = (
+		<DropdownMenuItem onClick={() => setDialog("presets")}>
+			<SlidersHorizontalIcon />
+			{TERM.runPreset}…
+		</DropdownMenuItem>
+	);
 	const presets = (
 		<RunPresetsDialog
 			scenario={scenario}
@@ -219,12 +226,7 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 					>
 						<EllipsisIcon />
 					</DropdownMenuTrigger>
-					<DropdownMenuContent className="w-48">
-						<DropdownMenuItem onClick={() => setDialog("presets")}>
-							<SlidersHorizontalIcon />
-							{TERM.runPreset}…
-						</DropdownMenuItem>
-					</DropdownMenuContent>
+					<DropdownMenuContent className="w-48">{presetsItem}</DropdownMenuContent>
 				</DropdownMenu>
 				{presets}
 			</>
@@ -264,10 +266,7 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 						<BellIcon />
 						{TERM.runNotification}…
 					</DropdownMenuItem>
-					<DropdownMenuItem onClick={() => setDialog("presets")}>
-						<SlidersHorizontalIcon />
-						{TERM.runPreset}…
-					</DropdownMenuItem>
+					{presetsItem}
 					<DropdownMenuSeparator />
 					<DropdownMenuItem
 						variant="danger"
