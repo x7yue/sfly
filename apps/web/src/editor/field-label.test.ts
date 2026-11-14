@@ -27,6 +27,10 @@ describe("字段错误的位置说明", () => {
 		expect(fieldLabel(entry, "params.0.description")).toBe("参数 1st（第 1 个）的说明");
 	});
 
+	it("节点的显示名称", () => {
+		expect(fieldLabel(pkg, "display_name")).toBe("显示名称");
+	});
+
 	it("还没有名字的参数只说第几个", () => {
 		expect(fieldLabel(entry, "params.1.name")).toBe("第 2 个参数的名称");
 	});

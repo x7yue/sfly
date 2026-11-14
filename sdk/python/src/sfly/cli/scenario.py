@@ -46,7 +46,7 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         parents=[common_options()],
         help="查看一个场景：入口参数、各链路上的节点、子流程、默认 Agent",
         description="查看场景最新版本的内容：入口参数、主链和各子流程上的节点"
-        "（节点类型、锁定的节点包版本、sfly Agent）、默认 Agent。",
+        "（显示名称、节点类型、锁定的节点包版本、sfly Agent）、默认 Agent。",
     )
     p_show.add_argument("scenario", metavar="场景", help="场景 id 或准确名称")
     p_show.set_defaults(func=command(_show))
@@ -130,6 +130,8 @@ def describe(scenario: dict[str, Any], head: dict[str, Any]) -> dict[str, Any]:
             "kind": node["kind"],
             "always": node.get("always", False),
         }
+        if node.get("display_name"):
+            view["display_name"] = node["display_name"]
         if node["kind"] == "package":
             view["package"] = node["package"]
             view["node"] = node["node"]
@@ -295,9 +297,10 @@ def _nodes_table(nodes: list[dict[str, Any]]) -> str:
         rows.append(
             [
                 n["id"],
+                n.get("display_name", "-"),
                 _node_type(n),
                 (n["package_version"] or "-") if is_package else "-",
                 (n["agent"] or "-") if is_package else "-",
             ]
         )
-    return format_table(["节点", "节点类型", "包版本", "Agent"], rows)
+    return format_table(["节点", "显示名称", "节点类型", "包版本", "Agent"], rows)

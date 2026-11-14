@@ -43,6 +43,7 @@ const PARAM_ITEM: Record<string, string> = {
 
 /** 节点上的单个字段：名称与检查器里的字段标签一致。 */
 const NODE_FIELD: Record<string, string> = {
+	display_name: "显示名称",
 	agent: "节点 Agent",
 	timeout: "超时",
 	retries: "重试次数",
