@@ -4,6 +4,7 @@ import {
 	type AnnotationWarning,
 	annotationWarnings,
 	isAnnotationWarning,
+	type WarningShape,
 } from "./annotation-warnings.js";
 import { type FeishuBotWarning, feishuBotInputWarnings, feishuBotWarnings } from "./feishu-bots.js";
 import { type InputWarning, inputWarnings } from "./inputs.js";
@@ -17,17 +18,20 @@ import {
 import { type StructureWarning, structureWarnings } from "./structure.js";
 import { type TimingWarning, timingWarnings } from "./timing.js";
 
-export type OrchestrationWarning =
+/** 指着节点或整个场景的警告：没有 `annotation_id`，和注释框的警告（`AnnotationWarning`）区分开。 */
+type NodeWarning = (
 	| StructureWarning
 	| ReferenceWarning
 	| InputWarning
 	| AgentInputWarning
 	| FeishuBotWarning
 	| TimingWarning
-	| AnnotationWarning;
+) & { annotation_id?: undefined };
+
+export type OrchestrationWarning = NodeWarning | AnnotationWarning;
 
 /** 这条警告是否阻断触发：触发前的预检要求处理完；注释框的警告只提示，不阻断（docs/SEMANTICS.md §1.6）。 */
-export const blocksTrigger = (warning: object): boolean => !isAnnotationWarning(warning);
+export const blocksTrigger = (warning: WarningShape): boolean => !isAnnotationWarning(warning);
 
 /**
  * 编排文档的全部静态检查（docs/SEMANTICS.md §1.2、§2.4、§5、§7）：结构、包版本锁定、引用、包节点输入（必填、常量类型、

@@ -1,3 +1,4 @@
+import type { AnnotationMembers } from "./annotations.js";
 import { nodeNameWithId } from "./node-display.js";
 import type { StructureDocument } from "./structure.js";
 
@@ -27,19 +28,22 @@ export interface AnnotationWarning {
 /** 注释框检查读取的部分：文档的节点，和注释框的标题与成员。 */
 export interface AnnotationWarningDocument {
 	nodes: StructureDocument["nodes"];
-	annotations?:
-		| readonly {
-				id: string;
-				title: string;
-				nodes: readonly string[];
-				subflows: readonly string[];
-		  }[]
-		| undefined;
+	annotations?: readonly (AnnotationMembers & { readonly title: string })[] | undefined;
 }
 
-/** 警告是否注释框的警告（带 `annotation_id`）；接口返回的警告（DocumentWarningView）也能判断。 */
-export const isAnnotationWarning = (warning: object): warning is AnnotationWarning =>
-	"annotation_id" in warning && warning.annotation_id !== undefined;
+/** 警告里区分注释框的部分：只有注释框的警告带 `annotation_id`，接口返回的警告（DocumentWarningView）也是。 */
+export interface WarningShape {
+	message: string;
+	annotation_id?: string | undefined;
+}
+
+/**
+ * 警告是否注释框的警告：别的警告指着节点或整个场景（`OrchestrationWarning` 靠 `annotation_id`
+ * 这一个字段分成两类）。接口返回的警告（DocumentWarningView）形状相同，也能判断。
+ */
+export const isAnnotationWarning = <W extends WarningShape>(
+	warning: W,
+): warning is W & { annotation_id: string } => warning.annotation_id !== undefined;
 
 /** 每个成员出现的次数，按第一次出现的顺序。 */
 function counted(ids: readonly string[]): Map<string, number> {

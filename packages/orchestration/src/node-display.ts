@@ -100,7 +100,9 @@ export function nameBeforeId(id: string, displayName: string | undefined): strin
 
 /**
  * 卡片以外写节点的名字：「显示名称（节点 ID）」；没有显示名称时只写节点 ID。
- * 命令行里节点 ID 在前（`sfly` 的输出常被拿去拼下一条命令），由命令行自己按这条规则写，不用这个函数。
+ * 命令行的运行输出（`run start --wait`、`run show`、`run artifacts`）节点 ID 在前（`链:节点「显示名称」`，
+ * 因为这些输出常被拿去拼下一条命令），由 Python 的 `with_display_name` 写，不用这个函数；
+ * `scenario show` 不是运行输出，和这里一样写「显示名称（节点 ID）」，由 Python 的 `name_with_id` 写。
  */
 export function nameWithId(id: string, displayName: string | undefined): string {
 	const name = nameBeforeId(id, displayName);
