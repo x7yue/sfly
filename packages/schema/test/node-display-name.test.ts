@@ -26,16 +26,15 @@ describe("节点的显示名称 display_name", () => {
 		expect(DISPLAY_NAME_MAX).toBe(40);
 	});
 
-	it.each(Object.keys(nodes) as (keyof typeof nodes)[])(
-		"%s 节点：可以不写；写了去掉首尾空白后保存",
-		(kind) => {
-			expect(OrchestrationDocument.parse(documentOf(nodes[kind])).nodes[0]).not.toHaveProperty(
-				"display_name",
-			);
-			const parsed = OrchestrationDocument.parse(withName(kind, "  创建测试用户 "));
-			expect(parsed.nodes[0]).toMatchObject({ display_name: "创建测试用户" });
-		},
-	);
+	it.each(
+		Object.keys(nodes) as (keyof typeof nodes)[],
+	)("%s 节点：可以不写；写了去掉首尾空白后保存", (kind) => {
+		expect(OrchestrationDocument.parse(documentOf(nodes[kind])).nodes[0]).not.toHaveProperty(
+			"display_name",
+		);
+		const parsed = OrchestrationDocument.parse(withName(kind, "  创建测试用户 "));
+		expect(parsed.nodes[0]).toMatchObject({ display_name: "创建测试用户" });
+	});
 
 	it("子流程入口节点没有这个字段：它的名称就是子流程名称（name）", () => {
 		const result = OrchestrationDocument.safeParse(
@@ -96,7 +95,12 @@ describe("显示名称：导出的文档 JSON Schema 与 zod 判断一致", () =
 	});
 
 	it("子流程入口节点写 display_name：两边都拒绝", () => {
-		const document = documentOf({ id: "s", kind: "subflow_entry", name: "监控", display_name: "x" });
+		const document = documentOf({
+			id: "s",
+			kind: "subflow_entry",
+			name: "监控",
+			display_name: "x",
+		});
 		expect(validate(document)).toBe(false);
 		expect(OrchestrationDocument.safeParse(document).success).toBe(false);
 	});

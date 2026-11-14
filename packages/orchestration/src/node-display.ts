@@ -4,7 +4,8 @@ import { subflowLabel } from "./chain-label.js";
 /**
  * 一个节点显示成什么：画布卡片、检查器、版本查看画布和运行监控页共用，不各算各的。
  * 分两种写法：卡片上（{@link nodeCardText}，标题加头部种类名）和卡片以外（{@link nodeOutsideCardText}，
- * 一句说明文字）。
+ * 一句说明文字）。节点有显示名称时，卡片上显示名称是标题；卡片以外写节点的名字时写成「显示名称（节点 ID）」
+ * （{@link nodeNameWithId}、{@link nameWithId}）。
  */
 
 export type NodeKind = OrchestrationNode["kind"];
@@ -69,13 +70,47 @@ function cardCaption(kind: NodeKind, title: string): string | undefined {
 	return title.includes(label) ? undefined : label;
 }
 
-/** 卡片上的写法：`title` 是卡片标题，`caption` 是头部 ID 旁的种类名（不需要时为 undefined）。 */
+/** 去掉首尾空白之后的显示名称；没写或只有空白时为 undefined。 */
+const displayNameOf = (node: OrchestrationNode | { display_name?: string | undefined }) =>
+	("display_name" in node ? node.display_name?.trim() : undefined) || undefined;
+
+/**
+ * 卡片上的写法：`title` 是卡片标题，`caption` 是头部 ID 旁的种类名（不需要时为 undefined）。
+ * 有显示名称时标题是显示名称，原来的标题（节点类型标题、「等待 30s」……）挪到 `caption`。
+ */
 export function nodeCardText(
 	node: OrchestrationNode,
 	lookup: NodeDisplayLookup,
 ): { title: string; caption: string | undefined } {
 	const title = cardTitle(node, lookup);
+	const named = displayNameOf(node);
+	if (named !== undefined) return { title: named, caption: title };
 	return { title, caption: cardCaption(node.kind, title) };
+}
+
+/**
+ * 卡片以外写节点的名字：「显示名称（节点 ID）」；没有显示名称时只写节点 ID。
+ * 命令行里节点 ID 在前（`sfly` 的输出常被拿去拼下一条命令），由命令行自己按这条规则写，不用这个函数。
+ */
+export function nameWithId(id: string, displayName: string | undefined): string {
+	const name = displayName?.trim();
+	return name && name !== id ? `${name}（${id}）` : id;
+}
+
+/**
+ * {@link nameWithId} 读节点的显示名称；子流程入口节点没有显示名称，用子流程名称
+ * （没有名称字段的旧版本只写节点 ID）。接受只有 `id` 和 `kind` 的节点，运行里的节点也能用。
+ */
+export function nodeNameWithId(node: {
+	id: string;
+	kind: string;
+	display_name?: string | undefined;
+	name?: string | undefined;
+}): string {
+	return nameWithId(
+		node.id,
+		node.kind === "subflow_entry" ? subflowLabel(node) : displayNameOf(node),
+	);
 }
 
 /**

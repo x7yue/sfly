@@ -2,7 +2,9 @@ import type { OrchestrationNode } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
 	type NodeDisplayLookup,
+	nameWithId,
 	nodeCardText,
+	nodeNameWithId,
 	nodeOutsideCardText,
 	subflowLabels,
 } from "../src/index.js";
@@ -111,6 +113,90 @@ describe("卡片上的标题和头部种类名", () => {
 		expect(nodeCardText(node({ kind: "sleep", duration: "5m" }), {}).title).toBe("等待 5m");
 		expect(nodeCardText(node({ kind: "stop_subflow", subflow: "mon" }), {}).title).toBe(
 			"停止「mon」",
+		);
+	});
+});
+
+describe("有显示名称时卡片上的写法", () => {
+	it("标题是显示名称，原来的标题挪到头部种类名的位置，包括不重复种类名的情况", () => {
+		const named = (n: Record<string, unknown> & { kind: OrchestrationNode["kind"] }) =>
+			nodeCardText(node({ display_name: "创建测试用户", ...n }), lookup);
+		expect(named({ kind: "package", package: "std", node: "shell" })).toEqual({
+			title: "创建测试用户",
+			caption: "Shell 命令",
+		});
+		expect(named({ kind: "package", package: "std", node: "gone" })).toEqual({
+			title: "创建测试用户",
+			caption: "gone",
+		});
+		expect(named({ kind: "sleep", duration: "30s" })).toEqual({
+			title: "创建测试用户",
+			caption: "等待 30s",
+		});
+		expect(named({ kind: "timer", at: "09:30:00" })).toEqual({
+			title: "创建测试用户",
+			caption: "等到 09:30:00",
+		});
+		expect(named({ kind: "stop_subflow", subflow: "mon" })).toEqual({
+			title: "创建测试用户",
+			caption: "停止「监控」",
+		});
+		expect(named({ kind: "stop_subflow" })).toEqual({
+			title: "创建测试用户",
+			caption: "停止子流程",
+		});
+		expect(named({ kind: "feishu_notify" })).toEqual({
+			title: "创建测试用户",
+			caption: "飞书通知",
+		});
+		expect(named({ kind: "async" })).toEqual({ title: "创建测试用户", caption: "异步任务" });
+		expect(named({ kind: "entry" })).toEqual({ title: "创建测试用户", caption: "入口" });
+	});
+
+	it("显示名称里的空白不算：只有空白当作没写，首尾空白不显示", () => {
+		const shell = { kind: "package", package: "std", node: "shell" } as const;
+		expect(nodeCardText(node({ ...shell, display_name: "   " }), lookup)).toEqual({
+			title: "Shell 命令",
+			caption: undefined,
+		});
+		expect(nodeCardText(node({ ...shell, display_name: " 建数据 " }), lookup).title).toBe("建数据");
+	});
+
+	it("子流程入口节点没有显示名称，标题仍然是子流程名称", () => {
+		expect(nodeCardText(node({ kind: "subflow_entry", id: "mon", name: "监控" }), lookup)).toEqual({
+			title: "监控",
+			caption: "子流程入口",
+		});
+	});
+});
+
+describe("「显示名称（节点 ID）」：卡片以外写节点的名字", () => {
+	it("有显示名称时写显示名称，节点 ID 放在括号里；没有时只写节点 ID", () => {
+		expect(nameWithId("http_request_1", "创建测试用户")).toBe("创建测试用户（http_request_1）");
+		expect(nameWithId("http_request_1", undefined)).toBe("http_request_1");
+		expect(nameWithId("http_request_1", "")).toBe("http_request_1");
+		expect(nameWithId("http_request_1", "  ")).toBe("http_request_1");
+	});
+
+	it("显示名称和节点 ID 一样时不重复", () => {
+		expect(nameWithId("legacy", "legacy")).toBe("legacy");
+	});
+
+	it("节点：读它的显示名称", () => {
+		const shell = { kind: "package", package: "std", node: "shell" } as const;
+		expect(nodeNameWithId(node({ ...shell, id: "shell_1", display_name: " 建数据 " }))).toBe(
+			"建数据（shell_1）",
+		);
+		expect(nodeNameWithId(node({ ...shell, id: "shell_1" }))).toBe("shell_1");
+	});
+
+	it("子流程入口节点用子流程名称；没有名称字段的旧版本只写节点 ID，填了空名称写「未命名子流程」", () => {
+		expect(nodeNameWithId(node({ kind: "subflow_entry", id: "mon", name: "监控" }))).toBe(
+			"监控（mon）",
+		);
+		expect(nodeNameWithId(node({ kind: "subflow_entry", id: "legacy" }))).toBe("legacy");
+		expect(nodeNameWithId(node({ kind: "subflow_entry", id: "blank", name: " " }))).toBe(
+			"未命名子流程（blank）",
 		);
 	});
 });
