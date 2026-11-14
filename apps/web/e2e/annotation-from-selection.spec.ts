@@ -49,6 +49,25 @@ async function marqueeMainChain(page: Page, first: string, last: string) {
 	);
 }
 
+/**
+ * 注释框的宽高是 `cardId` 节点卡片的几倍（同一时刻量两者）：视图缩放、平移、像素取整都不改变它，
+ * 只有框真的变大变小才变（屏幕像素的尺寸会随视图动画差零点几个像素）。
+ */
+const sizeInCards = (page: Page, annotationId: string, cardId: string) =>
+	page.evaluate(
+		([annotation, card]) => {
+			const rect = (selector: string) => {
+				const el = document.querySelector(selector);
+				if (!el) throw new Error(`页面上没有 ${selector}`);
+				return el.getBoundingClientRect();
+			};
+			const frame = rect(`[data-annotation="${annotation}"]`);
+			const unit = rect(`[data-node-id="${card}"]`);
+			return { width: frame.width / unit.width, height: frame.height / unit.height };
+		},
+		[annotationId, cardId] as const,
+	);
+
 const ctrlClick = (page: Page, id: string) =>
 	nodeCard(page, id).click({ modifiers: ["ControlOrMeta"] });
 
@@ -157,17 +176,18 @@ test("只选中子流程的一部分节点：只记节点成员；往这个子�
 	await expect(memberList(page).getByRole("listitem")).toHaveText([/fetch/, /sub_ping/]);
 
 	const frame = annotationFrame(page, "annotation_1");
-	const first = await box(frame);
-	expect(frames(first, await box(nodeCard(page, "sub_ping")))).toBe(true);
+	expect(frames(await box(frame), await box(nodeCard(page, "sub_ping")))).toBe(true);
+	const first = await sizeInCards(page, "annotation_1", "sub_ping");
 
 	await nodeCard(page, "sub_ping").click({ button: "right" });
 	await nodeMenu(page).getByRole("menuitem", { name: "在后面添加节点" }).click();
 	await addMenu(page).getByRole("option", { name: /Sleep/ }).click();
 	await expect(nodeCard(page, "sleep_1")).toBeVisible();
-	// 视图可能随新节点平移，大小不变：框只按成员算，sub_ping 是节点成员。
-	const after = await box(frame);
-	expect([after.width, after.height]).toEqual([first.width, first.height]);
-	expect(frames(after, await box(nodeCard(page, "sleep_1")))).toBe(false);
+	// 框只按成员算，sub_ping 是节点成员：框的大小（以卡片为单位）不变，新节点不在框里。
+	const after = await sizeInCards(page, "annotation_1", "sub_ping");
+	expect(after.width).toBeCloseTo(first.width, 1);
+	expect(after.height).toBeCloseTo(first.height, 1);
+	expect(frames(await box(frame), await box(nodeCard(page, "sleep_1")))).toBe(false);
 
 	await save(page, 2);
 	expect(await savedAnnotations(controlPlane, id)).toEqual([
