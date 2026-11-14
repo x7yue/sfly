@@ -35,7 +35,7 @@ export interface EditorMenuActions {
 
 /**
  * 编排画布的右键菜单内容（FlowCanvas 的 `menu`），按右键的对象分：连线（EdgeMenu）、节点（NodeMenu）、
- * 空白处（PaneMenu）。运行状态模式（不给 `edit`）下节点菜单只有只读项，空白处只有「适配视图」，连线没有菜单。
+ * 多选里的节点（作用于整组，只有「添加注释框」）、空白处（PaneMenu）。运行状态模式（不给 `edit`）下节点菜单只有只读项，空白处只有「适配视图」，连线没有菜单。
  */
 export function EditorMenu({
 	target,
