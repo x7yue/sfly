@@ -29,6 +29,7 @@ import { type CheckRow, type LocalState, type Preflight, preflightChecks } from 
 import { readLastPreset, rememberPreset } from "./last-preset";
 import { ParamField } from "./ParamField";
 import { PresetSelect } from "./PresetSelect";
+import { SectionTitle } from "./SectionTitle";
 import {
 	initialPresetId,
 	initialValues,
@@ -292,19 +293,6 @@ function errorText(errors: unknown[]): string | undefined {
 	if (!first) return undefined;
 	if (typeof first === "string") return first;
 	return (first as { message?: string }).message;
-}
-
-function SectionTitle({ children, first }: { children: React.ReactNode; first?: boolean }) {
-	return (
-		<h3
-			className={cn(
-				"mb-2.5 flex items-center text-xs font-semibold tracking-wide text-fg-2",
-				first ? "mt-0" : "mt-4.5",
-			)}
-		>
-			{children}
-		</h3>
-	);
 }
 
 /** 该场景已有运行中的运行：提示并给出查看入口。 */

@@ -4,6 +4,7 @@ import { PRESET_INVALID_LABEL, TERM } from "#/lib/copy";
 import { problemsText } from "#/presets/invalid-preset";
 import { Button } from "@/components/ui/button";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
+import { SectionTitle } from "./SectionTitle";
 
 /** 「管理预设…」选项的值：不是预设 ID，选中它只是打开管理对话框，选择框里的选中项不变。 */
 const MANAGE = "manage";
@@ -32,17 +33,20 @@ export function PresetSelect({
 }) {
 	const id = useId();
 	return (
-		<div className="mb-4.5 flex flex-col gap-2.5">
-			<div className="flex items-center justify-between gap-2">
-				<label htmlFor={id} className="text-xs font-semibold tracking-wide text-fg-2">
-					{TERM.runPreset}
-				</label>
+		<div className="mb-4.5">
+			<SectionTitle first>
+				<label htmlFor={id}>{TERM.runPreset}</label>
 				{value === null && (
-					<Button variant="link" size="sm" className="text-xs" onClick={onSaveAs}>
+					<Button
+						variant="link"
+						size="sm"
+						className="ml-auto text-xs tracking-normal"
+						onClick={onSaveAs}
+					>
 						存为预设
 					</Button>
 				)}
-			</div>
+			</SectionTitle>
 			<NativeSelect
 				id={id}
 				ref={selectRef}
