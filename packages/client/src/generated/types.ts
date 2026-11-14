@@ -822,6 +822,11 @@ export type NodeStatus = "queued" | "dispatched" | "running" | "waiting" | "succ
 export interface NodeTypeView {
 	name: NodeName;
 	title: string;
+	/**
+	 * 节点类型的说明：节点函数的文档字符串（去掉缩进，可以多段），显示在「添加节点」菜单（第一段）、
+	 * 节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。
+	 */
+	description?: string;
 	/** 入口：`module:function`。 */
 	entry: string;
 	inputs: IoSchema;
@@ -981,9 +986,11 @@ export interface PackageVersionSummary {
 	sha256: string;
 	size: number;
 	published_at: Timestamp;
+	/** 节点类型摘要，「添加节点」菜单用；`description` 是节点类型的完整说明，没有文档字符串时没有这个字段。 */
 	nodes: {
 		name: string;
 		title: string;
+		description?: string;
 	}[];
 	/** 有多少个场景的最新版本锁定了这个版本。 */
 	locked_orchestrations: number;

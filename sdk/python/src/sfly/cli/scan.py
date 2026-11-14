@@ -283,6 +283,22 @@ def _label_keys(metric: Metric) -> list[str]:
     return keys
 
 
+#: 节点类型说明（函数的文档字符串）最长多少个 Unicode 字符
+#: （与 packages/schema 的 NODE_DESCRIPTION_MAX 一致）。
+MAX_NODE_DESCRIPTION = 4000
+
+
+def node_description(fn: Any, label: str) -> str | None:
+    """函数的文档字符串去掉缩进后整段作为节点类型的说明；没有文档字符串或只有空白时返回 None。"""
+    description = inspect.cleandoc(fn.__doc__).strip() if fn.__doc__ else ""
+    if len(description) > MAX_NODE_DESCRIPTION:
+        raise ScanError(
+            f"{label}：文档字符串（节点类型的说明）最长 {MAX_NODE_DESCRIPTION} 个字符，"
+            f"实际 {len(description)} 个"
+        )
+    return description or None
+
+
 def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
     qualname: str = fn.__qualname__
     label = f"节点 {fn.__module__}.{qualname}"
@@ -293,9 +309,11 @@ def node_metadata(fn: Any, decl: NodeDeclaration) -> dict[str, Any]:
         declarations = metric_declarations(decl)
     except ScanError as error:
         raise ScanError(f"{label}：{error}") from None
+    description = node_description(fn, label)
     return {
         "name": name,
         "title": decl.title or name,
+        **({"description": description} if description else {}),
         "entry": f"{fn.__module__}:{qualname}",
         "inputs": input_schema(fn, label),
         "outputs": output_schema(fn, decl, label),
