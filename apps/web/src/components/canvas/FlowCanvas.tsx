@@ -47,6 +47,13 @@ import { VIEWPORT_MS, viewportDuration } from "./motion";
 import { nodeTypes } from "./NodeCard";
 import { isNavigationKey, navigateChain } from "./navigation";
 import { SubflowRegions } from "./SubflowRegions";
+import {
+	type CanvasSelection,
+	isNodeSelected,
+	NO_SELECTION,
+	selectNode,
+	soleNode,
+} from "./selection";
 
 /**
  * 可配置的编排画布（#35；以 xyflow 官方 React Flow UI 组件为起点）：铺满容器，控件悬浮在上面。
@@ -55,7 +62,7 @@ import { SubflowRegions } from "./SubflowRegions";
  * 打开时与窗口变化时自动适配视图（避开 `insets` 指出的悬浮控件）、底部工具条、左下小地图、
  * 键盘浏览（方向键沿链切换、↓/↑ 进出子流程、Enter 交给 onEnter、Esc 取消选中；不用方向键移动节点）。
  *
- * 使用方负责：节点与连线的状态（受控）、选中哪个节点、右侧检查器和其他悬浮控件（children）。
+ * 使用方负责：节点与连线的状态（受控）、选中状态（受控，见 selection.ts）、右侧检查器和其他悬浮控件（children）。
  *
  * 扩展点（后续票据复用这一个组件，不再各写一套画布）：
  * - `editable={false}`：只读（不能拖动、连线、删除），用于运行状态（#41）与版本对比（#40）；
@@ -75,8 +82,9 @@ export interface FlowCanvasProps {
 	nodes: SfNode[];
 	edges: SfEdge[];
 	info: CanvasInfo;
-	selectedId: string | null;
-	onSelect(id: string | null): void;
+	/** 选中了什么（只含画布上有的节点）。 */
+	selection: CanvasSelection;
+	onSelect(selection: CanvasSelection): void;
 	/** 可以拖动节点、连线、删除（默认 false：只读）。 */
 	editable?: boolean;
 	onNodesChange?: OnNodesChange<SfNode>;
@@ -89,8 +97,8 @@ export interface FlowCanvasProps {
 	decorateNode?: (id: string, node: SfNode["data"]["node"]) => NodeDecoration | undefined;
 	decorateEdge?: CanvasContextValue["decorateEdge"];
 	regionMeta?: CanvasContextValue["regionMeta"];
-	/** 选中节点时按 Enter（焦点在画布上）：通常把焦点移到检查器。 */
-	onEnter?(id: string): void;
+	/** 选中了东西时按 Enter（焦点在画布上）：通常把焦点移到检查器。 */
+	onEnter?(): void;
 	/** 检查器开关（工具条按钮与 I 键）；检查器本身由使用方渲染。 */
 	inspector?: { open: boolean; onToggle(): void };
 	/** 打开时是否显示小地图（默认显示；版本对比的窄画布默认收起）。 */
@@ -132,7 +140,7 @@ export function FlowCanvas({
 	nodes,
 	edges,
 	info,
-	selectedId,
+	selection,
 	onSelect,
 	editable = false,
 	onNodesChange,
@@ -184,10 +192,11 @@ export function FlowCanvas({
 	// 选中由使用方控制（单选）；React Flow 自己的 select 变化不往外传。
 	const shownNodes = useMemo(
 		() =>
-			nodes.map((n) =>
-				n.selected === (n.id === selectedId) ? n : { ...n, selected: n.id === selectedId },
-			),
-		[nodes, selectedId],
+			nodes.map((n) => {
+				const selected = isNodeSelected(selection, n.id);
+				return n.selected === selected ? n : { ...n, selected };
+			}),
+		[nodes, selection],
 	);
 	const handleNodesChange = useCallback(
 		(changes: NodeChange<SfNode>[]) => {
@@ -257,7 +266,7 @@ export function FlowCanvas({
 				openPaneMenu(client);
 				return;
 			}
-			onSelect(null);
+			onSelect(NO_SELECTION);
 			store.getState().addSelectedEdges([edgeId(edge)]);
 			focusRegion();
 			setMenuState({ target: { kind: "edge", edge, client }, open: true });
@@ -267,7 +276,7 @@ export function FlowCanvas({
 	const context = useMemo<CanvasContextValue>(
 		() => ({
 			info,
-			selectedId,
+			selection,
 			ports,
 			decorateNode,
 			decorateEdge,
@@ -277,7 +286,7 @@ export function FlowCanvas({
 		}),
 		[
 			info,
-			selectedId,
+			selection,
 			ports,
 			decorateNode,
 			decorateEdge,
@@ -352,7 +361,7 @@ export function FlowCanvas({
 		const card = wrapper.current?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
 		if (!menu || !node || !card) return;
 		card.focus({ preventScroll: true });
-		onSelect(id);
+		onSelect(selectNode(id));
 		setMenuState({
 			target: { kind: "node", id, node: node.data.node, anchor: at ?? card },
 			open: true,
@@ -360,8 +369,8 @@ export function FlowCanvas({
 	};
 
 	// —— 键盘：方向键沿链切换、Enter、Esc、Shift+F10 / 菜单键 ——
-	const latest = useRef({ nodes, edges, selectedId, onSelect, onEnter, reveal, openNodeMenu });
-	latest.current = { nodes, edges, selectedId, onSelect, onEnter, reveal, openNodeMenu };
+	const latest = useRef({ nodes, edges, selection, onSelect, onEnter, reveal, openNodeMenu });
+	latest.current = { nodes, edges, selection, onSelect, onEnter, reveal, openNodeMenu };
 	useEffect(() => {
 		const focusNode = (id: string) =>
 			requestAnimationFrame(() => {
@@ -382,7 +391,7 @@ export function FlowCanvas({
 				target?.closest("[data-node-id]") !== null ||
 				target?.classList.contains("react-flow__pane");
 			if (!onCanvas || !(target === document.body || root.contains(target))) return;
-			const { nodes, edges, selectedId, onSelect, onEnter, reveal, openNodeMenu } = latest.current;
+			const { nodes, edges, selection, onSelect, onEnter, reveal, openNodeMenu } = latest.current;
 			const cardId = target?.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId;
 			if (cardId && (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey))) {
 				// 拦下默认行为：浏览器自己的右键菜单不再弹出。
@@ -399,20 +408,20 @@ export function FlowCanvas({
 							kind: e.data?.kind ?? "chain",
 						})),
 					},
-					selectedId,
+					soleNode(selection),
 					event.key,
 				);
 				if (next) {
-					onSelect(next);
+					onSelect(selectNode(next));
 					reveal(next);
 					focusNode(next);
 				}
-			} else if (event.key === "Enter" && selectedId) {
+			} else if (event.key === "Enter" && selection.kind !== "none") {
 				event.preventDefault();
-				onEnter?.(selectedId);
-			} else if (event.key === "Escape" && selectedId) {
+				onEnter?.();
+			} else if (event.key === "Escape" && selection.kind !== "none") {
 				event.preventDefault();
-				onSelect(null);
+				onSelect(NO_SELECTION);
 				root.focus({ preventScroll: true });
 			}
 		};
@@ -468,9 +477,9 @@ export function FlowCanvas({
 					onConnect={onConnect}
 					onConnectEnd={onConnectEnd}
 					isValidConnection={isValidConnection}
-					onNodeClick={(_e, node) => onSelect(node.id)}
+					onNodeClick={(_e, node) => onSelect(selectNode(node.id))}
 					onPaneClick={() => {
-						onSelect(null);
+						onSelect(NO_SELECTION);
 						// 拖动画布的手势拦掉了 mousedown 的默认行为，点空白处时焦点不会自己移过来：
 						// 手动聚焦画布区域，并标记是鼠标放过来的（失焦时清掉）：编辑器据此决定 Tab 是添加节点
 						// 还是照常切换焦点（editor/ScenarioEditor.tsx）。
@@ -481,7 +490,7 @@ export function FlowCanvas({
 						openPaneMenu({ x: event.clientX, y: event.clientY });
 					}}
 					// 点选连线时节点取消选中：之后按 Delete 只删这条连线。
-					onEdgeClick={() => onSelect(null)}
+					onEdgeClick={() => onSelect(NO_SELECTION)}
 					onEdgeContextMenu={(event, edge) => {
 						event.preventDefault();
 						openEdgeMenu(docEdgeOf(edge), { x: event.clientX, y: event.clientY });
@@ -546,7 +555,7 @@ export function FlowCanvas({
 							nodeBorderRadius={12}
 							nodeColor={(n) => minimapLook(decorateNode?.(n.id, n.data.node)?.run).fill}
 							nodeStrokeColor={(n) =>
-								n.id === selectedId
+								isNodeSelected(selection, n.id)
 									? "var(--selected)"
 									: minimapLook(decorateNode?.(n.id, n.data.node)?.run).stroke
 							}

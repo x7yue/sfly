@@ -7,6 +7,7 @@ import { floatGroupClass } from "#/components/canvas/CanvasDock";
 import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META, nodeTitle } from "#/components/canvas/node-display";
+import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
@@ -172,20 +173,25 @@ export function RunTopRight({
 }
 
 /**
- * 运行状态检查器：选中节点时是该节点在这次运行里的摘要（运行编号与版本、Agent、耗时、尝试次数、错误）
+ * 运行状态检查器：选中一个节点时是该节点在这次运行里的摘要（运行编号与版本、Agent、耗时、尝试次数、错误）
  * 和「在监控页中打开」（跳转后定位到该节点）；没有选中时是这次运行的概况。
  */
 export const RunStateInspector = forwardRef<
 	HTMLElement,
 	{
 		state: CanvasRun;
-		selected: { id: string; node: DocNode } | null;
+		/** 画布上选中了什么（只含画布上有的节点）。 */
+		selection: CanvasSelection;
+		/** 画布上节点的内容。 */
+		nodeOf(id: string): DocNode | undefined;
 		info: CanvasInfo;
 		onCollapse(): void;
 		onEscape(): void;
 	}
->(function RunStateInspector({ state, selected, info, onCollapse, onEscape }, ref) {
+>(function RunStateInspector({ state, selection, nodeOf, info, onCollapse, onEscape }, ref) {
 	const width = useInspectorWidth();
+	const id = soleNode(selection);
+	const node = id === null ? undefined : nodeOf(id);
 	return (
 		<aside
 			ref={ref}
@@ -200,12 +206,12 @@ export const RunStateInspector = forwardRef<
 			className="absolute top-15.5 right-3 bottom-3.5 z-10 flex flex-col overflow-hidden rounded-xl border border-border-soft bg-surface/94 shadow-float"
 			style={{ width }}
 		>
-			{state.status === "ready" && selected ? (
+			{state.status === "ready" && id !== null && node ? (
 				<NodeRunInspector
 					run={state.run}
-					id={selected.id}
-					node={selected.node}
-					summary={state.overlay.node(selected.id)}
+					id={id}
+					node={node}
+					summary={state.overlay.node(id)}
 					info={info}
 					onCollapse={onCollapse}
 				/>

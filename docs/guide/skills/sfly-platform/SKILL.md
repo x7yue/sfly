@@ -17,8 +17,8 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
    完成：输出里有 `<包名>@dev`，`sfly agent list` 的「开发包」列里有这个包。
 3. **准备联调副本**：名称是 `<原名>-联调-<昵称>`（昵称取 `$SFLY_NICKNAME`，没设置时取系统用户名），改动都落在它上面，以后每次联调沿用同一份。先 `uv run sfly scenario list --search <原名>-联调`：
    - 已有这份副本：沿用。
-   - 没有，用户指定了原场景：`uv run sfly scenario copy <原名> --name <原名>-联调-<昵称>`。
-   - 没有可复制的场景（节点包第一次联调）：把下面的文档存成文件，`uv run sfly scenario create --name <包名>-联调-<昵称> --from <文件>`；它已经是开发版本和本机 Agent，直接做第 5 步。
+   - 没有，用户指定了原场景：`uv run sfly scenario copy <原名> --name <原名>-联调-<昵称>`。`copy` 会把原场景的说明一起复制过来，副本的说明讲的是原场景：复制后先 `uv run sfly scenario show <副本> --json`，取 `description` 字段（多行说明要完整取到），再 `uv run sfly scenario rename <副本> --description $'联调 <包名>，由 <昵称> 的 AI 编程助手创建\n<原场景的说明>'`。第一行写用途，`description` 的全文原样接在后面；原场景没有说明就只写第一行。
+   - 没有可复制的场景（节点包第一次联调）：把下面的文档存成文件，`uv run sfly scenario create --name <包名>-联调-<昵称> --description "联调 <包名>，由 <昵称> 的 AI 编程助手创建" --from <文件>`；它已经是开发版本和本机 Agent，直接做第 5 步。
 
    ```json
    {"document": {
@@ -32,7 +32,7 @@ description: 用 sfly 命令行操作 sfly 平台：联调节点包（在本机 
    }}
    ```
 
-   完成：联调副本存在，`uv run sfly scenario show <联调副本>` 列出了要联调的节点。
+   完成：联调副本存在，`uv run sfly scenario show <联调副本>` 列出了要联调的节点，「说明：」第一行是「联调 <包名>，由 <昵称> 的 AI 编程助手创建」。
 4. **改成开发版本和本机 Agent**（复制来的副本）：`uv run sfly scenario pull <副本> -o <文件>`，在文件的 `document` 里把 `packages["<包名>"]` 改成 `"dev"`，`default_agent` 和节点上单独写了的 `agent` 改成本机 Agent；新增节点照文件里已有的节点写，不用写坐标。再 `uv run sfly scenario push <文件>`。
    完成：push 输出新版本号且没有警告；有警告就按警告改完再 push。
 5. **运行**：`uv run sfly run start <联调副本> --wait --timeout 90s`，入口参数用 `--param 名=值`。进度写在 stderr，运行结束后 stdout 是摘要。`--timeout` 取比你的命令工具的超时更短的值。

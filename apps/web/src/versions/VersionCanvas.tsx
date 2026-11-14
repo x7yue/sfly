@@ -7,6 +7,7 @@ import type { CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import { FlowCanvas } from "#/components/canvas/FlowCanvas";
 import { toFlow } from "#/components/canvas/flow";
 import { subflowLabels } from "#/components/canvas/node-display";
+import { type CanvasSelection, NO_SELECTION } from "#/components/canvas/selection";
 import { LOD_HIDDEN, ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
@@ -44,7 +45,7 @@ export function VersionCanvas({
 }) {
 	const packages = useQuery(apiQuery(packagesApi.list));
 	const flow = useMemo(() => toFlow(document), [document]);
-	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [selection, setSelection] = useState<CanvasSelection>(NO_SELECTION);
 
 	const info: CanvasInfo = useMemo(() => {
 		const titles = new Map<string, string>();
@@ -90,8 +91,8 @@ export function VersionCanvas({
 				nodes={flow.nodes}
 				edges={flow.edges}
 				info={info}
-				selectedId={selectedId}
-				onSelect={setSelectedId}
+				selection={selection}
+				onSelect={setSelection}
 				insets={{ top: 0, right: 0, bottom: 0, left: 0 }}
 				decorateNode={decorateNode}
 				initialMinimap={false}
