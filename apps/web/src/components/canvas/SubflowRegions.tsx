@@ -13,7 +13,8 @@ interface Region {
 	/** 子流程名称（subflowLabel）。 */
 	name: string;
 	trigger: string | undefined;
-	count: number;
+	/** 子流程链上的节点（子流程入口在最前，按链上顺序；不含它下级的子流程）。 */
+	members: string[];
 	box: { x: number; y: number; w: number; h: number };
 }
 
@@ -40,7 +41,7 @@ export function subflowRegions(nodes: SfNode[], edges: SfEdge[]): Region[] {
 			id: start,
 			name: subflowLabel(entry),
 			trigger: edges.find((e) => e.target === start && e.data?.kind === "dispatch")?.source,
-			count: ids.length,
+			members: ids,
 			box: { x, y, w: x1 - x, h: y1 - y },
 		});
 	}
@@ -57,8 +58,17 @@ const META_FITS_EM = 24;
  * 子流程区域（原型 `.region`）：紫色虚线框，标题行写子流程名称和触发它的异步任务节点。
  * 标题行右侧可以由 FlowCanvas 的 regionMeta 替换（运行状态，#41）；区域窄到放不下默认的元信息时，
  * 先整段去掉它，名字最后才截断（运行状态的内容不去掉，它收缩到截断）。画在节点和连线下面。
+ * 给了 `onSelect` 时（可编辑的画布）标题可以点，点了选中子流程链上的全部节点。
  */
-export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdge[] }) {
+export function SubflowRegions({
+	nodes,
+	edges,
+	onSelect,
+}: {
+	nodes: SfNode[];
+	edges: SfEdge[];
+	onSelect?: (ids: readonly string[]) => void;
+}) {
 	const { regionMeta } = useFlowCanvas();
 	const regions = useMemo(() => subflowRegions(nodes, edges), [nodes, edges]);
 	// 用 JS 算而不是容器查询：标题栏的字号随缩放变，Chromium 不会因为容器的字号变了重新计算依赖 em 的容器查询。
@@ -73,7 +83,7 @@ export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdg
 				const meta =
 					custom ??
 					(fits
-						? `${r.trigger ? `由 ${r.trigger} 触发` : "没有异步任务节点触发"} · ${r.count} 个节点`
+						? `${r.trigger ? `由 ${r.trigger} 触发` : "没有异步任务节点触发"} · ${r.members.length} 个节点`
 						: null);
 				return (
 					<section
@@ -88,8 +98,20 @@ export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdg
 								ZOOM_TEXT_12,
 							)}
 						>
-							<span className="flex-none">子流程</span>
-							<span className="min-w-0 truncate font-semibold text-canvas-subflow">{r.name}</span>
+							{onSelect ? (
+								// 不进 Tab 顺序：画布只有画布区域一个停靠点（键盘用方向键浏览节点）。
+								<button
+									type="button"
+									tabIndex={-1}
+									aria-label={`选中子流程 ${r.name} 的全部节点`}
+									className="pointer-events-auto flex min-w-0 cursor-pointer items-center gap-2"
+									onClick={() => onSelect(r.members)}
+								>
+									<RegionTitle name={r.name} />
+								</button>
+							) : (
+								<RegionTitle name={r.name} />
+							)}
 							{meta && (
 								<span className="pointer-events-auto ml-auto min-w-0 shrink-100 truncate text-fg-3">
 									{meta}
@@ -100,5 +122,14 @@ export function SubflowRegions({ nodes, edges }: { nodes: SfNode[]; edges: SfEdg
 				);
 			})}
 		</ViewportPortal>
+	);
+}
+
+function RegionTitle({ name }: { name: string }) {
+	return (
+		<>
+			<span className="flex-none">子流程</span>
+			<span className="min-w-0 truncate font-semibold text-canvas-subflow">{name}</span>
+		</>
 	);
 }
