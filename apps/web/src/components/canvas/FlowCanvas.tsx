@@ -55,6 +55,7 @@ import {
 	type CanvasSelection,
 	isNodeSelected,
 	latestNode,
+	multipleNodes,
 	NO_SELECTION,
 	selectAnnotation,
 	selectedAnnotation,
@@ -405,17 +406,23 @@ export function FlowCanvas({
 		if (renaming) reveal(renaming);
 	}, [renaming, reveal]);
 
-	/** 打开节点菜单：先让节点卡片拿到焦点（菜单关闭后焦点回到它）并选中它。 */
+	/**
+	 * 打开节点菜单：先让节点卡片拿到焦点（菜单关闭后焦点回到它）。节点不在选中的一组里时选中它；
+	 * 在多选里时保持多选，菜单作用于整组（kind "nodes"）。
+	 */
 	const openNodeMenu = (id: string, at?: Position) => {
 		const node = nodes.find((n) => n.id === id);
 		const card = wrapper.current?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(id)}"]`);
 		if (!menu || !node || !card) return;
 		card.focus({ preventScroll: true });
+		const group = multipleNodes(selection);
+		const anchor = at ?? card;
+		if (group?.includes(id)) {
+			setMenuState({ target: { kind: "nodes", ids: group, anchor }, open: true });
+			return;
+		}
 		onSelect(selectNode(id));
-		setMenuState({
-			target: { kind: "node", id, node: node.data.node, anchor: at ?? card },
-			open: true,
-		});
+		setMenuState({ target: { kind: "node", id, node: node.data.node, anchor }, open: true });
 	};
 
 	// —— 键盘：方向键沿链切换、Enter、Esc、Shift+F10 / 菜单键 ——
@@ -669,6 +676,7 @@ export function FlowCanvas({
 const MENU_LABEL: Record<CanvasMenuTarget["kind"], string> = {
 	pane: "画布菜单",
 	node: "节点菜单",
+	nodes: "节点菜单",
 	edge: "连线菜单",
 };
 
