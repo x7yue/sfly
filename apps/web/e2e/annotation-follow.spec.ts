@@ -85,7 +85,7 @@ async function shiftsSince(page: Page, before: Positions, delta: { x: number; y:
 	);
 }
 
-/** 按住标题带的中心拖动 `by`（屏幕像素）；松开前等一帧让最后一次移动生效。 */
+/** 按住标题带的中心拖动 `by`（屏幕像素）。 */
 async function dragBand(page: Page, band: Locator, by: { x: number; y: number }) {
 	const b = await box(band);
 	const from = { x: b.x + b.width / 2, y: b.y + b.height / 2 };
