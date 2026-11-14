@@ -20,6 +20,15 @@ export function orderedInputs(io: Io): [string, JsonSchema][] {
 		.map((e) => e.entry);
 }
 
+/**
+ * 输入或输出的说明：节点包用 `Annotated[类型, Doc("…")]` 写的，元信息里是这一项 schema 的 `description`。
+ * 没写、写的不是字符串时为 undefined（旧版本的节点包都没有）。
+ */
+export function schemaDescription(schema: JsonSchema | undefined): string | undefined {
+	const text = schema?.description;
+	return typeof text === "string" && text !== "" ? text : undefined;
+}
+
 const show = (value: unknown) => JSON.stringify(value) ?? String(value);
 
 /** schema 的简短描述（错误信息用）。 */
