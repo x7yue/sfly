@@ -1,4 +1,5 @@
 import {
+	annotationMembersOfSelection,
 	checkConnection,
 	declaredOutputs,
 	documentWarnings,
@@ -433,14 +434,17 @@ function Editor({
 		history.checkpoint(key);
 		setMeta((m) => ({ ...m, annotations: update(m.annotations) }));
 	};
-	/** 新建只含这个节点的注释框：选中它，标题输入框拿到焦点（默认标题整段选中）。 */
-	const addAnnotation = (nodeId: string) => {
-		const created = newAnnotation(meta.annotations, { nodes: [nodeId], subflows: [] });
+	/** 新建注释框，算一步撤销：选中它，标题输入框拿到焦点（默认标题整段选中）。 */
+	const addAnnotation = (members: Pick<Annotation, "nodes" | "subflows">) => {
+		const created = newAnnotation(meta.annotations, members);
 		changeAnnotations((list) => [...list, created]);
 		setSelection(selectAnnotation(created.id));
 		setInspectorOpen(true);
 		focusField(annotationFieldKey(created.id, "title"), { select: true });
 	};
+	/** 用选中的一组节点新建：节点全被选中的子流程记为子流程成员，其余记为节点成员。 */
+	const addAnnotationAround = (ids: readonly string[]) =>
+		addAnnotation(annotationMembersOfSelection(doc, ids));
 	const deleteAnnotation = (id: string) => {
 		changeAnnotations((list) => list.filter((a) => a.id !== id));
 		setSelection(NO_SELECTION);
@@ -725,6 +729,7 @@ function Editor({
 		},
 		onLocate: locate,
 		onDelete: deleteNodes,
+		onAddAnnotation: addAnnotationAround,
 		onChangeAnnotation: (next, field) =>
 			changeAnnotations(
 				(list) => updateAnnotation(list, next.id, () => next),
@@ -850,9 +855,10 @@ function Editor({
 											tidy,
 											undo: history.undo,
 											redo: history.redo,
+											addAnnotationAround,
 											annotations: (nodeId) => ({
 												annotations: meta.annotations,
-												onAdd: () => addAnnotation(nodeId),
+												onAdd: () => addAnnotation({ nodes: [nodeId], subflows: [] }),
 												onJoin: (id) =>
 													changeAnnotations((list) =>
 														updateAnnotation(list, id, (a) => withNode(a, nodeId)),

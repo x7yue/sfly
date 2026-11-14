@@ -2,6 +2,7 @@ import { copyProblem, disconnectEdge, disconnectNode, nodeConnections } from "@s
 import type { OrchestrationDocument } from "@sfly/schema";
 import { type CanvasMenuTarget, FitViewMenuItem } from "#/components/canvas/CanvasMenu";
 import type { DocNode } from "#/components/canvas/flow";
+import { ContextMenuItem } from "@/components/ui/context-menu";
 import type { AddRequest } from "./AddNodeMenu";
 import { type AnnotationMenuActions, AnnotationMenuItems } from "./annotation-menu";
 import { EdgeMenu } from "./EdgeMenu";
@@ -28,11 +29,13 @@ export interface EditorMenuActions {
 	redo(): void;
 	/** 节点菜单里的注释框操作，作用于右键的节点。 */
 	annotations(nodeId: string): AnnotationMenuActions;
+	/** 用选中的一组节点新建注释框（多选里的节点的菜单「添加注释框」）。 */
+	addAnnotationAround(ids: readonly string[]): void;
 }
 
 /**
  * 编排画布的右键菜单内容（FlowCanvas 的 `menu`），按右键的对象分：连线（EdgeMenu）、节点（NodeMenu）、
- * 空白处（PaneMenu）。运行状态模式（不给 `edit`）下节点菜单只有只读项，空白处只有「适配视图」，连线没有菜单。
+ * 多选里的节点（作用于整组，只有「添加注释框」）、空白处（PaneMenu）。运行状态模式（不给 `edit`）下节点菜单只有只读项，空白处只有「适配视图」，连线没有菜单。
  */
 export function EditorMenu({
 	target,
@@ -52,6 +55,13 @@ export function EditorMenu({
 				edit={edit && nodeMenuEdit(edit, target.id, target.node)}
 			/>
 		);
+	}
+	if (target.kind === "nodes") {
+		return edit ? (
+			<ContextMenuItem onClick={() => edit.addAnnotationAround(target.ids)}>
+				添加注释框
+			</ContextMenuItem>
+		) : null;
 	}
 	if (!edit) return target.kind === "pane" ? <FitViewMenuItem /> : null;
 	if (target.kind === "edge") {

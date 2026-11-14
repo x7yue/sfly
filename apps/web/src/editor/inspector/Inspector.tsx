@@ -15,7 +15,7 @@ import type {
 	PackageSummary,
 } from "@sfly/schema";
 import { cn } from "cn";
-import { Trash2Icon } from "lucide-react";
+import { SquareDashedIcon, Trash2Icon } from "lucide-react";
 import { forwardRef, useEffect, useMemo, useState } from "react";
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
@@ -86,6 +86,8 @@ export interface InspectorContext {
 	onLocate(id: string): void;
 	/** 删除节点（多选时是整组，算一步撤销）。 */
 	onDelete(ids: readonly string[]): void;
+	/** 用选中的一组节点新建注释框。 */
+	onAddAnnotation(ids: readonly string[]): void;
 	/** 改注释框；同一个字段（`field`）的连续修改合成一步撤销。 */
 	onChangeAnnotation(annotation: Annotation, field?: string): void;
 	/** 删除注释框，成员节点不动。 */
@@ -498,6 +500,10 @@ function GroupInspector({
 			<Header onCollapse={onCollapse} title={`已选 ${ids.length} 个节点`} row={<span>多选</span>} />
 			<div className={cn(FIELD_LIST_CLASS, "min-h-0 flex-1 overflow-auto px-3.5 py-3")}>
 				<div className="flex flex-wrap gap-2">
+					<Button size="sm" onClick={() => context.onAddAnnotation(ids)}>
+						<SquareDashedIcon />
+						添加注释框
+					</Button>
 					<Button size="sm" onClick={() => context.onDelete(ids)}>
 						<Trash2Icon />
 						删除选中的节点
