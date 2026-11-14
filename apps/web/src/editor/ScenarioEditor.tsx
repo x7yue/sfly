@@ -8,7 +8,7 @@ import {
 	nodeDisplayName,
 	type OrchestrationWarning,
 	outgoingProblem,
-	removeNode,
+	removeNodes,
 	subflowLabels,
 	tidyLayout,
 	uniqueNodeId,
@@ -55,6 +55,7 @@ import { subflowRegions } from "#/components/canvas/SubflowRegions";
 import {
 	type CanvasSelection,
 	keepNodes,
+	latestNode,
 	NO_SELECTION,
 	selectNode,
 	soleNode,
@@ -267,7 +268,12 @@ function Editor({
 	const shownNodes = running && runFlow ? runFlow.nodes : nodes;
 	const shownEdges = running && runFlow ? runFlow.edges : edges;
 	// 选中的节点可能不在画布上：撤销了添加、运行绑定的版本里没有它。
-	const shownSelection = keepNodes(selection, (id) => shownNodes.some((n) => n.id === id));
+	const visibleSelection = keepNodes(selection, (id) => shownNodes.some((n) => n.id === id));
+	// 运行状态下画布只读、不能多选：编辑时选中的一组节点只显示最近选中的那个，切回编辑模式还是原来那组。
+	const shownSelection = useMemo(
+		() => (running ? latestNode(visibleSelection) : visibleSelection),
+		[running, visibleSelection],
+	);
 	const nodeOf = (id: string) => shownNodes.find((n) => n.id === id)?.data.node;
 
 	// —— 连线：只允许单入单出，规则与控制面共用（@sfly/orchestration） ——
@@ -382,16 +388,21 @@ function Editor({
 		setNodes(applied.nodes);
 		setEdges(applied.edges);
 	};
-	/** 删除节点（Delete 键、节点菜单、检查器的删除按钮）：恰好一进一出时前后自动接上。 */
-	const deleteNode = (id: string) => {
-		const edit = removeNode(doc, id);
+	/**
+	 * 删除节点（Delete 键、节点菜单、检查器的删除按钮；多选时是整组）：每个都是恰好一进一出时前后自动接上，
+	 * 入口节点跳过；整组算一步撤销。
+	 */
+	const deleteNodes = (ids: readonly string[]) => {
+		const edit = removeNodes(doc, ids);
 		if (!edit.ok) {
 			notify.warning(edit.reason);
 			return;
 		}
-		drafts.clear(`${id}/`);
-		setSelection((s) => keepNodes(s, (n) => n !== id));
+		for (const id of edit.removed) drafts.clear(`${id}/`);
+		setSelection((s) => keepNodes(s, (n) => !edit.removed.includes(n)));
 		applyEdit(edit.doc);
+		const reasons = [...new Set(edit.skipped.map((s) => s.reason))];
+		if (reasons.length > 0) notify.warning(`${reasons.join("；")}，已跳过`);
 	};
 	const updateNode = (id: string, node: DocNode) => {
 		// 同一个节点上连续的输入合并为一步撤销。
@@ -631,7 +642,7 @@ function Editor({
 			setMeta((m) => ({ ...m, packages: { ...m.packages, [name]: version } }));
 		},
 		onLocate: locate,
-		onDelete: deleteNode,
+		onDelete: deleteNodes,
 	};
 
 	const focusInspector = () => {
@@ -713,7 +724,7 @@ function Editor({
 					}}
 					onEnter={focusInspector}
 					inspector={{ open: inspectorOpen, onToggle: () => setInspectorOpen((o) => !o) }}
-					onDeleteNode={running ? undefined : deleteNode}
+					onDeleteNodes={running ? undefined : deleteNodes}
 					onInsertOnEdge={
 						running
 							? undefined
@@ -739,7 +750,7 @@ function Editor({
 											canRedo: history.canRedo,
 											openAddMenu,
 											applyEdit,
-											deleteNode,
+											deleteNodes,
 											startRename,
 											clipboard,
 											tidy,

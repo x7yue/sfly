@@ -9,7 +9,7 @@ import {
 } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { useEffect, useRef } from "react";
-import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
+import { type CanvasSelection, multipleNodes, soleNode } from "#/components/canvas/selection";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
@@ -103,7 +103,8 @@ export interface NodeClipboard {
 }
 
 /**
- * 编辑器的复制、粘贴、创建副本：Ctrl+C 复制、Ctrl+V 粘贴、Ctrl+D 创建副本作用于恰好选中的那一个节点，
+ * 编辑器的复制、粘贴、创建副本：Ctrl+C 复制、Ctrl+V 粘贴、Ctrl+D 创建副本作用于恰好选中的那一个节点
+ * （选中多个节点时 Ctrl+C、Ctrl+D 只提示不支持），
  * 返回菜单里用的同样三个操作。新节点有新的 ID、不带连线；成功时交给 `onPlace` 写回画布（各是一步撤销），
  * 不能复制、粘贴时提示原因。`enabled` 为 false 时（运行状态模式）快捷键都不处理。
  */
@@ -164,9 +165,15 @@ export function useNodeClipboard({
 		},
 	};
 
+	// 多个节点的复制、粘贴、创建副本不支持（剪贴板格式只有单个节点）：只提示，不复制任何节点。
+	const many = multipleNodes(selection) !== null;
 	useClipboardShortcuts({
 		enabled,
 		copy: () => {
+			if (many) {
+				notify.warning("不能一次复制多个节点", { description: "只选中一个节点再复制" });
+				return null;
+			}
 			const id = soleNode(selection);
 			const text = id ? textOf(id) : null;
 			if (id && text !== null) copiedNotice(id);
@@ -177,6 +184,10 @@ export function useNodeClipboard({
 	useShortcut(
 		"canvas-duplicate",
 		() => {
+			if (many) {
+				notify.warning("不能一次给多个节点创建副本", { description: "只选中一个节点再创建副本" });
+				return;
+			}
 			const id = soleNode(selection);
 			if (id) clipboard.duplicate(id);
 		},

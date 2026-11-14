@@ -76,7 +76,7 @@ export const SHORTCUTS = [
 		keys: "Tab",
 		displayOnly: true,
 	},
-	// 选中的是节点时删除节点（editor/ScenarioEditor.tsx 的 deleteNode），是连线时断开连线（FlowCanvas）。
+	// 选中的是节点时删除节点（editor/ScenarioEditor.tsx 的 deleteNodes，多选时是整组），是连线时断开连线（FlowCanvas）。
 	{
 		id: "canvas-delete",
 		group: "编排画布",

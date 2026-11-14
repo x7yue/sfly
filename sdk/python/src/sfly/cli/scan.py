@@ -166,12 +166,51 @@ def type_schema(tp: Any, *, param: bool = False) -> JsonSchema:
     raise ScanError(f"不支持的类型注解：{tp!r}")
 
 
-def _typeddict_schema(tp: Any) -> JsonSchema:
-    hints = typing.get_type_hints(tp)
-    schema: JsonSchema = {
-        "type": "object",
-        "properties": {key: type_schema(hint) for key, hint in hints.items()},
-    }
+#: TypedDict 字段注解上的限定符，可以包在 `Annotated` 外面或里面。
+#: `get_type_hints` 带 extras 时保留它们。
+_FIELD_QUALIFIERS = frozenset({"Required", "NotRequired", "ReadOnly"})
+
+
+def _is_field_qualifier(hint: Any) -> bool:
+    # 按名字认：Python 3.10 上 `NotRequired` 来自 typing_extensions，3.13 之前的 `ReadOnly` 也是。
+    return getattr(typing.get_origin(hint), "_name", None) in _FIELD_QUALIFIERS
+
+
+def _without_field_qualifiers(hint: Any) -> Any:
+    """去掉 `Required`、`NotRequired`、`ReadOnly`，`Annotated` 包在它们外面还是里面都行。"""
+    while True:
+        if _is_field_qualifier(hint):
+            hint = typing.get_args(hint)[0]
+            continue
+        if typing.get_origin(hint) is typing.Annotated:
+            inner, *_ = typing.get_args(hint)
+            if _is_field_qualifier(inner):
+                hint = _annotated(typing.get_args(inner)[0], hint.__metadata__)
+                continue
+        return hint
+
+
+def _properties(fields: Mapping[str, Any], where: str = "字段") -> dict[str, JsonSchema]:
+    """输出（TypedDict 或 `@node(outputs={...})`）各字段的 schema。
+
+    字段注解最外层的 `Doc` 写成 `description`；出错时消息前面加上 `{where} {字段名}：`。
+    """
+    properties: dict[str, JsonSchema] = {}
+    for key, hint in fields.items():
+        try:
+            hint, doc = split_doc(_without_field_qualifiers(hint))
+            prop = type_schema(hint)
+        except ScanError as error:
+            raise ScanError(f"{where} {key}：{error}") from None
+        if doc is not None:
+            prop["description"] = doc
+        properties[key] = prop
+    return properties
+
+
+def _typeddict_schema(tp: Any, where: str = "字段") -> JsonSchema:
+    hints = typing.get_type_hints(tp, include_extras=True)
+    schema: JsonSchema = {"type": "object", "properties": _properties(hints, where)}
     required = [key for key in hints if key in tp.__required_keys__]
     if required:
         schema["required"] = required
@@ -226,20 +265,16 @@ def input_schema(fn: Any, label: str) -> JsonSchema:
 
 
 def output_schema(fn: Any, decl: NodeDeclaration, label: str) -> JsonSchema:
-    try:
-        if decl.outputs is not None:
-            if isinstance(decl.outputs, Mapping):
-                props = {key: type_schema(tp) for key, tp in decl.outputs.items()}
-            elif isinstance(decl.outputs, str):
-                raise ScanError("outputs 应为键名列表或 键名 → 类型 的字典")
-            else:
-                props = {key: {} for key in decl.outputs}
-            return {"type": "object", "properties": props}
-        returns = typing.get_type_hints(fn).get("return")
-        if _is_typeddict(returns):
-            return _typeddict_schema(returns)
-    except ScanError as error:
-        raise ScanError(f"{label} 的输出：{error}") from None
+    where = f"{label} 的输出"
+    if decl.outputs is not None:
+        if isinstance(decl.outputs, Mapping):
+            return {"type": "object", "properties": _properties(decl.outputs, where)}
+        if isinstance(decl.outputs, str):
+            raise ScanError(f"{where}：outputs 应为键名列表或 键名 → 类型 的字典")
+        return {"type": "object", "properties": {key: {} for key in decl.outputs}}
+    returns = typing.get_type_hints(fn).get("return")
+    if _is_typeddict(returns):
+        return _typeddict_schema(returns, where)
     return {"type": "object", "properties": {}}
 
 

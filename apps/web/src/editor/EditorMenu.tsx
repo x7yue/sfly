@@ -18,7 +18,7 @@ export interface EditorMenuActions {
 	openAddMenu(request: AddRequest): void;
 	/** 把文档操作的结果写回画布（一步撤销）。 */
 	applyEdit(next: Pick<OrchestrationDocument, "nodes" | "edges">): void;
-	deleteNode(id: string): void;
+	deleteNodes(ids: readonly string[]): void;
 	/** 原地改显示名称（节点菜单的「重命名」）。 */
 	startRename(id: string): void;
 	clipboard: NodeClipboard;
@@ -97,6 +97,6 @@ function nodeMenuEdit(edit: EditorMenuActions, id: string, node: DocNode): NodeM
 			/>
 		),
 		onDisconnect: (side) => edit.applyEdit(disconnectNode(edit.doc, id, side)),
-		onDelete: () => edit.deleteNode(id),
+		onDelete: () => edit.deleteNodes([id]),
 	};
 }

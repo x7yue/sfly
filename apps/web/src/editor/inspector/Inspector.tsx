@@ -13,7 +13,7 @@ import { forwardRef, type ReactNode, useEffect, useMemo, useState } from "react"
 import type { CanvasInfo } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
-import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
+import { type CanvasSelection, multipleNodes, soleNode } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import { AgentSelect } from "./AgentSelect";
 import { DisplayNameField, isNamedNode } from "./DisplayNameField";
 import { FIELD_LIST_CLASS, Field, focusField, SectionTitle } from "./fields";
 import { InspectorWidthHandle, useInspectorWidth } from "./inspector-width";
+import { NodeOutputs } from "./NodeOutputs";
 import {
 	AsyncMapping,
 	ExecutionSettings,
@@ -68,12 +69,13 @@ export interface InspectorContext {
 	onLock(name: string, version: string): void;
 	/** 选中并定位到另一个节点。 */
 	onLocate(id: string): void;
-	onDelete(id: string): void;
+	/** 删除节点（多选时是整组，算一步撤销）。 */
+	onDelete(ids: readonly string[]): void;
 }
 
 /**
  * 右侧检查器（原型 `.insp`，可收起）。选中一个节点时：标题区 + 页签（参数 / 执行 / 说明）；
- * 没有选中节点时：场景级设置（默认 Agent、节点包版本、检查结果）。
+ * 选中多个节点时：「已选 N 个节点」和对这组节点的操作；没有选中节点时：场景级设置（默认 Agent、节点包版本、检查结果）。
  * 包节点的「说明」页叫「说明与指标」，带上节点类型声明的指标与图表（#43）。
  */
 export const Inspector = forwardRef<
@@ -92,6 +94,7 @@ export const Inspector = forwardRef<
 	const width = useInspectorWidth();
 	const id = soleNode(selection);
 	const node = id === null ? undefined : nodeOf(id);
+	const group = multipleNodes(selection);
 	return (
 		<aside
 			ref={ref}
@@ -108,6 +111,8 @@ export const Inspector = forwardRef<
 		>
 			{id !== null && node ? (
 				<NodeInspector key={id} id={id} node={node} context={context} onCollapse={onCollapse} />
+			) : group ? (
+				<GroupInspector ids={group} context={context} onCollapse={onCollapse} />
 			) : (
 				<ScenarioInspector context={context} onCollapse={onCollapse} />
 			)}
@@ -254,7 +259,7 @@ function NodeInspector({
 							variant="ghost"
 							size="icon-sm"
 							aria-label="删除节点"
-							onClick={() => context.onDelete(id)}
+							onClick={() => context.onDelete([id])}
 						>
 							<Trash2Icon />
 						</Button>
@@ -400,7 +405,8 @@ const KIND_DOC: Record<DocNode["kind"], string> = {
 function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: InspectorContext }) {
 	const { doc, catalog } = context;
 	const type = node.kind === "package" ? nodeTypeOf(doc, node, catalog) : undefined;
-	const outputs = type ? Object.keys(type.outputs.properties) : undefined;
+	const outputs =
+		type && Object.keys(type.outputs.properties).length > 0 ? type.outputs : undefined;
 	return (
 		<>
 			{/* 节点类型的说明是节点函数的文档字符串，按纯文本显示全文；没有说明时是通用的那句。 */}
@@ -426,17 +432,16 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 								onLock={context.onLock}
 							/>
 						</dd>
-						<dt className="text-fg-3">输出</dt>
-						<dd className="m-0 min-w-0 font-mono text-xs">
-							{outputs === undefined
-								? "—"
-								: outputs.length === 0
-									? "没有输出"
-									: outputs.join(" · ")}
-						</dd>
+						{!outputs && (
+							<>
+								<dt className="text-fg-3">输出</dt>
+								<dd className="m-0 min-w-0 font-mono text-xs">{type ? "没有输出" : "—"}</dd>
+							</>
+						)}
 					</>
 				)}
 			</dl>
+			{outputs && <NodeOutputs outputs={outputs} />}
 			{node.kind === "package" && (
 				<>
 					<SectionTitle>声明的指标与图表</SectionTitle>
@@ -444,6 +449,32 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 					<MetricDeclarations info={type as NodeMetricsInfo | null | undefined} />
 				</>
 			)}
+		</>
+	);
+}
+
+/** 选中多个节点时：选了几个，和对这组节点的操作。 */
+function GroupInspector({
+	ids,
+	context,
+	onCollapse,
+}: {
+	ids: readonly string[];
+	context: InspectorContext;
+	onCollapse(): void;
+}) {
+	return (
+		<>
+			<Header onCollapse={onCollapse} title={`已选 ${ids.length} 个节点`} row={<span>多选</span>} />
+			<div className={cn(FIELD_LIST_CLASS, "min-h-0 flex-1 overflow-auto px-3.5 py-3")}>
+				<div className="flex flex-wrap gap-2">
+					<Button size="sm" onClick={() => context.onDelete(ids)}>
+						<Trash2Icon />
+						删除选中的节点
+					</Button>
+				</div>
+				<p className="m-0 text-xs text-fg-3">拖动其中任意一个节点，整组一起移动。</p>
+			</div>
 		</>
 	);
 }

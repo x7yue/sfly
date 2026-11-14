@@ -2,6 +2,7 @@ import type { EdgeEnds, Position } from "@sfly/orchestration";
 import {
 	Background,
 	BackgroundVariant,
+	type EdgeChange,
 	type IsValidConnection,
 	MiniMap,
 	type NodeChange,
@@ -51,9 +52,13 @@ import { SubflowRegions } from "./SubflowRegions";
 import {
 	type CanvasSelection,
 	isNodeSelected,
+	latestNode,
 	NO_SELECTION,
 	selectNode,
+	selectNodes,
 	soleNode,
+	toggleNode,
+	withSelectChanges,
 } from "./selection";
 
 /**
@@ -61,18 +66,19 @@ import {
  *
  * 画布本身负责：节点卡片、连线、子流程区域、语义缩放（--canvas-zoom / data-lod，见 zoom-text.ts）、
  * 打开时与窗口变化时自动适配视图（避开 `insets` 指出的悬浮控件）、底部工具条、左下小地图、
- * 键盘浏览（方向键沿链切换、↓/↑ 进出子流程、Enter 交给 onEnter、Esc 取消选中；不用方向键移动节点）。
+ * 键盘浏览（方向键沿链切换、↓/↑ 进出子流程、Enter 交给 onEnter、Esc 取消选中；不用方向键移动节点）、
+ * 可编辑时的多选（指针工具下 Shift 拖动框选、Ctrl/⌘ 点击加选减选、点子流程区域标题选中整个子流程）。
  *
  * 使用方负责：节点与连线的状态（受控）、选中状态（受控，见 selection.ts）、右侧检查器和其他悬浮控件（children）。
  *
  * 扩展点（后续票据复用这一个组件，不再各写一套画布）：
- * - `editable={false}`：只读（不能拖动、连线、删除），用于运行状态（#41）与版本对比（#40）；
+ * - `editable={false}`：只读（不能拖动、连线、删除、多选），用于运行状态（#41）与版本对比（#40）；
  * - `decorateNode` / `decorateEdge` / `regionMeta`：叠加运行状态、主指标槽、差异标记（见 context.ts）；
  * - `menu`：右键菜单的内容（CanvasMenu.tsx）；不给时空白处的菜单只有「适配视图」，节点没有菜单；
  *   连线菜单只在可编辑时打开（只读时右键连线等同于右键空白处）；
  * - `onInsertOnEdge`：悬停链上的连线时中点的「＋」；`reconnect`：拖动连线的端点改接（都只在可编辑时生效）；
  * - `rename`：双击卡片标题原地改显示名称（只在 `editable` 时生效；状态在使用方，F2 和菜单也从那里进入）；
- * - `onDeleteNode`：删除节点（Delete 键）交给使用方，由它决定连线怎么处理（删除并接上前后）；
+ * - `onDeleteNodes`：删除选中的节点（Delete 键）交给使用方，由它决定连线怎么处理（删除并接上前后）；
  * - `dockStart` / `dockTools`：工具条上的「＋ 添加节点」与撤销 / 重做 / 整理布局（#39）；
  * - `onNodesChange` / `onEdgesChange` / `onConnect`：编辑操作，撤销栈（#39）可以包在外面。
  *
@@ -87,7 +93,7 @@ export interface FlowCanvasProps {
 	/** 选中了什么（只含画布上有的节点）。 */
 	selection: CanvasSelection;
 	onSelect(selection: CanvasSelection): void;
-	/** 可以拖动节点、连线、删除（默认 false：只读）。 */
+	/** 可以拖动节点、连线、删除、多选（默认 false：只读）。 */
 	editable?: boolean;
 	onNodesChange?: OnNodesChange<SfNode>;
 	onEdgesChange?: OnEdgesChange<SfEdge>;
@@ -117,10 +123,10 @@ export interface FlowCanvasProps {
 	 */
 	menu?: (target: CanvasMenuTarget) => ReactNode;
 	/**
-	 * 用 Delete / Backspace 删除选中的节点：给了就由使用方删除（画布自己不删），
+	 * 用 Delete / Backspace 删除选中的节点（多选时是整组，入口节点也在内）：给了就由使用方删除（画布自己不删），
 	 * 不给时画布直接删掉节点和它的连线。只在 `editable` 时生效。
 	 */
-	onDeleteNode?(id: string): void;
+	onDeleteNodes?(ids: readonly string[]): void;
 	/** 点了链上连线中点的「＋」：在这条连线中间插入节点；`client` 是添加节点菜单出现的屏幕坐标。 */
 	onInsertOnEdge?(edge: EdgeEnds, client: Position): void;
 	/** 原地改显示名称（双击卡片标题）；不给时标题不响应双击。 */
@@ -161,7 +167,7 @@ export function FlowCanvas({
 	initialMinimap = true,
 	refitOnResize = false,
 	menu,
-	onDeleteNode,
+	onDeleteNodes,
 	onInsertOnEdge,
 	rename,
 	reconnect,
@@ -194,7 +200,8 @@ export function FlowCanvas({
 		return map;
 	}, [edges]);
 
-	// 选中由使用方控制（单选）；React Flow 自己的 select 变化不往外传。
+	// 选中由使用方控制。React Flow 自己的 select 变化只在框选时采用（框到哪些节点由它算），
+	// 点击的选中由 onNodeClick 决定，其他时候（拖动没选中的节点、点连线）的 select 变化不往外传。
 	const shownNodes = useMemo(
 		() =>
 			nodes.map((n) => {
@@ -203,12 +210,26 @@ export function FlowCanvas({
 			}),
 		[nodes, selection],
 	);
+	/** 正在框选：按下鼠标起到松开为止（React Flow 在这期间才有 userSelectionRect）。 */
+	const boxSelecting = useCallback(() => store.getState().userSelectionRect !== null, [store]);
 	const handleNodesChange = useCallback(
 		(changes: NodeChange<SfNode>[]) => {
+			const picked = changes.flatMap((c) => (c.type === "select" ? [c] : []));
+			if (picked.length > 0 && boxSelecting()) onSelect(withSelectChanges(selection, picked));
 			const rest = changes.filter((c) => c.type !== "select");
 			if (rest.length > 0) onNodesChange?.(rest);
 		},
-		[onNodesChange],
+		[onNodesChange, onSelect, selection, boxSelecting],
+	);
+	// 框选时 React Flow 把连到框里节点的连线也选中：不要，选中的连线只来自点击（之后按 Delete 断开它）。
+	const handleEdgesChange = useCallback(
+		(changes: EdgeChange<SfEdge>[]) => {
+			const rest = boxSelecting()
+				? changes.filter((c) => !(c.type === "select" && c.selected))
+				: changes;
+			if (rest.length > 0) onEdgesChange?.(rest);
+		},
+		[onEdgesChange, boxSelecting],
 	);
 
 	// —— 视图：适配时避开悬浮控件 ——
@@ -238,6 +259,10 @@ export function FlowCanvas({
 		void flow.fitView({ ...fitOptions, duration: viewportDuration(VIEWPORT_MS) });
 	}, [flow, fitOptions]);
 	const canEdit = editable && tool === "pointer";
+	const selectSubflow = useCallback(
+		(ids: readonly string[]) => onSelect(selectNodes(ids)),
+		[onSelect],
+	);
 
 	// —— 右键菜单：关闭时保留对象，退场动画期间内容不变 ——
 	const [menuState, setMenuState] = useState<{ target: CanvasMenuTarget; open: boolean } | null>(
@@ -421,7 +446,8 @@ export function FlowCanvas({
 							kind: e.data?.kind ?? "chain",
 						})),
 					},
-					soleNode(selection),
+					// 多选时从最近选中的节点出发，收成单选。
+					soleNode(latestNode(selection)),
 					event.key,
 				);
 				if (next) {
@@ -475,6 +501,11 @@ export function FlowCanvas({
 					"after:pointer-events-none after:absolute after:inset-0 after:z-20 focus-visible:after:outline-2 focus-visible:after:-outline-offset-2 focus-visible:after:outline-ring",
 					"[&_.react-flow__viewport-portal]:pointer-events-none",
 					"data-[tool=hand]:[&_.react-flow__pane]:cursor-grab data-[tool=hand]:[&_.react-flow__node]:cursor-grab",
+					// 框选的矩形用中性的选中色；框选结束后 React Flow 画在选中节点外面的可拖动矩形不要
+					// （它盖住框里没选中的节点；整组拖动直接拖任意一个选中的节点）。
+					// 类名里的下划线在 Tailwind 的任意值里会变成空格，要转义成 \_。
+					"[--xy-selection-background-color:var(--selected-ring)] [--xy-selection-border:1px_dashed_var(--selected)]",
+					String.raw`[&_.react-flow\_\_nodesselection]:hidden`,
 				)}
 			>
 				<p id={hintId} hidden>
@@ -486,11 +517,17 @@ export function FlowCanvas({
 					nodeTypes={nodeTypes}
 					edgeTypes={edgeTypes}
 					onNodesChange={handleNodesChange}
-					onEdgesChange={onEdgesChange}
+					onEdgesChange={handleEdgesChange}
 					onConnect={onConnect}
 					onConnectEnd={onConnectEnd}
 					isValidConnection={isValidConnection}
-					onNodeClick={(_e, node) => onSelect(selectNode(node.id))}
+					onNodeClick={(event, node) =>
+						onSelect(
+							editable && (event.metaKey || event.ctrlKey)
+								? toggleNode(selection, node.id)
+								: selectNode(node.id),
+						)
+					}
 					onPaneClick={() => {
 						onSelect(NO_SELECTION);
 						// 拖动画布的手势拦掉了 mousedown 的默认行为，点空白处时焦点不会自己移过来：
@@ -517,10 +554,11 @@ export function FlowCanvas({
 							event.button === 2 ? { x: event.clientX, y: event.clientY } : undefined,
 						);
 					}}
-					onBeforeDelete={async ({ nodes: removed }) => {
-						const [first] = removed;
-						if (!first || !onDeleteNode) return true;
-						onDeleteNode(first.id);
+					// 选中的节点整组交给使用方，入口节点也在内（React Flow 不把它算进要删的节点）：由使用方跳过并说明。
+					// 没有选中节点时（选中的是连线）由 React Flow 删掉连线。
+					onBeforeDelete={async () => {
+						if (selection.kind !== "nodes" || !onDeleteNodes) return true;
+						onDeleteNodes(selection.ids);
 						return false;
 					}}
 					nodesDraggable={canEdit}
@@ -534,8 +572,10 @@ export function FlowCanvas({
 					elementsSelectable
 					selectNodesOnDrag={false}
 					deleteKeyCode={editable ? ["Backspace", "Delete"] : null}
+					// 加选、减选由 onNodeClick 按点击时的 Ctrl/⌘ 处理：React Flow 的多选键只翻转它自己的 selected，
+					// 这里的选中是受控的。框选只在可编辑、指针工具下：抓手工具下按住 Shift 拖动仍是平移。
 					multiSelectionKeyCode={null}
-					selectionKeyCode={null}
+					selectionKeyCode={canEdit ? "Shift" : null}
 					disableKeyboardA11y
 					fitView
 					fitViewOptions={fitOptions}
@@ -546,7 +586,11 @@ export function FlowCanvas({
 					ariaLabelConfig={{ "minimap.ariaLabel": "小地图" }}
 				>
 					<ZoomVariables target={wrapper} />
-					<SubflowRegions nodes={shownNodes} edges={edges} />
+					<SubflowRegions
+						nodes={shownNodes}
+						edges={edges}
+						onSelect={editable ? selectSubflow : undefined}
+					/>
 					<Background
 						variant={BackgroundVariant.Dots}
 						gap={22}
