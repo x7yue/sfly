@@ -149,7 +149,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `note-icon`：`NoteIcon` | 备注图标：悬停或键盘聚焦时在提示里显示备注全文（保留换行；长备注不超出视口，在提示里滚动：鼠标用滚轮，键盘用 PageUp / PageDown / Home / End）。页面上它是按钮，可以 Tab 到，名称「备注」、描述是全文；画布上节点卡片不在 Tab 顺序里，图标放在卡片里时传 `host`（卡片的选择器）和 `textId`：图标本身不可聚焦、对读屏隐藏，键盘用户靠卡片的键盘焦点看到提示，读屏用户在卡片的描述里读到备注。大小按所在文字的字号（em），不随画布缩放的提示固定 12px；节点卡片、注释框的标题带、运行监控页的图表组标题都用它，不另写一套 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状；每段的颜色、描边与高低取自 `STATUS[kind].area`） |
 | `sparkline`：`Sparkline` | 迷你趋势（主指标） |
-| `#/focus/FocusReadout`：`FocusReadout`、`FocusReadoutStrip` | 关注项读数：一个关注项（没设关注项时是执行中节点的主指标）的一格读数，从上到下三行——来源节点的状态形状（`StatusDot`）和名称（最多两行）、最新值和单位（`FocusValue`：等宽 16px 加粗，累计值就是当前累计，平台不算速率；图表有多个序列时先写最近更新的那条的名字）、「来源节点 · 多久前」（来源节点写成「显示名称（节点 ID）」，没有显示名称时只写节点 ID；有值时来源节点成功或已停止写「最终值」；没有值时写原因：来源节点还没有开始执行（排队中、被跳过、没开始就被取消或停止……）写这个状态没有执行的原因（`NODE_STATUS` 的 `notRun`，如「还没有开始执行」「已跳过，没有执行」），已经开始但还没有点写「还没有数据」。这个判断只在 `focus-format.ts` 的 `readingState`，脚注、可访问名称和图表卡片的空状态共用，运行监控详情里还没开始的节点写同一句话）；图表在节点包版本里不存在时写「这个版本的节点没有图表「X」」，不显示数值，脚注只写来源节点。**读数之间只用 1px 分隔，不套卡片**：`FocusReadoutStrip` 按宽度自动排成几列（每格至少 11rem），换行后每一行的分隔线也一样；外框由调用方的 `className` 决定。整格可点时用 `render` 换成按钮或链接，悬停是 3% 白（与表格行一致），可访问名称写明名称、最新值、来源节点和状态、多久前或最终值（「母单量 1.3M 单，来自 load（执行中），2s 前」）。「多久前」按读数的 `generated_at`（控制面时间）算，不随浏览器时钟跳动。概览用它；数据一律来自 `#/focus/use-run-focus` 的 `useRunFocus`（`GET /runs/:id/focus`），不另拼指标查询 |
+| `#/focus/FocusReadout`：`FocusReadout`、`FocusReadoutStrip` | 关注项读数：一个关注项（没设关注项时是执行中节点的主指标）的一格读数，从上到下三行——来源节点的状态形状（`StatusDot`）和名称（最多两行）、最新值和单位（`FocusValue`：等宽 16px 加粗，累计值就是当前累计，平台不算速率；图表有多个序列时先写最近更新的那条的名字）、「来源节点 · 多久前」（来源节点写成「显示名称（节点 ID）」，没有显示名称时只写节点 ID；有值时来源节点成功或已停止写「最终值」；没有值时写原因：来源节点还没有开始执行（排队中、被跳过、没开始就被取消或停止……）写这个状态没有执行的原因（`NODE_STATUS` 的 `notRun`，如「还没有开始执行」「已跳过，没有执行」），已经开始但还没有点写「还没有数据」，尝试已经结束仍没有点写「这次尝试没有上报数据」（这三句由 `lib/copy.ts` 的 `noDataLabel` 给出，运行监控详情的图表工作区用同一个函数）。有没有值只在 `focus-format.ts` 的 `readingState` 判断，脚注、可访问名称和图表卡片的空状态共用）；图表在节点包版本里不存在时写「这个版本的节点没有图表「X」」，不显示数值，脚注只写来源节点。**读数之间只用 1px 分隔，不套卡片**：`FocusReadoutStrip` 按宽度自动排成几列（每格至少 11rem），换行后每一行的分隔线也一样；外框由调用方的 `className` 决定。整格可点时用 `render` 换成按钮或链接，悬停是 3% 白（与表格行一致），可访问名称写明名称、最新值、来源节点和状态、多久前或最终值（「母单量 1.3M 单，来自 load（执行中），2s 前」）。「多久前」按读数的 `generated_at`（控制面时间）算，不随浏览器时钟跳动。概览用它；数据一律来自 `#/focus/use-run-focus` 的 `useRunFocus`（`GET /runs/:id/focus`），不另拼指标查询 |
 | `#/focus/FocusChart`：`FocusChart` | 概览里图表类关注项（折线、面积、柱状）的卡片：状态形状和名称、最新值（`FocusValue`）、「来源节点 · 多久前」、按容器的实际尺寸画的图（SVG 用测量到的像素宽度，文字不被拉伸；**纵轴从 0 起**，不把正常的小波动画成大起大落，上限包含每个桶的最大值；横轴是来源节点这次尝试的开始到结束，还没结束就到读数生成的时刻）、多个序列时的图例（线色与线型沿用 `MetricChart` 的 `seriesColor`、`seriesDash`；超过 10 个序列时只画平均值最高的 10 条并写明还有几条）和「在详情里打开 <节点>」（`Button variant="link"`）。文字格式在 `focus-format.ts`，几何在 `focus-chart.ts`（纯函数，有单测） |
 | `#/monitor/ViewTabs`：`ViewTabs` | 运行监控页头的「概览 / 详情」标签页：`role="tablist"`，只有选中的标签在 Tab 顺序里，左右方向键切换并立即显示、Home / End 到第一个 / 最后一个（`monitor-view.ts` 的 `nextView`），对应的面板是 `role="tabpanel"`，名称取自当前的标签页。外观沿用分段选择（`raised-2` 底加一圈 `border-strong` 内描边，不用青色；强制颜色下 `aria-selected="true"` 换成 `Highlight` 描边）：它放在页头里，用 `Tabs` 的下划线样式会和页头的底边打架；切换整个页面的两个视图用它，同一块内容换一种看法用 `Segmented` |
 | `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认；`role="separator"`，`aria-valuemin` / `aria-valuemax` / `aria-valuenow` 是量出来的值（默认大小也有值），操作说明放在 `aria-describedby` 里，不只写在 `title`。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限是视口宽度的 60%；检查器的上限还要给画布留出小地图、工具条与间距（`INSPECTOR_CANVAS_RESERVE`），取两者里小的，拖到最宽也不会让工具条压住小地图；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
@@ -279,7 +279,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 定时重新查询的间隔与搜索防抖只用 `src/lib/polling.ts` 的命名常量（`LIVE_POLL_MS` 等），不在组件里写数字；列表页的搜索框用 `useSearchInput`（`src/lib/use-search-input.ts`：本地输入、防抖后写进地址，地址变化时同步回搜索框）。
 - 浏览器经 `/api` 前缀访问（docs/ARCHITECTURE.md §7），契约里的 `path` 不含前缀。
 - 指标接口在 `http/metrics.ts` 的 `metricsApi`（摘要、目录、序列、平台自带图表）；实时增量是运行事件流上的 `metrics` 事件（`MetricIncrement`）。
-- 一次运行的关注项读数在 `http/run-focus.ts` 的 `runFocusApi.focus`（`GET /runs/:id/focus?points=N`）：最新值、最终值（`final`）都在控制面算好，页面只显示；异常的判断和排序也只在控制面做（`anomaly` 字段已留好，还没有填），页面不自己判断。前端只用 `useRunFocus`（运行中每 `LIVE_POLL_MS` 读一次）。
+- 一次运行的关注项读数在 `http/run-focus.ts` 的 `runFocusApi.focus`（`GET /runs/:id/focus?points=N`）：最新值、最终值（`final`）都在控制面算好，页面只显示；异常的判断也只在控制面做（`anomaly` 字段现在一律是 null），页面不自己判断。前端只用 `useRunFocus`（运行中每 `LIVE_POLL_MS` 读一次）。
 
 ## 9. 文案
 
@@ -288,7 +288,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词）；`chainLabel()`：链实例名称（主链 / 子流程 X）。
 - `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）。
 - `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
-- `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「还没有数据」）。
+- `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「还没有数据」「这次尝试没有上报数据」）。
 - 运行监控、运行抽屉与关注项读数共用的：`MONITOR_VIEW_LABEL`（概览 / 详情两个视图的名称）、`FINAL_VALUE_LABEL`（最终值）、`chainCountLabel()`（「N 条链 · N 个节点」）、`LIST_LABEL`（列表的可访问名称：图例、各链进度、执行中的节点）；`MESSAGE.noRunningNodes`（没有执行中的节点）。
 
 规则：两处及以上用到的文字、状态与术语放在这里，新增时先加到这里再引用，不要在组件里另写一份；只在一个页面出现的说明文字（空状态说明、提示语）留在组件里。

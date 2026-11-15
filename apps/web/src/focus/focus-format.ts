@@ -1,9 +1,8 @@
 import type { FocusSeries, RunFocusItem } from "@sfly/schema";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView } from "#/components/status";
-import { FINAL_VALUE_LABEL, MESSAGE } from "#/lib/copy";
+import { FINAL_VALUE_LABEL, noDataLabel } from "#/lib/copy";
 import { formatDuration, formatMetric } from "#/lib/format";
-import { notRunNote } from "#/lib/node-status";
 import { seriesName } from "#/monitor/charts";
 
 /** 距离某一刻多久：`2s`、`2m 10s`、`1h 02m`（秒取整；一分钟以内不写小数）。 */
@@ -46,8 +45,9 @@ export const sourceNodeName = (item: Pick<RunFocusItem, "node_id" | "display_nam
 
 /**
  * 一项读数处于哪种状态：脚注、可访问名称和图表的空状态都由它决定写什么，别处不再自己判断「还没开始」「没有数据」。
- * 来源节点还没有开始执行（`source.started_at` 为 null：排队中、被跳过、没开始就被取消或停止……）时写这个状态没有执行的原因
- * （`NODE_STATUS` 的 `notRun`）；已经开始、但还没有点写「还没有数据」；有值时，来源节点成功或已停止是最终值，否则是多久前。
+ * 没有值时写原因（`noDataLabel`）：来源节点还没有开始执行（`source.started_at` 为 null：排队中、被跳过、没开始就被取消或停止……）
+ * 写这个状态没有执行的原因，已经开始还没有点写「还没有数据」，尝试已经结束仍没有点写「这次尝试没有上报数据」；
+ * 有值时，来源节点成功或已停止是最终值，否则是多久前。
  */
 export type ReadingState =
 	| { kind: "empty"; text: string }
@@ -60,8 +60,9 @@ export function readingState(
 	generatedAt: string,
 ): ReadingState {
 	const { source, latest } = item;
-	if (source.started_at === null) return { kind: "empty", text: notRunNote(source.status) };
-	if (latest === null) return { kind: "empty", text: MESSAGE.noData };
+	if (source.started_at === null || latest === null) {
+		return { kind: "empty", text: noDataLabel(source, source.status) };
+	}
 	return item.final
 		? { kind: "final" }
 		: { kind: "live", ageMs: Date.parse(generatedAt) - Date.parse(latest.at) };

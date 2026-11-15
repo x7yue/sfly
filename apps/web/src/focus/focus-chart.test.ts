@@ -121,6 +121,8 @@ describe("图表里画哪些序列", () => {
 		);
 		expect(shown.series.map((s) => s.labels.pid)).toEqual(["1", "3", "4"]);
 		expect(shown.hidden).toBe(2);
+		// 颜色按序列在全部序列里的位置取，隐藏的序列不让后面的序列换色。
+		expect(shown.series.map((s) => s.slot)).toEqual([1, 3, 4]);
 	});
 
 	it("平均值按桶的点数加权，和详情的图表挑的是同几条：最后一个值很高的序列不一定入选", () => {

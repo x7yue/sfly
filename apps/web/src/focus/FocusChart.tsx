@@ -125,16 +125,19 @@ export function FocusChart({
 									{tick.label}
 								</text>
 							))}
-							{plot.lines.map((line, i) => (
-								<PlotLineShape
-									key={line.key}
-									type={item.chart_type}
-									line={line}
-									color={seriesColor(i)}
-									dash={seriesDash(i)}
-									baseline={plot.yTicks[0]?.y ?? 0}
-								/>
-							))}
+							{plot.lines.map((line, i) => {
+								const slot = series[i]?.slot ?? i;
+								return (
+									<PlotLineShape
+										key={line.key}
+										type={item.chart_type}
+										line={line}
+										color={seriesColor(slot)}
+										dash={seriesDash(slot)}
+										baseline={plot.yTicks[0]?.y ?? 0}
+									/>
+								);
+							})}
 						</svg>
 					)}
 					{state.kind === "empty" && (
@@ -149,7 +152,7 @@ export function FocusChart({
 					aria-label={LIST_LABEL.legend}
 					className="m-0 flex list-none flex-wrap gap-x-3 gap-y-0.5 p-0 text-xs text-fg-3"
 				>
-					{series.map((s, i) => (
+					{series.map((s) => (
 						<li key={s.key} className="inline-flex items-center gap-1">
 							<svg aria-hidden="true" width={12} height={4} className="flex-none overflow-visible">
 								<line
@@ -157,9 +160,9 @@ export function FocusChart({
 									x2={12}
 									y1={2}
 									y2={2}
-									stroke={seriesColor(i)}
+									stroke={seriesColor(s.slot)}
 									strokeWidth={2}
-									strokeDasharray={seriesDash(i)}
+									strokeDasharray={seriesDash(s.slot)}
 								/>
 							</svg>
 							{focusSeriesName(item, s)}

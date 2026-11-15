@@ -196,15 +196,19 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 		expect(readingLabel(reading, NOW)).not.toContain("最终值");
 	});
 
-	it("已经开始但还没有点：执行中和已结束都写「还没有数据」，已结束也不写「最终值」", () => {
-		const started = { attempt: 1, task_id: "t1", started_at: at(60) };
-		const running = empty("running", started);
-		const done = empty("success", { ...started, ended_at: at(30) }, true);
-		for (const reading of [running, done]) {
-			expect(readingState(reading, NOW)).toEqual({ kind: "empty", text: "还没有数据" });
-			expect(readingFoot(reading, NOW)).toBe("load · 还没有数据");
-			expect(readingLabel(reading, NOW)).toMatch(/，还没有数据$/);
-		}
+	it.each([
+		["执行中", "running", undefined, false, "还没有数据"],
+		["已成功（final 为 true）", "success", at(30), true, "这次尝试没有上报数据"],
+		["已失败", "failed", at(30), false, "这次尝试没有上报数据"],
+	] as const)("已经开始但还没有点，尝试%s：写「还没有数据」或「这次尝试没有上报数据」，不写「最终值」", (_name, status, endedAt, final, text) => {
+		const reading = empty(
+			status,
+			{ attempt: 1, task_id: "t1", started_at: at(60), ended_at: endedAt ?? null },
+			final,
+		);
+		expect(readingState(reading, NOW)).toEqual({ kind: "empty", text });
+		expect(readingFoot(reading, NOW)).toBe(`load · ${text}`);
+		expect(readingLabel(reading, NOW)).toMatch(new RegExp(`，${text}$`));
 	});
 
 	it("有值：来源节点还在是多久前，成功或已停止后是最终值", () => {

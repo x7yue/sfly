@@ -108,13 +108,14 @@ export function plotChart(
 
 /**
  * 图表里画哪些序列：与详情的图表同一个规则（`defaultShown`）——不超过 `limit` 条时全部画，超过时画平均值最高的 `limit` 条，
- * 没有点的排在最后，仍按原来的顺序画（颜色和图例顺序不随数据变化）。`hidden` 是没画的条数。
+ * 没有点的排在最后，仍按原来的顺序画。`slot` 是序列在全部序列里的位置，颜色按它取（详情的图表按序列首次出现的顺序给
+ * 全部序列分配颜色），所以隐藏别的序列时同一条序列的颜色不变。`hidden` 是没画的条数。
  */
 export function shownSeries(
 	series: readonly FocusSeries[],
 	limit = DEFAULT_SHOWN,
-): { series: Array<FocusSeries & { key: string }>; hidden: number } {
-	const keyed = series.map((s) => ({ ...s, key: seriesKey(s.metric, s.labels) }));
+): { series: Array<FocusSeries & { key: string; slot: number }>; hidden: number } {
+	const keyed = series.map((s, slot) => ({ ...s, key: seriesKey(s.metric, s.labels), slot }));
 	const shown = defaultShown(
 		keyed.map(({ key, points }) => ({ key, buckets: points })),
 		limit,

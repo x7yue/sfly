@@ -1,6 +1,6 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
-import type { RunNotificationState, RunStatus } from "@sfly/schema";
-import { NODE_STATUS } from "#/lib/node-status";
+import type { NodeStatus, RunNotificationState, RunStatus } from "@sfly/schema";
+import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
 /**
  * 界面文案（故事 79：文案集中管理，不引入 i18n 框架；规则见 docs/DESIGN-SYSTEM.md「文案」一节）。
@@ -152,6 +152,8 @@ export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
 	noData: "还没有数据",
+	/** 尝试已经结束，一个点都没有上报。 */
+	noDataEnded: "这次尝试没有上报数据",
 	/** 没有节点处于执行中：运行抽屉的摘要和运行监控的概览共用。 */
 	noRunningNodes: `没有${NODE_STATUS.running.label}的${TERM.node}。`,
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
@@ -166,6 +168,18 @@ export const MESSAGE = {
 	copyFailed: "复制失败",
 	clipboardDenied: "浏览器不允许访问剪贴板",
 } as const;
+
+/**
+ * 一次尝试没有数据时写什么：还没有开始执行写节点这个状态没有执行的原因（`NODE_STATUS` 的 `notRun`），已经开始还没有点写
+ * 「还没有数据」，已经结束仍没有点写「这次尝试没有上报数据」。运行监控的概览（关注项读数）和详情（图表工作区）共用。
+ */
+export function noDataLabel(
+	attempt: { started_at: string | null; ended_at: string | null },
+	status: NodeStatus,
+): string {
+	if (attempt.started_at === null) return notRunNote(status);
+	return attempt.ended_at === null ? MESSAGE.noData : MESSAGE.noDataEnded;
+}
 
 /**
  * 链和子流程的显示名称：画布、检查器、运行视图和运行通知的卡片共用（@sfly/orchestration 的 chain-label）。

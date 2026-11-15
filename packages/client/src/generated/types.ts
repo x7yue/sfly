@@ -1448,7 +1448,8 @@ export interface RunFocus {
  * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点在运行里的顺序编号。
  * `unavailable` 为 `chart_missing`（这次运行锁定的节点包版本里没有这张图表）时，`chart_type` 是 `line`、`unit` 是空串、
  * 没有数据，这几个值没有意义，页面按 `unavailable` 写明原因。
- * 节点还没有开始（所在的子流程也可能还没触发）时 `source.status` 是 `pending`，没有数据。
+ * 节点还没有开始执行（所在的子流程还没触发、排队中、被跳过、没开始就被取消或停止……）时 `source.started_at` 为 null，
+ * 没有数据，`source.status` 是节点当时的状态。
  */
 export interface RunFocusItem {
 	/** 作者设定的位置，从 1 开始；列表里不在这次运行里的项也占位置，所以返回的位置可以不连续。 */
@@ -1476,7 +1477,7 @@ export interface RunFocusItem {
 	last_at: Timestamp | null;
 	/** 采样间隔（毫秒）；目前总是 null。 */
 	sample_interval_ms: number | null;
-	/** 来源节点成功或已停止：只显示最终值，不判断异常。 */
+	/** 来源节点成功或已停止；没开始就被停止的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
 	final: boolean;
 	anomaly: FocusAnomaly | null;
 }

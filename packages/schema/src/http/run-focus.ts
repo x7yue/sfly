@@ -93,7 +93,8 @@ export const FocusAnomaly = z.object({
  * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点在运行里的顺序编号。
  * `unavailable` 为 `chart_missing`（这次运行锁定的节点包版本里没有这张图表）时，`chart_type` 是 `line`、`unit` 是空串、
  * 没有数据，这几个值没有意义，页面按 `unavailable` 写明原因。
- * 节点还没有开始（所在的子流程也可能还没触发）时 `source.status` 是 `pending`，没有数据。
+ * 节点还没有开始执行（所在的子流程还没触发、排队中、被跳过、没开始就被取消或停止……）时 `source.started_at` 为 null，
+ * 没有数据，`source.status` 是节点当时的状态。
  */
 export const RunFocusItem = z.object({
 	/** 作者设定的位置，从 1 开始；列表里不在这次运行里的项也占位置，所以返回的位置可以不连续。 */
@@ -121,7 +122,7 @@ export const RunFocusItem = z.object({
 	last_at: Timestamp.nullable(),
 	/** 采样间隔（毫秒）；目前总是 null。 */
 	sample_interval_ms: z.number().int().positive().nullable(),
-	/** 来源节点成功或已停止：只显示最终值，不判断异常。 */
+	/** 来源节点成功或已停止；没开始就被停止的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
 	final: z.boolean(),
 	anomaly: FocusAnomaly.nullable(),
 });
@@ -141,7 +142,7 @@ export const runFocusApi = {
 	/**
 	 * 一次运行的全部关注项：只返回节点在这次运行的版本里的那些项，取节点最新一次尝试的任务，图表的定义取这次运行
 	 * 锁定的节点包版本（那个版本里没有这张图表时 `unavailable` 为 `chart_missing`）。节点在这次运行绑定的版本里、
-	 * 但还没有开始（包括所在的子流程还没触发）时照样返回，状态是 `pending`。场景没设关注项时 `mode` 是
+	 * 但还没有开始（包括所在的子流程还没触发）时照样返回，`source.started_at` 为 null，没有数据。场景没设关注项时 `mode` 是
 	 * `primary`，返回执行中节点的主指标。运行不存在时 404。
 	 */
 	focus: endpoint({
