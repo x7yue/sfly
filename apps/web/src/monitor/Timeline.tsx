@@ -7,6 +7,7 @@ import { NodeName, type RunNodeName, runNodeName } from "#/components/node-name"
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, STATUS, StatusDot, type StatusKind } from "#/components/status";
+import { chainCountLabel, LIST_LABEL } from "#/lib/copy";
 import { formatClock, formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { shortcutText } from "#/lib/shortcuts";
@@ -169,9 +170,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 		>
 			<div className="flex min-w-0 items-center gap-2 border-b border-border-soft px-3 py-1.5">
 				<h2 className="m-0 text-sm font-semibold">链路时间线</h2>
-				<span className="text-xs text-fg-3">
-					{run.chains.length} 条链 · {nodeCount} 个节点
-				</span>
+				<span className="text-xs text-fg-3">{chainCountLabel(run.chains.length, nodeCount)}</span>
 				<fieldset
 					aria-label="时间线显示"
 					className="ml-1.5 flex rounded-md border border-border p-px"
@@ -198,7 +197,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 				</fieldset>
 				<span className="flex-1" />
 				<ul
-					aria-label="图例"
+					aria-label={LIST_LABEL.legend}
 					data-viz
 					className="m-0 flex list-none items-center gap-3 p-0 text-xs text-fg-3 max-xl:hidden"
 				>

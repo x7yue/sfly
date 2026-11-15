@@ -168,7 +168,7 @@ export function ParamsEditor({
 					<DialogHeader>
 						<DialogTitle>取消参数 {pending?.name} 的「敏感」标记？</DialogTitle>
 						<DialogDescription>
-							取消后，它的默认值和每次运行传入的值会在编辑器、触发表单、运行详情和日志里明文显示。
+							取消后，它的默认值和每次运行传入的值会在编辑器、触发表单、运行监控和日志里明文显示。
 						</DialogDescription>
 					</DialogHeader>
 					<DialogFooter>

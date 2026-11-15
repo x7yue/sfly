@@ -3,7 +3,7 @@ import { expect, test } from "./fixtures";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createScenario, publishPackage } from "./support";
 
-// 运行预设（#328，ADR 0024）：运行详情（监控页顶栏）和运行记录里显示运行用的预设，显示的是触发时记下的名称。
+// 运行预设（#328，ADR 0024）：运行监控页顶栏和运行记录里显示运行用的预设，显示的是触发时记下的名称。
 
 const JSON_HEADERS = { "content-type": "application/json", "x-sfly-nickname": "tester" };
 
@@ -39,7 +39,7 @@ const PRESET_PARAMS = [
 	{ name: "host", value: "10.0.0.8" },
 ];
 
-test("运行详情：顶栏显示用的预设，悬停或点击能看到哪些参数来自预设；没用预设的运行没有", async ({
+test("运行监控：顶栏显示用的预设，悬停或点击能看到哪些参数来自预设；没用预设的运行没有", async ({
 	page,
 	controlPlane,
 	connectAgent,

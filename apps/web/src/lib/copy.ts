@@ -1,5 +1,6 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
-import type { RunNotificationState, RunStatus } from "@sfly/schema";
+import type { NodeStatus, RunNotificationState, RunStatus } from "@sfly/schema";
+import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
 /**
  * 界面文案（故事 79：文案集中管理，不引入 i18n 框架；规则见 docs/DESIGN-SYSTEM.md「文案」一节）。
@@ -25,10 +26,10 @@ export const TERM = {
 	metric: "指标",
 	chart: "图表",
 	primaryMetric: "主指标",
+	focusItem: "关注项",
 	displayName: "显示名称",
 	note: "备注",
 	annotation: "注释框",
-	focusItem: "关注项",
 	lastEdited: "最后修改",
 } as const;
 
@@ -124,7 +125,7 @@ export const ACTION = {
 	cancelRun: "取消运行",
 	forceCancel: "强制终止",
 	keepRunning: "继续运行",
-	openRun: "打开运行详情",
+	openRun: "打开运行监控",
 	viewRuns: "查看运行记录",
 	edit: "编排",
 	newScenario: "新建场景",
@@ -151,16 +152,56 @@ const ASSISTANT_NAME = new Map([
 /** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
 export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`;
 
-/** 「预设：压测 A 集群」：运行详情、运行记录里这个运行用的运行预设（触发时记下的名称）。 */
+/** 「预设：压测 A 集群」：运行监控页顶栏、运行记录里这个运行用的运行预设（触发时记下的名称）。 */
 export const presetLabel = (name: string) => `预设：${name}`;
 
 /** 失效的运行预设（GLOSSARY）的状态词：运行抽屉的选择框、管理对话框的列表、「再次运行」的提示里都写它。 */
 export const PRESET_INVALID_LABEL = "已失效";
 
+/** 运行监控页两个视图的名称：页头的标签页，和概览里「在详情里打开」「在详情里查看」的说法共用。 */
+export const MONITOR_VIEW_LABEL = { overview: "概览", detail: "详情" } as const;
+
+/** 关注项读数里来源节点成功或已停止后的「最终值」：读数的脚注和可访问名称共用。 */
+export const FINAL_VALUE_LABEL = "最终值";
+
+/** 「2 条链 · 7 个节点」：运行监控的链路时间线和概览的链路共用。 */
+export const chainCountLabel = (chains: number, nodes: number) =>
+	`${chains} 条链 · ${nodes} 个节点`;
+
+/**
+ * 还没结束、正在推进的节点（排队中、准备中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
+ * 不等于任何一个节点状态名：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。
+ */
+export const ACTIVE_LABEL = "进行中";
+
+/** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */
+export const LIST_LABEL = {
+	legend: "图例",
+	chainProgress: "各链进度",
+	/** 运行监控的概览里，执行中的节点的列表；列表前的标题只写 `NODE_STATUS.running.label`。 */
+	runningNodes: `${NODE_STATUS.running.label}的${TERM.node}`,
+	/**
+	 * 运行抽屉的摘要里，还没结束、正在推进的节点（排队中、准备中、执行中、等待中）的列表，每个节点带自己的状态标签。
+	 * 说法不等于任何一个节点状态名；概览只列执行中的节点，用 `runningNodes`。
+	 */
+	activeNodes: `${ACTIVE_LABEL}的${TERM.node}`,
+} as const;
+
 /** 通用的加载 / 错误 / 空状态文字。 */
 export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
+	noData: "还没有数据",
+	/** 尝试已经结束，一个点都没有上报。 */
+	noDataEnded: "这次尝试没有上报数据",
+	/** 没有节点处于执行中：运行监控的概览。 */
+	noRunningNodes: `没有${NODE_STATUS.running.label}的${TERM.node}。`,
+	/** 概览没设关注项、有节点在执行中，但它们都没有声明主指标，没有读数可显示。 */
+	noPrimaryMetric: `${NODE_STATUS.running.label}的${TERM.node}都没有声明${TERM.primaryMetric}。`,
+	/** 运行中但没有进行中的节点：运行抽屉的摘要。 */
+	noActiveNodes: `没有${ACTIVE_LABEL}的${TERM.node}。`,
+	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
+	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
 	neverRun: "从未运行",
 	noLogs: "还没有日志。",
 	/** 监控页日志页签：任务或运行还没有结束，暂时没有日志。 */
@@ -173,8 +214,20 @@ export const MESSAGE = {
 } as const;
 
 /**
+ * 一次尝试没有数据时写什么：还没有开始执行写节点这个状态没有执行的原因（`NODE_STATUS` 的 `notRun`），已经开始还没有点写
+ * 「还没有数据」，已经结束仍没有点写「这次尝试没有上报数据」。运行监控的概览（关注项读数）和详情（图表工作区）共用。
+ */
+export function noDataLabel(
+	attempt: { started_at: string | null; ended_at: string | null },
+	status: NodeStatus,
+): string {
+	if (attempt.started_at === null) return notRunNote(status);
+	return attempt.ended_at === null ? MESSAGE.noData : MESSAGE.noDataEnded;
+}
+
+/**
  * 链和子流程的显示名称：画布、检查器、运行视图和运行通知的卡片共用（@sfly/orchestration 的 chain-label）。
- * `chainLabel` 是「主链」或「子流程 <名称>」，给出实例 ID 时带上实例短 ID；`subflowLabel` 是子流程的显示名称，
+ * `chainLabel` 是「主链」或「子流程 <名称>」，给出实例 ID 时带上实例短 ID（只有子流程名称时用 `namedChainLabel`）；`subflowLabel` 是子流程的显示名称，
  * 没有名称字段的旧版本显示节点 ID，填了空名称时显示「未命名子流程」。
  */
-export { chainLabel, subflowLabel } from "@sfly/orchestration";
+export { chainLabel, namedChainLabel, subflowLabel } from "@sfly/orchestration";

@@ -1,5 +1,6 @@
 import { type OrchestrationDocument, orchestrationsApi, type RunView } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Banner } from "#/components/feedback/banner";
 import { notify } from "#/components/feedback/notify";
@@ -25,7 +26,9 @@ import {
 	useMonitor,
 	useMonitorActions,
 } from "./monitor-state";
-import type { MonitorSearch } from "./run-link";
+import { initialView, type MonitorView, readRememberedView, rememberView } from "./monitor-view";
+import { Overview, type OverviewTarget } from "./Overview";
+import { type MonitorSearch, runMonitorLink } from "./run-link";
 import {
 	failureSummary,
 	initialSelection,
@@ -36,20 +39,53 @@ import {
 import { Timeline } from "./Timeline";
 import { runExtent, visibleRange } from "./timeline-model";
 import { attemptsSignature, useMetricCatalog } from "./use-run-metrics";
+import { VIEW_PANEL_ID, viewTabId } from "./ViewTabs";
 
 /**
- * 运行监控页（原型 #/monitor/:runId，全屏）：顶栏、链路时间线、图表工作区（#42）、底部面板。
+ * 运行监控页（原型 #/monitor/:runId，全屏）：顶栏和两个视图——概览（默认，Overview.tsx：链路和关注项）与详情
+ * （链路时间线、图表工作区（#42）、底部面板，原来的页面）。视图写在地址的 `view` 参数里，打开时按 monitor-view.ts 的
+ * `initialView` 决定（失败和取消的运行先打开详情），用户在顶栏的标签页上切换时浏览器记住它。
  * 运行中通过运行事件流实时更新（live-run.ts：运行视图、进度、指标增量）。
  * 时间线、图表与底部面板共用一份时间轴状态（monitor-state.tsx）。
  * 浏览器标签页标题显示运行状态与场景名；在页面上看着运行成功或被取消时弹出一次结果通知，
  * 失败改用时间线上方的页内横幅（FailureBanner），收起后失败摘要回到顶栏。
  * 地址里的节点、页签与日志时刻（run-link.ts 的 MonitorSearch）在第一次拿到运行视图时应用，之后地址变了再应用一次：
- * 页面上自己的操作（点节点、切页签）不写回地址。
+ * 页面上自己的操作（点节点、切页签）不写回地址；视图不参与这个判断（切视图不该重置选中的节点）。
  */
 export function MonitorPage({ runId, address }: { runId: string; address: MonitorSearch }) {
 	const runQuery = useLiveRun(runId);
 	const run = runQuery.data;
 	const running = !run || run.status === "running";
+	const navigate = useNavigate();
+
+	// 打开时的视图只在第一次拿到运行视图时决定一次（之后运行失败了也不把正在看概览的人拉走），并写进地址（替换当前
+	// 这一条历史）：发给同事的链接、刷新都停在同一个视图。
+	const opening = useRef<MonitorView | null>(null);
+	if (run && opening.current === null) {
+		opening.current = initialView({ address, run, remembered: readRememberedView() });
+	}
+	const view = address.view ?? opening.current ?? "overview";
+	const known = run !== undefined;
+	useEffect(() => {
+		if (known && address.view === undefined) {
+			void navigate({ ...runMonitorLink(runId, { ...address, view }), replace: true });
+		}
+	}, [known, address, view, runId, navigate]);
+	const changeView = (next: MonitorView) => {
+		rememberView(next);
+		void navigate(runMonitorLink(runId, { ...address, view: next }));
+	};
+	/** 点概览里的一项：进入详情，定位到它所在的节点。 */
+	const openNode = (target: OverviewTarget) => {
+		if (target.chainInstanceId !== null) {
+			store.select({ chainInstanceId: target.chainInstanceId, nodeId: target.nodeId });
+		}
+		// 点的那一格随概览卸载：焦点先移到「详情」标签，不落在 body 上。
+		document.getElementById(viewTabId("detail"))?.focus();
+		void navigate(runMonitorLink(runId, { view: "detail", node: target.nodeId }));
+	};
+	/** 顶栏的失败摘要在概览里点了以后切到详情（那里有它要打开的「尝试」页签）；不算用户选了视图，不记。 */
+	const showDetail = () => void navigate(runMonitorLink(runId, { ...address, view: "detail" }));
 
 	const orchestrationId = run?.orchestration_id;
 	const versionNumber = run?.orchestration_version;
@@ -123,13 +159,33 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 		<MonitorProvider store={store} axis={axis}>
 			{/* 规格最小宽度 1280；更窄时顶栏收成图标按钮，到 1024 仍不裁切操作。 */}
 			<div className="fixed inset-0 flex min-w-[1024px] flex-col bg-bg">
-				<MonitorTopBar run={run} name={name} failureInBanner={failureBanner} />
-				<MonitorBody
+				<MonitorTopBar
 					run={run}
-					doc={doc}
-					failureBanner={failureBanner}
-					onCloseBanner={() => setBannerClosed(run.id)}
+					name={name}
+					failureInBanner={failureBanner && view === "detail"}
+					view={view}
+					onViewChange={changeView}
+					onShowDetail={showDetail}
 				/>
+				<main className="flex min-h-0 flex-1 flex-col">
+					<div
+						role="tabpanel"
+						id={VIEW_PANEL_ID}
+						aria-labelledby={viewTabId(view)}
+						className="flex min-h-0 flex-1 flex-col"
+					>
+						{view === "overview" ? (
+							<Overview run={run} onOpenNode={openNode} />
+						) : (
+							<DetailView
+								run={run}
+								doc={doc}
+								failureBanner={failureBanner}
+								onCloseBanner={() => setBannerClosed(run.id)}
+							/>
+						)}
+					</div>
+				</main>
 			</div>
 		</MonitorProvider>
 	);
@@ -150,8 +206,11 @@ function applyAddress(store: MonitorStore, run: RunView, address: MonitorSearch)
 	if (address.tab) store.showPanel(address.tab);
 }
 
-/** 图表工作区要不要收成一行（chartsCompact）依赖指标目录，所以目录在这里取、传给图表工作区。 */
-function MonitorBody({
+/**
+ * 详情（原来的运行监控页）：链路时间线、图表工作区、底部面板。图表工作区要不要收成一行（chartsCompact）依赖指标目录，
+ * 所以目录在这里取、传给图表工作区；这些查询和快捷键只在详情里存在，概览不用它们。
+ */
+function DetailView({
 	run,
 	doc,
 	failureBanner,
@@ -167,12 +226,12 @@ function MonitorBody({
 	useEscapeClearsSelection();
 	useNextFailureShortcut(run);
 	return (
-		<main className="flex min-h-0 flex-1 flex-col">
+		<>
 			{failureBanner && <FailureBanner run={run} onClose={onCloseBanner} />}
 			<Timeline run={run} doc={doc} />
 			<ChartWorkspace run={run} doc={doc} catalog={catalog} compact={compact} />
 			<BottomPanel run={run} doc={doc} />
-		</main>
+		</>
 	);
 }
 
