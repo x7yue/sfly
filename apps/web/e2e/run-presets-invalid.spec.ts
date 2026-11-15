@@ -5,7 +5,7 @@ import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createRunPreset, listRunPresets, saveScenarioVersion } from "./run-presets-support";
 import { createScenario, publishPackage } from "./support";
 
-// 失效的运行预设（#326，ADR 0023）：画布保存时的警告、运行抽屉里不能选、在管理对话框里修好以后恢复可用。
+// 失效的运行预设（#326，ADR 0024）：画布保存时的警告、运行抽屉里不能选、在管理对话框里修好以后恢复可用。
 
 /** PARAM_SCENARIO 的入口参数换成 `params`（引用 params.host 的包节点不变）。 */
 const withParams = (params: Array<Record<string, unknown>>) => ({

@@ -1,4 +1,4 @@
-// 运行预设的维护（#323，ADR 0023）：修改、复制、删除，复制场景时一并复制，归档期间也能维护。
+// 运行预设的维护（#323，ADR 0024）：修改、复制、删除，复制场景时一并复制，归档期间也能维护。
 // HTTP API + 假 Agent + 真实 PostgreSQL。
 import { randomUUID } from "node:crypto";
 import { presetsApi, runsApi } from "@sfly/schema";

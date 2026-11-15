@@ -1,4 +1,4 @@
-// secret 参数作为预设参数（#324，ADR 0023「secret 预设参数」）：打码、`keep`、随预设和场景复制、日志打码。
+// secret 参数作为预设参数（#324，ADR 0024「secret 预设参数」）：打码、`keep`、随预设和场景复制、日志打码。
 // HTTP API + 假 Agent + 真实 PostgreSQL。
 import { runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

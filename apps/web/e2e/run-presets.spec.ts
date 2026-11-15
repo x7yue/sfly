@@ -2,7 +2,7 @@ import { expect, test } from "./fixtures";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createScenario, publishPackage } from "./support";
 
-// 运行预设（#322，ADR 0023）：在场景的更多菜单里新建预设，在运行抽屉里选中它，预设参数锁定，触发后运行用预设的值。
+// 运行预设（#322，ADR 0024）：在场景的更多菜单里新建预设，在运行抽屉里选中它，预设参数锁定，触发后运行用预设的值。
 
 test("从场景列表新建运行预设，在运行抽屉里选中它：预设参数锁定，触发后运行使用预设的值", async ({
 	page,

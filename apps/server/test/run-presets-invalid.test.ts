@@ -1,4 +1,4 @@
-// 失效的运行预设（#326，ADR 0023）：新版本让预设对不上以后的状态与问题清单、触发时拒绝、保存版本时的警告、修好以后恢复可用。
+// 失效的运行预设（#326，ADR 0024）：新版本让预设对不上以后的状态与问题清单、触发时拒绝、保存版本时的警告、修好以后恢复可用。
 // HTTP API + 假 Agent + 真实 PostgreSQL。
 import { orchestrationsApi, type PresetView, runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

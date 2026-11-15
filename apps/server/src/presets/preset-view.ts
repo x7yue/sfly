@@ -22,7 +22,7 @@ export function presetParamNames(
 
 /**
  * 一个预设参数的视图。所有接口返回的预设都经过这里：secret 参数的值在这里换成打码后的值，
- * 任何接口都不返回原值（ADR 0023「secret 预设参数」）。是不是 secret 以最新版本的声明为准，
+ * 任何接口都不返回原值（ADR 0024「secret 预设参数」）。是不是 secret 以最新版本的声明为准，
  * 已经不在声明里的参数（预设失效了）原来是不是 secret 无从判断，同样打码。
  */
 function paramView(

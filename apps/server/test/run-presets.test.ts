@@ -1,4 +1,4 @@
-// 运行预设（#322，ADR 0023）：新建预设的检查、按预设触发、触发前检查与运行详情里的预设。
+// 运行预设（#322，ADR 0024）：新建预设的检查、按预设触发、触发前检查与运行详情里的预设。
 // HTTP API + 假 Agent + 真实 PostgreSQL。
 import { randomUUID } from "node:crypto";
 import { runsApi } from "@sfly/schema";

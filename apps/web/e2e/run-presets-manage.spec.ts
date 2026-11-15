@@ -4,7 +4,7 @@ import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { createRunPreset, listRunPresets } from "./run-presets-support";
 import { createScenario, failApi, holdApi, publishPackage } from "./support";
 
-// 运行预设的维护（#323，ADR 0023）：在管理对话框里编辑、复制、删除预设；场景归档期间也能编辑。
+// 运行预设的维护（#323，ADR 0024）：在管理对话框里编辑、复制、删除预设；场景归档期间也能编辑。
 
 /** 打开场景卡片「更多」菜单里的「运行预设…」。 */
 async function openPresets(page: Page, scenario: string) {

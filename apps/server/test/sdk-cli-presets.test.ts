@@ -1,4 +1,4 @@
-// 运行预设在命令行里（#330，ADR 0023）：sfly run start --preset、scenario show 与 run show 里的预设、
+// 运行预设在命令行里（#330，ADR 0024）：sfly run start --preset、scenario show 与 run show 里的预设、
 // sfly api 的预设接口。真实的 sfly 进程对测试控制面；预设用 HTTP API 创建，运行由假 Agent 接收。
 import { runsApi } from "@sfly/schema";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";

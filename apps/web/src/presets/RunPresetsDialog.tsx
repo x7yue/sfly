@@ -70,7 +70,7 @@ export type OpeningView = { kind: "list" } | { kind: "form"; draft: PresetDraft 
 const LIST_VIEW: OpeningView = { kind: "list" };
 
 /**
- * 运行预设（GLOSSARY「运行预设」，ADR 0023）：列出场景的预设，新建、编辑、复制、删除。预设是场景的设置，
+ * 运行预设（GLOSSARY「运行预设」，ADR 0024）：列出场景的预设，新建、编辑、复制、删除。预设是场景的设置，
  * 不属于场景版本，修改后立即生效，场景归档期间也能修改；参数按名称对照最新版本的入口参数。
  * 列表、编辑表单、复制和删除确认是同一个弹窗里的几屏。
  */

@@ -2,7 +2,7 @@ import { z } from "zod";
 import { endpoint, Timestamp } from "./contract.js";
 
 /**
- * 运行预设（GLOSSARY「运行预设」，ADR 0023）相关接口的契约（约定见 ./contract.ts）。
+ * 运行预设（GLOSSARY「运行预设」，ADR 0024）相关接口的契约（约定见 ./contract.ts）。
  *
  * 运行预设是场景的设置，和运行通知一样不属于场景版本：增删改立即生效，不产生新版本。
  * 每个预设固定入口节点的一部分参数（预设参数），按参数名称对照场景最新版本的入口参数声明。

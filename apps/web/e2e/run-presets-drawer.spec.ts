@@ -9,7 +9,7 @@ import {
 } from "./run-presets-support";
 import { createScenario, publishPackage, scenarioUsing } from "./support";
 
-// 运行抽屉里用预设更顺手（#327，ADR 0023）：记住最近一次用的预设、切换预设时保留填写、存为预设、管理预设…。
+// 运行抽屉里用预设更顺手（#327，ADR 0024）：记住最近一次用的预设、切换预设时保留填写、存为预设、管理预设…。
 
 /** 打开场景卡片的运行抽屉。 */
 async function openDrawer(page: Page, scenario = "巡检") {

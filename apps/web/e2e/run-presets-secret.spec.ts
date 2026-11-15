@@ -4,7 +4,7 @@ import { expect, test } from "./fixtures";
 import { createRunPreset, listRunPresets } from "./run-presets-support";
 import { createScenario, publishPackage } from "./support";
 
-// secret 参数作为预设参数（#324，ADR 0023）：新建、编辑时不替换 secret、替换 secret，再用预设触发。
+// secret 参数作为预设参数（#324，ADR 0024）：新建、编辑时不替换 secret、替换 secret，再用预设触发。
 
 /** 入口参数 host 与 secret 的 api_token；api_token 会传给节点的 url 输入，Agent 收到的就是原值。 */
 const SCENARIO = {

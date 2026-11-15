@@ -56,7 +56,7 @@ function rejected(
 }
 
 /**
- * 运行预设（契约见 @sfly/schema 的 presetsApi，ADR 0023）：列出、新建、修改、复制、删除。
+ * 运行预设（契约见 @sfly/schema 的 presetsApi，ADR 0024）：列出、新建、修改、复制、删除。
  * 写操作需要昵称，昵称记为最后修改人；场景归档期间也能写。预设是场景的设置，不产生新的场景版本。
  */
 export function registerPresetRoutes(

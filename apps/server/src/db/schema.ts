@@ -151,7 +151,7 @@ export const orchestrations = pgTable("orchestrations", {
 });
 
 /**
- * 运行预设（GLOSSARY「运行预设」，ADR 0023）：场景的设置，不属于版本。values 是「参数名 → 值」，
+ * 运行预设（GLOSSARY「运行预设」，ADR 0024）：场景的设置，不属于版本。values 是「参数名 → 值」，
  * 键就是预设参数的名单；名称在同一个场景内唯一（区分大小写）。场景不物理删除，不需要级联。
  */
 export const runPresets = pgTable(

@@ -55,7 +55,7 @@ export interface HttpApiDeps {
 	logger: boolean;
 	hub: AgentHub;
 	orchestrations: OrchestrationStore;
-	/** 运行预设（src/presets/，ADR 0023）。 */
+	/** 运行预设（src/presets/，ADR 0024）。 */
 	presets: PresetStore;
 	engine: Engine;
 	packages: PackageRepository;
