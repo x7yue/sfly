@@ -60,8 +60,9 @@ test("页签上写出动作的个数（标记不算）；表格分三组，各�
 	await table.evaluate((el) => {
 		el.scrollTop = 800;
 	});
-	const earlier = await groupRows(table, "earlier");
-	expect(earlier.slice(0, 5)).toEqual(["1180", "1150", "1100", "~下单", "402"]);
+	await expect
+		.poll(async () => (await groupRows(table, "earlier")).slice(0, 5))
+		.toEqual(["1180", "1150", "1100", "~下单", "402"]);
 	// 1 在「正在做」、1190 在「最近 20 个」里：不再出现在「更早的明细」里。
 	await expect(table.locator('tbody[data-group="earlier"] tr[data-action-id="1"]')).toHaveCount(0);
 	await expect(table.locator('tbody[data-group="earlier"] tr[data-action-id="1190"]')).toHaveCount(
@@ -78,15 +79,12 @@ test("失败带完整的原因；子动作按层级缩进，最多 3 层；只�
 	const { runId } = await actionsScenario(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId, "verify", "actions");
 	const table = actionTable(page);
-	const indent = (id: number) =>
-		table
-			.locator(`tr[data-action-id="${id}"] td:nth-child(2) > span`)
-			.evaluate((el) => getComputedStyle(el).paddingLeft);
-	await expect.poll(() => indent(1)).toBe("12px");
-	expect(await indent(1201)).toBe("28px");
-	expect(await indent(1203)).toBe("60px");
+	const name = (id: number) => table.locator(`tr[data-action-id="${id}"] td:nth-child(2) > span`);
+	await expect(name(1)).toHaveCSS("padding-left", "12px");
+	await expect(name(1201)).toHaveCSS("padding-left", "28px");
+	await expect(name(1203)).toHaveCSS("padding-left", "60px");
 	// 第 4 层画在第 3 层。
-	expect(await indent(1204)).toBe("60px");
+	await expect(name(1204)).toHaveCSS("padding-left", "60px");
 
 	await table.evaluate((el) => {
 		el.scrollTop = 800;
@@ -97,13 +95,11 @@ test("失败带完整的原因；子动作按层级缩进，最多 3 层；只�
 		"拒单：余额不足（可用 1,203.55，需要 9,800.00）；撮合网关返回 REJECT_BALANCE，这一笔不再重试，等下一轮行情",
 	);
 	// 原因换行，不截断：这一行比只有一行字的行高。
-	const heights = await Promise.all(
-		["1180", "1150"].map(
-			async (id) => (await table.locator(`tr[data-action-id="${id}"]`).boundingBox())?.height ?? 0,
-		),
-	);
-	const plain = (await table.locator('tr[data-action-id="402"]').boundingBox())?.height ?? 0;
-	expect(Math.min(...heights)).toBeGreaterThan(plain);
+	const height = async (id: string) =>
+		(await table.locator(`tr[data-action-id="${id}"]`).boundingBox())?.height ?? 0;
+	await expect
+		.poll(async () => Math.min(await height("1180"), await height("1150")) - (await height("402")))
+		.toBeGreaterThan(0);
 
 	// 「下单」从 08:00:10.5 起只计数：1200 个里有明细的 404 个（只计数以前的 400 个和之后失败的 4 个）。
 	await expect(table.locator('tr[data-count-only="下单"]')).toHaveText(
@@ -141,7 +137,7 @@ test("往下滚动读更早的明细；一次只渲染看得见的那些行", as
 		)
 		.toBe(1);
 	// 406 条明细分三页读完（每页 200 条）。
-	expect(pages).toEqual(["latest", "older", "older"]);
+	await expect.poll(() => pages).toEqual(["latest", "older", "older"]);
 	await expect(table.getByRole("button", { name: "向下滚动或点击加载更早的明细" })).toHaveCount(0);
 	// 最早的是标记：小旗、没有耗时、结果写「标记」。
 	await expect(oldest).toHaveAttribute("data-result", "mark");
@@ -150,7 +146,7 @@ test("往下滚动读更早的明细；一次只渲染看得见的那些行", as
 	await expect(oldest.locator("td").nth(4)).toHaveText("标记");
 	await expect(table.locator('tr[data-action-id="3"]')).toContainText("订单=P-0003 方向=卖");
 	// 明细有四百多条，渲染出来的只是视口附近的那些。
-	expect(await table.locator("tr[data-action-id]").count()).toBeLessThan(80);
+	await expect.poll(() => table.locator("tr[data-action-id]").count()).toBeLessThan(80);
 });
 
 test("推送来的明细插到它开始的位置，同一个 ID 以后到的为准；页签上的个数跟着摘要变", async ({
@@ -174,7 +170,9 @@ test("推送来的明细插到它开始的位置，同一个 ID 以后到的为�
 	await agent.sync();
 	const row = table.locator(`tr[data-action-id="${RECONNECT.id}"]`);
 	await expect(row).toHaveAttribute("data-result", "running");
-	expect((await groupRows(table, "earlier")).slice(0, 3)).toEqual(["1180", "1171", "1150"]);
+	await expect
+		.poll(async () => (await groupRows(table, "earlier")).slice(0, 3))
+		.toEqual(["1180", "1171", "1150"]);
 
 	agent.actions(verify, [agent.actionEnd(RECONNECT.id, "success", at + RECONNECT.took)]);
 	agent.actionSummary(verify, actionsSummary(agent, times, true));
