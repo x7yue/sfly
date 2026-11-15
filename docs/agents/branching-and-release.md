@@ -33,6 +33,7 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 
 ## PR
 
+- 新增 ADR 的 PR，合入前先把最新的 `main` 合进分支：`pnpm lint:docs` 会拿它和 `origin/main` 比，能发现编号这期间被占用；两个 PR 同时开着、各自拿了同一个编号时，检查单靠自己拦不住，后合入的那个要在先合入之后再合一次 `main`。
 - 标题用祈使句：squash 合入后它就是 `main` 上的提交标题（GitHub 自动追加 ` (#编号)`），各提交的信息成为正文。
 - 加上分类标签，Release 说明按它分组（`.github/release.yml`）：`enhancement` 新功能、`bug` 修复、`documentation` 文档；其余归入「其他」。
 - 让 API 客户端生成的类型（`packages/client/src/generated/`）出现不兼容变化的 PR，另加标签 `breaking-change`，并在描述里写明变了什么、自建页面要怎么改。Release 说明把带这个标签的 PR 放在最前面的「API 客户端的不兼容变化」里：1.0 之前不保证跨版本兼容（ADR 0022），用户要在升级前知道要改什么。

@@ -19,7 +19,7 @@
 |---|---|
 | `pnpm bootstrap` | 安装 JS/TS、Rust、Python 依赖，并启用 `.githooks/`：推送分支前运行 gen:check、lint、typecheck（跳过用 `git push --no-verify`）；测试在 CI 里跑 |
 | `pnpm gen` | 从 `proto/` 生成 TS 代码，从 `packages/schema` 导出 JSON Schema |
-| `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试；lint 还检查 GitHub Actions 工作流（`pnpm lint:actions`，actionlint，需要 docker 或本机的 actionlint）。Agent 只能在 Linux 上编译，在 macOS 上 `lint:rust` 只检查 Agent 的库和可执行文件，测试代码由 CI 或 `pnpm linux` 检查 |
+| `pnpm lint` / `pnpm typecheck` / `pnpm test` | 三种语言的 lint、类型检查、测试；lint 还检查 GitHub Actions 工作流（`pnpm lint:actions`，actionlint，需要 docker 或本机的 actionlint）。Agent 只能在 Linux 上编译，在 macOS 上 `lint:rust` 只检查 Agent 的库和可执行文件，测试代码由 CI 或 `pnpm linux` 检查；控制面里依赖真实 Agent 的测试文件在 macOS 上自动跳过（跑完时有提示），用 `pnpm linux pnpm --filter @sfly/server test` 运行 |
 | `pnpm linux <命令>` | 在与 CI 相同工具链的 Linux 容器里运行命令（需要 docker），例如 `pnpm linux pnpm test:rust`。在 macOS 上跑 Agent 的测试和只有 Linux 能跑的检查用它；同步、依赖、PostgreSQL 与镜像源的说明见 `scripts/linux/run.sh` |
 | `pnpm proto:breaking` | buf breaking 检查 |
 | `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main`、PR（含草稿），以及手动触发；CI 里按语言拆成并行的 job） |

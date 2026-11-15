@@ -7,8 +7,9 @@ import { cp as copy, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "no
 import { arch, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { dependencyWheel, type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -37,7 +38,7 @@ const TOOLS = [
 	"uname",
 ];
 
-describe("全栈：install.sh --dev", () => {
+describeWithAgent("全栈：install.sh --dev", () => {
 	let mirror: ReleaseMirror;
 	let pypi: PypiStub;
 	let dir: string;

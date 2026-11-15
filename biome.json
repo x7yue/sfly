@@ -40,6 +40,7 @@
 	},
 	"plugins": [
 		"./biome-plugins/run-view-cache.grit",
+		"./biome-plugins/e2e-text-editing-keys.grit",
 		"./biome-plugins/e2e-fixed-wait.grit",
 		"./biome-plugins/no-raw-table.grit"
 	]
