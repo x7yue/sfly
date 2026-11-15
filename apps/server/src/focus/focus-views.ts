@@ -90,8 +90,10 @@ export async function focusItemViews(
 				const last_version = await lastVersionWithNode(db, orchestration.id, node_id);
 				return { ...named, status: "node_missing", last_version };
 			}
-			const declared = (await chartsOf(head, node_id))?.some((c) => c.title === chart);
-			return { ...named, status: declared ? "ok" : "chart_missing" };
+			const declared = (await chartsOf(head, node_id))?.find((c) => c.title === chart);
+			return declared
+				? { ...named, status: "ok", chart_type: declared.type }
+				: { ...named, status: "chart_missing" };
 		}),
 	);
 }

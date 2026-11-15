@@ -67,6 +67,7 @@ import {
 import { notify } from "#/components/feedback/notify";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
+import { ACTION } from "#/lib/copy";
 import { dialogOpen } from "#/lib/focus";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
@@ -897,7 +898,7 @@ function Editor({
 						running ? undefined : (
 							<>
 								<ToolButton
-									label="撤销"
+									label={ACTION.undo}
 									shortcut="canvas-undo"
 									disabled={!history.canUndo}
 									onClick={history.undo}

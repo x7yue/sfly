@@ -1,5 +1,6 @@
 // 关注项的设置（#344 / #348）：场景设置里的有序列表，不属于场景版本；整份替换、校验和错误码、
 // 失效项的状态、最后一次修改的说明。HTTP API + 真实 PostgreSQL，手动时钟。
+import type { OrchestrationView } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import {
@@ -49,8 +50,8 @@ describe("关注项的设置", () => {
 
 			const view = await putFocusItemsOk(api, id, [PROBE_LEVEL, LOAD_TPS]);
 			expect(view.focus_items).toEqual([
-				{ ...PROBE_LEVEL, status: "ok" },
-				{ ...LOAD_TPS, status: "ok" },
+				{ ...PROBE_LEVEL, status: "ok", chart_type: "line" },
+				{ ...LOAD_TPS, status: "ok", chart_type: "area" },
 			]);
 			expect(view.head_version).toBe(1);
 			expect(await orchestrationView(api, id)).toEqual(view);
@@ -69,7 +70,9 @@ describe("关注项的设置", () => {
 		it("没有声明的指标生成的默认图表可以设为关注项；只在图表里画出的指标名不行", async () => {
 			const id = await scene();
 			const view = await putFocusItemsOk(api, id, [{ node_id: "load", chart: "orders" }]);
-			expect(view.focus_items).toEqual([{ node_id: "load", chart: "orders", status: "ok" }]);
+			expect(view.focus_items).toEqual([
+				{ node_id: "load", chart: "orders", status: "ok", chart_type: "stat" },
+			]);
 
 			const res = await putFocusItems(api, id, [{ node_id: "load", chart: "p99" }]);
 			expect(res.status).toBe(400);
@@ -86,8 +89,8 @@ describe("关注项的设置", () => {
 				{ node_id: "load2", chart: "TPS", title: "" },
 			]);
 			expect(view.focus_items).toEqual([
-				{ ...LOAD_TPS, title: "撮合 TPS", status: "ok" },
-				{ node_id: "load2", chart: "TPS", status: "ok" },
+				{ ...LOAD_TPS, title: "撮合 TPS", status: "ok", chart_type: "area" },
+				{ node_id: "load2", chart: "TPS", status: "ok", chart_type: "area" },
 			]);
 		});
 
@@ -225,7 +228,7 @@ describe("关注项的设置", () => {
 			await api.saveVersion(id, benchDocument([["load", "load"]]));
 			const v2 = await orchestrationView(api, id);
 			expect(v2.focus_items).toEqual([
-				{ ...LOAD_TPS, status: "ok" },
+				{ ...LOAD_TPS, status: "ok", chart_type: "area" },
 				{ ...PROBE_LEVEL, status: "node_missing", last_version: 1 },
 			]);
 
@@ -235,7 +238,7 @@ describe("关注项的设置", () => {
 			]);
 			expect(kept.focus_items).toEqual([
 				{ ...PROBE_LEVEL, title: "探针电平", status: "node_missing", last_version: 1 },
-				{ ...LOAD_TPS, status: "ok" },
+				{ ...LOAD_TPS, status: "ok", chart_type: "area" },
 			]);
 
 			// 节点回来以后恢复可用；再次移除时，包含它的最后一个版本是第 3 版。
@@ -256,17 +259,60 @@ describe("关注项的设置", () => {
 			const view = await orchestrationView(api, id);
 			expect(view.focus_items).toEqual([
 				{ ...LOAD_TPS, status: "chart_missing" },
-				{ ...LOAD_LATENCY, status: "ok" },
+				{ ...LOAD_LATENCY, status: "ok", chart_type: "line" },
 			]);
 
 			const kept = await putFocusItemsOk(api, id, [LOAD_LATENCY, LOAD_TPS]);
 			expect(kept.focus_items.map((i) => i.status)).toEqual(["ok", "chart_missing"]);
 
-			// 移除以后再想加回去，就是新加的项，要通过检查。
+			// 移除以后又改了别的，再想加回去就是新加的项，要通过检查（移除之后立刻写回去是撤销，见下一条）。
 			await putFocusItemsOk(api, id, [LOAD_LATENCY]);
+			await putFocusItemsOk(api, id, [{ ...LOAD_LATENCY, title: "延迟" }]);
 			const readded = await putFocusItems(api, id, [LOAD_LATENCY, LOAD_TPS]);
 			expect(readded.status).toBe(400);
 			expect((await errorOf(readded)).code).toBe("focus_item_unknown_chart");
+		});
+
+		it("移除一个已经失效的项以后立刻撤销：写回的是移除之前的列表，失效的项不当作新加入的检查", async () => {
+			const id = await scene([
+				["load", "load"],
+				["probe", "probe"],
+			]);
+			await putFocusItemsOk(api, id, [LOAD_TPS, PROBE_LEVEL, LOAD_LATENCY]);
+			// 第 2 版去掉了 probe，节点包升到 2.0.0：probe:level 节点不在，load:TPS 图表不存在。
+			await api.saveVersion(id, benchDocument([["load", "load"]], "2.0.0"));
+			const stale = (view: OrchestrationView) => view.focus_items.map((i) => i.status);
+			expect(stale(await orchestrationView(api, id))).toEqual([
+				"chart_missing",
+				"node_missing",
+				"ok",
+			]);
+
+			const full = [LOAD_TPS, PROBE_LEVEL, LOAD_LATENCY];
+			for (const gone of [LOAD_TPS, PROBE_LEVEL]) {
+				const removed = await putFocusItemsOk(
+					api,
+					id,
+					full.filter((item) => item !== gone),
+				);
+				expect(removed.focus_items).toHaveLength(2);
+
+				const view = await putFocusItemsOk(api, id, full);
+				expect(stale(view)).toEqual(["chart_missing", "node_missing", "ok"]);
+				expect(view.focus_edit?.summary).toBe(`撤销了移除「${gone.chart}」`);
+			}
+		});
+
+		it("撤销只在移除之后立刻写回去时才成立：中间改过别的，失效的项就是新加入的", async () => {
+			const id = await scene([["load", "load"]]);
+			await putFocusItemsOk(api, id, [LOAD_TPS, LOAD_LATENCY]);
+			await api.saveVersion(id, benchDocument([["load", "load"]], "2.0.0"));
+			await putFocusItemsOk(api, id, [LOAD_LATENCY]);
+			await putFocusItemsOk(api, id, []);
+
+			const res = await putFocusItems(api, id, [LOAD_TPS, LOAD_LATENCY]);
+			expect(res.status).toBe(400);
+			expect((await errorOf(res)).code).toBe("focus_item_unknown_chart");
 		});
 
 		it("失效的项也占名额：满 8 项后再加返回 focus_items_limit，移除失效的项后可以再加", async () => {
@@ -389,6 +435,36 @@ describe("关注项的设置", () => {
 			expect(undone.focus_edit?.summary).toBe("撤销了移除「level」");
 			const again = await putFocusItemsOk(api, id, [LOAD_TPS]);
 			expect(again.focus_edit?.summary).toBe("移除了「level」");
+		});
+	});
+
+	// 连接池只有 10 个连接：事务占着一个连接时不能再去池里另取，否则 10 个并发的写入会互相等死。
+	describe("很多请求同时到达", () => {
+		const CONCURRENT = 14;
+
+		it("同时修改同一个场景的关注项：全部完成，列表是其中一次写入的结果", async () => {
+			const id = await scene();
+			const responses = await Promise.all(
+				Array.from({ length: CONCURRENT }, (_, i) =>
+					putFocusItems(api, id, [i % 2 === 0 ? LOAD_TPS : LOAD_LATENCY]),
+				),
+			);
+			expect(responses.map((res) => res.status)).toEqual(Array(CONCURRENT).fill(200));
+			expect(["load:TPS", "load:延迟"]).toContain(focusKeys(await orchestrationView(api, id))[0]);
+		});
+
+		it("同时归档很多个有关注项的场景：全部完成", async () => {
+			const ids = await Promise.all(
+				Array.from({ length: CONCURRENT }, async () => {
+					const id = await scene();
+					await putFocusItemsOk(api, id, [LOAD_TPS]);
+					return id;
+				}),
+			);
+			const responses = await Promise.all(
+				ids.map((id) => api.postEmpty(`/orchestrations/${id}/archive`)),
+			);
+			expect(responses.map((res) => res.status)).toEqual(Array(CONCURRENT).fill(200));
 		});
 	});
 });

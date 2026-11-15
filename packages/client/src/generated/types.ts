@@ -643,7 +643,7 @@ export interface FocusItemInput {
 /**
  * 关注项和场景最新版本的对照（`status`）：
  *
- * - `ok`：节点在最新版本里，它锁定的节点包版本声明了这张图表（含平台为没被图表引用的指标生成的默认图表）。
+ * - `ok`：节点在最新版本里，它锁定的节点包版本声明了这张图表（含平台为没被图表引用的指标生成的默认图表），带这张图表的类型 `chart_type`。
  * - `node_missing`：节点不在最新版本里。`last_version` 是包含它的最后一个版本号；没有任何版本包含它时为 null
  *   （复制场景时带过来的关注项）。运行绑定在这个版本及更早的版本时，这一项照常显示。
  * - `chart_missing`：节点还在，但它锁定的节点包版本没有这张图表（图表改了标题、节点类型换了，或者节点已不是包节点）。
@@ -656,6 +656,8 @@ export type FocusItemView = {
 	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
 	title?: string;
 	status: "ok";
+	/** 图表在最新版本里声明的类型（`stat` 是数值卡，显示成数值，其余照声明画）。 */
+	chart_type: "line" | "area" | "bar" | "stat";
 } | {
 	node_id: string;
 	chart: string;
