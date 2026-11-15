@@ -319,6 +319,58 @@ def summary_burst(ctx: Context, count: int, interval: float) -> None:
             time.sleep(interval)
 
 
+@node(title="直接写动作事件", outputs=[])
+def raw_events(ctx: Context, lines: list[Any]) -> None:
+    """Agent 转发动作明细的测试用（#357）：不经过 ctx.action，把 lines 的每一项写成事件管道里的
+    一行，一次写完。对象项按 JSON 写（键的先后照输入，中文不转义），字符串项原样写，所以可以写出
+    SDK 不会写的内容：没有 mono 的事件、结果不认识的事件、缺必需字段的事件。
+    """
+    text = "".join(
+        (line if isinstance(line, str) else json.dumps(line, ensure_ascii=False)) + "\n"
+        for line in lines
+    )
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        events.write(text)
+        events.flush()
+
+
+#: `action_flood` 写的 ts、mono 的基数：一个固定的过去时刻，和读到它时的时钟都差得很远。
+FLOOD_TS = 1_700_000_000_000
+FLOOD_MONO = 1_000_000
+
+
+@node(title="大量动作明细", outputs=[])
+def action_flood(ctx: Context, count: int, release_file: str = "") -> None:
+    """Agent 转发动作明细的测试用（#357）：不经过 ctx.action（SDK 自己最多上报 10 万个），尽快往
+    事件管道写出 id 从 1 到 count 的 count 个动作和标记，写完立即退出：奇数 id 是动作
+    （`action_start` 紧跟着它的 `action_end`），偶数 id 是标记。每个事件的 ts 是 `FLOOD_TS + id`、
+    mono 是 `FLOOD_MONO + id`。给了 release_file 时先等到这个文件出现再写。
+    """
+    while release_file and not os.path.exists(release_file):
+        time.sleep(0.02)
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        for first in range(1, count + 1, 2000):
+            lines = []
+            for i in range(first, min(first + 2000, count + 1)):
+                ts, mono = FLOOD_TS + i, FLOOD_MONO + i
+                if i % 2:
+                    lines.append(
+                        f'{{"type":"action_start","ts":{ts},"mono":{mono},"id":{i},'
+                        f'"parent":null,"depth":0,"name":"下单","fields":{{}}}}\n'
+                    )
+                    lines.append(
+                        f'{{"type":"action_end","ts":{ts},"mono":{mono},"id":{i},'
+                        f'"result":"success","reason":null,"fields":{{}}}}\n'
+                    )
+                else:
+                    lines.append(
+                        f'{{"type":"mark","ts":{ts},"mono":{mono},"id":{i},'
+                        f'"parent":null,"depth":0,"name":"成交","fields":{{}}}}\n'
+                    )
+            events.write("".join(lines))
+            events.flush()
+
+
 @node(title="多路日志", outputs=[])
 def chatter(
     ctx: Context, steps: int = 0, interval: float = 0.0, secret: str = ""

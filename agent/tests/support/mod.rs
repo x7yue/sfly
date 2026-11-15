@@ -40,6 +40,18 @@ pub fn system_time_ms() -> i64 {
         .as_millis() as i64
 }
 
+/// Agent 进程到目前为止的峰值常驻内存（`/proc/<pid>/status` 的 VmHWM）。
+pub fn peak_rss_bytes(pid: u32) -> u64 {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+    let kib: u64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmHWM:"))
+        .and_then(|v| v.trim().strip_suffix("kB"))
+        .and_then(|v| v.trim().parse().ok())
+        .expect("VmHWM");
+    kib * 1024
+}
+
 /// 等到 `check` 成立（看的是假控制面收不到的东西，例如文件；消息用 [`FakeControlPlane::wait_for`]）。
 pub async fn wait_until(what: &str, check: impl Fn() -> bool) {
     let deadline = tokio::time::Instant::now() + WAIT;
