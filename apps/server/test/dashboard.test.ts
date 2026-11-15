@@ -324,3 +324,98 @@ describe("控制台统计", () => {
 		});
 	});
 });
+
+describe("控制台的开始使用", () => {
+	let cp: TestControlPlane;
+	let api: ApiClient;
+	const agents: FakeAgent[] = [];
+	const connect = async (hello: HelloInit) => {
+		const agent = await FakeAgent.connect(cp.grpcUrl, hello);
+		agents.push(agent);
+		return agent;
+	};
+	const clock = () => cp.clock as ManualClock;
+	const setup = async () => {
+		const res = await cp.fetch("/dashboard");
+		expect(res.status).toBe(200);
+		return dashboardApi.get.response.parse(await res.json()).setup;
+	};
+
+	beforeEach(async () => {
+		cp = await startTestControlPlane();
+		api = new ApiClient(cp);
+	});
+	afterEach(async () => {
+		await Promise.all(agents.splice(0).map((a) => a.disconnect()));
+		await cp.close();
+	});
+
+	it("全新环境：四步都没完成", async () => {
+		expect(await setup()).toEqual({
+			agent: { done: false, online: 0, name: null },
+			package: { done: false, count: 0, latest: null },
+			scenario: { done: false, count: 0, name: null },
+			run: { done: false },
+		});
+	});
+
+	it("接入 Agent：有在线的 Agent 才算完成；写出名称排在最前的在线 Agent，离线的不计", async () => {
+		await (await connect({ name: "agent-a", slots: 1 })).disconnect();
+		expect((await setup()).agent).toEqual({ done: false, online: 0, name: null });
+
+		await connect({ name: "agent-c", slots: 1 });
+		expect((await setup()).agent).toEqual({ done: true, online: 1, name: "agent-c" });
+
+		await connect({ name: "agent-b", slots: 1 });
+		expect((await setup()).agent).toEqual({ done: true, online: 2, name: "agent-b" });
+	});
+
+	it("发布节点包：有任何一个版本就算完成；个数按包名数，最新是最近发布的版本", async () => {
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		expect((await setup()).package).toEqual({
+			done: true,
+			count: 1,
+			latest: { name: "stub", version: "1.0.0" },
+		});
+
+		for (const [name, version] of [
+			["stub", "1.1.0"],
+			["other", "0.2.0"],
+			["stub", "1.2.0"],
+		] as const) {
+			clock().advance(1000);
+			await publishPackage(cp, name, version, { echo: ["v"] });
+		}
+		expect((await setup()).package).toEqual({
+			done: true,
+			count: 2,
+			latest: { name: "stub", version: "1.2.0" },
+		});
+	});
+
+	it("新建场景：有没有归档的场景就算完成，已归档的不计；写出最近新建的场景", async () => {
+		const first = await api.createOrchestration("巡检");
+		expect((await setup()).scenario).toEqual({ done: true, count: 1, name: "巡检" });
+
+		clock().advance(1000);
+		const second = await api.createOrchestration("压测");
+		expect((await setup()).scenario).toEqual({ done: true, count: 2, name: "压测" });
+
+		await api.postEmpty(`/orchestrations/${first}/archive`);
+		expect((await setup()).scenario).toEqual({ done: true, count: 1, name: "压测" });
+		await api.postEmpty(`/orchestrations/${second}/archive`);
+		expect((await setup()).scenario).toEqual({ done: false, count: 0, name: null });
+	});
+
+	it("触发第一次运行：有任何一个运行就算完成，运行结束了也一样", async () => {
+		await publishPackage(cp, "stub", "1.0.0", { echo: ["v"] });
+		const agent = await connect({ name: "agent-a", slots: 1 });
+		const id = await api.orchestrationWith(single("a"));
+		expect((await setup()).run).toEqual({ done: false });
+
+		await api.triggerOk(id);
+		expect((await setup()).run).toEqual({ done: true });
+		await agent.succeed(await agent.nextAssign());
+		expect((await setup()).run).toEqual({ done: true });
+	});
+});

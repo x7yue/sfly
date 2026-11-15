@@ -18,6 +18,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { nodeStatusView, SlotBar, STATUS, StatusDot, StatusPill } from "#/components/status";
+import { GettingStarted } from "#/dashboard/GettingStarted";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
 import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
@@ -33,32 +34,48 @@ export const Route = createFileRoute("/_shell/")({
 	component: Dashboard,
 });
 
-/** 控制台（原型 #/dashboard）：页头一行（控制面时间、计数、运行场景），下面是正在运行、最近失败、Agent 状态。 */
+/**
+ * 控制台（原型 #/dashboard）：页头一行（控制面时间、计数、运行场景），下面是正在运行、最近失败、Agent 状态。
+ * 环境里还没有运行过任何场景时只显示「开始使用」（原型 #/empty），页头也只剩标题和一句说明。
+ */
 function Dashboard() {
 	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: LIVE_POLL_MS });
 	const overlays = useOverlays();
 	const data = dashboard.data;
+	const gettingStarted = data !== undefined && !data.setup.run.done;
+	// 第一次加载完成之前不显示按钮：全新环境里它马上又会消失。
+	const showActions = !gettingStarted && !dashboard.isPending;
 	return (
 		<Page>
 			<PageHeader
 				title={PAGE.dashboard}
 				description={
-					data && (
-						<span className="font-mono text-xs">控制面时间 {formatClock(data.generated_at)}</span>
-					)
+					gettingStarted
+						? "这套环境还没有运行过场景。按顺序做完下面四步，控制台会换成正在运行的内容。"
+						: data && (
+								<span className="font-mono text-xs">
+									控制面时间 {formatClock(data.generated_at)}
+								</span>
+							)
 				}
 				actions={
-					<>
-						{data && <RunCounts runs={data.runs} />}
-						<Button variant="default" onClick={() => overlays.open("run-scenario")}>
-							<PlayIcon />
-							运行场景
-						</Button>
-					</>
+					showActions && (
+						<>
+							{data && <RunCounts runs={data.runs} />}
+							<Button variant="default" onClick={() => overlays.open("run-scenario")}>
+								<PlayIcon />
+								运行场景
+							</Button>
+						</>
+					)
 				}
 			/>
 			{data ? (
-				<DashboardBody data={data} />
+				gettingStarted ? (
+					<GettingStarted setup={data.setup} />
+				) : (
+					<DashboardBody data={data} />
+				)
 			) : dashboard.isError ? (
 				<ErrorState
 					title="无法加载控制台数据"
