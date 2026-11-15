@@ -1,11 +1,10 @@
 import { type DashboardFailure, type DashboardView, isOnAgentStatus } from "@sfly/schema";
-import { and, asc, count, desc, eq, gt, gte, isNotNull, lte } from "drizzle-orm";
+import { and, count, desc, eq, gt, gte, isNotNull, lte } from "drizzle-orm";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
 	chainInstances,
-	nodePackages,
 	orchestrations,
 	orchestrationVersions,
 	runs,
@@ -13,70 +12,37 @@ import {
 } from "../db/schema.js";
 import { loadRunBoards } from "../engine/run-board.js";
 import { getRunView, type NodeView, type RunView } from "../engine/run-queries.js";
-import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
-import { packageLocks } from "../orchestrations/usage.js";
 
 const HOUR_MS = 3_600_000;
 /** 最近失败最多列出的条数。 */
 const RECENT_FAILURES = 10;
-/** 最近发布的节点包最多列出的版本数。 */
-const RECENT_PACKAGES = 5;
 const WINDOW_MS = 24 * HOUR_MS;
 
 export interface DashboardDeps {
 	db: Db;
 	clock: Clock;
 	hub: AgentHub;
-	orchestrations: OrchestrationStore;
 }
 
 type Outcome = "success" | "failed" | "cancelled";
 const OUTCOMES: readonly Outcome[] = ["success", "failed", "cancelled"];
 const isOutcome = (status: string): status is Outcome => (OUTCOMES as string[]).includes(status);
 
-const rate = (counts: Record<Outcome, number>) => {
-	const ended = counts.success + counts.failed + counts.cancelled;
-	return ended === 0 ? null : counts.success / ended;
-};
-
 /**
  * 控制台统计（契约见 @sfly/schema 的 dashboardApi）。「现在」取注入的时钟，
- * 窗口是 [now − 24h, now]，运行按结束时间归入窗口与小时桶。
+ * 窗口是 [now − 24h, now]，运行按结束时间归入窗口。
  */
-export async function dashboardView({
-	db,
-	clock,
-	hub,
-	orchestrations: store,
-}: DashboardDeps): Promise<DashboardView> {
+export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<DashboardView> {
 	const now = clock.now();
 	const windowStart = new Date(now.getTime() - WINDOW_MS);
-	const previousStart = new Date(windowStart.getTime() - WINDOW_MS);
 
-	// 前一个窗口与本窗口内结束的运行。
 	const ended = await db
-		.select({ status: runs.status, endedAt: runs.endedAt })
+		.select({ status: runs.status })
 		.from(runs)
-		.where(and(isNotNull(runs.endedAt), gte(runs.endedAt, previousStart), lte(runs.endedAt, now)));
+		.where(and(isNotNull(runs.endedAt), gte(runs.endedAt, windowStart), lte(runs.endedAt, now)));
 	const current = { success: 0, failed: 0, cancelled: 0 };
-	const previous = { success: 0, failed: 0, cancelled: 0 };
-	const hourly = Array.from({ length: 24 }, (_, i) => ({
-		start: new Date(windowStart.getTime() + i * HOUR_MS).toISOString(),
-		success: 0,
-		failed: 0,
-		cancelled: 0,
-	}));
 	for (const run of ended) {
-		if (!run.endedAt || !isOutcome(run.status)) continue;
-		if (run.endedAt < windowStart) {
-			previous[run.status] += 1;
-			continue;
-		}
-		current[run.status] += 1;
-		// 恰好在此刻结束的运行归入最后一个桶。
-		const index = Math.floor((run.endedAt.getTime() - windowStart.getTime()) / HOUR_MS);
-		const bucket = hourly[Math.min(index, hourly.length - 1)];
-		if (bucket) bucket[run.status] += 1;
+		if (isOutcome(run.status)) current[run.status] += 1;
 	}
 
 	const running = await runningRuns(db);
@@ -93,16 +59,6 @@ export async function dashboardView({
 		last_seen_at: agent.last_seen_at,
 	}));
 	const online = agents.filter((a) => a.status === "online");
-	const published = await db
-		.select({
-			name: nodePackages.name,
-			version: nodePackages.version,
-			publishedAt: nodePackages.publishedAt,
-		})
-		.from(nodePackages)
-		.orderBy(desc(nodePackages.publishedAt), asc(nodePackages.name), desc(nodePackages.version))
-		.limit(RECENT_PACKAGES);
-	const locks = packageLocks(await store.headDocuments());
 	const chains = running.flatMap((r) => r.chains);
 	const nodes = chains.flatMap((c) => c.nodes);
 
@@ -115,10 +71,7 @@ export async function dashboardView({
 			queued_tasks: nodes.filter((n) => n.status === ("queued" satisfies TaskStatus)).length,
 			...current,
 			failed_subflows: failures.subflows,
-			success_rate: rate(current),
-			previous_success_rate: rate(previous),
 		},
-		hourly,
 		running_runs: running.map(({ run, name, version, chains }) => ({
 			id: run.id,
 			orchestration_id: run.orchestrationId,
@@ -148,12 +101,6 @@ export async function dashboardView({
 			used_slots: online.reduce((sum, a) => sum + a.used_slots, 0),
 			list: agents,
 		},
-		recent_packages: published.map((p) => ({
-			name: p.name,
-			version: p.version,
-			published_at: p.publishedAt.toISOString(),
-			locked_orchestrations: locks.get(`${p.name}@${p.version}`) ?? 0,
-		})),
 	};
 }
 
