@@ -362,6 +362,39 @@ test("节点包安装：安装中的 Agent 状态写「安装中」和包名；�
 	await expect(header(page, "agent-failed-install")).toContainText("安装 demo-checks@1.3.0 失败");
 });
 
+test("状态后面的告警按固定顺序排：时钟偏差、能力不可调用、节点包安装失败", async ({
+	page,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-all-warnings",
+		capabilities: [{ name: "files", version: 2 }],
+		peer: { port: 50052, listenError: "端口 50052 已被占用" },
+		...agentClock(clock.now().getTime() + 3_600_000, 5_000),
+	});
+	agent.send({
+		case: "install",
+		value: {
+			package: "demo-checks",
+			version: "1.3.0",
+			state: 3, // FAILED
+			taskId: "t-3",
+			output: "依赖冲突",
+			installedPackages: [],
+		},
+	});
+	await agent.sync();
+
+	await page.goto("/agents");
+	const text = (await header(page, "agent-all-warnings").innerText()).replaceAll(/\s+/g, " ");
+	const positions = ["时间比控制面", "不能被其它 Agent 调用", "安装 demo-checks@1.3.0 失败"].map(
+		(warning) => text.indexOf(warning),
+	);
+	expect(positions.every((position) => position >= 0)).toBe(true);
+	expect(positions).toEqual([...positions].sort((a, b) => a - b));
+});
+
 test.describe("版本不一致", () => {
 	test.use({ controlPlaneOptions: { version: "2.0.0" } });
 

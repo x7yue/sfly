@@ -132,15 +132,15 @@ function RackStatus({ agent }: { agent: AgentView }) {
 					时间比控制面{formatClockOffset(clockOffset.offset_ms)}
 				</span>
 			)}
-			{failed && agent.install && (
-				<span className="text-xs text-danger-fg">
-					安装 {agent.install.package}@{agent.install.version} 失败
-				</span>
-			)}
 			{unavailable !== null && (
 				<span className="text-xs">
 					<span className="text-warn-fg">不能被其它 Agent 调用</span>
 					<span className="text-fg-3"> · {unavailable}</span>
+				</span>
+			)}
+			{failed && agent.install && (
+				<span className="text-xs text-danger-fg">
+					安装 {agent.install.package}@{agent.install.version} 失败
 				</span>
 			)}
 		</div>
