@@ -6,6 +6,7 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
+import { loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
 import {
 	createEditorScenario,
@@ -1228,6 +1229,35 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	}
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-run-state.png", {
+		mask: [
+			page.getByTestId("canvas-run").locator(".font-mono").first(),
+			page.getByTestId("run-summary").locator("dd").first(),
+		],
+	});
+});
+
+test("编排画布：运行状态（检查器的「正在做」和「动作」：计数、上限说明、折行的失败原因）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId, agent, tasks } = await runningScenario(
+		controlPlane,
+		connectAgent,
+		clock,
+	);
+	agent.actionSummary(tasks.verify as AssignedTask, loadSummary(agent, clock.now().getTime()));
+	await agent.sync();
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	await nodeCard(page, "verify").click();
+	const area = page.getByRole("region", { name: "动作", exact: true });
+	await expect(area.getByRole("table")).toContainText("1,284,819");
+	await area.evaluate((el) => el.scrollIntoView({ block: "start" }));
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-run-actions.png", {
 		mask: [
 			page.getByTestId("canvas-run").locator(".font-mono").first(),
 			page.getByTestId("run-summary").locator("dd").first(),

@@ -6,8 +6,8 @@ import { ACTIONS_POLL_MS } from "#/lib/polling";
 
 /**
  * 一个任务（一次尝试）的动作摘要（`GET /tasks/:id/actions/summary`）：页面读它的唯一入口。
- * `taskId` 为 undefined 时不查询（节点没有上报动作的可能：不在 Agent 上执行，或还没开始执行）。
- * 执行中（`live`）每 `ACTIONS_POLL_MS` 重新读取；结束时再读一次，拿到最后一份摘要，之后不再轮询。
+ * `taskId` 为 undefined 时不查询（节点不在 Agent 上执行，或这次尝试还没开始执行，不可能记录过动作）。
+ * 执行中（`live`）每 `ACTIONS_POLL_MS` 重新读取；这个任务结束时再读一次，拿到最后一份摘要，之后不再轮询。
  * 摘要接口没有推送，以后换成推送只改这里。
  */
 export function useActionSummary(taskId: string | undefined, { live }: { live: boolean }) {
@@ -16,11 +16,13 @@ export function useActionSummary(taskId: string | undefined, { live }: { live: b
 		enabled: taskId !== undefined,
 		refetchInterval: live ? ACTIONS_POLL_MS : false,
 	});
-	const wasLive = useRef(live);
+	const previous = useRef({ taskId, live });
 	const { refetch } = query;
 	useEffect(() => {
-		if (wasLive.current && !live && taskId !== undefined) void refetch();
-		wasLive.current = live;
-	}, [live, taskId, refetch]);
+		const before = previous.current;
+		previous.current = { taskId, live };
+		// 换了一个任务（选中了别的节点）不算结束：它自己的查询已经在读。
+		if (before.taskId === taskId && before.live && !live && taskId !== undefined) void refetch();
+	}, [taskId, live, refetch]);
 	return query;
 }

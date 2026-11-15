@@ -226,8 +226,8 @@ const COUNT_ONLY_SHOWN = 5;
 
 /**
  * 上限说明：哪些名称从几点起只计数，合计满了时说合计，以及开发文档里按批记录的建议。
- * 「从几点起」是第一个没有明细的动作开始的时刻，不是明细的终点：失败的动作在合计满以前仍有明细，所以只说「只计数」，
- * 合计满了（`capped_at`）单独说一句，也只说最早从几点起。
+ * 「从几点起」是第一个没有明细的动作开始的时刻，不是明细的终点：更早开始的动作结束时仍可能补上明细（失败的动作在
+ * 合计满以前会补），所以只说「从这个时刻起开始的动作」，不说「之后没有明细」；合计满了（`capped_at`）也一样。
  */
 function CapNote({
 	summary,
@@ -244,7 +244,7 @@ function CapNote({
 			{countOnly.length > 0 && (
 				<>
 					<p className="m-0">
-						超过上限的名称只计数，不再记录明细（失败的动作除外）；总数、失败数和最近的失败仍然准确。
+						明细有上限：超过以后开始的动作只计数、没有明细（失败的动作除外），总数、失败数和最近的失败仍然准确。
 					</p>
 					<ul className="m-0 my-1 list-none p-0 text-fg-1">
 						{countOnly.slice(0, COUNT_ONLY_SHOWN).map((c) => (
@@ -260,8 +260,8 @@ function CapNote({
 			)}
 			{summary.capped_at !== null && (
 				<p className="m-0">
-					全部名称合计的明细已满，最早从{" "}
-					<span className="font-mono">{clock(summary.capped_at)}</span> 起，失败的动作也只计数。
+					全部名称合计的明细已满：从 <span className="font-mono">{clock(summary.capped_at)}</span>{" "}
+					起开始的动作都只计数，失败的也一样。
 				</p>
 			)}
 			<p className="m-0 mt-1">

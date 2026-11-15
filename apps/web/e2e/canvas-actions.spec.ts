@@ -239,7 +239,9 @@ test("检查器：合计的明细满了，写明哪个时刻起开始只计数�
 	// 先超出的在前。
 	await expect(items.nth(0)).toHaveText("「撤单」从 07:30:14 起只计数");
 	await expect(items.nth(1)).toHaveText("「下单」从 07:40:14 起只计数");
-	await expect(cap).toContainText("全部名称合计的明细已满，最早从 07:30:14 起，失败的动作也只计数");
+	await expect(cap).toContainText(
+		"全部名称合计的明细已满：从 07:30:14 起开始的动作都只计数，失败的也一样",
+	);
 	await expect(cap.getByRole("link", { name: "开发节点（SDK 参考）" })).toBeVisible();
 
 	// 没有名称只计数、合计也没满时，没有这段说明。
