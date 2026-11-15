@@ -108,9 +108,9 @@ function formatElapsed(ms: number): string {
 }
 
 /**
- * 关注项一行的写法，值、序列名和「图表不存在」的句子与运行监控的读数共用同一份（@sfly/schema 的 `focus-reading.ts`）：`- 名称：值 单位`；最新值来自哪个序列不言自明时不写，
- * 否则写在名称后面（`- 名称（序列名）：值 单位`）；没有值写「—」；来源节点失败的末尾加 {@link NODE_FAILED_NOTE}；
- * 这次运行的节点包版本里没有这张图表的，写 {@link focusChartMissing}。
+ * 关注项一行：`- 名称：值 单位`。最新值来自哪个序列不言自明时不写序列名，否则写在名称后面（`- 名称（序列名）：值 单位`）；
+ * 没有值写「—」；来源节点失败的末尾加 {@link NODE_FAILED_NOTE}；这次运行的节点包版本里没有这张图表的，写 {@link focusChartMissing}。
+ * 值、序列名和「图表不存在」的句子与运行监控的读数共用同一份（@sfly/schema 的 `focus-reading.ts`）。
  */
 function focusLine(item: RunFocusItem): string {
 	if (item.unavailable) return `- ${item.title}：${focusChartMissing(item.chart)}`;
@@ -248,7 +248,11 @@ async function finalFocus(
 	if (scenario.focusItems.length === 0) return [];
 	try {
 		return await step.tx.transaction(async (savepoint) => {
-			const focus = await resolveRunFocus({ ...deps, db: savepoint }, run.id, { points: 0 });
+			const focus = await resolveRunFocus(
+				{ db: savepoint, clock: deps.clock, queries: deps.queries },
+				run.id,
+				{ points: 0 },
+			);
 			return focus?.mode === "focus" ? focus.items : [];
 		});
 	} catch (error) {
