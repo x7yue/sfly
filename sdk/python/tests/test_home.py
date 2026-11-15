@@ -55,8 +55,9 @@ def planes() -> Iterator[list[FakeControlPlane]]:
 
 
 @pytest.fixture
-def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    home = tmp_path / "sfly-home"
+def home(short_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # `sfly dev` 连的 socket 在这下面：放在短目录里，路径不超过上限。
+    home = short_dir / "sfly-home"
     home.mkdir()
     monkeypatch.setenv("SFLY_HOME", str(home))
     monkeypatch.delenv("SFLY_SERVER", raising=False)
@@ -189,16 +190,17 @@ def test_dev_connects_to_the_socket_under_sfly_home(
 def test_dev_finds_the_socket_the_way_the_agent_does(
     home: Path,
     tmp_path: Path,
+    short_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     agent_env: str,
     environment: dict[str, str],
     socket_at: str,
 ) -> None:
-    (home / "agent.env").write_text(agent_env.format(tmp=tmp_path), encoding="utf-8")
+    (home / "agent.env").write_text(agent_env.format(tmp=short_dir), encoding="utf-8")
     for key, value in environment.items():
-        monkeypatch.setenv(key, value.format(tmp=tmp_path))
+        monkeypatch.setenv(key, value.format(tmp=short_dir))
 
-    with fake_agent(tmp_path / socket_at) as requests:
+    with fake_agent(short_dir / socket_at) as requests:
         assert main(["dev", str(dev_project(tmp_path / "proj"))]) == 0
 
     assert [r["package"] for r in requests] == ["demo-dev"]
