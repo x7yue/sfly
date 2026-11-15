@@ -25,7 +25,8 @@
 | `pnpm check` | CI 执行的全部检查（GitHub Actions：push 到 `main`、PR（含草稿），以及手动触发；CI 里按语言拆成并行的 job） |
 | `pnpm test:e2e` | 构建 API 客户端和前端并运行 Playwright 端到端测试与视觉回归（`apps/web/e2e`；首次需 `pnpm --filter @sfly/web exec playwright install chromium`） |
 | `pnpm test:e2e:docker` | 在 Playwright 官方镜像中运行（与 CI 相同，视觉基线以它为准；加 `--update-snapshots` 更新基线） |
-| `pnpm test:e2e:stress <spec:行号>` | 复现 e2e 偶发失败：限制在 2 个 CPU 上重复运行（默认 40 次），修复后用同一命令确认失败降到 0。CI 上失败的用例用 `pnpm ci:failures` 查 |
+| `pnpm test:e2e:stress <spec:行号>` | 复现 e2e 偶发失败：限制在 2 个 CPU 上重复运行（默认 40 次），修复后用同一命令确认失败降到 0；Linux 用 `taskset`，macOS 在 Playwright 镜像里用 `docker --cpus=2`。CI 上失败的用例用 `pnpm ci:failures` 查 |
+| `pnpm test:e2e:changed [基准]` | 把相比基准（默认 `origin/main`）新增或改动的 e2e spec 重复运行 2–5 次；CI 在 PR 上自动运行。`bash scripts/e2e-changed.sh --list` 只列出选中的 spec |
 | `pnpm test:stress [-n 次数] <命令>` | 复现其他测试的偶发失败：限制在 2 个 CPU 上把同一条测试命令重复运行（默认 30 次），失败那几次的输出留在临时目录。例如 `pnpm test:stress cargo test --locked -p sfly-agent --test retention` |
 | `pnpm ci:failures <运行 ID>` | 只看 CI 一次运行里失败的测试（vitest、Playwright、pytest、cargo test 的失败块和断言差异），不用翻完整日志。运行 ID 在 `gh pr checks <PR>` 给出的链接里（`.../actions/runs/<运行 ID>/job/...`） |
 | `pnpm --filter @sfly/server dev` / `pnpm --filter @sfly/web dev` | 启动控制面 / 前端开发服务器（端口 3000，`/api` 代理到控制面） |
