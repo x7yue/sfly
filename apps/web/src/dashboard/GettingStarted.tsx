@@ -95,7 +95,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 				pageLink("/agents", PAGE.agents)
 			) : (
 				<Button
-					variant="primary"
+					variant={buttonVariant("agent")}
 					onClick={() =>
 						writeClipboard(
 							command,

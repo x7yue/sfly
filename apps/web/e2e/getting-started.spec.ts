@@ -55,7 +55,7 @@ test("每完成一步，白色按钮移到下一步；出现第一个运行后�
 	const command = "curl -fsSL http://sfly.example:8080/install.sh | sh -s -- --name <名称>";
 	await expect(step(page, "agent")).toContainText(command);
 	await step(page, "agent").getByRole("button", { name: "复制安装命令" }).click();
-	expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(command);
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(command);
 
 	// 2. Agent 在线：第 1 步打勾并写出事实；发布节点包没有白色按钮，只有开发文档「发布」的链接。
 	await connectAgent({ name: "verify-agent", slots: 2 });
