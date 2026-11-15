@@ -442,7 +442,7 @@ describe("关注项的设置", () => {
 	describe("很多请求同时到达", () => {
 		const CONCURRENT = 14;
 
-		it("同时修改同一个场景的关注项：全部完成，后写的生效", async () => {
+		it("同时修改同一个场景的关注项：全部完成，列表是其中一次写入的结果", async () => {
 			const id = await scene();
 			const responses = await Promise.all(
 				Array.from({ length: CONCURRENT }, (_, i) =>
@@ -450,7 +450,7 @@ describe("关注项的设置", () => {
 				),
 			);
 			expect(responses.map((res) => res.status)).toEqual(Array(CONCURRENT).fill(200));
-			expect(focusKeys(await orchestrationView(api, id))).toHaveLength(1);
+			expect(["load:TPS", "load:延迟"]).toContain(focusKeys(await orchestrationView(api, id))[0]);
 		});
 
 		it("同时归档很多个有关注项的场景：全部完成", async () => {

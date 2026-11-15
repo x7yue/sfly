@@ -2,10 +2,12 @@ import { FOCUS_ITEM_TITLE_MAX, type FocusItemInput, type FocusItemView } from "@
 import { cn } from "cn";
 import { ChevronDownIcon, ChevronUpIcon, GripVerticalIcon, XIcon } from "lucide-react";
 import { type DragEvent, useEffect, useRef, useState } from "react";
+import { FOCUS } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { QuotaCount } from "./FocusToggle";
 import { focusKey, indexAfterDrop, moveItem, renamedItem, sameFocusList } from "./focus-list-edit";
 import { focusInputOf, useFocusItems } from "./use-focus-items";
 
@@ -133,9 +135,8 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 		<div ref={page} className="flex flex-col gap-2.5">
 			<div className="flex flex-col gap-1 text-xs text-fg-3">
 				<p className="m-0">
-					本场景的关注项已用 <b className="font-mono font-medium text-fg-1">{focus.used}</b> /{" "}
-					{focus.limit}
-					{focus.stale > 0 && `（含 ${focus.stale} 项已失效的）`}
+					<QuotaCount focus={focus} />
+					{focus.stale > 0 && FOCUS.staleNote(focus.stale)}
 				</p>
 				{edit && (
 					<p className="m-0 text-fg-2">
@@ -214,9 +215,11 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 										{reason && <div className="px-2.25 text-xs text-fg-3">{reason}</div>}
 									</div>
 									<div className="flex h-7.5 flex-none items-center gap-0.5">
-										{item.chart_type !== undefined && (
-											<Badge className="mr-1">{item.chart_type === "stat" ? "数值" : "图表"}</Badge>
-										)}
+										<span className="mr-1 flex w-10 flex-none justify-end">
+											{item.chart_type !== undefined && (
+												<Badge>{item.chart_type === "stat" ? "数值" : "图表"}</Badge>
+											)}
+										</span>
 										<MoveButton
 											label={`上移 ${name}`}
 											focusId={`${key}/up`}
@@ -251,8 +254,9 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 				<p className="m-0 text-xs text-fg-3">还没有关注项。</p>
 			)}
 			<p className="m-0 text-xs text-fg-3">
-				关注项属于场景设置，不属于版本：改动立即生效，正在跑的运行也会跟着变，不产生新版本。
-				要添加：选中节点，在「说明与指标」里对图表点「关注」。
+				{
+					"关注项属于场景设置，不属于版本：改动立即生效，正在跑的运行也会跟着变，不产生新版本。要添加：选中节点，在「说明与指标」里对图表点「关注」。"
+				}
 			</p>
 			<output className="sr-only">{announcement}</output>
 		</div>
@@ -287,13 +291,15 @@ function NameField({
 			onChange={(e) => setTyped(e.target.value)}
 			onBlur={commit}
 			onKeyDown={(e) => {
+				// 输入法组字时回车、Esc 是选字和放弃组字（keyCode 229：Safari 在组字结束的那次按键上 isComposing 已经是 false）。
+				if (e.nativeEvent.isComposing || e.keyCode === 229) return;
 				if (e.key === "Enter") commit();
 				else if (e.key === "Escape" && typed !== null) {
 					e.preventDefault();
 					setTyped(null);
 				}
 			}}
-			className="border-transparent bg-transparent font-medium hover:border-border-control focus:bg-sunk"
+			className="font-medium"
 		/>
 	);
 }

@@ -30,6 +30,12 @@ export const TERM = {
 	annotation: "注释框",
 } as const;
 
+/** 关注项（GLOSSARY「关注项」）：节点检查器的名额和场景设置的「关注项」页共用的文字。 */
+export const FOCUS = {
+	/** 名额里注明其中有几项已经失效（失效的项也占名额）。 */
+	staleNote: (stale: number) => `（含 ${stale} 项已失效的）`,
+} as const;
+
 /** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */
 export const ANNOTATION_FIELD_LABEL: Readonly<Record<string, string>> = {
 	title: "标题",

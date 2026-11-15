@@ -1,4 +1,5 @@
 import { EyeIcon } from "lucide-react";
+import { FOCUS } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { type FocusItems, isFocused } from "./use-focus-items";
 
@@ -34,18 +35,27 @@ export function FocusToggle({
 	);
 }
 
+/** 「本场景的关注项已用 N / 8」：节点检查器的名额和场景设置的「关注项」页共用。 */
+export function QuotaCount({ focus }: { focus: FocusItems }) {
+	return (
+		<>
+			本场景的关注项已用 <b className="font-mono font-medium text-fg-1">{focus.used}</b> /{" "}
+			{focus.limit}
+		</>
+	);
+}
+
 /**
- * 「本场景的关注项已用 N / 8」，满了以后写明去场景设置的「关注项」页移除一项（失效的项也占名额）。读屏在名额变化时读出来。
+ * 名额，满了以后写明去场景设置的「关注项」页移除一项（失效的项也占名额）。读屏在名额变化时读出来。
  * `saved` 为 false 时说明这个节点还不能设：服务端按已保存的场景版本检查新加的项。
  */
 export function FocusQuota({ focus, saved }: { focus: FocusItems; saved: boolean }) {
 	return (
 		<>
 			<output className="m-0 mb-2 block text-xs text-fg-3">
-				本场景的关注项已用 <b className="font-mono font-medium text-fg-1">{focus.used}</b> /{" "}
-				{focus.limit}
+				<QuotaCount focus={focus} />
 				{focus.full &&
-					`，已满${focus.stale > 0 ? `（含 ${focus.stale} 项已失效的）` : ""}：先在场景设置的「关注项」页移除一项`}
+					`，已满${focus.stale > 0 ? FOCUS.staleNote(focus.stale) : ""}：先在场景设置的「关注项」页移除一项`}
 			</output>
 			{!saved && (
 				<p className="m-0 mb-2 text-xs text-fg-3">

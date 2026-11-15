@@ -137,12 +137,11 @@ test("移除之后又改了别的，撤销就消失了：它只管刚做的那�
 	await expect(panel.getByRole("button", { name: "撤销" })).toHaveCount(0);
 	await expect.poll(() => focusNames(panel)).toEqual(["子单量", "母单量"]);
 
-	// 别人在这期间改了列表：撤销不能把他的修改盖掉。
+	// 别人在这期间改了列表：页面读到以后撤销就消失，它不能把别人的修改盖掉。
 	await panel.getByRole("button", { name: "移除关注项 子单量" }).click();
 	await expect(panel.getByRole("button", { name: "撤销" })).toBeVisible();
 	await setFocusItems(controlPlane, id, [THROUGHPUT, LEVEL], "bob");
-	await page.reload();
-	await panel.getByRole("tab", { name: "关注项" }).click();
+	await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
 	await expect.poll(() => focusNames(panel)).toEqual(["母单量", "level"]);
 	await expect(panel.getByRole("button", { name: "撤销" })).toHaveCount(0);
 });
@@ -234,9 +233,9 @@ test("每行写来源节点、图表和类型；失效项的两种说明都显�
 	await expect(rows.nth(0)).toContainText("fetch · 图表 延迟");
 	await expect(rows.nth(0)).toContainText("这个版本的节点没有图表 延迟");
 	await expect(rows.nth(1)).toContainText("fetch2 · 图表 errors");
-	await expect(rows.nth(1)).toContainText("数值");
+	await expect(rows.nth(1).getByText(/^数值$/)).toHaveCount(1);
 	await expect(rows.nth(2)).toContainText("fetch2 · 图表 吞吐");
-	await expect(rows.nth(2)).toContainText("图表");
+	await expect(rows.nth(2).getByText(/^图表$/)).toHaveCount(1);
 	await expect(rows.nth(3)).toContainText("ping · 图表 level");
 	await expect(rows.nth(3)).toContainText(
 		"节点 ping 不在最新版本 v2 里，只在运行 v1 及更早版本时显示",
