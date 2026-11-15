@@ -27,6 +27,9 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
 - PR（草稿也算）的每次推送、`main` 上的每个提交。分支上只推送、没有 PR 时不运行：要在合并前验证就开一个草稿 PR，
   或手动触发（`gh workflow run ci.yml --ref <分支>`）。
 - PR 有新的推送时，上一次推送还没跑完的 CI 被取消；`main` 上每个提交的 CI 都跑完，连着合入几个 PR 也不会互相取消。
+- `e2e` 在 PR 上先完整跑一遍，再把这个 PR 新增或改动的 `apps/web/e2e/**/*.spec.ts`（含 `visual.spec.ts`）重复运行 2–5 次
+  （用例多时次数少，`scripts/e2e-changed.sh`），没有改动的 spec 时跳过；`main` 上的 push 不跑重复这一步。
+  这一步失败说明用例不稳定，处理见 CODING_STANDARDS「测试」。
 - 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
 - `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
 - CI 失败时先用 `pnpm ci:failures <运行 ID>` 看失败的测试和断言差异，不用下载完整日志。
