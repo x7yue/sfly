@@ -163,7 +163,7 @@ def summary_while_running(ctx: Context) -> None:
     with ctx.action("下单", 订单=3) as failed:
         failed.fail("拒单")
     with ctx.action("保持", 时长="4h") as hold:
-        ctx.mark("开始保持")
+        ctx.mark("进入保持")
         handle = ctx.action.start("等回报", parent=hold, 订单=4)
         hold.note(阶段="加压")
         time.sleep(60)

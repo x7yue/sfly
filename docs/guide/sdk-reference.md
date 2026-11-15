@@ -432,16 +432,16 @@ with ctx.action("保持", 时长="4h") as hold:            # 最外层
 
 动作和标记可以很多，但明细有上限，由 SDK 执行，固定不能配置。两种上限都把动作和标记一起数：
 
-- 每种名称最多记录 5 万个明细，全部名称合计最多 10 万个。超过以后只计数、不再记录明细，写一条 warn 日志，建议按批或按阶段记录，每一笔动作的延迟用指标。超过每种名称的上限时每种名称写一次，按超过上限的那一个是动作还是标记分别写建议（标记没有结果，也不会补上明细）；超过合计上限时整个任务只写一次，动作和标记的建议都写。
+- 每种名称最多上报 5 万个明细，全部名称合计最多 10 万个。超过以后只计数、不再上报明细，写一条 warn 日志，建议按批或按阶段记录，每一笔动作的延迟用指标。超过每种名称的上限时每种名称写一次，按超过上限的那一个是动作还是标记分别写建议（标记没有结果，也不会补上明细）；超过合计上限时整个任务只写一次，动作和标记的建议都写。
 - 失败的动作不受每种名称上限的限制：它失败时把开始和结束补上，直到合计 10 万个。所以少见但重要的失败不会被淹没。标记没有失败，超过每种名称的上限以后就只计数。
 - 超过上限以后始终准确的：正在做的动作（最多 50 个，带层级）、最近结束的 20 个、最近失败的 5 个、每种名称的总数（动作和标记合计）和失败数、从什么时候起这种名称只计数。它们由 SDK 汇总成摘要，有变化时才发出，每秒最多一次，节点退出时再发一次。
-- 记录动作和标记写进的是和日志、指标同一条事件管道，管道写满时调用会等待，内存不会越积越多。每次 `with ctx.action(...)` 写两行，每个标记写一行，耗时和一次 `ctx.metric()` 在同一个量级（见 ARCHITECTURE 的基准测试）。
+- 记录动作和标记写进的是和日志、指标同一条事件管道，管道写满时调用会等待，内存不会越积越多。每次 `with ctx.action(...)` 写两行，每个标记写一行，调用的开销和一次 `ctx.metric()` 在同一个量级（见 ARCHITECTURE 的基准测试）。
 
 高频场景（压测里每秒成百上千次）不要每一笔都记成动作或标记：按批或按阶段记录（「加压 1000 笔」「保持 4 小时」），每一笔的延迟、成功与失败的个数用指标；需要追查的少数失败，才记成动作。
 
 ### 本地调试与测试
 
-- `sfly debug` 把动作和标记和日志一起实时打印：每个动作开始一行、结束一行（结果、耗时、补充的字段、失败原因），每个标记一行，按层级缩进。节点结束时还没结束的动作打印为「未结束」。
+- `sfly debug` 把动作和标记和日志一起实时打印：每个动作开始一行、结束一行（结果、耗时、字段、失败原因），每个标记一行，按层级缩进。节点结束时还没结束的动作打印为「未结束」。
 - `sfly.testing.run_node` 的结果里有 `actions` 和 `action_summary`（见下文「`sfly.testing`」）。
 
 ```python
@@ -915,7 +915,7 @@ def test_count_lines(tmp_path: Path) -> None:
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
 | `notifications` | `Notification(ts, bot, body)` 的列表：每次 `ctx.notify` 发给的飞书机器人名称和完整的请求体（文本、`sfly.feishu.card` 组装的卡片和原始消息都在里面，可以直接断言），没有真的发送（不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不在里面，日志里有 warning）。从 SDK 0.3.0 起可用 |
 | `actions` | `ActionRecord(id, kind, name, parent, depth, fields, ts, mono, result, reason, duration_ms)` 的列表：节点用 `ctx.action` 记录的动作和 `ctx.mark` 记录的标记（`kind` 是 `action` 或 `mark`），按 `id` 排列（`id` 的先后和时间的先后不一定一致，要按先后用 `mono`）。`parent` 是父动作的 `id`，最外层为 `None`；`fields` 是动作开始（标记发生）时给的字段加上动作的 `note()` 补充的（值都是字符串）；`result` 是 `success`、`failed` 或 `unfinished`，标记为 `None`；`duration_ms` 是按单调时钟算的耗时（毫秒），标记为 `None`；节点结束时还没结束的动作记为 `unfinished`。从 SDK 0.4.0 起可用 |
-| `action_summary` | 最新的一份摘要 `ActionSummary(ts, total, reported, capped_ts, names, running, recent, recent_failed)`：`names` 是每种名称的 `ActionCount(name, total, failed, reported, capped_ts)`（`reported` 是已经记录明细的个数，`total` 减去它就是只计数、没有明细的个数），`running` 是正在做的动作（节点结束以后为空），`recent`、`recent_failed` 是最近结束的 20 个、最近失败的 5 个（最近的在前）。标记算进 `total`、`reported` 和 `names`，不在 `running`、`recent` 里。摘要有变化时才发、每秒最多一次，所以执行中的 `action_summary` 可能比 `actions` 晚一秒；节点退出时会再发一次，结束以后的摘要是完整的。没有用过动作或标记时为 `None` |
+| `action_summary` | 最新的一份摘要 `ActionSummary(ts, total, reported, capped_ts, names, running, recent, recent_failed)`：`names` 是每种名称的 `ActionCount(name, total, failed, reported, capped_ts)`（`reported` 是已经上报明细的个数，`total` 减去它就是只计数、没有明细的个数），`running` 是正在做的动作（节点结束以后为空），`recent`、`recent_failed` 是最近结束的 20 个、最近失败的 5 个（最近的在前）。标记算进 `total`、`reported`、`names` 和 `capped_ts`，不在 `running`、`recent` 里。摘要有变化时才发、每秒最多一次，所以执行中的 `action_summary` 可能比 `actions` 晚一秒；节点退出时会再发一次，结束以后的摘要是完整的。没有用过动作或标记时为 `None` |
 | `artifacts` | 产物名称 → 本地文件路径 |
 | `artifacts_dir`、`work_dir` | 产物目录、工作目录 |
 
@@ -964,7 +964,7 @@ uv run sfly debug countdown --params '{"name": "世界", "steps": 5}'
 - `--download <产物引用> <文件>`：节点用 `ctx.artifacts.download` 下载这个产物引用时，得到这个本地文件的内容；可以重复给出。文件不存在时以 2 退出。例如 `uv run sfly debug count_lines --params '{"log_file": "up"}' --download up ./server.log`。
 - `--agent <名称>=<目录>`：把一台 Agent 映射到本地目录，节点用 `ctx.agent(名称)` 访问它时，那台 Agent 上的绝对路径落在这个目录里；可以重复给出。目录不存在时以 2 退出。例如 `uv run sfly debug find_logs --params '{"source": "a-01"}' --agent a-01=./fixtures/a-01`。从 SDK 0.2.0 起可用。
 - `ctx.notify` 不真的发送：和日志一起实时打印一行 `通知  发给飞书机器人「<名称>」（本地调试不发送）：<请求体 JSON>`。从 SDK 0.3.0 起可用。
-- 动作和标记和日志一起按时间实时打印：动作开始一行 `动作  开始 #<ID> <名称> <字段>`，结束一行 `动作  成功|失败|未结束 #<ID> <名称> <耗时> <补充的字段> 原因：<失败原因>`，标记一行 `标记  <名称> <字段>`，按层级缩进（最多 3 层）。从 SDK 0.4.0 起可用。
+- 动作和标记和日志一起按时间实时打印：动作开始一行 `动作  开始 #<ID> <名称> <字段>`，结束一行 `动作  成功|失败|未结束 #<ID> <名称> <耗时> <字段> 原因：<失败原因>`，标记一行 `标记  <名称> <字段>`，按层级缩进（最多 3 层）。从 SDK 0.4.0 起可用。
 - Ctrl-C 按平台的取消流程取消（节点里抛出 `Cancelled`，宽限期后强制杀掉），再按一次立即杀掉；节点结束后、打印结果期间的 Ctrl-C 被忽略。
 - 退出码：成功 0，节点失败 1，参数不合法或找不到节点 2，取消 130。
 

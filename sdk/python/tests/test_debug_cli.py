@@ -294,7 +294,7 @@ def action_lines(stderr: str) -> list[str]:
     ]
 
 
-def test_actions_and_marks_are_printed_with_their_result_and_duration(project: Path) -> None:
+def test_actions_print_result_and_duration_and_marks_print_one_line(project: Path) -> None:
     run = sfly_debug(project, "actions")
 
     assert run.returncode == 0, run.stderr

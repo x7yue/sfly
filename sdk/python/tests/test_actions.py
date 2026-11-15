@@ -314,13 +314,13 @@ def test_summary_has_what_is_running_the_recent_ones_and_the_counts() -> None:
     assert [(n.name, n.total, n.failed) for n in summary.names] == [
         ("下单", 4, 1),
         ("保持", 1, 0),
-        ("开始保持", 1, 0),
+        ("进入保持", 1, 0),
         ("等回报", 1, 0),
     ]
     assert [(n.name, n.reported) for n in summary.names] == [
         ("下单", 4),
         ("保持", 1),
-        ("开始保持", 1),
+        ("进入保持", 1),
         ("等回报", 1),
     ]
     assert (summary.total, summary.reported, summary.capped_ts) == (7, 7, None)

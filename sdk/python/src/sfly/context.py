@@ -103,7 +103,7 @@
     （不一定是开始的先后，见上面 `id`；要按开始的先后用 `mono`）。每一项有 `id`、`parent`、
     `depth`、`name`、`fields`（开始时的字段加上 `note()` 补充的）、`ts`、`mono`（开始的时刻）。
   - `recent`：最近结束的 20 个动作（任何结果），最近结束的在前，每一项是 `running` 的字段再加
-    `end_ts`、`end_mono`（结束的时刻）、`result`、`reason`。`recent_failed`：其中最近失败的 5 个，
+    `end_ts`、`end_mono`（结束的时刻）、`result`、`reason`。`recent_failed`：最近失败的 5 个，
     格式相同，最近失败的在前。标记算进 `total`、`reported`、`names` 和 `capped_*`，
     不在 `running`、`recent`（以及 `recent_failed`）里。
   - 超过上限没有明细的动作也在 `running`、`recent`、`recent_failed` 里。

@@ -159,7 +159,7 @@ class ActionCount:
 
 @dataclass(frozen=True)
 class ActionSummary:
-    """一份动作摘要（`action_summary`）：到目前为止的汇总，超过明细上限之后仍然准确。
+    """一份动作和标记的摘要（`action_summary`）：到目前为止的汇总，超过明细上限之后仍然准确。
 
     - `ts`：发出这份摘要的时间（Unix 毫秒）；
     - `total`：记录的动作和标记的个数，`reported`：上报了明细的个数；
@@ -557,7 +557,7 @@ class _Pump:
                 break
             self._event(raw, batch)
         changes, self._action_changes = self._action_changes, []
-        # 日志和动作的变化一起按时间排（同一时间保持读到的先后），打印时交错显示。
+        # 日志和动作、标记的变化一起按时间排（同一时间保持读到的先后），打印时交错显示。
         merged: list[tuple[int, LogLine | ActionRecord]] = [(line.ts, line) for line in batch]
         merged.extend(changes)
         for _, item in sorted(merged, key=lambda pair: pair[0]):
