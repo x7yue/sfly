@@ -1,16 +1,17 @@
 import type { AgentView } from "@sfly/schema";
 import type { StatusKind, StatusView } from "#/components/status";
+import { AGENT_STATUS_LABEL } from "#/lib/copy";
 
 /**
  * Agent 的状态（Agent 管理页机架的头部、控制台 Agent 列的名称行共用）：更新中、更新失败、需要手动升级、版本不一致这些优先，
  * 其次是安装节点包，再是在线、离线。
  */
 export function agentStatusView(agent: AgentView): StatusView {
-	if (agent.status === "offline") return { kind: "pending", label: "离线" };
+	if (agent.status === "offline") return { kind: "pending", label: AGENT_STATUS_LABEL.offline };
 	const update = updateStatus(agent);
 	if (update) return update;
 	if (agent.install?.state === "installing") return { kind: "warn", label: "安装中" };
-	return { kind: "ok", label: "在线" };
+	return { kind: "ok", label: AGENT_STATUS_LABEL.online };
 }
 
 /**

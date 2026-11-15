@@ -17,7 +17,7 @@ import { createContext, type ReactNode, useContext, useRef, useState } from "rea
 import { DataTable, dataColumns } from "#/components/data-table";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { ACTION, TERM } from "#/lib/copy";
+import { ACTION, AGENT_STATUS_LABEL, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration } from "#/lib/format";
 import { RunPresetsDialog } from "#/presets/RunPresetsDialog";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
@@ -58,7 +58,7 @@ function AgentChips({
 	}
 	const offline = scenario.agents.filter((a) => a.status !== "online").length;
 	const chips = scenario.agents.map((a) => {
-		const state = a.status === "online" ? "在线" : a.status === "offline" ? "离线" : "未注册";
+		const state = a.status === "unknown" ? "未注册" : AGENT_STATUS_LABEL[a.status];
 		return (
 			<span
 				key={a.name}

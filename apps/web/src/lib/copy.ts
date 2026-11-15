@@ -112,6 +112,9 @@ export const FEISHU_BOT_SETUP = {
 	noSignature: "sfly 不支持签名校验，机器人的安全设置请用关键词或 IP 白名单。",
 } as const;
 
+/** Agent 的连接状态：Agent 管理页、控制台、场景列表和检查器的 Agent 选择都写这两个词。 */
+export const AGENT_STATUS_LABEL = { online: "在线", offline: "离线" } as const;
+
 /** 已请求取消、还在等待任务结束与清理的运行（故事 70：不显示成「运行中」）。 */
 export const CANCELLING_LABEL = "取消中";
 /** 清理期间再次取消，正在强制终止。 */
@@ -142,6 +145,8 @@ export const ACTION = {
 	moveUp: "上移",
 	moveDown: "下移",
 	resizeInspector: "调整检查器宽度",
+	expand: "展开",
+	collapse: "收起",
 } as const;
 
 /** AI 编程助手的显示名，键是请求头 `x-sfly-client` 里 `agent/<名称>` 的名称（用 Map，避免 `constructor` 这类名称取到对象自带的属性）。 */

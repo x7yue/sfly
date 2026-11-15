@@ -96,7 +96,7 @@ export function RunBlock({
 						ref={collapse}
 						variant="ghost"
 						size="icon-sm"
-						aria-label="收起"
+						aria-label={ACTION.collapse}
 						aria-expanded
 						onClick={onCollapse}
 					>

@@ -10,7 +10,7 @@ import { Truncate } from "@/components/ui/truncate";
 /**
  * 线路（外壳页方案 4.1）：一个运行的每条链画成一条线，节点是站，状态点取自状态表；进入执行中节点的那一段是青色，
  * 子流程从触发它的异步任务节点那一列分出，分支线是调度连线的青色虚线。站很多时按 {@link foldStations} 折叠。
- * 控制台的运行块用它，运行监控的概览也可以用（输入只要链实例的父链、异步任务节点和各节点状态）。
+ * 控制台的运行块和运行监控的概览用它（输入只要链实例的父链、异步任务节点和各节点状态）。
  */
 
 export interface LineNode {
@@ -24,6 +24,8 @@ export interface LineChain {
 	id: string;
 	/** 链的名称：「主链」或「子流程 <名称>」。 */
 	label: string;
+	/** 子流程实例的短 ID，写在名称后面（运行监控的概览）；不给时不写。 */
+	instance?: string | undefined;
 	parent_chain_instance_id: string | null;
 	/** 触发这个子流程实例的异步任务节点；主链为 null。 */
 	async_node_id: string | null;
@@ -149,7 +151,14 @@ export function RunLines({
 		>
 			{rows.map((row, r) => (
 				<li key={row.chain.id} className="col-span-full grid grid-cols-subgrid">
-					<span className="min-w-0 truncate pr-3 text-xs text-fg-3">{row.chain.label}</span>
+					<span className="flex min-w-0 pr-3 text-xs text-fg-3">
+						<Truncate>{row.chain.label}</Truncate>
+						{row.chain.instance && (
+							<span data-chain-id className="ml-1.5 flex-none font-mono">
+								{row.chain.instance}
+							</span>
+						)}
+					</span>
 					<ol className="col-[2/-3] m-0 grid list-none grid-cols-subgrid p-0">
 						{row.stations.map((station, k) => (
 							<StationCell

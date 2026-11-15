@@ -11,7 +11,7 @@ import { EndedPanel } from "#/dashboard/EndedPanel";
 import { RunningRuns } from "#/dashboard/RunningRuns";
 import { ScenariosPanel } from "#/dashboard/ScenariosPanel";
 import { apiQuery } from "#/lib/api";
-import { PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE } from "#/lib/copy";
 import { formatClock } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
@@ -132,7 +132,7 @@ function Wall({ data }: { data: DashboardView }) {
 
 function DashboardSkeleton() {
 	return (
-		<output aria-label="加载中" aria-busy="true" className={cn(WALL, "w-full")}>
+		<output aria-label={MESSAGE.loading} aria-busy="true" className={cn(WALL, "w-full")}>
 			{[0, 1].map((col) => (
 				<div key={col} className="flex flex-col gap-3.5">
 					{[0, 1].map((p) => (
