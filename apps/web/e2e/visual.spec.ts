@@ -1267,7 +1267,11 @@ test("编排画布：运行状态（检查器的「正在做」和「动作」�
 	await nodeCard(page, "verify").click();
 	const area = page.getByRole("region", { name: "动作", exact: true });
 	await expect(area.getByRole("table")).toContainText("1,284,819");
-	await area.evaluate((el) => el.scrollIntoView({ block: "start" }));
+	// 从「正在做」的标题起往下看：摘要已经滚出去，正在做、动作区和前几个失败都在。
+	await page
+		.getByRole("region", { name: "正在做" })
+		.getByRole("heading")
+		.evaluate((el) => el.scrollIntoView({ block: "start" }));
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-run-actions.png", {
 		mask: [

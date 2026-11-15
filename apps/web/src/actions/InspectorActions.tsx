@@ -134,13 +134,13 @@ export function ActionArea({
 				<caption className="sr-only">每种名称的总数和失败数</caption>
 				<thead>
 					<tr className="text-fg-3">
-						<th scope="col" className="pb-0.5 text-left font-normal">
+						<th scope="col" className="pb-0.5 text-left font-normal whitespace-nowrap">
 							名称
 						</th>
-						<th scope="col" className="pb-0.5 pl-3.5 text-right font-normal">
+						<th scope="col" className="pb-0.5 pl-3.5 text-right font-normal whitespace-nowrap">
 							总数
 						</th>
-						<th scope="col" className="pb-0.5 pl-3.5 text-right font-normal">
+						<th scope="col" className="pb-0.5 pl-3.5 text-right font-normal whitespace-nowrap">
 							失败
 						</th>
 					</tr>
