@@ -77,7 +77,7 @@ function RunsPage() {
 						) : (
 							<EmptyState
 								icon={<PlayIcon />}
-								title="没有运行记录"
+								title={MESSAGE.noRuns}
 								description="在场景卡片上点「运行」，记录会出现在这里。"
 							>
 								<Link to="/orchestrations" className={buttonVariants()}>
