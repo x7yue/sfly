@@ -8,10 +8,11 @@ import { type AddressInfo, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi, metricsApi } from "@sfly/schema";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { systemClock } from "../src/clock.js";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
@@ -28,7 +29,7 @@ const AGENT = "std-agent";
 
 const sha256 = (data: Buffer) => createHash("sha256").update(data).digest("hex");
 
-describe("全栈：标准节点包 sfly-std", () => {
+describeWithAgent("全栈：标准节点包 sfly-std", () => {
 	let dir: string;
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;

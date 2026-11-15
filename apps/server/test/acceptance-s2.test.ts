@@ -6,17 +6,18 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { chainOf, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
 import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe("验收 S2：并行", () => {
+describeWithAgent("验收 S2：并行", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;
