@@ -1,15 +1,14 @@
-import type { FocusSource, MetricDeclaration, RunFocusItem } from "@sfly/schema";
+import {
+	type FocusSource,
+	focusSeriesName,
+	focusValueText,
+	latestSeriesName,
+	type MetricDeclaration,
+	type RunFocusItem,
+} from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { chartLines } from "#/monitor/charts";
-import {
-	focusSeriesName,
-	formatAgo,
-	latestSeriesName,
-	readingFoot,
-	readingLabel,
-	readingState,
-	valueText,
-} from "./focus-format";
+import { formatAgo, readingFoot, readingLabel, readingState } from "./focus-format";
 
 const NOW = "2026-01-01T00:10:00.000Z";
 const at = (secondsAgo: number) => new Date(Date.parse(NOW) - secondsAgo * 1000).toISOString();
@@ -58,8 +57,8 @@ describe("多久前", () => {
 
 describe("读数的文字", () => {
 	it("最新值：数值卡写累计值，没有数据写破折号", () => {
-		expect(valueText(item())).toBe("1.3M");
-		expect(valueText(item({ latest: null }))).toBe("—");
+		expect(focusValueText(item())).toBe("1.3M");
+		expect(focusValueText(item({ latest: null }))).toBe("—");
 	});
 
 	it("脚注：节点 · 多久前；成功或已停止后是最终值", () => {

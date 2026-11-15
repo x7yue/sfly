@@ -3,6 +3,7 @@ import type { OrchestrationDocument } from "@sfly/schema";
 import { tasks } from "../db/schema.js";
 import type { ChainRow, RunRow, Step } from "../engine/step.js";
 import { firstAttempt } from "../engine/step.js";
+import type { RunFocusDeps } from "../focus/run-focus.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import { feishuBotGone, registeredBots } from "./bot-checks.js";
 import type { FeishuDelivery } from "./feishu-delivery.js";
@@ -41,6 +42,8 @@ export class EngineNotifications {
 			delivery: Pick<FeishuDelivery, "wake">;
 			/** 运行通知卡片里「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时返回 undefined（卡片没有按钮）。 */
 			runUrl: (runId: string) => string | undefined;
+			/** 运行通知卡片里「关注项」一段的最终值：和 `GET /runs/:id/focus` 同一份解析（{@link RunFocusDeps}，数据库用事务）。 */
+			focus: Omit<RunFocusDeps, "db">;
 		},
 	) {}
 
@@ -101,6 +104,7 @@ export class EngineNotifications {
 		await enqueueRunNotification(step, {
 			...finished,
 			runUrl: this.deps.runUrl(finished.run.id),
+			focus: this.deps.focus,
 		});
 	}
 

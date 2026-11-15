@@ -1,15 +1,18 @@
 import type { Page } from "@playwright/test";
 import { type E2eFixtures, expect, test } from "./fixtures";
+import { focusDocument, setFocusItems } from "./focus-support";
+import { httpCheckPoints, metricPackage, pingPoints } from "./monitor-scenario";
 import {
 	createFeishuBot,
 	createScenario,
 	publishPackage,
 	scenarioUsing,
 	setRunNotification,
+	triggerRun,
 } from "./support";
 
 // 运行通知（#232，ADR 0020）：场景的「更多」菜单里配置（四项设置，不属于场景版本）、复制场景时一并复制、
-// 机器人被删除时给出提示；运行结束时由控制面发卡片，运行抽屉里显示一行状态。
+// 机器人被删除时给出提示；运行结束时由控制面发卡片（场景设了关注项时带上它们的最终值，#354），运行抽屉里显示一行状态。
 
 const settingsOf = async (
 	cp: { fetch(path: string): Promise<Response> },
@@ -222,5 +225,84 @@ test.describe("运行抽屉里的运行通知状态", () => {
 		const summary = await runFromDrawer({ page, connectAgent }, "success");
 		await expect(summary.getByTestId("summary-status")).toHaveText("成功");
 		await expect(summary.getByRole("group", { name: "运行通知" })).toHaveCount(0);
+	});
+});
+
+test.describe("卡片里的关注项", () => {
+	/** 卡片里各个元素的正文，按顺序（控制面没有配置对外地址，卡片上没有按钮）。 */
+	const elementsOf = (request: { json: unknown } | undefined): string[] =>
+		(
+			request?.json as { card: { body: { elements: Array<{ content: string }> } } }
+		).card.body.elements.map((e) => e.content);
+
+	test("场景设了关注项：运行失败后，卡片在失败的节点之后有「关注项」一段，写每一项运行结束时的值，来源节点失败的写明", async ({
+		controlPlane,
+		connectAgent,
+		feishu,
+		clock,
+	}) => {
+		const agent = await connectAgent({
+			name: "agent-a",
+			slots: 4,
+			installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+		});
+		await publishPackage(controlPlane, metricPackage());
+		await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+		const scenario = await createScenario(controlPlane, "撮合浸泡", focusDocument);
+		await setRunNotification(controlPlane, scenario, { bot: "压测群" });
+		await setFocusItems(controlPlane, scenario, [
+			{ node_id: "fetch", chart: "延迟", title: "下单延迟" },
+			{ node_id: "fetch2", chart: "请求数" },
+			{ node_id: "fetch", chart: "errors" },
+			{ node_id: "ping", chart: "level", title: "探活 level" },
+		]);
+
+		const clock0 = clock.now().getTime();
+		const runId = await triggerRun(controlPlane, scenario);
+		const fetch = await agent.nextAssign();
+		agent.metrics(fetch, httpCheckPoints(clock0, 2, 5));
+		clock.advance(6000);
+		await agent.succeed(fetch);
+		const fetch2 = await agent.nextAssign();
+		agent.metrics(fetch2, httpCheckPoints(clock0, 7, 9));
+		clock.advance(4000);
+		await agent.succeed(fetch2);
+		const ping = await agent.nextAssign();
+		agent.metrics(ping, pingPoints(clock0, 11, 12));
+		await agent.sync();
+		await agent.fail(ping, "探活超时");
+
+		await expect.poll(() => feishu.requests.length).toBe(1);
+		const texts = elementsOf(feishu.requests[0]);
+		expect(texts.map((t) => t.split("\n")[0])).toEqual([
+			"**场景**：撮合浸泡",
+			"**失败的节点**",
+			"**关注项**",
+		]);
+		expect(texts[2]).toBe(
+			[
+				"**关注项**",
+				"- 下单延迟（latency_ms）：50 ms",
+				"- 请求数：390 次",
+				"- errors：1 次",
+				"- 探活 level：8（节点失败）",
+			].join("\n"),
+		);
+		expect(texts[0]).toContain(runId.slice(0, 8));
+	});
+
+	test("场景没有设关注项：卡片没有这一段", async ({ controlPlane, connectAgent, feishu }) => {
+		const agent = await connectAgent({ name: "agent-a" });
+		await publishPackage(controlPlane);
+		await createFeishuBot(controlPlane, "压测群", feishu.webhookUrl("a"));
+		const scenario = await createScenario(controlPlane, "订单压测", scenarioUsing("agent-a"));
+		await setRunNotification(controlPlane, scenario, { bot: "压测群", trigger: "always" });
+
+		await triggerRun(controlPlane, scenario);
+		await agent.succeed(await agent.nextAssign());
+
+		await expect.poll(() => feishu.requests.length).toBe(1);
+		const texts = elementsOf(feishu.requests[0]);
+		expect(texts.map((t) => t.split("\n")[0])).toEqual(["**场景**：订单压测"]);
 	});
 });

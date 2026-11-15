@@ -2,6 +2,7 @@ import type { OrchestrationDocument, PackageMetadata } from "@sfly/schema";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { agents, nodePackages } from "../db/schema.js";
+import type { Tx } from "../engine/step.js";
 
 const DEV_VERSION = "dev";
 
@@ -20,7 +21,7 @@ export interface NodeTypeRef {
 
 /** 场景中 nodeId 这个包节点的节点类型；不是包节点时为 undefined。 */
 export async function nodeTypeOf(
-	db: Db,
+	db: Db | Tx,
 	document: OrchestrationDocument,
 	nodeId: string,
 	agentName: string | null,

@@ -9,11 +9,19 @@ import {
 	nameWithId,
 	nodeNameBeforeId,
 } from "@sfly/orchestration";
-import type { OrchestrationDocument, RunNotificationTrigger } from "@sfly/schema";
+import {
+	focusChartMissing,
+	focusValueText,
+	latestSeriesName,
+	type OrchestrationDocument,
+	type RunFocusItem,
+	type RunNotificationTrigger,
+} from "@sfly/schema";
 import { asc, eq } from "drizzle-orm";
 import { chainInstances, orchestrations, type RunStatus, runs, tasks } from "../db/schema.js";
 import { finalFailures } from "../engine/failures.js";
 import type { RunRow, Step } from "../engine/step.js";
+import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { runListPreset } from "../presets/run-preset.js";
 import { registeredBots } from "./bot-checks.js";
 import { enqueueFeishuMessage } from "./feishu-queue.js";
@@ -39,6 +47,9 @@ const RESULT: Record<FinishedStatus, { color: CardColor; subtitle: string }> = {
 /** 卡片里最多列出的失败节点数，其余只写总数。 */
 const MAX_LISTED_FAILURES = 10;
 
+/** 关注项那一行里，来源节点失败的标注：值是失败前的最后一个值，不能当成结果。 */
+const NODE_FAILED_NOTE = "（节点失败）";
+
 /**
  * 失败的节点和它所在的链（链的名称与监控页一致：「主链」或「子流程 <名称> · <实例短 ID>」）。
  * `node` 已经按「显示名称（节点 ID）」写好（没有显示名称时只有节点 ID）。
@@ -63,6 +74,8 @@ interface RunNotificationFacts {
 	endedAt: Date;
 	/** 按失败的先后。 */
 	failures: readonly FailedNode[];
+	/** 运行结束那一刻场景的关注项在这次运行里的最终值，按作者的顺序；没有时不写这一段。 */
+	focus: readonly RunFocusItem[];
 	/** 「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时没有按钮。 */
 	runUrl: string | undefined;
 }
@@ -95,10 +108,23 @@ function formatElapsed(ms: number): string {
 }
 
 /**
+ * 关注项一行的写法，和运行监控的读数用同一套文字：`- 名称：值 单位`；最新值来自哪个序列不言自明时不写，
+ * 否则写在名称后面（`- 名称（序列名）：值 单位`）；没有值写「—」；来源节点失败的末尾加 {@link NODE_FAILED_NOTE}；
+ * 这次运行的节点包版本里没有这张图表的，写 {@link focusChartMissing}。
+ */
+export function focusLine(item: RunFocusItem): string {
+	if (item.unavailable) return `- ${item.title}：${focusChartMissing(item.chart)}`;
+	const series = latestSeriesName(item);
+	const unit = item.latest === null || item.unit === "" ? "" : ` ${item.unit}`;
+	const failed = item.source.status === "failed" ? NODE_FAILED_NOTE : "";
+	return `- ${item.title}${series === "" ? "" : `（${series}）`}：${focusValueText(item)}${unit}${failed}`;
+}
+
+/**
  * 运行通知的卡片：header 是标题，颜色和副标题表示结果；body 依次是附加说明（有的话）、场景名、预设（用了运行预设时）、
- * 运行编号、触发人、开始时间和耗时、失败的链和节点（最多 {@link MAX_LISTED_FAILURES} 个）；
- * 最后是「查看运行」按钮（有链接时）。
- * 请求体超过 20 KB 时截断附加说明（{@link fitCard}）；截了还放不下返回 `too_large`。
+ * 运行编号、触发人、开始时间和耗时、失败的链和节点（最多 {@link MAX_LISTED_FAILURES} 个）、
+ * 关注项的最终值（有的话，每项一行，场景的关注项最多 8 项，所以最多 8 行）；最后是「查看运行」按钮（有链接时）。
+ * 请求体超过 20 KB 时截断附加说明（{@link fitCard}），失败的节点和关注项都不动；截了还放不下返回 `too_large`。
  */
 function runNotificationCard(facts: RunNotificationFacts) {
 	const result = RESULT[facts.status];
@@ -125,6 +151,10 @@ function runNotificationCard(facts: RunNotificationFacts) {
 						].join("\n"),
 					},
 				];
+	const focus: CardElement[] =
+		facts.focus.length === 0
+			? []
+			: [{ tag: "markdown", content: ["**关注项**", ...facts.focus.map(focusLine)].join("\n") }];
 	const link = facts.runUrl;
 	const button: CardElement[] =
 		link === undefined
@@ -142,6 +172,7 @@ function runNotificationCard(facts: RunNotificationFacts) {
 			...(note === "" ? [] : [{ tag: "markdown" as const, content: note }]),
 			{ tag: "markdown", content: lines.join("\n") },
 			...failures,
+			...focus,
 			...button,
 		]),
 	);
@@ -195,6 +226,22 @@ async function failedNodes(
 }
 
 /**
+ * 运行结束那一刻场景的关注项在这次运行里的最终值：和 `GET /runs/:id/focus?points=0` 同一份解析（{@link resolveRunFocus}），
+ * 在写入运行最终状态的事务里读，看到的是这个事务里刚写下的节点状态。场景没有设关注项、或者这些项都不在这次运行的版本里时没有项。
+ */
+async function finalFocus(
+	step: Step,
+	run: RunRow,
+	scenario: Pick<typeof orchestrations.$inferSelect, "focusItems">,
+	deps: Omit<RunFocusDeps, "db">,
+): Promise<RunFocusItem[]> {
+	// 没设关注项时解析出来的是执行中节点的主指标，运行已经结束，卡片上没有这一段。
+	if (scenario.focusItems.length === 0) return [];
+	const focus = await resolveRunFocus({ ...deps, db: step.tx }, run.id, { points: 0 });
+	return focus?.mode === "focus" ? focus.items : [];
+}
+
+/**
  * 运行刚结束（在写入最终状态的事务里调用）：读场景当前的运行通知设置，选了机器人而且满足触发条件的，
  * 把卡片写进发送队列并在运行上记下发给哪个机器人（提交后由调用方唤醒投递）。
  * 机器人已经不存在（或卡片超过 20 KB）时不入队，在运行上记下「未发送」的原因：通知不会拦住运行。
@@ -206,6 +253,7 @@ export async function enqueueRunNotification(
 		status: FinishedStatus;
 		document: OrchestrationDocument;
 		runUrl: string | undefined;
+		focus: Omit<RunFocusDeps, "db">;
 	},
 ): Promise<void> {
 	const { run, status, document } = input;
@@ -237,6 +285,7 @@ export async function enqueueRunNotification(
 		startedAt: run.startedAt,
 		endedAt: step.now,
 		failures: await failedNodes(step, run, document),
+		focus: await finalFocus(step, run, scenario, input.focus),
 		runUrl: input.runUrl,
 	});
 	if ("error" in card) {
