@@ -36,9 +36,15 @@ test("只用键盘上移和下移：读屏的实时区域播报新位置，焦�
 	const down = panel.getByRole("button", { name: "下移 下单延迟" });
 	const up = panel.getByRole("button", { name: "上移 下单延迟" });
 	await expect(up).toHaveAttribute("aria-disabled", "true");
-	await down.focus();
+	// 从这一行的名称输入框 Tab 过去：第一个是（到头的）上移，第二个是下移。
+	await panel.getByRole("textbox", { name: /^名称（fetch · 延迟）/ }).focus();
+	await page.keyboard.press("Tab");
+	await expect(up).toBeFocused();
+	await page.keyboard.press("Tab");
+	await expect(down).toBeFocused();
 	await page.keyboard.press("Enter");
 	await expect(status).toHaveText("下单延迟 移到第 2 位，共 4 项");
+	await expect(panel.getByText("最后修改")).toContainText(/移到第 \d 位/);
 	await expect(down).toBeFocused();
 	await page.keyboard.press("Enter");
 	await expect(status).toHaveText("下单延迟 移到第 3 位，共 4 项");
@@ -62,9 +68,9 @@ test("只用键盘上移和下移：读屏的实时区域播报新位置，焦�
 	await expect
 		.poll(() => focusKeysOf(controlPlane, id))
 		.toEqual(["fetch:吞吐", "fetch2:请求数", "fetch:延迟", "ping:level"]);
-	await expect(panel.getByText("最后修改：")).toContainText("tester");
+	await expect(panel.getByText("最后修改")).toContainText("tester");
 	// 把刚才的移动挪回去，正好是上一次修改之前的列表：记为撤销。
-	await expect(panel.getByText("最后修改：")).toContainText("撤销了「下单延迟」的移动");
+	await expect(panel.getByText("最后修改")).toContainText("撤销了「下单延迟」的移动");
 	expect((await sceneView(controlPlane, id)).head_version).toBe(1);
 });
 
@@ -84,7 +90,7 @@ test("拖动手柄排序：落在两行之间，放手后写入，最后修改�
 	await expect
 		.poll(() => focusKeysOf(controlPlane, id))
 		.toEqual(["fetch:延迟", "ping:level", "fetch:吞吐", "fetch2:请求数"]);
-	await expect(panel.getByText("最后修改：")).toContainText("把「level」移到第 2 位");
+	await expect(panel.getByText("最后修改")).toContainText("把「level」移到第 2 位");
 
 	// 拖到最后一行的下半部分：放到末尾。
 	await handle("下单延迟").dragTo(row(focusList(panel), "子单量"), {
@@ -109,7 +115,7 @@ test("移除后马上出现撤销，撤销把列表恢复成移除之前的样�
 	await expect(undo).toBeFocused();
 	await expect(panel.getByRole("status")).toHaveText("已移除「母单量」，可以撤销");
 	await expect(panel.getByText("本场景的关注项已用 3 / 8")).toBeVisible();
-	await expect(panel.getByText("最后修改：")).toContainText("移除了「母单量」");
+	await expect(panel.getByText("最后修改")).toContainText("移除了「母单量」");
 	await expect
 		.poll(() => focusKeysOf(controlPlane, id))
 		.toEqual(["fetch:延迟", "fetch2:请求数", "ping:level"]);
@@ -117,7 +123,7 @@ test("移除后马上出现撤销，撤销把列表恢复成移除之前的样�
 	await undo.click();
 	await expect.poll(() => focusNames(panel)).toEqual(["下单延迟", "母单量", "子单量", "level"]);
 	await expect(undo).toHaveCount(0);
-	await expect(panel.getByText("最后修改：")).toContainText("撤销了移除「母单量」");
+	await expect(panel.getByText("最后修改")).toContainText("撤销了移除「母单量」");
 	await expect(panel.getByText("本场景的关注项已用 4 / 8")).toBeVisible();
 	await expect(panel.getByRole("textbox", { name: /^名称（fetch · 吞吐）/ })).toBeFocused();
 	await expect
@@ -161,7 +167,7 @@ test("移除一个已经失效的项以后也能撤销", async ({ page, controlP
 	await panel.getByRole("button", { name: "撤销" }).click();
 	await expect.poll(() => focusNames(panel)).toEqual(["母单量", "level"]);
 	await expect(page.getByText("无法修改关注项")).toHaveCount(0);
-	await expect(panel.getByText("最后修改：")).toContainText("撤销了移除「level」");
+	await expect(panel.getByText("最后修改")).toContainText("撤销了移除「level」");
 	await expect.poll(() => focusKeysOf(controlPlane, id)).toEqual(["fetch:吞吐", "ping:level"]);
 });
 
@@ -181,7 +187,7 @@ test("改名后显示新名字，写空或写成图表标题回到图表标题�
 	await expect
 		.poll(async () => (await sceneView(controlPlane, id)).focus_items[0])
 		.toMatchObject({ chart: "延迟", title: "撮合延迟" });
-	await expect(panel.getByText("最后修改：")).toContainText("把「延迟」改名为「撮合延迟」");
+	await expect(panel.getByText("最后修改")).toContainText("把「延迟」改名为「撮合延迟」");
 	// 来源和图表标题还在这一行里，名字改了也认得出是哪一张。
 	await expect(row(focusList(panel), "撮合延迟")).toContainText("fetch · 图表 延迟");
 
@@ -200,7 +206,7 @@ test("改名后显示新名字，写空或写成图表标题回到图表标题�
 		.poll(async () => (await sceneView(controlPlane, id)).focus_items[0])
 		.toEqual({ node_id: "fetch", chart: "延迟", status: "ok", chart_type: "line" });
 	// 改回原来的名字，正好是上一次修改之前的列表：记为撤销。
-	await expect(panel.getByText("最后修改：")).toContainText("撤销了「延迟」的改名");
+	await expect(panel.getByText("最后修改")).toContainText("撤销了「延迟」的改名");
 });
 
 test("每行写来源节点、图表和类型；失效项的两种说明都显示，名额计数里包含它们", async ({

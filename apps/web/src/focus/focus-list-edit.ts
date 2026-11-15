@@ -1,7 +1,7 @@
 import type { FocusItemView } from "@sfly/schema";
 
 /**
- * 场景检查器「关注项」页上对列表的修改（排序、改名）：都是纯函数，结果交给 `useFocusItems().replace` 整份写回。
+ * 场景设置的「关注项」页上对列表的修改（排序、改名）：都是纯函数，结果交给 `useFocusItems().replace` 整份写回。
  */
 
 /** 把第 `from` 项挪到第 `to` 位（挪完以后的下标，从 0 数）。 */

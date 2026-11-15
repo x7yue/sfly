@@ -13,6 +13,7 @@ import { formatDateTime } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Truncate } from "@/components/ui/truncate";
 import { QuotaCount } from "./FocusToggle";
 import { indexAfterDrop, moveItem, renamedItem } from "./focus-list-edit";
 import { useFocusItems } from "./use-focus-items";
@@ -143,7 +144,7 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 				</p>
 				{edit && (
 					<p className="m-0 text-fg-2">
-						{TERM.lastEdited}：<b className="font-medium text-fg-1">{edit.updated_by}</b> ·{" "}
+						{TERM.lastEdited} <b className="font-medium text-fg-1">{edit.updated_by}</b> ·{" "}
 						{formatDateTime(edit.updated_at)}，{edit.summary}
 					</p>
 				)}
@@ -213,8 +214,10 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 											focusId={`${key}/name`}
 											onRename={(typed) => rename(index, typed)}
 										/>
-										<div className="px-2.25 text-xs text-fg-3">
-											<span className="font-mono">{item.node_id}</span> · {TERM.chart} {item.chart}
+										<div className="flex px-2.25 text-xs text-fg-3">
+											<Truncate className="font-mono">{item.node_id}</Truncate>
+											<span className="flex-none whitespace-pre"> · </span>
+											<Truncate>{`${TERM.chart} ${item.chart}`}</Truncate>
 										</div>
 										{reason && <div className="px-2.25 text-xs text-fg-3">{reason}</div>}
 									</div>
@@ -332,7 +335,7 @@ function MoveButton({
 			onClick={() => {
 				if (!disabled) onMove();
 			}}
-			className="aria-disabled:pointer-events-none aria-disabled:opacity-40"
+			className="aria-disabled:cursor-not-allowed aria-disabled:opacity-40"
 		>
 			{children}
 		</Button>
