@@ -319,6 +319,7 @@ test("运行失败不弹通知：页内横幅留在时间线上方，状态一�
 	expect(bar.y).toBeGreaterThanOrEqual(top.y + top.height - 1);
 	expect(bar.y + bar.height).toBeLessThanOrEqual(tl.y + 1);
 	// 没有通知（不会盖在上面，也不会读两遍）。
+	// biome-ignore lint/plugin/e2e-fixed-wait: 断言的是没有发生的事：横幅出现之后通知一直没有弹出
 	await page.waitForTimeout(500);
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
 });

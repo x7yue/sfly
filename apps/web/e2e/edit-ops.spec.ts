@@ -620,8 +620,9 @@ test("命令面板「当前页面」列出保存和运行；没有修改时选�
 	await pageGroup.getByRole("option", { name: /^运行/ }).click();
 	const drawer = page.getByRole("dialog", { name: "运行 · 日终数据处理" });
 	await expect(drawer).toBeVisible();
-	await page.waitForTimeout(500);
-	expect(await drawer.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+	// 命令面板关闭之后才归还焦点：等它从页面上消失，再看焦点有没有留在抽屉里。
+	await expect(palette).toBeHidden();
+	await expect.poll(() => drawer.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 	await page.keyboard.press("Escape");
 	// 抽屉的退场动画里焦点还在它的输入框里，等它走完再按 R，免得按键写进输入框。
 	await expect(drawer).toHaveCount(0);

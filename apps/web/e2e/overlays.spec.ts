@@ -95,6 +95,7 @@ test("归档之后焦点落到下一张卡片；带「撤销」的通知在右�
 	expect(at.x).toBeGreaterThan(viewport.width / 2);
 	expect(at.y).toBeGreaterThan(viewport.height / 2);
 	await expect(toast.getByRole("button", { name: "关闭通知" })).toBeVisible();
+	// biome-ignore lint/plugin/e2e-fixed-wait: 带「撤销」的通知不自动消失：断言的是等过普通通知（2.6 秒）与警告（5.2 秒）的时长它仍在，没有发生的事无从等起
 	await page.waitForTimeout(7_000);
 	await expect(toast).toBeVisible();
 
