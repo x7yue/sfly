@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
@@ -34,7 +34,7 @@ async function publishStubPackage(cp: TestControlPlane): Promise<void> {
 	}
 }
 
-describe("全栈冒烟：两个节点的链", () => {
+describe.skipIf(agentUnsupported)("全栈冒烟：两个节点的链", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;
@@ -228,7 +228,7 @@ describe("全栈冒烟：两个节点的链", () => {
 	}, 60_000);
 });
 
-describe("全栈冒烟：Agent 从控制面下载并安装节点包", () => {
+describe.skipIf(agentUnsupported)("全栈冒烟：Agent 从控制面下载并安装节点包", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;
@@ -286,7 +286,7 @@ describe("全栈冒烟：Agent 从控制面下载并安装节点包", () => {
 	}, 90_000);
 });
 
-describe("全栈冒烟：开发模式 sfly dev", () => {
+describe.skipIf(agentUnsupported)("全栈冒烟：开发模式 sfly dev", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let devAgent: RealAgent;

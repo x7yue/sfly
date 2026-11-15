@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { repoRoot } from "./support/agent-binary.js";
+import { agentUnsupported, repoRoot } from "./support/agent-binary.js";
 import {
 	type AgentPair,
 	type BrokenPeers,
@@ -45,7 +45,7 @@ async function expected(path: string) {
 	};
 }
 
-describe("全栈：Agent 能力 files", () => {
+describe.skipIf(agentUnsupported)("全栈：Agent 能力 files", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	let pair: AgentPair;

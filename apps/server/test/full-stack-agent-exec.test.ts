@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentsApi, logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { agentUnsupported } from "./support/agent-binary.js";
 import { type AgentPair, startAgentPair } from "./support/agent-pair.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -37,7 +38,7 @@ async function pidsIn(path: string): Promise<number[]> {
 	}
 }
 
-describe("全栈：Agent 能力 exec", () => {
+describe.skipIf(agentUnsupported)("全栈：Agent 能力 exec", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	let pair: AgentPair;

@@ -3,14 +3,14 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chainOf, isAlive, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
-import { agentBinary } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe("验收 S1：数据流", () => {
+describe.skipIf(agentUnsupported)("验收 S1：数据流", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agents: RealAgent[] = [];

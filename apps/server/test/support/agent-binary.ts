@@ -4,6 +4,12 @@ import { join, resolve } from "node:path";
 
 export const repoRoot = resolve(import.meta.dirname, "../../../..");
 
+/**
+ * Agent 只能在 Linux 上编译（inotify）：用到 agentBinary() 的测试套件（包括经 startRealAgent、startAgentPair 用到的）
+ * 写成 `describe.skipIf(agentUnsupported)`，在 macOS 上用 `pnpm linux` 运行（scripts/linux/run.sh）。
+ */
+export const agentUnsupported = process.platform !== "linux";
+
 /** Agent 二进制：SFLY_AGENT_BIN 指定时直接使用，否则用 cargo 构建 debug 版本。 */
 export function agentBinary(): string {
 	const fromEnv = process.env.SFLY_AGENT_BIN;

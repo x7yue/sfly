@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { systemClock } from "../src/clock.js";
-import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
@@ -70,7 +70,7 @@ const FIXED_BODY = `    ctx.metric("latency", 12)
     return {"status": 200, "latency_ms": 12}
 `;
 
-describe("全栈：AI 编程助手只用 sfly 命令行走完联调闭环", () => {
+describe.skipIf(agentUnsupported)("全栈：AI 编程助手只用 sfly 命令行走完联调闭环", () => {
 	let dir: string;
 	let project: string;
 	let cp: TestControlPlane;

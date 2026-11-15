@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
@@ -17,7 +17,7 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 
 const run = promisify(execFile);
 
-describe("全栈：install.sh 安装的 Agent", () => {
+describe.skipIf(agentUnsupported)("全栈：install.sh 安装的 Agent", () => {
 	let cp: TestControlPlane;
 	let mirror: ReleaseMirror;
 	let dir: string;

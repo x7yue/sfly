@@ -1,7 +1,7 @@
 // 全栈（#10）：真实的控制面、Rust Agent 和 SDK 执行器。节点的 print、标准错误、子进程输出和 ctx.log
 // 合并成一条日志流到达控制面；进度显示在运行视图里；secret 参数的值在日志中被打码。
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
@@ -18,7 +18,7 @@ interface LogLine {
 	text: string;
 }
 
-describe("全栈：日志、进度与打码", () => {
+describe.skipIf(agentUnsupported)("全栈：日志、进度与打码", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;

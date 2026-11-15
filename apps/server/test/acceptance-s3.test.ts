@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chainOf, isAlive, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
-import { agentBinary } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import type { ManualClock } from "./support/manual-clock.js";
@@ -20,7 +20,7 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 const readPids = async (file: string) =>
 	(await readFile(file, "utf8")).trim().split(" ").map(Number);
 
-describe("验收 S3：故障", () => {
+describe.skipIf(agentUnsupported)("验收 S3：故障", () => {
 	let bin: string;
 	let cp: TestControlPlane;
 	let api: ApiClient;

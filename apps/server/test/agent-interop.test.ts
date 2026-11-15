@@ -2,11 +2,11 @@
 import { connect } from "node:net";
 import { agentsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe("Rust Agent 与控制面互通", () => {
+describe.skipIf(agentUnsupported)("Rust Agent 与控制面互通", () => {
 	let cp: TestControlPlane;
 	let bin: string;
 	let agent: RealAgent | undefined;

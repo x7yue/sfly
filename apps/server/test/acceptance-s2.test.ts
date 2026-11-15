@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { chainOf, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
-import { agentBinary } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import type { ManualClock } from "./support/manual-clock.js";
@@ -16,7 +16,7 @@ import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-a
 import { publishStubPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe("验收 S2：并行", () => {
+describe.skipIf(agentUnsupported)("验收 S2：并行", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { agentUnsupported } from "./support/agent-binary.js";
 import { type AgentPair, startAgentPair } from "./support/agent-pair.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -27,7 +28,7 @@ async function expected(path: string) {
 	};
 }
 
-describe("全栈：Agent 能力 files.write", () => {
+describe.skipIf(agentUnsupported)("全栈：Agent 能力 files.write", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	let pair: AgentPair;

@@ -8,7 +8,7 @@ import { arch, tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported, repoRoot } from "./support/agent-binary.js";
 import { dependencyWheel, type PypiStub, startPypiStub } from "./support/pypi-stub.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -37,7 +37,7 @@ const TOOLS = [
 	"uname",
 ];
 
-describe("全栈：install.sh --dev", () => {
+describe.skipIf(agentUnsupported)("全栈：install.sh --dev", () => {
 	let mirror: ReleaseMirror;
 	let pypi: PypiStub;
 	let dir: string;

@@ -6,7 +6,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
@@ -48,7 +48,7 @@ interface LogLine {
 	text: string;
 }
 
-describe("全栈：ctx.notify", () => {
+describe.skipIf(agentUnsupported)("全栈：ctx.notify", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;

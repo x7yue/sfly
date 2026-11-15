@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { agentUnsupported } from "./support/agent-binary.js";
 import {
 	type AgentPair,
 	type BrokenPeers,
@@ -35,7 +36,7 @@ async function expected(path: string) {
 	};
 }
 
-describe("全栈：Agent 能力 files.read", () => {
+describe.skipIf(agentUnsupported)("全栈：Agent 能力 files.read", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	let pair: AgentPair;

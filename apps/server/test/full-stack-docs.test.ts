@@ -14,7 +14,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { docsApi } from "@sfly/schema";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, repoRoot } from "./support/agent-binary.js";
+import { agentBinary, agentUnsupported, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
 import { type BlockResult, DocShell, shellBlocks } from "./support/doc-commands.js";
 import { eventually } from "./support/eventually.js";
@@ -119,7 +119,7 @@ const isForegroundAgent = (block: string) => block.trim() === "~/.sfly/bin/sfly-
 const PACKAGE = "demo";
 const NODE = "countdown";
 
-describe("全栈：开发文档里的命令", () => {
+describe.skipIf(agentUnsupported)("全栈：开发文档里的命令", () => {
 	let dir: string;
 	let sdkDir: string;
 	let mirror: ReleaseMirror;
