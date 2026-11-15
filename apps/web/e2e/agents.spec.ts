@@ -325,6 +325,43 @@ test("对外地址与能力：显式配置的地址标明来源；端口被占�
 	await expect(header(page, "agent-busy-port").locator("[data-status]")).toHaveText("在线");
 });
 
+test("节点包安装：安装中的 Agent 状态写「安装中」和包名；安装失败在状态后面写哪个包失败，Agent 仍然在线", async ({
+	page,
+	connectAgent,
+}) => {
+	const installing = await connectAgent({ name: "agent-installing" });
+	installing.send({
+		case: "install",
+		value: {
+			package: "demo-checks",
+			version: "1.2.0",
+			state: 1, // INSTALLING
+			taskId: "t-1",
+			installedPackages: [],
+		},
+	});
+	const failed = await connectAgent({ name: "agent-failed-install" });
+	failed.send({
+		case: "install",
+		value: {
+			package: "demo-checks",
+			version: "1.3.0",
+			state: 3, // FAILED
+			taskId: "t-2",
+			output: "依赖冲突",
+			installedPackages: [],
+		},
+	});
+	await installing.sync();
+	await failed.sync();
+
+	await page.goto("/agents");
+	await expect(header(page, "agent-installing").locator("[data-status]")).toHaveText("安装中");
+	await expect(header(page, "agent-installing")).toContainText("demo-checks@1.2.0");
+	await expect(header(page, "agent-failed-install").locator("[data-status]")).toHaveText("在线");
+	await expect(header(page, "agent-failed-install")).toContainText("安装 demo-checks@1.3.0 失败");
+});
+
 test.describe("版本不一致", () => {
 	test.use({ controlPlaneOptions: { version: "2.0.0" } });
 
