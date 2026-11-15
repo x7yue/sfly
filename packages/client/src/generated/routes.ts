@@ -32,6 +32,11 @@ import type {
 	PlatformMetricsQuery,
 	PreflightAgent,
 	PreflightProblem,
+	PresetChanges,
+	PresetDescription,
+	PresetName,
+	PresetParamInput,
+	PresetView,
 	ProgressEvent,
 	RunListItem,
 	RunListQuery,
@@ -426,6 +431,10 @@ export interface Api {
 		 * 不是最新版本时返回 409 `version_conflict`（details 见 VersionConflictDetails）。
 		 * 请求体不符合契约时用更具体的错误码：缺 base_version 返回 400 `base_version_required`，
 		 * 其余（文档不合法、base_version 不是非负整数）返回 400 `invalid_document`。
+		 *
+		 * 响应里的 `warnings` 只提示，不阻止保存。除了文档本身的静态检查，原来可用、对照新版本会失效的运行预设
+		 * （GLOSSARY「失效的运行预设」）各有一条，`code` 是 `preset_invalidated`，没有 `node_id`，`message` 写明预设名和原因；
+		 * 原来就已失效的预设不重复警告。
 		 */
 		saveVersion: Endpoint<
 			{
@@ -518,7 +527,7 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/copy`
 		 *
-		 * 复制场景并取新名字：说明和运行通知设置一起复制，源场景最新版本的内容作为第 1 版。
+		 * 复制场景并取新名字：说明、运行通知设置和运行预设（包括 secret 的值）一起复制，源场景最新版本的内容作为第 1 版。
 		 */
 		copy: Endpoint<
 			{
@@ -613,6 +622,102 @@ export interface Api {
 			NodeTypeView
 		>;
 	};
+	presets: {
+		/**
+		 * `GET /orchestrations/:id/presets`
+		 *
+		 * 场景的运行预设，按名称排序。每个预设的 `status` 和 `problems` 对照场景最新版本入口节点的参数声明：
+		 * 预设参数已不存在或保存的值不符合现在的类型时是失效的运行预设。场景不存在时 404 `not_found`。
+		 */
+		list: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			{
+				presets: PresetView[];
+			}
+		>;
+		/**
+		 * `POST /orchestrations/:id/presets`
+		 *
+		 * 新建运行预设（201，需要昵称请求头，昵称记为最后修改人）。`params` 是预设参数的完整清单，
+		 * 对照最新版本检查：参数已声明、值符合类型（不做类型转换，`json` 接受任何值）、字符串不为空，
+		 * 至少一个参数，不能重复；secret 参数也能设为预设参数，值明文保存，所有响应里只返回打码后的值。
+		 * 不通过时 400 `invalid_preset`，details 是 zod 格式的问题清单（`path` 指出字段，`message` 写明原因）；
+		 * 入口节点没有声明参数（包括场景还没有版本）时同样是 `invalid_preset`；新建时没有原值可沿用，用 `keep` 也是 `invalid_preset`。
+		 * 名称在场景内已被占用时 409 `preset_name_taken`。场景不存在时 404 `not_found`。
+		 */
+		create: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				body: {
+					name: PresetName;
+					description?: PresetDescription;
+					params: PresetParamInput[];
+				};
+			},
+			PresetView
+		>;
+		/**
+		 * `PATCH /orchestrations/:id/presets/:presetId`
+		 *
+		 * 修改运行预设（需要昵称请求头，昵称和时间记为最后修改人）：立即生效，不产生新的场景版本；
+		 * 两个人同时改时后保存的覆盖先保存的，不做冲突检测。请求体见 `PresetChanges`：没有 `params` 时只改名称和说明；
+		 * 给了 `params` 时 400 `invalid_preset` 的规则同新建；其中 secret 参数不重新输入时写 `{name, keep: true}` 沿用原值，
+		 * `keep` 用在非 secret 参数上，或者这个预设里原来没有值的参数上，同样是 `invalid_preset`。
+		 * 请求体不符合要求（含没有任何要修改的字段）同样是 400 `invalid_preset`。
+		 * 新名称被场景里别的预设占用时 409 `preset_name_taken`。预设不存在或不属于这个场景时 404 `preset_not_found`。
+		 * 场景归档期间也能修改。
+		 */
+		update: Endpoint<
+			{
+				params: {
+					id: string;
+					presetId: string;
+				};
+				body: PresetChanges;
+			},
+			PresetView
+		>;
+		/**
+		 * `POST /orchestrations/:id/presets/:presetId/copy`
+		 *
+		 * 复制运行预设（201，需要昵称请求头）：在控制面复制，说明和预设参数（包括 secret 的值）不变，新的 ID，
+		 * 请求体里是新名称（规则同新建），最后修改人记为复制的人。新名称已被占用时 409 `preset_name_taken`，
+		 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能复制。
+		 */
+		copy: Endpoint<
+			{
+				params: {
+					id: string;
+					presetId: string;
+				};
+				body: {
+					name: PresetName;
+				};
+			},
+			PresetView
+		>;
+		/**
+		 * `DELETE /orchestrations/:id/presets/:presetId`
+		 *
+		 * 删除运行预设（204，需要昵称请求头）。已有运行上记下的预设 ID、名称和预设参数的名单不受影响。
+		 * 预设不存在或不属于这个场景时 404 `preset_not_found`。场景归档期间也能删除。
+		 */
+		remove: Endpoint<
+			{
+				params: {
+					id: string;
+					presetId: string;
+				};
+			},
+			void
+		>;
+	};
 	runs: {
 		/**
 		 * `GET /runs`
@@ -638,7 +743,8 @@ export interface Api {
 		 * `GET /orchestrations/:id/preflight`
 		 *
 		 * 触发前预检：最新版本号、入口参数声明、不能触发的原因（空表示可以触发），
-		 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队）。
+		 * 以及触发表单的检查清单要列出的锁定包版本与引用的 Agent（不在线、在准备环境都不阻止触发，任务会排队），
+		 * 和场景的运行预设。
 		 */
 		preflight: Endpoint<
 			{
@@ -655,6 +761,8 @@ export interface Api {
 				packages: Record<string, string>;
 				/** 最新版本引用的 Agent、在线状态与是否在准备环境，默认 Agent 在前；没有版本时为空。 */
 				agents: PreflightAgent[];
+				/** 场景的运行预设，按名称排序（与 presetsApi.list 相同），`status` 对照这次检查用的最新版本。 */
+				presets: PresetView[];
 			}
 		>;
 		/**
@@ -677,6 +785,11 @@ export interface Api {
 		 *
 		 * 触发场景的最新版本（201）。预检不通过时 400 `invalid_orchestration`（details 是原因列表），
 		 * 参数不对时 400 `invalid_params`。
+		 *
+		 * 带上 `preset`（运行预设的 ID）时，预设参数取预设保存的值，`params` 只需要给其余的参数；预设在触发的事务里读取，
+		 * 之后修改预设不影响这次运行。`params` 里给 secret 预设参数传了任何值（即使和预设相同，以免调用方猜测原值），或给其他预设参数传了不同的值
+		 * （按 JSON 深比较）时 400 `preset_param_locked`（details 是 `{ param, preset }`：参数名和预设名），其他预设参数传相同的值照常触发。预设不存在或不属于这个场景时 404 `preset_not_found`；预设已失效（对照最新版本，见 PresetView 的 `status`）
+		 * 时 409 `preset_invalid`（details 是问题清单，每项 `{ param, reason }`），不产生运行。
 		 */
 		trigger: Endpoint<
 			{
@@ -685,6 +798,8 @@ export interface Api {
 				};
 				body?: {
 					params?: Record<string, unknown>;
+					/** 运行预设的 ID；不给就是不用预设。 */
+					preset?: string;
 				};
 			},
 			RunView
@@ -806,6 +921,13 @@ export const routes = {
 		get: { method: "GET", path: "/packages/:name", kind: "endpoint" },
 		version: { method: "GET", path: "/packages/:name/versions/:version", kind: "endpoint" },
 		nodeType: { method: "GET", path: "/packages/:name/versions/:version/nodes/:node", kind: "endpoint" },
+	},
+	presets: {
+		list: { method: "GET", path: "/orchestrations/:id/presets", kind: "endpoint" },
+		create: { method: "POST", path: "/orchestrations/:id/presets", kind: "endpoint" },
+		update: { method: "PATCH", path: "/orchestrations/:id/presets/:presetId", kind: "endpoint" },
+		copy: { method: "POST", path: "/orchestrations/:id/presets/:presetId/copy", kind: "endpoint" },
+		remove: { method: "DELETE", path: "/orchestrations/:id/presets/:presetId", kind: "endpoint" },
 	},
 	runs: {
 		list: { method: "GET", path: "/runs", kind: "endpoint" },

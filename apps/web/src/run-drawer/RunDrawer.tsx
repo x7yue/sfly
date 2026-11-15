@@ -145,6 +145,7 @@ function DrawerBody({
 				) : (
 					<TriggerForm
 						orchestrationId={orchestrationId}
+						scenarioName={name}
 						formId={formId}
 						options={{ ...local, onLocate: locate }}
 						onTriggered={triggered}

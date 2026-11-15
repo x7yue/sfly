@@ -10,6 +10,7 @@ const passed: Preflight = {
 		{ name: "agent-a", default: true, status: "online", preparing_since: null },
 		{ name: "agent-b", default: false, status: "online", preparing_since: null },
 	],
+	presets: [],
 };
 
 const summary = (p: Preflight, local?: Parameters<typeof preflightChecks>[1]) =>
@@ -171,6 +172,7 @@ describe("触发前检查清单", () => {
 			problems: [{ code: "no_version", message: "场景还没有保存过版本" }],
 			packages: {},
 			agents: [],
+			presets: [],
 		};
 		expect(summary(p)).toEqual([["version", "blocked", "场景还没有保存过版本", undefined]]);
 	});

@@ -27,6 +27,7 @@ import {
 import { Truncate } from "@/components/ui/truncate";
 import { CancelRunButton } from "./CancelRunDialog";
 import { useMonitorActions, useTimeAxis } from "./monitor-state";
+import { RunPresetInfo } from "./RunPresetInfo";
 import {
 	chainLabel,
 	chainRunStatus,
@@ -104,6 +105,7 @@ export function MonitorTopBar({
 					{status.label}
 				</StatusPill>
 			</output>
+			{run.preset && <RunPresetInfo preset={run.preset} />}
 			{failure && !failureInBanner && <FailureSummary failure={failure} />}
 			<ul
 				aria-label="各链状态"
@@ -184,7 +186,7 @@ export function MonitorTopBar({
 				title="再次运行"
 				orchestrationId={run.orchestration_id}
 				name={name ?? "场景"}
-				initialParams={run.params}
+				rerunOf={run}
 				onTriggered={(next) => navigate({ to: "/runs/$id", params: { id: next.id } })}
 			/>
 		</header>

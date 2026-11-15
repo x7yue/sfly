@@ -38,6 +38,13 @@ export class ApiClient {
 		});
 	}
 
+	delete(path: string, nickname = "tester"): Promise<Response> {
+		return this.cp.fetch(path, {
+			method: "DELETE",
+			headers: { [NICKNAME_HEADER]: encodeURIComponent(nickname) },
+		});
+	}
+
 	/** 没有请求体的 POST（带 content-type 的空请求体会被拒绝）。 */
 	postEmpty(path: string, nickname = "tester"): Promise<Response> {
 		return this.cp.fetch(path, {

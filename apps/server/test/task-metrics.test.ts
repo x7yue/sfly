@@ -507,6 +507,9 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["runs", "triggered_via", "text"],
 	["runs", "cancel_requested_via", "text"],
 	["orchestration_versions", "author_via", "text"],
+	["runs", "preset_id", "uuid"],
+	["runs", "preset_name", "text"],
+	["runs", "preset_params", "jsonb"],
 ];
 
 /** 0012 之后的迁移新建、当前代码会读的表：表名和建表的迁移文件（保存场景时的静态检查读 feishu_bots）。 */

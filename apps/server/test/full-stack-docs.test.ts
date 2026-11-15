@@ -69,6 +69,7 @@ const ROUTES = {
 		"subflows",
 		"standard-nodes",
 		"cross-agent-files",
+		"run-scenario",
 		"feishu-notify",
 		"api-client",
 	],

@@ -60,6 +60,7 @@ const run = (chains: ChainRunView[]): RunView => ({
 	started_at: at(0),
 	ended_at: null,
 	cancel: null,
+	preset: null,
 	run_notification: null,
 	chains,
 });

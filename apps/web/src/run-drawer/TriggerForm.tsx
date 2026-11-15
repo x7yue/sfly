@@ -1,8 +1,8 @@
 import {
 	domainKey,
 	orchestrationsApi,
-	type ParamDeclView,
 	type PreflightProblem,
+	type PresetView,
 	type RunView,
 	runListApi,
 	runsApi,
@@ -11,45 +11,59 @@ import { revalidateLogic, useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
-import { AlertTriangleIcon, CheckIcon, EyeIcon, EyeOffIcon, XIcon } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { AlertTriangleIcon, CheckIcon, XIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Banner } from "#/components/feedback/banner";
 import { ErrorState } from "#/components/feedback/states";
 import { StatusPill } from "#/components/status";
 import { ApiError, apiQuery, callApi } from "#/lib/api";
 import { shortId } from "#/lib/format";
 import { useNickname } from "#/lib/nickname";
 import { writeRunView } from "#/monitor/live-run";
+import { unusablePresetNotice } from "#/presets/invalid-preset";
+import { draftFromFormValues } from "#/presets/preset-form";
+import {
+	initialPresetId,
+	type RerunSource,
+	switchPreset,
+	usablePreset,
+} from "#/presets/preset-selection";
+import { type OpeningView, RunPresetsDialog } from "#/presets/RunPresetsDialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { type CheckRow, type LocalState, type Preflight, preflightChecks } from "./checks";
-import { type FieldValue, initialValues, paramsSchema, toParams } from "./trigger-form";
-
-/** 敏感参数临时显示的时长。 */
-const REVEAL_MS = 5000;
+import { readLastPreset, rememberPreset } from "./last-preset";
+import { ParamField } from "./ParamField";
+import { PresetSelect } from "./PresetSelect";
+import { SectionTitle } from "./SectionTitle";
+import { initialValues, lockedValue, paramsSchema, toParams } from "./trigger-form";
 
 export interface TriggerOptions extends LocalState {
 	/** 「前往」问题所在的节点（画布上定位，或进入画布并选中）。 */
 	onLocate?: (nodeId: string) => void;
-	/** 表单初始值（再次运行时为上次运行的参数；敏感参数不沿用，需要重新填写）。 */
-	initialParams?: Record<string, unknown>;
+	/**
+	 * 「再次运行」的来源运行：入口参数用它的值预填（敏感参数不沿用，需要重新填写），预设选中它用的预设
+	 * （预设用不了时在表单上方写明原因），不看浏览器里记住的预设。不给时是直接运行。
+	 */
+	rerunOf?: RerunSource;
 }
 
 /**
- * 运行抽屉的表单阶段（原型 drawerHTML 的 form）：已有运行中的提示、入口参数（按入口节点的声明生成，
- * TanStack Form + zod 校验）、触发前检查清单、触发人。底部的「取消」「触发运行」由 RunDrawer 渲染，
+ * 运行抽屉的表单阶段（原型 drawerHTML 的 form）：已有运行中的提示、「再次运行」原来的预设用不了的提示、运行预设（场景有预设时）、入口参数（按入口节点的声明生成，
+ * TanStack Form + zod 校验；选中预设时预设参数只读）、触发前检查清单、触发人。底部的「取消」「触发运行」由 RunDrawer 渲染，
  * 通过 formId 提交。触发成功后调用 onTriggered。
  */
 export function TriggerForm({
 	orchestrationId,
+	scenarioName,
 	formId,
 	options,
 	onTriggered,
 	onState,
 }: {
 	orchestrationId: string;
+	/** 场景名称，管理预设的对话框里写。 */
+	scenarioName: string;
 	formId: string;
 	options: TriggerOptions;
 	onTriggered: (run: RunView) => void;
@@ -61,6 +75,9 @@ export function TriggerForm({
 		staleTime: 0,
 		gcTime: 0,
 	});
+	// 管理预设的对话框：列表，或者「存为预设」时直接是带着现在填的值的新建表单。
+	const [manage, setManage] = useState<OpeningView | null>(null);
+	const presetSelect = useRef<HTMLSelectElement>(null);
 
 	useEffect(() => {
 		if (!preflight.data) onState({ canSubmit: false, pending: false, version: null });
@@ -85,14 +102,26 @@ export function TriggerForm({
 		);
 	}
 	return (
-		<ParamsForm
-			orchestrationId={orchestrationId}
-			formId={formId}
-			preflight={preflight.data}
-			options={options}
-			onTriggered={onTriggered}
-			onState={onState}
-		/>
+		<>
+			<ParamsForm
+				orchestrationId={orchestrationId}
+				formId={formId}
+				preflight={preflight.data}
+				options={options}
+				onTriggered={onTriggered}
+				onState={onState}
+				onManage={setManage}
+				presetSelect={presetSelect}
+			/>
+			{/* 在表单外面：对话框里的提交事件会沿 React 树冒泡到外层的 <form>，不能让它触发运行。 */}
+			<RunPresetsDialog
+				scenario={{ id: orchestrationId, name: scenarioName }}
+				open={manage !== null}
+				onOpenChange={(open) => !open && setManage(null)}
+				returnFocus={presetSelect}
+				openingView={manage ?? undefined}
+			/>
+		</>
 	);
 }
 
@@ -103,6 +132,8 @@ function ParamsForm({
 	options,
 	onTriggered,
 	onState,
+	onManage,
+	presetSelect,
 }: {
 	orchestrationId: string;
 	formId: string;
@@ -110,15 +141,30 @@ function ParamsForm({
 	options: TriggerOptions;
 	onTriggered: (run: RunView) => void;
 	onState: (state: { canSubmit: boolean; pending: boolean; version: number | null }) => void;
+	/** 打开管理预设的对话框。 */
+	onManage: (view: OpeningView) => void;
+	/** 预设选择框；对话框关闭后焦点回到它。 */
+	presetSelect: React.RefObject<HTMLSelectElement | null>;
 }) {
 	const queryClient = useQueryClient();
 	const nickname = useNickname();
 	const decls = preflight.params;
 	const checks = preflightChecks(preflight, options);
+	const [presetId, setPresetId] = useState<string | null>(() =>
+		initialPresetId(preflight.presets, readLastPreset(orchestrationId), options.rerunOf),
+	);
+	// 失效的运行预设不能用：选中之后预设才失效（预检刷新）或被删除时，当作没有选。
+	const preset = usablePreset(preflight.presets, presetId);
+	// 选中预设时，预设参数取预设的值、不能修改，只提交其余参数和预设（控制面填入预设的值）。
+	const lockedParams = (p: PresetView | undefined) =>
+		new Map(p?.params.map((q) => [q.name, q.value]));
+	const locked = lockedParams(preset);
+	const editable = decls.filter((p) => !locked.has(p.name));
 	const trigger = useMutation({
-		mutationFn: (params: Record<string, unknown>) =>
-			callApi(runsApi.trigger, { params: { id: orchestrationId }, body: { params } }),
-		onSuccess: (run) => {
+		mutationFn: (body: { params: Record<string, unknown>; preset?: string }) =>
+			callApi(runsApi.trigger, { params: { id: orchestrationId }, body }),
+		onSuccess: (run, body) => {
+			rememberPreset(orchestrationId, body.preset ?? null);
 			writeRunView(queryClient, run);
 			// 运行列表与场景卡片上的最近运行。
 			void queryClient.invalidateQueries({ queryKey: domainKey(runsApi.get) });
@@ -128,13 +174,14 @@ function ParamsForm({
 	});
 	const formElement = useRef<HTMLFormElement>(null);
 	const form = useForm({
-		defaultValues: initialValues(decls, options.initialParams),
+		defaultValues: initialValues(decls, options.rerunOf?.params),
 		// 第一次提交之前不打扰；提交过一次之后随输入重新校验。
 		validationLogic: revalidateLogic(),
-		validators: { onDynamic: paramsSchema(decls) },
+		validators: { onDynamic: paramsSchema(editable) },
 		onSubmit: ({ value }) => {
 			if (checks.blocked) return;
-			trigger.mutate(toParams(decls, value));
+			const params = toParams(editable, value);
+			trigger.mutate(preset ? { params, preset: preset.id } : { params });
 		},
 		// 校验没通过：把焦点放到第一个出错的字段（等错误渲染出来再找），读屏用户知道错在哪里。
 		onSubmitInvalid: () => {
@@ -144,6 +191,21 @@ function ParamsForm({
 		},
 	});
 
+	// 换预设：前后都能编辑的字段保留已经填的值，其余回到默认值（见 switchPreset）。
+	const selectPreset = (id: string | null) => {
+		const next = usablePreset(preflight.presets, id);
+		const values = switchPreset(decls, form.state.values, locked, lockedParams(next));
+		for (const p of decls) {
+			const value = values[p.name];
+			if (value !== undefined && value !== form.state.values[p.name]) {
+				form.setFieldValue(p.name, value);
+			}
+		}
+		setPresetId(next?.id ?? null);
+	};
+
+	// 「再次运行」原来的预设选不了（已删除、已失效）：写明原因。预设之后被修好或删除，提示随之更新。
+	const rerunNotice = unusablePresetNotice(preflight.presets, options.rerunOf?.preset ?? null);
 	const blocked = checks.blocked;
 	const pending = trigger.isPending;
 	useEffect(() => {
@@ -161,6 +223,19 @@ function ParamsForm({
 			}}
 		>
 			<RunningNotice orchestrationId={orchestrationId} />
+			{rerunNotice && <Banner tone="warn" title={rerunNotice} announce className="mb-3" />}
+			{(decls.length > 0 || preflight.presets.length > 0) && (
+				<PresetSelect
+					presets={preflight.presets}
+					value={preset?.id ?? null}
+					onChange={selectPreset}
+					onManage={() => onManage({ kind: "list" })}
+					onSaveAs={() =>
+						onManage({ kind: "form", draft: draftFromFormValues(decls, form.state.values) })
+					}
+					selectRef={presetSelect}
+				/>
+			)}
 			<SectionTitle first>
 				入口参数
 				<span className="ml-auto font-normal text-fg-3">{decls.length} 个</span>
@@ -168,19 +243,28 @@ function ParamsForm({
 			{decls.length === 0 && <p className="m-0 mb-3 text-xs text-fg-3">入口节点没有声明参数。</p>}
 			{/* 标签列的宽度在这里定一次，所有参数共用：输入框的左右沿对齐 */}
 			<div className="mb-3 grid grid-cols-[fit-content(40%)_minmax(0,1fr)] items-start gap-x-2.5 gap-y-3">
-				{decls.map((p) => (
-					<form.Field key={p.name} name={p.name}>
-						{(field) => (
-							<ParamField
-								param={p}
-								value={field.state.value}
-								error={errorText(field.state.meta.errors)}
-								onChange={(v) => field.handleChange(v)}
-								onBlur={field.handleBlur}
-							/>
-						)}
-					</form.Field>
-				))}
+				{decls.map((p) =>
+					preset && locked.has(p.name) ? (
+						<ParamField
+							key={p.name}
+							param={p}
+							value={lockedValue(p, locked.get(p.name))}
+							lockedBy={preset.name}
+						/>
+					) : (
+						<form.Field key={p.name} name={p.name}>
+							{(field) => (
+								<ParamField
+									param={p}
+									value={field.state.value}
+									error={errorText(field.state.meta.errors)}
+									onChange={(v) => field.handleChange(v)}
+									onBlur={field.handleBlur}
+								/>
+							)}
+						</form.Field>
+					),
+				)}
 			</div>
 			<SectionTitle>触发前检查</SectionTitle>
 			<ul
@@ -206,19 +290,6 @@ function errorText(errors: unknown[]): string | undefined {
 	if (!first) return undefined;
 	if (typeof first === "string") return first;
 	return (first as { message?: string }).message;
-}
-
-function SectionTitle({ children, first }: { children: React.ReactNode; first?: boolean }) {
-	return (
-		<h3
-			className={cn(
-				"mb-2.5 flex items-center text-xs font-semibold tracking-wide text-fg-2",
-				first ? "mt-0" : "mt-4.5",
-			)}
-		>
-			{children}
-		</h3>
-	);
 }
 
 /** 该场景已有运行中的运行：提示并给出查看入口。 */
@@ -248,155 +319,6 @@ function RunningNotice({ orchestrationId }: { orchestrationId: string }) {
 				查看
 			</Link>
 		</output>
-	);
-}
-
-/** 只在下划线后断行，不在单词中间断开；用 <wbr>，它不进读屏名称与复制的文字。 */
-const breakableName = (name: string) =>
-	name.split("_").map((part, i, parts) => (
-		// biome-ignore lint/suspicious/noArrayIndexKey: 参数名按下划线切成的片段，位置就是身份
-		<span key={i}>
-			{part}
-			{i < parts.length - 1 && (
-				<>
-					_<wbr />
-				</>
-			)}
-		</span>
-	));
-
-function ParamField({
-	param,
-	value,
-	error,
-	onChange,
-	onBlur,
-}: {
-	param: ParamDeclView;
-	value: FieldValue | undefined;
-	error: string | undefined;
-	onChange: (value: FieldValue) => void;
-	onBlur: () => void;
-}) {
-	const id = useId();
-	const labelId = `${id}-label`;
-	const helpId = `${id}-help`;
-	const errorId = `${id}-error`;
-	const [revealed, setRevealed] = useState(false);
-	useEffect(() => {
-		if (!revealed) return;
-		const timer = setTimeout(() => setRevealed(false), REVEAL_MS);
-		return () => clearTimeout(timer);
-	}, [revealed]);
-
-	const note = param.secret
-		? "界面和日志中都会打码"
-		: param.default !== undefined && param.type !== "boolean"
-			? `默认 ${JSON.stringify(param.default)}`
-			: null;
-	const description = param.description ?? null;
-	const descriptionId = `${id}-description`;
-	const describedBy = [
-		error ? errorId : null,
-		description ? descriptionId : null,
-		note ? helpId : null,
-	]
-		.filter(Boolean)
-		.join(" ");
-	const aria = {
-		id,
-		"aria-invalid": error ? true : undefined,
-		"aria-describedby": describedBy || undefined,
-		"aria-required": param.required || undefined,
-	};
-	const hidden = param.secret && !revealed;
-	let control: React.ReactNode;
-	if (param.type === "boolean") {
-		control = (
-			<div className="flex h-7.5 items-center gap-2">
-				<Switch
-					{...aria}
-					aria-labelledby={labelId}
-					checked={value === true}
-					onCheckedChange={(checked) => onChange(checked)}
-					onBlur={onBlur}
-				/>
-				<span className="font-mono text-xs text-fg-2">{value === true ? "true" : "false"}</span>
-			</div>
-		);
-	} else if (param.type === "json") {
-		control = (
-			<Textarea
-				{...aria}
-				rows={3}
-				spellCheck={false}
-				className="font-mono text-xs"
-				value={String(value ?? "")}
-				onChange={(e) => onChange(e.target.value)}
-				onBlur={onBlur}
-			/>
-		);
-	} else {
-		control = (
-			<div className="flex gap-1.5">
-				<Input
-					{...aria}
-					type={hidden ? "password" : "text"}
-					inputMode={param.type === "number" ? "decimal" : undefined}
-					autoComplete="off"
-					spellCheck={false}
-					className={param.type === "number" || param.secret ? "font-mono" : undefined}
-					value={String(value ?? "")}
-					onChange={(e) => onChange(e.target.value)}
-					onBlur={onBlur}
-				/>
-				{param.secret && (
-					<Button
-						variant="ghost"
-						size="icon"
-						aria-label={revealed ? `隐藏 ${param.name}` : `临时显示 ${param.name} 5 秒`}
-						title={revealed ? "隐藏" : "临时显示 5 秒"}
-						onClick={() => setRevealed((r) => !r)}
-					>
-						{revealed ? <EyeOffIcon /> : <EyeIcon />}
-					</Button>
-				)}
-			</div>
-		);
-	}
-	return (
-		<div className="col-span-full grid grid-cols-subgrid items-start">
-			<label id={labelId} htmlFor={id} className="min-w-0 pt-1.5 text-sm wrap-anywhere text-fg-2">
-				<span className="font-mono">{breakableName(param.name)}</span>
-				{param.required && (
-					<span aria-hidden className="ml-0.5 text-fg-2">
-						*
-					</span>
-				)}
-				<span className="block font-mono text-xs text-fg-3">
-					{param.type}
-					{param.secret && " · 敏感"}
-				</span>
-			</label>
-			<div className="flex min-w-0 flex-col gap-1.25">
-				{control}
-				{error && (
-					<p id={errorId} className="m-0 text-xs text-danger-fg">
-						{error}
-					</p>
-				)}
-				{description && (
-					<p id={descriptionId} className="m-0 text-xs text-fg-3">
-						{description}
-					</p>
-				)}
-				{note && (
-					<p id={helpId} className="m-0 text-xs text-fg-3">
-						{note}
-					</p>
-				)}
-			</div>
-		</div>
 	);
 }
 

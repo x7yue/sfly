@@ -1,9 +1,11 @@
+import { isDeepStrictEqual } from "node:util";
 import type { ParamDeclaration } from "@sfly/schema";
-import type { z } from "zod";
 
-type Declaration = z.infer<typeof ParamDeclaration>;
-
-function matchesType(type: Declaration["type"], value: unknown): boolean {
+/**
+ * 值是否符合参数声明的类型（docs/SEMANTICS.md §2.1）：不做类型转换，`json` 接受任何值。
+ * 触发时补参数和判断运行预设是否可用（src/presets/preset-validity.ts）用的都是它。
+ */
+export function matchesParamType(type: ParamDeclaration["type"], value: unknown): boolean {
 	switch (type) {
 		case "string":
 			return typeof value === "string";
@@ -17,11 +19,30 @@ function matchesType(type: Declaration["type"], value: unknown): boolean {
 }
 
 /**
+ * 用运行预设的值填入预设参数（ADR 0024「锁定由控制面执行」），之后照常补默认值、检查类型（{@link fillParams}）。
+ * 传入的值里给 secret 预设参数（以 `declarations` 为准）传了任何值、或给其他预设参数传了和预设不同的值（按 JSON 深比较）时
+ * 返回那个参数名；其他预设参数传相同的值照常接受。
+ * secret 即使传相同的值也拒绝：否则调用方可以反复猜，从接受还是拒绝推断出原值。
+ */
+export function withPresetValues(
+	provided: Record<string, unknown>,
+	presetValues: Record<string, unknown>,
+	declarations: ParamDeclaration[],
+): { params: Record<string, unknown> } | { locked: string } {
+	const secrets = new Set(declarations.filter((d) => d.secret).map((d) => d.name));
+	for (const [name, value] of Object.entries(presetValues)) {
+		if (!Object.hasOwn(provided, name)) continue;
+		if (secrets.has(name) || !isDeepStrictEqual(provided[name], value)) return { locked: name };
+	}
+	return { params: { ...provided, ...presetValues } };
+}
+
+/**
  * 计算链的入口参数（docs/SEMANTICS.md §2.1）：先填默认值，再用传入的值覆盖。
  * 缺少必填参数、传入未声明的参数或类型不符时返回错误。没有值的可选参数为 null。
  */
 export function fillParams(
-	declarations: Declaration[],
+	declarations: ParamDeclaration[],
 	provided: Record<string, unknown>,
 ): { params: Record<string, unknown> } | { errors: string[] } {
 	const errors: string[] = [];
@@ -38,7 +59,7 @@ export function fillParams(
 			params[decl.name] = null;
 			continue;
 		}
-		if (!matchesType(decl.type, value)) {
+		if (!matchesParamType(decl.type, value)) {
 			errors.push(`param ${decl.name} must be of type ${decl.type}`);
 		}
 		params[decl.name] = value;

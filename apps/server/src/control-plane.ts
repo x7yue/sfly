@@ -31,6 +31,7 @@ import { TaskMetrics } from "./metrics/task-metrics.js";
 import { OrchestrationStore } from "./orchestrations/orchestration-store.js";
 import { createPackageRepository } from "./packages/package-repository.js";
 import { PresenceRegistry } from "./presence/presence-registry.js";
+import { PresetStore } from "./presets/preset-store.js";
 import type { Mirrors } from "./public-config.js";
 import { Retention } from "./retention/retention.js";
 import { createParamsCheck, createPreflight } from "./runs/preflight.js";
@@ -274,6 +275,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logger,
 		hub,
 		orchestrations,
+		presets: new PresetStore({ db: database.db, clock }),
 		engine,
 		packages,
 		presence,

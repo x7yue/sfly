@@ -7,6 +7,8 @@ import { getRunView, listRuns } from "../engine/run-queries.js";
 import type { ProgressEvent } from "../logs/task-logs.js";
 import { referencedAgentStatus } from "../orchestrations/orchestration-list.js";
 import type { OrchestrationStore } from "../orchestrations/orchestration-store.js";
+import type { PresetStore } from "../presets/preset-store.js";
+import { entryParams } from "../presets/preset-validity.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { Sse } from "../sse/sse.js";
 import type { Topics } from "../sse/topics.js";
@@ -23,6 +25,7 @@ export function registerRunRoutes(
 		hub: AgentHub;
 		engine: Engine;
 		orchestrations: OrchestrationStore;
+		presets: PresetStore;
 		preflight: Preflight;
 		sse: Sse;
 		/** 任务进度（#10），在运行的 SSE 上以 `progress` 事件推送。 */
@@ -31,11 +34,14 @@ export function registerRunRoutes(
 		metrics: Topics<MetricIncrement>;
 	},
 ): void {
-	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、锁定的包版本与引用的 Agent。
+	// 触发表单和预检结果：最新版本号、入口参数声明、不能触发的原因（空表示可以触发）、锁定的包版本与引用的 Agent，
+	// 以及场景的运行预设（对照这次检查用的最新版本）。
 	contractRoute(app, runsApi.preflight, async ({ params }, reply) => {
 		const head = isUuid(params.id) ? await deps.orchestrations.head(params.id) : undefined;
 		if (!head) return sendError(reply, 404, "not_found", "orchestration not found");
 		const orchestration = await deps.orchestrations.get(params.id);
+		const declarations = entryParams(head.document);
+		const presets = await deps.presets.viewsFor(params.id, declarations);
 		if (orchestration?.archived_at) {
 			return {
 				version: head.number,
@@ -43,6 +49,7 @@ export function registerRunRoutes(
 				problems: [{ code: "archived", message: "场景已归档，恢复后才能运行" }],
 				packages: {},
 				agents: [],
+				presets,
 			};
 		}
 		if (head.number === 0) {
@@ -52,18 +59,19 @@ export function registerRunRoutes(
 				problems: [{ code: "no_version", message: "场景还没有保存过版本" }],
 				packages: {},
 				agents: [],
+				presets,
 			};
 		}
-		const entry = head.document.nodes.find((n) => n.kind === "entry");
 		return {
 			version: head.number,
-			params: entry?.kind === "entry" ? entry.params : [],
+			params: declarations,
 			problems: await deps.preflight(head.document),
 			packages: head.document.packages,
 			agents: (await referencedAgentStatus(deps.db, head.document)).map((agent) => ({
 				...agent,
 				preparing_since: deps.hub.preparingSince(agent.name)?.toISOString() ?? null,
 			})),
+			presets,
 		};
 	});
 
@@ -77,7 +85,7 @@ export function registerRunRoutes(
 		const actor = requireActor(request, reply);
 		if (!actor) return reply;
 		if (!isUuid(params.id)) return sendError(reply, 404, "not_found", "orchestration not found");
-		const outcome = await deps.engine.trigger(params.id, body.params, actor);
+		const outcome = await deps.engine.trigger(params.id, body, actor);
 		if (!outcome.ok) {
 			return sendError(reply, outcome.status, outcome.code, outcome.message, outcome.details);
 		}

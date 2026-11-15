@@ -81,6 +81,7 @@ describe("运行视图", () => {
 				problems: [],
 				packages: { stub: "1.0.0" },
 				agents: [{ name: "agent-a", default: true, status: "online", preparing_since: null }],
+				presets: [],
 			});
 		});
 
@@ -288,6 +289,7 @@ describe("运行视图", () => {
 						cancelling: false,
 						triggered_by: "小红",
 						triggered_via: null,
+						preset: null,
 						started_at: "2026-01-01T00:01:40.000Z",
 						ended_at: null,
 					},
@@ -299,6 +301,7 @@ describe("运行视图", () => {
 						cancelling: false,
 						triggered_by: "tester",
 						triggered_via: null,
+						preset: null,
 						started_at: "2026-01-01T00:00:00.000Z",
 						ended_at: "2026-01-01T00:01:30.000Z",
 					},

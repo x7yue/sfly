@@ -71,6 +71,7 @@ import { dialogOpen } from "#/lib/focus";
 import { BACKGROUND_POLL_MS } from "#/lib/polling";
 import { useOtherEditors } from "#/lib/presence";
 import { shortcutText } from "#/lib/shortcuts";
+import { notifyInvalidatedPresets, splitPresetWarnings } from "#/presets/invalidated-toast";
 import { RunDrawer } from "#/run-drawer/RunDrawer";
 import { DraftBanner } from "#/versions/DraftBanner";
 import { hasDraft } from "#/versions/draft";
@@ -675,11 +676,14 @@ function Editor({
 			return;
 		}
 		versioning.save.mutate(doc, {
-			onSuccess: (saved) =>
+			onSuccess: (saved) => {
+				const { presets, rest } = splitPresetWarnings(saved.warnings);
 				notify.success(
 					`已保存为版本 ${saved.number}`,
-					saved.warnings.length > 0 ? { description: warningsSummary(saved.warnings) } : undefined,
-				),
+					rest.length > 0 ? { description: warningsSummary(rest) } : undefined,
+				);
+				notifyInvalidatedPresets(presets);
+			},
 			onError: (error) => {
 				if (!versionConflictOf(error)) {
 					notify.error("保存失败", { description: error.message });

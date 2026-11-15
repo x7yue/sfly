@@ -1,6 +1,6 @@
 import type { ParamDeclView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { initialValues, paramsSchema, toParams } from "./trigger-form";
+import { initialValues, lockedValue, paramsSchema, toParams } from "./trigger-form";
 
 const decls: ParamDeclView[] = [
 	{ name: "biz_date", type: "string", required: true },
@@ -44,6 +44,17 @@ describe("入口参数表单", () => {
 			options: '{"mode":"fast"}',
 			api_token: "",
 		});
+	});
+
+	it("预设锁定的参数：secret 参数显示接口返回的打码值，不按类型换算；其余按类型换算", () => {
+		const find = (name: string) => decls.find((p) => p.name === name) as ParamDeclView;
+		expect(lockedValue(find("api_token"), "******")).toBe("******");
+		expect(lockedValue({ name: "pin", type: "number", secret: true }, "******")).toBe("******");
+		expect(lockedValue({ name: "on", type: "boolean", secret: true }, "******")).toBe("******");
+		expect(lockedValue({ name: "o", type: "json", secret: true }, "******")).toBe("******");
+		expect(lockedValue(find("steps"), 50)).toBe("50");
+		expect(lockedValue(find("validate_ok"), false)).toBe(false);
+		expect(lockedValue(find("options"), { a: 1 })).toBe('{"a":1}');
 	});
 
 	it("必填且没有默认值的参数留空时报「必填」；数字与 JSON 参数格式不对时指出原因", () => {
