@@ -226,7 +226,7 @@ test("排队的任务：Agent 不在线时照样列在它名下", async ({ page,
 	await expect(queued(page, "agent-away")).toContainText("10m 00s 后超时");
 });
 
-test("准备环境中：状态后面写「准备环境中 · 已 N 分 N 秒」，版本、槽位、最后在线照常，发出心跳后标记消失", async ({
+test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长与槽位格、排队行同一种写法），版本、槽位、最后在线照常，发出心跳后标记消失", async ({
 	page,
 	connectAgent,
 	clock,
@@ -240,7 +240,7 @@ test("准备环境中：状态后面写「准备环境中 · 已 N 分 N 秒」�
 
 	await page.goto("/agents");
 	const status = (name: string) => header(page, name).locator("[data-status]");
-	await expect(header(page, "agent-prep")).toContainText("在线准备环境中 · 已 2 分 10 秒");
+	await expect(header(page, "agent-prep")).toContainText("在线准备环境中 · 2m 10s");
 	await expect(status("agent-ready")).toHaveText("在线");
 	await expect(header(page, "agent-ready")).not.toContainText("准备环境中");
 	// 准备期间照常显示版本、槽位和最后在线。
@@ -250,7 +250,7 @@ test("准备环境中：状态后面写「准备环境中 · 已 N 分 N 秒」�
 
 	// 时长按控制面时间走：控制面时间过了一分钟，页面不用刷新列表就变了。
 	clock.advance(60_000);
-	await expect(header(page, "agent-prep")).toContainText("准备环境中 · 已 3 分 10 秒", {
+	await expect(header(page, "agent-prep")).toContainText("准备环境中 · 3m 10s", {
 		timeout: 15_000,
 	});
 

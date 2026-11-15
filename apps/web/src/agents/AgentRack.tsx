@@ -11,7 +11,7 @@ import { TERM } from "#/lib/copy";
 import {
 	formatClockOffset,
 	formatDateTime,
-	formatElapsed,
+	formatDuration,
 	formatFullDateTime,
 	shortId,
 } from "#/lib/format";
@@ -253,12 +253,12 @@ function endpointLabel({ address, port }: AgentView["endpoint"]): string {
 	return `${address.includes(":") ? `[${address}]` : address}:${port}`;
 }
 
-/** 准备环境中的标记：「准备环境中 · 已 2 分 10 秒」。时长按控制面时间算，每秒走一次（ADR 0018）。 */
+/** 准备环境中的标记：「准备环境中 · 2m 10s」，时长写法与槽位格、排队行一致。时长按控制面时间算，每秒走一次（ADR 0018）。 */
 function PreparingBadge({ since }: { since: string }) {
 	const now = useNow(true);
 	return (
 		<span className="text-xs text-fg-2">
-			准备环境中 · 已 {formatElapsed(now - new Date(since).getTime())}
+			准备环境中 · {formatDuration(now - new Date(since).getTime())}
 		</span>
 	);
 }
