@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ServerIcon, TerminalIcon } from "lucide-react";
 import { AgentRack } from "#/agents/AgentRack";
-import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
+import { EmptyState, QueryView, RackSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
@@ -41,7 +41,7 @@ function AgentsPage() {
 	const content = (
 		<QueryView
 			query={agents}
-			loading={<TableSkeleton columns={11} />}
+			loading={<RackSkeleton />}
 			errorTitle="无法加载 Agent"
 			isEmpty={(d) => d.agents.length === 0}
 			empty={
