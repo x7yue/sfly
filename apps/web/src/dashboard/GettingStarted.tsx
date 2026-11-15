@@ -1,5 +1,4 @@
 import type { DashboardSetup } from "@sfly/schema";
-import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { BookOpenIcon, CheckIcon, CopyIcon, PlayIcon } from "lucide-react";
 import { useConnectCommand } from "#/agents/connect-command";
@@ -7,7 +6,7 @@ import { useOverlays } from "#/components/app-shell/overlays";
 import { DocPageLink } from "#/components/doc-page-link";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
-import { DashboardPanel, panelLink } from "#/dashboard/DashboardPanel";
+import { DashboardPanel, panelDocLink, panelLink } from "#/dashboard/DashboardPanel";
 import { ACTION, DOC_PAGE, MESSAGE, PAGE, scenarioCreatedLabel } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 
@@ -35,18 +34,6 @@ interface Step {
 	state: string;
 	action: React.ReactNode;
 }
-
-/** 导航用 `<a>`：读屏读作链接，外观是 ghost 小按钮。 */
-const docButton = (page: string, children: React.ReactNode) => (
-	<Button
-		variant="ghost"
-		size="sm"
-		render={<Link to="/docs/$page" params={{ page }} />}
-		nativeButton={false}
-	>
-		{children}
-	</Button>
-);
 
 const Mono = ({ children }: { children: React.ReactNode }) => (
 	<span className="font-mono text-xs">{children}</span>
@@ -122,7 +109,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			state: MESSAGE.noPackages,
 			action: setup.package.done
 				? panelLink("/packages", PAGE.packages)
-				: docButton("publish", `${PAGE.docs} · ${DOC_PAGE.publish}`),
+				: panelDocLink("publish", `${PAGE.docs} · ${DOC_PAGE.publish}`),
 		},
 		{
 			id: "scenario",
@@ -175,7 +162,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			<DashboardPanel
 				title="开始使用"
 				count={`${finished} / 4`}
-				aside={docButton(
+				aside={panelDocLink(
 					"quickstart",
 					<>
 						<BookOpenIcon />
