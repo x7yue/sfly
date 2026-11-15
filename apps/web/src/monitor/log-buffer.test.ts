@@ -34,6 +34,7 @@ function page(f: ReturnType<typeof file>, from: number, to: number, lastSeq = to
 		last_seq: lastSeq,
 		truncated: false,
 		expired: false,
+		locate: null,
 	};
 }
 
