@@ -61,7 +61,7 @@ from sfly.context import ActionResult, Cancelled, _EventWriter, _now_ms, monoton
 
 #: 名称最长的字符数，超过的截断。
 MAX_NAME_CHARS = 64
-#: 一个动作最多的字段数（开始时给的和 `note()` 补充的合计），多出的丢弃。
+#: 一个动作或标记最多的字段数（动作是开始时给的和 `note()` 补充的合计），多出的丢弃。
 MAX_FIELDS = 8
 #: 字段值（转成字符串后）最长的字符数，超过的截断。
 MAX_VALUE_CHARS = 256

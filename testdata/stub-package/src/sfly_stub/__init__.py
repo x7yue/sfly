@@ -247,7 +247,7 @@ def notify_card(
     ctx.notify(bot, message=sfly.feishu.card(title, markdown, color))
 
 
-@node(title="动作", outputs=[])
+@node(title="动作和标记", outputs=[])
 def actions(ctx: Context, unfinished: bool = False) -> None:
     """动作与标记测试用（#355）：先写一行日志，嵌套记录动作，记一个标记，失败一次，再写一行日志。
     unfinished 时再开始一个不结束的动作。

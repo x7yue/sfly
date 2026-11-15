@@ -422,7 +422,8 @@ def _action_index(actions: list[ActionRecord], action_id: int) -> int:
 def _action_record(
     entry: Mapping[str, Any], kind: Literal["action", "mark"], ts: int
 ) -> ActionRecord:
-    """事件或摘要里的一项（不含结果）：`ts` 取自读到事件的时刻。"""
+    """事件或摘要里的一项（不含结果）：`ts` 由调用方给，读事件时取事件里的 `ts`，事件没有 `ts` 时取
+    读到它的时刻（见 `_event`），摘要里的项取它自己的 `ts`。"""
     return ActionRecord(
         id=int(entry["id"]),
         kind=kind,
