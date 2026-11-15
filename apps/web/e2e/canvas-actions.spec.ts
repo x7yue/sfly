@@ -54,7 +54,7 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 	await nodeCard(page, "verify").click();
 	const panel = inspector(page);
 
-	// 正在做：三层，名称、字段、已持续多久；摘要在它上面。字段按作者写的顺序：键名长短不一，jsonb 会改成按长短排。
+	// 正在做：三层，名称、字段、已持续多久；摘要在它上面。字段按作者写的顺序：键名长短不一，存成 jsonb 就会被改成按长短排（现在存的是 json，这里防止改回去）。
 	const doing = panel.getByRole("region", { name: "正在做" });
 	const rows = doing.getByRole("listitem");
 	await expect(rows).toHaveCount(3);
