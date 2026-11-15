@@ -110,23 +110,55 @@ test("Agent 列表", async ({ page, connectAgent, controlPlane, clock }) => {
 		arch: "x86_64",
 	});
 	await retired.disconnect();
-	await publishPackage(controlPlane);
-	const soak = await triggerRun(
+	await publishPackage(controlPlane, metricPackage());
+	const soakScenario = await createScenario(
 		controlPlane,
-		await createScenario(
-			controlPlane,
-			"撮合浸泡",
-			withSubflow("agent-linux", { probe: "探测主机", subflow: "巡检子流程" }),
-		),
+		"撮合浸泡",
+		withSubflow("agent-linux", { probe: "探测主机", subflow: "巡检子流程" }),
 	);
-	await linux.nextAssign();
-	await linux.nextAssign();
+	await setFocusItems(controlPlane, soakScenario, [
+		{ node_id: "probe", chart: "level", title: "探活 level" },
+		{ node_id: "probe", chart: "total" },
+		{ node_id: "verify", chart: "level", title: "核对 level" },
+	]);
+	const soak = await triggerRun(controlPlane, soakScenario);
+	const assigned = [await linux.nextAssign(), await linux.nextAssign()];
+	const probe = assigned.find((t) => t.nodeId === "probe") as AssignedTask;
+	const verify = assigned.find((t) => t.nodeId === "verify") as AssignedTask;
 	const inspect = await createScenario(controlPlane, "巡检", scenarioUsing("agent-mac"));
 	const running = await triggerRun(controlPlane, inspect);
-	await mac.nextAssign();
+	const inspecting = await mac.nextAssign();
 	await elapseWithHeartbeats(clock, [linux, mac], 95_000);
 	const waiting = await triggerRun(controlPlane, inspect);
 	await elapseWithHeartbeats(clock, [linux, mac], 65_000);
+
+	// 槽位格里的内容：probe 在做动作、关注项有新数据；verify 只报告了进度，关注项已经 100 秒没有新数据；
+	// 巡检没设关注项，显示主指标。
+	const now = clock.now().getTime();
+	const nowSeconds = Math.floor(now / 1000);
+	linux.actionSummary(probe, {
+		total: 1,
+		reported: 1,
+		running: [
+			{
+				id: 1,
+				parent: null,
+				depth: 0,
+				name: "保持 4 小时",
+				fields: {},
+				...linux.stamp(now - 150_000),
+			},
+		],
+	});
+	linux.metrics(probe, [
+		["level", nowSeconds, 4],
+		["total", nowSeconds, 1_284_814],
+	]);
+	linux.progress(verify, 3, 10, "已校验 3 / 10 批");
+	linux.metrics(verify, [["level", nowSeconds - 100, 3]]);
+	mac.metrics(inspecting, [["level", nowSeconds, 2]]);
+	await linux.sync();
+	await mac.sync();
 
 	// 三个机架一屏放下。
 	await page.setViewportSize({ width: 1440, height: 960 });

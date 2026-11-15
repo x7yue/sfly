@@ -1,3 +1,4 @@
+import type { RunningTaskView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { activityLabel, currentActivity } from "./current-activity";
 
@@ -46,5 +47,21 @@ describe("此刻在做什么", () => {
 			).toBe(null);
 		}
 		expect(currentActivity(undefined)).toBe(null);
+	});
+
+	it("Agent 列表里的任务（RunningTaskView）按同一条规则取：执行中才有，派发阶段没有", () => {
+		const task = (
+			status: RunningTaskView["status"],
+		): Pick<RunningTaskView, "status" | "current_action" | "progress"> => ({
+			status,
+			current_action: hold,
+			progress: progress("第 3 批"),
+		});
+		expect(currentActivity(task("running"))).toEqual({
+			kind: "action",
+			name: "保持 4 小时",
+			startedAt: Date.parse(hold.started_at),
+		});
+		expect(currentActivity(task("dispatched"))).toBe(null);
 	});
 });

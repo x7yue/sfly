@@ -160,9 +160,7 @@ function FocusSection({
 					</span>
 				)}
 				<span className="text-xs text-fg-3">
-					{primary
-						? `场景没有设置${TERM.focusItem}`
-						: `由场景设置，按设定的顺序排，${FOCUS.anomalyFirst}`}
+					{primary ? FOCUS.noneSet : `由场景设置，按设定的顺序排，${FOCUS.anomalyFirst}`}
 				</span>
 				<span className="flex-1" />
 				<Link

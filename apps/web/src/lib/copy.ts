@@ -63,6 +63,9 @@ export const LOG_ALERT_LEVELS = `${LOG_LEVEL_LABEL.warn} / ${LOG_LEVEL_LABEL.err
 /** 无新数据时「需要注意」里的推测：有点和没有点两种说法共用。 */
 const STALE_HINT = "可能是节点卡住了，或者 Agent 的指标上报中断了。";
 
+/** 有异常的关注项的统称：{@link FOCUS}.attention 和 attentionCount 共用。 */
+const ATTENTION = "需要注意";
+
 /** 关注项（GLOSSARY「关注项」）：节点检查器的名额、场景设置的「关注项」页和图表列表共用的文字。 */
 export const FOCUS = {
 	/** 名额里注明其中有几项已经失效（失效的项也占名额）。 */
@@ -72,7 +75,13 @@ export const FOCUS = {
 	/** 关注项不属于场景版本：节点检查器的图表列表和「关注项」页都要说明这一点。 */
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
 	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */
-	attention: "需要注意",
+	attention: ATTENTION,
+	/** 「3 项需要注意」：一个节点或任务有几项关注项有异常，节点卡片和 Agent 槽位格的可访问名称里用。 */
+	attentionCount: (count: number) => `${count} 项${ATTENTION}`,
+	/** 节点卡片和 Agent 槽位格只显示前几项时，没显示的个数（「还有 2 个关注项」）。 */
+	moreItems: (count: number) => `还有 ${count} 个${TERM.focusItem}`,
+	/** 场景没有设置关注项，显示的是执行中节点的主指标：概览的标题旁和 Agent 槽位格里的主指标共用这一句。 */
+	noneSet: `场景没有设置${TERM.focusItem}`,
 	/** 概览里最后一段的标题：这次运行里没有进入「需要注意」的 WARN / ERROR。 */
 	otherAlerts: "其他警告与错误",
 	/** 上面那一段没有内容时的说明。 */

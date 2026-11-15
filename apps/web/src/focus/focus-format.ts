@@ -69,7 +69,7 @@ export function readingState(
 }
 
 /** 读数的最后一段：多久前、最终值，没有值时是原因（{@link readingState}）。 */
-function readingWhen(item: RunFocusItem, generatedAt: string): string {
+export function readingWhen(item: RunFocusItem, generatedAt: string): string {
 	const state = readingState(item, generatedAt);
 	switch (state.kind) {
 		case "empty":
