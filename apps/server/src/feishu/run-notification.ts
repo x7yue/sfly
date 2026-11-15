@@ -11,8 +11,8 @@ import {
 } from "@sfly/orchestration";
 import {
 	focusChartMissing,
+	focusLatestSeriesName,
 	focusValueText,
-	latestSeriesName,
 	type OrchestrationDocument,
 	type RunFocusItem,
 	type RunNotificationTrigger,
@@ -74,7 +74,7 @@ interface RunNotificationFacts {
 	endedAt: Date;
 	/** 按失败的先后。 */
 	failures: readonly FailedNode[];
-	/** 运行结束那一刻场景的关注项在这次运行里的最终值，按作者的顺序；没有时不写这一段。 */
+	/** 运行结束那一刻场景的关注项在这次运行里的值，按作者的顺序；没有时不写这一段。 */
 	focus: readonly RunFocusItem[];
 	/** 「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时没有按钮。 */
 	runUrl: string | undefined;
@@ -108,13 +108,13 @@ function formatElapsed(ms: number): string {
 }
 
 /**
- * 关注项一行的写法，和运行监控的读数用同一套文字：`- 名称：值 单位`；最新值来自哪个序列不言自明时不写，
+ * 关注项一行的写法，值、序列名和「图表不存在」的句子与运行监控的读数共用同一份（@sfly/schema 的 `focus-reading.ts`）：`- 名称：值 单位`；最新值来自哪个序列不言自明时不写，
  * 否则写在名称后面（`- 名称（序列名）：值 单位`）；没有值写「—」；来源节点失败的末尾加 {@link NODE_FAILED_NOTE}；
  * 这次运行的节点包版本里没有这张图表的，写 {@link focusChartMissing}。
  */
-export function focusLine(item: RunFocusItem): string {
+function focusLine(item: RunFocusItem): string {
 	if (item.unavailable) return `- ${item.title}：${focusChartMissing(item.chart)}`;
-	const series = latestSeriesName(item);
+	const series = focusLatestSeriesName(item);
 	const unit = item.latest === null || item.unit === "" ? "" : ` ${item.unit}`;
 	const failed = item.source.status === "failed" ? NODE_FAILED_NOTE : "";
 	return `- ${item.title}${series === "" ? "" : `（${series}）`}：${focusValueText(item)}${unit}${failed}`;
@@ -123,7 +123,7 @@ export function focusLine(item: RunFocusItem): string {
 /**
  * 运行通知的卡片：header 是标题，颜色和副标题表示结果；body 依次是附加说明（有的话）、场景名、预设（用了运行预设时）、
  * 运行编号、触发人、开始时间和耗时、失败的链和节点（最多 {@link MAX_LISTED_FAILURES} 个）、
- * 关注项的最终值（有的话，每项一行，场景的关注项最多 8 项，所以最多 8 行）；最后是「查看运行」按钮（有链接时）。
+ * 关注项（有的话，每项一行，场景的关注项最多 8 项，所以最多 8 行）；最后是「查看运行」按钮（有链接时）。
  * 请求体超过 20 KB 时截断附加说明（{@link fitCard}），失败的节点和关注项都不动；截了还放不下返回 `too_large`。
  */
 function runNotificationCard(facts: RunNotificationFacts) {
@@ -226,19 +226,35 @@ async function failedNodes(
 }
 
 /**
- * 运行结束那一刻场景的关注项在这次运行里的最终值：和 `GET /runs/:id/focus?points=0` 同一份解析（{@link resolveRunFocus}），
+ * 读关注项的值要用的依赖：{@link resolveRunFocus} 的依赖（数据库用运行结束的事务），以及读不出来时怎么报告。
+ */
+export interface FinalFocusDeps extends Omit<RunFocusDeps, "db"> {
+	/** 读关注项出错：只报告，卡片照常发，没有「关注项」一段。 */
+	onError(error: unknown): void;
+}
+
+/**
+ * 运行结束那一刻场景的关注项在这次运行里的值：和 `GET /runs/:id/focus?points=0` 同一份解析（{@link resolveRunFocus}），
  * 在写入运行最终状态的事务里读，看到的是这个事务里刚写下的节点状态。场景没有设关注项、或者这些项都不在这次运行的版本里时没有项。
+ * 通知不能拦住运行结束（ADR 0020）：读取放在保存点里，出错时回到保存点、报告错误、按没有关注项处理，运行的最终状态照常提交。
  */
 async function finalFocus(
 	step: Step,
 	run: RunRow,
 	scenario: Pick<typeof orchestrations.$inferSelect, "focusItems">,
-	deps: Omit<RunFocusDeps, "db">,
+	deps: FinalFocusDeps,
 ): Promise<RunFocusItem[]> {
 	// 没设关注项时解析出来的是执行中节点的主指标，运行已经结束，卡片上没有这一段。
 	if (scenario.focusItems.length === 0) return [];
-	const focus = await resolveRunFocus({ ...deps, db: step.tx }, run.id, { points: 0 });
-	return focus?.mode === "focus" ? focus.items : [];
+	try {
+		return await step.tx.transaction(async (savepoint) => {
+			const focus = await resolveRunFocus({ ...deps, db: savepoint }, run.id, { points: 0 });
+			return focus?.mode === "focus" ? focus.items : [];
+		});
+	} catch (error) {
+		deps.onError(error);
+		return [];
+	}
 }
 
 /**
@@ -253,7 +269,7 @@ export async function enqueueRunNotification(
 		status: FinishedStatus;
 		document: OrchestrationDocument;
 		runUrl: string | undefined;
-		focus: Omit<RunFocusDeps, "db">;
+		focus: FinalFocusDeps;
 	},
 ): Promise<void> {
 	const { run, status, document } = input;

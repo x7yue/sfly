@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
 	focusChartMissing,
+	focusLatestSeriesName,
 	focusSeriesName,
 	focusValueText,
-	latestSeriesName,
 	type RunFocusItem,
 } from "../src/index.js";
 
@@ -26,13 +26,13 @@ describe("关注项读数的写法", () => {
 	});
 
 	it("序列的名字：只有一个不带标签的序列时没有；多个指标写指标名，带标签写标签值（按声明的标签键的顺序）", () => {
-		expect(latestSeriesName(reading())).toBe("");
-		expect(latestSeriesName(reading({ latest: null }))).toBe("");
+		expect(focusLatestSeriesName(reading())).toBe("");
+		expect(focusLatestSeriesName(reading({ latest: null }))).toBe("");
 		const cpu = reading({
 			metrics: [{ name: "cpu", label_keys: ["pid", "host"] }],
 			latest: { value: 3, metric: "cpu", labels: { host: "a", pid: "100" }, at: "x" },
 		});
-		expect(latestSeriesName(cpu)).toBe("100 · a");
+		expect(focusLatestSeriesName(cpu)).toBe("100 · a");
 		const both = reading({
 			metrics: [
 				{ name: "p50", label_keys: [] },
@@ -40,7 +40,7 @@ describe("关注项读数的写法", () => {
 			],
 			latest: { value: 3, metric: "p99", labels: {}, at: "x" },
 		});
-		expect(latestSeriesName(both)).toBe("p99");
+		expect(focusLatestSeriesName(both)).toBe("p99");
 		expect(focusSeriesName(both, { metric: "p50", labels: {} })).toBe("p50");
 	});
 });

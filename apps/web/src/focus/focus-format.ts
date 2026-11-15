@@ -1,4 +1,4 @@
-import { focusValueText, latestSeriesName, type RunFocusItem } from "@sfly/schema";
+import { focusLatestSeriesName, focusValueText, type RunFocusItem } from "@sfly/schema";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView } from "#/components/status";
 import { FINAL_VALUE_LABEL, FOCUS, noDataLabel } from "#/lib/copy";
@@ -66,7 +66,7 @@ export function readingLabel(item: RunFocusItem, generatedAt: string): string {
 	const status = nodeStatusView(item.source.status).label;
 	const origin = `来自 ${sourceNodeName(item)}（${status}）`;
 	if (item.unavailable) return `${item.title}，${FOCUS.chartMissing(item.chart)}，${origin}`;
-	const series = latestSeriesName(item);
+	const series = focusLatestSeriesName(item);
 	const value = `${series ? `${series} ` : ""}${focusValueText(item)}${item.unit ? ` ${item.unit}` : ""}`;
 	return `${item.title} ${value}，${origin}，${readingWhen(item, generatedAt)}`;
 }

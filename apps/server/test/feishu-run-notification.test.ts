@@ -1,5 +1,6 @@
 // 切入点 A：运行通知（#232，ADR 0020、docs/SEMANTICS.md §6）：场景设置里选了机器人的场景，运行结束时由控制面发一张卡片。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
+import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
@@ -406,7 +407,7 @@ describe("运行通知", () => {
 		const at = (s: number) => Date.UTC(2026, 0, 1) / 1000 + s;
 		const focusSection = (card: Card | undefined) =>
 			card?.card.body.elements.find((e) => e.content?.startsWith("**关注项**"));
-		/** 第 n 张卡片的各个元素（按顺序）：标签，markdown 的写开头一行。 */
+		/** 一张卡片的各个元素（按顺序）：markdown 的写开头一行，其余写标签。 */
 		const outline = (card: Card | undefined) =>
 			card?.card.body.elements.map((e) =>
 				e.tag === "markdown" ? e.content?.split("\n")[0] : e.tag,
@@ -429,7 +430,7 @@ describe("运行通知", () => {
 			});
 		});
 
-		it("运行结束时卡片在失败的节点之后、按钮之前有「关注项」一段：每项一行写名称、最终值和单位，来源节点失败的写（节点失败），没有值的写 —", async () => {
+		it("运行结束时卡片在失败的节点之后、按钮之前有「关注项」一段：每项一行写名称、运行结束时的值和单位，来源节点失败的写（节点失败），没有值的写 —", async () => {
 			const id = await scenario(
 				benchDocument([
 					["load", "load"],
@@ -609,6 +610,31 @@ describe("运行通知", () => {
 			expect(normalized(cards()[0], notInVersion)).toEqual(normalized(cards()[1], none));
 			expect(focusSection(cards()[0])).toBeUndefined();
 			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
+		});
+
+		it("读关注项出错也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段", async () => {
+			const id = await scenario(benchDocument());
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			// 节点包的元信息被改坏（`nodes` 不是数组）：解析关注项时读节点类型会抛出异常。
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				await client.query(
+					"UPDATE node_packages SET metadata = jsonb_set(metadata, '{nodes}', '5'::jsonb) WHERE name = 'bench'",
+				);
+			} finally {
+				await client.end();
+			}
+			await agent.fail(load, "boom");
+			await status(runId, "failed");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
+			await eventually(async () =>
+				expect((await api.run(runId)).run_notification).toMatchObject({ status: "delivered" }),
+			);
 		});
 
 		it("附加说明让卡片超过 20 KB 时先截断附加说明：关注项一段还在，内容不变", async () => {

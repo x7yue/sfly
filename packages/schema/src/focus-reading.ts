@@ -29,7 +29,7 @@ export function focusSeriesName(
  * 最新值来自哪个序列：图表读了好几个指标，或者序列带标签时写序列的名字（{@link focusSeriesName}）；
  * 只有一个不带标签的序列时为空字符串。
  */
-export function latestSeriesName(item: Pick<RunFocusItem, "latest" | "metrics">): string {
+export function focusLatestSeriesName(item: Pick<RunFocusItem, "latest" | "metrics">): string {
 	const { latest } = item;
 	if (latest === null) return "";
 	return item.metrics.length > 1 || Object.keys(latest.labels).length > 0

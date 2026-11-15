@@ -1,4 +1,4 @@
-import { focusValueText, latestSeriesName, type RunFocusItem } from "@sfly/schema";
+import { focusLatestSeriesName, focusValueText, type RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
 
 /**
@@ -12,7 +12,7 @@ export function FocusValue({
 	item: Pick<RunFocusItem, "latest" | "metrics" | "unit">;
 	className?: string;
 }) {
-	const series = latestSeriesName(item);
+	const series = focusLatestSeriesName(item);
 	return (
 		<span className={cn("font-mono text-lg font-semibold whitespace-nowrap text-fg-1", className)}>
 			{series && <span className="mr-1 text-xs font-normal text-fg-3">{series}</span>}

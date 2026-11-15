@@ -218,7 +218,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		delivery: feishuDelivery,
 	});
-	// 指标要在引擎之前建好：运行结束时运行通知的卡片要读关注项的最终值，和运行监控读指标用同一个读取。
+	// 指标要在引擎之前建好：运行结束时运行通知的卡片要读关注项的值，和运行监控读指标用同一个读取。
 	const metricRetention = new MetricRetention({
 		db: database.db,
 		clock,
@@ -245,7 +245,13 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			logs,
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
-			focus: { clock, queries: metricQueries },
+			focus: {
+				clock,
+				queries: metricQueries,
+				onError: (error) => {
+					if (logger) console.error("run notification: reading focus items failed:", error);
+				},
+			},
 		}),
 		leaseMs: options.leaseMs,
 		sdkWheel: (agentVersion) => {
