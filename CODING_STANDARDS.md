@@ -20,7 +20,6 @@
   这类写法在 CI 的 2 核 runner 和本机高负载时会偶发失败（#108、#129、#136）。
 - **断言路径时用真实路径。** 命令行和被测代码输出的是 resolve 过的路径，临时目录经过符号链接（macOS 的 `/tmp`、`/var`）时和 `tmpdir()` 不同：
   建临时目录后 `realpath` 一次，再拿它拼路径。
-- **e2e 里的文本编辑快捷键用 `ControlOrMeta`**：移到文首、文尾、全选写 `ControlOrMeta+Home`、`ControlOrMeta+End`、`ControlOrMeta+a`。macOS 的 Chromium 里 `Control+End` 不会把光标移到文尾，`Control+a` 是移到行首。
 - **测试只碰自己建的东西**：临时目录、端口、数据库、git 仓库。
   - 测试里启动 git 子进程时去掉继承来的 `GIT_*` 变量。
   - 不依赖 GNU coreutils 的特有行为：CI 的 Ubuntu 用 Rust 版 coreutils，复制改名后的系统命令会拒绝运行。
