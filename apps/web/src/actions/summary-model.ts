@@ -1,9 +1,21 @@
-import type { ActionNameCount, RunningActionView } from "@sfly/schema";
+import type { ActionNameCount, AttemptView, NodeRunView, RunningActionView } from "@sfly/schema";
 
 /**
  * 动作摘要里画在检查器上的几样东西（`ActionSummaryView`）：正在做的动作怎么排、哪些名称只计数、失败一共多少个。
  * 都是纯函数，摘要的内容由控制面准备好，这里只管排版需要的整理。
  */
+
+/**
+ * 检查器的「正在做」和「动作」属于节点的哪一次尝试：最近一次开始执行的（重试的新尝试还在排队、准备时，上一次的动作和失败
+ * 还在）。动作只有在 Agent 上执行的包节点才记，没有开始执行的尝试（排队中、准备中、没开始就被跳过或取消）也不可能有，
+ * 所以内置节点、还没有尝试、一次都没开始的节点是 undefined，界面上就没有这两块。
+ */
+export function actionAttempt(
+	node: Pick<NodeRunView, "kind" | "attempts"> | undefined,
+): AttemptView | undefined {
+	if (node?.kind !== "package") return undefined;
+	return [...node.attempts].reverse().find((a) => a.started_at !== null);
+}
 
 /** 界面最多缩进 3 层（开发文档「嵌套与并发」），更深的画在第 3 层：层级从 0 数起，所以是 2。 */
 const MAX_LEVEL = 2;

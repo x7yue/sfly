@@ -6,6 +6,7 @@ import { ActivityIcon, PanelRightCloseIcon } from "lucide-react";
 import { forwardRef, type ReactNode, useMemo } from "react";
 import { currentActivity } from "#/actions/current-activity";
 import { ActionArea, CurrentActions } from "#/actions/InspectorActions";
+import { actionAttempt } from "#/actions/summary-model";
 import { useActionSummary } from "#/actions/use-action-summary";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
 import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/components/canvas/context";
@@ -292,13 +293,10 @@ function NodeRunInspector({
 	const elapsed = view ? nodeElapsed(view, now) : null;
 	const status = view ? nodeStatusView(view.status) : null;
 	const latest = view?.attempts.at(-1);
-	// 动作记在尝试上，只有在 Agent 上执行、已经开始的尝试才可能有：显示最近一次开始执行的尝试（重试的新尝试还在排队、
-	// 准备时，上一次的动作和失败还在）。结束以后摘要还在，只是不再轮询。
-	const attempt = view && [...view.attempts].reverse().find((a) => a.started_at !== null);
+	// 动作记在尝试上；结束以后摘要还在，只是不再轮询。
+	const attempt = actionAttempt(view);
 	const live = attempt?.status === "running";
-	const actions = useActionSummary(view?.kind === "package" ? attempt?.task_id : undefined, {
-		live,
-	});
+	const actions = useActionSummary(attempt?.task_id, { live });
 	const actionSummary = actions.data;
 	const running = live && actionSummary ? actionSummary.running : [];
 	// 没有正在做的动作时，进度的说明代替「正在做」（#345 故事 29）。

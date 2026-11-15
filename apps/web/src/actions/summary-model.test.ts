@@ -1,6 +1,6 @@
-import type { ActionNameCount, RunningActionView } from "@sfly/schema";
+import type { ActionNameCount, AttemptView, NodeRunView, RunningActionView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { countOnlyNames, failedTotal, runningRows } from "./summary-model";
+import { actionAttempt, countOnlyNames, failedTotal, runningRows } from "./summary-model";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 const running = (
@@ -83,5 +83,56 @@ describe("上限说明和失败的个数", () => {
 			failedTotal([count("下单", null, 17), count("撤单", null, 3), count("预热", null)]),
 		).toBe(20);
 		expect(failedTotal([])).toBe(0);
+	});
+});
+
+const attempt = (n: number, status: AttemptView["status"], started: boolean): AttemptView =>
+	({
+		task_id: `t${n}`,
+		attempt: n,
+		status,
+		started_at: started ? "2026-01-01T00:00:00.000Z" : null,
+	}) as AttemptView;
+const node = (kind: NodeRunView["kind"], attempts: AttemptView[]) => ({ kind, attempts });
+
+describe("检查器的动作属于哪一次尝试", () => {
+	it("取最近一次开始执行的尝试：执行中、结束的（成功、失败、已取消、已停止）都有", () => {
+		for (const status of ["running", "success", "failed", "cancelled", "stopped"] as const) {
+			expect(actionAttempt(node("package", [attempt(1, status, true)]))?.task_id).toBe("t1");
+		}
+	});
+
+	it("重试的新尝试还在排队或准备时，是上一次的；新尝试开始以后是新的", () => {
+		const failed = attempt(1, "failed", true);
+		expect(actionAttempt(node("package", [failed, attempt(2, "queued", false)]))?.task_id).toBe(
+			"t1",
+		);
+		expect(actionAttempt(node("package", [failed, attempt(2, "dispatched", false)]))?.task_id).toBe(
+			"t1",
+		);
+		expect(actionAttempt(node("package", [failed, attempt(2, "running", true)]))?.task_id).toBe(
+			"t2",
+		);
+	});
+
+	it("没有开始执行过的节点没有：没有尝试（待执行、子流程还没触发、已跳过）、排队中、准备中、没开始就被取消", () => {
+		expect(actionAttempt(undefined)).toBeUndefined();
+		expect(actionAttempt(node("package", []))).toBeUndefined();
+		for (const status of ["queued", "dispatched", "cancelled", "skipped"] as const) {
+			expect(actionAttempt(node("package", [attempt(1, status, false)]))).toBeUndefined();
+		}
+	});
+
+	it("不在 Agent 上执行的内置节点没有，等待中的定时和 Sleep 节点也是", () => {
+		for (const kind of [
+			"timer",
+			"sleep",
+			"async",
+			"stop_subflow",
+			"feishu_notify",
+			"entry",
+		] as const) {
+			expect(actionAttempt(node(kind, [attempt(1, "waiting", true)]))).toBeUndefined();
+		}
 	});
 });
