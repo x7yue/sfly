@@ -14,6 +14,9 @@ stderr.log、artifacts/）是项目下的 `.sfly/runs/<时间>-<节点>/`，互�
 
 `ctx.notify` 不真的发送：和日志一起实时打印要发给哪个飞书机器人、请求体是什么。
 
+动作和标记（`ctx.action`、`ctx.mark`）和日志一起实时打印：每个动作开始一行、结束一行（结果和耗时），
+每个标记一行，按层级缩进（子动作和属于动作的标记），时间是本机的系统时间。
+
 Ctrl-C 走和平台相同的取消流程：取消标记 + SIGTERM，宽限期过后强制杀掉；再按一次立即杀掉。
 节点结束后结果已经确定，打印结果期间的 Ctrl-C 被忽略，退出码按结果给出。
 
@@ -33,8 +36,10 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
+from sfly.context import ActionResult
 from sfly.local import (
     DEFAULT_GRACE,
+    ActionRecord,
     Cancellation,
     Execution,
     LogLine,
@@ -69,6 +74,52 @@ def _print_notification(notification: Notification) -> None:
     body = json.dumps(notification.body, ensure_ascii=False)
     to = f"发给飞书机器人「{notification.bot}」（本地调试不发送）"
     print(f"{_clock(notification.ts)} 通知  {to}：{body}", file=sys.stderr)
+
+
+_RESULT_TEXT: dict[ActionResult, str] = {
+    "success": "成功",
+    "failed": "失败",
+    "unfinished": "未结束",
+}
+#: 缩进最多这么多层，更深的和这一层对齐（和界面一样）。
+_MAX_INDENT = 3
+
+
+def _duration(ms: int) -> str:
+    if ms < 1000:
+        return f"{ms} ms"
+    if ms < 60_000:
+        return f"{ms / 1000:.1f} s"
+    minutes, seconds = divmod(ms // 1000, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m{seconds:02d}s" if hours else f"{minutes}m{seconds:02d}s"
+
+
+def format_action(record: ActionRecord) -> str:
+    """一个动作开始、结束，或一个标记的终端输出：
+
+    12:00:01.234 动作  开始 #7 下单 订单=1001
+    12:00:01.250 动作  成功 #7 下单 16 ms 订单=1001 回报=已成交
+    12:00:01.251 动作  失败 #8 下单 3 ms 订单=1002 原因：ValueError: 拒单
+    12:00:01.300 标记  收到第一笔成交 订单=1001
+    """
+    indent = "  " * min(record.depth, _MAX_INDENT)
+    fields = "".join(f" {key}={value}" for key, value in record.fields.items())
+    if record.kind == "mark":
+        return f"{_clock(record.ts)} 标记  {indent}{record.name}{fields}"
+    if record.result is None:
+        return f"{_clock(record.ts)} 动作  {indent}开始 #{record.id} {record.name}{fields}"
+    assert record.duration_ms is not None
+    ended = record.ts + record.duration_ms
+    reason = f" 原因：{record.reason}" if record.reason else ""
+    return (
+        f"{_clock(ended)} 动作  {indent}{_RESULT_TEXT[record.result]} #{record.id} {record.name} "
+        f"{_duration(record.duration_ms)}{fields}{reason}"
+    )
+
+
+def _print_action(record: ActionRecord) -> None:
+    print(format_action(record), file=sys.stderr)
 
 
 def _say_from_signal_handler(text: str) -> None:
@@ -219,6 +270,7 @@ def debug(
             cancellation=cancellation,
             on_log=_print_log,
             on_notify=_print_notification,
+            on_action=_print_action,
             run_id=work.name,
             node_id=node,
             procs_dir=project.absolute() / PROCS_DIR / work.name,

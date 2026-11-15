@@ -1,4 +1,4 @@
-// 基准测试：SDK 单次 ctx.metric() 的开销（ARCHITECTURE §7.6；标准库 timeit，不给 SDK 加依赖，ADR 0002）。
+// 基准测试：SDK 单次 ctx.metric() 和单次 ctx.action() 的开销（ARCHITECTURE §7.6；标准库 timeit，不给 SDK 加依赖，ADR 0002）。
 // 运行 sdk/python/benchmarks/metric.py --json（也可以单独运行，见该文件），只记录，不判定。
 import { readTimeit } from "../bench.js";
 import { runChecked } from "../command.js";
@@ -9,15 +9,16 @@ import type { Measurement } from "../report.js";
 const CASES: Record<string, string> = {
 	metric: "单次 ctx.metric() 耗时",
 	labeled_metric: "单次带标签的 ctx.metric() 耗时（4 个指标 × 50 个进程，标签 pid、name）",
+	action: "单次 with ctx.action() 耗时（开始和结束各写一行事件）",
 };
 
 export default definePerfItem({
 	id: "bench-sdk-metric",
-	title: "基准测试：SDK 单次 ctx.metric()",
+	title: "基准测试：SDK 单次 ctx.metric() 和 ctx.action()",
 	scope: null,
 	needsArtifacts: false,
 	async run(ctx): Promise<ItemRun> {
-		ctx.log("timeit 测量 ctx.metric()");
+		ctx.log("timeit 测量 ctx.metric() 和 ctx.action()");
 		const stdout = await runChecked(
 			"uv",
 			["run", "--locked", "python", "sdk/python/benchmarks/metric.py", "--json"],
