@@ -22,7 +22,7 @@ export type StatusKind =
 	| "cancelled"
 	| "stopped";
 
-/** 7–8px 状态标记的形状：每种状态一个，不看颜色（色觉缺陷、强制颜色模式）、不看动画（减少动效）也能分辨。 */
+/** 7–8px 的状态形状：每种状态一个，不看颜色（色觉缺陷、强制颜色模式）、不看动画（减少动效）也能分辨。 */
 export type StatusMark =
 	| "disc"
 	| "ring-dot"
@@ -229,7 +229,7 @@ const MARK: Record<StatusMark, React.ReactNode> = {
 };
 
 /**
- * 状态标记（单独使用时自带状态色，例如时间线的行标签）；需要文字时用 StatusPill。
+ * 状态形状（单独使用时自带状态色，例如时间线的行标签）；需要文字时用 StatusPill。
  * 默认静止；`pulse` 只对执行中生效，一屏里每个执行中的对象只在它的前沿打开一处。
  */
 export function StatusDot({

@@ -1,5 +1,30 @@
 // 由 HTTP 契约（packages/schema/src/http）生成，不要手改：pnpm gen。
 
+/** 实时推送的一批新写入或刚结束的明细（`events` 的 `actions` 事件）。同一个 ID 再出现时，以后到的为准。 */
+export interface ActionChunk {
+	actions: ActionDetailView[];
+}
+
+/** 一条明细：一个动作或一个标记。 */
+export type ActionDetailView = ActionMarkDetail | ActionRecordDetail;
+
+/** 一个标记的明细：只有一个时刻。 */
+export interface ActionMarkDetail {
+	/** 任务内的 ID（动作和标记共用一个序列）。 */
+	id: number;
+	/** 父动作的 ID；最外层为 null。父动作不一定有明细。 */
+	parent: number | null;
+	/** 层级：最外层是 0。 */
+	depth: number;
+	name: string;
+	/** 说明字段（值都是文字），按写入的先后；动作的是开始时给的加上之后补充的。 */
+	fields: Record<string, string>;
+	/** 动作开始、标记发生的控制面时间。 */
+	started_at: Timestamp;
+	agent_started_at: Timestamp;
+	kind: "mark";
+}
+
 /** 一种名称（动作和标记的名称在一起）的计数。 */
 export interface ActionNameCount {
 	name: string;
@@ -14,6 +39,71 @@ export interface ActionNameCount {
 	agent_capped_at: Timestamp | null;
 }
 
+/**
+ * 一个任务（一次尝试）的一页明细，按开始时间从新到旧（开始时间相同时 ID 大的在前）。
+ *
+ * 一页的范围：从这一页最早的那条明细（读到最早一页时是任务的开头）到游标（最新一页时是现在），`count_only`
+ * 是起点（`from`）落在这个范围里的只计数的段，所以一直往前翻，每一段正好出现一次。
+ */
+export interface ActionPage {
+	task_id: string;
+	actions: ActionDetailView[];
+	/** 读更早的一页：下一次请求的 before；没有更早的明细时为 null。 */
+	before: string | null;
+	/**
+	 * 起点落在这一页范围里的只计数的段，从新到旧。只看失败时，`name_limit` 的段只在合计也满了时才有：合计没满时，
+	 * 超过每种名称上限之后失败的动作仍有明细。
+	 */
+	count_only: CountOnlyPeriod[];
+	/**
+	 * 读这一页那一刻明细的修订号：实时推送（`events`）的 `after` 用它，之后写入或结束的明细都由推送送达。
+	 * 最新一页的这个值才有用。
+	 */
+	rev: number;
+	/** 运行已超过保留期、明细已被清理（此时是空页）。 */
+	expired: boolean;
+}
+
+export interface ActionPageQuery {
+	/** 读这个游标之前（更早开始）的明细；不给时读最新的一页。 */
+	before?: string;
+	limit?: number;
+	/** 只要这个名称的。 */
+	name?: string;
+	/** true：只要失败的动作（没有标记）。 */
+	failed?: string;
+}
+
+/**
+ * 一个动作的明细。还在做时结果和结束都为 null；任务结束（成功、失败、取消、`agent_lost`）时还没结束的记为
+ * `unfinished`，结束时间取任务的结束时间。
+ */
+export interface ActionRecordDetail {
+	/** 任务内的 ID（动作和标记共用一个序列）。 */
+	id: number;
+	/** 父动作的 ID；最外层为 null。父动作不一定有明细。 */
+	parent: number | null;
+	/** 层级：最外层是 0。 */
+	depth: number;
+	name: string;
+	/** 说明字段（值都是文字），按写入的先后；动作的是开始时给的加上之后补充的。 */
+	fields: Record<string, string>;
+	/** 动作开始、标记发生的控制面时间。 */
+	started_at: Timestamp;
+	agent_started_at: Timestamp;
+	kind: "action";
+	/** 结果；还在做时为 null。 */
+	result: ActionResult | null;
+	/** 结束的控制面时间；还在做时为 null。 */
+	ended_at: Timestamp | null;
+	/** 结束的 Agent 时间；还在做时，以及任务结束时还没结束、取不到 Agent 时间时为 null。 */
+	agent_ended_at: Timestamp | null;
+	/** 耗时（毫秒）：按单调时钟算，不受 Agent 系统时间改动的影响；记为未结束的按控制面时间算；还在做时为 null。 */
+	duration_ms: number | null;
+	/** 失败的原因（最多 4096 个字符）；其他结果为 null。 */
+	reason: string | null;
+}
+
 /** 动作的结果：成功、失败、未结束（任务结束时还没结束，或因为取消离开 `with`）。 */
 export type ActionResult = "success" | "failed" | "unfinished";
 
@@ -24,6 +114,8 @@ export type ActionResult = "success" | "failed" | "unfinished";
 export interface ActionSummaryView {
 	/** 动作和标记合计的个数。 */
 	total: number;
+	/** 其中标记的个数：动作的个数是 total 减去它。 */
+	marks: number;
 	/** 有明细的个数（最多 100000）。 */
 	reported: number;
 	/** 有没有超出上限：有动作或标记只计数、没有明细。 */
@@ -307,6 +399,27 @@ export interface ClockOffsetView {
 	measured_at: Timestamp;
 	/** 偏差的绝对值达到 2 秒：页面只在这时提示，不到 2 秒视为一致。由控制面统一判断。 */
 	exceeds_threshold: boolean;
+}
+
+/**
+ * 只计数的一段：这段时间里有动作或标记只计数、没有明细。
+ *
+ * - `name_limit`：这个名称超过了每种名称的上限（5 万个），失败的动作仍有明细，不在 `count` 里；
+ * - `total_limit`：合计超过了上限（10 万个），之后所有名称都只计数，失败的也是；
+ * - `control_plane`：控制面兜底丢弃（被改过的 SDK 写出了超过上限的明细）。
+ *
+ * 每种名称、每种原因至多一段；算法见 docs/ARCHITECTURE.md §6.3。
+ */
+export interface CountOnlyPeriod {
+	name: string;
+	reason: "name_limit" | "total_limit" | "control_plane";
+	/** 从什么时候起（控制面时间、Agent 时间）：第一个没有明细的动作或标记的时刻。 */
+	from: Timestamp;
+	agent_from: Timestamp;
+	/** 到什么时候：任务已结束时是任务的结束时间；还在执行时为 null（至今）。 */
+	to: Timestamp | null;
+	/** 这一段里没有明细的个数。 */
+	count: number;
 }
 
 /**

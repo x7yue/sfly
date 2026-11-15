@@ -1,5 +1,11 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
-import type { LogLineView, NodeStatus, RunNotificationState, RunStatus } from "@sfly/schema";
+import type {
+	ActionResult,
+	LogLineView,
+	NodeStatus,
+	RunNotificationState,
+	RunStatus,
+} from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
 /**
@@ -34,6 +40,8 @@ export const TERM = {
 	note: "备注",
 	annotation: "注释框",
 	lastEdited: "最后修改",
+	action: "动作",
+	mark: "标记",
 } as const;
 
 /**
@@ -230,10 +238,29 @@ export const chainCountLabel = (chains: number, nodes: number) =>
 	`${chains} 条链 · ${nodes} 个节点`;
 
 /**
- * 还没结束、正在推进的节点（排队中、准备中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
- * 不等于任何一个节点状态名：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。
+ * 「进行中」：还没结束的统称，不等于任何一个状态名。运行抽屉的摘要里是还没结束、正在推进的节点（排队中、准备中、
+ * 执行中、等待中）合起来的名称：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。运行监控
+ * 「动作」页的结果里是还没结束的动作（`NODE_ACTIONS.results.running`）。
  */
 export const ACTIVE_LABEL = "进行中";
+
+/**
+ * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）共用的文字。和 `ACTION`（界面上的通用操作）不是一回事。
+ */
+export const NODE_ACTIONS = {
+	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，「动作」页的第一组。 */
+	doing: "正在做",
+	/**
+	 * 动作的结果和标记：动作自己的一组状态文字，不是运行状态（`RUN_STATUS_LABEL`）。还没结束的写「进行中」。
+	 */
+	results: {
+		running: ACTIVE_LABEL,
+		success: "成功",
+		failed: "失败",
+		unfinished: "未结束",
+		mark: TERM.mark,
+	} satisfies Record<ActionResult | "running" | "mark", string>,
+} as const;
 
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */
 export const LIST_LABEL = {

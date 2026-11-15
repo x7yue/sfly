@@ -1,6 +1,6 @@
-// 全栈（#356）：真实的控制面、Rust Agent 和 SDK 执行器，桩节点 actions 用 ctx.action 嵌套记录动作、记一个标记、
+// 全栈（#356、#357）：真实的控制面、Rust Agent 和 SDK 执行器，桩节点 actions 用 ctx.action 嵌套记录动作、记一个标记、
 // 失败一次，最后在嵌套的「等待放行」「检查放行文件」里等测试放行。动作摘要经事件管道、Agent 的 ActionSummary 到达控制面：
-// 执行中能读到摘要和此刻在做的动作，任务结束后正在做的清空、计数保留。
+// 执行中能读到摘要和此刻在做的动作，任务结束后正在做的清空、计数保留。明细经 Agent 的 ActionBatch 到达，和摘要对得上。
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,6 +42,102 @@ describe("全栈：动作摘要", () => {
 		await rm(dir, { recursive: true, force: true });
 	});
 
+	const summaryOf = async (taskId: string) => {
+		const res = await cp.fetch(`/tasks/${taskId}/actions/summary`);
+		expect(res.status).toBe(200);
+		return actionsApi.summary.response.parse(await res.json());
+	};
+
+	it("明细和摘要对得上：父子关系、补充的字段、失败的原因、标记，没结束的记为未结束", async () => {
+		const api = new ApiClient(cp);
+		const id = await api.orchestrationWith({
+			default_agent: "actions-agent",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{
+					id: "orders",
+					kind: "package",
+					package: "sfly-stub",
+					node: "actions",
+					inputs: { unfinished: true },
+				},
+			],
+			edges: [{ from: "entry", to: "orders", kind: "chain" }],
+			packages: { "sfly-stub": "0.1.0" },
+		});
+		const runId = await api.triggerOk(id);
+		await eventually(async () => expect((await api.run(runId)).status).toBe("success"), 30_000);
+		const [attempt] = (await api.node(runId, "orders")).attempts;
+		const taskId = attempt?.task_id ?? "";
+		const res = await cp.fetch(`/tasks/${taskId}/actions`);
+		expect(res.status).toBe(200);
+		const page = actionsApi.page.response.parse(await res.json());
+		const summary = await summaryOf(taskId);
+
+		expect(page.before).toBeNull();
+		expect(page.count_only).toEqual([]);
+		// 按开始时间从新到旧；SDK 在开始时分配 ID，同一个线程里开始的先后就是 ID 的先后。
+		expect(page.actions.map((a) => a.id)).toEqual(
+			[...page.actions.map((a) => a.id)].sort((a, b) => b - a),
+		);
+		const byName = (name: string) => page.actions.filter((a) => a.name === name);
+		const [placed, rejected] = byName("下单").sort((a, b) => a.id - b.id);
+		const [fill] = byName("收到第一笔成交");
+		const [risk] = byName("风控检查");
+		const [never] = byName("从不结束");
+		expect(placed).toMatchObject({
+			kind: "action",
+			parent: null,
+			depth: 0,
+			fields: { 订单: "1001", 回报: "已成交" },
+			result: "success",
+			reason: null,
+		});
+		expect(fill).toMatchObject({
+			kind: "mark",
+			parent: placed?.id,
+			depth: 1,
+			fields: { 订单: "1001" },
+		});
+		expect(risk).toMatchObject({ kind: "action", parent: placed?.id, depth: 1, result: "success" });
+		expect(rejected).toMatchObject({
+			result: "failed",
+			reason: "拒单：余额不足",
+			fields: { 订单: "1002" },
+		});
+		// 节点退出时还没结束的动作：控制面在任务结束时记为未结束，结束时间取任务的结束时间。
+		expect(never).toMatchObject({ result: "unfinished", ended_at: attempt?.ended_at });
+
+		// 计数、标记数、有明细的个数和明细一致；最近结束、最近失败的时间与明细的完全相同（同一组单调时钟读数折算）。
+		expect(summary.total).toBe(page.actions.length);
+		expect(summary.reported).toBe(page.actions.length);
+		expect(summary.marks).toBe(page.actions.filter((a) => a.kind === "mark").length);
+		expect(summary.names.map((n) => [n.name, n.total, n.failed])).toEqual(
+			summary.names.map((n) => [
+				n.name,
+				byName(n.name).length,
+				byName(n.name).filter((a) => a.kind === "action" && a.result === "failed").length,
+			]),
+		);
+		for (const ended of summary.recent) {
+			const detail = page.actions.find((a) => a.id === ended.id);
+			expect(detail).toMatchObject({
+				name: ended.name,
+				parent: ended.parent,
+				depth: ended.depth,
+				fields: ended.fields,
+				started_at: ended.started_at,
+				agent_started_at: ended.agent_started_at,
+				ended_at: ended.ended_at,
+				agent_ended_at: ended.agent_ended_at,
+				duration_ms: ended.duration_ms,
+				result: ended.result,
+				reason: ended.reason,
+			});
+		}
+		expect(summary.recent_failed.map((a) => a.id)).toEqual([rejected?.id]);
+	}, 90_000);
+
 	it("执行中读到动作摘要和此刻在做的动作；任务结束后正在做的清空，计数保留", async () => {
 		const api = new ApiClient(cp);
 		const release = join(dir, "release");
@@ -61,11 +157,7 @@ describe("全栈：动作摘要", () => {
 			packages: { "sfly-stub": "0.1.0" },
 		});
 		const runId = await api.triggerOk(id);
-		const summary = async (taskId: string) => {
-			const res = await cp.fetch(`/tasks/${taskId}/actions/summary`);
-			expect(res.status).toBe(200);
-			return actionsApi.summary.response.parse(await res.json());
-		};
+		const summary = summaryOf;
 
 		const attemptNow = async () => {
 			const [found] = (await api.node(runId, "orders")).attempts;

@@ -51,7 +51,7 @@ const client = createClient({
 | `runs`（运行） | `list`、`listForOrchestration`、`focus`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
 | `metrics`（指标） | `summary`、`catalog`、`series`、`platform` |
-| `actions`（动作） | `summary` |
+| `actions`（动作） | `summary`、`page`、`events` |
 | `artifacts`（产物） | `list`、`download` |
 | `agents`（sfly Agent） | `list`、`updateNow` |
 | `packages`（节点包） | `list`、`get`、`version`、`nodeType` |
@@ -85,7 +85,7 @@ for (const item of runs) {
 - 控制台统计用 `dashboard.get`（`setup` 是「开始使用」四步各自是否完成：有在线的 Agent、发布过节点包、有没归档的场景、有过运行），Agent 的在线状态和版本用 `agents.list`（`preparing_since` 不为空表示 Agent 在线但还在准备环境、不接任务），一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。
 - `runs.focus` 一次读出一次运行的全部关注项（`points` 是每个序列降采样的点数，默认 60，最多 300，0 只要最新值）：场景挑出来的关注项，每项带来源节点的状态、最新值、降采样后的序列、估算的采样间隔（`sample_interval_ms`）和异常（`anomaly`：`log` 最近 10 分钟内有 WARN / ERROR，`stale` 执行中却很久没有新数据，`failed` 来源节点失败，`retry` 10 分钟内开始了重试；规则见[运行场景](run-scenario.md)的「关注项」），有异常的排在前面，其余按作者的顺序；场景没设关注项时是准备中、执行中节点的主指标（`mode` 是 `primary`）。运行绑定的版本里没有的节点不返回；节点还没开始（包括所在的子流程还没触发）的项照样返回，`source.started_at` 为 null，没有数据；这次运行锁定的节点包版本里没有这张图表的项，`unavailable` 是 `chart_missing`。自建的看板用它就不用自己拼指标查询。
 - 时间字段都是控制面时间，格式是 ISO 8601 字符串。
-- 控制台里运行监控页的地址是 `{{SFLY_URL}}/runs/<运行 id>`，看板上需要深入排查时链接过去。地址可以带 `view=overview`（概览，关注项和链路）或 `view=detail`（详情，时间线、图表和日志）指定打开哪个视图，不带时失败和取消的运行打开详情，其余打开浏览器上次停留的视图（默认概览）；`node` 等下面的参数只在详情里用，给了它们就打开详情。地址可以带 `node=<节点 ID>` 选中一个节点，再加 `tab=logs`（或 `attempts`、`io`、`artifacts`）切到底部面板的页签；带了 `node` 之后还可以加 `at=<时刻>`（控制面时间，ISO 8601 的 UTC 写法，如 `2026-01-01T00:00:06.250Z`，和接口返回的时间同一种）：日志定位到包含那一刻的一页，那一刻正好有一行（1 秒以内）就高亮它，没有就在那个位置标出「这一刻」。
+- 控制台里运行监控页的地址是 `{{SFLY_URL}}/runs/<运行 id>`，看板上需要深入排查时链接过去。地址可以带 `view=overview`（概览，关注项和链路）或 `view=detail`（详情，时间线、图表和日志）指定打开哪个视图，不带时失败和取消的运行打开详情，其余打开浏览器上次停留的视图（默认概览）；`node` 等下面的参数只在详情里用，给了它们就打开详情。地址可以带 `node=<节点 ID>` 选中一个节点，再加 `tab=logs`（或 `actions`、`attempts`、`io`、`artifacts`）切到底部面板的页签；带了 `node` 之后还可以加 `at=<时刻>`（控制面时间，ISO 8601 的 UTC 写法，如 `2026-01-01T00:00:06.250Z`，和接口返回的时间同一种）：日志定位到包含那一刻的一页，那一刻正好有一行（1 秒以内）就高亮它，没有就在那个位置标出「这一刻」。
 
 ## 预检并触发
 
@@ -210,6 +210,45 @@ for (const node of live.chains.flatMap((chain) => chain.nodes)) {
 - 运行视图里执行中的尝试带 `current_action`：最外层、开始得最早的那个正在做的动作，写名称和开始时间（控制面时间）。没有正在做的最外层动作、尝试已经结束时为 `null`。Agent 列表里正在执行的任务（`running_tasks`）也带它。
 - `actions.summary` 读一个任务（一次尝试）的动作摘要：每种名称的个数（动作和标记合计）和失败的动作数（`names`，从什么时候起只计数写在 `capped_at`）、正在做的动作（`running`，带层级，最多 50 个，列满时 `running_complete` 为 `false`）、最近结束的 20 个动作和最近失败的 5 个动作，以及动作和标记的合计数、有没有超出上限（`capped`）。任务结束以后 `running` 为空，其余照旧。
 - 摘要是节点每秒最多上报一次的那一份，不是实时的每一个动作。字段和失败原因是节点写的数据，显示时当作文本。
+
+每一个动作和标记的明细按任务分页读，再接上实时推送：
+
+```ts
+const task = live.chains[0]?.nodes.at(-1)?.attempts.at(-1)?.task_id;
+if (task) {
+	const latest = await client.actions.page({ params: { id: task }, query: { limit: 100 } });
+	for (const detail of latest.actions) {
+		const result = detail.kind === "action" ? (detail.result ?? "正在做") : "标记";
+		console.log(detail.started_at, "  ".repeat(detail.depth), detail.name, result, detail.fields);
+	}
+	for (const period of latest.count_only) console.log(period.from, period.name, `${period.count} 个只计数`);
+	if (latest.before) {
+		const earlier = await client.actions.page({
+			params: { id: task },
+			query: { before: latest.before, limit: 100 },
+		});
+		console.log(`往前又读到 ${earlier.actions.length} 个`);
+	}
+	const failed = await client.actions.page({ params: { id: task }, query: { failed: "true" } });
+	for (const detail of failed.actions) if (detail.kind === "action") console.log("失败", detail.reason);
+
+	const stopActions = client.actions.events(
+		{ params: { id: task }, query: { after: latest.rev } },
+		{
+			summary: (summary) => console.log("正在做", summary.running.length, "个"),
+			actions: (chunk) => {
+				for (const detail of chunk.actions) console.log("更新", detail.id, detail.name);
+			},
+		},
+	);
+	window.addEventListener("pagehide", stopActions);
+}
+```
+
+- `actions.page` 按开始时间从新到旧分页（`limit` 默认 100，最多 500），`before` 往前翻，没有更早的明细时为 `null`。`name` 只要一种名称，`failed` 为 `true` 时只要失败的动作。
+- 还在做的动作 `result` 为 `null`。任务结束（成功、失败、取消、`agent_lost`）时还没结束的记为 `unfinished`，结束时间取任务的结束时间；之后才到的结束照样记下真实的结果。
+- 超过上限（每种名称 5 万个，合计 10 万个，失败的动作不受每种名称的限制）以后只计数、没有明细：`count_only` 写出这一页范围里哪种名称从什么时候起有多少个没有明细、为什么（`reason`）。一直往前翻，每一段正好出现一次。
+- `actions.events` 从分页返回的 `rev` 接上实时推送：连上时先推一份摘要，之后推送新写入和刚结束的明细（同一个 `id` 再出现时以后到的为准），每份新的摘要也推送；任务结束时推送正在做的为空的摘要和记为未结束的明细。断线重连后从断点继续，不重复、不遗漏。
 
 ## 下载产物
 
