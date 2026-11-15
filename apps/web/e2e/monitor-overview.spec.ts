@@ -477,12 +477,13 @@ test("排队中的节点（已有任务、还没开始）在概览和详情里�
 	await expect(card.locator("p + div")).toContainText("还没有开始执行");
 
 	await viewTab(page, "详情").click();
+	// 组默认展开还是收起取决于节点状态：等到图表或展开按钮出现，收起时点开。
 	const group = page.getByRole("region", { name: "probe 的图表" });
+	const figure = group.getByRole("figure", { name: "level", exact: true });
 	const toggle = group.getByRole("button", { expanded: false });
-	if (await toggle.count()) await toggle.click();
-	await expect(group.getByRole("figure", { name: "level", exact: true })).toContainText(
-		"还没有开始执行",
-	);
+	await expect(figure.or(toggle)).toBeVisible();
+	if (!(await figure.isVisible())) await toggle.click();
+	await expect(figure).toContainText("还没有开始执行");
 });
 
 test("这次运行的节点包版本里没有这张图表：读数写明原因，不显示数值", async ({
