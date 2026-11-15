@@ -291,7 +291,7 @@ flowchart TD
 |---|---|
 | `SFLY_TASK` | `task.json` 路径：节点入口、已解析的输入、超时等 |
 | `SFLY_OUTPUT` | 执行器写入返回值 `output.json` 的路径 |
-| `SFLY_EVENTS` | 命名管道 `events.fifo` 的路径：SDK 以追加方式打开，逐行写入结构化日志、进度、指标和飞书通知（JSONL）；Agent 在启动执行器前创建它并打开读端（ADR 0015） |
+| `SFLY_EVENTS` | 命名管道 `events.fifo` 的路径：SDK 以追加方式打开，逐行写入结构化日志、进度、指标、飞书通知以及动作和标记（JSONL）；Agent 在启动执行器前创建它并打开读端（ADR 0015） |
 | `SFLY_ARTIFACTS` | 产物目录，任务结束后由 Agent 上传 |
 | `SFLY_ARTIFACTS_URL` | 产物下载地址前缀；`ctx.artifacts.save()` 返回的产物引用 = 前缀 + 按路径段编码的名称；`ctx.artifacts.download()` 按产物引用直接从控制面下载，不经过 Agent |
 | `SFLY_CANCEL` | 取消标记文件；出现时 `ctx.cancelled()` 返回 true |
@@ -302,6 +302,14 @@ flowchart TD
 - 建立在 Agent 能力之上的标准节点（`std/src/sfly_std/`，下载、删除源文件共用 `_pull.py`）：`pull_files` 列出后逐个下载；`watch_files` 在后台线程里读 `files.watch` 的快照和事件、放进本地队列，主线程逐个下载（节点下载大文件时事件不在 Agent 上堆积溢出）。它按「文件标识 + 大小」去重、每份快照（包括重连后 `missed` 的）为准，「至少 N 秒没有修改」用本机的单调时钟计时、下载前再 `stat` 一次比较，不拿另一台 Agent 的修改时间和本机时间比；监听的连接中断、重连超时后隔一会儿重新开始监听，只有第一次就连不上时失败。
 
 - 事件管道：Agent 先以非阻塞方式打开读端、自己持有一个写端（没有写者时读端读到 EOF），再启动执行器；容量调到 `/proc/sys/fs/pipe-max-size`。数据只在内核缓冲区里，有数据时立即读取；写满时 SDK 的写入阻塞等待，不丢事件。执行器退出后 Agent 关掉自己的写端，把剩余数据读完（后台子进程还持有写端时最多等 2 秒）。本地调试（`sfly debug`、`sfly.testing`）用同样的做法。
+- 事件管道里的事件：每行一个 JSON 对象，`type` 是 `log`、`progress`、`metric`、`notify`、`action_start`、`action_end`、`mark`、`action_summary` 之一；Agent 不认识的内容原样记成一行 SDK 日志。动作和标记（`ctx.action`、`ctx.mark`，规格 #345）有后四种，格式如下，完整的说明在 `sdk/python/src/sfly/context.py` 的模块说明里，改动要两处一起改：
+  - **时间**：每个事件都带 `ts`（Agent 时间，Unix 毫秒，整数，SDK 读系统时钟）和 `mono`（同一时刻 Agent 系统级单调时钟的读数，毫秒，整数，大于 0；Linux 上是 `CLOCK_BOOTTIME`，其他平台是 `CLOCK_MONOTONIC`，和 Agent 的 `clock::monotonic_ms` 是同一个时钟）。读取方用 `mono` 按 ADR 0018 折算控制面时间、计算耗时，系统时间被改动时耗时不受影响。`ts`、`mono` 是事件发生的时刻，不一定随行的先后递增（补发的 `action_start` 比前面的行早）。
+  - **`action_start`**：`id`（整数，任务内从 1 开始递增，由 SDK 分配，动作和标记共用一个序列）、`parent`（父动作的 `id`，最外层是 null；父动作可能没有明细或已经结束，读取方不能要求它存在）、`depth`（祖先的个数，最外层是 0）、`name`（1 到 64 个字符）、`fields`（对象，最多 8 个键，值都是字符串，每个不超过 256 个字符，没有时是 `{}`）。
+  - **`action_end`**：`id`、`result`（`success`、`failed`、`unfinished` 之一，`unfinished` 是抛出了 `Cancelled`）、`reason`（失败的原因，形如 `ValueError: 消息`，最多 4096 个字符，其他结果为 null）、`fields`（`note()` 补充的字段；动作最终的字段是 `action_start` 的 `fields` 加上它、同名的以它为准，合计最多 8 个键）。没有结束的动作（节点进程被强制终止、任务结束时还没结束）没有 `action_end`，由读取方记为 `unfinished`，结束时间取任务结束的时刻。
+  - **`mark`**：`id`、`parent`、`depth`、`name`、`fields`，含义同 `action_start`；没有持续时间，也没有结果。
+  - **`action_summary`**：`total`（开始的动作和标记的个数，不论有没有明细）、`reported`（上报了明细的个数，最多 10 万）、`capped_ts`/`capped_mono`（合计超过 10 万个、之后只计数的起点，没有为 null）；`names`（每种名称一项，按第一次出现的先后：`name`、`total`、`failed`、`capped_ts`/`capped_mono`，后两个是这个名称从什么时候起只计数，没有为 null）；`running`（正在做的动作，最多 50 个，层级浅的、开始早的优先，按 `id` 排列：`id`、`parent`、`depth`、`name`、`fields`、`ts`/`mono`（开始的时刻））；`recent`（最近结束的 20 个动作，最近的在前：`running` 的字段加 `end_ts`/`end_mono`、`result`、`reason`）；`recent_failed`（其中最近失败的 5 个，格式相同）。每一份都是完整的，只有最新一份有用；有变化时才发，每秒最多一次（不到一秒的推迟到满一秒），节点退出时尽力再发一次；超过明细上限以后仍然准确。标记不在摘要里。
+  - **上限（SDK 执行）**：每种名称最多上报 5 万个明细，全部名称合计最多 10 万个，超过以后不再写这个动作的 `action_start`、`mark`，只计数。超过每种名称的上限（没有 `action_start`）的动作如果以失败结束，SDK 在结束时补发：先写一行 `action_start`（`ts`/`mono` 是动作真正开始的时刻，字段是开始时的字段），再写 `action_end`，直到合计 10 万个；所以失败的动作不受每种名称上限的限制。
+  - **Agent**：认得这四种事件，读到时丢弃，不转发，也不会当成不认识的内容记成日志；转发给控制面（`ActionBatch`）由后续的工单加上。
 - 标准输出 / 标准错误：Agent 读出、还没转发的内容也有上限（与事件管道一样最多排 16 块）；转发跟不上时 Agent 暂停读取，管道写满后节点写标准输出 / 标准错误阻塞等待，不丢日志，Agent 内存不随节点的输出量增长。
 - 工作目录 `work/<task_id>/` 里还有 `task.json`、`output.json`、`artifacts/`、取消标记，以及 Agent 写的标准输出 / 标准错误副本 `stdout.log` / `stderr.log`：每个文件 8 MiB，超过后改名为 `.1`（覆盖旧的 `.1`）再新建，每个流最多 16 MiB，写失败时忽略。执行器异常退出时，错误摘要附带的标准错误末尾（8 KiB）取自 Agent 内存，不读 `stderr.log`。
 - `task.json` 里有 `task_id`、`attempt`、`run_id`、`node_id`，SDK 据此提供 `ctx.task`；本地调试时任务 ID 是 `local`、attempt 是 1。`agents` 是任务通过「Agent」类型的输入引用的 Agent（`AssignTask.referenced_agents`：名称、地址、端口、不能调用的原因）。SDK 不读它：节点用 `ctx.agent(名称)` 调用另一台 Agent 时，寻址和名单检查都在 Agent 里（ADR 0019）；本地调试时引用的 Agent 和它们映射到的本地目录在 `SFLY_LOCAL_AGENTS` 里。任务通过「飞书机器人」类型的输入引用的机器人名称随任务下发（`AssignTask.referenced_feishu_bots`，不重复，不检查是否已登记，ADR 0020），供节点发通知时检查。
@@ -443,7 +451,7 @@ Agent 的目标版本就是控制面的版本（Welcome 下发，高于或低于
 
 针对 sfly 本身（SDK → Agent → 控制面 → PostgreSQL）的性能，分三类，都只在本地开发环境运行，不进 CI：
 
-- **基准测试**：单独测一段代码的耗时和吞吐，只有三处：SDK 单次 `ctx.metric()`（标准库 `timeit`）、Agent 的指标合并与按行切分（criterion，只作开发依赖）、控制面的指标分段写入与降采样查询（`vitest bench`）。指标相关的每一项都另有一个带标签的变体：4 个带标签（`pid`、`name`）的指标 × 50 个进程，共 200 个序列（相当于标准节点 `process_monitor` 按进程上报），与不带标签的数值并列写进报告；降采样查询另按运行监控页的用法（每张图表只查它引用的指标）测一张图表引用 1 个、2 个带标签指标（50、100 个序列）的耗时，对照下表「运行监控页的图表」。可以单独运行：`uv run --locked python sdk/python/benchmarks/metric.py`、`cargo bench -p sfly-agent --bench telemetry`、`pnpm --filter @sfly/server exec vitest bench --run perf/benchmarks/control-plane.bench.ts`；`cargo test`、pytest 与 `vitest run` 都不会运行它们。
+- **基准测试**：单独测一段代码的耗时和吞吐，只有三处：SDK 单次 `ctx.metric()` 和单次 `ctx.action()`（标准库 `timeit`）、Agent 的指标合并与按行切分（criterion，只作开发依赖）、控制面的指标分段写入与降采样查询（`vitest bench`）。指标相关的每一项都另有一个带标签的变体：4 个带标签（`pid`、`name`）的指标 × 50 个进程，共 200 个序列（相当于标准节点 `process_monitor` 按进程上报），与不带标签的数值并列写进报告；降采样查询另按运行监控页的用法（每张图表只查它引用的指标）测一张图表引用 1 个、2 个带标签指标（50、100 个序列）的耗时，对照下表「运行监控页的图表」。可以单独运行：`uv run --locked python sdk/python/benchmarks/metric.py`、`cargo bench -p sfly-agent --bench telemetry`、`pnpm --filter @sfly/server exec vitest bench --run perf/benchmarks/control-plane.bench.ts`；`cargo test`、pytest 与 `vitest run` 都不会运行它们。
 - **负载测试**：用 release 构建的 Agent、打包后的控制面和本机 PostgreSQL，在指定负载下验证资源有上限、数据正确、端到端延迟达标。`pnpm perf` 约 10 分钟，顺带运行基准测试。发版前必跑：`pnpm perf --release` 通过后把报告存进仓库的 `docs/perf/<版本>/`，随发版 PR 提交；改动关键路径——Agent 日志转发、事件通道（SDK → Agent）、指标合并、控制面指标写入与查询——的 PR 在描述里贴结果（发版步骤与关键路径对应的代码位置见 `docs/agents/branching-and-release.md`）。
 - **长时负载测试**：`pnpm perf:soak`，默认 1 小时（`--duration` 指定，如 `30m`、`2h`），只在维护者要求时运行。同一个控制面上同时施加「控制面接收指标」的负载（跑满时长，即下表的 1 小时目标）和真实 Agent 的持续负载（一个任务全程每秒 1 万次事件，其余槽位不停执行定速输出 stdout 与短时上报指标的任务），报告里有 Agent 与控制面内存、Agent 工作目录占用、控制面数据目录与数据库大小、指标点数随时间变化的数据，用来发现缓慢泄漏（#69 那样）。中途按 Ctrl-C 会停止负载，已采集的数据照常写进报告并标为被中断。结果写到本机结果目录下的 `soak/<时间>/`，只与长时负载测试对比（发版基线是 `docs/perf/<版本>/soak.json`）；发版时跑了的，同样用 `--release` 存进 `docs/perf/<版本>/`。
 

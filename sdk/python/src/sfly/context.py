@@ -12,7 +12,9 @@
 - `ctx.agent()` / `ctx.agent(名称)`：自己所在的 Agent / 通过「Agent」类型的参数拿到的
   另一台 Agent 的能力（见 `Context.agent`、`sfly.capabilities`）；
 - `ctx.notify(机器人, 文本)` / `ctx.notify(机器人, message=...)`：发一条飞书通知（文本或原始消息），
-  由控制面发出，投递失败不抛异常（见 `Context.notify`、`sfly.feishu`）。
+  由控制面发出，投递失败不抛异常（见 `Context.notify`、`sfly.feishu`）；
+- `ctx.action(名称, **字段)` / `ctx.action.start(...)` / `ctx.mark(名称, **字段)`：记录节点正在做的
+  事（动作）和某个时刻（标记）（见 `sfly.actions`）。
 
 取消时 Agent 先写入取消标记，再向进程树发 SIGTERM；执行器把 SIGTERM 变成节点里的 `Cancelled` 异常
 （`BaseException` 的子类，`except Exception` 不会吞掉它），`finally` 和 `with` 里的清理代码会执行，
@@ -30,9 +32,76 @@
 - 通知 `{"type": "notify", "ts": ..., "bot": "ops", "text": "...", "at_all": false}`，发原始消息时是
   `{"type": "notify", "ts": ..., "bot": "ops", "message": {...}}`：Agent 不解析，
   原样转给控制面（Notification 消息），由控制面校验、组装请求体并写进发送队列
+- 动作和标记（`ctx.action`、`ctx.mark`，规格 #345）有四种事件，见下一节。
 
 `print` 和子进程的输出不经过这里：Agent 直接读取执行器的标准输出 / 标准错误，
 与事件文件合并成同一条日志流。
+
+动作和标记的四种事件
+--------------------
+
+每一行是一个 JSON 对象，字符串里的中文不转义。`ts` 是 Agent 时间（SDK 读系统时钟，Unix 毫秒，
+整数），`mono` 是同一时刻 Agent 系统级单调时钟的读数（毫秒，整数，大于 0）：Linux 上是
+`CLOCK_BOOTTIME`，其他平台是 `CLOCK_MONOTONIC`，和 Agent 的 `clock::monotonic_ms` 是同一个时钟
+（ADR 0018）。
+控制面用 `mono` 折算控制面时间、计算耗时，系统时间被改动时耗时不受影响。各行的 `ts`、`mono` 是事件
+发生的时刻，不一定随行的先后递增（下面「补发」的 `action_start` 就比前面的行早）。
+
+- `{"type": "action_start", "ts", "mono", "id": 7, "parent": 3, "depth": 1, "name": "下单",
+  "fields": {"订单": "1001"}}`：一个动作开始。
+  - `id`：整数，任务内从 1 开始递增，由 SDK 分配；动作和标记共用这一个序列，同一个任务里
+    ID 不重复。
+  - `parent`：父动作的 `id`，最外层是 null。父动作不一定有明细（超过上限时不上报它的
+    `action_start`；`start()` 的父动作也可能已经结束），所以消费方不能要求 `parent` 指向一个已有的
+    动作。
+  - `depth`：整数，祖先的个数，最外层是 0，由 SDK 按 `parent` 算出（父动作没有明细时也准确）。
+  - `name`：字符串，1 到 64 个字符。`fields`：对象，最多 8 个键，键是字符串，值一律是字符串（
+    SDK 已转成字符串），每个不超过 256 个字符；没有字段时是 `{}`。
+- `{"type": "action_end", "ts", "mono", "id": 7, "result": "failed", "reason": "ValueError: 拒单",
+  "fields": {"回报": "rejected"}}`：动作结束。
+  - `result`：`success`、`failed`、`unfinished`（抛出了 `Cancelled`）三者之一。
+  - `reason`：失败的原因，形如 `<异常类型>: <消息>` 或 `fail()` 给的文字，最多 4096 个字符；
+    其他结果是 null。
+  - `fields`：这个动作上 `note()` 补充的字段，没有时是 `{}`。动作最终的字段是 `action_start` 的
+    `fields` 再用它覆盖同名的键，合计仍不超过 8 个键。
+  - 没有对应的 `action_start` 时，这个动作超过了上限，不会有这一行；失败的例外，见下面「补发」。
+- `{"type": "mark", "ts", "mono", "id": 8, "parent": 3, "depth": 1, "name": "收到第一笔成交",
+  "fields": {}}`：一个标记，字段的含义同 `action_start`；没有持续时间，也没有结果。
+- `{"type": "action_summary", "ts", "mono", ...}`：目前为止的汇总，`ts`、`mono` 是发出这一行的时刻。
+  发出时机：有变化时才发，每秒最多一次（距上一次不到一秒时推迟到满一秒），节点进程退出时尽力再发一次。
+  每一份都是完整的，只有最新一份有用。内容不受上限影响，超过上限之后仍然准确：
+
+  ```
+  {"type": "action_summary", "ts", "mono",
+   "total": 120345, "reported": 100000, "capped_ts": 1700000000000, "capped_mono": 123456789,
+   "names": [{"name": "下单", "total": 120000, "failed": 12,
+              "capped_ts": 1700000000000, "capped_mono": 123456789}],
+   "running": [{"id", "parent", "depth", "name", "fields", "ts", "mono"}],
+   "recent": [{"id", "parent", "depth", "name", "fields", "ts", "mono",
+               "end_ts", "end_mono", "result", "reason"}],
+   "recent_failed": [同 recent 的每一项]}
+  ```
+
+  - `total`：到目前为止开始的动作和标记的个数（不论有没有明细）；`reported`：已经上报明细（
+    `action_start` 或 `mark`，包括补发的）的个数，最多 100000。`capped_ts`、`capped_mono`：合计达到
+    100000 个、之后不再上报明细的起点（第一个没有上报明细的动作的开始时刻），没有达到时是 null。
+  - `names`：每种名称一项，按第一次出现的先后排列。`total`：这个名称的动作和标记的个数；`failed`：
+    失败的动作的个数；`capped_ts`、`capped_mono`：这个名称从什么时候起只计数（超过 50000 个，
+    或合计超过 100000 个以后；起点是第一个没有上报明细的动作的开始时刻），没有时是 null。
+  - `running`：正在做的动作，最多 50 个，优先取层级浅的、同一层级里开始早的，列表按开始的先后
+    （`id`）排列。每一项有 `id`、`parent`、`depth`、`name`、`fields`（开始时的字段加上 `note()`
+    补充的）、`ts`、`mono`（开始的时刻）。
+  - `recent`：最近结束的 20 个动作（任何结果），最近结束的在前，每一项是 `running` 的字段再加
+    `end_ts`、`end_mono`（结束的时刻）、`result`、`reason`。`recent_failed`：其中最近失败的 5 个，
+    格式相同，最近失败的在前。标记不在 `running`、`recent` 里。
+  - 超过上限没有明细的动作也在 `running`、`recent`、`recent_failed` 里。
+
+补发：超过每种名称的上限（50000 个）、没有上报 `action_start` 的动作，如果以失败结束，SDK 在
+结束时把明细补上（直到合计 100000 个）：连续写一行 `action_start`，时间是动作真正开始的时刻，
+再写一行 `action_end`；格式与平时完全相同。
+
+动作开始时发 `action_start`，结束时发 `action_end`，没有结束的动作不发 `action_end`：节点进程被
+强制终止、或者任务结束时还没结束的动作，由读取事件的一方（控制面、本地调试）记为 `unfinished`。
 """
 
 from __future__ import annotations
@@ -51,6 +120,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from sfly.actions import Action, Actions, ActionScope
     from sfly.capabilities import Agent
     from sfly.nodes import Metric
 
@@ -169,6 +239,23 @@ class _EventWriter:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+#: 和 Agent 的 `clock::monotonic_ms`（agent/src/clock.rs）同一个系统级单调时钟：Linux 上是开机以来的
+#: 时间、包括休眠（`CLOCK_BOOTTIME`），其他 Unix 是 `CLOCK_MONOTONIC`。`time.monotonic()` 不行：
+#: 它在 macOS 上不是同一个时钟，Agent 和 SDK 的读数要能互相折算。没有系统级单调时钟的平台
+#: （Agent 不支持的 Windows）取本进程的 `time.monotonic_ns()`，和 Agent 在那里的做法一样。
+_MONOTONIC_CLOCK: int | None = getattr(
+    time, "CLOCK_BOOTTIME", getattr(time, "CLOCK_MONOTONIC", None)
+)
+
+
+def monotonic_ms() -> int:
+    """单调时钟的读数（毫秒），不受系统时间被修改的影响，只用来算差值和交给 Agent 折算。
+    总是大于 0：协议里 0 表示没有读数。"""
+    if _MONOTONIC_CLOCK is None:
+        return time.monotonic_ns() // 1_000_000 + 1
+    return max(1, time.clock_gettime_ns(_MONOTONIC_CLOCK) // 1_000_000)
 
 
 class Log:
@@ -429,6 +516,9 @@ class Context:
         self._events = _EventWriter(events_path)
         self._cancel = cancel_path
         self.log = Log(self._events)
+        # 动作用到时才创建（sfly.actions 不在每个任务的启动路径上导入）。
+        self._actions: Actions | None = None
+        self._actions_lock = _thread.allocate_lock()
         self.artifacts = Artifacts(
             artifacts_dir,
             artifacts_url,
@@ -530,6 +620,47 @@ class Context:
                 raise TypeError(f"ctx.notify 的 text 必须是字符串，实际为 {text!r}")
             content = {"text": text, "at_all": at_all}
         self._events.write({"type": "notify", "ts": _now_ms(), "bot": bot, **content})
+
+    @property
+    def action(self) -> Actions:
+        """`ctx.action`：记录节点正在做的一件有开始和结束的事（动作）。
+
+            with ctx.action("下单", 订单=oid, 价格=price) as a:
+                ...
+                a.note(回报="已成交")          # 动作进行中补充字段
+                a.fail("拒单：余额不足")        # 标记失败，不抛异常
+
+            handle = ctx.action.start("保持", 时长="4h")   # 开始和结束不在同一段代码里
+            ...
+            handle.end()                                  # 或 handle.fail("原因")
+
+        用法、结果的规则、嵌套、上限见 `sfly.actions`。
+        """
+        actions = self._actions
+        if actions is None:
+            with self._actions_lock:
+                actions = self._actions
+                if actions is None:
+                    from sfly.actions import Actions
+
+                    actions = self._actions = Actions(self._events, self._warn_once)
+        return actions
+
+    def mark(
+        self,
+        name: str,
+        /,
+        *,
+        parent: Action | ActionScope | None = None,
+        **fields: object,
+    ) -> None:
+        """记一个时刻（标记），例如 `ctx.mark("收到第一笔成交", 订单=oid)`。
+        没有持续时间，也没有结果。
+
+        `parent` 是它属于哪个动作，默认是当前最内层的 `with ctx.action(...)`。名称和字段的规则
+        同动作，见 `sfly.actions`。
+        """
+        self.action.mark(name, parent=parent, **fields)
 
     def cancelled(self) -> bool:
         """任务是否已被取消（Agent 已写入取消标记）。"""

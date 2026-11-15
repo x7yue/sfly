@@ -40,6 +40,7 @@ description: 开发 sfly 节点包：新增或修改 `@node` 节点、本地调�
 
 ### 日志、进度、指标、产物
 - 信息一律通过 `ctx` 输出：`ctx.log` 带级别进入运行视图；耗时操作用 `ctx.progress` 上报进度。
+- 想让看运行的人知道节点此刻在做什么（连网关、预热、保持 4 小时、每一笔下单），用 `with ctx.action(名称, 订单=订单号)` 记成动作，一个时刻用 `ctx.mark(名称)`。名称只写这是一件什么事，订单号这类变化的内容放进字段；高频压测不要每一笔都记，按批或按阶段记录，每一笔的延迟用指标。单元测试里断言 `run_node(...).actions`。
 - 指标先在 `@node(metrics=...)` 里声明，再用 `ctx.metric` 上报（未声明的会被丢弃）。`gauge` 是瞬时值，`counter` 是累计值；用 `primary_metric` 指出最能代表运行状况的那个。按对象（进程、连接、网卡……）分别统计时在 `Metric(labels=[...])` 声明标签键、上报时带 `labels`；带标签的指标只能画在 `line` / `area` 图表里，也不能当主指标，需要时另报一个不带标签的合计指标。
 - 文件用 `ctx.artifacts.save` / `path` 保存，输出里放返回的产物引用；后续节点用 `ctx.artifacts.download(引用, 本地路径)` 下载，不要自己写 `urlopen`。
 - 往飞书群发通知用 `ctx.notify(机器人, 文本)`，要带格式用 `ctx.notify(机器人, message=sfly.feishu.card(标题, Markdown 正文, 颜色))`（完整的飞书请求体也能直接给 `message=`）；机器人声明成 `FeishuBot` 类型的参数传进来，不要自己请求 Webhook 地址：消息由控制面发出，投递失败不会抛异常，也不会让节点变慢。单元测试里断言 `run_node(...).notifications`。
