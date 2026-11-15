@@ -1,8 +1,8 @@
-import { isActiveStatus, type RunListItem } from "@sfly/schema";
+import type { RunListItem } from "@sfly/schema";
 import { and, count, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
-import { loadRunBoards } from "../engine/run-board.js";
+import { activeNodesOf, loadRunBoards } from "../engine/run-board.js";
 import { runListPreset } from "../presets/run-preset.js";
 
 export interface RunListFilter {
@@ -68,6 +68,7 @@ export async function listAllRuns(
 	return {
 		counts,
 		runs: rows.map(({ run, name, version }) => {
+			const chains = boards.get(run.id) ?? [];
 			const item: RunListItem = {
 				id: run.id,
 				orchestration_id: run.orchestrationId,
@@ -81,23 +82,12 @@ export async function listAllRuns(
 				started_at: run.startedAt.toISOString(),
 				ended_at: run.endedAt ? run.endedAt.toISOString() : null,
 				chains: [],
-				active_nodes: [],
+				active_nodes: activeNodesOf(chains),
 				failures: [],
 			};
-			for (const chain of boards.get(run.id) ?? []) {
+			for (const chain of chains) {
 				const subflow = chain.depth > 0;
-				const nodes = chain.nodes.map(({ node_id, display_name, status, progress }) => {
-					if (isActiveStatus(status)) {
-						item.active_nodes.push({
-							chain_instance_id: chain.id,
-							node_id,
-							display_name,
-							status,
-							progress: progress ? { current: progress.current, total: progress.total } : null,
-						});
-					}
-					return { node_id, status };
-				});
+				const nodes = chain.nodes.map(({ node_id, status }) => ({ node_id, status }));
 				const failedNode = chain.nodes.find((n) => n.status === "failed");
 				if (chain.status === "failed" || failedNode) {
 					item.failures.push({

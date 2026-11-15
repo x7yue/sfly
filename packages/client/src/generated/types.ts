@@ -319,28 +319,12 @@ export interface CurrentAction {
 	started_at: Timestamp;
 }
 
-export interface DashboardAgent {
-	name: string;
-	status: "online" | "offline";
-	slots: number;
-	/** 占用的槽位数（派发中与执行中的任务）。 */
-	used_slots: number;
-	/** 正在安装的节点包；没有在安装时为 null。 */
-	installing: {
-		package: string;
-		version: string;
-	} | null;
-	last_seen_at: Timestamp;
-}
-
 export interface DashboardAgentStats {
 	online: number;
 	offline: number;
 	/** 在线 Agent 的槽位合计与占用。 */
 	slots: number;
 	used_slots: number;
-	/** 全部注册过的 Agent，按名称排序。 */
-	list: DashboardAgent[];
 }
 
 /** 运行中的链实例：节点按链上的顺序，状态与运行视图一致（pending、queued、running、success…）。 */
@@ -354,6 +338,10 @@ export interface DashboardChain {
 	 * 取自运行绑定的场景版本；主链不给。
 	 */
 	subflow_name?: string;
+	/** 触发这个子流程实例的异步任务节点所在的链实例；主链为 null。 */
+	parent_chain_instance_id: string | null;
+	/** 触发这个子流程实例的异步任务节点；主链为 null。 */
+	async_node_id: string | null;
 	status: string;
 	nodes: {
 		node_id: string;
@@ -363,13 +351,33 @@ export interface DashboardChain {
 	}[];
 }
 
-/** 最近失败的一条：一个失败的链实例（主链失败即运行失败；子流程失败单独一条）。 */
-export interface DashboardFailure {
-	run_id: string;
+/**
+ * 最近结束的一个运行。失败的带上最先出问题的节点；运行的任务记录里找不到失败的节点时（数据不完整，正常运行不会出现）
+ * failure 为 null。
+ */
+export type DashboardEndedRun = {
+	id: string;
 	orchestration_id: string;
 	orchestration_name: string;
-	/** 所在运行的当前状态（子流程失败时主链可能还在运行）。 */
-	run_status: string;
+	orchestration_version: number;
+	triggered_by: string;
+	started_at: Timestamp;
+	ended_at: Timestamp;
+	status: "failed";
+	failure: DashboardRunFailure | null;
+} | {
+	id: string;
+	orchestration_id: string;
+	orchestration_name: string;
+	orchestration_version: number;
+	triggered_by: string;
+	started_at: Timestamp;
+	ended_at: Timestamp;
+	status: "success" | "cancelled";
+};
+
+/** 失败的运行最先出问题的地方：跨所有链，最后一次尝试失败、最先结束的节点和它所在的链。 */
+export interface DashboardRunFailure {
 	chain_instance_id: string;
 	chain_id: string;
 	subflow: boolean;
@@ -378,16 +386,16 @@ export interface DashboardFailure {
 	 * 取自运行绑定的场景版本；主链不给。
 	 */
 	subflow_name?: string;
-	/** 最先失败的节点（最后一次尝试失败）；没有失败节点时（例如校验失败）为 null。 */
-	node_id: string | null;
+	node_id: string;
 	/** 失败节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name?: string;
+	/** 失败节点最后一次尝试的尝试号。 */
+	attempt: number;
+	/** 这次尝试的错误，其中的 secret 值已打码。 */
 	error: {
 		kind: string;
 		message: string;
 	} | null;
-	/** 链实例结束的时间。 */
-	failed_at: Timestamp;
 }
 
 export interface DashboardRunStats {
@@ -415,7 +423,10 @@ export interface DashboardRunningRun {
 	started_at: Timestamp;
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;
+	/** 主链在前，子流程按深度、开始时间。 */
 	chains: DashboardChain[];
+	/** 进行中的节点（与运行列表的 `active_nodes` 相同）。 */
+	active_nodes: RunListActiveNode[];
 }
 
 export interface DashboardView {
@@ -424,8 +435,9 @@ export interface DashboardView {
 	runs: DashboardRunStats;
 	/** 正在运行的运行，按开始时间从新到旧。 */
 	running_runs: DashboardRunningRun[];
-	/** 窗口内失败的链实例，按失败时间从新到旧（最多 10 条）。 */
-	recent_failures: DashboardFailure[];
+	/** 窗口内结束的运行，按结束时间从新到旧（最多 10 个）。 */
+	recent_ended: DashboardEndedRun[];
+	/** Agent 的在线数与槽位合计；每台 Agent 的状态与正在执行的任务用 Agent 列表接口（agentsApi.list）。 */
 	agents: DashboardAgentStats;
 }
 
@@ -1482,6 +1494,14 @@ export interface RunListActiveNode {
 	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name?: string;
 	status: string;
+	/** 最后一次尝试的尝试号（从 1 开始）。 */
+	attempt: number;
+	/** 任务所在的 Agent（排队中的任务是它在等的 Agent）；不在 Agent 上执行的节点（等待节点、停止子流程节点）为 null。 */
+	agent: string | null;
+	/** 最后一次尝试开始的时间（等待节点是开始等待的时间）；还没开始执行（排队中、准备中）时为 null。 */
+	started_at: Timestamp | null;
+	/** 等待节点（定时 / Sleep）的唤醒时间；其他节点为 null。 */
+	wake_at: Timestamp | null;
 	/** 最新进度；没有上报过时为 null。 */
 	progress: {
 		current: number;
