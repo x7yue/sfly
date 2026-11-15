@@ -4,6 +4,7 @@ import {
 	isLabeled,
 	type Labels,
 	type MetricBucket,
+	type MetricDeclaration,
 	type MetricSeries,
 	type MetricSeriesQuery,
 	NodeTypeMetadata,
@@ -40,6 +41,27 @@ type TaskRow = typeof tasks.$inferSelect;
 export type SeriesOutcome =
 	| { ok: true; series: MetricSeries }
 	| { ok: false; status: 400 | 404; code: string; message: string };
+
+/** 序列最后一个点：控制面时间（Unix 秒）与值。 */
+export interface SeriesEnd {
+	at: number;
+	value: number;
+}
+
+/** {@link MetricQueries.taskSeries} 的结果。 */
+export interface TaskSeriesRead {
+	/** 实际的时间范围（Unix 秒）；没有数据且没有指定时为 undefined。 */
+	from: number | undefined;
+	to: number | undefined;
+	bucketSeconds: number;
+	series: Array<{
+		name: string;
+		labels: Labels;
+		buckets: MetricBucket[];
+		/** 最后一个点；序列还没有点（或已过保留期）为 undefined。 */
+		end: SeriesEnd | undefined;
+	}>;
+}
 
 /** 一个桶的累计量。 */
 interface Acc {
@@ -168,66 +190,93 @@ export class MetricQueries {
 		const ref = await nodeTypeOf(this.deps.db, run.document, task.nodeId, task.agentName);
 		const declared = ref?.type?.metrics ?? [];
 		const names = query.metrics ?? declared.map((m) => m.name);
-		const labeled = new Set(declared.filter(isLabeled).map((m) => m.name));
 		// 已过保留期（#32）：数据已清理，不再查询，每个序列都没有桶。
 		const expired = run.run.metricsPurgedAt !== null;
+		const read = await this.taskSeries(task.id, {
+			declared,
+			names,
+			expired,
+			from: query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000),
+			to: query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000),
+			points: query.points,
+		});
+		return {
+			ok: true,
+			series: {
+				run_id: runId,
+				chain_instance_id: task.chainInstanceId,
+				node_id: task.nodeId,
+				task_id: task.id,
+				attempt: task.attempt,
+				truncated: task.metricTruncated,
+				series_capped: task.metricSeriesCapped,
+				expired,
+				from: read.from === undefined ? null : isoOf(read.from),
+				to: read.to === undefined ? null : isoOf(read.to),
+				bucket_seconds: read.bucketSeconds,
+				series: read.series.map(({ name, labels, buckets }) => ({ name, labels, buckets })),
+			},
+		};
+	}
+
+	/**
+	 * 一个任务（一次尝试）里这些指标的序列，按目标点数降采样（{@link MetricQueries.series} 与关注项读数共用）：
+	 * 时间范围 [from, to]（控制面时间，Unix 秒）默认是这些指标已有数据的首尾，分成跨度 bucket_seconds 的桶，
+	 * 含内存里尚未写库的点；每个序列另给最后一个点的精确时间与值（不随降采样变粗）。
+	 * 没有任何数据、也没有声明标签键的指标给出一个空序列；声明了标签键的没有序列。已过保留期（expired）时序列没有桶。
+	 */
+	async taskSeries(
+		taskId: string,
+		query: {
+			/** 节点类型声明的指标（找出哪些带标签）。 */
+			declared: readonly MetricDeclaration[];
+			names: readonly string[];
+			expired: boolean;
+			from?: number | undefined;
+			to?: number | undefined;
+			points: number;
+		},
+	): Promise<TaskSeriesRead> {
+		const { declared, names, expired } = query;
+		const labeled = new Set(declared.filter(isLabeled).map((m) => m.name));
 		const unwritten = new Map(
 			expired
 				? []
-				: [...(await this.deps.metrics.unwritten(task.id))].filter(([, s]) =>
+				: [...(await this.deps.metrics.unwritten(taskId))].filter(([, s]) =>
 						names.includes(s.name),
 					),
 		);
 		const known = expired
 			? { series: [], first: undefined, last: undefined }
-			: await this.#known(task.id, names, unwritten);
+			: await this.#known(taskId, [...names], unwritten);
 		// 每个指标的全部序列；没有任何数据、也没有声明标签键的指标给出一个空序列（图表照常画出空图）。
 		const list = names.flatMap((name) => {
 			const found = known.series.filter((s) => s.name === name);
 			if (found.length > 0 || labeled.has(name)) return found;
 			return [{ name, labels: {}, key: name }];
 		});
-		let from = query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000);
-		let to = query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000);
-		from ??= known.first;
-		to ??= known.last;
-		const base = {
-			run_id: runId,
-			chain_instance_id: task.chainInstanceId,
-			node_id: task.nodeId,
-			task_id: task.id,
-			attempt: task.attempt,
-			truncated: task.metricTruncated,
-			series_capped: task.metricSeriesCapped,
-			expired,
-		};
+		const from = query.from ?? known.first;
+		const to = query.to ?? known.last;
 		if (expired || from === undefined || to === undefined || names.length === 0) {
 			return {
-				ok: true,
-				series: {
-					...base,
-					from: from === undefined ? null : isoOf(from),
-					to: to === undefined ? null : isoOf(to),
-					bucket_seconds: 1,
-					series: list.map(({ name, labels }) => ({ name, labels, buckets: [] })),
-				},
+				from,
+				to,
+				bucketSeconds: 1,
+				series: list.map(({ name, labels }) => ({ name, labels, buckets: [], end: undefined })),
 			};
 		}
 		const width = Math.max(1, Math.ceil((to - from + 1) / query.points));
-		const buckets = await this.#bucketize(task.id, names, unwritten, from, to, width);
+		const { buckets, ends } = await this.#bucketize(taskId, [...names], unwritten, from, to, width);
 		return {
-			ok: true,
-			series: {
-				...base,
-				from: isoOf(from),
-				to: isoOf(to),
-				bucket_seconds: width,
-				series: list.map(({ name, labels, key }) => ({
-					name,
-					labels,
-					buckets: buckets.get(key) ?? [],
-				})),
-			},
+			from,
+			to,
+			bucketSeconds: width,
+			series: list.map(({ name, labels, key }) => ({
+				name,
+				labels,
+				buckets: buckets.get(key) ?? [],
+				end: ends.get(key),
+			})),
 		};
 	}
 
@@ -279,7 +328,7 @@ export class MetricQueries {
 		};
 	}
 
-	/** 这些指标每个序列（键是 {@link seriesKey}）的非空桶。 */
+	/** 这些指标每个序列（键是 {@link seriesKey}）的非空桶，以及最后一个点。 */
 	async #bucketize(
 		taskId: string,
 		names: string[],
@@ -287,7 +336,7 @@ export class MetricQueries {
 		from: number,
 		to: number,
 		width: number,
-	): Promise<Map<string, MetricBucket[]>> {
+	): Promise<{ buckets: Map<string, MetricBucket[]>; ends: Map<string, SeriesEnd> }> {
 		// 段落在一个桶内、不和内存里的点重叠时只取段摘要（数组不读取、不解压）。
 		const memFirst = Math.min(
 			...[...unwritten.values()].map((s) => s.points[0]?.t ?? Number.POSITIVE_INFINITY),
@@ -396,7 +445,11 @@ export class MetricQueries {
 		}
 
 		const buckets = new Map<string, MetricBucket[]>();
+		const ends = new Map<string, SeriesEnd>();
 		for (const [key, byBucket] of accs) {
+			const lastBucket = Math.max(...byBucket.keys());
+			const lastAcc = byBucket.get(lastBucket);
+			if (lastAcc) ends.set(key, { at: lastAcc.lastAt, value: lastAcc.last });
 			buckets.set(
 				key,
 				[...byBucket.entries()]
@@ -413,7 +466,7 @@ export class MetricQueries {
 					})),
 			);
 		}
-		return buckets;
+		return { buckets, ends };
 	}
 
 	/**

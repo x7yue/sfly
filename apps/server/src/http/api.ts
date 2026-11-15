@@ -44,6 +44,7 @@ import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
 import { registerPresetRoutes } from "./preset-routes.js";
+import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
@@ -187,6 +188,7 @@ export function buildHttpApi({
 		metrics: metrics.increments,
 	});
 	registerRunListRoutes(app, { db: database.db });
+	registerRunFocusRoutes(app, { db: database.db, clock, queries: metricQueries });
 	registerLogRoutes(app, {
 		logs,
 		runLogs: new RunLogs({ db: database.db, logs, scanBytes: logScanBytes }),

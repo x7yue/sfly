@@ -606,6 +606,22 @@ export interface FeishuTestResult {
 /** Webhook 地址：必须是 http 或 https 地址，不含空白字符。 */
 export type FeishuWebhookUrl = string;
 
+/** 一项的异常；没有异常为 null。 */
+export interface FocusAnomaly {
+	kind: FocusAnomalyKind;
+	/** `log` 时是最近一条日志的级别。 */
+	level?: "warn" | "error";
+	/** 异常发生的时间（控制面时间）：最近一条日志、最后一个点、失败或重试开始的时间。 */
+	at: Timestamp;
+	/** 原因的原文，页面直接显示。 */
+	message: string;
+	/** `log` 时是这次尝试里 WARN / ERROR 的总条数。 */
+	count?: number;
+}
+
+/** 异常的四种原因，规则见 GLOSSARY「关注项」与方案文档第 4.1 节。 */
+export type FocusAnomalyKind = "log" | "stale" | "failed" | "retry";
+
 /** 关注项最后一次修改：谁、什么时候（控制面时间）、一句话说明改了什么（控制面比较新旧列表生成）。 */
 export interface FocusEditView {
 	/** 修改人的昵称。 */
@@ -655,6 +671,47 @@ export type FocusItemView = {
 	title?: string;
 	status: "chart_missing";
 };
+
+/** 读数的最新值：最近更新的那个序列的最后一个点。 */
+export interface FocusLatest {
+	value: number;
+	/** 这个点所在序列的标签；不带标签的序列为 `{}`。 */
+	labels: MetricLabels;
+	/** 这个点的控制面时间（按秒取整）。 */
+	at: Timestamp;
+}
+
+/** 序列里的一个桶：起始时间（控制面时间）、桶内的最小、最大值和最新值。 */
+export interface FocusPoint {
+	/** 桶的起始时间；升级之前存下的数据没有控制面时间，用它的 Agent 时间。 */
+	time: Timestamp;
+	min: number;
+	max: number;
+	/** 桶里最后一个点的值。 */
+	last: number;
+}
+
+export interface FocusSeries {
+	metric: MetricName;
+	labels: MetricLabels;
+	/** 按时间升序，每 `bucket_seconds` 秒一个桶，没有点的桶不给。 */
+	points: FocusPoint[];
+}
+
+/** 来源节点和它最新一次尝试的任务。 */
+export interface FocusSource {
+	/** 来源节点的状态，取法与运行视图里的节点状态一致。 */
+	status: NodeStatus;
+	/** 最新一次尝试的序号；节点还没有尝试时为 0。 */
+	attempt: number;
+	/** 最新一次尝试的任务；节点还没有尝试时为 null。 */
+	task_id: string | null;
+	/** 节点所在的链实例。 */
+	chain_instance_id: string;
+	/** 这次尝试开始、结束的时间，图表的横轴从开始画到结束（还没结束就画到 `generated_at`）；没有就是 null。 */
+	started_at: Timestamp | null;
+	ended_at: Timestamp | null;
+}
 
 /** 最近一次节点包安装状态（Agent 上报 InstallStatus）。 */
 export interface InstallProgressView {
@@ -1386,6 +1443,56 @@ export interface ReferencedAgent {
 export type RequiresAgent = string;
 
 export type RequiresSdk = string;
+
+export interface RunFocus {
+	/** 控制面生成这份读数的时间，页头「数据更新于」用它。 */
+	generated_at: Timestamp;
+	/** 场景设了关注项是 `focus`；没设时是执行中节点的主指标 `primary`。 */
+	mode: "focus" | "primary";
+	/** 这次运行的指标已过保留期：每一项都没有数据。 */
+	expired: boolean;
+	/** 已按「异常在前，其余按作者顺序」排好。 */
+	items: RunFocusItem[];
+}
+
+/**
+ * 一个关注项（或没设关注项时一个执行中节点的主指标）的读数。
+ *
+ * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点的执行顺序编号。
+ * `unavailable` 为 `chart_missing`（这次运行锁定的节点包版本里没有这张图表）时，`chart_type` 是 `line`、`unit` 是空串、
+ * 没有数据，这几个值没有意义，页面按 `unavailable` 写明原因。
+ */
+export interface RunFocusItem {
+	/** 作者设定的位置，从 1 开始；列表里不在这次运行里的项也占位置，所以返回的位置可以不连续。 */
+	position: number;
+	node_id: string;
+	/** 图表标题。 */
+	chart: string;
+	/** 显示名：作者起的名字，没起名时是图表标题。 */
+	title: string;
+	chart_type: "line" | "area" | "bar" | "stat";
+	/** 图表第一个指标的单位。 */
+	unit: string;
+	unavailable?: "chart_missing";
+	source: FocusSource;
+	latest: FocusLatest | null;
+	/** 数值卡只有第一个序列，其余图表是声明的全部序列；`points` 为 0 时为空。 */
+	series: FocusSeries[];
+	/** 每个桶的跨度（秒，至少 1）。 */
+	bucket_seconds: number;
+	/** 最后一个点的控制面时间；一个点都没有为 null。 */
+	last_at: Timestamp | null;
+	/** 按最近 10 个点估算的采样间隔（毫秒）；点不够 2 个时为 null。 */
+	sample_interval_ms: number | null;
+	/** 来源节点成功或已停止：只显示最终值，不判断异常。 */
+	final: boolean;
+	anomaly: FocusAnomaly | null;
+}
+
+export interface RunFocusQuery {
+	/** 每个序列降采样成多少个点；0 只要最新值，不返回序列。 */
+	points?: number;
+}
 
 /** 正在执行的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序。 */
 export interface RunListActiveNode {
