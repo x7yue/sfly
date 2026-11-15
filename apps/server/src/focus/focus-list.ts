@@ -1,4 +1,4 @@
-import { FOCUS_ITEMS_MAX, type FocusItemInput } from "@sfly/schema";
+import { FOCUS_ITEMS_MAX, type FocusItemInput, focusKey, focusName } from "@sfly/schema";
 
 /**
  * 关注项的列表（GLOSSARY「关注项」）：有序、按 `(node_id, chart)` 唯一、最多 {@link FOCUS_ITEMS_MAX} 项。
@@ -7,12 +7,6 @@ import { FOCUS_ITEMS_MAX, type FocusItemInput } from "@sfly/schema";
 export type FocusItem = FocusItemInput;
 
 type FocusRef = Pick<FocusItem, "node_id" | "chart">;
-
-/** 一个关注项的身份：来源节点和图表标题。名字（`title`）不是身份，改名还是同一项。 */
-export const focusKey = (item: FocusRef): string => JSON.stringify([item.node_id, item.chart]);
-
-/** 显示用的名字：场景作者起的名字，没起名时是图表标题。 */
-export const focusName = (item: FocusItem): string => item.title ?? item.chart;
 
 /** 写入被拒绝的原因，`code` 就是 400 响应的错误码。 */
 export type FocusRejection =
@@ -43,14 +37,6 @@ export function checkFocusList(items: readonly FocusItem[]): FocusRejection | un
 	}
 	return undefined;
 }
-
-/** 两份列表是否完全一样：同样的项、同样的名字、同样的顺序。 */
-export const sameFocusList = (a: readonly FocusItem[], b: readonly FocusItem[]): boolean =>
-	a.length === b.length &&
-	a.every((item, i) => {
-		const other = b[i] as FocusItem;
-		return focusKey(item) === focusKey(other) && item.title === other.title;
-	});
 
 /** 两份列表之间的差别：加了哪些项、去掉哪些项、公共的项顺序变没变、哪些项改了名。 */
 interface FocusDiff {

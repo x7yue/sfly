@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import type { OrchestrationView } from "@sfly/schema";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import { inspector, nodeCard, openEditor } from "./editor-support";
@@ -103,4 +103,28 @@ export async function selectMetricsTab(page: Page, nodeId: string) {
 	await panel.getByRole("tab", { name: "说明与指标" }).click();
 	await expect(panel.getByRole("list", { name: "图表" })).toBeVisible();
 	return panel;
+}
+
+/** 打开场景的画布，切到场景设置的「关注项」页（不选节点时的检查器）；返回检查器。 */
+export async function openFocusList(page: Page, scenarioId: string, lastNode = "ping") {
+	await openEditor(page, scenarioId, lastNode);
+	const panel = inspector(page);
+	const tab = panel.getByRole("tab", { name: "关注项" });
+	await tab.click();
+	await expect(tab).toHaveAttribute("aria-selected", "true");
+	return panel;
+}
+
+/** 「关注项」页的列表（没有关注项时没有列表）。 */
+export const focusList = (panel: Locator) => panel.getByRole("list", { name: "关注项" });
+
+/** 「关注项」页上每一行的名字（输入框里的文字），按显示顺序。 */
+export const focusNames = (panel: Locator) =>
+	focusList(panel)
+		.getByRole("textbox")
+		.evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value));
+
+/** 控制面上场景的关注项（`节点:图表`），按显示顺序。 */
+export async function focusKeysOf(cp: TestControlPlane, scenarioId: string) {
+	return (await sceneView(cp, scenarioId)).focus_items.map((i) => `${i.node_id}:${i.chart}`);
 }

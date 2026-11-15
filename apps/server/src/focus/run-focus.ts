@@ -2,6 +2,7 @@ import {
 	type ChartView,
 	DEFAULT_FOCUS_POINTS,
 	type FocusSeries,
+	focusName,
 	type MetricDeclaration,
 	type NodeStatus,
 	type RunFocus,
@@ -16,7 +17,7 @@ import { loadRunBoards, nodeNameIn } from "../engine/run-board.js";
 import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
-import { type FocusItem, focusName } from "./focus-list.js";
+import type { FocusItem } from "./focus-list.js";
 import { declaredNodeType } from "./focus-views.js";
 
 /** 解析一次运行的关注项要用到的依赖：控制面里读读数的地方（目前是 HTTP 接口）传这三样。 */

@@ -19,6 +19,7 @@ import { type E2eFixtures, expect, test } from "./fixtures";
 import {
 	createFocusScenario,
 	focusDocument,
+	openFocusList,
 	saveVersion,
 	selectMetricsTab,
 	setFocusItems,
@@ -1128,6 +1129,32 @@ test("编排画布：检查器「说明与指标」里的关注开关（已按�
 	await selectMetricsTab(page, "fetch2");
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-inspector-focus-toggles.png");
+});
+
+test("编排画布：场景设置的「关注项」页（排序列表、最后修改、失效的项）", async ({
+	page,
+	controlPlane,
+}) => {
+	const id = await createFocusScenario(controlPlane);
+	const throughput = { node_id: "fetch", chart: "吞吐", title: "母单量" };
+	const rejects = { node_id: "fetch2", chart: "errors", title: "拒单数" };
+	const latency = { node_id: "fetch", chart: "延迟", title: "下单延迟" };
+	const rest = [
+		{ node_id: "fetch2", chart: "请求数" },
+		{ node_id: "ping", chart: "level" },
+	];
+	await setFocusItems(controlPlane, id, [throughput, rejects, latency, ...rest], "lin");
+	// 最后一次修改：lin 把「下单延迟」移到第 2 位。
+	await setFocusItems(controlPlane, id, [throughput, latency, rejects, ...rest], "lin");
+	// 第 2 版去掉了 ping，它的关注项失效。
+	await saveVersion(controlPlane, id, 1, {
+		...focusDocument,
+		nodes: focusDocument.nodes.filter((n) => n.id !== "ping"),
+		edges: focusDocument.edges.filter((e) => e.to !== "ping"),
+	});
+	await openFocusList(page, id, "fetch2");
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-scene-focus-list.png");
 });
 
 test("编排画布：运行状态（选中失败尝试后重试中的节点）", async ({
