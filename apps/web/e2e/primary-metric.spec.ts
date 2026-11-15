@@ -187,6 +187,7 @@ test("序列的响应早于指标点生成、晚于增量到达：运行抽屉�
 	// 事件流里的增量没有可以观察的完成信号，等一小段时间让它先到达页面（增量来得更晚时
 	// 只是走了普通的追加路径，用例依然通过，不会因此误报）。
 	agent.metrics(task, pingPoints(START, 0, 3));
+	// biome-ignore lint/plugin/e2e-fixed-wait: 增量到达页面后先存着，释放序列响应之前页面上看不出变化，没有可等的状态（见上）
 	await page.waitForTimeout(500);
 	release();
 	const metric = active.locator('[data-primary-metric="level"]');

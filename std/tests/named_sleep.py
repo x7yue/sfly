@@ -51,6 +51,8 @@ class NamedSleep:
     @staticmethod
     def argv(name: str, seconds: str) -> list[str]:
         """进程名为 `name`、睡 `seconds` 秒的命令（例如交给 `sh -c "...; exec ..."`）。"""
+        if not sys.platform.startswith("linux"):
+            pytest.skip("改进程名要写 /proc/self/comm，只有 Linux 有")
         assert 0 < len(name) <= MAX_NAME, name
         return [sys.executable, "-I", __file__, name, seconds]
 

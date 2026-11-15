@@ -232,15 +232,6 @@ def test_sfly_debug_writes_to_an_agent_mapped_to_a_local_directory(tmp_path: Pat
 # ---- 经本地 socket 发出的请求和数据帧 ----
 
 
-@pytest.fixture
-def short_dir() -> Any:
-    """socket 路径不能太长（AF_UNIX 108 字节），放在 TMPDIR 下的短目录里。"""
-    import tempfile
-
-    with tempfile.TemporaryDirectory(prefix="sfly-") as tmp:
-        yield Path(tmp)
-
-
 INFO = {"path": "/srv/x", "size": 3, "mtime_ns": 1, "device": 2, "inode": 3}
 
 

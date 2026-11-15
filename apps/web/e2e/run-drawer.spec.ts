@@ -124,6 +124,7 @@ test("同一个运行在页面上只开一条事件流（摘要、底部按钮�
 	await agent.nextAssign();
 	await expect(drawer.getByTestId("summary-status")).toHaveText("运行中");
 	await expect(drawer.getByRole("button", { name: "取消运行" })).toBeVisible();
+	// biome-ignore lint/plugin/e2e-fixed-wait: 断言的是没有发生的事：之后没有再多开一条事件流
 	await page.waitForTimeout(300);
 	expect(streams).toHaveLength(1);
 });

@@ -6,9 +6,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentsApi, logsApi } from "@sfly/schema";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { type AgentPair, startAgentPair } from "./support/agent-pair.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { publishTestPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -37,7 +38,7 @@ async function pidsIn(path: string): Promise<number[]> {
 	}
 }
 
-describe("全栈：Agent 能力 exec", () => {
+describeWithAgent("全栈：Agent 能力 exec", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	let pair: AgentPair;

@@ -8,16 +8,17 @@ import { arch, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { type ReleaseMirror, startReleaseMirror } from "./support/release-mirror.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const run = promisify(execFile);
 
-describe("全栈：install.sh 安装的 Agent", () => {
+describeWithAgent("全栈：install.sh 安装的 Agent", () => {
 	let cp: TestControlPlane;
 	let mirror: ReleaseMirror;
 	let dir: string;

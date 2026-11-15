@@ -25,6 +25,11 @@ from sfly import Agent, AgentError, AgentUnreachable, Context, FileId, FileInfo
 from sfly.testing import Execution, run_node
 from sfly_std.watch_files import watch_files
 
+#: 真的在本机监听来源目录的用例：本地调试时的 files.watch 用 inotify，只支持 Linux。
+local_watch = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="本地调试时的 files.watch 用 inotify，只支持 Linux"
+)
+
 SOURCE = "a-01"
 #: 来源 Agent 上的目录（那台 Agent 上的绝对路径）。
 LOGS = "/var/log/app"
@@ -86,6 +91,7 @@ def pulled_logs(result: Execution) -> list[str]:
     ]
 
 
+@local_watch
 def test_pulls_the_matching_files_already_there(tmp_path: Path) -> None:
     source_dir(
         tmp_path,
@@ -105,6 +111,7 @@ def test_pulls_the_matching_files_already_there(tmp_path: Path) -> None:
     assert (local / "app.log.2").read_text(encoding="utf-8") == "第二个\n"
 
 
+@local_watch
 def test_ends_successfully_when_duration_ends_and_outputs_what_it_pulled(tmp_path: Path) -> None:
     # 到期时拉了几个文件取决于机器快慢：输出和拉下来的文件一致就行。
     source_dir(tmp_path, {"app.log.1": b"first\n", "app.log.2": "第二个\n".encode()})
@@ -120,6 +127,7 @@ def test_ends_successfully_when_duration_ends_and_outputs_what_it_pulled(tmp_pat
     assert len(local) == len(pulled_logs(result))
 
 
+@local_watch
 def test_files_rotated_while_watching_are_pulled_once_until_stopped(
     tmp_path: Path,
     once_watching: OnceWatching,
@@ -152,6 +160,7 @@ def test_files_rotated_while_watching_are_pulled_once_until_stopped(
     assert (local / "app.log.1.~1~").read_bytes() == b"round 2\n"
 
 
+@local_watch
 def test_a_file_still_being_written_is_pulled_only_after_it_has_not_changed_for_stable_seconds(
     tmp_path: Path, once_watching: OnceWatching
 ) -> None:
@@ -194,6 +203,7 @@ def test_a_file_still_being_written_is_pulled_only_after_it_has_not_changed_for_
         assert pulled_logs(result) == [f"{LOGS}/app.log"]
 
 
+@local_watch
 def test_delete_source_deletes_each_file_after_pulling_it(tmp_path: Path) -> None:
     logs = source_dir(tmp_path, {"app.log.1": b"1", "app.log.2": b"22", "app.log": b"now"})
 
@@ -208,6 +218,7 @@ def test_delete_source_deletes_each_file_after_pulling_it(tmp_path: Path) -> Non
     assert sorted(p.name for p in logs.iterdir()) == ["app.log"]
 
 
+@local_watch
 def test_a_pulled_file_that_grows_is_pulled_again_and_replaces_the_local_copy(
     tmp_path: Path, once_watching: OnceWatching
 ) -> None:
@@ -231,6 +242,7 @@ def test_a_pulled_file_that_grows_is_pulled_again_and_replaces_the_local_copy(
     assert local.read_bytes() == b"a\nb\n"
 
 
+@local_watch
 def test_reports_the_pulled_files_bytes_and_rate_as_metrics(tmp_path: Path) -> None:
     source_dir(tmp_path, {"a.log": b"a" * 1000, "b.log": b"b" * 24})
 
@@ -289,6 +301,7 @@ def test_losing_the_connection_while_checking_why_a_download_failed_retries_late
 BIG = 2 * 1024 * 1024 * 1024
 
 
+@local_watch
 def test_stopping_in_the_middle_of_a_download_leaves_no_partial_file(tmp_path: Path) -> None:
     logs = source_dir(tmp_path, {"a.log": b"a" * 100})
     with open(logs / "b.log", "wb") as f:
@@ -309,6 +322,7 @@ def test_stopping_in_the_middle_of_a_download_leaves_no_partial_file(tmp_path: P
     assert sorted(p.name for p in logs.iterdir()) == ["b.log"]
 
 
+@local_watch
 def test_fails_when_the_directory_does_not_exist_on_the_source_agent(tmp_path: Path) -> None:
     (tmp_path / "a").mkdir()
 

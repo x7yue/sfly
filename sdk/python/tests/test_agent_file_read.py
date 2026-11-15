@@ -18,7 +18,7 @@ import shutil
 import signal
 import subprocess
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -36,15 +36,6 @@ SFLY = str(Path(sys.executable).parent / "sfly")
 @pytest.fixture(autouse=True)
 def package_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.syspath_prepend(str(PACKAGE_SRC))
-
-
-@pytest.fixture
-def short_dir() -> Iterator[Path]:
-    """socket 路径不能太长（AF_UNIX 108 字节），放在 TMPDIR 下的短目录里。"""
-    import tempfile
-
-    with tempfile.TemporaryDirectory(prefix="sfly-") as tmp:
-        yield Path(tmp)
 
 
 def content(size: int) -> bytes:

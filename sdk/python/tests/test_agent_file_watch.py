@@ -22,6 +22,10 @@ from sfly.testing import Execution, run_node
 
 PACKAGE = Path(__file__).resolve().parents[3] / "testdata" / "agent-files-package"
 
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="本地调试时的 files.watch 用 inotify，只支持 Linux"
+)
+
 
 @pytest.fixture(autouse=True)
 def package_on_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,7 +172,6 @@ def test_cancelling_the_task_ends_the_watch_at_once(tmp_path: Path) -> None:
     assert "监听被取消" in [line.message for line in result.logs]
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="inotify")
 def test_a_cancel_right_after_the_inotify_instance_is_created_closes_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sigterm_after: Callable[[Any, str], None]
 ) -> None:

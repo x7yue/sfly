@@ -6,7 +6,7 @@ How every subagent sets up its worktree, runs heavy commands and pushes when sev
 
 - Run `pnpm bootstrap` in each new worktree: dependencies live per worktree, and the pre-push hook rejects a push from a worktree without them.
 - Create worktrees side by side under one parent directory.
-- After merging the integration branch or a ticket branch, check whether `pnpm-lock.yaml`, `uv.lock` or `Cargo.lock` changed (`git diff --name-only <commit before the merge> HEAD`). If one did, rerun `pnpm bootstrap` before typecheck or tests: without it typecheck reports the newly added dependency as not found.
+- After merging the integration branch or a ticket branch, check whether `pnpm-lock.yaml`, `uv.lock` or `Cargo.lock` changed (`git diff --name-only <commit before the merge> HEAD`). If one did, rerun `pnpm bootstrap` before typecheck or tests: without it typecheck reports the newly added dependency as not found. The pre-push hook stops a push on the same mismatch, but only at push time.
 
 ## Heavy commands
 

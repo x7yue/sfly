@@ -146,6 +146,7 @@ test("地址里的关键字被清掉时搜索框跟着清空，不会把旧关�
 		.click();
 	await expect(box).toHaveValue("");
 	// 等过防抖时间：地址里不会再出现旧关键字。
+	// biome-ignore lint/plugin/e2e-fixed-wait: 断言的是没有发生的事：过了搜索的防抖时间（250 毫秒）旧关键字没有被写回地址
 	await page.waitForTimeout(600);
 	expect(new URL(page.url()).searchParams.get("q")).toBeNull();
 	await expect(box).toHaveValue("");
