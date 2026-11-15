@@ -11,16 +11,16 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronRightIcon, PlayIcon } from "lucide-react";
-import { useId } from "react";
 import { useOverlays } from "#/components/app-shell/overlays";
 import { ChainBars } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { nodeStatusView, SlotBar, STATUS, StatusDot, StatusPill } from "#/components/status";
+import { DashboardPanel, panelLink } from "#/dashboard/DashboardPanel";
 import { GettingStarted } from "#/dashboard/GettingStarted";
 import { apiQuery } from "#/lib/api";
-import { ACTION, PAGE } from "#/lib/copy";
+import { ACTION, MESSAGE, PAGE } from "#/lib/copy";
 import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { Badge } from "@/components/ui/badge";
@@ -150,44 +150,10 @@ function DashboardBody({ data }: { data: DashboardView }) {
 
 // —— 面板 ——
 
-/** 控制台的面板：标题行（标题、计数、右侧操作）+ 内容；以标题作为区域名称。 */
-function DashboardPanel({
-	title,
-	count,
-	aside,
-	children,
-}: {
-	title: string;
-	count?: number;
-	aside?: React.ReactNode;
-	children: React.ReactNode;
-}) {
-	const id = useId();
-	return (
-		<Panel aria-labelledby={id}>
-			<div className="flex h-11 items-center gap-2 border-b border-border-soft px-3.5">
-				<h2 id={id} className="m-0 text-base font-semibold">
-					{title}
-				</h2>
-				{count !== undefined && <span className="font-mono text-xs text-fg-3">{count}</span>}
-				<span className="flex-1" />
-				{aside}
-			</div>
-			{children}
-		</Panel>
-	);
-}
-
 /** 面板里的空状态：一行说明。 */
 function PanelEmpty({ children }: { children: React.ReactNode }) {
 	return <p className="m-0 px-3.5 py-6 text-center text-sm text-fg-3">{children}</p>;
 }
-
-const panelLink = (to: "/runs" | "/agents", label: string) => (
-	<Button variant="ghost" size="sm" render={<Link to={to} />} nativeButton={false}>
-		{label}
-	</Button>
-);
 
 /** 面板里的一行可点击条目（原型 .rrow）。 */
 const ROW =
@@ -328,7 +294,7 @@ function AgentsPanel({ agents }: { agents: DashboardAgent[] }) {
 		<DashboardPanel title="Agent 状态" count={agents.length} aside={panelLink("/agents", "管理")}>
 			{agents.length === 0 ? (
 				<PanelEmpty>
-					还没有 Agent 连接。
+					{MESSAGE.noAgents}。
 					<Link
 						to="/agents"
 						className="ml-1 text-fg-2 underline underline-offset-2 hover:text-fg-1"

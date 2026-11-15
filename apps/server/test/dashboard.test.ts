@@ -361,7 +361,9 @@ describe("控制台的开始使用", () => {
 
 	it("接入 Agent：有在线的 Agent 才算完成；写出名称排在最前的在线 Agent，离线的不计", async () => {
 		await (await connect({ name: "agent-a", slots: 1 })).disconnect();
-		expect((await setup()).agent).toEqual({ done: false, online: 0, name: null });
+		await eventually(async () =>
+			expect((await setup()).agent).toEqual({ done: false, online: 0, name: null }),
+		);
 
 		await connect({ name: "agent-c", slots: 1 });
 		expect((await setup()).agent).toEqual({ done: true, online: 1, name: "agent-c" });

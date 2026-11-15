@@ -2,14 +2,14 @@ import type { DashboardSetup } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { BookOpenIcon, CheckIcon, CopyIcon, PlayIcon } from "lucide-react";
-import { useId } from "react";
 import { useConnectCommand } from "#/agents/connect-command";
 import { useOverlays } from "#/components/app-shell/overlays";
+import { DocPageLink } from "#/components/doc-page-link";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
-import { Panel } from "#/components/page";
-import { ACTION, DOC_PAGE, EMPTY, MESSAGE, PAGE, scenarioCreatedLabel } from "#/lib/copy";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { DashboardPanel, panelLink } from "#/dashboard/DashboardPanel";
+import { ACTION, DOC_PAGE, MESSAGE, PAGE, scenarioCreatedLabel } from "#/lib/copy";
+import { Button } from "@/components/ui/button";
 
 type StepId = keyof DashboardSetup;
 
@@ -36,10 +36,17 @@ interface Step {
 	action: React.ReactNode;
 }
 
-/** 导航用 `<a>`：读屏读作链接，外观与 ghost 按钮相同。 */
-const GHOST_LINK = buttonVariants({ variant: "ghost", size: "sm" });
-
-const DOC_LINK_CLASS = "text-fg-2 underline underline-offset-2 hover:text-fg-1";
+/** 导航用 `<a>`：读屏读作链接，外观是 ghost 小按钮。 */
+const docButton = (page: string, children: React.ReactNode) => (
+	<Button
+		variant="ghost"
+		size="sm"
+		render={<Link to="/docs/$page" params={{ page }} />}
+		nativeButton={false}
+	>
+		{children}
+	</Button>
+);
 
 const Mono = ({ children }: { children: React.ReactNode }) => (
 	<span className="font-mono text-xs">{children}</span>
@@ -47,22 +54,16 @@ const Mono = ({ children }: { children: React.ReactNode }) => (
 
 /**
  * 全新环境的控制台（外壳页方案第 5 节，原型 b-wall#empty）：还没有运行过任何场景时只显示这四步。
- * 白色主按钮是第一个没完成的步骤的动作，发布节点包那一步没有白色按钮（发布在命令行里完成）；
+ * 白色主按钮属于第一个没完成的步骤，发布节点包那一步没有白色按钮（发布在命令行里完成）；
  * 出现第一个运行之后控制台不再渲染它。
  */
 export function GettingStarted({ setup }: { setup: DashboardSetup }) {
-	const titleId = useId();
 	const overlays = useOverlays();
 	const command = useConnectCommand();
 	const next = nextStep(setup);
 	const finished = STEP_ORDER.filter((id) => setup[id].done).length;
-	const white = (id: StepId) => (next === id ? ("primary" as const) : ("default" as const));
-	const size = (id: StepId) => (next === id ? ("default" as const) : ("sm" as const));
-	const pageLink = (to: "/agents" | "/packages" | "/orchestrations" | "/runs", label: string) => (
-		<Link to={to} className={GHOST_LINK}>
-			{label}
-		</Link>
-	);
+	const buttonVariant = (id: StepId) => (next === id ? ("primary" as const) : ("default" as const));
+	const buttonSize = (id: StepId) => (next === id ? ("default" as const) : ("sm" as const));
 
 	const steps: Step[] = [
 		{
@@ -83,9 +84,9 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 				</>
 			),
 			doneWhen: `完成：${PAGE.agents}页出现一台在线的 Agent。`,
-			state: EMPTY.agents,
+			state: MESSAGE.noAgents,
 			action: setup.agent.done ? (
-				pageLink("/agents", PAGE.agents)
+				panelLink("/agents", PAGE.agents)
 			) : (
 				<Button
 					variant="primary"
@@ -118,14 +119,10 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 				</>
 			),
 			doneWhen: `完成：${PAGE.packages}页出现至少一个版本。`,
-			state: EMPTY.packages,
-			action: setup.package.done ? (
-				pageLink("/packages", PAGE.packages)
-			) : (
-				<Link to="/docs/$page" params={{ page: "publish" }} className={GHOST_LINK}>
-					{PAGE.docs} · 发布
-				</Link>
-			),
+			state: MESSAGE.noPackages,
+			action: setup.package.done
+				? panelLink("/packages", PAGE.packages)
+				: docButton("publish", `${PAGE.docs} · ${DOC_PAGE.publish}`),
 		},
 		{
 			id: "scenario",
@@ -138,13 +135,13 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 						? `已有 ${setup.scenario.count} 个场景，最近新建的是「${setup.scenario.name}」`
 						: scenarioCreatedLabel(setup.scenario.name),
 			body: "在画布上从入口节点开始把节点连成链，选默认 Agent，保存版本。",
-			state: EMPTY.scenarios,
+			state: MESSAGE.noScenarios,
 			action: setup.scenario.done ? (
-				pageLink("/orchestrations", PAGE.scenarios)
+				panelLink("/orchestrations", PAGE.scenarios)
 			) : (
 				<Button
-					variant={white("scenario")}
-					size={size("scenario")}
+					variant={buttonVariant("scenario")}
+					size={buttonSize("scenario")}
 					onClick={() => overlays.open("new-scenario")}
 				>
 					{ACTION.newScenario}
@@ -157,13 +154,13 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			done: setup.run.done,
 			fact: "已有运行",
 			body: `在场景卡片或画布上点「${ACTION.run}」，填入口参数后触发。`,
-			state: EMPTY.runs,
+			state: MESSAGE.noRuns,
 			action: setup.run.done ? (
-				pageLink("/runs", PAGE.runs)
+				panelLink("/runs", PAGE.runs)
 			) : setup.scenario.done ? (
 				<Button
-					variant={white("run")}
-					size={size("run")}
+					variant={buttonVariant("run")}
+					size={buttonSize("run")}
 					onClick={() => overlays.open("run-scenario")}
 				>
 					<PlayIcon />
@@ -175,29 +172,26 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 
 	return (
 		<>
-			<Panel aria-labelledby={titleId}>
-				<div className="flex h-11 items-center gap-2 border-b border-border-soft px-3.5">
-					<h2 id={titleId} className="m-0 text-base font-semibold">
-						开始使用
-					</h2>
-					<span className="font-mono text-xs text-fg-3">{finished} / 4</span>
-					<span className="flex-1" />
-					<Link to="/docs/$page" params={{ page: "quickstart" }} className={GHOST_LINK}>
+			<DashboardPanel
+				title="开始使用"
+				count={`${finished} / 4`}
+				aside={docButton(
+					"quickstart",
+					<>
 						<BookOpenIcon />
 						{DOC_PAGE.quickstart}
-					</Link>
-				</div>
+					</>,
+				)}
+			>
 				<ol className="m-0 list-none p-0">
 					{steps.map((step, index) => (
 						<StepRow key={step.id} step={step} index={index + 1} next={next === step.id} />
 					))}
 				</ol>
-			</Panel>
+			</DashboardPanel>
 			<p className="mt-3 mb-0 text-xs text-fg-3">
 				开发节点包可以交给 AI 编程助手：{PAGE.docs}
-				<Link to="/docs/$page" params={{ page: "quickstart" }} className={DOC_LINK_CLASS}>
-					「{DOC_PAGE.quickstart}」
-				</Link>
+				<DocPageLink page="quickstart">「{DOC_PAGE.quickstart}」</DocPageLink>
 				里有可以直接复制给它的提示词。
 			</p>
 		</>
@@ -209,6 +203,7 @@ function StepRow({ step, index, next }: { step: Step; index: number; next: boole
 		<li
 			data-step={step.id}
 			data-state={step.done ? "done" : next ? "next" : "todo"}
+			aria-current={next ? "step" : undefined}
 			className="grid grid-cols-[1.75rem_minmax(0,1fr)_auto] items-start gap-3.5 border-b border-border-soft p-4 last:border-0"
 		>
 			<span

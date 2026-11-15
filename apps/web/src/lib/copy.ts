@@ -56,17 +56,7 @@ export const PAGE = {
 /** 开发文档里被界面引用的页名（控制面 docs/guide/pages.json 里的标题）。 */
 export const DOC_PAGE = {
 	quickstart: "快速开始",
-} as const;
-
-/**
- * 还没有数据的标题：列表页的空状态和控制台「开始使用」每一步右侧的状态写同一句，
- * 没有这些数据时在哪里都读到同一个说法。
- */
-export const EMPTY = {
-	agents: "还没有 Agent 连接",
-	packages: "还没有发布节点包",
-	scenarios: "还没有场景",
-	runs: "没有运行记录",
+	publish: "发布",
 } as const;
 
 /** 运行与链实例的状态。 */
@@ -153,6 +143,11 @@ export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
 	neverRun: "从未运行",
+	/** 列表页的空状态标题；控制台「开始使用」每一步右侧的状态写同一句，在哪里都读到同一个说法。 */
+	noAgents: "还没有 Agent 连接",
+	noPackages: "还没有发布节点包",
+	noScenarios: "还没有场景",
+	noRuns: "没有运行记录",
 	noLogs: "还没有日志。",
 	/** 监控页日志页签：任务或运行还没有结束，暂时没有日志。 */
 	logOutputPending: "还没有日志输出。",

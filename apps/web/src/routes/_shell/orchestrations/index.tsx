@@ -15,7 +15,7 @@ import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/stat
 import { useListNavigation } from "#/components/list-navigation";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { EMPTY, PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { useSearchInput } from "#/lib/use-search-input";
 import { ScenarioCards, ScenarioRunDrawer, ScenarioTable } from "#/scenarios/ScenarioList";
@@ -176,7 +176,7 @@ function ScenariosPage() {
 							) : (
 								<EmptyState
 									icon={<WorkflowIcon />}
-									title={EMPTY.scenarios}
+									title={MESSAGE.noScenarios}
 									description="场景把节点串成一条测试链路。新建后自带一个入口节点；需要先发布至少一个节点包。"
 								>
 									<div className="flex justify-center gap-2">

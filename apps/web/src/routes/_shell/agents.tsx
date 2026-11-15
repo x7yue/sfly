@@ -1,15 +1,16 @@
 import { type AgentView, agentsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ServerIcon, TerminalIcon } from "lucide-react";
 import { useConnectCommand } from "#/agents/connect-command";
 import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
+import { DocPageLink } from "#/components/doc-page-link";
 import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { SlotBar, type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
-import { EMPTY, PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE } from "#/lib/copy";
 import { formatClockOffset, formatDateTime, formatElapsed, formatFullDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
@@ -56,7 +57,7 @@ function AgentsPage() {
 					empty={
 						<EmptyState
 							icon={<ServerIcon />}
-							title={EMPTY.agents}
+							title={MESSAGE.noAgents}
 							description="在测试机上运行下面的命令安装 Agent，它会主动连接控制面并出现在这里。首次启动会自动准备 uv、共享 venv 和 SDK 运行时。"
 						>
 							<CodeBlock code={command} className="mx-auto w-fit" />
@@ -87,13 +88,7 @@ function ConnectHelp({ command }: { command: string }) {
 						Agent 按名称注册，同名重新连接会替换旧连接。配置了注册令牌时加上{" "}
 						<code className="font-mono">--token &lt;令牌&gt;</code>
 						。开发机、配置和自动更新见开发文档的「
-						<Link
-							to="/docs/$page"
-							params={{ page: "install-agent" }}
-							className="text-fg-1 underline decoration-fg-3 underline-offset-2 hover:decoration-fg-1"
-						>
-							安装 Agent
-						</Link>
+						<DocPageLink page="install-agent">安装 Agent</DocPageLink>
 						」。
 					</DialogDescription>
 				</DialogHeader>

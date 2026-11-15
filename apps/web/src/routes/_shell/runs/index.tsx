@@ -7,7 +7,7 @@ import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/stat
 import { useListNavigation } from "#/components/list-navigation";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { EMPTY, MESSAGE, PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE } from "#/lib/copy";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
 import { useSearchInput } from "#/lib/use-search-input";
@@ -77,7 +77,7 @@ function RunsPage() {
 						) : (
 							<EmptyState
 								icon={<PlayIcon />}
-								title={EMPTY.runs}
+								title={MESSAGE.noRuns}
 								description="在场景卡片上点「运行」，记录会出现在这里。"
 							>
 								<Link to="/orchestrations" className={buttonVariants()}>
