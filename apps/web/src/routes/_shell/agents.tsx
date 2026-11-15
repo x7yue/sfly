@@ -38,6 +38,7 @@ function AgentsPage() {
 	const command = useConnectCommand();
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
 	const hasAgents = (agents.data?.agents.length ?? 0) > 0;
+	const loading = agents.data === undefined && !agents.isError;
 	const content = (
 		<QueryView
 			query={agents}
@@ -74,8 +75,8 @@ function AgentsPage() {
 				count={agents.data?.agents.length}
 				actions={hasAgents && <ConnectHelp command={command} />}
 			/>
-			{/* 每台 Agent 自己是一个面板；加载、错误、空状态放在一个面板里。 */}
-			{hasAgents ? content : <Panel>{content}</Panel>}
+			{/* 每台 Agent 自己是一个面板，加载骨架也是一台一个面板；只有错误和空状态放进一个面板。 */}
+			{hasAgents || loading ? content : <Panel>{content}</Panel>}
 		</Page>
 	);
 }
