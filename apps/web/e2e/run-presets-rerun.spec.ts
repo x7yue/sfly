@@ -139,8 +139,8 @@ test("对用了预设的运行点「再次运行」：选中同一个预设（�
 	// 触发：运行记下同一个预设，预设参数取预设现在的值，其余是填的值。
 	await field(drawer, "api_token").fill("tok-again");
 	await drawer.getByRole("button", { name: "触发运行" }).click();
-	await expect(page).not.toHaveURL(new RegExp(`/runs/${run}$`));
-	const next = page.url().split("/runs/")[1];
+	await expect(page).not.toHaveURL(new RegExp(`/runs/${run}(\\?|$)`));
+	const next = new URL(page.url()).pathname.split("/runs/")[1];
 	await expect(
 		page.getByRole("banner").getByRole("button", { name: "预设：压测 A 集群" }),
 	).toBeVisible();

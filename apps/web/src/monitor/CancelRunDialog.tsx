@@ -171,7 +171,7 @@ export function CancelRunButton({
 	/** 已请求取消、运行还没结束（按钮变成「强制终止」）。 */
 	cancelling: boolean;
 	size?: "sm";
-	/** 与别的操作并排时降低权重（运行记录卡片上与「打开运行详情」并排）。 */
+	/** 与别的操作并排时降低权重（运行记录卡片上与「打开运行监控」并排）。 */
 	variant?: "ghost";
 	/** 窗口窄于 1280 时只显示图标（文字留给读屏与悬停提示），监控页顶栏用。 */
 	collapse?: boolean;

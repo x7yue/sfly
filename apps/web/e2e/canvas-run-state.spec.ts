@@ -121,7 +121,7 @@ test("从监控页「在画布中查看」带入该运行（不是最近一次�
 
 	await nodeCard(page, "fetch").click();
 	await inspector(page).getByRole("link", { name: "在监控页中打开 fetch" }).click();
-	await expect(page).toHaveURL(`/runs/${runId}?node=fetch`);
+	await expect(page).toHaveURL(`/runs/${runId}?view=detail&node=fetch`);
 	await expect(page.locator('[data-node-row="fetch"] button')).toHaveAttribute(
 		"aria-pressed",
 		"true",
@@ -152,7 +152,7 @@ test("画布的运行状态与运行监控之间的入口有定向的页面过�
 	});
 
 	await page.getByRole("link", { name: "打开运行监控" }).click();
-	await expect(page).toHaveURL(`/runs/${runId}`);
+	await expect(page).toHaveURL(`/runs/${runId}?view=overview`);
 	await expect(pill("run-status")).toHaveCSS("view-transition-name", "run-state");
 	expect(await transitions()).toEqual([["to-monitor"]]);
 
@@ -163,7 +163,7 @@ test("画布的运行状态与运行监控之间的入口有定向的页面过�
 
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await page.getByRole("link", { name: "打开运行监控" }).click();
-	await expect(page).toHaveURL(`/runs/${runId}`);
+	await expect(page).toHaveURL(`/runs/${runId}?view=overview`);
 	expect(await transitions()).toEqual([]);
 });
 
