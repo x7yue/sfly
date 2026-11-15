@@ -1,4 +1,4 @@
-import { ensureLayout, type Position } from "@sfly/orchestration";
+import { ensureLayout, type LayoutDocument, type Position } from "@sfly/orchestration";
 import type { OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import type { Edge, Node } from "@xyflow/react";
 
@@ -14,8 +14,8 @@ export type EdgeKind = DocEdge["kind"];
 export type SfNode = Node<{ node: DocNode }, DocNode["kind"]>;
 export type SfEdge = Edge<{ kind: EdgeKind }>;
 
-/** 文档中场景级（非节点、非连线）的部分。 */
-export type DocMeta = Pick<OrchestrationDocument, "default_agent" | "packages">;
+/** 文档中场景级（非节点、非连线）的部分：默认 Agent、包版本锁定、注释框。 */
+export type DocMeta = Pick<OrchestrationDocument, "default_agent" | "packages" | "annotations">;
 
 export const edgeId = (edge: DocEdge) => `${edge.kind}:${edge.from}->${edge.to}`;
 
@@ -103,5 +103,12 @@ export function fromFlow(nodes: SfNode[], edges: SfEdge[], meta: DocMeta): Orche
 		nodes: docNodes,
 		edges: edges.map(docEdgeOf),
 		packages,
+		annotations: meta.annotations,
 	};
 }
+
+/** 画布上的节点和连线，只留结构和位置（@sfly/orchestration 算子流程区域、注释框范围用）。 */
+export const layoutOf = (nodes: readonly SfNode[], edges: readonly SfEdge[]): LayoutDocument => ({
+	nodes: nodes.map((n) => ({ id: n.id, kind: n.data.node.kind, position: n.position })),
+	edges: edges.map(docEdgeOf),
+});

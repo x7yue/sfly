@@ -789,7 +789,7 @@ describe("全栈：标准节点包 sfly-std", () => {
 		// 新版本把 shell 的默认解释器改成 /bin/bash：同一条命令在两个版本上的结果不同，能看出 Agent 执行的是哪个版本。
 		const next = await buildStdPackageVariant(join(dir, "dist-next"), {
 			version: "99.0.0",
-			edits: [["src/sfly_std/shell.py", 'shell: str = "/bin/sh"', 'shell: str = "/bin/bash"']],
+			edits: [["src/sfly_std/shell.py", '= "/bin/sh"', '= "/bin/bash"']],
 		});
 		// $0 是实际执行命令的解释器：不用 $BASH_VERSION 区分，有的系统上 /bin/sh 就是 bash。
 		const chain = (interpreter: string) => {

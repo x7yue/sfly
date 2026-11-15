@@ -32,6 +32,7 @@ import {
 	type AgentHub,
 	devPackageInfo,
 	type RunningTaskView,
+	runningTaskView,
 } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -473,21 +474,31 @@ export class Engine implements AgentSessionHandler {
 				};
 			}
 			const held = await step.tx
-				.select({ task: tasks, orchestrationId: runs.orchestrationId })
+				.select({
+					task: tasks,
+					orchestrationId: runs.orchestrationId,
+					document: orchestrationVersions.document,
+				})
 				.from(tasks)
 				.innerJoin(runs, eq(runs.id, tasks.runId))
+				.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
 				.orderBy(asc(tasks.seq))
 				.for("update", { of: tasks });
-			const terminated = held.map(({ task, orchestrationId }) => ({
-				task_id: task.id,
-				run_id: task.runId,
-				orchestration_id: orchestrationId,
-				node_id: task.nodeId,
-				attempt: task.attempt,
-				status: task.status as RunningTaskView["status"],
-				started_at: task.startedAt?.toISOString() ?? null,
-			}));
+			const terminated = held.map(({ task, orchestrationId, document }) =>
+				runningTaskView(
+					{
+						taskId: task.id,
+						runId: task.runId,
+						orchestrationId,
+						nodeId: task.nodeId,
+						attempt: task.attempt,
+						status: task.status,
+						startedAt: task.startedAt,
+					},
+					document,
+				),
+			);
 			for (const { task } of held) {
 				await this.#failTask(step, task, "agent_lost", "Agent 立即更新，终止了这个任务");
 			}

@@ -76,6 +76,38 @@ export interface AgentView {
 	endpoint: AgentEndpointView;
 }
 
+/**
+ * 注释框：给一组节点和子流程画的框，带标题和备注，说明它们合起来在场景里做什么。属于版本内容，只记成员、
+ * 不存坐标和大小，框的范围由成员算出（@sfly/orchestration 的 annotationBoxes，ADR 0023）；
+ * 只用于显示，不影响执行（docs/SEMANTICS.md §1.6）。
+ */
+export interface Annotation {
+	/** 注释框之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `annotation_1`。 */
+	id: string;
+	title: string;
+	note?: string;
+	/** 成员节点的节点 ID。 */
+	nodes: string[];
+	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
+	subflows: string[];
+}
+
+/**
+ * 注释框：给一组节点和子流程画的框，带标题和备注，说明它们合起来在场景里做什么。属于版本内容，只记成员、
+ * 不存坐标和大小，框的范围由成员算出（@sfly/orchestration 的 annotationBoxes，ADR 0023）；
+ * 只用于显示，不影响执行（docs/SEMANTICS.md §1.6）。
+ */
+export interface AnnotationInput {
+	/** 注释框之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `annotation_1`。 */
+	id: string;
+	title: string;
+	note?: string;
+	/** 成员节点的节点 ID。 */
+	nodes?: string[];
+	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
+	subflows?: string[];
+}
+
 export interface ArtifactView {
 	/** 产物目录内的相对路径（`/` 分隔）。 */
 	name: string;
@@ -96,6 +128,9 @@ export interface AsyncTaskNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "async";
 	/** 子流程参数映射：子流程入口参数名 → 值。 */
 	params: Record<string, unknown>;
@@ -108,6 +143,9 @@ export interface AsyncTaskNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "async";
 	/** 子流程参数映射：子流程入口参数名 → 值。 */
 	params?: Record<string, unknown>;
@@ -254,9 +292,16 @@ export interface DashboardChain {
 	chain_id: string;
 	/** 子流程实例（不是主链）。 */
 	subflow: boolean;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name?: string;
 	status: string;
 	nodes: {
 		node_id: string;
+		/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+		display_name?: string;
 		status: string;
 	}[];
 }
@@ -271,8 +316,15 @@ export interface DashboardFailure {
 	chain_instance_id: string;
 	chain_id: string;
 	subflow: boolean;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name?: string;
 	/** 最先失败的节点（最后一次尝试失败）；没有失败节点时（例如校验失败）为 null。 */
 	node_id: string | null;
+	/** 失败节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
 	error: {
 		kind: string;
 		message: string;
@@ -351,12 +403,16 @@ export interface DevPackageView {
 	metadata: Record<string, unknown> | null;
 }
 
-/** 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。 */
+/**
+ * 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。
+ * 注释框的警告带 `annotation_id`，指出是哪个注释框；它们也不阻断触发。
+ */
 export interface DocumentWarningView {
 	code: string;
 	message: string;
 	node_id?: string;
 	input?: string;
+	annotation_id?: string;
 }
 
 export interface Edge {
@@ -373,6 +429,9 @@ export interface EntryNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "entry";
 	params: ParamDeclaration[];
 }
@@ -384,6 +443,9 @@ export interface EntryNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "entry";
 	params?: ParamDeclarationInput[];
 }
@@ -457,6 +519,9 @@ export interface FeishuNotifyNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "feishu_notify";
 	always: boolean;
 	/**
@@ -493,6 +558,9 @@ export interface FeishuNotifyNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "feishu_notify";
 	always?: boolean;
 	/**
@@ -808,6 +876,8 @@ export type NodeName = string;
 
 export interface NodeRunView {
 	node_id: string;
+	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
 	kind: "entry" | "subflow_entry" | "async" | "timer" | "sleep" | "stop_subflow" | "feishu_notify" | "package";
 	/**
 	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
@@ -827,6 +897,11 @@ export type NodeStatus = "queued" | "dispatched" | "running" | "waiting" | "succ
 export interface NodeTypeView {
 	name: NodeName;
 	title: string;
+	/**
+	 * 节点类型的说明：节点函数的文档字符串（去掉缩进，可以多段），显示在「添加节点」菜单（第一段）、
+	 * 节点包管理页（第一段）和检查器的「说明」页（全文）。只用于显示；没有文档字符串时没有这个字段。
+	 */
+	description?: string;
 	/** 入口：`module:function`。 */
 	entry: string;
 	inputs: IoSchema;
@@ -844,6 +919,7 @@ export interface OrchestrationDocument {
 	edges: Edge[];
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages: Record<PackageName, string>;
+	annotations: Annotation[];
 }
 
 export interface OrchestrationDocumentInput {
@@ -852,6 +928,7 @@ export interface OrchestrationDocumentInput {
 	edges?: Edge[];
 	/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 	packages?: Record<PackageName, string>;
+	annotations?: AnnotationInput[];
 }
 
 /** 编辑起点：最新版本；还没有版本时是只含入口节点的初始文档（number 为 0，作者与时间为 null）。 */
@@ -940,6 +1017,9 @@ export interface PackageNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "package";
 	always: boolean;
 	package: PackageName;
@@ -961,6 +1041,9 @@ export interface PackageNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "package";
 	always?: boolean;
 	package: PackageName;
@@ -986,9 +1069,11 @@ export interface PackageVersionSummary {
 	sha256: string;
 	size: number;
 	published_at: Timestamp;
+	/** 节点类型摘要，「添加节点」菜单用；`description` 是节点类型的完整说明，没有文档字符串时没有这个字段。 */
 	nodes: {
 		name: string;
 		title: string;
+		description?: string;
 	}[];
 	/** 有多少个场景的最新版本锁定了这个版本。 */
 	locked_orchestrations: number;
@@ -1027,6 +1112,8 @@ export interface ParamDeclView {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
+	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	description?: string;
 }
 
 export interface ParamDeclaration {
@@ -1035,6 +1122,11 @@ export interface ParamDeclaration {
 	default?: unknown;
 	required: boolean;
 	secret: boolean;
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description?: string;
 }
 
 export interface ParamDeclarationInput {
@@ -1043,6 +1135,11 @@ export interface ParamDeclarationInput {
 	default?: unknown;
 	required?: boolean;
 	secret?: boolean;
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description?: string;
 }
 
 /**
@@ -1146,6 +1243,8 @@ export type RequiresSdk = string;
 export interface RunListActiveNode {
 	chain_instance_id: string;
 	node_id: string;
+	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
 	status: string;
 	/** 最新进度；没有上报过时为 null。 */
 	progress: {
@@ -1161,6 +1260,11 @@ export interface RunListChain {
 	chain_id: string;
 	/** 子流程实例（不是主链）。 */
 	subflow: boolean;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name?: string;
 	status: "running" | "success" | "failed" | "cancelled";
 	nodes: {
 		node_id: string;
@@ -1173,8 +1277,15 @@ export interface RunListFailure {
 	chain_instance_id: string;
 	chain_id: string;
 	subflow: boolean;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；主链不给。
+	 */
+	subflow_name?: string;
 	/** 链上第一个失败的节点；没有失败节点时（例如参数校验失败）为 null。 */
 	node_id: string | null;
+	/** 失败节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name?: string;
 }
 
 export interface RunListItem {
@@ -1412,6 +1523,8 @@ export interface RunningTaskView {
 	run_id: string;
 	orchestration_id: string;
 	node_id: string;
+	/** 运行绑定的场景版本里这个节点的显示名称（子流程入口节点是子流程名称）；没有时不给。 */
+	display_name?: string;
 	attempt: number;
 	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
 	status: "dispatched" | "running";
@@ -1437,6 +1550,9 @@ export interface SleepNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "sleep";
 	always: boolean;
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
@@ -1450,6 +1566,9 @@ export interface SleepNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "sleep";
 	always?: boolean;
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
@@ -1463,6 +1582,9 @@ export interface StopSubflowNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "stop_subflow";
 	always: boolean;
 	/**
@@ -1479,6 +1601,9 @@ export interface StopSubflowNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "stop_subflow";
 	always?: boolean;
 	/**
@@ -1495,6 +1620,8 @@ export interface SubflowEntryNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
 	kind: "subflow_entry";
 	/**
 	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
@@ -1511,6 +1638,8 @@ export interface SubflowEntryNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
 	kind: "subflow_entry";
 	/**
 	 * 子流程的名称，场景内唯一（停止子流程节点按名称选择子流程，docs/SEMANTICS.md §4.1）。
@@ -1565,6 +1694,9 @@ export interface TimerNode {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "timer";
 	always: boolean;
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
@@ -1579,6 +1711,9 @@ export interface TimerNodeInput {
 		x: number;
 		y: number;
 	};
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note?: string;
+	display_name?: string;
 	kind: "timer";
 	always?: boolean;
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */

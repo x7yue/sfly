@@ -9,9 +9,9 @@ import json
 import zipfile
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from sfly import Context, node
+from sfly import Context, Doc, node
 
 #: `archive` 为 true 时打成的 zip 产物的名称。
 ARCHIVE_NAME = "artifacts.zip"
@@ -20,7 +20,13 @@ REFS_OUTPUT_BYTES = 512 * 1024
 
 
 class CollectArtifactsOutputs(TypedDict):
-    refs: dict[str, str]
+    refs: Annotated[
+        dict[str, str],
+        Doc(
+            "产物名称（相对 base_dir 的路径，/ 分隔）→ 产物引用；"
+            "archive 为 true 时只有 artifacts.zip 一项；没有匹配到文件时为空对象"
+        ),
+    ]
 
 
 class NothingCollected(Exception):
@@ -34,12 +40,27 @@ class TooManyRefs(Exception):
 @node(title="收集产物")
 def collect_artifacts(
     ctx: Context,
-    paths: Sequence[str],
-    base_dir: str | None = None,
-    archive: bool = False,
-    required: bool = True,
+    paths: Annotated[
+        Sequence[str], Doc("通配符列表，都是相对 base_dir 的路径，例如 *.log 或目录 screenshots")
+    ],
+    base_dir: Annotated[
+        str | None, Doc("在哪个目录下匹配，通常写被测系统或前面的 shell 写结果的绝对路径")
+    ] = None,
+    archive: Annotated[
+        bool, Doc("为 true 时把匹配到的文件打成一个 zip 产物 artifacts.zip，不再逐个保存")
+    ] = False,
+    required: Annotated[bool, Doc("一个文件都没匹配到时是否让节点失败")] = True,
 ) -> CollectArtifactsOutputs:
-    """把 `base_dir` 下匹配 `paths` 的文件保存为产物，输出相对路径 → 产物引用。"""
+    """按通配符把文件保存为产物，在运行页面的节点详情里下载，也可以把产物引用交给后面的节点。
+
+    副作用：匹配到的文件保存为产物（archive 为 true 时打成一个 zip），不改动原文件。
+    产物在任务结束后由 Agent 上传到控制面，随运行一起按保留期清理。
+
+    失败：base_dir 不存在时失败。
+    一个文件都没匹配到时，required 为 true（默认）则失败，错误信息写明 base_dir 和通配符。
+    匹配的文件太多、输出放不下时失败，错误信息写明文件数，改用 archive 或缩小 paths。
+    通配符是绝对路径或含 .. 时失败。
+    """
     _validate(paths)
     base = Path(base_dir) if base_dir is not None else Path.cwd()
     if not base.is_dir():

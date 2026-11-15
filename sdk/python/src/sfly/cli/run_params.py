@@ -1,7 +1,7 @@
 """`sfly run start` 的入口参数：把 `--param 名=值`、`--params JSON` 按入口节点声明的类型
 转成触发请求里的 params。
 
-声明来自场景预检接口的 `params`（名称、类型、是否必填、默认值、是否 secret）。转换规则：
+声明来自场景预检接口的 `params`（名称、类型、说明、是否必填、默认值、是否 secret）。转换规则：
 string 原样保留；number 按 JSON 数字解析；boolean 接受 true / false；json 按 JSON 解析。
 参数名没有声明、值转换失败时报错并列出声明的参数；secret 参数的值不出现在任何错误里。
 """
@@ -100,12 +100,12 @@ def _parse_object(text: str, invalid: Callable[[str], CliError]) -> dict[str, An
 
 
 def describe_declared(declared: Sequence[Declaration]) -> str:
-    """声明的参数（名称、类型、是否必填、默认值）；secret 参数的默认值不输出。"""
+    """声明的参数；「说明」列依次是参数说明、必填、默认值、secret，secret 参数的默认值不输出。"""
     if not declared:
         return "场景的入口节点没有声明参数"
 
     def notes(decl: Declaration) -> str:
-        found = []
+        found = [decl["description"]] if decl.get("description") else []
         if decl.get("required"):
             found.append("必填")
         if "default" in decl and decl["default"] is not None and not decl.get("secret"):

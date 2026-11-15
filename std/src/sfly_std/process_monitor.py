@@ -13,11 +13,11 @@ import os
 import time
 from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Literal, TypedDict
+from typing import Annotated, Literal, TypedDict
 
 import psutil
 
-from sfly import Chart, Context, Metric, node
+from sfly import Chart, Context, Doc, Metric, node
 from sfly_std import _process
 from sfly_std._process import Target
 from sfly_std._sampling import rate, validate_duration, validate_interval
@@ -67,8 +67,8 @@ LOG_EVERY = 60.0
 
 
 class ProcessMonitorOutputs(TypedDict):
-    samples: int
-    processes_csv: str
+    samples: Annotated[int, Doc("采样了多少次")]
+    processes_csv: Annotated[str, Doc("产物 processes.csv 的引用")]
 
 
 class ProcessNotFound(Exception):
@@ -150,25 +150,38 @@ class _Sample(TypedDict):
 )
 def process_monitor(
     ctx: Context,
-    pid: int | Sequence[int] | None = None,
-    name: str | Sequence[str] | None = None,
-    match: str | Sequence[str] | None = None,
-    include_children: bool = True,
-    wait_for_process: float = 60,
-    interval: float = 1,
-    duration: float | None = None,
-    on_exit: Literal["fail", "succeed"] = "fail",
+    pid: Annotated[
+        int | Sequence[int] | None, Doc("进程号，或进程号的列表；通常引用 start_process 的输出 pid")
+    ] = None,
+    name: Annotated[
+        str | Sequence[str] | None,
+        Doc("进程名（可执行文件名，例如 nginx，必须完全一致），或进程名的列表"),
+    ] = None,
+    match: Annotated[
+        str | Sequence[str] | None,
+        Doc("命令行（各参数以空格连接）的正则表达式，部分匹配即可，或正则的列表"),
+    ] = None,
+    include_children: Annotated[bool, Doc("是否连同目标的全部子孙进程一起统计")] = True,
+    wait_for_process: Annotated[float, Doc("开始时最多等多少秒让每个目标都出现")] = 60,
+    interval: Annotated[float, Doc("采样间隔（秒）")] = 1,
+    duration: Annotated[
+        float | None,
+        Doc("监控多少秒后成功结束；不设置时一直运行，直到被停止子流程节点停止或运行被取消"),
+    ] = None,
+    on_exit: Annotated[
+        Literal["fail", "succeed"], Doc("目标进程退出时：fail 让节点失败，succeed 让节点成功结束")
+    ] = "fail",
 ) -> ProcessMonitorOutputs:
-    """每 `interval` 秒（默认 1）采样一次目标进程，上报所有进程的合计指标和每个进程各自的指标。
+    """统计目标进程（默认连同全部子孙进程）用了多少资源，上报合计和每个进程各自的指标。
 
-    - 目标：`pid`（进程号）、`name`（进程名，完全相同）、`match`（命令行正则，部分匹配即可），
-      都可以是列表，至少给出一个；`include_children`（默认 true）时加上目标的全部子孙进程；
-    - 启动时最多等 `wait_for_process` 秒（默认 60）让每个目标都匹配到进程，等不到时失败；
-    - 某个目标匹配的进程全部退出时，`on_exit` 为 `fail`（默认）则失败，为 `succeed` 则成功结束；
-    - `duration`（秒）过后成功结束；不设置时一直运行到被停止或取消。
+    副作用：每个进程每次采样的明细写进产物 processes.csv，进程列表有变化时写一条任务日志。
 
-    每个进程每次采样的明细写进产物 `processes.csv`；输出采样次数 `samples` 和它的产物引用
-    `processes_csv`。
+    不设置 duration 时一直运行，直到被停止子流程节点停止或运行被取消，被停止时记为「已停止」，
+    不算失败。
+
+    失败：开始时最多等 wait_for_process 秒让每个目标都出现，等不到时失败，错误信息列出没找到的目标。
+    某个目标匹配的进程全部退出时，on_exit 为 fail（默认）则失败，为 succeed 则成功结束。
+    pid、name、match 一个都没给时也失败。
     """
     targets = _Targets(_process.targets(pid, name, match), include_children)
     validate_interval(interval)

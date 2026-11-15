@@ -190,6 +190,27 @@ export const nodePosition = (page: Page, id: string) =>
 		return m ? { x: Number(m[1]), y: Number(m[2]) } : null;
 	});
 
+/**
+ * 等画布的视口动画（缩放按钮、适配视图、双击缩放）停下。动画是 d3-zoom 的 transition：d3 在整个动画期间把它挂在
+ * 缩放的元素上（`__transition`），结束时删掉。开始动画的事件处理函数里就挂上了，所以点击或双击返回之后立刻查，
+ * 也不会漏掉刚开始的动画。
+ */
+export async function settleViewport(page: Page) {
+	await expect
+		.poll(() => page.locator(".react-flow__renderer").evaluate((el) => "__transition" in el), {
+			message: "画布的视口动画没有停下",
+		})
+		.toBe(false);
+}
+
+/** 点 `steps` 次「缩小」，每次都等视口动画停下再点下一次：每一步都从上一步的结果开始。 */
+export async function zoomOut(page: Page, steps: number) {
+	for (let i = 0; i < steps; i++) {
+		await dock(page).getByRole("button", { name: "缩小" }).click();
+		await settleViewport(page);
+	}
+}
+
 /** 系统剪贴板里的文字（测试需要先授权 clipboard-read）。 */
 export const clipboard = (page: Page) => page.evaluate(() => navigator.clipboard.readText());
 

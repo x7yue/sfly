@@ -36,12 +36,14 @@ const source: OrchestrationDocument = {
 		{ from: "fetch", to: "sleep_1", kind: "chain" },
 	],
 	packages: { "demo-checks": "1.2.0" },
+	annotations: [],
 };
 
 const target: OrchestrationDocument = {
 	nodes: [{ id: "entry", kind: "entry", position: { x: 0, y: 0 }, params: [] }],
 	edges: [],
 	packages: {},
+	annotations: [],
 };
 
 function copied(doc: OrchestrationDocument, id: string): CopiedNode {
@@ -188,6 +190,31 @@ describe("粘贴", () => {
 		const before = JSON.parse(JSON.stringify(target));
 		placeCopy(target, copied(source, "fetch"), { x: 0, y: 0 });
 		expect(target).toEqual(before);
+	});
+});
+
+describe("显示名称随节点一起复制", () => {
+	const named: OrchestrationDocument = {
+		...source,
+		nodes: source.nodes.map((n) => (n.id === "fetch" ? { ...n, display_name: "创建测试用户" } : n)),
+	};
+
+	it("复制的内容、粘贴和创建副本的节点都带着显示名称，名称不加后缀", () => {
+		const text = copiedNodeText(named, "fetch");
+		if (!text.ok) throw new Error(text.reason);
+		expect(JSON.parse(text.text).node.display_name).toBe("创建测试用户");
+
+		const pasted = placed(placeCopy(target, copied(named, "fetch"), { x: 40, y: 40 }));
+		expect(nodeOf(pasted.doc, pasted.id)).toMatchObject({ display_name: "创建测试用户" });
+
+		const copy = placed(duplicateNode(named, "fetch", { x: 0, y: 200 }));
+		expect(nodeOf(copy.doc, copy.id)).toMatchObject({ display_name: "创建测试用户" });
+		expect(copy.id).not.toBe("fetch");
+	});
+
+	it("没有显示名称的节点复制出来也没有", () => {
+		const copy = placed(duplicateNode(source, "fetch", { x: 0, y: 200 }));
+		expect(nodeOf(copy.doc, copy.id)).not.toHaveProperty("display_name");
 	});
 });
 

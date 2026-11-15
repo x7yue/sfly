@@ -117,6 +117,9 @@
 	--color-canvas-subflow-fg: var(--canvas-subflow-fg);
 	--color-canvas-subflow-line: var(--canvas-subflow-line);
 	--color-canvas-subflow-soft: var(--canvas-subflow-soft);
+	--color-canvas-annotation-line: var(--canvas-annotation-line);
+	--color-canvas-annotation-soft: var(--canvas-annotation-soft);
+	--color-canvas-annotation-band: var(--canvas-annotation-band);
 	--color-canvas-run-running: var(--canvas-run-running);
 	--color-canvas-run-failed: var(--canvas-run-failed);
 	--color-canvas-run-cancelled: var(--canvas-run-cancelled);

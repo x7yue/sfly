@@ -22,7 +22,12 @@ export function devNodes(agents: AgentView[], name: string): NodeTypeIo[] | unde
 	const nodes = agent?.dev_packages.find((d) => d.name === name)?.metadata?.nodes;
 	if (!Array.isArray(nodes)) return undefined;
 	const valid = nodes.every(
-		(n) => isObject(n) && typeof n.name === "string" && isObject(n.inputs) && isObject(n.outputs),
+		(n) =>
+			isObject(n) &&
+			typeof n.name === "string" &&
+			isObject(n.inputs) &&
+			isObject(n.outputs) &&
+			(n.description === undefined || typeof n.description === "string"),
 	);
 	return valid ? (nodes as NodeTypeIo[]) : undefined;
 }

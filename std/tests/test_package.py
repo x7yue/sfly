@@ -38,6 +38,8 @@ LAST_SDK_WITHOUT_LABELS = Version("0.0.4")
 #: 最后一个没有 ctx.artifacts.download 的已发布平台版本（v0.1.3）；
 #: 下载接口（#193）从它的下一个版本起才有。
 LAST_SDK_WITHOUT_ARTIFACT_DOWNLOAD = Version("0.1.3")
+#: 最后一个没有 sfly.Doc 的已发布平台版本（v0.3.0）；Doc（#303）从它的下一个版本起才有。
+LAST_SDK_WITHOUT_DOC = Version("0.3.0")
 #: 最后一个没有 Agent 能力 files（files.list、files.read、files.write）的已发布平台版本（v0.1.3）；
 #: 它们（#198–#200，ADR 0019）和 SDK 的 ctx.agent() 从它的下一个版本起才有。
 LAST_AGENT_WITHOUT_FILE_CAPABILITIES = Version("0.1.3")
@@ -132,6 +134,22 @@ def test_requires_an_sdk_that_can_download_artifacts() -> None:
         )
 
 
+def test_requires_an_sdk_that_has_doc() -> None:
+    # 标准节点用 Annotated[类型, Doc("…")] 写输入、输出的说明（#317），更旧的 SDK 导入标准节点包时
+    # 就失败。和下载接口一样，Doc 还没随平台版本发布时只能声明当前版本能满足的范围（否则同版本的
+    # 控制面在预检时阻断全部标准节点）；仓库版本号一旦越过 LAST_SDK_WITHOUT_DOC，requires-sdk
+    # 必须同步排除它，下一次发布 sfly-std 在那个平台版本发布之后（见 branching-and-release.md）。
+    pyproject = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))
+    declared = SpecifierSet(pyproject["tool"]["sfly"]["requires-sdk"])
+    sdk = Version(SDK_VERSION)
+
+    assert sdk in declared, f"当前 SDK {sdk} 不满足 requires-sdk {declared}"
+    if sdk > LAST_SDK_WITHOUT_DOC:
+        assert LAST_SDK_WITHOUT_DOC not in declared, (
+            f"版本号已是 {sdk}：std/pyproject.toml 的 requires-sdk 要调成 >={sdk}（sfly.Doc）"
+        )
+
+
 def test_the_upload_instructions_on_the_standard_nodes_page_name_the_current_version() -> None:
     # 「上传 sfly-std」一节的命令里写的是当前版本的附件名，照着复制就能上传。
     version = tomllib.loads((STD / "pyproject.toml").read_text(encoding="utf-8"))["project"][
@@ -200,12 +218,6 @@ def _node_sections() -> dict[str, tuple[str, str]]:
     }
 
 
-def _labels(cell: str) -> list[str]:
-    """指标说明末尾的「标签 `a`、`b`」里的标签键；没有时为空。"""
-    m = re.search(r"，标签 ((?:`[a-z_][a-z0-9_]*`、?)+)$", cell)
-    return _names(m[1]) if m else []
-
-
 def test_the_overview_lists_every_node_with_its_title(metadata: dict[str, Any]) -> None:
     overview = DOC.read_text(encoding="utf-8").split("\n## 节点一览\n", 1)[1].split("\n## ", 1)[0]
     header, rows = _tables(overview)["类别"]
@@ -220,7 +232,7 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
     metadata: dict[str, Any],
 ) -> None:
     # 每节的结构一致：标题与节点标题相同；参数表、输出表（没有输出时写明「没有输出。」）、
-    # 指标表（有指标时，含单位、标出主指标，带标签的指标在说明末尾写「标签 `键`、`键`」）
+    # 指标表（有指标时，含单位、标出主指标；有带标签的指标时多一列「标签」，写标签键）
     # 与构建出的元信息逐项对应。
     sections = _node_sections()
     for node in metadata["nodes"]:
@@ -245,15 +257,71 @@ def test_every_section_documents_the_parameters_outputs_and_metrics_in_the_same_
 
         if node["metrics"]:
             header, rows = tables["指标"]
-            assert header == ["指标", "单位", "说明"], name
+            labeled = any(m.get("labels") for m in node["metrics"])
+            assert header == ["指标", "单位", *(["标签"] if labeled else []), "说明"], name
             units = {n: row[1] for row in rows for n in _names(row[0])}
             assert units == {m["name"]: m.get("unit", "") for m in node["metrics"]}, name
             primary = [n for row in rows if "（主指标）" in row[0] for n in _names(row[0])]
             assert primary == [node["primary_metric"]], name
-            labels = {n: _labels(row[2]) for row in rows for n in _names(row[0])}
-            assert labels == {m["name"]: m.get("labels", []) for m in node["metrics"]}, name
+            if labeled:
+                labels = {n: _names(row[2]) for row in rows for n in _names(row[0])}
+                assert labels == {m["name"]: m.get("labels", []) for m in node["metrics"]}, name
         else:
             assert "指标" not in tables, name
+
+
+def test_every_parameter_and_output_description_matches_the_standard_nodes_page(
+    metadata: dict[str, Any],
+) -> None:
+    # 说明以代码为准（#317）：参数表、输出表、指标表「说明」列的文字，与元信息里这个输入、输出、
+    # 指标的说明一字不差（一行写了几个名字时，每个名字的说明都要和这一格一样）。
+    # 画布按纯文本显示说明，所以表格里不写 Markdown。
+    sections = _node_sections()
+    for node in metadata["nodes"]:
+        tables = _tables(sections[node["name"]][1])
+        for kind, schema in (("参数", node["inputs"]), ("输出", node["outputs"])):
+            if kind not in tables:
+                continue
+            header, rows = tables[kind]
+            column = header.index("说明")
+            for row in rows:
+                for name in _names(row[0]):
+                    where = f"{node['name']} 的{kind} {name}"
+                    description = schema["properties"][name].get("description")
+                    assert row[column], f"{where}：「说明」列是空的"
+                    assert description == row[column], where
+        if node["metrics"]:
+            header, rows = tables["指标"]
+            column = header.index("说明")
+            descriptions = {m["name"]: m.get("description") for m in node["metrics"]}
+            for row in rows:
+                for name in _names(row[0]):
+                    where = f"{node['name']} 的指标 {name}"
+                    assert row[column], f"{where}：「说明」列是空的"
+                    assert descriptions[name] == row[column], where
+
+
+def test_descriptions_are_plain_text(metadata: dict[str, Any]) -> None:
+    # 节点、输入、输出、指标的说明在画布上按纯文本显示（不渲染 Markdown）：反引号和链接会原样出现。
+    markdown = re.compile(r"`|\]\(")
+    for node in metadata["nodes"]:
+        schemas = [node["inputs"], node["outputs"]]
+        texts = (
+            [(node["name"], node.get("description"))]
+            + [
+                (f"{node['name']} 的 {name}", prop.get("description"))
+                for schema in schemas
+                for name, prop in schema.get("properties", {}).items()
+            ]
+            + [(f"{node['name']} 的 {m['name']}", m.get("description")) for m in node["metrics"]]
+        )
+        for where, text in texts:
+            assert text is None or not markdown.search(text), f"{where} 的说明里有 Markdown"
+
+
+def test_every_node_has_a_description(metadata: dict[str, Any]) -> None:
+    # 节点函数的文档字符串就是节点类型的说明，显示在「添加节点」菜单和检查器里。
+    assert [n["name"] for n in metadata["nodes"] if not n.get("description")] == []
 
 
 def test_the_shell_node_fixture_for_the_web_e2e_tests_matches_the_built_package(

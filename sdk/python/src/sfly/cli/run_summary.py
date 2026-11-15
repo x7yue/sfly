@@ -14,6 +14,7 @@ from sfly.cli.errors import CliError
 from sfly.cli.run_view import (
     NodeRef,
     chain_label,
+    display_name_of,
     duration_ms,
     format_duration,
     format_log_line,
@@ -21,6 +22,7 @@ from sfly.cli.run_view import (
     line_time,
     node_type_label,
     run_status_label,
+    with_display_name,
 )
 
 # 每个失败任务在摘要里带多少行日志（要看更早的日志用 `sfly run logs`）。
@@ -93,6 +95,7 @@ def _failed_task(
     entry: dict[str, Any] = {
         "chain": chain,
         "node": node["node_id"],
+        **display_name_of(node),
         "type": types.get(node["node_id"]) or node_type_label(node),
         "attempt": attempt["attempt"] if attempt else None,
         "attempts": len(node["attempts"]),
@@ -162,7 +165,8 @@ def _render_failed(item: Mapping[str, Any]) -> list[str]:
     if item["attempt"] is not None:
         tries = f"，第 {item['attempt']} 次尝试"
     ref = NodeRef(item["chain"], item["node"], item["attempt"])
-    lines = [f"  {ref.format(retried=item['attempts'] > 1)}（{item['type']}{tries}）"]
+    node = with_display_name(ref.format(retried=item["attempts"] > 1), item.get("display_name"))
+    lines = [f"  {node}（{item['type']}{tries}）"]
     error = item["error"]
     if error:
         message = error["message"].rstrip().splitlines() or [""]

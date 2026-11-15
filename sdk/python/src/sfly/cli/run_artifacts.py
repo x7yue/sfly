@@ -18,7 +18,7 @@ from sfly.cli.errors import CliError
 from sfly.cli.files import part_file
 from sfly.cli.output import candidate_list, format_table
 from sfly.cli.run_logs import RunIndex, RunNode
-from sfly.cli.run_view import NodeRef, fetch_run
+from sfly.cli.run_view import NodeRef, fetch_run, with_display_name
 from sfly.cli.session import Session, command, common_options
 
 # 还没开始、不会有产物的任务不用请求。
@@ -52,6 +52,7 @@ class _Task:
         self.attempt = attempt
         self.ref = NodeRef(node.chain, node.node_id, attempt["attempt"])
         self.label = self.ref.format(retried=len(node.attempts) > 1)
+        self.named_label = with_display_name(self.label, node.display_name)
 
     @property
     def id(self) -> str:
@@ -100,6 +101,7 @@ def _artifacts(session: Session, args: argparse.Namespace) -> None:
                     "task_id": task.id,
                     "chain": task.node.chain,
                     "node": task.node.node_id,
+                    **({"display_name": task.node.display_name} if task.node.display_name else {}),
                     "attempt": task.attempt["attempt"],
                     "name": artifact["name"],
                     "size": artifact["size"],
@@ -110,7 +112,7 @@ def _artifacts(session: Session, args: argparse.Namespace) -> None:
                 }
             )
 
-    labels = {t.id: t.label for t in tasks}
+    labels = {t.id: t.named_label for t in tasks}
     if args.download and rows:
         directory = Path(args.download).expanduser().resolve()
         for row in rows:

@@ -7,6 +7,8 @@ import type { Tx } from "../engine/step.js";
 /** 节点选择的一个飞书机器人（触发时按实际值检查）。 */
 export interface BotToCheck {
 	nodeId: string;
+	/** 问题的说明里节点的写法：「显示名称（节点 ID）」（`nodeNameWithId`）。 */
+	node: string;
 	/** 「飞书机器人」类型的输入名（#233）；飞书通知节点自己的机器人字段不写。 */
 	input?: string;
 	bot: string;
@@ -45,9 +47,9 @@ export async function checkFeishuBots(
 	const registered = await registeredBots(db, [...new Set(references.map((r) => r.bot))]);
 	return references
 		.filter((r) => !registered.has(r.bot))
-		.map(({ nodeId, input, bot, source }) => ({
+		.map(({ nodeId, node, input, bot, source }) => ({
 			code: "feishu_bot_not_registered",
-			message: `${feishuBotNotRegistered(nodeId, bot, input)}${source === undefined ? "" : `（${source}）`}`,
+			message: `${feishuBotNotRegistered(node, bot, input)}${source === undefined ? "" : `（${source}）`}`,
 			node_id: nodeId,
 		}));
 }

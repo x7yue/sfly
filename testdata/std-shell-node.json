@@ -1,15 +1,18 @@
 {
 	"name": "shell",
 	"title": "Shell 命令",
+	"description": "执行一段命令，输出退出码、标准输出和标准错误。\n\n副作用：命令做什么，就有什么副作用。\n标准输出和标准错误实时转为任务日志。\n打开 save_output 时，完整的标准输出和标准错误各保存为一个产物。\n命令退出时还在运行的后台进程不会被终止。\n\n失败：退出码不在 ok_exit_codes 里时失败，错误信息是退出码、命令和标准错误的末尾。\n解释器或工作目录不存在时也失败。\n任务被取消或超时时，命令和它启动的全部子进程都会被终止。",
 	"entry": "sfly_std.shell:shell",
 	"inputs": {
 		"type": "object",
 		"properties": {
 			"command": {
-				"type": "string"
+				"type": "string",
+				"description": "要执行的命令"
 			},
 			"shell": {
 				"type": "string",
+				"description": "解释器：/bin/bash、python3 等任何能用 -c 执行一段命令的程序",
 				"default": "/bin/sh"
 			},
 			"env": {
@@ -24,6 +27,7 @@
 						"type": "null"
 					}
 				],
+				"description": "追加的环境变量（对象，值为字符串），在 Agent 的环境变量之上",
 				"default": null
 			},
 			"cwd": {
@@ -35,6 +39,7 @@
 						"type": "null"
 					}
 				],
+				"description": "工作目录，必须已经存在",
 				"default": null
 			},
 			"ok_exit_codes": {
@@ -42,10 +47,12 @@
 				"items": {
 					"type": "integer"
 				},
+				"description": "算作成功的退出码",
 				"default": [0]
 			},
 			"save_output": {
 				"type": "boolean",
+				"description": "保存完整输出：为 true 时把完整的标准输出和标准错误各保存为一个产物",
 				"default": false
 			}
 		},
@@ -56,13 +63,16 @@
 		"type": "object",
 		"properties": {
 			"exit_code": {
-				"type": "integer"
+				"type": "integer",
+				"description": "退出码；命令被信号终止时为 128 + 信号值（与 shell 的 $? 相同）"
 			},
 			"stdout": {
-				"type": "string"
+				"type": "string",
+				"description": "标准输出的最后 64 KiB"
 			},
 			"stderr": {
-				"type": "string"
+				"type": "string",
+				"description": "标准错误的最后 64 KiB"
 			},
 			"stdout_file": {
 				"anyOf": [
@@ -72,7 +82,8 @@
 					{
 						"type": "null"
 					}
-				]
+				],
+				"description": "产物 stdout.txt（完整的标准输出）的引用；save_output 为 false 时是空值"
 			},
 			"stderr_file": {
 				"anyOf": [
@@ -82,7 +93,8 @@
 					{
 						"type": "null"
 					}
-				]
+				],
+				"description": "产物 stderr.txt（完整的标准错误）的引用；save_output 为 false 时是空值"
 			}
 		},
 		"required": ["exit_code", "stdout", "stderr", "stdout_file", "stderr_file"]

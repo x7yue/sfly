@@ -1,5 +1,6 @@
 import type { NodeTypeMetadata, OrchestrationDocument } from "@sfly/schema";
 import { inputsOfType, isInputOfType, namesInInputs } from "./input-types.js";
+import { nodeNameWithId } from "./node-display.js";
 import { nodeTypeOf, type PackageCatalog, referencesIn } from "./references.js";
 
 /**
@@ -42,9 +43,12 @@ export interface AgentInputWarning {
 	input: string;
 }
 
-/** 「Agent」类型的输入选的 Agent 没有注册过时的说明（静态检查、触发和派发时共用）。 */
-export function agentNotRegistered(nodeId: string, input: string, agent: string): string {
-	return `节点 ${nodeId} 的输入 ${input} 选择的 Agent ${agent} 还没有注册过`;
+/**
+ * 「Agent」类型的输入选的 Agent 没有注册过时的说明（静态检查、触发和派发时共用）。
+ * `node` 是节点的名字：节点 ID，静态检查写成「显示名称（节点 ID）」（{@link nodeNameWithId}）。
+ */
+export function agentNotRegistered(node: string, input: string, agent: string): string {
+	return `节点 ${node} 的输入 ${input} 选择的 Agent ${agent} 还没有注册过`;
 }
 
 /**
@@ -65,7 +69,7 @@ export function agentInputWarnings(
 			if (referencesIn(agent).length > 0 || agents.has(agent)) continue;
 			warnings.push({
 				code: "agent_input_not_registered",
-				message: agentNotRegistered(node.id, input, agent),
+				message: agentNotRegistered(nodeNameWithId(node), input, agent),
 				node_id: node.id,
 				input,
 			});

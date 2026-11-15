@@ -1,11 +1,13 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 引用语法就是 ${{ ... }}，不是模板字符串
 import {
+	nodeNameWithId,
 	nodeTypeOf,
 	type PackageCatalog,
 	REFERENCE,
 	type ReferenceOption,
 	referenceOptions,
 	referenceScope,
+	schemaDescription,
 	WHOLE_REFERENCE,
 } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
@@ -15,14 +17,15 @@ import type { OrchestrationDocument } from "@sfly/schema";
  * 何时弹出补全、按「入口参数」「前序节点」分组与过滤、键盘选择。
  */
 
-/** 一个引用补全项，带上来源说明（类型、所属节点）。 */
+/** 一个引用补全项，带上来源说明（类型、所属节点）；输出还带节点包写的说明（`Doc`），没写就没有。 */
 export interface ReferenceChoice extends ReferenceOption {
 	detail: string;
+	description?: string | undefined;
 }
 
 /**
  * 节点 id 可以引用的值（本链的入口参数、前序节点的输出），带上来源说明：
- * 参数的类型（敏感参数标出），输出的类型与所属节点。
+ * 参数的类型（敏感参数标出），输出的类型与所属节点（写成「显示名称（节点 ID）」）。
  */
 export function referenceChoices(
 	doc: OrchestrationDocument,
@@ -42,7 +45,11 @@ export function referenceChoices(
 				? nodeTypeOf(doc, source, catalog)?.outputs.properties[o.key]
 				: undefined;
 		const type = typeof schema?.type === "string" ? `${schema.type} · ` : "";
-		return { ...o, detail: `${type}${o.node_id}` };
+		return {
+			...o,
+			detail: `${type}${source ? nodeNameWithId(source) : o.node_id}`,
+			description: schemaDescription(schema),
+		};
 	});
 }
 

@@ -25,23 +25,34 @@
 ## `@node`
 
 ```python
-from typing import TypedDict
+from typing import Annotated, TypedDict
 
-from sfly import Chart, Context, Metric, node
+from sfly import Chart, Context, Doc, Metric, node
 
 
 class CheckOutputs(TypedDict):
-    status: int
-    report: str
+    status: Annotated[int, Doc("HTTP 状态码")]
+    report: Annotated[str, Doc("检查结果的文字报告")]
 
 
 @node(
     title="HTTP 检查",
-    metrics=[Metric("latency_ms", unit="ms"), Metric("requests", kind="counter")],
+    metrics=[
+        Metric("latency_ms", unit="ms", description="从发出请求到收完响应的耗时"),
+        Metric("requests", kind="counter", description="已发出的请求数"),
+    ],
     charts=[Chart("延迟", type="line", metrics=["latency_ms"])],
     primary_metric="latency_ms",
 )
-def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
+def http_check(
+    ctx: Context,
+    url: Annotated[str, Doc("请求地址，带协议")],
+    expect: Annotated[int, Doc("期望的状态码")] = 200,
+) -> CheckOutputs:
+    """请求一个地址，检查返回的状态码是否符合预期。
+
+    只发一次 GET 请求，不跟随重定向。连接超时或状态码不符时失败，失败不会重试。
+    """
     ...
 ```
 
@@ -50,11 +61,35 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | 参数 | 默认值 | 说明 |
 |---|---|---|
 | `name` | 函数名 | 节点名，场景和 `sfly debug` 用它引用节点 |
-| `title` | 节点名 | 画布上显示的名称 |
+| `title` | 节点名 | 画布上显示的名称。写成说明用途的名称（例如「HTTP 检查」「重启服务并等待就绪」），不要照抄函数名或写缩写 |
 | `outputs` | 从返回类型读取 | 输出键：键名列表，或 键名 → 类型注解 的字典 |
 | `metrics` | 无 | 指标声明（`Metric`），最多 50 个 |
 | `charts` | 无 | 图表声明（`Chart`），最多 20 张 |
 | `primary_metric` | 无 | 主指标名，必须是已声明、不带标签键的指标，显示在紧凑位置 |
+
+### 节点类型的说明
+
+函数的文档字符串就是节点类型的说明：`sfly build` 去掉缩进后整段写进元信息里这个节点类型的 `description`，会显示在画布上：
+
+- 「添加节点」菜单和节点包管理页：在节点类型的标题下面显示第一段，帮人挑对节点；
+- 检查器的「说明与指标」页：按纯文本显示全文，不渲染 Markdown，空行分隔的段落原样保留。
+
+```python
+@node(title="HTTP 检查")
+def http_check(
+    ctx: Context,
+    url: Annotated[str, Doc("请求地址，带协议")],
+    expect: Annotated[int, Doc("期望的状态码")] = 200,
+) -> CheckOutputs:
+    """请求一个地址，检查返回的状态码是否符合预期。
+
+    只发一次 GET 请求，不跟随重定向。连接超时或状态码不符时失败，失败不会重试。
+    """
+```
+
+- 按三部分写：第一段一句话说明这个节点做什么；然后写副作用：会创建什么资源，由哪个节点清理，清理节点要不要设成 always 节点，没有副作用时省略这一部分；最后写什么情况下失败。输入和输出的名字、类型画布上已经有，含义和单位写在各自的 `Doc` 里，不要在这里重复。
+- 最长 4000 个 Unicode 字符（emoji 算一个），超过时 `sfly build` 报错并指出是哪个节点。没有文档字符串（或只有空白）时不写这个字段，也不报错；已发布的旧版本节点包没有说明，照旧显示。
+- 控制面要先升级：节点类型的 `description` 是元信息新增的字段，旧版本的控制面严格检查元信息，会以「元信息校验失败」拒绝带文档字符串的节点包。用新版 SDK 构建、发布之前，先把控制面升级到同一个版本；Agent 把元信息当作 JSON 原样转发，不受影响。
 
 ## 输入
 
@@ -68,7 +103,7 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 | `dict[str, T]`、`Mapping[str, T]` | 对象（键必须是 `str`） |
 | TypedDict | 有固定键的对象（非 `total` 的键可选） |
 | `T \| None`、`Optional[T]`、其他 `Union` | 任一成员 |
-| `Annotated[T, ...]` | 同 `T` |
+| `Annotated[T, ...]` | 同 `T`；例外是 `Doc`：它给这个输入写说明，见下文「输入的说明：`Doc`」 |
 | `sfly.AgentName` | 「Agent」类型：Agent 名称（字符串），见下文 |
 | `sfly.FeishuBot` | 「飞书机器人」类型：飞书机器人的名称（字符串），见下文 |
 | 没有注解、`Any`、`object` | 任意 JSON 值，不校验 |
@@ -77,15 +112,63 @@ def http_check(ctx: Context, url: str, expect: int = 200) -> CheckOutputs:
 - 派发任务前按 schema 校验：缺少必填输入、或声明了的输入类型不符时，任务以 `config_error` 失败，节点不会执行。没有声明的输入不检查。
 - 不支持的注解（例如自定义类）让 `sfly build` 报错。
 
+### 输入的说明：`Doc`
+
+```python
+from typing import Annotated, TypedDict
+
+from sfly import Context, Doc, node
+
+
+class CheckOutputs(TypedDict):
+    status: Annotated[int, Doc("HTTP 状态码")]
+
+
+@node(title="HTTP 检查")
+def http_check(
+    ctx: Context,
+    url: Annotated[str, Doc("请求地址，带协议")],
+    expect: Annotated[int, Doc("期望的状态码")] = 200,
+    verify_tls: Annotated[bool, Doc("是否校验服务端证书；自签名证书的测试环境设为 false")] = True,
+) -> CheckOutputs:
+    """请求一个地址，检查返回的状态码是否符合预期。
+
+    只发一次 GET 请求，不跟随重定向。连接超时或状态码不符时失败，失败不会重试。
+    """
+    ...
+```
+
+用 `Annotated[类型, Doc("…")]` 给输入写说明。`sfly build` 把它写成这个输入 schema 的 `description`，画布的检查器在输入框下面显示完整的说明，节点包管理页悬停在输入的名字上也能看到，`sfly package show` 的「说明」列里也有。参数的标签仍然是参数名，说明是帮助文字。说明跟着参数走，改参数名不会丢。
+
+- 写给搭场景的人看：这个输入是什么意思、单位是什么、怎么填。不要重复参数名和类型。
+- 必须是非空字符串，首尾空白不保存，最多 500 个 Unicode 字符（不是字节）。可以换行，检查器里照样显示成多行。
+- 写在参数注解的最外层，一个注解里只能有一个：可选参数写成 `Annotated[str | None, Doc("…")] = None`，不要写成 `Annotated[str, Doc("…")] | None` 或 `list[Annotated[str, Doc("…")]]`。`Annotated` 里的其他元数据照旧不起作用，`Doc` 是唯一的例外。
+- 任务上下文 `ctx` 不是输入，不能写 `Doc`。
+- 「Agent」类型和「飞书机器人」类型的输入也能写：`Annotated[AgentName, Doc("…")]`。
+- 没写说明不报错、不警告：旧版本的节点包和没写说明的输入，在画布上照旧显示。
+- `Doc` 写错时，`sfly build` 报错并指出节点和参数，例如 `节点 demo_checks.http_check 的参数 url：Doc 必须是非空字符串，收到 ''`。`sfly dev`、`sfly debug` 和 `sfly.testing.run_node` 用同一套扫描，结果一样。报错的情况：不是非空字符串、同一个注解里有两个、写在 `ctx` 上、写在 `list[...]`、`|` 等的里面、超过 500 个字符。
+
+这个写法从 SDK 0.4.0 起可用。用到它的节点包把 `requires-sdk` 调到 `>=0.4.0`：节点运行时要从 `sfly` 导入 `Doc`，更旧的 Agent 上没有它，声明之后任务在派发前就以 `env_error` 失败并提示升级，不会运行到一半才报错。
+
 ### 「Agent」类型的输入
 
 ```python
-from sfly import AgentName, Context, node
+from typing import Annotated, TypedDict
+
+from sfly import AgentName, Context, Doc, node
 
 
-@node(outputs=["files"])
-def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> dict:
-    """source 是日志所在的 Agent，节点在另一台 Agent 上清洗它的日志。"""
+class CleanOutputs(TypedDict):
+    files: Annotated[list[str], Doc("清洗过的日志文件的路径")]
+
+
+@node(title="清洗轮转日志")
+def clean(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    backup: Annotated[AgentName | None, Doc("存放备份的 Agent，不填就不备份")] = None,
+) -> CleanOutputs:
+    """清洗另一台 Agent 上轮转出来的日志。"""
     logs = list(ctx.agent(source).files.list("/var/log/app", "app.log.*"))
     ctx.log.info("Agent %s 上有 %d 个轮转出来的日志", source, len(logs))
     ...
@@ -104,12 +187,22 @@ def clean(ctx: Context, source: AgentName, backup: AgentName | None = None) -> d
 ### 「飞书机器人」类型的输入
 
 ```python
-from sfly import Context, FeishuBot, node
+from typing import Annotated, TypedDict
+
+from sfly import Context, Doc, FeishuBot, node
 
 
-@node(outputs=["passed"])
-def stress(ctx: Context, qps: int, alert_bot: FeishuBot | None = None) -> dict:
-    """alert_bot 是出问题时要通知的飞书机器人，在检查器里从已登记的机器人中选。"""
+class StressOutputs(TypedDict):
+    passed: Annotated[bool, Doc("压测是否达到目标 QPS")]
+
+
+@node(title="压测接口")
+def stress(
+    ctx: Context,
+    qps: Annotated[int, Doc("目标每秒请求数")],
+    alert_bot: Annotated[FeishuBot | None, Doc("压测不达标时通知的飞书机器人")] = None,
+) -> StressOutputs:
+    """压测一个接口，不达标时通知飞书群。"""
     ...
 ```
 
@@ -130,6 +223,31 @@ def stress(ctx: Context, qps: int, alert_bot: FeishuBot | None = None) -> dict:
 - 返回值必须是 dict，序列化为 JSON 后不超过 1 MB；返回 `None` 视为空对象。不满足时任务失败。
 - 后续节点可以引用输出里的值；大块数据存成产物，输出里放产物引用。
 - 输出里的 NUL 字符（`\x00`）保存时换成 U+FFFD（�），后续节点引用到的是替换后的值；错误信息、进度说明和指标标签也是这样（docs/SEMANTICS.md §2.5）。二进制内容存成产物。
+
+### 输出的说明：`Doc`
+
+```python
+from typing import Annotated, TypedDict
+
+from sfly import Doc
+
+
+class CheckOutputs(TypedDict):
+    status: Annotated[int, Doc("HTTP 状态码")]
+    body_file: Annotated[str | None, Doc("响应体保存的文件；响应没有正文时为 None")]
+    elapsed_ms: float
+```
+
+输出字段也用 `Annotated[类型, Doc("…")]` 写说明，规则和输入的 `Doc` 一样（见上文「输入的说明：`Doc`」）：写在字段注解的最外层，一个注解里只能有一个，必须是非空字符串，首尾空白不保存，最多 500 个 Unicode 字符，没写不报错。`sfly build` 把它写成这个输出 schema 的 `description`。
+
+搭场景的人在四个地方看到它：检查器「说明与指标」标签页里的「输出 | 说明」表、引用补全里这个输出的后面、节点包管理页悬停在输出的名字上，以及 `sfly package show` 输出表的「说明」列。没写说明的输出，这些地方照旧只显示名字和类型。
+
+- 写给要引用这个输出的人看：它装的是什么、单位是什么、什么情况下是空。不要重复字段名和类型。
+- `NotRequired[...]`、`Required[...]` 包在 `Annotated` 外面或里面都行：`NotRequired[Annotated[int, Doc("…")]]`。
+- 用 `@node(outputs={...})` 声明输出时，字典的值也能这样写：`outputs={"rows": Annotated[int, Doc("写入的行数")]}`。键名列表的写法没有地方写说明。
+- `Doc` 写错时 `sfly build` 报错并指出节点和输出，例如 `节点 demo_checks.http_check 的输出 status：Doc 必须是非空字符串，收到 ''`。`sfly dev`、`sfly debug` 用同一套扫描，结果一样（`sfly.testing.run_node` 只检查输入，不检查输出）。
+
+和输入的 `Doc` 同一个版本（SDK 0.4.0）起可用，`requires-sdk` 的要求也一样。
 
 ## 失败
 
@@ -165,12 +283,23 @@ ctx.progress(3, 10, "第 3 批")
 ## `ctx.notify`：飞书通知
 
 ```python
+from typing import Annotated, TypedDict
+
 import sfly
-from sfly import Context, FeishuBot, node
+from sfly import Context, Doc, FeishuBot, node
 
 
-@node(outputs=["passed"])
-def stress(ctx: Context, qps: int, alert_bot: FeishuBot) -> dict:
+class StressOutputs(TypedDict):
+    passed: Annotated[bool, Doc("压测是否达到目标 QPS")]
+
+
+@node(title="压测接口")
+def stress(
+    ctx: Context,
+    qps: Annotated[int, Doc("目标每秒请求数")],
+    alert_bot: Annotated[FeishuBot, Doc("压测不达标时通知的飞书机器人")],
+) -> StressOutputs:
+    """压测一个接口，不达标时通知飞书群。"""
     ...
     if p99 > 500:
         ctx.notify(alert_bot, f"p99 {p99} ms，超过 500 ms", at_all=True)
@@ -215,6 +344,7 @@ ctx.metric("conn_latency_ms", 8.2, labels={"host": "db-1", "port": 5432})
 ```
 
 - 指标要先在 `@node(metrics=...)` 里声明再上报。指标名是标识符（字母、数字、下划线，不以数字开头），不能重复。
+- `description`：一句话写这个指标量的是什么、怎么统计（例如「每秒成交的笔数，只算成功的订单」），单位另有 `unit`，不用重复。它显示在节点包管理页「声明的指标」列的悬停提示里，以及检查器「说明与指标」页的指标列表里；没写不报错。
 - `kind`：`gauge` 是瞬时值（例如延迟、队列长度），`counter` 是累计值（例如已发送的请求数，上报当前累计值）。
 - `Chart.type`：`line`、`area`、`bar`、`stat`；`metrics` 列出至少一个已声明的指标。没有被任何图表引用的指标由平台生成默认图表：瞬时值画折线，累计值画数值卡，带标签的指标一律画折线。
 - `labels`：标签键，用来在一个节点里同时上报多个对象的同一个指标（例如每个连接、每个进程）。最多 3 个键，命名规则同指标名，不能重复；`sfly build` 检查这些规则。
@@ -245,13 +375,21 @@ return {"report": ref}
 
 ```python
 from pathlib import Path
+from typing import Annotated, TypedDict
 
-from sfly import Context, node
+from sfly import Context, Doc, node
 
 
-@node(outputs=["lines"])
-def count_lines(ctx: Context, log_file: str) -> dict:
-    """log_file 是前面的节点输出的产物引用。"""
+class CountOutputs(TypedDict):
+    lines: Annotated[int, Doc("日志的行数")]
+
+
+@node(title="统计日志行数")
+def count_lines(
+    ctx: Context,
+    log_file: Annotated[str, Doc("日志的产物引用，由前面的节点输出")],
+) -> CountOutputs:
+    """下载一个日志产物，统计它有多少行。"""
     path = ctx.artifacts.download(log_file, "downloads/server.log")
     with path.open("rb") as f:
         return {"lines": sum(1 for _ in f)}
@@ -297,12 +435,23 @@ log.parent.mkdir(parents=True, exist_ok=True)
 ## `ctx.agent()`：Agent 能力
 
 ```python
-from sfly import AgentFileNotFound, AgentName, Context, node
+from typing import Annotated, Any, TypedDict
+
+from sfly import AgentFileNotFound, AgentName, Context, Doc, node
 
 
-@node(outputs=["logs", "current_size"])
-def find_logs(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
-    """source 是日志所在的 Agent；这个节点派到另一台 Agent 上运行。"""
+class FindOutputs(TypedDict):
+    logs: Annotated[list[dict[str, Any]], Doc("匹配 app.log* 的文件，每项有 path、size、inode")]
+    current_size: Annotated[int | None, Doc("app.log 当前的字节数；文件不存在时为 None")]
+
+
+@node(title="查找轮转日志")
+def find_logs(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    directory: Annotated[str, Doc("日志目录，source 所在机器上的绝对路径")] = "/var/log/app",
+) -> FindOutputs:
+    """列出另一台 Agent 上的日志文件，和当前 app.log 的大小。"""
     logs = [
         {"path": f.path, "size": f.size, "inode": f.id.inode}
         for f in ctx.agent(source).files.list(directory, "app.log*", recursive=True)
@@ -357,12 +506,23 @@ Agent 能力是 Agent 自身提供、节点在执行中调用的一组操作。`
 
 ```python
 import hashlib
+from typing import Annotated, Any, TypedDict
 
-from sfly import AgentName, Context, node
+from sfly import AgentName, Context, Doc, node
 
 
-@node(outputs=["sha256", "local"])
-def pull_log(ctx: Context, source: AgentName, path: str = "/var/log/app/app.log.1") -> dict:
+class PullOutputs(TypedDict):
+    sha256: Annotated[str, Doc("日志前 1 MB 的 sha256")]
+    local: Annotated[dict[str, Any], Doc("下载到本机的文件，有 path 和 size")]
+
+
+@node(title="拉取日志")
+def pull_log(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    path: Annotated[str, Doc("日志在 source 上的绝对路径")] = "/var/log/app/app.log.1",
+) -> PullOutputs:
+    """计算另一台 Agent 上一个日志前 1 MB 的 sha256，再把整个日志下载到本机。"""
     source_files = ctx.agent(source).files
     # 流式读取：只读开头 1 MB，不用先整个下载。
     digest = hashlib.sha256()
@@ -398,12 +558,25 @@ def pull_log(ctx: Context, source: AgentName, path: str = "/var/log/app/app.log.
 ### 写入、上传与删除
 
 ```python
-from sfly import AgentFileNotFound, AgentName, Context, node
+from typing import Annotated, TypedDict
+
+from sfly import AgentFileNotFound, AgentName, Context, Doc, node
 
 
-@node(outputs=["marker"])
-def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
-    """把 source 上的日志下载到本机清洗后，把结果放回去、删掉源文件。"""
+class CleanLogOutputs(TypedDict):
+    marker: Annotated[str, Doc("写在 source 上的完成标记文件的路径")]
+
+
+@node(title="清洗并回写日志")
+def clean_log(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    path: Annotated[str, Doc("要清洗的日志在 source 上的绝对路径")],
+) -> CleanLogOutputs:
+    """把另一台 Agent 上的日志下载到本机清洗，再把结果放回去。
+
+    会在那台 Agent 上写入 .cleaned 和 .done 文件，并删除原日志。
+    """
     ...  # 清洗，得到本机上的 cleaned.log
     ctx.agent(source).files.upload("cleaned.log", f"{path}.cleaned")
     marker = ctx.agent(source).files.write(f"{path}.done", b"cleaned\n")
@@ -436,12 +609,25 @@ def clean_log(ctx: Context, source: AgentName, path: str) -> dict:
 ### 监听目录：`files.watch`
 
 ```python
-from sfly import AgentName, Context, FileId, WatchSnapshot, node
+from typing import Annotated, TypedDict
+
+from sfly import AgentName, Context, Doc, FileId, WatchSnapshot, node
 
 
-@node(outputs=["rotated"])
-def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
-    """等 source 上的 app.log 轮转一次，输出被改名后的路径。"""
+class RotationOutputs(TypedDict):
+    rotated: Annotated[str, Doc("app.log 被改名后的路径")]
+
+
+@node(title="等待日志轮转")
+def wait_rotation(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    directory: Annotated[str, Doc("日志目录，source 所在机器上的绝对路径")] = "/var/log/app",
+) -> RotationOutputs:
+    """等另一台 Agent 上的 app.log 轮转一次。
+
+    监听意外结束时失败。
+    """
     current: FileId | None = None
     for item in ctx.agent(source).files.watch(directory, "app.log*"):
         if isinstance(item, WatchSnapshot):
@@ -479,12 +665,25 @@ def wait_rotation(ctx: Context, source: AgentName, directory: str = "/var/log/ap
 ### 执行命令：`exec`
 
 ```python
-from sfly import AgentName, Context, node
+from typing import Annotated, TypedDict
+
+from sfly import AgentName, Context, Doc, node
 
 
-@node(outputs=["compressed"])
-def compress_rotated_logs(ctx: Context, source: AgentName, directory: str = "/var/log/app") -> dict:
-    """在 source 上压缩已经轮转出去的日志（app.log.1、app.log.2…），gzip 的输出进入这个任务的日志。"""
+class CompressOutputs(TypedDict):
+    compressed: Annotated[list[str], Doc("压缩后的文件路径")]
+
+
+@node(title="压缩轮转日志")
+def compress_rotated_logs(
+    ctx: Context,
+    source: Annotated[AgentName, Doc("日志所在的 Agent")],
+    directory: Annotated[str, Doc("日志目录，source 所在机器上的绝对路径")] = "/var/log/app",
+) -> CompressOutputs:
+    """压缩另一台 Agent 上已经轮转出去的日志（app.log.1、app.log.2…）。
+
+    原文件被替换成 .gz，gzip 的输出进入这个任务的日志。任何一个 gzip 退出码不是 0 时失败。
+    """
     agent = ctx.agent(source)
     rotated = [
         f.path for f in agent.files.list(directory, "app.log.[0-9]*") if not f.path.endswith(".gz")

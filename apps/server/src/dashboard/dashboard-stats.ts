@@ -131,8 +131,13 @@ export async function dashboardView({
 				id: chain.id,
 				chain_id: chain.chain_id,
 				subflow: chain.depth > 0,
+				subflow_name: chain.subflow_name,
 				status: chain.status,
-				nodes: chain.nodes.map((n) => ({ node_id: n.node_id, status: n.status })),
+				nodes: chain.nodes.map((n) => ({
+					node_id: n.node_id,
+					display_name: n.display_name,
+					status: n.status,
+				})),
 			})),
 		})),
 		recent_failures: failures.recent,
@@ -225,8 +230,9 @@ async function failedChains(
 		subflows: subflows?.n ?? 0,
 		recent: recent.map(({ chain, orchestrationId, name }) => {
 			const view = views.get(chain.runId);
+			const chainView = view?.chains.find((c) => c.id === chain.id);
 			const endedAt = (node: NodeView) => node.attempts.at(-1)?.ended_at ?? "";
-			const [first] = (view?.chains.find((c) => c.id === chain.id)?.nodes ?? [])
+			const [first] = (chainView?.nodes ?? [])
 				.filter((n) => n.status === "failed")
 				.sort((a, b) => endedAt(a).localeCompare(endedAt(b)));
 			return {
@@ -237,7 +243,9 @@ async function failedChains(
 				chain_instance_id: chain.id,
 				chain_id: chain.chainId,
 				subflow: chain.depth > 0,
+				subflow_name: chainView?.name ?? undefined,
 				node_id: first?.node_id ?? null,
+				display_name: first?.display_name,
 				error: first?.error ?? null,
 				failed_at: (chain.endedAt ?? to).toISOString(),
 			};
