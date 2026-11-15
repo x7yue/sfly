@@ -1,42 +1,33 @@
 import {
+	type ChartView,
 	FOCUS_ITEMS_MAX,
 	type FocusItemInput,
 	type FocusItemView,
+	focusKey,
 	orchestrationsApi,
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { notify } from "#/components/feedback/notify";
 import { apiQuery, callApi } from "#/lib/api";
+import { TERM } from "#/lib/copy";
 import { errorText } from "#/lib/format";
 
 /** 关注项视图里的一项，换回请求里的写法（不带状态）。 */
-export const focusInputOf = ({ node_id, chart, title }: FocusItemView): FocusItemInput => ({
+const focusInputOf = ({ node_id, chart, title }: FocusItemView): FocusItemInput => ({
 	node_id,
 	chart,
 	...(title === undefined ? {} : { title }),
 });
 
-const isItem = (item: { node_id: string; chart: string }, nodeId: string, chart: string) =>
-	item.node_id === nodeId && item.chart === chart;
-
-export const isFocused = (items: readonly FocusItemView[], nodeId: string, chart: string) =>
-	items.some((item) => isItem(item, nodeId, chart));
-
-/**
- * 写入还没有返回时先显示的项：已经在列表里的沿用现在的样子，名字按这次写入的（改名立刻显示）；
- * 新加的当作可用（服务端检查过才会写入，不合格就以服务端的列表为准）。
- */
-function pendingItem(current: readonly FocusItemView[], input: FocusItemInput): FocusItemView {
-	const { node_id, chart, title } = input;
-	const known = current.find((item) => isItem(item, node_id, chart));
-	const { title: _was, ...untitled } = known ?? { node_id, chart, status: "ok" as const };
-	return { ...untitled, ...(title === undefined ? {} : { title }) };
-}
+export const isFocused = (items: readonly FocusItemView[], nodeId: string, chart: string) => {
+	const key = focusKey({ node_id: nodeId, chart });
+	return items.some((item) => focusKey(item) === key);
+};
 
 /**
  * 场景的关注项（GLOSSARY「关注项」）：读场景视图里的 `focus_items`，改的时候整份替换（`PATCH /orchestrations/:id`）。
  * 关注项不属于场景版本，改了立即生效，不要求先保存。点击后立刻显示新列表，写入按先后顺序一个个发出，
- * 失败时通知原因并重新读取服务端的列表。
+ * 失败时通知原因并重新读取服务端的列表。列表里的项都是视图（带状态和图表类型）：点击后显示的就是传进来的这份。
  */
 export function useFocusItems(orchestrationId: string) {
 	const queryClient = useQueryClient();
@@ -49,7 +40,8 @@ export function useFocusItems(orchestrationId: string) {
 		scope: { id: writing[0] as string },
 		mutationFn: (items: FocusItemInput[]) =>
 			callApi(orchestrationsApi.update, { params, body: { focus_items: items } }),
-		onError: (error) => notify.error("无法修改关注项", { description: errorText(error) }),
+		onError: (error) =>
+			notify.error(`无法修改${TERM.focusItem}`, { description: errorText(error) }),
 		onSettled: () => {
 			// 最后一个写入结束时，以服务端的列表（带状态、最后修改）为准。
 			if (queryClient.isMutating({ mutationKey: writing }) <= 1) {
@@ -61,14 +53,10 @@ export function useFocusItems(orchestrationId: string) {
 	const stale = items.filter((item) => item.status !== "ok").length;
 
 	/** 整份替换成 `next`（顺序就是显示顺序）。 */
-	const replace = (next: FocusItemInput[]) => {
+	const replace = (next: FocusItemView[]) => {
 		void queryClient.cancelQueries({ queryKey: detail.queryKey });
-		queryClient.setQueryData(
-			detail.queryKey,
-			(old) =>
-				old && { ...old, focus_items: next.map((item) => pendingItem(old.focus_items, item)) },
-		);
-		write.mutate(next);
+		queryClient.setQueryData(detail.queryKey, (old) => old && { ...old, focus_items: next });
+		write.mutate(next.map(focusInputOf));
 	};
 
 	return {
@@ -84,14 +72,18 @@ export function useFocusItems(orchestrationId: string) {
 		limit: FOCUS_ITEMS_MAX,
 		full: items.length >= FOCUS_ITEMS_MAX,
 		replace,
-		/** 把图表设为关注项（加到列表末尾）或取消；快速连点时以刚显示的列表为准。 */
-		toggle: (nodeId: string, chart: string, on: boolean) => {
+		/**
+		 * 把图表设为关注项（加到列表末尾，先当作可用：服务端检查过才会写入，不合格就以服务端的列表为准）或取消；
+		 * 快速连点时以刚显示的列表为准。
+		 */
+		toggle: (nodeId: string, chart: string, chartType: ChartView["type"], on: boolean) => {
 			const current = queryClient.getQueryData(detail.queryKey)?.focus_items ?? [];
 			if (isFocused(current, nodeId, chart) === on) return;
+			const key = focusKey({ node_id: nodeId, chart });
 			replace(
 				on
-					? [...current.map(focusInputOf), { node_id: nodeId, chart }]
-					: current.filter((item) => !isItem(item, nodeId, chart)).map(focusInputOf),
+					? [...current, { node_id: nodeId, chart, status: "ok", chart_type: chartType }]
+					: current.filter((item) => focusKey(item) !== key),
 			);
 		},
 	};

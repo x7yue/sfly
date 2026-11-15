@@ -32,7 +32,7 @@ import { StatusPill } from "#/components/status";
 import { FocusListPage } from "#/focus/FocusList";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
-import { ACTION, ANNOTATION_FIELD_LABEL } from "#/lib/copy";
+import { ACTION, ANNOTATION_FIELD_LABEL, INSPECTOR_PAGE } from "#/lib/copy";
 import { descriptionParagraphs } from "#/lib/node-description";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
 import { Button } from "@/components/ui/button";
@@ -327,13 +327,15 @@ function NodeInspector({
 			>
 				<TabsList>
 					<TabsTrigger value="params">
-						参数
+						{INSPECTOR_PAGE.params}
 						{paramErrors > 0 && (
 							<span className="font-mono text-2xs text-danger-fg">{paramErrors}</span>
 						)}
 					</TabsTrigger>
-					{hasExec && <TabsTrigger value="exec">执行</TabsTrigger>}
-					<TabsTrigger value="doc">{node.kind === "package" ? "说明与指标" : "说明"}</TabsTrigger>
+					{hasExec && <TabsTrigger value="exec">{INSPECTOR_PAGE.exec}</TabsTrigger>}
+					<TabsTrigger value="doc">
+						{node.kind === "package" ? INSPECTOR_PAGE.docWithMetrics : INSPECTOR_PAGE.doc}
+					</TabsTrigger>
 				</TabsList>
 				<TabsContent value="params" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
 					{general.length > 0 && <WarningList warnings={general} />}
@@ -579,15 +581,19 @@ function ScenarioInspector({
 }) {
 	return (
 		<>
-			<Header onCollapse={onCollapse} title="场景设置" row={<span>未选中节点</span>} />
+			<Header
+				onCollapse={onCollapse}
+				title={INSPECTOR_PAGE.sceneSettings}
+				row={<span>未选中节点</span>}
+			/>
 			<Tabs
 				value={tab}
 				onValueChange={(v) => onTab(v as ScenarioTab)}
 				className="min-h-0 flex-1 overflow-hidden"
 			>
 				<TabsList>
-					<TabsTrigger value="overview">概况</TabsTrigger>
-					<TabsTrigger value="focus">关注项</TabsTrigger>
+					<TabsTrigger value="overview">{INSPECTOR_PAGE.overview}</TabsTrigger>
+					<TabsTrigger value="focus">{INSPECTOR_PAGE.focus}</TabsTrigger>
 				</TabsList>
 				<TabsContent value="overview" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
 					<ScenarioOverview context={context} />

@@ -283,7 +283,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 界面只用中文，不引入 i18n 框架；多处共用的文字集中在 `src/lib/copy.ts`：
 
 - `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词）；`chainLabel()`：链实例名称（主链 / 子流程 X）。
-- `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）。
+- `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）；`INSPECTOR_PAGE`：检查器的页名（页签、页面标题，以及「先在场景设置的「关注项」页移除一项」这类指路的提示：都引用它，改名不会漏）。
 - `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
 - `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字。
 

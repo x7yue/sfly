@@ -28,12 +28,30 @@ export const TERM = {
 	displayName: "显示名称",
 	note: "备注",
 	annotation: "注释框",
+	focusItem: "关注项",
+	lastEdited: "最后修改",
 } as const;
 
-/** 关注项（GLOSSARY「关注项」）：节点检查器的名额和场景设置的「关注项」页共用的文字。 */
+/**
+ * 检查器的页名：页签、页面标题和别处指路的提示（「先在场景设置的「关注项」页移除一项」）引用同一份，改名不会漏。
+ * 「场景设置」是不选节点时的检查器，也是版本对比里场景级设置的名字。
+ */
+export const INSPECTOR_PAGE = {
+	sceneSettings: "场景设置",
+	overview: "概况",
+	focus: TERM.focusItem,
+	params: "参数",
+	exec: "执行",
+	doc: "说明",
+	docWithMetrics: "说明与指标",
+} as const;
+
+/** 关注项（GLOSSARY「关注项」）：节点检查器的名额、场景设置的「关注项」页和图表列表共用的文字。 */
 export const FOCUS = {
 	/** 名额里注明其中有几项已经失效（失效的项也占名额）。 */
 	staleNote: (stale: number) => `（含 ${stale} 项已失效的）`,
+	/** 关注项不属于场景版本：节点检查器的图表列表和「关注项」页都要说明这一点。 */
+	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
 } as const;
 
 /** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */
@@ -115,6 +133,10 @@ export const ACTION = {
 	copyErrorDetails: "复制错误详情",
 	insertReference: "插入引用",
 	addAnnotation: `添加${TERM.annotation}`,
+	undo: "撤销",
+	focus: "关注",
+	moveUp: "上移",
+	moveDown: "下移",
 	resizeInspector: "调整检查器宽度",
 } as const;
 

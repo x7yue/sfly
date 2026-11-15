@@ -1,17 +1,21 @@
-import { FOCUS_ITEM_TITLE_MAX, type FocusItemInput, type FocusItemView } from "@sfly/schema";
+import {
+	FOCUS_ITEM_TITLE_MAX,
+	type FocusItemView,
+	focusKey,
+	focusName,
+	sameFocusList,
+} from "@sfly/schema";
 import { cn } from "cn";
 import { ChevronDownIcon, ChevronUpIcon, GripVerticalIcon, XIcon } from "lucide-react";
 import { type DragEvent, useEffect, useRef, useState } from "react";
-import { FOCUS } from "#/lib/copy";
+import { ACTION, FOCUS, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { QuotaCount } from "./FocusToggle";
-import { focusKey, indexAfterDrop, moveItem, renamedItem, sameFocusList } from "./focus-list-edit";
-import { focusInputOf, useFocusItems } from "./use-focus-items";
-
-const nameOf = (item: FocusItemView) => item.title ?? item.chart;
+import { indexAfterDrop, moveItem, renamedItem } from "./focus-list-edit";
+import { useFocusItems } from "./use-focus-items";
 
 /** 失效的项为什么失效；可用的项没有。 */
 function staleReason(item: FocusItemView, headVersion: number): string | null {
@@ -31,8 +35,8 @@ function staleReason(item: FocusItemView, headVersion: number): string | null {
 interface Removed {
 	name: string;
 	key: string;
-	before: FocusItemInput[];
-	after: FocusItemInput[];
+	before: FocusItemView[];
+	after: FocusItemView[];
 }
 
 /** 正在拖动的一项，和它现在悬在哪个空位上（第 `slot` 项的前面；项数是末尾；还没悬在任何位置时为 null）。 */
@@ -51,7 +55,6 @@ interface Drag {
 export function FocusListPage({ orchestrationId }: { orchestrationId: string }) {
 	const focus = useFocusItems(orchestrationId);
 	const { items, edit } = focus;
-	const current = items.map(focusInputOf);
 	const [removed, setRemoved] = useState<Removed | null>(null);
 	const [drag, setDrag] = useState<Drag | null>(null);
 	const [announcement, setAnnouncement] = useState("");
@@ -67,34 +70,34 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 		page.current?.querySelector<HTMLElement>(`[data-focus-id="${CSS.escape(target)}"]`)?.focus();
 	}, [items]);
 
-	const undoable = removed !== null && sameFocusList(current, removed.after);
+	const undoable = removed !== null && sameFocusList(items, removed.after);
 
 	const moveTo = (from: number, to: number, refocusOn?: string) => {
 		const item = items[from];
 		if (item === undefined || to < 0 || to >= items.length || to === from) return;
 		setRemoved(null);
 		if (refocusOn !== undefined) refocus.current = refocusOn;
-		focus.replace(moveItem(current, from, to));
-		setAnnouncement(`${nameOf(item)} 移到第 ${to + 1} 位，共 ${items.length} 项`);
+		focus.replace(moveItem(items, from, to));
+		setAnnouncement(`${focusName(item)} 移到第 ${to + 1} 位，共 ${items.length} 项`);
 	};
 
 	const rename = (index: number, typed: string) => {
-		const was = current[index];
+		const was = items[index];
 		if (was === undefined) return;
 		const now = renamedItem(was, typed);
 		if (sameFocusList([was], [now])) return;
 		setRemoved(null);
-		focus.replace(current.map((item, i) => (i === index ? now : item)));
+		focus.replace(items.map((item, i) => (i === index ? now : item)));
 	};
 
 	const remove = (index: number) => {
 		const item = items[index];
 		if (item === undefined) return;
-		const after = current.filter((_, i) => i !== index);
-		setRemoved({ name: nameOf(item), key: focusKey(item), before: current, after });
+		const after = items.filter((_, i) => i !== index);
+		setRemoved({ name: focusName(item), key: focusKey(item), before: items, after });
 		refocus.current = "undo";
 		focus.replace(after);
-		setAnnouncement(`已移除 ${nameOf(item)}，可以撤销`);
+		setAnnouncement(`已移除 ${focusName(item)}，可以撤销`);
 	};
 
 	const undo = () => {
@@ -140,7 +143,7 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 				</p>
 				{edit && (
 					<p className="m-0 text-fg-2">
-						最后修改：<b className="font-medium text-fg-1">{edit.updated_by}</b> ·{" "}
+						{TERM.lastEdited}：<b className="font-medium text-fg-1">{edit.updated_by}</b> ·{" "}
 						{formatDateTime(edit.updated_at)}，{edit.summary}
 					</p>
 				)}
@@ -151,17 +154,18 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 						已移除「{removed.name}」，正在跑的运行也去掉了这一项。
 					</span>
 					<Button size="sm" data-focus-id="undo" onClick={undo}>
-						撤销
+						{ACTION.undo}
 					</Button>
 				</div>
 			)}
 			{items.length > 0 ? (
 				<>
 					<p className="m-0 text-xs text-fg-2">
-						运行时按这个顺序显示，有异常的项临时排到最前。拖动左侧手柄，或用上移、下移调整顺序。
+						运行时按这个顺序显示，有异常的项临时排到最前。拖动左侧手柄，或用{ACTION.moveUp}、
+						{ACTION.moveDown}调整顺序。
 					</p>
 					<ul
-						aria-label="关注项"
+						aria-label={TERM.focusItem}
 						onDragLeave={(e) => {
 							if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
 								setDrag((d) => d && { ...d, slot: null });
@@ -173,7 +177,7 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 							const key = focusKey(item);
 							const reason = staleReason(item, focus.headVersion);
 							const line = dropLine(index);
-							const name = nameOf(item);
+							const name = focusName(item);
 							return (
 								<li
 									key={key}
@@ -210,18 +214,18 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 											onRename={(typed) => rename(index, typed)}
 										/>
 										<div className="px-2.25 text-xs text-fg-3">
-											<span className="font-mono">{item.node_id}</span> · 图表 {item.chart}
+											<span className="font-mono">{item.node_id}</span> · {TERM.chart} {item.chart}
 										</div>
 										{reason && <div className="px-2.25 text-xs text-fg-3">{reason}</div>}
 									</div>
 									<div className="flex h-7.5 flex-none items-center gap-0.5">
 										<span className="mr-1 flex w-10 flex-none justify-end">
-											{item.chart_type !== undefined && (
-												<Badge>{item.chart_type === "stat" ? "数值" : "图表"}</Badge>
+											{item.status === "ok" && (
+												<Badge>{item.chart_type === "stat" ? "数值" : TERM.chart}</Badge>
 											)}
 										</span>
 										<MoveButton
-											label={`上移 ${name}`}
+											label={`${ACTION.moveUp} ${name}`}
 											focusId={`${key}/up`}
 											disabled={index === 0}
 											onMove={() => moveTo(index, index - 1, `${key}/up`)}
@@ -229,7 +233,7 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 											<ChevronUpIcon />
 										</MoveButton>
 										<MoveButton
-											label={`下移 ${name}`}
+											label={`${ACTION.moveDown} ${name}`}
 											focusId={`${key}/down`}
 											disabled={index === items.length - 1}
 											onMove={() => moveTo(index, index + 1, `${key}/down`)}
@@ -239,7 +243,7 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 										<Button
 											variant="ghost"
 											size="icon-sm"
-											aria-label={`移除关注项 ${name}`}
+											aria-label={`移除${TERM.focusItem} ${name}`}
 											onClick={() => remove(index)}
 										>
 											<XIcon />
@@ -251,12 +255,12 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 					</ul>
 				</>
 			) : (
-				<p className="m-0 text-xs text-fg-3">还没有关注项。</p>
+				<p className="m-0 text-xs text-fg-3">还没有{TERM.focusItem}。</p>
 			)}
 			<p className="m-0 text-xs text-fg-3">
-				{
-					"关注项属于场景设置，不属于版本：改动立即生效，正在跑的运行也会跟着变，不产生新版本。要添加：选中节点，在「说明与指标」里对图表点「关注」。"
-				}
+				{FOCUS.notVersioned}正在跑的运行也会跟着变。要添加：选中节点，在「
+				{INSPECTOR_PAGE.docWithMetrics}」里对
+				{TERM.chart}点「{ACTION.focus}」。
 			</p>
 			<output className="sr-only">{announcement}</output>
 		</div>
@@ -287,7 +291,7 @@ function NameField({
 			aria-label={`名称（${item.node_id} · ${item.chart}）`}
 			data-focus-id={focusId}
 			maxLength={FOCUS_ITEM_TITLE_MAX}
-			value={typed ?? nameOf(item)}
+			value={typed ?? focusName(item)}
 			onChange={(e) => setTyped(e.target.value)}
 			onBlur={commit}
 			onKeyDown={(e) => {

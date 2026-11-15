@@ -1,6 +1,7 @@
 import { type ChartView, isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
 import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
 import type { FocusItems } from "#/focus/use-focus-items";
+import { FOCUS } from "#/lib/copy";
 import { Badge } from "@/components/ui/badge";
 
 /**
@@ -160,6 +161,7 @@ export function MetricDeclarations({
 									focus={focus.focus}
 									nodeId={focus.nodeId}
 									chart={c.title}
+									chartType={c.type}
 									enabled={focus.saved}
 								/>
 							)}
@@ -169,7 +171,7 @@ export function MetricDeclarations({
 			</ul>
 			<p className="m-0 mt-2.5 text-xs text-fg-3">
 				图表定义来自节点包元信息，随锁定的版本走；场景里不需要配置。
-				{focus && "关注项是场景的设置，不属于场景版本：改了立即生效，不产生新版本。"}
+				{focus && FOCUS.notVersioned}
 			</p>
 		</>
 	);

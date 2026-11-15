@@ -147,9 +147,9 @@ export class OrchestrationStore {
 
 	/**
 	 * 场景视图：基本信息，加上关注项和它们在最新版本里的状态（{@link focusFields}）。
-	 * 在事务里调用时传 `tx`：事务已经占着一个连接，不能再去连接池里另取一个。
+	 * `db` 必须传：在事务里是 `tx`（事务已经占着一个连接，不能再去连接池里另取一个），不在事务里是 `this.deps.db`。
 	 */
-	async #view(row: OrchestrationRow, db: Db = this.deps.db): Promise<OrchestrationView> {
+	async #view(row: OrchestrationRow, db: Db): Promise<OrchestrationView> {
 		return { ...toBase(row), ...(await focusFields(db, row)) };
 	}
 
@@ -158,7 +158,7 @@ export class OrchestrationStore {
 			.insert(orchestrations)
 			.values({ id: randomUUID(), name, description, createdAt: this.deps.clock.now() })
 			.returning();
-		return this.#view(row as OrchestrationRow);
+		return this.#view(row as OrchestrationRow, this.deps.db);
 	}
 
 	/**
@@ -207,7 +207,7 @@ export class OrchestrationStore {
 			},
 		);
 		return "row" in outcome
-			? { kind: "updated", orchestration: await this.#view(outcome.row) }
+			? { kind: "updated", orchestration: await this.#view(outcome.row, this.deps.db) }
 			: outcome;
 	}
 
@@ -248,7 +248,7 @@ export class OrchestrationStore {
 			.set({ archivedAt: null })
 			.where(eq(orchestrations.id, id))
 			.returning();
-		return row && this.#view(row);
+		return row && this.#view(row, this.deps.db);
 	}
 
 	async head(id: string): Promise<OrchestrationHeadView | undefined> {
@@ -320,7 +320,7 @@ export class OrchestrationStore {
 			await copyPresets(tx, sourceId, id, actor, now);
 			return row as OrchestrationRow;
 		});
-		return copied && this.#view(copied);
+		return copied && this.#view(copied, this.deps.db);
 	}
 
 	/** 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。 */
@@ -345,7 +345,7 @@ export class OrchestrationStore {
 
 	async get(id: string): Promise<OrchestrationView | undefined> {
 		const row = await this.#row(id);
-		return row && this.#view(row);
+		return row && this.#view(row, this.deps.db);
 	}
 
 	/**

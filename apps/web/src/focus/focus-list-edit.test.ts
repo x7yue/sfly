@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { indexAfterDrop, moveItem, renamedItem, sameFocusList } from "./focus-list-edit";
+import { indexAfterDrop, moveItem, renamedItem } from "./focus-list-edit";
 
 describe("moveItem", () => {
 	it("把一项挪到另一个位置，其余的顺序不变", () => {
@@ -19,28 +19,13 @@ describe("indexAfterDrop", () => {
 });
 
 describe("renamedItem", () => {
-	const item = { node_id: "load", chart: "TPS", title: "撮合 TPS" };
+	const base = { node_id: "load", chart: "TPS", status: "ok", chart_type: "area" } as const;
+	const item = { ...base, title: "撮合 TPS" };
 
-	it("去掉首尾空白；清空、全是空白或者写成图表标题都回到没起名", () => {
-		expect(renamedItem(item, "  母单量 ")).toEqual({
-			node_id: "load",
-			chart: "TPS",
-			title: "母单量",
-		});
-		expect(renamedItem(item, "")).toEqual({ node_id: "load", chart: "TPS" });
-		expect(renamedItem(item, "   ")).toEqual({ node_id: "load", chart: "TPS" });
-		expect(renamedItem(item, "TPS")).toEqual({ node_id: "load", chart: "TPS" });
-	});
-});
-
-describe("sameFocusList", () => {
-	const a = { node_id: "load", chart: "TPS" };
-	const b = { node_id: "load", chart: "延迟", title: "下单延迟" };
-
-	it("项、名字和顺序都一样才算一样", () => {
-		expect(sameFocusList([a, b], [a, { ...b }])).toBe(true);
-		expect(sameFocusList([a, b], [b, a])).toBe(false);
-		expect(sameFocusList([a, b], [a, { ...b, title: "延迟" }])).toBe(false);
-		expect(sameFocusList([a, b], [a])).toBe(false);
+	it("去掉首尾空白；清空、全是空白或者写成图表标题都回到没起名；状态和图表类型不变", () => {
+		expect(renamedItem(item, "  母单量 ")).toEqual({ ...base, title: "母单量" });
+		expect(renamedItem(item, "")).toEqual(base);
+		expect(renamedItem(item, "   ")).toEqual(base);
+		expect(renamedItem(item, "TPS")).toEqual(base);
 	});
 });

@@ -1,5 +1,6 @@
+import type { ChartView } from "@sfly/schema";
 import { EyeIcon } from "lucide-react";
-import { FOCUS } from "#/lib/copy";
+import { ACTION, FOCUS, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { type FocusItems, isFocused } from "./use-focus-items";
 
@@ -11,11 +12,14 @@ export function FocusToggle({
 	focus,
 	nodeId,
 	chart,
+	chartType,
 	enabled,
 }: {
 	focus: FocusItems;
 	nodeId: string;
 	chart: string;
+	/** 图表声明的类型：设为关注项后马上显示成数值或图表，不等服务端返回。 */
+	chartType: ChartView["type"];
 	/** 这个节点的图表现在能不能设为关注项（见 FocusQuota 的说明）；已经是关注项的总能取消。 */
 	enabled: boolean;
 }) {
@@ -24,13 +28,13 @@ export function FocusToggle({
 		<Button
 			size="sm"
 			aria-pressed={pressed}
-			aria-label={`把 ${chart} 设为关注项`}
+			aria-label={`把 ${chart} 设为${TERM.focusItem}`}
 			disabled={!pressed && (focus.full || !enabled)}
-			onClick={() => focus.toggle(nodeId, chart, !pressed)}
+			onClick={() => focus.toggle(nodeId, chart, chartType, !pressed)}
 			className="aria-pressed:bg-raised-2 aria-pressed:text-fg-1 aria-pressed:shadow-[inset_0_0_0_1px_var(--border-strong)]"
 		>
 			<EyeIcon aria-hidden="true" />
-			关注
+			{ACTION.focus}
 		</Button>
 	);
 }
@@ -39,7 +43,7 @@ export function FocusToggle({
 export function QuotaCount({ focus }: { focus: FocusItems }) {
 	return (
 		<>
-			本场景的关注项已用 <b className="font-mono font-medium text-fg-1">{focus.used}</b> /{" "}
+			本场景的{TERM.focusItem}已用 <b className="font-mono font-medium text-fg-1">{focus.used}</b> /{" "}
 			{focus.limit}
 		</>
 	);
@@ -55,11 +59,11 @@ export function FocusQuota({ focus, saved }: { focus: FocusItems; saved: boolean
 			<output className="m-0 mb-2 block text-xs text-fg-3">
 				<QuotaCount focus={focus} />
 				{focus.full &&
-					`，已满${focus.stale > 0 ? FOCUS.staleNote(focus.stale) : ""}：先在场景设置的「关注项」页移除一项`}
+					`，已满${focus.stale > 0 ? FOCUS.staleNote(focus.stale) : ""}：先在${INSPECTOR_PAGE.sceneSettings}的「${INSPECTOR_PAGE.focus}」页移除一项`}
 			</output>
 			{!saved && (
 				<p className="m-0 mb-2 text-xs text-fg-3">
-					保存成场景版本以后，才能把这个节点的图表设为关注项。
+					保存成场景版本以后，才能把这个节点的{TERM.chart}设为{TERM.focusItem}。
 				</p>
 			)}
 		</>

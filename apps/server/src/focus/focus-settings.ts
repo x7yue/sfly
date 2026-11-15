@@ -1,4 +1,4 @@
-import type { FocusEditView, FocusItemView } from "@sfly/schema";
+import { type FocusEditView, type FocusItemView, focusKey, sameFocusList } from "@sfly/schema";
 import type { Actor } from "../actor.js";
 import type { Db } from "../db/database.js";
 import type { orchestrations, StoredFocusEdit } from "../db/schema.js";
@@ -8,8 +8,6 @@ import {
 	describeFocusUndo,
 	type FocusItem,
 	type FocusRejection,
-	focusKey,
-	sameFocusList,
 } from "./focus-list.js";
 import { focusItemViews } from "./focus-views.js";
 

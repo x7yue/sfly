@@ -67,8 +67,6 @@ const focusItemBase = {
 	chart: z.string(),
 	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
 	title: z.string().optional(),
-	/** 图表在最新版本里声明的类型（`stat` 是数值卡，显示成数值，其余照声明画）；失效的项没有这个字段。 */
-	chart_type: ChartDeclaration.shape.type.optional(),
 };
 
 /**
@@ -82,7 +80,12 @@ const focusItemBase = {
  * 失效的项（后两种）保留在列表里，也占名额。
  */
 export const FocusItemView = z.discriminatedUnion("status", [
-	z.object({ ...focusItemBase, status: z.literal("ok") }),
+	z.object({
+		...focusItemBase,
+		status: z.literal("ok"),
+		/** 图表在最新版本里声明的类型（`stat` 是数值卡，显示成数值，其余照声明画）。 */
+		chart_type: ChartDeclaration.shape.type,
+	}),
 	z.object({
 		...focusItemBase,
 		status: z.literal("node_missing"),
