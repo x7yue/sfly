@@ -1,12 +1,13 @@
 // 互通测试：真实的 Rust Agent（tonic 客户端）用标准 gRPC 连上控制面网关。
 import { connect } from "node:net";
 import { agentsApi } from "@sfly/schema";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { agentBinary } from "./support/agent-binary.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe.skipIf(agentUnsupported)("Rust Agent 与控制面互通", () => {
+describeWithAgent("Rust Agent 与控制面互通", () => {
 	let cp: TestControlPlane;
 	let bin: string;
 	let agent: RealAgent | undefined;

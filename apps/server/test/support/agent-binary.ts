@@ -5,15 +5,27 @@ import { join, resolve } from "node:path";
 export const repoRoot = resolve(import.meta.dirname, "../../../..");
 
 /**
- * Agent 只能在 Linux 上编译（inotify）：用到 agentBinary() 的测试套件（包括经 startRealAgent、startAgentPair 用到的）
- * 写成 `describe.skipIf(agentUnsupported)`，在 macOS 上用 `pnpm linux` 运行（scripts/linux/run.sh）。
+ * 这台机器上用不了 Agent 时的原因，能用时返回 undefined。
+ *
+ * Agent 只能在 Linux 上编译（文件监听用 inotify），macOS 上 `cargo build -p sfly-agent` 一定失败，
+ * 所以 macOS 上没有 SFLY_AGENT_BIN 就不用试。指定了 SFLY_AGENT_BIN，或者在 Linux 上，一律照常：
+ * 构建失败就是测试失败。
  */
-export const agentUnsupported = process.platform !== "linux";
+export function agentUnavailableReason(): string | undefined {
+	if (process.env.SFLY_AGENT_BIN || process.platform !== "darwin") return undefined;
+	return "Agent 只能在 Linux 上编译，macOS 上没有";
+}
 
 /** Agent 二进制：SFLY_AGENT_BIN 指定时直接使用，否则用 cargo 构建 debug 版本。 */
 export function agentBinary(): string {
 	const fromEnv = process.env.SFLY_AGENT_BIN;
 	if (fromEnv) return fromEnv;
+	const unavailable = agentUnavailableReason();
+	if (unavailable) {
+		throw new Error(
+			`${unavailable}：用 pnpm linux 在 Linux 容器里运行，或用 SFLY_AGENT_BIN 指定 Agent 二进制`,
+		);
+	}
 	execFileSync("cargo", ["build", "--quiet", "--locked", "-p", "sfly-agent"], {
 		cwd: repoRoot,
 		stdio: "inherit",

@@ -6,10 +6,11 @@
 import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { chainOf, isAlive, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
-import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
+import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { dependencyWheel, type PypiStub, startPypiStub } from "./support/pypi-stub.js";
@@ -20,7 +21,7 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 const readPids = async (file: string) =>
 	(await readFile(file, "utf8")).trim().split(" ").map(Number);
 
-describe.skipIf(agentUnsupported)("验收 S3：故障", () => {
+describeWithAgent("验收 S3：故障", () => {
 	let bin: string;
 	let cp: TestControlPlane;
 	let api: ApiClient;

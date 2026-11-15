@@ -1,15 +1,16 @@
 // 全栈（#18）：真实的控制面、Rust Agent 和 SDK 执行器。节点用 ctx.artifacts 保存产物，Agent 在上报结果前上传，
 // 输出里的产物引用交给后续节点，并且可以从控制面下载；完整日志可以分页读取和下载。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe.skipIf(agentUnsupported)("全栈：产物与完整日志", () => {
+describeWithAgent("全栈：产物与完整日志", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;

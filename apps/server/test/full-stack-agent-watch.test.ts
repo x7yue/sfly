@@ -5,17 +5,17 @@
 import { mkdir, mkdtemp, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentUnsupported } from "./support/agent-binary.js";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { type AgentPair, startAgentPair } from "./support/agent-pair.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { publishTestPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const PACKAGE = "sfly-agent-files";
 
-describe.skipIf(agentUnsupported)("全栈：Agent 能力 files.watch", () => {
+describeWithAgent("全栈：Agent 能力 files.watch", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	let pair: AgentPair;

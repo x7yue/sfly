@@ -3,15 +3,16 @@
 // 节点所在的 Agent 用它们连过去（ctx.agent(名称)）；没有注册过的 Agent 在触发时就被拒绝。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { agentsApi } from "@sfly/schema";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishTestPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe.skipIf(agentUnsupported)("全栈：「Agent」类型的输入", () => {
+describeWithAgent("全栈：「Agent」类型的输入", () => {
 	let cp: TestControlPlane;
 	const venvs: Awaited<ReturnType<typeof createStubVenv>>[] = [];
 	const agents: RealAgent[] = [];

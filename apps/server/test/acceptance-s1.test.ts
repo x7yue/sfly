@@ -1,16 +1,17 @@
 // 验收场景 S1 数据流（docs/SEMANTICS.md §8）：真实的控制面、两个真实的 Rust Agent、真实的 SDK 执行器和桩节点包。
 // 入口参数传递；跨 Agent 引用上游输出；产物上传和引用；A 启动进程 → B 失败 → C（always）清理进程。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { chainOf, isAlive, nodeOf, orchestration, statuses, stub } from "./support/acceptance.js";
-import { agentBinary, agentUnsupported } from "./support/agent-binary.js";
+import { agentBinary } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
 import { publishStubPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
-describe.skipIf(agentUnsupported)("验收 S1：数据流", () => {
+describeWithAgent("验收 S1：数据流", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agents: RealAgent[] = [];

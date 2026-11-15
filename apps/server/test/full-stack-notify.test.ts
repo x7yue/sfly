@@ -5,9 +5,10 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentBinary, agentUnsupported, repoRoot } from "./support/agent-binary.js";
+import { afterAll, beforeAll, expect, it } from "vitest";
+import { agentBinary, repoRoot } from "./support/agent-binary.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
 import { createStubVenv, type RealAgent, startRealAgent } from "./support/real-agent.js";
@@ -48,7 +49,7 @@ interface LogLine {
 	text: string;
 }
 
-describe.skipIf(agentUnsupported)("全栈：ctx.notify", () => {
+describeWithAgent("全栈：ctx.notify", () => {
 	let cp: TestControlPlane;
 	let venv: Awaited<ReturnType<typeof createStubVenv>>;
 	let agent: RealAgent;
