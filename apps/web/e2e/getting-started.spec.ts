@@ -29,7 +29,7 @@ test("全新环境：控制台只有四步，没有统计、运行和 Agent 面�
 	]);
 	await expect(page.getByRole("list", { name: "运行计数" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "运行场景" })).toHaveCount(0);
-	for (const name of ["正在运行", "最近失败", "Agent 状态"]) {
+	for (const name of ["正在运行", "最近结束", "Agent", "场景"]) {
 		await expect(page.getByRole("region", { name, exact: true })).toHaveCount(0);
 	}
 	await expect(page.getByRole("link", { name: "快速开始" })).toHaveCount(2);

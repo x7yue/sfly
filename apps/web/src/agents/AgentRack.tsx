@@ -1,13 +1,14 @@
 import type { AgentView, QueuedTaskView } from "@sfly/schema";
 import { cn } from "cn";
 import { useId } from "react";
+import { agentStatusView, updateStatus } from "#/agents/agent-status";
 import { queueTiming } from "#/agents/queue-timing";
 import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
 import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
 import { IdleSlots, idleSlotCount, SlotCell, taskChainLabel } from "#/components/slot-cell";
-import { nodeStatusView, StatusDot, type StatusKind, StatusPill } from "#/components/status";
-import { TERM } from "#/lib/copy";
+import { nodeStatusView, StatusDot, StatusPill } from "#/components/status";
+import { queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import {
 	formatClockOffset,
 	formatDateTime,
@@ -72,7 +73,7 @@ export function AgentRack({
 								</h3>
 								{online && (
 									<span className="font-mono text-xs text-fg-3">
-										{used} / {slots} 占用 · 排队 {queued}
+										{slotUsageLabel(used, slots)} · {queuedLabel(queued)}
 									</span>
 								)}
 							</div>
@@ -124,17 +125,10 @@ function RackStatus({ agent }: { agent: AgentView }) {
 	// 不监听端口的旧版本 Agent 也没有能力（能力显示「无」），不再重复说明。
 	const unavailable =
 		online && agent.endpoint.port !== null ? agent.endpoint.unavailable_reason : null;
+	const status = agentStatusView(agent);
 	return (
 		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-			{update ? (
-				<StatusPill kind={update.kind}>{update.label}</StatusPill>
-			) : installing ? (
-				<StatusPill kind="warn">安装中</StatusPill>
-			) : online ? (
-				<StatusPill kind="ok">在线</StatusPill>
-			) : (
-				<StatusPill kind="pending">离线</StatusPill>
-			)}
+			<StatusPill kind={status.kind}>{status.label}</StatusPill>
 			{online && agent.preparing_since && <PreparingBadge since={agent.preparing_since} />}
 			{update?.detail && (
 				<span className={cn("text-xs", update.kind === "failed" ? "text-danger-fg" : "text-fg-3")}>
@@ -242,34 +236,6 @@ function IdentifierList({ items }: { items: readonly string[] }) {
 			))}
 		</span>
 	);
-}
-
-/**
- * 在线 Agent 的更新状态（ADR 0014）：版本与控制面不一致时不接新任务，状态后面说明它在做什么；
- * 不需要更新时为 undefined。
- */
-function updateStatus(
-	agent: AgentView,
-): { kind: StatusKind; label: string; detail?: string } | undefined {
-	const { update } = agent;
-	switch (update.state) {
-		case "downloading":
-			return { kind: "running", label: "更新中", detail: "下载新版本" };
-		case "waiting_for_tasks":
-			return {
-				kind: "running",
-				label: "更新中",
-				detail: `等待 ${update.remaining_tasks} 个任务结束`,
-			};
-		case "replacing":
-			return { kind: "running", label: "更新中", detail: "替换并重新启动" };
-		case "failed":
-			return { kind: "failed", label: "更新失败", detail: update.reason };
-		case "manual_upgrade_required":
-			return { kind: "warn", label: "需要手动升级", detail: update.reason };
-		case "none":
-			return agent.version_mismatch ? { kind: "warn", label: "版本不一致" } : undefined;
-	}
 }
 
 /** 其它 Agent 连接它用的 `地址:端口`（IPv6 地址加方括号）；没有端口（旧版本 Agent）时只有地址。 */

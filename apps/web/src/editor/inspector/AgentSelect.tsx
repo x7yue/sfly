@@ -1,4 +1,5 @@
 import type { AgentView } from "@sfly/schema";
+import { AGENT_STATUS_LABEL } from "#/lib/copy";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import type { FieldControl } from "./fields";
 
@@ -34,7 +35,7 @@ export function AgentSelect({
 			<NativeSelectOption value="">{emptyLabel}</NativeSelectOption>
 			{agents.map((a) => (
 				<NativeSelectOption key={a.name} value={a.name}>
-					{a.name} · {a.status === "online" ? "在线" : "离线"}
+					{a.name} · {AGENT_STATUS_LABEL[a.status]}
 					{slots && ` · ${a.running_tasks.length}/${a.info.slots} 槽位`}
 				</NativeSelectOption>
 			))}

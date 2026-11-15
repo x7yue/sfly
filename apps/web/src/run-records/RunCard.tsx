@@ -1,11 +1,11 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChainBar, doneCount, listChainLabel } from "#/components/chain-progress";
+import { ChainBar, chainProgressText, listChainLabel } from "#/components/chain-progress";
 import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
-import { ViaTag } from "#/components/via-tag";
-import { ACTION } from "#/lib/copy";
-import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { TriggeredAt } from "#/components/via-tag";
+import { ACTION, ELAPSED_LABEL, moreLabel } from "#/lib/copy";
+import { formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
@@ -58,13 +58,12 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					{shortId(run.id)}
 				</span>
 				<span className="flex-1" />
-				<span className="font-mono text-sm" title="已运行">
+				<span className="font-mono text-sm" title={ELAPSED_LABEL}>
 					{formatDuration(now - Date.parse(run.started_at))}
 				</span>
 			</div>
 			<div className="text-xs text-fg-3">
-				{run.triggered_by}
-				<ViaTag via={run.triggered_via} /> 触发 · 开始 {formatDateTime(run.started_at)}
+				<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} />
 				{failedSubflows.length > 0 && (
 					<>
 						{" · "}
@@ -83,9 +82,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 								{listChainLabel(chain)}
 							</span>
 							<ChainBar label={listChainLabel(chain)} nodes={chain.nodes} />
-							<span className="font-mono text-2xs text-fg-3">
-								{doneCount(chain.nodes)}/{chain.nodes.length}
-							</span>
+							<span className="font-mono text-2xs text-fg-3">{chainProgressText(chain.nodes)}</span>
 						</div>
 					))}
 			</div>
@@ -120,9 +117,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 						</li>
 					))}
 					{run.active_nodes.length > MAX_ACTIVE && (
-						<li className="text-xs text-fg-3">
-							另有 {run.active_nodes.length - MAX_ACTIVE} 个节点
-						</li>
+						<li className="text-xs text-fg-3">{moreLabel(run.active_nodes.length - MAX_ACTIVE)}</li>
 					)}
 				</ul>
 			)}

@@ -1,5 +1,6 @@
 import { cn } from "cn";
 import { InfoIcon, OctagonXIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { ACTION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 
 /**
@@ -73,7 +74,7 @@ export function Banner({
 			</div>
 			{actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
 			{onDismiss && (
-				<Button variant="ghost" size="icon-sm" aria-label="收起" onClick={onDismiss}>
+				<Button variant="ghost" size="icon-sm" aria-label={ACTION.collapse} onClick={onDismiss}>
 					<XIcon />
 				</Button>
 			)}
