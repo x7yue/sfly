@@ -295,7 +295,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词）；`chainLabel()`：链实例名称（主链 / 子流程 X），手上只有子流程名称（主链为 null）时用 `namedChainLabel()`。
 - `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）；`FOCUS`：关注项共用的句子；`INSPECTOR_PAGE`：检查器的页名（页签、页面标题，以及「先在场景设置的「关注项」页移除一项」这类指路的提示：都引用它，改名不会漏）。
 - `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
-- `NODE_ACTIONS`：动作与标记在几处地方共用的文字（「正在做」），读屏读到的「正在做 X」也由它拼；术语「动作」是 `TERM.action`；`attemptLabel()`（「第 2 次尝试」）；`DOC_PAGE` 加了「开发节点（SDK 参考）」。
+- `NODE_ACTIONS`：动作与标记在几处地方共用的文字（「正在做」），读屏读到的「正在做 X」也由它拼；术语「动作」是 `TERM.action`；`attemptLabel()`（「第 2 次尝试」，运行监控的尝试页签和画布检查器的动作区共用）；`PROGRESS_LABEL`（节点上报的「进度」，图表工作区、时间线、运行抽屉、画布检查器共用；运行记录表里的「进度」是各链进度，不是它）；`DOC_PAGE` 加了「开发节点（SDK 参考）」。
 - `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「还没有数据」「这次尝试没有上报数据」）。
 - 运行监控、运行抽屉与关注项读数用的：`MONITOR_VIEW_LABEL`（概览 / 详情两个视图的名称）、`FINAL_VALUE_LABEL`（最终值）、`chainCountLabel()`（「N 条链 · N 个节点」）、`LIST_LABEL`（列表的可访问名称：图例、各链进度、概览里执行中的节点、运行抽屉里进行中的节点）；`MESSAGE.noRunningNodes`（没有执行中的节点）、`MESSAGE.noActiveNodes`（没有进行中的节点）。概览只列在 Agent 上的节点（准备中、执行中，统称执行中）；运行抽屉列排队中、准备中、执行中、等待中的节点，标题和列表名用 `ACTIVE_LABEL`（进行中），不用任何一个节点状态名。「进行中」在运行记录页指运行（进行中的卡片），在运行抽屉指节点，两处不在同一屏。
 - `DOC_PAGE`：界面里引用的开发文档页名（与 `docs/guide/pages.json` 的标题一致）。
