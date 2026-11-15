@@ -23,8 +23,10 @@
 - **测试只碰自己建的东西**：临时目录、端口、数据库、git 仓库。
   - 测试里启动 git 子进程时去掉继承来的 `GIT_*` 变量。
   - 不依赖 GNU coreutils 的特有行为：CI 的 Ubuntu 用 Rust 版 coreutils，复制改名后的系统命令会拒绝运行。
-- **修偶发失败的 PR 写明加压复现**：修复前在加压下失败几次，修复后跑多少次全部通过（`pnpm test:stress`，e2e 用 `pnpm test:e2e:stress`）。
+- **修偶发失败的 PR 写明加压复现**：修复前在加压下失败几次，修复后跑多少次全部通过（`pnpm test:stress`，e2e 用 `pnpm test:e2e:stress`，macOS 上它在 Docker 里运行）。
   不能只靠调大超时；确实要调时，写明原来的超时为什么不合理。
+- **PR 里新增或改动的 e2e spec 在 CI 里会重复运行几次**（`pnpm test:e2e:changed`）：那一步失败说明用例不稳定，不要重跑碰运气；
+  本地用 `pnpm test:e2e:stress $(bash scripts/e2e-changed.sh --list)` 复现。
 
 ## 文档
 

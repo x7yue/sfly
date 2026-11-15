@@ -4,6 +4,7 @@
 #   pnpm test:e2e:docker                       # 比对
 #   pnpm test:e2e:docker --update-snapshots    # 更新视觉基线
 # 需要 docker；容器使用宿主网络访问 DATABASE_URL 指向的 PostgreSQL。
+# SFLY_VISUAL=0 只跑功能用例（默认 1，含视觉回归）；E2E_DOCKER_FLAGS 给 docker run 加参数（例如 --cpus=2，`pnpm test:e2e:stress` 用）。
 # 设置 CI=1，让 playwright.config.ts 采用与 CI 相同的 worker 数、forbidOnly 和报告格式。
 set -euo pipefail
 
@@ -11,8 +12,10 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 version=$(node -p "require('$root/apps/web/node_modules/@playwright/test/package.json').version")
 
 pnpm --dir "$root" --filter @sfly/client --filter @sfly/web build
-exec docker run --rm --network host --ipc host \
-	--user "$(id -u):$(id -g)" -e HOME=/tmp -e CI=1 -e SFLY_VISUAL=1 \
+# E2E_DOCKER_FLAGS 按空白拆成多个参数，所以不加引号。
+# shellcheck disable=SC2086
+exec docker run --rm --network host --ipc host ${E2E_DOCKER_FLAGS:-} \
+	--user "$(id -u):$(id -g)" -e HOME=/tmp -e CI=1 -e SFLY_VISUAL="${SFLY_VISUAL:-1}" \
 	-e DATABASE_URL="${DATABASE_URL:-postgres://sfly:sfly@127.0.0.1:5432/sfly}" \
 	-v "$root:$root" -w "$root/apps/web" \
 	"mcr.microsoft.com/playwright:v$version-noble" \
