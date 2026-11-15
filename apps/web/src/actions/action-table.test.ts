@@ -3,7 +3,7 @@ import type {
 	ActionNameCount,
 	ActionRecordDetail,
 	ActionSummaryView,
-	CountOnlySpan,
+	CountOnlyPeriod,
 	EndedActionView,
 	RunningActionView,
 } from "@sfly/schema";
@@ -96,12 +96,12 @@ function summary(parts: Partial<ActionSummaryView> = {}): ActionSummaryView {
 	};
 }
 
-const span = (
+const period = (
 	name: string,
 	from: number,
-	reason: CountOnlySpan["reason"] = "name_limit",
+	reason: CountOnlyPeriod["reason"] = "name_limit",
 	count = 40,
-): CountOnlySpan => ({
+): CountOnlyPeriod => ({
 	name,
 	reason,
 	from: at(from),
@@ -198,7 +198,7 @@ describe("只计数的段", () => {
 	it("放在开始时间早于它起点的第一条明细前面", () => {
 		const groups = table({
 			details: [detail(5, 500), detail(4, 400), detail(3, 300)],
-			countOnly: [span("下单", 450), span("预热", 350)],
+			countOnly: [period("下单", 450), period("预热", 350)],
 		});
 		expect(shape(groups)).toEqual([["earlier", [5, "~下单", 4, "~预热", 3]]]);
 	});
@@ -206,7 +206,7 @@ describe("只计数的段", () => {
 	it("和明细同一时刻开始的放在那条明细后面；比全部明细都早的放在最后，比全部都晚的放在最前", () => {
 		const groups = table({
 			details: [detail(5, 500), detail(4, 400)],
-			countOnly: [span("预热", 100), span("下单", 400), span("加压", 900)],
+			countOnly: [period("预热", 100), period("下单", 400), period("加压", 900)],
 		});
 		expect(shape(groups)).toEqual([["earlier", ["~加压", 5, 4, "~下单", "~预热"]]]);
 	});
@@ -215,7 +215,7 @@ describe("只计数的段", () => {
 		const groups = table({
 			summary: summary({ recent: [ended(4, 400)] }),
 			details: [detail(4, 400)],
-			countOnly: [span("下单", 300)],
+			countOnly: [period("下单", 300)],
 		});
 		expect(shape(groups)).toEqual([
 			["recent", [4]],
@@ -226,7 +226,7 @@ describe("只计数的段", () => {
 	it("SDK 上限的段个数取最新的摘要（任务还在执行时一直在涨），控制面兜底的取分页读到的", () => {
 		const groups = table({
 			summary: summary({ names: [count("下单", 50_300, 50_000), count("预热", 9, 9)] }),
-			countOnly: [span("下单", 300, "name_limit", 120), span("预热", 200, "control_plane", 5)],
+			countOnly: [period("下单", 300, "name_limit", 120), period("预热", 200, "control_plane", 5)],
 		});
 		expect(groups[0]?.rows).toMatchObject([
 			{ kind: "count-only", name: "下单", reason: "name_limit", from: at(300), count: 300 },
@@ -235,11 +235,14 @@ describe("只计数的段", () => {
 	});
 
 	it("还在执行时到「至今」；任务结束后到任务的结束时间", () => {
-		const live = table({ countOnly: [span("下单", 300)] });
+		const live = table({ countOnly: [period("下单", 300)] });
 		expect(live[0]?.rows[0]).toMatchObject({ until: null });
-		const over = table({ countOnly: [span("下单", 300)], endedAt: at(5000) });
+		const over = table({ countOnly: [period("下单", 300)], endedAt: at(5000) });
 		expect(over[0]?.rows[0]).toMatchObject({ until: at(5000) });
-		const done = table({ countOnly: [{ ...span("下单", 300), to: at(4000) }], endedAt: at(5000) });
+		const done = table({
+			countOnly: [{ ...period("下单", 300), to: at(4000) }],
+			endedAt: at(5000),
+		});
 		expect(done[0]?.rows[0]).toMatchObject({ until: at(4000) });
 	});
 });

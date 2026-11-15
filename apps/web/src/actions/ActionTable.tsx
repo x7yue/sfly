@@ -1,4 +1,4 @@
-import type { CountOnlySpan } from "@sfly/schema";
+import type { CountOnlyPeriod } from "@sfly/schema";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { cn } from "cn";
 import { FlagIcon } from "lucide-react";
@@ -39,7 +39,7 @@ const GROUP_LABEL: Record<ActionGroupName, string> = {
 };
 
 /** 只计数的段为什么没有明细。 */
-const COUNT_ONLY_REASON: Record<CountOnlySpan["reason"], string> = {
+const COUNT_ONLY_REASON: Record<CountOnlyPeriod["reason"], string> = {
 	name_limit: "每种名称最多记录 5 万个，失败的动作仍有明细",
 	total_limit: "全部名称合计最多记录 10 万个",
 	control_plane: "控制面收到的明细超过上限，超出的已丢弃",
@@ -134,7 +134,7 @@ export function ActionTable({
 	const padTop = first ? first.start - headHeight : 0;
 	const padBottom = last ? virtualizer.getTotalSize() - (last.end - headHeight) : 0;
 	const time = dated ? formatFullDateTimeMs : formatClockMs;
-	const spanTime = dated ? formatFullDateTime : formatClock;
+	const periodTime = dated ? formatFullDateTime : formatClock;
 
 	return (
 		<div
@@ -174,7 +174,7 @@ export function ActionTable({
 								measure={virtualizer.measureElement}
 								item={item}
 								time={time}
-								spanTime={spanTime}
+								periodTime={periodTime}
 							/>
 						))}
 						{i === segments.length - 1 && padBottom > 0 && <Spacer height={padBottom} />}
@@ -234,13 +234,13 @@ function ItemRow({
 	measure,
 	item,
 	time,
-	spanTime,
+	periodTime,
 }: {
 	index: number;
 	measure: (node: Element | null) => void;
 	item: Item;
 	time: (iso: string) => string;
-	spanTime: (iso: string) => string;
+	periodTime: (iso: string) => string;
 }) {
 	if (item.kind === "heading") {
 		return (
@@ -264,7 +264,7 @@ function ItemRow({
 					colSpan={COLUMNS}
 					className="border-b border-border-soft bg-[repeating-linear-gradient(135deg,var(--border-soft)_0_6px,transparent_6px_12px)] px-3 py-1.5 text-fg-3"
 				>
-					{countOnlyText(row, spanTime)}
+					{countOnlyText(row, periodTime)}
 				</td>
 			</tr>
 		);

@@ -2,7 +2,7 @@ import {
 	type ActionDetailView,
 	type ActionSummaryView,
 	actionsApi,
-	type CountOnlySpan,
+	type CountOnlyPeriod,
 } from "@sfly/schema";
 import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -57,7 +57,7 @@ export interface TaskActions {
 	/** 读到的明细，按开始时间从新到旧，同一个 ID 只有一条（`action-details.ts`）。 */
 	details: readonly ActionDetailView[];
 	/** 读到的只计数的段。 */
-	countOnly: readonly CountOnlySpan[];
+	countOnly: readonly CountOnlyPeriod[];
 	/** 读到了第一页。 */
 	loaded: boolean;
 	/** 还有更早的明细没读：`loadOlder()` 读下一页。 */

@@ -1,4 +1,9 @@
-import type { ActionDetailView, ActionPage, ActionSummaryView, CountOnlySpan } from "@sfly/schema";
+import type {
+	ActionDetailView,
+	ActionPage,
+	ActionSummaryView,
+	CountOnlyPeriod,
+} from "@sfly/schema";
 
 /**
  * 一个任务（一次尝试）已经读到的动作明细：分页读到的加上实时推送来的（`use-task-actions.ts` 持有它）。
@@ -10,7 +15,7 @@ export interface ActionDetails {
 	/** 按开始时间从新到旧（同一时刻 ID 大的在前，与分页的顺序相同），同一个 ID 只有一条，后到的为准。 */
 	readonly details: readonly ActionDetailView[];
 	/** 分页读到的只计数的段，同一个名称、同一种原因只有一段（后读到的为准），按起点从新到旧。 */
-	readonly countOnly: readonly CountOnlySpan[];
+	readonly countOnly: readonly CountOnlyPeriod[];
 	/** 读更早一页的游标；null：已经读到最早的明细。 */
 	readonly before: string | null;
 	/** 最新一页的修订号：实时推送从它之后接上。 */
@@ -34,7 +39,7 @@ export const matchesFilter = (detail: ActionDetailView, filter: ActionFilter): b
 export function fromLatestPage(page: ActionPage): ActionDetails {
 	return {
 		details: mergeDetails([], page.actions),
-		countOnly: mergeSpans([], page.count_only),
+		countOnly: mergePeriods([], page.count_only),
 		before: page.before,
 		rev: page.rev,
 		expired: page.expired,
@@ -46,7 +51,7 @@ export function withOlderPage(d: ActionDetails, page: ActionPage): ActionDetails
 	return {
 		...d,
 		details: mergeDetails(d.details, page.actions),
-		countOnly: mergeSpans(d.countOnly, page.count_only),
+		countOnly: mergePeriods(d.countOnly, page.count_only),
 		before: page.before,
 	};
 }
@@ -59,7 +64,7 @@ export function withLatestPage(d: ActionDetails, page: ActionPage): ActionDetail
 	return {
 		...d,
 		details: mergeDetails(d.details, page.actions),
-		countOnly: mergeSpans(d.countOnly, page.count_only),
+		countOnly: mergePeriods(d.countOnly, page.count_only),
 	};
 }
 
@@ -134,14 +139,14 @@ function mergeDetails(
 	return merged;
 }
 
-const spanKey = (s: CountOnlySpan) => `${s.name}\n${s.reason}`;
+const periodKey = (s: CountOnlyPeriod) => `${s.name}\n${s.reason}`;
 
-function mergeSpans(
-	spans: readonly CountOnlySpan[],
-	incoming: readonly CountOnlySpan[],
-): readonly CountOnlySpan[] {
-	if (incoming.length === 0) return spans;
-	const byKey = new Map(spans.map((s) => [spanKey(s), s]));
-	for (const s of incoming) byKey.set(spanKey(s), s);
+function mergePeriods(
+	periods: readonly CountOnlyPeriod[],
+	incoming: readonly CountOnlyPeriod[],
+): readonly CountOnlyPeriod[] {
+	if (incoming.length === 0) return periods;
+	const byKey = new Map(periods.map((s) => [periodKey(s), s]));
+	for (const s of incoming) byKey.set(periodKey(s), s);
 	return [...byKey.values()].sort((a, b) => Date.parse(b.from) - Date.parse(a.from));
 }

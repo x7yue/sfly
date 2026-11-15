@@ -3,7 +3,7 @@ import type {
 	ActionPage,
 	ActionRecordDetail,
 	ActionSummaryView,
-	CountOnlySpan,
+	CountOnlyPeriod,
 } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import {
@@ -53,7 +53,7 @@ const mark = (id: number, start: number, name = "首笔成交"): ActionDetailVie
 	agent_started_at: at(start),
 });
 
-const span = (name: string, from: number, count = 10): CountOnlySpan => ({
+const period = (name: string, from: number, count = 10): CountOnlyPeriod => ({
 	name,
 	reason: "name_limit",
 	from: at(from),
@@ -65,7 +65,7 @@ const span = (name: string, from: number, count = 10): CountOnlySpan => ({
 function page(
 	actions: ActionDetailView[],
 	before: string | null,
-	countOnly: CountOnlySpan[] = [],
+	countOnly: CountOnlyPeriod[] = [],
 	rev = 7,
 ): ActionPage {
 	return { task_id: "t", actions, before, count_only: countOnly, rev, expired: false };
@@ -75,7 +75,7 @@ const ids = (details: readonly ActionDetailView[]) => details.map((d) => d.id);
 
 describe("动作明细的合并", () => {
 	it("最新一页：按开始时间从新到旧保留，记下更早一页的游标和实时推送的起点", () => {
-		const d = fromLatestPage(page([action(3, 300), action(2, 200)], "c2", [span("下单", 250)]));
+		const d = fromLatestPage(page([action(3, 300), action(2, 200)], "c2", [period("下单", 250)]));
 		expect(ids(d.details)).toEqual([3, 2]);
 		expect(d.before).toBe("c2");
 		expect(d.rev).toBe(7);
@@ -83,13 +83,15 @@ describe("动作明细的合并", () => {
 	});
 
 	it("更早的一页接在后面；和已有的重复的 ID 只留一条，只计数的段按名称和原因去重", () => {
-		const first = fromLatestPage(page([action(4, 400), action(3, 300)], "c3", [span("下单", 350)]));
+		const first = fromLatestPage(
+			page([action(4, 400), action(3, 300)], "c3", [period("下单", 350)]),
+		);
 		const d = withOlderPage(
 			first,
 			page(
 				[action(3, 300), action(2, 200), mark(1, 100)],
 				null,
-				[span("下单", 350), span("预热", 150)],
+				[period("下单", 350), period("预热", 150)],
 				9,
 			),
 		);
@@ -143,11 +145,11 @@ describe("动作明细的合并", () => {
 	it("重新读最新一页：明细合并去重，只计数的段以新读到的为准，游标和推送的起点不变", () => {
 		const loaded = withOlderPage(
 			fromLatestPage(page([action(4, 400)], "c4", [], 7)),
-			page([action(3, 300)], "c3", [span("预热", 350)]),
+			page([action(3, 300)], "c3", [period("预热", 350)]),
 		);
 		const d = withLatestPage(
 			loaded,
-			page([action(5, 500), action(4, 400)], "c4", [span("下单", 450, 3)], 12),
+			page([action(5, 500), action(4, 400)], "c4", [period("下单", 450, 3)], 12),
 		);
 		expect(ids(d.details)).toEqual([5, 4, 3]);
 		expect(d.countOnly.map((s) => [s.name, s.count])).toEqual([

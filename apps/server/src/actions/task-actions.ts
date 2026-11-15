@@ -18,7 +18,7 @@ import { isUuid } from "../util/uuid.js";
 import {
 	type ActionCursor,
 	type BatchPlan,
-	countOnlySpans,
+	countOnlyPeriods,
 	type DetailEnd,
 	type DroppedDetails,
 	detailView,
@@ -305,7 +305,7 @@ export class TaskActions {
 			...empty,
 			actions: shown.map((row) => detailView(row, end)),
 			before: earliest ? encodeActionCursor(earliest) : null,
-			count_only: countOnlySpans(
+			count_only: countOnlyPeriods(
 				{ names: task.names ?? [], cappedAt: task.cappedAt, dropped, to: task.endedAt },
 				{ name, failed },
 				{

@@ -3,7 +3,7 @@ import type {
 	ActionDetailView,
 	ActionNameCount,
 	ActionResult,
-	CountOnlySpan,
+	CountOnlyPeriod,
 	TaskStatus,
 } from "@sfly/schema";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
@@ -324,21 +324,21 @@ export interface CountOnlySources {
  * 控制面时间），null 是那一边没有界限。`failed`（只看失败）时，每种名称超过上限的段只在合计也满了时返回：
  * 合计没满时，那之后失败的动作都有明细。
  */
-export function countOnlySpans(
+export function countOnlyPeriods(
 	sources: CountOnlySources,
 	filter: { name?: string; failed?: boolean },
 	range: { from: number | null; until: number | null },
-): CountOnlySpan[] {
+): CountOnlyPeriod[] {
 	const to = sources.to?.toISOString() ?? null;
 	const totalCapped = sources.cappedAt === null ? null : Date.parse(sources.cappedAt);
-	const spans: CountOnlySpan[] = [];
+	const periods: CountOnlyPeriod[] = [];
 	for (const n of sources.names) {
 		const count = n.total - n.reported;
 		if (n.capped_at === null || count <= 0) continue;
 		const reason =
 			totalCapped === null || Date.parse(n.capped_at) < totalCapped ? "name_limit" : "total_limit";
 		if (reason === "name_limit" && filter.failed && totalCapped === null) continue;
-		spans.push({
+		periods.push({
 			name: n.name,
 			reason,
 			from: n.capped_at,
@@ -350,7 +350,7 @@ export function countOnlySpans(
 	for (const d of sources.dropped) {
 		if (d.dropped <= 0 || !d.droppedFrom) continue;
 		const from = d.droppedFrom.toISOString();
-		spans.push({
+		periods.push({
 			name: d.name,
 			reason: "control_plane",
 			from,
@@ -359,7 +359,7 @@ export function countOnlySpans(
 			count: d.dropped,
 		});
 	}
-	return spans
+	return periods
 		.filter((s) => {
 			const at = Date.parse(s.from);
 			return (

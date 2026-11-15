@@ -2,7 +2,7 @@ import type {
 	ActionDetailView,
 	ActionResult,
 	ActionSummaryView,
-	CountOnlySpan,
+	CountOnlyPeriod,
 	EndedActionView,
 	RunningActionView,
 } from "@sfly/schema";
@@ -49,7 +49,7 @@ export type ActionRow =
 			kind: "count-only";
 			key: string;
 			name: string;
-			reason: CountOnlySpan["reason"];
+			reason: CountOnlyPeriod["reason"];
 			/** 从什么时候起（控制面时间）。 */
 			from: string;
 			/** 从什么时候起（Agent 时间）。 */
@@ -82,7 +82,7 @@ export function actionTable({
 	summary: ActionSummaryView;
 	/** 分页和推送读到的明细，按开始时间从新到旧（`action-details.ts`）。 */
 	details: readonly ActionDetailView[];
-	countOnly: readonly CountOnlySpan[];
+	countOnly: readonly CountOnlyPeriod[];
 	/** 这次尝试结束的时间：还在执行的只计数的段到这里为止；还在执行时为 null。 */
 	endedAt: string | null;
 }): ActionTableGroup[] {
@@ -93,7 +93,7 @@ export function actionTable({
 	const groups: ActionTableGroup[] = [
 		{ name: "running", rows: newestFirst(summary.running).map(runningRow) },
 		{ name: "recent", rows: newestFirst(summary.recent).map(endedRow) },
-		{ name: "earlier", rows: withSpans(earlier, spanRows(summary, countOnly, endedAt)) },
+		{ name: "earlier", rows: withPeriods(earlier, periodRows(summary, countOnly, endedAt)) },
 	];
 	return groups.filter((g) => g.rows.length > 0);
 }
@@ -105,16 +105,16 @@ function newestFirst<A extends { id: number; started_at: string }>(list: readonl
 }
 
 /** 只计数的段（起点从新到旧）插进明细：放在开始时间早于它起点的第一条明细前面，没有这样的明细时放在最后。 */
-function withSpans(
+function withPeriods(
 	details: readonly ActionDetailView[],
-	spans: Extract<ActionRow, { kind: "count-only" }>[],
+	periods: Extract<ActionRow, { kind: "count-only" }>[],
 ): ActionRow[] {
 	const rows: ActionRow[] = [];
 	let next = 0;
-	for (const span of spans) {
-		const at = firstStartedBefore(details, Date.parse(span.from), next);
+	for (const period of periods) {
+		const at = firstStartedBefore(details, Date.parse(period.from), next);
 		while (next < at) rows.push(detailRow(details[next++] as ActionDetailView));
-		rows.push(span);
+		rows.push(period);
 	}
 	while (next < details.length) rows.push(detailRow(details[next++] as ActionDetailView));
 	return rows;
@@ -137,13 +137,13 @@ function firstStartedBefore(details: readonly ActionDetailView[], time: number, 
  * §6.3「只计数的段」），取最新的摘要：任务还在执行时它一直在涨，分页读到的是读那一刻的。控制面兜底的段摘要里没有，
  * 用分页读到的。
  */
-function spanRows(
+function periodRows(
 	summary: ActionSummaryView,
-	spans: readonly CountOnlySpan[],
+	periods: readonly CountOnlyPeriod[],
 	endedAt: string | null,
 ): Extract<ActionRow, { kind: "count-only" }>[] {
 	const unreported = new Map(summary.names.map((n) => [n.name, n.total - n.reported]));
-	return [...spans]
+	return [...periods]
 		.sort((a, b) => Date.parse(b.from) - Date.parse(a.from))
 		.map((s) => ({
 			kind: "count-only",

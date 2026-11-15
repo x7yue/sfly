@@ -54,7 +54,7 @@ export interface ActionPage {
 	 * 起点落在这一页范围里的只计数的段，从新到旧。只看失败时，`name_limit` 的段只在合计也满了时才有：合计没满时，
 	 * 超过每种名称上限之后失败的动作仍有明细。
 	 */
-	count_only: CountOnlySpan[];
+	count_only: CountOnlyPeriod[];
 	/**
 	 * 读这一页那一刻明细的修订号：实时推送（`events`）的 `after` 用它，之后写入或结束的明细都由推送送达。
 	 * 最新一页的这个值才有用。
@@ -410,7 +410,7 @@ export interface ClockOffsetView {
  *
  * 每种名称、每种原因至多一段；算法见 docs/ARCHITECTURE.md §6.3。
  */
-export interface CountOnlySpan {
+export interface CountOnlyPeriod {
 	name: string;
 	reason: "name_limit" | "total_limit" | "control_plane";
 	/** 从什么时候起（控制面时间、Agent 时间）：第一个没有明细的动作或标记的时刻。 */

@@ -221,7 +221,7 @@ if (task) {
 		const result = detail.kind === "action" ? (detail.result ?? "正在做") : "标记";
 		console.log(detail.started_at, "  ".repeat(detail.depth), detail.name, result, detail.fields);
 	}
-	for (const span of latest.count_only) console.log(span.from, span.name, `${span.count} 个只计数`);
+	for (const period of latest.count_only) console.log(period.from, period.name, `${period.count} 个只计数`);
 	if (latest.before) {
 		const earlier = await client.actions.page({
 			params: { id: task },
