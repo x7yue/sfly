@@ -1,6 +1,7 @@
 import { cn } from "cn";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useState } from "react";
+import { MESSAGE } from "#/lib/copy";
 import {
 	type KeyLabel,
 	type OperationKey,
@@ -158,7 +159,7 @@ export function CodeBlock({
 				onClick={() =>
 					writeClipboard(code, () => {
 						setCopied(true);
-						notify.success("已复制到剪贴板");
+						notify.success(MESSAGE.copied);
 						setTimeout(() => setCopied(false), 1500);
 					})
 				}
