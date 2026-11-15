@@ -1,9 +1,9 @@
 import type { ActionSummaryView, EndedActionView, RunningActionView } from "@sfly/schema";
-import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
+import { DocPageLink } from "#/components/doc-page-link";
 import { SectionHeading } from "#/components/page";
 import { StatusDot } from "#/components/status";
-import { attemptLabel, NODE_ACTIONS, TERM } from "#/lib/copy";
+import { attemptLabel, DOC_PAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatClockMs,
@@ -28,12 +28,8 @@ import { countOnlyNames, failedTotal, runningRows } from "./summary-model";
 /** 缩进一层的宽度（像素）。 */
 const INDENT_PX = 14;
 
-/** 开发文档里讲高频时怎么记录的那一节：页面在 `docs/guide/pages.json`，小节在那一页的标题里（有单测对着文档检查）。 */
-export const GUIDE = {
-	page: "sdk-reference",
-	title: "开发节点（SDK 参考）",
-	section: "数量上限",
-} as const;
+/** 开发文档里讲高频时怎么记录的那一节：页面的标题是 `DOC_PAGE.sdkReference`，小节在那一页的标题里（有单测对着文档检查）。 */
+export const GUIDE = { page: "sdk-reference", section: "数量上限" } as const;
 
 const FAILURES_LABEL = "最近的失败";
 
@@ -258,13 +254,7 @@ function CapNote({
 			)}
 			<p className="m-0 mt-1">
 				高频的动作适合按批记录，写法见开发文档「
-				<Link
-					to="/docs/$page"
-					params={{ page: GUIDE.page }}
-					className="text-fg-1 underline decoration-fg-3 underline-offset-2 hover:decoration-fg-1"
-				>
-					{GUIDE.title}
-				</Link>
+				<DocPageLink page={GUIDE.page}>{DOC_PAGE.sdkReference}</DocPageLink>
 				」的「{GUIDE.section}」。
 			</p>
 		</div>

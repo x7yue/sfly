@@ -8,6 +8,9 @@ type Summary = Partial<Omit<ActionSummaryEvent, "type">>;
 /** 失败原因的上限是 4096 个字符（SDK 截断）：一整段没有空格的长文，对版面最不留情。 */
 export const LONG_REASON = `ConnectionError: ${"abcdefghij".repeat(500)}`.slice(0, 4096);
 
+/** 折行的原因：一整段没有空格，检查器一行放不下。 */
+export const WRAPPING_REASON = `ConnectionError: ${"0123456789".repeat(12)}`;
+
 /** 一个失败的下单。 */
 export interface Reject {
 	/** 开始的时刻：多少毫秒之前。 */
@@ -18,7 +21,7 @@ export interface Reject {
 	took: number;
 }
 
-/** 最近的五个失败，最近的在前：长的原因放在中间，多行的原因放在最后。 */
+/** 最近的五个失败，最近的在前：放不下一行的原因放在中间，多行的原因放在最后。 */
 export const REJECTS: readonly Reject[] = [
 	{
 		ago: 31_000,
@@ -27,7 +30,7 @@ export const REJECTS: readonly Reject[] = [
 		took: 3,
 	},
 	{ ago: 5 * 60_000, order: "P-1230734", reason: "拒单：可用资金不足", took: 6 },
-	{ ago: 9 * 60_000, order: "P-1184694", reason: LONG_REASON, took: 5 },
+	{ ago: 9 * 60_000, order: "P-1184694", reason: WRAPPING_REASON, took: 5 },
 	{
 		ago: 13 * 60_000,
 		order: "P-1134681",
@@ -45,8 +48,13 @@ export const REJECTS: readonly Reject[] = [
 /**
  * `load`（下单压测）一小时 43 分钟时的摘要（设计原型的演示数据）：「保持 4 小时」里每下一单记一个「下单」，
  * 「下单」超过每种名称的上限（84 分钟之前）后只计数，合计还没满；正在做的有三层。`now` 是控制面时间（毫秒）。
+ * `rejects` 是最近的失败（默认 {@link REJECTS}）。
  */
-export function loadSummary(agent: FakeAgent, now: number): Summary {
+export function loadSummary(
+	agent: FakeAgent,
+	now: number,
+	rejects: readonly Reject[] = REJECTS,
+): Summary {
 	const at = (ago: number) => agent.stamp(now - ago);
 	const failed = (reject: Reject, id: number) => ({
 		id,
@@ -96,6 +104,21 @@ export function loadSummary(agent: FakeAgent, now: number): Summary {
 			},
 			{ id: 91, parent: 90, depth: 2, name: "等回报", fields: {}, ...at(2) },
 		],
-		recent_failed: REJECTS.map((reject, i) => failed(reject, 20 + i)),
+		// 检查器不放「最近 20 个」：这里给一个，测它不出现。
+		recent: [
+			{
+				id: 80,
+				parent: 90,
+				depth: 2,
+				name: "核对回报",
+				fields: {},
+				...at(40),
+				end_ts: at(30).ts,
+				end_mono: at(30).mono,
+				result: "success" as const,
+				reason: null,
+			},
+		],
+		recent_failed: rejects.map((reject, i) => failed(reject, 20 + i)),
 	};
 }

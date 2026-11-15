@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { DOC_PAGE } from "#/lib/copy";
 import { GUIDE } from "./InspectorActions";
 
 const guide = join(import.meta.dirname, "../../../../docs/guide");
@@ -10,7 +11,7 @@ describe("上限说明指向的开发文档", () => {
 		const { pages } = JSON.parse(readFileSync(join(guide, "pages.json"), "utf8")) as {
 			pages: { slug: string; title: string }[];
 		};
-		expect(pages.find((p) => p.slug === GUIDE.page)?.title).toBe(GUIDE.title);
+		expect(pages.find((p) => p.slug === GUIDE.page)?.title).toBe(DOC_PAGE.sdkReference);
 		const headings = readFileSync(join(guide, `${GUIDE.page}.md`), "utf8")
 			.split("\n")
 			.filter((line) => line.startsWith("#"));

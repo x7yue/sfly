@@ -88,6 +88,7 @@ export const PAGE = {
 export const DOC_PAGE = {
 	quickstart: "快速开始",
 	publish: "发布",
+	sdkReference: "开发节点（SDK 参考）",
 } as const;
 
 /** 运行与链实例的状态。 */
