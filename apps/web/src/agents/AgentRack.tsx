@@ -31,6 +31,7 @@ export function AgentRack({
 	controlPlaneVersion: string;
 }) {
 	const headingId = useId();
+	const slotsHeadingId = useId();
 	const slots = agent.info.slots;
 	const used = agent.running_tasks.length;
 	const queued = agent.queued_tasks.length;
@@ -66,7 +67,9 @@ export function AgentRack({
 					{showSlots && (
 						<div>
 							<div className="mb-2 flex items-center gap-2">
-								<h3 className="m-0 text-xs font-medium text-fg-2">槽位</h3>
+								<h3 id={slotsHeadingId} className="m-0 text-xs font-medium text-fg-2">
+									槽位
+								</h3>
 								{online && (
 									<span className="font-mono text-xs text-fg-3">
 										{used} / {slots} 占用 · 排队 {queued}
@@ -74,7 +77,7 @@ export function AgentRack({
 								)}
 							</div>
 							<ul
-								aria-label="槽位"
+								aria-labelledby={slotsHeadingId}
 								className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(300px,1fr))] items-start gap-2 p-0"
 							>
 								{agent.running_tasks.map((task) => (
@@ -197,13 +200,16 @@ function RackFacts({
 /** 排队的任务，按排队顺序：写排队了多久、多久后排队超时，看得出是不是槽位不够。 */
 function QueuedTasks({ tasks }: { tasks: QueuedTaskView[] }) {
 	const now = useNow(true);
+	const headingId = useId();
 	return (
 		<div>
 			<div className="mb-1.5 flex items-center gap-2">
-				<h3 className="m-0 text-xs font-medium text-fg-2">排队的任务</h3>
+				<h3 id={headingId} className="m-0 text-xs font-medium text-fg-2">
+					排队的任务
+				</h3>
 				<span className="font-mono text-xs text-fg-3">{tasks.length}</span>
 			</div>
-			<ul aria-label="排队的任务" className="m-0 flex list-none flex-col gap-1 p-0">
+			<ul aria-labelledby={headingId} className="m-0 flex list-none flex-col gap-1 p-0">
 				{tasks.map((task) => (
 					<li
 						key={task.task_id}
