@@ -543,6 +543,38 @@ def metric_rate(ctx: Context, rate: float = 10000, seconds: float = 10) -> dict[
     }
 
 
+#: action_rate 依次使用的动作名称：4 种，每种都不超过每种名称的上限（5 万个），合计会超过 10 万个。
+RATE_ACTION_NAMES = ("下单", "撤单", "查询", "回报")
+
+
+@node(
+    title="定速动作",
+    outputs=["count", "elapsed", "max_behind_ms", "max_call_ms"],
+)
+def action_rate(ctx: Context, rate: float = 5000, seconds: float = 10) -> dict[str, Any]:
+    """性能测试用（pnpm perf，#357）：按每秒 rate 个动作记录 seconds 秒，第 i 个是
+    `with ctx.action(RATE_ACTION_NAMES[i % 4], 序号=i + 1)`，每个动作往事件管道写两行
+    （开始、结束）。
+
+    每 100 个对一次时间，提前了就等到计划时刻。返回动作个数、实际用时（秒）、
+    比计划落后的最长时间与单次 `ctx.action()`（进入加离开 with）的最长耗时（毫秒）。
+    """
+    total = int(rate * seconds)
+    pacer = _Pacer(rate)
+    max_call = 0.0
+    for i in pacer.ticks(total):
+        before = time.perf_counter()
+        with ctx.action(RATE_ACTION_NAMES[i % len(RATE_ACTION_NAMES)], 序号=i + 1):
+            pass
+        max_call = max(max_call, time.perf_counter() - before)
+    return {
+        "count": total,
+        "elapsed": pacer.elapsed,
+        "max_behind_ms": pacer.max_behind * 1000,
+        "max_call_ms": max_call * 1000,
+    }
+
+
 @node(
     title="定速时钟",
     outputs=["count", "elapsed"],
