@@ -28,7 +28,7 @@
   apps/server/src/feishu/messages.ts），记成 `Notification`；其他机器人、不合格的原始消息不记，
   日志里写一行来源 system、级别 warn 的警告（apps/server/src/feishu/task-notifications.ts）；
 - 动作和标记：`ctx.action`、`ctx.mark` 写的四种事件（格式见 `sfly.context`）记成
-  `Execution.actions`（动作和标记，按开始的先后）和 `Execution.action_summary`（最新的一份摘要）；
+  `Execution.actions`（动作和标记，按 ID 排列）和 `Execution.action_summary`（最新的一份摘要）；
   节点结束时还没结束的动作记为 `unfinished`，结束时间取节点结束的时刻，摘要里「正在做」同时清空
   （和控制面在任务结束时做的一样）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
@@ -165,7 +165,7 @@ class ActionSummary:
     - `total`：开始的动作和标记的个数，`reported`：上报了明细的个数；
       `capped_ts`：合计超过上限、之后只计数的起点，没有时为 None；
     - `names`：每种名称的计数；
-    - `running`：正在做的动作（最多 50 个，层级浅的优先，按开始的先后）；
+    - `running`：正在做的动作（最多 50 个，层级浅的优先，按 ID 排列）；
     - `recent`：最近结束的 20 个动作，最近的在前；`recent_failed`：最近失败的 5 个，最近的在前。
     """
 
@@ -417,21 +417,32 @@ def _action_index(actions: list[ActionRecord], action_id: int) -> int:
     return bisect.bisect_left(actions, action_id, key=lambda record: record.id)
 
 
-def _summary_record(entry: Mapping[str, Any]) -> ActionRecord:
-    """摘要里的一项（正在做的、最近结束的）。"""
-    ended = "end_mono" in entry
+def _action_record(
+    entry: Mapping[str, Any], kind: Literal["action", "mark"], ts: int
+) -> ActionRecord:
+    """事件或摘要里的一项（不含结果）：`ts` 取自读到事件的时刻。"""
     return ActionRecord(
         id=int(entry["id"]),
-        kind="action",
+        kind=kind,
         name=str(entry["name"]),
         parent=_optional_int(entry.get("parent")),
         depth=int(entry.get("depth") or 0),
         fields=_fields(entry.get("fields")),
-        ts=int(entry["ts"]),
+        ts=ts,
         mono=int(entry["mono"]),
-        result=_result(entry["result"]) if ended else None,
+    )
+
+
+def _summary_record(entry: Mapping[str, Any]) -> ActionRecord:
+    """摘要里的一项（正在做的、最近结束的）。"""
+    record = _action_record(entry, "action", int(entry["ts"]))
+    if "end_mono" not in entry:
+        return record
+    return dataclasses.replace(
+        record,
+        result=_result(entry["result"]),
         reason=entry.get("reason"),
-        duration_ms=max(0, int(entry["end_mono"]) - int(entry["mono"])) if ended else None,
+        duration_ms=max(0, int(entry["end_mono"]) - record.mono),
     )
 
 
@@ -619,16 +630,7 @@ class _Pump:
     def _action_started(
         self, ts: int, event: Mapping[str, Any], kind: Literal["action", "mark"]
     ) -> None:
-        record = ActionRecord(
-            id=int(event["id"]),
-            kind=kind,
-            name=str(event["name"]),
-            parent=_optional_int(event.get("parent")),
-            depth=int(event.get("depth") or 0),
-            fields=_fields(event.get("fields")),
-            ts=ts,
-            mono=int(event["mono"]),
-        )
+        record = _action_record(event, kind, ts)
         actions = self._execution.actions
         # 一般按 ID 递增到达；超过每种名称的上限、失败时补发的开始比后面的行早，插到该在的位置。
         if not actions or record.id > actions[-1].id:

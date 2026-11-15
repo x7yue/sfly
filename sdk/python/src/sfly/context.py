@@ -644,7 +644,7 @@ class Context:
             with ctx.action("下单", 订单=oid, 价格=price) as a:
                 ...
                 a.note(回报="已成交")          # 动作进行中补充字段
-                a.fail("拒单：余额不足")        # 标记失败，不抛异常
+                a.fail("拒单：余额不足")        # 记为失败，不抛异常
 
             handle = ctx.action.start("保持", 时长="4h")   # 开始和结束不在同一段代码里
             ...

@@ -6,7 +6,7 @@
     with ctx.action("下单", 订单=oid, 价格=price) as a:     # 正常结束是成功
         ...
         a.note(回报="已成交")        # 动作进行中补充字段
-        a.fail("拒单：余额不足")      # 标记失败，不抛异常；动作在离开 with 时结束
+        a.fail("拒单：余额不足")      # 记为失败，不抛异常；动作在离开 with 时结束
 
     handle = ctx.action.start("保持", 时长="4h")   # 开始和结束不在同一段代码里
     ...
@@ -225,7 +225,7 @@ class Action:
 class ActionScope:
     """`with ctx.action(名称, **字段) as a:` 里的 `a`（也是 `ctx.action(...)` 的返回值）。
 
-    `a.note(**字段)` 补充字段；`a.fail(原因)` 把动作标记为失败但不抛异常，动作在离开 `with` 时才结束
+    `a.note(**字段)` 补充字段；`a.fail(原因)` 把动作记为失败但不抛异常，动作在离开 `with` 时才结束
     （多次调用保留第一次的原因）。
     """
 
@@ -250,7 +250,7 @@ class ActionScope:
         self._actions._note(self._started(), fields)
 
     def fail(self, message: object) -> None:
-        """把动作标记为失败，不抛异常；动作在离开 `with` 时结束。"""
+        """把动作记为失败，不抛异常；动作在离开 `with` 时结束。"""
         rec = self._started()
         if rec.result is not None:
             self._actions._ignored(rec)
@@ -459,34 +459,43 @@ class Actions:
                 rec.reported = True
                 self._events.write(self._start_event(rec, "mark" if mark else "action_start"))
             else:
-                self._count_only(stats, rec)
+                self._count_only(stats, rec, "标记" if mark else "动作")
             if not mark:
                 self._running[rec.id] = rec
             self._changed()
         return rec
 
-    def _count_only(self, stats: _NameStats, rec: _Record) -> None:
-        """这个动作的明细因为上限没有上报（开始时就超过上限，或失败时合计已满补不上）：
-        记下从什么时候起只计数，第一次时警告。"""
+    def _count_only(self, stats: _NameStats, rec: _Record, what: str) -> None:
+        """这个动作或标记的明细因为上限没有上报（开始时就超过上限，或失败的动作补发时合计已满）：
+        记下从什么时候起只计数，第一次时警告；`what`（动作、标记）写进警告。"""
         if stats.capped is None:
             stats.capped = (rec.ts, rec.mono)
             if stats.reported >= MAX_PER_NAME:
+                if what == "动作":
+                    detail = (
+                        f"（失败的动作仍会补上明细，直到合计 {MAX_TOTAL} 个）。"
+                        "每一笔都记成动作会拖慢节点、也看不过来：按批或按阶段记录动作，"
+                        "每一笔的延迟用指标"
+                    )
+                else:
+                    detail = f"。每一个都记成{what}会拖慢节点、也看不过来：按批或按阶段记录{what}"
                 self._warn(
                     "name-cap",
                     rec.name,
-                    f"{rec.name!r} 已记录 {MAX_PER_NAME} 个，之后只计数、不再上报明细"
-                    f"（失败的动作仍会补上明细，直到合计 {MAX_TOTAL} 个）。"
-                    "每一笔都记成动作会拖慢节点、也看不过来：按批或按阶段记录动作，"
-                    "每一笔的延迟用指标",
+                    f"{rec.name!r} 已记录 {MAX_PER_NAME} 个，之后只计数、不再上报明细{detail}",
                 )
         if self._reported >= MAX_TOTAL and self._capped is None:
             self._capped = (rec.ts, rec.mono)
+            advice = (
+                "按批或按阶段记录动作，每一笔的延迟用指标"
+                if what == "动作"
+                else "按批或按阶段记录标记"
+            )
             self._warn(
                 "total-cap",
                 "",
                 f"动作和标记已记录 {MAX_TOTAL} 个，之后只计数、不再上报明细"
-                "（正在做的动作、最近的动作和各名称的计数仍然准确）。"
-                "按批或按阶段记录动作，每一笔的延迟用指标",
+                f"（正在做的动作、最近的动作和各名称的计数仍然准确）。{advice}",
             )
 
     def _note(self, rec: _Record, fields: Mapping[str, object]) -> None:
@@ -523,7 +532,7 @@ class Actions:
                     self._events.write(self._start_event(rec, "action_start", late=True))
                     self._events.write(self._end_event(rec))
                 else:
-                    self._count_only(stats, rec)
+                    self._count_only(stats, rec, "动作")
             self._changed()
 
     def _ignored(self, rec: _Record) -> None:

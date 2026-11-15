@@ -149,7 +149,7 @@ def test_nested_actions_marks_and_explicit_parents() -> None:
     assert parent_of("第二个最外层") == (None, 0)
     assert named["深处的标记"].kind == "mark"
     assert (named["深处的标记"].result, named["深处的标记"].duration_ms) == (None, None)
-    # 动作和标记共用一个 ID 序列，按开始的先后排列。
+    # 动作和标记共用一个 ID 序列。
     assert [a.id for a in result.actions] == list(range(1, len(result.actions) + 1))
 
 
@@ -529,7 +529,7 @@ def test_the_summary_keeps_at_most_50_running_the_shallowest_first(tmp_path: Pat
         ctx.action.start("并发", parent=outer, 编号=i)
     ctx.action.start("很晚才开始的最外层")
 
-    # 62 个正在做：最外层 2 个，加上层级浅的、开始早的 48 个；列表按开始的先后。
+    # 62 个正在做：最外层 2 个，加上层级浅的、开始早的 48 个；列表按 ID 排列。
     wait_for(lambda: only(events(), "action_summary")[-1]["total"] == 62)
     running = only(events(), "action_summary")[-1]["running"]
     assert [r["id"] for r in running] == [*range(1, 50), 62]
@@ -632,6 +632,22 @@ def test_after_50000_of_a_name_only_counts_but_failures_still_get_a_detail(tmp_p
     # 超过上限的动作也在最近的动作里，失败的在最近失败里。
     assert summary["recent"][0]["name"] == "别的名称"
     assert [r["fields"] for r in summary["recent_failed"]] == [{"订单": "late"}]
+
+
+def test_the_per_name_cap_warning_for_marks_says_mark_and_has_no_failure_backfill(
+    tmp_path: Path,
+) -> None:
+    ctx, events = make_context(tmp_path)
+
+    for _ in range(50_001):
+        ctx.mark("收到成交")
+
+    assert len(only(events(), "mark")) == 50_000
+    warnings = [e["message"] for e in only(events(), "log")]
+    assert len(warnings) == 1, warnings
+    assert "'收到成交'" in warnings[0] and "50000" in warnings[0]
+    assert "标记" in warnings[0] and "按批或按阶段记录标记" in warnings[0]
+    assert "动作" not in warnings[0] and "失败" not in warnings[0], warnings[0]
 
 
 def test_after_100000_in_all_nothing_more_is_reported_not_even_failures(tmp_path: Path) -> None:

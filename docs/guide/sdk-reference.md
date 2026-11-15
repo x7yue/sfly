@@ -363,7 +363,7 @@ ctx.metric("conn_latency_ms", 8.2, labels={"host": "db-1", "port": 5432})
 with ctx.action("下单", 订单=oid, 价格=price) as a:     # 块里做的事是一个动作
     ...
     a.note(回报="已成交")        # 动作进行中补充字段
-    a.fail("拒单：余额不足")      # 标记为失败，不抛异常
+    a.fail("拒单：余额不足")      # 记为失败，不抛异常
 
 handle = ctx.action.start("保持", 时长="4h")   # 开始和结束不在同一段代码里
 ...
@@ -388,7 +388,7 @@ ctx.mark("收到第一笔成交", 订单=oid)           # 一个时刻
 
 ### 写法
 
-- `with ctx.action(名称, **字段) as a:`：进入时开始，离开时结束；`a.note(**字段)` 补充字段，`a.fail(原因)` 标记失败但不抛异常（动作在离开 `with` 时才结束，多次调用保留第一次的原因）。
+- `with ctx.action(名称, **字段) as a:`：进入时开始，离开时结束；`a.note(**字段)` 补充字段，`a.fail(原因)` 记为失败但不抛异常（动作在离开 `with` 时才结束，多次调用保留第一次的原因）。
 - `ctx.action.start(名称, *, parent=None, **字段)` 返回句柄，之后调用 `end()`（成功）或 `fail(原因)` 结束，也可以 `note(**字段)`。回调、异步回报这类开始和结束不在同一段代码里的事用它。
 - `ctx.mark(名称, *, parent=None, **字段)` 记一个时刻。
 - 名称是不超过 64 个字符的非空字符串。字段是名称之外的说明，最多 8 个，值转成字符串后每个不超过 256 个字符；名称之外的内容（订单号、价格）都放进字段。`note()` 补充的字段和开始时给的合计最多 8 个，同名的覆盖。
@@ -914,7 +914,7 @@ def test_count_lines(tmp_path: Path) -> None:
 | `progress` | `Progress(ts, current, total, message)` 的列表，保留每一次上报 |
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
 | `notifications` | `Notification(ts, bot, body)` 的列表：每次 `ctx.notify` 发给的飞书机器人名称和完整的请求体（文本、`sfly.feishu.card` 组装的卡片和原始消息都在里面，可以直接断言），没有真的发送（不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不在里面，日志里有 warning）。从 SDK 0.3.0 起可用 |
-| `actions` | `ActionRecord(id, kind, name, parent, depth, fields, ts, mono, result, reason, duration_ms)` 的列表：节点用 `ctx.action` 记录的动作和 `ctx.mark` 记录的标记（`kind` 是 `action` 或 `mark`），按开始的先后排列。`parent` 是父动作的 `id`，最外层为 `None`；`fields` 是开始时给的字段加上 `note()` 补充的（值都是字符串）；`result` 是 `success`、`failed` 或 `unfinished`，标记为 `None`；`duration_ms` 是按单调时钟算的耗时（毫秒），标记为 `None`；节点结束时还没结束的动作记为 `unfinished`。从 SDK 0.4.0 起可用 |
+| `actions` | `ActionRecord(id, kind, name, parent, depth, fields, ts, mono, result, reason, duration_ms)` 的列表：节点用 `ctx.action` 记录的动作和 `ctx.mark` 记录的标记（`kind` 是 `action` 或 `mark`），按 `id` 排列（`id` 的先后和开始时间的先后不一定一致，要按开始的先后用 `mono`）。`parent` 是父动作的 `id`，最外层为 `None`；`fields` 是开始时给的字段加上 `note()` 补充的（值都是字符串）；`result` 是 `success`、`failed` 或 `unfinished`，标记为 `None`；`duration_ms` 是按单调时钟算的耗时（毫秒），标记为 `None`；节点结束时还没结束的动作记为 `unfinished`。从 SDK 0.4.0 起可用 |
 | `action_summary` | 最新的一份摘要 `ActionSummary(ts, total, reported, capped_ts, names, running, recent, recent_failed)`：`names` 是每种名称的 `ActionCount(name, total, failed, reported, capped_ts)`（`reported` 是已经记录明细的个数，`total` 减去它就是只计数、没有明细的个数），`running` 是正在做的动作（节点结束以后为空），`recent`、`recent_failed` 是最近结束的 20 个、最近失败的 5 个（最近的在前）。摘要有变化时才发、每秒最多一次，所以执行中的 `action_summary` 可能比 `actions` 晚一秒；节点退出时会再发一次，结束以后的摘要是完整的。没有用过动作时为 `None` |
 | `artifacts` | 产物名称 → 本地文件路径 |
 | `artifacts_dir`、`work_dir` | 产物目录、工作目录 |
