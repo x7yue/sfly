@@ -2152,13 +2152,11 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 40
+            "minLength": 1
           },
           "description": {
             "default": "",
-            "type": "string",
-            "maxLength": 200
+            "type": "string"
           },
           "params": {
             "type": "array",
@@ -2187,7 +2185,18 @@
         ],
         "additionalProperties": false
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "body",
+          "path": "description",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：说明不能超过 200 个字符"
+        },
+        {
+          "part": "body",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：名称不能超过 40 个字符"
+        }
+      ]
     },
     {
       "method": "PATCH",
@@ -2219,12 +2228,10 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 40
+            "minLength": 1
           },
           "description": {
-            "type": "string",
-            "maxLength": 200
+            "type": "string"
           },
           "params": {
             "type": "array",
@@ -2250,6 +2257,16 @@
         "additionalProperties": false
       },
       "notes": [
+        {
+          "part": "body",
+          "path": "description",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：说明不能超过 200 个字符"
+        },
+        {
+          "part": "body",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：名称不能超过 40 个字符"
+        },
         {
           "part": "body",
           "path": "",
@@ -2287,8 +2304,7 @@
         "properties": {
           "name": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 40
+            "minLength": 1
           }
         },
         "required": [
@@ -2296,7 +2312,13 @@
         ],
         "additionalProperties": false
       },
-      "notes": []
+      "notes": [
+        {
+          "part": "body",
+          "path": "name",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：名称不能超过 40 个字符"
+        }
+      ]
     },
     {
       "method": "DELETE",

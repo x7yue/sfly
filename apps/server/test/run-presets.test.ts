@@ -103,6 +103,16 @@ describe("运行预设", () => {
 
 			await createPresetOk(api, id, { name: ` ${"名".repeat(40)} `, params });
 			await createPresetOk(api, id, { name: "q", description: "说".repeat(200), params });
+
+			// 和场景文档里显示用的文字一样按 Unicode 字符计：一个 emoji 算一个。
+			await createPresetOk(api, id, {
+				name: "🚀".repeat(40),
+				description: "🚀".repeat(200),
+				params,
+			});
+			expect(
+				await invalidPresetFields(await createPreset(api, id, { name: "🚀".repeat(41), params })),
+			).toEqual(["body.name"]);
 		});
 
 		it("名称在场景内唯一、区分大小写：重复时 409 preset_name_taken，别的场景可以同名", async () => {

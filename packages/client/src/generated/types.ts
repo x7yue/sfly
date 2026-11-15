@@ -1224,7 +1224,7 @@ export interface PresetChanges {
 	params?: PresetParamInput[];
 }
 
-/** 预设说明：不超过 `PRESET_DESCRIPTION_MAX` 个字符。 */
+/** 预设说明：去掉首尾空白后不超过 `PRESET_DESCRIPTION_MAX` 个字符。 */
 export type PresetDescription = string;
 
 /** 预设名称：去掉首尾空白后 1 到 `PRESET_NAME_MAX` 个字符，场景内唯一（区分大小写）。 */

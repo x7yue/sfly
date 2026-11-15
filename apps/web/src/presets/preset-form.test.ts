@@ -58,6 +58,11 @@ describe("运行预设的编辑表单", () => {
 		});
 		const ok = { name: " 压测 A ", description: "", values: { steps: "50" }, keptSecrets: [] };
 		expect(hasErrors(draftErrors(ok, decls))).toBe(false);
+		const emoji = { ...ok, name: "🚀".repeat(40), description: "🚀".repeat(200) };
+		expect(hasErrors(draftErrors(emoji, decls))).toBe(false);
+		expect(draftErrors({ ...emoji, description: "🚀".repeat(201) }, decls).description).toBe(
+			"说明不能超过 200 个字符",
+		);
 	});
 
 	it("请求体：预设参数按声明顺序，值按类型换算", () => {

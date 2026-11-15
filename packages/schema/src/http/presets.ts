@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { codePointLength } from "../display-text.js";
 import { endpoint, Timestamp } from "./contract.js";
 
 /**
@@ -9,23 +10,29 @@ import { endpoint, Timestamp } from "./contract.js";
  * 触发时带上预设的 ID（runsApi.trigger 的 `preset`），预设参数由控制面填入预设的值。
  */
 
-/** 预设名称的长度上限（字符数，去掉首尾空白之后）。 */
+/** 预设名称的长度上限（Unicode 字符数，去掉首尾空白之后）。 */
 export const PRESET_NAME_MAX = 40;
-/** 预设说明的长度上限（字符数）。 */
+/** 预设说明的长度上限（Unicode 字符数，去掉首尾空白之后）。 */
 export const PRESET_DESCRIPTION_MAX = 200;
+
+/**
+ * 长度和场景文档里显示用的文字一样按 Unicode 字符（码点）计（{@link codePointLength}），一个 emoji 算一个；
+ * 不同的是按去掉首尾空白之后的文字判断。
+ */
+const atMost = (max: number) => (text: string) => codePointLength(text) <= max;
 
 /** 预设名称：去掉首尾空白后 1 到 {@link PRESET_NAME_MAX} 个字符，场景内唯一（区分大小写）。 */
 export const PresetName = z
 	.string()
 	.trim()
 	.min(1, "名称不能为空")
-	.max(PRESET_NAME_MAX, `名称不能超过 ${PRESET_NAME_MAX} 个字符`);
+	.refine(atMost(PRESET_NAME_MAX), `名称不能超过 ${PRESET_NAME_MAX} 个字符`);
 
-/** 预设说明：不超过 {@link PRESET_DESCRIPTION_MAX} 个字符。 */
+/** 预设说明：去掉首尾空白后不超过 {@link PRESET_DESCRIPTION_MAX} 个字符。 */
 export const PresetDescription = z
 	.string()
 	.trim()
-	.max(PRESET_DESCRIPTION_MAX, `说明不能超过 ${PRESET_DESCRIPTION_MAX} 个字符`);
+	.refine(atMost(PRESET_DESCRIPTION_MAX), `说明不能超过 ${PRESET_DESCRIPTION_MAX} 个字符`);
 
 /**
  * 保存场景版本时，原来可用、对照新版本会失效的运行预设各给出一条警告（orchestrationsApi.saveVersion 的 `warnings`），

@@ -1,10 +1,4 @@
-import {
-	orchestrationsApi,
-	type ParamDeclView,
-	PRESET_DESCRIPTION_MAX,
-	type PresetView,
-	presetsApi,
-} from "@sfly/schema";
+import { orchestrationsApi, type ParamDeclView, type PresetView, presetsApi } from "@sfly/schema";
 import { type UseQueryResult, useMutation, useQuery } from "@tanstack/react-query";
 import { CheckIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -406,7 +400,6 @@ function PresetForm({
 						<Textarea
 							{...control}
 							rows={2}
-							maxLength={PRESET_DESCRIPTION_MAX}
 							value={draft.description}
 							onChange={(e) => setDraft({ ...draft, description: e.target.value })}
 						/>
