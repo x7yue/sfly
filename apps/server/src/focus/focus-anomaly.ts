@@ -92,7 +92,7 @@ const stale: Rule = ({ status, attempt, chartMissing, lastAt, sampleIntervalMs }
 /** 同时满足几种时只报排在前面的一种。 */
 const RULES: readonly Rule[] = [failed, log, retry, stale];
 
-/** 一项的异常；来源节点成功或已停止（只显示最终值）时不判断，为 null。 */
+/** 一项的异常；来源节点成功、已停止或已取消（只显示最终值）时不判断，为 null。 */
 export function focusAnomaly(subject: AnomalySubject, now: Date): FocusAnomaly | null {
 	if (isFinalStatus(subject.status)) return null;
 	for (const rule of RULES) {
@@ -102,8 +102,9 @@ export function focusAnomaly(subject: AnomalySubject, now: Date): FocusAnomaly |
 	return null;
 }
 
-/** 来源节点成功或已停止：只显示最终值，不判断异常。 */
-export const isFinalStatus = (status: NodeStatus) => status === "success" || status === "stopped";
+/** 来源节点成功、已停止或已取消：只显示最终值，不判断异常。 */
+export const isFinalStatus = (status: NodeStatus) =>
+	status === "success" || status === "stopped" || status === "cancelled";
 
 /**
  * 采样间隔（毫秒）：最近 {@link SAMPLE_POINTS} 个点（`times`：Unix 秒，升序）之间间隔的中位数；点不够两个时为 null。

@@ -426,7 +426,37 @@ describe("关注项的异常", () => {
 		]);
 	});
 
-	it("来源节点成功或已停止后只显示最终值，不判断异常：最近的 WARN、很久没有新点都不算", async () => {
+	it("来源节点被取消后也是收尾：10 分钟内有 WARN、也有重试，仍不判断异常，final 为 true", async () => {
+		await start();
+		const document = benchDocument();
+		const runId = await trigger([{ node_id: "load", chart: "延迟" }], {
+			...document,
+			nodes: document.nodes.map((n) => (n.id === "load" ? { ...n, retries: 1 } : n)),
+		});
+		const first = await agent.nextAssign();
+		await agent.fail(first, "ConnectionError: matcher 退出了");
+		const second = await agent.nextAssign();
+		await p99(second, [0]);
+		setClock(5000);
+		await log(second, 1, LogLevel.WARN, "慢");
+		expect(await item(runId)).toMatchObject({
+			source: { status: "running", attempt: 2 },
+			final: false,
+			anomaly: { kind: "log" },
+		});
+
+		await api.cancelOk(runId);
+		await agent.nextCancel();
+		await agent.cancelled(second);
+		setClock(10_000);
+		expect(await item(runId)).toMatchObject({
+			source: { status: "cancelled", attempt: 2 },
+			final: true,
+			anomaly: null,
+		});
+	});
+
+	it("来源节点成功、已停止或已取消后只显示最终值，不判断异常：最近的 WARN、很久没有新点都不算", async () => {
 		await start();
 		const runId = await trigger(
 			[

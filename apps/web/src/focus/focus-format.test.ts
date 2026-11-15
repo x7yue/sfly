@@ -64,7 +64,7 @@ describe("读数的文字", () => {
 		expect(valueText(item({ latest: null }))).toBe("—");
 	});
 
-	it("脚注：节点 · 多久前；成功或已停止后是最终值", () => {
+	it("脚注：节点 · 多久前；成功、已停止或已取消后是最终值", () => {
 		expect(readingFoot(item(), NOW)).toBe("load · 2s 前");
 		expect(readingFoot(item({ final: true }), NOW)).toBe("load · 最终值");
 	});
@@ -222,7 +222,7 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 		expect(readingLabel(reading, NOW)).toMatch(new RegExp(`，${text}$`));
 	});
 
-	it("有值：来源节点还在是多久前，成功或已停止后是最终值", () => {
+	it("有值：来源节点还在是多久前，成功、已停止或已取消后是最终值", () => {
 		expect(readingState(item(), NOW)).toEqual({ kind: "live", ageMs: 2000 });
 		expect(readingState(item({ final: true }), NOW)).toEqual({ kind: "final" });
 	});

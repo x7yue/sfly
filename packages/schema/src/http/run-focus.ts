@@ -79,7 +79,7 @@ export const FocusSource = z.object({
  * - `failed`：来源节点失败；
  * - `retry`：最新一次尝试的号大于 1，并且是 10 分钟以内开始的（还没开始执行时按进入排队的时间）。
  *
- * 同时满足几种时按 failed、log、retry、stale 的顺序只报一种。来源节点成功或已停止（`final`）时不判断。
+ * 同时满足几种时按 failed、log、retry、stale 的顺序只报一种。来源节点成功、已停止或已取消（`final`）时不判断。
  * 时间一律按控制面时间（ADR 0018），判断只在控制面做，各页面都用这一份结果。
  */
 export const FocusAnomalyKind = z.enum(["log", "stale", "failed", "retry"]);
@@ -141,7 +141,7 @@ export const RunFocusItem = z.object({
 	 * 一个点，所以至少是 1000；点不够两个时为 null。
 	 */
 	sample_interval_ms: z.number().int().positive().nullable(),
-	/** 来源节点成功或已停止；没开始就被停止的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
+	/** 来源节点成功、已停止或已取消；没开始就被停止或取消的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
 	final: z.boolean(),
 	anomaly: FocusAnomaly.nullable(),
 });

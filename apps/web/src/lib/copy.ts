@@ -216,7 +216,7 @@ export const PRESET_INVALID_LABEL = "已失效";
 /** 运行监控页两个视图的名称：页头的标签页，和概览里「在详情里打开」「在详情里查看」的说法共用。 */
 export const MONITOR_VIEW_LABEL = { overview: "概览", detail: "详情" } as const;
 
-/** 关注项读数里来源节点成功或已停止后的「最终值」：读数的脚注和可访问名称共用。 */
+/** 关注项读数里来源节点成功、已停止或已取消后的「最终值」：读数的脚注和可访问名称共用。 */
 export const FINAL_VALUE_LABEL = "最终值";
 
 /** 「2 条链 · 7 个节点」：运行监控的链路时间线和概览的链路共用。 */
