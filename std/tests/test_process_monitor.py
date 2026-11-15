@@ -73,6 +73,10 @@ def metric_names(result: Execution) -> set[str]:
     return {point.name for point in result.metrics}
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="macOS 上 psutil 读不到进程的 IO 计数，没有 IO 指标",
+)
 def test_monitors_a_process_by_pid_and_writes_per_process_samples(
     tmp_path: Path, spawn: Spawn
 ) -> None:
@@ -122,6 +126,10 @@ def test_matches_targets_by_name_and_by_command_line_pattern(
     assert {row["pid"] for row in rows(mixed)} == {str(first.pid), str(second.pid), str(third.pid)}
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="macOS 会压缩空闲进程的内存，子进程的 RSS 很快降到 64 MiB 以下",
+)
 def test_children_count_towards_the_totals_unless_include_children_is_false(
     tmp_path: Path, spawn: Spawn
 ) -> None:
@@ -189,6 +197,10 @@ def test_reports_each_process_as_a_series_labelled_with_pid_and_name(
     assert totals == [sum(values) for values in zip(*per_process, strict=True)]
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="macOS 上非 root 连 pid 1 的 CPU、内存也读不到（psutil.AccessDenied）",
+)
 def test_processes_whose_fds_and_io_cannot_be_read_do_not_report_them(
     tmp_path: Path, spawn: Spawn
 ) -> None:
@@ -302,6 +314,10 @@ def test_samples_collected_before_cancellation_are_kept(tmp_path: Path, spawn: S
     assert all(row["pid"] == str(proc.pid) and row["cmdline"] == "sleep 300" for row in samples)
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="macOS 的 /bin/sh 启动的是 bash，进程名是 bash 而不是 sh",
+)
 def test_logs_the_matched_processes_and_their_changes(tmp_path: Path, spawn: Spawn) -> None:
     parent = spawn(["sh", "-c", "sleep 0.6; sleep 300; true"])
     wait_for_children(parent.pid, 1)

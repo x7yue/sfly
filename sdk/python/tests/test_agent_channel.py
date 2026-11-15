@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -80,15 +80,6 @@ class FakeAgent:
 
 def frame(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False).encode("utf-8") + b"\n"
-
-
-@pytest.fixture
-def short_dir() -> Iterator[Path]:
-    """socket 路径不能太长（AF_UNIX 108 字节），放在 TMPDIR 下的短目录里。"""
-    import tempfile
-
-    with tempfile.TemporaryDirectory(prefix="sfly-") as tmp:
-        yield Path(tmp)
 
 
 def context(short_dir: Path, monkeypatch: pytest.MonkeyPatch, **task: Any) -> Context:

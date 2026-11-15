@@ -151,7 +151,7 @@ test("入口节点和子流程入口节点不能复制、不能创建副本", as
 	await page.keyboard.press("Control+d");
 	await expect(page.getByText("子流程入口节点不能复制或创建副本")).toBeVisible();
 	await nodeCard(page, "entry").click();
-	await page.keyboard.press("Control+c");
+	await page.keyboard.press("ControlOrMeta+c");
 	await expect(page.getByText("入口节点不能复制或创建副本", { exact: true })).toBeVisible();
 	expect(await clipboard(page)).toBe("原来的内容");
 	await expect.poll(() => nodeIds(page)).toEqual(ORIGINAL_IDS);
@@ -177,7 +177,7 @@ test("Ctrl+C 后在另一个标签页的另一个场景 Ctrl+V：落在鼠标位
 
 	await openEditor(sourceTab, source, "sub_ping");
 	await nodeCard(sourceTab, "fetch").click();
-	await sourceTab.keyboard.press("Control+c");
+	await sourceTab.keyboard.press("ControlOrMeta+c");
 	await expect(sourceTab.getByText("已复制节点 fetch")).toBeVisible();
 	expect(JSON.parse(await clipboard(sourceTab))).toEqual({
 		type: "sfly/node",
@@ -197,7 +197,7 @@ test("Ctrl+C 后在另一个标签页的另一个场景 Ctrl+V：落在鼠标位
 	await openEditor(page, target, "wait");
 	const at = { x: 500, y: 600 };
 	await page.mouse.move(at.x, at.y);
-	await page.keyboard.press("Control+v");
+	await page.keyboard.press("ControlOrMeta+v");
 	await expect(nodeCard(page, "fetch_1")).toBeFocused();
 	await expectCenteredAt(nodeCard(page, "fetch_1"), at);
 	await expect(page.locator("[data-edge]")).toHaveCount(1);
@@ -205,7 +205,7 @@ test("Ctrl+C 后在另一个标签页的另一个场景 Ctrl+V：落在鼠标位
 	// 鼠标在检查器上：落在视口（扣掉顶栏和检查器）中心。
 	const panel = await box(inspector(page));
 	await page.mouse.move(panel.x + panel.width / 2, panel.y + 200);
-	await page.keyboard.press("Control+v");
+	await page.keyboard.press("ControlOrMeta+v");
 	await expect(nodeCard(page, "fetch_2")).toBeFocused();
 	await expectCenteredAt(nodeCard(page, "fetch_2"), {
 		x: panel.x / 2,
@@ -347,7 +347,7 @@ test("打开空白处菜单不读剪贴板，点「粘贴」才读：不是节�
 		await expect(notNode.first()).toBeVisible();
 
 		await page.mouse.move(blank.x, blank.y);
-		await page.keyboard.press("Control+v");
+		await page.keyboard.press("ControlOrMeta+v");
 	}
 	await expect(page.getByText("已保存", { exact: true })).toBeVisible();
 	await expect.poll(() => nodeIds(page)).toEqual(ORIGINAL_IDS);
@@ -397,10 +397,10 @@ test("没有 Clipboard API 时（http 访问）菜单里的「复制」照样能
 
 	// 按键复制、粘贴走浏览器的 copy / paste 事件，不需要 Clipboard API。
 	await nodeCard(page, "ping").click();
-	await page.keyboard.press("Control+c");
+	await page.keyboard.press("ControlOrMeta+c");
 	await expect(page.getByText("已复制节点 ping").last()).toBeVisible();
 	await page.mouse.move(blank.x, blank.y);
-	await page.keyboard.press("Control+v");
+	await page.keyboard.press("ControlOrMeta+v");
 	await expect(nodeCard(page, "ping_1")).toBeFocused();
 	await expect.poll(() => nodeIds(page)).toEqual([...ORIGINAL_IDS, "ping_1"].sort());
 });
@@ -411,7 +411,7 @@ test("焦点在输入框里时 Ctrl+C / Ctrl+V / Ctrl+D 仍是文本操作", asy
 
 	// 先复制一个节点：之后在输入框里粘贴也不会粘出节点。
 	await nodeCard(page, "ping").click();
-	await page.keyboard.press("Control+c");
+	await page.keyboard.press("ControlOrMeta+c");
 	await expect(page.getByText("已复制节点 ping")).toBeVisible();
 
 	await nodeCard(page, "fetch").click();
@@ -431,7 +431,7 @@ test("焦点在输入框里时 Ctrl+C / Ctrl+V / Ctrl+D 仍是文本操作", asy
 		page,
 		JSON.stringify({ type: "sfly/node", node: { id: "x", kind: "sleep", duration: "1s" } }),
 	);
-	await page.keyboard.press("Control+v");
+	await page.keyboard.press("ControlOrMeta+v");
 	await expect(url).toContainText('"type":"sfly/node"');
 	await expect.poll(() => nodeIds(page)).toEqual(ORIGINAL_IDS);
 });
