@@ -19,7 +19,7 @@ import { isUuid } from "../util/uuid.js";
 import { type FocusItem, focusName } from "./focus-list.js";
 import { declaredNodeType } from "./focus-views.js";
 
-/** 解析一次运行的关注项要用到的依赖：控制面里谁要读读数（HTTP 接口、飞书运行通知、控制台）都传这三样。 */
+/** 解析一次运行的关注项要用到的依赖：控制面里读读数的地方（目前是 HTTP 接口）传这三样。 */
 export interface RunFocusDeps {
 	db: Db;
 	clock: Clock;
@@ -80,7 +80,7 @@ interface Reading {
  * - 来源是节点最新一次尝试的任务；图表的定义取这次运行绑定的版本锁定的节点包版本，那个版本里没有这张图表时
  *   `unavailable` 是 `chart_missing`。开发版本取 Agent 当前加载的源码，不一定是运行当时的定义。
  * - 数值卡只有第一个序列，其余图表是声明的全部序列；`latest` 是最近更新的那个序列的最后一个点。
- * - 异常归 #351：`anomaly` 和 `sample_interval_ms` 在这里一律是 null。
+ * - `anomaly` 和 `sample_interval_ms` 目前一律是 null。
  */
 export async function resolveRunFocus(
 	deps: RunFocusDeps,

@@ -6,7 +6,7 @@ import { NodeStatus } from "./runs.js";
 
 /**
  * 一次运行的关注项读数的契约（约定见 ./contract.ts）：`GET /runs/:id/focus` 一次返回运行的全部关注项，
- * 概览、画布、控制台、Agent 管理页和飞书运行通知都用这一份结果。
+ * 运行监控的概览读这一份结果。
  * 解析规则在控制面（apps/server/src/focus/run-focus.ts 的 `resolveRunFocus`），页面不再自己拼指标查询。
  */
 
@@ -61,10 +61,10 @@ export const FocusSource = z.object({
 	ended_at: Timestamp.nullable(),
 });
 
-/** 异常的四种原因，规则见 GLOSSARY「关注项」与方案文档第 4.1 节。 */
+/** 异常的四种原因：日志里有 WARN / ERROR（`log`）、很久没有新点（`stale`）、尝试失败（`failed`）、重试过（`retry`）。 */
 export const FocusAnomalyKind = z.enum(["log", "stale", "failed", "retry"]);
 
-/** 一项的异常；没有异常为 null。 */
+/** 一项的异常；没有异常为 null。目前每一项都是 null。 */
 export const FocusAnomaly = z.object({
 	kind: FocusAnomalyKind,
 	/** `log` 时是最近一条日志的级别。 */
@@ -80,7 +80,7 @@ export const FocusAnomaly = z.object({
 /**
  * 一个关注项（或没设关注项时一个执行中节点的主指标）的读数。
  *
- * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点的执行顺序编号。
+ * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点在运行里的顺序编号。
  * `unavailable` 为 `chart_missing`（这次运行锁定的节点包版本里没有这张图表）时，`chart_type` 是 `line`、`unit` 是空串、
  * 没有数据，这几个值没有意义，页面按 `unavailable` 写明原因。
  * 节点还没有开始（所在的子流程也可能还没触发）时 `source.status` 是 `pending`，没有数据。
@@ -107,7 +107,7 @@ export const RunFocusItem = z.object({
 	bucket_seconds: z.number().int().positive(),
 	/** 最后一个点的控制面时间；一个点都没有为 null。 */
 	last_at: Timestamp.nullable(),
-	/** 按最近 10 个点估算的采样间隔（毫秒）；点不够 2 个时为 null。 */
+	/** 采样间隔（毫秒）；目前总是 null。 */
 	sample_interval_ms: z.number().int().positive().nullable(),
 	/** 来源节点成功或已停止：只显示最终值，不判断异常。 */
 	final: z.boolean(),
@@ -121,7 +121,7 @@ export const RunFocus = z.object({
 	mode: z.enum(["focus", "primary"]),
 	/** 这次运行的指标已过保留期：每一项都没有数据。 */
 	expired: z.boolean(),
-	/** 已按「异常在前，其余按作者顺序」排好。 */
+	/** 按作者设定的顺序（`position` 升序）；没设关注项时按执行中节点在运行里的顺序。 */
 	items: z.array(RunFocusItem),
 });
 
