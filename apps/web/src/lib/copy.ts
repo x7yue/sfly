@@ -9,6 +9,9 @@ import { NODE_STATUS, notRunNote } from "#/lib/node-status";
  * 页面一次性的说明文字留在组件里；新的共用文字先加到这里再引用，不要在组件里另写一份。
  */
 
+/** 「还没有数据」：`MESSAGE.noData`，关注项的原因句里也用它（FOCUS 写在 MESSAGE 前面）。 */
+const MESSAGE_NO_DATA = "还没有数据";
+
 /** 术语（与 GLOSSARY.md 一致；「编排」只作动词）。 */
 export const TERM = {
 	scenario: "场景",
@@ -47,6 +50,19 @@ export const INSPECTOR_PAGE = {
 	docWithMetrics: "说明与指标",
 } as const;
 
+/** 日志级别的写法：日志列表、级别筛选、运行抽屉的最新日志和关注项的异常原因共用。 */
+export const LOG_LEVEL_LABEL: Record<LogLineView["level"], string> = {
+	debug: "DEBUG",
+	info: "INFO",
+	warn: "WARN",
+	error: "ERROR",
+};
+/** WARN 和 ERROR 合起来的写法：关注项的 WARN / ERROR 统计、概览的「其他警告与错误」。 */
+export const LOG_ALERT_LEVELS = `${LOG_LEVEL_LABEL.warn} / ${LOG_LEVEL_LABEL.error}`;
+
+/** 无新数据时「需要注意」里的推测：有点和没有点两种说法共用。 */
+const STALE_HINT = "可能是节点卡住了，或者 Agent 的指标上报中断了。";
+
 /** 关注项（GLOSSARY「关注项」）：节点检查器的名额、场景设置的「关注项」页和图表列表共用的文字。 */
 export const FOCUS = {
 	/** 名额里注明其中有几项已经失效（失效的项也占名额）。 */
@@ -65,17 +81,23 @@ export const FOCUS = {
 	staleFor: (ago: string) => `已 ${ago} 无新数据`,
 	sourceFailed: "来源节点失败",
 	retryReason: (attempt: number, clock: string) => `重试（${TERM.attempt} ${attempt}）· ${clock}`,
+	/**
+	 * 「需要注意」里每一行的原因，写清是哪个节点、为什么（与上面四种短句一一对应）。只用于执行中的节点的是无新数据的两句
+	 * （控制面只对开始执行了的节点判断无新数据）：有点时写最后一个点多久前和采样间隔（点不够两个时没有采样间隔），
+	 * 一个点都没有时写开始执行了多久。
+	 */
+	logDetail: (node: string, level: string, clock: string, message: string, count: number) =>
+		`${node} 的 ${level}（${clock}）：${message}${count > 1 ? ` · 这次${TERM.attempt}共有 ${count} 条 ${LOG_ALERT_LEVELS}` : ""}`,
+	staleDetail: (node: string, ago: string, every: string | null) =>
+		`${node} 仍在执行，但最后一个点在 ${ago} 前${every === null ? "" : `，采样间隔 ${every}`}。${STALE_HINT}`,
+	noDataDetail: (node: string, ago: string) =>
+		`${node} 已经执行了 ${ago}，${MESSAGE_NO_DATA}。${STALE_HINT}`,
+	failedDetail: (node: string, message: string) => `${node} 失败${message ? `：${message}` : "。"}`,
+	retryDetail: (node: string, clock: string, attempt: number, message: string) =>
+		`${node} 在 ${clock} 开始重试（${TERM.attempt} ${attempt}）${message ? `，上一次${TERM.attempt}失败：${message}` : "。"}`,
 	/** 运行监控页头：概览的关注项读数是什么时候生成的（控制面时间）。 */
 	dataUpdated: (clock: string) => `数据更新于 ${clock}`,
 } as const;
-
-/** 日志级别的写法：日志列表、级别筛选、运行抽屉的最新日志和关注项的异常原因共用。 */
-export const LOG_LEVEL_LABEL: Record<LogLineView["level"], string> = {
-	debug: "DEBUG",
-	info: "INFO",
-	warn: "WARN",
-	error: "ERROR",
-};
 
 /** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */
 export const ANNOTATION_FIELD_LABEL: Readonly<Record<string, string>> = {
@@ -211,7 +233,7 @@ export const LIST_LABEL = {
 export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
-	noData: "还没有数据",
+	noData: MESSAGE_NO_DATA,
 	/** 尝试已经结束，一个点都没有上报。 */
 	noDataEnded: "这次尝试没有上报数据",
 	/** 没有节点处于执行中：运行监控的概览。 */

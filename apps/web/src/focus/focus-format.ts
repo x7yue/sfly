@@ -111,6 +111,12 @@ export function readingFoot(item: RunFocusItem, generatedAt: string): string {
 	return item.unavailable ? node : `${node} · ${readingWhen(item, generatedAt)}`;
 }
 
+/** 最新值连同序列名和单位的一行文字：「p99_ms 21.4 ms」「16」；读数的可访问名称和「需要注意」用它。 */
+export function readingValue(item: Pick<RunFocusItem, "latest" | "metrics" | "unit">): string {
+	const series = latestSeriesName(item);
+	return `${series ? `${series} ` : ""}${valueText(item)}${item.unit ? ` ${item.unit}` : ""}`;
+}
+
 /**
  * 读数的可访问名称：名称、最新值、来源节点和状态，最后是异常原因（「需要注意：已 2m 10s 无新数据」），没有异常时是
  * {@link readingWhen}，例如「母单量 1284814 单，来自 load（执行中），2s 前」。
@@ -123,7 +129,5 @@ export function readingLabel(item: RunFocusItem, generatedAt: string): string {
 	if (item.unavailable) {
 		return `${item.title}，${FOCUS.chartMissing(item.chart)}，${origin}${attention}`;
 	}
-	const series = latestSeriesName(item);
-	const value = `${series ? `${series} ` : ""}${valueText(item)}${item.unit ? ` ${item.unit}` : ""}`;
-	return `${item.title} ${value}，${origin}${attention || `，${readingWhen(item, generatedAt)}`}`;
+	return `${item.title} ${readingValue(item)}，${origin}${attention || `，${readingWhen(item, generatedAt)}`}`;
 }

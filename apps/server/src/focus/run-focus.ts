@@ -331,7 +331,7 @@ function itemOf(
 			status: source.status,
 			attempt,
 			previousError: source.previousError,
-			hasData: !reading.chartMissing,
+			chartMissing: reading.chartMissing,
 			lastAt: latest ? latest.end.at * 1000 : null,
 			sampleIntervalMs: interval,
 		},

@@ -16,6 +16,10 @@
 //   200 段；查询的数据是 1 小时 × 200 个序列（72 万个点）。
 // - query_300_chart_50 / query_300_chart_100：同一份带标签的数据，按运行监控页的用法只查一张图表引用的指标
 //   （#153）：1 个指标（50 个序列）、2 个指标（100 个序列，标准节点 process_monitor 最大的按进程图表），300 个桶。
+// - focus_*：关注项读数（resolveRunFocus）的读法，`taskSeries` 带 `recent`（每个序列另给最近 10 个点的时间，算采样间隔），
+//   与不带 `recent` 的同一个查询成对出现，差值就是多读的那一次（数据都已写库，每次都要读库里最近的段）：
+//   focus_1 是 10 个指标、1 个桶（只要最新值的读数），focus_60_chart_100 是一张图表的 2 个带标签指标（100 个序列）、
+//   60 个桶（概览的图表）。
 import { create } from "@bufbuild/protobuf";
 import { MetricBatchSchema } from "@sfly/proto";
 import { eq } from "drizzle-orm";
@@ -23,6 +27,7 @@ import { afterAll, beforeAll, test } from "vitest";
 import { ConnectionClock } from "../../src/agents/agent-clock.js";
 import { type Database, openDatabase } from "../../src/db/database.js";
 import { tasks } from "../../src/db/schema.js";
+import { SAMPLE_POINTS } from "../../src/focus/focus-anomaly.js";
 import { MetricQueries } from "../../src/metrics/metric-queries.js";
 import { MetricRetention } from "../../src/metrics/metric-retention.js";
 import { type MetricSource, SEGMENT_POINTS, TaskMetrics } from "../../src/metrics/task-metrics.js";
@@ -257,4 +262,40 @@ test("一张图表的带标签降采样查询", async ({ bench }) => {
 	);
 	await bench("query_300_chart_50", () => one(300)).run(LABELED_RUN);
 	await bench("query_300_chart_100", () => two(300)).run(LABELED_RUN);
+});
+
+test("关注项读数的序列查询（带最近点的时间）", async ({ bench }) => {
+	const read = (task: BenchTask, names: readonly string[], points: number, recent: boolean) => () =>
+		queries.taskSeries(task.taskId, {
+			declared: names.map((name) => ({
+				name,
+				unit: "",
+				kind: "gauge" as const,
+				...(task === labeledQueryTask && { labels: ["pid", "name"] }),
+			})),
+			names,
+			expired: false,
+			points,
+			...(recent && { recent: SAMPLE_POINTS }),
+		});
+	const chart = LABELED_METRICS.slice(0, CHART_SERIES / PROCESSES.length);
+	// 先核对一次：每个序列都读到了最近 10 个点的时间，每秒一个。
+	for (const [task, names] of [
+		[queryTask, METRICS],
+		[labeledQueryTask, chart],
+	] as const) {
+		const { series } = await read(task, names, 1, true)();
+		for (const s of series) {
+			const last = s.recent.at(-1) ?? 0;
+			if (s.recent.length !== SAMPLE_POINTS || last - (s.recent[0] ?? 0) !== SAMPLE_POINTS - 1) {
+				throw new Error(`${s.name} 最近的点不对：${s.recent.join(",")}`);
+			}
+		}
+	}
+	await bench("focus_1", read(queryTask, METRICS, 1, false)).run(RUN);
+	await bench("focus_1_recent", read(queryTask, METRICS, 1, true)).run(RUN);
+	await bench("focus_60_chart_100", read(labeledQueryTask, chart, 60, false)).run(LABELED_RUN);
+	await bench("focus_60_chart_100_recent", read(labeledQueryTask, chart, 60, true)).run(
+		LABELED_RUN,
+	);
 });

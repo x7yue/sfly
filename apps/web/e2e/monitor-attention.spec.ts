@@ -1,7 +1,8 @@
 import type { Page } from "@playwright/test";
 import { type AssignedTask, LogLevel } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
-import { advance, logLine } from "./monitor-scenario";
+import { setFocusItems } from "./focus-support";
+import { advance, logLine, runningScenario } from "./monitor-scenario";
 import {
 	attention,
 	focusChart,
@@ -152,4 +153,47 @@ test("没有新数据的图表：曲线停在最后一个点，之后到现在�
 	// 详情里不读关注项，页头不写「数据更新于」。
 	await viewTab(page, "详情").click();
 	await expect(page.getByTestId("focus-freshness")).toHaveCount(0);
+});
+
+test("重试和失败：「需要注意」写明上一次失败的原因或失败的原因，直达按钮进详情看那个节点的尝试", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId, agent, tasks } = await runningScenario(
+		controlPlane,
+		connectAgent,
+		clock,
+	);
+	await setFocusItems(controlPlane, scenarioId, [
+		{ node_id: "verify", chart: "level", title: "核对 level" },
+	]);
+	await openOverview(page, clock, runId);
+
+	// verify 第 1 次失败，第 9 秒（上海时间 08:00:09）开始第 2 次。
+	await expect(rows(page)).toHaveCount(1);
+	await expect(rows(page).first()).toContainText(
+		"verify 在 08:00:09 开始重试（尝试 2），上一次尝试失败：AssertionError: 漏拦 3 笔",
+	);
+	await expect(readouts(page).getByRole("button").first()).toHaveAccessibleName(
+		/需要注意：重试（尝试 2）· 08:00:09$/,
+	);
+	await rows(page).first().getByRole("button", { name: "在详情里看 verify 的尝试" }).click();
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+	expect(search(page)).toEqual({ view: "detail", node: "verify", tab: "attempts" });
+	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
+	await expect(panel(page).getByRole("article", { name: "verify 第 2 次尝试" })).toBeVisible();
+
+	// 第 2 次也失败了：写失败的原因（错误信息的第一行）。
+	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦\n\nTraceback");
+	await viewTab(page, "概览").click();
+	await expect(rows(page).first()).toContainText("verify 失败：AssertionError: 仍然漏拦");
+	await expect(readouts(page).getByRole("button").first()).toHaveAccessibleName(
+		/需要注意：来源节点失败$/,
+	);
+	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里看 verify 的尝试");
 });

@@ -34,6 +34,19 @@ const BENCHES: Record<string, { label: string; noise: number; p99Target?: number
 		noise: 50,
 		p99Target: CHART_QUERY_P95_MS,
 	},
+	focus_1: { label: "关注项读数（1 小时 × 10 个指标 → 1 个桶，不读最近的点）", noise: 5 },
+	focus_1_recent: {
+		label: "关注项读数（1 小时 × 10 个指标 → 1 个桶，带最近 10 个点的时间）",
+		noise: 5,
+	},
+	focus_60_chart_100: {
+		label: "关注项图表（1 小时 × 2 个带标签指标 × 50 个进程 → 60 个桶，不读最近的点）",
+		noise: 30,
+	},
+	focus_60_chart_100_recent: {
+		label: "关注项图表（1 小时 × 2 个带标签指标 × 50 个进程 → 60 个桶，带最近 10 个点的时间）",
+		noise: 30,
+	},
 };
 
 export default definePerfItem({

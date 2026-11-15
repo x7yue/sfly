@@ -1,74 +1,74 @@
 import type { FocusAnomaly, RunFocus, RunFocusItem, RunLogLine, RunView } from "@sfly/schema";
 import { AnomalyMark } from "#/focus/AnomalyNote";
+import { anomalyText, formatAgo, readingValue, sourceNodeName } from "#/focus/focus-format";
 import {
-	anomalyText,
-	formatAgo,
-	latestSeriesName,
-	sourceNodeName,
-	valueText,
-} from "#/focus/focus-format";
-import { FOCUS, LOG_LEVEL_LABEL, MESSAGE, MONITOR_VIEW_LABEL, TERM } from "#/lib/copy";
+	FOCUS,
+	LOG_ALERT_LEVELS,
+	LOG_LEVEL_LABEL,
+	MESSAGE,
+	MONITOR_VIEW_LABEL,
+	TERM,
+} from "#/lib/copy";
 import { formatClock, formatClockMs } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LOG_LEVEL_STYLE } from "./LogList";
 import type { OverviewTarget } from "./Overview";
 import { logOrigin } from "./run-model";
 import { useRunLogs } from "./use-run-logs";
 
-/** 节点卡住或上报中断时「需要注意」里的推测：两种无新数据的说法共用。 */
-const STALE_HINT = "可能是节点卡住了，或者 Agent 的指标上报中断了。";
-
-/** 「需要注意」里一行的原因：哪个节点、为什么（异常由控制面判断，见契约 `FocusAnomalyKind`）。 */
-function why(item: RunFocusItem, anomaly: FocusAnomaly, generatedAt: string): string {
+/**
+ * 「需要注意」里的一行：写清是哪个节点、为什么（文字在 `FOCUS` 的 `…Detail`），以及直达按钮：WARN / ERROR 进详情
+ * 定位到那一行，没有新数据看那个节点的日志，失败和重试看它的尝试。异常由控制面判断（契约 `FocusAnomalyKind`）。
+ */
+function attentionRow(
+	item: RunFocusItem,
+	anomaly: FocusAnomaly,
+	generatedAt: string,
+): { why: string; label: string; target: OverviewTarget } {
 	const node = sourceNodeName(item);
 	const ago = formatAgo(Date.parse(generatedAt) - Date.parse(anomaly.at));
+	const at = { chainInstanceId: item.source.chain_instance_id, nodeId: item.node_id };
+	const detail = MONITOR_VIEW_LABEL.detail;
+	const attempts = {
+		label: `在${detail}里看 ${node} 的${TERM.attempt}`,
+		target: { ...at, tab: "attempts" as const },
+	};
 	switch (anomaly.kind) {
 		case "log": {
 			const level = LOG_LEVEL_LABEL[anomaly.level ?? "warn"];
-			const more =
-				(anomaly.count ?? 1) > 1
-					? ` · 这次${TERM.attempt}共有 ${anomaly.count} 条 WARN / ERROR`
-					: "";
-			return `${node} 的 ${level}（${formatClock(anomaly.at)}）：${anomaly.message}${more}`;
-		}
-		case "stale": {
-			// 一个点都没有时，异常的时间是开始执行的时间。
-			if (item.last_at === null)
-				return `${node} 已经执行了 ${ago}，${MESSAGE.noData}。${STALE_HINT}`;
-			const every =
-				item.sample_interval_ms === null ? "" : `，采样间隔 ${formatAgo(item.sample_interval_ms)}`;
-			return `${node} 仍在执行，但最后一个点在 ${ago} 前${every}。${STALE_HINT}`;
-		}
-		case "failed":
-			return `${node} 失败${anomaly.message ? `：${anomaly.message}` : "。"}`;
-		case "retry":
-			return `${node} 在 ${formatClock(anomaly.at)} 开始重试（${TERM.attempt} ${item.source.attempt}）${
-				anomaly.message ? `，上一次${TERM.attempt}失败：${anomaly.message}` : "。"
-			}`;
-	}
-}
-
-/** 直达按钮：WARN / ERROR 进详情定位到那一行；没有新数据看那个节点的日志；失败和重试看它的尝试。 */
-function jump(
-	item: RunFocusItem,
-	anomaly: FocusAnomaly,
-): { label: string; target: OverviewTarget } {
-	const node = sourceNodeName(item);
-	const at = { chainInstanceId: item.source.chain_instance_id, nodeId: item.node_id };
-	const detail = MONITOR_VIEW_LABEL.detail;
-	switch (anomaly.kind) {
-		case "log":
 			return {
-				label: `在${detail}里看这条 ${LOG_LEVEL_LABEL[anomaly.level ?? "warn"]}`,
+				why: FOCUS.logDetail(
+					node,
+					level,
+					formatClock(anomaly.at),
+					anomaly.message,
+					anomaly.count ?? 1,
+				),
+				label: `在${detail}里看这条 ${level}`,
 				target: { ...at, tab: "logs", at: anomaly.at },
 			};
+		}
 		case "stale":
-			return { label: `在${detail}里看 ${node} 的日志`, target: { ...at, tab: "logs" } };
+			return {
+				// 一个点都没有时，异常的时间是开始执行的时间。
+				why:
+					item.last_at === null
+						? FOCUS.noDataDetail(node, ago)
+						: FOCUS.staleDetail(
+								node,
+								ago,
+								item.sample_interval_ms === null ? null : formatAgo(item.sample_interval_ms),
+							),
+				label: `在${detail}里看 ${node} 的日志`,
+				target: { ...at, tab: "logs" },
+			};
 		case "failed":
+			return { why: FOCUS.failedDetail(node, anomaly.message), ...attempts };
 		case "retry":
 			return {
-				label: `在${detail}里看 ${node} 的${TERM.attempt}`,
-				target: { ...at, tab: "attempts" },
+				why: FOCUS.retryDetail(node, formatClock(anomaly.at), item.source.attempt, anomaly.message),
+				...attempts,
 			};
 	}
 }
@@ -99,9 +99,11 @@ export function Attention({
 			</div>
 			<ul className="m-0 list-none p-0">
 				{flagged.map((item) => {
-					const anomaly = item.anomaly as FocusAnomaly;
-					const { label, target } = jump(item, anomaly);
-					const series = latestSeriesName(item);
+					const { why, label, target } = attentionRow(
+						item,
+						item.anomaly as FocusAnomaly,
+						focus.generated_at,
+					);
 					return (
 						<li
 							key={`${item.node_id}\n${item.chart}\n${item.position}`}
@@ -113,16 +115,10 @@ export function Attention({
 								<p className="m-0">
 									<span className="font-semibold text-fg-1">{item.title}</span>
 									{!item.unavailable && item.latest && (
-										<span className="ml-2 font-mono text-xs text-fg-3">
-											{series && `${series} `}
-											{valueText(item)}
-											{item.unit && ` ${item.unit}`}
-										</span>
+										<span className="ml-2 font-mono text-xs text-fg-3">{readingValue(item)}</span>
 									)}
 								</p>
-								<p className="m-0 mt-0.5 wrap-anywhere text-fg-2">
-									{why(item, anomaly, focus.generated_at)}
-								</p>
+								<p className="m-0 mt-0.5 wrap-anywhere text-fg-2">{why}</p>
 							</div>
 							<Button size="sm" onClick={() => onOpen(target)}>
 								{label}
@@ -190,7 +186,7 @@ export function OtherWarnings({
 				<Skeleton className="h-10 w-full" />
 			) : shown.length === 0 ? (
 				<p className="m-0 text-xs text-fg-3">
-					{logs.expired ? MESSAGE.logsExpired : "没有别的 WARN / ERROR。"}
+					{logs.expired ? MESSAGE.logsExpired : `没有别的 ${LOG_ALERT_LEVELS}。`}
 				</p>
 			) : (
 				<ul className="m-0 list-none p-0">
@@ -212,9 +208,7 @@ export function OtherWarnings({
 								className="grid w-full cursor-pointer grid-cols-[96px_48px_minmax(0,10rem)_minmax(0,1fr)] gap-2 py-1 text-left font-mono text-xs text-fg-2 hover:bg-fg-1/3"
 							>
 								<span>{line.time === null ? "—" : formatClockMs(line.time)}</span>
-								<span className={line.level === "error" ? "text-log-error" : "text-log-warn"}>
-									{LOG_LEVEL_LABEL[line.level]}
-								</span>
+								<span className={LOG_LEVEL_STYLE[line.level]}>{LOG_LEVEL_LABEL[line.level]}</span>
 								<span className="truncate">{logOrigin(run, line)}</span>
 								<span className="truncate">{line.text}</span>
 							</button>

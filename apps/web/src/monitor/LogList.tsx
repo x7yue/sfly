@@ -13,7 +13,8 @@ import {
 import { ContextMenu, type ContextMenuAnchor, ContextMenuItem } from "@/components/ui/context-menu";
 import { type LogTimeKind, logLineTime } from "./log-time-kind";
 
-const LEVEL_STYLE: Record<LogLineView["level"], string> = {
+/** 日志级别的颜色：INFO 不上色，只有 WARN / ERROR 着色，DEBUG 用辅助文字色（DESIGN-SYSTEM 2.4）。 */
+export const LOG_LEVEL_STYLE: Record<LogLineView["level"], string> = {
 	debug: "text-log-debug",
 	info: "text-log-info",
 	warn: "text-log-warn",
@@ -366,7 +367,7 @@ export function LogList<L extends LogLineView>({
 							</span>
 							<span
 								className={
-									!locatable && line.level === "info" ? "text-fg-3" : LEVEL_STYLE[line.level]
+									!locatable && line.level === "info" ? "text-fg-3" : LOG_LEVEL_STYLE[line.level]
 								}
 							>
 								{LOG_LEVEL_LABEL[line.level]}
@@ -394,7 +395,9 @@ export function LogList<L extends LogLineView>({
 							<span data-log-source className={line.source === "agent" ? "text-fg-1" : "text-fg-3"}>
 								{line.source}
 							</span>
-							<span className={locatable ? LEVEL_STYLE[line.level] : "text-fg-3"}>{line.text}</span>
+							<span className={locatable ? LOG_LEVEL_STYLE[line.level] : "text-fg-3"}>
+								{line.text}
+							</span>
 						</div>
 					);
 				})}

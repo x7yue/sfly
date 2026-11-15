@@ -85,14 +85,6 @@ interface Acc {
  * metric_segments 的一行；能直接用段摘要时数组为 null（不读取、不解压）。数组以二进制读出（array_send），
  * 用 {@link decodeFloat8Array} / {@link decodeInt4Array} 解码（#153）。
  */
-/** 一个序列最近的几段（{@link MetricQueries.taskSeries} 的 `recent`）：段的起始时间与时间偏移（array_send 的二进制）。 */
-interface TailRow extends Record<string, unknown> {
-	metric: string;
-	labels: Labels;
-	start_s: number;
-	offsets: Buffer;
-}
-
 interface SegmentRow extends Record<string, unknown> {
 	metric: string;
 	labels: Labels;
@@ -111,6 +103,14 @@ interface SegmentRow extends Record<string, unknown> {
 	values: Buffer | null;
 	mins: Buffer | null;
 	maxs: Buffer | null;
+}
+
+/** 一个序列最近的几段（{@link MetricQueries.taskSeries} 的 `recent`）：段的起始时间与时间偏移（array_send 的二进制）。 */
+interface TailRow extends Record<string, unknown> {
+	metric: string;
+	labels: Labels;
+	start_s: number;
+	offsets: Buffer;
 }
 
 const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();

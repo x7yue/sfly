@@ -332,6 +332,36 @@ describe("关注项的异常", () => {
 		expect(await anomaly(runId)).toBeNull();
 	});
 
+	it("这次运行的节点包版本里没有这张图表的项不判断无新数据（没有数据可等），节点上的 WARN、失败照常算", async () => {
+		await start();
+		// 运行锁定 bench 1.0.0（图表叫 TPS）；之后的版本里叫「吞吐」，作者按新名字设了关注项。
+		const id = await api.orchestrationWith(benchDocument());
+		const runId = await api.triggerOk(id);
+		const task = await agent.nextAssign();
+		await api.saveVersion(id, benchDocument(undefined, "2.0.0"));
+		await putFocusItemsOk(api, id, [
+			{ node_id: "load", chart: "吞吐" },
+			{ node_id: "load", chart: "延迟" },
+		]);
+		const kinds = async () =>
+			(await focus(runId)).items.map((i) => [
+				i.chart,
+				i.unavailable ?? null,
+				i.anomaly?.kind ?? null,
+			]);
+
+		setClock(40_000);
+		expect(await kinds()).toEqual([
+			["延迟", null, "stale"],
+			["吞吐", "chart_missing", null],
+		]);
+		await log(task, 1, LogLevel.WARN, "慢");
+		expect(await kinds()).toEqual([
+			["吞吐", "chart_missing", "log"],
+			["延迟", null, "log"],
+		]);
+	});
+
 	it("同时满足几种时只报一种：failed、log、retry、stale 依次优先", async () => {
 		await start();
 		const document = benchDocument();

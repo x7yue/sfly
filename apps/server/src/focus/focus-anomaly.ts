@@ -1,10 +1,11 @@
 import { type FocusAnomaly, isOnAgentStatus, type NodeStatus } from "@sfly/schema";
 import type { TaskLogIssues } from "../db/schema.js";
+import { LOG_ISSUE_TEXT_CHARS } from "../logs/task-logs.js";
 import { clipChars } from "../util/text.js";
 
 /**
- * 关注项的异常（规格 #344，契约见 @sfly/schema 的 `FocusAnomalyKind`）：判断只在这里做，`GET /runs/:id/focus` 的每一项、
- * 各页面和运行通知都用这一份结果。时间都是控制面时间（ADR 0018），平台不为数值设阈值。
+ * 关注项的异常（规格 #344，契约见 @sfly/schema 的 `FocusAnomalyKind`）：判断只在这里做，经 `resolveRunFocus` 写进
+ * `GET /runs/:id/focus` 的每一项，页面只显示这份结果，不自己判断。时间都是控制面时间（ADR 0018），平台不为数值设阈值。
  */
 
 /** 「最近」的窗口：这么久以内的 WARN / ERROR、开始的重试算异常。 */
@@ -15,8 +16,6 @@ export const STALE_FLOOR_MS = 30_000;
 export const STALE_INTERVALS = 6;
 /** 估算采样间隔用最近多少个点。 */
 export const SAMPLE_POINTS = 10;
-/** 异常原文最多多少个字符（与日志里最近一条 WARN / ERROR 的正文一样）。 */
-const MESSAGE_CHARS = 500;
 
 /** 判断一项要用到的：来源节点的状态和它最新一次尝试，以及这一项的序列最后一个点的时间和采样间隔。 */
 export interface AnomalySubject {
@@ -34,8 +33,8 @@ export interface AnomalySubject {
 		| undefined;
 	/** 上一次尝试的错误信息（重试的原因）；没有上一次尝试或它没有错误信息时为 null。 */
 	previousError: string | null;
-	/** 这一项能不能有数据：图表在这次运行的节点包版本里不存在时没有数据可等，不判断无新数据。 */
-	hasData: boolean;
+	/** 图表在这次运行的节点包版本里不存在：没有数据可等，不判断无新数据。 */
+	chartMissing: boolean;
 	/** 最后一个点的控制面时间（毫秒）；一个点都没有为 null。 */
 	lastAt: number | null;
 	sampleIntervalMs: number | null;
@@ -43,11 +42,10 @@ export interface AnomalySubject {
 
 type Rule = (subject: AnomalySubject, now: number) => FocusAnomaly | null;
 
-const iso = (ms: number) => new Date(ms).toISOString();
 const within = (at: number, now: number) => now - at <= ANOMALY_WINDOW_MS;
-/** 错误信息的第一行（之后是堆栈），截到 500 个字符；没有时是空串。 */
+/** 错误信息的第一行（之后是堆栈），和日志正文一样截到 500 个字符；没有时是空串。 */
 const headline = (message: string | null) =>
-	clipChars((message ?? "").trim().split("\n")[0]?.trim() ?? "", MESSAGE_CHARS);
+	clipChars((message ?? "").trim().split("\n")[0]?.trim() ?? "", LOG_ISSUE_TEXT_CHARS);
 
 /** 来源节点失败：不限时间。 */
 const failed: Rule = ({ status, attempt }, now) => {
@@ -74,19 +72,21 @@ const retry: Rule = ({ attempt, previousError }, now) => {
 	if (!attempt || attempt.attempt <= 1) return null;
 	const at = (attempt.startedAt ?? attempt.queuedAt).getTime();
 	if (!within(at, now)) return null;
-	return { kind: "retry", at: iso(at), message: headline(previousError) };
+	return { kind: "retry", at: new Date(at).toISOString(), message: headline(previousError) };
 };
 
 /**
  * 来源节点在执行中（准备中、执行中，与主指标的口径相同），距离最后一个点超过 max(30 秒, 6 倍采样间隔)；
  * 一个点都没有时从这次尝试开始执行算起，还没开始执行（准备中）就不判断。
  */
-const stale: Rule = ({ status, attempt, hasData, lastAt, sampleIntervalMs }, now) => {
-	if (!hasData || !isOnAgentStatus(status)) return null;
+const stale: Rule = ({ status, attempt, chartMissing, lastAt, sampleIntervalMs }, now) => {
+	if (chartMissing || !isOnAgentStatus(status)) return null;
 	const since = lastAt ?? attempt?.startedAt?.getTime();
 	if (since === undefined) return null;
 	const limit = Math.max(STALE_FLOOR_MS, STALE_INTERVALS * (sampleIntervalMs ?? 0));
-	return now - since > limit ? { kind: "stale", at: iso(since), message: "" } : null;
+	return now - since > limit
+		? { kind: "stale", at: new Date(since).toISOString(), message: "" }
+		: null;
 };
 
 /** 同时满足几种时只报排在前面的一种。 */

@@ -77,19 +77,15 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 	};
 	/**
 	 * 点概览里的一项：进入详情，定位到它所在的节点，给了页签就切过去，给了时刻就在日志里定位到那一刻（「需要注意」的
-	 * 直达按钮）。节点有链实例时在这里直接定位，并把新地址记为已应用：地址可能和上一次直达时完全一样（切回概览再点一次），
-	 * 那样地址没变，不会再应用一次。
+	 * 直达按钮）。节点有链实例时在这里直接应用新地址（`applyAddress`；节点 ID 在一次运行里只对应一个节点），并记为已应用：
+	 * 地址可能和上一次直达时完全一样（切回概览再点一次），那样地址没变，不会再应用一次。
 	 */
 	const openNode = (target: OverviewTarget) => {
 		const next: MonitorSearch = { view: "detail", node: target.nodeId };
 		if (target.tab) next.tab = target.tab;
 		if (target.at) next.at = target.at;
-		if (target.chainInstanceId !== null) {
-			const ref = { chainInstanceId: target.chainInstanceId, nodeId: target.nodeId };
-			const at = target.at === undefined ? Number.NaN : Date.parse(target.at);
-			if (Number.isFinite(at)) store.locateLog(ref, at);
-			else store.select(ref);
-			if (target.tab && !Number.isFinite(at)) store.showPanel(target.tab);
+		if (run && target.chainInstanceId !== null) {
+			applyAddress(store, run, next);
 			appliedAddress.current = addressKeyOf(next);
 		}
 		// 点的那一格随概览卸载：焦点先移到「详情」标签，不落在 body 上。
