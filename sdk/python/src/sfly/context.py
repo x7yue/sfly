@@ -50,13 +50,18 @@
 - `{"type": "action_start", "ts", "mono", "id": 7, "parent": 3, "depth": 1, "name": "下单",
   "fields": {"订单": "1001"}}`：一个动作开始。
   - `id`：整数，任务内从 1 开始递增，由 SDK 分配；动作和标记共用这一个序列，同一个任务里
-    ID 不重复。
+    ID 不重复。多个线程同时开始动作时，先开始的不一定先拿到 ID：ID 的先后和开始时间的先后可能
+    不一致。比较谁先开始要比较 `mono`，不比较 `id`；例如选「最外层、开始得最早的动作」时，
+    在 `depth` 为 0 的动作里取 `mono` 最小的。
   - `parent`：父动作的 `id`，最外层是 null。父动作不一定有明细（超过上限时不上报它的
     `action_start`；`start()` 的父动作也可能已经结束），所以消费方不能要求 `parent` 指向一个已有的
     动作。
   - `depth`：整数，祖先的个数，最外层是 0，由 SDK 按 `parent` 算出（父动作没有明细时也准确）。
   - `name`：字符串，1 到 64 个字符。`fields`：对象，最多 8 个键，键是字符串，值一律是字符串（
     SDK 已转成字符串），每个不超过 256 个字符；没有字段时是 `{}`。
+  - `late`：只在补发的 `action_start` 上有，值是 `true`；平时没有这个字段。有它说明这个动作
+    超过了每种名称的上限、没有在开始时上报，因为失败才补上（见下面「补发」）；读取方收到它就知道
+    这个动作已经失败了，它的 `action_end` 紧跟在后面（中间不会有别的动作和标记的事件）。
 - `{"type": "action_end", "ts", "mono", "id": 7, "result": "failed", "reason": "ValueError: 拒单",
   "fields": {"回报": "rejected"}}`：动作结束。
   - `result`：`success`、`failed`、`unfinished`（抛出了 `Cancelled`）三者之一。
@@ -74,7 +79,7 @@
   ```
   {"type": "action_summary", "ts", "mono",
    "total": 120345, "reported": 100000, "capped_ts": 1700000000000, "capped_mono": 123456789,
-   "names": [{"name": "下单", "total": 120000, "failed": 12,
+   "names": [{"name": "下单", "total": 120000, "failed": 12, "reported": 50012,
               "capped_ts": 1700000000000, "capped_mono": 123456789}],
    "running": [{"id", "parent", "depth", "name", "fields", "ts", "mono"}],
    "recent": [{"id", "parent", "depth", "name", "fields", "ts", "mono",
@@ -84,13 +89,16 @@
 
   - `total`：到目前为止开始的动作和标记的个数（不论有没有明细）；`reported`：已经上报明细（
     `action_start` 或 `mark`，包括补发的）的个数，最多 100000。`capped_ts`、`capped_mono`：合计达到
-    100000 个、之后不再上报明细的起点（第一个没有上报明细的动作的开始时刻），没有达到时是 null。
+    100000 个、之后不再上报明细的起点（第一个因此没有上报明细的动作的开始时刻，包括补发时发现合计
+    已满、被丢弃的失败动作），没有达到时是 null。
   - `names`：每种名称一项，按第一次出现的先后排列。`total`：这个名称的动作和标记的个数；`failed`：
-    失败的动作的个数；`capped_ts`、`capped_mono`：这个名称从什么时候起只计数（超过 50000 个，
+    失败的动作的个数；`reported`：这个名称已经上报明细的个数，包括补发的，所以 `total` 减
+    `reported` 就是这个名称只计数、没有明细的个数（各名称的 `reported` 加起来等于外面的
+    `reported`）；`capped_ts`、`capped_mono`：这个名称从什么时候起只计数（超过 50000 个，
     或合计超过 100000 个以后；起点是第一个没有上报明细的动作的开始时刻），没有时是 null。
-  - `running`：正在做的动作，最多 50 个，优先取层级浅的、同一层级里开始早的，列表按开始的先后
-    （`id`）排列。每一项有 `id`、`parent`、`depth`、`name`、`fields`（开始时的字段加上 `note()`
-    补充的）、`ts`、`mono`（开始的时刻）。
+  - `running`：正在做的动作，最多 50 个，优先取层级浅的、同一层级里 `id` 小的，列表按 `id` 排列
+    （不一定是开始的先后，见上面 `id`；要按开始的先后用 `mono`）。每一项有 `id`、`parent`、
+    `depth`、`name`、`fields`（开始时的字段加上 `note()` 补充的）、`ts`、`mono`（开始的时刻）。
   - `recent`：最近结束的 20 个动作（任何结果），最近结束的在前，每一项是 `running` 的字段再加
     `end_ts`、`end_mono`（结束的时刻）、`result`、`reason`。`recent_failed`：其中最近失败的 5 个，
     格式相同，最近失败的在前。标记不在 `running`、`recent` 里。
@@ -98,7 +106,9 @@
 
 补发：超过每种名称的上限（50000 个）、没有上报 `action_start` 的动作，如果以失败结束，SDK 在
 结束时把明细补上（直到合计 100000 个）：连续写一行 `action_start`，时间是动作真正开始的时刻，
-再写一行 `action_end`；格式与平时完全相同。
+并带 `"late": true`，再写一行 `action_end`；除了 `late`，格式与平时完全相同。合计已经满了时不补，
+这个失败动作的明细被丢弃，和开始时就超过合计上限的动作一样只计数，摘要里的 `capped_ts` 在这时
+也会有值。
 
 动作开始时发 `action_start`，结束时发 `action_end`，没有结束的动作不发 `action_end`：节点进程被
 强制终止、或者任务结束时还没结束的动作，由读取事件的一方（控制面、本地调试）记为 `unfinished`。
@@ -113,7 +123,7 @@ import os
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 # 执行器每个任务启动一个进程（#76），导入 sfly 在每个任务的启动路径上：pathlib、threading、shutil、
 # traceback、urllib.parse 只在构造 Context、保存产物、记录异常时才用到，推迟到用到时再导入。
@@ -126,6 +136,12 @@ if TYPE_CHECKING:
 
 #: 日志级别（与控制面、画布一致）。
 LEVELS = ("debug", "info", "warn", "error")
+
+#: 动作的结果，也是 `action_end` 里 `result` 的取值：写事件的 `sfly.actions` 和读事件的本地调试
+#: （`sfly.local`、`sfly debug`）共用这一份。
+ActionResult = Literal["success", "failed", "unfinished"]
+#: 按事件里的文字查结果：读事件的一方遇到不认识的取值时抛 `KeyError`。
+ACTION_RESULTS: dict[str, ActionResult] = {result: result for result in get_args(ActionResult)}
 
 _FROM_ENV: Any = object()
 

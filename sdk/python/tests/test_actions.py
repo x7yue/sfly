@@ -245,9 +245,23 @@ def test_overlong_names_extra_fields_and_long_values_are_cut_with_one_warning_ea
     # 做了两次、又有标记，每种原因仍然只警告一次。
     warnings = warnings_of(result)
     assert len(warnings) == 3, warnings
-    assert "名称" in warnings[0] and "64" in warnings[0]
-    assert "字段值" in warnings[1] and "256" in warnings[1]
-    assert "字段" in warnings[2] and "超过 8 个" in warnings[2]
+    assert "动作的名称" in warnings[0] and "64" in warnings[0]
+    assert "动作的字段值" in warnings[1] and "256" in warnings[1]
+    assert "动作的字段" in warnings[2] and "超过 8 个" in warnings[2]
+
+
+def test_warnings_about_a_mark_say_mark_and_not_action(tmp_path: Path) -> None:
+    ctx, events = make_context(tmp_path)
+
+    many: dict[str, Any] = {f"字段{i}": i for i in range(9)}
+    ctx.mark("长" * 65, 长值="值" * 257, **many)
+
+    warnings = [e["message"] for e in only(events(), "log")]
+    assert len(warnings) == 3, warnings
+    assert "标记的名称" in warnings[0] and "64" in warnings[0]
+    assert "标记的字段值" in warnings[1] and "256" in warnings[1]
+    assert "标记的字段" in warnings[2] and "超过 8 个" in warnings[2]
+    assert not any("动作" in warning for warning in warnings), warnings
 
 
 def test_ending_a_handle_twice_is_ignored_with_one_warning() -> None:
@@ -275,7 +289,8 @@ def test_more_than_100_distinct_names_warns_once_and_suggests_fields(
     warnings = warnings_of(result)
     if warned:
         assert len(warnings) == 1, warnings
-        assert "100" in warnings[0] and "字段" in warnings[0]
+        # 这里记的都是标记：名称种数是动作和标记合计的。
+        assert "动作和标记的名称" in warnings[0] and "100" in warnings[0] and "字段" in warnings[0]
     else:
         assert warnings == []
 
@@ -301,6 +316,12 @@ def test_summary_has_what_is_running_the_recent_ones_and_the_counts() -> None:
         ("保持", 1, 0),
         ("开始保持", 1, 0),
         ("等回报", 1, 0),
+    ]
+    assert [(n.name, n.reported) for n in summary.names] == [
+        ("下单", 4),
+        ("保持", 1),
+        ("开始保持", 1),
+        ("等回报", 1),
     ]
     assert (summary.total, summary.reported, summary.capped_ts) == (7, 7, None)
     assert all(n.capped_ts is None for n in summary.names)
@@ -482,7 +503,14 @@ def test_the_summary_event_lists_names_running_recent_and_recent_failed(tmp_path
         "capped_ts": None,
         "capped_mono": None,
         "names": [
-            {"name": "等回报", "total": 1, "failed": 0, "capped_ts": None, "capped_mono": None}
+            {
+                "name": "等回报",
+                "total": 1,
+                "failed": 0,
+                "reported": 1,
+                "capped_ts": None,
+                "capped_mono": None,
+            }
         ],
         "running": [
             {"id": 1, "parent": None, "depth": 0, "name": "等回报", "fields": {"订单": "1"}}
@@ -576,6 +604,9 @@ def test_after_50000_of_a_name_only_counts_but_failures_still_get_a_detail(tmp_p
     assert [e["name"] for e in starts[-2:]] == ["下单", "别的名称"]
     assert [e["id"] for e in starts[-2:]] == [50_003, 50_004]
     assert starts[-2]["fields"] == {"订单": "late"}
+    # 只有补发的开始带 late：读取方据此知道这个动作超过了每种名称的上限、是失败的。
+    assert [e["id"] for e in starts if e.get("late")] == [50_003]
+    assert starts[-2]["late"] is True and "late" not in starts[-1] and "late" not in starts[0]
     assert [(e["id"], e["result"], e["reason"]) for e in ends[-2:]] == [
         (50_003, "failed", "拒单"),
         (50_004, "success", None),
@@ -591,9 +622,13 @@ def test_after_50000_of_a_name_only_counts_but_failures_still_get_a_detail(tmp_p
     summary = only(events(), "action_summary")[-1]
     by_name_ = {n["name"]: n for n in summary["names"]}
     assert (by_name_["下单"]["total"], by_name_["下单"]["failed"]) == (50_003, 1)
+    # 已上报的明细包括补发的那一个：只计数的动作是 total 减 reported，即 2 个。
+    assert by_name_["下单"]["reported"] == 50_001
+    assert by_name_["别的名称"]["reported"] == 1
     assert by_name_["下单"]["capped_ts"] is not None and by_name_["下单"]["capped_mono"] is not None
     assert by_name_["别的名称"]["capped_ts"] is None
     assert (summary["reported"], summary["capped_ts"]) == (50_002, None)
+    assert sum(n["reported"] for n in summary["names"]) == summary["reported"]
     # 超过上限的动作也在最近的动作里，失败的在最近失败里。
     assert summary["recent"][0]["name"] == "别的名称"
     assert [r["fields"] for r in summary["recent_failed"]] == [{"订单": "late"}]
@@ -631,6 +666,13 @@ def test_after_100000_in_all_nothing_more_is_reported_not_even_failures(tmp_path
     by_name_ = {n["name"]: n for n in summary["names"]}
     assert (by_name_["甲"]["total"], by_name_["甲"]["failed"]) == (50_002, 2)
     assert (by_name_["丙"]["total"], by_name_["丙"]["failed"]) == (2, 1)
+    assert [by_name_[name]["reported"] for name in ("甲", "乙", "丙", "丁")] == [
+        50_001,
+        49_999,
+        0,
+        0,
+    ]
+    assert sum(n["reported"] for n in summary["names"]) == summary["reported"]
     assert by_name_["丙"]["capped_ts"] is not None
     assert by_name_["乙"]["capped_ts"] is None
     assert [r["reason"] for r in summary["recent_failed"]] == [
@@ -638,3 +680,40 @@ def test_after_100000_in_all_nothing_more_is_reported_not_even_failures(tmp_path
         "合计到了，不再补",
         "补上了",
     ]
+
+
+def test_a_failure_whose_detail_the_total_cap_drops_after_a_late_one_still_warns(
+    tmp_path: Path,
+) -> None:
+    ctx, events = make_context(tmp_path)
+
+    for _ in range(50_000):
+        ctx.action.start("甲").end()
+    for _ in range(49_999):
+        ctx.action.start("乙").end()
+    # 这两个甲开始时合计还差一个才到 10 万，但甲已经超过每种名称的上限，所以都没有上报开始。
+    first = ctx.action.start("甲", 序号=1)
+    second = ctx.action.start("甲", 序号=2)
+    assert len(only(events(), "action_start")) == 99_999
+    assert len(only(events(), "log")) == 1
+
+    first.fail("补上明细，合计正好 10 万")
+    assert [e["fields"] for e in only(events(), "action_start")[-1:]] == [{"序号": "1"}]
+    assert len(only(events(), "action_start")) == 100_000
+    second.fail("明细被丢弃")
+
+    assert len(only(events(), "action_start")) == 100_000
+    warnings = [e["message"] for e in only(events(), "log")]
+    assert len(warnings) == 2, warnings
+    assert "'甲'" in warnings[0] and "50000" in warnings[0]
+    assert "100000" in warnings[1] and "指标" in warnings[1]
+
+    # 失败的动作都在最近失败里，丢弃明细的也在；等两个都失败以后的那一份摘要。
+    wait_for(lambda: len(only(events(), "action_summary")[-1]["recent_failed"]) == 2)
+    summary = only(events(), "action_summary")[-1]
+    assert [r["reason"] for r in summary["recent_failed"]] == [
+        "明细被丢弃",
+        "补上明细，合计正好 10 万",
+    ]
+    assert (summary["total"], summary["reported"]) == (100_001, 100_000)
+    assert summary["capped_ts"] is not None and summary["capped_mono"] is not None

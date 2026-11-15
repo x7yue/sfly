@@ -425,7 +425,7 @@ with ctx.action("保持", 时长="4h") as hold:            # 最外层
 - 名称为空（或只有空白）抛 `ValueError`，不是字符串抛 `TypeError`；`parent=` 不是动作抛 `TypeError`。
 - 名称超过 64 个字符、字段超过 8 个（多出的丢弃）、字段值超过 256 个字符：截断，每种原因写一条 warn 日志，只写一次。
 - 同一个句柄结束两次（或结束以后再 `note`、`fail`）：忽略，警告一次（每个名称一次）。
-- 不同的名称超过 100 种：警告一次。多半是把订单号写进了名称：名称只写这是一件什么事，变化的内容放进字段，计数表才看得懂。
+- 不同的名称（动作和标记合计）超过 100 种：警告一次。多半是把订单号写进了名称：名称只写这是一件什么事，变化的内容放进字段，计数表才看得懂。
 
 ### 数量上限
 
@@ -914,7 +914,7 @@ def test_count_lines(tmp_path: Path) -> None:
 | `metrics` | `MetricPoint(ts, name, kind, value, labels)` 的列表，保留每一次上报（未声明的、标签不合法的已丢弃）；`labels` 是这个点的标签（值都是字符串），不带标签时为 `{}` |
 | `notifications` | `Notification(ts, bot, body)` 的列表：每次 `ctx.notify` 发给的飞书机器人名称和完整的请求体（文本、`sfly.feishu.card` 组装的卡片和原始消息都在里面，可以直接断言），没有真的发送（不是通过「飞书机器人」参数传入的机器人、不合格的原始消息不在里面，日志里有 warning）。从 SDK 0.3.0 起可用 |
 | `actions` | `ActionRecord(id, kind, name, parent, depth, fields, ts, mono, result, reason, duration_ms)` 的列表：节点用 `ctx.action` 记录的动作和 `ctx.mark` 记录的标记（`kind` 是 `action` 或 `mark`），按开始的先后排列。`parent` 是父动作的 `id`，最外层为 `None`；`fields` 是开始时给的字段加上 `note()` 补充的（值都是字符串）；`result` 是 `success`、`failed` 或 `unfinished`，标记为 `None`；`duration_ms` 是按单调时钟算的耗时（毫秒），标记为 `None`；节点结束时还没结束的动作记为 `unfinished`。从 SDK 0.4.0 起可用 |
-| `action_summary` | 最新的一份摘要 `ActionSummary(ts, total, reported, capped_ts, names, running, recent, recent_failed)`：`names` 是每种名称的 `ActionCount(name, total, failed, capped_ts)`，`running` 是正在做的动作（节点结束以后为空），`recent`、`recent_failed` 是最近结束的 20 个、最近失败的 5 个（最近的在前）。摘要有变化时才发、每秒最多一次，所以执行中的 `action_summary` 可能比 `actions` 晚一秒；节点退出时会再发一次，结束以后的摘要是完整的。没有用过动作时为 `None` |
+| `action_summary` | 最新的一份摘要 `ActionSummary(ts, total, reported, capped_ts, names, running, recent, recent_failed)`：`names` 是每种名称的 `ActionCount(name, total, failed, reported, capped_ts)`（`reported` 是已经记录明细的个数，`total` 减去它就是只计数、没有明细的个数），`running` 是正在做的动作（节点结束以后为空），`recent`、`recent_failed` 是最近结束的 20 个、最近失败的 5 个（最近的在前）。摘要有变化时才发、每秒最多一次，所以执行中的 `action_summary` 可能比 `actions` 晚一秒；节点退出时会再发一次，结束以后的摘要是完整的。没有用过动作时为 `None` |
 | `artifacts` | 产物名称 → 本地文件路径 |
 | `artifacts_dir`、`work_dir` | 产物目录、工作目录 |
 

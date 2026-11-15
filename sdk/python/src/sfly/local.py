@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, Literal
 
-from sfly.context import monotonic_ms
+from sfly.context import ACTION_RESULTS, ActionResult, monotonic_ms
 from sfly.feishu import raw_message_problem, text_message
 
 #: 取消时从 SIGTERM 到强制杀掉的默认宽限期（秒，docs/SEMANTICS.md §3.4）。
@@ -116,9 +116,6 @@ class Notification:
     body: dict[str, Any]
 
 
-ActionResult = Literal["success", "failed", "unfinished"]
-
-
 @dataclass(frozen=True)
 class ActionRecord:
     """一次 `ctx.action` 或 `ctx.mark`。
@@ -149,12 +146,14 @@ class ActionRecord:
 
 @dataclass(frozen=True)
 class ActionCount:
-    """摘要里一种名称的计数：`total` 个（动作和标记），其中 `failed` 个失败。
+    """摘要里一种名称的计数：`total` 个（动作和标记），其中 `failed` 个失败，
+    `reported` 个上报了明细（包括失败时补发的）。
     `capped_ts`（Agent 时间）从这个时刻起这个名称只计数、没有明细（超过上限），没有时为 None。"""
 
     name: str
     total: int
     failed: int
+    reported: int
     capped_ts: int | None = None
 
 
@@ -409,15 +408,8 @@ def _fields(value: Any) -> dict[str, str]:
     return {str(k): str(v) for k, v in (value or {}).items()}
 
 
-_ACTION_RESULTS: dict[str, ActionResult] = {
-    "success": "success",
-    "failed": "failed",
-    "unfinished": "unfinished",
-}
-
-
 def _result(value: Any) -> ActionResult:
-    return _ACTION_RESULTS[str(value)]
+    return ACTION_RESULTS[str(value)]
 
 
 def _action_index(actions: list[ActionRecord], action_id: int) -> int:
@@ -451,7 +443,11 @@ def _action_summary(ts: int, event: Mapping[str, Any]) -> ActionSummary:
         capped_ts=_optional_int(event.get("capped_ts")),
         names=[
             ActionCount(
-                str(n["name"]), int(n["total"]), int(n["failed"]), _optional_int(n.get("capped_ts"))
+                str(n["name"]),
+                int(n["total"]),
+                int(n["failed"]),
+                int(n["reported"]),
+                _optional_int(n.get("capped_ts")),
             )
             for n in event["names"]
         ],

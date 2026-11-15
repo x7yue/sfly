@@ -19,6 +19,10 @@ from pathlib import Path
 
 import pytest
 
+from sfly.cli.debug import format_action
+from sfly.context import ACTION_RESULTS
+from sfly.local import ActionRecord
+
 STUB = Path(__file__).resolve().parents[3] / "testdata" / "stub-package"
 SFLY = str(Path(sys.executable).parent / "sfly")
 
@@ -318,6 +322,26 @@ def test_an_action_still_running_when_the_node_ends_is_printed_as_unfinished(
         "动作  开始 #5 从不结束 订单=1003",
         "动作  未结束 #5 从不结束 <耗时> 订单=1003",
     ]
+
+
+def test_every_result_an_action_can_end_with_has_its_own_printed_text() -> None:
+    texts = {"success": "成功", "failed": "失败", "unfinished": "未结束"}
+    # SDK 多出一种结果时，这里和 `sfly debug` 的输出都要跟着加。
+    assert texts.keys() == ACTION_RESULTS.keys()
+    for result, text in texts.items():
+        record = ActionRecord(
+            id=1,
+            kind="action",
+            name="下单",
+            parent=None,
+            depth=0,
+            fields={},
+            ts=0,
+            mono=1,
+            result=ACTION_RESULTS[result],
+            duration_ms=5,
+        )
+        assert f"动作  {text} #1 下单 5 ms" in format_action(record)
 
 
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(

@@ -29,12 +29,14 @@
 校验：名称为空（或只有空白）抛 `ValueError`，不是字符串抛 `TypeError`，调用时立即报错。
 下面这些不报错，截断或丢弃，每种原因写一条 warn 日志：名称超过 64 个字符、字段超过 8 个
 （多出的丢弃）、字段值（转成字符串后）超过 256 个字符。同一个句柄结束两次，第二次忽略，警告一次；
-不同名称超过 100 种时警告一次（名称里带了订单号这类每次都不同的内容，变化的内容放进字段）。
+不同名称（动作和标记合计）超过 100 种时警告一次（名称里带了订单号这类每次都不同的内容，
+变化的内容放进字段）。
 
 上限：每种名称最多上报 50000 个明细，合计最多 100000 个；超过以后只计数，警告一次，建议按批或
-按阶段记录、每一笔的延迟用指标。失败的动作不受每种名称上限的限制：结束时把开始和结束补上，
-直到合计 100000 个。正在做的动作、最近结束的 20 个、最近失败的 5 个、每种名称的总数和失败数
-始终准确，由 `action_summary` 汇总发出：有变化时才发，每秒最多一次，节点进程退出时尽力再发一次。
+按阶段记录、每一笔的延迟用指标。失败的动作不受每种名称上限的限制：结束时把开始（带 `late`）
+和结束补上，直到合计 100000 个；合计已满时补不上，明细被丢弃，也按合计上限警告一次。
+正在做的动作、最近结束的 20 个、最近失败的 5 个、每种名称的总数和失败数始终准确，
+由 `action_summary` 汇总发出：有变化时才发，每秒最多一次，节点进程退出时尽力再发一次。
 
 事件的格式（`action_start`、`action_end`、`mark`、`action_summary`）见 `sfly.context` 的模块说明。
 """
@@ -50,9 +52,9 @@ import time
 from collections import deque
 from collections.abc import Callable, Collection, Mapping
 from contextvars import ContextVar, Token
-from typing import Any, Literal
+from typing import Any
 
-from sfly.context import Cancelled, _EventWriter, _now_ms, monotonic_ms
+from sfly.context import ActionResult, Cancelled, _EventWriter, _now_ms, monotonic_ms
 
 #: 名称最长的字符数，超过的截断。
 MAX_NAME_CHARS = 64
@@ -74,8 +76,6 @@ RECENT_LIMIT = 20
 RECENT_FAILED_LIMIT = 5
 #: 摘要最短的发送间隔（秒）。
 SUMMARY_INTERVAL = 1.0
-
-Result = Literal["success", "failed", "unfinished"]
 
 #: 当前上下文里最内层的、还在进行的 `with ctx.action(...)`（线程、asyncio 任务各有各的）。
 _CURRENT: ContextVar[ActionScope | None] = ContextVar("sfly_action", default=None)
@@ -109,7 +109,7 @@ class _NameStats:
     def __init__(self) -> None:
         self.total = 0
         self.failed = 0
-        #: 已上报明细的个数（不含失败时补发的）。
+        #: 已上报明细的个数，包括失败时补发的：`total` 减去它，就是只计数、没有明细的个数。
         self.reported = 0
         #: 从什么时候起只计数：第一个没有上报明细的动作开始的 (Agent 时间, 单调时钟读数)。
         self.capped: tuple[int, int] | None = None
@@ -155,7 +155,7 @@ class _Record:
         self.mono = mono
         #: 是否上报了 `action_start`（超过上限的没有）。
         self.reported = False
-        self.result: Result | None = None
+        self.result: ActionResult | None = None
         self.reason: str | None = None
         self.end_ts = 0
         self.end_mono = 0
@@ -280,7 +280,7 @@ class ActionScope:
             except ValueError:
                 # 在另一个上下文里退出（例如异步生成器的清理）：不能还原，直接设回外层。
                 _CURRENT.set(self._outer)
-        result: Result
+        result: ActionResult
         reason = self._failure
         if exc_type is None:
             result = "failed" if reason is not None else "success"
@@ -325,7 +325,7 @@ class Actions:
     def __call__(self, name: str, /, **fields: object) -> ActionScope:
         """`with ctx.action("下单", 订单=oid) as a:`：块里做的是一个动作，进入开始，退出结束。"""
         name = self._check_name(name, "动作")
-        return ActionScope(self, name, self._check_fields(fields, ()))
+        return ActionScope(self, name, self._check_fields(fields, (), "动作"))
 
     def start(
         self,
@@ -340,7 +340,7 @@ class Actions:
         父动作默认是当前最内层的 `with ctx.action(...)`，`parent=` 显式指定。
         """
         name = self._check_name(name, "动作")
-        clean = self._check_fields(fields, ())
+        clean = self._check_fields(fields, (), "动作")
         rec = self._begin(name, clean, self._parent_of(parent), mark=False)
         return Action(self, rec)
 
@@ -354,7 +354,7 @@ class Actions:
     ) -> None:
         """记一个时刻（标记）。"""
         name = self._check_name(name, "标记")
-        clean = self._check_fields(fields, ())
+        clean = self._check_fields(fields, (), "标记")
         self._begin(name, clean, self._parent_of(parent), mark=True)
 
     # ---- 校验 ----
@@ -374,8 +374,11 @@ class Actions:
             return name[:MAX_NAME_CHARS]
         return name
 
-    def _check_fields(self, fields: Mapping[str, object], taken: Collection[str]) -> dict[str, str]:
-        """字段值转成字符串、截断；字段超过上限时丢弃多出的。`taken` 是已经有的键。"""
+    def _check_fields(
+        self, fields: Mapping[str, object], taken: Collection[str], what: str
+    ) -> dict[str, str]:
+        """字段值转成字符串、截断；字段超过上限时丢弃多出的。`taken` 是已经有的键，
+        `what`（动作、标记）写进警告。"""
         clean: dict[str, str] = {}
         if not fields:
             return clean
@@ -386,7 +389,7 @@ class Actions:
                     self._warn(
                         "too-many-fields",
                         "",
-                        f"动作的字段超过 {MAX_FIELDS} 个，多出的已丢弃"
+                        f"{what}的字段超过 {MAX_FIELDS} 个，多出的已丢弃"
                         "（字段留给要查的内容，不要放整份数据）",
                     )
                     continue
@@ -396,7 +399,7 @@ class Actions:
                 self._warn(
                     "value-too-long",
                     "",
-                    f"动作的字段值超过 {MAX_VALUE_CHARS} 个字符，已截断（字段 {key!r}）",
+                    f"{what}的字段值超过 {MAX_VALUE_CHARS} 个字符，已截断（字段 {key!r}）",
                 )
                 text = text[:MAX_VALUE_CHARS]
             clean[key] = text
@@ -435,7 +438,7 @@ class Actions:
                     self._warn(
                         "too-many-names",
                         "",
-                        f"动作的名称已超过 {MAX_NAMES} 种：名称里是不是带了订单号这类"
+                        f"动作和标记的名称已超过 {MAX_NAMES} 种：名称里是不是带了订单号这类"
                         "每次都不同的内容？变化的内容放进字段"
                         "（ctx.action(名称, 订单=订单号)），名称只写这是一件什么事",
                     )
@@ -463,7 +466,8 @@ class Actions:
         return rec
 
     def _count_only(self, stats: _NameStats, rec: _Record) -> None:
-        """这个动作超过了上限，不上报明细：记下从什么时候起只计数，第一次时警告。"""
+        """这个动作的明细因为上限没有上报（开始时就超过上限，或失败时合计已满补不上）：
+        记下从什么时候起只计数，第一次时警告。"""
         if stats.capped is None:
             stats.capped = (rec.ts, rec.mono)
             if stats.reported >= MAX_PER_NAME:
@@ -490,10 +494,12 @@ class Actions:
             if rec.result is not None:
                 self._ignored(rec)
                 return
-            rec.notes.update(self._check_fields(fields, rec.fields.keys() | rec.notes.keys()))
+            rec.notes.update(
+                self._check_fields(fields, rec.fields.keys() | rec.notes.keys(), "动作")
+            )
             self._changed()
 
-    def _finish(self, rec: _Record, result: Result, reason: str | None) -> None:
+    def _finish(self, rec: _Record, result: ActionResult, reason: str | None) -> None:
         ts, mono = _stamp()
         with self._lock:
             if rec.result is not None:
@@ -502,17 +508,22 @@ class Actions:
             rec.result, rec.reason, rec.end_ts, rec.end_mono = result, reason, ts, mono
             del self._running[rec.id]
             self._recent.append(rec)
+            stats = self._names[rec.name]
             if result == "failed":
-                self._names[rec.name].failed += 1
+                stats.failed += 1
                 self._recent_failed.append(rec)
             if rec.reported:
                 self._events.write(self._end_event(rec))
-            elif result == "failed" and self._reported < MAX_TOTAL:
-                # 超过每种名称的上限、没有上报开始的动作，失败了就补上：
-                # 先补开始（动作真正开始的时刻），再写结束。
-                self._reported += 1
-                self._events.write(self._start_event(rec, "action_start"))
-                self._events.write(self._end_event(rec))
+            elif result == "failed":
+                # 超过每种名称的上限、没有上报开始的动作，失败了就补上，直到合计上限：
+                # 先补开始（动作真正开始的时刻，带 late），再写结束。
+                if self._reported < MAX_TOTAL:
+                    stats.reported += 1
+                    self._reported += 1
+                    self._events.write(self._start_event(rec, "action_start", late=True))
+                    self._events.write(self._end_event(rec))
+                else:
+                    self._count_only(stats, rec)
             self._changed()
 
     def _ignored(self, rec: _Record) -> None:
@@ -525,8 +536,8 @@ class Actions:
     # ---- 事件 ----
 
     @staticmethod
-    def _start_event(rec: _Record, kind: str) -> dict[str, Any]:
-        return {
+    def _start_event(rec: _Record, kind: str, *, late: bool = False) -> dict[str, Any]:
+        event: dict[str, Any] = {
             "type": kind,
             "ts": rec.ts,
             "mono": rec.mono,
@@ -536,6 +547,9 @@ class Actions:
             "name": rec.name,
             "fields": rec.fields,
         }
+        if late:
+            event["late"] = True
+        return event
 
     @staticmethod
     def _end_event(rec: _Record) -> dict[str, Any]:
@@ -561,7 +575,13 @@ class Actions:
             "reported": self._reported,
             **_capped(self._capped),
             "names": [
-                {"name": name, "total": s.total, "failed": s.failed, **_capped(s.capped)}
+                {
+                    "name": name,
+                    "total": s.total,
+                    "failed": s.failed,
+                    "reported": s.reported,
+                    **_capped(s.capped),
+                }
                 for name, s in self._names.items()
             ],
             "running": [_entry(rec) for rec in running],

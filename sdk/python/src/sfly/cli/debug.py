@@ -36,6 +36,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
+from sfly.context import ActionResult
 from sfly.local import (
     DEFAULT_GRACE,
     ActionRecord,
@@ -75,7 +76,11 @@ def _print_notification(notification: Notification) -> None:
     print(f"{_clock(notification.ts)} 通知  {to}：{body}", file=sys.stderr)
 
 
-_RESULT_TEXT = {"success": "成功", "failed": "失败", "unfinished": "未结束"}
+_RESULT_TEXT: dict[ActionResult, str] = {
+    "success": "成功",
+    "failed": "失败",
+    "unfinished": "未结束",
+}
 #: 缩进最多这么多层，更深的和这一层对齐（和界面一样）。
 _MAX_INDENT = 3
 
