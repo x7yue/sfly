@@ -107,6 +107,39 @@ export const DashboardAgentStats = z.object({
 	list: z.array(DashboardAgent),
 });
 
+/**
+ * 「开始使用」的四步（外壳页方案第 5 节）：各自是否完成，以及写在步骤上的事实。四步互不依赖，各自从现有数据判断；
+ * 出现第一个运行（`run.done`）之后控制台不再显示这个面板。
+ */
+export const DashboardSetup = z.object({
+	/** 接入一台 Agent：有在线的 Agent 就算完成。 */
+	agent: z.object({
+		done: z.boolean(),
+		/** 在线的 Agent 数。 */
+		online: z.number().int(),
+		/** 名称排在最前的在线 Agent；没有在线的为 null。 */
+		name: z.string().nullable(),
+	}),
+	/** 发布节点包：已经发布过任何一个版本就算完成。 */
+	package: z.object({
+		done: z.boolean(),
+		/** 已发布的节点包个数（按包名，不计版本数）。 */
+		count: z.number().int(),
+		/** 最近发布的版本；还没有为 null。 */
+		latest: z.object({ name: z.string(), version: z.string() }).nullable(),
+	}),
+	/** 新建场景：有没有归档的场景就算完成。 */
+	scenario: z.object({
+		done: z.boolean(),
+		/** 没有归档的场景数。 */
+		count: z.number().int(),
+		/** 最近新建的、没有归档的场景名称；没有为 null。 */
+		name: z.string().nullable(),
+	}),
+	/** 触发第一次运行：有过任何一个运行（不论结果、不论场景是否已归档）就算完成。 */
+	run: z.object({ done: z.boolean() }),
+});
+
 export const DashboardView = z.object({
 	/** 统计的时刻（控制面时钟），窗口的终点。 */
 	generated_at: Timestamp,
@@ -116,6 +149,7 @@ export const DashboardView = z.object({
 	/** 窗口内失败的链实例，按失败时间从新到旧（最多 10 条）。 */
 	recent_failures: z.array(DashboardFailure),
 	agents: DashboardAgentStats,
+	setup: DashboardSetup,
 });
 
 export const dashboardApi = {
@@ -129,6 +163,7 @@ export const dashboardApi = {
 	}),
 };
 
+export type DashboardSetup = z.infer<typeof DashboardSetup>;
 export type DashboardView = z.infer<typeof DashboardView>;
 export type DashboardRunningRun = z.infer<typeof DashboardRunningRun>;
 export type DashboardChain = z.infer<typeof DashboardChain>;

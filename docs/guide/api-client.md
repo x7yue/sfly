@@ -82,7 +82,7 @@ for (const item of runs) {
 - `orchestrations.list` 列出没有归档的场景，按新建时间从新到旧。`q` 按名称、说明或引用的 Agent 搜索，`status` 按最近一次运行的状态筛选，`agent` 只看引用了这个 Agent 的场景。每一项带着最近一次运行和各节点的状态（`last_run`）、引用的 Agent 和它们是否在线（`agents`），看板画场景卡片只要这一次请求。
 - `runs.list` 列出所有场景的运行，按开始时间从新到旧，最多 `limit` 条（默认 200，最多 500）。可以按 `status`、`orchestration_id` 筛选，`q` 按运行编号前缀或触发人搜索。`counts` 是各状态的运行数。
 - `runs.get` 读一次运行的完整视图：各条链、各个节点的状态，每次尝试的错误和输出。
-- 控制台统计用 `dashboard.get`，Agent 的在线状态和版本用 `agents.list`（`preparing_since` 不为空表示 Agent 在线但还在准备环境、不接任务），一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。
+- 控制台统计用 `dashboard.get`（`setup` 是「开始使用」四步各自是否完成：有在线的 Agent、发布过节点包、有没归档的场景、有过运行），Agent 的在线状态和版本用 `agents.list`（`preparing_since` 不为空表示 Agent 在线但还在准备环境、不接任务），一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。
 - `runs.focus` 一次读出一次运行的全部关注项（`points` 是每个序列降采样的点数，默认 60，最多 300，0 只要最新值）：场景挑出来的、按作者顺序排的关注项，每项带来源节点的状态、最新值、降采样后的序列；场景没设关注项时是准备中、执行中节点的主指标（`mode` 是 `primary`）。运行绑定的版本里没有的节点不返回；节点还没开始（包括所在的子流程还没触发）的项照样返回，`source.started_at` 为 null，没有数据；这次运行锁定的节点包版本里没有这张图表的项，`unavailable` 是 `chart_missing`。自建的看板用它就不用自己拼指标查询。
 - 时间字段都是控制面时间，格式是 ISO 8601 字符串。
 - 控制台里运行监控页的地址是 `{{SFLY_URL}}/runs/<运行 id>`，看板上需要深入排查时链接过去。地址可以带 `view=overview`（概览，关注项和链路）或 `view=detail`（详情，时间线、图表和日志）指定打开哪个视图，不带时失败和取消的运行打开详情，其余打开浏览器上次停留的视图（默认概览）；`node` 等下面的参数只在详情里用，给了它们就打开详情。地址可以带 `node=<节点 ID>` 选中一个节点，再加 `tab=logs`（或 `actions`、`attempts`、`io`、`artifacts`）切到底部面板的页签；带了 `node` 之后还可以加 `at=<时刻>`（控制面时间，ISO 8601 的 UTC 写法，如 `2026-01-01T00:00:06.250Z`，和接口返回的时间同一种）：日志定位到包含那一刻的一页，那一刻正好有一行（1 秒以内）就高亮它，没有就在那个位置标出「这一刻」。

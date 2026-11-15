@@ -82,6 +82,12 @@ export const PAGE = {
 	docs: "开发文档",
 } as const;
 
+/** 开发文档里被界面引用的页名（控制面 docs/guide/pages.json 里的标题）。 */
+export const DOC_PAGE = {
+	quickstart: "快速开始",
+	publish: "发布",
+} as const;
+
 /** 运行与链实例的状态。 */
 export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
 	running: "运行中",
@@ -122,6 +128,7 @@ export const FORCE_CANCELLING_LABEL = "强制终止中";
 /** 通用操作（按钮、菜单项、命令）。 */
 export const ACTION = {
 	run: "运行",
+	runScenario: "运行场景",
 	trigger: "触发运行",
 	rerun: "再次运行",
 	cancelRun: "取消运行",
@@ -131,6 +138,7 @@ export const ACTION = {
 	viewRuns: "查看运行记录",
 	edit: "编排",
 	newScenario: "新建场景",
+	publishPackage: "发布节点包",
 	close: "关闭",
 	back: "返回",
 	retry: "重试",
@@ -143,6 +151,8 @@ export const ACTION = {
 	moveUp: "上移",
 	moveDown: "下移",
 	resizeInspector: "调整检查器宽度",
+	/** 编排画布运行状态的「跟随执行」：工具条按钮、快捷键面板和读屏播报都用这个名字。 */
+	followExecution: "跟随执行",
 } as const;
 
 /** AI 编程助手的显示名，键是请求头 `x-sfly-client` 里 `agent/<名称>` 的名称（用 Map，避免 `constructor` 这类名称取到对象自带的属性）。 */
@@ -153,6 +163,9 @@ const ASSISTANT_NAME = new Map([
 
 /** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
 export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`;
+
+/** 「已新建场景「巡检」」：新建弹窗成功后的提示，控制台「开始使用」里做完的那一步也写这一句。 */
+export const scenarioCreatedLabel = (name: string) => `已新建场景「${name}」`;
 
 /** 「预设：压测 A 集群」：运行监控页顶栏、运行记录里这个运行用的运行预设（触发时记下的名称）。 */
 export const presetLabel = (name: string) => `预设：${name}`;
@@ -224,12 +237,18 @@ export const MESSAGE = {
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
 	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
 	neverRun: "从未运行",
+	/** 列表页的空状态标题；控制台「开始使用」每一步右侧的状态写同一句，在哪里都读到同一个说法。 */
+	noAgents: "还没有 Agent 连接",
+	noPackages: "还没有发布节点包",
+	noScenarios: "还没有场景",
+	noRuns: "没有运行记录",
 	noLogs: "还没有日志。",
 	/** 监控页日志页签：任务或运行还没有结束，暂时没有日志。 */
 	logOutputPending: "还没有日志输出。",
 	/** 监控页日志页签：单个任务的日志写满上限后，控制面丢掉之后的输出。 */
 	logTruncated: "日志超过单个任务的大小上限，之后的输出已被截断。",
 	archived: "已归档",
+	copied: "已复制到剪贴板",
 	copyFailed: "复制失败",
 	clipboardDenied: "浏览器不允许访问剪贴板",
 } as const;

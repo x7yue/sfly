@@ -103,6 +103,8 @@ export const SHORTCUTS = [
 		displayOnly: true,
 	},
 	{ id: "canvas-fit", group: "编排画布", label: "适配视图", keys: "0" },
+	// 跟随执行（运行状态，components/canvas/FlowCanvas.tsx）：镜头框住执行中的节点；运行结束后不可用。
+	{ id: "canvas-follow", group: "编排画布", label: ACTION.followExecution, keys: "F" },
 	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
 	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },
 	{ id: "canvas-minimap", group: "编排画布", label: "小地图", keys: "M" },
