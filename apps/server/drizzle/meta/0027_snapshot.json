@@ -1,5 +1,5 @@
 {
-  "id": "bf730801-cfd2-4b94-aa17-8580dbc78938",
+  "id": "d399ed00-b421-4226-94d4-5a919bb8dd89",
   "prevId": "3cfbe20c-3943-42df-9d9a-9a625a43e708",
   "version": "7",
   "dialect": "postgresql",
@@ -1216,7 +1216,7 @@
         },
         "summary": {
           "name": "summary",
-          "type": "jsonb",
+          "type": "json",
           "primaryKey": false,
           "notNull": true
         },

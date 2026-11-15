@@ -6,7 +6,7 @@ import { actionTable } from "#/actions/action-table";
 import { useTaskActions } from "#/actions/use-task-actions";
 import { EmptyState, ErrorState, TableSkeleton } from "#/components/feedback/states";
 import { runNodeName } from "#/components/node-name";
-import { MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
+import { MESSAGE, TERM } from "#/lib/copy";
 import { Hint } from "./Hint";
 
 /**
@@ -36,8 +36,8 @@ export function ActionsTab({
 	const notes = useMemo(
 		() =>
 			summary && {
-				running: summary.running_complete ? undefined : NODE_ACTIONS.runningIncomplete,
-				recent: summary.capped ? NODE_ACTIONS.recentWhenCapped : undefined,
+				running: summary.running_complete ? undefined : "列满 50 个，可能还有没列出的",
+				recent: summary.capped ? "超过上限后也一直更新" : undefined,
 			},
 		[summary],
 	);
@@ -52,13 +52,13 @@ export function ActionsTab({
 		);
 	}
 	if (!summary || !loaded) return <TableSkeleton columns={5} rows={4} />;
-	if (actions.expired) return <Hint>{NODE_ACTIONS.expired}</Hint>;
+	if (actions.expired) return <Hint>这次运行的动作明细已超过保留期，已被清理。</Hint>;
 	if (groups.length === 0) {
 		return (
 			<EmptyState
 				icon={<ListTreeIcon />}
-				title={NODE_ACTIONS.none(runNodeName(node), attempt.status === "running")}
-				description={NODE_ACTIONS.noneHint}
+				title={`${runNodeName(node)} ${attempt.status === "running" ? "还没有" : "没有"}记录${TERM.action}`}
+				description="标准节点这一轮不记录动作；节点的代码用 ctx.action 记录动作、ctx.mark 记录标记。"
 				className="py-6"
 			/>
 		);
@@ -67,15 +67,14 @@ export function ActionsTab({
 		<div className="flex h-full flex-col">
 			{actions.error && (
 				<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
-					{NODE_ACTIONS.loadFailed}
-					{actions.error.message}
+					{MESSAGE.loadFailed(TERM.action)}：{actions.error.message}
 				</p>
 			)}
 			<div className="min-h-0 flex-1">
 				<ActionTable
 					groups={groups}
 					notes={notes || undefined}
-					caption={NODE_ACTIONS.caption(runNodeName(node))}
+					caption={`${runNodeName(node)} 的动作，按开始时间从新到旧`}
 					day={day}
 					hasOlder={actions.hasOlder}
 					loadingOlder={actions.loadingOlder}

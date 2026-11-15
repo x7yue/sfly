@@ -193,10 +193,6 @@ export const NODE_ACTIONS = {
 		recent: "最近 20 个",
 		earlier: "更早的明细",
 	} satisfies Record<ActionGroupName, string>,
-	/** 「正在做」列满 50 个（`running_complete` 为 false）时写在组名后面。 */
-	runningIncomplete: "列满 50 个，可能还有没列出的",
-	/** 超过上限、有动作只计数时写在「最近 20 个」后面。 */
-	recentWhenCapped: "超过上限后也一直更新",
 	columns: { start: "开始", name: "名称", fields: "字段", duration: "耗时", result: "结果" },
 	results: {
 		running: ACTIVE_LABEL,
@@ -220,15 +216,6 @@ export const NODE_ACTIONS = {
 		reason: CountOnlySpan["reason"];
 	}): string =>
 		`${span.from} 至${span.until === null ? "今" : ` ${span.until} `}的 ${span.count} 个「${span.name}」只计数，没有明细（${NODE_ACTIONS.countOnlyReason[span.reason]}）`,
-	/** 节点没有记录过动作和标记（规格 #345：标准节点这一轮不记录动作）。 */
-	none: (node: string, running: boolean) => `${node} ${running ? "还没有" : "没有"}记录动作`,
-	noneHint: "标准节点这一轮不记录动作；节点的代码用 ctx.action 记录动作、ctx.mark 记录标记。",
-	pickNode: "在时间线上选中一个节点，查看它的动作。",
-	loadFailed: "读取动作失败：",
-	expired: "这次运行的动作明细已超过保留期，已被清理。",
-	loadOlder: "向下滚动或点击加载更早的明细",
-	loadingOlder: "正在加载更早的明细…",
-	caption: (node: string) => `${node} 的动作，按开始时间从新到旧`,
 } as const;
 
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */

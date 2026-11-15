@@ -29,6 +29,7 @@ CREATE TABLE "task_actions" (
 	CONSTRAINT "task_actions_task_id_id_pk" PRIMARY KEY("task_id","id")
 );
 --> statement-breakpoint
+ALTER TABLE "task_action_summaries" ALTER COLUMN "summary" SET DATA TYPE json;--> statement-breakpoint
 ALTER TABLE "tasks" ADD COLUMN "action_details" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "tasks" ADD COLUMN "action_rev" bigint DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "tasks" ADD COLUMN "action_capped" boolean DEFAULT false NOT NULL;--> statement-breakpoint

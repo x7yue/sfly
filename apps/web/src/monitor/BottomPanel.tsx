@@ -104,7 +104,7 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 };
 
 /**
- * 底部面板（原型 bpBody）：日志、尝试、输入输出、产物四个页签，范围跟随时间线上选中的节点
+ * 底部面板（原型 bpBody）：日志、动作、尝试、输入输出、产物五个页签，范围跟随时间线上选中的节点
  * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter），两者都没有时是全部节点：
  * 日志页签把范围内节点的日志合并显示（#222、#224），点来源节点名切到这个节点的单节点日志。
  * 节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
@@ -340,7 +340,7 @@ export function BottomPanel({
 									day={run.started_at}
 								/>
 							) : (
-								<Hint>{node ? noAttempt(node) : NODE_ACTIONS.pickNode}</Hint>
+								<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的动作。"}</Hint>
 							))}
 						{tab === "attempts" && (
 							<AttemptsTab run={run} node={node} selected={selected} filter={filter} />

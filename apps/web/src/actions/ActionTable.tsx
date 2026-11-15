@@ -175,7 +175,7 @@ export function ActionTable({
 						onClick={loadOlder}
 						className="text-xs text-fg-3 underline-offset-2 hover:text-fg-1 hover:underline"
 					>
-						{loadingOlder ? NODE_ACTIONS.loadingOlder : NODE_ACTIONS.loadOlder}
+						{loadingOlder ? "正在加载更早的明细…" : "向下滚动或点击加载更早的明细"}
 					</button>
 				</div>
 			)}
