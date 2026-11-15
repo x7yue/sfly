@@ -14,7 +14,8 @@
 - **异步结果在等待条件里断言。** 触发异步动作（发消息、派发、取消、杀进程、写库）之后，要断言的状态放进等待条件，
   等它落定再继续：TS 用 `test/support/eventually.ts`，Agent 测试用 `wait_until`/`wait_for`，Python 用文件里的 `wait_for`。
   - 不在动作之后立即断言。
-  - 不先 sleep 固定时长再断言。
+  - 不先 sleep 固定时长再断言。e2e 里的 `waitForTimeout` 由 `biome-plugins/e2e-fixed-wait.grit` 拦下；确实只能等一段时间、确认某件事没有发生时，
+    在它上一行写 `// biome-ignore lint/plugin/e2e-fixed-wait: <原因>`。
   - 耗时只作超时上限，不作断言区间（例如 `0.45 <= elapsed < 2`）。
 
   这类写法在 CI 的 2 核 runner 和本机高负载时会偶发失败（#108、#129、#136）。

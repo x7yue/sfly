@@ -65,6 +65,7 @@ test("执行中的脉冲只动 scale 与 opacity，后出现的脉冲与已有�
 			document.body.append(el);
 		});
 	await addPulse();
+	// biome-ignore lint/plugin/e2e-fixed-wait: 脉冲的相位只取决于出现的时刻：第二个要晚一段时间出现，才分得出有没有对齐到同一节拍，时间流逝本身就是前提
 	await page.waitForTimeout(700);
 	await addPulse();
 	await expect.poll(() => pulses(page)).toBe(2);
