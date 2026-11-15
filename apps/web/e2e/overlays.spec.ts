@@ -180,7 +180,9 @@ test("内网用 http 访问（没有 Clipboard API）时，复制按钮照样把
 }) => {
 	const port = new URL(controlPlane.httpUrl).port;
 	const browser = await chromium.launch({
-		args: ["--host-resolver-rules=MAP sfly.test 127.0.0.1"],
+		// 走代理时域名由代理解析，上面的映射不起作用：本机配了系统代理（macOS 上 Chromium 会用）也要直连。
+		// macOS 上的 headless shell 不认 --no-proxy-server。
+		args: ["--host-resolver-rules=MAP sfly.test 127.0.0.1", "--proxy-server=direct://"],
 	});
 	try {
 		const insecure = await (await browser.newContext()).newPage();
