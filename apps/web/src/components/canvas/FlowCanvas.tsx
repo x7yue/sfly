@@ -319,7 +319,7 @@ export function FlowCanvas({
 	);
 	// 适配视图把节点和注释框的范围一起放进视口：框的范围由成员算出，比节点的外接框大（子流程成员的框更大），
 	// 只按节点算的话，节点贴着适配的边距时，框的外沿会伸到视口或检查器、工具条下面去。
-	// 范围按布局里的位置和卡片的固定大小算，不等 React Flow 量出节点尺寸。
+	// 范围按布局里的位置和卡片的原高度算，不等 React Flow 量出节点尺寸（执行中长高的那十几 px 落在适配的边距里）。
 	const extent = useRef({ layout, boxes });
 	extent.current = { layout, boxes };
 	const fitTo = useCallback(

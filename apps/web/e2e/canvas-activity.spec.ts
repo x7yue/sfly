@@ -51,6 +51,11 @@ test("执行中的节点卡片写出正在做的动作和已持续多久，没�
 	await expect(probeCard.getByTestId("node-activity")).toContainText("第 3 批");
 	await expect(probeCard.getByTestId("node-activity")).not.toContainText(/\d(ms|s|m)\b/);
 	await expect(probeCard).toHaveAccessibleName(/ 执行中 正在做 第 3 批$/);
+	// 有主指标的卡片多了一行就长高，仍在子流程区域里面。
+	await expect(probeCard.locator("[data-primary-metric]")).toBeVisible();
+	const card = await probeCard.boundingBox();
+	const region = await page.getByRole("region", { name: "子流程 sub" }).boundingBox();
+	expect(card && region && card.y + card.height < region.y + region.height).toBe(true);
 	// 已经结束的节点没有这一行。
 	await expect(nodeCard(page, "fetch").getByTestId("node-activity")).toHaveCount(0);
 	await expect(nodeCard(page, "fetch")).toHaveAccessibleName("节点 fetch，HTTP 检查 成功");

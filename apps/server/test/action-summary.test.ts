@@ -260,6 +260,16 @@ describe("动作摘要", () => {
 			complete: true,
 			total: 5,
 		});
+
+		// 断线期间结束的任务：Agent 重连后先重发结果，排队的摘要晚于结果到达。计数照收，正在做的仍然为空。
+		agent.actionSummary(task, {
+			total: 6,
+			reported: 6,
+			running: [doing(agent, 6, "收尾", T0 + 6_000)],
+		});
+		await eventually(async () => expect((await summary(task.taskId)).total).toBe(6));
+		expect((await summary(task.taskId)).running).toEqual([]);
+		expect(attemptOf(await api.run(runId))?.current_action).toBeNull();
 	});
 
 	it("失败的任务同样清空正在做的动作，重试的新尝试从头开始", async () => {

@@ -37,11 +37,10 @@ describe("此刻在做什么", () => {
 			currentActivity({ status: "running", current_action: null, progress: progress(" ") }),
 		).toBe(null);
 		expect(currentActivity({ status: "running", current_action: null, progress: null })).toBe(null);
-		expect(currentActivity({ status: "running", current_action: null })).toBe(null);
 	});
 
 	it("不在执行中的尝试没有「正在做」：结束后留下的进度不算", () => {
-		for (const status of ["dispatched", "success", "failed", "cancelled"]) {
+		for (const status of ["dispatched", "success", "failed", "cancelled"] as const) {
 			expect(
 				currentActivity({ status, current_action: null, progress: progress("第 10 批") }),
 			).toBe(null);

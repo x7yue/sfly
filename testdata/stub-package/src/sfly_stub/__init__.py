@@ -294,10 +294,10 @@ def actions_max(ctx: Context) -> None:
 
 
 @node(title="连发动作摘要", outputs=[])
-def summary_burst(ctx: Context, count: int, interval: float, done_file: str = "") -> None:
+def summary_burst(ctx: Context, count: int, interval: float) -> None:
     """Agent 转发动作摘要的测试用（#356）：不经过 ctx.action，直接往事件管道写 count 份摘要，
     间隔 interval 秒，第 i 份的 total 是 i。SDK 自己每秒最多发一份，这里写得比它快，
-    测的是 Agent 一侧只转发最新的一份。写完以后创建 done_file（给了的话）。
+    测的是 Agent 一侧只转发最新的一份。
     """
     with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
         for i in range(1, count + 1):
@@ -317,9 +317,6 @@ def summary_burst(ctx: Context, count: int, interval: float, done_file: str = ""
             events.write(json.dumps(summary, ensure_ascii=False) + "\n")
             events.flush()
             time.sleep(interval)
-    if done_file:
-        with open(done_file, "w"):
-            pass
 
 
 @node(title="多路日志", outputs=[])

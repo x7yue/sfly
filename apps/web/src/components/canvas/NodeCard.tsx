@@ -8,14 +8,7 @@ import { BaseNode, BaseNodeHeader, BaseNodeHeaderTitle } from "@/components/ui/b
 import { ActivityLine } from "./ActivityLine";
 import { useFlowCanvas } from "./context";
 import type { SfNode } from "./flow";
-import {
-	ACTIVITY_LINE_HEIGHT,
-	NODE_HEIGHT,
-	NODE_RADIUS,
-	NODE_WIDTH,
-	PORT_SIZE,
-	PORTS,
-} from "./geometry";
+import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
 import { NodeTitleEditor } from "./NodeTitleEditor";
 import { KIND_META, nodeSlot, nodeTags } from "./node-display";
 import { WarningBadge } from "./WarningBadge";
@@ -76,8 +69,9 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const activityId = useId();
 	const noteId = useId();
 	const activity = decoration?.activity;
-	// 「正在做」那一行代替配置摘要；有主指标时两行都在，卡片往下长一行。
+	// 「正在做」那一行代替配置摘要；有主指标时两行都在，卡片按内容长高（语义缩放时这两行都隐藏，卡片回到原高度）。
 	const showSlot = decoration?.slot !== undefined || !activity;
+	const grows = activity !== undefined && decoration?.slot !== undefined;
 	// 子流程入口节点没有显示名称，不进入原地编辑。
 	const editing = rename?.active === id && node.kind !== "subflow_entry";
 	const titleRef = useTitleDoubleClick(rename ? () => rename.start(id) : undefined);
@@ -100,7 +94,8 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			data-mark={decoration?.mark}
 			style={{
 				width: NODE_WIDTH,
-				height: NODE_HEIGHT + (activity && showSlot ? ACTIVITY_LINE_HEIGHT : 0),
+				height: grows ? undefined : NODE_HEIGHT,
+				minHeight: NODE_HEIGHT,
 				borderRadius: NODE_RADIUS,
 			}}
 			className={cn(

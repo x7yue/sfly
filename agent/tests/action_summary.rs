@@ -1,6 +1,8 @@
 //! 切入点 B（Agent 一侧）：节点写进事件管道的动作摘要（`action_summary`，规格 #345，格式见 sdk/python/src/sfly/context.py）
 //! 由 Agent 以 ActionSummary 消息原样转发：和进度一样只保留最新一份，每个任务每秒最多发一次，任务结束前把最后一份
 //! 发完再发结果；断线期间每个任务只排队最新的一份。一行事件不限长度，最长的摘要也整行到达。
+//!
+//! 时间的断言只用摘要里 SDK 写的单调时钟读数（节点实际写了多久），不用测试自己量的间隔。
 
 mod support;
 
@@ -8,7 +10,8 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 use sfly_agent::proto::{ActionSummary, TaskStatus, agent_message};
-use support::{AgentOptions, FakeControlPlane, Received, spawn_agent, stub_task, wait_until};
+use support::{AgentOptions, FakeControlPlane, Received, spawn_agent, stub_task};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 /// 某个任务收到的动作摘要：在全部已收消息中的位置、收到的那条消息、解析后的摘要。
 fn summaries_of(all: &[Received], task_id: &str) -> Vec<(usize, Received, Value)> {
@@ -46,18 +49,22 @@ async fn only_the_latest_summary_is_forwarded_at_most_once_per_second_and_the_la
     let (result, result_at) = cp.result_at("task-summary-rate").await;
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
     let summaries = summaries_of(&cp.received_with_session(), "task-summary-rate");
-    assert!(
-        (2..=5).contains(&summaries.len()),
-        "合并后约每秒一份，实际 {} 份",
-        summaries.len()
-    );
-    // 任务结束时补发的最后一份不受间隔限制。
-    for pair in summaries[..summaries.len() - 1].windows(2) {
-        let gap = pair[1].1.at - pair[0].1.at;
-        assert!(gap >= Duration::from_millis(900), "两份摘要的间隔 {gap:?}");
-    }
     let totals: Vec<&Value> = summaries.iter().map(|(_, _, s)| &s["total"]).collect();
     assert_eq!(totals[0], &json!(1), "第一份立即转发：{totals:?}");
+    // 节点从写第 1 份到写第 30 份用了 written 毫秒（SDK 写的单调时钟读数）。Agent 两次转发至少隔 1 秒，
+    // 只有任务结束时补发的最后一份不受限制：最多 ceil(written / 1000) + 2 份。不合并的话会转发 30 份。
+    let mono = |s: &Value| s["mono"].as_i64().unwrap();
+    let written = mono(&summaries.last().unwrap().2) - mono(&summaries[0].2);
+    let at_most = (written as f64 / 1000.0).ceil() as usize + 2;
+    assert!(
+        summaries.len() <= at_most && summaries.len() < 30,
+        "{written} 毫秒里写了 30 份，转发了 {} 份：{totals:?}",
+        summaries.len()
+    );
+    assert!(
+        totals.windows(2).all(|w| w[0].as_i64() < w[1].as_i64()),
+        "按写的先后转发：{totals:?}"
+    );
     assert_eq!(
         totals.last(),
         Some(&&json!(30)),
@@ -144,32 +151,50 @@ async fn the_longest_possible_summary_arrives_whole() {
 async fn while_disconnected_only_the_latest_summary_of_a_task_is_queued() {
     let cp = FakeControlPlane::start().await;
     let port = cp.port;
-    let _agent = spawn_agent(AgentOptions::new(&cp.url, "agent-summary-queue"));
+    let mut options = AgentOptions::new(&cp.url, "agent-summary-queue");
+    options.pipe_stderr = true;
+    let mut agent = spawn_agent(options);
+    let mut stderr = BufReader::new(agent.child.stderr.take().unwrap()).lines();
     cp.hello(0).await;
-    let dir = tempfile::tempdir().unwrap();
-    let done = dir.path().join("done");
 
-    // 约 3 秒写出 30 份摘要，写完后创建 done。
+    // 约 3 秒写出 30 份摘要。
     cp.assign(stub_task(
         "task-summary-queue",
         "summary_burst",
-        json!({ "count": 30, "interval": 0.1, "done_file": done }),
+        json!({ "count": 30, "interval": 0.1 }),
     ))
     .await;
     cp.wait_for("first summary", |all| {
         (!summaries_of(all, "task-summary-queue").is_empty()).then_some(())
     })
     .await;
-    // 控制面下线：之后的摘要都在 Agent 里排队，直到节点写完、任务结束。
+    // 控制面下线：之后的摘要都在 Agent 里排队。等 Agent 在标准错误里说结果已经交出：这时最后一份摘要也已经排进队了
+    // （转发器发完最后一份才交出结果）。
     drop(cp);
-    wait_until("the node to finish writing summaries", || done.exists()).await;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    let finished = "task task-summary-queue attempt 1 finished";
+    loop {
+        let line = tokio::time::timeout(Duration::from_secs(20), stderr.next_line())
+            .await
+            .expect("the agent never handed over the result")
+            .unwrap()
+            .expect("the agent exited");
+        if line.contains(finished) {
+            break;
+        }
+    }
+    tokio::spawn(async move { while let Ok(Some(_)) = stderr.next_line().await {} });
     let cp = FakeControlPlane::start_on(port).await;
+    cp.set_heartbeat_interval(Duration::from_millis(200));
 
-    let (result, result_at) = cp.result_at("task-summary-queue").await;
+    // 重连后 Agent 先重发没被 Ack 的结果（断线期间结束的任务也是），再发排队的消息，摘要可以晚于结果到达；
+    // 排队的消息先于周期心跳发出，所以等到第二次心跳（第一次是连上时立即发的）时，排队的都已经到了。
+    let (result, _) = cp.result_at("task-summary-queue").await;
     assert_eq!(result.status(), TaskStatus::Success, "{result:?}");
+    cp.wait_for("a periodic heartbeat", |_| {
+        (cp.heartbeats().len() >= 2).then_some(())
+    })
+    .await;
     let queued = summaries_of(&cp.received_with_session(), "task-summary-queue");
     let totals: Vec<&Value> = queued.iter().map(|(_, _, s)| &s["total"]).collect();
     assert_eq!(totals, [&json!(30)], "断线期间只排着最新的一份");
-    assert!(queued[0].0 < result_at, "排队的摘要在结果之前发出");
 }

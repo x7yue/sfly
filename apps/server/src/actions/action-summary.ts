@@ -79,13 +79,13 @@ export function parseActionSummary(eventJson: string): ActionSummaryEvent | unde
 	return parsed.success ? parsed.data : undefined;
 }
 
-/** 单调时钟读数 → 这一刻的控制面时间（这次连接的对应关系）。 */
-export type ControlPlaneTimeOf = (monotonicMs: number) => Date;
-
-/** 一份摘要换成接口里的样子，并选出此刻在做的动作。名称、字段值、失败原因里的 secret 值打码。 */
+/**
+ * 一份摘要换成接口里的样子，并选出此刻在做的动作。`controlPlaneTime` 把单调时钟读数折算成那一刻的控制面时间
+ * （这次连接的对应关系）；名称、字段值、失败原因里的 secret 值打码。
+ */
 export function actionSummaryView(
 	event: ActionSummaryEvent,
-	controlPlaneTime: ControlPlaneTimeOf,
+	controlPlaneTime: (monotonicMs: number) => Date,
 	secrets: readonly string[],
 ): { summary: ActionSummaryView; current: CurrentAction | null } {
 	const at = (mono: number) => controlPlaneTime(mono).toISOString();
