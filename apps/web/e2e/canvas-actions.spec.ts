@@ -176,7 +176,7 @@ test("检查器：没有动作的节点不显示「正在做」和「动作」�
 
 	// 还没有执行的节点：同样没有。
 	await nodeCard(page, "cleanup").click();
-	await expect(panel.getByRole("heading", { name: "cleanup" })).toBeVisible();
+	await expect(panel.getByTestId("run-attempts")).toHaveText("0");
 	await expect(panel.getByRole("region", { name: "动作", exact: true })).toHaveCount(0);
 	await expect(panel.getByTestId("run-progress")).toHaveCount(0);
 });
