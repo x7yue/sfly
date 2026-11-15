@@ -28,6 +28,8 @@ const NODE = "probe";
 const LOCAL_AGENT = "dev-tester-box";
 const PROD_AGENT = "prod-agent";
 const NICKNAME = "测试员";
+/** skill 模板里「<说明节点做什么的显示名称>」处写的名称。 */
+const DISPLAY_NAME = "探测服务";
 const ORIGINAL = "回归";
 const COPY = `${ORIGINAL}-联调-${NICKNAME}`;
 
@@ -301,8 +303,18 @@ describe("全栈：AI 编程助手只用 sfly 命令行走完联调闭环", () =
 				.replaceAll("<本机 Agent>", LOCAL_AGENT)
 				.replaceAll("<包名>", PACKAGE)
 				.replaceAll("<节点 id>", "probe")
-				.replaceAll("<节点名>", NODE),
-		) as { document: { nodes: Array<{ id: string; inputs?: Record<string, unknown> }> } };
+				.replaceAll("<节点名>", NODE)
+				.replaceAll("<说明节点做什么的显示名称>", DISPLAY_NAME),
+		) as {
+			document: {
+				nodes: Array<{ id: string; display_name?: string; inputs?: Record<string, unknown> }>;
+			};
+		};
+		// skill 要求给场景新增的节点写显示名称：模板里的每个节点都带 display_name。
+		expect(created.document.nodes.map((n) => [n.id, Boolean(n.display_name)])).toEqual([
+			["entry", true],
+			["probe", true],
+		]);
 		const probe = created.document.nodes.find((n) => n.id === "probe");
 		if (probe) probe.inputs = { host: "api.test" };
 		const fresh = join(dir, "新建.scenario.json");
@@ -313,6 +325,7 @@ describe("全栈：AI 编程助手只用 sfly 命令行走完联调闭环", () =
 		expect(result.stdout).toContain(`已新建场景「${name}」`);
 		const shown = await ok(["scenario", "show", name]);
 		expect(shown.stdout).toContain(`${PACKAGE}/${NODE}`);
+		expect(shown.stdout).toContain(DISPLAY_NAME);
 		expect(shown.stdout).toContain("dev");
 
 		const passed = await cli(["run", "start", name, "--wait", "--timeout", "120s"]);

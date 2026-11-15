@@ -209,8 +209,15 @@ describe("跨场景的运行列表", () => {
 			["sub", true, "failed"],
 		]);
 		const sub = item?.chains[1];
+		// 没有名称字段的旧版本以子流程入口的节点 ID 作为子流程名称。
 		expect(item?.failures).toEqual([
-			{ chain_instance_id: sub?.id, chain_id: "sub", subflow: true, node_id: "c" },
+			{
+				chain_instance_id: sub?.id,
+				chain_id: "sub",
+				subflow: true,
+				subflow_name: "sub",
+				node_id: "c",
+			},
 		]);
 		expect(item?.active_nodes[0]?.chain_instance_id).toBe(item?.chains[0]?.id);
 

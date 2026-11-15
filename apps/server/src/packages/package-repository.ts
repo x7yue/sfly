@@ -38,7 +38,7 @@ export interface PackageVersionSummary {
 	sha256: string;
 	size: number;
 	published_at: string;
-	nodes: { name: string; title: string }[];
+	nodes: { name: string; title: string; description?: string }[];
 }
 
 export interface PackageSummary {
@@ -69,7 +69,11 @@ const toSummary = (row: Row): PackageVersionSummary => ({
 	sha256: row.sha256,
 	size: row.size,
 	published_at: row.publishedAt.toISOString(),
-	nodes: row.metadata.nodes.map((n) => ({ name: n.name, title: n.title })),
+	nodes: row.metadata.nodes.map((n) => ({
+		name: n.name,
+		title: n.title,
+		...(n.description !== undefined && { description: n.description }),
+	})),
 });
 
 /** 解析并校验节点包归档：根目录下恰好一个 sfly-package.json 和一个 wheel。 */

@@ -9,9 +9,9 @@ from __future__ import annotations
 import sys
 import time
 from collections.abc import Sequence
-from typing import Literal, TypedDict
+from typing import Annotated, Literal, TypedDict
 
-from sfly import Context, Metric, node
+from sfly import Context, Doc, Metric, node
 from sfly_std import _params
 from sfly_std._logfile import LogFile
 from sfly_std._sampling import validate_duration
@@ -23,7 +23,7 @@ METRIC_INTERVAL = 1.0
 
 
 class FollowLogOutputs(TypedDict):
-    lines: int
+    lines: Annotated[int, Doc("转发的总行数（duration 到期时才有输出）")]
 
 
 class FailOnMatched(Exception):
@@ -34,27 +34,33 @@ class FailOnMatched(Exception):
     title="跟随日志",
     metrics=[
         Metric("lines_per_s", unit="行/s", description="每秒新增的行数"),
-        Metric("fail_matches", kind="counter", description="匹配 fail_on 的行数"),
+        Metric("fail_matches", kind="counter", description="累计匹配 fail_on 的行数"),
     ],
     primary_metric="lines_per_s",
 )
 def follow_log(
     ctx: Context,
-    path: str,
-    read_from: Literal["end", "start"] = "end",
-    fail_on: Sequence[str] = (),
-    duration: float | None = None,
+    path: Annotated[str, Doc("日志文件路径；相对路径相对于任务工作目录")],
+    # 不叫 from：节点参数就是函数参数，而 from 是 Python 关键字。
+    read_from: Annotated[
+        Literal["end", "start"],
+        Doc("从哪里开始跟随：end 从节点开始时的文件末尾，start 先转发文件里已有的内容"),
+    ] = "end",
+    fail_on: Annotated[
+        Sequence[str], Doc("正则表达式列表（re.search）：有一行匹配其中任意一个时节点失败")
+    ] = (),
+    duration: Annotated[
+        float | None,
+        Doc("跟随多少秒后成功结束；不设置时一直跟随，直到被停止子流程节点停止或运行被取消"),
+    ] = None,
 ) -> FollowLogOutputs:
-    """把日志文件 `path` 新增的行实时转为任务日志（来源 stdout）。
-
-    - `read_from`（不叫 `from`：节点参数就是函数参数，`from` 是 Python 关键字）默认 `end`：
-      从节点开始时的文件末尾跟起；`start` 先转发已有的内容；
-    - `fail_on`：正则列表（`re.search`），有一行匹配任意一个时节点失败，错误信息附上这一行；
-    - `duration`：跟随多少秒后成功结束；不设置时一直跟随，直到被停止子流程节点停止或运行被取消。
+    """把日志文件新增的行实时转为任务日志，出现匹配的错误行时失败。
 
     文件还不存在时等它出现；文件被轮转或截断时继续跟随新的内容。
-    指标 `lines_per_s`（每秒新增的行数，主指标）和 `fail_matches`（累计匹配 `fail_on` 的行数）；
-    输出转发的总行数 `lines`。
+    不设置 duration 时一直跟随，直到被停止子流程节点停止或运行被取消。
+    被停止时不算失败，已经转发的行都留在任务日志里。
+
+    失败：有一行匹配 fail_on 里的任意一个正则时立即失败，错误信息附上第一行匹配的内容和匹配的正则。
     """
     validate_duration(duration)
     patterns = [_params.regex(f"fail_on 第 {i} 条", p) for i, p in enumerate(fail_on, 1)]

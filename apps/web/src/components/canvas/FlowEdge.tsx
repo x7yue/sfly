@@ -4,6 +4,7 @@ import { useFlowCanvas } from "./context";
 import { EdgeInsertButton, useEdgeHover } from "./EdgeInsert";
 import type { SfEdge } from "./flow";
 import { PORTS } from "./geometry";
+import { isNodeSelected } from "./selection";
 import { ZOOM_TEXT_12 } from "./zoom-text";
 
 type Point = [number, number];
@@ -65,7 +66,7 @@ export function edgePath(
  * 可编辑时，悬停链上的连线在中点出现「＋」（EdgeInsert.tsx）；连线时（拖线、改接）不出现。
  */
 export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdge>) {
-	const { selectedId, decorateEdge, insertOnEdge, openEdgeMenu } = useFlowCanvas();
+	const { selection, decorateEdge, insertOnEdge, openEdgeMenu } = useFlowCanvas();
 	const hover = useEdgeHover();
 	const connecting = useStore((s) => s.connection.inProgress);
 	const from = useInternalNode(source)?.internals.positionAbsolute;
@@ -76,7 +77,8 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 	const p1: Point = [from.x + start.x, from.y + start.y];
 	const p2: Point = [to.x + PORTS.in.x, to.y + PORTS.in.y];
 	const { d, mid } = edgePath(kind, p1, p2);
-	const highlighted = selected || selectedId === source || selectedId === target;
+	const highlighted =
+		selected || isNodeSelected(selection, source) || isNodeSelected(selection, target);
 	const run = decorateEdge?.({ from: source, to: target, kind });
 	return (
 		<>

@@ -1,3 +1,4 @@
+import { subflowLabel } from "@sfly/orchestration";
 import {
 	type DashboardAgent,
 	type DashboardFailure,
@@ -13,6 +14,7 @@ import { ChevronRightIcon, WorkflowIcon } from "lucide-react";
 import { useId } from "react";
 import { ChainBars } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
+import { NodeName } from "#/components/node-name";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { Sparkline } from "#/components/sparkline";
 import { nodeStatusView, SlotBar, STATUS, StatusDot, StatusPill } from "#/components/status";
@@ -304,9 +306,7 @@ function RunningRow({ run, now }: { run: DashboardRunningRun; now: number }) {
 							{current.map((n, i) => (
 								<span key={n.key}>
 									{i > 0 && "、"}
-									<span className={cn("font-mono", STATUS[nodeStatusView(n.status).kind].text)}>
-										{n.node_id}
-									</span>
+									<NodeName node={n} className={STATUS[nodeStatusView(n.status).kind].text} />
 									{ACTIVE_SUFFIX[n.status]}
 								</span>
 							))}
@@ -341,7 +341,9 @@ function FailureRow({ failure }: { failure: DashboardFailure }) {
 			<div className="min-w-0 flex-1">
 				<div className="flex items-center gap-2">
 					<StatusPill kind="failed">
-						{failure.subflow ? `子流程失败 · ${failure.chain_id}` : "失败"}
+						{failure.subflow
+							? `子流程失败 · ${subflowLabel({ id: failure.chain_id, name: failure.subflow_name })}`
+							: "失败"}
 					</StatusPill>
 					<b className="truncate font-semibold">{failure.orchestration_name}</b>
 					<span data-slot="run-id" className="font-mono text-xs text-fg-3">
@@ -357,7 +359,11 @@ function FailureRow({ failure }: { failure: DashboardFailure }) {
 					<span>
 						{failure.node_id ? (
 							<>
-								失败节点 <span className="font-mono text-fg-2">{failure.node_id}</span>
+								失败节点{" "}
+								<NodeName
+									node={{ node_id: failure.node_id, display_name: failure.display_name }}
+									className="text-fg-2"
+								/>
 							</>
 						) : (
 							"没有失败节点"

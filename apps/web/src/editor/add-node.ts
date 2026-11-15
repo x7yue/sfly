@@ -12,7 +12,15 @@ export type AddItem =
 	| { kind: "async"; subflow?: string }
 	/** 子流程入口：新建时必须填写名称（SEMANTICS §1.2）。 */
 	| { kind: "subflow_entry"; name: string }
-	| { kind: "package"; package: string; version: string; node: string; title: string };
+	| {
+			kind: "package";
+			package: string;
+			version: string;
+			node: string;
+			title: string;
+			/** 节点类型的说明（完整的）；菜单里显示第一段。 */
+			description?: string;
+	  };
 
 export type BuiltinKind = Exclude<AddItem["kind"], "package">;
 export type PackageItem = Extract<AddItem, { kind: "package" }>;
@@ -80,7 +88,11 @@ export function packageGroups(
 	locked: Readonly<Record<string, string>>,
 ): PackageGroup[] {
 	const groups: PackageGroup[] = [];
-	const group = (name: string, version: string, nodes: { name: string; title?: string }[]) => {
+	const group = (
+		name: string,
+		version: string,
+		nodes: { name: string; title?: string; description?: string }[],
+	) => {
 		if (nodes.length === 0) return;
 		groups.push({
 			name,
@@ -91,6 +103,7 @@ export function packageGroups(
 				version,
 				node: n.name,
 				title: n.title ?? n.name,
+				...(n.description !== undefined && { description: n.description }),
 			})),
 		});
 	};

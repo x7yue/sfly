@@ -24,7 +24,18 @@ export const TERM = {
 	metric: "指标",
 	chart: "图表",
 	primaryMetric: "主指标",
+	displayName: "显示名称",
+	note: "备注",
+	annotation: "注释框",
 } as const;
+
+/** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */
+export const ANNOTATION_FIELD_LABEL: Readonly<Record<string, string>> = {
+	title: "标题",
+	note: TERM.note,
+	nodes: "成员节点",
+	subflows: "成员子流程",
+};
 
 /** 导航与页面名（侧边栏、面包屑、命令面板、快捷键面板）。 */
 export const PAGE = {
@@ -96,6 +107,7 @@ export const ACTION = {
 	clearFilters: "清除筛选",
 	copyErrorDetails: "复制错误详情",
 	insertReference: "插入引用",
+	addAnnotation: `添加${TERM.annotation}`,
 	resizeInspector: "调整检查器宽度",
 } as const;
 

@@ -1,4 +1,5 @@
-import type { NodeStatus, OrchestrationDocument } from "@sfly/schema";
+import { nodeNameBeforeId, subflowName } from "@sfly/orchestration";
+import type { NodeStatus, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
 import { asc, inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { type ChainStatus, chainInstances, type TaskProgress, tasks } from "../db/schema.js";
@@ -25,8 +26,25 @@ export function groupAttempts<T extends { chainInstanceId: string; nodeId: strin
 export const nodeStatus = (rows: readonly { status: NodeStatus }[]): NodeStatus =>
 	rows.at(-1)?.status ?? "pending";
 
+/** 链实例的子流程名称（链起点是子流程入口节点时，取自文档）；主链为 undefined。 */
+export function subflowNameOf(
+	document: OrchestrationDocument,
+	chainId: string,
+): string | undefined {
+	const start = document.nodes.find((n) => n.id === chainId);
+	return start?.kind === "subflow_entry" ? subflowName(start) : undefined;
+}
+
+/** 运行绑定版本里节点的显示名称（同运行视图里节点的 `display_name`）；没有这个节点或没有名称时为 undefined。 */
+export function nodeNameIn(document: OrchestrationDocument, nodeId: string): string | undefined {
+	const node = document.nodes.find((n) => n.id === nodeId);
+	return node && nodeNameBeforeId(node);
+}
+
 export interface BoardNode {
 	node_id: string;
+	/** 运行绑定版本里的显示名称（子流程入口节点是子流程名称）；没有时为 undefined。 */
+	display_name: string | undefined;
 	status: NodeStatus;
 	/** 最后一次尝试的最新进度。 */
 	progress: TaskProgress | null;
@@ -35,6 +53,8 @@ export interface BoardNode {
 export interface BoardChain {
 	id: string;
 	chain_id: string;
+	/** 运行绑定版本里的子流程名称（同运行视图里链实例的 name）；主链为 undefined。 */
+	subflow_name: string | undefined;
 	depth: number;
 	status: ChainStatus;
 	nodes: BoardNode[];
@@ -74,7 +94,7 @@ export async function loadRunBoards(
 		.orderBy(asc(tasks.attempt));
 	const attemptsOf = groupAttempts(taskRows);
 
-	const plans = new Map<string, (chainId: string) => string[]>();
+	const plans = new Map<string, (chainId: string) => readonly OrchestrationNode[]>();
 	const versionOf = new Map(items.map((r) => [r.id, r]));
 	const nodesOf = (runId: string) => {
 		const item = versionOf.get(runId);
@@ -83,25 +103,27 @@ export async function loadRunBoards(
 		if (!plan) {
 			const planned = planRun(item.document);
 			plan = (chainId) =>
-				("errors" in planned ? undefined : planned.chains.get(chainId)?.nodes.map((n) => n.id)) ??
-				[];
+				("errors" in planned ? undefined : planned.chains.get(chainId)?.nodes) ?? [];
 			plans.set(item.versionId, plan);
 		}
 		return plan;
 	};
 
 	for (const chain of chains) {
-		const nodes = nodesOf(chain.runId)(chain.chainId).map((nodeId) => {
-			const rows = attemptsOf(chain.id, nodeId);
+		const nodes = nodesOf(chain.runId)(chain.chainId).map((node) => {
+			const rows = attemptsOf(chain.id, node.id);
 			return {
-				node_id: nodeId,
+				node_id: node.id,
+				display_name: nodeNameBeforeId(node),
 				status: nodeStatus(rows),
 				progress: rows.at(-1)?.progress ?? null,
 			};
 		});
+		const document = versionOf.get(chain.runId)?.document;
 		boards.get(chain.runId)?.push({
 			id: chain.id,
 			chain_id: chain.chainId,
+			subflow_name: document && subflowNameOf(document, chain.chainId),
 			depth: chain.depth,
 			status: chain.status,
 			nodes,

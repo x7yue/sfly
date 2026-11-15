@@ -16,10 +16,13 @@
 新增一个节点：
 
 1. 新建 `src/sfly_std/<节点>.py`，用 `@node(title="中文标题")` 声明；参数默认值不要用可变对象
-   （用 `Sequence[int] = (0,)` 这类），能复用上面的共用模块就复用；
+   （用 `Sequence[int] = (0,)` 这类），能复用上面的共用模块就复用；每个输入和输出写
+   `Annotated[类型, Doc("…")]`，文档字符串写成节点做什么、副作用、什么情况下失败，
+   都是纯文本（画布上不渲染 Markdown，不写反引号）；
 2. 新建 `tests/test_<节点>.py`，用 `sfly.testing.run_node` 在真实的执行器进程里测试；
 3. 在开发文档「标准节点」页（docs/guide/standard-nodes.md）加一节「## `<节点名>`：<标题>」，
-   参数表、输出表、指标表与节点的元信息一致（`tests/test_package.py` 逐项比对）；
+   参数表、输出表、指标表与节点的元信息一致，参数表和输出表「说明」列的文字与 `Doc` 一字不差
+   （`tests/test_package.py` 逐项比对）；
 4. 只有引入新的第三方库时才改 `pyproject.toml` 的 dependencies（只写宽松下限，之后 `uv lock`）；
    用到新版 SDK 才有的接口时，把 `[tool.sfly] requires-sdk` 调到包含它的第一个平台版本；
    用到新的 Agent 能力（`ctx.agent()`）时同样调高 `requires-agent`。

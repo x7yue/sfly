@@ -33,8 +33,18 @@ const FieldStateContext = createContext<FieldStateValue>({
 
 export const draftKey = (nodeId: string, field: string) => `${nodeId}/${field}`;
 
-export const fieldErrorKey = (error: { nodeId?: string | undefined; field: string }) =>
-	draftKey(error.nodeId ?? "", error.field);
+/** 注释框字段的键（注释框的字段没有草稿，只用来找到出错的输入框）。 */
+export const annotationFieldKey = (annotationId: string, field: string) =>
+	`annotation:${annotationId}/${field}`;
+
+export const fieldErrorKey = (error: {
+	nodeId?: string | undefined;
+	annotationId?: string | undefined;
+	field: string;
+}) =>
+	error.annotationId === undefined
+		? draftKey(error.nodeId ?? "", error.field)
+		: annotationFieldKey(error.annotationId, error.field);
 
 export function useFieldDraftStore() {
 	const [drafts, setDrafts] = useState<ReadonlyMap<string, FieldDraft>>(new Map());

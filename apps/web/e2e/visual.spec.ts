@@ -6,12 +6,14 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
+import { annotated, annotationBand } from "./annotation-support";
 import {
 	createEditorScenario,
 	editorDocument,
 	nodeCard,
 	typedDocument,
 	typedNodes,
+	zoomOut,
 } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
@@ -25,6 +27,7 @@ import {
 	runningScenario,
 	unixAt,
 } from "./monitor-scenario";
+import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
 import { stoppingRun } from "./stop-subflow-scenario";
@@ -773,7 +776,8 @@ test.describe("编排画布", () => {
 	test("空白处右键菜单", async ({ page }) => {
 		await page.mouse.click(200, 640, { button: "right" });
 		const menu = page.getByRole("menu", { name: "画布菜单" });
-		await expect(menu).toBeVisible();
+		// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在画布上（选中入口节点、关掉菜单）。
+		await expect(menu).toBeFocused();
 		await page.keyboard.press("ArrowDown");
 		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("添加节点");
 		await expect(page).toHaveScreenshot("editor-pane-menu.png");
@@ -801,8 +805,9 @@ test.describe("编排画布", () => {
 		});
 		await page.mouse.click(at.x, at.y, { button: "right" });
 		const menu = page.getByRole("menu", { name: "连线菜单" });
-		await expect(menu).toBeVisible();
 		await expect(page.getByRole("button", { name: "在此插入节点" })).toBeVisible();
+		// 菜单出现后 Base UI 才把焦点移进菜单：等焦点到位再按键，否则方向键会落在画布上。
+		await expect(menu).toBeFocused();
 		await page.keyboard.press("ArrowDown");
 		await expect(menu.locator('[role="menuitem"][data-highlighted]')).toContainText("在此插入节点");
 		await expect(page).toHaveScreenshot("editor-edge-menu.png");
@@ -863,6 +868,208 @@ test("编排画布：非字符串参数的引用标签与 JSON 输入框", async
 	await expect(page).toHaveScreenshot("editor-reference-chip.png");
 });
 
+test("编排画布：检查器参数标签页里输入的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	const described = {
+		count: "重试的次数，0 表示不重试",
+		ratio: "采样比例，0 到 1 之间；超出范围按最近的边界取",
+		level: "low 只记录失败，high 记录每次请求",
+	} as const;
+	await publishPackage(controlPlane, {
+		nodes: typedNodes.map((node) =>
+			node.name === "typed"
+				? {
+						...node,
+						inputs: {
+							...node.inputs,
+							properties: Object.fromEntries(
+								Object.entries(node.inputs.properties).map(([name, schema]) => [
+									name,
+									name in described
+										? { ...schema, description: described[name as keyof typeof described] }
+										: schema,
+								]),
+							),
+						},
+					}
+				: node,
+		),
+	});
+	const id = await createScenario(controlPlane, "带说明的参数", typedDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "typed").click();
+	await expect(page.getByText(described.ratio)).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-input-docs.png");
+});
+
+/** demo-checks：http_check 的输出有的写了说明，有的没写。 */
+const documentedOutputs = [
+	{
+		name: "http_check",
+		title: "HTTP 检查",
+		entry: "demo_checks.http:http_check",
+		inputs: {
+			type: "object",
+			properties: { url: { type: "string" }, expect: { type: "integer", default: 200 } },
+			required: ["url"],
+			order: ["url", "expect"],
+		},
+		outputs: {
+			type: "object",
+			properties: {
+				status: { type: "integer", description: "HTTP 状态码" },
+				report: {
+					type: "string",
+					description: "检查报告的文字，包含每一步的耗时；响应超时时只有失败原因，没有耗时",
+				},
+				body_file: { type: "string" },
+			},
+		},
+	},
+	{
+		name: "ping",
+		title: "ping",
+		entry: "demo_checks.http:ping_host",
+		inputs: { type: "object", properties: { host: { type: "string" } }, required: ["host"] },
+		outputs: { type: "object", properties: { alive: {} } },
+	},
+];
+
+test("编排画布：检查器「说明与指标」里输出的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: documentedOutputs });
+	const id = await createScenario(controlPlane, "日终数据处理", editorDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "fetch").click();
+	await page.getByRole("tab", { name: "说明与指标" }).click();
+	await expect(page.getByRole("table", { name: "输出" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-output-docs.png");
+});
+
+test("编排画布：引用补全里输出的说明", async ({ page, controlPlane, connectAgent }) => {
+	await twoAgents(connectAgent);
+	await publishPackage(controlPlane, { nodes: documentedOutputs });
+	const id = await createScenario(controlPlane, "日终数据处理", editorDocument);
+	await page.goto(`/orchestrations/${id}`);
+	await nodeCard(page, "ping").click();
+	await page.getByRole("combobox", { name: "输入 host" }).fill("");
+	await page.keyboard.type("$");
+	await expect(page.getByRole("listbox", { name: "可引用的值" })).toBeVisible();
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-reference-output-docs.png");
+});
+
+test.describe("编排画布：节点的备注", () => {
+	const notes = {
+		fetch: "每天 8 点拉取快照\n超时设为 600 秒：镜像很大，冷启动要 5 分钟",
+		ping: "先确认 fetch 的结果",
+	};
+	test.beforeEach(async ({ page, controlPlane, connectAgent }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		const id = await createScenario(controlPlane, "带备注的场景", {
+			...editorDocument,
+			nodes: editorDocument.nodes.map((n) =>
+				n.id === "fetch" || n.id === "ping" ? { ...n, note: notes[n.id] } : n,
+			),
+		});
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("卡片头部的备注图标，检查器顶部的备注", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await expect(page.getByRole("textbox", { name: "备注" })).toHaveValue(notes.fetch);
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-node-notes.png");
+	});
+
+	test("悬停备注图标显示全文", async ({ page }) => {
+		await nodeCard(page, "fetch").locator('[data-slot="note-icon"]').hover();
+		await expect(page.getByRole("tooltip")).toHaveText(notes.fetch);
+		await expect(page).toHaveScreenshot("editor-node-note-tooltip.png");
+	});
+
+	test("缩小后图标仍在", async ({ page }) => {
+		await zoomOut(page, 3);
+		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-node-notes-zoomed-out.png");
+	});
+});
+
+test.describe("编排画布：注释框", () => {
+	test.beforeEach(async ({ page, controlPlane, connectAgent }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		const id = await createScenario(
+			controlPlane,
+			"带注释框的场景",
+			annotated([
+				{
+					id: "annotation_1",
+					title: "派发对账",
+					note: "异步任务和它调度的子流程入口一起看",
+					nodes: ["dispatch", "sub_entry"],
+				},
+				{
+					id: "annotation_2",
+					title: "收尾：通知和对账子流程",
+					nodes: ["ping"],
+					subflows: ["sub_entry"],
+				},
+				{ id: "annotation_3", title: "拉取快照", nodes: ["entry", "fetch"] },
+			]),
+		);
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("注释框和子流程区域交叠，选中其中一个", async ({ page }) => {
+		await annotationBand(page, "派发对账").click();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-annotations.png");
+	});
+
+	test("缩小后的标题", async ({ page }) => {
+		await zoomOut(page, 3);
+		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-annotations-zoomed-out.png");
+	});
+});
+
+test.describe("编排画布：注释框的成员", () => {
+	test.beforeEach(async ({ page, controlPlane, connectAgent }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		// fetch 和 ping 是成员，夹在中间的 dispatch 不是；子流程在框外。
+		const id = await createScenario(
+			controlPlane,
+			"带注释框的场景",
+			annotated([{ id: "annotation_1", title: "首尾两步", nodes: ["fetch", "ping"] }]),
+		);
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("选中注释框：成员高亮，框里夹着的非成员节点变淡", async ({ page }) => {
+		await annotationBand(page, "首尾两步").click();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-annotation-members-selected.png");
+	});
+
+	test("悬停注释框的标题带（没有选中）", async ({ page }) => {
+		await annotationBand(page, "首尾两步").hover();
+		await expect(page).toHaveScreenshot("editor-annotation-members-hovered.png");
+	});
+});
+
 test("编排画布：检查器「说明与指标」", async ({ page, controlPlane, connectAgent }) => {
 	await twoAgents(connectAgent);
 	await publishPackage(controlPlane, metricPackage());
@@ -899,6 +1106,51 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	});
 });
 
+/** 几个节点有显示名称：一个正常，一个 40 个字符（卡片上被截断），一个是异步任务。 */
+const displayNamedDocument = {
+	...editorDocument,
+	nodes: editorDocument.nodes.map((node) => {
+		const names: Record<string, string> = {
+			fetch: "创建测试用户",
+			dispatch: "派发对账子流程",
+			ping: "一二三四五六七八九十".repeat(4),
+		};
+		return node.id in names ? { ...node, display_name: names[node.id] } : node;
+	}),
+};
+
+test.describe("编排画布：显示名称", () => {
+	test.beforeEach(async ({ page, connectAgent, controlPlane }) => {
+		await twoAgents(connectAgent);
+		await publishPackage(controlPlane);
+		const id = await createScenario(controlPlane, "日终数据处理", displayNamedDocument);
+		await page.goto(`/orchestrations/${id}`);
+		await expect(nodeCard(page, "sub_ping")).toBeVisible();
+		await expect(page.getByRole("toolbar", { name: "画布工具" })).toBeVisible();
+	});
+
+	test("卡片标题、头部的原标题、被截断的名称与检查器顶部的输入框", async ({ page }) => {
+		await nodeCard(page, "fetch").click();
+		await expect(page.getByRole("textbox", { name: "显示名称" })).toHaveValue("创建测试用户");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-display-names.png");
+	});
+
+	test("原地改名：输入框占着卡片标题的位置，卡片大小不变", async ({ page }) => {
+		await nodeCard(page, "fetch").locator('[data-slot="base-node-title"]').dblclick();
+		await expect(nodeCard(page, "fetch").getByRole("textbox", { name: "显示名称" })).toBeFocused();
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-rename-in-place.png");
+	});
+
+	test("语义缩放：缩小后显示名称仍然看得清", async ({ page }) => {
+		await zoomOut(page, 3);
+		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
+		await page.mouse.move(700, 760);
+		await expect(page).toHaveScreenshot("editor-display-names-zoomed-out.png");
+	});
+});
+
 test("运行监控：子流程被停止（停止子流程节点的尝试）", async ({
 	page,
 	controlPlane,
@@ -913,6 +1165,26 @@ test("运行监控：子流程被停止（停止子流程节点的尝试）", as
 	await expect(page.getByRole("banner").getByTestId("run-status")).toHaveText("成功");
 	await page.mouse.move(700, 870);
 	await expect(page).toHaveScreenshot("monitor-stopped.png", { mask: runIds(page) });
+});
+
+test("运行监控：显示名称与备注图标（名称放不下时截断显示名称，节点 ID 完整）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, scenarioId } = await namedScenario(controlPlane, connectAgent, {
+		...FIRST,
+		verify: "核对结果：对比订单库与支付流水的差异，超过阈值时报警",
+	});
+	const runId = await triggerRun(controlPlane, scenarioId);
+	await driveToRetry(agent, clock, await agent.nextAssign());
+	await openMonitor(page, clock, runId, "verify");
+	await page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }).click();
+	await expect(page.getByRole("article", { name: /第 2 次尝试$/ })).toBeVisible();
+	await chartsLoaded(page);
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-display-names.png", { mask: runIds(page) });
 });
 
 test("编排画布：运行状态（子流程被停止）", async ({ page, controlPlane, connectAgent, clock }) => {

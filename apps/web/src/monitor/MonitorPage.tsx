@@ -147,7 +147,7 @@ function MonitorBody({
 		<main className="flex min-h-0 flex-1 flex-col">
 			{failureBanner && <FailureBanner run={run} onClose={onCloseBanner} />}
 			<Timeline run={run} doc={doc} />
-			<ChartWorkspace run={run} catalog={catalog} compact={compact} />
+			<ChartWorkspace run={run} doc={doc} catalog={catalog} compact={compact} />
 			<BottomPanel run={run} doc={doc} />
 		</main>
 	);

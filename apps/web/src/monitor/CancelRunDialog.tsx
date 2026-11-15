@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleStopIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
+import { type RunNodeName, runNodeName } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { callApi } from "#/lib/api";
 import { ACTION } from "#/lib/copy";
@@ -32,7 +33,8 @@ import { runViewQuery, writeRunView } from "./live-run";
 import { cancelImpact } from "./run-model";
 import { COLLAPSE_BUTTON, COLLAPSE_LABEL } from "./top-bar";
 
-const ids = (nodes: { node_id: string }[]) => [...new Set(nodes.map((n) => n.node_id))].join("、");
+/** 受影响的节点：「显示名称（节点 ID）」，同一个节点在几个子流程实例里只写一次。 */
+const names = (nodes: RunNodeName[]) => [...new Set(nodes.map(runNodeName))].join("、");
 
 /**
  * 取消运行的确认弹窗（原型 ovCancel，docs/SEMANTICS.md §3.4）：列出影响，点「取消运行」确认。
@@ -105,19 +107,19 @@ export function CancelRunDialog({
 								(force ? (
 									<Impact
 										title={`执行中的 ${impact.running.length} 个任务立即终止`}
-										ids={ids(impact.running)}
+										nodes={names(impact.running)}
 									/>
 								) : (
 									<Impact
 										title={`执行中的 ${impact.running.length} 个任务先优雅终止`}
-										ids={ids(impact.running)}
+										nodes={names(impact.running)}
 										note="宽限期过后强制杀掉整棵进程树"
 									/>
 								))}
 							{!force && impact.always.length > 0 && (
 								<Impact
 									title="always 节点照常执行清理"
-									ids={ids(impact.always)}
+									nodes={names(impact.always)}
 									note="清理期间可以再次取消以强制终止"
 									warn
 								/>
@@ -125,7 +127,7 @@ export function CancelRunDialog({
 							{!force && impact.cancelled.length > 0 && (
 								<Impact
 									title={`未开始的 ${impact.cancelled.length} 个节点标记为已取消`}
-									ids={ids(impact.cancelled)}
+									nodes={names(impact.cancelled)}
 								/>
 							)}
 						</ul>
@@ -216,12 +218,12 @@ export function CancelRunButton({
 
 function Impact({
 	title,
-	ids,
+	nodes,
 	note,
 	warn,
 }: {
 	title: string;
-	ids: string;
+	nodes: string;
 	note?: string;
 	warn?: boolean;
 }) {
@@ -233,7 +235,7 @@ function Impact({
 			<div className="min-w-0">
 				<div>{title}</div>
 				<div className="text-xs wrap-anywhere text-fg-3">
-					<span className="font-mono">{ids}</span>
+					<span className="font-mono">{nodes}</span>
 					{note && <> · {note}</>}
 				</div>
 			</div>

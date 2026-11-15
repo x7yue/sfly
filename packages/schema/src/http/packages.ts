@@ -31,7 +31,10 @@ export const PackageVersionSummary = z.object({
 	sha256: z.string(),
 	size: z.number().int(),
 	published_at: Timestamp,
-	nodes: z.array(z.object({ name: z.string(), title: z.string() })),
+	/** 节点类型摘要，「添加节点」菜单用；`description` 是节点类型的完整说明，没有文档字符串时没有这个字段。 */
+	nodes: z.array(
+		z.object({ name: z.string(), title: z.string(), description: z.string().optional() }),
+	),
 	/** 有多少个场景的最新版本锁定了这个版本。 */
 	locked_orchestrations: z.number().int(),
 });

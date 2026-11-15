@@ -3,7 +3,7 @@
 import {
 	type AgentUpdateState,
 	ON_AGENT_STATUSES,
-	type OrchestrationDocument,
+	OrchestrationDocument,
 	type PackageMetadata,
 	type RunNotificationTrigger,
 } from "@sfly/schema";
@@ -12,6 +12,7 @@ import {
 	bigint,
 	bigserial,
 	boolean,
+	customType,
 	doublePrecision,
 	index,
 	integer,
@@ -25,6 +26,22 @@ import {
 } from "drizzle-orm/pg-core";
 
 const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
+
+/**
+ * 场景文档（jsonb）：读出时按场景文档 schema 解析，和保存时一样补上默认值。场景版本不可修改，
+ * 升级前保存的版本没有后来新增的字段（例如注释框 `annotations`）；所有读文档的地方（接口返回的最新版本、
+ * 历史版本、运行绑定的版本，复制、恢复，引擎）都经过这里，拿到的文档和 OrchestrationDocument 的类型一致。
+ * 按更早的规则保存、现在已经解析不了的文档原样返回（历史版本照旧能看、能跑）。
+ */
+const orchestrationDocument = customType<{ data: OrchestrationDocument; driverData: unknown }>({
+	dataType: () => "jsonb",
+	toDriver: (document) => JSON.stringify(document),
+	fromDriver: (value) => {
+		const stored: unknown = typeof value === "string" ? JSON.parse(value) : value;
+		const parsed = OrchestrationDocument.safeParse(stored);
+		return parsed.success ? parsed.data : (stored as OrchestrationDocument);
+	},
+});
 
 /** Agent 上报的信息（Hello）。 */
 export interface AgentInfo {
@@ -159,7 +176,7 @@ export const orchestrationVersions = pgTable(
 			.notNull()
 			.references(() => orchestrations.id),
 		number: integer("number").notNull(),
-		document: jsonb("document").$type<OrchestrationDocument>().notNull(),
+		document: orchestrationDocument("document").notNull(),
 		author: text("author").notNull(),
 		/** 经哪个 AI 编程助手保存（请求头 x-sfly-client 里的 agent/<名称>）；只是标注，浏览器里保存的为空。 */
 		authorVia: text("author_via"),

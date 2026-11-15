@@ -36,6 +36,10 @@
             "type": "string",
             "minLength": 1
           },
+          "description": {
+            "type": "string",
+            "maxLength": 4000
+          },
           "entry": {
             "type": "string",
             "pattern": "^[A-Za-z_][\\w.]*:[A-Za-z_]\\w*$"

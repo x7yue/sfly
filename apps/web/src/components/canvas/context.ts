@@ -2,6 +2,7 @@ import type { EdgeEnds, Position } from "@sfly/orchestration";
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
 import type { DocEdge, DocNode } from "./flow";
+import { type CanvasSelection, NO_SELECTION } from "./selection";
 
 /**
  * 画布组件的扩展点（FlowCanvas 的 props 经 context 传给节点卡片、连线和子流程区域）。
@@ -38,14 +39,14 @@ export interface NodeDecoration {
 
 export type EdgeDecoration = "live" | "failed";
 
-/** 节点卡片需要的画布级信息。 */
+/** 节点卡片需要的画布级信息；`titleOf` 和 `subflowLabelOf` 同时是节点显示规则（nodeCardText）要查的信息。 */
 export interface CanvasInfo {
 	defaultAgent: string | undefined;
 	/** 包节点类型的标题（来自节点包元信息）。 */
 	titleOf(pkg: string, node: string): string | undefined;
 	/** 包名 → 锁定的版本。 */
 	packages: Readonly<Record<string, string>>;
-	/** 子流程入口节点 ID → 子流程的显示名称（node-display 的 subflowLabel）；不是子流程入口时为 undefined。 */
+	/** 子流程入口节点 ID → 子流程的显示名称（@sfly/orchestration 的 subflowLabels）；不是子流程入口时为 undefined。 */
 	subflowLabelOf(id: string): string | undefined;
 	/** 节点 ID → 静态检查警告（编辑模式）。 */
 	warnings: ReadonlyMap<string, readonly { message: string }[]>;
@@ -58,9 +59,21 @@ export interface PortState {
 	dispatch: boolean;
 }
 
+/** 卡片标题的原地编辑（改显示名称）：状态在使用方，FlowCanvas 只在可编辑时把它交给节点卡片。 */
+export interface NodeRename {
+	/** 正在原地编辑的节点；没有时为 null。 */
+	active: string | null;
+	/** 进入原地编辑；不能起显示名称的节点（子流程入口）什么也不做。 */
+	start(id: string): void;
+	/** 确认（Enter、失焦）：`text` 是输入框里的原文，空白表示清除显示名称。 */
+	commit(id: string, text: string): void;
+	/** 取消（Esc）：不改场景。 */
+	cancel(): void;
+}
+
 export interface CanvasContextValue {
 	info: CanvasInfo;
-	selectedId: string | null;
+	selection: CanvasSelection;
 	ports: ReadonlyMap<string, PortState>;
 	decorateNode?: (id: string, node: DocNode) => NodeDecoration | undefined;
 	decorateEdge?: (edge: {
@@ -78,6 +91,8 @@ export interface CanvasContextValue {
 	insertOnEdge?: (edge: EdgeEnds, client: Position) => void;
 	/** 打开连线菜单（在「＋」上右键时用，连线本身的右键由 FlowCanvas 处理）。 */
 	openEdgeMenu?: (edge: DocEdge, client: Position) => void;
+	/** 原地改显示名称：只在可编辑时给出（只读画布的卡片标题不响应双击）。 */
+	rename?: NodeRename;
 }
 
 export const EMPTY_INFO: CanvasInfo = {
@@ -90,7 +105,7 @@ export const EMPTY_INFO: CanvasInfo = {
 
 export const FlowCanvasContext = createContext<CanvasContextValue>({
 	info: EMPTY_INFO,
-	selectedId: null,
+	selection: NO_SELECTION,
 	ports: new Map(),
 	fit: () => {},
 });

@@ -9,6 +9,11 @@ import { startTestControlPlane, type TestControlPlane } from "./support/test-con
 
 const sha256 = (data: Uint8Array) => createHash("sha256").update(data).digest("hex");
 
+const withDescription = (description: string) =>
+	packageMetadata({
+		nodes: [{ ...(packageMetadata().nodes as object[])[0], description }],
+	});
+
 describe("节点包仓库", () => {
 	let cp: TestControlPlane | undefined;
 	afterEach(async () => {
@@ -178,6 +183,11 @@ describe("节点包仓库", () => {
 		["节点列表为空", packageArchive(packageMetadata({ nodes: [] }))],
 		["SDK 版本要求不合法", packageArchive(packageMetadata({ requires_sdk: "0.0.4" }))],
 		["没有 wheel", packageArchive(packageMetadata(), {})],
+		["节点类型的说明超过 4000 个字符", packageArchive(withDescription("x".repeat(4001)))],
+		[
+			"节点类型的说明超过 4000 个字符（按 Unicode 字符计）",
+			packageArchive(withDescription("😀".repeat(4001))),
+		],
 		[
 			"多个 wheel",
 			packageArchive(packageMetadata(), { "a.whl": strToU8("a"), "b.whl": strToU8("b") }),
@@ -201,6 +211,19 @@ describe("节点包仓库", () => {
 			error: { code: "invalid_package", message: expect.any(String) },
 		});
 		expect(await (await cp.fetch("/packages")).json()).toEqual({ packages: [] });
+	});
+
+	it("节点类型的说明最长 4000 个 Unicode 字符：4000 个 emoji 可以发布，原样查询到", async () => {
+		cp = await startTestControlPlane();
+		const description = "😀".repeat(4000);
+		const res = await cp.fetch(
+			"/packages",
+			publishInit(packageArchive(withDescription(description))),
+		);
+		expect(res.status).toBe(201);
+
+		const node = await cp.fetch("/packages/demo-checks/versions/1.2.0/nodes/http_check");
+		expect(await node.json()).toMatchObject({ name: "http_check", description });
 	});
 
 	it("元信息里的最低 SDK 版本原样保存，查询版本时返回", async () => {

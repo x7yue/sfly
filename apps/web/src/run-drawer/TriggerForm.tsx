@@ -289,12 +289,20 @@ function ParamField({
 		return () => clearTimeout(timer);
 	}, [revealed]);
 
-	const help = param.secret
+	const note = param.secret
 		? "界面和日志中都会打码"
 		: param.default !== undefined && param.type !== "boolean"
 			? `默认 ${JSON.stringify(param.default)}`
 			: null;
-	const describedBy = [error ? errorId : null, help ? helpId : null].filter(Boolean).join(" ");
+	const description = param.description ?? null;
+	const descriptionId = `${id}-description`;
+	const describedBy = [
+		error ? errorId : null,
+		description ? descriptionId : null,
+		note ? helpId : null,
+	]
+		.filter(Boolean)
+		.join(" ");
 	const aria = {
 		id,
 		"aria-invalid": error ? true : undefined,
@@ -377,9 +385,14 @@ function ParamField({
 						{error}
 					</p>
 				)}
-				{help && (
+				{description && (
+					<p id={descriptionId} className="m-0 text-xs text-fg-3">
+						{description}
+					</p>
+				)}
+				{note && (
 					<p id={helpId} className="m-0 text-xs text-fg-3">
-						{help}
+						{note}
 					</p>
 				)}
 			</div>

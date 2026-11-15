@@ -59,7 +59,12 @@ export type ArchiveResult =
 
 /** 新建场景的初始文档：只有一个入口节点，位置由整理布局算法给出（与画布的「整理布局」相同）。 */
 export const initialDocument = (): OrchestrationDocument =>
-	ensureLayout({ nodes: [{ id: "entry", kind: "entry", params: [] }], edges: [], packages: {} });
+	ensureLayout({
+		nodes: [{ id: "entry", kind: "entry", params: [] }],
+		edges: [],
+		packages: {},
+		annotations: [],
+	});
 
 type OrchestrationRow = typeof orchestrations.$inferSelect;
 type VersionRow = typeof orchestrationVersions.$inferSelect;
