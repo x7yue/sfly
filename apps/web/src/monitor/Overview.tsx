@@ -9,7 +9,7 @@ import { StatusDot } from "#/components/status";
 import { FocusChart } from "#/focus/FocusChart";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { useRunFocus } from "#/focus/use-run-focus";
-import { chainCountLabel, LIST_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import { chainCountLabel, LIST_LABEL, MESSAGE, RUNNING_PRIMARY_LABEL, TERM } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -142,7 +142,7 @@ function FocusSection({
 		<section aria-labelledby="overview-focus" className="flex flex-col gap-3">
 			<div className="flex items-baseline gap-2.5">
 				<h2 id="overview-focus" className="m-0 text-base font-semibold">
-					{primary ? `${NODE_STATUS.running.label}节点的${TERM.primaryMetric}` : TERM.focusItem}
+					{primary ? RUNNING_PRIMARY_LABEL : TERM.focusItem}
 				</h2>
 				{data && !primary && (
 					<span className="font-mono text-xs text-fg-3" data-testid="focus-count">

@@ -126,6 +126,7 @@ export const ACTION = {
 	forceCancel: "强制终止",
 	keepRunning: "继续运行",
 	openRun: "打开运行监控",
+	viewInCanvas: "在画布中查看",
 	viewRuns: "查看运行记录",
 	edit: "编排",
 	newScenario: "新建场景",
@@ -168,11 +169,21 @@ export const FINAL_VALUE_LABEL = "最终值";
 export const chainCountLabel = (chains: number, nodes: number) =>
 	`${chains} 条链 · ${nodes} 个节点`;
 
+/** 运行开始到现在的时长（运行中）和开始到结束的时长（已结束）：控制台、运行监控页顶栏、运行记录的卡片共用。 */
+export const ELAPSED_LABEL = "已运行";
+export const DURATION_LABEL = "耗时";
+
+/** 「还有 3 个」：列表或线路只画出前面一部分时，其余的个数（控制台的线路和进行中的节点、运行记录的卡片）。 */
+export const moreLabel = (count: number) => `还有 ${count} 个`;
+
 /**
- * 还没结束、正在推进的节点（排队中、准备中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
+ * 还没结束、正在推进的节点（排队中、准备中、执行中、等待中）合起来的名称，运行抽屉的摘要、控制台运行块的那一行用。
  * 不等于任何一个节点状态名：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。
  */
 export const ACTIVE_LABEL = "进行中";
+
+/** 「执行中节点的主指标」：场景没设关注项时读数区的标题，运行监控的概览和控制台的运行块共用。 */
+export const RUNNING_PRIMARY_LABEL = `${NODE_STATUS.running.label}节点的${TERM.primaryMetric}`;
 
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */
 export const LIST_LABEL = {
@@ -181,7 +192,7 @@ export const LIST_LABEL = {
 	/** 运行监控的概览里，执行中的节点的列表；列表前的标题只写 `NODE_STATUS.running.label`。 */
 	runningNodes: `${NODE_STATUS.running.label}的${TERM.node}`,
 	/**
-	 * 运行抽屉的摘要里，还没结束、正在推进的节点（排队中、准备中、执行中、等待中）的列表，每个节点带自己的状态标签。
+	 * 运行抽屉的摘要、控制台的运行块里，还没结束、正在推进的节点（排队中、准备中、执行中、等待中）的列表，每个节点带自己的状态标签。
 	 * 说法不等于任何一个节点状态名；概览只列执行中的节点，用 `runningNodes`。
 	 */
 	activeNodes: `${ACTIVE_LABEL}的${TERM.node}`,

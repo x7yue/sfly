@@ -4,7 +4,7 @@ import { ChainBar, doneCount, listChainLabel } from "#/components/chain-progress
 import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { ACTION } from "#/lib/copy";
+import { ACTION, ELAPSED_LABEL, moreLabel } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -58,7 +58,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					{shortId(run.id)}
 				</span>
 				<span className="flex-1" />
-				<span className="font-mono text-sm" title="已运行">
+				<span className="font-mono text-sm" title={ELAPSED_LABEL}>
 					{formatDuration(now - Date.parse(run.started_at))}
 				</span>
 			</div>
@@ -120,9 +120,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 						</li>
 					))}
 					{run.active_nodes.length > MAX_ACTIVE && (
-						<li className="text-xs text-fg-3">
-							另有 {run.active_nodes.length - MAX_ACTIVE} 个节点
-						</li>
+						<li className="text-xs text-fg-3">{moreLabel(run.active_nodes.length - MAX_ACTIVE)}</li>
 					)}
 				</ul>
 			)}

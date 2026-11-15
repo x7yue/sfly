@@ -307,23 +307,3 @@ export function alignPulses(root: Document) {
 		}
 	});
 }
-
-/** 槽位占用（原型 `.slotbar`）：每个槽位一格，占用的为浅灰（中性，不用状态色）。 */
-export function SlotBar({ used, total }: { used: number; total: number }) {
-	return (
-		<span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-			<span aria-hidden data-viz className="inline-flex gap-0.75">
-				{Array.from({ length: total }, (_, i) => (
-					<b
-						// biome-ignore lint/suspicious/noArrayIndexKey: 槽位按序号排列，没有其他标识
-						key={i}
-						className={cn("size-2.25 rounded-[2px]", i < used ? "bg-fg-2" : "bg-track")}
-					/>
-				))}
-			</span>
-			<span className="font-mono text-xs text-fg-2">
-				{used}/{total}
-			</span>
-		</span>
-	);
-}
