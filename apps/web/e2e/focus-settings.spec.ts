@@ -35,7 +35,7 @@ test("每张图表一个「关注」开关：打开后名额增加，刷新后�
 	await expect(quota(panel)).toHaveText("本场景的关注项已用 1 / 8");
 	await expect
 		.poll(async () => (await sceneView(controlPlane, id)).focus_items)
-		.toEqual([{ node_id: "fetch", chart: "延迟", status: "ok" }]);
+		.toEqual([{ node_id: "fetch", chart: "延迟", status: "ok", chart_type: "line" }]);
 	expect((await sceneView(controlPlane, id)).head_version).toBe(1);
 
 	// 同一张图表在另一个节点上是另一个关注项；名额是整个场景的。
@@ -109,7 +109,7 @@ test("满 8 个以后其余开关禁用并写明先移除一项，失效的项�
 	await openEditor(page, id, "fetch2");
 	const panel = await selectMetricsTab(page, "fetch2");
 	await expect(quota(panel)).toHaveText(
-		"本场景的关注项已用 8 / 8，已满（含 2 项已失效的）：先在场景检查器里移除一项",
+		"本场景的关注项已用 8 / 8，已满（含 2 项已失效的）：先在场景设置的「关注项」页移除一项",
 	);
 	await expect(pin(panel, "请求数")).toBeDisabled();
 	await expect(pin(panel, "errors")).toBeDisabled();
@@ -122,7 +122,7 @@ test("满 8 个以后其余开关禁用并写明先移除一项，失效的项�
 	await pin(panel, "请求数").click();
 	await expect(pin(panel, "请求数")).toHaveAttribute("aria-pressed", "true");
 	await expect(quota(panel)).toHaveText(
-		"本场景的关注项已用 8 / 8，已满（含 2 项已失效的）：先在场景检查器里移除一项",
+		"本场景的关注项已用 8 / 8，已满（含 2 项已失效的）：先在场景设置的「关注项」页移除一项",
 	);
 	await expect(pin(panel, "errors")).toBeDisabled();
 });

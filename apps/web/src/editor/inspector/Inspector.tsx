@@ -29,6 +29,7 @@ import {
 	soleNode,
 } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
+import { FocusListPage } from "#/focus/FocusList";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
 import { ACTION, ANNOTATION_FIELD_LABEL } from "#/lib/copy";
@@ -132,6 +133,8 @@ export const Inspector = forwardRef<
 	const group = multipleNodes(selection);
 	const annotationId = selectedAnnotation(selection);
 	const annotation = context.doc.annotations.find((a) => a.id === annotationId);
+	// 场景设置停在哪一页：选中节点再回来时还是原来的那一页。
+	const [scenarioTab, setScenarioTab] = useState<ScenarioTab>("overview");
 	return (
 		<aside
 			ref={ref}
@@ -158,7 +161,12 @@ export const Inspector = forwardRef<
 			) : group ? (
 				<GroupInspector ids={group} context={context} onCollapse={onCollapse} />
 			) : (
-				<ScenarioInspector context={context} onCollapse={onCollapse} />
+				<ScenarioInspector
+					context={context}
+					tab={scenarioTab}
+					onTab={setScenarioTab}
+					onCollapse={onCollapse}
+				/>
 			)}
 			<InspectorWidthHandle />
 		</aside>
@@ -555,14 +563,45 @@ function GroupInspector({
 	);
 }
 
-/** 没有选中节点时：场景级设置与检查结果。 */
+type ScenarioTab = "overview" | "focus";
+
+/** 没有选中节点时：场景设置，分两页：概况（默认 Agent、节点包版本、检查结果）和关注项。 */
 function ScenarioInspector({
 	context,
+	tab,
+	onTab,
 	onCollapse,
 }: {
 	context: InspectorContext;
+	tab: ScenarioTab;
+	onTab(tab: ScenarioTab): void;
 	onCollapse(): void;
 }) {
+	return (
+		<>
+			<Header onCollapse={onCollapse} title="场景设置" row={<span>未选中节点</span>} />
+			<Tabs
+				value={tab}
+				onValueChange={(v) => onTab(v as ScenarioTab)}
+				className="min-h-0 flex-1 overflow-hidden"
+			>
+				<TabsList>
+					<TabsTrigger value="overview">概况</TabsTrigger>
+					<TabsTrigger value="focus">关注项</TabsTrigger>
+				</TabsList>
+				<TabsContent value="overview" className={cn(FIELD_LIST_CLASS, "overflow-auto px-3.5 py-3")}>
+					<ScenarioOverview context={context} />
+				</TabsContent>
+				<TabsContent value="focus" className="overflow-auto px-3.5 py-3">
+					<FocusListPage orchestrationId={context.orchestrationId} />
+				</TabsContent>
+			</Tabs>
+		</>
+	);
+}
+
+/** 场景设置的「概况」页：默认 Agent、节点包版本和检查结果。必须放在 `FIELD_LIST_CLASS` 的容器里。 */
+function ScenarioOverview({ context }: { context: InspectorContext }) {
 	const { doc, warnings, notes, shownFieldErrors: fieldErrors } = context;
 	const summary = checkSummary(fieldErrors.length, warnings.length, notes.length);
 	const used = [
@@ -570,93 +609,90 @@ function ScenarioInspector({
 	].sort();
 	return (
 		<>
-			<Header onCollapse={onCollapse} title="场景设置" row={<span>未选中节点</span>} />
-			<div className={cn(FIELD_LIST_CLASS, "min-h-0 flex-1 overflow-auto px-3.5 py-3")}>
-				<Field label="默认 Agent" help="未单独选择 Agent 的包节点都派发到这里">
-					{(control) => (
-						<AgentSelect
-							control={control}
-							label="默认 Agent"
-							value={doc.default_agent}
-							agents={context.agents}
-							emptyLabel="（未设置）"
-							onChange={context.onDefaultAgent}
-						/>
-					)}
-				</Field>
-				<SectionTitle>节点包版本</SectionTitle>
-				{used.length === 0 && <p className="m-0 text-xs text-fg-3">还没有使用任何节点包。</p>}
-				{used.map((name) => (
-					<Field key={name} label={name} mono>
-						<PackageVersionField
-							name={name}
-							locked={doc.packages[name]}
-							packages={context.packages}
-							agents={context.agents}
-							onLock={context.onLock}
-						/>
-					</Field>
-				))}
-				<SectionTitle aside={<StatusPill kind={summary.kind}>{summary.label}</StatusPill>}>
-					检查
-				</SectionTitle>
-				{fieldErrors.length > 0 && (
-					<ul className="m-0 mb-3 flex list-none flex-col gap-1 p-0">
-						{fieldErrors.map((e) => {
-							const node = doc.nodes.find((n) => n.id === e.nodeId);
-							const annotation = doc.annotations.find((a) => a.id === e.annotationId);
-							const { annotationId, nodeId } = e;
-							return (
-								<li
-									key={`${nodeId}:${annotationId}:${e.field}`}
-									className={cn(
-										"flex items-start gap-2 rounded-md border border-danger-line bg-danger-soft px-2.5 py-1.5 text-xs text-danger-fg",
-									)}
-								>
-									<span className="min-w-0 flex-1">
-										{nodeId && (
-											<code className="font-mono">{node ? nodeNameWithId(node) : nodeId}</code>
-										)}
-										{annotationId && <>注释框 {nameWithId(annotationId, annotation?.title)}</>}{" "}
-										{annotationId
-											? (ANNOTATION_FIELD_LABEL[e.field] ?? e.field)
-											: fieldLabel(node, e.field)}
-										：{e.message}
-									</span>
-									{(nodeId || annotationId) && (
-										<button
-											type="button"
-											className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
-											onClick={() =>
-												annotationId
-													? context.onLocateAnnotation(annotationId)
-													: context.onLocate(nodeId as string)
-											}
-										>
-											前往
-										</button>
-									)}
-								</li>
-							);
-						})}
-					</ul>
-				)}
-				{warnings.length > 0 ? (
-					<WarningList
-						warnings={warnings}
-						onLocate={context.onLocate}
-						onLocateAnnotation={context.onLocateAnnotation}
+			<Field label="默认 Agent" help="未单独选择 Agent 的包节点都派发到这里">
+				{(control) => (
+					<AgentSelect
+						control={control}
+						label="默认 Agent"
+						value={doc.default_agent}
+						agents={context.agents}
+						emptyLabel="（未设置）"
+						onChange={context.onDefaultAgent}
 					/>
-				) : (
-					<p className="m-0 mb-3 text-xs text-ok">结构、包版本和引用检查都通过了。</p>
 				)}
-				{notes.length > 0 && <WarningList warnings={notes} onLocate={context.onLocate} />}
-				<p className="m-0 text-xs text-fg-3">
-					警告不阻止保存，触发运行时必须全部通过
-					{warnings.some(isAnnotationWarning) && "（注释框的警告除外，它不影响运行）"}
-					；提醒不影响运行；字段错误（红色）改正后才能保存。
-				</p>
-			</div>
+			</Field>
+			<SectionTitle>节点包版本</SectionTitle>
+			{used.length === 0 && <p className="m-0 text-xs text-fg-3">还没有使用任何节点包。</p>}
+			{used.map((name) => (
+				<Field key={name} label={name} mono>
+					<PackageVersionField
+						name={name}
+						locked={doc.packages[name]}
+						packages={context.packages}
+						agents={context.agents}
+						onLock={context.onLock}
+					/>
+				</Field>
+			))}
+			<SectionTitle aside={<StatusPill kind={summary.kind}>{summary.label}</StatusPill>}>
+				检查
+			</SectionTitle>
+			{fieldErrors.length > 0 && (
+				<ul className="m-0 mb-3 flex list-none flex-col gap-1 p-0">
+					{fieldErrors.map((e) => {
+						const node = doc.nodes.find((n) => n.id === e.nodeId);
+						const annotation = doc.annotations.find((a) => a.id === e.annotationId);
+						const { annotationId, nodeId } = e;
+						return (
+							<li
+								key={`${nodeId}:${annotationId}:${e.field}`}
+								className={cn(
+									"flex items-start gap-2 rounded-md border border-danger-line bg-danger-soft px-2.5 py-1.5 text-xs text-danger-fg",
+								)}
+							>
+								<span className="min-w-0 flex-1">
+									{nodeId && (
+										<code className="font-mono">{node ? nodeNameWithId(node) : nodeId}</code>
+									)}
+									{annotationId && <>注释框 {nameWithId(annotationId, annotation?.title)}</>}{" "}
+									{annotationId
+										? (ANNOTATION_FIELD_LABEL[e.field] ?? e.field)
+										: fieldLabel(node, e.field)}
+									：{e.message}
+								</span>
+								{(nodeId || annotationId) && (
+									<button
+										type="button"
+										className="flex-none cursor-pointer text-fg-2 underline underline-offset-2 hover:text-fg-1"
+										onClick={() =>
+											annotationId
+												? context.onLocateAnnotation(annotationId)
+												: context.onLocate(nodeId as string)
+										}
+									>
+										前往
+									</button>
+								)}
+							</li>
+						);
+					})}
+				</ul>
+			)}
+			{warnings.length > 0 ? (
+				<WarningList
+					warnings={warnings}
+					onLocate={context.onLocate}
+					onLocateAnnotation={context.onLocateAnnotation}
+				/>
+			) : (
+				<p className="m-0 mb-3 text-xs text-ok">结构、包版本和引用检查都通过了。</p>
+			)}
+			{notes.length > 0 && <WarningList warnings={notes} onLocate={context.onLocate} />}
+			<p className="m-0 text-xs text-fg-3">
+				警告不阻止保存，触发运行时必须全部通过
+				{warnings.some(isAnnotationWarning) && "（注释框的警告除外，它不影响运行）"}
+				；提醒不影响运行；字段错误（红色）改正后才能保存。
+			</p>
 		</>
 	);
 }

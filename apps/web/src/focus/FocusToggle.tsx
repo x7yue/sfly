@@ -4,7 +4,7 @@ import { type FocusItems, isFocused } from "./use-focus-items";
 
 /**
  * 把一张图表设为本场景的关注项的开关（`aria-pressed`，文字始终是「关注」，可访问名称写明是哪一张）。
- * 名额用完以后，没按下的开关禁用：先在场景检查器里移除一项。
+ * 名额用完以后，没按下的开关禁用：{@link FocusQuota} 写明去场景设置的「关注项」页移除一项。
  */
 export function FocusToggle({
 	focus,
@@ -35,18 +35,17 @@ export function FocusToggle({
 }
 
 /**
- * 「本场景的关注项已用 N / 8」，满了以后写明先移除一项（失效的项也占名额）。读屏在名额变化时读出来。
+ * 「本场景的关注项已用 N / 8」，满了以后写明去场景设置的「关注项」页移除一项（失效的项也占名额）。读屏在名额变化时读出来。
  * `saved` 为 false 时说明这个节点还不能设：服务端按已保存的场景版本检查新加的项。
  */
 export function FocusQuota({ focus, saved }: { focus: FocusItems; saved: boolean }) {
-	const stale = focus.items.filter((item) => item.status !== "ok").length;
 	return (
 		<>
 			<output className="m-0 mb-2 block text-xs text-fg-3">
 				本场景的关注项已用 <b className="font-mono font-medium text-fg-1">{focus.used}</b> /{" "}
 				{focus.limit}
 				{focus.full &&
-					`，已满${stale > 0 ? `（含 ${stale} 项已失效的）` : ""}：先在场景检查器里移除一项`}
+					`，已满${focus.stale > 0 ? `（含 ${focus.stale} 项已失效的）` : ""}：先在场景设置的「关注项」页移除一项`}
 			</output>
 			{!saved && (
 				<p className="m-0 mb-2 text-xs text-fg-3">

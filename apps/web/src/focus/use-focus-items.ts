@@ -23,19 +23,14 @@ export const isFocused = (items: readonly FocusItemView[], nodeId: string, chart
 	items.some((item) => isItem(item, nodeId, chart));
 
 /**
- * 写入还没有返回时先显示的项：已经在列表里的沿用现在的样子，新加的当作可用（服务端检查过才会写入，
- * 不合格就以服务端的列表为准）。改名要等服务端的列表回来才显示。
+ * 写入还没有返回时先显示的项：已经在列表里的沿用现在的样子，名字按这次写入的（改名立刻显示）；
+ * 新加的当作可用（服务端检查过才会写入，不合格就以服务端的列表为准）。
  */
 function pendingItem(current: readonly FocusItemView[], input: FocusItemInput): FocusItemView {
 	const { node_id, chart, title } = input;
-	return (
-		current.find((item) => isItem(item, node_id, chart)) ?? {
-			node_id,
-			chart,
-			status: "ok",
-			...(title === undefined ? {} : { title }),
-		}
-	);
+	const known = current.find((item) => isItem(item, node_id, chart));
+	const { title: _was, ...untitled } = known ?? { node_id, chart, status: "ok" as const };
+	return { ...untitled, ...(title === undefined ? {} : { title }) };
 }
 
 /**
@@ -63,6 +58,7 @@ export function useFocusItems(orchestrationId: string) {
 		},
 	});
 	const items = scene.data?.focus_items ?? [];
+	const stale = items.filter((item) => item.status !== "ok").length;
 
 	/** 整份替换成 `next`（顺序就是显示顺序）。 */
 	const replace = (next: FocusItemInput[]) => {
@@ -79,6 +75,12 @@ export function useFocusItems(orchestrationId: string) {
 		items,
 		/** 已用名额：包括已经失效的项。 */
 		used: items.length,
+		/** 其中已经失效的项数。 */
+		stale,
+		/** 最后一次修改（谁、什么时候、改了什么）；从没改过为 null。 */
+		edit: scene.data?.focus_edit ?? null,
+		/** 场景的最新版本号：失效的项要写明「不在最新版本 vN 里」。 */
+		headVersion: scene.data?.head_version ?? 0,
 		limit: FOCUS_ITEMS_MAX,
 		full: items.length >= FOCUS_ITEMS_MAX,
 		replace,
