@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ActivityIcon, PanelRightCloseIcon } from "lucide-react";
 import { forwardRef, type ReactNode, useMemo } from "react";
+import { currentActivity } from "#/actions/current-activity";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
 import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
@@ -36,6 +37,7 @@ type Decorations = Pick<CanvasContextValue, "decorateNode" | "decorateEdge" | "r
 /**
  * 节点卡片、连线与子流程区域的运行状态叠加。节点类型有主指标、节点开始执行过时，
  * 卡片底部的指标槽显示主指标的最新值与迷你趋势（#43），否则沿用配置摘要（关键输入）。
+ * 执行中的节点在标题下写此刻在做什么（#356）：最外层、开始得最早的动作，没有动作时是进度的说明。
  */
 export function useRunDecorations(
 	run: RunView | undefined,
@@ -63,6 +65,7 @@ export function useRunDecorations(
 				const entry = catalogEntry(metrics, summary.chain.id, id);
 				return {
 					run: summary.state,
+					activity: currentActivity(summary.node.attempts.at(-1)) ?? undefined,
 					slot: entry?.primary_metric ? (
 						<NodePrimaryMetric
 							runId={run.id}

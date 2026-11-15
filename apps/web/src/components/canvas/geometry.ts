@@ -10,6 +10,11 @@ import { NODE_SIZE, REGION_PADDING } from "@sfly/orchestration";
 /** 节点卡片（原型 `.n`）。 */
 export const NODE_WIDTH = NODE_SIZE.width;
 export const NODE_HEIGHT = NODE_SIZE.height;
+/**
+ * 执行中的卡片在标题下多出的「正在做」一行（高 24、下边距 4，ActivityLine）：卡片同时显示主指标时往下长这么多，
+ * 端口仍在原来的位置（#356）。
+ */
+export const ACTIVITY_LINE_HEIGHT = 28;
 /** 卡片圆角：设计体系的 `rounded-lg`（8px）。 */
 export const NODE_RADIUS = 8;
 

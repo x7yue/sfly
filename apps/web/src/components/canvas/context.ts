@@ -1,6 +1,7 @@
 import type { EdgeEnds, Position } from "@sfly/orchestration";
 import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
+import type { CurrentActivity } from "#/actions/current-activity";
 import type { DocEdge, DocNode } from "./flow";
 import { type CanvasSelection, NO_SELECTION } from "./selection";
 
@@ -12,6 +13,7 @@ import { type CanvasSelection, NO_SELECTION } from "./selection";
  *   「N 警告」，没有警告时不显示）；decorateEdge 返回 `live`（进入执行中节点的连线，青色实线）或 `failed`；
  *   regionMeta 替换子流程区域标题行右侧的「由 X 触发 · N 个节点」（例如实例状态与实例切换）。
  * - 主指标槽（#43）：decorateNode 返回 `slot`，替换卡片底部的配置摘要。
+ * - 正在做（#356）：decorateNode 返回 `activity`，执行中的卡片在标题下多一行，可访问名称里也有它。
  * - 版本对比（#40）：decorateNode 返回 `mark`（新增 / 删除 / 修改），卡片加差异标记；
  *   配合 FlowCanvas 的 `editable={false}` 做只读画布。
  */
@@ -33,6 +35,11 @@ export interface NodeDecoration {
 	status?: ReactNode;
 	/** 替换卡片底部的摘要槽（主指标）。 */
 	slot?: ReactNode;
+	/**
+	 * 执行中的节点此刻在做什么（动作，没有动作时是进度的说明）：画在标题下面。没有 `slot` 时它代替配置摘要
+	 * （执行中配置摘要没什么可看的，卡片也不变高）；有主指标时两行都在，卡片往下长一行。
+	 */
+	activity?: CurrentActivity;
 	/** 版本对比的差异标记。 */
 	mark?: "added" | "removed" | "changed";
 }

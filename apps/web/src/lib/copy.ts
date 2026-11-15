@@ -90,6 +90,12 @@ export const CANCELLING_LABEL = "取消中";
 /** 清理期间再次取消，正在强制终止。 */
 export const FORCE_CANCELLING_LABEL = "强制终止中";
 
+/**
+ * 执行中的节点此刻在做的事（动作，没有动作时是进度的说明，规格 #345）：节点卡片的可访问名称、检查器的一节标题
+ * 等处共用（actions/current-activity.ts）。
+ */
+export const DOING_LABEL = "正在做";
+
 /** 通用操作（按钮、菜单项、命令）。 */
 export const ACTION = {
 	run: "运行",
