@@ -3,6 +3,7 @@ import { type Client, createClient } from "@connectrpc/connect";
 import { createGrpcTransport } from "@connectrpc/connect-node";
 import {
 	type Ack,
+	type ActionEventSchema,
 	AgentGateway,
 	type AgentMessage,
 	AgentMessageSchema,
@@ -15,11 +16,13 @@ import {
 	type LogLineSchema,
 	LogSource,
 	type MetricPointSchema,
+	ActionResult as ProtoActionResult,
 	type ServerMessage,
 	TaskAction,
 	TaskStatus,
 	type Welcome,
 } from "@sfly/proto";
+import type { ActionResult } from "@sfly/schema";
 import packageJson from "../../package.json" with { type: "json" };
 import type { ActionSummaryEvent } from "../../src/actions/action-summary.js";
 
@@ -80,6 +83,19 @@ export type TaskResultInit = Extract<
 export type TaskRef = { taskId: string; attempt: number };
 export type LogLineInit = MessageInitShape<typeof LogLineSchema>;
 export type MetricPointInit = MessageInitShape<typeof MetricPointSchema>;
+/** ActionBatch 里的一个事件（动作开始、结束或标记）：用 {@link FakeAgent.actionStart} 等写。 */
+export type ActionEventInit = MessageInitShape<typeof ActionEventSchema>;
+/**
+ * 动作事件发生的时刻：一个数是控制面时间（Unix 毫秒），Agent 时间与它一致；要让 Agent 时间与控制面不一致
+ * （时钟偏差、时间跳变），写出两个读数：`{ ...agent.stamp(控制面时间), ts: Agent 时间 }`。
+ */
+export type ActionTime = number | { ts: number; mono: number };
+/** 动作开始、标记的可选项：父动作（不写层级时，有父动作是第 1 层）、字段（按写的先后）。 */
+export interface ActionPlace {
+	parent?: number;
+	depth?: number;
+	fields?: Record<string, string>;
+}
 export { LogLevel, LogSource };
 /** 派发的任务；`inputs` 是解析后的 inputs_json。 */
 export type AssignedTask = AssignTask & { inputs: Record<string, unknown> };
@@ -103,6 +119,15 @@ export function agentClock(agentTime: Date | string | number, monotonicMs: numbe
 		monotonicMs: BigInt(monotonicMs),
 	};
 }
+
+const PROTO_RESULTS: Record<ActionResult, ProtoActionResult> = {
+	success: ProtoActionResult.SUCCESS,
+	failed: ProtoActionResult.FAILED,
+	unfinished: ProtoActionResult.UNFINISHED,
+};
+
+const actionFields = (fields: Record<string, string> = {}) =>
+	Object.entries(fields).map(([key, value]) => ({ key, value }));
 
 /** {@link FakeAgent.connect} 的 `clock` 选项用的单调时钟读数起点（毫秒）：足够大，早于连接的时刻也折算得出正的读数。 */
 const SYNCED_MONOTONIC_MS = 1_000_000_000_000;
@@ -532,11 +557,84 @@ export class FakeAgent {
 	}
 
 	/**
-	 * 控制面时间为 `unixMs` 的时刻写进动作摘要的样子：Agent 时间（与控制面一致）和这台 Agent 的单调时钟读数。
+	 * 控制面时间为 `unixMs` 的时刻写进动作摘要和明细的样子：Agent 时间（与控制面一致）和这台 Agent 的单调时钟读数。
 	 * 只有用 `clock` 选项连接的 Agent 才能用（{@link monotonicAt}）。
 	 */
 	stamp(unixMs: number): { ts: number; mono: number } {
 		return { ts: unixMs, mono: Number(this.monotonicAt(unixMs)) };
+	}
+
+	/**
+	 * 上报一批动作和标记的明细（规格 #345，ActionBatch）：事件用 {@link actionStart}、{@link actionEnd}、
+	 * {@link actionMark} 写，按事件管道里的先后排列。控制面不回 Ack，要等它处理完用 {@link sync}。
+	 */
+	actions(task: TaskRef, events: ActionEventInit[]): void {
+		this.send({
+			case: "actions",
+			value: { taskId: task.taskId, attempt: task.attempt, events },
+		});
+	}
+
+	/** 一个动作开始（`action_start`）；`late` 是超过每种名称的上限、因为失败才补发的开始。 */
+	actionStart(
+		id: number,
+		name: string,
+		at: ActionTime,
+		init: ActionPlace & { late?: boolean } = {},
+	): ActionEventInit {
+		const { fields, late, ...place } = init;
+		return {
+			...this.#actionTime(at),
+			kind: {
+				case: "start",
+				value: { id: BigInt(id), name, late, ...this.#place(place), fields: actionFields(fields) },
+			},
+		};
+	}
+
+	/** 一个动作结束（`action_end`）：结果、失败的原因，`fields` 是 note() 补充的字段。 */
+	actionEnd(
+		id: number,
+		result: ActionResult,
+		at: ActionTime,
+		init: { reason?: string; fields?: Record<string, string> } = {},
+	): ActionEventInit {
+		return {
+			...this.#actionTime(at),
+			kind: {
+				case: "end",
+				value: {
+					id: BigInt(id),
+					result: PROTO_RESULTS[result],
+					reason: init.reason,
+					fields: actionFields(init.fields),
+				},
+			},
+		};
+	}
+
+	/** 一个标记（`mark`）。 */
+	actionMark(id: number, name: string, at: ActionTime, init: ActionPlace = {}): ActionEventInit {
+		const { fields, ...place } = init;
+		return {
+			...this.#actionTime(at),
+			kind: {
+				case: "mark",
+				value: { id: BigInt(id), name, ...this.#place(place), fields: actionFields(fields) },
+			},
+		};
+	}
+
+	#actionTime(at: ActionTime): Pick<ActionEventInit, "timeUnixMs" | "monotonicMs"> {
+		const { ts, mono } = typeof at === "number" ? this.stamp(at) : at;
+		return { timeUnixMs: BigInt(ts), monotonicMs: BigInt(mono) };
+	}
+
+	#place({ parent, depth }: Omit<ActionPlace, "fields">): { parent?: bigint; depth: number } {
+		return {
+			parent: parent === undefined ? undefined : BigInt(parent),
+			depth: depth ?? (parent === undefined ? 0 : 1),
+		};
 	}
 
 	/** 上报任意 TaskResult，等待对应的 Ack（task_id + attempt 相同）。 */
