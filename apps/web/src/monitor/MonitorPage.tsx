@@ -22,13 +22,12 @@ import {
 	createMonitorStore,
 	MonitorProvider,
 	type MonitorStore,
-	type NodeRef,
 	type TimeAxis,
 	useMonitor,
 	useMonitorActions,
 } from "./monitor-state";
 import { initialView, type MonitorView, readRememberedView, rememberView } from "./monitor-view";
-import { Overview } from "./Overview";
+import { Overview, type OverviewTarget } from "./Overview";
 import { type MonitorSearch, runMonitorLink } from "./run-link";
 import {
 	failureSummary,
@@ -77,10 +76,16 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 		void navigate(runMonitorLink(runId, { ...address, view: next }));
 	};
 	/** 点概览里的一项：进入详情，定位到它所在的节点。 */
-	const openNode = (node: NodeRef) => {
-		store.select(node);
-		void navigate(runMonitorLink(runId, { view: "detail", node: node.nodeId }));
+	const openNode = (target: OverviewTarget) => {
+		if (target.chainInstanceId !== null) {
+			store.select({ chainInstanceId: target.chainInstanceId, nodeId: target.nodeId });
+		}
+		// 点的那一格随概览卸载：焦点先移到「详情」标签，不落在 body 上。
+		document.getElementById(viewTabId("detail"))?.focus();
+		void navigate(runMonitorLink(runId, { view: "detail", node: target.nodeId }));
 	};
+	/** 顶栏的失败摘要在概览里点了以后切到详情（那里有它要打开的「尝试」页签）；不算用户选了视图，不记。 */
+	const showDetail = () => void navigate(runMonitorLink(runId, { ...address, view: "detail" }));
 
 	const orchestrationId = run?.orchestration_id;
 	const versionNumber = run?.orchestration_version;
@@ -160,6 +165,7 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 					failureInBanner={failureBanner && view === "detail"}
 					view={view}
 					onViewChange={changeView}
+					onShowDetail={showDetail}
 				/>
 				<main className="flex min-h-0 flex-1 flex-col">
 					<div

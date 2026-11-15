@@ -759,7 +759,8 @@ export interface Api {
 		 * `GET /runs/:id/focus`
 		 *
 		 * 一次运行的全部关注项：只返回节点在这次运行的版本里的那些项，取节点最新一次尝试的任务，图表的定义取这次运行
-		 * 锁定的节点包版本（那个版本里没有这张图表时 `unavailable` 为 `chart_missing`）。场景没设关注项时 `mode` 是
+		 * 锁定的节点包版本（那个版本里没有这张图表时 `unavailable` 为 `chart_missing`）。节点在这次运行绑定的版本里、
+		 * 但还没有开始（包括所在的子流程还没触发）时照样返回，状态是 `pending`。场景没设关注项时 `mode` 是
 		 * `primary`，返回执行中节点的主指标。运行不存在时 404。
 		 */
 		focus: Endpoint<

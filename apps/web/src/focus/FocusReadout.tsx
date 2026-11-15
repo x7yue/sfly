@@ -5,13 +5,8 @@ import { cn } from "cn";
 import type { ReactElement } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { TERM } from "#/lib/copy";
-import {
-	chartMissingText,
-	latestSeriesName,
-	readingFoot,
-	readingLabel,
-	valueText,
-} from "./focus-format";
+import { FocusValue } from "./FocusValue";
+import { chartMissingText, readingFoot, readingLabel } from "./focus-format";
 
 /**
  * 关注项读数：一个关注项（或主指标）的一格读数，概览、控制台运行块共用，读数之间只用 1px 分隔，不套卡片。
@@ -29,7 +24,6 @@ export function FocusReadout({
 	className,
 	...props
 }: useRender.ComponentProps<"div"> & { item: RunFocusItem; generatedAt: string }) {
-	const series = latestSeriesName(item);
 	return useRender({
 		defaultTagName: "div",
 		render,
@@ -51,13 +45,7 @@ export function FocusReadout({
 						{item.unavailable ? (
 							<span className="text-xs text-fg-3">{chartMissingText(item)}</span>
 						) : (
-							<span className="truncate font-mono text-lg font-semibold whitespace-nowrap text-fg-1">
-								{series && <span className="mr-1 text-xs font-normal text-fg-3">{series}</span>}
-								{valueText(item)}
-								{item.unit && (
-									<small className="ml-0.75 text-xs font-normal text-fg-3">{item.unit}</small>
-								)}
-							</span>
+							<FocusValue item={item} className="truncate" />
 						)}
 						<span className="font-mono text-xs wrap-anywhere text-fg-3">
 							{readingFoot(item, generatedAt)}
@@ -79,19 +67,17 @@ export function FocusReadoutStrip({
 	items,
 	generatedAt,
 	renderItem,
-	label = `${TERM.focusItem}读数`,
 	className,
 }: {
 	items: readonly RunFocusItem[];
 	generatedAt: string;
 	renderItem?: (item: RunFocusItem) => ReactElement<Record<string, unknown>>;
-	label?: string;
 	className?: string;
 }) {
 	return (
 		<div className={cn("overflow-hidden", className)}>
 			<ul
-				aria-label={label}
+				aria-label={`${TERM.focusItem}读数`}
 				className="-mt-px -ml-px grid list-none grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] p-0"
 			>
 				{items.map((item) => (
@@ -103,7 +89,7 @@ export function FocusReadoutStrip({
 							item={item}
 							generatedAt={generatedAt}
 							render={renderItem?.(item)}
-							className={renderItem ? "w-full cursor-pointer hover:bg-raised/50" : undefined}
+							className={renderItem ? "w-full cursor-pointer hover:bg-fg-1/3" : undefined}
 						/>
 					</li>
 				))}

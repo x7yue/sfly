@@ -12,7 +12,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runs, tasks } from "../db/schema.js";
-import { loadRunBoards } from "../engine/run-board.js";
+import { loadRunBoards, nodeNameIn } from "../engine/run-board.js";
 import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
@@ -29,8 +29,6 @@ export interface RunFocusDeps {
 export interface RunFocusOptions {
 	/** 每个序列降采样成多少个点（0 只要最新值）；默认 {@link DEFAULT_FOCUS_POINTS}。 */
 	points?: RunFocusQuery["points"];
-	/** 用这份列表代替场景现在的关注项（调用方自己保存了某个时刻的列表时用）。 */
-	items?: readonly FocusItem[];
 }
 
 type AttemptRow = Pick<
@@ -49,9 +47,11 @@ const isFinal = (status: NodeStatus) => status === "success" || status === "stop
 const iso = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 const isoOrNull = (date: Date | null) => (date ? date.toISOString() : null);
 
-/** 一个来源节点：它在这次运行里所在的链实例和状态、最新一次尝试，以及这次运行锁定的版本里它的节点类型。 */
+/** 一个来源节点：它在这次运行里所在的链实例（子流程还没触发时没有）和状态、最新一次尝试，以及这次运行锁定的版本里它的节点类型。 */
 interface Source {
-	chainInstanceId: string;
+	chainInstanceId: string | null;
+	/** 节点的显示名称（取自这次运行绑定的版本）；没有时为 undefined。 */
+	displayName: string | undefined;
 	status: NodeStatus;
 	/** 最新一次尝试；节点还没有尝试时为 undefined。 */
 	attempt: AttemptRow | undefined;
@@ -75,7 +75,8 @@ interface Reading {
  * 一次运行的关注项读数（`GET /runs/:id/focus`，契约见 @sfly/schema 的 `RunFocus`）：场景设了关注项就按作者的顺序，
  * 没设就是执行中节点的主指标。运行不存在（或编号不是 UUID）时为 undefined。
  *
- * - 只返回节点在这次运行里的项：运行绑定的版本里没有这个节点，或节点所在的子流程还没有触发时不返回。
+ * - 只返回节点在这次运行绑定的版本里的项（`position` 仍是它在作者列表里的位置）；节点还没开始、所在的子流程还没触发时
+ *   照样返回，状态是 pending，没有链实例（`source.chain_instance_id` 为 null）。
  * - 来源是节点最新一次尝试的任务；图表的定义取这次运行绑定的版本锁定的节点包版本，那个版本里没有这张图表时
  *   `unavailable` 是 `chart_missing`。开发版本取 Agent 当前加载的源码，不一定是运行当时的定义。
  * - 数值卡只有第一个序列，其余图表是声明的全部序列；`latest` 是最近更新的那个序列的最后一个点。
@@ -103,11 +104,11 @@ export async function resolveRunFocus(
 	const { document } = row;
 	const points = options.points ?? DEFAULT_FOCUS_POINTS;
 	const generatedAt = deps.clock.now();
-	const authored = options.items ?? row.focusItems;
+	const authored = row.focusItems;
 	const mode = authored.length > 0 ? "focus" : "primary";
 	const expired = row.run.metricsPurgedAt !== null;
 
-	// 节点在这次运行里的位置：只有已经开始的链（主链和已触发的子流程）上的节点。
+	// 节点在这次运行里的位置：已经开始的链（主链和已触发的子流程）上的节点；子流程还没触发的节点没有位置，是 pending。
 	const placed = new Map<string, { chainInstanceId: string; status: NodeStatus }>();
 	const board = await loadRunBoards(db, [{ id: runId, versionId: row.versionId, document }]);
 	for (const chain of board.get(runId) ?? []) {
@@ -117,11 +118,12 @@ export async function resolveRunFocus(
 			}
 		}
 	}
+	const inDocument = (nodeId: string) => document.nodes.some((n) => n.id === nodeId);
 	const isPackage = (nodeId: string) =>
 		document.nodes.find((n) => n.id === nodeId)?.kind === "package";
 	const wanted =
 		mode === "focus"
-			? new Set(authored.map((i) => i.node_id).filter((id) => placed.has(id)))
+			? new Set(authored.map((i) => i.node_id).filter(inDocument))
 			: new Set(
 					[...placed]
 						.filter(([id, at]) => at.status === "running" && isPackage(id))
@@ -131,10 +133,11 @@ export async function resolveRunFocus(
 	const attempts = await latestAttempts(db, runId, [...wanted]);
 	const sources = new Map<string, Source>();
 	for (const nodeId of wanted) {
-		const at = placed.get(nodeId) as { chainInstanceId: string; status: NodeStatus };
+		const at = placed.get(nodeId) ?? { chainInstanceId: null, status: "pending" as const };
 		const attempt = attempts.get(nodeId);
 		sources.set(nodeId, {
 			...at,
+			displayName: nodeNameIn(document, nodeId),
 			attempt,
 			type: await declaredNodeType(db, document, nodeId, attempt?.agentName),
 		});
@@ -293,6 +296,7 @@ function itemOf(
 	return {
 		position: reading.position,
 		node_id: reading.nodeId,
+		...(source.displayName === undefined ? {} : { display_name: source.displayName }),
 		chart: reading.chart,
 		title: reading.title,
 		chart_type: reading.chartType,

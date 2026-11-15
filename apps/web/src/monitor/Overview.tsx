@@ -13,8 +13,14 @@ import { TERM } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
-import { type NodeRef, useTimeAxis } from "./monitor-state";
+import { useTimeAxis } from "./monitor-state";
 import { chainLabelParts, orderedChains } from "./run-model";
+
+/** 概览里点一项要去详情里看的节点；节点所在的子流程还没触发时没有链实例。 */
+export interface OverviewTarget {
+	chainInstanceId: string | null;
+	nodeId: string;
+}
 
 /**
  * 运行监控的「概览」：从上到下是链路（各链的进度和执行中的节点）和关注项（数值类排成一条读数，图表类两列排开）。
@@ -26,7 +32,7 @@ export function Overview({
 	onOpenNode,
 }: {
 	run: RunView;
-	onOpenNode: (node: NodeRef) => void;
+	onOpenNode: (target: OverviewTarget) => void;
 }) {
 	const focus = useRunFocus(run.id, { live: run.status === "running" });
 	return (
@@ -124,7 +130,7 @@ function FocusSection({
 }: {
 	run: RunView;
 	focus: UseQueryResult<RunFocus>;
-	onOpenNode: (node: NodeRef) => void;
+	onOpenNode: (target: OverviewTarget) => void;
 }) {
 	const data = focus.data;
 	const primary = data?.mode === "primary";

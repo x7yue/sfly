@@ -84,7 +84,13 @@ describe("读数的文字", () => {
 				}),
 				NOW,
 			),
-		).toBe("load · 尚未开始");
+		).toBe("load · 还没有开始执行");
+	});
+
+	it("来源节点有显示名称时写成「显示名称（节点 ID）」，脚注和可访问名称都一样", () => {
+		const named = item({ display_name: "压测" });
+		expect(readingFoot(named, NOW)).toBe("压测（load） · 2s 前");
+		expect(readingLabel(named, NOW)).toBe("母单量 1.3M 单，来自 压测（load）（执行中），2s 前");
 	});
 
 	it("最新值来自哪个序列：多个指标写指标名，带标签写标签值", () => {

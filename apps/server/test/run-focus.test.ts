@@ -88,7 +88,9 @@ describe("运行的关注项读数", () => {
 	});
 
 	it("按作者的顺序返回：位置从 1 开始，名字是作者起的或图表标题，带来源、单位、最新值和降采样序列；还没开始的节点没有数据", async () => {
-		const id = await api.orchestrationWith(benchDocument());
+		const id = await api.orchestrationWith(
+			withNodes(benchDocument(), { load: { display_name: "压测" } }),
+		);
 		await putFocusItemsOk(api, id, [
 			{ node_id: "load", chart: "延迟", title: "下单延迟" },
 			{ node_id: "load", chart: "TPS" },
@@ -131,6 +133,9 @@ describe("运行的关注项读数", () => {
 			anomaly: null,
 		});
 		expect(latency?.unavailable).toBeUndefined();
+		// 来源节点的显示名称取自这次运行绑定的版本；没有显示名称的节点没有这个字段。
+		expect(latency?.display_name).toBe("压测");
+		expect(level?.display_name).toBeUndefined();
 		expect(latency?.series).toEqual([
 			{
 				metric: "p99",
@@ -253,7 +258,7 @@ describe("运行的关注项读数", () => {
 		expect(load?.source.chain_instance_id).toBe(await mainChain(runId));
 	});
 
-	it("节点还不在这次运行里（子流程没有触发）的项不返回", async () => {
+	it("节点所在的子流程还没有触发：这一项照样返回，状态是 pending，没有链实例也没有数据", async () => {
 		const document = {
 			default_agent: "agent-a",
 			nodes: [
@@ -279,9 +284,17 @@ describe("运行的关注项读数", () => {
 		const runId = await api.triggerOk(id);
 		await agent.nextAssign();
 
-		// 子流程要等 load 成功、spawn 执行之后才触发：现在只有 load。
+		// 子流程要等 load 成功、spawn 执行之后才触发：现在 watch 还没有链实例。
 		const early = await focus(runId);
-		expect(early.items.map((i) => [i.position, i.node_id])).toEqual([[2, "load"]]);
+		expect(early.items.map((i) => [i.position, i.node_id, i.source.status])).toEqual([
+			[1, "watch", "pending"],
+			[2, "load", "running"],
+		]);
+		expect(early.items[0]).toMatchObject({
+			source: { attempt: 0, task_id: null, chain_instance_id: null, started_at: null },
+			latest: null,
+			series: [],
+		});
 	});
 
 	it("节点不在这次运行绑定的版本里的项不返回，位置仍按作者的列表", async () => {

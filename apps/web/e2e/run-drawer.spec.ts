@@ -99,7 +99,7 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	expect(run.params).toMatchObject({ host: "10.0.0.8", steps: 5, dry_run: true });
 	expect(run.params.api_token).not.toBe("tok-live");
 
-	await drawer.getByRole("link", { name: "打开运行详情" }).click();
+	await drawer.getByRole("link", { name: "打开运行监控" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?|$)`));
 	await expect(page.getByRole("dialog")).toHaveCount(0);
 });

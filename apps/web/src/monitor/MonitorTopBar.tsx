@@ -59,12 +59,15 @@ export function MonitorTopBar({
 	failureInBanner,
 	view,
 	onViewChange,
+	onShowDetail,
 }: {
 	run: RunView;
 	name: string | undefined;
 	failureInBanner: boolean;
 	view: MonitorView;
 	onViewChange: (view: MonitorView) => void;
+	/** 切到详情，不改变记住的视图。 */
+	onShowDetail: () => void;
 }) {
 	const { now, live } = useTimeAxis();
 	const paused = useMotionPaused();
@@ -113,7 +116,12 @@ export function MonitorTopBar({
 			</output>
 			{run.preset && <RunPresetInfo preset={run.preset} />}
 			<ViewTabs view={view} onChange={onViewChange} />
-			{failure && !failureInBanner && <FailureSummary failure={failure} />}
+			{failure && !failureInBanner && (
+				<FailureSummary
+					failure={failure}
+					onShowDetail={view === "detail" ? undefined : onShowDetail}
+				/>
+			)}
 			<ul
 				aria-label="各链状态"
 				className="m-0 flex min-w-0 shrink-[4] list-none gap-1.5 overflow-hidden p-0 max-xl:hidden"
@@ -204,7 +212,14 @@ export function MonitorTopBar({
  * 失败摘要：「失败于 verify（第 2 次）· AssertionError: …」，太长时截断（悬停看完整的第一行）。
  * 点击选中这个节点，并把底部面板切到「尝试」页签（错误类型与堆栈）。
  */
-function FailureSummary({ failure }: { failure: RunFailure }) {
+function FailureSummary({
+	failure,
+	onShowDetail,
+}: {
+	failure: RunFailure;
+	/** 在概览里点时切到详情：「尝试」页签在详情里。 */
+	onShowDetail?: (() => void) | undefined;
+}) {
 	const actions = useMonitorActions();
 	return (
 		<Truncate
@@ -217,6 +232,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 					onClick={() => {
 						actions.select(failure.ref);
 						actions.showPanel("attempts");
+						onShowDetail?.();
 					}}
 					className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
 				/>

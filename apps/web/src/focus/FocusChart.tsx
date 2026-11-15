@@ -1,16 +1,18 @@
 import type { RunFocusItem } from "@sfly/schema";
-import { cn } from "cn";
-import { type ReactNode, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
-import { SERIES_COLORS, SERIES_DASH } from "#/monitor/MetricChart";
+import { seriesColor, seriesDash } from "#/monitor/MetricChart";
+import { Button } from "@/components/ui/button";
+import { FocusValue } from "./FocusValue";
 import { PLOT_MARGIN, plotChart, shownSeries } from "./focus-chart";
 import {
 	chartMissingText,
-	latestSeriesName,
+	hasSeveralMetrics,
+	NOT_STARTED_TEXT,
 	readingFoot,
 	readingLabel,
 	seriesName,
-	valueText,
+	sourceNodeName,
 } from "./focus-format";
 
 /** 绘图区的高度（px）；宽度取容器的实际宽度。 */
@@ -31,9 +33,6 @@ function useElementWidth<E extends HTMLElement>() {
 	return [ref, width] as const;
 }
 
-const lineColor = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length] as string;
-const lineDash = (i: number) => SERIES_DASH[i % SERIES_DASH.length];
-
 /**
  * 一个图表类关注项（折线、面积、柱状）的卡片：状态形状和名称、最新值、来源节点和多久前、按容器的实际尺寸画的图、
  * 序列多于一条时的图例，以及「在详情里打开」。图的横轴是来源节点这次尝试的开始到结束（还没结束就到读数生成的时刻），
@@ -52,7 +51,7 @@ export function FocusChart({
 	const [plotRef, width] = useElementWidth<HTMLDivElement>();
 	const { series, hidden } = useMemo(() => shownSeries(item.series), [item.series]);
 	const started = item.source.started_at;
-	const window = useMemo(() => {
+	const axis = useMemo(() => {
 		if (started === null) return null;
 		const start = Date.parse(started);
 		const end = Date.parse(item.source.ended_at ?? generatedAt);
@@ -60,15 +59,14 @@ export function FocusChart({
 	}, [started, item.source.ended_at, generatedAt]);
 	const plot = useMemo(
 		() =>
-			window && width > 0
-				? plotChart(series, window, item.bucket_seconds, { width, height: PLOT_HEIGHT })
+			axis && width > 0
+				? plotChart(series, axis, item.bucket_seconds, { width, height: PLOT_HEIGHT })
 				: null,
-		[window, width, series, item.bucket_seconds],
+		[axis, width, series, item.bucket_seconds],
 	);
 	const titleId = `focus-chart-${item.position}`;
-	const latestName = latestSeriesName(item);
 	const empty = item.latest === null;
-	const multiMetric = new Set(item.series.map((s) => s.metric)).size > 1;
+	const multiMetric = hasSeveralMetrics(item.series);
 
 	return (
 		<article
@@ -81,15 +79,7 @@ export function FocusChart({
 				<h3 id={titleId} className="m-0 min-w-0 text-sm font-semibold wrap-anywhere text-fg-1">
 					{item.title}
 				</h3>
-				{!item.unavailable && (
-					<span className="ml-auto flex-none truncate font-mono text-lg font-semibold whitespace-nowrap text-fg-1">
-						{latestName && <span className="mr-1 text-xs font-normal text-fg-3">{latestName}</span>}
-						{valueText(item)}
-						{item.unit && (
-							<small className="ml-0.75 text-xs font-normal text-fg-3">{item.unit}</small>
-						)}
-					</span>
-				)}
+				{!item.unavailable && <FocusValue item={item} className="ml-auto flex-none truncate" />}
 			</header>
 			<p className="m-0 font-mono text-xs text-fg-3">{readingFoot(item, generatedAt)}</p>
 			{item.unavailable ? (
@@ -141,8 +131,8 @@ export function FocusChart({
 									key={line.key}
 									type={item.chart_type}
 									line={line}
-									color={lineColor(i)}
-									dash={lineDash(i)}
+									color={seriesColor(i)}
+									dash={seriesDash(i)}
 									baseline={plot.yTicks[0]?.y ?? 0}
 								/>
 							))}
@@ -150,7 +140,7 @@ export function FocusChart({
 					)}
 					{empty && (
 						<span className="absolute inset-0 grid place-items-center pb-5 pl-11 text-xs text-fg-3">
-							{item.source.started_at === null ? "还没有开始执行" : "还没有数据"}
+							{item.source.started_at === null ? NOT_STARTED_TEXT : "还没有数据"}
 						</span>
 					)}
 				</div>
@@ -168,9 +158,9 @@ export function FocusChart({
 									x2={12}
 									y1={2}
 									y2={2}
-									stroke={lineColor(i)}
+									stroke={seriesColor(i)}
 									strokeWidth={2}
-									strokeDasharray={lineDash(i)}
+									strokeDasharray={seriesDash(i)}
 								/>
 							</svg>
 							{seriesName(s, multiMetric)}
@@ -180,23 +170,11 @@ export function FocusChart({
 				</ul>
 			)}
 			<footer className="mt-auto flex justify-end pt-1">
-				<OpenLink onClick={onOpen}>在详情里打开 {item.node_id}</OpenLink>
+				<Button variant="link" onClick={onOpen} className="text-xs text-fg-2">
+					在详情里打开 {sourceNodeName(item)}
+				</Button>
 			</footer>
 		</article>
-	);
-}
-
-function OpenLink({ onClick, children }: { onClick: () => void; children: ReactNode }) {
-	return (
-		<button
-			type="button"
-			onClick={onClick}
-			className={cn(
-				"cursor-pointer rounded-sm text-xs text-fg-2 underline decoration-border-strong underline-offset-3 hover:text-fg-1",
-			)}
-		>
-			{children}
-		</button>
 	);
 }
 

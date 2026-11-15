@@ -54,8 +54,8 @@ export const FocusSource = z.object({
 	attempt: z.number().int().nonnegative(),
 	/** 最新一次尝试的任务；节点还没有尝试时为 null。 */
 	task_id: z.string().nullable(),
-	/** 节点所在的链实例。 */
-	chain_instance_id: z.string(),
+	/** 节点所在的链实例；节点所在的子流程还没有触发（还没有链实例）时为 null。 */
+	chain_instance_id: z.string().nullable(),
 	/** 这次尝试开始、结束的时间，图表的横轴从开始画到结束（还没结束就画到 `generated_at`）；没有就是 null。 */
 	started_at: Timestamp.nullable(),
 	ended_at: Timestamp.nullable(),
@@ -83,11 +83,14 @@ export const FocusAnomaly = z.object({
  * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点的执行顺序编号。
  * `unavailable` 为 `chart_missing`（这次运行锁定的节点包版本里没有这张图表）时，`chart_type` 是 `line`、`unit` 是空串、
  * 没有数据，这几个值没有意义，页面按 `unavailable` 写明原因。
+ * 节点还没有开始（所在的子流程也可能还没触发）时 `source.status` 是 `pending`，没有数据。
  */
 export const RunFocusItem = z.object({
 	/** 作者设定的位置，从 1 开始；列表里不在这次运行里的项也占位置，所以返回的位置可以不连续。 */
 	position: z.number().int().positive(),
 	node_id: z.string(),
+	/** 来源节点的显示名称，取自这次运行绑定的场景版本；没有显示名称时不给。界面上写成「显示名称（节点 ID）」。 */
+	display_name: z.string().optional(),
 	/** 图表标题。 */
 	chart: z.string(),
 	/** 显示名：作者起的名字，没起名时是图表标题。 */
@@ -125,7 +128,8 @@ export const RunFocus = z.object({
 export const runFocusApi = {
 	/**
 	 * 一次运行的全部关注项：只返回节点在这次运行的版本里的那些项，取节点最新一次尝试的任务，图表的定义取这次运行
-	 * 锁定的节点包版本（那个版本里没有这张图表时 `unavailable` 为 `chart_missing`）。场景没设关注项时 `mode` 是
+	 * 锁定的节点包版本（那个版本里没有这张图表时 `unavailable` 为 `chart_missing`）。节点在这次运行绑定的版本里、
+	 * 但还没有开始（包括所在的子流程还没触发）时照样返回，状态是 `pending`。场景没设关注项时 `mode` 是
 	 * `primary`，返回执行中节点的主指标。运行不存在时 404。
 	 */
 	focus: endpoint({

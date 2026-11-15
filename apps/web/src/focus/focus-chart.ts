@@ -107,7 +107,7 @@ export function plotChart(
 }
 
 /**
- * 图表里画哪些序列：不超过 `limit` 条时全部画；超过时画最近一个点最高的 `limit` 条（按桶的最新值的平均），
+ * 图表里画哪些序列：不超过 `limit` 条时全部画；超过时画平均值最高的 `limit` 条（每个桶的最新值取平均），
  * 没有点的排在最后，仍按原来的顺序画（颜色和图例顺序不随数据变化）。`hidden` 是没画的条数。
  */
 export function shownSeries(

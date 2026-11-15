@@ -1,4 +1,5 @@
 import type { FocusSeries, RunFocusItem } from "@sfly/schema";
+import { runNodeName } from "#/components/node-name";
 import { nodeStatusView } from "#/components/status";
 import { formatDuration, formatMetric } from "#/lib/format";
 
@@ -39,20 +40,31 @@ export function seriesName(
 export function latestSeriesName(item: Pick<RunFocusItem, "latest" | "series">): string {
 	const { latest } = item;
 	if (latest === null) return "";
-	const multiMetric = new Set(item.series.map((s) => s.metric)).size > 1;
+	const multiMetric = hasSeveralMetrics(item.series);
 	return multiMetric || Object.keys(latest.labels).length > 0
 		? seriesName(latest, multiMetric)
 		: "";
 }
 
+/** 来源节点还没有开始执行（与 lib/node-status 里节点「待执行」的说明同一句话）。 */
+export const NOT_STARTED_TEXT = "还没有开始执行";
+
+/** 来源节点：「显示名称（节点 ID）」，没有显示名称时只写节点 ID（docs/SEMANTICS.md §1.4）。 */
+export const sourceNodeName = (item: Pick<RunFocusItem, "node_id" | "display_name">): string =>
+	runNodeName(item);
+
 /** 读数的脚注：来源节点和「多久前」；来源节点成功或已停止后是「最终值」，还没有数据时写明原因。 */
 export function readingFoot(item: RunFocusItem, generatedAt: string): string {
-	const node = item.node_id;
+	const node = sourceNodeName(item);
 	if (item.final) return `${node} · 最终值`;
 	const age = readingAge(item, generatedAt);
 	if (age !== null) return `${node} · ${formatAgo(age)} 前`;
-	return `${node} · ${item.source.task_id === null ? "尚未开始" : "还没有数据"}`;
+	return `${node} · ${item.source.task_id === null ? NOT_STARTED_TEXT : "还没有数据"}`;
 }
+
+/** 图表里有好几个指标（序列分属不同的指标）：读数和图例要写明是哪个指标。 */
+export const hasSeveralMetrics = (series: ReadonlyArray<Pick<FocusSeries, "metric">>): boolean =>
+	new Set(series.map((s) => s.metric)).size > 1;
 
 /** 这张图表在这次运行的节点包版本里不存在时的说明。 */
 export const chartMissingText = (item: Pick<RunFocusItem, "chart">) =>
@@ -64,7 +76,7 @@ export const chartMissingText = (item: Pick<RunFocusItem, "chart">) =>
  */
 export function readingLabel(item: RunFocusItem, generatedAt: string): string {
 	const status = nodeStatusView(item.source.status).label;
-	const origin = `来自 ${item.node_id}（${status}）`;
+	const origin = `来自 ${sourceNodeName(item)}（${status}）`;
 	if (item.unavailable) return `${item.title}，${chartMissingText(item)}，${origin}`;
 	const series = latestSeriesName(item);
 	const value = `${series ? `${series} ` : ""}${valueText(item)}${item.unit ? ` ${item.unit}` : ""}`;

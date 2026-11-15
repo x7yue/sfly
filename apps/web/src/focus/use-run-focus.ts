@@ -5,7 +5,8 @@ import { apiQuery } from "#/lib/api";
 import { LIVE_POLL_MS } from "#/lib/polling";
 
 /**
- * 一次运行的关注项读数（`GET /runs/:id/focus`）：概览、画布、控制台和 Agent 管理页共用，别处不要再自己拼指标查询。
+ * 一次运行的关注项读数（`GET /runs/:id/focus`）：页面读它的唯一入口（概览现在用；画布、控制台、Agent 管理页的关注项
+ * 读数也读这一份），不要再自己拼指标查询。
  * 运行中每 `LIVE_POLL_MS` 重新读取一次；运行结束时再读一次，拿到最终值，之后不再轮询。
  * `points` 是每个序列降采样的点数，只要最新值的地方（读数、槽位）传 0。
  */

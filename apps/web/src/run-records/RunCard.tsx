@@ -19,8 +19,8 @@ const MAX_ACTIVE = 3;
 
 /**
  * 进行中的运行（原型 runCard）：场景、版本、已运行时长、各链进度、失败的子流程、
- * 当前执行的节点与主指标（节点类型有主指标时，#43）或进度，「打开运行详情」「取消运行」。
- * 点卡片空白处也进入运行详情。
+ * 当前执行的节点与主指标（节点类型有主指标时，#43）或进度，「打开运行监控」「取消运行」。
+ * 点卡片空白处也进入运行监控。
  */
 export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 	const navigate = useNavigate();
@@ -32,7 +32,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 	const open = () => void navigate({ to: "/runs/$id", params: { id: run.id } });
 	const status = runStatusView(run.status, { cancelling: run.cancelling });
 	return (
-		// biome-ignore lint/a11y/useKeyWithClickEvents: 键盘用户用卡片里的「打开运行详情」链接
+		// biome-ignore lint/a11y/useKeyWithClickEvents: 键盘用户用卡片里的「打开运行监控」链接
 		<article
 			aria-label={`运行 ${shortId(run.id)}`}
 			onClick={(event) => {
@@ -132,7 +132,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					data-list-primary
 					className={buttonVariants({ size: "sm" })}
 				>
-					打开运行详情
+					打开运行监控
 				</Link>
 				{run.status === "running" && (
 					<span className="ml-auto">

@@ -683,8 +683,8 @@ export interface FocusSource {
 	attempt: number;
 	/** 最新一次尝试的任务；节点还没有尝试时为 null。 */
 	task_id: string | null;
-	/** 节点所在的链实例。 */
-	chain_instance_id: string;
+	/** 节点所在的链实例；节点所在的子流程还没有触发（还没有链实例）时为 null。 */
+	chain_instance_id: string | null;
 	/** 这次尝试开始、结束的时间，图表的横轴从开始画到结束（还没结束就画到 `generated_at`）；没有就是 null。 */
 	started_at: Timestamp | null;
 	ended_at: Timestamp | null;
@@ -1438,11 +1438,14 @@ export interface RunFocus {
  * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点的执行顺序编号。
  * `unavailable` 为 `chart_missing`（这次运行锁定的节点包版本里没有这张图表）时，`chart_type` 是 `line`、`unit` 是空串、
  * 没有数据，这几个值没有意义，页面按 `unavailable` 写明原因。
+ * 节点还没有开始（所在的子流程也可能还没触发）时 `source.status` 是 `pending`，没有数据。
  */
 export interface RunFocusItem {
 	/** 作者设定的位置，从 1 开始；列表里不在这次运行里的项也占位置，所以返回的位置可以不连续。 */
 	position: number;
 	node_id: string;
+	/** 来源节点的显示名称，取自这次运行绑定的场景版本；没有显示名称时不给。界面上写成「显示名称（节点 ID）」。 */
+	display_name?: string;
 	/** 图表标题。 */
 	chart: string;
 	/** 显示名：作者起的名字，没起名时是图表标题。 */

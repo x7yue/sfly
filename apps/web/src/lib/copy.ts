@@ -99,7 +99,7 @@ export const ACTION = {
 	cancelRun: "取消运行",
 	forceCancel: "强制终止",
 	keepRunning: "继续运行",
-	openRun: "打开运行详情",
+	openRun: "打开运行监控",
 	viewRuns: "查看运行记录",
 	edit: "编排",
 	newScenario: "新建场景",

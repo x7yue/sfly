@@ -40,7 +40,7 @@ export interface RunDrawerProps extends TriggerOptions {
 
 /**
  * 运行抽屉（原型 #/scenarios 的 drawerHTML）：右侧抽屉，先填写入口参数、查看触发前检查，触发后同一个抽屉
- * 显示运行摘要（各链进度、正在执行的节点、最新日志，实时更新），可以打开运行详情或取消运行。
+ * 显示运行摘要（各链进度、正在执行的节点、最新日志，实时更新），可以打开运行监控或取消运行。
  * 用于场景卡片的「运行」、编排画布的「运行」与监控页的「再次运行」。
  * 焦点锁定在抽屉里，Esc 关闭，关闭后焦点回到打开它的按钮；抽屉随页面卸载，离开页面即关闭。
  * 打开时焦点先落在正文上（不是页脚的「取消」：再按一次 Enter 抽屉就关了）。
@@ -182,7 +182,7 @@ function SummaryVersion({ runId }: { runId: string }) {
 	return run ? <Badge className="font-mono">v{run.orchestration_version}</Badge> : null;
 }
 
-/** 摘要阶段的底部：取消运行（运行中）、关闭、打开运行详情。 */
+/** 摘要阶段的底部：取消运行（运行中）、关闭、打开运行监控。 */
 function SummaryActions({ runId, orchestrationId }: { runId: string; orchestrationId: string }) {
 	const run = useLiveRun(runId).data;
 	return (
@@ -202,7 +202,7 @@ function SummaryActions({ runId, orchestrationId }: { runId: string; orchestrati
 				params={{ id: runId }}
 				className={buttonVariants({ variant: "primary" })}
 			>
-				打开运行详情
+				打开运行监控
 			</Link>
 		</>
 	);

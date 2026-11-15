@@ -71,7 +71,7 @@ test("「运行场景」打开命令面板，只列出运行场景一组，选�
 	await expect(page.getByRole("dialog", { name: /运行/ })).toBeVisible();
 });
 
-test("正在运行：各链进度与当前节点，点击进入运行详情", async ({
+test("正在运行：各链进度与当前节点，点击进入运行监控", async ({
 	page,
 	controlPlane,
 	connectAgent,

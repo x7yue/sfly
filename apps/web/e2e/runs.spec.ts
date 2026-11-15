@@ -44,7 +44,7 @@ test("进行中的运行显示为卡片：场景、版本、时长、各链进�
 	await expect(card.getByRole("img", { name: "子流程 sub 1/2" })).toBeVisible();
 	await expect(card.getByRole("listitem")).toHaveText([/verify.*执行中.*3 \/ 10/]);
 
-	await card.getByRole("link", { name: "打开运行详情" }).click();
+	await card.getByRole("link", { name: "打开运行监控" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?|$)`));
 });
 
@@ -188,7 +188,7 @@ test("取消运行：确认框列出影响、点「取消运行」确认，运�
 	const card = page.getByRole("article", { name: `运行 ${runId.slice(0, 8)}` });
 	const cancel = card.getByRole("button", { name: "取消运行" });
 	await expect(cancel).toHaveAttribute("data-variant", "ghost");
-	await expect(card.getByRole("link", { name: "打开运行详情" })).toBeVisible();
+	await expect(card.getByRole("link", { name: "打开运行监控" })).toBeVisible();
 	await cancel.click();
 	const dialog = page.getByRole("dialog", { name: `取消运行 ${runId.slice(0, 8)}？` });
 	await expect(dialog).toBeVisible();
@@ -246,11 +246,11 @@ test("列表页的键盘：/ 聚焦搜索框，↓ 与 J / K 从进行中的卡�
 	await page.keyboard.press("/");
 	await expect(page.getByRole("searchbox", { name: "搜索运行编号或触发人" })).toBeFocused();
 	await page.keyboard.press("ArrowDown");
-	await expectFocusVisible(card.getByRole("link", { name: "打开运行详情" }));
+	await expectFocusVisible(card.getByRole("link", { name: "打开运行监控" }));
 	await page.keyboard.press("j");
 	await expectFocusVisible(row.getByRole("link", { name: done.slice(0, 8) }));
 	await page.keyboard.press("k");
-	await expectFocusVisible(card.getByRole("link", { name: "打开运行详情" }));
+	await expectFocusVisible(card.getByRole("link", { name: "打开运行监控" }));
 	await page.keyboard.press("j");
 	await page.keyboard.press("j");
 	await expectFocusVisible(row.getByRole("link", { name: done.slice(0, 8) }));

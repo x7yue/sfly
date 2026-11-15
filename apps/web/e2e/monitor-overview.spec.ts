@@ -1,8 +1,17 @@
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { ErrorKind } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
-import { openMonitor, pingPoints, runningScenario, unixAt } from "./monitor-scenario";
+import { saveVersion, setFocusItems } from "./focus-support";
+import {
+	MONITOR_SCENARIO,
+	metricPackage,
+	openMonitor,
+	pingPoints,
+	runningScenario,
+	unixAt,
+} from "./monitor-scenario";
 import { focusChart, openOverview, overviewRun, readouts, viewTab } from "./overview-support";
+import { createScenario, publishPackage, triggerRun } from "./support";
 
 // 运行监控「概览」（#344）：概览 / 详情标签页、地址与记住的视图、关注项读数与图表、没设关注项时的主指标。
 
@@ -215,7 +224,7 @@ test("图表：按作者的顺序两列排开，纵轴从 0 开始，多条线�
 
 	// 还没开始执行的 cleanup：没有数据，写明原因。
 	await expect(focusChart(page, "清理 level")).toContainText("还没有开始执行");
-	await expect(focusChart(page, "清理 level")).toContainText("cleanup · 尚未开始");
+	await expect(focusChart(page, "清理 level")).toContainText("cleanup · 还没有开始执行");
 });
 
 test("点任何一项都进入详情，并定位到它所在的节点", async ({
@@ -234,6 +243,11 @@ test("点任何一项都进入详情，并定位到它所在的节点", async ({
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail&node=probe$`));
 	await expect(timeline(page).locator('[data-node-row="probe"] button')).toHaveAttribute(
 		"aria-pressed",
+		"true",
+	);
+	// 图表工作区里它所在的节点分组被选中。
+	await expect(page.getByRole("region", { name: "probe 的图表" })).toHaveAttribute(
+		"data-selected",
 		"true",
 	);
 
@@ -342,4 +356,103 @@ test("详情不受影响：用 view=detail 打开就是原来的页面", async (
 	await openMonitor(page, clock, runId);
 	await expect(page.getByRole("region", { name: "图表工作区" })).toBeVisible();
 	await expect(page.getByRole("region", { name: "底部面板" })).toBeVisible();
+});
+
+test("点一项进入详情后，焦点在「详情」标签上，键盘用户不会落在页面最前面", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	const button = readouts(page).getByRole("button", { name: /^total 16/ });
+	await button.focus();
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(/view=detail&node=probe$/);
+	await expect(viewTab(page, "详情")).toBeFocused();
+});
+
+test("子流程还没触发的节点也在概览里：写明还没有开始执行，点开进入详情", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane, metricPackage());
+	const scenarioId = await createScenario(controlPlane, "日终数据处理", MONITOR_SCENARIO);
+	await setFocusItems(controlPlane, scenarioId, [
+		{ node_id: "probe", chart: "level", title: "探活 level" },
+	]);
+	const runId = await triggerRun(controlPlane, scenarioId);
+	await agent.nextAssign();
+	await openOverview(page, clock, runId);
+
+	// 子流程要等 fetch 成功、spawn 执行之后才触发：probe 还没有链实例。
+	const card = focusChart(page, "探活 level");
+	await expect(card).toContainText("probe · 还没有开始执行");
+	await card.getByRole("button", { name: "在详情里打开 probe" }).click();
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail&node=probe$`));
+	await expect(timeline(page)).toBeVisible();
+});
+
+test("这次运行的节点包版本里没有这张图表：读数写明原因，不显示数值", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	// 之后的版本升到 1.3.0，http_check 的图表「吞吐」改名为「吞吐量」，作者按新名字设了关注项；这次运行锁定的是 1.2.0。
+	const renamed = metricPackage().nodes.map((node) => ({
+		...node,
+		...("charts" in node
+			? { charts: node.charts.map((c) => (c.title === "吞吐" ? { ...c, title: "吞吐量" } : c)) }
+			: {}),
+	}));
+	await publishPackage(controlPlane, { version: "1.3.0", nodes: renamed });
+	await saveVersion(controlPlane, scenarioId, 1, {
+		...MONITOR_SCENARIO,
+		packages: { "demo-checks": "1.3.0" },
+	});
+	await setFocusItems(controlPlane, scenarioId, [
+		{ node_id: "fetch", chart: "吞吐量" },
+		{ node_id: "fetch", chart: "errors" },
+	]);
+	await openOverview(page, clock, runId);
+
+	const missing = readouts(page).getByRole("button", { name: /没有图表「吞吐量」/ });
+	await expect(missing).toContainText("这个版本的节点没有图表「吞吐量」");
+	await expect(missing).toContainText("fetch · 最终值");
+	// 其余项照常显示。
+	await expect(readouts(page).getByRole("button", { name: /^errors 1 次/ })).toBeVisible();
+});
+
+test("概览里点顶栏的失败摘要：切到详情并打开失败节点的「尝试」页签，不改记住的视图", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	await agent.succeed(tasks.probe as AssignedTask);
+	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦", ErrorKind.NODE_ERROR);
+	const cleanup = await agent.nextAssign();
+	clock.advance(1000);
+	await agent.succeed(cleanup);
+	await openOverview(page, clock, runId);
+
+	// 概览没有失败横幅，失败摘要在顶栏。
+	await expect(page.getByRole("region", { name: "运行失败" })).toHaveCount(0);
+	await page.getByRole("banner").getByTestId("run-failure").click();
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+	await expect(
+		page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }),
+	).toHaveAttribute("aria-selected", "true");
+	expect(await page.evaluate(() => window.localStorage.getItem("sfly.monitor.view"))).toBeNull();
 });
