@@ -169,7 +169,7 @@ export const chainCountLabel = (chains: number, nodes: number) =>
 	`${chains} 条链 · ${nodes} 个节点`;
 
 /**
- * 还没结束、正在推进的节点（排队中、派发中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
+ * 还没结束、正在推进的节点（排队中、准备中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
  * 不等于任何一个节点状态名：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。
  */
 export const ACTIVE_LABEL = "进行中";
@@ -181,7 +181,7 @@ export const LIST_LABEL = {
 	/** 运行监控的概览里，执行中的节点的列表；列表前的标题只写 `NODE_STATUS.running.label`。 */
 	runningNodes: `${NODE_STATUS.running.label}的${TERM.node}`,
 	/**
-	 * 运行抽屉的摘要里，还没结束、正在推进的节点（排队中、派发中、执行中、等待中）的列表，每个节点带自己的状态标签。
+	 * 运行抽屉的摘要里，还没结束、正在推进的节点（排队中、准备中、执行中、等待中）的列表，每个节点带自己的状态标签。
 	 * 说法不等于任何一个节点状态名；概览只列执行中的节点，用 `runningNodes`。
 	 */
 	activeNodes: `${ACTIVE_LABEL}的${TERM.node}`,

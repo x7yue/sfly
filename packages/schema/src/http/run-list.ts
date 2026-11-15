@@ -39,7 +39,7 @@ export const RunListChain = z.object({
 	nodes: z.array(z.object({ node_id: z.string(), status: z.string() })),
 });
 
-/** 进行中的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序。 */
+/** 进行中的节点（排队中、准备中、执行中、等待中），按链与链上的顺序。 */
 export const RunListActiveNode = z.object({
 	chain_instance_id: z.string(),
 	node_id: z.string(),

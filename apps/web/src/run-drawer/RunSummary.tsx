@@ -44,7 +44,7 @@ const LOG_LINES = 6;
 
 /**
  * 运行抽屉的摘要阶段（原型 drawerHTML 的 summary）：运行状态与时长、各链进度、进行中的节点（进度）、
- * 最新几行日志，实时更新；节点类型有主指标时，进行中的节点显示主指标的最新值与趋势（#43）。
+ * 最新几行日志，实时更新；节点类型有主指标时，节点下面显示主指标的最新值与趋势（#43）。
  * 底部按钮由 RunDrawer 渲染。
  */
 export function RunSummary({ runId }: { runId: string }) {

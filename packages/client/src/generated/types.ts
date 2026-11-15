@@ -1513,23 +1513,23 @@ export type RequiresAgent = string;
 export type RequiresSdk = string;
 
 export interface RunFocus {
-	/** 控制面生成这份读数的时间，页头「数据更新于」用它。 */
+	/** 控制面生成这份读数的时间；页面上的「多久前」按它算。 */
 	generated_at: Timestamp;
-	/** 场景设了关注项是 `focus`；没设时是执行中节点的主指标 `primary`。 */
+	/** 场景设了关注项是 `focus`；没设时是准备中、执行中节点的主指标 `primary`。 */
 	mode: "focus" | "primary";
 	/** 这次运行的指标已过保留期：每一项都没有数据。 */
 	expired: boolean;
-	/** 按作者设定的顺序（`position` 升序）；没设关注项时按执行中节点在运行里的顺序。 */
+	/** 按作者设定的顺序（`position` 升序）；没设关注项时按准备中、执行中节点在运行里的顺序。 */
 	items: RunFocusItem[];
 }
 
 /**
- * 一个关注项（或没设关注项时一个执行中节点的主指标）的读数。
+ * 一个关注项（或没设关注项时一个准备中、执行中节点的主指标）的读数。
  *
  * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点在运行里的顺序编号。
  * `unavailable` 为 `chart_missing`（这次运行锁定的节点包版本里没有这张图表）时，`chart_type` 是 `line`、`unit` 是空串、
  * 没有数据，这几个值没有意义，页面按 `unavailable` 写明原因。
- * 节点还没有开始执行（所在的子流程还没触发、排队中、被跳过、没开始就被取消或停止……）时 `source.started_at` 为 null，
+ * 节点还没有开始执行（待执行、排队中、准备中、已跳过，以及没开始就已取消、已停止的；所在的子流程还没触发的节点是待执行）时 `source.started_at` 为 null，
  * 没有数据，`source.status` 是节点当时的状态。
  */
 export interface RunFocusItem {
@@ -1568,7 +1568,7 @@ export interface RunFocusQuery {
 	points?: number;
 }
 
-/** 进行中的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序。 */
+/** 进行中的节点（排队中、准备中、执行中、等待中），按链与链上的顺序。 */
 export interface RunListActiveNode {
 	chain_instance_id: string;
 	node_id: string;

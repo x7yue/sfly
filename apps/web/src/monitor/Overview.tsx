@@ -57,7 +57,7 @@ const executingNodes = (run: RunView) =>
 		}),
 	);
 
-/** 链路：每条链一行进度，下面一行写执行中的节点、所在 Agent、尝试号和已执行的时长。 */
+/** 链路：每条链一行进度，下面一行写执行中的节点、所在 Agent、尝试号和时长（从开始执行算起，准备中的节点从排队算起）。 */
 function ChainSection({ run }: { run: RunView }) {
 	const { now } = useTimeAxis();
 	const chains = orderedChains(run);
