@@ -57,15 +57,33 @@ test("每张图表一个「关注」开关：打开后名额增加，刷新后�
 	await expect.poll(async () => (await sceneView(controlPlane, id)).focus_items).toEqual([]);
 });
 
-test("连续打开几个开关：按点击的先后依次写入，每一个都留下", async ({ page, controlPlane }) => {
+test("第一个写入还没有返回时再点别的开关：按点击的先后依次写入，后点的不会被先发出的覆盖", async ({
+	page,
+	controlPlane,
+}) => {
 	const id = await createFocusScenario(controlPlane);
 	const panel = await openMetricsTab(page, id, "fetch");
 
-	for (const chart of ["吞吐", "请求数", "errors"]) await pin(panel, chart).click();
-	await expect(quota(panel)).toHaveText("本场景的关注项已用 3 / 8");
+	// 第一个写入挂起，等第二个开关也点过了再放行。
+	let release: () => void = () => {};
+	const held = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	let writes = 0;
+	await page.route(`**/api/orchestrations/${id}`, async (route) => {
+		if (route.request().method() === "PATCH" && writes++ === 0) await held;
+		await route.continue();
+	});
+
+	await pin(panel, "吞吐").click();
+	await pin(panel, "请求数").click();
+	await expect(pin(panel, "请求数")).toHaveAttribute("aria-pressed", "true");
+	await expect(quota(panel)).toHaveText("本场景的关注项已用 2 / 8");
+	release();
 	await expect
 		.poll(async () => (await sceneView(controlPlane, id)).focus_items.map((i) => i.chart))
-		.toEqual(["吞吐", "请求数", "errors"]);
+		.toEqual(["吞吐", "请求数"]);
+	await expect(pin(panel, "吞吐")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("满 8 个以后其余开关禁用并写明先移除一项，失效的项也占名额；取消一个后恢复", async ({
