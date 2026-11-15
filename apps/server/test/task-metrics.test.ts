@@ -512,6 +512,7 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["runs", "preset_params", "jsonb"],
 	["orchestrations", "focus_items", "jsonb DEFAULT '[]'::jsonb NOT NULL"],
 	["orchestrations", "focus_edit", "jsonb"],
+	["tasks", "log_issues", "jsonb"],
 ];
 
 /**
