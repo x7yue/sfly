@@ -413,7 +413,7 @@ message Notification {
 
 // 任务最新的一份动作摘要（ctx.action、ctx.mark，规格 #345）。每一份都是完整的，只有最新一份有用：Agent 只保留
 // 最新读到的一份，每个任务每秒最多发一次，任务结束前把最后一份发完，再发 TaskResult；断线期间每个任务也只排队最新
-// 的一份。控制面不回 Ack。
+// 的一份（断线期间结束的任务，重连后先重发结果，摘要随后到达）。控制面不回 Ack。
 message ActionSummary {
   string task_id = 1;
   uint32 attempt = 2;

@@ -171,7 +171,8 @@ impl Telemetry {
     }
 
     /// 排队一份动作摘要。这个任务已经有一份在排队（还没发出）时换成这一份，不再多排：
-    /// 先排的那个占位取走的就是最新的一份，所以它仍排在同一任务的结果之前。
+    /// 先排的那个占位取走的就是最新的一份，所以它仍排在同一任务的结果之前（断线期间结束的任务除外：
+    /// 重连后先重发没被 Ack 的结果，排队的消息随后发出）。
     pub fn send_action_summary(&self, summary: ActionSummary) {
         let task_id = summary.task_id.clone();
         let Ok(mut pending) = self.summaries.lock() else {
