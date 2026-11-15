@@ -236,10 +236,14 @@ export async function openMonitor(
 	await expect(page.getByRole("region", { name: "链路时间线" })).toBeVisible();
 }
 
-/** 推进手动时钟；每 15 秒心跳一次，手上任务的租约（30 秒）不会过期。 */
-async function advance(clock: ManualClock, agent: FakeAgent, ms: number) {
+/**
+ * 推进手动时钟；每 15 秒心跳一次，手上任务的租约（30 秒）不会过期。`each` 在每一步推进之后、心跳之前调用
+ * （例如让某个节点每一步都上报一个点）。
+ */
+export async function advance(clock: ManualClock, agent: FakeAgent, ms: number, each?: () => void) {
 	for (let left = ms; left > 0; left -= 15_000) {
 		clock.advance(Math.min(left, 15_000));
+		each?.();
 		await agent.heartbeat();
 	}
 }

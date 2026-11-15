@@ -40,18 +40,22 @@ export interface Plot {
 	yTicks: Array<{ y: number; label: string }>;
 	xTicks: Array<{ x: number; label: string }>;
 	lines: PlotLine[];
+	/** 没有新数据的一段：从最后一个点到横轴末端（绘图区里的左端和宽度）；没有要画的为 null。 */
+	gap: { x: number; width: number } | null;
 }
 
 /**
  * 按容器的实际尺寸画图表：纵轴从 0 起（不把正常的小波动放大成大起大落），上限是所有桶的最大值（尖峰也在范围里）；
  * 横轴是 `window`（来源节点这次尝试的开始到结束或到现在），桶画在它覆盖的时段的中点。
  * `series` 是要画的那些序列（调用方已经挑好），`bucketSeconds` 是桶的跨度。
+ * 给了 `gapFrom`（没有新数据时最后一个点的时间，毫秒）时，算出从它到横轴末端的一段，曲线停在最后一个点，之后画斜线。
  */
 export function plotChart(
 	series: ReadonlyArray<Pick<FocusSeries, "points"> & { key: string }>,
 	window: PlotWindow,
 	bucketSeconds: number,
 	size: { width: number; height: number },
+	gapFrom?: number,
 ): Plot {
 	const { left, right, top, bottom } = PLOT_MARGIN;
 	const plotW = Math.max(1, size.width - left - right);
@@ -103,6 +107,10 @@ export function plotChart(
 			label: clockLabel(window.start + f * span, span),
 		})),
 		lines,
+		gap:
+			gapFrom === undefined || x(gapFrom) >= left + plotW
+				? null
+				: { x: x(gapFrom), width: left + plotW - x(gapFrom) },
 	};
 }
 

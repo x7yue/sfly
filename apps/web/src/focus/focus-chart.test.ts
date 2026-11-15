@@ -98,6 +98,18 @@ describe("按容器的实际尺寸画图表", () => {
 		expect(plot.yTicks.map((t) => t.label)).toEqual(["0", "0.50", "1"]);
 		expect(plot.lines[0]?.path).toEqual([]);
 	});
+
+	it("没有新数据：从最后一个点到横轴末端是一段斜线区；没给最后一个点时没有", () => {
+		const series = [{ key: "a", points: [point(0, 1), point(60, 2)] }];
+		const right = SIZE.width - PLOT_MARGIN.right;
+		const plotW = right - PLOT_MARGIN.left;
+		const gap = plotChart(series, WINDOW, 1, SIZE, T0 + 60_000).gap;
+		expect(gap?.x).toBeCloseTo(PLOT_MARGIN.left + 0.6 * plotW);
+		expect((gap?.x ?? 0) + (gap?.width ?? 0)).toBeCloseTo(right);
+		expect(plotChart(series, WINDOW, 1, SIZE).gap).toBeNull();
+		// 最后一个点就在横轴末端（或更晚）：没有要画的一段。
+		expect(plotChart(series, WINDOW, 1, SIZE, WINDOW.end).gap).toBeNull();
+	});
 });
 
 describe("图表里画哪些序列", () => {

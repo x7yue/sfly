@@ -11,10 +11,12 @@ import {
 	chainInstances,
 	orchestrationVersions,
 	runs,
+	type TaskLogIssues,
 	type TaskProgress,
 	tasks,
 } from "../db/schema.js";
 import { Topics } from "../sse/topics.js";
+import { clipChars } from "../util/text.js";
 import { readLogPage } from "./log-pages.js";
 import { maskSecrets, secretValues } from "./secrets.js";
 
@@ -48,6 +50,11 @@ import { maskSecrets, secretValues } from "./secrets.js";
  *
  * ## 进度
  * 只在 `tasks.progress` 保留最新值，不写文件；同样带两种时间，升级之前保存的值经 {@link taskProgressView} 读出。
+ *
+ * ## WARN / ERROR（`tasks.log_issues`，规格 #344）
+ * 写进文件的 WARN / ERROR 行在写入时计数，并记下最近一条的级别、控制面时间和正文（打码之后，截到
+ * {@link LOG_ISSUE_TEXT_CHARS} 个字符），与字节数、序号在同一次更新里写库。关注项按它判断「最近 10 分钟内有 WARN / ERROR」，
+ * 不扫日志文件。截断标记本身是一行 WARN，计入；之后的行不再写入，也不再计数。
  *
  * ## 上限（#18）
  * 单个任务的日志文件不超过 `limitBytes`（默认 200 MB）：放不下的第一行换成一行截断标记
@@ -137,6 +144,8 @@ const TAIL_BYTES = 256 * 1024;
 const TAIL_LINES = 500;
 /** 单个任务日志的默认上限：200 MB。 */
 export const DEFAULT_LOG_LIMIT_BYTES = 200 * 1024 * 1024;
+/** `tasks.log_issues` 里最近一条 WARN / ERROR 的正文最多记多少个字符（Unicode 码点）。 */
+export const LOG_ISSUE_TEXT_CHARS = 500;
 
 /** 缓存的任务状态数上限。 */
 const CACHE_LIMIT = 1000;
@@ -158,6 +167,8 @@ interface TaskState {
 	/** 最后一行的控制面时间（毫秒）：没有行或最后一行是旧行时为 null，还没读过文件时为 undefined。 */
 	lastTimeMs: number | null | undefined;
 	truncated: boolean;
+	/** 已写入的 WARN / ERROR（`tasks.log_issues`）；还没有时为 null。 */
+	issues: TaskLogIssues | null;
 	secrets: string[];
 }
 
@@ -326,6 +337,7 @@ export class TaskLogs {
 		let seq = state.seq;
 		let agentSeq = state.agentSeq;
 		let lastTimeMs = state.lastTimeMs;
+		let issues = state.issues;
 		let truncated = false;
 		for (const { agentSeq: lineAgentSeq, timeMs: converted, ...entry } of entries) {
 			if (lineAgentSeq === null) seq += 1;
@@ -356,6 +368,14 @@ export class TaskLogs {
 				row = `${JSON.stringify(view)}\n`;
 				truncated = true;
 			}
+			if (view.level === "warn" || view.level === "error") {
+				issues = {
+					count: (issues?.count ?? 0) + 1,
+					level: view.level,
+					at: view.time as string,
+					text: clipChars(view.text, LOG_ISSUE_TEXT_CHARS),
+				};
+			}
 			lines.push(view);
 			text += row;
 			bytes += Buffer.byteLength(row);
@@ -370,6 +390,8 @@ export class TaskLogs {
 		state.agentSeq = agentSeq;
 		state.lastTimeMs = lastTimeMs;
 		state.truncated = truncated;
+		const issuesChanged = issues !== state.issues;
+		state.issues = issues;
 		await this.deps.db
 			.update(tasks)
 			.set({
@@ -378,6 +400,7 @@ export class TaskLogs {
 				logSeq: state.seq,
 				logAgentSeq: state.agentSeq,
 				logTruncated: truncated,
+				...(issuesChanged && { logIssues: issues }),
 			})
 			.where(eq(tasks.id, taskId));
 		const chunk = { task_id: taskId, lines, offset };
@@ -540,6 +563,7 @@ export class TaskLogs {
 			lastTimeMs: undefined,
 			// 写完截断标记、数据库还没更新时控制面可能退出过：文件已到上限也算截断。
 			truncated: task.logTruncated || bytes >= this.#limit,
+			issues: task.logIssues,
 			// 占位：写入前总会先经 runSecrets 刷新。
 			secrets: [],
 		};

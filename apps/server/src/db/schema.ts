@@ -267,6 +267,20 @@ export interface TaskProgress {
 	agent_time?: string | null;
 }
 
+/**
+ * 一次尝试写进日志的 WARN / ERROR（src/logs/task-logs.ts）：总条数和最近一条。写日志时更新，关注项判断异常时读它，
+ * 不扫日志文件。
+ */
+export interface TaskLogIssues {
+	count: number;
+	/** 最近一条的级别。 */
+	level: "warn" | "error";
+	/** 最近一条的控制面时间（ISO）。 */
+	at: string;
+	/** 最近一条的正文（secret 已打码），截到 500 个字符。 */
+	text: string;
+}
+
 export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
 
 /** 运行：绑定一个编排版本。params 是填充默认值并覆盖后的入口参数。 */
@@ -397,6 +411,8 @@ export const tasks = pgTable(
 		logAgentSeq: bigint("log_agent_seq", { mode: "number" }).notNull().default(0),
 		/** 日志超过上限已被截断（#18）：写入了截断标记，之后的行都被丢弃。 */
 		logTruncated: boolean("log_truncated").notNull().default(false),
+		/** 日志里的 WARN / ERROR（{@link TaskLogIssues}）；还没有写过时为空。 */
+		logIssues: jsonb("log_issues").$type<TaskLogIssues>(),
 		/**
 		 * 定时 / Sleep 节点的唤醒时间（#14）：waiting 期间由控制面周期扫描，到期后节点成功。
 		 * 定时器的全部状态都在这一行里（status + wake_at），控制面重启后照常扫描。

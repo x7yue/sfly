@@ -35,7 +35,7 @@ import {
 	runningScenario,
 	unixAt,
 } from "./monitor-scenario";
-import { openOverview, overviewRun, readouts } from "./overview-support";
+import { attention, attentionRun, openOverview, overviewRun, readouts } from "./overview-support";
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
@@ -631,6 +631,23 @@ test("运行监控：概览（关注项的读数和图表，没有异常）", as
 	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(3);
 	await page.mouse.move(20, 880);
 	await expect(page).toHaveScreenshot("monitor-overview.png", {
+		mask: [...runIds(page), page.locator("[data-chain-id]")],
+	});
+});
+
+test("运行监控：概览（有异常：「需要注意」、WARN 的读数、没有新数据的图表）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await attentionRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	await expect(attention(page).getByRole("listitem")).toHaveCount(3);
+	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(4);
+	await expect(page.locator("[data-stale-gap]")).toHaveCount(1);
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview-attention.png", {
 		mask: [...runIds(page), page.locator("[data-chain-id]")],
 	});
 });

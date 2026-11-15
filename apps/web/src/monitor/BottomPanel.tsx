@@ -18,7 +18,7 @@ import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { MESSAGE } from "#/lib/copy";
+import { LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
@@ -74,9 +74,9 @@ const TABS: [PanelTab, string][] = [
 type MinLevel = "all" | "info" | "warn" | "error";
 const MIN_LEVELS: [MinLevel, string][] = [
 	["all", "全部"],
-	["info", "INFO"],
-	["warn", "WARN"],
-	["error", "ERROR"],
+	["info", LOG_LEVEL_LABEL.info],
+	["warn", LOG_LEVEL_LABEL.warn],
+	["error", LOG_LEVEL_LABEL.error],
 ];
 const levelsFrom = (min: MinLevel): LogLineView["level"][] =>
 	min === "all" ? [] : LOG_LEVELS.slice(LOG_LEVELS.indexOf(min));
@@ -604,7 +604,7 @@ function LogsView<L extends LogLineView>({
 			{lines.length === 0 && !logs.hasOlder && !logs.hasNewer ? (
 				<Hint>
 					{logs.expired
-						? "这次运行的日志已超过保留期，已被清理。"
+						? MESSAGE.logsExpired
 						: filtered || scoped || zoom
 							? "没有符合条件的日志。"
 							: noOutput}
