@@ -76,9 +76,9 @@ export const FOCUS = {
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
 	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */
 	attention: ATTENTION,
-	/** 「3 项需要注意」：一个节点或任务有几项关注项有异常，节点卡片和 Agent 槽位格的可访问名称里用。 */
+	/** 「3 项需要注意」：一个任务有几项关注项有异常，Agent 槽位格的可访问名称里用。 */
 	attentionCount: (count: number) => `${count} 项${ATTENTION}`,
-	/** 节点卡片和 Agent 槽位格只显示前几项时，没显示的个数（「还有 2 个关注项」）。 */
+	/** Agent 槽位格只显示前几项时，没显示的个数（「还有 2 个关注项」）。 */
 	moreItems: (count: number) => `还有 ${count} 个${TERM.focusItem}`,
 	/** 场景没有设置关注项，显示的是执行中节点的主指标：概览的标题旁和 Agent 槽位格里的主指标共用这一句。 */
 	noneSet: `场景没有设置${TERM.focusItem}`,

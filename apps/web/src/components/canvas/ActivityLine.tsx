@@ -1,8 +1,7 @@
 import { cn } from "cn";
 import { activityLabel, type CurrentActivity } from "#/actions/current-activity";
+import { Elapsed } from "#/components/elapsed";
 import { StatusDot } from "#/components/status";
-import { formatDuration } from "#/lib/format";
-import { useNow } from "#/lib/use-now";
 import { LOD_HIDDEN, ZOOM_TEXT_12 } from "./zoom-text";
 
 /**
@@ -30,15 +29,5 @@ export function ActivityLine({ id, activity }: { id: string; activity: CurrentAc
 			</span>
 			{activity.kind === "action" && <Elapsed since={activity.startedAt} />}
 		</div>
-	);
-}
-
-/** 已持续多久，按控制面时间每秒刷新（只这一小块重新渲染）。 */
-function Elapsed({ since }: { since: number }) {
-	const now = useNow(true);
-	return (
-		<span className="ml-auto flex-none pl-1.5 font-mono text-fg-3">
-			{formatDuration(now - since)}
-		</span>
 	);
 }

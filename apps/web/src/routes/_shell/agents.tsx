@@ -30,7 +30,7 @@ export const Route = createFileRoute("/_shell/agents")({
 function AgentsPage() {
 	const command = useConnectCommand();
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
-	const focus = useSlotFocus(agents.data?.agents ?? []);
+	const runFocus = useSlotFocus(agents.data?.agents ?? []);
 	const hasAgents = (agents.data?.agents.length ?? 0) > 0;
 	const loading = agents.data === undefined && !agents.isError;
 	const content = (
@@ -56,7 +56,7 @@ function AgentsPage() {
 							key={agent.name}
 							agent={agent}
 							controlPlaneVersion={data.control_plane_version}
-							focus={focus}
+							runFocus={runFocus}
 						/>
 					))}
 				</div>

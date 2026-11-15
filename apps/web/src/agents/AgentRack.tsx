@@ -28,12 +28,12 @@ import { Truncate } from "@/components/ui/truncate";
 export function AgentRack({
 	agent,
 	controlPlaneVersion,
-	focus,
+	runFocus,
 }: {
 	agent: AgentView;
 	controlPlaneVersion: string;
 	/** 占着槽位的任务所属运行的关注项读数（页面按运行读好，`useSlotFocus`）。 */
-	focus: FocusByRun;
+	runFocus: FocusByRun;
 }) {
 	const headingId = useId();
 	const slotsHeadingId = useId();
@@ -86,7 +86,7 @@ export function AgentRack({
 								className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(300px,1fr))] items-start gap-2 p-0"
 							>
 								{agent.running_tasks.map((task) => (
-									<TaskSlot key={task.task_id} task={task} focus={focus.get(task.run_id)} />
+									<TaskSlot key={task.task_id} task={task} runFocus={runFocus.get(task.run_id)} />
 								))}
 								{online && idle > 0 && <IdleSlots count={idle} />}
 							</ul>

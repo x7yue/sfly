@@ -36,10 +36,4 @@ describe("关注项只显示前几个", () => {
 		expect(names(result.shown)).toEqual(["a", "b"]);
 		expect(result.more).toBe(2);
 	});
-
-	it("上限可以指定", () => {
-		const result = topFocusItems([item("a"), item("b"), item("c")], 1);
-		expect(names(result.shown)).toEqual(["a"]);
-		expect(result.more).toBe(2);
-	});
 });

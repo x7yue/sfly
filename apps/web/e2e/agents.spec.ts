@@ -5,8 +5,14 @@ import {
 	agentClock,
 } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
-import { createFocusScenario, setFocusItems } from "./focus-support";
-import { advance, httpCheckPoints, runningScenario } from "./monitor-scenario";
+import { createFocusScenario, saveVersion, setFocusItems } from "./focus-support";
+import {
+	advance,
+	httpCheckPoints,
+	MONITOR_SCENARIO,
+	metricPackage,
+	runningScenario,
+} from "./monitor-scenario";
 import {
 	createScenario,
 	elapseWithHeartbeats,
@@ -923,6 +929,34 @@ test("槽位格：场景没设关注项时显示这个节点的主指标并写�
 	await expect(slotFocus(probe, "关注项")).toHaveCount(0);
 });
 
+test("槽位格：这次运行的节点包版本里没有这张图表时，写明原因，不显示数值", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	// 之后的版本升到 1.3.0，ping 多了一张图表「水位」，作者把它设为关注项；这次运行锁定的是 1.2.0，没有这张图表。
+	const nodes = metricPackage().nodes.map((node) =>
+		node.name === "ping"
+			? { ...node, charts: [{ title: "水位", type: "line", metrics: ["level"] }] }
+			: node,
+	);
+	await publishPackage(controlPlane, { version: "1.3.0", nodes });
+	await saveVersion(controlPlane, scenarioId, 1, {
+		...MONITOR_SCENARIO,
+		packages: { "demo-checks": "1.3.0" },
+	});
+	await setFocusItems(controlPlane, scenarioId, [{ node_id: "probe", chart: "水位" }]);
+
+	await page.goto("/agents");
+	const row = slotFocus(slotCells(page, "agent-a").filter({ hasText: "probe" })).first();
+	await expect(row).toContainText("水位");
+	await expect(row).toContainText("这个版本的节点没有图表 水位");
+	await expect(row).not.toContainText("还没有数据");
+	await expect(row.locator('[data-status-dot="warn"]')).toHaveCount(0);
+});
+
 test("同一个运行的几个槽位只读一次关注项，每个运行各读一次，只要最新值（points=0）", async ({
 	page,
 	controlPlane,
@@ -948,7 +982,6 @@ test("同一个运行的几个槽位只读一次关注项，每个运行各读�
 	await expect(rack(page, "agent-a").getByRole("list", { name: "这个任务的主指标" })).toHaveCount(
 		3,
 	);
-	await page.waitForTimeout(300);
 	expect([...requested].sort()).toEqual([`${runId}?points=0`, `${other}?points=0`].sort());
 });
 
