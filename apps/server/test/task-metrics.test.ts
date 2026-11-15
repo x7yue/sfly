@@ -484,6 +484,9 @@ describe("指标上报与存储", () => {
 	});
 });
 
+/** drizzle 迁移文件里语句之间的分隔。 */
+const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
+
 /** 0012 之后的迁移加在当前代码会读写的表上的列：表名、列名、类型。 */
 const LATER_COLUMNS: [string, string, string][] = [
 	["tasks", "metric_series_capped", "boolean DEFAULT false NOT NULL"],
@@ -512,15 +515,21 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["runs", "preset_params", "jsonb"],
 	["orchestrations", "focus_items", "jsonb DEFAULT '[]'::jsonb NOT NULL"],
 	["orchestrations", "focus_edit", "jsonb"],
+	["tasks", "action_details", "integer DEFAULT 0 NOT NULL"],
+	["tasks", "action_rev", "bigint DEFAULT 0 NOT NULL"],
+	["tasks", "action_capped", "boolean DEFAULT false NOT NULL"],
 ];
 
 /**
  * 0012 之后的迁移新建、当前代码会读的表：表名和建表的迁移文件（保存场景时的静态检查读 feishu_bots，
- * 运行视图和 Agent 列表读 task_action_summaries）。
+ * 运行视图和 Agent 列表读 task_action_summaries，任务的动作明细读 task_actions、task_action_names）。
+ * 只取文件里提到这张表的语句：同一个文件里加在别的表上的列在 {@link LATER_COLUMNS} 里。
  */
 const LATER_TABLES: [string, string][] = [
 	["feishu_bots", "0018_feishu_bots.sql"],
 	["task_action_summaries", "0026_action_summaries.sql"],
+	["task_actions", "0027_action_details.sql"],
+	["task_action_names", "0027_action_details.sql"],
 ];
 
 describe("迁移前的指标数据", () => {
@@ -547,11 +556,16 @@ describe("迁移前的指标数据", () => {
 			([table, column, type]) => `ALTER TABLE "${table}" ADD COLUMN "${column}" ${type};`,
 		);
 		const created = await Promise.all(
-			LATER_TABLES.map(([, file]) => readFile(join(defaultMigrationsDir, file), "utf8")),
+			LATER_TABLES.map(async ([table, file]) =>
+				(await readFile(join(defaultMigrationsDir, file), "utf8"))
+					.split(STATEMENT_BREAKPOINT)
+					.filter((statement) => statement.includes(`"${table}"`))
+					.join(STATEMENT_BREAKPOINT),
+			),
 		);
 		await writeFile(
 			last,
-			`${await readFile(last, "utf8")}--> statement-breakpoint\n${[...added, ...created].join("\n--> statement-breakpoint\n")}`,
+			`${await readFile(last, "utf8")}${STATEMENT_BREAKPOINT}\n${[...added, ...created].join(`\n${STATEMENT_BREAKPOINT}\n`)}`,
 		);
 		return dir;
 	};

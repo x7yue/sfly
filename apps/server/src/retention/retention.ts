@@ -1,9 +1,17 @@
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { and, eq, isNotNull, isNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { artifacts, feishuMessages, runs } from "../db/schema.js";
+import {
+	artifacts,
+	feishuMessages,
+	runs,
+	taskActionNames,
+	taskActionSummaries,
+	taskActions,
+	tasks,
+} from "../db/schema.js";
 
 /** 日志和产物的默认保留期：30 天。 */
 export const DEFAULT_RETENTION_DAYS = 30;
@@ -13,7 +21,8 @@ const BATCH = 100;
 
 /**
  * 日志和产物的保留期清理（#18）：运行结束超过保留期后，删除它的日志目录 `logs/<run_id>/`、
- * 产物目录 `artifacts/<run_id>/` 和产物记录，以及这个运行的飞书投递记录（ADR 0020），并在 `runs.purged_at` 记下清理时间。
+ * 产物目录 `artifacts/<run_id>/` 和产物记录，这个运行的飞书投递记录（ADR 0020），以及它的任务的动作明细、每种名称的
+ * 计数和动作摘要（规格 #345），并在 `runs.purged_at` 记下清理时间。
  * 运行本身、任务状态和输出都保留。是否到期只按注入的时钟判断，测试推进手动时钟即可。
  */
 export class Retention {
@@ -71,6 +80,10 @@ export class Retention {
 				),
 			);
 			await this.deps.db.transaction(async (tx) => {
+				const runTasks = tx.select({ id: tasks.id }).from(tasks).where(eq(tasks.runId, id));
+				await tx.delete(taskActions).where(inArray(taskActions.taskId, runTasks));
+				await tx.delete(taskActionNames).where(inArray(taskActionNames.taskId, runTasks));
+				await tx.delete(taskActionSummaries).where(inArray(taskActionSummaries.taskId, runTasks));
 				await tx.delete(artifacts).where(eq(artifacts.runId, id));
 				await tx.delete(feishuMessages).where(eq(feishuMessages.runId, id));
 				await tx.update(runs).set({ purgedAt: now }).where(eq(runs.id, id));
