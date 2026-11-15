@@ -4,7 +4,9 @@ import { PackageMetadata } from "./package-metadata.js";
 
 export * from "./display-text.js";
 export * from "./focus-list.js";
+export * from "./focus-reading.js";
 export * from "./http/index.js";
+export * from "./metric-format.js";
 export * from "./orchestration-document.js";
 export * from "./package-metadata.js";
 export * from "./run-log-order.js";

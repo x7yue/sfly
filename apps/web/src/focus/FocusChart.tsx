@@ -1,4 +1,4 @@
-import type { RunFocusItem } from "@sfly/schema";
+import { focusSeriesName, type RunFocusItem } from "@sfly/schema";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOCUS, LIST_LABEL, MONITOR_VIEW_LABEL } from "#/lib/copy";
@@ -7,13 +7,7 @@ import { seriesColor, seriesDash } from "#/monitor/MetricChart";
 import { Button } from "@/components/ui/button";
 import { FocusValue } from "./FocusValue";
 import { PLOT_MARGIN, plotChart, shownSeries } from "./focus-chart";
-import {
-	focusSeriesName,
-	readingFoot,
-	readingLabel,
-	readingState,
-	sourceNodeName,
-} from "./focus-format";
+import { readingFoot, readingLabel, readingState, sourceNodeName } from "./focus-format";
 
 /** 绘图区的高度（px）；宽度取容器的实际宽度。 */
 const PLOT_HEIGHT = 156;

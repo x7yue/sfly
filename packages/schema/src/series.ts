@@ -37,3 +37,20 @@ export function compareSeries(
 	const y = seriesKey(b.name, b.labels);
 	return x < y ? -1 : x > y ? 1 : 0;
 }
+
+/**
+ * 序列在图例和读数里的名字（#78）：不带标签时是指标名；带标签时是标签值以「 · 」连接（按声明的标签键的顺序，
+ * 没有声明时按键名），图表引用多个指标时前面再加上指标名（例如 `read_bytes · sda`）。
+ * 运行监控的图例、关注项读数和运行通知的卡片共用。
+ */
+export function seriesName(
+	name: string,
+	labels: Labels,
+	keys: readonly string[] | undefined,
+	multiMetric: boolean,
+): string {
+	const order = keys?.length ? keys : Object.keys(labels).sort();
+	const values = order.flatMap((k) => labels[k] ?? []);
+	if (values.length === 0) return name;
+	return (multiMetric ? [name, ...values] : values).join(" · ");
+}

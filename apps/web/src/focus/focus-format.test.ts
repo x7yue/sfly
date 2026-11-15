@@ -1,15 +1,13 @@
-import type { FocusSource, MetricDeclaration, RunFocusItem } from "@sfly/schema";
+import {
+	type FocusSource,
+	focusLatestSeriesName,
+	focusSeriesName,
+	type MetricDeclaration,
+	type RunFocusItem,
+} from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { chartLines } from "#/monitor/charts";
-import {
-	focusSeriesName,
-	formatAgo,
-	latestSeriesName,
-	readingFoot,
-	readingLabel,
-	readingState,
-	valueText,
-} from "./focus-format";
+import { formatAgo, readingFoot, readingLabel, readingState } from "./focus-format";
 
 const NOW = "2026-01-01T00:10:00.000Z";
 const at = (secondsAgo: number) => new Date(Date.parse(NOW) - secondsAgo * 1000).toISOString();
@@ -57,11 +55,6 @@ describe("多久前", () => {
 });
 
 describe("读数的文字", () => {
-	it("最新值：数值卡写累计值，没有数据写破折号", () => {
-		expect(valueText(item())).toBe("1.3M");
-		expect(valueText(item({ latest: null }))).toBe("—");
-	});
-
 	it("脚注：节点 · 多久前；成功或已停止后是最终值", () => {
 		expect(readingFoot(item(), NOW)).toBe("load · 2s 前");
 		expect(readingFoot(item({ final: true }), NOW)).toBe("load · 最终值");
@@ -74,12 +67,12 @@ describe("读数的文字", () => {
 	});
 
 	it("最新值来自哪个序列：多个指标写指标名，带标签写标签值", () => {
-		expect(latestSeriesName(item())).toBe("");
+		expect(focusLatestSeriesName(item())).toBe("");
 		const cpu = item({
 			metrics: [{ name: "cpu", label_keys: ["pid", "host"] }],
 			latest: { value: 3, metric: "cpu", labels: { pid: "100", host: "a" }, at: at(1) },
 		});
-		expect(latestSeriesName(cpu)).toBe("100 · a");
+		expect(focusLatestSeriesName(cpu)).toBe("100 · a");
 		const both = item({
 			metrics: [
 				{ name: "p50", label_keys: [] },
@@ -88,8 +81,8 @@ describe("读数的文字", () => {
 			latest: { value: 3, metric: "p99", labels: {}, at: at(1) },
 			series: [],
 		});
-		expect(latestSeriesName(both)).toBe("p99");
-		expect(latestSeriesName(item({ latest: null }))).toBe("");
+		expect(focusLatestSeriesName(both)).toBe("p99");
+		expect(focusLatestSeriesName(item({ latest: null }))).toBe("");
 	});
 
 	it("可访问名称：名称、值、来源节点和状态、多久前或最终值", () => {
@@ -128,8 +121,10 @@ describe("序列的名字和详情里同一条序列的一样", () => {
 			metrics: [{ name: "cpu", label_keys: ["pid", "host"] }],
 			latest: { value: 3, metric: "cpu", labels, at: at(1) },
 		});
-		expect(latestSeriesName(overview)).toBe("100 · a");
-		expect(latestSeriesName(overview)).toBe(detailNames(["cpu"], [{ name: "cpu", labels }])[0]);
+		expect(focusLatestSeriesName(overview)).toBe("100 · a");
+		expect(focusLatestSeriesName(overview)).toBe(
+			detailNames(["cpu"], [{ name: "cpu", labels }])[0],
+		);
 	});
 
 	it("图表读了好几个指标时前面写指标名，序列还没有点（points 为 0）时也一样", () => {

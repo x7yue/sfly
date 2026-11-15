@@ -15,15 +15,19 @@ import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runs, tasks } from "../db/schema.js";
 import { loadRunBoards, nodeNameIn } from "../engine/run-board.js";
+import type { Tx } from "../engine/step.js";
 import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import type { FocusItem } from "./focus-list.js";
 import { declaredNodeType } from "./focus-views.js";
 
-/** 解析一次运行的关注项要用到的依赖：控制面里读读数的地方（目前是 HTTP 接口）传这三样。 */
+/**
+ * 解析一次运行的关注项要用到的依赖：控制面里读读数的地方（HTTP 接口、运行结束时的运行通知）传这三样。
+ * `db` 可以是事务：运行通知在写入运行最终状态的事务里读，要看到这个事务里刚写下的节点状态；序列走 `queries`，用自己的连接。
+ */
 export interface RunFocusDeps {
-	db: Db;
+	db: Db | Tx;
 	clock: Clock;
 	queries: Pick<MetricQueries, "taskSeries">;
 }
@@ -159,7 +163,7 @@ export async function resolveRunFocus(
 
 /** 这些节点各自最新一次尝试（不含占位）。 */
 async function latestAttempts(
-	db: Db,
+	db: Db | Tx,
 	runId: string,
 	nodeIds: readonly string[],
 ): Promise<Map<string, AttemptRow>> {
