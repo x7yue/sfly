@@ -218,34 +218,27 @@ export class OrchestrationStore {
 	 * 归档：有运行中的运行时拒绝。加行锁后检查，与触发（engine.trigger 对同一行加共享锁后检查归档）互斥，
 	 * 不会归档之后又多出一个运行中的运行。已归档的再次归档保持原来的归档时间。
 	 */
-	async archive(id: string): Promise<ArchiveResult> {
-		const outcome = await this.deps.db.transaction(
-			async (
-				tx,
-			): Promise<{ row: OrchestrationRow } | Exclude<ArchiveResult, { kind: "archived" }>> => {
-				const [row] = await tx
-					.select()
-					.from(orchestrations)
-					.where(eq(orchestrations.id, id))
-					.for("update");
-				if (!row) return { kind: "not_found" };
-				const [running] = await tx
-					.select({ n: count() })
-					.from(runs)
-					.where(and(eq(runs.orchestrationId, id), eq(runs.status, "running")));
-				if (running && running.n > 0) return { kind: "running", count: running.n };
-				if (row.archivedAt) return { row };
-				const [updated] = await tx
-					.update(orchestrations)
-					.set({ archivedAt: this.deps.clock.now() })
-					.where(eq(orchestrations.id, id))
-					.returning();
-				return { row: updated as OrchestrationRow };
-			},
-		);
-		return "row" in outcome
-			? { kind: "archived", orchestration: await this.#view(outcome.row) }
-			: outcome;
+	archive(id: string): Promise<ArchiveResult> {
+		return this.deps.db.transaction(async (tx): Promise<ArchiveResult> => {
+			const [row] = await tx
+				.select()
+				.from(orchestrations)
+				.where(eq(orchestrations.id, id))
+				.for("update");
+			if (!row) return { kind: "not_found" };
+			const [running] = await tx
+				.select({ n: count() })
+				.from(runs)
+				.where(and(eq(runs.orchestrationId, id), eq(runs.status, "running")));
+			if (running && running.n > 0) return { kind: "running", count: running.n };
+			if (row.archivedAt) return { kind: "archived", orchestration: await this.#view(row) };
+			const [updated] = await tx
+				.update(orchestrations)
+				.set({ archivedAt: this.deps.clock.now() })
+				.where(eq(orchestrations.id, id))
+				.returning();
+			return { kind: "archived", orchestration: await this.#view(updated as OrchestrationRow) };
+		});
 	}
 
 	/** 恢复已归档的场景。场景不存在时返回 undefined。 */
