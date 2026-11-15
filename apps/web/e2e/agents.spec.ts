@@ -81,6 +81,11 @@ test("机架头部：状态、名称、版本、系统、对外地址、最后�
 	await expect(offline).toContainText("最后在线 01-01 08:01");
 	await expect(offline).toContainText("未被引用");
 	await expect(rack(page, "agent-gone").locator("dl")).toHaveText("节点包无能力无");
+	// 离线的 Agent 接不了任务：槽位不算空闲，没有任务时不画槽位一栏，也不写占用数。
+	await expect(slotCells(page, "agent-gone")).toHaveCount(0);
+	await expect(rack(page, "agent-gone").getByRole("heading", { name: "槽位" })).toHaveCount(0);
+	await expect(rack(page, "agent-gone")).not.toContainText("占用");
+	await expect(rack(page, "agent-gone")).not.toContainText("空闲");
 });
 
 test("槽位格：占用的格子写节点、场景、运行编号、所在链、尝试号、节点类型和已执行时长；空闲的槽位合并成一行矮条，没有槽位编号", async ({
@@ -147,6 +152,28 @@ test("槽位格：槽位占满时没有空闲条；还在准备（派发中）�
 	await expect(cells.nth(1)).toContainText("准备中");
 	await expect(rack(page, "agent-small")).toContainText("2 / 2 占用 · 排队 0");
 	await expect(rack(page, "agent-small")).not.toContainText("槽位空闲");
+});
+
+test("槽位格：Agent 断线后租约到期前还占着槽位的任务照常列出，但不写空闲条和占用数", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-busy", slots: 4 });
+	await publishPackage(controlPlane);
+	await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "巡检", scenarioUsing("agent-busy")),
+	);
+	await agent.nextAssign();
+	await agent.disconnect();
+
+	await page.goto("/agents");
+	await expect(header(page, "agent-busy").locator("[data-status]")).toHaveText("离线");
+	await expect(slotCells(page, "agent-busy")).toHaveCount(1);
+	await expect(slotCells(page, "agent-busy").first()).toContainText("巡检");
+	await expect(rack(page, "agent-busy")).not.toContainText("空闲");
+	await expect(rack(page, "agent-busy")).not.toContainText("占用");
 });
 
 test("槽位格：子流程里的任务写子流程名称，主链的任务写「主链」；可访问名称写出节点和场景", async ({

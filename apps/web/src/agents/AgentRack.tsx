@@ -21,6 +21,7 @@ import { Truncate } from "@/components/ui/truncate";
 /**
  * 一台 Agent 的机架面板（外壳页方案 4.1）：头部一行是状态、名称、版本、系统、对外地址和最后在线，状态后面跟着各种告警，
  * 右侧是被引用的场景数和「立即更新」；主体是槽位格，格子下面是排队的任务；底部是节点包与能力。
+ * 离线的 Agent 接不了任务，槽位不算空闲，所以不画空闲矮条、不写占用数。
  */
 export function AgentRack({
 	agent,
@@ -32,7 +33,12 @@ export function AgentRack({
 	const headingId = useId();
 	const slots = agent.info.slots;
 	const used = agent.running_tasks.length;
+	const queued = agent.queued_tasks.length;
+	const online = agent.status === "online";
 	const idle = idleSlotCount(slots, used);
+	// 离线的 Agent 接不了任务，槽位不算空闲：不画空闲矮条、不写占用数；没有任务还占着槽位时槽位一栏整个不画。
+	const showSlots = online || used > 0;
+	const hasBody = showSlots || queued > 0;
 	const packages = [
 		...agent.installed_packages.map((p) => `${p.name}@${p.version}`),
 		...agent.dev_packages.map((p) => `${p.name}@dev`),
@@ -55,25 +61,38 @@ export function AgentRack({
 					<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
 				)}
 			</header>
-			<div className="px-4 pt-3 pb-3.5">
-				<div className="mb-2 flex items-center gap-2">
-					<h3 className="m-0 text-xs font-medium text-fg-2">槽位</h3>
-					<span className="font-mono text-xs text-fg-3">
-						{used} / {slots} 占用 · 排队 {agent.queued_tasks.length}
-					</span>
+			{hasBody && (
+				<div className="flex flex-col gap-3 px-4 pt-3 pb-3.5">
+					{showSlots && (
+						<div>
+							<div className="mb-2 flex items-center gap-2">
+								<h3 className="m-0 text-xs font-medium text-fg-2">槽位</h3>
+								{online && (
+									<span className="font-mono text-xs text-fg-3">
+										{used} / {slots} 占用 · 排队 {queued}
+									</span>
+								)}
+							</div>
+							<ul
+								aria-label="槽位"
+								className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(300px,1fr))] items-start gap-2 p-0"
+							>
+								{agent.running_tasks.map((task) => (
+									<SlotCell key={task.task_id} task={task} />
+								))}
+								{online && idle > 0 && <IdleSlots count={idle} />}
+							</ul>
+						</div>
+					)}
+					{queued > 0 && <QueuedTasks tasks={agent.queued_tasks} />}
 				</div>
-				<ul
-					aria-label="槽位"
-					className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(300px,1fr))] items-start gap-2 p-0"
-				>
-					{agent.running_tasks.map((task) => (
-						<SlotCell key={task.task_id} task={task} />
-					))}
-					{idle > 0 && <IdleSlots count={idle} />}
-				</ul>
-				{agent.queued_tasks.length > 0 && <QueuedTasks tasks={agent.queued_tasks} />}
-			</div>
-			<dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3.5 gap-y-1 border-t border-border-soft px-4 py-2.5 text-xs">
+			)}
+			<dl
+				className={cn(
+					"m-0 grid grid-cols-[auto_1fr] gap-x-3.5 gap-y-1 border-border-soft px-4 py-2.5 text-xs",
+					hasBody && "border-t",
+				)}
+			>
 				<dt className="text-fg-3">{TERM.nodePackage}</dt>
 				<dd className="m-0 text-fg-2">
 					<IdentifierList items={packages} />
@@ -179,7 +198,7 @@ function RackFacts({
 function QueuedTasks({ tasks }: { tasks: QueuedTaskView[] }) {
 	const now = useNow(true);
 	return (
-		<div className="mt-3">
+		<div>
 			<div className="mb-1.5 flex items-center gap-2">
 				<h3 className="m-0 text-xs font-medium text-fg-2">排队的任务</h3>
 				<span className="font-mono text-xs text-fg-3">{tasks.length}</span>
