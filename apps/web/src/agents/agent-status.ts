@@ -18,21 +18,23 @@ export function agentStatusView(agent: AgentView): StatusView {
  * 在线 Agent 的更新状态（ADR 0014）：版本与控制面不一致时不接新任务，状态后面说明它在做什么；
  * 不需要更新时为 undefined。
  */
+const UPDATING = "更新中";
+
 export function updateStatus(
 	agent: AgentView,
 ): { kind: StatusKind; label: string; detail?: string } | undefined {
 	const { update } = agent;
 	switch (update.state) {
 		case "downloading":
-			return { kind: "running", label: "更新中", detail: "下载新版本" };
+			return { kind: "running", label: UPDATING, detail: "下载新版本" };
 		case "waiting_for_tasks":
 			return {
 				kind: "running",
-				label: "更新中",
+				label: UPDATING,
 				detail: `等待 ${update.remaining_tasks} 个任务结束`,
 			};
 		case "replacing":
-			return { kind: "running", label: "更新中", detail: "替换并重新启动" };
+			return { kind: "running", label: UPDATING, detail: "替换并重新启动" };
 		case "failed":
 			return { kind: "failed", label: "更新失败", detail: update.reason };
 		case "manual_upgrade_required":
