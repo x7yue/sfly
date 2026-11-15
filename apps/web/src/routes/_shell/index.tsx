@@ -17,7 +17,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { nodeStatusView, SlotBar, STATUS, StatusDot, StatusPill } from "#/components/status";
-import { DashboardPanel, panelLink } from "#/dashboard/DashboardPanel";
+import { DashboardPanel } from "#/dashboard/DashboardPanel";
 import { GettingStarted } from "#/dashboard/GettingStarted";
 import { apiQuery } from "#/lib/api";
 import { ACTION, MESSAGE, PAGE } from "#/lib/copy";
@@ -154,6 +154,12 @@ function DashboardBody({ data }: { data: DashboardView }) {
 function PanelEmpty({ children }: { children: React.ReactNode }) {
 	return <p className="m-0 px-3.5 py-6 text-center text-sm text-fg-3">{children}</p>;
 }
+
+const panelLink = (to: "/runs" | "/agents", label: string) => (
+	<Button variant="ghost" size="sm" render={<Link to={to} />} nativeButton={false}>
+		{label}
+	</Button>
+);
 
 /** 面板里的一行可点击条目（原型 .rrow）。 */
 const ROW =
