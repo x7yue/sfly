@@ -176,7 +176,10 @@ test("重试和失败：「需要注意」写明上一次失败的原因或失�
 	await expect(rows(page).first()).toContainText(
 		"verify 在 08:00:09 开始重试（尝试 2），上一次尝试失败：AssertionError: 漏拦 3 笔",
 	);
-	await expect(readouts(page).getByRole("button").first()).toHaveAccessibleName(
+	// verify 的 level 是瞬时值，平台给它的默认图表是折线：原因写在图表卡片上和图的可访问名称里。
+	const verifyChart = focusChart(page, "核对 level");
+	await expect(verifyChart).toContainText("重试（尝试 2）· 08:00:09 · verify");
+	await expect(verifyChart.getByRole("img")).toHaveAccessibleName(
 		/需要注意：重试（尝试 2）· 08:00:09$/,
 	);
 	await rows(page).first().getByRole("button", { name: "在详情里看 verify 的尝试" }).click();
@@ -192,8 +195,6 @@ test("重试和失败：「需要注意」写明上一次失败的原因或失�
 	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦\n\nTraceback");
 	await viewTab(page, "概览").click();
 	await expect(rows(page).first()).toContainText("verify 失败：AssertionError: 仍然漏拦");
-	await expect(readouts(page).getByRole("button").first()).toHaveAccessibleName(
-		/需要注意：来源节点失败$/,
-	);
+	await expect(verifyChart.getByRole("img")).toHaveAccessibleName(/需要注意：来源节点失败$/);
 	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里看 verify 的尝试");
 });
