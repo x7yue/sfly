@@ -281,6 +281,8 @@ test("底部面板的页签是一个 Tab 停靠点：← → 在页签之间移�
 
 	await logsTab.focus();
 	await page.keyboard.press("ArrowRight");
+	await expect(tabs.getByRole("tab", { name: "动作" })).toBeFocused();
+	await page.keyboard.press("ArrowRight");
 	await expect(tabs.getByRole("tab", { name: "尝试" })).toBeFocused();
 	await page.keyboard.press("Enter");
 	await expect(tabs.getByRole("tab", { name: "尝试" })).toHaveAttribute("aria-selected", "true");
