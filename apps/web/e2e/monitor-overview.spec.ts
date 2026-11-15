@@ -19,7 +19,7 @@ import {
 	readouts,
 	viewTab,
 } from "./overview-support";
-import { createScenario, publishPackage, triggerRun } from "./support";
+import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
 // 运行监控「概览」（#344）：概览 / 详情标签页、地址与记住的视图、关注项读数与图表、没设关注项时的主指标。
 
@@ -334,6 +334,29 @@ test("场景没设关注项：显示执行中节点的主指标，并给出「�
 		"false",
 	);
 	await expect(inspector(page).getByText("本场景的关注项已用 0 / 8")).toBeVisible();
+});
+
+test("场景没设关注项，执行中的节点都没声明主指标：写明这个原因，节点都结束后才写没有执行中的节点", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane);
+	const scenarioId = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const task = await agent.nextAssign();
+	await openOverview(page, clock, runId);
+
+	await expect(page.getByRole("list", { name: "执行中的节点" })).toContainText("ping");
+	await expect(readouts(page)).toHaveCount(0);
+	await expect(page.getByText("执行中的节点都没有声明主指标。")).toBeVisible();
+	await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
+
+	await agent.succeed(task);
+	await expect(page.getByText("没有执行中的节点。")).toBeVisible();
+	await expect(page.getByText("执行中的节点都没有声明主指标。")).toHaveCount(0);
 });
 
 test("场景设了关注项：「调整关注项」也直接打开「关注项」页，列表里是这些项；地址里的值不合法时停在「概况」", async ({

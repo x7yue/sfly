@@ -196,6 +196,8 @@ export const MESSAGE = {
 	noDataEnded: "这次尝试没有上报数据",
 	/** 没有节点处于执行中：运行监控的概览。 */
 	noRunningNodes: `没有${NODE_STATUS.running.label}的${TERM.node}。`,
+	/** 概览没设关注项、有节点在执行中，但它们都没有声明主指标，没有读数可显示。 */
+	noPrimaryMetric: `${NODE_STATUS.running.label}的${TERM.node}都没有声明${TERM.primaryMetric}。`,
 	/** 运行中但没有进行中的节点：运行抽屉的摘要。 */
 	noActiveNodes: `没有${ACTIVE_LABEL}的${TERM.node}。`,
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */

@@ -46,12 +46,9 @@ export function Overview({
 	);
 }
 
-/** 链路：每条链一行进度，下面一行写执行中的节点、所在 Agent、尝试号和已执行的时长。 */
-function ChainSection({ run }: { run: RunView }) {
-	const { now } = useTimeAxis();
-	const chains = orderedChains(run);
-	const nodeCount = chains.reduce((n, chain) => n + chain.nodes.length, 0);
-	const executing = chains.flatMap((chain) =>
+/** 正在 Agent 上的节点（准备中、执行中）和它们最新的一次尝试，按链与链上的顺序。 */
+const executingNodes = (run: RunView) =>
+	orderedChains(run).flatMap((chain) =>
 		chain.nodes.flatMap((node) => {
 			const attempt = node.attempts.at(-1);
 			return attempt && isOnAgentStatus(attempt.status) && node.status === attempt.status
@@ -59,6 +56,13 @@ function ChainSection({ run }: { run: RunView }) {
 				: [];
 		}),
 	);
+
+/** 链路：每条链一行进度，下面一行写执行中的节点、所在 Agent、尝试号和已执行的时长。 */
+function ChainSection({ run }: { run: RunView }) {
+	const { now } = useTimeAxis();
+	const chains = orderedChains(run);
+	const nodeCount = chains.reduce((n, chain) => n + chain.nodes.length, 0);
+	const executing = executingNodes(run);
 	return (
 		<section
 			aria-labelledby="overview-chains"
@@ -168,18 +172,29 @@ function FocusSection({
 			) : !data ? (
 				<Skeleton className="h-28 w-full" />
 			) : (
-				<FocusBody data={data} onOpen={open} />
+				<FocusBody data={data} executing={executingNodes(run).length > 0} onOpen={open} />
 			)}
 		</section>
 	);
 }
 
-function FocusBody({ data, onOpen }: { data: RunFocus; onOpen: (item: RunFocusItem) => void }) {
+function FocusBody({
+	data,
+	executing,
+	onOpen,
+}: {
+	data: RunFocus;
+	/** 链路里列着执行中的节点：没设关注项时没有读数，原因就不是「没有执行中的节点」。 */
+	executing: boolean;
+	onOpen: (item: RunFocusItem) => void;
+}) {
 	if (data.items.length === 0) {
 		return (
 			<p className="m-0 rounded-lg border border-dashed border-border-soft px-4 py-6 text-center text-sm text-fg-3">
 				{data.mode === "primary"
-					? MESSAGE.noRunningNodes
+					? executing
+						? MESSAGE.noPrimaryMetric
+						: MESSAGE.noRunningNodes
 					: `这次运行里没有可显示的${TERM.focusItem}：场景设置的${TERM.focusItem}所在的节点不在这次运行的版本里。`}
 			</p>
 		);
