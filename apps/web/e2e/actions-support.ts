@@ -35,9 +35,12 @@ const RECENT_REASON = "超时：撮合网关 3 秒没有回报";
 const LATE_REASON =
 	"拒单：余额不足（可用 1,203.55，需要 9,800.00）；撮合网关返回 REJECT_BALANCE，这一笔不再重试，等下一轮行情";
 
+/** 下单的字段：四个键名长短不一，jsonb 会按长短重排，页面上要和写入的先后一致。 */
 const orderFields = (id: number) => ({
-	订单: `P-${String(id).padStart(4, "0")}`,
-	方向: id % 2 ? "卖" : "买",
+	订单号: `P-${String(id).padStart(4, "0")}`,
+	价: (18 + (id % 7) / 10).toFixed(1),
+	数量: String(100 * (1 + (id % 3))),
+	买卖方向: id % 2 ? "卖" : "买",
 });
 /** 最近 20 个里第 id 个开始的时刻。 */
 const recentAt = (now: number, id: number) => now - 400 + (id - 1181) * 18;

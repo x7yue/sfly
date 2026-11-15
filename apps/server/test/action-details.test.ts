@@ -190,6 +190,50 @@ describe("动作明细", () => {
 		]);
 	});
 
+	it("字段的先后和作者写的一致：明细接口和摘要接口都一样（键名长短不一，jsonb 会按长短重排）", async () => {
+		const agent = await connect();
+		const { task } = await start(agent);
+		const written = { 订单号: "P-1", 价: "18.3", 数量: "200", 买卖方向: "卖", 备注: "首单" };
+		const order = Object.keys(written);
+		agent.actions(task, [
+			agent.actionStart(1, "下单", T0 + 1_000, { fields: written }),
+			agent.actionStart(2, "下单", T0 + 2_000, { fields: written }),
+			agent.actionEnd(2, "success", T0 + 2_100),
+		]);
+		const entry = (id: number, at: number) => ({
+			id,
+			parent: null,
+			depth: 0,
+			name: "下单",
+			fields: written,
+			...agent.stamp(at),
+		});
+		agent.actionSummary(task, {
+			total: 2,
+			reported: 2,
+			names: [
+				{ name: "下单", total: 2, failed: 0, reported: 2, capped_ts: null, capped_mono: null },
+			],
+			running: [entry(1, T0 + 1_000)],
+			recent: [
+				{
+					...entry(2, T0 + 2_000),
+					...{ end_ts: T0 + 2_100, end_mono: agent.stamp(T0 + 2_100).mono },
+					result: "success",
+					reason: null,
+				},
+			],
+		});
+		await agent.sync();
+
+		const details = (await page(task.taskId)).actions;
+		expect(details.map((a) => Object.keys(a.fields))).toEqual([order, order]);
+		const res = await cp.fetch(`/tasks/${task.taskId}/actions/summary`);
+		const summary = actionsApi.summary.response.parse(await res.json());
+		expect(summary.running.map((a) => Object.keys(a.fields))).toEqual([order]);
+		expect(summary.recent.map((a) => Object.keys(a.fields))).toEqual([order]);
+	});
+
 	it("分页：按开始时间从新到旧（同一时刻 ID 大的在前），游标接着读更早的；按名称、只看失败筛选", async () => {
 		const agent = await connect();
 		const { task } = await start(agent);

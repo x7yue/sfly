@@ -44,6 +44,10 @@ test("页签上写出动作的个数（标记不算）；表格分三组，各�
 	await expect(running).toContainText("目标=200 单/s");
 	await expect(running).toContainText("5.0s");
 	await expect(running).toContainText("进行中");
+	// 字段按作者写的先后：「正在做」来自摘要（控制面存成 json，不是会重排键的 jsonb）。
+	await expect(
+		table.locator('tbody[data-group="running"] tr[data-action-id="1201"]'),
+	).toContainText("订单号=P-1201 价=18.4 数量=200 买卖方向=卖");
 
 	await table.evaluate((el) => {
 		el.scrollTop = 400;
@@ -145,7 +149,10 @@ test("往下滚动读更早的明细；一次只渲染看得见的那些行", as
 	await expect(oldest).toContainText("收到第一笔成交");
 	await expect(oldest.locator("td").nth(3)).toHaveText("—");
 	await expect(oldest.locator("td").nth(4)).toHaveText("标记");
-	await expect(table.locator('tr[data-action-id="3"]')).toContainText("订单=P-0003 方向=卖");
+	// 字段按作者写的先后（明细来自分页；「正在做」来自摘要，见第一个用例）。
+	await expect(table.locator('tr[data-action-id="3"]')).toContainText(
+		"订单号=P-0003 价=18.3 数量=100 买卖方向=卖",
+	);
 	// 明细有四百多条，渲染出来的只是视口附近的那些。
 	await expect.poll(() => table.locator("tr[data-action-id]").count()).toBeLessThan(80);
 });
