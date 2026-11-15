@@ -2,6 +2,7 @@ import { Toolbar } from "@base-ui/react/toolbar";
 import { useReactFlow, useStore } from "@xyflow/react";
 import { cn } from "cn";
 import {
+	CrosshairIcon,
 	HandIcon,
 	MapIcon,
 	MinusIcon,
@@ -11,6 +12,7 @@ import {
 	ScanIcon,
 } from "lucide-react";
 import { type ReactNode, useRef } from "react";
+import { ACTION } from "#/lib/copy";
 import { type ShortcutId, shortcutText } from "#/lib/shortcuts";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -72,7 +74,8 @@ export type CanvasTool = "pointer" | "hand";
 
 /**
  * 底部居中的画布工具条（原型 `.dock`）：指针 / 抓手、缩放比例、适配视图、小地图与检查器开关。
- * `start` 放在最左侧（#39 的「＋ 添加节点」），`tools` 放在适配视图之后（#39 的撤销 / 重做 / 整理布局）。
+ * `start` 放在最左侧（#39 的「＋ 添加节点」），`follow`（运行状态的「跟随执行」）与 `tools` 放在适配视图之后
+ * （#39 的撤销 / 重做 / 整理布局）。
  */
 export function CanvasDock({
 	tool,
@@ -80,7 +83,9 @@ export function CanvasDock({
 	onFit,
 	minimap,
 	onToggleMinimap,
+	onZoom,
 	inspector,
+	follow,
 	start,
 	tools,
 	clearRight = 0,
@@ -90,14 +95,22 @@ export function CanvasDock({
 	onFit(): void;
 	minimap: boolean;
 	onToggleMinimap(): void;
+	/** 点缩放按钮时（用户自己动镜头）；运行状态的跟随执行据此关闭。 */
+	onZoom?(): void;
 	inspector?: { open: boolean; onToggle(): void };
+	/** 「跟随执行」按钮：`active` 是按下的样式；运行结束后 `disabled`。 */
+	follow?: { active: boolean; disabled: boolean; onToggle(): void };
 	start?: ReactNode;
 	tools?: ReactNode;
 	/** 画布右侧被悬浮面板（检查器）占住的宽度：居中放不下时工具条往左让开。 */
 	clearRight?: number;
 }) {
 	const zoom = useStore((s) => s.transform[2]);
-	const zoomBy = useZoomSteps();
+	const zoomSteps = useZoomSteps();
+	const zoomBy = (factor: number) => {
+		onZoom?.();
+		zoomSteps(factor);
+	};
 	return (
 		// 两侧的占位等宽时工具条居中；右侧占位不小于 clearRight，放不下就把工具条往左推。
 		<div className="pointer-events-none absolute inset-x-0 bottom-3.5 z-10 flex">
@@ -142,6 +155,20 @@ export function CanvasDock({
 				<ToolButton label="适配视图" shortcut="canvas-fit" onClick={onFit}>
 					<ScanIcon />
 				</ToolButton>
+				{follow && (
+					<>
+						<GroupDivider />
+						<ToolButton
+							label={ACTION.followExecution}
+							shortcut="canvas-follow"
+							pressed={follow.active}
+							disabled={follow.disabled}
+							onClick={follow.onToggle}
+						>
+							<CrosshairIcon />
+						</ToolButton>
+					</>
+				)}
 				{tools && (
 					<>
 						<GroupDivider />
