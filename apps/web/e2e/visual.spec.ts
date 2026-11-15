@@ -1273,11 +1273,9 @@ test("编排画布：运行状态（检查器的「正在做」和「动作」�
 		.getByRole("heading")
 		.evaluate((el) => el.scrollIntoView({ block: "start" }));
 	await page.mouse.move(700, 760);
+	// 摘要滚出去了，只有顶栏里的运行编号要遮住。
 	await expect(page).toHaveScreenshot("editor-run-actions.png", {
-		mask: [
-			page.getByTestId("canvas-run").locator(".font-mono").first(),
-			page.getByTestId("run-summary").locator("dd").first(),
-		],
+		mask: [page.getByTestId("canvas-run").locator(".font-mono").first()],
 	});
 });
 
