@@ -162,7 +162,7 @@ class ActionSummary:
     """一份动作和标记的摘要（`action_summary`）：到目前为止的汇总，超过明细上限之后仍然准确。
 
     - `ts`：发出这份摘要的时间（Unix 毫秒）；
-    - `total`：记录的动作和标记的个数，`reported`：上报了明细的个数；
+    - `total`：记录的动作和标记的个数，`marks`：其中标记的个数，`reported`：上报了明细的个数；
       `capped_ts`：第一个因为合计已满而被丢弃明细的时刻（之后仍可能有已上报的明细），
       没有丢弃过时为 None；
     - `names`：每种名称的计数；
@@ -174,6 +174,7 @@ class ActionSummary:
 
     ts: int
     total: int
+    marks: int
     reported: int
     capped_ts: int | None
     names: list[ActionCount]
@@ -454,6 +455,7 @@ def _action_summary(ts: int, event: Mapping[str, Any]) -> ActionSummary:
     return ActionSummary(
         ts=ts,
         total=int(event["total"]),
+        marks=int(event["marks"]),
         reported=int(event["reported"]),
         capped_ts=_optional_int(event.get("capped_ts")),
         names=[

@@ -515,6 +515,7 @@ export class FakeAgent {
 		const event: ActionSummaryEvent = {
 			type: "action_summary",
 			total: 0,
+			marks: 0,
 			reported: 0,
 			capped_ts: null,
 			capped_mono: null,

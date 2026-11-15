@@ -2,6 +2,9 @@
 
 import type { Download, Endpoint, RouteTable, Stream } from "../route.js";
 import type {
+	ActionChunk,
+	ActionPage,
+	ActionPageQuery,
 	ActionSummaryView,
 	AgentView,
 	ArtifactView,
@@ -72,6 +75,46 @@ export interface Api {
 				};
 			},
 			ActionSummaryView
+		>;
+		/**
+		 * `GET /tasks/:id/actions`
+		 *
+		 * 一个任务（一次尝试）的明细，按开始时间从新到旧分页，可以按名称、只看失败筛选；返回落在这一页范围里的只计数的段。
+		 * 任务不存在时 404，游标不是之前返回的 `before` 时 400。
+		 */
+		page: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+				query?: ActionPageQuery;
+			},
+			ActionPage
+		>;
+		/**
+		 * `GET /tasks/:id/actions/events`
+		 *
+		 * 摘要和明细的实时推送（SSE）。`after` 用分页返回的 `rev`；断线重连时按 `Last-Event-ID` 请求头接上
+		 * （与 `after` 取较大者，API 客户端的订阅自动带上），不重复也不遗漏。
+		 *
+		 * - `summary`：连上时先发一份，之后每存下一份新的摘要发一份；任务结束时再发一份（正在做的动作为空）。
+		 * - `actions`：`after` 之后写入或结束的明细，之后每写入一批推送一批；任务结束时推送记为未结束的那些。
+		 *
+		 * 事件 ID 是推送到的修订号。运行已过保留期时只发摘要。任务不存在时 404。
+		 */
+		events: Stream<
+			{
+				params: {
+					id: string;
+				};
+				query?: {
+					after?: number;
+				};
+			},
+			{
+				summary: ActionSummaryView;
+				actions: ActionChunk;
+			}
 		>;
 	};
 	agents: {
@@ -901,6 +944,8 @@ export interface Api {
 export const routes = {
 	actions: {
 		summary: { method: "GET", path: "/tasks/:id/actions/summary", kind: "endpoint" },
+		page: { method: "GET", path: "/tasks/:id/actions", kind: "endpoint" },
+		events: { method: "GET", path: "/tasks/:id/actions/events", kind: "stream" },
 	},
 	agents: {
 		list: { method: "GET", path: "/agents", kind: "endpoint" },

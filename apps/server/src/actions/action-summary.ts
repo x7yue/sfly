@@ -56,6 +56,7 @@ const NameCount = z.object({
 const ActionSummaryEvent = z.object({
 	type: z.literal("action_summary"),
 	total: z.number().int(),
+	marks: z.number().int(),
 	reported: z.number().int(),
 	capped_ts: z.number().nullable(),
 	capped_mono: z.number().nullable(),
@@ -117,6 +118,7 @@ export function actionSummaryView(
 	return {
 		summary: {
 			total: event.total,
+			marks: event.marks,
 			reported: event.reported,
 			capped: event.total > event.reported,
 			...cappedAt(event.capped_ts, event.capped_mono),
@@ -155,6 +157,7 @@ function earliestOutermost<A extends { depth: number; mono: number; id: number }
 /** 没有记录过动作的任务的摘要。 */
 export const EMPTY_SUMMARY: ActionSummaryView = {
 	total: 0,
+	marks: 0,
 	reported: 0,
 	capped: false,
 	capped_at: null,
