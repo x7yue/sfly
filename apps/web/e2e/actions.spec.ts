@@ -8,6 +8,7 @@ import {
 } from "./actions-support";
 import { expect, test } from "./fixtures";
 import { openMonitor } from "./monitor-scenario";
+import { failApi } from "./support";
 
 // 运行监控「详情」底部面板的「动作」页（规格 #345，#357）：页签上的个数、跟着范围和尝试换、三组表格、
 // 往下滚动读更早的明细、只计数的一段、推送来的明细。
@@ -214,6 +215,28 @@ test("范围和尝试沿用底部面板的切换；没有动作的节点写明�
 	await expect(bp.getByText("在时间线上选中一个节点，查看它的动作。")).toBeVisible();
 	await nodeButton(page, "verify").click();
 	await expect(actionTable(page)).toBeVisible();
+});
+
+test("摘要读不到时写「无法加载动作」和错误详情，重试后显示表格", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, verify } = await actionsScenario(controlPlane, connectAgent, clock);
+	const path = `/tasks/${verify.taskId}/actions`;
+	// 推送连上时也会先发一份摘要：推送也连不上，摘要才只能从接口读。
+	await failApi(page, `${path}/events**`);
+	const summary = await failApi(page, `${path}/summary`);
+	await openMonitor(page, clock, runId, "verify", "actions");
+	const error = panel(page).getByRole("alert");
+	await expect(error).toContainText("无法加载动作");
+	await expect(error).toContainText(`GET /api${path}/summary → 503 unavailable`);
+
+	await summary.restore();
+	await error.getByRole("button", { name: "重试" }).click();
+	await expect(actionTable(page).locator('tr[data-action-id="1204"]')).toBeVisible();
+	await expect(error).toBeHidden();
 });
 
 test("1280×800：拖高底部面板以后能看到动作表", async ({

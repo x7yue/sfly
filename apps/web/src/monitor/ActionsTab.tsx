@@ -41,17 +41,18 @@ export function ActionsTab({
 			},
 		[summary],
 	);
-	if (!loaded && actions.error) {
-		return (
+	if (!summary || !loaded) {
+		return actions.error ? (
 			<ErrorState
 				title={MESSAGE.loadFailed(TERM.action)}
 				error={actions.error}
 				onRetry={actions.retry}
 				className="my-4"
 			/>
+		) : (
+			<TableSkeleton columns={5} rows={4} />
 		);
 	}
-	if (!summary || !loaded) return <TableSkeleton columns={5} rows={4} />;
 	if (actions.expired) return <Hint>这次运行的动作明细已超过保留期，已被清理。</Hint>;
 	if (groups.length === 0) {
 		return (

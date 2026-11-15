@@ -186,7 +186,7 @@ export function BottomPanel({
 	const actionSummary = useActionSummary(
 		attempt?.task_id,
 		attempt?.status === "running" && !(tab === "actions" && !collapsed),
-	);
+	).data;
 	const actionsShown = actionSummary && actionSummary.total > 0 ? actionCount(actionSummary) : null;
 	return (
 		<section

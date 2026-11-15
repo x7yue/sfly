@@ -4,7 +4,7 @@ import {
 	actionsApi,
 	type CountOnlySpan,
 } from "@sfly/schema";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiQuery, callApi } from "#/lib/api";
 import { STATUS_POLL_MS } from "#/lib/polling";
@@ -31,11 +31,12 @@ const summaryQuery = (taskId: string) => apiQuery(actionsApi.summary, { params: 
  * 一个任务（一次尝试）的动作摘要。缓存只有一份：{@link useTaskActions} 连着推送时由推送更新，
  * 没连着时 `poll` 为 true 就定时重新读（任务还在执行、没有在看「动作」页时传 true）；`poll` 变成 false 时
  * （任务结束、开始看「动作」页）再读一次，任务结束时的那一份（正在做的为空）不会漏掉。`taskId` 为 undefined 时不读。
+ * 返回查询本身：`data` 是摘要，读不到时 `error` 是原因。
  */
 export function useActionSummary(
 	taskId: string | undefined,
 	poll: boolean,
-): ActionSummaryView | undefined {
+): UseQueryResult<ActionSummaryView> {
 	const query = useQuery({
 		...summaryQuery(taskId ?? ""),
 		enabled: taskId !== undefined,
@@ -47,7 +48,7 @@ export function useActionSummary(
 		if (polled.current && !poll) void refetch();
 		polled.current = poll;
 	}, [poll, refetch]);
-	return query.data;
+	return query;
 }
 
 export interface TaskActions {
@@ -65,9 +66,12 @@ export interface TaskActions {
 	loadOlder: () => void;
 	/** 运行已超过保留期，明细已被清理。 */
 	expired: boolean;
-	/** 最近一次读取失败的原因：第一页读不到时用 `retry()` 重读，读更早的一页失败时再滚动或点按钮就会重读。 */
+	/**
+	 * 最近一次读取失败的原因：第一页或摘要读不到时用 `retry()` 重读，读更早的一页失败时再滚动或点按钮就会重读。
+	 * 已经读到的摘要后台刷新失败不算。
+	 */
 	error: Error | null;
-	/** 重读第一页（第一页读取失败以后）。 */
+	/** 重读读不到的第一页和摘要。 */
 	retry: () => void;
 }
 
@@ -80,7 +84,11 @@ export interface TaskActions {
 export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER): TaskActions {
 	const { name, failed } = filter;
 	const queryClient = useQueryClient();
-	const summary = useActionSummary(taskId, false);
+	const {
+		data: summary,
+		error: summaryError,
+		refetch: refetchSummary,
+	} = useActionSummary(taskId, false);
 	const [buffer, setBuffer] = useState<ActionDetails | null>(null);
 	const [loadingOlder, setLoadingOlder] = useState(false);
 	const [error, setError] = useState<Error | null>(null);
@@ -168,8 +176,11 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 		loadingOlder,
 		loadOlder,
 		expired: buffer?.expired ?? false,
-		error,
-		retry: useCallback(() => setReloads((n) => n + 1), []),
+		error: error ?? (summary === undefined ? summaryError : null),
+		retry: () => {
+			if (buffer === null && error !== null) setReloads((n) => n + 1);
+			if (summary === undefined) void refetchSummary();
+		},
 	};
 }
 
