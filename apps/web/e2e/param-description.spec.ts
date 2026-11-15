@@ -8,6 +8,8 @@ import {
 	openEditor,
 } from "./editor-support";
 import { expect, test } from "./fixtures";
+import { PARAM_SCENARIO } from "./run-drawer-scenario";
+import { createRunPreset } from "./run-presets-support";
 import { createScenario, publishPackage } from "./support";
 
 // 入口参数的说明（#305）：搭场景的人在参数编辑器里给入口参数和子流程入口的参数写一行说明，
@@ -208,4 +210,59 @@ test("版本对比列出参数说明的变化", async ({ page, controlPlane }) =
 	const changes = page.getByRole("region", { name: "节点" });
 	await expect(changes).toContainText("参数 biz_date");
 	await expect(changes).toContainText("必填 · 说明「业务日期」");
+});
+
+test("运行预设固定的参数也显示说明：抽屉里说明在「由预设 … 固定」前面，预设的编辑表单里同样显示说明", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane);
+	const described = {
+		...PARAM_SCENARIO,
+		nodes: PARAM_SCENARIO.nodes.map((node) =>
+			node.id === "entry"
+				? {
+						...node,
+						params: node.params?.map((p) =>
+							p.name === "host"
+								? { ...p, description: "被巡检的主机" }
+								: p.name === "steps"
+									? { ...p, description: "每次最多处理的步数" }
+									: p,
+						),
+					}
+				: node,
+		),
+	};
+	const id = await createScenario(controlPlane, "巡检", described);
+	await createRunPreset(controlPlane, id, {
+		name: "A 集群",
+		params: [{ name: "host", value: "10.0.0.8" }],
+	});
+	await page.goto("/orchestrations");
+	const card = page.getByRole("article", { name: "巡检" });
+
+	await card.getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("combobox", { name: "运行预设" }).selectOption({ label: "A 集群" });
+	await expect(drawer.getByRole("textbox", { name: /^host / })).toHaveAccessibleDescription(
+		"被巡检的主机 由预设 A 集群 固定",
+	);
+	await expect(drawer.getByRole("textbox", { name: /^steps / })).toHaveAccessibleDescription(
+		"每次最多处理的步数 默认 3",
+	);
+	await page.keyboard.press("Escape");
+	await expect(drawer).toBeHidden();
+
+	await card.getByRole("button", { name: "更多操作" }).click();
+	await page.getByRole("menuitem", { name: "运行预设…" }).click();
+	const dialog = page.getByRole("dialog", { name: "运行预设" });
+	await dialog.getByRole("listitem").getByRole("button", { name: "编辑" }).click();
+	const form = page.getByRole("dialog", { name: "编辑运行预设" });
+	await expect(form.getByRole("textbox", { name: /^host / })).toHaveAccessibleDescription(
+		"被巡检的主机",
+	);
+	await expect(form.getByRole("textbox", { name: /^steps / })).toHaveAccessibleDescription(
+		"每次最多处理的步数 默认 3",
+	);
 });
