@@ -516,11 +516,14 @@ export class Engine implements AgentSessionHandler {
 				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
 				.orderBy(asc(tasks.seq))
 				.for("update");
-			// 终止的任务就是上面锁住的这些（同一个事务、同样的条件）。
+			// 返回给调用方的是锁住的这些任务，在失败之前取（失败后状态就变了）。
 			const terminated = (
 				await loadAgentTasks(
 					step.tx,
-					and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)),
+					inArray(
+						tasks.id,
+						held.map((task) => task.id),
+					),
 				)
 			).running.map((t) => t.view);
 			for (const task of held) {
