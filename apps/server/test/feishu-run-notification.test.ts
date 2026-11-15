@@ -631,6 +631,25 @@ describe("运行通知", () => {
 			}
 		};
 
+		it("读关注项时抛出异常也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段", async () => {
+			const id = await scenario(benchDocument());
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			// 节点包的元信息被改坏（`nodes` 不是数组）：解析关注项时读节点类型会抛出异常。
+			await execute(
+				"UPDATE node_packages SET metadata = jsonb_set(metadata, '{nodes}', '5'::jsonb) WHERE name = 'bench'",
+			);
+			await agent.fail(load, "boom");
+			await status(runId, "failed");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
+			await eventually(async () =>
+				expect((await api.run(runId)).run_notification).toMatchObject({ status: "delivered" }),
+			);
+		});
+
 		it("读关注项时数据库报错也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段，错误记下来", async () => {
 			await agent.disconnect();
 			await feishu.close();
@@ -662,7 +681,7 @@ describe("运行通知", () => {
 			}
 		});
 
-		it("运行结束的事务里读关注项不从连接池另取连接：只有一个连接的连接池上，在事务里照样读出最终值", async () => {
+		it("在事务里读关注项（运行结束时就是这样读的）不从连接池另取连接：只有一个连接的连接池上照样读出最终值", async () => {
 			const id = await scenario(benchDocument(), { trigger: "always" });
 			await putFocusItemsOk(api, id, [
 				{ node_id: "load", chart: "TPS" },
