@@ -37,6 +37,7 @@ import {
 } from "react";
 import { useShortcut } from "#/components/shortcuts";
 import { dialogOpen, isEditable } from "#/lib/focus";
+import { ACTION } from "#/lib/copy";
 import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenu } from "@/components/ui/context-menu";
 import { AnnotationBoxes } from "./AnnotationBoxes";
@@ -404,8 +405,8 @@ export function FlowCanvas({
 		const resume = `按 ${shortcutText("canvas-follow")} 恢复`;
 		setAnnouncement(
 			cause === "drag"
-				? `已停止跟随执行，${resume}`
-				: `镜头已移到选中的节点，跟随执行已暂停，${resume}`,
+				? `已停止${ACTION.followExecution}，${resume}`
+				: `镜头已移到选中的节点，已停止${ACTION.followExecution}，${resume}`,
 		);
 	}, []);
 	// 打开跟随时马上框一次；之后执行前沿（执行中的节点）变化，停留一会儿才平移：停留期间又变化就重新计时。

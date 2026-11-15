@@ -12,6 +12,7 @@ import {
 	ScanIcon,
 } from "lucide-react";
 import { type ReactNode, useRef } from "react";
+import { ACTION } from "#/lib/copy";
 import { type ShortcutId, shortcutText } from "#/lib/shortcuts";
 import { Kbd } from "@/components/ui/kbd";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -151,7 +152,7 @@ export function CanvasDock({
 					<>
 						<GroupDivider />
 						<ToolButton
-							label="跟随执行"
+							label={ACTION.followExecution}
 							shortcut="canvas-follow"
 							pressed={follow.active}
 							disabled={follow.disabled}

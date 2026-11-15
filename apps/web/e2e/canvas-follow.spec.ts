@@ -223,7 +223,7 @@ test("拖动画布就停止跟随并播报，按 F 恢复；键盘选到视野�
 	await page.keyboard.press("ArrowRight");
 	await expect(nodeCard(page, "entry")).toHaveAttribute("aria-pressed", "true");
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
-	await expect(announcements).toHaveText("镜头已移到选中的节点，跟随执行已暂停，按 F 恢复");
+	await expect(announcements).toHaveText("镜头已移到选中的节点，已停止跟随执行，按 F 恢复");
 	await expect.poll(() => framed(page, [nodeCard(page, "entry")])).toBe(true);
 	await page.keyboard.press("f");
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
