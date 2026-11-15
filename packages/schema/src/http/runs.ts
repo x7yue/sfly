@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { type OrchestrationNode, ParamType } from "../orchestration-document.js";
 import { RunLogNodesParam } from "../run-log-scope.js";
+import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { download, endpoint, stream, Timestamp } from "./contract.js";
 import { MetricIncrement } from "./metrics.js";
@@ -105,6 +106,8 @@ export const AttemptView = z.object({
 	/** 定时 / Sleep 节点的唤醒时间；其他节点为 null。 */
 	wake_at: Timestamp.nullable(),
 	progress: TaskProgressView.nullable(),
+	/** 执行中的尝试此刻在做的动作（见 CurrentAction）；没有时为 null，尝试结束后也为 null。 */
+	current_action: CurrentAction.nullable(),
 });
 
 export const NodeRunView = z.object({

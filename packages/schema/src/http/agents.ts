@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { endpoint, Timestamp } from "./contract.js";
 
@@ -34,6 +35,8 @@ export const RunningTaskView = z.object({
 	status: z.enum(["dispatched", "running"]),
 	/** 执行器启动的时间；派发阶段为 null。 */
 	started_at: Timestamp.nullable(),
+	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，派发阶段也为 null。 */
+	current_action: CurrentAction.nullable(),
 });
 
 /**

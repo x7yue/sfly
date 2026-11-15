@@ -21,6 +21,7 @@ import {
 	type Welcome,
 } from "@sfly/proto";
 import packageJson from "../../package.json" with { type: "json" };
+import type { ActionSummaryEvent } from "../../src/actions/action-summary.js";
 
 /**
  * 假 Agent 默认上报的版本：控制面的默认版本（package.json）。版本与控制面不一致的 Agent 不会被派任务（ADR 0014），
@@ -503,6 +504,38 @@ export class FakeAgent {
 				}),
 			},
 		});
+	}
+
+	/**
+	 * 上报一份动作摘要（规格 #345；`action_summary` 事件，格式见 sdk/python/src/sfly/context.py）：Agent 把事件管道里
+	 * 那一行原样放进 ActionSummary.event_json。没写的项取「没有记录过动作」的值；控制面不回 Ack。
+	 * 摘要里的时刻用 {@link stamp} 写。
+	 */
+	actionSummary(task: TaskRef, summary: Partial<Omit<ActionSummaryEvent, "type">> = {}): void {
+		const event: ActionSummaryEvent = {
+			type: "action_summary",
+			total: 0,
+			reported: 0,
+			capped_ts: null,
+			capped_mono: null,
+			names: [],
+			running: [],
+			recent: [],
+			recent_failed: [],
+			...summary,
+		};
+		this.send({
+			case: "actionSummary",
+			value: { taskId: task.taskId, attempt: task.attempt, eventJson: JSON.stringify(event) },
+		});
+	}
+
+	/**
+	 * 控制面时间为 `unixMs` 的时刻写进动作摘要的样子：Agent 时间（与控制面一致）和这台 Agent 的单调时钟读数。
+	 * 只有用 `clock` 选项连接的 Agent 才能用（{@link monotonicAt}）。
+	 */
+	stamp(unixMs: number): { ts: number; mono: number } {
+		return { ts: unixMs, mono: Number(this.monotonicAt(unixMs)) };
 	}
 
 	/** 上报任意 TaskResult，等待对应的 Ack（task_id + attempt 相同）。 */

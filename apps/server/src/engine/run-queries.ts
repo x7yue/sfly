@@ -1,6 +1,7 @@
 import { nodeNameBeforeId } from "@sfly/orchestration";
 import type { AttemptView, ChainRunView, NodeRunView, RunSummary, RunView } from "@sfly/schema";
 import { and, asc, desc, eq } from "drizzle-orm";
+import { currentActionOfTask } from "../actions/action-summary.js";
 import { clockOffsetView } from "../agents/agent-clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -8,6 +9,7 @@ import {
 	feishuMessages,
 	orchestrationVersions,
 	runs,
+	taskActionSummaries,
 	tasks,
 } from "../db/schema.js";
 import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
@@ -61,11 +63,14 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		.from(chainInstances)
 		.where(eq(chainInstances.runId, runId))
 		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt), asc(chainInstances.id));
-	const allTasks = await db
-		.select()
-		.from(tasks)
-		.where(eq(tasks.runId, runId))
-		.orderBy(asc(tasks.attempt));
+	const allTasks = (
+		await db
+			.select({ task: tasks, currentAction: taskActionSummaries.currentAction })
+			.from(tasks)
+			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
+			.where(eq(tasks.runId, runId))
+			.orderBy(asc(tasks.attempt))
+	).map(({ task, currentAction }) => ({ ...task, currentAction }));
 	const attemptsOf = groupAttempts(allTasks);
 	const plan = planRun(document);
 	// 每个链实例只列出它那条链（主链或子流程）上的节点。
@@ -137,6 +142,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 									message: maskSecrets(t.progress.message, secrets),
 								}
 							: null,
+						current_action: currentActionOfTask(t.status, t.currentAction),
 					}));
 				const last = attempts.at(-1);
 				return {

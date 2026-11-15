@@ -284,6 +284,7 @@ describe("运行视图与进度推送的合并（#110）", () => {
 								end_clock_offset: null,
 								wake_at: null,
 								progress: attemptProgress,
+								current_action: null,
 							},
 						],
 					},
@@ -331,6 +332,7 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		end_clock_offset: null,
 		wake_at: null,
 		progress: null,
+		current_action: null,
 	});
 	const node = (id: string, status: NodeRunView["status"], attempts: AttemptView[] = []) =>
 		({

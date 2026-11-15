@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
+import { TaskActions } from "./actions/task-actions.js";
 import {
 	AgentBinaries,
 	type AgentBinaryFiles,
@@ -245,6 +246,12 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
 	await engine.recover();
+	const actions = new TaskActions({
+		db: database.db,
+		clock,
+		logs,
+		runChanges: engine.runChanges,
+	});
 	const metricRetention = new MetricRetention({
 		db: database.db,
 		clock,
@@ -281,6 +288,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		presence,
 		preflight,
 		logs,
+		actions,
 		metrics,
 		metricQueries: new MetricQueries({ db: database.db, clock, metrics }),
 		retention,
@@ -322,14 +330,15 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
 			hub,
-			// 日志、进度、指标和 ctx.notify 的通知不改变运行状态，不经过引擎
-			// （src/logs/task-logs.ts、src/metrics/task-metrics.ts、src/feishu/task-notifications.ts）。
+			// 日志、进度、指标、ctx.notify 的通知和动作摘要不改变运行状态，不经过引擎（src/logs/task-logs.ts、
+			// src/metrics/task-metrics.ts、src/feishu/task-notifications.ts、src/actions/task-actions.ts）。
 			handler: {
 				onOnline: (conn, running) => engine.onOnline(conn, running),
 				async onMessage(conn, message) {
 					if (metrics.handles(message)) return metrics.onMessage(conn, message);
 					if (logs.handles(message)) return logs.onMessage(conn, message);
 					if (notifications.handles(message)) return notifications.onMessage(conn, message);
+					if (actions.handles(message)) return actions.onMessage(conn, message);
 					// 任务结束：先写入它的指标（Agent 在结果之前发完最后的点）。写不进去时记下来、照常处理结果：
 					// 没写入的点留在内存里，由周期写入重试有限次（src/metrics/task-metrics.ts）。
 					if (message.body.case === "result") {

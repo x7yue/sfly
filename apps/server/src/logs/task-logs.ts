@@ -317,7 +317,7 @@ export class TaskLogs {
 	 */
 	async #write(taskId: string, state: TaskState, entries: readonly NewLine[]): Promise<void> {
 		// 子流程实例可能在任务运行期间才创建，它声明的 secret 从此也要打码：每批都重新取。
-		state.secrets = await this.#currentSecrets(state.runId);
+		state.secrets = await this.runSecrets(state.runId);
 		const file = join(this.deps.dataDir, state.path);
 		if (state.lastTimeMs === undefined) state.lastTimeMs = await lastLineTimeMs(file);
 		const lines: LogLineView[] = [];
@@ -394,7 +394,7 @@ export class TaskLogs {
 		return this.#serial(progress.taskId, async () => {
 			const state = await this.#stateFor(progress.taskId, agentName);
 			if (!state) return;
-			state.secrets = await this.#currentSecrets(state.runId);
+			state.secrets = await this.runSecrets(state.runId);
 			const value: TaskProgressView = {
 				current: progress.current,
 				total: progress.total ?? null,
@@ -495,8 +495,8 @@ export class TaskLogs {
 		return state;
 	}
 
-	/** 一次运行当前的全部 secret 值（链实例可能在运行期间新增，每次现查）。 */
-	async #currentSecrets(runId: string): Promise<string[]> {
+	/** 一次运行当前的全部 secret 值（链实例可能在运行期间新增，每次现查）；动作摘要打码也用它。 */
+	async runSecrets(runId: string): Promise<string[]> {
 		const [row] = await this.deps.db
 			.select({ document: orchestrationVersions.document })
 			.from(runs)
@@ -540,7 +540,7 @@ export class TaskLogs {
 			lastTimeMs: undefined,
 			// 写完截断标记、数据库还没更新时控制面可能退出过：文件已到上限也算截断。
 			truncated: task.logTruncated || bytes >= this.#limit,
-			// 占位：写入前总会先经 #currentSecrets 刷新。
+			// 占位：写入前总会先经 runSecrets 刷新。
 			secrets: [],
 		};
 	}

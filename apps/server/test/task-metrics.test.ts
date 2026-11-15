@@ -514,8 +514,14 @@ const LATER_COLUMNS: [string, string, string][] = [
 	["orchestrations", "focus_edit", "jsonb"],
 ];
 
-/** 0012 之后的迁移新建、当前代码会读的表：表名和建表的迁移文件（保存场景时的静态检查读 feishu_bots）。 */
-const LATER_TABLES: [string, string][] = [["feishu_bots", "0018_feishu_bots.sql"]];
+/**
+ * 0012 之后的迁移新建、当前代码会读的表：表名和建表的迁移文件（保存场景时的静态检查读 feishu_bots，
+ * 运行视图和 Agent 列表读 task_action_summaries）。
+ */
+const LATER_TABLES: [string, string][] = [
+	["feishu_bots", "0018_feishu_bots.sql"],
+	["task_action_summaries", "0026_action_summaries.sql"],
+];
 
 describe("迁移前的指标数据", () => {
 	let cp: TestControlPlane;
