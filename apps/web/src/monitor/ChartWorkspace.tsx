@@ -17,6 +17,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
+import { MESSAGE } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
@@ -305,7 +306,7 @@ export function ChartWorkspace({
 					<Skeleton className="h-10 w-full" />
 				</output>
 			) : catalog.data.expired ? (
-				<Notice compact={compact}>这次运行的指标数据已超过保留期，已被清理。</Notice>
+				<Notice compact={compact}>{MESSAGE.metricsExpired}</Notice>
 			) : groups.length === 0 ? (
 				<Notice compact={compact}>
 					这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。

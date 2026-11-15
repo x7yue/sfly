@@ -149,6 +149,8 @@ export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
 	noData: "还没有数据",
+	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
+	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
 	neverRun: "从未运行",
 	noLogs: "还没有日志。",
 	/** 监控页日志页签：任务或运行还没有结束，暂时没有日志。 */

@@ -187,9 +187,7 @@ function FocusBody({ data, onOpen }: { data: RunFocus; onOpen: (item: RunFocusIt
 	const charts = data.items.filter((item) => !isReadout(item));
 	return (
 		<>
-			{data.expired && (
-				<p className="m-0 text-xs text-fg-3">这次运行的指标已过保留期，没有数据。</p>
-			)}
+			{data.expired && <p className="m-0 text-xs text-fg-3">{MESSAGE.metricsExpired}</p>}
 			{readouts.length > 0 && (
 				<FocusReadoutStrip
 					items={readouts}
