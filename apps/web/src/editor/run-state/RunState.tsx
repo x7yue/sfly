@@ -13,6 +13,7 @@ import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusPill } from "#/components/status";
+import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { runViewTransition } from "#/lib/view-transition";
@@ -170,7 +171,7 @@ export function RunTopRight({
 					className={buttonVariants({ variant: "primary" })}
 				>
 					<ActivityIcon />
-					打开运行监控
+					{ACTION.openRun}
 				</Link>
 			)}
 		</div>

@@ -181,7 +181,7 @@ test("命令面板：「运行」分组跳转到最近的运行；「运行场�
 		new RegExp(`${runId.slice(0, 8)}.*日终数据处理`),
 	]);
 	await page.keyboard.press("Enter");
-	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?|$)`));
 
 	await page.goto("/agents");
 	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();

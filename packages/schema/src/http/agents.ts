@@ -22,21 +22,49 @@ export const DevPackageView = z.object({
 	metadata: z.record(z.string(), z.unknown()).nullable(),
 });
 
-/** 派发给 Agent、还没结束的任务。 */
-export const RunningTaskView = z.object({
+/** 占着或等着这台 Agent 槽位的任务：哪个场景的哪个运行、哪条链上的哪个节点、第几次尝试。 */
+const AgentTaskFields = {
 	task_id: z.string(),
 	run_id: z.string(),
 	orchestration_id: z.string(),
+	/** 场景现在的名称（名称不跟版本走）。 */
+	orchestration_name: z.string(),
 	node_id: z.string(),
 	/** 运行绑定的场景版本里这个节点的显示名称（子流程入口节点是子流程名称）；没有时不给。 */
 	display_name: z.string().optional(),
+	/** 节点类型，写作「包名/节点类型名」。 */
+	node_type: z.string(),
+	/** 任务所在的链实例（运行监控里的链）。 */
+	chain_instance_id: z.string(),
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；任务在主链上为 null。
+	 */
+	chain_name: z.string().nullable(),
 	attempt: z.number().int(),
+};
+
+/** 派发给 Agent、还没结束的任务（占着槽位）。 */
+export const RunningTaskView = z.object({
+	...AgentTaskFields,
 	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
 	status: z.enum(["dispatched", "running"]),
 	/** 执行器启动的时间；派发阶段为 null。 */
 	started_at: Timestamp.nullable(),
 	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，派发阶段也为 null。 */
 	current_action: CurrentAction.nullable(),
+});
+
+/**
+ * 在等这台 Agent 的任务：Agent 不在线、还在准备环境，或没有空闲槽位。
+ * 超过 queue_expires_at 仍没有派发时任务以 env_error 失败（docs/SEMANTICS.md 的 queue_timeout）。
+ */
+export const QueuedTaskView = z.object({
+	...AgentTaskFields,
+	/** 进入排队的时间；重试的尝试从重新排队时算。 */
+	queued_at: Timestamp,
+	/** 排队超时的时间；没有设置排队超时的任务为 null。 */
+	queue_expires_at: Timestamp.nullable(),
 });
 
 /**
@@ -111,6 +139,8 @@ export const AgentView = z.object({
 	dev_packages: z.array(DevPackageView),
 	/** 按派发顺序排列；长度即占用的槽位数。 */
 	running_tasks: z.array(RunningTaskView),
+	/** 在等这台 Agent 的任务，按排队顺序（也是派发顺序）。 */
+	queued_tasks: z.array(QueuedTaskView),
 	/**
 	 * Agent 版本与控制面版本（列表响应的 control_plane_version）不一致：控制面不给它派新任务（ADR 0014），
 	 * 它手上的任务照常跑完。按最近一次连接上报的版本判断。
@@ -165,5 +195,6 @@ export type AgentUpdateState = z.infer<typeof AgentUpdateState>;
 export type AgentUpdateView = z.infer<typeof AgentUpdateView>;
 export type DevPackageView = z.infer<typeof DevPackageView>;
 export type RunningTaskView = z.infer<typeof RunningTaskView>;
+export type QueuedTaskView = z.infer<typeof QueuedTaskView>;
 export type CapabilityView = z.infer<typeof CapabilityView>;
 export type AgentEndpointView = z.infer<typeof AgentEndpointView>;

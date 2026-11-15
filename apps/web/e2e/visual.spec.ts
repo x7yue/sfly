@@ -35,6 +35,7 @@ import {
 	runningScenario,
 	unixAt,
 } from "./monitor-scenario";
+import { openOverview, overviewRun, readouts } from "./overview-support";
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
@@ -42,6 +43,7 @@ import { stoppingRun } from "./stop-subflow-scenario";
 import {
 	createFeishuBot,
 	createScenario,
+	elapseWithHeartbeats,
 	failApi,
 	holdApi,
 	publishPackage,
@@ -49,6 +51,7 @@ import {
 	seedDashboard,
 	setRunNotification,
 	triggerRun,
+	withSubflow,
 } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
 
@@ -80,16 +83,64 @@ async function twoAgents(connectAgent: E2eFixtures["connectAgent"]) {
 	return mac;
 }
 
-test("Agent 列表", async ({ page, connectAgent, controlPlane }) => {
-	const mac = await twoAgents(connectAgent);
-	await createScenario(controlPlane, "巡检", scenarioUsing("agent-linux"));
-	await mac.disconnect();
+test("Agent 列表", async ({ page, connectAgent, controlPlane, clock }) => {
+	const linux = await connectAgent({
+		name: "agent-linux",
+		agentVersion: "0.1.0",
+		os: "linux",
+		arch: "x86_64",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+		capabilities: [{ name: "files", version: 1 }],
+		peer: { port: 50052 },
+	});
+	const mac = await connectAgent({
+		name: "agent-mac",
+		agentVersion: "0.1.0",
+		os: "macos",
+		arch: "aarch64",
+		slots: 1,
+		capabilities: [{ name: "files", version: 1 }],
+		peer: { port: 50052, publicAddress: "10.20.30.40" },
+	});
+	const retired = await connectAgent({
+		name: "agent-retired",
+		agentVersion: "0.1.0",
+		os: "linux",
+		arch: "x86_64",
+	});
+	await retired.disconnect();
+	await publishPackage(controlPlane);
+	const soak = await triggerRun(
+		controlPlane,
+		await createScenario(
+			controlPlane,
+			"撮合浸泡",
+			withSubflow("agent-linux", { probe: "探测主机", subflow: "巡检子流程" }),
+		),
+	);
+	await linux.nextAssign();
+	await linux.nextAssign();
+	const inspect = await createScenario(controlPlane, "巡检", scenarioUsing("agent-mac"));
+	const running = await triggerRun(controlPlane, inspect);
+	await mac.nextAssign();
+	await elapseWithHeartbeats(clock, [linux, mac], 95_000);
+	const waiting = await triggerRun(controlPlane, inspect);
+	await elapseWithHeartbeats(clock, [linux, mac], 65_000);
 
+	// 三个机架一屏放下。
+	await page.setViewportSize({ width: 1440, height: 960 });
 	await page.goto("/agents");
-	await expect(page.getByRole("row", { name: /agent-mac/ })).toContainText("离线");
-	await expect(page.getByRole("row", { name: /agent-linux/ })).toContainText("1 个场景");
-
-	await expect(page).toHaveScreenshot("agents.png");
+	await expect(page.getByRole("region", { name: "agent-retired", exact: true })).toContainText(
+		"离线",
+	);
+	await expect(page.getByRole("region", { name: "agent-mac", exact: true })).toContainText(
+		"排队 1",
+	);
+	// 运行编号是随机的。
+	await expect(page).toHaveScreenshot("agents.png", {
+		mask: [soak, running, waiting].map((id) => page.getByText(id.slice(0, 8))),
+	});
 });
 
 test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgent }) => {
@@ -118,8 +169,12 @@ test("Agent 列表：版本不一致与更新状态", async ({ page, connectAgen
 		await agent.sync();
 	}
 
+	// 五个机架一屏放下，包括头部放不下时换行的那一台。
+	await page.setViewportSize({ width: 1440, height: 1280 });
 	await page.goto("/agents");
-	await expect(page.getByRole("row", { name: /agent-failed/ })).toContainText("更新失败");
+	await expect(page.getByRole("region", { name: "agent-failed", exact: true })).toContainText(
+		"更新失败",
+	);
 	await expect(page).toHaveScreenshot("agents-update.png");
 });
 
@@ -152,9 +207,9 @@ test("Agent 列表：立即更新确认框", async ({ page, controlPlane, connec
 	await page.getByRole("button", { name: "立即更新" }).click();
 	const dialog = page.getByRole("dialog", { name: "立即更新 agent-linux？" });
 	await expect(dialog.getByRole("listitem")).toHaveCount(1);
-	// 运行 ID 是随机的。
+	// 运行 ID 是随机的：确认框里和后面机架的槽位格里各有一处。
 	await expect(page).toHaveScreenshot("agents-update-now.png", {
-		mask: [page.locator('ul[aria-label="会被终止的任务"] li > span.text-xs')],
+		mask: [page.getByText(held.runId.slice(0, 8))],
 	});
 });
 
@@ -402,7 +457,7 @@ test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, c
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const task = await agent.nextAssign();
 	// 等实时推送接上（节点显示为执行中）再上报进度与日志。
-	await expect(drawer.getByRole("list", { name: "正在执行的节点" })).toContainText("执行中");
+	await expect(drawer.getByRole("list", { name: "进行中的节点" })).toContainText("执行中");
 	agent.progress(task, 40, 100, "第 40 步");
 	agent.logs(task, [
 		logLine(clock, 1, "连接 10.0.0.8"),
@@ -550,6 +605,22 @@ test("运行监控：失败的运行（尝试页签）", async ({ page, controlP
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);
 	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
+});
+
+test("运行监控：概览（关注项的读数和图表，没有异常）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	await expect(readouts(page).getByRole("button")).toHaveCount(2);
+	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(3);
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview.png", {
+		mask: [...runIds(page), page.locator("[data-chain-id]")],
+	});
 });
 
 test("运行监控：图表工作区（小型运行，全部展开，悬停联动）", async ({

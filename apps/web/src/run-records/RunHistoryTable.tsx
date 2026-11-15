@@ -93,7 +93,7 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 
 /**
  * 历史运行（原型 viewRuns 的表格，TanStack Table）：编号、场景、状态（与失败节点同一行）、各链进度、版本、
- * 触发人、开始时间、耗时。行高固定，点整行进入运行详情（编号是可聚焦的链接）。
+ * 触发人、开始时间、耗时。行高固定，点整行进入运行监控（编号是可聚焦的链接）。
  */
 export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: number }) {
 	const navigate = useNavigate();

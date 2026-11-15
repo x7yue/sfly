@@ -11,6 +11,7 @@ import { orchestrationsApi } from "./orchestrations.js";
 import { packagesApi } from "./packages.js";
 import { presenceApi } from "./presence.js";
 import { presetsApi } from "./presets.js";
+import { runFocusApi } from "./run-focus.js";
 import { runListApi } from "./run-list.js";
 import { artifactsApi, logsApi, runsApi } from "./runs.js";
 import { sdkApi, systemApi } from "./system.js";
@@ -29,6 +30,7 @@ export * from "./orchestrations.js";
 export * from "./packages.js";
 export * from "./presence.js";
 export * from "./presets.js";
+export * from "./run-focus.js";
 export * from "./run-list.js";
 export * from "./runs.js";
 export * from "./system.js";
@@ -48,7 +50,7 @@ export const httpApis = {
 	packages: packagesApi,
 	presence: presenceApi,
 	presets: presetsApi,
-	runs: { ...runListApi, ...runsApi },
+	runs: { ...runListApi, ...runFocusApi, ...runsApi },
 	sdk: sdkApi,
 	system: systemApi,
 } satisfies Record<string, Record<string, RouteDef>>;
