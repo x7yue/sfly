@@ -1237,8 +1237,7 @@ test("运行监控：显示名称与备注图标（名称放不下时截断显�
 	});
 	const runId = await triggerRun(controlPlane, scenarioId);
 	await driveToRetry(agent, clock, await agent.nextAssign());
-	await openMonitor(page, clock, runId, "verify");
-	await page.getByRole("region", { name: "底部面板" }).getByRole("tab", { name: "尝试" }).click();
+	await openMonitor(page, clock, runId, "verify", "attempts");
 	await expect(page.getByRole("article", { name: /第 2 次尝试$/ })).toBeVisible();
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);

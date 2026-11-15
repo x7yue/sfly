@@ -216,10 +216,24 @@ export async function runningScenario(
 	return { runId, scenarioId, agent, tasks: { fetch, ...first, verify: retry } };
 }
 
-/** 打开监控页：浏览器时间固定在手动时钟的当前时刻。 */
-export async function openMonitor(page: Page, clock: ManualClock, runId: string, node?: string) {
+/**
+ * 打开监控页：浏览器时间固定在手动时钟的当前时刻。
+ * tab：打开时就切到的底部面板页签。页面打开后再点页签会改变图表工作区的高度，而「滚到选中节点」只在目录到达时判断一次，
+ * 两者的先后取决于网络响应的快慢，截图里选中节点的组在不在视野内就不确定；要截图的用例用 tab 一开始就定下面板的状态。
+ */
+export async function openMonitor(
+	page: Page,
+	clock: ManualClock,
+	runId: string,
+	node?: string,
+	tab?: "logs" | "attempts" | "io" | "artifacts",
+) {
 	await page.clock.setFixedTime(clock.now());
-	await page.goto(`/runs/${runId}${node ? `?node=${node}` : ""}`);
+	const search = new URLSearchParams();
+	if (node) search.set("node", node);
+	if (tab) search.set("tab", tab);
+	const query = search.toString();
+	await page.goto(`/runs/${runId}${query ? `?${query}` : ""}`);
 	await expect(page.getByRole("region", { name: "链路时间线" })).toBeVisible();
 }
 
