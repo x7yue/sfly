@@ -2,6 +2,7 @@ import type { LogLineView } from "@sfly/schema";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "cn";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { LOG_LEVEL_LABEL } from "#/lib/copy";
 import {
 	formatClockMs,
 	formatFullDateTime,
@@ -11,13 +12,6 @@ import {
 } from "#/lib/format";
 import { ContextMenu, type ContextMenuAnchor, ContextMenuItem } from "@/components/ui/context-menu";
 import { type LogTimeKind, logLineTime } from "./log-time-kind";
-
-const LEVEL_LABEL: Record<LogLineView["level"], string> = {
-	debug: "DEBUG",
-	info: "INFO",
-	warn: "WARN",
-	error: "ERROR",
-};
 
 const LEVEL_STYLE: Record<LogLineView["level"], string> = {
 	debug: "text-log-debug",
@@ -375,7 +369,7 @@ export function LogList<L extends LogLineView>({
 									!locatable && line.level === "info" ? "text-fg-3" : LEVEL_STYLE[line.level]
 								}
 							>
-								{LEVEL_LABEL[line.level]}
+								{LOG_LEVEL_LABEL[line.level]}
 							</span>
 							{origin && (
 								// biome-ignore lint/a11y/noStaticElementInteractions: 嵌在整行的 button 里，不能再放 button；键盘用行上的菜单（Shift+F10）

@@ -14,19 +14,27 @@ import { formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
+import { Attention, OtherWarnings } from "./Attention";
 import { useTimeAxis } from "./monitor-state";
+import type { PanelTab } from "./run-link";
 import { chainLabelParts, orderedChains } from "./run-model";
 
-/** 概览里点一项要去详情里看的节点；节点所在的子流程还没触发时没有链实例。 */
+/**
+ * 概览里点一项要去详情里看的地方：节点（所在的子流程还没触发时没有链实例），可以再指定底部面板的页签，
+ * 以及日志要定位的时刻（控制面时间，与 API 的 `Timestamp` 同写法）。
+ */
 export interface OverviewTarget {
 	chainInstanceId: string | null;
 	nodeId: string;
+	tab?: PanelTab;
+	at?: string;
 }
 
 /**
- * 运行监控的「概览」：从上到下是链路（各链的进度和执行中的节点）和关注项（数值类排成一条读数，图表类两列排开）。
- * 点任何一项都进入「详情」并定位到来源节点（`onOpenNode`）。数据是 `GET /runs/:id/focus`，运行中每 2 秒重新读取。
- * 场景没设关注项时显示执行中节点的主指标，并给出「设置关注项」的入口。
+ * 运行监控的「概览」：从上到下是链路（各链的进度和执行中的节点）、「需要注意」（只在有异常时出现）、关注项（数值类排成
+ * 一条读数，图表类两列排开，有异常的排在前面）和其他警告与错误。点任何一项都进入「详情」并定位到来源节点
+ * （`onOpenNode`），「需要注意」的直达按钮还定位到那一行日志或那个页签。数据是 `GET /runs/:id/focus`，运行中每 2 秒
+ * 重新读取。场景没设关注项时显示执行中节点的主指标，并给出「设置关注项」的入口。
  */
 export function Overview({
 	run,
@@ -40,7 +48,9 @@ export function Overview({
 		<div className="min-h-0 flex-1 overflow-auto bg-bg">
 			<div className="flex flex-col gap-5 p-4">
 				<ChainSection run={run} />
+				{focus.data && <Attention focus={focus.data} onOpen={onOpenNode} />}
 				<FocusSection run={run} focus={focus} onOpenNode={onOpenNode} />
+				<OtherWarnings run={run} focus={focus.data} onOpen={onOpenNode} />
 			</div>
 		</div>
 	);
@@ -150,7 +160,9 @@ function FocusSection({
 					</span>
 				)}
 				<span className="text-xs text-fg-3">
-					{primary ? `场景没有设置${TERM.focusItem}` : `由场景设置，按设定的顺序排`}
+					{primary
+						? `场景没有设置${TERM.focusItem}`
+						: `由场景设置，按设定的顺序排，有异常的排在最前`}
 				</span>
 				<span className="flex-1" />
 				<Link

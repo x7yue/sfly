@@ -75,14 +75,26 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 		rememberView(next);
 		void navigate(runMonitorLink(runId, { ...address, view: next }));
 	};
-	/** 点概览里的一项：进入详情，定位到它所在的节点。 */
+	/**
+	 * 点概览里的一项：进入详情，定位到它所在的节点，给了页签就切过去，给了时刻就在日志里定位到那一刻（「需要注意」的
+	 * 直达按钮）。节点有链实例时在这里直接定位，并把新地址记为已应用：地址可能和上一次直达时完全一样（切回概览再点一次），
+	 * 那样地址没变，不会再应用一次。
+	 */
 	const openNode = (target: OverviewTarget) => {
+		const next: MonitorSearch = { view: "detail", node: target.nodeId };
+		if (target.tab) next.tab = target.tab;
+		if (target.at) next.at = target.at;
 		if (target.chainInstanceId !== null) {
-			store.select({ chainInstanceId: target.chainInstanceId, nodeId: target.nodeId });
+			const ref = { chainInstanceId: target.chainInstanceId, nodeId: target.nodeId };
+			const at = target.at === undefined ? Number.NaN : Date.parse(target.at);
+			if (Number.isFinite(at)) store.locateLog(ref, at);
+			else store.select(ref);
+			if (target.tab && !Number.isFinite(at)) store.showPanel(target.tab);
+			appliedAddress.current = addressKeyOf(next);
 		}
 		// 点的那一格随概览卸载：焦点先移到「详情」标签，不落在 body 上。
 		document.getElementById(viewTabId("detail"))?.focus();
-		void navigate(runMonitorLink(runId, { view: "detail", node: target.nodeId }));
+		void navigate(runMonitorLink(runId, next));
 	};
 	/** 顶栏的失败摘要在概览里点了以后切到详情（那里有它要打开的「尝试」页签）；不算用户选了视图，不记。 */
 	const showDetail = () => void navigate(runMonitorLink(runId, { ...address, view: "detail" }));
@@ -103,7 +115,7 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 	// 第一次拿到运行视图时应用地址（选中节点的规则见 initialSelection），之后地址变了再应用一次。
 	// 第一次在渲染里应用而不是在 effect 里：底部面板第一次渲染就看到选中的节点，不会先挂上没选中节点时的合并日志、
 	// 白发一次请求之后又卸载（这时依赖这个状态的子组件还没有挂上）；之后的变化在 effect 里应用。
-	const addressKey = `${address.node ?? ""}\n${address.tab ?? ""}\n${address.at ?? ""}`;
+	const addressKey = addressKeyOf(address);
 	const appliedAddress = useRef<string | null>(null);
 	const applyIfNew = () => {
 		if (!run || appliedAddress.current === addressKey) return;
@@ -190,6 +202,10 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 		</MonitorProvider>
 	);
 }
+
+/** 地址里决定打开哪里的部分（节点、页签、时刻）；视图不算，切视图不重置选中的节点。 */
+const addressKeyOf = (address: MonitorSearch) =>
+	`${address.node ?? ""}\n${address.tab ?? ""}\n${address.at ?? ""}`;
 
 /**
  * 把地址里的位置变成页面状态：选中节点（没给节点时是失败的节点）、切到页签；带了 `at` 又给了运行里有的节点时，

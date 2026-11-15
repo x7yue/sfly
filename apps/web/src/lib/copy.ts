@@ -1,5 +1,5 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
-import type { NodeStatus, RunNotificationState, RunStatus } from "@sfly/schema";
+import type { LogLineView, NodeStatus, RunNotificationState, RunStatus } from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
 /**
@@ -55,7 +55,27 @@ export const FOCUS = {
 	chartMissing: (chart: string) => `这个版本的节点没有图表 ${chart}`,
 	/** 关注项不属于场景版本：节点检查器的图表列表和「关注项」页都要说明这一点。 */
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
+	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */
+	attention: "需要注意",
+	/**
+	 * 异常原因的短句（规格 #344 的四种异常）：读数的脚注、图表卡片和别处的关注项读数都用这几句，
+	 * 由 `focus-format.ts` 的 `anomalyText` 按一项的 `anomaly` 选出。
+	 */
+	logReason: (level: string, clock: string) => `${level} · ${clock}`,
+	staleFor: (ago: string) => `已 ${ago} 无新数据`,
+	sourceFailed: "来源节点失败",
+	retryReason: (attempt: number, clock: string) => `重试（${TERM.attempt} ${attempt}）· ${clock}`,
+	/** 运行监控页头：概览的关注项读数是什么时候生成的（控制面时间）。 */
+	dataUpdated: (clock: string) => `数据更新于 ${clock}`,
 } as const;
+
+/** 日志级别的写法：日志列表、级别筛选、运行抽屉的最新日志和关注项的异常原因共用。 */
+export const LOG_LEVEL_LABEL: Record<LogLineView["level"], string> = {
+	debug: "DEBUG",
+	info: "INFO",
+	warn: "WARN",
+	error: "ERROR",
+};
 
 /** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */
 export const ANNOTATION_FIELD_LABEL: Readonly<Record<string, string>> = {
@@ -202,6 +222,8 @@ export const MESSAGE = {
 	noActiveNodes: `没有${ACTIVE_LABEL}的${TERM.node}。`,
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
 	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
+	/** 运行监控的日志页签和概览的「其他警告与错误」：运行的日志已过保留期。 */
+	logsExpired: "这次运行的日志已超过保留期，已被清理。",
 	neverRun: "从未运行",
 	noLogs: "还没有日志。",
 	/** 监控页日志页签：任务或运行还没有结束，暂时没有日志。 */
