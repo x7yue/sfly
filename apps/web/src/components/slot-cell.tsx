@@ -2,7 +2,7 @@ import type { RunningTaskView } from "@sfly/schema";
 import { cn } from "cn";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, STATUS, StatusDot } from "#/components/status";
-import { chainLabel, TERM } from "#/lib/copy";
+import { namedChainLabel, TERM } from "#/lib/copy";
 import { formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { Truncate } from "@/components/ui/truncate";
@@ -77,8 +77,7 @@ export const idleSlotCount = (slots: number, running: number): number =>
 
 /** 任务所在链的名称：「主链」或「子流程 <名称>」（`chain_name` 为 null 是主链）。 */
 export const taskChainLabel = (task: Pick<RunningTaskView, "chain_name">): string =>
-	// chain_id 只在没有名称时顶替名称；这里的名称总是给出的。
-	chainLabel({ chain_id: "", subflow: task.chain_name !== null, name: task.chain_name });
+	namedChainLabel(task.chain_name);
 
 /** 格子的可访问名称：节点、场景，以及调用方补充的说明。 */
 export const slotLabel = (

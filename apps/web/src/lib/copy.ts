@@ -144,7 +144,7 @@ export const MESSAGE = {
 
 /**
  * 链和子流程的显示名称：画布、检查器、运行视图和运行通知的卡片共用（@sfly/orchestration 的 chain-label）。
- * `chainLabel` 是「主链」或「子流程 <名称>」，给出实例 ID 时带上实例短 ID；`subflowLabel` 是子流程的显示名称，
+ * `chainLabel` 是「主链」或「子流程 <名称>」，给出实例 ID 时带上实例短 ID（只有子流程名称时用 `namedChainLabel`）；`subflowLabel` 是子流程的显示名称，
  * 没有名称字段的旧版本显示节点 ID，填了空名称时显示「未命名子流程」。
  */
-export { chainLabel, subflowLabel } from "@sfly/orchestration";
+export { chainLabel, namedChainLabel, subflowLabel } from "@sfly/orchestration";
