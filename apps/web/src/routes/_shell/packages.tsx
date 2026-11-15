@@ -15,7 +15,7 @@ import { EmptyState, ErrorState, QueryView, TableSkeleton } from "#/components/f
 import { useListNavigation } from "#/components/list-navigation";
 import { CodeBlock, Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { PAGE } from "#/lib/copy";
+import { EMPTY, PAGE } from "#/lib/copy";
 import { formatBytes, formatDateTime } from "#/lib/format";
 import { firstParagraph } from "#/lib/node-description";
 import { compareVersions } from "#/lib/package-versions";
@@ -71,7 +71,7 @@ function PackagesPage() {
 					<Panel>
 						<EmptyState
 							icon={<BoxIcon />}
-							title="还没有发布节点包"
+							title={EMPTY.packages}
 							description="用 sfly init 创建项目、写好节点后，在项目目录里发布。"
 						>
 							<CodeBlock code="uv run sfly publish" className="mx-auto w-fit" />

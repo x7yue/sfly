@@ -478,7 +478,7 @@ test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
 test("控制台：全新环境的「开始使用」", async ({ page }) => {
 	await page.goto("/");
 	await expect(page.getByRole("region", { name: "开始使用", exact: true })).toContainText(
-		"等待 Agent 连接…",
+		"还没有 Agent 连接",
 	);
 	await expect(page).toHaveScreenshot("dashboard-empty.png");
 });

@@ -8,7 +8,7 @@ import { useOverlays } from "#/components/app-shell/overlays";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
 import { Panel } from "#/components/page";
-import { ACTION } from "#/lib/copy";
+import { ACTION, DOC_PAGE, EMPTY, MESSAGE, PAGE } from "#/lib/copy";
 import { Button, buttonVariants } from "@/components/ui/button";
 
 type StepId = keyof DashboardSetup;
@@ -82,17 +82,17 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 					</code>
 				</>
 			),
-			doneWhen: "完成：Agent 管理页出现一台在线的 Agent。",
-			state: "等待 Agent 连接…",
+			doneWhen: `完成：${PAGE.agents}页出现一台在线的 Agent。`,
+			state: EMPTY.agents,
 			action: setup.agent.done ? (
-				pageLink("/agents", "Agent 管理")
+				pageLink("/agents", PAGE.agents)
 			) : (
 				<Button
 					variant="primary"
 					onClick={() =>
 						writeClipboard(
 							command,
-							() => notify.success("已复制安装命令"),
+							() => notify.success(MESSAGE.copied),
 							"可以手动选中上面的命令复制",
 						)
 					}
@@ -117,13 +117,13 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 					的 <Mono>.sflypkg</Mono>。
 				</>
 			),
-			doneWhen: "完成：节点包管理页出现至少一个版本。",
-			state: "还没有节点包",
+			doneWhen: `完成：${PAGE.packages}页出现至少一个版本。`,
+			state: EMPTY.packages,
 			action: setup.package.done ? (
-				pageLink("/packages", "节点包管理")
+				pageLink("/packages", PAGE.packages)
 			) : (
 				<Link to="/docs/$page" params={{ page: "publish" }} className={GHOST_LINK}>
-					开发文档 · 发布
+					{PAGE.docs} · 发布
 				</Link>
 			),
 		},
@@ -136,9 +136,9 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 					? `已有 ${setup.scenario.count} 个场景，最近新建的是「${setup.scenario.name}」`
 					: `已新建场景「${setup.scenario.name}」`,
 			body: "在画布上从入口节点开始把节点连成链，选默认 Agent，保存版本。",
-			state: "还没有场景",
+			state: EMPTY.scenarios,
 			action: setup.scenario.done ? (
-				pageLink("/orchestrations", "场景编排")
+				pageLink("/orchestrations", PAGE.scenarios)
 			) : (
 				<Button
 					variant={white("scenario")}
@@ -154,10 +154,10 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			title: "触发第一次运行",
 			done: setup.run.done,
 			fact: "已有运行",
-			body: "在场景卡片或画布上点「运行」，填入口参数后触发。",
-			state: "还没有运行",
+			body: `在场景卡片或画布上点「${ACTION.run}」，填入口参数后触发。`,
+			state: EMPTY.runs,
 			action: setup.run.done ? (
-				pageLink("/runs", "运行记录")
+				pageLink("/runs", PAGE.runs)
 			) : setup.scenario.done ? (
 				<Button
 					variant={white("run")}
@@ -165,7 +165,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 					onClick={() => overlays.open("run-scenario")}
 				>
 					<PlayIcon />
-					运行场景
+					{ACTION.runScenario}
 				</Button>
 			) : null,
 		},
@@ -182,7 +182,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 					<span className="flex-1" />
 					<Link to="/docs/$page" params={{ page: "quickstart" }} className={GHOST_LINK}>
 						<BookOpenIcon />
-						快速开始
+						{DOC_PAGE.quickstart}
 					</Link>
 				</div>
 				<ol className="m-0 list-none p-0">
@@ -192,9 +192,9 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 				</ol>
 			</Panel>
 			<p className="mt-3 mb-0 text-xs text-fg-3">
-				开发节点包可以交给 AI 编程助手：开发文档
+				开发节点包可以交给 AI 编程助手：{PAGE.docs}
 				<Link to="/docs/$page" params={{ page: "quickstart" }} className={DOC_LINK_CLASS}>
-					「快速开始」
+					「{DOC_PAGE.quickstart}」
 				</Link>
 				里有可以直接复制给它的提示词。
 			</p>

@@ -9,7 +9,7 @@ import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/stat
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { SlotBar, type StatusKind, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
-import { PAGE } from "#/lib/copy";
+import { EMPTY, PAGE } from "#/lib/copy";
 import { formatClockOffset, formatDateTime, formatElapsed, formatFullDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
@@ -56,7 +56,7 @@ function AgentsPage() {
 					empty={
 						<EmptyState
 							icon={<ServerIcon />}
-							title="还没有 Agent 连接"
+							title={EMPTY.agents}
 							description="在测试机上运行下面的命令安装 Agent，它会主动连接控制面并出现在这里。首次启动会自动准备 uv、共享 venv 和 SDK 运行时。"
 						>
 							<CodeBlock code={command} className="mx-auto w-fit" />

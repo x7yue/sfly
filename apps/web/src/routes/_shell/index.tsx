@@ -20,7 +20,7 @@ import { Page, PageHeader, Panel } from "#/components/page";
 import { nodeStatusView, SlotBar, STATUS, StatusDot, StatusPill } from "#/components/status";
 import { GettingStarted } from "#/dashboard/GettingStarted";
 import { apiQuery } from "#/lib/api";
-import { PAGE } from "#/lib/copy";
+import { ACTION, PAGE } from "#/lib/copy";
 import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { Badge } from "@/components/ui/badge";
@@ -64,7 +64,7 @@ function Dashboard() {
 							{data && <RunCounts runs={data.runs} />}
 							<Button variant="default" onClick={() => overlays.open("run-scenario")}>
 								<PlayIcon />
-								运行场景
+								{ACTION.runScenario}
 							</Button>
 						</>
 					)

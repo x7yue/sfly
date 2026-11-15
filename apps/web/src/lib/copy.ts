@@ -53,6 +53,22 @@ export const PAGE = {
 	docs: "开发文档",
 } as const;
 
+/** 开发文档里被界面引用的页名（控制面 docs/guide/pages.json 里的标题）。 */
+export const DOC_PAGE = {
+	quickstart: "快速开始",
+} as const;
+
+/**
+ * 还没有数据的标题：列表页的空状态和控制台「开始使用」每一步右侧的状态写同一句，
+ * 没有这些数据时在哪里都读到同一个说法。
+ */
+export const EMPTY = {
+	agents: "还没有 Agent 连接",
+	packages: "还没有发布节点包",
+	scenarios: "还没有场景",
+	runs: "没有运行记录",
+} as const;
+
 /** 运行与链实例的状态。 */
 export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
 	running: "运行中",
@@ -93,6 +109,7 @@ export const FORCE_CANCELLING_LABEL = "强制终止中";
 /** 通用操作（按钮、菜单项、命令）。 */
 export const ACTION = {
 	run: "运行",
+	runScenario: "运行场景",
 	trigger: "触发运行",
 	rerun: "再次运行",
 	cancelRun: "取消运行",
@@ -138,6 +155,7 @@ export const MESSAGE = {
 	/** 监控页日志页签：单个任务的日志写满上限后，控制面丢掉之后的输出。 */
 	logTruncated: "日志超过单个任务的大小上限，之后的输出已被截断。",
 	archived: "已归档",
+	copied: "已复制到剪贴板",
 	copyFailed: "复制失败",
 	clipboardDenied: "浏览器不允许访问剪贴板",
 } as const;

@@ -51,7 +51,7 @@ test("每完成一步，白色按钮移到下一步；出现第一个运行后�
 		"data-variant",
 		"primary",
 	);
-	await expect(step(page, "agent")).toContainText("等待 Agent 连接…");
+	await expect(step(page, "agent")).toContainText("还没有 Agent 连接");
 	const command = "curl -fsSL http://sfly.example:8080/install.sh | sh -s -- --name <名称>";
 	await expect(step(page, "agent")).toContainText(command);
 	await step(page, "agent").getByRole("button", { name: "复制安装命令" }).click();
@@ -69,7 +69,7 @@ test("每完成一步，白色按钮移到下一步；出现第一个运行后�
 	await expect(
 		step(page, "package").getByRole("link", { name: "开发文档 · 发布" }),
 	).toHaveAttribute("href", "/docs/publish");
-	await expect(step(page, "package")).toContainText("还没有节点包");
+	await expect(step(page, "package")).toContainText("还没有发布节点包");
 
 	// 3. 发布了节点包：白色按钮是「新建场景」，打开新建场景弹窗。
 	await publishPackage(controlPlane);
