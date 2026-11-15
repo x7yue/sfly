@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { MONITOR_VIEW_LABEL } from "#/lib/copy";
+import { MONITOR_VIEW_LABEL, PAGE } from "#/lib/copy";
 import { MONITOR_VIEWS, type MonitorView, nextView } from "./monitor-view";
 
 /** 视图面板的 id：标签页的 `aria-controls` 指向它，面板（`<main>`）的名称来自当前的标签页。 */
@@ -21,7 +21,7 @@ export function ViewTabs({
 	return (
 		<div
 			role="tablist"
-			aria-label="运行监控视图"
+			aria-label={`${PAGE.monitor}视图`}
 			className="inline-flex h-7.5 flex-none items-stretch gap-px rounded-md border border-border-control bg-sunk p-0.5"
 		>
 			{MONITOR_VIEWS.map((value) => (
