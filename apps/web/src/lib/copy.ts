@@ -1,5 +1,6 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
-import type { RunNotificationState, RunStatus } from "@sfly/schema";
+import type { CountOnlySpan, RunNotificationState, RunStatus } from "@sfly/schema";
+import type { ActionGroupName, ActionOutcome } from "#/actions/action-table";
 
 /**
  * 界面文案（故事 79：文案集中管理，不引入 i18n 框架；规则见 docs/DESIGN-SYSTEM.md「文案」一节）。
@@ -30,6 +31,8 @@ export const TERM = {
 	annotation: "注释框",
 	focusItem: "关注项",
 	lastEdited: "最后修改",
+	action: "动作",
+	mark: "标记",
 } as const;
 
 /**
@@ -54,6 +57,61 @@ export const FOCUS = {
 	chartMissing: (chart: string) => `这个版本的节点没有图表 ${chart}`,
 	/** 关注项不属于场景版本：节点检查器的图表列表和「关注项」页都要说明这一点。 */
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
+} as const;
+
+const DOING = "正在做";
+
+/**
+ * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）：运行监控「动作」页，以及画布、检查器、概览里写动作的地方共用的文字。
+ * 和 `ACTION`（界面上的通用操作）不是一回事。
+ */
+export const NODE_ACTIONS = {
+	/** 此刻在做的事：「动作」页的第一组、读屏读到的「正在做 X」。 */
+	doing: DOING,
+	/** 「动作」页签的可访问名称，`count` 是写好的个数（标记不算）。 */
+	tabLabel: (count: string) => `${TERM.action}，共 ${count} 个`,
+	groups: {
+		running: DOING,
+		recent: "最近 20 个",
+		earlier: "更早的明细",
+	} satisfies Record<ActionGroupName, string>,
+	/** 「正在做」列满 50 个（`running_complete` 为 false）时写在组名后面。 */
+	runningIncomplete: "列满 50 个，可能还有没列出的",
+	/** 超过上限、有动作只计数时写在「最近 20 个」后面。 */
+	recentWhenCapped: "超过上限后也一直更新",
+	columns: { start: "开始", name: "名称", fields: "字段", duration: "耗时", result: "结果" },
+	results: {
+		running: "进行中",
+		success: "成功",
+		failed: "失败",
+		unfinished: "未结束",
+		mark: TERM.mark,
+	} satisfies Record<ActionOutcome["status"] | "mark", string>,
+	/** 只计数的段为什么没有明细（`CountOnlySpan.reason`）。 */
+	countOnlyReason: {
+		name_limit: "每种名称最多记录 5 万个，失败的动作仍有明细",
+		total_limit: "全部名称合计最多记录 10 万个",
+		control_plane: "控制面收到的明细超过上限，超出的已丢弃",
+	} satisfies Record<CountOnlySpan["reason"], string>,
+	/** 只计数的一段：「09:19:12 至今的 1,234,794 个「下单」只计数，没有明细（…）」，时间和个数已经写好。 */
+	countOnly: (span: {
+		from: string;
+		until: string | null;
+		count: string;
+		name: string;
+		reason: CountOnlySpan["reason"];
+	}): string =>
+		`${span.from} 至${span.until === null ? "今" : ` ${span.until} `}的 ${span.count} 个「${span.name}」只计数，没有明细（${NODE_ACTIONS.countOnlyReason[span.reason]}）`,
+	/** 节点没有记录过动作和标记（规格 #345：标准节点这一轮不记录动作）。 */
+	none: (node: string, running: boolean) => `${node} ${running ? "还没有" : "没有"}记录动作`,
+	noneHint: "标准节点这一轮不记录动作；节点的代码用 ctx.action 记录动作、ctx.mark 记录标记。",
+	pickNode: "在时间线上选中一个节点，查看它的动作。",
+	loading: "正在加载动作…",
+	loadFailed: "读取动作失败：",
+	expired: "这次运行的动作明细已超过保留期，已被清理。",
+	loadOlder: "向下滚动或点击加载更早的明细",
+	loadingOlder: "正在加载更早的明细…",
+	caption: (node: string) => `${node} 的动作，按开始时间从新到旧`,
 } as const;
 
 /** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */

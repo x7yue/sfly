@@ -120,6 +120,9 @@ export function formatMetric(value: number): string {
 	return abs >= 100 ? value.toFixed(0) : abs >= 10 ? value.toFixed(1) : value.toFixed(2);
 }
 
+/** 整数加千位分隔：`1,284,819`（计数）。 */
+export const formatInteger = (n: number): string => Math.round(n).toLocaleString("en-US");
+
 /** 一个值在界面上怎么写：字符串原样，其余按 JSON（预设参数的值、保存的值）。 */
 export const valueText = (value: unknown): string =>
 	typeof value === "string" ? value : JSON.stringify(value);
