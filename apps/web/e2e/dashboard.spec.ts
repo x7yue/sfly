@@ -125,10 +125,10 @@ test("线路：每条链一行，节点是站，已完成数写在右边；子�
 		"probe（执行中）",
 	]);
 	await expect(rows.nth(0)).toContainText("主链");
-	await expect(rows.nth(0)).toContainText("2 / 3");
+	await expect(rows.nth(0)).toContainText("2/3");
 	await expect(rows.nth(1).getByRole("listitem")).toHaveText(["sub（成功）", "verify（失败）"]);
 	await expect(rows.nth(1)).toContainText("子流程 sub");
-	await expect(rows.nth(1)).toContainText("1 / 2");
+	await expect(rows.nth(1)).toContainText("1/2");
 
 	// 子流程的第一站和主链上的 spawn 对齐；进入执行中的 probe 的那一段是青色。
 	const station = (row: number, name: string) =>
@@ -239,6 +239,41 @@ test("最近结束：失败的写错误类型、第一个失败的节点、所�
 	await expect(ok.getByRole("link", { name: "打开失败节点" })).toHaveCount(0);
 	const [failBox, okBox] = await Promise.all([fail.boundingBox(), ok.boundingBox()]);
 	expect(okBox?.height ?? 0).toBeLessThan((failBox?.height ?? 0) / 2);
+});
+
+test("最近结束：取消的运行也只占一行，写结束时间和耗时，没有「打开失败节点」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	const scenario = await runOnce(controlPlane, agent);
+	const run = await triggerRun(controlPlane, scenario);
+	const task = await agent.nextAssign();
+	clock.advance(3000);
+	const cancel = await controlPlane.fetch(`/runs/${run}/cancel`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: "{}",
+	});
+	expect(cancel.ok).toBe(true);
+	await agent.nextCancel();
+	await agent.cancelled(task);
+	await page.goto("/");
+	const row = ended(page).filter({ hasText: "已取消" });
+	await expect(row).toContainText("巡检");
+	await expect(row).toContainText("耗时 3.0s");
+	await expect(row.getByRole("button", { name: "再次运行" })).toBeVisible();
+	await expect(row.getByRole("link", { name: "打开失败节点" })).toHaveCount(0);
+	const [cancelled, succeeded] = await Promise.all([
+		row.boundingBox(),
+		ended(page).filter({ hasText: "成功" }).boundingBox(),
+	]);
+	// 只差最后一行没有的 1px 分隔线。
+	expect(
+		Math.abs((cancelled?.height ?? 0) - (succeeded?.height ?? Number.NaN)),
+	).toBeLessThanOrEqual(1);
 });
 
 test("最近结束的失败行：「打开失败节点」进入运行监控并选中失败节点，「再次运行」打开带上次参数的运行抽屉", async ({
@@ -449,7 +484,7 @@ test("运行多时：6 个以上运行时运行块换成一行一个的紧凑行
 	await expect(left.getByRole("region")).toHaveCount(0);
 	await expect(rows.first()).toContainText("浸泡 06");
 	await expect(rows.first()).toContainText("soak");
-	await expect(rows.first().getByRole("img", { name: "主链 2 / 4" })).toBeVisible();
+	await expect(rows.first().getByRole("img", { name: "主链 2/4" })).toBeVisible();
 	// 紧凑行不取读数：等到控制台接口又轮询了一次，仍然没有读数请求。
 	await page.waitForRequest((r) => new URL(r.url()).pathname === "/api/dashboard");
 	expect(focusRequests).toEqual([]);

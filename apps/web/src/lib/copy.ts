@@ -189,6 +189,10 @@ export const chainCountLabel = (chains: number, nodes: number) =>
 export const ELAPSED_LABEL = "已运行";
 export const DURATION_LABEL = "耗时";
 
+/** 「2 / 8 占用」「排队 1」：一台 Agent 的槽位占用和排队的任务数（Agent 管理页的机架、控制台的 Agent 列）。 */
+export const slotUsageLabel = (used: number, slots: number) => `${used} / ${slots} 占用`;
+export const queuedLabel = (count: number) => `排队 ${count}`;
+
 /** 「还有 3 个」：列表或线路只画出前面一部分时，其余的个数（控制台的线路和进行中的节点、运行记录的卡片）。 */
 export const moreLabel = (count: number) => `还有 ${count} 个`;
 

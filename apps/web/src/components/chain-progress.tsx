@@ -12,6 +12,10 @@ import { nodeStatusDisplay } from "#/lib/node-status";
 export const doneCount = (nodes: readonly { status: string }[]) =>
 	nodes.filter((n) => nodeStatusDisplay(n.status)?.done).length;
 
+/** 「2/3」：已完成的节点数 / 节点数，各链进度条与线路的计数和读屏名称都用它。 */
+export const chainProgressText = (nodes: readonly { status: string }[]) =>
+	`${doneCount(nodes)}/${nodes.length}`;
+
 const SHAPE = { tall: "h-3 w-1.5", short: "h-2 w-1.5" };
 
 /** 一条链的进度条；label 是链的名称（{@link chainLabel}）。 */
@@ -22,7 +26,7 @@ export function ChainBar({
 	label: string;
 	nodes: readonly { node_id: string; status: string }[];
 }) {
-	const text = `${label} ${doneCount(nodes)}/${nodes.length}`;
+	const text = `${label} ${chainProgressText(nodes)}`;
 	return (
 		<span
 			role="img"

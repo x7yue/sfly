@@ -1,7 +1,7 @@
 import { isActiveStatus } from "@sfly/schema";
 import { cn } from "cn";
 import type { CSSProperties } from "react";
-import { doneCount } from "#/components/chain-progress";
+import { chainProgressText } from "#/components/chain-progress";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { LIST_LABEL, moreLabel } from "#/lib/copy";
@@ -33,10 +33,13 @@ export interface LineChain {
 	nodes: readonly LineNode[];
 }
 
-/** 线路上的一站：一个节点，或折起来的一段（「已完成 N 个」在当前站之前，「还有 N 个」在之后）。 */
+/**
+ * 线路上的一站：一个节点，或折起来的一段（「已完成 N 个」在当前站之前，「还有 N 个」在之后）。
+ * 折起来的一段画成它最后一个节点（挨着画出来的那一站）的状态。
+ */
 export type Station =
 	| { kind: "node"; node: LineNode; index: number }
-	| { kind: "fold"; side: "done" | "rest"; start: number; count: number };
+	| { kind: "fold"; side: "done" | "rest"; start: number; count: number; status: string };
 
 /** 一条链超过这么多个节点就折叠；折叠后至多 6 站（加上画出来的失败节点）。 */
 export const LINE_MAX_STATIONS = 7;
@@ -59,7 +62,13 @@ export function foldStations(nodes: readonly LineNode[], max = LINE_MAX_STATIONS
 		let end = i;
 		while (end < nodes.length && !shown(end)) end++;
 		if (end - i > 1) {
-			stations.push({ kind: "fold", side: i < anchor ? "done" : "rest", start: i, count: end - i });
+			stations.push({
+				kind: "fold",
+				side: i < anchor ? "done" : "rest",
+				start: i,
+				count: end - i,
+				status: nodes[end - 1]?.status ?? "pending",
+			});
 			i = end;
 		} else {
 			stations.push(all[i] as Station);
@@ -171,7 +180,7 @@ export function RunLines({
 						))}
 					</ol>
 					<span className="pl-2 text-right font-mono text-xs text-fg-3">
-						{doneCount(row.chain.nodes)} / {row.chain.nodes.length}
+						{chainProgressText(row.chain.nodes)}
 					</span>
 				</li>
 			))}
@@ -197,8 +206,7 @@ function StationCell({
 }) {
 	const node = station.kind === "node" ? station.node : undefined;
 	const status = node ? nodeStatusView(node.status) : undefined;
-	const kind =
-		status?.kind ?? (station.kind === "fold" && station.side === "done" ? "ok" : "pending");
+	const kind = nodeStatusView(station.kind === "fold" ? station.status : station.node.status).kind;
 	return (
 		<li style={{ gridColumnStart: column + 1 }} className="relative min-w-0">
 			<span className="relative flex h-5 items-center">
@@ -247,11 +255,11 @@ function StationCell({
 
 /**
  * 线路缩略（控制台的紧凑行）：一条链的各站只画点和线，折叠规则同 {@link foldStations}，折起来的一段画成一截虚线。
- * 读屏读作「主链 5 / 10」。
+ * 读屏读作「主链 5/10」。
  */
 export function RunLineThumb({ chain }: { chain: LineChain }) {
 	const stations = foldStations(chain.nodes);
-	const text = `${chain.label} ${doneCount(chain.nodes)} / ${chain.nodes.length}`;
+	const text = `${chain.label} ${chainProgressText(chain.nodes)}`;
 	return (
 		<span
 			role="img"

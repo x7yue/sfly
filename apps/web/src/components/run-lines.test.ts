@@ -68,6 +68,18 @@ describe("长链折叠", () => {
 		expect(shape(foldStations(one))).toEqual(["n1", "n2", "n3", "n4", "n5", "还有 4"]);
 	});
 
+	it("折起来的一段画成它最后一个节点的状态", () => {
+		const nodes = chain([
+			...repeat("success", 3),
+			"failed",
+			...repeat("skipped", 10),
+			"running",
+			...repeat("pending", 5),
+		]);
+		const folds = foldStations(nodes).flatMap((s) => (s.kind === "fold" ? [s.status] : []));
+		expect(folds).toEqual(["success", "skipped", "pending"]);
+	});
+
 	it("都结束了的链只画最后一站", () => {
 		const nodes = chain(repeat("success", 12));
 		expect(shape(foldStations(nodes))).toEqual(["已完成 11", "n12"]);

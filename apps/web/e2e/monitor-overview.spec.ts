@@ -282,7 +282,7 @@ test("链路：各链的线路（子流程从触发它的节点分出），下�
 	const rows = page.getByRole("list", { name: "各链进度" }).locator(":scope > li");
 	await expect(rows).toHaveCount(2);
 	await expect(rows.first()).toContainText("主链");
-	await expect(rows.first()).toContainText("3 / 5");
+	await expect(rows.first()).toContainText("3/5");
 	await expect(rows.first().getByRole("listitem")).toHaveText([
 		"entry（成功）",
 		"fetch（成功）",

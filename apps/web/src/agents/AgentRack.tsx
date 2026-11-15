@@ -8,7 +8,7 @@ import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
 import { IdleSlots, idleSlotCount, SlotCell, taskChainLabel } from "#/components/slot-cell";
 import { nodeStatusView, StatusDot, StatusPill } from "#/components/status";
-import { TERM } from "#/lib/copy";
+import { queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import {
 	formatClockOffset,
 	formatDateTime,
@@ -73,7 +73,7 @@ export function AgentRack({
 								</h3>
 								{online && (
 									<span className="font-mono text-xs text-fg-3">
-										{used} / {slots} 占用 · 排队 {queued}
+										{slotUsageLabel(used, slots)} · {queuedLabel(queued)}
 									</span>
 								)}
 							</div>

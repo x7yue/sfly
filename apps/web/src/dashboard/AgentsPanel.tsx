@@ -7,7 +7,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { IdleSlots, idleSlotCount, SlotCell } from "#/components/slot-cell";
 import { STATUS, StatusDot } from "#/components/status";
 import { apiQuery } from "#/lib/api";
-import { TERM } from "#/lib/copy";
+import { AGENT_STATUS_LABEL, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardPanel } from "./DashboardPanel";
@@ -27,7 +27,7 @@ export function AgentsPanel() {
 	return (
 		<DashboardPanel
 			title={TERM.agent}
-			count={agents.data && `${online} / ${list.length} 在线`}
+			count={agents.data && `${online} / ${list.length} ${AGENT_STATUS_LABEL.online}`}
 			aside={<PanelLink to="/agents">管理</PanelLink>}
 		>
 			{agents.data ? (
@@ -82,7 +82,7 @@ function AgentSlots({ agent }: { agent: AgentView }) {
 				<span className="flex-1" />
 				{online && (
 					<span className="font-mono text-xs text-fg-2">
-						{used} / {agent.info.slots} 占用
+						{slotUsageLabel(used, agent.info.slots)}
 					</span>
 				)}
 			</div>
@@ -94,7 +94,7 @@ function AgentSlots({ agent }: { agent: AgentView }) {
 					{online && idle > 0 && <IdleSlots count={idle} compact />}
 				</ul>
 			)}
-			{queued > 0 && <p className="m-0 mt-2 text-xs text-fg-3">排队 {queued}</p>}
+			{queued > 0 && <p className="m-0 mt-2 text-xs text-fg-3">{queuedLabel(queued)}</p>}
 		</section>
 	);
 }

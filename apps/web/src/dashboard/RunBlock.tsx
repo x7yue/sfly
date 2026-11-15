@@ -8,6 +8,7 @@ import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
 import { type LineChain, RunLines, RunLineThumb } from "#/components/run-lines";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
+import { TriggeredAt } from "#/components/via-tag";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { useRunFocus } from "#/focus/use-run-focus";
 import {
@@ -19,7 +20,7 @@ import {
 	RUNNING_PRIMARY_LABEL,
 	TERM,
 } from "#/lib/copy";
-import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { formatClock, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { runMonitorLink } from "#/monitor/run-link";
@@ -81,8 +82,7 @@ export function RunBlock({
 						</span>
 					</div>
 					<div className="mt-0.5 text-xs text-fg-3">
-						{run.triggered_by} 触发 · 开始{" "}
-						<span className="font-mono">{formatDateTime(run.started_at)}</span>
+						<TriggeredAt by={run.triggered_by} at={run.started_at} />
 					</div>
 				</div>
 				<div className="flex-none text-right">

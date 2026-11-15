@@ -6,7 +6,7 @@ import { useState } from "react";
 import { NodeName } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
-import { ViaTag } from "#/components/via-tag";
+import { TriggeredAt } from "#/components/via-tag";
 import { apiQuery } from "#/lib/api";
 import { ACTION, DURATION_LABEL, ELAPSED_LABEL } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
@@ -98,9 +98,7 @@ export function MonitorTopBar({
 					<Badge className="font-mono">v{run.orchestration_version}</Badge>
 				</h1>
 				<span className="truncate text-xs text-fg-3">
-					{run.triggered_by}
-					<ViaTag via={run.triggered_via} /> 触发 · 开始{" "}
-					<span className="font-mono">{formatDateTime(run.started_at)}</span> ·{" "}
+					<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} /> ·{" "}
 					<span className="font-mono" data-testid="run-elapsed">
 						{live ? ELAPSED_LABEL : DURATION_LABEL} {formatDuration(elapsed)}
 					</span>
