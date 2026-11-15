@@ -9,7 +9,8 @@ use serde_json::json;
 use sfly_agent::clock;
 use sfly_agent::proto::{LogBatch, LogLevel, LogLine, LogSource, Progress, agent_message};
 use support::{
-    AgentOptions, DAYS_613_MS, FakeControlPlane, Received, spawn_agent, stub_task, system_time_ms,
+    AgentOptions, DAYS_613_MS, FakeControlPlane, Received, peak_rss_bytes, spawn_agent, stub_task,
+    system_time_ms,
 };
 
 fn log_lines(all: &[Received], task_id: &str) -> Vec<(usize, LogLine)> {
@@ -383,18 +384,6 @@ async fn logs_queued_while_disconnected_are_capped_and_the_result_still_arrives(
     // 序号照常递增，控制面能看出缺口。
     let seqs: Vec<u64> = lines.iter().map(|(_, l)| l.seq).collect();
     assert!(seqs.windows(2).all(|w| w[0] < w[1]));
-}
-
-/// Agent 进程到目前为止的峰值常驻内存（`/proc/<pid>/status` 的 VmHWM）。
-fn peak_rss_bytes(pid: u32) -> u64 {
-    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
-    let kib: u64 = status
-        .lines()
-        .find_map(|l| l.strip_prefix("VmHWM:"))
-        .and_then(|v| v.trim().strip_suffix("kB"))
-        .and_then(|v| v.trim().parse().ok())
-        .expect("VmHWM");
-    kib * 1024
 }
 
 #[tokio::test]

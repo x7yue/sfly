@@ -103,7 +103,7 @@ struct Args {
     /// 与控制面断开期间最多排队的指标点数，超出后丢弃最早的点。
     #[arg(long, env = "SFLY_METRIC_QUEUE_POINTS", default_value_t = DEFAULT_METRIC_QUEUE_POINTS, hide = true)]
     metric_queue_points: usize,
-    /// 只在测试中使用：转发器每秒最多处理这么多字节的标准输出 / 标准错误（0 = 不限制），模拟转发跟不上节点的输出。
+    /// 只在测试中使用：转发器每秒最多处理这么多字节的标准输出 / 标准错误 / 事件管道内容（0 = 不限制），模拟转发跟不上节点的输出。
     #[arg(long, env = "SFLY_LOG_FORWARD_RATE", default_value_t = 0, hide = true)]
     log_forward_rate: u64,
     /// 自更新下载新二进制时，连接建立后等待数据的超时秒数（每次读取）；超时算「更新失败」，下一次握手后重试。

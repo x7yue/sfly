@@ -15,10 +15,15 @@
 //!   和进度一样只保留最新一份，每个任务每秒最多发一次 `ActionSummary`（这一行原文，Agent 不解析内容），
 //!   任务结束前补发最后一份；断线期间每个任务只排队最新的一份（[`Telemetry::send_action_summary`]）。
 //!   事件管道的一行不限长度（[`read_events`] 读到换行为止），摘要再长也整行转发；
-//! - `{"type":"action_start"}`、`{"type":"action_end"}`、`{"type":"mark"}`：认得，目前丢弃，不转发，也不记成日志。
+//! - `{"type":"action_start"}`、`{"type":"action_end"}`、`{"type":"mark"}`（动作和标记的明细，规格 #345）：解析成
+//!   `ActionEvent`，和日志一样约每 100 毫秒一批（一批最多 [`MAX_BATCH_ACTIONS`] 个）以 `ActionBatch` 转发，任务结束前发完；
+//!   同一批内按事件管道里的先后排列，不按单调时钟重排（补发的 `action_start` 时间早，但紧挨着它的 `action_end`），
+//!   `fields` 保持 SDK 写的先后（[`Fields`]）；缺必需字段、`result` 不认识的行和别的不认识的内容一样记成一行 SDK 日志。
+//!   断线期间排队的批次和日志一样有字节数上限（[`Telemetry::send`]）。
 //!
 //! 每行和每次进度带两个时间（ADR 0018）：Agent 时间（SDK 事件取 SDK 记录的时间，其余取读到的时刻），以及读到它时的
-//! 单调时钟读数（每次读取读一次时钟），控制面据此折算出控制面时间。
+//! 单调时钟读数（每次读取读一次时钟），控制面据此折算出控制面时间；动作明细的单调时钟读数优先取 SDK 写的 `mono`
+//! （[`detail`]）。
 //! 同一批内按单调时钟读数排序后再编号，所以不同来源的行大致按读到的先后排列，Agent 时间跳变也不打乱顺序；
 //! 同一来源内保持写入顺序。
 //! 标准输出 / 标准错误的原始内容同时写到工作目录的 `stdout.log` / `stderr.log`，每个文件 8 MiB，超过后改名为 `.1`
@@ -28,6 +33,7 @@
 //! 不丢日志，Agent 内存不随节点的输出量增长（#75）。
 
 use std::collections::HashMap;
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -36,6 +42,7 @@ use std::time::Duration;
 use prost::Message as _;
 
 use serde::Deserialize;
+use serde::de::{Deserializer, MapAccess, Visitor};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -44,8 +51,9 @@ use tokio::time::Instant;
 use crate::clock;
 use crate::metrics::{Labels, Merger, MetricQueue};
 use crate::proto::{
-    ActionSummary, AgentMessage, AssignTask, LogBatch, LogLevel, LogLine, LogSource, MetricBatch,
-    Notification, Progress, agent_message,
+    self, ActionBatch, ActionEvent, ActionField, ActionResult, ActionSummary, AgentMessage,
+    AssignTask, LogBatch, LogLevel, LogLine, LogSource, MetricBatch, Notification, Progress,
+    action_event, agent_message,
 };
 use crate::time_jump;
 
@@ -61,17 +69,19 @@ const LINE_CHUNKS: usize = 16;
 const MAX_LINE_BYTES: usize = 64 * 1024;
 /// 一批最多的行数。
 const MAX_BATCH_LINES: usize = 1000;
+/// 一批最多的动作明细事件数。
+const MAX_BATCH_ACTIONS: usize = 1000;
 /// 执行器退出后，等待仍持有标准输出（或事件管道）的后台子进程关闭管道的最长时间。
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// 断开期间默认最多排队的日志字节数。
 pub const DEFAULT_TELEMETRY_QUEUE_BYTES: usize = 64 * 1024 * 1024;
 
-/// 发往控制面的任务消息（`TaskStarted` / `LogBatch` / `Progress` / `MetricBatch` / `Notification` / `ActionSummary`）。
-/// 连接断开期间在通道里排队，重连后按顺序发送。
+/// 发往控制面的任务消息（`TaskStarted` / `LogBatch` / `Progress` / `MetricBatch` / `Notification` / `ActionSummary` /
+/// `ActionBatch`）。连接断开期间在通道里排队，重连后按顺序发送。
 ///
-/// - 日志和通知（`Notification`）：排队的字节数有上限，超出时丢弃新的日志批次（控制面按序号看到缺口）和通知，
-///   其他消息照常排队；
+/// - 日志、通知（`Notification`）和动作明细（`ActionBatch`）：排队的字节数合计有上限，超出时丢弃新的日志批次
+///   （控制面按序号看到缺口）、新的动作明细批次和通知，其他消息照常排队；
 /// - 指标：批次本身放在有界的 [`MetricQueue`] 里（超出时丢弃最早的点），通道里只放一个占位，
 ///   轮到它时取出最早的指标批次——指标仍按发出顺序排在同一任务的结果之前；
 /// - 动作摘要：每个任务最多排着一份（[`Telemetry::send_action_summary`]），通道里放一个占位，轮到它时取出这个任务
@@ -134,12 +144,16 @@ impl Telemetry {
         let size = message.encoded_len();
         let limited = matches!(
             message.body,
-            Some(agent_message::Body::Logs(_) | agent_message::Body::Notification(_))
+            Some(
+                agent_message::Body::Logs(_)
+                    | agent_message::Body::Notification(_)
+                    | agent_message::Body::Actions(_)
+            )
         );
         if limited && self.queued.load(Ordering::SeqCst) + size > self.limit {
             if !self.dropping.swap(true, Ordering::SeqCst) {
                 eprintln!(
-                    "log queue is full ({} bytes queued while disconnected): dropping new log lines and notifications",
+                    "log queue is full ({} bytes queued while disconnected): dropping new log lines, action details and notifications",
                     self.queued.load(Ordering::SeqCst)
                 );
             }
@@ -311,7 +325,7 @@ impl Tail {
 
 impl Pump {
     /// 开始转发：读取标准输出、标准错误和事件管道。`forward_rate` 只在测试中使用：
-    /// 转发器每秒最多处理这么多字节的标准输出 / 标准错误（0 = 不限制），模拟转发跟不上节点的输出。
+    /// 转发器每秒最多处理这么多字节的标准输出 / 标准错误 / 事件管道内容（0 = 不限制），模拟转发跟不上节点的输出。
     pub fn start(
         task: &AssignTask,
         stdout: impl AsyncRead + Unpin + Send + 'static,
@@ -354,6 +368,7 @@ impl Pump {
             pending: Vec::new(),
             progress: Latest::default(),
             action_summary: Latest::default(),
+            actions: Vec::new(),
             metrics: Merger::default(),
             throttle: Throttle::new(forward_rate),
             time_jumps: time_jump::Watch::start(),
@@ -589,12 +604,116 @@ enum Event {
     /// 动作摘要：内容由 SDK 和控制面约定，原文转发。
     #[serde(rename = "action_summary")]
     ActionSummary {},
-    /// 动作和标记的明细：目前不转发。认得它们是为了不被当成不认识的内容记进日志。
+    /// 一个动作开始。
     #[serde(rename = "action_start")]
-    ActionStart {},
+    ActionStart {
+        #[serde(default)]
+        ts: Option<i64>,
+        #[serde(default)]
+        mono: Option<i64>,
+        id: u64,
+        #[serde(default)]
+        parent: Option<u64>,
+        depth: u32,
+        name: String,
+        #[serde(default)]
+        fields: Fields,
+        /// 补发的（超过每种名称的上限、因为失败才补上明细）。
+        #[serde(default)]
+        late: bool,
+    },
+    /// 一个动作结束。
     #[serde(rename = "action_end")]
-    ActionEnd {},
-    Mark {},
+    ActionEnd {
+        #[serde(default)]
+        ts: Option<i64>,
+        #[serde(default)]
+        mono: Option<i64>,
+        id: u64,
+        result: EndResult,
+        #[serde(default)]
+        reason: Option<String>,
+        /// `note()` 补充的字段。
+        #[serde(default)]
+        fields: Fields,
+    },
+    /// 一个标记。
+    Mark {
+        #[serde(default)]
+        ts: Option<i64>,
+        #[serde(default)]
+        mono: Option<i64>,
+        id: u64,
+        #[serde(default)]
+        parent: Option<u64>,
+        depth: u32,
+        name: String,
+        #[serde(default)]
+        fields: Fields,
+    },
+}
+
+/// `action_end` 的 `result`。
+#[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum EndResult {
+    Success,
+    Failed,
+    Unfinished,
+}
+
+impl From<EndResult> for ActionResult {
+    fn from(result: EndResult) -> Self {
+        match result {
+            EndResult::Success => ActionResult::Success,
+            EndResult::Failed => ActionResult::Failed,
+            EndResult::Unfinished => ActionResult::Unfinished,
+        }
+    }
+}
+
+/// 事件里的 `fields` 对象（键 → 字符串值），保持键在 JSON 里出现的先后：proto 用 `repeated ActionField` 就是为了保序。
+/// 不用 [`Labels`]：它按键排序。
+#[derive(Default)]
+struct Fields(Vec<ActionField>);
+
+impl<'de> Deserialize<'de> for Fields {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct FieldsVisitor;
+
+        impl<'de> Visitor<'de> for FieldsVisitor {
+            type Value = Fields;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("an object with string values")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Fields, A::Error> {
+                let mut fields = Vec::with_capacity(map.size_hint().unwrap_or(0));
+                while let Some((key, value)) = map.next_entry()? {
+                    fields.push(ActionField { key, value });
+                }
+                Ok(Fields(fields))
+            }
+        }
+
+        deserializer.deserialize_map(FieldsVisitor)
+    }
+}
+
+/// 一个动作明细事件。Agent 时间取 SDK 写的 `ts`；单调时钟读数优先取 SDK 写的 `mono`（大于 0），
+/// 没有时取读到这一块时的读数 `read_at`（和日志一样）。
+fn detail(
+    ts: Option<i64>,
+    mono: Option<i64>,
+    read_at: i64,
+    kind: action_event::Kind,
+) -> ActionEvent {
+    ActionEvent {
+        time_unix_ms: sdk_time_ms(ts),
+        monotonic_ms: mono.filter(|&mono| mono > 0).unwrap_or(read_at),
+        kind: Some(kind),
+    }
 }
 
 /// 读取事件管道，把以换行结尾的完整内容按块交给 `chunks`，直到所有写端关闭（最后不完整的一行丢弃）。
@@ -646,6 +765,8 @@ struct Forwarder {
     progress: Latest<Progress>,
     /// 动作摘要那一行的原文。
     action_summary: Latest<String>,
+    /// 还没发出的动作明细，按事件管道里的先后。
+    actions: Vec<ActionEvent>,
     /// 还没发出的指标点。
     metrics: Merger,
     throttle: Throttle,
@@ -735,7 +856,7 @@ impl Forwarder {
                     None => pipes_open = false,
                 },
                 chunk = events.recv(), if events_open => match chunk {
-                    Some(chunk) => self.events(&chunk),
+                    Some(chunk) => self.events(&chunk).await,
                     None => events_open = false,
                 },
                 _ = tick.tick() => {
@@ -754,7 +875,7 @@ impl Forwarder {
                     None => pipes_open = false,
                 },
                 chunk = events.recv(), if events_open => match chunk {
-                    Some(chunk) => self.events(&chunk),
+                    Some(chunk) => self.events(&chunk).await,
                     None => events_open = false,
                 },
                 () = tokio::time::sleep_until(deadline) => break,
@@ -766,6 +887,9 @@ impl Forwarder {
     fn flush_full_batch(&mut self) {
         if self.pending.len() >= MAX_BATCH_LINES {
             self.flush_lines();
+        }
+        if self.actions.len() >= MAX_BATCH_ACTIONS {
+            self.flush_actions();
         }
     }
 
@@ -779,7 +903,8 @@ impl Forwarder {
     }
 
     /// 处理事件管道里的一块完整内容。
-    fn events(&mut self, chunk: &EventChunk) {
+    async fn events(&mut self, chunk: &EventChunk) {
+        self.throttle.pace(chunk.bytes.len()).await;
         for line in chunk.bytes.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
             self.event(line, chunk.monotonic_ms);
             self.flush_full_batch();
@@ -831,7 +956,66 @@ impl Forwarder {
             Ok(Event::ActionSummary {}) => self
                 .action_summary
                 .set(String::from_utf8_lossy(line).into_owned()),
-            Ok(Event::ActionStart {} | Event::ActionEnd {} | Event::Mark {}) => {}
+            Ok(Event::ActionStart {
+                ts,
+                mono,
+                id,
+                parent,
+                depth,
+                name,
+                fields,
+                late,
+            }) => self.actions.push(detail(
+                ts,
+                mono,
+                monotonic_ms,
+                action_event::Kind::Start(proto::ActionStart {
+                    id,
+                    parent,
+                    depth,
+                    name,
+                    fields: fields.0,
+                    late,
+                }),
+            )),
+            Ok(Event::ActionEnd {
+                ts,
+                mono,
+                id,
+                result,
+                reason,
+                fields,
+            }) => self.actions.push(detail(
+                ts,
+                mono,
+                monotonic_ms,
+                action_event::Kind::End(proto::ActionEnd {
+                    id,
+                    result: ActionResult::from(result).into(),
+                    reason,
+                    fields: fields.0,
+                }),
+            )),
+            Ok(Event::Mark {
+                ts,
+                mono,
+                id,
+                parent,
+                depth,
+                name,
+                fields,
+            }) => self.actions.push(detail(
+                ts,
+                mono,
+                monotonic_ms,
+                action_event::Kind::Mark(proto::ActionMark {
+                    id,
+                    parent,
+                    depth,
+                    name,
+                    fields: fields.0,
+                }),
+            )),
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
                 time_unix_ms: clock::agent_time_ms(),
@@ -859,9 +1043,10 @@ impl Forwarder {
         });
     }
 
-    /// 发出这一批日志；进度、动作摘要、指标到时间（或 `last`）时发出。
+    /// 发出这一批日志和动作明细；进度、动作摘要、指标到时间（或 `last`）时发出。
     fn poll(&mut self, last: bool) {
         self.flush_lines();
+        self.flush_actions();
         if let Some(progress) = self.progress.take_due(last) {
             self.send(agent_message::Body::Progress(progress));
         }
@@ -913,6 +1098,18 @@ impl Forwarder {
             task_id: self.task_id.clone(),
             attempt: self.attempt,
             lines,
+        }));
+    }
+
+    fn flush_actions(&mut self) {
+        if self.actions.is_empty() {
+            return;
+        }
+        let events = std::mem::take(&mut self.actions);
+        self.send(agent_message::Body::Actions(ActionBatch {
+            task_id: self.task_id.clone(),
+            attempt: self.attempt,
+            events,
         }));
     }
 
