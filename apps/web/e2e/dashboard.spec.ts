@@ -11,13 +11,14 @@ import {
 	triggerRun,
 } from "./support";
 
-// 控制台（原型 #/dashboard）：统计卡、正在运行、运行趋势、最近失败、Agent 状态、最近发布的节点包。
+// 控制台（原型 #/dashboard）：页头一行（控制面时间、计数、运行场景）、正在运行、最近失败、Agent 状态。
 
-const stat = (page: Page, name: string) =>
-	page.getByRole("region", { name: "运行统计" }).getByRole("region", { name, exact: true });
+const header = (page: Page) =>
+	page.getByRole("heading", { name: "控制台", level: 1, exact: true }).locator("..");
+const counts = (page: Page) => page.getByRole("list", { name: "运行计数" });
 const panel = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
 
-test("统计卡：运行中、成功、失败、成功率、Agent 在线、槽位占用", async ({
+test("页头一行：控制面时间、此刻与最近 24 小时的计数、运行场景；没有统计卡、趋势和最近发布的节点包", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -25,20 +26,49 @@ test("统计卡：运行中、成功、失败、成功率、Agent 在线、槽�
 }) => {
 	await seedDashboard({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
-	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
 
-	await expect(stat(page, "运行中")).toContainText("1");
-	await expect(stat(page, "运行中")).toContainText("1 条链 · 1 个任务执行中");
-	await expect(stat(page, "成功")).toContainText("1");
-	await expect(stat(page, "失败")).toContainText("1含 1 个子流程");
-	await expect(stat(page, "成功率")).toContainText("50.0%");
-	await expect(stat(page, "Agent 在线")).toContainText("1/ 2");
-	await expect(stat(page, "Agent 在线")).toContainText("agent-mac 离线");
-	await expect(stat(page, "槽位占用")).toContainText("1/ 4");
-	await expect(stat(page, "槽位占用")).toContainText("排队任务 0");
-	await expect(
-		panel(page, "运行趋势").getByRole("img", { name: /最近 24 小时：成功 1、失败 1、取消 0/ }),
-	).toBeVisible();
+	const head = header(page);
+	await expect(head).toContainText("控制面时间 09:01:15");
+	const list = counts(page);
+	await expect(list.getByRole("listitem")).toHaveText([
+		"运行中 1",
+		"执行中任务 1",
+		"排队 0",
+		"最近 24 小时 成功 1 · 失败 1 · 取消 0",
+	]);
+	await expect(head.getByRole("button", { name: "运行场景" })).toBeVisible();
+	await expect(head.getByRole("link", { name: "场景编排" })).toHaveCount(0);
+
+	await expect(page.getByRole("region", { name: "运行统计" })).toHaveCount(0);
+	await expect(page.getByRole("img", { name: /最近 24 小时：成功/ })).toHaveCount(0);
+	await expect(panel(page, "运行趋势")).toHaveCount(0);
+	await expect(panel(page, "最近发布的节点包")).toHaveCount(0);
+
+	// 计数与页头排在同一行。
+	const [title, summary, button] = await Promise.all([
+		page.getByRole("heading", { name: "控制台", level: 1 }).boundingBox(),
+		list.boundingBox(),
+		head.getByRole("button", { name: "运行场景" }).boundingBox(),
+	]);
+	const middle = (b: typeof title) => (b ? b.y + b.height / 2 : Number.NaN);
+	expect(Math.abs(middle(summary) - middle(title))).toBeLessThan(4);
+	expect(Math.abs(middle(button) - middle(title))).toBeLessThan(4);
+});
+
+test("「运行场景」打开命令面板，只列出运行场景一组，选一个场景打开它的运行抽屉", async ({
+	page,
+	controlPlane,
+}) => {
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	await page.goto("/");
+	await header(page).getByRole("button", { name: "运行场景" }).click();
+
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	await expect(palette.getByRole("group", { name: "运行场景" })).toBeVisible();
+	await expect(palette.getByRole("group")).toHaveCount(1);
+	await palette.getByRole("option", { name: "运行「巡检」" }).click();
+	await expect(page.getByRole("dialog", { name: /运行/ })).toBeVisible();
 });
 
 test("正在运行：各链进度与当前节点，点击进入运行详情", async ({
@@ -82,7 +112,7 @@ test("最近失败：失败节点与错误类型，子流程失败单独列出",
 	await expect(rows.nth(1)).toHaveAttribute("href", `/runs/${failed}`);
 });
 
-test("Agent 状态与最近发布的节点包", async ({ page, controlPlane, connectAgent, clock }) => {
+test("Agent 状态", async ({ page, controlPlane, connectAgent, clock }) => {
 	await seedDashboard({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
 	const agents = panel(page, "Agent 状态");
@@ -95,12 +125,6 @@ test("Agent 状态与最近发布的节点包", async ({ page, controlPlane, con
 		"agent-mac",
 		"0/2",
 		"离线 · 01-01 08:00",
-	]);
-	const packages = panel(page, "最近发布的节点包");
-	await expect(packages.getByRole("row").first().getByRole("cell")).toHaveText([
-		"demo-checks",
-		"1.2.0",
-		"01-01 08:00 · 2 个场景锁定",
 	]);
 });
 
@@ -125,7 +149,7 @@ test("正在安装节点包的 Agent", async ({ page, connectAgent }) => {
 	).toHaveText("正在安装 demo-checks@1.2.0");
 });
 
-test("实时更新：运行结束后从正在运行中移除，计入成功", async ({
+test("实时更新：运行结束后从正在运行中移除，计数里计入成功", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -138,12 +162,14 @@ test("实时更新：运行结束后从正在运行中移除，计入成功", as
 
 	await page.goto("/");
 	await expect(panel(page, "正在运行").getByRole("link", { name: /巡检/ })).toBeVisible();
-	await expect(stat(page, "成功")).toContainText("0");
+	await expect(counts(page)).toContainText("运行中 1");
+	await expect(counts(page)).toContainText("成功 0");
 
 	await agent.succeed(task);
 	await expect(panel(page, "正在运行").getByRole("link")).toHaveCount(0);
 	await expect(panel(page, "正在运行")).toContainText("没有正在运行的运行");
-	await expect(stat(page, "成功")).toContainText("1");
+	await expect(counts(page)).toContainText("运行中 0");
+	await expect(counts(page)).toContainText("成功 1");
 });
 
 test("没有数据时各模块显示空状态", async ({ page }) => {
@@ -151,32 +177,36 @@ test("没有数据时各模块显示空状态", async ({ page }) => {
 	await expect(panel(page, "正在运行")).toContainText("没有正在运行的运行");
 	await expect(panel(page, "最近失败")).toContainText("最近 24 小时没有失败");
 	await expect(panel(page, "Agent 状态")).toContainText("还没有 Agent 连接");
-	await expect(panel(page, "最近发布的节点包")).toContainText("还没有发布节点包");
-	await expect(stat(page, "成功率")).toContainText("—");
+	await expect(counts(page).getByRole("listitem")).toHaveText([
+		"运行中 0",
+		"执行中任务 0",
+		"排队 0",
+		"最近 24 小时 成功 0 · 失败 0 · 取消 0",
+	]);
 });
 
-test("没有数据时：运行中标签前没有执行中的状态点，成功与失败的趋势线是中性色；有数据时才着状态色", async ({
+test("计数：失败为 0 时是中性色，有失败时才着失败色", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
-	const color = (locator: ReturnType<typeof stat>) =>
-		locator.evaluate((el) => getComputedStyle(el).color);
+	const RUNNING = 0;
+	const FAILED = 4;
+	const color = (index: number) =>
+		counts(page)
+			.locator("b")
+			.nth(index)
+			.evaluate((el) => getComputedStyle(el).color);
 	await page.goto("/");
-	await expect(stat(page, "运行中")).toContainText("0");
-	await expect(stat(page, "运行中").locator('[data-status-dot="running"]')).toHaveCount(0);
-	const neutral = await color(stat(page, "成功").getByText("成功", { exact: true }));
-	await expect(stat(page, "成功").locator("[data-sparkline]")).toBeVisible();
-	expect(await color(stat(page, "成功").locator("[data-sparkline]"))).toBe(neutral);
-	expect(await color(stat(page, "失败").locator("[data-sparkline]"))).toBe(neutral);
+	await expect(counts(page)).toContainText("失败 0");
+	const neutral = await color(RUNNING);
+	expect(await color(FAILED)).toBe(neutral);
 
 	await seedDashboard({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
-	await expect(stat(page, "运行中").locator('[data-status-dot="running"]')).toHaveCount(1);
-	await expect(stat(page, "成功").locator("[data-sparkline]")).toBeVisible();
-	expect(await color(stat(page, "成功").locator("[data-sparkline]"))).not.toBe(neutral);
-	expect(await color(stat(page, "失败").locator("[data-sparkline]"))).not.toBe(neutral);
+	await expect(counts(page)).toContainText("失败 1");
+	expect(await color(FAILED)).not.toBe(neutral);
 });
 
 test("加载中显示骨架，加载失败显示错误详情，重试后恢复", async ({ page }) => {
@@ -195,39 +225,6 @@ test("加载中显示骨架，加载失败显示错误详情，重试后恢复",
 	await outage.restore();
 	await error.getByRole("button", { name: "重试" }).click();
 	await expect(panel(page, "正在运行")).toBeVisible();
-});
-
-test("运行趋势：柱子与图例的颜色和形状取自状态表（成功实心、失败实心高对比、取消虚线空心），堆叠的段之间留缝", async ({
-	page,
-	controlPlane,
-	connectAgent,
-	clock,
-}) => {
-	await seedDashboard({ page, controlPlane, connectAgent, clock });
-	await page.goto("/");
-	const trend = panel(page, "运行趋势");
-	const chart = trend.getByRole("img", { name: /^最近 24 小时/ });
-	await expect(chart).toHaveAttribute("data-viz", "true");
-
-	const ok = chart.locator("rect.fill-ok-fill");
-	const failed = chart.locator("rect.fill-danger-fill");
-	await expect(ok).toHaveCount(1);
-	await expect(failed).toHaveCount(1);
-	const [good, bad] = await Promise.all(
-		[ok, failed].map((rect) =>
-			rect.evaluate((el) => ({
-				y: Number(el.getAttribute("y")),
-				height: Number(el.getAttribute("height")),
-			})),
-		),
-	);
-	expect((good?.y ?? 0) - ((bad?.y ?? 0) + (bad?.height ?? 0))).toBeGreaterThanOrEqual(1);
-
-	const swatch = (label: string) => trend.getByText(label, { exact: true }).locator("b");
-	await expect(swatch("成功")).toHaveClass(/bg-ok-fill/);
-	await expect(swatch("失败")).toHaveClass(/bg-danger-fill/);
-	await expect(swatch("取消")).toHaveCSS("border-top-style", "dashed");
-	await expect(swatch("取消")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
 });
 
 test("正在运行：每个运行的状态标签脉冲一处；当前节点按状态表着色（执行中青色、排队中灰色）", async ({

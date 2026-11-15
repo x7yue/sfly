@@ -172,7 +172,7 @@ export function buildHttpApi({
 	});
 
 	registerAgentRoutes(app, { hub, engine, orchestrations });
-	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
+	registerDashboardRoutes(app, { db: database.db, clock, hub });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerPresetRoutes(app, { presets });

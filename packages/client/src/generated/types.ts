@@ -333,22 +333,6 @@ export interface DashboardFailure {
 	failed_at: Timestamp;
 }
 
-/** 趋势里的一小时：[start, start + 1h) 内结束的运行数（恰好在 generated_at 结束的归入最后一个桶）。 */
-export interface DashboardHour {
-	start: Timestamp;
-	success: number;
-	failed: number;
-	cancelled: number;
-}
-
-export interface DashboardPackage {
-	name: string;
-	version: string;
-	published_at: Timestamp;
-	/** 有多少个场景的最新版本锁定了这个版本。 */
-	locked_orchestrations: number;
-}
-
 export interface DashboardRunStats {
 	/** 正在运行的运行数（含取消中的）。 */
 	running: number;
@@ -363,10 +347,6 @@ export interface DashboardRunStats {
 	cancelled: number;
 	/** 窗口内失败的子流程实例数（不论所在运行是否已结束）。 */
 	failed_subflows: number;
-	/** 成功率 = 成功 / 结束的运行数（0–1）；窗口内没有结束的运行时为 null。 */
-	success_rate: number | null;
-	/** 前一个 24 小时的成功率，用于对比；没有结束的运行时为 null。 */
-	previous_success_rate: number | null;
 }
 
 export interface DashboardRunningRun {
@@ -385,15 +365,11 @@ export interface DashboardView {
 	/** 统计的时刻（控制面时钟），窗口的终点。 */
 	generated_at: Timestamp;
 	runs: DashboardRunStats;
-	/** 24 个小时桶，从旧到新；最后一个桶以 generated_at 为终点。 */
-	hourly: DashboardHour[];
 	/** 正在运行的运行，按开始时间从新到旧。 */
 	running_runs: DashboardRunningRun[];
 	/** 窗口内失败的链实例，按失败时间从新到旧（最多 10 条）。 */
 	recent_failures: DashboardFailure[];
 	agents: DashboardAgentStats;
-	/** 最近发布的节点包版本，从新到旧（最多 5 个）。 */
-	recent_packages: DashboardPackage[];
 }
 
 /** Agent 上以开发模式（sfly dev）加载的节点包；metadata 是加载时扫描出的元信息，未经发布校验。 */
