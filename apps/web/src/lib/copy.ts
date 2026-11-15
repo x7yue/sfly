@@ -48,6 +48,9 @@ export const INSPECTOR_PAGE = {
 	docWithMetrics: "说明与指标",
 } as const;
 
+/** 节点用 `ctx.progress` 上报的进度：监控的图表工作区、时间线、运行抽屉、画布检查器共用（运行记录表里「进度」是各链进度，不是它）。 */
+export const PROGRESS_LABEL = "进度";
+
 /** 「第 2 次尝试」：节点重试时指明是哪一次（运行监控的尝试页签、画布检查器的动作区共用）。 */
 export const attemptLabel = (attempt: number) => `第 ${attempt} 次${TERM.attempt}`;
 

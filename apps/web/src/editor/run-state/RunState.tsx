@@ -15,7 +15,7 @@ import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusPill } from "#/components/status";
-import { ACTION, MESSAGE, TERM } from "#/lib/copy";
+import { ACTION, MESSAGE, PROGRESS_LABEL, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { runViewTransition } from "#/lib/view-transition";
@@ -293,7 +293,7 @@ function NodeRunInspector({
 	const status = view ? nodeStatusView(view.status) : null;
 	const latest = view?.attempts.at(-1);
 	// 动作记在尝试上，只有在 Agent 上执行、已经开始的尝试才可能有：显示最近一次开始执行的尝试（重试的新尝试还在排队、
-	// 准备时，上一次的动作和失败还在）。结束以后摘要还在（计数、最近的失败），只是不再轮询。
+	// 准备时，上一次的动作和失败还在）。结束以后摘要还在，只是不再轮询。
 	const attempt = view && [...view.attempts].reverse().find((a) => a.started_at !== null);
 	const live = attempt?.status === "running";
 	const actions = useActionSummary(view?.kind === "package" ? attempt?.task_id : undefined, {
@@ -338,7 +338,7 @@ function NodeRunInspector({
 						<Row label="实例">第 1 个（共 {summary.instances} 个）</Row>
 					)}
 					{activity?.kind === "progress" && (
-						<TextRow label="进度" testId="run-progress">
+						<TextRow label={PROGRESS_LABEL} testId="run-progress">
 							{activity.message}
 						</TextRow>
 					)}

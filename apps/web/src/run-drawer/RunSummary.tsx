@@ -12,7 +12,14 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { ACTIVE_LABEL, chainLabel as chainName, LIST_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import {
+	ACTIVE_LABEL,
+	chainLabel as chainName,
+	LIST_LABEL,
+	MESSAGE,
+	PROGRESS_LABEL,
+	TERM,
+} from "#/lib/copy";
 import {
 	formatClock,
 	formatDateTime,
@@ -231,7 +238,7 @@ function ActiveNode({
 					{ratio !== null && (
 						<div
 							role="progressbar"
-							aria-label={`${runNodeName(node)} 进度`}
+							aria-label={`${runNodeName(node)} ${PROGRESS_LABEL}`}
 							aria-valuemin={0}
 							aria-valuemax={progress.total ?? undefined}
 							aria-valuenow={progress.current}
