@@ -1,0 +1,12 @@
+language js
+
+// docs/DESIGN-SYSTEM.md §5 组件清单：表格用 components/ui/table（列表页用 data-table），
+// 表头吸顶、行悬停、选中行的样式都在那里。ui/table.tsx 自己要渲染原生 <table>。
+or {
+	JsxOpeningElement(name=$tag),
+	JsxSelfClosingElement(name=$tag)
+} as $element where {
+	$tag <: `table`,
+	$filename <: not r".*apps/web/src/components/ui/.*",
+	register_diagnostic(span=$element, message="控制台里不手写 <table>（docs/DESIGN-SYSTEM.md §5 组件清单）：表格用 components/ui/table 的 Table、TableHeader、TableBody、TableRow、TableHead、TableCell，列表页用 components/data-table 的 DataTable，表头吸顶、行悬停和选中行的样式都在那里。")
+}

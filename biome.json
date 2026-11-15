@@ -38,5 +38,9 @@
 			"quoteStyle": "double"
 		}
 	},
-	"plugins": ["./biome-plugins/run-view-cache.grit"]
+	"plugins": [
+		"./biome-plugins/run-view-cache.grit",
+		"./biome-plugins/e2e-fixed-wait.grit",
+		"./biome-plugins/no-raw-table.grit"
+	]
 }
