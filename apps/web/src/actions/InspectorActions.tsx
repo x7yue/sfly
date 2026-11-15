@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { SectionHeading } from "#/components/page";
 import { StatusDot } from "#/components/status";
-import { NODE_ACTIONS, TERM } from "#/lib/copy";
+import { attemptLabel, NODE_ACTIONS, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatClockMs,
@@ -19,9 +19,10 @@ import { Truncate } from "@/components/ui/truncate";
 import { countOnlyNames, failedTotal, runningRows } from "./summary-model";
 
 /**
- * 画布运行状态检查器里的两块（规格 #345，原型 `#canvas-run`）：摘要下面的「正在做」，和图表后面的「动作」区。
- * 数据都来自 `useActionSummary`；没有动作的节点两块都不画，只留进度的说明（调用方决定）。
- * 「最近 20 个」不放在这里：每秒 200 单时它只覆盖约 0.1 秒，一直在滚（设计文档 node-actions.md 第 7 节第 6 条）。
+ * 画布运行状态检查器里的两块（规格 #345，原型 `#canvas-run`）：摘要下面的「正在做」，和后面的「动作」区（设计里
+ * 图表夹在两者之间）。数据都来自 `useActionSummary`；没有动作记录的节点两块都不画，进度的说明由调用方写在摘要里。
+ * 「最近 20 个」不放在这里：每秒 200 单时它只覆盖约 0.1 秒，一直在滚（设计方案「动作」第 7 节第 6 条，
+ * PR #257 的 docs/proposals/node-actions.md）。
  */
 
 /** 缩进一层的宽度（像素）。 */
@@ -98,7 +99,7 @@ export function CurrentActions({
 				))}
 			</ul>
 			{!complete && (
-				<p className="m-0 mt-1.5 text-xs text-fg-3">{NODE_ACTIONS.runningIncomplete}</p>
+				<p className="m-0 mt-1.5 text-xs text-fg-3">列满 {running.length} 个，可能还有没列出的</p>
 			)}
 		</section>
 	);
@@ -131,11 +132,7 @@ export function ActionArea({
 		<section aria-label={TERM.action}>
 			<SectionHeading>
 				{TERM.action}
-				{attempts > 1 && (
-					<span className="font-normal">
-						第 {attempt} 次{TERM.attempt}
-					</span>
-				)}
+				{attempts > 1 && <span>{attemptLabel(attempt)}</span>}
 			</SectionHeading>
 			<table className="w-full border-collapse text-xs leading-5">
 				<caption className="sr-only">每种名称的总数和失败数</caption>
@@ -174,7 +171,7 @@ export function ActionArea({
 				</tbody>
 			</table>
 			{(countOnly.length > 0 || summary.capped_at !== null) && (
-				<CapNote summary={summary} countOnly={countOnly} otherDay={otherDay} />
+				<CapNote countOnly={countOnly} totalFullAt={summary.capped_at} otherDay={otherDay} />
 			)}
 			{failures.length > 0 && (
 				<>
@@ -221,21 +218,19 @@ function Failure({ failure, otherDay }: { failure: EndedActionView; otherDay: bo
 	);
 }
 
-/** 只列出这么多个只计数的名称，其余写个数。 */
-const COUNT_ONLY_SHOWN = 5;
-
 /**
  * 上限说明：哪些名称从几点起只计数，合计满了时说合计，以及开发文档里按批记录的建议。
  * 「从几点起」是第一个没有明细的动作开始的时刻，不是明细的终点：更早开始的动作结束时仍可能补上明细（失败的动作在
  * 合计满以前会补），所以只说「从这个时刻起开始的动作」，不说「之后没有明细」；合计满了（`capped_at`）也一样。
  */
 function CapNote({
-	summary,
 	countOnly,
+	totalFullAt,
 	otherDay,
 }: {
-	summary: ActionSummaryView;
 	countOnly: ReturnType<typeof countOnlyNames>;
+	/** 合计的明细满了（`capped_at`）：第一个因此没有明细的动作开始的时刻；没满为 null。 */
+	totalFullAt: string | null;
 	otherDay: boolean;
 }) {
 	const clock = (iso: string) => (otherDay ? formatFullDateTime(iso) : formatClock(iso));
@@ -247,21 +242,18 @@ function CapNote({
 						明细有上限：超过以后开始的动作只计数、没有明细（失败的动作除外），总数、失败数和最近的失败仍然准确。
 					</p>
 					<ul className="m-0 my-1 list-none p-0 text-fg-1">
-						{countOnly.slice(0, COUNT_ONLY_SHOWN).map((c) => (
+						{countOnly.map((c) => (
 							<li key={c.name} className="min-w-0 wrap-anywhere">
 								「{c.name}」从 <span className="font-mono">{clock(c.since)}</span> 起只计数
 							</li>
 						))}
 					</ul>
-					{countOnly.length > COUNT_ONLY_SHOWN && (
-						<p className="m-0 mb-1">另有 {countOnly.length - COUNT_ONLY_SHOWN} 个名称也只计数。</p>
-					)}
 				</>
 			)}
-			{summary.capped_at !== null && (
+			{totalFullAt !== null && (
 				<p className="m-0">
-					全部名称合计的明细已满：从 <span className="font-mono">{clock(summary.capped_at)}</span>{" "}
-					起开始的动作都只计数，失败的也一样。
+					全部名称合计的明细已满，满了以后开始的动作都只计数（失败的也一样）；第一个因此没有明细的动作是{" "}
+					<span className="font-mono">{clock(totalFullAt)}</span> 开始的。
 				</p>
 			)}
 			<p className="m-0 mt-1">

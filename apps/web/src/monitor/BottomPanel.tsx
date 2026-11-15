@@ -18,7 +18,7 @@ import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { MESSAGE } from "#/lib/copy";
+import { attemptLabel, MESSAGE } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
@@ -686,7 +686,7 @@ function AttemptsTab({
 				return (
 					<article
 						key={a.task_id}
-						aria-label={`${runNodeName(n)} 第 ${a.attempt} 次尝试`}
+						aria-label={`${runNodeName(n)} ${attemptLabel(a.attempt)}`}
 						className={cn(
 							"rounded-lg border bg-bg p-2.5 text-xs",
 							a.error ? "border-danger-line" : "border-border-soft",

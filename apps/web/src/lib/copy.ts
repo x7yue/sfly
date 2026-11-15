@@ -48,6 +48,9 @@ export const INSPECTOR_PAGE = {
 	docWithMetrics: "说明与指标",
 } as const;
 
+/** 「第 2 次尝试」：节点重试时指明是哪一次（运行监控的尝试页签、画布检查器的动作区共用）。 */
+export const attemptLabel = (attempt: number) => `第 ${attempt} 次${TERM.attempt}`;
+
 /** 关注项（GLOSSARY「关注项」）：节点检查器的名额、场景设置的「关注项」页和图表列表共用的文字。 */
 export const FOCUS = {
 	/** 名额里注明其中有几项已经失效（失效的项也占名额）。 */
@@ -175,17 +178,13 @@ export const chainCountLabel = (chains: number, nodes: number) =>
  */
 export const ACTIVE_LABEL = "进行中";
 
-const DOING = "正在做";
-
 /**
  * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）：画布、检查器、概览里写动作的地方共用的文字。
  * 和 `ACTION`（界面上的通用操作）不是一回事。
  */
 export const NODE_ACTIONS = {
 	/** 此刻在做的事：检查器的「正在做」、读屏读到的「正在做 X」。 */
-	doing: DOING,
-	/** 「正在做」列满 50 个（`running_complete` 为 false）时写在后面。 */
-	runningIncomplete: "列满 50 个，可能还有没列出的",
+	doing: "正在做",
 } as const;
 
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */

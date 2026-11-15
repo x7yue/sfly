@@ -291,17 +291,18 @@ function NodeRunInspector({
 	const now = useNow(run.status === "running");
 	const elapsed = view ? nodeElapsed(view, now) : null;
 	const status = view ? nodeStatusView(view.status) : null;
-	const attempt = view?.attempts.at(-1);
-	// 只有在 Agent 上执行、已经开始的尝试才可能记录过动作；节点结束后摘要还在（计数、最近的失败），只是不再轮询。
+	const latest = view?.attempts.at(-1);
+	// 动作记在尝试上，只有在 Agent 上执行、已经开始的尝试才可能有：显示最近一次开始执行的尝试（重试的新尝试还在排队、
+	// 准备时，上一次的动作和失败还在）。结束以后摘要还在（计数、最近的失败），只是不再轮询。
+	const attempt = view && [...view.attempts].reverse().find((a) => a.started_at !== null);
 	const live = attempt?.status === "running";
-	const actions = useActionSummary(
-		view?.kind === "package" && attempt?.started_at ? attempt.task_id : undefined,
-		{ live },
-	);
+	const actions = useActionSummary(view?.kind === "package" ? attempt?.task_id : undefined, {
+		live,
+	});
 	const actionSummary = actions.data;
 	const running = live && actionSummary ? actionSummary.running : [];
 	// 没有正在做的动作时，进度的说明代替「正在做」（#345 故事 29）。
-	const activity = running.length === 0 ? currentActivity(attempt) : null;
+	const activity = running.length === 0 ? currentActivity(latest) : null;
 	return (
 		<>
 			<Header
