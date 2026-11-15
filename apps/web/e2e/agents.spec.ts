@@ -238,6 +238,14 @@ test("排队的任务：列在格子下面，写排队了多久、多久后排�
 	await expect(rack(page, "agent-small")).toContainText("1 / 1 占用 · 排队 0");
 });
 
+test("加载中：骨架是每台 Agent 一个面板，外面没有再套一层面板", async ({ page }) => {
+	await holdApi(page, "/agents");
+	await page.goto("/agents");
+	const skeleton = page.getByRole("status", { name: "加载中" });
+	await expect(skeleton).toBeVisible();
+	await expect(skeleton.locator("xpath=ancestor::section")).toHaveCount(0);
+});
+
 test("排队的任务：Agent 不在线时照样列在它名下", async ({ page, controlPlane, connectAgent }) => {
 	const away = await connectAgent({ name: "agent-away" });
 	await away.disconnect();
