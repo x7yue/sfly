@@ -1,6 +1,6 @@
 import {
 	feishuBotsApi,
-	type OrchestrationView,
+	type OrchestrationBase,
 	orchestrationsApi,
 	RUN_NOTIFICATION_NOTE_MAX,
 	RUN_NOTIFICATION_TITLE_MAX,
@@ -49,7 +49,7 @@ export function RunNotificationDialog({
 	onOpenChange,
 	returnFocus,
 }: {
-	scenario: OrchestrationView;
+	scenario: OrchestrationBase;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	returnFocus?: React.RefObject<HTMLElement | null>;

@@ -1799,11 +1799,42 @@
               }
             },
             "additionalProperties": false
+          },
+          "focus_items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "chart": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 40,
+                  "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+                }
+              },
+              "required": [
+                "node_id",
+                "chart"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false
       },
       "notes": [
+        {
+          "part": "body",
+          "path": "focus_items[].title",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
         {
           "part": "body",
           "path": "run_notification",

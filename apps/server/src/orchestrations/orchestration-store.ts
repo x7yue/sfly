@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { ensureLayout, fillMissingPositions } from "@sfly/orchestration";
 import type {
+	FocusItemInput,
+	OrchestrationBase,
 	OrchestrationDocument,
 	OrchestrationView,
 	RunNotificationChanges,
@@ -10,6 +12,8 @@ import type { Actor } from "../actor.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runs } from "../db/schema.js";
+import type { FocusRejection } from "../focus/focus-list.js";
+import { copiedFocus, focusFields, replaceFocusItems } from "../focus/focus-settings.js";
 import { copyPresets } from "../presets/preset-store.js";
 
 export type { OrchestrationView };
@@ -58,6 +62,12 @@ export type ArchiveResult =
 	| { kind: "not_found" }
 	| { kind: "running"; count: number };
 
+/** 修改场景设置的结果。`rejected`：关注项不合格（{@link FocusRejection}），什么都没有改。 */
+export type UpdateResult =
+	| { kind: "updated"; orchestration: OrchestrationView }
+	| { kind: "not_found" }
+	| { kind: "rejected"; rejection: FocusRejection };
+
 /** 新建场景的初始文档：只有一个入口节点，位置由整理布局算法给出（与画布的「整理布局」相同）。 */
 export const initialDocument = (): OrchestrationDocument =>
 	ensureLayout({
@@ -88,7 +98,8 @@ async function versionRow(
 	return row;
 }
 
-export const toView = (row: OrchestrationRow): OrchestrationView => ({
+/** 场景的基本信息（场景列表用）；场景视图在它之上加了对照最新版本才能得出的关注项，见 {@link OrchestrationStore}。 */
+export const toBase = (row: OrchestrationRow): OrchestrationBase => ({
 	id: row.id,
 	name: row.name,
 	description: row.description,
@@ -134,17 +145,23 @@ export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
 export class OrchestrationStore {
 	constructor(private readonly deps: { db: Db; clock: Clock }) {}
 
+	/** 场景视图：基本信息，加上关注项和它们在最新版本里的状态（{@link focusFields}）。 */
+	async #view(row: OrchestrationRow): Promise<OrchestrationView> {
+		return { ...toBase(row), ...(await focusFields(this.deps.db, row)) };
+	}
+
 	async create(name: string, description = ""): Promise<OrchestrationView> {
 		const [row] = await this.deps.db
 			.insert(orchestrations)
 			.values({ id: randomUUID(), name, description, createdAt: this.deps.clock.now() })
 			.returning();
-		return toView(row as OrchestrationRow);
+		return this.#view(row as OrchestrationRow);
 	}
 
 	/**
-	 * 修改名称、说明和运行通知设置（不属于版本内容，不产生新版本；只改写提到的项）。
-	 * 场景不存在时返回 undefined。
+	 * 修改名称、说明、运行通知设置和关注项（不属于版本内容，不产生新版本；只改写提到的项）。
+	 * 关注项是整份替换，校验和「最后修改」见 {@link replaceFocusItems}；同时修改时后写的生效。
+	 * 加行锁后读出旧列表再比较，同一个场景的关注项修改依次进行。
 	 */
 	async update(
 		id: string,
@@ -152,45 +169,83 @@ export class OrchestrationStore {
 			name?: string | undefined;
 			description?: string | undefined;
 			run_notification?: RunNotificationChanges | undefined;
+			focus_items?: readonly FocusItemInput[] | undefined;
 		},
-	): Promise<OrchestrationView | undefined> {
-		const [row] = await this.deps.db
-			.update(orchestrations)
-			.set({
-				...(changes.name === undefined ? {} : { name: changes.name }),
-				...(changes.description === undefined ? {} : { description: changes.description }),
-				...runNotifyColumns(changes.run_notification ?? {}),
-			})
-			.where(eq(orchestrations.id, id))
-			.returning();
-		return row && toView(row);
+		actor: Actor,
+	): Promise<UpdateResult> {
+		const outcome = await this.deps.db.transaction(
+			async (
+				tx,
+			): Promise<{ row: OrchestrationRow } | Exclude<UpdateResult, { kind: "updated" }>> => {
+				const [row] = await tx
+					.select()
+					.from(orchestrations)
+					.where(eq(orchestrations.id, id))
+					.for("update");
+				if (!row) return { kind: "not_found" };
+				const focus =
+					changes.focus_items === undefined
+						? undefined
+						: await replaceFocusItems(
+								this.deps.db,
+								row,
+								changes.focus_items,
+								actor,
+								this.deps.clock.now(),
+							);
+				if (focus?.kind === "rejected") return focus;
+				const set = {
+					...(changes.name === undefined ? {} : { name: changes.name }),
+					...(changes.description === undefined ? {} : { description: changes.description }),
+					...runNotifyColumns(changes.run_notification ?? {}),
+					...(focus?.kind === "replaced" ? focus.columns : {}),
+				};
+				if (Object.keys(set).length === 0) return { row };
+				const [updated] = await tx
+					.update(orchestrations)
+					.set(set)
+					.where(eq(orchestrations.id, id))
+					.returning();
+				return { row: updated as OrchestrationRow };
+			},
+		);
+		return "row" in outcome
+			? { kind: "updated", orchestration: await this.#view(outcome.row) }
+			: outcome;
 	}
 
 	/**
 	 * 归档：有运行中的运行时拒绝。加行锁后检查，与触发（engine.trigger 对同一行加共享锁后检查归档）互斥，
 	 * 不会归档之后又多出一个运行中的运行。已归档的再次归档保持原来的归档时间。
 	 */
-	archive(id: string): Promise<ArchiveResult> {
-		return this.deps.db.transaction(async (tx): Promise<ArchiveResult> => {
-			const [row] = await tx
-				.select()
-				.from(orchestrations)
-				.where(eq(orchestrations.id, id))
-				.for("update");
-			if (!row) return { kind: "not_found" };
-			const [running] = await tx
-				.select({ n: count() })
-				.from(runs)
-				.where(and(eq(runs.orchestrationId, id), eq(runs.status, "running")));
-			if (running && running.n > 0) return { kind: "running", count: running.n };
-			if (row.archivedAt) return { kind: "archived", orchestration: toView(row) };
-			const [updated] = await tx
-				.update(orchestrations)
-				.set({ archivedAt: this.deps.clock.now() })
-				.where(eq(orchestrations.id, id))
-				.returning();
-			return { kind: "archived", orchestration: toView(updated as OrchestrationRow) };
-		});
+	async archive(id: string): Promise<ArchiveResult> {
+		const outcome = await this.deps.db.transaction(
+			async (
+				tx,
+			): Promise<{ row: OrchestrationRow } | Exclude<ArchiveResult, { kind: "archived" }>> => {
+				const [row] = await tx
+					.select()
+					.from(orchestrations)
+					.where(eq(orchestrations.id, id))
+					.for("update");
+				if (!row) return { kind: "not_found" };
+				const [running] = await tx
+					.select({ n: count() })
+					.from(runs)
+					.where(and(eq(runs.orchestrationId, id), eq(runs.status, "running")));
+				if (running && running.n > 0) return { kind: "running", count: running.n };
+				if (row.archivedAt) return { row };
+				const [updated] = await tx
+					.update(orchestrations)
+					.set({ archivedAt: this.deps.clock.now() })
+					.where(eq(orchestrations.id, id))
+					.returning();
+				return { row: updated as OrchestrationRow };
+			},
+		);
+		return "row" in outcome
+			? { kind: "archived", orchestration: await this.#view(outcome.row) }
+			: outcome;
 	}
 
 	/** 恢复已归档的场景。场景不存在时返回 undefined。 */
@@ -200,15 +255,15 @@ export class OrchestrationStore {
 			.set({ archivedAt: null })
 			.where(eq(orchestrations.id, id))
 			.returning();
-		return row && toView(row);
+		return row && this.#view(row);
 	}
 
 	async head(id: string): Promise<OrchestrationHeadView | undefined> {
-		const orchestration = await this.get(id);
+		const orchestration = await this.#row(id);
 		if (!orchestration) return undefined;
 		const version =
-			orchestration.head_version > 0
-				? await this.getVersion(id, orchestration.head_version)
+			orchestration.headVersion > 0
+				? await this.getVersion(id, orchestration.headVersion)
 				: undefined;
 		return {
 			orchestration_id: id,
@@ -221,11 +276,11 @@ export class OrchestrationStore {
 	}
 
 	/**
-	 * 复制编排：新编排使用新名字，说明、运行通知设置和运行预设一起复制，源编排有版本时，以源编排最新版本的内容作为第 1 版（作者为复制的人）。
-	 * 源编排不存在时返回 undefined。
+	 * 复制编排：新编排使用新名字，说明、运行通知设置、运行预设和关注项一起复制，源编排有版本时，以源编排最新版本的内容作为第 1 版（作者为复制的人）。
+	 * 关注项的最后修改记为复制的人（{@link copiedFocus}）。源编排不存在时返回 undefined。
 	 */
-	copy(sourceId: string, name: string, actor: Actor): Promise<OrchestrationView | undefined> {
-		return this.deps.db.transaction(async (tx) => {
+	async copy(sourceId: string, name: string, actor: Actor): Promise<OrchestrationView | undefined> {
+		const copied = await this.deps.db.transaction(async (tx) => {
 			const [source] = await tx
 				.select()
 				.from(orchestrations)
@@ -255,6 +310,7 @@ export class OrchestrationStore {
 					runNotifyTrigger: source.runNotifyTrigger,
 					runNotifyTitle: source.runNotifyTitle,
 					runNotifyNote: source.runNotifyNote,
+					...copiedFocus(source, actor, now),
 				})
 				.returning();
 			if (head) {
@@ -269,8 +325,9 @@ export class OrchestrationStore {
 				});
 			}
 			await copyPresets(tx, sourceId, id, actor, now);
-			return toView(row as OrchestrationRow);
+			return row as OrchestrationRow;
 		});
+		return copied && this.#view(copied);
 	}
 
 	/** 每个已保存过版本的场景的最新版本文档（统计引用与锁定用）。 */
@@ -288,9 +345,14 @@ export class OrchestrationStore {
 		return rows.map((r) => r.document);
 	}
 
-	async get(id: string): Promise<OrchestrationView | undefined> {
+	async #row(id: string): Promise<OrchestrationRow | undefined> {
 		const [row] = await this.deps.db.select().from(orchestrations).where(eq(orchestrations.id, id));
-		return row && toView(row);
+		return row;
+	}
+
+	async get(id: string): Promise<OrchestrationView | undefined> {
+		const row = await this.#row(id);
+		return row && this.#view(row);
 	}
 
 	/**
@@ -323,7 +385,7 @@ export class OrchestrationStore {
 
 	/** 版本历史（不含文档内容），按版本号从新到旧。编排不存在时返回 undefined。 */
 	async listVersions(orchestrationId: string): Promise<VersionSummary[] | undefined> {
-		if (!(await this.get(orchestrationId))) return undefined;
+		if (!(await this.#row(orchestrationId))) return undefined;
 		const rows = await this.deps.db
 			.select({
 				number: orchestrationVersions.number,
