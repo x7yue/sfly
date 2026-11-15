@@ -122,16 +122,33 @@ const ASSISTANT_NAME = new Map([
 /** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
 export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`;
 
-/** 「预设：压测 A 集群」：运行详情、运行记录里这个运行用的运行预设（触发时记下的名称）。 */
+/** 「预设：压测 A 集群」：运行监控页顶栏、运行记录里这个运行用的运行预设（触发时记下的名称）。 */
 export const presetLabel = (name: string) => `预设：${name}`;
 
 /** 失效的运行预设（GLOSSARY）的状态词：运行抽屉的选择框、管理对话框的列表、「再次运行」的提示里都写它。 */
 export const PRESET_INVALID_LABEL = "已失效";
 
+/** 运行监控页两个视图的名称：页头的标签页，和概览里「在详情里打开」「在详情里查看」的说法共用。 */
+export const MONITOR_VIEW_LABEL = { overview: "概览", detail: "详情" } as const;
+
+/** 关注项读数里来源节点成功或已停止后的「最终值」：读数的脚注和可访问名称共用。 */
+export const FINAL_VALUE_LABEL = "最终值";
+
+/** 「2 条链 · 7 个节点」：运行监控的链路时间线和概览的链路共用。 */
+export const chainCountLabel = (chains: number, nodes: number) =>
+	`${chains} 条链 · ${nodes} 个节点`;
+
+/** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */
+export const LIST_LABEL = {
+	legend: "图例",
+	chainProgress: "各链进度",
+} as const;
+
 /** 通用的加载 / 错误 / 空状态文字。 */
 export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
+	noData: "还没有数据",
 	neverRun: "从未运行",
 	noLogs: "还没有日志。",
 	/** 监控页日志页签：任务或运行还没有结束，暂时没有日志。 */

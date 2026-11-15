@@ -4,6 +4,7 @@ import { ChainBar, doneCount, listChainLabel } from "#/components/chain-progress
 import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
+import { ACTION } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -132,7 +133,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					data-list-primary
 					className={buttonVariants({ size: "sm" })}
 				>
-					打开运行监控
+					{ACTION.openRun}
 				</Link>
 				{run.status === "running" && (
 					<span className="ml-auto">

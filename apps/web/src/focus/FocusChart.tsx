@@ -1,6 +1,7 @@
 import type { RunFocusItem } from "@sfly/schema";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
+import { LIST_LABEL, MESSAGE, MONITOR_VIEW_LABEL } from "#/lib/copy";
 import { seriesColor, seriesDash } from "#/monitor/MetricChart";
 import { Button } from "@/components/ui/button";
 import { FocusValue } from "./FocusValue";
@@ -140,14 +141,14 @@ export function FocusChart({
 					)}
 					{empty && (
 						<span className="absolute inset-0 grid place-items-center pb-5 pl-11 text-xs text-fg-3">
-							{item.source.started_at === null ? NOT_STARTED_TEXT : "还没有数据"}
+							{item.source.started_at === null ? NOT_STARTED_TEXT : MESSAGE.noData}
 						</span>
 					)}
 				</div>
 			)}
 			{series.length > 1 && (
 				<ul
-					aria-label="图例"
+					aria-label={LIST_LABEL.legend}
 					className="m-0 flex list-none flex-wrap gap-x-3 gap-y-0.5 p-0 text-xs text-fg-3"
 				>
 					{series.map((s, i) => (
@@ -166,12 +167,16 @@ export function FocusChart({
 							{seriesName(s, multiMetric)}
 						</li>
 					))}
-					{hidden > 0 && <li>另有 {hidden} 条序列在详情里查看</li>}
+					{hidden > 0 && (
+						<li>
+							另有 {hidden} 条序列在{MONITOR_VIEW_LABEL.detail}里查看
+						</li>
+					)}
 				</ul>
 			)}
 			<footer className="mt-auto flex justify-end pt-1">
 				<Button variant="link" onClick={onOpen} className="text-xs text-fg-2">
-					在详情里打开 {sourceNodeName(item)}
+					在{MONITOR_VIEW_LABEL.detail}里打开 {sourceNodeName(item)}
 				</Button>
 			</footer>
 		</article>

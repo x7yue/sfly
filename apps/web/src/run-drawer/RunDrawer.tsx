@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { PlayIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { PanelWidthHandle } from "#/components/PanelWidthHandle";
+import { ACTION } from "#/lib/copy";
 import { usePanelWidth } from "#/lib/panel-width";
 import { CancelRunButton } from "#/monitor/CancelRunDialog";
 import { useLiveRun } from "#/monitor/live-run";
@@ -202,7 +203,7 @@ function SummaryActions({ runId, orchestrationId }: { runId: string; orchestrati
 				params={{ id: runId }}
 				className={buttonVariants({ variant: "primary" })}
 			>
-				打开运行监控
+				{ACTION.openRun}
 			</Link>
 		</>
 	);

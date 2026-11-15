@@ -1,5 +1,6 @@
 import { useRef } from "react";
-import { MONITOR_VIEW_LABEL, MONITOR_VIEWS, type MonitorView, nextView } from "./monitor-view";
+import { MONITOR_VIEW_LABEL } from "#/lib/copy";
+import { MONITOR_VIEWS, type MonitorView, nextView } from "./monitor-view";
 
 /** 视图面板的 id：标签页的 `aria-controls` 指向它，面板（`<main>`）的名称来自当前的标签页。 */
 export const VIEW_PANEL_ID = "monitor-view-panel";

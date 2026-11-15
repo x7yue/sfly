@@ -12,7 +12,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { chainLabel as chainName, TERM } from "#/lib/copy";
+import { chainLabel as chainName, LIST_LABEL, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatDateTime,
@@ -94,7 +94,7 @@ export function RunSummary({ runId }: { runId: string }) {
 				</span>
 			</div>
 			{run.run_notification && <RunNotificationLine state={run.run_notification} />}
-			<ul aria-label="各链进度" className="m-0 flex list-none flex-col gap-1.5 p-0">
+			<ul aria-label={LIST_LABEL.chainProgress} className="m-0 flex list-none flex-col gap-1.5 p-0">
 				{chains.map((chain) => (
 					<ChainRow key={chain.id} chain={chain} />
 				))}

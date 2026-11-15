@@ -9,8 +9,9 @@ import { StatusDot } from "#/components/status";
 import { FocusChart } from "#/focus/FocusChart";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { useRunFocus } from "#/focus/use-run-focus";
-import { TERM } from "#/lib/copy";
+import { chainCountLabel, LIST_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
+import { NODE_STATUS } from "#/lib/node-status";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
 import { useTimeAxis } from "./monitor-state";
@@ -67,12 +68,9 @@ function ChainSection({ run }: { run: RunView }) {
 				<h2 id="overview-chains" className="m-0 text-base font-semibold">
 					链路
 				</h2>
-				<span className="text-xs text-fg-3">
-					<span className="font-mono">{chains.length}</span> 条链 ·{" "}
-					<span className="font-mono">{nodeCount}</span> 个节点
-				</span>
+				<span className="text-xs text-fg-3">{chainCountLabel(chains.length, nodeCount)}</span>
 			</div>
-			<ul aria-label="各链进度" className="m-0 flex list-none flex-col gap-2 p-0">
+			<ul aria-label={LIST_LABEL.chainProgress} className="m-0 flex list-none flex-col gap-2 p-0">
 				{chains.map((chain) => {
 					const { name, id } = chainLabelParts(chain);
 					return (
@@ -95,9 +93,9 @@ function ChainSection({ run }: { run: RunView }) {
 			</ul>
 			{executing.length > 0 && (
 				<div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1.5 border-t border-border-soft pt-3 text-xs text-fg-2">
-					<span className="text-fg-3">执行中</span>
+					<span className="text-fg-3">{NODE_STATUS.running.label}</span>
 					<ul
-						aria-label="执行中的节点"
+						aria-label={`${NODE_STATUS.running.label}的${TERM.node}`}
 						className="m-0 flex list-none flex-wrap gap-x-5 gap-y-1.5 p-0"
 					>
 						{executing.map(({ chain, node, attempt }) => (
@@ -140,7 +138,7 @@ function FocusSection({
 		<section aria-labelledby="overview-focus" className="flex flex-col gap-3">
 			<div className="flex items-baseline gap-2.5">
 				<h2 id="overview-focus" className="m-0 text-base font-semibold">
-					{primary ? `执行中节点的${TERM.primaryMetric}` : TERM.focusItem}
+					{primary ? `${NODE_STATUS.running.label}节点的${TERM.primaryMetric}` : TERM.focusItem}
 				</h2>
 				{data && !primary && (
 					<span className="font-mono text-xs text-fg-3" data-testid="focus-count">
@@ -162,7 +160,7 @@ function FocusSection({
 			</div>
 			{focus.error && !data ? (
 				<ErrorState
-					title={`无法加载${TERM.focusItem}`}
+					title={MESSAGE.loadFailed(TERM.focusItem)}
 					error={focus.error}
 					onRetry={() => void focus.refetch()}
 				/>
@@ -180,7 +178,7 @@ function FocusBody({ data, onOpen }: { data: RunFocus; onOpen: (item: RunFocusIt
 		return (
 			<p className="m-0 rounded-lg border border-dashed border-border-soft px-4 py-6 text-center text-sm text-fg-3">
 				{data.mode === "primary"
-					? "没有执行中的节点。"
+					? `没有${NODE_STATUS.running.label}的${TERM.node}。`
 					: `这次运行里没有可显示的${TERM.focusItem}：场景设置的${TERM.focusItem}所在的节点不在这次运行的版本里。`}
 			</p>
 		);

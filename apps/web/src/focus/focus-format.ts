@@ -1,7 +1,9 @@
 import type { FocusSeries, RunFocusItem } from "@sfly/schema";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView } from "#/components/status";
+import { FINAL_VALUE_LABEL, MESSAGE } from "#/lib/copy";
 import { formatDuration, formatMetric } from "#/lib/format";
+import { NODE_STATUS } from "#/lib/node-status";
 
 /** 距离某一刻多久：`2s`、`2m 10s`、`1h 02m`（秒取整；一分钟以内不写小数）。 */
 export function formatAgo(ms: number): string {
@@ -46,8 +48,8 @@ export function latestSeriesName(item: Pick<RunFocusItem, "latest" | "series">):
 		: "";
 }
 
-/** 来源节点还没有开始执行（与 lib/node-status 里节点「待执行」的说明同一句话）。 */
-export const NOT_STARTED_TEXT = "还没有开始执行";
+/** 来源节点还没有开始执行：取 lib/node-status 里节点没有执行过时的说明，去掉句号放进脚注。 */
+export const NOT_STARTED_TEXT = NODE_STATUS.pending.notRun.replace(/。$/, "");
 
 /** 来源节点：「显示名称（节点 ID）」，没有显示名称时只写节点 ID（docs/SEMANTICS.md §1.4）。 */
 export const sourceNodeName = (item: Pick<RunFocusItem, "node_id" | "display_name">): string =>
@@ -56,10 +58,10 @@ export const sourceNodeName = (item: Pick<RunFocusItem, "node_id" | "display_nam
 /** 读数的脚注：来源节点和「多久前」；来源节点成功或已停止后是「最终值」，还没有数据时写明原因。 */
 export function readingFoot(item: RunFocusItem, generatedAt: string): string {
 	const node = sourceNodeName(item);
-	if (item.final) return `${node} · 最终值`;
+	if (item.final) return `${node} · ${FINAL_VALUE_LABEL}`;
 	const age = readingAge(item, generatedAt);
 	if (age !== null) return `${node} · ${formatAgo(age)} 前`;
-	return `${node} · ${item.source.task_id === null ? NOT_STARTED_TEXT : "还没有数据"}`;
+	return `${node} · ${item.source.task_id === null ? NOT_STARTED_TEXT : MESSAGE.noData}`;
 }
 
 /** 图表里有好几个指标（序列分属不同的指标）：读数和图例要写明是哪个指标。 */
@@ -81,6 +83,10 @@ export function readingLabel(item: RunFocusItem, generatedAt: string): string {
 	const series = latestSeriesName(item);
 	const value = `${series ? `${series} ` : ""}${valueText(item)}${item.unit ? ` ${item.unit}` : ""}`;
 	const age = readingAge(item, generatedAt);
-	const when = item.final ? "最终值" : age === null ? "还没有数据" : `${formatAgo(age)} 前`;
+	const when = item.final
+		? FINAL_VALUE_LABEL
+		: age === null
+			? MESSAGE.noData
+			: `${formatAgo(age)} 前`;
 	return `${item.title} ${value}，${origin}，${when}`;
 }

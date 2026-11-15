@@ -8,11 +8,6 @@ import type { MonitorSearch } from "./run-link";
 export const MONITOR_VIEWS = ["overview", "detail"] as const;
 export type MonitorView = (typeof MONITOR_VIEWS)[number];
 
-export const MONITOR_VIEW_LABEL: Record<MonitorView, string> = {
-	overview: "概览",
-	detail: "详情",
-};
-
 export const MONITOR_VIEW_KEY = "sfly.monitor.view";
 
 const isView = (value: unknown): value is MonitorView =>
