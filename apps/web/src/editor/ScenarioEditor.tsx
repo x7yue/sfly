@@ -105,6 +105,7 @@ import {
 	useRunDecorations,
 } from "./run-state/RunState";
 import { useCanvasRun, useRunFlow } from "./run-state/use-canvas-run";
+import { useRunMotion } from "./run-state/use-run-motion";
 import {
 	documentFieldErrors,
 	type FieldError,
@@ -284,6 +285,12 @@ function Editor({
 		[readyRun?.doc, titleOf, info],
 	);
 	const running = mode === "run";
+	// 跟着执行推进的动效（刚变成执行中的连线、跟随执行）只在运行状态下有。
+	const runMotion = useRunMotion(
+		running ? readyRun?.run : undefined,
+		running ? readyRun?.overlay : undefined,
+		running ? runFlow?.edges : undefined,
+	);
 	const shownNodes = running && runFlow ? runFlow.nodes : nodes;
 	const shownEdges = running && runFlow ? runFlow.edges : edges;
 	const shownAnnotations =
@@ -818,6 +825,7 @@ function Editor({
 					annotations={shownAnnotations}
 					info={running ? runInfo : info}
 					{...(running ? decorations : {})}
+					{...(running ? runMotion : {})}
 					selection={shownSelection}
 					onSelect={setSelection}
 					onNodesChange={running ? runFlow?.onNodesChange : history.onNodesChange}
