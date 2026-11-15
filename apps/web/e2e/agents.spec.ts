@@ -1,26 +1,41 @@
+import type { Page } from "@playwright/test";
 import { AgentUpdateState, agentClock } from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
 import {
 	createScenario,
+	elapseWithHeartbeats,
 	failApi,
 	holdApi,
 	publishPackage,
 	scenarioUsing,
 	triggerRun,
+	withSubflow,
 } from "./support";
 
-// Agent 管理页（原型 #/agents）。
+// Agent 管理页（原型 #agents）：每台 Agent 是一个机架面板，头部一行是状态和告警，主体是槽位格。
 
 // 控制面版本固定为 1.2.3：与它一致的 Agent 才会被派任务（ADR 0014）。
 test.use({ controlPlaneOptions: { version: "1.2.3" } });
 
-test("列出 Agent：在线状态、槽位占用、版本、系统、对外地址、能力、已安装节点包、被引用场景数、最后在线", async ({
+const NAMES = { probe: "探测主机", subflow: "巡检子流程" };
+
+/** 一台 Agent 的机架（面板的名称是 Agent 名称）。 */
+const rack = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
+/** 机架头部：状态、告警、名称、版本、系统、对外地址、最后在线。 */
+const header = (page: Page, name: string) => rack(page, name).locator("header");
+/** 机架里的槽位格：占用的格子和合并的空闲条。 */
+const slotCells = (page: Page, name: string) =>
+	rack(page, name).getByRole("list", { name: "槽位" }).getByRole("listitem");
+const queued = (page: Page, name: string) =>
+	rack(page, name).getByRole("list", { name: "排队的任务" }).getByRole("listitem");
+
+test("机架头部：状态、名称、版本、系统、对外地址、最后在线，右侧是被引用的场景数；节点包与能力在底部", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
-	const busy = await connectAgent({
+	await connectAgent({
 		name: "agent-busy",
 		agentVersion: "1.2.3",
 		os: "linux",
@@ -38,44 +53,180 @@ test("列出 Agent：在线状态、槽位占用、版本、系统、对外地�
 		arch: "aarch64",
 	});
 	await publishPackage(controlPlane);
-	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-busy"));
+	await createScenario(controlPlane, "巡检", scenarioUsing("agent-busy"));
 	await createScenario(controlPlane, "巡检副本", scenarioUsing("agent-busy"));
 	clock.advance(90_000);
 	await gone.disconnect();
-	await triggerRun(controlPlane, scenario);
-	await busy.nextAssign();
 
 	await page.goto("/agents");
-	const busyRow = page.getByRole("row", { name: /agent-busy/ });
-	await expect(busyRow.getByRole("cell")).toHaveText([
-		"agent-busy",
-		"在线",
-		"1/2",
-		"1.2.3",
-		"linux/x86_64",
-		"127.0.0.1:50052",
-		"files v1",
-		"demo-checks@1.2.0",
-		"2 个场景",
-		"现在",
-	]);
-	// 离线时间按浏览器时区（测试固定为 Asia/Shanghai）显示。
-	await expect(page.getByRole("row", { name: /agent-gone/ }).getByRole("cell")).toHaveText([
-		"agent-gone",
-		"离线",
-		"0/4",
-		"1.0.0",
-		"macos/aarch64",
-		"127.0.0.1",
-		"无",
-		"无",
-		"未被引用",
-		"01-01 08:01",
-	]);
-	await expect(page.getByRole("heading", { name: "Agent 管理" })).toBeVisible();
+	await expect(page.getByRole("heading", { name: "Agent 管理", level: 1 })).toBeVisible();
+	const busy = header(page, "agent-busy");
+	await expect(busy.locator("[data-status]")).toHaveText("在线");
+	await expect(busy.getByRole("heading", { name: "agent-busy", level: 2 })).toBeVisible();
+	await expect(busy).toContainText("1.2.3");
+	await expect(busy).toContainText("linux/x86_64");
+	await expect(busy).toContainText("对外地址 127.0.0.1:50052");
+	await expect(busy).toContainText("最后在线 现在");
+	await expect(busy).toContainText("被 2 个场景引用");
+	await expect(rack(page, "agent-busy").locator("dl")).toHaveText(
+		"节点包demo-checks@1.2.0能力files v1",
+	);
+
+	// 离线时间按浏览器时区（测试固定为 Asia/Shanghai）显示；离线的 Agent 不提示版本与控制面不一致。
+	const offline = header(page, "agent-gone");
+	await expect(offline.locator("[data-status]")).toHaveText("离线");
+	await expect(offline).toContainText("1.0.0");
+	await expect(offline).not.toContainText("控制面 1.2.3");
+	await expect(offline).toContainText("macos/aarch64");
+	await expect(offline).toContainText("最后在线 01-01 08:01");
+	await expect(offline).toContainText("未被引用");
+	await expect(rack(page, "agent-gone").locator("dl")).toHaveText("节点包无能力无");
 });
 
-test("准备环境中：在线旁边显示「准备环境中 · 已 N 分 N 秒」，版本、槽位、最后在线照常，发出心跳后标记消失", async ({
+test("槽位格：占用的格子写节点、场景、运行编号、所在链、尝试号、节点类型和已执行时长；空闲的槽位合并成一行矮条，没有槽位编号", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-busy", slots: 4 });
+	await publishPackage(controlPlane);
+	const named = scenarioUsing("agent-busy");
+	const runId = await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "巡检", {
+			...named,
+			nodes: named.nodes.map((n) => (n.id === "ping" ? { ...n, display_name: "探测主机" } : n)),
+		}),
+	);
+	await agent.nextAssign();
+	await elapseWithHeartbeats(clock, [agent], 90_000);
+
+	await page.goto("/agents");
+	const cells = slotCells(page, "agent-busy");
+	await expect(cells).toHaveCount(2);
+	const cell = cells.first();
+	await expect(cell).toContainText("探测主机（ping）");
+	await expect(cell).toContainText("巡检");
+	await expect(cell).toContainText(runId.slice(0, 8));
+	await expect(cell).toContainText("主链 · 尝试 1 · demo-checks/ping");
+	await expect(cell).toContainText("1m 30s");
+	// 连续的空闲槽合并成一行，不随旁边的格子拉伸。
+	const idle = cells.nth(1);
+	await expect(idle).toHaveText("3 个槽位空闲");
+	const cellHeight = (await cell.boundingBox())?.height ?? 0;
+	const idleHeight = (await idle.boundingBox())?.height ?? 0;
+	expect(idleHeight).toBeGreaterThan(0);
+	expect(idleHeight).toBeLessThan(cellHeight);
+	await expect(rack(page, "agent-busy")).toContainText("1 / 4 占用 · 排队 0");
+	// 系统里没有槽位身份，不写「槽 1」这样的编号。
+	await expect(rack(page, "agent-busy")).not.toContainText(/槽 ?\d/);
+
+	// 已执行时长跟着控制面时间走。
+	await elapseWithHeartbeats(clock, [agent], 60_000);
+	await expect(cell).toContainText("2m 30s", { timeout: 15_000 });
+});
+
+test("槽位格：槽位占满时没有空闲条；还在准备（派发中）的任务写「准备中」，不写时长", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-small", slots: 2 });
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, "巡检", scenarioUsing("agent-small"));
+	await triggerRun(controlPlane, scenario);
+	await triggerRun(controlPlane, scenario);
+	await agent.nextAssign();
+	await agent.nextAssign({ start: false });
+
+	await page.goto("/agents");
+	const cells = slotCells(page, "agent-small");
+	await expect(cells).toHaveCount(2);
+	await expect(cells.nth(0)).not.toContainText("准备中");
+	await expect(cells.nth(1)).toContainText("准备中");
+	await expect(rack(page, "agent-small")).toContainText("2 / 2 占用 · 排队 0");
+	await expect(rack(page, "agent-small")).not.toContainText("槽位空闲");
+});
+
+test("槽位格：子流程里的任务写子流程名称，主链的任务写「主链」；可访问名称写出节点和场景", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-busy", slots: 4 });
+	await publishPackage(controlPlane);
+	await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "撮合", withSubflow("agent-busy", NAMES)),
+	);
+	await agent.nextAssign();
+	await agent.nextAssign();
+
+	await page.goto("/agents");
+	const main = slotCells(page, "agent-busy").filter({ hasText: "探测主机" });
+	await expect(main).toContainText("主链 · 尝试 1");
+	await expect(main).toHaveAccessibleName("节点 探测主机（probe），场景 撮合");
+	const inside = slotCells(page, "agent-busy").filter({ hasText: "子流程 巡检子流程" });
+	await expect(inside).toContainText("子流程 巡检子流程 · 尝试 1 · demo-checks/ping");
+	await expect(inside).toHaveAccessibleName("节点 verify，场景 撮合");
+});
+
+test("排队的任务：列在格子下面，写排队了多久、多久后排队超时；开始执行后离开队列", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-small", slots: 1 });
+	await publishPackage(controlPlane);
+	const first = await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "巡检", scenarioUsing("agent-small")),
+	);
+	const held = await agent.nextAssign();
+	const waiting = await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "拨测", scenarioUsing("agent-small")),
+	);
+	await elapseWithHeartbeats(clock, [agent], 90_000);
+
+	await page.goto("/agents");
+	await expect(rack(page, "agent-small")).toContainText("1 / 1 占用 · 排队 1");
+	await expect(slotCells(page, "agent-small")).toHaveCount(1);
+	await expect(slotCells(page, "agent-small").first()).toContainText(first.slice(0, 8));
+	const row = queued(page, "agent-small");
+	await expect(row).toHaveCount(1);
+	await expect(row).toContainText("ping");
+	await expect(row).toContainText("拨测");
+	await expect(row).toContainText(waiting.slice(0, 8));
+	// 排队超时默认 10 分钟：排队了 1 分 30 秒，还剩 8 分 30 秒。
+	await expect(row).toContainText("排队 1m 30s · 8m 30s 后超时");
+
+	// 槽位空出来，排队的任务开始执行。
+	await agent.succeed(held, {});
+	await agent.nextAssign();
+	await expect(queued(page, "agent-small")).toHaveCount(0, { timeout: 15_000 });
+	await expect(slotCells(page, "agent-small").first()).toContainText(waiting.slice(0, 8));
+	await expect(rack(page, "agent-small")).toContainText("1 / 1 占用 · 排队 0");
+});
+
+test("排队的任务：Agent 不在线时照样列在它名下", async ({ page, controlPlane, connectAgent }) => {
+	const away = await connectAgent({ name: "agent-away" });
+	await away.disconnect();
+	await publishPackage(controlPlane);
+	await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "巡检", scenarioUsing("agent-away")),
+	);
+
+	await page.goto("/agents");
+	await expect(header(page, "agent-away").locator("[data-status]")).toHaveText("离线");
+	await expect(queued(page, "agent-away")).toHaveCount(1);
+	await expect(queued(page, "agent-away")).toContainText("10m 00s 后超时");
+});
+
+test("准备环境中：状态后面写「准备环境中 · 已 N 分 N 秒」，版本、槽位、最后在线照常，发出心跳后标记消失", async ({
 	page,
 	connectAgent,
 	clock,
@@ -88,25 +239,25 @@ test("准备环境中：在线旁边显示「准备环境中 · 已 N 分 N 秒�
 	clock.advance(130_000);
 
 	await page.goto("/agents");
-	const row = (name: string) => page.getByRole("row", { name: new RegExp(name) });
-	const status = (name: string) => row(name).getByRole("cell").nth(1);
-	await expect(status("agent-prep")).toHaveText("在线准备环境中 · 已 2 分 10 秒");
+	const status = (name: string) => header(page, name).locator("[data-status]");
+	await expect(header(page, "agent-prep")).toContainText("在线准备环境中 · 已 2 分 10 秒");
 	await expect(status("agent-ready")).toHaveText("在线");
+	await expect(header(page, "agent-ready")).not.toContainText("准备环境中");
 	// 准备期间照常显示版本、槽位和最后在线。
-	const cell = (index: number) => row("agent-prep").getByRole("cell").nth(index);
-	await expect(cell(2)).toHaveText("0/2");
-	await expect(cell(3)).toHaveText("1.2.3");
-	await expect(cell(9)).toHaveText("现在");
+	await expect(header(page, "agent-prep")).toContainText("1.2.3");
+	await expect(header(page, "agent-prep")).toContainText("最后在线 现在");
+	await expect(rack(page, "agent-prep")).toContainText("0 / 2 占用");
 
 	// 时长按控制面时间走：控制面时间过了一分钟，页面不用刷新列表就变了。
 	clock.advance(60_000);
-	await expect(status("agent-prep")).toHaveText("在线准备环境中 · 已 3 分 10 秒", {
+	await expect(header(page, "agent-prep")).toContainText("准备环境中 · 已 3 分 10 秒", {
 		timeout: 15_000,
 	});
 
 	// 准备好（发出第一次心跳）：列表刷新后标记消失，仍然在线。
 	await preparing.ready();
-	await expect(status("agent-prep")).toHaveText("在线", { timeout: 15_000 });
+	await expect(header(page, "agent-prep")).not.toContainText("准备环境中", { timeout: 15_000 });
+	await expect(status("agent-prep")).toHaveText("在线");
 });
 
 test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒时不显示，心跳测到新的偏差后更新", async ({
@@ -125,20 +276,16 @@ test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒
 	await connectAgent({ name: "agent-old" }, { clock: false });
 
 	await page.goto("/agents");
-	const status = (name: string) =>
-		page
-			.getByRole("row", { name: new RegExp(name) })
-			.getByRole("cell")
-			.nth(1);
-	await expect(status("agent-ahead")).toHaveText("在线时间比控制面快 613 天");
-	await expect(status("agent-synced")).toHaveText("在线");
-	await expect(status("agent-old")).toHaveText("在线");
+	await expect(header(page, "agent-ahead")).toContainText("在线时间比控制面快 613 天");
+	await expect(header(page, "agent-synced").locator("[data-status]")).toHaveText("在线");
+	await expect(header(page, "agent-synced")).not.toContainText("时间比控制面");
+	await expect(header(page, "agent-old")).not.toContainText("时间比控制面");
 
 	// 这台机器的时间被往回改了 90 秒：下一次心跳后显示出来。
 	clock.advance(10_000);
 	await synced.heartbeat([], agentClock(now() - 90_000, 15_000));
 	// 列表每 STATUS_POLL_MS（5 秒）才重新拉取一次，默认的 5 秒等不到下一次。
-	await expect(status("agent-synced")).toHaveText("在线时间比控制面慢 1 分钟", {
+	await expect(header(page, "agent-synced")).toContainText("在线时间比控制面慢 1 分钟", {
 		timeout: 15_000,
 	});
 });
@@ -163,19 +310,19 @@ test("对外地址与能力：显式配置的地址标明来源；端口被占�
 	await connectAgent({ name: "agent-old" });
 
 	await page.goto("/agents");
-	const cells = (name: string) =>
-		page.getByRole("row", { name: new RegExp(name) }).getByRole("cell");
-	await expect(cells("agent-nat").nth(5)).toHaveText("10.20.30.40:6000安装时配置");
-	await expect(cells("agent-nat").nth(6)).toHaveText("files v2、exec v1");
-	await expect(cells("agent-busy-port").nth(5)).toHaveText("127.0.0.1:50052");
-	await expect(cells("agent-busy-port").nth(6)).toHaveText(
-		"files v2不能被其它 Agent 调用端口 50052 已被占用",
+	await expect(header(page, "agent-nat")).toContainText("对外地址 10.20.30.40:6000 · 安装时配置");
+	await expect(rack(page, "agent-nat").locator("dl")).toHaveText("节点包无能力files v2、exec v1");
+	await expect(header(page, "agent-busy-port")).toContainText("对外地址 127.0.0.1:50052");
+	await expect(header(page, "agent-busy-port")).toContainText(
+		"不能被其它 Agent 调用 · 端口 50052 已被占用",
 	);
-	// 不监听端口的旧版本 Agent：只有地址，没有能力。
-	await expect(cells("agent-old").nth(5)).toHaveText("127.0.0.1");
-	await expect(cells("agent-old").nth(6)).toHaveText("无");
+	// 不监听端口的旧版本 Agent：只有地址，没有能力，也不重复说明为什么不能调用。
+	await expect(header(page, "agent-old")).toContainText("对外地址 127.0.0.1");
+	await expect(header(page, "agent-old")).not.toContainText("对外地址 127.0.0.1:");
+	await expect(header(page, "agent-old")).not.toContainText("不能被其它 Agent 调用");
+	await expect(rack(page, "agent-old").locator("dl")).toHaveText("节点包无能力无");
 	// 端口被占用不影响执行任务：状态照常是在线。
-	await expect(cells("agent-busy-port").nth(1)).toHaveText("在线");
+	await expect(header(page, "agent-busy-port").locator("[data-status]")).toHaveText("在线");
 });
 
 test.describe("版本不一致", () => {
@@ -204,28 +351,38 @@ test.describe("版本不一致", () => {
 		await report("agent-downloading", { state: AgentUpdateState.DOWNLOADING });
 
 		await page.goto("/agents");
-		const cells = (name: string) =>
-			page.getByRole("row", { name: new RegExp(name) }).getByRole("cell");
-		await expect(cells("agent-current").nth(1)).toHaveText("在线");
-		await expect(cells("agent-current").nth(3)).toHaveText("2.0.0");
-		await expect(cells("agent-old").nth(1)).toHaveText("版本不一致");
-		await expect(cells("agent-old").nth(3)).toHaveText("1.0.0控制面 2.0.0");
-		await expect(cells("agent-waiting").nth(1)).toHaveText("更新中等待 2 个任务结束立即更新");
-		await expect(cells("agent-manual").nth(1)).toHaveText(
-			"需要手动升级已指定 --no-auto-update，不自动更新",
-		);
-		await expect(cells("agent-failed").nth(1)).toHaveText("更新失败sha256 不匹配");
-		await expect(cells("agent-failed").nth(3)).toHaveText("1.0.0控制面 2.0.0");
-		// 「立即更新」只给确实在更新流程中（下载中、等待任务结束）的 Agent：
+		const status = (name: string) => header(page, name).locator("[data-status]");
+		await expect(status("agent-current")).toHaveText("在线");
+		await expect(header(page, "agent-current")).toContainText("2.0.0");
+		await expect(header(page, "agent-current")).not.toContainText("控制面 2.0.0");
+		await expect(status("agent-old")).toHaveText("版本不一致");
+		await expect(header(page, "agent-old")).toContainText("1.0.0");
+		await expect(header(page, "agent-old")).toContainText("控制面 2.0.0");
+		await expect(status("agent-waiting")).toHaveText("更新中");
+		await expect(header(page, "agent-waiting")).toContainText("等待 2 个任务结束");
+		await expect(status("agent-manual")).toHaveText("需要手动升级");
+		await expect(header(page, "agent-manual")).toContainText("已指定 --no-auto-update，不自动更新");
+		await expect(status("agent-failed")).toHaveText("更新失败");
+		await expect(header(page, "agent-failed")).toContainText("sha256 不匹配");
+		await expect(header(page, "agent-failed")).toContainText("1.0.0");
+		await expect(header(page, "agent-failed")).toContainText("控制面 2.0.0");
+		await expect(status("agent-downloading")).toHaveText("更新中");
+		await expect(header(page, "agent-downloading")).toContainText("下载新版本");
+		// 「立即更新」放在头部右侧，只给确实在更新流程中（下载中、等待任务结束）的 Agent：
 		// 更新失败、需要手动升级、没有上报更新状态的旧 Agent 都没有。
 		const updateNow = (name: string) =>
-			page.getByRole("row", { name: new RegExp(name) }).getByRole("button", { name: "立即更新" });
+			header(page, name).getByRole("button", { name: "立即更新" });
 		await expect(updateNow("agent-waiting")).toBeVisible();
 		await expect(updateNow("agent-downloading")).toBeVisible();
 		await expect(updateNow("agent-old")).toHaveCount(0);
 		await expect(updateNow("agent-failed")).toHaveCount(0);
 		await expect(updateNow("agent-current")).toHaveCount(0);
 		await expect(updateNow("agent-manual")).toHaveCount(0);
+		// 状态和告警在同一行（头部是一行，不换行成几块）。
+		const tops = await header(page, "agent-waiting")
+			.locator("[data-status], h2, button")
+			.evaluateAll((all) => all.map((el) => Math.round(el.getBoundingClientRect().top)));
+		expect(new Set(tops.map((top) => Math.round(top / 8))).size).toBe(1);
 	});
 
 	test("立即更新：确认框列出会被终止的任务；取消不产生影响，确认后状态变为替换中", async ({
@@ -266,11 +423,12 @@ test.describe("版本不一致", () => {
 		await old.sync();
 
 		await page.goto("/agents");
-		const row = page.getByRole("row", { name: /agent-a/ });
-		const status = row.getByRole("cell").nth(1);
-		await expect(status).toContainText("等待 2 个任务结束");
+		const top = header(page, "agent-a");
+		await expect(top).toContainText("等待 2 个任务结束");
+		// 机架里这两个任务各占一格，槽位占满没有空闲条。
+		await expect(slotCells(page, "agent-a")).toHaveCount(2);
 		const open = async () => {
-			await row.getByRole("button", { name: "立即更新" }).click();
+			await top.getByRole("button", { name: "立即更新" }).click();
 			const dialog = page.getByRole("dialog", { name: "立即更新 agent-a？" });
 			await expect(dialog).toBeVisible();
 			return dialog;
@@ -288,7 +446,6 @@ test.describe("版本不一致", () => {
 		await expect(terminated.nth(1)).toContainText(second.slice(0, 8));
 		await expect(dialog).toContainText("agent_lost");
 		await expect(dialog).toContainText("2.0.0");
-
 		// 取消：任务照常运行，Agent 没有收到指令。
 		await dialog.getByRole("button", { name: "取消" }).click();
 		await expect(dialog).toBeHidden();
@@ -300,7 +457,7 @@ test.describe("版本不一致", () => {
 		};
 		expect(await runStatus(first)).toBe("running");
 		expect(await runStatus(second)).toBe("running");
-		await expect(status).toContainText("等待 2 个任务结束");
+		await expect(top).toContainText("等待 2 个任务结束");
 
 		// 确认：Agent 收到指令，任务以 agent_lost 失败；Agent 上报替换中。
 		dialog = await open();
@@ -316,8 +473,8 @@ test.describe("版本不一致", () => {
 		await old.sync();
 		// 确认后的刷新可能早于这次心跳，下一次轮询（5 秒）又和断言超时打平：重新加载，不依赖轮询时机。
 		await page.reload();
-		await expect(status).toHaveText("更新中替换并重新启动");
-		await expect(row.getByRole("button", { name: "立即更新" })).toHaveCount(0);
+		await expect(top).toContainText("更新中替换并重新启动");
+		await expect(top.getByRole("button", { name: "立即更新" })).toHaveCount(0);
 	});
 
 	test("新版本连续启动失败、恢复旧版本后显示「更新失败」及原因", async ({ page, connectAgent }) => {
@@ -331,9 +488,11 @@ test.describe("版本不一致", () => {
 		await agent.sync();
 
 		await page.goto("/agents");
-		const cells = page.getByRole("row", { name: /agent-rolled-back/ }).getByRole("cell");
-		await expect(cells.nth(1)).toHaveText(`更新失败${reason}`);
-		await expect(cells.nth(3)).toHaveText("1.0.0控制面 2.0.0");
+		const top = header(page, "agent-rolled-back");
+		await expect(top.locator("[data-status]")).toHaveText("更新失败");
+		await expect(top).toContainText(reason);
+		await expect(top).toContainText("1.0.0");
+		await expect(top).toContainText("控制面 2.0.0");
 	});
 });
 
@@ -384,7 +543,7 @@ test("加载中显示骨架，加载失败显示错误详情，重试后恢复",
 	await page.goto("/agents");
 	await expect(page.getByRole("status", { name: "加载中" })).toBeVisible();
 	hold.release();
-	await expect(page.getByRole("row", { name: /agent-a/ })).toBeVisible();
+	await expect(rack(page, "agent-a")).toBeVisible();
 
 	await page.unrouteAll();
 	const outage = await failApi(page, "/agents");
@@ -396,7 +555,7 @@ test("加载中显示骨架，加载失败显示错误详情，重试后恢复",
 
 	await outage.restore();
 	await error.getByRole("button", { name: "重试" }).click();
-	await expect(page.getByRole("row", { name: /agent-a/ })).toBeVisible();
+	await expect(rack(page, "agent-a")).toBeVisible();
 	await expect(error).toBeHidden();
 });
 
@@ -408,7 +567,7 @@ const ITEMS = [
 	"sfly-std@0.3.1",
 ];
 
-test("能力与节点包的每一项不拆开（不在连字符处折行）；表格放不下时横向滚动，放得下时余量不平摊给各列", async ({
+test("能力与节点包的每一项不拆开（不在连字符处折行），很长时在机架里折行，不撑出横向滚动", async ({
 	page,
 	connectAgent,
 }) => {
@@ -432,21 +591,12 @@ test("能力与节点包的每一项不拆开（不在连字符处折行）；�
 		peer: { port: 50052, publicAddress: "10.20.30.40" },
 	});
 
-	const measure = async (width: number) => {
+	for (const width of [1280, 1920]) {
 		await page.setViewportSize({ width, height: 900 });
 		await page.goto("/agents");
-		const table = page.getByRole("table", { name: "Agent 列表" });
-		await expect(table.getByRole("row")).toHaveCount(2);
-		const widths = await table
-			.getByRole("columnheader")
-			.evaluateAll((all) => all.map((th) => Math.round(th.getBoundingClientRect().width)));
-		const scrolls = await page
-			.locator('[data-slot="table-container"]')
-			.evaluate((el) => el.scrollWidth > el.clientWidth);
-		const broken = await table
-			.getByRole("row")
-			.nth(1)
-			.getByRole("cell")
+		await expect(rack(page, "agent-linux")).toBeVisible();
+		const broken = await rack(page, "agent-linux")
+			.locator("dd")
 			.evaluateAll((cells, items) => {
 				const lineOf = (cell: Element, index: number) => {
 					const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT);
@@ -470,19 +620,10 @@ test("能力与节点包的每一项不拆开（不在连字符处折行）；�
 					}),
 				);
 			}, ITEMS);
-		return { widths, scrolls, broken };
-	};
-	const narrow = await measure(1280);
-	expect(narrow.scrolls).toBe(true);
-	expect(narrow.broken).toEqual([]);
-	const wide = await measure(1920);
-	expect(wide.scrolls).toBe(false);
-	expect(wide.broken).toEqual([]);
-	const flexible = [1, 6, 7];
-	const fixed = (widths: number[]) => widths.filter((_, i) => !flexible.includes(i));
-	const flex = (widths: number[]) => flexible.reduce((sum, i) => sum + (widths[i] ?? 0), 0);
-	expect(fixed(wide.widths)).toEqual(fixed(narrow.widths));
-	expect(flex(wide.widths)).toBeGreaterThan(flex(narrow.widths) + 300);
+		expect(broken, `${width}px 宽时被拆开的项`).toEqual([]);
+		const scrolls = await page.locator("#main").evaluate((el) => el.scrollWidth > el.clientWidth);
+		expect(scrolls, `${width}px 宽时横向滚动`).toBe(false);
+	}
 });
 
 test("立即更新失败时，原因写在确认框里，不发通知", async ({ page, connectAgent }) => {

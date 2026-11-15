@@ -1,0 +1,264 @@
+import type { AgentView, QueuedTaskView } from "@sfly/schema";
+import { cn } from "cn";
+import { useId } from "react";
+import { queueTiming } from "#/agents/queue-timing";
+import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
+import { NodeName } from "#/components/node-name";
+import { Panel } from "#/components/page";
+import { IdleSlots, idleSlotCount, SlotCell, taskChainLabel } from "#/components/slot-cell";
+import { nodeStatusView, StatusDot, type StatusKind, StatusPill } from "#/components/status";
+import { TERM } from "#/lib/copy";
+import {
+	formatClockOffset,
+	formatDateTime,
+	formatElapsed,
+	formatFullDateTime,
+	shortId,
+} from "#/lib/format";
+import { useNow } from "#/lib/use-now";
+import { Truncate } from "@/components/ui/truncate";
+
+/**
+ * 一台 Agent 的机架面板（外壳页方案 4.1）：头部一行是状态、名称、版本、系统、对外地址和最后在线，状态后面跟着各种告警，
+ * 右侧是被引用的场景数和「立即更新」；主体是槽位格，格子下面是排队的任务；底部是节点包与能力。
+ */
+export function AgentRack({
+	agent,
+	controlPlaneVersion,
+}: {
+	agent: AgentView;
+	controlPlaneVersion: string;
+}) {
+	const headingId = useId();
+	const slots = agent.info.slots;
+	const used = agent.running_tasks.length;
+	const idle = idleSlotCount(slots, used);
+	const packages = [
+		...agent.installed_packages.map((p) => `${p.name}@${p.version}`),
+		...agent.dev_packages.map((p) => `${p.name}@dev`),
+	];
+	return (
+		<Panel aria-labelledby={headingId}>
+			<header className="flex flex-wrap items-center gap-x-3.5 gap-y-1.5 border-b border-border-soft px-4 py-3">
+				<RackStatus agent={agent} />
+				<h2 id={headingId} className="m-0 font-mono text-base font-semibold">
+					{agent.name}
+				</h2>
+				<RackFacts agent={agent} controlPlaneVersion={controlPlaneVersion} />
+				<span className="flex-1" />
+				<span className="text-xs text-fg-3">
+					{agent.referencing_orchestrations > 0
+						? `被 ${agent.referencing_orchestrations} 个${TERM.scenario}引用`
+						: "未被引用"}
+				</span>
+				{canUpdateNow(agent) && (
+					<UpdateNowButton agent={agent} controlPlaneVersion={controlPlaneVersion} />
+				)}
+			</header>
+			<div className="px-4 pt-3 pb-3.5">
+				<div className="mb-2 flex items-center gap-2">
+					<h3 className="m-0 text-xs font-medium text-fg-2">槽位</h3>
+					<span className="font-mono text-xs text-fg-3">
+						{used} / {slots} 占用 · 排队 {agent.queued_tasks.length}
+					</span>
+				</div>
+				<ul
+					aria-label="槽位"
+					className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(300px,1fr))] items-start gap-2 p-0"
+				>
+					{agent.running_tasks.map((task) => (
+						<SlotCell key={task.task_id} task={task} />
+					))}
+					{idle > 0 && <IdleSlots count={idle} />}
+				</ul>
+				{agent.queued_tasks.length > 0 && <QueuedTasks tasks={agent.queued_tasks} />}
+			</div>
+			<dl className="m-0 grid grid-cols-[auto_1fr] gap-x-3.5 gap-y-1 border-t border-border-soft px-4 py-2.5 text-xs">
+				<dt className="text-fg-3">{TERM.nodePackage}</dt>
+				<dd className="m-0 text-fg-2">
+					<IdentifierList items={packages} />
+				</dd>
+				<dt className="text-fg-3">能力</dt>
+				<dd className="m-0 text-fg-2">
+					<IdentifierList items={agent.capabilities.map((c) => `${c.name} v${c.version}`)} />
+				</dd>
+			</dl>
+		</Panel>
+	);
+}
+
+/**
+ * 状态（在线、离线，更新中、更新失败这些优先）和跟在它后面的告警：准备环境、更新的说明、安装、时钟偏差、
+ * 能力不能被其它 Agent 调用、节点包安装失败。
+ */
+function RackStatus({ agent }: { agent: AgentView }) {
+	const online = agent.status === "online";
+	const update = online ? updateStatus(agent) : undefined;
+	const installing = online && agent.install?.state === "installing";
+	const failed = agent.install?.state === "failed";
+	// 时钟偏差只在达到阈值时提示（由接口判断）；离线 Agent 的偏差是断开前测的，不显示。
+	const clockOffset = online && agent.clock_offset?.exceeds_threshold ? agent.clock_offset : null;
+	// 能力不能被其它 Agent 调用的原因（端口被占用等）只对在线、监听端口的 Agent 提示：离线时本来就调用不了；
+	// 不监听端口的旧版本 Agent 也没有能力（能力显示「无」），不再重复说明。
+	const unavailable =
+		online && agent.endpoint.port !== null ? agent.endpoint.unavailable_reason : null;
+	return (
+		<div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+			{update ? (
+				<StatusPill kind={update.kind}>{update.label}</StatusPill>
+			) : installing ? (
+				<StatusPill kind="warn">安装中</StatusPill>
+			) : online ? (
+				<StatusPill kind="ok">在线</StatusPill>
+			) : (
+				<StatusPill kind="pending">离线</StatusPill>
+			)}
+			{online && agent.preparing_since && <PreparingBadge since={agent.preparing_since} />}
+			{update?.detail && (
+				<span className={cn("text-xs", update.kind === "failed" ? "text-danger-fg" : "text-fg-3")}>
+					{update.detail}
+				</span>
+			)}
+			{!update && installing && agent.install && (
+				<span className="font-mono text-2xs text-fg-3">
+					{agent.install.package}@{agent.install.version}
+				</span>
+			)}
+			{clockOffset && (
+				<span
+					className="text-xs text-warn-fg"
+					title={`Agent 时间与控制面时间不一致，测于 ${formatFullDateTime(clockOffset.measured_at)}`}
+				>
+					时间比控制面{formatClockOffset(clockOffset.offset_ms)}
+				</span>
+			)}
+			{failed && agent.install && (
+				<span className="text-xs text-danger-fg">
+					安装 {agent.install.package}@{agent.install.version} 失败
+				</span>
+			)}
+			{unavailable !== null && (
+				<span className="text-xs">
+					<span className="text-warn-fg">不能被其它 Agent 调用</span>
+					<span className="text-fg-3"> · {unavailable}</span>
+				</span>
+			)}
+		</div>
+	);
+}
+
+/** 版本、系统、对外地址、最后在线。 */
+function RackFacts({
+	agent,
+	controlPlaneVersion,
+}: {
+	agent: AgentView;
+	controlPlaneVersion: string;
+}) {
+	const online = agent.status === "online";
+	return (
+		<div className="flex flex-wrap items-baseline gap-x-3.5 gap-y-0.5 text-xs text-fg-3">
+			<span className="font-mono text-fg-2">{agent.info.agent_version || "—"}</span>
+			{online && agent.version_mismatch && <span>控制面 {controlPlaneVersion}</span>}
+			<span className="font-mono text-fg-2">
+				{agent.info.os || "?"}/{agent.info.arch || "?"}
+			</span>
+			<span>
+				对外地址 <span className="font-mono text-fg-2">{endpointLabel(agent.endpoint) || "—"}</span>
+				{agent.endpoint.address_source === "configured" && " · 安装时配置"}
+			</span>
+			<span>
+				最后在线{" "}
+				{online ? "现在" : <span className="font-mono">{formatDateTime(agent.last_seen_at)}</span>}
+			</span>
+		</div>
+	);
+}
+
+/** 排队的任务，按排队顺序：写排队了多久、多久后排队超时，看得出是不是槽位不够。 */
+function QueuedTasks({ tasks }: { tasks: QueuedTaskView[] }) {
+	const now = useNow(true);
+	return (
+		<div className="mt-3">
+			<div className="mb-1.5 flex items-center gap-2">
+				<h3 className="m-0 text-xs font-medium text-fg-2">排队的任务</h3>
+				<span className="font-mono text-xs text-fg-3">{tasks.length}</span>
+			</div>
+			<ul aria-label="排队的任务" className="m-0 flex list-none flex-col gap-1 p-0">
+				{tasks.map((task) => (
+					<li
+						key={task.task_id}
+						className="flex min-w-0 items-center gap-2 rounded-md border border-border-soft bg-bg px-3 py-1.5 text-xs"
+					>
+						<StatusDot kind={nodeStatusView("queued").kind} />
+						<NodeName node={task} className="text-sm" />
+						<span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-fg-3">
+							<Truncate>{`${task.orchestration_name} · ${taskChainLabel(task)} · ${TERM.attempt} ${task.attempt}`}</Truncate>
+							<span className="flex-none font-mono text-2xs">{shortId(task.run_id)}</span>
+						</span>
+						<span className="flex-none text-fg-2">{queueTiming(task, now)}</span>
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
+/** 每项 `nowrap`：浏览器会在连字符处折行，`sfly-stub@0.1.0` 会被拆成两行。 */
+function IdentifierList({ items }: { items: readonly string[] }) {
+	if (items.length === 0) return <span className="text-fg-3">无</span>;
+	return (
+		<span className="font-mono">
+			{items.map((item, i) => (
+				<span key={item} className="whitespace-nowrap">
+					{item}
+					{i < items.length - 1 && "、"}
+				</span>
+			))}
+		</span>
+	);
+}
+
+/**
+ * 在线 Agent 的更新状态（ADR 0014）：版本与控制面不一致时不接新任务，状态后面说明它在做什么；
+ * 不需要更新时为 undefined。
+ */
+function updateStatus(
+	agent: AgentView,
+): { kind: StatusKind; label: string; detail?: string } | undefined {
+	const { update } = agent;
+	switch (update.state) {
+		case "downloading":
+			return { kind: "running", label: "更新中", detail: "下载新版本" };
+		case "waiting_for_tasks":
+			return {
+				kind: "running",
+				label: "更新中",
+				detail: `等待 ${update.remaining_tasks} 个任务结束`,
+			};
+		case "replacing":
+			return { kind: "running", label: "更新中", detail: "替换并重新启动" };
+		case "failed":
+			return { kind: "failed", label: "更新失败", detail: update.reason };
+		case "manual_upgrade_required":
+			return { kind: "warn", label: "需要手动升级", detail: update.reason };
+		case "none":
+			return agent.version_mismatch ? { kind: "warn", label: "版本不一致" } : undefined;
+	}
+}
+
+/** 其它 Agent 连接它用的 `地址:端口`（IPv6 地址加方括号）；没有端口（旧版本 Agent）时只有地址。 */
+function endpointLabel({ address, port }: AgentView["endpoint"]): string {
+	if (port === null) return address;
+	return `${address.includes(":") ? `[${address}]` : address}:${port}`;
+}
+
+/** 准备环境中的标记：「准备环境中 · 已 2 分 10 秒」。时长按控制面时间算，每秒走一次（ADR 0018）。 */
+function PreparingBadge({ since }: { since: string }) {
+	const now = useNow(true);
+	return (
+		<span className="text-xs text-fg-2">
+			准备环境中 · 已 {formatElapsed(now - new Date(since).getTime())}
+		</span>
+	);
+}
