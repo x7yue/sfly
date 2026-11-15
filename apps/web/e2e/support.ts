@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page } from "@playwright/test";
-import { ErrorKind } from "../../server/test/support/fake-agent.js";
+import { ErrorKind, type FakeAgent } from "../../server/test/support/fake-agent.js";
+import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import {
 	packageArchive,
 	packageMetadata,
@@ -103,6 +104,21 @@ export const scenarioUsing = (agent: string, version = "1.2.0") => ({
 });
 
 /**
+ * 手动时钟走过 `ms`，期间 Agent 照常心跳：任务租约是 30 秒，不心跳的任务会以 agent_lost 失败，
+ * 想让任务「执行了一分半钟」就不能一步推进。
+ */
+export async function elapseWithHeartbeats(
+	clock: ManualClock,
+	agents: readonly FakeAgent[],
+	ms: number,
+): Promise<void> {
+	for (let left = ms; left > 0; left -= 20_000) {
+		clock.advance(Math.min(left, 20_000));
+		for (const agent of agents) await agent.heartbeat();
+	}
+}
+
+/**
  * 让浏览器对某个 /api 接口的请求挂起，直到调用返回的 release()；用来观察加载状态。
  * 也可以传 fail 让它返回错误响应（错误状态）。
  */
@@ -130,22 +146,26 @@ export async function failApi(page: Page, path: string, status = 503) {
 	return { restore: () => page.unroute(`**/api${path}`, handler) };
 }
 
-/** 主链 entry → spawn → probe，子流程 sub → verify（都用 demo-checks/ping）。 */
-const withSubflow = (agent: string) => {
-	const ping = (id: string) => ({
+/**
+ * 主链 entry → spawn → probe，子流程 sub → verify（都用 demo-checks/ping）。
+ * 给了 `names` 时，probe 有显示名称、子流程有名称（没有名称的子流程以节点 ID 作名称）。
+ */
+export const withSubflow = (agent: string, names?: { probe: string; subflow: string }) => {
+	const ping = (id: string, displayName?: string) => ({
 		id,
 		kind: "package",
 		package: "demo-checks",
 		node: "ping",
 		inputs: { host: "h" },
+		...(displayName ? { display_name: displayName } : {}),
 	});
 	return {
 		default_agent: agent,
 		nodes: [
 			{ id: "entry", kind: "entry" },
 			{ id: "spawn", kind: "async", params: {} },
-			ping("probe"),
-			{ id: "sub", kind: "subflow_entry" },
+			ping("probe", names?.probe),
+			{ id: "sub", kind: "subflow_entry", ...(names ? { name: names.subflow } : {}) },
 			ping("verify"),
 		],
 		edges: [
