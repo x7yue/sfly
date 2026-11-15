@@ -1,6 +1,5 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
-import type { CountOnlySpan, NodeStatus, RunNotificationState, RunStatus } from "@sfly/schema";
-import type { ActionGroupName, ActionOutcome } from "#/actions/action-table";
+import type { ActionResult, NodeStatus, RunNotificationState, RunStatus } from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
 /**
@@ -172,50 +171,28 @@ export const chainCountLabel = (chains: number, nodes: number) =>
 	`${chains} 条链 · ${nodes} 个节点`;
 
 /**
- * 还没结束、正在推进的节点（排队中、准备中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
- * 不等于任何一个节点状态名：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。
+ * 「进行中」：还没结束的统称，不等于任何一个状态名。运行抽屉的摘要里是还没结束、正在推进的节点（排队中、准备中、
+ * 执行中、等待中）合起来的名称：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。运行监控
+ * 「动作」页的结果里是还没结束的动作（`NODE_ACTIONS.results.running`）。
  */
 export const ACTIVE_LABEL = "进行中";
 
-const DOING = "正在做";
-
 /**
- * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）：运行监控「动作」页，以及画布、检查器、概览里写动作的地方共用的文字。
- * 和 `ACTION`（界面上的通用操作）不是一回事。
+ * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）共用的文字。和 `ACTION`（界面上的通用操作）不是一回事。
  */
 export const NODE_ACTIONS = {
-	/** 此刻在做的事：「动作」页的第一组、读屏读到的「正在做 X」。 */
-	doing: DOING,
-	/** 「动作」页签的可访问名称，`count` 是写好的个数（标记不算）。 */
-	tabLabel: (count: string) => `${TERM.action}，共 ${count} 个`,
-	groups: {
-		running: DOING,
-		recent: "最近 20 个",
-		earlier: "更早的明细",
-	} satisfies Record<ActionGroupName, string>,
-	columns: { start: "开始", name: "名称", fields: "字段", duration: "耗时", result: "结果" },
+	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，「动作」页的第一组。 */
+	doing: "正在做",
+	/**
+	 * 动作的结果和标记：动作自己的一组状态文字，不是运行状态（`RUN_STATUS_LABEL`）。还没结束的写「进行中」。
+	 */
 	results: {
 		running: ACTIVE_LABEL,
-		success: RUN_STATUS_LABEL.success,
-		failed: RUN_STATUS_LABEL.failed,
+		success: "成功",
+		failed: "失败",
 		unfinished: "未结束",
 		mark: TERM.mark,
-	} satisfies Record<ActionOutcome["status"] | "mark", string>,
-	/** 只计数的段为什么没有明细（`CountOnlySpan.reason`）。 */
-	countOnlyReason: {
-		name_limit: "每种名称最多记录 5 万个，失败的动作仍有明细",
-		total_limit: "全部名称合计最多记录 10 万个",
-		control_plane: "控制面收到的明细超过上限，超出的已丢弃",
-	} satisfies Record<CountOnlySpan["reason"], string>,
-	/** 只计数的一段：「09:19:12 至今的 1,234,794 个「下单」只计数，没有明细（…）」，时间和个数已经写好。 */
-	countOnly: (span: {
-		from: string;
-		until: string | null;
-		count: string;
-		name: string;
-		reason: CountOnlySpan["reason"];
-	}): string =>
-		`${span.from} 至${span.until === null ? "今" : ` ${span.until} `}的 ${span.count} 个「${span.name}」只计数，没有明细（${NODE_ACTIONS.countOnlyReason[span.reason]}）`,
+	} satisfies Record<ActionResult | "running" | "mark", string>,
 } as const;
 
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */

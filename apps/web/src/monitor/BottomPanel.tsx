@@ -20,7 +20,7 @@ import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
+import { MESSAGE, TERM } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
@@ -225,7 +225,7 @@ export function BottomPanel({
 								value={value}
 								aria-label={
 									value === "actions" && actionsShown !== null
-										? NODE_ACTIONS.tabLabel(formatInteger(actionsShown))
+										? `${TERM.action}，共 ${formatInteger(actionsShown)} 个`
 										: undefined
 								}
 								className="relative -mb-0 h-full gap-0 border-b-0 px-3 pt-0 pb-0 text-fg-3 data-active:border-transparent data-active:text-fg-1 data-active:after:absolute data-active:after:right-2 data-active:after:bottom-0 data-active:after:left-2 data-active:after:h-0.5 data-active:after:bg-primary"

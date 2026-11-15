@@ -1,3 +1,4 @@
+import type { CountOnlySpan } from "@sfly/schema";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { cn } from "cn";
 import { FlagIcon } from "lucide-react";
@@ -30,6 +31,19 @@ const AT_TOP = 4;
 /** 子动作每一层缩进的宽度（像素）。 */
 const INDENT_PX = 16;
 const COLUMNS = 5;
+
+const GROUP_LABEL: Record<ActionGroupName, string> = {
+	running: NODE_ACTIONS.doing,
+	recent: "最近 20 个",
+	earlier: "更早的明细",
+};
+
+/** 只计数的段为什么没有明细。 */
+const COUNT_ONLY_REASON: Record<CountOnlySpan["reason"], string> = {
+	name_limit: "每种名称最多记录 5 万个，失败的动作仍有明细",
+	total_limit: "全部名称合计最多记录 10 万个",
+	control_plane: "控制面收到的明细超过上限，超出的已丢弃",
+};
 
 /** 虚拟列表里的一项：组名一行，或表格的一行。 */
 type Item = { key: string; group: ActionGroupName } & (
@@ -143,11 +157,11 @@ export function ActionTable({
 				</colgroup>
 				<thead ref={head}>
 					<tr>
-						<TableHead className="py-1.5">{NODE_ACTIONS.columns.start}</TableHead>
-						<TableHead className="py-1.5">{NODE_ACTIONS.columns.name}</TableHead>
-						<TableHead className="py-1.5">{NODE_ACTIONS.columns.fields}</TableHead>
-						<TableHead className="py-1.5 text-right">{NODE_ACTIONS.columns.duration}</TableHead>
-						<TableHead className="py-1.5">{NODE_ACTIONS.columns.result}</TableHead>
+						<TableHead className="py-1.5">开始</TableHead>
+						<TableHead className="py-1.5">名称</TableHead>
+						<TableHead className="py-1.5">字段</TableHead>
+						<TableHead className="py-1.5 text-right">耗时</TableHead>
+						<TableHead className="py-1.5">结果</TableHead>
 					</tr>
 				</thead>
 				{segments.map((segment, i) => (
@@ -236,7 +250,7 @@ function ItemRow({
 					colSpan={COLUMNS}
 					className="px-3 pt-2.5 pb-1 text-left text-xs font-normal text-fg-3"
 				>
-					<span className="mr-2 font-semibold text-fg-2">{NODE_ACTIONS.groups[item.group]}</span>
+					<span className="mr-2 font-semibold text-fg-2">{GROUP_LABEL[item.group]}</span>
 					{item.note}
 				</th>
 			</tr>
@@ -250,13 +264,7 @@ function ItemRow({
 					colSpan={COLUMNS}
 					className="border-b border-border-soft bg-[repeating-linear-gradient(135deg,var(--border-soft)_0_6px,transparent_6px_12px)] px-3 py-1.5 text-fg-3"
 				>
-					{NODE_ACTIONS.countOnly({
-						from: spanTime(row.from),
-						until: row.until === null ? null : spanTime(row.until),
-						count: formatInteger(row.count),
-						name: row.name,
-						reason: row.reason,
-					})}
+					{countOnlyText(row, spanTime)}
 				</td>
 			</tr>
 		);
@@ -298,6 +306,15 @@ function ItemRow({
 			</td>
 		</TableRow>
 	);
+}
+
+/** 只计数的一段：「09:19:12 至今的 1,234,794 个「下单」只计数，没有明细（…）」。 */
+function countOnlyText(
+	row: Extract<ActionRow, { kind: "count-only" }>,
+	time: (iso: string) => string,
+): string {
+	const until = row.until === null ? "今" : ` ${time(row.until)} `;
+	return `${time(row.from)} 至${until}的 ${formatInteger(row.count)} 个「${row.name}」只计数，没有明细（${COUNT_ONLY_REASON[row.reason]}）`;
 }
 
 /** 结果：成功不着色；失败是红色菱形加完整的原因（换行，不截断）；进行中是执行中的形状；标记是小旗。 */
