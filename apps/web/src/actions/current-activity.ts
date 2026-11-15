@@ -1,4 +1,5 @@
 import type { AttemptView } from "@sfly/schema";
+import { NODE_ACTIONS } from "#/lib/copy";
 
 /**
  * 执行中的任务此刻在做什么（规格 #345 故事 29）：有正在做的动作时是动作（控制面选出的最外层、开始得最早的那个，
@@ -23,4 +24,4 @@ export function currentActivity(
 
 /** 读屏用的一句话：「正在做 保持 4 小时」；没有动作时是进度的说明。不带已持续多久（每秒都在变）。 */
 export const activityLabel = (activity: CurrentActivity): string =>
-	`正在做 ${activity.kind === "action" ? activity.name : activity.message}`;
+	`${NODE_ACTIONS.doing} ${activity.kind === "action" ? activity.name : activity.message}`;

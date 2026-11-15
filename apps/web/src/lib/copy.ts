@@ -31,6 +31,7 @@ export const TERM = {
 	note: "备注",
 	annotation: "注释框",
 	lastEdited: "最后修改",
+	action: "动作",
 } as const;
 
 /**
@@ -173,6 +174,19 @@ export const chainCountLabel = (chains: number, nodes: number) =>
  * 不等于任何一个节点状态名：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。
  */
 export const ACTIVE_LABEL = "进行中";
+
+const DOING = "正在做";
+
+/**
+ * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）：画布、检查器、概览里写动作的地方共用的文字。
+ * 和 `ACTION`（界面上的通用操作）不是一回事。
+ */
+export const NODE_ACTIONS = {
+	/** 此刻在做的事：检查器的「正在做」、读屏读到的「正在做 X」。 */
+	doing: DOING,
+	/** 「正在做」列满 50 个（`running_complete` 为 false）时写在后面。 */
+	runningIncomplete: "列满 50 个，可能还有没列出的",
+} as const;
 
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */
 export const LIST_LABEL = {

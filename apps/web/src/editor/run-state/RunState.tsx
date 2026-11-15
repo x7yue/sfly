@@ -5,6 +5,8 @@ import { cn } from "cn";
 import { ActivityIcon, PanelRightCloseIcon } from "lucide-react";
 import { forwardRef, type ReactNode, useMemo } from "react";
 import { currentActivity } from "#/actions/current-activity";
+import { ActionArea, CurrentActions } from "#/actions/InspectorActions";
+import { useActionSummary } from "#/actions/use-action-summary";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
 import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
@@ -13,7 +15,7 @@ import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusPill } from "#/components/status";
-import { ACTION } from "#/lib/copy";
+import { ACTION, MESSAGE, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { runViewTransition } from "#/lib/view-transition";
@@ -256,6 +258,18 @@ function Row({ label, children, testId }: { label: string; children: ReactNode; 
 	);
 }
 
+/** 摘要里的一行说明文字：可以折行，不是等宽的数据（进度的说明是节点写的一句话）。 */
+function TextRow({ label, children, testId }: { label: string; children: string; testId: string }) {
+	return (
+		<>
+			<dt className="text-fg-3">{label}</dt>
+			<dd className="m-0 min-w-0 wrap-anywhere" data-testid={testId}>
+				{children}
+			</dd>
+		</>
+	);
+}
+
 const HINT = "日志、图表和每次尝试的详情都在运行监控页里。";
 
 function NodeRunInspector({
@@ -277,6 +291,17 @@ function NodeRunInspector({
 	const now = useNow(run.status === "running");
 	const elapsed = view ? nodeElapsed(view, now) : null;
 	const status = view ? nodeStatusView(view.status) : null;
+	const attempt = view?.attempts.at(-1);
+	// 只有在 Agent 上执行、已经开始的尝试才可能记录过动作；节点结束后摘要还在（计数、最近的失败），只是不再轮询。
+	const live = attempt?.status === "running";
+	const actions = useActionSummary(
+		view?.kind === "package" && attempt?.started_at ? attempt.task_id : undefined,
+		{ live },
+	);
+	const actionSummary = actions.data;
+	const running = live && actionSummary ? actionSummary.running : [];
+	// 没有正在做的动作时，进度的说明代替「正在做」（#345 故事 29）。
+	const activity = running.length === 0 ? currentActivity(attempt) : null;
 	return (
 		<>
 			<Header
@@ -292,7 +317,10 @@ function NodeRunInspector({
 				title={nodeCardText(node, info).title}
 				onCollapse={onCollapse}
 			/>
-			<div className="min-h-0 flex-1 overflow-auto px-3.5 py-3 text-sm">
+			<div
+				data-testid="run-inspector-body"
+				className="min-h-0 flex-1 overflow-auto px-3.5 py-3 text-sm"
+			>
 				<dl
 					data-testid="run-summary"
 					className="m-0 grid grid-cols-[72px_1fr] gap-x-3 gap-y-1.5 text-xs"
@@ -307,6 +335,11 @@ function NodeRunInspector({
 					</Row>
 					{summary && summary.instances > 1 && (
 						<Row label="实例">第 1 个（共 {summary.instances} 个）</Row>
+					)}
+					{activity?.kind === "progress" && (
+						<TextRow label="进度" testId="run-progress">
+							{activity.message}
+						</TextRow>
 					)}
 				</dl>
 				{view?.error && (
@@ -323,6 +356,22 @@ function NodeRunInspector({
 				{!view && (
 					<p className="m-0 mt-3 text-xs text-fg-2">
 						这个节点所在的子流程在这次运行里还没有触发，没有运行记录。
+					</p>
+				)}
+				{running.length > 0 && actionSummary && (
+					<CurrentActions running={running} complete={actionSummary.running_complete} />
+				)}
+				{actionSummary && actionSummary.total > 0 && attempt && view && (
+					<ActionArea
+						summary={actionSummary}
+						attempt={attempt.attempt}
+						attempts={view.attempts.length}
+						day={run.started_at}
+					/>
+				)}
+				{actions.error && !actionSummary && (
+					<p role="alert" className="m-0 mt-3 text-xs text-danger-fg">
+						{MESSAGE.loadFailed(TERM.action)}：{actions.error.message}
 					</p>
 				)}
 				<p className="m-0 mt-3.5 mb-2.5 text-xs text-fg-3">{HINT}</p>
