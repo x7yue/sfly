@@ -1,13 +1,12 @@
 import type { RunFocusItem } from "@sfly/schema";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
-import { LIST_LABEL, MONITOR_VIEW_LABEL } from "#/lib/copy";
+import { FOCUS, LIST_LABEL, MONITOR_VIEW_LABEL } from "#/lib/copy";
 import { seriesColor, seriesDash } from "#/monitor/MetricChart";
 import { Button } from "@/components/ui/button";
 import { FocusValue } from "./FocusValue";
 import { PLOT_MARGIN, plotChart, shownSeries } from "./focus-chart";
 import {
-	chartMissingText,
 	focusSeriesName,
 	readingFoot,
 	readingLabel,
@@ -83,7 +82,7 @@ export function FocusChart({
 			<p className="m-0 font-mono text-xs text-fg-3">{readingFoot(item, generatedAt)}</p>
 			{item.unavailable ? (
 				<p className="m-0 grid h-24 place-items-center text-xs text-fg-3">
-					{chartMissingText(item)}
+					{FOCUS.chartMissing(item.chart)}
 				</p>
 			) : (
 				<div ref={plotRef} className="relative" style={{ height: PLOT_HEIGHT }}>

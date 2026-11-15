@@ -1,7 +1,8 @@
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { ErrorKind } from "../../server/test/support/fake-agent.js";
+import { inspector } from "./editor-support";
 import { expect, test } from "./fixtures";
-import { saveVersion, setFocusItems } from "./focus-support";
+import { focusList, saveVersion, setFocusItems } from "./focus-support";
 import {
 	MONITOR_SCENARIO,
 	metricPackage,
@@ -10,7 +11,14 @@ import {
 	runningScenario,
 	unixAt,
 } from "./monitor-scenario";
-import { focusChart, openOverview, overviewRun, readouts, viewTab } from "./overview-support";
+import {
+	focusChart,
+	OVERVIEW_ITEMS,
+	openOverview,
+	overviewRun,
+	readouts,
+	viewTab,
+} from "./overview-support";
 import { createScenario, publishPackage, triggerRun } from "./support";
 
 // 运行监控「概览」（#344）：概览 / 详情标签页、地址与记住的视图、关注项读数与图表、没设关注项时的主指标。
@@ -297,10 +305,8 @@ test("场景没设关注项：显示执行中节点的主指标，并给出「�
 
 	await expect(page.getByRole("heading", { name: "执行中节点的主指标", level: 2 })).toBeVisible();
 	await expect(page.getByText("场景没有设置关注项")).toBeVisible();
-	await expect(page.getByRole("link", { name: "设置关注项" })).toHaveAttribute(
-		"href",
-		`/orchestrations/${scenarioId}`,
-	);
+	const setting = page.getByRole("link", { name: "设置关注项" });
+	await expect(setting).toHaveAttribute("href", `/orchestrations/${scenarioId}?settings=focus`);
 
 	// 执行中的 verify（第 2 次尝试）和 probe 各一项；主指标 level 是瞬时值，写最近一个点。
 	const clock0 = Date.parse("2026-01-01T00:00:00.000Z");
@@ -317,6 +323,36 @@ test("场景没设关注项：显示执行中节点的主指标，并给出「�
 		`level ${last(3, 6)}，来自 probe（执行中），1s 前`,
 	);
 	await expect(page.getByTestId("focus-count")).toHaveCount(0);
+
+	// 入口直接打开场景设置的「关注项」页，不是停在「概况」。
+	await setting.click();
+	await expect(page).toHaveURL(new RegExp(`/orchestrations/${scenarioId}\\?settings=focus$`));
+	const tab = inspector(page).getByRole("tab", { name: "关注项" });
+	await expect(tab).toHaveAttribute("aria-selected", "true");
+	await expect(inspector(page).getByRole("tab", { name: "概况" })).toHaveAttribute(
+		"aria-selected",
+		"false",
+	);
+	await expect(inspector(page).getByText("本场景的关注项已用 0 / 8")).toBeVisible();
+});
+
+test("场景设了关注项：「调整关注项」也直接打开「关注项」页，列表里是这些项；地址里的值不合法时停在「概况」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+
+	await page.getByRole("link", { name: "调整关注项" }).click();
+	await expect(page).toHaveURL(new RegExp(`/orchestrations/${scenarioId}\\?settings=focus$`));
+	const panel = inspector(page);
+	await expect(panel.getByRole("tab", { name: "关注项" })).toHaveAttribute("aria-selected", "true");
+	await expect(focusList(panel).getByRole("listitem")).toHaveCount(OVERVIEW_ITEMS.length);
+
+	await page.goto(`/orchestrations/${scenarioId}?settings=bogus`);
+	await expect(panel.getByRole("tab", { name: "概况" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("运行中每 2 秒刷新：新上报的点出现在读数里，不用刷新页面；运行结束后读数变成最终值", async ({
@@ -474,8 +510,8 @@ test("这次运行的节点包版本里没有这张图表：读数写明原因�
 	]);
 	await openOverview(page, clock, runId);
 
-	const missing = readouts(page).getByRole("button", { name: /没有图表「吞吐量」/ });
-	await expect(missing).toContainText("这个版本的节点没有图表「吞吐量」");
+	const missing = readouts(page).getByRole("button", { name: /没有图表 吞吐量/ });
+	await expect(missing).toContainText("这个版本的节点没有图表 吞吐量");
 	// 没有值可说：脚注只写来源节点，不写「最终值」。
 	await expect(missing).not.toContainText("最终值");
 	await expect(missing).toContainText("fetch");

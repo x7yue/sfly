@@ -104,7 +104,7 @@ describe("读数的文字", () => {
 			),
 		).toBe("母单量 1.3M 单，来自 load（成功），最终值");
 		expect(readingLabel(item({ unavailable: "chart_missing", latest: null }), NOW)).toBe(
-			"母单量，这个版本的节点没有图表「母单量」，来自 load（执行中）",
+			"母单量，这个版本的节点没有图表 母单量，来自 load（执行中）",
 		);
 	});
 });
@@ -226,7 +226,7 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 		});
 		expect(readingFoot(missing, NOW)).toBe("load");
 		expect(readingLabel(missing, NOW)).toBe(
-			"母单量，这个版本的节点没有图表「母单量」，来自 load（成功）",
+			"母单量，这个版本的节点没有图表 母单量，来自 load（成功）",
 		);
 	});
 });

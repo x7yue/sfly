@@ -152,6 +152,7 @@ function FocusSection({
 				<Link
 					to="/orchestrations/$id"
 					params={{ id: run.orchestration_id }}
+					search={{ settings: "focus" }}
 					className="inline-flex items-center gap-1.5 rounded-sm text-xs text-fg-2 hover:text-fg-1"
 				>
 					<EyeIcon aria-hidden="true" className="size-3.5" />

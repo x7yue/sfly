@@ -1,7 +1,7 @@
 import type { FocusSeries, RunFocusItem } from "@sfly/schema";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView } from "#/components/status";
-import { FINAL_VALUE_LABEL, noDataLabel } from "#/lib/copy";
+import { FINAL_VALUE_LABEL, FOCUS, noDataLabel } from "#/lib/copy";
 import { formatDuration, formatMetric } from "#/lib/format";
 import { seriesName } from "#/monitor/charts";
 
@@ -87,10 +87,6 @@ export function readingFoot(item: RunFocusItem, generatedAt: string): string {
 	return item.unavailable ? node : `${node} · ${readingWhen(item, generatedAt)}`;
 }
 
-/** 这张图表在这次运行的节点包版本里不存在时的说明。 */
-export const chartMissingText = (item: Pick<RunFocusItem, "chart">) =>
-	`这个版本的节点没有图表「${item.chart}」`;
-
 /**
  * 读数的可访问名称：名称、最新值、来源节点和状态、{@link readingWhen}，例如
  * 「母单量 1284814 单，来自 load（执行中），2s 前」。
@@ -98,7 +94,7 @@ export const chartMissingText = (item: Pick<RunFocusItem, "chart">) =>
 export function readingLabel(item: RunFocusItem, generatedAt: string): string {
 	const status = nodeStatusView(item.source.status).label;
 	const origin = `来自 ${sourceNodeName(item)}（${status}）`;
-	if (item.unavailable) return `${item.title}，${chartMissingText(item)}，${origin}`;
+	if (item.unavailable) return `${item.title}，${FOCUS.chartMissing(item.chart)}，${origin}`;
 	const series = latestSeriesName(item);
 	const value = `${series ? `${series} ` : ""}${valueText(item)}${item.unit ? ` ${item.unit}` : ""}`;
 	return `${item.title} ${value}，${origin}，${readingWhen(item, generatedAt)}`;

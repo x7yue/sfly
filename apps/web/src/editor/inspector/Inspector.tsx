@@ -125,8 +125,13 @@ export const Inspector = forwardRef<
 		onCollapse(): void;
 		/** 在检查器里按 Esc（没有被补全列表等消费）：焦点回到画布。 */
 		onEscape(): void;
+		/** 打开时场景设置停在哪一页（地址的 `settings`）；没给是「概况」。 */
+		initialScenarioTab?: ScenarioTab;
 	}
->(function Inspector({ selection, nodeOf, context, onCollapse, onEscape }, ref) {
+>(function Inspector(
+	{ selection, nodeOf, context, onCollapse, onEscape, initialScenarioTab = "overview" },
+	ref,
+) {
 	const width = useInspectorWidth();
 	const id = soleNode(selection);
 	const node = id === null ? undefined : nodeOf(id);
@@ -134,7 +139,7 @@ export const Inspector = forwardRef<
 	const annotationId = selectedAnnotation(selection);
 	const annotation = context.doc.annotations.find((a) => a.id === annotationId);
 	// 场景设置停在哪一页：选中节点再回来时还是原来的那一页。
-	const [scenarioTab, setScenarioTab] = useState<ScenarioTab>("overview");
+	const [scenarioTab, setScenarioTab] = useState<ScenarioTab>(initialScenarioTab);
 	return (
 		<aside
 			ref={ref}
@@ -565,7 +570,9 @@ function GroupInspector({
 	);
 }
 
-type ScenarioTab = "overview" | "focus";
+/** 场景设置的两页：概况和关注项。 */
+export const SCENARIO_TABS = ["overview", "focus"] as const;
+export type ScenarioTab = (typeof SCENARIO_TABS)[number];
 
 /** 没有选中节点时：场景设置，分两页：概况（默认 Agent、节点包版本、检查结果）和关注项。 */
 function ScenarioInspector({

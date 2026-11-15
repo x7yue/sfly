@@ -4,9 +4,9 @@ import type { RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
 import type { ReactElement } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
-import { TERM } from "#/lib/copy";
+import { FOCUS, TERM } from "#/lib/copy";
 import { FocusValue } from "./FocusValue";
-import { chartMissingText, readingFoot, readingLabel } from "./focus-format";
+import { readingFoot, readingLabel } from "./focus-format";
 
 /**
  * 关注项读数：一个关注项（或主指标）的一格读数，读数之间只用 1px 分隔，不套卡片。
@@ -43,7 +43,7 @@ export function FocusReadout({
 							<span className="line-clamp-2 wrap-anywhere">{item.title}</span>
 						</span>
 						{item.unavailable ? (
-							<span className="text-xs text-fg-3">{chartMissingText(item)}</span>
+							<span className="text-xs text-fg-3">{FOCUS.chartMissing(item.chart)}</span>
 						) : (
 							<FocusValue item={item} className="truncate" />
 						)}
