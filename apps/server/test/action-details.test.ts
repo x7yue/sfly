@@ -29,6 +29,9 @@ const iso = (ms: number) => new Date(ms).toISOString();
 /** 613 天：Agent 时间与控制面时间差得很远时，控制面时间仍按单调时钟读数折算。 */
 const DAYS_613 = 613 * 24 * 3600 * 1000;
 
+/** 引号、反斜杠、逗号、花括号：字段值原样存下、原样读出。 */
+const RAW = '拒绝 "余额不足", C:\\单\\{1002}';
+
 type Detail = ActionDetailView;
 type ActionDetail = Extract<Detail, { kind: "action" }>;
 type NameCount = ActionSummaryEvent["names"][number];
@@ -103,7 +106,7 @@ describe("动作明细", () => {
 		await cp.close();
 	});
 
-	it("存下动作、子动作和标记：字段按写的先后（之后补充的覆盖同名的），两种时间，耗时；按开始时间从新到旧", async () => {
+	it("存下动作、子动作和标记：字段按写的先后（之后补充的覆盖同名的）、原样保存，两种时间，耗时；按开始时间从新到旧", async () => {
 		const agent = await connect();
 		const { task } = await start(agent);
 		expect(await page(task.taskId)).toEqual({
@@ -122,14 +125,14 @@ describe("动作明细", () => {
 				fields: { 订单: "1001", 价格: "10.5", 方向: "买" },
 			}),
 			agent.actionEnd(2, "success", T0 + 2_250, { fields: { 价格: "10.6", 回报: "成交" } }),
-			agent.actionMark(3, "收到第一笔成交", T0 + 2_300, { parent: 1, fields: { 订单: "1001" } }),
+			agent.actionMark(3, "收到第一笔成交", T0 + 2_300, { parent: 1, fields: { 原文: RAW } }),
 			agent.actionStart(4, "下单", T0 + 3_000, { parent: 1, fields: { 订单: "1002" } }),
 		]);
 		// 动作 4 在下一批里结束，带上补充的字段。
 		agent.actions(task, [
 			agent.actionEnd(4, "failed", T0 + 3_500, {
 				reason: "拒单：余额不足",
-				fields: { 回报: "拒绝" },
+				fields: { 回报: RAW },
 			}),
 		]);
 		await agent.sync();
@@ -142,7 +145,7 @@ describe("动作明细", () => {
 					parent: 1,
 					depth: 1,
 					name: "下单",
-					fields: { 订单: "1002", 回报: "拒绝" },
+					fields: { 订单: "1002", 回报: RAW },
 					started_at: iso(T0 + 3_000),
 					ended_at: iso(T0 + 3_500),
 					agent_ended_at: iso(T0 + 3_500),
@@ -156,7 +159,7 @@ describe("动作明细", () => {
 					parent: 1,
 					depth: 1,
 					name: "收到第一笔成交",
-					fields: { 订单: "1001" },
+					fields: { 原文: RAW },
 					started_at: iso(T0 + 2_300),
 					agent_started_at: iso(T0 + 2_300),
 				},
