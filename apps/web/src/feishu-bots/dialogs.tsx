@@ -11,7 +11,7 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { apiQuery, callApi } from "#/lib/api";
-import { FEISHU_BOT_SETUP } from "#/lib/copy";
+import { FEISHU_BOT_SETUP, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -267,7 +267,7 @@ const referenceText = (reference: FeishuBotReference): string => {
 		case "feishu_bot_input":
 			return `节点 ${reference.node_id} 的输入 ${reference.input}`;
 		case "run_notification":
-			return "运行通知（场景设置）";
+			return `${TERM.runNotification}（${INSPECTOR_PAGE.sceneSettings}）`;
 	}
 };
 

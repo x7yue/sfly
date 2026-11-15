@@ -1,4 +1,4 @@
-import type { FocusEditView, FocusItemView } from "@sfly/schema";
+import { type FocusEditView, type FocusItemView, focusKey, sameFocusList } from "@sfly/schema";
 import type { Actor } from "../actor.js";
 import type { Db } from "../db/database.js";
 import type { orchestrations, StoredFocusEdit } from "../db/schema.js";
@@ -8,8 +8,6 @@ import {
 	describeFocusUndo,
 	type FocusItem,
 	type FocusRejection,
-	focusKey,
-	sameFocusList,
 } from "./focus-list.js";
 import { focusItemViews } from "./focus-views.js";
 
@@ -18,7 +16,10 @@ type OrchestrationRow = typeof orchestrations.$inferSelect;
 /** 关注项在场景表里的两列。 */
 export type FocusColumns = Pick<OrchestrationRow, "focusItems" | "focusEdit">;
 
-/** 场景视图里的关注项：每项带它在最新版本里的状态，加上最后一次修改。 */
+/**
+ * 场景视图里的关注项：每项带它在最新版本里的状态，加上最后一次修改。
+ * 在事务里调用时传 `tx`（`Tx` 可以当 `Db` 用）：事务已经占着一个连接，不能再去连接池里另取一个。
+ */
 export async function focusFields(
 	db: Db,
 	row: OrchestrationRow,
@@ -41,7 +42,8 @@ export type FocusReplacement =
 /**
  * 用 `requested` 整份替换场景的关注项（调用方已对场景行加了排他锁，`row` 是锁住之后读到的）：
  * 列表自身要合格（不超过 8 项、没有重复）；新加入的项（现在的列表里没有的）要引用最新版本里存在的节点和图表，
- * 已经在列表里、后来失效的项可以原样保留。和现在一样的列表不算修改；把上一次修改之前的列表写回去记为撤销。
+ * 已经在列表里、后来失效的项可以原样保留。和现在一样的列表不算修改。
+ * 把上一次修改之前的列表写回去记为撤销：它回到的是原来的状态，里面已经失效的项（上一次修改移除的）不当作新加入的检查。
  */
 export async function replaceFocusItems(
 	db: Db,
@@ -52,14 +54,16 @@ export async function replaceFocusItems(
 ): Promise<FocusReplacement> {
 	const invalid = checkFocusList(requested);
 	if (invalid) return { kind: "rejected", rejection: invalid };
-	const existing = new Set(row.focusItems.map(focusKey));
-	const added = requested.filter((item) => !existing.has(focusKey(item)));
-	const unknown = (await focusItemViews(db, row, added)).filter((view) => view.status !== "ok");
-	if (unknown.length > 0) return { kind: "rejected", rejection: unknownChart(unknown) };
 	if (sameFocusList(row.focusItems, requested)) return { kind: "unchanged" };
 
 	const before = row.focusEdit?.before;
 	const undo = before != null && sameFocusList(before, requested);
+	if (!undo) {
+		const existing = new Set(row.focusItems.map(focusKey));
+		const added = requested.filter((item) => !existing.has(focusKey(item)));
+		const unknown = (await focusItemViews(db, row, added)).filter((view) => view.status !== "ok");
+		if (unknown.length > 0) return { kind: "rejected", rejection: unknownChart(unknown) };
+	}
 	return {
 		kind: "replaced",
 		columns: {
