@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
-import { expect, test } from "./fixtures";
+import { type E2eFixtures, expect, test } from "./fixtures";
 import {
 	createScenario,
 	failApi,
@@ -17,6 +17,19 @@ const header = (page: Page) =>
 	page.getByRole("heading", { name: "控制台", level: 1, exact: true }).locator("..");
 const counts = (page: Page) => page.getByRole("list", { name: "运行计数" });
 const panel = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
+
+/** 环境里出现过一个运行（没有运行过任何场景的环境显示「开始使用」，不是控制台）：触发场景，让 Agent 成功完成它。 */
+async function runOnce(
+	controlPlane: E2eFixtures["controlPlane"],
+	agent: FakeAgent,
+	name = "巡检",
+): Promise<string> {
+	await publishPackage(controlPlane);
+	const scenario = await createScenario(controlPlane, name, scenarioUsing(agent.name));
+	await triggerRun(controlPlane, scenario);
+	await agent.succeed(await agent.nextAssign());
+	return scenario;
+}
 
 test("页头一行：控制面时间、此刻与最近 24 小时的计数、运行场景；没有统计卡、趋势和最近发布的节点包", async ({
 	page,
@@ -58,9 +71,9 @@ test("页头一行：控制面时间、此刻与最近 24 小时的计数、运�
 test("「运行场景」打开命令面板，只列出运行场景一组，选一个场景打开它的运行抽屉", async ({
 	page,
 	controlPlane,
+	connectAgent,
 }) => {
-	await publishPackage(controlPlane);
-	await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	await runOnce(controlPlane, await connectAgent({ name: "agent-a" }));
 	await page.goto("/");
 	await header(page).getByRole("button", { name: "运行场景" }).click();
 
@@ -128,8 +141,9 @@ test("Agent 状态", async ({ page, controlPlane, connectAgent, clock }) => {
 	]);
 });
 
-test("正在安装节点包的 Agent", async ({ page, connectAgent }) => {
+test("正在安装节点包的 Agent", async ({ page, controlPlane, connectAgent }) => {
 	const agent: FakeAgent = await connectAgent({ name: "agent-a", slots: 2 });
+	await runOnce(controlPlane, agent);
 	agent.send({
 		case: "install",
 		value: {
@@ -172,16 +186,20 @@ test("实时更新：运行结束后从正在运行中移除，计数里计入�
 	await expect(counts(page)).toContainText("成功 1");
 });
 
-test("没有数据时各模块显示空状态", async ({ page }) => {
+test("运行过之后，没有运行中的和失败的运行时各模块显示空状态", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await runOnce(controlPlane, await connectAgent({ name: "agent-a" }));
 	await page.goto("/");
 	await expect(panel(page, "正在运行")).toContainText("没有正在运行的运行");
 	await expect(panel(page, "最近失败")).toContainText("最近 24 小时没有失败");
-	await expect(panel(page, "Agent 状态")).toContainText("还没有 Agent 连接");
 	await expect(counts(page).getByRole("listitem")).toHaveText([
 		"运行中 0",
 		"执行中任务 0",
 		"排队 0",
-		"最近 24 小时 成功 0 · 失败 0 · 取消 0",
+		"最近 24 小时 成功 1 · 失败 0 · 取消 0",
 	]);
 });
 
@@ -189,7 +207,6 @@ test("计数：失败为 0 时是中性色，有失败时才着失败色", async
 	page,
 	controlPlane,
 	connectAgent,
-	clock,
 }) => {
 	const RUNNING = 0;
 	const FAILED = 4;
@@ -198,13 +215,16 @@ test("计数：失败为 0 时是中性色，有失败时才着失败色", async
 			.locator("b")
 			.nth(index)
 			.evaluate((el) => getComputedStyle(el).color);
+	const agent = await connectAgent({ name: "agent-a", slots: 2 });
+	const scenario = await runOnce(controlPlane, agent);
 	await page.goto("/");
 	await expect(counts(page)).toContainText("失败 0");
 	const neutral = await color(RUNNING);
 	expect(await color(FAILED)).toBe(neutral);
 
-	await seedDashboard({ page, controlPlane, connectAgent, clock });
-	await page.goto("/");
+	await triggerRun(controlPlane, scenario);
+	await agent.fail(await agent.nextAssign(), "出错了");
+	await page.reload();
 	await expect(counts(page)).toContainText("失败 1");
 	expect(await color(FAILED)).not.toBe(neutral);
 });
@@ -214,7 +234,7 @@ test("加载中显示骨架，加载失败显示错误详情，重试后恢复",
 	await page.goto("/");
 	await expect(page.getByRole("status", { name: "加载中" }).first()).toBeVisible();
 	hold.release();
-	await expect(panel(page, "正在运行")).toBeVisible();
+	await expect(panel(page, "开始使用")).toBeVisible();
 
 	await page.unrouteAll();
 	const outage = await failApi(page, "/dashboard");
@@ -224,7 +244,7 @@ test("加载中显示骨架，加载失败显示错误详情，重试后恢复",
 	await expect(error).toContainText("GET /api/dashboard → 503 unavailable");
 	await outage.restore();
 	await error.getByRole("button", { name: "重试" }).click();
-	await expect(panel(page, "正在运行")).toBeVisible();
+	await expect(panel(page, "开始使用")).toBeVisible();
 });
 
 test("正在运行：每个运行的状态标签脉冲一处；当前节点按状态表着色（执行中青色、排队中灰色）", async ({

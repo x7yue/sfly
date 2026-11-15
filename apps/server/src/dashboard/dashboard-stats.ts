@@ -12,6 +12,7 @@ import {
 } from "../db/schema.js";
 import { loadRunBoards } from "../engine/run-board.js";
 import { getRunView, type NodeView, type RunView } from "../engine/run-queries.js";
+import { setupSummary } from "./setup-summary.js";
 
 const HOUR_MS = 3_600_000;
 /** 最近失败最多列出的条数。 */
@@ -101,6 +102,7 @@ export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<
 			used_slots: online.reduce((sum, a) => sum + a.used_slots, 0),
 			list: agents,
 		},
+		setup: await setupSummary(db),
 	};
 }
 
