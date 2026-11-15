@@ -1,5 +1,10 @@
 import type { ServerMessage } from "@sfly/proto";
-import type { AgentEndpointView, ClockOffsetView, OrchestrationDocument } from "@sfly/schema";
+import type {
+	AgentEndpointView,
+	ClockOffsetView,
+	QueuedTaskView,
+	RunningTaskView,
+} from "@sfly/schema";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
@@ -13,11 +18,8 @@ import {
 	type InstalledPackage,
 	type InstallProgress,
 	ON_AGENT,
-	orchestrationVersions,
-	runs,
 	tasks,
 } from "../db/schema.js";
-import { nodeNameIn } from "../engine/run-board.js";
 import { devMetadataWithDefaultCharts } from "../packages/default-charts.js";
 import type { AsyncQueue } from "../util/async-queue.js";
 import type { Mutex } from "../util/mutex.js";
@@ -28,6 +30,7 @@ import {
 	measureClockOffset,
 } from "./agent-clock.js";
 import { agentEndpoint } from "./agent-endpoint.js";
+import { agentTaskRows, queuedTaskView, runningTaskView } from "./agent-tasks.js";
 
 /** proto 的 DevPackage 转成存储形式：metadata_json 解析为对象（不是 JSON 对象时为 null）。 */
 export function devPackageInfo(p: { name: string; source: string; metadataJson: string }) {
@@ -138,7 +141,9 @@ export interface AgentView {
 	dev_packages: DevPackageInfo[];
 	/** 派发给这个 Agent、还没结束的任务（派发阶段和执行阶段），按派发顺序排列。 */
 	running_tasks: RunningTaskView[];
-	/** Agent 版本与控制面版本不一致（ADR 0014）：不给它派新任务。 */
+	/** 在等这个 Agent 的任务（不在线、还在准备环境或没有空闲槽位），按排队顺序。 */
+	queued_tasks: QueuedTaskView[];
+	/** Agent 版本与控制面不一致（ADR 0014）：不给它派新任务。 */
 	version_mismatch: boolean;
 	/** 最近一次 Heartbeat 上报的更新状态。 */
 	update: AgentUpdateInfo;
@@ -146,46 +151,6 @@ export interface AgentView {
 	capabilities: CapabilityInfo[];
 	/** 其它 Agent 连接这台 Agent 用的地址（ADR 0019）。 */
 	endpoint: AgentEndpointView;
-}
-
-export interface RunningTaskView {
-	task_id: string;
-	run_id: string;
-	orchestration_id: string;
-	node_id: string;
-	/** 运行绑定的版本里这个节点的显示名称；没有时没有这个字段。 */
-	display_name?: string;
-	attempt: number;
-	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
-	status: "dispatched" | "running";
-	/** 执行器启动的时间；派发阶段为 null。 */
-	started_at: string | null;
-}
-
-/** 派发给 Agent、还没结束的任务的视图；显示名称取自运行绑定的版本 `document`。 */
-export function runningTaskView(
-	t: {
-		taskId: string;
-		runId: string;
-		orchestrationId: string;
-		nodeId: string;
-		attempt: number;
-		status: string;
-		startedAt: Date | null;
-	},
-	document: OrchestrationDocument,
-): RunningTaskView {
-	const displayName = nodeNameIn(document, t.nodeId);
-	return {
-		task_id: t.taskId,
-		run_id: t.runId,
-		orchestration_id: t.orchestrationId,
-		node_id: t.nodeId,
-		...(displayName === undefined ? {} : { display_name: displayName }),
-		attempt: t.attempt,
-		status: t.status as RunningTaskView["status"],
-		started_at: t.startedAt?.toISOString() ?? null,
-	};
 }
 
 /**
@@ -347,23 +312,13 @@ export class AgentHub {
 
 	async list(): Promise<AgentView[]> {
 		const rows = await this.deps.db.select().from(agents).orderBy(asc(agents.name));
-		const running = await this.deps.db
-			.select({
-				agent: tasks.agentName,
-				taskId: tasks.id,
-				runId: tasks.runId,
-				orchestrationId: runs.orchestrationId,
-				nodeId: tasks.nodeId,
-				attempt: tasks.attempt,
-				status: tasks.status,
-				startedAt: tasks.startedAt,
-				document: orchestrationVersions.document,
-			})
-			.from(tasks)
-			.innerJoin(runs, eq(runs.id, tasks.runId))
-			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
-			.where(and(inArray(tasks.status, ON_AGENT), isNotNull(tasks.agentName)))
+		// 占着槽位的和在排队的任务一次取出；running_tasks 按派发顺序（seq），queued_tasks 按排队顺序（派发先看 queued_at）。
+		const agentTasks = await agentTaskRows(this.deps.db)
+			.where(and(inArray(tasks.status, [...ON_AGENT, "queued"]), isNotNull(tasks.agentName)))
 			.orderBy(asc(tasks.seq));
+		const queued = agentTasks.filter((t) => t.status === "queued");
+		queued.sort((a, b) => a.queuedAt.getTime() - b.queuedAt.getTime());
+		const running = agentTasks.filter((t) => t.status !== "queued");
 		return rows.map(
 			({
 				info: { install, dev_packages, update, capabilities, peer, source_address, ...info },
@@ -382,9 +337,8 @@ export class AgentHub {
 					...p,
 					metadata: devMetadataWithDefaultCharts(p.metadata),
 				})),
-				running_tasks: running
-					.filter((t) => t.agent === row.name)
-					.map((t) => runningTaskView(t, t.document)),
+				running_tasks: running.filter((t) => t.agent === row.name).map(runningTaskView),
+				queued_tasks: queued.filter((t) => t.agent === row.name).map(queuedTaskView),
 				version_mismatch: this.versionMismatch(info),
 				update: update ?? NO_UPDATE,
 				capabilities: capabilities ?? [],

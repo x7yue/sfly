@@ -57,6 +57,8 @@ export interface AgentView {
 	dev_packages: DevPackageView[];
 	/** 按派发顺序排列；长度即占用的槽位数。 */
 	running_tasks: RunningTaskView[];
+	/** 在等这台 Agent 的任务，按排队顺序（也是派发顺序）。 */
+	queued_tasks: QueuedTaskView[];
 	/**
 	 * Agent 版本与控制面版本（列表响应的 control_plane_version）不一致：控制面不给它派新任务（ADR 0014），
 	 * 它手上的任务照常跑完。按最近一次连接上报的版本判断。
@@ -1317,6 +1319,35 @@ export interface ProgressEvent {
 	progress: TaskProgressView;
 }
 
+/**
+ * 在等这台 Agent 的任务：Agent 不在线、还在准备环境，或没有空闲槽位。
+ * 超过 queue_expires_at 仍没有派发时任务以 env_error 失败（docs/SEMANTICS.md 的 queue_timeout）。
+ */
+export interface QueuedTaskView {
+	task_id: string;
+	run_id: string;
+	orchestration_id: string;
+	/** 场景现在的名称（名称不跟版本走）。 */
+	orchestration_name: string;
+	node_id: string;
+	/** 运行绑定的场景版本里这个节点的显示名称（子流程入口节点是子流程名称）；没有时不给。 */
+	display_name?: string;
+	/** 节点类型，写作「包名/节点类型名」。 */
+	node_type: string;
+	/** 任务所在的链实例（运行监控里的链）。 */
+	chain_instance_id: string;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；任务在主链上为 null。
+	 */
+	chain_name: string | null;
+	attempt: number;
+	/** 进入排队的时间；重试的尝试从重新排队时算。 */
+	queued_at: Timestamp;
+	/** 排队超时的时间；没有设置排队超时的任务为 null。 */
+	queue_expires_at: Timestamp | null;
+}
+
 /** 场景引用的 Agent；unknown：还没有注册过（从没连接过控制面）。 */
 export interface ReferencedAgent {
 	name: string;
@@ -1635,14 +1666,25 @@ export interface RunView {
 	chains: ChainRunView[];
 }
 
-/** 派发给 Agent、还没结束的任务。 */
+/** 派发给 Agent、还没结束的任务（占着槽位）。 */
 export interface RunningTaskView {
 	task_id: string;
 	run_id: string;
 	orchestration_id: string;
+	/** 场景现在的名称（名称不跟版本走）。 */
+	orchestration_name: string;
 	node_id: string;
 	/** 运行绑定的场景版本里这个节点的显示名称（子流程入口节点是子流程名称）；没有时不给。 */
 	display_name?: string;
+	/** 节点类型，写作「包名/节点类型名」。 */
+	node_type: string;
+	/** 任务所在的链实例（运行监控里的链）。 */
+	chain_instance_id: string;
+	/**
+	 * 子流程名称（与运行视图里链实例的 name 相同：没有名称字段的旧版本为子流程入口的节点 ID，名称为空时为空字符串），
+	 * 取自运行绑定的场景版本；任务在主链上为 null。
+	 */
+	chain_name: string | null;
 	attempt: number;
 	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
 	status: "dispatched" | "running";

@@ -23,17 +23,13 @@ import {
 	type OrchestrationDocument,
 	type OrchestrationNode,
 	type PackageMetadata,
+	type RunningTaskView,
 } from "@sfly/schema";
 import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { ClockOffset } from "../agents/agent-clock.js";
-import {
-	type AgentConnection,
-	type AgentHub,
-	devPackageInfo,
-	type RunningTaskView,
-	runningTaskView,
-} from "../agents/agent-hub.js";
+import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
+import { agentTaskRows, runningTaskView } from "../agents/agent-tasks.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -515,32 +511,18 @@ export class Engine implements AgentSessionHandler {
 				};
 			}
 			const held = await step.tx
-				.select({
-					task: tasks,
-					orchestrationId: runs.orchestrationId,
-					document: orchestrationVersions.document,
-				})
+				.select()
 				.from(tasks)
-				.innerJoin(runs, eq(runs.id, tasks.runId))
-				.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 				.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
 				.orderBy(asc(tasks.seq))
-				.for("update", { of: tasks });
-			const terminated = held.map(({ task, orchestrationId, document }) =>
-				runningTaskView(
-					{
-						taskId: task.id,
-						runId: task.runId,
-						orchestrationId,
-						nodeId: task.nodeId,
-						attempt: task.attempt,
-						status: task.status,
-						startedAt: task.startedAt,
-					},
-					document,
-				),
-			);
-			for (const { task } of held) {
+				.for("update");
+			// 终止的任务就是上面锁住的这些（同一个事务、同样的条件）。
+			const terminated = (
+				await agentTaskRows(step.tx)
+					.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
+					.orderBy(asc(tasks.seq))
+			).map(runningTaskView);
+			for (const task of held) {
 				await this.#failTask(step, task, "agent_lost", "Agent 立即更新，终止了这个任务");
 			}
 			// 与派发消息一样在事务提交后发出。

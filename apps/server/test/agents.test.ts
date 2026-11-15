@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
+import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
@@ -56,6 +57,7 @@ describe("Agent 注册", () => {
 				install: null,
 				dev_packages: [],
 				running_tasks: [],
+				queued_tasks: [],
 				// 控制面是 package.json 的版本，与 1.2.3 不一致。
 				version_mismatch: true,
 				update: { state: "none", remaining_tasks: 0, reason: "" },
@@ -126,16 +128,164 @@ describe("Agent 注册", () => {
 				task_id: task.taskId,
 				run_id: runId,
 				orchestration_id: orchestrationId,
+				orchestration_name: "test",
 				node_id: "a",
+				node_type: "stub/echo",
+				chain_instance_id: (await api.run(runId)).chains[0]?.id,
+				chain_name: null,
 				attempt: 1,
 				status: "running",
 				started_at: "2026-01-01T00:00:00.000Z",
 			},
 		]);
 		expect(b?.running_tasks).toEqual([]);
+		expect(a?.queued_tasks).toEqual([]);
 
 		await agent.succeed(task, {});
 		expect((await listAgents(cp))[0]?.running_tasks).toEqual([]);
+	});
+
+	it("Agent 列表里的任务带场景的现在的名称、所在的链实例和子流程名称（主链没有）", async () => {
+		cp = await startTestControlPlane();
+		const api = new ApiClient(cp);
+		const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+		agents.push(agent);
+		await publishPackage(cp, "stub", "1.0.0", { echo: [] });
+		const echo = (id: string) => ({ id, kind: "package", package: "stub", node: "echo" });
+		const orchestrationId = await api.orchestrationWith(
+			{
+				default_agent: "agent-a",
+				nodes: [
+					{ id: "entry", kind: "entry" },
+					{ id: "spawn", kind: "async", params: {} },
+					echo("main"),
+					{ id: "sub", kind: "subflow_entry", name: "巡检子流程" },
+					echo("inside"),
+				],
+				edges: [
+					{ from: "entry", to: "spawn", kind: "chain" },
+					{ from: "spawn", to: "main", kind: "chain" },
+					{ from: "sub", to: "inside", kind: "chain" },
+					{ from: "spawn", to: "sub", kind: "dispatch" },
+				],
+				packages: { stub: "1.0.0" },
+			},
+			"撮合浸泡",
+		);
+		const runId = await api.triggerOk(orchestrationId);
+		await agent.nextAssign();
+		await agent.nextAssign();
+
+		const view = await api.run(runId);
+		const mainChain = view.chains.find((c) => c.depth === 0);
+		const subflow = view.chains.find((c) => c.depth > 0);
+		const [listed] = await listAgents(cp);
+		expect(listed?.running_tasks).toHaveLength(2);
+		const byNode = (nodeId: string) => listed?.running_tasks.find((t) => t.node_id === nodeId);
+		expect(byNode("main")).toMatchObject({
+			orchestration_name: "撮合浸泡",
+			chain_instance_id: mainChain?.id,
+			chain_name: null,
+		});
+		expect(byNode("inside")).toMatchObject({
+			orchestration_name: "撮合浸泡",
+			chain_instance_id: subflow?.id,
+			chain_name: "巡检子流程",
+		});
+
+		// 场景改名后，列表里是现在的名称（名称不跟版本走）。
+		const rename = await api.patch(`/orchestrations/${orchestrationId}`, {
+			name: "撮合浸泡 · 改名",
+		});
+		expect(rename.status).toBe(200);
+		expect((await listAgents(cp))[0]?.running_tasks[0]?.orchestration_name).toBe("撮合浸泡 · 改名");
+	});
+
+	describe("排队的任务", () => {
+		const node = (id: string, queueTimeout?: number) => ({
+			id,
+			kind: "package",
+			package: "stub",
+			node: "echo",
+			...(queueTimeout === undefined ? {} : { queue_timeout: queueTimeout }),
+		});
+		const single = (agent: string, ...nodes: ReturnType<typeof node>[]) => ({
+			default_agent: agent,
+			nodes: [{ id: "entry", kind: "entry" }, ...nodes],
+			edges: nodes.map((n, i) => ({
+				from: i === 0 ? "entry" : nodes[i - 1]?.id,
+				to: n.id,
+				kind: "chain",
+			})),
+			packages: { stub: "1.0.0" },
+		});
+
+		it("没有空闲槽位的任务在 queued_tasks 里，按排队顺序，带排队时间和排队超时；开始执行后移到 running_tasks", async () => {
+			cp = await startTestControlPlane();
+			const clock = cp.clock as ManualClock;
+			const api = new ApiClient(cp);
+			const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a", slots: 1 });
+			agents.push(agent);
+			await publishPackage(cp, "stub", "1.0.0", { echo: [] });
+			const id = await api.orchestrationWith(single("agent-a", node("a", 30)), "巡检");
+			const first = await api.triggerOk(id);
+			const running = await agent.nextAssign();
+			clock.advance(5_000);
+			const second = await api.triggerOk(id);
+			clock.advance(7_000);
+			const third = await api.triggerOk(id);
+
+			const [listed] = await listAgents(cp);
+			expect(listed?.running_tasks.map((t) => t.run_id)).toEqual([first]);
+			expect(listed?.queued_tasks).toEqual([
+				{
+					task_id: expect.any(String),
+					run_id: second,
+					orchestration_id: id,
+					orchestration_name: "巡检",
+					node_id: "a",
+					node_type: "stub/echo",
+					chain_instance_id: (await api.run(second)).chains[0]?.id,
+					chain_name: null,
+					attempt: 1,
+					queued_at: "2026-01-01T00:00:05.000Z",
+					queue_expires_at: "2026-01-01T00:00:35.000Z",
+				},
+				expect.objectContaining({
+					run_id: third,
+					queued_at: "2026-01-01T00:00:12.000Z",
+					queue_expires_at: "2026-01-01T00:00:42.000Z",
+				}),
+			]);
+
+			await agent.succeed(running, {});
+			await agent.nextAssign();
+			const [next] = await listAgents(cp);
+			expect(next?.running_tasks.map((t) => t.run_id)).toEqual([second]);
+			expect(next?.queued_tasks.map((t) => t.run_id)).toEqual([third]);
+		});
+
+		it("Agent 不在线时排队的任务照样列在它名下；排队超时失败后从列表里消失", async () => {
+			cp = await startTestControlPlane();
+			const clock = cp.clock as ManualClock;
+			const api = new ApiClient(cp);
+			const offline = await FakeAgent.connect(cp.grpcUrl, { name: "agent-b" });
+			await offline.disconnect();
+			await publishPackage(cp, "stub", "1.0.0", { echo: [] });
+			const id = await api.orchestrationWith(single("agent-b", node("a", 20)));
+			const runId = await api.triggerOk(id);
+
+			const own = cp;
+			const [listed] = await listAgents(own);
+			expect(listed).toMatchObject({ name: "agent-b", status: "offline", running_tasks: [] });
+			expect(listed?.queued_tasks).toMatchObject([
+				{ run_id: runId, queue_expires_at: "2026-01-01T00:00:20.000Z" },
+			]);
+
+			clock.advance(20_000);
+			await eventually(async () => expect((await listAgents(own))[0]?.queued_tasks).toEqual([]));
+			expect((await api.run(runId)).status).toBe("failed");
+		});
 	});
 
 	it("Agent 列表里的任务带节点的显示名称（取自运行绑定的版本，之后改名不影响），没有显示名称的节点不带", async () => {
