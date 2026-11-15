@@ -272,16 +272,19 @@ describe("Agent 注册", () => {
 			const api = new ApiClient(cp);
 			const offline = await FakeAgent.connect(cp.grpcUrl, { name: "agent-b" });
 			await offline.disconnect();
+			const own = cp;
+			await eventually(async () => expect((await listAgents(own))[0]?.status).toBe("offline"));
 			await publishPackage(cp, "stub", "1.0.0", { echo: [] });
 			const id = await api.orchestrationWith(single("agent-b", node("a", 20)));
 			const runId = await api.triggerOk(id);
 
-			const own = cp;
-			const [listed] = await listAgents(own);
-			expect(listed).toMatchObject({ name: "agent-b", status: "offline", running_tasks: [] });
-			expect(listed?.queued_tasks).toMatchObject([
-				{ run_id: runId, queue_expires_at: "2026-01-01T00:00:20.000Z" },
-			]);
+			await eventually(async () => {
+				const [listed] = await listAgents(own);
+				expect(listed).toMatchObject({ name: "agent-b", status: "offline", running_tasks: [] });
+				expect(listed?.queued_tasks).toMatchObject([
+					{ run_id: runId, queue_expires_at: "2026-01-01T00:00:20.000Z" },
+				]);
+			});
 
 			clock.advance(20_000);
 			await eventually(async () => expect((await listAgents(own))[0]?.queued_tasks).toEqual([]));
