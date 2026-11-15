@@ -50,7 +50,7 @@ export const NodeStatus = z.enum([...TaskStatus.options, "pending"]);
 /**
  * 状态分组（控制面与前端共用，不要在别处再写一份）：
  * - ON_AGENT_STATUSES：由 Agent 负责、占用槽位的任务状态（派发阶段和执行阶段，有租约），也是还会上报指标的状态；
- * - ACTIVE_STATUSES：还没结束、正在推进的节点状态：排队、派发中、执行中、等待唤醒（「正在执行的节点」）。
+ * - ACTIVE_STATUSES：还没结束、正在推进的节点状态：排队、派发中、执行中、等待唤醒（「进行中的节点」）。
  */
 export const ON_AGENT_STATUSES = ["dispatched", "running"] as const satisfies readonly z.infer<
 	typeof TaskStatus

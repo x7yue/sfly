@@ -56,7 +56,7 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	const summary = drawer.getByRole("region", { name: "运行摘要" });
 	await expect(summary.getByTestId("summary-status")).toHaveText("运行中");
 	await expect(summary.getByRole("img", { name: "主链 1/2" })).toBeVisible();
-	const active = summary.getByRole("list", { name: "执行中的节点" });
+	const active = summary.getByRole("list", { name: "进行中的节点" });
 	await expect(active).toContainText("ping");
 	await expect(active).toContainText("agent-a");
 	await expect(active).toContainText("执行中");
@@ -256,6 +256,30 @@ test("引用的 Agent 不在线时提示任务会排队，仍可触发；已有�
 	await notice.getByRole("link", { name: "查看" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?|$)`));
 	await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("运行摘要：排队中的节点也在「进行中的节点」下，各带自己的状态标签；标题不叫「执行中」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await agent.disconnect();
+	await publishPackage(controlPlane);
+	await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+
+	await page.goto("/orchestrations");
+	await page.getByRole("article", { name: "巡检" }).getByRole("button", { name: "运行" }).click();
+	const drawer = page.getByRole("dialog", { name: "运行 · 巡检" });
+	await drawer.getByRole("button", { name: "触发运行" }).click();
+
+	const summary = drawer.getByRole("region", { name: "运行摘要" });
+	await expect(summary.getByRole("heading", { name: "进行中", exact: true })).toBeVisible();
+	await expect(summary.getByRole("heading", { name: "执行中", exact: true })).toHaveCount(0);
+	const active = summary.getByRole("list", { name: "进行中的节点" });
+	await expect(active).toContainText("ping");
+	await expect(active).toContainText("排队中");
+	await expect(active).not.toContainText("执行中");
 });
 
 test("引用的 Agent 在准备环境时提醒任务会等它准备好，仍可触发，准备好后任务照常派发", async ({

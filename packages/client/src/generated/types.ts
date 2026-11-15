@@ -1489,7 +1489,7 @@ export interface RunFocusQuery {
 	points?: number;
 }
 
-/** 正在执行的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序。 */
+/** 进行中的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序。 */
 export interface RunListActiveNode {
 	chain_instance_id: string;
 	node_id: string;

@@ -403,7 +403,7 @@ test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, c
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const task = await agent.nextAssign();
 	// 等实时推送接上（节点显示为执行中）再上报进度与日志。
-	await expect(drawer.getByRole("list", { name: "执行中的节点" })).toContainText("执行中");
+	await expect(drawer.getByRole("list", { name: "进行中的节点" })).toContainText("执行中");
 	agent.progress(task, 40, 100, "第 40 步");
 	agent.logs(task, [
 		logLine(clock, 1, "连接 10.0.0.8"),

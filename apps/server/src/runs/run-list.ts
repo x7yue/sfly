@@ -18,7 +18,7 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /**
  * 跨场景的运行列表（契约见 @sfly/schema 的 runListApi）：按开始时间从新到旧，
- * 每项带各链的节点状态、正在执行的节点与失败的链。链与任务按整页批量读取
+ * 每项带各链的节点状态、进行中的节点与失败的链。链与任务按整页批量读取
  * （engine/run-board.ts，节点状态的取法与运行视图相同）。
  */
 export async function listAllRuns(

@@ -168,12 +168,23 @@ export const FINAL_VALUE_LABEL = "最终值";
 export const chainCountLabel = (chains: number, nodes: number) =>
 	`${chains} 条链 · ${nodes} 个节点`;
 
+/**
+ * 还没结束、正在推进的节点（排队中、派发中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
+ * 不等于任何一个节点状态名：「执行中」只指执行中这一种状态。
+ */
+export const ACTIVE_LABEL = "进行中";
+
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */
 export const LIST_LABEL = {
 	legend: "图例",
 	chainProgress: "各链进度",
-	/** 运行抽屉的摘要和运行监控的概览里，执行中的节点的列表；列表前的标题只写 `NODE_STATUS.running.label`。 */
+	/** 运行监控的概览里，执行中的节点的列表；列表前的标题只写 `NODE_STATUS.running.label`。 */
 	runningNodes: `${NODE_STATUS.running.label}的${TERM.node}`,
+	/**
+	 * 运行抽屉的摘要里，还没结束、正在推进的节点（排队中、派发中、执行中、等待中）的列表，每个节点带自己的状态标签。
+	 * 说法不等于任何一个节点状态名；概览只列执行中的节点，用 `runningNodes`。
+	 */
+	activeNodes: `${ACTIVE_LABEL}的${TERM.node}`,
 } as const;
 
 /** 通用的加载 / 错误 / 空状态文字。 */
@@ -183,8 +194,10 @@ export const MESSAGE = {
 	noData: "还没有数据",
 	/** 尝试已经结束，一个点都没有上报。 */
 	noDataEnded: "这次尝试没有上报数据",
-	/** 没有节点处于执行中：运行抽屉的摘要和运行监控的概览共用。 */
+	/** 没有节点处于执行中：运行监控的概览。 */
 	noRunningNodes: `没有${NODE_STATUS.running.label}的${TERM.node}。`,
+	/** 运行中但没有进行中的节点：运行抽屉的摘要。 */
+	noActiveNodes: `没有${ACTIVE_LABEL}的${TERM.node}。`,
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
 	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
 	neverRun: "从未运行",
