@@ -137,6 +137,7 @@ describe("Agent 注册", () => {
 				status: "running",
 				started_at: "2026-01-01T00:00:00.000Z",
 				current_action: null,
+				progress: null,
 			},
 		]);
 		expect(b?.running_tasks).toEqual([]);
@@ -144,6 +145,48 @@ describe("Agent 注册", () => {
 
 		await agent.succeed(task, {});
 		expect((await listAgents(cp))[0]?.running_tasks).toEqual([]);
+	});
+
+	it("Agent 列表里正在执行的任务带最新进度（说明里的 secret 值打码），没上报过时为 null", async () => {
+		const own = await startTestControlPlane();
+		cp = own;
+		const api = new ApiClient(own);
+		const agent = await FakeAgent.connect(own.grpcUrl, { name: "agent-a" }, { clock: own.clock });
+		agents.push(agent);
+		await publishPackage(own, "stub", "1.0.0", { echo: [] });
+		await api.triggerOk(
+			await api.orchestrationWith({
+				default_agent: "agent-a",
+				nodes: [
+					{
+						id: "entry",
+						kind: "entry",
+						params: [{ name: "token", type: "string", default: "tk-secret", secret: true }],
+					},
+					{ id: "a", kind: "package", package: "stub", node: "echo" },
+				],
+				edges: [{ from: "entry", to: "a", kind: "chain" }],
+				packages: { stub: "1.0.0" },
+			}),
+		);
+		const task = await agent.nextAssign();
+		const progressOf = async () => (await listAgents(own))[0]?.running_tasks.map((t) => t.progress);
+		expect(await progressOf()).toEqual([null]);
+
+		agent.progress(task, 3, 10, "第 3 批，令牌 tk-secret");
+		await eventually(async () =>
+			expect(await progressOf()).toEqual([
+				{
+					current: 3,
+					total: 10,
+					message: "第 3 批，令牌 ******",
+					time: "2026-01-01T00:00:00.000Z",
+					agent_time: "2026-01-01T00:00:01.000Z",
+				},
+			]),
+		);
+		await agent.succeed(task, {});
+		expect(await progressOf()).toEqual([]);
 	});
 
 	it("Agent 列表里的任务带场景的现在的名称、所在的链实例和子流程名称（主链没有）", async () => {
