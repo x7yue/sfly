@@ -30,7 +30,7 @@ import {
 	measureClockOffset,
 } from "./agent-clock.js";
 import { agentEndpoint } from "./agent-endpoint.js";
-import { agentTaskRows, queuedTaskView, runningTaskView } from "./agent-tasks.js";
+import { loadAgentTasks } from "./agent-tasks.js";
 
 /** proto 的 DevPackage 转成存储形式：metadata_json 解析为对象（不是 JSON 对象时为 null）。 */
 export function devPackageInfo(p: { name: string; source: string; metadataJson: string }) {
@@ -312,13 +312,10 @@ export class AgentHub {
 
 	async list(): Promise<AgentView[]> {
 		const rows = await this.deps.db.select().from(agents).orderBy(asc(agents.name));
-		// 占着槽位的和在排队的任务一次取出；running_tasks 按派发顺序（seq），queued_tasks 按排队顺序（派发先看 queued_at）。
-		const agentTasks = await agentTaskRows(this.deps.db)
-			.where(and(inArray(tasks.status, [...ON_AGENT, "queued"]), isNotNull(tasks.agentName)))
-			.orderBy(asc(tasks.seq));
-		const queued = agentTasks.filter((t) => t.status === "queued");
-		queued.sort((a, b) => a.queuedAt.getTime() - b.queuedAt.getTime());
-		const running = agentTasks.filter((t) => t.status !== "queued");
+		const { running, queued } = await loadAgentTasks(
+			this.deps.db,
+			and(inArray(tasks.status, [...ON_AGENT, "queued"]), isNotNull(tasks.agentName)),
+		);
 		return rows.map(
 			({
 				info: { install, dev_packages, update, capabilities, peer, source_address, ...info },
@@ -337,8 +334,8 @@ export class AgentHub {
 					...p,
 					metadata: devMetadataWithDefaultCharts(p.metadata),
 				})),
-				running_tasks: running.filter((t) => t.agent === row.name).map(runningTaskView),
-				queued_tasks: queued.filter((t) => t.agent === row.name).map(queuedTaskView),
+				running_tasks: running.filter((t) => t.agent === row.name).map((t) => t.view),
+				queued_tasks: queued.filter((t) => t.agent === row.name).map((t) => t.view),
 				version_mismatch: this.versionMismatch(info),
 				update: update ?? NO_UPDATE,
 				capabilities: capabilities ?? [],

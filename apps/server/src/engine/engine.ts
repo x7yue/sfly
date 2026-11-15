@@ -29,7 +29,7 @@ import { and, asc, count, eq, inArray, isNotNull, or, sql } from "drizzle-orm";
 import type { Actor } from "../actor.js";
 import type { ClockOffset } from "../agents/agent-clock.js";
 import { type AgentConnection, type AgentHub, devPackageInfo } from "../agents/agent-hub.js";
-import { agentTaskRows, runningTaskView } from "../agents/agent-tasks.js";
+import { loadAgentTasks } from "../agents/agent-tasks.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -518,10 +518,11 @@ export class Engine implements AgentSessionHandler {
 				.for("update");
 			// 终止的任务就是上面锁住的这些（同一个事务、同样的条件）。
 			const terminated = (
-				await agentTaskRows(step.tx)
-					.where(and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)))
-					.orderBy(asc(tasks.seq))
-			).map(runningTaskView);
+				await loadAgentTasks(
+					step.tx,
+					and(eq(tasks.agentName, agentName), inArray(tasks.status, ON_AGENT)),
+				)
+			).running.map((t) => t.view);
 			for (const task of held) {
 				await this.#failTask(step, task, "agent_lost", "Agent 立即更新，终止了这个任务");
 			}
