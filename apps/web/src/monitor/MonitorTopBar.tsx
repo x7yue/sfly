@@ -27,6 +27,7 @@ import {
 import { Truncate } from "@/components/ui/truncate";
 import { CancelRunButton } from "./CancelRunDialog";
 import { useMonitorActions, useTimeAxis } from "./monitor-state";
+import type { MonitorView } from "./monitor-view";
 import { RunPresetInfo } from "./RunPresetInfo";
 import {
 	chainLabel,
@@ -40,13 +41,14 @@ import {
 	runStatus,
 } from "./run-model";
 import { COLLAPSE_BUTTON, COLLAPSE_LABEL, MONITOR_TOPBAR_HEIGHT } from "./top-bar";
+import { ViewTabs } from "./ViewTabs";
 
 /** 顶栏最多显示几条链的状态，其余收成「+N」。 */
 const MAX_CHAIN_BADGES = 4;
 
 /**
  * 运行监控页顶栏（原型 monitorHTML 的 `.mon-top`）：返回、场景名与版本、触发人 / 开始时间 / 已运行时长、
- * 运行切换（同场景的其他运行）、运行状态、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
+ * 运行切换（同场景的其他运行）、运行状态、「概览 / 详情」标签页、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
  * 在画布中查看、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
@@ -55,10 +57,17 @@ export function MonitorTopBar({
 	run,
 	name,
 	failureInBanner,
+	view,
+	onViewChange,
+	onShowDetail,
 }: {
 	run: RunView;
 	name: string | undefined;
 	failureInBanner: boolean;
+	view: MonitorView;
+	onViewChange: (view: MonitorView) => void;
+	/** 切到详情，不改变记住的视图。 */
+	onShowDetail: () => void;
 }) {
 	const { now, live } = useTimeAxis();
 	const paused = useMotionPaused();
@@ -106,7 +115,13 @@ export function MonitorTopBar({
 				</StatusPill>
 			</output>
 			{run.preset && <RunPresetInfo preset={run.preset} />}
-			{failure && !failureInBanner && <FailureSummary failure={failure} />}
+			<ViewTabs view={view} onChange={onViewChange} />
+			{failure && !failureInBanner && (
+				<FailureSummary
+					failure={failure}
+					onShowDetail={view === "detail" ? undefined : onShowDetail}
+				/>
+			)}
 			<ul
 				aria-label="各链状态"
 				className="m-0 flex min-w-0 shrink-[4] list-none gap-1.5 overflow-hidden p-0 max-xl:hidden"
@@ -197,7 +212,14 @@ export function MonitorTopBar({
  * 失败摘要：「失败于 verify（第 2 次）· AssertionError: …」，太长时截断（悬停看完整的第一行）。
  * 点击选中这个节点，并把底部面板切到「尝试」页签（错误类型与堆栈）。
  */
-function FailureSummary({ failure }: { failure: RunFailure }) {
+function FailureSummary({
+	failure,
+	onShowDetail,
+}: {
+	failure: RunFailure;
+	/** 在概览里点时切到详情：「尝试」页签在详情里。 */
+	onShowDetail?: (() => void) | undefined;
+}) {
 	const actions = useMonitorActions();
 	return (
 		<Truncate
@@ -210,6 +232,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 					onClick={() => {
 						actions.select(failure.ref);
 						actions.showPanel("attempts");
+						onShowDetail?.();
 					}}
 					className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
 				/>

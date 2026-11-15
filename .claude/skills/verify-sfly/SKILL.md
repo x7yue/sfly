@@ -91,7 +91,7 @@ curl -s "$HTTP_URL/api/agents"          # 在线状态、agent_version、install
 证明的标准：
 - 走真实的用户路径：在页面上点按钮，发布节点包用 `sfly publish`。不要直接调 API 写数据来代替用户操作。API 只用来读取，作为第二视角。
 - 同时证明操作本身和操作后的状态。例如「触发运行」要拍到抽屉里的「成功」，还要用 `/api/runs/<id>` 看到节点的 `outputs`。
-- 证明副作用：Agent 的 `installed_packages` 里出现了节点包；任务日志和产物出现在运行详情里；场景的版本号增加了。
+- 证明副作用：Agent 的 `installed_packages` 里出现了节点包；任务日志和产物出现在运行监控的详情里；场景的版本号增加了。
 - 不 mock：控制面、Agent 和数据库都是真实的。节点包依赖走 uv 的真实来源，没有网络时会以 `env_error` 失败，这本身就是如实的结果。
 
 ## 清理

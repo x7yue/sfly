@@ -95,7 +95,12 @@ import {
 import { freeCardSpot } from "./free-spot";
 import { isNamedNode } from "./inspector/DisplayNameField";
 import { focusField } from "./inspector/fields";
-import { type FocusRequest, Inspector, type InspectorContext } from "./inspector/Inspector";
+import {
+	type FocusRequest,
+	Inspector,
+	type InspectorContext,
+	type ScenarioTab,
+} from "./inspector/Inspector";
 import { useInspectorWidth } from "./inspector/inspector-width";
 import { useNodeClipboard } from "./node-clipboard";
 import { useReconnect } from "./reconnect";
@@ -127,12 +132,15 @@ export function ScenarioEditor({
 	head,
 	initialRun,
 	initialNode,
+	initialSettings,
 }: {
 	orchestration: OrchestrationView;
 	head: OrchestrationHeadView;
 	initialRun?: string;
 	/** 打开时选中的节点（运行抽屉里预检问题的「前往」）。 */
 	initialNode?: string;
+	/** 打开时场景设置停在哪一页（运行监控概览的「设置关注项」直接去「关注项」页）。 */
+	initialSettings?: ScenarioTab;
 }) {
 	// 编辑起点：本地草稿（刷新不丢失）或最新版本；放弃本地修改后用最新版本重建画布。
 	const [start, setStart] = useState(() => startEditing(orchestration.id, head));
@@ -143,6 +151,7 @@ export function ScenarioEditor({
 				start={start}
 				initialRun={initialRun}
 				initialNode={initialNode}
+				initialSettings={initialSettings}
 				onReload={(latest) => setStart(startEditing(orchestration.id, latest, start.nonce + 1))}
 			/>
 		</ReactFlowProvider>
@@ -172,12 +181,14 @@ function Editor({
 	start,
 	initialRun,
 	initialNode,
+	initialSettings,
 	onReload,
 }: {
 	orchestration: OrchestrationView;
 	start: EditStart;
 	initialRun?: string;
 	initialNode?: string;
+	initialSettings?: ScenarioTab;
 	onReload: (head: OrchestrationHeadView) => void;
 }) {
 	const flow = useReactFlow<SfNode, SfEdge>();
@@ -939,6 +950,7 @@ function Editor({
 							context={context}
 							onCollapse={() => setInspectorOpen(false)}
 							onEscape={focusCanvasNode}
+							initialScenarioTab={initialSettings}
 						/>
 					)}
 				</FlowCanvas>

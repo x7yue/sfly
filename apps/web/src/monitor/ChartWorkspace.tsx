@@ -17,6 +17,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
+import { MESSAGE, noDataLabel } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
@@ -305,7 +306,7 @@ export function ChartWorkspace({
 					<Skeleton className="h-10 w-full" />
 				</output>
 			) : catalog.data.expired ? (
-				<Notice compact={compact}>这次运行的指标数据已超过保留期，已被清理。</Notice>
+				<Notice compact={compact}>{MESSAGE.metricsExpired}</Notice>
 			) : groups.length === 0 ? (
 				<Notice compact={compact}>
 					这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。
@@ -523,16 +524,15 @@ function NodeGroup({
 		series_capped: attempt.series_capped || series.loaded.some((s) => s.series_capped),
 		dropped_points: attempt.dropped_points,
 	};
+	const noData = noDataLabel(runAttempt ?? { started_at: null, ended_at: null }, node.status);
 	const empty = (loading: boolean) =>
 		!runAttempt?.started_at
-			? "节点尚未开始 · 暂无数据"
+			? noData
 			: !window || zoomed
 				? "所选时间段内无数据"
 				: loading
 					? "正在加载…"
-					: runAttempt.ended_at
-						? "这次尝试没有上报数据"
-						: "还没有上报数据";
+					: noData;
 	const title = `${entry.package}/${entry.node}`;
 	const name = runNodeName(node);
 	return (

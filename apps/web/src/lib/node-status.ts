@@ -22,7 +22,10 @@ export interface NodeStatusDisplay {
 	 * 其余种类不论节点类型都照画。没有开始执行的尝试只有排队段，用不到这一列。
 	 */
 	segment: SegmentKind;
-	/** 节点没有执行过（没有尝试）时，底部面板的提示，接在节点 ID 后面。 */
+	/**
+	 * 节点还没有开始执行（没有尝试，或尝试排队、派发后还没开始）时的说明：运行监控详情的底部面板接在节点 ID 后面，
+	 * 关注项读数和图表的空状态去掉句号后单独写（`notRunNote`）。
+	 */
 	notRun: string;
 	/** 节点没有执行过时，时间线节点行的耗时一栏。 */
 	notRunDuration: string;
@@ -122,6 +125,10 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 		notRunDuration: "停止",
 	},
 };
+
+/** `notRun` 去掉句号，接在别的文字后面用（关注项读数的脚注、图表的空状态）。 */
+export const notRunNote = (status: NodeStatus): string =>
+	NODE_STATUS[status].notRun.replace(/。$/, "");
 
 /** 按状态字符串查显示规则；不认识的状态（例如更新的控制面新增的）返回 undefined，由调用方兜底。 */
 export const nodeStatusDisplay = (status: string): NodeStatusDisplay | undefined =>

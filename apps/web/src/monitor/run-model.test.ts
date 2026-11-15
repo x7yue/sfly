@@ -469,7 +469,7 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 			expect(initialSelection(withFailure)).toEqual({ chainInstanceId: "main", nodeId: "verify" });
 		});
 
-		it("运行抽屉的摘要仍然回退到执行中的节点", () => {
+		it("运行抽屉的摘要仍然回退到进行中的节点", () => {
 			expect(focusNode(running("running"))).toEqual({ chainInstanceId: "main", nodeId: "load" });
 		});
 	});
