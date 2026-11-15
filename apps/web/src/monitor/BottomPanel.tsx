@@ -33,7 +33,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Truncate } from "@/components/ui/truncate";
 import { attemptAgentTimes } from "./attempt-clock";
-import { LogList, type LogLocation } from "./LogList";
+import { LogList, type LogReveal } from "./LogList";
 import type { LoadedLine } from "./log-buffer";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
 import {
@@ -425,7 +425,7 @@ function TaskLogsTab({
 	onEmpty: (empty: boolean) => void;
 }) {
 	const logs = useTaskLogs(attempt.task_id, levels, moment);
-	const locate = useMemo<LogsLocate<LoadedLine> | undefined>(() => {
+	const reveal = useMemo<LogReveal<LoadedLine> | undefined>(() => {
 		if (!logs.located || !moment) return undefined;
 		const { at_offset, exact_seq } = logs.located;
 		return {
@@ -438,7 +438,7 @@ function TaskLogsTab({
 	return (
 		<LogsView
 			logs={logs}
-			locate={locate}
+			reveal={reveal}
 			lineKey={seqKey}
 			truncated={logs.truncated ? MESSAGE.logTruncated : null}
 			filtered={filtered}
@@ -497,22 +497,10 @@ function RunLogsTab({
 	);
 }
 
-/** 日志页签要定位的那一刻（task 日志按时刻定位，#347）：控制面返回的结果落到列表的行上。 */
-interface LogsLocate<L> {
-	/** 同一次定位的标识（缓冲区里的定位结果）。 */
-	id: unknown;
-	/** 那一刻（控制面时间，ISO）。 */
-	at: string;
-	/** 是不是正好对应那一刻的行；没有这样的行时为 null，改为在那一刻的位置标出「这一刻」。 */
-	exact: ((line: L) => boolean) | null;
-	/** 这一行是不是不早于那一刻：「这一刻」插在第一个这样的行前面。 */
-	fromMoment: (line: L) => boolean;
-}
-
 /** 日志页签的内容（单个任务与合并视图共用）：截断、旧行、读取失败的提示，按时间范围过滤，点一行标出时刻。 */
 function LogsView<L extends LogLineView>({
 	logs,
-	locate,
+	reveal,
 	lineKey,
 	origin,
 	onOrigin,
@@ -538,7 +526,7 @@ function LogsView<L extends LogLineView>({
 		error: string | null;
 	};
 	/** 定位到某一刻；不给时是普通的日志。 */
-	locate?: LogsLocate<L>;
+	reveal?: LogReveal<L>;
 	lineKey: (line: L) => string;
 	/** 来源节点列；不给时没有这一列。 */
 	origin?: (line: L) => string;
@@ -580,17 +568,6 @@ function LogsView<L extends LogLineView>({
 		[logs.lines, zoom],
 	);
 	const unlocatable = useMemo(() => logs.lines.filter((l) => l.time === null).length, [logs.lines]);
-	// 正好对应那一刻的行被时间范围过滤掉时，不高亮也不标「这一刻」。
-	const location = useMemo<LogLocation | undefined>(() => {
-		if (!locate) return undefined;
-		const { id, at } = locate;
-		if (locate.exact) {
-			const hit = lines.find(locate.exact);
-			return { id, at, highlight: hit ? lineKey(hit) : null, moment: null };
-		}
-		const from = lines.findIndex(locate.fromMoment);
-		return { id, at, highlight: null, moment: from < 0 ? lines.length : from };
-	}, [locate, lines, lineKey]);
 	// 标记被别处清除（或换了标记）时取消行的高亮。
 	const marked =
 		markedKey !== null &&
@@ -645,7 +622,7 @@ function LogsView<L extends LogLineView>({
 						hasNewer={logs.hasNewer}
 						loadingNewer={logs.loadingNewer}
 						loadNewer={logs.loadNewer}
-						located={location}
+						reveal={reveal}
 						marked={marked}
 						timeKind={timeKind}
 						day={day}

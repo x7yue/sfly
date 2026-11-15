@@ -16,6 +16,12 @@ import {
 /** 每页行数。 */
 const PAGE = 300;
 
+/** 分页请求的查询：每页 {@link PAGE} 行，加上级别筛选（`levelKey` 为空表示不筛选）和位置（定位的时刻，或往前、往后翻页的起点）。 */
+const pageQuery = (
+	levelKey: string,
+	position: { at?: string; before?: number; after?: number },
+) => ({ limit: PAGE, ...(levelKey ? { level: levelKey } : {}), ...position });
+
 export const taskLogDownloadPath = (taskId: string) =>
 	apiUrl(logsApi.download, { params: { id: taskId } });
 
@@ -70,7 +76,7 @@ export function useTaskLogs(
 		setLoadingNewer(false);
 		callApi(logsApi.page, {
 			params: { id: taskId },
-			query: { limit: PAGE, ...(levelKey ? { level: levelKey } : {}), ...(at ? { at } : {}) },
+			query: pageQuery(levelKey, at ? { at } : {}),
 		})
 			.then((page) => {
 				if (generation.current !== current) return;
@@ -97,7 +103,7 @@ export function useTaskLogs(
 		setLoadingOlder(true);
 		callApi(logsApi.page, {
 			params: { id: taskId },
-			query: { limit: PAGE, before: start, ...(levelKey ? { level: levelKey } : {}) },
+			query: pageQuery(levelKey, { before: start }),
 		})
 			.then((page) => {
 				if (generation.current !== current) return;
@@ -114,7 +120,7 @@ export function useTaskLogs(
 		setLoadingNewer(true);
 		callApi(logsApi.page, {
 			params: { id: taskId },
-			query: { limit: PAGE, after: end, ...(levelKey ? { level: levelKey } : {}) },
+			query: pageQuery(levelKey, { after: end }),
 		})
 			.then((page) => {
 				if (generation.current !== current) return;
