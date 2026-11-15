@@ -26,15 +26,24 @@ Communication to and from subagents should be sparse. Communicate primarily thro
 
 4. Use a fresh **implementer subagent** for each ticket, each in its own worktree on its own branch. Each implementer subagent:
    - confirms its worktree is based on the integration branch before starting, and resets onto it if not;
-   - writes a failing test for each acceptance criterion before the code that makes it pass, at the seam the spec's Testing Decisions name;
+   - writes a failing test for each acceptance criterion before the code that makes it pass, at the seam the spec's Testing Decisions name, and follows `CODING_STANDARDS.md` while writing, because the merge review in step 5 checks the ticket against it;
    - runs long checks (full test suites, e2e, `pnpm perf`) in the foreground and ends its turn only with its final report: every early stop wakes the orchestrator with nothing to act on;
    - merges the integration branch tip into its own branch before reporting done
 
-5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent**. Push the integration branch after a batch of merges rather than after each one: every push to a branch with a PR starts a CI run.
+5. Once an **implementer subagent** completes, merge its work to the integration branch with a **merger subagent** that is also the ticket's **acceptor**. Run it on a different model from the implementer's, so the acceptance is an independent read. Each problem the merge review finds costs one subagent turn here and a whole fix round if it waits for step 7. The merger subagent:
+   - records the integration branch tip (`git rev-parse HEAD`) as the **pre-merge commit**, then merges the ticket branch and resolves conflicts;
+   - on the merged commit, checks the ticket's acceptance criteria one by one, citing for each the test or observed behaviour that shows it, and runs the ticket's own tests;
+   - repeats each end-to-end spec the ticket adds or changes until it is stable: `pnpm test:e2e:stress <spec>`, or `pnpm test:e2e:docker <spec> --repeat-each 40` in the Playwright image. One failed repeat fails the ticket;
+   - calls the Skill tool with `code-review`, the pre-merge commit as the fixed point and the ticket as the spec. The Standards axis covers `CODING_STANDARDS.md`, `docs/DESIGN-SYSTEM.md` and the terms in `GLOSSARY.md`: user-facing text (docs, UI copy, log and error messages, PR titles) uses the glossary term and avoids its `_Avoid_` wording for that concept. A finding that cites one of those documents fails the ticket; a smell-baseline finding is a judgement call that goes into the report;
+   - ends with a report holding one line per acceptance criterion (pass or fail, with its evidence), the repeat result per end-to-end spec, the review findings, and a verdict:
+     - **pass**: the integration branch tip is the merge commit;
+     - **fail**: the merger subagent ran `git reset --hard <pre-merge commit>`, did not push, and lists each problem with the criterion or rule it breaks.
 
-6. If this changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. This allows for maximum concurrency.
+   On **fail**, return the report to the ticket's implementer to fix on its own branch, then run this step again for the ticket. Push the integration branch after a batch of passing merges rather than after each one: every push to a branch with a PR starts a CI run.
 
-7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch. The Standards axis covers `CODING_STANDARDS.md` and the terms in `GLOSSARY.md`: user-facing text (docs, UI copy, log and error messages, PR titles) uses the glossary term and avoids its `_Avoid_` wording for that concept. Fix all issues raised by the code review in a single fresh **implementer subagent**.
+6. If a passing merge changes the **frontier** of available tickets, kick off more **implementer subagents** to work on the new tickets. A ticket sent back unblocks nothing until its merge passes. This allows for maximum concurrency.
+
+7. Once all tickets are complete, call the Skill tool with `code-review` on the integration branch, with `main` as the fixed point. Step 5 already reviewed each ticket's own diff against the standards, so this pass is for what one ticket's diff cannot show: duplicates across tickets, the Spec axis over the whole spec, and wording that differs between tickets. Fix all issues raised by the code review in a single fresh **implementer subagent**.
 
 8. Mark the draft PR ready for review once its checks pass. Merging into `main` waits for the user.
 
