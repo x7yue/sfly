@@ -449,7 +449,6 @@ a.rd:hover .rk span{color:var(--fg-1)}
 .minis .mini .chart-slot svg{display:block;width:100%;height:100%}
 .pinbtn{height:24px}
 .pinbtn[aria-pressed="true"]{background:var(--raised-2);border-color:var(--border-strong);color:var(--fg-1)}
-.pinbtn[aria-pressed="true"] svg{fill:currentColor}
 .pinbtn:disabled{opacity:.4;cursor:not-allowed}
 .quota{display:flex;align-items:center;gap:8px;margin-top:2px;font-size:12px;line-height:18px;color:var(--fg-3)}
 .quota b{font:500 12px/18px var(--mono);color:var(--fg-1)}
@@ -467,6 +466,30 @@ a.rd:hover .rk span{color:var(--fg-1)}
 .mini .ch .pinbtn svg{width:12px;height:12px;display:inline-block;margin:0}
 @media (forced-colors:active){.st li .mk .sx{background:Canvas}}
 .cv{overflow:clip}
+
+/* —— 设计评审后的修改（v4） —— */
+/* 选中：中性描边外再隔开一圈，执行中节点的青色描边保持不变；焦点环在更外面，两者不混 */
+.nd.sel,.nd.running.sel{box-shadow:0 0 0 3px var(--canvas-bg),0 0 0 5px var(--selected)}
+.nd:focus-visible{outline:2px solid var(--signal);outline-offset:9px}
+/* 节点卡片上的关注项：名称优先保住，数值和单位不换行 */
+.nd .frs .fr.cmp{gap:6px}
+.nd .frs .fr.cmp .t{flex:1 1 auto;min-width:0}
+.nd .frs .fr.cmp .v{flex:none;margin-left:auto}
+.badge.zh{font:500 12px/16px var(--sans)}
+.edited{margin:4px 0 0;font-size:12px;line-height:18px;color:var(--fg-3)}
+.edited b{font-weight:400;color:var(--fg-2)}
+.undo{display:flex;align-items:center;gap:8px;margin-top:8px;padding:6px 6px 6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--raised);font-size:12px;line-height:18px;color:var(--fg-1)}
+.undo .btn{margin-left:auto}
+.mtop .fresh{font-size:12px;line-height:18px;color:var(--fg-3);white-space:nowrap}
+.mtop .fresh .mono{color:var(--fg-2)}
+@media (prefers-reduced-motion:no-preference){.sx.pulse .ring{transform-box:view-box}}
+@media (forced-colors:active){
+  .nd.sel{outline:3px solid Highlight;outline-offset:3px}
+  .nd:focus-visible{outline:2px dashed CanvasText;outline-offset:9px}
+  /* 背景色在强制颜色下会被抹掉：按下和选中的状态改用系统高亮色的轮廓 */
+  .seg .on,.seg [aria-pressed="true"],.mtop [role="tab"][aria-selected="true"],.btabs [aria-selected="true"],.insp .tabs [aria-selected="true"],
+  .tg[aria-pressed="true"],.follow[aria-pressed="true"],.pinbtn[aria-pressed="true"],[data-mode].on{outline:2px solid Highlight;outline-offset:-2px}
+}
 </style>
 </head>
 <body>
@@ -487,7 +510,7 @@ a.rd:hover .rk span{color:var(--fg-1)}
   <symbol id="i-rerun" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
   <symbol id="i-monitor" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></symbol>
-  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/></symbol>
   <symbol id="i-back" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7"/><path d="M19 12H5"/></symbol>
   <symbol id="i-cross" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></symbol>
   <symbol id="i-grip" viewBox="0 0 24 24"><circle cx="9" cy="6" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="18" r="1"/></symbol>
@@ -801,7 +824,7 @@ a.rd:hover .rk span{color:var(--fg-1)}
     <a class="back" href="#console" aria-label="返回控制台"><svg class="i"><use href="#i-back"/></svg></a>
     <div class="ttl"><h1 style="margin:0;font-size:13px;line-height:18px;font-weight:600">撮合浸泡 · 4 小时 <span class="badge" style="margin-left:4px">v7</span></h1><span>lin 触发 · 开始 09:12:05 · 已运行 1h 47m 12s</span></div>
     <span class="vr"></span>
-    <span class="pill running"><i class="dot running"></i>运行中</span><span class="mono cap fg3">7f3a91c2</span>
+    <span class="pill running"><i class="dot running"></i>运行中</span><span class="mono cap fg3">7f3a91c2</span><span class="fresh" title="每 2 秒刷新一次">数据更新于 <span class="mono">10:59:17</span></span>
     <span class="vr"></span>
     <div class="seg" role="tablist" aria-label="视图">
       <button role="tab" id="tab-ov" aria-selected="true" aria-controls="pane-ov" data-runtab="ov" class="on">概览</button>
@@ -865,14 +888,14 @@ a.rd:hover .rk span{color:var(--fg-1)}
         <span class="cap fg3">由场景设置，按设定的顺序排，有异常的排在最前</span>
         <span class="spacer"></span>
         <div class="seg" role="group" aria-label="图表时间范围"><button aria-pressed="false">最近 15 分钟</button><button aria-pressed="false">最近 1 小时</button><button aria-pressed="true" class="on">全程</button></div>
-        <a class="btn sm ghost" href="#canvas-scene"><svg class="i"><use href="#i-pin"/></svg>调整关注项</a>
+        <a class="btn sm ghost" href="#canvas-scene"><svg class="i"><use href="#i-eye"/></svg>调整关注项</a>
       </div>
       <div class="rdstrip n3" data-rd="ov-stat"></div>
       <div class="charts2" data-cards="ov-chart" style="margin-top:10px"></div>
     </section>
 
     <section class="ov-sec panel" style="padding:12px 14px" aria-labelledby="h-logs">
-      <div style="display:flex;align-items:center;gap:8px"><h2 id="h-logs" style="margin:0;font-size:14px;line-height:20px">其他警告与错误</h2><span class="mono cap fg3">2</span><span class="cap fg3">关注项相关的见上方「需要注意」</span><span class="spacer"></span><button class="btn sm ghost" data-runtab="detail" data-bp="log">在详情里看全部日志</button></div>
+      <div style="display:flex;align-items:center;gap:8px"><h2 id="h-logs" style="margin:0;font-size:14px;line-height:20px">其他警告与错误</h2><span class="mono cap fg3">2</span><span class="cap fg3">最近 10 分钟内来自关注项来源节点的，见上方「需要注意」</span><span class="spacer"></span><button class="btn sm ghost" data-runtab="detail" data-bp="log">在详情里看全部日志</button></div>
       <div class="logx" style="margin-top:8px">
         <div class="r"><span>10:31:07.882</span><span class="w">WARN</span><span>proc_mon</span><span class="m">matcher 线程数从 64 增加到 72</span></div>
         <div class="r"><span>09:40:12.019</span><span class="x">ERROR</span><span>load</span><span class="m">连接被重置，第 1 次重连成功（connection reset by peer）</span></div>
@@ -882,17 +905,19 @@ a.rd:hover .rk span{color:var(--fg-1)}
 
   <div class="mbody" data-runpane="detail" id="pane-detail" role="tabpanel" aria-labelledby="tab-detail" hidden>
     <div class="dt">
-      <section class="panel" aria-labelledby="h-tl">
+      <p class="pnote" data-detail-note hidden></p>
+      <section class="panel tlp" aria-labelledby="h-tl">
         <div class="dbar">
           <h2 id="h-tl">链路时间线</h2><span class="mono cap fg3">3 条链 · 14 个节点</span>
           <div class="tl-legend" aria-hidden="true" style="margin-left:12px"><span><i class="l-run"></i>执行中</span><span><i class="l-act"></i>动作</span><span><i class="l-cnt"></i>只计数</span><span><i class="l-bad"></i>失败的动作</span><span><svg class="mk" viewBox="0 0 10 10"><path d="M2.2 .6v8.8" stroke="currentColor" stroke-width="1.3" fill="none"/><path d="M2.8 .9h5.8L7.1 3.1l1.5 2.2H2.8z" fill="currentColor"/></svg>标记</span></div>
           <span class="spacer"></span>
           <div class="seg" role="group" aria-label="时间线范围"><button data-tlzoom="0" aria-pressed="true" class="on">全程</button><button data-tlzoom="1" aria-pressed="false">放大到 09:12:46 起 3 秒</button></div>
+          <button class="btn sm ghost" data-tlcollapse aria-expanded="true" aria-controls="tl">收起时间线</button>
         </div>
-        <div class="tlbox" id="tl" style="margin-top:6px"></div>
-        <p class="hint" data-detail-note>和现在的时间线一样按链和节点排；有动作的节点下面多两条轨道（动作、子动作），收起节点时一起收起。全程看时，太密的子动作画成一条带，09:19:12 之后的「下单」只计数（斜线）；红色短线是失败的下单，白色短线是 09:40:12 的「重连撮合网关」，小旗是标记。放大到能分开时一个个画出来。原型只画了 load 的动作。</p>
+        <div class="tlaxis" id="tl-axis"></div>
+        <div class="tlbox" id="tl"></div>
       </section>
-      <div class="elided">图表：按节点分组的全部图表与平台自带图表，和现在一样，原型省略。</div>
+      <p class="pnote">原型说明：图表区和现在一样，原型省略。时间线上斜线是只计数的一段，红色短线是失败的下单，白色短线是「重连撮合网关」，小旗是标记；放大后一个个画出来。只画了 load 的动作。</p>
       <section class="panel bp" aria-label="日志与动作">
         <div class="btabs" role="tablist" aria-label="底部面板">
           <button role="tab" data-bptab="log" aria-selected="false" tabindex="-1">日志</button>
@@ -909,7 +934,7 @@ a.rd:hover .rk span{color:var(--fg-1)}
 
 <!-- ===================== 画布：运行状态 / 编辑 ===================== -->
 <div class="view cv" id="v-canvas">
-  <div class="world" id="world" role="group" aria-label="场景链路"><svg class="edges" id="edges" width="2400" height="900" aria-hidden="true"></svg></div>
+  <div class="world" id="world" role="group" aria-label="场景链路：方向键在节点之间移动，上下键换链，回车选中"><svg class="edges" id="edges" width="2400" height="900" aria-hidden="true"></svg></div>
 
   <div class="float" style="left:12px;top:12px">
     <a class="back btn ghost" href="#console" style="width:30px;padding:0;justify-content:center" aria-label="返回控制台"><svg class="i"><use href="#i-back"/></svg></a>
@@ -978,6 +1003,9 @@ const FX = [
     warn: { level: "WARN", at: "10:58:41", msg: "下单接口 p99 超过 20ms：23.4ms（窗口 60s）" } },
   { id: "sysmem", title: "系统内存使用率", form: "chart", node: "sys_mon", ref: "图表 内存使用率", agent: "agent-01", s: ["sysmem"], names: ["mem_used_percent"], unit: "%", f: fmt1, age: 130, every: 5 },
 ];
+// 图表自己的标题：节点卡片上节点已经说明了来源，用它代替场景里起的长名字
+FX.forEach((it) => (it.chart = it.ref.replace(/^图表 /, "")));
+const RUN_SPAN = 6432; // 演示运行从 09:12:05 到 10:59:17 的秒数
 const FX_ENDED = [
   { id: "e1", title: "母单量", form: "stat", node: "submit", s: ["e_parent"], unit: "单", f: fmtInt, ended: true },
   { id: "e2", title: "子单量", form: "stat", node: "submit", s: ["e_child"], unit: "单", f: fmtInt, ended: true },
@@ -986,13 +1014,24 @@ const FX_ENDED = [
 const LINE = ["#d4d4d4", "#8aa4c0", "#7a7a7a", "#456e97"];
 
 /* ———— 状态与异常 ———— */
-const ico = (st, pulse) => `<svg class="sx sx-${st}${pulse ? " pulse" : ""}" aria-hidden="true"><use href="#s-${st}"/></svg>`;
+// 脉冲的外圈要直接写在 SVG 里：样式选不到 <use> 引用进来的图形，写成 <use> 时脉冲动不起来
+const ico = (st, pulse) => pulse && st === "running"
+  ? `<svg class="sx sx-running pulse" viewBox="0 0 10 10" aria-hidden="true"><circle cx="5" cy="5" r="2.2" fill="currentColor"/><circle class="ring" cx="5" cy="5" r="4.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>`
+  : `<svg class="sx sx-${st}" aria-hidden="true"><use href="#s-${st}"/></svg>`;
 const ST_TEXT = { running: "执行中", done: "成功", ok: "成功", stopped: "已停止", failed: "失败", pending: "待执行" };
 const srcState = (it) => (it.ended ? "failed" : typeof state === "function" && window.__canvasReady ? state(it.node) : "running");
 const shape = (st) => (st === "done" ? "ok" : st);
 const staleAfter = (it) => Math.max(30, 6 * (it.every || 1));
 const isStale = (it) => !it.ended && srcState(it) === "running" && it.age > staleAfter(it);
-const anomaly = (it) => (it.warn ? "warn" : isStale(it) ? "stale" : null);
+// 只有还在执行的来源节点才可能「需要注意」；成功、已停止的只显示最终值，失败的总是异常
+const finalOnly = (it) => it.ended || ["done", "stopped"].includes(srcState(it));
+function anomaly(it) {
+  if (it.ended) return null;
+  const st = srcState(it);
+  if (st === "failed") return "failed";
+  if (st !== "running") return null;
+  return it.warn ? "warn" : isStale(it) ? "stale" : null;
+}
 const ordered = (list) => [...list.filter(anomaly), ...list.filter((it) => !anomaly(it))];
 const ago = (s) => (s < 60 ? `${s}s 前` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`);
 const mainIdx = (it) => it.main ?? 0;
@@ -1002,18 +1041,19 @@ function reason(it) {
   const a = anomaly(it);
   if (a === "warn") return `1 条 ${it.warn.level} · ${it.warn.at}`;
   if (a === "stale") return `已 ${ago(it.age)} 无新数据`;
+  if (a === "failed") return "来源节点失败";
   return null;
 }
 function label(it) {
   const r = reason(it);
   const st = ST_TEXT[srcState(it)] ?? "";
-  return `${it.title} ${serName(it)} ${latest(it)} ${it.unit}，来自 ${it.node}（${st}）${r ? "，" + r : it.ended ? "，最终值" : "，" + ago(it.age)}`;
+  return `${it.title} ${serName(it)} ${latest(it)} ${it.unit}，来自 ${it.node}（${st}）${r ? "，" + r : finalOnly(it) ? "，最终值" : "，" + ago(it.age)}`;
 }
 
 /* ———— 关注项的呈现：读数（控制台、概览）、行（节点卡片、Agent 槽位、检查器）、图表卡片（概览） ———— */
 function readout(it) {
   const r = reason(it), st = srcState(it);
-  const foot = it.ended ? `<span class="rf">${it.node} · 最终值</span>` : r ? `<span class="rf warn">${ico("warn")}${r}</span>` : `<span class="rf">${it.node} · ${ago(it.age)}</span>`;
+  const foot = finalOnly(it) ? `<span class="rf">${it.node} · 最终值</span>` : r ? `<span class="rf warn">${ico("warn")}${r}</span>` : `<span class="rf">${it.node} · ${ago(it.age)}</span>`;
   return `<a class="rd${it.ended ? " ended" : ""}" href="#run" data-jump="${it.node}" aria-label="${label(it)}">
     <span class="rk">${ico(shape(st))}<span>${it.title}</span></span>
     <span class="rv${anomaly(it) === "stale" ? " stale" : ""}">${serName(it) ? `<span class="ser">${serName(it)}</span>` : ""}${latest(it)}<small>${it.unit}</small></span>${foot}</a>`;
@@ -1028,7 +1068,9 @@ function rows(list, max, opts = {}) {
   const more = list.length - shown.length;
   return shown.map((it) => {
     const r = reason(it);
-    return `<div class="fr"${opts.click ? ` data-pick="${it.node}" tabindex="0" role="button"` : ""} aria-label="${label(it)}">${r ? ico("warn") : ""}<span class="t">${it.title}</span><span class="v">${serName(it) ? serName(it) + " " : ""}${latest(it)}</span><span class="u">${it.unit}</span>${!opts.compact ? `<span class="m${r ? " warn" : ""}">${r ?? (opts.src ? it.node + " · " : "") + ago(it.age)}</span>` : ""}</div>`;
+    if (opts.compact) return `<div class="fr cmp" aria-label="${label(it)}" title="${it.title}${serName(it) ? " · " + serName(it) : ""}">${r ? ico("warn") : ""}<span class="t">${it.chart}</span><span class="v">${latest(it)}</span><span class="u">${it.unit}</span></div>`;
+    const meta = r ?? (opts.src ? it.node + " · " : "") + (finalOnly(it) ? "最终值" : ago(it.age));
+    return `<div class="fr"${opts.click ? ` data-pick="${it.node}" tabindex="0" role="button"` : ""} aria-label="${label(it)}">${r ? ico("warn") : ""}<span class="t">${it.title}</span><span class="v">${serName(it) ? serName(it) + " " : ""}${latest(it)}</span><span class="u">${it.unit}</span><span class="m${r ? " warn" : ""}">${meta}</span></div>`;
   }).join("") + (more > 0 ? `<div class="fr rest">还有 ${more} 个关注项</div>` : "");
 }
 function attention() {
@@ -1037,13 +1079,14 @@ function attention() {
   const why = (it) => anomaly(it) === "warn"
     ? `${it.node} 的 ${it.warn.level}（<span class="mono">${it.warn.at}</span>）：${it.warn.msg}`
     : `${it.node} 仍在执行，但最后一个点在 <span class="mono">${ago(it.age)}</span> 前，采样间隔 <span class="mono">${it.every}s</span>。可能是节点卡住或 Agent 的指标上报中断`;
-  const act = (it) => anomaly(it) === "warn" ? "在详情里看日志" : `在详情里打开 ${it.node}`;
+  const act = (it) => anomaly(it) === "warn" ? "在详情里看这条 WARN" : `在详情里看 ${it.node} 的日志`;
+  const at = (it) => anomaly(it) === "warn" ? ` data-at="${it.warn.at}"` : "";
   return `<div class="hd"><h2 id="h-attn">需要注意</h2><span class="mono cap fg3">${list.length}</span></div>` +
-    list.map((it) => `<div class="row">${ico("warn")}<div><b>${it.title}</b> <span class="mono cap fg3">${serName(it)} ${latest(it)} ${it.unit}</span><div class="why">${why(it)}</div></div><a class="btn sm" href="#run" data-jump="${it.node}">${act(it)}</a></div>`).join("");
+    list.map((it) => `<div class="row">${ico("warn")}<div><b>${it.title}</b> <span class="mono cap fg3">${serName(it)} ${latest(it)} ${it.unit}</span><div class="why">${why(it)}</div></div><a class="btn sm" href="#run-detail" data-jump="${it.node}" data-bp="log"${at(it)}>${act(it)}</a></div>`).join("");
 }
 const CHART_SPECS = {};
-function chartSlot(id, keys, f, unit, title) {
-  CHART_SPECS[id] = { keys, f, unit, title };
+function chartSlot(id, keys, f, unit, title, stale = 0) {
+  CHART_SPECS[id] = { keys, f, unit, title, stale };
   return `<div class="chart-slot" data-chart="${id}"></div>`;
 }
 function chartCard(it) {
@@ -1052,7 +1095,7 @@ function chartCard(it) {
   return `<article class="card" id="fx-${it.id}" aria-labelledby="t-${it.id}">
     <div class="ch">${ico(shape(srcState(it)))}<b id="t-${it.id}">${it.title}</b><span class="last${anomaly(it) === "stale" ? " fg2" : ""}">${serName(it) ? `<small style="margin:0 4px 0 0">${serName(it)}</small>` : ""}${latest(it)}<small>${it.unit}</small></span></div>
     ${r ? `<div class="meta warn">${ico("warn")}${r} · ${it.node}</div>` : `<div class="meta">${it.node} · ${it.ref} · ${it.agent} · ${ago(it.age)}</div>`}
-    ${chartSlot("ov-" + it.id, it.s, it.f, it.unit, it.title)}${legend}
+    ${chartSlot("ov-" + it.id, it.s, it.f, it.unit, it.title, anomaly(it) === "stale" ? it.age : 0)}${legend}
     <div class="foot"><a class="lnk" href="#run" data-jump="${it.node}">在详情里打开 ${it.node}</a></div></article>`;
 }
 
@@ -1063,13 +1106,19 @@ function chartSvg(spec, w, h, compact) {
   const arrs = spec.keys.map((k) => S[k]);
   const hi = niceMax(Math.max(...arrs.flat()));
   const y = (v) => T + (h - B - T) * (1 - v / hi);
-  const x = (i) => L + (i / (P - 1)) * (w - L);
+  const end = 1 - (spec.stale || 0) / RUN_SPAN; // 最后一个点在哪
+  const x = (i) => L + (i / (P - 1)) * end * (w - L);
   const ticks = compact ? [0] : [0, hi / 2, hi];
   const grid = ticks.map((t) => `<line x1="${L}" x2="${w}" y1="${y(t)}" y2="${y(t)}" stroke="rgb(255 255 255 / .05)"/>${compact ? "" : `<text x="${L - 6}" y="${y(t) + 4}" fill="#969696" font-size="11" text-anchor="end" font-family="JetBrains Mono, monospace">${spec.f(t)}</text>`}`).join("");
   const xs = compact ? "" : ["09:12", "09:48", "10:23", "10:59"].map((t, i) => `<text x="${L + ((w - L) * i) / 3}" y="${h - 4}" fill="#969696" font-size="11" text-anchor="${i === 0 ? "start" : i === 3 ? "end" : "middle"}" font-family="JetBrains Mono, monospace">${t}</text>`).join("");
   const lines = arrs.map((a, j) => `<polyline fill="none" stroke="${LINE[j]}" stroke-width="1.5" ${j ? 'stroke-dasharray="5 3"' : ""} points="${a.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ")}"/>`).join("");
-  const name = `${spec.title}，最新 ${spec.f(last(spec.keys[spec.keys.length - 1]))} ${spec.unit}`;
-  return `<svg role="img" aria-label="${name}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">${grid}${xs}${lines}</svg>`;
+  const gapTxt = spec.stale ? `已 ${ago(spec.stale)} 无新数据` : "";
+  const name = `${spec.title}，最新 ${spec.f(last(spec.keys[spec.keys.length - 1]))} ${spec.unit}${spec.stale ? `，${gapTxt}，曲线停在最后一个点` : ""}`;
+  const pid = "gap-" + Math.random().toString(36).slice(2, 8);
+  const gap = spec.stale ? `<defs><pattern id="${pid}" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="1.5" height="6" fill="rgb(255 255 255 / .14)"/></pattern></defs><rect class="gapband" x="${x(P - 1)}" y="${T}" width="${w - x(P - 1)}" height="${h - B - T}" fill="url(#${pid})"/>` : "";
+  // 无数据的说明画在曲线上面，带底色，不和曲线叠在一起
+  const gapLabel = spec.stale && !compact ? `<rect x="${x(P - 1) - 118}" y="${h - B - 26}" width="112" height="20" rx="3" fill="var(--surface)"/><text x="${x(P - 1) - 8}" y="${h - B - 12}" fill="var(--warn-fg)" font-size="12" text-anchor="end" font-family="IBM Plex Sans, sans-serif">${gapTxt}</text>` : "";
+  return `<svg role="img" aria-label="${name}" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">${grid}${xs}${gap}${lines}${gapLabel}</svg>`;
 }
 function renderCharts(root = document) {
   root.querySelectorAll(".chart-slot[data-chart]").forEach((el) => {
@@ -1116,12 +1165,23 @@ svg.mk{width:9px;height:9px;flex:none;display:inline-block;vertical-align:middle
 .acur .r .f{font-family:var(--mono);color:var(--fg-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-left:6px}
 .acur .r .d{font-family:var(--mono);color:var(--fg-2);font-variant-numeric:tabular-nums}
 .acur .r .nm{display:flex;min-width:0}
-.acnt{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:2px 14px;font-size:12px;line-height:20px}
-.acnt .h{color:var(--fg-3)}
-.acnt .v{font-family:var(--mono);color:var(--fg-1);text-align:right;font-variant-numeric:tabular-nums}
-.acnt .v.bad{color:var(--danger-fg)}
-.acnt .v.z{color:var(--fg-3)}
-.acnt .nm{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.acnt{width:100%;border-collapse:collapse;font-size:12px;line-height:20px}
+.acnt thead th{font-weight:400;color:var(--fg-3);text-align:right;padding:0 0 2px 14px}
+.acnt thead th:first-child{text-align:left;padding-left:0}
+.acnt tbody th{font-weight:400;text-align:left;color:var(--fg-1);padding:0}
+.acnt td.v{font-family:var(--mono);color:var(--fg-1);text-align:right;font-variant-numeric:tabular-nums;padding:0 0 0 14px;white-space:nowrap}
+.acnt td.v.bad{color:var(--danger-fg)}
+.acnt td.v.z{color:var(--fg-3)}
+.acnt .nm{display:flex;align-items:center;gap:6px;min-width:0;white-space:nowrap}
+.afail{list-style:none;margin:8px 0 10px;padding:0}
+.afail li{padding:5px 0;border-top:1px solid var(--border-soft);font-size:12px;line-height:18px}
+.afail li:first-child{border-top:0}
+.afail .l1{display:grid;grid-template-columns:84px minmax(0,1fr) auto;gap:6px}
+.afail .t,.afail .d{font-family:var(--mono);color:var(--fg-3);font-variant-numeric:tabular-nums}
+.afail .n{color:var(--fg-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.afail .n .f{font-family:var(--mono);color:var(--fg-3);margin-left:6px}
+.afail .why{display:flex;align-items:flex-start;gap:6px;margin-top:2px;color:var(--danger-fg)}
+.afail .why .sx{margin-top:5px}
 .acap{margin-top:6px;font-size:12px;line-height:18px;color:var(--fg-2)}
 .alist{margin-top:8px}
 .alist .r{display:grid;grid-template-columns:84px minmax(0,1fr) 44px 12px;gap:6px;align-items:center;padding:2px 0;border-top:1px solid var(--border-soft);font-size:12px;line-height:18px}
@@ -1133,7 +1193,7 @@ svg.mk{width:9px;height:9px;flex:none;display:inline-block;vertical-align:middle
 .alist .r.bad .n .why{color:var(--danger-fg);margin-left:6px}
 
 /* 运行监控「详情」 */
-.dt{display:flex;flex-direction:column;gap:12px}
+.dt{display:flex;flex-direction:column;gap:10px}
 .dt .dbar{display:flex;align-items:center;gap:8px;min-height:30px}
 .dt .dbar h2{margin:0;font-size:14px;line-height:20px;font-weight:600}
 .tlbox{position:relative}
@@ -1157,18 +1217,14 @@ svg.mk{width:9px;height:9px;flex:none;display:inline-block;vertical-align:middle
 select.sel{height:26px;padding:0 26px 0 8px;border-radius:6px;border:1px solid var(--border);background:var(--sunk);color:var(--fg-1);font:400 12px/18px var(--sans);appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--fg-3) 50%),linear-gradient(135deg,var(--fg-3) 50%,transparent 50%);background-position:calc(100% - 13px) 11px,calc(100% - 9px) 11px;background-size:4px 4px;background-repeat:no-repeat}
 .tg{height:26px;padding:0 10px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--fg-2);font:400 12px/18px var(--sans);cursor:pointer;display:inline-flex;align-items:center;gap:6px}
 .tg[aria-pressed="true"]{background:var(--raised-2);border-color:var(--border-strong);color:var(--fg-1)}
-.asum{padding:8px 12px 0;font-size:12px;line-height:18px;color:var(--fg-2)}
+.asum{display:flex;flex-direction:column;gap:4px;padding:6px 12px 6px;border-bottom:1px solid var(--border-soft);font-size:12px;line-height:18px;color:var(--fg-2)}
 .asum .mono{color:var(--fg-1)}
-.acnts{display:flex;flex-wrap:wrap;gap:6px 16px;padding:6px 12px 8px;font-size:12px;line-height:18px;color:var(--fg-3)}
-.acnts span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.acnts b{font-weight:400;color:var(--fg-2)}
-.acnts .mono{color:var(--fg-1)}
-.acnts .bad{color:var(--danger-fg)}
+.acnts{display:flex;flex-wrap:wrap;gap:2px 4px;margin-left:-8px}
 .atab{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px;line-height:18px}
 .atab th{position:sticky;top:0;background:var(--surface);text-align:left;font-weight:400;color:var(--fg-3);padding:6px 8px;border-bottom:1px solid var(--border-soft);white-space:nowrap}
 .atab td{padding:4px 8px;border-top:1px solid var(--border-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .atab th:first-child,.atab td:first-child{padding-left:12px}
-.atab .c-t{width:112px}.atab .c-n{width:210px}.atab .c-d{width:84px;text-align:right}.atab .c-r{width:300px}
+.atab .c-t{width:112px}.atab .c-n{width:200px}.atab .c-d{width:84px;text-align:right}
 .atab td.c-d{font-family:var(--mono);color:var(--fg-2);text-align:right;font-variant-numeric:tabular-nums}
 .atab td.c-f{font-family:var(--mono);color:var(--fg-3)}
 .atab .tbtn{padding:0;border:0;background:none;font:400 12px/18px var(--mono);color:var(--fg-2);cursor:pointer;text-decoration:underline;text-decoration-color:transparent;text-underline-offset:3px;font-variant-numeric:tabular-nums}
@@ -1179,19 +1235,45 @@ select.sel{height:26px;padding:0 26px 0 8px;border-radius:6px;border:1px solid v
 .atab .res span{overflow:hidden;text-overflow:ellipsis}
 .atab .res.bad{color:var(--danger-fg)}
 .atab .res.live{color:var(--signal-fg)}
-.atab .res.ok{color:var(--fg-2)}
+.atab .res.ok{color:var(--fg-3)}
 .atab .res.mark{color:var(--fg-3)}
 .atab tr.grp td{padding:10px 12px 4px;border-top:0;color:var(--fg-3);font-size:12px}
 .atab tr.grp td b{font-weight:500;color:var(--fg-2);margin-right:8px}
 .atab tr.gap td{padding:6px 12px;color:var(--fg-3);background:repeating-linear-gradient(135deg,rgb(255 255 255 / .03) 0 6px,transparent 6px 12px)}
 .atab tr.more td{color:var(--fg-3);padding:6px 12px}
-.abody{max-height:520px;overflow:auto}
+.abody{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}
+/* 「详情」固定成几段：时间线限高、可以收起，底部面板占满剩下的高度并自己滚动 */
+#pane-detail:not([hidden]){display:flex;flex-direction:column;overflow:hidden;padding-bottom:14px}
+#pane-detail .dt{flex:1;min-height:0}
+.tlp{flex:none;padding:10px 14px 10px}
+.tlbox{height:clamp(150px,30vh,420px);overflow:auto;scrollbar-gutter:stable}
+.tlaxis{margin-top:6px;scrollbar-gutter:stable;overflow:hidden}
+.tlaxis svg{display:block}
+.tlp.collapsed .tlaxis{display:none}
+.tlp.collapsed .tlbox,.tlp.collapsed .tl-legend,.tlp.collapsed [data-tlzoom]{display:none}
+.dt .elided{flex:none}
+.bp{flex:1;min-height:0;display:flex;flex-direction:column}
+#bp-body{flex:1;min-height:0;display:flex;flex-direction:column}
+.pnote{flex:none;margin:0;padding:8px 14px;border:1px dashed var(--border);border-radius:8px;font-size:12px;line-height:18px;color:var(--fg-3)}
+.lnkbtn{padding:0;border:0;background:none;color:var(--fg-2);font:inherit;text-decoration:underline;text-underline-offset:3px;text-decoration-color:var(--border-strong);cursor:pointer}
+.lnkbtn:hover{color:var(--fg-1)}
+.cnt{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 8px;border:1px solid transparent;border-radius:6px;background:none;color:var(--fg-3);font:400 12px/18px var(--sans);cursor:pointer;white-space:nowrap}
+.cnt b{font-weight:400;color:var(--fg-2)}
+.cnt .mono{color:var(--fg-1)}
+.cnt:hover{background:var(--raised)}
+.cnt[aria-pressed="true"]{background:var(--raised-2);border-color:var(--border-strong)}
+.cnt.bad,.cnt.bad .mono{color:var(--danger-fg)}
+.aempty{padding:16px 12px;font-size:13px;line-height:20px;color:var(--fg-2)}
+.aempty p{margin:0 0 10px}
 .lognote{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border-soft);font-size:12px;line-height:18px;color:var(--fg-2)}
 .logs2 .r{display:grid;grid-template-columns:112px 52px 92px minmax(0,1fr);gap:8px;padding:4px 12px;border-top:1px solid var(--border-soft);font:400 12px/18px var(--mono);color:var(--fg-2);white-space:nowrap}
 .logs2 .r:first-child{border-top:0}
 .logs2 .r .w{color:var(--warn-fg)}.logs2 .r .x{color:var(--danger-fg)}
 .logs2 .r .m{overflow:hidden;text-overflow:ellipsis;color:var(--fg-1)}
-.logs2 .r.hit{background:var(--raised);box-shadow:inset 2px 0 0 var(--signal)}
+.logs2 .r.hit{background:var(--raised);box-shadow:inset 2px 0 0 var(--primary)}
+.logs2 .r.mark{color:var(--fg-2);background:repeating-linear-gradient(90deg,var(--border) 0 4px,transparent 4px 8px) left 50%/100% 1px no-repeat}
+.logs2 .r.mark .m{color:var(--fg-2);font-family:var(--sans)}
+.logs2{flex:1;min-height:0;overflow:auto;scrollbar-gutter:stable}
 @media (forced-colors:active){
   .tl-legend i,.atab tr.gap td{forced-color-adjust:none}
   /* 时间线是 SVG：强制颜色模式不改 SVG 的填充，文字和白色标记要自己换成系统前景色 */
@@ -1244,7 +1326,8 @@ function recent() {
   let t = NOW - 0.004;
   for (let i = 0; i < 20; i++) {
     t -= 0.0045 + r() * 0.0012;
-    const fail = i === 5 ? REASONS[0] : null;
+    if (i === 5) { out.push(rejects().at(-1)); continue; }
+    const fail = null;
     const d = i === 2 ? 0.0234 : 0.002 + r() * 0.011;
     out.push({ name: "下单", s: t, e: t + d, f: { 订单: `P-${String(n - 1 - i).padStart(7, "0")}`, 方向: i % 3 ? "买" : "卖", 数量: String(100 * (1 + (i * 5) % 9)), 价格: (18.3 + r() * 0.1).toFixed(2) }, depth: 1, fail });
   }
@@ -1274,9 +1357,12 @@ const flag = (x, cy) => `<line x1="${x}" x2="${x}" y1="${cy - 8}" y2="${cy + 7}"
 function resultCell(a, running) {
   if (a.mark) return `<span class="res mark">${markIco()}<span>标记</span></span>`;
   if (running) return `<span class="res live">${ico("running")}<span>进行中</span></span>`;
-  if (a.fail) return `<span class="res bad">${ico("failed")}<span>${a.fail}</span></span>`;
-  return `<span class="res ok">${ico("ok")}<span>成功</span></span>`;
+  if (a.fail) return `<span class="res bad" title="${a.fail}">${ico("failed")}<span>${a.fail}</span></span>`;
+  // 成功不着色：一整列绿点会和失败抢注意力
+  return `<span class="res ok"><span>成功</span></span>`;
 }
+// 时间线里的中文至少 12px；11px 只给数字和拉丁字母
+const fs = (t) => (/[一-鿿]/.test(t) ? 12 : 11);
 
 /* 节点卡片、Agent 槽位格、概览「执行中」：最外层、开始得最早的那个正在进行的动作 */
 function actLine(id, compact) {
@@ -1286,7 +1372,7 @@ function actLine(id, compact) {
   return `<div class="actl" aria-label="正在做：${a.name}，已 ${dur(NOW - a.s)}">${compact ? ico("running") : `<span class="k">正在</span>`}<span class="n">${a.name}</span><span class="m">${dur(NOW - a.s)}</span></div>`;
 }
 
-/* 画布检查器：正在做（树）+ 动作区（计数、上限说明、最近 20 个） */
+/* 画布检查器：正在做（树）+ 动作区（每种名称的计数、上限说明、最近的失败） */
 function inspCurrent(id) {
   if (!ACT_NODES[id] || !loadRunning()) return "";
   const rows = CURRENT().map((a) => `<div class="r" style="padding-left:${a.depth * 14}px">${ico("running")}<span class="nm"><b>${a.name}</b><span class="f">${fieldsTxt(a.f)}</span></span><span class="d">${dur(NOW - a.s)}</span></div>`).join("");
@@ -1295,16 +1381,17 @@ function inspCurrent(id) {
 function inspActions(id) {
   if (!ACT_NODES[id]) return "";
   const c = counts(), total = c.filter((x) => !x.mark).reduce((s, x) => s + x.n, 0);
-  const cnt = `<div class="acnt"><span class="h">名称</span><span class="h" style="text-align:right">总数</span><span class="h" style="text-align:right">失败</span>${c.map((x) => `<span class="nm">${x.mark ? markIco() : ""}${x.name}</span><span class="v">${fmtInt(x.n)}</span><span class="v ${x.mark ? "z" : x.bad ? "bad" : "z"}">${x.mark ? "—" : fmtInt(x.bad)}</span>`).join("")}</div>`;
-  const list = recent().map((a) => `<div class="r${a.fail ? " bad" : ""}"><span class="t">${clock(a.s).slice(0, 12)}</span><span class="n">${a.name}<span class="f">${a.f.订单}</span>${a.fail ? `<span class="why">${a.fail.split("（")[0]}</span>` : ""}</span><span class="d">${dur(a.e - a.s)}</span>${ico(a.fail ? "failed" : "ok")}</div>`).join("");
-  return `<div class="isec"><div class="sh"><h3>动作</h3><span class="mono cap fg3">${fmtInt(total)}</span><span class="rule"></span></div>${cnt}
-    <p class="acap">「下单」超过 5 万个，${clock(CAP_AT, false)} 之后只计数；失败的、正在做的和最近 20 个仍有明细。</p>
-    <div class="sh" style="margin-top:12px"><h3>最近 20 个</h3><span class="rule"></span></div><div class="alist">${list}</div>
-    <p class="hint">按开始时间从新到旧。全部动作在运行监控「详情」的「动作」页里，可以按名称筛选、只看失败。</p></div>`;
+  const rows = c.map((x) => `<tr><th scope="row"><span class="nm">${x.mark ? markIco() : ""}${x.name}${x.running ? `<span class="fg3">进行中</span>` : ""}</span></th><td class="v">${fmtInt(x.n)}</td><td class="v ${x.bad ? "bad" : "z"}">${x.mark ? "—" : fmtInt(x.bad)}</td></tr>`).join("");
+  const fails = rejects().slice(-5).reverse().map((a) => `<li><div class="l1"><span class="t">${clock(a.s).slice(0, 12)}</span><span class="n">${a.name}<span class="f">${a.f.订单}</span></span><span class="d">${dur(a.e - a.s)}</span></div><div class="why">${ico("failed")}<span>${a.fail}</span></div></li>`).join("");
+  return `<div class="isec"><div class="sh"><h3>动作</h3><span class="mono cap fg3">${fmtInt(total)}</span><span class="rule"></span></div>
+    <table class="acnt"><caption class="vh">每种动作的总数和失败数</caption><thead><tr><th scope="col">名称</th><th scope="col">总数</th><th scope="col">失败</th></tr></thead><tbody>${rows}</tbody></table>
+    <p class="acap">「下单」超过 5 万个，${clock(CAP_AT, false)} 之后只计数，失败的和正在做的仍有明细。高频的动作适合按批或按阶段记录，写法见开发文档「SDK · 动作」。</p>
+    <div class="sh" style="margin-top:12px"><h3>最近的失败</h3><span class="mono cap fg3">${REJECTS()}</span><span class="rule"></span></div><ul class="afail">${fails}</ul>
+    <p class="hint">全部动作和失败在运行监控详情的「动作」页里，可以按名称筛选。</p></div>`;
 }
 
 /* ———— 运行监控「详情」：时间线 + 底部面板（日志 / 动作 / 尝试 / 输入输出 / 产物） ———— */
-let tlZoom = false, actName = "", actFail = false, actAgent = false, bpTab = "act", logHit = null;
+let tlScrollFor = null, tlZoom = false, tlOpen = true, actName = "", actFail = false, actAgent = false, bpTab = "act", logHit = null, detailScope = "load", pendingNote = null;
 const TL_ROWS = [
   { id: "主链", chain: true },
   { id: "entry", t: "入口", st: "ok", s: sec("09:12:05.100"), e: sec("09:12:05.104") },
@@ -1322,46 +1409,53 @@ const TL_ROWS = [
   { id: "sys_watch", chain: true },
   { id: "sys_mon", t: "sfly-std/system_monitor", st: "running", s: sec("09:12:10.010"), e: null },
 ];
+const SCOPES = TL_ROWS.filter((r) => !r.chain && r.st !== "pending");
 function tlSvg(w) {
   const L = 236, RH = 26, AX = 22;
   const [t0, t1] = tlZoom ? [sec("09:12:46.000"), sec("09:12:49.000")] : [sec("09:12:00"), NOW + 60];
   const X = (t) => L + ((Math.min(Math.max(t, t0), t1) - t0) / (t1 - t0)) * (w - L - 8);
+  const inWin = (s, e) => (e ?? NOW) >= t0 && s <= t1; // 完全在窗口外的不画，不要被夹到边上
   const rows = [];
   for (const r of TL_ROWS) {
     rows.push(r);
     if (r.acts) { rows.push({ lane: 0, id: "动作" }); rows.push({ lane: 1, id: "子动作" }); }
   }
-  const H = AX + rows.length * RH + 6;
-  const out = [];
-  // 刻度
+  const AXH = AX;
+  const H = rows.length * RH + 6;
+  const out = [], ax = [];
+  const OFF = AX; // 行区域整体上移，刻度单独画
   const step = tlZoom ? 0.5 : 900, first = Math.ceil(t0 / step) * step;
   for (let t = first; t <= t1; t += step) {
     const x = X(t);
     const anchor = x > w - 40 ? "end" : "middle";
-    out.push(`<line x1="${x}" x2="${x}" y1="${AX - 4}" y2="${H}" stroke="rgb(255 255 255 / .05)"/><text x="${anchor === "end" ? w - 2 : x}" y="13" fill="#969696" font-size="11" text-anchor="${anchor}" font-family="JetBrains Mono, monospace">${tlZoom ? clock(t).slice(0, 10) : clock(t, false).slice(0, 5)}</text>`);
+    out.push(`<line x1="${x}" x2="${x}" y1="0" y2="${H}" stroke="rgb(255 255 255 / .05)"/>`);
+    ax.push(`<line x1="${x}" x2="${x}" y1="${AXH - 4}" y2="${AXH}" stroke="rgb(255 255 255 / .12)"/><text x="${anchor === "end" ? w - 2 : x}" y="13" fill="#969696" font-size="11" text-anchor="${anchor}" font-family="JetBrains Mono, monospace">${tlZoom ? clock(t).slice(0, 10) : clock(t, false).slice(0, 5)}</text>`);
   }
-  if (!tlZoom) out.push(`<line x1="${X(NOW)}" x2="${X(NOW)}" y1="${AX - 4}" y2="${H}" stroke="var(--signal)" stroke-width="1"/>`);
+  // 「现在」线和产品一样用半透明的青色线，不用实心青色
+  if (!tlZoom) { out.push(`<line x1="${X(NOW)}" x2="${X(NOW)}" y1="0" y2="${H}" stroke="var(--signal-line)" stroke-width="1"/>`); ax.push(`<line x1="${X(NOW)}" x2="${X(NOW)}" y1="${AXH - 6}" y2="${AXH}" stroke="var(--signal-line)" stroke-width="1"/>`); }
   rows.forEach((r, i) => {
-    const y = AX + i * RH, cy = y + RH / 2;
-    if (i % 2 === 0) out.push(`<rect x="0" y="${y}" width="${w}" height="${RH}" fill="rgb(255 255 255 / .012)"/>`);
+    const y = i * RH, cy = y + RH / 2;
+    const scoped = r.id === detailScope && !r.lane && r.lane !== 0;
+    if (scoped) out.push(`<rect x="0" y="${y}" width="${w}" height="${RH}" fill="var(--raised)"/><rect x="0" y="${y + 4}" width="2" height="${RH - 8}" fill="var(--primary)"/>`);
+    else if (i % 2 === 0) out.push(`<rect x="0" y="${y}" width="${w}" height="${RH}" fill="rgb(255 255 255 / .012)"/>`);
     if (r.chain) { out.push(`<text x="10" y="${cy + 4}" fill="#d4d4d4" font-size="12" font-weight="600" font-family="IBM Plex Sans, sans-serif">${r.id}</text>`); return; }
     if (r.lane !== undefined) {
       out.push(`<text x="${r.lane ? 52 : 38}" y="${cy + 4}" fill="#969696" font-size="12" font-family="IBM Plex Sans, sans-serif">${r.lane ? "└ 子动作" : "动作"}</text>`);
       if (r.lane === 0) {
         for (const a of PHASES) {
+          if (!inWin(a.s, a.e)) continue;
           const x1 = X(a.s), x2 = X(a.e ?? NOW), run = a.e === null;
-          out.push(`<rect x="${x1}" y="${cy - 6}" width="${Math.max(2, x2 - x1)}" height="12" rx="2" fill="${run ? "var(--signal-soft)" : "var(--border-strong)"}" stroke="${run ? "var(--signal)" : "none"}"/>`);
-          if (x2 - x1 > 120) out.push(`<text x="${x1 + 6}" y="${cy + 4}" fill="${run ? "var(--signal-fg)" : "#d4d4d4"}" font-size="11" font-family="IBM Plex Sans, sans-serif">${a.name}</text>`);
+          out.push(`<rect x="${x1}" y="${cy - 6}" width="${Math.max(2, x2 - x1)}" height="12" rx="2" fill="${run ? "var(--signal-soft)" : "var(--border-strong)"}" stroke="${run ? "var(--signal-line)" : "none"}"/>`);
+          if (x2 - x1 > 120) out.push(`<text x="${x1 + 6}" y="${cy + 4}" fill="#ececec" font-size="${fs(a.name)}" font-family="IBM Plex Sans, sans-serif">${a.name}</text>`);
         }
       } else if (!tlZoom) {
         // 全程：下单太密，画成带；超出上限后只计数，画成斜线
-        out.push(`<rect x="${X(A0 + 0.8)}" y="${cy - 5}" width="${X(CAP_AT) - X(A0 + 0.8)}" height="10" fill="var(--border-strong)" opacity=".75"/>`);
-        out.push(`<rect x="${X(CAP_AT)}" y="${cy - 5}" width="${X(NOW) - X(CAP_AT)}" height="10" fill="url(#hatch)" stroke="var(--border)" stroke-width=".5"/>`);
+        out.push(`<rect x="${X(A0 + 0.8)}" y="${cy - 5}" width="${Math.max(0, X(CAP_AT) - X(A0 + 0.8))}" height="10" fill="var(--border-strong)" opacity=".75"/>`);
+        out.push(`<rect x="${X(CAP_AT)}" y="${cy - 5}" width="${Math.max(0, X(NOW) - X(CAP_AT))}" height="10" fill="url(#hatch)" stroke="var(--border)" stroke-width=".5"/>`);
         const rc = X(RECONNECT.s);
         out.push(`<rect x="${rc - 1.5}" y="${cy - 7}" width="3" height="14" fill="var(--fg-1)"/>`);
         for (const a of rejects()) out.push(`<rect x="${X(a.s) - 1}" y="${cy - 8}" width="2" height="16" fill="var(--danger)"/>`);
-        const fx = X(FIRST_FILL.s);
-        out.push(flag(fx, cy));
+        out.push(flag(X(FIRST_FILL.s), cy));
       } else {
         // 放大后一个个画出来：预热时每秒 20 单
         const r = rng(97);
@@ -1370,109 +1464,155 @@ function tlSvg(w) {
           out.push(`<rect x="${X(t)}" y="${cy - 5}" width="${Math.max(1.5, X(t + d) - X(t))}" height="10" rx="1" fill="var(--border-strong)"/>`);
         }
         const fx = X(FIRST_FILL.s);
-        out.push(`${flag(fx, cy)}<rect x="${fx + 10}" y="${cy - 8}" width="54" height="16" rx="3" fill="#1f1f1f"/><text x="${fx + 13}" y="${cy + 4}" fill="#d4d4d4" font-size="11" font-family="IBM Plex Sans, sans-serif">首笔成交</text>`);
+        out.push(`${flag(fx, cy)}<rect x="${fx + 10}" y="${cy - 9}" width="58" height="18" rx="3" fill="#1f1f1f"/><text x="${fx + 13}" y="${cy + 4}" fill="#ececec" font-size="12" font-family="IBM Plex Sans, sans-serif">首笔成交</text>`);
       }
       return;
     }
-    const shapeY = cy - 5;
-    out.push(`<svg x="14" y="${shapeY}" width="10" height="10" class="sx-${shape(r.st)}" style="color:var(--${r.st === "ok" ? "ok" : r.st === "running" ? "signal" : "pending"})"><use href="#s-${shape(r.st)}"/></svg>`);
-    out.push(`<text x="30" y="${cy + 4}" fill="#d4d4d4" font-size="12" font-family="JetBrains Mono, monospace">${r.id}</text><text x="${30 + r.id.length * 7.4 + 8}" y="${cy + 4}" fill="#969696" font-size="11" font-family="JetBrains Mono, monospace">${((n) => (r.t.length > n ? r.t.slice(0, n - 1) + "…" : r.t))(Math.floor((L - 46 - r.id.length * 7.4) / 6.7))}</text>`);
-    if (r.s !== undefined) {
+    out.push(`<svg x="14" y="${cy - 5}" width="10" height="10" class="sx-${shape(r.st)}" style="color:var(--${r.st === "ok" ? "ok" : r.st === "running" ? "signal" : "pending"})"><use href="#s-${shape(r.st)}"/></svg>`);
+    const room = L - 46 - r.id.length * 7.4, cut = Math.floor(room / (fs(r.t) === 12 ? 12 : 6.7));
+    out.push(`<text x="30" y="${cy + 4}" fill="#ececec" font-size="12" font-family="JetBrains Mono, monospace">${r.id}</text><text x="${30 + r.id.length * 7.4 + 8}" y="${cy + 4}" fill="#969696" font-size="${fs(r.t)}" font-family="${fs(r.t) === 12 ? "IBM Plex Sans, sans-serif" : "JetBrains Mono, monospace"}">${r.t.length > cut ? r.t.slice(0, cut - 1) + "…" : r.t}</text>`);
+    if (r.s !== undefined && inWin(r.s, r.e)) {
       const x1 = X(r.s), x2 = X(r.e ?? NOW), run = r.e === null;
-      if (!(tlZoom && (r.e ?? NOW) < t0))
-        out.push(`<rect x="${x1}" y="${cy - (run ? 6 : 3)}" width="${Math.max(2, x2 - x1)}" height="${run ? 12 : 6}" rx="${run ? 2 : 3}" fill="${run ? "var(--signal-soft)" : "var(--ok)"}" stroke="${run ? "var(--signal)" : "none"}"/>`);
+      out.push(`<rect x="${x1}" y="${cy - (run ? 6 : 3)}" width="${Math.max(2, x2 - x1)}" height="${run ? 12 : 6}" rx="${run ? 2 : 3}" fill="${run ? "var(--signal-soft)" : "var(--ok)"}" stroke="${run ? "var(--signal-line)" : "none"}"/>`);
     }
   });
-  const label = tlZoom ? "链路时间线，放大到 09:12:46 至 09:12:49：load 的子动作「下单」一个个画出，09:12:47.310 有标记「首笔成交」" : "链路时间线，全程：load 正在执行，动作「保持 4 小时」进行中；子动作「下单」在 09:19:12 之后只计数；17 个失败的下单和 09:40:12 的「重连撮合网关」仍有明细";
-  return `<svg role="img" aria-label="${label}" viewBox="0 0 ${w} ${H}" width="${w}" height="${H}"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="6" fill="rgb(255 255 255 / .16)"/></pattern></defs>${out.join("")}</svg>`;
+  const label = (tlZoom ? "链路时间线，放大到 09:12:46 至 09:12:49：load 的子动作「下单」一个个画出，09:12:47.310 有标记「首笔成交」" : "链路时间线，全程：load 正在执行，动作「保持 4 小时」进行中；子动作「下单」在 09:19:12 之后只计数；17 个失败的下单和 09:40:12 的「重连撮合网关」仍有明细") + "。逐个查看见下方「动作」表";
+  const scopeRow = rows.findIndex((r) => r.id === detailScope && r.lane === undefined);
+  return { scrollTo: Math.max(0, (scopeRow - 2) * RH), axis: `<svg aria-hidden="true" viewBox="0 0 ${w} ${AXH}" width="${w}" height="${AXH}">${ax.join("")}</svg>`, body: `<svg role="img" aria-label="${label}" viewBox="0 0 ${w} ${H}" width="${w}" height="${H}"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="2" height="6" fill="rgb(255 255 255 / .16)"/></pattern></defs>${out.join("")}</svg>` };
 }
 function actRows() {
   const at = (s) => clock(s + (actAgent ? SKEW : 0));
   const row = (a, running) => `<tr${a.fail ? ' class="bad"' : ""}><td class="c-t"><button class="tbtn" data-logjump="${a.s}" aria-label="在日志里跳到 ${at(a.s)}">${at(a.s)}</button></td>
-    <td class="c-n"><span class="nm" style="padding-left:${a.depth * 16}px">${a.mark ? markIco() : ""}<span>${a.name}</span></span></td><td class="c-f">${fieldsTxt(a.f)}</td>
+    <td class="c-n"><span class="nm" style="padding-left:${a.depth * 16}px">${a.mark ? markIco() : ""}<span>${a.name}</span></span></td><td class="c-f" title="${fieldsTxt(a.f)}">${fieldsTxt(a.f)}</td>
     <td class="c-d">${a.mark ? "—" : dur((a.e ?? NOW) - a.s)}</td><td class="c-r">${resultCell(a, running)}</td></tr>`;
   const keep = (a) => (!actName || a.name === actName) && (!actFail || a.fail);
   const grp = (title, note, list, running) => {
     const rs = list.filter(keep);
     return rs.length ? `<tr class="grp"><td colspan="5"><b>${title}</b>${note}</td></tr>${rs.map((a) => row(a, running)).join("")}` : "";
   };
-  const fails = rejects().reverse().filter((a) => a.s < NOW - 1);
+  const empty = `<tr class="more"><td colspan="5">没有符合条件的动作。<button class="lnkbtn" data-clear>清除筛选</button></td></tr>`;
   let html = grp("正在做", "", CURRENT(), true);
   html += grp("最近 20 个", "超过上限后也一直更新", recent(), false);
-  if (actFail) return html + grp("更早的失败", "失败的动作不受每种名称的上限限制", fails, false) || `<tr class="more"><td colspan="5">没有符合条件的动作</td></tr>`;
-  const older = [RECONNECT];
-  html += grp("更早：已记录的明细", "从新到旧", older, false);
+  if (actFail) return html + grp("更早的失败", "失败的动作不受每种名称的上限限制", rejects().slice(0, -1).reverse(), false) || empty;
+  html += grp("更早：已记录的明细", "从新到旧", [RECONNECT], false);
   if (!actName || actName === "下单") {
-    html += `<tr class="gap"><td colspan="5">${clock(CAP_AT, false)} 至 ${clock(NOW - 0.1, false)} 的 ${fmtInt(ORDERS() - PER_NAME - 20)} 个「下单」只计数，没有明细（每种名称最多记录 5 万个）；其中失败的 ${REJECTS()} 个有明细，点「只看失败」</td></tr>`;
+    html += `<tr class="gap"><td colspan="5">${clock(CAP_AT, false)} 至 ${clock(NOW - 0.1, false)} 的 ${fmtInt(ORDERS() - PER_NAME - 20)} 个「下单」只计数，没有明细（每种名称最多记录 5 万个）；其中失败的 ${REJECTS()} 个有明细，<button class="lnkbtn" data-failonly>只看失败</button></td></tr>`;
     const r = rng(101);
     let t = CAP_AT;
     const tail = [0, 1, 2].map((i) => { t -= 0.0049 + r() * 0.0003; return { name: "下单", s: t, e: t + 0.003 + r() * 0.006, f: { 订单: `P-${String(PER_NAME - i).padStart(7, "0")}`, 方向: i % 2 ? "卖" : "买", 数量: String(100 * (2 + i)), 价格: (18.3 + r() * 0.1).toFixed(2) }, depth: 1 }; });
     html += tail.filter(keep).map((a) => row(a, false)).join("") + `<tr class="more"><td colspan="5">还有 ${fmtInt(PER_NAME - 3)} 个「下单」，滚动加载</td></tr>`;
   }
   html += [PHASES[2], PHASES[1], FIRST_FILL, PHASES[0]].filter(keep).map((a) => row(a, false)).join("");
-  return html || `<tr class="more"><td colspan="5">没有符合条件的动作</td></tr>`;
+  return html || empty;
+}
+function scopeSelect() {
+  return `<label class="vh" for="act-scope">范围：节点</label><select class="sel" id="act-scope" data-scope>${SCOPES.map((r) => `<option value="${r.id}"${r.id === detailScope ? " selected" : ""}>${r.id}${ACT_NODES[r.id] ? "（有动作）" : ""}</option>`).join("")}</select><span class="cap fg3">尝试 1，共 1 次</span>`;
 }
 function actPanel() {
+  if (!ACT_NODES[detailScope]) {
+    const r = TL_ROWS.find((x) => x.id === detailScope);
+    return `<div class="tool" role="toolbar" aria-label="筛选动作">${scopeSelect()}</div>
+      <div class="aempty"><p><b class="mono">${detailScope}</b>（<span class="mono">${r.t}</span>）没有记录动作。标准节点这一轮不记录动作；用户的节点在代码里用 <span class="mono">ctx.action</span> 记录。</p><button class="btn sm" data-setscope="load">看 load 的动作</button></div>`;
+  }
   const c = counts(), total = c.filter((x) => !x.mark).reduce((s, x) => s + x.n, 0);
   const opts = c.map((x) => `<option value="${x.name}"${actName === x.name ? " selected" : ""}>${x.name}</option>`).join("");
   return `<div class="tool" role="toolbar" aria-label="筛选动作">
-      <span class="chip">范围 <b class="mono">load</b> · 尝试 1</span>
+      ${scopeSelect()}
       <label class="vh" for="act-name">按名称筛选</label><select class="sel" id="act-name" data-actname><option value="">全部名称</option>${opts}</select>
       <button class="tg" aria-pressed="${actFail}" data-actfail>${ico("failed")}只看失败</button>
       <span class="spacer"></span>
-      <div class="seg" role="group" aria-label="时间"><button aria-pressed="${actAgent}" class="${actAgent ? "on" : ""}" data-actagent="1">Agent 时间</button><button aria-pressed="${!actAgent}" class="${actAgent ? "" : "on"}" data-actagent="0">控制面时间</button></div>
+      <div class="seg" role="group" aria-label="表格里的时间" title="时间线始终按控制面时间画"><button aria-pressed="${actAgent}" class="${actAgent ? "on" : ""}" data-actagent="1">Agent 时间</button><button aria-pressed="${!actAgent}" class="${actAgent ? "" : "on"}" data-actagent="0">控制面时间</button></div>
     </div>
-    <p class="asum">共 <span class="mono">${fmtInt(total)}</span> 个动作、<span class="mono">1</span> 个标记，失败 <span class="mono">${REJECTS()}</span> 个。「下单」超过 5 万个后只计数；失败的、正在做的和最近 20 个始终有明细。</p>
-    <div class="acnts">${c.map((x) => `<span>${x.mark ? markIco() : ""}<b>${x.name}</b><span class="mono">${fmtInt(x.n)}</span>${x.bad ? `<span class="bad">失败 ${x.bad}</span>` : ""}${x.running ? `<span class="fg3">进行中</span>` : ""}</span>`).join("")}</div>
-    <div class="abody"><table class="atab"><caption class="vh">load 的动作，按开始时间从新到旧</caption><colgroup><col class="c-t"><col class="c-n"><col><col class="c-d"><col class="c-r"></colgroup>
-      <thead><tr><th scope="col">开始</th><th scope="col">名称</th><th scope="col">字段</th><th scope="col" style="text-align:right">耗时</th><th scope="col">结果</th></tr></thead>
+    <div class="asum"><span>共 <span class="mono">${fmtInt(total)}</span> 个动作、<span class="mono">1</span> 个标记。「下单」超过 5 万个后只计数，失败的、正在做的和最近 20 个始终有明细。</span>
+      <span class="acnts" role="group" aria-label="按名称筛选">${c.map((x) => `<button class="cnt" data-cnt="${x.name}" aria-pressed="${actName === x.name}">${x.mark ? markIco() : ""}<b>${x.name}</b><span class="mono">${fmtInt(x.n)}</span>${x.running ? `<span class="fg3">进行中</span>` : ""}</button>`).join("")}<button class="cnt bad" data-actfail aria-pressed="${actFail}">失败 <span class="mono">${REJECTS()}</span></button></span></div>
+    <div class="abody"><table class="atab"><caption class="vh">${detailScope} 的动作，按开始时间从新到旧</caption><colgroup><col class="c-t"><col class="c-n"><col><col class="c-d"><col></colgroup>
+      <thead><tr><th scope="col">开始${actAgent ? `（Agent 时间，比控制面快 ${Math.round(SKEW * 1000)}ms）` : ""}</th><th scope="col">名称</th><th scope="col">字段</th><th scope="col" style="text-align:right">耗时</th><th scope="col">结果</th></tr></thead>
       <tbody>${actRows()}</tbody></table></div>`;
 }
-const LOGS = [
-  ["10:59:16.969", "INFO", "sdk", "第 1,284,3xx 单下单完成（成交回报 3ms）"],
-  ["10:58:41.207", "WARN", "sdk", "下单接口 p99 超过 20ms：23.4ms（窗口 60s）"],
-  ["09:40:12.402", "INFO", "sdk", "重连成功，继续下单"],
-  ["09:40:12.019", "ERROR", "sdk", "连接被重置，第 1 次重连（connection reset by peer）"],
-  ["09:15:47.015", "INFO", "sdk", "进入保持阶段，目标 200 单/s，持续 4 小时"],
-  ["09:14:47.012", "INFO", "sdk", "开始加压：20 → 200 单/s，步长 30 单/s"],
-  ["09:12:47.310", "INFO", "sdk", "收到第一笔成交 P-0000002"],
-  ["09:12:46.200", "INFO", "agent", "开始执行 trade-sim/order_load@2.3.1"],
-];
+const LOGS = {
+  load: () => [
+    ["10:59:16.969", "INFO", "sdk", `第 ${fmtInt(ORDERS() - 1)} 单下单完成（成交回报 3ms）`],
+    ["10:58:41.207", "WARN", "sdk", "下单接口 p99 超过 20ms：23.4ms（窗口 60s）"],
+    ["09:40:12.402", "INFO", "sdk", "重连成功，继续下单"],
+    ["09:40:12.019", "ERROR", "sdk", "连接被重置，第 1 次重连（connection reset by peer）"],
+    ["09:15:47.015", "INFO", "sdk", "进入保持阶段，目标 200 单/s，持续 4 小时"],
+    ["09:14:47.012", "INFO", "sdk", "开始加压：20 → 200 单/s，步长 30 单/s"],
+    ["09:12:47.310", "INFO", "sdk", "收到第一笔成交 P-0000002"],
+    ["09:12:46.200", "INFO", "agent", "开始执行 trade-sim/order_load@2.3.1"],
+  ],
+  sys_mon: () => [
+    ["10:57:07.012", "INFO", "sdk", "采样：mem_used_percent=63.5 cpu_percent=44.2 load1=3.4"],
+    ["10:57:02.009", "INFO", "sdk", "采样：mem_used_percent=63.4 cpu_percent=41.8 load1=3.3"],
+    ["09:12:10.010", "INFO", "agent", "开始执行 sfly-std/system_monitor@0.3.0（interval = 5s）"],
+  ],
+  proc_mon: () => [
+    ["10:31:07.882", "WARN", "sdk", "matcher 线程数从 64 增加到 72"],
+    ["09:12:09.900", "INFO", "agent", "开始执行 sfly-std/process_monitor@0.3.0"],
+  ],
+};
 function logPanel() {
-  const near = logHit === null ? -1 : LOGS.reduce((best, l, i) => (Math.abs(sec(l[0]) - logHit) < Math.abs(sec(LOGS[best][0]) - logHit) ? i : best), 0);
-  const note = logHit === null ? "" : `<div class="lognote" role="status">已跳到 <span class="mono">${clock(logHit)}</span>，这一行最接近那个时刻。<span class="spacer"></span><button class="btn sm ghost" data-bptab="act">回到动作</button></div>`;
-  return `${note}<div class="logs2">${LOGS.map((l, i) => `<div class="r${i === near ? " hit" : ""}"><span>${l[0]}</span><span class="${l[1] === "WARN" ? "w" : l[1] === "ERROR" ? "x" : ""}">${l[1]}</span><span>${l[2]}</span><span class="m">${l[3]}</span></div>`).join("")}</div>`;
+  const r = TL_ROWS.find((x) => x.id === detailScope);
+  const lines = (LOGS[detailScope] ?? (() => [[clock(r.s), "INFO", "agent", `开始执行 ${r.t}`]]))();
+  // 跳到某个时刻：正好是某一行（1 秒内）就高亮那一行，否则在那个时刻插一条标记，不去冒认别的行
+  const hit = logHit === null ? -1 : lines.findIndex((l) => Math.abs(sec(l[0]) - logHit) < 1);
+  const insertAt = logHit === null || hit >= 0 ? -1 : lines.findIndex((l) => sec(l[0]) < logHit);
+  const stale = detailScope === "sys_mon" ? `<div class="lognote"><span>最后一行在 <span class="mono">10:57:07</span>，已 2m 10s 没有新的日志和数据（采样间隔 5s）。节点可能卡住了，或者 Agent 的上报中断了。</span></div>` : "";
+  const note = logHit === null ? "" : `<div class="lognote" role="status"><span>已跳到 <span class="mono">${clock(logHit)}</span>${hit >= 0 ? "" : "，这一刻前后的日志如下"}。</span><span class="spacer"></span>${ACT_NODES[detailScope] ? `<button class="btn sm ghost" data-bptab="act">回到动作</button>` : ""}</div>`;
+  const rowsHtml = lines.map((l, i) => `${i === insertAt ? `<div class="r mark"><span>${clock(logHit)}</span><span></span><span></span><span class="m">这一刻</span></div>` : ""}<div class="r${i === hit ? " hit" : ""}"><span>${l[0]}</span><span class="${l[1] === "WARN" ? "w" : l[1] === "ERROR" ? "x" : ""}">${l[1]}</span><span>${l[2]}</span><span class="m">${l[3]}</span></div>`).join("") + (insertAt === -1 && hit === -1 && logHit !== null ? `<div class="r mark"><span>${clock(logHit)}</span><span></span><span></span><span class="m">这一刻</span></div>` : "");
+  return `<div class="tool" role="toolbar" aria-label="筛选日志">${scopeSelect()}<span class="spacer"></span><span class="cap fg3">级别筛选、时间切换和下载与现在相同，原型省略</span></div>${stale}${note}<div class="logs2"><p class="vh">${detailScope} 的日志，从新到旧</p>${rowsHtml}</div>`;
 }
 function drawDetail() {
   const box = document.getElementById("tl");
   if (!box) return;
-  box.innerHTML = tlSvg(Math.round(box.clientWidth));
+  const panel = box.closest(".tlp");
+  panel.classList.toggle("collapsed", !tlOpen);
+  const tg = document.querySelector("[data-tlcollapse]");
+  tg.setAttribute("aria-expanded", String(tlOpen)); tg.textContent = tlOpen ? "收起时间线" : "展开时间线";
+  if (tlOpen) {
+    const t = tlSvg(Math.round(box.clientWidth));
+    document.getElementById("tl-axis").innerHTML = t.axis;
+    box.innerHTML = t.body;
+    // 定位到范围里的那个节点：它和它的动作轨道停在可见区域的上部
+    if (tlScrollFor !== detailScope + tlZoom) { box.scrollTop = t.scrollTo; tlScrollFor = detailScope + tlZoom; }
+  }
   document.querySelectorAll("[data-tlzoom]").forEach((b) => { const on = (b.dataset.tlzoom === "1") === tlZoom; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); });
-  document.querySelectorAll("[data-bptab]").forEach((b) => { if (!b.closest(".btabs")) return; const on = b.dataset.bptab === bpTab; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
+  const total = counts().filter((x) => !x.mark).reduce((s, x) => s + x.n, 0);
+  const actTab = document.querySelector('.btabs [data-bptab="act"]');
+  actTab.innerHTML = ACT_NODES[detailScope] ? `动作<span class="n" aria-hidden="true">1.28M</span>` : "动作";
+  actTab.setAttribute("aria-label", ACT_NODES[detailScope] ? `动作，共 ${fmtInt(total)} 个` : "动作");
+  document.querySelectorAll(".btabs [data-bptab]").forEach((b) => { const on = b.dataset.bptab === bpTab; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
   document.getElementById("bp-body").innerHTML = bpTab === "act" ? actPanel() : bpTab === "log" ? logPanel() : `<p class="hint" style="padding:0 12px 12px">和现在一样，原型省略。</p>`;
   document.querySelectorAll("#v-run .bp svg.i, #v-run .bp i").forEach((s) => s.setAttribute("aria-hidden", "true"));
 }
+const refocus = (sel) => document.querySelector(sel)?.focus();
 document.addEventListener("click", (e) => {
   const z = e.target.closest("[data-tlzoom]");
   if (z) { tlZoom = z.dataset.tlzoom === "1"; drawDetail(); announce(tlZoom ? "时间线放大到 09:12:46 至 09:12:49" : "时间线显示全程"); }
+  if (e.target.closest("[data-tlcollapse]")) { tlOpen = !tlOpen; drawDetail(); refocus("[data-tlcollapse]"); }
   const t = e.target.closest("[data-bptab]");
-  if (t) { bpTab = t.dataset.bptab; if (bpTab !== "log") logHit = null; drawDetail(); }
-  const f = e.target.closest("[data-actfail]");
-  if (f) { actFail = !actFail; drawDetail(); document.querySelector("[data-actfail]")?.focus(); announce(actFail ? "只看失败的动作" : "显示全部动作"); }
+  if (t) { bpTab = t.dataset.bptab; if (bpTab !== "log") logHit = null; drawDetail(); refocus(`.btabs [data-bptab="${bpTab}"]`); }
+  if (e.target.closest("[data-actfail]") || e.target.closest("[data-failonly]")) { actFail = e.target.closest("[data-failonly]") ? true : !actFail; drawDetail(); refocus("[data-actfail]"); announce(actFail ? "只看失败的动作" : "显示全部动作"); }
+  const cn = e.target.closest("[data-cnt]");
+  if (cn) { actName = actName === cn.dataset.cnt ? "" : cn.dataset.cnt; drawDetail(); refocus(`[data-cnt="${cn.dataset.cnt}"]`); announce(actName ? `只看「${actName}」` : "显示全部名称"); }
+  if (e.target.closest("[data-clear]")) { actName = ""; actFail = false; drawDetail(); refocus("#act-name"); announce("已清除筛选"); }
+  const ss = e.target.closest("[data-setscope]");
+  if (ss) { detailScope = ss.dataset.setscope; drawDetail(); refocus("#act-scope"); }
   const ag = e.target.closest("[data-actagent]");
-  if (ag) { actAgent = ag.dataset.actagent === "1"; drawDetail(); document.querySelector(`[data-actagent="${ag.dataset.actagent}"]`)?.focus(); }
+  if (ag) { actAgent = ag.dataset.actagent === "1"; drawDetail(); refocus(`[data-actagent="${ag.dataset.actagent}"]`); }
   const lj = e.target.closest("[data-logjump]");
-  if (lj) { logHit = +lj.dataset.logjump; bpTab = "log"; drawDetail(); document.querySelector('[data-bptab="log"]')?.focus(); announce(`日志跳到 ${clock(logHit)}`); }
+  if (lj) { logHit = +lj.dataset.logjump; bpTab = "log"; drawDetail(); refocus('.btabs [data-bptab="log"]'); announce(`日志跳到 ${clock(logHit)}`); }
 });
 document.addEventListener("change", (e) => {
-  if (e.target.matches("[data-actname]")) { actName = e.target.value; drawDetail(); document.getElementById("act-name")?.focus(); }
+  if (e.target.matches("[data-actname]")) { actName = e.target.value; drawDetail(); refocus("#act-name"); }
+  if (e.target.matches("[data-scope]")) { detailScope = e.target.value; actName = ""; actFail = false; logHit = null; drawDetail(); refocus("#act-scope"); }
 });
 document.addEventListener("keydown", (e) => {
   const tab = e.target.closest?.(".btabs [data-bptab]");
-  if (!tab || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+  if (!tab || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+  e.preventDefault();
   const all = [...document.querySelectorAll(".btabs [data-bptab]")];
-  const i = (all.indexOf(tab) + (e.key === "ArrowRight" ? 1 : all.length - 1)) % all.length;
-  bpTab = all[i].dataset.bptab; drawDetail(); document.querySelectorAll(".btabs [data-bptab]")[i].focus();
+  const i = e.key === "Home" ? 0 : e.key === "End" ? all.length - 1 : (all.indexOf(tab) + (e.key === "ArrowRight" ? 1 : all.length - 1)) % all.length;
+  bpTab = all[i].dataset.bptab; if (bpTab !== "log") logHit = null; drawDetail(); document.querySelectorAll(".btabs [data-bptab]")[i].focus();
 });
 </script>
 
@@ -1517,6 +1657,8 @@ const ELAPSED = { load: "1h 46m 31s", proc_mon: "1h 46m 40s", sys_mon: "1h 46m 4
 /* 执行推进：每一步是「主链上执行中的节点」的序号；子流程由停止子流程节点结束 */
 const STEPS = [5, 6, 7, 8, 9, 10];
 let step = 0, follow = true, mode = "run", selected = null, prevLive = new Set(), camTimer = null;
+// 画布只占一个 Tab 停靠点：cursor 是那个停靠点所在的节点，方向键在节点之间移动
+let cursor = "load";
 function state(id) {
   const front = STEPS[step], n = byId[id];
   if (n.chain === "main") { const i = NODES.indexOf(n); return i < front ? "done" : i === front ? "running" : "pending"; }
@@ -1547,8 +1689,8 @@ function renderCanvas() {
   for (const n of NODES) {
     const st = mode === "run" ? state(n.id) : "edit";
     const pins = fxOf(n.id).length;
-    world.insertAdjacentHTML("beforeend", `<div class="nd ${st}${selected === n.id ? " sel" : ""}" data-node="${n.id}" tabindex="0" role="button" aria-pressed="${selected === n.id}" aria-label="${nodeLabel(n, st)}" style="left:${n.x}px;top:${n.y}px">
-      ${pins ? `<span class="pin" aria-hidden="true"><svg class="i"><use href="#i-pin"/></svg>${pins}</span>` : ""}${n.always ? '<span class="tag">always</span>' : ""}
+    world.insertAdjacentHTML("beforeend", `<div class="nd ${st}${selected === n.id ? " sel" : ""}" data-node="${n.id}" tabindex="${n.id === cursor ? 0 : -1}" role="button" aria-pressed="${selected === n.id}" aria-label="${nodeLabel(n, st)}" style="left:${n.x}px;top:${n.y}px">
+      ${pins ? `<span class="pin" aria-hidden="true"><svg class="i"><use href="#i-eye"/></svg>${pins}</span>` : ""}${n.always ? '<span class="tag">always</span>' : ""}
       <div class="h"><svg class="i"><use href="#${ICON[n.kind]}"/></svg>${n.id}${mode === "run" ? pill(st) : ""}</div>
       <div class="t">${n.title}</div>${slot(n, st)}</div>`);
   }
@@ -1581,8 +1723,12 @@ function camera() {
   const running = NODES.filter((n) => mode === "run" && state(n.id) === "running");
   const targets = running.length ? running : mode === "run" ? [byId.notify] : [byId.load, byId.proc_mon, byId.sys_mon];
   const h = (n) => world.querySelector(`[data-node="${n.id}"]`)?.offsetHeight ?? 90;
-  const minX = Math.min(...targets.map((n) => n.x)), maxX = Math.max(...targets.map((n) => n.x + W));
-  const minY = Math.min(...targets.map((n) => n.y)) - 40, maxY = Math.max(...targets.map((n) => n.y + h(n)));
+  const boxes = targets.map((n) => {
+    const r = REGIONS.find((g) => g.nodes.includes(n.id));
+    return r ? { l: r.x, t: r.y, r: r.x + r.w, b: r.y + r.h } : { l: n.x, t: n.y - 40, r: n.x + W, b: n.y + h(n) };
+  });
+  const minX = Math.min(...boxes.map((b) => b.l)), maxX = Math.max(...boxes.map((b) => b.r));
+  const minY = Math.min(...boxes.map((b) => b.t)), maxY = Math.max(...boxes.map((b) => b.b));
   const visL = 24, visT = 70, visW = innerWidth - (document.getElementById("insp").offsetWidth + 24) - 48, visH = innerHeight - visT - 120;
   const pad = 48, bw = maxX - minX + pad * 2, bh = maxY - minY + pad * 2;
   const z = Math.max(0.6, Math.min(1, visW / bw, visH / bh));
@@ -1615,11 +1761,45 @@ addEventListener("keydown", (e) => {
   if (e.key === "f" && !e.target.closest("input,textarea")) { follow = !follow; syncFollow(); if (follow) camera(); }
 });
 document.getElementById("world").addEventListener("click", (e) => { const el = e.target.closest(".nd"); if (el) select(el.dataset.node, false); });
+/* 键盘浏览：左右按链路顺序，上下换到相邻的链，Home / End 到第一个、最后一个节点 */
+function neighbor(id, key) {
+  const i = NODES.findIndex((n) => n.id === id), n = NODES[i];
+  if (key === "Home") return NODES[0];
+  if (key === "End") return NODES.at(-1);
+  if (key === "ArrowRight") return NODES[(i + 1) % NODES.length];
+  if (key === "ArrowLeft") return NODES[(i + NODES.length - 1) % NODES.length];
+  const dir = key === "ArrowDown" ? 1 : -1;
+  const cand = NODES.filter((m) => (m.y - n.y) * dir > 40);
+  if (!cand.length) return n;
+  return cand.reduce((best, m) => (Math.abs(m.y - n.y) * 4 + Math.abs(m.x - n.x) < Math.abs(best.y - n.y) * 4 + Math.abs(best.x - n.x) ? m : best));
+}
+function setCursor(id) {
+  cursor = id;
+  document.querySelectorAll("#world .nd").forEach((el) => (el.tabIndex = el.dataset.node === id ? 0 : -1));
+}
+// 焦点落到镜头外的节点时，把镜头平移过去；为此打断跟随执行
+function reveal(id) {
+  // 用节点在画布上的坐标和镜头的目标位置算，不读 DOM 位置：镜头平移有过渡，过渡中读到的位置是半路上的
+  const n = byId[id], world = document.getElementById("world"), el = world.querySelector(`[data-node="${id}"]`);
+  if (!n || !el) return;
+  const m = /translate\(([-\d.]+)px, ([-\d.]+)px\) scale\(([\d.]+)\)/.exec(world.style.transform);
+  const tx = m ? +m[1] : 0, ty = m ? +m[2] : 0, z = m ? +m[3] : 1;
+  const L = 24, T = 70, R = innerWidth - document.getElementById("insp").offsetWidth - 36, B = innerHeight - 110;
+  const l = tx + n.x * z, t = ty + n.y * z, r = l + W * z, b = t + el.offsetHeight * z;
+  if (l >= L && r <= R && t >= T && b <= B) return;
+  const ntx = tx + (L + R) / 2 - (l + r) / 2, nty = ty + (T + B) / 2 - (t + b) / 2;
+  world.style.transform = `translate(${ntx.toFixed(1)}px, ${nty.toFixed(1)}px) scale(${z})`;
+  if (follow && mode === "run" && !ended()) { follow = false; clearTimeout(camTimer); syncFollow(); hint("键盘浏览时暂停跟随执行；按 F 恢复"); announce("已暂停跟随执行，按 F 恢复"); }
+}
+document.getElementById("world").addEventListener("focusin", (e) => { const el = e.target.closest(".nd"); if (el) { setCursor(el.dataset.node); reveal(el.dataset.node); } });
 document.getElementById("world").addEventListener("keydown", (e) => {
   const el = e.target.closest(".nd"); if (!el) return;
-  const i = NODES.findIndex((n) => n.id === el.dataset.node);
-  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el.dataset.node, true); }
-  if (e.key === "ArrowRight" || e.key === "ArrowLeft") { e.preventDefault(); document.querySelector(`[data-node="${NODES[(i + (e.key === "ArrowRight" ? 1 : NODES.length - 1)) % NODES.length].id}"]`).focus({ preventScroll: true }); }
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(el.dataset.node, true); return; }
+  if (!["ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) return;
+  e.preventDefault();
+  const next = neighbor(el.dataset.node, e.key);
+  setCursor(next.id);
+  document.querySelector(`[data-node="${next.id}"]`).focus({ preventScroll: true });
 });
 document.getElementById("sim-step").addEventListener("click", () => {
   if (ended()) return;
@@ -1636,6 +1816,7 @@ document.getElementById("sim-step").addEventListener("click", () => {
 document.getElementById("sim-reset").addEventListener("click", () => { step = 0; follow = true; selected = null; prevLive = new Set(); clearTimeout(camTimer); hint(""); draw(); camera(); });
 function select(id, viaKeyboard) {
   selected = selected === id ? null : id;
+  cursor = id;
   draw();
   if (viaKeyboard) document.querySelector(`[data-node="${id}"]`)?.focus({ preventScroll: true });
 }
@@ -1644,12 +1825,16 @@ function select(id, viaKeyboard) {
 <script>
 /* ———— 检查器 ———— */
 const LIMIT = 8;
-const pinBtn = (on, title, disabled) => `<button class="pinbtn" aria-pressed="${on}" aria-label="把 ${title} 设为关注项" data-pin="${title}"${disabled ? ' disabled title="本场景的关注项已满 8 个"' : ""}><svg class="i"><use href="#i-pin"/></svg>关注</button>`;
+// 引用的节点不在最新版本里的关注项：照样保留，也占名额
+const MISSING = [{ id: "miss", title: "撮合延迟", node: "probe_lat", ref: "图表 延迟", form: "chart" }];
+const USED = () => FX.length + MISSING.length;
+let lastEdit = { who: "lin", when: "今天 10:02", what: "把「下单延迟」移到第 6 位" }, removed = null;
+const pinBtn = (on, title, disabled) => `<button class="pinbtn" aria-pressed="${on}" aria-label="把 ${title} 设为关注项" data-pin="${title}"${disabled ? ' disabled title="本场景的关注项已满 8 个，先在场景检查器里移除一项"' : ""}><svg class="i"><use href="#i-eye"/></svg>关注</button>`;
 const kv = (pairs) => `<dl class="kv">${pairs.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>`;
 function chartMini(id, c, i) {
   const fx = pinnedChart(id, c.title), r = fx ? reason(fx) : null;
-  return `<div class="mini${fx ? " pinned" : ""}"><div class="ch">${r ? ico("warn") : ""}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.title}</span><span class="last">${c.f(last(c.keys[c.keys.length - 1]))}<small>${c.unit}</small></span>${pinBtn(!!fx, c.title, !fx && FX.length >= LIMIT)}</div>
-    ${r ? `<div class="cap" style="color:var(--warn-fg);margin-top:2px">${r}</div>` : ""}${chartSlot(`cv-${id}-${i}`, c.keys, c.f, c.unit, c.title)}</div>`;
+  return `<div class="mini${fx ? " pinned" : ""}"><div class="ch">${r ? ico("warn") : ""}<span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.title}</span><span class="last">${c.f(last(c.keys[c.keys.length - 1]))}<small>${c.unit}</small></span>${pinBtn(!!fx, c.title, !fx && USED() >= LIMIT)}</div>
+    ${r ? `<div class="cap" style="color:var(--warn-fg);margin-top:2px">${r}</div>` : ""}${chartSlot(`cv-${id}-${i}`, c.keys, c.f, c.unit, c.title, fx && anomaly(fx) === "stale" ? fx.age : 0)}</div>`;
 }
 function runInspector() {
   if (!selected) {
@@ -1665,33 +1850,36 @@ function runInspector() {
   const took = st === "pending" ? "—" : ELAPSED[n.id] ?? (st === "running" ? "3s" : "12ms");
   const info = kv([["运行", "7f3a91c2 · v7"], ...(n.agent ? [["Agent", n.agent]] : []), ["耗时", took], ["尝试", st === "pending" ? "—" : "1"]]);
   if (st === "pending") return `${head}<div class="ib">${info}<p class="hint">还没有开始执行。${fxOf(n.id).length ? `开始后这里显示它的图表，其中 ${fxOf(n.id).length} 张是关注项。` : ""}</p></div>`;
-  const sorted = charts ? [...charts].sort((a, b) => !!pinnedChart(selected, b.title) - !!pinnedChart(selected, a.title)) : null;
-  const sec = sorted ? `<div class="isec"><div class="sh"><h3>图表</h3><span class="mono cap fg3">${charts.length}${selected === "proc_mon" ? " / 10" : selected === "sys_mon" ? " / 9" : ""}</span><span class="rule"></span><span class="cap fg3">关注项排在前面</span></div><div class="minis">${sorted.map((c, i) => chartMini(selected, c, i)).join("")}</div>
+  const rank = (c) => { const fx = pinnedChart(selected, c.title); return fx ? (anomaly(fx) ? 0 : 1) : 2; };
+  const sorted = charts ? [...charts].sort((a, b) => rank(a) - rank(b)) : null;
+  const sec = sorted ? `<div class="isec"><div class="sh"><h3>图表</h3><span class="mono cap fg3">${charts.length}${selected === "proc_mon" ? " / 10" : selected === "sys_mon" ? " / 9" : ""}</span><span class="rule"></span><span class="cap fg3">有异常的关注项排最前</span></div><div class="minis">${sorted.map((c, i) => chartMini(selected, c, i)).join("")}</div>
       <p class="hint">在这里点「关注」立即生效，正在跑的运行也会跟着变，不产生新版本。${selected !== "load" ? "按进程、按网卡的图表在监控页里看。" : ""}</p></div>` : `<p class="hint">这个节点没有声明图表。</p>`;
-  return `${head}<div class="ib">${info}${inspCurrent(selected)}${sec}${inspActions(selected)}<div class="isec"><a class="btn" href="#run" data-jump="${n.id}">在监控页中打开 ${n.id}</a></div></div>`;
+  return `${head}<div class="ib">${info}${inspCurrent(selected)}${sec}${inspActions(selected)}<div class="isec"><a class="btn" href="#run-detail" data-jump="${n.id}">在运行监控详情里打开 ${n.id}</a></div></div>`;
 }
 function tabs(names, on) {
   return `<div class="tabs" role="tablist">${names.map((t) => `<button role="tab" aria-selected="${t === on}" tabindex="${t === on ? 0 : -1}">${t}</button>`).join("")}</div>`;
 }
 function editInspector() {
   if (!selected) {
-    const list = FX.map((it, i) => `<div class="it"><svg class="i grip" style="width:14px;height:14px" aria-hidden="true"><use href="#i-grip"/></svg><div style="min-width:0"><b>${it.title}</b><div class="src">${it.node} · ${it.ref}</div></div><span class="badge">${it.form === "stat" ? "数值" : "图表"}</span>
+    const list = FX.map((it, i) => `<div class="it" data-row="${i}"><svg class="i grip" style="width:14px;height:14px" aria-hidden="true"><use href="#i-grip"/></svg><div style="min-width:0"><b>${it.title}</b><div class="src">${it.node} · ${it.ref}</div></div><span class="badge zh">${it.form === "stat" ? "数值" : "图表"}</span>
       <button class="btn sm ghost mv" data-move="${i}:-1" aria-label="上移 ${it.title}"${i === 0 ? ' aria-disabled="true"' : ""}><svg class="i"><use href="#i-up"/></svg></button>
       <button class="btn sm ghost mv" data-move="${i}:1" aria-label="下移 ${it.title}"${i === FX.length - 1 ? ' aria-disabled="true"' : ""}><svg class="i"><use href="#i-down"/></svg></button>
-      <button class="btn sm ghost mv" aria-label="移除关注项 ${it.title}"><svg class="i"><use href="#i-x"/></svg></button></div>`).join("");
-    const miss = `<div class="it miss"><svg class="i grip" style="width:14px;height:14px" aria-hidden="true"><use href="#i-grip"/></svg><div style="min-width:0"><b>撮合延迟</b><div class="src">probe_lat · 图表 延迟</div><div class="cap fg3">节点 probe_lat 不在最新版本 v7 里，只在运行 v5 及更早版本时显示</div></div><span class="badge">图表</span><span></span><span></span><button class="btn sm ghost mv" aria-label="移除关注项 撮合延迟"><svg class="i"><use href="#i-x"/></svg></button></div>`;
+      <button class="btn sm ghost mv" data-remove="${i}" aria-label="移除关注项 ${it.title}"><svg class="i"><use href="#i-x"/></svg></button></div>`).join("");
+    const miss = `<div class="it miss"><svg class="i grip" style="width:14px;height:14px" aria-hidden="true"><use href="#i-grip"/></svg><div style="min-width:0"><b>撮合延迟</b><div class="src">probe_lat · 图表 延迟</div><div class="cap fg3">节点 probe_lat 不在最新版本 v7 里，只在运行 v5 及更早版本时显示</div></div><span class="badge zh">图表</span><span></span><span></span><button class="btn sm ghost mv" data-remove="miss" aria-label="移除关注项 撮合延迟"><svg class="i"><use href="#i-x"/></svg></button></div>`;
     return `<div class="ih"><div class="l1">场景</div><h2>撮合浸泡 · 4 小时</h2></div>${tabs(["概况", "关注项", "运行通知"], "关注项")}
-      <div class="ib"><div class="quota">本场景已用 <b>${FX.length}</b> / ${LIMIT}</div>
+      <div class="ib"><div class="quota"><span>本场景已用 <b>${USED()}</b> / ${LIMIT}${MISSING.length ? "（含 1 项只在旧版本运行里显示的）" : ""}</span></div>
+      <p class="edited">最后修改：<b>${lastEdit.who}</b> · ${lastEdit.when}，${lastEdit.what}</p>
+      ${removed ? `<div class="undo" role="status">已移除「${removed.it.title}」，正在跑的运行也去掉了这一项。<button class="btn sm" data-undo>撤销</button></div>` : ""}
       <p class="cap fg2" style="margin:6px 0 0">运行时按这个顺序显示在运行监控的「概览」、控制台和 Agent 管理里；有异常的项临时排到最前。拖动左侧手柄或用上移、下移调整顺序。</p>
-      <div class="flist" style="margin-top:10px">${list}${miss}</div>
+      <div class="flist" style="margin-top:10px">${list}${MISSING.length ? miss : ""}</div>
       <p class="hint">关注项属于场景设置，不属于版本：改动立即生效，正在跑的运行也会跟着变，不产生新版本。要添加：选中节点，在「说明与指标」里对图表点「关注」。</p></div>`;
   }
   const charts = CHARTS.load;
-  const full = FX.length >= LIMIT;
+  const full = USED() >= LIMIT;
   return `<div class="ih"><div class="l1">load · 包节点</div><h2>下单压测</h2><div class="ty">trade-sim/order_load@2.3.1</div></div>${tabs(["参数", "执行", "说明与指标"], "说明与指标")}
     <div class="ib">${kv([["节点 ID", "load"], ["节点类型", "trade-sim/order_load"], ["版本", "2.3.1（最新）"]])}
       <div class="isec"><div class="sh"><h3>图表</h3><span class="mono cap fg3">5</span><span class="rule"></span></div>
-        <div class="quota">本场景的关注项已用 <b>${FX.length}</b> / ${LIMIT}${full ? "，已满：先在场景检查器里移除一项" : ""}</div>
+        <div class="quota"><span>本场景的关注项已用 <b>${USED()}</b> / ${LIMIT}${full ? "，已满（含 1 项只在旧版本运行里显示的）：先在场景检查器里移除一项" : ""}</span></div>
         <div class="decl" style="margin-top:8px">${charts.map((c) => `<span class="nm" style="font-family:var(--sans);font-weight:500">${c.title}<span>${c.type} <span class="mono">${c.metrics}</span></span></span>${pinBtn(!!pinnedChart("load", c.title), c.title, !pinnedChart("load", c.title) && full)}`).join("")}</div></div>
       <p class="hint">点「关注」把这张图表设为场景的关注项：数值卡显示成数值，其余照声明画。图表的样式来自节点包，随锁定的版本走；设成关注项不产生新版本，立即生效。</p></div>`;
 }
@@ -1708,10 +1896,29 @@ document.addEventListener("click", (e) => {
     const [i, d] = mv.dataset.move.split(":").map(Number);
     const [it] = FX.splice(i, 1);
     FX.splice(i + d, 0, it);
+    lastEdit = { who: "lin", when: "刚刚", what: `把「${it.title}」移到第 ${i + d + 1} 位` };
+    removed = null;
     draw();
     renderShell();
     announce(`${it.title} 移到第 ${i + d + 1} 位，共 ${FX.length} 项`);
     document.querySelector(`[data-move="${i + d}:${d}"]`)?.focus();
+  }
+  const rm = e.target.closest("[data-remove]");
+  if (rm) {
+    const key = rm.dataset.remove;
+    const it = key === "miss" ? MISSING.splice(0, 1)[0] : FX.splice(+key, 1)[0];
+    removed = { it, at: key === "miss" ? "miss" : +key };
+    lastEdit = { who: "lin", when: "刚刚", what: `移除了「${it.title}」` };
+    draw(); renderShell();
+    announce(`已移除 ${it.title}，可以撤销`);
+    document.querySelector("[data-undo]")?.focus();
+  }
+  if (e.target.closest("[data-undo]") && removed) {
+    if (removed.at === "miss") MISSING.unshift(removed.it); else FX.splice(removed.at, 0, removed.it);
+    lastEdit = { who: "lin", when: "刚刚", what: `撤销了移除「${removed.it.title}」` };
+    const t = removed.it.title; removed = null;
+    draw(); renderShell();
+    announce(`已恢复 ${t}`);
   }
   const pick = e.target.closest("[data-pick]");
   if (pick) select(pick.dataset.pick, false);
@@ -1723,8 +1930,11 @@ document.addEventListener("keydown", (e) => {
 
 /* ———— 画布页的外框 ———— */
 function draw() {
+  // 重画节点会丢掉焦点：记下焦点在哪个节点上，画完放回去
+  const had = document.activeElement?.closest?.("#world .nd")?.dataset.node;
   window.__canvasReady = true;
   renderCanvas();
+  if (had) document.querySelector(`[data-node="${had}"]`)?.focus({ preventScroll: true });
   document.getElementById("insp").innerHTML = mode === "run" ? runInspector() : editInspector();
   window.__canvasReady = false;
   renderCharts(document.getElementById("insp"));
@@ -1744,24 +1954,34 @@ function draw() {
 
 /* ———— 运行监控：概览 / 详情（标签页） ———— */
 function runTab(t, note) {
+  const want = t === "detail" ? "#run-detail" : "#run";
+  if (location.hash !== want) history.replaceState(null, "", want);
   document.querySelectorAll("[data-runpane]").forEach((p) => (p.hidden = p.dataset.runpane !== t));
   document.querySelectorAll('.mtop [role="tab"]').forEach((b) => { const on = b.dataset.runtab === t; b.classList.toggle("on", on); b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1; });
-  if (note) document.querySelector("[data-detail-note]").textContent = `已展开 ${note} 的分组并滚到它（原型省略了图表区）。`;
+  const nt = document.querySelector("[data-detail-note]");
+  nt.hidden = !note;
+  if (note) nt.textContent = `原型说明：已在时间线上定位到 ${note}，图表区里展开它的分组（图表区原型省略）。`;
   if (t === "ov") renderCharts(document.getElementById("pane-ov"));
   if (t === "detail") drawDetail();
 }
 document.querySelectorAll("[data-runtab]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.bp) bpTab = b.dataset.bp; runTab(b.dataset.runtab); }));
 document.querySelector('.mtop [role="tablist"]').addEventListener("keydown", (e) => {
-  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
-  const next = document.querySelector('.mtop [role="tab"][aria-selected="false"]');
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+  e.preventDefault();
+  const tabs = [...document.querySelectorAll('.mtop [role="tab"]')];
+  const next = e.key === "Home" ? tabs[0] : e.key === "End" ? tabs.at(-1) : document.querySelector('.mtop [role="tab"][aria-selected="false"]');
   runTab(next.dataset.runtab); next.focus();
 });
 document.addEventListener("click", (e) => {
   const j = e.target.closest("[data-jump]");
   if (!j) return;
   e.preventDefault();
-  if (!location.hash.startsWith("#run")) { location.hash = "#run"; setTimeout(() => runTab("detail", j.dataset.jump), 0); }
-  else runTab("detail", j.dataset.jump);
+  detailScope = j.dataset.jump;
+  bpTab = j.dataset.bp || (ACT_NODES[detailScope] ? "act" : "log");
+  logHit = j.dataset.at ? sec(j.dataset.at) : null;
+  actName = ""; actFail = false; pendingNote = detailScope;
+  if (location.hash !== "#run-detail") location.hash = "#run-detail";
+  else { runTab("detail", pendingNote); pendingNote = null; }
 });
 
 /* ———— 路由与启动 ———— */
@@ -1777,7 +1997,7 @@ function show() {
   if (crumb) document.querySelector("[data-crumb]").textContent = crumb;
   if (view === "shell") renderShell();
   if (key === "run") runTab("ov");
-  if (key === "run-detail") runTab("detail");
+  if (key === "run-detail") { runTab("detail", pendingNote); pendingNote = null; }
   if (view === "v-canvas") {
     mode = key === "canvas-run" ? "run" : "edit";
     selected = key === "canvas-edit" ? "load" : key === "canvas-scene" ? null : selected === "load" && mode === "run" ? selected : null;
