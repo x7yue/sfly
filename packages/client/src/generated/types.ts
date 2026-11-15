@@ -606,6 +606,56 @@ export interface FeishuTestResult {
 /** Webhook 地址：必须是 http 或 https 地址，不含空白字符。 */
 export type FeishuWebhookUrl = string;
 
+/** 关注项最后一次修改：谁、什么时候（控制面时间）、一句话说明改了什么（控制面比较新旧列表生成）。 */
+export interface FocusEditView {
+	/** 修改人的昵称。 */
+	updated_by: string;
+	updated_at: Timestamp;
+	/** 例如「添加了「TPS」」「把「下单延迟」移到第 6 位」「撤销了移除「TPS」」「复制自「撮合浸泡」」。 */
+	summary: string;
+}
+
+/**
+ * 请求里的一个关注项（GLOSSARY「关注项」）：来源节点的 ID，和图表的标题（按标题引用，节点包元信息不给图表加 ID），
+ * 以及场景作者起的名字：不写、或者去掉首尾空白后为空，都是没起名，显示时用图表标题。名字只能写一行。
+ */
+export interface FocusItemInput {
+	node_id: string;
+	chart: string;
+	title?: string;
+}
+
+/**
+ * 关注项和场景最新版本的对照（`status`）：
+ *
+ * - `ok`：节点在最新版本里，它锁定的节点包版本声明了这张图表（含平台为没被图表引用的指标生成的默认图表）。
+ * - `node_missing`：节点不在最新版本里。`last_version` 是包含它的最后一个版本号；没有任何版本包含它时为 null
+ *   （复制场景时带过来的关注项）。运行绑定在这个版本及更早的版本时，这一项照常显示。
+ * - `chart_missing`：节点还在，但它锁定的节点包版本没有这张图表（图表改了标题、节点类型换了，或者节点已不是包节点）。
+ *
+ * 失效的项（后两种）保留在列表里，也占名额。
+ */
+export type FocusItemView = {
+	node_id: string;
+	chart: string;
+	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
+	title?: string;
+	status: "ok";
+} | {
+	node_id: string;
+	chart: string;
+	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
+	title?: string;
+	status: "node_missing";
+	last_version: number | null;
+} | {
+	node_id: string;
+	chart: string;
+	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
+	title?: string;
+	status: "chart_missing";
+};
+
 /** 最近一次节点包安装状态（Agent 上报 InstallStatus）。 */
 export interface InstallProgressView {
 	package: string;
@@ -1026,6 +1076,10 @@ export interface OrchestrationView {
 	/** 归档时间；没有归档时为 null。 */
 	archived_at: Timestamp | null;
 	run_notification: RunNotificationSettings;
+	/** 关注项，按作者设定的顺序；每项带它在最新版本里的状态。场景列表不带这个字段。 */
+	focus_items: FocusItemView[];
+	/** 关注项最后一次修改；从没改过（也没有复制过关注项）时为 null。 */
+	focus_edit: FocusEditView | null;
 }
 
 /** 节点包名：小写字母、数字、`-`、`_`，以字母或数字开头。 */

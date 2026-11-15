@@ -17,6 +17,13 @@ import {
 } from "./editor-support";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
+	createFocusScenario,
+	focusDocument,
+	saveVersion,
+	selectMetricsTab,
+	setFocusItems,
+} from "./focus-support";
+import {
 	connPoint,
 	labeledRun,
 	largeScenario,
@@ -1080,6 +1087,30 @@ test("编排画布：检查器「说明与指标」", async ({ page, controlPlan
 	await expect(page.getByRole("list", { name: "图表" })).toBeVisible();
 	await page.mouse.move(700, 760);
 	await expect(page).toHaveScreenshot("editor-inspector-metrics.png");
+});
+
+test("编排画布：检查器「说明与指标」里的关注开关（已按下、禁用，名额已满且含失效的项）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await twoAgents(connectAgent);
+	const id = await createFocusScenario(controlPlane);
+	await setFocusItems(controlPlane, id, [
+		...["延迟", "吞吐", "请求数", "errors"].map((chart) => ({ node_id: "fetch", chart })),
+		...["延迟", "吞吐"].map((chart) => ({ node_id: "fetch2", chart })),
+		...["level", "total"].map((chart) => ({ node_id: "ping", chart })),
+	]);
+	await saveVersion(controlPlane, id, 1, {
+		...focusDocument,
+		nodes: focusDocument.nodes.filter((n) => n.id !== "ping"),
+		edges: focusDocument.edges.filter((e) => e.to !== "ping"),
+	});
+	await page.goto(`/orchestrations/${id}`);
+	await expect(nodeCard(page, "fetch2")).toBeVisible();
+	await selectMetricsTab(page, "fetch2");
+	await page.mouse.move(700, 760);
+	await expect(page).toHaveScreenshot("editor-inspector-focus-toggles.png");
 });
 
 test("编排画布：运行状态（选中失败尝试后重试中的节点）", async ({

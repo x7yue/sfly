@@ -713,7 +713,9 @@ function Editor({
 	useShortcut("canvas-run", () => setTriggering(true), !running);
 
 	const context: InspectorContext = {
+		orchestrationId: orchestration.id,
 		doc,
+		saved: versioning.base.document,
 		catalog,
 		info,
 		packages: packages.data?.packages,
