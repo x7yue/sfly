@@ -1233,6 +1233,8 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	await page.clock.setFixedTime(clock.now());
 	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	// 跟随执行把镜头平移到执行中的节点（缩放正好到 100%）：等平移停下再点节点，点击会打断还在进行的平移。
+	await expect(page.locator(".react-flow__viewport")).toHaveAttribute("style", /scale\(1\)/);
 	await nodeCard(page, "verify").click();
 	await expect(page.getByTestId("run-attempts")).toHaveText("2");
 	for (const id of ["fetch", "verify", "probe"]) {
