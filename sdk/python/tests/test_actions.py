@@ -646,7 +646,7 @@ def test_the_per_name_cap_warning_for_marks_says_mark_and_has_no_failure_backfil
     warnings = [e["message"] for e in only(events(), "log")]
     assert len(warnings) == 1, warnings
     assert "'收到成交'" in warnings[0] and "50000" in warnings[0]
-    assert "标记" in warnings[0] and "按批或按阶段记录标记" in warnings[0]
+    assert "标记" in warnings[0] and "按批记录标记" in warnings[0]
     assert "动作" not in warnings[0] and "失败" not in warnings[0], warnings[0]
 
 
@@ -719,7 +719,7 @@ def test_the_total_cap_warning_names_both_actions_and_marks_whichever_hits_it(
     warnings = [e["message"] for e in only(events(), "log")]
     assert len(warnings) == 1, warnings
     assert "100000" in warnings[0] and "标记" in warnings[0] and "动作" in warnings[0]
-    assert "按批或按阶段记录动作和标记" in warnings[0] and "指标" in warnings[0]
+    assert "按批记录动作和标记" in warnings[0] and "指标" in warnings[0]
 
 
 def test_a_failure_whose_detail_the_total_cap_drops_after_a_late_one_still_warns(
