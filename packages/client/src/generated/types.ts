@@ -675,7 +675,8 @@ export type FocusItemView = {
 /** 读数的最新值：最近更新的那个序列的最后一个点。 */
 export interface FocusLatest {
 	value: number;
-	/** 这个点所在序列的标签；不带标签的序列为 `{}`。 */
+	/** 这个点所在序列的指标名和标签；不带标签的序列标签为 `{}`。 */
+	metric: MetricName;
 	labels: MetricLabels;
 	/** 这个点的控制面时间（按秒取整）。 */
 	at: Timestamp;

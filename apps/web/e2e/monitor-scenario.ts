@@ -216,10 +216,10 @@ export async function runningScenario(
 	return { runId, scenarioId, agent, tasks: { fetch, ...first, verify: retry } };
 }
 
-/** 打开监控页：浏览器时间固定在手动时钟的当前时刻。 */
+/** 打开监控页的「详情」（原来的页面）：浏览器时间固定在手动时钟的当前时刻。 */
 export async function openMonitor(page: Page, clock: ManualClock, runId: string, node?: string) {
 	await page.clock.setFixedTime(clock.now());
-	await page.goto(`/runs/${runId}${node ? `?node=${node}` : ""}`);
+	await page.goto(`/runs/${runId}?view=detail${node ? `&node=${node}` : ""}`);
 	await expect(page.getByRole("region", { name: "链路时间线" })).toBeVisible();
 }
 

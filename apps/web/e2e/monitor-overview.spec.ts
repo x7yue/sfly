@@ -1,0 +1,345 @@
+import type { AssignedTask } from "../../server/test/support/fake-agent.js";
+import { ErrorKind } from "../../server/test/support/fake-agent.js";
+import { expect, test } from "./fixtures";
+import { openMonitor, pingPoints, runningScenario, unixAt } from "./monitor-scenario";
+import { focusChart, openOverview, overviewRun, readouts, viewTab } from "./overview-support";
+
+// 运行监控「概览」（#344）：概览 / 详情标签页、地址与记住的视图、关注项读数与图表、没设关注项时的主指标。
+
+const timeline = (page: import("@playwright/test").Page) =>
+	page.getByRole("region", { name: "链路时间线" });
+
+test("默认打开概览，地址跟着视图变，刷新后停在上次的视图；链接里写明的视图优先于记住的视图", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await page.clock.setFixedTime(clock.now());
+
+	// 第一次打开：概览，当前视图写进地址。
+	await page.goto(`/runs/${runId}`);
+	await expect(viewTab(page, "概览")).toHaveAttribute("aria-selected", "true");
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=overview$`));
+	await expect(page.getByRole("heading", { name: "链路", level: 2, exact: true })).toBeVisible();
+	await expect(timeline(page)).toHaveCount(0);
+
+	// 切到详情：就是原来的页面。
+	await viewTab(page, "详情").click();
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail$`));
+	await expect(timeline(page)).toBeVisible();
+	await expect(page.getByRole("heading", { name: "链路", level: 2, exact: true })).toHaveCount(0);
+
+	// 刷新停在详情；不带视图打开同一个运行，浏览器记住的上次视图是详情。
+	await page.reload();
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+	await page.goto(`/runs/${runId}`);
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail$`));
+
+	// 链接里写明的视图优先：发给同事的链接停在同一处，不看对方记住了什么。
+	await page.goto(`/runs/${runId}?view=overview`);
+	await expect(viewTab(page, "概览")).toHaveAttribute("aria-selected", "true");
+	await expect(page.getByRole("heading", { name: "链路", level: 2, exact: true })).toBeVisible();
+
+	// 切回概览之后，不带视图再打开，回到概览。
+	await viewTab(page, "详情").click();
+	await viewTab(page, "概览").click();
+	await page.goto(`/runs/${runId}`);
+	await expect(viewTab(page, "概览")).toHaveAttribute("aria-selected", "true");
+});
+
+test("标签页是 tablist：方向键、Home、End 切换并移动焦点，只有选中的标签在 Tab 顺序里", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	const overview = viewTab(page, "概览");
+	const detail = viewTab(page, "详情");
+	await expect(page.getByRole("tablist", { name: "运行监控视图" })).toBeVisible();
+	await expect(overview).toHaveAttribute("tabindex", "0");
+	await expect(detail).toHaveAttribute("tabindex", "-1");
+
+	await overview.focus();
+	await page.keyboard.press("ArrowRight");
+	await expect(detail).toHaveAttribute("aria-selected", "true");
+	await expect(detail).toBeFocused();
+	await expect(timeline(page)).toBeVisible();
+	await expect(page).toHaveURL(/view=detail/);
+
+	await page.keyboard.press("ArrowRight");
+	await expect(overview).toHaveAttribute("aria-selected", "true");
+	await expect(overview).toBeFocused();
+	await page.keyboard.press("End");
+	await expect(detail).toBeFocused();
+	await expect(detail).toHaveAttribute("aria-selected", "true");
+	await page.keyboard.press("Home");
+	await expect(overview).toBeFocused();
+	await expect(overview).toHaveAttribute("aria-selected", "true");
+	await page.keyboard.press("ArrowLeft");
+	await expect(detail).toBeFocused();
+	await expect(page.getByRole("tabpanel", { name: "详情", exact: true })).toBeVisible();
+});
+
+test("失败和取消的运行总是先打开详情：失败的运行定位到失败的节点，记住概览也一样", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	await agent.succeed(tasks.probe as AssignedTask);
+	await agent.fail(tasks.verify as AssignedTask, "AssertionError: 仍然漏拦", ErrorKind.NODE_ERROR);
+	const cleanup = await agent.nextAssign();
+	clock.advance(1000);
+	await agent.succeed(cleanup);
+	await page.clock.setFixedTime(clock.now());
+	// 浏览器记住的是概览。
+	await page.addInitScript(() => window.localStorage.setItem("sfly.monitor.view", "overview"));
+
+	await page.goto(`/runs/${runId}`);
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail$`));
+	await expect(timeline(page).locator('[data-node-row="verify"] button')).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+
+	// 用户自己切到概览，地址里写明的视图被尊重。
+	await viewTab(page, "概览").click();
+	await expect(page.getByRole("heading", { name: "链路", level: 2, exact: true })).toBeVisible();
+	await page.reload();
+	await expect(viewTab(page, "概览")).toHaveAttribute("aria-selected", "true");
+});
+
+test("取消的运行也先打开详情", async ({ page, controlPlane, connectAgent, clock }) => {
+	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const res = await controlPlane.fetch(`/runs/${runId}/cancel`, {
+		method: "POST",
+		headers: { "content-type": "application/json", "x-sfly-nickname": "tester" },
+		body: "{}",
+	});
+	expect(res.status).toBe(200);
+	for (const task of [tasks.probe, tasks.verify] as AssignedTask[]) {
+		await agent.nextCancel();
+		await agent.cancelled(task);
+	}
+	// 清理节点（always）照常执行，之后运行才是已取消。
+	await agent.succeed(await agent.nextAssign());
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/runs/${runId}`);
+	await expect(page.getByRole("banner").getByTestId("run-status")).toHaveText("已取消");
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+});
+
+test("读数：数值类的关注项排成一条，写状态形状、名称、最新值、来源节点和多久前；累计值就是当前累计，成功的节点是最终值", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+
+	const heading = page.getByRole("heading", { name: "关注项", level: 2 });
+	await expect(heading).toBeVisible();
+	await expect(page.getByTestId("focus-count")).toHaveText("6");
+	await expect(readouts(page).getByRole("listitem")).toHaveCount(2);
+
+	// 执行中的 probe：累计值 total 是 16（当前累计，不是速率），最后一个点在 1 秒前。
+	const total = readouts(page).getByRole("button", {
+		name: "total 16，来自 probe（执行中），1s 前",
+	});
+	await expect(total).toBeVisible();
+	await expect(total).toContainText("total");
+	await expect(total).toContainText("16");
+	await expect(total).toContainText("probe · 1s 前");
+	await expect(total.locator('[data-status-dot="running"]')).toHaveCount(1);
+
+	// 已成功的 fetch：最终值，状态形状是成功。
+	const errors = readouts(page).getByRole("button", {
+		name: "errors 1 次，来自 fetch（成功），最终值",
+	});
+	await expect(errors).toContainText("1次");
+	await expect(errors).toContainText("fetch · 最终值");
+	await expect(errors.locator('[data-status-dot="ok"]')).toHaveCount(1);
+
+	// 读数按作者的顺序：probe 的 total 在前（第 4 个），fetch 的 errors 在后（第 5 个）。
+	await expect(readouts(page).getByRole("button")).toHaveText([/total/, /errors/]);
+});
+
+test("图表：按作者的顺序两列排开，纵轴从 0 开始，多条线有图例，还没开始的节点写明原因", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+
+	const titles = page.locator("[data-focus-chart] h3");
+	await expect(titles).toHaveText(["下单延迟", "探活 level", "请求数", "清理 level"]);
+
+	// 两列：第一行两张图表并排，第二行在下面。
+	const boxes = await page.locator("[data-focus-chart]").evaluateAll((els) =>
+		els.map((el) => {
+			const r = el.getBoundingClientRect();
+			return { x: Math.round(r.x), y: Math.round(r.y) };
+		}),
+	);
+	expect(boxes[0]?.y).toBe(boxes[1]?.y);
+	expect(boxes[0]?.x).toBeLessThan(boxes[1]?.x ?? 0);
+	expect(boxes[2]?.y).toBeGreaterThan(boxes[0]?.y ?? 0);
+
+	// 下单延迟：来源 fetch 已成功，读数是最近更新的那条线（latency_ms），有两条线的图例；纵轴从 0 开始。
+	const latency = focusChart(page, "下单延迟");
+	await expect(latency).toContainText("latency_ms");
+	await expect(latency).toContainText("50");
+	await expect(latency).toContainText("fetch · 最终值");
+	const legend = latency.getByRole("list", { name: "图例" });
+	await expect(legend.getByRole("listitem")).toHaveText(["latency_ms", "p99_ms"]);
+	const plot = latency.getByRole("img", { name: /^下单延迟/ });
+	await expect(plot.locator("text").first()).toHaveText("0");
+	await expect(plot.locator("polyline")).toHaveCount(2);
+	await expect(plot).toHaveAccessibleName("下单延迟 latency_ms 50 ms，来自 fetch（成功），最终值");
+
+	// 柱状图画柱，不画线。
+	const bars = focusChart(page, "请求数").getByRole("img", { name: /^请求数/ });
+	await expect(bars.locator("rect")).not.toHaveCount(0);
+	await expect(bars.locator("polyline")).toHaveCount(0);
+
+	// 还没开始执行的 cleanup：没有数据，写明原因。
+	await expect(focusChart(page, "清理 level")).toContainText("还没有开始执行");
+	await expect(focusChart(page, "清理 level")).toContainText("cleanup · 尚未开始");
+});
+
+test("点任何一项都进入详情，并定位到它所在的节点", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+
+	await readouts(page)
+		.getByRole("button", { name: /^total 16/ })
+		.click();
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail&node=probe$`));
+	await expect(timeline(page).locator('[data-node-row="probe"] button')).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+
+	await viewTab(page, "概览").click();
+	await focusChart(page, "下单延迟").getByRole("button", { name: "在详情里打开 fetch" }).click();
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail&node=fetch$`));
+	await expect(timeline(page).locator('[data-node-row="fetch"] button')).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+});
+
+test("链路：各链的进度，下面一行写执行中的节点、Agent、尝试号和已执行的时长", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+
+	const chains = page.getByRole("list", { name: "各链进度" });
+	await expect(chains.getByRole("listitem")).toHaveCount(2);
+	await expect(chains.getByRole("listitem").first()).toContainText("主链");
+	await expect(chains.getByRole("listitem").first()).toContainText("3 / 5");
+	await expect(chains.getByRole("img", { name: "主链 3/5" })).toBeVisible();
+	await expect(chains.getByRole("listitem").nth(1)).toContainText("子流程 sub");
+
+	const running = page.getByRole("list", { name: "执行中的节点" });
+	await expect(running.getByRole("listitem")).toHaveCount(2);
+	await expect(running.getByRole("listitem").filter({ hasText: "verify" })).toContainText(
+		"agent-a · 尝试 2 · 5.0s",
+	);
+	await expect(running.getByRole("listitem").filter({ hasText: "probe" })).toContainText(
+		"agent-a · 尝试 1 · 8.0s",
+	);
+});
+
+test("场景没设关注项：显示执行中节点的主指标，并给出「设置关注项」的入口", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+
+	await expect(page.getByRole("heading", { name: "执行中节点的主指标", level: 2 })).toBeVisible();
+	await expect(page.getByText("场景没有设置关注项")).toBeVisible();
+	await expect(page.getByRole("link", { name: "设置关注项" })).toHaveAttribute(
+		"href",
+		`/orchestrations/${scenarioId}`,
+	);
+
+	// 执行中的 verify（第 2 次尝试）和 probe 各一项；主指标 level 是瞬时值，写最近一个点。
+	const clock0 = Date.parse("2026-01-01T00:00:00.000Z");
+	const last = (base: number, from: number) => {
+		const level = pingPoints(clock0, from, 13, base).filter(([name]) => name === "level");
+		return level.at(-1)?.[2];
+	};
+	const items = readouts(page).getByRole("button");
+	await expect(items).toHaveCount(2);
+	await expect(items.nth(0)).toHaveAccessibleName(
+		`level ${last(5, 9)}，来自 verify（执行中），1s 前`,
+	);
+	await expect(items.nth(1)).toHaveAccessibleName(
+		`level ${last(3, 6)}，来自 probe（执行中），1s 前`,
+	);
+	await expect(page.getByTestId("focus-count")).toHaveCount(0);
+});
+
+test("运行中每 2 秒刷新：新上报的点出现在读数里，不用刷新页面；运行结束后读数变成最终值", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	await expect(
+		readouts(page).getByRole("button", { name: "total 16，来自 probe（执行中），1s 前" }),
+	).toBeVisible();
+
+	const clock0 = Date.parse("2026-01-01T00:00:00.000Z");
+	agent.metrics(tasks.probe as AssignedTask, [["total", unixAt(clock0, 14), 18]]);
+	await agent.sync();
+	clock.advance(1000);
+	await expect(
+		readouts(page).getByRole("button", { name: "total 18，来自 probe（执行中），1s 前" }),
+	).toBeVisible();
+
+	// probe 成功后：最终值，不再「多久前」。
+	await agent.succeed(tasks.probe as AssignedTask);
+	await expect(
+		readouts(page).getByRole("button", { name: "total 18，来自 probe（成功），最终值" }),
+	).toBeVisible();
+});
+
+test("详情不受影响：用 view=detail 打开就是原来的页面", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId);
+	await expect(page.getByRole("region", { name: "图表工作区" })).toBeVisible();
+	await expect(page.getByRole("region", { name: "底部面板" })).toBeVisible();
+});

@@ -100,7 +100,7 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	expect(run.params.api_token).not.toBe("tok-live");
 
 	await drawer.getByRole("link", { name: "打开运行详情" }).click();
-	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?|$)`));
 	await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
@@ -254,7 +254,7 @@ test("引用的 Agent 不在线时提示任务会排队，仍可触发；已有�
 	const notice = drawer.getByRole("status").filter({ hasText: "运行中的运行" });
 	await expect(notice).toContainText(`该场景已有 1 个运行中的运行 ${runId.slice(0, 8)}`);
 	await notice.getByRole("link", { name: "查看" }).click();
-	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?|$)`));
 	await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 

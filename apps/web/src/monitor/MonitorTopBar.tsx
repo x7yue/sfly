@@ -27,6 +27,7 @@ import {
 import { Truncate } from "@/components/ui/truncate";
 import { CancelRunButton } from "./CancelRunDialog";
 import { useMonitorActions, useTimeAxis } from "./monitor-state";
+import type { MonitorView } from "./monitor-view";
 import { RunPresetInfo } from "./RunPresetInfo";
 import {
 	chainLabel,
@@ -40,13 +41,14 @@ import {
 	runStatus,
 } from "./run-model";
 import { COLLAPSE_BUTTON, COLLAPSE_LABEL, MONITOR_TOPBAR_HEIGHT } from "./top-bar";
+import { ViewTabs } from "./ViewTabs";
 
 /** 顶栏最多显示几条链的状态，其余收成「+N」。 */
 const MAX_CHAIN_BADGES = 4;
 
 /**
  * 运行监控页顶栏（原型 monitorHTML 的 `.mon-top`）：返回、场景名与版本、触发人 / 开始时间 / 已运行时长、
- * 运行切换（同场景的其他运行）、运行状态、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
+ * 运行切换（同场景的其他运行）、运行状态、「概览 / 详情」标签页、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
  * 在画布中查看、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
@@ -55,10 +57,14 @@ export function MonitorTopBar({
 	run,
 	name,
 	failureInBanner,
+	view,
+	onViewChange,
 }: {
 	run: RunView;
 	name: string | undefined;
 	failureInBanner: boolean;
+	view: MonitorView;
+	onViewChange: (view: MonitorView) => void;
 }) {
 	const { now, live } = useTimeAxis();
 	const paused = useMotionPaused();
@@ -106,6 +112,7 @@ export function MonitorTopBar({
 				</StatusPill>
 			</output>
 			{run.preset && <RunPresetInfo preset={run.preset} />}
+			<ViewTabs view={view} onChange={onViewChange} />
 			{failure && !failureInBanner && <FailureSummary failure={failure} />}
 			<ul
 				aria-label="各链状态"

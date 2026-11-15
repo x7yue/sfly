@@ -25,6 +25,7 @@ export const TERM = {
 	metric: "指标",
 	chart: "图表",
 	primaryMetric: "主指标",
+	focusItem: "关注项",
 	displayName: "显示名称",
 	note: "备注",
 	annotation: "注释框",

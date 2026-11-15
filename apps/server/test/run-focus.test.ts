@@ -124,7 +124,7 @@ describe("运行的关注项读数", () => {
 				started_at: iso(0),
 				ended_at: null,
 			},
-			latest: { value: 30, labels: {}, at: iso(3) },
+			latest: { value: 30, metric: "p99", labels: {}, at: iso(3) },
 			last_at: iso(3),
 			bucket_seconds: 1,
 			final: false,
@@ -374,13 +374,18 @@ describe("运行的关注项读数", () => {
 			["cpu", { pid: "100" }, 9],
 			["cpu", { pid: "200" }, 4],
 		]);
-		expect(cpu?.latest).toEqual({ value: 19, labels: { pid: "100" }, at: iso(9) });
+		expect(cpu?.latest).toEqual({
+			value: 19,
+			metric: "cpu",
+			labels: { pid: "100" },
+			at: iso(9),
+		});
 		expect(cpu?.last_at).toBe(iso(9));
 		// 数值卡「合计」引用 mem 和 total，只画第一个指标；total 更新得更晚也不影响。
 		expect(total).toMatchObject({
 			chart_type: "stat",
 			unit: "MB",
-			latest: { value: 640, labels: {}, at: iso(3) },
+			latest: { value: 640, metric: "mem", labels: {}, at: iso(3) },
 		});
 		expect(total?.series.map((s) => s.metric)).toEqual(["mem"]);
 
@@ -388,7 +393,12 @@ describe("运行的关注项读数", () => {
 		agent.metrics(task, [point("cpu", 12, 99, { pid: "200" })]);
 		await agent.sync();
 		[cpu, total] = (await focus(runId)).items;
-		expect(cpu?.latest).toEqual({ value: 99, labels: { pid: "200" }, at: iso(12) });
+		expect(cpu?.latest).toEqual({
+			value: 99,
+			metric: "cpu",
+			labels: { pid: "200" },
+			at: iso(12),
+		});
 		expect(cpu?.last_at).toBe(iso(12));
 	});
 

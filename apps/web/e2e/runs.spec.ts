@@ -45,7 +45,7 @@ test("进行中的运行显示为卡片：场景、版本、时长、各链进�
 	await expect(card.getByRole("listitem")).toHaveText([/verify.*执行中.*3 \/ 10/]);
 
 	await card.getByRole("link", { name: "打开运行详情" }).click();
-	await expect(page).toHaveURL(`/runs/${runId}`);
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?|$)`));
 });
 
 test("历史运行显示为表格：编号、场景、状态与失败节点、进度、版本、触发人、开始时间、耗时", async ({
@@ -78,7 +78,7 @@ test("历史运行显示为表格：编号、场景、状态与失败节点、�
 	await expect(table.getByRole("row").nth(1)).toContainText(failed.slice(0, 8));
 
 	await failedRow.click();
-	await expect(page).toHaveURL(`/runs/${failed}`);
+	await expect(page).toHaveURL(new RegExp(`/runs/${failed}(\\?|$)`));
 });
 
 test("按状态、场景、编号或触发人筛选，筛选条件放在地址里", async ({
@@ -255,7 +255,7 @@ test("列表页的键盘：/ 聚焦搜索框，↓ 与 J / K 从进行中的卡�
 	await page.keyboard.press("j");
 	await expectFocusVisible(row.getByRole("link", { name: done.slice(0, 8) }));
 	await page.keyboard.press("Enter");
-	await expect(page).toHaveURL(`/runs/${done}`);
+	await expect(page).toHaveURL(new RegExp(`/runs/${done}(\\?|$)`));
 });
 
 test("历史运行表：场景列吃掉多出来的宽度，其余列按内容收紧，宽屏上编号、状态、开始、耗时聚在一起；场景名被截断时悬停显示全文", async ({

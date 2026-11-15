@@ -307,7 +307,12 @@ function itemOf(
 			ended_at: isoOrNull(attempt?.endedAt ?? null),
 		},
 		latest: latest
-			? { value: latest.end.value, labels: latest.series.labels, at: iso(latest.end.at) }
+			? {
+					value: latest.end.value,
+					metric: latest.series.name,
+					labels: latest.series.labels,
+					at: iso(latest.end.at),
+				}
 			: null,
 		series: points === 0 ? [] : series.map(focusSeries),
 		bucket_seconds: read?.bucketSeconds ?? 1,

@@ -65,7 +65,7 @@ test("卡片显示缩略图、名称、说明、版本与节点数、Agent 在�
 	await expect(empty).not.toContainText("没有说明");
 
 	await card.getByRole("link", { name: "运行中，进入运行监控" }).click();
-	await expect(page).toHaveURL(new RegExp(`/runs/${runId}$`));
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}(\\?|$)`));
 });
 
 test("最近一次运行已请求取消、还在等待任务结束时，卡片与表格显示「取消中」而不是「运行中」", async ({

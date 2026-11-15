@@ -57,7 +57,7 @@ test("正在运行：各链进度与当前节点，点击进入运行详情", as
 	await expect(row.getByRole("img", { name: "子流程 sub 1/2" })).toBeVisible();
 
 	await row.click();
-	await expect(page).toHaveURL(new RegExp(`/runs/${running}$`));
+	await expect(page).toHaveURL(new RegExp(`/runs/${running}(\\?|$)`));
 });
 
 test("最近失败：失败节点与错误类型，子流程失败单独列出", async ({

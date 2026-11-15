@@ -1,0 +1,113 @@
+import { mergeProps } from "@base-ui/react/merge-props";
+import { useRender } from "@base-ui/react/use-render";
+import type { RunFocusItem } from "@sfly/schema";
+import { cn } from "cn";
+import type { ReactElement } from "react";
+import { nodeStatusView, StatusDot } from "#/components/status";
+import { TERM } from "#/lib/copy";
+import {
+	chartMissingText,
+	latestSeriesName,
+	readingFoot,
+	readingLabel,
+	valueText,
+} from "./focus-format";
+
+/**
+ * 关注项读数：一个关注项（或主指标）的一格读数，概览、控制台运行块共用，读数之间只用 1px 分隔，不套卡片。
+ * 从上到下三行：来源节点的状态形状和名称；最新值（累计值就是当前累计，平台不算速率；多个序列时先写最近更新的那条
+ * 的名字）和单位；来源节点和「多久前」，来源节点成功或已停止后是「最终值」。
+ * 图表在节点包版本里不存在时写明原因，不显示数值。
+ *
+ * 默认是一个 `div`；整格可以点时用 `render` 换成按钮或链接（可访问名称写明名称、值、来源节点和状态、多久前）。
+ * `generatedAt` 是这份读数的生成时间（控制面时间）：「多久前」按它算，不随浏览器时钟跳动。
+ */
+export function FocusReadout({
+	item,
+	generatedAt,
+	render,
+	className,
+	...props
+}: useRender.ComponentProps<"div"> & { item: RunFocusItem; generatedAt: string }) {
+	const series = latestSeriesName(item);
+	return useRender({
+		defaultTagName: "div",
+		render,
+		props: mergeProps<"div">(
+			{
+				// 没换成按钮或链接时是个没有角色的 div：给它 group，名称才有地方挂。
+				role: render ? undefined : "group",
+				"aria-label": readingLabel(item, generatedAt),
+				className: cn(
+					"flex min-w-0 flex-col gap-px px-3 py-2 text-left text-inherit no-underline",
+					className,
+				),
+				children: (
+					<>
+						<span className="flex items-start gap-1.5 text-xs text-fg-2">
+							<StatusDot kind={nodeStatusView(item.source.status).kind} className="mt-1.25" />
+							<span className="line-clamp-2 wrap-anywhere">{item.title}</span>
+						</span>
+						{item.unavailable ? (
+							<span className="text-xs text-fg-3">{chartMissingText(item)}</span>
+						) : (
+							<span className="truncate font-mono text-lg font-semibold whitespace-nowrap text-fg-1">
+								{series && <span className="mr-1 text-xs font-normal text-fg-3">{series}</span>}
+								{valueText(item)}
+								{item.unit && (
+									<small className="ml-0.75 text-xs font-normal text-fg-3">{item.unit}</small>
+								)}
+							</span>
+						)}
+						<span className="font-mono text-xs wrap-anywhere text-fg-3">
+							{readingFoot(item, generatedAt)}
+						</span>
+					</>
+				),
+			},
+			props,
+		),
+		state: { slot: "focus-readout" },
+	});
+}
+
+/**
+ * 一排关注项读数：自动按宽度排成几列，读数之间 1px 分隔（每格的上、左描边，整体左移、上移 1px 再裁掉最外面一圈，
+ * 换行后每一行也一样）。`renderItem` 给每一格换成按钮或链接。外框、底色由调用方的 `className` 决定。
+ */
+export function FocusReadoutStrip({
+	items,
+	generatedAt,
+	renderItem,
+	label = `${TERM.focusItem}读数`,
+	className,
+}: {
+	items: readonly RunFocusItem[];
+	generatedAt: string;
+	renderItem?: (item: RunFocusItem) => ReactElement<Record<string, unknown>>;
+	label?: string;
+	className?: string;
+}) {
+	return (
+		<div className={cn("overflow-hidden", className)}>
+			<ul
+				aria-label={label}
+				className="-mt-px -ml-px grid list-none grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] p-0"
+			>
+				{items.map((item) => (
+					<li
+						key={`${item.node_id}\n${item.chart}\n${item.position}`}
+						className="min-w-0 border-t border-l border-border-soft"
+					>
+						<FocusReadout
+							item={item}
+							generatedAt={generatedAt}
+							render={renderItem?.(item)}
+							className={renderItem ? "w-full cursor-pointer hover:bg-raised/50" : undefined}
+						/>
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
