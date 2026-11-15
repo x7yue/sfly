@@ -11,15 +11,16 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { ChevronRightIcon, PlayIcon } from "lucide-react";
-import { useId } from "react";
 import { useOverlays } from "#/components/app-shell/overlays";
 import { ChainBars } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { nodeStatusView, SlotBar, STATUS, StatusDot, StatusPill } from "#/components/status";
+import { DashboardPanel } from "#/dashboard/DashboardPanel";
+import { GettingStarted } from "#/dashboard/GettingStarted";
 import { apiQuery } from "#/lib/api";
-import { PAGE } from "#/lib/copy";
+import { ACTION, MESSAGE, PAGE } from "#/lib/copy";
 import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { Badge } from "@/components/ui/badge";
@@ -33,32 +34,48 @@ export const Route = createFileRoute("/_shell/")({
 	component: Dashboard,
 });
 
-/** 控制台（原型 #/dashboard）：页头一行（控制面时间、计数、运行场景），下面是正在运行、最近失败、Agent 状态。 */
+/**
+ * 控制台（原型 #/dashboard）：页头一行（控制面时间、计数、运行场景），下面是正在运行、最近失败、Agent 状态。
+ * 环境里还没有运行过任何场景时只显示「开始使用」（原型 #/empty），页头也只剩标题和一句说明。
+ */
 function Dashboard() {
 	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: LIVE_POLL_MS });
 	const overlays = useOverlays();
 	const data = dashboard.data;
+	const gettingStarted = data !== undefined && !data.setup.run.done;
+	// 第一次加载完成之前不显示按钮：全新环境里它马上又会消失。
+	const showActions = !gettingStarted && !dashboard.isPending;
 	return (
 		<Page>
 			<PageHeader
 				title={PAGE.dashboard}
 				description={
-					data && (
-						<span className="font-mono text-xs">控制面时间 {formatClock(data.generated_at)}</span>
-					)
+					gettingStarted
+						? "这套环境还没有运行过场景。按顺序做完下面四步，控制台会换成正在运行的内容。"
+						: data && (
+								<span className="font-mono text-xs">
+									控制面时间 {formatClock(data.generated_at)}
+								</span>
+							)
 				}
 				actions={
-					<>
-						{data && <RunCounts runs={data.runs} />}
-						<Button variant="default" onClick={() => overlays.open("run-scenario")}>
-							<PlayIcon />
-							运行场景
-						</Button>
-					</>
+					showActions && (
+						<>
+							{data && <RunCounts runs={data.runs} />}
+							<Button variant="default" onClick={() => overlays.open("run-scenario")}>
+								<PlayIcon />
+								{ACTION.runScenario}
+							</Button>
+						</>
+					)
 				}
 			/>
 			{data ? (
-				<DashboardBody data={data} />
+				gettingStarted ? (
+					<GettingStarted setup={data.setup} />
+				) : (
+					<DashboardBody data={data} />
+				)
 			) : dashboard.isError ? (
 				<ErrorState
 					title="无法加载控制台数据"
@@ -132,34 +149,6 @@ function DashboardBody({ data }: { data: DashboardView }) {
 }
 
 // —— 面板 ——
-
-/** 控制台的面板：标题行（标题、计数、右侧操作）+ 内容；以标题作为区域名称。 */
-function DashboardPanel({
-	title,
-	count,
-	aside,
-	children,
-}: {
-	title: string;
-	count?: number;
-	aside?: React.ReactNode;
-	children: React.ReactNode;
-}) {
-	const id = useId();
-	return (
-		<Panel aria-labelledby={id}>
-			<div className="flex h-11 items-center gap-2 border-b border-border-soft px-3.5">
-				<h2 id={id} className="m-0 text-base font-semibold">
-					{title}
-				</h2>
-				{count !== undefined && <span className="font-mono text-xs text-fg-3">{count}</span>}
-				<span className="flex-1" />
-				{aside}
-			</div>
-			{children}
-		</Panel>
-	);
-}
 
 /** 面板里的空状态：一行说明。 */
 function PanelEmpty({ children }: { children: React.ReactNode }) {
@@ -311,7 +300,7 @@ function AgentsPanel({ agents }: { agents: DashboardAgent[] }) {
 		<DashboardPanel title="Agent 状态" count={agents.length} aside={panelLink("/agents", "管理")}>
 			{agents.length === 0 ? (
 				<PanelEmpty>
-					还没有 Agent 连接。
+					{MESSAGE.noAgents}。
 					<Link
 						to="/agents"
 						className="ml-1 text-fg-2 underline underline-offset-2 hover:text-fg-1"

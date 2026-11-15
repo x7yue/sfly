@@ -62,11 +62,12 @@ export function edgePath(
 /**
  * 链连线与调度连线。端点 = 节点位置 + geometry.ts 的端口偏移。选中节点相关的连线（或选中的连线本身）
  * 改成选中色，虚线流动两个周期后停住；decorateEdge 给出的运行状态：live 青色实线、failed 红色，
- * 选中时只加粗，颜色保持：执行信号不被选中覆盖。线宽不随视图缩放：缩小到 0.3 时屏幕上仍是 1.5px。
+ * 选中时只加粗，颜色保持：执行信号不被选中覆盖。刚变成执行中的 live 连线（enteringEdges）青色虚线流动两遍后变回实线，
+ * 减少动效时不流动。线宽不随视图缩放：缩小到 0.3 时屏幕上仍是 1.5px。
  * 可编辑时，悬停链上的连线在中点出现「＋」（EdgeInsert.tsx）；连线时（拖线、改接）不出现。
  */
 export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdge>) {
-	const { selection, decorateEdge, insertOnEdge, openEdgeMenu } = useFlowCanvas();
+	const { selection, decorateEdge, enteringEdges, insertOnEdge, openEdgeMenu } = useFlowCanvas();
 	const hover = useEdgeHover();
 	const connecting = useStore((s) => s.connection.inProgress);
 	const from = useInternalNode(source)?.internals.positionAbsolute;
@@ -92,6 +93,9 @@ export function FlowEdge({ id, source, target, selected, data }: EdgeProps<SfEdg
 					kind === "dispatch" && "stroke-signal-line [stroke-dasharray:4_4]",
 					run === "live" &&
 						"stroke-canvas-edge-live stroke-[length:max(1.75px,calc(1.75px/var(--canvas-zoom)))] [stroke-dasharray:none]",
+					run === "live" &&
+						enteringEdges?.has(id) &&
+						"motion-safe:[animation:edge-enter_0.9s_linear_2]",
 					run === "failed" && "stroke-canvas-run-failed opacity-70",
 					highlighted &&
 						!run &&

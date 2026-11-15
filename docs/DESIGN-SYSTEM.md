@@ -66,7 +66,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ### 2.4 配色规则
 
-- **白色是每屏唯一的主操作**：`<Button variant="primary">` 每屏最多一个（如「新建场景」）；其余按钮用默认（中性）或 `ghost`。Logo 与头像的白底不是操作。
+- **白色是每屏唯一的主操作**：`<Button variant="primary">` 每屏最多一个（如「新建场景」）；其余按钮用默认（中性）或 `ghost`。Logo 与头像的白底不是操作。全新环境的控制台（「开始使用」）里，白色按钮跟着第一个没完成的步骤走：复制安装命令、新建场景、运行场景；发布节点包那一步在命令行里完成，没有白色按钮，只有开发文档「发布」的链接。
 - **青色只用于执行中、键盘焦点环、调度连线**。不要用青色表示选中、链接或强调。
 - **执行中的区段是淡底加描边，不是实心青色**：时间线段、链路进度段、场景缩略图节点、平台图表里的节点耗时条按状态表画（`STATUS.running.area`：`signal-fill` 底加 1px `signal-line` 描边），与成功、失败等色块同一量级。实心 `signal` 只给状态标记、时间线段尾的脉冲头和焦点环。
 - **选中是中性高亮**：`selected-bg` 底 + 左侧 2px 白色短条（工具类 `selected-row`），画布上是 `selected` 描边 + `selected-ring`，相关连线灰色虚线流动。文字选区是中性的 `selection-bg`。日志按时刻定位到的那一行同样用 `selected-row`（不用青色），没有正好对应的行时插入的「这一刻」是一行文字加一条中性细线（`border-strong`）。
@@ -144,6 +144,8 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、运行抽屉、通知；`useOverlays().open("shortcuts")`、`useOverlays().runScenario(场景)` |
 | `app-shell/CommandPalette` | 「当前页面」「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」六组。「当前页面」是当前页面已绑定、并在注册表里带 `palette` 的快捷键（取消运行、保存……），名称与按键取自注册表，页面状态变了（运行结束、没有失败节点）就自动出现或消失，为空时整组不渲染；其余命令加在 `commands` 里 |
 | `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`PageHeader` 固定一个控件高（有没有右侧按钮标题都在同一位置），标题 h1 可以被程序聚焦（焦点去向的兜底，见第 7 节）；`Panel` 用 `overflow: clip` 裁圆角，不是滚动容器（里面的表头才能吸顶）；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
+| `doc-page-link`：`DocPageLink` | 正文里指向开发文档某一页的行内链接（`page` 是文档的 slug） |
+| `#/dashboard/DashboardPanel`：`DashboardPanel` | 控制台的面板：标题行（标题、计数、右侧操作）加内容，以标题作区域名称；「开始使用」和正在运行、最近失败、Agent 状态共用 |
 | `#/docs/Markdown` | 用户文档（ADR 0013）的 Markdown 渲染：代码块用 `CodeBlock`（```prompt 代码块是给人读、复制给 AI 编程助手的提示词，自动换行、正文字体；其余代码块不换行），表格用 `ui/table`，`<slug>.md` 链接换成文档页 |
 | `status`：`STATUS`、`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView`、`alignPulses` | 状态语法与槽位，见 6.1；运行 / 链 / 节点状态的种类与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，颜色、形状、动效只从 `STATUS` 取，不另写映射表。节点状态在各处的显示规则（种类、画布运行状态、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
 | `slot-cell`：`SlotCell`、`IdleSlots`、`idleSlotCount`、`taskChainLabel`、`slotLabel` | 槽位格：Agent 上一个被占用的槽位（带文字的容器，圆角 8px；不是 `SlotBar` 里 2px 的小格），写节点（`NodeName`）、场景、运行编号、所在链（主链或子流程名）、尝试号、节点类型和已执行时长；描边与文字色取自 `STATUS` 的执行中（只取描边，底色用 `raised`），标记是 `StatusDot`，还在准备（派发中、没有开始时间）的任务时长处写「准备中」。放在 `<ul>` 里，每个槽位格是 `<li>`，可访问名称是「节点 …，场景 …」，调用方在底部追加内容（`children`）时用 `summary` 把要点补进名称。连续的空闲槽用 `IdleSlots` 合并成一行矮条（空闲是在线的 Agent 上没被占用的槽位，离线的 Agent 不画矮条，见 `AgentRack` 一行；控制台里 `SlotBar` 目前不分在线离线，#363 换成槽位格后按同一条规则），网格设 `items-start`，矮条不随旁边的格子拉伸。系统里没有槽位身份，格子不写「槽 1」这样的编号。Agent 管理页的机架（`#/agents/AgentRack`）用它 |
@@ -155,6 +157,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `#/focus/FocusChart`：`FocusChart` | 概览里图表类关注项（折线、面积、柱状）的卡片：状态形状和名称、最新值（`FocusValue`）、「来源节点 · 多久前」、按容器的实际尺寸画的图（SVG 用测量到的像素宽度，文字不被拉伸；**纵轴从 0 起**，不把正常的小波动画成大起大落，上限包含每个桶的最大值；横轴是来源节点这次尝试的开始到结束，还没结束就到读数生成的时刻）、多个序列时的图例（线色与线型沿用 `MetricChart` 的 `seriesColor`、`seriesDash`；超过 10 个序列时只画平均值最高的 10 条并写明还有几条；挑好以后保持不变，读数刷新、平均值的排名变了也不换，只在出现新序列时重新挑，与详情的图表同一个 `pickShown`）和「在详情里打开 <节点>」（`Button variant="link"`）。文字格式在 `focus-format.ts`，几何在 `focus-chart.ts`（纯函数，有单测）。有异常时「来源节点 · 多久前」一行换成 `AnomalyNote`（原因后面接「 · 来源节点」）；**没有新数据**（`stale`）时曲线停在最后一个点，之后到现在画斜线（`border-strong` 的 45° 细线，`focus-chart.ts` 的 `plotChart` 给出这一段），斜线旁用 `warn-fg` 写「已 2m 10s 无新数据」，图的可访问名称后面加「曲线停在最后一个点」。这段斜线只在图表的绘图区里表示没有新数据，不是状态色块，和 6.1 里排队中的灰色斜纹（进度段、时间线）不在同一种元素上 |
 | `#/focus/AnomalyNote`：`AnomalyMark`、`AnomalyNote` | 关注项的异常：`AnomalyMark` 是琥珀实心三角（状态表的 `warn`，不另写颜色），只是形状，旁边必须有写明原因的文字，或者原因写在所在元素的可访问名称里；`AnomalyNote` 是三角加原因（`warn-fg`，12px），原因的短句由 `focus-format.ts` 的 `anomalyText` 给出（「WARN · 10:58:41」「已 2m 10s 无新数据」「来源节点失败」「重试（尝试 2）· 10:41:02」，文字在 `lib/copy.ts` 的 `FOCUS`）。异常同时用形状和文字表达，色觉缺陷和强制颜色模式下也分得出；读数、图表卡片、「需要注意」（`#/monitor/Attention`）都用它们；别处显示关注项的异常时也用这两个，不另画三角 |
 | `#/monitor/ViewTabs`：`ViewTabs` | 运行监控页头的「概览 / 详情」标签页：`role="tablist"`，只有选中的标签在 Tab 顺序里，左右方向键切换并立即显示、Home / End 到第一个 / 最后一个（`monitor-view.ts` 的 `nextView`），对应的面板是 `role="tabpanel"`，名称取自当前的标签页。外观沿用分段选择（`raised-2` 底加一圈 `border-strong` 内描边，不用青色；强制颜色下 `aria-selected="true"` 换成 `Highlight` 描边）：它放在页头里，用 `Tabs` 的下划线样式会和页头的底边打架；切换整个页面的两个视图用它，同一块内容换一种看法用 `Segmented` |
+| `canvas/CanvasDock`：`ToolButton` | 画布底部工具条（一个 Tab 停靠点）与它的图标按钮：按钮的提示从注册表取名称和按键。运行状态下工具条里多一个「跟随执行」按钮（`F`，准星图标）：打开时镜头框住所有执行中的节点（子流程里的连同子流程区域），框在没被顶栏、检查器、工具条占住的可见区域正中，缩放夹在 0.6 到 1，只移动镜头、不改选中的节点；执行前沿（执行中的节点）变化后停留 2 秒才平移（`FOLLOW_DWELL_MS`），平移的时长与「减少动效」同视口动画（见第 11 节）。拖动画布、缩放（滚轮或工具条的缩放按钮）、用方向键把选中移到视野外的节点时关闭，并在画布里的读屏实时区域（`<output aria-live="polite">`）播报「按 F 恢复」；运行结束后自动关闭、按钮禁用。按下用中性样式（`aria-pressed`，强制颜色下是系统高亮色轮廓），不用青色。第一次默认打开，之后记住这个浏览器里上次的选择（`lib/follow-execution`，localStorage `sfly.canvas.follow`），运行结束的自动关闭不算选择 |
 | `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认；`role="separator"`，`aria-valuemin` / `aria-valuemax` / `aria-valuenow` 是量出来的值（默认大小也有值），操作说明放在 `aria-describedby` 里，不只写在 `title`。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限是视口宽度的 60%；检查器的上限还要给画布留出小地图、工具条与间距（`INSPECTOR_CANVAS_RESERVE`），取两者里小的，拖到最宽也不会让工具条压住小地图；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
 | `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它；行的属性（点击、样式、`data-*` 标记）由 `rowProps` 给出 |
 | `list-navigation`：`useListNavigation`、`focusFirstListItem` | 列表页的行导航，见第 7 节 |
@@ -294,6 +297,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
 - `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「还没有数据」「这次尝试没有上报数据」）。
 - 运行监控、运行抽屉与关注项读数用的：`MONITOR_VIEW_LABEL`（概览 / 详情两个视图的名称）、`FINAL_VALUE_LABEL`（最终值）、`FOCUS` 里异常的文字（`attention`「需要注意」，`logReason`、`staleFor`、`sourceFailed`、`retryReason` 四种原因的短句，`logDetail`、`staleDetail`、`noDataDetail`、`failedDetail`、`retryDetail`「需要注意」每行写清哪个节点、为什么，`dataUpdated`「数据更新于 HH:MM:SS」）、`LOG_LEVEL_LABEL`（日志级别的写法 DEBUG / INFO / WARN / ERROR，日志列表、级别筛选、运行抽屉和异常原因共用）与 `LOG_ALERT_LEVELS`（「WARN / ERROR」）、`MESSAGE.logsExpired`（日志已过保留期）、`chainCountLabel()`（「N 条链 · N 个节点」）、`LIST_LABEL`（列表的可访问名称：图例、各链进度、概览里执行中的节点、运行抽屉里进行中的节点）；`MESSAGE.noRunningNodes`（没有执行中的节点）、`MESSAGE.noActiveNodes`（没有进行中的节点）。概览只列在 Agent 上的节点（准备中、执行中，统称执行中）；运行抽屉列排队中、准备中、执行中、等待中的节点，标题和列表名用 `ACTIVE_LABEL`（进行中），不用任何一个节点状态名。「进行中」在运行记录页指运行（进行中的卡片），在运行抽屉指节点，两处不在同一屏。
+- `DOC_PAGE`：界面里引用的开发文档页名（与 `docs/guide/pages.json` 的标题一致）。
 
 规则：两处及以上用到的文字、状态与术语放在这里，新增时先加到这里再引用，不要在组件里另写一份；只在一个页面出现的说明文字（空状态说明、提示语）留在组件里。
 
@@ -309,11 +313,11 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 ## 11. 动效
 
 - **token**（`tokens.css`）：`--motion-fast` 100ms（退场、悬停、按下）、`--motion-base` 150ms（浮层与提示进场、选中、颜色变化）、`--motion-slow` 200ms（抽屉、画布视口）；`--motion-ease-out`（进场与状态变化，工具类 `ease-out` / `ease-standard`）、`--motion-ease-in`（退场，`ease-in`）。`transition-*` 不写时长与缓动时默认就是 `--motion-base` + `--motion-ease-out`；浮层用 `duration-(--motion-base)` 这样的写法取值。JS 驱动的动效（画布视口）用同样的数值。
-- 只动 `transform`（`translate` / `scale`）与 `opacity`；图表数据刷新、日志跟随、列表焦点移动都是瞬时的。
+- 只动 `transform`（`translate` / `scale`）与 `opacity`；图表数据刷新、日志跟随、列表焦点移动都是瞬时的。唯一的例外是 SVG 连线的虚线流动（`stroke-dashoffset`：选中的连线、刚变成执行中的连线），连线没有 `transform` 能表达的位移。
 - **减少动效**（`prefers-reduced-motion: reduce`）：去掉位移、缩放、视口平移和持续循环的动画，保留淡入淡出与颜色变化，状态信息不能只靠动画表达。不用全局把时长压成 0 的写法，按动效逐个处理，规则写在动效定义旁边：
-  - 持续循环的动画只在 `prefers-reduced-motion: no-preference` 下启用：执行中的脉冲（`pulse-ring`）、骨架屏的明暗呼吸（`animate-pulse`）。静止时它们的形状已经说明了状态。画布选中连线的虚线流动不是持续循环：流动 2 个周期后停住，减少动效时不流动。
+  - 持续循环的动画只在 `prefers-reduced-motion: no-preference` 下启用：执行中的脉冲（`pulse-ring`）、骨架屏的明暗呼吸（`animate-pulse`）。静止时它们的形状已经说明了状态。画布选中连线的虚线流动不是持续循环：流动 2 个周期后停住，减少动效时不流动。运行状态下进入执行中节点的连线同理：静止的青色实线，只在一段连线刚变成执行中的那一刻（页面看着它变成执行中）流动 2 遍（`edge-enter`）后变回实线，减少动效时不流动；打开页面时已经在执行的连线是静止的。
   - 加载图标（`animate-spin`）放慢到 3 秒一圈，不停下来。
   - 浮层的进出场（`components/ui/overlay.ts` 的 `POPUP_MOTION`：Base UI 的 `data-starting-style` / `data-ending-style` 加过渡）只剩淡入淡出：缩放写在 `motion-safe:` 里，抽屉的位移由 `app.css` base 层清掉。进场 `--motion-base`、退场 `--motion-fast`；通知进出场 `--motion-slow`，堆叠时高度变化不做过渡。
   - 颜色、底色、描边的过渡照常。
-- **暂停动效**（全站一个开关）：没开系统「减少动效」的人也能停掉持续自动运动（一盯几个小时的运行监控、控制台的「正在运行」）。键名 `sfly.motion.paused`（localStorage，`lib/motion-pause.ts`），状态写在 `<html data-motion="paused">`，`app.css` 据此停掉所有持续循环：执行中的脉冲（`pulse-ring`）、骨架屏的呼吸，加载图标放慢到 3 秒一圈而不停；执行中的形状（带外圈的点、段尾的脉冲头）照旧。入口两处：运行监控顶栏的「暂停动效」按钮（运行中，或已经暂停时显示），命令面板的全局命令「暂停动效 / 恢复动效」；两处是同一个开关。
+- **暂停动效**（全站一个开关）：没开系统「减少动效」的人也能停掉持续自动运动（一盯几个小时的运行监控、控制台的「正在运行」）。键名 `sfly.motion.paused`（localStorage，`lib/motion-pause.ts`），状态写在 `<html data-motion="paused">`，`app.css` 据此停掉所有持续循环：执行中的脉冲（`pulse-ring`）、骨架屏的呼吸，加载图标放慢到 3 秒一圈而不停；执行中的形状（带外圈的点、段尾的脉冲头）照旧。画布运行状态里一次性的动效不受它影响：刚变成执行中的连线流动 2 遍就停，跟随执行的镜头平移是执行前沿变化时才发生，想停掉后者就关「跟随执行」。入口两处：运行监控顶栏的「暂停动效」按钮（运行中，或已经暂停时显示），命令面板的全局命令「暂停动效 / 恢复动效」；两处是同一个开关。
 - **页面过渡**：只有「编排画布的运行状态 ↔ 运行监控」这一对入口做 View Transition（`lib/view-transition.ts`；`runViewTransition("to-monitor" | "to-canvas")` 传给 `Link` 的 `viewTransition`）：整页淡入淡出并朝前进的方向平移 12px（150ms），运行状态标签（工具类 `vt-run-state`）移动到另一页的位置（200ms）。全局路由切换与列表重排不做过渡；系统开了「减少动效」时不发起，直接切换。过渡的样式写在 `app.css` 末尾，按 type 区分。

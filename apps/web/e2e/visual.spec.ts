@@ -531,12 +531,24 @@ test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
 	});
 });
 
-test("控制台没有数据", async ({ page }) => {
+test("控制台：全新环境的「开始使用」", async ({ page }) => {
 	await page.goto("/");
-	await expect(page.getByRole("region", { name: "正在运行", exact: true })).toContainText(
-		"没有正在运行的运行",
+	await expect(page.getByRole("region", { name: "开始使用", exact: true })).toContainText(
+		"还没有 Agent 连接",
 	);
 	await expect(page).toHaveScreenshot("dashboard-empty.png");
+});
+
+test("控制台：「开始使用」第 1、2 步已完成，白色按钮在第 3 步", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "verify-agent", slots: 2 });
+	await publishPackage(controlPlane);
+	await page.goto("/");
+	await expect(page.locator('[data-step="scenario"]')).toHaveAttribute("data-state", "next");
+	await expect(page).toHaveScreenshot("dashboard-empty-progress.png");
 });
 
 test("运行记录", async ({ page, controlPlane, connectAgent, clock }) => {
@@ -1238,6 +1250,8 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 	await page.clock.setFixedTime(clock.now());
 	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	// 跟随执行把镜头平移到执行中的节点（缩放正好到 100%）：等平移停下再点节点，点击会打断还在进行的平移。
+	await expect(page.locator(".react-flow__viewport")).toHaveAttribute("style", /scale\(1\)/);
 	await nodeCard(page, "verify").click();
 	await expect(page.getByTestId("run-attempts")).toHaveText("2");
 	for (const id of ["fetch", "verify", "probe"]) {

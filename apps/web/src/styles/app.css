@@ -180,6 +180,17 @@
 			stroke-dashoffset: -11;
 		}
 	}
+	/* 刚变成执行中的连线：实线先变成虚线流动一个周期（7 + 5），播完回到实线。 */
+	@keyframes edge-enter {
+		from {
+			stroke-dasharray: 7 5;
+			stroke-dashoffset: 0;
+		}
+		to {
+			stroke-dasharray: 7 5;
+			stroke-dashoffset: -12;
+		}
+	}
 	@keyframes status-pulse {
 		from {
 			opacity: 0.7;
