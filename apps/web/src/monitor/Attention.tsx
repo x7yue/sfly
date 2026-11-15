@@ -1,14 +1,7 @@
 import type { FocusAnomaly, RunFocus, RunFocusItem, RunLogLine, RunView } from "@sfly/schema";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { anomalyText, formatAgo, readingValue, sourceNodeName } from "#/focus/focus-format";
-import {
-	FOCUS,
-	LOG_ALERT_LEVELS,
-	LOG_LEVEL_LABEL,
-	MESSAGE,
-	MONITOR_VIEW_LABEL,
-	TERM,
-} from "#/lib/copy";
+import { FOCUS, LOG_LEVEL_LABEL, MESSAGE, MONITOR_VIEW_LABEL, TERM } from "#/lib/copy";
 import { formatClock, formatClockMs } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -170,7 +163,7 @@ export function OtherWarnings({
 		>
 			<div className="mb-2 flex items-baseline gap-2.5">
 				<h2 id="overview-warnings" className="m-0 text-base font-semibold">
-					其他警告与错误
+					{FOCUS.otherAlerts}
 				</h2>
 				{(others.length > SHOWN_LINES || logs.hasOlder) && (
 					<span className="text-xs text-fg-3">
@@ -186,7 +179,7 @@ export function OtherWarnings({
 				<Skeleton className="h-10 w-full" />
 			) : shown.length === 0 ? (
 				<p className="m-0 text-xs text-fg-3">
-					{logs.expired ? MESSAGE.logsExpired : `没有别的 ${LOG_ALERT_LEVELS}。`}
+					{logs.expired ? MESSAGE.logsExpired : `${FOCUS.noOtherAlerts}。`}
 				</p>
 			) : (
 				<ul className="m-0 list-none p-0">

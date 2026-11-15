@@ -9,7 +9,7 @@ import { StatusDot } from "#/components/status";
 import { FocusChart } from "#/focus/FocusChart";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { useRunFocus } from "#/focus/use-run-focus";
-import { chainCountLabel, LIST_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import { chainCountLabel, FOCUS, LIST_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -162,7 +162,7 @@ function FocusSection({
 				<span className="text-xs text-fg-3">
 					{primary
 						? `场景没有设置${TERM.focusItem}`
-						: `由场景设置，按设定的顺序排，有异常的排在最前`}
+						: `由场景设置，按设定的顺序排，${FOCUS.anomalyFirst}`}
 				</span>
 				<span className="flex-1" />
 				<Link

@@ -57,7 +57,7 @@ export const LOG_LEVEL_LABEL: Record<LogLineView["level"], string> = {
 	warn: "WARN",
 	error: "ERROR",
 };
-/** WARN 和 ERROR 合起来的写法：关注项的 WARN / ERROR 统计、概览的「其他警告与错误」。 */
+/** WARN 和 ERROR 合起来的写法：关注项的 WARN / ERROR 统计。 */
 export const LOG_ALERT_LEVELS = `${LOG_LEVEL_LABEL.warn} / ${LOG_LEVEL_LABEL.error}`;
 
 /** 无新数据时「需要注意」里的推测：有点和没有点两种说法共用。 */
@@ -73,6 +73,12 @@ export const FOCUS = {
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
 	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */
 	attention: "需要注意",
+	/** 概览里最后一段的标题：这次运行里没有进入「需要注意」的 WARN / ERROR。 */
+	otherAlerts: "其他警告与错误",
+	/** 上面那一段没有内容时的说明。 */
+	noOtherAlerts: "没有其他警告与错误",
+	/** 有异常的关注项排在最前：概览的副标题和场景设置的「关注项」页共用这一句。 */
+	anomalyFirst: "有异常的项排在最前",
 	/**
 	 * 异常原因的短句（规格 #344 的四种异常）：读数的脚注、图表卡片和别处的关注项读数都用这几句，
 	 * 由 `focus-format.ts` 的 `anomalyText` 按一项的 `anomaly` 选出。
