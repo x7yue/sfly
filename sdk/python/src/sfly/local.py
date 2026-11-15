@@ -122,13 +122,13 @@ class ActionRecord:
 
     - `id`：任务内递增的 ID（动作和标记共用）；`kind`：`action` 或 `mark`；
     - `parent`：父动作的 ID，最外层是 None；`depth`：层级，最外层是 0；
-    - `fields`：字段（值都是字符串）：开始时给的，加上 `note()` 补充的；
-    - `ts`：开始（标记发生）的时间，Unix 毫秒，Agent 时间（本地调试就是本机的系统时间）；
+    - `fields`：字段（值都是字符串）：动作开始（标记发生）时给的，加上动作的 `note()` 补充的；
+    - `ts`：动作开始或标记发生的时间，Unix 毫秒，Agent 时间（本地调试就是本机的系统时间）；
       `mono`：同一时刻单调时钟的读数（毫秒）；
-    - `result`：`success`、`failed`、`unfinished`；还在进行的动作和标记是 None；
+    - `result`：`success`、`failed`、`unfinished`；还在进行的动作是 None，标记总是 None；
     - `reason`：失败的原因（`ValueError: 消息`、或 `fail()` 给的文字），其余为 None；
-    - `duration_ms`：耗时（毫秒，按单调时钟算，系统时间被改动也不受影响）；还在进行的动作和标记
-      是 None。
+    - `duration_ms`：动作的耗时（毫秒，按单调时钟算，系统时间被改动也不受影响）；还在进行的动作
+      是 None，标记总是 None。
     """
 
     id: int
@@ -146,8 +146,8 @@ class ActionRecord:
 
 @dataclass(frozen=True)
 class ActionCount:
-    """摘要里一种名称的计数：`total` 个（动作和标记），其中 `failed` 个失败，
-    `reported` 个上报了明细（包括失败时补发的）。
+    """摘要里一种名称的计数：`total` 个（动作和标记合计），其中 `failed` 个动作失败，
+    `reported` 个上报了明细（包括失败的动作补发的）。
     `capped_ts`（Agent 时间）从这个时刻起这个名称只计数、没有明细（超过上限），没有时为 None。"""
 
     name: str
@@ -162,11 +162,13 @@ class ActionSummary:
     """一份动作摘要（`action_summary`）：到目前为止的汇总，超过明细上限之后仍然准确。
 
     - `ts`：发出这份摘要的时间（Unix 毫秒）；
-    - `total`：开始的动作和标记的个数，`reported`：上报了明细的个数；
+    - `total`：记录的动作和标记的个数，`reported`：上报了明细的个数；
       `capped_ts`：合计超过上限、之后只计数的起点，没有时为 None；
     - `names`：每种名称的计数；
     - `running`：正在做的动作（最多 50 个，层级浅的优先，按 ID 排列）；
     - `recent`：最近结束的 20 个动作，最近的在前；`recent_failed`：最近失败的 5 个，最近的在前。
+
+    标记算进 `total`、`reported`、`names` 和 `capped_ts`，不在 `running`、`recent` 里。
     """
 
     ts: int
@@ -745,9 +747,9 @@ def execute(
     - `pythonpath`：执行器子进程额外的模块搜索路径（放在 PYTHONPATH 最前面）；
     - `cancellation`：取消请求；`on_tick` 在执行期间定期以部分结果调用，可以在里面请求取消；
     - `on_log` / `on_progress` / `on_metric` / `on_notify`：每读到一条就调用（实时显示用）；
-      `on_action`：动作开始、标记发生、动作结束时调用，参数是变化后的记录（没有 `result` 的是
-      开始，有 `result` 的是结束，`kind` 为 `mark` 的是标记）；节点结束时还没结束的动作也以
-      `unfinished` 调用一次；
+      `on_action`：动作开始、标记发生、动作结束时调用，参数是变化后的记录（`kind` 为 `mark` 的是
+      标记，只调用一次；`kind` 为 `action` 的，没有 `result` 是开始，有 `result` 是结束）；
+      节点结束时还没结束的动作也以 `unfinished` 调用一次；
     - `run_id`、`node_id`（默认取入口的函数名）：写进 task.json，节点里是 `ctx.task`；
     - `procs_dir`：后台进程目录（`ctx.procs_dir`），默认 `work_dir/procs`；
     - `downloads`：产物引用 → 本地内容（bytes / str 是内容，str 按 UTF-8；路径是本地文件）。

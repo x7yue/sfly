@@ -32,10 +32,13 @@
 不同名称（动作和标记合计）超过 100 种时警告一次（名称里带了订单号这类每次都不同的内容，
 变化的内容放进字段）。
 
-上限：每种名称最多上报 50000 个明细，合计最多 100000 个；超过以后只计数，警告一次，建议按批或
-按阶段记录、每一笔的延迟用指标。失败的动作不受每种名称上限的限制：结束时把开始（带 `late`）
-和结束补上，直到合计 100000 个；合计已满时补不上，明细被丢弃，也按合计上限警告一次。
-正在做的动作、最近结束的 20 个、最近失败的 5 个、每种名称的总数和失败数始终准确，
+上限：每种名称最多上报 50000 个明细，合计最多 100000 个，动作和标记都算；超过以后只计数，
+警告建议按批或按阶段记录，每一笔动作的延迟用指标。超过每种名称的上限，每种名称警告一次，
+按是动作还是标记分别写（标记没有结果，不补发）；超过合计上限，整个任务警告一次，动作和标记
+都写。
+失败的动作不受每种名称上限的限制：结束时把开始（带 `late`）和结束补上，直到合计 100000 个；
+合计已满时补不上，明细被丢弃，也按合计上限警告。
+正在做的动作、最近结束的 20 个、最近失败的 5 个、每种名称的总数（动作和标记合计）和失败数始终准确，
 由 `action_summary` 汇总发出：有变化时才发，每秒最多一次，节点进程退出时尽力再发一次。
 
 事件的格式（`action_start`、`action_end`、`mark`、`action_summary`）见 `sfly.context` 的模块说明。
@@ -111,7 +114,8 @@ class _NameStats:
         self.failed = 0
         #: 已上报明细的个数，包括失败时补发的：`total` 减去它，就是只计数、没有明细的个数。
         self.reported = 0
-        #: 从什么时候起只计数：第一个没有上报明细的动作开始的 (Agent 时间, 单调时钟读数)。
+        #: 从什么时候起只计数：第一个没有上报明细的动作或标记的 (Agent 时间, 单调时钟读数)，
+        #: 动作取开始的时刻，标记取它发生的时刻。
         self.capped: tuple[int, int] | None = None
 
 
@@ -148,12 +152,12 @@ class _Record:
         self.parent = parent
         self.depth = depth
         self.name = name
-        #: 开始时给的字段；`note()` 补充的放在 `notes`。
+        #: 动作开始（标记发生）时给的字段；`note()` 给动作补充的放在 `notes`。
         self.fields = fields
         self.notes: dict[str, str] = {}
         self.ts = ts
         self.mono = mono
-        #: 是否上报了 `action_start`（超过上限的没有）。
+        #: 是否上报了 `action_start` 或 `mark`（超过上限的没有）。
         self.reported = False
         self.result: ActionResult | None = None
         self.reason: str | None = None
@@ -429,6 +433,7 @@ class Actions:
     def _begin(
         self, name: str, fields: dict[str, str], parent: _Record | None, *, mark: bool
     ) -> _Record:
+        """动作开始，或标记发生（`mark=True`：记一个时刻，不进入「正在做」）。"""
         ts, mono = _stamp()
         with self._lock:
             stats = self._names.get(name)
@@ -466,8 +471,9 @@ class Actions:
         return rec
 
     def _count_only(self, stats: _NameStats, rec: _Record, what: str) -> None:
-        """这个动作或标记的明细因为上限没有上报（开始时就超过上限，或失败的动作补发时合计已满）：
-        记下从什么时候起只计数，第一次时警告；`what`（动作、标记）写进警告。"""
+        """这个动作或标记的明细因为上限没有上报（记录时就超过上限，或失败的动作补发时合计已满）：
+        记下从什么时候起只计数，第一次时警告；每种名称的警告按 `what`（动作、标记）分别写，
+        合计上限的警告两种都写。"""
         if stats.capped is None:
             stats.capped = (rec.ts, rec.mono)
             if stats.reported >= MAX_PER_NAME:
@@ -486,16 +492,12 @@ class Actions:
                 )
         if self._reported >= MAX_TOTAL and self._capped is None:
             self._capped = (rec.ts, rec.mono)
-            advice = (
-                "按批或按阶段记录动作，每一笔的延迟用指标"
-                if what == "动作"
-                else "按批或按阶段记录标记"
-            )
             self._warn(
                 "total-cap",
                 "",
                 f"动作和标记已记录 {MAX_TOTAL} 个，之后只计数、不再上报明细"
-                f"（正在做的动作、最近的动作和各名称的计数仍然准确）。{advice}",
+                "（正在做的动作、最近的动作和各名称的计数仍然准确）。"
+                "按批或按阶段记录动作和标记，每一笔动作的延迟用指标",
             )
 
     def _note(self, rec: _Record, fields: Mapping[str, object]) -> None:

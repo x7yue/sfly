@@ -698,6 +698,30 @@ def test_after_100000_in_all_nothing_more_is_reported_not_even_failures(tmp_path
     ]
 
 
+def test_the_total_cap_warning_names_both_actions_and_marks_whichever_hits_it(
+    tmp_path: Path,
+) -> None:
+    ctx, events = make_context(tmp_path)
+
+    for _ in range(50_000):
+        ctx.action.start("甲").end()
+    for _ in range(49_999):
+        ctx.mark("乙")
+    ctx.mark("丙")
+    assert len(only(events(), "action_start", "mark")) == 100_000
+    assert only(events(), "log") == []
+
+    ctx.mark("丁")
+    ctx.action.start("戊").end()
+    ctx.mark("己")
+
+    assert len(only(events(), "action_start", "mark")) == 100_000
+    warnings = [e["message"] for e in only(events(), "log")]
+    assert len(warnings) == 1, warnings
+    assert "100000" in warnings[0] and "标记" in warnings[0] and "动作" in warnings[0]
+    assert "按批或按阶段记录动作和标记" in warnings[0] and "指标" in warnings[0]
+
+
 def test_a_failure_whose_detail_the_total_cap_drops_after_a_late_one_still_warns(
     tmp_path: Path,
 ) -> None:
