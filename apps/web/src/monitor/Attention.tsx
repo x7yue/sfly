@@ -33,7 +33,8 @@ function why(item: RunFocusItem, anomaly: FocusAnomaly, generatedAt: string): st
 		}
 		case "stale": {
 			// 一个点都没有时，异常的时间是开始执行的时间。
-			if (item.last_at === null) return `${node} 已经执行了 ${ago}，还没有上报数据。${STALE_HINT}`;
+			if (item.last_at === null)
+				return `${node} 已经执行了 ${ago}，${MESSAGE.noData}。${STALE_HINT}`;
 			const every =
 				item.sample_interval_ms === null ? "" : `，采样间隔 ${formatAgo(item.sample_interval_ms)}`;
 			return `${node} 仍在执行，但最后一个点在 ${ago} 前${every}。${STALE_HINT}`;
@@ -192,7 +193,7 @@ export function OtherWarnings({
 					{logs.expired ? MESSAGE.logsExpired : "没有别的 WARN / ERROR。"}
 				</p>
 			) : (
-				<ul aria-label="其他警告与错误" className="m-0 list-none p-0">
+				<ul className="m-0 list-none p-0">
 					{shown.map((line) => (
 						<li
 							key={`${line.task_id}:${line.seq}`}
