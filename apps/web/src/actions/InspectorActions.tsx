@@ -1,6 +1,13 @@
-import type { ActionSummaryView, EndedActionView, RunningActionView } from "@sfly/schema";
+import {
+	type ActionSummaryView,
+	type CountOnlyPeriod,
+	type EndedActionView,
+	type RunningActionView,
+	sdkCountOnlyPeriods,
+} from "@sfly/schema";
 import { cn } from "cn";
 import { DocPageLink } from "#/components/doc-page-link";
+import { Elapsed } from "#/components/elapsed";
 import { SectionHeading } from "#/components/page";
 import { StatusDot } from "#/components/status";
 import { attemptLabel, DOC_PAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
@@ -14,9 +21,9 @@ import {
 	spansOtherDay,
 } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
-import { useNow } from "#/lib/use-now";
 import { Truncate } from "@/components/ui/truncate";
-import { countOnlyNames, failedTotal, runningRows } from "./summary-model";
+import { fieldsText } from "./action-table";
+import { failedTotal, runningRows } from "./summary-model";
 
 /**
  * 画布运行状态检查器里的两块（规格 #345，原型 `#canvas-run`）：摘要下面的「正在做」，和后面的「动作」区（设计里
@@ -32,11 +39,6 @@ const INDENT_PX = 14;
 export const GUIDE = { page: "sdk-reference", section: "数量上限" } as const;
 
 const FAILURES_LABEL = "最近的失败";
-
-const fieldsText = (fields: Record<string, string>) =>
-	Object.entries(fields)
-		.map(([key, value]) => `${key}=${value}`)
-		.join(" ");
 
 /** 名称和字段：放不下时各自截断，悬停或聚焦看全文。 */
 function NameAndFields({
@@ -70,7 +72,6 @@ export function CurrentActions({
 	running: readonly RunningActionView[];
 	complete: boolean;
 }) {
-	const now = useNow(true);
 	return (
 		<section aria-label={NODE_ACTIONS.doing}>
 			<SectionHeading>{NODE_ACTIONS.doing}</SectionHeading>
@@ -88,14 +89,14 @@ export function CurrentActions({
 							// 缩进读屏读不出来：子动作在名称前加一句。
 							prefix={level > 0 ? "子动作：" : undefined}
 						/>
-						<span className="font-mono text-fg-2">
-							{formatDuration(now - Date.parse(action.started_at))}
-						</span>
+						<Elapsed since={Date.parse(action.started_at)} className="font-mono text-fg-2" />
 					</li>
 				))}
 			</ul>
 			{!complete && (
-				<p className="m-0 mt-1.5 text-xs text-fg-3">列满 {running.length} 个，可能还有没列出的</p>
+				<p className="m-0 mt-1.5 text-xs text-fg-3">
+					{NODE_ACTIONS.runningIncomplete(running.length)}
+				</p>
 			)}
 		</section>
 	);
@@ -119,9 +120,11 @@ export function ActionArea({
 }) {
 	const failures = summary.recent_failed;
 	const failed = failedTotal(summary.names);
-	const countOnly = countOnlyNames(summary.names);
+	const countOnly = sdkCountOnlyPeriods(summary, {}, null).sort(
+		(a, b) => Date.parse(a.from) - Date.parse(b.from),
+	);
 	const otherDay = spansOtherDay(
-		[...failures.map((f) => f.started_at), ...countOnly.map((c) => c.since), summary.capped_at],
+		[...failures.map((f) => f.started_at), ...countOnly.map((c) => c.from), summary.capped_at],
 		day,
 	);
 	return (
@@ -224,7 +227,7 @@ function CapNote({
 	totalFullAt,
 	otherDay,
 }: {
-	countOnly: ReturnType<typeof countOnlyNames>;
+	countOnly: readonly CountOnlyPeriod[];
 	/** 合计的明细满了（`capped_at`）：第一个因此没有明细的动作开始的时刻；没满为 null。 */
 	totalFullAt: string | null;
 	otherDay: boolean;
@@ -241,7 +244,7 @@ function CapNote({
 					<ul className="m-0 my-1 list-none p-0 text-fg-1">
 						{countOnly.map((c) => (
 							<li key={c.name} className="min-w-0 wrap-anywhere">
-								「{c.name}」从 <span className="font-mono">{clock(c.since)}</span> 起只计数
+								「{c.name}」从 <span className="font-mono">{clock(c.from)}</span> 起只计数
 							</li>
 						))}
 					</ul>

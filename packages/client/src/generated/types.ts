@@ -1,5 +1,30 @@
 // 由 HTTP 契约（packages/schema/src/http）生成，不要手改：pnpm gen。
 
+/** 实时推送的一批新写入或刚结束的明细（`events` 的 `actions` 事件）。同一个 ID 再出现时，以后到的为准。 */
+export interface ActionChunk {
+	actions: ActionDetailView[];
+}
+
+/** 一条明细：一个动作或一个标记。 */
+export type ActionDetailView = ActionMarkDetail | ActionRecordDetail;
+
+/** 一个标记的明细：只有一个时刻。 */
+export interface ActionMarkDetail {
+	/** 任务内的 ID（动作和标记共用一个序列）。 */
+	id: number;
+	/** 父动作的 ID；最外层为 null。父动作不一定有明细。 */
+	parent: number | null;
+	/** 层级：最外层是 0。 */
+	depth: number;
+	name: string;
+	/** 说明字段（值都是文字），按写入的先后；动作的是开始时给的加上之后补充的。 */
+	fields: Record<string, string>;
+	/** 动作开始、标记发生的控制面时间。 */
+	started_at: Timestamp;
+	agent_started_at: Timestamp;
+	kind: "mark";
+}
+
 /** 一种名称（动作和标记的名称在一起）的计数。 */
 export interface ActionNameCount {
 	name: string;
@@ -14,6 +39,71 @@ export interface ActionNameCount {
 	agent_capped_at: Timestamp | null;
 }
 
+/**
+ * 一个任务（一次尝试）的一页明细，按开始时间从新到旧（开始时间相同时 ID 大的在前）。
+ *
+ * 一页的范围：从这一页最早的那条明细（读到最早一页时是任务的开头）到游标（最新一页时是现在），`count_only`
+ * 是起点（`from`）落在这个范围里的只计数的段，所以一直往前翻，每一段正好出现一次。
+ */
+export interface ActionPage {
+	task_id: string;
+	actions: ActionDetailView[];
+	/** 读更早的一页：下一次请求的 before；没有更早的明细时为 null。 */
+	before: string | null;
+	/**
+	 * 起点落在这一页范围里的只计数的段，从新到旧。只看失败时，`name_limit` 的段只在合计也满了时才有：合计没满时，
+	 * 超过每种名称上限之后失败的动作仍有明细。
+	 */
+	count_only: CountOnlyPeriod[];
+	/**
+	 * 读这一页那一刻明细的修订号：实时推送（`events`）的 `after` 用它，之后写入或结束的明细都由推送送达。
+	 * 最新一页的这个值才有用。
+	 */
+	rev: number;
+	/** 运行已超过保留期、明细已被清理（此时是空页）。 */
+	expired: boolean;
+}
+
+export interface ActionPageQuery {
+	/** 读这个游标之前（更早开始）的明细；不给时读最新的一页。 */
+	before?: string;
+	limit?: number;
+	/** 只要这个名称的。 */
+	name?: string;
+	/** true：只要失败的动作（没有标记）。 */
+	failed?: string;
+}
+
+/**
+ * 一个动作的明细。还在做时结果和结束都为 null；任务结束（成功、失败、取消、`agent_lost`）时还没结束的记为
+ * `unfinished`，结束时间取任务的结束时间。
+ */
+export interface ActionRecordDetail {
+	/** 任务内的 ID（动作和标记共用一个序列）。 */
+	id: number;
+	/** 父动作的 ID；最外层为 null。父动作不一定有明细。 */
+	parent: number | null;
+	/** 层级：最外层是 0。 */
+	depth: number;
+	name: string;
+	/** 说明字段（值都是文字），按写入的先后；动作的是开始时给的加上之后补充的。 */
+	fields: Record<string, string>;
+	/** 动作开始、标记发生的控制面时间。 */
+	started_at: Timestamp;
+	agent_started_at: Timestamp;
+	kind: "action";
+	/** 结果；还在做时为 null。 */
+	result: ActionResult | null;
+	/** 结束的控制面时间；还在做时为 null。 */
+	ended_at: Timestamp | null;
+	/** 结束的 Agent 时间；还在做时，以及任务结束时还没结束、取不到 Agent 时间时为 null。 */
+	agent_ended_at: Timestamp | null;
+	/** 耗时（毫秒）：按单调时钟算，不受 Agent 系统时间改动的影响；记为未结束的按控制面时间算；还在做时为 null。 */
+	duration_ms: number | null;
+	/** 失败的原因（最多 4096 个字符）；其他结果为 null。 */
+	reason: string | null;
+}
+
 /** 动作的结果：成功、失败、未结束（任务结束时还没结束，或因为取消离开 `with`）。 */
 export type ActionResult = "success" | "failed" | "unfinished";
 
@@ -24,6 +114,8 @@ export type ActionResult = "success" | "failed" | "unfinished";
 export interface ActionSummaryView {
 	/** 动作和标记合计的个数。 */
 	total: number;
+	/** 其中标记的个数：动作的个数是 total 减去它。 */
+	marks: number;
 	/** 有明细的个数（最多 100000）。 */
 	reported: number;
 	/** 有没有超出上限：有动作或标记只计数、没有明细。 */
@@ -307,6 +399,27 @@ export interface ClockOffsetView {
 	measured_at: Timestamp;
 	/** 偏差的绝对值达到 2 秒：页面只在这时提示，不到 2 秒视为一致。由控制面统一判断。 */
 	exceeds_threshold: boolean;
+}
+
+/**
+ * 只计数的一段：这段时间里有动作或标记只计数、没有明细。
+ *
+ * - `name_limit`：这个名称超过了每种名称的上限（5 万个），失败的动作仍有明细，不在 `count` 里；
+ * - `total_limit`：合计超过了上限（10 万个），之后所有名称都只计数，失败的也是；
+ * - `control_plane`：控制面兜底丢弃（被改过的 SDK 写出了超过上限的明细）。
+ *
+ * 每种名称、每种原因至多一段；算法见 docs/ARCHITECTURE.md §6.3。
+ */
+export interface CountOnlyPeriod {
+	name: string;
+	reason: "name_limit" | "total_limit" | "control_plane";
+	/** 从什么时候起（控制面时间、Agent 时间）：第一个没有明细的动作或标记的时刻。 */
+	from: Timestamp;
+	agent_from: Timestamp;
+	/** 到什么时候：任务已结束时是任务的结束时间；还在执行时为 null（至今）。 */
+	to: Timestamp | null;
+	/** 这一段里没有明细的个数。 */
+	count: number;
 }
 
 /**
@@ -702,20 +815,36 @@ export interface FeishuTestResult {
 /** Webhook 地址：必须是 http 或 https 地址，不含空白字符。 */
 export type FeishuWebhookUrl = string;
 
-/** 一项的异常；没有异常为 null。目前每一项都是 null。 */
+/** 一项的异常；没有异常为 null。 */
 export interface FocusAnomaly {
 	kind: FocusAnomalyKind;
 	/** `log` 时是最近一条日志的级别。 */
 	level?: "warn" | "error";
-	/** 异常发生的时间（控制面时间）：最近一条日志、最后一个点、失败或重试开始的时间。 */
+	/**
+	 * 异常发生的时间（控制面时间）：`log` 是最近一条 WARN / ERROR 的时间，`stale` 是最后一个点的时间（一个点都没有时是
+	 * 这次尝试开始执行的时间），`failed` 是失败的时间，`retry` 是这次尝试开始执行的时间（还没开始时是进入排队的时间）。
+	 */
 	at: Timestamp;
-	/** 原因的原文，页面直接显示。 */
+	/**
+	 * 原因的原文，截到 500 个字符：`log` 是那一条日志的正文；`failed` 是这次尝试的错误信息、`retry` 是上一次尝试的错误信息，
+	 * 两者都只取第一行（之后是堆栈）；没有原文（`stale`，或没有错误信息）时是空串。
+	 */
 	message: string;
-	/** `log` 时是这次尝试里 WARN / ERROR 的总条数。 */
+	/** `log` 时是这次尝试里 WARN / ERROR 的总条数（日志截断时写的截断标记也算一条，之后的行不再计数）。 */
 	count?: number;
 }
 
-/** 异常的四种原因：日志里有 WARN / ERROR（`log`）、很久没有新点（`stale`）、尝试失败（`failed`）、重试过（`retry`）。 */
+/**
+ * 异常的四种原因（规格 #344）：
+ * - `log`：来源任务最近一条 WARN / ERROR 在 10 分钟以内；
+ * - `stale`：来源节点在执行中（准备中、执行中），距离最后一个点超过「30 秒」和「6 倍采样间隔」里大的那个；
+ *   点不够两个时只按 30 秒判断，一个点都没有时从这次尝试开始执行算起（还没开始执行的准备中节点不判断）；
+ * - `failed`：来源节点失败；
+ * - `retry`：最新一次尝试的号大于 1，并且是 10 分钟以内开始的（还没开始执行时按进入排队的时间）。
+ *
+ * 同时满足几种时按 failed、log、retry、stale 的顺序只报一种。来源节点成功、已停止或已取消（`final`）时不判断。
+ * 时间一律按控制面时间（ADR 0018），判断只在控制面做，各页面都用这一份结果。
+ */
 export type FocusAnomalyKind = "log" | "stale" | "failed" | "retry";
 
 /** 关注项最后一次修改：谁、什么时候（控制面时间）、一句话说明改了什么（控制面比较新旧列表生成）。 */
@@ -1589,7 +1718,10 @@ export interface RunFocus {
 	mode: "focus" | "primary";
 	/** 这次运行的指标已过保留期：每一项都没有数据。 */
 	expired: boolean;
-	/** 按作者设定的顺序（`position` 升序）；没设关注项时按准备中、执行中节点在运行里的顺序。 */
+	/**
+	 * 有异常（`anomaly` 不为 null）的项在前，其余在后；两部分里各自按作者设定的顺序（`position` 升序），没设关注项时
+	 * 按准备中、执行中节点在运行里的顺序。
+	 */
 	items: RunFocusItem[];
 }
 
@@ -1626,9 +1758,12 @@ export interface RunFocusItem {
 	bucket_seconds: number;
 	/** 最后一个点的控制面时间；一个点都没有为 null。 */
 	last_at: Timestamp | null;
-	/** 采样间隔（毫秒）；目前总是 null。 */
+	/**
+	 * 估算的采样间隔（毫秒）：最近更新的那个序列最近 10 个点之间间隔的中位数。点的时间按秒取整，同一个序列一秒最多
+	 * 一个点，所以至少是 1000；点不够两个时为 null。
+	 */
 	sample_interval_ms: number | null;
-	/** 来源节点成功或已停止；没开始就被停止的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
+	/** 来源节点成功、已停止或已取消；没开始就被停止或取消的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
 	final: boolean;
 	anomaly: FocusAnomaly | null;
 }

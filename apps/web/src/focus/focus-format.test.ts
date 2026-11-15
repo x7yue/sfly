@@ -1,7 +1,9 @@
 import type { FocusSource, MetricDeclaration, RunFocusItem } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
+import { formatClock } from "#/lib/format";
 import { chartLines } from "#/monitor/charts";
 import {
+	anomalyText,
 	focusSeriesName,
 	formatAgo,
 	latestSeriesName,
@@ -62,7 +64,7 @@ describe("读数的文字", () => {
 		expect(valueText(item({ latest: null }))).toBe("—");
 	});
 
-	it("脚注：节点 · 多久前；成功或已停止后是最终值", () => {
+	it("脚注：节点 · 多久前；成功、已停止或已取消后是最终值", () => {
 		expect(readingFoot(item(), NOW)).toBe("load · 2s 前");
 		expect(readingFoot(item({ final: true }), NOW)).toBe("load · 最终值");
 	});
@@ -220,7 +222,7 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 		expect(readingLabel(reading, NOW)).toMatch(new RegExp(`，${text}$`));
 	});
 
-	it("有值：来源节点还在是多久前，成功或已停止后是最终值", () => {
+	it("有值：来源节点还在是多久前，成功、已停止或已取消后是最终值", () => {
 		expect(readingState(item(), NOW)).toEqual({ kind: "live", ageMs: 2000 });
 		expect(readingState(item({ final: true }), NOW)).toEqual({ kind: "final" });
 	});
@@ -236,6 +238,37 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 		expect(readingFoot(missing, NOW)).toBe("load");
 		expect(readingLabel(missing, NOW)).toBe(
 			"母单量，这个版本的节点没有图表 母单量，来自 load（成功）",
+		);
+	});
+});
+
+describe("异常原因的短句：写法由这里决定，有没有异常、是哪一种由控制面判断", () => {
+	it("WARN / ERROR 写最近一条的级别和时间，无新数据写多久，失败、重试各一句；没有异常为 null", () => {
+		const warnAt = at(30);
+		expect(
+			anomalyText(
+				item({ anomaly: { kind: "log", level: "error", at: warnAt, message: "x", count: 3 } }),
+				NOW,
+			),
+		).toBe(`ERROR · ${formatClock(warnAt)}`);
+		expect(anomalyText(item({ anomaly: { kind: "stale", at: at(130), message: "" } }), NOW)).toBe(
+			"已 2m 10s 无新数据",
+		);
+		expect(
+			anomalyText(item({ anomaly: { kind: "failed", at: at(5), message: "boom" } }), NOW),
+		).toBe("来源节点失败");
+		const retried = item({
+			source: { ...item().source, attempt: 2 },
+			anomaly: { kind: "retry", at: at(40), message: "boom" },
+		});
+		expect(anomalyText(retried, NOW)).toBe(`重试（尝试 2）· ${formatClock(at(40))}`);
+		expect(anomalyText(item(), NOW)).toBeNull();
+	});
+
+	it("可访问名称：有异常时最后写「需要注意：原因」，代替多久前", () => {
+		const stale = item({ anomaly: { kind: "stale", at: at(130), message: "" } });
+		expect(readingLabel(stale, NOW)).toBe(
+			"母单量 1.3M 单，来自 load（执行中），需要注意：已 2m 10s 无新数据",
 		);
 	});
 });

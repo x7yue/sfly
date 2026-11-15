@@ -26,6 +26,7 @@ message AgentMessage {
     MetricBatch metrics = 8;
     Notification notification = 9;
     ActionSummary action_summary = 10;
+    ActionBatch actions = 11;
   }
 }
 
@@ -420,6 +421,78 @@ message ActionSummary {
   // 事件管道里那一行 action_summary 事件的原文（JSON 对象，格式见 sdk/python/src/sfly/context.py）。Agent 不解析
   // 内容，摘要格式只由 SDK 和控制面约定；里面的时间都带 SDK 写的单调时钟读数，控制面据此折算控制面时间。
   string event_json = 3;
+}
+
+// 一个任务新增的动作和标记的明细（ctx.action、ctx.mark，规格 #345）：事件管道里的 action_start、action_end、mark
+// 三种事件，和日志一样约每 100 毫秒一批（一批最多 1000 个事件），同一批内按事件管道里的先后排列。任务结束前发完，
+// 再发 TaskResult。断线排队与日志相同（排队的字节数有上限，超出时丢弃新的批次）。控制面不回 Ack，同一个动作 ID
+// 的重复明细被忽略。事件的格式与规则见 sdk/python/src/sfly/context.py，这里是 Agent 解析之后的样子。
+message ActionBatch {
+  string task_id = 1;
+  uint32 attempt = 2;
+  repeated ActionEvent events = 3;
+}
+
+message ActionEvent {
+  // 事件发生时的 Agent 时间（Unix 毫秒）：SDK 写的 ts。
+  int64 time_unix_ms = 1;
+  // 事件发生时的单调时钟读数（毫秒），含义同 Hello.monotonic_ms：优先取 SDK 写的 mono，没有时取 Agent 读到这一行
+  // 时的读数。控制面按这次连接的对应关系把它折算成控制面时间（ADR 0018），耗时取开始和结束两个读数之差。
+  int64 monotonic_ms = 2;
+  oneof kind {
+    ActionStart start = 3;
+    ActionEnd end = 4;
+    ActionMark mark = 5;
+  }
+}
+
+// 一个动作开始（action_start）。
+message ActionStart {
+  // 任务内的动作 ID（动作和标记共用一个序列，由 SDK 分配）。
+  uint64 id = 1;
+  // 父动作的 ID；最外层没有。父动作不一定有明细。
+  optional uint64 parent = 2;
+  // 层级：最外层是 0。
+  uint32 depth = 3;
+  string name = 4;
+  // 说明字段，按 SDK 写的先后。
+  repeated ActionField fields = 5;
+  // 补发的 action_start（超过每种名称的上限、因为失败才补上明细），紧跟着就是它的 ActionEnd。
+  bool late = 6;
+}
+
+// 一个动作结束（action_end）。没有结束的动作没有这一条，控制面在任务结束时把它记为未结束。
+message ActionEnd {
+  uint64 id = 1;
+  ActionResult result = 2;
+  // 失败的原因；其他结果没有。
+  optional string reason = 3;
+  // note() 补充的说明字段，覆盖开始时同名的字段。
+  repeated ActionField fields = 4;
+}
+
+// 一个标记（mark）：只有一个时刻，没有结束。
+message ActionMark {
+  uint64 id = 1;
+  // 所属的动作；不属于任何动作时没有。
+  optional uint64 parent = 2;
+  uint32 depth = 3;
+  string name = 4;
+  repeated ActionField fields = 5;
+}
+
+// 一个说明字段（值都是 SDK 转好的文字）。
+message ActionField {
+  string key = 1;
+  string value = 2;
+}
+
+enum ActionResult {
+  ACTION_RESULT_UNSPECIFIED = 0;
+  ACTION_RESULT_SUCCESS = 1;
+  ACTION_RESULT_FAILED = 2;
+  // 因为取消离开 with。
+  ACTION_RESULT_UNFINISHED = 3;
 }
 
 // 任务的最终结果；控制面按 task_id + attempt 幂等处理，处理后回复 Ack。

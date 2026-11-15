@@ -7,7 +7,7 @@ import { forwardRef, type ReactNode, useMemo } from "react";
 import { currentActivity } from "#/actions/current-activity";
 import { ActionArea, CurrentActions } from "#/actions/InspectorActions";
 import { actionAttempt } from "#/actions/summary-model";
-import { useActionSummary } from "#/actions/use-action-summary";
+import { useActionSummary } from "#/actions/use-task-actions";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
 import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
@@ -18,10 +18,12 @@ import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { ACTION, MESSAGE, PROGRESS_LABEL, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { ACTIONS_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
 import { runViewTransition } from "#/lib/view-transition";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
+import { runMonitorLink } from "#/monitor/run-link";
 import { chainRunStatus, runStatus } from "#/monitor/run-model";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -296,8 +298,9 @@ function NodeRunInspector({
 	// 动作记在尝试上；结束以后摘要还在，只是不再轮询。
 	const attempt = actionAttempt(view);
 	const live = attempt?.status === "running";
-	const actions = useActionSummary(attempt?.task_id, { live });
+	const actions = useActionSummary(attempt?.task_id, live && ACTIONS_POLL_MS);
 	const actionSummary = actions.data;
+	const hasActions = actionSummary !== undefined && actionSummary.total > 0;
 	const running = live && actionSummary ? actionSummary.running : [];
 	// 没有正在做的动作时，进度的说明代替「正在做」（#345 故事 29）。
 	const activity = running.length === 0 ? currentActivity(latest) : null;
@@ -360,7 +363,7 @@ function NodeRunInspector({
 				{running.length > 0 && actionSummary && (
 					<CurrentActions running={running} complete={actionSummary.running_complete} />
 				)}
-				{actionSummary && actionSummary.total > 0 && attempt && view && (
+				{hasActions && attempt && view && (
 					<ActionArea
 						summary={actionSummary}
 						attempt={attempt.attempt}
@@ -375,15 +378,24 @@ function NodeRunInspector({
 				)}
 				<p className="m-0 mt-3.5 mb-2.5 text-xs text-fg-3">{HINT}</p>
 				{view && (
-					<Link
-						to="/runs/$id"
-						params={{ id: run.id }}
-						search={{ node: id }}
-						viewTransition={runViewTransition("to-monitor")}
-						className={buttonVariants()}
-					>
-						在监控页中打开 {runNodeName(view)}
-					</Link>
+					<div className="flex flex-wrap gap-1.5">
+						<Link
+							{...runMonitorLink(run.id, { node: id })}
+							viewTransition={runViewTransition("to-monitor")}
+							className={buttonVariants()}
+						>
+							在监控页中打开 {runNodeName(view)}
+						</Link>
+						{hasActions && (
+							<Link
+								{...runMonitorLink(run.id, { node: id, tab: "actions" })}
+								viewTransition={runViewTransition("to-monitor")}
+								className={buttonVariants({ variant: "ghost" })}
+							>
+								查看{TERM.action}明细
+							</Link>
+						)}
+					</div>
 				)}
 			</div>
 		</>

@@ -7,9 +7,10 @@ import { NodeName } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
+import { useRunFocus } from "#/focus/use-run-focus";
 import { apiQuery } from "#/lib/api";
-import { ACTION } from "#/lib/copy";
-import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { ACTION, FOCUS } from "#/lib/copy";
+import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import { shortcutText } from "#/lib/shortcuts";
 import { runViewTransition } from "#/lib/view-transition";
@@ -47,8 +48,23 @@ import { ViewTabs } from "./ViewTabs";
 const MAX_CHAIN_BADGES = 4;
 
 /**
+ * 概览的「数据更新于 10:59:17」：关注项读数的生成时间（控制面时间，`generated_at`）。与概览读同一份读数
+ * （同一个查询，不多发请求），盯运行的人看得出页面本身还在刷新。还没读到时不显示。
+ */
+function FocusFreshness({ run }: { run: RunView }) {
+	const focus = useRunFocus(run.id, { live: run.status === "running" });
+	const generatedAt = focus.data?.generated_at;
+	if (!generatedAt) return null;
+	return (
+		<span data-testid="focus-freshness" className="flex-none text-xs whitespace-nowrap text-fg-3">
+			{FOCUS.dataUpdated(formatClock(generatedAt))}
+		</span>
+	);
+}
+
+/**
  * 运行监控页顶栏（原型 monitorHTML 的 `.mon-top`）：返回、场景名与版本、触发人 / 开始时间 / 已运行时长、
- * 运行切换（同场景的其他运行）、运行状态、「概览 / 详情」标签页、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
+ * 运行切换（同场景的其他运行）、运行状态（概览里后面写「数据更新于」）、「概览 / 详情」标签页、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
  * 在画布中查看、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
@@ -114,6 +130,7 @@ export function MonitorTopBar({
 					{status.label}
 				</StatusPill>
 			</output>
+			{view === "overview" && <FocusFreshness run={run} />}
 			{run.preset && <RunPresetInfo preset={run.preset} />}
 			<ViewTabs view={view} onChange={onViewChange} />
 			{failure && !failureInBanner && (

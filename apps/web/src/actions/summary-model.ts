@@ -1,7 +1,8 @@
 import type { ActionNameCount, AttemptView, NodeRunView, RunningActionView } from "@sfly/schema";
+import { type Indent, indentOf } from "./action-table";
 
 /**
- * 动作摘要里画在检查器上的几样东西（`ActionSummaryView`）：正在做的动作怎么排、哪些名称只计数、失败一共多少个。
+ * 动作摘要里画在检查器上的几样东西（`ActionSummaryView`）：正在做的动作怎么排、失败一共多少个。
  * 都是纯函数，摘要的内容由控制面准备好，这里只管排版需要的整理。
  */
 
@@ -17,14 +18,11 @@ export function actionAttempt(
 	return [...node.attempts].reverse().find((a) => a.started_at !== null);
 }
 
-/** 界面最多缩进 3 层（开发文档「嵌套与并发」），更深的画在第 3 层：层级从 0 数起，所以是 2。 */
-const MAX_LEVEL = 2;
-
 /** 正在做的一个动作和它画在第几层。 */
 export interface RunningRow {
 	action: RunningActionView;
-	/** 缩进的层数，0 到 2。 */
-	level: number;
+	/** 缩进的层数，最多 3（开发文档「嵌套与并发」，和「动作」页一样）。 */
+	level: Indent;
 }
 
 /**
@@ -47,7 +45,7 @@ export function runningRows(running: readonly RunningActionView[]): RunningRow[]
 	const visit = (action: RunningActionView) => {
 		if (seen.has(action.id)) return;
 		seen.add(action.id);
-		rows.push({ action, level: Math.min(action.depth, MAX_LEVEL) });
+		rows.push({ action, level: indentOf(action.depth) });
 		for (const child of children.get(action.id) ?? []) visit(child);
 	};
 	for (const root of roots) visit(root);
@@ -58,18 +56,6 @@ export function runningRows(running: readonly RunningActionView[]): RunningRow[]
 
 const byStart = (running: readonly RunningActionView[]) =>
 	[...running].sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at) || a.id - b.id);
-
-/** 一种只计数的名称，和它从什么时候起只计数（控制面时间）。 */
-export interface CountOnly {
-	name: string;
-	since: string;
-}
-
-/** 只计数、没有明细的名称（`capped_at` 有值的），先超出的在前。 */
-export const countOnlyNames = (names: readonly ActionNameCount[]): CountOnly[] =>
-	names
-		.flatMap((n) => (n.capped_at === null ? [] : [{ name: n.name, since: n.capped_at }]))
-		.sort((a, b) => Date.parse(a.since) - Date.parse(b.since));
 
 /** 失败的动作一共有多少个（各名称的失败数之和）。 */
 export const failedTotal = (names: readonly ActionNameCount[]): number =>

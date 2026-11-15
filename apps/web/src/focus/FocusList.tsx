@@ -162,8 +162,8 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 			{items.length > 0 ? (
 				<>
 					<p className="m-0 text-xs text-fg-2">
-						运行时按这个顺序显示，有异常的项临时排到最前。拖动左侧手柄，或用{ACTION.moveUp}、
-						{ACTION.moveDown}调整顺序。
+						运行时按这个顺序显示；{FOCUS.anomalyFirst}，但不改这里的顺序。拖动左侧手柄，或用
+						{ACTION.moveUp}、{ACTION.moveDown}调整顺序。
 					</p>
 					<ul
 						aria-label={TERM.focusItem}

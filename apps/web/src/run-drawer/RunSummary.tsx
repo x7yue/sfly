@@ -16,6 +16,7 @@ import {
 	ACTIVE_LABEL,
 	chainLabel as chainName,
 	LIST_LABEL,
+	LOG_LEVEL_LABEL,
 	MESSAGE,
 	PROGRESS_LABEL,
 	TERM,
@@ -269,10 +270,10 @@ function ActiveNode({
 }
 
 const LEVEL: Record<string, { label: string; className: string }> = {
-	debug: { label: "DEBUG", className: "text-log-debug" },
-	info: { label: "INFO", className: "text-log-info" },
-	warn: { label: "WARN", className: "text-log-warn" },
-	error: { label: "ERROR", className: "text-log-error" },
+	debug: { label: LOG_LEVEL_LABEL.debug, className: "text-log-debug" },
+	info: { label: LOG_LEVEL_LABEL.info, className: "text-log-info" },
+	warn: { label: LOG_LEVEL_LABEL.warn, className: "text-log-warn" },
+	error: { label: LOG_LEVEL_LABEL.error, className: "text-log-error" },
 };
 
 const NO_FILTER: never[] = [];
@@ -289,7 +290,13 @@ function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 	)
 		? formatFullDateTime
 		: formatClock;
-	if (logs.error) return <p className="m-0 text-xs text-danger-fg">无法加载日志：{logs.error}</p>;
+	if (logs.error) {
+		return (
+			<p className="m-0 text-xs text-danger-fg">
+				{MESSAGE.loadFailed("日志")}：{logs.error}
+			</p>
+		);
+	}
 	if (!logs.loaded) return <Skeleton className="h-16 w-full" />;
 	if (lines.length === 0) return <p className="m-0 text-xs text-fg-3">还没有日志。</p>;
 	return (

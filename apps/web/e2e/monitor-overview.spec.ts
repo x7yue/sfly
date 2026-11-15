@@ -310,7 +310,8 @@ test("场景没设关注项：显示执行中节点的主指标，并给出「�
 	const setting = page.getByRole("link", { name: "设置关注项" });
 	await expect(setting).toHaveAttribute("href", `/orchestrations/${scenarioId}?settings=focus`);
 
-	// 执行中的 verify（第 2 次尝试）和 probe 各一项；主指标 level 是瞬时值，写最近一个点。
+	// 执行中的 verify（第 2 次尝试）和 probe 各一项；主指标 level 是瞬时值，写最近一个点。verify 的第 2 次尝试是第 9 秒
+	// （上海时间 08:00:09）开始的重试，10 分钟以内算异常（#351），读数写原因、排在前面。
 	const clock0 = Date.parse("2026-01-01T00:00:00.000Z");
 	const last = (base: number, from: number) => {
 		const level = pingPoints(clock0, from, 13, base).filter(([name]) => name === "level");
@@ -319,7 +320,7 @@ test("场景没设关注项：显示执行中节点的主指标，并给出「�
 	const items = readouts(page).getByRole("button");
 	await expect(items).toHaveCount(2);
 	await expect(items.nth(0)).toHaveAccessibleName(
-		`level ${last(5, 9)}，来自 verify（执行中），1s 前`,
+		`level ${last(5, 9)}，来自 verify（执行中），需要注意：重试（尝试 2）· 08:00:09`,
 	);
 	await expect(items.nth(1)).toHaveAccessibleName(
 		`level ${last(3, 6)}，来自 probe（执行中），1s 前`,

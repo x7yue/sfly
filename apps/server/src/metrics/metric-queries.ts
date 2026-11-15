@@ -60,6 +60,11 @@ export interface TaskSeriesRead {
 		buckets: MetricBucket[];
 		/** 最后一个点；序列还没有点（或已过保留期）为 undefined。 */
 		end: SeriesEnd | undefined;
+		/**
+		 * 最近 `recent` 个点的控制面时间（Unix 秒，升序，最后一个就是 `end.at`），不随降采样变粗；
+		 * 查询没有要 `recent` 时为空。
+		 */
+		recent: number[];
 	}>;
 }
 
@@ -98,6 +103,14 @@ interface SegmentRow extends Record<string, unknown> {
 	values: Buffer | null;
 	mins: Buffer | null;
 	maxs: Buffer | null;
+}
+
+/** 一个序列最近的几段（{@link MetricQueries.taskSeries} 的 `recent`）：段的起始时间与时间偏移（array_send 的二进制）。 */
+interface TailRow extends Record<string, unknown> {
+	metric: string;
+	labels: Labels;
+	start_s: number;
+	offsets: Buffer;
 }
 
 const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
@@ -222,7 +235,8 @@ export class MetricQueries {
 	/**
 	 * 一个任务（一次尝试）里这些指标的序列，按目标点数降采样（{@link MetricQueries.series} 与关注项读数共用）：
 	 * 时间范围 [from, to]（控制面时间，Unix 秒）默认是这些指标已有数据的首尾，分成跨度 bucket_seconds 的桶，
-	 * 含内存里尚未写库的点；每个序列另给最后一个点的精确时间与值（不随降采样变粗）。
+	 * 含内存里尚未写库的点；每个序列另给最后一个点的精确时间与值（不随降采样变粗）。给了 `recent` 时，每个序列另给
+	 * 最近这么多个点的时间（关注项估算采样间隔用，与时间范围无关）。
 	 * 没有任何数据、也没有声明标签键的指标给出一个空序列；声明了标签键的没有序列。已过保留期（expired）时序列没有桶。
 	 */
 	async taskSeries(
@@ -235,6 +249,8 @@ export class MetricQueries {
 			from?: number | undefined;
 			to?: number | undefined;
 			points: number;
+			/** 每个序列另给最近这么多个点的时间；不给时不读。 */
+			recent?: number;
 		},
 	): Promise<TaskSeriesRead> {
 		const { declared, names, expired } = query;
@@ -262,11 +278,22 @@ export class MetricQueries {
 				from,
 				to,
 				bucketSeconds: 1,
-				series: list.map(({ name, labels }) => ({ name, labels, buckets: [], end: undefined })),
+				series: list.map(({ name, labels }) => ({
+					name,
+					labels,
+					buckets: [],
+					end: undefined,
+					recent: [],
+				})),
 			};
 		}
 		const width = Math.max(1, Math.ceil((to - from + 1) / query.points));
-		const { buckets, ends } = await this.#bucketize(taskId, [...names], unwritten, from, to, width);
+		const [{ buckets, ends }, recent] = await Promise.all([
+			this.#bucketize(taskId, [...names], unwritten, from, to, width),
+			query.recent === undefined
+				? new Map<string, number[]>()
+				: this.#recent(taskId, list, unwritten, query.recent),
+		]);
 		return {
 			from,
 			to,
@@ -276,8 +303,61 @@ export class MetricQueries {
 				labels,
 				buckets: buckets.get(key) ?? [],
 				end: ends.get(key),
+				recent: recent.get(key) ?? [],
 			})),
 		};
+	}
+
+	/**
+	 * 每个序列（键是 {@link seriesKey}）最近 `n` 个点的控制面时间（Unix 秒，升序）。内存里的点（含当前段已经写过库的）
+	 * 是最新的；不够 `n` 个时再从库里按起始时间倒着取最近的段（每段至少一个点，所以最多 `n` 段），取到够 `n` 个点为止。
+	 * 同一个点可能内存和库里都有（当前段周期写库），按时间去重：同一序列里点的控制面时间严格递增。
+	 */
+	async #recent(
+		taskId: string,
+		list: ReadonlyArray<{ name: string; key: string }>,
+		unwritten: Map<string, UnwrittenSeries>,
+		n: number,
+	): Promise<Map<string, number[]>> {
+		const times = new Map<string, Set<number>>();
+		for (const { key } of list) {
+			times.set(
+				key,
+				new Set(
+					unwritten
+						.get(key)
+						?.points.slice(-n)
+						.map((p) => p.t),
+				),
+			);
+		}
+		const short = [
+			...new Set(list.filter((s) => (times.get(s.key)?.size ?? 0) < n).map((s) => s.name)),
+		];
+		if (short.length > 0) {
+			const result = await this.deps.db.execute<TailRow>(sql`
+				select s.metric, s.labels, extract(epoch from g.start_at)::float8 as start_s,
+					array_send(g.offsets) as offsets
+				from metric_series s
+				cross join lateral (
+					select start_at, offsets, sum(points) over (order by start_at desc) - points as newer
+					from (
+						select start_at, offsets, points from metric_segments m
+						where m.task_id = s.task_id and m.metric = s.metric and m.labels = s.labels
+						order by start_at desc limit ${n}
+					) latest
+				) g
+				where s.task_id = ${taskId} and s.metric in (${sql.join(
+					short.map((name) => sql`${name}`),
+					sql`, `,
+				)}) and g.newer < ${n}`);
+			for (const row of result.rows) {
+				const set = times.get(seriesKey(row.metric, row.labels));
+				if (!set) continue;
+				for (const offset of decodeInt4Array(row.offsets)) set.add(row.start_s + offset);
+			}
+		}
+		return new Map([...times].map(([key, set]) => [key, [...set].sort((a, b) => a - b).slice(-n)]));
 	}
 
 	/**

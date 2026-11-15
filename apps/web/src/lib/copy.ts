@@ -1,5 +1,11 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
-import type { NodeStatus, RunNotificationState, RunStatus } from "@sfly/schema";
+import type {
+	ActionResult,
+	LogLineView,
+	NodeStatus,
+	RunNotificationState,
+	RunStatus,
+} from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
 /**
@@ -8,6 +14,9 @@ import { NODE_STATUS, notRunNote } from "#/lib/node-status";
  * 这里放多处共用的文字：术语（GLOSSARY.md）、状态文字、导航与页面名、通用操作、通用的加载 / 错误 / 空状态。
  * 页面一次性的说明文字留在组件里；新的共用文字先加到这里再引用，不要在组件里另写一份。
  */
+
+/** 「还没有数据」：`MESSAGE.noData`，关注项的原因句里也用它（FOCUS 写在 MESSAGE 前面）。 */
+const MESSAGE_NO_DATA = "还没有数据";
 
 /** 术语（与 GLOSSARY.md 一致；「编排」只作动词）。 */
 export const TERM = {
@@ -32,6 +41,7 @@ export const TERM = {
 	annotation: "注释框",
 	lastEdited: "最后修改",
 	action: "动作",
+	mark: "标记",
 } as const;
 
 /**
@@ -54,6 +64,19 @@ export const PROGRESS_LABEL = "进度";
 /** 「第 2 次尝试」：节点重试时指明是哪一次（运行监控的尝试页签、画布检查器的动作区共用）。 */
 export const attemptLabel = (attempt: number) => `第 ${attempt} 次${TERM.attempt}`;
 
+/** 日志级别的写法：日志列表、级别筛选、运行抽屉的最新日志和关注项的异常原因共用。 */
+export const LOG_LEVEL_LABEL: Record<LogLineView["level"], string> = {
+	debug: "DEBUG",
+	info: "INFO",
+	warn: "WARN",
+	error: "ERROR",
+};
+/** WARN 和 ERROR 合起来的写法：关注项的 WARN / ERROR 统计。 */
+export const LOG_ALERT_LEVELS = `${LOG_LEVEL_LABEL.warn} / ${LOG_LEVEL_LABEL.error}`;
+
+/** 无新数据时「需要注意」里的推测：有点和没有点两种说法共用。 */
+const STALE_HINT = "可能是节点卡住了，或者 Agent 的指标上报中断了。";
+
 /** 关注项（GLOSSARY「关注项」）：节点检查器的名额、场景设置的「关注项」页和图表列表共用的文字。 */
 export const FOCUS = {
 	/** 名额里注明其中有几项已经失效（失效的项也占名额）。 */
@@ -62,6 +85,38 @@ export const FOCUS = {
 	chartMissing: (chart: string) => `这个版本的节点没有图表 ${chart}`,
 	/** 关注项不属于场景版本：节点检查器的图表列表和「关注项」页都要说明这一点。 */
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
+	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */
+	attention: "需要注意",
+	/** 概览里最后一段的标题：这次运行里没有进入「需要注意」的 WARN / ERROR。 */
+	otherAlerts: "其他警告与错误",
+	/** 上面那一段没有内容时的说明。 */
+	noOtherAlerts: "没有其他警告与错误",
+	/** 有异常的关注项排在最前：概览的副标题和场景设置的「关注项」页共用这一句。 */
+	anomalyFirst: "有异常的项排在最前",
+	/**
+	 * 异常原因的短句（规格 #344 的四种异常）：读数的脚注、图表卡片和别处的关注项读数都用这几句，
+	 * 由 `focus-format.ts` 的 `anomalyText` 按一项的 `anomaly` 选出。
+	 */
+	logReason: (level: string, clock: string) => `${level} · ${clock}`,
+	staleFor: (ago: string) => `已 ${ago} 无新数据`,
+	sourceFailed: "来源节点失败",
+	retryReason: (attempt: number, clock: string) => `重试（${TERM.attempt} ${attempt}）· ${clock}`,
+	/**
+	 * 「需要注意」里每一行的原因，写清是哪个节点、为什么（与上面四种短句一一对应）。只用于执行中的节点的是无新数据的两句
+	 * （控制面只对开始执行了的节点判断无新数据）：有点时写最后一个点多久前和采样间隔（点不够两个时没有采样间隔），
+	 * 一个点都没有时写开始执行了多久。
+	 */
+	logDetail: (node: string, level: string, clock: string, message: string, count: number) =>
+		`${node} 的 ${level}（${clock}）：${message}${count > 1 ? ` · 这次${TERM.attempt}共有 ${count} 条 ${LOG_ALERT_LEVELS}` : ""}`,
+	staleDetail: (node: string, ago: string, every: string | null) =>
+		`${node} 仍在执行，但最后一个点在 ${ago} 前${every === null ? "" : `，采样间隔 ${every}`}。${STALE_HINT}`,
+	noDataDetail: (node: string, ago: string) =>
+		`${node} 已经执行了 ${ago}，${MESSAGE_NO_DATA}。${STALE_HINT}`,
+	failedDetail: (node: string, message: string) => `${node} 失败${message ? `：${message}` : "。"}`,
+	retryDetail: (node: string, clock: string, attempt: number, message: string) =>
+		`${node} 在 ${clock} 开始重试（${TERM.attempt} ${attempt}）${message ? `，上一次${TERM.attempt}失败：${message}` : "。"}`,
+	/** 运行监控页头：概览的关注项读数是什么时候生成的（控制面时间）。 */
+	dataUpdated: (clock: string) => `数据更新于 ${clock}`,
 } as const;
 
 /** 注释框各字段的名称：检查器的字段错误和版本对比共用。 */
@@ -182,7 +237,7 @@ export const PRESET_INVALID_LABEL = "已失效";
 /** 运行监控页两个视图的名称：页头的标签页，和概览里「在详情里打开」「在详情里查看」的说法共用。 */
 export const MONITOR_VIEW_LABEL = { overview: "概览", detail: "详情" } as const;
 
-/** 关注项读数里来源节点成功或已停止后的「最终值」：读数的脚注和可访问名称共用。 */
+/** 关注项读数里来源节点成功、已停止或已取消后的「最终值」：读数的脚注和可访问名称共用。 */
 export const FINAL_VALUE_LABEL = "最终值";
 
 /** 「2 条链 · 7 个节点」：运行监控的链路时间线和概览的链路共用。 */
@@ -190,18 +245,31 @@ export const chainCountLabel = (chains: number, nodes: number) =>
 	`${chains} 条链 · ${nodes} 个节点`;
 
 /**
- * 还没结束、正在推进的节点（排队中、准备中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
- * 不等于任何一个节点状态名：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。
+ * 「进行中」：还没结束的统称，不等于任何一个状态名。运行抽屉的摘要里是还没结束、正在推进的节点（排队中、准备中、
+ * 执行中、等待中）合起来的名称：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。运行监控
+ * 「动作」页的结果里是还没结束的动作（`NODE_ACTIONS.results.running`）。
  */
 export const ACTIVE_LABEL = "进行中";
 
 /**
- * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）：画布、检查器、概览里写动作的地方共用的文字。
+ * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）：画布、检查器、概览、运行监控里写动作的地方共用的文字。
  * 和 `ACTION`（界面上的通用操作）不是一回事。
  */
 export const NODE_ACTIONS = {
-	/** 此刻在做的事：检查器的「正在做」、读屏读到的「正在做 X」。 */
+	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，检查器的「正在做」，「动作」页的第一组。 */
 	doing: "正在做",
+	/** 正在做的动作列满了：接口只给前 50 个，可能还有没列出的（检查器的「正在做」、「动作」页的第一组共用）。 */
+	runningIncomplete: (listed: number) => `列满 ${listed} 个，可能还有没列出的`,
+	/**
+	 * 动作的结果和标记：动作自己的一组状态文字，不是运行状态（`RUN_STATUS_LABEL`）。还没结束的写「进行中」。
+	 */
+	results: {
+		running: ACTIVE_LABEL,
+		success: "成功",
+		failed: "失败",
+		unfinished: "未结束",
+		mark: TERM.mark,
+	} satisfies Record<ActionResult | "running" | "mark", string>,
 } as const;
 
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */
@@ -221,7 +289,7 @@ export const LIST_LABEL = {
 export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
-	noData: "还没有数据",
+	noData: MESSAGE_NO_DATA,
 	/** 尝试已经结束，一个点都没有上报。 */
 	noDataEnded: "这次尝试没有上报数据",
 	/** 没有节点处于执行中：运行监控的概览。 */
@@ -232,6 +300,8 @@ export const MESSAGE = {
 	noActiveNodes: `没有${ACTIVE_LABEL}的${TERM.node}。`,
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
 	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
+	/** 运行监控的日志页签和概览的「其他警告与错误」：运行的日志已过保留期。 */
+	logsExpired: "这次运行的日志已超过保留期，已被清理。",
 	neverRun: "从未运行",
 	/** 列表页的空状态标题；控制台「开始使用」每一步右侧的状态写同一句，在哪里都读到同一个说法。 */
 	noAgents: "还没有 Agent 连接",

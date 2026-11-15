@@ -6,7 +6,7 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
-import { loadSummary } from "./actions-support";
+import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
 import {
 	createEditorScenario,
@@ -36,7 +36,7 @@ import {
 	runningScenario,
 	unixAt,
 } from "./monitor-scenario";
-import { openOverview, overviewRun, readouts } from "./overview-support";
+import { attention, attentionRun, openOverview, overviewRun, readouts } from "./overview-support";
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
@@ -620,6 +620,21 @@ test("运行监控：失败的运行（尝试页签）", async ({ page, controlP
 	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
 });
 
+test("运行监控：详情的「动作」页（正在做的按层级缩进、最近 20 个）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await actionsScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId, "verify", "actions");
+	await expect(actionTable(page).locator('tr[data-action-id="1204"]')).toBeVisible();
+	await expect(actionTable(page).locator('tbody[data-group="recent"]')).toBeVisible();
+	await chartsLoaded(page);
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-actions.png", { mask: runIds(page) });
+});
+
 test("运行监控：概览（关注项的读数和图表，没有异常）", async ({
 	page,
 	controlPlane,
@@ -632,6 +647,23 @@ test("运行监控：概览（关注项的读数和图表，没有异常）", as
 	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(3);
 	await page.mouse.move(20, 880);
 	await expect(page).toHaveScreenshot("monitor-overview.png", {
+		mask: [...runIds(page), page.locator("[data-chain-id]")],
+	});
+});
+
+test("运行监控：概览（有异常：「需要注意」、WARN 的读数、没有新数据的图表）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await attentionRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	await expect(attention(page).getByRole("listitem")).toHaveCount(3);
+	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(4);
+	await expect(page.locator("[data-stale-gap]")).toHaveCount(1);
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview-attention.png", {
 		mask: [...runIds(page), page.locator("[data-chain-id]")],
 	});
 });

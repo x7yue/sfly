@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
-import { LONG_REASON, loadSummary, REJECTS } from "./actions-support";
+import { LONG_REASON, loadSummary, orderFields, REJECTS } from "./actions-support";
 import { inspector, nodeCard } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { runningScenario } from "./monitor-scenario";
@@ -21,6 +21,12 @@ async function openNode(page: Page, setup: Running, clock: Clock, node: string) 
 	await nodeCard(page, node).click();
 	return inspector(page);
 }
+
+/** 字段在页面上的写法，顺序就是写入的顺序：`订单号=P-0003 价=18.3`。 */
+const authored = (fields: Record<string, string>) =>
+	Object.entries(fields)
+		.map(([key, value]) => `${key}=${value}`)
+		.join(" ");
 
 /** 一种名称的计数。 */
 const counted = (name: string, total: number, failed = 0) => ({
@@ -48,7 +54,7 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 	await nodeCard(page, "verify").click();
 	const panel = inspector(page);
 
-	// 正在做：三层，名称、字段、已持续多久；摘要在它上面。字段的顺序由控制面存储决定，只核对每一个。
+	// 正在做：三层，名称、字段、已持续多久；摘要在它上面。字段按作者写的顺序：键名长短不一，jsonb 会改成按长短排。
 	const doing = panel.getByRole("region", { name: "正在做" });
 	const rows = doing.getByRole("listitem");
 	await expect(rows).toHaveCount(3);
@@ -56,9 +62,7 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 	await expect(rows.nth(0)).toContainText("目标=200 单/s");
 	await expect(rows.nth(0)).toContainText("1h 43m");
 	await expect(rows.nth(1)).toContainText("下单");
-	for (const field of ["订单=P-1284814", "方向=买", "数量=300", "价格=18.36"]) {
-		await expect(rows.nth(1)).toContainText(field);
-	}
+	await expect(rows.nth(1)).toContainText(authored(orderFields(1_284_814)));
 	await expect(rows.nth(1)).toContainText(/\dms/);
 	await expect(rows.nth(2)).toContainText("等回报");
 	const names = await Promise.all(
@@ -97,7 +101,7 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 	await expect(area.getByRole("heading", { name: /最近的失败/ })).toContainText("17");
 	await expect(area).toContainText("共 17 个，只列出最近 5 个");
 	const first = fails.getByRole("listitem").nth(0);
-	await expect(first).toContainText("订单=P-1284808");
+	await expect(first).toContainText(authored({ ...orderFields(20), 订单号: "P-1284808" }));
 	await expect(first).toContainText("3ms");
 	await expect(first.getByTestId("action-reason")).toHaveText(REJECTS[0]?.reason ?? "");
 	const line = await first.getByTestId("action-name").boundingBox();
@@ -107,6 +111,26 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 	// 摘要里有「最近 20 个」（核对回报），检查器不画它。
 	await expect(panel).not.toContainText("核对回报");
 	await expect(panel).not.toContainText("最近 20 个");
+});
+
+test("检查器：有动作的节点底部多一个入口，打开监控详情的「动作」页", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const setup = await runningScenario(controlPlane, connectAgent, clock);
+	setup.agent.actionSummary(
+		setup.tasks.verify as AssignedTask,
+		loadSummary(setup.agent, clock.now().getTime()),
+	);
+	await setup.agent.sync();
+	const panel = await openNode(page, setup, clock, "verify");
+
+	await expect(panel.getByRole("link", { name: "在监控页中打开 verify" })).toBeVisible();
+	await panel.getByRole("link", { name: "查看动作明细" }).click();
+	await expect(page).toHaveURL(`/runs/${setup.runId}?view=detail&node=verify&tab=actions`);
+	await expect(page.getByRole("tab", { name: /^动作/ })).toHaveAttribute("aria-selected", "true");
 });
 
 test("检查器：4096 个字符的失败原因完整显示，不撑破版面", async ({
@@ -167,6 +191,7 @@ test("检查器：没有动作的节点不显示「正在做」和「动作」�
 	await expect(panel.getByTestId("run-progress")).toHaveText("第 3 批");
 	await expect(panel.getByRole("region", { name: "正在做" })).toHaveCount(0);
 	await expect(panel.getByRole("region", { name: "动作", exact: true })).toHaveCount(0);
+	await expect(panel.getByRole("link", { name: "查看动作明细" })).toHaveCount(0);
 
 	// 已经成功、没有记录过动作：什么都没有。
 	await nodeCard(page, "fetch").click();

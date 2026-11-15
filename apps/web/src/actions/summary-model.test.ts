@@ -1,6 +1,6 @@
 import type { ActionNameCount, AttemptView, NodeRunView, RunningActionView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { actionAttempt, countOnlyNames, failedTotal, runningRows } from "./summary-model";
+import { actionAttempt, failedTotal, runningRows } from "./summary-model";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 const running = (
@@ -33,7 +33,7 @@ describe("正在做的动作排成树", () => {
 		expect(shown(rows)).toEqual(["0:预热", "0:保持", "1:下单 A", "2:回报", "1:下单 B"]);
 	});
 
-	it("最多缩进 3 层，更深的画在第 3 层", () => {
+	it("最多缩进 3 层（和「动作」页一样），更深的画在第 3 层", () => {
 		const rows = runningRows([
 			running(1, null, 0, "a", 1),
 			running(2, 1, 1, "b", 2),
@@ -41,7 +41,7 @@ describe("正在做的动作排成树", () => {
 			running(4, 3, 3, "d", 4),
 			running(5, 4, 4, "e", 5),
 		]);
-		expect(shown(rows)).toEqual(["0:a", "1:b", "2:c", "2:d", "2:e"]);
+		expect(shown(rows)).toEqual(["0:a", "1:b", "2:c", "3:d", "3:e"]);
 	});
 
 	it("父动作不在列表里（已经结束，或列满 50 个被挤掉）时，从它自己的层级起排", () => {
@@ -64,26 +64,11 @@ const count = (name: string, cappedAt: string | null, failed = 0): ActionNameCou
 	agent_capped_at: cappedAt,
 });
 
-describe("上限说明和失败的个数", () => {
-	it("只列出只计数的名称，先超出的在前", () => {
-		const names = [
-			count("下单", "2026-01-01T09:19:12.000Z"),
-			count("预热", null),
-			count("撤单", "2026-01-01T09:10:00.000Z"),
-		];
-		expect(countOnlyNames(names)).toEqual([
-			{ name: "撤单", since: "2026-01-01T09:10:00.000Z" },
-			{ name: "下单", since: "2026-01-01T09:19:12.000Z" },
-		]);
-		expect(countOnlyNames([count("预热", null)])).toEqual([]);
-	});
-
-	it("失败的个数是各个名称的失败数之和", () => {
-		expect(
-			failedTotal([count("下单", null, 17), count("撤单", null, 3), count("预热", null)]),
-		).toBe(20);
-		expect(failedTotal([])).toBe(0);
-	});
+it("失败的个数是各个名称的失败数之和", () => {
+	expect(failedTotal([count("下单", null, 17), count("撤单", null, 3), count("预热", null)])).toBe(
+		20,
+	);
+	expect(failedTotal([])).toBe(0);
 });
 
 const attempt = (n: number, status: AttemptView["status"], started: boolean): AttemptView =>
