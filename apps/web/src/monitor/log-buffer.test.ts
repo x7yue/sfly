@@ -1,6 +1,12 @@
 import type { LogLineView, LogPage } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { fromLatestPage, withLive, withOlderPage } from "./log-buffer";
+import {
+	fromLatestPage,
+	fromLocatedPage,
+	withLive,
+	withNewerPage,
+	withOlderPage,
+} from "./log-buffer";
 
 // 一份日志文件：第 n 行的内容与字节偏移（JSONL，与控制面写入的格式相同）。
 const line = (seq: number, level: LogLineView["level"] = "info"): LogLineView => ({
@@ -35,6 +41,20 @@ function page(f: ReturnType<typeof file>, from: number, to: number, lastSeq = to
 		truncated: false,
 		expired: false,
 		locate: null,
+	};
+}
+
+/** 定位到某一刻读到的一页：[from, to] 行，那一刻在 atSeq 行的行首之前，exactSeq 是正好对应的行。 */
+function located(
+	f: ReturnType<typeof file>,
+	from: number,
+	to: number,
+	atSeq: number,
+	exactSeq: number | null,
+): LogPage {
+	return {
+		...page(f, from, to, f.lines.length),
+		locate: { at_offset: f.offsetOf(atSeq), exact_seq: exactSeq },
 	};
 }
 
@@ -117,5 +137,77 @@ describe("日志分页与实时接续", () => {
 		);
 		expect(b.truncated).toBe(true);
 		expect(seqs(b)).toEqual([1, 2, 3, 4]);
+	});
+});
+
+describe("定位到某一刻的一页", () => {
+	it("读到的是文件中间的一页：前面和后面都还有行，记下那一刻的位置和正好对应的行", () => {
+		const f = file(100);
+		const b = fromLocatedPage(located(f, 41, 60, 51, 50));
+		expect(seqs(b)).toHaveLength(20);
+		expect(b).toMatchObject({
+			loaded: true,
+			hasOlder: true,
+			hasNewer: true,
+			start: f.offsetOf(41),
+			end: f.offsetOf(61),
+			located: { at_offset: f.offsetOf(51), exact_seq: 50 },
+		});
+	});
+
+	it("定位到第一页时前面没有行，定位到最后一页时后面没有行", () => {
+		const f = file(100);
+		const first = fromLocatedPage(located(f, 1, 20, 1, null));
+		expect(first).toMatchObject({ hasOlder: false, hasNewer: true });
+		const last = fromLocatedPage(located(f, 81, 100, 101, null));
+		expect(last).toMatchObject({ hasOlder: true, hasNewer: false, located: { exact_seq: null } });
+	});
+
+	it("往前、往后翻的页接在两头：行连续，翻到两头后不再有更早或更新的行", () => {
+		const f = file(100);
+		let b = fromLocatedPage(located(f, 41, 60, 51, null));
+		b = withOlderPage(b, page(f, 21, 40));
+		b = withNewerPage(b, page(f, 61, 80));
+		expect(seqs(b)).toEqual(Array.from({ length: 60 }, (_, i) => 21 + i));
+		expect(b).toMatchObject({
+			hasOlder: true,
+			hasNewer: true,
+			start: f.offsetOf(21),
+			end: f.offsetOf(81),
+		});
+		b = withOlderPage(b, page(f, 1, 20));
+		b = withNewerPage(b, page(f, 81, 100));
+		expect(seqs(b)).toHaveLength(100);
+		expect(b).toMatchObject({ hasOlder: false, hasNewer: false, end: f.size, lastSeq: 100 });
+	});
+
+	it("往后翻到文件末尾后，实时流从这一页的最后序号接上：与历史重叠的行不重复", () => {
+		const f = file(30);
+		let b = fromLocatedPage(located(f, 1, 10, 5, null));
+		// 读这一页时文件里只写到第 28 行。
+		b = withNewerPage(b, { ...page(f, 11, 28), size: f.offsetOf(29), last_seq: 28 });
+		expect(b).toMatchObject({ hasNewer: false, lastSeq: 28, end: f.offsetOf(29) });
+		// 之后又写到第 30 行：实时流补发第 29、30 行，也可能带上已经读到的第 28 行。
+		b = withLive(b, chunk(f, 28, 30), all);
+		expect(seqs(b)).toEqual(Array.from({ length: 30 }, (_, i) => 1 + i));
+		expect(b.end).toBe(f.size);
+	});
+
+	it("按级别筛选时一页里只有符合的行，往后翻照样在末尾读完", () => {
+		const f = file(40, (seq) => (seq % 4 === 0 ? "error" : "info"));
+		const errors = (p: LogPage): LogPage => ({
+			...p,
+			lines: p.lines.filter((l) => l.level === "error"),
+		});
+		let b = fromLocatedPage(errors(located(f, 11, 20, 16, 16)));
+		expect(seqs(b)).toEqual([12, 16, 20]);
+		b = withNewerPage(b, errors(page(f, 21, 40)));
+		expect(seqs(b)).toEqual([12, 16, 20, 24, 28, 32, 36, 40]);
+		expect(b.hasNewer).toBe(false);
+	});
+
+	it("最新一页（没有定位）后面没有行，也没有定位结果", () => {
+		const f = file(10);
+		expect(fromLatestPage(page(f, 6, 10))).toMatchObject({ hasNewer: false, located: null });
 	});
 });
