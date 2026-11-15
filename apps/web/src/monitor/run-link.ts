@@ -23,11 +23,8 @@ export const MonitorSearch = z.object({
 });
 export type MonitorSearch = z.infer<typeof MonitorSearch>;
 
-/** 运行监控页上要打开的位置：{@link MonitorSearch} 的内容。 */
-export type MonitorTarget = MonitorSearch;
-
 /** 通往运行监控页某个位置的链接：`<Link {...runMonitorLink(id, target)}>`，或 `navigate(runMonitorLink(id, target))`。 */
-export function runMonitorLink(runId: string, target: MonitorTarget) {
+export function runMonitorLink(runId: string, target: MonitorSearch) {
 	const search: MonitorSearch = {};
 	if (target.node !== undefined) search.node = target.node;
 	if (target.tab !== undefined) search.tab = target.tab;

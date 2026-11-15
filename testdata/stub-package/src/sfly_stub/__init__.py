@@ -247,6 +247,26 @@ def notify_card(
     ctx.notify(bot, message=sfly.feishu.card(title, markdown, color))
 
 
+@node(title="动作和标记", outputs=[])
+def actions(ctx: Context, unfinished: bool = False) -> None:
+    """动作与标记测试用（#355）：先写一行日志，嵌套记录动作，记一个标记，失败一次，再写一行日志。
+    unfinished 时再开始一个不结束的动作。
+
+    ctx.action、ctx.mark 从 SDK 0.4.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    ctx.log.info("动作前")
+    with ctx.action("下单", 订单="1001") as order:
+        ctx.mark("收到第一笔成交", 订单="1001")
+        with ctx.action("风控检查"):
+            pass
+        order.note(回报="已成交")
+    with ctx.action("下单", 订单="1002") as order:
+        order.fail("拒单：余额不足")
+    if unfinished:
+        ctx.action.start("从不结束", 订单="1003")
+    ctx.log.info("动作后")
+
+
 @node(title="多路日志", outputs=[])
 def chatter(
     ctx: Context, steps: int = 0, interval: float = 0.0, secret: str = ""

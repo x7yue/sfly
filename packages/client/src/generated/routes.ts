@@ -10,6 +10,7 @@ import type {
 	FeishuBotView,
 	FeishuTestResult,
 	FeishuWebhookUrl,
+	FocusItemInput,
 	ListOrchestrationsQuery,
 	LogChunk,
 	LogPage,
@@ -401,7 +402,7 @@ export interface Api {
 		/**
 		 * `GET /orchestrations/:id`
 		 *
-		 * 单个场景（名称、说明、最新版本号、归档时间）。
+		 * 单个场景（名称、说明、最新版本号、归档时间、运行通知设置、关注项）。
 		 */
 		get: Endpoint<
 			{
@@ -509,7 +510,17 @@ export interface Api {
 		/**
 		 * `PATCH /orchestrations/:id`
 		 *
-		 * 修改名称、说明和运行通知设置；不产生新的场景版本，立即生效。
+		 * 修改名称、说明、运行通知设置和关注项；不产生新的场景版本，立即生效。
+		 *
+		 * `focus_items` 是整份替换：给了就用它代替现在的列表（空数组即清空），按列表顺序保存；同时修改时后写的生效，
+		 * 不做乐观锁。不合格时返回 400，列表不变：
+		 *
+		 * - `focus_items_limit`：超过 `FOCUS_ITEMS_MAX` 项。已经失效的项也算在内。
+		 * - `focus_item_duplicate`：同一个 `(node_id, chart)` 出现了不止一次。
+		 * - `focus_item_unknown_chart`：新加入的项引用了最新版本里没有的节点，或者这个节点锁定的节点包版本没有这张图表。
+		 *   已经在列表里、后来失效的项允许原样保留（排序、改名都可以）；移除之后再加回去算新加入的。
+		 *
+		 * 控制面比较新旧列表，记下最后一次修改（响应里的 `focus_edit`）；写入和现在一样的列表不算修改。
 		 */
 		update: Endpoint<
 			{
@@ -520,6 +531,7 @@ export interface Api {
 					name?: string;
 					description?: string;
 					run_notification?: RunNotificationChanges;
+					focus_items?: FocusItemInput[];
 				};
 			},
 			OrchestrationView
@@ -527,7 +539,9 @@ export interface Api {
 		/**
 		 * `POST /orchestrations/:id/copy`
 		 *
-		 * 复制场景并取新名字：说明、运行通知设置和运行预设（包括 secret 的值）一起复制，源场景最新版本的内容作为第 1 版。
+		 * 复制场景并取新名字：说明、运行通知设置、运行预设（包括 secret 的值）和关注项（包括已经失效的）一起复制，
+		 * 源场景最新版本的内容作为第 1 版。有关注项时，副本的关注项最后修改记为复制的人，说明写「复制自「源场景名」」。
+		 * 联调副本也走这个接口。
 		 */
 		copy: Endpoint<
 			{

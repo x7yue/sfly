@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -17,6 +18,10 @@ import time
 from pathlib import Path
 
 import pytest
+
+from sfly.cli.debug import format_action
+from sfly.context import ACTION_RESULTS
+from sfly.local import ActionRecord
 
 STUB = Path(__file__).resolve().parents[3] / "testdata" / "stub-package"
 SFLY = str(Path(sys.executable).parent / "sfly")
@@ -277,6 +282,66 @@ def test_a_card_and_a_raw_message_are_printed_and_an_invalid_one_is_warned_about
         " warn  system ctx.notify 的消息没有发送：" in line and "msg_type" in line
         for line in invalid.stderr.splitlines()
     ), invalid.stderr
+
+
+def action_lines(stderr: str) -> list[str]:
+    """标准错误里动作和标记的行，去掉开头的时间；耗时换成 `<耗时>`。"""
+    lines = [re.sub(r"^\d\d:\d\d:\d\d\.\d{3} ", "", line) for line in stderr.splitlines()]
+    return [
+        re.sub(r"(?<= )\d+(\.\d)? (ms|s)(?= |$)", "<耗时>", line)
+        for line in lines
+        if line.startswith(("动作 ", "标记 "))
+    ]
+
+
+def test_actions_print_result_and_duration_and_marks_print_one_line(project: Path) -> None:
+    run = sfly_debug(project, "actions")
+
+    assert run.returncode == 0, run.stderr
+    assert action_lines(run.stderr) == [
+        "动作  开始 #1 下单 订单=1001",
+        "标记    收到第一笔成交 订单=1001",
+        "动作    开始 #3 风控检查",
+        "动作    成功 #3 风控检查 <耗时>",
+        "动作  成功 #1 下单 <耗时> 订单=1001 回报=已成交",
+        "动作  开始 #4 下单 订单=1002",
+        "动作  失败 #4 下单 <耗时> 订单=1002 原因：拒单：余额不足",
+    ]
+    # 和日志一起按时间排：日志的行也在，动作的 JSON 不会当成不认识的内容打印出来。
+    assert "动作前" in run.stderr and "动作后" in run.stderr
+    assert "action_start" not in run.stderr and "action_summary" not in run.stderr
+
+
+def test_an_action_still_running_when_the_node_ends_is_printed_as_unfinished(
+    project: Path,
+) -> None:
+    run = sfly_debug(project, "actions", "--params", '{"unfinished": true}')
+
+    assert run.returncode == 0, run.stderr
+    assert action_lines(run.stderr)[-2:] == [
+        "动作  开始 #5 从不结束 订单=1003",
+        "动作  未结束 #5 从不结束 <耗时> 订单=1003",
+    ]
+
+
+def test_every_result_an_action_can_end_with_has_its_own_printed_text() -> None:
+    texts = {"success": "成功", "failed": "失败", "unfinished": "未结束"}
+    # SDK 多出一种结果时，这里和 `sfly debug` 的输出都要跟着加。
+    assert texts.keys() == ACTION_RESULTS.keys()
+    for result, text in texts.items():
+        record = ActionRecord(
+            id=1,
+            kind="action",
+            name="下单",
+            parent=None,
+            depth=0,
+            fields={},
+            ts=0,
+            mono=1,
+            result=ACTION_RESULTS[result],
+            duration_ms=5,
+        )
+        assert f"动作  {text} #1 下单 5 ms" in format_action(record)
 
 
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(

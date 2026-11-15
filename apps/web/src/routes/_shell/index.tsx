@@ -10,18 +10,17 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { cn } from "cn";
-import { ChevronRightIcon, WorkflowIcon } from "lucide-react";
+import { ChevronRightIcon, PlayIcon } from "lucide-react";
 import { useId } from "react";
+import { useOverlays } from "#/components/app-shell/overlays";
 import { ChainBars } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
 import { Page, PageHeader, Panel } from "#/components/page";
-import { Sparkline } from "#/components/sparkline";
 import { nodeStatusView, SlotBar, STATUS, StatusDot, StatusPill } from "#/components/status";
-import { TrendChart, TrendLegend } from "#/dashboard/charts";
 import { apiQuery } from "#/lib/api";
 import { PAGE } from "#/lib/copy";
-import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -34,23 +33,32 @@ export const Route = createFileRoute("/_shell/")({
 	component: Dashboard,
 });
 
-/** 控制台（原型 #/dashboard）：模块固定——统计卡、正在运行、运行趋势、最近失败、Agent 状态、最近发布的节点包。 */
+/** 控制台（原型 #/dashboard）：页头一行（控制面时间、计数、运行场景），下面是正在运行、最近失败、Agent 状态。 */
 function Dashboard() {
 	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: LIVE_POLL_MS });
+	const overlays = useOverlays();
+	const data = dashboard.data;
 	return (
 		<Page>
 			<PageHeader
 				title={PAGE.dashboard}
-				description="最近 24 小时 · 实时更新"
+				description={
+					data && (
+						<span className="font-mono text-xs">控制面时间 {formatClock(data.generated_at)}</span>
+					)
+				}
 				actions={
-					<Button variant="default" render={<Link to="/orchestrations" />} nativeButton={false}>
-						<WorkflowIcon />
-						场景编排
-					</Button>
+					<>
+						{data && <RunCounts runs={data.runs} />}
+						<Button variant="default" onClick={() => overlays.open("run-scenario")}>
+							<PlayIcon />
+							运行场景
+						</Button>
+					</>
 				}
 			/>
-			{dashboard.data ? (
-				<DashboardBody data={dashboard.data} />
+			{data ? (
+				<DashboardBody data={data} />
 			) : dashboard.isError ? (
 				<ErrorState
 					title="无法加载控制台数据"
@@ -64,149 +72,62 @@ function Dashboard() {
 	);
 }
 
-function DashboardBody({ data }: { data: DashboardView }) {
+/** 页头右侧一行等宽的计数：此刻的运行中、执行中的任务、排队，以及最近 24 小时的成功、失败、取消。 */
+function RunCounts({ runs }: { runs: DashboardView["runs"] }) {
 	return (
-		<>
-			<Stats data={data} />
-			<div className="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] items-start gap-3.5">
-				<div className="flex flex-col gap-3.5">
-					<RunningPanel runs={data.running_runs} now={Date.parse(data.generated_at)} />
-					<DashboardPanel title="运行趋势" aside={<TrendLegend />}>
-						<div className="px-3.5 pt-3 pb-2.5">
-							<TrendChart hours={data.hourly} />
-						</div>
-					</DashboardPanel>
-					<PackagesPanel packages={data.recent_packages} />
-				</div>
-				<div className="flex flex-col gap-3.5">
-					<FailuresPanel failures={data.recent_failures} />
-					<AgentsPanel agents={data.agents.list} />
-				</div>
-			</div>
-		</>
+		<ul
+			aria-label="运行计数"
+			className="m-0 mr-2 flex list-none items-center gap-4 p-0 text-xs text-fg-3"
+		>
+			<Count label="运行中" value={runs.running} />
+			<Count label="执行中任务" value={runs.running_tasks} />
+			<Count label="排队" value={runs.queued_tasks} />
+			<li aria-hidden className="h-3.5 w-px bg-border" />
+			<li>
+				最近 24 小时 <Count label="成功" value={runs.success} inline />
+				{" · "}
+				{/* 数值为 0 时不着色：颜色只在有失败时传达信号。 */}
+				<Count
+					label="失败"
+					value={runs.failed}
+					inline
+					className={runs.failed > 0 ? "text-danger-fg" : undefined}
+				/>
+				{" · "}
+				<Count label="取消" value={runs.cancelled} inline />
+			</li>
+		</ul>
 	);
 }
 
-// —— 统计卡 ——
-
-function Stats({ data }: { data: DashboardView }) {
-	const { runs, agents, hourly } = data;
-	const offline = agents.list.filter((a) => a.status === "offline");
-	return (
-		<section aria-label="运行统计" className="mb-3.5 grid grid-cols-6 gap-2.5">
-			<StatCard
-				label={
-					<>
-						{runs.running > 0 && <StatusDot kind="running" />}
-						运行中
-					</>
-				}
-				name="运行中"
-				value={runs.running}
-				detail={`${runs.running_chains} 条链 · ${runs.running_tasks} 个任务执行中`}
-			/>
-			<StatCard
-				name="成功"
-				value={runs.success}
-				// 数值为 0 时不着色：颜色只在有成功 / 失败时传达信号。
-				valueClassName={runs.success > 0 ? "text-ok" : undefined}
-				detail={<TrendSpark values={hourly.map((h) => h.success)} activeClassName="text-ok" />}
-			/>
-			<StatCard
-				name="失败"
-				value={runs.failed}
-				valueClassName={runs.failed > 0 ? "text-danger-fg" : undefined}
-				unit={runs.failed_subflows > 0 ? `含 ${runs.failed_subflows} 个子流程` : undefined}
-				detail={
-					<TrendSpark values={hourly.map((h) => h.failed)} activeClassName={STATUS.failed.tone} />
-				}
-			/>
-			<StatCard
-				name="成功率"
-				value={runs.success_rate === null ? "—" : (runs.success_rate * 100).toFixed(1)}
-				unit={runs.success_rate === null ? undefined : "%"}
-				detail={rateChange(runs.success_rate, runs.previous_success_rate)}
-			/>
-			<StatCard
-				name="Agent 在线"
-				value={agents.online}
-				unit={`/ ${agents.list.length}`}
-				detail={
-					offline.length === 0 ? (
-						agents.list.length === 0 ? (
-							"还没有 Agent"
-						) : (
-							"全部在线"
-						)
-					) : (
-						<span className="text-warn-fg">{offline.map((a) => a.name).join("、")} 离线</span>
-					)
-				}
-			/>
-			<StatCard
-				name="槽位占用"
-				value={agents.used_slots}
-				unit={`/ ${agents.slots}`}
-				detail={`排队任务 ${runs.queued_tasks}`}
-			/>
-		</section>
-	);
-}
-
-function TrendSpark({
-	values,
-	activeClassName,
-}: {
-	values: readonly number[];
-	activeClassName: string;
-}) {
-	const empty = values.every((v) => v === 0);
-	return (
-		<Sparkline
-			values={values}
-			className={cn("mt-1.5 w-full", empty ? "text-fg-3" : activeClassName)}
-		/>
-	);
-}
-
-/** 与前 24 小时的成功率对比：`较前 24 小时 −3.1%`。 */
-function rateChange(current: number | null, previous: number | null): string {
-	if (current === null) return "最近 24 小时没有结束的运行";
-	if (previous === null) return "前 24 小时没有可比数据";
-	const diff = (current - previous) * 100;
-	const sign = diff > 0 ? "+" : diff < 0 ? "−" : "±";
-	return `较前 24 小时 ${sign}${Math.abs(diff).toFixed(1)}%`;
-}
-
-function StatCard({
-	name,
+function Count({
 	label,
 	value,
-	unit,
-	valueClassName,
-	detail,
+	inline,
+	className,
 }: {
-	/** 可访问名称（统计项名称）。 */
-	name: string;
-	/** 显示的标签；默认同 name。 */
-	label?: React.ReactNode;
-	value: React.ReactNode;
-	unit?: string;
-	valueClassName?: string;
-	detail?: React.ReactNode;
+	label: string;
+	value: number;
+	inline?: boolean;
+	className?: string;
 }) {
+	const content = (
+		<>
+			{label} <b className={cn("font-mono font-semibold text-fg-1", className)}>{value}</b>
+		</>
+	);
+	return inline ? <span>{content}</span> : <li>{content}</li>;
+}
+
+function DashboardBody({ data }: { data: DashboardView }) {
 	return (
-		<section
-			aria-label={name}
-			className="min-w-0 rounded-lg border border-border-soft bg-surface px-3.5 py-3"
-		>
-			<div className="flex items-center gap-1.5 text-xs text-fg-3">{label ?? name}</div>
-			<div className={cn("mt-1.5 font-mono text-2xl font-semibold", valueClassName)}>
-				{value}
-				{unit && <small className="ml-1 text-xs font-normal text-fg-3">{unit}</small>}
+		<div className="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] items-start gap-3.5">
+			<RunningPanel runs={data.running_runs} now={Date.parse(data.generated_at)} />
+			<div className="flex flex-col gap-3.5">
+				<FailuresPanel failures={data.recent_failures} />
+				<AgentsPanel agents={data.agents.list} />
 			</div>
-			{detail && <div className="mt-0.5 truncate text-xs text-fg-3">{detail}</div>}
-		</section>
+		</div>
 	);
 }
 
@@ -245,7 +166,7 @@ function PanelEmpty({ children }: { children: React.ReactNode }) {
 	return <p className="m-0 px-3.5 py-6 text-center text-sm text-fg-3">{children}</p>;
 }
 
-const panelLink = (to: "/runs" | "/agents" | "/packages", label: string) => (
+const panelLink = (to: "/runs" | "/agents", label: string) => (
 	<Button variant="ghost" size="sm" render={<Link to={to} />} nativeButton={false}>
 		{label}
 	</Button>
@@ -444,62 +365,11 @@ function agentState(agent: DashboardAgent): { text: string; className?: string }
 	return { text: "在线" };
 }
 
-// —— 最近发布的节点包 ——
-
-function PackagesPanel({ packages }: { packages: DashboardView["recent_packages"] }) {
-	return (
-		<DashboardPanel title="最近发布的节点包" aside={panelLink("/packages", "节点包管理")}>
-			{packages.length === 0 ? (
-				<PanelEmpty>还没有发布节点包</PanelEmpty>
-			) : (
-				<Table aria-label="最近发布的节点包">
-					<TableBody>
-						{packages.map((p) => (
-							<TableRow key={`${p.name}@${p.version}`}>
-								<TableCell width="fit" className="font-mono">
-									<Link
-										to="/packages"
-										search={{ name: p.name, version: p.version }}
-										className="text-fg-1 no-underline hover:underline"
-									>
-										{p.name}
-									</Link>
-								</TableCell>
-								<TableCell width="fit" className="font-mono">
-									{p.version}
-								</TableCell>
-								<TableCell width="grow" className="text-xs text-fg-3">
-									<Truncate>
-										{`${formatDateTime(p.published_at)} · ${
-											p.locked_orchestrations > 0
-												? `${p.locked_orchestrations} 个场景锁定`
-												: "未被锁定"
-										}`}
-									</Truncate>
-								</TableCell>
-							</TableRow>
-						))}
-					</TableBody>
-				</Table>
-			)}
-		</DashboardPanel>
-	);
-}
-
 // —— 加载骨架 ——
 
 function DashboardSkeleton() {
 	return (
 		<output aria-label="加载中" aria-busy="true" className="block">
-			<div className="mb-3.5 grid grid-cols-6 gap-2.5">
-				{Array.from({ length: 6 }, (_, i) => (
-					// biome-ignore lint/suspicious/noArrayIndexKey: 骨架没有标识
-					<div key={i} className="rounded-lg border border-border-soft bg-surface px-3.5 py-3">
-						<Skeleton className="h-3 w-1/2" />
-						<Skeleton className="mt-3 h-5 w-1/3" />
-					</div>
-				))}
-			</div>
 			<div className="grid grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-3.5">
 				{[0, 1].map((col) => (
 					<div key={col} className="flex flex-col gap-3.5">

@@ -65,7 +65,7 @@ test("地址带节点、页签和时刻：选中这个节点，切到日志页�
 	await expect(logs.getByRole("button", { name: /加载更新的日志/ })).toBeVisible();
 });
 
-test("没有正好对应的行：在那一刻的位置插一条「这一刻」，不高亮别的行；正好有一行（1 秒以内）时高亮它、不插标记", async ({
+test("没有正好对应的行：在那一刻的位置插一条「这一刻」，不高亮别的行；正好有一行（1 秒以内）时高亮它、不插「这一刻」", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -86,12 +86,12 @@ test("没有正好对应的行：在那一刻的位置插一条「这一刻」�
 	// 第 10 秒：离第二行、第三行都是 2 秒。
 	await page.goto(monitorUrl(runId, { node: "probe", at: iso(clock0 + 10_000) }));
 	await expect(scope(page)).toHaveText("范围：probe");
-	const marker = logs.locator("[data-moment]");
-	await expect(marker).toHaveCount(1);
-	await expect(marker).toHaveText(`这一刻 控制面时间 ${clockMs(clock0 + 10_000)}`);
+	const moment = logs.locator("[data-moment]");
+	await expect(moment).toHaveCount(1);
+	await expect(moment).toHaveText(`这一刻 控制面时间 ${clockMs(clock0 + 10_000)}`);
 	await expect(logs.locator("[data-located]")).toHaveCount(0);
-	await expect(marker).toBeInViewport();
-	// 前后的行照常显示，标记在第二行和第三行之间。
+	await expect(moment).toBeInViewport();
+	// 前后的行照常显示，「这一刻」在第二行和第三行之间。
 	await expect(logs.locator("[data-index]")).toContainText([
 		"probe one",
 		"probe two",
@@ -118,7 +118,7 @@ test("没有正好对应的行：在那一刻的位置插一条「这一刻」�
 	await expect(logs.locator("[data-located]")).toHaveCount(0);
 });
 
-test("时刻早于第一行、晚于最后一行时分别定位到开头和末尾，标记在最前和最后", async ({
+test("时刻早于第一行、晚于最后一行时分别定位到开头和末尾，「这一刻」在最前和最后", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -194,15 +194,18 @@ test("从定位到的那一页往前翻页、往后翻页：行连续不重复�
 	);
 	await agent.sync();
 
-	/** 这个任务的日志分页请求（查询参数）和实时流连接的次数。 */
+	/** 这个任务的日志分页请求（查询参数）、读到的行序号，以及按时间顺序排列的请求（分页请求写查询参数，实时流连接写 "events"）。 */
 	const pageQueries: string[] = [];
-	let events = 0;
+	const requests: string[] = [];
+	const read: number[] = [];
 	page.on("request", (req: Request) => {
 		const url = new URL(req.url());
-		if (url.pathname === `/api/tasks/${probe.taskId}/logs`) pageQueries.push(url.search);
-		if (url.pathname === `/api/tasks/${probe.taskId}/logs/events`) events++;
+		if (url.pathname === `/api/tasks/${probe.taskId}/logs`) {
+			pageQueries.push(url.search);
+			requests.push(url.search);
+		}
+		if (url.pathname === `/api/tasks/${probe.taskId}/logs/events`) requests.push("events");
 	});
-	const read: number[] = [];
 	page.on("response", async (res) => {
 		const url = new URL(res.url());
 		if (url.pathname !== `/api/tasks/${probe.taskId}/logs`) return;
@@ -214,31 +217,26 @@ test("从定位到的那一页往前翻页、往后翻页：行连续不重复�
 	await page.goto(monitorUrl(runId, { node: "probe", at: iso(clock0 + 7_000 + 3_500) }));
 	const logs = logsOf(page);
 	await expect(logs.locator("[data-located]")).toContainText("probe line 350");
-	// 还没读到末尾：不连实时流。
-	expect(events).toBe(0);
+	const older = logs.getByRole("button", { name: /加载更早的日志/ });
+	const newer = logs.getByRole("button", { name: /加载更新的日志/ });
 
 	// 向上滚动一直读到开头。
-	for (let n = 0; n < 4; n++) {
-		if ((await logs.getByRole("button", { name: /加载更早的日志/ }).count()) === 0) break;
+	await expect(async () => {
 		await logs.evaluate((el) => {
 			el.scrollTop = 0;
 		});
-		await expect(logs.getByRole("button", { name: "正在加载更早的日志…" })).toHaveCount(0);
-	}
-	await expect(logs.getByRole("button", { name: /加载更早的日志/ })).toHaveCount(0);
+		await expect(older).toHaveCount(0, { timeout: 1_000 });
+	}).toPass();
 	await expect(logs).toContainText("probe line 1");
-	expect(events).toBe(0);
 
 	// 向下滚动一直读到末尾：之后才连实时流。
-	for (let n = 0; n < 4; n++) {
-		if ((await logs.getByRole("button", { name: /加载更新的日志/ }).count()) === 0) break;
+	await expect(async () => {
 		await logs.evaluate((el) => {
 			el.scrollTop = el.scrollHeight;
 		});
-		await expect(logs.getByRole("button", { name: "正在加载更新的日志…" })).toHaveCount(0);
-	}
-	await expect(logs.getByRole("button", { name: /加载更新的日志/ })).toHaveCount(0);
-	await expect.poll(() => events).toBe(1);
+		await expect(newer).toHaveCount(0, { timeout: 1_000 });
+	}).toPass();
+	await expect.poll(() => requests.filter((r) => r === "events").length).toBe(1);
 	await logs.evaluate((el) => {
 		el.scrollTop = el.scrollHeight;
 	});
@@ -248,9 +246,13 @@ test("从定位到的那一页往前翻页、往后翻页：行连续不重复�
 	agent.logs(probe, [at(701, 14_000, "probe live line")]);
 	await expect(logs.getByRole("button", { name: /probe live line/ })).toHaveCount(1);
 	await expect(logs.getByRole("button", { name: /probe line 700/ })).toHaveCount(1);
-	// 定位的一页、往前翻的页、往后翻的页首尾相接：700 行每一行恰好读到一次，每页只请求一次。
-	expect(read.toSorted((a, b) => a - b)).toEqual(Array.from({ length: 700 }, (_, i) => i + 1));
-	expect(new Set(pageQueries).size).toBe(pageQueries.length);
+	// 定位的一页、往前翻的页、往后翻的页首尾相接：700 行每一行恰好读到一次，每页只请求一次，
+	// 实时流在所有分页请求之后才连上（读到末尾之前不连）。
+	await expect
+		.poll(() => read.toSorted((a, b) => a - b))
+		.toEqual(Array.from({ length: 700 }, (_, i) => i + 1));
+	await expect.poll(() => pageQueries.length - new Set(pageQueries).size).toBe(0);
+	await expect.poll(() => requests.indexOf("events")).toBe(requests.length - 1);
 });
 
 test("页面打开之后地址变了：选中新的节点，定位到新的时刻", async ({

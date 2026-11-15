@@ -10,7 +10,9 @@
 //! - `{"type":"metric"}` 按「序列（指标名 + 标签）× 单调时钟秒」合并（[`crate::metrics`]），每个任务每秒最多发一批 `MetricBatch`，
 //!   任务结束前发完；
 //! - `{"type":"notify"}`（`ctx.notify`，ADR 0020）先发出已经读到的日志，再把这一行原文放进 `Notification` 转给控制面，
-//!   Agent 不解析消息内容。
+//!   Agent 不解析消息内容；
+//! - `{"type":"action_start"}`、`{"type":"action_end"}`、`{"type":"mark"}`、`{"type":"action_summary"}`（`ctx.action`、
+//!   `ctx.mark`，规格 #345，格式见 sdk/python/src/sfly/context.py）：认得，目前丢弃，不转发，也不记成日志。
 //!
 //! 每行和每次进度带两个时间（ADR 0018）：Agent 时间（SDK 事件取 SDK 记录的时间，其余取读到的时刻），以及读到它时的
 //! 单调时钟读数（每次读取读一次时钟），控制面据此折算出控制面时间。
@@ -543,6 +545,14 @@ enum Event {
     },
     /// 内容由 SDK 和控制面约定，原文转发。
     Notify {},
+    /// 动作和标记的四种事件：目前不转发。认得它们是为了不被当成不认识的内容记进日志。
+    #[serde(rename = "action_start")]
+    ActionStart {},
+    #[serde(rename = "action_end")]
+    ActionEnd {},
+    Mark {},
+    #[serde(rename = "action_summary")]
+    ActionSummary {},
 }
 
 /// 读取事件管道，把以换行结尾的完整内容按块交给 `chunks`，直到所有写端关闭（最后不完整的一行丢弃）。
@@ -743,6 +753,12 @@ impl Forwarder {
                     event_json: String::from_utf8_lossy(line).into_owned(),
                 }));
             }
+            Ok(
+                Event::ActionStart {}
+                | Event::ActionEnd {}
+                | Event::Mark {}
+                | Event::ActionSummary {},
+            ) => {}
             // 不认识的内容原样记成一行 SDK 日志。
             Err(_) => self.pending.push(Pending {
                 time_unix_ms: clock::agent_time_ms(),

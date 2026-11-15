@@ -756,3 +756,32 @@ def test_notify_with_a_wrongly_shaped_call_raises_type_error(
     ctx = Context(events_path=None, cancel_path=None)
     with pytest.raises(TypeError, match=reason):
         ctx.notify(*args, **kwargs)  # type: ignore[arg-type]
+
+
+def test_actions_and_marks_are_returned_and_do_not_show_up_in_the_logs() -> None:
+    from sfly_stub import actions
+
+    result = run_node(actions)
+
+    assert result.status == "success", result.error
+    assert [(a.id, a.kind, a.name, a.parent, a.depth) for a in result.actions] == [
+        (1, "action", "下单", None, 0),
+        (2, "mark", "收到第一笔成交", 1, 1),
+        (3, "action", "风控检查", 1, 1),
+        (4, "action", "下单", None, 0),
+    ]
+    assert [(a.result, a.reason) for a in result.actions] == [
+        ("success", None),
+        (None, None),
+        ("success", None),
+        ("failed", "拒单：余额不足"),
+    ]
+    assert result.actions[0].fields == {"订单": "1001", "回报": "已成交"}
+    assert result.action_summary is not None
+    assert [(n.name, n.total, n.failed) for n in result.action_summary.names] == [
+        ("下单", 2, 1),
+        ("收到第一笔成交", 1, 0),
+        ("风控检查", 1, 0),
+    ]
+    # 事件管道里的动作、标记和摘要不会当成不认识的内容记进日志。
+    assert [line.message for line in result.logs] == ["动作前", "动作后"]

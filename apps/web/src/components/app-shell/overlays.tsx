@@ -14,11 +14,16 @@ import { toggleSidebar } from "./sidebar-state";
 /**
  * 全局浮层：命令面板、快捷键面板、昵称弹窗、新建场景弹窗、运行抽屉（命令面板的「运行场景」）与通知容器，
  * 挂在根路由，外壳页和全屏页都能用。
- * 同一时间只打开一个；任何组件用 `useOverlays().open("shortcuts")` 打开。
+ * 同一时间只打开一个；任何组件用 `useOverlays().open("shortcuts")` 打开。`run-scenario` 是只列出「运行场景」的命令面板。
  * 弹窗（Base UI Dialog）负责锁定焦点、Esc 关闭，并在关闭后把焦点还给打开前的元素；
  * 焦点所在的元素被移走（归档、删除列表项）时由 useFocusRecovery 交给相邻的一项。
  */
-export type Overlay = "command-palette" | "shortcuts" | "nickname" | "new-scenario";
+export type Overlay =
+	| "command-palette"
+	| "run-scenario"
+	| "shortcuts"
+	| "nickname"
+	| "new-scenario";
 
 /** 要运行的场景（命令面板的「运行场景」打开运行抽屉）。 */
 export interface RunTarget {
@@ -79,8 +84,9 @@ export function GlobalOverlays({ children }: { children: React.ReactNode }) {
 				))}
 				<ShortcutListener />
 				<CommandPalette
-					open={current === "command-palette"}
+					open={current === "command-palette" || current === "run-scenario"}
 					onOpenChange={setOpen("command-palette")}
+					scope={current === "run-scenario" ? "run-scenario" : null}
 					openOverlay={setCurrent}
 					runScenario={api.runScenario}
 				/>
