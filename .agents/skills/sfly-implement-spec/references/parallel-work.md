@@ -6,6 +6,7 @@ How every subagent sets up its worktree, runs heavy commands and pushes when sev
 
 - Run `pnpm bootstrap` in each new worktree: dependencies live per worktree, and the pre-push hook rejects a push from a worktree without them.
 - Create worktrees side by side under one parent directory.
+- After merging the integration branch or a ticket branch, check whether `pnpm-lock.yaml`, `uv.lock` or `Cargo.lock` changed (`git diff --name-only <commit before the merge> HEAD`). If one did, rerun `pnpm bootstrap` before typecheck or tests: without it typecheck reports the newly added dependency as not found. The pre-push hook stops a push on the same mismatch, but only at push time.
 
 ## Heavy commands
 
@@ -18,6 +19,11 @@ flock -o <lock file> pnpm test
 `-o` keeps the lock out of the command's child processes. Without it, a process a test leaves behind holds the lock and every queued command hangs.
 
 Run `pnpm perf` and `pnpm perf:soak` only when no other heavy command is running.
+
+## End-to-end tests
+
+- Run a single end-to-end file as `pnpm test:e2e <file>`. A `--` before the file makes it run the whole suite.
+- Visual regression screenshots (`apps/web/e2e/__screenshots__/`) that conflict in a merge are regenerated rather than taken from either side. Merge the source files first, then run `pnpm test:e2e:docker e2e/visual.spec.ts --update-snapshots` in the Playwright image, and open the diff images. Done when every changed screenshot's difference traces to a change made on one of the two merged sides.
 
 ## Shared files
 
