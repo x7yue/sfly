@@ -1,16 +1,13 @@
 import type { RunFocusItem } from "@sfly/schema";
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
-import { FOCUS, LIST_LABEL, MONITOR_VIEW_LABEL } from "#/lib/copy";
-import type { ShownPick } from "#/monitor/charts";
-import { seriesColor, seriesDash } from "#/monitor/MetricChart";
+import { FOCUS, MONITOR_VIEW_LABEL } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { AnomalyNote } from "./AnomalyNote";
+import { FocusPlot } from "./FocusPlot";
 import { FocusValue } from "./FocusValue";
-import { PLOT_MARGIN, plotChart, shownSeries } from "./focus-chart";
 import {
 	anomalyText,
-	focusSeriesName,
 	readingFoot,
 	readingLabel,
 	readingState,
@@ -19,21 +16,6 @@ import {
 
 /** 绘图区的高度（px）；宽度取容器的实际宽度。 */
 const PLOT_HEIGHT = 156;
-
-/** 元素的实际宽度（px）：量一次，之后随容器尺寸变化更新；还没量到时为 0。 */
-function useElementWidth<E extends HTMLElement>() {
-	const ref = useRef<E>(null);
-	const [width, setWidth] = useState(0);
-	useLayoutEffect(() => {
-		const el = ref.current;
-		if (!el) return;
-		setWidth(Math.round(el.clientWidth));
-		const observer = new ResizeObserver(() => setWidth(Math.round(el.clientWidth)));
-		observer.observe(el);
-		return () => observer.disconnect();
-	}, []);
-	return [ref, width] as const;
-}
 
 /**
  * 一个图表类关注项（折线、面积、柱状）的卡片：状态形状和名称、最新值、来源节点和多久前、按容器的实际尺寸画的图、
@@ -52,14 +34,6 @@ export function FocusChart({
 	/** 在详情里打开来源节点。 */
 	onOpen: () => void;
 }) {
-	const [plotRef, width] = useElementWidth<HTMLDivElement>();
-	// 画哪些序列只在第一次和出现新序列时挑：读数每 2 秒刷新，平均值接近的序列不来回换。
-	const [picked, setPicked] = useState<ShownPick | undefined>(undefined);
-	const { series, hidden, pick } = useMemo(
-		() => shownSeries(item.series, picked),
-		[item.series, picked],
-	);
-	if (pick !== picked) setPicked(pick);
 	const started = item.source.started_at;
 	const axis = useMemo(() => {
 		if (started === null) return null;
@@ -67,25 +41,8 @@ export function FocusChart({
 		const end = Date.parse(item.source.ended_at ?? generatedAt);
 		return { start, end: Math.max(end, start + 1000) };
 	}, [started, item.source.ended_at, generatedAt]);
-	const staleSince = item.anomaly?.kind === "stale" && item.last_at ? item.last_at : null;
-	const plot = useMemo(
-		() =>
-			axis && width > 0
-				? plotChart(
-						series,
-						axis,
-						item.bucket_seconds,
-						{ width, height: PLOT_HEIGHT },
-						staleSince === null ? undefined : Date.parse(staleSince),
-					)
-				: null,
-		[axis, width, series, item.bucket_seconds, staleSince],
-	);
 	const titleId = `focus-chart-${item.position}`;
-	const hatchId = useId();
 	const state = readingState(item, generatedAt);
-	const gap = plot?.gap ?? null;
-	const gapText = gap && anomalyText(item, generatedAt);
 
 	return (
 		<article
@@ -110,130 +67,18 @@ export function FocusChart({
 					{FOCUS.chartMissing(item.chart)}
 				</p>
 			) : (
-				<div ref={plotRef} className="relative" style={{ height: PLOT_HEIGHT }}>
-					{plot && (
-						<svg
-							role="img"
-							aria-label={`${readingLabel(item, generatedAt)}${gap ? "，曲线停在最后一个点" : ""}`}
-							width={width}
-							height={PLOT_HEIGHT}
-							className="block"
-						>
-							{gap && (
-								<>
-									<defs>
-										<pattern
-											id={hatchId}
-											width={6}
-											height={6}
-											patternUnits="userSpaceOnUse"
-											patternTransform="rotate(45)"
-										>
-											<rect width={1.5} height={6} fill="var(--border-strong)" />
-										</pattern>
-									</defs>
-									<rect
-										data-stale-gap
-										x={gap.x}
-										y={PLOT_MARGIN.top}
-										width={gap.width}
-										height={PLOT_HEIGHT - PLOT_MARGIN.top - PLOT_MARGIN.bottom}
-										fill={`url(#${CSS.escape(hatchId)})`}
-									/>
-								</>
-							)}
-							{plot.yTicks.map((tick) => (
-								<g key={tick.label}>
-									<line
-										x1={PLOT_MARGIN.left}
-										x2={width - PLOT_MARGIN.right}
-										y1={tick.y}
-										y2={tick.y}
-										stroke="var(--chart-grid)"
-									/>
-									<text
-										x={PLOT_MARGIN.left - 6}
-										y={tick.y + 4}
-										textAnchor="end"
-										className="fill-fg-3 font-mono text-2xs"
-									>
-										{tick.label}
-									</text>
-								</g>
-							))}
-							{plot.xTicks.map((tick, i) => (
-								<text
-									key={tick.x}
-									x={tick.x}
-									y={PLOT_HEIGHT - 4}
-									textAnchor={i === 0 ? "start" : i === plot.xTicks.length - 1 ? "end" : "middle"}
-									className="fill-fg-3 font-mono text-2xs"
-								>
-									{tick.label}
-								</text>
-							))}
-							{plot.lines.map((line, i) => {
-								const slot = series[i]?.slot ?? i;
-								return (
-									<PlotLineShape
-										key={line.key}
-										type={item.chart_type}
-										line={line}
-										color={seriesColor(slot)}
-										dash={seriesDash(slot)}
-										baseline={plot.yTicks[0]?.y ?? 0}
-									/>
-								);
-							})}
-						</svg>
-					)}
-					{state.kind === "empty" && (
-						<span className="absolute inset-0 grid place-items-center pb-5 pl-11 text-xs text-fg-3">
-							{state.text}
-						</span>
-					)}
-					{gap && gapText && (
-						<span
-							aria-hidden="true"
-							className="absolute rounded-sm bg-surface px-1 text-xs whitespace-nowrap text-warn-fg"
-							style={{
-								bottom: PLOT_MARGIN.bottom + 6,
-								// 斜线在右半边时文字靠在它的左边，否则放进斜线里。
-								...(gap.x > width / 2 ? { right: width - gap.x + 6 } : { left: gap.x + 6 }),
-							}}
-						>
-							{gapText}
-						</span>
-					)}
-				</div>
-			)}
-			{series.length > 1 && (
-				<ul
-					aria-label={LIST_LABEL.legend}
-					className="m-0 flex list-none flex-wrap gap-x-3 gap-y-0.5 p-0 text-xs text-fg-3"
-				>
-					{series.map((s) => (
-						<li key={s.key} className="inline-flex items-center gap-1">
-							<svg aria-hidden="true" width={12} height={4} className="flex-none overflow-visible">
-								<line
-									x1={0}
-									x2={12}
-									y1={2}
-									y2={2}
-									stroke={seriesColor(s.slot)}
-									strokeWidth={2}
-									strokeDasharray={seriesDash(s.slot)}
-								/>
-							</svg>
-							{focusSeriesName(item, s)}
-						</li>
-					))}
-					{hidden > 0 && (
-						<li>
-							另有 {hidden} 条序列在{MONITOR_VIEW_LABEL.detail}里查看
-						</li>
-					)}
-				</ul>
+				<FocusPlot
+					series={item.series}
+					type={item.chart_type}
+					metrics={item.metrics}
+					axis={axis}
+					bucketSeconds={item.bucket_seconds}
+					staleSince={item.anomaly?.kind === "stale" ? item.last_at : null}
+					height={PLOT_HEIGHT}
+					label={readingLabel(item, generatedAt)}
+					empty={state.kind === "empty" ? state.text : null}
+					gapText={anomalyText(item, generatedAt)}
+				/>
 			)}
 			<footer className="mt-auto flex justify-end pt-1">
 				<Button variant="link" onClick={onOpen} className="text-xs text-fg-2">
@@ -241,52 +86,5 @@ export function FocusChart({
 				</Button>
 			</footer>
 		</article>
-	);
-}
-
-function PlotLineShape({
-	type,
-	line,
-	color,
-	dash,
-	baseline,
-}: {
-	type: RunFocusItem["chart_type"];
-	line: ReturnType<typeof plotChart>["lines"][number];
-	color: string;
-	dash: string | undefined;
-	baseline: number;
-}) {
-	const points = (p: ReadonlyArray<readonly [number, number]>) =>
-		p.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
-	if (type === "bar") {
-		return (
-			<g fill={color} opacity={0.75}>
-				{line.bars.map((bar) => (
-					<rect key={bar.x} x={bar.x} y={bar.y} width={bar.width} height={bar.height} />
-				))}
-			</g>
-		);
-	}
-	const first = line.path[0];
-	const last = line.path.at(-1);
-	return (
-		<g>
-			{line.band && <polygon points={points(line.band)} fill={color} opacity={0.18} />}
-			{type === "area" && first && last && (
-				<polygon
-					points={points([...line.path, [last[0], baseline], [first[0], baseline]])}
-					fill={color}
-					opacity={0.13}
-				/>
-			)}
-			<polyline
-				points={points(line.path)}
-				fill="none"
-				stroke={color}
-				strokeWidth={1.5}
-				strokeDasharray={dash}
-			/>
-		</g>
 	);
 }

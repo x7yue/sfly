@@ -73,6 +73,12 @@ export const FOCUS = {
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
 	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */
 	attention: "需要注意",
+	/** 「3 个关注项」：画布节点卡片的可访问名称。 */
+	itemCount: (count: number) => `${count} 个${TERM.focusItem}`,
+	/** 「1 项需要注意」：画布节点卡片的可访问名称、画布检查器里关注项的标题旁。 */
+	attentionCount: (count: number): string => `${count} 项${FOCUS.attention}`,
+	/** 只放得下前几项时，其余的个数：画布节点卡片的最后一行。 */
+	moreItems: (count: number) => `还有 ${count} 个${TERM.focusItem}`,
 	/** 概览里最后一段的标题：这次运行里没有进入「需要注意」的 WARN / ERROR。 */
 	otherAlerts: "其他警告与错误",
 	/** 上面那一段没有内容时的说明。 */

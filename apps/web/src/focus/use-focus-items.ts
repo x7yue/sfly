@@ -5,6 +5,7 @@ import {
 	type FocusItemView,
 	focusKey,
 	orchestrationsApi,
+	runFocusApi,
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { notify } from "#/components/feedback/notify";
@@ -43,9 +44,11 @@ export function useFocusItems(orchestrationId: string) {
 		onError: (error) =>
 			notify.error(`无法修改${TERM.focusItem}`, { description: errorText(error) }),
 		onSettled: () => {
-			// 最后一个写入结束时，以服务端的列表（带状态、最后修改）为准。
+			// 最后一个写入结束时，以服务端的列表（带状态、最后修改）为准；运行的关注项读数也重新读（已经结束的运行不再轮询，
+			// 在画布运行状态的检查器里开关后，概览里要马上出现或撤下这一项）。
 			if (queryClient.isMutating({ mutationKey: writing }) <= 1) {
 				void queryClient.invalidateQueries({ queryKey: detail.queryKey });
+				void queryClient.invalidateQueries({ queryKey: runFocusApi.focus.key });
 			}
 		},
 	});

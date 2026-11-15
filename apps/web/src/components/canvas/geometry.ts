@@ -8,8 +8,8 @@ import { NODE_SIZE, REGION_PADDING } from "@sfly/orchestration";
  */
 
 /**
- * 节点卡片（原型 `.n`）。执行中的卡片同时有「正在做」一行和主指标时（#356）按内容长高十几 px，
- * 仍在子流程区域的下边距里；端口按这里的高度放，不随它移动。
+ * 节点卡片（原型 `.n`）。运行状态下卡片按内容长高（「正在做」一行与主指标都在时，#356；显示关注项时，#353）：
+ * 子流程区域、注释框、适配视图和跟随执行按量出来的高度算（flow.ts 的 `layoutOf`）。端口按这里的高度放，不随它移动。
  */
 export const NODE_WIDTH = NODE_SIZE.width;
 export const NODE_HEIGHT = NODE_SIZE.height;

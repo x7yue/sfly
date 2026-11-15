@@ -5,7 +5,8 @@ import { type CanvasInsets, NODE_HEIGHT, NODE_WIDTH } from "./geometry";
 /**
  * 跟随执行（运行状态）的镜头框选，纯逻辑，单测见 follow.test.ts：镜头框住所有执行中的节点，
  * 子流程里的节点连同它的子流程区域一起框进来；框在没被悬浮控件（顶栏、右侧的检查器、工具条）占住的可见区域里，
- * 放在它的正中，缩放夹在 {@link FOLLOW_ZOOM}。
+ * 放在它的正中，缩放夹在 {@link FOLLOW_ZOOM}。卡片按布局里量出来的高度算（运行状态下卡片显示关注项、正在做的事时会长高），
+ * 子流程区域也跟着长高。
  */
 
 /** 跟随时的缩放范围：不缩得比 0.6 小（节点上的字还能读），不放得比 1 大。 */
@@ -72,14 +73,15 @@ export function followViewport({
 	area: CanvasInsets;
 }): Viewport | null {
 	const regions = subflowRegions(layout);
-	const positions = new Map(layout.nodes.map((n) => [n.id, n.position]));
+	const nodes = new Map(layout.nodes.map((n) => [n.id, n]));
 	const framed = running.flatMap((id): Rect[] => {
 		const region = regions.find((r) => r.members.includes(id));
 		if (region) {
 			return [{ x: region.box.x, y: region.box.y, width: region.box.w, height: region.box.h }];
 		}
-		const at = positions.get(id);
-		return at ? [{ x: at.x, y: at.y, width: NODE_WIDTH, height: NODE_HEIGHT }] : [];
+		const node = nodes.get(id);
+		const at = node?.position;
+		return at ? [{ x: at.x, y: at.y, width: NODE_WIDTH, height: node.height ?? NODE_HEIGHT }] : [];
 	});
 	if (framed.length === 0) return null;
 

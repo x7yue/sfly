@@ -9,6 +9,7 @@ import { ActivityLine } from "./ActivityLine";
 import { useFlowCanvas } from "./context";
 import type { SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
+import { FocusBadge } from "./NodeFocus";
 import { NodeTitleEditor } from "./NodeTitleEditor";
 import { KIND_META, nodeSlot, nodeTags } from "./node-display";
 import { WarningBadge } from "./WarningBadge";
@@ -45,9 +46,9 @@ function useTitleDoubleClick(onDoubleClick: (() => void) | undefined) {
 
 /**
  * 节点卡片（原型 `.n`，以 React Flow UI 的 BaseNode / BaseHandle 为起点）：种类图标、ID、种类名（标题没说明种类时）、状态，
- * 标题，执行中时的「正在做」一行，底部摘要槽；右上角标签（always、另选的 Agent、重试）。端口常显：左侧链入口，右侧链出口，
- * 异步任务节点底部的调度出口；子流程入口节点左侧接收调度连线。
- * 叠加的运行状态、正在做的事、主指标、差异标记来自 FlowCanvas 的 decorateNode（见 context.ts）。
+ * 标题，执行中时的「正在做」一行，底部摘要槽；右上角标签（always、另选的 Agent、重试），运行状态下左上角是关注项的个数。
+ * 端口常显：左侧链入口，右侧链出口，异步任务节点底部的调度出口；子流程入口节点左侧接收调度连线。
+ * 叠加的运行状态、正在做的事、主指标、关注项、差异标记来自 FlowCanvas 的 decorateNode（见 context.ts）。
  */
 export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const { info, ports, decorateNode, rename } = useFlowCanvas();
@@ -67,11 +68,16 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 	const cardId = useId();
 	const statusId = useId();
 	const activityId = useId();
+	const focusId = useId();
 	const noteId = useId();
 	const activity = decoration?.activity;
-	// 「正在做」那一行代替配置摘要；有主指标时两行都在，卡片按内容长高（语义缩放时这两行都隐藏，卡片回到原高度）。
-	const showSlot = decoration?.slot !== undefined || !activity;
-	const grows = activity !== undefined && decoration?.slot !== undefined;
+	const focus = decoration?.focus;
+	const focusRows = focus?.rows;
+	// 关注项代替摘要槽；没有关注项时「正在做」那一行代替配置摘要，有主指标时两行都在。多出来的行让卡片按内容长高
+	// （语义缩放时这几行都隐藏，卡片回到原高度）。
+	const showSlot = !focusRows && (decoration?.slot !== undefined || !activity);
+	const grows =
+		focusRows !== undefined || (activity !== undefined && decoration?.slot !== undefined);
 	// 子流程入口节点没有显示名称，不进入原地编辑。
 	const editing = rename?.active === id && node.kind !== "subflow_entry";
 	const titleRef = useTitleDoubleClick(rename ? () => rename.start(id) : undefined);
@@ -82,10 +88,12 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			role={editing ? "group" : "button"}
 			tabIndex={-1}
 			// 名称：「节点 ID，种类，标题」（aria-label，由自己的 id 引用）接上右上角的状态（运行状态、警告、差异标记），
-			// 执行中再接上「正在做 X」。
+			// 执行中再接上「正在做 X」，有关注项时最后是「N 个关注项，M 项需要注意」。
 			id={cardId}
 			aria-label={[`节点 ${id}`, caption, title !== id && title].filter(Boolean).join("，")}
-			aria-labelledby={[cardId, statusId, activity && activityId].filter(Boolean).join(" ")}
+			aria-labelledby={[cardId, statusId, activity && activityId, focus && focusId]
+				.filter(Boolean)
+				.join(" ")}
 			// 备注是描述：读屏用户用方向键切到节点时跟在名称后面读到（图标本身不可聚焦，见 NoteIcon）。
 			aria-describedby={note ? noteId : undefined}
 			aria-pressed={editing ? undefined : selected}
@@ -117,6 +125,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				"data-[mark=removed]:border-dashed data-[mark=removed]:border-danger data-[mark=removed]:text-fg-2 data-[mark=removed]:[&_[data-slot=base-node-title]]:line-through",
 			)}
 		>
+			{focus && <FocusBadge id={focusId} focus={focus} />}
 			{tags.length > 0 && (
 				<div className={cn("absolute -top-2.5 right-2.5 flex gap-1", LOD_HIDDEN)}>
 					{tags.map((tag) => (
@@ -185,6 +194,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 				</BaseNodeHeaderTitle>
 			)}
 			{activity && <ActivityLine id={activityId} activity={activity} />}
+			{focusRows}
 			{showSlot && (
 				<div
 					data-empty={(!decoration?.slot && slot.empty) || undefined}

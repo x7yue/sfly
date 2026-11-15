@@ -126,6 +126,27 @@ describe("跟随执行的镜头框选", () => {
 		expect(inside(onScreen(v, region), area)).toBe(true);
 	});
 
+	it("卡片长高了（显示关注项、正在做的事）：按量出来的高度框，长高的卡片和子流程区域放在可见区域的正中", () => {
+		const grown: LayoutDocument = {
+			...layout,
+			nodes: layout.nodes.map((n) => (n.id === "c" || n.id === "s1" ? { ...n, height: 180 } : n)),
+		};
+		const at = (running: string[]) => {
+			const v = followViewport({ running, layout: grown, size: SIZE, area: AREA });
+			if (!v) throw new Error("没有可框的节点");
+			return v;
+		};
+		const area = visible(AREA);
+		const tallCard = onScreen(at(["c"]), { ...card(756, 0), height: 180 });
+		expect(center(tallCard).y).toBeCloseTo(center(area).y, 6);
+		const tallRegion = onScreen(at(["s1"]), {
+			...region,
+			height: region.height + 180 - NODE_SIZE.height,
+		});
+		expect(inside(tallRegion, area)).toBe(true);
+		expect(center(tallRegion).y).toBeCloseTo(center(area).y, 6);
+	});
+
 	it("缩放下限 0.6：执行中的节点离得很远时不再缩小，整体仍然居中", () => {
 		const v = frame(["entry", "far"]);
 		expect(v.zoom).toBe(FOLLOW_ZOOM.min);

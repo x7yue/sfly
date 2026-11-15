@@ -343,15 +343,15 @@ export function FlowCanvas({
 	);
 	// 适配视图把节点和注释框的范围一起放进视口：框的范围由成员算出，比节点的外接框大（子流程成员的框更大），
 	// 只按节点算的话，节点贴着适配的边距时，框的外沿会伸到视口或检查器、工具条下面去。
-	// 范围按布局里的位置和卡片的原高度算，不等 React Flow 量出节点尺寸（执行中长高的那十几 px 落在适配的边距里）。
+	// 卡片按布局里量出来的高度算（运行状态下会长高）；打开画布时还没量，按原高度。
 	const extent = useRef({ layout, boxes });
 	extent.current = { layout, boxes };
 	const fitTo = useCallback(
 		(duration: number) => {
 			const { layout: current, boxes: framed } = extent.current;
 			const rects = [
-				...current.nodes.flatMap(({ position: p }) =>
-					p ? [{ x: p.x, y: p.y, width: NODE_WIDTH, height: NODE_HEIGHT }] : [],
+				...current.nodes.flatMap(({ position: p, height }) =>
+					p ? [{ x: p.x, y: p.y, width: NODE_WIDTH, height: height ?? NODE_HEIGHT }] : [],
 				),
 				...framed.map(({ box: b }) => ({ x: b.x, y: b.y, width: b.w, height: b.h })),
 			];
@@ -526,6 +526,8 @@ export function FlowCanvas({
 			if (!node || !el) return false;
 			const { x, y, zoom } = flow.getViewport();
 			const { x: nx, y: ny } = node.internals.positionAbsolute;
+			// 运行状态下卡片会长高：按量出来的高度判断。
+			const height = node.measured.height ?? NODE_HEIGHT;
 			const W = el.clientWidth;
 			const H = el.clientHeight;
 			const left = nx * zoom + x;
@@ -534,14 +536,14 @@ export function FlowCanvas({
 				left >= area.left &&
 				top >= area.top &&
 				left + NODE_WIDTH * zoom <= W - area.right &&
-				top + NODE_HEIGHT * zoom <= H - area.bottom;
+				top + height * zoom <= H - area.bottom;
 			if (visible) return false;
 			const cx = area.left + (W - area.left - area.right) / 2;
 			const cy = area.top + (H - area.top - area.bottom) / 2;
 			void flow.setViewport(
 				{
 					x: cx - (nx + NODE_WIDTH / 2) * zoom,
-					y: cy - (ny + NODE_HEIGHT / 2) * zoom,
+					y: cy - (ny + height / 2) * zoom,
 					zoom,
 				},
 				{ duration: viewportDuration(VIEWPORT_MS) },
