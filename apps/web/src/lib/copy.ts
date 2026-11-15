@@ -170,7 +170,7 @@ export const chainCountLabel = (chains: number, nodes: number) =>
 
 /**
  * 还没结束、正在推进的节点（排队中、派发中、执行中、等待中）合起来的名称，运行抽屉的摘要用。
- * 不等于任何一个节点状态名：「执行中」只指执行中这一种状态。
+ * 不等于任何一个节点状态名：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。
  */
 export const ACTIVE_LABEL = "进行中";
 

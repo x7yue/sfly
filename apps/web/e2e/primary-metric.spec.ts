@@ -120,7 +120,7 @@ test("画布运行状态：节点卡片的指标槽显示主指标最新值与�
 	await expect(probe).toHaveText("level 42");
 });
 
-test("运行抽屉摘要：执行中的节点显示主指标的最新值与趋势，实时更新", async ({
+test("运行抽屉摘要：进行中的节点显示主指标的最新值与趋势，实时更新", async ({
 	page,
 	controlPlane,
 	connectAgent,
