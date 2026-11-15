@@ -51,7 +51,7 @@ describe("复制场景时复制关注项", () => {
 		const copied = await copy(source, "撮合浸泡 副本", "小明");
 		expect(copied.name).toBe("撮合浸泡 副本");
 		expect(copied.focus_items).toEqual([
-			{ ...LOAD_TPS, title: "撮合 TPS", status: "ok" },
+			{ ...LOAD_TPS, title: "撮合 TPS", status: "ok", chart_type: "area" },
 			// 副本的第 1 版就是源场景的最新版本，里面没有 probe：没有任何版本包含它。
 			{ ...PROBE_LEVEL, status: "node_missing", last_version: null },
 		]);

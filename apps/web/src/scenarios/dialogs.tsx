@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
+import { ACTION } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -266,7 +267,7 @@ export function ArchiveScenarioDialog({
 		onSuccess: async () => {
 			onOpenChange(false);
 			notify.success(`已归档「${scenario.name}」`, {
-				action: { label: "撤销", onClick: () => unarchive.mutate(scenario) },
+				action: { label: ACTION.undo, onClick: () => unarchive.mutate(scenario) },
 			});
 			await invalidate();
 		},
