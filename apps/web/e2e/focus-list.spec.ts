@@ -107,7 +107,7 @@ test("移除后马上出现撤销，撤销把列表恢复成移除之前的样�
 	const undo = panel.getByRole("button", { name: "撤销" });
 	await expect(panel.getByText("已移除「母单量」，正在跑的运行也去掉了这一项。")).toBeVisible();
 	await expect(undo).toBeFocused();
-	await expect(panel.getByRole("status")).toHaveText("已移除 母单量，可以撤销");
+	await expect(panel.getByRole("status")).toHaveText("已移除「母单量」，可以撤销");
 	await expect(panel.getByText("本场景的关注项已用 3 / 8")).toBeVisible();
 	await expect(panel.getByText("最后修改：")).toContainText("移除了「母单量」");
 	await expect

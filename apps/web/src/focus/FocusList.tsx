@@ -27,7 +27,7 @@ function staleReason(item: FocusItemView, headVersion: number): string | null {
 				? `节点 ${item.node_id} 不在任何版本里（复制场景时带过来的），运行里不会显示这一项`
 				: `节点 ${item.node_id} 不在最新版本 v${headVersion} 里，只在运行 v${item.last_version} 及更早版本时显示`;
 		case "chart_missing":
-			return `这个版本的节点没有图表 ${item.chart}`;
+			return FOCUS.chartMissing(item.chart);
 	}
 }
 
@@ -97,14 +97,14 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 		setRemoved({ name: focusName(item), key: focusKey(item), before: items, after });
 		refocus.current = "undo";
 		focus.replace(after);
-		setAnnouncement(`已移除 ${focusName(item)}，可以撤销`);
+		setAnnouncement(`已移除「${focusName(item)}」，可以撤销`);
 	};
 
 	const undo = () => {
 		if (removed === null) return;
 		refocus.current = `${removed.key}/name`;
 		focus.replace(removed.before);
-		setAnnouncement(`已恢复 ${removed.name}`);
+		setAnnouncement(`已恢复「${removed.name}」`);
 		setRemoved(null);
 	};
 
