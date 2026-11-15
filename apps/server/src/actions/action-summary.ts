@@ -170,7 +170,7 @@ export const EMPTY_SUMMARY: ActionSummaryView = {
 };
 
 /** 只有执行中的任务有正在做的动作：结束了的任务（以及还没开始执行的）都没有。 */
-const isDoing = (status: TaskStatus) => status === "running";
+export const isDoing = (status: TaskStatus) => status === "running";
 
 /** 任务的动作摘要：存下的最新一份；任务已经结束时正在做的动作为空。 */
 export function summaryOfTask(

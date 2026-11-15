@@ -51,7 +51,7 @@ const client = createClient({
 | `runs`（运行） | `list`、`listForOrchestration`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
 | `metrics`（指标） | `summary`、`catalog`、`series`、`platform` |
-| `actions`（动作） | `summary` |
+| `actions`（动作） | `summary`、`page`、`events` |
 | `artifacts`（产物） | `list`、`download` |
 | `agents`（sfly Agent） | `list`、`updateNow` |
 | `packages`（节点包） | `list`、`get`、`version`、`nodeType` |
@@ -209,6 +209,45 @@ for (const node of live.chains.flatMap((chain) => chain.nodes)) {
 - 运行视图里执行中的尝试带 `current_action`：最外层、开始得最早的那个正在做的动作，写名称和开始时间（控制面时间）。没有正在做的最外层动作、尝试已经结束时为 `null`。Agent 列表里正在执行的任务（`running_tasks`）也带它。
 - `actions.summary` 读一个任务（一次尝试）的动作摘要：每种名称的个数（动作和标记合计）和失败的动作数（`names`，从什么时候起只计数写在 `capped_at`）、正在做的动作（`running`，带层级，最多 50 个，列满时 `running_complete` 为 `false`）、最近结束的 20 个动作和最近失败的 5 个动作，以及动作和标记的合计数、有没有超出上限（`capped`）。任务结束以后 `running` 为空，其余照旧。
 - 摘要是节点每秒最多上报一次的那一份，不是实时的每一个动作。字段和失败原因是节点写的数据，显示时当作文本。
+
+每一个动作和标记的明细按任务分页读，再接上实时推送：
+
+```ts
+const task = live.chains[0]?.nodes.at(-1)?.attempts.at(-1)?.task_id;
+if (task) {
+	const latest = await client.actions.page({ params: { id: task }, query: { limit: 100 } });
+	for (const detail of latest.actions) {
+		const result = detail.kind === "action" ? (detail.result ?? "正在做") : "标记";
+		console.log(detail.started_at, "  ".repeat(detail.depth), detail.name, result, detail.fields);
+	}
+	for (const span of latest.count_only) console.log(span.from, span.name, `${span.count} 个只计数`);
+	if (latest.before) {
+		const earlier = await client.actions.page({
+			params: { id: task },
+			query: { before: latest.before, limit: 100 },
+		});
+		console.log(`往前又读到 ${earlier.actions.length} 个`);
+	}
+	const failed = await client.actions.page({ params: { id: task }, query: { failed: "true" } });
+	for (const detail of failed.actions) if (detail.kind === "action") console.log("失败", detail.reason);
+
+	const stopActions = client.actions.events(
+		{ params: { id: task }, query: { after: latest.rev } },
+		{
+			summary: (summary) => console.log("正在做", summary.running.length, "个"),
+			actions: (chunk) => {
+				for (const detail of chunk.actions) console.log("更新", detail.id, detail.name);
+			},
+		},
+	);
+	window.addEventListener("pagehide", stopActions);
+}
+```
+
+- `actions.page` 按开始时间从新到旧分页（`limit` 默认 100，最多 500），`before` 往前翻，没有更早的明细时为 `null`。`name` 只要一种名称，`failed` 为 `true` 时只要失败的动作。
+- 还在做的动作 `result` 为 `null`。任务结束（成功、失败、取消、`agent_lost`）时还没结束的记为 `unfinished`，结束时间取任务的结束时间；之后才到的结束照样记下真实的结果。
+- 超过上限（每种名称 5 万个，合计 10 万个，失败的动作不受每种名称的限制）以后只计数、没有明细：`count_only` 写出这一页范围里哪种名称从什么时候起有多少个没有明细、为什么（`reason`）。一直往前翻，每一段正好出现一次。
+- `actions.events` 从分页返回的 `rev` 接上实时推送：连上时先推一份摘要，之后推送新写入和刚结束的明细（同一个 `id` 再出现时以后到的为准），每份新的摘要也推送；任务结束时推送正在做的为空的摘要和记为未结束的明细。断线重连后从断点继续，不重复、不遗漏。
 
 ## 下载产物
 

@@ -189,7 +189,10 @@ export const ActionPage = z.object({
 	actions: z.array(ActionDetailView),
 	/** 读更早的一页：下一次请求的 before；没有更早的明细时为 null。 */
 	before: ActionCursor.nullable(),
-	/** 起点落在这一页范围里的只计数的段，从新到旧。只看失败时不含 `name_limit` 的段（那些失败的动作有明细）。 */
+	/**
+	 * 起点落在这一页范围里的只计数的段，从新到旧。只看失败时，`name_limit` 的段只在合计也满了时才有：合计没满时，
+	 * 超过每种名称上限之后失败的动作仍有明细。
+	 */
 	count_only: z.array(CountOnlySpan),
 	/**
 	 * 读这一页那一刻明细的修订号：实时推送（`events`）的 `after` 用它，之后写入或结束的明细都由推送送达。
