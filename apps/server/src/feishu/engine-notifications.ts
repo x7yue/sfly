@@ -8,7 +8,7 @@ import { feishuBotGone, registeredBots } from "./bot-checks.js";
 import type { FeishuDelivery } from "./feishu-delivery.js";
 import { enqueueFeishuMessage } from "./feishu-queue.js";
 import { prepareNotification } from "./notify-node.js";
-import { enqueueRunNotification, type FinalFocusDeps } from "./run-notification.js";
+import { enqueueRunNotification, type FocusAtRunEndDeps } from "./run-notification.js";
 
 /** 一个 step 在事务里留下的、要等提交之后才能做的飞书通知收尾。 */
 export interface PendingNotifications {
@@ -42,7 +42,7 @@ export class EngineNotifications {
 			/** 运行通知卡片里「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时返回 undefined（卡片没有按钮）。 */
 			runUrl: (runId: string) => string | undefined;
 			/** 运行通知卡片里「关注项」一段的值：和 `GET /runs/:id/focus` 同一份解析，读不出来时只报告。 */
-			focus: FinalFocusDeps;
+			focus: FocusAtRunEndDeps;
 		},
 	) {}
 

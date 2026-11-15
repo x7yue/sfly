@@ -24,7 +24,8 @@ import { declaredNodeType } from "./focus-views.js";
 
 /**
  * 解析一次运行的关注项要用到的依赖：控制面里读读数的地方（HTTP 接口、运行结束时的运行通知）传这三样。
- * `db` 可以是事务：运行通知在写入运行最终状态的事务里读，要看到这个事务里刚写下的节点状态；序列走 `queries`，用自己的连接。
+ * `db` 可以是事务：运行通知在写入运行最终状态的事务里读，要看到这个事务里刚写下的节点状态。所有查询（包括 `queries` 读的序列）
+ * 都走 `db`，一个接一个地执行，不从连接池另取连接。
  */
 export interface RunFocusDeps {
 	db: Db | Tx;
@@ -234,7 +235,10 @@ function primaryReadings(sources: ReadonlyMap<string, Source>): Reading[] {
 	return readings;
 }
 
-/** 每个有数据可读的节点读一次序列：同一个节点的几个项合并成一次查询。 */
+/**
+ * 每个有数据可读的节点读一次序列：同一个节点的几个项合并成一次查询。一个接一个地读：`db` 是事务时只有这一个连接
+ * （再从连接池另取连接，会和等这个事务的锁的写入互相等死）。
+ */
 async function readSeries(
 	deps: RunFocusDeps,
 	expired: boolean,
@@ -249,21 +253,18 @@ async function readSeries(
 		metricsOf.set(nodeId, names);
 	}
 	const reads = new Map<string, TaskSeriesRead>();
-	await Promise.all(
-		[...metricsOf].map(async ([nodeId, names]) => {
-			const { attempt, type } = sources.get(nodeId) as Source;
-			if (!attempt?.startedAt || !type || names.size === 0) return;
-			reads.set(
-				nodeId,
-				await deps.queries.taskSeries(attempt.id, {
-					declared: type.metrics ?? [],
-					names: [...names],
-					expired,
-					points: Math.max(1, points),
-				}),
-			);
-		}),
-	);
+	for (const [nodeId, names] of metricsOf) {
+		const { attempt, type } = sources.get(nodeId) as Source;
+		if (!attempt?.startedAt || !type || names.size === 0) continue;
+		reads.set(
+			nodeId,
+			await deps.queries.taskSeries(
+				attempt.id,
+				{ declared: type.metrics ?? [], names: [...names], expired, points: Math.max(1, points) },
+				deps.db,
+			),
+		);
+	}
 	return reads;
 }
 

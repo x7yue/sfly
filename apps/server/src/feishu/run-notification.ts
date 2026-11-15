@@ -228,21 +228,21 @@ async function failedNodes(
 /**
  * 读关注项的值要用的依赖：{@link resolveRunFocus} 的依赖（数据库用运行结束的事务），以及读不出来时怎么报告。
  */
-export interface FinalFocusDeps extends Omit<RunFocusDeps, "db"> {
+export interface FocusAtRunEndDeps extends Omit<RunFocusDeps, "db"> {
 	/** 读关注项出错：只报告，卡片照常发，没有「关注项」一段。 */
 	onError(error: unknown): void;
 }
 
 /**
  * 运行结束那一刻场景的关注项在这次运行里的值：和 `GET /runs/:id/focus?points=0` 同一份解析（{@link resolveRunFocus}），
- * 在写入运行最终状态的事务里读，看到的是这个事务里刚写下的节点状态。场景没有设关注项、或者这些项都不在这次运行的版本里时没有项。
+ * 在写入运行最终状态的事务里读（序列也是，不从连接池另取连接），看到的是这个事务里刚写下的节点状态。场景没有设关注项、或者这些项都不在这次运行的版本里时没有项。
  * 通知不能拦住运行结束（ADR 0020）：读取放在保存点里，出错时回到保存点、报告错误、按没有关注项处理，运行的最终状态照常提交。
  */
-async function finalFocus(
+async function focusAtRunEnd(
 	step: Step,
 	run: RunRow,
 	scenario: Pick<typeof orchestrations.$inferSelect, "focusItems">,
-	deps: FinalFocusDeps,
+	deps: FocusAtRunEndDeps,
 ): Promise<RunFocusItem[]> {
 	// 没设关注项时解析出来的是执行中节点的主指标，运行已经结束，卡片上没有这一段。
 	if (scenario.focusItems.length === 0) return [];
@@ -273,7 +273,7 @@ export async function enqueueRunNotification(
 		status: FinishedStatus;
 		document: OrchestrationDocument;
 		runUrl: string | undefined;
-		focus: FinalFocusDeps;
+		focus: FocusAtRunEndDeps;
 	},
 ): Promise<void> {
 	const { run, status, document } = input;
@@ -305,7 +305,7 @@ export async function enqueueRunNotification(
 		startedAt: run.startedAt,
 		endedAt: step.now,
 		failures: await failedNodes(step, run, document),
-		focus: await finalFocus(step, run, scenario, input.focus),
+		focus: await focusAtRunEnd(step, run, scenario, input.focus),
 		runUrl: input.runUrl,
 	});
 	if ("error" in card) {

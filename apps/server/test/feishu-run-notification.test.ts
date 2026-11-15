@@ -1,7 +1,13 @@
 // 切入点 A：运行通知（#232，ADR 0020、docs/SEMANTICS.md §6）：场景设置里选了机器人的场景，运行结束时由控制面发一张卡片。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
+import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as schema from "../src/db/schema.js";
+import { resolveRunFocus } from "../src/focus/run-focus.js";
+import { MetricQueries } from "../src/metrics/metric-queries.js";
+import { MetricRetention } from "../src/metrics/metric-retention.js";
+import { TaskMetrics } from "../src/metrics/task-metrics.js";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
@@ -64,7 +70,9 @@ describe("运行通知", () => {
 	let agent: FakeAgent;
 
 	/** 默认配置了对外地址（SFLY_PUBLIC_URL）；没有配置的情况在最后一组里另起控制面。 */
-	async function start(options: { publicHttpUrl?: string } = { publicHttpUrl: PUBLIC_URL }) {
+	async function start(
+		options: Parameters<typeof startTestControlPlane>[0] = { publicHttpUrl: PUBLIC_URL },
+	) {
 		cp = await startTestControlPlane(options);
 		clock = cp.clock as ManualClock;
 		api = new ApiClient(cp);
@@ -612,29 +620,87 @@ describe("运行通知", () => {
 			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
 		});
 
-		it("读关注项出错也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段", async () => {
-			const id = await scenario(benchDocument());
-			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
-			const runId = await api.triggerOk(id);
-			const load = await agent.nextAssign();
-			// 节点包的元信息被改坏（`nodes` 不是数组）：解析关注项时读节点类型会抛出异常。
+		/** 在控制面的数据库上直接执行一条 SQL（模拟库里的数据或结构出了问题）。 */
+		const execute = async (query: string) => {
 			const client = new pg.Client({ connectionString: cp.database.url });
 			await client.connect();
 			try {
-				await client.query(
-					"UPDATE node_packages SET metadata = jsonb_set(metadata, '{nodes}', '5'::jsonb) WHERE name = 'bench'",
-				);
+				await client.query(query);
 			} finally {
 				await client.end();
 			}
-			await agent.fail(load, "boom");
-			await status(runId, "failed");
+		};
 
-			await eventually(() => expect(feishu.requests).toHaveLength(1));
-			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
-			await eventually(async () =>
-				expect((await api.run(runId)).run_notification).toMatchObject({ status: "delivered" }),
-			);
+		it("读关注项时数据库报错也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段，错误记下来", async () => {
+			await agent.disconnect();
+			await feishu.close();
+			await cp.close();
+			await start({ publicHttpUrl: PUBLIC_URL, logger: true });
+			await publishBench(cp);
+			const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+			try {
+				const id = await scenario(benchDocument());
+				await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
+				const runId = await api.triggerOk(id);
+				const load = await agent.nextAssign();
+				// 指标摘要表不见了：读关注项的序列时查询报错，运行结束的事务里这条语句失败。
+				await execute("ALTER TABLE metric_series RENAME TO metric_series_gone");
+				await agent.fail(load, "boom");
+				await status(runId, "failed");
+
+				await eventually(() => expect(feishu.requests).toHaveLength(1));
+				expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
+				await eventually(async () =>
+					expect((await api.run(runId)).run_notification).toMatchObject({ status: "delivered" }),
+				);
+				expect(errors).toHaveBeenCalledWith(
+					"run notification: reading focus items failed:",
+					expect.objectContaining({ cause: expect.objectContaining({ code: "42P01" }) }),
+				);
+			} finally {
+				errors.mockRestore();
+			}
+		});
+
+		it("运行结束的事务里读关注项不从连接池另取连接：只有一个连接的连接池上，在事务里照样读出最终值", async () => {
+			const id = await scenario(benchDocument(), { trigger: "always" });
+			await putFocusItemsOk(api, id, [
+				{ node_id: "load", chart: "TPS" },
+				{ node_id: "probe", chart: "level", title: "探活" },
+			]);
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			agent.metrics(load, [["tps", at(1), 500]]);
+			await agent.succeed(load);
+			const probe = await agent.nextAssign();
+			agent.metrics(probe, [["level", at(2), 3]]);
+			await agent.sync();
+			await agent.succeed(probe);
+			await status(runId, "success");
+
+			// 唯一的连接被事务占着：事务之外再取连接，等 1 秒就报错。
+			const pool = new pg.Pool({
+				connectionString: cp.database.url,
+				max: 1,
+				connectionTimeoutMillis: 1000,
+			});
+			try {
+				const db = drizzle(pool, { schema });
+				const queries = new MetricQueries({
+					db,
+					clock,
+					metrics: new TaskMetrics({ db, clock, retention: new MetricRetention({ db, clock }) }),
+				});
+				// 点写进库之后才读得到（这里的 MetricQueries 看不到控制面内存里还没写库的点）。
+				await eventually(async () => {
+					const focus = await db.transaction((tx) =>
+						resolveRunFocus({ db: tx, clock, queries }, runId, { points: 0 }),
+					);
+					expect(focus?.items.map((item) => item.latest?.value)).toEqual([500, 3]);
+				});
+			} finally {
+				await pool.end();
+			}
 		});
 
 		it("附加说明让卡片超过 20 KB 时先截断附加说明：关注项一段还在，内容不变", async () => {
