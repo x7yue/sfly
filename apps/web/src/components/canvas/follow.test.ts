@@ -1,6 +1,6 @@
 import { type LayoutDocument, NODE_SIZE, REGION_PADDING } from "@sfly/orchestration";
-import { describe, expect, it } from "vitest";
-import { FOLLOW_ZOOM, followViewport } from "./follow";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createFrameScheduler, FOLLOW_DWELL_MS, FOLLOW_ZOOM, followViewport } from "./follow";
 
 type Rect = { x: number; y: number; width: number; height: number };
 type Viewport = { x: number; y: number; zoom: number };
@@ -146,5 +146,55 @@ describe("跟随执行的镜头框选", () => {
 
 	it("画布上没有的节点不影响其余节点的框选", () => {
 		expect(frame(["a", "gone"])).toEqual(frame(["a"]));
+	});
+});
+
+describe("什么时候框", () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	it("跟随刚打开时马上框一次", () => {
+		const frame = vi.fn();
+		createFrameScheduler().update("a", frame);
+		expect(frame).toHaveBeenCalledTimes(1);
+	});
+
+	it("执行前沿变了，停留满了才框", () => {
+		const frame = vi.fn();
+		const schedule = createFrameScheduler();
+		schedule.update("a", vi.fn());
+		schedule.update("b", frame);
+		vi.advanceTimersByTime(FOLLOW_DWELL_MS - 1);
+		expect(frame).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(1);
+		expect(frame).toHaveBeenCalledTimes(1);
+	});
+
+	it("停留期间又变了，从最后一次变化重新计时", () => {
+		const first = vi.fn();
+		const last = vi.fn();
+		const schedule = createFrameScheduler();
+		schedule.update("a", vi.fn());
+		schedule.update("b", first);
+		vi.advanceTimersByTime(FOLLOW_DWELL_MS - 500);
+		schedule.update("c", last);
+		vi.advanceTimersByTime(500);
+		expect(first).not.toHaveBeenCalled();
+		expect(last).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(FOLLOW_DWELL_MS - 500);
+		expect(first).not.toHaveBeenCalled();
+		expect(last).toHaveBeenCalledTimes(1);
+	});
+
+	it("跟随关了就不再框，重新打开又马上框", () => {
+		const frame = vi.fn();
+		const schedule = createFrameScheduler();
+		schedule.update("a", vi.fn());
+		schedule.update("b", frame);
+		schedule.update(null, frame);
+		vi.advanceTimersByTime(FOLLOW_DWELL_MS * 2);
+		expect(frame).not.toHaveBeenCalled();
+		schedule.update("b", frame);
+		expect(frame).toHaveBeenCalledTimes(1);
 	});
 });

@@ -81,46 +81,6 @@ const openRun = async (page: Page, scenarioId: string, runId: string) => {
 
 const followButton = (page: Page) => dock(page).getByRole("button", { name: "跟随执行" });
 
-interface CameraWatch {
-	/** 节点变成执行中的时刻，还没有时是 null（页面里的 performance.now()）。 */
-	changedAt: number | null;
-	/** 这之后镜头第一次移动的时刻，还没有移动时是 null（同一个时钟）。 */
-	movedAt: number | null;
-}
-
-/** 页面里记下节点 `id` 变成执行中的时刻，和这之后镜头第一次移动的时刻；返回读取它们的函数。 */
-async function watchCamera(page: Page, id: string) {
-	await page.evaluate((nodeId) => {
-		const seen = { changedAt: null, movedAt: null, before: "" } as CameraWatch & {
-			before: string;
-		};
-		(window as unknown as { camera: CameraWatch }).camera = seen;
-		const nodes = document.querySelector(".react-flow__nodes");
-		const viewport = document.querySelector<HTMLElement>(".react-flow__viewport");
-		if (!nodes || !viewport) throw new Error("画布还没有渲染");
-		new MutationObserver((records) => {
-			for (const r of records) {
-				const target = r.target as Element;
-				const running = target.getAttribute("data-run") === "running";
-				if (running && target.getAttribute("data-node-id") === nodeId && seen.changedAt === null) {
-					seen.changedAt = performance.now();
-					seen.before = viewport.style.transform;
-				}
-			}
-		}).observe(nodes, { attributes: true, attributeFilter: ["data-run"], subtree: true });
-		new MutationObserver(() => {
-			const moved = viewport.style.transform !== seen.before;
-			if (seen.changedAt !== null && seen.movedAt === null && moved) {
-				seen.movedAt = performance.now();
-			}
-		}).observe(viewport, { attributes: true, attributeFilter: ["style"] });
-	}, id);
-	return () =>
-		page.evaluate(
-			() => (window as unknown as { camera: CameraWatch }).camera,
-		) as Promise<CameraWatch>;
-}
-
 /**
  * 这些元素是不是都框在可见区域里（检查器左边、工具条上面），整体水平居中在检查器左边的那一块：
  * 检查器左边的可见区域，左右两侧的边距相同，所以中心在检查器左边缘的一半。
@@ -143,7 +103,7 @@ async function framed(page: Page, targets: Locator[]) {
 
 const region = (page: Page) => page.getByRole("region", { name: "子流程 监控" });
 
-test("跟随执行：打开时镜头框住执行中的节点；执行前沿变化后停留约 2 秒才平移到新的节点，选中的节点不变", async ({
+test("跟随执行：打开时镜头框住执行中的节点；执行前沿变化后镜头平移到新的节点，选中的节点不变", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -157,15 +117,10 @@ test("跟随执行：打开时镜头框住执行中的节点；执行前沿变�
 	await nodeCard(page, "n1").click();
 	await expect(nodeCard(page, "n1")).toHaveAttribute("aria-pressed", "true");
 
-	// 记下 n2 变成执行中和镜头第一次移动的时刻：两者相隔不到 2 秒就是没有停留。
-	const camera = await watchCamera(page, "n2");
 	await agent.succeed(n1);
 	const afterN1 = await assigns(agent, 1);
 	await expect(nodeCard(page, "n2")).toHaveAttribute("data-run", "running");
 	await expect.poll(() => framed(page, [nodeCard(page, "n2")]), { timeout: 10_000 }).toBe(true);
-	const seen = await camera();
-	expect(seen.movedAt).not.toBeNull();
-	expect((seen.movedAt ?? 0) - (seen.changedAt ?? 0)).toBeGreaterThanOrEqual(1900);
 	// 只移动了镜头：选中的还是 n1，检查器显示的也是它。
 	await expect(nodeCard(page, "n1")).toHaveAttribute("aria-pressed", "true");
 	await expect(nodeCard(page, "n2")).toHaveAttribute("aria-pressed", "false");
@@ -201,19 +156,10 @@ test("拖动画布就停止跟随并播报，按 F 恢复；键盘选到视野�
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
 	await expect(announcements).toHaveText("已停止跟随执行，按 F 恢复");
 
-	// 之后执行推进，镜头不动：n2 开始执行、过了停留的时间，镜头还在拖动后的位置。
-	const camera = await watchCamera(page, "n2");
+	// 之后执行推进到 n2，F 恢复：镜头框住 n2。
 	await agent.succeed(n1);
 	const afterN1 = await assigns(agent, 1);
 	await expect(nodeCard(page, "n2")).toHaveAttribute("data-run", "running");
-	await page.waitForFunction(() => {
-		const { changedAt } = (window as unknown as { camera: { changedAt: number | null } }).camera;
-		return changedAt !== null && performance.now() - changedAt > 2600;
-	});
-	expect((await camera()).movedAt).toBeNull();
-	expect(await framed(page, [nodeCard(page, "n2")])).toBe(false);
-
-	// F 恢复：镜头框住 n2。
 	await page.keyboard.press("f");
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
 	await expect.poll(() => framed(page, [nodeCard(page, "n2")]), { timeout: 10_000 }).toBe(true);
@@ -236,6 +182,25 @@ test("拖动画布就停止跟随并播报，按 F 恢复；键盘选到视野�
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
 	await page.keyboard.press("f");
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+});
+
+test("点工具条的缩放按钮也停止跟随并播报，按 F 恢复", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const { scenarioId, runId } = await startRun(controlPlane, connectAgent);
+	await openRun(page, scenarioId, runId);
+	await expect.poll(() => framed(page, [nodeCard(page, "n1")])).toBe(true);
+
+	await dock(page).getByRole("button", { name: "放大" }).click();
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
+	await expect(page.getByRole("status").filter({ hasText: "跟随执行" })).toHaveText(
+		"已停止跟随执行，按 F 恢复",
+	);
+	await page.keyboard.press("f");
+	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
+	await expect.poll(() => framed(page, [nodeCard(page, "n1")])).toBe(true);
 });
 
 test("跟随执行第一次默认打开，之后记住这个浏览器里上次的选择，刷新后保持；运行结束自动关闭不改这个选择", async ({

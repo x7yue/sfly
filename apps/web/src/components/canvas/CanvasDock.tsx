@@ -83,6 +83,7 @@ export function CanvasDock({
 	onFit,
 	minimap,
 	onToggleMinimap,
+	onZoom,
 	inspector,
 	follow,
 	start,
@@ -94,6 +95,8 @@ export function CanvasDock({
 	onFit(): void;
 	minimap: boolean;
 	onToggleMinimap(): void;
+	/** 点缩放按钮时（用户自己动镜头）；运行状态的跟随执行据此关闭。 */
+	onZoom?(): void;
 	inspector?: { open: boolean; onToggle(): void };
 	/** 「跟随执行」按钮：`active` 是按下的样式；运行结束后 `disabled`。 */
 	follow?: { active: boolean; disabled: boolean; onToggle(): void };
@@ -103,7 +106,11 @@ export function CanvasDock({
 	clearRight?: number;
 }) {
 	const zoom = useStore((s) => s.transform[2]);
-	const zoomBy = useZoomSteps();
+	const zoomSteps = useZoomSteps();
+	const zoomBy = (factor: number) => {
+		onZoom?.();
+		zoomSteps(factor);
+	};
 	return (
 		// 两侧的占位等宽时工具条居中；右侧占位不小于 clearRight，放不下就把工具条往左推。
 		<div className="pointer-events-none absolute inset-x-0 bottom-3.5 z-10 flex">

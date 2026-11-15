@@ -36,8 +36,8 @@ import {
 	useState,
 } from "react";
 import { useShortcut } from "#/components/shortcuts";
-import { dialogOpen, isEditable } from "#/lib/focus";
 import { ACTION } from "#/lib/copy";
+import { dialogOpen, isEditable } from "#/lib/focus";
 import { shortcutText } from "#/lib/shortcuts";
 import { ContextMenu } from "@/components/ui/context-menu";
 import { AnnotationBoxes } from "./AnnotationBoxes";
@@ -53,7 +53,7 @@ import {
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
 import { type DocEdge, docEdgeOf, edgeId, layoutOf, type SfEdge, type SfNode } from "./flow";
-import { FOLLOW_DWELL_MS, followViewport } from "./follow";
+import { createFrameScheduler, followViewport } from "./follow";
 import {
 	type CanvasInsets,
 	FIT_MAX_ZOOM,
@@ -87,8 +87,8 @@ import {
 
 /**
  * 跟随执行（运行状态）：镜头框住 `running`（执行中的节点，含子流程区域，规则见 follow.ts）。打开时马上框，
- * 之后执行前沿（`running`）变化后停留 {@link FOLLOW_DWELL_MS} 才平移；只移动镜头，不改选中的节点。
- * 拖动画布（也包括滚轮缩放）、或用方向键把选中移到视野外的节点（镜头平移过去）时关闭，并在读屏的实时区域播报。
+ * 之后执行前沿（`running`）变化后停留 follow.ts 的 `FOLLOW_DWELL_MS` 才平移；只移动镜头，不改选中的节点。
+ * 拖动画布、缩放（滚轮或工具条的按钮），或用方向键把选中移到视野外的节点（镜头平移过去）时关闭，并在读屏的实时区域播报。
  */
 export interface FollowExecution {
 	/** 跟随着；运行结束后是 false。 */
@@ -385,46 +385,35 @@ export function FlowCanvas({
 		(duration: number) => {
 			const running = followRef.current?.running;
 			if (!running) return;
-			const { width, height } = store.getState();
+			const el = wrapper.current;
+			if (!el) return;
 			const viewport = followViewport({
 				running,
 				layout: extent.current.layout,
-				size: { width, height },
+				size: { width: el.clientWidth, height: el.clientHeight },
 				area: areaRef.current,
 			});
 			if (viewport) void flow.setViewport(viewport, { duration });
 		},
-		[flow, store],
+		[flow],
 	);
 	const [announcement, setAnnouncement] = useState("");
-	/** 拖动画布、键盘选到视野外的节点：关闭跟随并告诉读屏用户怎么恢复。 */
-	const stopFollowing = useCallback((cause: "drag" | "keyboard") => {
+	/** 用户自己动镜头（拖动、缩放）或键盘选到视野外的节点：关闭跟随并告诉读屏用户怎么恢复。 */
+	const stopFollowing = useCallback((cause: "manual" | "keyboard") => {
 		const current = followRef.current;
 		if (!current?.active) return;
 		current.onChange(false);
-		const resume = `按 ${shortcutText("canvas-follow")} 恢复`;
-		setAnnouncement(
-			cause === "drag"
-				? `已停止${ACTION.followExecution}，${resume}`
-				: `镜头已移到选中的节点，已停止${ACTION.followExecution}，${resume}`,
-		);
+		const stopped = `已停止${ACTION.followExecution}，按 ${shortcutText("canvas-follow")} 恢复`;
+		setAnnouncement(cause === "manual" ? stopped : `镜头已移到选中的节点，${stopped}`);
 	}, []);
-	// 打开跟随时马上框一次；之后执行前沿（执行中的节点）变化，停留一会儿才平移：停留期间又变化就重新计时。
+	// 什么时候框见 createFrameScheduler；画布卸载时取消等待中的那一次。
 	const followKey = flow.viewportInitialized && follow?.active ? follow.running.join("\n") : null;
-	const framing = useRef(false);
-	useEffect(() => {
-		if (followKey === null) {
-			framing.current = false;
-			return;
-		}
-		if (!framing.current) {
-			framing.current = true;
-			frameRunning(viewportDuration(VIEWPORT_MS));
-			return;
-		}
-		const timer = setTimeout(() => frameRunning(viewportDuration(VIEWPORT_MS)), FOLLOW_DWELL_MS);
-		return () => clearTimeout(timer);
-	}, [followKey, frameRunning]);
+	const [frames] = useState(createFrameScheduler);
+	useEffect(
+		() => frames.update(followKey, () => frameRunning(viewportDuration(VIEWPORT_MS))),
+		[frames, followKey, frameRunning],
+	);
+	useEffect(() => frames.cancel, [frames]);
 	const following = follow?.active ?? false;
 	useEffect(() => {
 		if (following) setAnnouncement("");
@@ -746,7 +735,7 @@ export function FlowCanvas({
 					}}
 					// 有事件的移动是用户在拖动或滚轮缩放画布；程序平移（跟随、适配视图、定位节点）的事件是 null。
 					onMove={(event) => {
-						if (event) stopFollowing("drag");
+						if (event) stopFollowing("manual");
 					}}
 					onPaneContextMenu={(event) => {
 						event.preventDefault();
@@ -847,6 +836,7 @@ export function FlowCanvas({
 					onFit={fit}
 					minimap={minimap}
 					onToggleMinimap={() => setMinimap((m) => !m)}
+					onZoom={() => stopFollowing("manual")}
 					inspector={inspector}
 					follow={
 						follow && {

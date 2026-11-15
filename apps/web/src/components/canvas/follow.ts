@@ -14,6 +14,32 @@ export const FOLLOW_ZOOM = { min: 0.6, max: 1 } as const;
 /** 执行前沿（执行中的节点）变化之后，镜头停留这么久才平移：一连串很快结束的节点不会让镜头连跳。 */
 export const FOLLOW_DWELL_MS = 2000;
 
+/**
+ * 什么时候框：跟随刚打开时马上框一次；之后执行前沿的 `key` 变了，停留 {@link FOLLOW_DWELL_MS} 才框，
+ * 停留期间又变了就重新计时。`key` 为 null（跟随关了、画布还没就绪）时取消等待，下次打开重新马上框；`cancel` 在画布卸载时用。
+ */
+export function createFrameScheduler() {
+	let framed = false;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const cancel = () => {
+		clearTimeout(timer);
+		framed = false;
+	};
+	return {
+		update(key: string | null, frame: () => void) {
+			if (key === null) return cancel();
+			clearTimeout(timer);
+			if (!framed) {
+				framed = true;
+				frame();
+			} else {
+				timer = setTimeout(frame, FOLLOW_DWELL_MS);
+			}
+		},
+		cancel,
+	};
+}
+
 /** 框住的内容与可见区域边缘的留白（屏幕像素）。 */
 const FRAME_PADDING = 24;
 
