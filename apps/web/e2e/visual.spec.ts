@@ -1266,6 +1266,8 @@ test("编排画布：运行状态（检查器的「正在做」和「动作」�
 	await page.clock.setFixedTime(clock.now());
 	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	// 跟随执行把镜头平移到执行中的节点（缩放正好到 100%）：等平移停下再点节点，点击会打断还在进行的平移。
+	await expect(page.locator(".react-flow__viewport")).toHaveAttribute("style", /scale\(1\)/);
 	await nodeCard(page, "verify").click();
 	const area = page.getByRole("region", { name: "动作", exact: true });
 	await expect(area.getByRole("table")).toContainText("1,284,819");
