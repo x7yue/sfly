@@ -1,9 +1,4 @@
-import type {
-	ActionDetailView,
-	ActionPage,
-	ActionSummaryView,
-	CountOnlyPeriod,
-} from "@sfly/schema";
+import type { ActionDetailView, ActionPage, CountOnlyPeriod } from "@sfly/schema";
 
 /**
  * 一个任务（一次尝试）已经读到的动作明细：分页读到的加上实时推送来的（`use-task-actions.ts` 持有它）。
@@ -14,8 +9,11 @@ import type {
 export interface ActionDetails {
 	/** 按开始时间从新到旧（同一时刻 ID 大的在前，与分页的顺序相同），同一个 ID 只有一条，后到的为准。 */
 	readonly details: readonly ActionDetailView[];
-	/** 分页读到的只计数的段，同一个名称、同一种原因只有一段（后读到的为准），按起点从新到旧。 */
-	readonly countOnly: readonly CountOnlyPeriod[];
+	/**
+	 * 分页读到的控制面兜底的只计数的段（`control_plane`），同一个名称只有一段（后读到的为准），按起点从新到旧。
+	 * SDK 上限的段不从分页取，由最新的摘要算出（action-table.ts）。
+	 */
+	readonly controlPlanePeriods: readonly CountOnlyPeriod[];
 	/** 读更早一页的游标；null：已经读到最早的明细。 */
 	readonly before: string | null;
 	/** 最新一页的修订号：实时推送从它之后接上。 */
@@ -39,7 +37,7 @@ export const matchesFilter = (detail: ActionDetailView, filter: ActionFilter): b
 export function fromLatestPage(page: ActionPage): ActionDetails {
 	return {
 		details: mergeDetails([], page.actions),
-		countOnly: mergePeriods([], page.count_only),
+		controlPlanePeriods: mergePeriods([], page.count_only),
 		before: page.before,
 		rev: page.rev,
 		expired: page.expired,
@@ -51,20 +49,8 @@ export function withOlderPage(d: ActionDetails, page: ActionPage): ActionDetails
 	return {
 		...d,
 		details: mergeDetails(d.details, page.actions),
-		countOnly: mergePeriods(d.countOnly, page.count_only),
+		controlPlanePeriods: mergePeriods(d.controlPlanePeriods, page.count_only),
 		before: page.before,
-	};
-}
-
-/**
- * 重新读到的最新一页（有名称刚开始只计数时，见 {@link newlyCapped}）：明细和只计数的段合并进来，
- * 更早一页的游标和实时推送的起点不变（推送一直连着，这一页的明细它都会送到）。
- */
-export function withLatestPage(d: ActionDetails, page: ActionPage): ActionDetails {
-	return {
-		...d,
-		details: mergeDetails(d.details, page.actions),
-		countOnly: mergePeriods(d.countOnly, page.count_only),
 	};
 }
 
@@ -80,19 +66,6 @@ export function withLive(
 	const oldest = d.before === null ? undefined : d.details.at(-1);
 	const kept = actions.filter((a) => accept(a) && (!oldest || compare(a, oldest) <= 0));
 	return kept.length === 0 ? d : { ...d, details: mergeDetails(d.details, kept) };
-}
-
-/**
- * 有没有名称在这两份摘要之间刚开始只计数（`capped_at` 从没有变成有）。这时它的只计数的段落在最新一页的范围里，
- * 而只计数的段只随分页返回，要重新读一次最新的一页。没有上一份摘要时不算（读第一页时它已经在里面了）。
- */
-export function newlyCapped(
-	previous: ActionSummaryView | undefined,
-	next: ActionSummaryView,
-): boolean {
-	if (!previous) return false;
-	const before = new Set(previous.names.filter((n) => n.capped_at !== null).map((n) => n.name));
-	return next.names.some((n) => n.capped_at !== null && !before.has(n.name));
 }
 
 /** 分页的顺序：开始时间从新到旧，同一时刻 ID 大的在前。负数表示 a 排在 b 前面。 */
@@ -141,12 +114,14 @@ function mergeDetails(
 
 const periodKey = (s: CountOnlyPeriod) => `${s.name}\n${s.reason}`;
 
+/** 把一页的 `count_only` 里控制面兜底的段合并进来。 */
 function mergePeriods(
 	periods: readonly CountOnlyPeriod[],
 	incoming: readonly CountOnlyPeriod[],
 ): readonly CountOnlyPeriod[] {
-	if (incoming.length === 0) return periods;
+	const controlPlane = incoming.filter((p) => p.reason === "control_plane");
+	if (controlPlane.length === 0) return periods;
 	const byKey = new Map(periods.map((s) => [periodKey(s), s]));
-	for (const s of incoming) byKey.set(periodKey(s), s);
+	for (const s of controlPlane) byKey.set(periodKey(s), s);
 	return [...byKey.values()].sort((a, b) => Date.parse(b.from) - Date.parse(a.from));
 }

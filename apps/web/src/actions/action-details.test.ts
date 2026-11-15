@@ -2,18 +2,10 @@ import type {
 	ActionDetailView,
 	ActionPage,
 	ActionRecordDetail,
-	ActionSummaryView,
 	CountOnlyPeriod,
 } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import {
-	fromLatestPage,
-	matchesFilter,
-	newlyCapped,
-	withLatestPage,
-	withLive,
-	withOlderPage,
-} from "./action-details";
+import { fromLatestPage, matchesFilter, withLive, withOlderPage } from "./action-details";
 
 const T0 = Date.UTC(2026, 0, 1, 9, 0, 0);
 const at = (ms: number) => new Date(T0 + ms).toISOString();
@@ -53,13 +45,17 @@ const mark = (id: number, start: number, name = "首笔成交"): ActionDetailVie
 	agent_started_at: at(start),
 });
 
-const period = (name: string, from: number, count = 10): CountOnlyPeriod => ({
+const period = (
+	name: string,
+	from: number,
+	reason: CountOnlyPeriod["reason"] = "control_plane",
+): CountOnlyPeriod => ({
 	name,
-	reason: "name_limit",
+	reason,
 	from: at(from),
 	agent_from: at(from),
 	to: null,
-	count,
+	count: 10,
 });
 
 function page(
@@ -74,15 +70,21 @@ function page(
 const ids = (details: readonly ActionDetailView[]) => details.map((d) => d.id);
 
 describe("动作明细的合并", () => {
-	it("最新一页：按开始时间从新到旧保留，记下更早一页的游标和实时推送的起点", () => {
-		const d = fromLatestPage(page([action(3, 300), action(2, 200)], "c2", [period("下单", 250)]));
+	it("最新一页：按开始时间从新到旧保留，记下更早一页的游标、实时推送的起点和控制面兜底的只计数的段", () => {
+		const d = fromLatestPage(
+			page([action(3, 300), action(2, 200)], "c2", [
+				period("下单", 250),
+				period("预热", 260, "name_limit"),
+			]),
+		);
 		expect(ids(d.details)).toEqual([3, 2]);
 		expect(d.before).toBe("c2");
 		expect(d.rev).toBe(7);
-		expect(d.countOnly).toHaveLength(1);
+		// SDK 上限的段由摘要算，不从分页取。
+		expect(d.controlPlanePeriods.map((s) => s.name)).toEqual(["下单"]);
 	});
 
-	it("更早的一页接在后面；和已有的重复的 ID 只留一条，只计数的段按名称和原因去重", () => {
+	it("更早的一页接在后面；和已有的重复的 ID 只留一条，只计数的段按名称去重", () => {
 		const first = fromLatestPage(
 			page([action(4, 400), action(3, 300)], "c3", [period("下单", 350)]),
 		);
@@ -97,7 +99,7 @@ describe("动作明细的合并", () => {
 		);
 		expect(ids(d.details)).toEqual([4, 3, 2, 1]);
 		expect(d.before).toBeNull();
-		expect(d.countOnly.map((s) => s.name)).toEqual(["下单", "预热"]);
+		expect(d.controlPlanePeriods.map((s) => s.name)).toEqual(["下单", "预热"]);
 		// 实时推送接着最新一页的修订号，更早一页的不算
 		expect(d.rev).toBe(7);
 	});
@@ -141,24 +143,6 @@ describe("动作明细的合并", () => {
 		);
 		expect(ids(d.details)).toEqual([2]);
 	});
-
-	it("重新读最新一页：明细合并去重，只计数的段以新读到的为准，游标和推送的起点不变", () => {
-		const loaded = withOlderPage(
-			fromLatestPage(page([action(4, 400)], "c4", [], 7)),
-			page([action(3, 300)], "c3", [period("预热", 350)]),
-		);
-		const d = withLatestPage(
-			loaded,
-			page([action(5, 500), action(4, 400)], "c4", [period("下单", 450, 3)], 12),
-		);
-		expect(ids(d.details)).toEqual([5, 4, 3]);
-		expect(d.countOnly.map((s) => [s.name, s.count])).toEqual([
-			["下单", 3],
-			["预热", 10],
-		]);
-		expect(d.before).toBe("c3");
-		expect(d.rev).toBe(7);
-	});
 });
 
 describe("筛选条件", () => {
@@ -170,39 +154,5 @@ describe("筛选条件", () => {
 		expect(matchesFilter(action(5, 0, null), { failed: true })).toBe(false);
 		expect(matchesFilter(mark(6, 0), { failed: true })).toBe(false);
 		expect(matchesFilter(mark(7, 0), {})).toBe(true);
-	});
-});
-
-describe("有名称刚开始只计数", () => {
-	const summary = (capped: Record<string, number | null>): ActionSummaryView => ({
-		total: 0,
-		marks: 0,
-		reported: 0,
-		capped: false,
-		capped_at: null,
-		agent_capped_at: null,
-		names: Object.entries(capped).map(([name, from]) => ({
-			name,
-			total: 1,
-			failed: 0,
-			reported: 1,
-			capped_at: from === null ? null : at(from),
-			agent_capped_at: from === null ? null : at(from),
-		})),
-		running: [],
-		running_complete: true,
-		recent: [],
-		recent_failed: [],
-	});
-
-	it("某个名称从有明细变成只计数时为 true，已经只计数的不算", () => {
-		expect(newlyCapped(summary({ 下单: null }), summary({ 下单: 100 }))).toBe(true);
-		expect(newlyCapped(summary({ 下单: 100 }), summary({ 下单: 100, 预热: null }))).toBe(false);
-		expect(newlyCapped(summary({ 下单: 100 }), summary({ 下单: 100, 预热: 300 }))).toBe(true);
-		expect(newlyCapped(summary({}), summary({}))).toBe(false);
-	});
-
-	it("没有上一份摘要时不算", () => {
-		expect(newlyCapped(undefined, summary({ 下单: 100 }))).toBe(false);
 	});
 });

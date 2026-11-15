@@ -8,6 +8,7 @@ import type {
 	RunningActionView,
 } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
+import { fromLatestPage, withLive } from "./action-details";
 import { type ActionRow, type ActionTableGroup, actionCount, actionTable } from "./action-table";
 
 const T0 = Date.UTC(2026, 0, 1, 9, 0, 0);
@@ -70,13 +71,19 @@ const mark = (id: number, start: number): ActionDetailView => ({
 	agent_started_at: at(start),
 });
 
-const count = (name: string, total: number, reported: number): ActionNameCount => ({
+/** 一种名称的计数：给了 `cappedAt`（毫秒）就是从那时起只计数，`total − reported` 个没有明细。 */
+const count = (
+	name: string,
+	total: number,
+	reported = total,
+	cappedAt?: number,
+): ActionNameCount => ({
 	name,
 	total,
 	failed: 0,
 	reported,
-	capped_at: total > reported ? at(0) : null,
-	agent_capped_at: total > reported ? at(0) : null,
+	capped_at: cappedAt === undefined ? null : at(cappedAt),
+	agent_capped_at: cappedAt === undefined ? null : at(cappedAt),
 });
 
 function summary(parts: Partial<ActionSummaryView> = {}): ActionSummaryView {
@@ -96,14 +103,10 @@ function summary(parts: Partial<ActionSummaryView> = {}): ActionSummaryView {
 	};
 }
 
-const period = (
-	name: string,
-	from: number,
-	reason: CountOnlyPeriod["reason"] = "name_limit",
-	count = 40,
-): CountOnlyPeriod => ({
+/** 控制面兜底的一段（分页读到的）。 */
+const dropped = (name: string, from: number, count = 40): CountOnlyPeriod => ({
 	name,
-	reason,
+	reason: "control_plane",
 	from: at(from),
 	agent_from: at(from),
 	to: null,
@@ -116,7 +119,8 @@ const table = (
 	actionTable({
 		summary: summary(),
 		details: [],
-		countOnly: [],
+		controlPlanePeriods: [],
+		hasOlder: false,
 		endedAt: null,
 		...parts,
 	});
@@ -198,7 +202,7 @@ describe("只计数的段", () => {
 	it("放在开始时间早于它起点的第一条明细前面", () => {
 		const groups = table({
 			details: [detail(5, 500), detail(4, 400), detail(3, 300)],
-			countOnly: [period("下单", 450), period("预热", 350)],
+			controlPlanePeriods: [dropped("下单", 450), dropped("预热", 350)],
 		});
 		expect(shape(groups)).toEqual([["earlier", [5, "~下单", 4, "~预热", 3]]]);
 	});
@@ -206,7 +210,7 @@ describe("只计数的段", () => {
 	it("和明细同一时刻开始的放在那条明细后面；比全部明细都早的放在最后，比全部都晚的放在最前", () => {
 		const groups = table({
 			details: [detail(5, 500), detail(4, 400)],
-			countOnly: [period("预热", 100), period("下单", 400), period("加压", 900)],
+			controlPlanePeriods: [dropped("预热", 100), dropped("下单", 400), dropped("加压", 900)],
 		});
 		expect(shape(groups)).toEqual([["earlier", ["~加压", 5, 4, "~下单", "~预热"]]]);
 	});
@@ -215,7 +219,7 @@ describe("只计数的段", () => {
 		const groups = table({
 			summary: summary({ recent: [ended(4, 400)] }),
 			details: [detail(4, 400)],
-			countOnly: [period("下单", 300)],
+			controlPlanePeriods: [dropped("下单", 300)],
 		});
 		expect(shape(groups)).toEqual([
 			["recent", [4]],
@@ -223,24 +227,70 @@ describe("只计数的段", () => {
 		]);
 	});
 
-	it("SDK 上限的段个数取最新的摘要（任务还在执行时一直在涨），控制面兜底的取分页读到的", () => {
+	it("SDK 上限的段由摘要算出：每种名称一段，从只计数的时刻起，个数是没有明细的那些；原因按先碰到的上限", () => {
 		const groups = table({
-			summary: summary({ names: [count("下单", 50_300, 50_000), count("预热", 9, 9)] }),
-			countOnly: [period("下单", 300, "name_limit", 120), period("预热", 200, "control_plane", 5)],
+			summary: summary({
+				capped_at: at(500),
+				names: [count("下单", 50_300, 50_000, 300), count("预热", 9), count("撤单", 120, 100, 600)],
+			}),
+			controlPlanePeriods: [dropped("加压", 200, 5)],
 		});
 		expect(groups[0]?.rows).toMatchObject([
+			{ kind: "count-only", name: "撤单", reason: "total_limit", from: at(600), count: 20 },
 			{ kind: "count-only", name: "下单", reason: "name_limit", from: at(300), count: 300 },
-			{ kind: "count-only", name: "预热", reason: "control_plane", from: at(200), count: 5 },
+			{ kind: "count-only", name: "加压", reason: "control_plane", from: at(200), count: 5 },
 		]);
 	});
 
+	it("打开时还没超出上限，之后某个名称开始只计数、期间又推送来很多明细：这一段出现在它开始的位置", () => {
+		const opened = fromLatestPage({
+			task_id: "t",
+			actions: Array.from({ length: 200 }, (_, i) => detail(1000 - i, 10_000 - i * 10)),
+			before: "c801",
+			count_only: [],
+			rev: 7,
+			expired: false,
+		});
+		const before = table({
+			summary: summary({ names: [count("下单", 1000)] }),
+			details: opened.details,
+			hasOlder: true,
+		});
+		expect(before.flatMap((g) => g.rows).some((r) => r.kind === "count-only")).toBe(false);
+
+		// 推送来 500 条更新的明细，「下单」从第 12 秒起只计数：比重新读一次最新一页的最早一条还早。
+		const pushed = Array.from({ length: 500 }, (_, i) => detail(1001 + i, 10_010 + i * 10));
+		const later = withLive(opened, pushed);
+		const groups = table({
+			summary: summary({ names: [count("下单", 1800, 1500, 12_000)] }),
+			details: later.details,
+			hasOlder: later.before !== null,
+		});
+		const earlier = shape(groups).find(([name]) => name === "earlier")?.[1] ?? [];
+		const at12s = earlier.indexOf("~下单");
+		expect(earlier.slice(at12s - 1, at12s + 2)).toEqual([1200, "~下单", 1199]);
+		expect(groups.flatMap((g) => g.rows).find((r) => r.kind === "count-only")).toMatchObject({
+			count: 300,
+		});
+	});
+
+	it("还有更早的明细没读时，起点早于已读到的最早一条的段先不显示；读到最早的明细以后显示在最后", () => {
+		const parts = {
+			summary: summary({ names: [count("下单", 500, 400, 100)] }),
+			details: [detail(4, 400), detail(3, 300)],
+		};
+		expect(shape(table({ ...parts, hasOlder: true }))).toEqual([["earlier", [4, 3]]]);
+		expect(shape(table({ ...parts, hasOlder: false }))).toEqual([["earlier", [4, 3, "~下单"]]]);
+	});
+
 	it("还在执行时到「至今」；任务结束后到任务的结束时间", () => {
-		const live = table({ countOnly: [period("下单", 300)] });
-		expect(live[0]?.rows[0]).toMatchObject({ until: null });
-		const over = table({ countOnly: [period("下单", 300)], endedAt: at(5000) });
-		expect(over[0]?.rows[0]).toMatchObject({ until: at(5000) });
+		const capped = summary({ names: [count("下单", 500, 400, 300)] });
+		expect(table({ summary: capped })[0]?.rows[0]).toMatchObject({ until: null });
+		expect(table({ summary: capped, endedAt: at(5000) })[0]?.rows[0]).toMatchObject({
+			until: at(5000),
+		});
 		const done = table({
-			countOnly: [{ ...period("下单", 300), to: at(4000) }],
+			controlPlanePeriods: [{ ...dropped("下单", 300), to: at(4000) }],
 			endedAt: at(5000),
 		});
 		expect(done[0]?.rows[0]).toMatchObject({ until: at(4000) });

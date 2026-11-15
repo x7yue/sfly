@@ -1,10 +1,11 @@
 import { type ActionEvent, type ActionField, ActionResult as ProtoActionResult } from "@sfly/proto";
-import type {
-	ActionDetailView,
-	ActionNameCount,
-	ActionResult,
-	CountOnlyPeriod,
-	TaskStatus,
+import {
+	type ActionDetailView,
+	type ActionNameCount,
+	type ActionResult,
+	type CountOnlyPeriod,
+	sdkCountOnlyPeriods,
+	type TaskStatus,
 } from "@sfly/schema";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { taskActions } from "../db/schema.js";
@@ -320,9 +321,9 @@ export interface CountOnlySources {
 }
 
 /**
- * 一页明细范围里的只计数的段，从新到旧（docs/ARCHITECTURE.md §6.3「只计数的段」）。范围是 `[from, until)`（毫秒，
- * 控制面时间），null 是那一边没有界限。`failed`（只看失败）时，每种名称超过上限的段只在合计也满了时返回：
- * 合计没满时，那之后失败的动作都有明细。
+ * 一页明细范围里的只计数的段，从新到旧（docs/ARCHITECTURE.md §6.3「只计数的段」）：SDK 上限的段由摘要算出
+ * （`sdkCountOnlyPeriods`，web 用同一份），加上控制面兜底丢弃的。范围是 `[from, until)`（毫秒，控制面时间），
+ * null 是那一边没有界限。
  */
 export function countOnlyPeriods(
 	sources: CountOnlySources,
@@ -330,25 +331,14 @@ export function countOnlyPeriods(
 	range: { from: number | null; until: number | null },
 ): CountOnlyPeriod[] {
 	const to = sources.to?.toISOString() ?? null;
-	const totalCapped = sources.cappedAt === null ? null : Date.parse(sources.cappedAt);
-	const periods: CountOnlyPeriod[] = [];
-	for (const n of sources.names) {
-		const count = n.total - n.reported;
-		if (n.capped_at === null || count <= 0) continue;
-		const reason =
-			totalCapped === null || Date.parse(n.capped_at) < totalCapped ? "name_limit" : "total_limit";
-		if (reason === "name_limit" && filter.failed && totalCapped === null) continue;
-		periods.push({
-			name: n.name,
-			reason,
-			from: n.capped_at,
-			agent_from: n.agent_capped_at ?? n.capped_at,
-			to,
-			count,
-		});
-	}
+	const periods = sdkCountOnlyPeriods(
+		{ names: sources.names, capped_at: sources.cappedAt },
+		filter,
+		to,
+	);
 	for (const d of sources.dropped) {
 		if (d.dropped <= 0 || !d.droppedFrom) continue;
+		if (filter.name !== undefined && d.name !== filter.name) continue;
 		const from = d.droppedFrom.toISOString();
 		periods.push({
 			name: d.name,
@@ -360,12 +350,10 @@ export function countOnlyPeriods(
 		});
 	}
 	return periods
-		.filter((s) => {
-			const at = Date.parse(s.from);
+		.filter((p) => {
+			const at = Date.parse(p.from);
 			return (
-				(filter.name === undefined || s.name === filter.name) &&
-				(range.from === null || at >= range.from) &&
-				(range.until === null || at < range.until)
+				(range.from === null || at >= range.from) && (range.until === null || at < range.until)
 			);
 		})
 		.sort((a, b) => Date.parse(b.from) - Date.parse(a.from));

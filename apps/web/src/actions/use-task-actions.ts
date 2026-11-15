@@ -14,8 +14,6 @@ import {
 	type ActionFilter,
 	fromLatestPage,
 	matchesFilter,
-	newlyCapped,
-	withLatestPage,
 	withLive,
 	withOlderPage,
 } from "./action-details";
@@ -56,8 +54,8 @@ export interface TaskActions {
 	summary: ActionSummaryView | undefined;
 	/** 读到的明细，按开始时间从新到旧，同一个 ID 只有一条（`action-details.ts`）。 */
 	details: readonly ActionDetailView[];
-	/** 读到的只计数的段。 */
-	countOnly: readonly CountOnlyPeriod[];
+	/** 分页读到的控制面兜底的只计数的段；SDK 上限的段由摘要算出（action-table.ts）。 */
+	controlPlanePeriods: readonly CountOnlyPeriod[];
 	/** 读到了第一页。 */
 	loaded: boolean;
 	/** 还有更早的明细没读：`loadOlder()` 读下一页。 */
@@ -78,8 +76,8 @@ export interface TaskActions {
 /**
  * 一个任务（一次尝试）的动作：先读最新的一页明细，再用它的修订号接上实时推送（`actionsApi.events`；断线后
  * API 客户端带 `Last-Event-ID` 接上），`loadOlder()` 往前翻页。推送来的摘要写进 {@link useActionSummary} 的缓存，
- * 推送来的明细按筛选条件挑过再合并（合并规则在 action-details.ts，有单测）。有名称刚开始只计数时重新读一次
- * 最新的一页，拿到它的只计数的段。任务或筛选条件（`name`、`failed`）变了重新读。
+ * 推送来的明细按筛选条件挑过再合并（合并规则在 action-details.ts，有单测）。任务或筛选条件（`name`、`failed`）
+ * 变了重新读。
  */
 export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER): TaskActions {
 	const { name, failed } = filter;
@@ -124,27 +122,13 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 			.catch((e: Error) => generation.current === current && setError(e));
 	}, [readPage, reloads]);
 
-	const refreshLatest = () => {
-		const current = generation.current;
-		readPage()
-			.then(
-				(page) => generation.current === current && setBuffer((b) => b && withLatestPage(b, page)),
-			)
-			.catch((e: Error) => generation.current === current && setError(e));
-	};
-
 	const accept = (detail: ActionDetailView) => matchesFilter(detail, { name, failed });
 	const after = buffer === null || buffer.expired ? null : buffer.rev;
 	useEventSource(
 		actionsApi.events,
 		after === null ? null : { params: { id: taskId }, query: { after } },
 		{
-			summary: (next) => {
-				const key = summaryQuery(taskId).queryKey;
-				const previous = queryClient.getQueryData(key);
-				queryClient.setQueryData(key, next);
-				if (newlyCapped(previous, next)) refreshLatest();
-			},
+			summary: (next) => queryClient.setQueryData(summaryQuery(taskId).queryKey, next),
 			actions: (chunk) => setBuffer((b) => b && withLive(b, chunk.actions, accept)),
 		},
 	);
@@ -170,7 +154,7 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 	return {
 		summary,
 		details: buffer?.details ?? EMPTY,
-		countOnly: buffer?.countOnly ?? EMPTY,
+		controlPlanePeriods: buffer?.controlPlanePeriods ?? EMPTY,
 		loaded: buffer !== null,
 		hasOlder: buffer !== null && buffer.before !== null,
 		loadingOlder,

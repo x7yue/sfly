@@ -25,13 +25,19 @@ export function ActionsTab({
 	day: string;
 }) {
 	const actions = useTaskActions(attempt.task_id);
-	const { summary, details, countOnly, loaded } = actions;
+	const { summary, details, controlPlanePeriods, hasOlder, loaded } = actions;
 	const groups = useMemo(
 		() =>
 			summary && loaded
-				? actionTable({ summary, details, countOnly, endedAt: attempt.ended_at })
+				? actionTable({
+						summary,
+						details,
+						controlPlanePeriods,
+						hasOlder,
+						endedAt: attempt.ended_at,
+					})
 				: [],
-		[summary, loaded, details, countOnly, attempt.ended_at],
+		[summary, loaded, details, controlPlanePeriods, hasOlder, attempt.ended_at],
 	);
 	const notes = useMemo(
 		() =>
