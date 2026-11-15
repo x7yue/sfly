@@ -4,9 +4,9 @@ import { useMemo } from "react";
 import { ActionTable } from "#/actions/ActionTable";
 import { actionTable } from "#/actions/action-table";
 import { useTaskActions } from "#/actions/use-task-actions";
-import { EmptyState } from "#/components/feedback/states";
+import { EmptyState, ErrorState, TableSkeleton } from "#/components/feedback/states";
 import { runNodeName } from "#/components/node-name";
-import { NODE_ACTIONS } from "#/lib/copy";
+import { MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
 import { Hint } from "./Hint";
 
 /**
@@ -41,14 +41,17 @@ export function ActionsTab({
 			},
 		[summary],
 	);
-	const error = actions.error && (
-		<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
-			{NODE_ACTIONS.loadFailed}
-			{actions.error}
-		</p>
-	);
-
-	if (!summary || !loaded) return error || <Hint>{NODE_ACTIONS.loading}</Hint>;
+	if (!loaded && actions.error) {
+		return (
+			<ErrorState
+				title={MESSAGE.loadFailed(TERM.action)}
+				error={actions.error}
+				onRetry={actions.retry}
+				className="my-4"
+			/>
+		);
+	}
+	if (!summary || !loaded) return <TableSkeleton columns={5} rows={4} />;
 	if (actions.expired) return <Hint>{NODE_ACTIONS.expired}</Hint>;
 	if (groups.length === 0) {
 		return (
@@ -62,7 +65,12 @@ export function ActionsTab({
 	}
 	return (
 		<div className="flex h-full flex-col">
-			{error}
+			{actions.error && (
+				<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
+					{NODE_ACTIONS.loadFailed}
+					{actions.error.message}
+				</p>
+			)}
 			<div className="min-h-0 flex-1">
 				<ActionTable
 					groups={groups}

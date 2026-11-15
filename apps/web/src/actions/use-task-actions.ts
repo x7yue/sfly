@@ -65,8 +65,10 @@ export interface TaskActions {
 	loadOlder: () => void;
 	/** 运行已超过保留期，明细已被清理。 */
 	expired: boolean;
-	/** 读取失败的原因。 */
-	error: string | null;
+	/** 最近一次读取失败的原因：第一页读不到时用 `retry()` 重读，读更早的一页失败时再滚动或点按钮就会重读。 */
+	error: Error | null;
+	/** 重读第一页（第一页读取失败以后）。 */
+	retry: () => void;
 }
 
 /**
@@ -81,7 +83,8 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 	const summary = useActionSummary(taskId, false);
 	const [buffer, setBuffer] = useState<ActionDetails | null>(null);
 	const [loadingOlder, setLoadingOlder] = useState(false);
-	const [error, setError] = useState<string | null>(null);
+	const [error, setError] = useState<Error | null>(null);
+	const [reloads, setReloads] = useState(0);
 	const generation = useRef(0);
 	const bufferRef = useRef(buffer);
 	bufferRef.current = buffer;
@@ -101,6 +104,7 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 		[taskId, name, failed],
 	);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: retry() 改 reloads 就是要重读
 	useEffect(() => {
 		const current = ++generation.current;
 		setBuffer(null);
@@ -109,8 +113,8 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 		olderInFlight.current = false;
 		readPage()
 			.then((page) => generation.current === current && setBuffer(fromLatestPage(page)))
-			.catch((e: Error) => generation.current === current && setError(e.message));
-	}, [readPage]);
+			.catch((e: Error) => generation.current === current && setError(e));
+	}, [readPage, reloads]);
 
 	const refreshLatest = () => {
 		const current = generation.current;
@@ -118,7 +122,7 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 			.then(
 				(page) => generation.current === current && setBuffer((b) => b && withLatestPage(b, page)),
 			)
-			.catch((e: Error) => generation.current === current && setError(e.message));
+			.catch((e: Error) => generation.current === current && setError(e));
 	};
 
 	const accept = (detail: ActionDetailView) => matchesFilter(detail, { name, failed });
@@ -147,7 +151,7 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 			.then(
 				(page) => generation.current === current && setBuffer((b) => b && withOlderPage(b, page)),
 			)
-			.catch((e: Error) => generation.current === current && setError(e.message))
+			.catch((e: Error) => generation.current === current && setError(e))
 			.finally(() => {
 				if (generation.current !== current) return;
 				olderInFlight.current = false;
@@ -165,6 +169,7 @@ export function useTaskActions(taskId: string, filter: ActionFilter = NO_FILTER)
 		loadOlder,
 		expired: buffer?.expired ?? false,
 		error,
+		retry: useCallback(() => setReloads((n) => n + 1), []),
 	};
 }
 

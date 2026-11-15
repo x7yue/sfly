@@ -200,8 +200,8 @@ export const NODE_ACTIONS = {
 	columns: { start: "开始", name: "名称", fields: "字段", duration: "耗时", result: "结果" },
 	results: {
 		running: ACTIVE_LABEL,
-		success: "成功",
-		failed: "失败",
+		success: RUN_STATUS_LABEL.success,
+		failed: RUN_STATUS_LABEL.failed,
 		unfinished: "未结束",
 		mark: TERM.mark,
 	} satisfies Record<ActionOutcome["status"] | "mark", string>,
@@ -224,7 +224,6 @@ export const NODE_ACTIONS = {
 	none: (node: string, running: boolean) => `${node} ${running ? "还没有" : "没有"}记录动作`,
 	noneHint: "标准节点这一轮不记录动作；节点的代码用 ctx.action 记录动作、ctx.mark 记录标记。",
 	pickNode: "在时间线上选中一个节点，查看它的动作。",
-	loading: "正在加载动作…",
 	loadFailed: "读取动作失败：",
 	expired: "这次运行的动作明细已超过保留期，已被清理。",
 	loadOlder: "向下滚动或点击加载更早的明细",
