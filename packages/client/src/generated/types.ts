@@ -429,6 +429,44 @@ export interface DashboardRunningRun {
 	active_nodes: RunListActiveNode[];
 }
 
+/**
+ * 「开始使用」的四步（外壳页方案第 5 节）：各自是否完成，以及写在步骤上的事实。四步互不依赖，各自从现有数据判断；
+ * 出现第一个运行（`run.done`）之后控制台不再显示这个面板。
+ */
+export interface DashboardSetup {
+	/** 接入一台 Agent：有在线的 Agent 就算完成。 */
+	agent: {
+		done: boolean;
+		/** 在线的 Agent 数。 */
+		online: number;
+		/** 名称排在最前的在线 Agent；没有在线的为 null。 */
+		name: string | null;
+	};
+	/** 发布节点包：已经发布过任何一个版本就算完成。 */
+	package: {
+		done: boolean;
+		/** 已发布的节点包个数（按包名，不计版本数）。 */
+		count: number;
+		/** 最近发布的版本；还没有为 null。 */
+		latest: {
+			name: string;
+			version: string;
+		} | null;
+	};
+	/** 新建场景：有没有归档的场景就算完成。 */
+	scenario: {
+		done: boolean;
+		/** 没有归档的场景数。 */
+		count: number;
+		/** 最近新建的、没有归档的场景名称；没有为 null。 */
+		name: string | null;
+	};
+	/** 触发第一次运行：有过任何一个运行（不论结果、不论场景是否已归档）就算完成。 */
+	run: {
+		done: boolean;
+	};
+}
+
 export interface DashboardView {
 	/** 统计的时刻（控制面时钟），窗口的终点。 */
 	generated_at: Timestamp;
@@ -439,6 +477,7 @@ export interface DashboardView {
 	recent_ended: DashboardEndedRun[];
 	/** Agent 的在线数与槽位合计；每台 Agent 的状态与正在执行的任务用 Agent 列表接口（agentsApi.list）。 */
 	agents: DashboardAgentStats;
+	setup: DashboardSetup;
 }
 
 /** Agent 上以开发模式（sfly dev）加载的节点包；metadata 是加载时扫描出的元信息，未经发布校验。 */

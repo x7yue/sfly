@@ -212,7 +212,7 @@ export function CommandPalette({
 						</CommandGroup>
 					)}
 					{scenarios.length > 0 && (
-						<CommandGroup heading="运行场景">
+						<CommandGroup heading={ACTION.runScenario}>
 							{scenarios.map((o) => (
 								<CommandItem
 									key={o.id}

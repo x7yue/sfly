@@ -535,12 +535,24 @@ test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
 	});
 });
 
-test("控制台没有数据", async ({ page }) => {
+test("控制台：全新环境的「开始使用」", async ({ page }) => {
 	await page.goto("/");
-	await expect(page.getByRole("region", { name: "正在运行", exact: true })).toContainText(
-		"此刻没有运行",
+	await expect(page.getByRole("region", { name: "开始使用", exact: true })).toContainText(
+		"还没有 Agent 连接",
 	);
 	await expect(page).toHaveScreenshot("dashboard-empty.png");
+});
+
+test("控制台：「开始使用」第 1、2 步已完成，白色按钮在第 3 步", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	await connectAgent({ name: "verify-agent", slots: 2 });
+	await publishPackage(controlPlane);
+	await page.goto("/");
+	await expect(page.locator('[data-step="scenario"]')).toHaveAttribute("data-state", "next");
+	await expect(page).toHaveScreenshot("dashboard-empty-progress.png");
 });
 
 test("控制台：多个运行时换成紧凑行，点开一行展开成运行块", async ({

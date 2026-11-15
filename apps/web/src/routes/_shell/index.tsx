@@ -8,10 +8,11 @@ import { ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { AgentsPanel } from "#/dashboard/AgentsPanel";
 import { EndedPanel } from "#/dashboard/EndedPanel";
+import { GettingStarted } from "#/dashboard/GettingStarted";
 import { RunningRuns } from "#/dashboard/RunningRuns";
 import { ScenariosPanel } from "#/dashboard/ScenariosPanel";
 import { apiQuery } from "#/lib/api";
-import { MESSAGE, PAGE } from "#/lib/copy";
+import { ACTION, MESSAGE, PAGE } from "#/lib/copy";
 import { formatClock } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
@@ -25,32 +26,46 @@ export const Route = createFileRoute("/_shell/")({
 /**
  * 控制台：此刻的实况墙（外壳页方案 4.1）。页头一行是控制面时间、计数和「运行场景」；左栏是正在运行的运行块和最近结束，
  * 右栏是 Agent 的槽位和场景。数量多时的退化规则见 dashboard/wall-rules。
+ * 环境里还没有运行过任何场景时只显示「开始使用」（原型 #/empty），页头也只剩标题和一句说明。
  */
 function Dashboard() {
 	const dashboard = useQuery({ ...apiQuery(dashboardApi.get), refetchInterval: LIVE_POLL_MS });
 	const overlays = useOverlays();
 	const data = dashboard.data;
+	const gettingStarted = data !== undefined && !data.setup.run.done;
+	// 第一次加载完成之前不显示按钮：全新环境里它马上又会消失。
+	const showActions = !gettingStarted && !dashboard.isPending;
 	return (
 		<Page>
 			<PageHeader
 				title={PAGE.dashboard}
 				description={
-					data && (
-						<span className="font-mono text-xs">控制面时间 {formatClock(data.generated_at)}</span>
-					)
+					gettingStarted
+						? "这套环境还没有运行过场景。按顺序做完下面四步，控制台会换成正在运行的内容。"
+						: data && (
+								<span className="font-mono text-xs">
+									控制面时间 {formatClock(data.generated_at)}
+								</span>
+							)
 				}
 				actions={
-					<>
-						{data && <RunCounts runs={data.runs} />}
-						<Button variant="default" onClick={() => overlays.open("run-scenario")}>
-							<PlayIcon />
-							运行场景
-						</Button>
-					</>
+					showActions && (
+						<>
+							{data && <RunCounts runs={data.runs} />}
+							<Button variant="default" onClick={() => overlays.open("run-scenario")}>
+								<PlayIcon />
+								{ACTION.runScenario}
+							</Button>
+						</>
+					)
 				}
 			/>
 			{data ? (
-				<Wall data={data} />
+				gettingStarted ? (
+					<GettingStarted setup={data.setup} />
+				) : (
+					<Wall data={data} />
+				)
 			) : dashboard.isError ? (
 				<ErrorState
 					title="无法加载控制台数据"

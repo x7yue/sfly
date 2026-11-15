@@ -17,6 +17,7 @@ import {
 } from "../db/schema.js";
 import { activeNodesOf, loadRunBoards } from "../engine/run-board.js";
 import { getRunView, type RunView } from "../engine/run-queries.js";
+import { setupSummary } from "./setup-summary.js";
 
 const HOUR_MS = 3_600_000;
 /** 最近结束最多列出的条数。 */
@@ -99,6 +100,7 @@ export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<
 			slots: online.reduce((sum, a) => sum + a.info.slots, 0),
 			used_slots: online.reduce((sum, a) => sum + a.running_tasks.length, 0),
 		},
+		setup: await setupSummary(db),
 	};
 }
 
