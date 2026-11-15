@@ -145,9 +145,12 @@ export const toVersionView = (row: VersionRow): OrchestrationVersionView => ({
 export class OrchestrationStore {
 	constructor(private readonly deps: { db: Db; clock: Clock }) {}
 
-	/** 场景视图：基本信息，加上关注项和它们在最新版本里的状态（{@link focusFields}）。 */
-	async #view(row: OrchestrationRow): Promise<OrchestrationView> {
-		return { ...toBase(row), ...(await focusFields(this.deps.db, row)) };
+	/**
+	 * 场景视图：基本信息，加上关注项和它们在最新版本里的状态（{@link focusFields}）。
+	 * 在事务里调用时传 `tx`：事务已经占着一个连接，不能再去连接池里另取一个。
+	 */
+	async #view(row: OrchestrationRow, db: Db = this.deps.db): Promise<OrchestrationView> {
+		return { ...toBase(row), ...(await focusFields(db, row)) };
 	}
 
 	async create(name: string, description = ""): Promise<OrchestrationView> {
@@ -186,13 +189,7 @@ export class OrchestrationStore {
 				const focus =
 					changes.focus_items === undefined
 						? undefined
-						: await replaceFocusItems(
-								this.deps.db,
-								row,
-								changes.focus_items,
-								actor,
-								this.deps.clock.now(),
-							);
+						: await replaceFocusItems(tx, row, changes.focus_items, actor, this.deps.clock.now());
 				if (focus?.kind === "rejected") return focus;
 				const set = {
 					...(changes.name === undefined ? {} : { name: changes.name }),
@@ -231,13 +228,16 @@ export class OrchestrationStore {
 				.from(runs)
 				.where(and(eq(runs.orchestrationId, id), eq(runs.status, "running")));
 			if (running && running.n > 0) return { kind: "running", count: running.n };
-			if (row.archivedAt) return { kind: "archived", orchestration: await this.#view(row) };
+			if (row.archivedAt) return { kind: "archived", orchestration: await this.#view(row, tx) };
 			const [updated] = await tx
 				.update(orchestrations)
 				.set({ archivedAt: this.deps.clock.now() })
 				.where(eq(orchestrations.id, id))
 				.returning();
-			return { kind: "archived", orchestration: await this.#view(updated as OrchestrationRow) };
+			return {
+				kind: "archived",
+				orchestration: await this.#view(updated as OrchestrationRow, tx),
+			};
 		});
 	}
 
