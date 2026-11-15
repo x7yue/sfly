@@ -101,7 +101,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # buf breaking 需要基线提交
+          fetch-depth: 0 # buf breaking 需要基线提交；lint:docs 要 origin/main 和合并基点（ADR 编号、已接受 ADR 的正文）
 
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
