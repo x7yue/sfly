@@ -2,6 +2,7 @@ import type { RunFocusItem } from "@sfly/schema";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOCUS, LIST_LABEL, MONITOR_VIEW_LABEL } from "#/lib/copy";
+import type { ShownPick } from "#/monitor/charts";
 import { seriesColor, seriesDash } from "#/monitor/MetricChart";
 import { Button } from "@/components/ui/button";
 import { FocusValue } from "./FocusValue";
@@ -48,7 +49,13 @@ export function FocusChart({
 	onOpen: () => void;
 }) {
 	const [plotRef, width] = useElementWidth<HTMLDivElement>();
-	const { series, hidden } = useMemo(() => shownSeries(item.series), [item.series]);
+	// 画哪些序列只在第一次和出现新序列时挑：读数每 2 秒刷新，平均值接近的序列不来回换。
+	const [picked, setPicked] = useState<ShownPick | undefined>(undefined);
+	const { series, hidden, pick } = useMemo(
+		() => shownSeries(item.series, picked),
+		[item.series, picked],
+	);
+	if (pick !== picked) setPicked(pick);
 	const started = item.source.started_at;
 	const axis = useMemo(() => {
 		if (started === null) return null;

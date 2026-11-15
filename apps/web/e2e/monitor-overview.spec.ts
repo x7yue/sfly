@@ -4,6 +4,8 @@ import { inspector } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { focusList, saveVersion, setFocusItems } from "./focus-support";
 import {
+	connPoint,
+	labeledRun,
 	MONITOR_SCENARIO,
 	metricPackage,
 	openMonitor,
@@ -357,6 +359,58 @@ test("场景没设关注项，执行中的节点都没声明主指标：写明�
 	await agent.succeed(task);
 	await expect(page.getByText("没有执行中的节点。")).toBeVisible();
 	await expect(page.getByText("执行中的节点都没有声明主指标。")).toHaveCount(0);
+});
+
+test("图表的序列多于 10 条：刷新后平均值的排名变了，画的还是第一次挑出的那几条", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, task, runId, scenarioId, clock0 } = await labeledRun(
+		{ controlPlane, connectAgent, clock },
+		[
+			{ name: "tps", unit: "req/s", kind: "gauge" },
+			{ name: "conn_tps", unit: "req/s", kind: "gauge", labels: ["host"] },
+		],
+		[{ title: "各连接", type: "line", metrics: ["conn_tps"] }],
+	);
+	await setFocusItems(controlPlane, scenarioId, [
+		{ node_id: "ping", chart: "各连接" },
+		{ node_id: "ping", chart: "tps" },
+	]);
+	const host = (i: number) => `h${String(i).padStart(2, "0")}`;
+	// 12 台主机各一个点，h00 最低、h11 最高：第一次只画最高的 10 条，h00、h01 不画。
+	agent.metrics(task, [
+		...Array.from({ length: 12 }, (_, i) => connPoint(clock0, { host: host(i) }, 1, 10 + 5 * i)),
+		["tps", unixAt(clock0, 1), 77] as [string, number, number],
+	]);
+	await agent.sync();
+	clock.advance(10_000);
+	await openOverview(page, clock, runId);
+
+	const legend = focusChart(page, "各连接").getByRole("list", { name: "图例" });
+	await expect(legend).toContainText("另有 2 条序列");
+	await expect(legend).not.toContainText("h00");
+	await expect(legend).not.toContainText("h01");
+	const before = await legend.getByRole("listitem").allTextContents();
+	expect(before).toHaveLength(11);
+
+	// h00、h01 之后的点把它们的平均值抬到最高：按这时的排名会换成它们。
+	agent.metrics(task, [
+		...[2, 3, 4, 5, 6].flatMap((s) => [
+			connPoint(clock0, { host: host(0) }, s, 1000),
+			connPoint(clock0, { host: host(1) }, s, 900),
+		]),
+		["tps", unixAt(clock0, 7), 88] as [string, number, number],
+	]);
+	await agent.sync();
+	clock.advance(1000);
+	// 同一次刷新里 tps 那张图表的读数变了：确认读数已经刷新过，再看图例。
+	await expect(
+		focusChart(page, "tps").getByRole("img", { name: /^tps 88 req\/s，来自 ping/ }),
+	).toBeVisible();
+	await expect(legend.getByRole("listitem")).toHaveText(before);
 });
 
 test("场景设了关注项：「调整关注项」也直接打开「关注项」页，列表里是这些项；地址里的值不合法时停在「概况」", async ({

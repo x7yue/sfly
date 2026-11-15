@@ -232,7 +232,7 @@ export interface ShownPick {
  */
 export function pickShown(
 	previous: ShownPick | undefined,
-	lines: readonly { key: string; buckets: readonly ChartBucket[] }[],
+	lines: readonly { key: string; buckets: readonly Pick<ChartBucket, "points" | "avg">[] }[],
 	range: unknown,
 	limit = DEFAULT_SHOWN,
 ): ShownPick {

@@ -384,5 +384,5 @@ export async function labeledRun(
 	const clock0 = clock.now().getTime();
 	const runId = await triggerRun(controlPlane, scenarioId);
 	const task = await agent.nextAssign();
-	return { agent, task, runId, clock0 };
+	return { agent, task, runId, scenarioId, clock0 };
 }

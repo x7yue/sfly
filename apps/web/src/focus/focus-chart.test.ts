@@ -117,6 +117,7 @@ describe("图表里画哪些序列", () => {
 	it("超过上限时画值最高的几条，仍按原来的顺序，并说明有几条没画", () => {
 		const shown = shownSeries(
 			series(5, (i) => [5, 90, 1, 80, 70][i] as number),
+			undefined,
 			3,
 		);
 		expect(shown.series.map((s) => s.labels.pid)).toEqual(["1", "3", "4"]);
@@ -140,11 +141,44 @@ describe("图表里画哪些序列", () => {
 		expect(shown.hidden).toBe(1);
 	});
 
+	it("挑好以后保持不变：刷新后平均值的排名变了，画的还是原来那几条", () => {
+		const first = shownSeries(
+			series(5, (i) => [5, 90, 1, 80, 70][i] as number),
+			undefined,
+			3,
+		);
+		expect(first.series.map((s) => s.labels.pid)).toEqual(["1", "3", "4"]);
+		// 序列 0 涨到最高、序列 4 掉到最低：不换。
+		const refreshed = shownSeries(
+			series(5, (i) => [500, 90, 1, 80, 0][i] as number),
+			first.pick,
+			3,
+		);
+		expect(refreshed.pick).toBe(first.pick);
+		expect(refreshed.series.map((s) => s.labels.pid)).toEqual(["1", "3", "4"]);
+		expect(refreshed.hidden).toBe(2);
+	});
+
+	it("出现新序列时重新挑", () => {
+		const first = shownSeries(
+			series(5, (i) => [5, 90, 1, 80, 70][i] as number),
+			undefined,
+			3,
+		);
+		const grown = shownSeries(
+			series(6, (i) => [5, 90, 1, 80, 70, 100][i] as number),
+			first.pick,
+			3,
+		);
+		expect(grown.series.map((s) => s.labels.pid)).toEqual(["1", "3", "5"]);
+		expect(grown.hidden).toBe(3);
+	});
+
 	it("没有点的序列排在最后", () => {
 		const list = [
 			{ metric: "cpu", labels: { pid: "a" }, points: [] },
 			{ metric: "cpu", labels: { pid: "b" }, points: [point(0, 1)] },
 		];
-		expect(shownSeries(list, 1).series.map((s) => s.labels.pid)).toEqual(["b"]);
+		expect(shownSeries(list, undefined, 1).series.map((s) => s.labels.pid)).toEqual(["b"]);
 	});
 });
