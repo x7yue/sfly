@@ -6,9 +6,10 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logsApi } from "@sfly/schema";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { type AgentPair, startAgentPair } from "./support/agent-pair.js";
 import { ApiClient } from "./support/api-client.js";
+import { describeWithAgent } from "./support/describe-with-agent.js";
 import { eventually } from "./support/eventually.js";
 import { publishTestPackage } from "./support/stub-package.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -27,7 +28,7 @@ async function expected(path: string) {
 	};
 }
 
-describe("全栈：Agent 能力 files.write", () => {
+describeWithAgent("全栈：Agent 能力 files.write", () => {
 	let cp: TestControlPlane;
 	let api: ApiClient;
 	let pair: AgentPair;

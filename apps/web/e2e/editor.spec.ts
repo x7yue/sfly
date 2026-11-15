@@ -299,7 +299,7 @@ test("检查器：字符串参数只有一个输入框，输入 $ 或点「插�
 
 	// 光标在引用后面，退格一次整块删除。
 	await host.click();
-	await page.keyboard.press("Control+End");
+	await page.keyboard.press("ControlOrMeta+End");
 	await page.keyboard.press("Backspace");
 	// 空的输入框显示占位文字。
 	await expect(host).toHaveText("必填");
@@ -356,7 +356,7 @@ test("检查器：字符串参数只有一个输入框，输入 $ 或点「插�
 	await expect(url).toHaveText("https://example.test/?d=${{ params.biz_date }}");
 	// 光标停在引用后面：接着写文字，再把光标移到最前面用 ${{ 插入一个引用。
 	await page.keyboard.type("&x=1");
-	await page.keyboard.press("Control+Home");
+	await page.keyboard.press("ControlOrMeta+Home");
 	await page.keyboard.type("${{ api");
 	await list.getByRole("option", { name: /params\.api_token/ }).click();
 	await expect(url).toHaveText(
@@ -571,7 +571,7 @@ test("异步任务参数映射、Sleep 时长、入口参数默认值用同一�
 	await expect(date.locator("[data-reference]")).toHaveCount(1);
 	await expect(page.getByText("有未保存的修改")).toHaveCount(0);
 	await date.click();
-	await page.keyboard.press("Control+End");
+	await page.keyboard.press("ControlOrMeta+End");
 	await page.keyboard.type("-$api");
 	await page.keyboard.press("ArrowDown");
 	await page.keyboard.press("Enter");
@@ -667,7 +667,7 @@ test("放大编辑：等宽的大弹窗里有补全和高亮，锁定焦点，Es
 	expect((await box(big)).height).toBeGreaterThan(300);
 
 	// 弹窗里输入：多行、$ 补全、引用高亮；检查器里的值同步。
-	await page.keyboard.press("Control+End");
+	await page.keyboard.press("ControlOrMeta+End");
 	await page.keyboard.press("Enter");
 	await page.keyboard.type("date=$biz");
 	await expect(list.getByRole("option")).toHaveText([/params\.biz_date/]);
@@ -730,7 +730,7 @@ test("放大编辑：等宽的大弹窗里有补全和高亮，锁定焦点，Es
 	// 撤销历史：弹窗里的修改可以在画布上撤销。
 	await open.click();
 	await expect(big).toBeFocused();
-	await page.keyboard.press("Control+a");
+	await page.keyboard.press("ControlOrMeta+a");
 	await page.keyboard.type("echo zoomed");
 	await dialog.getByRole("button", { name: "完成" }).click();
 	await expect(dialog).toHaveCount(0);

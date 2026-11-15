@@ -417,11 +417,11 @@ test("焦点在输入框里时 Ctrl+C / Ctrl+V / Ctrl+D 仍是文本操作", asy
 	await nodeCard(page, "fetch").click();
 	const url = inspector(page).getByRole("combobox", { name: "输入 url" });
 	await url.click();
-	await page.keyboard.press("Control+a");
-	await page.keyboard.press("Control+c");
+	await page.keyboard.press("ControlOrMeta+a");
+	await page.keyboard.press("ControlOrMeta+c");
 	await expect.poll(() => clipboard(page)).toBe("https://example.test/snap");
 	await page.keyboard.press("End");
-	await page.keyboard.press("Control+v");
+	await page.keyboard.press("ControlOrMeta+v");
 	await expect(url).toHaveText("https://example.test/snaphttps://example.test/snap");
 	await page.keyboard.press("Control+d");
 	await expect(url).toBeFocused();
