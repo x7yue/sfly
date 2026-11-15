@@ -9,6 +9,7 @@ import {
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import { packageMetadata } from "../../server/test/support/package-archive.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
+import type { PanelTab } from "../src/monitor/run-link";
 import { type E2eFixtures, expect } from "./fixtures";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
@@ -226,7 +227,7 @@ export async function openMonitor(
 	clock: ManualClock,
 	runId: string,
 	node?: string,
-	tab?: "logs" | "actions" | "attempts" | "io" | "artifacts",
+	tab?: PanelTab,
 ) {
 	await page.clock.setFixedTime(clock.now());
 	const search = new URLSearchParams({ view: "detail" });

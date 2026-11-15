@@ -10,7 +10,7 @@ export interface ActionDetails {
 	/** 按开始时间从新到旧（同一时刻 ID 大的在前，与分页的顺序相同），同一个 ID 只有一条，后到的为准。 */
 	readonly details: readonly ActionDetailView[];
 	/**
-	 * 分页读到的控制面兜底的只计数的段（`control_plane`），同一个名称只有一段（后读到的为准），按起点从新到旧。
+	 * 分页读到的控制面兜底的只计数的段（`control_plane`），同一个名称只有一段（后读到的为准）。
 	 * SDK 上限的段不从分页取，由最新的摘要算出（action-table.ts）。
 	 */
 	readonly controlPlanePeriods: readonly CountOnlyPeriod[];
@@ -64,22 +64,32 @@ export function withLive(
 	accept: (detail: ActionDetailView) => boolean = () => true,
 ): ActionDetails {
 	const oldest = d.before === null ? undefined : d.details.at(-1);
-	const kept = actions.filter((a) => accept(a) && (!oldest || compare(a, oldest) <= 0));
+	const kept = actions.filter((a) => accept(a) && (!oldest || byNewest(a, oldest) <= 0));
 	return kept.length === 0 ? d : { ...d, details: mergeDetails(d.details, kept) };
 }
 
-/** 分页的顺序：开始时间从新到旧，同一时刻 ID 大的在前。负数表示 a 排在 b 前面。 */
-function compare(a: ActionDetailView, b: ActionDetailView): number {
-	return Date.parse(b.started_at) - Date.parse(a.started_at) || b.id - a.id;
-}
+/**
+ * 明细和动作的顺序（与分页相同）：开始时间从新到旧，同一时刻 ID 大的在前。负数表示 a 排在 b 前面。
+ * 「动作」页的三组（action-table.ts）也按它排。
+ */
+export const byNewest = (a: Started, b: Started): number =>
+	Date.parse(b.started_at) - Date.parse(a.started_at) || b.id - a.id;
 
-/** 第一个不排在 `detail` 前面的位置（等于长度时在末尾）。 */
-function lowerBound(sorted: readonly ActionDetailView[], detail: ActionDetailView): number {
-	let lo = 0;
+type Started = Pick<ActionDetailView, "id" | "started_at">;
+
+/**
+ * 有序列表里从 `lo` 起第一个让 `before` 不成立的位置（等于长度时在末尾），二分查找：`before` 对前面一段都成立、
+ * 对后面一段都不成立。
+ */
+export function partitionPoint<T>(
+	sorted: readonly T[],
+	before: (item: T) => boolean,
+	lo = 0,
+): number {
 	let hi = sorted.length;
 	while (lo < hi) {
 		const mid = (lo + hi) >>> 1;
-		if (compare(sorted[mid] as ActionDetailView, detail) < 0) lo = mid + 1;
+		if (before(sorted[mid] as T)) lo = mid + 1;
 		else hi = mid;
 	}
 	return lo;
@@ -96,12 +106,12 @@ function mergeDetails(
 	const out = sorted.slice();
 	const inserts: { at: number; detail: ActionDetailView }[] = [];
 	for (const detail of latest.values()) {
-		const at = lowerBound(sorted, detail);
+		const at = partitionPoint(sorted, (d) => byNewest(d, detail) < 0);
 		if (sorted[at]?.id === detail.id) out[at] = detail;
 		else inserts.push({ at, detail });
 	}
 	if (inserts.length === 0) return out;
-	inserts.sort((a, b) => a.at - b.at || compare(a.detail, b.detail));
+	inserts.sort((a, b) => a.at - b.at || byNewest(a.detail, b.detail));
 	const merged: ActionDetailView[] = [];
 	let next = 0;
 	for (const { at, detail } of inserts) {
@@ -112,7 +122,8 @@ function mergeDetails(
 	return merged;
 }
 
-const periodKey = (s: CountOnlyPeriod) => `${s.name}\n${s.reason}`;
+/** 只计数的段的键：同一个名称、同一种原因至多一段。 */
+export const periodKey = (p: CountOnlyPeriod): string => `${p.name}\n${p.reason}`;
 
 /** 把一页的 `count_only` 里控制面兜底的段合并进来。 */
 function mergePeriods(
@@ -123,5 +134,5 @@ function mergePeriods(
 	if (controlPlane.length === 0) return periods;
 	const byKey = new Map(periods.map((s) => [periodKey(s), s]));
 	for (const s of controlPlane) byKey.set(periodKey(s), s);
-	return [...byKey.values()].sort((a, b) => Date.parse(b.from) - Date.parse(a.from));
+	return [...byKey.values()];
 }

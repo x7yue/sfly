@@ -7,6 +7,7 @@ import {
 	type RunningActionView,
 	sdkCountOnlyPeriods,
 } from "@sfly/schema";
+import { byNewest, partitionPoint, periodKey } from "./action-details";
 
 /**
  * 运行监控「动作」页的表格（规格 #345）：摘要、分页读到的明细、只计数的段整理成三组行。
@@ -96,8 +97,8 @@ export function actionTable({
 	for (const a of summary.recent) shown.add(a.id);
 	const earlier = details.filter((d) => !shown.has(d.id));
 	const groups: ActionTableGroup[] = [
-		{ name: "running", rows: newestFirst(summary.running).map(runningRow) },
-		{ name: "recent", rows: newestFirst(summary.recent).map(endedRow) },
+		{ name: "running", rows: [...summary.running].sort(byNewest).map(runningRow) },
+		{ name: "recent", rows: [...summary.recent].sort(byNewest).map(endedRow) },
 		{
 			name: "earlier",
 			rows: withPeriods(
@@ -111,10 +112,6 @@ export function actionTable({
 
 const startOf = (a: { started_at: string }) => Date.parse(a.started_at);
 
-function newestFirst<A extends { id: number; started_at: string }>(list: readonly A[]): A[] {
-	return [...list].sort((a, b) => startOf(b) - startOf(a) || b.id - a.id);
-}
-
 /** 只计数的段（起点从新到旧）插进明细：放在开始时间早于它起点的第一条明细前面，没有这样的明细时放在最后。 */
 function withPeriods(
 	details: readonly ActionDetailView[],
@@ -123,24 +120,13 @@ function withPeriods(
 	const rows: ActionRow[] = [];
 	let next = 0;
 	for (const period of periods) {
-		const at = firstStartedBefore(details, Date.parse(period.from), next);
+		const from = Date.parse(period.from);
+		const at = partitionPoint(details, (d) => startOf(d) >= from, next);
 		while (next < at) rows.push(detailRow(details[next++] as ActionDetailView));
 		rows.push(period);
 	}
 	while (next < details.length) rows.push(detailRow(details[next++] as ActionDetailView));
 	return rows;
-}
-
-/** 从 `from` 起，第一条开始时间早于 `time` 的明细的位置（明细从新到旧，所以二分查找）。 */
-function firstStartedBefore(details: readonly ActionDetailView[], time: number, from: number) {
-	let lo = from;
-	let hi = details.length;
-	while (lo < hi) {
-		const mid = (lo + hi) >>> 1;
-		if (startOf(details[mid] as ActionDetailView) >= time) lo = mid + 1;
-		else hi = mid;
-	}
-	return lo;
 }
 
 /**
@@ -163,7 +149,7 @@ function periodRows(
 		.sort((a, b) => Date.parse(b.from) - Date.parse(a.from))
 		.map((p) => ({
 			kind: "count-only",
-			key: `c:${p.name}\n${p.reason}`,
+			key: `c:${periodKey(p)}`,
 			name: p.name,
 			reason: p.reason,
 			from: p.from,
