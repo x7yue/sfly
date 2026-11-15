@@ -25,6 +25,7 @@ message AgentMessage {
     InstallStatus install = 7;
     MetricBatch metrics = 8;
     Notification notification = 9;
+    ActionSummary action_summary = 10;
   }
 }
 
@@ -407,6 +408,17 @@ message Notification {
   uint32 attempt = 2;
   // 事件管道里的那一行通知事件原文（JSON 对象，格式见 sdk/python/src/sfly/context.py）：机器人名称和消息内容。
   // Agent 不解析消息内容，消息格式只由 SDK 和控制面约定：新增的格式不需要升级 Agent。
+  string event_json = 3;
+}
+
+// 任务最新的一份动作摘要（ctx.action、ctx.mark，规格 #345）。每一份都是完整的，只有最新一份有用：Agent 只保留
+// 最新读到的一份，每个任务每秒最多发一次，任务结束前把最后一份发完，再发 TaskResult；断线期间每个任务也只排队最新
+// 的一份。控制面不回 Ack。
+message ActionSummary {
+  string task_id = 1;
+  uint32 attempt = 2;
+  // 事件管道里那一行 action_summary 事件的原文（JSON 对象，格式见 sdk/python/src/sfly/context.py）。Agent 不解析
+  // 内容，摘要格式只由 SDK 和控制面约定；里面的时间都带 SDK 写的单调时钟读数，控制面据此折算控制面时间。
   string event_json = 3;
 }
 

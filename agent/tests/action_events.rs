@@ -1,6 +1,7 @@
 //! 切入点 B（Agent 一侧）：节点用 ctx.action、ctx.mark 写进事件管道的四种事件（`action_start`、`action_end`、
 //! `mark`、`action_summary`，规格 #345，格式见 sdk/python/src/sfly/context.py）。
-//! Agent 认得它们，先丢弃、不转发：不会当成不认识的内容原样记成一行 SDK 日志。
+//! Agent 认得它们，不会当成不认识的内容原样记成一行 SDK 日志：摘要转发给控制面（action_summary.rs），
+//! 另外三种目前丢弃。
 
 mod support;
 
