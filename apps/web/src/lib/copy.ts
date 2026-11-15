@@ -1,5 +1,6 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
 import type { RunNotificationState, RunStatus } from "@sfly/schema";
+import { NODE_STATUS } from "#/lib/node-status";
 
 /**
  * 界面文案（故事 79：文案集中管理，不引入 i18n 框架；规则见 docs/DESIGN-SYSTEM.md「文案」一节）。
@@ -142,6 +143,8 @@ export const chainCountLabel = (chains: number, nodes: number) =>
 export const LIST_LABEL = {
 	legend: "图例",
 	chainProgress: "各链进度",
+	/** 运行抽屉的摘要和运行监控的概览里，执行中的节点的列表；列表前的标题只写 `NODE_STATUS.running.label`。 */
+	runningNodes: `${NODE_STATUS.running.label}的${TERM.node}`,
 } as const;
 
 /** 通用的加载 / 错误 / 空状态文字。 */
@@ -149,6 +152,8 @@ export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
 	noData: "还没有数据",
+	/** 没有节点处于执行中：运行抽屉的摘要和运行监控的概览共用。 */
+	noRunningNodes: `没有${NODE_STATUS.running.label}的${TERM.node}。`,
 	/** 运行监控的详情（图表工作区）和概览：运行的指标已过保留期。 */
 	metricsExpired: "这次运行的指标数据已超过保留期，已被清理。",
 	neverRun: "从未运行",

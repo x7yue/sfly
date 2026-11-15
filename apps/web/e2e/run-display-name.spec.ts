@@ -37,7 +37,7 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const fetch = await agent.nextAssign();
 	const summary = drawer.getByRole("region", { name: "运行摘要" });
-	const active = summary.getByRole("list", { name: "正在执行的节点" });
+	const active = summary.getByRole("list", { name: "执行中的节点" });
 	await expect(active.getByRole("listitem")).toHaveText([/^执行中拉取订单（fetch）agent-a/]);
 	agent.progress(fetch, 3, 10);
 	await expect(active.getByRole("progressbar", { name: "拉取订单（fetch） 进度" })).toBeVisible();

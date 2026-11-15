@@ -12,7 +12,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { chainLabel as chainName, LIST_LABEL, TERM } from "#/lib/copy";
+import { chainLabel as chainName, LIST_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatDateTime,
@@ -22,6 +22,7 @@ import {
 	spansOtherDay,
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
+import { NODE_STATUS } from "#/lib/node-status";
 import { useNow } from "#/lib/use-now";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
@@ -43,8 +44,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 const LOG_LINES = 6;
 
 /**
- * 运行抽屉的摘要阶段（原型 drawerHTML 的 summary）：运行状态与时长、各链进度、正在执行的节点（进度）、
- * 最新几行日志，实时更新；节点类型有主指标时，正在执行的节点显示主指标的最新值与趋势（#43）。
+ * 运行抽屉的摘要阶段（原型 drawerHTML 的 summary）：运行状态与时长、各链进度、执行中的节点（进度）、
+ * 最新几行日志，实时更新；节点类型有主指标时，执行中的节点显示主指标的最新值与趋势（#43）。
  * 底部按钮由 RunDrawer 渲染。
  */
 export function RunSummary({ runId }: { runId: string }) {
@@ -99,13 +100,15 @@ export function RunSummary({ runId }: { runId: string }) {
 					<ChainRow key={chain.id} chain={chain} />
 				))}
 			</ul>
-			<h3 className="mt-4.5 mb-2.5 text-xs font-semibold tracking-wide text-fg-2">正在执行</h3>
+			<h3 className="mt-4.5 mb-2.5 text-xs font-semibold tracking-wide text-fg-2">
+				{NODE_STATUS.running.label}
+			</h3>
 			{active.length === 0 ? (
 				<p className="m-0 text-xs text-fg-3">
-					{run.status === "running" ? "没有正在执行的节点。" : `运行已结束：${status.label}。`}
+					{run.status === "running" ? MESSAGE.noRunningNodes : `运行已结束：${status.label}。`}
 				</p>
 			) : (
-				<ul aria-label="正在执行的节点" className="m-0 flex list-none flex-col gap-2 p-0">
+				<ul aria-label={LIST_LABEL.runningNodes} className="m-0 flex list-none flex-col gap-2 p-0">
 					{active.map(({ chain, node }) => (
 						<ActiveNode
 							key={`${chain.id}:${node.node_id}`}

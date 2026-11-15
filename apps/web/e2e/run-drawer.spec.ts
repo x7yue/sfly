@@ -56,7 +56,7 @@ test("填写入口参数并触发：字段校验、检查清单，触发后抽�
 	const summary = drawer.getByRole("region", { name: "运行摘要" });
 	await expect(summary.getByTestId("summary-status")).toHaveText("运行中");
 	await expect(summary.getByRole("img", { name: "主链 1/2" })).toBeVisible();
-	const active = summary.getByRole("list", { name: "正在执行的节点" });
+	const active = summary.getByRole("list", { name: "执行中的节点" });
 	await expect(active).toContainText("ping");
 	await expect(active).toContainText("agent-a");
 	await expect(active).toContainText("执行中");

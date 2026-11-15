@@ -120,7 +120,7 @@ test("画布运行状态：节点卡片的指标槽显示主指标最新值与�
 	await expect(probe).toHaveText("level 42");
 });
 
-test("运行抽屉摘要：正在执行的节点显示主指标的最新值与趋势，实时更新", async ({
+test("运行抽屉摘要：执行中的节点显示主指标的最新值与趋势，实时更新", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -135,7 +135,7 @@ test("运行抽屉摘要：正在执行的节点显示主指标的最新值与�
 	await drawer.getByRole("textbox", { name: /^api_token / }).fill("tok-live");
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const task = await agent.nextAssign();
-	const active = drawer.getByRole("list", { name: "正在执行的节点" });
+	const active = drawer.getByRole("list", { name: "执行中的节点" });
 	await expect(active).toContainText("执行中");
 
 	agent.metrics(task, pingPoints(START, 0, 3));
@@ -180,7 +180,7 @@ test("序列的响应早于指标点生成、晚于增量到达：运行抽屉�
 	await drawer.getByRole("textbox", { name: /^api_token / }).fill("tok-live");
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const task = await agent.nextAssign();
-	const active = drawer.getByRole("list", { name: "正在执行的节点" });
+	const active = drawer.getByRole("list", { name: "执行中的节点" });
 	await expect(active).toContainText("执行中");
 	await firstRequest;
 

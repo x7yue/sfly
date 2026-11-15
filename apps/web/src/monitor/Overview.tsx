@@ -95,7 +95,7 @@ function ChainSection({ run }: { run: RunView }) {
 				<div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1.5 border-t border-border-soft pt-3 text-xs text-fg-2">
 					<span className="text-fg-3">{NODE_STATUS.running.label}</span>
 					<ul
-						aria-label={`${NODE_STATUS.running.label}的${TERM.node}`}
+						aria-label={LIST_LABEL.runningNodes}
 						className="m-0 flex list-none flex-wrap gap-x-5 gap-y-1.5 p-0"
 					>
 						{executing.map(({ chain, node, attempt }) => (
@@ -178,7 +178,7 @@ function FocusBody({ data, onOpen }: { data: RunFocus; onOpen: (item: RunFocusIt
 		return (
 			<p className="m-0 rounded-lg border border-dashed border-border-soft px-4 py-6 text-center text-sm text-fg-3">
 				{data.mode === "primary"
-					? `没有${NODE_STATUS.running.label}的${TERM.node}。`
+					? MESSAGE.noRunningNodes
 					: `这次运行里没有可显示的${TERM.focusItem}：场景设置的${TERM.focusItem}所在的节点不在这次运行的版本里。`}
 			</p>
 		);
