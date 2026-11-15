@@ -20,10 +20,12 @@ import { MonitorTopBar } from "./MonitorTopBar";
 import {
 	createMonitorStore,
 	MonitorProvider,
+	type MonitorStore,
 	type TimeAxis,
 	useMonitor,
 	useMonitorActions,
 } from "./monitor-state";
+import type { MonitorSearch } from "./run-link";
 import {
 	failureSummary,
 	initialSelection,
@@ -41,8 +43,10 @@ import { attemptsSignature, useMetricCatalog } from "./use-run-metrics";
  * 时间线、图表与底部面板共用一份时间轴状态（monitor-state.tsx）。
  * 浏览器标签页标题显示运行状态与场景名；在页面上看着运行成功或被取消时弹出一次结果通知，
  * 失败改用时间线上方的页内横幅（FailureBanner），收起后失败摘要回到顶栏。
+ * 地址里的节点、页签与日志时刻（run-link.ts 的 MonitorSearch）在第一次拿到运行视图时应用，之后地址变了再应用一次：
+ * 页面上自己的操作（点节点、切页签）不写回地址。
  */
-export function MonitorPage({ runId, initialNode }: { runId: string; initialNode?: string }) {
+export function MonitorPage({ runId, address }: { runId: string; address: MonitorSearch }) {
 	const runQuery = useLiveRun(runId);
 	const run = runQuery.data;
 	const running = !run || run.status === "running";
@@ -60,14 +64,18 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 	});
 
 	const [store] = useState(() => createMonitorStore());
-	// 第一次拿到运行视图时选中节点（规则见 initialSelection）。
-	// 在渲染里选而不是在 effect 里：底部面板第一次渲染就看到选中的节点，不会先挂上没选中节点时的合并日志、
-	// 白发一次请求之后又卸载（这时依赖这个状态的子组件还没有挂上）。
-	const selectedOnce = useRef(false);
-	if (run && !selectedOnce.current) {
-		selectedOnce.current = true;
-		store.select(initialSelection(run, initialNode));
-	}
+	// 第一次拿到运行视图时应用地址（选中节点的规则见 initialSelection），之后地址变了再应用一次。
+	// 第一次在渲染里应用而不是在 effect 里：底部面板第一次渲染就看到选中的节点，不会先挂上没选中节点时的合并日志、
+	// 白发一次请求之后又卸载（这时依赖这个状态的子组件还没有挂上）；之后的变化在 effect 里应用。
+	const addressKey = `${address.node ?? ""}\n${address.tab ?? ""}\n${address.at ?? ""}`;
+	const appliedAddress = useRef<string | null>(null);
+	const applyIfNew = () => {
+		if (!run || appliedAddress.current === addressKey) return;
+		appliedAddress.current = addressKey;
+		applyAddress(store, run, address);
+	};
+	if (appliedAddress.current === null) applyIfNew();
+	useEffect(applyIfNew);
 
 	const name = orchestration.data?.name;
 	useRunDocumentTitle(run, name);
@@ -125,6 +133,21 @@ export function MonitorPage({ runId, initialNode }: { runId: string; initialNode
 			</div>
 		</MonitorProvider>
 	);
+}
+
+/**
+ * 把地址里的位置变成页面状态：选中节点（没给节点时是失败的节点）、切到页签；带了 `at` 又给了运行里有的节点时，
+ * 打开这个节点的日志并定位到那一刻，没给页签时就是日志页签。
+ */
+function applyAddress(store: MonitorStore, run: RunView, address: MonitorSearch) {
+	const selected = initialSelection(run, address.node);
+	const at = address.at === undefined ? Number.NaN : Date.parse(address.at);
+	if (selected && selected.nodeId === address.node && Number.isFinite(at)) {
+		store.locateLog(selected, at);
+	} else {
+		store.select(selected);
+	}
+	if (address.tab) store.showPanel(address.tab);
 }
 
 /** 图表工作区要不要收成一行（chartsCompact）依赖指标目录，所以目录在这里取、传给图表工作区。 */
