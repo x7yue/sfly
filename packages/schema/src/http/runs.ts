@@ -382,10 +382,32 @@ export const LogPageQuery = z
 		level: LevelsParam,
 		/** 只要这些来源，逗号分隔。 */
 		source: blankAsMissing(csv(LOG_SOURCES)),
+		/**
+		 * 定位到这个时刻（控制面时间）：返回包含那一刻的一页，前后各取一半（不足的一侧由另一侧补满），
+		 * 响应的 `locate` 写明那一刻的位置和有没有正好对应的行。不能与 before、after 同时给。
+		 */
+		at: blankAsMissing(Timestamp),
 	})
 	.refine((q) => q.before === undefined || q.after === undefined, {
 		message: "before 与 after 不能同时给",
+	})
+	.refine((q) => q.at === undefined || (q.before === undefined && q.after === undefined), {
+		message: "at 不能与 before、after 同时给",
 	});
+
+/**
+ * 按时刻定位（`at`）的结果。「正好对应」：行的控制面时间与 `at` 相差不超过 1 秒（含），有几行时取离 `at` 最近的，
+ * 一样近时取前一行；没有控制面时间的旧行从不算。判断只在筛选（`level`、`source`）之后的行里做，没有符合的行就是没有。
+ */
+export const LogLocate = z.object({
+	/**
+	 * 那一刻在日志文件里的位置：这个字节偏移之前的行，控制面时间都早于 `at`（旧行没有控制面时间，算在前面）；
+	 * 这个偏移起的行都不早于 `at`。晚于最后一行时是日志文件的大小，没有日志时是 0。
+	 */
+	at_offset: z.number().int(),
+	/** 正好对应那一刻的行的序号；没有这样的行时为 null，页面改为在 `at_offset` 的位置标出这一刻。 */
+	exact_seq: z.number().int().nullable(),
+});
 
 export const LogPage = z.object({
 	task_id: z.string(),
@@ -402,6 +424,8 @@ export const LogPage = z.object({
 	truncated: z.boolean(),
 	/** 运行已超过保留期、日志已被清理（此时是空页）。 */
 	expired: z.boolean(),
+	/** 请求带了 `at` 时的定位结果；`end` 小于 `size` 说明这一页之后还有行，没带 `at` 时为 null。 */
+	locate: LogLocate.nullable(),
 });
 
 /** 合并日志里一行的来源：它是哪个节点的哪一次尝试（任务）输出的。 */
@@ -674,6 +698,7 @@ export type RunSummary = z.infer<typeof RunSummary>;
 export type ParamDeclView = z.infer<typeof ParamDeclView>;
 export type PreflightProblem = z.infer<typeof PreflightProblem>;
 export type LogLineView = z.infer<typeof LogLineView>;
+export type LogLocate = z.infer<typeof LogLocate>;
 export type LogPage = z.infer<typeof LogPage>;
 export type LogChunk = z.infer<typeof LogChunk>;
 export type LogOrigin = z.infer<typeof LogOrigin>;

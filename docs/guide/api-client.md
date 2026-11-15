@@ -83,7 +83,7 @@ for (const item of runs) {
 - `runs.get` 读一次运行的完整视图：各条链、各个节点的状态，每次尝试的错误和输出。
 - 控制台统计用 `dashboard.get`，Agent 的在线状态和版本用 `agents.list`（`preparing_since` 不为空表示 Agent 在线但还在准备环境、不接任务），一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。
 - 时间字段都是控制面时间，格式是 ISO 8601 字符串。
-- 控制台里运行监控页的地址是 `{{SFLY_URL}}/runs/<运行 id>`，看板上需要深入排查时链接过去。
+- 控制台里运行监控页的地址是 `{{SFLY_URL}}/runs/<运行 id>`，看板上需要深入排查时链接过去。地址可以带 `node=<节点 ID>` 选中一个节点，再加 `tab=logs`（或 `attempts`、`io`、`artifacts`）切到底部面板的页签；带了 `node` 之后还可以加 `at=<时刻>`（控制面时间，ISO 8601 的 UTC 写法，如 `2026-01-01T00:00:06.250Z`，和接口返回的时间同一种）：日志定位到包含那一刻的一页，那一刻正好有一行（1 秒以内）就高亮它，没有就在那个位置标出「这一刻」。
 
 ## 预检并触发
 

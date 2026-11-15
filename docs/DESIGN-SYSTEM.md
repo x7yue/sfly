@@ -69,7 +69,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - **白色是每屏唯一的主操作**：`<Button variant="primary">` 每屏最多一个（如「新建场景」）；其余按钮用默认（中性）或 `ghost`。Logo 与头像的白底不是操作。
 - **青色只用于执行中、键盘焦点环、调度连线**。不要用青色表示选中、链接或强调。
 - **执行中的区段是淡底加描边，不是实心青色**：时间线段、链路进度段、场景缩略图节点、平台图表里的节点耗时条按状态表画（`STATUS.running.area`：`signal-fill` 底加 1px `signal-line` 描边），与成功、失败等色块同一量级。实心 `signal` 只给状态标记、时间线段尾的脉冲头和焦点环。
-- **选中是中性高亮**：`selected-bg` 底 + 左侧 2px 白色短条（工具类 `selected-row`），画布上是 `selected` 描边 + `selected-ring`，相关连线灰色虚线流动。文字选区是中性的 `selection-bg`。
+- **选中是中性高亮**：`selected-bg` 底 + 左侧 2px 白色短条（工具类 `selected-row`），画布上是 `selected` 描边 + `selected-ring`，相关连线灰色虚线流动。文字选区是中性的 `selection-bg`。日志按时刻定位到的那一行同样用 `selected-row`（不用青色），没有正好对应的行时插入的「这一刻」是一行文字加一条中性细线（`border-strong`）。
 - 绿色 = 成功，红色 = 失败，**琥珀色只有三个意思：等待中（定时 / Sleep）、警告、安装中**。排队中（在等 Agent 的槽位）是中性灰；日志定位标记线、被标记的日志行、节点的 `always` 标签这类不是警告的东西也不用琥珀（用中性的 `selected`）。
 - 状态文字与图标用 `-fg`：`text-warn-fg`、`text-signal-fg`、`text-danger-fg`；不带 `-fg` 的 `text-warn` / `text-signal` / `text-danger` 只写在状态表（`components/status.tsx`）里，别处要标记色时取 `STATUS[kind].tone`（`design-rules.test.ts` 检查）。
 - **没有信号就不着色**：数值为 0 的统计、全零的趋势线用中性色；「运行中」统计前的执行中状态点只在有运行时出现。必填标记（`*`）用中性 `fg-2`，红色只给错误。保存状态里只有需要处理的才带点（保存被拦截红、未保存琥珀），「已保存」是纯文字。

@@ -8,6 +8,7 @@ import type {
 import { describe, expect, it } from "vitest";
 import {
 	applyProgress,
+	attemptAt,
 	chainLabel,
 	chainLabelParts,
 	failureSummary,
@@ -525,5 +526,33 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 		expect(runDocumentTitle(view("running", true), "日终数据处理")).toBe(
 			"○ 取消中 · 日终数据处理 · sfly",
 		);
+	});
+});
+
+describe("时刻落在节点的哪一次尝试里", () => {
+	const at = (seconds: number) => Date.UTC(2026, 0, 1, 0, 0, seconds);
+	const attempt = (n: number, startedAt: number | null) =>
+		({
+			attempt: n,
+			task_id: `task-${n}`,
+			started_at: startedAt === null ? null : new Date(at(startedAt)).toISOString(),
+		}) as AttemptView;
+	const node = (...attempts: AttemptView[]) => ({ attempts }) as NodeRunView;
+
+	it("取开始时间不晚于那一刻的最后一次尝试：它正在执行，或是下一次开始之前的最后一次", () => {
+		const retried = node(attempt(1, 10), attempt(2, 30), attempt(3, 60));
+		expect(attemptAt(retried, at(10))?.attempt).toBe(1);
+		expect(attemptAt(retried, at(29.999))?.attempt).toBe(1);
+		expect(attemptAt(retried, at(30))?.attempt).toBe(2);
+		expect(attemptAt(retried, at(45))?.attempt).toBe(2);
+		expect(attemptAt(retried, at(600))?.attempt).toBe(3);
+	});
+
+	it("早于第一次尝试开始、或还没有开始的尝试：没有对应的尝试", () => {
+		expect(attemptAt(node(attempt(1, 10)), at(9))).toBeUndefined();
+		expect(attemptAt(node(attempt(1, null)), at(100))).toBeUndefined();
+		expect(attemptAt(node(), at(100))).toBeUndefined();
+		// 最后一次排队中、还没开始：落在前一次里。
+		expect(attemptAt(node(attempt(1, 10), attempt(2, null)), at(100))?.attempt).toBe(1);
 	});
 });
