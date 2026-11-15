@@ -2,6 +2,7 @@
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
 import {
 	type AgentUpdateState,
+	type FocusItemInput,
 	ON_AGENT_STATUSES,
 	OrchestrationDocument,
 	type PackageMetadata,
@@ -142,6 +143,17 @@ export const feishuBots = pgTable("feishu_bots", {
 });
 
 /**
+ * 关注项最后一次修改的记录（`orchestrations.focus_edit`）：谁、什么时候（控制面时间，ISO 8601）、一句话说明，
+ * 以及修改之前的列表：下一次写入恰好把它写回去时，说明记为「撤销」。刚刚撤销过的修改没有可以再撤销的列表。
+ */
+export interface StoredFocusEdit {
+	by: string;
+	at: string;
+	summary: string;
+	before: FocusItemInput[] | null;
+}
+
+/**
  * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
  * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
  */
@@ -165,6 +177,14 @@ export const orchestrations = pgTable("orchestrations", {
 	runNotifyTitle: text("run_notify_title").notNull().default(""),
 	/** 附加说明（Markdown）；空字符串即没有。 */
 	runNotifyNote: text("run_notify_note").notNull().default(""),
+	/**
+	 * 关注项（GLOSSARY「关注项」）：场景挑出来、运行中重点展示的图表，按作者设定的顺序，最多 FOCUS_ITEMS_MAX 项
+	 * （包括已经失效的）。和运行通知一样不属于版本，改了立即生效。节点 ID 跨版本稳定，图表按标题引用；
+	 * 节点在最新版本里的状态每次读的时候对照得出，不存。
+	 */
+	focusItems: jsonb("focus_items").$type<FocusItemInput[]>().notNull().default([]),
+	/** 关注项最后一次修改；从没改过时为空。 */
+	focusEdit: jsonb("focus_edit").$type<StoredFocusEdit>(),
 });
 
 /**

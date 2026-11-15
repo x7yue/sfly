@@ -29,6 +29,8 @@ import {
 	soleNode,
 } from "#/components/canvas/selection";
 import { StatusPill } from "#/components/status";
+import { isSavedNodeType } from "#/focus/saved-node";
+import { useFocusItems } from "#/focus/use-focus-items";
 import { ACTION, ANNOTATION_FIELD_LABEL } from "#/lib/copy";
 import { descriptionParagraphs } from "#/lib/node-description";
 import { MetricDeclarations, type NodeMetricsInfo } from "#/metrics/MetricDeclarations";
@@ -71,7 +73,12 @@ const tabOfField = (key: string): Tab =>
 
 /** 检查器需要的场景级上下文。 */
 export interface InspectorContext {
+	/** 场景的 ID：关注项存在场景的设置里，检查器直接读写。 */
+	orchestrationId: string;
+	/** 画布上正在编辑的文档。 */
 	doc: OrchestrationDocument;
+	/** 编辑起点：已保存的版本。关注项只能引用已保存的节点，新加的节点要先保存。 */
+	saved: OrchestrationDocument;
 	catalog: PackageCatalog;
 	info: CanvasInfo;
 	packages: PackageSummary[] | undefined;
@@ -488,11 +495,30 @@ function NodeDoc({ id, node, context }: { id: string; node: DocNode; context: In
 			{node.kind === "package" && (
 				<>
 					<SectionTitle>声明的指标与图表</SectionTitle>
-					{/* 目录里是节点包查询 API 返回的完整节点类型（含默认图表），类型上只声明了输入输出。 */}
-					<MetricDeclarations info={type as NodeMetricsInfo | null | undefined} />
+					<NodeMetrics id={id} type={type} context={context} />
 				</>
 			)}
 		</>
+	);
+}
+
+/** 包节点的指标与图表，每张图表带「关注」开关（关注项，#344）。 */
+function NodeMetrics({
+	id,
+	type,
+	context,
+}: {
+	id: string;
+	type: ReturnType<typeof nodeTypeOf>;
+	context: InspectorContext;
+}) {
+	const focus = useFocusItems(context.orchestrationId);
+	return (
+		<MetricDeclarations
+			// 目录里是节点包查询 API 返回的完整节点类型（含默认图表），类型上只声明了输入输出。
+			info={type as NodeMetricsInfo | null | undefined}
+			focus={{ focus, nodeId: id, saved: isSavedNodeType(context.saved, context.doc, id) }}
+		/>
 	);
 }
 

@@ -48,21 +48,25 @@ import { toggleSidebar } from "./sidebar-state";
  * 分组：「当前页面」是当前页面绑定了处理函数、并在注册表里带 `palette` 的快捷键（取消运行、保存……），名称和按键
  * 都取自注册表，页面状态变了（运行结束、没有失败节点）就自动出现或消失；「跳转」来自 navigation.ts；
  * 「场景」来自场景列表（进入编排画布）；「运行」是最近的运行（进入运行监控）；「运行场景」打开该场景的运行抽屉；
- * 「命令」在下面的 commands 里登记。
+ * 「命令」在下面的 commands 里登记。`scope` 为 `run-scenario` 时（控制台的「运行场景」按钮）只列出「运行场景」一组。
  * 页面要加命令先在注册表登记并加 `palette`，再用 useShortcut 绑定；与页面无关的命令往 commands 里加一项，
  * 带快捷键的命令写上 shortcut，面板里会显示对应的按键。
  */
 export function CommandPalette({
 	open,
 	onOpenChange,
+	scope,
 	openOverlay,
 	runScenario,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	/** 只列出哪一组；null 是完整的命令面板。 */
+	scope: "run-scenario" | null;
 	openOverlay: (overlay: Overlay) => void;
 	runScenario: (target: RunTarget) => void;
 }) {
+	const all = scope === null;
 	const navigate = useNavigate();
 	const pageCommands = usePaletteCommands();
 	// 「场景」分组只列出没有归档的场景。
@@ -124,11 +128,14 @@ export function CommandPalette({
 	return (
 		<CommandDialog open={open} onOpenChange={onOpenChange}>
 			<CommandRoot>
-				<CommandInput placeholder="搜索页面、场景，或输入命令…" aria-label="命令" />
+				<CommandInput
+					placeholder={all ? "搜索页面、场景，或输入命令…" : "搜索要运行的场景…"}
+					aria-label="命令"
+				/>
 				<ResultsStatus />
 				<CommandList className="overscroll-contain">
 					<CommandEmpty>没有匹配的结果</CommandEmpty>
-					{pageCommands.length > 0 && (
+					{all && pageCommands.length > 0 && (
 						<CommandGroup heading="当前页面">
 							{pageCommands.map((c) => {
 								const Icon = PAGE_COMMAND_ICON[c.id];
@@ -149,23 +156,25 @@ export function CommandPalette({
 							})}
 						</CommandGroup>
 					)}
-					<CommandGroup heading="跳转">
-						{NAV_ITEMS.map((item) => (
-							<CommandItem
-								key={item.to}
-								value={`nav:${item.to}`}
-								keywords={[item.label]}
-								onSelect={() => run(() => navigate({ to: item.to }))}
-							>
-								<item.icon />
-								{item.label}
-								<CommandShortcut>
-									<Keys shortcut={item.shortcut} />
-								</CommandShortcut>
-							</CommandItem>
-						))}
-					</CommandGroup>
-					{scenarios.length > 0 && (
+					{all && (
+						<CommandGroup heading="跳转">
+							{NAV_ITEMS.map((item) => (
+								<CommandItem
+									key={item.to}
+									value={`nav:${item.to}`}
+									keywords={[item.label]}
+									onSelect={() => run(() => navigate({ to: item.to }))}
+								>
+									<item.icon />
+									{item.label}
+									<CommandShortcut>
+										<Keys shortcut={item.shortcut} />
+									</CommandShortcut>
+								</CommandItem>
+							))}
+						</CommandGroup>
+					)}
+					{all && scenarios.length > 0 && (
 						<CommandGroup heading="场景">
 							{scenarios.map((o) => (
 								<CommandItem
@@ -182,7 +191,7 @@ export function CommandPalette({
 							))}
 						</CommandGroup>
 					)}
-					{runs.data && runs.data.runs.length > 0 && (
+					{all && runs.data && runs.data.runs.length > 0 && (
 						<CommandGroup heading="运行">
 							{runs.data.runs.map((r) => {
 								const status = runStatusView(r.status, { cancelling: r.cancelling });
@@ -219,24 +228,26 @@ export function CommandPalette({
 							))}
 						</CommandGroup>
 					)}
-					<CommandGroup heading="命令">
-						{commands.map((c) => (
-							<CommandItem
-								key={c.id}
-								value={`command:${c.id}`}
-								keywords={"keywords" in c ? c.keywords : [c.label]}
-								onSelect={() => run(c.perform)}
-							>
-								<c.icon />
-								{c.label}
-								{c.shortcut && (
-									<CommandShortcut>
-										<Keys shortcut={c.shortcut} />
-									</CommandShortcut>
-								)}
-							</CommandItem>
-						))}
-					</CommandGroup>
+					{all && (
+						<CommandGroup heading="命令">
+							{commands.map((c) => (
+								<CommandItem
+									key={c.id}
+									value={`command:${c.id}`}
+									keywords={"keywords" in c ? c.keywords : [c.label]}
+									onSelect={() => run(c.perform)}
+								>
+									<c.icon />
+									{c.label}
+									{c.shortcut && (
+										<CommandShortcut>
+											<Keys shortcut={c.shortcut} />
+										</CommandShortcut>
+									)}
+								</CommandItem>
+							))}
+						</CommandGroup>
+					)}
 				</CommandList>
 				<footer className="flex gap-3.5 border-t border-border-soft px-3.5 py-2 text-xs text-fg-3">
 					<span className="inline-flex items-center gap-1">

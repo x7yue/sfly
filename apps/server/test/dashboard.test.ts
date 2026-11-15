@@ -106,11 +106,11 @@ describe("控制台统计", () => {
 		return runId;
 	}
 
-	it("最近 24 小时按结束时间统计成功、失败、取消与成功率，窗口外的不计入，并与前 24 小时对比", async () => {
+	it("最近 24 小时按结束时间统计成功、失败、取消，窗口外的不计入；响应里没有趋势、成功率和最近发布的节点包", async () => {
 		const agent = await connect({ name: "agent-a", slots: 4 });
 		const id = await api.orchestrationWith(single("a"));
 
-		// 前一个 24 小时：1 成功 1 失败（成功率 0.5）。
+		// 窗口之前：1 成功 1 失败。
 		await finishRun(agent, id, "success");
 		await finishRun(agent, id, "failed");
 		// 最近 24 小时：3 成功、1 失败、1 取消。
@@ -123,55 +123,13 @@ describe("控制台统计", () => {
 
 		const { generated_at, runs } = await dashboard();
 		expect(generated_at).toBe(clock.now().toISOString());
-		expect(runs).toMatchObject({
-			running: 0,
-			success: 3,
-			failed: 1,
-			cancelled: 1,
-			success_rate: 0.6,
-			previous_success_rate: 0.5,
-		});
-	});
+		expect(runs).toMatchObject({ running: 0, success: 3, failed: 1, cancelled: 1 });
 
-	it("按小时的趋势：24 个桶以现在为终点，运行按结束时间归桶", async () => {
-		const agent = await connect({ name: "agent-a", slots: 4 });
-		const id = await api.orchestrationWith(single("a"));
-		clock.set("2026-01-01T06:00:00.000Z");
-		await finishRun(agent, id, "cancelled");
-		clock.set("2026-01-01T07:30:00.000Z");
-		await finishRun(agent, id, "success");
-		await finishRun(agent, id, "failed");
-		clock.set("2026-01-02T05:59:00.000Z");
-		await finishRun(agent, id, "success");
-		clock.set("2026-01-02T06:00:00.000Z");
-
-		const { hourly } = await dashboard();
-		expect(hourly).toHaveLength(24);
-		expect(hourly[0]).toEqual({
-			start: "2026-01-01T06:00:00.000Z",
-			success: 0,
-			failed: 0,
-			cancelled: 1,
-		});
-		expect(hourly[1]).toEqual({
-			start: "2026-01-01T07:00:00.000Z",
-			success: 1,
-			failed: 1,
-			cancelled: 0,
-		});
-		expect(hourly[2]).toEqual({
-			start: "2026-01-01T08:00:00.000Z",
-			success: 0,
-			failed: 0,
-			cancelled: 0,
-		});
-		expect(hourly.slice(2, 23).every((h) => h.success + h.failed + h.cancelled === 0)).toBe(true);
-		expect(hourly[23]).toEqual({
-			start: "2026-01-02T05:00:00.000Z",
-			success: 1,
-			failed: 0,
-			cancelled: 0,
-		});
+		const raw = (await (await cp.fetch("/dashboard")).json()) as Record<string, unknown>;
+		expect(raw).not.toHaveProperty("hourly");
+		expect(raw).not.toHaveProperty("recent_packages");
+		expect(raw.runs).not.toHaveProperty("success_rate");
+		expect(raw.runs).not.toHaveProperty("previous_success_rate");
 	});
 
 	it("正在运行：各链（主链与子流程）的节点状态、取消中的运行；运行中的链、执行中与排队的任务数", async () => {
@@ -364,53 +322,5 @@ describe("控制台统计", () => {
 				},
 			],
 		});
-	});
-
-	it("最近发布的节点包：最新的 5 个版本，从新到旧，带被场景锁定的数量", async () => {
-		for (const version of ["0.1.0", "0.2.0", "0.3.0", "0.4.0", "0.5.0"]) {
-			clock.advance(HOUR);
-			await publishPackage(cp, "demo", version, { echo: ["v"] });
-		}
-		await api.orchestrationWith({
-			...single("a"),
-			nodes: [
-				{ id: "entry", kind: "entry" },
-				{ id: "a", kind: "package", package: "demo", node: "echo", inputs: {} },
-			],
-			packages: { demo: "0.4.0" },
-		});
-
-		expect((await dashboard()).recent_packages).toEqual([
-			{
-				name: "demo",
-				version: "0.5.0",
-				published_at: "2026-01-01T05:00:00.000Z",
-				locked_orchestrations: 0,
-			},
-			{
-				name: "demo",
-				version: "0.4.0",
-				published_at: "2026-01-01T04:00:00.000Z",
-				locked_orchestrations: 1,
-			},
-			{
-				name: "demo",
-				version: "0.3.0",
-				published_at: "2026-01-01T03:00:00.000Z",
-				locked_orchestrations: 0,
-			},
-			{
-				name: "demo",
-				version: "0.2.0",
-				published_at: "2026-01-01T02:00:00.000Z",
-				locked_orchestrations: 0,
-			},
-			{
-				name: "demo",
-				version: "0.1.0",
-				published_at: "2026-01-01T01:00:00.000Z",
-				locked_orchestrations: 0,
-			},
-		]);
 	});
 });

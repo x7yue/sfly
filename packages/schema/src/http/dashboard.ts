@@ -3,7 +3,7 @@ import { endpoint, Timestamp } from "./contract.js";
 
 /**
  * 控制台统计接口的契约（约定见 ./contract.ts）。统计窗口是「最近 24 小时」：
- * [generated_at − 24h, generated_at]，按运行（或链实例）的结束时间归入窗口与按小时的桶。
+ * [generated_at − 24h, generated_at]，按运行（或链实例）的结束时间归入窗口。
  */
 
 /** 一次运行（或链）的结果计数。 */
@@ -12,9 +12,6 @@ const Outcomes = {
 	failed: z.number().int(),
 	cancelled: z.number().int(),
 };
-
-/** 趋势里的一小时：[start, start + 1h) 内结束的运行数（恰好在 generated_at 结束的归入最后一个桶）。 */
-export const DashboardHour = z.object({ start: Timestamp, ...Outcomes });
 
 export const DashboardRunStats = z.object({
 	/** 正在运行的运行数（含取消中的）。 */
@@ -29,10 +26,6 @@ export const DashboardRunStats = z.object({
 	...Outcomes,
 	/** 窗口内失败的子流程实例数（不论所在运行是否已结束）。 */
 	failed_subflows: z.number().int(),
-	/** 成功率 = 成功 / 结束的运行数（0–1）；窗口内没有结束的运行时为 null。 */
-	success_rate: z.number().nullable(),
-	/** 前一个 24 小时的成功率，用于对比；没有结束的运行时为 null。 */
-	previous_success_rate: z.number().nullable(),
 });
 
 /** 运行中的链实例：节点按链上的顺序，状态与运行视图一致（pending、queued、running、success…）。 */
@@ -114,27 +107,15 @@ export const DashboardAgentStats = z.object({
 	list: z.array(DashboardAgent),
 });
 
-export const DashboardPackage = z.object({
-	name: z.string(),
-	version: z.string(),
-	published_at: Timestamp,
-	/** 有多少个场景的最新版本锁定了这个版本。 */
-	locked_orchestrations: z.number().int(),
-});
-
 export const DashboardView = z.object({
 	/** 统计的时刻（控制面时钟），窗口的终点。 */
 	generated_at: Timestamp,
 	runs: DashboardRunStats,
-	/** 24 个小时桶，从旧到新；最后一个桶以 generated_at 为终点。 */
-	hourly: z.array(DashboardHour),
 	/** 正在运行的运行，按开始时间从新到旧。 */
 	running_runs: z.array(DashboardRunningRun),
 	/** 窗口内失败的链实例，按失败时间从新到旧（最多 10 条）。 */
 	recent_failures: z.array(DashboardFailure),
 	agents: DashboardAgentStats,
-	/** 最近发布的节点包版本，从新到旧（最多 5 个）。 */
-	recent_packages: z.array(DashboardPackage),
 });
 
 export const dashboardApi = {
@@ -153,4 +134,3 @@ export type DashboardRunningRun = z.infer<typeof DashboardRunningRun>;
 export type DashboardChain = z.infer<typeof DashboardChain>;
 export type DashboardFailure = z.infer<typeof DashboardFailure>;
 export type DashboardAgent = z.infer<typeof DashboardAgent>;
-export type DashboardHour = z.infer<typeof DashboardHour>;
