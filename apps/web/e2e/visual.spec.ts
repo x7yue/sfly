@@ -35,6 +35,7 @@ import {
 	runningScenario,
 	unixAt,
 } from "./monitor-scenario";
+import { openOverview, overviewRun, readouts } from "./overview-support";
 import { driveToRetry, FIRST, namedScenario } from "./run-display-name-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
 import { advance, seedRunRecords } from "./run-records";
@@ -456,7 +457,7 @@ test("运行抽屉：运行摘要", async ({ page, controlPlane, connectAgent, c
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const task = await agent.nextAssign();
 	// 等实时推送接上（节点显示为执行中）再上报进度与日志。
-	await expect(drawer.getByRole("list", { name: "正在执行的节点" })).toContainText("执行中");
+	await expect(drawer.getByRole("list", { name: "进行中的节点" })).toContainText("执行中");
 	agent.progress(task, 40, 100, "第 40 步");
 	agent.logs(task, [
 		logLine(clock, 1, "连接 10.0.0.8"),
@@ -604,6 +605,22 @@ test("运行监控：失败的运行（尝试页签）", async ({ page, controlP
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);
 	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
+});
+
+test("运行监控：概览（关注项的读数和图表，没有异常）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	await expect(readouts(page).getByRole("button")).toHaveCount(2);
+	await expect(page.locator('[data-focus-chart] svg[role="img"]')).toHaveCount(3);
+	await page.mouse.move(20, 880);
+	await expect(page).toHaveScreenshot("monitor-overview.png", {
+		mask: [...runIds(page), page.locator("[data-chain-id]")],
+	});
 });
 
 test("运行监控：图表工作区（小型运行，全部展开，悬停联动）", async ({

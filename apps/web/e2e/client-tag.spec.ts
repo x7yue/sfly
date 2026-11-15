@@ -34,7 +34,7 @@ async function send(
 const triggerAs = (cp: TestControlPlane, scenario: string, client?: string) =>
 	send(cp, `/orchestrations/${scenario}/runs`, { params: {} }, "tester", client).then((r) => r.id);
 
-test("运行记录：经 AI 编程助手触发的运行，卡片、历史表格和运行详情页都显示「经 Claude Code」；浏览器里触发的不显示", async ({
+test("运行记录：经 AI 编程助手触发的运行，卡片、历史表格和运行监控页都显示「经 Claude Code」；浏览器里触发的不显示", async ({
 	page,
 	controlPlane,
 	connectAgent,

@@ -34,7 +34,7 @@ test("浏览器时间比控制面快 613 天：监控页的已运行时长和执
 	const { runId, agent } = await runningScenario(controlPlane, connectAgent, clock);
 	await browserAhead(page, clock.now());
 
-	await page.goto(`/runs/${runId}`);
+	await page.goto(`/runs/${runId}?view=detail`);
 	const elapsed = page.getByRole("banner").getByTestId("run-elapsed");
 	await expect(elapsed).toHaveText("已运行 14.0s");
 	// 运行开始后 14 秒：时间轴取 20 秒（右端留余量），"现在"线在 70%，执行中的条带占 9s–14s。

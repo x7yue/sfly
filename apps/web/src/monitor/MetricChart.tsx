@@ -65,8 +65,8 @@ export const SERIES_DASH: readonly (string | undefined)[] = [
 	"5 3",
 	"1.5 2.5",
 ];
-const seriesColor = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length] as string;
-const seriesDash = (i: number) => SERIES_DASH[i % SERIES_DASH.length];
+export const seriesColor = (i: number) => SERIES_COLORS[i % SERIES_COLORS.length] as string;
+export const seriesDash = (i: number) => SERIES_DASH[i % SERIES_DASH.length];
 
 function SeriesSwatch({ color, dash }: { color: string; dash: string | undefined }) {
 	return (

@@ -4,7 +4,7 @@ import { RunListPreset } from "./runs.js";
 
 /**
  * 跨场景的运行列表（运行记录页，约定见 ./contract.ts）。每一项带上各链的进度摘要、
- * 正在执行的节点与失败的链，列表页不必逐个读取运行视图。节点状态与运行视图（GET /runs/:id）一致。
+ * 进行中的节点与失败的链，列表页不必逐个读取运行视图。节点状态与运行视图（GET /runs/:id）一致。
  */
 
 const RUN_STATUSES = ["running", "success", "failed", "cancelled"] as const;
@@ -39,7 +39,7 @@ export const RunListChain = z.object({
 	nodes: z.array(z.object({ node_id: z.string(), status: z.string() })),
 });
 
-/** 正在执行的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序。 */
+/** 进行中的节点（排队中、准备中、执行中、等待中），按链与链上的顺序。 */
 export const RunListActiveNode = z.object({
 	chain_instance_id: z.string(),
 	node_id: z.string(),

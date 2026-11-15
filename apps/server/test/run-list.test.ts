@@ -173,7 +173,7 @@ describe("跨场景的运行列表", () => {
 		expect((await list("?limit=2")).runs).toHaveLength(2);
 	});
 
-	it("进行中的运行给出正在执行的节点与进度、失败的子流程与取消中标记", async () => {
+	it("进行中的运行给出进行中的节点与进度、失败的子流程与取消中标记", async () => {
 		const scenario = await api.orchestrationWith(
 			orchestration(
 				[
