@@ -47,6 +47,40 @@ const BENCHES: Record<string, { label: string; noise: number; p99Target?: number
 		label: "关注项图表（1 小时 × 2 个带标签指标 × 50 个进程 → 60 个桶，带最近 10 个点的时间）",
 		noise: 30,
 	},
+	focus_c8_1: {
+		label: "关注项读数（10 个指标 → 1 个桶，8 个并发读一批，不读最近的点）",
+		noise: 10,
+	},
+	focus_c8_1_recent: {
+		label: "关注项读数（10 个指标 → 1 个桶，8 个并发读一批，带最近 10 个点的时间）",
+		noise: 10,
+	},
+	focus_c8_chart_100: {
+		label: "关注项图表（2 个带标签指标 × 50 个进程 → 60 个桶，8 个并发读一批，不读最近的点）",
+		noise: 200,
+	},
+	focus_c8_chart_100_recent: {
+		label:
+			"关注项图表（2 个带标签指标 × 50 个进程 → 60 个桶，8 个并发读一批，带最近 10 个点的时间）",
+		noise: 200,
+	},
+	focus_c32_1: {
+		label: "关注项读数（10 个指标 → 1 个桶，32 个并发读一批，不读最近的点）",
+		noise: 10,
+	},
+	focus_c32_1_recent: {
+		label: "关注项读数（10 个指标 → 1 个桶，32 个并发读一批，带最近 10 个点的时间）",
+		noise: 10,
+	},
+	focus_c32_chart_100: {
+		label: "关注项图表（2 个带标签指标 × 50 个进程 → 60 个桶，32 个并发读一批，不读最近的点）",
+		noise: 200,
+	},
+	focus_c32_chart_100_recent: {
+		label:
+			"关注项图表（2 个带标签指标 × 50 个进程 → 60 个桶，32 个并发读一批，带最近 10 个点的时间）",
+		noise: 200,
+	},
 };
 
 export default definePerfItem({
