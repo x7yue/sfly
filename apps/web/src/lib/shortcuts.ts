@@ -1,5 +1,3 @@
-import { ACTION } from "./copy";
-
 /**
  * 统一的快捷键注册表（纯逻辑，单测见 shortcuts.test.ts）。
  *
