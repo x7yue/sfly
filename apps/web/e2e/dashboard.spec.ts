@@ -302,6 +302,29 @@ test("Agent 列：排队等这台 Agent 的任务数写在槽位下面", async (
 	await expect(row.getByRole("listitem")).toHaveCount(1);
 });
 
+test("Agent 列：不是「在线」的状态写在名称行（安装节点包中）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 2 });
+	await runOnce(controlPlane, agent);
+	agent.send({
+		case: "install",
+		value: {
+			package: "demo-checks",
+			version: "1.2.0",
+			state: 1,
+			taskId: "t-1",
+			installedPackages: [],
+		},
+	});
+	await page.goto("/");
+	const row = region(page, "Agent").getByRole("region", { name: "agent-a" });
+	await expect(row).toContainText("安装中");
+	await expect(row).toContainText("0 / 2 占用");
+});
+
 test("场景列：按最近一次运行的时间排序，写上次运行的结果，从没运行过的写「从未运行」；点一行进入画布", async ({
 	page,
 	controlPlane,
