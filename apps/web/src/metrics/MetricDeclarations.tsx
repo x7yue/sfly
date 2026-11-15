@@ -1,7 +1,7 @@
 import { type ChartView, isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
 import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
 import type { FocusItems } from "#/focus/use-focus-items";
-import { FOCUS } from "#/lib/copy";
+import { FOCUS, TERM } from "#/lib/copy";
 import { Badge } from "@/components/ui/badge";
 
 /**
@@ -148,7 +148,7 @@ export function MetricDeclarations({
 			</ul>
 			<h4 className="mt-3 mb-1.5 text-xs font-semibold text-fg-2">图表 {charts.length} 张</h4>
 			{focus && <FocusQuota focus={focus.focus} saved={focus.saved} />}
-			<ul aria-label="图表" className="m-0 flex list-none flex-col gap-1 p-0">
+			<ul aria-label={TERM.chart} className="m-0 flex list-none flex-col gap-1 p-0">
 				{charts.map((c) => (
 					<li key={c.title} className="flex items-center gap-1.5 text-xs">
 						<span className="min-w-0 truncate">{c.title}</span>
