@@ -93,7 +93,7 @@ export const FocusAnomaly = z.object({
  * `mode` 为 `primary` 时没有图表：`chart` 与 `title` 是主指标名，`chart_type` 是 `stat`，`position` 按节点在运行里的顺序编号。
  * `unavailable` 为 `chart_missing`（这次运行锁定的节点包版本里没有这张图表）时，`chart_type` 是 `line`、`unit` 是空串、
  * 没有数据，这几个值没有意义，页面按 `unavailable` 写明原因。
- * 节点还没有开始执行（待执行、排队中、准备中、已跳过，以及没开始就已取消、已停止的；所在的子流程还没触发的节点是待执行）时 `source.started_at` 为 null，
+ * 节点还没有开始执行（待执行、排队中、准备中、已跳过，以及没开始就失败、已取消、已停止的；所在的子流程还没触发的节点是待执行）时 `source.started_at` 为 null，
  * 没有数据，`source.status` 是节点当时的状态。
  */
 export const RunFocusItem = z.object({

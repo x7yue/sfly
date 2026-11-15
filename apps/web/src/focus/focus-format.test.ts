@@ -181,7 +181,16 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 			empty("queued", { attempt: 1, task_id: "t1" }),
 			"还没有开始执行",
 		],
-		["派发后还没开始", empty("dispatched", { attempt: 1, task_id: "t1" }), "还没有开始执行"],
+		[
+			"准备中：已派发，还没开始",
+			empty("dispatched", { attempt: 1, task_id: "t1" }),
+			"还没有开始执行",
+		],
+		[
+			"没开始就失败（排队超时、安装节点包失败）",
+			empty("failed", { attempt: 1, task_id: "t1", ended_at: "2026-01-01T00:00:05.000Z" }),
+			"没有开始执行就失败了",
+		],
 		["被跳过", empty("skipped"), "已跳过，没有执行"],
 		["没开始就被取消", empty("cancelled"), "在开始前被取消，没有执行"],
 		[

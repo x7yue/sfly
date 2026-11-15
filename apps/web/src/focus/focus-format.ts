@@ -45,7 +45,7 @@ export const sourceNodeName = (item: Pick<RunFocusItem, "node_id" | "display_nam
 
 /**
  * 一项读数处于哪种状态：脚注、可访问名称和图表的空状态都由它决定写什么，别处不再自己判断「还没开始」「没有数据」。
- * 没有值时写原因（`noDataLabel`）：来源节点还没有开始执行（`source.started_at` 为 null：待执行、排队中、准备中、已跳过，以及没开始就已取消、已停止的）
+ * 没有值时写原因（`noDataLabel`）：来源节点还没有开始执行（`source.started_at` 为 null，有哪些状态见契约 `RunFocusItem`）
  * 写这个状态没有执行的原因，已经开始还没有点写「还没有数据」，尝试已经结束仍没有点写「这次尝试没有上报数据」；
  * 有值时，来源节点成功或已停止是最终值，否则是多久前。
  */

@@ -23,7 +23,7 @@ export interface NodeStatusDisplay {
 	 */
 	segment: SegmentKind;
 	/**
-	 * 节点还没有开始执行（没有尝试，或最新的尝试在排队中、准备中）时的说明：运行监控详情的底部面板接在节点 ID 后面，
+	 * 节点没有开始执行（没有尝试，或最新的尝试还没开始，或没开始就结束了）时的说明：运行监控详情的底部面板接在节点 ID 后面，
 	 * 关注项读数和图表的空状态去掉句号后单独写（`notRunNote`）。
 	 */
 	notRun: string;
@@ -93,7 +93,7 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 		canvas: "failed",
 		done: false,
 		segment: "fail",
-		notRun: "还没有开始执行。",
+		notRun: "没有开始执行就失败了。",
 		notRunDuration: "—",
 	},
 	skipped: {
