@@ -318,6 +318,94 @@ describe("运行的关注项读数", () => {
 		});
 	});
 
+	it("被跳过的节点：状态是 skipped，没有尝试也没有数据", async () => {
+		const id = await api.orchestrationWith(benchDocument());
+		await putFocusItemsOk(api, id, [
+			{ node_id: "load", chart: "延迟" },
+			{ node_id: "probe", chart: "level" },
+		]);
+		const runId = await api.triggerOk(id);
+		const task = await agent.nextAssign();
+		agent.metrics(task, [["p99", at(1), 10]]);
+		// load 失败（没有重试），后面的普通节点 probe 被跳过。
+		await agent.fail(task, "boom");
+
+		const [load, probe] = (await focus(runId)).items;
+		expect(load).toMatchObject({ source: { status: "failed", attempt: 1 }, latest: { value: 10 } });
+		expect(probe).toMatchObject({
+			node_id: "probe",
+			source: {
+				status: "skipped",
+				attempt: 0,
+				task_id: null,
+				chain_instance_id: await mainChain(runId),
+				started_at: null,
+				ended_at: null,
+			},
+			latest: null,
+			last_at: null,
+			series: [],
+			final: false,
+		});
+	});
+
+	it("子流程被停止时还没开始的节点：状态是 stopped，没有尝试也没有数据，final 仍是 true；已经开始的节点没有点时也一样没有数据", async () => {
+		const document = {
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "spawn", kind: "async", params: {} },
+				{ id: "load", kind: "package", package: "bench", node: "load" },
+				{ id: "stop", kind: "stop_subflow", subflow: "mon" },
+				{ id: "mon", kind: "subflow_entry", params: [] },
+				{ id: "watch", kind: "package", package: "bench", node: "probe" },
+				{ id: "after", kind: "package", package: "bench", node: "probe" },
+			],
+			edges: [
+				{ from: "entry", to: "spawn", kind: "chain" },
+				{ from: "spawn", to: "load", kind: "chain" },
+				{ from: "load", to: "stop", kind: "chain" },
+				{ from: "mon", to: "watch", kind: "chain" },
+				{ from: "watch", to: "after", kind: "chain" },
+				{ from: "spawn", to: "mon", kind: "dispatch" },
+			],
+			packages: { bench: "1.0.0" },
+		};
+		const id = await api.orchestrationWith(document);
+		await putFocusItemsOk(api, id, [
+			{ node_id: "after", chart: "level" },
+			{ node_id: "watch", chart: "level" },
+		]);
+		const runId = await api.triggerOk(id);
+		const tasks: Record<string, AssignedTask> = {};
+		for (let i = 0; i < 2; i++) {
+			const task = await agent.nextAssign();
+			tasks[task.nodeId] = task;
+		}
+		// load 成功后停止子流程节点停止 mon：watch 正在执行，被取消后记为已停止；after 还没开始，也记为已停止。
+		await agent.succeed(tasks.load as AssignedTask);
+		await agent.nextCancel();
+		await agent.cancelled(tasks.watch as AssignedTask);
+
+		const [after, watch] = (await focus(runId)).items;
+		expect(after).toMatchObject({
+			node_id: "after",
+			source: { status: "stopped", attempt: 0, task_id: null, started_at: null, ended_at: null },
+			latest: null,
+			series: [],
+			final: true,
+		});
+		expect(watch).toMatchObject({
+			node_id: "watch",
+			source: { status: "stopped", attempt: 1, task_id: tasks.watch?.taskId },
+			latest: null,
+			last_at: null,
+			series: [{ metric: "level", labels: {}, points: [] }],
+			final: true,
+		});
+		expect(watch?.source.started_at).not.toBeNull();
+	});
+
 	it("节点不在这次运行绑定的版本里的项不返回，位置仍按作者的列表", async () => {
 		const id = await api.orchestrationWith(benchDocument([["load", "load"]]));
 		const runId = await api.triggerOk(id);

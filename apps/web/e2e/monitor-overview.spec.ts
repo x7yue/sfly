@@ -401,6 +401,54 @@ test("子流程还没触发的节点也在概览里：写明还没有开始执�
 	await expect(timeline(page)).toBeVisible();
 });
 
+test("排队中的节点（已有任务、还没开始）在概览和详情里写同一句话：还没有开始执行", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	// agent-b 注册过但不在线：派给它的任务一直排队。
+	const offline = await connectAgent({
+		name: "agent-b",
+		slots: 1,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await offline.disconnect();
+	await publishPackage(controlPlane, metricPackage());
+	const scenarioId = await createScenario(controlPlane, "排队的节点", {
+		default_agent: "agent-b",
+		nodes: [
+			{ id: "entry", kind: "entry", params: [] },
+			{
+				id: "probe",
+				kind: "package",
+				package: "demo-checks",
+				node: "ping",
+				inputs: { host: "p" },
+			},
+		],
+		edges: [{ from: "entry", to: "probe", kind: "chain" }],
+		packages: { "demo-checks": "1.2.0" },
+	});
+	await setFocusItems(controlPlane, scenarioId, [
+		{ node_id: "probe", chart: "level", title: "探活 level" },
+	]);
+	const runId = await triggerRun(controlPlane, scenarioId);
+	await openOverview(page, clock, runId);
+
+	const card = focusChart(page, "探活 level");
+	await expect(card).toContainText("probe · 还没有开始执行");
+	await expect(card.locator("p + div")).toContainText("还没有开始执行");
+
+	await viewTab(page, "详情").click();
+	const group = page.getByRole("region", { name: "probe 的图表" });
+	const toggle = group.getByRole("button", { expanded: false });
+	if (await toggle.count()) await toggle.click();
+	await expect(group.getByRole("figure", { name: "level", exact: true })).toContainText(
+		"还没有开始执行",
+	);
+});
+
 test("这次运行的节点包版本里没有这张图表：读数写明原因，不显示数值", async ({
 	page,
 	controlPlane,
@@ -428,7 +476,9 @@ test("这次运行的节点包版本里没有这张图表：读数写明原因�
 
 	const missing = readouts(page).getByRole("button", { name: /没有图表「吞吐量」/ });
 	await expect(missing).toContainText("这个版本的节点没有图表「吞吐量」");
-	await expect(missing).toContainText("fetch · 最终值");
+	// 没有值可说：脚注只写来源节点，不写「最终值」。
+	await expect(missing).not.toContainText("最终值");
+	await expect(missing).toContainText("fetch");
 	// 其余项照常显示。
 	await expect(readouts(page).getByRole("button", { name: /^errors 1 次/ })).toBeVisible();
 });

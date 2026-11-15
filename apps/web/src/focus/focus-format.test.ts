@@ -1,13 +1,13 @@
-import type { MetricDeclaration, RunFocusItem } from "@sfly/schema";
+import type { FocusSource, MetricDeclaration, RunFocusItem } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
 import { chartLines } from "#/monitor/charts";
 import {
 	focusSeriesName,
 	formatAgo,
 	latestSeriesName,
-	readingAge,
 	readingFoot,
 	readingLabel,
+	readingState,
 	valueText,
 } from "./focus-format";
 
@@ -54,11 +54,6 @@ describe("多久前", () => {
 	it("时间倒退（读数早于最后一个点）当作 0", () => {
 		expect(formatAgo(-5000)).toBe("0s");
 	});
-
-	it("距离读数生成时的最后一个点；一个点都没有为 null", () => {
-		expect(readingAge(item(), NOW)).toBe(2000);
-		expect(readingAge(item({ last_at: null }), NOW)).toBeNull();
-	});
 });
 
 describe("读数的文字", () => {
@@ -67,27 +62,9 @@ describe("读数的文字", () => {
 		expect(valueText(item({ latest: null }))).toBe("—");
 	});
 
-	it("脚注：节点 · 多久前；成功或已停止后是最终值；还没有数据时写明原因", () => {
+	it("脚注：节点 · 多久前；成功或已停止后是最终值", () => {
 		expect(readingFoot(item(), NOW)).toBe("load · 2s 前");
 		expect(readingFoot(item({ final: true }), NOW)).toBe("load · 最终值");
-		expect(readingFoot(item({ latest: null, last_at: null }), NOW)).toBe("load · 还没有数据");
-		expect(
-			readingFoot(
-				item({
-					latest: null,
-					last_at: null,
-					source: {
-						status: "pending",
-						attempt: 0,
-						task_id: null,
-						chain_instance_id: "c1",
-						started_at: null,
-						ended_at: null,
-					},
-				}),
-				NOW,
-			),
-		).toBe("load · 还没有开始执行");
 	});
 
 	it("来源节点有显示名称时写成「显示名称（节点 ID）」，脚注和可访问名称都一样", () => {
@@ -177,6 +154,75 @@ describe("序列的名字和详情里同一条序列的一样", () => {
 					{ name: "mem", labels: {} },
 				],
 			),
+		);
+	});
+});
+
+describe("读数的状态：脚注、可访问名称和图表的空状态都由它决定", () => {
+	const source = (
+		status: FocusSource["status"],
+		patch: Partial<FocusSource> = {},
+	): FocusSource => ({
+		status,
+		attempt: 0,
+		task_id: null,
+		chain_instance_id: "c1",
+		started_at: null,
+		ended_at: null,
+		...patch,
+	});
+	const empty = (status: FocusSource["status"], patch: Partial<FocusSource> = {}, final = false) =>
+		item({ latest: null, last_at: null, final, source: source(status, patch) });
+
+	it.each([
+		["还没开始（待执行）", empty("pending"), "还没有开始执行"],
+		[
+			"排队中：已有任务，但没有开始",
+			empty("queued", { attempt: 1, task_id: "t1" }),
+			"还没有开始执行",
+		],
+		["派发后还没开始", empty("dispatched", { attempt: 1, task_id: "t1" }), "还没有开始执行"],
+		["被跳过", empty("skipped"), "已跳过，没有执行"],
+		["没开始就被取消", empty("cancelled"), "在开始前被取消，没有执行"],
+		[
+			"所在子流程被停止，节点没开始（读数里 final 为 true）",
+			empty("stopped", {}, true),
+			"子流程被停止，没有执行",
+		],
+	])("%s：写这个状态没有执行的原因，不写「最终值」", (_name, reading, text) => {
+		expect(readingState(reading, NOW)).toEqual({ kind: "empty", text });
+		expect(readingFoot(reading, NOW)).toBe(`load · ${text}`);
+		expect(readingLabel(reading, NOW)).toMatch(new RegExp(`，${text}$`));
+		expect(readingLabel(reading, NOW)).not.toContain("最终值");
+	});
+
+	it("已经开始但还没有点：执行中和已结束都写「还没有数据」，已结束也不写「最终值」", () => {
+		const started = { attempt: 1, task_id: "t1", started_at: at(60) };
+		const running = empty("running", started);
+		const done = empty("success", { ...started, ended_at: at(30) }, true);
+		for (const reading of [running, done]) {
+			expect(readingState(reading, NOW)).toEqual({ kind: "empty", text: "还没有数据" });
+			expect(readingFoot(reading, NOW)).toBe("load · 还没有数据");
+			expect(readingLabel(reading, NOW)).toMatch(/，还没有数据$/);
+		}
+	});
+
+	it("有值：来源节点还在是多久前，成功或已停止后是最终值", () => {
+		expect(readingState(item(), NOW)).toEqual({ kind: "live", ageMs: 2000 });
+		expect(readingState(item({ final: true }), NOW)).toEqual({ kind: "final" });
+	});
+
+	it("图表在这次运行的节点包版本里不存在：没有值可说，脚注只写来源节点", () => {
+		const missing = item({
+			unavailable: "chart_missing",
+			latest: null,
+			last_at: null,
+			final: true,
+			source: { ...item().source, status: "success", ended_at: at(1) },
+		});
+		expect(readingFoot(missing, NOW)).toBe("load");
+		expect(readingLabel(missing, NOW)).toBe(
+			"母单量，这个版本的节点没有图表「母单量」，来自 load（成功）",
 		);
 	});
 });

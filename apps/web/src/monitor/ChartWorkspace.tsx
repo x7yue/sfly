@@ -19,6 +19,7 @@ import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
 import { MESSAGE } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
+import { notRunNote } from "#/lib/node-status";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
 import { Badge } from "@/components/ui/badge";
@@ -526,14 +527,14 @@ function NodeGroup({
 	};
 	const empty = (loading: boolean) =>
 		!runAttempt?.started_at
-			? "节点尚未开始 · 暂无数据"
+			? notRunNote(node.status)
 			: !window || zoomed
 				? "所选时间段内无数据"
 				: loading
 					? "正在加载…"
 					: runAttempt.ended_at
 						? "这次尝试没有上报数据"
-						: "还没有上报数据";
+						: MESSAGE.noData;
 	const title = `${entry.package}/${entry.node}`;
 	const name = runNodeName(node);
 	return (

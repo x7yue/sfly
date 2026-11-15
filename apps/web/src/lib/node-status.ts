@@ -123,6 +123,10 @@ export const NODE_STATUS: Record<NodeStatus, NodeStatusDisplay> = {
 	},
 };
 
+/** `notRun` 去掉句号，接在别的文字后面用（关注项读数的脚注、图表的空状态）。 */
+export const notRunNote = (status: NodeStatus): string =>
+	NODE_STATUS[status].notRun.replace(/。$/, "");
+
 /** 按状态字符串查显示规则；不认识的状态（例如更新的控制面新增的）返回 undefined，由调用方兜底。 */
 export const nodeStatusDisplay = (status: string): NodeStatusDisplay | undefined =>
 	Object.hasOwn(NODE_STATUS, status) ? NODE_STATUS[status as NodeStatus] : undefined;

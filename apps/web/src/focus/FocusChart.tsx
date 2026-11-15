@@ -1,7 +1,7 @@
 import type { RunFocusItem } from "@sfly/schema";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
-import { LIST_LABEL, MESSAGE, MONITOR_VIEW_LABEL } from "#/lib/copy";
+import { LIST_LABEL, MONITOR_VIEW_LABEL } from "#/lib/copy";
 import { seriesColor, seriesDash } from "#/monitor/MetricChart";
 import { Button } from "@/components/ui/button";
 import { FocusValue } from "./FocusValue";
@@ -9,9 +9,9 @@ import { PLOT_MARGIN, plotChart, shownSeries } from "./focus-chart";
 import {
 	chartMissingText,
 	focusSeriesName,
-	NOT_STARTED_TEXT,
 	readingFoot,
 	readingLabel,
+	readingState,
 	sourceNodeName,
 } from "./focus-format";
 
@@ -65,7 +65,7 @@ export function FocusChart({
 		[axis, width, series, item.bucket_seconds],
 	);
 	const titleId = `focus-chart-${item.position}`;
-	const empty = item.latest === null;
+	const state = readingState(item, generatedAt);
 
 	return (
 		<article
@@ -137,9 +137,9 @@ export function FocusChart({
 							))}
 						</svg>
 					)}
-					{empty && (
+					{state.kind === "empty" && (
 						<span className="absolute inset-0 grid place-items-center pb-5 pl-11 text-xs text-fg-3">
-							{item.source.started_at === null ? NOT_STARTED_TEXT : MESSAGE.noData}
+							{state.text}
 						</span>
 					)}
 				</div>
