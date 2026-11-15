@@ -2471,6 +2471,39 @@
     },
     {
       "method": "GET",
+      "path": "/runs/:id/focus",
+      "key": [
+        "runs",
+        "focus"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "default": 60,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 300
+          }
+        },
+        "additionalProperties": false
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
       "path": "/orchestrations/:id/preflight",
       "key": [
         "runs",

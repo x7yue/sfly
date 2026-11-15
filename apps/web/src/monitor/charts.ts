@@ -196,11 +196,11 @@ export const DEFAULT_SHOWN = 10;
  * 从高到低取前 limit 个，平均值按桶的点数加权；没有数据的序列排在最后，平均值相同时取靠前的。
  */
 export function defaultShown(
-	lines: readonly { key: string; buckets: readonly ChartBucket[] }[],
+	lines: readonly { key: string; buckets: readonly Pick<ChartBucket, "points" | "avg">[] }[],
 	limit = DEFAULT_SHOWN,
 ): Set<string> {
 	if (lines.length <= limit) return new Set(lines.map((l) => l.key));
-	const average = (buckets: readonly ChartBucket[]) => {
+	const average = (buckets: readonly Pick<ChartBucket, "points" | "avg">[]) => {
 		let points = 0;
 		let sum = 0;
 		for (const b of buckets) {
@@ -232,7 +232,7 @@ export interface ShownPick {
  */
 export function pickShown(
 	previous: ShownPick | undefined,
-	lines: readonly { key: string; buckets: readonly ChartBucket[] }[],
+	lines: readonly { key: string; buckets: readonly Pick<ChartBucket, "points" | "avg">[] }[],
 	range: unknown,
 	limit = DEFAULT_SHOWN,
 ): ShownPick {
