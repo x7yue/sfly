@@ -31,25 +31,25 @@ const LOAD_OLDER_AT = 120;
 /** 离底部多近时加载更新的一页（像素）：定位到日志中间一页后，列表底部之后还有行。 */
 const LOAD_NEWER_AT = 120;
 
-/** 「这一刻」标记行的键：不会和任何日志行的键相同（行键是序号，或「任务 ID:序号」）。 */
+/** 「这一刻」行的键：不会和任何日志行的键相同（行键是序号，或「任务 ID:序号」）。 */
 const MOMENT_KEY = "moment";
 
 /**
  * 定位到某一刻（#347）后列表怎么显示：正好有一行时高亮它，没有时在那一刻的位置插一条「这一刻」，并滚动到它。
  * 高亮用 `selected-row` 的中性白色短条，不用青色。
  */
-export interface LogLocation {
+export interface LogReveal<L> {
 	/** 同一次定位的标识：换了就重新滚动到它（读者可能已经滚到别处）。 */
 	id: unknown;
-	/** 高亮的行的键；没有正好对应的行时为 null。 */
-	highlight: string | null;
-	/** 「这一刻」插在 `lines` 的这个下标之前（等于行数时在末尾）；没有时为 null。 */
-	moment: number | null;
-	/** 那一刻（控制面时间，ISO），写在标记上。 */
+	/** 那一刻（控制面时间，ISO），写在「这一刻」上。 */
 	at: string;
+	/** 是不是正好对应那一刻的行；没有这样的行时为 null，改为在那一刻的位置标出「这一刻」。 */
+	exact: ((line: L) => boolean) | null;
+	/** 这一行是不是不早于那一刻：「这一刻」插在第一个这样的行前面。 */
+	fromMoment: (line: L) => boolean;
 }
 
-/** 列表里的一项：一行日志，或「这一刻」标记（`line` 为 null）。 */
+/** 列表里的一项：一行日志，或「这一刻」（`line` 为 null）。 */
 interface Row<L> {
 	key: string;
 	line: L | null;
@@ -78,7 +78,7 @@ const COLUMNS = {
  * 列表里有一行显示的时间不在运行开始那天（day）时整列都带上日期。
  * 整个列表是一个 Tab 停靠点（漫游焦点），Tab 不必穿过几十上百行：进来落在上次停留的行（没有就是视口里第一行），
  * 行间用方向键、PageUp / PageDown、Home / End 移动。
- * 定位到某一刻时（`located`）列表停在那一刻、不跟随末尾；那一刻的位置在日志中间时（`hasNewer`）滚动到底部加载更新的一页，
+ * 定位到某一刻时（`reveal`）列表停在那一刻、不跟随末尾；那一刻的位置在日志中间时（`hasNewer`）滚动到底部加载更新的一页，
  * 读到末尾之前不跟随。「这一刻」是列表里的一项，不能聚焦，方向键跳过它。
  * 点一行把它的控制面时间标到时间轴上（onPick），标记的行高亮；没有控制面时间的行不能点：
  * 正文退到辅助色，指针是「不可用」。合并多个任务的日志时（origin），每行多一列来源节点：
@@ -96,7 +96,7 @@ export function LogList<L extends LogLineView>({
 	hasNewer = false,
 	loadingNewer = false,
 	loadNewer,
-	located,
+	reveal,
 	marked,
 	onPick,
 	timeKind,
@@ -116,8 +116,8 @@ export function LogList<L extends LogLineView>({
 	hasNewer?: boolean;
 	loadingNewer?: boolean;
 	loadNewer?: () => void;
-	/** 定位到某一刻；不给时是普通的日志列表。 */
-	located?: LogLocation;
+	/** 定位到某一刻；不给时是普通的日志列表。正好对应的行被时间范围过滤掉时，不高亮也不标「这一刻」。 */
+	reveal?: LogReveal<L>;
 	/** 标记的行的键。 */
 	marked: string | null;
 	onPick: (line: L) => void;
@@ -135,18 +135,28 @@ export function LogList<L extends LogLineView>({
 		[lines, timeKind, day],
 	);
 	const formatTime = dated ? formatFullDateTimeMs : formatClockMs;
+	/** 定位的结果落到列表上：高亮的行的键，或「这一刻」插在 `lines` 的这个下标之前（等于行数时在末尾）。 */
+	const placed = useMemo<{ highlight: string | null; moment: number | null } | undefined>(() => {
+		if (!reveal) return undefined;
+		if (reveal.exact) {
+			const hit = lines.find(reveal.exact);
+			return { highlight: hit ? lineKey(hit) : null, moment: null };
+		}
+		const from = lines.findIndex(reveal.fromMoment);
+		return { highlight: null, moment: from < 0 ? lines.length : from };
+	}, [reveal, lines, lineKey]);
 	const rows = useMemo(() => {
 		const out: Row<L>[] = lines.map((line) => ({ key: lineKey(line), line }));
-		if (located?.moment != null) out.splice(located.moment, 0, { key: MOMENT_KEY, line: null });
+		if (placed?.moment != null) out.splice(placed.moment, 0, { key: MOMENT_KEY, line: null });
 		return out;
-	}, [lines, lineKey, located?.moment]);
+	}, [lines, lineKey, placed?.moment]);
 	const [menu, setMenu] = useState<{ line: L; at: ContextMenuAnchor; open: boolean } | null>(null);
 	const box = useRef<HTMLDivElement>(null);
 	/** 停靠点所在的行；它不在渲染范围里时停靠点落在视口里的第一行。 */
 	const [stopKey, setStopKey] = useState<string | null>(null);
 	/** 键盘移动后要聚焦的行（虚拟列表里它可能还没渲染，渲染后再聚焦）。 */
 	const pendingFocus = useRef<number | null>(null);
-	const follow = useRef(located === undefined);
+	const follow = useRef(reveal === undefined);
 	/** 加载更早的一页之前，视口顶部那一行：加载后滚回它。 */
 	const anchor = useRef<{ key: string; offset: number } | null>(null);
 	/** 上一次贴底后的 scrollTop。 */
@@ -198,16 +208,14 @@ export function LogList<L extends LogLineView>({
 	/** 已经滚动到的那一次定位。 */
 	const revealed = useRef<unknown>(undefined);
 	useLayoutEffect(() => {
-		if (!located || revealed.current === located.id) return;
+		if (!reveal || !placed || revealed.current === reveal.id) return;
 		const index =
-			located.highlight === null
-				? located.moment
-				: rows.findIndex((r) => r.key === located.highlight);
+			placed.highlight === null ? placed.moment : rows.findIndex((r) => r.key === placed.highlight);
 		if (index === null || index < 0) return;
-		revealed.current = located.id;
+		revealed.current = reveal.id;
 		follow.current = false;
 		virtualizer.scrollToIndex(index, { align: "center" });
-	}, [located, rows, virtualizer]);
+	}, [reveal, placed, rows, virtualizer]);
 
 	const items = virtualizer.getVirtualItems();
 	const firstShown = virtualizer.range?.startIndex ?? items[0]?.index ?? 0;
@@ -288,7 +296,7 @@ export function LogList<L extends LogLineView>({
 								ref={virtualizer.measureElement}
 								index={item.index}
 								top={item.start}
-								at={located?.at ?? ""}
+								at={reveal?.at ?? ""}
 								day={day}
 							/>
 						);
@@ -304,8 +312,8 @@ export function LogList<L extends LogLineView>({
 							data-level={line.level}
 							data-source={line.source}
 							data-marked={marked === row.key || undefined}
-							data-located={located?.highlight === row.key || undefined}
-							aria-current={located?.highlight === row.key ? "location" : undefined}
+							data-located={placed?.highlight === row.key || undefined}
+							aria-current={placed?.highlight === row.key ? "location" : undefined}
 							role="button"
 							tabIndex={row.key === tabStop ? 0 : -1}
 							aria-disabled={!locatable || undefined}
@@ -429,7 +437,7 @@ export function LogList<L extends LogLineView>({
 }
 
 /**
- * 「这一刻」标记（没有正好对应那一刻的行时插在它的位置）：一行文字写着时刻（控制面时间），后面接一条贯穿整行的中性细线。
+ * 「这一刻」（没有正好对应那一刻的行时插在它的位置）：一行文字写着时刻（控制面时间），后面接一条贯穿整行的中性细线。
  * 它不是日志行：不能聚焦、不能点；读屏用户读到的就是这行文字。
  */
 function MomentRow({

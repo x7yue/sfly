@@ -16,7 +16,7 @@ const notFound = (reply: FastifyReply) =>
 	sendError(reply, 404, "not_found", "orchestration not found");
 
 /**
- * 场景与场景版本：新建、改名称和说明、归档与恢复、复制、场景列表（契约见 @sfly/schema 的
+ * 场景与场景版本：新建、改名称、说明、运行通知设置和关注项、归档与恢复、复制、场景列表（契约见 @sfly/schema 的
  * orchestrationsApi）；保存（追加）版本、查询版本。版本不可修改，场景不物理删除。
  */
 export function registerOrchestrationRoutes(
@@ -60,10 +60,19 @@ export function registerOrchestrationRoutes(
 		return found ?? notFound(reply);
 	});
 
+	// 关注项不合格时的错误码见契约的 update（focus_items_limit / focus_item_duplicate / focus_item_unknown_chart）。
 	contractRoute(app, orchestrationsApi.update, async ({ params, body }, reply, raw) => {
-		if (!requireNickname(raw, reply)) return reply;
-		const updated = isUuid(params.id) ? await orchestrations.update(params.id, body) : undefined;
-		return updated ?? notFound(reply);
+		const actor = requireActor(raw, reply);
+		if (!actor) return reply;
+		const result = isUuid(params.id)
+			? await orchestrations.update(params.id, body, actor)
+			: ({ kind: "not_found" } as const);
+		if (result.kind === "not_found") return notFound(reply);
+		if (result.kind === "rejected") {
+			const { code, message, details } = result.rejection;
+			return sendError(reply, 400, code, message, details);
+		}
+		return result.orchestration;
 	});
 
 	contractRoute(app, orchestrationsApi.archive, async ({ params }, reply, raw) => {

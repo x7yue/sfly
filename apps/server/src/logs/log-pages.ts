@@ -63,7 +63,7 @@ export interface LocateRequest {
 }
 
 /** 行的控制面时间与那一刻相差不超过这么多毫秒，就算正好对应。 */
-export const EXACT_WITHIN_MS = 1000;
+const EXACT_WITHIN_MS = 1000;
 
 const CHUNK = 64 * 1024;
 /** 扫描上限很小时每次读取的最小字节数：只影响读文件的次数，不影响一页的结果。 */
@@ -124,15 +124,15 @@ export function readLogPageAt(file: string, request: LocateRequest): Promise<Loc
 	return withReader(file, request, missing, async (reader) => {
 		const { limit, filter } = request;
 		const atOffset = await momentOffset(reader, request.at);
-		const read = (direction: "backward" | "forward", count: number) =>
+		const readSide = (direction: "backward" | "forward", count: number) =>
 			direction === "forward"
 				? forward(reader, { direction, after: atOffset, limit: count, filter })
 				: backward(reader, { direction, before: atOffset, limit: count, filter });
-		let older = await read("backward", Math.floor(limit / 2));
-		const newer = await read("forward", limit - older.lines.length);
+		let older = await readSide("backward", Math.floor(limit / 2));
+		const newer = await readSide("forward", limit - older.lines.length);
 		const short = limit - older.lines.length - newer.lines.length;
 		if (short > 0 && newer.end >= reader.size && older.start > 0) {
-			older = await read("backward", limit - newer.lines.length);
+			older = await readSide("backward", limit - newer.lines.length);
 		}
 		const lines = [...older.lines, ...newer.lines];
 		return {

@@ -64,20 +64,18 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 	});
 
 	const [store] = useState(() => createMonitorStore());
-	// 第一次拿到运行视图时应用地址（选中节点的规则见 initialSelection）。
-	// 在渲染里应用而不是在 effect 里：底部面板第一次渲染就看到选中的节点，不会先挂上没选中节点时的合并日志、
-	// 白发一次请求之后又卸载（这时依赖这个状态的子组件还没有挂上）。
+	// 第一次拿到运行视图时应用地址（选中节点的规则见 initialSelection），之后地址变了再应用一次。
+	// 第一次在渲染里应用而不是在 effect 里：底部面板第一次渲染就看到选中的节点，不会先挂上没选中节点时的合并日志、
+	// 白发一次请求之后又卸载（这时依赖这个状态的子组件还没有挂上）；之后的变化在 effect 里应用。
 	const addressKey = `${address.node ?? ""}\n${address.tab ?? ""}\n${address.at ?? ""}`;
 	const appliedAddress = useRef<string | null>(null);
-	if (run && appliedAddress.current === null) {
-		appliedAddress.current = addressKey;
-		applyAddress(store, run, address);
-	}
-	useEffect(() => {
+	const applyIfNew = () => {
 		if (!run || appliedAddress.current === addressKey) return;
 		appliedAddress.current = addressKey;
 		applyAddress(store, run, address);
-	}, [run, store, address, addressKey]);
+	};
+	if (appliedAddress.current === null) applyIfNew();
+	useEffect(applyIfNew);
 
 	const name = orchestration.data?.name;
 	useRunDocumentTitle(run, name);

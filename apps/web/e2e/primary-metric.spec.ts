@@ -70,10 +70,10 @@ test("检查器「说明与指标」：包节点显示节点类型声明的指�
 	await expect(metrics.getByRole("listitem").first()).toHaveText("latency_msms· 瞬时值主指标");
 	const charts = panel.getByRole("list", { name: "图表" });
 	await expect(charts.getByRole("listitem")).toHaveText([
-		"延迟折线latency_ms · p99_ms",
-		"吞吐面积rps",
-		"请求数柱状requests",
-		"errors数值卡errors默认",
+		"延迟折线latency_ms · p99_ms关注",
+		"吞吐面积rps关注",
+		"请求数柱状requests关注",
+		"errors数值卡errors默认关注",
 	]);
 
 	await nodeCard(page, "dispatch").click();
