@@ -361,6 +361,31 @@ test("场景没设关注项，执行中的节点都没声明主指标：写明�
 	await expect(page.getByText("执行中的节点都没有声明主指标。")).toHaveCount(0);
 });
 
+test("场景没设关注项，节点还在准备中（安装节点包）：显示它的主指标读数，写明还没有开始执行，不说没声明主指标", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a" });
+	await publishPackage(controlPlane, metricPackage());
+	const scenarioId = await createScenario(controlPlane, "巡检", scenarioUsing("agent-a"));
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const task = await agent.nextAssign({ start: false });
+	await openOverview(page, clock, runId);
+
+	await expect(page.getByRole("heading", { name: "执行中节点的主指标", level: 2 })).toBeVisible();
+	await expect(page.getByRole("list", { name: "执行中的节点" })).toContainText("ping");
+	const item = readouts(page).getByRole("button");
+	await expect(item).toHaveCount(1);
+	await expect(item).toHaveAccessibleName("level —，来自 ping（准备中），还没有开始执行");
+	await expect(page.getByText("执行中的节点都没有声明主指标。")).toHaveCount(0);
+	await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
+
+	await agent.started(task);
+	await expect(item).toHaveAccessibleName("level —，来自 ping（执行中），还没有数据");
+});
+
 test("图表的序列多于 10 条：刷新后平均值的排名变了，画的还是第一次挑出的那几条", async ({
 	page,
 	controlPlane,

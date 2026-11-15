@@ -3,6 +3,7 @@ import {
 	DEFAULT_FOCUS_POINTS,
 	type FocusSeries,
 	focusName,
+	isOnAgentStatus,
 	type MetricDeclaration,
 	type NodeStatus,
 	type RunFocus,
@@ -74,10 +75,10 @@ interface Reading {
 
 /**
  * 一次运行的关注项读数（`GET /runs/:id/focus`，契约见 @sfly/schema 的 `RunFocus`）：场景设了关注项就按作者的顺序，
- * 没设就是执行中节点的主指标。运行不存在（或编号不是 UUID）时为 undefined。
+ * 没设就是准备中、执行中节点的主指标。运行不存在（或编号不是 UUID）时为 undefined。
  *
- * - 只返回节点在这次运行绑定的版本里的项（`position` 仍是它在作者列表里的位置）；节点还没开始、所在的子流程还没触发时
- *   照样返回，状态是 pending，没有链实例（`source.chain_instance_id` 为 null）。
+ * - 只返回节点在这次运行绑定的版本里的项（`position` 仍是它在作者列表里的位置）；节点还没开始时
+ *   照样返回；所在的子流程还没触发的节点状态是 pending，没有链实例（`source.chain_instance_id` 为 null）。
  * - 来源是节点最新一次尝试的任务；图表的定义取这次运行绑定的版本锁定的节点包版本，那个版本里没有这张图表时
  *   `unavailable` 是 `chart_missing`。开发版本取 Agent 当前加载的源码，不一定是运行当时的定义。
  * - 数值卡只有第一个序列，其余图表是声明的全部序列；`latest` 是最近更新的那个序列的最后一个点。
@@ -127,7 +128,7 @@ export async function resolveRunFocus(
 			? new Set(authored.map((i) => i.node_id).filter(inDocument))
 			: new Set(
 					[...placed]
-						.filter(([id, at]) => at.status === "running" && isPackage(id))
+						.filter(([id, at]) => isOnAgentStatus(at.status) && isPackage(id))
 						.map(([id]) => id),
 				);
 
@@ -209,7 +210,7 @@ function focusReadings(
 	});
 }
 
-/** 没设关注项时：执行中的节点（节点类型有主指标的）的主指标，按节点在运行里的顺序。 */
+/** 没设关注项时：准备中、执行中的节点（节点类型有主指标的）的主指标，按节点在运行里的顺序。 */
 function primaryReadings(sources: ReadonlyMap<string, Source>): Reading[] {
 	const readings: Reading[] = [];
 	for (const [nodeId, { type }] of sources) {

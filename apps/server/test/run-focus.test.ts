@@ -382,7 +382,7 @@ describe("运行的关注项读数", () => {
 			const task = await agent.nextAssign();
 			tasks[task.nodeId] = task;
 		}
-		// load 成功后停止子流程节点停止 mon：watch 正在执行，被取消后记为已停止；after 还没开始，也记为已停止。
+		// load 成功后停止子流程节点停止 mon：watch 执行中，被取消后记为已停止；after 还没开始，也记为已停止。
 		await agent.succeed(tasks.load as AssignedTask);
 		await agent.nextCancel();
 		await agent.cancelled(tasks.watch as AssignedTask);
@@ -590,6 +590,31 @@ describe("运行的关注项读数", () => {
 		await agent.sync();
 		const next = await focus(runId);
 		expect(next.items.map((i) => [i.node_id, i.latest?.value])).toEqual([["b", 3]]);
+	});
+
+	it("主指标模式下，停在派发阶段（准备中）的节点也返回它的主指标：状态是 dispatched，还没有数据", async () => {
+		const document = {
+			default_agent: "agent-a",
+			nodes: [
+				{ id: "entry", kind: "entry" },
+				{ id: "a", kind: "package", package: "prim", node: "work" },
+			],
+			edges: [{ from: "entry", to: "a", kind: "chain" }],
+			packages: { prim: "1.0.0" },
+		};
+		const runId = await api.triggerOk(await api.orchestrationWith(document));
+		const a = await agent.nextAssign({ start: false });
+
+		const preparing = await focus(runId);
+		expect(preparing.mode).toBe("primary");
+		expect(preparing.items).toHaveLength(1);
+		expect(preparing.items[0]).toMatchObject({
+			node_id: "a",
+			chart: "done",
+			source: { status: "dispatched", attempt: 1, task_id: a.taskId },
+			latest: null,
+			final: false,
+		});
 	});
 
 	it("points 是每个序列降采样的点数：默认 60，0 只要最新值；超过上限是 400", async () => {
