@@ -119,6 +119,7 @@ export const ACTION = {
 	viewRuns: "查看运行记录",
 	edit: "编排",
 	newScenario: "新建场景",
+	publishPackage: "发布节点包",
 	close: "关闭",
 	back: "返回",
 	retry: "重试",
@@ -137,6 +138,9 @@ const ASSISTANT_NAME = new Map([
 
 /** 「经 Claude Code」：操作经哪个 AI 编程助手发起。不认识的名称原样显示。只是标注，不是鉴权（ADR 0004）。 */
 export const viaLabel = (via: string) => `经 ${ASSISTANT_NAME.get(via) ?? via}`;
+
+/** 「已新建场景「巡检」」：新建弹窗成功后的提示，控制台「开始使用」里已完成的步骤也写这一句。 */
+export const scenarioCreatedLabel = (name: string) => `已新建场景「${name}」`;
 
 /** 「预设：压测 A 集群」：运行详情、运行记录里这个运行用的运行预设（触发时记下的名称）。 */
 export const presetLabel = (name: string) => `预设：${name}`;

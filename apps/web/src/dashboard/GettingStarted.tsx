@@ -8,7 +8,7 @@ import { useOverlays } from "#/components/app-shell/overlays";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
 import { Panel } from "#/components/page";
-import { ACTION, DOC_PAGE, EMPTY, MESSAGE, PAGE } from "#/lib/copy";
+import { ACTION, DOC_PAGE, EMPTY, MESSAGE, PAGE, scenarioCreatedLabel } from "#/lib/copy";
 import { Button, buttonVariants } from "@/components/ui/button";
 
 type StepId = keyof DashboardSetup;
@@ -104,7 +104,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 		},
 		{
 			id: "package",
-			title: "发布节点包",
+			title: ACTION.publishPackage,
 			done: setup.package.done,
 			fact: setup.package.latest
 				? setup.package.count > 1
@@ -132,9 +132,11 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			title: "新建场景并编排",
 			done: setup.scenario.done,
 			fact:
-				setup.scenario.count > 1
-					? `已有 ${setup.scenario.count} 个场景，最近新建的是「${setup.scenario.name}」`
-					: `已新建场景「${setup.scenario.name}」`,
+				setup.scenario.name === null
+					? ""
+					: setup.scenario.count > 1
+						? `已有 ${setup.scenario.count} 个场景，最近新建的是「${setup.scenario.name}」`
+						: scenarioCreatedLabel(setup.scenario.name),
 			body: "在画布上从入口节点开始把节点连成链，选默认 Agent，保存版本。",
 			state: EMPTY.scenarios,
 			action: setup.scenario.done ? (

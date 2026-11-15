@@ -4,6 +4,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
+import { scenarioCreatedLabel } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -147,7 +148,7 @@ export function NewScenarioDialog({
 			callApi(orchestrationsApi.create, { body }),
 		onSuccess: async (created) => {
 			onOpenChange(false);
-			notify.success(`已新建场景「${created.name}」`);
+			notify.success(scenarioCreatedLabel(created.name));
 			await invalidate();
 			navigate({ to: "/orchestrations/$id", params: { id: created.id } });
 		},
