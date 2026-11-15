@@ -226,7 +226,7 @@ export async function openMonitor(
 	clock: ManualClock,
 	runId: string,
 	node?: string,
-	tab?: "logs" | "attempts" | "io" | "artifacts",
+	tab?: "logs" | "actions" | "attempts" | "io" | "artifacts",
 ) {
 	await page.clock.setFixedTime(clock.now());
 	const search = new URLSearchParams({ view: "detail" });
