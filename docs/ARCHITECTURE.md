@@ -103,6 +103,10 @@ docs/               架构、语义规范、ADR；docs/guide 是用户文档（A
 ```
 
 - JS/TS 使用 pnpm workspace；Rust 使用 cargo；Python 使用 uv。
+- 文档和代码里的名称不一一对应（GLOSSARY 不写实现，对照在这里）：
+  - **场景**在代码里叫 `orchestration`：`orchestrations` 表、`packages/orchestration`、`/orchestrations` 路由、`OrchestrationStore`、`OrchestrationDocument`；前端的页面目录是 `apps/web/src/scenarios/`，接口路径仍是 `/orchestrations`。
+  - **子流程**在代码里叫 `chain`（链）：`chain_instances` 表、`chain_id`；主链和子流程都是链，**异步任务节点**到子流程入口节点的连线叫 `dispatch`。
+  - **节点包**在代码里叫 `package`（`node_packages` 表、`apps/server/src/packages/`、`PackageNode`），不要和 pnpm workspace 的 `packages/` 目录弄混，后者是 TypeScript 库；标准节点包在 `std/`。
 - 三份契约，各有唯一来源：
   - **线上协议**（Agent ↔ 控制面）：`proto/`，生成 TS（protobuf-es）和 Rust（prost/tonic）代码。
   - **文档格式**（场景文档、节点包元信息）：`packages/schema`，前端和控制面直接使用；Python CLI 使用导出的 JSON Schema。
