@@ -28,6 +28,32 @@ const LEVEL_STYLE: Record<LogLineView["level"], string> = {
 
 /** 离顶部多近时加载更早的一页（像素）。 */
 const LOAD_OLDER_AT = 120;
+/** 离底部多近时加载更新的一页（像素）：定位到日志中间一页后，列表底部之后还有行。 */
+const LOAD_NEWER_AT = 120;
+
+/** 「这一刻」标记行的键：不会和任何日志行的键相同（行键是序号，或「任务 ID:序号」）。 */
+const MOMENT_KEY = "moment";
+
+/**
+ * 定位到某一刻（#347）后列表怎么显示：正好有一行时高亮它，没有时在那一刻的位置插一条「这一刻」，并滚动到它。
+ * 高亮用 `selected-row` 的中性白色短条，不用青色。
+ */
+export interface LogLocation {
+	/** 同一次定位的标识：换了就重新滚动到它（读者可能已经滚到别处）。 */
+	id: unknown;
+	/** 高亮的行的键；没有正好对应的行时为 null。 */
+	highlight: string | null;
+	/** 「这一刻」插在 `lines` 的这个下标之前（等于行数时在末尾）；没有时为 null。 */
+	moment: number | null;
+	/** 那一刻（控制面时间，ISO），写在标记上。 */
+	at: string;
+}
+
+/** 列表里的一项：一行日志，或「这一刻」标记（`line` 为 null）。 */
+interface Row<L> {
+	key: string;
+	line: L | null;
+}
 
 /** 没有控制面时间的行（升级之前写入的）不能定位的原因。 */
 const NOT_LOCATABLE = "这行日志没有记录控制面时间，不能在时间轴上定位";
@@ -52,6 +78,8 @@ const COLUMNS = {
  * 列表里有一行显示的时间不在运行开始那天（day）时整列都带上日期。
  * 整个列表是一个 Tab 停靠点（漫游焦点），Tab 不必穿过几十上百行：进来落在上次停留的行（没有就是视口里第一行），
  * 行间用方向键、PageUp / PageDown、Home / End 移动。
+ * 定位到某一刻时（`located`）列表停在那一刻、不跟随末尾；那一刻的位置在日志中间时（`hasNewer`）滚动到底部加载更新的一页，
+ * 读到末尾之前不跟随。「这一刻」是列表里的一项，不能聚焦，方向键跳过它。
  * 点一行把它的控制面时间标到时间轴上（onPick），标记的行高亮；没有控制面时间的行不能点：
  * 正文退到辅助色，指针是「不可用」。合并多个任务的日志时（origin），每行多一列来源节点：
  * 点来源节点名，或在行上右键 / 按 Shift+F10 / 菜单键打开菜单，选「只看……的日志」（onOrigin），都是切到这个节点；
@@ -65,6 +93,10 @@ export function LogList<L extends LogLineView>({
 	hasOlder,
 	loadingOlder,
 	loadOlder,
+	hasNewer = false,
+	loadingNewer = false,
+	loadNewer,
+	located,
 	marked,
 	onPick,
 	timeKind,
@@ -80,6 +112,12 @@ export function LogList<L extends LogLineView>({
 	hasOlder: boolean;
 	loadingOlder: boolean;
 	loadOlder: () => void;
+	/** 最后一行之后还有没加载的行：不跟随末尾，滚动到底部或点按钮加载（`loadNewer`）。 */
+	hasNewer?: boolean;
+	loadingNewer?: boolean;
+	loadNewer?: () => void;
+	/** 定位到某一刻；不给时是普通的日志列表。 */
+	located?: LogLocation;
 	/** 标记的行的键。 */
 	marked: string | null;
 	onPick: (line: L) => void;
@@ -97,13 +135,18 @@ export function LogList<L extends LogLineView>({
 		[lines, timeKind, day],
 	);
 	const formatTime = dated ? formatFullDateTimeMs : formatClockMs;
+	const rows = useMemo(() => {
+		const out: Row<L>[] = lines.map((line) => ({ key: lineKey(line), line }));
+		if (located?.moment != null) out.splice(located.moment, 0, { key: MOMENT_KEY, line: null });
+		return out;
+	}, [lines, lineKey, located?.moment]);
 	const [menu, setMenu] = useState<{ line: L; at: ContextMenuAnchor; open: boolean } | null>(null);
 	const box = useRef<HTMLDivElement>(null);
 	/** 停靠点所在的行；它不在渲染范围里时停靠点落在视口里的第一行。 */
 	const [stopKey, setStopKey] = useState<string | null>(null);
 	/** 键盘移动后要聚焦的行（虚拟列表里它可能还没渲染，渲染后再聚焦）。 */
 	const pendingFocus = useRef<number | null>(null);
-	const follow = useRef(true);
+	const follow = useRef(located === undefined);
 	/** 加载更早的一页之前，视口顶部那一行：加载后滚回它。 */
 	const anchor = useRef<{ key: string; offset: number } | null>(null);
 	/** 上一次贴底后的 scrollTop。 */
@@ -116,7 +159,7 @@ export function LogList<L extends LogLineView>({
 	 */
 	const pin = (force = false) => {
 		const el = box.current;
-		if (!el || !follow.current) return;
+		if (!el || !follow.current || hasNewer) return;
 		const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
 		const moved = pinnedTop.current !== null && Math.abs(el.scrollTop - pinnedTop.current) > 1;
 		if (!force && moved && !atBottom) {
@@ -128,16 +171,13 @@ export function LogList<L extends LogLineView>({
 	};
 	const virtualizer = useVirtualizer({
 		onChange: () => pin(),
-		count: lines.length,
+		count: rows.length,
 		getScrollElement: () => box.current,
 		estimateSize: () => 20,
 		overscan: 24,
 		paddingStart: 4,
 		paddingEnd: 8,
-		getItemKey: (i) => {
-			const line = lines[i];
-			return line ? lineKey(line) : i;
-		},
+		getItemKey: (i) => rows[i]?.key ?? i,
 	});
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: pin 只读 ref
@@ -145,7 +185,7 @@ export function LogList<L extends LogLineView>({
 		const saved = anchor.current;
 		if (saved) {
 			anchor.current = null;
-			const index = lines.findIndex((l) => lineKey(l) === saved.key);
+			const index = rows.findIndex((r) => r.key === saved.key);
 			if (index >= 0) {
 				const start = virtualizer.getOffsetForIndex(index, "start")?.[0] ?? 0;
 				virtualizer.scrollToOffset(start + saved.offset);
@@ -153,18 +193,27 @@ export function LogList<L extends LogLineView>({
 			return;
 		}
 		pin(true);
-	}, [lines, lineKey, virtualizer]);
+	}, [rows, virtualizer]);
+
+	/** 已经滚动到的那一次定位。 */
+	const revealed = useRef<unknown>(undefined);
+	useLayoutEffect(() => {
+		if (!located || revealed.current === located.id) return;
+		const index =
+			located.highlight === null
+				? located.moment
+				: rows.findIndex((r) => r.key === located.highlight);
+		if (index === null || index < 0) return;
+		revealed.current = located.id;
+		follow.current = false;
+		virtualizer.scrollToIndex(index, { align: "center" });
+	}, [located, rows, virtualizer]);
 
 	const items = virtualizer.getVirtualItems();
 	const firstShown = virtualizer.range?.startIndex ?? items[0]?.index ?? 0;
-	const stopRendered =
-		stopKey !== null &&
-		items.some((i) => lines[i.index] && lineKey(lines[i.index] as L) === stopKey);
-	const tabStop = stopRendered
-		? stopKey
-		: lines[firstShown]
-			? lineKey(lines[firstShown] as L)
-			: null;
+	const stopRendered = stopKey !== null && items.some((i) => rows[i.index]?.key === stopKey);
+	const firstLine = rows[firstShown]?.line ? rows[firstShown] : rows[firstShown + 1];
+	const tabStop = stopRendered ? stopKey : firstLine?.line ? firstLine.key : null;
 
 	useLayoutEffect(() => {
 		const index = pendingFocus.current;
@@ -175,11 +224,14 @@ export function LogList<L extends LogLineView>({
 		row.focus();
 	});
 
-	const moveTo = (index: number) => {
-		const target = Math.max(0, Math.min(lines.length - 1, index));
-		const line = lines[target];
-		if (!line) return;
-		setStopKey(lineKey(line));
+	/** 移到第 index 项；那一项是「这一刻」（不能聚焦）时沿方向再走一项。 */
+	const moveTo = (index: number, direction: 1 | -1) => {
+		const clamp = (i: number) => Math.max(0, Math.min(rows.length - 1, i));
+		let target = clamp(index);
+		if (rows[target]?.line === null) target = clamp(target + direction);
+		const row = rows[target];
+		if (!row?.line) return;
+		setStopKey(row.key);
 		pendingFocus.current = target;
 		virtualizer.scrollToIndex(target, { align: "auto" });
 		const rendered = box.current?.querySelector<HTMLElement>(`[data-index="${target}"]`);
@@ -199,12 +251,14 @@ export function LogList<L extends LogLineView>({
 			className="h-full overflow-auto font-mono text-xs"
 			onScroll={(e) => {
 				const el = e.currentTarget;
-				follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 8;
+				const fromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+				follow.current = fromBottom < 8 && !hasNewer;
+				if (hasNewer && !loadingNewer && fromBottom < LOAD_NEWER_AT) loadNewer?.();
 				if (hasOlder && !loadingOlder && el.scrollTop < LOAD_OLDER_AT) {
 					const first = items[0];
-					const line = first ? lines[first.index] : undefined;
-					if (first && line) {
-						anchor.current = { key: lineKey(line), offset: el.scrollTop - first.start };
+					const row = first ? rows[first.index] : undefined;
+					if (first && row) {
+						anchor.current = { key: row.key, offset: el.scrollTop - first.start };
 					}
 					loadOlder();
 				}
@@ -224,8 +278,21 @@ export function LogList<L extends LogLineView>({
 			)}
 			<div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
 				{items.map((item) => {
-					const line = lines[item.index];
-					if (!line) return null;
+					const row = rows[item.index];
+					if (!row) return null;
+					const line = row.line;
+					if (!line) {
+						return (
+							<MomentRow
+								key={item.key}
+								ref={virtualizer.measureElement}
+								index={item.index}
+								top={item.start}
+								at={located?.at ?? ""}
+								day={day}
+							/>
+						);
+					}
 					const locatable = line.time !== null;
 					const shown = logLineTime(line, timeKind);
 					return (
@@ -236,14 +303,16 @@ export function LogList<L extends LogLineView>({
 							data-index={item.index}
 							data-level={line.level}
 							data-source={line.source}
-							data-marked={marked === lineKey(line) || undefined}
+							data-marked={marked === row.key || undefined}
+							data-located={located?.highlight === row.key || undefined}
+							aria-current={located?.highlight === row.key ? "location" : undefined}
 							role="button"
-							tabIndex={lineKey(line) === tabStop ? 0 : -1}
+							tabIndex={row.key === tabStop ? 0 : -1}
 							aria-disabled={!locatable || undefined}
 							aria-description={locatable ? undefined : NOT_LOCATABLE}
 							title={locatable ? "在时间轴上标出这一时刻" : NOT_LOCATABLE}
 							onClick={() => locatable && onPick(line)}
-							onFocus={() => setStopKey(lineKey(line))}
+							onFocus={() => setStopKey(row.key)}
 							onContextMenu={(e) => {
 								if (!onOrigin) return;
 								e.preventDefault();
@@ -255,17 +324,18 @@ export function LogList<L extends LogLineView>({
 								});
 							}}
 							onKeyDown={(e) => {
-								const step: Record<string, number> = {
-									ArrowDown: item.index + 1,
-									ArrowUp: item.index - 1,
-									PageDown: item.index + page,
-									PageUp: item.index - page,
-									Home: 0,
-									End: lines.length - 1,
+								const step: Record<string, [index: number, direction: 1 | -1]> = {
+									ArrowDown: [item.index + 1, 1],
+									ArrowUp: [item.index - 1, -1],
+									PageDown: [item.index + page, 1],
+									PageUp: [item.index - page, -1],
+									Home: [0, 1],
+									End: [rows.length - 1, -1],
 								};
-								if (e.key in step) {
+								const move = step[e.key];
+								if (move) {
 									e.preventDefault();
-									moveTo(step[e.key] as number);
+									moveTo(...move);
 								} else if (e.key === "Enter" || e.key === " ") {
 									e.preventDefault();
 									if (locatable) onPick(line);
@@ -281,7 +351,7 @@ export function LogList<L extends LogLineView>({
 								"absolute top-0 left-0 grid w-full gap-2 px-3 leading-5 wrap-anywhere whitespace-pre-wrap",
 								COLUMNS[dated ? "dated" : "clock"][origin ? "origin" : "plain"],
 								locatable ? "cursor-pointer hover:bg-fg-1/3" : "cursor-not-allowed",
-								"data-marked:selected-row",
+								"data-marked:selected-row data-located:selected-row",
 							)}
 							style={{ transform: `translateY(${item.start}px)` }}
 						>
@@ -327,6 +397,18 @@ export function LogList<L extends LogLineView>({
 					);
 				})}
 			</div>
+			{hasNewer && (
+				<div className="px-3 pt-1 pb-1.5">
+					<button
+						type="button"
+						disabled={loadingNewer}
+						onClick={loadNewer}
+						className="text-xs text-fg-3 underline-offset-2 hover:text-fg-1 hover:underline"
+					>
+						{loadingNewer ? "正在加载更新的日志…" : "向下滚动或点击加载更新的日志"}
+					</button>
+				</div>
+			)}
 			{/* 菜单渲染在 body 里（Portal），放在这里只是和列表一起挂载 */}
 			{onOrigin && origin && (
 				<ContextMenu
@@ -342,6 +424,40 @@ export function LogList<L extends LogLineView>({
 					)}
 				</ContextMenu>
 			)}
+		</div>
+	);
+}
+
+/**
+ * 「这一刻」标记（没有正好对应那一刻的行时插在它的位置）：一行文字写着时刻（控制面时间），后面接一条贯穿整行的中性细线。
+ * 它不是日志行：不能聚焦、不能点；读屏用户读到的就是这行文字。
+ */
+function MomentRow({
+	ref,
+	index,
+	top,
+	at,
+	day,
+}: {
+	ref: (node: HTMLElement | null) => void;
+	index: number;
+	top: number;
+	at: string;
+	day: string;
+}) {
+	const time = spansOtherDay([at], day) ? formatFullDateTimeMs(at) : formatClockMs(at);
+	return (
+		<div
+			ref={ref}
+			data-index={index}
+			data-moment
+			className="absolute top-0 left-0 flex h-5 w-full items-center gap-2 px-3 text-xs text-fg-2"
+			style={{ transform: `translateY(${top}px)` }}
+		>
+			<span className="flex-none">
+				这一刻 <span className="font-mono text-fg-3">控制面时间 {time}</span>
+			</span>
+			<span aria-hidden className="h-px flex-1 bg-border-strong" />
 		</div>
 	);
 }

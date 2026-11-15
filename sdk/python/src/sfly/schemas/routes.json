@@ -452,10 +452,25 @@
           },
           "source": {
             "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
           }
         }
       },
       "notes": [
+        {
+          "part": "query",
+          "path": "",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：before 与 after 不能同时给"
+        },
+        {
+          "part": "query",
+          "path": "at",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
         {
           "part": "query",
           "path": "source",
@@ -479,7 +494,7 @@
         {
           "part": "query",
           "path": "",
-          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：before 与 after 不能同时给"
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：at 不能与 before、after 同时给"
         }
       ]
     },

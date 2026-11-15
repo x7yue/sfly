@@ -33,19 +33,22 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Truncate } from "@/components/ui/truncate";
 import { attemptAgentTimes } from "./attempt-clock";
-import { LogList } from "./LogList";
+import { LogList, type LogLocation } from "./LogList";
+import type { LoadedLine } from "./log-buffer";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
 import {
 	type NodeRef,
 	nodeKey,
-	type PanelTab,
 	PLATFORM_KEY,
+	sameNode,
 	useMonitor,
 	useMonitorActions,
 	useTimeAxis,
 } from "./monitor-state";
+import type { PanelTab } from "./run-link";
 import { runLineKey } from "./run-log-buffer";
 import {
+	attemptAt,
 	documentNodes,
 	findNode,
 	logOrigin,
@@ -58,7 +61,7 @@ import {
 } from "./run-model";
 import { MONITOR_TOPBAR_HEIGHT } from "./top-bar";
 import { runLogDownloadPath, useRunLogs } from "./use-run-logs";
-import { taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
+import { type LogMoment, taskLogDownloadPath, useTaskLogs } from "./use-task-logs";
 
 const TABS: [PanelTab, string][] = [
 	["logs", "日志"],
@@ -110,6 +113,7 @@ export function BottomPanel({
 	doc: OrchestrationDocument | undefined;
 }) {
 	const selected = useMonitor((s) => s.selected);
+	const logMoment = useMonitor((s) => s.logMoment);
 	const zoom = useMonitor((s) => s.zoom);
 	const filter = useMonitor((s) => s.filter);
 	const filtered = filter ? [...filter].filter((k) => k !== PLATFORM_KEY).length : 0;
@@ -125,11 +129,13 @@ export function BottomPanel({
 	const refKey = selected ? `${selected.chainInstanceId}:${selected.nodeId}` : "";
 	/** 从合并视图点来源节点名选中节点时，要看的那一次尝试：换节点时默认是最近一次，这里例外。 */
 	const pendingAttempt = useRef<string | null>(null);
-	// biome-ignore lint/correctness/useExhaustiveDependencies: 换节点时回到最近一次尝试
+	/** 定位日志的请求：只对它指定的节点有效。 */
+	const moment = logMoment && sameNode(logMoment.node, selected) ? logMoment : null;
+	// biome-ignore lint/correctness/useExhaustiveDependencies: 换节点、或有新的定位请求时，回到默认的那一次尝试
 	useEffect(() => {
 		setAttemptId(pendingAttempt.current);
 		pendingAttempt.current = null;
-	}, [refKey]);
+	}, [refKey, moment?.request]);
 	const showOrigin = useCallback(
 		(line: RunLogLine) => {
 			pendingAttempt.current = line.task_id;
@@ -137,8 +143,14 @@ export function BottomPanel({
 		},
 		[actions],
 	);
+	/** 定位的时刻落在的那一次尝试（它早于所有尝试时是最近一次）。 */
+	const momentAttempt =
+		node && moment ? (attemptAt(node, moment.at) ?? node.attempts.at(-1)) : undefined;
 	const attempt =
-		node?.attempts.find((a) => a.task_id === attemptId) ?? node?.attempts.at(-1) ?? undefined;
+		node?.attempts.find((a) => a.task_id === attemptId) ??
+		momentAttempt ??
+		node?.attempts.at(-1) ??
+		undefined;
 	/** 没有选中节点时日志页签下载的合并日志：范围与合并视图相同。 */
 	const mergedDownload = useMemo(
 		() => runLogDownloadPath(run.id, logScope(run, filter)),
@@ -273,6 +285,8 @@ export function BottomPanel({
 								<TaskLogsTab
 									key={attempt.task_id}
 									attempt={attempt}
+									// 用户切到了别的尝试时不定位：那一刻不在它的日志里。
+									moment={attempt === momentAttempt ? moment : null}
 									levels={levelsFrom(minLevel)}
 									filtered={minLevel !== "all"}
 									timeKind={logTimeKind}
@@ -394,6 +408,7 @@ function Segmented({
 
 function TaskLogsTab({
 	attempt,
+	moment,
 	levels,
 	filtered,
 	timeKind,
@@ -401,16 +416,29 @@ function TaskLogsTab({
 	onEmpty,
 }: {
 	attempt: AttemptView;
+	/** 要在这次尝试的日志里定位的时刻；不定位时为 null。 */
+	moment: LogMoment | null;
 	levels: LogLineView["level"][];
 	filtered: boolean;
 	timeKind: LogTimeKind;
 	day: string;
 	onEmpty: (empty: boolean) => void;
 }) {
-	const logs = useTaskLogs(attempt.task_id, levels);
+	const logs = useTaskLogs(attempt.task_id, levels, moment);
+	const locate = useMemo<LogsLocate<LoadedLine> | undefined>(() => {
+		if (!logs.located || !moment) return undefined;
+		const { at_offset, exact_seq } = logs.located;
+		return {
+			id: logs.located,
+			at: new Date(moment.at).toISOString(),
+			exact: exact_seq === null ? null : (line) => line.seq === exact_seq,
+			fromMoment: (line) => line.offset >= at_offset,
+		};
+	}, [logs.located, moment]);
 	return (
 		<LogsView
 			logs={logs}
+			locate={locate}
 			lineKey={seqKey}
 			truncated={logs.truncated ? MESSAGE.logTruncated : null}
 			filtered={filtered}
@@ -469,9 +497,22 @@ function RunLogsTab({
 	);
 }
 
+/** 日志页签要定位的那一刻（task 日志按时刻定位，#347）：控制面返回的结果落到列表的行上。 */
+interface LogsLocate<L> {
+	/** 同一次定位的标识（缓冲区里的定位结果）。 */
+	id: unknown;
+	/** 那一刻（控制面时间，ISO）。 */
+	at: string;
+	/** 是不是正好对应那一刻的行；没有这样的行时为 null，改为在那一刻的位置标出「这一刻」。 */
+	exact: ((line: L) => boolean) | null;
+	/** 这一行是不是不早于那一刻：「这一刻」插在第一个这样的行前面。 */
+	fromMoment: (line: L) => boolean;
+}
+
 /** 日志页签的内容（单个任务与合并视图共用）：截断、旧行、读取失败的提示，按时间范围过滤，点一行标出时刻。 */
 function LogsView<L extends LogLineView>({
 	logs,
+	locate,
 	lineKey,
 	origin,
 	onOrigin,
@@ -489,9 +530,15 @@ function LogsView<L extends LogLineView>({
 		hasOlder: boolean;
 		loadingOlder: boolean;
 		loadOlder: () => void;
+		/** 最后一行之后还有没加载的行（定位到日志中间时），向下滚动加载。 */
+		hasNewer?: boolean;
+		loadingNewer?: boolean;
+		loadNewer?: () => void;
 		expired: boolean;
 		error: string | null;
 	};
+	/** 定位到某一刻；不给时是普通的日志。 */
+	locate?: LogsLocate<L>;
 	lineKey: (line: L) => string;
 	/** 来源节点列；不给时没有这一列。 */
 	origin?: (line: L) => string;
@@ -512,7 +559,8 @@ function LogsView<L extends LogLineView>({
 	/** 加载完、没有任何日志时为 true。 */
 	onEmpty: (empty: boolean) => void;
 }) {
-	const empty = !filtered && logs.loaded && logs.lines.length === 0 && !logs.hasOlder;
+	const empty =
+		!filtered && logs.loaded && logs.lines.length === 0 && !logs.hasOlder && !logs.hasNewer;
 	useEffect(() => onEmpty(empty), [empty, onEmpty]);
 	useEffect(() => () => onEmpty(false), [onEmpty]);
 	const zoom = useMonitor((s) => s.zoom);
@@ -532,6 +580,17 @@ function LogsView<L extends LogLineView>({
 		[logs.lines, zoom],
 	);
 	const unlocatable = useMemo(() => logs.lines.filter((l) => l.time === null).length, [logs.lines]);
+	// 正好对应那一刻的行被时间范围过滤掉时，不高亮也不标「这一刻」。
+	const location = useMemo<LogLocation | undefined>(() => {
+		if (!locate) return undefined;
+		const { id, at } = locate;
+		if (locate.exact) {
+			const hit = lines.find(locate.exact);
+			return { id, at, highlight: hit ? lineKey(hit) : null, moment: null };
+		}
+		const from = lines.findIndex(locate.fromMoment);
+		return { id, at, highlight: null, moment: from < 0 ? lines.length : from };
+	}, [locate, lines, lineKey]);
 	// 标记被别处清除（或换了标记）时取消行的高亮。
 	const marked =
 		markedKey !== null &&
@@ -565,7 +624,7 @@ function LogsView<L extends LogLineView>({
 					读取日志失败：{logs.error}
 				</p>
 			)}
-			{lines.length === 0 && !logs.hasOlder ? (
+			{lines.length === 0 && !logs.hasOlder && !logs.hasNewer ? (
 				<Hint>
 					{logs.expired
 						? "这次运行的日志已超过保留期，已被清理。"
@@ -583,6 +642,10 @@ function LogsView<L extends LogLineView>({
 						hasOlder={logs.hasOlder}
 						loadingOlder={logs.loadingOlder}
 						loadOlder={logs.loadOlder}
+						hasNewer={logs.hasNewer}
+						loadingNewer={logs.loadingNewer}
+						loadNewer={logs.loadNewer}
+						located={location}
 						marked={marked}
 						timeKind={timeKind}
 						day={day}

@@ -10,6 +10,10 @@ import { type LogLineView, logLineView } from "./task-logs.js";
  * 只读完整的行（还在写入的最后半行不算），给了 `until` 时只读它之前的内容。每次最多扫描 `scanLimit` 字节
  * （默认 {@link SCAN_LIMIT}）的行，但至少读完一行：筛选条件很少匹配时，一页可能不足 `limit` 行，
  * 用 `start` / `end` 接着翻页即可。
+ *
+ * 按时刻定位（#347，{@link readLogPageAt}）：在文件里二分找到那一刻的位置，再从这个位置各往前、往后读半页。
+ * 二分要求控制面时间随偏移不减：同一任务内记录时就保证了这一点（task-logs.ts；个别超过 2 秒的倒挂只会让找到的位置偏在倒挂附近）；
+ * 升级之前写入的旧行没有控制面时间，是文件开头连续的一段，算在那一刻之前。
  */
 
 export interface LogFilter {
@@ -44,6 +48,23 @@ export interface LogPage {
 	size: number;
 }
 
+/** 按时刻定位读到的一页：{@link LogPage} 加上那一刻的位置。字段含义见 @sfly/schema 的 LogLocate。 */
+export interface LocatedPage extends LogPage {
+	atOffset: number;
+	exactSeq: number | null;
+}
+
+export interface LocateRequest {
+	/** 要定位的时刻（控制面时间，毫秒）。 */
+	at: number;
+	limit: number;
+	filter: LogFilter;
+	scanLimit?: number;
+}
+
+/** 行的控制面时间与那一刻相差不超过这么多毫秒，就算正好对应。 */
+export const EXACT_WITHIN_MS = 1000;
+
 const CHUNK = 64 * 1024;
 /** 扫描上限很小时每次读取的最小字节数：只影响读文件的次数，不影响一页的结果。 */
 const MIN_CHUNK = 4 * 1024;
@@ -53,14 +74,26 @@ const matches = (line: LogLineView, filter: LogFilter) =>
 	(!filter.levels || filter.levels.has(line.level)) &&
 	(!filter.sources || filter.sources.has(line.source));
 
-/** 读一页日志；文件不存在时是空页。 */
-export async function readLogPage(file: string, request: PageRequest): Promise<LogPage> {
+/** 打开的日志文件，和读它要用的量：完整行的总字节数、扫描上限、每次读取的字节数。 */
+interface Reader {
+	handle: FileHandle;
+	size: number;
+	scanLimit: number;
+	chunk: number;
+}
+
+/** 打开日志文件读一次；文件不存在时是 `missing`。 */
+async function withReader<T>(
+	file: string,
+	request: { scanLimit?: number; until?: number },
+	missing: T,
+	work: (reader: Reader) => Promise<T>,
+): Promise<T> {
 	let handle: FileHandle;
 	try {
 		handle = await open(file, "r");
 	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT")
-			return { lines: [], start: 0, end: 0, size: 0 };
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return missing;
 		throw error;
 	}
 	try {
@@ -68,12 +101,102 @@ export async function readLogPage(file: string, request: PageRequest): Promise<L
 		const chunk = Math.min(CHUNK, Math.max(MIN_CHUNK, scanLimit));
 		const { size: fileSize } = await handle.stat();
 		const size = await completeSize(handle, Math.min(fileSize, request.until ?? fileSize), chunk);
-		return request.direction === "forward"
-			? await forward(handle, size, request, scanLimit, chunk)
-			: await backward(handle, size, request, scanLimit, chunk);
+		return await work({ handle, size, scanLimit, chunk });
 	} finally {
 		await handle.close();
 	}
+}
+
+/** 读一页日志；文件不存在时是空页。 */
+export function readLogPage(file: string, request: PageRequest): Promise<LogPage> {
+	return withReader(file, request, { lines: [], start: 0, end: 0, size: 0 }, (reader) =>
+		request.direction === "forward" ? forward(reader, request) : backward(reader, request),
+	);
+}
+
+/**
+ * 读包含那一刻（`at`）的一页：前后各取一半，一侧不够时（靠近开头或末尾）由另一侧补满，所以那一刻早于第一行时是第一页，
+ * 晚于最后一行时是最后一页。`start` / `end` 与 {@link readLogPage} 的意思相同，往前、往后接着翻页照旧。
+ * 文件不存在时是空页，那一刻的位置是 0。
+ */
+export function readLogPageAt(file: string, request: LocateRequest): Promise<LocatedPage> {
+	const missing = { lines: [], start: 0, end: 0, size: 0, atOffset: 0, exactSeq: null };
+	return withReader(file, request, missing, async (reader) => {
+		const { limit, filter } = request;
+		const atOffset = await momentOffset(reader, request.at);
+		const read = (direction: "backward" | "forward", count: number) =>
+			direction === "forward"
+				? forward(reader, { direction, after: atOffset, limit: count, filter })
+				: backward(reader, { direction, before: atOffset, limit: count, filter });
+		let older = await read("backward", Math.floor(limit / 2));
+		const newer = await read("forward", limit - older.lines.length);
+		const short = limit - older.lines.length - newer.lines.length;
+		if (short > 0 && newer.end >= reader.size && older.start > 0) {
+			older = await read("backward", limit - newer.lines.length);
+		}
+		const lines = [...older.lines, ...newer.lines];
+		return {
+			lines,
+			start: older.start,
+			end: newer.end,
+			size: reader.size,
+			atOffset,
+			exactSeq: exactLine(lines, request.at),
+		};
+	});
+}
+
+/** 一行日志是不是不早于那一刻：旧行没有控制面时间，一律算早于。 */
+const notBefore = (line: LogLineView, at: number) =>
+	line.time !== null && Date.parse(line.time) >= at;
+
+/**
+ * 那一刻在文件里的位置：第一个不早于 `at` 的行的行首，都早于它时是文件末尾。
+ * 在字节范围上二分：lo、hi 始终是行首（或末尾），lo 之前的行都早于 at，hi 起的行都不早于 at。
+ */
+async function momentOffset(reader: Reader, at: number): Promise<number> {
+	const { handle, size, chunk } = reader;
+	let lo = 0;
+	let hi = size;
+	while (lo < hi) {
+		const start = await lineStart(handle, Math.floor((lo + hi) / 2), chunk);
+		const { row, next } = await lineFrom(reader, start);
+		if (notBefore(parse(row), at)) hi = start;
+		else lo = next;
+	}
+	return lo;
+}
+
+/** 行首 `start` 开始的一行（不含换行符）和下一行的行首；`start` 必须在完整行的范围里。 */
+async function lineFrom(
+	{ handle, size, chunk }: Reader,
+	start: number,
+): Promise<{ row: Buffer; next: number }> {
+	let pending: Buffer = Buffer.alloc(0);
+	for (let pos = start; pos < size; ) {
+		const bytes = await read(handle, pos, Math.min(chunk, size - pos));
+		pos += bytes.length;
+		pending = pending.length ? Buffer.concat([pending, bytes]) : bytes;
+		const nl = pending.indexOf(0x0a);
+		if (nl >= 0) return { row: pending.subarray(0, nl), next: start + nl + 1 };
+		if (bytes.length === 0) break;
+	}
+	throw new Error(`日志文件的 ${start} 处不是完整的行`);
+}
+
+/** 页里正好对应那一刻的行的序号：控制面时间离 `at` 最近、相差不超过 {@link EXACT_WITHIN_MS}，一样近时取前一行。 */
+function exactLine(lines: readonly PagedLine[], at: number): number | null {
+	let best: PagedLine | undefined;
+	let bestGap = EXACT_WITHIN_MS + 1;
+	for (const line of lines) {
+		if (line.time === null) continue;
+		const gap = Math.abs(Date.parse(line.time) - at);
+		if (gap < bestGap) {
+			best = line;
+			bestGap = gap;
+		}
+	}
+	return best?.seq ?? null;
 }
 
 async function read(handle: FileHandle, position: number, length: number): Promise<Buffer> {
@@ -99,11 +222,8 @@ async function completeSize(handle: FileHandle, size: number, chunk: number): Pr
 const parse = (bytes: Buffer): LogLineView => logLineView(JSON.parse(bytes.toString("utf8")));
 
 async function forward(
-	handle: FileHandle,
-	size: number,
+	{ handle, size, scanLimit, chunk }: Reader,
 	request: Extract<PageRequest, { direction: "forward" }>,
-	scanLimit: number,
-	chunk: number,
 ): Promise<LogPage> {
 	let pos = Math.min(Math.max(0, request.after), size);
 	// 不在行首：跳到下一行行首。
@@ -142,11 +262,8 @@ async function forward(
 }
 
 async function backward(
-	handle: FileHandle,
-	size: number,
+	{ handle, size, scanLimit, chunk }: Reader,
 	request: Extract<PageRequest, { direction: "backward" }>,
-	scanLimit: number,
-	chunk: number,
 ): Promise<LogPage> {
 	let end = Math.min(Math.max(0, request.before ?? size), size);
 	// 不在行首：只取这一行之前的完整行。
