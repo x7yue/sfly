@@ -70,10 +70,7 @@ function ChainSection({ run }: { run: RunView }) {
 				{chains.map((chain) => {
 					const { name, id } = chainLabelParts(chain);
 					return (
-						<li
-							key={chain.id}
-							className="grid grid-cols-[10rem_minmax(0,1fr)_auto] items-center gap-3"
-						>
+						<li key={chain.id} className="flex items-center gap-3">
 							<span className="flex w-40 min-w-0 flex-none text-xs text-fg-2">
 								<Truncate>{name}</Truncate>
 								{id && (
