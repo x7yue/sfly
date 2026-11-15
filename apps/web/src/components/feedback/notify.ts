@@ -17,20 +17,22 @@ const DURATION = 2600;
 
 const persistent = { duration: Number.POSITIVE_INFINITY, closeButton: true } as const;
 
-/** 调用方给的时长对带操作的通知无效：它们一律等用户关闭。 */
-const withDefaults = (duration: number, options?: ExternalToast): ExternalToast => ({
-	duration,
+/** 对外的选项不含 `duration`：时长由通知的种类决定，带操作的通知一律等用户关闭。 */
+export type NotifyOptions = Omit<ExternalToast, "duration">;
+
+const withDefaults = (duration: number, options?: NotifyOptions): ExternalToast => ({
 	...options,
+	duration,
 	...(options?.action ? persistent : {}),
 });
 
 export const notify = {
-	success: (message: string, options?: ExternalToast) =>
+	success: (message: string, options?: NotifyOptions) =>
 		toast.success(message, withDefaults(DURATION, options)),
-	info: (message: string, options?: ExternalToast) =>
+	info: (message: string, options?: NotifyOptions) =>
 		toast.info(message, withDefaults(DURATION, options)),
-	warning: (message: string, options?: ExternalToast) =>
+	warning: (message: string, options?: NotifyOptions) =>
 		toast.warning(message, withDefaults(DURATION * 2, options)),
-	error: (message: string, options?: ExternalToast) =>
-		toast.error(message, { ...persistent, ...options }),
+	error: (message: string, options?: NotifyOptions) =>
+		toast.error(message, { ...options, ...persistent }),
 };
