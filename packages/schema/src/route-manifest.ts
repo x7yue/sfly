@@ -54,6 +54,12 @@ const DESCRIPTION =
 	"query 的值在 URL 里总是文本，integer、number、boolean 表示文本要能解析成它。" +
 	"notes 记录 JSON Schema 表达不了的约束（自定义校验、转换），那些只由控制面校验。";
 
+/**
+ * `refine` 的 `params` 里带上它，表示这条检查在导出的 JSON Schema 里有等价的约束（`maxLength`、`pattern`），
+ * 不记进 `notes`。
+ */
+export const MIRRORED_IN_JSON_SCHEMA = { mirroredInJsonSchema: true } as const;
+
 const REASON_CUSTOM = "自定义校验（refine）不在 JSON Schema 里，由控制面校验";
 const REASON_PIPE =
 	"含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验";
@@ -66,6 +72,11 @@ function dottedPath(path: readonly (string | number)[]): string {
 		else out.push(String(segment));
 	}
 	return out.join(".").replaceAll(".[]", "[]");
+}
+
+function isMirrored(check: { _zod: { def: object } }): boolean {
+	const params = (check._zod.def as { params?: { mirroredInJsonSchema?: unknown } }).params;
+	return params?.mirroredInJsonSchema === true;
 }
 
 function customMessage(check: { _zod: { def: { error?: unknown } } }): string | undefined {
@@ -97,6 +108,7 @@ function exportPart(
 			if (def.type === "pipe" || def.type === "transform") note(where, REASON_PIPE);
 			for (const check of def.checks ?? []) {
 				if (check._zod.def.check !== "custom") continue;
+				if (isMirrored(check)) continue;
 				const message = customMessage(check);
 				note(where, message ? `${REASON_CUSTOM}：${message}` : REASON_CUSTOM);
 			}

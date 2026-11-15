@@ -1,4 +1,4 @@
-import { subflowName } from "@sfly/orchestration";
+import { nodeNameBeforeId } from "@sfly/orchestration";
 import type { AttemptView, ChainRunView, NodeRunView, RunSummary, RunView } from "@sfly/schema";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { clockOffsetView } from "../agents/agent-clock.js";
@@ -14,7 +14,7 @@ import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runListPreset, runPresetView } from "../presets/run-preset.js";
 import { agentFor, planRun } from "./chain.js";
-import { groupAttempts, nodeStatus } from "./run-board.js";
+import { groupAttempts, nodeStatus, subflowNameOf } from "./run-board.js";
 
 /** 运行视图的类型来自 HTTP 契约（@sfly/schema 的 runsApi）。 */
 export type { AttemptView, ChainRunView as ChainView, NodeRunView as NodeView, RunView };
@@ -72,10 +72,6 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 	const chainNodes = (chainId: string) =>
 		("errors" in plan ? undefined : plan.chains.get(chainId)?.nodes) ?? [];
 	const secrets = secretValues(document, chains);
-	const chainName = (chainId: string) => {
-		const start = document.nodes.find((n) => n.id === chainId);
-		return start?.kind === "subflow_entry" ? subflowName(start) : null;
-	};
 
 	// 只打码用户内容（参数、输入、输出、错误信息），ID、状态、时间等字段原样返回。
 	const m = <T>(value: T): T => maskDeep(value, secrets);
@@ -105,7 +101,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 		chains: chains.map((chain) => ({
 			id: chain.id,
 			chain_id: chain.chainId,
-			name: chainName(chain.chainId),
+			name: subflowNameOf(document, chain.chainId) ?? null,
 			parent_chain_instance_id: chain.parentChainInstanceId,
 			async_node_id: chain.asyncNodeId,
 			depth: chain.depth,
@@ -145,6 +141,7 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 				const last = attempts.at(-1);
 				return {
 					node_id: node.id,
+					display_name: nodeNameBeforeId(node),
 					kind: node.kind,
 					status: nodeStatus(rows),
 					agent: node.kind === "package" ? agentFor(document, node) : null,

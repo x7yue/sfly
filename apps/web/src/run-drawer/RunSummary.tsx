@@ -9,6 +9,7 @@ import { cn } from "cn";
 import { useMemo } from "react";
 import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
+import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
 import { chainLabel as chainName, TERM } from "#/lib/copy";
@@ -119,7 +120,7 @@ export function RunSummary({ runId }: { runId: string }) {
 			)}
 			<h3 className="mt-4.5 mb-2.5 flex items-center text-xs font-semibold tracking-wide text-fg-2">
 				最新日志
-				{focus && <span className="ml-auto font-mono font-normal text-fg-3">{focus.node_id}</span>}
+				{focus && <NodeName node={focus} className="ml-auto font-normal text-fg-3" />}
 			</h3>
 			{taskId ? (
 				<LatestLogs taskId={taskId} day={run.started_at} />
@@ -206,7 +207,7 @@ function ActiveNode({
 		<li className="rounded-lg border border-border-soft bg-raised px-3 py-2.5">
 			<div className="flex items-center gap-2 text-sm">
 				<StatusPill kind={s.kind}>{s.label}</StatusPill>
-				<span className="font-mono">{node.node_id}</span>
+				<NodeName node={node} />
 				{chain.depth > 0 && <span className="truncate text-xs text-fg-3">{chainLabel(chain)}</span>}
 				<span className="ml-auto font-mono text-2xs text-fg-3">
 					{[node.agent, since ? formatDuration(now - Date.parse(since)) : null]
@@ -228,7 +229,7 @@ function ActiveNode({
 					{ratio !== null && (
 						<div
 							role="progressbar"
-							aria-label={`${node.node_id} 进度`}
+							aria-label={`${runNodeName(node)} 进度`}
 							aria-valuemin={0}
 							aria-valuemax={progress.total ?? undefined}
 							aria-valuenow={progress.current}

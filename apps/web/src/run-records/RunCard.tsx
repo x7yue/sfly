@@ -1,9 +1,9 @@
 import type { RunListItem } from "@sfly/schema";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChainBar, doneCount } from "#/components/chain-progress";
+import { ChainBar, doneCount, listChainLabel } from "#/components/chain-progress";
+import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { chainLabel } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -68,7 +68,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					<>
 						{" · "}
 						<span className="text-danger-fg">
-							{failedSubflows.map((f) => chainLabel(f)).join("、")} 失败
+							{failedSubflows.map(listChainLabel).join("、")} 失败
 						</span>
 					</>
 				)}
@@ -79,9 +79,9 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 					.map((chain) => (
 						<div key={chain.id} className="flex items-center gap-2.5 text-sm">
 							<span className="max-w-50 min-w-18 flex-none truncate text-fg-2">
-								{chainLabel(chain)}
+								{listChainLabel(chain)}
 							</span>
-							<ChainBar label={chainLabel(chain)} nodes={chain.nodes} />
+							<ChainBar label={listChainLabel(chain)} nodes={chain.nodes} />
 							<span className="font-mono text-2xs text-fg-3">
 								{doneCount(chain.nodes)}/{chain.nodes.length}
 							</span>
@@ -96,8 +96,10 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 							className="flex items-center gap-2 text-sm whitespace-nowrap"
 						>
 							<StatusDot kind={nodeStatusView(node.status).kind} />
-							<span className="font-mono">{node.node_id}</span>
-							<span className="text-xs text-fg-3">{nodeStatusView(node.status).label}</span>
+							<NodeName node={node} />
+							<span className="flex-none text-xs text-fg-3">
+								{nodeStatusView(node.status).label}
+							</span>
 							<NodePrimaryMetric
 								runId={run.id}
 								entry={catalogEntry(catalog.data, node.chain_instance_id, node.node_id)}

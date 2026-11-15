@@ -82,7 +82,7 @@ describe("立即更新", () => {
 
 	it("Agent 收到立即更新指令；手上的任务以 agent_lost 失败并按重试配置重新排队，更新后重新派发", async () => {
 		await start();
-		const { old, held, runs } = await holding([{ retries: 1 }, {}]);
+		const { old, held, runs } = await holding([{ retries: 1, display_name: "创建测试用户" }, {}]);
 		const [retried, once] = runs as [string, string];
 
 		const res = await updateNow("agent-a");
@@ -91,6 +91,11 @@ describe("立即更新", () => {
 		expect(body.terminated_tasks.map((t) => t.task_id).sort()).toEqual(
 			held.map((t) => t.taskId).sort(),
 		);
+		// 被终止的任务带节点的显示名称（取自运行绑定的版本），没有显示名称的不带。
+		const named = body.terminated_tasks.find((t) => t.run_id === retried);
+		const unnamed = body.terminated_tasks.find((t) => t.run_id === once);
+		expect(named?.display_name).toBe("创建测试用户");
+		expect(unnamed).not.toHaveProperty("display_name");
 		await old.next("updateNow");
 
 		// 配置了重试的节点排队等下一次尝试，没有配置的节点失败、运行失败。

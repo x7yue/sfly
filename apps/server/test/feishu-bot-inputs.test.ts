@@ -51,14 +51,24 @@ interface Problem {
 	node_id?: string;
 }
 
-const document = (inputs: Record<string, unknown>, extra: { pick?: boolean } = {}) => ({
+const document = (
+	inputs: Record<string, unknown>,
+	extra: { pick?: boolean; name?: string } = {},
+) => ({
 	default_agent: "runner",
 	nodes: [
 		{ id: "entry", kind: "entry", params: [{ name: "channel", type: "string" }] },
 		...(extra.pick
 			? [{ id: "pick", kind: "package", package: "alerts", node: "pick", inputs: {} }]
 			: []),
-		{ id: "a", kind: "package", package: "alerts", node: "alert", inputs },
+		{
+			id: "a",
+			kind: "package",
+			package: "alerts",
+			node: "alert",
+			inputs,
+			...(extra.name === undefined ? {} : { display_name: extra.name }),
+		},
 	],
 	edges: extra.pick
 		? [
@@ -148,18 +158,38 @@ describe("「飞书机器人」类型的输入", () => {
 		expect(assign.referencedFeishuBots).toEqual(["dev"]);
 	});
 
+	it("提到的节点写成「显示名称（节点 ID）」：节点有显示名称时预检和触发时的文案都带上", async () => {
+		const { id } = await save(document({ bot: "ghost" }, { name: "发告警" }));
+		const message = "节点 发告警（a） 的输入 bot 选择的飞书机器人「ghost」还没有登记";
+		expect(await preflight(id)).toEqual([
+			{ code: "feishu_bot_not_registered", message, node_id: "a" },
+		]);
+
+		const viaParam = await save(document({ bot: "${{ params.channel }}" }, { name: "发告警" }));
+		const rejected = await api.trigger(viaParam.id, { channel: "ghost" });
+		expect(((await rejected.json()) as { error: { message: string } }).error.message).toBe(
+			`${message}（取自入口参数）`,
+		);
+	});
+
 	it("子流程里引用入口参数的也在触发时按实际值检查：经异步任务节点的参数映射传入", async () => {
 		const doc = {
 			default_agent: "runner",
 			nodes: [
 				{ id: "entry", kind: "entry", params: [{ name: "channel", type: "string" }] },
-				{ id: "spawn", kind: "async", params: { bot: "${{ params.channel }}" } },
+				{
+					id: "spawn",
+					kind: "async",
+					display_name: "派发告警",
+					params: { bot: "${{ params.channel }}" },
+				},
 				{ id: "sub", kind: "subflow_entry", params: [{ name: "bot", type: "string" }] },
 				{
 					id: "a",
 					kind: "package",
 					package: "alerts",
 					node: "alert",
+					display_name: "发告警",
 					inputs: { bot: "${{ params.bot }}" },
 				},
 			],
@@ -178,7 +208,7 @@ describe("「飞书机器人」类型的输入", () => {
 		expect(((await rejected.json()) as { error: unknown }).error).toMatchObject({
 			code: "invalid_params",
 			message:
-				"节点 a 的输入 bot 选择的飞书机器人「ghost」还没有登记（取自子流程的参数，由异步任务节点 spawn 传入）",
+				"节点 发告警（a） 的输入 bot 选择的飞书机器人「ghost」还没有登记（取自子流程的参数，由异步任务节点 派发告警（spawn） 传入）",
 			details: [{ code: "feishu_bot_not_registered", node_id: "a" }],
 		});
 		await runner.expectNoAssign();

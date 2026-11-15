@@ -8,8 +8,8 @@ import { FeishuBotName } from "./feishu-bots.js";
  * 名称和说明不属于场景版本，可以随时修改；归档的场景不出现在默认列表、不能触发运行，可以恢复，不提供物理删除。
  * 场景版本不可修改：保存、恢复都是追加新版本。
  *
- * 响应里的 `document` 用 OrchestrationDocument：控制面保存时已按它解析（默认值都已补齐），
- * 存储的文档再解析一次不会改变，满足「响应解析前后相同」的约定。
+ * 响应里的 `document` 用 OrchestrationDocument：控制面保存时按它解析，读出时再解析一次（升级前保存的版本
+ * 由此补上后来新增字段的默认值，例如注释框 `annotations`），满足「响应解析前后相同」的约定。
  */
 
 /**
@@ -87,12 +87,16 @@ export const OrchestrationVersionView = z.object({
 	document: OrchestrationDocument,
 });
 
-/** 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。 */
+/**
+ * 保存时返回的静态检查警告（@sfly/orchestration 的 documentWarnings）；只提示，不阻止保存。
+ * 注释框的警告带 `annotation_id`，指出是哪个注释框；它们也不阻断触发。
+ */
 export const DocumentWarningView = z.object({
 	code: z.string(),
 	message: z.string(),
 	node_id: z.string().optional(),
 	input: z.string().optional(),
+	annotation_id: z.string().optional(),
 });
 
 export const SavedVersionView = z.object({

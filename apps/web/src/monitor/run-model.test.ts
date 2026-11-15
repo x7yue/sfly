@@ -2,7 +2,6 @@ import type {
 	AttemptView,
 	ChainRunView,
 	NodeRunView,
-	OrchestrationDocument,
 	RunView,
 	TaskProgressView,
 } from "@sfly/schema";
@@ -11,7 +10,6 @@ import {
 	applyProgress,
 	chainLabel,
 	chainLabelParts,
-	documentNodes,
 	failureSummary,
 	focusNode,
 	initialSelection,
@@ -19,7 +17,6 @@ import {
 	logOrigin,
 	logScope,
 	nextFailure,
-	nodeTitle,
 	progressLabel,
 	runDocumentTitle,
 	runFailure,
@@ -132,31 +129,6 @@ describe("子流程名称（#80 故事 1、23）", () => {
 		expect(`${chainLabelParts(sub).name} · ${chainLabelParts(sub).id}`).toBe(chainLabel(sub));
 		const main = chain({ depth: 0, name: null, chain_id: "entry" });
 		expect(chainLabelParts(main)).toEqual({ name: "主链", id: null });
-	});
-
-	it("停止子流程节点的说明文字是它要停止的子流程名称", () => {
-		const doc: OrchestrationDocument = {
-			nodes: [
-				{ id: "entry", kind: "entry", params: [] },
-				{ id: "stop", kind: "stop_subflow", always: false, subflow: "mon" },
-				{ id: "unset", kind: "stop_subflow", always: false },
-				{ id: "mon", kind: "subflow_entry", name: "监控", params: [] },
-			],
-			edges: [],
-			packages: {},
-		};
-		const decls = documentNodes(doc);
-		const node = (id: string): NodeRunView => ({
-			node_id: id,
-			kind: "stop_subflow",
-			status: "waiting",
-			agent: null,
-			outputs: null,
-			error: null,
-			attempts: [],
-		});
-		expect(nodeTitle(node("stop"), decls.get("stop"), decls)).toBe("停止子流程「监控」");
-		expect(nodeTitle(node("unset"), decls.get("unset"), decls)).toBe("停止子流程");
 	});
 });
 
@@ -400,7 +372,7 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 	it("第一个失败的节点、最后一次失败的尝试、错误信息的第一行（不含堆栈）", () => {
 		expect(runFailure(failed)).toEqual({
 			ref: { chainInstanceId: "main", nodeId: "verify" },
-			nodeId: "verify",
+			node: { node_id: "verify" },
 			attempt: 2,
 			message: "AssertionError: 仍然漏拦",
 		});

@@ -1,5 +1,6 @@
 import { ChevronDownIcon, ListFilterIcon } from "lucide-react";
 import { useId, useState } from "react";
+import { NodeName, runNodeName } from "#/components/node-name";
 import { StatusDot } from "#/components/status";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -49,7 +50,7 @@ export function NodeFilter({
 	const visible = groups.filter(
 		(g) =>
 			!q ||
-			g.ref.nodeId.toLowerCase().includes(q) ||
+			runNodeName(g.node).toLowerCase().includes(q) ||
 			`${g.entry.package}/${g.entry.node}`.toLowerCase().includes(q),
 	);
 	const chains = [...new Map(visible.map((g) => [g.chain.id, g.chain])).values()];
@@ -110,13 +111,13 @@ export function NodeFilter({
 								{members.map((g) => (
 									<Row
 										key={g.key}
-										name={g.ref.nodeId}
+										name={runNodeName(g.node)}
 										checked={checked(g.key)}
 										onChange={(on) => toggle([g.key], on)}
 										indent
 									>
 										<StatusDot kind={g.status.kind} />
-										<span className="font-mono">{g.ref.nodeId}</span>
+										<NodeName node={g.node} />
 										<span className="min-w-0 truncate text-fg-3">
 											{g.entry.package}/{g.entry.node}
 										</span>

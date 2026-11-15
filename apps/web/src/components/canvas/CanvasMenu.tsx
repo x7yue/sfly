@@ -25,6 +25,12 @@ export type CanvasMenuTarget =
 			anchor: Position | Element;
 	  }
 	| {
+			kind: "nodes";
+			/** 右键的节点在这组多选里：打开菜单时选中的一组节点（菜单作用于整组，选中状态保持）。 */
+			ids: readonly string[];
+			anchor: Position | Element;
+	  }
+	| {
 			kind: "edge";
 			edge: DocEdge;
 			/** 右键处（或连线中点「＋」上右键处）的屏幕坐标。 */
@@ -33,7 +39,7 @@ export type CanvasMenuTarget =
 
 /** 菜单贴着哪里出现。 */
 export const menuAnchor = (target: CanvasMenuTarget) =>
-	target.kind === "node" ? target.anchor : target.client;
+	target.kind === "node" || target.kind === "nodes" ? target.anchor : target.client;
 
 /** 「适配视图」：任何画布菜单里都可以放，只读画布的空白处菜单只有它。 */
 export function FitViewMenuItem() {

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeftIcon, ChevronDownIcon, PauseIcon, PlayIcon, WorkflowIcon } from "lucide-react";
 import { useState } from "react";
+import { NodeName } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
@@ -23,6 +24,7 @@ import {
 	DropdownMenuLabel,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Truncate } from "@/components/ui/truncate";
 import { CancelRunButton } from "./CancelRunDialog";
 import { useMonitorActions, useTimeAxis } from "./monitor-state";
 import { RunPresetInfo } from "./RunPresetInfo";
@@ -198,17 +200,22 @@ export function MonitorTopBar({
 function FailureSummary({ failure }: { failure: RunFailure }) {
 	const actions = useMonitorActions();
 	return (
-		<button
-			type="button"
-			title={`${failureSummary(failure)}\n点击查看这个节点的尝试`}
-			data-testid="run-failure"
-			onClick={() => {
-				actions.select(failure.ref);
-				actions.showPanel("attempts");
-			}}
-			className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
+		<Truncate
+			label={`${failureSummary(failure)}\n点击查看这个节点的尝试`}
+			render={
+				<button
+					type="button"
+					aria-description="点击查看这个节点的尝试"
+					data-testid="run-failure"
+					onClick={() => {
+						actions.select(failure.ref);
+						actions.showPanel("attempts");
+					}}
+					className="block h-6.5 min-w-24 shrink-[2] truncate rounded-md px-1.5 text-left text-xs leading-6.5 text-fg-2 hover:bg-raised hover:text-fg-1"
+				/>
+			}
 		>
-			失败于 <span className="font-mono text-fg-1">{failure.nodeId}</span>
+			失败于 <NodeName node={failure.node} className="text-fg-1" />
 			{failureAttempt(failure)}
 			{failure.message && (
 				<span className="text-danger-fg">
@@ -216,7 +223,7 @@ function FailureSummary({ failure }: { failure: RunFailure }) {
 					{failure.message}
 				</span>
 			)}
-		</button>
+		</Truncate>
 	);
 }
 

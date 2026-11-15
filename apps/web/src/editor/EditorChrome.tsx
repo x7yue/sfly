@@ -112,12 +112,15 @@ export function EditorTopLeft({
  * 保存被拦截（红）、没有保存的修改或还没有保存过版本（琥珀，此时白色主操作是保存）；已保存是纯文字。
  * 字段错误属于检查结果，显示在左上控件组；保存按钮不因字段错误禁用，点它会把焦点放到出错的字段（ScenarioEditor 的 save）。
  * 白色主操作只有一个：有未保存的修改时是保存，否则是运行。保存被拦截（409）时弹出冲突对话框。
+ * 正在原地改名（`renaming`）时保存按钮可点：输入框里的名称还没进文档，没有改动时它本来是禁用的，
+ * 禁用的按钮点不到，名称确认之后还得再点一次。
  */
 export function EditorTopRight({
 	orchestration,
 	editors,
 	doc,
 	versioning,
+	renaming,
 	onSave,
 	onRun,
 	onReload,
@@ -127,6 +130,8 @@ export function EditorTopRight({
 	editors: readonly string[];
 	doc: OrchestrationDocument;
 	versioning: Versioning;
+	/** 正在原地改显示名称。 */
+	renaming: boolean;
 	onSave(): void;
 	onRun(): void;
 	onReload(head: OrchestrationHeadView): void;
@@ -168,7 +173,7 @@ export function EditorTopRight({
 			</Tooltip>
 			<Button
 				variant={unsaved ? "primary" : "default"}
-				disabled={save.isPending || (!dirty && base.version > 0)}
+				disabled={save.isPending || (!dirty && base.version > 0 && !renaming)}
 				onClick={onSave}
 			>
 				{save.isPending ? "保存中…" : "保存"}

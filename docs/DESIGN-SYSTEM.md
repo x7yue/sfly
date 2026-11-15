@@ -60,7 +60,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ### 2.3 画布专用 `--canvas-*`
 
-`canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-run-running` / `-failed` / `-cancelled` / `-stopped` / `-done-bg` / `-done-border`（已完成的节点下沉，不降文字对比度）、`--canvas-minimap-mask`（小地图视口外遮罩）。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
+`canvas-bg`、`canvas-grid`、`canvas-node-bg` / `-border` / `-selected`、`canvas-port`、`canvas-edge` / `-selected` / `-live` / `-dispatch`、`canvas-subflow` / `-fg` / `-line` / `-soft`、`canvas-annotation-line` / `-soft` / `-band`（注释框：中性实线框和抬起一档的标题带，和紫色虚线的子流程区域分开）、`canvas-run-running` / `-failed` / `-cancelled` / `-stopped` / `-done-bg` / `-done-border`（已完成的节点下沉，不降文字对比度）、`--canvas-minimap-mask`（小地图视口外遮罩）。画布组件（#35 起）只用这一层和语义层。节点几何常量（卡片宽高、端口位置）由 #35 收敛为单一来源。
 
 画布里的文字随缩放比例放大，屏幕上不小于最小字号，只有两档：数字与拉丁字母 11px，含中文 12px；卡片标题 13px，缩小视图时仍约 12px。写法固定用 `components/canvas/zoom-text.ts` 的 `ZOOM_TEXT_11`、`ZOOM_TEXT_12`、`ZOOM_TEXT_TITLE`，不另写字号。
 
@@ -146,6 +146,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`PageHeader` 固定一个控件高（有没有右侧按钮标题都在同一位置），标题 h1 可以被程序聚焦（焦点去向的兜底，见第 7 节）；`Panel` 用 `overflow: clip` 裁圆角，不是滚动容器（里面的表头才能吸顶）；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
 | `#/docs/Markdown` | 用户文档（ADR 0013）的 Markdown 渲染：代码块用 `CodeBlock`（```prompt 代码块是给人读、复制给 AI 编程助手的提示词，自动换行、正文字体；其余代码块不换行），表格用 `ui/table`，`<slug>.md` 链接换成文档页 |
 | `status`：`STATUS`、`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView`、`alignPulses` | 状态语法与槽位，见 6.1；运行 / 链 / 节点状态的种类与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，颜色、形状、动效只从 `STATUS` 取，不另写映射表。节点状态在各处的显示规则（种类、画布运行状态、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
+| `note-icon`：`NoteIcon` | 备注图标：悬停或键盘聚焦时在提示里显示备注全文（保留换行；长备注不超出视口，在提示里滚动：鼠标用滚轮，键盘用 PageUp / PageDown / Home / End）。页面上它是按钮，可以 Tab 到，名称「备注」、描述是全文；画布上节点卡片不在 Tab 顺序里，图标放在卡片里时传 `host`（卡片的选择器）和 `textId`：图标本身不可聚焦、对读屏隐藏，键盘用户靠卡片的键盘焦点看到提示，读屏用户在卡片的描述里读到备注。大小按所在文字的字号（em），不随画布缩放的提示固定 12px；节点卡片、注释框的标题带、运行监控页的图表组标题都用它，不另写一套 |
 | `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状；每段的颜色、描边与高低取自 `STATUS[kind].area`） |
 | `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |
 | `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认；`role="separator"`，`aria-valuemin` / `aria-valuemax` / `aria-valuenow` 是量出来的值（默认大小也有值），操作说明放在 `aria-describedby` 里，不只写在 `title`。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限是视口宽度的 60%；检查器的上限还要给画布留出小地图、工具条与间距（`INSPECTOR_CANVAS_RESERVE`），取两者里小的，拖到最宽也不会让工具条压住小地图；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
@@ -236,7 +237,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 ### 6.5 长文本、截断与列宽
 
 - **标题不截成一行**：面板里的标题（卡片、检查器）最多两行，`line-clamp-2`；放不下的部分在详情页或悬停里看。
-- **工具条里的标题、表格与列表里的名称**：用 `Truncate` 单行截断。真的被截断时，悬停或键盘聚焦都会用提示显示全文（只有 `title` 不行：键盘和触屏拿不到）；截断的是链接、按钮本身时传 `render={<Link …/>}`，提示跟着它的聚焦出现；普通文字被截断时自己可以 Tab 到。全文始终在 DOM 里，读屏、页内查找、复制拿到的都是全文，不在脚本里截字符串。
+- **工具条里的标题、表格与列表里的名称**：用 `Truncate` 单行截断。真的被截断时，悬停或键盘聚焦都会用提示显示全文（只有 `title` 不行：键盘和触屏拿不到）；截断的是链接、按钮本身时传 `render={<Link …/>}`，提示跟着它的聚焦出现；普通文字被截断时自己可以 Tab 到。按钮里还有图标、徽标等别的内容、或者好几段文字都可能被截断时，传 `render` 和 `label`（提示里的全文）：按钮本身是触发器，里面的 `Truncate` 只截断，不再多一个可聚焦的元素和第二个提示，按钮上不再写 `title`。全文始终在 DOM 里，读屏、页内查找、复制拿到的都是全文，不在脚本里截字符串。
 - **标识符保留结尾**：包名@版本、文件名这类最有区分度的在末尾，`Truncate keepEnd={n}` 让结尾 n 个字符始终可见、省略号落在中间。
 - **标识符不折行**：等宽的标识符（包名@版本、地址、运行编号）不在连字符处折成两行，宁可截断；整段的路径、堆栈要换行时用 `overflow-wrap: anywhere`（`wrap-anywhere`），不用 `break-all`（它把普通单词也从中间切开）。
 - **列表表格的列宽**（`TableHead` / `TableCell` 的 `width`，DataTable 写在列的 `meta.width`）：编号、状态、进度、版本、触发人、时间、耗时、操作这类列用 `"fit"`（按内容收紧、不折行）；场景名、说明、错误信息这类列用 `"grow"`（吃掉剩下的宽度，里面用 `Truncate`），每张表只有一列 `"grow"`。宽屏上余量都给 `"grow"` 列，数值列聚在一起，不平摊到每一列。

@@ -16,11 +16,13 @@ from sfly.cli.output import actor_label, add_limit_option, dump_json, format_tab
 from sfly.cli.run_view import (
     NodeRef,
     chain_label,
+    display_name_of,
     duration_ms,
     fetch_run,
     format_duration,
     node_status_label,
     run_status_label,
+    with_display_name,
 )
 from sfly.cli.scenario_lookup import find_scenario
 from sfly.cli.session import Session, command, common_options
@@ -192,6 +194,7 @@ def describe(run: Mapping[str, Any], scenario_name: str | None) -> dict[str, Any
                 "nodes": [
                     {
                         "id": node["node_id"],
+                        **display_name_of(node),
                         "kind": node["kind"],
                         "status": node["status"],
                         "agent": node["agent"],
@@ -249,7 +252,7 @@ def render(view: Mapping[str, Any]) -> str:
         if chain["nodes"]:
             rows = [
                 [
-                    n["id"],
+                    with_display_name(n["id"], n.get("display_name")),
                     node_status_label(n["status"]),
                     str(len(n["attempts"])),
                     n["agent"] or "-",
@@ -266,7 +269,7 @@ def render(view: Mapping[str, Any]) -> str:
         else:
             lines.append("  没有节点")
         attention.extend(
-            (NodeRef(chain["chain"], n["id"]).label, n)
+            (with_display_name(NodeRef(chain["chain"], n["id"]).label, n.get("display_name")), n)
             for n in chain["nodes"]
             if n["status"] == "failed" or len(n["attempts"]) > 1
         )

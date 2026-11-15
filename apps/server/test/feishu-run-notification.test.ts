@@ -299,6 +299,51 @@ describe("运行通知", () => {
 			expect(list?.content).toBe(`**失败的节点**\n- 子流程 压测 · ${instance}：b`);
 		});
 
+		it("失败的节点有显示名称时写成「显示名称（节点 ID）」，没有时只写节点 ID", async () => {
+			const id = await scenario(
+				flow([
+					echo("a", { display_name: "创建测试用户" }),
+					echo("b", { always: true }),
+					echo("c", { always: true, display_name: "c" }),
+				]),
+			);
+			const runId = await api.triggerOk(id);
+			for (let i = 0; i < 3; i++) await agent.fail(await agent.nextAssign(), "boom");
+			await status(runId, "failed");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			const list = (cards()[0] as Card).card.body.elements.find((e) =>
+				e.content?.startsWith("**失败的节点**"),
+			);
+			expect(list?.content).toBe("**失败的节点**\n- 主链：创建测试用户（a）\n- 主链：b\n- 主链：c");
+		});
+
+		it("子流程里失败的节点也写显示名称；名称取自运行绑定的版本，运行中改了场景不影响", async () => {
+			const document = (name: string) =>
+				orchestration(
+					[
+						[{ id: "entry", kind: "entry", params: [] }, spawn("go")],
+						[
+							{ id: "sub", kind: "subflow_entry", name: "压测", params: [] },
+							echo("b", { display_name: name }),
+						],
+					],
+					[["go", "sub"]],
+				);
+			const id = await scenario(document("压测下单接口"));
+			const runId = await api.triggerOk(id);
+			await api.saveVersion(id, document("改过的名字"));
+			await agent.fail(await agent.nextAssign(), "boom");
+			await status(runId, "failed");
+			const instance = chainOf(await api.run(runId), "sub").id.slice(0, 8);
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			const list = (cards()[0] as Card).card.body.elements.find((e) =>
+				e.content?.startsWith("**失败的节点**"),
+			);
+			expect(list?.content).toBe(`**失败的节点**\n- 子流程 压测 · ${instance}：压测下单接口（b）`);
+		});
+
 		it("失败的节点最多列 10 个，其余写总数", async () => {
 			const nodes = [
 				echo("f0"),

@@ -27,6 +27,8 @@ export const RunningTaskView = z.object({
 	run_id: z.string(),
 	orchestration_id: z.string(),
 	node_id: z.string(),
+	/** 运行绑定的场景版本里这个节点的显示名称（子流程入口节点是子流程名称）；没有时不给。 */
+	display_name: z.string().optional(),
 	attempt: z.number().int(),
 	/** dispatched：下载、安装、启动中；running：执行器已启动。 */
 	status: z.enum(["dispatched", "running"]),

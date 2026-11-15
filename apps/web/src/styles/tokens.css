@@ -191,6 +191,10 @@
 	--canvas-subflow-fg: var(--base-violet-200);
 	--canvas-subflow-line: color-mix(in srgb, var(--canvas-subflow) 52%, transparent);
 	--canvas-subflow-soft: color-mix(in srgb, var(--canvas-subflow) 7%, transparent);
+	/* 注释框：中性实线框，和紫色虚线的子流程区域分开；标题带是抬起一档的面 */
+	--canvas-annotation-line: var(--border-strong);
+	--canvas-annotation-soft: color-mix(in srgb, var(--base-white) 2.5%, transparent);
+	--canvas-annotation-band: var(--raised);
 	--canvas-run-running: var(--signal);
 	--canvas-run-failed: var(--danger);
 	--canvas-run-cancelled: var(--cancelled); /* 虚线 */

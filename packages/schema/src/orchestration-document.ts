@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optionalLine, optionalMultiline, requiredLine } from "./display-text.js";
 import { NodeName, PackageName } from "./package-metadata.js";
 
 /**
@@ -8,13 +9,30 @@ import { NodeName, PackageName } from "./package-metadata.js";
 
 export const ParamType = z.enum(["string", "number", "boolean", "json"]);
 
+/** 参数说明的长度上限（Unicode 字符数）。 */
+export const PARAM_DESCRIPTION_MAX = 200;
+
+/** 备注（节点的、注释框的）的长度上限（Unicode 字符数）。 */
+export const NODE_NOTE_MAX = 2000;
+
+/** 注释框标题的长度上限（Unicode 字符数）。 */
+export const ANNOTATION_TITLE_MAX = 40;
+
 export const ParamDeclaration = z.strictObject({
 	name: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
 	type: ParamType,
 	default: z.unknown().optional(),
 	required: z.boolean().default(false),
 	secret: z.boolean().default(false),
+	/**
+	 * 一行说明：触发表单、子流程参数映射表单和命令行的参数表里显示。属于版本内容，和 `position` 一样；
+	 * 只用于显示，不影响执行（docs/SEMANTICS.md §2.1）。
+	 */
+	description: optionalLine(PARAM_DESCRIPTION_MAX),
 });
+
+/** 节点显示名称的长度上限（Unicode 字符数）。 */
+export const DISPLAY_NAME_MAX = 40;
 
 /** 节点输入值：常量或含 `${{ ... }}` 引用的字符串，原样保存，派发时解析。 */
 const InputValues = z.record(z.string(), z.unknown());
@@ -25,12 +43,28 @@ const nodeBase = {
 	id: z.string().min(1),
 	/** 布局属于版本内容。 */
 	position: Position.optional(),
+	/** 备注：多行说明，写这个节点做什么、为什么这样配置。属于版本内容，只用于显示，不影响执行（docs/SEMANTICS.md §1.5）。 */
+	note: optionalMultiline(NODE_NOTE_MAX),
 };
+
+/**
+ * 显示名称：一行短名字，卡片标题和其他显示节点的地方优先显示它。属于版本内容，和 `position` 一样（ADR 0023）；
+ * 只用于显示，不参与引用、派发和校验（docs/SEMANTICS.md §1.4）。子流程入口节点没有它：子流程名称（`name`）就是显示名称。
+ */
+const displayName = { display_name: optionalLine(DISPLAY_NAME_MAX) };
+
+/**
+ * 参数声明列表，没写时是空列表。用 `prefault` 而不是 `default`：参数声明里有「去掉首尾空白」的转换，
+ * zod 导出输入形态的 JSON Schema 时会把转换外层的 `default` 当成只属于输出而丢掉，`prefault` 的值会留下，
+ * 解析结果一样。
+ */
+const paramDeclarations = z.array(ParamDeclaration).prefault([]);
 
 export const EntryNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("entry"),
-	params: z.array(ParamDeclaration).default([]),
+	params: paramDeclarations,
 });
 
 export const SubflowEntryNode = z.strictObject({
@@ -41,11 +75,12 @@ export const SubflowEntryNode = z.strictObject({
 	 * 可选只为兼容旧版本：没有该字段时以节点 ID 作为名称；为空或重复时保存只警告、触发时拒绝（§1.2）。
 	 */
 	name: z.string().optional(),
-	params: z.array(ParamDeclaration).default([]),
+	params: paramDeclarations,
 });
 
 export const AsyncTaskNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("async"),
 	/** 子流程参数映射：子流程入口参数名 → 值。 */
 	params: InputValues.default({}),
@@ -53,6 +88,7 @@ export const AsyncTaskNode = z.strictObject({
 
 export const TimerNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("timer"),
 	always: z.boolean().default(false),
 	/** `HH:MM:SS` 或 ISO 8601 日期时间。 */
@@ -62,6 +98,7 @@ export const TimerNode = z.strictObject({
 
 export const SleepNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("sleep"),
 	always: z.boolean().default(false),
 	/** 例如 `30s`、`10m`、`1h`，可以是引用。 */
@@ -70,6 +107,7 @@ export const SleepNode = z.strictObject({
 
 export const StopSubflowNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("stop_subflow"),
 	always: z.boolean().default(false),
 	/**
@@ -87,6 +125,7 @@ export const FeishuCardColor = z.enum(["blue", "green", "orange", "red", "grey"]
 
 export const FeishuNotifyNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("feishu_notify"),
 	always: z.boolean().default(false),
 	/**
@@ -118,6 +157,7 @@ export const FeishuNotifyNode = z.strictObject({
 
 export const PackageNode = z.strictObject({
 	...nodeBase,
+	...displayName,
 	kind: z.literal("package"),
 	always: z.boolean().default(false),
 	package: PackageName,
@@ -150,6 +190,32 @@ export const Edge = z.strictObject({
 	kind: z.enum(["chain", "dispatch"]),
 });
 
+/**
+ * 注释框：给一组节点和子流程画的框，带标题和备注，说明它们合起来在场景里做什么。属于版本内容，只记成员、
+ * 不存坐标和大小，框的范围由成员算出（@sfly/orchestration 的 annotationBoxes，ADR 0023）；
+ * 只用于显示，不影响执行（docs/SEMANTICS.md §1.6）。
+ */
+export const Annotation = z.strictObject({
+	/** 注释框之间唯一（重复时文档不合法）；画布新建时自动生成，例如 `annotation_1`。 */
+	id: z.string().min(1),
+	title: requiredLine(ANNOTATION_TITLE_MAX),
+	note: optionalMultiline(NODE_NOTE_MAX),
+	/** 成员节点的节点 ID。 */
+	nodes: z.array(z.string().min(1)).default([]),
+	/** 成员子流程：子流程入口的节点 ID（和停止子流程节点一样，子流程改名不影响）。 */
+	subflows: z.array(z.string().min(1)).default([]),
+});
+
+const Annotations = z.array(Annotation).superRefine((annotations, ctx) => {
+	const seen = new Set<string>();
+	for (const [i, { id }] of annotations.entries()) {
+		if (seen.has(id)) {
+			ctx.addIssue({ code: "custom", path: [i, "id"], message: `注释框 ID ${id} 重复` });
+		}
+		seen.add(id);
+	}
+});
+
 export const OrchestrationDocument = z
 	.strictObject({
 		default_agent: z.string().min(1).optional(),
@@ -157,9 +223,11 @@ export const OrchestrationDocument = z
 		edges: z.array(Edge).default([]),
 		/** 锁定的节点包版本：包名 → 版本（`dev` 表示开发版本）。 */
 		packages: z.record(PackageName, z.string().min(1)).default({}),
+		annotations: Annotations.default([]),
 	})
 	.meta({ title: "sfly 编排文档" });
 
 export type ParamDeclaration = z.infer<typeof ParamDeclaration>;
 export type OrchestrationDocument = z.infer<typeof OrchestrationDocument>;
 export type OrchestrationNode = z.infer<typeof OrchestrationNode>;
+export type Annotation = z.infer<typeof Annotation>;

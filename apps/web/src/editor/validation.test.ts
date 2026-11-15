@@ -1,7 +1,12 @@
 import { type PackageCatalog, packageKey } from "@sfly/orchestration";
 import type { OrchestrationDocument } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { checkSummary, documentFieldErrors, undeclaredInputNotes } from "./validation";
+import {
+	checkSummary,
+	documentFieldErrors,
+	undeclaredInputNotes,
+	warningsSummary,
+} from "./validation";
 
 const base: OrchestrationDocument = {
 	nodes: [
@@ -14,11 +19,27 @@ const base: OrchestrationDocument = {
 	],
 	edges: [{ from: "entry", to: "wait", kind: "chain" }],
 	packages: {},
+	annotations: [],
 };
 
 describe("保存前的字段校验", () => {
 	it("合法的文档没有字段错误；静态检查的警告（例如缺少 Agent）不算字段错误", () => {
 		expect(documentFieldErrors(base)).toEqual([]);
+	});
+
+	it("显示名称超过 40 个字符或带换行时指出所在节点和字段；空白的显示名称不算错", () => {
+		const withName = (display_name: string): OrchestrationDocument => ({
+			...base,
+			nodes: base.nodes.map((n) => (n.id === "wait" ? { ...n, display_name } : n)),
+		});
+		expect(documentFieldErrors(withName("😀".repeat(40)))).toEqual([]);
+		expect(documentFieldErrors(withName("   "))).toEqual([]);
+		expect(documentFieldErrors(withName("😀".repeat(41)))).toEqual([
+			{ nodeId: "wait", field: "display_name", message: "最多 40 个字符", typed: false },
+		]);
+		expect(documentFieldErrors(withName("第一行\n第二行"))).toEqual([
+			{ nodeId: "wait", field: "display_name", message: "只能写一行", typed: false },
+		]);
 	});
 
 	it("参数名不合法或重复时指出所在节点和字段", () => {
@@ -102,10 +123,35 @@ describe("提醒：节点类型没有声明的输入", () => {
 		expect(undeclaredInputNotes(doc, new Map())).toEqual([]);
 	});
 
+	it("提醒里的节点写成「显示名称（节点 ID）」", () => {
+		const loaded = new Map([[packageKey("demo", "1.0.0"), [type]]]) as unknown as PackageCatalog;
+		const named: OrchestrationDocument = {
+			...doc,
+			nodes: doc.nodes.map((n) => (n.id === "fetch" ? { ...n, display_name: "探测站点" } : n)),
+		};
+		expect(undeclaredInputNotes(named, loaded)[0]?.message).toBe(
+			"探测站点（fetch） 的输入 token 没有在节点类型中声明",
+		);
+	});
+
 	it("检查结果：字段错误最先，其次警告，没有警告时带上提醒条数", () => {
 		expect(checkSummary(0, 2, 1)).toEqual({ kind: "warn", label: "2 条警告" });
 		expect(checkSummary(0, 0, 1)).toEqual({ kind: "ok", label: "检查通过 · 1 条提醒" });
 		expect(checkSummary(0, 0, 0)).toEqual({ kind: "ok", label: "检查通过" });
 		expect(checkSummary(1, 2, 1)).toEqual({ kind: "failed", label: "1 处字段错误" });
+	});
+
+	it("保存后的提示：只有注释框的警告时说明不影响触发运行；混着时说清有几条要处理", () => {
+		const annotation = {
+			code: "annotation_no_members",
+			message: "…",
+			annotation_id: "annotation_1",
+		};
+		const other = { code: "orphan_node", message: "…", node_id: "stray" };
+		expect(warningsSummary([other, other])).toBe("2 条警告，触发运行前需要处理");
+		expect(warningsSummary([annotation])).toBe("1 条警告，不影响触发运行");
+		expect(warningsSummary([annotation, other, annotation])).toBe(
+			"3 条警告，其中 1 条触发运行前需要处理",
+		);
 	});
 });

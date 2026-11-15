@@ -60,8 +60,17 @@ export interface ChainProgressData {
 	id: string;
 	chain_id: string;
 	subflow: boolean;
+	/** 子流程名称（运行列表、控制台统计从运行绑定的版本里补上）；主链没有。 */
+	subflow_name?: string | undefined;
 	nodes: readonly { node_id: string; status: string }[];
 }
+
+/** 运行列表、控制台统计里的链实例（或失败的链）的名称：「主链」或「子流程 <子流程名称>」。 */
+export const listChainLabel = (chain: {
+	chain_id: string;
+	subflow: boolean;
+	subflow_name?: string | undefined;
+}) => chainLabel({ chain_id: chain.chain_id, subflow: chain.subflow, name: chain.subflow_name });
 
 /** 各链一行进度条；给出 max 时最多画这么多条，其余只计数（保证表格行高一致）。 */
 export function ChainBars({
@@ -82,7 +91,7 @@ export function ChainBars({
 				{visible.map((chain) => (
 					<ChainBar
 						key={chain.id}
-						label={chainLabel(chain)}
+						label={listChainLabel(chain)}
 						nodes={chain.nodes}
 						variant={variant}
 					/>

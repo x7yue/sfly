@@ -5,6 +5,7 @@ import {
 	MAX_SERIES,
 	type MetricDataLoss,
 	type MetricSeries,
+	type OrchestrationDocument,
 	type PlatformMetrics,
 	type RunView,
 } from "@sfly/schema";
@@ -13,6 +14,8 @@ import { cn } from "cn";
 import { BarChart3Icon, ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
+import { NodeName, runNodeName } from "#/components/node-name";
+import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
 import { formatDuration } from "#/lib/format";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -23,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Segmented } from "@/components/ui/segmented";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Truncate } from "@/components/ui/truncate";
 import {
 	buildGroups,
 	type ChartGroup,
@@ -36,7 +40,7 @@ import { balancedColumns, chartLines, chartWindow } from "./charts";
 import { MetricChart } from "./MetricChart";
 import { nodeKey, PLATFORM_KEY, useMonitor, useMonitorActions, useTimeAxis } from "./monitor-state";
 import { NodeFilter } from "./NodeFilter";
-import { chainLabel } from "./run-model";
+import { chainLabel, documentNodes, findNode } from "./run-model";
 import type { TimeRange } from "./timeline-model";
 import {
 	attemptsSignature,
@@ -63,10 +67,13 @@ const iso = (ms: number) => new Date(ms).toISOString();
  */
 export function ChartWorkspace({
 	run,
+	doc,
 	catalog,
 	compact,
 }: {
 	run: RunView;
+	/** 运行绑定的版本文档：节点的备注。 */
+	doc: OrchestrationDocument | undefined;
 	catalog: ReturnType<typeof useMetricCatalog>;
 	compact: boolean;
 }) {
@@ -83,6 +90,7 @@ export function ChartWorkspace({
 		() => buildGroups(run, catalog.data?.nodes ?? [], chosen),
 		[run, catalog.data, chosen],
 	);
+	const decls = useMemo(() => documentNodes(doc), [doc]);
 
 	const [search, setSearch] = useState("");
 	const [density, setDensity] = useState<Density>("standard");
@@ -101,7 +109,7 @@ export function ChartWorkspace({
 		.map((g) => ({
 			group: g,
 			charts:
-				!query || matches(g.ref.nodeId) || matches(`${g.entry.package}/${g.entry.node}`)
+				!query || matches(runNodeName(g.node)) || matches(`${g.entry.package}/${g.entry.node}`)
 					? g.entry.charts
 					: g.entry.charts.filter((c) => matches(c.title)),
 		}))
@@ -205,10 +213,13 @@ export function ChartWorkspace({
 	}, [scrollTo]);
 
 	const nodes = filter ? [...filter].filter((k) => k !== PLATFORM_KEY) : [];
+	const only = groups.find((g) => g.key === nodes[0])?.node;
 	const filterLabel = !filter
 		? "全部节点"
 		: nodes.length === 1 && !filter.has(PLATFORM_KEY)
-			? (groups.find((g) => g.key === nodes[0])?.ref.nodeId ?? "已选 1 个节点")
+			? only
+				? runNodeName(only)
+				: "已选 1 个节点"
 			: `已选 ${nodes.length} 个节点`;
 	const minColumn = MIN_COLUMN[density];
 	const dense = density === "compact";
@@ -307,6 +318,7 @@ export function ChartWorkspace({
 				<NodeGroup
 					key={group.key}
 					group={group}
+					note={decls.get(group.ref.nodeId)?.note?.trim() || undefined}
 					charts={charts}
 					series={seriesByGroup.get(group.key) ?? noSeries()}
 					open={isOpen(group.key, defaultOpen(group))}
@@ -390,12 +402,20 @@ function useWidth(ref: React.RefObject<HTMLElement | null>) {
 	return width;
 }
 
+/**
+ * 分组的外框：标题行（展开按钮、备注图标、其余信息、尝试选择与「只看」）和展开后的内容。
+ * 展开按钮里是 `title`（`titleText` 是它的全文：里面的名字被截断时，悬停或聚焦展开按钮就显示）；
+ * 备注图标是自己的按钮，不能嵌在展开按钮里，所以放在按钮后面，标题行其余的信息（`header`）点了也展开或收起。
+ */
 function GroupShell({
 	groupKey,
 	label,
 	selected,
 	open,
 	onToggle,
+	title,
+	titleText,
+	note,
 	header,
 	attempts,
 	only,
@@ -406,6 +426,9 @@ function GroupShell({
 	selected?: boolean;
 	open: boolean;
 	onToggle: (open: boolean) => void;
+	title: React.ReactNode;
+	titleText: string;
+	note?: React.ReactNode;
 	header: React.ReactNode;
 	attempts?: React.ReactNode;
 	only?: React.ReactNode;
@@ -419,11 +442,16 @@ function GroupShell({
 			className="mb-2.5 rounded-xl border border-border-soft bg-surface data-selected:border-selected"
 		>
 			<div className="flex items-center gap-2 py-1 pr-2">
-				<button
-					type="button"
-					aria-expanded={open}
-					onClick={() => onToggle(!open)}
-					className="flex h-8 min-w-0 flex-1 items-center gap-2 pl-3 text-left text-sm whitespace-nowrap"
+				<Truncate
+					label={titleText}
+					render={
+						<button
+							type="button"
+							aria-expanded={open}
+							onClick={() => onToggle(!open)}
+							className="flex h-8 min-w-0 items-center gap-2 pl-3 text-left text-sm whitespace-nowrap"
+						/>
+					}
 				>
 					<span className="grid w-3.5 flex-none place-items-center text-fg-3">
 						<ChevronRightIcon
@@ -431,8 +459,17 @@ function GroupShell({
 							style={{ rotate: open ? "90deg" : "0deg" }}
 						/>
 					</span>
+					{title}
+				</Truncate>
+				{note}
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: 只是把点击区扩大到整行，键盘用左边的展开按钮 */}
+				{/* biome-ignore lint/a11y/useKeyWithClickEvents: 同上 */}
+				<div
+					onClick={() => onToggle(!open)}
+					className="flex h-8 min-w-0 flex-1 items-center gap-2 overflow-hidden text-sm whitespace-nowrap"
+				>
 					{header}
-				</button>
+				</div>
 				{/* 右侧两栏的位置固定（没有尝试选择器、没有「只看」时留空），各组的右侧信息竖着对齐 */}
 				<div className="flex flex-none items-center gap-2">
 					<div className="w-34">{attempts}</div>
@@ -446,6 +483,7 @@ function GroupShell({
 
 function NodeGroup({
 	group,
+	note,
 	charts,
 	series,
 	open,
@@ -460,6 +498,8 @@ function NodeGroup({
 	now,
 }: {
 	group: ChartGroup;
+	/** 节点的备注（运行绑定的版本里的，去掉首尾空白）；没有时为 undefined。 */
+	note: string | undefined;
 	onAttempt: (attempt: number) => void;
 	charts: CatalogNode["charts"];
 	series: GroupSeries;
@@ -494,17 +534,24 @@ function NodeGroup({
 						? "这次尝试没有上报数据"
 						: "还没有上报数据";
 	const title = `${entry.package}/${entry.node}`;
+	const name = runNodeName(node);
 	return (
 		<GroupShell
 			groupKey={group.key}
-			label={`${node.node_id} 的图表`}
+			label={`${name} 的图表`}
 			selected={selected}
 			open={open}
 			onToggle={onToggle}
-			header={
+			title={
 				<>
 					<StatusPill kind={status.kind}>{status.label}</StatusPill>
-					<span className="flex-none font-mono font-medium">{node.node_id}</span>
+					<NodeName node={node} className="font-medium" />
+				</>
+			}
+			titleText={name}
+			note={note && <NoteIcon note={note} className="flex-none text-sm" />}
+			header={
+				<>
 					<span className="min-w-0 truncate font-mono text-fg-2">{title}</span>
 					{group.chainName && (
 						<span className="flex-none text-xs text-fg-3" title={chainLabel(chain)}>
@@ -526,7 +573,7 @@ function NodeGroup({
 			attempts={
 				entry.attempts.length > 1 && (
 					<NativeSelect
-						aria-label={`${node.node_id} 的尝试`}
+						aria-label={`${name} 的尝试`}
 						title="切换查看这个节点的每次尝试"
 						className="w-full [&_select]:h-6.5 [&_select]:text-xs"
 						value={String(attempt.attempt)}
@@ -546,7 +593,7 @@ function NodeGroup({
 						variant="ghost"
 						size="sm"
 						onClick={onlyThis}
-						aria-label={`只看 ${node.node_id}`}
+						aria-label={`只看 ${name}`}
 						title="只看这个节点的图表"
 					>
 						只看
@@ -736,10 +783,15 @@ function PlatformGroup({
 			label="平台自带图表"
 			open={open}
 			onToggle={onToggle}
-			header={
+			title={
 				<>
 					<Badge>平台</Badge>
 					<span className="font-semibold">平台自带图表</span>
+				</>
+			}
+			titleText="平台自带图表"
+			header={
+				<>
 					<span className="min-w-0 truncate text-xs text-fg-3">
 						节点耗时 · 槽位 · 并发 · 重试，不需要节点注册
 					</span>
@@ -792,7 +844,7 @@ function PlatformGroup({
 						{data
 							? data.nodes
 									.filter((n) => n.retries > 0)
-									.map((n) => `${n.node_id} ×${n.retries}`)
+									.map((n) => `${platformNodeName(run, n)} ×${n.retries}`)
 									.join("、") || "没有重试"
 							: empty}
 					</div>
@@ -801,6 +853,12 @@ function PlatformGroup({
 		</GroupShell>
 	);
 }
+
+/** 平台自带图表里的一个节点在运行视图里的样子（带显示名称）；运行视图里还没有时只有节点 ID。 */
+const platformNode = (run: RunView, n: { chain_instance_id: string; node_id: string }) =>
+	findNode(run, { chainInstanceId: n.chain_instance_id, nodeId: n.node_id }) ?? n;
+const platformNodeName = (run: RunView, n: { chain_instance_id: string; node_id: string }) =>
+	runNodeName(platformNode(run, n));
 
 /** 节点耗时 Top 10：条长为总耗时（含排队与等待）。 */
 function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | undefined }) {
@@ -839,7 +897,7 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 						const waiting = STATUS.warn.area;
 						return (
 							<li key={`${n.chain_instance_id}:${n.node_id}`} className="contents">
-								<span className="truncate font-mono text-fg-2">{n.node_id}</span>
+								<NodeName node={platformNode(run, n)} className="truncate text-fg-2" />
 								<span className="relative h-2.5 overflow-hidden rounded-[2px] bg-track">
 									<i
 										className={cn(

@@ -33,7 +33,7 @@ const defaultHelp = (param: ParamDeclView): string | null =>
 			: null;
 
 /**
- * 一个入口参数的表单行：标签（名称、类型、是否敏感）与按类型渲染的控件，加上错误和帮助文字。
+ * 一个入口参数的表单行：标签（名称、类型、是否敏感）与按类型渲染的控件，下面依次是错误、参数的说明和帮助文字。
  * 运行抽屉和运行预设的编辑表单共用。外层是网格，这一行占满整行（subgrid）：标签列、控件列，
  * 给了 `leading` 时最前面再多一列，外层网格要按列数排好。
  */
@@ -70,6 +70,7 @@ export function ParamField({
 	const id = useId();
 	const labelId = `${id}-label`;
 	const helpId = `${id}-help`;
+	const descriptionId = `${id}-description`;
 	const errorId = `${id}-error`;
 	const [revealed, setRevealed] = useState(false);
 	useEffect(() => {
@@ -86,7 +87,14 @@ export function ParamField({
 
 	const locked = lockedBy !== undefined;
 	const helpText = locked ? `由预设 ${lockedBy} 固定` : help;
-	const describedBy = [error ? errorId : null, helpText ? helpId : null].filter(Boolean).join(" ");
+	const description = param.description ?? null;
+	const describedBy = [
+		error ? errorId : null,
+		description ? descriptionId : null,
+		helpText ? helpId : null,
+	]
+		.filter(Boolean)
+		.join(" ");
 	const aria = {
 		id,
 		"aria-invalid": error ? true : undefined,
@@ -200,6 +208,11 @@ export function ParamField({
 				{error && (
 					<p id={errorId} className="m-0 text-xs text-danger-fg">
 						{error}
+					</p>
+				)}
+				{description && (
+					<p id={descriptionId} className="m-0 text-xs text-fg-3">
+						{description}
 					</p>
 				)}
 				{helpText && (

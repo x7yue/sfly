@@ -109,6 +109,8 @@ export const AttemptView = z.object({
 
 export const NodeRunView = z.object({
 	node_id: z.string(),
+	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
+	display_name: z.string().optional(),
 	kind: z.enum(NODE_KINDS),
 	/**
 	 * 最近一次尝试的状态；还没有尝试时为 pending，被跳过时为 skipped，没开始就被取消时为 cancelled
@@ -221,6 +223,8 @@ export const ParamDeclView = z.object({
 	default: z.unknown().optional(),
 	required: z.boolean().optional(),
 	secret: z.boolean().optional(),
+	/** 搭场景的人写的一行说明；敏感参数的说明照常给出，只有值打码。 */
+	description: z.string().optional(),
 });
 
 /** 运行事件流上的 `progress` 事件：一个任务的最新进度。 */
