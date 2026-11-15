@@ -155,6 +155,8 @@ export const ACTION = {
 	resizeInspector: "调整检查器宽度",
 	expand: "展开",
 	collapse: "收起",
+	/** 编排画布运行状态的「跟随执行」：工具条按钮、快捷键面板和读屏播报都用这个名字。 */
+	followExecution: "跟随执行",
 } as const;
 
 /** AI 编程助手的显示名，键是请求头 `x-sfly-client` 里 `agent/<名称>` 的名称（用 Map，避免 `constructor` 这类名称取到对象自带的属性）。 */
