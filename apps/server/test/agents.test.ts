@@ -130,6 +130,7 @@ describe("Agent 注册", () => {
 				attempt: 1,
 				status: "running",
 				started_at: "2026-01-01T00:00:00.000Z",
+				current_action: null,
 			},
 		]);
 		expect(b?.running_tasks).toEqual([]);

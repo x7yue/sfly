@@ -11,6 +11,8 @@ type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Expect<T extends true> = T;
 
 export type ContractParity = [
+	Expect<Within<NonNullable<Api["actions"]["summary"]["input"]["params"]>, NonNullable<z.input<Apis["actions"]["summary"]["params"]>>>>,
+	Expect<Equal<Api["actions"]["summary"]["output"], z.output<Apis["actions"]["summary"]["response"]>>>,
 	Expect<Equal<Api["agents"]["list"]["output"], z.output<Apis["agents"]["list"]["response"]>>>,
 	Expect<Within<NonNullable<Api["agents"]["updateNow"]["input"]["params"]>, NonNullable<z.input<Apis["agents"]["updateNow"]["params"]>>>>,
 	Expect<Equal<Api["agents"]["updateNow"]["output"], z.output<Apis["agents"]["updateNow"]["response"]>>>,

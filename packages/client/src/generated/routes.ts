@@ -2,6 +2,7 @@
 
 import type { Download, Endpoint, RouteTable, Stream } from "../route.js";
 import type {
+	ActionSummaryView,
 	AgentView,
 	ArtifactView,
 	DashboardView,
@@ -58,6 +59,21 @@ import type {
 } from "./types.js";
 
 export interface Api {
+	actions: {
+		/**
+		 * `GET /tasks/:id/actions/summary`
+		 *
+		 * 一个任务（一次尝试）的动作摘要；没有记录过动作的任务返回各项为空的摘要，任务不存在时 404。
+		 */
+		summary: Endpoint<
+			{
+				params: {
+					id: string;
+				};
+			},
+			ActionSummaryView
+		>;
+	};
 	agents: {
 		/**
 		 * `GET /agents`
@@ -883,6 +899,9 @@ export interface Api {
 }
 
 export const routes = {
+	actions: {
+		summary: { method: "GET", path: "/tasks/:id/actions/summary", kind: "endpoint" },
+	},
 	agents: {
 		list: { method: "GET", path: "/agents", kind: "endpoint" },
 		updateNow: { method: "POST", path: "/agents/:name/update-now", kind: "endpoint" },

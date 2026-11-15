@@ -51,6 +51,7 @@ const client = createClient({
 | `runs`（运行） | `list`、`listForOrchestration`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
 | `metrics`（指标） | `summary`、`catalog`、`series`、`platform` |
+| `actions`（动作） | `summary` |
 | `artifacts`（产物） | `list`、`download` |
 | `agents`（sfly Agent） | `list`、`updateNow` |
 | `packages`（节点包） | `list`、`get`、`version`、`nodeType` |
@@ -145,7 +146,7 @@ const stop = client.runs.events(
 );
 ```
 
-- 连上时，以及运行或任何节点的状态变化时，事件 `run` 推送完整的运行视图。`progress` 是一个任务的最新进度，`metrics` 是执行中的任务新上报的指标点（每个任务每秒最多一条）。每类事件的数据都有类型，只写关心的事件。
+- 连上时，以及运行或任何节点的状态变化时，事件 `run` 推送完整的运行视图；执行中的节点此刻在做的动作（`current_action`，见「读节点正在做的事」）换了时也推送。`progress` 是一个任务的最新进度，`metrics` 是执行中的任务新上报的指标点（每个任务每秒最多一条）。每类事件的数据都有类型，只写关心的事件。
 - 断线、连不上或控制面返回 5xx 时自动重连。间隔是控制面在流里建议的值（没有时 1 秒），连续失败时翻倍，最多 15 秒。重连后控制面先推一次完整的运行视图，页面不会停在旧状态。
 - `onOpen` 在首次连上和每次重连后各调用一次。断线期间错过的指标点不会补发，在这里用 `metrics.series` 重新查询。
 - 控制面返回 4xx（例如运行不存在）或者响应不是事件流时，订阅停止，不再重连，调用 `onError`。
@@ -188,6 +189,26 @@ const stopLogs = client.logs.runEvents(
 - `logs.runEvents` 从最新一页的 `live_after` 接上实时推送：之后写入的行，包括之后才开始的任务的行，都会送达，和读过的页不重复、不遗漏。断线重连后从断点继续。积压的行太多时控制面不逐行补发，推送 `reload`，这时从最新一页重新读。
 - 只看一个任务的日志用 `logs.page` 和 `logs.events`（`after_seq` 填分页返回的 `last_seq`）。
 - 日志是被测系统产生的数据。显示时当作文本（`textContent`），不要当作 HTML 插进页面。
+
+## 读节点正在做的事
+
+节点用 `ctx.action` 记录的动作，写法见 [开发节点](sdk-reference.md) 的「`ctx.action` 与 `ctx.mark`」一节：
+
+```ts
+const live = await client.runs.get({ params: { id: run.id } });
+for (const node of live.chains.flatMap((chain) => chain.nodes)) {
+	const attempt = node.attempts.at(-1);
+	if (!attempt?.current_action) continue;
+	console.log(node.node_id, "正在做", attempt.current_action.name, attempt.current_action.started_at);
+	const actions = await client.actions.summary({ params: { id: attempt.task_id } });
+	for (const action of actions.running) console.log("  ".repeat(action.depth), action.name, action.fields);
+	for (const failed of actions.recent_failed) console.log("失败", failed.name, failed.reason);
+}
+```
+
+- 运行视图里执行中的尝试带 `current_action`：最外层、开始得最早的那个正在做的动作，写名称和开始时间（控制面时间）。没有正在做的最外层动作、尝试已经结束时为 `null`。Agent 列表里正在执行的任务（`running_tasks`）也带它。
+- `actions.summary` 读一个任务（一次尝试）的动作摘要：每种名称的个数（动作和标记合计）和失败的动作数（`names`，从什么时候起只计数写在 `capped_at`）、正在做的动作（`running`，带层级，最多 50 个，列满时 `running_complete` 为 `false`）、最近结束的 20 个动作和最近失败的 5 个动作，以及动作和标记的合计数、有没有超出上限（`capped`）。任务结束以后 `running` 为空，其余照旧。
+- 摘要是节点每秒最多上报一次的那一份，不是实时的每一个动作。字段和失败原因是节点写的数据，显示时当作文本。
 
 ## 下载产物
 

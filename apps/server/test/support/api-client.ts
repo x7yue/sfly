@@ -162,6 +162,8 @@ export interface AttemptView {
 		time: string | null;
 		agent_time: string | null;
 	} | null;
+	/** 执行中的尝试此刻在做的动作（#356）；没有时为 null。 */
+	current_action: { name: string; started_at: string } | null;
 }
 
 export interface NodeView {

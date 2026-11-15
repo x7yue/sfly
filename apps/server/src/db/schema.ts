@@ -1,7 +1,9 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
 import {
+	type ActionSummaryView,
 	type AgentUpdateState,
+	type CurrentAction,
 	type FocusItemInput,
 	ON_AGENT_STATUSES,
 	OrchestrationDocument,
@@ -427,6 +429,20 @@ export const tasks = pgTable(
 		index("tasks_chain_instance").on(t.chainInstanceId),
 	],
 );
+
+/**
+ * 任务最新的一份动作摘要（规格 #345，src/actions/task-actions.ts）：每一份都是完整的，新的整个替换旧的。
+ * 和任务行分开存：一份可以有几百 KB，引擎和运行视图读任务行时不用把它读出来。和任务的进度一样随任务保留。
+ */
+export const taskActionSummaries = pgTable("task_action_summaries", {
+	taskId: uuid("task_id")
+		.primaryKey()
+		.references(() => tasks.id),
+	/** 时间已经折算好、secret 值已经打码的摘要；正在做的动作在任务结束后由读取的一方当作空的。 */
+	summary: jsonb("summary").$type<ActionSummaryView>().notNull(),
+	/** 从摘要里选出的此刻在做的动作：运行视图、Agent 列表只读这一列。 */
+	currentAction: jsonb("current_action").$type<CurrentAction>(),
+});
 
 export type FeishuMessageSource = "node" | "notify" | "run_notification";
 export type FeishuMessageStatus = "queued" | "delivered" | "failed" | "discarded";

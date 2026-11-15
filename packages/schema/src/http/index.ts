@@ -1,3 +1,4 @@
+import { actionsApi } from "./actions.js";
 import { agentBinariesApi } from "./agent-binaries.js";
 import { agentsApi } from "./agents.js";
 import { clientPackageApi } from "./client-package.js";
@@ -14,6 +15,7 @@ import { runListApi } from "./run-list.js";
 import { artifactsApi, logsApi, runsApi } from "./runs.js";
 import { sdkApi, systemApi } from "./system.js";
 
+export * from "./actions.js";
 export * from "./agent-binaries.js";
 export * from "./agents.js";
 export * from "./client-package.js";
@@ -32,6 +34,7 @@ export * from "./runs.js";
 export * from "./system.js";
 
 export const httpApis = {
+	actions: actionsApi,
 	agentBinaries: agentBinariesApi,
 	agents: agentsApi,
 	artifacts: artifactsApi,

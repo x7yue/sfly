@@ -536,6 +536,8 @@ export class Engine implements AgentSessionHandler {
 						attempt: task.attempt,
 						status: task.status,
 						startedAt: task.startedAt,
+						// 这些任务随即以 agent_lost 结束，不再有正在做的动作。
+						currentAction: null,
 					},
 					document,
 				),

@@ -5,6 +5,7 @@ import {
 	systemApi,
 } from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import type { TaskActions } from "../actions/task-actions.js";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
@@ -28,6 +29,7 @@ import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
+import { registerActionRoutes } from "./action-routes.js";
 import { registerAgentBinaryRoutes } from "./agent-binary-routes.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
@@ -62,6 +64,8 @@ export interface HttpApiDeps {
 	presence: PresenceRegistry;
 	preflight: Preflight;
 	logs: TaskLogs;
+	/** 任务的动作（src/actions/）。 */
+	actions: TaskActions;
 	metrics: TaskMetrics;
 	metricQueries: MetricQueries;
 	retention: Retention;
@@ -112,6 +116,7 @@ export function buildHttpApi({
 	presence,
 	preflight,
 	logs,
+	actions,
 	metrics,
 	metricQueries,
 	retention,
@@ -194,6 +199,7 @@ export function buildHttpApi({
 		isPurged: (runId) => retention.isPurged(runId),
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
+	registerActionRoutes(app, { actions });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });

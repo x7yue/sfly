@@ -1,6 +1,12 @@
 import type { ServerMessage } from "@sfly/proto";
-import type { AgentEndpointView, ClockOffsetView, OrchestrationDocument } from "@sfly/schema";
+import type {
+	AgentEndpointView,
+	ClockOffsetView,
+	CurrentAction,
+	OrchestrationDocument,
+} from "@sfly/schema";
 import { and, asc, eq, inArray, isNotNull } from "drizzle-orm";
+import { currentActionOfTask } from "../actions/action-summary.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import {
@@ -15,6 +21,8 @@ import {
 	ON_AGENT,
 	orchestrationVersions,
 	runs,
+	type TaskStatus,
+	taskActionSummaries,
 	tasks,
 } from "../db/schema.js";
 import { nodeNameIn } from "../engine/run-board.js";
@@ -160,9 +168,14 @@ export interface RunningTaskView {
 	status: "dispatched" | "running";
 	/** 执行器启动的时间；派发阶段为 null。 */
 	started_at: string | null;
+	/** 此刻在做的动作；没有时为 null。 */
+	current_action: CurrentAction | null;
 }
 
-/** 派发给 Agent、还没结束的任务的视图；显示名称取自运行绑定的版本 `document`。 */
+/**
+ * 派发给 Agent、还没结束的任务的视图；显示名称取自运行绑定的版本 `document`，`currentAction` 是存下的此刻在做的动作
+ * （src/actions/）。
+ */
 export function runningTaskView(
 	t: {
 		taskId: string;
@@ -170,8 +183,9 @@ export function runningTaskView(
 		orchestrationId: string;
 		nodeId: string;
 		attempt: number;
-		status: string;
+		status: TaskStatus;
 		startedAt: Date | null;
+		currentAction: CurrentAction | null;
 	},
 	document: OrchestrationDocument,
 ): RunningTaskView {
@@ -185,6 +199,7 @@ export function runningTaskView(
 		attempt: t.attempt,
 		status: t.status as RunningTaskView["status"],
 		started_at: t.startedAt?.toISOString() ?? null,
+		current_action: currentActionOfTask(t.status, t.currentAction),
 	};
 }
 
@@ -357,9 +372,11 @@ export class AgentHub {
 				attempt: tasks.attempt,
 				status: tasks.status,
 				startedAt: tasks.startedAt,
+				currentAction: taskActionSummaries.currentAction,
 				document: orchestrationVersions.document,
 			})
 			.from(tasks)
+			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 			.where(and(inArray(tasks.status, ON_AGENT), isNotNull(tasks.agentName)))

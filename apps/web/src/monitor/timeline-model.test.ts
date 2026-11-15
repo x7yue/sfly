@@ -35,6 +35,7 @@ function attempt(overrides: Partial<AttemptView>): AttemptView {
 		end_clock_offset: null,
 		wake_at: null,
 		progress: null,
+		current_action: null,
 		...overrides,
 	};
 }

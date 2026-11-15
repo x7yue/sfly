@@ -248,9 +248,11 @@ def notify_card(
 
 
 @node(title="动作和标记", outputs=[])
-def actions(ctx: Context, unfinished: bool = False) -> None:
+def actions(ctx: Context, unfinished: bool = False, release_file: str = "") -> None:
     """动作与标记测试用（#355）：先写一行日志，嵌套记录动作，记一个标记，失败一次，再写一行日志。
     unfinished 时再开始一个不结束的动作。
+    给了 release_file 时（#356），最后在嵌套的「等待放行」「检查放行文件」里等到这个文件出现才结束，
+    让测试在节点执行中看到正在做的动作。
 
     ctx.action、ctx.mark 从 SDK 0.4.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
     """
@@ -265,6 +267,56 @@ def actions(ctx: Context, unfinished: bool = False) -> None:
     if unfinished:
         ctx.action.start("从不结束", 订单="1003")
     ctx.log.info("动作后")
+    if release_file:
+        with ctx.action("等待放行", 文件=os.path.basename(release_file)):
+            with ctx.action("检查放行文件"):
+                while not os.path.exists(release_file):
+                    time.sleep(0.05)
+
+
+@node(title="最长的动作摘要", outputs=[])
+def actions_max(ctx: Context) -> None:
+    """动作摘要最长时的测试用（#356）：正在做的、最近结束的、最近失败的都列满，名称、字段、失败原因都取上限，
+    字符都是汉字（UTF-8 里三个字节），节点退出时 SDK 发出的那一份摘要有几百 KiB。
+
+    ctx.action 从 SDK 0.4.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    from sfly import actions
+
+    fields: dict[str, Any] = {
+        f"字段{i}": "值" * actions.MAX_VALUE_CHARS for i in range(actions.MAX_FIELDS)
+    }
+    pad = actions.MAX_NAME_CHARS - 2
+    for i in range(actions.RECENT_LIMIT + actions.RECENT_FAILED_LIMIT):
+        ctx.action.start(f"{i:02d}" + "拒" * pad, **fields).fail("因" * actions.MAX_REASON_CHARS)
+    for i in range(actions.RUNNING_LIMIT):
+        ctx.action.start(f"{i:02d}" + "做" * pad, **fields)
+
+
+@node(title="连发动作摘要", outputs=[])
+def summary_burst(ctx: Context, count: int, interval: float) -> None:
+    """Agent 转发动作摘要的测试用（#356）：不经过 ctx.action，直接往事件管道写 count 份摘要，
+    间隔 interval 秒，第 i 份的 total 是 i。SDK 自己每秒最多发一份，这里写得比它快，
+    测的是 Agent 一侧只转发最新的一份。
+    """
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        for i in range(1, count + 1):
+            summary = {
+                "type": "action_summary",
+                "ts": int(time.time() * 1000),
+                "mono": sfly.context.monotonic_ms(),
+                "total": i,
+                "reported": i,
+                "capped_ts": None,
+                "capped_mono": None,
+                "names": [],
+                "running": [],
+                "recent": [],
+                "recent_failed": [],
+            }
+            events.write(json.dumps(summary, ensure_ascii=False) + "\n")
+            events.flush()
+            time.sleep(interval)
 
 
 @node(title="多路日志", outputs=[])

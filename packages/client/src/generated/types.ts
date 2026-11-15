@@ -1,5 +1,48 @@
 // 由 HTTP 契约（packages/schema/src/http）生成，不要手改：pnpm gen。
 
+/** 一种名称（动作和标记的名称在一起）的计数。 */
+export interface ActionNameCount {
+	name: string;
+	/** 动作和标记的个数，不论有没有明细。 */
+	total: number;
+	/** 失败的动作的个数。 */
+	failed: number;
+	/** 有明细的个数；total 减去它是只计数、没有明细的个数。 */
+	reported: number;
+	/** 从什么时候起只计数（控制面时间、Agent 时间）；没有超出上限时为 null。失败的动作超出后仍有明细。 */
+	capped_at: Timestamp | null;
+	agent_capped_at: Timestamp | null;
+}
+
+/** 动作的结果：成功、失败、未结束（任务结束时还没结束，或因为取消离开 `with`）。 */
+export type ActionResult = "success" | "failed" | "unfinished";
+
+/**
+ * 一个任务的动作摘要：任务结束（成功、失败、取消、`agent_lost`）以后 `running` 为空。
+ * 正在做的、最近结束的、计数都只取这一份，超出上限前后都准确。
+ */
+export interface ActionSummaryView {
+	/** 动作和标记合计的个数。 */
+	total: number;
+	/** 有明细的个数（最多 100000）。 */
+	reported: number;
+	/** 有没有超出上限：有动作或标记只计数、没有明细。 */
+	capped: boolean;
+	/** 合计已满、开始丢弃明细的时刻；没有丢弃过时为 null。不是明细的终点：之后仍可能有补上的失败的动作。 */
+	capped_at: Timestamp | null;
+	agent_capped_at: Timestamp | null;
+	/** 每种名称一项，按第一次出现的先后。 */
+	names: ActionNameCount[];
+	/** 正在做的动作，最多 50 个（层级浅的优先），按 ID 排列。 */
+	running: RunningActionView[];
+	/** `running` 是不是全部正在做的动作：列满 50 个时为 false，可能还有没列出的。 */
+	running_complete: boolean;
+	/** 最近结束的 20 个动作，最近结束的在前。 */
+	recent: EndedActionView[];
+	/** 最近失败的 5 个动作，最近失败的在前。 */
+	recent_failed: EndedActionView[];
+}
+
 /** 其它 Agent 连接这台 Agent、调用它的能力用的地址（ADR 0019），按最近一次连接上报的。 */
 export interface AgentEndpointView {
 	/**
@@ -174,6 +217,8 @@ export interface AttemptView {
 	/** 定时 / Sleep 节点的唤醒时间；其他节点为 null。 */
 	wake_at: Timestamp | null;
 	progress: TaskProgressView | null;
+	/** 执行中的尝试此刻在做的动作（见 CurrentAction）；没有时为 null，尝试结束后也为 null。 */
+	current_action: CurrentAction | null;
 }
 
 /** 一项 Agent 能力（ADR 0019）：Agent 自身提供、节点在执行中通过 SDK 调用的一组操作。 */
@@ -260,6 +305,16 @@ export interface ClockOffsetView {
 	measured_at: Timestamp;
 	/** 偏差的绝对值达到 2 秒：页面只在这时提示，不到 2 秒视为一致。由控制面统一判断。 */
 	exceeds_threshold: boolean;
+}
+
+/**
+ * 执行中的任务此刻在做的事：最外层（第 0 层）、开始得最早的那个正在做的动作（运行视图的尝试、
+ * Agent 列表里正在执行的任务都带它）。没有正在做的最外层动作、或者任务不在执行中时为 null。
+ */
+export interface CurrentAction {
+	name: string;
+	/** 开始的控制面时间。 */
+	started_at: Timestamp;
 }
 
 export interface DashboardAgent {
@@ -396,6 +451,30 @@ export interface Edge {
 	to: string;
 	/** chain：链上的顺序连线；dispatch：异步任务节点 → 子流程入口节点的调度连线。 */
 	kind: "chain" | "dispatch";
+}
+
+/** 一个已经结束的动作。 */
+export interface EndedActionView {
+	/** 任务内的动作 ID（动作和标记共用一个序列），先后不一定是开始的先后。 */
+	id: number;
+	/** 父动作的 ID；最外层为 null。父动作不一定还在摘要里。 */
+	parent: number | null;
+	/** 层级：最外层是 0。 */
+	depth: number;
+	name: string;
+	/** 说明字段（值都是文字），开始时给的加上之后补充的。 */
+	fields: Record<string, string>;
+	/** 开始的控制面时间。 */
+	started_at: Timestamp;
+	/** 开始的 Agent 时间。 */
+	agent_started_at: Timestamp;
+	ended_at: Timestamp;
+	agent_ended_at: Timestamp;
+	/** 耗时（毫秒），按单调时钟算，不受 Agent 系统时间改动的影响。 */
+	duration_ms: number;
+	result: ActionResult;
+	/** 失败的原因（最多 4096 个字符）；其他结果为 null。 */
+	reason: string | null;
 }
 
 export interface EntryNode {
@@ -1667,6 +1746,23 @@ export interface RunView {
 	chains: ChainRunView[];
 }
 
+/** 一个正在做的动作。 */
+export interface RunningActionView {
+	/** 任务内的动作 ID（动作和标记共用一个序列），先后不一定是开始的先后。 */
+	id: number;
+	/** 父动作的 ID；最外层为 null。父动作不一定还在摘要里。 */
+	parent: number | null;
+	/** 层级：最外层是 0。 */
+	depth: number;
+	name: string;
+	/** 说明字段（值都是文字），开始时给的加上之后补充的。 */
+	fields: Record<string, string>;
+	/** 开始的控制面时间。 */
+	started_at: Timestamp;
+	/** 开始的 Agent 时间。 */
+	agent_started_at: Timestamp;
+}
+
 /** 派发给 Agent、还没结束的任务。 */
 export interface RunningTaskView {
 	task_id: string;
@@ -1680,6 +1776,8 @@ export interface RunningTaskView {
 	status: "dispatched" | "running";
 	/** 执行器启动的时间；派发阶段为 null。 */
 	started_at: Timestamp | null;
+	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，派发阶段也为 null。 */
+	current_action: CurrentAction | null;
 }
 
 export interface SavedVersionView {

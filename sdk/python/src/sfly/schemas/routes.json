@@ -3,6 +3,27 @@
   "routes": [
     {
       "method": "GET",
+      "path": "/tasks/:id/actions/summary",
+      "key": [
+        "actions",
+        "summary"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
       "path": "/agent/binaries",
       "key": [
         "agent-binaries",
