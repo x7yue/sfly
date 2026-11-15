@@ -127,6 +127,52 @@ test("直达按钮：WARN 进详情，日志定位到那一行；没有新数据
 	await expect(panel(page).getByRole("log", { name: "日志" })).toContainText("探活第 4 次");
 });
 
+test("「其他警告与错误」列出不在「需要注意」里的 WARN / ERROR，点一条进详情并定位到那一行；已经在「需要注意」里的不重复", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	test.setTimeout(60_000);
+	const { runId, agent, tasks } = await overviewRun(controlPlane, connectAgent, clock);
+	const probe = tasks.probe as AssignedTask;
+	const others = page.getByRole("region", { name: "其他警告与错误" });
+	// fetch 已经成功，它早先的 WARN 不会进「需要注意」，只在这里。
+	await openOverview(page, clock, runId);
+	await expect(attention(page)).toHaveCount(0);
+	await expect(others.getByRole("listitem")).toHaveCount(1);
+	await expect(others).toContainText("retrying request (1/3): connection reset");
+
+	// probe 新打的 WARN 在「需要注意」里，这里不重复。三行各差 100 毫秒，WARN 在中间。
+	const now = clock.now().getTime();
+	const line = (seq: number, text: string, level: LogLevel) => ({
+		...logLine(clock, seq, text, level),
+		monotonicMs: agent.monotonicAt(now - 300 + seq * 100),
+	});
+	agent.logs(probe, [
+		line(1, "探活第 1 次", LogLevel.INFO),
+		line(2, "探活超时 3 次（阈值 2 次）", LogLevel.WARN),
+		line(3, "探活第 4 次", LogLevel.INFO),
+	]);
+	await agent.sync();
+	await expect(rows(page)).toHaveCount(2);
+	await expect(others.getByRole("listitem")).toHaveCount(1);
+	await expect(others).not.toContainText("探活超时");
+
+	// 10 分钟后它从「需要注意」撤下，列在这里，新的在上面。
+	await advance(clock, agent, 10 * 60_000 + 15_000, () => probePoint(agent, probe, clock));
+	await expect(attention(page)).toHaveCount(0);
+	await expect(others.getByRole("listitem")).toHaveCount(2);
+	await expect(others.getByRole("listitem").first()).toContainText("probe");
+	await others.getByRole("button", { name: /探活超时 3 次/ }).click();
+	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
+	expect(search(page)).toMatchObject({ view: "detail", node: "probe", tab: "logs" });
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：probe");
+	const located = panel(page).getByRole("log", { name: "日志" }).locator("[data-located]");
+	await expect(located).toHaveCount(1);
+	await expect(located).toContainText("探活超时 3 次（阈值 2 次）");
+});
+
 test("没有新数据的图表：曲线停在最后一个点，之后到现在画斜线，写明多久没有新数据，读屏也说明；页头写「数据更新于」", async ({
 	page,
 	controlPlane,
