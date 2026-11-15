@@ -4,6 +4,7 @@ import { nodeStatusView } from "#/components/status";
 import { FINAL_VALUE_LABEL, MESSAGE } from "#/lib/copy";
 import { formatDuration, formatMetric } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
+import { seriesName } from "#/monitor/charts";
 
 /** 距离某一刻多久：`2s`、`2m 10s`、`1h 02m`（秒取整；一分钟以内不写小数）。 */
 export function formatAgo(ms: number): string {
@@ -23,28 +24,27 @@ export function readingAge(
 export const valueText = (item: Pick<RunFocusItem, "latest">): string =>
 	item.latest === null ? "—" : formatMetric(item.latest.value);
 
-/** 序列在图例里的名字：不带标签时是指标名；带标签时是标签值（按键名排序，以「 · 」连接），图表里有好几个指标时前面再加指标名。 */
-export function seriesName(
+/**
+ * 序列在图例和读数里的名字：规则与详情的图表相同（`charts.ts` 的 `seriesName`），标签键的顺序和图表是否读了好几个指标
+ * 取自这一项读的指标。
+ */
+export function focusSeriesName(
+	item: Pick<RunFocusItem, "metrics">,
 	series: Pick<FocusSeries, "metric" | "labels">,
-	multiMetric: boolean,
 ): string {
-	const values = Object.entries(series.labels)
-		.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-		.map(([, value]) => value);
-	if (values.length === 0) return series.metric;
-	return (multiMetric ? [series.metric, ...values] : values).join(" · ");
+	const keys = item.metrics.find((m) => m.name === series.metric)?.label_keys;
+	return seriesName(series.metric, series.labels, keys, item.metrics.length > 1);
 }
 
 /**
- * 最新值来自哪个序列：图表里有好几个指标，或者序列带标签时写序列的名字（{@link seriesName}）；
+ * 最新值来自哪个序列：图表读了好几个指标，或者序列带标签时写序列的名字（{@link focusSeriesName}）；
  * 只有一个不带标签的序列时为空字符串。
  */
-export function latestSeriesName(item: Pick<RunFocusItem, "latest" | "series">): string {
+export function latestSeriesName(item: Pick<RunFocusItem, "latest" | "metrics">): string {
 	const { latest } = item;
 	if (latest === null) return "";
-	const multiMetric = hasSeveralMetrics(item.series);
-	return multiMetric || Object.keys(latest.labels).length > 0
-		? seriesName(latest, multiMetric)
+	return item.metrics.length > 1 || Object.keys(latest.labels).length > 0
+		? focusSeriesName(item, latest)
 		: "";
 }
 
@@ -63,10 +63,6 @@ export function readingFoot(item: RunFocusItem, generatedAt: string): string {
 	if (age !== null) return `${node} · ${formatAgo(age)} 前`;
 	return `${node} · ${item.source.task_id === null ? NOT_STARTED_TEXT : MESSAGE.noData}`;
 }
-
-/** 图表里有好几个指标（序列分属不同的指标）：读数和图例要写明是哪个指标。 */
-export const hasSeveralMetrics = (series: ReadonlyArray<Pick<FocusSeries, "metric">>): boolean =>
-	new Set(series.map((s) => s.metric)).size > 1;
 
 /** 这张图表在这次运行的节点包版本里不存在时的说明。 */
 export const chartMissingText = (item: Pick<RunFocusItem, "chart">) =>

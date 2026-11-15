@@ -1,6 +1,8 @@
-import type { RunFocusItem } from "@sfly/schema";
+import type { MetricDeclaration, RunFocusItem } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
+import { chartLines } from "#/monitor/charts";
 import {
+	focusSeriesName,
 	formatAgo,
 	latestSeriesName,
 	readingAge,
@@ -29,6 +31,7 @@ function item(patch: Partial<RunFocusItem> = {}): RunFocusItem {
 			ended_at: null,
 		},
 		latest: { value: 1284814, metric: "orders", labels: {}, at: at(2) },
+		metrics: [{ name: "orders", label_keys: [] }],
 		series: [{ metric: "orders", labels: {}, points: [] }],
 		bucket_seconds: 1,
 		last_at: at(2),
@@ -96,16 +99,17 @@ describe("读数的文字", () => {
 	it("最新值来自哪个序列：多个指标写指标名，带标签写标签值", () => {
 		expect(latestSeriesName(item())).toBe("");
 		const cpu = item({
+			metrics: [{ name: "cpu", label_keys: ["pid", "host"] }],
 			latest: { value: 3, metric: "cpu", labels: { pid: "100", host: "a" }, at: at(1) },
-			series: [{ metric: "cpu", labels: { pid: "100", host: "a" }, points: [] }],
 		});
-		expect(latestSeriesName(cpu)).toBe("a · 100");
+		expect(latestSeriesName(cpu)).toBe("100 · a");
 		const both = item({
-			latest: { value: 3, metric: "p99", labels: {}, at: at(1) },
-			series: [
-				{ metric: "p50", labels: {}, points: [] },
-				{ metric: "p99", labels: {}, points: [] },
+			metrics: [
+				{ name: "p50", label_keys: [] },
+				{ name: "p99", label_keys: [] },
 			],
+			latest: { value: 3, metric: "p99", labels: {}, at: at(1) },
+			series: [],
 		});
 		expect(latestSeriesName(both)).toBe("p99");
 		expect(latestSeriesName(item({ latest: null }))).toBe("");
@@ -124,6 +128,55 @@ describe("读数的文字", () => {
 		).toBe("母单量 1.3M 单，来自 load（成功），最终值");
 		expect(readingLabel(item({ unavailable: "chart_missing", latest: null }), NOW)).toBe(
 			"母单量，这个版本的节点没有图表「母单量」，来自 load（执行中）",
+		);
+	});
+});
+
+describe("序列的名字和详情里同一条序列的一样", () => {
+	const cpu: MetricDeclaration = { name: "cpu", unit: "%", kind: "gauge", labels: ["pid", "host"] };
+	const mem: MetricDeclaration = { name: "mem", unit: "MB", kind: "gauge" };
+	const detailNames = (
+		names: string[],
+		series: Array<{ name: string; labels: Record<string, string> }>,
+	) =>
+		chartLines(
+			names,
+			[cpu, mem],
+			series.map((s) => ({ ...s, buckets: [] })),
+		).map((line) => line.name);
+
+	it("标签值按声明的标签键的顺序排，不按键名排", () => {
+		const labels = { host: "a", pid: "100" };
+		const overview = item({
+			metrics: [{ name: "cpu", label_keys: ["pid", "host"] }],
+			latest: { value: 3, metric: "cpu", labels, at: at(1) },
+		});
+		expect(latestSeriesName(overview)).toBe("100 · a");
+		expect(latestSeriesName(overview)).toBe(detailNames(["cpu"], [{ name: "cpu", labels }])[0]);
+	});
+
+	it("图表读了好几个指标时前面写指标名，序列还没有点（points 为 0）时也一样", () => {
+		const labels = { pid: "100", host: "a" };
+		const overview = item({
+			metrics: [
+				{ name: "cpu", label_keys: ["pid", "host"] },
+				{ name: "mem", label_keys: [] },
+			],
+			series: [],
+		});
+		expect(focusSeriesName(overview, { metric: "cpu", labels })).toBe("cpu · 100 · a");
+		expect(focusSeriesName(overview, { metric: "mem", labels: {} })).toBe("mem");
+		expect([
+			focusSeriesName(overview, { metric: "cpu", labels }),
+			focusSeriesName(overview, { metric: "mem", labels: {} }),
+		]).toEqual(
+			detailNames(
+				["cpu", "mem"],
+				[
+					{ name: "cpu", labels },
+					{ name: "mem", labels: {} },
+				],
+			),
 		);
 	});
 });

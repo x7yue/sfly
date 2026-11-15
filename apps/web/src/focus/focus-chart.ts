@@ -1,6 +1,6 @@
 import { type FocusSeries, seriesKey } from "@sfly/schema";
 import { formatClock, formatHourMinute, formatMetric } from "#/lib/format";
-import { DEFAULT_SHOWN } from "#/monitor/charts";
+import { DEFAULT_SHOWN, defaultShown } from "#/monitor/charts";
 
 /** 图表的绘图区：四周留给纵轴刻度和横轴时刻的边距（px）。 */
 export const PLOT_MARGIN = { left: 44, right: 4, top: 6, bottom: 20 };
@@ -107,7 +107,7 @@ export function plotChart(
 }
 
 /**
- * 图表里画哪些序列：不超过 `limit` 条时全部画；超过时画平均值最高的 `limit` 条（每个桶的最新值取平均），
+ * 图表里画哪些序列：与详情的图表同一个规则（`defaultShown`）——不超过 `limit` 条时全部画，超过时画平均值最高的 `limit` 条，
  * 没有点的排在最后，仍按原来的顺序画（颜色和图例顺序不随数据变化）。`hidden` 是没画的条数。
  */
 export function shownSeries(
@@ -115,17 +115,9 @@ export function shownSeries(
 	limit = DEFAULT_SHOWN,
 ): { series: Array<FocusSeries & { key: string }>; hidden: number } {
 	const keyed = series.map((s) => ({ ...s, key: seriesKey(s.metric, s.labels) }));
-	if (keyed.length <= limit) return { series: keyed, hidden: 0 };
-	const mean = (s: FocusSeries) =>
-		s.points.length === 0
-			? Number.NEGATIVE_INFINITY
-			: s.points.reduce((sum, p) => sum + p.last, 0) / s.points.length;
-	const top = new Set(
-		keyed
-			.map((s, i) => ({ s, i, mean: mean(s) }))
-			.sort((a, b) => b.mean - a.mean || a.i - b.i)
-			.slice(0, limit)
-			.map(({ s }) => s.key),
+	const shown = defaultShown(
+		keyed.map(({ key, points }) => ({ key, buckets: points })),
+		limit,
 	);
-	return { series: keyed.filter((s) => top.has(s.key)), hidden: keyed.length - limit };
+	return { series: keyed.filter((s) => shown.has(s.key)), hidden: keyed.length - shown.size };
 }

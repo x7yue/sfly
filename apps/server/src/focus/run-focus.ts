@@ -275,11 +275,13 @@ const focusSeries = (s: SeriesRead): FocusSeries => ({
 		time: b.time ?? b.agent_time,
 		min: b.min,
 		max: b.max,
+		avg: b.avg,
 		last: b.last,
+		points: b.points,
 	})),
 });
 
-/** 一项的读数：来源节点的状态、图表引用的序列和最新值。 */
+/** 一项的读数：来源节点的状态、图表引用的指标和序列、最新值。 */
 function itemOf(
 	reading: Reading,
 	source: Source,
@@ -302,6 +304,10 @@ function itemOf(
 		chart_type: reading.chartType,
 		unit: reading.unit,
 		...(reading.chartMissing ? { unavailable: "chart_missing" as const } : {}),
+		metrics: reading.metrics.map((name) => ({
+			name,
+			label_keys: source.type?.metrics?.find((m) => m.name === name)?.labels ?? [],
+		})),
 		source: {
 			status: source.status,
 			attempt: attempt?.attempt ?? 0,

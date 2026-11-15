@@ -1,5 +1,5 @@
 // 切入点 A：一次运行的关注项读数 GET /runs/:id/focus（#350）。真实控制面 + 讲真实 gRPC 的假 Agent + 手动时钟
-// + 独立的 PostgreSQL，通过 HTTP 接口观察。异常判断（`anomaly`）归「异常排最前」那张工单，这里只验证它总是 null。
+// + 独立的 PostgreSQL，通过 HTTP 接口观察。`anomaly` 和 `sample_interval_ms` 目前总是 null，这里只验证这一点。
 import { type RunFocus, runFocusApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -15,7 +15,10 @@ const at = (s: number) => Date.UTC(2026, 0, 1) / 1000 + s;
 const iso = (s: number) => new Date(at(s) * 1000).toISOString();
 const DAY = 24 * 60 * 60 * 1000;
 
-/** 带标签的指标（按进程的 CPU）：折线 CPU 有几个序列；数值卡「合计」引用两个指标，只画第一个。 */
+/**
+ * 带标签的指标（按进程的 CPU）：折线 CPU 有几个序列；数值卡「合计」引用两个指标，只画第一个；
+ * 「磁盘」的标签键声明成 op、device（不是按键名排的顺序），「内存与磁盘」引用两个指标。
+ */
 const PROCS = {
 	watch: {
 		outputs: [],
@@ -23,10 +26,13 @@ const PROCS = {
 			{ name: "cpu", unit: "%", kind: "gauge" as const, labels: ["pid"] },
 			{ name: "mem", unit: "MB", kind: "gauge" as const },
 			{ name: "total", unit: "单", kind: "counter" as const },
+			{ name: "io", unit: "MB/s", kind: "gauge" as const, labels: ["op", "device"] },
 		],
 		charts: [
 			{ title: "CPU", type: "line" as const, metrics: ["cpu"] },
 			{ title: "合计", type: "stat" as const, metrics: ["mem", "total"] },
+			{ title: "磁盘", type: "line" as const, metrics: ["io"] },
+			{ title: "内存与磁盘", type: "line" as const, metrics: ["mem", "io"] },
 		],
 	},
 };
@@ -41,6 +47,17 @@ const PRIM = {
 		],
 		primary_metric: "done",
 	},
+};
+
+/** 入口接 procs 的 watch 节点。 */
+const WATCH_DOCUMENT = {
+	default_agent: "agent-a",
+	nodes: [
+		{ id: "entry", kind: "entry" },
+		{ id: "watch", kind: "package", package: "procs", node: "watch" },
+	],
+	edges: [{ from: "entry", to: "watch", kind: "chain" }],
+	packages: { procs: "1.0.0" },
 };
 
 const point = (name: string, s: number, value: number, labels: Record<string, string> = {}) => ({
@@ -141,9 +158,9 @@ describe("运行的关注项读数", () => {
 				metric: "p99",
 				labels: {},
 				points: [
-					{ time: iso(1), min: 10, max: 10, last: 10 },
-					{ time: iso(2), min: 20, max: 20, last: 20 },
-					{ time: iso(3), min: 30, max: 30, last: 30 },
+					{ time: iso(1), min: 10, max: 10, avg: 10, last: 10, points: 1 },
+					{ time: iso(2), min: 20, max: 20, avg: 20, last: 20, points: 1 },
+					{ time: iso(3), min: 30, max: 30, avg: 30, last: 30, points: 1 },
 				],
 			},
 		]);
@@ -205,7 +222,11 @@ describe("运行的关注项读数", () => {
 		expect(item?.source).toMatchObject({ status: "running", attempt: 2, task_id: second.taskId });
 		expect(item?.latest).toMatchObject({ value: 5, at: iso(7) });
 		expect(item?.series).toEqual([
-			{ metric: "p99", labels: {}, points: [{ time: iso(7), min: 5, max: 5, last: 5 }] },
+			{
+				metric: "p99",
+				labels: {},
+				points: [{ time: iso(7), min: 5, max: 5, avg: 5, last: 5, points: 1 }],
+			},
 		]);
 	});
 
@@ -344,6 +365,7 @@ describe("运行的关注项读数", () => {
 			chart: "吞吐",
 			title: "吞吐量",
 			unavailable: "chart_missing",
+			metrics: [],
 			source: { status: "running", attempt: 1, task_id: task.taskId },
 			latest: null,
 			series: [],
@@ -357,16 +379,7 @@ describe("运行的关注项读数", () => {
 	});
 
 	it("数值卡只取第一个序列；多序列的图表返回声明的全部序列，latest 取最近更新的那个并带上它的标签", async () => {
-		const document = {
-			default_agent: "agent-a",
-			nodes: [
-				{ id: "entry", kind: "entry" },
-				{ id: "watch", kind: "package", package: "procs", node: "watch" },
-			],
-			edges: [{ from: "entry", to: "watch", kind: "chain" }],
-			packages: { procs: "1.0.0" },
-		};
-		const id = await api.orchestrationWith(document);
+		const id = await api.orchestrationWith(WATCH_DOCUMENT);
 		await putFocusItemsOk(api, id, [
 			{ node_id: "watch", chart: "CPU" },
 			{ node_id: "watch", chart: "合计" },
@@ -401,6 +414,8 @@ describe("运行的关注项读数", () => {
 			latest: { value: 640, metric: "mem", labels: {}, at: iso(3) },
 		});
 		expect(total?.series.map((s) => s.metric)).toEqual(["mem"]);
+		expect(total?.metrics).toEqual([{ name: "mem", label_keys: [] }]);
+		expect(cpu?.metrics).toEqual([{ name: "cpu", label_keys: ["pid"] }]);
 
 		// 另一个序列更新得更晚时，latest 换成它。
 		agent.metrics(task, [point("cpu", 12, 99, { pid: "200" })]);
@@ -413,6 +428,26 @@ describe("运行的关注项读数", () => {
 			at: iso(12),
 		});
 		expect(cpu?.last_at).toBe(iso(12));
+	});
+
+	it("每一项带它读的指标，指标带声明的标签键（按声明的顺序，不是按键名排）；序列的名字页面按这个起", async () => {
+		const id = await api.orchestrationWith(WATCH_DOCUMENT);
+		await putFocusItemsOk(api, id, [
+			{ node_id: "watch", chart: "磁盘" },
+			{ node_id: "watch", chart: "内存与磁盘" },
+		]);
+		const runId = await api.triggerOk(id);
+		const task = await agent.nextAssign();
+		agent.metrics(task, [point("io", 1, 5, { device: "sda", op: "read" }), point("mem", 1, 640)]);
+		await agent.sync();
+
+		const [disk, both] = (await focus(runId)).items;
+		expect(disk?.metrics).toEqual([{ name: "io", label_keys: ["op", "device"] }]);
+		expect(both?.metrics).toEqual([
+			{ name: "mem", label_keys: [] },
+			{ name: "io", label_keys: ["op", "device"] },
+		]);
+		expect(both?.series.map((s) => s.metric)).toEqual(["mem", "io"]);
 	});
 
 	it("场景没设关注项时，mode 是 primary，返回执行中节点的主指标", async () => {
@@ -450,6 +485,7 @@ describe("运行的关注项读数", () => {
 			title: "done",
 			chart_type: "stat",
 			unit: "单",
+			metrics: [{ name: "done", label_keys: [] }],
 			source: { status: "running", attempt: 1, task_id: a.taskId },
 			latest: { value: 25, at: iso(2) },
 			final: false,
@@ -489,7 +525,9 @@ describe("运行的关注项读数", () => {
 				time: iso(s),
 				min: s,
 				max: s + 19,
+				avg: s + 9.5,
 				last: s + 19,
+				points: 20,
 			})),
 		);
 		expect(coarse?.latest).toMatchObject({ value: 119, at: iso(119) });

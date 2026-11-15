@@ -658,14 +658,24 @@ export interface FocusLatest {
 	at: Timestamp;
 }
 
-/** 序列里的一个桶：起始时间（控制面时间）、桶内的最小、最大值和最新值。 */
+/** 一项读的指标：名字和声明的标签键（序列名里标签值按这个顺序排；不带标签的指标是空数组）。 */
+export interface FocusMetric {
+	name: MetricName;
+	label_keys: MetricName[];
+}
+
+/** 序列里的一个桶：起始时间（控制面时间）、桶内的最小、最大值、平均值和最新值。 */
 export interface FocusPoint {
 	/** 桶的起始时间；升级之前存下的数据没有控制面时间，用它的 Agent 时间。 */
 	time: Timestamp;
 	min: number;
 	max: number;
+	/** 桶里所有点的平均值。 */
+	avg: number;
 	/** 桶里最后一个点的值。 */
 	last: number;
+	/** 桶里有几个点。 */
+	points: number;
 }
 
 export interface FocusSeries {
@@ -1454,6 +1464,8 @@ export interface RunFocusItem {
 	/** 图表第一个指标的单位。 */
 	unit: string;
 	unavailable?: "chart_missing";
+	/** 这一项读的指标，按图表里的顺序（数值卡只有第一个）；`unavailable` 时为空。 */
+	metrics: FocusMetric[];
 	source: FocusSource;
 	latest: FocusLatest | null;
 	/** 数值卡只有第一个序列，其余图表是声明的全部序列；`points` 为 0 时为空。 */

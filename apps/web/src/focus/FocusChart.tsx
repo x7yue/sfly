@@ -8,11 +8,10 @@ import { FocusValue } from "./FocusValue";
 import { PLOT_MARGIN, plotChart, shownSeries } from "./focus-chart";
 import {
 	chartMissingText,
-	hasSeveralMetrics,
+	focusSeriesName,
 	NOT_STARTED_TEXT,
 	readingFoot,
 	readingLabel,
-	seriesName,
 	sourceNodeName,
 } from "./focus-format";
 
@@ -37,7 +36,7 @@ function useElementWidth<E extends HTMLElement>() {
 /**
  * 一个图表类关注项（折线、面积、柱状）的卡片：状态形状和名称、最新值、来源节点和多久前、按容器的实际尺寸画的图、
  * 序列多于一条时的图例，以及「在详情里打开」。图的横轴是来源节点这次尝试的开始到结束（还没结束就到读数生成的时刻），
- * 纵轴从 0 起。序列多于 10 条时只画最近的几条（`shownSeries`），图例写明还有多少条。
+ * 纵轴从 0 起。序列多于 10 条时只画平均值最高的那些（`shownSeries`），图例写明还有多少条。
  */
 export function FocusChart({
 	item,
@@ -67,7 +66,6 @@ export function FocusChart({
 	);
 	const titleId = `focus-chart-${item.position}`;
 	const empty = item.latest === null;
-	const multiMetric = hasSeveralMetrics(item.series);
 
 	return (
 		<article
@@ -164,7 +162,7 @@ export function FocusChart({
 									strokeDasharray={seriesDash(i)}
 								/>
 							</svg>
-							{seriesName(s, multiMetric)}
+							{focusSeriesName(item, s)}
 						</li>
 					))}
 					{hidden > 0 && (

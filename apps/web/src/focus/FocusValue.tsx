@@ -10,7 +10,7 @@ export function FocusValue({
 	item,
 	className,
 }: {
-	item: Pick<RunFocusItem, "latest" | "series" | "unit">;
+	item: Pick<RunFocusItem, "latest" | "metrics" | "unit">;
 	className?: string;
 }) {
 	const series = latestSeriesName(item);

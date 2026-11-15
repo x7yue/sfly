@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import { niceMax, PLOT_MARGIN, plotChart, shownSeries } from "./focus-chart";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
-const point = (s: number, last: number, min = last, max = last) => ({
+const point = (s: number, last: number, min = last, max = last, avg = last, points = 1) => ({
 	time: new Date(T0 + s * 1000).toISOString(),
 	min,
 	max,
+	avg,
 	last,
+	points,
 });
 const SIZE = { width: 344, height: 126 };
 const WINDOW = { start: T0, end: T0 + 100_000 };
@@ -119,6 +121,21 @@ describe("图表里画哪些序列", () => {
 		);
 		expect(shown.series.map((s) => s.labels.pid)).toEqual(["1", "3", "4"]);
 		expect(shown.hidden).toBe(2);
+	});
+
+	it("平均值按桶的点数加权，和详情的图表挑的是同几条：最后一个值很高的序列不一定入选", () => {
+		// spike 只在一个点上冲到 100，其余 99 个点都是 1，平均约 2；其余 10 条平均 5。按桶的最新值取平均会选中 spike。
+		const list = [
+			{
+				metric: "cpu",
+				labels: { pid: "spike" },
+				points: [point(0, 100, 100, 100, 100, 1), point(1, 1, 1, 1, 1, 99)],
+			},
+			...series(10, () => 5),
+		];
+		const shown = shownSeries(list);
+		expect(shown.series.map((s) => s.labels.pid)).not.toContain("spike");
+		expect(shown.hidden).toBe(1);
 	});
 
 	it("没有点的序列排在最后", () => {

@@ -19,14 +19,18 @@ export const RunFocusQuery = z.strictObject({
 	points: z.coerce.number().int().min(0).max(MAX_FOCUS_POINTS).default(DEFAULT_FOCUS_POINTS),
 });
 
-/** 序列里的一个桶：起始时间（控制面时间）、桶内的最小、最大值和最新值。 */
+/** 序列里的一个桶：起始时间（控制面时间）、桶内的最小、最大值、平均值和最新值。 */
 export const FocusPoint = z.object({
 	/** 桶的起始时间；升级之前存下的数据没有控制面时间，用它的 Agent 时间。 */
 	time: Timestamp,
 	min: z.number(),
 	max: z.number(),
+	/** 桶里所有点的平均值。 */
+	avg: z.number(),
 	/** 桶里最后一个点的值。 */
 	last: z.number(),
+	/** 桶里有几个点。 */
+	points: z.number().int().positive(),
 });
 
 export const FocusSeries = z.object({
@@ -44,6 +48,12 @@ export const FocusLatest = z.object({
 	labels: MetricLabels,
 	/** 这个点的控制面时间（按秒取整）。 */
 	at: Timestamp,
+});
+
+/** 一项读的指标：名字和声明的标签键（序列名里标签值按这个顺序排；不带标签的指标是空数组）。 */
+export const FocusMetric = z.object({
+	name: MetricName,
+	label_keys: z.array(MetricName),
 });
 
 /** 来源节点和它最新一次尝试的任务。 */
@@ -99,6 +109,8 @@ export const RunFocusItem = z.object({
 	/** 图表第一个指标的单位。 */
 	unit: z.string(),
 	unavailable: z.literal("chart_missing").optional(),
+	/** 这一项读的指标，按图表里的顺序（数值卡只有第一个）；`unavailable` 时为空。 */
+	metrics: z.array(FocusMetric),
 	source: FocusSource,
 	latest: FocusLatest.nullable(),
 	/** 数值卡只有第一个序列，其余图表是声明的全部序列；`points` 为 0 时为空。 */
@@ -145,6 +157,7 @@ export const runFocusApi = {
 
 export type RunFocusQuery = z.infer<typeof RunFocusQuery>;
 export type FocusPoint = z.infer<typeof FocusPoint>;
+export type FocusMetric = z.infer<typeof FocusMetric>;
 export type FocusSeries = z.infer<typeof FocusSeries>;
 export type FocusLatest = z.infer<typeof FocusLatest>;
 export type FocusSource = z.infer<typeof FocusSource>;
