@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { Readable, Transform, type TransformCallback } from "node:stream";
 import { type LogLineView, logsApi, RunLogDownloadRow, type RunLogLine } from "@sfly/schema";
 import type { FastifyInstance } from "fastify";
-import { type LogFilter, readLogPage } from "../logs/log-pages.js";
+import { type LogFilter, readLogPage, readLogPageAt } from "../logs/log-pages.js";
 import {
 	decodeRunLogCursor,
 	decodeRunLogLiveCursor,
@@ -28,6 +28,7 @@ import { sendError } from "./errors.js";
  * - `?after_seq=<n>`：已经用分页接口读到了第 n 行，连上时只发之后的行（与 `Last-Event-ID` 取较大者）。
  * - `GET /tasks/:id/logs`：按字节偏移分页读取（`before` / `after`、`limit`、`level`、`source`），见 log-pages.ts；
  *   契约见 @sfly/schema 的 logsApi.page，查询参数不合法时 400 `invalid_request`。
+ *   `at`（#347）：按控制面时间定位，返回包含那一刻的一页和 `locate`（那一刻的位置、正好对应的行）。
  * - `GET /tasks/:id/logs/download`：下载日志文件（JSONL），每行都带两种时间（升级之前写入的行在下载时补齐）。
  * - 运行的日志超过保留期被清理后（`expired`）：分页是空页、下载返回 410 `expired`。
  *
@@ -140,19 +141,29 @@ export function registerLogRoutes(
 		if (!info) return sendError(reply, 404, "not_found", "task not found");
 		const setOf = <T>(values: T[] | undefined) => (values ? new Set(values) : undefined);
 		const filter: LogFilter = { levels: setOf(query.level), sources: setOf(query.source) };
-		const { after, before, limit } = query;
-		const page = await readLogPage(
-			info.file,
-			after !== undefined
-				? { direction: "forward", after, limit, filter }
-				: { direction: "backward", before, limit, filter },
-		);
+		const { after, before, limit, at } = query;
+		const located =
+			at === undefined
+				? undefined
+				: await readLogPageAt(info.file, { at: Date.parse(at), limit, filter });
+		const page =
+			located ??
+			(await readLogPage(
+				info.file,
+				after !== undefined
+					? { direction: "forward", after, limit, filter }
+					: { direction: "backward", before, limit, filter },
+			));
 		return {
 			task_id: params.id,
-			...page,
+			lines: page.lines,
+			start: page.start,
+			end: page.end,
+			size: page.size,
 			last_seq: info.seq,
 			truncated: info.truncated,
 			expired: await deps.isPurged(info.runId),
+			locate: located ? { at_offset: located.atOffset, exact_seq: located.exactSeq } : null,
 		};
 	});
 
