@@ -71,7 +71,7 @@ export function IdleSlots({ count }: { count: number }) {
 	);
 }
 
-/** 没被占用的槽位数。 */
+/** 没被占用的槽位数；只有在线的 Agent 才把它们当空闲槽画出来（调用方判断）。 */
 export const idleSlotCount = (slots: number, running: number): number =>
 	Math.max(0, slots - running);
 

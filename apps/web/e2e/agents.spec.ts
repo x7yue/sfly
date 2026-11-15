@@ -251,6 +251,10 @@ test("排队的任务：Agent 不在线时照样列在它名下", async ({ page,
 	await expect(header(page, "agent-away").locator("[data-status]")).toHaveText("离线");
 	await expect(queued(page, "agent-away")).toHaveCount(1);
 	await expect(queued(page, "agent-away")).toContainText("10m 00s 后超时");
+	// 离线又没有任务占着槽位：没有槽位一栏，也不写「占用」。
+	await expect(rack(page, "agent-away").getByRole("heading", { name: "槽位" })).toHaveCount(0);
+	await expect(slotCells(page, "agent-away")).toHaveCount(0);
+	await expect(rack(page, "agent-away")).not.toContainText("占用");
 });
 
 test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长与槽位格、排队行同一种写法），版本、槽位、最后在线照常，发出心跳后标记消失", async ({
