@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { optionalLine } from "../display-text.js";
 import { OrchestrationDocument } from "../orchestration-document.js";
+import { ChartDeclaration } from "../package-metadata.js";
 import { endpoint, Timestamp } from "./contract.js";
 import { FeishuBotName } from "./feishu-bots.js";
 
@@ -66,6 +67,8 @@ const focusItemBase = {
 	chart: z.string(),
 	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
 	title: z.string().optional(),
+	/** 图表在最新版本里声明的类型（`stat` 是数值卡，显示成数值，其余照声明画）；失效的项没有这个字段。 */
+	chart_type: ChartDeclaration.shape.type.optional(),
 };
 
 /**

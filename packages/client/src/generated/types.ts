@@ -640,12 +640,16 @@ export type FocusItemView = {
 	chart: string;
 	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
 	title?: string;
+	/** 图表在最新版本里声明的类型（`stat` 是数值卡，显示成数值，其余照声明画）；失效的项没有这个字段。 */
+	chart_type?: "line" | "area" | "bar" | "stat";
 	status: "ok";
 } | {
 	node_id: string;
 	chart: string;
 	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
 	title?: string;
+	/** 图表在最新版本里声明的类型（`stat` 是数值卡，显示成数值，其余照声明画）；失效的项没有这个字段。 */
+	chart_type?: "line" | "area" | "bar" | "stat";
 	status: "node_missing";
 	last_version: number | null;
 } | {
@@ -653,6 +657,8 @@ export type FocusItemView = {
 	chart: string;
 	/** 场景作者起的名字；没起名时没有这个字段，显示时用 `chart`。 */
 	title?: string;
+	/** 图表在最新版本里声明的类型（`stat` 是数值卡，显示成数值，其余照声明画）；失效的项没有这个字段。 */
+	chart_type?: "line" | "area" | "bar" | "stat";
 	status: "chart_missing";
 };
 

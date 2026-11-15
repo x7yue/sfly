@@ -50,8 +50,8 @@ describe("关注项的设置", () => {
 
 			const view = await putFocusItemsOk(api, id, [PROBE_LEVEL, LOAD_TPS]);
 			expect(view.focus_items).toEqual([
-				{ ...PROBE_LEVEL, status: "ok" },
-				{ ...LOAD_TPS, status: "ok" },
+				{ ...PROBE_LEVEL, status: "ok", chart_type: "line" },
+				{ ...LOAD_TPS, status: "ok", chart_type: "area" },
 			]);
 			expect(view.head_version).toBe(1);
 			expect(await orchestrationView(api, id)).toEqual(view);
@@ -70,7 +70,9 @@ describe("关注项的设置", () => {
 		it("没有声明的指标生成的默认图表可以设为关注项；只在图表里画出的指标名不行", async () => {
 			const id = await scene();
 			const view = await putFocusItemsOk(api, id, [{ node_id: "load", chart: "orders" }]);
-			expect(view.focus_items).toEqual([{ node_id: "load", chart: "orders", status: "ok" }]);
+			expect(view.focus_items).toEqual([
+				{ node_id: "load", chart: "orders", status: "ok", chart_type: "stat" },
+			]);
 
 			const res = await putFocusItems(api, id, [{ node_id: "load", chart: "p99" }]);
 			expect(res.status).toBe(400);
@@ -87,8 +89,8 @@ describe("关注项的设置", () => {
 				{ node_id: "load2", chart: "TPS", title: "" },
 			]);
 			expect(view.focus_items).toEqual([
-				{ ...LOAD_TPS, title: "撮合 TPS", status: "ok" },
-				{ node_id: "load2", chart: "TPS", status: "ok" },
+				{ ...LOAD_TPS, title: "撮合 TPS", status: "ok", chart_type: "area" },
+				{ node_id: "load2", chart: "TPS", status: "ok", chart_type: "area" },
 			]);
 		});
 
@@ -226,7 +228,7 @@ describe("关注项的设置", () => {
 			await api.saveVersion(id, benchDocument([["load", "load"]]));
 			const v2 = await orchestrationView(api, id);
 			expect(v2.focus_items).toEqual([
-				{ ...LOAD_TPS, status: "ok" },
+				{ ...LOAD_TPS, status: "ok", chart_type: "area" },
 				{ ...PROBE_LEVEL, status: "node_missing", last_version: 1 },
 			]);
 
@@ -236,7 +238,7 @@ describe("关注项的设置", () => {
 			]);
 			expect(kept.focus_items).toEqual([
 				{ ...PROBE_LEVEL, title: "探针电平", status: "node_missing", last_version: 1 },
-				{ ...LOAD_TPS, status: "ok" },
+				{ ...LOAD_TPS, status: "ok", chart_type: "area" },
 			]);
 
 			// 节点回来以后恢复可用；再次移除时，包含它的最后一个版本是第 3 版。
@@ -257,7 +259,7 @@ describe("关注项的设置", () => {
 			const view = await orchestrationView(api, id);
 			expect(view.focus_items).toEqual([
 				{ ...LOAD_TPS, status: "chart_missing" },
-				{ ...LOAD_LATENCY, status: "ok" },
+				{ ...LOAD_LATENCY, status: "ok", chart_type: "line" },
 			]);
 
 			const kept = await putFocusItemsOk(api, id, [LOAD_LATENCY, LOAD_TPS]);

@@ -98,5 +98,5 @@
 | `focus_item_duplicate` | 同一个节点的同一张图表出现了不止一次 |
 | `focus_item_unknown_chart` | 新加的项引用了最新版本里没有的节点，或者这个节点的节点类型没有这张图表 |
 
-写入和现在一样的列表不算修改。读取用 `orchestrations.get`：`focus_items` 是按作者顺序排好的列表，每项带 `status`：`ok`，`node_missing`（带 `last_version`，包含这个节点的最后一个版本号；复制场景时带过来、没有任何版本包含它的项为 `null`）或 `chart_missing`；`focus_edit` 是最后一次修改（`updated_by`、`updated_at`、`summary`），从没改过时为 `null`。场景列表（`orchestrations.list`）不带关注项。
+写入和现在一样的列表不算修改。读取用 `orchestrations.get`：`focus_items` 是按作者顺序排好的列表，每项带 `status`：`ok`（再带 `chart_type`，图表在最新版本里声明的类型 `line`、`area`、`bar` 或 `stat`，`stat` 是数值卡）、`node_missing`（带 `last_version`，包含这个节点的最后一个版本号；复制场景时带过来、没有任何版本包含它的项为 `null`）或 `chart_missing`；`focus_edit` 是最后一次修改（`updated_by`、`updated_at`、`summary`），从没改过时为 `null`。场景列表（`orchestrations.list`）不带关注项。
 
