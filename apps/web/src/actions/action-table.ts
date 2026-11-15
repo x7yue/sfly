@@ -52,6 +52,8 @@ export type ActionRow =
 			reason: CountOnlySpan["reason"];
 			/** 从什么时候起（控制面时间）。 */
 			from: string;
+			/** 从什么时候起（Agent 时间）。 */
+			agentFrom: string;
 			/** 到什么时候：任务结束的时间；还在执行时为 null（至今）。 */
 			until: string | null;
 			count: number;
@@ -149,6 +151,7 @@ function spanRows(
 			name: s.name,
 			reason: s.reason,
 			from: s.from,
+			agentFrom: s.agent_from,
 			until: s.to ?? endedAt,
 			count: (s.reason === "control_plane" ? undefined : unreported.get(s.name)) ?? s.count,
 		}));
