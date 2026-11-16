@@ -4,21 +4,23 @@ import {
 	type ChartView,
 	type FocusLatest,
 	type FocusSeries,
+	type MetricDeclaration,
 	type MetricSeries,
 	type NodeRunView,
 	type RunFocusItem,
 } from "@sfly/schema";
-import { useQueries } from "@tanstack/react-query";
+import { type UseQueryResult, useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
-import { useId } from "react";
+import { type ReactNode, useId } from "react";
 import { SectionHeading } from "#/components/page";
 import { AnomalyNote } from "#/focus/AnomalyNote";
 import { FocusPlot } from "#/focus/FocusPlot";
 import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
 import { FocusValue } from "#/focus/FocusValue";
+import type { PlotWindow } from "#/focus/focus-chart";
 import { anomalyText, readingLabel, readingState, readingValue } from "#/focus/focus-format";
 import { type FocusItems, isFocused } from "#/focus/use-focus-items";
-import { FOCUS, MONITOR_VIEW_LABEL, noDataLabel, PAGE, TERM } from "#/lib/copy";
+import { FOCUS, MESSAGE, MONITOR_DETAIL_LABEL, noDataLabel, TERM } from "#/lib/copy";
 import { useNow } from "#/lib/use-now";
 import { seriesQuery } from "#/monitor/use-run-metrics";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -28,9 +30,14 @@ const CHART_POINTS = 120;
 /** 绘图区的高度（px）。 */
 const PLOT_HEIGHT = 88;
 
-/** 检查器里的一张图表：节点类型声明的图表，它现在是不是关注项，是的话它的关注项读数（还没读到时为 undefined）。 */
+/**
+ * 检查器里的一张图表：节点类型声明的图表（`declared`），或者是关注项、这次运行锁定的节点包版本却没有声明的图表
+ * （`declared` 为 undefined：照样列出来，写明原因，不悄悄消失）。`focused` 是它现在是不是关注项，`reading` 是它的关注项读数
+ * （不是关注项、还没读到时为 undefined）。
+ */
 interface NodeChart {
-	chart: ChartView;
+	title: string;
+	declared: ChartView | undefined;
 	focused: boolean;
 	reading: RunFocusItem | undefined;
 }
@@ -45,14 +52,20 @@ export function orderCharts(
 	readings: readonly RunFocusItem[],
 	focused: (chart: string) => boolean,
 ): NodeChart[] {
-	const rows = charts.map((chart): NodeChart => {
-		const on = focused(chart.title);
-		return {
-			chart,
-			focused: on,
-			reading: on ? readings.find((r) => r.chart === chart.title) : undefined,
-		};
-	});
+	const rows = [
+		...charts.map((chart): NodeChart => {
+			const on = focused(chart.title);
+			return {
+				title: chart.title,
+				declared: chart,
+				focused: on,
+				reading: on ? readings.find((r) => r.chart === chart.title) : undefined,
+			};
+		}),
+		...readings
+			.filter((r) => r.unavailable && focused(r.chart) && !charts.some((c) => c.title === r.chart))
+			.map((r): NodeChart => ({ title: r.chart, declared: undefined, focused: true, reading: r })),
+	];
 	const rank = (row: NodeChart) => (!row.focused ? 2 : row.reading?.anomaly ? 0 : 1);
 	const at = (row: NodeChart) => (row.reading ? readings.indexOf(row.reading) : readings.length);
 	return rows.sort((a, b) => rank(a) - rank(b) || (a.focused ? at(a) - at(b) : 0));
@@ -72,12 +85,15 @@ const focusSeries = (s: MetricSeries["series"][number]): FocusSeries => ({
 	})),
 });
 
-/** 最近更新的那个序列的最后一个点（与控制面给关注项取最新值的规则相同）。 */
+/**
+ * 不是关注项的图表的最新值：最近更新的那个序列的最后一个点，同一时刻取排在前面的序列（和控制面给关注项取最新值的做法一样，
+ * 只是这里按桶的时间比）。
+ */
 function latestOf(series: readonly FocusSeries[]): FocusLatest | null {
 	let latest: FocusLatest | null = null;
 	for (const s of series) {
 		const last = s.points.at(-1);
-		if (last && (latest === null || Date.parse(last.time) >= Date.parse(latest.at))) {
+		if (last && (latest === null || Date.parse(last.time) > Date.parse(latest.at))) {
 			latest = { value: last.last, metric: s.metric, labels: s.labels, at: last.time };
 		}
 	}
@@ -106,13 +122,16 @@ export function NodeCharts({
 }: {
 	runId: string;
 	node: NodeRunView;
-	/** 运行指标目录里这个节点（它所在的链实例）的条目；没有声明图表时什么也不画。 */
+	/** 运行指标目录里这个节点（它所在的链实例）的条目；没有声明图表、也没有关注项时什么也不画。 */
 	entry: CatalogNode;
 	/** 还没读到关注项读数时为 undefined。 */
 	readings: NodeReadings | undefined;
 	focus: FocusItems;
-	/** 这个节点的图表能不能设为关注项：最新版本里还是同一个节点类型、同一个节点包版本。 */
-	enabled: boolean;
+	/**
+	 * 这个节点的图表能不能设为关注项：最新版本里还是同一个节点类型、同一个节点包版本。还不知道（运行绑定的版本还在加载）时为
+	 * undefined，开关先禁用、不写原因。
+	 */
+	enabled: boolean | undefined;
 }) {
 	const headingId = useId();
 	const latest = entry.attempts.at(-1);
@@ -132,120 +151,182 @@ export function NodeCharts({
 		isFocused(focus.items, node.node_id, chart),
 	);
 	const results = useQueries({
-		queries: charts.map(({ chart }) =>
-			seriesQuery(
+		queries: charts.map(({ declared }) => ({
+			...seriesQuery(
 				runId,
 				{
 					chain_instance_id: entry.chain_instance_id,
 					node_id: entry.node_id,
 					attempt: latest?.attempt,
-					metrics: readMetrics(chart).join(","),
+					metrics: declared ? readMetrics(declared).join(",") : "",
 					points: CHART_POINTS,
 				},
 				!live,
 			),
-		),
+			enabled: !!declared,
+		})),
 	});
-	if (entry.charts.length === 0) return null;
-	const declared = new Map(entry.metrics.map((m) => [m.name, m]));
+	if (charts.length === 0) return null;
+	const declaredMetric = new Map(entry.metrics.map((m) => [m.name, m]));
 	return (
 		<section aria-labelledby={headingId}>
 			<SectionHeading id={headingId}>
 				{TERM.chart}
-				<span className="font-mono">{entry.charts.length}</span>
+				<span className="font-mono">{charts.length}</span>
 			</SectionHeading>
 			<FocusQuota focus={focus} saved />
-			{!enabled && (
+			{enabled === false && (
 				<p className="m-0 mb-2 text-xs text-fg-3">
-					最新版本里这个节点已删除，或者换了节点类型、节点包版本，不能把它的{TERM.chart}设为
-					{TERM.focusItem}。
+					{`最新版本里这个节点已删除，或者换了节点类型、节点包版本，不能把它的${TERM.chart}设为${TERM.focusItem}。`}
 				</p>
 			)}
 			<ul aria-label={TERM.chart} className="m-0 flex list-none flex-col gap-2 p-0">
 				{charts.map((row, i) => {
 					const result = results[i];
-					const series = (result?.data?.series ?? []).map(focusSeries);
-					const metrics = readMetrics(row.chart).map((name) => ({
-						name,
-						label_keys: declared.get(name)?.labels ?? [],
-					}));
-					const unit = declared.get(row.chart.metrics[0] ?? "")?.unit ?? "";
 					const reading =
 						row.reading && readings ? { item: row.reading, at: readings.generatedAt } : null;
-					const value = reading?.item ?? { latest: latestOf(series), metrics, unit };
-					const label = reading
-						? readingLabel(reading.item, reading.at)
-						: `${row.chart.title} ${readingValue(value)}`;
-					const state = reading ? readingState(reading.item, reading.at) : null;
-					const empty =
-						state?.kind === "empty"
-							? state.text
-							: !reading && value.latest === null
-								? noDataLabel(attempt ?? NOT_STARTED, node.status)
-								: null;
+					const titleId = `${headingId}-${i}`;
 					return (
-						<li key={row.chart.title}>
+						<li key={row.title}>
 							<article
-								aria-labelledby={`${headingId}-${i}`}
-								data-node-chart={row.chart.title}
+								aria-labelledby={titleId}
+								data-node-chart={row.title}
 								className="flex min-w-0 flex-col gap-1 rounded-lg border border-border-soft bg-bg px-2.5 pt-2 pb-1.5"
 							>
-								<header className="flex min-w-0 items-center gap-2">
-									<h4
-										id={`${headingId}-${i}`}
-										className="m-0 line-clamp-2 min-w-0 text-xs font-normal wrap-anywhere text-fg-2"
-									>
-										{row.chart.title}
-									</h4>
-									<FocusValue
-										item={value}
-										className={cn(
-											"ml-auto min-w-0 truncate",
-											reading?.item.anomaly?.kind === "stale" && "text-fg-2",
-										)}
+								{row.declared ? (
+									<DeclaredChart
+										titleId={titleId}
+										chart={row.declared}
+										reading={reading}
+										result={result}
+										metricOf={(name) => declaredMetric.get(name)}
+										axis={axis}
+										noData={noDataLabel(attempt ?? NOT_STARTED, node.status)}
+										toggle={
+											<FocusToggle
+												focus={focus}
+												nodeId={node.node_id}
+												chart={row.title}
+												chartType={row.declared.type}
+												enabled={enabled === true}
+											/>
+										}
 									/>
-									<FocusToggle
-										focus={focus}
-										nodeId={node.node_id}
-										chart={row.chart.title}
-										chartType={row.chart.type}
-										enabled={enabled}
-									/>
-								</header>
-								{reading?.item.anomaly && (
-									<AnomalyNote item={reading.item} generatedAt={reading.at} />
+								) : (
+									<>
+										<header className="flex min-w-0 items-center gap-2">
+											<ChartTitle id={titleId}>{row.title}</ChartTitle>
+											<span className="ml-auto" />
+											<FocusToggle
+												focus={focus}
+												nodeId={node.node_id}
+												chart={row.title}
+												chartType={row.reading?.chart_type ?? "line"}
+												enabled={enabled === true}
+											/>
+										</header>
+										<p className="m-0 text-xs text-fg-3">{FOCUS.chartMissing(row.title)}</p>
+									</>
 								)}
-								{row.chart.type !== "stat" &&
-									(result?.isPending ? (
-										<Skeleton style={{ height: PLOT_HEIGHT }} />
-									) : (
-										<FocusPlot
-											series={series}
-											type={row.chart.type}
-											metrics={metrics}
-											axis={axis}
-											bucketSeconds={result?.data?.bucket_seconds ?? 1}
-											staleSince={
-												reading?.item.anomaly?.kind === "stale" ? reading.item.last_at : null
-											}
-											height={PLOT_HEIGHT}
-											label={label}
-											empty={empty}
-											gapText={reading ? anomalyText(reading.item, reading.at) : null}
-										/>
-									))}
 							</article>
 						</li>
 					);
 				})}
 			</ul>
 			<p className="m-0 mt-2.5 text-xs text-fg-3">
-				有异常的{TERM.focusItem}排在最前，其次是其余{TERM.focusItem}，再是其他{TERM.chart}
-				。图表显示最新一次
-				{TERM.attempt}的全程，要缩放就在{PAGE.monitor}
-				{MONITOR_VIEW_LABEL.detail}里打开。{FOCUS.notVersioned}
+				{`${FOCUS.anomalyFirst}，其次是其余${TERM.focusItem}，再是其他${TERM.chart}。图表显示最新一次${TERM.attempt}的全程，要缩放就在${MONITOR_DETAIL_LABEL}里看。${FOCUS.notVersioned}`}
 			</p>
 		</section>
+	);
+}
+
+function ChartTitle({ id, children }: { id: string; children: string }) {
+	return (
+		<h4 id={id} className="m-0 line-clamp-2 min-w-0 text-xs font-normal wrap-anywhere text-fg-2">
+			{children}
+		</h4>
+	);
+}
+
+/**
+ * 节点类型声明的一张图表：标题、最新值、「关注」开关；有异常时一行原因；数值卡以外画最新一次尝试的全程。
+ * 是关注项、读到了读数时，最新值、异常原因、没有新数据的那一段取读数；否则取序列。
+ */
+function DeclaredChart({
+	titleId,
+	chart,
+	reading,
+	result,
+	metricOf,
+	axis,
+	noData,
+	toggle,
+}: {
+	titleId: string;
+	chart: ChartView;
+	reading: { item: RunFocusItem; at: string } | null;
+	result: UseQueryResult<MetricSeries> | undefined;
+	metricOf: (name: string) => MetricDeclaration | undefined;
+	axis: PlotWindow | null;
+	/** 序列里一个点都没有时写什么（按这次尝试和节点的状态）。 */
+	noData: string;
+	toggle: ReactNode;
+}) {
+	const series = (result?.data?.series ?? []).map(focusSeries);
+	const metrics = readMetrics(chart).map((name) => ({
+		name,
+		label_keys: metricOf(name)?.labels ?? [],
+	}));
+	const unit = metricOf(chart.metrics[0] ?? "")?.unit ?? "";
+	const value = reading?.item ?? { latest: latestOf(series), metrics, unit };
+	const state = reading ? readingState(reading.item, reading.at) : null;
+	const failed = result?.error && !result.data;
+	const empty =
+		state?.kind === "empty"
+			? state.text
+			: failed
+				? MESSAGE.loadFailed(TERM.metric)
+				: !reading && value.latest === null
+					? noData
+					: null;
+	return (
+		<>
+			<header className="flex min-w-0 items-center gap-2">
+				<ChartTitle id={titleId}>{chart.title}</ChartTitle>
+				<FocusValue
+					item={value}
+					className={cn(
+						"ml-auto min-w-0 truncate",
+						reading?.item.anomaly?.kind === "stale" && "text-fg-2",
+					)}
+				/>
+				{toggle}
+			</header>
+			{reading?.item.anomaly && <AnomalyNote item={reading.item} generatedAt={reading.at} />}
+			{chart.type === "stat" ? (
+				failed && <p className="m-0 text-xs text-fg-3">{MESSAGE.loadFailed(TERM.metric)}</p>
+			) : result?.isPending ? (
+				<Skeleton style={{ height: PLOT_HEIGHT }} />
+			) : (
+				<FocusPlot
+					series={series}
+					type={chart.type}
+					metrics={metrics}
+					axis={axis}
+					bucketSeconds={result?.data?.bucket_seconds ?? 1}
+					staleSince={reading?.item.anomaly?.kind === "stale" ? reading.item.last_at : null}
+					height={PLOT_HEIGHT}
+					label={
+						reading
+							? readingLabel(reading.item, reading.at)
+							: `${chart.title} ${readingValue(value)}`
+					}
+					empty={empty}
+					gapText={reading ? anomalyText(reading.item, reading.at) : null}
+					elsewhere={MONITOR_DETAIL_LABEL}
+				/>
+			)}
+		</>
 	);
 }
 

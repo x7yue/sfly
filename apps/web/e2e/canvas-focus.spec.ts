@@ -40,10 +40,14 @@ test("卡片：眼睛图标和数量、前两项、「还有 N 个关注项」�
 	await expect(probe.getByTestId("node-focus")).not.toContainText("还有");
 	// 「正在做」一行和关注项都在，卡片长高了，仍在子流程区域里面。
 	await expect(probe.getByTestId("node-activity")).toContainText("第 3 批");
-	const card = await probe.boundingBox();
-	const region = await page.getByRole("region", { name: "子流程 sub" }).boundingBox();
-	expect(card?.height).toBeGreaterThan(140);
-	expect(card && region && card.y + card.height < region.y + region.height).toBe(true);
+	const region = page.getByRole("region", { name: "子流程 sub" });
+	await expect.poll(async () => (await probe.boundingBox())?.height).toBeGreaterThan(140);
+	await expect
+		.poll(async () => {
+			const [card, box] = [await probe.boundingBox(), await region.boundingBox()];
+			return card && box && card.y + card.height < box.y + box.height;
+		})
+		.toBe(true);
 
 	// cleanup 还没开始执行：只有个数，底部照常是配置摘要。
 	const cleanup = nodeCard(page, "cleanup");
@@ -68,8 +72,9 @@ test("卡片的可访问名称里有关注项的个数和需要注意的项数",
 }) => {
 	const running = await canvasFocusRun(controlPlane, connectAgent, clock);
 	await openCanvasRun(page, clock, running);
+	// 卡片上的三角旁边放不下原因：原因写在名称里。
 	await expect(nodeCard(page, "probe")).toHaveAccessibleName(
-		/^节点 probe，.+ 执行中 正在做 第 3 批 2 个关注项，1 项需要注意$/,
+		/^节点 probe，.+ 执行中 正在做 第 3 批 2 个关注项，1 项需要注意：total 已 2m \d+s 无新数据$/,
 	);
 	await expect(nodeCard(page, "fetch")).toHaveAccessibleName(
 		"节点 fetch，HTTP 检查 成功 3 个关注项",
@@ -124,6 +129,13 @@ test("选中节点：检查器按「有异常的关注项、其余关注项、�
 	await expect(panel.getByRole("article", { name: "level" }).getByRole("img")).toHaveAccessibleName(
 		/^探活 level 4，来自 probe（执行中），\d+s 前$/,
 	);
+
+	// cleanup 还没开始执行：没有图表可画，写明原因和其中几张是关注项。
+	await nodeCard(page, "cleanup").click();
+	await expect(panel).toContainText(
+		"还没有开始执行。开始执行以后，这里显示它声明的图表，其中 1 张是关注项。",
+	);
+	await expect(panel.locator("[data-node-chart]")).toHaveCount(0);
 
 	// fetch：三张关注项按作者的顺序，没设关注项的「吞吐」在最后；图表固定显示这次尝试的全程。
 	await nodeCard(page, "fetch").click();

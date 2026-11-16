@@ -1,7 +1,7 @@
 import type { RunFocusItem } from "@sfly/schema";
 import { useMemo } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
-import { FOCUS, MONITOR_VIEW_LABEL } from "#/lib/copy";
+import { FOCUS, MONITOR_VIEW_LABEL, openInLabel } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { AnomalyNote } from "./AnomalyNote";
 import { FocusPlot } from "./FocusPlot";
@@ -78,11 +78,12 @@ export function FocusChart({
 					label={readingLabel(item, generatedAt)}
 					empty={state.kind === "empty" ? state.text : null}
 					gapText={anomalyText(item, generatedAt)}
+					elsewhere={MONITOR_VIEW_LABEL.detail}
 				/>
 			)}
 			<footer className="mt-auto flex justify-end pt-1">
 				<Button variant="link" onClick={onOpen} className="text-xs text-fg-2">
-					在{MONITOR_VIEW_LABEL.detail}里打开 {sourceNodeName(item)}
+					{openInLabel(MONITOR_VIEW_LABEL.detail, sourceNodeName(item))}
 				</Button>
 			</footer>
 		</article>

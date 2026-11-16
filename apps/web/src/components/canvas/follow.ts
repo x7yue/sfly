@@ -57,24 +57,11 @@ const unionOf = (rects: readonly Rect[]): Rect => {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-/**
- * 框住 `running`（执行中的节点 ID）的视口；画布上没有这些节点时是 null。
- * `area` 是视口四周被悬浮控件占住的宽度，检查器的宽度在 `area.right` 里；`size` 是画布容器的大小。
- */
-export function followViewport({
-	running,
-	layout,
-	size,
-	area,
-}: {
-	running: readonly string[];
-	layout: LayoutDocument;
-	size: { width: number; height: number };
-	area: CanvasInsets;
-}): Viewport | null {
+/** 跟随时要框住的东西：`running`（执行中的节点 ID）的卡片，子流程里的节点换成它的子流程区域。 */
+function framedRects(running: readonly string[], layout: LayoutDocument): Rect[] {
 	const regions = subflowRegions(layout);
 	const nodes = new Map(layout.nodes.map((n) => [n.id, n]));
-	const framed = running.flatMap((id): Rect[] => {
+	return running.flatMap((id): Rect[] => {
 		const region = regions.find((r) => r.members.includes(id));
 		if (region) {
 			return [{ x: region.box.x, y: region.box.y, width: region.box.w, height: region.box.h }];
@@ -83,13 +70,31 @@ export function followViewport({
 		const at = node?.position;
 		return at ? [{ x: at.x, y: at.y, width: NODE_WIDTH, height: node.height ?? NODE_HEIGHT }] : [];
 	});
+}
+
+interface FollowFrame {
+	running: readonly string[];
+	layout: LayoutDocument;
+	size: { width: number; height: number };
+	area: CanvasInsets;
+}
+
+const visibleOf = ({ size, area }: Pick<FollowFrame, "size" | "area">) => ({
+	width: size.width - area.left - area.right,
+	height: size.height - area.top - area.bottom,
+});
+
+/**
+ * 框住 `running`（执行中的节点 ID）的视口；画布上没有这些节点时是 null。
+ * `area` 是视口四周被悬浮控件占住的宽度，检查器的宽度在 `area.right` 里；`size` 是画布容器的大小。
+ */
+export function followViewport(frame: FollowFrame): Viewport | null {
+	const framed = framedRects(frame.running, frame.layout);
 	if (framed.length === 0) return null;
 
+	const { area } = frame;
 	const bounds = unionOf(framed);
-	const visible = {
-		width: size.width - area.left - area.right,
-		height: size.height - area.top - area.bottom,
-	};
+	const visible = visibleOf(frame);
 	const zoom = clamp(
 		Math.min(
 			(visible.width - 2 * FRAME_PADDING) / bounds.width,
@@ -103,4 +108,26 @@ export function followViewport({
 		y: area.top + visible.height / 2 - (bounds.y + bounds.height / 2) * zoom,
 		zoom,
 	};
+}
+
+/**
+ * 镜头在 `viewport` 时，`running` 要框住的东西是不是都在可见区域里。框好以后卡片可能才长高（关注项读到了、
+ * 多了「正在做」一行），长出来的部分落到可见区域外时要重新框。
+ */
+export function framedInView({
+	viewport,
+	...frame
+}: FollowFrame & { viewport: Viewport }): boolean {
+	const { area } = frame;
+	const visible = visibleOf(frame);
+	return framedRects(frame.running, frame.layout).every((r) => {
+		const left = r.x * viewport.zoom + viewport.x;
+		const top = r.y * viewport.zoom + viewport.y;
+		return (
+			left >= area.left - 1 &&
+			top >= area.top - 1 &&
+			left + r.width * viewport.zoom <= area.left + visible.width + 1 &&
+			top + r.height * viewport.zoom <= area.top + visible.height + 1
+		);
+	});
 }

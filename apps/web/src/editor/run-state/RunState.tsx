@@ -1,10 +1,11 @@
 import { nodeCardText } from "@sfly/orchestration";
-import type {
-	OrchestrationDocument,
-	RunFocus,
-	RunFocusItem,
-	RunMetricCatalog,
-	RunView,
+import {
+	isActiveStatus,
+	type OrchestrationDocument,
+	type RunFocus,
+	type RunFocusItem,
+	type RunMetricCatalog,
+	type RunView,
 } from "@sfly/schema";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
@@ -12,14 +13,14 @@ import { ActivityIcon, PanelRightCloseIcon } from "lucide-react";
 import { forwardRef, type ReactNode, useId, useMemo } from "react";
 import { currentActivity } from "#/actions/current-activity";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
+import { cardFocusLabel, FocusRows } from "#/components/canvas/CardFocus";
 import type {
 	CanvasContextValue,
 	CanvasInfo,
+	CardFocus,
 	NodeDecoration,
-	NodeFocus,
 } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
-import { FocusRows } from "#/components/canvas/NodeFocus";
 import { KIND_META } from "#/components/canvas/node-display";
 import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
@@ -30,8 +31,9 @@ import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { focusPreview, nodeFocusItems } from "#/focus/focus-preview";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
-import { ACTION, FOCUS, MONITOR_VIEW_LABEL, PAGE, TERM } from "#/lib/copy";
+import { ACTION, FOCUS, MESSAGE, MONITOR_DETAIL_LABEL, openInLabel, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { NODE_STATUS } from "#/lib/node-status";
 import { useNow } from "#/lib/use-now";
 import { runViewTransition } from "#/lib/view-transition";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
@@ -59,18 +61,19 @@ type Decorations = Pick<CanvasContextValue, "decorateNode" | "decorateEdge" | "r
  * 卡片上属于这个节点的关注项：左上角的个数；节点开始执行过以后，底部换成前两项（有异常的在前）和「还有 N 个关注项」。
  * 场景没设关注项、或者没有属于这个节点的时为 undefined。
  */
-function nodeFocus(
+function cardFocus(
 	focus: RunFocus | undefined,
 	id: string,
 	started: boolean,
-): NodeFocus | undefined {
+): CardFocus | undefined {
 	const items = nodeFocusItems(focus, id);
 	if (!focus || items.length === 0) return undefined;
-	const preview = focusPreview(items);
 	return {
 		count: items.length,
-		attention: preview.attention,
-		rows: started ? <FocusRows preview={preview} generatedAt={focus.generated_at} /> : undefined,
+		label: cardFocusLabel(items, focus.generated_at),
+		rows: started ? (
+			<FocusRows preview={focusPreview(items)} generatedAt={focus.generated_at} />
+		) : undefined,
 	};
 }
 
@@ -101,7 +104,7 @@ export function useRunDecorations(
 								{ended ? "未执行" : "待执行"}
 							</StatusPill>
 						),
-						focus: nodeFocus(focus, id, false),
+						focus: cardFocus(focus, id, false),
 					};
 				}
 				const s = nodeStatusView(summary.node.status);
@@ -110,7 +113,7 @@ export function useRunDecorations(
 				return {
 					run: summary.state,
 					activity: currentActivity(summary.node.attempts.at(-1)) ?? undefined,
-					focus: nodeFocus(focus, id, started),
+					focus: cardFocus(focus, id, started),
 					slot: entry?.primary_metric ? (
 						<NodePrimaryMetric
 							runId={run.id}
@@ -395,7 +398,15 @@ function NodeRunInspector({
 							}
 						}
 						focus={focusItems}
-						enabled={!!state.doc && isSavedNodeType(saved, state.doc, id)}
+						enabled={state.doc && isSavedNodeType(saved, state.doc, id)}
+					/>
+				)}
+				{view && !entry && node.kind === "package" && (
+					<NoCharts
+						run={run}
+						view={view}
+						metrics={state.metrics}
+						focused={nodeFocusItems(focus, id).length}
 					/>
 				)}
 				<p className="m-0 mt-3.5 mb-2.5 text-xs text-fg-3">{HINT}</p>
@@ -405,13 +416,43 @@ function NodeRunInspector({
 						viewTransition={runViewTransition("to-monitor")}
 						className={buttonVariants()}
 					>
-						在{PAGE.monitor}
-						{MONITOR_VIEW_LABEL.detail}里打开 {runNodeName(view)}
+						{openInLabel(MONITOR_DETAIL_LABEL, runNodeName(view))}
 					</Link>
 				)}
 			</div>
 		</>
 	);
+}
+
+/**
+ * 包节点还没有图表可画时（运行指标目录里没有它：还没开始执行，或者指标已过保留期）写明原因；还会开始执行的，说明开始以后
+ * 这里显示它声明的图表、其中几张是关注项。开始执行了、目录还没刷新到时什么也不写。
+ */
+function NoCharts({
+	run,
+	view,
+	metrics,
+	focused,
+}: {
+	run: RunView;
+	view: NodeRunSummary["node"];
+	metrics: RunMetricCatalog | undefined;
+	/** 属于这个节点的关注项个数。 */
+	focused: number;
+}) {
+	let text: string;
+	if (metrics?.expired) text = MESSAGE.metricsExpired;
+	else if (!metrics || view.attempts.some((a) => a.started_at !== null)) return null;
+	else {
+		const later =
+			run.status === "running" && (view.status === "pending" || isActiveStatus(view.status));
+		text = `${NODE_STATUS[view.status].notRun}${
+			later
+				? `开始执行以后，这里显示它声明的${TERM.chart}${focused > 0 ? `，其中 ${focused} 张是${TERM.focusItem}` : ""}。`
+				: ""
+		}`;
+	}
+	return <p className="m-0 mt-3 text-xs text-fg-3">{text}</p>;
 }
 
 function RunOverview({
@@ -491,7 +532,7 @@ function RunFocusList({
 	onSelect(item: RunFocusItem): void;
 }) {
 	const headingId = useId();
-	const attention = focusPreview(focus.items).attention;
+	const attention = focus.items.filter((item) => item.anomaly).length;
 	return (
 		<section aria-labelledby={headingId}>
 			<SectionHeading id={headingId}>

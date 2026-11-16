@@ -6,10 +6,10 @@ import { NoteIcon } from "#/components/note-icon";
 import { BaseHandle } from "@/components/ui/base-handle";
 import { BaseNode, BaseNodeHeader, BaseNodeHeaderTitle } from "@/components/ui/base-node";
 import { ActivityLine } from "./ActivityLine";
+import { FocusBadge } from "./CardFocus";
 import { useFlowCanvas } from "./context";
 import type { SfNode } from "./flow";
 import { NODE_HEIGHT, NODE_RADIUS, NODE_WIDTH, PORT_SIZE, PORTS } from "./geometry";
-import { FocusBadge } from "./NodeFocus";
 import { NodeTitleEditor } from "./NodeTitleEditor";
 import { KIND_META, nodeSlot, nodeTags } from "./node-display";
 import { WarningBadge } from "./WarningBadge";
@@ -88,7 +88,7 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			role={editing ? "group" : "button"}
 			tabIndex={-1}
 			// 名称：「节点 ID，种类，标题」（aria-label，由自己的 id 引用）接上右上角的状态（运行状态、警告、差异标记），
-			// 执行中再接上「正在做 X」，有关注项时最后是「N 个关注项，M 项需要注意」。
+			// 执行中再接上「正在做 X」，有关注项时最后是关注项的个数（有异常时写几项需要注意、为什么）。
 			id={cardId}
 			aria-label={[`节点 ${id}`, caption, title !== id && title].filter(Boolean).join("，")}
 			aria-labelledby={[cardId, statusId, activity && activityId, focus && focusId]

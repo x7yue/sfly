@@ -228,6 +228,12 @@ export const PRESET_INVALID_LABEL = "已失效";
 /** 运行监控页两个视图的名称：页头的标签页，和概览里「在详情里打开」「在详情里查看」的说法共用。 */
 export const MONITOR_VIEW_LABEL = { overview: "概览", detail: "详情" } as const;
 
+/** 「运行监控详情」：运行监控页之外的地方（画布运行状态的检查器）指向运行监控的「详情」视图时这样写。 */
+export const MONITOR_DETAIL_LABEL = `${PAGE.monitor}${MONITOR_VIEW_LABEL.detail}`;
+
+/** 「在详情里打开 fetch」「在运行监控详情里打开 fetch」：跳到某个视图里的这个节点的按钮或链接。 */
+export const openInLabel = (place: string, node: string) => `在${place}里打开 ${node}`;
+
 /** 关注项读数里来源节点成功、已停止或已取消后的「最终值」：读数的脚注和可访问名称共用。 */
 export const FINAL_VALUE_LABEL = "最终值";
 

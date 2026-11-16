@@ -5,6 +5,7 @@ import {
 	type FocusItemView,
 	focusKey,
 	orchestrationsApi,
+	queryKey,
 	runFocusApi,
 } from "@sfly/schema";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -48,7 +49,7 @@ export function useFocusItems(orchestrationId: string) {
 			// 在画布运行状态的检查器里开关后，概览里要马上出现或撤下这一项）。
 			if (queryClient.isMutating({ mutationKey: writing }) <= 1) {
 				void queryClient.invalidateQueries({ queryKey: detail.queryKey });
-				void queryClient.invalidateQueries({ queryKey: runFocusApi.focus.key });
+				void queryClient.invalidateQueries({ queryKey: queryKey(runFocusApi.focus) });
 			}
 		},
 	});
