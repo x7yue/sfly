@@ -26,7 +26,7 @@ export interface AgentTasks {
 /**
  * 符合 `where` 的任务（Agent 列表的 `running_tasks`、`queued_tasks`，立即更新返回的被终止任务）：
  * 任务行连上运行、场景和链实例，节点的显示名称、节点类型和子流程名称取自运行绑定的版本（不是场景现在的版本），
- * 占着槽位的任务带上存下的此刻在做的动作（src/actions/）和最新进度（写入时已打码，与运行视图里的同一份）。
+ * 占着槽位的任务带上存下的此刻在做的动作（src/actions/）和最新进度（写入时按那一刻这次运行已知的 secret 打码；运行视图读取时会按当时的 secret 再打一遍，这里不会）。
  * 版本文档按版本只读一次：排队的任务很多时，不会每个任务带一份文档。
  */
 export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promise<AgentTasks> {

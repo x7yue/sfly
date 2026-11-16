@@ -54,7 +54,7 @@ export const RunningTaskView = z.object({
 	started_at: Timestamp.nullable(),
 	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，派发阶段也为 null。 */
 	current_action: CurrentAction.nullable(),
-	/** 最新进度（ctx.progress），与运行视图里同一次尝试的进度相同；没上报过时为 null。说明里的 secret 值已打码。 */
+	/** 最新进度（ctx.progress）；没上报过时为 null。说明里的 secret 值按写入时这次运行已知的 secret 打码；运行视图读取时还会按当时的 secret 再打一遍，所以写入之后才出现的 secret 值，运行视图会打码、这里不会。 */
 	progress: TaskProgressView.nullable(),
 });
 
