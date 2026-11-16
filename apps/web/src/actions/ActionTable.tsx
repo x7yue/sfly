@@ -16,7 +16,7 @@ import {
 } from "#/lib/format";
 import type { LogTimeKind } from "#/monitor/log-time-kind";
 import { Button } from "@/components/ui/button";
-import { TableHead, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Truncate } from "@/components/ui/truncate";
 import { partitionPoint } from "./action-details";
 import {
@@ -249,7 +249,7 @@ export function ActionTable({
 				loadOlderNearBottom();
 			}}
 		>
-			<table className="w-full table-fixed border-collapse text-xs">
+			<Table className="table-fixed text-xs">
 				<caption className="sr-only">{caption}</caption>
 				<colgroup>
 					<col className={startWidth} />
@@ -258,8 +258,8 @@ export function ActionTable({
 					<col className="w-21" />
 					<col />
 				</colgroup>
-				<thead ref={head}>
-					<tr>
+				<TableHeader ref={head}>
+					<TableRow>
 						<TableHead className="py-1.5 whitespace-normal">
 							{agent ? (
 								<>
@@ -276,10 +276,14 @@ export function ActionTable({
 						<TableHead className="py-1.5">字段</TableHead>
 						<TableHead className="py-1.5 text-right">耗时</TableHead>
 						<TableHead className="py-1.5">结果</TableHead>
-					</tr>
-				</thead>
+					</TableRow>
+				</TableHeader>
 				{segments.map((segment, i) => (
-					<tbody key={segment.group} data-group={segment.group}>
+					<TableBody
+						key={segment.group}
+						data-group={segment.group}
+						className="[&_tr:last-child]:border-b"
+					>
 						{i === 0 && padTop > 0 && <Spacer height={padTop} />}
 						{segment.items.map(({ virtual: v, item }) => (
 							<ItemRow
@@ -299,9 +303,9 @@ export function ActionTable({
 							/>
 						))}
 						{i === segments.length - 1 && padBottom > 0 && <Spacer height={padBottom} />}
-					</tbody>
+					</TableBody>
 				))}
-			</table>
+			</Table>
 			{hasOlder && (
 				<div className="px-3 py-1.5">
 					<button

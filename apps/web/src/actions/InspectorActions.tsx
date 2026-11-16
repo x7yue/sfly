@@ -21,6 +21,15 @@ import {
 	spansOtherDay,
 } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
+import {
+	COLUMN_WIDTH,
+	Table,
+	TableBody,
+	TableCell,
+	TableHead,
+	TableHeader,
+	TableRow,
+} from "@/components/ui/table";
 import { Truncate } from "@/components/ui/truncate";
 import { fieldsText } from "./action-table";
 import { failedTotal, runningRows } from "./summary-model";
@@ -136,42 +145,39 @@ export function ActionArea({
 				{TERM.action}
 				{attempts > 1 && <span>{attemptLabel(attempt)}</span>}
 			</SectionHeading>
-			<table className="w-full border-collapse text-xs leading-5">
-				<caption className="sr-only">每种名称的总数和失败数</caption>
-				<thead>
-					<tr className="text-fg-3">
-						<th scope="col" className="pb-0.5 text-left font-normal whitespace-nowrap">
-							名称
-						</th>
-						<th scope="col" className="pb-0.5 pl-3.5 text-right font-normal whitespace-nowrap">
-							总数
-						</th>
-						<th scope="col" className="pb-0.5 pl-3.5 text-right font-normal whitespace-nowrap">
-							失败
-						</th>
-					</tr>
-				</thead>
-				<tbody>
+			<Table aria-label="每种名称的总数和失败数" className="text-xs leading-5">
+				<TableHeader>
+					<TableRow>
+						<TableHead className="px-0 py-1">名称</TableHead>
+						<TableHead className="py-1 pr-0 pl-3.5 text-right">总数</TableHead>
+						<TableHead className="py-1 pr-0 pl-3.5 text-right">失败</TableHead>
+					</TableRow>
+				</TableHeader>
+				<TableBody>
 					{summary.names.map((n) => (
-						<tr key={n.name}>
-							<th scope="row" className="w-full max-w-0 p-0 text-left font-normal text-fg-1">
+						<TableRow key={n.name}>
+							<th
+								scope="row"
+								className={cn(COLUMN_WIDTH.grow, "px-0 py-0.5 text-left font-normal text-fg-1")}
+							>
 								<Truncate>{n.name}</Truncate>
 							</th>
-							<td className="pl-3.5 text-right font-mono whitespace-nowrap text-fg-1">
+							<TableCell width="fit" className="py-0.5 pr-0 pl-3.5 text-right font-mono text-fg-1">
 								{formatInteger(n.total)}
-							</td>
-							<td
+							</TableCell>
+							<TableCell
+								width="fit"
 								className={cn(
-									"pl-3.5 text-right font-mono whitespace-nowrap",
+									"py-0.5 pr-0 pl-3.5 text-right font-mono",
 									n.failed > 0 ? "text-danger-fg" : "text-fg-3",
 								)}
 							>
 								{formatInteger(n.failed)}
-							</td>
-						</tr>
+							</TableCell>
+						</TableRow>
 					))}
-				</tbody>
-			</table>
+				</TableBody>
+			</Table>
 			{(countOnly.length > 0 || summary.capped_at !== null) && (
 				<CapNote countOnly={countOnly} totalFullAt={summary.capped_at} otherDay={otherDay} />
 			)}

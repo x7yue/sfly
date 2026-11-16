@@ -467,6 +467,7 @@ test("检查器：执行中每秒重新读取摘要，节点结束时再读一�
 
 	// 之后不再读：等三个轮询间隔，请求数不变。
 	const done = requests.length;
+	// biome-ignore lint/plugin/e2e-fixed-wait: 断言的是没有发生的事：节点结束以后过了三个轮询间隔（每秒一次），摘要没有再被读
 	await page.waitForTimeout(3_000);
 	expect(requests.length).toBe(done);
 });
