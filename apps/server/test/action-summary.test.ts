@@ -4,8 +4,10 @@ import { actionsApi, agentsApi, runsApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ActionSummaryEvent } from "../src/actions/action-summary.js";
 import { ApiClient } from "./support/api-client.js";
+import { echo, orchestration, param, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent } from "./support/fake-agent.js";
+import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { SseClient } from "./support/sse-client.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -321,6 +323,67 @@ describe("动作摘要", () => {
 		);
 		await agent.succeed(task);
 		expect(await listed()).toEqual([]);
+	});
+
+	it("进度说明和正在做的动作：运行视图和 Agent 列表按运行此刻的 secret 值打码，口径一样（之后才创建的子流程带来的 secret 也算）", async () => {
+		const agent = await connect();
+		const runId = await api.triggerOk(
+			await api.orchestrationWith(
+				orchestration(
+					[
+						[
+							{ id: "entry", kind: "entry", params: [param("token", { required: true })] },
+							spawn("spawn1"),
+							{ id: "nap", kind: "sleep", duration: "20s" },
+							spawn("spawn2", { key: "${{ params.token }}" }),
+						],
+						[{ id: "watch", kind: "subflow_entry", params: [] }, echo("a")],
+						[
+							{
+								id: "login",
+								kind: "subflow_entry",
+								params: [param("key", { secret: true, required: true })],
+							},
+							echo("b"),
+						],
+					],
+					[
+						["spawn1", "watch"],
+						["spawn2", "login"],
+					],
+				),
+			),
+			{ token: "s3cr3t" },
+		);
+		// a 在 secret 出现之前写下进度和正在做的动作：写入时还不知道 s3cr3t 是 secret。
+		const a = await agent.nextAssign();
+		agent.progress(a, 1, 3, "用 s3cr3t 登录");
+		agent.actionSummary(a, {
+			total: 1,
+			reported: 1,
+			running: [doing(agent, 1, "登录 s3cr3t", T0 + 1_000)],
+		});
+		await agent.sync();
+		// nap 到点后 spawn2 创建 login 子流程，它的 secret 参数 key 就是 s3cr3t（不到 a 的租约期限，a 还在执行）。
+		(cp.clock as ManualClock).advance(20_000);
+		await agent.nextAssign();
+
+		const attempt = async () =>
+			(await api.run(runId)).chains
+				.flatMap((c) => c.nodes)
+				.find((n) => n.node_id === "a")
+				?.attempts.at(-1);
+		const listed = async () => {
+			const res = await cp.fetch("/agents");
+			const [first] = agentsApi.list.response.parse(await res.json()).agents;
+			return first?.running_tasks.find((t) => t.node_id === "a");
+		};
+		const masked = {
+			progress: { message: "用 ****** 登录" },
+			current_action: { name: "登录 ******" },
+		};
+		expect(await attempt()).toMatchObject(masked);
+		expect(await listed()).toMatchObject(masked);
 	});
 
 	it("名称、字段和失败原因里的 secret 值打码", async () => {
