@@ -2,6 +2,7 @@ import { isOnAgentStatus, type RunFocus, type RunFocusItem, type RunView } from 
 import type { UseQueryResult } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { EyeIcon } from "lucide-react";
+import { type CurrentActivity, currentActivity } from "#/actions/current-activity";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
 import { RunLines } from "#/components/run-lines";
@@ -20,6 +21,7 @@ import {
 import { formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Truncate } from "@/components/ui/truncate";
 import { Attention, OtherWarnings } from "./Attention";
 import { useTimeAxis } from "./monitor-state";
 import type { PanelTab } from "./run-link";
@@ -121,12 +123,33 @@ function ChainSection({ run }: { run: RunView }) {
 										{formatDuration(now - Date.parse(attempt.started_at ?? attempt.queued_at))}
 									</span>
 								</span>
+								<ExecutingActivity activity={currentActivity(attempt)} />
 							</li>
 						))}
 					</ul>
 				</div>
 			)}
 		</section>
+	);
+}
+
+/**
+ * 执行中那一行里节点此刻在做什么：有动作时写「正在 保持 4 小时」（最外层、开始得最早的那个），没有动作时写进度的说明。
+ * 准备中的节点还没有可写的，什么都不画。
+ */
+function ExecutingActivity({ activity }: { activity: CurrentActivity | null }) {
+	if (!activity) return null;
+	return (
+		<span className="flex max-w-80 min-w-0 items-baseline gap-1.5 text-fg-3">
+			<span aria-hidden>·</span>
+			{activity.kind === "action" ? (
+				<span className="flex min-w-0 items-baseline gap-1">
+					正在 <Truncate className="text-fg-1">{activity.name}</Truncate>
+				</span>
+			) : (
+				<Truncate className="text-fg-2">{activity.message}</Truncate>
+			)}
+		</span>
 	);
 }
 

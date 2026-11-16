@@ -18,6 +18,7 @@ import {
 	LIST_LABEL,
 	LOG_LEVEL_LABEL,
 	MESSAGE,
+	PROGRESS_LABEL,
 	TERM,
 } from "#/lib/copy";
 import {
@@ -235,7 +236,7 @@ function ActiveNode({
 					{ratio !== null && (
 						<div
 							role="progressbar"
-							aria-label={`${runNodeName(node)} 进度`}
+							aria-label={`${runNodeName(node)} ${PROGRESS_LABEL}`}
 							aria-valuemin={0}
 							aria-valuemax={progress.total ?? undefined}
 							aria-valuenow={progress.current}
