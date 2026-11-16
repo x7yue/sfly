@@ -13,14 +13,13 @@ import {
 	type ActionFilter,
 	fromLatestPage,
 	matchesFilter,
+	NO_FILTER,
 	withLive,
 	withOlderPage,
 } from "./action-details";
 
 /** 每页的明细数。 */
 const PAGE = 200;
-
-const NO_FILTER: ActionFilter = {};
 
 const summaryQuery = (taskId: string) => apiQuery(actionsApi.summary, { params: { id: taskId } });
 

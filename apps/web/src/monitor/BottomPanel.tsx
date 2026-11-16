@@ -13,6 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { DownloadIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ActionFilter, NO_FILTER } from "#/actions/action-details";
 import { actionCount } from "#/actions/action-table";
 import { useActionSummary } from "#/actions/use-task-actions";
 import { NodeName, runNodeName } from "#/components/node-name";
@@ -134,6 +135,9 @@ export function BottomPanel({
 	const panel = useRef<HTMLElement>(null);
 	const node = findNode(run, selected);
 	const [attemptId, setAttemptId] = useState<string | null>(null);
+	/** 「动作」页的筛选条件，记在这里：切到日志再回来还在；换了尝试（任务）就回到不筛选。 */
+	const [actionFilterOf, setActionFilterOf] = useState<{ taskId: string; filter: ActionFilter }>();
+	const logTab = useRef<HTMLButtonElement>(null);
 	const refKey = selected ? `${selected.chainInstanceId}:${selected.nodeId}` : "";
 	/** 从合并视图点来源节点名选中节点时，要看的那一次尝试：换节点时默认是最近一次，这里例外。 */
 	const pendingAttempt = useRef<string | null>(null);
@@ -224,6 +228,7 @@ export function BottomPanel({
 							<TabsTrigger
 								key={value}
 								value={value}
+								ref={value === "logs" ? logTab : undefined}
 								aria-label={
 									value === "actions" && actionsShown !== null
 										? `${TERM.action}，共 ${formatInteger(actionsShown)} 个`
@@ -339,6 +344,16 @@ export function BottomPanel({
 									node={node}
 									attempt={attempt}
 									day={run.started_at}
+									filter={
+										actionFilterOf?.taskId === attempt.task_id ? actionFilterOf.filter : NO_FILTER
+									}
+									onFilter={(filter) => setActionFilterOf({ taskId: attempt.task_id, filter })}
+									onLocate={(at) => {
+										if (!selected) return;
+										actions.locateLog(selected, at);
+										// 「动作」页被日志换掉，焦点不留在已经消失的按钮上：交给日志页签。
+										logTab.current?.focus();
+									}}
 								/>
 							) : (
 								<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的动作。"}</Hint>
@@ -637,7 +652,7 @@ function LogsView<L extends LogLineView>({
 					{logs.expired
 						? MESSAGE.logsExpired
 						: filtered || scoped || zoom
-							? "没有符合条件的日志。"
+							? `${MESSAGE.noMatch("日志")}。`
 							: noOutput}
 				</Hint>
 			) : (
