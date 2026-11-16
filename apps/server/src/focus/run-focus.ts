@@ -28,7 +28,14 @@ import { runSecretValues } from "../logs/task-logs.js";
 import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
-import { focusAnomaly, isFinalStatus, SAMPLE_POINTS, sampleIntervalMs } from "./focus-anomaly.js";
+import {
+	type AnomalySubject,
+	focusAnomaly,
+	isFinalStatus,
+	SAMPLE_POINTS,
+	sampleIntervalMs,
+	staleSince,
+} from "./focus-anomaly.js";
 import type { FocusItem } from "./focus-list.js";
 import { declaredNodeType } from "./focus-views.js";
 
@@ -353,17 +360,15 @@ function itemOf(
 		if (s.end && (!latest || s.end.at > latest.end.at)) latest = { end: s.end, series: s };
 	}
 	const interval = latest ? sampleIntervalMs(latest.series.recent) : null;
-	const anomaly = focusAnomaly(
-		{
-			status: source.status,
-			attempt,
-			previousError: source.previousError,
-			chartMissing: reading.chartMissing,
-			lastAt: latest ? latest.end.at * 1000 : null,
-			sampleIntervalMs: interval,
-		},
-		now,
-	);
+	const subject: AnomalySubject = {
+		status: source.status,
+		attempt,
+		previousError: source.previousError,
+		chartMissing: reading.chartMissing,
+		lastAt: latest ? latest.end.at * 1000 : null,
+		sampleIntervalMs: interval,
+	};
+	const anomaly = focusAnomaly(subject, now);
 	return {
 		position: reading.position,
 		node_id: reading.nodeId,
@@ -397,6 +402,7 @@ function itemOf(
 		bucket_seconds: read?.bucketSeconds ?? 1,
 		last_at: latest ? iso(latest.end.at) : null,
 		sample_interval_ms: interval,
+		stale_since: isoOrNull(staleSince(subject, now)),
 		final: isFinalStatus(source.status),
 		anomaly,
 	};

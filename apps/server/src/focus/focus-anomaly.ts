@@ -76,17 +76,23 @@ const retry: Rule = ({ attempt, previousError }, now) => {
 };
 
 /**
- * 来源节点在执行中（准备中、执行中，与主指标的口径相同），距离最后一个点超过 max(30 秒, 6 倍采样间隔)；
- * 一个点都没有时从这次尝试开始执行算起，还没开始执行（准备中）就不判断。
+ * 从何时起没有新数据（契约里每一项的 `stale_since`）：来源节点在执行中（准备中、执行中，与主指标的口径相同），距离最后一个点
+ * 超过 max(30 秒, 6 倍采样间隔) 时，是最后一个点的时间；一个点都没有时从这次尝试开始执行算起，还没开始执行（准备中）、
+ * 图表在节点包版本里不存在时不判断。和这一项报哪一种异常无关：图表画斜线、写「已 2m 10s 无新数据」看它。
  */
-const stale: Rule = ({ status, attempt, chartMissing, lastAt, sampleIntervalMs }, now) => {
+export function staleSince(subject: AnomalySubject, now: Date): Date | null {
+	const { status, attempt, chartMissing, lastAt, sampleIntervalMs } = subject;
 	if (chartMissing || !isOnAgentStatus(status)) return null;
 	const since = lastAt ?? attempt?.startedAt?.getTime();
 	if (since === undefined) return null;
 	const limit = Math.max(STALE_FLOOR_MS, STALE_INTERVALS * (sampleIntervalMs ?? 0));
-	return now - since > limit
-		? { kind: "stale", at: new Date(since).toISOString(), message: "" }
-		: null;
+	return now.getTime() - since > limit ? new Date(since) : null;
+}
+
+/** 没有新数据（{@link staleSince}）。 */
+const stale: Rule = (subject, now) => {
+	const since = staleSince(subject, new Date(now));
+	return since ? { kind: "stale", at: since.toISOString(), message: "" } : null;
 };
 
 /** 同时满足几种时只报排在前面的一种。 */

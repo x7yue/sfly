@@ -44,6 +44,7 @@ const item = (patch: Partial<RunFocusItem> = {}): RunFocusItem => ({
 	bucket_seconds: 1,
 	last_at: at(2),
 	sample_interval_ms: null,
+	stale_since: null,
 	final: false,
 	anomaly: null,
 	...patch,

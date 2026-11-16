@@ -173,6 +173,31 @@ test("「其他警告与错误」列出不在「需要注意」里的 WARN / ERR
 	await expect(located).toContainText("探活超时 3 次（阈值 2 次）");
 });
 
+test("先打一条 WARN 再不上报：原因报 WARN，图表照样画斜线、写明多久没有新数据，不会看起来像平稳", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent, tasks } = await overviewRun(controlPlane, connectAgent, clock);
+	await openOverview(page, clock, runId);
+	const level = focusChart(page, "探活 level");
+	agent.logs(tasks.probe as AssignedTask, [logLine(clock, 1, "探活变慢", LogLevel.WARN)]);
+	await agent.sync();
+	await expect(level).toContainText("WARN · 08:00:14");
+	await expect(level.locator("[data-stale-gap]")).toHaveCount(0);
+
+	// probe 最后一个点在第 13 秒：推进到第 59 秒，WARN 还在 10 分钟以内，原因仍报它。
+	await advance(clock, agent, 45_000);
+	await expect(page.getByTestId("focus-freshness")).toHaveText("数据更新于 08:00:59");
+	await expect(level.locator("[data-stale-gap]")).toHaveCount(1);
+	await expect(level).toContainText("WARN · 08:00:14");
+	await expect(level).toContainText("已 46s 无新数据");
+	await expect(level.getByRole("img")).toHaveAccessibleName(
+		"探活 level 3，来自 probe（执行中），需要注意：WARN · 08:00:14，曲线停在最后一个点",
+	);
+});
+
 test("没有新数据的图表：曲线停在最后一个点，之后到现在画斜线，写明多久没有新数据，读屏也说明；页头写「数据更新于」", async ({
 	page,
 	controlPlane,

@@ -1781,6 +1781,12 @@ export interface RunFocusItem {
 	 * 一个点，所以至少是 1000；点不够两个时为 null。
 	 */
 	sample_interval_ms: number | null;
+	/**
+	 * 从何时起没有新数据（控制面时间）：来源节点准备中或执行中、距离最后一个点超过 `stale` 的期限时是最后一个点的时间，一个点都
+	 * 没有时是这次尝试开始执行的时间；否则（还有新数据、还没开始执行、已结束、`unavailable`）为 null。规则与异常 `stale` 相同，
+	 * 但和这一项报哪一种异常无关：`anomaly` 只报一种（例如先有 WARN 再不上报时报 `log`），图表的斜线和「已 2m 10s 无新数据」看这里。
+	 */
+	stale_since: Timestamp | null;
 	/** 来源节点成功、已停止或已取消；没开始就被停止或取消的节点也是 true，页面看 `source.started_at` 和 `latest` 才知道有没有值。 */
 	final: boolean;
 	anomaly: FocusAnomaly | null;

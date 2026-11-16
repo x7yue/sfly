@@ -7,13 +7,7 @@ import { Button } from "@/components/ui/button";
 import { AnomalyNote } from "./AnomalyNote";
 import { FocusPlot } from "./FocusPlot";
 import { FocusValue } from "./FocusValue";
-import {
-	anomalyText,
-	readingFoot,
-	readingLabel,
-	readingState,
-	sourceNodeName,
-} from "./focus-format";
+import { readingFoot, readingLabel, readingState, sourceNodeName, staleText } from "./focus-format";
 
 /** 绘图区的高度（px）；宽度取容器的实际宽度。 */
 const PLOT_HEIGHT = 156;
@@ -81,11 +75,11 @@ export function FocusChart({
 					metrics={item.metrics}
 					axis={axis}
 					bucketSeconds={item.bucket_seconds}
-					staleSince={item.anomaly?.kind === "stale" ? item.last_at : null}
+					staleSince={item.stale_since}
 					height={PLOT_HEIGHT}
 					label={readingLabel(item, generatedAt)}
 					empty={state.kind === "empty" ? state.text : null}
-					gapText={anomalyText(item, generatedAt)}
+					gapText={staleText(item, generatedAt)}
 					hiddenNote={hiddenSeriesLabel.inView}
 				/>
 			)}

@@ -18,7 +18,7 @@ import { FocusPlot } from "#/focus/FocusPlot";
 import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
 import { FocusValue } from "#/focus/FocusValue";
 import type { PlotWindow } from "#/focus/focus-chart";
-import { anomalyText, readingLabel, readingState, readingValue } from "#/focus/focus-format";
+import { readingLabel, readingState, readingValue, staleText } from "#/focus/focus-format";
 import { type FocusItems, isFocused } from "#/focus/use-focus-items";
 import {
 	FOCUS,
@@ -321,7 +321,7 @@ function DeclaredChart({
 					metrics={metrics}
 					axis={axis}
 					bucketSeconds={result?.data?.bucket_seconds ?? 1}
-					staleSince={reading?.item.anomaly?.kind === "stale" ? reading.item.last_at : null}
+					staleSince={reading?.item.stale_since ?? null}
 					height={PLOT_HEIGHT}
 					label={
 						reading
@@ -329,7 +329,7 @@ function DeclaredChart({
 							: `${chart.title} ${readingValue(value)}`
 					}
 					empty={empty}
-					gapText={reading ? anomalyText(reading.item, reading.at) : null}
+					gapText={reading ? staleText(reading.item, reading.at) : null}
 					hiddenNote={hiddenSeriesLabel.openPage}
 				/>
 			)}

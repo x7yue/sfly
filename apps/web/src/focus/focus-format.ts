@@ -68,13 +68,25 @@ export function anomalyText(
 		case "log":
 			return FOCUS.logReason(LOG_LEVEL_LABEL[anomaly.level ?? "warn"], formatClock(anomaly.at));
 		case "stale":
-			return FOCUS.staleFor(formatAgo(Date.parse(generatedAt) - Date.parse(anomaly.at)));
+			return staleFor(anomaly.at, generatedAt);
 		case "failed":
 			return FOCUS.sourceFailed;
 		case "retry":
 			return FOCUS.retryReason(item.source.attempt, formatClock(anomaly.at));
 	}
 }
+
+const staleFor = (since: string, generatedAt: string) =>
+	FOCUS.staleFor(formatAgo(Date.parse(generatedAt) - Date.parse(since)));
+
+/**
+ * 「已 2m 10s 无新数据」：从控制面给的 `stale_since` 算起，还有新数据时为 null。和这一项报哪一种异常无关（例如先有 WARN
+ * 再不上报，异常报的是 WARN），图表的斜线旁写它。
+ */
+export const staleText = (
+	item: Pick<RunFocusItem, "stale_since">,
+	generatedAt: string,
+): string | null => (item.stale_since === null ? null : staleFor(item.stale_since, generatedAt));
 
 /** 读数的脚注：来源节点和 {@link readingWhen}；图表在节点包版本里不存在时没有值可说，只写来源节点。 */
 export function readingFoot(item: RunFocusItem, generatedAt: string): string {
