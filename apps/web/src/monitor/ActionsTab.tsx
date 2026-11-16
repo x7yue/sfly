@@ -6,7 +6,7 @@ import { actionTable } from "#/actions/action-table";
 import { useTaskActions } from "#/actions/use-task-actions";
 import { EmptyState, ErrorState, TableSkeleton } from "#/components/feedback/states";
 import { runNodeName } from "#/components/node-name";
-import { MESSAGE, TERM } from "#/lib/copy";
+import { MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
 import { Hint } from "./Hint";
 
 /**
@@ -42,7 +42,9 @@ export function ActionsTab({
 	const notes = useMemo(
 		() =>
 			summary && {
-				running: summary.running_complete ? undefined : "列满 50 个，可能还有没列出的",
+				running: summary.running_complete
+					? undefined
+					: NODE_ACTIONS.runningIncomplete(summary.running.length),
 				recent: summary.capped ? "超过上限后也一直更新" : undefined,
 			},
 		[summary],

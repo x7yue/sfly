@@ -58,6 +58,12 @@ export const INSPECTOR_PAGE = {
 	docWithMetrics: "说明与指标",
 } as const;
 
+/** 节点用 `ctx.progress` 上报的进度：监控的图表工作区、时间线、运行抽屉、画布检查器共用（运行记录表里「进度」是各链进度，不是它）。 */
+export const PROGRESS_LABEL = "进度";
+
+/** 「第 2 次尝试」：节点重试时指明是哪一次（运行监控的尝试页签、画布检查器的动作区共用）。 */
+export const attemptLabel = (attempt: number) => `第 ${attempt} 次${TERM.attempt}`;
+
 /** 日志级别的写法：日志列表、级别筛选、运行抽屉的最新日志和关注项的异常原因共用。 */
 export const LOG_LEVEL_LABEL: Record<LogLineView["level"], string> = {
 	debug: "DEBUG",
@@ -148,6 +154,7 @@ export const PAGE = {
 export const DOC_PAGE = {
 	quickstart: "快速开始",
 	publish: "发布",
+	sdkReference: "开发节点（SDK 参考）",
 } as const;
 
 /** 运行与链实例的状态。 */
@@ -200,6 +207,7 @@ export const ACTION = {
 	forceCancel: "强制终止",
 	keepRunning: "继续运行",
 	openRun: "打开运行监控",
+	openActionDetails: `打开${TERM.action}明细`,
 	viewInCanvas: "在画布中查看",
 	viewRuns: "查看运行记录",
 	edit: "编排",
@@ -270,11 +278,14 @@ export const moreLabel = (count: number) => `还有 ${count} 个`;
 export const ACTIVE_LABEL = "进行中";
 
 /**
- * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）共用的文字。和 `ACTION`（界面上的通用操作）不是一回事。
+ * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）：画布、检查器、概览、运行监控里写动作的地方共用的文字。
+ * 和 `ACTION`（界面上的通用操作）不是一回事。
  */
 export const NODE_ACTIONS = {
-	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，「动作」页的第一组。 */
+	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，检查器的「正在做」，「动作」页的第一组。 */
 	doing: "正在做",
+	/** 正在做的动作列满了：接口只给前 50 个，可能还有没列出的（检查器的「正在做」、「动作」页的第一组共用）。 */
+	runningIncomplete: (listed: number) => `列满 ${listed} 个，可能还有没列出的`,
 	/**
 	 * 动作的结果和标记：动作自己的一组状态文字，不是运行状态（`RUN_STATUS_LABEL`）。还没结束的写「进行中」。
 	 */

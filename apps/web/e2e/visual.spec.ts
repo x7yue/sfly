@@ -6,7 +6,7 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
-import { actionsScenario, actionTable } from "./actions-support";
+import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
 import {
 	createEditorScenario,
@@ -1363,6 +1363,39 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 			page.getByTestId("canvas-run").locator(".font-mono").first(),
 			page.getByTestId("run-summary").locator("dd").first(),
 		],
+	});
+});
+
+test("编排画布：运行状态（检查器的「正在做」和「动作」：计数、上限说明、折行的失败原因）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId, agent, tasks } = await runningScenario(
+		controlPlane,
+		connectAgent,
+		clock,
+	);
+	agent.actionSummary(tasks.verify as AssignedTask, loadSummary(agent, clock.now().getTime()));
+	await agent.sync();
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	// 跟随执行把镜头平移到执行中的节点（缩放正好到 100%）：等平移停下再点节点，点击会打断还在进行的平移。
+	await expect(page.locator(".react-flow__viewport")).toHaveAttribute("style", /scale\(1\)/);
+	await nodeCard(page, "verify").click();
+	const area = page.getByRole("region", { name: "动作", exact: true });
+	await expect(area.getByRole("table")).toContainText("1,284,819");
+	// 从「正在做」的标题起往下看：摘要已经滚出去，正在做、动作区和前几个失败都在。
+	await page
+		.getByRole("region", { name: "正在做" })
+		.getByRole("heading")
+		.evaluate((el) => el.scrollIntoView({ block: "start" }));
+	await page.mouse.move(700, 760);
+	// 摘要滚出去了，只有顶栏里的运行编号要遮住。
+	await expect(page).toHaveScreenshot("editor-run-actions.png", {
+		mask: [page.getByTestId("canvas-run").locator(".font-mono").first()],
 	});
 });
 

@@ -7,7 +7,6 @@ import {
 import { type UseQueryResult, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiQuery, callApi } from "#/lib/api";
-import { STATUS_POLL_MS } from "#/lib/polling";
 import { useEventSource } from "#/lib/sse";
 import {
 	type ActionDetails,
@@ -26,26 +25,31 @@ const NO_FILTER: ActionFilter = {};
 const summaryQuery = (taskId: string) => apiQuery(actionsApi.summary, { params: { id: taskId } });
 
 /**
- * 一个任务（一次尝试）的动作摘要。缓存只有一份：{@link useTaskActions} 连着推送时由推送更新，
- * 没连着时 `poll` 为 true 就定时重新读（任务还在执行、没有在看「动作」页时传 true）；`poll` 变成 false 时
- * （任务结束、开始看「动作」页）再读一次，任务结束时的那一份（正在做的为空）不会漏掉。`taskId` 为 undefined 时不读。
- * 返回查询本身：`data` 是摘要，读不到时 `error` 是原因。
+ * 一个任务（一次尝试）的动作摘要：页面读它的唯一入口，缓存只有一份。{@link useTaskActions} 连着推送时由推送更新，
+ * 没连着时 `pollMs` 是数字就每隔这么久重新读（任务还在执行、没有在看「动作」页时传：画布检查器每秒，
+ * 运行监控底部面板的页签个数每 5 秒）；`pollMs` 变成 false 时（任务结束、开始看「动作」页）再读一次，任务结束时的
+ * 那一份（正在做的为空）不会漏掉。换了一个任务不算结束：它自己的查询已经在读。`taskId` 为 undefined 时不读
+ * （节点不在 Agent 上执行，或这次尝试还没开始执行）。返回查询本身：`data` 是摘要，读不到时 `error` 是原因。
  */
 export function useActionSummary(
 	taskId: string | undefined,
-	poll: boolean,
+	pollMs: number | false,
 ): UseQueryResult<ActionSummaryView> {
 	const query = useQuery({
 		...summaryQuery(taskId ?? ""),
 		enabled: taskId !== undefined,
-		refetchInterval: poll ? STATUS_POLL_MS : false,
+		refetchInterval: pollMs,
 	});
 	const { refetch } = query;
-	const polled = useRef(poll);
+	const previous = useRef({ taskId, polling: pollMs !== false });
 	useEffect(() => {
-		if (polled.current && !poll) void refetch();
-		polled.current = poll;
-	}, [poll, refetch]);
+		const before = previous.current;
+		const polling = pollMs !== false;
+		previous.current = { taskId, polling };
+		if (before.taskId === taskId && before.polling && !polling && taskId !== undefined) {
+			void refetch();
+		}
+	}, [taskId, pollMs, refetch]);
 	return query;
 }
 
