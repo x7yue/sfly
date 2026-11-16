@@ -62,8 +62,11 @@ export interface LocateRequest {
 	scanLimit?: number;
 }
 
-/** 行的控制面时间与那一刻相差不超过这么多毫秒，就算正好对应。 */
-const EXACT_WITHIN_MS = 1000;
+/**
+ * 行的控制面时间与那一刻相差不超过这么多毫秒、并且这个范围里只有这一行时，才算正好对应。日志和动作都按 Agent 的单调时钟
+ * 换算成控制面时间（ADR 0018），时间是准的；范围再宽，高频时（每秒几百行）最近的一行很可能是另一笔订单的。
+ */
+const EXACT_WITHIN_MS = 50;
 
 const CHUNK = 64 * 1024;
 /** 扫描上限很小时每次读取的最小字节数：只影响读文件的次数，不影响一页的结果。 */
@@ -184,19 +187,15 @@ async function lineFrom(
 	throw new Error(`日志文件的 ${start} 处不是完整的行`);
 }
 
-/** 页里正好对应那一刻的行的序号：控制面时间离 `at` 最近、相差不超过 {@link EXACT_WITHIN_MS}，一样近时取前一行。 */
+/**
+ * 页里正好对应那一刻的行的序号：和 `at` 相差不超过 {@link EXACT_WITHIN_MS} 的行只有一行时就是它；没有、或者不止一行
+ * （分不出是哪一笔的）时为 null，页面在那一刻插「这一刻」。
+ */
 function exactLine(lines: readonly PagedLine[], at: number): number | null {
-	let best: PagedLine | undefined;
-	let bestGap = EXACT_WITHIN_MS + 1;
-	for (const line of lines) {
-		if (line.time === null) continue;
-		const gap = Math.abs(Date.parse(line.time) - at);
-		if (gap < bestGap) {
-			best = line;
-			bestGap = gap;
-		}
-	}
-	return best?.seq ?? null;
+	const near = lines.filter(
+		(line) => line.time !== null && Math.abs(Date.parse(line.time) - at) <= EXACT_WITHIN_MS,
+	);
+	return near.length === 1 ? (near[0] as PagedLine).seq : null;
 }
 
 async function read(handle: FileHandle, position: number, length: number): Promise<Buffer> {

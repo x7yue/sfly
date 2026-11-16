@@ -5,7 +5,7 @@ import { expect, test } from "./fixtures";
 import { runningScenario } from "./monitor-scenario";
 
 // 运行监控页的地址能带节点、底部页签和一个时刻（控制面时间），日志定位到包含那一刻的一页（#347）：
-// 正好有一行日志（1 秒以内）就高亮它（中性的白色短条），没有就在那一刻的位置插一条「这一刻」；
+// 正好有一行日志（相差 50 毫秒以内、并且只有这一行）就高亮它（中性的白色短条），没有就在那一刻的位置插一条「这一刻」；
 // 从这一页往前、往后翻页和实时接续照常。
 
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
@@ -43,15 +43,18 @@ test("地址带节点、页签和时刻：选中这个节点，切到日志页�
 	const clock0 = clock.now().getTime();
 	const { runId, agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
 	const at = logAt(agent, clock0);
-	// probe 在第 7 秒到第 13 秒之间每 10 毫秒一行：第 k 行在第 7 + k × 0.01 秒，一共 600 行，大于一页（300 行）。
+	// probe 一共 600 行，大于一页（300 行）：前 299 行在第 7 到 10 秒之间每 10 毫秒一行，第 300 行单独在第 10.5 秒，
+	// 之后的在第 11 秒起每 6 毫秒一行。
+	const timeOf = (k: number) =>
+		k < 300 ? 7_000 + k * 10 : k === 300 ? 10_500 : 11_000 + (k - 300) * 6;
 	agent.logs(
 		tasks.probe as AssignedTask,
-		Array.from({ length: 600 }, (_, i) => at(i + 1, 7_000 + (i + 1) * 10, `probe line ${i + 1}`)),
+		Array.from({ length: 600 }, (_, i) => at(i + 1, timeOf(i + 1), `probe line ${i + 1}`)),
 	);
 	await agent.sync();
 
-	// 第 300 行的时间，再偏后 4 毫秒：不是任何一行的时间，但离第 300 行最近。
-	await page.goto(monitorUrl(runId, { node: "probe", tab: "logs", at: iso(clock0 + 10_004) }));
+	// 第 300 行的时间，再偏后 4 毫秒：不是任何一行的时间，50 毫秒以内只有第 300 行。
+	await page.goto(monitorUrl(runId, { node: "probe", tab: "logs", at: iso(clock0 + 10_504) }));
 	const logs = logsOf(page);
 	await expect(scope(page)).toHaveText("范围：probe");
 	const located = logs.locator("[data-located]");
@@ -65,7 +68,7 @@ test("地址带节点、页签和时刻：选中这个节点，切到日志页�
 	await expect(logs.getByRole("button", { name: /加载更新的日志/ })).toBeVisible();
 });
 
-test("没有正好对应的行：在那一刻的位置插一条「这一刻」，不高亮别的行；正好有一行（1 秒以内）时高亮它、不插「这一刻」", async ({
+test("没有正好对应的行：在那一刻的位置插一条「这一刻」，不高亮别的行；正好有一行（50 毫秒以内只有它）时高亮它、不插「这一刻」；50 毫秒以内有两行时也插「这一刻」", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -106,16 +109,27 @@ test("没有正好对应的行：在那一刻的位置插一条「这一刻」�
 	await page.keyboard.press("ArrowUp");
 	await expect(logs.getByRole("button", { name: /probe two/ })).toBeFocused();
 
-	// 第 8.4 秒：第二行之后 0.4 秒，算正好有这一行。
-	await page.goto(monitorUrl(runId, { node: "probe", at: iso(clock0 + 8_400) }));
+	// 第 8.04 秒：第二行之后 40 毫秒，50 毫秒以内只有它，算正好有这一行。
+	await page.goto(monitorUrl(runId, { node: "probe", at: iso(clock0 + 8_040) }));
 	await expect(logs.locator("[data-located]")).toContainText("probe two");
 	await expect(logs.locator("[data-located]")).toHaveCount(1);
 	await expect(logs.locator("[data-moment]")).toHaveCount(0);
 
-	// 第 9.1 秒：离第二行 1.1 秒，已经不算正好有。
-	await page.goto(monitorUrl(runId, { node: "probe", at: iso(clock0 + 9_100) }));
+	// 第 8.4 秒：离第二行 0.4 秒，已经不算正好有（高频时这一行很可能是另一笔订单的）。
+	await page.goto(monitorUrl(runId, { node: "probe", at: iso(clock0 + 8_400) }));
 	await expect(logs.locator("[data-moment]")).toHaveCount(1);
 	await expect(logs.locator("[data-located]")).toHaveCount(0);
+
+	// 第 14 秒和 14.03 秒各一行：第 14.015 秒离两行都在 50 毫秒以内，分不出是哪一行，插「这一刻」。
+	agent.logs(tasks.probe as AssignedTask, [
+		at(5, 14_000, "probe five"),
+		at(6, 14_030, "probe six"),
+	]);
+	await agent.sync();
+	await page.goto(monitorUrl(runId, { node: "probe", at: iso(clock0 + 14_015) }));
+	await expect(logs.locator("[data-moment]")).toHaveCount(1);
+	await expect(logs.locator("[data-located]")).toHaveCount(0);
+	await expect(logs.locator("[data-index]")).toContainText(["probe five", "这一刻", "probe six"]);
 });
 
 test("时刻早于第一行、晚于最后一行时分别定位到开头和末尾，「这一刻」在最前和最后", async ({
