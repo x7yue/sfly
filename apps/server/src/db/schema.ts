@@ -1,7 +1,11 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
 import {
+	type ActionResult,
+	type ActionSummaryView,
 	type AgentUpdateState,
+	type CurrentAction,
+	type FocusItemInput,
 	ON_AGENT_STATUSES,
 	OrchestrationDocument,
 	type PackageMetadata,
@@ -16,6 +20,7 @@ import {
 	doublePrecision,
 	index,
 	integer,
+	json,
 	jsonb,
 	pgTable,
 	primaryKey,
@@ -42,6 +47,9 @@ const orchestrationDocument = customType<{ data: OrchestrationDocument; driverDa
 		return parsed.success ? parsed.data : (stored as OrchestrationDocument);
 	},
 });
+
+/** 存下的动作摘要：SDK 写的那一份；控制面有没有兜底丢弃过明细记在任务上（`tasks.action_capped`），读取时才合进去。 */
+export type StoredActionSummary = Omit<ActionSummaryView, "control_plane_capped">;
 
 /** Agent 上报的信息（Hello）。 */
 export interface AgentInfo {
@@ -142,6 +150,17 @@ export const feishuBots = pgTable("feishu_bots", {
 });
 
 /**
+ * 关注项最后一次修改的记录（`orchestrations.focus_edit`）：谁、什么时候（控制面时间，ISO 8601）、一句话说明，
+ * 以及修改之前的列表：下一次写入恰好把它写回去时，说明记为「撤销」。刚刚撤销过的修改没有可以再撤销的列表。
+ */
+export interface StoredFocusEdit {
+	by: string;
+	at: string;
+	summary: string;
+	before: FocusItemInput[] | null;
+}
+
+/**
  * 场景：记录当前最新版本号（0 表示还没有保存过版本）。名称和说明不属于版本内容，可以随时修改（#33）。
  * 归档（#33）：archived_at 不为空时不出现在默认列表、不能触发；不物理删除。
  */
@@ -165,6 +184,14 @@ export const orchestrations = pgTable("orchestrations", {
 	runNotifyTitle: text("run_notify_title").notNull().default(""),
 	/** 附加说明（Markdown）；空字符串即没有。 */
 	runNotifyNote: text("run_notify_note").notNull().default(""),
+	/**
+	 * 关注项（GLOSSARY「关注项」）：场景挑出来、运行中重点展示的图表，按作者设定的顺序，最多 FOCUS_ITEMS_MAX 项
+	 * （包括已经失效的）。和运行通知一样不属于版本，改了立即生效。节点 ID 跨版本稳定，图表按标题引用；
+	 * 节点在最新版本里的状态每次读的时候对照得出，不存。
+	 */
+	focusItems: jsonb("focus_items").$type<FocusItemInput[]>().notNull().default([]),
+	/** 关注项最后一次修改；从没改过时为空。 */
+	focusEdit: jsonb("focus_edit").$type<StoredFocusEdit>(),
 });
 
 /**
@@ -243,6 +270,20 @@ export interface TaskProgress {
 	time: string | null;
 	/** Agent 时间（ISO）：SDK 记录这次进度的时间；没有上报时为 null。升级之前保存的进度没有这个字段。 */
 	agent_time?: string | null;
+}
+
+/**
+ * 一次尝试写进日志的 WARN / ERROR（src/logs/task-logs.ts）：总条数和最近一条。写日志时更新，关注项判断异常时读它，
+ * 不扫日志文件。
+ */
+export interface TaskLogIssues {
+	count: number;
+	/** 最近一条的级别。 */
+	level: "warn" | "error";
+	/** 最近一条的控制面时间（ISO）。 */
+	at: string;
+	/** 最近一条的正文（secret 已打码），截到 500 个字符。 */
+	text: string;
 }
 
 export type ErrorKind = "node_error" | "timeout" | "agent_lost" | "env_error" | "config_error";
@@ -375,6 +416,8 @@ export const tasks = pgTable(
 		logAgentSeq: bigint("log_agent_seq", { mode: "number" }).notNull().default(0),
 		/** 日志超过上限已被截断（#18）：写入了截断标记，之后的行都被丢弃。 */
 		logTruncated: boolean("log_truncated").notNull().default(false),
+		/** 日志里的 WARN / ERROR（{@link TaskLogIssues}）；还没有写过时为空。 */
+		logIssues: jsonb("log_issues").$type<TaskLogIssues>(),
 		/**
 		 * 定时 / Sleep 节点的唤醒时间（#14）：waiting 期间由控制面周期扫描，到期后节点成功。
 		 * 定时器的全部状态都在这一行里（status + wake_at），控制面重启后照常扫描。
@@ -397,6 +440,12 @@ export const tasks = pgTable(
 		metricSeriesCapped: boolean("metric_series_capped").notNull().default(false),
 		/** Agent 断线排队超过上限而丢弃的指标点数（#29，Agent 在 MetricBatch 中上报）。 */
 		metricDropped: bigint("metric_dropped", { mode: "number" }).notNull().default(0),
+		/** 已存下的动作和标记的明细条数（规格 #345，`task_actions`）；控制面兜底的合计上限按它判断。 */
+		actionDetails: integer("action_details").notNull().default(0),
+		/** 明细的修订号：每写入一批加一，写入或结束的明细记下这个值（`task_actions.rev`），实时推送按它接续。 */
+		actionRev: bigint("action_rev", { mode: "number" }).notNull().default(0),
+		/** 控制面兜底丢弃过明细：任务日志里的警告已经写过（每个任务只写一次）。 */
+		actionCapped: boolean("action_capped").notNull().default(false),
 	},
 	(t) => [
 		index("tasks_waiting").on(t.wakeAt).where(sql`${t.status} = 'waiting'`),
@@ -406,6 +455,82 @@ export const tasks = pgTable(
 		index("tasks_agent_status").on(t.agentName, t.status),
 		index("tasks_chain_instance").on(t.chainInstanceId),
 	],
+);
+
+/**
+ * 任务最新的一份动作摘要（规格 #345，src/actions/task-actions.ts）：每一份都是完整的，新的整个替换旧的。
+ * 和任务行分开存：一份可以有几百 KB，引擎和运行视图读任务行时不用把它读出来。保留期和日志相同（src/retention/retention.ts）。
+ */
+export const taskActionSummaries = pgTable("task_action_summaries", {
+	taskId: uuid("task_id")
+		.primaryKey()
+		.references(() => tasks.id),
+	/** 时间已经折算好、secret 值已经打码的摘要；正在做的动作在任务结束后由读取的一方当作空的。用 json 而不是 jsonb：保留字段的先后。 */
+	summary: json("summary").$type<StoredActionSummary>().notNull(),
+	/** 从摘要里选出的此刻在做的动作：运行视图、Agent 列表只读这一列。 */
+	currentAction: jsonb("current_action").$type<CurrentAction>(),
+});
+
+/**
+ * 动作和标记的明细（规格 #345，src/actions/task-actions.ts）：每个动作、标记一行，ID 是 SDK 分配的任务内 ID。
+ * 时间已经折算好、secret 值已经打码；还在做的动作结果为空，任务结束以后由读取的一方记为未结束。
+ * 没有指向任务的外键：一批最多 1000 行，外键检查在写入路径上逐行执行（与 `metric_segments` 一样）；
+ * 写入前已经确认任务存在。
+ */
+export const taskActions = pgTable(
+	"task_actions",
+	{
+		taskId: uuid("task_id").notNull(),
+		id: bigint("id", { mode: "number" }).notNull(),
+		kind: text("kind").$type<"action" | "mark">().notNull(),
+		parent: bigint("parent", { mode: "number" }),
+		depth: integer("depth").notNull(),
+		name: text("name").notNull(),
+		/** 开始时给的字段：`json` 而不是 `jsonb`，保留写入的先后。 */
+		fields: json("fields").$type<Record<string, string>>().notNull(),
+		/** 结束时补充的字段（note()），读取时覆盖到 `fields` 上；开始和结束在同一批时直接写进 `fields`。 */
+		noted: json("noted").$type<Record<string, string>>(),
+		startedAt: timestamptz("started_at").notNull(),
+		agentStartedAt: timestamptz("agent_started_at").notNull(),
+		/** 开始的单调时钟读数（毫秒）：耗时是结束与它的差，Agent 的系统时间被改动不影响。 */
+		startMono: bigint("start_mono", { mode: "number" }).notNull(),
+		endedAt: timestamptz("ended_at"),
+		agentEndedAt: timestamptz("agent_ended_at"),
+		durationMs: bigint("duration_ms", { mode: "number" }),
+		result: text("result").$type<ActionResult>(),
+		reason: text("reason"),
+		/** 最后写入这一行（开始或结束）的那一批的修订号（`tasks.action_rev`）。 */
+		rev: bigint("rev", { mode: "number" }).notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.taskId, t.id] }),
+		index("task_actions_started").on(t.taskId, t.startedAt, t.id),
+		index("task_actions_name").on(t.taskId, t.name, t.startedAt, t.id),
+		index("task_actions_failed").on(t.taskId, t.startedAt, t.id).where(sql`${t.result} = 'failed'`),
+		index("task_actions_rev").on(t.taskId, t.rev, t.id),
+	],
+);
+
+/**
+ * 每个任务每种名称的明细计数（规格 #345）：控制面兜底的每种名称上限按 `stored` 判断，被丢弃的个数和其中最早的
+ * 开始时间是「只计数的段」里 `control_plane` 那一段。
+ */
+export const taskActionNames = pgTable(
+	"task_action_names",
+	{
+		taskId: uuid("task_id")
+			.notNull()
+			.references(() => tasks.id),
+		name: text("name").notNull(),
+		/** 存下的明细个数，不含补发的失败动作（它们只受合计上限的限制）。 */
+		stored: integer("stored").notNull().default(0),
+		/** 控制面兜底丢弃的个数。 */
+		dropped: integer("dropped").notNull().default(0),
+		/** 被丢弃的明细里最早的开始时间（控制面时间、Agent 时间）；没有丢弃过时为空。 */
+		droppedFrom: timestamptz("dropped_from"),
+		agentDroppedFrom: timestamptz("agent_dropped_from"),
+	},
+	(t) => [primaryKey({ columns: [t.taskId, t.name] })],
 );
 
 export type FeishuMessageSource = "node" | "notify" | "run_notification";

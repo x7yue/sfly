@@ -64,7 +64,7 @@ test("顶栏：场景名、版本、触发人、已运行时长、各链状态�
 	const header = page.getByRole("banner");
 	await expect(header.getByRole("heading", { name: /日终数据处理/ })).toContainText("v1");
 	await expect(header).toContainText("tester 触发");
-	await expect(header.getByTestId("run-elapsed")).toHaveText("已运行 14.0s");
+	await expect(header.getByTestId("run-elapsed")).toHaveText("已运行 14s");
 	await expect(header.getByRole("list", { name: "各链状态" }).getByRole("listitem")).toHaveCount(2);
 	await expect(header.getByRole("button", { name: "取消运行" })).toBeVisible();
 	// 运行进行中的取消按钮是中性样式，危险强调留在确认弹窗里。
@@ -73,7 +73,7 @@ test("顶栏：场景名、版本、触发人、已运行时长、各链状态�
 		"default",
 	);
 	await expect(header.getByRole("button", { name: "再次运行" })).toHaveCount(0);
-	await expect(header.getByRole("link", { name: "在画布中查看" })).toHaveAttribute(
+	await expect(header.getByRole("link", { name: "在画布中打开" })).toHaveAttribute(
 		"href",
 		/\/orchestrations\//,
 	);
@@ -193,7 +193,7 @@ test("点选节点：时间线行高亮，底部面板切换到该节点；尝�
 	const seg = timeline(page).locator('[data-node-row="verify"] [data-segment="fail"]');
 	await seg.click();
 	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
-	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次尝试）");
 
 	await panel(page).getByRole("tab", { name: "尝试" }).click();
 	const first = panel(page).getByRole("article", { name: "verify 第 1 次尝试" });
@@ -248,7 +248,7 @@ test("时间线的键盘与读屏：链与节点是嵌套列表；有重试的�
 	// runningScenario 里 verify 失败过一次、正在重试：轨道上有两段。
 	await expect(tl.locator('[data-node-row="verify"] [data-segment]')).not.toHaveCount(0);
 	await expect(nodeButton(page, "verify")).toHaveAccessibleDescription(
-		/^第 1 次：失败的尝试 \S+；第 2 次：执行中 \S+$/,
+		/^第 1 次尝试：失败的尝试 \S+；第 2 次尝试：执行中 \S+$/,
 	);
 	await nodeButton(page, "spawn").focus();
 	await page.keyboard.press("Tab");
@@ -283,7 +283,7 @@ test("取消选中：范围标签上的 × 与 Esc 都回到全部节点；弹�
 	await expect(pressed).toHaveCount(0);
 
 	await nodeButton(page, "verify").click();
-	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(scope).toHaveText("范围：verify（第 2 次尝试）");
 	await page.keyboard.press("Escape");
 	await expect(scope).toHaveText("范围：全部节点");
 	await expect(pressed).toHaveCount(0);
@@ -294,7 +294,7 @@ test("取消选中：范围标签上的 × 与 Esc 都回到全部节点；弹�
 	await expect(dialog).toBeVisible();
 	await page.keyboard.press("Escape");
 	await expect(dialog).toBeHidden();
-	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(scope).toHaveText("范围：verify（第 2 次尝试）");
 	await page.keyboard.press("Escape");
 	await expect(scope).toHaveText("范围：全部节点");
 });
@@ -716,7 +716,7 @@ test("F 依次选中失败的节点并切到「尝试」页签，到末尾回到
 	await openMonitor(page, clock, runId);
 	const scope = panel(page).getByTestId("bp-scope");
 	const attemptsTab = panel(page).getByRole("tab", { name: "尝试" });
-	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(scope).toHaveText("范围：verify（第 2 次尝试）");
 	await expect(attemptsTab).toHaveAttribute("aria-selected", "false");
 
 	await page.keyboard.press("f");
@@ -725,12 +725,12 @@ test("F 依次选中失败的节点并切到「尝试」页签，到末尾回到
 	await expect(attemptsTab).toHaveAttribute("aria-selected", "true");
 
 	await page.keyboard.press("f");
-	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(scope).toHaveText("范围：verify（第 2 次尝试）");
 	await expect(nodeButton(page, "verify")).toHaveAttribute("aria-pressed", "true");
 
 	await nodeButton(page, "fetch").click();
 	await page.keyboard.press("f");
-	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(scope).toHaveText("范围：verify（第 2 次尝试）");
 });
 
 test("没有失败的节点时 F 不起作用", async ({ page, controlPlane, connectAgent, clock }) => {
@@ -924,7 +924,7 @@ test("失败的运行：默认选中失败的节点，页内横幅写失败摘�
 
 	const banner = page.getByRole("region", { name: "运行失败" });
 	await expect(banner.getByTestId("run-failure")).toHaveText(
-		"失败于 verify（第 2 次）· AssertionError: 仍然漏拦",
+		"失败于 verify（第 2 次尝试）· AssertionError: 仍然漏拦",
 	);
 	await expect(header.getByTestId("run-failure")).toHaveCount(0);
 	await banner.getByRole("button", { name: "查看失败节点" }).click();
@@ -938,7 +938,7 @@ test("失败的运行：默认选中失败的节点，页内横幅写失败摘�
 	await banner.getByRole("button", { name: "收起" }).click();
 	await expect(banner).toHaveCount(0);
 	const failure = header.getByTestId("run-failure");
-	await expect(failure).toHaveText("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
+	await expect(failure).toHaveText("失败于 verify（第 2 次尝试）· AssertionError: 仍然漏拦");
 	await panel(page).getByRole("tab", { name: "日志" }).click();
 	await failure.click();
 	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(

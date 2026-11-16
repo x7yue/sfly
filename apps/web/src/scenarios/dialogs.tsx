@@ -1,9 +1,10 @@
-import { domainKey, type OrchestrationView, orchestrationsApi } from "@sfly/schema";
+import { domainKey, type OrchestrationBase, orchestrationsApi } from "@sfly/schema";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { callApi } from "#/lib/api";
+import { ACTION, scenarioCreatedLabel } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -147,7 +148,7 @@ export function NewScenarioDialog({
 			callApi(orchestrationsApi.create, { body }),
 		onSuccess: async (created) => {
 			onOpenChange(false);
-			notify.success(`已新建场景「${created.name}」`);
+			notify.success(scenarioCreatedLabel(created.name));
 			await invalidate();
 			navigate({ to: "/orchestrations/$id", params: { id: created.id } });
 		},
@@ -175,7 +176,7 @@ export function CopyScenarioDialog({
 	onOpenChange,
 	returnFocus,
 }: {
-	scenario: OrchestrationView;
+	scenario: OrchestrationBase;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	returnFocus?: React.RefObject<HTMLElement | null>;
@@ -215,7 +216,7 @@ export function EditScenarioDialog({
 	onOpenChange,
 	returnFocus,
 }: {
-	scenario: OrchestrationView;
+	scenario: OrchestrationBase;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	returnFocus?: React.RefObject<HTMLElement | null>;
@@ -254,7 +255,7 @@ export function ArchiveScenarioDialog({
 	onOpenChange,
 	returnFocus,
 }: {
-	scenario: OrchestrationView;
+	scenario: OrchestrationBase;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	returnFocus?: React.RefObject<HTMLElement | null>;
@@ -266,7 +267,7 @@ export function ArchiveScenarioDialog({
 		onSuccess: async () => {
 			onOpenChange(false);
 			notify.success(`已归档「${scenario.name}」`, {
-				action: { label: "撤销", onClick: () => unarchive.mutate(scenario) },
+				action: { label: ACTION.undo, onClick: () => unarchive.mutate(scenario) },
 			});
 			await invalidate();
 		},
@@ -301,7 +302,7 @@ export function ArchiveScenarioDialog({
 export function useUnarchiveScenario() {
 	const invalidate = useInvalidateScenarios();
 	return useMutation({
-		mutationFn: (scenario: OrchestrationView) =>
+		mutationFn: (scenario: OrchestrationBase) =>
 			callApi(orchestrationsApi.unarchive, { params: { id: scenario.id } }),
 		onSuccess: async (restored) => {
 			notify.success(`已恢复「${restored.name}」`);

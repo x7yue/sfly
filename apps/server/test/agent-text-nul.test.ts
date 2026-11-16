@@ -4,7 +4,7 @@
 // HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL；写库失败用测试库里的触发器制造。
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 import { InstallState } from "@sfly/proto";
-import { agentsApi, logsApi, metricsApi, type RunMetricSummary } from "@sfly/schema";
+import { actionsApi, agentsApi, logsApi, metricsApi, type RunMetricSummary } from "@sfly/schema";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
@@ -133,6 +133,41 @@ describe("Agent 上报的字符串里含 NUL", () => {
 
 		const [attempt] = (await api.node(runId, "a")).attempts;
 		expect(attempt?.progress?.message).toBe(`第 1 步${REPLACEMENT}`);
+		await agent.succeed(a);
+		expect(agent.ended).toBe(false);
+	});
+
+	it("动作明细的名称、字段的键和值、失败原因含 NUL：NUL 换成 U+FFFD", async () => {
+		const agent = await connect();
+		await api.triggerOk(await api.orchestrationWith(chain([{ id: "a" }])));
+
+		const a = await agent.nextAssign();
+		const now = cp.clock.now().getTime();
+		agent.actions(a, [
+			agent.actionStart(1, `下单${NUL}`, now, { fields: { [`订单${NUL}`]: `10${NUL}01` } }),
+			agent.actionMark(2, `开盘${NUL}`, now, { fields: { 板块: `A${NUL}` } }),
+		]);
+		agent.actions(a, [
+			agent.actionEnd(1, "failed", now + 10, {
+				reason: `拒单${NUL}`,
+				fields: { 回报: `拒${NUL}` },
+			}),
+		]);
+		await agent.sync();
+
+		const page = actionsApi.page.response.parse(
+			await (await cp.fetch(`/tasks/${a.taskId}/actions`)).json(),
+		);
+		expect(
+			page.actions.map((d) => [d.name, d.fields, d.kind === "action" ? d.reason : null]),
+		).toEqual([
+			[`开盘${REPLACEMENT}`, { 板块: `A${REPLACEMENT}` }, null],
+			[
+				`下单${REPLACEMENT}`,
+				{ [`订单${REPLACEMENT}`]: `10${REPLACEMENT}01`, 回报: `拒${REPLACEMENT}` },
+				`拒单${REPLACEMENT}`,
+			],
+		]);
 		await agent.succeed(a);
 		expect(agent.ended).toBe(false);
 	});

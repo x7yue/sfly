@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useMemo } from "react";
 
 /**
- * 迷你趋势（原型 spark）：折线（可选面积），控制台统计卡与各处主指标共用。
+ * 迷你趋势（原型 spark）：折线（可选面积），各处主指标共用。
  * 纵轴从 min(0, 最小值) 起、上方留 12%；横轴按 xs（缺省为序号）在 domain（缺省为 xs 的范围）里排开。
  * 宽度由 className 决定（SVG 横向拉伸，线宽不缩放）；少于两个点时不画。颜色缺省取 currentColor。
  */

@@ -12,7 +12,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { notify } from "#/components/feedback/notify";
 import { NodeName } from "#/components/node-name";
+import { nodeStatusView } from "#/components/status";
 import { callApi } from "#/lib/api";
+import { attemptLabel } from "#/lib/copy";
 import { shortId } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import {
@@ -111,8 +113,8 @@ export function UpdateNowButton({
 										>
 											<NodeName node={task} />
 											<span className="text-xs text-fg-3">
-												运行 <span className="font-mono">{shortId(task.run_id)}</span> · 第{" "}
-												{task.attempt} 次尝试 · {task.status === "running" ? "执行中" : "派发中"}
+												运行 <span className="font-mono">{shortId(task.run_id)}</span> ·{" "}
+												{attemptLabel(task.attempt)} · {nodeStatusView(task.status).label}
 											</span>
 										</li>
 									))}

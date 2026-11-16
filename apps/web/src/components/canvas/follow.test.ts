@@ -1,0 +1,264 @@
+import { type LayoutDocument, NODE_SIZE, REGION_PADDING } from "@sfly/orchestration";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	createFrameScheduler,
+	FOLLOW_DWELL_MS,
+	FOLLOW_ZOOM,
+	followViewport,
+	framedInView,
+	rectInView,
+} from "./follow";
+
+type Rect = { x: number; y: number; width: number; height: number };
+type Viewport = { x: number; y: number; zoom: number };
+
+const card = (x: number, y: number): Rect => ({
+	x,
+	y,
+	width: NODE_SIZE.width,
+	height: NODE_SIZE.height,
+});
+
+/** 主链 entry → a → spawn → c → mid → far 在一行，spawn 调度的子流程 sub → s1 在下面一行；far 在很远的地方。 */
+const layout: LayoutDocument = {
+	nodes: [
+		{ id: "entry", kind: "entry", position: { x: 0, y: 0 } },
+		{ id: "a", kind: "package", position: { x: 252, y: 0 } },
+		{ id: "spawn", kind: "async", position: { x: 504, y: 0 } },
+		{ id: "c", kind: "package", position: { x: 756, y: 0 } },
+		{ id: "sub", kind: "subflow_entry", position: { x: 660, y: 230 } },
+		{ id: "s1", kind: "package", position: { x: 912, y: 230 } },
+		{ id: "mid", kind: "package", position: { x: 1200, y: 0 } },
+		{ id: "far", kind: "package", position: { x: 6000, y: 0 } },
+	],
+	edges: [
+		{ from: "entry", to: "a", kind: "chain" },
+		{ from: "a", to: "spawn", kind: "chain" },
+		{ from: "spawn", to: "c", kind: "chain" },
+		{ from: "spawn", to: "sub", kind: "dispatch" },
+		{ from: "sub", to: "s1", kind: "chain" },
+		{ from: "c", to: "mid", kind: "chain" },
+		{ from: "mid", to: "far", kind: "chain" },
+	],
+};
+
+/** 子流程 sub 的区域：成员 sub、s1 的外接框加上四周留白。 */
+const region: Rect = {
+	x: 660 - REGION_PADDING.left,
+	y: 230 - REGION_PADDING.top,
+	width: 912 + NODE_SIZE.width + REGION_PADDING.right - (660 - REGION_PADDING.left),
+	height: 230 + NODE_SIZE.height + REGION_PADDING.bottom - (230 - REGION_PADDING.top),
+};
+
+const SIZE = { width: 1440, height: 900 };
+/** 画布四周被悬浮控件占住的区域：顶栏、右侧的检查器（372 宽加边距）、底部的工具条。 */
+const AREA = { top: 72, right: 396, bottom: 72, left: 12 };
+/** 没有悬浮控件：只有画布本身。 */
+const NO_AREA = { top: 0, right: 0, bottom: 0, left: 0 };
+
+/** 画布上的矩形在屏幕上的位置。 */
+const onScreen = (v: Viewport, r: Rect): Rect => ({
+	x: r.x * v.zoom + v.x,
+	y: r.y * v.zoom + v.y,
+	width: r.width * v.zoom,
+	height: r.height * v.zoom,
+});
+
+const center = (r: Rect) => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
+
+const visible = (area: typeof AREA) => ({
+	x: area.left,
+	y: area.top,
+	width: SIZE.width - area.left - area.right,
+	height: SIZE.height - area.top - area.bottom,
+});
+
+const inside = (r: Rect, outer: Rect) =>
+	r.x >= outer.x - 1e-6 &&
+	r.y >= outer.y - 1e-6 &&
+	r.x + r.width <= outer.x + outer.width + 1e-6 &&
+	r.y + r.height <= outer.y + outer.height + 1e-6;
+
+function frame(running: string[], area = AREA, size = SIZE): Viewport {
+	const viewport = followViewport({ running, layout, size, area });
+	if (!viewport) throw new Error("没有可框的节点");
+	return viewport;
+}
+
+describe("跟随执行的镜头框选", () => {
+	it("一个执行中的节点：放大到 1，放在可见区域的正中", () => {
+		const v = frame(["a"]);
+		expect(v.zoom).toBe(1);
+		const shown = onScreen(v, card(252, 0));
+		const area = visible(AREA);
+		expect(center(shown).x).toBeCloseTo(center(area).x, 6);
+		expect(center(shown).y).toBeCloseTo(center(area).y, 6);
+	});
+
+	it("扣掉右侧检查器的宽度：节点落在检查器左边的可见区域里，检查器越宽越往左", () => {
+		const narrow = frame(["a"], { ...AREA, right: 12 });
+		const wide = frame(["a"], { ...AREA, right: 600 });
+		const at = (v: Viewport) => center(onScreen(v, card(252, 0))).x;
+		expect(at(narrow)).toBeCloseTo((AREA.left + SIZE.width - 12) / 2, 6);
+		expect(at(wide)).toBeCloseTo((AREA.left + SIZE.width - 600) / 2, 6);
+		expect(at(wide)).toBeLessThan(at(narrow));
+		const shown = onScreen(wide, card(252, 0));
+		expect(shown.x + shown.width).toBeLessThanOrEqual(SIZE.width - 600);
+	});
+
+	it("多个执行中的节点：全部框进可见区域，整体居中，缩放介于 0.6 和 1 之间", () => {
+		const v = frame(["entry", "mid"]);
+		expect(v.zoom).toBeGreaterThan(FOLLOW_ZOOM.min);
+		expect(v.zoom).toBeLessThan(FOLLOW_ZOOM.max);
+		const [first, second] = [onScreen(v, card(0, 0)), onScreen(v, card(1200, 0))];
+		const area = visible(AREA);
+		expect(inside(first, area)).toBe(true);
+		expect(inside(second, area)).toBe(true);
+		const middle = (first.x + second.x + second.width) / 2;
+		expect(middle).toBeCloseTo(center(area).x, 6);
+	});
+
+	it("子流程里的节点连同它的子流程区域一起框进来", () => {
+		const v = frame(["s1"]);
+		const shown = onScreen(v, region);
+		expect(inside(shown, visible(AREA))).toBe(true);
+		expect(center(shown).x).toBeCloseTo(center(visible(AREA)).x, 6);
+		expect(center(shown).y).toBeCloseTo(center(visible(AREA)).y, 6);
+	});
+
+	it("主链和子流程里同时有执行中的节点：节点卡片和子流程区域都在可见区域里", () => {
+		const v = frame(["c", "s1"]);
+		const area = visible(AREA);
+		expect(inside(onScreen(v, card(756, 0)), area)).toBe(true);
+		expect(inside(onScreen(v, region), area)).toBe(true);
+	});
+
+	it("卡片长高了（显示关注项、正在做的事）：按量出来的高度框，长高的卡片和子流程区域放在可见区域的正中", () => {
+		const grown: LayoutDocument = {
+			...layout,
+			nodes: layout.nodes.map((n) => (n.id === "c" || n.id === "s1" ? { ...n, height: 180 } : n)),
+		};
+		const at = (running: string[]) => {
+			const v = followViewport({ running, layout: grown, size: SIZE, area: AREA });
+			if (!v) throw new Error("没有可框的节点");
+			return v;
+		};
+		const area = visible(AREA);
+		const tallCard = onScreen(at(["c"]), { ...card(756, 0), height: 180 });
+		expect(center(tallCard).y).toBeCloseTo(center(area).y, 6);
+		const tallRegion = onScreen(at(["s1"]), {
+			...region,
+			height: region.height + 180 - NODE_SIZE.height,
+		});
+		expect(inside(tallRegion, area)).toBe(true);
+		expect(center(tallRegion).y).toBeCloseTo(center(area).y, 6);
+	});
+
+	it("框好以后卡片长高：长出来的部分还在可见区域里就不用重新框，落到工具条下面就要", () => {
+		const v = frame(["c"]);
+		const grownBy = (height: number): LayoutDocument => ({
+			...layout,
+			nodes: layout.nodes.map((n) => (n.id === "c" ? { ...n, height } : n)),
+		});
+		const inView = (height: number) =>
+			framedInView({
+				running: ["c"],
+				layout: grownBy(height),
+				size: SIZE,
+				area: AREA,
+				viewport: v,
+			});
+		expect(inView(NODE_SIZE.height)).toBe(true);
+		expect(inView(NODE_SIZE.height + 60)).toBe(true);
+		// 可见区域 756 高，卡片在正中，下面还剩 (756 - 112) / 2 = 322。
+		expect(inView(NODE_SIZE.height + 400)).toBe(false);
+	});
+
+	it("矩形在不在可见区域里：扣掉悬浮控件，差 1px 以内算在里面", () => {
+		const view = { viewport: { x: 0, y: 0, zoom: 1 }, size: SIZE, area: AREA };
+		// 可见区域：x 从 12 到 1044，y 从 72 到 828。
+		const at = (x: number, y: number) => rectInView({ x, y, width: 100, height: 100 }, view);
+		expect(at(12, 72)).toBe(true);
+		expect(at(944, 728)).toBe(true);
+		expect(at(11.5, 72)).toBe(true);
+		expect(at(944.5, 72)).toBe(true);
+		expect(at(10, 72)).toBe(false);
+		expect(at(946, 72)).toBe(false);
+		expect(at(500, 730)).toBe(false);
+		const zoomed = { ...view, viewport: { x: 12, y: 72, zoom: 0.5 } };
+		expect(rectInView({ x: 1900, y: 0, width: 160, height: 100 }, zoomed)).toBe(true);
+		expect(rectInView({ x: 1950, y: 0, width: 160, height: 100 }, zoomed)).toBe(false);
+	});
+
+	it("缩放下限 0.6：执行中的节点离得很远时不再缩小，整体仍然居中", () => {
+		const v = frame(["entry", "far"]);
+		expect(v.zoom).toBe(FOLLOW_ZOOM.min);
+		const [left, right] = [onScreen(v, card(0, 0)), onScreen(v, card(6000, 0))];
+		const middle = (left.x + right.x + right.width) / 2;
+		expect(middle).toBeCloseTo(center(visible(AREA)).x, 6);
+	});
+
+	it("缩放上限 1：只有一个节点、窗口很大时也不放大", () => {
+		const v = frame(["a"], NO_AREA, { width: 4000, height: 3000 });
+		expect(v.zoom).toBe(FOLLOW_ZOOM.max);
+	});
+
+	it("没有执行中的节点、或节点不在画布上时没有视口", () => {
+		expect(followViewport({ running: [], layout, size: SIZE, area: AREA })).toBeNull();
+		expect(followViewport({ running: ["gone"], layout, size: SIZE, area: AREA })).toBeNull();
+	});
+
+	it("画布上没有的节点不影响其余节点的框选", () => {
+		expect(frame(["a", "gone"])).toEqual(frame(["a"]));
+	});
+});
+
+describe("什么时候框", () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	it("跟随刚打开时马上框一次", () => {
+		const frame = vi.fn();
+		createFrameScheduler().update("a", frame);
+		expect(frame).toHaveBeenCalledTimes(1);
+	});
+
+	it("执行前沿变了，停留满了才框", () => {
+		const frame = vi.fn();
+		const schedule = createFrameScheduler();
+		schedule.update("a", vi.fn());
+		schedule.update("b", frame);
+		vi.advanceTimersByTime(FOLLOW_DWELL_MS - 1);
+		expect(frame).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(1);
+		expect(frame).toHaveBeenCalledTimes(1);
+	});
+
+	it("停留期间又变了，从最后一次变化重新计时", () => {
+		const first = vi.fn();
+		const last = vi.fn();
+		const schedule = createFrameScheduler();
+		schedule.update("a", vi.fn());
+		schedule.update("b", first);
+		vi.advanceTimersByTime(FOLLOW_DWELL_MS - 500);
+		schedule.update("c", last);
+		vi.advanceTimersByTime(500);
+		expect(first).not.toHaveBeenCalled();
+		expect(last).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(FOLLOW_DWELL_MS - 500);
+		expect(first).not.toHaveBeenCalled();
+		expect(last).toHaveBeenCalledTimes(1);
+	});
+
+	it("跟随关了就不再框，重新打开又马上框", () => {
+		const frame = vi.fn();
+		const schedule = createFrameScheduler();
+		schedule.update("a", vi.fn());
+		schedule.update("b", frame);
+		schedule.update(null, frame);
+		vi.advanceTimersByTime(FOLLOW_DWELL_MS * 2);
+		expect(frame).not.toHaveBeenCalled();
+		schedule.update("b", frame);
+		expect(frame).toHaveBeenCalledTimes(1);
+	});
+});

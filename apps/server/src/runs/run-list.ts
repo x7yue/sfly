@@ -1,8 +1,14 @@
-import { isActiveStatus, type RunListItem } from "@sfly/schema";
+import type { RunListItem } from "@sfly/schema";
 import { and, count, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
-import { loadRunBoards } from "../engine/run-board.js";
+import {
+	activeNodesOf,
+	type BoardChain,
+	type BoardNode,
+	boardFailures,
+	loadRunBoards,
+} from "../engine/run-board.js";
 import { runListPreset } from "../presets/run-preset.js";
 
 export interface RunListFilter {
@@ -18,7 +24,7 @@ const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /**
  * 跨场景的运行列表（契约见 @sfly/schema 的 runListApi）：按开始时间从新到旧，
- * 每项带各链的节点状态、正在执行的节点与失败的链。链与任务按整页批量读取
+ * 每项带各链的节点状态、进行中的节点与失败的链。链与任务按整页批量读取
  * （engine/run-board.ts，节点状态的取法与运行视图相同）。
  */
 export async function listAllRuns(
@@ -68,6 +74,7 @@ export async function listAllRuns(
 	return {
 		counts,
 		runs: rows.map(({ run, name, version }) => {
+			const chains = boards.get(run.id) ?? [];
 			const item: RunListItem = {
 				id: run.id,
 				orchestration_id: run.orchestrationId,
@@ -81,34 +88,13 @@ export async function listAllRuns(
 				started_at: run.startedAt.toISOString(),
 				ended_at: run.endedAt ? run.endedAt.toISOString() : null,
 				chains: [],
-				active_nodes: [],
+				active_nodes: activeNodesOf(chains),
 				failures: [],
 			};
-			for (const chain of boards.get(run.id) ?? []) {
+			item.failures = chainFailures(chains);
+			for (const chain of chains) {
 				const subflow = chain.depth > 0;
-				const nodes = chain.nodes.map(({ node_id, display_name, status, progress }) => {
-					if (isActiveStatus(status)) {
-						item.active_nodes.push({
-							chain_instance_id: chain.id,
-							node_id,
-							display_name,
-							status,
-							progress: progress ? { current: progress.current, total: progress.total } : null,
-						});
-					}
-					return { node_id, status };
-				});
-				const failedNode = chain.nodes.find((n) => n.status === "failed");
-				if (chain.status === "failed" || failedNode) {
-					item.failures.push({
-						chain_instance_id: chain.id,
-						chain_id: chain.chain_id,
-						subflow,
-						subflow_name: chain.subflow_name,
-						node_id: failedNode?.node_id ?? null,
-						display_name: failedNode?.display_name,
-					});
-				}
+				const nodes = chain.nodes.map(({ node_id, status }) => ({ node_id, status }));
 				item.chains.push({
 					id: chain.id,
 					chain_id: chain.chain_id,
@@ -121,4 +107,31 @@ export async function listAllRuns(
 			return item;
 		}),
 	};
+}
+
+/**
+ * 失败的链实例（链失败或链上有节点最终失败），按失败的先后（`boardFailures`）：有失败节点的链按它
+ * 第一个失败的节点排，每条链带的就是这个节点，所以第一项是这次运行「第一个失败的节点」所在的链；链失败了却没有失败的节点
+ * （例如参数校验失败）的排在最后，按链的顺序。
+ */
+function chainFailures(chains: readonly BoardChain[]): RunListItem["failures"] {
+	const first = new Map<BoardChain, BoardNode>();
+	for (const { chain, node } of boardFailures(chains)) {
+		if (!first.has(chain)) first.set(chain, node);
+	}
+	const failed = [
+		...first.keys(),
+		...chains.filter((chain) => chain.status === "failed" && !first.has(chain)),
+	];
+	return failed.map((chain) => {
+		const node = first.get(chain);
+		return {
+			chain_instance_id: chain.id,
+			chain_id: chain.chain_id,
+			subflow: chain.depth > 0,
+			subflow_name: chain.subflow_name,
+			node_id: node?.node_id ?? null,
+			display_name: node?.display_name,
+		};
+	});
 }

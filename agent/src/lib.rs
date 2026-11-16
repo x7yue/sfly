@@ -116,7 +116,7 @@ pub struct Config {
     pub telemetry_queue_bytes: usize,
     /// 与控制面断开期间最多排队多少个指标点（所有任务合计）；超出后丢弃最早的点，恢复后上报丢弃计数。
     pub metric_queue_points: usize,
-    /// 只在测试中使用：转发器每秒最多处理多少字节的标准输出 / 标准错误（0 = 不限制，[`logs::Pump::start`]）。
+    /// 只在测试中使用：转发器每秒最多处理多少字节的标准输出 / 标准错误 / 事件管道内容（0 = 不限制，[`logs::Pump::start`]）。
     pub log_forward_rate: u64,
     /// 自更新下载新二进制时每次读取的超时（[`update::DEFAULT_READ_TIMEOUT`]）。
     pub update_read_timeout: Duration,

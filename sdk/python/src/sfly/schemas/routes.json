@@ -3,6 +3,118 @@
   "routes": [
     {
       "method": "GET",
+      "path": "/tasks/:id/actions/summary",
+      "key": [
+        "actions",
+        "summary"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "notes": []
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/actions",
+      "key": [
+        "actions",
+        "page"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "before": {
+            "type": "string"
+          },
+          "limit": {
+            "default": 100,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 500
+          },
+          "name": {
+            "type": "string"
+          },
+          "failed": {
+            "type": "string"
+          }
+        }
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "failed",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "name",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
+        {
+          "part": "query",
+          "path": "before",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/tasks/:id/actions/events",
+      "key": null,
+      "kind": "stream",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        }
+      },
+      "notes": [
+        {
+          "part": "query",
+          "path": "after",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        }
+      ]
+    },
+    {
+      "method": "GET",
       "path": "/agent/binaries",
       "key": [
         "agent-binaries",
@@ -452,10 +564,25 @@
           },
           "source": {
             "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
           }
         }
       },
       "notes": [
+        {
+          "part": "query",
+          "path": "",
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：before 与 after 不能同时给"
+        },
+        {
+          "part": "query",
+          "path": "at",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
         {
           "part": "query",
           "path": "source",
@@ -479,7 +606,7 @@
         {
           "part": "query",
           "path": "",
-          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：before 与 after 不能同时给"
+          "reason": "自定义校验（refine）不在 JSON Schema 里，由控制面校验：at 不能与 before、after 同时给"
         }
       ]
     },
@@ -1799,11 +1926,42 @@
               }
             },
             "additionalProperties": false
+          },
+          "focus_items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "node_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "chart": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "title": {
+                  "type": "string",
+                  "maxLength": 40,
+                  "pattern": "^[^\\r\\n]*(?![\\s\\S])"
+                }
+              },
+              "required": [
+                "node_id",
+                "chart"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "additionalProperties": false
       },
       "notes": [
+        {
+          "part": "body",
+          "path": "focus_items[].title",
+          "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
+        },
         {
           "part": "body",
           "path": "run_notification",
@@ -2401,6 +2559,39 @@
           "reason": "含转换（transform、preprocess、pipe），JSON Schema 只描述转换前的输入，转换后的约束由控制面校验"
         }
       ]
+    },
+    {
+      "method": "GET",
+      "path": "/runs/:id/focus",
+      "key": [
+        "runs",
+        "focus"
+      ],
+      "kind": "endpoint",
+      "params": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "query": {
+        "type": "object",
+        "properties": {
+          "points": {
+            "default": 60,
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 300
+          }
+        },
+        "additionalProperties": false
+      },
+      "notes": []
     },
     {
       "method": "GET",

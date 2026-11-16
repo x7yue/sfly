@@ -5,6 +5,7 @@ import {
 	systemApi,
 } from "@sfly/schema";
 import Fastify, { type FastifyError, type FastifyInstance } from "fastify";
+import type { TaskActions } from "../actions/task-actions.js";
 import type { AgentBinaries } from "../agent-binaries/agent-binaries.js";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { ArtifactStore } from "../artifacts/artifact-store.js";
@@ -28,6 +29,7 @@ import type { Retention } from "../retention/retention.js";
 import type { Preflight } from "../runs/preflight.js";
 import type { SdkWheel } from "../sdk/sdk-wheels.js";
 import { registerSse } from "../sse/sse.js";
+import { registerActionRoutes } from "./action-routes.js";
 import { registerAgentBinaryRoutes } from "./agent-binary-routes.js";
 import { registerAgentRoutes } from "./agent-routes.js";
 import { registerArtifactRoutes } from "./artifact-routes.js";
@@ -44,6 +46,7 @@ import { registerOrchestrationRoutes } from "./orchestration-routes.js";
 import { registerPackageRoutes } from "./packages-routes.js";
 import { registerPresenceRoutes } from "./presence-routes.js";
 import { registerPresetRoutes } from "./preset-routes.js";
+import { registerRunFocusRoutes } from "./run-focus-routes.js";
 import { registerRunListRoutes } from "./run-list-routes.js";
 import { registerRunRoutes } from "./run-routes.js";
 import { registerSdkRoutes } from "./sdk-routes.js";
@@ -62,6 +65,8 @@ export interface HttpApiDeps {
 	presence: PresenceRegistry;
 	preflight: Preflight;
 	logs: TaskLogs;
+	/** 任务的动作（src/actions/）。 */
+	actions: TaskActions;
 	metrics: TaskMetrics;
 	metricQueries: MetricQueries;
 	retention: Retention;
@@ -112,6 +117,7 @@ export function buildHttpApi({
 	presence,
 	preflight,
 	logs,
+	actions,
 	metrics,
 	metricQueries,
 	retention,
@@ -171,7 +177,7 @@ export function buildHttpApi({
 	});
 
 	registerAgentRoutes(app, { hub, engine, orchestrations });
-	registerDashboardRoutes(app, { db: database.db, clock, hub, orchestrations });
+	registerDashboardRoutes(app, { db: database.db, clock, hub, queries: metricQueries });
 	registerFeishuBotRoutes(app, { bots: feishuBots, client: feishu, db: database.db });
 	registerOrchestrationRoutes(app, { db: database.db, orchestrations, packages });
 	registerPresetRoutes(app, { presets });
@@ -187,6 +193,7 @@ export function buildHttpApi({
 		metrics: metrics.increments,
 	});
 	registerRunListRoutes(app, { db: database.db });
+	registerRunFocusRoutes(app, { db: database.db, clock, queries: metricQueries });
 	registerLogRoutes(app, {
 		logs,
 		runLogs: new RunLogs({ db: database.db, logs, scanBytes: logScanBytes }),
@@ -194,6 +201,7 @@ export function buildHttpApi({
 		isPurged: (runId) => retention.isPurged(runId),
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
+	registerActionRoutes(app, { actions, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });

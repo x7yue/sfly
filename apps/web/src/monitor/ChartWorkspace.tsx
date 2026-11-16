@@ -1,5 +1,6 @@
 import {
 	type CatalogNode,
+	errorHeadline,
 	isLabeled,
 	isOnAgentStatus,
 	MAX_SERIES,
@@ -12,12 +13,14 @@ import {
 import { useQueries } from "@tanstack/react-query";
 import { cn } from "cn";
 import { BarChart3Icon, ChevronRightIcon, SearchIcon } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
+import { attemptLabel, DURATION_LABEL, MESSAGE, noDataLabel, PROGRESS_LABEL } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
+import { useElementWidth } from "#/lib/use-element-width";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
 import { Badge } from "@/components/ui/badge";
@@ -53,6 +56,12 @@ const PLATFORM_TEXT = "平台自带图表 节点耗时 槽位 并发 重试";
 const PLATFORM_CHARTS = 4;
 const MIN_COLUMN = { standard: 340, compact: 230 };
 type Density = keyof typeof MIN_COLUMN;
+/**
+ * 图表工作区最少的高度（px，大约是工具栏）：底部面板被拖高、窗口变矮时图表让出高度，滚动查看，时间线、图表、
+ * 底部面板总在窗口里（底部面板的最大高度据此留出这一截）。
+ */
+export const CHARTS_MIN_HEIGHT = 48;
+
 /** 分组内外的水平留白（px）：工作区 12×2、分组 10×2、描边。 */
 const GROUP_INSET = 48;
 
@@ -97,7 +106,14 @@ export function ChartWorkspace({
 	const [opened, setOpened] = useState<Record<string, boolean>>({});
 	const scroller = useRef<HTMLElement>(null);
 	const toolbar = useRef<HTMLDivElement>(null);
-	const width = useWidth(scroller);
+	const [measure, width] = useElementWidth<HTMLElement>();
+	const scrollerRef = useCallback(
+		(el: HTMLElement | null) => {
+			scroller.current = el;
+			measure(el);
+		},
+		[measure],
+	);
 
 	const query = search.trim().toLowerCase();
 	const matches = (text: string) => text.toLowerCase().includes(query);
@@ -226,13 +242,14 @@ export function ChartWorkspace({
 
 	return (
 		<section
-			ref={scroller}
+			ref={scrollerRef}
 			aria-label="图表工作区"
 			className={cn(
-				"relative overflow-auto px-3",
+				"relative flex-initial overflow-auto px-3 [scrollbar-gutter:stable]",
 				// 高度按内容取：图表少的时候多出来的高度归底部面板（日志），图表多的时候这里滚动。
-				compact ? "flex-initial pt-2 pb-2.5" : "min-h-60 flex-initial pb-7",
+				compact ? "pt-2 pb-2.5" : "pb-7",
 			)}
+			style={compact ? undefined : { minHeight: CHARTS_MIN_HEIGHT }}
 		>
 			{!compact && (
 				<div
@@ -300,12 +317,16 @@ export function ChartWorkspace({
 					className="mb-2.5"
 				/>
 			) : !catalog.data ? (
-				<output aria-label="加载中" aria-busy="true" className="mb-2.5 flex flex-col gap-2.5">
+				<output
+					aria-label={MESSAGE.loading}
+					aria-busy="true"
+					className="mb-2.5 flex flex-col gap-2.5"
+				>
 					<Skeleton className="h-10 w-full" />
 					<Skeleton className="h-10 w-full" />
 				</output>
 			) : catalog.data.expired ? (
-				<Notice compact={compact}>这次运行的指标数据已超过保留期，已被清理。</Notice>
+				<Notice compact={compact}>{MESSAGE.metricsExpired}</Notice>
 			) : groups.length === 0 ? (
 				<Notice compact={compact}>
 					这次运行没有节点上报指标。节点类型声明了指标后，图表会按节点显示在这里。
@@ -386,20 +407,6 @@ function Notice({ children, compact }: { children: React.ReactNode; compact?: bo
 			{children}
 		</div>
 	);
-}
-
-/** 元素的内容宽度（随窗口与面板变化）。 */
-function useWidth(ref: React.RefObject<HTMLElement | null>) {
-	const [width, setWidth] = useState(1280);
-	useLayoutEffect(() => {
-		const el = ref.current;
-		if (!el) return;
-		setWidth(el.clientWidth);
-		const observer = new ResizeObserver(() => setWidth(el.clientWidth));
-		observer.observe(el);
-		return () => observer.disconnect();
-	}, [ref]);
-	return width;
 }
 
 /**
@@ -523,16 +530,15 @@ function NodeGroup({
 		series_capped: attempt.series_capped || series.loaded.some((s) => s.series_capped),
 		dropped_points: attempt.dropped_points,
 	};
+	const noData = noDataLabel(runAttempt ?? { started_at: null, ended_at: null }, node.status);
 	const empty = (loading: boolean) =>
 		!runAttempt?.started_at
-			? "节点尚未开始 · 暂无数据"
+			? noData
 			: !window || zoomed
-				? "所选时间段内无数据"
+				? MESSAGE.noDataInRange
 				: loading
-					? "正在加载…"
-					: runAttempt.ended_at
-						? "这次尝试没有上报数据"
-						: "还没有上报数据";
+					? MESSAGE.loading
+					: noData;
 	const title = `${entry.package}/${entry.node}`;
 	const name = runNodeName(node);
 	return (
@@ -581,7 +587,7 @@ function NodeGroup({
 					>
 						{entry.attempts.map((a, i) => (
 							<NativeSelectOption key={a.task_id} value={String(a.attempt)}>
-								第 {a.attempt} 次{i === entry.attempts.length - 1 ? "（最新）" : ""}
+								{`${attemptLabel(a.attempt)}${i === entry.attempts.length - 1 ? "（最新）" : ""}`}
 							</NativeSelectOption>
 						))}
 					</NativeSelect>
@@ -712,11 +718,11 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
 			{item("节点类型", `${entry.package}/${entry.node}@${entry.version}`)}
 			{item("Agent", node.agent ?? "—")}
-			{item("耗时", started === null ? "—" : formatDuration(ended - started))}
+			{item(DURATION_LABEL, started === null ? "—" : formatDuration(ended - started))}
 			{item("尝试", node.attempts.length)}
 			{progress && (
 				<div className="min-w-45">
-					<div className="text-xs text-fg-3">进度</div>
+					<div className="text-xs text-fg-3">{PROGRESS_LABEL}</div>
 					<div className="font-mono text-xs">
 						{progress.current}
 						{progress.total === null ? "" : ` / ${progress.total}`}
@@ -731,7 +737,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 					<div className="text-xs text-fg-3">错误</div>
 					<div className="flex items-center gap-1.5 text-xs">
 						<Badge variant="danger">{node.error.kind}</Badge>
-						<span className="truncate text-danger-fg">{node.error.message.split("\n\n")[0]}</span>
+						<span className="truncate text-danger-fg">{errorHeadline(node.error.message)}</span>
 					</div>
 				</div>
 			)}
@@ -776,7 +782,11 @@ function PlatformGroup({
 	const window = data
 		? chartWindow({ started_at: data.from, ended_at: run.ended_at }, range, now)
 		: null;
-	const empty = data ? "所选时间段内无数据" : error ? `无法加载：${error.message}` : "正在加载…";
+	const empty = data
+		? MESSAGE.noDataInRange
+		: error
+			? `无法加载：${error.message}`
+			: MESSAGE.loading;
 	return (
 		<GroupShell
 			groupKey={PLATFORM_KEY}
@@ -836,7 +846,7 @@ function PlatformGroup({
 					className="relative m-0 min-w-0 rounded-lg border border-border-soft bg-bg px-2.5 pt-2 pb-1.5"
 				>
 					<figcaption className="text-xs text-fg-2">重试次数</figcaption>
-					<div className="mt-1.5 mb-0.5 font-mono text-2xl font-semibold" data-latest>
+					<div className="mt-1.5 mb-0.5 font-mono text-lg font-semibold" data-latest>
 						{data ? data.retries : "—"}
 						<small className="ml-1 text-xs font-normal text-fg-3">次</small>
 					</div>
@@ -881,7 +891,7 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 			</figcaption>
 			{nodes.length === 0 ? (
 				<p className="m-0 mt-1.5 text-xs text-fg-3">
-					{data ? "还没有节点开始执行。" : "正在加载…"}
+					{data ? "还没有节点开始执行。" : MESSAGE.loading}
 				</p>
 			) : (
 				<ol

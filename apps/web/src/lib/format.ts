@@ -51,7 +51,10 @@ export function formatBytes(bytes: number): string {
 	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 耗时：`850ms`、`12.3s`、`3m 05s`、`1h 02m`、`2d 03h`。 */
+/**
+ * 给定值的耗时（动作耗时、运行结束后的耗时）：`850ms`、`12.3s`、`3m 05s`、`1h 02m`、`2d 03h`。
+ * 每秒刷新的「已持续多久」用 {@link formatElapsed}。
+ */
 export function formatDuration(ms: number): string {
 	const d = Math.max(0, ms);
 	if (d < 1000) return `${Math.round(d)}ms`;
@@ -65,15 +68,18 @@ export function formatDuration(ms: number): string {
 	return `${Math.floor(h / 24)}d ${pad(h % 24)}h`;
 }
 
-/** 已经过了多久：`45 秒`、`2 分 10 秒`、`1 小时 2 分`（超过一小时不再写秒）。 */
+/**
+ * 每秒刷新的「已持续多久」和「多久前」：`2s`、`2m 10s`、`1h 02m`。秒取整，一分钟以内也不写小数：
+ * 界面每秒刷新一次，带小数时小数位基本不动（5.3s、6.3s、7.3s），读起来像假的。
+ */
 export function formatElapsed(ms: number): string {
-	const total = Math.floor(Math.max(0, ms) / 1000);
-	const seconds = total % 60;
-	const minutes = Math.floor(total / 60);
-	if (minutes === 0) return `${seconds} 秒`;
-	if (minutes < 60) return `${minutes} 分 ${seconds} 秒`;
-	return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+	const seconds = Math.max(0, Math.floor(ms / 1000));
+	return seconds < 60 ? `${seconds}s` : formatDuration(seconds * 1000);
 }
+
+/** 还在走的时长（`live`，每秒刷新）用 {@link formatElapsed}，已经定下来的用 {@link formatDuration}。 */
+export const formatSpan = (ms: number, live: boolean): string =>
+	live ? formatElapsed(ms) : formatDuration(ms);
 
 const CLOCK_OFFSET_UNITS: Array<[ms: number, unit: string]> = [
 	[86_400_000, "天"],
@@ -111,14 +117,11 @@ export function formatClockMs(time: number | string): string {
 	return `${formatClock(d.getTime())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
 }
 
-/** 指标值：`1.2M`、`12.3k`、`812`、`3.14`。 */
-export function formatMetric(value: number): string {
-	const abs = Math.abs(value);
-	if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 1e7 ? 0 : 1)}M`;
-	if (abs >= 1e4) return `${(value / 1e3).toFixed(abs >= 1e5 ? 0 : 1)}k`;
-	if (Number.isInteger(value)) return String(value);
-	return abs >= 100 ? value.toFixed(0) : abs >= 10 ? value.toFixed(1) : value.toFixed(2);
-}
+/** 指标值：`1.2M`、`12.3k`、`812`、`3.14`；和运行通知的卡片共用同一个定义。 */
+export { formatMetric } from "@sfly/schema";
+
+/** 整数加千位分隔：`1,284,819`（计数）。 */
+export const formatInteger = (n: number): string => Math.round(n).toLocaleString("en-US");
 
 /** 一个值在界面上怎么写：字符串原样，其余按 JSON（预设参数的值、保存的值）。 */
 export const valueText = (value: unknown): string =>

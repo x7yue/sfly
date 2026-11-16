@@ -124,7 +124,7 @@ test("没选中节点时合并显示全部节点的日志：按控制面时间�
 	await expect(rows).toHaveCount(9);
 
 	await nodeButton(page, "verify").click();
-	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(scope).toHaveText("范围：verify（第 2 次尝试）");
 	await expect(rows).toHaveCount(1);
 	await expect(logs.locator("[data-log-origin]")).toHaveCount(0);
 
@@ -177,7 +177,7 @@ test("合并视图向上滚动一页页加载更早的日志，一直到运行�
 	await expect(logs).not.toContainText("开始执行");
 
 	const older = logs.getByRole("button", { name: /加载更早的日志/ });
-	const loadingOlder = logs.getByRole("button", { name: "正在加载更早的日志…" });
+	const loadingOlder = logs.getByRole("button", { name: "加载中" });
 	for (let pages = 1; (await older.count()) > 0; pages++) {
 		expect(pages, "三页之内应读到运行开始").toBeLessThanOrEqual(3);
 		const before = befores.length;
@@ -415,7 +415,7 @@ test("打开监控页时链接里给了节点：不会先挂上合并视图、�
 	});
 
 	await openMonitor(page, clock, runId, "verify");
-	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次尝试）");
 	await expect(panel(page).getByRole("tabpanel", { includeHidden: true })).toHaveText(
 		"还没有日志输出。",
 	);
@@ -567,7 +567,7 @@ test("合并视图点来源节点名，或在行上打开菜单，选中这个�
 
 	// 点来源节点名：选中这个节点，看到的是这一行所在的那次尝试（verify 第 1 次，不是最近一次）。
 	await failure.locator("[data-log-origin]").click();
-	await expect(scope).toHaveText("范围：verify（第 1 次）");
+	await expect(scope).toHaveText("范围：verify（第 1 次尝试）");
 	await expect(rows).toContainText(["verify 1 checking", "AssertionError: 漏拦 3 笔"]);
 	await expect(rows).toHaveCount(2);
 	await expect(logs.locator("[data-log-origin]")).toHaveCount(0);
@@ -635,7 +635,7 @@ test("合并视图下的下载按钮下载范围内整次运行合并后的日�
 	await expect(merged).toBeVisible();
 
 	await nodeButton(page, "verify").click();
-	await expect(scope).toHaveText("范围：verify（第 2 次）");
+	await expect(scope).toHaveText("范围：verify（第 2 次尝试）");
 	await expect(merged).toHaveCount(0);
 	await expect(single).toHaveAttribute("href", `/api/tasks/${tasks.verify?.taskId}/logs/download`);
 	expect(await downloaded(single, "verify-2.log.jsonl")).toMatchObject([

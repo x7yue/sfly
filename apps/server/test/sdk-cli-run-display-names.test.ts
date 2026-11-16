@@ -116,7 +116,7 @@ describe("sfly 运行输出里的显示名称 → 控制面", { timeout: 60_000 
 				`    （前面还有更早的日志，用 sfly run logs ${runId} --node main:a 查看）`,
 			);
 			expect(lines(result.stderr)).toEqual(
-				expect.arrayContaining(["main:a#2「创建测试用户」 失败 3.0s", "main:b 失败 0.0s"]),
+				expect.arrayContaining(["main:a#2「创建测试用户」 失败 3.0s", "main:b 失败 0ms"]),
 			);
 
 			const waited = await cli("run", "wait", runId);
@@ -167,7 +167,7 @@ describe("sfly 运行输出里的显示名称 → 控制面", { timeout: 60_000 
 			const result = await waiting.exited;
 			expect(result.code, result.stderr).toBe(1);
 			expect(lines(result.stdout)).toContain("  report:send「发送报告」（stub/echo，第 1 次尝试）");
-			expect(lines(result.stderr)).toContain("report:send「发送报告」 失败 0.0s");
+			expect(lines(result.stderr)).toContain("report:send「发送报告」 失败 0ms");
 			expect((await api.run(await runOf(id))).status).toBe("failed");
 		});
 	});
@@ -184,7 +184,7 @@ describe("sfly 运行输出里的显示名称 → 控制面", { timeout: 60_000 
 				expect.arrayContaining([
 					["节点", "状态", "尝试", "Agent", "耗时"],
 					["a「创建测试用户」", "失败", "2", agent.name, "3.0s"],
-					["b", "失败", "1", agent.name, "0.0s"],
+					["b", "失败", "1", agent.name, "0ms"],
 				]),
 			);
 			expect(out).toEqual(

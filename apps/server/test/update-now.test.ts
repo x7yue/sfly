@@ -95,6 +95,11 @@ describe("立即更新", () => {
 		const named = body.terminated_tasks.find((t) => t.run_id === retried);
 		const unnamed = body.terminated_tasks.find((t) => t.run_id === once);
 		expect(named?.display_name).toBe("创建测试用户");
+		expect(named).toMatchObject({
+			orchestration_name: "test",
+			node_type: "stub/echo",
+			chain_name: null,
+		});
 		expect(unnamed).not.toHaveProperty("display_name");
 		await old.next("updateNow");
 

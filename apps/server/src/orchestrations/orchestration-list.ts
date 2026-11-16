@@ -7,7 +7,7 @@ import type {
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { agents, orchestrations, orchestrationVersions, runs, tasks } from "../db/schema.js";
-import { initialDocument, toView } from "./orchestration-store.js";
+import { initialDocument, toBase } from "./orchestration-store.js";
 
 /** 场景列表的筛选（GET /orchestrations 的查询参数）。 */
 export interface OrchestrationFilter {
@@ -147,7 +147,7 @@ export async function listOrchestrationSummaries(
 			for (const node of doc.nodes) lastRun.node_states[node.id] ??= "pending";
 		}
 		return {
-			...toView(orchestration),
+			...toBase(orchestration),
 			updated_at: (savedAt ?? orchestration.createdAt).toISOString(),
 			node_count: doc.nodes.length,
 			subflow_count: doc.nodes.filter((n) => n.kind === "subflow_entry").length,

@@ -7,7 +7,7 @@ import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/stat
 import { useListNavigation } from "#/components/list-navigation";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { MESSAGE, PAGE } from "#/lib/copy";
+import { ACTIVE_LABEL, MESSAGE, PAGE, RUN_STATUS_LABEL, TERM } from "#/lib/copy";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
 import { useSearchInput } from "#/lib/use-search-input";
@@ -71,13 +71,13 @@ function RunsPage() {
 						{filtered ? (
 							<EmptyState
 								icon={<SearchIcon />}
-								title="没有符合条件的运行"
+								title={MESSAGE.noMatch(TERM.run)}
 								description="换一个状态、场景或关键字试试。"
 							/>
 						) : (
 							<EmptyState
 								icon={<PlayIcon />}
-								title="没有运行记录"
+								title={MESSAGE.noRuns}
 								description="在场景卡片上点「运行」，记录会出现在这里。"
 							>
 								<Link to="/orchestrations" className={buttonVariants()}>
@@ -101,9 +101,9 @@ function RunsBody({ runs }: { runs: RunListItem[] }) {
 	return (
 		<>
 			{live.length > 0 && (
-				<section aria-label="进行中">
+				<section aria-label={ACTIVE_LABEL}>
 					<SectionHeading level={2}>
-						进行中 <span className="font-mono text-fg-3">{live.length}</span>
+						{ACTIVE_LABEL} <span className="font-mono text-fg-3">{live.length}</span>
 					</SectionHeading>
 					<div className="mb-2 grid grid-cols-[repeat(auto-fill,minmax(440px,1fr))] gap-3">
 						{live.map((run) => (
@@ -147,10 +147,10 @@ function Toolbar({ counts }: { counts?: Record<(typeof STATUSES)[number], number
 				onChange={(value) => update({ status: value === "all" ? undefined : value })}
 				options={[
 					{ value: "all", label: "全部" },
-					{ value: "running", label: withCount("运行中", counts?.running) },
-					{ value: "failed", label: withCount("失败", counts?.failed) },
-					{ value: "success", label: "成功" },
-					{ value: "cancelled", label: "已取消" },
+					{ value: "running", label: withCount(RUN_STATUS_LABEL.running, counts?.running) },
+					{ value: "failed", label: withCount(RUN_STATUS_LABEL.failed, counts?.failed) },
+					{ value: "success", label: RUN_STATUS_LABEL.success },
+					{ value: "cancelled", label: RUN_STATUS_LABEL.cancelled },
 				]}
 			/>
 			<NativeSelect

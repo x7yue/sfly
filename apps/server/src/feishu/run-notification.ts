@@ -2,18 +2,20 @@
  * 运行通知（GLOSSARY「运行通知」，ADR 0020、docs/SEMANTICS.md §6）：运行结束时，在写入运行最终状态的同一个事务里，
  * 读取场景当前的设置，满足触发条件就把卡片写进发送队列。卡片的结构由平台固定。
  */
+import { chainLabel, FEISHU_BODY_LIMIT_LABEL, nameWithId } from "@sfly/orchestration";
 import {
-	chainLabel,
-	FEISHU_BODY_LIMIT_LABEL,
-	MAIN_CHAIN_LABEL,
-	nameWithId,
-	nodeNameBeforeId,
-} from "@sfly/orchestration";
-import type { OrchestrationDocument, RunNotificationTrigger } from "@sfly/schema";
-import { asc, eq } from "drizzle-orm";
-import { chainInstances, orchestrations, type RunStatus, runs, tasks } from "../db/schema.js";
-import { finalFailures } from "../engine/failures.js";
+	focusChartMissing,
+	focusLatestSeriesName,
+	focusValueText,
+	type OrchestrationDocument,
+	type RunFocusItem,
+	type RunNotificationTrigger,
+} from "@sfly/schema";
+import { eq } from "drizzle-orm";
+import { orchestrations, type RunStatus, runs } from "../db/schema.js";
+import { boardFailures, loadRunBoards } from "../engine/run-board.js";
 import type { RunRow, Step } from "../engine/step.js";
+import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { runListPreset } from "../presets/run-preset.js";
 import { registeredBots } from "./bot-checks.js";
 import { enqueueFeishuMessage } from "./feishu-queue.js";
@@ -39,6 +41,9 @@ const RESULT: Record<FinishedStatus, { color: CardColor; subtitle: string }> = {
 /** 卡片里最多列出的失败节点数，其余只写总数。 */
 const MAX_LISTED_FAILURES = 10;
 
+/** 关注项那一行里，来源节点失败的标注：值是失败前的最后一个值，不能当成结果。 */
+const NODE_FAILED_NOTE = "（节点失败）";
+
 /**
  * 失败的节点和它所在的链（链的名称与监控页一致：「主链」或「子流程 <名称> · <实例短 ID>」）。
  * `node` 已经按「显示名称（节点 ID）」写好（没有显示名称时只有节点 ID）。
@@ -63,6 +68,8 @@ interface RunNotificationFacts {
 	endedAt: Date;
 	/** 按失败的先后。 */
 	failures: readonly FailedNode[];
+	/** 运行结束那一刻场景的关注项在这次运行里的值，顺序与 {@link resolveRunFocus} 相同（有异常的在前）；没有时不写这一段。 */
+	focus: readonly RunFocusItem[];
 	/** 「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时没有按钮。 */
 	runUrl: string | undefined;
 }
@@ -95,10 +102,23 @@ function formatElapsed(ms: number): string {
 }
 
 /**
+ * 关注项一行：`- 名称：值 单位`。最新值来自哪个序列不言自明时不写序列名，否则写在名称后面（`- 名称（序列名）：值 单位`）；
+ * 没有值写「—」；来源节点失败的末尾加 {@link NODE_FAILED_NOTE}；这次运行的节点包版本里没有这张图表的，写 {@link focusChartMissing}。
+ * 值、序列名和「图表不存在」的句子与运行监控的读数共用同一份（@sfly/schema 的 `focus-reading.ts`）。
+ */
+function focusLine(item: RunFocusItem): string {
+	if (item.unavailable) return `- ${item.title}：${focusChartMissing(item.chart)}`;
+	const series = focusLatestSeriesName(item);
+	const unit = item.latest === null || item.unit === "" ? "" : ` ${item.unit}`;
+	const failed = item.source.status === "failed" ? NODE_FAILED_NOTE : "";
+	return `- ${item.title}${series === "" ? "" : `（${series}）`}：${focusValueText(item)}${unit}${failed}`;
+}
+
+/**
  * 运行通知的卡片：header 是标题，颜色和副标题表示结果；body 依次是附加说明（有的话）、场景名、预设（用了运行预设时）、
- * 运行编号、触发人、开始时间和耗时、失败的链和节点（最多 {@link MAX_LISTED_FAILURES} 个）；
- * 最后是「查看运行」按钮（有链接时）。
- * 请求体超过 20 KB 时截断附加说明（{@link fitCard}）；截了还放不下返回 `too_large`。
+ * 运行编号、触发人、开始时间和耗时、失败的链和节点（最多 {@link MAX_LISTED_FAILURES} 个）、
+ * 关注项（有的话，每项一行，场景的关注项最多 8 项，所以最多 8 行）；最后是「查看运行」按钮（有链接时）。
+ * 请求体超过 20 KB 时截断附加说明（{@link fitCard}），失败的节点和关注项都不动；截了还放不下返回 `too_large`。
  */
 function runNotificationCard(facts: RunNotificationFacts) {
 	const result = RESULT[facts.status];
@@ -125,6 +145,10 @@ function runNotificationCard(facts: RunNotificationFacts) {
 						].join("\n"),
 					},
 				];
+	const focus: CardElement[] =
+		facts.focus.length === 0
+			? []
+			: [{ tag: "markdown", content: ["**关注项**", ...facts.focus.map(focusLine)].join("\n") }];
 	const link = facts.runUrl;
 	const button: CardElement[] =
 		link === undefined
@@ -142,56 +166,68 @@ function runNotificationCard(facts: RunNotificationFacts) {
 			...(note === "" ? [] : [{ tag: "markdown" as const, content: note }]),
 			{ tag: "markdown", content: lines.join("\n") },
 			...failures,
+			...focus,
 			...button,
 		]),
 	);
 }
 
-/** 运行里最终失败的节点，按失败的先后（同一时刻的按链、再按节点在文档里的顺序）。 */
+/**
+ * 运行里最终失败的节点，按失败的先后（`boardFailures`：同一时刻的按链实例、再按节点在链上的顺序），
+ * 第一项和控制台、运行监控、运行记录的「第一个失败的节点」相同。在写入运行最终状态的事务里读（`step.tx`）。
+ */
 async function failedNodes(
 	step: Step,
 	run: RunRow,
 	document: OrchestrationDocument,
 ): Promise<FailedNode[]> {
-	const chains = await step.tx
-		.select()
-		.from(chainInstances)
-		.where(eq(chainInstances.runId, run.id))
-		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt), asc(chainInstances.id));
-	const rows = await step.tx
-		.select({
-			chainInstanceId: tasks.chainInstanceId,
-			nodeId: tasks.nodeId,
-			attempt: tasks.attempt,
-			status: tasks.status,
-			endedAt: tasks.endedAt,
-		})
-		.from(tasks)
-		.where(eq(tasks.runId, run.id));
-	const chainIndex = new Map(chains.map((c, i) => [c.id, i]));
-	const nodeIndex = new Map(document.nodes.map((n, i) => [n.id, i]));
-	const declared = new Map(document.nodes.map((n) => [n.id, n]));
-	const labelOf = (chainInstanceId: string) => {
-		const chain = chains.find((c) => c.id === chainInstanceId);
-		if (!chain) return MAIN_CHAIN_LABEL;
-		const start = document.nodes.find((n) => n.id === chain.chainId);
-		const name = start?.kind === "subflow_entry" ? start.name : undefined;
-		return chainLabel({ chain_id: chain.chainId, subflow: chain.depth > 0, name }, chain.id);
-	};
-	return finalFailures(rows)
-		.sort(
-			(a, b) =>
-				(a.endedAt?.getTime() ?? 0) - (b.endedAt?.getTime() ?? 0) ||
-				(chainIndex.get(a.chainInstanceId) ?? 0) - (chainIndex.get(b.chainInstanceId) ?? 0) ||
-				(nodeIndex.get(a.nodeId) ?? 0) - (nodeIndex.get(b.nodeId) ?? 0),
-		)
-		.map((row) => {
-			const node = declared.get(row.nodeId);
-			return {
-				chain: labelOf(row.chainInstanceId),
-				node: node ? nameWithId(row.nodeId, nodeNameBeforeId(node)) : row.nodeId,
-			};
+	const boards = await loadRunBoards(step.tx, [
+		{ id: run.id, versionId: run.orchestrationVersionId, document },
+	]);
+	const chains = boards.get(run.id) ?? [];
+	return boardFailures(chains).map(({ chain, node }) => ({
+		chain: chainLabel(
+			{ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.subflow_name },
+			chain.id,
+		),
+		node: nameWithId(node.node_id, node.display_name),
+	}));
+}
+
+/**
+ * 读关注项的值要用的依赖：{@link resolveRunFocus} 的依赖（数据库用运行结束的事务），以及读不出来时怎么报告。
+ */
+export interface FocusAtRunEndDeps extends Omit<RunFocusDeps, "db"> {
+	/** 读关注项出错：只报告，卡片照常发，没有「关注项」一段。 */
+	onError(error: unknown): void;
+}
+
+/**
+ * 运行结束那一刻场景的关注项在这次运行里的值：和 `GET /runs/:id/focus?points=0` 同一份解析（{@link resolveRunFocus}），
+ * 在写入运行最终状态的事务里读（序列也是，不从连接池另取连接），看到的是这个事务里刚写下的节点状态。场景没有设关注项、或者这些项都不在这次运行的版本里时没有项。
+ * 通知不能拦住运行结束（ADR 0020）：读取放在保存点里，出错时回到保存点、报告错误、按没有关注项处理，运行的最终状态照常提交。
+ */
+async function focusAtRunEnd(
+	step: Step,
+	run: RunRow,
+	scenario: Pick<typeof orchestrations.$inferSelect, "focusItems">,
+	deps: FocusAtRunEndDeps,
+): Promise<RunFocusItem[]> {
+	// 没设关注项时解析出来的是执行中节点的主指标，运行已经结束，卡片上没有这一段。
+	if (scenario.focusItems.length === 0) return [];
+	try {
+		return await step.tx.transaction(async (savepoint) => {
+			const focus = await resolveRunFocus(
+				{ db: savepoint, clock: deps.clock, queries: deps.queries },
+				run.id,
+				{ points: 0 },
+			);
+			return focus?.mode === "focus" ? focus.items : [];
 		});
+	} catch (error) {
+		deps.onError(error);
+		return [];
+	}
 }
 
 /**
@@ -206,6 +242,8 @@ export async function enqueueRunNotification(
 		status: FinishedStatus;
 		document: OrchestrationDocument;
 		runUrl: string | undefined;
+		/** 读关注项的依赖（卡片里「关注项」一段的列表是 `RunNotificationFacts.focus`）。 */
+		focusDeps: FocusAtRunEndDeps;
 	},
 ): Promise<void> {
 	const { run, status, document } = input;
@@ -237,6 +275,7 @@ export async function enqueueRunNotification(
 		startedAt: run.startedAt,
 		endedAt: step.now,
 		failures: await failedNodes(step, run, document),
+		focus: await focusAtRunEnd(step, run, scenario, input.focusDeps),
 		runUrl: input.runUrl,
 	});
 	if ("error" in card) {

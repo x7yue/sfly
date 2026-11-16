@@ -10,9 +10,10 @@
         assert [line.message for line in result.logs if line.source == "sdk"] == [...]
 
 节点和在 Agent 上一样在执行器子进程里运行（见 `sfly.local`），结果 `Execution` 里有输出、
-失败原因、日志、进度、指标、产物和 `ctx.notify` 的通知（`notifications`：机器人名和请求体，
-不真的发送）。用 `cancel_when` / `cancel_after` 模拟取消：节点里抛出
-`sfly.Cancelled`，`finally` 里的清理代码执行，结果的 `status` 为 `cancelled`。
+失败原因、日志、进度、指标、产物、`ctx.notify` 的通知（`notifications`：机器人名和请求体，
+不真的发送）和 `ctx.action`、`ctx.mark` 记录的动作与标记（`actions`、`action_summary`）。
+用 `cancel_when` / `cancel_after` 模拟取消：节点里抛出 `sfly.Cancelled`，`finally` 里的清理
+代码执行，结果的 `status` 为 `cancelled`。
 """
 
 from __future__ import annotations
@@ -27,6 +28,9 @@ from typing import Any
 
 from sfly.local import (
     DEFAULT_GRACE,
+    ActionCount,
+    ActionRecord,
+    ActionSummary,
     Cancellation,
     Execution,
     LogLine,
@@ -39,6 +43,9 @@ from sfly.local import (
 from sfly.runner import load_entry
 
 __all__ = [
+    "ActionCount",
+    "ActionRecord",
+    "ActionSummary",
     "Execution",
     "LogLine",
     "MetricPoint",

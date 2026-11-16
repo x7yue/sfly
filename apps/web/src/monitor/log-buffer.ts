@@ -1,9 +1,12 @@
-import type { LogChunk, LogLineView, LogPage } from "@sfly/schema";
+import type { LogChunk, LogLineView, LogLocate, LogPage } from "@sfly/schema";
 
 /**
  * 一个任务已加载的日志（纯逻辑，单测见 log-buffer.test.ts）：先读最后一页历史（服务端按筛选条件过滤），
  * 再用 `after_seq` 接上实时流（浏览器按同样的条件过滤），往前翻页补更早的行。
  * 不变式：已加载的行在日志文件里是连续的一段 [start, end)（筛掉的行除外），按序号排列、不重复。
+ *
+ * 定位到某一刻（#347）读到的是文件中间的一页（{@link fromLocatedPage}）：之后还有行（`hasNewer`），
+ * 要用 `after=end` 往后翻页读到文件末尾，实时流才能接上；`hasNewer` 为 true 时不能连实时流。
  */
 
 /** 已加载的一行及其在日志文件中的字节偏移。 */
@@ -14,14 +17,18 @@ export interface LogBuffer {
 	lines: LoadedLine[];
 	/** 已加载部分在文件中的起点：往前翻页用 `before=start`。 */
 	start: number;
-	/** 已加载部分在文件中的终点：实时流的下一批应从这里开始。 */
+	/** 已加载部分在文件中的终点：实时流的下一批应从这里开始；`hasNewer` 时往后翻页用 `after=end`。 */
 	end: number;
 	hasOlder: boolean;
+	/** 终点之后还有没读到的行（定位到中间一页时）：先往后翻页读到末尾，再连实时流。 */
+	hasNewer: boolean;
 	loaded: boolean;
 	truncated: boolean;
 	expired: boolean;
 	/** 读最后一页时已写入的最大序号：实时流从它之后接上。 */
 	lastSeq: number;
+	/** 定位到某一刻读到的位置和正好对应的行；不是定位读到的为 null。 */
+	located: LogLocate | null;
 }
 
 /** 浏览器里最多保留的行数：实时追加超过时丢掉最早的行（仍可往前翻页重新加载）。 */
@@ -35,10 +42,12 @@ export const emptyBuffer: LogBuffer = {
 	start: 0,
 	end: 0,
 	hasOlder: false,
+	hasNewer: false,
 	loaded: false,
 	truncated: false,
 	expired: false,
 	lastSeq: 0,
+	located: null,
 };
 
 const encoder = new TextEncoder();
@@ -65,9 +74,34 @@ export function fromLatestPage(page: LogPage): LogBuffer {
 		start: page.start,
 		end: page.end,
 		hasOlder: page.start > 0,
+		hasNewer: false,
 		loaded: true,
 		truncated: page.truncated,
 		expired: page.expired,
+		lastSeq: page.last_seq,
+		located: null,
+	};
+}
+
+/** 这一页读到了文件末尾：之后只有实时流会带来新的行。 */
+export const reachedEnd = (page: LogPage) => page.end >= page.size;
+
+/** 定位到某一刻读到的一页（`at`）：前后都可能还有行。 */
+export function fromLocatedPage(page: LogPage): LogBuffer {
+	return {
+		...fromLatestPage(page),
+		hasNewer: !reachedEnd(page),
+		located: page.locate,
+	};
+}
+
+/** 往后翻的一页（`after=buffer.end`）；翻到文件末尾后不再有更新的行，实时流从这一页的 `last_seq` 接上。 */
+export function withNewerPage(buffer: LogBuffer, page: LogPage): LogBuffer {
+	return {
+		...buffer,
+		lines: mergeLines(buffer.lines, page.lines),
+		end: page.end,
+		hasNewer: !reachedEnd(page),
 		lastSeq: page.last_seq,
 	};
 }

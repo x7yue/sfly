@@ -3,8 +3,9 @@ import { openEditor } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { openMonitor, runningScenario } from "./monitor-scenario";
 import { PARAM_SCENARIO } from "./run-drawer-scenario";
-import { createScenario, publishPackage, seedDashboard } from "./support";
+import { createScenario, publishPackage } from "./support";
 import { twoVersions } from "./versions-support";
+import { seedWall } from "./wall-support";
 
 const RING = "rgb(44, 196, 240)";
 
@@ -16,26 +17,28 @@ const pulses = (page: Page) =>
 				.filter((a) => a instanceof CSSAnimation && a.animationName === "status-pulse").length,
 	);
 
-test("状态标记每种状态一个形状，默认静止；强制颜色模式下用系统文字色照样画出来", async ({
+test("状态形状每种状态一个，默认静止；强制颜色模式下用系统文字色照样画出来", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
-	await seedDashboard({ page, controlPlane, connectAgent, clock });
+	await seedWall({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
 	const running = page
-		.getByRole("region", { name: "正在运行" })
-		.locator('[data-status-dot="running"]');
+		.getByRole("region", { name: "正在运行", exact: true })
+		.locator('[data-status-dot="running"]')
+		.first();
 	const failed = page
-		.getByRole("region", { name: "最近失败" })
+		.getByRole("region", { name: "最近结束", exact: true })
 		.locator('[data-status-dot="failed"]');
 	await expect(running).toBeVisible();
 	await expect(failed.first()).toBeVisible();
 	const outline = (dot: typeof running) =>
 		dot.locator("svg").evaluate((svg) => svg.innerHTML.replaceAll(/\s+/g, ""));
 	expect(await outline(running)).not.toBe(await outline(failed.first()));
-	expect(await pulses(page)).toBe(1);
+	// 每个正在运行的运行只在运行块的状态标签上脉冲一处。
+	expect(await pulses(page)).toBe(2);
 
 	await page.emulateMedia({ forcedColors: "active" });
 	const forced = await failed
@@ -146,7 +149,10 @@ test("暂停动效是全站的：命令面板里切换，控制台与列表页�
 	await runningScenario(controlPlane, connectAgent, clock);
 	await page.goto("/");
 	await expect(page.getByRole("heading", { name: "控制台", exact: true })).toBeVisible();
-	const running = page.getByRole("link", { name: /运行中/ }).first();
+	const running = page
+		.getByRole("region", { name: "正在运行", exact: true })
+		.getByText("运行中")
+		.first();
 	await expect(running).toBeVisible();
 	await expect.poll(() => pulses(page)).toBeGreaterThan(0);
 	const html = page.locator("html");

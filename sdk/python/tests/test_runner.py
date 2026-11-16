@@ -179,6 +179,8 @@ DEFERRED_MODULES = {
     "urllib.request",
     "http.client",
     "sfly.download",
+    # 动作和标记（sfly.actions）只在节点第一次用到 ctx.action、ctx.mark 时才导入。
+    "sfly.actions",
 }
 
 

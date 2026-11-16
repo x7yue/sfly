@@ -27,12 +27,18 @@
   输入引用的机器人，按同样的规则组装请求体、校验原始消息（`sfly.feishu`，镜像
   apps/server/src/feishu/messages.ts），记成 `Notification`；其他机器人、不合格的原始消息不记，
   日志里写一行来源 system、级别 warn 的警告（apps/server/src/feishu/task-notifications.ts）；
+- 动作和标记：`ctx.action`、`ctx.mark` 写的四种事件（格式见 `sfly.context`）记成
+  `Execution.actions`（动作和标记，按 ID 排列）和 `Execution.action_summary`（最新的一份摘要）；
+  节点结束时还没结束的动作记为 `unfinished`，结束时间取节点结束的时刻，摘要里「正在做」同时清空
+  （和控制面在任务结束时做的一样）；
 - 取消：先写取消标记，再向进程组发 SIGTERM，宽限期过后 SIGKILL；强制取消时立即杀掉
   （agent/src/executor.rs、process_tree.rs，docs/SEMANTICS.md §3.4）。
 """
 
 from __future__ import annotations
 
+import bisect
+import dataclasses
 import json
 import os
 import queue
@@ -46,6 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import IO, Any, Literal
 
+from sfly.context import ACTION_RESULTS, ActionResult, monotonic_ms
 from sfly.feishu import raw_message_problem, text_message
 
 #: 取消时从 SIGTERM 到强制杀掉的默认宽限期（秒，docs/SEMANTICS.md §3.4）。
@@ -110,6 +117,73 @@ class Notification:
 
 
 @dataclass(frozen=True)
+class ActionRecord:
+    """一次 `ctx.action` 或 `ctx.mark`。
+
+    - `id`：任务内递增的 ID（动作和标记共用）；`kind`：`action` 或 `mark`；
+    - `parent`：父动作的 ID，最外层是 None；`depth`：层级，最外层是 0；
+    - `fields`：字段（值都是字符串）：动作开始（标记发生）时给的，加上动作的 `note()` 补充的；
+    - `ts`：动作开始或标记发生的时间，Unix 毫秒，Agent 时间（本地调试就是本机的系统时间）；
+      `mono`：同一时刻单调时钟的读数（毫秒）；
+    - `result`：`success`、`failed`、`unfinished`；还在进行的动作是 None，标记总是 None；
+    - `reason`：失败的原因（`ValueError: 消息`、或 `fail()` 给的文字），其余为 None；
+    - `duration_ms`：动作的耗时（毫秒，按单调时钟算，系统时间被改动也不受影响）；还在进行的动作
+      是 None，标记总是 None。
+    """
+
+    id: int
+    kind: Literal["action", "mark"]
+    name: str
+    parent: int | None
+    depth: int
+    fields: Mapping[str, str]
+    ts: int
+    mono: int
+    result: ActionResult | None = None
+    reason: str | None = None
+    duration_ms: int | None = None
+
+
+@dataclass(frozen=True)
+class ActionCount:
+    """摘要里一种名称的计数：`total` 个（动作和标记合计），其中 `failed` 个动作失败，
+    `reported` 个上报了明细（包括失败的动作补发的）。
+    `capped_ts`（Agent 时间）从这个时刻起这个名称只计数、没有明细（超过上限），没有时为 None。"""
+
+    name: str
+    total: int
+    failed: int
+    reported: int
+    capped_ts: int | None = None
+
+
+@dataclass(frozen=True)
+class ActionSummary:
+    """一份动作和标记的摘要（`action_summary`）：到目前为止的汇总，超过明细上限之后仍然准确。
+
+    - `ts`：发出这份摘要的时间（Unix 毫秒）；
+    - `total`：记录的动作和标记的个数，`marks`：其中标记的个数，`reported`：上报了明细的个数；
+      `capped_ts`：第一个因为合计已满而被丢弃明细的时刻（之后仍可能有已上报的明细），
+      没有丢弃过时为 None；
+    - `names`：每种名称的计数；
+    - `running`：正在做的动作（最多 50 个，层级浅的优先，按 ID 排列）；
+    - `recent`：最近结束的 20 个动作，最近的在前；`recent_failed`：最近失败的 5 个，最近的在前。
+
+    标记算进 `total`、`reported`、`names` 和 `capped_ts`，不在 `running`、`recent` 里。
+    """
+
+    ts: int
+    total: int
+    marks: int
+    reported: int
+    capped_ts: int | None
+    names: list[ActionCount]
+    running: list[ActionRecord]
+    recent: list[ActionRecord]
+    recent_failed: list[ActionRecord]
+
+
+@dataclass(frozen=True)
 class NodeError:
     """失败原因。`kind` 与平台的错误类型相同：`node_error`（节点抛出异常、执行器异常退出）、
     `config_error`（参数校验失败）；`type` 是节点抛出的异常类名（只有 node_error 有）。"""
@@ -132,6 +206,8 @@ class Execution:
     progress: list[Progress] = field(default_factory=list)
     metrics: list[MetricPoint] = field(default_factory=list)
     notifications: list[Notification] = field(default_factory=list)
+    actions: list[ActionRecord] = field(default_factory=list)
+    action_summary: ActionSummary | None = None
 
     @property
     def artifacts_dir(self) -> Path:
@@ -328,6 +404,76 @@ def _grow_pipe(fd: int) -> None:
         pass
 
 
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
+def _fields(value: Any) -> dict[str, str]:
+    return {str(k): str(v) for k, v in (value or {}).items()}
+
+
+def _result(value: Any) -> ActionResult:
+    return ACTION_RESULTS[str(value)]
+
+
+def _action_index(actions: list[ActionRecord], action_id: int) -> int:
+    """`actions`（按 ID 升序）里 ID 不小于 `action_id` 的第一项的位置。"""
+    return bisect.bisect_left(actions, action_id, key=lambda record: record.id)
+
+
+def _action_record(
+    entry: Mapping[str, Any], kind: Literal["action", "mark"], ts: int
+) -> ActionRecord:
+    """事件或摘要里的一项（不含结果）：`ts` 由调用方给，读事件时取事件里的 `ts`，事件没有 `ts` 时取
+    读到它的时刻（见 `_event`），摘要里的项取它自己的 `ts`。"""
+    return ActionRecord(
+        id=int(entry["id"]),
+        kind=kind,
+        name=str(entry["name"]),
+        parent=_optional_int(entry.get("parent")),
+        depth=int(entry.get("depth") or 0),
+        fields=_fields(entry.get("fields")),
+        ts=ts,
+        mono=int(entry["mono"]),
+    )
+
+
+def _summary_record(entry: Mapping[str, Any]) -> ActionRecord:
+    """摘要里的一项（正在做的、最近结束的）。"""
+    record = _action_record(entry, "action", int(entry["ts"]))
+    if "end_mono" not in entry:
+        return record
+    return dataclasses.replace(
+        record,
+        result=_result(entry["result"]),
+        reason=entry.get("reason"),
+        duration_ms=max(0, int(entry["end_mono"]) - record.mono),
+    )
+
+
+def _action_summary(ts: int, event: Mapping[str, Any]) -> ActionSummary:
+    return ActionSummary(
+        ts=ts,
+        total=int(event["total"]),
+        marks=int(event["marks"]),
+        reported=int(event["reported"]),
+        capped_ts=_optional_int(event.get("capped_ts")),
+        names=[
+            ActionCount(
+                str(n["name"]),
+                int(n["total"]),
+                int(n["failed"]),
+                int(n["reported"]),
+                _optional_int(n.get("capped_ts")),
+            )
+            for n in event["names"]
+        ],
+        running=[_summary_record(e) for e in event["running"]],
+        recent=[_summary_record(e) for e in event["recent"]],
+        recent_failed=[_summary_record(e) for e in event["recent_failed"]],
+    )
+
+
 class _Pump:
     """读取执行器的标准输出 / 标准错误和事件管道，转成日志、进度、指标。"""
 
@@ -339,6 +485,7 @@ class _Pump:
         on_progress: Callable[[Progress], None] | None,
         on_metric: Callable[[MetricPoint], None] | None,
         on_notify: Callable[[Notification], None] | None,
+        on_action: Callable[[ActionRecord], None] | None,
         feishu_bots: list[str] | None,
     ) -> None:
         self._execution = execution
@@ -350,6 +497,9 @@ class _Pump:
         self._on_progress = on_progress
         self._on_metric = on_metric
         self._on_notify = on_notify
+        self._on_action = on_action
+        #: 这一次 `poll` 里读到的动作和标记的变化：(事件时间, 记录)，按时间和日志交错着回调。
+        self._action_changes: list[tuple[int, ActionRecord]] = []
         #: 任务引用的飞书机器人；None 表示不知道输入的类型，不检查。
         self._feishu_bots = feishu_bots
         #: 标准错误最后的 `_STDERR_TAIL_BYTES` 字节（错误摘要用，不读 stderr.log）。
@@ -410,11 +560,17 @@ class _Pump:
             except queue.Empty:
                 break
             self._event(raw, batch)
-        batch.sort(key=lambda line: line.ts)
-        for line in batch:
-            self._execution.logs.append(line)
-            if self._on_log is not None:
-                self._on_log(line)
+        changes, self._action_changes = self._action_changes, []
+        # 日志和动作、标记的变化一起按时间排（同一时间保持读到的先后），打印时交错显示。
+        merged: list[tuple[int, LogLine | ActionRecord]] = [(line.ts, line) for line in batch]
+        merged.extend(changes)
+        for _, item in sorted(merged, key=lambda pair: pair[0]):
+            if isinstance(item, LogLine):
+                self._execution.logs.append(item)
+                if self._on_log is not None:
+                    self._on_log(item)
+            elif self._on_action is not None:
+                self._on_action(item)
 
     def drain(self) -> None:
         """执行器已退出：关掉自己的事件管道写端，等各个管道关闭（最多等一会儿），读完剩余内容。"""
@@ -423,6 +579,7 @@ class _Pump:
         for thread in self._readers:
             thread.join(max(0.0, deadline - time.monotonic()))
         self.poll()
+        self._end_unfinished_actions()
 
     def _event(self, raw: bytes, batch: list[LogLine]) -> None:
         try:
@@ -462,10 +619,64 @@ class _Pump:
             if kind == "notify":
                 self._notify(ts, event, batch)
                 return
+            if kind in ("action_start", "mark"):
+                self._action_started(ts, event, "action" if kind == "action_start" else "mark")
+                return
+            if kind == "action_end":
+                self._action_ended(ts, event)
+                return
+            if kind == "action_summary":
+                self._execution.action_summary = _action_summary(ts, event)
+                return
         except (ValueError, TypeError, KeyError, AttributeError):
             pass
         # 不认识的内容原样记成一行 SDK 日志。
         batch.append(LogLine(_now_ms(), "sdk", "info", raw.decode("utf-8", errors="replace")))
+
+    def _action_started(
+        self, ts: int, event: Mapping[str, Any], kind: Literal["action", "mark"]
+    ) -> None:
+        record = _action_record(event, kind, ts)
+        actions = self._execution.actions
+        # 一般按 ID 递增到达；超过每种名称的上限、失败时补发的开始比后面的行早，插到该在的位置。
+        if not actions or record.id > actions[-1].id:
+            actions.append(record)
+        else:
+            actions.insert(_action_index(actions, record.id), record)
+        self._action_changes.append((ts, record))
+
+    def _action_ended(self, ts: int, event: Mapping[str, Any]) -> None:
+        actions = self._execution.actions
+        index = _action_index(actions, int(event["id"]))
+        if index == len(actions) or actions[index].id != int(event["id"]):
+            return
+        started = actions[index]
+        reason = event.get("reason")
+        ended = dataclasses.replace(
+            started,
+            fields={**started.fields, **_fields(event.get("fields"))},
+            result=_result(event["result"]),
+            reason=None if reason is None else str(reason),
+            duration_ms=max(0, int(event["mono"]) - started.mono),
+        )
+        actions[index] = ended
+        self._action_changes.append((ts, ended))
+
+    def _end_unfinished_actions(self) -> None:
+        """节点结束时还没结束的动作记为 `unfinished`，结束时间取现在；摘要里「正在做」清空。"""
+        now_mono = monotonic_ms()
+        actions = self._execution.actions
+        for index, record in enumerate(actions):
+            if record.kind == "action" and record.result is None:
+                ended = dataclasses.replace(
+                    record, result="unfinished", duration_ms=max(0, now_mono - record.mono)
+                )
+                actions[index] = ended
+                if self._on_action is not None:
+                    self._on_action(ended)
+        summary = self._execution.action_summary
+        if summary is not None:
+            self._execution.action_summary = dataclasses.replace(summary, running=[])
 
     def _notify(self, ts: int, event: Mapping[str, Any], batch: list[LogLine]) -> None:
         """一次 `ctx.notify`：与控制面相同，只认任务引用的机器人，原始消息要合格，
@@ -526,6 +737,7 @@ def execute(
     on_progress: Callable[[Progress], None] | None = None,
     on_metric: Callable[[MetricPoint], None] | None = None,
     on_notify: Callable[[Notification], None] | None = None,
+    on_action: Callable[[ActionRecord], None] | None = None,
     on_tick: Callable[[Execution], None] | None = None,
     run_id: str = "local",
     node_id: str | None = None,
@@ -539,6 +751,9 @@ def execute(
     - `pythonpath`：执行器子进程额外的模块搜索路径（放在 PYTHONPATH 最前面）；
     - `cancellation`：取消请求；`on_tick` 在执行期间定期以部分结果调用，可以在里面请求取消；
     - `on_log` / `on_progress` / `on_metric` / `on_notify`：每读到一条就调用（实时显示用）；
+      `on_action`：动作开始、标记发生、动作结束时调用，参数是变化后的记录（`kind` 为 `mark` 的是
+      标记，只调用一次；`kind` 为 `action` 的，没有 `result` 是开始，有 `result` 是结束）；
+      节点结束时还没结束的动作也以 `unfinished` 调用一次；
     - `run_id`、`node_id`（默认取入口的函数名）：写进 task.json，节点里是 `ctx.task`；
     - `procs_dir`：后台进程目录（`ctx.procs_dir`），默认 `work_dir/procs`；
     - `downloads`：产物引用 → 本地内容（bytes / str 是内容，str 按 UTF-8；路径是本地文件）。
@@ -610,7 +825,9 @@ def execute(
     )
     env["SFLY_LOCAL_AGENTS"] = str(local_agents)
     feishu_bots = referenced_feishu_bots(schema, inputs) if schema is not None else None
-    pump = _Pump(execution, events, on_log, on_progress, on_metric, on_notify, feishu_bots)
+    pump = _Pump(
+        execution, events, on_log, on_progress, on_metric, on_notify, on_action, feishu_bots
+    )
     # 执行器自成一个进程组（不在终端的前台进程组里，Ctrl-C 不会直接打到它），取消时整组终止。
     try:
         proc = subprocess.Popen(

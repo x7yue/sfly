@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { type AnnotationMembers, annotationBoxes, type LayoutDocument } from "../src/index.js";
+import {
+	type AnnotationMembers,
+	annotationBoxes,
+	type LayoutDocument,
+	subflowRegions,
+} from "../src/index.js";
 
 type Node = LayoutDocument["nodes"][number];
 type Edge = LayoutDocument["edges"][number];
@@ -102,6 +107,17 @@ describe("由成员算出注释框的范围", () => {
 		const [box] = annotationBoxes({ ...longer, annotations: [annotation({ subflows: ["sub"] })] });
 		expect(box?.box.w).toBe(1164 + 208 - 660 + 48 + 48);
 		expect(box?.members).toEqual(["sub", "spawn2", "more"]);
+	});
+
+	it("卡片长高了（布局里带着量出来的高度）：子流程区域和框住它的注释框跟着往下长，下边仍留 20", () => {
+		const grown: LayoutDocument = {
+			...doc,
+			nodes: doc.nodes.map((n) => (n.id === "spawn2" ? { ...n, height: 170 } : n)),
+		};
+		const [region] = subflowRegions(grown);
+		expect(region?.box).toEqual({ x: 660 - 24, y: 230 - 44, w: 912 + 208 - 660 + 48, h: 170 + 64 });
+		const [box] = annotationBoxes({ ...grown, annotations: [annotation({ subflows: ["sub"] })] });
+		expect(box?.box.h).toBe(170 + 64 + 64);
 	});
 
 	it("按 annotations 的顺序给出（后面的画在上层）", () => {

@@ -2,6 +2,7 @@ import type { AddressInfo } from "node:net";
 import { hostname } from "node:os";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
+import { TaskActions } from "./actions/task-actions.js";
 import {
 	AgentBinaries,
 	type AgentBinaryFiles,
@@ -217,6 +218,19 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		delivery: feishuDelivery,
 	});
+	// 指标要在引擎之前建好：运行结束时运行通知的卡片要读关注项的值，和运行监控读指标用同一个读取。
+	const metricRetention = new MetricRetention({
+		db: database.db,
+		clock,
+		retentionDays: options.metricRetentionDays,
+	});
+	const metrics = new TaskMetrics({
+		db: database.db,
+		clock,
+		retention: metricRetention,
+		limitBytes: options.metricLimitBytes,
+	});
+	const metricQueries = new MetricQueries({ db: database.db, clock, metrics });
 	const engine = new Engine({
 		db: database.db,
 		clock,
@@ -231,6 +245,13 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			logs,
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
+			focusDeps: {
+				clock,
+				queries: metricQueries,
+				onError: (error) => {
+					if (logger) console.error("run notification: reading focus items failed:", error);
+				},
+			},
 		}),
 		leaseMs: options.leaseMs,
 		sdkWheel: (agentVersion) => {
@@ -245,16 +266,11 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 	});
 	// 重启恢复：状态都在 PG，只需给租约和排队超时留出 Agent 重连的时间（#15）。
 	await engine.recover();
-	const metricRetention = new MetricRetention({
+	const actions = new TaskActions({
 		db: database.db,
 		clock,
-		retentionDays: options.metricRetentionDays,
-	});
-	const metrics = new TaskMetrics({
-		db: database.db,
-		clock,
-		retention: metricRetention,
-		limitBytes: options.metricLimitBytes,
+		logs,
+		runChanges: engine.runChanges,
 	});
 	const artifacts = new ArtifactStore({
 		db: database.db,
@@ -281,8 +297,9 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		presence,
 		preflight,
 		logs,
+		actions,
 		metrics,
-		metricQueries: new MetricQueries({ db: database.db, clock, metrics }),
+		metricQueries,
 		retention,
 		artifacts,
 		agentToken: options.agentToken,
@@ -322,14 +339,15 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			host: options.grpc?.host ?? "127.0.0.1",
 			port: options.grpc?.port ?? 0,
 			hub,
-			// 日志、进度、指标和 ctx.notify 的通知不改变运行状态，不经过引擎
-			// （src/logs/task-logs.ts、src/metrics/task-metrics.ts、src/feishu/task-notifications.ts）。
+			// 日志、进度、指标、ctx.notify 的通知和动作摘要不改变运行状态，不经过引擎（src/logs/task-logs.ts、
+			// src/metrics/task-metrics.ts、src/feishu/task-notifications.ts、src/actions/task-actions.ts）。
 			handler: {
 				onOnline: (conn, running) => engine.onOnline(conn, running),
 				async onMessage(conn, message) {
 					if (metrics.handles(message)) return metrics.onMessage(conn, message);
 					if (logs.handles(message)) return logs.onMessage(conn, message);
 					if (notifications.handles(message)) return notifications.onMessage(conn, message);
+					if (actions.handles(message)) return actions.onMessage(conn, message);
 					// 任务结束：先写入它的指标（Agent 在结果之前发完最后的点）。写不进去时记下来、照常处理结果：
 					// 没写入的点留在内存里，由周期写入重试有限次（src/metrics/task-metrics.ts）。
 					if (message.body.case === "result") {

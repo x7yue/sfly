@@ -48,9 +48,10 @@ const client = createClient({
 |---|---|
 | `orchestrations`（场景） | `list`、`get`、`head`、`versions`、`version`、`saveVersion`、`restoreVersion`、`create`、`update`、`copy`、`archive`、`unarchive` |
 | `presets`（运行预设） | `list`、`create`、`update`、`copy`、`remove` |
-| `runs`（运行） | `list`、`listForOrchestration`、`preflight`、`trigger`、`get`、`cancel`、`events` |
+| `runs`（运行） | `list`、`listForOrchestration`、`focus`、`preflight`、`trigger`、`get`、`cancel`、`events` |
 | `logs`（日志） | `runPage`、`runEvents`、`runDownload`、`page`、`events`、`download` |
 | `metrics`（指标） | `summary`、`catalog`、`series`、`platform` |
+| `actions`（动作） | `summary`、`page`、`events` |
 | `artifacts`（产物） | `list`、`download` |
 | `agents`（sfly Agent） | `list`、`updateNow` |
 | `packages`（节点包） | `list`、`get`、`version`、`nodeType` |
@@ -81,9 +82,11 @@ for (const item of runs) {
 - `orchestrations.list` 列出没有归档的场景，按新建时间从新到旧。`q` 按名称、说明或引用的 Agent 搜索，`status` 按最近一次运行的状态筛选，`agent` 只看引用了这个 Agent 的场景。每一项带着最近一次运行和各节点的状态（`last_run`）、引用的 Agent 和它们是否在线（`agents`），看板画场景卡片只要这一次请求。
 - `runs.list` 列出所有场景的运行，按开始时间从新到旧，最多 `limit` 条（默认 200，最多 500）。可以按 `status`、`orchestration_id` 筛选，`q` 按运行编号前缀或触发人搜索。`counts` 是各状态的运行数。
 - `runs.get` 读一次运行的完整视图：各条链、各个节点的状态，每次尝试的错误和输出。
-- 控制台统计用 `dashboard.get`，Agent 的在线状态和版本用 `agents.list`（`preparing_since` 不为空表示 Agent 在线但还在准备环境、不接任务），一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。
+- 控制台统计用 `dashboard.get`（`setup` 是「开始使用」四步各自是否完成：有在线的 Agent、发布过节点包、有没归档的场景、有过运行；`recent_ended` 是最近 24 小时结束的运行，失败的带 `focus`：场景现在的关注项在这次运行结束时的值，最多 4 项，字段和 `GET /runs/:id/focus?points=0` 的 `items` 相同），Agent 的在线状态和版本用 `agents.list`（`preparing_since` 不为空表示 Agent 在线但还在准备环境、不接任务），一次运行的指标摘要、图表声明和序列用 `metrics.summary`、`metrics.catalog`、`metrics.series`。
+- `runs.focus` 一次读出一次运行的全部关注项（`points` 是每个序列降采样的点数，默认 60，最多 300，0 只要最新值）：场景挑出来的关注项，每项带来源节点的状态、最新值、降采样后的序列、估算的采样间隔（`sample_interval_ms`）和异常（`anomaly`：`log` 最近 10 分钟内有 WARN / ERROR，`stale` 执行中却很久没有新数据，`failed` 来源节点失败，`retry` 10 分钟内开始了重试；规则见[运行场景](run-scenario.md)的「关注项」），有异常的排在前面，其余按作者的顺序；场景没设关注项时是准备中、执行中节点的主指标（`mode` 是 `primary`）。运行绑定的版本里没有的节点不返回；节点还没开始（包括所在的子流程还没触发）的项照样返回，`source.started_at` 为 null，没有数据；这次运行锁定的节点包版本里没有这张图表的项，`unavailable` 是 `chart_missing`。自建的看板用它就不用自己拼指标查询。
+- 自建的槽位看板读这两处：`agents.list` 里每台 Agent 的 `running_tasks` 是占着槽位的任务，`status` 为 `dispatched`（界面写「准备中」，`started_at` 和 `current_action` 为 `null`）或 `running`，每项带它属于哪个场景（`orchestration_id`、`orchestration_name`）、哪个运行（`run_id`）、哪条链（`chain_instance_id`，`chain_name` 是子流程名称，主链为 `null`）上的哪个节点（`node_id`、`display_name`、`node_type`）的第几次尝试（`attempt`），还有 `started_at`、`current_action` 和 `progress`（见下面「读节点正在做的事」）；`queued_tasks` 是在等这台 Agent 的任务，带同样的定位字段和 `queued_at`、`queue_expires_at`（排队超时的时间，没有设置排队超时为 `null`）。`runs.list` 里每个运行、`dashboard.get` 的 `running_runs` 里每个运行都带 `active_nodes`，是它进行中的节点（`status` 为 `queued`、`dispatched`、`running` 或 `waiting`），每项带 `chain_instance_id`、`node_id`、`display_name`、`attempt`、`agent`（任务所在的 Agent，排队中的是它在等的 Agent，不在 Agent 上执行的节点为 `null`）、`started_at`（还没开始执行时为 `null`）、`wake_at`（等待节点的唤醒时间）和 `progress`（`current` 和 `total`）。有了这些，自建的看板不用逐个运行去读运行视图，就能画出每台 Agent 的槽位里是哪个节点在做什么，也能列出每个运行此刻进行到哪。
 - 时间字段都是控制面时间，格式是 ISO 8601 字符串。
-- 控制台里运行监控页的地址是 `{{SFLY_URL}}/runs/<运行 id>`，看板上需要深入排查时链接过去。
+- 控制台里运行监控页的地址是 `{{SFLY_URL}}/runs/<运行 id>`，看板上需要深入排查时链接过去。地址可以带 `view=overview`（概览，关注项和链路）或 `view=detail`（详情，时间线、图表和日志）指定打开哪个视图，不带 `view` 时，给了 `node`、`tab` 或 `at` 就打开详情，没给的话失败和取消的运行打开详情，其余打开浏览器上次停留的视图（默认概览）；写了 `view=overview` 时，`node` 用来在概览里标出属于这个节点的关注项，`tab`、`at` 只在详情里有效。地址可以带 `node=<节点 ID>` 选中一个节点，再加 `tab=logs`（或 `actions`、`attempts`、`io`、`artifacts`）切到底部面板的页签；带了 `node` 之后还可以加 `at=<时刻>`（控制面时间，ISO 8601 的 UTC 写法，如 `2026-01-01T00:00:06.250Z`，和接口返回的时间同一种）：日志定位到包含那一刻的一页，那一刻正好有一行（相差 50 毫秒以内，并且只有这一行）就高亮它，没有就在那个位置标出「这一刻」。
 
 ## 预检并触发
 
@@ -145,7 +148,7 @@ const stop = client.runs.events(
 );
 ```
 
-- 连上时，以及运行或任何节点的状态变化时，事件 `run` 推送完整的运行视图。`progress` 是一个任务的最新进度，`metrics` 是执行中的任务新上报的指标点（每个任务每秒最多一条）。每类事件的数据都有类型，只写关心的事件。
+- 连上时，以及运行或任何节点的状态变化时，事件 `run` 推送完整的运行视图；执行中的节点此刻在做的动作（`current_action`，见「读节点正在做的事」）换了时也推送。`progress` 是一个任务的最新进度，`metrics` 是执行中的任务新上报的指标点（每个任务每秒最多一条）。每类事件的数据都有类型，只写关心的事件。
 - 断线、连不上或控制面返回 5xx 时自动重连。间隔是控制面在流里建议的值（没有时 1 秒），连续失败时翻倍，最多 15 秒。重连后控制面先推一次完整的运行视图，页面不会停在旧状态。
 - `onOpen` 在首次连上和每次重连后各调用一次。断线期间错过的指标点不会补发，在这里用 `metrics.series` 重新查询。
 - 控制面返回 4xx（例如运行不存在）或者响应不是事件流时，订阅停止，不再重连，调用 `onError`。
@@ -188,6 +191,65 @@ const stopLogs = client.logs.runEvents(
 - `logs.runEvents` 从最新一页的 `live_after` 接上实时推送：之后写入的行，包括之后才开始的任务的行，都会送达，和读过的页不重复、不遗漏。断线重连后从断点继续。积压的行太多时控制面不逐行补发，推送 `reload`，这时从最新一页重新读。
 - 只看一个任务的日志用 `logs.page` 和 `logs.events`（`after_seq` 填分页返回的 `last_seq`）。
 - 日志是被测系统产生的数据。显示时当作文本（`textContent`），不要当作 HTML 插进页面。
+
+## 读节点正在做的事
+
+节点用 `ctx.action` 记录的动作，写法见 [开发节点](sdk-reference.md) 的「`ctx.action` 与 `ctx.mark`」一节：
+
+```ts
+const live = await client.runs.get({ params: { id: run.id } });
+for (const node of live.chains.flatMap((chain) => chain.nodes)) {
+	const attempt = node.attempts.at(-1);
+	if (!attempt?.current_action) continue;
+	console.log(node.node_id, "正在做", attempt.current_action.name, attempt.current_action.started_at);
+	const actions = await client.actions.summary({ params: { id: attempt.task_id } });
+	for (const action of actions.running) console.log("  ".repeat(action.depth), action.name, action.fields);
+	for (const failed of actions.recent_failed) console.log("失败", failed.name, failed.reason);
+}
+```
+
+- 运行视图里执行中的尝试带 `current_action`：最外层、开始得最早的那个正在做的动作，写名称和开始时间（控制面时间）。没有正在做的最外层动作、尝试已经结束时为 `null`。Agent 列表里正在执行的任务（`running_tasks`）也带它，还带 `progress`：这次尝试最新的进度（`ctx.progress`），和运行视图里同一次尝试的相同，没上报过时为 `null`。
+- `actions.summary` 读一个任务（一次尝试）的动作摘要：每种名称的个数（动作和标记合计）和失败的动作数（`names`，从什么时候起只计数写在 `capped_at`）、正在做的动作（`running`，带层级，最多 50 个，列满时 `running_complete` 为 `false`）、最近结束的 20 个动作和最近失败的 5 个动作，以及动作和标记的合计数、有没有超出上限（`capped`）。任务结束以后 `running` 为空，其余照旧。
+- 摘要是节点每秒最多上报一次的那一份，不是实时的每一个动作。字段和失败原因是节点写的数据，显示时当作文本。
+
+每一个动作和标记的明细按任务分页读，再接上实时推送：
+
+```ts
+const task = live.chains[0]?.nodes.at(-1)?.attempts.at(-1)?.task_id;
+if (task) {
+	const latest = await client.actions.page({ params: { id: task }, query: { limit: 100 } });
+	for (const detail of latest.actions) {
+		const result = detail.kind === "action" ? (detail.result ?? "进行中") : "标记";
+		console.log(detail.started_at, "  ".repeat(detail.depth), detail.name, result, detail.fields);
+	}
+	for (const period of latest.count_only) console.log(period.from, period.name, `${period.count} 个只计数`);
+	if (latest.before) {
+		const earlier = await client.actions.page({
+			params: { id: task },
+			query: { before: latest.before, limit: 100 },
+		});
+		console.log(`往前又读到 ${earlier.actions.length} 个`);
+	}
+	const failed = await client.actions.page({ params: { id: task }, query: { failed: "true" } });
+	for (const detail of failed.actions) if (detail.kind === "action") console.log("失败", detail.reason);
+
+	const stopActions = client.actions.events(
+		{ params: { id: task }, query: { after: latest.rev } },
+		{
+			summary: (summary) => console.log("正在做", summary.running.length, "个"),
+			actions: (chunk) => {
+				for (const detail of chunk.actions) console.log("更新", detail.id, detail.name);
+			},
+		},
+	);
+	window.addEventListener("pagehide", stopActions);
+}
+```
+
+- `actions.page` 按开始时间从新到旧分页（`limit` 默认 100，最多 500），`before` 往前翻，没有更早的明细时为 `null`。`name` 只要一种名称，`failed` 为 `true` 时只要失败的动作。
+- 进行中的动作 `result` 为 `null`。任务结束（成功、失败、取消、`agent_lost`）时还没结束的记为 `unfinished`，结束时间取任务的结束时间；任务结束以后才到的明细不再记下，所以 `unfinished` 不会再变。
+- 超过上限（每种名称 5 万个，合计 10 万个，失败的动作不受每种名称的限制）以后只计数、没有明细：`count_only` 写出这一页范围里哪种名称从什么时候起有多少个没有明细、为什么（`reason`）。一直往前翻，每一段正好出现一次。
+- `actions.events` 从分页返回的 `rev` 接上实时推送：连上时先推一份摘要，之后推送新写入和刚结束的明细（同一个 `id` 再出现时以后到的为准），每份新的摘要也推送；任务结束时推送正在做的为空的摘要和记为未结束的明细。断线重连后从断点继续，不重复、不遗漏。
 
 ## 下载产物
 

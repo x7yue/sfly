@@ -247,6 +247,130 @@ def notify_card(
     ctx.notify(bot, message=sfly.feishu.card(title, markdown, color))
 
 
+@node(title="动作和标记", outputs=[])
+def actions(ctx: Context, unfinished: bool = False, release_file: str = "") -> None:
+    """动作与标记测试用（#355）：先写一行日志，嵌套记录动作，记一个标记，失败一次，再写一行日志。
+    unfinished 时再开始一个不结束的动作。
+    给了 release_file 时（#356），最后在嵌套的「等待放行」「检查放行文件」里等到这个文件出现才结束，
+    让测试在节点执行中看到正在做的动作。
+
+    ctx.action、ctx.mark 从 SDK 0.4.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    ctx.log.info("动作前")
+    with ctx.action("下单", 订单="1001") as order:
+        ctx.mark("收到第一笔成交", 订单="1001")
+        with ctx.action("风控检查"):
+            pass
+        order.note(回报="已成交")
+    with ctx.action("下单", 订单="1002") as order:
+        order.fail("拒单：余额不足")
+    if unfinished:
+        ctx.action.start("从不结束", 订单="1003")
+    ctx.log.info("动作后")
+    if release_file:
+        with ctx.action("等待放行", 文件=os.path.basename(release_file)):
+            with ctx.action("检查放行文件"):
+                while not os.path.exists(release_file):
+                    time.sleep(0.05)
+
+
+@node(title="最长的动作摘要", outputs=[])
+def actions_max(ctx: Context) -> None:
+    """动作摘要最长时的测试用（#356）：正在做的、最近结束的、最近失败的都列满，名称、字段、失败原因都取上限，
+    字符都是汉字（UTF-8 里三个字节），节点退出时 SDK 发出的那一份摘要有几百 KiB。
+
+    ctx.action 从 SDK 0.4.0 起才有：在上一个 Release 的 SDK 上这个节点不能运行。
+    """
+    from sfly import actions
+
+    fields: dict[str, Any] = {
+        f"字段{i}": "值" * actions.MAX_VALUE_CHARS for i in range(actions.MAX_FIELDS)
+    }
+    pad = actions.MAX_NAME_CHARS - 2
+    for i in range(actions.RECENT_LIMIT + actions.RECENT_FAILED_LIMIT):
+        ctx.action.start(f"{i:02d}" + "拒" * pad, **fields).fail("因" * actions.MAX_REASON_CHARS)
+    for i in range(actions.RUNNING_LIMIT):
+        ctx.action.start(f"{i:02d}" + "做" * pad, **fields)
+
+
+@node(title="连发动作摘要", outputs=[])
+def summary_burst(ctx: Context, count: int, interval: float) -> None:
+    """Agent 转发动作摘要的测试用（#356）：不经过 ctx.action，直接往事件管道写 count 份摘要，
+    间隔 interval 秒，第 i 份的 total 是 i。SDK 自己每秒最多发一份，这里写得比它快，
+    测的是 Agent 一侧只转发最新的一份。
+    """
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        for i in range(1, count + 1):
+            summary = {
+                "type": "action_summary",
+                "ts": int(time.time() * 1000),
+                "mono": sfly.context.monotonic_ms(),
+                "total": i,
+                "reported": i,
+                "capped_ts": None,
+                "capped_mono": None,
+                "names": [],
+                "running": [],
+                "recent": [],
+                "recent_failed": [],
+            }
+            events.write(json.dumps(summary, ensure_ascii=False) + "\n")
+            events.flush()
+            time.sleep(interval)
+
+
+@node(title="直接写动作事件", outputs=[])
+def raw_events(ctx: Context, lines: list[Any]) -> None:
+    """Agent 转发动作明细的测试用（#357）：不经过 ctx.action，把 lines 的每一项写成事件管道里的
+    一行，一次写完。对象项按 JSON 写（键的先后照输入，中文不转义），字符串项原样写，所以可以写出
+    SDK 不会写的内容：没有 mono 的事件、结果不认识的事件、缺必需字段的事件。
+    """
+    text = "".join(
+        (line if isinstance(line, str) else json.dumps(line, ensure_ascii=False)) + "\n"
+        for line in lines
+    )
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        events.write(text)
+        events.flush()
+
+
+#: `action_flood` 写的 ts、mono 的基数：一个固定的过去时刻，和读到它时的时钟都差得很远。
+FLOOD_TS = 1_700_000_000_000
+FLOOD_MONO = 1_000_000
+
+
+@node(title="大量动作明细", outputs=[])
+def action_flood(ctx: Context, count: int, release_file: str = "") -> None:
+    """Agent 转发动作明细的测试用（#357）：不经过 ctx.action（SDK 自己最多上报 10 万个），尽快往
+    事件管道写出 id 从 1 到 count 的 count 个动作和标记，写完立即退出：奇数 id 是动作
+    （`action_start` 紧跟着它的 `action_end`），偶数 id 是标记。每个事件的 ts 是 `FLOOD_TS + id`、
+    mono 是 `FLOOD_MONO + id`。给了 release_file 时先等到这个文件出现再写。
+    """
+    while release_file and not os.path.exists(release_file):
+        time.sleep(0.02)
+    with open(os.environ["SFLY_EVENTS"], "a", encoding="utf-8") as events:
+        for first in range(1, count + 1, 2000):
+            lines = []
+            for i in range(first, min(first + 2000, count + 1)):
+                ts, mono = FLOOD_TS + i, FLOOD_MONO + i
+                if i % 2:
+                    lines.append(
+                        f'{{"type":"action_start","ts":{ts},"mono":{mono},"id":{i},'
+                        f'"parent":null,"depth":0,"name":"下单","fields":{{}}}}\n'
+                    )
+                    lines.append(
+                        f'{{"type":"action_end","ts":{ts},"mono":{mono},"id":{i},'
+                        f'"result":"success","reason":null,"fields":{{}}}}\n'
+                    )
+                else:
+                    lines.append(
+                        f'{{"type":"mark","ts":{ts},"mono":{mono},"id":{i},'
+                        f'"parent":null,"depth":0,"name":"成交","fields":{{}}}}\n'
+                    )
+            events.write("".join(lines))
+            events.flush()
+
+
 @node(title="多路日志", outputs=[])
 def chatter(
     ctx: Context, steps: int = 0, interval: float = 0.0, secret: str = ""
@@ -410,6 +534,38 @@ def metric_rate(ctx: Context, rate: float = 10000, seconds: float = 10) -> dict[
     for i in pacer.ticks(total):
         before = time.perf_counter()
         ctx.metric("seq", float(i + 1))
+        max_call = max(max_call, time.perf_counter() - before)
+    return {
+        "count": total,
+        "elapsed": pacer.elapsed,
+        "max_behind_ms": pacer.max_behind * 1000,
+        "max_call_ms": max_call * 1000,
+    }
+
+
+#: action_rate 依次使用的动作名称：4 种，每种都不超过每种名称的上限（5 万个），合计会超过 10 万个。
+RATE_ACTION_NAMES = ("下单", "撤单", "查询", "回报")
+
+
+@node(
+    title="定速动作",
+    outputs=["count", "elapsed", "max_behind_ms", "max_call_ms"],
+)
+def action_rate(ctx: Context, rate: float = 5000, seconds: float = 10) -> dict[str, Any]:
+    """性能测试用（pnpm perf，#357）：按每秒 rate 个动作记录 seconds 秒，第 i 个是
+    `with ctx.action(RATE_ACTION_NAMES[i % 4], 序号=i + 1)`，每个动作往事件管道写两行
+    （开始、结束）。
+
+    每 100 个对一次时间，提前了就等到计划时刻。返回动作个数、实际用时（秒）、
+    比计划落后的最长时间与单次 `ctx.action()`（进入加离开 with）的最长耗时（毫秒）。
+    """
+    total = int(rate * seconds)
+    pacer = _Pacer(rate)
+    max_call = 0.0
+    for i in pacer.ticks(total):
+        before = time.perf_counter()
+        with ctx.action(RATE_ACTION_NAMES[i % len(RATE_ACTION_NAMES)], 序号=i + 1):
+            pass
         max_call = max(max_call, time.perf_counter() - before)
     return {
         "count": total,

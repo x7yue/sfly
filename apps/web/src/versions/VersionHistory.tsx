@@ -10,6 +10,7 @@ import { EmptyState, ErrorState } from "#/components/feedback/states";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { ViaTag } from "#/components/via-tag";
 import { apiQuery, callApi } from "#/lib/api";
+import { MESSAGE } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { notifyInvalidatedPresets, splitPresetWarnings } from "#/presets/invalidated-toast";
 import { Badge } from "@/components/ui/badge";
@@ -93,7 +94,7 @@ export function VersionHistory({
 						onRetry={() => versions.refetch()}
 					/>
 				) : (
-					<output aria-label="加载中" aria-busy="true" className="flex flex-col gap-2">
+					<output aria-label={MESSAGE.loading} aria-busy="true" className="flex flex-col gap-2">
 						<Skeleton className="h-8 w-72" />
 						<Skeleton className="h-8 w-72" />
 					</output>
@@ -158,7 +159,7 @@ export function VersionHistory({
 							afterLabel={`版本 ${pickedB}`}
 						/>
 					) : (
-						<p className="m-0 text-sm text-fg-3">加载中…</p>
+						<p className="m-0 text-sm text-fg-3">{MESSAGE.loading}</p>
 					)}
 				</Panel>
 			</div>

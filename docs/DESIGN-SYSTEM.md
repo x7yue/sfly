@@ -34,14 +34,14 @@
 |---|---|---|
 | 表面 | `sunk` < `bg` < `surface` < `raised` < `raised-2` | 输入框 / 页面 / 面板与侧栏 / 按钮与菜单 / 悬停与选中 |
 | | `inset` | 面板里的井（图表卡、代码块、日志区），等于 `sunk`；`bg` 只做页面底色 |
-| | `track`、`scrim` | 槽位条与进度条的空槽；弹窗遮罩 |
+| | `track`、`scrim` | 进度条的空槽；弹窗遮罩 |
 | 描边 | `border`、`border-soft`、`border-strong` | 面板与分隔 / 面板内分隔 / 浮层；有意安静 |
 | | `border-control` | 表单控件（输入框、下拉、勾选框、开关、分段）的边界：在 `sunk`、`surface`、`raised` 上都 ≥ 3:1 |
 | 文字 | `fg-1`、`fg-2`、`fg-3` | 正文 / 次要 / 辅助（对 `bg`、`surface`、`raised`、`raised-2` 都 ≥ 4.5:1；不再叠加不透明度） |
 | 主操作 | `primary`、`primary-hover`、`primary-foreground` | 白色按钮 |
 | 信号（青） | `signal`、`signal-fg`、`signal-line`、`signal-soft` | 执行中、键盘焦点环（`ring`）、调度连线；`signal-soft`（淡底）与 `signal-line`（描边）用于执行中的区段，见 2.4 |
 | 选中 | `selected`、`selected-bg`、`selected-ring`、`selection-bg` | 中性高亮；`selection-bg` 是文字选区（`::selection`，不用青色） |
-| 状态 | `ok`、`warn`(`-fg`)、`danger`(`-fg`)、`signal`(`-fg`)；`pending`、`skipped`、`cancelled`、`stopped` | 不带 `-fg` 的给标记、描边与色块，状态文字用 `-fg`（成功的绿本身够亮）。见 6.1 |
+| 状态 | `ok`、`warn`(`-fg`)、`danger`(`-fg`)、`signal`(`-fg`)；`pending`、`skipped`、`cancelled`、`stopped` | 不带 `-fg` 的给状态形状、描边与色块，状态文字用 `-fg`（成功的绿本身够亮）。见 6.1 |
 | | `-line`、`-soft` | 描边（在 `surface` 上 ≥ 3:1）；带文字的淡底（≈ 1.15:1，`signal-soft` 是执行中的淡底，故意强一档 1.3:1） |
 | | `ok-fill`、`warn-fill`、`danger-fill`、`signal-fill`、`stopped-fill`、`pending-fill` | 状态面积色：进度段、缩略图节点、时间线区段、趋势柱、小地图只用这一组，每种状态一档，不另写 `bg-ok/50` 这样的透明度 |
 | 日志 | `log-debug`、`log-info`、`log-warn`、`log-error` | INFO 不上色 |
@@ -56,7 +56,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 `tokens.css` 末尾有 `@media (prefers-contrast: more)` 加强档：描边三级、控件边界、辅助文字、网格、连线、端口、选中外圈与滚动条滑块各加强一档，组件不用改。
 
-工具类（`app.css` 的 `@utility`）：`selected-row`（`selected-bg` 底 + 左侧 2px 白条，表格、目录、列表的选中项都用它）、`focus-glow`（输入框聚焦光晕）、`pulse-ring`（执行中的脉冲，见 6.1）。
+工具类（`app.css` 的 `@utility`）：`selected-row`（`selected-bg` 底 + 左侧 2px 白条，表格、目录、列表的选中项和运行监控时间线上范围里的节点行都用它）、`focus-glow`（输入框聚焦光晕）、`pulse-ring`（执行中的脉冲，见 6.1）。
 
 ### 2.3 画布专用 `--canvas-*`
 
@@ -66,13 +66,13 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ### 2.4 配色规则
 
-- **白色是每屏唯一的主操作**：`<Button variant="primary">` 每屏最多一个（如「新建场景」）；其余按钮用默认（中性）或 `ghost`。Logo 与头像的白底不是操作。
+- **白色是每屏唯一的主操作**：`<Button variant="primary">` 每屏最多一个（如「新建场景」）；其余按钮用默认（中性）或 `ghost`。Logo 与头像的白底不是操作。全新环境的控制台（「开始使用」）里，白色按钮跟着第一个没完成的步骤走：复制安装命令、新建场景、运行场景；发布节点包那一步在命令行里完成，没有白色按钮，只有开发文档「发布」的链接。
 - **青色只用于执行中、键盘焦点环、调度连线**。不要用青色表示选中、链接或强调。
-- **执行中的区段是淡底加描边，不是实心青色**：时间线段、链路进度段、场景缩略图节点、平台图表里的节点耗时条按状态表画（`STATUS.running.area`：`signal-fill` 底加 1px `signal-line` 描边），与成功、失败等色块同一量级。实心 `signal` 只给状态标记、时间线段尾的脉冲头和焦点环。
-- **选中是中性高亮**：`selected-bg` 底 + 左侧 2px 白色短条（工具类 `selected-row`），画布上是 `selected` 描边 + `selected-ring`，相关连线灰色虚线流动。文字选区是中性的 `selection-bg`。
-- 绿色 = 成功，红色 = 失败，**琥珀色只有三个意思：等待中（定时 / Sleep）、警告、安装中**。排队中（在等 Agent 的槽位）是中性灰；日志定位标记线、被标记的日志行、节点的 `always` 标签这类不是警告的东西也不用琥珀（用中性的 `selected`）。
-- 状态文字与图标用 `-fg`：`text-warn-fg`、`text-signal-fg`、`text-danger-fg`；不带 `-fg` 的 `text-warn` / `text-signal` / `text-danger` 只写在状态表（`components/status.tsx`）里，别处要标记色时取 `STATUS[kind].tone`（`design-rules.test.ts` 检查）。
-- **没有信号就不着色**：数值为 0 的统计、全零的趋势线用中性色；「运行中」统计前的执行中状态点只在有运行时出现。必填标记（`*`）用中性 `fg-2`，红色只给错误。保存状态里只有需要处理的才带点（保存被拦截红、未保存琥珀），「已保存」是纯文字。
+- **执行中的区段是淡底加描边，不是实心青色**：时间线段、链路进度段、场景缩略图节点、平台图表里的节点耗时条按状态表画（`STATUS.running.area`：`signal-fill` 底加 1px `signal-line` 描边），与成功、失败等色块同一量级。实心 `signal` 只给状态形状、时间线段尾的脉冲头和焦点环。
+- **选中是中性高亮**：`selected-bg` 底 + 左侧 2px 白色短条（工具类 `selected-row`），画布上是 `BaseNode` 的两圈 box-shadow（卡片外先垫 3px 画布底色，再画 2px `selected` 描边，卡片自己的描边——执行中的青色、失败的红色——不变，和青色的键盘焦点环、执行中的描边分得开；青色的键盘焦点环再往外一圈，`outline-offset` 9px，键盘只会把焦点放在刚选中的节点上），强制颜色下 box-shadow 没有了，换成隔开一圈（`outline-offset` 3px）的 3px `Highlight` 轮廓，画在卡片外面（选中且键盘聚焦时轮廓换成焦点环，没有信息丢失：键盘只会把焦点放在刚选中的节点上）；`selected-ring` 只给注释框的选中光晕、注释框成员的描边和框选矩形的底色；相关连线灰色虚线流动。文字选区是中性的 `selection-bg`。日志按时刻定位到的那一行同样用 `selected-row`（不用青色），没有正好对应的行时插入的「这一刻」是一行文字加一条中性细线（`border-strong`）。从控制台点读数进入概览时，属于被定位的节点的关注项同样中性高亮（读数用 `selected-row`，图表卡片的描边换成 `selected`），都带 `aria-current="location"`。
+- 绿色 = 成功，红色 = 失败，**琥珀色只有三个意思：等待中（定时 / Sleep）、警告、安装中**。关注项的异常（「需要注意」，四种原因里也包括来源节点失败）算警告，用琥珀三角加原因（`AnomalyNote`）；来源节点本身的状态形状不变，失败仍是红色菱形。排队中（在等 Agent 的槽位）是中性灰；点选日志行时时间轴上的定位线、被点选的日志行、节点的 `always` 标签这类不是警告的东西也不用琥珀（用中性的 `selected`）。
+- 状态文字与图标用 `-fg`：`text-warn-fg`、`text-signal-fg`、`text-danger-fg`；不带 `-fg` 的 `text-warn` / `text-signal` / `text-danger` 只写在状态表（`components/status.tsx`）里，别处要状态形状的颜色时取 `STATUS[kind].tone`（`design-rules.test.ts` 检查）。
+- **没有信号就不着色**：数值为 0 的计数（控制台页头的「失败 0」）、全零的趋势线用中性色。必填的星号（`*`）用中性 `fg-2`，红色只给错误。保存状态里只有需要处理的才带点（保存被拦截红、未保存琥珀），「已保存」是纯文字。
 - **已停止**用中性灰实心小方块（画布卡片灰色描边、进度条与时间线灰色带描边的矮段），与已取消、已跳过区分：停止是场景的正常流程，不用警示色。
 - **紫色只用于子流程区域**（`canvas-subflow*`），语义层没有紫色。
 - **日志 INFO 不上色**（`log-info` = 正文色），只有 WARN / ERROR 着色，DEBUG 用辅助文字色。
@@ -93,15 +93,15 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `text-xs` | 12 / 18 | 辅助：表头、说明、次要信息、表格里的等宽数据、徽标；中文的最小字号 |
 | `text-sm` | 13 / 20 | 正文（body 默认）、按钮、输入框、菜单项 |
 | `text-base` | 14 / 20 | 区块与弹窗标题、空状态标题、命令面板输入 |
-| `text-lg` | 16 / 24 | 页面标题 |
-| `text-2xl` | 22 / 28 | 统计数字（控制台） |
+| `text-lg` | 16 / 24 | 页面标题；关注项读数、图表卡片和运行监控数值卡里的最新值（等宽加粗） |
+| `text-2xl` | 22 / 28 | 运行的已运行时长（控制台运行块的右上角），全站唯一的大字号 |
 
   字号 token 用 rem（默认根字号 16px 下就是上表的像素值）：用户调大浏览器默认字号时文字与间距一起放大。不在 `html` 上设字号。
 
   原型里的非整档字号归并：12.5 → 13（正文、菜单、面包屑）、11.5 → 12（徽标、提示、字段说明）、10 → 11；15（弹窗标题）→ 14。
-- 圆角只有 `rounded-sm` 4、`rounded-md` 6、`rounded-lg` 8、`rounded-xl` 12（另有 `rounded-full`）。小于 12px 的指示元素（槽位格、进度段）用 2px。组件里不写色值、不用其他圆角任意值（`src/styles/design-rules.test.ts` 检查）。
+- 圆角只有 `rounded-sm` 4、`rounded-md` 6、`rounded-lg` 8、`rounded-xl` 12（另有 `rounded-full`）。小于 12px 的指示元素（进度段）用 2px。组件里不写色值、不用其他圆角任意值（`src/styles/design-rules.test.ts` 检查）。
 - 控件高度：按钮 / 输入框 30（`h-7.5`），小号 26（`h-6.5`）；顶栏 48（`--topbar-height`）；侧栏 208 / 折叠 56；kbd 18。
-- 图标（lucide）：根部的 `LucideProvider` 统一线宽为屏幕上的 1.5px（`nonScalingStroke`），不随图标尺寸变粗变细；图标尺寸只用 12 / 14 / 16（`size-3`、`size-3.5`、`size-4`）。勾选框的对勾加粗到 2px。
+- 图标（lucide）：根部的 `LucideProvider` 统一线宽为屏幕上的 1.5px（`nonScalingStroke`），不随图标尺寸变粗变细；图标尺寸只用 12 / 14 / 16（`size-3`、`size-3.5`、`size-4`）。勾选框的对勾加粗到 2px。例外：画布里的图标按 em 取尺寸（`size-[1em]`），随语义缩放后的卡片文字一起变化，不受 12 / 14 / 16 的限制（先例：`components/canvas/zoom-text.ts` 的 `KIND_CHIP`，`CardFocus.tsx` 的眼睛图标）。
 
 ## 4. CSS layer
 
@@ -125,7 +125,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `Checkbox` | 勾选框：原生 `input`，16px、`sunk` 底、`border-control` 描边；勾选后中性高亮（`selected` 底 + 深色对勾），不用青色 |
 | `Switch` | 开关：30 × 18、`border-control` 描边；关闭 `track` 底 + 灰色圆点，打开 `selected` 底 + 深色圆点（与勾选框一致，不用绿色）；强制颜色模式下用系统颜色画。旁边有文字时写 `label="必填"`：开关和文字包在同一个 `<label>` 里，点文字也切换，文字就是开关的名称（不再另写 `aria-label`）；长说明放在旁边，用 `aria-describedby` 关联 |
 | `FormField`、`FormAlert` | 表单字段：标签（必填加中性的 `*`）、控件、帮助、错误；错误与帮助用 `aria-describedby` 关联、出错时控件 `aria-invalid`（控件经 render 函数拿到这些属性）。`FormAlert` 是提交失败的服务端错误（`role="alert"`），写在弹窗里、提交按钮上方。见 6.4 |
-| `Segmented` | 分段选择（筛选、视图切换）：`fieldset` + `aria-pressed` 按钮，`border-control` 描边，当前项中性高亮（`raised-2` 底加一圈 `border-strong` 内描边）；只有图标的选项给 `label` |
+| `Segmented` | 分段选择（筛选、显示方式切换；同一块内容换一种看法）：`fieldset` + `aria-pressed` 按钮，`border-control` 描边，当前项中性高亮（`raised-2` 底加一圈 `border-strong` 内描边）；只有图标的选项给 `label` |
 | `Badge` | `default` / `ok` / `warn` / `danger`；版本号、计数等（12px） |
 | `Dialog` | 模态弹窗：锁定焦点、Esc 关闭、关闭后焦点回到打开前的元素；距顶 12vh、宽 520（`className` 覆盖），最高 76vh。三段：`DialogHeader`、`DialogBody`、`DialogFooter`，内容变高时只有 `DialogBody` 滚动（上下还有内容时边缘出现阴影），标题与按钮一直看得见；外层包 `<form>` 也照样分三段（form 不占版面）。没用 `DialogBody` 的弹窗过高时整个弹窗滚动，按钮行贴在底边。点遮罩关闭由 `pointerDismiss` 决定：默认 `"pristine"`，在弹窗里输入过任何东西后点遮罩不再关闭（Esc 与「取消」照常），搜索类弹窗（命令面板）`"always"`，`"never"` 只能用按钮或 Esc。`DialogDescription` 是决定后果的说明：13px 正文、二级文字 |
 | `Sheet` | 抽屉（右侧，默认 460px），焦点与点遮罩关闭的规则同 Dialog |
@@ -141,18 +141,39 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | 组件 | 说明 |
 |---|---|
 | `app-shell/AppShell` | 外壳：侧边栏（导航来自 `navigation.ts`，可折叠，状态存 localStorage；项右侧平时是计数，悬停或键盘聚焦时在同一位置换成跳转快捷键 `Keys`，折叠后不显示）、顶栏（面包屑来自路由 `staticData.crumb`、Ctrl K 搜索入口、昵称） |
-| `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、运行抽屉、通知；`useOverlays().open("shortcuts")`、`useOverlays().runScenario(场景)` |
-| `app-shell/CommandPalette` | 「当前页面」「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」六组。「当前页面」是当前页面已绑定、并在注册表里带 `palette` 的快捷键（取消运行、保存……），名称与按键取自注册表，页面状态变了（运行结束、没有失败节点）就自动出现或消失，为空时整组不渲染；其余命令加在 `commands` 里 |
+| `app-shell/overlays` | 全局浮层：命令面板、快捷键面板、昵称弹窗、运行抽屉、通知；`useOverlays().open("shortcuts")`、`useOverlays().open("run-scenario")`（只列「运行场景」一组的命令面板，控制台的「运行场景」按钮用它）、`useOverlays().runScenario(场景)` |
+| `app-shell/CommandPalette` | 「当前页面」「跳转」「场景」「运行」（最近的运行）「运行场景」（打开运行抽屉）「命令」六组。「当前页面」是当前页面已绑定、并在注册表里带 `palette` 的快捷键（取消运行、保存……），名称与按键取自注册表，页面状态变了（运行结束、没有失败节点）就自动出现或消失，为空时整组不渲染；其余命令加在 `commands` 里。`scope="run-scenario"` 时只列「运行场景」一组，在里面按 Ctrl K 切成完整的命令面板 |
 | `page`：`Page`、`PageHeader`、`Panel`、`SectionHeading`、`Keys`、`CodeBlock` | 页面版式；`PageHeader` 固定一个控件高（有没有右侧按钮标题都在同一位置），标题 h1 可以被程序聚焦（焦点去向的兜底，见第 7 节）；`Panel` 用 `overflow: clip` 裁圆角，不是滚动容器（里面的表头才能吸顶）；`Keys keys="Ctrl+K"` 显示按键；`CodeBlock` 带复制 |
+| `doc-page-link`：`DocPageLink` | 指向开发文档某一页的链接，界面里去开发文档都用它：`page` 是 `DOC_PAGE` 里的 slug，链接文字缺省是页名；`look` 是 `inline`（正文里的行内链接，缺省）或 `button`（ghost 小按钮，同 `PanelLink`：控制台「开始使用」的标题行和步骤） |
+| `#/dashboard/DashboardPanel`：`DashboardPanel` | 控制台的面板：标题行（标题、计数、右侧操作）加内容，以标题作区域名称；「开始使用」和实况墙的最近结束、Agent、场景共用 |
 | `#/docs/Markdown` | 用户文档（ADR 0013）的 Markdown 渲染：代码块用 `CodeBlock`（```prompt 代码块是给人读、复制给 AI 编程助手的提示词，自动换行、正文字体；其余代码块不换行），表格用 `ui/table`，`<slug>.md` 链接换成文档页 |
-| `status`：`STATUS`、`StatusPill`、`StatusDot`、`SlotBar`、`runStatusView`、`nodeStatusView`、`alignPulses` | 状态语法与槽位，见 6.1；运行 / 链 / 节点状态的种类与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，颜色、形状、动效只从 `STATUS` 取，不另写映射表。节点状态在各处的显示规则（种类、画布运行状态、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
+| `status`：`STATUS`、`StatusPill`、`StatusDot`、`runStatusView`、`nodeStatusView`、`alignPulses` | 状态语法，见 6.1；运行 / 链 / 节点状态的种类与文字只从 `runStatusView`（含「取消中」）与 `nodeStatusView` 取，颜色、形状、动效只从 `STATUS` 取，不另写映射表。节点状态在各处的显示规则（种类、画布运行状态、时间线、是否算已完成）集中在 `src/lib/node-status.ts` 的 `NODE_STATUS` 一张表里，新增节点状态只改这张表 |
+| `slot-cell`：`SlotCell`、`IdleSlots`、`idleSlotCount`、`taskChainLabel`、`slotLabel` | 槽位格：Agent 上一个被占用的槽位（带文字的容器，圆角 8px），写节点（`NodeName`）、场景、运行编号、所在链（主链或子流程名）、尝试号、节点类型和已执行时长；描边与文字色取自 `STATUS` 的执行中（只取描边，底色用 `raised`），状态形状是 `StatusDot`，还在准备（`dispatched`、没有开始时间）的任务时长处写「准备中」。放在 `<ul>` 里，每个槽位格是 `<li>`，可访问名称是「节点 …，场景 …」，调用方在底部追加内容（`children`）时用 `summary` 把要点补进名称。连续的空闲槽用 `IdleSlots` 合并成一行矮条（空闲是能接新任务的 Agent 上没被占用的槽位，`agent-status` 的 `acceptsTasks`：在线、已准备好环境、版本与控制面一致；离线、准备环境中、版本不一致或更新中的 Agent 不画矮条，见 `AgentRack` 一行），网格设 `items-start`，矮条不随旁边的格子拉伸。系统里没有槽位身份，格子不写「槽 1」这样的编号。Agent 管理页的机架（`#/agents/AgentRack`）通过 `TaskSlot` 用它；控制台的 Agent 列用紧凑形式（`compact`，`IdleSlots` 同样传 `compact`）：一行写节点、场景、子流程名和已执行时长，圆角 6px，不写运行编号、尝试号和节点类型（运行块里有），也不放关注项的数值和正在做的动作（关注项只在左栏出现：运行块的读数，和最近结束里失败的运行的最终值；正在做只在 Agent 管理页的槽位格和画布卡片上） |
+| `#/agents/AgentRack`：`AgentRack`；`#/agents/PreparingBadge`：`PreparingBadge`；`#/agents/agent-status`：`agentStatusView`、`updateStatus`、`acceptsTasks` | 一台 Agent 的机架面板（`Panel`，名称是 Agent 名称）：头部一行是状态（`agentStatusView`，控制台 Agent 列的名称行用同一个）、名称、版本、系统、对外地址、最后在线，右侧是被引用的场景数和「立即更新」，更新、时钟偏差、能力不可调用、节点包安装失败这些告警跟在状态后面，放不下时头部换行；主体是 `SlotCell` 网格（`auto-fill`，最窄 300px）和排队的任务（写排队了多久、多久后排队超时，`queueTiming`）；接不了新任务的 Agent（`acceptsTasks` 为 false：离线、准备环境中、版本不一致或更新中，和控制面派发的条件一致）槽位不算空闲：不画空闲矮条、不写「N / M 占用」，还占着槽位的任务照常列出，一个都没有时槽位一栏整个不画；准备环境中写「准备环境中 · 2m 10s」（`PreparingBadge`，控制台 Agent 列的名称行也用它）；底部是节点包与能力的小字 |
+| `#/agents/TaskSlot`：`TaskSlot` | Agent 管理页的槽位格：`SlotCell` 加两样东西。**正在做**：一行（`sunk` 底，嵌在 `raised` 底的格子里），动作写「正在」加名称，右侧是已持续多久（`components/elapsed` 的 `Elapsed`，画布卡片上同一行也用它）；画布卡片只有 208px 宽，用执行中的形状代替「正在」两个字，格子放得下就写出来；没有动作时只写进度的说明，不写「正在」、没有时长；不在执行中的任务（准备中）没有这一行。取法只有 `actions/current-activity.ts` 的 `currentActivity`（和画布节点卡片同一条规则）。**关注项**：来源是这个任务的前两项（`focus/focus-preview.ts` 的 `focusPreview`，按读数的顺序取前两项：控制面已经把有异常的排在最前，这里不再排；画布节点卡片用同一个函数），每项一行，用 `#/focus/FocusRows` 的 `slot` 放法（画布节点卡片是同一个组件的 `card` 放法）——有异常的行首是 `AnomalyMark`，名称（`Truncate`）、最新值（`FocusValue`，12px、不加粗；图表有多个序列时先写序列名；图表在节点包版本里不存在时值的位置写「这个版本的节点没有图表 X」，不显示数值）、右侧是多久前（`readingWhen`，只有「2s 前」用等宽，最终值、没有值的原因是中文说明，不用等宽）或异常的原因（`warn-fg`，`anomalyText`）；多出的写「还有 N 个关注项」（`FOCUS.moreItems`）。场景没设关注项时是这个节点的主指标（名称前写「主指标」），右侧写「场景没有设置关注项」（`FOCUS.noneSet`，有异常时写异常的原因）；关注项读不到时写「无法加载关注项」。可访问名称在「节点 …，场景 …」后接「正在做 X」和「N 项需要注意：名称 原因；…」（有几项异常写几项，不只是显示出来的两项）。读数（`GET /runs/:id/focus?points=0`）由页面按运行读好再分给各个槽位（`agents/use-slot-focus.ts`），同一个运行的几个槽位只读一次；读数按「来源是这个任务」分（一个子流程在一次运行里最多一个实例，节点只有一个来源任务）；内容怎么算在 `agents/slot-content.ts`（纯函数，有单测）。控制台的 Agent 列（紧凑形式）不显示这两样 |
 | `note-icon`：`NoteIcon` | 备注图标：悬停或键盘聚焦时在提示里显示备注全文（保留换行；长备注不超出视口，在提示里滚动：鼠标用滚轮，键盘用 PageUp / PageDown / Home / End）。页面上它是按钮，可以 Tab 到，名称「备注」、描述是全文；画布上节点卡片不在 Tab 顺序里，图标放在卡片里时传 `host`（卡片的选择器）和 `textId`：图标本身不可聚焦、对读屏隐藏，键盘用户靠卡片的键盘焦点看到提示，读屏用户在卡片的描述里读到备注。大小按所在文字的字号（em），不随画布缩放的提示固定 12px；节点卡片、注释框的标题带、运行监控页的图表组标题都用它，不另写一套 |
-| `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条（`ticks` / `wide` 两种形状；每段的颜色、描边与高低取自 `STATUS[kind].area`） |
-| `sparkline`：`Sparkline` | 迷你趋势（控制台统计卡、主指标） |
+| `chain-progress`：`ChainBar`、`ChainBars` | 各链进度条：每个节点一段竖向短段（运行记录、运行抽屉；每段的颜色、描边与高低取自 `STATUS[kind].area`）；「2/3」这样的计数用 `chainProgressText`，进度条、线路的计数和读屏名称都用它 |
+| `run-lines`：`RunLines`、`RunLineThumb`、`foldStations`、`layoutLines` | 线路：一个运行的每条链画成一条线，节点是站（`StatusDot`，状态只从 `STATUS` 取），站名写在点下面，右边是「已完成数 / 节点数」；进入执行中节点的那一段是 `signal-line`，其余是 `border-strong`；子流程从触发它的异步任务节点那一列分出，分支竖线是调度连线的青色虚线（`signal-line` 虚线）。所有行共用一套列（CSS subgrid），同一条链分出的几条子流程列靠右的排在前面，分支竖线不会穿过别的线。超过 7 个节点的链按 `foldStations` 折叠：只画当前站（进行中的节点，没有时是第一个待执行的节点）前面最后一站、当前站和之后两站，其余折成「已完成 N 个」「还有 N 个」（点是这一段最后一个节点的状态），失败的节点总是画出来。`RunLineThumb` 是一条链的缩略（只有点和线，折起来的一段是一截虚线），读屏读作「主链 5/10」。控制台的运行块与紧凑行、运行监控的概览用它 |
+| `#/dashboard/*`：`RunningRuns`、`RunBlock`、`CompactRunRow`、`EndedPanel`、`AgentsPanel`、`ScenariosPanel`、`PanelLink`；`wall-rules` 的 `wallLayout`、`readoutCells`、`readoutPlan`、`agentColumn` | 控制台的实况墙：左栏是正在运行的运行块（场景、版本、运行编号、触发人与开始时间，右上角 22px 的已运行时长；线路；读数区；进行中的节点那一行；打开运行监控、在画布中打开、取消运行）和最近结束，右栏是 Agent 列（槽位格的紧凑形式，数据是 Agent 列表接口，与 Agent 管理页共用查询缓存）和场景列。**读数区**：场景设了关注项时是一排关注项读数（`FocusReadoutStrip`，数据是 `GET /runs/:id/focus?points=0`），标题行写「关注项 N · M 项需要注意」（`#/focus/FocusTally`，琥珀色，没有异常时不写；画布概况的关注项标题同一个写法）和「调整关注项」；按读数区的实际宽度放 3 或 4 格读数（`readoutCells`，另有「还有 N 个关注项」那一格，读数和它每格至少 140px：1440 的窗口里 4 格，1280 的窗口里 3 格；宽度用 `lib/use-element-width` 量运行块的内容宽度，不看窗口宽度），有异常的总在可见的格子里（比格数多时全部显示，`readoutPlan` 同时给出排几列），其余写「还有 N 个关注项 · 打开概览」（`FOCUS.moreItems`）；点一格进入运行监控概览并定位到它所在的节点（`view=overview&node=`，概览里属于这个节点的关注项标出位置：`aria-current="location"` 加中性高亮，第一项滚进视野），点「还有 N 个关注项」进入概览。没设关注项时是执行中节点的主指标，排法、点按和「N 项需要注意」都和关注项一样（同用 `readoutPlan`），最后一格写「还有 N 个主指标 · 打开概览」（`FOCUS.morePrimary`），标题行写「场景没有设置关注项 · 设置关注项」（`FOCUS.noneSet`）。没有可显示的读数时保留标题行和入口，写原因（`MESSAGE.noPrimaryMetric`、`MESSAGE.noRunningNodes`、`FOCUS.noneInRun`）；读取失败写「无法加载关注项」（同 Agent 槽位格）。最近结束里失败的运行在错误信息下面带关注项的最终值（场景现在的关注项，最多 4 项：3 项一行，4 项两行两列；只读，不可点）。数量多时按 `wall-rules`：3 个以上运行时进行中的节点和读数只放前 2 项（有异常的加上前两项），6 个以上运行时运行块换成一行一个的紧凑行（整行是展开按钮，展开后焦点在「收起」上，收起后回到这一行；紧凑行不取读数），Agent 超过 5 台时只列忙碌、接不了新任务（`acceptsTasks`）、不是「在线」状态的，其余合并成「N 台空闲」。右栏两列都有加载骨架和错误状态；没有 Agent 时写「还没有 Agent 连接」和去 Agent 管理页的链接，没有可列的场景（还没新建，或都已归档）写「没有场景」 |
+| `sparkline`：`Sparkline` | 迷你趋势（主指标） |
+| `elapsed`：`Elapsed` | 已持续多久（`lib/format` 的 `formatElapsed`：一分钟以内只写整秒，`2s`、`2m 10s`），按控制面时间每秒刷新，只这一小块重新渲染：节点卡片和 Agent 槽位格上的「正在做」、动作表里进行中的耗时都用它。每秒刷新的时长（运行块的已运行、进行中的节点、准备环境中、排队了多久、关注项的「多久前」）一律用 `formatElapsed`；`formatDuration`（`12.3s`）只给定值的耗时（动作耗时、运行结束后的耗时） |
+| `#/focus/FocusReadout`：`FocusReadout`、`FocusReadoutStrip` | 关注项读数：一个关注项（没设关注项时是执行中节点的主指标）的一格读数，从上到下三行——来源节点的状态形状（`StatusDot`）和名称（最多两行）、最新值和单位（`FocusValue`：等宽 16px 加粗，累计值就是当前累计，平台不算速率；图表有多个序列时先写最近更新的那条的名字）、「来源节点 · 多久前」（来源节点写成「显示名称（节点 ID）」，没有显示名称时只写节点 ID；有值时来源节点成功、已停止或已取消写「最终值」；没有值时写原因：来源节点还没有开始执行（待执行、排队中、准备中、已跳过，以及没开始就失败、已取消、已停止的）写这个状态没有执行的原因（`NODE_STATUS` 的 `notRun`，如「还没有开始执行」「已跳过，没有执行」），已经开始但还没有点写「还没有数据」，尝试已经结束仍没有点写「这次尝试没有上报数据」；运行已经结束、来源节点一直待执行（没轮到它，或子流程没有触发）写「这次运行没有执行」，可访问名称里的状态写「未执行」（`NOT_RUN_IN_ENDED_RUN`，和画布运行状态同一个词；调用方传 `runEnded`，画布节点卡片的行（`FocusRows`）和检查器的图表也传）（这几句由 `lib/copy.ts` 的 `noDataLabel` 给出，运行监控详情的图表工作区用同一个函数）。有没有值只在 `focus-format.ts` 的 `readingState` 判断，脚注、可访问名称和图表卡片的空状态共用）；图表在节点包版本里不存在时写「这个版本的节点没有图表 X」（`FOCUS.chartMissing`，句子来自 `@sfly/schema` 的 `focusChartMissing`；场景设置的「关注项」页和运行通知的卡片也用它），不显示数值，脚注只写来源节点。**读数之间只用 1px 分隔，不套卡片**：`FocusReadoutStrip` 默认按宽度自动排成几列（每格至少 11rem），调用方给 `columns` 时是这么多等宽的列（控制台按运行块的宽度放 3 或 4 格），`trailing` 是排在最后、和读数一样占一格的内容（「还有 N 个关注项 · 打开概览」）；换行后每一行的分隔线也一样；外框由调用方的 `className` 决定。整格可点时用 `render` 换成按钮或链接，悬停是 3% 白（与表格行一致），可访问名称写明名称、最新值、来源节点和状态，以及多久前、最终值或没有值的原因（「母单量 1.3M 单，来自 load（执行中），2s 前」）。「多久前」按读数的 `generated_at`（控制面时间）算，不随浏览器时钟跳动。**有异常时**（异常只由控制面判断，见契约 `FocusAnomalyKind`）第三行换成琥珀三角和原因（`AnomalyNote`），可访问名称最后写「需要注意：原因」；没有新数据时最新值退成 `fg-2`（`FocusValue` 自己按控制面给的 `stale_since` 判断，和报哪一种异常无关，读数、图表卡片、槽位格和画布检查器的图表都用它，画布卡片的行用同一个判断）。概览、画布运行状态检查器的概况（全部关注项，每格是按钮，点了选中所在的节点）、控制台的运行块和最近结束的失败行用它；只放得下几项的地方（节点卡片、Agent 槽位格、控制台的运行块）取哪几项用 `#/focus/focus-preview` 的 `focusPreview(items, limit)`（读数由控制面排好，有异常的在最前，前端不再排）；去场景设置「关注项」页的入口是 `#/focus/FocusSettingsLink`（概览和运行块共用）；数据一律来自 `#/focus/use-run-focus` 的 `useRunFocus`（`GET /runs/:id/focus`），不另拼指标查询 |
+| `#/focus/FocusTally`：`FocusTally` | 关注项标题后面的项数和「· N 项需要注意」（`focus-preview` 的 `countAttention` 数有异常的项，含没显示出来的；`FOCUS.attentionCount`，琥珀色，没有异常时不写）：控制台运行块的读数区和画布概况的关注项共用，主指标时不写项数。卡片和槽位格可访问名称里的「N 项需要注意：原因」由 `focus-format` 的 `attentionSummary` 拼 |
+| `#/focus/FocusSettingsLink`：`FocusSettingsLink` | 去场景设置「关注项」页的链接（画布路由的 `?settings=focus`，眼睛图标加文字）：设了关注项是「调整关注项」，没设是「设置关注项」（`FOCUS.settingsLink`）；运行监控概览和控制台运行块的读数区标题行右侧共用 |
+| `#/focus/FocusChart`：`FocusChart`；`#/focus/FocusPlot`：`FocusPlot` | 概览里图表类关注项（折线、面积、柱状）的卡片：状态形状和名称、最新值（`FocusValue`）、「来源节点 · 多久前」、按容器的实际尺寸画的图（`FocusPlot`：绘图区和图例，画布运行状态检查器里的图表也用它，高度由调用方给）（SVG 用测量到的像素宽度，文字不被拉伸；**纵轴从 0 起**，不把正常的小波动画成大起大落，上限包含每个桶的最大值；横轴是来源节点这次尝试的开始到结束，还没结束就到读数生成的时刻）、多个序列时的图例（线色与线型沿用 `MetricChart` 的 `seriesColor`、`seriesDash`；超过 10 个序列时只画平均值最高的 10 条并写明还有几条；挑好以后保持不变，读数刷新、平均值的排名变了也不换，只在出现新序列时重新挑，与详情的图表同一个 `pickShown`）和「在详情里查看 <节点>」（`Button variant="link"`，同一页里切到详情，写「查看」）。文字格式在 `focus-format.ts`（值和序列名的写法来自 `@sfly/schema` 的 `focus-reading.ts`），几何在 `focus-chart.ts`（纯函数，有单测）。有异常时「来源节点 · 多久前」一行换成 `AnomalyNote`（原因后面接「 · 来源节点」）；**无新数据**（控制面给了 `stale_since`，和这一项报哪一种异常无关：先有 WARN 再不上报时原因写 WARN，图照样画斜线）时曲线停在最后一个点，之后到现在画斜线（`border-strong` 的 45° 细线，`focus-chart.ts` 的 `plotChart` 给出这一段），斜线旁用 `warn-fg` 写「已 2m 10s 无新数据」，图的可访问名称后面加「曲线停在最后一个点」。这段斜线只在图表的绘图区里表示没有新数据，不是状态色块，和 6.1 里排队中的灰色斜纹（进度段、时间线）不在同一种元素上 |
+| `canvas/CardFocus`：`FocusBadge`、`cardFocusLabel` | 画布运行状态下节点卡片上的关注项（场景设了关注项时）：`FocusBadge` 是左上角的眼睛图标和个数（和右上角的标签同一个样子），卡片的可访问名称接上「N 个关注项，M 项需要注意：原因」（`cardFocusLabel`：卡片上的三角旁边放不下原因，原因写在名称里，悬停一行也能看到；图表在节点包版本里不存在的项再接上「这个版本的节点没有图表 X」，卡片上这一行没有数值）。节点开始执行以后，底部的摘要槽换成前两项（`#/focus/focus-preview` 的 `focusPreview`，按控制面排好的顺序：有异常的在前，带 `AnomalyMark`），用 `#/focus/FocusRows` 的 `card` 放法画（`aria-hidden`，用图表自己的标题（「CPU」）而不是场景起的名字，图表不存在时值的位置写原因），多出的写「还有 N 个关注项」；来源节点成功、已停止或已取消后控制面不再判断异常，只剩最终值。卡片按内容长高，子流程区域、注释框和跟随执行按量出来的高度框。**场景没设关注项时**，执行中节点的主指标有异常（读数里这个节点那一项，`focus-preview.ts` 的 `nodePrimaryItem`，判断只在控制面）：主指标槽里数值前画 `AnomalyMark`，卡片的可访问名称接上「1 项需要注意：主指标 level 原因」（`cardFocusLabel` 的 `primary`，写法和槽位格一致），没有眼睛图标和个数；没有异常时卡片不变 |
+| `#/focus/FocusRows`：`FocusRows` | 紧凑的关注项行：只放得下前几项的地方（画布节点卡片、Agent 槽位格）共用，取哪几项用 `focusPreview`。每项一行：有异常的行首是 `AnomalyMark`，名称、最新值（`FocusValue`，没有新数据时退成 `fg-2`）；图表在节点包版本里不存在时值的位置写「这个版本的节点没有图表 X」（`FOCUS.chartMissing`），不显示数值，卡片和槽位格写法一致；最后一行是「还有 N 个关注项」。`variant` 是两种放法：`card`（只给眼睛看，容器 `aria-hidden`，名称是图表标题，文字直接截断、悬停一行看完整的读数，数值靠右，字号跟画布的语义缩放）和 `slot`（读屏要读，名称是关注项的名称、主指标前写「主指标」（`focusItemTitle`），文字用 `Truncate`，右侧是脚注：异常的原因，没有异常时是多久前，主指标写「场景没有设置关注项」）。容器的样式、`aria-*`、`data-testid` 由调用方给。别处不再另写关注项的行 |
+| `#/focus/AnomalyNote`：`AnomalyMark`、`AnomalyNote` | 关注项的异常：`AnomalyMark` 是琥珀实心三角（状态表的 `warn`，不另写颜色），只是形状，旁边必须有写明原因的文字，或者原因写在所在元素的可访问名称里；`AnomalyNote` 是三角加原因（`warn-fg`，12px），原因的短句由 `focus-format.ts` 的 `anomalyText` 给出（「1 条 WARN · 10:58:41」「已 2m 10s 无新数据」「来源节点失败」「重试（第 2 次尝试）· 10:41:02」，文字在 `lib/copy.ts` 的 `FOCUS`）。异常同时用形状和文字表达，色觉缺陷和强制颜色模式下也分得出；读数、图表卡片、「需要注意」（`#/monitor/Attention`）都用它们；别处显示关注项的异常时也用这两个，不另画三角 |
+| `#/actions/InspectorActions`：`CurrentActions`、`ActionArea` | 画布运行状态检查器里的「正在做」和「动作」区，数据来自 `useActionSummary`（`GET /tasks/:id/actions/summary`，节点执行中每 `ACTIONS_POLL_MS` 重新读取，结束后再读一次）。显示最近一次开始执行的尝试的动作（重试的新尝试还在排队、准备时，上一次的动作和失败还在），节点重试过时「动作」标题旁写这是第几次尝试。**「正在做」**：只在尝试执行中画；正在进行的动作按层级缩进（最多 3 层，更深的画在第 3 层；缩进读屏读不出来，子动作的名称前有一句只给读屏的「子动作：」），写名称、字段（`key=value`，放不下截断，悬停看全文）和已持续多久（`elapsed` 的 `Elapsed`）；列满 50 个时（`running_complete` 为 false）写「列满 N 个，可能还有没列出的」（N 取列表的个数）。**「动作」区**：每种名称的总数和失败数（一张 `Table`，名称按第一次出现的先后排，计数变化时行不重排；名称里动作和标记在一起）；上限说明列出每个只计数的名称和它从几点起只计数；「失败的动作除外」只对只超过每种名称上限（`name_limit`）的名称说（失败的动作仍有明细，直到合计满）：全是这种名称时写在开头那一句里，同时有因合计满而只计数（`total_limit`）的名称时写在 `name_limit` 的名称后面，全是 `total_limit` 时不写；合计满了时再说「满了以后开始的动作都只计数（失败的也一样）」和第一个因此没有明细的动作是几点开始的（那个时刻不是明细的终点：更早开始的动作结束时仍可能补上明细，失败的动作在合计满以前会补，所以不说「从那个时刻起都没有明细」），并说明控制面另外丢弃的明细要到运行监控详情的「动作」页签里看（`NODE_ACTIONS.controlPlaneDropped`，写成「超过上限时」，没有丢弃过时也是实话；摘要只写有没有丢弃过，`control_plane_capped` 为 true、SDK 没超限时也显示上限说明），并指向开发文档「开发节点（SDK 参考）」的「数量上限」；最近的失败（接口给的最近 5 个，标题旁写一共多少个，多于 5 个时下面用 `moreLabel()` 写还有几个）原因单独一行、不截断，放不下就折行（`wrap-anywhere`，4096 个字符也不撑破检查器）。「最近 20 个」不放在检查器里（每秒 200 单时只覆盖约 0.1 秒，一直在滚）。没有动作记录的节点这两块都不画；摘要里写进度的说明的条件和卡片一致：尝试执行中、没有正在做的动作。检查器底部有动作记录的节点多一个「打开动作明细」（`ACTION.openActionDetails`：去另一个页面，按第 9 节写「打开」），用 `runMonitorLink` 带上 `tab=actions` 打开运行监控详情的「动作」页签 |
+| `#/monitor/ViewTabs`：`ViewTabs` | 运行监控页头的「概览 / 详情」标签页：`role="tablist"`，只有选中的标签在 Tab 顺序里，左右方向键切换并立即显示、Home / End 到第一个 / 最后一个（`monitor-view.ts` 的 `nextView`），对应的面板是 `role="tabpanel"`，名称取自当前的标签页。外观沿用分段选择（`raised-2` 底加一圈 `border-strong` 内描边，不用青色；强制颜色下 `aria-selected="true"` 换成 `Highlight` 描边）：它放在页头里，用 `Tabs` 的下划线样式会和页头的底边打架；切换整个页面的两个视图用它，同一块内容换一种看法用 `Segmented` |
+| `canvas/CanvasDock`：`ToolButton` | 画布底部工具条（一个 Tab 停靠点）与它的图标按钮：按钮的提示从注册表取名称和按键。运行状态下工具条里多一个「跟随执行」按钮（`F`，准星图标）：打开时镜头框住所有执行中的节点（子流程里的连同子流程区域），框在没被顶栏、检查器、工具条占住的可见区域正中，缩放夹在 0.6 到 1，只移动镜头、不改选中的节点；执行前沿（执行中的节点）变化后停留 2 秒才平移（`FOLLOW_DWELL_MS`），平移的时长与「减少动效」同视口动画（见第 11 节）。拖动画布、缩放（滚轮或工具条的缩放按钮）、用方向键把选中移到视野外的节点时关闭，并在画布里的读屏实时区域（`<output aria-live="polite">`）播报「按 F 恢复」；运行结束后自动关闭、按钮禁用。按下用中性样式（`aria-pressed`，强制颜色下是系统高亮色轮廓），不用青色。第一次默认打开，之后记住这个浏览器里上次的选择（`lib/follow-execution`，localStorage `sfly.canvas.follow`），但只有按钮和 F 的切换算选择：拖动、缩放、键盘选到视野外这类停止只在当前页面有效（`editor/run-state/use-run-motion.ts` 的 `paused`，`FollowExecution.onPause`），刷新后回到上次用按钮或 F 选的状态；运行结束的自动关闭同样不算选择 |
 | `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认；`role="separator"`，`aria-valuemin` / `aria-valuemax` / `aria-valuenow` 是量出来的值（默认大小也有值），操作说明放在 `aria-describedby` 里，不只写在 `title`。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限是视口宽度的 60%；检查器的上限还要给画布留出小地图、工具条与间距（`INSPECTOR_CANVAS_RESERVE`），取两者里小的，拖到最宽也不会让工具条压住小地图；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
-| `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它；行的属性（点击、样式、`data-*` 标记）由 `rowProps` 给出 |
+| `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它；行的属性（点击、样式、`data-*` 属性）由 `rowProps` 给出 |
+| `#/monitor/ActionTracks`：`ActionTracks`、`ActionLegend` | 运行监控时间线上有动作的节点下面的两条轨道和它们的图例，见 6.1「动作轨道」；数据只从 `monitor/use-action-tracks.ts` 读，排版是 `monitor/action-tracks.ts` 的纯函数（画出来的元素只和像素宽度有关，不随明细条数增长） |
+| `#/actions/ActionTable`：`ActionTable` | 运行监控「动作」页签的表格（一个任务最多 10 万条明细）：行由 `actions/action-table.ts` 整理成「正在做」「最近 20 个」「更早的明细」三组，画成一张虚拟滚动的 `Table`：每组一个 `TableBody`，组名是 `scope="rowgroup"` 的表头，上下用占位行撑出高度，表头吸顶，列宽固定（见 6.5）。结果一列按状态语法：成功不着色，失败是红色菱形加完整的原因（换行），进行中是执行中的形状，标记是小旗；只计数的一段是一整行浅斜纹。离开顶部以后，推送来的行插在上面时视口里的行不动；滚到底部附近读更早的一页。开始一列按 `timeKind` 显示 Agent 时间或控制面时间（ADR 0018，默认控制面时间，存在 localStorage 的 `sfly.actions.time`，和日志的互不影响），显示 Agent 时间时表头第二行写时钟偏差（`attemptClockNote`，和「尝试」页签的说明同一份），时间线不跟着切；每行的开始时间是按钮，点它日志跳到那一刻（`onLocate`，始终是控制面时间）；开始时间的按钮合起来只有一个 Tab 停靠点（漫游焦点，同日志列表；没渲染时停靠点退回视口里的第一行），方向键、PageUp / PageDown、Home、End 在行间移动，只计数的行里的按钮照常可以 Tab；焦点所在的行被卸掉（滚出渲染范围、结束后换了组）时焦点落到页面上，Tab 再进来落在停靠点。三组标题后面的说明由 `groupNotes()` 给：「最近 20 个」在 SDK 超出上限（摘要的 `capped`）或读到控制面丢弃的段时写「超过上限后也一直更新」；只看失败时第三组写失败的动作有没有明细（合计满了没有；没满有，更早的页没读完或读到控制面丢弃的段时加「控制面丢弃的除外」）。只计数的一行里有「只看失败」；只看失败时，这一段里失败的个数不知道（个数包括成功的），写明这个名称一共失败多少个，没有失败过的名称这一行不出现 |
+| `#/actions/ActionToolbar`：`ActionToolbar` | 运行监控「动作」页签的工具条和一行总数：按名称筛选的 `NativeSelect`、「只看失败」开关（`aria-pressed`）、表格里的时间 `Segmented`；下面一行总数，每种名称的个数和「失败 N」是同一份筛选条件的按钮（`aria-pressed`），名称很多时这一块限高、自己滚动。筛选条件由底部面板持有（切到日志再回来还在），换条件重新读明细时工具条不换掉、焦点留在刚操作的控件上，表格显示上一批行（变淡），点按钮之后在实时区域（`<output>`）播报「筛选后 N 个动作」（在点的那一刻算一次，不随摘要的更新重读）。筛选后没有行时写「没有符合条件的动作。」加「清除筛选」，点它以后焦点回到名称下拉 |
 | `list-navigation`：`useListNavigation`、`focusFirstListItem` | 列表页的行导航，见第 7 节 |
-| `feedback/states`：`EmptyState`、`TableSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
+| `feedback/states`：`EmptyState`、`TableSkeleton`、`RackSkeleton`、`ErrorState`、`QueryView` | 空 / 加载 / 错误；`QueryView` 把查询的四种状态接上 |
 | `feedback/notify` | `notify.success / info / warning / error`，见 6.3 |
 | `feedback/banner`：`Banner` | 页内横幅（`danger` / `warn` / `info`），见 6.3 |
 | `feedback/clipboard`：`writeClipboard` | 复制：先用 Clipboard API，内网 http 下没有它或被拒绝时改用浏览器的复制命令；两条路都失败才提示「复制失败」。在点击处理函数里同步调用 |
@@ -166,14 +187,14 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ### 6.1 状态语法（`components/status.tsx` 的 `STATUS`）
 
-状态的颜色、形状、动效都在 `STATUS: Record<StatusKind, StatusLook>` 一张表里：`tone`（标记、描边、色块的颜色）、`text`（状态文字的颜色）、`mark`（8px 标记的形状）、`area`（有面积的色块：`tall` 满高还是矮一档、HTML 的 `box` 类、SVG 的 `svg` 类）、`pulse`（能否脉冲）。`StatusDot`、`StatusPill`、`ChainBar`、`ScenarioThumbnail` 只读这张表；其他要画状态的地方（时间线区段、小地图、趋势柱）也从这里取，不另写颜色。
+状态的颜色、形状、动效都在 `STATUS: Record<StatusKind, StatusLook>` 一张表里：`tone`（状态形状、描边、色块的颜色）、`text`（状态文字的颜色）、`mark`（8px 的状态形状）、`area`（有面积的色块：`tall` 满高还是矮一档、HTML 的 `box` 类、SVG 的 `svg` 类）、`pulse`（能否脉冲）。`StatusDot`、`StatusPill`、`ChainBar`、`RunLines`、`ScenarioThumbnail`、`SlotCell` 只读这张表；其他要画状态的地方（时间线区段、小地图、趋势柱）也从这里取，不另写颜色。
 
-| kind | 用于 | 标记（8px） | 文字 | 面积色块 |
+| kind | 用于 | 状态形状（8px） | 文字 | 面积色块 |
 |---|---|---|---|---|
 | `ok` | 成功、在线 | 绿色实心圆点 | `ok` | 矮；`ok-fill` |
 | `running` | 执行中、准备中、发送中 | 青色圆点加外圈 | `signal-fg` | **满高**；`signal-fill` 底 + `signal-line` 描边 |
 | `failed` | 失败 | 红色实心菱形 | `danger-fg` | **满高**；实心 `danger-fill` |
-| `warn` | 等待中（定时 / Sleep）、警告、安装中 | 琥珀实心三角 | `warn-fg` | **满高**；`warn-fill` 底 + `warn-line` 描边 |
+| `warn` | 等待中（定时 / Sleep）、警告（含关注项的异常）、安装中 | 琥珀实心三角 | `warn-fg` | **满高**；`warn-fill` 底 + `warn-line` 描边 |
 | `pending` | 待执行、离线 | 灰色空心圈 | `fg-3` | 矮；空槽 `pending-fill` |
 | `queued` | 排队中（在等 Agent 的槽位）、通知排队中 | 灰色半实心圈 | `fg-3` | 矮；空槽加灰色斜纹（SVG 里是空槽加灰色描边） |
 | `skipped` | 已跳过 | 灰色斜杠圈 | `fg-3` | 矮；空心，`border-strong` 描边 |
@@ -182,31 +203,40 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 规则：
 
-- **形状**：每种状态一个标记，用 currentColor 画在 8 × 8 的 SVG 里。红绿色觉缺陷时靠形状分辨；强制颜色模式下颜色换成系统文字色，形状照样在；「减少动效」时执行中没有脉冲，靠外圈与成功区分。
-- **面积色块**：需要处理或正在发生的状态（执行中、失败、等待）满高，其余矮一档（链路进度 `ticks` 12 / 8px，`wide` 8 / 5px，缩略图节点上下各收进 1/8）。红色盲看来失败的红和成功的绿几乎同色，靠高度分开；形状相同的两种状态在正常视力与三种色觉缺陷模拟下色差都 ≥ 10（OKLab ΔE，`design-rules.test.ts` 检查）。
+- **形状**：每种状态一个形状，用 currentColor 画在 8 × 8 的 SVG 里。红绿色觉缺陷时靠形状分辨；强制颜色模式下颜色换成系统文字色，形状照样在；「减少动效」时执行中没有脉冲，靠外圈与成功区分。
+- **面积色块**：需要处理或正在发生的状态（执行中、失败、等待）满高，其余矮一档（链路进度 12 / 8px，缩略图节点上下各收进 1/8）。红色盲看来失败的红和成功的绿几乎同色，靠高度分开；形状相同的两种状态在正常视力与三种色觉缺陷模拟下色差都 ≥ 10（OKLab ΔE，`design-rules.test.ts` 检查）。
 - **面积色只有 `-fill` 一档**：同一个状态在进度条、缩略图、时间线、趋势柱、小地图里深浅一样。
-- **脉冲**：状态点默认静止。一屏内每个执行中的对象只在一处脉冲，取它的前沿：运行监控是时间线上执行中区段的段尾脉冲头（每个执行中节点一个），外加顶栏的运行状态标签作为页面级的一处；列表页是每个执行中运行的状态标签；时间线行标签、链路标签、切换运行按钮、图表分组头、「实时跟随」都不脉冲（「实时跟随」是视图状态，不是执行状态）。调用方用 `<StatusDot pulse>` / `<StatusPill pulse>` 打开（只对执行中生效）；不是状态点的元素（时间线段尾的脉冲头）加工具类 `pulse-ring`，它在元素自己的 `::after` 上画一圈当前色的光环，所以脉冲头要是真实元素，不能是伪元素。脉冲只动 `scale` 与 `opacity`，周期 `--pulse-period`，入口调用的 `alignPulses` 让新出现的脉冲对齐到同一相位。
-- 状态文字的颜色在所有表面上 ≥ 4.5:1，标记与色块的颜色 ≥ 3:1（`design-rules.test.ts` 检查）。
+- **脉冲**：状态点默认静止。一屏内每个执行中的对象只在一处脉冲，取它的前沿：运行监控的详情视图是时间线上执行中区段的段尾脉冲头（每个执行中节点一个），外加顶栏的运行状态标签作为页面级的一处，概览视图没有时间线，执行中的节点（链路下面一行、读数、图表卡片）都不脉冲，只有顶栏的运行状态标签；列表页是每个执行中运行的状态标签；控制台是每个运行块（或紧凑行）的状态标签，线路的站、进行中的节点、Agent 列与场景列的状态点都不脉冲；时间线行标签、链路标签、切换运行按钮、图表分组头、「实时跟随」都不脉冲（「实时跟随」是视图状态，不是执行状态）。调用方用 `<StatusDot pulse>` / `<StatusPill pulse>` 打开（只对执行中生效）；不是状态点的元素（时间线段尾的脉冲头）加工具类 `pulse-ring`，它在元素自己的 `::after` 上画一圈当前色的光环，所以脉冲头要是真实元素，不能是伪元素。脉冲只动 `scale` 与 `opacity`，周期 `--pulse-period`，入口调用的 `alignPulses` 让新出现的脉冲对齐到同一相位。
+- 状态文字的颜色在所有表面上 ≥ 4.5:1，状态形状与色块的颜色 ≥ 3:1（`design-rules.test.ts` 检查）。
 
 **时间线区段**（`monitor/Timeline`）按同一套规则画，段的种类对应状态：完成 → `ok`、执行中 → `running`、失败的尝试 → `failed`、等待节点 → `warn`、排队等待 Agent → `queued`、已取消 → `cancelled`、已停止 → `stopped`，用 `STATUS[kind].area.box` 与 `tall`：
 
-- 轨道 12px；矮段在轨道里垂直居中 6px（用 `clip-path: inset()` 或内层元素只改可见高度，点击与悬停的热区保持满高）。
+- 节点行里的区段 12px 高；矮段在其中垂直居中 6px（用 `clip-path: inset()` 或内层元素只改可见高度，点击与悬停的热区保持满高）。
 - 完成是矮的 `ok-fill`；失败的尝试是满高实心红；两者相邻时在任何色觉下都靠高度分开。
 - 执行中满高，段尾加一个真实元素的脉冲头（实心 `signal`，`pulse-ring`），是监控页唯一按节点脉冲的地方。
 - 已取消是矮的空心虚线框（不再是斜纹）；排队是矮的灰色斜纹；等待是满高的琥珀底加描边，三者形状互不相同。
-- 图例按同样的形状画。时间线轨道与图例色块加 `data-viz`（见 6.2）。
+- 图例按同样的形状画。时间线上画区段和动作的区域与图例色块加 `data-viz`（见 6.2）。
+
+**动作轨道**（`monitor/ActionTracks`，排版在 `monitor/action-tracks.ts`）：有动作的节点下面两行，「动作」（最外层）和「└ 子动作」，行高和节点行一样，标签 12px 三级文字，随链收起。轨道是一张图：`role="img"`，可访问名称概括画了什么（正在做的、从几点起只计数、几个失败的、少见的子动作、几个标记），以「逐个查看见下方动作表」结尾；悬停提示写名称、开始、耗时和结果。
+
+- 够长、一条条画出来的动作：进行中的按 `STATUS.running.area`（`signal-fill` 底加 `signal-line` 描边，和执行中的区段一样，不脉冲：段尾的脉冲头仍是每个执行中节点唯一的一处），失败的按 `STATUS.failed.area`，已结束的中性 `border-strong`。动作条都是 14px 高（描边里面放得下 12px 的名称），不按状态分高低：状态色块靠高低分开的是失败的红和成功的绿，这里已结束的是暗灰不是绿，失败的红比它亮得多，各种色觉下都分得开；够宽时在条里写名称（12px）。
+- 分不开的画成密度带：中性 `border-strong` 分三档不透明度，越密越实，不用状态色。
+- 只计数的段是浅斜纹（和「动作」页签里只计数的那一行是同一个意思）：`border-strong` 的 1px 45° 细线加 `border-soft` 描边，和排队段 135° 的灰色斜纹方向相反，也不在同一种行上（排队段在节点行里）；`FocusChart` 里没有新数据的斜线只在图表的绘图区里。
+- 密度带上要认出来的：失败的动作是比带高的红色竖线（取 `STATUS.failed.tone`），少见的子动作是白色竖线（`fg-1`），标记是小旗（`FlagIcon`，`fg-1`，和「动作」页签里标记的小旗一样）。白色竖线和小旗用的是文字色 `fg-1`，只表示「少见」和「标记」，不是选中（节点行左侧的白色短条）也不是主操作。
+- 图例：有动作的节点时在区段的图例后面加「动作」「只计数」「失败的动作」「少见的动作」「标记」；窗口窄于 2xl（1536px）时一行放不下两套，只留动作轨道的这几项。
+- 范围里的节点（选中的）是 `selected-row`。打开页面、换范围时时间线滚到它，版面变高以后再对准一次，用户自己滚动时间线以后不再跟着跳。
 
 **时间轴的跨度**（`monitor/timeline-model.ts`）：运行中的轴不随「现在」每秒伸缩。跨度只取一级一级的固定值（10 秒起，到一天，相邻两级相差 25% 到 50%），取已用时长加 20% 余量后向上的那一级；「现在」线越过轴的 1 / 1.2 才扩到下一级，两次扩轴之间区段与刻度纹丝不动，只有「现在」线向右推进，扩轴时一次到位。已结束的运行按实际时长定轴，末端留 8% 的空白，短运行也铺满轨道。
 
 ### 6.2 强制颜色与高对比度
 
-- **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态标记是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-pressed="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边；数据图形（链路进度、缩略图、槽位条、时间线轨道与图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
+- **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态形状是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-current="location"`（被定位的关注项）、`aria-pressed="true"`、`aria-selected="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边（画布节点卡片是例外：选中靠外圈的 box-shadow，强制颜色下换成隔开 3px 的 3px `Highlight` 外轮廓，不画在卡片里面，见 2.4）；数据图形（链路进度、线路、缩略图、时间线的区段与动作轨道、图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
 - **更高对比度**（`prefers-contrast: more`）：`tokens.css` 末尾的加强档，见第 2 节。
 
 ### 6.3 空、加载、错误、禁用
 
 - **空**：`EmptyState`——图标方块、14px 标题、说明（最宽 40em，居中）、下一步操作（按钮或 `CodeBlock` 命令示例），放在 `Panel` 里。
-- **加载**：`TableSkeleton`（按表格列数画骨架，`role=status` 名称「加载中」）；首次加载才显示，后台刷新不闪；出现前先等 200ms，加载在 200ms 内完成时不闪骨架。
+- **加载**：`TableSkeleton`（按表格列数画骨架，`role=status` 名称「加载中」）；不是表格的页面用与内容同形的骨架，Agent 管理页是 `RackSkeleton`（每台 Agent 一个面板：头部一行加一排槽位格）；首次加载才显示，后台刷新不闪；出现前先等 200ms，加载在 200ms 内完成时不闪骨架。
 - **错误**：`ErrorState`——红色描边块，标题「无法加载 …」、原因、一行错误详情（`GET /api/agents → 503 code`）、「重试」与「复制错误详情」（含 details）。已有数据时后台刷新失败不替换页面。查询默认失败后再重试 2 次（间隔 1 秒），4xx 不重试（`src/router.tsx`）。
 - **禁用**：40% 不透明、`cursor-not-allowed`，不换颜色。
 - **通知**：见下面的「通知与横幅」。
@@ -220,8 +250,8 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | 消失 | 成功 / 信息 2.6 秒，警告 5.2 秒；失败的、带操作的（「撤销」）不自动消失，有关闭按钮 | 状态解除时由页面移除，不自己计时；`onDismiss` 只是收起 | 下次提交时清掉 |
 | 读屏 | 通知区域「通知（Alt+T 跳到这里）」；Alt+T 把焦点移进去 | `announce` 时读一次（失败用 alert）；页面已有状态播报（运行监控的 `<output>`）时不要再开 | `role="alert"` |
 
-- 通知里的信息在别处也要看得到：「撤销」在「已归档」里也能做，运行结果在监控页顶栏一直显示。
-- **运行失败不发通知**：运行监控页在时间线上方显示页内横幅「运行失败」（带「查看失败节点」，可以收起，收起后失败摘要回到顶栏）；成功与取消才在页面上看着结束时发一次回执通知。
+- 通知里的信息在别处也要看得到：「撤销」在「已归档」里也能做，运行结果在监控页顶栏一直显示。列表里的移除是例外：就地移除的列表（可排序的列表，§7）把「撤销」放在列表上方原处，不进通知，因为键盘用户要能直接回到它。
+- **运行失败不发通知**：运行监控页的详情视图在时间线上方显示页内横幅「运行失败」（带「查看失败节点」，可以收起，收起后失败摘要回到顶栏）；概览视图没有横幅，失败摘要一直在顶栏，点它切到详情并打开失败节点的「尝试」页签；成功与取消才在页面上看着结束时发一次回执通知。
 - 弹窗打开时不发通知（会被遮罩挡住、读屏也读不到），错误写在弹窗里。
 - 横幅颜色之外靠图标形状区分：失败八边形、警告三角、信息圆形。
 
@@ -240,6 +270,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - **工具条里的标题、表格与列表里的名称**：用 `Truncate` 单行截断。真的被截断时，悬停或键盘聚焦都会用提示显示全文（只有 `title` 不行：键盘和触屏拿不到）；截断的是链接、按钮本身时传 `render={<Link …/>}`，提示跟着它的聚焦出现；普通文字被截断时自己可以 Tab 到。按钮里还有图标、徽标等别的内容、或者好几段文字都可能被截断时，传 `render` 和 `label`（提示里的全文）：按钮本身是触发器，里面的 `Truncate` 只截断，不再多一个可聚焦的元素和第二个提示，按钮上不再写 `title`。全文始终在 DOM 里，读屏、页内查找、复制拿到的都是全文，不在脚本里截字符串。
 - **标识符保留结尾**：包名@版本、文件名这类最有区分度的在末尾，`Truncate keepEnd={n}` 让结尾 n 个字符始终可见、省略号落在中间。
 - **标识符不折行**：等宽的标识符（包名@版本、地址、运行编号）不在连字符处折成两行，宁可截断；整段的路径、堆栈要换行时用 `overflow-wrap: anywhere`（`wrap-anywhere`），不用 `break-all`（它把普通单词也从中间切开）。
+- **虚拟滚动的表格**（动作表）列宽固定（`table-fixed` 加 `<colgroup>`）：只渲染视口附近的行时，自动列宽会随滚动跳动。
 - **列表表格的列宽**（`TableHead` / `TableCell` 的 `width`，DataTable 写在列的 `meta.width`）：编号、状态、进度、版本、触发人、时间、耗时、操作这类列用 `"fit"`（按内容收紧、不折行）；场景名、说明、错误信息这类列用 `"grow"`（吃掉剩下的宽度，里面用 `Truncate`），每张表只有一列 `"grow"`。宽屏上余量都给 `"grow"` 列，数值列聚在一起，不平摊到每一列。
 
 ### 6.6 浮层体系
@@ -253,9 +284,10 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 ## 7. 键盘、焦点与快捷键
 
 - 焦点环统一是 2px 青色外框（`:focus-visible`，在 `components` 层，第三方库的样式去不掉它），组件不要用 `outline-none` 去掉它（输入框改用青色描边 + 光晕，并用 `focus:outline-hidden` 给强制颜色模式留轮廓）。所有元素平时的 `outline-color` 就是焦点色（base 层），所以带 `transition-colors` 的元素聚焦时焦点环也是即时出现、不会先灰后青。
-- 画布节点卡片的焦点环 `outline-offset` 是 3px：读作「框在卡片外面」，与执行中节点的青色描边区分开。
+- 画布节点卡片的焦点环 `outline-offset` 是 9px：在选中描边（3px 画布底色加 2px `selected` 描边）的外面，读作「框在卡片外面」，与执行中节点的青色描边、选中描边都区分开。
 - 编排画布只有一个 Tab 停靠点：画布区域。进入后方向键沿链选中节点，焦点跟着移到节点卡片上；Esc 取消选中、焦点回到画布区域。节点卡片与连线都不进 Tab 顺序（React Flow 的 `nodesFocusable` / `edgesFocusable` 关闭）。顶栏控件在 DOM 里排在画布之前，工具条与检查器在画布之后。底部的画布工具条同样只有一个 Tab 停靠点：← → 在按钮之间移动，禁用的按钮不参与。
 - 弹窗与抽屉用 `Dialog` / `Sheet`：锁定焦点、Esc 关闭、关闭后焦点回到原处；自己写的浮层也必须满足，并加端到端测试。
+- **可排序的列表**（场景设置的「关注项」页是参照实现）：拖动手柄只服务鼠标（`aria-hidden`，不进 Tab 顺序）；键盘和读屏靠每行的「上移」「下移」按钮，到头的按钮用 `aria-disabled` 而不是 `disabled`（禁用的按钮不能聚焦，连按到头时焦点会掉出列表），焦点跟着被移动的那一项走，实时区域（`<output class="sr-only">`）播报「X 移到第 N 位，共 M 项」。移除后在列表上方原处给「撤销」，焦点移到它上面；撤销只管刚做的那一次移除。
 - **焦点所在的元素被移走时**（归档、恢复、删除了它所在的列表项，空状态被列表替换），焦点不留在 body 上（`useFocusRecovery`，根路由挂载，不用逐页接）：它在列表项（`data-list-item`）里就交给下一项的主链接，没有下一项交给上一项；列表空了、或它不在列表项里，交给页面标题（`PageHeader` 的 h1）。弹窗、菜单关闭时焦点先回到打开它的元素，那个元素随后被移走也照这个规则处理。只管外壳页的主区域，全屏页（画布、运行监控）自己管焦点；用户自己点空白处让焦点离开时不处理。新增内容（登记了第一个机器人）后要把焦点放到新的那一项时，页面自己聚焦它。
 - **快捷键注册表** `src/lib/shortcuts.ts` 的 `SHORTCUTS` 是唯一来源：快捷键面板（?）从它生成，页面用 `useShortcut(id, handler, enabled)` 绑定（`enabled` 为 false 时不绑定，键不被拦截）。新增快捷键先登记（分组「全局 / 编排画布 / 运行监控 / 列表页」、名称、按键、是否允许在输入框或弹窗中触发），再绑定；没有绑定的不要登记。写法：`Ctrl+K`（同时按）、`G D`（1 秒内依次按）；Ctrl 同时匹配 ⌘；默认焦点在输入框里或有弹窗打开时不触发。
 - 不同页面分组（编排画布、运行监控、列表页）可以登记同一个键（画布与监控页的 `E`、`R`，画布与列表页的 `/`），因为它们属于互斥的路由：按键只匹配当前已绑定处理函数的那一个。「全局」的键不能与任何分组重复，同一分组内也不能重复（`shortcuts.test.ts` 检查）。
@@ -276,15 +308,24 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 定时重新查询的间隔与搜索防抖只用 `src/lib/polling.ts` 的命名常量（`LIVE_POLL_MS` 等），不在组件里写数字；列表页的搜索框用 `useSearchInput`（`src/lib/use-search-input.ts`：本地输入、防抖后写进地址，地址变化时同步回搜索框）。
 - 浏览器经 `/api` 前缀访问（docs/ARCHITECTURE.md §7），契约里的 `path` 不含前缀。
 - 指标接口在 `http/metrics.ts` 的 `metricsApi`（摘要、目录、序列、平台自带图表）；实时增量是运行事件流上的 `metrics` 事件（`MetricIncrement`）。
+- 一次运行的关注项读数在 `http/run-focus.ts` 的 `runFocusApi.focus`（`GET /runs/:id/focus?points=N`）：最新值、最终值（`final`）都在控制面算好，页面只显示；异常的判断也只在控制面做（`anomaly` 字段由控制面按 `focus-anomaly.ts` 填，有异常的项排在最前），页面不自己判断。前端只用 `useRunFocus`（运行中每 `LIVE_POLL_MS` 读一次）；一页里要读好几个运行时用 `useQueries` 配它的查询 `runFocusQuery`（Agent 管理页的槽位格：一个运行只读一次、`points=0`，再分给它的各个槽位），key 和缓存与 `useRunFocus` 相同。Agent 列表（`running_tasks` 带 `current_action` 和 `progress`）没有推送，Agent 管理页每 `STATUS_POLL_MS` 重新读一次，槽位格里的关注项也跟着这个节奏读。
+- 一个任务的动作摘要在 `http/actions.ts` 的 `actionsApi.summary`（`GET /tasks/:id/actions/summary`）：正在做的、每种名称的总数和失败数、最近的失败都在控制面准备好，页面只显示。前端只用 `use-task-actions.ts` 的 `useActionSummary`（缓存只有一份：「动作」页签连着推送时由推送更新；没连着、任务还在执行时按调用方给的间隔重新读，结束时再读一次——画布检查器每 `ACTIONS_POLL_MS`，不为它另开推送）。
 
 ## 9. 文案
 
 界面只用中文，不引入 i18n 框架；多处共用的文字集中在 `src/lib/copy.ts`：
 
-- `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词）；`chainLabel()`：链实例名称（主链 / 子流程 X）。
-- `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）。
-- `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
-- `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字。
+- `TERM`：术语（与 `GLOSSARY.md` 一致，「编排」只作动词）；`chainLabel()`：链实例名称（主链 / 子流程 X），手上只有子流程名称（主链为 null）时用 `namedChainLabel()`。
+- `PAGE`：导航与页面名（侧边栏、面包屑、页面标题、命令面板）；`FOCUS`：关注项共用的句子；`INSPECTOR_PAGE`：检查器的页名（页签、页面标题，以及「先在场景设置的「关注项」页移除一项」这类指路的提示：都引用它，改名不会漏）。
+- `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字（控制台页头的计数「运行中」「成功」「失败」也取自它，「取消」按规格写原文，不是状态词「已取消」）；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
+- `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选、展开、收起……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「加载中」（行内的加载提示也只写它，不写「正在加载…」）「无法加载X」（`loadFailed(X)`，X 以字母或数字开头时前面隔一个空格：「无法加载 Agent」）「还没有数据」「这次尝试没有上报数据」，`noMatch(X)`：筛选之后什么都没有的「没有符合条件的X」，日志、运行、动作共用）。
+- 运行监控、运行抽屉与关注项读数用的：`MONITOR_VIEW_LABEL`（概览 / 详情两个视图的名称）、`FINAL_VALUE_LABEL`（最终值）、`FOCUS` 里异常的文字（`attention`「需要注意」，`attentionCount`「3 项需要注意」（控制台运行块读数区的标题旁、画布节点卡片和 Agent 槽位格），`moreItems`「还有 2 个关注项」（`moreLabel` 加上「关注项」，只放得下前几项时），`noneSet`「场景没有设置关注项」（概览和控制台运行块读数区的标题旁、Agent 槽位格里的主指标），`settingsLink()`「设置关注项」「调整关注项」（去场景设置「关注项」页的入口），`logReason`（「1 条 WARN · 10:58:41」「3 条 WARN / ERROR · 10:58:41」：条数是这次尝试的 WARN / ERROR 合计，只有一条时才写它的级别，时间是最近一条的）、`staleFor`、`sourceFailed`、`retryReason` 四种原因的短句，`logDetail`、`staleDetail`、`noDataDetail`、`failedDetail`、`retryDetail`「需要注意」每行写清哪个节点、为什么，`dataUpdated`「数据更新于 HH:MM:SS」，`invalidNote`「（含 N 项已失效的）」：失效的关注项和「无新数据」（`stale`）是两回事，`viewLogLine`、`viewNodeLogs`、`viewNodeAttempts`「需要注意」每行右侧的直达按钮：「在详情里查看 WARN 那一行」「在详情里查看 probe 的日志」「在详情里查看 verify 的尝试」，`otherAlertsRest`「最近 20 条，其余在详情的日志里查看」）、`LOG_LEVEL_LABEL`（日志级别的写法 DEBUG / INFO / WARN / ERROR，日志列表、级别筛选、运行抽屉和异常原因共用）与 `LOG_ALERT_LEVELS`（「WARN / ERROR」）、`MESSAGE.logsExpired`（日志已过保留期）、`chainCountLabel()`（「N 条链 · N 个节点」）、`LIST_LABEL`（列表的可访问名称：图例、各链进度、运行抽屉、控制台运行块和概览链路里进行中的节点）；`MESSAGE.noRunningNodes`（没有执行中的节点）、`MESSAGE.noActiveNodes`（没有进行中的节点）。运行抽屉、控制台的运行块和概览的链路都列排队中、准备中、执行中、等待中的节点，标题和列表名用 `ACTIVE_LABEL`（进行中），不用任何一个节点状态名；那一行的写法只有 `components/active-node` 的 `activeDetail`（还没开始执行的写状态，等待节点写唤醒时间）。「进行中」在运行记录页指运行（进行中的卡片），在运行抽屉和控制台指节点，在运行监控「动作」页签的结果里指还没结束的动作，几处不在同一屏。
+- `NODE_ACTIONS`：动作与标记（GLOSSARY「动作」「标记」）共用的文字：`doing`（「正在做」：画布卡片和读屏的「正在做 X」、检查器的「正在做」、「动作」页签的第一组）；`runningIncomplete()`（「列满 N 个，可能还有没列出的」：正在做的动作列满了，检查器和「动作」页签共用）；`results`（动作的结果：进行中、成功、失败、未结束、标记），是动作自己的一组状态文字，不是运行状态，不引用 `RUN_STATUS_LABEL`，「进行中」引用 `ACTIVE_LABEL`；`countOnly`（「只计数」：「动作」页签只计数的那一行、时间线上动作轨道的浅斜纹和图例）；`countOnlyNoDetail`（「只计数、没有明细」：「动作」页签只计数那一行的主句和检查器的上限说明共用同一个标点）。`doingNow`（「正在」：可见处的短写，Agent 槽位格和运行监控概览执行中那一行写「正在 X」；读屏仍读 `doing` 的「正在做 X」；画布卡片用执行中的形状代替这两个字，不引用它）。「动作」页签的文字在 `ACTION_PAGE`（工具条、三组的名称、表头里的 Agent 时间、只计数的一行里的起止、原因和失败的个数、读屏播报、跳到日志），列名（耗时用 `DURATION_LABEL`）写在 `ActionTable` 里；时间切换的名称各管各的，日志页签写「日志时间」，「动作」页签写「表格里的时间」（`ACTION_PAGE.timeKind`），两份选择互不影响；检查器的计数表表头和上限说明写在 `InspectorActions` 里，只在那里出现。术语「动作」是 `TERM.action`；`attemptLabel()`（「第 2 次尝试」：尝试序号只有这一种写法，运行监控的尝试页签、范围、失败摘要、时间线，画布检查器，槽位格、控制台和概览里进行中的节点，关注项的重试原因都用它；日志合并视图的来源列只有 140px，写「名称 #N」，是唯一的例外）；`PROGRESS_LABEL`（节点上报的「进度」，图表工作区、时间线、运行抽屉、画布检查器共用；运行记录表里的「进度」是各链进度，不是它）；`DOC_PAGE["sdk-reference"]` 是开发文档「开发节点（SDK 参考）」的页名。和 `ACTION`（界面上的通用操作）不是一回事。
+- 指向运行监控「详情」视图的写法：`MONITOR_DETAIL_LABEL`（「运行监控详情」：运行监控页之外的地方，如画布检查器，用它指路）、`openInLabel()`（「在运行监控详情里打开 fetch」：去另一个页面里看这个节点的按钮或链接）、`viewInLabel()`（「在详情里查看 fetch」「在日志里查看 10:00:01」：同一页里切到另一个视图或页签去看某样东西，概览的图表卡片、「需要注意」的按钮和「动作」页签里开始时间的按钮用它）、`hiddenSeriesLabel`（图例里放不下的序列，「还有 N 条序列」和 `moreLabel` 同一个说法：概览是页内切到详情，写「在详情里查看」；检查器要去另一个页面，写「打开运行监控详情」）与 `ZOOM_IN_DETAIL_LABEL`（「要缩放，打开运行监控详情」）。
+- 「打开 X」是去另一个页面（「打开运行监控」「打开失败节点」：控制台的失败行进入运行监控并选中失败节点；「在画布中打开」「打开运行记录」），「查看 X」是在当前页面里展开或切换（运行监控页横幅的「查看失败节点」，概览里「在详情里查看…」）；同一个意思不换着说。
+- 时长、数量与 Agent 状态：`ELAPSED_LABEL`（已运行）、`DURATION_LABEL`（耗时）、`moreLabel()`（「还有 N 个」：列表或线路只画出一部分时）、`AGENT_STATUS_LABEL`（在线、离线；Agent 的完整状态用 `#/agents/agent-status` 的 `agentStatusView`）、`slotUsageLabel()`、`queuedLabel()`（「2 / 8 占用」「排队 1」；`QUEUED_LABEL` 是「排队」这个词，控制台页头的计数和排队任务的一行时间说明也用它）、`RUNNING_PRIMARY_LABEL`（「执行中节点的主指标」）。
+- `DOC_PAGE`：界面里引用的开发文档页，slug → 页名（与 `docs/guide/pages.json` 的标题一致，有单测检查）；链接用 `DocPageLink`。
+- 只写一句错误的地方（运行监控的页头、「需要注意」和图表工作区的节点信息、关注项的失败原因、画布检查器）取错误信息的第一行：`@sfly/schema` 的 `errorHeadline()`，之后的行是堆栈，不显示。
 
 规则：两处及以上用到的文字、状态与术语放在这里，新增时先加到这里再引用，不要在组件里另写一份；只在一个页面出现的说明文字（空状态说明、提示语）留在组件里。
 
@@ -300,11 +341,11 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 ## 11. 动效
 
 - **token**（`tokens.css`）：`--motion-fast` 100ms（退场、悬停、按下）、`--motion-base` 150ms（浮层与提示进场、选中、颜色变化）、`--motion-slow` 200ms（抽屉、画布视口）；`--motion-ease-out`（进场与状态变化，工具类 `ease-out` / `ease-standard`）、`--motion-ease-in`（退场，`ease-in`）。`transition-*` 不写时长与缓动时默认就是 `--motion-base` + `--motion-ease-out`；浮层用 `duration-(--motion-base)` 这样的写法取值。JS 驱动的动效（画布视口）用同样的数值。
-- 只动 `transform`（`translate` / `scale`）与 `opacity`；图表数据刷新、日志跟随、列表焦点移动都是瞬时的。
+- 只动 `transform`（`translate` / `scale`）与 `opacity`；图表数据刷新、日志跟随、列表焦点移动都是瞬时的。唯一的例外是 SVG 连线的虚线流动（`stroke-dashoffset`：选中的连线、刚变成执行中的连线），连线没有 `transform` 能表达的位移。
 - **减少动效**（`prefers-reduced-motion: reduce`）：去掉位移、缩放、视口平移和持续循环的动画，保留淡入淡出与颜色变化，状态信息不能只靠动画表达。不用全局把时长压成 0 的写法，按动效逐个处理，规则写在动效定义旁边：
-  - 持续循环的动画只在 `prefers-reduced-motion: no-preference` 下启用：执行中的脉冲（`pulse-ring`）、骨架屏的明暗呼吸（`animate-pulse`）。静止时它们的形状已经说明了状态。画布选中连线的虚线流动不是持续循环：流动 2 个周期后停住，减少动效时不流动。
+  - 持续循环的动画只在 `prefers-reduced-motion: no-preference` 下启用：执行中的脉冲（`pulse-ring`）、骨架屏的明暗呼吸（`animate-pulse`）。静止时它们的形状已经说明了状态。画布选中连线的虚线流动不是持续循环：流动 2 个周期后停住，减少动效时不流动。运行状态下进入执行中节点的连线同理：静止的青色实线，只在一段连线刚变成执行中的那一刻（页面看着它变成执行中）流动 2 遍（`edge-enter`）后变回实线，减少动效时不流动；打开页面时已经在执行的连线是静止的。
   - 加载图标（`animate-spin`）放慢到 3 秒一圈，不停下来。
   - 浮层的进出场（`components/ui/overlay.ts` 的 `POPUP_MOTION`：Base UI 的 `data-starting-style` / `data-ending-style` 加过渡）只剩淡入淡出：缩放写在 `motion-safe:` 里，抽屉的位移由 `app.css` base 层清掉。进场 `--motion-base`、退场 `--motion-fast`；通知进出场 `--motion-slow`，堆叠时高度变化不做过渡。
   - 颜色、底色、描边的过渡照常。
-- **暂停动效**（全站一个开关）：没开系统「减少动效」的人也能停掉持续自动运动（一盯几个小时的运行监控、控制台的「正在运行」）。键名 `sfly.motion.paused`（localStorage，`lib/motion-pause.ts`），状态写在 `<html data-motion="paused">`，`app.css` 据此停掉所有持续循环：执行中的脉冲（`pulse-ring`）、骨架屏的呼吸，加载图标放慢到 3 秒一圈而不停；执行中的形状（带外圈的点、段尾的脉冲头）照旧。入口两处：运行监控顶栏的「暂停动效」按钮（运行中，或已经暂停时显示），命令面板的全局命令「暂停动效 / 恢复动效」；两处是同一个开关。
+- **暂停动效**（全站一个开关）：没开系统「减少动效」的人也能停掉持续自动运动（一盯几个小时的运行监控、控制台的「正在运行」）。键名 `sfly.motion.paused`（localStorage，`lib/motion-pause.ts`），状态写在 `<html data-motion="paused">`，`app.css` 据此停掉所有持续循环：执行中的脉冲（`pulse-ring`）、骨架屏的呼吸，加载图标放慢到 3 秒一圈而不停；执行中的形状（带外圈的点、段尾的脉冲头）照旧。画布运行状态里一次性的动效不受它影响：刚变成执行中的连线流动 2 遍就停，跟随执行的镜头平移是执行前沿变化时才发生，想停掉后者就关「跟随执行」。入口两处：运行监控顶栏的「暂停动效」按钮（运行中，或已经暂停时显示），命令面板的全局命令「暂停动效 / 恢复动效」；两处是同一个开关。
 - **页面过渡**：只有「编排画布的运行状态 ↔ 运行监控」这一对入口做 View Transition（`lib/view-transition.ts`；`runViewTransition("to-monitor" | "to-canvas")` 传给 `Link` 的 `viewTransition`）：整页淡入淡出并朝前进的方向平移 12px（150ms），运行状态标签（工具类 `vt-run-state`）移动到另一页的位置（200ms）。全局路由切换与列表重排不做过渡；系统开了「减少动效」时不发起，直接切换。过渡的样式写在 `app.css` 末尾，按 type 区分。

@@ -38,7 +38,7 @@ test("运行中时间轴不随「现在」每秒压缩：右端留余量，只�
 	await openMonitor(page, clock, runId);
 	const tl = timeline(page);
 	const elapsed = header(page).getByTestId("run-elapsed");
-	await expect(elapsed).toHaveText("已运行 14.0s");
+	await expect(elapsed).toHaveText("已运行 14s");
 
 	// 14 秒的运行取 20 秒的轴：verify 第 2 次从第 9 秒起，「现在」线在 70%。
 	const before = await segmentLeft(page, "verify", "run");
@@ -47,14 +47,14 @@ test("运行中时间轴不随「现在」每秒压缩：右端留余量，只�
 	await expect(tl.locator("[data-now-line]")).toHaveAttribute("style", /left: 70%/);
 
 	await advance(clock, agent, 2_000);
-	await expect(elapsed).toHaveText("已运行 16.0s");
+	await expect(elapsed).toHaveText("已运行 16s");
 	await expect(tl.locator("[data-now-line]")).toHaveAttribute("style", /left: 80%/);
 	expect(await segmentLeft(page, "verify", "run")).toBeCloseTo(before, 3);
 	expect(await tl.locator("[data-axis-track] span").allTextContents()).toEqual(ticksBefore);
 
 	// 越过余量（17 秒 × 1.2 > 20 秒）：扩到 30 秒，区段与刻度一次到位。
 	await advance(clock, agent, 1_000);
-	await expect(elapsed).toHaveText("已运行 17.0s");
+	await expect(elapsed).toHaveText("已运行 17s");
 	await expect.poll(() => segmentLeft(page, "verify", "run")).toBeCloseTo(9 / 30, 2);
 	expect(await tl.locator("[data-axis-track] span").allTextContents()).not.toEqual(ticksBefore);
 });
@@ -97,20 +97,26 @@ test("脉冲：同屏每个执行中的对象只在前沿脉冲一处；「暂�
 	await expect.poll(() => pulses(page)).toBe(3);
 });
 
-test("笔记本屏上时间线的行全部露出，不把执行中的节点藏到折叠线下面；窗口很矮时把它滚进来", async ({
+test("时间线主体最高占视口的 30%：行少时按内容的高度，放不下时滚动；不把执行中的节点藏到折叠线下面", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
 	const { runId } = await runningScenario(controlPlane, connectAgent, clock);
-	await page.setViewportSize({ width: 1024, height: 768 });
+	await page.setViewportSize({ width: 1024, height: 1080 });
 	await openMonitor(page, clock, runId);
 	const main = body(page);
-	// 9 行（2 条链、7 个节点）：主体的高度够放下全部行，没有滚动。
+	// 9 行（2 条链、7 个节点）：1080 的 30% 放得下全部行，没有滚动，主体就是内容的高度。
 	await expect(timeline(page).locator("[data-chain-row], [data-node-row]")).toHaveCount(9);
-	expect(await main.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+	await expect.poll(() => main.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+	await expect.poll(() => main.evaluate((el) => el.clientHeight)).toBeLessThan(1080 * 0.3);
 	await expect(timeline(page).locator('[data-node-row="probe"]')).toBeInViewport();
+
+	// 笔记本屏（768 高）：主体限在 30%（230px），放不下全部行，滚动；第一个执行中的节点（verify）看得见。
+	await page.setViewportSize({ width: 1024, height: 768 });
+	await expect.poll(() => main.evaluate((el) => el.clientHeight)).toBeLessThanOrEqual(231);
+	await expect(timeline(page).locator('[data-node-row="verify"]')).toBeInViewport({ ratio: 1 });
 
 	// 窗口矮到放不下全部行：第一个执行中的节点（verify）自动滚进可视范围。
 	await page.setViewportSize({ width: 1024, height: 300 });
@@ -281,6 +287,8 @@ test("底部面板的页签是一个 Tab 停靠点：← → 在页签之间移�
 
 	await logsTab.focus();
 	await page.keyboard.press("ArrowRight");
+	await expect(tabs.getByRole("tab", { name: "动作" })).toBeFocused();
+	await page.keyboard.press("ArrowRight");
 	await expect(tabs.getByRole("tab", { name: "尝试" })).toBeFocused();
 	await page.keyboard.press("Enter");
 	await expect(tabs.getByRole("tab", { name: "尝试" })).toHaveAttribute("aria-selected", "true");
@@ -311,7 +319,7 @@ test("运行失败不弹通知：页内横幅留在时间线上方，状态一�
 	await expect(header(page).getByTestId("run-status")).toHaveText("失败");
 	const banner = page.getByRole("region", { name: "运行失败" });
 	await expect(banner).toBeVisible();
-	await expect(banner).toContainText("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
+	await expect(banner).toContainText("失败于 verify（第 2 次尝试）· AssertionError: 仍然漏拦");
 	const top = await header(page).boundingBox();
 	const bar = await banner.boundingBox();
 	const tl = await timeline(page).boundingBox();

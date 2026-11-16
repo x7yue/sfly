@@ -12,6 +12,8 @@
  *   （ShortcutMatcher.handle 的 isBound）。「全局」的键不能与任何分组重复，同一分组内也不能重复（单测检查）。
  */
 
+import { ACTION } from "./copy";
+
 export type ShortcutGroup = "全局" | "编排画布" | "运行监控" | "列表页";
 
 export interface ShortcutDef {
@@ -63,7 +65,7 @@ export const SHORTCUTS = [
 	{ id: "canvas-run", group: "编排画布", label: "运行", keys: "Ctrl+Enter", palette: true },
 	{ id: "canvas-mode-edit", group: "编排画布", label: "编辑模式", keys: "E" },
 	{ id: "canvas-mode-run", group: "编排画布", label: "运行状态模式", keys: "R" },
-	{ id: "canvas-undo", group: "编排画布", label: "撤销", keys: "Ctrl+Z" },
+	{ id: "canvas-undo", group: "编排画布", label: ACTION.undo, keys: "Ctrl+Z" },
 	{ id: "canvas-redo", group: "编排画布", label: "重做", keys: "Ctrl+Shift+Z" },
 	{ id: "canvas-tidy", group: "编排画布", label: "整理布局", keys: "Alt+Shift+F" },
 	// 添加节点（editor/ScenarioEditor.tsx）：/ 添加的节点不连线；焦点在节点卡片上按 Tab，新节点接在它后面
@@ -101,6 +103,8 @@ export const SHORTCUTS = [
 		displayOnly: true,
 	},
 	{ id: "canvas-fit", group: "编排画布", label: "适配视图", keys: "0" },
+	// 跟随执行（运行状态，components/canvas/FlowCanvas.tsx）：镜头框住执行中的节点；运行结束后不可用。
+	{ id: "canvas-follow", group: "编排画布", label: ACTION.followExecution, keys: "F" },
 	{ id: "canvas-pointer", group: "编排画布", label: "指针", keys: "V" },
 	{ id: "canvas-hand", group: "编排画布", label: "抓手", keys: "H" },
 	{ id: "canvas-minimap", group: "编排画布", label: "小地图", keys: "M" },

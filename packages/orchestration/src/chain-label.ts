@@ -25,6 +25,13 @@ export const subflowLabel = (node: { id: string; name?: string | null | undefine
 	subflowName({ id: node.id, name: node.name ?? undefined }) || UNNAMED_SUBFLOW_LABEL;
 
 /**
+ * 按名称写出链的名称（链实例的名称只靠名称就够写时用，例如槽位格里的任务）：`name` 是子流程名称（{@link subflowName}），
+ * 主链传 null。「主链」或「子流程 <名称>」，名称为空时显示 {@link UNNAMED_SUBFLOW_LABEL}。
+ */
+export const namedChainLabel = (name: string | null): string =>
+	name === null ? MAIN_CHAIN_LABEL : `${SUBFLOW_LABEL} ${name || UNNAMED_SUBFLOW_LABEL}`;
+
+/**
  * 链实例的名称：「主链」或「子流程 <名称>」（`chain_id` 是子流程入口节点的 ID，`name` 是它的名称）；
  * 给出实例 ID 时带上实例短 ID（同一子流程有多个实例时区分）：「子流程 <名称> · <实例短 ID>」。
  */
@@ -33,6 +40,6 @@ export function chainLabel(
 	instanceId?: string,
 ): string {
 	if (!chain.subflow) return MAIN_CHAIN_LABEL;
-	const name = `${SUBFLOW_LABEL} ${subflowLabel({ id: chain.chain_id, name: chain.name })}`;
+	const name = namedChainLabel(subflowName({ id: chain.chain_id, name: chain.name ?? undefined }));
 	return instanceId ? `${name} · ${shortId(instanceId)}` : name;
 }

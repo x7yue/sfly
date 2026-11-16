@@ -7,17 +7,26 @@ import {
 } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
-import { ChainBar, doneCount } from "#/components/chain-progress";
+import { ChainBar, chainProgressText } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { chainLabel as chainName, TERM } from "#/lib/copy";
+import {
+	ACTIVE_LABEL,
+	chainLabel as chainName,
+	LIST_LABEL,
+	LOG_LEVEL_LABEL,
+	MESSAGE,
+	PROGRESS_LABEL,
+	TERM,
+} from "#/lib/copy";
 import {
 	formatClock,
 	formatDateTime,
-	formatDuration,
+	formatElapsed,
 	formatFullDateTime,
+	formatSpan,
 	shortId,
 	spansOtherDay,
 	TIME_NOT_RECORDED,
@@ -43,8 +52,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 const LOG_LINES = 6;
 
 /**
- * 运行抽屉的摘要阶段（原型 drawerHTML 的 summary）：运行状态与时长、各链进度、正在执行的节点（进度）、
- * 最新几行日志，实时更新；节点类型有主指标时，正在执行的节点显示主指标的最新值与趋势（#43）。
+ * 运行抽屉的摘要阶段（原型 drawerHTML 的 summary）：运行状态与时长、各链进度、进行中的节点（进度）、
+ * 最新几行日志，实时更新；节点类型有主指标时，节点下面显示主指标的最新值与趋势（#43）。
  * 底部按钮由 RunDrawer 渲染。
  */
 export function RunSummary({ runId }: { runId: string }) {
@@ -55,12 +64,16 @@ export function RunSummary({ runId }: { runId: string }) {
 	const now = useNow(!run || run.status === "running");
 	if (query.error && !run) {
 		return (
-			<ErrorState title="无法加载运行" error={query.error} onRetry={() => void query.refetch()} />
+			<ErrorState
+				title={MESSAGE.loadFailed(TERM.run)}
+				error={query.error}
+				onRetry={() => void query.refetch()}
+			/>
 		);
 	}
 	if (!run) {
 		return (
-			<output aria-label="加载中" className="flex flex-col gap-3">
+			<output aria-label={MESSAGE.loading} className="flex flex-col gap-3">
 				<Skeleton className="h-6 w-full" />
 				<Skeleton className="h-24 w-full" />
 			</output>
@@ -86,7 +99,7 @@ export function RunSummary({ runId }: { runId: string }) {
 				<span className="font-mono" data-slot="run-id">
 					{shortId(run.id)}
 				</span>
-				<span className="font-mono text-fg-3">{formatDuration(elapsed)}</span>
+				<span className="font-mono text-fg-3">{formatSpan(elapsed, !run.ended_at)}</span>
 				<span className="ml-auto text-xs text-fg-3">
 					{run.triggered_by}
 					<ViaTag via={run.triggered_via} /> 触发 ·{" "}
@@ -94,18 +107,20 @@ export function RunSummary({ runId }: { runId: string }) {
 				</span>
 			</div>
 			{run.run_notification && <RunNotificationLine state={run.run_notification} />}
-			<ul aria-label="各链进度" className="m-0 flex list-none flex-col gap-1.5 p-0">
+			<ul aria-label={LIST_LABEL.chainProgress} className="m-0 flex list-none flex-col gap-1.5 p-0">
 				{chains.map((chain) => (
 					<ChainRow key={chain.id} chain={chain} />
 				))}
 			</ul>
-			<h3 className="mt-4.5 mb-2.5 text-xs font-semibold tracking-wide text-fg-2">正在执行</h3>
+			<h3 className="mt-4.5 mb-2.5 text-xs font-semibold tracking-wide text-fg-2">
+				{ACTIVE_LABEL}
+			</h3>
 			{active.length === 0 ? (
 				<p className="m-0 text-xs text-fg-3">
-					{run.status === "running" ? "没有正在执行的节点。" : `运行已结束：${status.label}。`}
+					{run.status === "running" ? MESSAGE.noActiveNodes : `运行已结束：${status.label}。`}
 				</p>
 			) : (
-				<ul aria-label="正在执行的节点" className="m-0 flex list-none flex-col gap-2 p-0">
+				<ul aria-label={LIST_LABEL.activeNodes} className="m-0 flex list-none flex-col gap-2 p-0">
 					{active.map(({ chain, node }) => (
 						<ActiveNode
 							key={`${chain.id}:${node.node_id}`}
@@ -158,7 +173,6 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 }
 
 function ChainRow({ chain }: { chain: ChainRunView }) {
-	const done = doneCount(chain.nodes);
 	const label = chainLabelParts(chain);
 	return (
 		<li className="flex items-center gap-2.5 text-xs">
@@ -175,9 +189,7 @@ function ChainRow({ chain }: { chain: ChainRunView }) {
 				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name })}
 				nodes={chain.nodes}
 			/>
-			<span className="ml-auto font-mono text-2xs text-fg-3">
-				{done}/{chain.nodes.length}
-			</span>
+			<span className="ml-auto font-mono text-2xs text-fg-3">{chainProgressText(chain.nodes)}</span>
 		</li>
 	);
 }
@@ -198,7 +210,8 @@ function ActiveNode({
 }) {
 	const s = nodeStatusView(node.status);
 	const attempt = node.attempts.at(-1);
-	const since = attempt?.started_at ?? attempt?.queued_at;
+	// 还没开始执行（排队中、准备中）的不写时长：状态标签已经写明，不从排队算起（同控制台和概览的进行中的节点）。
+	const since = attempt?.started_at;
 	const progress = attempt?.progress;
 	const ratio = progress?.total
 		? Math.min(1, Math.max(0, progress.current / progress.total))
@@ -210,7 +223,7 @@ function ActiveNode({
 				<NodeName node={node} />
 				{chain.depth > 0 && <span className="truncate text-xs text-fg-3">{chainLabel(chain)}</span>}
 				<span className="ml-auto font-mono text-2xs text-fg-3">
-					{[node.agent, since ? formatDuration(now - Date.parse(since)) : null]
+					{[node.agent, since ? formatElapsed(now - Date.parse(since)) : null]
 						.filter(Boolean)
 						.join(" · ")}
 				</span>
@@ -229,7 +242,7 @@ function ActiveNode({
 					{ratio !== null && (
 						<div
 							role="progressbar"
-							aria-label={`${runNodeName(node)} 进度`}
+							aria-label={`${runNodeName(node)} ${PROGRESS_LABEL}`}
 							aria-valuemin={0}
 							aria-valuemax={progress.total ?? undefined}
 							aria-valuenow={progress.current}
@@ -260,10 +273,10 @@ function ActiveNode({
 }
 
 const LEVEL: Record<string, { label: string; className: string }> = {
-	debug: { label: "DEBUG", className: "text-log-debug" },
-	info: { label: "INFO", className: "text-log-info" },
-	warn: { label: "WARN", className: "text-log-warn" },
-	error: { label: "ERROR", className: "text-log-error" },
+	debug: { label: LOG_LEVEL_LABEL.debug, className: "text-log-debug" },
+	info: { label: LOG_LEVEL_LABEL.info, className: "text-log-info" },
+	warn: { label: LOG_LEVEL_LABEL.warn, className: "text-log-warn" },
+	error: { label: LOG_LEVEL_LABEL.error, className: "text-log-error" },
 };
 
 const NO_FILTER: never[] = [];
@@ -280,7 +293,13 @@ function LatestLogs({ taskId, day }: { taskId: string; day: string }) {
 	)
 		? formatFullDateTime
 		: formatClock;
-	if (logs.error) return <p className="m-0 text-xs text-danger-fg">无法加载日志：{logs.error}</p>;
+	if (logs.error) {
+		return (
+			<p className="m-0 text-xs text-danger-fg">
+				{MESSAGE.loadFailed("日志")}：{logs.error}
+			</p>
+		);
+	}
 	if (!logs.loaded) return <Skeleton className="h-16 w-full" />;
 	if (lines.length === 0) return <p className="m-0 text-xs text-fg-3">还没有日志。</p>;
 	return (
