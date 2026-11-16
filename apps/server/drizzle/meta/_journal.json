@@ -197,6 +197,13 @@
       "when": 1794762074626,
       "tag": "0028_log_issues",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794780213100,
+      "tag": "0029_action_details",
+      "breakpoints": true
     }
   ]
 }

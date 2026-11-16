@@ -314,6 +314,8 @@ class Actions:
         self._ids = itertools.count(1)
         self._names: dict[str, _NameStats] = {}
         self._total = 0
+        #: 其中标记的个数。
+        self._marks = 0
         self._reported = 0
         self._capped: tuple[int, int] | None = None
         self._running: dict[int, _Record] = {}
@@ -449,6 +451,8 @@ class Actions:
                     )
             stats.total += 1
             self._total += 1
+            if mark:
+                self._marks += 1
             rec = _Record(
                 next(self._ids),
                 parent.id if parent is not None else None,
@@ -583,6 +587,7 @@ class Actions:
             "ts": ts,
             "mono": mono,
             "total": self._total,
+            "marks": self._marks,
             "reported": self._reported,
             **_capped(self._capped),
             "names": [

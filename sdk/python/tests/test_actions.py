@@ -499,6 +499,7 @@ def test_the_summary_event_lists_names_running_recent_and_recent_failed(tmp_path
     assert without_times(summary) == {
         "type": "action_summary",
         "total": 1,
+        "marks": 0,
         "reported": 1,
         "capped_ts": None,
         "capped_mono": None,
@@ -519,6 +520,18 @@ def test_the_summary_event_lists_names_running_recent_and_recent_failed(tmp_path
         "recent": [],
         "recent_failed": [],
     }
+
+
+def test_the_summary_counts_marks_apart_from_actions(tmp_path: Path) -> None:
+    ctx, events = make_context(tmp_path)
+
+    with ctx.action("下单"):
+        ctx.mark("收到第一笔成交")
+    ctx.mark("收到第一笔成交")
+    ctx.action.start("等回报")
+
+    wait_for(lambda: only(events(), "action_summary")[-1]["total"] == 4)
+    assert only(events(), "action_summary")[-1]["marks"] == 2
 
 
 def test_the_summary_keeps_at_most_50_running_the_shallowest_first(tmp_path: Path) -> None:

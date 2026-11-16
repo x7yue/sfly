@@ -1,6 +1,7 @@
 // Drizzle 表定义（唯一来源）。修改后运行 `pnpm --filter @sfly/server db:generate --name <描述>` 生成迁移。
 // 表随各票据加入，见 docs/ARCHITECTURE.md §6.2。
 import {
+	type ActionResult,
 	type ActionSummaryView,
 	type AgentUpdateState,
 	type CurrentAction,
@@ -19,6 +20,7 @@ import {
 	doublePrecision,
 	index,
 	integer,
+	json,
 	jsonb,
 	pgTable,
 	primaryKey,
@@ -435,6 +437,12 @@ export const tasks = pgTable(
 		metricSeriesCapped: boolean("metric_series_capped").notNull().default(false),
 		/** Agent 断线排队超过上限而丢弃的指标点数（#29，Agent 在 MetricBatch 中上报）。 */
 		metricDropped: bigint("metric_dropped", { mode: "number" }).notNull().default(0),
+		/** 已存下的动作和标记的明细条数（规格 #345，`task_actions`）；控制面兜底的合计上限按它判断。 */
+		actionDetails: integer("action_details").notNull().default(0),
+		/** 明细的修订号：每写入一批加一，写入或结束的明细记下这个值（`task_actions.rev`），实时推送按它接续。 */
+		actionRev: bigint("action_rev", { mode: "number" }).notNull().default(0),
+		/** 控制面兜底丢弃过明细：任务日志里的警告已经写过（每个任务只写一次）。 */
+		actionCapped: boolean("action_capped").notNull().default(false),
 	},
 	(t) => [
 		index("tasks_waiting").on(t.wakeAt).where(sql`${t.status} = 'waiting'`),
@@ -448,17 +456,79 @@ export const tasks = pgTable(
 
 /**
  * 任务最新的一份动作摘要（规格 #345，src/actions/task-actions.ts）：每一份都是完整的，新的整个替换旧的。
- * 和任务行分开存：一份可以有几百 KB，引擎和运行视图读任务行时不用把它读出来。和任务的进度一样随任务保留。
+ * 和任务行分开存：一份可以有几百 KB，引擎和运行视图读任务行时不用把它读出来。保留期和日志相同（src/retention/retention.ts）。
  */
 export const taskActionSummaries = pgTable("task_action_summaries", {
 	taskId: uuid("task_id")
 		.primaryKey()
 		.references(() => tasks.id),
-	/** 时间已经折算好、secret 值已经打码的摘要；正在做的动作在任务结束后由读取的一方当作空的。 */
-	summary: jsonb("summary").$type<ActionSummaryView>().notNull(),
+	/** 时间已经折算好、secret 值已经打码的摘要；正在做的动作在任务结束后由读取的一方当作空的。用 json 而不是 jsonb：保留字段的先后。 */
+	summary: json("summary").$type<ActionSummaryView>().notNull(),
 	/** 从摘要里选出的此刻在做的动作：运行视图、Agent 列表只读这一列。 */
 	currentAction: jsonb("current_action").$type<CurrentAction>(),
 });
+
+/**
+ * 动作和标记的明细（规格 #345，src/actions/task-actions.ts）：每个动作、标记一行，ID 是 SDK 分配的任务内 ID。
+ * 时间已经折算好、secret 值已经打码；还在做的动作结果为空，任务结束以后由读取的一方记为未结束。
+ * 没有指向任务的外键：一批最多 1000 行，外键检查在写入路径上逐行执行（与 `metric_segments` 一样）；
+ * 写入前已经确认任务存在。
+ */
+export const taskActions = pgTable(
+	"task_actions",
+	{
+		taskId: uuid("task_id").notNull(),
+		id: bigint("id", { mode: "number" }).notNull(),
+		kind: text("kind").$type<"action" | "mark">().notNull(),
+		parent: bigint("parent", { mode: "number" }),
+		depth: integer("depth").notNull(),
+		name: text("name").notNull(),
+		/** 开始时给的字段：`json` 而不是 `jsonb`，保留写入的先后。 */
+		fields: json("fields").$type<Record<string, string>>().notNull(),
+		/** 结束时补充的字段（note()），读取时覆盖到 `fields` 上；开始和结束在同一批时直接写进 `fields`。 */
+		noted: json("noted").$type<Record<string, string>>(),
+		startedAt: timestamptz("started_at").notNull(),
+		agentStartedAt: timestamptz("agent_started_at").notNull(),
+		/** 开始的单调时钟读数（毫秒）：耗时是结束与它的差，Agent 的系统时间被改动不影响。 */
+		startMono: bigint("start_mono", { mode: "number" }).notNull(),
+		endedAt: timestamptz("ended_at"),
+		agentEndedAt: timestamptz("agent_ended_at"),
+		durationMs: bigint("duration_ms", { mode: "number" }),
+		result: text("result").$type<ActionResult>(),
+		reason: text("reason"),
+		/** 最后写入这一行（开始或结束）的那一批的修订号（`tasks.action_rev`）。 */
+		rev: bigint("rev", { mode: "number" }).notNull(),
+	},
+	(t) => [
+		primaryKey({ columns: [t.taskId, t.id] }),
+		index("task_actions_started").on(t.taskId, t.startedAt, t.id),
+		index("task_actions_name").on(t.taskId, t.name, t.startedAt, t.id),
+		index("task_actions_failed").on(t.taskId, t.startedAt, t.id).where(sql`${t.result} = 'failed'`),
+		index("task_actions_rev").on(t.taskId, t.rev, t.id),
+	],
+);
+
+/**
+ * 每个任务每种名称的明细计数（规格 #345）：控制面兜底的每种名称上限按 `stored` 判断，被丢弃的个数和其中最早的
+ * 开始时间是「只计数的段」里 `control_plane` 那一段。
+ */
+export const taskActionNames = pgTable(
+	"task_action_names",
+	{
+		taskId: uuid("task_id")
+			.notNull()
+			.references(() => tasks.id),
+		name: text("name").notNull(),
+		/** 存下的明细个数，不含补发的失败动作（它们只受合计上限的限制）。 */
+		stored: integer("stored").notNull().default(0),
+		/** 控制面兜底丢弃的个数。 */
+		dropped: integer("dropped").notNull().default(0),
+		/** 被丢弃的明细里最早的开始时间（控制面时间、Agent 时间）；没有丢弃过时为空。 */
+		droppedFrom: timestamptz("dropped_from"),
+		agentDroppedFrom: timestamptz("agent_dropped_from"),
+	},
+	(t) => [primaryKey({ columns: [t.taskId, t.name] })],
+);
 
 export type FeishuMessageSource = "node" | "notify" | "run_notification";
 export type FeishuMessageStatus = "queued" | "delivered" | "failed" | "discarded";

@@ -6,6 +6,7 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
+import { actionsScenario, actionTable } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
 import { canvasFocusRun, openCanvasRun } from "./canvas-focus-support";
 import {
@@ -619,6 +620,21 @@ test("运行监控：失败的运行（尝试页签）", async ({ page, controlP
 	await chartsLoaded(page);
 	await page.mouse.move(700, 870);
 	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
+});
+
+test("运行监控：详情的「动作」页（正在做的按层级缩进、最近 20 个）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await actionsScenario(controlPlane, connectAgent, clock);
+	await openMonitor(page, clock, runId, "verify", "actions");
+	await expect(actionTable(page).locator('tr[data-action-id="1204"]')).toBeVisible();
+	await expect(actionTable(page).locator('tbody[data-group="recent"]')).toBeVisible();
+	await chartsLoaded(page);
+	await page.mouse.move(700, 870);
+	await expect(page).toHaveScreenshot("monitor-actions.png", { mask: runIds(page) });
 });
 
 test("运行监控：概览（关注项的读数和图表，没有异常）", async ({
