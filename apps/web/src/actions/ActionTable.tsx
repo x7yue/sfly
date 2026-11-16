@@ -5,7 +5,7 @@ import { FlagIcon } from "lucide-react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Elapsed } from "#/components/elapsed";
 import { STATUS, StatusDot } from "#/components/status";
-import { NODE_ACTIONS } from "#/lib/copy";
+import { ACTION_PAGE, NODE_ACTIONS } from "#/lib/copy";
 import {
 	formatClock,
 	formatClockMs,
@@ -15,8 +15,11 @@ import {
 	formatInteger,
 	spansOtherDay,
 } from "#/lib/format";
+import type { LogTimeKind } from "#/monitor/log-time-kind";
+import { Button } from "@/components/ui/button";
 import { TableHead, TableRow } from "@/components/ui/table";
 import { Truncate } from "@/components/ui/truncate";
+import { partitionPoint } from "./action-details";
 import {
 	type ActionGroupName,
 	type ActionRow,
@@ -32,6 +35,10 @@ const AT_TOP = 4;
 const INDENT_PX = 16;
 const COLUMNS = 5;
 
+/** 只看失败时，第三组读到的都是失败的动作。 */
+const groupLabel = (group: ActionGroupName, failedOnly: boolean): string =>
+	group === "earlier" && failedOnly ? "更早的失败" : GROUP_LABEL[group];
+
 const GROUP_LABEL: Record<ActionGroupName, string> = {
 	running: NODE_ACTIONS.doing,
 	recent: "最近 20 个",
@@ -45,11 +52,22 @@ const COUNT_ONLY_REASON: Record<CountOnlyPeriod["reason"], string> = {
 	control_plane: "控制面收到的明细超过上限，超出的已丢弃",
 };
 
+type CountOnlyRow = Extract<ActionRow, { kind: "count-only" }>;
+type RecordRow = Exclude<ActionRow, { kind: "count-only" }>;
+const isRecord = (item: Item): item is Item & { kind: "row"; row: RecordRow } =>
+	item.kind === "row" && item.row.kind !== "count-only";
+
 /** 虚拟列表里的一项：组名一行，或表格的一行。 */
 type Item = { key: string; group: ActionGroupName } & (
 	| { kind: "heading"; note: string | undefined }
 	| { kind: "row"; row: ActionRow }
 );
+
+/** 一格时间的格式：整张表有不在运行开始那天的时间时，都带上日期。 */
+interface TimeFormat {
+	time: (iso: string) => string;
+	periodTime: (iso: string) => string;
+}
 
 /**
  * 「动作」页的表格（原型 `actRows`）：三组行（action-table.ts 整理好的）画在一张 `<table>` 里，表头吸顶。
@@ -57,15 +75,26 @@ type Item = { key: string; group: ActionGroupName } & (
  * `scope="rowgroup"` 的表头。列宽固定（`table-fixed`）：只渲染一部分行时自动列宽会随滚动跳动。
  * 滚动到底部附近（或点表格下面的按钮）读更早的一页。离开顶部以后，新推送来的行插在上面时视口里的行保持不动；
  * 停在顶部时新的行出现在最上面。
+ *
+ * 开始一列按 `timeKind` 显示 Agent 时间或控制面时间（ADR 0018），Agent 时间时表头写明时钟偏差（`clockNote`）；
+ * 每行的开始时间是按钮，点它调 `onLocate`（控制面时间，毫秒）：日志跳到那一刻，不论这一列显示哪种时间。
+ * 开始时间的按钮是整张表的一个 Tab 停靠点（漫游焦点，同日志列表）：Tab 不必穿过几十上百行，行间用方向键、
+ * PageUp / PageDown、Home / End 移动，虚拟滚动卸掉了的行也能靠它找回来。
  */
 export function ActionTable({
 	groups,
 	notes,
 	caption,
 	day,
+	timeKind,
+	clockNote,
+	failedOnly,
+	onLocate,
+	onFailedOnly,
 	hasOlder,
 	loadingOlder,
 	loadOlder,
+	busy = false,
 }: {
 	groups: readonly ActionTableGroup[];
 	/** 写在组名后面的说明。 */
@@ -74,9 +103,21 @@ export function ActionTable({
 	caption: string;
 	/** 运行开始的时刻：时间要不要带日期按它那一天判断。 */
 	day: string;
+	/** 开始一列显示哪一种时间；时间线始终按控制面时间画，不跟着它变。 */
+	timeKind: LogTimeKind;
+	/** 这次尝试的时钟偏差（`attemptClockNote`）：显示 Agent 时间时写在表头。 */
+	clockNote: string;
+	/** 现在只看失败：第三组叫「更早的失败」，只计数的一行里不再给「只看失败」。 */
+	failedOnly: boolean;
+	/** 点一行的开始时间：参数是开始的控制面时间（毫秒）。 */
+	onLocate: (at: number) => void;
+	/** 点只计数的一行里的「只看失败」。 */
+	onFailedOnly: () => void;
 	hasOlder: boolean;
 	loadingOlder: boolean;
 	loadOlder: () => void;
+	/** 换筛选条件，新的行还没读到：这是上一个条件的行，先显示着。 */
+	busy?: boolean;
 }) {
 	const items = useMemo(
 		() =>
@@ -86,11 +127,23 @@ export function ActionTable({
 			]),
 		[groups, notes],
 	);
-	const dated = useMemo(() => spansOtherDay(edgeTimes(groups), day), [groups, day]);
+	const dated = useMemo(
+		() => spansOtherDay(edgeTimes(groups, timeKind), day),
+		[groups, timeKind, day],
+	);
 	const box = useRef<HTMLDivElement>(null);
 	const head = useRef<HTMLTableSectionElement>(null);
 	const [headHeight, setHeadHeight] = useState(0);
-	useLayoutEffect(() => setHeadHeight(head.current?.offsetHeight ?? 0), []);
+	// 表头的高度随时间一列的说明（偏差）换行变化。
+	useLayoutEffect(() => {
+		const el = head.current;
+		if (!el) return;
+		const measure = () => setHeadHeight(el.offsetHeight);
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
 	const getItemKey = useCallback((i: number) => items[i]?.key ?? i, [items]);
 	const virtualizer = useVirtualizer({
 		count: items.length,
@@ -98,6 +151,7 @@ export function ActionTable({
 		estimateSize: () => 27,
 		overscan: 16,
 		scrollMargin: headHeight,
+		scrollPaddingStart: headHeight,
 		getItemKey,
 	});
 
@@ -127,20 +181,79 @@ export function ActionTable({
 		loadOlderNearBottom();
 	}, [items, virtualizer]);
 
+	/** 能聚焦的行（动作和标记）在 `items` 里的位置，从前到后。 */
+	const focusable = useMemo(() => items.flatMap((it, i) => (isRecord(it) ? [i] : [])), [items]);
+	/** 漫游焦点：最近停留的那一行；它被虚拟滚动卸掉时，停靠点退回视口里的第一行。 */
+	const [stopKey, setStopKey] = useState<string | null>(null);
+	const pendingFocus = useRef<number | null>(null);
+
 	const virtual = virtualizer.getVirtualItems();
+	const stopRendered = stopKey !== null && virtual.some((v) => items[v.index]?.key === stopKey);
+	const firstFocusable = virtual.find((v) => items[v.index] && isRecord(items[v.index] as Item));
+	const tabStop = stopRendered ? stopKey : (items[firstFocusable?.index ?? -1]?.key ?? null);
+
+	useLayoutEffect(() => {
+		const index = pendingFocus.current;
+		if (index === null) return;
+		const button = box.current?.querySelector<HTMLElement>(`[data-index="${index}"] [data-locate]`);
+		if (!button) return;
+		pendingFocus.current = null;
+		button.focus();
+	});
+
+	/** 把焦点移到第 position 个能聚焦的行（`focusable` 里的位置）；那一行还没渲染时先滚过去，渲染出来再聚焦。 */
+	const focusRow = (position: number) => {
+		const index = focusable[Math.max(0, Math.min(focusable.length - 1, position))];
+		const item = index === undefined ? undefined : items[index];
+		if (index === undefined || !item) return;
+		setStopKey(item.key);
+		pendingFocus.current = index;
+		virtualizer.scrollToIndex(index, { align: "auto" });
+		const rendered = box.current?.querySelector<HTMLElement>(
+			`[data-index="${index}"] [data-locate]`,
+		);
+		if (rendered) {
+			pendingFocus.current = null;
+			rendered.focus();
+		}
+	};
+	const page = Math.max(
+		1,
+		(virtualizer.range?.endIndex ?? 0) - (virtualizer.range?.startIndex ?? 0) - 1,
+	);
+	const onRowKeyDown = (event: React.KeyboardEvent<HTMLElement>, index: number) => {
+		const position = partitionPoint(focusable, (i) => i < index);
+		const target = {
+			ArrowDown: position + 1,
+			ArrowUp: position - 1,
+			PageDown: position + page,
+			PageUp: position - page,
+			Home: 0,
+			End: focusable.length - 1,
+		}[event.key];
+		if (target === undefined) return;
+		event.preventDefault();
+		focusRow(target);
+	};
+
 	const segments = groupSegments(virtual, items);
 	const first = virtual[0];
 	const last = virtual.at(-1);
 	const padTop = first ? first.start - headHeight : 0;
 	const padBottom = last ? virtualizer.getTotalSize() - (last.end - headHeight) : 0;
-	const time = dated ? formatFullDateTimeMs : formatClockMs;
-	const periodTime = dated ? formatFullDateTime : formatClock;
+	const format: TimeFormat = {
+		time: dated ? formatFullDateTimeMs : formatClockMs,
+		periodTime: dated ? formatFullDateTime : formatClock,
+	};
+	const agent = timeKind === "agent";
+	const startWidth = agent ? "w-56" : dated ? "w-44" : "w-28";
 
 	return (
 		<div
 			ref={box}
 			data-testid="action-table"
-			className="h-full overflow-auto"
+			aria-busy={busy}
+			className={cn("h-full overflow-auto transition-opacity", busy && "opacity-60")}
 			onScroll={() => {
 				remember();
 				loadOlderNearBottom();
@@ -149,7 +262,7 @@ export function ActionTable({
 			<table className="w-full table-fixed border-collapse text-xs">
 				<caption className="sr-only">{caption}</caption>
 				<colgroup>
-					<col className={dated ? "w-44" : "w-28"} />
+					<col className={startWidth} />
 					<col className="w-50" />
 					<col />
 					<col className="w-21" />
@@ -157,7 +270,18 @@ export function ActionTable({
 				</colgroup>
 				<thead ref={head}>
 					<tr>
-						<TableHead className="py-1.5">开始</TableHead>
+						<TableHead className="py-1.5 whitespace-normal">
+							{agent ? (
+								<>
+									{ACTION_PAGE.startAgentTime}
+									<span className="block font-normal text-fg-3">
+										{ACTION_PAGE.clockOffset(clockNote)}
+									</span>
+								</>
+							) : (
+								"开始"
+							)}
+						</TableHead>
 						<TableHead className="py-1.5">名称</TableHead>
 						<TableHead className="py-1.5">字段</TableHead>
 						<TableHead className="py-1.5 text-right">耗时</TableHead>
@@ -173,8 +297,15 @@ export function ActionTable({
 								index={v.index}
 								measure={virtualizer.measureElement}
 								item={item}
-								time={time}
-								periodTime={periodTime}
+								format={format}
+								timeKind={timeKind}
+								failedOnly={failedOnly}
+								tabStop={item.key === tabStop}
+								headHeight={headHeight}
+								onFocusRow={() => setStopKey(item.key)}
+								onRowKeyDown={onRowKeyDown}
+								onLocate={onLocate}
+								onFailedOnly={onFailedOnly}
 							/>
 						))}
 						{i === segments.length - 1 && padBottom > 0 && <Spacer height={padBottom} />}
@@ -210,12 +341,17 @@ function groupSegments(virtual: VirtualItem[], items: Item[]) {
 	return segments;
 }
 
-/** 每组最新和最早的时刻（每组从新到旧排）：用来判断时间要不要带日期，不用把 10 万行都看一遍。 */
-function edgeTimes(groups: readonly ActionTableGroup[]): string[] {
+/**
+ * 每组最新和最早的时刻（每组从新到旧排）：用来判断时间要不要带日期，不用把 10 万行都看一遍。
+ * 显示 Agent 时间时看的是 Agent 时间：它可以和控制面差出几百天。
+ */
+function edgeTimes(groups: readonly ActionTableGroup[], kind: LogTimeKind): string[] {
 	const times: string[] = [];
 	const add = (row: ActionRow | undefined) => {
 		if (!row) return;
-		if (row.kind !== "count-only") times.push(row.startedAt);
+		if (row.kind !== "count-only")
+			times.push(kind === "agent" ? row.agentStartedAt : row.startedAt);
+		else if (kind === "agent") times.push(row.agentFrom);
 		else times.push(row.from, ...(row.until === null ? [] : [row.until]));
 	};
 	for (const g of groups) {
@@ -233,14 +369,28 @@ function ItemRow({
 	index,
 	measure,
 	item,
-	time,
-	periodTime,
+	format,
+	timeKind,
+	failedOnly,
+	tabStop,
+	headHeight,
+	onFocusRow,
+	onRowKeyDown,
+	onLocate,
+	onFailedOnly,
 }: {
 	index: number;
 	measure: (node: Element | null) => void;
 	item: Item;
-	time: (iso: string) => string;
-	periodTime: (iso: string) => string;
+	format: TimeFormat;
+	timeKind: LogTimeKind;
+	failedOnly: boolean;
+	tabStop: boolean;
+	headHeight: number;
+	onFocusRow: () => void;
+	onRowKeyDown: (event: React.KeyboardEvent<HTMLElement>, index: number) => void;
+	onLocate: (at: number) => void;
+	onFailedOnly: () => void;
 }) {
 	if (item.kind === "heading") {
 		return (
@@ -250,7 +400,7 @@ function ItemRow({
 					colSpan={COLUMNS}
 					className="px-3 pt-2.5 pb-1 text-left text-xs font-normal text-fg-3"
 				>
-					<span className="mr-2 font-semibold text-fg-2">{GROUP_LABEL[item.group]}</span>
+					<span className="mr-2 font-semibold text-fg-2">{groupLabel(item.group, failedOnly)}</span>
 					{item.note}
 				</th>
 			</tr>
@@ -264,21 +414,47 @@ function ItemRow({
 					colSpan={COLUMNS}
 					className="border-b border-border-soft bg-[repeating-linear-gradient(135deg,var(--border-soft)_0_6px,transparent_6px_12px)] px-3 py-1.5 text-fg-3"
 				>
-					{countOnlyText(row, periodTime)}
+					{countOnlyText(row, timeKind, format.periodTime)}
+					{!row.failedOnly && (
+						<>
+							{" "}
+							<Button
+								variant="link"
+								size="sm"
+								onClick={onFailedOnly}
+								className="inline align-baseline text-xs text-fg-2"
+							>
+								{ACTION_PAGE.failedOnly}
+							</Button>
+						</>
+					)}
 				</td>
 			</tr>
 		);
 	}
 	const fields = fieldsText(row.fields);
+	const shown = format.time(timeKind === "agent" ? row.agentStartedAt : row.startedAt);
 	return (
 		<TableRow
 			ref={measure}
 			data-index={index}
 			data-action-id={row.id}
 			data-result={row.kind === "mark" ? "mark" : row.outcome.status}
+			style={{ scrollMarginTop: headHeight }}
 		>
 			<td className="px-3 py-1 align-top font-mono whitespace-nowrap text-fg-2">
-				{time(row.startedAt)}
+				<button
+					type="button"
+					data-locate
+					tabIndex={tabStop ? 0 : -1}
+					aria-label={ACTION_PAGE.jumpToLog(shown)}
+					onClick={() => onLocate(Date.parse(row.startedAt))}
+					onFocus={onFocusRow}
+					onKeyDown={(event) => onRowKeyDown(event, index)}
+					className="cursor-pointer underline decoration-transparent underline-offset-3 hover:text-fg-1 hover:decoration-border-strong"
+				>
+					{shown}
+				</button>
 			</td>
 			<td className="py-1 pr-3 align-top">
 				<span
@@ -308,13 +484,29 @@ function ItemRow({
 	);
 }
 
-/** 只计数的一段：「09:19:12 至今的 1,234,794 个「下单」只计数，没有明细（…）」。 */
+/** 为什么没有明细：名称上限的段在合计也满了以后，失败的动作同样没有明细。 */
+const reasonText = (row: CountOnlyRow): string =>
+	row.reason === "name_limit" && row.totalFull
+		? ACTION_PAGE.nameLimitTotalFull
+		: COUNT_ONLY_REASON[row.reason];
+
+/**
+ * 只计数的一段：「09:19:12 至今的 1,234,794 个「下单」只计数，没有明细（…）」。显示 Agent 时间时只有起点的
+ * Agent 时间（结束的只有控制面时间），写「起」。只看失败时接上失败的个数不知道。
+ */
 function countOnlyText(
-	row: Extract<ActionRow, { kind: "count-only" }>,
+	row: CountOnlyRow,
+	kind: LogTimeKind,
 	time: (iso: string) => string,
 ): string {
-	const until = row.until === null ? "今" : ` ${time(row.until)} `;
-	return `${time(row.from)} 至${until}的 ${formatInteger(row.count)} 个「${row.name}」只计数，没有明细（${COUNT_ONLY_REASON[row.reason]}）`;
+	const span =
+		kind === "agent"
+			? `${time(row.agentFrom)} 起`
+			: `${time(row.from)} 至${row.until === null ? "今" : ` ${time(row.until)} `}`;
+	const text = `${span}的 ${formatInteger(row.count)} 个「${row.name}」只计数，没有明细（${reasonText(row)}）`;
+	return row.failedOnly
+		? `${text}；${ACTION_PAGE.failedUnknown(row.name, row.failedOnly.total)}`
+		: text;
 }
 
 /** 结果：成功不着色；失败是红色菱形加完整的原因（换行，不截断）；进行中是执行中的形状；标记是小旗。 */

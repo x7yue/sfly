@@ -1,30 +1,52 @@
 import type { AttemptView, NodeRunView } from "@sfly/schema";
 import { ListTreeIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ActionTable } from "#/actions/ActionTable";
-import { actionTable } from "#/actions/action-table";
+import { ActionToolbar } from "#/actions/ActionToolbar";
+import { type ActionFilter, NO_FILTER } from "#/actions/action-details";
+import { filterAnnouncement, isFiltered, withFailed } from "#/actions/action-filter";
+import { type ActionTableGroup, actionTable } from "#/actions/action-table";
 import { useTaskActions } from "#/actions/use-task-actions";
 import { EmptyState, ErrorState, TableSkeleton } from "#/components/feedback/states";
 import { runNodeName } from "#/components/node-name";
-import { MESSAGE, TERM } from "#/lib/copy";
+import { ACTION, ACTION_PAGE, MESSAGE, TERM } from "#/lib/copy";
+import { Button } from "@/components/ui/button";
+import { attemptClockNote } from "./attempt-clock";
 import { Hint } from "./Hint";
+import { setActionTimeKind, useActionTimeKind } from "./log-time-kind";
 
 /**
  * 底部面板的「动作」页签（规格 #345，原型 `actPanel`）：选中节点的那一次尝试的动作，分成「正在做」「最近 20 个」
  * 「更早的明细」三组（action-table.ts），往下滚动读更早的明细，推送来的插到它的位置。没有动作的节点写明
  * 标准节点这一轮不记录动作。
+ *
+ * 工具条（ActionToolbar）按名称、只看失败筛选，表格里的时间可以切成 Agent 时间（表头写明时钟偏差，时间线始终按控制面时间画）；
+ * 点一行的开始时间，日志跳到那一刻（`onLocate`）。筛选条件由底部面板持有：切到日志再回来还在。
+ *
+ * 换筛选条件要重新读明细，工具条一直留着，焦点不丢：读到之前表格还显示上一个条件的行（变淡），第一次读到之前才是骨架。
+ * 筛选之后在实时区域（`<output>`）播报结果，在点的那一刻算一次（见 `filterAnnouncement`）。
+ * 筛选后没有行时写明并给出「清除筛选」，点它以后焦点回到名称下拉；只计数那一行里的「只看失败」被换掉以后，
+ * 焦点回到工具条的「只看失败」。
  */
 export function ActionsTab({
 	node,
 	attempt,
 	day,
+	filter,
+	onFilter,
+	onLocate,
 }: {
 	node: NodeRunView;
 	attempt: AttemptView;
 	/** 运行开始的时刻：时间要不要带日期按它那一天判断。 */
 	day: string;
+	filter: ActionFilter;
+	onFilter: (filter: ActionFilter) => void;
+	/** 点一行的开始时间：日志跳到那一刻（控制面时间，毫秒）。 */
+	onLocate: (at: number) => void;
 }) {
-	const actions = useTaskActions(attempt.task_id);
+	const timeKind = useActionTimeKind();
+	const actions = useTaskActions(attempt.task_id, filter);
 	const { summary, details, controlPlanePeriods, hasOlder, loaded } = actions;
 	const groups = useMemo(
 		() =>
@@ -35,19 +57,41 @@ export function ActionsTab({
 						controlPlanePeriods,
 						hasOlder,
 						endedAt: attempt.ended_at,
+						filter,
 					})
 				: [],
-		[summary, loaded, details, controlPlanePeriods, hasOlder, attempt.ended_at],
+		[summary, loaded, details, controlPlanePeriods, hasOlder, attempt.ended_at, filter],
 	);
 	const notes = useMemo(
 		() =>
 			summary && {
 				running: summary.running_complete ? undefined : "列满 50 个，可能还有没列出的",
 				recent: summary.capped ? "超过上限后也一直更新" : undefined,
+				earlier: filter.failed
+					? summary.capped_at === null
+						? ACTION_PAGE.failedNoNameLimit
+						: ACTION_PAGE.failedAfterTotalFull
+					: undefined,
 			},
-		[summary],
+		[summary, filter.failed],
 	);
-	if (!summary || !loaded) {
+	const clockNote = useMemo(() => attemptClockNote(attempt), [attempt]);
+
+	// 第一次读到以后，换筛选条件重新读时工具条不再换成骨架：焦点在工具条上，不能丢。
+	const [opened, setOpened] = useState(false);
+	if (loaded && !opened) setOpened(true);
+	const lastGroups = useRef<ActionTableGroup[]>([]);
+	if (loaded) lastGroups.current = groups;
+	const [announcement, setAnnouncement] = useState("");
+	const nameSelect = useRef<HTMLSelectElement>(null);
+	const failedToggle = useRef<HTMLButtonElement>(null);
+
+	const change = (next: ActionFilter) => {
+		onFilter(next);
+		if (summary) setAnnouncement(filterAnnouncement(summary, next));
+	};
+
+	if (!summary || !opened) {
 		return actions.error ? (
 			<ErrorState
 				title={MESSAGE.loadFailed(TERM.action)}
@@ -60,7 +104,7 @@ export function ActionsTab({
 		);
 	}
 	if (actions.expired) return <Hint>这次运行的动作明细已超过保留期，已被清理。</Hint>;
-	if (groups.length === 0) {
+	if (loaded && groups.length === 0 && !isFiltered(filter)) {
 		return (
 			<EmptyState
 				icon={<ListTreeIcon />}
@@ -72,21 +116,66 @@ export function ActionsTab({
 	}
 	return (
 		<div className="flex h-full flex-col">
-			{actions.error && (
+			<ActionToolbar
+				summary={summary}
+				filter={filter}
+				onFilter={change}
+				timeKind={timeKind}
+				onTimeKind={setActionTimeKind}
+				nameSelect={nameSelect}
+				failedToggle={failedToggle}
+			/>
+			<output className="sr-only">{announcement}</output>
+			{loaded && actions.error && (
 				<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
 					{MESSAGE.loadFailed(TERM.action)}：{actions.error.message}
 				</p>
 			)}
 			<div className="min-h-0 flex-1">
-				<ActionTable
-					groups={groups}
-					notes={notes || undefined}
-					caption={`${runNodeName(node)} 的动作，按开始时间从新到旧`}
-					day={day}
-					hasOlder={actions.hasOlder}
-					loadingOlder={actions.loadingOlder}
-					loadOlder={actions.loadOlder}
-				/>
+				{!loaded && actions.error ? (
+					<ErrorState
+						title={MESSAGE.loadFailed(TERM.action)}
+						error={actions.error}
+						onRetry={actions.retry}
+						className="my-4"
+					/>
+				) : loaded && groups.length === 0 ? (
+					<div className="flex items-center gap-3 p-4 text-sm text-fg-3">
+						<p className="m-0">{ACTION_PAGE.none}</p>
+						<Button
+							size="sm"
+							onClick={() => {
+								change(NO_FILTER);
+								nameSelect.current?.focus();
+							}}
+						>
+							{ACTION.clearFilters}
+						</Button>
+					</div>
+				) : !loaded && lastGroups.current.length === 0 ? (
+					<TableSkeleton columns={5} rows={4} />
+				) : (
+					<ActionTable
+						// 换了筛选条件是另一批行：从头看起，不停在上一批滚到的位置。
+						key={`${filter.name ?? ""}\n${filter.failed === true}`}
+						groups={lastGroups.current}
+						notes={notes || undefined}
+						caption={`${runNodeName(node)} 的动作，按开始时间从新到旧`}
+						day={day}
+						timeKind={timeKind}
+						clockNote={clockNote}
+						failedOnly={filter.failed === true}
+						onLocate={onLocate}
+						onFailedOnly={() => {
+							change(withFailed(filter, true));
+							failedToggle.current?.focus();
+						}}
+						hasOlder={actions.hasOlder}
+						loadingOlder={actions.loadingOlder}
+						loadOlder={actions.loadOlder}
+						busy={!loaded}
+					/>
+				)}
 			</div>
 		</div>
 	);

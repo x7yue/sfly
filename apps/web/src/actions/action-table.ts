@@ -7,7 +7,14 @@ import {
 	type RunningActionView,
 	sdkCountOnlyPeriods,
 } from "@sfly/schema";
-import { byNewest, partitionPoint, periodKey } from "./action-details";
+import {
+	type ActionFilter,
+	byNewest,
+	matchesFilter,
+	NO_FILTER,
+	partitionPoint,
+	periodKey,
+} from "./action-details";
 
 /**
  * 运行监控「动作」页的表格（规格 #345）：摘要、分页读到的明细、只计数的段整理成三组行。
@@ -17,6 +24,10 @@ import { byNewest, partitionPoint, periodKey } from "./action-details";
  *   第一条明细前面：SDK 上限的段也只取摘要，控制面兜底的段取分页读到的。
  *
  * 每组按开始时间从新到旧，没有行的组不出现。
+ *
+ * 筛选（名称、只看失败）时三组都只留符合条件的：正在做的动作还没有结果，只看失败时那一组不出现；明细本来就是按
+ * 同一个条件读的，这里再挑一遍，换条件之后缓冲里还没换掉的明细不会混进来。只计数的段按同一个条件取（`sdkCountOnlyPeriods`）。
+ * 只看失败时，只计数的段里没有明细的那些动作可能有失败的：个数里成功的失败的都有，写明失败的个数不知道。
  */
 
 export type ActionGroupName = "running" | "recent" | "earlier";
@@ -52,6 +63,13 @@ export type ActionRow =
 			key: string;
 			name: string;
 			reason: CountOnlyPeriod["reason"];
+			/** 合计也已满：每种名称上限的段里，合计满了以后失败的动作也没有明细了。 */
+			totalFull: boolean;
+			/**
+			 * 只看失败时才有：这一段里失败的个数不知道（个数包括成功的）；`total` 是这个名称一共失败的个数
+			 * （摘要里的，不论有没有明细），摘要里还没有这个名称时为 null。
+			 */
+			failedOnly: { total: number | null } | null;
 			/** 从什么时候起（控制面时间）。 */
 			from: string;
 			/** 从什么时候起（Agent 时间）。 */
@@ -81,6 +99,7 @@ export function actionTable({
 	controlPlanePeriods,
 	hasOlder,
 	endedAt,
+	filter = NO_FILTER,
 }: {
 	summary: ActionSummaryView;
 	/** 分页和推送读到的明细，按开始时间从新到旧（`action-details.ts`）。 */
@@ -91,19 +110,24 @@ export function actionTable({
 	hasOlder: boolean;
 	/** 这次尝试结束的时间：还在执行的只计数的段到这里为止；还在执行时为 null。 */
 	endedAt: string | null;
+	filter?: ActionFilter;
 }): ActionTableGroup[] {
+	const doing = filter.failed
+		? []
+		: summary.running.filter((a) => filter.name === undefined || a.name === filter.name);
+	const recent = summary.recent.filter((a) => matchesFilter({ ...a, kind: "action" }, filter));
 	const shown = new Set<number>();
-	for (const a of summary.running) shown.add(a.id);
-	for (const a of summary.recent) shown.add(a.id);
-	const earlier = details.filter((d) => !shown.has(d.id));
+	for (const a of doing) shown.add(a.id);
+	for (const a of recent) shown.add(a.id);
+	const earlier = details.filter((d) => !shown.has(d.id) && matchesFilter(d, filter));
 	const groups: ActionTableGroup[] = [
-		{ name: "running", rows: [...summary.running].sort(byNewest).map(runningRow) },
-		{ name: "recent", rows: [...summary.recent].sort(byNewest).map(endedRow) },
+		{ name: "running", rows: [...doing].sort(byNewest).map(runningRow) },
+		{ name: "recent", rows: [...recent].sort(byNewest).map(endedRow) },
 		{
 			name: "earlier",
 			rows: withPeriods(
 				earlier,
-				periodRows(summary, details, controlPlanePeriods, hasOlder, endedAt),
+				periodRows(summary, details, controlPlanePeriods, hasOlder, endedAt, filter),
 			),
 		},
 	];
@@ -140,23 +164,36 @@ function periodRows(
 	controlPlanePeriods: readonly CountOnlyPeriod[],
 	hasOlder: boolean,
 	endedAt: string | null,
+	filter: ActionFilter,
 ): Extract<ActionRow, { kind: "count-only" }>[] {
 	const oldest = hasOlder ? details.at(-1) : undefined;
-	const fromSummary = sdkCountOnlyPeriods(summary, {}, endedAt).filter(
+	const fromSummary = sdkCountOnlyPeriods(summary, filter, endedAt).filter(
 		(p) => !oldest || Date.parse(p.from) >= startOf(oldest),
 	);
-	return [...fromSummary, ...controlPlanePeriods]
-		.sort((a, b) => Date.parse(b.from) - Date.parse(a.from))
-		.map((p) => ({
-			kind: "count-only",
-			key: `c:${periodKey(p)}`,
-			name: p.name,
-			reason: p.reason,
-			from: p.from,
-			agentFrom: p.agent_from,
-			until: p.to ?? endedAt,
-			count: p.count,
-		}));
+	const fromControlPlane = controlPlanePeriods.filter(
+		(p) => filter.name === undefined || p.name === filter.name,
+	);
+	return [...fromSummary, ...fromControlPlane]
+		.flatMap((p): Extract<ActionRow, { kind: "count-only" }>[] => {
+			const failed = summary.names.find((n) => n.name === p.name)?.failed;
+			// 只看失败：这个名称一个都没有失败过，就没有失败的明细缺口。
+			if (filter.failed && failed === 0) return [];
+			return [
+				{
+					kind: "count-only",
+					key: `c:${periodKey(p)}`,
+					name: p.name,
+					reason: p.reason,
+					totalFull: summary.capped_at !== null,
+					failedOnly: filter.failed ? { total: failed ?? null } : null,
+					from: p.from,
+					agentFrom: p.agent_from,
+					until: p.to ?? endedAt,
+					count: p.count,
+				},
+			];
+		})
+		.sort((a, b) => Date.parse(b.from) - Date.parse(a.from));
 }
 
 const indentOf = (depth: number) => Math.min(Math.max(depth, 0), INDENT_MAX) as Indent;

@@ -77,10 +77,11 @@ const count = (
 	total: number,
 	reported = total,
 	cappedAt?: number,
+	failed = 0,
 ): ActionNameCount => ({
 	name,
 	total,
-	failed: 0,
+	failed,
 	reported,
 	capped_at: cappedAt === undefined ? null : at(cappedAt),
 	agent_capped_at: cappedAt === undefined ? null : at(cappedAt),
@@ -294,6 +295,134 @@ describe("只计数的段", () => {
 			endedAt: at(5000),
 		});
 		expect(done[0]?.rows[0]).toMatchObject({ until: at(4000) });
+	});
+});
+
+describe("筛选", () => {
+	const other = (id: number, start: number): EndedActionView => ({
+		...ended(id, start),
+		name: "预热",
+	});
+	const parts = {
+		summary: summary({
+			running: [running(1, 100), { ...running(2, 200, 1), name: "预热" }],
+			recent: [ended(8, 800), ended(7, 700, "failed"), other(6, 600)],
+		}),
+		details: [detail(5, 500, "failed"), detail(4, 400), { ...detail(3, 300), name: "预热" }],
+	};
+
+	it("按名称：正在做、最近 20 个和更早的明细都只留这个名称的", () => {
+		expect(shape(table({ ...parts, filter: { name: "预热" } }))).toEqual([
+			["running", [2]],
+			["recent", [6]],
+			["earlier", [3]],
+		]);
+	});
+
+	it("只看失败：正在做的还没有结果，不算失败；最近 20 个和更早的明细只留失败的", () => {
+		expect(shape(table({ ...parts, filter: { failed: true } }))).toEqual([
+			["recent", [7]],
+			["earlier", [5]],
+		]);
+	});
+
+	it("名称和只看失败一起用", () => {
+		expect(shape(table({ ...parts, filter: { name: "下单", failed: true } }))).toEqual([
+			["recent", [7]],
+			["earlier", [5]],
+		]);
+		expect(table({ ...parts, filter: { name: "预热", failed: true } })).toEqual([]);
+	});
+
+	it("标记不是失败的动作：只看失败时不出现", () => {
+		const groups = table({
+			details: [mark(2, 200), detail(1, 100, "failed")],
+			filter: { failed: true },
+		});
+		expect(shape(groups)).toEqual([["earlier", [1]]]);
+	});
+
+	it("换筛选条件时缓冲里还是上一个条件读到的明细：不符合的不显示", () => {
+		expect(shape(table({ details: parts.details, filter: { name: "预热" } }))).toEqual([
+			["earlier", [3]],
+		]);
+	});
+
+	it("筛选了名称：只留这个名称的只计数的段", () => {
+		const capped = summary({
+			capped_at: at(500),
+			names: [count("下单", 50_300, 50_000, 300), count("撤单", 120, 100, 600)],
+		});
+		const groups = table({
+			summary: capped,
+			controlPlanePeriods: [dropped("加压", 200, 5)],
+			filter: { name: "撤单" },
+		});
+		expect(shape(groups)).toEqual([["earlier", ["~撤单"]]]);
+	});
+});
+
+describe("只看失败时只计数的段", () => {
+	/** 「下单」从 300 起每种名称的上限、合计满在 500，共 17 个失败。 */
+	const full = summary({
+		capped_at: at(500),
+		names: [
+			count("下单", 50_300, 50_000, 300, 17),
+			count("预热", 900, 800, 700, 0),
+			count("撤单", 120, 100, 600, 2),
+		],
+	});
+	const rows = (groups: ActionTableGroup[]) =>
+		groups.flatMap((g) => g.rows).filter((r) => r.kind === "count-only");
+
+	it("合计已满：这一段的个数包括成功的，失败的个数不知道，只写这个名称一共失败多少个", () => {
+		expect(rows(table({ summary: full, filter: { failed: true } }))).toMatchObject([
+			{ name: "撤单", reason: "total_limit", count: 20, failedOnly: { total: 2 } },
+			{ name: "下单", reason: "name_limit", count: 300, failedOnly: { total: 17 } },
+		]);
+	});
+
+	it("这个名称一个都没有失败过：没有失败的明细缺口，这一段不显示", () => {
+		const names = rows(table({ summary: full, filter: { failed: true } })).map((r) => r.name);
+		expect(names).not.toContain("预热");
+		expect(rows(table({ summary: full })).map((r) => r.name)).toContain("预热");
+	});
+
+	it("合计没满：超过每种名称上限之后失败的动作仍有明细，这一段不显示", () => {
+		const open = { ...full, capped_at: null };
+		expect(rows(table({ summary: open, filter: { failed: true } }))).toEqual([]);
+	});
+
+	it("控制面兜底丢弃的段：失败的个数同样不知道；摘要里还没有这个名称时不知道一共失败多少个", () => {
+		const groups = table({
+			summary: full,
+			controlPlanePeriods: [dropped("下单", 450, 40), dropped("新的", 100, 5)],
+			filter: { failed: true },
+		});
+		expect(rows(groups)).toMatchObject([
+			{ name: "撤单", failedOnly: { total: 2 } },
+			{ name: "下单", reason: "control_plane", count: 40, failedOnly: { total: 17 } },
+			{ name: "下单", reason: "name_limit" },
+			{ name: "新的", reason: "control_plane", failedOnly: { total: null } },
+		]);
+	});
+
+	it("没有筛选失败时不带这个说明", () => {
+		expect(rows(table({ summary: full }))[0]).toMatchObject({ failedOnly: null });
+		expect(rows(table({ summary: full, filter: { name: "下单" } }))[0]).toMatchObject({
+			failedOnly: null,
+		});
+	});
+
+	it("合计已满时，名称上限的段说明合计也满了：之后失败的也没有明细", () => {
+		expect(rows(table({ summary: full }))).toMatchObject([
+			{ name: "预热", totalFull: true },
+			{ name: "撤单", totalFull: true },
+			{ name: "下单", reason: "name_limit", totalFull: true },
+		]);
+		expect(rows(table({ summary: { ...full, capped_at: null } }))[0]).toMatchObject({
+			totalFull: false,
+		});
 	});
 });
 

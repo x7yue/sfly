@@ -29,6 +29,9 @@ export interface ActionFilter {
 	failed?: boolean;
 }
 
+/** 没有筛选。 */
+export const NO_FILTER: ActionFilter = {};
+
 /** 这条明细符不符合筛选条件：实时推送不按筛选条件过滤，推送来的明细要自己挑。 */
 export const matchesFilter = (detail: ActionDetailView, filter: ActionFilter): boolean =>
 	(filter.name === undefined || detail.name === filter.name) &&

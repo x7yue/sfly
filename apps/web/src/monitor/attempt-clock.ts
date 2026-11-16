@@ -1,5 +1,5 @@
 import type { AttemptView, ClockOffsetView } from "@sfly/schema";
-import { formatClockOffset } from "#/lib/format";
+import { formatClockOffset, TIME_NOT_RECORDED } from "#/lib/format";
 
 /** 一次尝试在 Agent 上的开始、结束时间（ADR 0018）：只在时钟偏差达到阈值时才有。 */
 export interface AttemptAgentTimes {
@@ -17,20 +17,17 @@ function agentTime(offset: ClockOffsetView | null): string | null {
 	return Number.isNaN(time.getTime()) ? null : time.toISOString();
 }
 
-/**
- * 尝试开始或结束时的时钟偏差达到阈值（由接口判断）时，给出两头的 Agent 时间和偏差说明；
- * 都不到阈值、或没有记录（旧版本 Agent、旧任务、控制面执行的节点）时返回 null：只显示控制面时间。
- */
-export function attemptAgentTimes(
+/** 开始、结束各一句：达到阈值的写偏差，没到的写一致，没有记录的不写。 */
+function offsetParts(
 	attempt: Pick<AttemptView, "start_clock_offset" | "end_clock_offset">,
-): AttemptAgentTimes | null {
-	const ends = [
-		["开始", attempt.start_clock_offset],
-		["结束", attempt.end_clock_offset],
-	] as const;
-	if (!ends.some(([, offset]) => offset?.exceeds_threshold)) return null;
+): string[] {
 	let named = false;
-	const parts = ends.flatMap(([label, offset]) => {
+	return (
+		[
+			["开始", attempt.start_clock_offset],
+			["结束", attempt.end_clock_offset],
+		] as const
+	).flatMap(([label, offset]) => {
 		if (!offset) return [];
 		if (!offset.exceeds_threshold) return [`${label}时一致`];
 		// 「比控制面」只在第一处写。
@@ -38,9 +35,35 @@ export function attemptAgentTimes(
 		named = true;
 		return [`${label}时${subject}${formatClockOffset(offset.offset_ms)}`];
 	});
+}
+
+/**
+ * 尝试开始或结束时的时钟偏差达到阈值（由接口判断）时，给出两头的 Agent 时间和偏差说明；
+ * 都不到阈值、或没有记录（旧版本 Agent、旧任务、控制面执行的节点）时返回 null：只显示控制面时间。
+ */
+export function attemptAgentTimes(
+	attempt: Pick<AttemptView, "start_clock_offset" | "end_clock_offset">,
+): AttemptAgentTimes | null {
+	if (
+		!attempt.start_clock_offset?.exceeds_threshold &&
+		!attempt.end_clock_offset?.exceeds_threshold
+	) {
+		return null;
+	}
 	return {
 		start: agentTime(attempt.start_clock_offset),
 		end: agentTime(attempt.end_clock_offset),
-		details: parts,
+		details: offsetParts(attempt),
 	};
+}
+
+/**
+ * 一次尝试的时钟偏差写成一句话（「动作」页显示 Agent 时间时写在表头）：和 {@link attemptAgentTimes} 的说明是同一份，
+ * 但没到阈值也写（一致），没有记录时写「未记录」。还没结束的尝试只有开始时的偏差。
+ */
+export function attemptClockNote(
+	attempt: Pick<AttemptView, "start_clock_offset" | "end_clock_offset">,
+): string {
+	const parts = offsetParts(attempt);
+	return parts.length === 0 ? TIME_NOT_RECORDED : parts.join("，");
 }

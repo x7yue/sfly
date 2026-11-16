@@ -262,6 +262,45 @@ export const NODE_ACTIONS = {
 	} satisfies Record<ActionResult | "running" | "mark", string>,
 } as const;
 
+/**
+ * 运行监控「动作」页的工具条、表头和只计数的一行（规格 #345，#358）：筛选、时间、跳到日志。和 `NODE_ACTIONS`
+ * 分开：这些文字只在「动作」页出现。组名和只计数的原因写在 `ActionTable` 里。
+ */
+export const ACTION_PAGE = {
+	/** 工具条的可访问名称。 */
+	toolbar: `筛选${TERM.action}`,
+	byName: "按名称筛选",
+	allNames: "全部名称",
+	failedOnly: `只看${NODE_ACTIONS.results.failed}`,
+	/** 每种名称的个数按钮那一组的可访问名称。 */
+	nameCounts: "各名称的个数",
+	failedCount: (count: string) => `${NODE_ACTIONS.results.failed} ${count}`,
+	/** 表格里的时间显示哪一种（Agent 时间或控制面时间）。 */
+	timeKind: "表格里的时间",
+	/** 一行总数；有标记时接上「、N 个标记」。 */
+	total: (actions: string, marks: string | null) =>
+		`共 ${actions} 个${TERM.action}${marks === null ? "" : `、${marks} 个${TERM.mark}`}`,
+	/** 读屏播报：筛选之后有多少个。名称的个数里可能有标记，不能说成都是动作（`mixed`）。 */
+	result: (count: string, mixed: boolean) =>
+		`筛选后 ${count} 个${mixed ? `${TERM.action}和${TERM.mark}` : TERM.action}`,
+	cleared: "已清除筛选",
+	none: `没有符合条件的${TERM.action}。`,
+	/** 表头：开始一列显示的是 Agent 时间时，写明和控制面时间差多少（ADR 0018）。 */
+	startAgentTime: "开始（Agent 时间）",
+	clockOffset: (note: string) => `时钟偏差：${note}`,
+	/** 开始时间那一格的按钮：日志跳到那一刻。 */
+	jumpToLog: (time: string) => `在日志里跳到 ${time}`,
+	/** 只看失败时第三组的说明：合计没满，失败的动作不受每种名称的上限限制，都有明细。 */
+	failedNoNameLimit: "失败的动作不受每种名称的上限限制",
+	/** 只看失败时第三组的说明：合计满了以后，之后失败的动作没有明细。 */
+	failedAfterTotalFull: "合计满 10 万个以后失败的没有明细",
+	/** 只计数的一行：名称上限的段，合计也满了：合计满了以后失败的动作也没有明细。 */
+	nameLimitTotalFull: "每种名称最多记录 5 万个；合计满 10 万个以后，失败的动作也没有明细",
+	/** 只计数的一行：只看失败时，这一段里失败的个数不知道；`total` 是这个名称一共失败了多少个。 */
+	failedUnknown: (name: string, total: number | null) =>
+		`其中有多少个${NODE_ACTIONS.results.failed}不知道${total === null ? "" : `（「${name}」一共${NODE_ACTIONS.results.failed} ${total} 个）`}`,
+} as const;
+
 /** 列表的可访问名称：同名的列表在不同页面里共用一个说法。 */
 export const LIST_LABEL = {
 	legend: "图例",
