@@ -480,6 +480,8 @@ export const MESSAGE = {
 	loadFailed: (what: string) => `无法加载${/^[A-Za-z0-9]/.test(what) ? " " : ""}${what}`,
 	noMatch: MESSAGE_NO_MATCH,
 	noData: MESSAGE_NO_DATA,
+	/** 运行监控详情的图表：缩放到的时间段里没有点。 */
+	noDataInRange: "所选时间段内无数据",
 	/** 尝试已经结束，一个点都没有上报。 */
 	noDataEnded: "这次尝试没有上报数据",
 	/** 没有节点处于执行中：运行监控的概览。 */

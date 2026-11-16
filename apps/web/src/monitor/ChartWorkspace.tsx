@@ -540,7 +540,7 @@ function NodeGroup({
 		!runAttempt?.started_at
 			? noData
 			: !window || zoomed
-				? "所选时间段内无数据"
+				? MESSAGE.noDataInRange
 				: loading
 					? MESSAGE.loading
 					: noData;
@@ -788,7 +788,7 @@ function PlatformGroup({
 		? chartWindow({ started_at: data.from, ended_at: run.ended_at }, range, now)
 		: null;
 	const empty = data
-		? "所选时间段内无数据"
+		? MESSAGE.noDataInRange
 		: error
 			? `无法加载：${error.message}`
 			: MESSAGE.loading;
