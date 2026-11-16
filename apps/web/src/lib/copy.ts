@@ -290,6 +290,11 @@ export const ACTION_PAGE = {
 	clockOffset: (note: string) => `时钟偏差：${note}`,
 	/** 开始时间那一格的按钮：日志跳到那一刻。 */
 	jumpToLog: (time: string) => `在日志里跳到 ${time}`,
+	/** 只看失败时第三组的名称（平时叫「更早的明细」，写在 `ActionTable` 里）。 */
+	earlierFailed: "更早的失败",
+	/** 只计数的一行的开头：控制面时间写起止（`until` 为 null 是至今），Agent 时间只有起点，没有结束的 Agent 时间。 */
+	countOnlySpan: (from: string, until: string | null, agent: boolean) =>
+		agent ? `${from} 起` : `${from} 至${until === null ? "今" : ` ${until} `}`,
 	/** 只看失败时第三组的说明：合计没满，失败的动作不受每种名称的上限限制，都有明细。 */
 	failedNoNameLimit: "失败的动作不受每种名称的上限限制",
 	/** 只看失败时第三组的说明：合计满了以后，之后失败的动作没有明细。 */

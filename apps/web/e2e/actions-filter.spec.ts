@@ -304,6 +304,8 @@ test("时间一列：Tab 只停在一个开始时间上，方向键、Home、End
 	await table.evaluate((el) => {
 		el.scrollTop = 0;
 	});
+	await expect(table.locator('tr[data-action-id="1204"]')).toBeVisible();
+	await expect(table.locator('tr[data-action-id="2"]')).toHaveCount(0);
 	await expect(table.locator('button[data-locate][tabindex="0"]')).toHaveCount(1);
 	await countButton(page, "失败 9").focus();
 	await page.keyboard.press("Tab");

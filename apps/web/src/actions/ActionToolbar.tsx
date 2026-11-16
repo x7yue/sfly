@@ -80,7 +80,7 @@ export function ActionToolbar({
 				/>
 			</fieldset>
 			<div className="flex items-start gap-x-3 px-3 pb-1.5 text-xs text-fg-2">
-				<p className="m-0 flex-none py-[3px]">
+				<p className="m-0 flex-none py-0.75">
 					{ACTION_PAGE.total(
 						formatInteger(actionCount(summary)),
 						summary.marks > 0 ? formatInteger(summary.marks) : null,

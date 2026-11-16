@@ -107,7 +107,7 @@ export function ActionTable({
 	timeKind: LogTimeKind;
 	/** 这次尝试的时钟偏差（`attemptClockNote`）：显示 Agent 时间时写在表头。 */
 	clockNote: string;
-	/** 现在只看失败：第三组叫「更早的失败」，只计数的一行里不再给「只看失败」。 */
+	/** 现在只看失败：第三组换名称，只计数的一行里不再给「只看失败」。 */
 	failedOnly: boolean;
 	/** 点一行的开始时间：参数是开始的控制面时间（毫秒）。 */
 	onLocate: (at: number) => void;
@@ -499,10 +499,12 @@ function countOnlyText(
 	kind: LogTimeKind,
 	time: (iso: string) => string,
 ): string {
-	const span =
-		kind === "agent"
-			? `${time(row.agentFrom)} 起`
-			: `${time(row.from)} 至${row.until === null ? "今" : ` ${time(row.until)} `}`;
+	const agent = kind === "agent";
+	const span = ACTION_PAGE.countOnlySpan(
+		time(agent ? row.agentFrom : row.from),
+		row.until === null ? null : time(row.until),
+		agent,
+	);
 	const text = `${span}的 ${formatInteger(row.count)} 个「${row.name}」只计数，没有明细（${reasonText(row)}）`;
 	return row.failedOnly
 		? `${text}；${ACTION_PAGE.failedUnknown(row.name, row.failedOnly.total)}`
