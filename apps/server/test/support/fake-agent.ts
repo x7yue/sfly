@@ -369,12 +369,15 @@ export class FakeAgent {
 	 * 等到控制面处理完此前发出的全部消息：入站消息按顺序处理，
 	 * 这里发一条不存在任务的结果（控制面忽略但仍回 Ack）并等它的 Ack。
 	 */
-	async sync(): Promise<void> {
-		await this.report({
-			taskId: SYNC_TASK_ID,
-			attempt: ++this.#syncs,
-			status: TaskStatus.SUCCESS,
-		});
+	async sync(options: { timeoutMs?: number } = {}): Promise<void> {
+		await this.report(
+			{
+				taskId: SYNC_TASK_ID,
+				attempt: ++this.#syncs,
+				status: TaskStatus.SUCCESS,
+			},
+			options,
+		);
 	}
 
 	#syncs = 0;
@@ -637,14 +640,18 @@ export class FakeAgent {
 		};
 	}
 
-	/** 上报任意 TaskResult，等待对应的 Ack（task_id + attempt 相同）。 */
-	async report(result: TaskResultInit): Promise<Ack> {
+	/** 上报任意 TaskResult，等待对应的 Ack（task_id + attempt 相同）；`timeoutMs` 是等 Ack 的上限，默认 5 秒。 */
+	async report(result: TaskResultInit, options: { timeoutMs?: number } = {}): Promise<Ack> {
 		this.send({ case: "result", value: result });
 		const ackFor = (m: ServerMessage) =>
 			m.body.case === "ack" &&
 			m.body.value.taskId === result.taskId &&
 			m.body.value.attempt === result.attempt;
-		const message = await this.#nextMatching(ackFor, `ack for ${result.taskId}`, 5000);
+		const message = await this.#nextMatching(
+			ackFor,
+			`ack for ${result.taskId}`,
+			options.timeoutMs ?? 5000,
+		);
 		this.#held.delete(keyOf({ taskId: result.taskId ?? "", attempt: result.attempt ?? 0 }));
 		return message.body.value as Ack;
 	}

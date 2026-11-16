@@ -73,7 +73,8 @@ describe("动作明细的控制面兜底上限", () => {
 			agent.actionEnd(100_010, "failed", T0 + 200_010, { reason: "已成交" }),
 			agent.actionMark(100_011, "开盘", T0 + 200_020),
 		]);
-		await agent.sync();
+		// 10 万条明细分 100 批写库：整套测试一起跑时要 4 到 7 秒，默认的 5 秒等不够。
+		await agent.sync({ timeoutMs: 15_000 });
 
 		expect((await page(task.taskId, { limit: 1 })).actions.map((a) => a.id)).toEqual([100_006]);
 		expect((await page(task.taskId, { name: "下单", limit: 1 })).actions.map((a) => a.id)).toEqual([
