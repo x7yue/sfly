@@ -54,7 +54,7 @@ export function useFocusItems(orchestrationId: string) {
 		},
 	});
 	const items = scene.data?.focus_items ?? [];
-	const stale = items.filter((item) => item.status !== "ok").length;
+	const invalid = items.filter((item) => item.status !== "ok").length;
 
 	/** 整份替换成 `next`（顺序就是显示顺序）。 */
 	const replace = (next: FocusItemView[]) => {
@@ -68,7 +68,7 @@ export function useFocusItems(orchestrationId: string) {
 		/** 已用名额：包括已经失效的项。 */
 		used: items.length,
 		/** 其中已经失效的项数。 */
-		stale,
+		invalid,
 		/** 最后一次修改（谁、什么时候、改了什么）；从没改过为 null。 */
 		edit: scene.data?.focus_edit ?? null,
 		/** 场景的最新版本号：失效的项要写明「不在最新版本 vN 里」。 */

@@ -62,7 +62,7 @@ describe("节点卡片的可访问名称里的关注项", () => {
 			anomaly: retry,
 		});
 		expect(cardFocusLabel([primary], NOW, "primary")).toBe(
-			`1 项需要注意：主指标 level 重试（尝试 2）· ${formatClock(retry.at)}`,
+			`1 项需要注意：主指标 level 重试（第 2 次尝试）· ${formatClock(retry.at)}`,
 		);
 	});
 });

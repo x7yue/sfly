@@ -319,7 +319,7 @@ test("运行失败不弹通知：页内横幅留在时间线上方，状态一�
 	await expect(header(page).getByTestId("run-status")).toHaveText("失败");
 	const banner = page.getByRole("region", { name: "运行失败" });
 	await expect(banner).toBeVisible();
-	await expect(banner).toContainText("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
+	await expect(banner).toContainText("失败于 verify（第 2 次尝试）· AssertionError: 仍然漏拦");
 	const top = await header(page).boundingBox();
 	const bar = await banner.boundingBox();
 	const tl = await timeline(page).boundingBox();

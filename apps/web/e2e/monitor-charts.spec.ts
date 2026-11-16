@@ -444,7 +444,7 @@ test("节点多选筛选：按链整组勾选、搜索、快速选择、平台�
 	// 没有选中节点时，底部面板的范围跟随筛选；有选中节点时跟随选中。
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：跟随筛选（2 个节点）");
 	await timeline(page).locator('[data-node-row="verify"] button').click();
-	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次）");
+	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：verify（第 2 次尝试）");
 	await timeline(page).locator('[data-node-row="verify"] button').click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：跟随筛选（2 个节点）");
 
@@ -690,7 +690,7 @@ test("重试过的节点可以切换查看每次尝试的图表，默认看最�
 	const verify = group(page, "verify");
 	const attempt = verify.getByRole("combobox", { name: "verify 的尝试" });
 	await expect(attempt).toHaveValue("2");
-	await expect(attempt.getByRole("option")).toHaveText(["第 1 次", "第 2 次（最新）"]);
+	await expect(attempt.getByRole("option")).toHaveText(["第 1 次尝试", "第 2 次尝试（最新）"]);
 	const level = chart(page, "verify", "level");
 	await expect(level.locator("[data-latest]")).toHaveText("11");
 	await expect(level.locator("[data-window]")).toHaveText("08:00:09 – 08:00:14");

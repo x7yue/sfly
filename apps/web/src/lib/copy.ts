@@ -93,8 +93,8 @@ const STALE_HINT = "可能是节点卡住了，或者 Agent 的指标上报中�
 
 /** 关注项（GLOSSARY「关注项」）：节点检查器的名额、场景设置的「关注项」页和图表列表共用的文字。 */
 export const FOCUS = {
-	/** 名额里注明其中有几项已经失效（失效的项也占名额）。 */
-	staleNote: (stale: number) => `（含 ${stale} 项已失效的）`,
+	/** 名额里注明其中有几项已经失效（失效的项也占名额）。「失效」不是「无新数据」（`stale`）。 */
+	invalidNote: (invalid: number) => `（含 ${invalid} 项已失效的）`,
 	/** 关注项失效的一种原因：节点包的这个版本没有声明这张图表。句子来自 `@sfly/schema` 的 `focusChartMissing`。 */
 	chartMissing: focusChartMissing,
 	/** 关注项不属于场景版本：节点检查器的图表列表和「关注项」页都要说明这一点。 */
@@ -141,7 +141,7 @@ export const FOCUS = {
 		`${count} 条 ${count === 1 ? level : LOG_ALERT_LEVELS} · ${clock}`,
 	staleFor: (ago: string) => `已 ${ago} 无新数据`,
 	sourceFailed: "来源节点失败",
-	retryReason: (attempt: number, clock: string) => `重试（${TERM.attempt} ${attempt}）· ${clock}`,
+	retryReason: (attempt: number, clock: string) => `重试（${attemptLabel(attempt)}）· ${clock}`,
 	/**
 	 * 「需要注意」里每一行的原因，写清是哪个节点、为什么（与上面四种短句一一对应）。只用于执行中的节点的是无新数据的两句
 	 * （控制面只对开始执行了的节点判断无新数据）：有点时写最后一个点多久前和采样间隔（点不够两个时没有采样间隔），
@@ -155,7 +155,18 @@ export const FOCUS = {
 		`${node} 已经执行了 ${ago}，${MESSAGE_NO_DATA}。${STALE_HINT}`,
 	failedDetail: (node: string, message: string) => `${node} 失败${message ? `：${message}` : "。"}`,
 	retryDetail: (node: string, clock: string, attempt: number, message: string) =>
-		`${node} 在 ${clock} 开始重试（${TERM.attempt} ${attempt}）${message ? `，上一次${TERM.attempt}失败：${message}` : "。"}`,
+		`${node} 在 ${clock} 开始重试（${attemptLabel(attempt)}）${message ? `，上一次${TERM.attempt}失败：${message}` : "。"}`,
+	/**
+	 * 概览「需要注意」每行右侧直达按钮的文字：同一页里切到「详情」去看（`viewInLabel`）：WARN / ERROR 看那一行日志，
+	 * 没有新数据看那个节点的日志，失败和重试看它的尝试。
+	 */
+	viewLogLine: (level: string) => viewInLabel(MONITOR_VIEW_LABEL.detail, `${level} 那一行`),
+	viewNodeLogs: (node: string) => viewInLabel(MONITOR_VIEW_LABEL.detail, `${node} 的日志`),
+	viewNodeAttempts: (node: string) =>
+		viewInLabel(MONITOR_VIEW_LABEL.detail, `${node} 的${TERM.attempt}`),
+	/** 概览最后一段列不下的 WARN / ERROR：其余在「详情」的日志里。 */
+	otherAlertsRest: (shown: number) =>
+		`最近 ${shown} 条，其余在${MONITOR_VIEW_LABEL.detail}的日志里查看`,
 	/** 运行监控页头：概览的关注项读数是什么时候生成的（控制面时间）。 */
 	dataUpdated: (clock: string) => `数据更新于 ${clock}`,
 } as const;
@@ -199,7 +210,7 @@ export const RUN_STATUS_LABEL: Record<RunStatus, string> = {
 };
 
 /**
- * 飞书消息的投递结果（GLOSSARY「投递」）：机器人管理页的「最近投递」和运行详情里的运行通知都用这两个词，
+ * 飞书消息的投递结果（GLOSSARY「投递」）：机器人管理页的「最近投递」和运行抽屉里的运行通知都用这两个词，
  * 失败写「投递失败」，不用「发送失败」。
  */
 export const DELIVERY = {
@@ -207,7 +218,7 @@ export const DELIVERY = {
 	failed: "投递失败",
 } as const;
 
-/** 运行通知的状态文字（运行详情里的一行）。 */
+/** 运行通知的状态文字（运行抽屉里的一行）。 */
 export const RUN_NOTIFICATION_STATUS_LABEL: Record<RunNotificationState["status"], string> = {
 	queued: "排队中",
 	delivered: DELIVERY.delivered,
@@ -241,8 +252,8 @@ export const ACTION = {
 	keepRunning: "继续运行",
 	openRun: "打开运行监控",
 	openActionDetails: `打开${TERM.action}明细`,
-	viewInCanvas: "在画布中查看",
-	viewRuns: "查看运行记录",
+	openInCanvas: "在画布中打开",
+	openRuns: "打开运行记录",
 	edit: "编排",
 	newScenario: "新建场景",
 	publishPackage: "发布节点包",
@@ -282,26 +293,29 @@ export const presetLabel = (name: string) => `预设：${name}`;
 /** 失效的运行预设（GLOSSARY）的状态词：运行抽屉的选择框、管理对话框的列表、「再次运行」的提示里都写它。 */
 export const PRESET_INVALID_LABEL = "已失效";
 
-/** 运行监控页两个视图的名称：页头的标签页，和概览里「在详情里打开」「在详情里查看」的说法共用。 */
+/** 运行监控页两个视图的名称：页头的标签页，和概览里「在详情里查看」的说法共用。 */
 export const MONITOR_VIEW_LABEL = { overview: "概览", detail: "详情" } as const;
 
 /** 「运行监控详情」：运行监控页之外的地方（画布运行状态的检查器）指向运行监控的「详情」视图时这样写。 */
 export const MONITOR_DETAIL_LABEL = `${PAGE.monitor}${MONITOR_VIEW_LABEL.detail}`;
 
 /**
- * 图例里放不下的序列：概览里是同一页切到「详情」视图，写「在详情里查看」；
+ * 图例里放不下的序列（「还有 N 条序列」，和 {@link moreLabel} 同一个说法）：概览里是同一页切到「详情」视图，写「在详情里查看」；
  * 检查器在运行监控之外，要去另一个页面，写「打开运行监控详情」。
  */
 export const hiddenSeriesLabel = {
-	inView: (count: number) => `另有 ${count} 条序列在${MONITOR_VIEW_LABEL.detail}里查看`,
-	openPage: (count: number) => `另有 ${count} 条序列，打开${MONITOR_DETAIL_LABEL}`,
+	inView: (count: number) => `还有 ${count} 条序列在${MONITOR_VIEW_LABEL.detail}里查看`,
+	openPage: (count: number) => `还有 ${count} 条序列，打开${MONITOR_DETAIL_LABEL}`,
 };
 
 /** 检查器的图表列表里说明图表不能缩放，要缩放得去运行监控的详情。 */
 export const ZOOM_IN_DETAIL_LABEL = `要缩放，打开${MONITOR_DETAIL_LABEL}`;
 
-/** 「在详情里打开 fetch」「在运行监控详情里打开 fetch」：跳到某个视图里的这个节点的按钮或链接。 */
+/** 「在运行监控详情里打开 fetch」：去另一个页面里看这个节点的按钮或链接（同一页里切视图用 {@link viewInLabel}）。 */
 export const openInLabel = (place: string, node: string) => `在${place}里打开 ${node}`;
+
+/** 「在详情里查看 fetch」「在日志里查看 10:00:01」：同一页里切到另一个视图或页签去看某样东西（去另一个页面用 {@link openInLabel}）。 */
+export const viewInLabel = (place: string, what: string) => `在${place}里查看 ${what}`;
 
 /** 关注项读数里来源节点成功、已停止或已取消后的「最终值」：读数的脚注和可访问名称共用。 */
 export const FINAL_VALUE_LABEL = "最终值";
@@ -314,9 +328,13 @@ export const chainCountLabel = (chains: number, nodes: number) =>
 export const ELAPSED_LABEL = "已运行";
 export const DURATION_LABEL = "耗时";
 
-/** 「2 / 8 占用」「排队 1」：一台 Agent 的槽位占用和排队的任务数（Agent 管理页的机架、控制台的 Agent 列）。 */
+/**
+ * 「2 / 8 占用」「排队 1」：一台 Agent 的槽位占用和排队的任务数（Agent 管理页的机架、控制台的 Agent 列）。
+ * `QUEUED_LABEL` 是「排队」这个词本身：控制台页头的计数（数字另着色）和排队任务的一行时间说明也用它。
+ */
 export const slotUsageLabel = (used: number, slots: number) => `${used} / ${slots} 占用`;
-export const queuedLabel = (count: number) => `排队 ${count}`;
+export const QUEUED_LABEL = "排队";
+export const queuedLabel = (count: number) => `${QUEUED_LABEL} ${count}`;
 
 /**
  * 线路里当前站之前折起来的一段：都算完成的写「已完成 3 个」，不算完成的（取消的运行里已取消的节点）写它们的状态，
@@ -333,20 +351,22 @@ export const moreLabel = (count: number) => `还有 ${count} 个`;
 /**
  * 「进行中」：还没结束的统称，不等于任何一个状态名。运行抽屉的摘要里是还没结束、正在推进的节点（排队中、准备中、
  * 执行中、等待中）合起来的名称：抽屉里排队中、等待中的节点也在这个列表里，标题不能写成其中一个状态。控制台运行块
- * 和运行监控概览的链路里那一行同理。运行监控「动作」页的结果里是还没结束的动作（`NODE_ACTIONS.results.running`）。
+ * 和运行监控概览的链路里那一行同理。运行监控「动作」页签的结果里是还没结束的动作（`NODE_ACTIONS.results.running`）。
  */
 export const ACTIVE_LABEL = "进行中";
+
+const COUNT_ONLY = "只计数";
 
 /**
  * 动作与标记（GLOSSARY「动作」「标记」，规格 #345）：画布、检查器、概览、运行监控里写动作的地方共用的文字。
  * 和 `ACTION`（界面上的通用操作）不是一回事。
  */
 export const NODE_ACTIONS = {
-	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，检查器的「正在做」，「动作」页的第一组。 */
+	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，检查器的「正在做」，「动作」页签的第一组。 */
 	doing: "正在做",
 	/** 版面放得下时写在动作名称前的「正在」（Agent 槽位格、概览执行中那一行）；画布卡片只有 208px 宽，用执行中的形状代替它。 */
 	doingNow: "正在",
-	/** 正在做的动作列满了：接口只给前 50 个，可能还有没列出的（检查器的「正在做」、「动作」页的第一组共用）。 */
+	/** 正在做的动作列满了：接口只给前 50 个，可能还有没列出的（检查器的「正在做」、「动作」页签的第一组共用）。 */
 	runningIncomplete: (listed: number) => `列满 ${listed} 个，可能还有没列出的`,
 	/**
 	 * 动作的结果和标记：动作自己的一组状态文字，不是运行状态（`RUN_STATUS_LABEL`）。还没结束的写「进行中」。
@@ -358,14 +378,16 @@ export const NODE_ACTIONS = {
 		unfinished: "未结束",
 		mark: TERM.mark,
 	} satisfies Record<ActionResult | "running" | "mark", string>,
-	/** 超出上限、只记个数没有明细：「动作」页里只计数的那一行、时间线上的斜线和图例。 */
-	countOnly: "只计数",
+	/** 超出上限、只记个数没有明细：「动作」页签里只计数的那一行、时间线上的斜纹和图例。 */
+	countOnly: COUNT_ONLY,
+	/** 「只计数、没有明细」：「动作」页签里只计数的那一行和检查器的上限说明用同一个标点。 */
+	countOnlyNoDetail: `${COUNT_ONLY}、没有明细`,
 	/**
 	 * 检查器的上限说明末尾：摘要里只写控制面有没有另外丢弃过明细（`control_plane_capped`，只有它为 true 时也显示上限说明），
-	 * 丢弃了哪些名称要到「动作」页的只计数的行里看（`ACTION_PAGE.countOnlyReason` 的 `control_plane`）。写成「超过上限时」，
+	 * 丢弃了哪些名称要到「动作」页签的只计数的行里看（`ACTION_PAGE.countOnlyReason` 的 `control_plane`）。写成「超过上限时」，
 	 * 没有丢弃过时同样是实话。
 	 */
-	controlPlaneDropped: `控制面收到的明细超过上限时，超出的会丢弃；丢弃了哪些名称，到${MONITOR_DETAIL_LABEL}的「动作」页里看。`,
+	controlPlaneDropped: `控制面收到的明细超过上限时，超出的会丢弃；丢弃了哪些名称，到${MONITOR_DETAIL_LABEL}的「动作」页签里看。`,
 } as const;
 
 /** 失败的动作在只计数的段里怎么处理：只计数的原因和只看失败时第三组的说明共用这几句。 */
@@ -375,8 +397,8 @@ const FAILED_DROPPED = "合计满 10 万个以后，失败的动作也没有明�
 const FAILED_KEPT_EXCEPT_DROPPED = `${FAILED_KEPT}，控制面丢弃的除外`;
 
 /**
- * 运行监控「动作」页的文字（规格 #345，#358）：工具条、三组的名称、表头里的 Agent 时间、只计数的一行、读屏播报。
- * 和 `NODE_ACTIONS` 分开：这些文字只在「动作」页出现，列名（名称、字段、耗时、结果）写在 `ActionTable` 里。
+ * 运行监控「动作」页签的文字（规格 #345，#358）：工具条、三组的名称、表头里的 Agent 时间、只计数的一行、读屏播报。
+ * 和 `NODE_ACTIONS` 分开：这些文字只在「动作」页签出现，列名（名称、字段、结果）写在 `ActionTable` 里。
  */
 export const ACTION_PAGE = {
 	/** 工具条的可访问名称。 */
@@ -400,8 +422,8 @@ export const ACTION_PAGE = {
 	/** 表头：开始一列显示的是 Agent 时间时，写明和控制面时间差多少（ADR 0018）。 */
 	startAgentTime: "开始（Agent 时间）",
 	clockOffset: (note: string) => `时钟偏差：${note}`,
-	/** 开始时间那一格的按钮：日志跳到那一刻。 */
-	jumpToLog: (time: string) => `在日志里跳到 ${time}`,
+	/** 开始时间那一格的按钮：切到「日志」页签，定位到那一刻。 */
+	jumpToLog: (time: string) => viewInLabel("日志", time),
 	/** 三组的名称：只看失败时，第三组读到的都是失败的动作。 */
 	groups: {
 		running: NODE_ACTIONS.doing,
@@ -454,7 +476,8 @@ export const LIST_LABEL = {
 /** 通用的加载 / 错误 / 空状态文字。 */
 export const MESSAGE = {
 	loading: "加载中",
-	loadFailed: (what: string) => `无法加载${what}`,
+	/** 「无法加载日志」「无法加载 Agent 列表」：名称以字母或数字开头时和前面的汉字隔一个空格。 */
+	loadFailed: (what: string) => `无法加载${/^[A-Za-z0-9]/.test(what) ? " " : ""}${what}`,
 	noMatch: MESSAGE_NO_MATCH,
 	noData: MESSAGE_NO_DATA,
 	/** 尝试已经结束，一个点都没有上报。 */

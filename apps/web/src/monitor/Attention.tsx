@@ -1,7 +1,7 @@
 import type { FocusAnomaly, RunFocus, RunFocusItem, RunLogLine, RunView } from "@sfly/schema";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { anomalyText, readingValue, sourceNodeName } from "#/focus/focus-format";
-import { FOCUS, LOG_LEVEL_LABEL, MESSAGE, MONITOR_VIEW_LABEL, TERM } from "#/lib/copy";
+import { FOCUS, LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
 import { formatClock, formatClockMs, formatElapsed } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,7 +14,7 @@ import { useRunLogs } from "./use-run-logs";
  * 「需要注意」里的一行：写清是哪个节点、为什么（文字在 `FOCUS` 的 `…Detail`），以及直达按钮：WARN / ERROR 进详情
  * 定位到那一行，没有新数据看那个节点的日志，失败和重试看它的尝试。异常由控制面判断（契约 `FocusAnomalyKind`）。
  */
-function attentionRow(
+function attentionLine(
 	item: RunFocusItem,
 	anomaly: FocusAnomaly,
 	generatedAt: string,
@@ -22,9 +22,8 @@ function attentionRow(
 	const node = sourceNodeName(item);
 	const ago = formatElapsed(Date.parse(generatedAt) - Date.parse(anomaly.at));
 	const at = { chainInstanceId: item.source.chain_instance_id, nodeId: item.node_id };
-	const detail = MONITOR_VIEW_LABEL.detail;
 	const attempts = {
-		label: `在${detail}里看 ${node} 的${TERM.attempt}`,
+		label: FOCUS.viewNodeAttempts(node),
 		target: { ...at, tab: "attempts" as const },
 	};
 	switch (anomaly.kind) {
@@ -38,7 +37,7 @@ function attentionRow(
 					anomaly.message,
 					anomaly.count ?? 1,
 				),
-				label: `在${detail}里看这条 ${level}`,
+				label: FOCUS.viewLogLine(level),
 				target: { ...at, tab: "logs", at: anomaly.at },
 			};
 		}
@@ -53,7 +52,7 @@ function attentionRow(
 								ago,
 								item.sample_interval_ms === null ? null : formatElapsed(item.sample_interval_ms),
 							),
-				label: `在${detail}里看 ${node} 的日志`,
+				label: FOCUS.viewNodeLogs(node),
 				target: { ...at, tab: "logs" },
 			};
 		case "failed":
@@ -92,7 +91,7 @@ export function Attention({
 			</div>
 			<ul className="m-0 list-none p-0">
 				{flagged.map((item) => {
-					const { why, label, target } = attentionRow(
+					const { why, label, target } = attentionLine(
 						item,
 						item.anomaly as FocusAnomaly,
 						focus.generated_at,
@@ -125,7 +124,7 @@ export function Attention({
 }
 
 const ALERT_LEVELS = ["warn", "error"] as const;
-/** 「其他警告与错误」最多列出最近的这么多条，其余在详情的日志里看。 */
+/** 「其他警告与错误」最多列出最近的这么多条，其余在详情的日志里查看。 */
 const SHOWN_LINES = 20;
 
 /** 已经在「需要注意」里出现的那几条日志：来源任务、时间、级别都对得上，正文以异常的原文（截到 500 个字符）开头。 */
@@ -166,9 +165,7 @@ export function OtherWarnings({
 					{FOCUS.otherAlerts}
 				</h2>
 				{(others.length > SHOWN_LINES || logs.hasOlder) && (
-					<span className="text-xs text-fg-3">
-						最近 {shown.length} 条，其余在{MONITOR_VIEW_LABEL.detail}的日志里看
-					</span>
+					<span className="text-xs text-fg-3">{FOCUS.otherAlertsRest(shown.length)}</span>
 				)}
 			</div>
 			{logs.error ? (

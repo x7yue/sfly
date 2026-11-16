@@ -72,7 +72,7 @@ describe("节点的时间线区段", () => {
 		expect(segs.at(-1)).toMatchObject({ kind: "run", start: s(2), end: s(30), live: true });
 	});
 
-	it("还在排队（或派发中）的尝试只有一段排队，延伸到现在", () => {
+	it("还在排队（或准备中）的尝试只有一段排队，延伸到现在", () => {
 		const segs = nodeSegments(
 			node("package", [attempt({ status: "dispatched", queued_at: at(5) })]),
 			s(9),

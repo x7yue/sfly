@@ -3,7 +3,7 @@ import { cn } from "cn";
 import { Elapsed } from "#/components/elapsed";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, STATUS, StatusDot } from "#/components/status";
-import { namedChainLabel, TERM } from "#/lib/copy";
+import { attemptLabel, namedChainLabel, TERM } from "#/lib/copy";
 import { shortId } from "#/lib/format";
 import { Truncate } from "@/components/ui/truncate";
 
@@ -80,7 +80,7 @@ export function SlotCell({
 				<span className="flex-none font-mono text-2xs text-fg-3">{shortId(task.run_id)}</span>
 			</div>
 			<div className="mt-0.5 flex min-w-0 text-xs text-fg-3">
-				<Truncate>{`${taskChainLabel(task)} · ${TERM.attempt} ${task.attempt}`}</Truncate>
+				<Truncate>{`${taskChainLabel(task)} · ${attemptLabel(task.attempt)}`}</Truncate>
 				<span className="flex-none whitespace-pre"> · </span>
 				<Truncate className="font-mono">{task.node_type}</Truncate>
 			</div>

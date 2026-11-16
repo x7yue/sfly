@@ -43,8 +43,8 @@ test("有动作的节点下面多两条轨道，随链一起收起；可访问�
 	// 最外层三个动作一条条画出来，进行中的「保持 4 小时」写着名字。
 	await expect(top.locator("[data-track-item]")).toHaveCount(3);
 	await expect(top).toContainText("保持 4 小时");
-	// 全程：每 5ms 一个的「下单」太密，画成密度带；第 3.5 秒起只计数，画成斜线；失败的是红色短线，「重连撮合网关」
-	// 是白色短线，标记是小旗。
+	// 全程：每 5ms 一个的「下单」太密，画成密度带；第 3.5 秒起只计数，画成斜纹；失败的是红色竖线，「重连撮合网关」
+	// 是白色竖线，标记是小旗。
 	await expect(child.locator("[data-band]").first()).toBeVisible();
 	await expect(child.locator("[data-count-only]")).toHaveCount(1);
 	await expect(child.locator('[data-tone="failed"]')).toHaveCount(FAILED);
@@ -113,7 +113,7 @@ test("打开时滚到地址里的节点并用白色短条标出；轨道晚到�
 	await expect(nodeRow(page, "verify")).not.toHaveAttribute("data-selected");
 });
 
-test("在「动作」页换范围（切尝试）时，时间线滚回那个节点", async ({
+test("在「动作」页签换范围（切尝试）时，时间线滚回那个节点", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -141,12 +141,12 @@ test("在「动作」页换范围（切尝试）时，时间线滚回那个节�
 	await scrollAway();
 
 	const attempts = panel(page).getByRole("group", { name: "尝试" });
-	await attempts.getByRole("button", { name: "第 1 次" }).click();
+	await attempts.getByRole("button", { name: "第 1 次尝试" }).click();
 	await expect(verify).toBeInViewport({ ratio: 1 });
 	await expect(verify).toHaveAttribute("data-selected", "true");
 
 	await scrollAway();
-	await attempts.getByRole("button", { name: "第 2 次" }).click();
+	await attempts.getByRole("button", { name: "第 2 次尝试" }).click();
 	await expect(verify).toBeInViewport({ ratio: 1 });
 });
 

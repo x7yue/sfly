@@ -14,7 +14,7 @@ import {
 } from "@sfly/schema";
 import { type RunNodeName, runNodeName } from "#/components/node-name";
 import { runStatusView, type StatusKind } from "#/components/status";
-import { chainLabel as chainName } from "#/lib/copy";
+import { attemptLabel, chainLabel as chainName } from "#/lib/copy";
 import { shortId } from "#/lib/format";
 import { type NodeRef, nodeKey, sameNode } from "./monitor-state";
 
@@ -207,16 +207,16 @@ export function nextFailure(run: RunView, selected: NodeRef | null): NodeRef | n
 	return toRef(failed[at + 1] ?? failed[0]);
 }
 
-/** 失败的那次尝试：「（第 2 次）」；节点没有尝试记录时为空。 */
+/** 失败的那次尝试：「（第 2 次尝试）」；节点没有尝试记录时为空。 */
 export const failureAttempt = (failure: RunFailure): string =>
-	failure.attempt === null ? "" : `（第 ${failure.attempt} 次）`;
+	failure.attempt === null ? "" : `（${attemptLabel(failure.attempt)}）`;
 
 /** 错误信息前的分隔：紧跟全角括号时不再加空格。 */
 export const failureMessageSeparator = (failure: RunFailure): string =>
 	failure.attempt === null ? " · " : "· ";
 
 /**
- * 失败摘要：「失败于 核对结果（verify）（第 2 次）· AssertionError: 仍然漏拦」。
+ * 失败摘要：「失败于 核对结果（verify）（第 2 次尝试）· AssertionError: 仍然漏拦」。
  * 监控页顶栏（悬停提示）与运行结束的通知共用这一份文字。
  */
 export function failureSummary(failure: RunFailure): string {
@@ -245,7 +245,7 @@ export function cancelImpact(run: RunView, doc: OrchestrationDocument | undefine
 	const nodes = run.chains.flatMap((c) => c.nodes);
 	const notStarted = (n: NodeRunView) => n.status === "pending" || n.status === "queued";
 	return {
-		/** 正在执行（或派发中、等待中）的节点：先优雅终止。 */
+		/** 正在执行（或准备中、等待中）的节点：先优雅终止。 */
 		running: nodes.filter((n) => ["running", "dispatched", "waiting"].includes(n.status)),
 		/** 还没开始的 always 节点：照常执行清理。 */
 		always: nodes.filter((n) => notStarted(n) && isAlways(decls.get(n.node_id))),

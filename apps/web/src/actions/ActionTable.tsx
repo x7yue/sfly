@@ -4,7 +4,7 @@ import { FlagIcon } from "lucide-react";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Elapsed } from "#/components/elapsed";
 import { STATUS, StatusDot } from "#/components/status";
-import { ACTION_PAGE, NODE_ACTIONS } from "#/lib/copy";
+import { ACTION_PAGE, DURATION_LABEL, MESSAGE, NODE_ACTIONS } from "#/lib/copy";
 import {
 	formatClock,
 	formatClockMs,
@@ -56,7 +56,7 @@ interface TimeFormat {
 }
 
 /**
- * 「动作」页的表格（原型 `actRows`）：三组行（action-table.ts 整理好的）画在一张 `<table>` 里，表头吸顶。
+ * 「动作」页签的表格（原型 `actRows`）：三组行（action-table.ts 整理好的）画在一张 `<table>` 里，表头吸顶。
  * 明细最多 10 万条，所以是虚拟滚动：只渲染视口附近的行，上下用占位行撑出高度；每组是一个 `<tbody>`，组名是
  * `scope="rowgroup"` 的表头。列宽固定（`table-fixed`）：只渲染一部分行时自动列宽会随滚动跳动。
  * 滚动到底部附近（或点表格下面的按钮）读更早的一页。离开顶部以后，新推送来的行插在上面时视口里的行保持不动；
@@ -274,7 +274,7 @@ export function ActionTable({
 						</TableHead>
 						<TableHead className="py-1.5">名称</TableHead>
 						<TableHead className="py-1.5">字段</TableHead>
-						<TableHead className="py-1.5 text-right">耗时</TableHead>
+						<TableHead className="py-1.5 text-right">{DURATION_LABEL}</TableHead>
 						<TableHead className="py-1.5">结果</TableHead>
 					</TableRow>
 				</TableHeader>
@@ -314,7 +314,7 @@ export function ActionTable({
 						onClick={loadOlder}
 						className="text-xs text-fg-3 underline-offset-2 hover:text-fg-1 hover:underline"
 					>
-						{loadingOlder ? "正在加载更早的明细…" : "向下滚动或点击加载更早的明细"}
+						{loadingOlder ? MESSAGE.loading : "向下滚动或点击加载更早的明细"}
 					</button>
 				</div>
 			)}
@@ -482,7 +482,7 @@ function ItemRow({
 }
 
 /**
- * 只计数的一段：「09:19:12 至今的 1,234,794 个「下单」只计数，没有明细（…）」。显示 Agent 时间时只有起点的
+ * 只计数的一段：「09:19:12 至今的 1,234,794 个「下单」只计数、没有明细（…）」。显示 Agent 时间时只有起点的
  * Agent 时间（结束的只有控制面时间），写「起」。只看失败时接上失败的个数不知道。
  */
 function countOnlyText(
@@ -496,7 +496,7 @@ function countOnlyText(
 		row.until === null ? null : time(row.until),
 		agent,
 	);
-	const text = `${span}的 ${formatInteger(row.count)} 个「${row.name}」${NODE_ACTIONS.countOnly}，没有明细（${ACTION_PAGE.countOnlyReason(row.reason, row.totalFull)}）`;
+	const text = `${span}的 ${formatInteger(row.count)} 个「${row.name}」${NODE_ACTIONS.countOnlyNoDetail}（${ACTION_PAGE.countOnlyReason(row.reason, row.totalFull)}）`;
 	return row.failedGap
 		? `${text}；${ACTION_PAGE.failedUnknown(row.name, row.failedGap.total === null ? null : formatInteger(row.failedGap.total))}`
 		: text;

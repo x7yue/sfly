@@ -22,9 +22,9 @@ import type { TimeRange } from "./timeline-model";
  * - 够长的动作（{@link LONG_PX} 以上）一条条画出来（最多 {@link MAX_BARS} 条）。
  * - 其余的按它占的像素分桶（每 {@link BUCKET_PX} 个像素一桶）：桶里只有它一个就单独画成短线；
  *   和别的动作挤在同一桶里就是分不开，这些桶连成密度带，按每桶的个数分三档。
- * - 密度带上失败的动作画红色短线、少见名称的子动作画白色短线，每桶每种至多一个；标记画小旗，少见名称的每桶一面，
+ * - 密度带上失败的动作画红色竖线、少见名称的子动作画白色竖线，每桶每种至多一个；标记画小旗，少见名称的每桶一面，
  *   常见名称的挤在一起时隔开 {@link FLAG_PX} 才再画一面。
- * - 只计数的段画成斜线；最新一页不是全部明细时，没读到的那些只知道个数，平均分到尝试开始到最早读到的那条之间，
+ * - 只计数的段画成斜纹；最新一页不是全部明细时，没读到的那些只知道个数，平均分到尝试开始到最早读到的那条之间，
  *   并进密度带。
  * - 完全在范围外的不画，跨过边缘的裁到范围里。
  */
@@ -99,7 +99,7 @@ export interface TrackBar {
 }
 
 /**
- * 短线：单独的短动作（`marker` 为 false，宽度是它的实际长度），或者密度带上要突出的失败、少见的动作（`marker` 为 true）。
+ * 单独的短动作画成短线（`marker` 为 false，宽度是它的实际长度）；密度带上要突出的失败、少见的动作画成比带高的竖线（`marker` 为 true）。
  */
 export interface TrackTick {
 	from: number;
@@ -363,7 +363,7 @@ const levelOf = (count: number): BandRun["level"] =>
 	count >= LEVEL_FROM[2] ? 3 : count >= LEVEL_FROM[1] ? 2 : 1;
 
 /**
- * `highlightRare`：少见名称的动作画白色短线（子动作这条）。最外层的动作多半只有几个、每个持续很久，
+ * `highlightRare`：少见名称的动作画白色竖线（子动作这条）。最外层的动作多半只有几个、每个持续很久，
  * 不再单独突出；少见名称的标记在两条轨道上都画小旗。
  */
 function layoutTrack(
@@ -400,7 +400,7 @@ function layoutTrack(
 		if (item.kind === "action" && (to - from) * width >= LONG_PX && out.bars.length < MAX_BARS) {
 			const state = item.end === null ? "running" : item.result === "failed" ? "failed" : "ended";
 			out.bars.push({ from, to, item, state });
-			// 够长、一条条画出来的少见动作也在开头标一条白色短线，和密度带上的一样认得出来。
+			// 够长、一条条画出来的少见动作也在开头标一条白色竖线，和密度带上的一样认得出来。
 			if (highlightRare && item.rare && state !== "failed") {
 				out.ticks.push({ from, to: from, item, tone: "rare", marker: true });
 			}

@@ -81,6 +81,7 @@ function cardFocus(
 	focus: RunFocus | undefined,
 	id: string,
 	started: boolean,
+	runEnded: boolean,
 ): CardFocus | undefined {
 	const items = nodeFocusItems(focus, id);
 	if (!focus || items.length === 0) return undefined;
@@ -93,6 +94,7 @@ function cardFocus(
 				preview={focusPreview(items)}
 				generatedAt={focus.generated_at}
 				mode={focus.mode}
+				runEnded={runEnded}
 				aria-hidden
 				data-testid="node-focus"
 				className={cn("rounded-md bg-sunk px-2 py-0.5", ZOOM_TEXT_12, LOD_HIDDEN)}
@@ -138,7 +140,7 @@ export function useRunDecorations(
 								{ended ? NOT_RUN_IN_ENDED_RUN.label : NODE_STATUS.pending.label}
 							</StatusPill>
 						),
-						focus: cardFocus(focus, id, false),
+						focus: cardFocus(focus, id, false, ended),
 					};
 				}
 				const s = nodeStatusView(summary.node.status);
@@ -149,7 +151,7 @@ export function useRunDecorations(
 				return {
 					run: summary.state,
 					activity: currentActivity(summary.node.attempts.at(-1)) ?? undefined,
-					focus: cardFocus(focus, id, started) ?? anomaly,
+					focus: cardFocus(focus, id, started, ended) ?? anomaly,
 					slot: entry?.primary_metric ? (
 						<>
 							{anomaly && <AnomalyMark className="flex-none" />}
@@ -200,13 +202,13 @@ export function RunStateBadge({ state }: { state: CanvasRun }) {
 	let body: ReactNode;
 	switch (state.status) {
 		case "loading":
-			body = <span className="text-xs text-fg-3">加载运行…</span>;
+			body = <span className="text-xs text-fg-3">{MESSAGE.loading}</span>;
 			break;
 		case "none":
 			body = <StatusPill kind="pending">还没有运行</StatusPill>;
 			break;
 		case "error":
-			body = <StatusPill kind="failed">无法加载运行</StatusPill>;
+			body = <StatusPill kind="failed">{MESSAGE.loadFailed(TERM.run)}</StatusPill>;
 			break;
 		case "ready": {
 			const { run } = state;
@@ -363,7 +365,7 @@ function TextRow({ label, children, testId }: { label: string; children: string;
 	);
 }
 
-const HINT = "日志和每次尝试的详情在运行监控页里。";
+const HINT = `日志和每次${TERM.attempt}在${MONITOR_DETAIL_LABEL}里。`;
 
 function NodeRunInspector({
 	state,
@@ -473,6 +475,7 @@ function NodeRunInspector({
 						}
 						focus={focusItems}
 						enabled={state.doc && isSavedNodeType(saved, state.doc, id)}
+						runEnded={run.status !== "running"}
 					/>
 				)}
 				{view && !entry && node.kind === "package" && (
@@ -567,7 +570,7 @@ function RunOverview({
 	let body: ReactNode;
 	switch (state.status) {
 		case "loading":
-			body = <p className="m-0 text-xs text-fg-3">加载运行…</p>;
+			body = <p className="m-0 text-xs text-fg-3">{MESSAGE.loading}</p>;
 			break;
 		case "none":
 			body = (
@@ -580,7 +583,7 @@ function RunOverview({
 		case "error":
 			body = (
 				<p role="alert" className="m-0 text-xs text-danger-fg">
-					无法加载运行：{state.error.message}
+					{MESSAGE.loadFailed(TERM.run)}：{state.error.message}
 				</p>
 			);
 			break;

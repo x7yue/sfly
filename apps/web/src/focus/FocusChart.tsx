@@ -2,7 +2,7 @@ import type { RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
-import { FOCUS, hiddenSeriesLabel, MONITOR_VIEW_LABEL, openInLabel } from "#/lib/copy";
+import { FOCUS, hiddenSeriesLabel, MONITOR_VIEW_LABEL, viewInLabel } from "#/lib/copy";
 import { attemptWindow } from "#/monitor/charts";
 import { Button } from "@/components/ui/button";
 import { AnomalyNote } from "./AnomalyNote";
@@ -15,7 +15,7 @@ const PLOT_HEIGHT = 156;
 
 /**
  * 一个图表类关注项（折线、面积、柱状）的卡片：状态形状和名称、最新值、来源节点和多久前、按容器的实际尺寸画的图、
- * 序列多于一条时的图例，以及「在详情里打开」。图的横轴是来源节点这次尝试的开始到结束（还没结束就到读数生成的时刻），
+ * 序列多于一条时的图例，以及「在详情里查看」。图的横轴是来源节点这次尝试的开始到结束（还没结束就到读数生成的时刻），
  * 纵轴从 0 起。序列多于 10 条时只画平均值最高的那些（`shownSeries`），图例写明还有多少条。
  * 有异常时「来源节点 · 多久前」一行换成琥珀三角、原因和来源节点；没有新数据时曲线停在最后一个点，之后到现在画斜线，
  * 写明「已 2m 10s 无新数据」，图的可访问名称里也说明。
@@ -31,7 +31,7 @@ export function FocusChart({
 	generatedAt: string;
 	/** 运行已经结束：一直待执行的来源节点写「这次运行没有执行」。 */
 	runEnded?: boolean;
-	/** 在详情里打开来源节点。 */
+	/** 在详情里查看来源节点。 */
 	onOpen: () => void;
 	/** 从别处（控制台运行块的读数）进来定位到这个节点：描边换成中性高亮，`aria-current="location"`。 */
 	located?: boolean;
@@ -89,7 +89,7 @@ export function FocusChart({
 			)}
 			<footer className="mt-auto flex justify-end pt-1">
 				<Button variant="link" onClick={onOpen} className="text-xs text-fg-2">
-					{openInLabel(MONITOR_VIEW_LABEL.detail, sourceNodeName(item))}
+					{viewInLabel(MONITOR_VIEW_LABEL.detail, sourceNodeName(item))}
 				</Button>
 			</footer>
 		</article>

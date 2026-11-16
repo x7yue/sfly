@@ -58,7 +58,7 @@ export function attemptAgentTimes(
 }
 
 /**
- * 一次尝试的时钟偏差写成一句话（「动作」页显示 Agent 时间时写在表头）：和 {@link attemptAgentTimes} 的说明是同一份，
+ * 一次尝试的时钟偏差写成一句话（「动作」页签显示 Agent 时间时写在表头）：和 {@link attemptAgentTimes} 的说明是同一份，
  * 但没到阈值也写（一致），没有记录时写「未记录」。还没结束的尝试只有开始时的偏差。
  */
 export function attemptClockNote(

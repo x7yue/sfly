@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
  * 放在它影响的区域顶部，状态解除时由页面移除，不自己计时消失。操作结果的回执用 `notify`。
  *
  *   <Banner tone="danger" title="运行失败" actions={<Button size="sm">查看失败节点</Button>}>
- *     失败于 submit（第 2 次）· 执行器异常退出
+ *     失败于 submit（第 2 次尝试）· 执行器异常退出
  *   </Banner>
  *
  * - 颜色之外靠图标形状区分：失败八边形、警告三角、信息圆形。

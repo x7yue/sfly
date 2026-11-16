@@ -10,7 +10,7 @@ import { expect, test } from "./fixtures";
 import { openMonitor } from "./monitor-scenario";
 import { failApi } from "./support";
 
-// 运行监控「详情」底部面板的「动作」页（规格 #345，#357）：页签上的个数、跟着范围和尝试换、三组表格、
+// 运行监控「详情」底部面板的「动作」页签（规格 #345，#357）：页签上的个数、跟着范围和尝试换、三组表格、
 // 往下滚动读更早的明细、只计数的一段、推送来的明细。
 
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
@@ -108,7 +108,7 @@ test("失败带完整的原因；子动作按层级缩进，最多 3 层；只�
 
 	// 「下单」从 08:00:10.5 起只计数：1200 个里有明细的 404 个（只计数以前的 400 个和之后失败的 4 个）。
 	await expect(table.locator('tr[data-count-only="下单"]')).toHaveText(
-		"08:00:10 至今的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败",
+		"08:00:10 至今的 796 个「下单」只计数、没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败",
 	);
 
 	// 显示 Agent 时间时只有起点的 Agent 时间，没有结束的 Agent 时间：写「起」，不写「至」。
@@ -117,7 +117,7 @@ test("失败带完整的原因；子动作按层级缩进，最多 3 层；只�
 		.getByRole("button", { name: "Agent 时间" })
 		.click();
 	await expect(table.locator('tr[data-count-only="下单"]')).toHaveText(
-		/^\d\d:\d\d:\d\d 起的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败$/,
+		/^\d\d:\d\d:\d\d 起的 796 个「下单」只计数、没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败$/,
 	);
 });
 
@@ -203,7 +203,7 @@ test("推送来的明细插到它开始的位置，同一个 ID 以后到的为�
 	await expect(tabOf(page)).toHaveAccessibleName("动作，共 1,205 个");
 });
 
-test("范围和尝试沿用底部面板的切换；没有动作的节点写明标准节点这一轮不记录动作；没选节点时请人先选一个", async ({
+test("范围和尝试沿用底部面板的切换；没有动作的节点写明标准节点目前不记录动作；没选节点时请人先选一个", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -215,11 +215,17 @@ test("范围和尝试沿用底部面板的切换；没有动作的节点写明�
 	await expect(actionTable(page)).toBeVisible();
 
 	// verify 第 1 次失败了，没有记录动作。
-	await bp.getByRole("group", { name: "尝试" }).getByRole("button", { name: "第 1 次" }).click();
+	await bp
+		.getByRole("group", { name: "尝试" })
+		.getByRole("button", { name: "第 1 次尝试" })
+		.click();
 	const empty = bp.getByRole("region", { name: "verify 没有记录动作" });
-	await expect(empty).toContainText("标准节点这一轮不记录动作");
+	await expect(empty).toContainText("标准节点目前不记录动作");
 	await expect(tabOf(page)).toHaveAccessibleName("动作");
-	await bp.getByRole("group", { name: "尝试" }).getByRole("button", { name: "第 2 次" }).click();
+	await bp
+		.getByRole("group", { name: "尝试" })
+		.getByRole("button", { name: "第 2 次尝试" })
+		.click();
 	await expect(actionTable(page)).toBeVisible();
 	await expect(tabOf(page)).toHaveAccessibleName("动作，共 1,204 个");
 

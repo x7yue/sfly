@@ -36,8 +36,8 @@ export function rememberView(view: MonitorView, storage: ViewStorage = window.lo
 
 /**
  * 打开运行监控时的视图，按优先顺序：
- * 1. 地址里写明的 `view`；
- * 2. 地址里给了 `node`、`tab` 或 `at`：这些只在详情里有意义，要看的就是详情；
+ * 1. 地址里写明的 `view`（写了 `view=overview` 时，`node` 用来在概览里标出属于这个节点的关注项，`tab`、`at` 只在详情里有效）；
+ * 2. 没写 `view`，地址里给了 `node`、`tab` 或 `at`：选中节点、切页签、定位到某一刻只有详情里做得到，所以打开详情；
  * 3. 失败和取消的运行总是先打开详情（有失败的节点时详情会选中第一个），不看记住的视图；
  * 4. 浏览器记住的上次视图；
  * 5. 概览。

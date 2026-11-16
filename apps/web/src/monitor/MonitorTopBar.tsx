@@ -9,7 +9,7 @@ import { runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { TriggeredAt } from "#/components/via-tag";
 import { useRunFocus } from "#/focus/use-run-focus";
 import { apiQuery } from "#/lib/api";
-import { ACTION, DURATION_LABEL, ELAPSED_LABEL, FOCUS } from "#/lib/copy";
+import { ACTION, DURATION_LABEL, ELAPSED_LABEL, FOCUS, MESSAGE } from "#/lib/copy";
 import { formatClock, formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import { shortcutText } from "#/lib/shortcuts";
@@ -65,7 +65,7 @@ function FocusFreshness({ run }: { run: RunView }) {
 /**
  * 运行监控页顶栏（原型 monitorHTML 的 `.mon-top`）：返回、场景名与版本、触发人 / 开始时间 / 已运行时长、
  * 运行切换（同场景的其他运行）、运行状态（概览里后面写「数据更新于」）、「概览 / 详情」标签页、失败摘要（失败的运行：第一个失败的节点，点击查看它的尝试）、各链状态、
- * 在画布中查看、取消（运行中）或再次运行（已结束，主操作）。
+ * 在画布中打开、取消（运行中）或再次运行（已结束，主操作）。
  * 窗口窄于 1280 时左侧信息截断、各链状态隐藏、右侧按钮只显示图标，操作始终可点。
  * 运行状态标签是页面级唯一的整体脉冲（执行中时）。
  */
@@ -184,11 +184,11 @@ export function MonitorTopBar({
 				params={{ id: run.orchestration_id }}
 				search={{ run: run.id }}
 				viewTransition={runViewTransition("to-canvas")}
-				title={ACTION.viewInCanvas}
+				title={ACTION.openInCanvas}
 				className={buttonVariants({ className: COLLAPSE_BUTTON })}
 			>
 				<WorkflowIcon />
-				<span className={COLLAPSE_LABEL}>{ACTION.viewInCanvas}</span>
+				<span className={COLLAPSE_LABEL}>{ACTION.openInCanvas}</span>
 			</Link>
 			{run.status === "running" ? (
 				<CancelRunButton
@@ -224,7 +224,7 @@ export function MonitorTopBar({
 }
 
 /**
- * 失败摘要：「失败于 verify（第 2 次）· AssertionError: …」，太长时截断（悬停看完整的第一行）。
+ * 失败摘要：「失败于 verify（第 2 次尝试）· AssertionError: …」，太长时截断（悬停看完整的第一行）。
  * 点击选中这个节点，并把底部面板切到「尝试」页签（错误类型与堆栈）。
  */
 function FailureSummary({
@@ -288,7 +288,7 @@ function RunSwitcher({ run }: { run: RunView }) {
 			<DropdownMenuContent className="w-auto min-w-105">
 				<DropdownMenuGroup>
 					<DropdownMenuLabel>本场景的运行</DropdownMenuLabel>
-					{runs.isPending && <p className="m-0 px-1.5 py-1 text-xs text-fg-3">加载中…</p>}
+					{runs.isPending && <p className="m-0 px-1.5 py-1 text-xs text-fg-3">{MESSAGE.loading}</p>}
 					{runs.error && (
 						<p className="m-0 px-1.5 py-1 text-xs text-danger-fg">无法加载：{runs.error.message}</p>
 					)}

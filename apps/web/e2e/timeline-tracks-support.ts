@@ -6,7 +6,7 @@ import type { TestControlPlane } from "../../server/test/support/test-control-pl
 import type { E2eFixtures } from "./fixtures";
 import { type Running, runningScenario } from "./monitor-scenario";
 
-// 时间线上的动作轨道（#359）：端到端测试用的动作，比「动作」页的（actions-support.ts）稀，放大以后分得开，
+// 时间线上的动作轨道（#359）：端到端测试用的动作，比「动作」页签的（actions-support.ts）稀，放大以后分得开，
 // 而且明细比最新一页（500 条）多，时间线要另读失败的和少见名称的那几页。
 
 /** 「下单」从什么时候起只计数（相对 verify 第 2 次尝试开始，毫秒）。 */

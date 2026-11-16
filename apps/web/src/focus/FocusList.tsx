@@ -21,7 +21,7 @@ import { indexAfterDrop, moveItem, renamedItem } from "./focus-list-edit";
 import { useFocusItems } from "./use-focus-items";
 
 /** 失效的项为什么失效；可用的项没有。 */
-function staleReason(item: FocusItemView, headVersion: number): string | null {
+function invalidReason(item: FocusItemView, headVersion: number): string | null {
 	switch (item.status) {
 		case "ok":
 			return null;
@@ -156,7 +156,7 @@ export function FocusListPage({
 			<div className="flex flex-col gap-1 text-xs text-fg-3">
 				<p className="m-0">
 					<QuotaCount focus={focus} />
-					{focus.stale > 0 && FOCUS.staleNote(focus.stale)}
+					{focus.invalid > 0 && FOCUS.invalidNote(focus.invalid)}
 				</p>
 				{edit && (
 					<p className="m-0 text-fg-2">
@@ -192,7 +192,7 @@ export function FocusListPage({
 					>
 						{items.map((item, index) => {
 							const key = focusKey(item);
-							const reason = staleReason(item, focus.headVersion);
+							const reason = invalidReason(item, focus.headVersion);
 							const line = dropLine(index);
 							const name = focusName(item);
 							const node = {

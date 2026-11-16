@@ -5,7 +5,7 @@ import { useSyncExternalStore } from "react";
  * 可以切换成控制面时间。选择保存在 localStorage，刷新后保持。
  * 时间线定位和按时间范围过滤不看这个选择，始终用控制面时间。
  *
- * 「动作」页表格里的时间有自己的一份选择（默认控制面时间，和时间线一致），和日志的互不影响。
+ * 「动作」页签表格里的时间有自己的一份选择（默认控制面时间，和时间线一致），和日志的互不影响。
  */
 export type LogTimeKind = "agent" | "control_plane";
 

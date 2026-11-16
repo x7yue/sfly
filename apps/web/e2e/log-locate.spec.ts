@@ -174,7 +174,7 @@ test("节点重试过：时刻落在哪一次尝试，就打开哪一次尝试�
 	const attempt = (n: number) =>
 		panel(page)
 			.getByRole("group", { name: "尝试" })
-			.getByRole("button", { name: `第 ${n} 次` });
+			.getByRole("button", { name: `第 ${n} 次尝试` });
 
 	await page.goto(monitorUrl(runId, { node: "verify", at: iso(clock0 + 8_500) }));
 	await expect(attempt(1)).toHaveAttribute("aria-pressed", "true");

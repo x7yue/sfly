@@ -23,7 +23,7 @@ import {
 import { useId, useRef } from "react";
 import type { DocNode } from "#/components/canvas/flow";
 import { controlPlaneNow } from "#/lib/control-plane-time";
-import { subflowLabel } from "#/lib/copy";
+import { MESSAGE, subflowLabel } from "#/lib/copy";
 import { latestVersion } from "#/lib/package-versions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -95,7 +95,7 @@ export function PackageParams({
 	const undeclared = Object.keys(node.inputs).filter((k) => !type?.inputs.properties[k]);
 	return (
 		<>
-			{type === undefined && <p className="m-0 text-xs text-fg-3">加载节点类型…</p>}
+			{type === undefined && <p className="m-0 text-xs text-fg-3">{MESSAGE.loading}</p>}
 			{type === null && (
 				<p className="m-0 mb-3 text-xs text-warn-fg">
 					找不到这个节点类型的元信息，不能生成参数表单。

@@ -4,7 +4,7 @@ import { formatInteger } from "#/lib/format";
 import type { ActionFilter } from "./action-details";
 
 /**
- * 「动作」页的筛选条件（名称、只看失败）怎么变，以及筛选之后读屏播报什么。
+ * 「动作」页签的筛选条件（名称、只看失败）怎么变，以及筛选之后读屏播报什么。
  * 要读哪些明细、表格里留哪些行在 `use-task-actions.ts` 和 `action-table.ts`。
  */
 

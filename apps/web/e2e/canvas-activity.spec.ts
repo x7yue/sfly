@@ -46,7 +46,7 @@ test("执行中的节点卡片写出正在做的动作和已持续多久，没�
 	await expect(verifyActivity).toContainText("保持 4 小时");
 	await expect(verifyActivity).toContainText("1h 43m");
 	// verify 是第 2 次尝试：10 分钟以内开始的重试算异常，场景没设关注项时主指标的异常也写进名称。
-	const retry = /1 项需要注意：主指标 level 重试（尝试 2）· \d\d:\d\d:\d\d/;
+	const retry = /1 项需要注意：主指标 level 重试（第 2 次尝试）· \d\d:\d\d:\d\d/;
 	await expect(verifyCard).toHaveAccessibleName(
 		new RegExp(`^节点 verify，.+ 执行中 正在做 保持 4 小时 ${retry.source}$`),
 	);

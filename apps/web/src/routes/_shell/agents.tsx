@@ -9,7 +9,7 @@ import { DocPageLink } from "#/components/doc-page-link";
 import { EmptyState, QueryView, RackSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { MESSAGE, PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,7 +37,7 @@ function AgentsPage() {
 		<QueryView
 			query={agents}
 			loading={<RackSkeleton />}
-			errorTitle="无法加载 Agent"
+			errorTitle={MESSAGE.loadFailed(TERM.agent)}
 			isEmpty={(d) => d.agents.length === 0}
 			empty={
 				<EmptyState

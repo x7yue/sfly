@@ -7,7 +7,7 @@ import { notify } from "#/components/feedback/notify";
 import { ErrorState } from "#/components/feedback/states";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
-import { DURATION_LABEL } from "#/lib/copy";
+import { DURATION_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import { dialogOpen, isEditable } from "#/lib/focus";
 import { formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
@@ -142,7 +142,7 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 		return (
 			<div className="fixed inset-0 grid place-items-center bg-bg p-8">
 				<ErrorState
-					title="无法加载运行"
+					title={MESSAGE.loadFailed(TERM.run)}
 					error={runQuery.error}
 					onRetry={() => void runQuery.refetch()}
 					className="w-[560px]"
@@ -153,7 +153,7 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 	if (!run || !axis) {
 		return (
 			<output
-				aria-label="加载中"
+				aria-label={MESSAGE.loading}
 				aria-busy="true"
 				className="fixed inset-0 flex flex-col gap-3 bg-bg p-3"
 			>

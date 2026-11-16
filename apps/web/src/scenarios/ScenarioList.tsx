@@ -219,7 +219,7 @@ function ScenarioActions({ scenario }: { scenario: OrchestrationSummary }) {
 					className={buttonVariants({ size: "sm", variant: "ghost" })}
 				>
 					<HistoryIcon />
-					{ACTION.viewRuns}
+					{ACTION.openRuns}
 				</Link>
 				<DropdownMenu>
 					<DropdownMenuTrigger

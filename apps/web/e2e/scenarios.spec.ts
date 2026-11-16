@@ -320,7 +320,7 @@ test("归档确认框的放弃按钮叫「保留场景」；归档成功的通�
 	await expect(card).toBeVisible();
 });
 
-test("已归档场景的历史运行仍可回看：卡片与表格行的「查看运行记录」，运行记录的场景筛选里标注「已归档」", async ({
+test("已归档场景的历史运行仍可回看：卡片与表格行的「打开运行记录」，运行记录的场景筛选里标注「已归档」", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -340,7 +340,7 @@ test("已归档场景的历史运行仍可回看：卡片与表格行的「查�
 
 	await page.goto("/orchestrations?archived=true");
 	const card = page.getByRole("article", { name: "旧场景" });
-	await card.getByRole("link", { name: "查看运行记录" }).click();
+	await card.getByRole("link", { name: "打开运行记录" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs\\?scenario=${id}`));
 	const select = page.getByRole("combobox", { name: "场景" });
 	await expect(select).toHaveValue(id);
@@ -351,7 +351,7 @@ test("已归档场景的历史运行仍可回看：卡片与表格行的「查�
 	await page.goto("/orchestrations?archived=true&view=table");
 	await page
 		.getByRole("row", { name: /旧场景/ })
-		.getByRole("link", { name: "查看运行记录" })
+		.getByRole("link", { name: "打开运行记录" })
 		.click();
 	await expect(page).toHaveURL(new RegExp(`scenario=${id}`));
 	await select.selectOption({ label: "新场景" });

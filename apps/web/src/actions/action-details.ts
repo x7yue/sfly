@@ -77,7 +77,7 @@ export function withLive(
 
 /**
  * 明细和动作的顺序（与分页相同）：开始时间从新到旧，同一时刻 ID 大的在前。负数表示 a 排在 b 前面。
- * 「动作」页的三组（action-table.ts）也按它排。
+ * 「动作」页签的三组（action-table.ts）也按它排。
  */
 export const byNewest = (a: Started, b: Started): number =>
 	Date.parse(b.started_at) - Date.parse(a.started_at) || b.id - a.id;

@@ -1,7 +1,7 @@
 import { isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
 import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
 import type { FocusItems } from "#/focus/use-focus-items";
-import { CHART_TYPE_LABEL, FOCUS, TERM } from "#/lib/copy";
+import { CHART_TYPE_LABEL, FOCUS, MESSAGE, TERM } from "#/lib/copy";
 import { Badge } from "@/components/ui/badge";
 
 /**
@@ -112,7 +112,7 @@ export function MetricDeclarations({
 	focus?: ChartFocus;
 }) {
 	if (info === undefined) {
-		return <p className="m-0 text-xs text-fg-3">正在加载节点类型的元信息…</p>;
+		return <p className="m-0 text-xs text-fg-3">{MESSAGE.loading}</p>;
 	}
 	if (info === null) {
 		return <p className="m-0 text-xs text-fg-3">找不到这个节点类型，无法显示它声明的指标。</p>;

@@ -124,6 +124,7 @@ export function NodeCharts({
 	readings,
 	focus,
 	enabled,
+	runEnded,
 }: {
 	runId: string;
 	node: NodeRunView;
@@ -137,6 +138,8 @@ export function NodeCharts({
 	 * undefined，开关先禁用、不写原因。
 	 */
 	enabled: boolean | undefined;
+	/** 运行已经结束：一直待执行的节点写「这次运行没有执行」「未执行」，不写「还没有开始执行」「待执行」。 */
+	runEnded: boolean;
 }) {
 	const headingId = useId();
 	const latest = entry.attempts.at(-1);
@@ -195,10 +198,11 @@ export function NodeCharts({
 										titleId={titleId}
 										chart={row.declared}
 										reading={reading}
+										runEnded={runEnded}
 										result={result}
 										metricOf={(name) => declaredMetric.get(name)}
 										axis={axis}
-										noData={noDataLabel(attempt ?? NOT_STARTED, node.status)}
+										noData={noDataLabel(attempt ?? NOT_STARTED, node.status, runEnded)}
 										toggle={
 											<FocusToggle
 												focus={focus}
@@ -253,6 +257,7 @@ function DeclaredChart({
 	titleId,
 	chart,
 	reading,
+	runEnded,
 	result,
 	metricOf,
 	axis,
@@ -262,6 +267,7 @@ function DeclaredChart({
 	titleId: string;
 	chart: ChartView;
 	reading: { item: RunFocusItem; at: string } | null;
+	runEnded: boolean;
 	result: UseQueryResult<MetricSeries> | undefined;
 	metricOf: (name: string) => MetricDeclaration | undefined;
 	axis: PlotWindow | null;
@@ -277,7 +283,7 @@ function DeclaredChart({
 	}));
 	const unit = metricOf(chart.metrics[0] ?? "")?.unit ?? "";
 	const value = reading?.item ?? { latest: latestOf(raw), metrics, unit };
-	const state = reading ? readingState(reading.item, reading.at) : null;
+	const state = reading ? readingState(reading.item, reading.at, runEnded) : null;
 	const failed = result?.error && !result.data;
 	const empty =
 		state?.kind === "empty"
@@ -310,7 +316,7 @@ function DeclaredChart({
 					height={PLOT_HEIGHT}
 					label={
 						reading
-							? readingLabel(reading.item, reading.at)
+							? readingLabel(reading.item, reading.at, runEnded)
 							: `${chart.title} ${readingValue(value)}`
 					}
 					empty={empty}

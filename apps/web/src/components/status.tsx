@@ -184,7 +184,7 @@ export function nodeStatusView(status: string): StatusView {
 		: { kind: "pending", label: status };
 }
 
-/** 运行通知的状态（运行详情里的一行）：排队中、已送达、投递失败、已丢弃（机器人被删除）、未发送（没进队列）。 */
+/** 运行通知的状态（运行抽屉里的一行）：排队中、已送达、投递失败、已丢弃（机器人被删除）、未发送（没进队列）。 */
 const RUN_NOTIFICATION_KIND: Record<RunNotificationState["status"], StatusKind> = {
 	queued: "queued",
 	delivered: "ok",

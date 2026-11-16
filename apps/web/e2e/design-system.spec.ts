@@ -17,7 +17,7 @@ const pulses = (page: Page) =>
 				.filter((a) => a instanceof CSSAnimation && a.animationName === "status-pulse").length,
 	);
 
-test("状态标记每种状态一个形状，默认静止；强制颜色模式下用系统文字色照样画出来", async ({
+test("状态形状每种状态一个，默认静止；强制颜色模式下用系统文字色照样画出来", async ({
 	page,
 	controlPlane,
 	connectAgent,

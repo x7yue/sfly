@@ -21,7 +21,7 @@ export function actionAttempt(
 /** 正在做的一个动作和它画在第几层。 */
 export interface RunningRow {
 	action: RunningActionView;
-	/** 缩进的层数，最多 3（开发文档「嵌套与并发」，和「动作」页一样）。 */
+	/** 缩进的层数，最多 3（开发文档「嵌套与并发」，和「动作」页签一样）。 */
 	level: Indent;
 }
 

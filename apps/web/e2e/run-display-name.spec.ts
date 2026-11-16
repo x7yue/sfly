@@ -96,7 +96,7 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 	const ended = dashboardPanel(page, "最近结束").getByRole("listitem");
 	await expect(ended).toHaveCount(1);
 	await expect(ended.first()).toContainText(
-		"失败节点 探测延迟（probe） · 子流程 压测监控 · 尝试 1",
+		"失败节点 探测延迟（probe） · 子流程 压测监控 · 第 1 次尝试",
 	);
 });
 
@@ -113,7 +113,7 @@ test("运行监控页：顶栏、失败横幅、时间线、尝试列表、范�
 	await openMonitor(page, clock, runId);
 
 	// 第一个失败的节点是先失败的 probe（主链的 verify 晚于它失败），和控制台、运行记录一致。
-	const summary = "失败于 探测延迟（probe）（第 1 次）· TimeoutError: 延迟超过阈值";
+	const summary = "失败于 探测延迟（probe）（第 1 次尝试）· TimeoutError: 延迟超过阈值";
 	const banner = page.getByRole("region", { name: "运行失败" });
 	await expect(banner.getByTestId("run-failure")).toHaveText(summary);
 	await banner.getByRole("button", { name: "收起" }).click();
@@ -133,14 +133,14 @@ test("运行监控页：顶栏、失败横幅、时间线、尝试列表、范�
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：探测延迟（probe）");
 	await row("verify").click();
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText(
-		"范围：核对结果（verify）（第 2 次）",
+		"范围：核对结果（verify）（第 2 次尝试）",
 	);
 	await expect(
 		panel(page).getByRole("button", { name: "清除范围，不再只看 核对结果（verify）" }),
 	).toBeVisible();
 	await panel(page).getByRole("tab", { name: "尝试" }).click();
 	const firstAttempt = panel(page).getByRole("article", { name: "核对结果（verify） 第 1 次尝试" });
-	await expect(firstAttempt).toContainText("核对结果（verify）第 1 次");
+	await expect(firstAttempt).toContainText("核对结果（verify）第 1 次尝试");
 
 	// 合并日志的来源节点。
 	await panel(page)
@@ -257,7 +257,7 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 	const ended = dashboardPanel(page, "最近结束").getByRole("listitem");
 	await expect(ended).toHaveCount(1);
 	await expect(ended.first()).toContainText(
-		"失败节点 探测延迟（probe） · 子流程 压测监控 · 尝试 1",
+		"失败节点 探测延迟（probe） · 子流程 压测监控 · 第 1 次尝试",
 	);
 });
 
@@ -323,7 +323,7 @@ test("运行监控页：名称被截断时，悬停或聚焦时间线行、图�
 	await failure.evaluate((el) => {
 		el.style.maxWidth = "240px";
 	});
-	await showsOnHoverAndFocus(failure, `失败于 ${LONG}（probe）（第 1 次）`);
+	await showsOnHoverAndFocus(failure, `失败于 ${LONG}（probe）（第 1 次尝试）`);
 	await expect(failure).toHaveText(/^失败于 一二三/);
 	await failure.evaluate((el) => {
 		el.style.maxWidth = "";

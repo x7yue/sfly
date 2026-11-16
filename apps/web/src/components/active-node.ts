@@ -1,6 +1,6 @@
 import { isOnAgentStatus, type RunListActiveNode } from "@sfly/schema";
 import { nodeStatusView } from "#/components/status";
-import { TERM } from "#/lib/copy";
+import { attemptLabel } from "#/lib/copy";
 import { formatClock, formatElapsed } from "#/lib/format";
 
 /**
@@ -17,7 +17,7 @@ export const activeOrder = (node: Pick<ActiveNode, "status">) =>
 	isOnAgentStatus(node.status) ? 0 : node.status === "queued" ? 1 : 2;
 
 /**
- * 「agent-a · 尝试 2 · 1m 05s」；还没开始执行（排队中、准备中）的时长处写状态，不从排队算起；
+ * 「agent-a · 第 2 次尝试 · 1m 05s」；还没开始执行（排队中、准备中）的时长处写状态，不从排队算起；
  * 不在 Agent 上的等待节点写「等待中 · 唤醒 10:30:00」。时长每秒刷新，用 `formatElapsed`。
  */
 export function activeDetail(node: ActiveNode, now: number): string {
@@ -29,5 +29,5 @@ export function activeDetail(node: ActiveNode, now: number): string {
 	}
 	const time =
 		node.started_at === null ? status.label : formatElapsed(now - Date.parse(node.started_at));
-	return `${node.agent} · ${TERM.attempt} ${node.attempt} · ${time}`;
+	return `${node.agent} · ${attemptLabel(node.attempt)} · ${time}`;
 }

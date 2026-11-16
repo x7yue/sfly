@@ -2,7 +2,7 @@ import type { LogLineView } from "@sfly/schema";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "cn";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import { LOG_LEVEL_LABEL } from "#/lib/copy";
+import { LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
 import {
 	formatClockMs,
 	formatFullDateTime,
@@ -275,7 +275,7 @@ export function LogList<L extends LogLineView>({
 						onClick={loadOlder}
 						className="text-xs text-fg-3 underline-offset-2 hover:text-fg-1 hover:underline"
 					>
-						{loadingOlder ? "正在加载更早的日志…" : "向上滚动或点击加载更早的日志"}
+						{loadingOlder ? MESSAGE.loading : "向上滚动或点击加载更早的日志"}
 					</button>
 				</div>
 			)}
@@ -410,7 +410,7 @@ export function LogList<L extends LogLineView>({
 						onClick={loadNewer}
 						className="text-xs text-fg-3 underline-offset-2 hover:text-fg-1 hover:underline"
 					>
-						{loadingNewer ? "正在加载更新的日志…" : "向下滚动或点击加载更新的日志"}
+						{loadingNewer ? MESSAGE.loading : "向下滚动或点击加载更新的日志"}
 					</button>
 				</div>
 			)}

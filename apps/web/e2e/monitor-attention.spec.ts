@@ -45,7 +45,7 @@ test("「需要注意」只在有异常时出现：probe 打了 WARN 就列出�
 		"probe 的 WARN（08:00:14）：探活超时 3 次（阈值 2 次）",
 	);
 	await expect(rows(page).nth(1)).toContainText("total");
-	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里看这条 WARN");
+	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里查看 WARN 那一行");
 	const total = readouts(page).getByRole("button", {
 		name: "total 16，来自 probe（执行中），需要注意：1 条 WARN · 08:00:14",
 	});
@@ -74,7 +74,7 @@ test("「需要注意」只在有异常时出现：probe 打了 WARN 就列出�
 	await expect(rows(page).first()).toContainText(
 		"probe 仍在执行，但最后一个点在 1m 45s 前，采样间隔 15s。可能是节点卡住了，或者 Agent 的指标上报中断了。",
 	);
-	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里看 probe 的日志");
+	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里查看 probe 的日志");
 
 	probePoint(agent, probe, clock);
 	await agent.sync();
@@ -104,7 +104,7 @@ test("直达按钮：WARN 进详情，日志定位到那一行；没有新数据
 	const warnAt = new Date(now - 100).toISOString();
 	await openOverview(page, clock, runId);
 
-	await rows(page).first().getByRole("button", { name: "在详情里看这条 WARN" }).click();
+	await rows(page).first().getByRole("button", { name: "在详情里查看 WARN 那一行" }).click();
 	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
 	expect(search(page)).toEqual({ view: "detail", node: "probe", tab: "logs", at: warnAt });
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：probe");
@@ -116,7 +116,7 @@ test("直达按钮：WARN 进详情，日志定位到那一行；没有新数据
 	await viewTab(page, "概览").click();
 	await advance(clock, agent, 10 * 60_000 + 15_000);
 	await expect(rows(page).first()).toContainText("probe 仍在执行，但最后一个点在");
-	await rows(page).first().getByRole("button", { name: "在详情里看 probe 的日志" }).click();
+	await rows(page).first().getByRole("button", { name: "在详情里查看 probe 的日志" }).click();
 	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
 	expect(search(page)).toEqual({ view: "detail", node: "probe", tab: "logs" });
 	await expect(panel(page).getByTestId("bp-scope")).toHaveText("范围：probe");
@@ -258,15 +258,15 @@ test("重试和失败：「需要注意」写明上一次失败的原因或失�
 	// verify 第 1 次失败，第 9 秒（上海时间 08:00:09）开始第 2 次。
 	await expect(rows(page)).toHaveCount(1);
 	await expect(rows(page).first()).toContainText(
-		"verify 在 08:00:09 开始重试（尝试 2），上一次尝试失败：AssertionError: 漏拦 3 笔",
+		"verify 在 08:00:09 开始重试（第 2 次尝试），上一次尝试失败：AssertionError: 漏拦 3 笔",
 	);
 	// verify 的 level 是瞬时值，平台给它的默认图表是折线：原因写在图表卡片上和图的可访问名称里。
 	const verifyChart = focusChart(page, "核对 level");
-	await expect(verifyChart).toContainText("重试（尝试 2）· 08:00:09 · verify");
+	await expect(verifyChart).toContainText("重试（第 2 次尝试）· 08:00:09 · verify");
 	await expect(verifyChart.getByRole("img")).toHaveAccessibleName(
-		/需要注意：重试（尝试 2）· 08:00:09$/,
+		/需要注意：重试（第 2 次尝试）· 08:00:09$/,
 	);
-	await rows(page).first().getByRole("button", { name: "在详情里看 verify 的尝试" }).click();
+	await rows(page).first().getByRole("button", { name: "在详情里查看 verify 的尝试" }).click();
 	await expect(viewTab(page, "详情")).toHaveAttribute("aria-selected", "true");
 	expect(search(page)).toEqual({ view: "detail", node: "verify", tab: "attempts" });
 	await expect(panel(page).getByRole("tab", { name: "尝试" })).toHaveAttribute(
@@ -280,5 +280,5 @@ test("重试和失败：「需要注意」写明上一次失败的原因或失�
 	await viewTab(page, "概览").click();
 	await expect(rows(page).first()).toContainText("verify 失败：AssertionError: 仍然漏拦");
 	await expect(verifyChart.getByRole("img")).toHaveAccessibleName(/需要注意：来源节点失败$/);
-	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里看 verify 的尝试");
+	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里查看 verify 的尝试");
 });

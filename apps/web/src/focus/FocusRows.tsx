@@ -27,7 +27,7 @@ interface Look {
 	more: string;
 	name(item: RunFocusItem, mode: RunFocus["mode"]): string;
 	/** 悬停一行看到的文字。 */
-	title(item: RunFocusItem, generatedAt: string): string | undefined;
+	title(item: RunFocusItem, generatedAt: string, runEnded: boolean): string | undefined;
 	/** 单行文字（名称、失效的原因）。 */
 	Text: ComponentType<{ className: string; children: string }>;
 	Value: ComponentType<CellProps>;
@@ -120,11 +120,14 @@ export function FocusRows({
 	generatedAt,
 	mode,
 	variant,
+	runEnded = false,
 	className,
 	...props
 }: {
 	preview: Pick<FocusPreview<RunFocusItem>, "shown" | "more">;
 	generatedAt: string;
+	/** 运行已经结束：悬停一行看到的文字里，一直待执行的来源节点写「未执行」，不写「待执行」。 */
+	runEnded?: boolean;
 	/** `primary`：场景没有设置关注项，显示的是这个节点的主指标。 */
 	mode: RunFocus["mode"];
 	variant: keyof typeof LOOKS;
@@ -137,7 +140,7 @@ export function FocusRows({
 					key={`${item.node_id}\n${item.chart}\n${item.position}`}
 					data-focus-row={item.chart}
 					data-anomaly={item.anomaly?.kind}
-					title={look.title(item, generatedAt)}
+					title={look.title(item, generatedAt, runEnded)}
 					className={cn("flex min-w-0 items-center gap-1.5", look.row)}
 				>
 					{item.anomaly && <AnomalyMark className="flex-none" />}

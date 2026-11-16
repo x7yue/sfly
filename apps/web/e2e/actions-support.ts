@@ -10,7 +10,7 @@ import type { TestControlPlane } from "../../server/test/support/test-control-pl
 import type { E2eFixtures } from "./fixtures";
 import { type Running, runningScenario } from "./monitor-scenario";
 
-// 运行监控「动作」页（#357）：端到端测试与视觉回归共用的动作和标记。
+// 运行监控「动作」页签（#357）：端到端测试与视觉回归共用的动作和标记。
 
 type Ended = ActionSummaryEvent["recent"][number];
 type NameCount = ActionSummaryEvent["names"][number];
@@ -195,7 +195,7 @@ export function actionsSummary(
 	};
 }
 
-/** 「动作」页的表格（滚动容器）。 */
+/** 「动作」页签的表格（滚动容器）。 */
 export const actionTable = (page: Page): Locator => page.getByTestId("action-table");
 
 /** 一组（`running` / `recent` / `earlier`）里现在渲染出来的行：动作和标记写 ID，只计数的段写 `~名称`。 */

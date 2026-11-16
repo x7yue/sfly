@@ -99,7 +99,7 @@ test("场景没设关注项时，主指标有异常的卡片：主指标旁有�
 	await expect(verify.locator("[data-primary-metric]")).toBeVisible();
 	await expect(verify.locator('[data-status-dot="warn"]')).toHaveCount(1);
 	await expect(verify).toHaveAccessibleName(
-		/^节点 verify，.+ 执行中 1 项需要注意：主指标 level 重试（尝试 2）· \d\d:\d\d:\d\d$/,
+		/^节点 verify，.+ 执行中 1 项需要注意：主指标 level 重试（第 2 次尝试）· \d\d:\d\d:\d\d$/,
 	);
 	// 没设关注项：没有眼睛图标和个数。
 	await expect(verify.getByTestId("node-focus-count")).toHaveCount(0);

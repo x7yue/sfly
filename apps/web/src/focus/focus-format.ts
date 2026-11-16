@@ -84,7 +84,7 @@ export function readingWhen(item: RunFocusItem, generatedAt: string, runEnded = 
 /**
  * 异常原因的短句（异常由控制面判断，这里只管写法）：「1 条 WARN · 10:58:41」「3 条 WARN / ERROR · 10:58:41」（这次尝试的 WARN / ERROR 条数，只有一条时写它的级别，时间是最近一条的）、
  * 「已 2m 10s 无新数据」（从最后一个点算起，一个点都没有时从开始执行算起）、「来源节点失败」、
- * 「重试（尝试 2）· 10:41:02」（这次尝试开始的时间）；没有异常为 null。读数的脚注、图表卡片、可访问名称共用，
+ * 「重试（第 2 次尝试）· 10:41:02」（这次尝试开始的时间）；没有异常为 null。读数的脚注、图表卡片、可访问名称共用，
  * 「多久」按读数的 `generatedAt`（控制面时间）算。
  */
 export function anomalyText(

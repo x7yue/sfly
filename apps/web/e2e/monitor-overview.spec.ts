@@ -333,7 +333,7 @@ test("点任何一项都进入详情，并定位到它所在的节点", async ({
 	);
 
 	await viewTab(page, "概览").click();
-	await focusChart(page, "下单延迟").getByRole("button", { name: "在详情里打开 fetch" }).click();
+	await focusChart(page, "下单延迟").getByRole("button", { name: "在详情里查看 fetch" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail&node=fetch$`));
 	await expect(timeline(page).locator('[data-node-row="fetch"] button')).toHaveAttribute(
 		"aria-pressed",
@@ -371,10 +371,10 @@ test("链路：各链的线路（子流程从触发它的节点分出），下�
 	const running = page.getByRole("list", { name: "进行中的节点" });
 	await expect(running.getByRole("listitem")).toHaveCount(2);
 	await expect(running.getByRole("listitem").filter({ hasText: "verify" })).toContainText(
-		"agent-a · 尝试 2 · 5s",
+		"agent-a · 第 2 次尝试 · 5s",
 	);
 	await expect(running.getByRole("listitem").filter({ hasText: "probe" })).toContainText(
-		"agent-a · 尝试 1 · 8s",
+		"agent-a · 第 1 次尝试 · 8s",
 	);
 });
 
@@ -402,7 +402,7 @@ test("场景没设关注项：显示执行中节点的主指标，并给出「�
 	const items = readouts(page).getByRole("button");
 	await expect(items).toHaveCount(2);
 	await expect(items.nth(0)).toHaveAccessibleName(
-		`level ${last(5, 9)}，来自 verify（执行中），需要注意：重试（尝试 2）· 08:00:09`,
+		`level ${last(5, 9)}，来自 verify（执行中），需要注意：重试（第 2 次尝试）· 08:00:09`,
 	);
 	await expect(items.nth(1)).toHaveAccessibleName(
 		`level ${last(3, 6)}，来自 probe（执行中），1s 前`,
@@ -460,7 +460,7 @@ test("场景没设关注项，节点还在准备中（安装节点包）：显�
 	await expect(page.getByRole("heading", { name: "执行中节点的主指标", level: 2 })).toBeVisible();
 	// 还没开始执行：时长处写「准备中」，不从排队算起（和控制台运行块、Agent 槽位格一样）。
 	await expect(page.getByRole("list", { name: "进行中的节点" }).getByRole("listitem")).toHaveText([
-		"ping agent-a · 尝试 1 · 准备中",
+		"ping agent-a · 第 1 次尝试 · 准备中",
 	]);
 	const item = readouts(page).getByRole("button");
 	await expect(item).toHaveCount(1);
@@ -501,7 +501,7 @@ test("图表的序列多于 10 条：刷新后平均值的排名变了，画的�
 	await openOverview(page, clock, runId);
 
 	const legend = focusChart(page, "各连接").getByRole("list", { name: "图例" });
-	await expect(legend).toContainText("另有 2 条序列");
+	await expect(legend).toContainText("还有 2 条序列");
 	await expect(legend).not.toContainText("h00");
 	await expect(legend).not.toContainText("h01");
 	const before = await legend.getByRole("listitem").allTextContents();
@@ -620,7 +620,7 @@ test("子流程还没触发的节点也在概览里：写明还没有开始执�
 	// 子流程要等 fetch 成功、spawn 执行之后才触发：probe 还没有链实例。
 	const card = focusChart(page, "探活 level");
 	await expect(card).toContainText("probe · 还没有开始执行");
-	await card.getByRole("button", { name: "在详情里打开 probe" }).click();
+	await card.getByRole("button", { name: "在详情里查看 probe" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail&node=probe$`));
 	await expect(timeline(page)).toBeVisible();
 });

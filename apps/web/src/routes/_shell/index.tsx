@@ -12,8 +12,9 @@ import { GettingStarted } from "#/dashboard/GettingStarted";
 import { RunningRuns } from "#/dashboard/RunningRuns";
 import { ScenariosPanel } from "#/dashboard/ScenariosPanel";
 import { apiQuery } from "#/lib/api";
-import { ACTION, MESSAGE, PAGE } from "#/lib/copy";
+import { ACTION, MESSAGE, PAGE, QUEUED_LABEL, RUN_STATUS_LABEL } from "#/lib/copy";
 import { formatClock } from "#/lib/format";
+import { NODE_STATUS } from "#/lib/node-status";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -86,21 +87,22 @@ function RunCounts({ runs }: { runs: DashboardView["runs"] }) {
 			aria-label="运行计数"
 			className="m-0 mr-2 flex list-none items-center gap-4 p-0 text-xs text-fg-3"
 		>
-			<Count label="运行中" value={runs.running} />
-			<Count label="执行中任务" value={runs.running_tasks} />
-			<Count label="排队" value={runs.queued_tasks} />
+			<Count label={RUN_STATUS_LABEL.running} value={runs.running} />
+			<Count label={`${NODE_STATUS.running.label}任务`} value={runs.running_tasks} />
+			<Count label={QUEUED_LABEL} value={runs.queued_tasks} />
 			<li aria-hidden className="h-3.5 w-px bg-border" />
 			<li>
-				最近 24 小时 <Count label="成功" value={runs.success} inline />
+				最近 24 小时 <Count label={RUN_STATUS_LABEL.success} value={runs.success} inline />
 				{" · "}
 				{/* 数值为 0 时不着色：颜色只在有失败时传达信号。 */}
 				<Count
-					label="失败"
+					label={RUN_STATUS_LABEL.failed}
 					value={runs.failed}
 					inline
 					className={runs.failed > 0 ? "text-danger-fg" : undefined}
 				/>
 				{" · "}
+				{/* 按规格 #346 故事 17 写「取消」；`RUN_STATUS_LABEL.cancelled` 是状态词「已取消」。 */}
 				<Count label="取消" value={runs.cancelled} inline />
 			</li>
 		</ul>

@@ -396,11 +396,11 @@ describe("失败的运行：失败摘要、默认选中的节点、标签页标�
 	it("失败摘要：节点、第几次尝试、错误信息的第一行；没有尝试记录或错误信息时省略", () => {
 		const failure = runFailure(failed);
 		if (!failure) throw new Error("没有失败");
-		expect(failureSummary(failure)).toBe("失败于 verify（第 2 次）· AssertionError: 仍然漏拦");
+		expect(failureSummary(failure)).toBe("失败于 verify（第 2 次尝试）· AssertionError: 仍然漏拦");
 		expect(failureSummary({ ...failure, attempt: null })).toBe(
 			"失败于 verify · AssertionError: 仍然漏拦",
 		);
-		expect(failureSummary({ ...failure, message: "" })).toBe("失败于 verify（第 2 次）");
+		expect(failureSummary({ ...failure, message: "" })).toBe("失败于 verify（第 2 次尝试）");
 	});
 
 	it("没有失败的节点时为 null", () => {

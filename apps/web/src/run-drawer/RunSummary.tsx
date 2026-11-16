@@ -64,12 +64,16 @@ export function RunSummary({ runId }: { runId: string }) {
 	const now = useNow(!run || run.status === "running");
 	if (query.error && !run) {
 		return (
-			<ErrorState title="无法加载运行" error={query.error} onRetry={() => void query.refetch()} />
+			<ErrorState
+				title={MESSAGE.loadFailed(TERM.run)}
+				error={query.error}
+				onRetry={() => void query.refetch()}
+			/>
 		);
 	}
 	if (!run) {
 		return (
-			<output aria-label="加载中" className="flex flex-col gap-3">
+			<output aria-label={MESSAGE.loading} className="flex flex-col gap-3">
 				<Skeleton className="h-6 w-full" />
 				<Skeleton className="h-24 w-full" />
 			</output>

@@ -6,6 +6,7 @@ import { DataTable, dataColumns } from "#/components/data-table";
 import { runNodeName } from "#/components/node-name";
 import { runStatusView, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
+import { DURATION_LABEL } from "#/lib/copy";
 import { formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { ScenarioWithPreset } from "#/presets/ScenarioWithPreset";
 
@@ -80,7 +81,7 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 		}),
 		col.display({
 			id: "duration",
-			header: "耗时",
+			header: DURATION_LABEL,
 			meta: { width: "fit", className: "text-right font-mono", headClassName: "text-right" },
 			cell: ({ row }) => {
 				const run = row.original;

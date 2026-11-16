@@ -709,7 +709,7 @@ test("运行记录为空", async ({ page }) => {
 async function chartsLoaded(page: Page) {
 	const ws = page.getByRole("region", { name: "图表工作区" });
 	await expect(ws.locator("[data-group]").first()).toBeVisible();
-	await expect(ws.getByText("正在加载…")).toHaveCount(0);
+	await expect(ws.getByText("加载中")).toHaveCount(0);
 }
 
 /** 运行 ID 是随机的：截图时遮住显示运行编号与子流程实例编号的地方。 */
@@ -751,7 +751,7 @@ test("运行监控：失败的运行（尝试页签）", async ({ page, controlP
 	await expect(page).toHaveScreenshot("monitor-failed.png", { mask: runIds(page) });
 });
 
-test("运行监控：详情的「动作」页（正在做的按层级缩进、最近 20 个）", async ({
+test("运行监控：详情的「动作」页签（正在做的按层级缩进、最近 20 个）", async ({
 	page,
 	controlPlane,
 	connectAgent,

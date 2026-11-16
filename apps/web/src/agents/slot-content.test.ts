@@ -94,7 +94,7 @@ describe("槽位格里的内容", () => {
 		expect(message.summary).toBe("正在做 第 3 批");
 	});
 
-	it("派发阶段（还没开始执行）的任务没有「正在做」", () => {
+	it("准备中（还没开始执行）的任务没有「正在做」", () => {
 		const progress = { current: 3, total: 10, message: "第 3 批", time: null, agent_time: null };
 		expect(
 			slotContent(task({ status: "dispatched", started_at: null, progress }), undefined),

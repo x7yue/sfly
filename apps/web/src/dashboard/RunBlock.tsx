@@ -50,7 +50,7 @@ export const lineChains = (chains: readonly DashboardChain[]): LineChain[] =>
 
 /**
  * 运行块（外壳页方案 4.1）：场景、版本、运行编号、触发人和开始时间，右上角是全站唯一的大号「已运行」时长；
- * 下面依次是线路、读数（{@link RunReadout}）、进行中的节点那一行，以及「打开运行监控」「在画布中查看」「取消运行」。
+ * 下面依次是线路、读数（{@link RunReadout}）、进行中的节点那一行，以及「打开运行监控」「在画布中打开」「取消运行」。
  * `activeLimit` 限制进行中的节点和读数列几个（运行多时，见 wall-rules）；`onCollapse` 给了时是从紧凑行展开的，
  * 页头多一个「收起」。
  */
@@ -127,7 +127,7 @@ export function RunBlock({
 					className={buttonVariants({ variant: "ghost", size: "sm" })}
 				>
 					<WorkflowIcon />
-					{ACTION.viewInCanvas}
+					{ACTION.openInCanvas}
 				</Link>
 				<CancelRunButton
 					size="sm"

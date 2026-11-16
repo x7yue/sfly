@@ -10,7 +10,7 @@ import { LOD_HIDDEN, ZOOM_TEXT_11 } from "./zoom-text";
  * 卡片可访问名称里的关注项：「2 个关注项，1 项需要注意：total 已 2m 10s 无新数据」，没有异常时只有个数；图表在节点包版本里
  * 不存在的项再接上「这个版本的节点没有图表 X」（卡片上这一行没有数值，原因也写在这里）。卡片上的三角旁边放不下原因，
  * 原因写在这里（用图表自己的标题，和卡片上一致）。场景没设关注项时（`primary`）是这个节点的主指标，不数个数：
- * 「1 项需要注意：主指标 level 重试（尝试 2）· 10:41:02」，和 Agent 槽位格的写法一致。`generatedAt` 是读数的生成时间。
+ * 「1 项需要注意：主指标 level 重试（第 2 次尝试）· 10:41:02」，和 Agent 槽位格的写法一致。`generatedAt` 是读数的生成时间。
  */
 export function cardFocusLabel(
 	items: readonly RunFocusItem[],

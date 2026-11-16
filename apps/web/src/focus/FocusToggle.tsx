@@ -59,7 +59,7 @@ export function FocusQuota({ focus, saved }: { focus: FocusItems; saved: boolean
 			<output className="m-0 mb-2 block text-xs text-fg-3">
 				<QuotaCount focus={focus} />
 				{focus.full &&
-					`，已满${focus.stale > 0 ? FOCUS.staleNote(focus.stale) : ""}：先在${INSPECTOR_PAGE.sceneSettings}的「${INSPECTOR_PAGE.focus}」页移除一项`}
+					`，已满${focus.invalid > 0 ? FOCUS.invalidNote(focus.invalid) : ""}：先在${INSPECTOR_PAGE.sceneSettings}的「${INSPECTOR_PAGE.focus}」页移除一项`}
 			</output>
 			{!saved && (
 				<p className="m-0 mb-2 text-xs text-fg-3">

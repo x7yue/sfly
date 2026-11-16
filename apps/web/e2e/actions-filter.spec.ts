@@ -11,7 +11,7 @@ import { type E2eFixtures, expect, test } from "./fixtures";
 import { openMonitor } from "./monitor-scenario";
 import { createScenario, publishPackage, scenarioUsing, triggerRun } from "./support";
 
-// 运行监控「动作」页的筛选、表格里的时间和点开始时间跳到日志（规格 #345，#358）。
+// 运行监控「动作」页签的筛选、表格里的时间和点开始时间跳到日志（规格 #345，#358）。
 
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
 const toolbar = (page: Page) => panel(page).getByRole("group", { name: "筛选动作" });
@@ -34,7 +34,7 @@ const tab = (page: Page, name: string | RegExp) => panel(page).getByRole("tab", 
 /** 页面上的时刻（浏览器时区 Asia/Shanghai）：`08:00:10.000`。 */
 const clockMs = (ms: number) => new Date(ms + 8 * 3600_000).toISOString().slice(11, 23);
 
-/** 打开 verify 第 2 次尝试的「动作」页：「下单」1200 个、其中 9 个失败，只有 404 个有明细。 */
+/** 打开 verify 第 2 次尝试的「动作」页签：「下单」1200 个、其中 9 个失败，只有 404 个有明细。 */
 async function openActions({
 	page,
 	controlPlane,
@@ -199,7 +199,7 @@ test("只计数的一行里有「只看失败」：点它以后焦点回到工�
 	});
 	const row = table.locator('tr[data-count-only="下单"]');
 	await expect(row).toHaveText(
-		"08:00:10 至今的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败",
+		"08:00:10 至今的 796 个「下单」只计数、没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败",
 	);
 	await row.getByRole("button", { name: "只看失败" }).click();
 	await expect(failedToggle(page)).toBeFocused();
@@ -242,7 +242,7 @@ test("合计已满时只看失败：只计数的个数里有成功的，写明�
 	await failedToggle(page).click();
 	await expectAnnounced(page, "筛选后 9 个动作");
 	await expect(row).toHaveText(
-		"08:00:10 至今的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个；合计满 10 万个以后，失败的动作也没有明细）；其中有多少个失败不知道（「下单」一共失败 9 个）",
+		"08:00:10 至今的 796 个「下单」只计数、没有明细（每种名称最多记录 5 万个；合计满 10 万个以后，失败的动作也没有明细）；其中有多少个失败不知道（「下单」一共失败 9 个）",
 	);
 	// 已经只看失败：这一行不再给「只看失败」。
 	await expect(row.getByRole("button")).toHaveCount(0);
@@ -498,7 +498,7 @@ test("切到 Agent 时间：开始一列显示 Agent 时间，表头写明时钟
 	await expect(header).toHaveText("开始（Agent 时间）时钟偏差：开始时比控制面快 3 小时");
 	// 跳到日志用的是控制面时间，和这一列显示哪种时间无关。
 	await expect(rowTime(page, 2)).toHaveAccessibleName(
-		`在日志里跳到 ${clockMs(t0 + 2_000 + AHEAD_MS)}`,
+		`在日志里查看 ${clockMs(t0 + 2_000 + AHEAD_MS)}`,
 	);
 	// 时间线不跟着切：它画的是控制面时间（刻度和执行段位置都不变）。
 	const timeline = page.getByRole("region", { name: "链路时间线" });
@@ -569,7 +569,7 @@ test("点开始时间跳到日志：正好有那一行（50 毫秒以内只有�
 	await expect(located).toContainText("下单 P-0002 已发出");
 	await expect(logs.locator("[data-moment]")).toHaveCount(0);
 
-	// 回到动作页，点第 6 秒失败的「下单」：前后的日志离它都远，在它的位置插「这一刻」，不高亮别的行。
+	// 回到「动作」页签，点第 6 秒失败的「下单」：前后的日志离它都远，在它的位置插「这一刻」，不高亮别的行。
 	await tab(page, /^动作/).click();
 	await rowTime(page, 4).click();
 	const moment = logs.locator("[data-moment]");
@@ -604,7 +604,7 @@ test("显示 Agent 时间时点开始时间，跳到的仍是控制面时间的�
 	await expect(logs.locator("[data-moment]")).toHaveCount(0);
 });
 
-test("筛选条件记在底部面板里：跳到日志再回到「动作」页还在", async ({
+test("筛选条件记在底部面板里：跳到日志再回到「动作」页签还在", async ({
 	page,
 	controlPlane,
 	connectAgent,

@@ -23,8 +23,10 @@ import { NODE_ROW_HEIGHT } from "./timeline-model";
 const TRACK_LABEL: Record<TrackId, string> = { top: TERM.action, child: `子${TERM.action}` };
 const FAILED = `失败的${TERM.action}`;
 const RARE = `少见的${TERM.action}`;
+/** 轨道只是概览，逐个查看看底部面板「动作」页签里的表：可访问名称和没读到明细的说明共用这一句。 */
+const SEE_TABLE = `逐个查看见下方${TERM.action}表`;
 /** 没读到的明细：时间线只读每次尝试最新的一页（和失败的、少见的），更早的只知道个数（use-action-tracks.ts）。 */
-const UNREAD = "这段的明细没有读进时间线，按个数平均画；逐个查看见下方动作表";
+const UNREAD = `这段的明细没有读进时间线，按个数平均画；${SEE_TABLE}`;
 
 /** 只计数的段：浅斜纹，45°（排队段的灰色斜纹是 135°，在节点行上）。 */
 const HATCH =
@@ -48,7 +50,7 @@ const LABEL_PX = 72;
 
 /**
  * 有动作的节点下面的两条轨道（原型 `tlSvg` 的 lane）：「动作」是最外层的，「子动作」是里面的。轨道是一张图，
- * 可访问名称概括它画了什么，逐个查看用底部面板的「动作」页。点轨道和点节点行一样选中节点（Rows 按坐标找 `data-segment`）。
+ * 可访问名称概括它画了什么，逐个查看用底部面板的「动作」页签。点轨道和点节点行一样选中节点（Rows 按坐标找 `data-segment`）。
  */
 export function ActionTracks({
 	prepared,
@@ -208,7 +210,7 @@ export function tracksLabel(name: string, o: TrackOverview): string {
 	if (o.marks > 0) parts.push(`${formatInteger(o.marks)} 个${TERM.mark}`);
 	const body =
 		parts.length > 0 ? parts.join("；") : `共 ${formatInteger(o.actions)} 个${TERM.action}`;
-	return `${name} 的${TERM.action}轨道：${body}。逐个查看见下方${TERM.action}表`;
+	return `${name} 的${TERM.action}轨道：${body}。${SEE_TABLE}`;
 }
 
 /** 时间线图例里动作轨道的几项（有动作的节点时才出现）。 */

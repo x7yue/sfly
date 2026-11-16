@@ -168,7 +168,7 @@ test("进行中的节点那一行：节点、Agent、尝试号、已执行时长
 	await page.goto("/");
 	await expect(
 		block(page, "撮合压测").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
-	).toHaveText(["probeagent-linux · 尝试 1 · 15s"]);
+	).toHaveText(["probeagent-linux · 第 1 次尝试 · 15s"]);
 	await expect(
 		block(page, "定时巡检").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
 	).toHaveText(["nap等待中 · 唤醒 09:15:14"]);
@@ -470,7 +470,7 @@ test("最近结束的失败行：带关注项的最终值（场景现在的关�
 	await expect(values.first()).toHaveAccessibleName(/来自 fetch2（失败）/);
 });
 
-test("运行块的三个按钮：打开运行监控、在画布中查看、取消运行（走现有的确认流程）", async ({
+test("运行块的三个按钮：打开运行监控、在画布中打开、取消运行（走现有的确认流程）", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -483,7 +483,7 @@ test("运行块的三个按钮：打开运行监控、在画布中查看、取�
 		"href",
 		`/runs/${running}`,
 	);
-	await expect(run.getByRole("link", { name: "在画布中查看" })).toHaveAttribute(
+	await expect(run.getByRole("link", { name: "在画布中打开" })).toHaveAttribute(
 		"href",
 		`/orchestrations/${stress}?run=${running}`,
 	);
@@ -509,7 +509,7 @@ test("最近结束：失败的写错误类型、第一个失败的节点、所�
 	await expect(fail).toContainText("订单链路");
 	await expect(fail).toContainText(failed.slice(0, 8));
 	await expect(fail).toContainText("timeout");
-	await expect(fail).toContainText("失败节点 submit · 主链 · 尝试 2");
+	await expect(fail).toContainText("失败节点 submit · 主链 · 第 2 次尝试");
 	await expect(fail).toContainText("结束于 01-01 08:05 · 耗时 4m 12s");
 	await expect(fail).toContainText("等待响应超时：下单接口 30 秒内没有返回");
 

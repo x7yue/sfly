@@ -19,7 +19,7 @@ import {
 } from "./action-details";
 
 /**
- * 运行监控「动作」页的表格（规格 #345）：摘要、分页读到的明细、只计数的段整理成三组行。
+ * 运行监控「动作」页签的表格（规格 #345）：摘要、分页读到的明细、只计数的段整理成三组行。
  *
  * - 「正在做」「最近 20 个」只取摘要：超出上限前后都准确，也不用等明细送到；
  * - 「更早的明细」是分页和推送读到的明细，去掉已经在前两组里的 ID；只计数的段插在开始时间早于它起点的
@@ -222,7 +222,7 @@ function periodRows(
 		.sort((a, b) => Date.parse(b.from) - Date.parse(a.from));
 }
 
-/** 动作的缩进层数：深度从 0 数起，更深的画在第 3 层。检查器的「正在做」和「动作」页共用。 */
+/** 动作的缩进层数：深度从 0 数起，更深的画在第 3 层。检查器的「正在做」和「动作」页签共用。 */
 export const indentOf = (depth: number) => Math.min(Math.max(depth, 0), INDENT_MAX) as Indent;
 
 function recordRow(a: RunningActionView | ActionDetailView): RecordRow {

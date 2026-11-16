@@ -296,7 +296,7 @@ describe("只计数的一段", () => {
 		expect(layoutOf([s], view(0, 10_000, 5_000)).child.countOnly).toEqual([{ from: 0.1, to: 0.5 }]);
 	});
 
-	it("只计数以后失败、少见的动作仍有明细，画成短线", () => {
+	it("只计数以后失败、少见的动作仍有明细，画成竖线", () => {
 		const s = source({
 			summary: summary({
 				total: 1_202,
@@ -324,7 +324,7 @@ describe("只计数的一段", () => {
 });
 
 describe("失败的、少见的在密度带上突出", () => {
-	it("密度带里失败的画红色短线、少见的画白色短线，每 2 个像素各一条", () => {
+	it("密度带里失败的画红色竖线、少见的画白色竖线，每 2 个像素各一条", () => {
 		const s = source({
 			summary: summary({
 				total: 404,
@@ -346,7 +346,7 @@ describe("失败的、少见的在密度带上突出", () => {
 		]);
 	});
 
-	it("够长的少见子动作一条条画出来，开头标白色短线；最外层少见的动作不单独突出", () => {
+	it("够长的少见子动作一条条画出来，开头标白色竖线；最外层少见的动作不单独突出", () => {
 		const s = source({
 			summary: summary({
 				total: 403,
@@ -440,7 +440,7 @@ describe("最新一页不是全部明细时", () => {
 			startedAt: T0 - 9_000,
 		});
 		const tracks = layoutOf([s], view(-10_000, 10_000, 5_000));
-		// 带从尝试开始（-9s，第 0.05 处）连到读到的那段（1.0–1.4s），之后是只计数的斜线。
+		// 带从尝试开始（-9s，第 0.05 处）连到读到的那段（1.0–1.4s），之后是只计数的斜纹。
 		expect(tracks.child.band[0]?.from).toBeCloseTo(0.05, 2);
 		expect(tracks.child.band.at(-1)?.to).toBeCloseTo(0.57, 2);
 		expect(dense(tracks.child)).toBeCloseTo(0.52, 2);

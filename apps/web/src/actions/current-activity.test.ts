@@ -49,7 +49,7 @@ describe("此刻在做什么", () => {
 		expect(currentActivity(undefined)).toBe(null);
 	});
 
-	it("Agent 列表里的任务（RunningTaskView）按同一条规则取：执行中才有，派发阶段没有", () => {
+	it("Agent 列表里的任务（RunningTaskView）按同一条规则取：执行中才有，准备中没有", () => {
 		const task = (
 			status: RunningTaskView["status"],
 		): Pick<RunningTaskView, "status" | "current_action" | "progress"> => ({

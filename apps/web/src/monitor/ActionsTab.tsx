@@ -18,7 +18,7 @@ import { setActionTimeKind, useActionTimeKind } from "./log-time-kind";
 /**
  * 底部面板的「动作」页签（规格 #345，原型 `actPanel`）：选中节点的那一次尝试的动作，分成「正在做」「最近 20 个」
  * 「更早的明细」三组（action-table.ts），往下滚动读更早的明细，推送来的插到它的位置。没有动作的节点写明
- * 标准节点这一轮不记录动作。
+ * 标准节点目前不记录动作。
  *
  * 工具条（ActionToolbar）按名称、只看失败筛选，表格里的时间可以切成 Agent 时间（表头写明时钟偏差，时间线始终按控制面时间画）；
  * 点一行的开始时间，日志跳到那一刻（`onLocate`）。筛选条件由底部面板持有：切到日志再回来还在。
@@ -112,7 +112,7 @@ export function ActionsTab({
 			<EmptyState
 				icon={<ListTreeIcon />}
 				title={`${runNodeName(node)} ${attempt.status === "running" ? "还没有" : "没有"}记录${TERM.action}`}
-				description="标准节点这一轮不记录动作；节点的代码用 ctx.action 记录动作、ctx.mark 记录标记。"
+				description="标准节点目前不记录动作；节点的代码用 ctx.action 记录动作、ctx.mark 记录标记。"
 				className="py-6"
 			/>
 		);

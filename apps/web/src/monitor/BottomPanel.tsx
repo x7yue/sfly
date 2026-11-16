@@ -136,7 +136,7 @@ export function BottomPanel({
 	const panel = useRef<HTMLElement>(null);
 	const node = findNode(run, selected);
 	const [attemptId, setAttemptId] = useState<string | null>(null);
-	/** 「动作」页的筛选条件，记在这里：切到日志再回来还在；换了尝试（任务）就回到不筛选。 */
+	/** 「动作」页签的筛选条件，记在这里：切到日志再回来还在；换了尝试（任务）就回到不筛选。 */
 	const [actionFilterOf, setActionFilterOf] = useState<{ taskId: string; filter: ActionFilter }>();
 	const logTab = useRef<HTMLButtonElement>(null);
 	const refKey = selected ? `${selected.chainInstanceId}:${selected.nodeId}` : "";
@@ -199,7 +199,7 @@ export function BottomPanel({
 		: height === null
 			? { flex: `1 0 ${DEFAULT_HEIGHT}`, maxHeight: highest }
 			: { height, maxHeight: highest };
-	// 「动作」页签上的个数：看着「动作」页时由它的推送更新，没在看、任务还在执行时定时重新读。
+	// 「动作」页签上的个数：看着「动作」页签时由它的推送更新，没在看、任务还在执行时定时重新读。
 	const actionSummary = useActionSummary(
 		attempt?.task_id,
 		attempt?.status === "running" && !(tab === "actions" && !collapsed) && STATUS_POLL_MS,
@@ -262,7 +262,7 @@ export function BottomPanel({
 							node={node}
 							suffix={
 								(node && attempt && node.attempts.length > 1
-									? `（第 ${attempt.attempt} 次）`
+									? `（${attemptLabel(attempt.attempt)}）`
 									: "") + (zoom && tab === "logs" ? " · 已按时间范围过滤" : "")
 							}
 							onClear={() => actions.select(null)}
@@ -273,7 +273,7 @@ export function BottomPanel({
 							<Segmented
 								label="尝试"
 								value={attempt?.task_id ?? ""}
-								options={node.attempts.map((a) => [a.task_id, `第 ${a.attempt} 次`])}
+								options={node.attempts.map((a) => [a.task_id, attemptLabel(a.attempt)])}
 								onChange={setAttemptId}
 							/>
 						)}
@@ -364,7 +364,7 @@ export function BottomPanel({
 									onLocate={(at) => {
 										if (!selected) return;
 										actions.locateLog(selected, at);
-										// 「动作」页被日志换掉，焦点不留在已经消失的按钮上：交给日志页签。
+										// 「动作」页签被日志换掉，焦点不留在已经消失的按钮上：交给日志页签。
 										logTab.current?.focus();
 									}}
 								/>
@@ -637,7 +637,7 @@ function LogsView<L extends LogLineView>({
 			? markedKey
 			: null;
 
-	if (!logs.loaded) return <Hint>正在加载日志…</Hint>;
+	if (!logs.loaded) return <Hint>{MESSAGE.loading}</Hint>;
 	return (
 		<div className="flex h-full flex-col">
 			{truncated && (
@@ -753,7 +753,7 @@ function AttemptsTab({
 					>
 						<header className="flex items-center gap-2">
 							<NodeName node={n} />
-							<b className="flex-none font-semibold">第 {a.attempt} 次</b>
+							<b className="flex-none font-semibold">{attemptLabel(a.attempt)}</b>
 							<StatusPill kind={status.kind}>{status.label}</StatusPill>
 							<span className="ml-auto flex-none font-mono text-2xs text-fg-3">
 								{a.agent ?? "控制面"} · {a.started_at ? formatClock(a.started_at) : "未开始"} ·{" "}
@@ -924,7 +924,7 @@ function ArtifactsTab({ attempt }: { attempt: AttemptView }) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: 状态变化时重新获取
 	useEffect(() => void refetch(), [attempt.status, refetch]);
 	if (query.error) return <Hint>无法加载产物：{query.error.message}</Hint>;
-	if (!query.data) return <Hint>正在加载产物…</Hint>;
+	if (!query.data) return <Hint>{MESSAGE.loading}</Hint>;
 	if (query.data.expired) return <Hint>这次运行的产物已超过保留期，已被清理。</Hint>;
 	if (query.data.artifacts.length === 0) return <Hint>这次尝试没有产物。</Hint>;
 	return (

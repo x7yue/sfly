@@ -179,7 +179,7 @@ export function ActionArea({
 					))}
 				</TableBody>
 			</Table>
-			{/* 只有控制面兜底丢弃过明细（被改过的 SDK，SDK 自己没超限）时也写上限说明：丢弃的段在详情的「动作」页里。 */}
+			{/* 只有控制面兜底丢弃过明细（被改过的 SDK，SDK 自己没超限）时也写上限说明：丢弃的段在详情的「动作」页签里。 */}
 			{(countOnly.length > 0 || summary.capped_at !== null || summary.control_plane_capped) && (
 				<CapNote countOnly={countOnly} totalFullAt={summary.capped_at} otherDay={otherDay} />
 			)}
@@ -227,7 +227,7 @@ function Failure({ failure, otherDay }: { failure: EndedActionView; otherDay: bo
 }
 
 /**
- * 上限说明：哪些名称从几点起只计数，合计满了时说合计，控制面另外丢弃的明细要去「动作」页看（摘要里没有，
+ * 上限说明：哪些名称从几点起只计数，合计满了时说合计，控制面另外丢弃的明细要去「动作」页签看（摘要里没有，
  * 这里读不到它们），以及开发文档里按批记录的建议。
  * 「从几点起」是第一个没有明细的动作开始的时刻，不是明细的终点：更早开始的动作结束时仍可能补上明细（失败的动作在
  * 合计满以前会补），所以只说「从这个时刻起开始的动作」，不说「之后没有明细」；合计满了（`capped_at`）也一样。
@@ -254,7 +254,7 @@ function CapNote({
 			{countOnly.length > 0 && (
 				<>
 					<p className="m-0">
-						明细有上限：超过以后开始的动作{NODE_ACTIONS.countOnly}、没有明细
+						明细有上限：超过以后开始的动作{NODE_ACTIONS.countOnlyNoDetail}
 						{hasNameLimit && !hasTotalLimit && EXCEPT_FAILED}，总数、失败数和{FAILURES_LABEL}
 						仍然准确。
 					</p>

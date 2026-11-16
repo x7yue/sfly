@@ -7,7 +7,7 @@ import { listChainLabel } from "#/components/chain-progress";
 import { NodeName } from "#/components/node-name";
 import { runStatusView, StatusPill } from "#/components/status";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
-import { ACTION, DURATION_LABEL, PAGE, TERM } from "#/lib/copy";
+import { ACTION, attemptLabel, DURATION_LABEL, PAGE } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { runViewQuery } from "#/monitor/live-run";
 import { runMonitorLink } from "#/monitor/run-link";
@@ -140,7 +140,7 @@ function EndedRow({ run, generatedAt }: { run: DashboardEndedRun; generatedAt: s
 	);
 }
 
-/** 「失败节点 submit · 主链 · 尝试 2」。 */
+/** 「失败节点 submit · 主链 · 第 2 次尝试」。 */
 function FailureWhere({ failure }: { failure: DashboardRunFailure }) {
 	return (
 		<span className="min-w-0">
@@ -149,7 +149,7 @@ function FailureWhere({ failure }: { failure: DashboardRunFailure }) {
 				node={{ node_id: failure.node_id, display_name: failure.display_name }}
 				className="text-fg-2"
 			/>{" "}
-			· {listChainLabel(failure)} · {TERM.attempt} {failure.attempt}
+			· {listChainLabel(failure)} · {attemptLabel(failure.attempt)}
 		</span>
 	);
 }

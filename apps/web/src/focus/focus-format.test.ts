@@ -259,7 +259,7 @@ describe("异常原因的短句：写法由这里决定，有没有异常、是�
 			source: { ...item().source, attempt: 2 },
 			anomaly: { kind: "retry", at: at(40), message: "boom" },
 		});
-		expect(anomalyText(retried, NOW)).toBe(`重试（尝试 2）· ${formatClock(at(40))}`);
+		expect(anomalyText(retried, NOW)).toBe(`重试（第 2 次尝试）· ${formatClock(at(40))}`);
 		expect(anomalyText(item(), NOW)).toBeNull();
 	});
 

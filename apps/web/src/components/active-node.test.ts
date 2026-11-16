@@ -15,17 +15,17 @@ const node = (patch: Partial<ActiveNode>): ActiveNode => ({
 describe("进行中的节点那一行", () => {
 	it("执行中：Agent、尝试号、已执行时长（整秒）", () => {
 		expect(activeDetail(node({ started_at: "2026-01-01T00:09:54.600Z" }), NOW)).toBe(
-			"agent-a · 尝试 2 · 5s",
+			"agent-a · 第 2 次尝试 · 5s",
 		);
-		expect(activeDetail(node({}), NOW)).toBe("agent-a · 尝试 2 · 1m 05s");
+		expect(activeDetail(node({}), NOW)).toBe("agent-a · 第 2 次尝试 · 1m 05s");
 	});
 
 	it("还没开始执行（准备中、排队中）时长处写状态，不从排队算起", () => {
 		expect(activeDetail(node({ status: "dispatched", started_at: null }), NOW)).toBe(
-			"agent-a · 尝试 2 · 准备中",
+			"agent-a · 第 2 次尝试 · 准备中",
 		);
 		expect(activeDetail(node({ status: "queued", started_at: null }), NOW)).toBe(
-			"agent-a · 尝试 2 · 排队中",
+			"agent-a · 第 2 次尝试 · 排队中",
 		);
 	});
 

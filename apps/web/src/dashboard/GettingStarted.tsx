@@ -8,7 +8,15 @@ import { DocPageLink } from "#/components/doc-page-link";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
 import { DashboardPanel } from "#/dashboard/DashboardPanel";
-import { ACTION, DOC_PAGE, MESSAGE, PAGE, scenarioCreatedLabel } from "#/lib/copy";
+import {
+	ACTION,
+	AGENT_STATUS_LABEL,
+	DOC_PAGE,
+	MESSAGE,
+	PAGE,
+	scenarioCreatedLabel,
+	TERM,
+} from "#/lib/copy";
 import { Button, buttonVariants } from "@/components/ui/button";
 
 type StepId = keyof DashboardSetup;
@@ -78,8 +86,8 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			done: setup.agent.done,
 			fact:
 				setup.agent.online > 1
-					? `${setup.agent.name} 等 ${setup.agent.online} 台在线`
-					: `${setup.agent.name} 在线`,
+					? `${setup.agent.name} 等 ${setup.agent.online} 台${AGENT_STATUS_LABEL.online}`
+					: `${setup.agent.name} ${AGENT_STATUS_LABEL.online}`,
 			body: (
 				<>
 					任务在 Agent 所在的测试机上执行。在测试机上运行这条命令，Agent 会主动连接控制面；开发机加{" "}
@@ -89,7 +97,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 					</code>
 				</>
 			),
-			doneWhen: `完成：${PAGE.agents}页出现一台在线的 Agent。`,
+			doneWhen: `完成：${PAGE.agents}页出现一台${AGENT_STATUS_LABEL.online}的 ${TERM.agent}。`,
 			state: MESSAGE.noAgents,
 			action: setup.agent.done ? (
 				pageLink("/agents", PAGE.agents)

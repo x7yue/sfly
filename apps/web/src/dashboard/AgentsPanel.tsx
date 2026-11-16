@@ -49,7 +49,7 @@ export function AgentsPanel() {
 			) : agents.isError ? (
 				<div className="p-3.5">
 					<ErrorState
-						title="无法加载 Agent 列表"
+						title={MESSAGE.loadFailed(`${TERM.agent} 列表`)}
 						error={agents.error}
 						onRetry={() => void agents.refetch()}
 					/>

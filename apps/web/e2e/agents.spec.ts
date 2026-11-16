@@ -129,7 +129,7 @@ test("槽位格：占用的格子写节点、场景、运行编号、所在链�
 	await expect(cell).toContainText("探测主机（ping）");
 	await expect(cell).toContainText("巡检");
 	await expect(cell).toContainText(runId.slice(0, 8));
-	await expect(cell).toContainText("主链 · 尝试 1 · demo-checks/ping");
+	await expect(cell).toContainText("主链 · 第 1 次尝试 · demo-checks/ping");
 	await expect(cell).toContainText("1m 30s");
 	// 连续的空闲槽合并成一行，不随旁边的格子拉伸。
 	const idle = cells.nth(1);
@@ -147,7 +147,7 @@ test("槽位格：占用的格子写节点、场景、运行编号、所在链�
 	await expect(cell).toContainText("2m 30s", { timeout: 15_000 });
 });
 
-test("槽位格：槽位占满时没有空闲条；还在准备（派发中）的任务写「准备中」，不写时长", async ({
+test("槽位格：槽位占满时没有空闲条；还在准备的任务写「准备中」，不写时长", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -207,10 +207,10 @@ test("槽位格：子流程里的任务写子流程名称，主链的任务写�
 
 	await page.goto("/agents");
 	const main = slotCells(page, "agent-busy").filter({ hasText: "探测主机" });
-	await expect(main).toContainText("主链 · 尝试 1");
+	await expect(main).toContainText("主链 · 第 1 次尝试");
 	await expect(main).toHaveAccessibleName("节点 探测主机（probe），场景 撮合");
 	const inside = slotCells(page, "agent-busy").filter({ hasText: "子流程 巡检子流程" });
-	await expect(inside).toContainText("子流程 巡检子流程 · 尝试 1 · demo-checks/ping");
+	await expect(inside).toContainText("子流程 巡检子流程 · 第 1 次尝试 · demo-checks/ping");
 	await expect(inside).toHaveAccessibleName("节点 verify，场景 撮合");
 });
 
@@ -280,7 +280,7 @@ test("排队的任务：Agent 不在线时照样列在它名下", async ({ page,
 	await expect(rack(page, "agent-away")).not.toContainText("占用");
 });
 
-test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长与槽位格、排队行同一种写法），版本、最后在线照常，还接不了任务所以不写占用、不画空闲槽；发出心跳后标记消失", async ({
+test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长与槽位格、排队行同一种写法），版本、最后在线照常，还接不了任务所以不写占用、不画空闲槽；发出心跳后「准备环境中」消失", async ({
 	page,
 	connectAgent,
 	clock,
@@ -309,7 +309,7 @@ test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长�
 		timeout: 15_000,
 	});
 
-	// 准备好（发出第一次心跳）：列表刷新后标记消失，仍然在线。
+	// 准备好（发出第一次心跳）：列表刷新后「准备环境中」消失，仍然在线。
 	await preparing.ready();
 	await expect(header(page, "agent-prep")).not.toContainText("准备环境中", { timeout: 15_000 });
 	await expect(status("agent-prep")).toHaveText("在线");
@@ -933,11 +933,11 @@ test("槽位格：场景没设关注项时显示这个节点的主指标并写�
 	const verify = slotCells(page, "agent-a").filter({ hasText: "verify" });
 	const verifyRows = slotFocus(verify, "主指标");
 	await expect(verifyRows).toContainText("主指标 level");
-	await expect(verifyRows).toContainText("重试（尝试 2）");
+	await expect(verifyRows).toContainText("重试（第 2 次尝试）");
 	await expect(verifyRows).not.toContainText("场景没有设置关注项");
 	await expect(verifyRows.locator('[data-status-dot="warn"]')).toHaveCount(1);
 	await expect(verify).toHaveAccessibleName(
-		/，1 项需要注意：主指标 level 重试（尝试 2）· \d\d:\d\d:\d\d$/,
+		/，1 项需要注意：主指标 level 重试（第 2 次尝试）· \d\d:\d\d:\d\d$/,
 	);
 	// 没有主指标的节点（这里没有）不写关注项；别的任务的主指标不会出现在这个格子里。
 	await expect(slotFocus(probe, "关注项")).toHaveCount(0);

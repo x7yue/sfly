@@ -15,7 +15,7 @@ import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/stat
 import { useListNavigation } from "#/components/list-navigation";
 import { Page, PageHeader, Panel } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { MESSAGE, PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { useSearchInput } from "#/lib/use-search-input";
 import { ScenarioCards, ScenarioRunDrawer, ScenarioTable } from "#/scenarios/ScenarioList";
@@ -151,7 +151,7 @@ function ScenariosPage() {
 							<TableSkeleton columns={6} />
 						</Panel>
 					}
-					errorTitle="无法加载场景"
+					errorTitle={MESSAGE.loadFailed(TERM.scenario)}
 					isEmpty={(d) => d.orchestrations.length === 0}
 					empty={
 						<Panel>

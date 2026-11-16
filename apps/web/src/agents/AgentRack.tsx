@@ -11,7 +11,7 @@ import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
 import { IdleSlots, idleSlotCount, taskChainLabel } from "#/components/slot-cell";
 import { nodeStatusView, StatusDot, StatusPill } from "#/components/status";
-import { queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
+import { attemptLabel, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import { formatClockOffset, formatDateTime, formatFullDateTime, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { Truncate } from "@/components/ui/truncate";
@@ -212,7 +212,7 @@ function QueuedTasks({ tasks }: { tasks: QueuedTaskView[] }) {
 						<StatusDot kind={nodeStatusView("queued").kind} />
 						<NodeName node={task} className="text-sm" />
 						<span className="flex min-w-0 flex-1 items-baseline gap-1.5 text-fg-3">
-							<Truncate>{`${task.orchestration_name} · ${taskChainLabel(task)} · ${TERM.attempt} ${task.attempt}`}</Truncate>
+							<Truncate>{`${task.orchestration_name} · ${taskChainLabel(task)} · ${attemptLabel(task.attempt)}`}</Truncate>
 							<span className="flex-none font-mono text-2xs">{shortId(task.run_id)}</span>
 						</span>
 						<span className="flex-none text-fg-2">{queueTiming(task, now)}</span>

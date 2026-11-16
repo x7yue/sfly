@@ -17,7 +17,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
-import { MESSAGE, noDataLabel, PROGRESS_LABEL } from "#/lib/copy";
+import { attemptLabel, DURATION_LABEL, MESSAGE, noDataLabel, PROGRESS_LABEL } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
@@ -308,7 +308,11 @@ export function ChartWorkspace({
 					className="mb-2.5"
 				/>
 			) : !catalog.data ? (
-				<output aria-label="加载中" aria-busy="true" className="mb-2.5 flex flex-col gap-2.5">
+				<output
+					aria-label={MESSAGE.loading}
+					aria-busy="true"
+					className="mb-2.5 flex flex-col gap-2.5"
+				>
 					<Skeleton className="h-10 w-full" />
 					<Skeleton className="h-10 w-full" />
 				</output>
@@ -538,7 +542,7 @@ function NodeGroup({
 			: !window || zoomed
 				? "所选时间段内无数据"
 				: loading
-					? "正在加载…"
+					? MESSAGE.loading
 					: noData;
 	const title = `${entry.package}/${entry.node}`;
 	const name = runNodeName(node);
@@ -588,7 +592,7 @@ function NodeGroup({
 					>
 						{entry.attempts.map((a, i) => (
 							<NativeSelectOption key={a.task_id} value={String(a.attempt)}>
-								第 {a.attempt} 次{i === entry.attempts.length - 1 ? "（最新）" : ""}
+								{`${attemptLabel(a.attempt)}${i === entry.attempts.length - 1 ? "（最新）" : ""}`}
 							</NativeSelectOption>
 						))}
 					</NativeSelect>
@@ -719,7 +723,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			<StatusPill kind={status.kind}>{status.label}</StatusPill>
 			{item("节点类型", `${entry.package}/${entry.node}@${entry.version}`)}
 			{item("Agent", node.agent ?? "—")}
-			{item("耗时", started === null ? "—" : formatDuration(ended - started))}
+			{item(DURATION_LABEL, started === null ? "—" : formatDuration(ended - started))}
 			{item("尝试", node.attempts.length)}
 			{progress && (
 				<div className="min-w-45">
@@ -783,7 +787,11 @@ function PlatformGroup({
 	const window = data
 		? chartWindow({ started_at: data.from, ended_at: run.ended_at }, range, now)
 		: null;
-	const empty = data ? "所选时间段内无数据" : error ? `无法加载：${error.message}` : "正在加载…";
+	const empty = data
+		? "所选时间段内无数据"
+		: error
+			? `无法加载：${error.message}`
+			: MESSAGE.loading;
 	return (
 		<GroupShell
 			groupKey={PLATFORM_KEY}
@@ -888,7 +896,7 @@ function NodeDurations({ run, data }: { run: RunView; data: PlatformMetrics | un
 			</figcaption>
 			{nodes.length === 0 ? (
 				<p className="m-0 mt-1.5 text-xs text-fg-3">
-					{data ? "还没有节点开始执行。" : "正在加载…"}
+					{data ? "还没有节点开始执行。" : MESSAGE.loading}
 				</p>
 			) : (
 				<ol

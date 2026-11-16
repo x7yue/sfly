@@ -7,7 +7,14 @@ import { NodeName, type RunNodeName, runNodeName } from "#/components/node-name"
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, STATUS, StatusDot, type StatusKind } from "#/components/status";
-import { ACTION, chainCountLabel, LIST_LABEL, PROGRESS_LABEL } from "#/lib/copy";
+import {
+	ACTION,
+	attemptLabel,
+	chainCountLabel,
+	LIST_LABEL,
+	PROGRESS_LABEL,
+	QUEUED_LABEL,
+} from "#/lib/copy";
 import { formatClock, formatDuration, formatSpan } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { shortcutText } from "#/lib/shortcuts";
@@ -91,7 +98,7 @@ const LEGEND_LABEL: Record<SegmentKind, string> = {
 	...SEGMENT_LABEL,
 	ok: "完成",
 	fail: "失败尝试",
-	queue: "排队",
+	queue: QUEUED_LABEL,
 };
 
 /** 节点的总耗时：第一段开始到最后一段结束（含排队与等待）。 */
@@ -841,7 +848,7 @@ function NodeRow({
 								segments
 									.map(
 										(seg) =>
-											`第 ${seg.attempt} 次：${SEGMENT_LABEL[seg.kind]} ${formatDuration(seg.end - seg.start)}`,
+											`${attemptLabel(seg.attempt)}：${SEGMENT_LABEL[seg.kind]} ${formatDuration(seg.end - seg.start)}`,
 									)
 									.join("；") || undefined
 							}
@@ -928,7 +935,7 @@ function SegmentBar({
 			data-segment={seg.kind}
 			data-chain={node.chainInstanceId}
 			data-node={node.nodeId}
-			title={`${name} · 第 ${seg.attempt} 次 · ${SEGMENT_LABEL[seg.kind]} · ${formatDuration(seg.end - seg.start)}`}
+			title={`${name} · ${attemptLabel(seg.attempt)} · ${SEGMENT_LABEL[seg.kind]} · ${formatDuration(seg.end - seg.start)}`}
 			className={cn("absolute h-3 min-w-0.5 cursor-pointer", chainRow ? "top-2.25" : "top-1.75")}
 			style={{ left: `${left}%`, width: `max(${Math.max(0.25, right - left)}%, 2px)` }}
 		>
