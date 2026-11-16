@@ -25,6 +25,7 @@ import {
 	runs,
 	tasks,
 } from "../db/schema.js";
+import { isPlaceholderAttempt } from "../engine/run-board.js";
 import type { Tx } from "../engine/step.js";
 import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
@@ -116,10 +117,6 @@ interface TailRow extends Record<string, unknown> {
 
 const isoOf = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 
-/** 被跳过的节点、还没开始就被取消的尝试只是占位，不算尝试（与运行视图一致）。 */
-const isPlaceholder = (t: TaskRow) =>
-	t.status === "skipped" || (t.status === "cancelled" && t.startedAt === null);
-
 /**
  * 指标的只读查询（#31）：运行的指标目录、序列查询（降采样）、平台自带图表。
  * 原始数据见 src/metrics/task-metrics.ts（ADR 0009）。
@@ -194,7 +191,7 @@ export class MetricQueries {
 					),
 				)
 				.orderBy(asc(tasks.attempt))
-		).filter((t) => !isPlaceholder(t));
+		).filter((t) => !isPlaceholderAttempt(t));
 		const task =
 			query.attempt === undefined
 				? attempts.at(-1)
@@ -668,7 +665,7 @@ export class MetricQueries {
 	#groups(rows: TaskRow[], include: (nodeId: string) => boolean): TaskRow[][] {
 		const groups = new Map<string, TaskRow[]>();
 		for (const t of rows) {
-			if (isPlaceholder(t) || !include(t.nodeId)) continue;
+			if (isPlaceholderAttempt(t) || !include(t.nodeId)) continue;
 			const key = `${t.chainInstanceId}/${t.nodeId}`;
 			const list = groups.get(key) ?? [];
 			list.push(t);

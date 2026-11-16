@@ -8,7 +8,13 @@ import {
 } from "@sfly/schema";
 import { asc, inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
-import { type ChainStatus, chainInstances, type TaskProgress, tasks } from "../db/schema.js";
+import {
+	type ChainStatus,
+	chainInstances,
+	type TaskProgress,
+	type TaskStatus,
+	tasks,
+} from "../db/schema.js";
 import { planRun } from "./chain.js";
 import type { Tx } from "./step.js";
 
@@ -28,6 +34,14 @@ export function groupAttempts<T extends { chainInstanceId: string; nodeId: strin
 	}
 	return (chainInstanceId, nodeId) => byNode.get(`${chainInstanceId}/${nodeId}`) ?? [];
 }
+
+/**
+ * 这一行是不是占位，不是真正的一次尝试：被跳过的节点、还没开始就被取消或停止的尝试（例如子流程被停止时还在排队的重试）。
+ * 运行视图、运行板、指标目录和关注项读数都按它数尝试；节点状态仍取最后一行（含占位）。
+ */
+export const isPlaceholderAttempt = (t: { status: TaskStatus; startedAt: Date | null }): boolean =>
+	t.status === "skipped" ||
+	((t.status === "cancelled" || t.status === "stopped") && t.startedAt === null);
 
 /** 节点状态：按 attempt 升序的任务行里最后一行的状态，没有任务行时为 pending。 */
 export const nodeStatus = (rows: readonly { status: NodeStatus }[]): NodeStatus =>

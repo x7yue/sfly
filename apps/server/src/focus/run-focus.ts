@@ -14,7 +14,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runs, tasks } from "../db/schema.js";
-import { loadRunBoards, nodeNameIn } from "../engine/run-board.js";
+import { isPlaceholderAttempt, loadRunBoards, nodeNameIn } from "../engine/run-board.js";
 import type { Tx } from "../engine/step.js";
 import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
@@ -53,11 +53,6 @@ type AttemptRow = Pick<
 	| "errorMessage"
 	| "logIssues"
 >;
-
-/** 被跳过的节点、还没开始就被取消或停止的尝试只是占位，不算尝试（与运行视图一致）。 */
-const isPlaceholder = (t: Pick<AttemptRow, "status" | "startedAt">) =>
-	t.status === "skipped" ||
-	((t.status === "cancelled" || t.status === "stopped") && t.startedAt === null);
 
 const iso = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 const isoOrNull = (date: Date | null) => (date ? date.toISOString() : null);
@@ -207,7 +202,7 @@ async function latestAttempts(
 		.where(and(eq(tasks.runId, runId), inArray(tasks.nodeId, [...nodeIds])))
 		.orderBy(asc(tasks.attempt));
 	for (const row of rows) {
-		if (!isPlaceholder(row)) {
+		if (!isPlaceholderAttempt(row)) {
 			found.set(row.nodeId, { latest: row, previous: found.get(row.nodeId)?.latest });
 		}
 	}

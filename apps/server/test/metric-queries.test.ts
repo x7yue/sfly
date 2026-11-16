@@ -684,9 +684,7 @@ describe("指标查询", () => {
 			await remote.disconnect();
 			(cp.clock as ManualClock).advance(30_000);
 			const loadOf = async () =>
-				(await api.run(runId)).chains
-					.flatMap((c) => c.nodes)
-					.find((n) => n.node_id === "load");
+				(await api.run(runId)).chains.flatMap((c) => c.nodes).find((n) => n.node_id === "load");
 			await eventually(async () =>
 				expect((await loadOf())?.attempts.map((a) => a.status)).toEqual(["failed", "queued"]),
 			);

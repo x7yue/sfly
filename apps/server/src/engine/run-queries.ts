@@ -16,7 +16,7 @@ import { maskDeep, maskSecrets, secretValues } from "../logs/secrets.js";
 import { taskProgressView } from "../logs/task-logs.js";
 import { runListPreset, runPresetView } from "../presets/run-preset.js";
 import { agentFor, planRun } from "./chain.js";
-import { groupAttempts, nodeStatus, subflowNameOf } from "./run-board.js";
+import { groupAttempts, isPlaceholderAttempt, nodeStatus, subflowNameOf } from "./run-board.js";
 
 /** 运行视图的类型来自 HTTP 契约（@sfly/schema 的 runsApi）。 */
 export type { AttemptView, ChainRunView as ChainView, NodeRunView as NodeView, RunView };
@@ -116,12 +116,8 @@ export async function getRunView(db: Db, runId: string): Promise<RunView | undef
 			ended_at: iso(chain.endedAt),
 			nodes: chainNodes(chain.chainId).map((node) => {
 				const rows = attemptsOf(chain.id, node.id);
-				// 被跳过的节点、还没开始就被取消或停止的尝试只是占位，不算尝试；节点状态取最后一行（含占位）。
-				const placeholder = (t: (typeof rows)[number]) =>
-					t.status === "skipped" ||
-					((t.status === "cancelled" || t.status === "stopped") && t.startedAt === null);
 				const attempts: AttemptView[] = rows
-					.filter((t) => !placeholder(t))
+					.filter((t) => !isPlaceholderAttempt(t))
 					.map((t) => ({
 						task_id: t.id,
 						attempt: t.attempt,
