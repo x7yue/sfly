@@ -6,15 +6,22 @@ import {
 	isOnAgentStatus,
 	type MetricDeclaration,
 	type NodeStatus,
+	type OrchestrationDocument,
 	type RunFocus,
 	type RunFocusItem,
 	type RunFocusQuery,
 } from "@sfly/schema";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, runs, tasks } from "../db/schema.js";
-import { isPlaceholderAttempt, loadRunBoards, nodeNameIn } from "../engine/run-board.js";
+import {
+	type BoardAttempt,
+	type BoardChain,
+	type BoardNode,
+	loadRunBoards,
+	nodeNameIn,
+} from "../engine/run-board.js";
 import type { Tx } from "../engine/step.js";
 import type { MetricQueries, SeriesEnd, TaskSeriesRead } from "../metrics/metric-queries.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
@@ -39,32 +46,23 @@ export interface RunFocusOptions {
 	points?: RunFocusQuery["points"];
 }
 
-type AttemptRow = Pick<
-	typeof tasks.$inferSelect,
-	| "id"
-	| "chainInstanceId"
-	| "nodeId"
-	| "attempt"
-	| "agentName"
-	| "status"
-	| "queuedAt"
-	| "startedAt"
-	| "endedAt"
-	| "errorMessage"
-	| "logIssues"
->;
+/** 来源的一次尝试：运行板上的那一行，加上判断异常要读的错误信息和日志里的 WARN / ERROR。 */
+type SourceAttempt = BoardAttempt & Pick<typeof tasks.$inferSelect, "errorMessage" | "logIssues">;
 
 const iso = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString();
 const isoOrNull = (date: Date | null) => (date ? date.toISOString() : null);
 
-/** 一个来源节点：它在这次运行里所在的链实例（子流程还没触发时没有）和状态、最新一次尝试，以及这次运行锁定的版本里它的节点类型。 */
+/**
+ * 一个来源节点：它在这次运行里所在的链实例（子流程还没触发时没有）、状态和最新一次尝试（三者出自运行板上的同一个链实例，
+ * 见 {@link sourcesOf}），以及这次运行锁定的版本里它的节点类型。
+ */
 interface Source {
 	chainInstanceId: string | null;
 	/** 节点的显示名称（取自这次运行绑定的版本）；没有时为 undefined。 */
 	displayName: string | undefined;
 	status: NodeStatus;
 	/** 最新一次尝试；节点还没有尝试时为 undefined。 */
-	attempt: AttemptRow | undefined;
+	attempt: SourceAttempt | undefined;
 	/** 上一次尝试的错误信息（最新一次是重试时，重试的原因）；没有时为 null。 */
 	previousError: string | null;
 	type: NodeTypeView | undefined;
@@ -90,7 +88,7 @@ interface Reading {
  *
  * - 只返回节点在这次运行绑定的版本里的项（`position` 仍是它在作者列表里的位置）；设了关注项时，
  *   节点还没开始也照样返回，所在的子流程还没触发的节点状态是 pending，没有链实例（`source.chain_instance_id` 为 null）。
- * - 来源是节点最新一次尝试的任务；图表的定义取这次运行绑定的版本锁定的节点包版本，那个版本里没有这张图表时
+ * - 来源的链实例、状态和最新一次尝试的任务出自运行板上同一个链实例（{@link placedNodes}）；图表的定义取这次运行绑定的版本锁定的节点包版本，那个版本里没有这张图表时
  *   `unavailable` 是 `chart_missing`。开发版本取 Agent 当前加载的源码，不一定是运行当时的定义。
  * - 数值卡只有第一个序列，其余图表是声明的全部序列；`latest` 是最近更新的那个序列的最后一个点，采样间隔也按这个序列
  *   最近的点估算。
@@ -122,15 +120,8 @@ export async function resolveRunFocus(
 	const expired = row.run.metricsPurgedAt !== null;
 
 	// 节点在这次运行里的位置：已经开始的链（主链和已触发的子流程）上的节点；子流程还没触发的节点没有位置，是 pending。
-	const placed = new Map<string, { chainInstanceId: string; status: NodeStatus }>();
 	const board = await loadRunBoards(db, [{ id: runId, versionId: row.versionId, document }]);
-	for (const chain of board.get(runId) ?? []) {
-		for (const node of chain.nodes) {
-			if (!placed.has(node.node_id)) {
-				placed.set(node.node_id, { chainInstanceId: chain.id, status: node.status });
-			}
-		}
-	}
+	const placed = placedNodes(board.get(runId) ?? []);
 	const inDocument = (nodeId: string) => document.nodes.some((n) => n.id === nodeId);
 	const isPackage = (nodeId: string) =>
 		document.nodes.find((n) => n.id === nodeId)?.kind === "package";
@@ -139,23 +130,10 @@ export async function resolveRunFocus(
 			? new Set(authored.map((i) => i.node_id).filter(inDocument))
 			: new Set(
 					[...placed]
-						.filter(([id, at]) => isOnAgentStatus(at.status) && isPackage(id))
+						.filter(([id, at]) => isOnAgentStatus(at.node.status) && isPackage(id))
 						.map(([id]) => id),
 				);
-
-	const attempts = await latestAttempts(db, runId, [...wanted]);
-	const sources = new Map<string, Source>();
-	for (const nodeId of wanted) {
-		const at = placed.get(nodeId) ?? { chainInstanceId: null, status: "pending" as const };
-		const { latest: attempt, previous } = attempts.get(nodeId) ?? {};
-		sources.set(nodeId, {
-			...at,
-			displayName: nodeNameIn(document, nodeId),
-			attempt,
-			previousError: previous?.errorMessage ?? null,
-			type: await declaredNodeType(db, document, nodeId, attempt?.agentName),
-		});
-	}
+	const sources = await sourcesOf(db, document, wanted, placed);
 
 	const readings = mode === "focus" ? focusReadings(authored, sources) : primaryReadings(sources);
 	const reads = await readSeries(deps, expired, sources, readings, points);
@@ -176,37 +154,74 @@ export async function resolveRunFocus(
 	};
 }
 
-/** 这些节点各自最新一次尝试和它前面的一次（都不含占位）。 */
-async function latestAttempts(
-	db: Db | Tx,
-	runId: string,
-	nodeIds: readonly string[],
-): Promise<Map<string, { latest: AttemptRow; previous: AttemptRow | undefined }>> {
-	const found = new Map<string, { latest: AttemptRow; previous: AttemptRow | undefined }>();
-	if (nodeIds.length === 0) return found;
-	const rows = await db
-		.select({
-			id: tasks.id,
-			chainInstanceId: tasks.chainInstanceId,
-			nodeId: tasks.nodeId,
-			attempt: tasks.attempt,
-			agentName: tasks.agentName,
-			status: tasks.status,
-			queuedAt: tasks.queuedAt,
-			startedAt: tasks.startedAt,
-			endedAt: tasks.endedAt,
-			errorMessage: tasks.errorMessage,
-			logIssues: tasks.logIssues,
-		})
-		.from(tasks)
-		.where(and(eq(tasks.runId, runId), inArray(tasks.nodeId, [...nodeIds])))
-		.orderBy(asc(tasks.attempt));
-	for (const row of rows) {
-		if (!isPlaceholderAttempt(row)) {
-			found.set(row.nodeId, { latest: row, previous: found.get(row.nodeId)?.latest });
+/** 节点在这次运行里所在的链实例和它在运行板上的那一行。 */
+type Placed = ReadonlyMap<string, { chainInstanceId: string; node: BoardNode }>;
+
+/**
+ * 每个节点在运行板上所在的链实例：取运行板上第一个有这个节点的链实例（层级、开始时间、ID 的顺序）。一个子流程在一次运行里
+ * 最多一个实例（docs/SEMANTICS.md §1），所以一个节点至多在一个链实例上，这条规则只是让结果确定。
+ */
+function placedNodes(chains: readonly BoardChain[]): Placed {
+	const placed = new Map<string, { chainInstanceId: string; node: BoardNode }>();
+	for (const chain of chains) {
+		for (const node of chain.nodes) {
+			if (!placed.has(node.node_id)) placed.set(node.node_id, { chainInstanceId: chain.id, node });
 		}
 	}
-	return found;
+	return placed;
+}
+
+/**
+ * 每个要读的节点的来源（docs/ARCHITECTURE.md §6.1「运行里的关注项读数」）：链实例、状态、最新一次尝试和它前面的一次都出自
+ * 运行板上同一个链实例的同一行（{@link placedNodes}），尝试不含占位。判断异常要的错误信息和 WARN / ERROR 按这两次尝试的
+ * 任务 ID 补读一次。
+ */
+async function sourcesOf(
+	db: Db | Tx,
+	document: OrchestrationDocument,
+	wanted: ReadonlySet<string>,
+	placed: Placed,
+): Promise<Map<string, Source>> {
+	const tried = (nodeId: string) => placed.get(nodeId)?.node.attempts ?? [];
+	const taskIds = [...wanted].flatMap((nodeId) =>
+		tried(nodeId)
+			.slice(-2)
+			.map((a) => a.taskId),
+	);
+	const details = new Map(
+		taskIds.length === 0
+			? []
+			: (
+					await db
+						.select({
+							id: tasks.id,
+							errorMessage: tasks.errorMessage,
+							logIssues: tasks.logIssues,
+						})
+						.from(tasks)
+						.where(inArray(tasks.id, taskIds))
+				).map((d) => [d.id, d]),
+	);
+	const withDetails = (attempt: BoardAttempt | undefined): SourceAttempt | undefined =>
+		attempt && {
+			...attempt,
+			errorMessage: details.get(attempt.taskId)?.errorMessage ?? null,
+			logIssues: details.get(attempt.taskId)?.logIssues ?? null,
+		};
+	const sources = new Map<string, Source>();
+	for (const nodeId of wanted) {
+		const at = placed.get(nodeId);
+		const attempt = withDetails(tried(nodeId).at(-1));
+		sources.set(nodeId, {
+			chainInstanceId: at?.chainInstanceId ?? null,
+			status: at?.node.status ?? "pending",
+			displayName: nodeNameIn(document, nodeId),
+			attempt,
+			previousError: withDetails(tried(nodeId).at(-2))?.errorMessage ?? null,
+			type: await declaredNodeType(db, document, nodeId, attempt?.agent),
+		});
+	}
+	return sources;
 }
 
 const unitOf = (metrics: readonly MetricDeclaration[] | undefined, name: string | undefined) =>
@@ -280,7 +295,7 @@ async function readSeries(
 		reads.set(
 			nodeId,
 			await deps.queries.taskSeries(
-				attempt.id,
+				attempt.taskId,
 				{
 					declared: type.metrics ?? [],
 					names: [...names],
@@ -358,7 +373,7 @@ function itemOf(
 		source: {
 			status: source.status,
 			attempt: attempt?.attempt ?? 0,
-			task_id: attempt?.id ?? null,
+			task_id: attempt?.taskId ?? null,
 			chain_instance_id: source.chainInstanceId,
 			started_at: isoOrNull(attempt?.startedAt ?? null),
 			ended_at: isoOrNull(attempt?.endedAt ?? null),

@@ -62,12 +62,16 @@ export function nodeNameIn(document: OrchestrationDocument, nodeId: string): str
 	return node && nodeNameBeforeId(node);
 }
 
-/** 节点最后一次尝试（任务行）上控制台要用的字段。 */
+/** 节点的一次尝试（任务行）上运行列表、控制台、关注项读数要用的字段。 */
 export interface BoardAttempt {
+	taskId: string;
 	attempt: number;
+	status: TaskStatus;
 	/** 任务的 Agent（agent_name）；内置节点为 null。 */
 	agent: string | null;
+	queuedAt: Date;
 	startedAt: Date | null;
+	endedAt: Date | null;
 	wakeAt: Date | null;
 	/** 最新进度。 */
 	progress: TaskProgress | null;
@@ -77,9 +81,10 @@ export interface BoardNode {
 	node_id: string;
 	/** 运行绑定版本里的显示名称（子流程入口节点是子流程名称）；没有时为 undefined。 */
 	display_name: string | undefined;
+	/** 节点状态（{@link nodeStatus}，含占位行）。 */
 	status: NodeStatus;
-	/** 最后一次尝试；还没有任务行（pending）时为 null。 */
-	last: BoardAttempt | null;
+	/** 真正的尝试（不含 {@link isPlaceholderAttempt} 的占位），按 attempt 升序，和运行视图里的 `attempts` 相同。 */
+	attempts: BoardAttempt[];
 }
 
 export interface BoardChain {
@@ -97,8 +102,9 @@ export interface BoardChain {
 }
 
 /**
- * 一批运行的链实例与各节点状态（运行列表、控制台用）：链与任务按整批读取，查询次数与运行数无关。
- * 每个链实例只列出它那条链（主链或子流程）上的节点，同一版本的文档只规划一次。
+ * 一批运行的链实例与各节点状态和尝试（运行列表、控制台、关注项读数用）：链与任务按整批读取，查询次数与运行数无关。
+ * 链实例的顺序与运行视图相同（层级、开始时间、ID）；每个链实例只列出它那条链（主链或子流程）上的节点，按节点在链上的顺序，
+ * 同一版本的文档只规划一次。
  */
 export async function loadRunBoards(
 	db: Db | Tx,
@@ -119,15 +125,18 @@ export async function loadRunBoards(
 		})
 		.from(chainInstances)
 		.where(inArray(chainInstances.runId, ids))
-		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt));
+		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt), asc(chainInstances.id));
 	const taskRows = await db
 		.select({
+			id: tasks.id,
 			chainInstanceId: tasks.chainInstanceId,
 			nodeId: tasks.nodeId,
 			attempt: tasks.attempt,
 			agentName: tasks.agentName,
 			status: tasks.status,
+			queuedAt: tasks.queuedAt,
 			startedAt: tasks.startedAt,
+			endedAt: tasks.endedAt,
 			wakeAt: tasks.wakeAt,
 			progress: tasks.progress,
 		})
@@ -154,20 +163,23 @@ export async function loadRunBoards(
 	for (const chain of chains) {
 		const nodes = nodesOf(chain.runId)(chain.chainId).map((node) => {
 			const rows = attemptsOf(chain.id, node.id);
-			const last = rows.at(-1);
 			return {
 				node_id: node.id,
 				display_name: nodeNameBeforeId(node),
 				status: nodeStatus(rows),
-				last: last
-					? {
-							attempt: last.attempt,
-							agent: last.agentName,
-							startedAt: last.startedAt,
-							wakeAt: last.wakeAt,
-							progress: last.progress,
-						}
-					: null,
+				attempts: rows
+					.filter((row) => !isPlaceholderAttempt(row))
+					.map((row) => ({
+						taskId: row.id,
+						attempt: row.attempt,
+						status: row.status,
+						agent: row.agentName,
+						queuedAt: row.queuedAt,
+						startedAt: row.startedAt,
+						endedAt: row.endedAt,
+						wakeAt: row.wakeAt,
+						progress: row.progress,
+					})),
 			};
 		});
 		const document = versionOf.get(chain.runId)?.document;
@@ -188,8 +200,9 @@ export async function loadRunBoards(
 /** 一个运行里进行中的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序；运行列表与控制台共用。 */
 export function activeNodesOf(chains: readonly BoardChain[]): RunListActiveNode[] {
 	return chains.flatMap((chain) =>
-		chain.nodes.flatMap(({ node_id, display_name, status, last }) => {
-			// 进行中的节点一定有任务行。
+		chain.nodes.flatMap(({ node_id, display_name, status, attempts }) => {
+			// 进行中的节点的最后一行就是它最新的一次尝试（排队、准备、执行、等待都不是占位）。
+			const last = attempts.at(-1);
 			if (!last || !isActiveStatus(status)) return [];
 			return {
 				chain_instance_id: chain.id,
