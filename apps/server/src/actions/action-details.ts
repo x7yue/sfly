@@ -9,8 +9,8 @@ import {
 } from "@sfly/schema";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { taskActions } from "../db/schema.js";
-import { maskSecrets } from "../logs/secrets.js";
 import { isDoing } from "./action-summary.js";
+import { actionField, actionName, actionReason } from "./action-text.js";
 
 /**
  * 动作明细（规格 #345，docs/ARCHITECTURE.md §6.3「动作明细」）的纯逻辑：把 Agent 转发的一批事件（ActionBatch）
@@ -39,7 +39,7 @@ interface Moment {
 	mono: number;
 }
 
-/** 一个事件：时间已经折算、名称和字段值里的 secret 已经打码。 */
+/** 一个事件：时间已经折算，名称、字段和原因里的 secret 已经打码、超长的已经截断。 */
 export type PreparedEvent =
 	| (Moment & {
 			kind: "action" | "mark";
@@ -61,7 +61,7 @@ export type PreparedEvent =
 	  });
 
 /**
- * 一批事件折算时间、打码。`controlPlaneTime` 把单调时钟读数折算成控制面时间（这次连接的对应关系，ADR 0018）。
+ * 一批事件折算时间、打码并按 SDK 的上限截断（action-text.ts）。`controlPlaneTime` 把单调时钟读数折算成控制面时间（这次连接的对应关系，ADR 0018）。
  * 结果不是成功、失败、未结束之一的结束不合法，丢弃（同版本的 SDK 不会写出来）。
  */
 export function prepareEvents(
@@ -85,7 +85,7 @@ export function prepareEvents(
 				id: Number(v.id),
 				parent: v.parent === undefined ? null : Number(v.parent),
 				depth: v.depth,
-				name: maskSecrets(v.name, secrets),
+				name: actionName(v.name, secrets),
 				fields: fieldsOf(v.fields, secrets),
 				late: kind.case === "start" && kind.value.late,
 			});
@@ -98,7 +98,7 @@ export function prepareEvents(
 				kind: "end",
 				id: Number(kind.value.id),
 				result,
-				reason: result === "failed" && reason !== undefined ? maskSecrets(reason, secrets) : null,
+				reason: result === "failed" && reason !== undefined ? actionReason(reason, secrets) : null,
 				fields: fieldsOf(kind.value.fields, secrets),
 			});
 		}
@@ -106,14 +106,14 @@ export function prepareEvents(
 	return prepared;
 }
 
-/** 字段按写的先后，值打码；超过 8 个时丢弃多出的（被改过的 SDK）。 */
+/** 字段按写的先后，键和值打码、值截断（{@link actionField}）；超过 8 个时丢弃多出的（被改过的 SDK）。 */
 function fieldsOf(
 	fields: readonly ActionField[],
 	secrets: readonly string[],
 ): Record<string, string> {
 	return mergeFields(
 		{},
-		fields.map((f) => [f.key, maskSecrets(f.value, secrets)]),
+		fields.map((f) => actionField(f.key, f.value, secrets)),
 	);
 }
 

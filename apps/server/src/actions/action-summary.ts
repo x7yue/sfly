@@ -8,7 +8,7 @@ import {
 } from "@sfly/schema";
 import { z } from "zod";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
-import { maskDeep, maskSecrets } from "../logs/secrets.js";
+import { actionField, actionName, actionReason } from "./action-text.js";
 
 /**
  * 动作摘要（规格 #345）的纯逻辑：解析 SDK 写的 `action_summary` 事件（格式见 sdk/python/src/sfly/context.py），
@@ -25,6 +25,11 @@ import { maskDeep, maskSecrets } from "../logs/secrets.js";
 export const RUNNING_LIMIT = 50;
 const RECENT_LIMIT = 20;
 const RECENT_FAILED_LIMIT = 5;
+/**
+ * 摘要里最多列多少种名称：SDK 不限（超过 100 种时在任务日志里警告一次），名称里带订单号这样的写法会让每秒一份的摘要
+ * 越来越大，这里只存前这么多种（SDK 按第一次出现的先后列），合计和其余字段照常。
+ */
+export const SUMMARY_NAMES_LIMIT = 1000;
 
 const Running = z.object({
 	id: z.number().int(),
@@ -82,7 +87,8 @@ export function parseActionSummary(eventJson: string): ActionSummaryEvent | unde
 
 /**
  * 一份摘要换成接口里的样子，并选出此刻在做的动作。`controlPlaneTime` 把单调时钟读数折算成那一刻的控制面时间
- * （这次连接的对应关系）；名称、字段值、失败原因里的 secret 值打码。
+ * （这次连接的对应关系）；名称、字段、失败原因里的 secret 值打码，超长的按 SDK 的上限截断（action-text.ts），
+ * 名称最多列 {@link SUMMARY_NAMES_LIMIT} 种。
  */
 export function actionSummaryView(
 	event: ActionSummaryEvent,
@@ -91,13 +97,15 @@ export function actionSummaryView(
 ): { summary: ActionSummaryView; current: CurrentAction | null } {
 	const at = (mono: number) => controlPlaneTime(mono).toISOString();
 	const agentAt = (ts: number) => new Date(recordableAgentTimeMs(ts)).toISOString();
-	const mask = (text: string) => maskSecrets(text, secrets);
+	const name = (text: string) => actionName(text, secrets);
 	const running = (a: z.infer<typeof Running>): RunningActionView => ({
 		id: a.id,
 		parent: a.parent,
 		depth: a.depth,
-		name: mask(a.name),
-		fields: maskDeep(a.fields, secrets),
+		name: name(a.name),
+		fields: Object.fromEntries(
+			Object.entries(a.fields).map(([key, value]) => actionField(key, value, secrets)),
+		),
 		started_at: at(a.mono),
 		agent_started_at: agentAt(a.ts),
 	});
@@ -107,7 +115,7 @@ export function actionSummaryView(
 		agent_ended_at: agentAt(a.end_ts),
 		duration_ms: Math.max(0, Math.round(a.end_mono - a.mono)),
 		result: a.result,
-		reason: a.reason === null ? null : mask(a.reason),
+		reason: a.reason === null ? null : actionReason(a.reason, secrets),
 	});
 	const cappedAt = (ts: number | null, mono: number | null) => ({
 		capped_at: mono === null ? null : at(mono),
@@ -122,8 +130,8 @@ export function actionSummaryView(
 			reported: event.reported,
 			capped: event.total > event.reported,
 			...cappedAt(event.capped_ts, event.capped_mono),
-			names: event.names.map((n) => ({
-				name: mask(n.name),
+			names: event.names.slice(0, SUMMARY_NAMES_LIMIT).map((n) => ({
+				name: name(n.name),
 				total: n.total,
 				failed: n.failed,
 				reported: n.reported,
@@ -134,7 +142,7 @@ export function actionSummaryView(
 			recent: event.recent.slice(0, RECENT_LIMIT).map(ended),
 			recent_failed: event.recent_failed.slice(0, RECENT_FAILED_LIMIT).map(ended),
 		},
-		current: outermost ? { name: mask(outermost.name), started_at: at(outermost.mono) } : null,
+		current: outermost ? { name: name(outermost.name), started_at: at(outermost.mono) } : null,
 	};
 }
 
