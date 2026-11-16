@@ -7,7 +7,7 @@ import {
 } from "@sfly/schema";
 import { cn } from "cn";
 import { useMemo } from "react";
-import { ChainBar, doneCount } from "#/components/chain-progress";
+import { ChainBar, chainProgressText } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, runNotificationView, STATUS, StatusPill } from "#/components/status";
@@ -167,7 +167,6 @@ function RunNotificationLine({ state }: { state: RunNotificationState }) {
 }
 
 function ChainRow({ chain }: { chain: ChainRunView }) {
-	const done = doneCount(chain.nodes);
 	const label = chainLabelParts(chain);
 	return (
 		<li className="flex items-center gap-2.5 text-xs">
@@ -184,9 +183,7 @@ function ChainRow({ chain }: { chain: ChainRunView }) {
 				label={chainName({ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.name })}
 				nodes={chain.nodes}
 			/>
-			<span className="ml-auto font-mono text-2xs text-fg-3">
-				{done}/{chain.nodes.length}
-			</span>
+			<span className="ml-auto font-mono text-2xs text-fg-3">{chainProgressText(chain.nodes)}</span>
 		</li>
 	);
 }

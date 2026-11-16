@@ -31,7 +31,15 @@ import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { focusPreview, nodeFocusItems } from "#/focus/focus-preview";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
-import { ACTION, FOCUS, MESSAGE, MONITOR_DETAIL_LABEL, openInLabel, TERM } from "#/lib/copy";
+import {
+	ACTION,
+	DURATION_LABEL,
+	FOCUS,
+	MESSAGE,
+	MONITOR_DETAIL_LABEL,
+	openInLabel,
+	TERM,
+} from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { useNow } from "#/lib/use-now";
@@ -362,7 +370,7 @@ function NodeRunInspector({
 						{shortId(run.id)} · v{run.orchestration_version}
 					</Row>
 					<Row label="Agent">{view?.agent ?? "控制面"}</Row>
-					<Row label="耗时">{elapsed === null ? "—" : formatDuration(elapsed)}</Row>
+					<Row label={DURATION_LABEL}>{elapsed === null ? "—" : formatDuration(elapsed)}</Row>
 					<Row label="尝试" testId="run-attempts">
 						{view?.attempts.length ?? 0}
 					</Row>
@@ -502,7 +510,7 @@ function RunOverview({
 						</dd>
 						<Row label="触发人">{run.triggered_by}</Row>
 						<Row label="开始">{formatDateTime(run.started_at)}</Row>
-						<Row label="耗时">{formatDuration(end - Date.parse(run.started_at))}</Row>
+						<Row label={DURATION_LABEL}>{formatDuration(end - Date.parse(run.started_at))}</Row>
 					</dl>
 					{state.focus?.mode === "focus" && state.focus.items.length > 0 && (
 						<RunFocusList focus={state.focus} onSelect={(item) => onSelectNode(item.node_id)} />

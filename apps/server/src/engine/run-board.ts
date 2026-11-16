@@ -1,5 +1,11 @@
 import { nodeNameBeforeId, subflowName } from "@sfly/orchestration";
-import type { NodeStatus, OrchestrationDocument, OrchestrationNode } from "@sfly/schema";
+import {
+	isActiveStatus,
+	type NodeStatus,
+	type OrchestrationDocument,
+	type OrchestrationNode,
+	type RunListActiveNode,
+} from "@sfly/schema";
 import { asc, inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { type ChainStatus, chainInstances, type TaskProgress, tasks } from "../db/schema.js";
@@ -41,13 +47,24 @@ export function nodeNameIn(document: OrchestrationDocument, nodeId: string): str
 	return node && nodeNameBeforeId(node);
 }
 
+/** 节点最后一次尝试（任务行）上控制台要用的字段。 */
+export interface BoardAttempt {
+	attempt: number;
+	/** 任务的 Agent（agent_name）；内置节点为 null。 */
+	agent: string | null;
+	startedAt: Date | null;
+	wakeAt: Date | null;
+	/** 最新进度。 */
+	progress: TaskProgress | null;
+}
+
 export interface BoardNode {
 	node_id: string;
 	/** 运行绑定版本里的显示名称（子流程入口节点是子流程名称）；没有时为 undefined。 */
 	display_name: string | undefined;
 	status: NodeStatus;
-	/** 最后一次尝试的最新进度。 */
-	progress: TaskProgress | null;
+	/** 最后一次尝试；还没有任务行（pending）时为 null。 */
+	last: BoardAttempt | null;
 }
 
 export interface BoardChain {
@@ -55,6 +72,10 @@ export interface BoardChain {
 	chain_id: string;
 	/** 运行绑定版本里的子流程名称（同运行视图里链实例的 name）；主链为 undefined。 */
 	subflow_name: string | undefined;
+	/** 派发这个子流程实例的异步任务节点所在的链实例；主链为 null。 */
+	parent_chain_instance_id: string | null;
+	/** 派发这个子流程实例的异步任务节点；主链为 null。 */
+	async_node_id: string | null;
 	depth: number;
 	status: ChainStatus;
 	nodes: BoardNode[];
@@ -76,6 +97,8 @@ export async function loadRunBoards(
 			id: chainInstances.id,
 			runId: chainInstances.runId,
 			chainId: chainInstances.chainId,
+			parentChainInstanceId: chainInstances.parentChainInstanceId,
+			asyncNodeId: chainInstances.asyncNodeId,
 			depth: chainInstances.depth,
 			status: chainInstances.status,
 		})
@@ -86,7 +109,11 @@ export async function loadRunBoards(
 		.select({
 			chainInstanceId: tasks.chainInstanceId,
 			nodeId: tasks.nodeId,
+			attempt: tasks.attempt,
+			agentName: tasks.agentName,
 			status: tasks.status,
+			startedAt: tasks.startedAt,
+			wakeAt: tasks.wakeAt,
 			progress: tasks.progress,
 		})
 		.from(tasks)
@@ -112,11 +139,20 @@ export async function loadRunBoards(
 	for (const chain of chains) {
 		const nodes = nodesOf(chain.runId)(chain.chainId).map((node) => {
 			const rows = attemptsOf(chain.id, node.id);
+			const last = rows.at(-1);
 			return {
 				node_id: node.id,
 				display_name: nodeNameBeforeId(node),
 				status: nodeStatus(rows),
-				progress: rows.at(-1)?.progress ?? null,
+				last: last
+					? {
+							attempt: last.attempt,
+							agent: last.agentName,
+							startedAt: last.startedAt,
+							wakeAt: last.wakeAt,
+							progress: last.progress,
+						}
+					: null,
 			};
 		});
 		const document = versionOf.get(chain.runId)?.document;
@@ -124,10 +160,35 @@ export async function loadRunBoards(
 			id: chain.id,
 			chain_id: chain.chainId,
 			subflow_name: document && subflowNameOf(document, chain.chainId),
+			parent_chain_instance_id: chain.parentChainInstanceId,
+			async_node_id: chain.asyncNodeId,
 			depth: chain.depth,
 			status: chain.status,
 			nodes,
 		});
 	}
 	return boards;
+}
+
+/** 一个运行里进行中的节点（排队、派发中、执行中、等待唤醒），按链与链上的顺序；运行列表与控制台共用。 */
+export function activeNodesOf(chains: readonly BoardChain[]): RunListActiveNode[] {
+	return chains.flatMap((chain) =>
+		chain.nodes.flatMap(({ node_id, display_name, status, last }) => {
+			// 进行中的节点一定有任务行。
+			if (!last || !isActiveStatus(status)) return [];
+			return {
+				chain_instance_id: chain.id,
+				node_id,
+				display_name,
+				status,
+				attempt: last.attempt,
+				agent: last.agent,
+				started_at: last.startedAt?.toISOString() ?? null,
+				wake_at: last.wakeAt?.toISOString() ?? null,
+				progress: last.progress
+					? { current: last.progress.current, total: last.progress.total }
+					: null,
+			};
+		}),
+	);
 }

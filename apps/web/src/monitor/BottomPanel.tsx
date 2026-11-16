@@ -20,7 +20,7 @@ import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { LOG_LEVEL_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import { ACTION, LOG_LEVEL_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
@@ -291,7 +291,7 @@ export function BottomPanel({
 							</>
 						)}
 						<Button variant="ghost" size="sm" onClick={() => actions.setPanelOpen(collapsed)}>
-							{collapsed ? "展开" : "收起"}
+							{collapsed ? ACTION.expand : ACTION.collapse}
 						</Button>
 					</div>
 				</div>
