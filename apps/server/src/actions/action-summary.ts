@@ -8,6 +8,7 @@ import {
 } from "@sfly/schema";
 import { z } from "zod";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
+import type { StoredActionSummary } from "../db/schema.js";
 import { maskSecrets } from "../logs/secrets.js";
 import { actionField, actionName, actionReason } from "./action-text.js";
 
@@ -95,7 +96,7 @@ export function actionSummaryView(
 	event: ActionSummaryEvent,
 	controlPlaneTime: (monotonicMs: number) => Date,
 	secrets: readonly string[],
-): { summary: ActionSummaryView; current: CurrentAction | null } {
+): { summary: StoredActionSummary; current: CurrentAction | null } {
 	const at = (mono: number) => controlPlaneTime(mono).toISOString();
 	const agentAt = (ts: number) => new Date(recordableAgentTimeMs(ts)).toISOString();
 	const name = (text: string) => actionName(text, secrets);
@@ -164,7 +165,7 @@ function earliestOutermost<A extends { depth: number; mono: number; id: number }
 }
 
 /** 没有记录过动作的任务的摘要。 */
-export const EMPTY_SUMMARY: ActionSummaryView = {
+export const EMPTY_SUMMARY: StoredActionSummary = {
 	total: 0,
 	marks: 0,
 	reported: 0,
@@ -181,13 +182,15 @@ export const EMPTY_SUMMARY: ActionSummaryView = {
 /** 只有执行中的任务有正在做的动作：结束了的任务（以及还没开始执行的）都没有。 */
 export const isDoing = (status: TaskStatus) => status === "running";
 
-/** 任务的动作摘要：存下的最新一份；任务已经结束时正在做的动作为空。 */
+/**
+ * 任务的动作摘要：存下的最新一份，加上控制面有没有兜底丢弃过明细（`tasks.action_capped`）；任务已经结束时正在做的动作为空。
+ */
 export function summaryOfTask(
-	status: TaskStatus,
-	stored: ActionSummaryView | null,
+	task: { status: TaskStatus; actionCapped: boolean },
+	stored: StoredActionSummary | null,
 ): ActionSummaryView {
-	if (!stored) return EMPTY_SUMMARY;
-	return isDoing(status) ? stored : { ...stored, running: [], running_complete: true };
+	const summary = { ...(stored ?? EMPTY_SUMMARY), control_plane_capped: task.actionCapped };
+	return isDoing(task.status) ? summary : { ...summary, running: [], running_complete: true };
 }
 
 /**

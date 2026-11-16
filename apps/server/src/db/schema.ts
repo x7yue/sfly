@@ -49,6 +49,9 @@ const orchestrationDocument = customType<{ data: OrchestrationDocument; driverDa
 });
 
 /** Agent 上报的信息（Hello）。 */
+
+/** 存下的动作摘要：SDK 写的那一份；控制面有没有兜底丢弃过明细记在任务上（`tasks.action_capped`），读取时才合进去。 */
+export type StoredActionSummary = Omit<ActionSummaryView, "control_plane_capped">;
 export interface AgentInfo {
 	agent_version: string;
 	os: string;
@@ -463,7 +466,7 @@ export const taskActionSummaries = pgTable("task_action_summaries", {
 		.primaryKey()
 		.references(() => tasks.id),
 	/** 时间已经折算好、secret 值已经打码的摘要；正在做的动作在任务结束后由读取的一方当作空的。用 json 而不是 jsonb：保留字段的先后。 */
-	summary: json("summary").$type<ActionSummaryView>().notNull(),
+	summary: json("summary").$type<StoredActionSummary>().notNull(),
 	/** 从摘要里选出的此刻在做的动作：运行视图、Agent 列表只读这一列。 */
 	currentAction: jsonb("current_action").$type<CurrentAction>(),
 });

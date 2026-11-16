@@ -16,6 +16,7 @@ const summary = (names: ActionNameCount[], marks = 0): ActionSummaryView => ({
 	marks,
 	reported: 0,
 	capped: false,
+	control_plane_capped: false,
 	capped_at: null,
 	agent_capped_at: null,
 	names,

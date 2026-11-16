@@ -11,7 +11,14 @@ import { and, asc, desc, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
 import type { Db } from "../db/database.js";
-import { runs, taskActionNames, taskActionSummaries, taskActions, tasks } from "../db/schema.js";
+import {
+	runs,
+	type StoredActionSummary,
+	taskActionNames,
+	taskActionSummaries,
+	taskActions,
+	tasks,
+} from "../db/schema.js";
 import type { TaskLogs } from "../logs/task-logs.js";
 import { Topics } from "../sse/topics.js";
 import { isUuid } from "../util/uuid.js";
@@ -43,7 +50,9 @@ import {
 /** 写入的明细和存下的摘要，按任务发布给实时推送（{@link TaskActions.follow}）。 */
 type Published =
 	| { kind: "actions"; rev: number; rows: StoredDetail[] }
-	| { kind: "summary"; summary: ActionSummaryView };
+	| { kind: "summary"; summary: StoredActionSummary }
+	/** 控制面第一次兜底丢弃这个任务的明细：摘要的 `control_plane_capped` 变了。 */
+	| { kind: "capped" };
 
 /**
  * 实时推送的一条：`actions` 的 `rev` 是这些明细的修订号；`summary` 的 `rev` 是这条流已经推送到的修订号。
@@ -245,18 +254,25 @@ export class TaskActions {
 		if (written === undefined) return;
 		if (written.length > 0)
 			this.#published.publish(taskId, { kind: "actions", rev, rows: written });
-		if (capping) await this.deps.logs.appendSystem(taskId, "warn", CAPPED_WARNING);
+		if (capping) {
+			this.#published.publish(taskId, { kind: "capped" });
+			await this.deps.logs.appendSystem(taskId, "warn", CAPPED_WARNING);
+		}
 	}
 
 	/** 一个任务的动作摘要（任务结束后正在做的动作为空）；任务不存在时为 undefined。 */
 	async summary(taskId: string): Promise<ActionSummaryView | undefined> {
 		if (!isUuid(taskId)) return undefined;
 		const [row] = await this.deps.db
-			.select({ status: tasks.status, summary: taskActionSummaries.summary })
+			.select({
+				status: tasks.status,
+				actionCapped: tasks.actionCapped,
+				summary: taskActionSummaries.summary,
+			})
 			.from(tasks)
 			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
 			.where(eq(tasks.id, taskId));
-		return row && summaryOfTask(row.status, row.summary);
+		return row && summaryOfTask(row, row.summary);
 	}
 
 	/**
@@ -375,11 +391,16 @@ export class TaskActions {
 		};
 		let sent = after;
 		let state: { status: TaskStatus; end: TaskEnd | null } | undefined;
-		let summary: ActionSummaryView | null = null;
+		let summary: StoredActionSummary | null = null;
+		let actionCapped = false;
 		let expired = false;
 		let checking = false;
 		const sendSummary = (status: TaskStatus) =>
-			emit({ kind: "summary", summary: summaryOfTask(status, summary), rev: sent });
+			emit({
+				kind: "summary",
+				summary: summaryOfTask({ status, actionCapped }, summary),
+				rev: sent,
+			});
 		const sendRows = (rows: StoredDetail[], rev: number, end: TaskEnd | null) =>
 			emit({ kind: "actions", actions: rows.map((row) => detailView(row, end)), rev });
 		const sendUnfinished = async (upTo: number, end: TaskEnd) => {
@@ -391,6 +412,7 @@ export class TaskActions {
 			if (!read) return;
 			state = read;
 			summary = read.summary;
+			actionCapped = read.actionCapped;
 			expired = read.expired;
 			if (!isActiveStatus(read.status)) unsubscribeRun();
 			sendSummary(read.status);
@@ -404,8 +426,9 @@ export class TaskActions {
 		const unsubscribe = this.#published.subscribe(taskId, (event) =>
 			serial(() => {
 				if (!state) return;
-				if (event.kind === "summary") {
-					summary = event.summary;
+				if (event.kind === "summary" || event.kind === "capped") {
+					if (event.kind === "summary") summary = event.summary;
+					else actionCapped = true;
 					sendSummary(state.status);
 				} else if (!expired && event.rev > sent) {
 					sent = event.rev;
@@ -441,6 +464,7 @@ export class TaskActions {
 		const [row] = await this.deps.db
 			.select({
 				...TASK_END_COLUMNS,
+				actionCapped: tasks.actionCapped,
 				purgedAt: runs.purgedAt,
 				summary: taskActionSummaries.summary,
 			})
@@ -453,6 +477,7 @@ export class TaskActions {
 				status: row.status,
 				end: taskEndOf(row),
 				summary: row.summary,
+				actionCapped: row.actionCapped,
 				expired: row.purgedAt !== null,
 			}
 		);

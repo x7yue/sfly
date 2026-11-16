@@ -98,6 +98,7 @@ describe("动作摘要", () => {
 			marks: 0,
 			reported: 0,
 			capped: false,
+			control_plane_capped: false,
 			capped_at: null,
 			agent_capped_at: null,
 			names: [],
@@ -167,6 +168,7 @@ describe("动作摘要", () => {
 			marks: 1,
 			reported: 4,
 			capped: true,
+			control_plane_capped: false,
 			capped_at: iso(T0 + 3_000),
 			agent_capped_at: iso(T0 + 3_000),
 			names: [

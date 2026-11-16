@@ -361,8 +361,9 @@ export const NODE_ACTIONS = {
 	/** 超出上限、只记个数没有明细：「动作」页里只计数的那一行、时间线上的斜线和图例。 */
 	countOnly: "只计数",
 	/**
-	 * 检查器的上限说明末尾：控制面另外丢弃的明细摘要里没有，要到「动作」页的只计数的行里看（`ACTION_PAGE.countOnlyReason`
-	 * 的 `control_plane`）。写成「超过上限时」，没有丢弃过时同样是实话。
+	 * 检查器的上限说明末尾：摘要里只写控制面有没有另外丢弃过明细（`control_plane_capped`，只有它为 true 时也显示上限说明），
+	 * 丢弃了哪些名称要到「动作」页的只计数的行里看（`ACTION_PAGE.countOnlyReason` 的 `control_plane`）。写成「超过上限时」，
+	 * 没有丢弃过时同样是实话。
 	 */
 	controlPlaneDropped: `控制面收到的明细超过上限时，超出的会丢弃；丢弃了哪些名称，到${MONITOR_DETAIL_LABEL}的「动作」页里看。`,
 } as const;

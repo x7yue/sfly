@@ -179,7 +179,8 @@ export function ActionArea({
 					))}
 				</TableBody>
 			</Table>
-			{(countOnly.length > 0 || summary.capped_at !== null) && (
+			{/* 只有控制面兜底丢弃过明细（被改过的 SDK，SDK 自己没超限）时也写上限说明：丢弃的段在详情的「动作」页里。 */}
+			{(countOnly.length > 0 || summary.capped_at !== null || summary.control_plane_capped) && (
 				<CapNote countOnly={countOnly} totalFullAt={summary.capped_at} otherDay={otherDay} />
 			)}
 			{failures.length > 0 && (

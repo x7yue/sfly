@@ -110,6 +110,7 @@ function summary(parts: Partial<ActionSummaryView> = {}): ActionSummaryView {
 		marks: 0,
 		reported: 0,
 		capped: false,
+		control_plane_capped: false,
 		capped_at: null,
 		agent_capped_at: null,
 		names: [],

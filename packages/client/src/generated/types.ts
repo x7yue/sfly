@@ -118,8 +118,13 @@ export interface ActionSummaryView {
 	marks: number;
 	/** 有明细的个数（最多 100000）。 */
 	reported: number;
-	/** 有没有超出上限：有动作或标记只计数、没有明细。 */
+	/** 有没有超出 SDK 的上限：有动作或标记只计数、没有明细。 */
 	capped: boolean;
+	/**
+	 * 控制面兜底丢弃过这个任务的明细（被改过的 SDK 写出超过上限的明细时，规格 #345 故事 49）。SDK 的上限没超时 `capped`
+	 * 也可能是 false；哪些名称从几点起只计数在明细分页的 `count_only` 里（`reason` 为 `control_plane`）。
+	 */
+	control_plane_capped: boolean;
 	/** 合计已满、开始丢弃明细的时刻；没有丢弃过时为 null。不是明细的终点：之后仍可能有补上的失败的动作。 */
 	capped_at: Timestamp | null;
 	agent_capped_at: Timestamp | null;
