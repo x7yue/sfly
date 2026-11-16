@@ -1,6 +1,6 @@
 // 切入点 A：控制台统计接口 GET /dashboard（#34）。HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL +
 // 手动时钟；响应按契约解析（不符合契约时测试失败）。
-import { type DashboardView, dashboardApi, runListApi } from "@sfly/schema";
+import { type DashboardView, dashboardApi, runFocusApi, runListApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -477,6 +477,35 @@ describe("控制台统计", () => {
 				items: unknown[];
 			};
 			expect(focus).toEqual(direct.items.slice(0, 4));
+		});
+
+		it("来源节点失败的原因里的 secret 参数值已打码：控制台和运行的关注项读数都一样", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const document = benchDocument([["load", "load"]]);
+			const id = await api.orchestrationWith(
+				{
+					...document,
+					nodes: document.nodes.map((n) =>
+						n.kind === "entry"
+							? {
+									...n,
+									params: [{ name: "token", type: "string", secret: true, required: true }],
+								}
+							: n,
+					),
+				},
+				"压测",
+			);
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "orders" }]);
+			const runId = await api.triggerOk(id, { token: "s3cr3t" });
+			await agent.fail(await agent.nextAssign(), "登录失败：token=s3cr3t\n  at login()");
+
+			const masked = { kind: "failed", message: "登录失败：token=******" };
+			expect((await focusOf(runId))?.[0]?.anomaly).toMatchObject(masked);
+			const direct = runFocusApi.focus.response.parse(
+				await (await cp.fetch(`/runs/${runId}/focus`)).json(),
+			);
+			expect(direct.items[0]?.anomaly).toMatchObject(masked);
 		});
 
 		it("按场景现在的关注项：结束之后改的也算；场景没设关注项时是空的", async () => {

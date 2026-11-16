@@ -230,6 +230,23 @@ describe("运行的关注项读数", () => {
 		]);
 	});
 
+	it("重试的原因（上一次尝试的错误信息）里的 secret 参数值已打码，和运行视图里的错误信息一样", async () => {
+		const document = withNodes(benchDocument(), {
+			entry: { params: [{ name: "token", type: "string", secret: true, required: true }] },
+			load: { retries: 1 },
+		});
+		const id = await api.orchestrationWith(document);
+		await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
+		const runId = await api.triggerOk(id, { token: "s3cr3t" });
+		await agent.fail(await agent.nextAssign(), "登录失败：token=s3cr3t");
+		await agent.nextAssign();
+
+		const [item] = (await focus(runId)).items;
+		expect(item?.anomaly).toMatchObject({ kind: "retry", message: "登录失败：token=******" });
+		const load = (await api.run(runId)).chains[0]?.nodes.find((n) => n.node_id === "load");
+		expect(load?.attempts[0]?.error?.message).toBe("登录失败：token=******");
+	});
+
 	it("子流程里的节点：来源是子流程实例上的任务", async () => {
 		const document = {
 			default_agent: "agent-a",
