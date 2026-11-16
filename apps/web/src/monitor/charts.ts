@@ -47,7 +47,8 @@ export function attemptWindow(attempt: AttemptTimes, now: number): TimeRange | n
 }
 
 /**
- * 运行监控详情里图表的横轴：这次尝试实际运行的时段（{@link attemptWindow}），与时间线当前显示的范围（拖选缩放）取交集。
+ * 运行监控详情里图表的横轴：这次尝试实际运行的时段（开始到结束或 `now`），与时间线当前显示的范围（拖选缩放）取交集，
+ * 再像 {@link attemptWindow} 一样至少 {@link MIN_CHART_SPAN}。
  * 还没开始执行，或与显示的范围不相交时为 null。
  */
 export function chartWindow(

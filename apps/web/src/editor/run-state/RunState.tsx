@@ -45,7 +45,7 @@ import {
 	PROGRESS_LABEL,
 	TERM,
 } from "#/lib/copy";
-import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { ACTIONS_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
@@ -194,7 +194,7 @@ export function RunStateBadge({ state }: { state: CanvasRun }) {
 					</StatusPill>
 					<span className="font-mono text-xs">{shortId(run.id)}</span>
 					<span className="font-mono text-xs text-fg-3">
-						{formatDuration(end - Date.parse(run.started_at))}
+						{formatSpan(end - Date.parse(run.started_at), !run.ended_at)}
 					</span>
 				</>
 			);
@@ -401,7 +401,9 @@ function NodeRunInspector({
 						{shortId(run.id)} · v{run.orchestration_version}
 					</Row>
 					<Row label="Agent">{view?.agent ?? "控制面"}</Row>
-					<Row label={DURATION_LABEL}>{elapsed === null ? "—" : formatDuration(elapsed)}</Row>
+					<Row label={DURATION_LABEL}>
+						{elapsed === null ? "—" : formatSpan(elapsed, !view?.attempts.at(-1)?.ended_at)}
+					</Row>
 					<Row label="尝试" testId="run-attempts">
 						{view?.attempts.length ?? 0}
 					</Row>
@@ -573,7 +575,9 @@ function RunOverview({
 						</dd>
 						<Row label="触发人">{run.triggered_by}</Row>
 						<Row label="开始">{formatDateTime(run.started_at)}</Row>
-						<Row label={DURATION_LABEL}>{formatDuration(end - Date.parse(run.started_at))}</Row>
+						<Row label={DURATION_LABEL}>
+							{formatSpan(end - Date.parse(run.started_at), !run.ended_at)}
+						</Row>
 					</dl>
 					{state.focus?.mode === "focus" && state.focus.items.length > 0 && (
 						<RunFocusList

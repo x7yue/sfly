@@ -63,7 +63,7 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 	await expect(rows.nth(0)).toContainText("1h 43m");
 	await expect(rows.nth(1)).toContainText("下单");
 	await expect(rows.nth(1)).toContainText(authored(orderFields(1_284_814)));
-	await expect(rows.nth(1)).toContainText(/\dms/);
+	await expect(rows.nth(1)).toContainText(/买\d+s$/);
 	await expect(rows.nth(2)).toContainText("等回报");
 	const names = await Promise.all(
 		[0, 1, 2].map((i) => rows.nth(i).getByTestId("action-name").boundingBox()),

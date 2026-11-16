@@ -280,7 +280,7 @@ test("排队的任务：Agent 不在线时照样列在它名下", async ({ page,
 	await expect(rack(page, "agent-away")).not.toContainText("占用");
 });
 
-test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长与槽位格、排队行同一种写法），版本、槽位、最后在线照常，发出心跳后标记消失", async ({
+test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长与槽位格、排队行同一种写法），版本、最后在线照常，还接不了任务所以不写占用、不画空闲槽；发出心跳后标记消失", async ({
 	page,
 	connectAgent,
 	clock,
@@ -297,10 +297,11 @@ test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长�
 	await expect(header(page, "agent-prep")).toContainText("在线准备环境中 · 2m 10s");
 	await expect(status("agent-ready")).toHaveText("在线");
 	await expect(header(page, "agent-ready")).not.toContainText("准备环境中");
-	// 准备期间照常显示版本、槽位和最后在线。
+	// 准备期间照常显示版本和最后在线；还不接任务，槽位不算空闲。
 	await expect(header(page, "agent-prep")).toContainText("1.2.3");
 	await expect(header(page, "agent-prep")).toContainText("最后在线 现在");
-	await expect(rack(page, "agent-prep")).toContainText("0 / 2 占用");
+	await expect(rack(page, "agent-prep")).not.toContainText("占用");
+	await expect(rack(page, "agent-prep")).not.toContainText("槽位空闲");
 
 	// 时长按控制面时间走：控制面时间过了一分钟，页面不用刷新列表就变了。
 	clock.advance(60_000);
@@ -312,6 +313,8 @@ test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长�
 	await preparing.ready();
 	await expect(header(page, "agent-prep")).not.toContainText("准备环境中", { timeout: 15_000 });
 	await expect(status("agent-prep")).toHaveText("在线");
+	await expect(rack(page, "agent-prep")).toContainText("0 / 2 占用");
+	await expect(rack(page, "agent-prep")).toContainText("2 个槽位空闲");
 });
 
 test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒时不显示，心跳测到新的偏差后更新", async ({

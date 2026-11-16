@@ -314,7 +314,7 @@ function NameField({
 	};
 	return (
 		<Input
-			aria-label={`名称（${node} · ${item.chart}）`}
+			aria-label={FOCUS.nameField(node, item.chart)}
 			data-focus-id={focusId}
 			maxLength={FOCUS_ITEM_TITLE_MAX}
 			value={typed ?? focusName(item)}

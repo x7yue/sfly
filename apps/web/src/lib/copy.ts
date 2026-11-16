@@ -113,8 +113,16 @@ export const FOCUS = {
 	noneInRun: `这次运行里没有可显示的${TERM.focusItem}：场景设置的${TERM.focusItem}所在的节点不在这次运行的版本里。`,
 	/** 场景没有设置关注项，显示的是执行中节点的主指标：概览的标题旁、控制台运行块的读数区标题旁和 Agent 槽位格里的主指标共用这一句。 */
 	noneSet: `场景没有设置${TERM.focusItem}`,
-	/** 去场景设置的「关注项」页的入口：设了关注项是「调整关注项」，没设是「设置关注项」。 */
-	settingsLink: (configured: boolean): string => `${configured ? "调整" : "设置"}${TERM.focusItem}`,
+	/** 「关注项」页每一项名称输入框的可访问名称：「名称（子单接口（fetch2） · errors）」，写明是哪个节点的哪张图表。 */
+	nameField: (node: string, chart: string) => `名称（${node} · ${chart}）`,
+	/**
+	 * 去场景设置的「关注项」页的入口：设了关注项是「调整关注项」，没设是「设置关注项」；读数读取失败、不知道设没设时
+	 * （`null`）只说去哪里。
+	 */
+	settingsLink: (configured: boolean | null): string =>
+		configured === null
+			? `打开${INSPECTOR_PAGE.sceneSettings}的「${INSPECTOR_PAGE.focus}」页`
+			: `${configured ? "调整" : "设置"}${TERM.focusItem}`,
 	/** 概览里最后一段的标题：这次运行里没有进入「需要注意」的 WARN / ERROR。 */
 	otherAlerts: "其他警告与错误",
 	/** 上面那一段没有内容时的说明。 */
@@ -125,7 +133,12 @@ export const FOCUS = {
 	 * 异常原因的短句（规格 #344 的四种异常）：读数的脚注、图表卡片和别处的关注项读数都用这几句，
 	 * 由 `focus-format.ts` 的 `anomalyText` 按一项的 `anomaly` 选出。
 	 */
-	logReason: (count: number, level: string, clock: string) => `${count} 条 ${level} · ${clock}`,
+	/**
+	 * 「1 条 WARN · 10:58:41」：`count` 是这次尝试的 WARN 和 ERROR 合计，`level` 只是最近一条的级别，所以多于一条时
+	 * 写「3 条 WARN / ERROR」，不把合计都说成最近一条的级别。时间是最近一条的。
+	 */
+	logReason: (count: number, level: string, clock: string) =>
+		`${count} 条 ${count === 1 ? level : LOG_ALERT_LEVELS} · ${clock}`,
 	staleFor: (ago: string) => `已 ${ago} 无新数据`,
 	sourceFailed: "来源节点失败",
 	retryReason: (attempt: number, clock: string) => `重试（${TERM.attempt} ${attempt}）· ${clock}`,

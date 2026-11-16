@@ -10,7 +10,6 @@ import {
 	type RunFocusItem,
 } from "@sfly/schema";
 import { type UseQueryResult, useQueries } from "@tanstack/react-query";
-import { cn } from "cn";
 import { type ReactNode, useId } from "react";
 import { SectionHeading } from "#/components/page";
 import { AnomalyNote } from "#/focus/AnomalyNote";
@@ -293,13 +292,7 @@ function DeclaredChart({
 		<>
 			<header className="flex min-w-0 items-center gap-2">
 				<ChartTitle id={titleId}>{chart.title}</ChartTitle>
-				<FocusValue
-					item={value}
-					className={cn(
-						"ml-auto min-w-0 truncate",
-						reading?.item.anomaly?.kind === "stale" && "text-fg-2",
-					)}
-				/>
+				<FocusValue item={value} className="ml-auto min-w-0 truncate" />
 				{toggle}
 			</header>
 			{reading?.item.anomaly && <AnomalyNote item={reading.item} generatedAt={reading.at} />}

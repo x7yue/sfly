@@ -12,6 +12,7 @@ import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/componen
 import { TriggeredAt } from "#/components/via-tag";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { FocusSettingsLink } from "#/focus/FocusSettingsLink";
+import { emptyReadingsNote } from "#/focus/focus-format";
 import { useRunFocus } from "#/focus/use-run-focus";
 import {
 	ACTION,
@@ -156,7 +157,11 @@ function RunReadout({ run, limit }: { run: DashboardRunningRun; limit: number | 
 		if (!focus.isError) return null;
 		return (
 			<section aria-label={TERM.focusItem} className="mt-3">
-				<ReadoutHeading title={TERM.focusItem} orchestrationId={null} configured={false}>
+				<ReadoutHeading
+					title={TERM.focusItem}
+					orchestrationId={run.orchestration_id}
+					configured={null}
+				>
 					<RuleLine />
 				</ReadoutHeading>
 				<p className="m-0 text-xs text-fg-3">{MESSAGE.loadFailed(TERM.focusItem)}</p>
@@ -176,13 +181,7 @@ function RunReadout({ run, limit }: { run: DashboardRunningRun; limit: number | 
 				{primary && <span>{FOCUS.noneSet} ·</span>}
 			</ReadoutHeading>
 			{data.items.length === 0 ? (
-				<p className="m-0 text-xs text-fg-3">
-					{primary
-						? executing
-							? MESSAGE.noPrimaryMetric
-							: MESSAGE.noRunningNodes
-						: FOCUS.noneInRun}
-				</p>
+				<p className="m-0 text-xs text-fg-3">{emptyReadingsNote(data.mode, executing)}</p>
 			) : (
 				<FocusReadoutStrip
 					items={shown}
@@ -214,8 +213,8 @@ function RunReadout({ run, limit }: { run: DashboardRunningRun; limit: number | 
 }
 
 /**
- * 读数区的标题行：标题、`children`（计数、分隔线、说明），右边是去场景设置「关注项」页的链接；读取失败时
- * 不知道场景设没设关注项，`orchestrationId` 传 null，不画链接。
+ * 读数区的标题行：标题、`children`（计数、分隔线、说明），右边是去场景设置「关注项」页的链接（读取失败时不知道
+ * 场景设没设关注项，`configured` 是 null）。
  */
 function ReadoutHeading({
 	title,
@@ -224,17 +223,15 @@ function ReadoutHeading({
 	children,
 }: {
 	title: string;
-	orchestrationId: string | null;
-	configured: boolean;
+	orchestrationId: string;
+	configured: boolean | null;
 	children: ReactNode;
 }) {
 	return (
 		<div className="mb-1.5 flex items-center gap-2 text-xs text-fg-3">
 			<h4 className="m-0 text-xs font-normal">{title}</h4>
 			{children}
-			{orchestrationId !== null && (
-				<FocusSettingsLink orchestrationId={orchestrationId} configured={configured} />
-			)}
+			<FocusSettingsLink orchestrationId={orchestrationId} configured={configured} />
 		</div>
 	);
 }

@@ -234,14 +234,14 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 });
 
 describe("异常原因的短句：写法由这里决定，有没有异常、是哪一种由控制面判断", () => {
-	it("WARN / ERROR 写这次尝试的条数、最近一条的级别和时间，无新数据写多久，失败、重试各一句；没有异常为 null", () => {
+	it("WARN / ERROR 写这次尝试的条数（多于一条时不说成最近一条的级别）和最近一条的时间，无新数据写多久，失败、重试各一句；没有异常为 null", () => {
 		const warnAt = at(30);
 		expect(
 			anomalyText(
 				item({ anomaly: { kind: "log", level: "error", at: warnAt, message: "x", count: 3 } }),
 				NOW,
 			),
-		).toBe(`3 条 ERROR · ${formatClock(warnAt)}`);
+		).toBe(`3 条 WARN / ERROR · ${formatClock(warnAt)}`);
 		expect(
 			anomalyText(
 				item({ anomaly: { kind: "log", level: "warn", at: warnAt, message: "x", count: 1 } }),

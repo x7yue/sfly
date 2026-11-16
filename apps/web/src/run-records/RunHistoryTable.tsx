@@ -6,7 +6,7 @@ import { DataTable, dataColumns } from "#/components/data-table";
 import { runNodeName } from "#/components/node-name";
 import { runStatusView, StatusPill } from "#/components/status";
 import { ViaTag } from "#/components/via-tag";
-import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { ScenarioWithPreset } from "#/presets/ScenarioWithPreset";
 
 /** 表格里最多画几条链，其余只计数，保证行高一致。 */
@@ -85,7 +85,7 @@ const columns = dataColumns<RunListItem & { now: number }>((col) =>
 			cell: ({ row }) => {
 				const run = row.original;
 				const end = run.ended_at ? Date.parse(run.ended_at) : run.now;
-				return formatDuration(end - Date.parse(run.started_at));
+				return formatSpan(end - Date.parse(run.started_at), !run.ended_at);
 			},
 		}),
 	]),

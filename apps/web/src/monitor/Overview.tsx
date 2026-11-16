@@ -16,6 +16,7 @@ import { nodeStatusView, StatusDot } from "#/components/status";
 import { FocusChart } from "#/focus/FocusChart";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { FocusSettingsLink } from "#/focus/FocusSettingsLink";
+import { emptyReadingsNote } from "#/focus/focus-format";
 import { useRunFocus } from "#/focus/use-run-focus";
 import {
 	ACTIVE_LABEL,
@@ -285,11 +286,7 @@ function FocusBody({
 	if (data.items.length === 0) {
 		return (
 			<p className="m-0 rounded-lg border border-dashed border-border-soft px-4 py-6 text-center text-sm text-fg-3">
-				{data.mode === "primary"
-					? executing
-						? MESSAGE.noPrimaryMetric
-						: MESSAGE.noRunningNodes
-					: FOCUS.noneInRun}
+				{emptyReadingsNote(data.mode, executing)}
 			</p>
 		);
 	}

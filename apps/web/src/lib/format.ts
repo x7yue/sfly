@@ -77,6 +77,10 @@ export function formatElapsed(ms: number): string {
 	return seconds < 60 ? `${seconds}s` : formatDuration(seconds * 1000);
 }
 
+/** 还在走的时长（`live`，每秒刷新）用 {@link formatElapsed}，已经定下来的用 {@link formatDuration}。 */
+export const formatSpan = (ms: number, live: boolean): string =>
+	live ? formatElapsed(ms) : formatDuration(ms);
+
 const CLOCK_OFFSET_UNITS: Array<[ms: number, unit: string]> = [
 	[86_400_000, "天"],
 	[3_600_000, "小时"],

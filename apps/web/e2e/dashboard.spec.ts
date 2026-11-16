@@ -1,6 +1,8 @@
 import type { Locator, Page } from "@playwright/test";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import { type E2eFixtures, expect, test } from "./fixtures";
+import { metricPackage } from "./monitor-scenario";
+import { readouts } from "./overview-support";
 import {
 	createScenario,
 	failApi,
@@ -9,8 +11,6 @@ import {
 	scenarioUsing,
 	triggerRun,
 } from "./support";
-import { metricPackage } from "./monitor-scenario";
-import { readouts } from "./overview-support";
 import { focusWallRun, mainChain, manyRuns, seedWall } from "./wall-support";
 
 // 控制台的实况墙（外壳页方案 4.1）：页头一行；左栏是正在运行的运行块和最近结束，右栏是 Agent 的槽位和场景。
@@ -273,6 +273,8 @@ test("运行块的读数读取失败：保留标题行，写「无法加载关�
 	await page.goto("/");
 	const readout = block(page, "撮合压测").getByRole("region", { name: "关注项", exact: true });
 	await expect(readout).toContainText("无法加载关注项");
+	// 不知道场景设没设关注项：入口只写去哪个页面。
+	await expect(readout.getByRole("link", { name: "打开场景设置的「关注项」页" })).toBeVisible();
 });
 
 const FOCUS_AGENT = {
@@ -321,7 +323,9 @@ test("运行块的关注项读数：1440 下放 4 格，有异常的排在最前
 		/^延迟.*fetch · 最终值$/,
 		/^请求数.*fetch · 最终值$/,
 	]);
-	await expect(readings(run).first()).toHaveAccessibleName(/来自 fetch2（执行中），需要注意：WARN/);
+	await expect(readings(run).first()).toHaveAccessibleName(
+		/来自 fetch2（执行中），需要注意：1 条 WARN/,
+	);
 });
 
 test("运行块的关注项读数：按运行块的宽度算，1280 下放 3 格，其余写「还有 4 个关注项 · 打开概览」", async ({

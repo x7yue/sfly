@@ -1,11 +1,12 @@
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
-import { ErrorKind } from "../../server/test/support/fake-agent.js";
+import { ErrorKind, LogLevel } from "../../server/test/support/fake-agent.js";
 import { inspector } from "./editor-support";
 import { expect, test } from "./fixtures";
 import { focusList, saveVersion, setFocusItems } from "./focus-support";
 import {
 	connPoint,
 	labeledRun,
+	logLine,
 	MONITOR_SCENARIO,
 	metricPackage,
 	openMonitor,
@@ -14,6 +15,7 @@ import {
 	unixAt,
 } from "./monitor-scenario";
 import {
+	attention,
 	focusChart,
 	OVERVIEW_ITEMS,
 	openOverview,
@@ -111,11 +113,17 @@ test("地址里带 node 时，可视区域变小或版面变高后重新对准�
 	connectAgent,
 	clock,
 }) => {
-	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	const { runId, agent, tasks } = await overviewRun(controlPlane, connectAgent, clock);
 	await page.clock.setFixedTime(clock.now());
 	await page.setViewportSize({ width: 1280, height: 640 });
 	await page.goto(`/runs/${runId}?view=overview&node=cleanup`);
 	const located = focusChart(page, "清理 level");
+	await expect(located).toBeInViewport({ ratio: 1 });
+
+	// 版面变高：probe 打了一条 WARN，「需要注意」出现在关注项上面，把卡片往下推；页面跟着重新对准。
+	agent.logs(tasks.probe as AssignedTask, [logLine(clock, 1, "探活超时", LogLevel.WARN)]);
+	await agent.sync();
+	await expect(attention(page)).toBeVisible();
 	await expect(located).toBeInViewport({ ratio: 1 });
 
 	// 窗口变矮：概览的可视区域变小，被定位的卡片重新对准，整张都在视野里。
@@ -634,7 +642,8 @@ test("运行已经结束、子流程没有触发：节点写「这次运行没�
 		{ node_id: "probe", chart: "level", title: "探活 level" },
 	]);
 	const runId = await triggerRun(controlPlane, scenarioId);
-	// fetch 失败，运行结束：子流程没有触发，probe 一直待执行。
+	// fetch 两次尝试都失败（重试 1 次），运行结束：子流程没有触发，probe 一直待执行。
+	await agent.fail(await agent.nextAssign(), "下单接口返回 503");
 	await agent.fail(await agent.nextAssign(), "下单接口返回 503");
 	await openOverview(page, clock, runId);
 

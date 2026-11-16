@@ -1,13 +1,30 @@
-import { focusLatestSeriesName, focusValueText, type RunFocusItem } from "@sfly/schema";
+import {
+	focusLatestSeriesName,
+	focusValueText,
+	type RunFocus,
+	type RunFocusItem,
+} from "@sfly/schema";
 import { runNodeName } from "#/components/node-name";
 import {
 	FINAL_VALUE_LABEL,
 	FOCUS,
 	focusSourceStatus,
 	LOG_LEVEL_LABEL,
+	MESSAGE,
 	noDataLabel,
 } from "#/lib/copy";
 import { formatClock, formatElapsed } from "#/lib/format";
+
+/**
+ * 一次运行没有可显示的读数时写什么：没设关注项时，有执行中（含准备中）的节点是它们都没声明主指标，否则是没有执行中的
+ * 节点；设了关注项是它们所在的节点都不在这次运行的版本里。概览和控制台的运行块共用。
+ */
+export const emptyReadingsNote = (mode: RunFocus["mode"], executing: boolean): string =>
+	mode === "primary"
+		? executing
+			? MESSAGE.noPrimaryMetric
+			: MESSAGE.noRunningNodes
+		: FOCUS.noneInRun;
 
 /** 来源节点：「显示名称（节点 ID）」，没有显示名称时只写节点 ID（docs/SEMANTICS.md §1.4）。 */
 export const sourceNodeName = (item: Pick<RunFocusItem, "node_id" | "display_name">): string =>
@@ -55,7 +72,7 @@ export function readingWhen(item: RunFocusItem, generatedAt: string, runEnded = 
 }
 
 /**
- * 异常原因的短句（异常由控制面判断，这里只管写法）：「2 条 WARN · 10:58:41」（这次尝试的 WARN / ERROR 条数，最近一条的级别和时间）、
+ * 异常原因的短句（异常由控制面判断，这里只管写法）：「1 条 WARN · 10:58:41」「3 条 WARN / ERROR · 10:58:41」（这次尝试的 WARN / ERROR 条数，只有一条时写它的级别，时间是最近一条的）、
  * 「已 2m 10s 无新数据」（从最后一个点算起，一个点都没有时从开始执行算起）、「来源节点失败」、
  * 「重试（尝试 2）· 10:41:02」（这次尝试开始的时间）；没有异常为 null。读数的脚注、图表卡片、可访问名称共用，
  * 「多久」按读数的 `generatedAt`（控制面时间）算。

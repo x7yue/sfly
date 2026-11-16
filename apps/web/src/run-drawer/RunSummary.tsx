@@ -24,9 +24,9 @@ import {
 import {
 	formatClock,
 	formatDateTime,
-	formatDuration,
 	formatElapsed,
 	formatFullDateTime,
+	formatSpan,
 	shortId,
 	spansOtherDay,
 	TIME_NOT_RECORDED,
@@ -95,9 +95,7 @@ export function RunSummary({ runId }: { runId: string }) {
 				<span className="font-mono" data-slot="run-id">
 					{shortId(run.id)}
 				</span>
-				<span className="font-mono text-fg-3">
-					{run.ended_at ? formatDuration(elapsed) : formatElapsed(elapsed)}
-				</span>
+				<span className="font-mono text-fg-3">{formatSpan(elapsed, !run.ended_at)}</span>
 				<span className="ml-auto text-xs text-fg-3">
 					{run.triggered_by}
 					<ViaTag via={run.triggered_via} /> 触发 ·{" "}
@@ -208,7 +206,8 @@ function ActiveNode({
 }) {
 	const s = nodeStatusView(node.status);
 	const attempt = node.attempts.at(-1);
-	const since = attempt?.started_at ?? attempt?.queued_at;
+	// 还没开始执行（排队中、准备中）的不写时长：状态标签已经写明，不从排队算起（同控制台和概览的进行中的节点）。
+	const since = attempt?.started_at;
 	const progress = attempt?.progress;
 	const ratio = progress?.total
 		? Math.min(1, Math.max(0, progress.current / progress.total))

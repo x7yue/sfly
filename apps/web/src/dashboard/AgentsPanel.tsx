@@ -3,8 +3,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { useId } from "react";
-import { PreparingBadge } from "#/agents/AgentRack";
 import { acceptsTasks, agentStatusView } from "#/agents/agent-status";
+import { PreparingBadge } from "#/agents/PreparingBadge";
 import { ErrorState } from "#/components/feedback/states";
 import { IdleSlots, idleSlotCount, SlotCell } from "#/components/slot-cell";
 import { STATUS, StatusDot } from "#/components/status";
@@ -33,12 +33,12 @@ export function AgentsPanel() {
 			aside={<PanelLink to="/agents">管理</PanelLink>}
 		>
 			{agents.data && list.length === 0 ? (
-				<p className="m-0 px-3.5 py-3 text-xs text-fg-2">
-					{MESSAGE.noAgents}。
+				<div className="flex flex-col gap-1 px-3.5 py-3 text-xs">
+					<p className="m-0 text-fg-2">{MESSAGE.noAgents}</p>
 					<Link to="/agents" className="text-fg-1">
 						{MESSAGE.agentInstallLink}
 					</Link>
-				</p>
+				</div>
 			) : agents.data ? (
 				<div className="divide-y divide-border-soft">
 					{listed.map((agent) => (

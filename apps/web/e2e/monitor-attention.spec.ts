@@ -47,9 +47,9 @@ test("「需要注意」只在有异常时出现：probe 打了 WARN 就列出�
 	await expect(rows(page).nth(1)).toContainText("total");
 	await expect(rows(page).first().getByRole("button")).toHaveText("在详情里看这条 WARN");
 	const total = readouts(page).getByRole("button", {
-		name: "total 16，来自 probe（执行中），需要注意：WARN · 08:00:14",
+		name: "total 16，来自 probe（执行中），需要注意：1 条 WARN · 08:00:14",
 	});
-	await expect(total).toContainText("WARN · 08:00:14");
+	await expect(total).toContainText("1 条 WARN · 08:00:14");
 	await expect(total.locator('[data-status-dot="warn"]')).toHaveCount(1);
 	await expect(page.locator("[data-focus-chart] h3")).toHaveText([
 		"探活 level",
@@ -184,12 +184,25 @@ test("没有新数据的图表：曲线停在最后一个点，之后到现在�
 	await expect(page.getByTestId("focus-freshness")).toHaveText("数据更新于 08:00:14");
 	const level = focusChart(page, "探活 level");
 	await expect(level.locator("[data-stale-gap]")).toHaveCount(0);
+	// 卡片右上角的最新值：有新数据时是主文字色，没有新数据时退成次要文字色（和读数一样）。
+	const value = level.locator("header > .font-mono");
+	const color = (className: string) =>
+		page.evaluate((c) => {
+			const probe = document.createElement("span");
+			probe.className = c;
+			document.body.append(probe);
+			const shown = getComputedStyle(probe).color;
+			probe.remove();
+			return shown;
+		}, className);
+	await expect(value).toHaveCSS("color", await color("text-fg-1"));
 
 	// probe 最后一个点在第 13 秒，采样间隔 1 秒：30 秒以后算没有新数据。推进到第 59 秒。
 	await advance(clock, agent, 45_000);
 	await expect(page.getByTestId("focus-freshness")).toHaveText("数据更新于 08:00:59");
 	await expect(level.locator("[data-stale-gap]")).toHaveCount(1);
 	await expect(level).toContainText("已 46s 无新数据 · probe");
+	await expect(value).toHaveCSS("color", await color("text-fg-2"));
 	await expect(level.getByRole("img")).toHaveAccessibleName(
 		"探活 level 3，来自 probe（执行中），需要注意：已 46s 无新数据，曲线停在最后一个点",
 	);

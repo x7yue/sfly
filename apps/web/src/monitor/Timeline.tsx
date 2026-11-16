@@ -8,7 +8,7 @@ import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, STATUS, StatusDot, type StatusKind } from "#/components/status";
 import { ACTION, chainCountLabel, LIST_LABEL, PROGRESS_LABEL } from "#/lib/copy";
-import { formatClock, formatDuration } from "#/lib/format";
+import { formatClock, formatDuration, formatSpan } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
@@ -731,7 +731,7 @@ function ChainRows({
 						</span>
 					)}
 					<span className="ml-auto min-w-13 flex-none text-right font-mono text-2xs text-fg-3">
-						{formatDuration(end - Date.parse(chain.started_at))}
+						{formatSpan(end - Date.parse(chain.started_at), !chain.ended_at)}
 					</span>
 				</button>
 				<div aria-hidden data-viz className="relative mr-3.5 h-full">
