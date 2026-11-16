@@ -35,7 +35,6 @@ interface Look {
 	Foot: ComponentType<CellProps> | null;
 }
 
-
 /** 画布节点卡片的底部：行高 20px，字号随画布的语义缩放（容器给）。 */
 const CARD: Look = {
 	row: "h-5",
@@ -49,7 +48,10 @@ const CARD: Look = {
 	Value: ({ item }) => (
 		<>
 			<span
-				className={cn("ml-auto flex-none font-mono", isStaleValue(item) ? "text-fg-2" : "text-fg-1")}
+				className={cn(
+					"ml-auto flex-none font-mono",
+					isStaleValue(item) ? "text-fg-2" : "text-fg-1",
+				)}
 			>
 				{focusValueText(item)}
 			</span>
