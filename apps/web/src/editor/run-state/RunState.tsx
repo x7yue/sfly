@@ -392,7 +392,7 @@ function NodeRunInspector({
 								viewTransition={runViewTransition("to-monitor")}
 								className={buttonVariants({ variant: "ghost" })}
 							>
-								查看{TERM.action}明细
+								{ACTION.openActionDetails}
 							</Link>
 						)}
 					</div>

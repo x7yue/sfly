@@ -199,6 +199,7 @@ export const ACTION = {
 	forceCancel: "强制终止",
 	keepRunning: "继续运行",
 	openRun: "打开运行监控",
+	openActionDetails: `打开${TERM.action}明细`,
 	viewInCanvas: "在画布中查看",
 	viewRuns: "查看运行记录",
 	edit: "编排",

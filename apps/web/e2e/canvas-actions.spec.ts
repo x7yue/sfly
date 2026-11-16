@@ -128,7 +128,7 @@ test("检查器：有动作的节点底部多一个入口，打开监控详情�
 	const panel = await openNode(page, setup, clock, "verify");
 
 	await expect(panel.getByRole("link", { name: "在监控页中打开 verify" })).toBeVisible();
-	await panel.getByRole("link", { name: "查看动作明细" }).click();
+	await panel.getByRole("link", { name: "打开动作明细" }).click();
 	await expect(page).toHaveURL(`/runs/${setup.runId}?view=detail&node=verify&tab=actions`);
 	await expect(page.getByRole("tab", { name: /^动作/ })).toHaveAttribute("aria-selected", "true");
 });
@@ -191,7 +191,7 @@ test("检查器：没有动作的节点不显示「正在做」和「动作」�
 	await expect(panel.getByTestId("run-progress")).toHaveText("第 3 批");
 	await expect(panel.getByRole("region", { name: "正在做" })).toHaveCount(0);
 	await expect(panel.getByRole("region", { name: "动作", exact: true })).toHaveCount(0);
-	await expect(panel.getByRole("link", { name: "查看动作明细" })).toHaveCount(0);
+	await expect(panel.getByRole("link", { name: "打开动作明细" })).toHaveCount(0);
 
 	// 已经成功、没有记录过动作：什么都没有。
 	await nodeCard(page, "fetch").click();
