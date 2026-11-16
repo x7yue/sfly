@@ -8,6 +8,8 @@ import {
 	type RunningActionView,
 	sdkCountOnlyPeriods,
 } from "@sfly/schema";
+import { failedTotal } from "#/actions/action-filter";
+import { actionCount } from "#/actions/action-table";
 import type { TimeRange } from "./timeline-model";
 
 /**
@@ -280,9 +282,9 @@ export function prepareTracks(sources: readonly TrackSource[]): PreparedTracks {
 			(depthVotes.get(name) ?? 0) > 0 ? "top" : "child";
 
 		const { summary } = source;
-		overview.failed += summary.names.reduce((n, c) => n + c.failed, 0);
+		overview.failed += failedTotal(summary);
 		overview.marks += summary.marks;
-		overview.actions += summary.total - summary.marks;
+		overview.actions += actionCount(summary);
 		const periods = [
 			...sdkCountOnlyPeriods(
 				summary,

@@ -31,8 +31,9 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { Truncate } from "@/components/ui/truncate";
+import { failedTotal } from "./action-filter";
 import { fieldsText } from "./action-table";
-import { failedTotal, runningRows } from "./summary-model";
+import { runningRows } from "./summary-model";
 
 /**
  * 画布运行状态检查器里的两块（规格 #345，原型 `#canvas-run`）：摘要下面的「正在做」，和后面的「动作」区（设计里
@@ -131,7 +132,7 @@ export function ActionArea({
 	day: string;
 }) {
 	const failures = summary.recent_failed;
-	const failed = failedTotal(summary.names);
+	const failed = failedTotal(summary);
 	const countOnly = sdkCountOnlyPeriods(summary, {}, null).sort(
 		(a, b) => Date.parse(a.from) - Date.parse(b.from),
 	);
