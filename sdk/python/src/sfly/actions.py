@@ -22,8 +22,9 @@
 - 未结束：`with` 里抛出了 `Cancelled`；节点进程被强制终止、任务结束时还没结束的动作，由读取事件的
   一方（控制面、本地调试）记为未结束。
 
-父动作：默认是当前上下文里最内层的 `with ctx.action(...)`，用 `contextvars` 实现，所以同一个线程、
-同一个 asyncio 任务里自动嵌套，新线程从最外层开始。`start()` 返回的句柄不会自动成为别人的父动作，
+父动作：默认是当前上下文里最内层、还没结束的 `with ctx.action(...)`，用 `contextvars`
+实现，所以同一个线程、同一个 asyncio 任务里自动嵌套，新线程从最外层开始；with 里起的
+asyncio 任务比 with 活得久时，跳过已经结束的。`start()` 返回的句柄不会自动成为别人的父动作，
 需要时用 `parent=` 指定（`ctx.action.start(名称, parent=句柄)`、`ctx.mark(名称, parent=句柄)`）。
 
 校验：名称为空（或只有空白）抛 `ValueError`，不是字符串抛 `TypeError`，调用时立即报错。
@@ -412,7 +413,7 @@ class Actions:
         return clean
 
     def _parent_of(self, parent: Action | ActionScope | None) -> _Record | None:
-        """显式的父动作，没有给时取当前上下文里最内层的 `with` 动作。"""
+        """显式的父动作，没有给时取当前上下文里最内层、还没结束的 `with` 动作。"""
         if parent is None:
             return self._default_parent(_CURRENT.get())
         if not isinstance(parent, (Action, ActionScope)):
