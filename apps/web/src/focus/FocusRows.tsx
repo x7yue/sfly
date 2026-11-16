@@ -1,6 +1,6 @@
 import { focusValueText, type RunFocus, type RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ComponentType } from "react";
 import { FOCUS } from "#/lib/copy";
 import { Truncate } from "@/components/ui/truncate";
 import { AnomalyMark } from "./AnomalyNote";
@@ -8,13 +8,88 @@ import { FocusValue } from "./FocusValue";
 import { anomalyText, focusItemTitle, readingLabel, readingWhen } from "./focus-format";
 import type { FocusPreview } from "./focus-preview";
 
-/** 两处放法的差别：行高与字号、最后一行（「还有 N 个关注项」）的样子，槽位格里数值的字号。 */
-const LOOK = {
-	/** 画布节点卡片的底部：行高 20px，字号随画布的语义缩放（容器给）。 */
-	card: { row: "h-5", value: "", more: "flex h-5 items-center text-fg-3" },
-	/** Agent 管理页的槽位格：12px，数值紧跟名称，右侧是脚注。 */
-	slot: { row: "text-xs", value: "text-xs font-normal", more: "text-xs text-fg-3" },
-} as const;
+/** 一行里的一项内容：行的数据，加上读数的生成时间和模式（脚注要用）。 */
+interface CellProps {
+	item: RunFocusItem;
+	generatedAt: string;
+	mode: RunFocus["mode"];
+}
+
+/** 一种放法：行的样子，名称、数值、脚注怎么画。 */
+interface Look {
+	row: string;
+	more: string;
+	name(item: RunFocusItem, mode: RunFocus["mode"]): string;
+	/** 悬停一行看到的文字。 */
+	title(item: RunFocusItem, generatedAt: string): string | undefined;
+	/** 单行文字（名称、失效的原因）。 */
+	Text: ComponentType<{ className: string; children: string }>;
+	Value: ComponentType<CellProps>;
+	/** 一行最右边；没有时为 null。 */
+	Foot: ComponentType<CellProps> | null;
+}
+
+const isStale = (item: RunFocusItem) => item.anomaly?.kind === "stale";
+
+/** 画布节点卡片的底部：行高 20px，字号随画布的语义缩放（容器给）。 */
+const CARD: Look = {
+	row: "h-5",
+	more: "flex h-5 items-center text-fg-3",
+	name: (item) => item.chart,
+	title: readingLabel,
+	// 卡片是装饰，里面不放可聚焦的东西：直接截断。
+	Text: ({ className, children }) => (
+		<span className={cn("min-w-0 truncate", className)}>{children}</span>
+	),
+	Value: ({ item }) => (
+		<>
+			<span
+				className={cn("ml-auto flex-none font-mono", isStale(item) ? "text-fg-2" : "text-fg-1")}
+			>
+				{focusValueText(item)}
+			</span>
+			{item.unit && <span className="flex-none text-fg-3">{item.unit}</span>}
+		</>
+	),
+	Foot: null,
+};
+
+/** Agent 管理页的槽位格：12px，数值紧跟名称，右侧是脚注。 */
+const SLOT: Look = {
+	row: "text-xs",
+	more: "text-xs text-fg-3",
+	name: focusItemTitle,
+	title: () => undefined,
+	// 被截断时可以聚焦看全文。
+	Text: ({ className, children }) => <Truncate className={className}>{children}</Truncate>,
+	Value: ({ item }) => (
+		<FocusValue item={item} className={cn("text-xs font-normal", isStale(item) && "text-fg-2")} />
+	),
+	Foot: ({ item, generatedAt, mode }) => {
+		const reason = anomalyText(item, generatedAt);
+		// 图表不存在时没有值可说，不写；不是异常的主指标写明为什么显示它。
+		const text =
+			reason ??
+			(item.unavailable
+				? null
+				: mode === "primary"
+					? FOCUS.noneSet
+					: readingWhen(item, generatedAt));
+		if (text === null) return null;
+		return (
+			<span
+				className={cn(
+					"ml-auto flex-none pl-1.5",
+					reason === null ? "font-mono text-fg-3" : "text-warn-fg",
+				)}
+			>
+				{text}
+			</span>
+		);
+	},
+};
+
+const LOOKS = { card: CARD, slot: SLOT } as const;
 
 /**
  * 紧凑的关注项行：画布节点卡片和 Agent 槽位格共用，只放得下前几项的地方都用它（取哪几项见 `focusPreview`）。
@@ -43,99 +118,30 @@ export function FocusRows({
 	generatedAt: string;
 	/** `primary`：场景没有设置关注项，显示的是这个节点的主指标。 */
 	mode: RunFocus["mode"];
-	variant: keyof typeof LOOK;
+	variant: keyof typeof LOOKS;
 } & Omit<ComponentProps<"ul">, "children">) {
-	const look = LOOK[variant];
+	const look = LOOKS[variant];
 	return (
 		<ul {...props} className={cn("m-0 flex list-none flex-col p-0", className)}>
-			{preview.shown.map((item) => {
-				const reason = anomalyText(item, generatedAt);
-				return (
-					<li
-						key={`${item.node_id}\n${item.chart}\n${item.position}`}
-						data-focus-row={item.chart}
-						data-anomaly={item.anomaly?.kind}
-						title={variant === "card" ? readingLabel(item, generatedAt) : undefined}
-						className={cn("flex min-w-0 items-center gap-1.5", look.row)}
-					>
-						{reason !== null && <AnomalyMark className="flex-none" />}
-						<Cell variant={variant} className="min-w-6 text-fg-2">
-							{variant === "card" ? item.chart : focusItemTitle(item, mode)}
-						</Cell>
-						{item.unavailable ? (
-							<Cell variant={variant} className="text-fg-3">
-								{FOCUS.chartMissing(item.chart)}
-							</Cell>
-						) : variant === "card" ? (
-							<>
-								<span
-									className={cn(
-										"ml-auto flex-none font-mono",
-										item.anomaly?.kind === "stale" ? "text-fg-2" : "text-fg-1",
-									)}
-								>
-									{focusValueText(item)}
-								</span>
-								{item.unit && <span className="flex-none text-fg-3">{item.unit}</span>}
-							</>
-						) : (
-							<FocusValue
-								item={item}
-								className={cn(look.value, item.anomaly?.kind === "stale" && "text-fg-2")}
-							/>
-						)}
-						{variant === "slot" && (
-							<Foot item={item} generatedAt={generatedAt} mode={mode} reason={reason} />
-						)}
-					</li>
-				);
-			})}
+			{preview.shown.map((item) => (
+				<li
+					key={`${item.node_id}\n${item.chart}\n${item.position}`}
+					data-focus-row={item.chart}
+					data-anomaly={item.anomaly?.kind}
+					title={look.title(item, generatedAt)}
+					className={cn("flex min-w-0 items-center gap-1.5", look.row)}
+				>
+					{item.anomaly && <AnomalyMark className="flex-none" />}
+					<look.Text className="min-w-6 text-fg-2">{look.name(item, mode)}</look.Text>
+					{item.unavailable ? (
+						<look.Text className="text-fg-3">{FOCUS.chartMissing(item.chart)}</look.Text>
+					) : (
+						<look.Value item={item} generatedAt={generatedAt} mode={mode} />
+					)}
+					{look.Foot && <look.Foot item={item} generatedAt={generatedAt} mode={mode} />}
+				</li>
+			))}
 			{preview.more > 0 && <li className={look.more}>{FOCUS.moreItems(preview.more)}</li>}
 		</ul>
-	);
-}
-
-/** 单行文字：槽位格里被截断时可以聚焦看全文（`Truncate`）；卡片是装饰，里面不放可聚焦的东西，直接截断。 */
-function Cell({
-	variant,
-	className,
-	children,
-}: {
-	variant: keyof typeof LOOK;
-	className: string;
-	children: string;
-}) {
-	return variant === "slot" ? (
-		<Truncate className={className}>{children}</Truncate>
-	) : (
-		<span className={cn("min-w-0 truncate", className)}>{children}</span>
-	);
-}
-
-/** 槽位格一行最右边：异常的原因，没有异常时是多久前；图表不存在时没有值可说，不写。 */
-function Foot({
-	item,
-	generatedAt,
-	mode,
-	reason,
-}: {
-	item: RunFocusItem;
-	generatedAt: string;
-	mode: RunFocus["mode"];
-	reason: string | null;
-}) {
-	const text =
-		reason ??
-		(item.unavailable ? null : mode === "primary" ? FOCUS.noneSet : readingWhen(item, generatedAt));
-	if (text === null) return null;
-	return (
-		<span
-			className={cn(
-				"ml-auto flex-none pl-1.5",
-				reason === null ? "font-mono text-fg-3" : "text-warn-fg",
-			)}
-		>
-			{text}
-		</span>
 	);
 }

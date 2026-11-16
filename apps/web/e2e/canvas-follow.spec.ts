@@ -107,6 +107,14 @@ async function framed(page: Page, targets: Locator[]) {
 
 const region = (page: Page) => page.getByRole("region", { name: "子流程 监控" });
 
+/** 拖动画布的空白处。 */
+async function dragCanvas(page: Page) {
+	await page.mouse.move(300, 700);
+	await page.mouse.down();
+	await page.mouse.move(380, 720, { steps: 6 });
+	await page.mouse.up();
+}
+
 test("跟随执行：打开时镜头框住执行中的节点；执行前沿变化后镜头平移到新的节点，选中的节点不变", async ({
 	page,
 	controlPlane,
@@ -153,10 +161,7 @@ test("拖动画布就停止跟随并播报，按 F 恢复；键盘选到视野�
 	const announcements = page.getByRole("status").filter({ hasText: "跟随执行" });
 
 	// 拖动画布：停止跟随，读屏收到播报。
-	await page.mouse.move(300, 700);
-	await page.mouse.down();
-	await page.mouse.move(380, 720, { steps: 6 });
-	await page.mouse.up();
+	await dragCanvas(page);
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
 	await expect(announcements).toHaveText("已停止跟随执行，按 F 恢复");
 
@@ -225,10 +230,7 @@ test("拖动画布、缩放、键盘选到视野外只在当前页面停止跟�
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "true");
 
 	// 拖动画布。
-	await page.mouse.move(300, 700);
-	await page.mouse.down();
-	await page.mouse.move(380, 720, { steps: 6 });
-	await page.mouse.up();
+	await dragCanvas(page);
 	await expect(followButton(page)).toHaveAttribute("aria-pressed", "false");
 	expect(await storedFollow(page)).toBeNull();
 	await page.reload();

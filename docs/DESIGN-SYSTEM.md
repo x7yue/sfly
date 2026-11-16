@@ -69,7 +69,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - **白色是每屏唯一的主操作**：`<Button variant="primary">` 每屏最多一个（如「新建场景」）；其余按钮用默认（中性）或 `ghost`。Logo 与头像的白底不是操作。全新环境的控制台（「开始使用」）里，白色按钮跟着第一个没完成的步骤走：复制安装命令、新建场景、运行场景；发布节点包那一步在命令行里完成，没有白色按钮，只有开发文档「发布」的链接。
 - **青色只用于执行中、键盘焦点环、调度连线**。不要用青色表示选中、链接或强调。
 - **执行中的区段是淡底加描边，不是实心青色**：时间线段、链路进度段、场景缩略图节点、平台图表里的节点耗时条按状态表画（`STATUS.running.area`：`signal-fill` 底加 1px `signal-line` 描边），与成功、失败等色块同一量级。实心 `signal` 只给状态形状、时间线段尾的脉冲头和焦点环。
-- **选中是中性高亮**：`selected-bg` 底 + 左侧 2px 白色短条（工具类 `selected-row`），画布上是 `BaseNode` 的两圈 box-shadow（卡片外先垫 3px 画布底色，再画 2px `selected` 描边，卡片自己的描边——执行中的青色、失败的红色——不变，和青色的键盘焦点环、执行中的描边分得开；青色的键盘焦点环再往外一圈，`outline-offset` 9px，键盘只会把焦点放在刚选中的节点上），强制颜色下 box-shadow 没有了，换成隔开一圈（`outline-offset` 3px）的 3px `Highlight` 轮廓，画在卡片外面；`selected-ring` 只给注释框的选中光晕和注释框成员的描边；相关连线灰色虚线流动。文字选区是中性的 `selection-bg`。日志按时刻定位到的那一行同样用 `selected-row`（不用青色），没有正好对应的行时插入的「这一刻」是一行文字加一条中性细线（`border-strong`）。从控制台点读数进入概览时，属于被定位的节点的关注项同样中性高亮（读数用 `selected-row`，图表卡片的描边换成 `selected`），都带 `aria-current="location"`。
+- **选中是中性高亮**：`selected-bg` 底 + 左侧 2px 白色短条（工具类 `selected-row`），画布上是 `BaseNode` 的两圈 box-shadow（卡片外先垫 3px 画布底色，再画 2px `selected` 描边，卡片自己的描边——执行中的青色、失败的红色——不变，和青色的键盘焦点环、执行中的描边分得开；青色的键盘焦点环再往外一圈，`outline-offset` 9px，键盘只会把焦点放在刚选中的节点上），强制颜色下 box-shadow 没有了，换成隔开一圈（`outline-offset` 3px）的 3px `Highlight` 轮廓，画在卡片外面（选中且键盘聚焦时轮廓换成焦点环，没有信息丢失：键盘只会把焦点放在刚选中的节点上）；`selected-ring` 只给注释框的选中光晕、注释框成员的描边和框选矩形的底色；相关连线灰色虚线流动。文字选区是中性的 `selection-bg`。日志按时刻定位到的那一行同样用 `selected-row`（不用青色），没有正好对应的行时插入的「这一刻」是一行文字加一条中性细线（`border-strong`）。从控制台点读数进入概览时，属于被定位的节点的关注项同样中性高亮（读数用 `selected-row`，图表卡片的描边换成 `selected`），都带 `aria-current="location"`。
 - 绿色 = 成功，红色 = 失败，**琥珀色只有三个意思：等待中（定时 / Sleep）、警告、安装中**。关注项的异常（「需要注意」，四种原因里也包括来源节点失败）算警告，用琥珀三角加原因（`AnomalyNote`）；来源节点本身的状态形状不变，失败仍是红色菱形。排队中（在等 Agent 的槽位）是中性灰；点选日志行时时间轴上的定位线、被点选的日志行、节点的 `always` 标签这类不是警告的东西也不用琥珀（用中性的 `selected`）。
 - 状态文字与图标用 `-fg`：`text-warn-fg`、`text-signal-fg`、`text-danger-fg`；不带 `-fg` 的 `text-warn` / `text-signal` / `text-danger` 只写在状态表（`components/status.tsx`）里，别处要状态形状的颜色时取 `STATUS[kind].tone`（`design-rules.test.ts` 检查）。
 - **没有信号就不着色**：数值为 0 的计数（控制台页头的「失败 0」）、全零的趋势线用中性色。必填的星号（`*`）用中性 `fg-2`，红色只给错误。保存状态里只有需要处理的才带点（保存被拦截红、未保存琥珀），「已保存」是纯文字。
@@ -229,7 +229,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ### 6.2 强制颜色与高对比度
 
-- **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态形状是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-pressed="true"`、`aria-selected="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边；数据图形（链路进度、线路、缩略图、时间线的区段与动作轨道、图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
+- **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态形状是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-pressed="true"`、`aria-selected="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边（画布节点卡片是例外：选中靠外圈的 box-shadow，强制颜色下换成隔开 3px 的 3px `Highlight` 外轮廓，不画在卡片里面，见 2.4）；数据图形（链路进度、线路、缩略图、时间线的区段与动作轨道、图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
 - **更高对比度**（`prefers-contrast: more`）：`tokens.css` 末尾的加强档，见第 2 节。
 
 ### 6.3 空、加载、错误、禁用
@@ -283,7 +283,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 ## 7. 键盘、焦点与快捷键
 
 - 焦点环统一是 2px 青色外框（`:focus-visible`，在 `components` 层，第三方库的样式去不掉它），组件不要用 `outline-none` 去掉它（输入框改用青色描边 + 光晕，并用 `focus:outline-hidden` 给强制颜色模式留轮廓）。所有元素平时的 `outline-color` 就是焦点色（base 层），所以带 `transition-colors` 的元素聚焦时焦点环也是即时出现、不会先灰后青。
-- 画布节点卡片的焦点环 `outline-offset` 是 3px：读作「框在卡片外面」，与执行中节点的青色描边区分开。
+- 画布节点卡片的焦点环 `outline-offset` 是 9px：在选中描边（3px 画布底色加 2px `selected` 描边）的外面，读作「框在卡片外面」，与执行中节点的青色描边、选中描边都区分开。
 - 编排画布只有一个 Tab 停靠点：画布区域。进入后方向键沿链选中节点，焦点跟着移到节点卡片上；Esc 取消选中、焦点回到画布区域。节点卡片与连线都不进 Tab 顺序（React Flow 的 `nodesFocusable` / `edgesFocusable` 关闭）。顶栏控件在 DOM 里排在画布之前，工具条与检查器在画布之后。底部的画布工具条同样只有一个 Tab 停靠点：← → 在按钮之间移动，禁用的按钮不参与。
 - 弹窗与抽屉用 `Dialog` / `Sheet`：锁定焦点、Esc 关闭、关闭后焦点回到原处；自己写的浮层也必须满足，并加端到端测试。
 - **可排序的列表**（场景设置的「关注项」页是参照实现）：拖动手柄只服务鼠标（`aria-hidden`，不进 Tab 顺序）；键盘和读屏靠每行的「上移」「下移」按钮，到头的按钮用 `aria-disabled` 而不是 `disabled`（禁用的按钮不能聚焦，连按到头时焦点会掉出列表），焦点跟着被移动的那一项走，实时区域（`<output class="sr-only">`）播报「X 移到第 N 位，共 M 项」。移除后在列表上方原处给「撤销」，焦点移到它上面；撤销只管刚做的那一次移除。
