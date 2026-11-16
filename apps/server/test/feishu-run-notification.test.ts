@@ -1,9 +1,7 @@
 // 切入点 A：运行通知（#232，ADR 0020、docs/SEMANTICS.md §6）：场景设置里选了机器人的场景，运行结束时由控制面发一张卡片。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
-import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as schema from "../src/db/schema.js";
 import { resolveRunFocus } from "../src/focus/run-focus.js";
 import { MetricQueries } from "../src/metrics/metric-queries.js";
 import { MetricRetention } from "../src/metrics/metric-retention.js";
@@ -17,6 +15,7 @@ import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-it
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk, renamePresetInDb, triggerWithPreset } from "./support/presets.js";
+import { singleConnection } from "./support/single-connection.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 // 卡片里的时间按控制面所在的时区显示：固定成东八区，期望值才与运行测试的机器无关。
@@ -697,27 +696,9 @@ describe("运行通知", () => {
 			await agent.succeed(probe);
 			await status(runId, "success");
 
-			// 唯一的连接被事务占着：事务之外再取连接，等 1 秒就报错。
-			const pool = new pg.Pool({
-				connectionString: cp.database.url,
-				max: 1,
-				connectionTimeoutMillis: 1000,
-			});
-			// 这个连接上同时在等结果的查询数：一条一条地读时不会超过 1。
-			let pending = 0;
-			let mostPending = 0;
-			pool.on("connect", (client) => {
-				const query = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
-				client.query = ((...args: unknown[]) => {
-					pending += 1;
-					mostPending = Math.max(mostPending, pending);
-					return query(...args).finally(() => {
-						pending -= 1;
-					});
-				}) as typeof client.query;
-			});
+			const single = singleConnection(cp.database.url);
 			try {
-				const db = drizzle(pool, { schema });
+				const { db } = single;
 				const queries = new MetricQueries({
 					db,
 					clock,
@@ -730,9 +711,9 @@ describe("运行通知", () => {
 					);
 					expect(focus?.items.map((item) => item.latest?.value)).toEqual([500, 3]);
 				});
-				expect(mostPending).toBe(1);
+				expect(single.mostPending()).toBe(1);
 			} finally {
-				await pool.end();
+				await single.end();
 			}
 		});
 

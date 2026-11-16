@@ -2,6 +2,7 @@
 // 失效项的状态、最后一次修改的说明。HTTP API + 真实 PostgreSQL，手动时钟。
 import type { OrchestrationView } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { OrchestrationStore } from "../src/orchestrations/orchestration-store.js";
 import { ApiClient } from "./support/api-client.js";
 import {
 	benchDocument,
@@ -13,6 +14,7 @@ import {
 	putFocusItemsOk,
 } from "./support/focus-items.js";
 import { ManualClock } from "./support/manual-clock.js";
+import { type SingleConnection, singleConnection } from "./support/single-connection.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const LOAD_TPS = { node_id: "load", chart: "TPS" };
@@ -465,6 +467,39 @@ describe("关注项的设置", () => {
 				ids.map((id) => api.postEmpty(`/orchestrations/${id}/archive`)),
 			);
 			expect(responses.map((res) => res.status)).toEqual(Array(CONCURRENT).fill(200));
+		});
+	});
+
+	describe("在事务里读关注项的状态", () => {
+		const ACTOR = { nickname: "测试", via: null };
+		let single: SingleConnection;
+		beforeEach(() => {
+			single = singleConnection(cp.database.url);
+		});
+		afterEach(async () => {
+			await single.end();
+		});
+		const store = () => new OrchestrationStore({ db: single.db, clock });
+
+		it("一次加两个来自不同节点的关注项：只用事务的连接、一条一条地对照最新版本", async () => {
+			const id = await scene();
+			const result = await store().update(id, { focus_items: [LOAD_TPS, PROBE_LEVEL] }, ACTOR);
+			expect(result.kind).toBe("updated");
+			expect(focusKeys(await orchestrationView(api, id))).toEqual(["load:TPS", "probe:level"]);
+			expect(single.mostPending()).toBe(1);
+		});
+
+		it("归档关注项来自几个节点的场景：只用事务的连接、一条一条地读", async () => {
+			const id = await scene();
+			await putFocusItemsOk(api, id, [LOAD_TPS, PROBE_LEVEL, LOAD_LATENCY]);
+			const result = await store().archive(id);
+			expect(result.kind).toBe("archived");
+			expect(focusKeys((result as { orchestration: OrchestrationView }).orchestration)).toEqual([
+				"load:TPS",
+				"probe:level",
+				"load:延迟",
+			]);
+			expect(single.mostPending()).toBe(1);
 		});
 	});
 });
