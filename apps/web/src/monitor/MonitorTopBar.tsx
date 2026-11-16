@@ -6,10 +6,10 @@ import { useState } from "react";
 import { NodeName } from "#/components/node-name";
 import { useShortcut } from "#/components/shortcuts";
 import { runStatusView, StatusDot, StatusPill } from "#/components/status";
-import { ViaTag } from "#/components/via-tag";
+import { TriggeredAt } from "#/components/via-tag";
 import { useRunFocus } from "#/focus/use-run-focus";
 import { apiQuery } from "#/lib/api";
-import { ACTION, FOCUS } from "#/lib/copy";
+import { ACTION, DURATION_LABEL, ELAPSED_LABEL, FOCUS } from "#/lib/copy";
 import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
 import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import { shortcutText } from "#/lib/shortcuts";
@@ -114,11 +114,9 @@ export function MonitorTopBar({
 					<Badge className="font-mono">v{run.orchestration_version}</Badge>
 				</h1>
 				<span className="truncate text-xs text-fg-3">
-					{run.triggered_by}
-					<ViaTag via={run.triggered_via} /> 触发 · 开始{" "}
-					<span className="font-mono">{formatDateTime(run.started_at)}</span> ·{" "}
+					<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} /> ·{" "}
 					<span className="font-mono" data-testid="run-elapsed">
-						{live ? "已运行" : "耗时"} {formatDuration(elapsed)}
+						{live ? ELAPSED_LABEL : DURATION_LABEL} {formatDuration(elapsed)}
 					</span>
 				</span>
 			</div>
@@ -186,11 +184,11 @@ export function MonitorTopBar({
 				params={{ id: run.orchestration_id }}
 				search={{ run: run.id }}
 				viewTransition={runViewTransition("to-canvas")}
-				title="在画布中查看"
+				title={ACTION.viewInCanvas}
 				className={buttonVariants({ className: COLLAPSE_BUTTON })}
 			>
 				<WorkflowIcon />
-				<span className={COLLAPSE_LABEL}>在画布中查看</span>
+				<span className={COLLAPSE_LABEL}>{ACTION.viewInCanvas}</span>
 			</Link>
 			{run.status === "running" ? (
 				<CancelRunButton

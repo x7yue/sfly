@@ -159,7 +159,8 @@ function periodRows(
 		}));
 }
 
-const indentOf = (depth: number) => Math.min(Math.max(depth, 0), INDENT_MAX) as Indent;
+/** 动作的缩进层数：深度从 0 数起，更深的画在第 3 层。检查器的「正在做」和「动作」页共用。 */
+export const indentOf = (depth: number) => Math.min(Math.max(depth, 0), INDENT_MAX) as Indent;
 
 function recordRow(a: RunningActionView | ActionDetailView): RecordRow {
 	return {

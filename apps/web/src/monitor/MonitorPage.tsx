@@ -7,6 +7,7 @@ import { notify } from "#/components/feedback/notify";
 import { ErrorState } from "#/components/feedback/states";
 import { useShortcut } from "#/components/shortcuts";
 import { apiQuery } from "#/lib/api";
+import { DURATION_LABEL } from "#/lib/copy";
 import { dialogOpen, isEditable } from "#/lib/focus";
 import { formatDuration, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
@@ -339,7 +340,7 @@ function useTerminalNotice(run: RunView | undefined, name: string | undefined) {
 		if (before !== "running" || run.status === "running") return;
 		const scenario = name ?? "场景";
 		const took = run.ended_at
-			? `耗时 ${formatDuration(Date.parse(run.ended_at) - Date.parse(run.started_at))}`
+			? `${DURATION_LABEL} ${formatDuration(Date.parse(run.ended_at) - Date.parse(run.started_at))}`
 			: undefined;
 		if (run.status === "success") {
 			notify.success(`${scenario} 运行成功`, { description: took });

@@ -17,7 +17,7 @@ import { ErrorState } from "#/components/feedback/states";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { NoteIcon } from "#/components/note-icon";
 import { STATUS, StatusPill } from "#/components/status";
-import { MESSAGE, noDataLabel } from "#/lib/copy";
+import { MESSAGE, noDataLabel, PROGRESS_LABEL } from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { PrimaryMetric } from "#/metrics/PrimaryMetric";
 import { primaryMetricData } from "#/metrics/use-primary-metric";
@@ -723,7 +723,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 			{item("尝试", node.attempts.length)}
 			{progress && (
 				<div className="min-w-45">
-					<div className="text-xs text-fg-3">进度</div>
+					<div className="text-xs text-fg-3">{PROGRESS_LABEL}</div>
 					<div className="font-mono text-xs">
 						{progress.current}
 						{progress.total === null ? "" : ` / ${progress.total}`}

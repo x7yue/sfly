@@ -5,6 +5,9 @@ import { cn } from "cn";
 import { ActivityIcon, PanelRightCloseIcon } from "lucide-react";
 import { forwardRef, type ReactNode, useMemo } from "react";
 import { currentActivity } from "#/actions/current-activity";
+import { ActionArea, CurrentActions } from "#/actions/InspectorActions";
+import { actionAttempt } from "#/actions/summary-model";
+import { useActionSummary } from "#/actions/use-task-actions";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
 import type { CanvasContextValue, CanvasInfo, NodeDecoration } from "#/components/canvas/context";
 import type { DocNode } from "#/components/canvas/flow";
@@ -13,12 +16,14 @@ import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
 import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusPill } from "#/components/status";
-import { ACTION } from "#/lib/copy";
+import { ACTION, DURATION_LABEL, MESSAGE, PROGRESS_LABEL, TERM } from "#/lib/copy";
 import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { ACTIONS_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
 import { runViewTransition } from "#/lib/view-transition";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
+import { runMonitorLink } from "#/monitor/run-link";
 import { chainRunStatus, runStatus } from "#/monitor/run-model";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -256,6 +261,18 @@ function Row({ label, children, testId }: { label: string; children: ReactNode; 
 	);
 }
 
+/** 摘要里的一行说明文字：可以折行，不是等宽的数据（进度的说明是节点写的一句话）。 */
+function TextRow({ label, children, testId }: { label: string; children: string; testId: string }) {
+	return (
+		<>
+			<dt className="text-fg-3">{label}</dt>
+			<dd className="m-0 min-w-0 wrap-anywhere" data-testid={testId}>
+				{children}
+			</dd>
+		</>
+	);
+}
+
 const HINT = "日志、图表和每次尝试的详情都在运行监控页里。";
 
 function NodeRunInspector({
@@ -277,6 +294,16 @@ function NodeRunInspector({
 	const now = useNow(run.status === "running");
 	const elapsed = view ? nodeElapsed(view, now) : null;
 	const status = view ? nodeStatusView(view.status) : null;
+	const latest = view?.attempts.at(-1);
+	// 动作记在尝试上；结束以后摘要还在，只是不再轮询。
+	const attempt = actionAttempt(view);
+	const live = attempt?.status === "running";
+	const actions = useActionSummary(attempt?.task_id, live && ACTIONS_POLL_MS);
+	const actionSummary = actions.data;
+	const hasActions = actionSummary !== undefined && actionSummary.total > 0;
+	const running = live && actionSummary ? actionSummary.running : [];
+	// 没有正在做的动作时，进度的说明代替「正在做」（#345 故事 29）。
+	const activity = running.length === 0 ? currentActivity(latest) : null;
 	return (
 		<>
 			<Header
@@ -292,7 +319,10 @@ function NodeRunInspector({
 				title={nodeCardText(node, info).title}
 				onCollapse={onCollapse}
 			/>
-			<div className="min-h-0 flex-1 overflow-auto px-3.5 py-3 text-sm">
+			<div
+				data-testid="run-inspector-body"
+				className="min-h-0 flex-1 overflow-auto px-3.5 py-3 text-sm"
+			>
 				<dl
 					data-testid="run-summary"
 					className="m-0 grid grid-cols-[72px_1fr] gap-x-3 gap-y-1.5 text-xs"
@@ -301,12 +331,17 @@ function NodeRunInspector({
 						{shortId(run.id)} · v{run.orchestration_version}
 					</Row>
 					<Row label="Agent">{view?.agent ?? "控制面"}</Row>
-					<Row label="耗时">{elapsed === null ? "—" : formatDuration(elapsed)}</Row>
+					<Row label={DURATION_LABEL}>{elapsed === null ? "—" : formatDuration(elapsed)}</Row>
 					<Row label="尝试" testId="run-attempts">
 						{view?.attempts.length ?? 0}
 					</Row>
 					{summary && summary.instances > 1 && (
 						<Row label="实例">第 1 个（共 {summary.instances} 个）</Row>
+					)}
+					{activity?.kind === "progress" && (
+						<TextRow label={PROGRESS_LABEL} testId="run-progress">
+							{activity.message}
+						</TextRow>
 					)}
 				</dl>
 				{view?.error && (
@@ -325,17 +360,42 @@ function NodeRunInspector({
 						这个节点所在的子流程在这次运行里还没有触发，没有运行记录。
 					</p>
 				)}
+				{running.length > 0 && actionSummary && (
+					<CurrentActions running={running} complete={actionSummary.running_complete} />
+				)}
+				{hasActions && attempt && view && (
+					<ActionArea
+						summary={actionSummary}
+						attempt={attempt.attempt}
+						attempts={view.attempts.length}
+						day={run.started_at}
+					/>
+				)}
+				{actions.error && !actionSummary && (
+					<p role="alert" className="m-0 mt-3 text-xs text-danger-fg">
+						{MESSAGE.loadFailed(TERM.action)}：{actions.error.message}
+					</p>
+				)}
 				<p className="m-0 mt-3.5 mb-2.5 text-xs text-fg-3">{HINT}</p>
 				{view && (
-					<Link
-						to="/runs/$id"
-						params={{ id: run.id }}
-						search={{ node: id }}
-						viewTransition={runViewTransition("to-monitor")}
-						className={buttonVariants()}
-					>
-						在监控页中打开 {runNodeName(view)}
-					</Link>
+					<div className="flex flex-wrap gap-1.5">
+						<Link
+							{...runMonitorLink(run.id, { node: id })}
+							viewTransition={runViewTransition("to-monitor")}
+							className={buttonVariants()}
+						>
+							在监控页中打开 {runNodeName(view)}
+						</Link>
+						{hasActions && (
+							<Link
+								{...runMonitorLink(run.id, { node: id, tab: "actions" })}
+								viewTransition={runViewTransition("to-monitor")}
+								className={buttonVariants({ variant: "ghost" })}
+							>
+								{ACTION.openActionDetails}
+							</Link>
+						)}
+					</div>
 				)}
 			</div>
 		</>
@@ -381,7 +441,7 @@ function RunOverview({ state, onCollapse }: { state: CanvasRun; onCollapse(): vo
 						</dd>
 						<Row label="触发人">{run.triggered_by}</Row>
 						<Row label="开始">{formatDateTime(run.started_at)}</Row>
-						<Row label="耗时">{formatDuration(end - Date.parse(run.started_at))}</Row>
+						<Row label={DURATION_LABEL}>{formatDuration(end - Date.parse(run.started_at))}</Row>
 					</dl>
 					<p className="m-0 mt-3.5 text-xs text-fg-3">选中节点查看它在这次运行里的摘要。{HINT}</p>
 				</>

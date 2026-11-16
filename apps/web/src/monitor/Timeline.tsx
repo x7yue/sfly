@@ -7,7 +7,7 @@ import { NodeName, type RunNodeName, runNodeName } from "#/components/node-name"
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, STATUS, StatusDot, type StatusKind } from "#/components/status";
-import { chainCountLabel, LIST_LABEL } from "#/lib/copy";
+import { ACTION, chainCountLabel, LIST_LABEL, PROGRESS_LABEL } from "#/lib/copy";
 import { formatClock, formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { shortcutText } from "#/lib/shortcuts";
@@ -313,7 +313,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 					aria-controls={BODY_ID}
 					onClick={() => setHidden((h) => !h)}
 				>
-					{hidden ? "展开时间线" : "收起时间线"}
+					{hidden ? ACTION.expand : ACTION.collapse}时间线
 				</Button>
 			</div>
 			<div
@@ -835,7 +835,7 @@ function NodeRow({
 						<button
 							type="button"
 							aria-pressed={selected}
-							aria-label={`${name} ${title} ${status.label}${progress ? ` 进度 ${progress}` : ""}`}
+							aria-label={`${name} ${title} ${status.label}${progress ? ` ${PROGRESS_LABEL} ${progress}` : ""}`}
 							// 轨道上的区段只给鼠标（悬停看详情、点选节点），每次尝试写在这里：一行只有一个停靠点。
 							aria-description={
 								segments

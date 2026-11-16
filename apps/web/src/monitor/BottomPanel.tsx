@@ -20,7 +20,7 @@ import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { LOG_LEVEL_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import { ACTION, attemptLabel, LOG_LEVEL_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
@@ -31,6 +31,7 @@ import {
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
+import { STATUS_POLL_MS } from "#/lib/polling";
 import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -197,7 +198,7 @@ export function BottomPanel({
 	// 「动作」页签上的个数：看着「动作」页时由它的推送更新，没在看、任务还在执行时定时重新读。
 	const actionSummary = useActionSummary(
 		attempt?.task_id,
-		attempt?.status === "running" && !(tab === "actions" && !collapsed),
+		attempt?.status === "running" && !(tab === "actions" && !collapsed) && STATUS_POLL_MS,
 	).data;
 	const actionsShown = actionSummary && actionSummary.total > 0 ? actionCount(actionSummary) : null;
 	return (
@@ -303,7 +304,7 @@ export function BottomPanel({
 							</>
 						)}
 						<Button variant="ghost" size="sm" onClick={() => actions.setPanelOpen(collapsed)}>
-							{collapsed ? "展开" : "收起"}
+							{collapsed ? ACTION.expand : ACTION.collapse}
 						</Button>
 					</div>
 				</div>
@@ -729,7 +730,7 @@ function AttemptsTab({
 				return (
 					<article
 						key={a.task_id}
-						aria-label={`${runNodeName(n)} 第 ${a.attempt} 次尝试`}
+						aria-label={`${runNodeName(n)} ${attemptLabel(a.attempt)}`}
 						className={cn(
 							"rounded-lg border bg-bg p-2.5 text-xs",
 							a.error ? "border-danger-line" : "border-border-soft",

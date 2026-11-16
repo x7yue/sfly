@@ -46,6 +46,14 @@ export const RunListActiveNode = z.object({
 	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name: z.string().optional(),
 	status: z.string(),
+	/** 最后一次尝试的尝试号（从 1 开始）。 */
+	attempt: z.number().int(),
+	/** 任务所在的 Agent（排队中的任务是它在等的 Agent）；不在 Agent 上执行的节点（等待节点、停止子流程节点）为 null。 */
+	agent: z.string().nullable(),
+	/** 最后一次尝试开始的时间（等待节点是开始等待的时间）；还没开始执行（排队中、准备中）时为 null。 */
+	started_at: Timestamp.nullable(),
+	/** 等待节点（定时 / Sleep）的唤醒时间；其他节点为 null。 */
+	wake_at: Timestamp.nullable(),
 	/** 最新进度；没有上报过时为 null。 */
 	progress: z.object({ current: z.number(), total: z.number().nullable() }).nullable(),
 });

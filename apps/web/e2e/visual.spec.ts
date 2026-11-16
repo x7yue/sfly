@@ -6,7 +6,7 @@ import {
 	type AssignedTask,
 	LogLevel,
 } from "../../server/test/support/fake-agent.js";
-import { actionsScenario, actionTable } from "./actions-support";
+import { actionsScenario, actionTable, loadSummary } from "./actions-support";
 import { annotated, annotationBand } from "./annotation-support";
 import {
 	createEditorScenario,
@@ -49,12 +49,12 @@ import {
 	holdApi,
 	publishPackage,
 	scenarioUsing,
-	seedDashboard,
 	setRunNotification,
 	triggerRun,
 	withSubflow,
 } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
+import { longChainRun, manyRuns, seedWall } from "./wall-support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
 // 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）、
@@ -521,11 +521,15 @@ test("场景的运行通知设置：机器人已被删除时的提示", async ({
 });
 
 test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
-	await seedDashboard({ page, controlPlane, connectAgent, clock });
+	await seedWall({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
 	await expect(
-		page.getByRole("region", { name: "最近失败", exact: true }).getByRole("link"),
+		page.getByRole("region", { name: "最近结束", exact: true }).getByRole("listitem"),
 	).toHaveCount(2);
+	await expect(page.getByRole("region", { name: "执行中节点的主指标" })).toContainText("level");
+	await expect(
+		page.getByRole("region", { name: "场景", exact: true }).getByRole("link"),
+	).toHaveCount(6);
 	// 运行 ID 是随机的，遮住。
 	await expect(page).toHaveScreenshot("dashboard.png", {
 		mask: [page.locator('[data-slot="run-id"]')],
@@ -550,6 +554,45 @@ test("控制台：「开始使用」第 1、2 步已完成，白色按钮在第 
 	await page.goto("/");
 	await expect(page.locator('[data-step="scenario"]')).toHaveAttribute("data-state", "next");
 	await expect(page).toHaveScreenshot("dashboard-empty-progress.png");
+});
+
+test("控制台：多个运行时换成紧凑行，点开一行展开成运行块", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 8 });
+	await publishPackage(controlPlane);
+	await manyRuns(controlPlane, agent, clock, 7);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto("/");
+	const left = page.getByRole("region", { name: "正在运行", exact: true });
+	await left.getByRole("button", { name: /浸泡 06/ }).click();
+	await expect(left.getByRole("region", { name: "浸泡 06", exact: true })).toBeVisible();
+	await expect(left.getByRole("button", { expanded: false })).toHaveCount(6);
+	await expect(page).toHaveScreenshot("dashboard-many.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("控制台：30 个节点的长链只画当前站附近几站，其余折成「已完成 N 个」「还有 N 个」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 4 });
+	await publishPackage(controlPlane);
+	await longChainRun(controlPlane, agent, clock);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto("/");
+	const lines = page.getByRole("list", { name: "各链进度" });
+	await expect(lines).toContainText("已完成 15 个");
+	await expect(lines).toContainText("还有 13 个");
+	await expect(page).toHaveScreenshot("dashboard-long-chain.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
 });
 
 test("运行记录", async ({ page, controlPlane, connectAgent, clock }) => {
@@ -1279,6 +1322,39 @@ test("编排画布：运行状态（选中失败尝试后重试中的节点）",
 			page.getByTestId("canvas-run").locator(".font-mono").first(),
 			page.getByTestId("run-summary").locator("dd").first(),
 		],
+	});
+});
+
+test("编排画布：运行状态（检查器的「正在做」和「动作」：计数、上限说明、折行的失败原因）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, scenarioId, agent, tasks } = await runningScenario(
+		controlPlane,
+		connectAgent,
+		clock,
+	);
+	agent.actionSummary(tasks.verify as AssignedTask, loadSummary(agent, clock.now().getTime()));
+	await agent.sync();
+	await page.clock.setFixedTime(clock.now());
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
+	// 跟随执行把镜头平移到执行中的节点（缩放正好到 100%）：等平移停下再点节点，点击会打断还在进行的平移。
+	await expect(page.locator(".react-flow__viewport")).toHaveAttribute("style", /scale\(1\)/);
+	await nodeCard(page, "verify").click();
+	const area = page.getByRole("region", { name: "动作", exact: true });
+	await expect(area.getByRole("table")).toContainText("1,284,819");
+	// 从「正在做」的标题起往下看：摘要已经滚出去，正在做、动作区和前几个失败都在。
+	await page
+		.getByRole("region", { name: "正在做" })
+		.getByRole("heading")
+		.evaluate((el) => el.scrollIntoView({ block: "start" }));
+	await page.mouse.move(700, 760);
+	// 摘要滚出去了，只有顶栏里的运行编号要遮住。
+	await expect(page).toHaveScreenshot("editor-run-actions.png", {
+		mask: [page.getByTestId("canvas-run").locator(".font-mono").first()],
 	});
 });
 

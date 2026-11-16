@@ -9,7 +9,8 @@ import { Truncate } from "@/components/ui/truncate";
 
 /**
  * 槽位格：Agent 上一个被占用的槽位，写这个任务的节点、场景、运行编号、所在链、尝试号、节点类型和已执行时长。
- * Agent 管理页的机架用它；以后控制台的 Agent 列（#363）也用它，不另画一份。目前控制台用的是 `SlotBar`。
+ * Agent 管理页的机架用它；控制台的 Agent 列用紧凑形式（`compact`）：一行写节点、场景、子流程名和已执行时长，
+ * 不写运行编号、尝试号和节点类型（运行块里有）。
  *
  * 系统里没有槽位身份，`running_tasks` 只是按派发顺序排列，所以格子不写「槽 1」这样的编号。
  * 调用方在格子底部追加内容（正在做的动作、关注项）时，作为 `children` 传入，并用 `summary` 把这些内容的要点
@@ -17,16 +18,48 @@ import { Truncate } from "@/components/ui/truncate";
  */
 export function SlotCell({
 	task,
+	compact = false,
 	summary,
 	children,
 }: {
 	task: RunningTaskView;
+	/** 控制台 Agent 列的一行形式。 */
+	compact?: boolean;
 	/** 追加在可访问名称末尾的说明（`children` 里的动作、异常的关注项）；读屏用户不看画面，名称里要有它们。 */
 	summary?: string | undefined;
 	/** 追加在格子底部的内容。 */
 	children?: React.ReactNode;
 }) {
 	const status = nodeStatusView(task.status);
+	const elapsed =
+		task.started_at === null ? (
+			<span className="font-sans text-fg-3">{status.label}</span>
+		) : (
+			<Elapsed since={task.started_at} />
+		);
+	if (compact) {
+		return (
+			<li
+				aria-label={slotLabel(task, summary)}
+				className={cn("min-w-0 rounded-md px-2.5 py-2", STATUS[status.kind].area.box, "bg-raised")}
+			>
+				<div className="flex min-w-0 items-center gap-2">
+					<StatusDot kind={status.kind} />
+					<NodeName
+						node={task}
+						className={cn("max-w-1/2 flex-none text-xs font-medium", STATUS[status.kind].text)}
+					/>
+					<Truncate className="text-xs text-fg-2">
+						{task.chain_name === null
+							? task.orchestration_name
+							: `${task.orchestration_name} · ${taskChainLabel(task)}`}
+					</Truncate>
+					<span className="ml-auto flex-none font-mono text-xs text-fg-3">{elapsed}</span>
+				</div>
+				{children}
+			</li>
+		);
+	}
 	return (
 		<li
 			aria-label={slotLabel(task, summary)}
@@ -40,13 +73,7 @@ export function SlotCell({
 			<div className="flex items-center gap-2">
 				<StatusDot kind={status.kind} />
 				<NodeName node={task} className={cn("font-medium", STATUS[status.kind].text)} />
-				<span className="ml-auto flex-none font-mono text-xs text-fg-2">
-					{task.started_at === null ? (
-						<span className="font-sans text-fg-3">{status.label}</span>
-					) : (
-						<Elapsed since={task.started_at} />
-					)}
-				</span>
+				<span className="ml-auto flex-none font-mono text-xs text-fg-2">{elapsed}</span>
 			</div>
 			<div className="mt-0.5 flex min-w-0 items-baseline gap-1.5">
 				<Truncate>{task.orchestration_name}</Truncate>
@@ -62,10 +89,15 @@ export function SlotCell({
 	);
 }
 
-/** 连续的空闲槽合并成一行矮条：不随旁边的格子拉伸（放在 `items-start` 的网格里）。 */
-export function IdleSlots({ count }: { count: number }) {
+/** 连续的空闲槽合并成一行矮条：不随旁边的格子拉伸（放在 `items-start` 的网格里）。`compact` 与紧凑的槽位格同高。 */
+export function IdleSlots({ count, compact = false }: { count: number; compact?: boolean }) {
 	return (
-		<li className="min-w-0 rounded-lg border border-border-soft bg-sunk px-3 py-2.25 text-xs text-fg-3">
+		<li
+			className={cn(
+				"min-w-0 border border-border-soft bg-sunk text-xs text-fg-3",
+				compact ? "rounded-md px-2.5 py-2" : "rounded-lg px-3 py-2.25",
+			)}
+		>
 			{count} 个槽位空闲
 		</li>
 	);
