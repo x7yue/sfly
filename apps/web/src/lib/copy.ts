@@ -94,10 +94,12 @@ export const FOCUS = {
 	attention: "需要注意",
 	/** 「3 个关注项」：画布节点卡片的可访问名称。 */
 	itemCount: (count: number) => `${count} 个${TERM.focusItem}`,
-	/** 「1 项需要注意」：画布节点卡片的可访问名称、画布检查器里关注项的标题旁。 */
+	/** 「1 项需要注意」：画布节点卡片和 Agent 槽位格的可访问名称、画布检查器里关注项的标题旁。 */
 	attentionCount: (count: number): string => `${count} 项${FOCUS.attention}`,
-	/** 只放得下前几项时，其余的个数（`moreLabel` 加上「关注项」）：画布节点卡片的最后一行。 */
+	/** 只放得下前几项时，其余的个数（`moreLabel` 加上「关注项」）：画布节点卡片和 Agent 槽位格的最后一行。 */
 	moreItems: (count: number): string => `${moreLabel(count)}${TERM.focusItem}`,
+	/** 场景没有设置关注项，显示的是执行中节点的主指标：概览的标题旁和 Agent 槽位格里的主指标共用这一句。 */
+	noneSet: `场景没有设置${TERM.focusItem}`,
 	/** 概览里最后一段的标题：这次运行里没有进入「需要注意」的 WARN / ERROR。 */
 	otherAlerts: "其他警告与错误",
 	/** 上面那一段没有内容时的说明。 */
@@ -305,6 +307,8 @@ export const ACTIVE_LABEL = "进行中";
 export const NODE_ACTIONS = {
 	/** 此刻在做的事：画布卡片和读屏的「正在做 X」，检查器的「正在做」，「动作」页的第一组。 */
 	doing: "正在做",
+	/** 版面放得下时写在动作名称前的「正在」（Agent 槽位格、概览执行中那一行）；画布卡片只有 208px 宽，用执行中的形状代替它。 */
+	doingNow: "正在",
 	/** 正在做的动作列满了：接口只给前 50 个，可能还有没列出的（检查器的「正在做」、「动作」页的第一组共用）。 */
 	runningIncomplete: (listed: number) => `列满 ${listed} 个，可能还有没列出的`,
 	/**

@@ -252,7 +252,8 @@ function CapNote({
 					<ul className="m-0 my-1 list-none p-0 text-fg-1">
 						{countOnly.map((c) => (
 							<li key={c.name} className="min-w-0 wrap-anywhere">
-								「{c.name}」从 <span className="font-mono">{clock(c.from)}</span> 起{NODE_ACTIONS.countOnly}
+								「{c.name}」从 <span className="font-mono">{clock(c.from)}</span> 起
+								{NODE_ACTIONS.countOnly}
 								{hasNameLimit && hasTotalLimit && c.reason === "name_limit" && EXCEPT_FAILED}
 							</li>
 						))}
@@ -261,7 +262,8 @@ function CapNote({
 			)}
 			{totalFullAt !== null && (
 				<p className="m-0">
-					全部名称合计的明细已满，满了以后开始的动作都{NODE_ACTIONS.countOnly}（失败的也一样）；第一个因此没有明细的动作是{" "}
+					全部名称合计的明细已满，满了以后开始的动作都{NODE_ACTIONS.countOnly}
+					（失败的也一样）；第一个因此没有明细的动作是{" "}
 					<span className="font-mono">{clock(totalFullAt)}</span> 开始的。
 				</p>
 			)}

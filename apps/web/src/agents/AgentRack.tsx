@@ -3,10 +3,12 @@ import { cn } from "cn";
 import { useId } from "react";
 import { agentStatusView, updateStatus } from "#/agents/agent-status";
 import { queueTiming } from "#/agents/queue-timing";
+import { TaskSlot } from "#/agents/TaskSlot";
 import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
+import type { FocusByRun } from "#/agents/use-slot-focus";
 import { NodeName } from "#/components/node-name";
 import { Panel } from "#/components/page";
-import { IdleSlots, idleSlotCount, SlotCell, taskChainLabel } from "#/components/slot-cell";
+import { IdleSlots, idleSlotCount, taskChainLabel } from "#/components/slot-cell";
 import { nodeStatusView, StatusDot, StatusPill } from "#/components/status";
 import { queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import {
@@ -27,9 +29,12 @@ import { Truncate } from "@/components/ui/truncate";
 export function AgentRack({
 	agent,
 	controlPlaneVersion,
+	runFocus,
 }: {
 	agent: AgentView;
 	controlPlaneVersion: string;
+	/** 占着槽位的任务所属运行的关注项读数（页面按运行读好，`useSlotFocus`）。 */
+	runFocus: FocusByRun;
 }) {
 	const headingId = useId();
 	const slotsHeadingId = useId();
@@ -82,7 +87,7 @@ export function AgentRack({
 								className="m-0 grid list-none grid-cols-[repeat(auto-fill,minmax(300px,1fr))] items-start gap-2 p-0"
 							>
 								{agent.running_tasks.map((task) => (
-									<SlotCell key={task.task_id} task={task} />
+									<TaskSlot key={task.task_id} task={task} runFocus={runFocus.get(task.run_id)} />
 								))}
 								{online && idle > 0 && <IdleSlots count={idle} />}
 							</ul>

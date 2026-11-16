@@ -4,6 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ServerIcon, TerminalIcon } from "lucide-react";
 import { AgentRack } from "#/agents/AgentRack";
 import { useConnectCommand } from "#/agents/connect-command";
+import { useSlotFocus } from "#/agents/use-slot-focus";
 import { DocPageLink } from "#/components/doc-page-link";
 import { EmptyState, QueryView, RackSkeleton } from "#/components/feedback/states";
 import { CodeBlock, Page, PageHeader, Panel } from "#/components/page";
@@ -29,6 +30,7 @@ export const Route = createFileRoute("/_shell/agents")({
 function AgentsPage() {
 	const command = useConnectCommand();
 	const agents = useQuery({ ...apiQuery(agentsApi.list), refetchInterval: STATUS_POLL_MS });
+	const runFocus = useSlotFocus(agents.data?.agents ?? []);
 	const hasAgents = (agents.data?.agents.length ?? 0) > 0;
 	const loading = agents.data === undefined && !agents.isError;
 	const content = (
@@ -54,6 +56,7 @@ function AgentsPage() {
 							key={agent.name}
 							agent={agent}
 							controlPlaneVersion={data.control_plane_version}
+							runFocus={runFocus}
 						/>
 					))}
 				</div>

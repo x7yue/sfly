@@ -63,7 +63,7 @@ const withSleep = (agent: string) => ({
  * - 巡检成功一次（耗时 2.3s）；一分钟后订单链路的 ping 第 1 次失败、重试的第 2 次超时失败（耗时 4m 12s）；
  * - 一小时后定时巡检停在 Sleep 节点 nap 上，撮合压测开始运行：子流程的 verify 失败，主链的 probe 执行中并上报主指标；
  * - 草稿从没运行过；agent-mac 离线。
- * 返回各运行与场景的 ID，和 agent-linux（probe 在它上面）。
+ * 返回各运行与场景的 ID，和 agent-linux 以及它上面执行中的 probe 任务。
  */
 export async function seedWall({
 	page,
@@ -121,7 +121,7 @@ export async function seedWall({
 	// 不超过任务租约（30 秒），probe 保持执行中。
 	clock.advance(15_000);
 	await page.clock.setFixedTime(clock.now());
-	return { linux, running, sleeping, failed, succeeded, stress, orders, inspect };
+	return { linux, probe, running, sleeping, failed, succeeded, stress, orders, inspect };
 }
 
 /**

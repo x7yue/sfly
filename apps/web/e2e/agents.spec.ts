@@ -1,6 +1,18 @@
-import type { Page } from "@playwright/test";
-import { AgentUpdateState, agentClock } from "../../server/test/support/fake-agent.js";
+import type { Locator, Page } from "@playwright/test";
+import {
+	AgentUpdateState,
+	type AssignedTask,
+	agentClock,
+} from "../../server/test/support/fake-agent.js";
 import { expect, test } from "./fixtures";
+import { createFocusScenario, saveVersion, setFocusItems } from "./focus-support";
+import {
+	advance,
+	httpCheckPoints,
+	MONITOR_SCENARIO,
+	metricPackage,
+	runningScenario,
+} from "./monitor-scenario";
 import {
 	createScenario,
 	elapseWithHeartbeats,
@@ -23,9 +35,12 @@ const NAMES = { probe: "探测主机", subflow: "巡检子流程" };
 const rack = (page: Page, name: string) => page.getByRole("region", { name, exact: true });
 /** 机架头部：状态、告警、名称、版本、系统、对外地址、最后在线。 */
 const header = (page: Page, name: string) => rack(page, name).locator("header");
-/** 机架里的槽位格：占用的格子和合并的空闲条。 */
+/** 机架里的槽位格：占用的格子和合并的空闲条（格子里的关注项列表不算）。 */
 const slotCells = (page: Page, name: string) =>
-	rack(page, name).getByRole("list", { name: "槽位" }).getByRole("listitem");
+	rack(page, name).getByRole("list", { name: "槽位" }).locator(":scope > li");
+/** 一个槽位格里这个任务的关注项（没设关注项时是主指标）。 */
+const slotFocus = (cell: Locator, what: "关注项" | "主指标" = "关注项") =>
+	cell.getByRole("list", { name: `这个任务的${what}` }).getByRole("listitem");
 const queued = (page: Page, name: string) =>
 	rack(page, name).getByRole("list", { name: "排队的任务" }).getByRole("listitem");
 
@@ -764,4 +779,232 @@ test("立即更新失败时，原因写在确认框里，不发通知", async ({
 	await expect(dialog.getByRole("alert")).toHaveText("立即更新失败：Agent 没有应答");
 	await expect(dialog).toBeVisible();
 	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+});
+
+const HOUR_43 = (60 + 43) * 60_000;
+/** 「已 57s 无新数据」「已 1m 02s 无新数据」：多久取决于最后一个点和读数生成时刻的差。 */
+const STALE = /已 (?:\d+m )?\d+s 无新数据/;
+
+test("槽位格：正在做的动作和已持续多久；没有动作时写进度的说明；随列表刷新，动作结束后撤掉", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	const verify = tasks.verify as AssignedTask;
+	const now = clock.now().getTime();
+	agent.actionSummary(verify, {
+		total: 2,
+		reported: 2,
+		running: [
+			{
+				id: 1,
+				parent: null,
+				depth: 0,
+				name: "保持 4 小时",
+				fields: {},
+				...agent.stamp(now - HOUR_43),
+			},
+			{ id: 2, parent: 1, depth: 1, name: "下单", fields: {}, ...agent.stamp(now - 5) },
+		],
+	});
+	agent.progress(tasks.probe as AssignedTask, 3, 10, "第 3 批");
+	await agent.sync();
+
+	await page.goto("/agents");
+	const withAction = slotCells(page, "agent-a").filter({ hasText: "verify" });
+	const activity = withAction.getByTestId("slot-activity");
+	await expect(activity).toContainText("正在");
+	await expect(activity).toContainText("保持 4 小时");
+	await expect(activity).toContainText("1h 43m");
+	await expect(activity).not.toContainText("下单");
+	await expect(withAction).toHaveAccessibleName(/，正在做 保持 4 小时(，|$)/);
+
+	// 没有动作时写进度的说明：不写「正在」，也没有时长。
+	const withProgress = slotCells(page, "agent-a").filter({ hasText: "probe" });
+	await expect(withProgress.getByTestId("slot-activity")).toHaveText("第 3 批");
+	await expect(withProgress).toHaveAccessibleName(/，正在做 第 3 批(，|$)/);
+
+	// 最外层的动作换了：列表刷新后跟着变；时长随控制面时间走。
+	agent.actionSummary(verify, {
+		total: 3,
+		reported: 3,
+		running: [{ id: 3, parent: null, depth: 0, name: "收尾", fields: {}, ...agent.stamp(now) }],
+	});
+	await expect(activity).toContainText("收尾", { timeout: 15_000 });
+	await expect(activity).not.toContainText("保持 4 小时");
+	await expect(withAction).toHaveAccessibleName(/，正在做 收尾(，|$)/);
+
+	// 动作都结束了、也没有进度：这一行撤掉。
+	agent.actionSummary(verify, { total: 3, reported: 3 });
+	await expect(activity).toHaveCount(0, { timeout: 15_000 });
+	await expect(withAction).not.toHaveAccessibleName(/正在做/);
+});
+
+test("槽位格：只显示前两个关注项，有异常的排前、带三角和原因，多出的写「还有 N 个关注项」；可访问名称写出有异常的项", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	const scenarioId = await createFocusScenario(controlPlane);
+	await setFocusItems(controlPlane, scenarioId, [
+		{ node_id: "fetch", chart: "延迟" },
+		{ node_id: "fetch", chart: "吞吐" },
+		{ node_id: "fetch", chart: "请求数" },
+		{ node_id: "fetch", chart: "errors", title: "错误数" },
+	]);
+	const clock0 = clock.now().getTime();
+	await triggerRun(controlPlane, scenarioId);
+	const fetch = await agent.nextAssign();
+	agent.metrics(fetch, httpCheckPoints(clock0, 0, 3));
+	await agent.sync();
+	// 之后只有延迟还在上报：吞吐、请求数、错误数都超过 30 秒没有新数据。
+	await advance(clock, agent, 60_000, () => {
+		const s = Math.floor(clock.now().getTime() / 1000);
+		agent.metrics(fetch, [
+			["latency_ms", s, 45],
+			["p99_ms", s, 90],
+		]);
+	});
+
+	await page.goto("/agents");
+	const cell = slotCells(page, "agent-a").first();
+	const rows = slotFocus(cell);
+	// 作者的顺序是延迟、吞吐、请求数、错误数；有异常的排前，所以前两项是吞吐和请求数。
+	await expect(rows).toHaveCount(3);
+	await expect(rows.nth(0)).toContainText("吞吐");
+	await expect(rows.nth(0)).toContainText("165");
+	await expect(rows.nth(0)).toContainText("req/s");
+	await expect(rows.nth(0)).toContainText(STALE);
+	await expect(rows.nth(0).locator('[data-status-dot="warn"]')).toHaveCount(1);
+	await expect(rows.nth(1)).toContainText("请求数");
+	await expect(rows.nth(1)).toContainText("520");
+	await expect(rows.nth(1).locator('[data-status-dot="warn"]')).toHaveCount(1);
+	await expect(rows.nth(2)).toHaveText("还有 2 个关注项");
+	await expect(cell).not.toContainText("延迟");
+	await expect(cell).not.toContainText("错误数");
+	// 可访问名称写出有异常的项（不只是显示出来的两项）。
+	await expect(cell).toHaveAccessibleName(
+		new RegExp(
+			`^节点 fetch，场景 撮合浸泡，3 项需要注意：吞吐 ${STALE.source}；请求数 ${STALE.source}；错误数 ${STALE.source}$`,
+		),
+	);
+});
+
+test("槽位格：场景没设关注项时显示这个节点的主指标并写明原因；主指标有异常时右侧写异常的原因", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await runningScenario(controlPlane, connectAgent, clock);
+
+	await page.goto("/agents");
+	// probe 是子流程里的 ping，主指标 level 现在是 3；verify 是第 2 次尝试，10 分钟以内开始的重试算异常。
+	const probe = slotCells(page, "agent-a").filter({ hasText: "probe" });
+	const probeRows = slotFocus(probe, "主指标");
+	await expect(probeRows).toHaveCount(1);
+	await expect(probeRows).toContainText("主指标 level");
+	await expect(probeRows).toContainText("3");
+	await expect(probeRows).toContainText("场景没有设置关注项");
+	await expect(probeRows.locator('[data-status-dot="warn"]')).toHaveCount(0);
+
+	const verify = slotCells(page, "agent-a").filter({ hasText: "verify" });
+	const verifyRows = slotFocus(verify, "主指标");
+	await expect(verifyRows).toContainText("主指标 level");
+	await expect(verifyRows).toContainText("重试（尝试 2）");
+	await expect(verifyRows).not.toContainText("场景没有设置关注项");
+	await expect(verifyRows.locator('[data-status-dot="warn"]')).toHaveCount(1);
+	await expect(verify).toHaveAccessibleName(
+		/，1 项需要注意：主指标 level 重试（尝试 2）· \d\d:\d\d:\d\d$/,
+	);
+	// 没有主指标的节点（这里没有）不写关注项；别的任务的主指标不会出现在这个格子里。
+	await expect(slotFocus(probe, "关注项")).toHaveCount(0);
+});
+
+test("槽位格：这次运行的节点包版本里没有这张图表时，写明原因，不显示数值", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { scenarioId } = await runningScenario(controlPlane, connectAgent, clock);
+	// 之后的版本升到 1.3.0，ping 多了一张图表「水位」，作者把它设为关注项；这次运行锁定的是 1.2.0，没有这张图表。
+	const nodes = metricPackage().nodes.map((node) =>
+		node.name === "ping"
+			? { ...node, charts: [{ title: "水位", type: "line", metrics: ["level"] }] }
+			: node,
+	);
+	await publishPackage(controlPlane, { version: "1.3.0", nodes });
+	await saveVersion(controlPlane, scenarioId, 1, {
+		...MONITOR_SCENARIO,
+		packages: { "demo-checks": "1.3.0" },
+	});
+	await setFocusItems(controlPlane, scenarioId, [{ node_id: "probe", chart: "水位" }]);
+
+	await page.goto("/agents");
+	const row = slotFocus(slotCells(page, "agent-a").filter({ hasText: "probe" })).first();
+	await expect(row).toContainText("水位");
+	await expect(row).toContainText("这个版本的节点没有图表 水位");
+	await expect(row).not.toContainText("还没有数据");
+	await expect(row.locator('[data-status-dot="warn"]')).toHaveCount(0);
+});
+
+test("同一个运行的几个槽位只读一次关注项，每个运行各读一次，只要最新值（points=0）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId, agent } = await runningScenario(controlPlane, connectAgent, clock);
+	// 第二个运行也在这台 Agent 上占一个槽位：页面上共三个槽位格，来自两个运行。
+	const other = await triggerRun(
+		controlPlane,
+		await createScenario(controlPlane, "拨测", scenarioUsing("agent-a")),
+	);
+	await agent.nextAssign();
+	const requested: string[] = [];
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		const run = /^\/api\/runs\/([^/]+)\/focus$/.exec(url.pathname)?.[1];
+		if (run) requested.push(`${run}${url.search}`);
+	});
+
+	await page.goto("/agents");
+	await expect(slotCells(page, "agent-a")).toHaveCount(4);
+	await expect(rack(page, "agent-a").getByRole("list", { name: "这个任务的主指标" })).toHaveCount(
+		3,
+	);
+	expect([...requested].sort()).toEqual([`${runId}?points=0`, `${other}?points=0`].sort());
+});
+
+test("关注项读不到时，槽位格仍写正在做的动作，关注项的位置写「无法加载关注项」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent, tasks } = await runningScenario(controlPlane, connectAgent, clock);
+	agent.progress(tasks.probe as AssignedTask, 3, 10, "第 3 批");
+	await agent.sync();
+	await page.route(/\/api\/runs\/[^/]+\/focus/, (route) =>
+		route.fulfill({
+			status: 503,
+			contentType: "application/json",
+			body: JSON.stringify({ error: { code: "unavailable", message: "控制面暂时不可用" } }),
+		}),
+	);
+
+	await page.goto("/agents");
+	const probe = slotCells(page, "agent-a").filter({ hasText: "probe" });
+	await expect(probe.getByTestId("slot-activity")).toHaveText("第 3 批");
+	await expect(probe).toContainText("无法加载关注项", { timeout: 15_000 });
+	await expect(slotFocus(probe, "主指标")).toHaveCount(0);
 });

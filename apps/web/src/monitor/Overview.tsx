@@ -15,6 +15,7 @@ import {
 	FOCUS,
 	LIST_LABEL,
 	MESSAGE,
+	NODE_ACTIONS,
 	RUNNING_PRIMARY_LABEL,
 	TERM,
 } from "#/lib/copy";
@@ -144,7 +145,7 @@ function ExecutingActivity({ activity }: { activity: CurrentActivity | null }) {
 			<span aria-hidden>·</span>
 			{activity.kind === "action" ? (
 				<span className="flex min-w-0 items-baseline gap-1">
-					正在 <Truncate className="text-fg-1">{activity.name}</Truncate>
+					{NODE_ACTIONS.doingNow} <Truncate className="text-fg-1">{activity.name}</Truncate>
 				</span>
 			) : (
 				<Truncate className="text-fg-2">{activity.message}</Truncate>
@@ -181,9 +182,7 @@ function FocusSection({
 					</span>
 				)}
 				<span className="text-xs text-fg-3">
-					{primary
-						? `场景没有设置${TERM.focusItem}`
-						: `由场景设置，按设定的顺序排，${FOCUS.anomalyFirst}`}
+					{primary ? FOCUS.noneSet : `由场景设置，按设定的顺序排，${FOCUS.anomalyFirst}`}
 				</span>
 				<span className="flex-1" />
 				<Link

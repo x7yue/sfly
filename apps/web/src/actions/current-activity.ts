@@ -10,7 +10,10 @@ export type CurrentActivity =
 	| { kind: "action"; name: string /** 开始的控制面时间（毫秒）。 */; startedAt: number }
 	| { kind: "progress"; message: string };
 
-/** 这次尝试此刻在做什么；不在执行中、或者既没有动作也没有进度的说明时为 null。 */
+/**
+ * 这次尝试此刻在做什么；不在执行中、或者既没有动作也没有进度的说明时为 null。
+ * 运行视图里的尝试（`AttemptView`）和 Agent 列表里的任务（`RunningTaskView`）都是这个形状，两处按同一条规则取。
+ */
 export function currentActivity(
 	attempt: Pick<AttemptView, "status" | "current_action" | "progress"> | undefined,
 ): CurrentActivity | null {

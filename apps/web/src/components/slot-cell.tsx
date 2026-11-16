@@ -1,10 +1,10 @@
 import type { RunningTaskView } from "@sfly/schema";
 import { cn } from "cn";
+import { Elapsed } from "#/components/elapsed";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { nodeStatusView, STATUS, StatusDot } from "#/components/status";
 import { namedChainLabel, TERM } from "#/lib/copy";
-import { formatDuration, shortId } from "#/lib/format";
-import { useNow } from "#/lib/use-now";
+import { shortId } from "#/lib/format";
 import { Truncate } from "@/components/ui/truncate";
 
 /**
@@ -35,7 +35,7 @@ export function SlotCell({
 		task.started_at === null ? (
 			<span className="font-sans text-fg-3">{status.label}</span>
 		) : (
-			<Elapsed since={task.started_at} />
+			<Elapsed since={Date.parse(task.started_at)} />
 		);
 	if (compact) {
 		return (
@@ -121,9 +121,3 @@ export const slotLabel = (
 		`${TERM.scenario} ${task.orchestration_name}`,
 		...(summary ? [summary] : []),
 	].join("，");
-
-/** 已执行时长，按控制面时间每秒走一次（ADR 0018）。 */
-function Elapsed({ since }: { since: string }) {
-	const now = useNow(true);
-	return <>{formatDuration(now - new Date(since).getTime())}</>;
-}

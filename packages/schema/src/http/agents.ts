@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CurrentAction } from "./actions.js";
 import { ClockOffsetView } from "./clock-offset.js";
 import { endpoint, Timestamp } from "./contract.js";
+import { TaskProgressView } from "./runs.js";
 
 /** Agent 管理相关接口的契约（约定见 ./contract.ts）。 */
 
@@ -53,6 +54,8 @@ export const RunningTaskView = z.object({
 	started_at: Timestamp.nullable(),
 	/** 此刻在做的动作（见 CurrentAction）；没有时为 null，派发阶段也为 null。 */
 	current_action: CurrentAction.nullable(),
+	/** 最新进度（ctx.progress），与运行视图里同一次尝试的进度相同；没上报过时为 null。说明里的 secret 值已打码。 */
+	progress: TaskProgressView.nullable(),
 });
 
 /**

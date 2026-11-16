@@ -13,6 +13,7 @@ import {
 } from "../db/schema.js";
 import { nodeNameIn, subflowNameOf } from "../engine/run-board.js";
 import type { Tx } from "../engine/step.js";
+import { taskProgressView } from "../logs/task-logs.js";
 
 /** 占着槽位或排队等 Agent 的任务视图，连同它所属的 Agent（任务都已指定 Agent）。 */
 export interface AgentTasks {
@@ -25,7 +26,7 @@ export interface AgentTasks {
 /**
  * 符合 `where` 的任务（Agent 列表的 `running_tasks`、`queued_tasks`，立即更新返回的被终止任务）：
  * 任务行连上运行、场景和链实例，节点的显示名称、节点类型和子流程名称取自运行绑定的版本（不是场景现在的版本），
- * 占着槽位的任务带上存下的此刻在做的动作（src/actions/）。
+ * 占着槽位的任务带上存下的此刻在做的动作（src/actions/）和最新进度（写入时已打码，与运行视图里的同一份）。
  * 版本文档按版本只读一次：排队的任务很多时，不会每个任务带一份文档。
  */
 export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promise<AgentTasks> {
@@ -46,6 +47,7 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 			queueExpiresAt: tasks.queueExpiresAt,
 			startedAt: tasks.startedAt,
 			currentAction: taskActionSummaries.currentAction,
+			progress: tasks.progress,
 		})
 		.from(tasks)
 		.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
@@ -103,6 +105,7 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 					status: row.status as RunningTaskView["status"],
 					started_at: row.startedAt?.toISOString() ?? null,
 					current_action: currentActionOfTask(row.status, row.currentAction),
+					progress: row.progress ? taskProgressView(row.progress) : null,
 				};
 				return [{ agent: found.agent, view }];
 			}),
