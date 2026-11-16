@@ -227,10 +227,11 @@ test("从定位到的那一页往前翻页、往后翻页：行连续不重复�
 		read.push(...body.lines.map((l) => l.seq));
 	});
 
-	// 第 350 行：一页是第 200 到 499 行。
+	// 第 350 行：一页是第 200 到 499 行。每 10 毫秒一行，50 毫秒以内不止一行，在那一刻插「这一刻」。
 	await page.goto(monitorUrl(runId, { node: "probe", at: iso(clock0 + 7_000 + 3_500) }));
 	const logs = logsOf(page);
-	await expect(logs.locator("[data-located]")).toContainText("probe line 350");
+	await expect(logs.locator("[data-moment]")).toHaveCount(1);
+	await expect(logs).toContainText("probe line 350");
 	const older = logs.getByRole("button", { name: /加载更早的日志/ });
 	const newer = logs.getByRole("button", { name: /加载更新的日志/ });
 

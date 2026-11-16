@@ -184,17 +184,17 @@ test("先打一条 WARN 再不上报：原因报 WARN，图表照样画斜线、
 	const level = focusChart(page, "探活 level");
 	agent.logs(tasks.probe as AssignedTask, [logLine(clock, 1, "探活变慢", LogLevel.WARN)]);
 	await agent.sync();
-	await expect(level).toContainText("WARN · 08:00:14");
+	await expect(level).toContainText("1 条 WARN · 08:00:14");
 	await expect(level.locator("[data-stale-gap]")).toHaveCount(0);
 
 	// probe 最后一个点在第 13 秒：推进到第 59 秒，WARN 还在 10 分钟以内，原因仍报它。
 	await advance(clock, agent, 45_000);
 	await expect(page.getByTestId("focus-freshness")).toHaveText("数据更新于 08:00:59");
 	await expect(level.locator("[data-stale-gap]")).toHaveCount(1);
-	await expect(level).toContainText("WARN · 08:00:14");
+	await expect(level).toContainText("1 条 WARN · 08:00:14");
 	await expect(level).toContainText("已 46s 无新数据");
 	await expect(level.getByRole("img")).toHaveAccessibleName(
-		"探活 level 3，来自 probe（执行中），需要注意：WARN · 08:00:14，曲线停在最后一个点",
+		"探活 level 3，来自 probe（执行中），需要注意：1 条 WARN · 08:00:14，曲线停在最后一个点",
 	);
 });
 

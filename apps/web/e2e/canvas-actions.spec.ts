@@ -495,10 +495,12 @@ test("检查器：结束的节点保留动作区、没有「正在做」；失�
 		// 节点结束时还没结束的动作：控制面把它们记成未结束，摘要里的「正在做」清空。
 		running: [leftover],
 	};
-	// fetch 早已成功；摘要在结果之后才到，也不让它重新出现。
-	setup.agent.actionSummary(setup.tasks.fetch as AssignedTask, summary);
+	// probe 记下动作后成功（摘要在结果之前到，之后才到的摘要控制面不再收）：动作区还在，「正在做」清空。
+	const probe = setup.tasks.probe as AssignedTask;
+	setup.agent.actionSummary(probe, summary);
 	await setup.agent.sync();
-	const panel = await openNode(page, setup, clock, "fetch");
+	await setup.agent.succeed(probe);
+	const panel = await openNode(page, setup, clock, "probe");
 	await expect(
 		panel
 			.getByRole("table", { name: "每种名称的总数和失败数" })
