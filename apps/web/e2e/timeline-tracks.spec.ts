@@ -78,8 +78,12 @@ test("放大以后分得开的一个个画出来，窗口外的不画", async ({
 	await expect(page.getByTestId("zoom-range")).toBeVisible();
 	await expect(child.locator("[data-band]")).toHaveCount(0);
 	// 每 5ms 一个，1 秒里 200 个左右，一个个画出来；窗口外的 400 多个不画。
-	await expect.poll(() => child.locator('[data-tone="plain"]').count()).toBeGreaterThanOrEqual(190);
-	expect(await child.locator('[data-tone="plain"]').count()).toBeLessThanOrEqual(205);
+	await expect
+		.poll(async () => {
+			const n = await child.locator('[data-tone="plain"]').count();
+			return n >= 190 && n <= 205;
+		})
+		.toBe(true);
 	// 最外层只有「保持 4 小时」在窗口里，裁到窗口的右端；结束在窗口以前的「预热」不画。
 	const top = tracksOf(page, "verify").locator('[data-track="top"]');
 	await expect(top.locator("[data-track-item]")).toHaveCount(1);
@@ -156,8 +160,9 @@ test("1280×800：版面分成几段，首屏就能看到动作表；收起时�
 	await expect(table.getByRole("columnheader", { name: "开始" })).toBeInViewport();
 	await expect(table.locator("tr[data-action-id]").first()).toBeInViewport();
 	// 时间线主体最高是视口的 30%（800 的 30% 是 240px），刻度吸在主体顶端。
-	const body = await timelineBody(page).boundingBox();
-	expect(body?.height).toBeLessThanOrEqual(240);
+	await expect
+		.poll(async () => (await timelineBody(page).boundingBox())?.height)
+		.toBeLessThanOrEqual(240);
 
 	const bp = panel(page);
 	const bottom = async () => {

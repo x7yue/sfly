@@ -109,8 +109,8 @@ test("时间线主体最高占视口的 30%：行少时按内容的高度，放�
 	const main = body(page);
 	// 9 行（2 条链、7 个节点）：1080 的 30% 放得下全部行，没有滚动，主体就是内容的高度。
 	await expect(timeline(page).locator("[data-chain-row], [data-node-row]")).toHaveCount(9);
-	expect(await main.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
-	expect(await main.evaluate((el) => el.clientHeight)).toBeLessThan(1080 * 0.3);
+	await expect.poll(() => main.evaluate((el) => el.scrollHeight <= el.clientHeight)).toBe(true);
+	await expect.poll(() => main.evaluate((el) => el.clientHeight)).toBeLessThan(1080 * 0.3);
 	await expect(timeline(page).locator('[data-node-row="probe"]')).toBeInViewport();
 
 	// 笔记本屏（768 高）：主体限在 30%（230px），放不下全部行，滚动；第一个执行中的节点（verify）看得见。

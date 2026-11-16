@@ -314,7 +314,7 @@ function countOnlyText(
 	time: (iso: string) => string,
 ): string {
 	const until = row.until === null ? "今" : ` ${time(row.until)} `;
-	return `${time(row.from)} 至${until}的 ${formatInteger(row.count)} 个「${row.name}」只计数，没有明细（${COUNT_ONLY_REASON[row.reason]}）`;
+	return `${time(row.from)} 至${until}的 ${formatInteger(row.count)} 个「${row.name}」${NODE_ACTIONS.countOnly}，没有明细（${COUNT_ONLY_REASON[row.reason]}）`;
 }
 
 /** 结果：成功不着色；失败是红色菱形加完整的原因（换行，不截断）；进行中是执行中的形状；标记是小旗。 */

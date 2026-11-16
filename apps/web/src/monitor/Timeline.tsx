@@ -15,7 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
 import { ActionLegend, ActionTracks } from "./ActionTracks";
-import type { PreparedTracks } from "./action-tracks";
+import type { PreparedTracks, TrackView } from "./action-tracks";
 import {
 	type NodeRef,
 	nodeKey,
@@ -60,7 +60,9 @@ const BRUSH_MIN = 0.004;
 /** 拖选范围小于轨道宽度的这个比例时不缩放。 */
 const ZOOM_MIN = 0.01;
 /** 主体最高占视口的约 30%（至少 150px、最多 420px），图表和底部面板总有地方；行不多时按内容的高度。 */
-const BODY_MAX_HEIGHT = "clamp(150px, 30dvh, 420px)";
+/** 时间线主体最高的高度（px）：默认的上限，拖动调高也不超过它。 */
+const TIMELINE_MAX_PX = 420;
+const BODY_MAX_HEIGHT = `clamp(150px, 30dvh, ${TIMELINE_MAX_PX}px)`;
 
 /** 区段种类对应的状态（docs/DESIGN-SYSTEM.md §6.1）。执行中的段不用实心青（只有段尾的脉冲头是实心）：长时间的运行里最大的几块不能全是饱和青。 */
 const SEGMENT_STATUS: Record<SegmentKind, StatusKind> = {
@@ -157,6 +159,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 		(chain) => chain.nodes.filter((n) => tracksOf(chain, n.node_id)).length,
 	);
 	const [width, setWidth] = useState(0);
+	const trackView = useMemo(() => ({ range, now, width }), [range, now, width]);
 	const [hidden, setHidden] = useState(false);
 	const rows = useRef<HTMLDivElement>(null);
 	const reveal = useRevealScope({ body, rows, chains, isOpen });
@@ -343,7 +346,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 								open={open}
 								range={range}
 								now={now}
-								width={width}
+								trackView={trackView}
 								dispatcher={dispatcherOf(run, chain)}
 								decls={decls}
 								display={display}
@@ -361,7 +364,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 					size={height}
 					measure={() => body.current?.clientHeight ?? 0}
 					min={56}
-					max={() => window.innerHeight * 0.62}
+					max={() => Math.min(window.innerHeight * 0.62, TIMELINE_MAX_PX)}
 					onResize={setHeight}
 					onReset={() => setHeight(null)}
 				/>
@@ -659,7 +662,7 @@ function ChainRows({
 	open,
 	range,
 	now,
-	width,
+	trackView,
 	dispatcher,
 	decls,
 	display,
@@ -672,8 +675,8 @@ function ChainRows({
 	open: boolean;
 	range: TimeRange;
 	now: number;
-	/** 轨道区域的像素宽度。 */
-	width: number;
+	/** 动作轨道看的范围、现在和像素宽度。 */
+	trackView: TrackView;
 	/** 派发这个子流程实例的异步任务节点；主链为 null。 */
 	dispatcher: RunNodeName | null;
 	decls: ReturnType<typeof documentNodes>;
@@ -765,8 +768,7 @@ function ChainRows({
 							node={node}
 							segments={segments[i] ?? []}
 							range={range}
-							now={now}
-							width={width}
+							trackView={trackView}
 							tracks={tracksOf(node.node_id)}
 							decls={decls}
 							display={display}
@@ -789,8 +791,7 @@ function NodeRow({
 	node,
 	segments,
 	range,
-	now,
-	width,
+	trackView,
 	tracks,
 	decls,
 	display,
@@ -801,8 +802,7 @@ function NodeRow({
 	node: NodeRunView;
 	segments: Segment[];
 	range: TimeRange;
-	now: number;
-	width: number;
+	trackView: TrackView;
 	tracks: PreparedTracks | undefined;
 	decls: ReturnType<typeof documentNodes>;
 	display: NodeDisplayLookup;
@@ -890,15 +890,7 @@ function NodeRow({
 				</div>
 			</div>
 			{tracks && (
-				<ActionTracks
-					prepared={tracks}
-					range={range}
-					now={now}
-					width={width}
-					node={ref}
-					name={name}
-					indent={indent}
-				/>
+				<ActionTracks prepared={tracks} view={trackView} node={ref} name={name} indent={indent} />
 			)}
 		</li>
 	);

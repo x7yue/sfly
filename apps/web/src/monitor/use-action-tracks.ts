@@ -32,7 +32,7 @@ interface Started {
 type PageQuery = { limit: number; failed?: "true"; name?: string };
 
 /** 一次尝试除了最新一页还要读的页：失败的、每种少见的名称。 */
-function extraPages(summary: ActionSummaryView): { query: PageQuery; version: string }[] {
+function extraPagesOf(summary: ActionSummaryView): { query: PageQuery; version: string }[] {
 	const pages: { query: PageQuery; version: string }[] = [];
 	const failed = summary.names.reduce((n, c) => n + c.failed, 0);
 	if (failed > 0) {
@@ -110,13 +110,13 @@ export function useActionTracks(
 			staleTime: Number.POSITIVE_INFINITY,
 		})),
 	});
-	const extras = withActions.flatMap((s, i) =>
+	const extraRequests = withActions.flatMap((s, i) =>
 		latest[i]?.data?.before == null
 			? []
-			: extraPages(s.summary).map((p) => ({ owner: s.attempt.task_id, ...p })),
+			: extraPagesOf(s.summary).map((p) => ({ owner: s.attempt.task_id, ...p })),
 	);
 	const extraResults = useQueries({
-		queries: extras.map(({ owner, query }) => ({
+		queries: extraRequests.map(({ owner, query }) => ({
 			...pageQuery(owner, query),
 			staleTime: Number.POSITIVE_INFINITY,
 		})),
@@ -141,29 +141,29 @@ export function useActionTracks(
 	}, [runningIds, queryClient]);
 
 	// 摘要里和一页相关的计数变了（或者尝试结束了）才重读那一页。
-	const versions = new Map<string, { key: QueryKey; version: string }>();
+	const pageVersions = new Map<string, { key: QueryKey; version: string }>();
 	withActions.forEach(({ attempt, summary }) => {
 		const { queryKey } = pageQuery(attempt.task_id, { limit: MAX_ACTION_PAGE });
 		const version = `${attempt.status}|${summary.total}|${summary.recent[0]?.id ?? ""}|${summary.running.length}`;
-		versions.set(JSON.stringify(queryKey), { key: queryKey, version });
+		pageVersions.set(JSON.stringify(queryKey), { key: queryKey, version });
 	});
-	for (const { owner, query, version } of extras) {
+	for (const { owner, query, version } of extraRequests) {
 		const status = started.find((s) => s.attempt.task_id === owner)?.attempt.status;
 		const { queryKey } = pageQuery(owner, query);
-		versions.set(JSON.stringify(queryKey), { key: queryKey, version: `${status}|${version}` });
+		pageVersions.set(JSON.stringify(queryKey), { key: queryKey, version: `${status}|${version}` });
 	}
-	const signature = [...versions.entries()].map(([k, v]) => `${k}=${v.version}`).join("\n");
-	const seen = useRef(new Map<string, string>());
-	// biome-ignore lint/correctness/useExhaustiveDependencies: signature 包含了 versions 的全部内容
+	const versionKey = [...pageVersions.entries()].map(([k, v]) => `${k}=${v.version}`).join("\n");
+	const seenVersions = useRef(new Map<string, string>());
+	// biome-ignore lint/correctness/useExhaustiveDependencies: versionKey 包含了 pageVersions 的全部内容
 	useEffect(() => {
-		for (const [hash, { key, version }] of versions) {
-			const before = seen.current.get(hash);
-			seen.current.set(hash, version);
+		for (const [hash, { key, version }] of pageVersions) {
+			const before = seenVersions.current.get(hash);
+			seenVersions.current.set(hash, version);
 			if (before !== undefined && before !== version) {
 				void queryClient.refetchQueries({ queryKey: key, exact: true });
 			}
 		}
-	}, [signature, queryClient]);
+	}, [versionKey, queryClient]);
 
 	const cache = useRef(new Map<string, { deps: unknown[]; prepared: PreparedTracks }>());
 	const byNode = new Map<string, { sources: TrackSource[]; deps: unknown[] }>();
@@ -171,7 +171,9 @@ export function useActionTracks(
 		const page: ActionPage | undefined = latest[i]?.data;
 		const pages = [
 			page,
-			...extras.flatMap((e, j) => (e.owner === attempt.task_id ? [extraResults[j]?.data] : [])),
+			...extraRequests.flatMap((e, j) =>
+				e.owner === attempt.task_id ? [extraResults[j]?.data] : [],
+			),
 		].filter((p): p is ActionPage => p !== undefined && !p.expired);
 		const source: TrackSource = {
 			taskId: attempt.task_id,
@@ -185,7 +187,7 @@ export function useActionTracks(
 				p.count_only.filter((c) => c.reason === "control_plane"),
 			),
 			startedAt: Date.parse(attempt.started_at),
-			endedAt: attempt.ended_at,
+			endedAt: attempt.ended_at === null ? null : Date.parse(attempt.ended_at),
 		};
 		const entry = byNode.get(node) ?? { sources: [], deps: [] };
 		byNode.set(node, entry);

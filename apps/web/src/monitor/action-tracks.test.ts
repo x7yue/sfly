@@ -203,6 +203,19 @@ describe("全程看时：太密的画成密度带", () => {
 		const tracks = layoutOf([s], view(0, 20_000, 5_000));
 		expect(tracks.child.flags.map((f) => f.item.name)).toEqual(["收到第一笔成交"]);
 	});
+
+	it("常见名称的标记挤在一起时也画小旗，隔开 12px 才再画一面", () => {
+		// 每 3ms 一个标记，400 个挤在 60px 里：画 5 面。
+		const marks = Array.from({ length: 400 }, (_, i) => mark(i + 3, 10 + i * 3, "成交"));
+		const dense = source({
+			summary: summary({ total: 400, marks: 400, reported: 400, names: [count("成交", 400)] }),
+			details: marks,
+		});
+		const flags = layoutOf([dense], view(0, 20_000, 5_000)).child.flags;
+		expect(flags).toHaveLength(5);
+		const gaps = flags.slice(1).map((f, i) => (f.at - (flags[i]?.at ?? 0)) * 1000);
+		expect(Math.min(...gaps)).toBeGreaterThan(11.99);
+	});
 });
 
 describe("放大以后：能分开的一个个画出来，窗口外的不画", () => {
@@ -256,7 +269,7 @@ describe("只计数的一段", () => {
 		const live = layoutOf([s], view(0, 10_000, 5_000));
 		expect(live.child.countOnly).toEqual([{ from: 0.15, to: 0.5 }]);
 		expect(live.top.countOnly).toEqual([]);
-		const done = layoutOf([{ ...s, endedAt: at(8_000) }], view(0, 10_000, 9_000));
+		const done = layoutOf([{ ...s, endedAt: T0 + 8_000 }], view(0, 10_000, 9_000));
 		expect(done.child.countOnly).toEqual([{ from: 0.15, to: 0.8 }]);
 	});
 
@@ -385,7 +398,7 @@ describe("合并明细和摘要", () => {
 			["t1:6", "ended", 0.4],
 			["t1:7", "running", 0.5],
 		]);
-		const done = layoutOf([{ ...s, endedAt: at(6_000) }], view(0, 10_000, 9_000));
+		const done = layoutOf([{ ...s, endedAt: T0 + 6_000 }], view(0, 10_000, 9_000));
 		expect(done.child.bars.map((b) => [b.item.key, b.state, b.to])).toEqual([
 			["t1:6", "ended", 0.4],
 			["t1:7", "ended", 0.6],

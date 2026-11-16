@@ -202,18 +202,18 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 **时间线区段**（`monitor/Timeline`）按同一套规则画，段的种类对应状态：完成 → `ok`、执行中 → `running`、失败的尝试 → `failed`、等待节点 → `warn`、排队等待 Agent → `queued`、已取消 → `cancelled`、已停止 → `stopped`，用 `STATUS[kind].area.box` 与 `tall`：
 
-- 轨道 12px；矮段在轨道里垂直居中 6px（用 `clip-path: inset()` 或内层元素只改可见高度，点击与悬停的热区保持满高）。
+- 节点行里的区段 12px 高；矮段在其中垂直居中 6px（用 `clip-path: inset()` 或内层元素只改可见高度，点击与悬停的热区保持满高）。
 - 完成是矮的 `ok-fill`；失败的尝试是满高实心红；两者相邻时在任何色觉下都靠高度分开。
 - 执行中满高，段尾加一个真实元素的脉冲头（实心 `signal`，`pulse-ring`），是监控页唯一按节点脉冲的地方。
 - 已取消是矮的空心虚线框（不再是斜纹）；排队是矮的灰色斜纹；等待是满高的琥珀底加描边，三者形状互不相同。
-- 图例按同样的形状画。时间线轨道与图例色块加 `data-viz`（见 6.2）。
+- 图例按同样的形状画。时间线上画区段和动作的区域与图例色块加 `data-viz`（见 6.2）。
 
 **动作轨道**（`monitor/ActionTracks`，排版在 `monitor/action-tracks.ts`）：有动作的节点下面两行，「动作」（最外层）和「└ 子动作」，行高和节点行一样，标签 12px 三级文字，随链收起。轨道是一张图：`role="img"`，可访问名称概括画了什么（正在做的、从几点起只计数、几个失败的、少见的子动作、几个标记），以「逐个查看见下方动作表」结尾；悬停提示写名称、开始、耗时和结果。
 
-- 够长、一条条画出来的动作：已结束的中性 `border-strong`，进行中的按 `STATUS.running.area`（`signal-fill` 底加 `signal-line` 描边，和执行中的区段一样，不脉冲：段尾的脉冲头仍是每个执行中节点唯一的一处），失败的按 `STATUS.failed.area`；最外层 12px 高、子动作 10px，够宽时在里面写名称（12px）。
+- 够长、一条条画出来的动作：进行中的按 `STATUS.running.area`（`signal-fill` 底加 `signal-line` 描边，和执行中的区段一样，不脉冲：段尾的脉冲头仍是每个执行中节点唯一的一处），失败的按 `STATUS.failed.area`，已结束的中性 `border-strong`。动作条都是 14px 高（描边里面放得下 12px 的名称），不按状态分高低：状态色块靠高低分开的是失败的红和成功的绿，这里已结束的是暗灰不是绿，失败的红比它亮得多，各种色觉下都分得开；够宽时在条里写名称（12px）。
 - 分不开的画成密度带：中性 `border-strong` 分三档不透明度，越密越实，不用状态色。
-- 只计数的段是浅斜线（`border-strong` 的 1px 45° 细线加 `border-soft` 描边），和排队段的灰色斜纹（节点行上的区段）、`FocusChart` 里没有新数据的斜线（图表的绘图区）不在同一种元素上。
-- 密度带上要认出来的：失败的动作是比带高的红色竖线（取 `STATUS.failed.tone`），少见的子动作是白色竖线（`fg-1`），标记是小旗（`FlagIcon`，`fg-1`，和「动作」页里标记的小旗一样）。白色在这里只是「少见」，不是选中，也不是主操作。
+- 只计数的段是浅斜纹（和「动作」页里只计数的那一行是同一个意思）：`border-strong` 的 1px 45° 细线加 `border-soft` 描边，和排队段 135° 的灰色斜纹方向相反，也不在同一种行上（排队段在节点行里）；`FocusChart` 里没有新数据的斜线只在图表的绘图区里。
+- 密度带上要认出来的：失败的动作是比带高的红色竖线（取 `STATUS.failed.tone`），少见的子动作是白色竖线（`fg-1`），标记是小旗（`FlagIcon`，`fg-1`，和「动作」页里标记的小旗一样）。白色竖线和小旗用的是文字色 `fg-1`，只表示「少见」和「标记」，不是选中（节点行左侧的白色短条）也不是主操作。
 - 图例：有动作的节点时在区段的图例后面加「动作」「只计数」「失败的动作」「少见的动作」「标记」；窗口窄于 2xl（1536px）时一行放不下两套，只留动作轨道的这几项。
 - 范围里的节点（选中的）是 `selected-row`。打开页面、换范围时时间线滚到它，版面变高以后再对准一次，用户自己滚动时间线以后不再跟着跳。
 
@@ -221,7 +221,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 ### 6.2 强制颜色与高对比度
 
-- **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态形状是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-pressed="true"`、`aria-selected="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边；数据图形（链路进度、缩略图、槽位条、时间线轨道与图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
+- **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态形状是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-pressed="true"`、`aria-selected="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边；数据图形（链路进度、缩略图、槽位条、时间线的区段与动作轨道、图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
 - **更高对比度**（`prefers-contrast: more`）：`tokens.css` 末尾的加强档，见第 2 节。
 
 ### 6.3 空、加载、错误、禁用
@@ -310,7 +310,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
 - `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「还没有数据」「这次尝试没有上报数据」）。
 - 运行监控、运行抽屉与关注项读数用的：`MONITOR_VIEW_LABEL`（概览 / 详情两个视图的名称）、`FINAL_VALUE_LABEL`（最终值）、`FOCUS` 里异常的文字（`attention`「需要注意」，`logReason`、`staleFor`、`sourceFailed`、`retryReason` 四种原因的短句，`logDetail`、`staleDetail`、`noDataDetail`、`failedDetail`、`retryDetail`「需要注意」每行写清哪个节点、为什么，`dataUpdated`「数据更新于 HH:MM:SS」）、`LOG_LEVEL_LABEL`（日志级别的写法 DEBUG / INFO / WARN / ERROR，日志列表、级别筛选、运行抽屉和异常原因共用）与 `LOG_ALERT_LEVELS`（「WARN / ERROR」）、`MESSAGE.logsExpired`（日志已过保留期）、`chainCountLabel()`（「N 条链 · N 个节点」）、`LIST_LABEL`（列表的可访问名称：图例、各链进度、概览里执行中的节点、运行抽屉里进行中的节点）；`MESSAGE.noRunningNodes`（没有执行中的节点）、`MESSAGE.noActiveNodes`（没有进行中的节点）。概览只列在 Agent 上的节点（准备中、执行中，统称执行中）；运行抽屉列排队中、准备中、执行中、等待中的节点，标题和列表名用 `ACTIVE_LABEL`（进行中），不用任何一个节点状态名。「进行中」在运行记录页指运行（进行中的卡片），在运行抽屉指节点，在运行监控「动作」页的结果里指还没结束的动作，几处不在同一屏。
-- `NODE_ACTIONS`：动作与标记（GLOSSARY「动作」「标记」）共用的文字：`doing`（「正在做」：画布卡片和读屏的「正在做 X」、「动作」页的第一组）；`results`（动作的结果：进行中、成功、失败、未结束、标记），是动作自己的一组状态文字，不是运行状态，不引用 `RUN_STATUS_LABEL`，「进行中」引用 `ACTIVE_LABEL`。「动作」页的组名、表头、只计数的一段只在这一页出现，写在 `ActionTable` 里。和 `ACTION`（界面上的通用操作）不是一回事。
+- `NODE_ACTIONS`：动作与标记（GLOSSARY「动作」「标记」）共用的文字：`doing`（「正在做」：画布卡片和读屏的「正在做 X」、「动作」页的第一组）；`results`（动作的结果：进行中、成功、失败、未结束、标记），是动作自己的一组状态文字，不是运行状态，不引用 `RUN_STATUS_LABEL`，「进行中」引用 `ACTIVE_LABEL`；`countOnly`（「只计数」：「动作」页只计数的那一行、时间线上动作轨道的浅斜纹和图例）。「动作」页的组名、表头只在这一页出现，写在 `ActionTable` 里。和 `ACTION`（界面上的通用操作）不是一回事。
 - `DOC_PAGE`：界面里引用的开发文档页名（与 `docs/guide/pages.json` 的标题一致）。
 
 规则：两处及以上用到的文字、状态与术语放在这里，新增时先加到这里再引用，不要在组件里另写一份；只在一个页面出现的说明文字（空状态说明、提示语）留在组件里。

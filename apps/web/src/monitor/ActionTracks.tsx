@@ -8,14 +8,16 @@ import {
 	type BandRun,
 	layoutTracks,
 	type PreparedTracks,
+	TRACK_IDS,
 	type TrackId,
 	type TrackItem,
 	type TrackLayout,
 	type TrackOverview,
 	type TrackTick,
+	type TrackView,
 } from "./action-tracks";
 import type { NodeRef } from "./monitor-state";
-import { NODE_ROW_HEIGHT, type TimeRange } from "./timeline-model";
+import { NODE_ROW_HEIGHT } from "./timeline-model";
 
 /** 轨道的名字（标签列）和图例。 */
 const TRACK_LABEL: Record<TrackId, string> = { top: TERM.action, child: `子${TERM.action}` };
@@ -24,7 +26,7 @@ const RARE = `少见的${TERM.action}`;
 /** 没读到的明细：时间线只读每次尝试最新的一页（和失败的、少见的），更早的只知道个数（use-action-tracks.ts）。 */
 const UNREAD = "这段的明细没有读进时间线，按个数平均画；逐个查看见下方动作表";
 
-/** 只计数的段：浅斜线（和排队段的灰色斜纹不在同一种行上，密度也不同）。 */
+/** 只计数的段：浅斜纹，45°（排队段的灰色斜纹是 135°，在节点行上）。 */
 const HATCH =
 	"border border-border-soft bg-[repeating-linear-gradient(45deg,var(--border-strong)_0_1px,transparent_1px_4px)]";
 const BAND_LEVEL: Record<BandRun["level"], string> = {
@@ -32,7 +34,10 @@ const BAND_LEVEL: Record<BandRun["level"], string> = {
 	2: "bg-border-strong/70",
 	3: "bg-border-strong",
 };
-/** 一条条画出来的动作：已结束的中性灰，进行中、失败的按状态表（执行中是淡底加 signal-line 描边）。 */
+/**
+ * 一条条画出来的动作：已结束的中性灰，进行中、失败的按状态表（执行中是淡底加 signal-line 描边）。高度都一样，
+ * 不按状态分高低（docs/DESIGN-SYSTEM.md §6.1「动作轨道」）。
+ */
 const BAR_STATE = {
 	ended: "bg-border-strong",
 	running: STATUS.running.area.box,
@@ -47,34 +52,27 @@ const LABEL_PX = 72;
  */
 export function ActionTracks({
 	prepared,
-	range,
-	now,
-	width,
+	view,
 	node,
 	name,
 	indent,
 }: {
 	prepared: PreparedTracks;
-	range: TimeRange;
-	now: number;
-	/** 轨道区域的像素宽度。 */
-	width: number;
+	/** 看的范围、现在、轨道区域的像素宽度。 */
+	view: TrackView;
 	node: NodeRef;
 	/** 节点的名字（读屏名称里用）。 */
 	name: string;
 	indent: number;
 }) {
-	const layout = useMemo(
-		() => layoutTracks(prepared, { range, now, width }),
-		[prepared, range, now, width],
-	);
+	const layout = useMemo(() => layoutTracks(prepared, view), [prepared, view]);
 	return (
 		<div
 			role="img"
 			aria-label={tracksLabel(name, prepared.overview)}
 			data-action-tracks={node.nodeId}
 		>
-			{(["top", "child"] as const).map((id) => (
+			{TRACK_IDS.map((id) => (
 				<div
 					key={id}
 					data-track={id}
@@ -95,7 +93,7 @@ export function ActionTracks({
 						data-node={node.nodeId}
 						className="relative mr-3.5 h-full cursor-pointer"
 					>
-						<Track layout={layout[id]} width={width} top={id === "top"} />
+						<Track layout={layout[id]} width={view.width} />
 					</div>
 				</div>
 			))}
@@ -104,12 +102,13 @@ export function ActionTracks({
 }
 
 const pct = (f: number) => `${f * 100}%`;
-const span = (from: number, to: number) => ({
+/** 从 `from` 到 `to`（范围里的比例）的位置和宽度。 */
+const place = (from: number, to: number) => ({
 	left: pct(from),
 	width: pct(Math.max(0, to - from)),
 });
 
-function Track({ layout, width, top }: { layout: TrackLayout; width: number; top: boolean }) {
+function Track({ layout, width }: { layout: TrackLayout; width: number }) {
 	return (
 		<>
 			{layout.countOnly.map((s) => (
@@ -117,7 +116,7 @@ function Track({ layout, width, top }: { layout: TrackLayout; width: number; top
 					key={`c${s.from}`}
 					data-count-only
 					className={cn("absolute top-2 h-2.5 rounded-[2px]", HATCH)}
-					style={span(s.from, s.to)}
+					style={place(s.from, s.to)}
 				/>
 			))}
 			{layout.band.map((r) => (
@@ -126,7 +125,7 @@ function Track({ layout, width, top }: { layout: TrackLayout; width: number; top
 					data-band={r.level}
 					title={r.unread ? UNREAD : undefined}
 					className={cn("absolute top-2 h-2.5", BAND_LEVEL[r.level])}
-					style={span(r.from, r.to)}
+					style={place(r.from, r.to)}
 				/>
 			))}
 			{layout.bars.map((b) => (
@@ -135,11 +134,11 @@ function Track({ layout, width, top }: { layout: TrackLayout; width: number; top
 					data-track-item={b.item.key}
 					title={itemTitle(b.item)}
 					className={cn(
-						"absolute overflow-hidden rounded-[2px]",
-						top ? "top-1.75 h-3" : "top-2 h-2.5",
+						// 14px 高：执行中的描边里面还放得下 12px 的名称。
+						"absolute top-1.5 h-3.5 overflow-hidden rounded-[2px]",
 						BAR_STATE[b.state],
 					)}
-					style={span(b.from, b.to)}
+					style={place(b.from, b.to)}
 				>
 					{(b.to - b.from) * width >= LABEL_PX && (
 						<span className="block truncate px-1.5 text-xs/3 text-fg-1">{b.item.name}</span>
@@ -153,7 +152,7 @@ function Track({ layout, width, top }: { layout: TrackLayout; width: number; top
 					data-tone={t.tone}
 					title={itemTitle(t.item)}
 					className={cn("absolute", TICK[t.tone], t.marker && "-translate-x-1/2")}
-					style={t.marker ? { left: pct(t.from) } : span(t.from, t.to)}
+					style={t.marker ? { left: pct(t.from) } : place(t.from, t.to)}
 				/>
 			))}
 			{layout.flags.map((f) => (

@@ -20,7 +20,8 @@ import type { TimeRange } from "./timeline-model";
  * - 够长的动作（{@link LONG_PX} 以上）一条条画出来（最多 {@link MAX_BARS} 条）。
  * - 其余的按它占的像素分桶（每 {@link BUCKET_PX} 个像素一桶）：桶里只有它一个就单独画成短线；
  *   和别的动作挤在同一桶里就是分不开，这些桶连成密度带，按每桶的个数分三档。
- * - 密度带上失败的动作画红色短线、少见名称的动作画白色短线、少见名称的标记画小旗，每桶每种至多一个。
+ * - 密度带上失败的动作画红色短线、少见名称的子动作画白色短线，每桶每种至多一个；标记画小旗，少见名称的每桶一面，
+ *   常见名称的挤在一起时隔开 {@link FLAG_PX} 才再画一面。
  * - 只计数的段画成斜线；最新一页不是全部明细时，没读到的那些只知道个数，平均分到尝试开始到最早读到的那条之间，
  *   并进密度带。
  * - 完全在范围外的不画，跨过边缘的裁到范围里。
@@ -34,6 +35,8 @@ export const TRACK_IDS: readonly TrackId[] = ["top", "child"];
 export const BUCKET_PX = 2;
 /** 至少这么长（像素）的动作一条条画出来，不进密度带。 */
 export const LONG_PX = 16;
+/** 小旗的宽度（像素）：挤在一起的常见名称的标记，隔开这么远才再画一面。 */
+export const FLAG_PX = 12;
 /** 每条轨道一条条画出来的动作最多这么多；多出来的按短动作处理，进密度带。 */
 export const MAX_BARS = 200;
 /** 密度带三档的起点：每桶至少几个（含没读到、按平均分进来的）。 */
@@ -66,8 +69,8 @@ export interface TrackSource {
 	controlPlanePeriods: readonly CountOnlyPeriod[];
 	/** 尝试开始执行的时刻（毫秒）。 */
 	startedAt: number;
-	/** 尝试结束的时刻；还在执行时为 null。 */
-	endedAt: string | null;
+	/** 尝试结束的时刻（毫秒）；还在执行时为 null。 */
+	endedAt: number | null;
 }
 
 /** 轨道上的一个动作或标记：明细和摘要里的正在做、最近结束、最近失败合在一起，同一尝试的同一 ID 只有一个。 */
@@ -176,7 +179,7 @@ function sourceItems(source: TrackSource) {
 	const items = new Map<number, { item: TrackItem; depth: number }>();
 	/** 每种名称读到了几条明细（只算分页读到的：摘要里最近的那些可能是只计数的）。 */
 	const paged = new Map<string, Set<number>>();
-	const taskEnd = source.endedAt === null ? null : Date.parse(source.endedAt);
+	const taskEnd = source.endedAt;
 	const put = (id: number, depth: number, item: TrackItem) => {
 		const before = items.get(id);
 		if (before && (before.item.end !== null || item.end === null)) return;
@@ -281,7 +284,11 @@ export function prepareTracks(sources: readonly TrackSource[]): PreparedTracks {
 		overview.marks += summary.marks;
 		overview.actions += summary.total - summary.marks;
 		const periods = [
-			...sdkCountOnlyPeriods(summary, {}, source.endedAt),
+			...sdkCountOnlyPeriods(
+				summary,
+				{},
+				source.endedAt === null ? null : new Date(source.endedAt).toISOString(),
+			),
 			...source.controlPlanePeriods,
 		];
 		for (const p of periods) {
@@ -354,7 +361,7 @@ const levelOf = (count: number): BandRun["level"] =>
 	count >= LEVEL_FROM[2] ? 3 : count >= LEVEL_FROM[1] ? 2 : 1;
 
 /**
- * `highlightRare`：少见名称的动作画白色短线（子动作这条）。最外层的动作多半是一个个阶段，个数都少，
+ * `highlightRare`：少见名称的动作画白色短线（子动作这条）。最外层的动作多半只有几个、每个持续很久，
  * 不再单独突出；少见名称的标记在两条轨道上都画小旗。
  */
 function layoutTrack(
@@ -422,6 +429,12 @@ function layoutTrack(
 	const failedMarked = new Set<number>();
 	const rareMarked = new Set<number>();
 	const flagged = new Set<number>();
+	/** 上一面小旗的位置（像素）：挤在一起的常见标记隔开 {@link FLAG_PX} 才再画一面。 */
+	let lastFlag = Number.NEGATIVE_INFINITY;
+	const flag = (at: number, item: TrackItem) => {
+		out.flags.push({ at, item });
+		lastFlag = at * width;
+	};
 	for (let k = 0; k < shorts; k++) {
 		const item = items[shortIndex[k] as number] as TrackItem;
 		const first = shortFirst[k] as number;
@@ -431,14 +444,14 @@ function layoutTrack(
 		let crowded = false;
 		for (let b = first; b <= last && !crowded; b++) crowded = dense(b);
 		if (!crowded) {
-			if (item.kind === "mark") out.flags.push({ at: from, item });
+			if (item.kind === "mark") flag(from, item);
 			else out.ticks.push({ from, to, item, tone: toneOf(item, highlightRare), marker: false });
 			continue;
 		}
 		if (item.kind === "mark") {
-			if (item.rare && !flagged.has(first)) {
+			if ((item.rare && !flagged.has(first)) || from * width - lastFlag >= FLAG_PX) {
 				flagged.add(first);
-				out.flags.push({ at: from, item });
+				flag(from, item);
 			}
 		} else if (item.result === "failed") {
 			if (!failedMarked.has(first)) {
