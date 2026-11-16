@@ -53,7 +53,7 @@ import {
 } from "./context";
 import { edgeTypes } from "./FlowEdge";
 import { type DocEdge, docEdgeOf, edgeId, layoutOf, type SfEdge, type SfNode } from "./flow";
-import { createFrameScheduler, followViewport, framedInView } from "./follow";
+import { createFrameScheduler, followViewport, framedInView, rectInView } from "./follow";
 import {
 	type CanvasInsets,
 	FIT_MAX_ZOOM,
@@ -547,20 +547,15 @@ export function FlowCanvas({
 			const node = flow.getInternalNode(id);
 			const el = wrapper.current;
 			if (!node || !el) return false;
-			const { x, y, zoom } = flow.getViewport();
+			const viewport = flow.getViewport();
+			const { zoom } = viewport;
 			const { x: nx, y: ny } = node.internals.positionAbsolute;
 			// 运行状态下卡片会长高：按量出来的高度判断。
 			const height = node.measured.height ?? NODE_HEIGHT;
 			const W = el.clientWidth;
 			const H = el.clientHeight;
-			const left = nx * zoom + x;
-			const top = ny * zoom + y;
-			const visible =
-				left >= area.left &&
-				top >= area.top &&
-				left + NODE_WIDTH * zoom <= W - area.right &&
-				top + height * zoom <= H - area.bottom;
-			if (visible) return false;
+			const rect = { x: nx, y: ny, width: NODE_WIDTH, height };
+			if (rectInView(rect, { viewport, size: { width: W, height: H }, area })) return false;
 			const cx = area.left + (W - area.left - area.right) / 2;
 			const cy = area.top + (H - area.top - area.bottom) / 2;
 			void flow.setViewport(
