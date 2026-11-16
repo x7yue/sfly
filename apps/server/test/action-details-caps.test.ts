@@ -121,6 +121,12 @@ describe("动作明细的控制面兜底上限", () => {
 		const marks = (name: string, firstId: number, count: number, from: number) =>
 			Array.from({ length: count }, (_, k) => agent.actionMark(firstId + k, name, from + k));
 
+		const summary = async () =>
+			actionsApi.summary.response.parse(
+				await (await cp.fetch(`/tasks/${task.taskId}/actions/summary`)).json(),
+			);
+		expect((await summary()).control_plane_capped).toBe(false);
+
 		// 「下单」存满 5 万条，再来的标记和普通的开始都被丢弃；补发的失败动作照常存下。
 		send(marks("下单", 1, 50_000, T0 + 1));
 		send([
@@ -175,5 +181,7 @@ describe("动作明细的控制面兜底上限", () => {
 		expect(warnings[0]?.text).toContain("100000");
 		expect(warnings[0]?.text).toContain("50000");
 		expect(warnings[0]?.text).toContain("不再保存");
+		// 摘要写明控制面丢弃过明细（SDK 的摘要里没有超出上限，检查器靠它说明哪些只计数）。
+		expect(await summary()).toMatchObject({ capped: false, control_plane_capped: true });
 	}, 60_000);
 });
