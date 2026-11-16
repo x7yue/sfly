@@ -159,13 +159,13 @@ describe("读数区显示哪几项、排几列", () => {
 		item("g"),
 	];
 
-	it("取前几格，其余只计数；「N 项需要注意」数全部有异常的", () => {
+	it("取前几格，其余只计数", () => {
 		const wide = readoutPlan(ITEMS, 753, null);
 		expect(titles(wide.shown)).toEqual(["a", "b", "c", "d"]);
-		expect([wide.more, wide.attention]).toEqual([3, 2]);
+		expect(wide.more).toBe(3);
 		const narrow = readoutPlan(ITEMS, 624, null);
 		expect(titles(narrow.shown)).toEqual(["a", "b", "c"]);
-		expect([narrow.more, narrow.attention]).toEqual([4, 2]);
+		expect(narrow.more).toBe(4);
 	});
 
 	it("3 个以上运行时是有异常的加上前两项：异常不到两项时补满两项", () => {
@@ -187,7 +187,7 @@ describe("读数区显示哪几项、排几列", () => {
 		];
 		const narrow = readoutPlan(items, 624, null);
 		expect(titles(narrow.shown)).toEqual(["a", "b", "c", "d", "e"]);
-		expect([narrow.more, narrow.attention]).toEqual([1, 5]);
+		expect(narrow.more).toBe(1);
 		const crowded = readoutPlan(items, 753, 2);
 		expect(titles(crowded.shown)).toEqual(["a", "b", "c", "d", "e"]);
 		expect(crowded.more).toBe(1);
@@ -197,7 +197,7 @@ describe("读数区显示哪几项、排几列", () => {
 		const few = readoutPlan([item("a"), item("b")], 753, null);
 		expect(titles(few.shown)).toEqual(["a", "b"]);
 		expect(few.more).toBe(0);
-		expect(readoutPlan([], 753, null)).toEqual({ shown: [], more: 0, attention: 0, columns: 0 });
+		expect(readoutPlan([], 753, null)).toEqual({ shown: [], more: 0, columns: 0 });
 	});
 
 	it("列数：显示的项数加上「还有 N 个关注项」那一格，最多是按宽度能放的格数加一；异常换行时不超过它", () => {

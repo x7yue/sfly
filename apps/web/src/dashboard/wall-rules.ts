@@ -1,6 +1,6 @@
 import type { AgentView, RunFocusItem } from "@sfly/schema";
 import { acceptsTasks, agentStatusView } from "#/agents/agent-status";
-import { type FocusPreview, focusPreview } from "#/focus/focus-preview";
+import { countAttention, type FocusPreview, focusPreview } from "#/focus/focus-preview";
 
 /**
  * 实况墙在数量变多时的退化规则（外壳页方案 4.2）。长链折叠在线路组件里（`components/run-lines` 的 `foldStations`）。
@@ -57,8 +57,10 @@ export function readoutPlan<T extends Pick<RunFocusItem, "anomaly">>(
 	width: number,
 	activeLimit: number | null,
 ): ReadoutPlan<T> {
-	const attention = items.filter((item) => item.anomaly !== null).length;
-	const preview = focusPreview(items, Math.max(readoutCells(width, activeLimit), attention));
+	const preview = focusPreview(
+		items,
+		Math.max(readoutCells(width, activeLimit), countAttention(items)),
+	);
 	const cells = preview.shown.length + (preview.more > 0 ? 1 : 0);
 	return { ...preview, columns: Math.min(cells, readoutCells(width, null) + 1) };
 }

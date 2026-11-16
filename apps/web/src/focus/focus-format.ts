@@ -109,6 +109,24 @@ export function anomalyText(
 	}
 }
 
+/**
+ * 可访问名称里的「2 项需要注意：total 已 2m 10s 无新数据；latency 1 条 WARN · 10:58:41」：有异常的项各写名字（`nameOf`）和
+ * 原因（{@link anomalyText}）；没有异常时为 null。画布节点卡片和 Agent 槽位格共用。
+ */
+export function attentionSummary<T extends Pick<RunFocusItem, "anomaly" | "source">>(
+	items: readonly T[],
+	generatedAt: string,
+	nameOf: (item: T) => string,
+): string | null {
+	const reasons = items.flatMap((item) => {
+		const reason = anomalyText(item, generatedAt);
+		return reason === null ? [] : [`${nameOf(item)} ${reason}`];
+	});
+	return reasons.length === 0
+		? null
+		: `${FOCUS.attentionCount(reasons.length)}：${reasons.join("；")}`;
+}
+
 const staleFor = (since: string, generatedAt: string) =>
 	FOCUS.staleFor(formatElapsed(Date.parse(generatedAt) - Date.parse(since)));
 

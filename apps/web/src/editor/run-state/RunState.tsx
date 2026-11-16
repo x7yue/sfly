@@ -34,6 +34,7 @@ import { nodeStatusView, StatusPill } from "#/components/status";
 import { AnomalyMark } from "#/focus/AnomalyNote";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { FocusRows } from "#/focus/FocusRows";
+import { FocusTally } from "#/focus/FocusTally";
 import { focusPreview, nodeFocusItems, nodePrimaryItem } from "#/focus/focus-preview";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
@@ -639,13 +640,11 @@ function RunFocusList({
 	onSelect(item: RunFocusItem): void;
 }) {
 	const headingId = useId();
-	const attention = focus.items.filter((item) => item.anomaly).length;
 	return (
 		<section aria-labelledby={headingId}>
 			<SectionHeading id={headingId}>
 				{TERM.focusItem}
-				<span className="font-mono">{focus.items.length}</span>
-				{attention > 0 && <span className="text-warn-fg">{FOCUS.attentionCount(attention)}</span>}
+				<FocusTally items={focus.items} />
 			</SectionHeading>
 			<FocusReadoutStrip
 				items={focus.items}
