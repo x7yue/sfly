@@ -31,7 +31,8 @@ Cindy worktree 自动生成的 `cindy/<名字>` 分支，推送前改成上面�
   （用例多时次数少，`scripts/e2e-changed.sh`），没有改动的 spec 时跳过；`main` 上的 push 不跑重复这一步。
   这一步失败说明用例不稳定，处理见 CODING_STANDARDS「测试」。
 - 推送前的钩子（`.githooks/pre-push`）只跑版本号、生成代码、lint、类型检查；测试由 CI 负责，推送前想自己跑用 `pnpm test`。
-- `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
+- `check` 是汇总：`rust`、`py`、`ts`、`package` 四个 job 全部成功它才通过。`e2e` 也是汇总：端到端测试分 4 片并行
+  （`e2e (1/4)` 到 `e2e (4/4)`），全部成功它才通过。规则集只认 `check` 与 `e2e` 这两个名字。
 - CI 失败时先用 `pnpm ci:failures <运行 ID>` 看失败的测试和断言差异，不用下载完整日志。
 
 ## PR
