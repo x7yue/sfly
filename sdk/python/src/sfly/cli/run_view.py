@@ -145,9 +145,14 @@ def duration_ms(start: str | None, end: str | None) -> int | None:
 
 
 def format_duration(ms: int | None) -> str:
-    """`0.4s`、`12s`、`3m05s`、`1h02m`：不到 10 秒保留一位小数；没有时为 `-`。"""
+    """`16ms`、`1.2s`、`12s`、`3m05s`、`1h02m`：不到 1 秒写毫秒，不到 10 秒保留一位小数。
+
+    没有时为 `-`。命令行里的耗时都用它（`sfly run`、`sfly debug` 的动作）。
+    """
     if ms is None:
         return "-"
+    if ms < 1000:
+        return f"{ms}ms"
     if ms < 10_000:
         return f"{ms / 1000:.1f}s"
     seconds = round(ms / 1000)

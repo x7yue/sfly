@@ -36,6 +36,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any
 
+from sfly.cli.run_view import format_duration
 from sfly.context import ActionResult
 from sfly.local import (
     DEFAULT_GRACE,
@@ -85,22 +86,12 @@ _RESULT_TEXT: dict[ActionResult, str] = {
 _MAX_INDENT = 3
 
 
-def _duration(ms: int) -> str:
-    if ms < 1000:
-        return f"{ms} ms"
-    if ms < 60_000:
-        return f"{ms / 1000:.1f} s"
-    minutes, seconds = divmod(ms // 1000, 60)
-    hours, minutes = divmod(minutes, 60)
-    return f"{hours}h{minutes:02d}m{seconds:02d}s" if hours else f"{minutes}m{seconds:02d}s"
-
-
 def format_action(record: ActionRecord) -> str:
     """一个动作开始、结束，或一个标记的终端输出：
 
     12:00:01.234 动作  开始 #7 下单 订单=1001
-    12:00:01.250 动作  成功 #7 下单 16 ms 订单=1001 回报=已成交
-    12:00:01.251 动作  失败 #8 下单 3 ms 订单=1002 原因：ValueError: 拒单
+    12:00:01.250 动作  成功 #7 下单 16ms 订单=1001 回报=已成交
+    12:00:01.251 动作  失败 #8 下单 3ms 订单=1002 原因：ValueError: 拒单
     12:00:01.300 标记  收到第一笔成交 订单=1001
     """
     indent = "  " * min(record.depth, _MAX_INDENT)
@@ -114,7 +105,7 @@ def format_action(record: ActionRecord) -> str:
     reason = f" 原因：{record.reason}" if record.reason else ""
     return (
         f"{_clock(ended)} 动作  {indent}{_RESULT_TEXT[record.result]} #{record.id} {record.name} "
-        f"{_duration(record.duration_ms)}{fields}{reason}"
+        f"{format_duration(record.duration_ms)}{fields}{reason}"
     )
 
 

@@ -288,7 +288,7 @@ def action_lines(stderr: str) -> list[str]:
     """标准错误里动作和标记的行，去掉开头的时间；耗时换成 `<耗时>`。"""
     lines = [re.sub(r"^\d\d:\d\d:\d\d\.\d{3} ", "", line) for line in stderr.splitlines()]
     return [
-        re.sub(r"(?<= )\d+(\.\d)? (ms|s)(?= |$)", "<耗时>", line)
+        re.sub(r"(?<= )\d+(\.\d)?(ms|s)(?= |$)", "<耗时>", line)
         for line in lines
         if line.startswith(("动作 ", "标记 "))
     ]
@@ -341,7 +341,7 @@ def test_every_result_an_action_can_end_with_has_its_own_printed_text() -> None:
             result=ACTION_RESULTS[result],
             duration_ms=5,
         )
-        assert f"动作  {text} #1 下单 5 ms" in format_action(record)
+        assert f"动作  {text} #1 下单 5ms" in format_action(record)
 
 
 def test_background_processes_go_under_the_project_procs_dir_named_after_the_run(
