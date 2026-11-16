@@ -85,8 +85,8 @@ export const FOCUS = {
 	itemCount: (count: number) => `${count} 个${TERM.focusItem}`,
 	/** 「1 项需要注意」：画布节点卡片的可访问名称、画布检查器里关注项的标题旁。 */
 	attentionCount: (count: number): string => `${count} 项${FOCUS.attention}`,
-	/** 只放得下前几项时，其余的个数：画布节点卡片的最后一行。 */
-	moreItems: (count: number) => `还有 ${count} 个${TERM.focusItem}`,
+	/** 只放得下前几项时，其余的个数（`moreLabel` 加上「关注项」）：画布节点卡片的最后一行。 */
+	moreItems: (count: number): string => `${moreLabel(count)}${TERM.focusItem}`,
 	/** 概览里最后一段的标题：这次运行里没有进入「需要注意」的 WARN / ERROR。 */
 	otherAlerts: "其他警告与错误",
 	/** 上面那一段没有内容时的说明。 */
