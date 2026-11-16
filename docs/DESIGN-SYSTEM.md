@@ -101,7 +101,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
   原型里的非整档字号归并：12.5 → 13（正文、菜单、面包屑）、11.5 → 12（徽标、提示、字段说明）、10 → 11；15（弹窗标题）→ 14。
 - 圆角只有 `rounded-sm` 4、`rounded-md` 6、`rounded-lg` 8、`rounded-xl` 12（另有 `rounded-full`）。小于 12px 的指示元素（进度段）用 2px。组件里不写色值、不用其他圆角任意值（`src/styles/design-rules.test.ts` 检查）。
 - 控件高度：按钮 / 输入框 30（`h-7.5`），小号 26（`h-6.5`）；顶栏 48（`--topbar-height`）；侧栏 208 / 折叠 56；kbd 18。
-- 图标（lucide）：根部的 `LucideProvider` 统一线宽为屏幕上的 1.5px（`nonScalingStroke`），不随图标尺寸变粗变细；图标尺寸只用 12 / 14 / 16（`size-3`、`size-3.5`、`size-4`）。勾选框的对勾加粗到 2px。
+- 图标（lucide）：根部的 `LucideProvider` 统一线宽为屏幕上的 1.5px（`nonScalingStroke`），不随图标尺寸变粗变细；图标尺寸只用 12 / 14 / 16（`size-3`、`size-3.5`、`size-4`）。勾选框的对勾加粗到 2px。例外：画布里的图标按 em 取尺寸（`size-[1em]`），随语义缩放后的卡片文字一起变化，不受 12 / 14 / 16 的限制（先例：`components/canvas/zoom-text.ts` 的 `KIND_CHIP`，`CardFocus.tsx` 的眼睛图标）。
 
 ## 4. CSS layer
 
@@ -306,6 +306,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选、展开、收起……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「还没有数据」「这次尝试没有上报数据」）。
 - 运行监控、运行抽屉与关注项读数用的：`MONITOR_VIEW_LABEL`（概览 / 详情两个视图的名称）、`FINAL_VALUE_LABEL`（最终值）、`FOCUS` 里异常的文字（`attention`「需要注意」，`logReason`、`staleFor`、`sourceFailed`、`retryReason` 四种原因的短句，`logDetail`、`staleDetail`、`noDataDetail`、`failedDetail`、`retryDetail`「需要注意」每行写清哪个节点、为什么，`dataUpdated`「数据更新于 HH:MM:SS」）、`LOG_LEVEL_LABEL`（日志级别的写法 DEBUG / INFO / WARN / ERROR，日志列表、级别筛选、运行抽屉和异常原因共用）与 `LOG_ALERT_LEVELS`（「WARN / ERROR」）、`MESSAGE.logsExpired`（日志已过保留期）、`chainCountLabel()`（「N 条链 · N 个节点」）、`LIST_LABEL`（列表的可访问名称：图例、各链进度、概览里执行中的节点、运行抽屉里进行中的节点）；`MESSAGE.noRunningNodes`（没有执行中的节点）、`MESSAGE.noActiveNodes`（没有进行中的节点）。概览只列在 Agent 上的节点（准备中、执行中，统称执行中）；运行抽屉列排队中、准备中、执行中、等待中的节点，标题和列表名用 `ACTIVE_LABEL`（进行中），不用任何一个节点状态名。控制台的运行块和运行抽屉一样列进行中的节点。「进行中」在运行记录页指运行（进行中的卡片），在运行抽屉和控制台指节点，在运行监控「动作」页的结果里指还没结束的动作，几处不在同一屏。
 - `NODE_ACTIONS`：动作与标记（GLOSSARY「动作」「标记」）共用的文字：`doing`（「正在做」：画布卡片和读屏的「正在做 X」、检查器的「正在做」、「动作」页的第一组）；`runningIncomplete()`（「列满 N 个，可能还有没列出的」：正在做的动作列满了，检查器和「动作」页共用）；`results`（动作的结果：进行中、成功、失败、未结束、标记），是动作自己的一组状态文字，不是运行状态，不引用 `RUN_STATUS_LABEL`，「进行中」引用 `ACTIVE_LABEL`。「动作」页的组名、表头、只计数的一段写在 `ActionTable` 里，检查器的计数表表头和上限说明写在 `InspectorActions` 里，各自只在自己那里出现。术语「动作」是 `TERM.action`；`attemptLabel()`（「第 2 次尝试」，运行监控的尝试页签和画布检查器的动作区共用）；`PROGRESS_LABEL`（节点上报的「进度」，图表工作区、时间线、运行抽屉、画布检查器共用；运行记录表里的「进度」是各链进度，不是它）；`DOC_PAGE.sdkReference` 是开发文档「开发节点（SDK 参考）」的页名。和 `ACTION`（界面上的通用操作）不是一回事。
+- 指向运行监控「详情」视图的写法：`MONITOR_DETAIL_LABEL`（「运行监控详情」：运行监控页之外的地方，如画布检查器，用它指路）、`openInLabel()`（「在详情里打开 fetch」「在运行监控详情里打开 fetch」：跳到这个视图里某个节点的按钮或链接）、`hiddenSeriesLabel`（图例里放不下的序列：概览是页内切到详情，写「在详情里查看」；检查器要去另一个页面，写「打开运行监控详情」）与 `ZOOM_IN_DETAIL_LABEL`（「要缩放，打开运行监控详情」）。
 - 「打开 X」是去另一个页面（「打开运行监控」「打开失败节点」：控制台的失败行进入运行监控并选中失败节点），「查看 X」是在当前页面里展开（运行监控页横幅的「查看失败节点」）；同一个意思不换着说。
 - 时长、数量与 Agent 状态：`ELAPSED_LABEL`（已运行）、`DURATION_LABEL`（耗时）、`moreLabel()`（「还有 N 个」：列表或线路只画出一部分时）、`AGENT_STATUS_LABEL`（在线、离线；Agent 的完整状态用 `#/agents/agent-status` 的 `agentStatusView`）、`slotUsageLabel()`、`queuedLabel()`（「2 / 8 占用」「排队 1」）、`RUNNING_PRIMARY_LABEL`（「执行中节点的主指标」）。
 - `DOC_PAGE`：界面里引用的开发文档页名（与 `docs/guide/pages.json` 的标题一致）。
