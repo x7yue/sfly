@@ -259,14 +259,25 @@ export const NODE_ROW_HEIGHT = 26;
  */
 export const ROWS_BOTTOM_PADDING = 8;
 
-/** 时间线主体的内容高度；主体的最大高度据此定：行不多时全部露出，不让正在执行的节点藏到折叠线下面。 */
+/** 有动作的节点下面多出的轨道（「动作」「子动作」）行数，每行和节点行一样高。 */
+export const ACTION_TRACK_ROWS = 2;
+
+/**
+ * 时间线主体的内容高度；主体的最大高度据此定：行不多时全部露出，不让正在执行的节点藏到折叠线下面。
+ * `tracked`：这条链里有几个节点有动作轨道。
+ */
 export function timelineContentHeight<C extends { nodes: readonly unknown[] }>(
 	chains: readonly C[],
 	isOpen: (chain: C) => boolean,
+	tracked: (chain: C) => number = () => 0,
 ): number {
 	return chains.reduce(
 		(height, chain) =>
-			height + CHAIN_ROW_HEIGHT + (isOpen(chain) ? chain.nodes.length * NODE_ROW_HEIGHT : 0),
+			height +
+			CHAIN_ROW_HEIGHT +
+			(isOpen(chain)
+				? (chain.nodes.length + tracked(chain) * ACTION_TRACK_ROWS) * NODE_ROW_HEIGHT
+				: 0),
 		AXIS_HEIGHT + ROWS_BOTTOM_PADDING,
 	);
 }

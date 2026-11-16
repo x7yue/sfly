@@ -54,6 +54,12 @@ const PLATFORM_TEXT = "平台自带图表 节点耗时 槽位 并发 重试";
 const PLATFORM_CHARTS = 4;
 const MIN_COLUMN = { standard: 340, compact: 230 };
 type Density = keyof typeof MIN_COLUMN;
+/**
+ * 图表工作区最少的高度（px，大约是工具栏）：底部面板被拖高、窗口变矮时图表让出高度，滚动查看，时间线、图表、
+ * 底部面板总在窗口里（底部面板的最大高度据此留出这一截）。
+ */
+export const CHARTS_MIN_HEIGHT = 48;
+
 /** 分组内外的水平留白（px）：工作区 12×2、分组 10×2、描边。 */
 const GROUP_INSET = 48;
 
@@ -230,10 +236,11 @@ export function ChartWorkspace({
 			ref={scroller}
 			aria-label="图表工作区"
 			className={cn(
-				"relative overflow-auto px-3",
+				"relative flex-initial overflow-auto px-3 [scrollbar-gutter:stable]",
 				// 高度按内容取：图表少的时候多出来的高度归底部面板（日志），图表多的时候这里滚动。
-				compact ? "flex-initial pt-2 pb-2.5" : "min-h-60 flex-initial pb-7",
+				compact ? "pt-2 pb-2.5" : "pb-7",
 			)}
+			style={compact ? undefined : { minHeight: CHARTS_MIN_HEIGHT }}
 		>
 			{!compact && (
 				<div

@@ -38,6 +38,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Truncate } from "@/components/ui/truncate";
 import { ActionsTab } from "./ActionsTab";
 import { attemptAgentTimes } from "./attempt-clock";
+import { CHARTS_MIN_HEIGHT } from "./ChartWorkspace";
 import { Hint } from "./Hint";
 import { LogList, type LogReveal } from "./LogList";
 import type { LoadedLine } from "./log-buffer";
@@ -158,6 +159,11 @@ export function BottomPanel({
 		momentAttempt ??
 		node?.attempts.at(-1) ??
 		undefined;
+	// 范围里的那一次尝试写进共享状态：范围换了（换节点、切尝试），时间线滚到那个节点。
+	const scopeTask = node ? (attempt?.task_id ?? null) : null;
+	useEffect(() => {
+		actions.setScopeTask(scopeTask);
+	}, [actions, scopeTask]);
 	/** 没有选中节点时日志页签下载的合并日志：范围与合并视图相同。 */
 	const mergedDownload = useMemo(
 		() => runLogDownloadPath(run.id, logScope(run, filter)),
@@ -180,8 +186,14 @@ export function BottomPanel({
 	/** 选中的节点还没有开始：没有日志可看。其余情况（单个尝试、合并视图）由日志页签自己报告有没有内容。 */
 	const empty = tab === "logs" && ((node !== undefined && !attempt) || logsEmpty);
 	const collapsed = panelOpen === null ? empty : !panelOpen;
-	const effective = collapsed ? COLLAPSED_HEIGHT : (height ?? DEFAULT_HEIGHT);
-	const grows = !collapsed && height === null;
+	// 收起时只剩标签行；默认占满图表工作区下面剩下的高度；拖动以后是拖到的高度。最高到图表工作区和底部面板共有的
+	// 高度减去图表的最小高度：窗口变矮、时间线调高时图表先让出高度，面板不会被挤出窗口。
+	const highest = `calc(100% - ${CHARTS_MIN_HEIGHT}px)`;
+	const style: React.CSSProperties = collapsed
+		? { height: COLLAPSED_HEIGHT }
+		: height === null
+			? { flex: `1 0 ${DEFAULT_HEIGHT}`, maxHeight: highest }
+			: { height, maxHeight: highest };
 	// 「动作」页签上的个数：看着「动作」页时由它的推送更新，没在看、任务还在执行时定时重新读。
 	const actionSummary = useActionSummary(
 		attempt?.task_id,
@@ -193,7 +205,7 @@ export function BottomPanel({
 			ref={panel}
 			aria-label="底部面板"
 			className="relative mt-auto flex min-h-0 flex-none flex-col border-t border-border-soft bg-surface"
-			style={grows ? { flex: `1 0 ${DEFAULT_HEIGHT}` } : { height: effective }}
+			style={style}
 		>
 			<ResizeHandle
 				label="调整底部面板高度"
@@ -301,7 +313,8 @@ export function BottomPanel({
 						value={tab}
 						hidden={collapsed}
 						tabIndex={-1}
-						className="overflow-hidden shadow-inset-top"
+						// 各页签的滚动区都预留滚动条的位置：切换页签、内容变长时宽度不跳。
+						className="overflow-hidden shadow-inset-top [&_.overflow-auto]:[scrollbar-gutter:stable]"
 					>
 						{tab === "logs" &&
 							(attempt ? (
