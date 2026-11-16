@@ -108,7 +108,8 @@ export function NodeCard({ id, data, selected }: NodeProps<SfNode>) {
 			}}
 			className={cn(
 				"flex flex-col px-3 py-2.5",
-				"focus-visible:outline-offset-3",
+				// 键盘焦点环在选中描边（3px 底色加 2px 描边，BaseNode）的外面，两圈不重叠：键盘只会把焦点放在刚选中的节点上。
+				"focus-visible:outline-offset-9",
 				"data-[run=running]:border-canvas-run-running data-[run=failed]:border-canvas-run-failed",
 				// 退后的状态（待执行、已跳过、已取消、已停止、已删除）不用不透明度，标题换成次要文字色：
 				// 文字对比度不降（DESIGN-SYSTEM §2.2），状态由描边与状态徽标区分。

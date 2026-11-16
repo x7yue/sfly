@@ -78,6 +78,52 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "failed");
 });
 
+test("选中节点：卡片外隔开一圈中性描边，执行中节点的青色描边不变；强制颜色下是隔开的系统高亮色轮廓，不画在卡片里面", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { scenarioId, runId } = await runningScenario(controlPlane, connectAgent, clock);
+	await page.goto(`/orchestrations/${scenarioId}?run=${runId}`);
+	const verify = nodeCard(page, "verify");
+	await expect(verify).toHaveAttribute("data-run", "running");
+	const look = () =>
+		verify.evaluate((el) => {
+			const style = getComputedStyle(el);
+			return {
+				border: style.borderTopColor,
+				shadow: style.boxShadow,
+				outline: [style.outlineStyle, style.outlineWidth, style.outlineOffset],
+			};
+		});
+	const canvas = await page
+		.locator("[data-canvas-region]")
+		.evaluate((el) => getComputedStyle(el).backgroundColor);
+	const unselected = await look();
+	expect(unselected.shadow).toBe("none");
+
+	// 先垫 3px 画布底色，外面再画 2px 中性描边（--selected 是 #d4d4d4）；卡片自己的青色描边没有被选中盖掉。
+	await verify.click();
+	await expect(verify).toHaveAttribute("aria-pressed", "true");
+	await page.mouse.move(0, 0);
+	const rings = `${canvas} 0px 0px 0px 3px, rgb(212, 212, 212) 0px 0px 0px 5px`;
+	await expect.poll(async () => (await look()).shadow.endsWith(rings)).toBe(true);
+	const selected = await look();
+	expect(selected.border).toBe(unselected.border);
+	expect(selected.border).not.toBe("rgb(212, 212, 212)");
+	expect(selected.outline).toEqual(unselected.outline);
+
+	// 强制颜色模式没有 box-shadow：选中的卡片换成隔开一圈的 Highlight 轮廓，画在卡片外面；没选中的没有。
+	await page.emulateMedia({ forcedColors: "active" });
+	await expect(verify).toHaveCSS("outline-style", "solid");
+	await expect(verify).toHaveCSS("outline-width", "3px");
+	await expect(verify).toHaveCSS("outline-offset", "3px");
+	const fetch = nodeCard(page, "fetch");
+	await expect(fetch).toHaveAttribute("aria-pressed", "false");
+	await expect(fetch).toHaveCSS("outline-style", "none");
+});
+
 test("运行状态下 Enter 把焦点移到检查器、Esc 回到画布上的节点，焦点环都可见", async ({
 	page,
 	controlPlane,
