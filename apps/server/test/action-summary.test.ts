@@ -337,6 +337,7 @@ describe("动作摘要", () => {
 							{ id: "entry", kind: "entry", params: [param("token", { required: true })] },
 							spawn("spawn1"),
 							{ id: "nap", kind: "sleep", duration: "20s" },
+							// biome-ignore lint/suspicious/noTemplateCurlyInString: 编排引用语法就是 ${{ ... }}，不是模板字符串
 							spawn("spawn2", { key: "${{ params.token }}" }),
 						],
 						[{ id: "watch", kind: "subflow_entry", params: [] }, echo("a")],
