@@ -60,6 +60,8 @@ from typing import Any
 
 from sfly.context import ActionResult, Cancelled, _EventWriter, _now_ms, monotonic_ms
 
+# 下面的上限和 packages/schema/src/http/actions.ts 的 ACTION_LIMITS 一致（控制面按同一组兜底），有测试检查。
+
 #: 名称最长的字符数，超过的截断。
 MAX_NAME_CHARS = 64
 #: 一个动作或标记最多的字段数（动作是开始时给的和 `note()` 补充的合计），多出的丢弃。

@@ -1,5 +1,6 @@
 import { type ActionEvent, type ActionField, ActionResult as ProtoActionResult } from "@sfly/proto";
 import {
+	ACTION_LIMITS,
 	type ActionDetailView,
 	type ActionNameCount,
 	type ActionResult,
@@ -17,10 +18,6 @@ import { actionField, actionName, actionReason, mergeFields } from "./action-tex
  * 排成要写进 `task_actions` 的行（控制面兜底的上限在这里执行），把存下的行换成接口里的 {@link ActionDetailView}
  * （任务结束以后还没结束的动作在这里记为未结束），算出一页明细范围里的只计数的段，以及分页游标的编码。
  */
-
-/** 控制面兜底的上限，与 SDK 相同（sdk/python/src/sfly/actions.py 的 MAX_TOTAL、MAX_PER_NAME；字段数见 action-text.ts）。 */
-export const TOTAL_DETAIL_LIMIT = 100_000;
-export const NAME_DETAIL_LIMIT = 50_000;
 
 /** `task_actions` 的一行。 */
 export type StoredDetail = typeof taskActions.$inferSelect;
@@ -197,7 +194,7 @@ export function planBatch(
 		if (begun.has(e.id)) continue;
 		begun.add(e.id);
 		const named = stored.get(e.name) ?? 0;
-		if (details >= TOTAL_DETAIL_LIMIT || (!e.late && named >= NAME_DETAIL_LIMIT)) {
+		if (details >= ACTION_LIMITS.total || (!e.late && named >= ACTION_LIMITS.perName)) {
 			const seen = plan.dropped.get(e.name);
 			if (!seen) plan.dropped.set(e.name, { count: 1, from: e.at, agentFrom: e.agentAt });
 			else {

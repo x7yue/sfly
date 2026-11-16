@@ -8,6 +8,29 @@ import { endpoint, stream, Timestamp } from "./contract.js";
  * SDK 写的单调时钟读数折算，Agent 时间原样保存。
  */
 
+/**
+ * 动作的上限（规格 #345）：SDK 先执行（sdk/python/src/sfly/actions.py 里的同名常量，见 `SDK_NAME`），控制面按同一组兜底，
+ * 界面上的说明和接口的注释写的也是这几个数。和 SDK 一致由 packages/schema/test/action-limits.test.ts 检查。
+ */
+export const ACTION_LIMITS = {
+	/** 名称最长的字符数（控制面兜底时字段的键也按它截断）。 */
+	nameChars: 64,
+	/** 字段值（转成字符串后）最长的字符数。 */
+	valueChars: 256,
+	/** 失败原因最长的字符数。 */
+	reasonChars: 4096,
+	/** 一个动作或标记最多的字段数（开始时给的和 `note()` 补充的合计）。 */
+	fields: 8,
+	/** 每种名称最多记录的明细个数。 */
+	perName: 50_000,
+	/** 全部名称合计最多记录的明细个数。 */
+	total: 100_000,
+	/** 摘要里「正在做」「最近结束」「最近失败」最多列出的个数。 */
+	running: 50,
+	recent: 20,
+	recentFailed: 5,
+} as const;
+
 /** 路径里的任务 ID：不是 UUID 时控制面返回 404（与找不到相同），所以这里只要求是字符串。 */
 const IdParams = z.object({ id: z.string() });
 
