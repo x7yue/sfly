@@ -1,0 +1,8 @@
+language js
+
+// CODING_STANDARDS.md「测试」：异步结果在等待条件里断言，不先 sleep 固定时长再断言（#108、#129、#136）。
+// 确实只能等一段时间、确认某件事没有发生时，在这一行上方写
+// `// biome-ignore lint/plugin/e2e-fixed-wait: <原因>`。
+`$page.waitForTimeout($...)` as $call where {
+	register_diagnostic(span=$call, message="端到端测试不先 sleep 固定时长再断言（CODING_STANDARDS.md「测试」：异步结果在等待条件里断言）：把要等的状态写进 expect(...) 的自动重试、expect.poll(...) 或等元素状态（toBeVisible、toHaveText、toBeFocused 等）。确实只能等一段时间、确认某件事没有发生时，在这一行上方写 // biome-ignore lint/plugin/e2e-fixed-wait: <原因>。")
+}

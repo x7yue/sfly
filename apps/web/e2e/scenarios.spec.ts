@@ -201,6 +201,7 @@ test("按名称、说明或 Agent 搜索，按最近运行状态和 Agent 筛选
 	await expect(cards).toHaveCount(3);
 	// 搜索框随地址清空（与运行记录页同一种防抖 + 写地址方式），不会把旧关键字写回。
 	await expect(search).toHaveValue("");
+	// biome-ignore lint/plugin/e2e-fixed-wait: 断言的是没有发生的事：过了搜索的防抖时间（250 毫秒）旧关键字没有被写回地址
 	await page.waitForTimeout(600);
 	await expect(cards).toHaveCount(3);
 

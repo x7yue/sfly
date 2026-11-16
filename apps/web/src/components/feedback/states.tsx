@@ -5,6 +5,7 @@ import { ApiError } from "#/lib/api";
 import { ACTION, MESSAGE } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { writeClipboard } from "./clipboard";
 import { notify } from "./notify";
 
@@ -63,21 +64,21 @@ export function TableSkeleton({ columns, rows = 5 }: { columns: number; rows?: n
 			aria-busy="true"
 			className="block transition-opacity delay-200 duration-(--motion-base) starting:opacity-0"
 		>
-			<table className="w-full">
-				<tbody>
+			<Table>
+				<TableBody>
 					{Array.from({ length: rows }, (_, r) => (
 						// biome-ignore lint/suspicious/noArrayIndexKey: 骨架行没有标识
-						<tr key={r} className="border-b border-border-soft last:border-0">
+						<TableRow key={r} className="hover:bg-transparent">
 							{Array.from({ length: columns }, (_, c) => (
 								// biome-ignore lint/suspicious/noArrayIndexKey: 骨架列没有标识
-								<td key={c} className="px-3 py-3">
+								<TableCell key={c} className="py-3">
 									<Skeleton className="h-3" style={{ width: widths[c % widths.length] }} />
-								</td>
+								</TableCell>
 							))}
-						</tr>
+						</TableRow>
 					))}
-				</tbody>
-			</table>
+				</TableBody>
+			</Table>
 		</output>
 	);
 }

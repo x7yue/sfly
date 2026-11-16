@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 import threading
 import time
 from collections.abc import Iterator
@@ -72,6 +73,9 @@ def whole_disks() -> set[str]:
     }
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="用 Linux 的回环网卡名 lo 和 /sys/block 找整块磁盘"
+)
 def test_reports_every_network_interface_and_every_whole_disk_as_its_own_series(
     tmp_path: Path, loopback_traffic: None
 ) -> None:
@@ -109,6 +113,10 @@ def used_percent(path: str) -> float:
     return 100 * used / (used + st.f_bavail * st.f_frsize)
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="APFS 的卷共用容器空间，statvfs 算出的已用比例是整个容器的，与 df 不同",
+)
 def test_values_are_plausible_for_this_machine(tmp_path: Path) -> None:
     result = run_node(system_monitor, {"interval": 0.2, "duration": 0.6}, work_dir=tmp_path)
 
@@ -129,6 +137,7 @@ def test_values_are_plausible_for_this_machine(tmp_path: Path) -> None:
         assert all(v >= 0 for v in values(result, name)), name
 
 
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/dev/shm 是 Linux 的 tmpfs")
 def test_disk_path_selects_the_file_system(tmp_path: Path) -> None:
     path = "/dev/shm"
     result = run_node(
@@ -172,6 +181,9 @@ def loopback_traffic() -> Iterator[None]:
     server.close()
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="回环网卡在 Linux 上叫 lo（macOS 上是 lo0）"
+)
 def test_nic_selects_one_network_interface(tmp_path: Path, loopback_traffic: None) -> None:
     lo = run_node(
         system_monitor, {"interval": 0.2, "duration": 0.6, "nic": "lo"}, work_dir=tmp_path / "lo"
@@ -252,6 +264,9 @@ def test_fails_clearly_before_sampling_when_inputs_are_wrong(
     assert result.metrics == []
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="回环网卡在 Linux 上叫 lo（macOS 上是 lo0）"
+)
 def test_lists_the_existing_network_interfaces_when_nic_does_not_exist(tmp_path: Path) -> None:
     result = run_node(system_monitor, {"nic": "eth-不存在"}, work_dir=tmp_path)
 

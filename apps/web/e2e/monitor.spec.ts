@@ -848,6 +848,7 @@ test("命令面板「当前页面」列出此刻可用的快捷键，选「取�
 	await expect(palette).toBeHidden();
 	const dialog = page.getByRole("dialog", { name: /取消运行/ });
 	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
+	// biome-ignore lint/plugin/e2e-fixed-wait: 断言的是没有发生的事：命令面板已经关闭，之后焦点也没有被抢走
 	await page.waitForTimeout(500);
 	await expect(dialog.getByRole("button", { name: "继续运行" })).toBeFocused();
 	await page.keyboard.press("Escape");
@@ -875,9 +876,8 @@ test("命令面板「当前页面」：已结束的失败运行是下一个失�
 	const { runId } = await failedRun(controlPlane, connectAgent, clock);
 	await openMonitor(page, clock, runId);
 	await page.keyboard.press("Control+k");
-	const pageGroup = page
-		.getByRole("dialog", { name: "命令面板" })
-		.getByRole("group", { name: "当前页面" });
+	const palette = page.getByRole("dialog", { name: "命令面板" });
+	const pageGroup = palette.getByRole("group", { name: "当前页面" });
 	await expect(pageGroup.getByRole("option")).toHaveText([
 		/^下一个失败的节点F$/,
 		/^只看 ERROR \/ 恢复级别E$/,
@@ -896,8 +896,9 @@ test("命令面板「当前页面」：已结束的失败运行是下一个失�
 	await pageGroup.getByRole("option", { name: /再次运行/ }).click();
 	const rerun = page.getByRole("dialog", { name: "再次运行 · 日终数据处理" });
 	await expect(rerun).toBeVisible();
-	await page.waitForTimeout(500);
-	expect(await rerun.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+	// 命令面板关闭之后才归还焦点：等它从页面上消失，再看焦点有没有留在新弹窗里。
+	await expect(palette).toBeHidden();
+	await expect.poll(() => rerun.evaluate((el) => el.contains(document.activeElement))).toBe(true);
 });
 
 test("失败的运行：默认选中失败的节点，页内横幅写失败摘要（可收起，收起后回到顶栏）；再次运行沿用上次的参数（敏感参数除外）进入新运行；运行切换列出同场景的运行", async ({

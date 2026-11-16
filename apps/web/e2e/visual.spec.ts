@@ -1084,10 +1084,7 @@ test.describe("编排画布", () => {
 	});
 
 	test("语义缩放", async ({ page }) => {
-		for (let i = 0; i < 3; i++) {
-			await page.getByRole("button", { name: "缩小" }).click();
-			await page.waitForTimeout(300); // 等缩放动画（150ms）结束，每一步都从上一步的结果开始
-		}
+		await zoomOut(page, 3);
 		await expect(page.locator("[data-lod]")).toHaveAttribute("data-lod", "true");
 		await idle(page);
 		await expect(page).toHaveScreenshot("editor-zoomed-out.png");

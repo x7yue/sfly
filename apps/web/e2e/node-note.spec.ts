@@ -307,10 +307,10 @@ test.describe("复制、粘贴、创建副本", () => {
 		await expect(noteBox(page)).toHaveValue(NOTE);
 
 		await nodeCard(page, "fetch").click();
-		await page.keyboard.press("Control+c");
+		await page.keyboard.press("ControlOrMeta+c");
 		await expect(page.getByText("已复制节点 fetch")).toBeVisible();
 		expect(JSON.parse(await clipboard(page))).toMatchObject({ node: { id: "fetch", note: NOTE } });
-		await page.keyboard.press("Control+v");
+		await page.keyboard.press("ControlOrMeta+v");
 		await expect(nodeCard(page, "fetch_2")).toBeFocused();
 		await expect(noteIcon(page, "fetch_2")).toHaveCount(1);
 		await expect(noteBox(page)).toHaveValue(NOTE);

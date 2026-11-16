@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Iterator
@@ -63,6 +64,9 @@ def test_fails_when_the_pid_is_not_running(tmp_path: Path, spawn: Any) -> None:
     )
 
 
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="用 /proc/<pid>/stat 等进程变成僵尸"
+)
 def test_a_zombie_process_does_not_count_as_running(tmp_path: Path, spawn: Any) -> None:
     proc = spawn("true")
     while _state(proc.pid) != "Z":  # 已退出、还没被回收

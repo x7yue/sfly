@@ -28,6 +28,16 @@ if ((${current%%.*} < required)); then
 	echo "pre-push：需要 Node $required（.node-version），当前是 $current：先切换 Node 版本（例如 nvm use $required）" >&2
 	exit 1
 fi
+# 合入 main 后 pnpm-lock.yaml 或 uv.lock 变了、依赖没重装时，后面的 lint 和 typecheck 会报一页 `Cannot find module` 之类的错，看不出原因。
+# pnpm 每次安装都把当时的锁文件复制到 node_modules/.pnpm/lock.yaml；uv 的 --check 只比对锁文件和 .venv，不联网。
+if ! cmp -s pnpm-lock.yaml node_modules/.pnpm/lock.yaml; then
+	echo "pre-push：node_modules 里装的依赖和 pnpm-lock.yaml 不一致（合入 main 或切换分支后常见），先运行 pnpm install" >&2
+	exit 1
+fi
+if ! uv sync --check --offline --all-packages >/dev/null 2>&1; then
+	echo "pre-push：.venv 里装的 Python 依赖和 uv.lock 不一致，先运行 uv sync --locked --all-packages" >&2
+	exit 1
+fi
 echo "pre-push：运行 gen:check、lint、typecheck（跳过：git push --no-verify）" >&2
 pnpm release:version check >/dev/null
 pnpm gen:check

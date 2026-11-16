@@ -18,7 +18,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -251,15 +251,6 @@ def test_sfly_debug_runs_a_command_on_an_agent_mapped_to_a_local_directory(tmp_p
 
 
 # ---- 经本地 socket 发出的调用 ----
-
-
-@pytest.fixture
-def short_dir() -> Iterator[Path]:
-    """socket 路径不能太长（AF_UNIX 108 字节），放在 TMPDIR 下的短目录里。"""
-    import tempfile
-
-    with tempfile.TemporaryDirectory(prefix="sfly-") as tmp:
-        yield Path(tmp)
 
 
 class ReplyingAgent:

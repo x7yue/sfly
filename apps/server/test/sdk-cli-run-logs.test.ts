@@ -1,7 +1,7 @@
 // sfly run logs / artifacts：真实的 sfly 进程读测试控制面里一次运行的日志和产物。
 // 假 Agent 经 gRPC 上报日志（两台 Agent 的 Agent 时间偏差不同），产物经 HTTP 上传。
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { encodeRunLogScope, logsApi, type RunLogLine, runsApi } from "@sfly/schema";
@@ -82,8 +82,9 @@ describe("sfly run logs / artifacts → 控制面", () => {
 	};
 
 	const cli = (...args: string[]) => sfly([...args, "--server", cp.httpUrl]);
+	/** 真实路径：命令行输出的是 resolve 过的绝对路径，TMPDIR 经过符号链接（macOS 的 /tmp、/var）时和 tmpdir() 不同。 */
 	const tempDir = async () => {
-		const dir = await mkdtemp(join(tmpdir(), "sfly-run-logs-"));
+		const dir = await realpath(await mkdtemp(join(tmpdir(), "sfly-run-logs-")));
 		tempDirs.push(dir);
 		return dir;
 	};
