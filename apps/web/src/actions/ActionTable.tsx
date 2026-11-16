@@ -37,7 +37,7 @@ const COLUMNS = 5;
 
 /** 只看失败时，第三组读到的都是失败的动作。 */
 const groupLabel = (group: ActionGroupName, failedOnly: boolean): string =>
-	group === "earlier" && failedOnly ? "更早的失败" : GROUP_LABEL[group];
+	group === "earlier" && failedOnly ? ACTION_PAGE.earlierFailed : GROUP_LABEL[group];
 
 const GROUP_LABEL: Record<ActionGroupName, string> = {
 	running: NODE_ACTIONS.doing,
