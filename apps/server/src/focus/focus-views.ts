@@ -1,11 +1,9 @@
-import type { OrchestrationDocument } from "@sfly/schema";
-import { type ChartView, type FocusItemView, NodeTypeMetadata } from "@sfly/schema";
+import type { ChartView, FocusItemView, OrchestrationDocument } from "@sfly/schema";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrationVersions } from "../db/schema.js";
 import type { Tx } from "../engine/step.js";
-import { nodeTypeOf } from "../metrics/node-types.js";
-import { type NodeTypeView, withDefaultCharts } from "../packages/default-charts.js";
+import { declaredNodeType } from "../metrics/node-types.js";
 import type { FocusItem } from "./focus-list.js";
 
 /** 场景和它的最新版本号（0 表示还没有保存过版本）。 */
@@ -26,29 +24,6 @@ async function headDocument(db: Db | Tx, { id, headVersion }: HeadRef) {
 			),
 		);
 	return row?.document;
-}
-
-/**
- * 文档里 `nodeId` 这个节点的节点类型（图表含平台为没被图表引用的指标生成的默认图表）；节点不是包节点、锁定的节点包版本找不到、
- * 或者元信息不合法时为 undefined。开发版本取 `agentName`（没给时是节点所在的 Agent）当前加载的源码，
- * 不一定是运行当时的定义。
- */
-export async function declaredNodeType(
-	db: Db | Tx,
-	document: OrchestrationDocument,
-	nodeId: string,
-	agentName?: string | null,
-): Promise<NodeTypeView | undefined> {
-	const node = document.nodes.find((n) => n.id === nodeId);
-	if (node?.kind !== "package") return undefined;
-	const ref = await nodeTypeOf(
-		db,
-		document,
-		nodeId,
-		agentName ?? node.agent ?? document.default_agent ?? null,
-	);
-	const type = NodeTypeMetadata.safeParse(ref?.type);
-	return type.success ? withDefaultCharts(type.data) : undefined;
 }
 
 /** 文档里 `nodeId` 这个节点的节点类型声明的图表，含默认图表；见 {@link declaredNodeType}。 */

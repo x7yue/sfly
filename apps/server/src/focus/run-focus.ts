@@ -1,8 +1,9 @@
 import {
 	type ChartView,
+	chartMetrics,
 	DEFAULT_FOCUS_POINTS,
-	type FocusSeries,
 	focusName,
+	focusSeriesOf,
 	isOnAgentStatus,
 	latestSeries,
 	type MetricDeclaration,
@@ -27,6 +28,7 @@ import type { Tx } from "../engine/step.js";
 import { maskSecrets } from "../logs/secrets.js";
 import { runSecretValues } from "../logs/task-logs.js";
 import type { MetricQueries, TaskSeriesRead } from "../metrics/metric-queries.js";
+import { declaredNodeType } from "../metrics/node-types.js";
 import type { NodeTypeView } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import {
@@ -38,7 +40,6 @@ import {
 	staleSince,
 } from "./focus-anomaly.js";
 import type { FocusItem } from "./focus-list.js";
-import { declaredNodeType } from "./focus-views.js";
 
 /**
  * 解析一次运行的关注项要用到的依赖：控制面里读读数的地方（HTTP 接口、运行结束时的运行通知）传这三样。
@@ -258,7 +259,7 @@ function focusReadings(
 				chart: item.chart,
 				title: focusName(item),
 				chartType: chart?.type ?? "line",
-				metrics: chart ? (chart.type === "stat" ? chart.metrics.slice(0, 1) : chart.metrics) : [],
+				metrics: chart ? chartMetrics(chart) : [],
 				unit: unitOf(source.type?.metrics, chart?.metrics[0]),
 				chartMissing: chart === undefined,
 			},
@@ -331,20 +332,6 @@ type SeriesRead = TaskSeriesRead["series"][number];
 const seriesOf = (reading: Reading, read: TaskSeriesRead): SeriesRead[] =>
 	reading.metrics.flatMap((metric) => read.series.filter((s) => s.name === metric));
 
-const focusSeries = (s: SeriesRead): FocusSeries => ({
-	metric: s.name,
-	labels: s.labels,
-	points: s.buckets.map((b) => ({
-		// 升级之前存下的数据没有控制面时间，横轴用它的 Agent 时间（与 bucketStartMs 一致）。
-		time: b.time ?? b.agent_time,
-		min: b.min,
-		max: b.max,
-		avg: b.avg,
-		last: b.last,
-		points: b.points,
-	})),
-});
-
 /** 一项的读数：来源节点的状态、图表引用的指标和序列、最新值、采样间隔和异常（按 `now` 判断）。 */
 function itemOf(
 	reading: Reading,
@@ -396,7 +383,7 @@ function itemOf(
 					at: iso(latest.end.at),
 				}
 			: null,
-		series: points === 0 ? [] : series.map(focusSeries),
+		series: points === 0 ? [] : series.map(focusSeriesOf),
 		bucket_seconds: read?.bucketSeconds ?? 1,
 		last_at: latest ? iso(latest.end.at) : null,
 		sample_interval_ms: interval,
