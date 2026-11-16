@@ -253,6 +253,18 @@ export const MONITOR_VIEW_LABEL = { overview: "概览", detail: "详情" } as co
 /** 「运行监控详情」：运行监控页之外的地方（画布运行状态的检查器）指向运行监控的「详情」视图时这样写。 */
 export const MONITOR_DETAIL_LABEL = `${PAGE.monitor}${MONITOR_VIEW_LABEL.detail}`;
 
+/**
+ * 图例里放不下的序列：概览里是同一页切到「详情」视图，写「在详情里查看」；
+ * 检查器在运行监控之外，要去另一个页面，写「打开运行监控详情」。
+ */
+export const hiddenSeriesLabel = {
+	inView: (count: number) => `另有 ${count} 条序列在${MONITOR_VIEW_LABEL.detail}里查看`,
+	openPage: (count: number) => `另有 ${count} 条序列，打开${MONITOR_DETAIL_LABEL}`,
+};
+
+/** 检查器的图表列表里说明图表不能缩放，要缩放得去运行监控的详情。 */
+export const ZOOM_IN_DETAIL_LABEL = `要缩放，打开${MONITOR_DETAIL_LABEL}`;
+
 /** 「在详情里打开 fetch」「在运行监控详情里打开 fetch」：跳到某个视图里的这个节点的按钮或链接。 */
 export const openInLabel = (place: string, node: string) => `在${place}里打开 ${node}`;
 

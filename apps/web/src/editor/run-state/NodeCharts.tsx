@@ -20,7 +20,14 @@ import { FocusValue } from "#/focus/FocusValue";
 import type { PlotWindow } from "#/focus/focus-chart";
 import { anomalyText, readingLabel, readingState, readingValue } from "#/focus/focus-format";
 import { type FocusItems, isFocused } from "#/focus/use-focus-items";
-import { FOCUS, MESSAGE, MONITOR_DETAIL_LABEL, noDataLabel, TERM } from "#/lib/copy";
+import {
+	FOCUS,
+	hiddenSeriesLabel,
+	MESSAGE,
+	noDataLabel,
+	TERM,
+	ZOOM_IN_DETAIL_LABEL,
+} from "#/lib/copy";
 import { useNow } from "#/lib/use-now";
 import { seriesQuery } from "#/monitor/use-run-metrics";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -108,8 +115,8 @@ export interface NodeReadings {
 
 /**
  * 画布运行状态检查器里选中节点的图表：节点类型声明的全部图表（运行指标目录里这个节点的，含平台给没被图表引用的指标生成的
- * 默认图表），按 {@link orderCharts} 排，每张带「关注」开关，立即生效。图固定显示最新一次尝试的全程，不能缩放：要缩放在运行监控
- * 详情里看。序列与运行监控详情的图表用同一个查询（`seriesQuery`），运行中由运行事件流追加新的点；关注项的最新值和异常原因取
+ * 默认图表），按 {@link orderCharts} 排，每张带「关注」开关，立即生效。图固定显示最新一次尝试的全程，不能缩放：要缩放，打开运行监控
+ * 详情。序列与运行监控详情的图表用同一个查询（`seriesQuery`），运行中由运行事件流追加新的点；关注项的最新值和异常原因取
  * 关注项读数，和节点卡片、检查器的概况一致，其他图表的最新值取序列里最近更新的那个。数值卡只显示数值（取第一个序列，与关注项一样）。
  */
 export function NodeCharts({
@@ -234,7 +241,7 @@ export function NodeCharts({
 				})}
 			</ul>
 			<p className="m-0 mt-2.5 text-xs text-fg-3">
-				{`${FOCUS.anomalyFirst}，其次是其余${TERM.focusItem}，再是其他${TERM.chart}。图表显示最新一次${TERM.attempt}的全程，要缩放就在${MONITOR_DETAIL_LABEL}里看。${FOCUS.notVersioned}`}
+				{`${FOCUS.anomalyFirst}，其次是其余${TERM.focusItem}，再是其他${TERM.chart}。图表显示最新一次${TERM.attempt}的全程，${ZOOM_IN_DETAIL_LABEL}。${FOCUS.notVersioned}`}
 			</p>
 		</section>
 	);
@@ -323,7 +330,7 @@ function DeclaredChart({
 					}
 					empty={empty}
 					gapText={reading ? anomalyText(reading.item, reading.at) : null}
-					elsewhere={MONITOR_DETAIL_LABEL}
+					hiddenNote={hiddenSeriesLabel.openPage}
 				/>
 			)}
 		</>

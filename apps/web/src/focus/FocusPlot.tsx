@@ -24,7 +24,7 @@ function useElementWidth<E extends HTMLElement>() {
 /**
  * 一张图表（折线、面积、柱状）的绘图区和图例：按容器的实际宽度画（SVG 用量出来的像素宽度，文字不被拉伸），纵轴从 0 起，
  * 横轴是 `axis`（来源节点这次尝试的开始到结束，还没结束就到现在）。序列多于 10 条时只画平均值最高的那些（`shownSeries`），
- * 挑好以后保持不变，只在出现新序列时重新挑；图例写明还有多少条、在哪里看（`elsewhere`）。给了 `staleSince`（没有新数据时最后一个点的时间）时
+ * 挑好以后保持不变，只在出现新序列时重新挑；图例写明还有多少条、怎么看到（`hiddenNote`）。给了 `staleSince`（没有新数据时最后一个点的时间）时
  * 曲线停在最后一个点，之后到横轴末端画斜线，旁边写 `gapText`，图的可访问名称后面加「曲线停在最后一个点」。
  * 概览的图表卡片（`FocusChart`）和画布运行状态检查器里的图表共用。
  */
@@ -39,7 +39,7 @@ export function FocusPlot({
 	label,
 	empty,
 	gapText,
-	elsewhere,
+	hiddenNote,
 }: {
 	series: readonly FocusSeries[];
 	type: RunFocusItem["chart_type"];
@@ -55,8 +55,8 @@ export function FocusPlot({
 	/** 没有值时盖在绘图区上的原因；有值时为 null。 */
 	empty: string | null;
 	gapText: string | null;
-	/** 没画出来的序列在哪里能看到（「详情」「运行监控详情」）：图例最后一行写「另有 N 条序列在 X 里查看」。 */
-	elsewhere: string;
+	/** 图例最后一行，说明没画出来的序列怎么看到：写法由调用的地方选（`hiddenSeriesLabel`）。 */
+	hiddenNote: (count: number) => string;
 }) {
 	const [plotRef, width] = useElementWidth<HTMLDivElement>();
 	// 画哪些序列只在第一次和出现新序列时挑：读数每 2 秒刷新，平均值接近的序列不来回换。
@@ -197,11 +197,7 @@ export function FocusPlot({
 							{focusSeriesName({ metrics }, s)}
 						</li>
 					))}
-					{hidden > 0 && (
-						<li>
-							另有 {hidden} 条序列在{elsewhere}里查看
-						</li>
-					)}
+					{hidden > 0 && <li>{hiddenNote(hidden)}</li>}
 				</ul>
 			)}
 		</>
