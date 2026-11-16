@@ -122,6 +122,8 @@ test("往下滚动读更早的明细；一次只渲染看得见的那些行", as
 	const pages: string[] = [];
 	page.on("request", (r) => {
 		const url = new URL(r.url());
+		// 时间线的动作轨道另读一次最新的 500 条（limit=500），不算在表格的翻页里。
+		if (url.searchParams.get("limit") === "500") return;
 		if (/\/api\/tasks\/[^/]+\/actions$/.test(url.pathname))
 			pages.push(url.searchParams.get("before") ? "older" : "latest");
 	});

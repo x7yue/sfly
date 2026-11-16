@@ -56,7 +56,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 `tokens.css` 末尾有 `@media (prefers-contrast: more)` 加强档：描边三级、控件边界、辅助文字、网格、连线、端口、选中外圈与滚动条滑块各加强一档，组件不用改。
 
-工具类（`app.css` 的 `@utility`）：`selected-row`（`selected-bg` 底 + 左侧 2px 白条，表格、目录、列表的选中项都用它）、`focus-glow`（输入框聚焦光晕）、`pulse-ring`（执行中的脉冲，见 6.1）。
+工具类（`app.css` 的 `@utility`）：`selected-row`（`selected-bg` 底 + 左侧 2px 白条，表格、目录、列表的选中项和运行监控时间线上范围里的节点行都用它）、`focus-glow`（输入框聚焦光晕）、`pulse-ring`（执行中的脉冲，见 6.1）。
 
 ### 2.3 画布专用 `--canvas-*`
 
@@ -165,6 +165,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 | `canvas/CanvasDock`：`ToolButton` | 画布底部工具条（一个 Tab 停靠点）与它的图标按钮：按钮的提示从注册表取名称和按键。运行状态下工具条里多一个「跟随执行」按钮（`F`，准星图标）：打开时镜头框住所有执行中的节点（子流程里的连同子流程区域），框在没被顶栏、检查器、工具条占住的可见区域正中，缩放夹在 0.6 到 1，只移动镜头、不改选中的节点；执行前沿（执行中的节点）变化后停留 2 秒才平移（`FOLLOW_DWELL_MS`），平移的时长与「减少动效」同视口动画（见第 11 节）。拖动画布、缩放（滚轮或工具条的缩放按钮）、用方向键把选中移到视野外的节点时关闭，并在画布里的读屏实时区域（`<output aria-live="polite">`）播报「按 F 恢复」；运行结束后自动关闭、按钮禁用。按下用中性样式（`aria-pressed`，强制颜色下是系统高亮色轮廓），不用青色。第一次默认打开，之后记住这个浏览器里上次的选择（`lib/follow-execution`，localStorage `sfly.canvas.follow`），运行结束的自动关闭不算选择 |
 | `ResizeHandle`、`PanelWidthHandle` | 区块边缘的拖动条：拖动调整高度或宽度，可聚焦，方向键每次 16px，双击或 Enter 恢复默认；`role="separator"`，`aria-valuemin` / `aria-valuemax` / `aria-valuenow` 是量出来的值（默认大小也有值），操作说明放在 `aria-describedby` 里，不只写在 `title`。`PanelWidthHandle` 是右侧面板（检查器、运行抽屉）左边缘的调宽条：宽度存 localStorage，所有场景共用，下限是面板的默认宽度（检查器 372px、运行抽屉 460px），上限是视口宽度的 60%；检查器的上限还要给画布留出小地图、工具条与间距（`INSPECTOR_CANVAS_RESERVE`），取两者里小的，拖到最宽也不会让工具条压住小地图；面板用 `usePanelWidth(min)` 取宽度（`lib/panel-width`） |
 | `data-table`：`DataTable`、`dataColumns` | 数据表格：行与表头模型用 TanStack Table，外观沿用 `ui/table`；列表页的表格都用它；行的属性（点击、样式、`data-*` 属性）由 `rowProps` 给出 |
+| `#/monitor/ActionTracks`：`ActionTracks`、`ActionLegend` | 运行监控时间线上有动作的节点下面的两条轨道和它们的图例，见 6.1「动作轨道」；数据只从 `monitor/use-action-tracks.ts` 读，排版是 `monitor/action-tracks.ts` 的纯函数（画出来的元素只和像素宽度有关，不随明细条数增长） |
 | `#/actions/ActionTable`：`ActionTable` | 运行监控「动作」页的表格（一个任务最多 10 万条明细）：行由 `actions/action-table.ts` 整理成「正在做」「最近 20 个」「更早的明细」三组，画成一张虚拟滚动的 `<table>`：每组一个 `<tbody>`，组名是 `scope="rowgroup"` 的表头，上下用占位行撑出高度，表头吸顶，列宽固定（见 6.5）。结果一列按状态语法：成功不着色，失败是红色菱形加完整的原因（换行），进行中是执行中的形状，标记是小旗；只计数的一段是一整行浅斜纹。离开顶部以后，推送来的行插在上面时视口里的行不动；滚到底部附近读更早的一页。开始一列按 `timeKind` 显示 Agent 时间或控制面时间（ADR 0018，默认控制面时间，存在 localStorage 的 `sfly.actions.time`，和日志的互不影响），显示 Agent 时间时表头第二行写时钟偏差（`attemptClockNote`，和「尝试」页签的说明同一份），时间线不跟着切；每行的开始时间是按钮，点它日志跳到那一刻（`onLocate`，始终是控制面时间）；开始时间的按钮合起来只有一个 Tab 停靠点（漫游焦点，同日志列表；没渲染时停靠点退回视口里的第一行），方向键、PageUp / PageDown、Home、End 在行间移动，只计数的行里的按钮照常可以 Tab；焦点所在的行被卸掉（滚出渲染范围、结束后换了组）时焦点落到页面上，Tab 再进来落在停靠点。只计数的一行里有「只看失败」；只看失败时，这一段里失败的个数不知道（个数包括成功的），写明这个名称一共失败多少个，没有失败过的名称这一行不出现 |
 | `#/actions/ActionToolbar`：`ActionToolbar` | 运行监控「动作」页的工具条和一行总数：按名称筛选的 `NativeSelect`、「只看失败」开关（`aria-pressed`）、表格里的时间 `Segmented`；下面一行总数，每种名称的个数和「失败 N」是同一份筛选条件的按钮（`aria-pressed`），名称很多时这一块限高、自己滚动。筛选条件由底部面板持有（切到日志再回来还在），换条件重新读明细时工具条不换掉、焦点留在刚操作的控件上，表格显示上一批行（变淡），点按钮之后在实时区域（`<output>`）播报「筛选后 N 个动作」（在点的那一刻算一次，不随摘要的更新重读）。筛选后没有行时写「没有符合条件的动作。」加「清除筛选」，点它以后焦点回到名称下拉 |
 | `list-navigation`：`useListNavigation`、`focusFirstListItem` | 列表页的行导航，见第 7 节 |
@@ -206,17 +207,26 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 
 **时间线区段**（`monitor/Timeline`）按同一套规则画，段的种类对应状态：完成 → `ok`、执行中 → `running`、失败的尝试 → `failed`、等待节点 → `warn`、排队等待 Agent → `queued`、已取消 → `cancelled`、已停止 → `stopped`，用 `STATUS[kind].area.box` 与 `tall`：
 
-- 轨道 12px；矮段在轨道里垂直居中 6px（用 `clip-path: inset()` 或内层元素只改可见高度，点击与悬停的热区保持满高）。
+- 节点行里的区段 12px 高；矮段在其中垂直居中 6px（用 `clip-path: inset()` 或内层元素只改可见高度，点击与悬停的热区保持满高）。
 - 完成是矮的 `ok-fill`；失败的尝试是满高实心红；两者相邻时在任何色觉下都靠高度分开。
 - 执行中满高，段尾加一个真实元素的脉冲头（实心 `signal`，`pulse-ring`），是监控页唯一按节点脉冲的地方。
 - 已取消是矮的空心虚线框（不再是斜纹）；排队是矮的灰色斜纹；等待是满高的琥珀底加描边，三者形状互不相同。
-- 图例按同样的形状画。时间线轨道与图例色块加 `data-viz`（见 6.2）。
+- 图例按同样的形状画。时间线上画区段和动作的区域与图例色块加 `data-viz`（见 6.2）。
+
+**动作轨道**（`monitor/ActionTracks`，排版在 `monitor/action-tracks.ts`）：有动作的节点下面两行，「动作」（最外层）和「└ 子动作」，行高和节点行一样，标签 12px 三级文字，随链收起。轨道是一张图：`role="img"`，可访问名称概括画了什么（正在做的、从几点起只计数、几个失败的、少见的子动作、几个标记），以「逐个查看见下方动作表」结尾；悬停提示写名称、开始、耗时和结果。
+
+- 够长、一条条画出来的动作：进行中的按 `STATUS.running.area`（`signal-fill` 底加 `signal-line` 描边，和执行中的区段一样，不脉冲：段尾的脉冲头仍是每个执行中节点唯一的一处），失败的按 `STATUS.failed.area`，已结束的中性 `border-strong`。动作条都是 14px 高（描边里面放得下 12px 的名称），不按状态分高低：状态色块靠高低分开的是失败的红和成功的绿，这里已结束的是暗灰不是绿，失败的红比它亮得多，各种色觉下都分得开；够宽时在条里写名称（12px）。
+- 分不开的画成密度带：中性 `border-strong` 分三档不透明度，越密越实，不用状态色。
+- 只计数的段是浅斜纹（和「动作」页里只计数的那一行是同一个意思）：`border-strong` 的 1px 45° 细线加 `border-soft` 描边，和排队段 135° 的灰色斜纹方向相反，也不在同一种行上（排队段在节点行里）；`FocusChart` 里没有新数据的斜线只在图表的绘图区里。
+- 密度带上要认出来的：失败的动作是比带高的红色竖线（取 `STATUS.failed.tone`），少见的子动作是白色竖线（`fg-1`），标记是小旗（`FlagIcon`，`fg-1`，和「动作」页里标记的小旗一样）。白色竖线和小旗用的是文字色 `fg-1`，只表示「少见」和「标记」，不是选中（节点行左侧的白色短条）也不是主操作。
+- 图例：有动作的节点时在区段的图例后面加「动作」「只计数」「失败的动作」「少见的动作」「标记」；窗口窄于 2xl（1536px）时一行放不下两套，只留动作轨道的这几项。
+- 范围里的节点（选中的）是 `selected-row`。打开页面、换范围时时间线滚到它，版面变高以后再对准一次，用户自己滚动时间线以后不再跟着跳。
 
 **时间轴的跨度**（`monitor/timeline-model.ts`）：运行中的轴不随「现在」每秒伸缩。跨度只取一级一级的固定值（10 秒起，到一天，相邻两级相差 25% 到 50%），取已用时长加 20% 余量后向上的那一级；「现在」线越过轴的 1 / 1.2 才扩到下一级，两次扩轴之间区段与刻度纹丝不动，只有「现在」线向右推进，扩轴时一次到位。已结束的运行按实际时长定轴，末端留 8% 的空白，短运行也铺满轨道。
 
 ### 6.2 强制颜色与高对比度
 
-- **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态形状是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-pressed="true"`、`aria-selected="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边；数据图形（链路进度、线路、缩略图、时间线轨道与图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
+- **强制颜色模式**（Windows 高对比度）：浏览器换掉作者的颜色、去掉 `box-shadow` 与渐变。状态形状是 currentColor 画的 SVG，不用处理。`app.css` 的 components 层集中补其余的：`aria-current="page"`、`aria-pressed="true"`、`aria-selected="true"`、`data-state="selected"`、`selected-row` 换成 2px `Highlight` 内描边；数据图形（链路进度、线路、缩略图、时间线的区段与动作轨道、图例）加 `data-viz`，保留作者颜色并垫一块 `bg` 底（`forced-color-adjust: none` 只给这些颜色本身就是信息的地方）。开关用系统颜色画（`switch.tsx`）；输入框的焦点由 `focus:outline-hidden` 的透明轮廓在强制颜色下显示出来。新组件不要只靠底色或阴影表达状态。
 - **更高对比度**（`prefers-contrast: more`）：`tokens.css` 末尾的加强档，见第 2 节。
 
 ### 6.3 空、加载、错误、禁用
@@ -306,7 +316,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - `RUN_STATUS_LABEL`、`CANCELLING_LABEL`：运行状态文字；节点状态文字在 `src/lib/node-status.ts` 的 `NODE_STATUS`（显示时都用 `components/status` 的 `runStatusView` / `nodeStatusView`）。
 - `ACTION`：通用操作（运行、取消运行、强制终止、重试、清除筛选、展开、收起……）；`MESSAGE`：通用的加载 / 错误 / 空状态文字（含「还没有数据」「这次尝试没有上报数据」，`noMatch(X)`：筛选之后什么都没有的「没有符合条件的X」，日志、运行、动作共用）。
 - 运行监控、运行抽屉与关注项读数用的：`MONITOR_VIEW_LABEL`（概览 / 详情两个视图的名称）、`FINAL_VALUE_LABEL`（最终值）、`FOCUS` 里异常的文字（`attention`「需要注意」，`logReason`、`staleFor`、`sourceFailed`、`retryReason` 四种原因的短句，`logDetail`、`staleDetail`、`noDataDetail`、`failedDetail`、`retryDetail`「需要注意」每行写清哪个节点、为什么，`dataUpdated`「数据更新于 HH:MM:SS」）、`LOG_LEVEL_LABEL`（日志级别的写法 DEBUG / INFO / WARN / ERROR，日志列表、级别筛选、运行抽屉和异常原因共用）与 `LOG_ALERT_LEVELS`（「WARN / ERROR」）、`MESSAGE.logsExpired`（日志已过保留期）、`chainCountLabel()`（「N 条链 · N 个节点」）、`LIST_LABEL`（列表的可访问名称：图例、各链进度、概览里执行中的节点、运行抽屉里进行中的节点）；`MESSAGE.noRunningNodes`（没有执行中的节点）、`MESSAGE.noActiveNodes`（没有进行中的节点）。概览只列在 Agent 上的节点（准备中、执行中，统称执行中）；运行抽屉列排队中、准备中、执行中、等待中的节点，标题和列表名用 `ACTIVE_LABEL`（进行中），不用任何一个节点状态名。控制台的运行块和运行抽屉一样列进行中的节点。「进行中」在运行记录页指运行（进行中的卡片），在运行抽屉和控制台指节点，在运行监控「动作」页的结果里指还没结束的动作，几处不在同一屏。
-- `NODE_ACTIONS`：动作与标记（GLOSSARY「动作」「标记」）共用的文字：`doing`（「正在做」：画布卡片和读屏的「正在做 X」、检查器的「正在做」、「动作」页的第一组）；`runningIncomplete()`（「列满 N 个，可能还有没列出的」：正在做的动作列满了，检查器和「动作」页共用）；`results`（动作的结果：进行中、成功、失败、未结束、标记），是动作自己的一组状态文字，不是运行状态，不引用 `RUN_STATUS_LABEL`，「进行中」引用 `ACTIVE_LABEL`。「动作」页的文字在 `ACTION_PAGE`（工具条、三组的名称、表头里的 Agent 时间、只计数的一行里的起止、原因和失败的个数、读屏播报、跳到日志），列名和只计数那一行的主句写在 `ActionTable` 里；检查器的计数表表头和上限说明写在 `InspectorActions` 里，只在那里出现。术语「动作」是 `TERM.action`；`attemptLabel()`（「第 2 次尝试」，运行监控的尝试页签和画布检查器的动作区共用）；`PROGRESS_LABEL`（节点上报的「进度」，图表工作区、时间线、运行抽屉、画布检查器共用；运行记录表里的「进度」是各链进度，不是它）；`DOC_PAGE.sdkReference` 是开发文档「开发节点（SDK 参考）」的页名。和 `ACTION`（界面上的通用操作）不是一回事。
+- `NODE_ACTIONS`：动作与标记（GLOSSARY「动作」「标记」）共用的文字：`doing`（「正在做」：画布卡片和读屏的「正在做 X」、检查器的「正在做」、「动作」页的第一组）；`runningIncomplete()`（「列满 N 个，可能还有没列出的」：正在做的动作列满了，检查器和「动作」页共用）；`results`（动作的结果：进行中、成功、失败、未结束、标记），是动作自己的一组状态文字，不是运行状态，不引用 `RUN_STATUS_LABEL`，「进行中」引用 `ACTIVE_LABEL`；`countOnly`（「只计数」：「动作」页只计数的那一行、时间线上动作轨道的浅斜纹和图例）。「动作」页的文字在 `ACTION_PAGE`（工具条、三组的名称、表头里的 Agent 时间、只计数的一行里的起止、原因和失败的个数、读屏播报、跳到日志），列名和只计数那一行的主句写在 `ActionTable` 里；检查器的计数表表头和上限说明写在 `InspectorActions` 里，只在那里出现。术语「动作」是 `TERM.action`；`attemptLabel()`（「第 2 次尝试」，运行监控的尝试页签和画布检查器的动作区共用）；`PROGRESS_LABEL`（节点上报的「进度」，图表工作区、时间线、运行抽屉、画布检查器共用；运行记录表里的「进度」是各链进度，不是它）；`DOC_PAGE.sdkReference` 是开发文档「开发节点（SDK 参考）」的页名。和 `ACTION`（界面上的通用操作）不是一回事。
 - 指向运行监控「详情」视图的写法：`MONITOR_DETAIL_LABEL`（「运行监控详情」：运行监控页之外的地方，如画布检查器，用它指路）、`openInLabel()`（「在详情里打开 fetch」「在运行监控详情里打开 fetch」：跳到这个视图里某个节点的按钮或链接）、`hiddenSeriesLabel`（图例里放不下的序列：概览是页内切到详情，写「在详情里查看」；检查器要去另一个页面，写「打开运行监控详情」）与 `ZOOM_IN_DETAIL_LABEL`（「要缩放，打开运行监控详情」）。
 - 「打开 X」是去另一个页面（「打开运行监控」「打开失败节点」：控制台的失败行进入运行监控并选中失败节点），「查看 X」是在当前页面里展开（运行监控页横幅的「查看失败节点」）；同一个意思不换着说。
 - 时长、数量与 Agent 状态：`ELAPSED_LABEL`（已运行）、`DURATION_LABEL`（耗时）、`moreLabel()`（「还有 N 个」：列表或线路只画出一部分时）、`AGENT_STATUS_LABEL`（在线、离线；Agent 的完整状态用 `#/agents/agent-status` 的 `agentStatusView`）、`slotUsageLabel()`、`queuedLabel()`（「2 / 8 占用」「排队 1」）、`RUNNING_PRIMARY_LABEL`（「执行中节点的主指标」）。

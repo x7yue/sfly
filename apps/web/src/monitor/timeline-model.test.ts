@@ -414,4 +414,12 @@ describe("时间线要保证看得见的行", () => {
 		expect(timelineContentHeight([main, sub], () => false)).toBe(22 + 30 + 30 + 8);
 		expect(timelineContentHeight([], () => true)).toBe(22 + 8);
 	});
+
+	it("有动作的节点下面多两行轨道，链收起时一起收起", () => {
+		const tracked = (c: { id: string }) => (c.id === "main" ? 1 : 0);
+		expect(timelineContentHeight([main, sub], () => true, tracked)).toBe(
+			22 + 30 + 3 * 26 + 2 * 26 + 30 + 26 + 8,
+		);
+		expect(timelineContentHeight([main, sub], () => false, tracked)).toBe(22 + 30 + 30 + 8);
+	});
 });

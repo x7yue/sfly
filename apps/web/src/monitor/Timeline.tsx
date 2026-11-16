@@ -2,20 +2,23 @@ import { type NodeDisplayLookup, nodeOutsideCardText, subflowLabels } from "@sfl
 import type { ChainRunView, NodeRunView, OrchestrationDocument, RunView } from "@sfly/schema";
 import { cn } from "cn";
 import { ChevronRightIcon, CrosshairIcon, ZoomInIcon, ZoomOutIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { NodeName, type RunNodeName, runNodeName } from "#/components/node-name";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, STATUS, StatusDot, type StatusKind } from "#/components/status";
-import { chainCountLabel, LIST_LABEL, PROGRESS_LABEL } from "#/lib/copy";
+import { ACTION, chainCountLabel, LIST_LABEL, PROGRESS_LABEL } from "#/lib/copy";
 import { formatClock, formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
+import { ActionLegend, ActionTracks } from "./ActionTracks";
+import type { PreparedTracks, TrackView } from "./action-tracks";
 import {
 	type NodeRef,
+	nodeKey,
 	sameNode,
 	useMonitor,
 	useMonitorActions,
@@ -48,6 +51,7 @@ import {
 	zoomStep,
 	zoomToSegments,
 } from "./timeline-model";
+import { useActionTracks } from "./use-action-tracks";
 
 /** 标签列宽度，所有行共用这一个变量；节点 ID 不截断，显示名称和说明文字在剩余宽度里截断（先截说明）。 */
 const LABEL_W = "var(--label-w)";
@@ -55,8 +59,10 @@ const LABEL_W = "var(--label-w)";
 const BRUSH_MIN = 0.004;
 /** 拖选范围小于轨道宽度的这个比例时不缩放。 */
 const ZOOM_MIN = 0.01;
-const BODY_MIN_HEIGHT = "30dvh";
-const BODY_MAX_HEIGHT = "45dvh";
+/** 主体最高占视口的约 30%（至少 150px、最多 420px），图表和底部面板总有地方；行不多时按内容的高度。 */
+/** 时间线主体最高的高度（px）：默认的上限，拖动调高也不超过它。 */
+const TIMELINE_MAX_PX = 420;
+const BODY_MAX_HEIGHT = `clamp(150px, 30dvh, ${TIMELINE_MAX_PX}px)`;
 
 /** 区段种类对应的状态（docs/DESIGN-SYSTEM.md §6.1）。执行中的段不用实心青（只有段尾的脉冲头是实心）：长时间的运行里最大的几块不能全是饱和青。 */
 const SEGMENT_STATUS: Record<SegmentKind, StatusKind> = {
@@ -144,14 +150,19 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 		});
 	};
 
-	const contentHeight = timelineContentHeight(chains, isOpen);
-	const attention = attentionRow(chains, isOpen);
-	const attentionKey = attention ? `${attention.chainId}:${attention.nodeId ?? ""}` : "";
-	const touched = useRef(false);
-	useEffect(() => {
-		if (!attentionKey || touched.current) return;
-		body.current?.querySelector("[data-attention]")?.scrollIntoView({ block: "nearest" });
-	}, [attentionKey]);
+	const tracks = useActionTracks(run, isOpen);
+	const tracksOf = (chain: Pick<ChainRunView, "id">, nodeId: string) =>
+		tracks.get(nodeKey({ chainInstanceId: chain.id, nodeId }));
+	const contentHeight = timelineContentHeight(
+		chains,
+		isOpen,
+		(chain) => chain.nodes.filter((n) => tracksOf(chain, n.node_id)).length,
+	);
+	const [width, setWidth] = useState(0);
+	const trackView = useMemo(() => ({ range, now, width }), [range, now, width]);
+	const [hidden, setHidden] = useState(false);
+	const rows = useRef<HTMLDivElement>(null);
+	const reveal = useRevealScope({ body, rows, chains, isOpen });
 
 	const selectedNode = findNode(run, selected);
 	const selectedSegments = useMemo(
@@ -169,11 +180,13 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 			className="relative flex-none border-b border-border-soft bg-bg [--label-w:clamp(220px,18cqi,380px)] [container-type:inline-size]"
 		>
 			<div className="flex min-w-0 items-center gap-2 border-b border-border-soft px-3 py-1.5">
-				<h2 className="m-0 text-sm font-semibold">链路时间线</h2>
-				<span className="text-xs text-fg-3">{chainCountLabel(run.chains.length, nodeCount)}</span>
+				<h2 className="m-0 flex-none text-sm font-semibold">链路时间线</h2>
+				<span className="flex-none text-xs whitespace-nowrap text-fg-3">
+					{chainCountLabel(run.chains.length, nodeCount)}
+				</span>
 				<fieldset
 					aria-label="时间线显示"
-					className="ml-1.5 flex rounded-md border border-border p-px"
+					className="ml-1.5 flex flex-none rounded-md border border-border p-px whitespace-nowrap"
 				>
 					{(
 						[
@@ -199,12 +212,19 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 				<ul
 					aria-label={LIST_LABEL.legend}
 					data-viz
-					className="m-0 flex list-none items-center gap-3 p-0 text-xs text-fg-3 max-xl:hidden"
+					className="m-0 flex list-none items-center gap-3 p-0 text-xs whitespace-nowrap text-fg-3 max-xl:hidden"
 				>
 					{LEGEND.map((kind) => {
 						const area = segmentArea(kind);
 						return (
-							<li key={kind} className="inline-flex items-center gap-1.25">
+							<li
+								key={kind}
+								// 有动作轨道时一行放不下两套图例：窄于 2xl 时只留动作轨道的，区段的状态在行上的状态形状和读屏名称里。
+								className={cn(
+									"inline-flex items-center gap-1.25",
+									tracks.size > 0 && "max-2xl:hidden",
+								)}
+							>
 								<b
 									aria-hidden
 									className={cn(
@@ -217,6 +237,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 							</li>
 						);
 					})}
+					{tracks.size > 0 && <ActionLegend />}
 				</ul>
 				<span aria-hidden className="mx-1 h-4.5 w-px bg-border max-xl:hidden" />
 				{zoom && (
@@ -285,17 +306,23 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 							回到实时
 						</Button>
 					))}
+				<Button
+					variant="ghost"
+					size="sm"
+					aria-expanded={!hidden}
+					aria-controls={BODY_ID}
+					onClick={() => setHidden((h) => !h)}
+				>
+					{hidden ? ACTION.expand : ACTION.collapse}时间线
+				</Button>
 			</div>
 			<div
 				ref={body}
-				onWheel={() => {
-					touched.current = true;
-				}}
-				onPointerDown={() => {
-					touched.current = true;
-				}}
+				id={BODY_ID}
+				hidden={hidden}
+				{...reveal.userScroll}
 				className={cn(
-					"relative overflow-auto [container-type:scroll-state]",
+					"relative overflow-auto [container-type:scroll-state] [scrollbar-gutter:stable]",
 					// 刻度行吸顶，上沿的阴影吸在它下面
 					"before:pointer-events-none before:sticky before:top-5.5 before:z-2 before:-mb-3 before:block before:h-3 before:bg-linear-to-b before:from-black/50 before:to-transparent before:opacity-0 before:transition-opacity",
 					"after:pointer-events-none after:sticky after:bottom-0 after:z-2 after:-mt-3 after:block after:h-3 after:bg-linear-to-t after:from-black/50 after:to-transparent after:opacity-0 after:transition-opacity",
@@ -303,14 +330,12 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 				)}
 				style={
 					height === null
-						? {
-								maxHeight: `max(${BODY_MIN_HEIGHT}, min(${contentHeight + 2}px, ${BODY_MAX_HEIGHT}))`,
-							}
+						? { maxHeight: `min(${contentHeight + 2}px, ${BODY_MAX_HEIGHT})` }
 						: { height }
 				}
 			>
-				<Axis range={range} origin={Date.parse(run.started_at)} />
-				<Rows run={run} range={range} now={now} live={live} onZoom={actions.zoom}>
+				<Axis range={range} origin={Date.parse(run.started_at)} onWidth={setWidth} />
+				<Rows contentRef={rows} run={run} range={range} now={now} live={live} onZoom={actions.zoom}>
 					{chains.map((chain) => {
 						const open = isOpen(chain);
 						return (
@@ -321,33 +346,131 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 								open={open}
 								range={range}
 								now={now}
+								trackView={trackView}
 								dispatcher={dispatcherOf(run, chain)}
 								decls={decls}
 								display={display}
-								attentionNode={attention?.chainId === chain.id ? attention.nodeId : undefined}
+								tracksOf={(nodeId) => tracksOf(chain, nodeId)}
 								onToggle={() => toggleChain(chain)}
 							/>
 						);
 					})}
 				</Rows>
 			</div>
-			<ResizeHandle
-				label="调整时间线高度"
-				edge="bottom"
-				size={height}
-				measure={() => body.current?.clientHeight ?? 0}
-				min={56}
-				max={() => window.innerHeight * 0.62}
-				onResize={setHeight}
-				onReset={() => setHeight(null)}
-			/>
+			{!hidden && (
+				<ResizeHandle
+					label="调整时间线高度"
+					edge="bottom"
+					size={height}
+					measure={() => body.current?.clientHeight ?? 0}
+					min={56}
+					max={() => Math.min(window.innerHeight * 0.62, TIMELINE_MAX_PX)}
+					onResize={setHeight}
+					onReset={() => setHeight(null)}
+				/>
+			)}
 		</section>
 	);
 }
 
-/** 时间轴刻度（吸顶）。 */
-function Axis({ range, origin }: { range: TimeRange; origin: number }) {
+const BODY_ID = "timeline-body";
+
+/**
+ * 把范围里的节点（底部面板看的节点和尝试）滚到时间线主体里看得见的地方，不被吸顶的刻度挡住；它所在的链收起时是链的汇总行。
+ * 没选中节点时是要保证看得见的那一行（attentionRow：第一个正在执行或失败的节点）。
+ *
+ * 对准一次不够：轨道在摘要读到以后才多出两行，图表、底部面板加载也会改变时间线主体的高度。所以对准之后保持「对准中」，
+ * 主体或行容器的大小每变一次就再对一次，直到用户自己滚动时间线（滚轮、按住、按键）。范围换了（换节点、切尝试）总是重新
+ * 对准；没选中节点时只是要注意的那一行换了，用户滚动过以后不再跟着跳。返回要挂在主体上的事件处理。
+ */
+function useRevealScope({
+	body,
+	rows,
+	chains,
+	isOpen,
+}: {
+	body: React.RefObject<HTMLDivElement | null>;
+	rows: React.RefObject<HTMLDivElement | null>;
+	chains: readonly ChainRunView[];
+	isOpen: (chain: Pick<ChainRunView, "id">) => boolean;
+}) {
+	const selected = useMonitor((s) => s.selected);
+	const scopeTask = useMonitor((s) => s.scopeTask);
+	const rowOf = (chainId: string, nodeId: string | null) =>
+		nodeId !== null && isOpen({ id: chainId })
+			? `[data-node-item="${CSS.escape(nodeKey({ chainInstanceId: chainId, nodeId }))}"]`
+			: `[data-chain-row="${CSS.escape(chainId)}"]`;
+	const attention = attentionRow(chains, isOpen);
+	const target = selected
+		? rowOf(selected.chainInstanceId, selected.nodeId)
+		: attention && rowOf(attention.chainId, attention.nodeId);
+	const scope = selected ? `${nodeKey(selected)}\n${scopeTask ?? ""}` : null;
+	const state = useRef({
+		target: null as string | null,
+		scope: null as string | null,
+		armed: false,
+		touched: false,
+	});
+	const align = useCallback(() => {
+		const s = state.current;
+		const box = body.current;
+		const el = s.armed && s.target ? box?.querySelector<HTMLElement>(s.target) : null;
+		if (box && el) revealIn(box, el);
+	}, [body]);
+
+	useEffect(() => {
+		const s = state.current;
+		if (scope !== s.scope) s.armed = scope !== null || !s.touched;
+		else if (scope === null && target !== s.target) s.armed = !s.touched;
+		s.scope = scope;
+		s.target = target;
+		align();
+	}, [scope, target, align]);
+
+	useEffect(() => {
+		const observer = new ResizeObserver(align);
+		for (const el of [body.current, rows.current]) if (el) observer.observe(el);
+		return () => observer.disconnect();
+	}, [body, rows, align]);
+
+	const stop = () => {
+		state.current.touched = true;
+		state.current.armed = false;
+	};
+	return {
+		userScroll: { onWheel: stop, onPointerDown: stop, onKeyDown: stop, onTouchStart: stop },
+	};
+}
+
+/** 把 `el` 滚进 `box` 看得见的部分（刻度行下面）；放不下时对齐上沿。 */
+function revealIn(box: HTMLElement, el: HTMLElement) {
+	const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+	const bottom = top + el.offsetHeight;
+	if (top < box.scrollTop + AXIS_HEIGHT) box.scrollTop = top - AXIS_HEIGHT;
+	else if (bottom > box.scrollTop + box.clientHeight) {
+		box.scrollTop = Math.min(top - AXIS_HEIGHT, bottom - box.clientHeight);
+	}
+}
+
+/** 时间轴刻度（吸顶）。`onWidth`：轨道区域的像素宽度（动作轨道按它分桶）。 */
+function Axis({
+	range,
+	origin,
+	onWidth,
+}: {
+	range: TimeRange;
+	origin: number;
+	onWidth: (width: number) => void;
+}) {
 	const items = ticks(range, { origin });
+	const track = useRef<HTMLDivElement>(null);
+	useEffect(() => {
+		const el = track.current;
+		if (!el) return;
+		const observer = new ResizeObserver(([entry]) => onWidth(entry?.contentRect.width ?? 0));
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, [onWidth]);
 	return (
 		<div
 			className="sticky top-0 z-3 grid border-b border-border-soft bg-bg"
@@ -356,7 +479,7 @@ function Axis({ range, origin }: { range: TimeRange; origin: number }) {
 			<div className="px-3 pt-0.75 text-xs text-fg-3">
 				<span className="font-mono">{formatClock(range.start)}</span> 起
 			</div>
-			<div className="relative mr-3.5" data-axis-track>
+			<div ref={track} className="relative mr-3.5" data-axis-track>
 				{items.map((t) => (
 					<span
 						key={t.at}
@@ -375,6 +498,7 @@ function Axis({ range, origin }: { range: TimeRange; origin: number }) {
  * 行容器：在轨道区域上处理悬停（竖线）、拖选（缩放）与点击区段（选中节点），并画网格线、现在、日志标记与悬停竖线。
  */
 function Rows({
+	contentRef,
 	run,
 	range,
 	now,
@@ -382,6 +506,8 @@ function Rows({
 	onZoom,
 	children,
 }: {
+	/** 行容器：它的高度变了（例如读到动作以后多出轨道），时间线重新把范围里的节点对准。 */
+	contentRef: React.Ref<HTMLDivElement>;
 	run: RunView;
 	range: TimeRange;
 	now: number;
@@ -429,6 +555,7 @@ function Rows({
 	return (
 		// 指针悬停与拖选只是可视化辅助；节点用标签列的按钮选中（键盘可达）。
 		<div
+			ref={contentRef}
 			className="relative select-none"
 			style={{ paddingBottom: ROWS_BOTTOM_PADDING }}
 			onPointerMove={(e) => {
@@ -535,10 +662,11 @@ function ChainRows({
 	open,
 	range,
 	now,
+	trackView,
 	dispatcher,
 	decls,
 	display,
-	attentionNode,
+	tracksOf,
 	onToggle,
 }: {
 	chain: ChainRunView;
@@ -547,14 +675,14 @@ function ChainRows({
 	open: boolean;
 	range: TimeRange;
 	now: number;
+	/** 动作轨道看的范围、现在和像素宽度。 */
+	trackView: TrackView;
 	/** 派发这个子流程实例的异步任务节点；主链为 null。 */
 	dispatcher: RunNodeName | null;
 	decls: ReturnType<typeof documentNodes>;
 	display: NodeDisplayLookup;
-	/**
-	 * 要保证看得见的那一行（attentionRow）在这条链里时：节点 ID，链收起时是 null；不在这条链里是 undefined。
-	 */
-	attentionNode: string | null | undefined;
+	/** 这条链上有动作的节点的轨道数据；没有动作的节点为 undefined。 */
+	tracksOf: (nodeId: string) => PreparedTracks | undefined;
 	onToggle: () => void;
 }) {
 	const selected = useMonitor((s) => s.selected);
@@ -567,7 +695,6 @@ function ChainRows({
 		<li>
 			<div
 				data-chain-row={chain.id}
-				data-attention={attentionNode === null || undefined}
 				className="grid scroll-mt-5.5 items-center border-b border-fg-1/3 bg-fg-1/2"
 				style={{ height: CHAIN_ROW_HEIGHT, gridTemplateColumns: `${LABEL_W} 1fr` }}
 			>
@@ -641,10 +768,11 @@ function ChainRows({
 							node={node}
 							segments={segments[i] ?? []}
 							range={range}
+							trackView={trackView}
+							tracks={tracksOf(node.node_id)}
 							decls={decls}
 							display={display}
 							indent={indent}
-							attention={attentionNode === node.node_id}
 							selected={sameNode(selected, { chainInstanceId: chain.id, nodeId: node.node_id })}
 						/>
 					))}
@@ -654,25 +782,31 @@ function ChainRows({
 	);
 }
 
+/**
+ * 一个节点一行；有动作的节点下面再接两条轨道（ActionTracks），链收起时一起收起。范围里的节点（选中的）用 `selected-row`：
+ * 中性底色加左侧 2px 白色短条。
+ */
 function NodeRow({
 	chain,
 	node,
 	segments,
 	range,
+	trackView,
+	tracks,
 	decls,
 	display,
 	indent,
-	attention,
 	selected,
 }: {
 	chain: ChainRunView;
 	node: NodeRunView;
 	segments: Segment[];
 	range: TimeRange;
+	trackView: TrackView;
+	tracks: PreparedTracks | undefined;
 	decls: ReturnType<typeof documentNodes>;
 	display: NodeDisplayLookup;
 	indent: number;
-	attention: boolean;
 	selected: boolean;
 }) {
 	const actions = useMonitorActions();
@@ -687,73 +821,77 @@ function NodeRow({
 	const packageNode = decl?.kind === "package";
 	const shortTitle = packageNode ? decl.node : title;
 	return (
-		<li
-			data-node-row={node.node_id}
-			data-selected={selected || undefined}
-			data-attention={attention || undefined}
-			className="grid scroll-mt-5.5 items-center border-b border-fg-1/3 data-selected:bg-fg-1/5"
-			style={{ height: NODE_ROW_HEIGHT, gridTemplateColumns: `${LABEL_W} 1fr` }}
-		>
-			{/* 行上的节点名和说明被截断时，悬停或聚焦这个按钮就显示全文（按钮是唯一的停靠点，里面的 Truncate 只截断）。 */}
-			<Truncate
-				label={name === node.node_id ? title : `${name} · ${title}`}
-				render={
-					<button
-						type="button"
-						aria-pressed={selected}
-						aria-label={`${name} ${title} ${status.label}${progress ? ` ${PROGRESS_LABEL} ${progress}` : ""}`}
-						// 轨道上的区段只给鼠标（悬停看详情、点选节点），每次尝试写在这里：一行只有一个停靠点。
-						aria-description={
-							segments
-								.map(
-									(seg) =>
-										`第 ${seg.attempt} 次：${SEGMENT_LABEL[seg.kind]} ${formatDuration(seg.end - seg.start)}`,
-								)
-								.join("；") || undefined
-						}
-						onClick={() => actions.select(selected ? null : ref)}
-						className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
-						style={{ paddingLeft: 30 + indent }}
-					/>
-				}
+		<li data-node-item={nodeKey(ref)}>
+			<div
+				data-node-row={node.node_id}
+				data-selected={selected || undefined}
+				className="grid items-center border-b border-fg-1/3 data-selected:selected-row"
+				style={{ height: NODE_ROW_HEIGHT, gridTemplateColumns: `${LABEL_W} 1fr` }}
 			>
-				<StatusDot kind={status.kind} />
-				<NodeName node={node} />
-				<Truncate className={cn("flex-1 text-xs text-fg-3", packageNode && "font-mono")}>
-					{shortTitle}
-				</Truncate>
-				{node.attempts.length > 1 && <Badge className="h-4 px-1">×{node.attempts.length}</Badge>}
-				{isAlways(decl) && (
-					<Badge variant="warn" className="h-4 px-1">
-						always
-					</Badge>
-				)}
-				{progress && (
-					<span data-progress className="ml-auto flex-none font-mono text-2xs text-fg-3">
-						{progress}
-					</span>
-				)}
-				<span
-					className={cn(
-						"min-w-13 flex-none text-right font-mono text-2xs text-fg-3",
-						!progress && "ml-auto",
-					)}
+				{/* 行上的节点名和说明被截断时，悬停或聚焦这个按钮就显示全文（按钮是唯一的停靠点，里面的 Truncate 只截断）。 */}
+				<Truncate
+					label={name === node.node_id ? title : `${name} · ${title}`}
+					render={
+						<button
+							type="button"
+							aria-pressed={selected}
+							aria-label={`${name} ${title} ${status.label}${progress ? ` ${PROGRESS_LABEL} ${progress}` : ""}`}
+							// 轨道上的区段只给鼠标（悬停看详情、点选节点），每次尝试写在这里：一行只有一个停靠点。
+							aria-description={
+								segments
+									.map(
+										(seg) =>
+											`第 ${seg.attempt} 次：${SEGMENT_LABEL[seg.kind]} ${formatDuration(seg.end - seg.start)}`,
+									)
+									.join("；") || undefined
+							}
+							onClick={() => actions.select(selected ? null : ref)}
+							className="flex h-full min-w-0 items-center gap-1.5 pr-2.5 text-left text-xs whitespace-nowrap"
+							style={{ paddingLeft: 30 + indent }}
+						/>
+					}
 				>
-					{span === null ? NODE_STATUS[node.status].notRunDuration : formatDuration(span)}
-				</span>
-			</Truncate>
-			<div aria-hidden data-viz className="relative mr-3.5 h-full">
-				{segments.map((seg) => (
-					<SegmentBar
-						key={`${seg.taskId}:${seg.kind}`}
-						seg={seg}
-						range={range}
-						node={ref}
-						name={name}
-						selected={selected}
-					/>
-				))}
+					<StatusDot kind={status.kind} />
+					<NodeName node={node} />
+					<Truncate className={cn("flex-1 text-xs text-fg-3", packageNode && "font-mono")}>
+						{shortTitle}
+					</Truncate>
+					{node.attempts.length > 1 && <Badge className="h-4 px-1">×{node.attempts.length}</Badge>}
+					{isAlways(decl) && (
+						<Badge variant="warn" className="h-4 px-1">
+							always
+						</Badge>
+					)}
+					{progress && (
+						<span data-progress className="ml-auto flex-none font-mono text-2xs text-fg-3">
+							{progress}
+						</span>
+					)}
+					<span
+						className={cn(
+							"min-w-13 flex-none text-right font-mono text-2xs text-fg-3",
+							!progress && "ml-auto",
+						)}
+					>
+						{span === null ? NODE_STATUS[node.status].notRunDuration : formatDuration(span)}
+					</span>
+				</Truncate>
+				<div aria-hidden data-viz className="relative mr-3.5 h-full">
+					{segments.map((seg) => (
+						<SegmentBar
+							key={`${seg.taskId}:${seg.kind}`}
+							seg={seg}
+							range={range}
+							node={ref}
+							name={name}
+							selected={selected}
+						/>
+					))}
+				</div>
 			</div>
+			{tracks && (
+				<ActionTracks prepared={tracks} view={trackView} node={ref} name={name} indent={indent} />
+			)}
 		</li>
 	);
 }

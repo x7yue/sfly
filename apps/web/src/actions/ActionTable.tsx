@@ -492,7 +492,7 @@ function countOnlyText(
 		row.until === null ? null : time(row.until),
 		agent,
 	);
-	const text = `${span}的 ${formatInteger(row.count)} 个「${row.name}」只计数，没有明细（${ACTION_PAGE.countOnlyReason(row.reason, row.totalFull)}）`;
+	const text = `${span}的 ${formatInteger(row.count)} 个「${row.name}」${NODE_ACTIONS.countOnly}，没有明细（${ACTION_PAGE.countOnlyReason(row.reason, row.totalFull)}）`;
 	return row.failedGap
 		? `${text}；${ACTION_PAGE.failedUnknown(row.name, row.failedGap.total === null ? null : formatInteger(row.failedGap.total))}`
 		: text;

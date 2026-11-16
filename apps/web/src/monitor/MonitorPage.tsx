@@ -242,8 +242,11 @@ function DetailView({
 		<>
 			{failureBanner && <FailureBanner run={run} onClose={onCloseBanner} />}
 			<Timeline run={run} doc={doc} />
-			<ChartWorkspace run={run} doc={doc} catalog={catalog} compact={compact} />
-			<BottomPanel run={run} doc={doc} />
+			{/* 时间线下面的高度由图表工作区和底部面板分：底部面板最高到这里减去图表的最小高度，不被挤出窗口。 */}
+			<div className="flex min-h-0 flex-1 flex-col">
+				<ChartWorkspace run={run} doc={doc} catalog={catalog} compact={compact} />
+				<BottomPanel run={run} doc={doc} />
+			</div>
 		</>
 	);
 }
