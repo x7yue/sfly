@@ -2,7 +2,7 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import type { RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOCUS, TERM } from "#/lib/copy";
 import { AnomalyNote } from "./AnomalyNote";
@@ -69,25 +69,39 @@ export function FocusReadout({
 }
 
 /**
- * 一排关注项读数：自动按宽度排成几列，读数之间 1px 分隔（每格的上、左描边，整体左移、上移 1px 再裁掉最外面一圈，
- * 换行后每一行也一样）。`renderItem` 给每一格换成按钮或链接。外框、底色由调用方的 `className` 决定。
+ * 一排关注项读数：默认自动按宽度排成几列；`columns` 给了就是这么多等宽的列（控制台按运行块的宽度放 3 或 4 格），
+ * 放不下的换行。读数之间 1px 分隔（每格的上、左描边，整体左移、上移 1px 再裁掉最外面一圈，换行后每一行也一样）。
+ * `renderItem` 给每一格换成按钮或链接；`trailing` 是排在最后、和读数一样占一格的内容（「还有 3 个关注项 · 打开概览」）。
+ * 外框、底色由调用方的 `className` 决定。
  */
 export function FocusReadoutStrip({
 	items,
 	generatedAt,
 	renderItem,
+	columns,
+	trailing,
 	className,
 }: {
 	items: readonly RunFocusItem[];
 	generatedAt: string;
 	renderItem?: (item: RunFocusItem) => ReactElement<Record<string, unknown>>;
+	columns?: number;
+	trailing?: ReactNode;
 	className?: string;
 }) {
 	return (
 		<div className={cn("overflow-hidden", className)}>
 			<ul
 				aria-label={`${TERM.focusItem}读数`}
-				className="-mt-px -ml-px grid list-none grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] p-0"
+				className={cn(
+					"-mt-px -ml-px grid list-none p-0",
+					columns === undefined && "grid-cols-[repeat(auto-fit,minmax(11rem,1fr))]",
+				)}
+				style={
+					columns === undefined
+						? undefined
+						: { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }
+				}
 			>
 				{items.map((item) => (
 					<li
@@ -102,6 +116,7 @@ export function FocusReadoutStrip({
 						/>
 					</li>
 				))}
+				{trailing && <li className="min-w-0 border-t border-l border-border-soft">{trailing}</li>}
 			</ul>
 		</div>
 	);

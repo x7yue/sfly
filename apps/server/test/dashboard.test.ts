@@ -5,12 +5,15 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
 import { type AssignedTask, ErrorKind, FakeAgent, type HelloInit } from "./support/fake-agent.js";
+import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-items.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
 
 const HOUR = 3_600_000;
 const MINUTE = 60_000;
+/** 测试时钟的起点（2026-01-01T00:00:00Z）之后第 s 秒（Unix 秒）。 */
+const at = (s: number) => Date.UTC(2026, 0, 1) / 1000 + s;
 
 type Node = Record<string, unknown> & { id: string };
 
@@ -271,6 +274,9 @@ describe("控制台统计", () => {
 			expect(s).toMatchObject({ ...common, started_at: started, ended_at: started });
 			expect(c).not.toHaveProperty("failure");
 			expect(s).not.toHaveProperty("failure");
+			expect(f).toHaveProperty("focus", []);
+			expect(c).not.toHaveProperty("focus");
+			expect(s).not.toHaveProperty("focus");
 		});
 
 		it("失败的运行给出最先失败的节点、所在的链、最后一次尝试的尝试号与错误；之后失败的 always 节点不算", async () => {
@@ -399,6 +405,120 @@ describe("控制台统计", () => {
 				kind: "node_error",
 				message: "登录失败：token=******",
 			});
+		});
+	});
+
+	describe("失败的运行带关注项的最终值", () => {
+		/** load 先失败，wide 因此被跳过；load 上报过订单数 250 和延迟 20。 */
+		async function failedRun(agent: FakeAgent, id: string): Promise<string> {
+			const runId = await api.triggerOk(id);
+			const task = await agent.nextAssign();
+			agent.metrics(task, [
+				["orders", at(1), 100],
+				["orders", at(2), 250],
+				["p99", at(2), 20],
+			]);
+			await agent.sync();
+			await agent.fail(task, "下单失败");
+			expect((await api.run(runId)).status).toBe("failed");
+			return runId;
+		}
+		const focusOf = async (runId: string) => {
+			const ended = (await dashboard()).recent_ended.find((r) => r.id === runId);
+			return ended?.status === "failed" ? ended.focus : undefined;
+		};
+
+		beforeEach(async () => {
+			await publishBench(cp);
+		});
+
+		it("取场景现在的关注项在结束时的值：和运行的关注项读数同样的规则，最多 4 项，只要最新值", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(
+				benchDocument([
+					["load", "load"],
+					["wide", "wide"],
+				]),
+				"压测",
+			);
+			await putFocusItemsOk(api, id, [
+				{ node_id: "wide", chart: "m1" },
+				{ node_id: "load", chart: "orders", title: "订单数" },
+				{ node_id: "load", chart: "延迟" },
+				{ node_id: "wide", chart: "m2" },
+				{ node_id: "load", chart: "TPS" },
+			]);
+			const runId = await failedRun(agent, id);
+
+			const focus = await focusOf(runId);
+			// 失败节点的三项有异常，排在最前；之后是没有执行的 wide 的项，作者的顺序；第 5 项放不下。
+			expect(focus?.map((i) => [i.position, i.title])).toEqual([
+				[2, "订单数"],
+				[3, "延迟"],
+				[5, "TPS"],
+				[1, "m1"],
+			]);
+			expect(focus?.[0]).toMatchObject({
+				node_id: "load",
+				latest: { value: 250 },
+				source: { status: "failed", attempt: 1 },
+				anomaly: { kind: "failed" },
+				series: [],
+			});
+			expect(focus?.[1]).toMatchObject({ latest: { value: 20 }, series: [] });
+			expect(focus?.[3]).toMatchObject({
+				node_id: "wide",
+				latest: null,
+				source: { status: "skipped" },
+				anomaly: null,
+			});
+			// 与 GET /runs/:id/focus?points=0 同一份读数的前 4 项。
+			const direct = (await (await cp.fetch(`/runs/${runId}/focus?points=0`)).json()) as {
+				items: unknown[];
+			};
+			expect(focus).toEqual(direct.items.slice(0, 4));
+		});
+
+		it("按场景现在的关注项：结束之后改的也算；场景没设关注项时是空的", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(benchDocument([["load", "load"]]), "压测");
+			const runId = await failedRun(agent, id);
+			expect(await focusOf(runId)).toEqual([]);
+
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "orders" }]);
+			expect((await focusOf(runId))?.map((i) => [i.chart, i.latest?.value])).toEqual([
+				["orders", 250],
+			]);
+
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟", title: "下单延迟" }]);
+			expect((await focusOf(runId))?.map((i) => [i.title, i.latest?.value])).toEqual([
+				["下单延迟", 20],
+			]);
+
+			await putFocusItemsOk(api, id, []);
+			expect(await focusOf(runId)).toEqual([]);
+		});
+
+		it("10 个失败的运行各带自己的最终值，按结束时间从新到旧", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(benchDocument([["load", "load"]]), "压测");
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "orders" }]);
+			const runs: string[] = [];
+			for (let i = 1; i <= 11; i++) {
+				const runId = await api.triggerOk(id);
+				const task = await agent.nextAssign();
+				agent.metrics(task, [["orders", at(i), i * 10]]);
+				await agent.sync();
+				await agent.fail(task);
+				runs.push(runId);
+				clock.advance(MINUTE);
+			}
+
+			const { recent_ended } = await dashboard();
+			expect(recent_ended.map((r) => r.id)).toEqual(runs.slice(1).reverse());
+			expect(
+				recent_ended.map((r) => (r.status === "failed" ? r.focus[0]?.latest?.value : null)),
+			).toEqual([110, 100, 90, 80, 70, 60, 50, 40, 30, 20]);
 		});
 	});
 

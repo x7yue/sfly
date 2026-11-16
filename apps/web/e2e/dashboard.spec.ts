@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import type { FakeAgent } from "../../server/test/support/fake-agent.js";
 import { type E2eFixtures, expect, test } from "./fixtures";
 import {
@@ -9,7 +9,7 @@ import {
 	scenarioUsing,
 	triggerRun,
 } from "./support";
-import { mainChain, manyRuns, seedWall } from "./wall-support";
+import { focusWallRun, mainChain, manyRuns, seedWall } from "./wall-support";
 
 // 控制台的实况墙（外壳页方案 4.1）：页头一行；左栏是正在运行的运行块和最近结束，右栏是 Agent 的槽位和场景。
 
@@ -20,7 +20,8 @@ const region = (page: Page, name: string) => page.getByRole("region", { name, ex
 /** 一个运行块（区域名称是场景名）。 */
 const block = (page: Page, scenario: string) =>
 	region(page, "正在运行").getByRole("region", { name: scenario, exact: true });
-const ended = (page: Page) => region(page, "最近结束").getByRole("listitem");
+/** 最近结束里的一行（失败的行里还有关注项读数的列表项，不算）。 */
+const ended = (page: Page) => region(page, "最近结束").locator("li[data-run-status]");
 
 /** 环境里出现过一个运行：触发场景，让 Agent 成功完成它。 */
 async function runOnce(
@@ -187,6 +188,197 @@ test("运行块的主指标：场景没设关注项时，读数区是执行中�
 	await expect(
 		block(page, "定时巡检").getByRole("region", { name: "执行中节点的主指标" }),
 	).toHaveCount(0);
+});
+
+const FOCUS_AGENT = {
+	name: "agent-a",
+	slots: 4,
+	installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+};
+/** 运行块的读数区（场景设了关注项）。 */
+const focusRegion = (run: Locator) => run.getByRole("region", { name: "关注项", exact: true });
+const readoutList = (run: Locator) => focusRegion(run).getByRole("list", { name: "关注项读数" });
+/** 一格一格的读数（链接），按排列的顺序，不含最后一格「还有 N 个关注项」。 */
+const readings = (run: Locator) =>
+	readoutList(run).getByRole("link").filter({ hasNotText: "打开概览" });
+/** 最后一格：「还有 N 个关注项 · 打开概览」。 */
+const moreLink = (run: Locator, count: number) =>
+	readoutList(run).getByRole("link", { name: `还有 ${count} 个关注项 · 打开概览`, exact: true });
+/** 连上 agent-a，跑出 {@link focusWallRun} 的状态（场景「撮合浸泡」）。 */
+async function focusRun(
+	{
+		controlPlane,
+		connectAgent,
+		clock,
+	}: Pick<E2eFixtures, "controlPlane" | "connectAgent" | "clock">,
+	options: Parameters<typeof focusWallRun>[3] & { slots?: number } = {},
+) {
+	const agent = await connectAgent({ ...FOCUS_AGENT, slots: options.slots ?? FOCUS_AGENT.slots });
+	return { agent, ...(await focusWallRun(controlPlane, agent, clock, options)) };
+}
+
+test("运行块的关注项读数：1440 下放 4 格，有异常的排在最前并写明原因，其余写「还有 3 个关注项 · 打开概览」，标题旁写「2 项需要注意」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await focusRun({ controlPlane, connectAgent, clock });
+	await page.goto("/");
+	const run = block(page, "撮合浸泡");
+	await expect(readings(run)).toHaveCount(4);
+	await expect(focusRegion(run)).toContainText("2 项需要注意");
+	await expect(moreLink(run, 3)).toBeVisible();
+	// 控制面把有异常的排在前面：fetch2 的延迟、吞吐（写原因，不写来源），之后是作者的顺序里 fetch 的延迟、请求数（写来源和最终值）。
+	await expect(readings(run)).toHaveText([
+		/^延迟.*WARN · 08:00:04$/,
+		/^吞吐.*WARN · 08:00:04$/,
+		/^延迟.*fetch · 最终值$/,
+		/^请求数.*fetch · 最终值$/,
+	]);
+	await expect(readings(run).first()).toHaveAccessibleName(/来自 fetch2（执行中），需要注意：WARN/);
+});
+
+test("运行块的关注项读数：按运行块的宽度算，1280 下放 3 格，其余写「还有 4 个关注项 · 打开概览」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await focusRun({ controlPlane, connectAgent, clock });
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await page.goto("/");
+	const run = block(page, "撮合浸泡");
+	await expect(readings(run)).toHaveCount(3);
+	await expect(focusRegion(run)).toContainText("2 项需要注意");
+	await expect(moreLink(run, 4)).toBeVisible();
+	await expect(readings(run).nth(2)).toContainText("最终值");
+
+	// 窗口变宽时跟着变：格数看运行块的宽度，不是进页面时的那一次。
+	await page.setViewportSize({ width: 1440, height: 900 });
+	await expect(readings(run)).toHaveCount(4);
+	await expect(moreLink(run, 3)).toBeVisible();
+});
+
+test("运行块的关注项读数：有异常的总在可见的格子里，比格数多时全部显示", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	// fetch2 的四张图表都有异常（WARN），再加 ping 的 level：5 项里 4 项有异常，1280 下只有 3 格。
+	await focusRun(
+		{ controlPlane, connectAgent, clock },
+		{
+			items: [
+				{ node_id: "ping", chart: "level" },
+				{ node_id: "fetch2", chart: "延迟" },
+				{ node_id: "fetch2", chart: "吞吐" },
+				{ node_id: "fetch2", chart: "请求数" },
+				{ node_id: "fetch2", chart: "errors" },
+			],
+		},
+	);
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await page.goto("/");
+	const run = block(page, "撮合浸泡");
+	await expect(focusRegion(run)).toContainText("4 项需要注意");
+	await expect(readings(run)).toHaveCount(4);
+	for (const reading of await readings(run).all()) await expect(reading).toContainText("WARN");
+	await expect(moreLink(run, 1)).toBeVisible();
+});
+
+test("运行块的关注项读数：3 个以上运行时每块只放有异常的和前两项", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { agent } = await focusRun({ controlPlane, connectAgent, clock }, { slots: 8 });
+	await manyRuns(controlPlane, agent, clock, 2);
+	await page.goto("/");
+	const run = block(page, "撮合浸泡");
+	// 两项有异常，正好两格；其余 5 项不再按宽度补格。
+	await expect(readings(run)).toHaveCount(2);
+	await expect(focusRegion(run)).toContainText("2 项需要注意");
+	await expect(moreLink(run, 5)).toBeVisible();
+	for (const reading of await readings(run).all()) await expect(reading).toContainText("WARN");
+});
+
+test("运行块的关注项读数：点一格进入运行监控概览并定位到那个节点；「还有 N 个关注项」进入概览", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await focusRun({ controlPlane, connectAgent, clock });
+	await page.goto("/");
+	const run = block(page, "撮合浸泡");
+	await readings(run).nth(2).click();
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?.*view=overview`));
+	await expect(page).toHaveURL(/node=fetch(&|$)/);
+	// 概览里属于 fetch 的三项关注项（数值「errors」，图表「延迟」「请求数」）标出位置，fetch2 的没有。
+	await expect(page.getByRole("heading", { name: "链路", level: 2 })).toBeVisible();
+	const located = page.locator('[aria-current="location"]');
+	await expect(located).toHaveCount(3);
+	await expect(located.filter({ hasText: "fetch2" })).toHaveCount(0);
+
+	await page.goBack();
+	await moreLink(block(page, "撮合浸泡"), 3).click();
+	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=overview$`));
+	await expect(page.locator('[aria-current="location"]')).toHaveCount(0);
+});
+
+test("运行块的读数区标题旁的入口：设了关注项是「调整关注项」，进入场景设置的关注项页", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { scenarioId } = await focusRun({ controlPlane, connectAgent, clock });
+	await page.goto("/");
+	const link = focusRegion(block(page, "撮合浸泡")).getByRole("link", { name: "调整关注项" });
+	await expect(link).toHaveAttribute("href", `/orchestrations/${scenarioId}?settings=focus`);
+	await link.click();
+	await expect(page).toHaveURL(new RegExp(`/orchestrations/${scenarioId}\\?settings=focus`));
+});
+
+test("运行块的主指标：场景没设关注项时，标题旁写明并给出「设置关注项」的入口", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { stress } = await seedWall({ page, controlPlane, connectAgent, clock });
+	await page.goto("/");
+	const primary = block(page, "撮合压测").getByRole("region", { name: "执行中节点的主指标" });
+	await expect(primary).toContainText("场景没有设置关注项");
+	await expect(primary.getByRole("link", { name: "设置关注项" })).toHaveAttribute(
+		"href",
+		`/orchestrations/${stress}?settings=focus`,
+	);
+});
+
+test("最近结束的失败行：带关注项的最终值（场景现在的关注项，最多 4 项）", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await focusRun({ controlPlane, connectAgent, clock }, { fail: true });
+	await page.goto("/");
+	const row = ended(page).filter({ hasText: runId.slice(0, 8) });
+	await expect(row).toContainText("失败节点 fetch2");
+	const values = row.getByRole("list", { name: "关注项读数" }).getByRole("group");
+	// 作者写了 7 项，只带前 4 项：有异常的（来源节点失败）在最前，之后是成功的 fetch 的最终值。
+	await expect(values).toHaveCount(4);
+	await expect(values).toHaveText([
+		/^延迟.*来源节点失败$/,
+		/^吞吐.*来源节点失败$/,
+		/^延迟.*fetch · 最终值$/,
+		/^请求数.*fetch · 最终值$/,
+	]);
+	await expect(values.first()).toHaveAccessibleName(/来自 fetch2（失败）/);
 });
 
 test("运行块的三个按钮：打开运行监控、在画布中查看、取消运行（走现有的确认流程）", async ({

@@ -3,11 +3,13 @@ import {
 	type AssignedTask,
 	ErrorKind,
 	type FakeAgent,
+	LogLevel,
 } from "../../server/test/support/fake-agent.js";
 import type { ManualClock } from "../../server/test/support/manual-clock.js";
 import type { TestControlPlane } from "../../server/test/support/test-control-plane.js";
 import type { E2eFixtures } from "./fixtures";
-import { metricPackage, pingPoints } from "./monitor-scenario";
+import { createFocusScenario, setFocusItems } from "./focus-support";
+import { httpCheckPoints, logLine, metricPackage, pingPoints } from "./monitor-scenario";
 import {
 	createScenario,
 	elapseWithHeartbeats,
@@ -60,7 +62,7 @@ const withSleep = (agent: string) => ({
 
 /**
  * 固定的一组数据（手动时钟从 2026-01-01T00:00Z，即浏览器里的 08:00 开始；节点包带主指标）：
- * - 巡检成功一次（耗时 2.3s）；一分钟后订单链路的 ping 第 1 次失败、重试的第 2 次超时失败（耗时 4m 12s）；
+ * - 巡检成功一次（耗时 2.3s）；一分钟后订单链路的 ping 第 1 次失败、重试的第 2 次上报了指标后超时失败（耗时 4m 12s）；
  * - 一小时后定时巡检停在 Sleep 节点 nap 上，撮合压测开始运行：子流程的 verify 失败，主链的 probe 执行中并上报主指标；
  * - 草稿从没运行过；agent-mac 离线。
  * 返回各运行与场景的 ID，和 agent-linux 以及它上面执行中的 probe 任务。
@@ -100,6 +102,9 @@ export async function seedWall({
 	const failed = await triggerRun(controlPlane, orders);
 	await linux.fail(await linux.nextAssign(), "AssertionError: 子单量 0");
 	const retry = await linux.nextAssign();
+	// 重试的这次尝试上报过指标：失败的运行带关注项的最终值时（场景设了关注项）读到它。
+	linux.metrics(retry, pingPoints(clock.now().getTime(), 0, 3));
+	await linux.sync();
 	await elapseWithHeartbeats(clock, [linux], 252_000);
 	await linux.fail(
 		retry,
@@ -190,4 +195,52 @@ export async function longChainRun(
 		await agent.succeed(task);
 	}
 	return run;
+}
+
+/**
+ * 运行块读数的关注项（按作者的顺序）：fetch、fetch2 各有延迟、吞吐、请求数和 errors（focus-support 的 `focusDocument`），
+ * ping 有 level 和 total。{@link focusWallRun} 的状态下：fetch 成功（最终值），fetch2 执行中并有 WARN（它的两项有异常），
+ * ping 待执行。控制面给的顺序是有异常的在最前：fetch2 的延迟、吞吐，之后是作者的顺序。
+ */
+export const FOCUS_WALL_ITEMS = [
+	{ node_id: "fetch", chart: "延迟" },
+	{ node_id: "fetch", chart: "请求数" },
+	{ node_id: "ping", chart: "level" },
+	{ node_id: "fetch2", chart: "延迟" },
+	{ node_id: "fetch", chart: "errors" },
+	{ node_id: "ping", chart: "total" },
+	{ node_id: "fetch2", chart: "吞吐" },
+] as const;
+
+/**
+ * 场景「撮合浸泡」设了 {@link FOCUS_WALL_ITEMS}，触发一次运行：fetch 上报了 4 秒的指标后成功；fetch2 开始执行、上报指标并
+ * 打了一条 WARN，保持执行中。`fail: true` 时 fetch2 之后失败，运行失败。Agent 叫 agent-a，要有 2 个以上槽位。
+ */
+export async function focusWallRun(
+	controlPlane: TestControlPlane,
+	agent: FakeAgent,
+	clock: ManualClock,
+	{
+		fail = false,
+		items = FOCUS_WALL_ITEMS,
+	}: {
+		fail?: boolean;
+		items?: ReadonlyArray<{ node_id: string; chart: string; title?: string }>;
+	} = {},
+): Promise<{ runId: string; scenarioId: string }> {
+	const scenarioId = await createFocusScenario(controlPlane);
+	await setFocusItems(controlPlane, scenarioId, [...items]);
+	const clock0 = clock.now().getTime();
+	const runId = await triggerRun(controlPlane, scenarioId);
+	const fetch = await agent.nextAssign();
+	agent.metrics(fetch, httpCheckPoints(clock0, 0, 3));
+	clock.advance(4000);
+	await agent.succeed(fetch);
+	const fetch2 = await agent.nextAssign();
+	agent.metrics(fetch2, httpCheckPoints(clock0, 4, 6));
+	agent.logs(fetch2, [logLine(clock, 1, "下单接口 p99 超过 20ms", LogLevel.WARN)]);
+	await agent.sync();
+	clock.advance(2000);
+	if (fail) await agent.fail(fetch2, "下单接口返回 503");
+	return { runId, scenarioId };
 }

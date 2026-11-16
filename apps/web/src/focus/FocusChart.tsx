@@ -1,4 +1,5 @@
 import type { RunFocusItem } from "@sfly/schema";
+import { cn } from "cn";
 import { useMemo } from "react";
 import { nodeStatusView, StatusDot } from "#/components/status";
 import { FOCUS, hiddenSeriesLabel, MONITOR_VIEW_LABEL, openInLabel } from "#/lib/copy";
@@ -28,11 +29,14 @@ export function FocusChart({
 	item,
 	generatedAt,
 	onOpen,
+	located = false,
 }: {
 	item: RunFocusItem;
 	generatedAt: string;
 	/** 在详情里打开来源节点。 */
 	onOpen: () => void;
+	/** 从别处（控制台运行块的读数）进来定位到这个节点：描边换成中性高亮，`aria-current="location"`。 */
+	located?: boolean;
 }) {
 	const started = item.source.started_at;
 	const axis = useMemo(() => {
@@ -48,7 +52,11 @@ export function FocusChart({
 		<article
 			aria-labelledby={titleId}
 			data-focus-chart={item.chart}
-			className="flex min-w-0 flex-col gap-1 rounded-lg border border-border-soft bg-surface px-3.5 pt-3 pb-2.5"
+			aria-current={located ? "location" : undefined}
+			className={cn(
+				"flex min-w-0 flex-col gap-1 rounded-lg border border-border-soft bg-surface px-3.5 pt-3 pb-2.5",
+				located && "border-selected",
+			)}
 		>
 			<header className="flex items-baseline gap-2">
 				<StatusDot kind={nodeStatusView(item.source.status).kind} className="self-center" />

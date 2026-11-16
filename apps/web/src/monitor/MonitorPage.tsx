@@ -184,7 +184,7 @@ export function MonitorPage({ runId, address }: { runId: string; address: Monito
 						className="flex min-h-0 flex-1 flex-col"
 					>
 						{view === "overview" ? (
-							<Overview run={run} onOpenNode={openNode} />
+							<Overview run={run} onOpenNode={openNode} located={address.node} />
 						) : (
 							<DetailView
 								run={run}

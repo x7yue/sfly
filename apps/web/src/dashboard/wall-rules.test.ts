@@ -1,6 +1,6 @@
-import type { AgentView, RunningTaskView } from "@sfly/schema";
+import type { AgentView, RunFocusItem, RunningTaskView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { agentColumn, wallLayout } from "./wall-rules";
+import { agentColumn, readoutCells, readoutPlan, wallLayout } from "./wall-rules";
 
 describe("运行个数", () => {
 	it("1、2 个运行：运行块，进行中的节点全列", () => {
@@ -100,5 +100,103 @@ describe("Agent 合并", () => {
 		]);
 		expect(names(listed)).toEqual(["installing", "mismatch"]);
 		expect(idle).toBe(4);
+	});
+});
+
+describe("读数区放几格", () => {
+	// 运行块内容的实际宽度：1440 的窗口里约 753px，1280 的窗口里约 624px。
+	const WIDE = 753;
+	const NARROW = 624;
+
+	it("按运行块的宽度放 4 格或 3 格（「还有 N 个关注项」也占一格）", () => {
+		expect(readoutCells(WIDE, null)).toBe(4);
+		expect(readoutCells(NARROW, null)).toBe(3);
+	});
+
+	it("宽度的分界：5 列各至少 140px 才放 4 格；再宽也不超过 4 格，再窄也不少于 3 格", () => {
+		expect(readoutCells(699, null)).toBe(3);
+		expect(readoutCells(700, null)).toBe(4);
+		expect(readoutCells(1400, null)).toBe(4);
+		expect(readoutCells(200, null)).toBe(3);
+		expect(readoutCells(0, null)).toBe(3);
+	});
+
+	it("3 个以上运行时每块只放前 2 项，不看宽度", () => {
+		for (const runs of [3, 6])
+			for (const width of [NARROW, WIDE])
+				expect(readoutCells(width, wallLayout(runs).activeLimit)).toBe(2);
+		expect(readoutCells(WIDE, wallLayout(2).activeLimit)).toBe(4);
+	});
+});
+
+const warn: RunFocusItem["anomaly"] = {
+	kind: "log",
+	level: "warn",
+	at: "2026-01-01T00:10:00.000Z",
+	message: "超时",
+};
+const item = (name: string, anomaly = false) => ({ name, anomaly: anomaly ? warn : null });
+const titles = (items: readonly { name: string }[]) => items.map((i) => i.name);
+
+describe("读数区显示哪几项、排几列", () => {
+	// 控制面给的读数：有异常的在最前，其余按作者的顺序。
+	const ITEMS = [
+		item("a", true),
+		item("b", true),
+		item("c"),
+		item("d"),
+		item("e"),
+		item("f"),
+		item("g"),
+	];
+
+	it("取前几格，其余只计数；「N 项需要注意」数全部有异常的", () => {
+		const wide = readoutPlan(ITEMS, 753, null);
+		expect(titles(wide.shown)).toEqual(["a", "b", "c", "d"]);
+		expect([wide.more, wide.attention]).toEqual([3, 2]);
+		const narrow = readoutPlan(ITEMS, 624, null);
+		expect(titles(narrow.shown)).toEqual(["a", "b", "c"]);
+		expect([narrow.more, narrow.attention]).toEqual([4, 2]);
+	});
+
+	it("3 个以上运行时是有异常的加上前两项：异常不到两项时补满两项", () => {
+		const one = readoutPlan([item("a", true), item("b"), item("c")], 753, 2);
+		expect(titles(one.shown)).toEqual(["a", "b"]);
+		expect(one.more).toBe(1);
+		const none = readoutPlan([item("a"), item("b"), item("c")], 753, 2);
+		expect(titles(none.shown)).toEqual(["a", "b"]);
+	});
+
+	it("有异常的总在里面：异常比格数多时全部显示，不够的格数不补", () => {
+		const items = [
+			item("a", true),
+			item("b", true),
+			item("c", true),
+			item("d", true),
+			item("e", true),
+			item("f"),
+		];
+		const narrow = readoutPlan(items, 624, null);
+		expect(titles(narrow.shown)).toEqual(["a", "b", "c", "d", "e"]);
+		expect([narrow.more, narrow.attention]).toEqual([1, 5]);
+		const crowded = readoutPlan(items, 753, 2);
+		expect(titles(crowded.shown)).toEqual(["a", "b", "c", "d", "e"]);
+		expect(crowded.more).toBe(1);
+	});
+
+	it("项数不超过格数时全部显示，没有「还有」", () => {
+		const few = readoutPlan([item("a"), item("b")], 753, null);
+		expect(titles(few.shown)).toEqual(["a", "b"]);
+		expect(few.more).toBe(0);
+		expect(readoutPlan([], 753, null)).toEqual({ shown: [], more: 0, attention: 0, columns: 0 });
+	});
+
+	it("列数：显示的项数加上「还有 N 个关注项」那一格，最多是按宽度能放的格数加一；异常换行时不超过它", () => {
+		expect(readoutPlan(ITEMS, 753, null).columns).toBe(5);
+		expect(readoutPlan(ITEMS, 624, null).columns).toBe(4);
+		expect(readoutPlan([item("a"), item("b")], 753, null).columns).toBe(2);
+		expect(readoutPlan(ITEMS, 753, 2).columns).toBe(3);
+		const crowded = [1, 2, 3, 4, 5, 6].map((n) => item(`a${n}`, true));
+		expect(readoutPlan(crowded, 624, null).columns).toBe(4);
 	});
 });

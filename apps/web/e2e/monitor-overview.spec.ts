@@ -70,6 +70,36 @@ test("默认打开概览，地址跟着视图变，刷新后停在上次的视�
 	await expect(viewTab(page, "概览")).toHaveAttribute("aria-selected", "true");
 });
 
+test("地址里带 node 时概览标出这个节点的关注项（数值和图表），第一项滚进视野；换一个节点跟着换", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await page.clock.setFixedTime(clock.now());
+	// 窗口矮到放不下整页：第二行的图表「清理 level」在视野外。
+	await page.setViewportSize({ width: 1280, height: 520 });
+	await page.goto(`/runs/${runId}?view=overview`);
+	await expect(focusChart(page, "清理 level")).toBeAttached();
+	await expect(focusChart(page, "清理 level")).not.toBeInViewport();
+	const located = page.locator('[aria-current="location"]');
+	await expect(located).toHaveCount(0);
+
+	await page.goto(`/runs/${runId}?view=overview&node=cleanup`);
+	await expect(viewTab(page, "概览")).toHaveAttribute("aria-selected", "true");
+	await expect(located).toHaveCount(1);
+	await expect(focusChart(page, "清理 level")).toHaveAttribute("aria-current", "location");
+	await expect(focusChart(page, "清理 level")).toBeInViewport();
+
+	// probe 有两项关注项：数值「total」和图表「探活 level」；别的节点的不标。
+	await page.goto(`/runs/${runId}?view=overview&node=probe`);
+	await expect(located).toHaveCount(2);
+	await expect(located.filter({ hasText: "total" })).toHaveCount(1);
+	await expect(focusChart(page, "探活 level")).toHaveAttribute("aria-current", "location");
+	await expect(focusChart(page, "下单延迟")).not.toHaveAttribute("aria-current", "location");
+});
+
 test("标签页是 tablist：方向键、Home、End 切换并移动焦点，只有选中的标签在 Tab 顺序里", async ({
 	page,
 	controlPlane,

@@ -56,7 +56,7 @@ import {
 	withSubflow,
 } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
-import { longChainRun, manyRuns, seedWall } from "./wall-support";
+import { focusWallRun, longChainRun, manyRuns, seedWall } from "./wall-support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
 // 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）、
@@ -555,17 +555,58 @@ test("场景的运行通知设置：机器人已被删除时的提示", async ({
 });
 
 test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
-	await seedWall({ page, controlPlane, connectAgent, clock });
+	const { stress, orders } = await seedWall({ page, controlPlane, connectAgent, clock });
+	// 撮合压测的 probe 在执行中、verify 失败（来源节点失败，有异常）；订单链路失败，带关注项的最终值。
+	await setFocusItems(controlPlane, stress, [
+		{ node_id: "probe", chart: "level" },
+		{ node_id: "probe", chart: "total" },
+		{ node_id: "verify", chart: "level" },
+		{ node_id: "verify", chart: "total" },
+	]);
+	await setFocusItems(controlPlane, orders, [
+		{ node_id: "submit", chart: "level" },
+		{ node_id: "submit", chart: "total" },
+	]);
+	// 页面在外壳里滚动，整页截图截不到：窗口加高，让失败行的最终值也在画面里。
+	await page.setViewportSize({ width: 1440, height: 1100 });
 	await page.goto("/");
 	await expect(
-		page.getByRole("region", { name: "最近结束", exact: true }).getByRole("listitem"),
+		page.getByRole("region", { name: "最近结束", exact: true }).locator("li[data-run-status]"),
 	).toHaveCount(2);
-	await expect(page.getByRole("region", { name: "执行中节点的主指标" })).toContainText("level");
+	await expect(page.getByRole("region", { name: "关注项", exact: true })).toContainText(
+		"2 项需要注意",
+	);
+	await expect(
+		page.getByRole("region", { name: "最近结束", exact: true }).getByRole("group"),
+	).toHaveCount(2);
 	await expect(
 		page.getByRole("region", { name: "场景", exact: true }).getByRole("link"),
 	).toHaveCount(6);
 	// 运行 ID 是随机的，遮住。
 	await expect(page).toHaveScreenshot("dashboard.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("控制台：关注项读数按运行块的宽度放 3 格，有异常的排在最前，其余写「还有 N 个关注项」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await focusWallRun(controlPlane, agent, clock);
+	await page.clock.setFixedTime(clock.now());
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await page.goto("/");
+	const readout = page.getByRole("list", { name: "关注项读数" });
+	await expect(readout.getByRole("link")).toHaveCount(4);
+	await expect(readout).toContainText("还有 4 个关注项");
+	await expect(page).toHaveScreenshot("dashboard-focus-1280.png", {
 		mask: [page.locator('[data-slot="run-id"]')],
 	});
 });
