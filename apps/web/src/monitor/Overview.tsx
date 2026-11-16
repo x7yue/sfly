@@ -2,18 +2,24 @@ import { isOnAgentStatus, type RunFocus, type RunFocusItem, type RunView } from 
 import type { UseQueryResult } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { EyeIcon } from "lucide-react";
-import { ChainBar, doneCount } from "#/components/chain-progress";
 import { ErrorState } from "#/components/feedback/states";
 import { NodeName } from "#/components/node-name";
+import { RunLines } from "#/components/run-lines";
 import { StatusDot } from "#/components/status";
 import { FocusChart } from "#/focus/FocusChart";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
 import { useRunFocus } from "#/focus/use-run-focus";
-import { chainCountLabel, FOCUS, LIST_LABEL, MESSAGE, TERM } from "#/lib/copy";
+import {
+	chainCountLabel,
+	FOCUS,
+	LIST_LABEL,
+	MESSAGE,
+	RUNNING_PRIMARY_LABEL,
+	TERM,
+} from "#/lib/copy";
 import { formatDuration } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Truncate } from "@/components/ui/truncate";
 import { Attention, OtherWarnings } from "./Attention";
 import { useTimeAxis } from "./monitor-state";
 import type { PanelTab } from "./run-link";
@@ -67,7 +73,7 @@ const executingNodes = (run: RunView) =>
 		}),
 	);
 
-/** 链路：每条链一行进度，下面一行写执行中的节点、所在 Agent、尝试号和时长（从开始执行算起，准备中的节点从排队算起）。 */
+/** 链路：各链的线路（components/run-lines），下面一行写执行中的节点、所在 Agent、尝试号和时长（从开始执行算起，准备中的节点从排队算起）。 */
 function ChainSection({ run }: { run: RunView }) {
 	const { now } = useTimeAxis();
 	const chains = orderedChains(run);
@@ -84,27 +90,19 @@ function ChainSection({ run }: { run: RunView }) {
 				</h2>
 				<span className="text-xs text-fg-3">{chainCountLabel(chains.length, nodeCount)}</span>
 			</div>
-			<ul aria-label={LIST_LABEL.chainProgress} className="m-0 flex list-none flex-col gap-2 p-0">
-				{chains.map((chain) => {
+			<RunLines
+				chains={chains.map((chain) => {
 					const { name, id } = chainLabelParts(chain);
-					return (
-						<li key={chain.id} className="flex items-center gap-3">
-							<span className="flex w-40 min-w-0 flex-none text-xs text-fg-2">
-								<Truncate>{name}</Truncate>
-								{id && (
-									<span data-chain-id className="ml-1.5 flex-none font-mono text-fg-3">
-										{id}
-									</span>
-								)}
-							</span>
-							<ChainBar label={name} nodes={chain.nodes} variant="wide" />
-							<span className="font-mono text-xs text-fg-3">
-								{doneCount(chain.nodes)} / {chain.nodes.length}
-							</span>
-						</li>
-					);
+					return {
+						id: chain.id,
+						label: name,
+						instance: id ?? undefined,
+						parent_chain_instance_id: chain.parent_chain_instance_id,
+						async_node_id: chain.async_node_id,
+						nodes: chain.nodes,
+					};
 				})}
-			</ul>
+			/>
 			{executing.length > 0 && (
 				<div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-1.5 border-t border-border-soft pt-3 text-xs text-fg-2">
 					<span className="text-fg-3">{NODE_STATUS.running.label}</span>
@@ -152,7 +150,7 @@ function FocusSection({
 		<section aria-labelledby="overview-focus" className="flex flex-col gap-3">
 			<div className="flex items-baseline gap-2.5">
 				<h2 id="overview-focus" className="m-0 text-base font-semibold">
-					{primary ? `${NODE_STATUS.running.label}节点的${TERM.primaryMetric}` : TERM.focusItem}
+					{primary ? RUNNING_PRIMARY_LABEL : TERM.focusItem}
 				</h2>
 				{data && !primary && (
 					<span className="font-mono text-xs text-fg-3" data-testid="focus-count">

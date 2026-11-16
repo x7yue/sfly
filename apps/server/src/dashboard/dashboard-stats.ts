@@ -1,4 +1,9 @@
-import { type DashboardFailure, type DashboardView, isOnAgentStatus } from "@sfly/schema";
+import {
+	type DashboardEndedRun,
+	type DashboardRunFailure,
+	type DashboardView,
+	isOnAgentStatus,
+} from "@sfly/schema";
 import { and, count, desc, eq, gt, gte, isNotNull, lte } from "drizzle-orm";
 import type { AgentHub } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
@@ -10,13 +15,13 @@ import {
 	runs,
 	type TaskStatus,
 } from "../db/schema.js";
-import { loadRunBoards } from "../engine/run-board.js";
-import { getRunView, type NodeView, type RunView } from "../engine/run-queries.js";
+import { activeNodesOf, loadRunBoards } from "../engine/run-board.js";
+import { getRunView, type RunView } from "../engine/run-queries.js";
 import { setupSummary } from "./setup-summary.js";
 
 const HOUR_MS = 3_600_000;
-/** 最近失败最多列出的条数。 */
-const RECENT_FAILURES = 10;
+/** 最近结束最多列出的条数。 */
+const RECENT_ENDED = 10;
 const WINDOW_MS = 24 * HOUR_MS;
 
 export interface DashboardDeps {
@@ -47,18 +52,9 @@ export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<
 	}
 
 	const running = await runningRuns(db);
-	const failures = await failedChains(db, windowStart, now);
-	const agents = (await hub.list()).map((agent) => ({
-		name: agent.name,
-		status: agent.status,
-		slots: agent.info.slots,
-		used_slots: agent.running_tasks.length,
-		installing:
-			agent.status === "online" && agent.install?.state === "installing"
-				? { package: agent.install.package, version: agent.install.version }
-				: null,
-		last_seen_at: agent.last_seen_at,
-	}));
+	const recentEnded = await recentEndedRuns(db, windowStart, now);
+	const failedSubflows = await failedSubflowCount(db, windowStart, now);
+	const agents = await hub.list();
 	const online = agents.filter((a) => a.status === "online");
 	const chains = running.flatMap((r) => r.chains);
 	const nodes = chains.flatMap((c) => c.nodes);
@@ -71,7 +67,7 @@ export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<
 			running_tasks: nodes.filter((n) => isOnAgentStatus(n.status)).length,
 			queued_tasks: nodes.filter((n) => n.status === ("queued" satisfies TaskStatus)).length,
 			...current,
-			failed_subflows: failures.subflows,
+			failed_subflows: failedSubflows,
 		},
 		running_runs: running.map(({ run, name, version, chains }) => ({
 			id: run.id,
@@ -86,6 +82,8 @@ export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<
 				chain_id: chain.chain_id,
 				subflow: chain.depth > 0,
 				subflow_name: chain.subflow_name,
+				parent_chain_instance_id: chain.parent_chain_instance_id,
+				async_node_id: chain.async_node_id,
 				status: chain.status,
 				nodes: chain.nodes.map((n) => ({
 					node_id: n.node_id,
@@ -93,14 +91,14 @@ export async function dashboardView({ db, clock, hub }: DashboardDeps): Promise<
 					status: n.status,
 				})),
 			})),
+			active_nodes: activeNodesOf(chains),
 		})),
-		recent_failures: failures.recent,
+		recent_ended: recentEnded,
 		agents: {
 			online: online.length,
 			offline: agents.length - online.length,
-			slots: online.reduce((sum, a) => sum + a.slots, 0),
-			used_slots: online.reduce((sum, a) => sum + a.used_slots, 0),
-			list: agents,
+			slots: online.reduce((sum, a) => sum + a.info.slots, 0),
+			used_slots: online.reduce((sum, a) => sum + a.running_tasks.length, 0),
 		},
 		setup: await setupSummary(db),
 	};
@@ -139,65 +137,85 @@ async function runningRuns(db: Db) {
 	}));
 }
 
-/**
- * 窗口内失败（按结束时间）的链实例，从新到旧：失败的子流程总数与最近的若干条。
- * 失败节点取最后一次尝试失败、最先结束的节点（之后失败的 always 清理节点不算）；
- * 错误信息取自运行视图，其中的 secret 值已打码。
- */
-async function failedChains(
-	db: Db,
-	from: Date,
-	to: Date,
-): Promise<{ subflows: number; recent: DashboardFailure[] }> {
-	const inWindow = and(
-		eq(chainInstances.status, "failed"),
-		isNotNull(chainInstances.endedAt),
-		gte(chainInstances.endedAt, from),
-		lte(chainInstances.endedAt, to),
-	);
-	const [subflows] = await db
+/** 窗口内失败的子流程实例数（按链实例的结束时间，不论所在运行是否已结束）。 */
+async function failedSubflowCount(db: Db, from: Date, to: Date): Promise<number> {
+	const [row] = await db
 		.select({ n: count() })
 		.from(chainInstances)
-		.where(and(inWindow, gt(chainInstances.depth, 0)));
-	const recent = await db
-		.select({
-			chain: chainInstances,
-			orchestrationId: runs.orchestrationId,
-			name: orchestrations.name,
-		})
-		.from(chainInstances)
-		.innerJoin(runs, eq(runs.id, chainInstances.runId))
-		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
-		.where(inWindow)
-		.orderBy(desc(chainInstances.endedAt), desc(chainInstances.id))
-		.limit(RECENT_FAILURES);
-	const views = new Map<string, RunView | undefined>();
-	for (const { chain } of recent) {
-		if (!views.has(chain.runId)) views.set(chain.runId, await getRunView(db, chain.runId));
-	}
-	return {
-		subflows: subflows?.n ?? 0,
-		recent: recent.map(({ chain, orchestrationId, name }) => {
-			const view = views.get(chain.runId);
-			const chainView = view?.chains.find((c) => c.id === chain.id);
-			const endedAt = (node: NodeView) => node.attempts.at(-1)?.ended_at ?? "";
-			const [first] = (chainView?.nodes ?? [])
-				.filter((n) => n.status === "failed")
-				.sort((a, b) => endedAt(a).localeCompare(endedAt(b)));
-			return {
-				run_id: chain.runId,
-				orchestration_id: orchestrationId,
-				orchestration_name: name,
-				run_status: view?.status ?? "failed",
-				chain_instance_id: chain.id,
-				chain_id: chain.chainId,
-				subflow: chain.depth > 0,
-				subflow_name: chainView?.name ?? undefined,
-				node_id: first?.node_id ?? null,
-				display_name: first?.display_name,
-				error: first?.error ?? null,
-				failed_at: (chain.endedAt ?? to).toISOString(),
-			};
+		.where(
+			and(
+				eq(chainInstances.status, "failed"),
+				gt(chainInstances.depth, 0),
+				isNotNull(chainInstances.endedAt),
+				gte(chainInstances.endedAt, from),
+				lte(chainInstances.endedAt, to),
+			),
+		);
+	return row?.n ?? 0;
+}
+
+/**
+ * 失败的运行最先出问题的地方：跨所有链实例，最后一次尝试失败、最先结束的节点（并列时链在前、节点在前）；
+ * 之后失败的 always 清理节点不算。错误信息取自运行视图，其中的 secret 值已打码。
+ * 链失败就一定有节点最终失败（引擎按同一个条件判断），找不到时是数据不完整，返回 null。
+ */
+function firstFailure(view: RunView): DashboardRunFailure | null {
+	const candidates = view.chains.flatMap((chain) =>
+		chain.nodes.flatMap((node) => {
+			const attempt = node.attempts.at(-1);
+			if (node.status !== "failed" || !attempt?.ended_at) return [];
+			return { chain, node, attempt, endedAt: Date.parse(attempt.ended_at) };
 		}),
+	);
+	// Array.prototype.sort 是稳定的：同一时刻结束的保持链、节点的顺序。
+	const [first] = candidates.sort((a, b) => a.endedAt - b.endedAt);
+	if (!first) return null;
+	const { chain, node, attempt } = first;
+	return {
+		chain_instance_id: chain.id,
+		chain_id: chain.chain_id,
+		subflow: chain.depth > 0,
+		subflow_name: chain.name ?? undefined,
+		node_id: node.node_id,
+		display_name: node.display_name,
+		attempt: attempt.attempt,
+		error: attempt.error,
 	};
+}
+
+/** 窗口内结束的运行（按结束时间从新到旧，最多 RECENT_ENDED 个）；失败的带上最先出问题的节点。 */
+async function recentEndedRuns(db: Db, from: Date, to: Date): Promise<DashboardEndedRun[]> {
+	const rows = await db
+		.select({
+			run: runs,
+			name: orchestrations.name,
+			version: orchestrationVersions.number,
+		})
+		.from(runs)
+		.innerJoin(orchestrations, eq(orchestrations.id, runs.orchestrationId))
+		.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
+		.where(and(isNotNull(runs.endedAt), gte(runs.endedAt, from), lte(runs.endedAt, to)))
+		.orderBy(desc(runs.endedAt), desc(runs.id))
+		.limit(RECENT_ENDED);
+	const ended: DashboardEndedRun[] = [];
+	// 失败的运行逐个读运行视图（最多 RECENT_ENDED 个），不并发占用连接池。
+	for (const { run, name, version } of rows) {
+		if (!run.endedAt || !isOutcome(run.status)) continue;
+		const base = {
+			id: run.id,
+			orchestration_id: run.orchestrationId,
+			orchestration_name: name,
+			orchestration_version: version,
+			triggered_by: run.triggeredBy,
+			started_at: run.startedAt.toISOString(),
+			ended_at: run.endedAt.toISOString(),
+		};
+		if (run.status !== "failed") {
+			ended.push({ ...base, status: run.status });
+			continue;
+		}
+		const view = await getRunView(db, run.id);
+		ended.push({ ...base, status: "failed", failure: view ? firstFailure(view) : null });
+	}
+	return ended;
 }

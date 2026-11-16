@@ -49,12 +49,12 @@ import {
 	holdApi,
 	publishPackage,
 	scenarioUsing,
-	seedDashboard,
 	setRunNotification,
 	triggerRun,
 	withSubflow,
 } from "./support";
 import { saveSecondVersion, twoVersions } from "./versions-support";
+import { longChainRun, manyRuns, seedWall } from "./wall-support";
 
 // 视觉回归：对固定状态截图并与 e2e/__screenshots__ 中的基线比对（见 playwright.config.ts）。
 // 数据都是确定的：手动时钟、固定的浏览器时间与时区、内容相同的节点包归档（sha256 不变）、
@@ -521,11 +521,15 @@ test("场景的运行通知设置：机器人已被删除时的提示", async ({
 });
 
 test("控制台", async ({ page, controlPlane, connectAgent, clock }) => {
-	await seedDashboard({ page, controlPlane, connectAgent, clock });
+	await seedWall({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
 	await expect(
-		page.getByRole("region", { name: "最近失败", exact: true }).getByRole("link"),
+		page.getByRole("region", { name: "最近结束", exact: true }).getByRole("listitem"),
 	).toHaveCount(2);
+	await expect(page.getByRole("region", { name: "执行中节点的主指标" })).toContainText("level");
+	await expect(
+		page.getByRole("region", { name: "场景", exact: true }).getByRole("link"),
+	).toHaveCount(6);
 	// 运行 ID 是随机的，遮住。
 	await expect(page).toHaveScreenshot("dashboard.png", {
 		mask: [page.locator('[data-slot="run-id"]')],
@@ -550,6 +554,45 @@ test("控制台：「开始使用」第 1、2 步已完成，白色按钮在第 
 	await page.goto("/");
 	await expect(page.locator('[data-step="scenario"]')).toHaveAttribute("data-state", "next");
 	await expect(page).toHaveScreenshot("dashboard-empty-progress.png");
+});
+
+test("控制台：多个运行时换成紧凑行，点开一行展开成运行块", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 8 });
+	await publishPackage(controlPlane);
+	await manyRuns(controlPlane, agent, clock, 7);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto("/");
+	const left = page.getByRole("region", { name: "正在运行", exact: true });
+	await left.getByRole("button", { name: /浸泡 06/ }).click();
+	await expect(left.getByRole("region", { name: "浸泡 06", exact: true })).toBeVisible();
+	await expect(left.getByRole("button", { expanded: false })).toHaveCount(6);
+	await expect(page).toHaveScreenshot("dashboard-many.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
+});
+
+test("控制台：30 个节点的长链只画当前站附近几站，其余折成「已完成 N 个」「还有 N 个」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 4 });
+	await publishPackage(controlPlane);
+	await longChainRun(controlPlane, agent, clock);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto("/");
+	const lines = page.getByRole("list", { name: "各链进度" });
+	await expect(lines).toContainText("已完成 15 个");
+	await expect(lines).toContainText("还有 13 个");
+	await expect(page).toHaveScreenshot("dashboard-long-chain.png", {
+		mask: [page.locator('[data-slot="run-id"]')],
+	});
 });
 
 test("运行记录", async ({ page, controlPlane, connectAgent, clock }) => {
