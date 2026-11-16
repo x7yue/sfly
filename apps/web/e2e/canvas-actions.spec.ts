@@ -94,6 +94,10 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 		"/docs/sdk-reference",
 	);
 	await expect(cap).toContainText("「数量上限」");
+	// 控制面另外丢弃的明细摘要里没有：写明去哪里看。
+	await expect(cap).toContainText(
+		"控制面收到的明细超过上限时，超出的会丢弃；丢弃了哪些名称，到运行监控详情的「动作」页里看。",
+	);
 
 	// 最近的失败：五个，一共 17 个；原因单独一行、完整。
 	const fails = area.getByRole("list", { name: "最近的失败" });

@@ -7,6 +7,7 @@ import {
 	type RunningActionView,
 	sdkCountOnlyPeriods,
 } from "@sfly/schema";
+import { ACTION_PAGE, NODE_ACTIONS } from "#/lib/copy";
 import {
 	type ActionFilter,
 	byNewest,
@@ -93,6 +94,34 @@ export const fieldsText = (fields: Readonly<Record<string, string>>): string =>
 
 /** 动作的个数（页签上写的）：标记不算。 */
 export const actionCount = (summary: ActionSummaryView): number => summary.total - summary.marks;
+
+/**
+ * 三组标题后面的说明。「最近 20 个」取自摘要，不受明细上限影响，所以 SDK 超出上限（摘要的 `capped`）或者读到了
+ * 控制面丢弃的段时写明；只看失败时第三组说失败的动作有没有明细（合计满了没有；没满有，控制面丢弃的除外）。
+ * 控制面丢弃的段只随分页返回、摘要里没有：更早的页没读完（`hasOlder`）时可能还没读到，第三组按「可能有」写。
+ */
+export function groupNotes({
+	summary,
+	controlPlanePeriods,
+	hasOlder,
+	failedOnly,
+}: {
+	summary: ActionSummaryView;
+	controlPlanePeriods: readonly CountOnlyPeriod[];
+	hasOlder: boolean;
+	failedOnly: boolean;
+}): Partial<Record<ActionGroupName, string>> {
+	const dropped = controlPlanePeriods.length > 0;
+	return {
+		...(!summary.running_complete && {
+			running: NODE_ACTIONS.runningIncomplete(summary.running.length),
+		}),
+		...((summary.capped || dropped) && { recent: ACTION_PAGE.recentKeepsUpdating }),
+		...(failedOnly && {
+			earlier: ACTION_PAGE.earlierFailedNote(summary.capped_at !== null, dropped || hasOlder),
+		}),
+	};
+}
 
 export function actionTable({
 	summary,

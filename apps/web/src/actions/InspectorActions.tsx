@@ -226,7 +226,8 @@ function Failure({ failure, otherDay }: { failure: EndedActionView; otherDay: bo
 }
 
 /**
- * 上限说明：哪些名称从几点起只计数，合计满了时说合计，以及开发文档里按批记录的建议。
+ * 上限说明：哪些名称从几点起只计数，合计满了时说合计，控制面另外丢弃的明细要去「动作」页看（摘要里没有，
+ * 这里读不到它们），以及开发文档里按批记录的建议。
  * 「从几点起」是第一个没有明细的动作开始的时刻，不是明细的终点：更早开始的动作结束时仍可能补上明细（失败的动作在
  * 合计满以前会补），所以只说「从这个时刻起开始的动作」，不说「之后没有明细」；合计满了（`capped_at`）也一样。
  *
@@ -274,6 +275,7 @@ function CapNote({
 					<span className="font-mono">{clock(totalFullAt)}</span> 开始的。
 				</p>
 			)}
+			<p className="m-0 mt-1">{NODE_ACTIONS.controlPlaneDropped}</p>
 			<p className="m-0 mt-1">
 				高频的动作适合按批记录，写法见开发文档「
 				<DocPageLink page={GUIDE.page}>{DOC_PAGE.sdkReference}</DocPageLink>
