@@ -1,8 +1,13 @@
-import type { RunListItem } from "@sfly/schema";
+import { failuresInOrder, type RunListItem } from "@sfly/schema";
 import { and, count, desc, eq, ilike, or, type SQL, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrations, orchestrationVersions, type RunStatus, runs } from "../db/schema.js";
-import { activeNodesOf, loadRunBoards } from "../engine/run-board.js";
+import {
+	activeNodesOf,
+	type BoardChain,
+	type BoardNode,
+	loadRunBoards,
+} from "../engine/run-board.js";
 import { runListPreset } from "../presets/run-preset.js";
 
 export interface RunListFilter {
@@ -85,20 +90,10 @@ export async function listAllRuns(
 				active_nodes: activeNodesOf(chains),
 				failures: [],
 			};
+			item.failures = chainFailures(chains);
 			for (const chain of chains) {
 				const subflow = chain.depth > 0;
 				const nodes = chain.nodes.map(({ node_id, status }) => ({ node_id, status }));
-				const failedNode = chain.nodes.find((n) => n.status === "failed");
-				if (chain.status === "failed" || failedNode) {
-					item.failures.push({
-						chain_instance_id: chain.id,
-						chain_id: chain.chain_id,
-						subflow,
-						subflow_name: chain.subflow_name,
-						node_id: failedNode?.node_id ?? null,
-						display_name: failedNode?.display_name,
-					});
-				}
 				item.chains.push({
 					id: chain.id,
 					chain_id: chain.chain_id,
@@ -111,4 +106,34 @@ export async function listAllRuns(
 			return item;
 		}),
 	};
+}
+
+/**
+ * 失败的链实例（链失败或链上有节点最终失败），按失败的先后（@sfly/schema 的 `failuresInOrder`）：有失败节点的链按它
+ * 第一个失败的节点排，每条链带的就是这个节点，所以第一项是这次运行「第一个失败的节点」所在的链；链失败了却没有失败的节点
+ * （例如参数校验失败）的排在最后，按链的顺序。
+ */
+function chainFailures(chains: readonly BoardChain[]): RunListItem["failures"] {
+	const first = new Map<BoardChain, BoardNode>();
+	for (const { chain, node } of failuresInOrder(
+		chains,
+		(n) => n.attempts.at(-1)?.endedAt?.getTime() ?? null,
+	)) {
+		if (!first.has(chain)) first.set(chain, node);
+	}
+	const failed = [
+		...first.keys(),
+		...chains.filter((chain) => chain.status === "failed" && !first.has(chain)),
+	];
+	return failed.map((chain) => {
+		const node = first.get(chain);
+		return {
+			chain_instance_id: chain.id,
+			chain_id: chain.chain_id,
+			subflow: chain.depth > 0,
+			subflow_name: chain.subflow_name,
+			node_id: node?.node_id ?? null,
+			display_name: node?.display_name,
+		};
+	});
 }

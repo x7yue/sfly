@@ -10,6 +10,7 @@ export * from "./http/index.js";
 export * from "./metric-format.js";
 export * from "./orchestration-document.js";
 export * from "./package-metadata.js";
+export * from "./run-failures.js";
 export * from "./run-log-order.js";
 export * from "./run-log-scope.js";
 export * from "./series.js";

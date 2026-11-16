@@ -2,14 +2,9 @@
  * 运行通知（GLOSSARY「运行通知」，ADR 0020、docs/SEMANTICS.md §6）：运行结束时，在写入运行最终状态的同一个事务里，
  * 读取场景当前的设置，满足触发条件就把卡片写进发送队列。卡片的结构由平台固定。
  */
+import { chainLabel, FEISHU_BODY_LIMIT_LABEL, nameWithId } from "@sfly/orchestration";
 import {
-	chainLabel,
-	FEISHU_BODY_LIMIT_LABEL,
-	MAIN_CHAIN_LABEL,
-	nameWithId,
-	nodeNameBeforeId,
-} from "@sfly/orchestration";
-import {
+	failuresInOrder,
 	focusChartMissing,
 	focusLatestSeriesName,
 	focusValueText,
@@ -17,9 +12,9 @@ import {
 	type RunFocusItem,
 	type RunNotificationTrigger,
 } from "@sfly/schema";
-import { asc, eq } from "drizzle-orm";
-import { chainInstances, orchestrations, type RunStatus, runs, tasks } from "../db/schema.js";
-import { finalFailures } from "../engine/failures.js";
+import { eq } from "drizzle-orm";
+import { orchestrations, type RunStatus, runs } from "../db/schema.js";
+import { loadRunBoards } from "../engine/run-board.js";
 import type { RunRow, Step } from "../engine/step.js";
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { runListPreset } from "../presets/run-preset.js";
@@ -178,51 +173,28 @@ function runNotificationCard(facts: RunNotificationFacts) {
 	);
 }
 
-/** 运行里最终失败的节点，按失败的先后（同一时刻的按链、再按节点在文档里的顺序）。 */
+/**
+ * 运行里最终失败的节点，按失败的先后（@sfly/schema 的 `failuresInOrder`：同一时刻的按链实例、再按节点在链上的顺序），
+ * 第一项和控制台、运行监控、运行记录的「第一个失败的节点」相同。在写入运行最终状态的事务里读（`step.tx`）。
+ */
 async function failedNodes(
 	step: Step,
 	run: RunRow,
 	document: OrchestrationDocument,
 ): Promise<FailedNode[]> {
-	const chains = await step.tx
-		.select()
-		.from(chainInstances)
-		.where(eq(chainInstances.runId, run.id))
-		.orderBy(asc(chainInstances.depth), asc(chainInstances.startedAt), asc(chainInstances.id));
-	const rows = await step.tx
-		.select({
-			chainInstanceId: tasks.chainInstanceId,
-			nodeId: tasks.nodeId,
-			attempt: tasks.attempt,
-			status: tasks.status,
-			endedAt: tasks.endedAt,
-		})
-		.from(tasks)
-		.where(eq(tasks.runId, run.id));
-	const chainIndex = new Map(chains.map((c, i) => [c.id, i]));
-	const nodeIndex = new Map(document.nodes.map((n, i) => [n.id, i]));
-	const declared = new Map(document.nodes.map((n) => [n.id, n]));
-	const labelOf = (chainInstanceId: string) => {
-		const chain = chains.find((c) => c.id === chainInstanceId);
-		if (!chain) return MAIN_CHAIN_LABEL;
-		const start = document.nodes.find((n) => n.id === chain.chainId);
-		const name = start?.kind === "subflow_entry" ? start.name : undefined;
-		return chainLabel({ chain_id: chain.chainId, subflow: chain.depth > 0, name }, chain.id);
-	};
-	return finalFailures(rows)
-		.sort(
-			(a, b) =>
-				(a.endedAt?.getTime() ?? 0) - (b.endedAt?.getTime() ?? 0) ||
-				(chainIndex.get(a.chainInstanceId) ?? 0) - (chainIndex.get(b.chainInstanceId) ?? 0) ||
-				(nodeIndex.get(a.nodeId) ?? 0) - (nodeIndex.get(b.nodeId) ?? 0),
-		)
-		.map((row) => {
-			const node = declared.get(row.nodeId);
-			return {
-				chain: labelOf(row.chainInstanceId),
-				node: node ? nameWithId(row.nodeId, nodeNameBeforeId(node)) : row.nodeId,
-			};
-		});
+	const boards = await loadRunBoards(step.tx, [
+		{ id: run.id, versionId: run.orchestrationVersionId, document },
+	]);
+	const chains = boards.get(run.id) ?? [];
+	return failuresInOrder(chains, (n) => n.attempts.at(-1)?.endedAt?.getTime() ?? null).map(
+		({ chain, node }) => ({
+			chain: chainLabel(
+				{ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.subflow_name },
+				chain.id,
+			),
+			node: nameWithId(node.node_id, node.display_name),
+		}),
+	);
 }
 
 /**

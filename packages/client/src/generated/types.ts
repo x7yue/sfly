@@ -1853,7 +1853,7 @@ export interface RunListFailure {
 	 * 取自运行绑定的场景版本；主链不给。
 	 */
 	subflow_name?: string;
-	/** 链上第一个失败的节点；没有失败节点时（例如参数校验失败）为 null。 */
+	/** 链上第一个失败的节点（按失败的先后，GLOSSARY「第一个失败的节点」）；没有失败节点时（例如参数校验失败）为 null。 */
 	node_id: string | null;
 	/** 失败节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name?: string;
@@ -1877,6 +1877,10 @@ export interface RunListItem {
 	/** 按深度、开始时间排序。 */
 	chains: RunListChain[];
 	active_nodes: RunListActiveNode[];
+	/**
+	 * 失败的链实例，按失败的先后：有失败节点的链按它第一个失败的节点的结束时间（同一时刻按链的顺序），所以第一项是这次运行
+	 * 「第一个失败的节点」所在的链（和控制台、运行监控、运行通知是同一个节点）；链失败却没有失败节点的排在最后。
+	 */
 	failures: RunListFailure[];
 }
 

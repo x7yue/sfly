@@ -10,7 +10,12 @@ import { createScenario, publishPackage } from "./support";
 export const NOTE = "从订单库拉取当天的订单，超时设为 600 秒：大促日数据量大。";
 
 /** 主链 entry → fetch → spawn（派发子流程 sub → probe）→ verify（重试 1 次）；fetch 有备注。 */
-export function namedDocument(names: { fetch: string; verify: string; subflow: string }) {
+export function namedDocument(names: {
+	fetch: string;
+	verify: string;
+	subflow: string;
+	probe?: string;
+}) {
 	const ping = (id: string, extra: Record<string, unknown>) => ({
 		id,
 		kind: "package",
@@ -35,7 +40,7 @@ export function namedDocument(names: { fetch: string; verify: string; subflow: s
 			{ id: "spawn", kind: "async", params: {}, display_name: "派发监控" },
 			ping("verify", { retries: 1, display_name: names.verify }),
 			{ id: "sub", kind: "subflow_entry", name: names.subflow, params: [] },
-			ping("probe", { display_name: "探测延迟" }),
+			ping("probe", { display_name: names.probe ?? "探测延迟" }),
 		],
 		edges: [
 			{ from: "entry", to: "fetch", kind: "chain" },
@@ -54,7 +59,7 @@ export const RENAMED = { fetch: "拉取全部订单", verify: "复核结果", su
 export async function namedScenario(
 	controlPlane: TestControlPlane,
 	connectAgent: E2eFixtures["connectAgent"],
-	names = FIRST,
+	names: Parameters<typeof namedDocument>[0] = FIRST,
 ) {
 	const agent = await connectAgent({
 		name: "agent-a",

@@ -1,15 +1,16 @@
 import { UNNAMED_SUBFLOW_LABEL } from "@sfly/orchestration";
-import type {
-	AttemptView,
-	ChainRunView,
-	LogOrigin,
-	NodeRunView,
-	OrchestrationDocument,
-	OrchestrationNode,
-	ProgressEvent,
-	RunLogScope,
-	RunView,
-	TaskProgressView,
+import {
+	type AttemptView,
+	type ChainRunView,
+	failuresInOrder,
+	type LogOrigin,
+	type NodeRunView,
+	type OrchestrationDocument,
+	type OrchestrationNode,
+	type ProgressEvent,
+	type RunLogScope,
+	type RunView,
+	type TaskProgressView,
 } from "@sfly/schema";
 import { type RunNodeName, runNodeName } from "#/components/node-name";
 import { runStatusView, type StatusKind } from "#/components/status";
@@ -128,16 +129,25 @@ const toRef = (pick: { chainInstanceId: string; nodeId: string } | undefined): N
 	pick ? { chainInstanceId: pick.chainInstanceId, nodeId: pick.nodeId } : null;
 
 /**
- * 监控页打开运行时默认选中的节点：链接里给的节点，其次第一个失败的节点（按链的层级与节点顺序）；都没有时不选，
+ * 监控页打开运行时默认选中的节点：链接里给的节点，其次第一个失败的节点（{@link runFailures}）；都没有时不选，
  * 底部面板显示全部节点合并后的日志。执行中的节点不默认选中：会把日志范围收窄到一个可能还没输出的节点，
- * 而别的节点正在写日志。
+ * 而别的节点正在写日志。节点 ID 在一次运行里只对应一个链实例（一个子流程最多一个实例，docs/SEMANTICS.md §1），
+ * 所以链接里给节点 ID 就能定位到它所在的实例。
  */
 export function initialSelection(run: RunView, linkedNode?: string): NodeRef | null {
-	const all = nodeRefs(run);
-	return toRef(
-		(linkedNode ? all.find((n) => n.nodeId === linkedNode) : undefined) ??
-			all.find((n) => n.status === "failed"),
-	);
+	const linked = linkedNode ? nodeRefs(run).find((n) => n.nodeId === linkedNode) : undefined;
+	return toRef(linked ?? runFailures(run)[0]);
+}
+
+/**
+ * 运行里最终失败的节点，按失败的先后（@sfly/schema 的 `failuresInOrder`，链实例按运行视图的顺序）：第一项是
+ * 「第一个失败的节点」，控制台、运行记录、运行通知用同一份顺序。
+ */
+function runFailures(run: RunView) {
+	return failuresInOrder(run.chains, (node) => {
+		const ended = node.attempts.at(-1)?.ended_at;
+		return ended ? Date.parse(ended) : null;
+	}).map(({ chain, node }) => ({ chain, node, chainInstanceId: chain.id, nodeId: node.node_id }));
 }
 
 /** 运行抽屉的摘要要看最近日志的节点：{@link initialSelection} 选中的节点，其次是还在进行的节点（运行抽屉没有「不选」）。 */
@@ -160,7 +170,7 @@ export function progressLabel(node: NodeRunView): string | null {
 	return progress.total === null ? `${progress.current}` : `${progress.current}/${progress.total}`;
 }
 
-/** 失败运行的摘要：第一个失败的节点（按链的层级与节点顺序）、它的第几次尝试与错误信息的第一行。 */
+/** 失败运行的摘要：第一个失败的节点（{@link runFailures}）、它的第几次尝试与错误信息的第一行。 */
 export interface RunFailure {
 	ref: NodeRef;
 	node: RunNodeName;
@@ -172,27 +182,25 @@ export interface RunFailure {
 
 /** 第一个失败的节点；没有失败的节点时为 null（运行中也可能已有失败的节点）。 */
 export function runFailure(run: RunView): RunFailure | null {
-	for (const chain of orderedChains(run)) {
-		const node = chain.nodes.find((n) => n.status === "failed");
-		if (!node) continue;
-		const attempt = [...node.attempts].reverse().find((a) => a.error) ?? node.attempts.at(-1);
-		const error = node.error ?? attempt?.error ?? null;
-		return {
-			ref: { chainInstanceId: chain.id, nodeId: node.node_id },
-			node: { node_id: node.node_id, display_name: node.display_name },
-			attempt: attempt?.attempt ?? null,
-			message: (error?.message ?? "").trim().split("\n")[0]?.trim() ?? "",
-		};
-	}
-	return null;
+	const [first] = runFailures(run);
+	if (!first) return null;
+	const { chain, node } = first;
+	const attempt = [...node.attempts].reverse().find((a) => a.error) ?? node.attempts.at(-1);
+	const error = node.error ?? attempt?.error ?? null;
+	return {
+		ref: { chainInstanceId: chain.id, nodeId: node.node_id },
+		node: { node_id: node.node_id, display_name: node.display_name },
+		attempt: attempt?.attempt ?? null,
+		message: (error?.message ?? "").trim().split("\n")[0]?.trim() ?? "",
+	};
 }
 
 /**
- * 下一个失败的节点（F）：失败的节点按链的层级与节点顺序（与 {@link runFailure} 一致）排成一圈，选中的是其中一个时
+ * 下一个失败的节点（F）：失败的节点按失败的先后（与 {@link runFailure} 一致）排成一圈，选中的是其中一个时
  * 取它后面的一个，到末尾回到第一个；选中的不是失败节点（或没有选中）时从第一个开始。没有失败的节点为 null。
  */
 export function nextFailure(run: RunView, selected: NodeRef | null): NodeRef | null {
-	const failed = nodeRefs(run).filter((n) => n.status === "failed");
+	const failed = runFailures(run);
 	const at = failed.findIndex((n) => sameNode(n, selected));
 	return toRef(failed[at + 1] ?? failed[0]);
 }

@@ -116,11 +116,14 @@ export function RunHistoryTable({ runs, now }: { runs: RunListItem[]; now: numbe
 	);
 }
 
-/** 状态文字；失败时带上失败节点（子流程里的节点带上子流程名）。 */
+/**
+ * 状态文字；失败时带上第一个失败的节点（子流程里的节点带上子流程名）：`failures` 按失败的先后排，第一项就是它所在的链，
+ * 和控制台、运行监控的页头是同一个节点。
+ */
 function statusText(run: RunListItem): string {
 	const label = runStatusView(run.status).label;
 	if (run.status !== "failed") return label;
-	const failure = run.failures.find((f) => !f.subflow) ?? run.failures[0];
+	const [failure] = run.failures;
 	if (!failure?.node_id) return label;
 	const where = failure.subflow ? `${listChainLabel(failure)} / ` : "";
 	const node = runNodeName({ node_id: failure.node_id, display_name: failure.display_name });

@@ -3,6 +3,7 @@ import {
 	type DashboardEndedRun,
 	type DashboardRunFailure,
 	type DashboardView,
+	failuresInOrder,
 	isOnAgentStatus,
 	type RunFocusItem,
 } from "@sfly/schema";
@@ -156,22 +157,15 @@ async function failedSubflowCount(db: Db, from: Date, to: Date): Promise<number>
 }
 
 /**
- * 失败的运行最先出问题的地方：跨所有链实例，最后一次尝试失败、最先结束的节点（并列时链在前、节点在前）；
- * 之后失败的 always 清理节点不算。错误信息取自运行视图，其中的 secret 值已打码。
+ * 失败的运行最先出问题的地方：第一个失败的节点（@sfly/schema 的 `failuresInOrder`，运行监控的页头、运行记录、运行通知
+ * 用同一份顺序）；之后失败的 always 清理节点不算。错误信息取自运行视图，其中的 secret 值已打码。
  * 链失败就一定有节点最终失败（引擎按同一个条件判断），找不到时是数据不完整，返回 null。
  */
 function firstFailure(view: RunView): DashboardRunFailure | null {
-	const candidates = view.chains.flatMap((chain) =>
-		chain.nodes.flatMap((node) => {
-			const attempt = node.attempts.at(-1);
-			if (node.status !== "failed" || !attempt?.ended_at) return [];
-			return { chain, node, attempt, endedAt: Date.parse(attempt.ended_at) };
-		}),
-	);
-	// Array.prototype.sort 是稳定的：同一时刻结束的保持链、节点的顺序。
-	const [first] = candidates.sort((a, b) => a.endedAt - b.endedAt);
+	const [first] = failuresInOrder(view.chains, lastEndedAt);
 	if (!first) return null;
-	const { chain, node, attempt } = first;
+	const { chain, node } = first;
+	const attempt = node.attempts.at(-1);
 	return {
 		chain_instance_id: chain.id,
 		chain_id: chain.chain_id,
@@ -179,10 +173,16 @@ function firstFailure(view: RunView): DashboardRunFailure | null {
 		subflow_name: chain.name ?? undefined,
 		node_id: node.node_id,
 		display_name: node.display_name,
-		attempt: attempt.attempt,
-		error: attempt.error,
+		attempt: attempt?.attempt ?? 0,
+		error: attempt?.error ?? null,
 	};
 }
+
+/** 节点最后一次尝试的结束时间（毫秒）；没有时为 null。 */
+const lastEndedAt = (node: RunView["chains"][number]["nodes"][number]) => {
+	const ended = node.attempts.at(-1)?.ended_at;
+	return ended ? Date.parse(ended) : null;
+};
 
 /**
  * 失败的运行在结束时的关注项读数：场景现在的关注项（`resolveRunFocus`，和 `GET /runs/:id/focus?points=0` 同一份规则）的
