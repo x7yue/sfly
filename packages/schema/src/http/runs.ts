@@ -340,6 +340,15 @@ export const runsApi = {
 };
 
 export const LOG_LEVELS = ["debug", "info", "warn", "error"] as const;
+/** WARN 和 ERROR：关注项的日志异常、「其他警告与错误」都看这两级。 */
+export const ALERT_LOG_LEVELS = [
+	"warn",
+	"error",
+] as const satisfies readonly (typeof LOG_LEVELS)[number][];
+export type AlertLogLevel = (typeof ALERT_LOG_LEVELS)[number];
+/** 这一行日志的级别是不是 WARN 或 ERROR（{@link ALERT_LOG_LEVELS}）。 */
+export const isAlertLevel = (level: (typeof LOG_LEVELS)[number]): level is AlertLogLevel =>
+	(ALERT_LOG_LEVELS as readonly string[]).includes(level);
 export const LOG_SOURCES = ["stdout", "stderr", "sdk", "agent", "system"] as const;
 export const MAX_LOG_PAGE_LINES = 1000;
 
