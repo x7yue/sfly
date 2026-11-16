@@ -118,6 +118,7 @@ function EndedRow({ run, generatedAt }: { run: DashboardEndedRun; generatedAt: s
 					<FocusReadoutStrip
 						items={run.focus}
 						generatedAt={generatedAt}
+						runEnded
 						// 最多 3 项排一行；4 项排成两行两列，不留空格。
 						columns={run.focus.length > 3 ? 2 : run.focus.length}
 						className="mt-2 rounded-md border border-border-soft"

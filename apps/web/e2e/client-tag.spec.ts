@@ -34,7 +34,7 @@ async function send(
 const triggerAs = (cp: TestControlPlane, scenario: string, client?: string) =>
 	send(cp, `/orchestrations/${scenario}/runs`, { params: {} }, "tester", client).then((r) => r.id);
 
-test("运行记录：经 AI 编程助手触发的运行，卡片、历史表格和运行监控页都显示「经 Claude Code」；浏览器里触发的不显示", async ({
+test("运行记录：经 AI 编程助手触发的运行，卡片、历史表格、运行监控页和控制台的运行块都显示「经 Claude Code」；浏览器里触发的不显示", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -64,6 +64,16 @@ test("运行记录：经 AI 编程助手触发的运行，卡片、历史表格�
 			.nth(5);
 	await expect(triggeredBy(viaDone)).toHaveText("tester 经 Claude Code");
 	await expect(triggeredBy(byHandDone)).toHaveText("tester");
+
+	await page.goto("/");
+	const block = (id: string) =>
+		page
+			.getByRole("region", { name: "正在运行", exact: true })
+			.getByRole("region", { name: "巡检", exact: true })
+			.filter({ hasText: id.slice(0, 8) });
+	await expect(block(viaRunning)).toContainText("tester 经 Codex 触发");
+	await expect(block(byHandRunning)).toContainText("tester 触发");
+	await expect(block(byHandRunning)).not.toContainText("经");
 
 	await page.goto(`/runs/${viaDone}`);
 	await expect(page.getByRole("banner")).toContainText("tester 经 Claude Code 触发");

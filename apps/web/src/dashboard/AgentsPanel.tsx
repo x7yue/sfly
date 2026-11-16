@@ -1,13 +1,15 @@
 import { type AgentView, agentsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { useId } from "react";
-import { agentStatusView } from "#/agents/agent-status";
+import { acceptsTasks, agentStatusView } from "#/agents/agent-status";
+import { PreparingBadge } from "#/agents/PreparingBadge";
 import { ErrorState } from "#/components/feedback/states";
 import { IdleSlots, idleSlotCount, SlotCell } from "#/components/slot-cell";
 import { STATUS, StatusDot } from "#/components/status";
 import { apiQuery } from "#/lib/api";
-import { AGENT_STATUS_LABEL, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
+import { AGENT_STATUS_LABEL, MESSAGE, queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
 import { STATUS_POLL_MS } from "#/lib/polling";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DashboardPanel } from "./DashboardPanel";
@@ -30,7 +32,14 @@ export function AgentsPanel() {
 			count={agents.data && `${online} / ${list.length} ${AGENT_STATUS_LABEL.online}`}
 			aside={<PanelLink to="/agents">管理</PanelLink>}
 		>
-			{agents.data ? (
+			{agents.data && list.length === 0 ? (
+				<div className="flex flex-col gap-1 px-3.5 py-3 text-xs">
+					<p className="m-0 text-fg-2">{MESSAGE.noAgents}</p>
+					<Link to="/agents" className="text-fg-1">
+						{MESSAGE.agentInstallLink}
+					</Link>
+				</div>
+			) : agents.data ? (
 				<div className="divide-y divide-border-soft">
 					{listed.map((agent) => (
 						<AgentSlots key={agent.name} agent={agent} />
@@ -56,13 +65,13 @@ export function AgentsPanel() {
 }
 
 /**
- * 一台 Agent：名称行（状态点、名称、版本；不是「在线」时写状态文字；在线时写占用数），下面是槽位格和排队数。
- * 离线的 Agent 接不了任务，槽位不算空闲：不画空闲矮条、不写占用数（同 Agent 管理页的机架）。
+ * 一台 Agent：名称行（状态点、名称、版本；不是「在线」时写状态文字，准备环境中写「准备环境中」；能接新任务时写占用数），
+ * 下面是槽位格和排队数。接不了新任务的 Agent（`acceptsTasks`）槽位不算空闲：不画空闲矮条、不写占用数（同 Agent 管理页的机架）。
  */
 function AgentSlots({ agent }: { agent: AgentView }) {
 	const headingId = useId();
 	const status = agentStatusView(agent);
-	const online = agent.status === "online";
+	const accepts = acceptsTasks(agent);
 	const used = agent.running_tasks.length;
 	const idle = idleSlotCount(agent.info.slots, used);
 	const queued = agent.queued_tasks.length;
@@ -79,19 +88,22 @@ function AgentSlots({ agent }: { agent: AgentView }) {
 				) : (
 					<span className={cn("text-xs", STATUS[status.kind].text)}>{status.label}</span>
 				)}
+				{agent.status === "online" && agent.preparing_since && (
+					<PreparingBadge since={agent.preparing_since} />
+				)}
 				<span className="flex-1" />
-				{online && (
+				{accepts && (
 					<span className="font-mono text-xs text-fg-2">
 						{slotUsageLabel(used, agent.info.slots)}
 					</span>
 				)}
 			</div>
-			{(used > 0 || (online && idle > 0)) && (
+			{(used > 0 || (accepts && idle > 0)) && (
 				<ul aria-labelledby={headingId} className="m-0 mt-2 flex list-none flex-col gap-1 p-0">
 					{agent.running_tasks.map((task) => (
 						<SlotCell key={task.task_id} task={task} compact />
 					))}
-					{online && idle > 0 && <IdleSlots count={idle} compact />}
+					{accepts && idle > 0 && <IdleSlots count={idle} compact />}
 				</ul>
 			)}
 			{queued > 0 && <p className="m-0 mt-2 text-xs text-fg-3">{queuedLabel(queued)}</p>}

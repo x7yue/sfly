@@ -97,8 +97,13 @@ export interface FollowExecution {
 	disabled: boolean;
 	/** 执行中的节点（画布上的 ID）。 */
 	running: readonly string[];
-	/** 按钮和 F 切换；画布自己在拖动和键盘选到视野外时传 false。 */
+	/** 按钮和 F 切换：这是用户的选择，要记住。 */
 	onChange(active: boolean): void;
+	/**
+	 * 画布自己在拖动、缩放和键盘选到视野外时停止跟随：只在当前页面有效，不是用户的选择，刷新后回到按钮或 F 上次选的状态。
+	 * 之后按钮或 F 恢复。
+	 */
+	onPause(): void;
 }
 
 /**
@@ -404,7 +409,7 @@ export function FlowCanvas({
 	const stopFollowing = useCallback((cause: "manual" | "keyboard") => {
 		const current = followRef.current;
 		if (!current?.active) return;
-		current.onChange(false);
+		current.onPause();
 		const stopped = `已停止${ACTION.followExecution}，按 ${shortcutText("canvas-follow")} 恢复`;
 		setAnnouncement(cause === "manual" ? stopped : `镜头已移到选中的节点，${stopped}`);
 	}, []);

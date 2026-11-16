@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Request } from "@playwright/test";
 import type { AssignedTask } from "../../server/test/support/fake-agent.js";
 import { LONG_REASON, loadSummary, orderFields, REJECTS } from "./actions-support";
 import { inspector, nodeCard } from "./editor-support";
@@ -63,7 +63,7 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 	await expect(rows.nth(0)).toContainText("1h 43m");
 	await expect(rows.nth(1)).toContainText("下单");
 	await expect(rows.nth(1)).toContainText(authored(orderFields(1_284_814)));
-	await expect(rows.nth(1)).toContainText(/\dms/);
+	await expect(rows.nth(1)).toContainText(/买\d+s$/);
 	await expect(rows.nth(2)).toContainText("等回报");
 	const names = await Promise.all(
 		[0, 1, 2].map((i) => rows.nth(i).getByTestId("action-name").boundingBox()),
@@ -94,6 +94,10 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 		"/docs/sdk-reference",
 	);
 	await expect(cap).toContainText("「数量上限」");
+	// 控制面另外丢弃的明细摘要里没有：写明去哪里看。
+	await expect(cap).toContainText(
+		"控制面收到的明细超过上限时，超出的会丢弃；丢弃了哪些名称，到运行监控详情的「动作」页里看。",
+	);
 
 	// 最近的失败：五个，一共 17 个；原因单独一行、完整。
 	const fails = area.getByRole("list", { name: "最近的失败" });
@@ -465,10 +469,12 @@ test("检查器：执行中每秒重新读取摘要，节点结束时再读一�
 	await expect(counts.getByRole("row", { name: "对账 2 0" })).toBeVisible();
 	await expect(panel.getByRole("region", { name: "正在做" })).toHaveCount(0);
 
-	// 之后不再读：等三个轮询间隔，请求数不变。
+	// 之后不再读：别的节点还在执行，运行没有结束，页面上运行的关注项每 2 秒重新读一次。等它又来了两次（间隔比摘要的
+	// 轮询间隔 1 秒长，这期间摘要要是还在轮询早就读了），请求数不变。
 	const done = requests.length;
-	// biome-ignore lint/plugin/e2e-fixed-wait: 断言的是没有发生的事：节点结束以后过了三个轮询间隔（每秒一次），摘要没有再被读
-	await page.waitForTimeout(3_000);
+	const isFocusRead = (request: Request) => new URL(request.url()).pathname.endsWith("/focus");
+	await page.waitForRequest(isFocusRead);
+	await page.waitForRequest(isFocusRead);
 	expect(requests.length).toBe(done);
 });
 
@@ -584,7 +590,7 @@ test("概览：执行中那一行在节点后面写「正在 动作名称」，�
 	await setup.agent.sync();
 	await openOverview(page, clock, setup.runId);
 
-	const rows = page.getByRole("list", { name: "执行中的节点" }).getByRole("listitem");
+	const rows = page.getByRole("list", { name: "进行中的节点" }).getByRole("listitem");
 	await expect(rows).toHaveCount(2);
 	const verify = rows.filter({ hasText: "verify" });
 	await expect(verify).toContainText("正在 保持 4 小时");

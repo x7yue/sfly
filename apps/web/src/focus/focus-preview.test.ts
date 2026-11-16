@@ -1,6 +1,6 @@
 import type { RunFocus, RunFocusItem } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { focusPreview, nodeFocusItems } from "./focus-preview";
+import { focusPreview, nodeFocusItems, nodePrimaryItem } from "./focus-preview";
 
 type Item = Pick<RunFocusItem, "node_id" | "chart" | "anomaly">;
 
@@ -48,5 +48,20 @@ describe("只放得下几项时显示哪几项", () => {
 	it("场景没设关注项时读数是执行中节点的主指标，不算任何节点的关注项", () => {
 		expect(nodeFocusItems(focusOf("primary", ITEMS), "load")).toEqual([]);
 		expect(nodeFocusItems(undefined, "load")).toEqual([]);
+	});
+});
+
+describe("没设关注项时节点卡片上的主指标", () => {
+	const primary = focusOf("primary", [item("load", "level", warn), item("proc_mon", "cpu")]);
+
+	it("取读数里这个节点的那一项，带着控制面判断出的异常", () => {
+		expect(nodePrimaryItem(primary, "load")?.anomaly).toEqual(warn);
+		expect(nodePrimaryItem(primary, "proc_mon")?.anomaly).toBeNull();
+	});
+
+	it("没有这个节点的主指标（没有开始执行、已经结束）、读数还没到、设了关注项时都没有", () => {
+		expect(nodePrimaryItem(primary, "sys_mon")).toBeUndefined();
+		expect(nodePrimaryItem(undefined, "load")).toBeUndefined();
+		expect(nodePrimaryItem(focusOf("focus", ITEMS), "load")).toBeUndefined();
 	});
 });

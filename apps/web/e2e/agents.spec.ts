@@ -280,7 +280,7 @@ test("排队的任务：Agent 不在线时照样列在它名下", async ({ page,
 	await expect(rack(page, "agent-away")).not.toContainText("占用");
 });
 
-test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长与槽位格、排队行同一种写法），版本、槽位、最后在线照常，发出心跳后标记消失", async ({
+test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长与槽位格、排队行同一种写法），版本、最后在线照常，还接不了任务所以不写占用、不画空闲槽；发出心跳后标记消失", async ({
 	page,
 	connectAgent,
 	clock,
@@ -297,10 +297,11 @@ test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长�
 	await expect(header(page, "agent-prep")).toContainText("在线准备环境中 · 2m 10s");
 	await expect(status("agent-ready")).toHaveText("在线");
 	await expect(header(page, "agent-ready")).not.toContainText("准备环境中");
-	// 准备期间照常显示版本、槽位和最后在线。
+	// 准备期间照常显示版本和最后在线；还不接任务，槽位不算空闲。
 	await expect(header(page, "agent-prep")).toContainText("1.2.3");
 	await expect(header(page, "agent-prep")).toContainText("最后在线 现在");
-	await expect(rack(page, "agent-prep")).toContainText("0 / 2 占用");
+	await expect(rack(page, "agent-prep")).not.toContainText("占用");
+	await expect(rack(page, "agent-prep")).not.toContainText("槽位空闲");
 
 	// 时长按控制面时间走：控制面时间过了一分钟，页面不用刷新列表就变了。
 	clock.advance(60_000);
@@ -312,6 +313,8 @@ test("准备环境中：状态后面写「准备环境中 · 2m 10s」（时长�
 	await preparing.ready();
 	await expect(header(page, "agent-prep")).not.toContainText("准备环境中", { timeout: 15_000 });
 	await expect(status("agent-prep")).toHaveText("在线");
+	await expect(rack(page, "agent-prep")).toContainText("0 / 2 占用");
+	await expect(rack(page, "agent-prep")).toContainText("2 个槽位空闲");
 });
 
 test("时钟偏差：Agent 时间比控制面快 613 天时显示，只差 1 秒时不显示，心跳测到新的偏差后更新", async ({
@@ -503,10 +506,16 @@ test.describe("版本不一致", () => {
 		await expect(updateNow("agent-current")).toHaveCount(0);
 		await expect(updateNow("agent-manual")).toHaveCount(0);
 		// 状态和告警在同一行（头部是一行，不换行成几块）。
-		const tops = await header(page, "agent-waiting")
+		// 按各元素的竖直中线比：按 8px 分桶的写法在页面上方的版面一变、中线跨过桶边界时会误报。
+		const middles = await header(page, "agent-waiting")
 			.locator("[data-status], h2, button")
-			.evaluateAll((all) => all.map((el) => Math.round(el.getBoundingClientRect().top)));
-		expect(new Set(tops.map((top) => Math.round(top / 8))).size).toBe(1);
+			.evaluateAll((all) =>
+				all.map((el) => {
+					const box = el.getBoundingClientRect();
+					return box.top + box.height / 2;
+				}),
+			);
+		expect(Math.max(...middles) - Math.min(...middles)).toBeLessThan(8);
 	});
 
 	test("立即更新：确认框列出会被终止的任务；取消不产生影响，确认后状态变为替换中", async ({
@@ -914,6 +923,11 @@ test("槽位格：场景没设关注项时显示这个节点的主指标并写�
 	await expect(probeRows).toContainText("主指标 level");
 	await expect(probeRows).toContainText("3");
 	await expect(probeRows).toContainText("场景没有设置关注项");
+	// 右侧的说明是中文，不用等宽字体（等宽只给数值，例如「2s 前」）。
+	await expect(probeRows.getByText("场景没有设置关注项")).not.toHaveCSS(
+		"font-family",
+		/JetBrains Mono/,
+	);
 	await expect(probeRows.locator('[data-status-dot="warn"]')).toHaveCount(0);
 
 	const verify = slotCells(page, "agent-a").filter({ hasText: "verify" });

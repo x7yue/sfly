@@ -8,7 +8,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { formatClock } from "#/lib/format";
 import { chartLines } from "#/monitor/charts";
-import { anomalyText, formatAgo, readingFoot, readingLabel, readingState } from "./focus-format";
+import { anomalyText, readingFoot, readingLabel, readingState } from "./focus-format";
 
 const NOW = "2026-01-01T00:10:00.000Z";
 const at = (secondsAgo: number) => new Date(Date.parse(NOW) - secondsAgo * 1000).toISOString();
@@ -41,20 +41,6 @@ function item(patch: Partial<RunFocusItem> = {}): RunFocusItem {
 		...patch,
 	};
 }
-
-describe("多久前", () => {
-	it("一分钟以内写秒，之后写分秒、时分", () => {
-		expect(formatAgo(0)).toBe("0s");
-		expect(formatAgo(2400)).toBe("2s");
-		expect(formatAgo(59_999)).toBe("59s");
-		expect(formatAgo(130_000)).toBe("2m 10s");
-		expect(formatAgo(3_720_000)).toBe("1h 02m");
-	});
-
-	it("时间倒退（读数早于最后一个点）当作 0", () => {
-		expect(formatAgo(-5000)).toBe("0s");
-	});
-});
 
 describe("读数的文字", () => {
 	it("脚注：节点 · 多久前；成功、已停止或已取消后是最终值", () => {
@@ -202,6 +188,17 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 		expect(readingLabel(reading, NOW)).not.toContain("最终值");
 	});
 
+	it("运行已经结束、节点一直待执行（没轮到它，或子流程没有触发）：写「这次运行没有执行」「未执行」，不再说还会执行", () => {
+		const reading = empty("pending");
+		expect(readingState(reading, NOW, true)).toEqual({ kind: "empty", text: "这次运行没有执行" });
+		expect(readingFoot(reading, NOW, true)).toBe("load · 这次运行没有执行");
+		expect(readingLabel(reading, NOW, true)).toBe(
+			"母单量 — 单，来自 load（未执行），这次运行没有执行",
+		);
+		// 没开始就被取消的节点原因本来就是结束的说法，运行结束后不变。
+		expect(readingFoot(empty("cancelled"), NOW, true)).toBe("load · 在开始前被取消，没有执行");
+	});
+
 	it.each([
 		["执行中", "running", undefined, false, "还没有数据"],
 		["已成功（final 为 true）", "success", at(30), true, "这次尝试没有上报数据"],
@@ -238,14 +235,20 @@ describe("读数的状态：脚注、可访问名称和图表的空状态都由�
 });
 
 describe("异常原因的短句：写法由这里决定，有没有异常、是哪一种由控制面判断", () => {
-	it("WARN / ERROR 写最近一条的级别和时间，无新数据写多久，失败、重试各一句；没有异常为 null", () => {
+	it("WARN / ERROR 写这次尝试的条数（多于一条时不说成最近一条的级别）和最近一条的时间，无新数据写多久，失败、重试各一句；没有异常为 null", () => {
 		const warnAt = at(30);
 		expect(
 			anomalyText(
 				item({ anomaly: { kind: "log", level: "error", at: warnAt, message: "x", count: 3 } }),
 				NOW,
 			),
-		).toBe(`ERROR · ${formatClock(warnAt)}`);
+		).toBe(`3 条 WARN / ERROR · ${formatClock(warnAt)}`);
+		expect(
+			anomalyText(
+				item({ anomaly: { kind: "log", level: "warn", at: warnAt, message: "x", count: 1 } }),
+				NOW,
+			),
+		).toBe(`1 条 WARN · ${formatClock(warnAt)}`);
 		expect(anomalyText(item({ anomaly: { kind: "stale", at: at(130), message: "" } }), NOW)).toBe(
 			"已 2m 10s 无新数据",
 		);

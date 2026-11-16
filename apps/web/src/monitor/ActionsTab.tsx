@@ -5,11 +5,11 @@ import { ActionTable } from "#/actions/ActionTable";
 import { ActionToolbar } from "#/actions/ActionToolbar";
 import { type ActionFilter, NO_FILTER } from "#/actions/action-details";
 import { filterAnnouncement, isFiltered, withFailed } from "#/actions/action-filter";
-import { type ActionTableGroup, actionTable } from "#/actions/action-table";
+import { type ActionTableGroup, actionTable, groupNotes } from "#/actions/action-table";
 import { useTaskActions } from "#/actions/use-task-actions";
 import { EmptyState, ErrorState, TableSkeleton } from "#/components/feedback/states";
 import { runNodeName } from "#/components/node-name";
-import { ACTION, ACTION_PAGE, MESSAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
+import { ACTION, ACTION_PAGE, MESSAGE, TERM } from "#/lib/copy";
 import { Button } from "@/components/ui/button";
 import { attemptClockNote } from "./attempt-clock";
 import { Hint } from "./Hint";
@@ -66,23 +66,17 @@ export function ActionsTab({
 	// 第一次读到以后，换筛选条件重新读时工具条不再换成骨架：焦点在工具条上，不能丢。
 	const [opened, setOpened] = useState(false);
 	if (loaded && !opened) setOpened(true);
-	// 表格显示的是最近一次读到的行和它们的筛选条件：新条件的明细读到之前，不让上一批行带着新条件的组名和说明。
-	const shown = useRef({ groups: [] as ActionTableGroup[], filter });
-	if (loaded) shown.current = { groups, filter };
-	const shownFilter = shown.current.filter;
+	// 表格显示的是最近一次读到的行、它们的筛选条件和说明：新条件的明细读到之前，不让上一批行带着新条件的组名和说明。
 	const notes = useMemo(
 		() =>
-			summary && {
-				running: summary.running_complete
-					? undefined
-					: NODE_ACTIONS.runningIncomplete(summary.running.length),
-				recent: summary.capped ? "超过上限后也一直更新" : undefined,
-				earlier: shownFilter.failed
-					? ACTION_PAGE.earlierFailedNote(summary.capped_at !== null)
-					: undefined,
-			},
-		[summary, shownFilter.failed],
+			summary && loaded
+				? groupNotes({ summary, controlPlanePeriods, hasOlder, failedOnly: filter.failed === true })
+				: undefined,
+		[summary, loaded, controlPlanePeriods, hasOlder, filter.failed],
 	);
+	const shown = useRef({ groups: [] as ActionTableGroup[], filter, notes });
+	if (loaded) shown.current = { groups, filter, notes };
+	const shownFilter = shown.current.filter;
 	const clockNote = useMemo(() => attemptClockNote(attempt), [attempt]);
 
 	const [announcement, setAnnouncement] = useState({ text: "", count: 0 });
@@ -168,7 +162,7 @@ export function ActionsTab({
 						// 换了筛选条件是另一批行：从头看起，不停在上一批滚到的位置。
 						key={`${shownFilter.name ?? ""}\n${shownFilter.failed === true}`}
 						groups={shown.current.groups}
-						notes={notes || undefined}
+						notes={shown.current.notes}
 						caption={`${runNodeName(node)} 的动作，按开始时间从新到旧`}
 						day={day}
 						timeKind={timeKind}

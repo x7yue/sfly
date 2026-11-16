@@ -1,11 +1,13 @@
 import { type OrchestrationSummary, orchestrationsApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
+import { ErrorState } from "#/components/feedback/states";
 import { runStatusView, StatusPill } from "#/components/status";
 import { apiQuery } from "#/lib/api";
 import { MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Truncate } from "@/components/ui/truncate";
 import { DashboardPanel } from "./DashboardPanel";
 import { PanelLink } from "./panel-link";
@@ -38,7 +40,9 @@ export function ScenariosPanel() {
 			count={scenarios.data && all.length}
 			aside={<PanelLink to="/orchestrations">{PAGE.scenarios}</PanelLink>}
 		>
-			{shown.length > 0 && (
+			{scenarios.data && shown.length === 0 ? (
+				<p className="m-0 px-3.5 py-3 text-xs text-fg-2">{MESSAGE.noScenariosListed}</p>
+			) : scenarios.data ? (
 				<ul className="m-0 list-none p-0">
 					{shown.map((scenario) => (
 						<li key={scenario.id} className="border-b border-border-soft last:border-0">
@@ -58,6 +62,19 @@ export function ScenariosPanel() {
 						</li>
 					))}
 				</ul>
+			) : scenarios.isError ? (
+				<div className="p-3.5">
+					<ErrorState
+						title={MESSAGE.loadFailed(TERM.scenario)}
+						error={scenarios.error}
+						onRetry={() => void scenarios.refetch()}
+					/>
+				</div>
+			) : (
+				<div className="flex flex-col gap-2 p-3.5">
+					<Skeleton className="h-3 w-1/3" />
+					<Skeleton className="h-8 w-full" />
+				</div>
 			)}
 		</DashboardPanel>
 	);

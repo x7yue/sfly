@@ -101,6 +101,15 @@ describe("Agent 合并", () => {
 		expect(names(listed)).toEqual(["installing", "mismatch"]);
 		expect(idle).toBe(4);
 	});
+
+	it("准备环境中的 Agent 还不接任务，不算空闲，单独列出", () => {
+		const { listed, idle } = agentColumn([
+			agent("preparing", { preparing_since: "2026-01-01T00:00:00.000Z" }),
+			...["a", "b", "c", "d", "e"].map((n) => agent(n)),
+		]);
+		expect(names(listed)).toEqual(["preparing"]);
+		expect(idle).toBe(5);
+	});
 });
 
 describe("读数区放几格", () => {

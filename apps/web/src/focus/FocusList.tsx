@@ -3,12 +3,14 @@ import {
 	type FocusItemView,
 	focusKey,
 	focusName,
+	type OrchestrationDocument,
 	sameFocusList,
 } from "@sfly/schema";
 import { cn } from "cn";
 import { ChevronDownIcon, ChevronUpIcon, GripVerticalIcon, XIcon } from "lucide-react";
 import { type DragEvent, useEffect, useRef, useState } from "react";
-import { ACTION, FOCUS, INSPECTOR_PAGE, TERM } from "#/lib/copy";
+import { NodeName, runNodeName } from "#/components/node-name";
+import { ACTION, CHART_TYPE_LABEL, FOCUS, INSPECTOR_PAGE, TERM } from "#/lib/copy";
 import { formatDateTime } from "#/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,6 +34,12 @@ function staleReason(item: FocusItemView, headVersion: number): string | null {
 	}
 }
 
+/** 节点在已保存版本里的显示名称；没有显示名称或节点不在里面时为 undefined。 */
+function displayNameOf(saved: Pick<OrchestrationDocument, "nodes">, nodeId: string) {
+	const node = saved.nodes.find((n) => n.id === nodeId);
+	return node && "display_name" in node ? node.display_name : undefined;
+}
+
 /** 刚移除的一项：撤销就是把移除之前的列表写回去。 */
 interface Removed {
 	name: string;
@@ -49,11 +57,19 @@ interface Drag {
 /**
  * 场景设置的「关注项」页（画布编辑模式，不选节点时的检查器）：按显示顺序列出本场景的全部关注项，
  * 可以拖动手柄或用上移、下移排序、改名（清空回到图表标题）、移除（移除后马上可以撤销）。
+ * 每项写来源节点（「显示名称（节点 ID）」，节点不在最新版本里时只写节点 ID）、图表和图表类型。
  * 失效的项照样列出并写明原因，也占名额。每次修改都是整份替换（`useFocusItems().replace`），立即生效，不产生新版本。
  *
  * 排序用上移、下移按钮时，焦点跟着那一项走，读屏播报新位置；到头的按钮用 `aria-disabled`，焦点才不会掉。
  */
-export function FocusListPage({ orchestrationId }: { orchestrationId: string }) {
+export function FocusListPage({
+	orchestrationId,
+	saved,
+}: {
+	orchestrationId: string;
+	/** 已保存的场景版本：来源节点的显示名称从这里取（关注项只能引用已保存的节点）。 */
+	saved: Pick<OrchestrationDocument, "nodes">;
+}) {
 	const focus = useFocusItems(orchestrationId);
 	const { items, edit } = focus;
 	const [removed, setRemoved] = useState<Removed | null>(null);
@@ -179,6 +195,11 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 							const reason = staleReason(item, focus.headVersion);
 							const line = dropLine(index);
 							const name = focusName(item);
+							const node = {
+								node_id: item.node_id,
+								display_name:
+									item.status === "node_missing" ? undefined : displayNameOf(saved, item.node_id),
+							};
 							return (
 								<li
 									key={key}
@@ -211,21 +232,20 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
 									<div className="min-w-0 flex-1">
 										<NameField
 											item={item}
+											node={runNodeName(node)}
 											focusId={`${key}/name`}
 											onRename={(typed) => rename(index, typed)}
 										/>
 										<div className="flex px-2.25 text-xs text-fg-3">
-											<Truncate className="font-mono">{item.node_id}</Truncate>
+											<NodeName node={node} className="min-w-0" />
 											<span className="flex-none whitespace-pre"> · </span>
 											<Truncate>{`${TERM.chart} ${item.chart}`}</Truncate>
 										</div>
 										{reason && <div className="px-2.25 text-xs text-fg-3">{reason}</div>}
 									</div>
 									<div className="flex h-7.5 flex-none items-center gap-0.5">
-										<span className="mr-1 flex w-10 flex-none justify-end">
-											{item.status === "ok" && (
-												<Badge>{item.chart_type === "stat" ? "数值" : TERM.chart}</Badge>
-											)}
+										<span className="mr-1 flex w-12 flex-none justify-end">
+											{item.status === "ok" && <Badge>{CHART_TYPE_LABEL[item.chart_type]}</Badge>}
 										</span>
 										<MoveButton
 											label={`${ACTION.moveUp} ${name}`}
@@ -276,10 +296,13 @@ export function FocusListPage({ orchestrationId }: { orchestrationId: string }) 
  */
 function NameField({
 	item,
+	node,
 	focusId,
 	onRename,
 }: {
 	item: FocusItemView;
+	/** 来源节点的写法（「显示名称（节点 ID）」）。 */
+	node: string;
 	focusId: string;
 	onRename(typed: string): void;
 }) {
@@ -291,7 +314,7 @@ function NameField({
 	};
 	return (
 		<Input
-			aria-label={`名称（${item.node_id} · ${item.chart}）`}
+			aria-label={FOCUS.nameField(node, item.chart)}
 			data-focus-id={focusId}
 			maxLength={FOCUS_ITEM_TITLE_MAX}
 			value={typed ?? focusName(item)}

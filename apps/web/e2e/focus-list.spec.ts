@@ -220,13 +220,19 @@ test("每行写来源节点、图表和类型；失效项的两种说明都显�
 		{ node_id: "fetch2", chart: "吞吐", title: "子流程吞吐" },
 		LEVEL,
 	]);
-	// 第 2 版：fetch 换成了 ping 节点类型（没有图表「延迟」），ping 节点删掉了。
+	// 第 2 版：fetch 换成了 ping 节点类型（没有图表「延迟」），ping 节点删掉了，fetch2 起了显示名称。
 	await saveVersion(controlPlane, id, 1, {
 		...focusDocument,
 		nodes: [
 			...focusDocument.nodes
 				.filter((n) => n.id !== "ping")
-				.map((n) => (n.id === "fetch" ? { ...n, node: "ping", inputs: { host: "h" } } : n)),
+				.map((n) =>
+					n.id === "fetch"
+						? { ...n, node: "ping", inputs: { host: "h" } }
+						: n.id === "fetch2"
+							? { ...n, display_name: "子单接口" }
+							: n,
+				),
 		],
 		edges: focusDocument.edges.filter((e) => e.to !== "ping"),
 	});
@@ -238,17 +244,22 @@ test("每行写来源节点、图表和类型；失效项的两种说明都显�
 
 	await expect(rows.nth(0)).toContainText("fetch · 图表 延迟");
 	await expect(rows.nth(0)).toContainText("这个版本的节点没有图表 延迟");
-	await expect(rows.nth(1)).toContainText("fetch2 · 图表 errors");
-	await expect(rows.nth(1).getByText(/^数值$/)).toHaveCount(1);
-	await expect(rows.nth(2)).toContainText("fetch2 · 图表 吞吐");
-	await expect(rows.nth(2).getByText(/^图表$/)).toHaveCount(1);
+	// 来源节点写「显示名称（节点 ID）」，和运行时的读数一样；类型写图表类型，和「图表 errors」不矛盾。
+	await expect(rows.nth(1)).toContainText("子单接口（fetch2） · 图表 errors");
+	await expect(rows.nth(1).getByRole("textbox")).toHaveAccessibleName(
+		/^名称（子单接口（fetch2） · errors）/,
+	);
+	await expect(rows.nth(1).getByText(/^数值卡$/)).toHaveCount(1);
+	await expect(rows.nth(2)).toContainText("子单接口（fetch2） · 图表 吞吐");
+	await expect(rows.nth(2).getByText(/^面积$/)).toHaveCount(1);
+	// 节点不在最新版本里：只写节点 ID。
 	await expect(rows.nth(3)).toContainText("ping · 图表 level");
 	await expect(rows.nth(3)).toContainText(
 		"节点 ping 不在最新版本 v2 里，只在运行 v1 及更早版本时显示",
 	);
 	// 失效的项没有类型可写。
-	await expect(rows.nth(0).getByText(/^(数值|图表)$/)).toHaveCount(0);
-	await expect(rows.nth(3).getByText(/^(数值|图表)$/)).toHaveCount(0);
+	await expect(rows.nth(0).getByText(/^(数值卡|折线|面积|柱状)$/)).toHaveCount(0);
+	await expect(rows.nth(3).getByText(/^(数值卡|折线|面积|柱状)$/)).toHaveCount(0);
 });
 
 test("没有关注项时写明怎么添加；节点检查器里设的关注项回到场景设置时已经在列表里", async ({

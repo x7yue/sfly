@@ -321,6 +321,7 @@
 		/* 当前项、选中项从底色与左侧白条换成描边（:where 不加权重，键盘焦点环仍然优先） */
 		:where(
 				[aria-current="page"],
+				[aria-current="location"],
 				[aria-pressed="true"],
 				[aria-selected="true"],
 				[data-state="selected"],
@@ -328,6 +329,15 @@
 			) {
 			outline: 2px solid Highlight;
 			outline-offset: -2px;
+		}
+		/*
+		 * 画布节点卡片的选中靠外圈的 box-shadow，强制颜色下没有了：换成隔开一圈的系统高亮色轮廓，画在卡片外面
+		 * （上面通用的 -2px 内描边会盖住卡片里的内容）。同样用 :where 不加权重，键盘焦点环仍然优先；
+		 * 放在通用规则后面，权重相同时这条生效。
+		 */
+		:where(.selected [data-slot="base-node"]) {
+			outline: 3px solid Highlight;
+			outline-offset: 3px;
 		}
 		/* 进度段、缩略图、槽位条是数据图形，颜色与形状一起是信息：保留作者颜色，垫一块自己的深色底 */
 		[data-viz] {

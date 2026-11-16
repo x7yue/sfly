@@ -17,15 +17,21 @@ import { readingFoot, readingLabel } from "./focus-format";
  * 图表在节点包版本里不存在时写明原因，不显示数值。
  *
  * 默认是一个 `div`；整格可以点时用 `render` 换成按钮或链接（可访问名称写明名称、值、来源节点和状态，以及多久前、最终值或没有值的原因）。
- * `generatedAt` 是这份读数的生成时间（控制面时间）：「多久前」按它算，不随浏览器时钟跳动。
+ * `generatedAt` 是这份读数的生成时间（控制面时间）：「多久前」按它算，不随浏览器时钟跳动。`runEnded` 是运行已经结束：
+ * 一直待执行的来源节点写「这次运行没有执行」。
  */
 export function FocusReadout({
 	item,
 	generatedAt,
+	runEnded = false,
 	render,
 	className,
 	...props
-}: useRender.ComponentProps<"div"> & { item: RunFocusItem; generatedAt: string }) {
+}: useRender.ComponentProps<"div"> & {
+	item: RunFocusItem;
+	generatedAt: string;
+	runEnded?: boolean;
+}) {
 	return useRender({
 		defaultTagName: "div",
 		render,
@@ -33,7 +39,7 @@ export function FocusReadout({
 			{
 				// 没换成按钮或链接时是个没有角色的 div：给它 group，名称才有地方挂。
 				role: render ? undefined : "group",
-				"aria-label": readingLabel(item, generatedAt),
+				"aria-label": readingLabel(item, generatedAt, runEnded),
 				className: cn(
 					"flex min-w-0 flex-col gap-px px-3 py-2 text-left text-inherit no-underline",
 					className,
@@ -47,16 +53,13 @@ export function FocusReadout({
 						{item.unavailable ? (
 							<span className="text-xs text-fg-3">{FOCUS.chartMissing(item.chart)}</span>
 						) : (
-							<FocusValue
-								item={item}
-								className={cn("truncate", item.anomaly?.kind === "stale" && "text-fg-2")}
-							/>
+							<FocusValue item={item} className="truncate" />
 						)}
 						{item.anomaly ? (
 							<AnomalyNote item={item} generatedAt={generatedAt} />
 						) : (
 							<span className="font-mono text-xs wrap-anywhere text-fg-3">
-								{readingFoot(item, generatedAt)}
+								{readingFoot(item, generatedAt, runEnded)}
 							</span>
 						)}
 					</>
@@ -77,6 +80,7 @@ export function FocusReadout({
 export function FocusReadoutStrip({
 	items,
 	generatedAt,
+	runEnded = false,
 	renderItem,
 	columns,
 	trailing,
@@ -84,6 +88,8 @@ export function FocusReadoutStrip({
 }: {
 	items: readonly RunFocusItem[];
 	generatedAt: string;
+	/** 运行已经结束（见 {@link FocusReadout}）。 */
+	runEnded?: boolean;
 	renderItem?: (item: RunFocusItem) => ReactElement<Record<string, unknown>>;
 	columns?: number;
 	trailing?: ReactNode;
@@ -111,6 +117,7 @@ export function FocusReadoutStrip({
 						<FocusReadout
 							item={item}
 							generatedAt={generatedAt}
+							runEnded={runEnded}
 							render={renderItem?.(item)}
 							className={renderItem ? "w-full cursor-pointer hover:bg-fg-1/3" : undefined}
 						/>

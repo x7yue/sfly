@@ -51,7 +51,10 @@ export function formatBytes(bytes: number): string {
 	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 耗时：`850ms`、`12.3s`、`3m 05s`、`1h 02m`、`2d 03h`。 */
+/**
+ * 给定值的耗时（动作耗时、运行结束后的耗时）：`850ms`、`12.3s`、`3m 05s`、`1h 02m`、`2d 03h`。
+ * 每秒刷新的「已持续多久」用 {@link formatElapsed}。
+ */
 export function formatDuration(ms: number): string {
 	const d = Math.max(0, ms);
 	if (d < 1000) return `${Math.round(d)}ms`;
@@ -64,6 +67,19 @@ export function formatDuration(ms: number): string {
 	// 长时间的浸泡测试：超过一天换成「天 + 小时」，不出现「7474h」。
 	return `${Math.floor(h / 24)}d ${pad(h % 24)}h`;
 }
+
+/**
+ * 每秒刷新的「已持续多久」和「多久前」：`2s`、`2m 10s`、`1h 02m`。秒取整，一分钟以内也不写小数：
+ * 界面每秒刷新一次，带小数时小数位基本不动（5.3s、6.3s、7.3s），读起来像假的。
+ */
+export function formatElapsed(ms: number): string {
+	const seconds = Math.max(0, Math.floor(ms / 1000));
+	return seconds < 60 ? `${seconds}s` : formatDuration(seconds * 1000);
+}
+
+/** 还在走的时长（`live`，每秒刷新）用 {@link formatElapsed}，已经定下来的用 {@link formatDuration}。 */
+export const formatSpan = (ms: number, live: boolean): string =>
+	live ? formatElapsed(ms) : formatDuration(ms);
 
 const CLOCK_OFFSET_UNITS: Array<[ms: number, unit: string]> = [
 	[86_400_000, "天"],

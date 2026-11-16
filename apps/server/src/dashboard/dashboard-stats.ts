@@ -77,6 +77,7 @@ export async function dashboardView(deps: DashboardDeps): Promise<DashboardView>
 			orchestration_name: name,
 			orchestration_version: version,
 			triggered_by: run.triggeredBy,
+			triggered_via: run.triggeredVia,
 			started_at: run.startedAt.toISOString(),
 			cancelling: run.cancelRequestedAt !== null,
 			chains: chains.map((chain) => ({

@@ -1,8 +1,8 @@
 import type { FocusAnomaly, RunFocus, RunFocusItem, RunLogLine, RunView } from "@sfly/schema";
 import { AnomalyMark } from "#/focus/AnomalyNote";
-import { anomalyText, formatAgo, readingValue, sourceNodeName } from "#/focus/focus-format";
+import { anomalyText, readingValue, sourceNodeName } from "#/focus/focus-format";
 import { FOCUS, LOG_LEVEL_LABEL, MESSAGE, MONITOR_VIEW_LABEL, TERM } from "#/lib/copy";
-import { formatClock, formatClockMs } from "#/lib/format";
+import { formatClock, formatClockMs, formatElapsed } from "#/lib/format";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { LOG_LEVEL_STYLE } from "./LogList";
@@ -20,7 +20,7 @@ function attentionRow(
 	generatedAt: string,
 ): { why: string; label: string; target: OverviewTarget } {
 	const node = sourceNodeName(item);
-	const ago = formatAgo(Date.parse(generatedAt) - Date.parse(anomaly.at));
+	const ago = formatElapsed(Date.parse(generatedAt) - Date.parse(anomaly.at));
 	const at = { chainInstanceId: item.source.chain_instance_id, nodeId: item.node_id };
 	const detail = MONITOR_VIEW_LABEL.detail;
 	const attempts = {
@@ -51,7 +51,7 @@ function attentionRow(
 						: FOCUS.staleDetail(
 								node,
 								ago,
-								item.sample_interval_ms === null ? null : formatAgo(item.sample_interval_ms),
+								item.sample_interval_ms === null ? null : formatElapsed(item.sample_interval_ms),
 							),
 				label: `在${detail}里看 ${node} 的日志`,
 				target: { ...at, tab: "logs" },

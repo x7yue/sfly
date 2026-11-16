@@ -1,8 +1,8 @@
 import type { RunFocus, RunFocusItem, RunningTaskView } from "@sfly/schema";
 import { activityLabel, type CurrentActivity, currentActivity } from "#/actions/current-activity";
-import { anomalyText } from "#/focus/focus-format";
+import { anomalyText, focusItemTitle } from "#/focus/focus-format";
 import { focusPreview } from "#/focus/focus-preview";
-import { FOCUS, TERM } from "#/lib/copy";
+import { FOCUS } from "#/lib/copy";
 
 /** 槽位格里这个任务的关注项：前两项（读数里有异常的在最前）和没显示的个数。 */
 export interface SlotFocus {
@@ -21,10 +21,6 @@ export interface SlotContent {
 	summary: string | undefined;
 }
 
-/** 一项关注项在槽位格里的名称：主指标前面写明是主指标（关注项的名称是作者起的或图表标题，没有这个问题）。 */
-export const slotItemTitle = (item: Pick<RunFocusItem, "title">, mode: RunFocus["mode"]): string =>
-	mode === "primary" ? `${TERM.primaryMetric} ${item.title}` : item.title;
-
 /**
  * 一个被占用的槽位里要写的内容：正在做什么（`currentActivity`，和节点卡片同一条规则）和这个任务的关注项。
  * 关注项取运行的读数（`GET /runs/:id/focus`）里来源正是这个任务的那些：同一个运行里别的任务的项、同一个节点在别的
@@ -36,7 +32,7 @@ export function slotContent(task: RunningTaskView, focus: RunFocus | undefined):
 	const reasons = focus
 		? mine.flatMap((item) => {
 				const reason = anomalyText(item, focus.generated_at);
-				return reason === null ? [] : [`${slotItemTitle(item, focus.mode)} ${reason}`];
+				return reason === null ? [] : [`${focusItemTitle(item, focus.mode)} ${reason}`];
 			})
 		: [];
 	const parts = [

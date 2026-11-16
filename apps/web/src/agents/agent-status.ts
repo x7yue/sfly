@@ -15,6 +15,15 @@ export function agentStatusView(agent: AgentView): StatusView {
 }
 
 /**
+ * 这台 Agent 此刻能不能接新任务（与控制面派发的条件一致）：在线、已准备好环境、版本与控制面一致（更新中的 Agent
+ * 版本也不一致，ADR 0014）。不能接的 Agent 槽位不算空闲：不画空闲矮条、不写占用数，控制台也不把它合并进「N 台空闲」。
+ */
+export const acceptsTasks = (
+	agent: Pick<AgentView, "status" | "preparing_since" | "version_mismatch">,
+): boolean =>
+	agent.status === "online" && agent.preparing_since === null && !agent.version_mismatch;
+
+/**
  * 在线 Agent 的更新状态（ADR 0014）：版本与控制面不一致时不接新任务，状态后面说明它在做什么；
  * 不需要更新时为 undefined。
  */

@@ -195,7 +195,7 @@ export function MetricChart({
 				</div>
 			) : type === "stat" ? (
 				<>
-					<div className="mt-1.5 mb-0.5 font-mono text-2xl font-semibold" data-latest>
+					<div className="mt-1.5 mb-0.5 font-mono text-lg font-semibold" data-latest>
 						{latest === undefined ? "—" : formatMetric(latest)}
 						<small className="ml-1 text-xs font-normal text-fg-3">{unit}</small>
 					</div>

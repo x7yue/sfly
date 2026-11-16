@@ -4,14 +4,14 @@ import { FOCUS } from "#/lib/copy";
 
 /**
  * 去场景设置「关注项」页的链接（画布路由的 `?settings=focus`）：运行监控的概览和控制台运行块的读数区标题行右侧。
- * 场景设了关注项是「调整关注项」，没设是「设置关注项」。
+ * 场景设了关注项是「调整关注项」，没设是「设置关注项」；不知道设没设（读数读取失败）时传 null，写去哪个页面。
  */
 export function FocusSettingsLink({
 	orchestrationId,
 	configured,
 }: {
 	orchestrationId: string;
-	configured: boolean;
+	configured: boolean | null;
 }) {
 	return (
 		<Link

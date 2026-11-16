@@ -5,7 +5,7 @@ import { NodeName } from "#/components/node-name";
 import { nodeStatusView, runStatusView, StatusDot, StatusPill } from "#/components/status";
 import { TriggeredAt } from "#/components/via-tag";
 import { ACTION, ELAPSED_LABEL, moreLabel } from "#/lib/copy";
-import { formatDuration, shortId } from "#/lib/format";
+import { formatElapsed, shortId } from "#/lib/format";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { NodePrimaryMetric } from "#/metrics/PrimaryMetric";
 import { catalogEntry } from "#/metrics/use-primary-metric";
@@ -59,7 +59,7 @@ export function RunCard({ run, now }: { run: RunListItem; now: number }) {
 				</span>
 				<span className="flex-1" />
 				<span className="font-mono text-sm" title={ELAPSED_LABEL}>
-					{formatDuration(now - Date.parse(run.started_at))}
+					{formatElapsed(now - Date.parse(run.started_at))}
 				</span>
 			</div>
 			<div className="text-xs text-fg-3">

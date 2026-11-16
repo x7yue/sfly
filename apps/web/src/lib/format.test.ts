@@ -3,6 +3,7 @@ import {
 	errorText,
 	formatClockOffset,
 	formatDuration,
+	formatElapsed,
 	formatFullDateTime,
 	formatFullDateTimeMs,
 	spansOtherDay,
@@ -38,6 +39,20 @@ describe("formatDuration", () => {
 	it("超过一天用「天 + 小时」", () => {
 		expect(formatDuration(24 * 3_600_000)).toBe("1d 00h");
 		expect(formatDuration(7474 * 3_600_000 + 31 * 60_000)).toBe("311d 10h");
+	});
+});
+
+describe("formatElapsed", () => {
+	it("每秒刷新的时长：一分钟以内只写整秒，之后写分秒、时分", () => {
+		expect(formatElapsed(0)).toBe("0s");
+		expect(formatElapsed(2400)).toBe("2s");
+		expect(formatElapsed(59_999)).toBe("59s");
+		expect(formatElapsed(130_000)).toBe("2m 10s");
+		expect(formatElapsed(3_720_000)).toBe("1h 02m");
+	});
+
+	it("时间倒退（读数早于最后一个点）当作 0", () => {
+		expect(formatElapsed(-5000)).toBe("0s");
 	});
 });
 

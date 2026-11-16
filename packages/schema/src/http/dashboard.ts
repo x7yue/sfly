@@ -62,6 +62,8 @@ export const DashboardRunningRun = z.object({
 	orchestration_name: z.string(),
 	orchestration_version: z.number().int(),
 	triggered_by: z.string(),
+	/** 经哪个 AI 编程助手触发；没有时为 null（与运行列表的 `triggered_via` 相同）。 */
+	triggered_via: z.string().nullable(),
 	started_at: Timestamp,
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: z.boolean(),

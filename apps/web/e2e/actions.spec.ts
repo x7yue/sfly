@@ -42,7 +42,7 @@ test("页签上写出动作的个数（标记不算）；表格分三组，各�
 	const running = table.locator('tbody[data-group="running"] tr[data-action-id="1"]');
 	await expect(running).toContainText("保持 4 小时");
 	await expect(running).toContainText("目标=200 单/s");
-	await expect(running).toContainText("5.0s");
+	await expect(running).toContainText("5s");
 	await expect(running).toContainText("进行中");
 	// 字段按作者写的先后：「正在做」来自摘要（控制面存成 json，不是会重排键的 jsonb）。
 	await expect(
@@ -109,6 +109,15 @@ test("失败带完整的原因；子动作按层级缩进，最多 3 层；只�
 	// 「下单」从 08:00:10.5 起只计数：1200 个里有明细的 404 个（只计数以前的 400 个和之后失败的 4 个）。
 	await expect(table.locator('tr[data-count-only="下单"]')).toHaveText(
 		"08:00:10 至今的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败",
+	);
+
+	// 显示 Agent 时间时只有起点的 Agent 时间，没有结束的 Agent 时间：写「起」，不写「至」。
+	await panel(page)
+		.getByRole("group", { name: "表格里的时间" })
+		.getByRole("button", { name: "Agent 时间" })
+		.click();
+	await expect(table.locator('tr[data-count-only="下单"]')).toHaveText(
+		/^\d\d:\d\d:\d\d 起的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败$/,
 	);
 });
 

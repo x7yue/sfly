@@ -1,6 +1,6 @@
-import type { ActionNameCount, AttemptView, NodeRunView, RunningActionView } from "@sfly/schema";
+import type { AttemptView, NodeRunView, RunningActionView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { actionAttempt, failedTotal, runningRows } from "./summary-model";
+import { actionAttempt, runningRows } from "./summary-model";
 
 const T0 = Date.parse("2026-01-01T00:00:00.000Z");
 const running = (
@@ -53,22 +53,6 @@ describe("正在做的动作排成树", () => {
 		const rows = runningRows([running(1, 2, 1, "甲", 1), running(2, 1, 1, "乙", 2)]);
 		expect(shown(rows).sort()).toEqual(["1:乙", "1:甲"]);
 	});
-});
-
-const count = (name: string, cappedAt: string | null, failed = 0): ActionNameCount => ({
-	name,
-	total: 10,
-	failed,
-	reported: 5,
-	capped_at: cappedAt,
-	agent_capped_at: cappedAt,
-});
-
-it("失败的个数是各个名称的失败数之和", () => {
-	expect(failedTotal([count("下单", null, 17), count("撤单", null, 3), count("预热", null)])).toBe(
-		20,
-	);
-	expect(failedTotal([])).toBe(0);
 });
 
 const attempt = (n: number, status: AttemptView["status"], started: boolean): AttemptView =>

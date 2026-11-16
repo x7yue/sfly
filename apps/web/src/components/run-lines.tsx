@@ -4,7 +4,8 @@ import type { CSSProperties } from "react";
 import { chainProgressText } from "#/components/chain-progress";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView, StatusDot } from "#/components/status";
-import { LIST_LABEL, moreLabel } from "#/lib/copy";
+import { FOLDED_LABEL, LIST_LABEL, moreLabel } from "#/lib/copy";
+import { nodeStatusDisplay } from "#/lib/node-status";
 import { Truncate } from "@/components/ui/truncate";
 
 /**
@@ -34,12 +35,19 @@ export interface LineChain {
 }
 
 /**
- * 线路上的一站：一个节点，或折起来的一段（「已完成 N 个」在当前站之前，「还有 N 个」在之后）。
+ * 线路上的一站：一个节点，或折起来的一段。当前站之前的段是 `done`（都算已完成：成功、已跳过、已停止）或 `ended`
+ * （一样状态、但不算完成的节点，例如取消的运行里已取消的节点），之后的是 `rest`。
  * 折起来的一段画成它最后一个节点（挨着画出来的那一站）的状态。
  */
 export type Station =
 	| { kind: "node"; node: LineNode; index: number }
-	| { kind: "fold"; side: "done" | "rest"; start: number; count: number; status: string };
+	| {
+			kind: "fold";
+			side: "done" | "ended" | "rest";
+			start: number;
+			count: number;
+			status: string;
+	  };
 
 /** 一条链超过这么多个节点就折叠；折叠后至多 6 站（加上画出来的失败节点）。 */
 export const LINE_MAX_STATIONS = 7;
@@ -47,7 +55,8 @@ export const LINE_MAX_STATIONS = 7;
 /**
  * 长链折叠（外壳页方案 4.2）：节点不超过 `max` 个时每个节点一站；超过时只画当前站（进行中的节点，没有时是第一个
  * 待执行的节点）前面最后一站、当前站和之后两站，其余折成「已完成 N 个」「还有 N 个」。失败的节点总是画出来，
- * 不折进「已完成」；只折一个节点时直接画它（一站和一段折叠一样宽）。都结束了的链只画最后一站。
+ * 不折进「已完成」；不算完成的节点（已取消）也不折进「已完成」，连着的一样状态折成一段（「已取消 N 个」）。
+ * 只折一个节点时直接画它（一站和一段折叠一样宽）。都结束了的链只画最后一站。
  */
 export function foldStations(nodes: readonly LineNode[], max = LINE_MAX_STATIONS): Station[] {
 	const all: Station[] = nodes.map((node, index) => ({ kind: "node", node, index }));
@@ -57,14 +66,21 @@ export function foldStations(nodes: readonly LineNode[], max = LINE_MAX_STATIONS
 	const anchor = open >= 0 ? open : nodes.length;
 	const shown = (i: number) =>
 		(i >= anchor - 1 && i <= anchor + 2) || nodes[i]?.status === "failed";
+	// 当前站之前，算已完成的节点一起折，不算完成的按状态分开折；之后的都是「还有」。
+	const group = (i: number) => {
+		if (i >= anchor) return "rest";
+		const status = nodes[i]?.status ?? "";
+		return nodeStatusDisplay(status)?.done ? "done" : status;
+	};
 	const stations: Station[] = [];
 	for (let i = 0; i < nodes.length; ) {
 		let end = i;
-		while (end < nodes.length && !shown(end)) end++;
+		while (end < nodes.length && !shown(end) && group(end) === group(i)) end++;
 		if (end - i > 1) {
+			const kind = group(i);
 			stations.push({
 				kind: "fold",
-				side: i < anchor ? "done" : "rest",
+				side: kind === "rest" || kind === "done" ? kind : "ended",
 				start: i,
 				count: end - i,
 				status: nodes[end - 1]?.status ?? "pending",
@@ -133,8 +149,17 @@ export function layoutLines(
 const isRunning = (station: Station | undefined) =>
 	station?.kind === "node" && nodeStatusView(station.node.status).kind === "running";
 
-const foldLabel = (station: Extract<Station, { kind: "fold" }>) =>
-	station.side === "done" ? `已完成 ${station.count} 个` : moreLabel(station.count);
+/** 折起来的一段写什么：「已完成 3 个」「已取消 4 个」「还有 5 个」。 */
+export function foldLabel(station: Extract<Station, { kind: "fold" }>): string {
+	switch (station.side) {
+		case "done":
+			return FOLDED_LABEL.done(station.count);
+		case "ended":
+			return FOLDED_LABEL.ended(nodeStatusView(station.status).label, station.count);
+		case "rest":
+			return moreLabel(station.count);
+	}
+}
 
 /**
  * 线路。每行是一条链：名称、各站（站名在点的下面）、已完成数 / 节点数。所有行共用一套列（CSS subgrid），

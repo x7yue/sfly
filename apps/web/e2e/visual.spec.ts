@@ -631,13 +631,18 @@ test("控制台：「开始使用」第 1、2 步已完成，白色按钮在第 
 	await expect(page).toHaveScreenshot("dashboard-empty-progress.png");
 });
 
-test("控制台：多个运行时换成紧凑行，点开一行展开成运行块", async ({
+test("控制台：多个运行时换成紧凑行，点开一行展开成运行块；Agent 很多时只列要看的，其余合并成「N 台空闲」", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
 	const agent = await connectAgent({ name: "agent-a", slots: 8 });
+	// 另外 6 台：3 台在线空闲，1 台离线，1 台版本不一致，1 台还在准备环境。
+	for (const name of ["agent-b", "agent-c", "agent-d"]) await connectAgent({ name, slots: 4 });
+	await (await connectAgent({ name: "agent-e", slots: 4 })).disconnect();
+	await connectAgent({ name: "agent-f", slots: 4, agentVersion: "0.0.1" });
+	await connectAgent({ name: "agent-g", slots: 4 }, { preparing: true });
 	await publishPackage(controlPlane);
 	await manyRuns(controlPlane, agent, clock, 7);
 	await page.clock.setFixedTime(clock.now());
@@ -646,6 +651,14 @@ test("控制台：多个运行时换成紧凑行，点开一行展开成运行�
 	await left.getByRole("button", { name: /浸泡 06/ }).click();
 	await expect(left.getByRole("region", { name: "浸泡 06", exact: true })).toBeVisible();
 	await expect(left.getByRole("button", { expanded: false })).toHaveCount(6);
+	const agents = page.getByRole("region", { name: "Agent", exact: true });
+	await expect(agents.getByRole("heading", { level: 3 })).toHaveText([
+		"agent-a",
+		"agent-e",
+		"agent-f",
+		"agent-g",
+	]);
+	await expect(agents).toContainText("3 台空闲");
 	await expect(page).toHaveScreenshot("dashboard-many.png", {
 		mask: [page.locator('[data-slot="run-id"]')],
 	});

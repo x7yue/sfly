@@ -16,7 +16,7 @@ import { ActionArea, CurrentActions } from "#/actions/InspectorActions";
 import { actionAttempt } from "#/actions/summary-model";
 import { useActionSummary } from "#/actions/use-task-actions";
 import { floatGroupClass } from "#/components/canvas/CanvasDock";
-import { cardFocusLabel, FocusRows } from "#/components/canvas/CardFocus";
+import { cardFocusLabel } from "#/components/canvas/CardFocus";
 import type {
 	CanvasContextValue,
 	CanvasInfo,
@@ -26,12 +26,14 @@ import type {
 import type { DocNode } from "#/components/canvas/flow";
 import { KIND_META } from "#/components/canvas/node-display";
 import { type CanvasSelection, soleNode } from "#/components/canvas/selection";
-import { ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
+import { LOD_HIDDEN, ZOOM_TEXT_12 } from "#/components/canvas/zoom-text";
 import { runNodeName } from "#/components/node-name";
 import { SectionHeading } from "#/components/page";
 import { nodeStatusView, StatusPill } from "#/components/status";
+import { AnomalyMark } from "#/focus/AnomalyNote";
 import { FocusReadoutStrip } from "#/focus/FocusReadout";
-import { focusPreview, nodeFocusItems } from "#/focus/focus-preview";
+import { FocusRows } from "#/focus/FocusRows";
+import { focusPreview, nodeFocusItems, nodePrimaryItem } from "#/focus/focus-preview";
 import { isSavedNodeType } from "#/focus/saved-node";
 import { useFocusItems } from "#/focus/use-focus-items";
 import {
@@ -40,11 +42,12 @@ import {
 	FOCUS,
 	MESSAGE,
 	MONITOR_DETAIL_LABEL,
+	NOT_RUN_IN_ENDED_RUN,
 	openInLabel,
 	PROGRESS_LABEL,
 	TERM,
 } from "#/lib/copy";
-import { formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { ACTIONS_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
@@ -85,9 +88,27 @@ function cardFocus(
 		count: items.length,
 		label: cardFocusLabel(items, focus.generated_at),
 		rows: started ? (
-			<FocusRows preview={focusPreview(items)} generatedAt={focus.generated_at} />
+			<FocusRows
+				variant="card"
+				preview={focusPreview(items)}
+				generatedAt={focus.generated_at}
+				mode={focus.mode}
+				aria-hidden
+				data-testid="node-focus"
+				className={cn("rounded-md bg-sunk px-2 py-0.5", ZOOM_TEXT_12, LOD_HIDDEN)}
+			/>
 		) : undefined,
 	};
+}
+
+/**
+ * 场景没设关注项时，卡片上的主指标有异常（读数里这个节点的主指标，和别处同一份）：主指标旁画三角，原因写进卡片的可访问名称，
+ * 没有异常时什么也不加。数值和迷你趋势仍是 `NodePrimaryMetric` 的。
+ */
+function primaryAnomaly(focus: RunFocus | undefined, id: string) {
+	const item = nodePrimaryItem(focus, id);
+	if (!focus || !item || item.anomaly === null) return undefined;
+	return { label: cardFocusLabel([item], focus.generated_at, "primary") };
 }
 
 /**
@@ -114,7 +135,7 @@ export function useRunDecorations(
 						run: "pending",
 						status: (
 							<StatusPill kind="pending" className={ZOOM_TEXT_12}>
-								{ended ? "未执行" : "待执行"}
+								{ended ? NOT_RUN_IN_ENDED_RUN.label : NODE_STATUS.pending.label}
 							</StatusPill>
 						),
 						focus: cardFocus(focus, id, false),
@@ -123,17 +144,22 @@ export function useRunDecorations(
 				const s = nodeStatusView(summary.node.status);
 				const entry = catalogEntry(metrics, summary.chain.id, id);
 				const started = summary.node.attempts.some((a) => a.started_at !== null);
+				// 三角画在主指标旁，卡片上没有主指标槽时不写异常（名称里也不写）。
+				const anomaly = entry?.primary_metric ? primaryAnomaly(focus, id) : undefined;
 				return {
 					run: summary.state,
 					activity: currentActivity(summary.node.attempts.at(-1)) ?? undefined,
-					focus: cardFocus(focus, id, started),
+					focus: cardFocus(focus, id, started) ?? anomaly,
 					slot: entry?.primary_metric ? (
-						<NodePrimaryMetric
-							runId={run.id}
-							entry={entry}
-							status={summary.node.status}
-							variant="inline"
-						/>
+						<>
+							{anomaly && <AnomalyMark className="flex-none" />}
+							<NodePrimaryMetric
+								runId={run.id}
+								entry={entry}
+								status={summary.node.status}
+								variant="inline"
+							/>
+						</>
 					) : undefined,
 					status: (
 						<StatusPill kind={s.kind} className={ZOOM_TEXT_12}>
@@ -193,7 +219,7 @@ export function RunStateBadge({ state }: { state: CanvasRun }) {
 					</StatusPill>
 					<span className="font-mono text-xs">{shortId(run.id)}</span>
 					<span className="font-mono text-xs text-fg-3">
-						{formatDuration(end - Date.parse(run.started_at))}
+						{formatSpan(end - Date.parse(run.started_at), !run.ended_at)}
 					</span>
 				</>
 			);
@@ -400,7 +426,9 @@ function NodeRunInspector({
 						{shortId(run.id)} · v{run.orchestration_version}
 					</Row>
 					<Row label="Agent">{view?.agent ?? "控制面"}</Row>
-					<Row label={DURATION_LABEL}>{elapsed === null ? "—" : formatDuration(elapsed)}</Row>
+					<Row label={DURATION_LABEL}>
+						{elapsed === null ? "—" : formatSpan(elapsed, !view?.attempts.at(-1)?.ended_at)}
+					</Row>
 					<Row label="尝试" testId="run-attempts">
 						{view?.attempts.length ?? 0}
 					</Row>
@@ -426,7 +454,7 @@ function NodeRunInspector({
 				)}
 				{!view && (
 					<p className="m-0 mt-3 text-xs text-fg-2">
-						这个节点所在的子流程在这次运行里还没有触发，没有运行记录。
+						{NOT_RUN_IN_ENDED_RUN.subflowNote(run.status !== "running")}
 					</p>
 				)}
 				{running.length > 0 && actionSummary && (
@@ -572,10 +600,16 @@ function RunOverview({
 						</dd>
 						<Row label="触发人">{run.triggered_by}</Row>
 						<Row label="开始">{formatDateTime(run.started_at)}</Row>
-						<Row label={DURATION_LABEL}>{formatDuration(end - Date.parse(run.started_at))}</Row>
+						<Row label={DURATION_LABEL}>
+							{formatSpan(end - Date.parse(run.started_at), !run.ended_at)}
+						</Row>
 					</dl>
 					{state.focus?.mode === "focus" && state.focus.items.length > 0 && (
-						<RunFocusList focus={state.focus} onSelect={(item) => onSelectNode(item.node_id)} />
+						<RunFocusList
+							focus={state.focus}
+							runEnded={run.status !== "running"}
+							onSelect={(item) => onSelectNode(item.node_id)}
+						/>
 					)}
 					<p className="m-0 mt-3.5 text-xs text-fg-3">选中节点查看它在这次运行里的摘要。{HINT}</p>
 				</>
@@ -596,9 +630,11 @@ function RunOverview({
  */
 function RunFocusList({
 	focus,
+	runEnded,
 	onSelect,
 }: {
 	focus: RunFocus;
+	runEnded: boolean;
 	onSelect(item: RunFocusItem): void;
 }) {
 	const headingId = useId();
@@ -613,6 +649,7 @@ function RunFocusList({
 			<FocusReadoutStrip
 				items={focus.items}
 				generatedAt={focus.generated_at}
+				runEnded={runEnded}
 				className="rounded-lg border border-border-soft bg-bg"
 				renderItem={(item) => <button type="button" onClick={() => onSelect(item)} />}
 			/>

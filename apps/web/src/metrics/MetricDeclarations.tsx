@@ -1,7 +1,7 @@
-import { type ChartView, isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
+import { isLabeled, type MetricDeclaration, type NodeTypeView } from "@sfly/schema";
 import { FocusQuota, FocusToggle } from "#/focus/FocusToggle";
 import type { FocusItems } from "#/focus/use-focus-items";
-import { FOCUS, TERM } from "#/lib/copy";
+import { CHART_TYPE_LABEL, FOCUS, TERM } from "#/lib/copy";
 import { Badge } from "@/components/ui/badge";
 
 /**
@@ -15,13 +15,6 @@ export type NodeMetricsInfo = Partial<Pick<NodeTypeView, "metrics" | "charts" | 
 const KIND_LABEL: Record<MetricDeclaration["kind"], string> = {
 	gauge: "瞬时值",
 	counter: "累计值",
-};
-
-const CHART_LABEL: Record<ChartView["type"], string> = {
-	line: "折线",
-	area: "面积",
-	bar: "柱状",
-	stat: "数值卡",
 };
 
 const metricTitle = (m: MetricDeclaration) =>
@@ -88,7 +81,7 @@ export function ChartsCell({ info }: { info: NodeMetricsInfo }) {
 			</div>
 			<div className="text-fg-3">
 				{charts.map((c, i) => (
-					<span key={c.title} title={`${CHART_LABEL[c.type]}：${c.metrics.join("、")}`}>
+					<span key={c.title} title={`${CHART_TYPE_LABEL[c.type]}：${c.metrics.join("、")}`}>
 						{i > 0 && " · "}
 						{c.title}
 						{c.default && " 默认"}
@@ -152,7 +145,7 @@ export function MetricDeclarations({
 				{charts.map((c) => (
 					<li key={c.title} className="flex items-center gap-1.5 text-xs">
 						<span className="min-w-0 truncate">{c.title}</span>
-						<span className="flex-none text-fg-3">{CHART_LABEL[c.type]}</span>
+						<span className="flex-none text-fg-3">{CHART_TYPE_LABEL[c.type]}</span>
 						<span className="min-w-0 truncate font-mono text-fg-3">{c.metrics.join(" · ")}</span>
 						<span className="ml-auto flex flex-none items-center gap-1.5">
 							{c.default && <Badge title="没被任何图表引用的指标，由平台生成默认图表">默认</Badge>}

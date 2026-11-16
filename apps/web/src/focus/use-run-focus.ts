@@ -1,8 +1,8 @@
 import { DEFAULT_FOCUS_POINTS, runFocusApi } from "@sfly/schema";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef } from "react";
 import { apiQuery } from "#/lib/api";
 import { LIVE_POLL_MS } from "#/lib/polling";
+import { useRefetchWhenPollingStops } from "#/lib/use-refetch-when-polling-stops";
 
 /**
  * 读一次运行的关注项读数的查询（`GET /runs/:id/focus`）：`useRunFocus` 和一页里要读好几个运行的地方（`useQueries`）
@@ -37,11 +37,7 @@ export function useRunFocus(
 		...runFocusQuery(runId, { points, refetchInterval: live ? LIVE_POLL_MS : false }),
 		enabled,
 	});
-	const wasLive = useRef(live);
-	const { refetch } = query;
-	useEffect(() => {
-		if (wasLive.current && !live) void refetch();
-		wasLive.current = live;
-	}, [live, refetch]);
+	const { queryKey } = runFocusQuery(runId, { points, refetchInterval: false });
+	useRefetchWhenPollingStops(live ? [queryKey] : []);
 	return query;
 }

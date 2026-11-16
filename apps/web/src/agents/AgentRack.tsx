@@ -1,7 +1,8 @@
 import type { AgentView, QueuedTaskView } from "@sfly/schema";
 import { cn } from "cn";
 import { useId } from "react";
-import { agentStatusView, updateStatus } from "#/agents/agent-status";
+import { acceptsTasks, agentStatusView, updateStatus } from "#/agents/agent-status";
+import { PreparingBadge } from "#/agents/PreparingBadge";
 import { queueTiming } from "#/agents/queue-timing";
 import { TaskSlot } from "#/agents/TaskSlot";
 import { canUpdateNow, UpdateNowButton } from "#/agents/UpdateNowButton";
@@ -11,20 +12,14 @@ import { Panel } from "#/components/page";
 import { IdleSlots, idleSlotCount, taskChainLabel } from "#/components/slot-cell";
 import { nodeStatusView, StatusDot, StatusPill } from "#/components/status";
 import { queuedLabel, slotUsageLabel, TERM } from "#/lib/copy";
-import {
-	formatClockOffset,
-	formatDateTime,
-	formatDuration,
-	formatFullDateTime,
-	shortId,
-} from "#/lib/format";
+import { formatClockOffset, formatDateTime, formatFullDateTime, shortId } from "#/lib/format";
 import { useNow } from "#/lib/use-now";
 import { Truncate } from "@/components/ui/truncate";
 
 /**
  * 一台 Agent 的机架面板（外壳页方案 4.1）：头部一行是状态、名称、版本、系统、对外地址和最后在线，状态后面跟着各种告警，
  * 右侧是被引用的场景数和「立即更新」；主体是槽位格，格子下面是排队的任务；底部是节点包与能力。
- * 离线的 Agent 接不了任务，槽位不算空闲，所以不画空闲矮条、不写占用数。
+ * 接不了新任务的 Agent（离线、准备环境中、版本不一致或更新中，`acceptsTasks`）槽位不算空闲，所以不画空闲矮条、不写占用数。
  */
 export function AgentRack({
 	agent,
@@ -41,10 +36,10 @@ export function AgentRack({
 	const slots = agent.info.slots;
 	const used = agent.running_tasks.length;
 	const queued = agent.queued_tasks.length;
-	const online = agent.status === "online";
+	const accepts = acceptsTasks(agent);
 	const idle = idleSlotCount(slots, used);
-	// 离线的 Agent 接不了任务，槽位不算空闲：不画空闲矮条、不写占用数；没有任务还占着槽位时槽位一栏整个不画。
-	const showSlots = online || used > 0;
+	// 接不了新任务的 Agent 槽位不算空闲：不画空闲矮条、不写占用数；没有任务还占着槽位时槽位一栏整个不画。
+	const showSlots = accepts || used > 0;
 	const hasBody = showSlots || queued > 0;
 	const packages = [
 		...agent.installed_packages.map((p) => `${p.name}@${p.version}`),
@@ -76,7 +71,7 @@ export function AgentRack({
 								<h3 id={slotsHeadingId} className="m-0 text-xs font-medium text-fg-2">
 									槽位
 								</h3>
-								{online && (
+								{accepts && (
 									<span className="font-mono text-xs text-fg-3">
 										{slotUsageLabel(used, slots)} · {queuedLabel(queued)}
 									</span>
@@ -89,7 +84,7 @@ export function AgentRack({
 								{agent.running_tasks.map((task) => (
 									<TaskSlot key={task.task_id} task={task} runFocus={runFocus.get(task.run_id)} />
 								))}
-								{online && idle > 0 && <IdleSlots count={idle} />}
+								{accepts && idle > 0 && <IdleSlots count={idle} />}
 							</ul>
 						</div>
 					)}
@@ -247,14 +242,4 @@ function IdentifierList({ items }: { items: readonly string[] }) {
 function endpointLabel({ address, port }: AgentView["endpoint"]): string {
 	if (port === null) return address;
 	return `${address.includes(":") ? `[${address}]` : address}:${port}`;
-}
-
-/** 准备环境中的标记：「准备环境中 · 2m 10s」，时长写法与槽位格、排队行一致。时长按控制面时间算，每秒走一次（ADR 0018）。 */
-function PreparingBadge({ since }: { since: string }) {
-	const now = useNow(true);
-	return (
-		<span className="text-xs text-fg-2">
-			准备环境中 · {formatDuration(now - new Date(since).getTime())}
-		</span>
-	);
 }

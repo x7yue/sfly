@@ -45,7 +45,11 @@ test("执行中的节点卡片写出正在做的动作和已持续多久，没�
 	const verifyActivity = verifyCard.getByTestId("node-activity");
 	await expect(verifyActivity).toContainText("保持 4 小时");
 	await expect(verifyActivity).toContainText("1h 43m");
-	await expect(verifyCard).toHaveAccessibleName(/^节点 verify，.+ 执行中 正在做 保持 4 小时$/);
+	// verify 是第 2 次尝试：10 分钟以内开始的重试算异常，场景没设关注项时主指标的异常也写进名称。
+	const retry = /1 项需要注意：主指标 level 重试（尝试 2）· \d\d:\d\d:\d\d/;
+	await expect(verifyCard).toHaveAccessibleName(
+		new RegExp(`^节点 verify，.+ 执行中 正在做 保持 4 小时 ${retry.source}$`),
+	);
 	// 进度的说明：没有时长。
 	const probeCard = nodeCard(page, "probe");
 	await expect(probeCard.getByTestId("node-activity")).toContainText("第 3 批");
@@ -67,10 +71,12 @@ test("执行中的节点卡片写出正在做的动作和已持续多久，没�
 		running: [{ id: 3, parent: null, depth: 0, name: "收尾", fields: {}, ...agent.stamp(now) }],
 	});
 	await expect(verifyCard.getByTestId("node-activity")).toContainText("收尾");
-	await expect(verifyCard).toHaveAccessibleName(/ 执行中 正在做 收尾$/);
+	await expect(verifyCard).toHaveAccessibleName(new RegExp(` 执行中 正在做 收尾 ${retry.source}$`));
 
 	// 动作都结束了、也没有进度：这一行撤掉。
 	agent.actionSummary(verify, { total: 3, reported: 3 });
 	await expect(verifyCard.getByTestId("node-activity")).toHaveCount(0);
-	await expect(verifyCard).toHaveAccessibleName(/^节点 verify，.+ 执行中$/);
+	await expect(verifyCard).toHaveAccessibleName(
+		new RegExp(`^节点 verify，.+ 执行中 ${retry.source}$`),
+	);
 });

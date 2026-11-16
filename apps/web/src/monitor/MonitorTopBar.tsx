@@ -10,7 +10,7 @@ import { TriggeredAt } from "#/components/via-tag";
 import { useRunFocus } from "#/focus/use-run-focus";
 import { apiQuery } from "#/lib/api";
 import { ACTION, DURATION_LABEL, ELAPSED_LABEL, FOCUS } from "#/lib/copy";
-import { formatClock, formatDateTime, formatDuration, shortId } from "#/lib/format";
+import { formatClock, formatDateTime, formatSpan, shortId } from "#/lib/format";
 import { toggleMotionPaused, useMotionPaused } from "#/lib/motion-pause";
 import { shortcutText } from "#/lib/shortcuts";
 import { runViewTransition } from "#/lib/view-transition";
@@ -116,7 +116,7 @@ export function MonitorTopBar({
 				<span className="truncate text-xs text-fg-3">
 					<TriggeredAt by={run.triggered_by} via={run.triggered_via} at={run.started_at} /> ·{" "}
 					<span className="font-mono" data-testid="run-elapsed">
-						{live ? ELAPSED_LABEL : DURATION_LABEL} {formatDuration(elapsed)}
+						{live ? ELAPSED_LABEL : DURATION_LABEL} {formatSpan(elapsed, live)}
 					</span>
 				</span>
 			</div>

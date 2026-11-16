@@ -1,8 +1,8 @@
-import type { ActionNameCount, AttemptView, NodeRunView, RunningActionView } from "@sfly/schema";
+import type { AttemptView, NodeRunView, RunningActionView } from "@sfly/schema";
 import { type Indent, indentOf } from "./action-table";
 
 /**
- * 动作摘要里画在检查器上的几样东西（`ActionSummaryView`）：正在做的动作怎么排、失败一共多少个。
+ * 动作摘要里画在检查器上的几样东西（`ActionSummaryView`）：正在做的动作怎么排。
  * 都是纯函数，摘要的内容由控制面准备好，这里只管排版需要的整理。
  */
 
@@ -56,7 +56,3 @@ export function runningRows(running: readonly RunningActionView[]): RunningRow[]
 
 const byStart = (running: readonly RunningActionView[]) =>
 	[...running].sort((a, b) => Date.parse(a.started_at) - Date.parse(b.started_at) || a.id - b.id);
-
-/** 失败的动作一共有多少个（各名称的失败数之和）。 */
-export const failedTotal = (names: readonly ActionNameCount[]): number =>
-	names.reduce((sum, n) => sum + n.failed, 0);

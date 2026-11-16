@@ -9,8 +9,11 @@ import {
 } from "@sfly/schema";
 import { type QueryKey, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef } from "react";
+import { failedTotal } from "#/actions/action-filter";
+import { summaryQuery } from "#/actions/use-task-actions";
 import { apiQuery } from "#/lib/api";
 import { STATUS_POLL_MS } from "#/lib/polling";
+import { useRefetchWhenPollingStops } from "#/lib/use-refetch-when-polling-stops";
 import {
 	type PreparedTracks,
 	prepareTracks,
@@ -34,7 +37,7 @@ type PageQuery = { limit: number; failed?: "true"; name?: string };
 /** 一次尝试除了最新一页还要读的页：失败的、每种少见的名称。 */
 function extraPagesOf(summary: ActionSummaryView): { query: PageQuery; version: string }[] {
 	const pages: { query: PageQuery; version: string }[] = [];
-	const failed = summary.names.reduce((n, c) => n + c.failed, 0);
+	const failed = failedTotal(summary);
 	if (failed > 0) {
 		pages.push({ query: { limit: MAX_ACTION_PAGE, failed: "true" }, version: String(failed) });
 	}
@@ -95,7 +98,7 @@ export function useActionTracks(
 
 	const summaries = useQueries({
 		queries: started.map(({ attempt }) => ({
-			...apiQuery(actionsApi.summary, { params: { id: attempt.task_id } }),
+			...summaryQuery(attempt.task_id),
 			refetchInterval: attempt.status === "running" ? STATUS_POLL_MS : false,
 		})),
 	});
@@ -123,22 +126,11 @@ export function useActionTracks(
 	});
 
 	// 尝试结束时再读一次摘要（之后不再定时重读）：结束时的那一份正在做的为空。
-	const runningIds = started
-		.filter((s) => s.attempt.status === "running")
-		.map((s) => s.attempt.task_id)
-		.join(" ");
-	const wasRunning = useRef<string[]>([]);
-	useEffect(() => {
-		const now = runningIds === "" ? [] : runningIds.split(" ");
-		for (const id of wasRunning.current) {
-			if (now.includes(id)) continue;
-			void queryClient.invalidateQueries({
-				queryKey: apiQuery(actionsApi.summary, { params: { id } }).queryKey,
-				exact: true,
-			});
-		}
-		wasRunning.current = now;
-	}, [runningIds, queryClient]);
+	useRefetchWhenPollingStops(
+		started
+			.filter((s) => s.attempt.status === "running")
+			.map((s) => summaryQuery(s.attempt.task_id).queryKey),
+	);
 
 	// 摘要里和一页相关的计数变了（或者尝试结束了）才重读那一页。
 	const pageVersions = new Map<string, { key: QueryKey; version: string }>();

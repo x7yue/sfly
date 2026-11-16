@@ -843,7 +843,7 @@ function PlatformGroup({
 					className="relative m-0 min-w-0 rounded-lg border border-border-soft bg-bg px-2.5 pt-2 pb-1.5"
 				>
 					<figcaption className="text-xs text-fg-2">重试次数</figcaption>
-					<div className="mt-1.5 mb-0.5 font-mono text-2xl font-semibold" data-latest>
+					<div className="mt-1.5 mb-0.5 font-mono text-lg font-semibold" data-latest>
 						{data ? data.retries : "—"}
 						<small className="ml-1 text-xs font-normal text-fg-3">次</small>
 					</div>
