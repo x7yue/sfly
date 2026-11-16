@@ -92,20 +92,20 @@ describe("任务日志按时刻定位", () => {
 	/** 第 1 到 n 行，第 k 行在控制面时间 T0 之后 k × 10 秒。 */
 	const everyTenSeconds = (n: number) => write(range(1, n).map((k) => lineAt(k, k * 10_000)));
 
-	it("那一刻正好有一行（1 秒以内）：返回包含它的一页，写明是哪一行，那一刻的位置在它之前或之后的第一行", async () => {
+	it("那一刻正好有一行（50 毫秒以内只有这一行）：返回包含它的一页，写明是哪一行，那一刻的位置在它之前或之后的第一行", async () => {
 		await everyTenSeconds(100);
 		const all = await page("limit=1000");
 		const offsetOf = (seq: number) => all.lines.find((l) => l.seq === seq)?.offset;
 
-		// 第 50 行之后 0.4 秒：那一刻落在第 50、51 行之间。
-		const after = await page(`limit=20&at=${iso(T0 + 500_400)}`);
+		// 第 50 行之后 40 毫秒：那一刻落在第 50、51 行之间。
+		const after = await page(`limit=20&at=${iso(T0 + 500_040)}`);
 		expect(after.locate).toEqual({ at_offset: offsetOf(51), exact_seq: 50 });
 		expect(seqs(after)).toEqual(range(41, 60));
 		expect(after.start).toBe(offsetOf(41));
 		expect(after.end).toBe(offsetOf(61));
 
-		// 第 50 行之前 0.4 秒：那一刻落在第 49、50 行之间。
-		const before = await page(`limit=20&at=${iso(T0 + 499_600)}`);
+		// 第 50 行之前 40 毫秒：那一刻落在第 49、50 行之间。
+		const before = await page(`limit=20&at=${iso(T0 + 499_960)}`);
 		expect(before.locate).toEqual({ at_offset: offsetOf(50), exact_seq: 50 });
 		expect(seqs(before)).toEqual(range(40, 59));
 
@@ -138,32 +138,36 @@ describe("任务日志按时刻定位", () => {
 		}
 	}, 60_000);
 
-	it("相差正好 1 秒算正好有那一行，多 1 毫秒就不算", async () => {
+	it("相差正好 50 毫秒算正好有那一行，多 1 毫秒就不算（相差 0.4 秒也不算：日志按批次到达，那一行可能是另一笔订单的）", async () => {
 		await everyTenSeconds(100);
 
-		const edge = await page(`limit=20&at=${iso(T0 + 501_000)}`);
+		const edge = await page(`limit=20&at=${iso(T0 + 500_050)}`);
 		expect(edge.locate?.exact_seq).toBe(50);
-		const over = await page(`limit=20&at=${iso(T0 + 501_001)}`);
+		const over = await page(`limit=20&at=${iso(T0 + 500_051)}`);
 		expect(over.locate?.exact_seq).toBeNull();
-		const early = await page(`limit=20&at=${iso(T0 + 499_000)}`);
+		const early = await page(`limit=20&at=${iso(T0 + 499_950)}`);
 		expect(early.locate?.exact_seq).toBe(50);
-		const tooEarly = await page(`limit=20&at=${iso(T0 + 498_999)}`);
+		const tooEarly = await page(`limit=20&at=${iso(T0 + 499_949)}`);
 		expect(tooEarly.locate?.exact_seq).toBeNull();
+		const batched = await page(`limit=20&at=${iso(T0 + 500_400)}`);
+		expect(batched.locate?.exact_seq).toBeNull();
 	});
 
-	it("1 秒以内有几行时，取离那一刻最近的一行", async () => {
+	it("50 毫秒以内有不止一行时不算正好有那一行：分不出是哪一笔的，只写那一刻的位置", async () => {
 		await write([
 			lineAt(1, 10_000),
 			lineAt(2, 20_000),
-			lineAt(3, 20_300),
-			lineAt(4, 20_700),
+			lineAt(3, 20_030),
+			lineAt(4, 20_120),
 			lineAt(5, 30_000),
 		]);
 
-		expect((await page(`at=${iso(T0 + 20_450)}`)).locate?.exact_seq).toBe(3);
-		expect((await page(`at=${iso(T0 + 20_550)}`)).locate?.exact_seq).toBe(4);
-		// 离两行一样近：取前一行。
-		expect((await page(`at=${iso(T0 + 20_500)}`)).locate?.exact_seq).toBe(3);
+		// 第 2、3 行都在 50 毫秒以内。
+		expect((await page(`at=${iso(T0 + 20_015)}`)).locate?.exact_seq).toBeNull();
+		// 离第 3、4 行都是 45 毫秒。
+		expect((await page(`at=${iso(T0 + 20_075)}`)).locate?.exact_seq).toBeNull();
+		// 只有第 4 行在 50 毫秒以内（第 3 行差 80 毫秒）。
+		expect((await page(`at=${iso(T0 + 20_110)}`)).locate?.exact_seq).toBe(4);
 	});
 
 	it("没有正好对应的行：不指定任何一行，写明那一刻在日志里的位置，页里前后的行照常给出", async () => {
