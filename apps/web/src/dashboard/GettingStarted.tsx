@@ -1,5 +1,4 @@
 import type { DashboardSetup } from "@sfly/schema";
-import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { BookOpenIcon, CheckIcon, CopyIcon, PlayIcon } from "lucide-react";
 import { useConnectCommand } from "#/agents/connect-command";
@@ -8,8 +7,9 @@ import { DocPageLink } from "#/components/doc-page-link";
 import { writeClipboard } from "#/components/feedback/clipboard";
 import { notify } from "#/components/feedback/notify";
 import { DashboardPanel } from "#/dashboard/DashboardPanel";
+import { PanelLink } from "#/dashboard/panel-link";
 import { ACTION, DOC_PAGE, MESSAGE, PAGE, scenarioCreatedLabel } from "#/lib/copy";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 
 type StepId = keyof DashboardSetup;
 
@@ -35,24 +35,6 @@ interface Step {
 	state: string;
 	action: React.ReactNode;
 }
-
-/**
- * 步骤里的导航用 `<a>`：读屏读作链接，外观是 ghost 小按钮。控制台其他面板标题行的链接
- * （index.tsx 的 `panelLink`）沿用按钮的写法，这里不跟着改。
- */
-const GHOST_LINK = buttonVariants({ variant: "ghost", size: "sm" });
-
-const pageLink = (to: "/agents" | "/packages" | "/orchestrations" | "/runs", label: string) => (
-	<Link to={to} className={GHOST_LINK}>
-		{label}
-	</Link>
-);
-
-const docLink = (page: string, children: React.ReactNode) => (
-	<Link to="/docs/$page" params={{ page }} className={GHOST_LINK}>
-		{children}
-	</Link>
-);
 
 const Mono = ({ children }: { children: React.ReactNode }) => (
 	<span className="font-mono text-xs">{children}</span>
@@ -92,7 +74,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			doneWhen: `完成：${PAGE.agents}页出现一台在线的 Agent。`,
 			state: MESSAGE.noAgents,
 			action: setup.agent.done ? (
-				pageLink("/agents", PAGE.agents)
+				<PanelLink to="/agents">{PAGE.agents}</PanelLink>
 			) : (
 				<Button
 					variant={buttonVariant("agent")}
@@ -126,9 +108,14 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			),
 			doneWhen: `完成：${PAGE.packages}页出现至少一个版本。`,
 			state: MESSAGE.noPackages,
-			action: setup.package.done
-				? pageLink("/packages", PAGE.packages)
-				: docLink("publish", `${PAGE.docs} · ${DOC_PAGE.publish}`),
+			action: setup.package.done ? (
+				<PanelLink to="/packages">{PAGE.packages}</PanelLink>
+			) : (
+				<DocPageLink
+					page="publish"
+					look="button"
+				>{`${PAGE.docs} · ${DOC_PAGE.publish}`}</DocPageLink>
+			),
 		},
 		{
 			id: "scenario",
@@ -143,7 +130,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			body: "在画布上从入口节点开始把节点连成链，选默认 Agent，保存版本。",
 			state: MESSAGE.noScenarios,
 			action: setup.scenario.done ? (
-				pageLink("/orchestrations", PAGE.scenarios)
+				<PanelLink to="/orchestrations">{PAGE.scenarios}</PanelLink>
 			) : (
 				<Button
 					variant={buttonVariant("scenario")}
@@ -162,7 +149,7 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			body: `在场景卡片或画布上点「${ACTION.run}」，填入口参数后触发。`,
 			state: MESSAGE.noRuns,
 			action: setup.run.done ? (
-				pageLink("/runs", PAGE.runs)
+				<PanelLink to="/runs">{PAGE.runs}</PanelLink>
 			) : setup.scenario.done ? (
 				<Button
 					variant={buttonVariant("run")}
@@ -181,13 +168,12 @@ export function GettingStarted({ setup }: { setup: DashboardSetup }) {
 			<DashboardPanel
 				title="开始使用"
 				count={`${finished} / 4`}
-				aside={docLink(
-					"quickstart",
-					<>
+				aside={
+					<DocPageLink page="quickstart" look="button">
 						<BookOpenIcon />
 						{DOC_PAGE.quickstart}
-					</>,
-				)}
+					</DocPageLink>
+				}
 			>
 				<ol className="m-0 list-none p-0">
 					{steps.map((step, index) => (

@@ -91,7 +91,7 @@ function ConnectHelp({ command }: { command: string }) {
 						Agent 按名称注册，同名重新连接会替换旧连接。配置了注册令牌时加上{" "}
 						<code className="font-mono">--token &lt;令牌&gt;</code>
 						。开发机、配置和自动更新见开发文档的「
-						<DocPageLink page="install-agent">安装 Agent</DocPageLink>
+						<DocPageLink page="install-agent" />
 						」。
 					</DialogDescription>
 				</DialogHeader>

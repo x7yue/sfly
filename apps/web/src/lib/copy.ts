@@ -184,12 +184,14 @@ export const PAGE = {
 	docs: "开发文档",
 } as const;
 
-/** 开发文档里被界面引用的页名（控制面 docs/guide/pages.json 里的标题）。 */
+/** 开发文档里被界面引用的页：slug → 页名（docs/guide/pages.json 里的标题，有单测对着它检查）。 */
 export const DOC_PAGE = {
 	quickstart: "快速开始",
+	"install-agent": "安装 Agent",
 	publish: "发布",
-	sdkReference: "开发节点（SDK 参考）",
+	"sdk-reference": "开发节点（SDK 参考）",
 } as const;
+export type DocPage = keyof typeof DOC_PAGE;
 
 /** 运行与链实例的状态。 */
 export const RUN_STATUS_LABEL: Record<RunStatus, string> = {

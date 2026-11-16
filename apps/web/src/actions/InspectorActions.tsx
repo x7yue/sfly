@@ -10,7 +10,7 @@ import { DocPageLink } from "#/components/doc-page-link";
 import { Elapsed } from "#/components/elapsed";
 import { SectionHeading } from "#/components/page";
 import { StatusDot } from "#/components/status";
-import { attemptLabel, DOC_PAGE, moreLabel, NODE_ACTIONS, TERM } from "#/lib/copy";
+import { attemptLabel, moreLabel, NODE_ACTIONS, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatClockMs,
@@ -45,7 +45,7 @@ import { runningRows } from "./summary-model";
 /** 缩进一层的宽度（像素）。 */
 const INDENT_PX = 14;
 
-/** 开发文档里讲高频时怎么记录的那一节：页面的标题是 `DOC_PAGE.sdkReference`，小节在那一页的标题里（有单测对着文档检查）。 */
+/** 开发文档里讲高频时怎么记录的那一节：页名在 `DOC_PAGE` 里，小节在那一页的标题里（有单测对着文档检查）。 */
 export const GUIDE = { page: "sdk-reference", section: "数量上限" } as const;
 
 const FAILURES_LABEL = "最近的失败";
@@ -279,7 +279,7 @@ function CapNote({
 			<p className="m-0 mt-1">{NODE_ACTIONS.controlPlaneDropped}</p>
 			<p className="m-0 mt-1">
 				高频的动作适合按批记录，写法见开发文档「
-				<DocPageLink page={GUIDE.page}>{DOC_PAGE.sdkReference}</DocPageLink>
+				<DocPageLink page={GUIDE.page} />
 				」的「{GUIDE.section}」。
 			</p>
 		</div>
