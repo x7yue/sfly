@@ -10,7 +10,7 @@ import {
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { taskActions } from "../db/schema.js";
 import { isDoing } from "./action-summary.js";
-import { actionField, actionName, actionReason } from "./action-text.js";
+import { actionField, actionName, actionReason, mergeFields } from "./action-text.js";
 
 /**
  * 动作明细（规格 #345，docs/ARCHITECTURE.md §6.3「动作明细」）的纯逻辑：把 Agent 转发的一批事件（ActionBatch）
@@ -18,10 +18,9 @@ import { actionField, actionName, actionReason } from "./action-text.js";
  * （任务结束以后还没结束的动作在这里记为未结束），算出一页明细范围里的只计数的段，以及分页游标的编码。
  */
 
-/** 控制面兜底的上限，与 SDK 相同（sdk/python/src/sfly/actions.py 的 MAX_TOTAL、MAX_PER_NAME、MAX_FIELDS）。 */
+/** 控制面兜底的上限，与 SDK 相同（sdk/python/src/sfly/actions.py 的 MAX_TOTAL、MAX_PER_NAME；字段数见 action-text.ts）。 */
 export const TOTAL_DETAIL_LIMIT = 100_000;
 export const NAME_DETAIL_LIMIT = 50_000;
-const MAX_FIELDS = 8;
 
 /** `task_actions` 的一行。 */
 export type StoredDetail = typeof taskActions.$inferSelect;
@@ -115,19 +114,6 @@ function fieldsOf(
 		{},
 		fields.map((f) => actionField(f.key, f.value, secrets)),
 	);
-}
-
-/** 补充的字段覆盖同名的、新的接在后面，合计不超过 8 个。 */
-function mergeFields(
-	fields: Record<string, string>,
-	added: Iterable<readonly [string, string]>,
-): Record<string, string> {
-	// Map 而不是对象：`__proto__`、`toString` 这样的键也照常记下。
-	const merged = new Map(Object.entries(fields));
-	for (const [key, value] of added) {
-		if (merged.has(key) || merged.size < MAX_FIELDS) merged.set(key, value);
-	}
-	return Object.fromEntries(merged);
 }
 
 /** 这一批里开始的动作和标记的名称（读每种名称已经存下的个数用）。 */

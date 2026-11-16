@@ -10,7 +10,7 @@ import { z } from "zod";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { StoredActionSummary } from "../db/schema.js";
 import { maskSecrets } from "../logs/secrets.js";
-import { actionField, actionName, actionReason } from "./action-text.js";
+import { actionField, actionName, actionReason, mergeFields } from "./action-text.js";
 
 /**
  * 动作摘要（规格 #345）的纯逻辑：解析 SDK 写的 `action_summary` 事件（格式见 sdk/python/src/sfly/context.py），
@@ -105,7 +105,8 @@ export function actionSummaryView(
 		parent: a.parent,
 		depth: a.depth,
 		name: name(a.name),
-		fields: Object.fromEntries(
+		fields: mergeFields(
+			{},
 			Object.entries(a.fields).map(([key, value]) => actionField(key, value, secrets)),
 		),
 		started_at: at(a.mono),

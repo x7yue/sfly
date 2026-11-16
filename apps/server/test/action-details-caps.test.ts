@@ -48,11 +48,13 @@ describe("动作明细的控制面兜底上限", () => {
 	/** n 个字符（都在基本平面内，一个字符就是一个 UTF-16 码元）。 */
 	const chars = (n: number) => "长".repeat(n);
 
-	it("名称、字段值、失败原因超过 SDK 的上限时按同样的上限截断：名称 64、字段值 256、原因 4096 个字符", async () => {
+	it("名称、字段值、失败原因超过 SDK 的上限时按同样的上限截断：名称 64、字段值 256、原因 4096 个字符；字段的键按名称的上限截断", async () => {
 		await api.triggerOk(await api.orchestrationWith(DOC));
 		const task = await agent.nextAssign();
 		agent.actions(task, [
-			agent.actionStart(1, chars(100), T0 + 1_000, { fields: { 订单: chars(300) } }),
+			agent.actionStart(1, chars(100), T0 + 1_000, {
+				fields: { 订单: chars(300), [chars(5_000)]: "键很长" },
+			}),
 			agent.actionEnd(1, "failed", T0 + 2_000, { reason: chars(5_000) }),
 			agent.actionMark(2, chars(65), T0 + 3_000),
 		]);
@@ -60,11 +62,12 @@ describe("动作明细的控制面兜底上限", () => {
 
 		const [mark, ended] = (await page(task.taskId)).actions;
 		expect(mark?.name).toBe(chars(64));
-		expect(ended).toMatchObject({ name: chars(64), fields: { 订单: chars(256) } });
+		expect(ended?.fields).toEqual({ 订单: chars(256), [chars(64)]: "键很长" });
+		expect(ended?.name).toBe(chars(64));
 		expect(ended?.kind === "action" && ended.reason).toBe(`${chars(4_095)}…`);
 	});
 
-	it("摘要也按同样的上限截断，名称最多列 1000 种：被改过的 SDK 每秒写一份很大的摘要也写不爆数据库", async () => {
+	it("摘要也按同样的上限截断（字段最多 8 个），名称最多列 1000 种：被改过的 SDK 每秒写一份很大的摘要也写不爆数据库", async () => {
 		await api.triggerOk(await api.orchestrationWith(DOC));
 		const task = await agent.nextAssign();
 		const stamp = agent.stamp(T0 + 1_000);
@@ -91,7 +94,16 @@ describe("动作明细的控制面兜底上限", () => {
 				capped_ts: null,
 				capped_mono: null,
 			})),
-			running: [{ id: 1, parent: null, depth: 0, name: chars(90), fields: {}, ...stamp }],
+			running: [
+				{
+					id: 1,
+					parent: null,
+					depth: 0,
+					name: chars(90),
+					fields: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`k${i}`, "v"])),
+					...stamp,
+				},
+			],
 			recent: [ended],
 			recent_failed: [ended],
 		});
@@ -102,6 +114,7 @@ describe("动作明细的控制面兜底上限", () => {
 		expect(summary.names).toHaveLength(1_000);
 		expect(summary.names[0]?.name).toBe(chars(64));
 		expect(summary.running[0]?.name).toBe(chars(64));
+		expect(Object.keys(summary.running[0]?.fields ?? {})).toHaveLength(8);
 		expect(summary.recent_failed[0]).toMatchObject({
 			name: chars(64),
 			fields: { 订单: chars(256) },
