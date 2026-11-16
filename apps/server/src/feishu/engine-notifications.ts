@@ -42,7 +42,7 @@ export class EngineNotifications {
 			/** 运行通知卡片里「查看运行」的链接；没有配置 SFLY_PUBLIC_URL 时返回 undefined（卡片没有按钮）。 */
 			runUrl: (runId: string) => string | undefined;
 			/** 运行通知卡片里「关注项」一段的值：和 `GET /runs/:id/focus` 同一份解析，读不出来时只报告。 */
-			focus: FocusAtRunEndDeps;
+			focusDeps: FocusAtRunEndDeps;
 		},
 	) {}
 
@@ -103,7 +103,7 @@ export class EngineNotifications {
 		await enqueueRunNotification(step, {
 			...finished,
 			runUrl: this.deps.runUrl(finished.run.id),
-			focus: this.deps.focus,
+			focusDeps: this.deps.focusDeps,
 		});
 	}
 

@@ -245,7 +245,8 @@ export async function enqueueRunNotification(
 		status: FinishedStatus;
 		document: OrchestrationDocument;
 		runUrl: string | undefined;
-		focus: FocusAtRunEndDeps;
+		/** 读关注项的依赖（卡片里「关注项」一段的列表是 `RunNotificationFacts.focus`）。 */
+		focusDeps: FocusAtRunEndDeps;
 	},
 ): Promise<void> {
 	const { run, status, document } = input;
@@ -277,7 +278,7 @@ export async function enqueueRunNotification(
 		startedAt: run.startedAt,
 		endedAt: step.now,
 		failures: await failedNodes(step, run, document),
-		focus: await focusAtRunEnd(step, run, scenario, input.focus),
+		focus: await focusAtRunEnd(step, run, scenario, input.focusDeps),
 		runUrl: input.runUrl,
 	});
 	if ("error" in card) {

@@ -245,7 +245,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			logs,
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
-			focus: {
+			focusDeps: {
 				clock,
 				queries: metricQueries,
 				onError: (error) => {
