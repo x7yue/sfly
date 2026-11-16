@@ -11,6 +11,7 @@ import {
 	type ActionFilter,
 	byNewest,
 	matchesFilter,
+	matchesName,
 	NO_FILTER,
 	partitionPoint,
 	periodKey,
@@ -69,7 +70,7 @@ export type ActionRow =
 			 * 只看失败时才有：这一段里失败的个数不知道（个数包括成功的）；`total` 是这个名称一共失败的个数
 			 * （摘要里的，不论有没有明细），摘要里还没有这个名称时为 null。
 			 */
-			failedOnly: { total: number | null } | null;
+			failedGap: { total: number | null } | null;
 			/** 从什么时候起（控制面时间）。 */
 			from: string;
 			/** 从什么时候起（Agent 时间）。 */
@@ -112,9 +113,7 @@ export function actionTable({
 	endedAt: string | null;
 	filter?: ActionFilter;
 }): ActionTableGroup[] {
-	const doing = filter.failed
-		? []
-		: summary.running.filter((a) => filter.name === undefined || a.name === filter.name);
+	const doing = filter.failed ? [] : summary.running.filter((a) => matchesName(a, filter));
 	const recent = summary.recent.filter((a) => matchesFilter({ ...a, kind: "action" }, filter));
 	const shown = new Set<number>();
 	for (const a of doing) shown.add(a.id);
@@ -170,9 +169,7 @@ function periodRows(
 	const fromSummary = sdkCountOnlyPeriods(summary, filter, endedAt).filter(
 		(p) => !oldest || Date.parse(p.from) >= startOf(oldest),
 	);
-	const fromControlPlane = controlPlanePeriods.filter(
-		(p) => filter.name === undefined || p.name === filter.name,
-	);
+	const fromControlPlane = controlPlanePeriods.filter((p) => matchesName(p, filter));
 	return [...fromSummary, ...fromControlPlane]
 		.flatMap((p): Extract<ActionRow, { kind: "count-only" }>[] => {
 			const failed = summary.names.find((n) => n.name === p.name)?.failed;
@@ -185,7 +182,7 @@ function periodRows(
 					name: p.name,
 					reason: p.reason,
 					totalFull: summary.capped_at !== null,
-					failedOnly: filter.failed ? { total: failed ?? null } : null,
+					failedGap: filter.failed ? { total: failed ?? null } : null,
 					from: p.from,
 					agentFrom: p.agent_from,
 					until: p.to ?? endedAt,

@@ -1,4 +1,3 @@
-import type { CountOnlyPeriod } from "@sfly/schema";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import { cn } from "cn";
 import { FlagIcon } from "lucide-react";
@@ -35,22 +34,9 @@ const AT_TOP = 4;
 const INDENT_PX = 16;
 const COLUMNS = 5;
 
-/** 只看失败时，第三组读到的都是失败的动作。 */
+/** 三组的名称：只看失败时，第三组读到的都是失败的动作。 */
 const groupLabel = (group: ActionGroupName, failedOnly: boolean): string =>
-	group === "earlier" && failedOnly ? ACTION_PAGE.earlierFailed : GROUP_LABEL[group];
-
-const GROUP_LABEL: Record<ActionGroupName, string> = {
-	running: NODE_ACTIONS.doing,
-	recent: "最近 20 个",
-	earlier: "更早的明细",
-};
-
-/** 只计数的段为什么没有明细。 */
-const COUNT_ONLY_REASON: Record<CountOnlyPeriod["reason"], string> = {
-	name_limit: "每种名称最多记录 5 万个，失败的动作仍有明细",
-	total_limit: "全部名称合计最多记录 10 万个",
-	control_plane: "控制面收到的明细超过上限，超出的已丢弃",
-};
+	group === "earlier" && failedOnly ? ACTION_PAGE.groups.earlierFailed : ACTION_PAGE.groups[group];
 
 type CountOnlyRow = Extract<ActionRow, { kind: "count-only" }>;
 type RecordRow = Exclude<ActionRow, { kind: "count-only" }>;
@@ -78,8 +64,9 @@ interface TimeFormat {
  *
  * 开始一列按 `timeKind` 显示 Agent 时间或控制面时间（ADR 0018），Agent 时间时表头写明时钟偏差（`clockNote`）；
  * 每行的开始时间是按钮，点它调 `onLocate`（控制面时间，毫秒）：日志跳到那一刻，不论这一列显示哪种时间。
- * 开始时间的按钮是整张表的一个 Tab 停靠点（漫游焦点，同日志列表）：Tab 不必穿过几十上百行，行间用方向键、
- * PageUp / PageDown、Home / End 移动，虚拟滚动卸掉了的行也能靠它找回来。
+ * 开始时间的按钮合起来只有一个 Tab 停靠点（漫游焦点，同日志列表；只计数的一行里的按钮照常可以 Tab）：Tab 不必穿过
+ * 几十上百行，行间用方向键、PageUp / PageDown、Home / End 移动（跳过只计数的行），虚拟滚动卸掉了的行也能靠它找回来。
+ * 焦点所在的行被卸掉（滚出渲染范围、结束后换了组、被挤出「最近 20 个」）时焦点落到页面上，Tab 再进来落在停靠点。
  */
 export function ActionTable({
 	groups,
@@ -183,13 +170,16 @@ export function ActionTable({
 
 	/** 能聚焦的行（动作和标记）在 `items` 里的位置，从前到后。 */
 	const focusable = useMemo(() => items.flatMap((it, i) => (isRecord(it) ? [i] : [])), [items]);
-	/** 漫游焦点：最近停留的那一行；它被虚拟滚动卸掉时，停靠点退回视口里的第一行。 */
+	/** 漫游焦点：最近停留的那一行；它没有渲染时，停靠点退回视口里的第一行（不是上方多渲染的那些）。 */
 	const [stopKey, setStopKey] = useState<string | null>(null);
 	const pendingFocus = useRef<number | null>(null);
 
 	const virtual = virtualizer.getVirtualItems();
 	const stopRendered = stopKey !== null && virtual.some((v) => items[v.index]?.key === stopKey);
-	const firstFocusable = virtual.find((v) => items[v.index] && isRecord(items[v.index] as Item));
+	const visibleFrom = virtualizer.range?.startIndex ?? virtual[0]?.index ?? 0;
+	const firstFocusable = virtual.find(
+		(v) => v.index >= visibleFrom && items[v.index] && isRecord(items[v.index] as Item),
+	);
 	const tabStop = stopRendered ? stopKey : (items[firstFocusable?.index ?? -1]?.key ?? null);
 
 	useLayoutEffect(() => {
@@ -341,6 +331,10 @@ function groupSegments(virtual: VirtualItem[], items: Item[]) {
 	return segments;
 }
 
+/** 这一行开始的时刻，按这一列显示的那种时间。 */
+const startedAtOf = (row: RecordRow, kind: LogTimeKind): string =>
+	kind === "agent" ? row.agentStartedAt : row.startedAt;
+
 /**
  * 每组最新和最早的时刻（每组从新到旧排）：用来判断时间要不要带日期，不用把 10 万行都看一遍。
  * 显示 Agent 时间时看的是 Agent 时间：它可以和控制面差出几百天。
@@ -349,8 +343,7 @@ function edgeTimes(groups: readonly ActionTableGroup[], kind: LogTimeKind): stri
 	const times: string[] = [];
 	const add = (row: ActionRow | undefined) => {
 		if (!row) return;
-		if (row.kind !== "count-only")
-			times.push(kind === "agent" ? row.agentStartedAt : row.startedAt);
+		if (row.kind !== "count-only") times.push(startedAtOf(row, kind));
 		else if (kind === "agent") times.push(row.agentFrom);
 		else times.push(row.from, ...(row.until === null ? [] : [row.until]));
 	};
@@ -415,7 +408,7 @@ function ItemRow({
 					className="border-b border-border-soft bg-[repeating-linear-gradient(135deg,var(--border-soft)_0_6px,transparent_6px_12px)] px-3 py-1.5 text-fg-3"
 				>
 					{countOnlyText(row, timeKind, format.periodTime)}
-					{!row.failedOnly && (
+					{!row.failedGap && (
 						<>
 							{" "}
 							<Button
@@ -433,7 +426,7 @@ function ItemRow({
 		);
 	}
 	const fields = fieldsText(row.fields);
-	const shown = format.time(timeKind === "agent" ? row.agentStartedAt : row.startedAt);
+	const shown = format.time(startedAtOf(row, timeKind));
 	return (
 		<TableRow
 			ref={measure}
@@ -484,12 +477,6 @@ function ItemRow({
 	);
 }
 
-/** 为什么没有明细：名称上限的段在合计也满了以后，失败的动作同样没有明细。 */
-const reasonText = (row: CountOnlyRow): string =>
-	row.reason === "name_limit" && row.totalFull
-		? ACTION_PAGE.nameLimitTotalFull
-		: COUNT_ONLY_REASON[row.reason];
-
 /**
  * 只计数的一段：「09:19:12 至今的 1,234,794 个「下单」只计数，没有明细（…）」。显示 Agent 时间时只有起点的
  * Agent 时间（结束的只有控制面时间），写「起」。只看失败时接上失败的个数不知道。
@@ -505,9 +492,9 @@ function countOnlyText(
 		row.until === null ? null : time(row.until),
 		agent,
 	);
-	const text = `${span}的 ${formatInteger(row.count)} 个「${row.name}」只计数，没有明细（${reasonText(row)}）`;
-	return row.failedOnly
-		? `${text}；${ACTION_PAGE.failedUnknown(row.name, row.failedOnly.total)}`
+	const text = `${span}的 ${formatInteger(row.count)} 个「${row.name}」只计数，没有明细（${ACTION_PAGE.countOnlyReason(row.reason, row.totalFull)}）`;
+	return row.failedGap
+		? `${text}；${ACTION_PAGE.failedUnknown(row.name, row.failedGap.total === null ? null : formatInteger(row.failedGap.total))}`
 		: text;
 }
 

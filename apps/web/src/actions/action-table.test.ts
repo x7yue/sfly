@@ -377,8 +377,8 @@ describe("只看失败时只计数的段", () => {
 
 	it("合计已满：这一段的个数包括成功的，失败的个数不知道，只写这个名称一共失败多少个", () => {
 		expect(rows(table({ summary: full, filter: { failed: true } }))).toMatchObject([
-			{ name: "撤单", reason: "total_limit", count: 20, failedOnly: { total: 2 } },
-			{ name: "下单", reason: "name_limit", count: 300, failedOnly: { total: 17 } },
+			{ name: "撤单", reason: "total_limit", count: 20, failedGap: { total: 2 } },
+			{ name: "下单", reason: "name_limit", count: 300, failedGap: { total: 17 } },
 		]);
 	});
 
@@ -400,17 +400,17 @@ describe("只看失败时只计数的段", () => {
 			filter: { failed: true },
 		});
 		expect(rows(groups)).toMatchObject([
-			{ name: "撤单", failedOnly: { total: 2 } },
-			{ name: "下单", reason: "control_plane", count: 40, failedOnly: { total: 17 } },
+			{ name: "撤单", failedGap: { total: 2 } },
+			{ name: "下单", reason: "control_plane", count: 40, failedGap: { total: 17 } },
 			{ name: "下单", reason: "name_limit" },
-			{ name: "新的", reason: "control_plane", failedOnly: { total: null } },
+			{ name: "新的", reason: "control_plane", failedGap: { total: null } },
 		]);
 	});
 
 	it("没有筛选失败时不带这个说明", () => {
-		expect(rows(table({ summary: full }))[0]).toMatchObject({ failedOnly: null });
+		expect(rows(table({ summary: full }))[0]).toMatchObject({ failedGap: null });
 		expect(rows(table({ summary: full, filter: { name: "下单" } }))[0]).toMatchObject({
-			failedOnly: null,
+			failedGap: null,
 		});
 	});
 

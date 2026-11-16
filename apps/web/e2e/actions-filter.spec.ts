@@ -25,6 +25,11 @@ const announced = (page: Page) =>
 	panel(page)
 		.getByRole("status")
 		.filter({ hasText: /^(筛选后|已清除筛选)/ });
+/**
+ * 播报的话（可能带一个句号：两次播报的话一样时交替加句号，读屏才会再读，见 ActionsTab）。
+ */
+const expectAnnounced = (page: Page, text: string) =>
+	expect(announced(page)).toHaveText(new RegExp(`^${text}。?$`));
 const tab = (page: Page, name: string | RegExp) => panel(page).getByRole("tab", { name });
 /** 页面上的时刻（浏览器时区 Asia/Shanghai）：`08:00:10.000`。 */
 const clockMs = (ms: number) => new Date(ms + 8 * 3600_000).toISOString().slice(11, 23);
@@ -66,7 +71,7 @@ test("按名称筛选：下拉和计数按钮是同一个条件；三组只留�
 	await expect(nameSelect(page)).toHaveValue("下单");
 	await expect(countButton(page, "下单 1,200")).toHaveAttribute("aria-pressed", "true");
 	// 任务里有标记，名称的个数里可能有标记：不说成都是动作。
-	await expect(announced(page)).toHaveText("筛选后 1,200 个动作和标记");
+	await expectAnnounced(page, "筛选后 1,200 个动作和标记");
 	// 「保持 4 小时」和标记不在表里了：正在做只剩「下单」1201 和它的子动作不是「下单」所以也不在。
 	await expect.poll(() => groupRows(table, "running")).toEqual(["1201"]);
 	await expect(table.locator('tr[data-action-id="1"]')).toHaveCount(0);
@@ -77,7 +82,7 @@ test("按名称筛选：下拉和计数按钮是同一个条件；三组只留�
 	await expect(countButton(page, "下单 1,200")).toBeFocused();
 	await expect(countButton(page, "下单 1,200")).toHaveAttribute("aria-pressed", "false");
 	await expect(nameSelect(page)).toHaveValue("");
-	await expect(announced(page)).toHaveText("已清除筛选");
+	await expectAnnounced(page, "已清除筛选");
 	await expect
 		.poll(() => groupRows(table, "running"))
 		.toEqual(["1204", "1203", "1202", "1201", "1"]);
@@ -86,7 +91,7 @@ test("按名称筛选：下拉和计数按钮是同一个条件；三组只留�
 	await countButton(page, "收到第一笔成交 1").click();
 	await expect(countButton(page, "收到第一笔成交 1")).toBeFocused();
 	await expect(nameSelect(page)).toHaveValue("收到第一笔成交");
-	await expect(announced(page)).toHaveText("筛选后 1 个动作和标记");
+	await expectAnnounced(page, "筛选后 1 个动作和标记");
 });
 
 test("只看失败：工具条的开关和「失败 N」按钮是同一个开关；正在做的不算失败，最近 20 个和更早的明细只留失败的", async ({
@@ -103,12 +108,12 @@ test("只看失败：工具条的开关和「失败 N」按钮是同一个开关
 	await expect(failedToggle(page)).toBeFocused();
 	await expect(failedToggle(page)).toHaveAttribute("aria-pressed", "true");
 	await expect(countButton(page, "失败 9")).toHaveAttribute("aria-pressed", "true");
-	await expect(announced(page)).toHaveText("筛选后 9 个动作");
+	await expectAnnounced(page, "筛选后 9 个动作");
 	// 正在做的动作还没有结果：「正在做」这一组不出现。
 	await expect(table.locator('tbody[data-group="running"]')).toHaveCount(0);
 	await expect.poll(() => groupRows(table, "recent")).toEqual(["1190"]);
 	await expect(table.locator('th[scope="rowgroup"]', { hasText: "更早的失败" })).toContainText(
-		"失败的动作不受每种名称的上限限制",
+		"失败的动作仍有明细",
 	);
 	await table.evaluate((el) => {
 		el.scrollTop = el.scrollHeight;
@@ -124,10 +129,27 @@ test("只看失败：工具条的开关和「失败 N」按钮是同一个开关
 	await countButton(page, "失败 9").click();
 	await expect(countButton(page, "失败 9")).toBeFocused();
 	await expect(failedToggle(page)).toHaveAttribute("aria-pressed", "false");
-	await expect(announced(page)).toHaveText("已清除筛选");
+	await expectAnnounced(page, "已清除筛选");
 	await expect
 		.poll(() => groupRows(table, "running"))
 		.toEqual(["1204", "1203", "1202", "1201", "1"]);
+});
+
+test("两次筛选的播报一样时读屏也要再读：第二次的文字和上一次不同", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	await openActions({ page, controlPlane, connectAgent, clock });
+	await failedToggle(page).click();
+	await expect(announced(page)).toHaveText("筛选后 9 个动作");
+	// 「下单」的失败也是 9 个：播报的话一样，实时区域的文字要变一下读屏才会读。
+	await nameSelect(page).focus();
+	await nameSelect(page).selectOption("下单");
+	await expect(announced(page)).toHaveText("筛选后 9 个动作。");
+	await countButton(page, "下单 1,200").click();
+	await expect(announced(page)).toHaveText("筛选后 9 个动作");
 });
 
 test("名称和只看失败一起用；筛选后没有行时写明并给出「清除筛选」，点它以后焦点回到名称下拉", async ({
@@ -139,12 +161,12 @@ test("名称和只看失败一起用；筛选后没有行时写明并给出「�
 	await openActions({ page, controlPlane, connectAgent, clock });
 	await nameSelect(page).selectOption("下单");
 	await failedToggle(page).click();
-	await expect(announced(page)).toHaveText("筛选后 9 个动作");
+	await expectAnnounced(page, "筛选后 9 个动作");
 	await expect.poll(() => groupRows(actionTable(page), "recent")).toEqual(["1190"]);
 
 	// 「保持 4 小时」一个都没有失败。
 	await nameSelect(page).selectOption("保持 4 小时");
-	await expect(announced(page)).toHaveText("筛选后 0 个动作");
+	await expectAnnounced(page, "筛选后 0 个动作");
 	const empty = panel(page).getByText("没有符合条件的动作。");
 	await expect(empty).toBeVisible();
 	await expect(actionTable(page)).toHaveCount(0);
@@ -155,7 +177,7 @@ test("名称和只看失败一起用；筛选后没有行时写明并给出「�
 	const clear = panel(page).getByRole("button", { name: "清除筛选" });
 	await clear.focus();
 	await page.keyboard.press("Enter");
-	await expect(announced(page)).toHaveText("已清除筛选");
+	await expectAnnounced(page, "已清除筛选");
 	// 按钮已经换掉了：焦点不留在 body 上。
 	await expect(nameSelect(page)).toBeFocused();
 	await expect(nameSelect(page)).toHaveValue("");
@@ -182,7 +204,7 @@ test("只计数的一行里有「只看失败」：点它以后焦点回到工�
 	await row.getByRole("button", { name: "只看失败" }).click();
 	await expect(failedToggle(page)).toBeFocused();
 	await expect(failedToggle(page)).toHaveAttribute("aria-pressed", "true");
-	await expect(announced(page)).toHaveText("筛选后 9 个动作");
+	await expectAnnounced(page, "筛选后 9 个动作");
 	await expect(table.locator("tr[data-count-only]")).toHaveCount(0);
 });
 
@@ -218,14 +240,14 @@ test("合计已满时只看失败：只计数的个数里有成功的，写明�
 	await expect(row).not.toContainText("失败的动作仍有明细");
 
 	await failedToggle(page).click();
-	await expect(announced(page)).toHaveText("筛选后 9 个动作");
+	await expectAnnounced(page, "筛选后 9 个动作");
 	await expect(row).toHaveText(
 		"08:00:10 至今的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个；合计满 10 万个以后，失败的动作也没有明细）；其中有多少个失败不知道（「下单」一共失败 9 个）",
 	);
 	// 已经只看失败：这一行不再给「只看失败」。
 	await expect(row.getByRole("button")).toHaveCount(0);
 	await expect(table.locator('th[scope="rowgroup"]', { hasText: "更早的失败" })).toContainText(
-		"合计满 10 万个以后失败的没有明细",
+		"合计满 10 万个以后，失败的动作也没有明细",
 	);
 });
 
@@ -312,6 +334,18 @@ test("时间一列：Tab 只停在一个开始时间上，方向键、Home、End
 	await expect(table.locator('tr[data-action-id="1204"] button[data-locate]')).toBeFocused();
 	await page.keyboard.press("Home");
 	await expect(table.locator('tr[data-action-id="1204"] button[data-locate]')).toBeFocused();
+
+	// 滚下去以后 Tab 进来，落在视口里的行，不是视口上方多渲染的行：视口不会被拉回去。
+	await table.evaluate((el) => {
+		el.scrollTop = 600;
+	});
+	await expect(table.locator('tr[data-action-id="1204"]')).toHaveCount(0);
+	await countButton(page, "失败 9").focus();
+	await page.keyboard.press("Tab");
+	const landed = page.locator("[data-locate]:focus");
+	await expect(landed).toBeInViewport();
+	// 为了看得见，浏览器最多把它滚进视口（表头盖住的那一截），视口不会被拉走。
+	expect(Math.abs((await table.evaluate((el) => el.scrollTop)) - 600)).toBeLessThan(60);
 });
 
 // 下面用一个 Agent 时间比控制面快 3 小时的节点：ping 执行了 10 秒，记了动作和几行日志。
@@ -466,11 +500,13 @@ test("切到 Agent 时间：开始一列显示 Agent 时间，表头写明时钟
 	const timeline = page.getByRole("region", { name: "链路时间线" });
 	const segment = timeline.locator('[data-node-row="ping"] [data-segment]').first();
 	const before = await segment.boundingBox();
+	expect(before).not.toBeNull();
 	await times.getByRole("button", { name: "控制面时间" }).click();
 	await expect(header).toHaveText("开始");
+	expect(await segment.boundingBox()).toEqual(before);
 	await times.getByRole("button", { name: "Agent 时间" }).click();
-	const after = await segment.boundingBox();
-	expect(after).toEqual(before);
+	await expect(header).toHaveText("开始（Agent 时间）时钟偏差：开始时比控制面快 3 小时");
+	expect(await segment.boundingBox()).toEqual(before);
 
 	await page.reload();
 	await expect(
@@ -573,7 +609,7 @@ test("筛选条件记在底部面板里：跳到日志再回到「动作」页�
 	const { runId } = await pingWithActions({ controlPlane, connectAgent, clock }, 0);
 	await openMonitor(page, clock, runId, "ping", "actions");
 	await failedToggle(page).click();
-	await expect(announced(page)).toHaveText("筛选后 1 个动作");
+	await expectAnnounced(page, "筛选后 1 个动作");
 	await expect.poll(() => groupRows(actionTable(page), "recent")).toEqual(["4"]);
 
 	await rowTime(page, 4).click();

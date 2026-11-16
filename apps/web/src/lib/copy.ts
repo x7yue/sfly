@@ -1,6 +1,7 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
 import type {
 	ActionResult,
+	CountOnlyPeriod,
 	LogLineView,
 	NodeStatus,
 	RunNotificationState,
@@ -17,6 +18,9 @@ import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
 /** 「还没有数据」：`MESSAGE.noData`，关注项的原因句里也用它（FOCUS 写在 MESSAGE 前面）。 */
 const MESSAGE_NO_DATA = "还没有数据";
+
+/** 「没有符合条件的X」：筛选之后什么都没有（日志、运行、动作的空状态共用这一个说法）；`MESSAGE.noMatch` 是它。 */
+const MESSAGE_NO_MATCH = (what: string) => `没有符合条件的${what}`;
 
 /** 术语（与 GLOSSARY.md 一致；「编排」只作动词）。 */
 export const TERM = {
@@ -262,9 +266,13 @@ export const NODE_ACTIONS = {
 	} satisfies Record<ActionResult | "running" | "mark", string>,
 } as const;
 
+/** 失败的动作在只计数的段里怎么处理：只计数的原因和只看失败时第三组的说明共用这两句。 */
+const FAILED_KEPT = "失败的动作仍有明细";
+const FAILED_DROPPED = "合计满 10 万个以后，失败的动作也没有明细";
+
 /**
- * 运行监控「动作」页的工具条、表头和只计数的一行（规格 #345，#358）：筛选、时间、跳到日志。和 `NODE_ACTIONS`
- * 分开：这些文字只在「动作」页出现。组名和只计数的原因写在 `ActionTable` 里。
+ * 运行监控「动作」页的文字（规格 #345，#358）：工具条、三组的名称、表头里的 Agent 时间、只计数的一行、读屏播报。
+ * 和 `NODE_ACTIONS` 分开：这些文字只在「动作」页出现，列名（名称、字段、耗时、结果）写在 `ActionTable` 里。
  */
 export const ACTION_PAGE = {
 	/** 工具条的可访问名称。 */
@@ -284,25 +292,37 @@ export const ACTION_PAGE = {
 	result: (count: string, mixed: boolean) =>
 		`筛选后 ${count} 个${mixed ? `${TERM.action}和${TERM.mark}` : TERM.action}`,
 	cleared: "已清除筛选",
-	none: `没有符合条件的${TERM.action}。`,
+	none: `${MESSAGE_NO_MATCH(TERM.action)}。`,
 	/** 表头：开始一列显示的是 Agent 时间时，写明和控制面时间差多少（ADR 0018）。 */
 	startAgentTime: "开始（Agent 时间）",
 	clockOffset: (note: string) => `时钟偏差：${note}`,
 	/** 开始时间那一格的按钮：日志跳到那一刻。 */
 	jumpToLog: (time: string) => `在日志里跳到 ${time}`,
-	/** 只看失败时第三组的名称（平时叫「更早的明细」，写在 `ActionTable` 里）。 */
-	earlierFailed: "更早的失败",
+	/** 三组的名称：只看失败时，第三组读到的都是失败的动作。 */
+	groups: {
+		running: NODE_ACTIONS.doing,
+		recent: "最近 20 个",
+		earlier: "更早的明细",
+		earlierFailed: "更早的失败",
+	},
+	/** 只看失败时第三组的说明：合计满了以后失败的动作也没有明细，没满时都有明细。 */
+	earlierFailedNote: (totalFull: boolean) => (totalFull ? FAILED_DROPPED : FAILED_KEPT),
+	/** 只计数的段为什么没有明细；名称上限的段在合计也满了以后，失败的动作同样没有明细（`totalFull`）。 */
+	countOnlyReason: (reason: CountOnlyPeriod["reason"], totalFull: boolean) => {
+		switch (reason) {
+			case "name_limit":
+				return `每种名称最多记录 5 万个${totalFull ? `；${FAILED_DROPPED}` : `，${FAILED_KEPT}`}`;
+			case "total_limit":
+				return "全部名称合计最多记录 10 万个";
+			case "control_plane":
+				return "控制面收到的明细超过上限，超出的已丢弃";
+		}
+	},
 	/** 只计数的一行的开头：控制面时间写起止（`until` 为 null 是至今），Agent 时间只有起点，没有结束的 Agent 时间。 */
 	countOnlySpan: (from: string, until: string | null, agent: boolean) =>
 		agent ? `${from} 起` : `${from} 至${until === null ? "今" : ` ${until} `}`,
-	/** 只看失败时第三组的说明：合计没满，失败的动作不受每种名称的上限限制，都有明细。 */
-	failedNoNameLimit: "失败的动作不受每种名称的上限限制",
-	/** 只看失败时第三组的说明：合计满了以后，之后失败的动作没有明细。 */
-	failedAfterTotalFull: "合计满 10 万个以后失败的没有明细",
-	/** 只计数的一行：名称上限的段，合计也满了：合计满了以后失败的动作也没有明细。 */
-	nameLimitTotalFull: "每种名称最多记录 5 万个；合计满 10 万个以后，失败的动作也没有明细",
-	/** 只计数的一行：只看失败时，这一段里失败的个数不知道；`total` 是这个名称一共失败了多少个。 */
-	failedUnknown: (name: string, total: number | null) =>
+	/** 只计数的一行：只看失败时，这一段里失败的个数不知道；`total` 是这个名称一共失败了多少个（已加千分位）。 */
+	failedUnknown: (name: string, total: string | null) =>
 		`其中有多少个${NODE_ACTIONS.results.failed}不知道${total === null ? "" : `（「${name}」一共${NODE_ACTIONS.results.failed} ${total} 个）`}`,
 } as const;
 
@@ -323,6 +343,7 @@ export const LIST_LABEL = {
 export const MESSAGE = {
 	loading: "加载中",
 	loadFailed: (what: string) => `无法加载${what}`,
+	noMatch: MESSAGE_NO_MATCH,
 	noData: MESSAGE_NO_DATA,
 	/** 尝试已经结束，一个点都没有上报。 */
 	noDataEnded: "这次尝试没有上报数据",

@@ -651,7 +651,7 @@ function LogsView<L extends LogLineView>({
 					{logs.expired
 						? MESSAGE.logsExpired
 						: filtered || scoped || zoom
-							? "没有符合条件的日志。"
+							? `${MESSAGE.noMatch("日志")}。`
 							: noOutput}
 				</Hint>
 			) : (

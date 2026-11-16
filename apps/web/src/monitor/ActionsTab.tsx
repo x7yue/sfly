@@ -62,33 +62,40 @@ export function ActionsTab({
 				: [],
 		[summary, loaded, details, controlPlanePeriods, hasOlder, attempt.ended_at, filter],
 	);
+
+	// 第一次读到以后，换筛选条件重新读时工具条不再换成骨架：焦点在工具条上，不能丢。
+	const [opened, setOpened] = useState(false);
+	if (loaded && !opened) setOpened(true);
+	// 表格显示的是最近一次读到的行和它们的筛选条件：新条件的明细读到之前，不让上一批行带着新条件的组名和说明。
+	const shown = useRef({ groups: [] as ActionTableGroup[], filter });
+	if (loaded) shown.current = { groups, filter };
+	const shownFilter = shown.current.filter;
 	const notes = useMemo(
 		() =>
 			summary && {
 				running: summary.running_complete ? undefined : "列满 50 个，可能还有没列出的",
 				recent: summary.capped ? "超过上限后也一直更新" : undefined,
-				earlier: filter.failed
-					? summary.capped_at === null
-						? ACTION_PAGE.failedNoNameLimit
-						: ACTION_PAGE.failedAfterTotalFull
+				earlier: shownFilter.failed
+					? ACTION_PAGE.earlierFailedNote(summary.capped_at !== null)
 					: undefined,
 			},
-		[summary, filter.failed],
+		[summary, shownFilter.failed],
 	);
 	const clockNote = useMemo(() => attemptClockNote(attempt), [attempt]);
 
-	// 第一次读到以后，换筛选条件重新读时工具条不再换成骨架：焦点在工具条上，不能丢。
-	const [opened, setOpened] = useState(false);
-	if (loaded && !opened) setOpened(true);
-	const lastGroups = useRef<ActionTableGroup[]>([]);
-	if (loaded) lastGroups.current = groups;
-	const [announcement, setAnnouncement] = useState("");
+	const [announcement, setAnnouncement] = useState({ text: "", count: 0 });
 	const nameSelect = useRef<HTMLSelectElement>(null);
 	const failedToggle = useRef<HTMLButtonElement>(null);
 
 	const change = (next: ActionFilter) => {
 		onFilter(next);
-		if (summary) setAnnouncement(filterAnnouncement(summary, next));
+		// 和上一次播报的话相同时读屏不读：交替加句号，让文字变一下。
+		if (summary) {
+			setAnnouncement(({ count }) => ({
+				text: `${filterAnnouncement(summary, next)}${count % 2 === 0 ? "" : "。"}`,
+				count: count + 1,
+			}));
+		}
 	};
 
 	if (!summary || !opened) {
@@ -125,7 +132,7 @@ export function ActionsTab({
 				nameSelect={nameSelect}
 				failedToggle={failedToggle}
 			/>
-			<output className="sr-only">{announcement}</output>
+			<output className="sr-only">{announcement.text}</output>
 			{loaded && actions.error && (
 				<p role="alert" className="m-0 flex-none px-3 py-1 text-xs text-danger-fg">
 					{MESSAGE.loadFailed(TERM.action)}：{actions.error.message}
@@ -152,19 +159,19 @@ export function ActionsTab({
 							{ACTION.clearFilters}
 						</Button>
 					</div>
-				) : !loaded && lastGroups.current.length === 0 ? (
+				) : !loaded && shown.current.groups.length === 0 ? (
 					<TableSkeleton columns={5} rows={4} />
 				) : (
 					<ActionTable
 						// 换了筛选条件是另一批行：从头看起，不停在上一批滚到的位置。
-						key={`${filter.name ?? ""}\n${filter.failed === true}`}
-						groups={lastGroups.current}
+						key={`${shownFilter.name ?? ""}\n${shownFilter.failed === true}`}
+						groups={shown.current.groups}
 						notes={notes || undefined}
 						caption={`${runNodeName(node)} 的动作，按开始时间从新到旧`}
 						day={day}
 						timeKind={timeKind}
 						clockNote={clockNote}
-						failedOnly={filter.failed === true}
+						failedOnly={shownFilter.failed === true}
 						onLocate={onLocate}
 						onFailedOnly={() => {
 							change(withFailed(filter, true));

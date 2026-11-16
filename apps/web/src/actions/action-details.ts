@@ -32,9 +32,13 @@ export interface ActionFilter {
 /** 没有筛选。 */
 export const NO_FILTER: ActionFilter = {};
 
+/** 名称符不符合筛选条件（没筛选名称时都符合）。 */
+export const matchesName = (item: { name: string }, filter: ActionFilter): boolean =>
+	filter.name === undefined || item.name === filter.name;
+
 /** 这条明细符不符合筛选条件：实时推送不按筛选条件过滤，推送来的明细要自己挑。 */
 export const matchesFilter = (detail: ActionDetailView, filter: ActionFilter): boolean =>
-	(filter.name === undefined || detail.name === filter.name) &&
+	matchesName(detail, filter) &&
 	(!filter.failed || (detail.kind === "action" && detail.result === "failed"));
 
 export function fromLatestPage(page: ActionPage): ActionDetails {
