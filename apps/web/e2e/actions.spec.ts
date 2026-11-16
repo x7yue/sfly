@@ -42,7 +42,7 @@ test("页签上写出动作的个数（标记不算）；表格分三组，各�
 	const running = table.locator('tbody[data-group="running"] tr[data-action-id="1"]');
 	await expect(running).toContainText("保持 4 小时");
 	await expect(running).toContainText("目标=200 单/s");
-	await expect(running).toContainText("5.0s");
+	await expect(running).toContainText("5s");
 	await expect(running).toContainText("进行中");
 	// 字段按作者写的先后：「正在做」来自摘要（控制面存成 json，不是会重排键的 jsonb）。
 	await expect(

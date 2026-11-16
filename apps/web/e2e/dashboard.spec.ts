@@ -9,6 +9,8 @@ import {
 	scenarioUsing,
 	triggerRun,
 } from "./support";
+import { metricPackage } from "./monitor-scenario";
+import { readouts } from "./overview-support";
 import { focusWallRun, mainChain, manyRuns, seedWall } from "./wall-support";
 
 // 控制台的实况墙（外壳页方案 4.1）：页头一行；左栏是正在运行的运行块和最近结束，右栏是 Agent 的槽位和场景。
@@ -103,7 +105,7 @@ test("运行块：场景、版本、运行编号、触发人和开始时间，�
 	await expect(run).toContainText(running.slice(0, 8));
 	await expect(run).toContainText("tester 触发 · 开始 01-01 09:05");
 	const elapsed = run.getByTestId("run-elapsed");
-	await expect(elapsed).toHaveText("15.0s");
+	await expect(elapsed).toHaveText("15s");
 	await expect(run).toContainText("已运行");
 	// 全站唯一的大字号（22px）。
 	expect(await elapsed.evaluate((el) => getComputedStyle(el).fontSize)).toBe("22px");
@@ -156,38 +158,121 @@ test("线路：每条链一行，节点是站，已完成数写在右边；子�
 	expect(await segment("entry")).not.toBe(signal);
 });
 
-test("进行中的节点那一行：节点、Agent、尝试号、已执行时长；等待节点写唤醒时间", async ({
+test("进行中的节点那一行：节点、Agent、尝试号、已执行时长；等待节点写唤醒时间；运行监控概览的链路里写法一样", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
-	await seedWall({ page, controlPlane, connectAgent, clock });
+	const { sleeping } = await seedWall({ page, controlPlane, connectAgent, clock });
 	await page.goto("/");
 	await expect(
 		block(page, "撮合压测").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
-	).toHaveText(["probeagent-linux · 尝试 1 · 15.0s"]);
+	).toHaveText(["probeagent-linux · 尝试 1 · 15s"]);
 	await expect(
 		block(page, "定时巡检").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
 	).toHaveText(["nap等待中 · 唤醒 09:15:14"]);
+
+	// 点进概览，停在 Sleep 上的运行仍写等待节点和唤醒时间，不会整行消失。
+	await page.goto(`/runs/${sleeping}?view=overview`);
+	await expect(page.getByRole("list", { name: "进行中的节点" }).getByRole("listitem")).toHaveText([
+		"nap 等待中 · 唤醒 09:15:14",
+	]);
 });
 
-test("运行块的主指标：场景没设关注项时，读数区是执行中节点的主指标", async ({
+test("运行块的主指标：场景没设关注项时，读数区是执行中节点的主指标，点一格进入概览并定位到那个节点", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { running } = await seedWall({ page, controlPlane, connectAgent, clock });
+	await page.goto("/");
+	const readout = block(page, "撮合压测").getByRole("region", { name: "执行中节点的主指标" });
+	const cells = readout.getByRole("list", { name: "关注项读数" }).getByRole("link");
+	await expect(cells).toHaveCount(1);
+	await expect(cells.first()).toContainText("probe");
+	await expect(cells.first()).toContainText("level");
+	// 等待中的运行没有执行中的节点：标题行和「设置关注项」都在，写明原因。
+	const waiting = block(page, "定时巡检").getByRole("region", { name: "执行中节点的主指标" });
+	await expect(waiting).toContainText("没有执行中的节点。");
+	await expect(waiting.getByRole("link", { name: "设置关注项" })).toBeVisible();
+
+	await cells.first().click();
+	await expect(page).toHaveURL(new RegExp(`/runs/${running}\\?view=overview&node=probe$`));
+	await expect(readouts(page).locator('[aria-current="location"]')).toContainText("level");
+});
+
+/** entry → s1、s2 两个异步任务节点 → probe；s1、s2 各分出一条子流程（va、vb）。三个 ping 同时执行中。 */
+const threeBranches = (agent: string) => {
+	const ping = (id: string) => ({
+		id,
+		kind: "package",
+		package: "demo-checks",
+		node: "ping",
+		inputs: { host: id },
+	});
+	const chain = (from: string, to: string) => ({ from, to, kind: "chain" });
+	return {
+		default_agent: agent,
+		nodes: [
+			{ id: "entry", kind: "entry" },
+			{ id: "s1", kind: "async", params: {} },
+			{ id: "s2", kind: "async", params: {} },
+			ping("probe"),
+			{ id: "sub-a", kind: "subflow_entry", name: "甲" },
+			ping("va"),
+			{ id: "sub-b", kind: "subflow_entry", name: "乙" },
+			ping("vb"),
+		],
+		edges: [
+			chain("entry", "s1"),
+			chain("s1", "s2"),
+			chain("s2", "probe"),
+			chain("sub-a", "va"),
+			chain("sub-b", "vb"),
+			{ from: "s1", to: "sub-a", kind: "dispatch" },
+			{ from: "s2", to: "sub-b", kind: "dispatch" },
+		],
+		packages: { "demo-checks": "1.2.0" },
+	};
+};
+
+test("运行块的主指标：和关注项一样排，3 个以上运行时只放前两项，其余写「还有 N 个主指标 · 打开概览」", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({ ...FOCUS_AGENT, slots: 8 });
+	await publishPackage(controlPlane, metricPackage());
+	const scenario = await createScenario(controlPlane, "三路探活", threeBranches("agent-a"));
+	const run = await triggerRun(controlPlane, scenario);
+	for (let i = 0; i < 3; i++) await agent.nextAssign();
+	await manyRuns(controlPlane, agent, clock, 2);
+	await page.clock.setFixedTime(clock.now());
+	await page.goto("/");
+	const list = block(page, "三路探活")
+		.getByRole("region", { name: "执行中节点的主指标" })
+		.getByRole("list", { name: "关注项读数" });
+	await expect(list.getByRole("link").filter({ hasNotText: "打开概览" })).toHaveCount(2);
+	const more = list.getByRole("link", { name: "还有 1 个主指标 · 打开概览", exact: true });
+	await expect(more).toBeVisible();
+	await more.click();
+	await expect(page).toHaveURL(new RegExp(`/runs/${run}\\?view=overview$`));
+});
+
+test("运行块的读数读取失败：保留标题行，写「无法加载关注项」，和 Agent 页的槽位格一样", async ({
 	page,
 	controlPlane,
 	connectAgent,
 	clock,
 }) => {
 	await seedWall({ page, controlPlane, connectAgent, clock });
+	await failApi(page, "/runs/*/focus**");
 	await page.goto("/");
-	const readout = block(page, "撮合压测").getByRole("region", { name: "执行中节点的主指标" });
-	await expect(readout.getByRole("group")).toHaveCount(1);
-	await expect(readout.getByRole("group").first()).toContainText("probe");
-	await expect(readout.getByRole("group").first()).toContainText("level");
-	// 等待中的运行没有执行中的节点，也就没有读数区。
-	await expect(
-		block(page, "定时巡检").getByRole("region", { name: "执行中节点的主指标" }),
-	).toHaveCount(0);
+	const readout = block(page, "撮合压测").getByRole("region", { name: "关注项", exact: true });
+	await expect(readout).toContainText("无法加载关注项");
 });
 
 const FOCUS_AGENT = {
@@ -518,7 +603,7 @@ test("Agent 列：每台 Agent 的槽位格写节点、场景和已执行时长�
 	const linux = agents.getByRole("region", { name: "agent-linux" });
 	await expect(linux).toContainText("1 / 4 占用");
 	const slots = linux.getByRole("list").getByRole("listitem");
-	await expect(slots).toHaveText(["probe撮合压测15.0s", "3 个槽位空闲"]);
+	await expect(slots).toHaveText(["probe撮合压测15s", "3 个槽位空闲"]);
 	await expect(slots.first()).toHaveAccessibleName("节点 probe，场景 撮合压测");
 	await expect(linux.getByTestId("slot-activity")).toHaveCount(0);
 
@@ -568,6 +653,80 @@ test("Agent 列：不是「在线」的状态写在名称行（安装节点包�
 	const row = region(page, "Agent").getByRole("region", { name: "agent-a" });
 	await expect(row).toContainText("安装中");
 	await expect(row).toContainText("0 / 2 占用");
+});
+
+test("Agent 列：准备环境中、版本不一致的 Agent 接不了新任务，不画空闲槽、不写占用数；准备环境中写在名称行", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const agent = await connectAgent({ name: "agent-a", slots: 2 });
+	await runOnce(controlPlane, agent);
+	await connectAgent({ name: "agent-prep", slots: 2 }, { preparing: true });
+	await connectAgent({ name: "agent-old", slots: 2, agentVersion: "0.0.1" });
+	await page.goto("/");
+	const agents = region(page, "Agent");
+	await expect(agents.getByRole("region", { name: "agent-a" })).toContainText("2 个槽位空闲");
+	for (const [name, status] of [
+		["agent-prep", "准备环境中"],
+		["agent-old", "版本不一致"],
+	] as const) {
+		const row = agents.getByRole("region", { name });
+		await expect(row).toContainText(status);
+		await expect(row).not.toContainText("占用");
+		await expect(row).not.toContainText("槽位空闲");
+	}
+});
+
+test("右栏没有 Agent、没有场景时写明；场景列加载中显示骨架，加载失败显示错误详情", async ({
+	page,
+	controlPlane,
+	connectAgent,
+}) => {
+	const scenario = await runOnce(controlPlane, await connectAgent({ name: "agent-a" }));
+	// 场景全部归档：列表里没有可列的场景。
+	const archived = await controlPlane.fetch(`/orchestrations/${scenario}/archive`, {
+		method: "POST",
+		headers: { "x-sfly-nickname": "tester" },
+	});
+	expect(archived.ok).toBe(true);
+	// 接口没有删除 Agent 的操作：让 Agent 列表返回空，相当于一台 Agent 都没有。
+	await page.route("**/api/agents", async (route) => {
+		const response = await route.fetch();
+		await route.fulfill({ response, json: { ...(await response.json()), agents: [] } });
+	});
+	// 场景列表（不含归档）的请求先挂起，看加载状态。
+	const list = (url: URL) => url.pathname === "/api/orchestrations";
+	let release: () => void = () => {};
+	const released = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+	await page.route(list, async (route) => {
+		await released;
+		await route.continue();
+	});
+	await page.goto("/");
+	const scenarios = region(page, "场景");
+	await expect(scenarios.locator('[data-slot="skeleton"]').first()).toBeVisible();
+	release();
+	await expect(scenarios).toContainText("没有场景");
+	const agents = region(page, "Agent");
+	await expect(agents).toContainText("还没有 Agent 连接");
+	await expect(agents.getByRole("link", { name: "打开 Agent 管理查看安装命令" })).toHaveAttribute(
+		"href",
+		"/agents",
+	);
+
+	await page.unroute(list);
+	await page.route(list, (route) =>
+		route.fulfill({
+			status: 503,
+			contentType: "application/json",
+			body: JSON.stringify({ error: { code: "unavailable", message: "控制面暂时不可用" } }),
+		}),
+	);
+	await page.reload();
+	await expect(scenarios.getByRole("alert")).toContainText("无法加载场景");
 });
 
 test("场景列：按最近一次运行的时间排序，写上次运行的结果，从没运行过的写「从未运行」；点一行进入画布", async ({

@@ -584,7 +584,7 @@ test("概览：执行中那一行在节点后面写「正在 动作名称」，�
 	await setup.agent.sync();
 	await openOverview(page, clock, setup.runId);
 
-	const rows = page.getByRole("list", { name: "执行中的节点" }).getByRole("listitem");
+	const rows = page.getByRole("list", { name: "进行中的节点" }).getByRole("listitem");
 	await expect(rows).toHaveCount(2);
 	const verify = rows.filter({ hasText: "verify" });
 	await expect(verify).toContainText("正在 保持 4 小时");

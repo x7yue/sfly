@@ -914,6 +914,11 @@ test("槽位格：场景没设关注项时显示这个节点的主指标并写�
 	await expect(probeRows).toContainText("主指标 level");
 	await expect(probeRows).toContainText("3");
 	await expect(probeRows).toContainText("场景没有设置关注项");
+	// 右侧的说明是中文，不用等宽字体（等宽只给数值，例如「2s 前」）。
+	await expect(probeRows.getByText("场景没有设置关注项")).not.toHaveCSS(
+		"font-family",
+		/JetBrains Mono/,
+	);
 	await expect(probeRows.locator('[data-status-dot="warn"]')).toHaveCount(0);
 
 	const verify = slotCells(page, "agent-a").filter({ hasText: "verify" });

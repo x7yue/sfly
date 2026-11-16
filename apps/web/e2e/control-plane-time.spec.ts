@@ -36,7 +36,7 @@ test("浏览器时间比控制面快 613 天：监控页的已运行时长和执
 
 	await page.goto(`/runs/${runId}?view=detail`);
 	const elapsed = page.getByRole("banner").getByTestId("run-elapsed");
-	await expect(elapsed).toHaveText("已运行 14.0s");
+	await expect(elapsed).toHaveText("已运行 14s");
 	// 运行开始后 14 秒：时间轴取 20 秒（右端留余量），"现在"线在 70%，执行中的条带占 9s–14s。
 	await expect(page.locator("[data-now-line]")).toHaveAttribute("style", /left: 70%/);
 	await expect
@@ -46,7 +46,7 @@ test("浏览器时间比控制面快 613 天：监控页的已运行时长和执
 
 	// 控制面时间过去 10 秒，浏览器时间不动：页面从心跳里跟上。
 	await advance(clock, agent, 10_000);
-	await expect(elapsed).toHaveText("已运行 24.0s");
+	await expect(elapsed).toHaveText("已运行 24s");
 	await expect
 		.poll(async () => (await segmentSpan(page, "verify", "run")).left)
 		.toBeCloseTo(9 / 30, 2);
@@ -63,14 +63,14 @@ test("浏览器时间比控制面快 613 天：运行记录、场景列表和运
 
 	await page.goto("/runs");
 	const card = page.getByRole("article", { name: `运行 ${runId.slice(0, 8)}` });
-	await expect(card).toContainText("14.0s");
+	await expect(card).toContainText("14s");
 	await expect(card).not.toContainText("613d");
 	// 开始时间与控制面的"今年"同年，省略年份。
 	await expect(card).toContainText("开始 01-01 08:00");
 
 	await page.goto("/orchestrations");
 	const scenario = page.getByRole("article", { name: "日终数据处理" });
-	await expect(scenario).toContainText("14.0s");
+	await expect(scenario).toContainText("14s");
 	await expect(scenario).not.toContainText("613d");
 
 	// 运行抽屉：再触发一次，摘要里的时长从 0 开始，随控制面时间推进。
@@ -79,9 +79,9 @@ test("浏览器时间比控制面快 613 天：运行记录、场景列表和运
 	await drawer.getByRole("button", { name: "触发运行" }).click();
 	const summary = drawer.getByRole("region", { name: "运行摘要" });
 	await expect(summary.getByTestId("summary-status")).toHaveText("运行中");
-	await expect(summary).toContainText("0ms");
+	await expect(summary).toContainText("0s");
 	await advance(clock, agent, 5_000);
-	await expect(summary).toContainText("5.0s");
+	await expect(summary).toContainText("5s");
 });
 
 test("拿不到控制面时间时按浏览器时间显示", async ({ page, controlPlane, connectAgent, clock }) => {

@@ -65,7 +65,7 @@ export function ScenariosPanel() {
 			) : scenarios.isError ? (
 				<div className="p-3.5">
 					<ErrorState
-						title={MESSAGE.loadFailed(`${TERM.scenario}列表`)}
+						title={MESSAGE.loadFailed(TERM.scenario)}
 						error={scenarios.error}
 						onRetry={() => void scenarios.refetch()}
 					/>

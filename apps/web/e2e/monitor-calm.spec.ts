@@ -38,7 +38,7 @@ test("运行中时间轴不随「现在」每秒压缩：右端留余量，只�
 	await openMonitor(page, clock, runId);
 	const tl = timeline(page);
 	const elapsed = header(page).getByTestId("run-elapsed");
-	await expect(elapsed).toHaveText("已运行 14.0s");
+	await expect(elapsed).toHaveText("已运行 14s");
 
 	// 14 秒的运行取 20 秒的轴：verify 第 2 次从第 9 秒起，「现在」线在 70%。
 	const before = await segmentLeft(page, "verify", "run");
@@ -47,14 +47,14 @@ test("运行中时间轴不随「现在」每秒压缩：右端留余量，只�
 	await expect(tl.locator("[data-now-line]")).toHaveAttribute("style", /left: 70%/);
 
 	await advance(clock, agent, 2_000);
-	await expect(elapsed).toHaveText("已运行 16.0s");
+	await expect(elapsed).toHaveText("已运行 16s");
 	await expect(tl.locator("[data-now-line]")).toHaveAttribute("style", /left: 80%/);
 	expect(await segmentLeft(page, "verify", "run")).toBeCloseTo(before, 3);
 	expect(await tl.locator("[data-axis-track] span").allTextContents()).toEqual(ticksBefore);
 
 	// 越过余量（17 秒 × 1.2 > 20 秒）：扩到 30 秒，区段与刻度一次到位。
 	await advance(clock, agent, 1_000);
-	await expect(elapsed).toHaveText("已运行 17.0s");
+	await expect(elapsed).toHaveText("已运行 17s");
 	await expect.poll(() => segmentLeft(page, "verify", "run")).toBeCloseTo(9 / 30, 2);
 	expect(await tl.locator("[data-axis-track] span").allTextContents()).not.toEqual(ticksBefore);
 });

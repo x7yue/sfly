@@ -90,7 +90,12 @@ test("地址里带 node 时概览标出这个节点的关注项（数值和图�
 	await expect(viewTab(page, "概览")).toHaveAttribute("aria-selected", "true");
 	await expect(located).toHaveCount(1);
 	await expect(focusChart(page, "清理 level")).toHaveAttribute("aria-current", "location");
-	await expect(focusChart(page, "清理 level")).toBeInViewport();
+	await expect(focusChart(page, "清理 level")).toBeInViewport({ ratio: 1 });
+	// 强制颜色模式（Windows 高对比度）换掉了描边色：被定位的卡片改用系统高亮色的内描边，别的卡片没有。
+	await page.emulateMedia({ forcedColors: "active" });
+	await expect(focusChart(page, "清理 level")).toHaveCSS("outline-style", "solid");
+	await expect(focusChart(page, "下单延迟")).toHaveCSS("outline-style", "none");
+	await page.emulateMedia({ forcedColors: "none" });
 
 	// probe 有两项关注项：数值「total」和图表「探活 level」；别的节点的不标。
 	await page.goto(`/runs/${runId}?view=overview&node=probe`);
@@ -98,6 +103,34 @@ test("地址里带 node 时概览标出这个节点的关注项（数值和图�
 	await expect(located.filter({ hasText: "total" })).toHaveCount(1);
 	await expect(focusChart(page, "探活 level")).toHaveAttribute("aria-current", "location");
 	await expect(focusChart(page, "下单延迟")).not.toHaveAttribute("aria-current", "location");
+});
+
+test("地址里带 node 时，可视区域变小或版面变高后重新对准被定位的项；自己滚动过以后不再替他对准", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const { runId } = await overviewRun(controlPlane, connectAgent, clock);
+	await page.clock.setFixedTime(clock.now());
+	await page.setViewportSize({ width: 1280, height: 640 });
+	await page.goto(`/runs/${runId}?view=overview&node=cleanup`);
+	const located = focusChart(page, "清理 level");
+	await expect(located).toBeInViewport({ ratio: 1 });
+
+	// 窗口变矮：概览的可视区域变小，被定位的卡片重新对准，整张都在视野里。
+	await page.setViewportSize({ width: 1280, height: 480 });
+	await expect(located).toBeInViewport({ ratio: 1 });
+
+	// 用户自己往上滚了：之后窗口再变，不把页面拉回去。
+	await page.mouse.move(640, 300);
+	await page.mouse.wheel(0, -5000);
+	await expect(located).not.toBeInViewport();
+	await page.setViewportSize({ width: 1280, height: 460 });
+	await page.evaluate(
+		() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+	);
+	await expect(located).not.toBeInViewport();
 });
 
 test("标签页是 tablist：方向键、Home、End 切换并移动焦点，只有选中的标签在 Tab 顺序里", async ({
@@ -300,7 +333,7 @@ test("点任何一项都进入详情，并定位到它所在的节点", async ({
 	);
 });
 
-test("链路：各链的线路（子流程从触发它的节点分出），下面一行写执行中的节点、Agent、尝试号和已执行的时长", async ({
+test("链路：各链的线路（子流程从触发它的节点分出），下面一行写进行中的节点、Agent、尝试号和已执行的时长", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -327,13 +360,13 @@ test("链路：各链的线路（子流程从触发它的节点分出），下�
 	]);
 	expect(Math.abs((spawn?.x ?? 0) - (sub?.x ?? Number.NaN))).toBeLessThan(1);
 
-	const running = page.getByRole("list", { name: "执行中的节点" });
+	const running = page.getByRole("list", { name: "进行中的节点" });
 	await expect(running.getByRole("listitem")).toHaveCount(2);
 	await expect(running.getByRole("listitem").filter({ hasText: "verify" })).toContainText(
-		"agent-a · 尝试 2 · 5.0s",
+		"agent-a · 尝试 2 · 5s",
 	);
 	await expect(running.getByRole("listitem").filter({ hasText: "probe" })).toContainText(
-		"agent-a · 尝试 1 · 8.0s",
+		"agent-a · 尝试 1 · 8s",
 	);
 });
 
@@ -393,7 +426,7 @@ test("场景没设关注项，执行中的节点都没声明主指标：写明�
 	const task = await agent.nextAssign();
 	await openOverview(page, clock, runId);
 
-	await expect(page.getByRole("list", { name: "执行中的节点" })).toContainText("ping");
+	await expect(page.getByRole("list", { name: "进行中的节点" })).toContainText("ping");
 	await expect(readouts(page)).toHaveCount(0);
 	await expect(page.getByText("执行中的节点都没有声明主指标。")).toBeVisible();
 	await expect(page.getByText("没有执行中的节点。")).toHaveCount(0);
@@ -417,7 +450,10 @@ test("场景没设关注项，节点还在准备中（安装节点包）：显�
 	await openOverview(page, clock, runId);
 
 	await expect(page.getByRole("heading", { name: "执行中节点的主指标", level: 2 })).toBeVisible();
-	await expect(page.getByRole("list", { name: "执行中的节点" })).toContainText("ping");
+	// 还没开始执行：时长处写「准备中」，不从排队算起（和控制台运行块、Agent 槽位格一样）。
+	await expect(page.getByRole("list", { name: "进行中的节点" }).getByRole("listitem")).toHaveText([
+		"ping agent-a · 尝试 1 · 准备中",
+	]);
 	const item = readouts(page).getByRole("button");
 	await expect(item).toHaveCount(1);
 	await expect(item).toHaveAccessibleName("level —，来自 ping（准备中），还没有开始执行");
@@ -579,6 +615,32 @@ test("子流程还没触发的节点也在概览里：写明还没有开始执�
 	await card.getByRole("button", { name: "在详情里打开 probe" }).click();
 	await expect(page).toHaveURL(new RegExp(`/runs/${runId}\\?view=detail&node=probe$`));
 	await expect(timeline(page)).toBeVisible();
+});
+
+test("运行已经结束、子流程没有触发：节点写「这次运行没有执行」，不再说还会执行", async ({
+	page,
+	controlPlane,
+	connectAgent,
+	clock,
+}) => {
+	const agent = await connectAgent({
+		name: "agent-a",
+		slots: 4,
+		installedPackages: [{ name: "demo-checks", version: "1.2.0" }],
+	});
+	await publishPackage(controlPlane, metricPackage());
+	const scenarioId = await createScenario(controlPlane, "日终数据处理", MONITOR_SCENARIO);
+	await setFocusItems(controlPlane, scenarioId, [
+		{ node_id: "probe", chart: "level", title: "探活 level" },
+	]);
+	const runId = await triggerRun(controlPlane, scenarioId);
+	// fetch 失败，运行结束：子流程没有触发，probe 一直待执行。
+	await agent.fail(await agent.nextAssign(), "下单接口返回 503");
+	await openOverview(page, clock, runId);
+
+	const card = focusChart(page, "探活 level");
+	await expect(card).toContainText("probe · 这次运行没有执行");
+	await expect(card).not.toContainText("还没有开始执行");
 });
 
 test("排队中的节点（已有任务、还没开始）在概览和详情里写同一句话：还没有开始执行", async ({
