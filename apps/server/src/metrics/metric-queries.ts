@@ -203,14 +203,18 @@ export class MetricQueries {
 		const names = query.metrics ?? declared.map((m) => m.name);
 		// 已过保留期（#32）：数据已清理，不再查询，每个序列都没有桶。
 		const expired = run.run.metricsPurgedAt !== null;
-		const read = await this.taskSeries(task.id, {
-			declared,
-			names,
-			expired,
-			from: query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000),
-			to: query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000),
-			points: query.points,
-		});
+		const read = await this.taskSeries(
+			task.id,
+			{
+				declared,
+				names,
+				expired,
+				from: query.from === undefined ? undefined : Math.floor(Date.parse(query.from) / 1000),
+				to: query.to === undefined ? undefined : Math.floor(Date.parse(query.to) / 1000),
+				points: query.points,
+			},
+			this.deps.db,
+		);
 		return {
 			ok: true,
 			series: {
@@ -241,7 +245,7 @@ export class MetricQueries {
 	 * 含内存里尚未写库的点；每个序列另给最后一个点的精确时间与值（不随降采样变粗）。给了 `recent` 时，每个序列另给
 	 * 最近这么多个点的时间（关注项估算采样间隔用，与时间范围无关）。
 	 * 没有任何数据、也没有声明标签键的指标给出一个空序列；声明了标签键的没有序列。已过保留期（expired）时序列没有桶。
-	 * 在事务里读时 `db` 传这个事务：查询都走它，不从连接池另取连接。
+	 * `db` 由调用方明写：在事务里读时传这个事务，查询都走它，不从连接池另取连接（CODING_STANDARDS「数据库」）。
 	 */
 	async taskSeries(
 		taskId: string,
@@ -256,7 +260,7 @@ export class MetricQueries {
 			/** 每个序列另给最近这么多个点的时间；不给时不读。 */
 			recent?: number;
 		},
-		db: Db | Tx = this.deps.db,
+		db: Db | Tx,
 	): Promise<TaskSeriesRead> {
 		const { declared, names, expired } = query;
 		const labeled = new Set(declared.filter(isLabeled).map((m) => m.name));

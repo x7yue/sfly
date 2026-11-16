@@ -269,18 +269,22 @@ test("一张图表的带标签降采样查询", async ({ bench }) => {
 
 test("关注项读数的序列查询（带最近点的时间）", async ({ bench }) => {
 	const read = (task: BenchTask, names: readonly string[], points: number, recent: boolean) => () =>
-		queries.taskSeries(task.taskId, {
-			declared: names.map((name) => ({
-				name,
-				unit: "",
-				kind: "gauge" as const,
-				...(task === labeledQueryTask && { labels: ["pid", "name"] }),
-			})),
-			names,
-			expired: false,
-			points,
-			...(recent && { recent: SAMPLE_POINTS }),
-		});
+		queries.taskSeries(
+			task.taskId,
+			{
+				declared: names.map((name) => ({
+					name,
+					unit: "",
+					kind: "gauge" as const,
+					...(task === labeledQueryTask && { labels: ["pid", "name"] }),
+				})),
+				names,
+				expired: false,
+				points,
+				...(recent && { recent: SAMPLE_POINTS }),
+			},
+			database.db,
+		);
 	const chart = LABELED_METRICS.slice(0, CHART_SERIES / PROCESSES.length);
 	// 先核对一次：每个序列都读到了最近 10 个点的时间，每秒一个。
 	for (const [task, names] of [
@@ -324,18 +328,22 @@ const dbCounters = async () => {
 
 test("关注项读数的并发读（8、32 个并发，带与不带最近点的时间）", async ({ bench }) => {
 	const read = (task: BenchTask, names: readonly string[], points: number, recent: boolean) => () =>
-		queries.taskSeries(task.taskId, {
-			declared: names.map((name) => ({
-				name,
-				unit: "",
-				kind: "gauge" as const,
-				...(task === labeledQueryTask && { labels: ["pid", "name"] }),
-			})),
-			names,
-			expired: false,
-			points,
-			...(recent && { recent: SAMPLE_POINTS }),
-		});
+		queries.taskSeries(
+			task.taskId,
+			{
+				declared: names.map((name) => ({
+					name,
+					unit: "",
+					kind: "gauge" as const,
+					...(task === labeledQueryTask && { labels: ["pid", "name"] }),
+				})),
+				names,
+				expired: false,
+				points,
+				...(recent && { recent: SAMPLE_POINTS }),
+			},
+			database.db,
+		);
 	const chart = LABELED_METRICS.slice(0, CHART_SERIES / PROCESSES.length);
 	const shapes = [
 		{ id: "1", task: queryTask, names: METRICS, points: 1, run: RUN },
