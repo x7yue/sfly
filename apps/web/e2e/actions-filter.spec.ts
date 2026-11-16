@@ -457,8 +457,10 @@ async function pingWithActions(
 		recent_failed: [failed],
 	});
 	agent.logs(task, [
-		logAt(agent, t0 + 2_300, 1, "下单 P-0002 已发出", skew),
-		logAt(agent, t0 + 9_000, 2, "继续保持", skew),
+		logAt(agent, t0 + 2_030, 1, "下单 P-0002 已发出", skew),
+		logAt(agent, t0 + 2_300, 2, "下单 P-0002 已回报", skew),
+		logAt(agent, t0 + 3_020, 3, "首笔成交已记账", skew),
+		logAt(agent, t0 + 9_000, 4, "继续保持", skew),
 	]);
 	await agent.sync();
 	return { runId, agent, task, t0, skew };
@@ -548,7 +550,7 @@ test("显示 Agent 时间时只计数的一行写 Agent 时间的起点和「起
 	);
 });
 
-test("点开始时间跳到日志：正好有那一行（1 秒以内）就高亮它，没有就在那一刻插一条「这一刻」；焦点交给日志页签", async ({
+test("点开始时间跳到日志：正好有那一行（50 毫秒以内只有它）就高亮它，没有就在那一刻插一条「这一刻」；焦点交给日志页签", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -558,7 +560,7 @@ test("点开始时间跳到日志：正好有那一行（1 秒以内）就高亮
 	await openMonitor(page, clock, runId, "ping", "actions");
 	const logs = panel(page).getByRole("log", { name: "日志" });
 
-	// 第 2 秒的「下单」：第一行日志在它后面 0.3 秒，算正好有这一行。
+	// 第 2 秒的「下单」：第一行日志在它后面 30 毫秒，50 毫秒以内只有它，算正好有这一行（0.3 秒后的那一行不算）。
 	await rowTime(page, 2).click();
 	await expect(tab(page, "日志")).toHaveAttribute("aria-selected", "true");
 	await expect(tab(page, "日志")).toBeFocused();
@@ -596,9 +598,9 @@ test("显示 Agent 时间时点开始时间，跳到的仍是控制面时间的�
 		.getByRole("button", { name: "Agent 时间" })
 		.click();
 	const logs = panel(page).getByRole("log", { name: "日志" });
-	// 第 3 秒的标记「首笔成交」：第一行日志在它前面 0.7 秒，算正好有这一行。按 Agent 时间去找（快 3 小时）就找不到。
+	// 第 3 秒的标记「首笔成交」：后面 20 毫秒有一行日志，算正好有这一行。按 Agent 时间去找（快 3 小时）就找不到。
 	await rowTime(page, 3).click();
-	await expect(logs.locator("[data-located]")).toContainText("下单 P-0002 已发出");
+	await expect(logs.locator("[data-located]")).toContainText("首笔成交已记账");
 	await expect(logs.locator("[data-moment]")).toHaveCount(0);
 });
 
