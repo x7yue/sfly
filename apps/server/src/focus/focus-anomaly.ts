@@ -1,4 +1,4 @@
-import { type FocusAnomaly, isOnAgentStatus, type NodeStatus } from "@sfly/schema";
+import { errorHeadline, type FocusAnomaly, isOnAgentStatus, type NodeStatus } from "@sfly/schema";
 import type { TaskLogIssues } from "../db/schema.js";
 import { LOG_ISSUE_TEXT_CHARS } from "../logs/task-logs.js";
 import { clipChars } from "../util/text.js";
@@ -43,9 +43,9 @@ export interface AnomalySubject {
 type Rule = (subject: AnomalySubject, now: number) => FocusAnomaly | null;
 
 const within = (at: number, now: number) => now - at <= ANOMALY_WINDOW_MS;
-/** 错误信息的第一行（之后是堆栈），和日志正文一样截到 500 个字符；没有时是空串。 */
+/** 错误信息的第一行（{@link errorHeadline}），和日志正文一样截到 500 个字符。 */
 const headline = (message: string | null) =>
-	clipChars((message ?? "").trim().split("\n")[0]?.trim() ?? "", LOG_ISSUE_TEXT_CHARS);
+	clipChars(errorHeadline(message), LOG_ISSUE_TEXT_CHARS);
 
 /** 来源节点失败：不限时间。 */
 const failed: Rule = ({ status, attempt }, now) => {

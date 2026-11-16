@@ -2,6 +2,7 @@ import { UNNAMED_SUBFLOW_LABEL } from "@sfly/orchestration";
 import {
 	type AttemptView,
 	type ChainRunView,
+	errorHeadline,
 	type LogOrigin,
 	type NodeRunView,
 	type OrchestrationDocument,
@@ -193,7 +194,7 @@ export function runFailure(run: RunView): RunFailure | null {
 		ref: { chainInstanceId: chain.id, nodeId: node.node_id },
 		node: { node_id: node.node_id, display_name: node.display_name },
 		attempt: attempt?.attempt ?? null,
-		message: (error?.message ?? "").trim().split("\n")[0]?.trim() ?? "",
+		message: errorHeadline(error?.message),
 	};
 }
 

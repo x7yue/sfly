@@ -1,5 +1,6 @@
 import { nodeCardText } from "@sfly/orchestration";
 import {
+	errorHeadline,
 	isActiveStatus,
 	type OrchestrationDocument,
 	type RunFocus,
@@ -61,7 +62,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { InspectorWidthHandle, useInspectorWidth } from "../inspector/inspector-width";
 import { OnlineEditors } from "../OnlineEditors";
 import { NodeCharts } from "./NodeCharts";
-import { errorSummary, type NodeRunSummary, nodeElapsed, type RunOverlay } from "./run-overlay";
+import { type NodeRunSummary, nodeElapsed, type RunOverlay } from "./run-overlay";
 import type { CanvasRun } from "./use-canvas-run";
 
 /**
@@ -449,7 +450,7 @@ function NodeRunInspector({
 						<Badge variant="danger" className="font-mono">
 							{view.error.kind}
 						</Badge>
-						<p className="m-0 mt-1.5 break-words text-xs">{errorSummary(view.error)}</p>
+						<p className="m-0 mt-1.5 break-words text-xs">{errorHeadline(view.error.message)}</p>
 					</div>
 				)}
 				{!view && (

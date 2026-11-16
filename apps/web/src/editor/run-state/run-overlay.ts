@@ -1,4 +1,4 @@
-import type { ChainRunView, ErrorView, NodeRunView, RunView } from "@sfly/schema";
+import type { ChainRunView, NodeRunView, RunView } from "@sfly/schema";
 import type { EdgeDecoration, NodeRunState } from "#/components/canvas/context";
 import type { SfEdge } from "#/components/canvas/flow";
 import { NODE_STATUS } from "#/lib/node-status";
@@ -106,6 +106,3 @@ export function nodeElapsed(node: NodeRunView, now: number): number | null {
 	const end = last?.ended_at ? Date.parse(last.ended_at) : now;
 	return Math.max(0, end - Math.min(...started));
 }
-
-/** 错误的一句话摘要：空行之后是堆栈，画布上不显示。 */
-export const errorSummary = (error: ErrorView) => error.message.split(/\n\s*\n/)[0]?.trim() ?? "";
