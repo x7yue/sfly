@@ -4,6 +4,7 @@ import {
 	focusLatestSeriesName,
 	focusSeriesName,
 	focusValueText,
+	latestSeries,
 	type RunFocusItem,
 } from "../src/index.js";
 
@@ -42,5 +43,19 @@ describe("关注项读数的写法", () => {
 		});
 		expect(focusLatestSeriesName(both)).toBe("p99");
 		expect(focusSeriesName(both, { metric: "p50", labels: {} })).toBe("p50");
+	});
+});
+
+describe("最近更新的序列", () => {
+	const lastAt = (s: { at: number | null }) => s.at;
+
+	it("取最后一个点最晚的序列；同一时刻取靠前的；都没有点时没有", () => {
+		const a = { name: "a", at: 123 };
+		const b = { name: "b", at: 129 };
+		const c = { name: "c", at: 129 };
+		expect(latestSeries([a, b, c], lastAt)).toBe(b);
+		expect(latestSeries([{ name: "x", at: null }, a], lastAt)).toBe(a);
+		expect(latestSeries([{ name: "x", at: null }], lastAt)).toBeUndefined();
+		expect(latestSeries([], lastAt)).toBeUndefined();
 	});
 });

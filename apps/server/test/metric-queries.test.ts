@@ -256,6 +256,28 @@ describe("指标查询", () => {
 			expect(seriesOf(done)).toEqual({ tps: [[65, 1, 7, 7, 7, 7]], ...expected });
 		});
 
+		it("每个序列带最后一个点的精确时间（不随降采样变粗）：同一个桶里的两个序列也分得出谁更新", async () => {
+			const agent = await connect();
+			const { runId, task } = await start(agent);
+			const conn = (host: string, t: number) => ({
+				name: "conn_tps",
+				labels: { host },
+				timeUnixS: BigInt(at(t)),
+				value: t,
+				min: t,
+				max: t,
+			});
+			agent.metrics(task, [conn("a", 0), conn("a", 123), conn("b", 0), conn("b", 129)]);
+			await agent.sync();
+
+			const result = await series(runId, { metrics: "conn_tps,p99", points: 2 });
+			expect(result.series.map((s) => [s.name, s.labels.host ?? null, s.last_at])).toEqual([
+				["conn_tps", "a", iso(123)],
+				["conn_tps", "b", iso(129)],
+				["p99", null, null],
+			]);
+		});
+
 		it("运行中尚未写库的点也能查到（断线重连后用来补齐实时增量）", async () => {
 			const agent = await connect();
 			const { runId, task } = await start(agent);
