@@ -15,7 +15,7 @@ const { nameChars, valueChars, reasonChars, fields: maxFields } = ACTION_LIMITS;
 export const actionName = (name: string, secrets: readonly string[]): string =>
 	clipChars(maskSecrets(name, secrets), nameChars);
 
-/** 失败原因：超过上限时和 SDK 一样留前 4095 个字符、末尾加「…」。 */
+/** 失败原因：超过上限时和 SDK 一样留前 `reasonChars - 1` 个字符、末尾加「…」。 */
 export function actionReason(reason: string, secrets: readonly string[]): string {
 	const chars = Array.from(maskSecrets(reason, secrets));
 	return chars.length > reasonChars
@@ -23,7 +23,7 @@ export function actionReason(reason: string, secrets: readonly string[]): string
 		: chars.join("");
 }
 
-/** 一个字段：键和值里的 secret 值都打码，键截到 64、值截到 256 个字符。 */
+/** 一个字段：键和值里的 secret 值都打码，键截到名称的上限、值截到字段值的上限。 */
 export const actionField = (
 	key: string,
 	value: string,

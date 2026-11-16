@@ -35,8 +35,8 @@ export const runViewFailures = (chains: readonly ChainRunView[]) =>
 	});
 
 /**
- * 错误信息的第一行（之后是堆栈），去掉首尾空白；没有错误信息时是空串。只显示一句错误的地方都按它截：运行监控的页头和
- * 「需要注意」、关注项的失败原因、画布检查器（docs/DESIGN-SYSTEM.md 第 9 节）。
+ * 错误信息的第一行（之后是堆栈），去掉首尾空白；没有错误信息时是空串。只显示一句错误的地方都按它截：运行监控的页头、
+ * 「需要注意」和图表工作区、关注项的失败原因、画布检查器（docs/DESIGN-SYSTEM.md 第 9 节）。
  */
 export const errorHeadline = (message: string | null | undefined): string =>
 	(message ?? "").trim().split("\n")[0]?.trim() ?? "";

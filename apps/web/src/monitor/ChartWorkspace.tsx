@@ -1,5 +1,6 @@
 import {
 	type CatalogNode,
+	errorHeadline,
 	isLabeled,
 	isOnAgentStatus,
 	MAX_SERIES,
@@ -732,7 +733,7 @@ function NodeSummary({ group, now }: { group: ChartGroup; now: number }) {
 					<div className="text-xs text-fg-3">错误</div>
 					<div className="flex items-center gap-1.5 text-xs">
 						<Badge variant="danger">{node.error.kind}</Badge>
-						<span className="truncate text-danger-fg">{node.error.message.split("\n\n")[0]}</span>
+						<span className="truncate text-danger-fg">{errorHeadline(node.error.message)}</span>
 					</div>
 				</div>
 			)}

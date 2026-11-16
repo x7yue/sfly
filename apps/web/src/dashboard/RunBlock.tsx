@@ -176,7 +176,7 @@ function RunReadout({ run, limit }: { run: DashboardRunningRun; limit: number | 
 	return (
 		<section ref={measure} aria-label={title} className="mt-3">
 			<ReadoutHeading title={title} orchestrationId={run.orchestration_id} configured={!primary}>
-				<FocusTally items={data.items} counted={!primary} />
+				<FocusTally items={data.items} showCount={!primary} />
 				<RuleLine />
 				{primary && <span>{FOCUS.noneSet} ·</span>}
 			</ReadoutHeading>

@@ -325,7 +325,7 @@ shadcn 组件用的 `background`、`foreground`、`popover`、`muted`、`accent`
 - 「打开 X」是去另一个页面（「打开运行监控」「打开失败节点」：控制台的失败行进入运行监控并选中失败节点），「查看 X」是在当前页面里展开（运行监控页横幅的「查看失败节点」）；同一个意思不换着说。
 - 时长、数量与 Agent 状态：`ELAPSED_LABEL`（已运行）、`DURATION_LABEL`（耗时）、`moreLabel()`（「还有 N 个」：列表或线路只画出一部分时）、`AGENT_STATUS_LABEL`（在线、离线；Agent 的完整状态用 `#/agents/agent-status` 的 `agentStatusView`）、`slotUsageLabel()`、`queuedLabel()`（「2 / 8 占用」「排队 1」）、`RUNNING_PRIMARY_LABEL`（「执行中节点的主指标」）。
 - `DOC_PAGE`：界面里引用的开发文档页，slug → 页名（与 `docs/guide/pages.json` 的标题一致，有单测检查）；链接用 `DocPageLink`。
-- 只写一句错误的地方（运行监控的页头和「需要注意」、关注项的失败原因、画布检查器）取错误信息的第一行：`@sfly/schema` 的 `errorHeadline()`，之后的行是堆栈，不显示。
+- 只写一句错误的地方（运行监控的页头、「需要注意」和图表工作区的节点信息、关注项的失败原因、画布检查器）取错误信息的第一行：`@sfly/schema` 的 `errorHeadline()`，之后的行是堆栈，不显示。
 
 规则：两处及以上用到的文字、状态与术语放在这里，新增时先加到这里再引用，不要在组件里另写一份；只在一个页面出现的说明文字（空状态说明、提示语）留在组件里。
 
