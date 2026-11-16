@@ -1,24 +1,10 @@
 import { type FocusSeries, focusSeriesName, type RunFocusItem } from "@sfly/schema";
-import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { LIST_LABEL } from "#/lib/copy";
+import { useElementWidth } from "#/lib/use-element-width";
 import type { ShownPick } from "#/monitor/charts";
 import { seriesColor, seriesDash } from "#/monitor/MetricChart";
 import { PLOT_MARGIN, type PlotWindow, plotChart, shownSeries } from "./focus-chart";
-
-/** 元素的实际宽度（px）：量一次，之后随容器尺寸变化更新；还没量到时为 0。 */
-function useElementWidth<E extends HTMLElement>() {
-	const ref = useRef<E>(null);
-	const [width, setWidth] = useState(0);
-	useLayoutEffect(() => {
-		const el = ref.current;
-		if (!el) return;
-		setWidth(Math.round(el.clientWidth));
-		const observer = new ResizeObserver(() => setWidth(Math.round(el.clientWidth)));
-		observer.observe(el);
-		return () => observer.disconnect();
-	}, []);
-	return [ref, width] as const;
-}
 
 /**
  * 一张图表（折线、面积、柱状）的绘图区和图例：按容器的实际宽度画（SVG 用量出来的像素宽度，文字不被拉伸），纵轴从 0 起，

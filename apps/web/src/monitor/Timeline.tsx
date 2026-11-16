@@ -11,6 +11,7 @@ import { ACTION, chainCountLabel, LIST_LABEL, PROGRESS_LABEL } from "#/lib/copy"
 import { formatClock, formatDuration, formatSpan } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
 import { shortcutText } from "#/lib/shortcuts";
+import { useElementWidth } from "#/lib/use-element-width";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Truncate } from "@/components/ui/truncate";
@@ -158,7 +159,8 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 		isOpen,
 		(chain) => chain.nodes.filter((n) => tracksOf(chain, n.node_id)).length,
 	);
-	const [width, setWidth] = useState(0);
+	// 轨道区域的像素宽度（刻度那一行的轨道，没有横向内边距）：动作轨道按它分桶。
+	const [axisTrack, width] = useElementWidth<HTMLDivElement>();
 	const trackView = useMemo(() => ({ range, now, width }), [range, now, width]);
 	const [hidden, setHidden] = useState(false);
 	const rows = useRef<HTMLDivElement>(null);
@@ -334,7 +336,7 @@ export function Timeline({ run, doc }: { run: RunView; doc: OrchestrationDocumen
 						: { height }
 				}
 			>
-				<Axis range={range} origin={Date.parse(run.started_at)} onWidth={setWidth} />
+				<Axis range={range} origin={Date.parse(run.started_at)} trackRef={axisTrack} />
 				<Rows contentRef={rows} run={run} range={range} now={now} live={live} onZoom={actions.zoom}>
 					{chains.map((chain) => {
 						const open = isOpen(chain);
@@ -452,25 +454,17 @@ function revealIn(box: HTMLElement, el: HTMLElement) {
 	}
 }
 
-/** 时间轴刻度（吸顶）。`onWidth`：轨道区域的像素宽度（动作轨道按它分桶）。 */
+/** 时间轴刻度（吸顶）。`trackRef` 挂在轨道区域上，量它的宽度。 */
 function Axis({
 	range,
 	origin,
-	onWidth,
+	trackRef,
 }: {
 	range: TimeRange;
 	origin: number;
-	onWidth: (width: number) => void;
+	trackRef: (el: HTMLDivElement | null) => void;
 }) {
 	const items = ticks(range, { origin });
-	const track = useRef<HTMLDivElement>(null);
-	useEffect(() => {
-		const el = track.current;
-		if (!el) return;
-		const observer = new ResizeObserver(([entry]) => onWidth(entry?.contentRect.width ?? 0));
-		observer.observe(el);
-		return () => observer.disconnect();
-	}, [onWidth]);
 	return (
 		<div
 			className="sticky top-0 z-3 grid border-b border-border-soft bg-bg"
@@ -479,7 +473,7 @@ function Axis({
 			<div className="px-3 pt-0.75 text-xs text-fg-3">
 				<span className="font-mono">{formatClock(range.start)}</span> 起
 			</div>
-			<div ref={track} className="relative mr-3.5" data-axis-track>
+			<div ref={trackRef} className="relative mr-3.5" data-axis-track>
 				{items.map((t) => (
 					<span
 						key={t.at}
