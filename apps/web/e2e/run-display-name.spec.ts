@@ -20,8 +20,11 @@ const workspace = (page: Page) => page.getByRole("region", { name: "图表工作
 const panel = (page: Page) => page.getByRole("region", { name: "底部面板" });
 const dashboardPanel = (page: Page, name: string) =>
 	page.getByRole("region", { name, exact: true });
+/** 控制台「正在运行」里的一个运行块（区域名称是场景名）。 */
+const runBlock = (page: Page, scenario: string) =>
+	dashboardPanel(page, "正在运行").getByRole("region", { name: scenario, exact: true });
 
-test("运行抽屉、控制台统计和运行记录写成「显示名称（节点 ID）」；「子流程失败」写子流程名称", async ({
+test("运行抽屉、控制台统计和运行记录写成「显示名称（节点 ID）」；最近结束的失败行写子流程名称", async ({
 	page,
 	controlPlane,
 	connectAgent,
@@ -52,13 +55,19 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 
 	await page.clock.setFixedTime(clock.now());
 	await page.goto("/");
-	const running = dashboardPanel(page, "正在运行").getByRole("link", { name: /日终对账/ });
-	await expect(running).toContainText("执行中：核对结果（verify）");
-	await expect(running.getByRole("img", { name: /^子流程 压测监控 \d\/2$/ })).toBeVisible();
-	const failures = dashboardPanel(page, "最近失败").getByRole("link");
-	await expect(failures).toHaveCount(1);
-	await expect(failures.first()).toContainText("子流程失败 · 压测监控");
-	await expect(failures.first()).toContainText("失败节点 探测延迟（probe） · 主链仍在运行");
+	const running = runBlock(page, "日终对账");
+	await expect(
+		running.getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
+	).toHaveText([/^核对结果（verify）agent-a/]);
+	const lines = running.getByRole("list", { name: "各链进度" });
+	await expect(lines).toContainText("核对结果（verify）");
+	const subflow = lines.locator(":scope > li").filter({ hasText: "子流程 压测监控" });
+	await expect(subflow).toContainText("1/2");
+	await expect(subflow.getByRole("listitem")).toHaveText([
+		"压测监控（sub）（成功）",
+		"探测延迟（probe）（失败）",
+	]);
+	await expect(dashboardPanel(page, "最近结束").getByRole("listitem")).toHaveCount(0);
 
 	await page.goto("/runs");
 	const card = page.getByRole("article", { name: `运行 ${runId.slice(0, 8)}` });
@@ -79,6 +88,13 @@ test("运行抽屉、控制台统计和运行记录写成「显示名称（节�
 		.getByRole("row", { name: new RegExp(runId.slice(0, 8)) });
 	await expect(row.getByRole("cell").nth(2)).toHaveText("失败 · 核对结果（verify）");
 	await expect(row.getByRole("img", { name: /^子流程 压测监控 \d\/2$/ })).toBeVisible();
+
+	await page.goto("/");
+	const ended = dashboardPanel(page, "最近结束").getByRole("listitem");
+	await expect(ended).toHaveCount(1);
+	await expect(ended.first()).toContainText(
+		"失败节点 探测延迟（probe） · 子流程 压测监控 · 尝试 1",
+	);
 });
 
 test("运行监控页：顶栏、失败横幅、时间线、尝试列表、范围标签、图表组标题与备注、节点筛选、合并日志的来源节点", async ({
@@ -213,7 +229,7 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 	await nodeCard(page, "fetch").click();
 	await expect(inspector(page).getByRole("heading", { name: "拉取订单" })).toBeVisible();
 	await expect(
-		inspector(page).getByRole("link", { name: "在监控页中打开 拉取订单（fetch）" }),
+		inspector(page).getByRole("link", { name: "在运行监控详情里打开 拉取订单（fetch）" }),
 	).toBeVisible();
 
 	await page.goto("/runs");
@@ -228,13 +244,13 @@ test("改了显示名称之后，旧运行仍显示它绑定版本里的名称",
 
 	await page.goto("/");
 	await expect(
-		dashboardPanel(page, "正在运行").getByRole("link", { name: /日终对账/ }),
-	).toContainText("执行中：拉取全部订单（fetch）");
-	const failures = dashboardPanel(page, "最近失败").getByRole("link");
-	await expect(failures).toHaveText([
-		/失败.*失败节点 核对结果（verify）/,
-		/子流程失败 · 压测监控.*失败节点 探测延迟（probe）/,
-	]);
+		runBlock(page, "日终对账").getByRole("list", { name: "进行中的节点" }).getByRole("listitem"),
+	).toHaveText([/^拉取全部订单（fetch）/]);
+	const ended = dashboardPanel(page, "最近结束").getByRole("listitem");
+	await expect(ended).toHaveCount(1);
+	await expect(ended.first()).toContainText(
+		"失败节点 探测延迟（probe） · 子流程 压测监控 · 尝试 1",
+	);
 });
 
 const LONG = "一二三四五六七八九十".repeat(4);

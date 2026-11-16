@@ -91,7 +91,8 @@
 
   ```
   {"type": "action_summary", "ts", "mono",
-   "total": 120345, "reported": 100000, "capped_ts": 1700000000000, "capped_mono": 123456789,
+   "total": 120345, "marks": 2, "reported": 100000,
+   "capped_ts": 1700000000000, "capped_mono": 123456789,
    "names": [{"name": "下单", "total": 120000, "failed": 12, "reported": 50012,
               "capped_ts": 1700000000000, "capped_mono": 123456789}],
    "running": [{"id", "parent", "depth", "name", "fields", "ts", "mono"}],
@@ -100,7 +101,8 @@
    "recent_failed": [同 recent 的每一项]}
   ```
 
-  - `total`：到目前为止记录的动作和标记的个数（不论有没有明细）；`reported`：已经上报明细（
+  - `total`：到目前为止记录的动作和标记的个数（不论有没有明细），`marks`：其中标记的个数；
+    `reported`：已经上报明细（
     `action_start` 或 `mark`，包括补发的）的个数，最多 100000。
     `capped_ts`、`capped_mono`：第一个因为合计已满（100000 个）而被丢弃明细的动作或标记的时刻，
     动作取开始的时刻，标记取它发生的时刻（包括补发时发现合计已满、被丢弃的失败动作）。它不是明细的

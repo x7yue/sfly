@@ -201,7 +201,7 @@ export function buildHttpApi({
 		isPurged: (runId) => retention.isPurged(runId),
 	});
 	registerMetricRoutes(app, { metrics, queries: metricQueries });
-	registerActionRoutes(app, { actions });
+	registerActionRoutes(app, { actions, sse });
 	registerArtifactRoutes(app, { artifacts, agentToken, publicHttpUrl: publicConfig.httpUrl });
 	registerPackageRoutes(app, { packages, orchestrations });
 	registerPresenceRoutes(app, { orchestrations, presence, sse });

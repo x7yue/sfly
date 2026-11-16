@@ -218,6 +218,19 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		delivery: feishuDelivery,
 	});
+	// 指标要在引擎之前建好：运行结束时运行通知的卡片要读关注项的值，和运行监控读指标用同一个读取。
+	const metricRetention = new MetricRetention({
+		db: database.db,
+		clock,
+		retentionDays: options.metricRetentionDays,
+	});
+	const metrics = new TaskMetrics({
+		db: database.db,
+		clock,
+		retention: metricRetention,
+		limitBytes: options.metricLimitBytes,
+	});
+	const metricQueries = new MetricQueries({ db: database.db, clock, metrics });
 	const engine = new Engine({
 		db: database.db,
 		clock,
@@ -232,6 +245,13 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 			logs,
 			delivery: feishuDelivery,
 			runUrl: (runId) => (configuredUrl ? `${configuredUrl}/runs/${runId}` : undefined),
+			focus: {
+				clock,
+				queries: metricQueries,
+				onError: (error) => {
+					if (logger) console.error("run notification: reading focus items failed:", error);
+				},
+			},
 		}),
 		leaseMs: options.leaseMs,
 		sdkWheel: (agentVersion) => {
@@ -251,17 +271,6 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		clock,
 		logs,
 		runChanges: engine.runChanges,
-	});
-	const metricRetention = new MetricRetention({
-		db: database.db,
-		clock,
-		retentionDays: options.metricRetentionDays,
-	});
-	const metrics = new TaskMetrics({
-		db: database.db,
-		clock,
-		retention: metricRetention,
-		limitBytes: options.metricLimitBytes,
 	});
 	const artifacts = new ArtifactStore({
 		db: database.db,
@@ -290,7 +299,7 @@ export async function startControlPlane(options: ControlPlaneOptions): Promise<C
 		logs,
 		actions,
 		metrics,
-		metricQueries: new MetricQueries({ db: database.db, clock, metrics }),
+		metricQueries,
 		retention,
 		artifacts,
 		agentToken: options.agentToken,

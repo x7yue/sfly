@@ -113,11 +113,11 @@ describe("槽位格里的内容", () => {
 		expect(slotContent(task({ task_id: "t3" }), focus([mine, other])).focus).toBeNull();
 	});
 
-	it("前两个关注项，有异常的排前，多出的算在「还有」里", () => {
+	it("前两个关注项按读数的顺序（控制面把有异常的排在最前，这里不再排），多出的算在「还有」里", () => {
 		const items = [
+			item({ title: "丙", anomaly: warn }),
 			item({ title: "甲" }),
 			item({ title: "乙" }),
-			item({ title: "丙", anomaly: warn }),
 			item({ title: "丁" }),
 		];
 		const content = slotContent(task(), focus(items));

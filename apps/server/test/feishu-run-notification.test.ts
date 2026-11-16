@@ -1,11 +1,19 @@
 // 切入点 A：运行通知（#232，ADR 0020、docs/SEMANTICS.md §6）：场景设置里选了机器人的场景，运行结束时由控制面发一张卡片。
 // HTTP API + 假 Agent + 真实 PostgreSQL + 手动时钟 + 假飞书 Webhook 服务（support/fake-feishu.ts）。
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { drizzle } from "drizzle-orm/node-postgres";
+import pg from "pg";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as schema from "../src/db/schema.js";
+import { resolveRunFocus } from "../src/focus/run-focus.js";
+import { MetricQueries } from "../src/metrics/metric-queries.js";
+import { MetricRetention } from "../src/metrics/metric-retention.js";
+import { TaskMetrics } from "../src/metrics/task-metrics.js";
 import { ApiClient, type RunView } from "./support/api-client.js";
 import { chainOf, orchestration, spawn } from "./support/chains.js";
 import { eventually } from "./support/eventually.js";
 import { FakeAgent } from "./support/fake-agent.js";
 import { type FakeFeishu, startFakeFeishu } from "./support/fake-feishu.js";
+import { benchDocument, publishBench, putFocusItemsOk } from "./support/focus-items.js";
 import type { ManualClock } from "./support/manual-clock.js";
 import { publishPackage } from "./support/package-archive.js";
 import { createPresetOk, renamePresetInDb, triggerWithPreset } from "./support/presets.js";
@@ -62,7 +70,9 @@ describe("运行通知", () => {
 	let agent: FakeAgent;
 
 	/** 默认配置了对外地址（SFLY_PUBLIC_URL）；没有配置的情况在最后一组里另起控制面。 */
-	async function start(options: { publicHttpUrl?: string } = { publicHttpUrl: PUBLIC_URL }) {
+	async function start(
+		options: Parameters<typeof startTestControlPlane>[0] = { publicHttpUrl: PUBLIC_URL },
+	) {
 		cp = await startTestControlPlane(options);
 		clock = cp.clock as ManualClock;
 		api = new ApiClient(cp);
@@ -397,6 +407,365 @@ describe("运行通知", () => {
 			await eventually(() => expect(feishu.requests).toHaveLength(1));
 			const elements = (cards()[0] as Card).card.body.elements;
 			expect(elements.map((e) => e.tag)).toEqual(["markdown"]);
+		});
+	});
+
+	describe("关注项", () => {
+		/** 测试时钟的起点（2026-01-01T00:00:00Z）之后第 s 秒（Unix 秒）。 */
+		const at = (s: number) => Date.UTC(2026, 0, 1) / 1000 + s;
+		const focusSection = (card: Card | undefined) =>
+			card?.card.body.elements.find((e) => e.content?.startsWith("**关注项**"));
+		/** 一张卡片的各个元素（按顺序）：markdown 的写开头一行，其余写标签。 */
+		const outline = (card: Card | undefined) =>
+			card?.card.body.elements.map((e) =>
+				e.tag === "markdown" ? e.content?.split("\n")[0] : e.tag,
+			);
+
+		beforeEach(async () => {
+			await publishBench(cp);
+			await publishPackage(cp, "procs", "1.0.0", {
+				watch: {
+					outputs: [],
+					metrics: [
+						{ name: "cpu", unit: "%", kind: "gauge" as const, labels: ["pid"] },
+						{ name: "mem", unit: "MB", kind: "gauge" as const },
+					],
+					charts: [
+						{ title: "CPU", type: "line" as const, metrics: ["cpu"] },
+						{ title: "资源", type: "line" as const, metrics: ["mem", "cpu"] },
+					],
+				},
+			});
+		});
+
+		it("运行结束时卡片在失败的节点之后、按钮之前有「关注项」一段：每项一行写名称、运行结束时的值和单位，有异常的项（来源节点失败）排在最前、写（节点失败），没有值的写 —", async () => {
+			const id = await scenario(
+				benchDocument([
+					["load", "load"],
+					["probe", "probe"],
+					["tail", "probe"],
+				]),
+			);
+			await putFocusItemsOk(api, id, [
+				{ node_id: "load", chart: "延迟", title: "下单延迟" },
+				{ node_id: "load", chart: "TPS" },
+				{ node_id: "load", chart: "orders" },
+				{ node_id: "probe", chart: "level", title: "探活" },
+				{ node_id: "tail", chart: "level", title: "收尾" },
+			]);
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			agent.metrics(load, [
+				["p99", at(1), 10],
+				["p99", at(2), 45],
+				["tps", at(2), 500],
+				["orders", at(2), 1_284_814],
+			]);
+			await agent.succeed(load);
+			const probe = await agent.nextAssign();
+			agent.metrics(probe, [["level", at(3), 3]]);
+			await agent.sync();
+			await agent.fail(probe, "boom");
+			await status(runId, "failed");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			const card = cards()[0];
+			expect(outline(card)).toEqual([
+				"**场景**：订单压测",
+				"**失败的节点**",
+				"**关注项**",
+				"button",
+			]);
+			expect(focusSection(card)?.content).toBe(
+				[
+					"**关注项**",
+					"- 探活：3（节点失败）",
+					"- 下单延迟：45 ms",
+					"- TPS：500 req/s",
+					"- orders：1.3M",
+					"- 收尾：—",
+				].join("\n"),
+			);
+		});
+
+		it("取运行结束那一刻场景的关注项：运行中改了关注项，卡片按新的", async () => {
+			const id = await scenario(benchDocument(), { trigger: "always" });
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "TPS" }]);
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			agent.metrics(load, [
+				["tps", at(1), 500],
+				["p99", at(1), 9],
+			]);
+			await agent.sync();
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟", title: "改过的名字" }]);
+			await agent.succeed(load);
+			await agent.succeed(await agent.nextAssign());
+			await status(runId, "success");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(focusSection(cards()[0])?.content).toBe("**关注项**\n- 改过的名字：9 ms");
+		});
+
+		it("这次运行的版本里没有这张图表：写「这个版本的节点没有图表 X」，其余项照常", async () => {
+			// 运行锁定 bench 1.0.0（图表叫 TPS）；之后的版本升到 2.0.0，图表改名为「吞吐」，作者按新名字设了关注项。
+			const id = await scenario(benchDocument(), { trigger: "always" });
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			agent.metrics(load, [
+				["tps", at(1), 7],
+				["p99", at(1), 9],
+			]);
+			await agent.sync();
+			await api.saveVersion(id, benchDocument(undefined, "2.0.0"));
+			await putFocusItemsOk(api, id, [
+				{ node_id: "load", chart: "吞吐", title: "吞吐量" },
+				{ node_id: "load", chart: "延迟" },
+			]);
+			await agent.succeed(load);
+			await agent.succeed(await agent.nextAssign());
+			await status(runId, "success");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(focusSection(cards()[0])?.content).toBe(
+				["**关注项**", "- 吞吐量：这个版本的节点没有图表 吞吐", "- 延迟：9 ms"].join("\n"),
+			);
+		});
+
+		it("多个序列的图表：写最近更新的那个序列的值，带上它的名字", async () => {
+			const id = await scenario(
+				{
+					default_agent: "agent-a",
+					nodes: [
+						{ id: "entry", kind: "entry" },
+						{ id: "watch", kind: "package", package: "procs", node: "watch" },
+					],
+					edges: [{ from: "entry", to: "watch", kind: "chain" }],
+					packages: { procs: "1.0.0" },
+				},
+				{ trigger: "always" },
+			);
+			await putFocusItemsOk(api, id, [
+				{ node_id: "watch", chart: "CPU", title: "撮合进程 CPU" },
+				{ node_id: "watch", chart: "资源" },
+			]);
+			const runId = await api.triggerOk(id);
+			const watch = await agent.nextAssign();
+			agent.metrics(watch, [
+				{
+					name: "cpu",
+					labels: { pid: "100" },
+					timeUnixS: BigInt(at(4)),
+					value: 30,
+					min: 30,
+					max: 30,
+				},
+				{
+					name: "cpu",
+					labels: { pid: "200" },
+					timeUnixS: BigInt(at(5)),
+					value: 12,
+					min: 12,
+					max: 12,
+				},
+				{ name: "mem", labels: {}, timeUnixS: BigInt(at(6)), value: 512, min: 512, max: 512 },
+			]);
+			await agent.sync();
+			await agent.succeed(watch);
+			await status(runId, "success");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(focusSection(cards()[0])?.content).toBe(
+				["**关注项**", "- 撮合进程 CPU（200）：12 %", "- 资源（mem）：512 MB"].join("\n"),
+			);
+		});
+
+		it("最多 8 行：场景的关注项上限是 8，每项一行，顺序是作者排的", async () => {
+			const id = await scenario(benchDocument([["w", "wide"]]), { trigger: "always" });
+			const charts = Array.from({ length: 8 }, (_, i) => `m${i + 1}`);
+			await putFocusItemsOk(api, id, charts.map((chart) => ({ node_id: "w", chart })).reverse());
+			const runId = await api.triggerOk(id);
+			const task = await agent.nextAssign();
+			agent.metrics(
+				task,
+				charts.map((name, i): [string, number, number] => [name, at(1), i + 1]),
+			);
+			await agent.sync();
+			await agent.succeed(task);
+			await status(runId, "success");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(focusSection(cards()[0])?.content).toBe(
+				["**关注项**", ...charts.map((chart, i) => `- ${chart}：${i + 1}`).reverse()].join("\n"),
+			);
+		});
+
+		it("没有关注项，或者这些关注项都不在这次运行的版本里：卡片和没有这项功能时一字不差", async () => {
+			const id = await scenario(benchDocument(), { trigger: "always" });
+			await putFocusItemsOk(api, id, [{ node_id: "probe", chart: "level" }]);
+			// 之后的版本删掉了 probe，关注项原样保留；这次运行用的是新版本。
+			await api.saveVersion(id, benchDocument([["load", "load"]]));
+			const notInVersion = await runEnding(id, "failed");
+			await putFocusItemsOk(api, id, []);
+			const none = await runEnding(id, "failed");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(2));
+			// 两个运行的编号不同：换成占位符之后整张卡片逐字相同。
+			const normalized = (card: Card | undefined, runId: string) =>
+				JSON.parse(
+					JSON.stringify(card).replaceAll(runId, "<运行>").replaceAll(runId.slice(0, 8), "<运行>"),
+				);
+			expect(normalized(cards()[0], notInVersion)).toEqual(normalized(cards()[1], none));
+			expect(focusSection(cards()[0])).toBeUndefined();
+			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
+		});
+
+		/** 在控制面的数据库上直接执行一条 SQL（模拟库里的数据或结构出了问题）。 */
+		const execute = async (query: string) => {
+			const client = new pg.Client({ connectionString: cp.database.url });
+			await client.connect();
+			try {
+				await client.query(query);
+			} finally {
+				await client.end();
+			}
+		};
+
+		it("读关注项时抛出异常也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段", async () => {
+			const id = await scenario(benchDocument());
+			await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			// 节点包的元信息被改坏（`nodes` 不是数组）：解析关注项时读节点类型会抛出异常。
+			await execute(
+				"UPDATE node_packages SET metadata = jsonb_set(metadata, '{nodes}', '5'::jsonb) WHERE name = 'bench'",
+			);
+			await agent.fail(load, "boom");
+			await status(runId, "failed");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
+			await eventually(async () =>
+				expect((await api.run(runId)).run_notification).toMatchObject({ status: "delivered" }),
+			);
+		});
+
+		it("读关注项时数据库报错也不拦住运行结束：运行照常结束，卡片照常发，只是没有「关注项」一段，错误记下来", async () => {
+			await agent.disconnect();
+			await feishu.close();
+			await cp.close();
+			await start({ publicHttpUrl: PUBLIC_URL, logger: true });
+			await publishBench(cp);
+			const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+			try {
+				const id = await scenario(benchDocument());
+				await putFocusItemsOk(api, id, [{ node_id: "load", chart: "延迟" }]);
+				const runId = await api.triggerOk(id);
+				const load = await agent.nextAssign();
+				// 指标摘要表不见了：读关注项的序列时查询报错，运行结束的事务里这条语句失败。
+				await execute("ALTER TABLE metric_series RENAME TO metric_series_gone");
+				await agent.fail(load, "boom");
+				await status(runId, "failed");
+
+				await eventually(() => expect(feishu.requests).toHaveLength(1));
+				expect(outline(cards()[0])).toEqual(["**场景**：订单压测", "**失败的节点**", "button"]);
+				await eventually(async () =>
+					expect((await api.run(runId)).run_notification).toMatchObject({ status: "delivered" }),
+				);
+				expect(errors).toHaveBeenCalledWith(
+					"run notification: reading focus items failed:",
+					expect.objectContaining({ cause: expect.objectContaining({ code: "42P01" }) }),
+				);
+			} finally {
+				errors.mockRestore();
+			}
+		});
+
+		it("在事务里读关注项（运行结束时就是这样读的）不从连接池另取连接、一条一条地读：只有一个连接的连接池上照样读出最终值", async () => {
+			const id = await scenario(benchDocument(), { trigger: "always" });
+			await putFocusItemsOk(api, id, [
+				{ node_id: "load", chart: "TPS" },
+				{ node_id: "probe", chart: "level", title: "探活" },
+			]);
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			agent.metrics(load, [["tps", at(1), 500]]);
+			await agent.succeed(load);
+			const probe = await agent.nextAssign();
+			agent.metrics(probe, [["level", at(2), 3]]);
+			await agent.sync();
+			await agent.succeed(probe);
+			await status(runId, "success");
+
+			// 唯一的连接被事务占着：事务之外再取连接，等 1 秒就报错。
+			const pool = new pg.Pool({
+				connectionString: cp.database.url,
+				max: 1,
+				connectionTimeoutMillis: 1000,
+			});
+			// 这个连接上同时在等结果的查询数：一条一条地读时不会超过 1。
+			let pending = 0;
+			let mostPending = 0;
+			pool.on("connect", (client) => {
+				const query = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
+				client.query = ((...args: unknown[]) => {
+					pending += 1;
+					mostPending = Math.max(mostPending, pending);
+					return query(...args).finally(() => {
+						pending -= 1;
+					});
+				}) as typeof client.query;
+			});
+			try {
+				const db = drizzle(pool, { schema });
+				const queries = new MetricQueries({
+					db,
+					clock,
+					metrics: new TaskMetrics({ db, clock, retention: new MetricRetention({ db, clock }) }),
+				});
+				// 点写进库之后才读得到（这里的 MetricQueries 看不到控制面内存里还没写库的点）。
+				await eventually(async () => {
+					const focus = await db.transaction((tx) =>
+						resolveRunFocus({ db: tx, clock, queries }, runId, { points: 0 }),
+					);
+					expect(focus?.items.map((item) => item.latest?.value)).toEqual([500, 3]);
+				});
+				expect(mostPending).toBe(1);
+			} finally {
+				await pool.end();
+			}
+		});
+
+		it("附加说明让卡片超过 20 KB 时先截断附加说明：关注项一段还在，内容不变", async () => {
+			const id = await scenario(benchDocument(), {
+				trigger: "always",
+				note: "\u0001".repeat(4000),
+			});
+			await putFocusItemsOk(api, id, [
+				{ node_id: "load", chart: "TPS" },
+				{ node_id: "load", chart: "延迟", title: "下单延迟" },
+			]);
+			const runId = await api.triggerOk(id);
+			const load = await agent.nextAssign();
+			agent.metrics(load, [
+				["tps", at(1), 500],
+				["p99", at(1), 9],
+			]);
+			await agent.sync();
+			await agent.succeed(load);
+			await agent.succeed(await agent.nextAssign());
+			await status(runId, "success");
+
+			await eventually(() => expect(feishu.requests).toHaveLength(1));
+			expect(Buffer.byteLength(feishu.requests[0]?.body ?? "", "utf8")).toBeLessThanOrEqual(
+				20 * 1024,
+			);
+			const note = cards()[0]?.card.body.elements[0]?.content ?? "";
+			expect(note.endsWith("…（已截断）")).toBe(true);
+			expect(note.length).toBeLessThan(4000);
+			expect(focusSection(cards()[0])?.content).toBe(
+				["**关注项**", "- TPS：500 req/s", "- 下单延迟：9 ms"].join("\n"),
+			);
 		});
 	});
 

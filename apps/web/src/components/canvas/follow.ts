@@ -5,7 +5,8 @@ import { type CanvasInsets, NODE_HEIGHT, NODE_WIDTH } from "./geometry";
 /**
  * 跟随执行（运行状态）的镜头框选，纯逻辑，单测见 follow.test.ts：镜头框住所有执行中的节点，
  * 子流程里的节点连同它的子流程区域一起框进来；框在没被悬浮控件（顶栏、右侧的检查器、工具条）占住的可见区域里，
- * 放在它的正中，缩放夹在 {@link FOLLOW_ZOOM}。
+ * 放在它的正中，缩放夹在 {@link FOLLOW_ZOOM}。卡片按布局里量出来的高度算（运行状态下卡片显示关注项、正在做的事时会长高），
+ * 子流程区域也跟着长高。
  */
 
 /** 跟随时的缩放范围：不缩得比 0.6 小（节点上的字还能读），不放得比 1 大。 */
@@ -56,38 +57,44 @@ const unionOf = (rects: readonly Rect[]): Rect => {
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-/**
- * 框住 `running`（执行中的节点 ID）的视口；画布上没有这些节点时是 null。
- * `area` 是视口四周被悬浮控件占住的宽度，检查器的宽度在 `area.right` 里；`size` 是画布容器的大小。
- */
-export function followViewport({
-	running,
-	layout,
-	size,
-	area,
-}: {
-	running: readonly string[];
-	layout: LayoutDocument;
-	size: { width: number; height: number };
-	area: CanvasInsets;
-}): Viewport | null {
+/** 跟随时要框住的东西：`running`（执行中的节点 ID）的卡片，子流程里的节点换成它的子流程区域。 */
+function framedRects(running: readonly string[], layout: LayoutDocument): Rect[] {
 	const regions = subflowRegions(layout);
-	const positions = new Map(layout.nodes.map((n) => [n.id, n.position]));
-	const framed = running.flatMap((id): Rect[] => {
+	const nodes = new Map(layout.nodes.map((n) => [n.id, n]));
+	return running.flatMap((id): Rect[] => {
 		const region = regions.find((r) => r.members.includes(id));
 		if (region) {
 			return [{ x: region.box.x, y: region.box.y, width: region.box.w, height: region.box.h }];
 		}
-		const at = positions.get(id);
-		return at ? [{ x: at.x, y: at.y, width: NODE_WIDTH, height: NODE_HEIGHT }] : [];
+		const node = nodes.get(id);
+		const at = node?.position;
+		return at ? [{ x: at.x, y: at.y, width: NODE_WIDTH, height: node.height ?? NODE_HEIGHT }] : [];
 	});
+}
+
+interface FollowFrame {
+	running: readonly string[];
+	layout: LayoutDocument;
+	size: { width: number; height: number };
+	area: CanvasInsets;
+}
+
+const visibleOf = ({ size, area }: Pick<FollowFrame, "size" | "area">) => ({
+	width: size.width - area.left - area.right,
+	height: size.height - area.top - area.bottom,
+});
+
+/**
+ * 框住 `running`（执行中的节点 ID）的视口；画布上没有这些节点时是 null。
+ * `area` 是视口四周被悬浮控件占住的宽度，检查器的宽度在 `area.right` 里；`size` 是画布容器的大小。
+ */
+export function followViewport(frame: FollowFrame): Viewport | null {
+	const framed = framedRects(frame.running, frame.layout);
 	if (framed.length === 0) return null;
 
+	const { area } = frame;
 	const bounds = unionOf(framed);
-	const visible = {
-		width: size.width - area.left - area.right,
-		height: size.height - area.top - area.bottom,
-	};
+	const visible = visibleOf(frame);
 	const zoom = clamp(
 		Math.min(
 			(visible.width - 2 * FRAME_PADDING) / bounds.width,
@@ -101,4 +108,26 @@ export function followViewport({
 		y: area.top + visible.height / 2 - (bounds.y + bounds.height / 2) * zoom,
 		zoom,
 	};
+}
+
+/**
+ * 镜头在 `viewport` 时，`running` 要框住的东西是不是都在可见区域里。框好以后卡片可能才长高（关注项读到了、
+ * 多了「正在做」一行），长出来的部分落到可见区域外时要重新框。
+ */
+export function framedInView({
+	viewport,
+	...frame
+}: FollowFrame & { viewport: Viewport }): boolean {
+	const { area } = frame;
+	const visible = visibleOf(frame);
+	return framedRects(frame.running, frame.layout).every((r) => {
+		const left = r.x * viewport.zoom + viewport.x;
+		const top = r.y * viewport.zoom + viewport.y;
+		return (
+			left >= area.left - 1 &&
+			top >= area.top - 1 &&
+			left + r.width * viewport.zoom <= area.left + visible.width + 1 &&
+			top + r.height * viewport.zoom <= area.top + visible.height + 1
+		);
+	});
 }

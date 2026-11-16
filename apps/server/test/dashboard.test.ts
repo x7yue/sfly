@@ -1,6 +1,6 @@
 // 切入点 A：控制台统计接口 GET /dashboard（#34）。HTTP API + 讲真实 gRPC 的假 Agent + 真实 PostgreSQL +
 // 手动时钟；响应按契约解析（不符合契约时测试失败）。
-import { type DashboardView, dashboardApi } from "@sfly/schema";
+import { type DashboardView, dashboardApi, runListApi } from "@sfly/schema";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
 import { eventually } from "./support/eventually.js";
@@ -194,134 +194,261 @@ describe("控制台统计", () => {
 		expect(status(sub, "s2")).toBe("pending");
 	});
 
-	it("最近失败：每个失败的链一条，给出最先失败的节点与错误类型；子流程失败单独列出（主链可能仍在运行）", async () => {
-		const agent = await connect({ name: "agent-a", slots: 4 });
-		const cleanup = await api.orchestrationWith(
-			scenario([[{ id: "entry", kind: "entry" }, echo("a"), echo("c", { always: true })]]),
-			"清理",
-		);
-		const inspect = await api.orchestrationWith(withSubflow(), "巡检");
+	describe("最近结束", () => {
+		const endedIds = async () => (await dashboard()).recent_ended.map((r) => r.id);
 
-		// 24 小时之前的失败不列出。
-		await api.triggerOk(cleanup);
-		await agent.fail(await agent.nextAssign());
-		await agent.fail(await agent.nextAssign());
-		clock.advance(25 * HOUR);
+		it("窗口按结束时间 [现在 − 24 小时, 现在]：刚好在窗口起点的算在内，早 1 毫秒的在外；还在运行的不列出", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(single("a"));
 
-		// a 超时失败后 always 节点 c 照常执行并也失败：失败节点仍是最先失败的 a。
-		const failedRun = await api.triggerOk(cleanup);
-		await agent.fail(await agent.nextAssign(), "等待响应超时", ErrorKind.TIMEOUT);
-		clock.advance(MINUTE);
-		await agent.fail(await agent.nextAssign(), "清理失败");
-		expect((await api.run(failedRun)).status).toBe("failed");
+			const before = await finishRun(agent, id, "success");
+			clock.advance(1);
+			const atStart = await finishRun(agent, id, "failed");
+			clock.advance(24 * HOUR);
+			const inside = await finishRun(agent, id, "cancelled");
+			await api.triggerOk(id);
+			await agent.nextAssign();
 
-		// 子流程的 s1 失败，主链的 a 仍在执行。
-		clock.advance(MINUTE);
-		const running = await api.triggerOk(inspect);
-		const first = await agent.nextAssign();
-		const second = await agent.nextAssign();
-		const s1 = first.nodeId === "s1" ? first : second;
-		clock.advance(1000);
-		await agent.fail(s1, "校验失败");
+			const view = await dashboard();
+			expect(view.recent_ended.map((r) => r.id)).toEqual([inside, atStart]);
+			expect(view.recent_ended).not.toContainEqual(expect.objectContaining({ id: before }));
+			expect(view.runs).toMatchObject({ running: 1, success: 0, failed: 1, cancelled: 1 });
+		});
 
-		const view = await dashboard();
-		expect(view.runs).toMatchObject({ failed: 1, failed_subflows: 1 });
-		expect(view.recent_failures).toMatchObject([
-			{
-				run_id: running,
-				orchestration_id: inspect,
+		it("按结束时间从新到旧，同一时刻结束的按运行编号倒序，最多 10 个", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(single("a"));
+
+			const distinct: string[] = [];
+			for (let i = 0; i < 9; i++) {
+				distinct.push(await finishRun(agent, id, "success"));
+				clock.advance(MINUTE);
+			}
+			const sameInstant: string[] = [];
+			for (let i = 0; i < 3; i++) sameInstant.push(await finishRun(agent, id, "success"));
+
+			const ids = await endedIds();
+			expect(ids).toHaveLength(10);
+			expect(ids).toEqual([
+				...[...sameInstant].sort().reverse(),
+				...[...distinct].reverse().slice(0, 7),
+			]);
+		});
+
+		it("成功、取消、失败的条目带运行的基本信息；只有失败的带 failure", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(single("a"), "巡检");
+			await api.saveVersion(id, single("a"));
+
+			const started = clock.now().toISOString();
+			const success = await finishRun(agent, id, "success");
+			clock.advance(MINUTE);
+			const cancelled = await finishRun(agent, id, "cancelled");
+			clock.advance(MINUTE);
+			const failed = await finishRun(agent, id, "failed");
+			const ended = clock.now().toISOString();
+
+			const { recent_ended } = await dashboard();
+			const common = {
+				orchestration_id: id,
 				orchestration_name: "巡检",
-				run_status: "running",
-				chain_id: "sub",
-				subflow: true,
-				node_id: "s1",
-				error: { kind: "node_error", message: "校验失败" },
-				failed_at: "2026-01-02T01:02:01.000Z",
-			},
-			{
-				run_id: failedRun,
-				orchestration_id: cleanup,
-				orchestration_name: "清理",
-				run_status: "failed",
+				orchestration_version: 2,
+				triggered_by: "tester",
+				ended_at: ended,
+			};
+			expect(recent_ended.map((r) => [r.id, r.status])).toEqual([
+				[failed, "failed"],
+				[cancelled, "cancelled"],
+				[success, "success"],
+			]);
+			const [f, c, s] = recent_ended;
+			expect(f).toMatchObject({ ...common, started_at: ended, failure: { node_id: "a" } });
+			expect(c).toMatchObject({
+				...common,
+				started_at: new Date(Date.parse(started) + MINUTE).toISOString(),
+				ended_at: new Date(Date.parse(started) + MINUTE).toISOString(),
+			});
+			expect(s).toMatchObject({ ...common, started_at: started, ended_at: started });
+			expect(c).not.toHaveProperty("failure");
+			expect(s).not.toHaveProperty("failure");
+		});
+
+		it("失败的运行给出最先失败的节点、所在的链、最后一次尝试的尝试号与错误；之后失败的 always 节点不算", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(
+				scenario([
+					[{ id: "entry", kind: "entry" }, echo("a", { retries: 1 }), echo("c", { always: true })],
+				]),
+				"清理",
+			);
+
+			const runId = await api.triggerOk(id);
+			await agent.fail(await agent.nextAssign(), "第一次失败");
+			const retry = await agent.nextAssign();
+			expect(retry.attempt).toBe(2);
+			clock.advance(MINUTE);
+			await agent.fail(retry, "等待响应超时", ErrorKind.TIMEOUT);
+			clock.advance(MINUTE);
+			await agent.fail(await agent.nextAssign(), "清理失败");
+
+			const { recent_ended } = await dashboard();
+			expect(recent_ended).toHaveLength(1);
+			const [ended] = recent_ended;
+			expect(ended).toMatchObject({ id: runId, status: "failed" });
+			const mainChain = (await api.run(runId)).chains[0];
+			expect(ended?.status === "failed" && ended.failure).toEqual({
+				chain_instance_id: mainChain?.id,
 				chain_id: "entry",
 				subflow: false,
 				node_id: "a",
+				attempt: 2,
 				error: { kind: "timeout", message: "等待响应超时" },
-				failed_at: "2026-01-02T01:01:00.000Z",
-			},
-		]);
+			});
+		});
+
+		it("主链成功、子流程节点失败导致运行失败时，failure 是子流程的链与节点", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(withSubflow(), "巡检");
+
+			const runId = await api.triggerOk(id);
+			const first = await agent.nextAssign();
+			const second = await agent.nextAssign();
+			const [a, s1] = first.nodeId === "a" ? [first, second] : [second, first];
+			await agent.succeed(a);
+			await agent.fail(s1, "校验失败");
+			expect((await api.run(runId)).status).toBe("failed");
+
+			const subChain = (await api.run(runId)).chains.find((c) => c.chain_id === "sub");
+			const [ended] = (await dashboard()).recent_ended;
+			expect(ended?.status === "failed" && ended.failure).toEqual({
+				chain_instance_id: subChain?.id,
+				chain_id: "sub",
+				subflow: true,
+				subflow_name: "sub",
+				node_id: "s1",
+				attempt: 1,
+				error: { kind: "node_error", message: "校验失败" },
+			});
+		});
+
+		it("多条链上的节点失败时，取最先结束的；同一时刻结束的取靠前的链", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(withSubflow(), "巡检");
+			const failBoth = async (order: "sub-first" | "same-instant") => {
+				const runId = await api.triggerOk(id);
+				const first = await agent.nextAssign();
+				const second = await agent.nextAssign();
+				const [a, s1] = first.nodeId === "a" ? [first, second] : [second, first];
+				await agent.fail(s1, "子流程失败");
+				if (order === "sub-first") clock.advance(MINUTE);
+				await agent.fail(a, "主链失败");
+				return runId;
+			};
+			const subFirst = await failBoth("sub-first");
+			clock.advance(MINUTE);
+			const sameInstant = await failBoth("same-instant");
+
+			const { recent_ended } = await dashboard();
+			const failureOf = (runId: string) => {
+				const ended = recent_ended.find((r) => r.id === runId);
+				return ended?.status === "failed" ? ended.failure : undefined;
+			};
+			expect(failureOf(subFirst)).toMatchObject({ chain_id: "sub", node_id: "s1" });
+			expect(failureOf(sameInstant)).toMatchObject({ chain_id: "entry", node_id: "a" });
+		});
+
+		it("子流程失败时主链还在运行：运行不列入最近结束，失败的子流程仍计入 failed_subflows", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(withSubflow(), "巡检");
+
+			// 24 小时之前失败的子流程不计入。
+			await api.triggerOk(id);
+			const [x, y] = [await agent.nextAssign(), await agent.nextAssign()];
+			await agent.fail(x.nodeId === "s1" ? x : y);
+			await agent.fail(x.nodeId === "s1" ? y : x);
+			clock.advance(25 * HOUR);
+
+			await api.triggerOk(id);
+			const [p, q] = [await agent.nextAssign(), await agent.nextAssign()];
+			await agent.fail(p.nodeId === "s1" ? p : q);
+
+			const view = await dashboard();
+			expect(view.runs).toMatchObject({ running: 1, failed: 0, failed_subflows: 1 });
+			expect(view.recent_ended).toEqual([]);
+		});
+
+		it("失败的错误信息里的 secret 参数值已打码", async () => {
+			const agent = await connect({ name: "agent-a", slots: 4 });
+			const id = await api.orchestrationWith(
+				scenario([
+					[
+						{
+							id: "entry",
+							kind: "entry",
+							params: [{ name: "token", type: "string", secret: true, required: true }],
+						},
+						echo("a"),
+					],
+				]),
+			);
+			await api.triggerOk(id, { token: "s3cr3t" });
+			await agent.fail(await agent.nextAssign(), "登录失败：token=s3cr3t");
+
+			const [ended] = (await dashboard()).recent_ended;
+			expect(ended?.status === "failed" && ended.failure?.error).toEqual({
+				kind: "node_error",
+				message: "登录失败：token=******",
+			});
+		});
 	});
 
-	it("最近失败的错误信息里的 secret 参数值已打码", async () => {
-		const agent = await connect({ name: "agent-a", slots: 4 });
-		const id = await api.orchestrationWith(
-			scenario([
-				[
-					{
-						id: "entry",
-						kind: "entry",
-						params: [{ name: "token", type: "string", secret: true, required: true }],
-					},
-					echo("a"),
-				],
+	it("进行中的节点与运行列表一致；子流程实例指向派发它的链实例与异步任务节点，主链为 null", async () => {
+		const a = await connect({ name: "agent-a", slots: 1 });
+		const id = await api.orchestrationWith(withSubflow(), "巡检");
+		const runId = await api.triggerOk(id);
+		// 只有一个槽位：main 链的 a 与子流程的 s1 一个执行中、一个排队。
+		await a.nextAssign();
+
+		const { running_runs } = await dashboard();
+		const [run] = running_runs;
+		const listed = runListApi.list.response.parse(await (await cp.fetch("/runs")).json()).runs;
+		expect(run?.id).toBe(runId);
+		expect(run?.active_nodes).toEqual(listed.find((r) => r.id === runId)?.active_nodes);
+		expect(run?.active_nodes.map((n) => [n.status, n.agent, n.attempt])).toEqual(
+			expect.arrayContaining([
+				["running", "agent-a", 1],
+				["queued", "agent-a", 1],
 			]),
 		);
-		await api.triggerOk(id, { token: "s3cr3t" });
-		await agent.fail(await agent.nextAssign(), "登录失败：token=s3cr3t");
+		expect(run?.active_nodes).toHaveLength(2);
 
-		const [failure] = (await dashboard()).recent_failures;
-		expect(failure?.error).toEqual({ kind: "node_error", message: "登录失败：token=******" });
+		const [main, sub] = run?.chains ?? [];
+		expect(main).toMatchObject({ parent_chain_instance_id: null, async_node_id: null });
+		expect(sub).toMatchObject({
+			chain_id: "sub",
+			parent_chain_instance_id: main?.id,
+			async_node_id: "spawn",
+		});
 	});
 
-	it("Agent：在线与离线数量、在线 Agent 的槽位合计与占用、正在安装节点包的 Agent", async () => {
+	it("Agent：在线与离线数量、在线 Agent 的槽位合计与占用；响应里没有 Agent 清单", async () => {
 		const a = await connect({ name: "agent-a", slots: 2 });
-		const b = await connect({ name: "agent-b", slots: 3 });
+		await connect({ name: "agent-b", slots: 3 });
 		await (await connect({ name: "agent-c", slots: 4 })).disconnect();
 		const id = await api.orchestrationWith(single("a"));
 		await api.triggerOk(id);
 		await a.nextAssign();
-		b.send({
-			case: "install",
-			value: { package: "stub", version: "1.0.0", state: 1, taskId: "t-1", installedPackages: [] },
-		});
 
 		await eventually(async () =>
-			expect((await dashboard()).agents.list.find((x) => x.name === "agent-b")?.installing).toEqual(
-				{ package: "stub", version: "1.0.0" },
-			),
+			expect((await dashboard()).agents).toEqual({
+				online: 2,
+				offline: 1,
+				slots: 5,
+				used_slots: 1,
+			}),
 		);
-		expect((await dashboard()).agents).toEqual({
-			online: 2,
-			offline: 1,
-			slots: 5,
-			used_slots: 1,
-			list: [
-				{
-					name: "agent-a",
-					status: "online",
-					slots: 2,
-					used_slots: 1,
-					installing: null,
-					last_seen_at: "2026-01-01T00:00:00.000Z",
-				},
-				{
-					name: "agent-b",
-					status: "online",
-					slots: 3,
-					used_slots: 0,
-					installing: { package: "stub", version: "1.0.0" },
-					last_seen_at: "2026-01-01T00:00:00.000Z",
-				},
-				{
-					name: "agent-c",
-					status: "offline",
-					slots: 4,
-					used_slots: 0,
-					installing: null,
-					last_seen_at: "2026-01-01T00:00:00.000Z",
-				},
-			],
-		});
+		const raw = (await (await cp.fetch("/dashboard")).json()) as { agents: object };
+		expect(raw.agents).not.toHaveProperty("list");
 	});
 });
 

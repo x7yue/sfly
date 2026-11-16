@@ -27,7 +27,12 @@ export function ActivityLine({ id, activity }: { id: string; activity: CurrentAc
 			<span className="min-w-0 truncate">
 				{activity.kind === "action" ? activity.name : activity.message}
 			</span>
-			{activity.kind === "action" && <Elapsed since={activity.startedAt} />}
+			{activity.kind === "action" && (
+				<Elapsed
+					since={activity.startedAt}
+					className="ml-auto flex-none pl-1.5 font-mono text-fg-3"
+				/>
+			)}
 		</div>
 	);
 }

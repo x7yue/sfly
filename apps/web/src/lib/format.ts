@@ -101,14 +101,11 @@ export function formatClockMs(time: number | string): string {
 	return `${formatClock(d.getTime())}.${String(d.getMilliseconds()).padStart(3, "0")}`;
 }
 
-/** 指标值：`1.2M`、`12.3k`、`812`、`3.14`。 */
-export function formatMetric(value: number): string {
-	const abs = Math.abs(value);
-	if (abs >= 1e6) return `${(value / 1e6).toFixed(abs >= 1e7 ? 0 : 1)}M`;
-	if (abs >= 1e4) return `${(value / 1e3).toFixed(abs >= 1e5 ? 0 : 1)}k`;
-	if (Number.isInteger(value)) return String(value);
-	return abs >= 100 ? value.toFixed(0) : abs >= 10 ? value.toFixed(1) : value.toFixed(2);
-}
+/** 指标值：`1.2M`、`12.3k`、`812`、`3.14`；和运行通知的卡片共用同一个定义。 */
+export { formatMetric } from "@sfly/schema";
+
+/** 整数加千位分隔：`1,284,819`（计数）。 */
+export const formatInteger = (n: number): string => Math.round(n).toLocaleString("en-US");
 
 /** 一个值在界面上怎么写：字符串原样，其余按 JSON（预设参数的值、保存的值）。 */
 export const valueText = (value: unknown): string =>

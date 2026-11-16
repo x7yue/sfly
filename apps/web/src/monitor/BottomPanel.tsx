@@ -13,26 +13,34 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { DownloadIcon, XIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ActionFilter, NO_FILTER } from "#/actions/action-details";
+import { actionCount } from "#/actions/action-table";
+import { useActionSummary } from "#/actions/use-task-actions";
 import { NodeName, runNodeName } from "#/components/node-name";
 import { ResizeHandle } from "#/components/ResizeHandle";
 import { useShortcut } from "#/components/shortcuts";
 import { nodeStatusView, StatusPill } from "#/components/status";
 import { apiQuery, apiUrl } from "#/lib/api";
-import { LOG_LEVEL_LABEL, MESSAGE } from "#/lib/copy";
+import { ACTION, attemptLabel, LOG_LEVEL_LABEL, MESSAGE, TERM } from "#/lib/copy";
 import {
 	formatBytes,
 	formatClock,
 	formatDuration,
 	formatFullDateTime,
+	formatInteger,
+	formatMetric,
 	TIME_NOT_RECORDED,
 } from "#/lib/format";
 import { NODE_STATUS } from "#/lib/node-status";
+import { STATUS_POLL_MS } from "#/lib/polling";
 import { shortcutText } from "#/lib/shortcuts";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Truncate } from "@/components/ui/truncate";
+import { ActionsTab } from "./ActionsTab";
 import { attemptAgentTimes } from "./attempt-clock";
+import { Hint } from "./Hint";
 import { LogList, type LogReveal } from "./LogList";
 import type { LoadedLine } from "./log-buffer";
 import { LOG_TIME_KINDS, type LogTimeKind, setLogTimeKind, useLogTimeKind } from "./log-time-kind";
@@ -65,6 +73,7 @@ import { type LogMoment, taskLogDownloadPath, useTaskLogs } from "./use-task-log
 
 const TABS: [PanelTab, string][] = [
 	["logs", "日志"],
+	["actions", TERM.action],
 	["attempts", "尝试"],
 	["io", "输入输出"],
 	["artifacts", "产物"],
@@ -97,7 +106,7 @@ const ERROR_KIND_LABEL: Record<string, string> = {
 };
 
 /**
- * 底部面板（原型 bpBody）：日志、尝试、输入输出、产物四个页签，范围跟随时间线上选中的节点
+ * 底部面板（原型 bpBody）：日志、动作、尝试、输入输出、产物五个页签，范围跟随时间线上选中的节点
  * （共享状态 selected）；没有选中节点时跟随图表工作区的节点筛选（共享状态 filter），两者都没有时是全部节点：
  * 日志页签把范围内节点的日志合并显示（#222、#224），点来源节点名切到这个节点的单节点日志。
  * 节点有多次尝试时可以切换尝试（默认最近一次）。上沿可以拖动调整高度，双击恢复默认（默认高度、按内容自动收起）。
@@ -126,6 +135,9 @@ export function BottomPanel({
 	const panel = useRef<HTMLElement>(null);
 	const node = findNode(run, selected);
 	const [attemptId, setAttemptId] = useState<string | null>(null);
+	/** 「动作」页的筛选条件，记在这里：切到日志再回来还在；换了尝试（任务）就回到不筛选。 */
+	const [actionFilterOf, setActionFilterOf] = useState<{ taskId: string; filter: ActionFilter }>();
+	const logTab = useRef<HTMLButtonElement>(null);
 	const refKey = selected ? `${selected.chainInstanceId}:${selected.nodeId}` : "";
 	/** 从合并视图点来源节点名选中节点时，要看的那一次尝试：换节点时默认是最近一次，这里例外。 */
 	const pendingAttempt = useRef<string | null>(null);
@@ -175,6 +187,12 @@ export function BottomPanel({
 	const collapsed = panelOpen === null ? empty : !panelOpen;
 	const effective = collapsed ? COLLAPSED_HEIGHT : (height ?? DEFAULT_HEIGHT);
 	const grows = !collapsed && height === null;
+	// 「动作」页签上的个数：看着「动作」页时由它的推送更新，没在看、任务还在执行时定时重新读。
+	const actionSummary = useActionSummary(
+		attempt?.task_id,
+		attempt?.status === "running" && !(tab === "actions" && !collapsed) && STATUS_POLL_MS,
+	).data;
+	const actionsShown = actionSummary && actionSummary.total > 0 ? actionCount(actionSummary) : null;
 	return (
 		<section
 			ref={panel}
@@ -210,9 +228,20 @@ export function BottomPanel({
 							<TabsTrigger
 								key={value}
 								value={value}
+								ref={value === "logs" ? logTab : undefined}
+								aria-label={
+									value === "actions" && actionsShown !== null
+										? `${TERM.action}，共 ${formatInteger(actionsShown)} 个`
+										: undefined
+								}
 								className="relative -mb-0 h-full gap-0 border-b-0 px-3 pt-0 pb-0 text-fg-3 data-active:border-transparent data-active:text-fg-1 data-active:after:absolute data-active:after:right-2 data-active:after:bottom-0 data-active:after:left-2 data-active:after:h-0.5 data-active:after:bg-primary"
 							>
 								{label}
+								{value === "actions" && actionsShown !== null && (
+									<span aria-hidden className="ml-1 font-mono text-2xs text-fg-3">
+										{formatMetric(actionsShown)}
+									</span>
+								)}
 							</TabsTrigger>
 						))}
 					</TabsList>
@@ -268,7 +297,7 @@ export function BottomPanel({
 							</>
 						)}
 						<Button variant="ghost" size="sm" onClick={() => actions.setPanelOpen(collapsed)}>
-							{collapsed ? "展开" : "收起"}
+							{collapsed ? ACTION.expand : ACTION.collapse}
 						</Button>
 					</div>
 				</div>
@@ -307,6 +336,27 @@ export function BottomPanel({
 									onEmpty={setLogsEmpty}
 									onOrigin={showOrigin}
 								/>
+							))}
+						{tab === "actions" &&
+							(attempt && node ? (
+								<ActionsTab
+									key={attempt.task_id}
+									node={node}
+									attempt={attempt}
+									day={run.started_at}
+									filter={
+										actionFilterOf?.taskId === attempt.task_id ? actionFilterOf.filter : NO_FILTER
+									}
+									onFilter={(filter) => setActionFilterOf({ taskId: attempt.task_id, filter })}
+									onLocate={(at) => {
+										if (!selected) return;
+										actions.locateLog(selected, at);
+										// 「动作」页被日志换掉，焦点不留在已经消失的按钮上：交给日志页签。
+										logTab.current?.focus();
+									}}
+								/>
+							) : (
+								<Hint>{node ? noAttempt(node) : "在时间线上选中一个节点，查看它的动作。"}</Hint>
 							))}
 						{tab === "attempts" && (
 							<AttemptsTab run={run} node={node} selected={selected} filter={filter} />
@@ -373,10 +423,6 @@ function ScopeLabel({
 }
 
 const noAttempt = (node: NodeRunView) => `${runNodeName(node)} ${NODE_STATUS[node.status].notRun}`;
-
-function Hint({ children }: { children: ReactNode }) {
-	return <p className="m-0 p-4 text-sm text-fg-3">{children}</p>;
-}
 
 function Segmented({
 	label,
@@ -606,7 +652,7 @@ function LogsView<L extends LogLineView>({
 					{logs.expired
 						? MESSAGE.logsExpired
 						: filtered || scoped || zoom
-							? "没有符合条件的日志。"
+							? `${MESSAGE.noMatch("日志")}。`
 							: noOutput}
 				</Hint>
 			) : (
@@ -686,7 +732,7 @@ function AttemptsTab({
 				return (
 					<article
 						key={a.task_id}
-						aria-label={`${runNodeName(n)} 第 ${a.attempt} 次尝试`}
+						aria-label={`${runNodeName(n)} ${attemptLabel(a.attempt)}`}
 						className={cn(
 							"rounded-lg border bg-bg p-2.5 text-xs",
 							a.error ? "border-danger-line" : "border-border-soft",

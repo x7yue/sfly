@@ -53,7 +53,10 @@ function ActivityRow({ activity }: { activity: CurrentActivity }) {
 				<>
 					<span className="flex-none text-fg-3">正在</span>
 					<Truncate className="text-fg-1">{activity.name}</Truncate>
-					<Elapsed since={activity.startedAt} />
+					<Elapsed
+						since={activity.startedAt}
+						className="ml-auto flex-none pl-1.5 font-mono text-fg-3"
+					/>
 				</>
 			) : (
 				<Truncate className="text-fg-1">{activity.message}</Truncate>

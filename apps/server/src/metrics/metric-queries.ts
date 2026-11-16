@@ -25,6 +25,7 @@ import {
 	runs,
 	tasks,
 } from "../db/schema.js";
+import type { Tx } from "../engine/step.js";
 import { withDefaultCharts } from "../packages/default-charts.js";
 import { isUuid } from "../util/uuid.js";
 import { nodeTypeOf } from "./node-types.js";
@@ -238,6 +239,7 @@ export class MetricQueries {
 	 * 含内存里尚未写库的点；每个序列另给最后一个点的精确时间与值（不随降采样变粗）。给了 `recent` 时，每个序列另给
 	 * 最近这么多个点的时间（关注项估算采样间隔用，与时间范围无关）。
 	 * 没有任何数据、也没有声明标签键的指标给出一个空序列；声明了标签键的没有序列。已过保留期（expired）时序列没有桶。
+	 * 在事务里读时 `db` 传这个事务：查询都走它，不从连接池另取连接。
 	 */
 	async taskSeries(
 		taskId: string,
@@ -252,6 +254,7 @@ export class MetricQueries {
 			/** 每个序列另给最近这么多个点的时间；不给时不读。 */
 			recent?: number;
 		},
+		db: Db | Tx = this.deps.db,
 	): Promise<TaskSeriesRead> {
 		const { declared, names, expired } = query;
 		const labeled = new Set(declared.filter(isLabeled).map((m) => m.name));
@@ -264,7 +267,7 @@ export class MetricQueries {
 		);
 		const known = expired
 			? { series: [], first: undefined, last: undefined }
-			: await this.#known(taskId, [...names], unwritten);
+			: await this.#known(db, taskId, [...names], unwritten);
 		// 每个指标的全部序列；没有任何数据、也没有声明标签键的指标给出一个空序列（图表照常画出空图）。
 		const list = names.flatMap((name) => {
 			const found = known.series.filter((s) => s.name === name);
@@ -288,12 +291,19 @@ export class MetricQueries {
 			};
 		}
 		const width = Math.max(1, Math.ceil((to - from + 1) / query.points));
-		const [{ buckets, ends }, recent] = await Promise.all([
-			this.#bucketize(taskId, [...names], unwritten, from, to, width),
+		const { buckets, ends } = await this.#bucketize(
+			db,
+			taskId,
+			[...names],
+			unwritten,
+			from,
+			to,
+			width,
+		);
+		const recent =
 			query.recent === undefined
 				? new Map<string, number[]>()
-				: this.#recent(taskId, list, unwritten, query.recent),
-		]);
+				: await this.#recent(db, taskId, list, unwritten, query.recent);
 		return {
 			from,
 			to,
@@ -314,6 +324,7 @@ export class MetricQueries {
 	 * 同一个点可能内存和库里都有（当前段周期写库），按时间去重：同一序列里点的控制面时间严格递增。
 	 */
 	async #recent(
+		db: Db | Tx,
 		taskId: string,
 		list: ReadonlyArray<{ name: string; key: string }>,
 		unwritten: Map<string, UnwrittenSeries>,
@@ -335,7 +346,7 @@ export class MetricQueries {
 			...new Set(list.filter((s) => (times.get(s.key)?.size ?? 0) < n).map((s) => s.name)),
 		];
 		if (short.length > 0) {
-			const result = await this.deps.db.execute<TailRow>(sql`
+			const result = await db.execute<TailRow>(sql`
 				select s.metric, s.labels, extract(epoch from g.start_at)::float8 as start_s,
 					array_send(g.offsets) as offsets
 				from metric_series s
@@ -365,6 +376,7 @@ export class MetricQueries {
 	 * 没有数据时首尾时间为 undefined。
 	 */
 	async #known(
+		db: Db | Tx,
 		taskId: string,
 		names: string[],
 		unwritten: Map<string, UnwrittenSeries>,
@@ -377,7 +389,7 @@ export class MetricQueries {
 		let last = Number.NEGATIVE_INFINITY;
 		const series = new Map<string, { name: string; labels: Labels; key: string }>();
 		if (names.length > 0) {
-			const rows = await this.deps.db
+			const rows = await db
 				.select({
 					metric: metricSeries.metric,
 					labels: metricSeries.labels,
@@ -410,6 +422,7 @@ export class MetricQueries {
 
 	/** 这些指标每个序列（键是 {@link seriesKey}）的非空桶，以及最后一个点。 */
 	async #bucketize(
+		db: Db | Tx,
 		taskId: string,
 		names: string[],
 		unwritten: Map<string, UnwrittenSeries>,
@@ -428,7 +441,7 @@ export class MetricQueries {
 			and end_at < ${memBound}::timestamptz
 			and floor((extract(epoch from start_at)::float8 - ${from}::float8) / ${width}::float8)
 				= floor((extract(epoch from end_at)::float8 - ${from}::float8) / ${width}::float8))`;
-		const result = await this.deps.db.execute<SegmentRow>(sql`
+		const result = await db.execute<SegmentRow>(sql`
 			select metric, labels, extract(epoch from start_at)::float8 as start_s, extract(epoch from end_at)::float8 as end_s,
 				points, min, max, avg, last,
 				case when ${summarized} then null else array_send(offsets) end as offsets,

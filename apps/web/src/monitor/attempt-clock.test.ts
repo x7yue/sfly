@@ -1,6 +1,6 @@
 import type { ClockOffsetView } from "@sfly/schema";
 import { describe, expect, it } from "vitest";
-import { attemptAgentTimes } from "./attempt-clock";
+import { attemptAgentTimes, attemptClockNote } from "./attempt-clock";
 
 const DAY = 86_400_000;
 const offset = (offset_ms: number, measured_at: string): ClockOffsetView => ({
@@ -63,5 +63,44 @@ describe("尝试的 Agent 时间", () => {
 				end_clock_offset: null,
 			}),
 		).toMatchObject({ start: null });
+	});
+});
+
+describe("表头写的时钟偏差", () => {
+	it("两头都有记录：开始和结束各写一句，一致的写一致", () => {
+		expect(
+			attemptClockNote({
+				start_clock_offset: offset(613 * DAY, "2025-03-07T00:00:01.000Z"),
+				end_clock_offset: offset(-3_000, "2025-03-07T00:01:01.000Z"),
+			}),
+		).toBe("开始时比控制面快 613 天，结束时慢 3 秒");
+		expect(
+			attemptClockNote({
+				start_clock_offset: offset(500, "2025-03-07T00:00:00.000Z"),
+				end_clock_offset: offset(90_000, "2025-03-07T00:01:00.000Z"),
+			}),
+		).toBe("开始时一致，结束时比控制面快 1 分钟");
+	});
+
+	it("都不到阈值时照样写出来，不当作没有记录", () => {
+		expect(
+			attemptClockNote({
+				start_clock_offset: offset(1_000, "2025-03-07T00:00:00.000Z"),
+				end_clock_offset: offset(-1_999, "2025-03-07T00:01:00.000Z"),
+			}),
+		).toBe("开始时一致，结束时一致");
+	});
+
+	it("还没结束的只有开始的偏差，不写结束", () => {
+		expect(
+			attemptClockNote({
+				start_clock_offset: offset(-7_200_000, "2025-03-07T02:00:00.000Z"),
+				end_clock_offset: null,
+			}),
+		).toBe("开始时比控制面慢 2 小时");
+	});
+
+	it("旧版本 Agent、旧任务没有记录偏差：写未记录", () => {
+		expect(attemptClockNote({ start_clock_offset: null, end_clock_offset: null })).toBe("未记录");
 	});
 });

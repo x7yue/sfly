@@ -7,7 +7,7 @@ import { EmptyState, QueryView, TableSkeleton } from "#/components/feedback/stat
 import { useListNavigation } from "#/components/list-navigation";
 import { Page, PageHeader, Panel, SectionHeading } from "#/components/page";
 import { apiQuery } from "#/lib/api";
-import { MESSAGE, PAGE } from "#/lib/copy";
+import { MESSAGE, PAGE, TERM } from "#/lib/copy";
 import { LIVE_POLL_MS } from "#/lib/polling";
 import { useNow } from "#/lib/use-now";
 import { useSearchInput } from "#/lib/use-search-input";
@@ -71,7 +71,7 @@ function RunsPage() {
 						{filtered ? (
 							<EmptyState
 								icon={<SearchIcon />}
-								title="没有符合条件的运行"
+								title={MESSAGE.noMatch(TERM.run)}
 								description="换一个状态、场景或关键字试试。"
 							/>
 						) : (

@@ -20,17 +20,23 @@ export const runFocusQuery = (
 });
 
 /**
- * 一次运行的关注项读数（`GET /runs/:id/focus`）：页面读它的唯一入口，不要再自己拼指标查询（目前是运行监控的概览和页头的「数据更新于」，两处参数相同，共用一个查询）。
+ * 一次运行的关注项读数（`GET /runs/:id/focus`）：页面读它的唯一入口，不要再自己拼指标查询（运行监控的概览和页头的「数据更新于」，
+ * 两处参数相同，共用一个查询；编排画布的运行状态：节点卡片和检查器）。
  * 运行中每 `LIVE_POLL_MS` 重新读取一次；运行结束时再读一次，拿到最终值，之后不再轮询。
- * `points` 是每个序列降采样的点数，只要最新值的地方（读数、槽位）传 0。
+ * `points` 是每个序列降采样的点数，只要最新值的地方（读数、槽位）传 0。`enabled` 为 false 时不请求（还不知道是哪个运行）。
  */
 export function useRunFocus(
 	runId: string,
-	{ live, points }: { live: boolean; points?: number | undefined },
+	{
+		live,
+		points,
+		enabled = true,
+	}: { live: boolean; points?: number | undefined; enabled?: boolean },
 ) {
-	const query = useQuery(
-		runFocusQuery(runId, { points, refetchInterval: live ? LIVE_POLL_MS : false }),
-	);
+	const query = useQuery({
+		...runFocusQuery(runId, { points, refetchInterval: live ? LIVE_POLL_MS : false }),
+		enabled,
+	});
 	const wasLive = useRef(live);
 	const { refetch } = query;
 	useEffect(() => {

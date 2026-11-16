@@ -1,10 +1,10 @@
 import type { RunFocus, RunFocusItem, RunningTaskView } from "@sfly/schema";
 import { activityLabel, type CurrentActivity, currentActivity } from "#/actions/current-activity";
 import { anomalyText } from "#/focus/focus-format";
-import { topFocusItems } from "#/focus/top-items";
+import { focusPreview } from "#/focus/focus-preview";
 import { FOCUS, TERM } from "#/lib/copy";
 
-/** 槽位格里这个任务的关注项：前两项（有异常的排前）和没显示的个数。 */
+/** 槽位格里这个任务的关注项：前两项（读数里有异常的在最前）和没显示的个数。 */
 export interface SlotFocus {
 	/** `primary`：场景没有设置关注项，显示的是这个节点的主指标。 */
 	mode: RunFocus["mode"];
@@ -45,11 +45,12 @@ export function slotContent(task: RunningTaskView, focus: RunFocus | undefined):
 			? [`${FOCUS.attentionCount(reasons.length)}：${reasons.join("；")}`]
 			: []),
 	];
+	const { shown, more } = focusPreview(mine);
 	return {
 		activity,
 		focus:
 			focus && mine.length > 0
-				? { mode: focus.mode, ...topFocusItems(mine), generatedAt: focus.generated_at }
+				? { mode: focus.mode, shown, more, generatedAt: focus.generated_at }
 				: null,
 		summary: parts.length > 0 ? parts.join("，") : undefined,
 	};

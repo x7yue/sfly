@@ -3,6 +3,7 @@ import { type ChartView, type FocusItemView, NodeTypeMetadata } from "@sfly/sche
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { orchestrationVersions } from "../db/schema.js";
+import type { Tx } from "../engine/step.js";
 import { nodeTypeOf } from "../metrics/node-types.js";
 import { type NodeTypeView, withDefaultCharts } from "../packages/default-charts.js";
 import type { FocusItem } from "./focus-list.js";
@@ -33,7 +34,7 @@ async function headDocument(db: Db, { id, headVersion }: HeadRef) {
  * 不一定是运行当时的定义。
  */
 export async function declaredNodeType(
-	db: Db,
+	db: Db | Tx,
 	document: OrchestrationDocument,
 	nodeId: string,
 	agentName?: string | null,

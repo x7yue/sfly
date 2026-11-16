@@ -1,5 +1,30 @@
 // 由 HTTP 契约（packages/schema/src/http）生成，不要手改：pnpm gen。
 
+/** 实时推送的一批新写入或刚结束的明细（`events` 的 `actions` 事件）。同一个 ID 再出现时，以后到的为准。 */
+export interface ActionChunk {
+	actions: ActionDetailView[];
+}
+
+/** 一条明细：一个动作或一个标记。 */
+export type ActionDetailView = ActionMarkDetail | ActionRecordDetail;
+
+/** 一个标记的明细：只有一个时刻。 */
+export interface ActionMarkDetail {
+	/** 任务内的 ID（动作和标记共用一个序列）。 */
+	id: number;
+	/** 父动作的 ID；最外层为 null。父动作不一定有明细。 */
+	parent: number | null;
+	/** 层级：最外层是 0。 */
+	depth: number;
+	name: string;
+	/** 说明字段（值都是文字），按写入的先后；动作的是开始时给的加上之后补充的。 */
+	fields: Record<string, string>;
+	/** 动作开始、标记发生的控制面时间。 */
+	started_at: Timestamp;
+	agent_started_at: Timestamp;
+	kind: "mark";
+}
+
 /** 一种名称（动作和标记的名称在一起）的计数。 */
 export interface ActionNameCount {
 	name: string;
@@ -14,6 +39,71 @@ export interface ActionNameCount {
 	agent_capped_at: Timestamp | null;
 }
 
+/**
+ * 一个任务（一次尝试）的一页明细，按开始时间从新到旧（开始时间相同时 ID 大的在前）。
+ *
+ * 一页的范围：从这一页最早的那条明细（读到最早一页时是任务的开头）到游标（最新一页时是现在），`count_only`
+ * 是起点（`from`）落在这个范围里的只计数的段，所以一直往前翻，每一段正好出现一次。
+ */
+export interface ActionPage {
+	task_id: string;
+	actions: ActionDetailView[];
+	/** 读更早的一页：下一次请求的 before；没有更早的明细时为 null。 */
+	before: string | null;
+	/**
+	 * 起点落在这一页范围里的只计数的段，从新到旧。只看失败时，`name_limit` 的段只在合计也满了时才有：合计没满时，
+	 * 超过每种名称上限之后失败的动作仍有明细。
+	 */
+	count_only: CountOnlyPeriod[];
+	/**
+	 * 读这一页那一刻明细的修订号：实时推送（`events`）的 `after` 用它，之后写入或结束的明细都由推送送达。
+	 * 最新一页的这个值才有用。
+	 */
+	rev: number;
+	/** 运行已超过保留期、明细已被清理（此时是空页）。 */
+	expired: boolean;
+}
+
+export interface ActionPageQuery {
+	/** 读这个游标之前（更早开始）的明细；不给时读最新的一页。 */
+	before?: string;
+	limit?: number;
+	/** 只要这个名称的。 */
+	name?: string;
+	/** true：只要失败的动作（没有标记）。 */
+	failed?: string;
+}
+
+/**
+ * 一个动作的明细。还在做时结果和结束都为 null；任务结束（成功、失败、取消、`agent_lost`）时还没结束的记为
+ * `unfinished`，结束时间取任务的结束时间。
+ */
+export interface ActionRecordDetail {
+	/** 任务内的 ID（动作和标记共用一个序列）。 */
+	id: number;
+	/** 父动作的 ID；最外层为 null。父动作不一定有明细。 */
+	parent: number | null;
+	/** 层级：最外层是 0。 */
+	depth: number;
+	name: string;
+	/** 说明字段（值都是文字），按写入的先后；动作的是开始时给的加上之后补充的。 */
+	fields: Record<string, string>;
+	/** 动作开始、标记发生的控制面时间。 */
+	started_at: Timestamp;
+	agent_started_at: Timestamp;
+	kind: "action";
+	/** 结果；还在做时为 null。 */
+	result: ActionResult | null;
+	/** 结束的控制面时间；还在做时为 null。 */
+	ended_at: Timestamp | null;
+	/** 结束的 Agent 时间；还在做时，以及任务结束时还没结束、取不到 Agent 时间时为 null。 */
+	agent_ended_at: Timestamp | null;
+	/** 耗时（毫秒）：按单调时钟算，不受 Agent 系统时间改动的影响；记为未结束的按控制面时间算；还在做时为 null。 */
+	duration_ms: number | null;
+	/** 失败的原因（最多 4096 个字符）；其他结果为 null。 */
+	reason: string | null;
+}
+
 /** 动作的结果：成功、失败、未结束（任务结束时还没结束，或因为取消离开 `with`）。 */
 export type ActionResult = "success" | "failed" | "unfinished";
 
@@ -24,6 +114,8 @@ export type ActionResult = "success" | "failed" | "unfinished";
 export interface ActionSummaryView {
 	/** 动作和标记合计的个数。 */
 	total: number;
+	/** 其中标记的个数：动作的个数是 total 减去它。 */
+	marks: number;
 	/** 有明细的个数（最多 100000）。 */
 	reported: number;
 	/** 有没有超出上限：有动作或标记只计数、没有明细。 */
@@ -310,6 +402,27 @@ export interface ClockOffsetView {
 }
 
 /**
+ * 只计数的一段：这段时间里有动作或标记只计数、没有明细。
+ *
+ * - `name_limit`：这个名称超过了每种名称的上限（5 万个），失败的动作仍有明细，不在 `count` 里；
+ * - `total_limit`：合计超过了上限（10 万个），之后所有名称都只计数，失败的也是；
+ * - `control_plane`：控制面兜底丢弃（被改过的 SDK 写出了超过上限的明细）。
+ *
+ * 每种名称、每种原因至多一段；算法见 docs/ARCHITECTURE.md §6.3。
+ */
+export interface CountOnlyPeriod {
+	name: string;
+	reason: "name_limit" | "total_limit" | "control_plane";
+	/** 从什么时候起（控制面时间、Agent 时间）：第一个没有明细的动作或标记的时刻。 */
+	from: Timestamp;
+	agent_from: Timestamp;
+	/** 到什么时候：任务已结束时是任务的结束时间；还在执行时为 null（至今）。 */
+	to: Timestamp | null;
+	/** 这一段里没有明细的个数。 */
+	count: number;
+}
+
+/**
  * 执行中的任务此刻在做的事：最外层（第 0 层）、开始得最早的那个正在做的动作（运行视图的尝试、
  * Agent 列表里正在执行的任务都带它）。没有正在做的最外层动作、或者任务不在执行中时为 null。
  */
@@ -319,28 +432,12 @@ export interface CurrentAction {
 	started_at: Timestamp;
 }
 
-export interface DashboardAgent {
-	name: string;
-	status: "online" | "offline";
-	slots: number;
-	/** 占用的槽位数（派发中与执行中的任务）。 */
-	used_slots: number;
-	/** 正在安装的节点包；没有在安装时为 null。 */
-	installing: {
-		package: string;
-		version: string;
-	} | null;
-	last_seen_at: Timestamp;
-}
-
 export interface DashboardAgentStats {
 	online: number;
 	offline: number;
 	/** 在线 Agent 的槽位合计与占用。 */
 	slots: number;
 	used_slots: number;
-	/** 全部注册过的 Agent，按名称排序。 */
-	list: DashboardAgent[];
 }
 
 /** 运行中的链实例：节点按链上的顺序，状态与运行视图一致（pending、queued、running、success…）。 */
@@ -354,6 +451,10 @@ export interface DashboardChain {
 	 * 取自运行绑定的场景版本；主链不给。
 	 */
 	subflow_name?: string;
+	/** 触发这个子流程实例的异步任务节点所在的链实例；主链为 null。 */
+	parent_chain_instance_id: string | null;
+	/** 触发这个子流程实例的异步任务节点；主链为 null。 */
+	async_node_id: string | null;
 	status: string;
 	nodes: {
 		node_id: string;
@@ -363,13 +464,33 @@ export interface DashboardChain {
 	}[];
 }
 
-/** 最近失败的一条：一个失败的链实例（主链失败即运行失败；子流程失败单独一条）。 */
-export interface DashboardFailure {
-	run_id: string;
+/**
+ * 最近结束的一个运行。失败的带上最先出问题的节点；运行的任务记录里找不到失败的节点时（数据不完整，正常运行不会出现）
+ * failure 为 null。
+ */
+export type DashboardEndedRun = {
+	id: string;
 	orchestration_id: string;
 	orchestration_name: string;
-	/** 所在运行的当前状态（子流程失败时主链可能还在运行）。 */
-	run_status: string;
+	orchestration_version: number;
+	triggered_by: string;
+	started_at: Timestamp;
+	ended_at: Timestamp;
+	status: "failed";
+	failure: DashboardRunFailure | null;
+} | {
+	id: string;
+	orchestration_id: string;
+	orchestration_name: string;
+	orchestration_version: number;
+	triggered_by: string;
+	started_at: Timestamp;
+	ended_at: Timestamp;
+	status: "success" | "cancelled";
+};
+
+/** 失败的运行最先出问题的地方：跨所有链，最后一次尝试失败、最先结束的节点和它所在的链。 */
+export interface DashboardRunFailure {
 	chain_instance_id: string;
 	chain_id: string;
 	subflow: boolean;
@@ -378,16 +499,16 @@ export interface DashboardFailure {
 	 * 取自运行绑定的场景版本；主链不给。
 	 */
 	subflow_name?: string;
-	/** 最先失败的节点（最后一次尝试失败）；没有失败节点时（例如校验失败）为 null。 */
-	node_id: string | null;
+	node_id: string;
 	/** 失败节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name?: string;
+	/** 失败节点最后一次尝试的尝试号。 */
+	attempt: number;
+	/** 这次尝试的错误，其中的 secret 值已打码。 */
 	error: {
 		kind: string;
 		message: string;
 	} | null;
-	/** 链实例结束的时间。 */
-	failed_at: Timestamp;
 }
 
 export interface DashboardRunStats {
@@ -415,7 +536,10 @@ export interface DashboardRunningRun {
 	started_at: Timestamp;
 	/** 已请求取消、正在清理（运行状态仍是 running）。 */
 	cancelling: boolean;
+	/** 主链在前，子流程按深度、开始时间。 */
 	chains: DashboardChain[];
+	/** 进行中的节点（与运行列表的 `active_nodes` 相同）。 */
+	active_nodes: RunListActiveNode[];
 }
 
 /**
@@ -462,8 +586,9 @@ export interface DashboardView {
 	runs: DashboardRunStats;
 	/** 正在运行的运行，按开始时间从新到旧。 */
 	running_runs: DashboardRunningRun[];
-	/** 窗口内失败的链实例，按失败时间从新到旧（最多 10 条）。 */
-	recent_failures: DashboardFailure[];
+	/** 窗口内结束的运行，按结束时间从新到旧（最多 10 个）。 */
+	recent_ended: DashboardEndedRun[];
+	/** Agent 的在线数与槽位合计；每台 Agent 的状态与正在执行的任务用 Agent 列表接口（agentsApi.list）。 */
 	agents: DashboardAgentStats;
 	setup: DashboardSetup;
 }
@@ -1667,6 +1792,14 @@ export interface RunListActiveNode {
 	/** 节点的显示名称（子流程入口节点是子流程名称），取自运行绑定的场景版本；没有时不给。 */
 	display_name?: string;
 	status: string;
+	/** 最后一次尝试的尝试号（从 1 开始）。 */
+	attempt: number;
+	/** 任务所在的 Agent（排队中的任务是它在等的 Agent）；不在 Agent 上执行的节点（等待节点、停止子流程节点）为 null。 */
+	agent: string | null;
+	/** 最后一次尝试开始的时间（等待节点是开始等待的时间）；还没开始执行（排队中、准备中）时为 null。 */
+	started_at: Timestamp | null;
+	/** 等待节点（定时 / Sleep）的唤醒时间；其他节点为 null。 */
+	wake_at: Timestamp | null;
 	/** 最新进度；没有上报过时为 null。 */
 	progress: {
 		current: number;

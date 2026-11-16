@@ -93,6 +93,7 @@ describe("动作摘要", () => {
 		const { task } = await start(agent);
 		expect(await summary(task.taskId)).toEqual({
 			total: 0,
+			marks: 0,
 			reported: 0,
 			capped: false,
 			capped_at: null,
@@ -116,6 +117,7 @@ describe("动作摘要", () => {
 		};
 		agent.actionSummary(task, {
 			total: 6,
+			marks: 1,
 			reported: 4,
 			...{ capped_ts: T0 + 3_000, capped_mono: agent.stamp(T0 + 3_000).mono },
 			names: [
@@ -160,6 +162,7 @@ describe("动作摘要", () => {
 		};
 		expect(await summary(task.taskId)).toEqual({
 			total: 6,
+			marks: 1,
 			reported: 4,
 			capped: true,
 			capped_at: iso(T0 + 3_000),
