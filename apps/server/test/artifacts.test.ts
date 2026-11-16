@@ -4,9 +4,13 @@
 
 import { createHash } from "node:crypto";
 import { request as httpRequest } from "node:http";
+import { connect } from "node:net";
+import { setTimeout as sleep } from "node:timers/promises";
 import { artifactsApi } from "@sfly/schema";
+import { Agent } from "undici";
 import { afterEach, describe, expect, it } from "vitest";
 import { ApiClient } from "./support/api-client.js";
+import { eventually } from "./support/eventually.js";
 import { type AssignedTask, FakeAgent, TaskStatus } from "./support/fake-agent.js";
 import { publishPackage } from "./support/package-archive.js";
 import { startTestControlPlane, type TestControlPlane } from "./support/test-control-plane.js";
@@ -311,6 +315,60 @@ describe("产物", () => {
 			expect(await res.json(), name).toMatchObject({ error: { code: "not_found" } });
 		}
 	});
+});
+
+/** 这个地址是否拒绝新连接（控制面关闭时 app.close() 已经开始）。 */
+const refusesConnections = (httpUrl: string) =>
+	new Promise<boolean>((resolve) => {
+		const { hostname, port } = new URL(httpUrl);
+		const socket = connect(Number(port), hostname);
+		socket.once("connect", () => {
+			socket.destroy();
+			resolve(false);
+		});
+		socket.once("error", () => resolve(true));
+	});
+
+describe("控制面关闭时还在下载的产物", () => {
+	// app.close() 只在开始时关掉当时空闲的 keep-alive 连接。还在发送的响应（产物下载）发完后连接成了空闲连接，
+	// 没人关的话要等客户端或服务端的 keep-alive 超时（约 70 秒），控制面关闭一直等它。
+	it("下载发完后连接随即关闭，控制面关闭不等 keep-alive 超时", async () => {
+		const cp = await startTestControlPlane();
+		const client = new Agent();
+		let closing: Promise<void> | undefined;
+		try {
+			await publishPackage(cp, "stub", "1.0.0", { echo: ["text"] });
+			const agent = await FakeAgent.connect(cp.grpcUrl, { name: "agent-a" });
+			const api = new ApiClient(cp);
+			await api.triggerOk(await api.orchestrationWith(DOC));
+			const task = await agent.nextAssign();
+			// 比内核和客户端的缓冲区都大：客户端不读响应体，控制面就发不完。
+			const big = Buffer.alloc(32 * 1024 * 1024, 7);
+			const put = await fetch(`${task.artifactUploadUrl}big.bin`, {
+				method: "PUT",
+				headers: { "content-type": "application/octet-stream" },
+				body: big,
+			});
+			expect(put.status).toBe(201);
+			await agent.disconnect();
+
+			const res = await fetch(`${task.artifactUploadUrl}big.bin`, {
+				dispatcher: client,
+			} as RequestInit);
+			expect(res.status).toBe(200);
+			closing = cp.close();
+			await eventually(async () => expect(await refusesConnections(cp.httpUrl)).toBe(true));
+			expect((await res.arrayBuffer()).byteLength).toBe(big.length);
+			const outcome = await Promise.race([
+				closing.then(() => "closed"),
+				sleep(10_000).then(() => "still waiting"),
+			]);
+			expect(outcome).toBe("closed");
+		} finally {
+			await client.destroy();
+			await (closing ?? cp.close());
+		}
+	}, 30_000);
 });
 
 describe("节点输出上限", () => {

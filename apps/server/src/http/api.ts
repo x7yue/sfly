@@ -138,6 +138,18 @@ export function buildHttpApi({
 }: HttpApiDeps): FastifyInstance {
 	// 浏览器经同源的 /api/* 访问 API 与 SSE（ADR 0006），根路径上的 API 供 Agent、CLI 使用。
 	const app = Fastify({ logger, rewriteUrl: (req) => stripApiPrefix(req.url ?? "/") });
+	// app.close() 只在开始时关掉当时空闲的 keep-alive 连接。当时还没发完的响应（例如产物下载）发完后，连接留在
+	// keep-alive 里，要等客户端或服务端的 keep-alive 超时（约 70 秒）才断开，app.close() 一直等它。
+	// 关闭开始之后发完的响应随即关掉连接，和 Connection: close 的响应一样。
+	let closing = false;
+	app.addHook("preClose", (done) => {
+		closing = true;
+		done();
+	});
+	app.addHook("onResponse", (request, _reply, done) => {
+		if (closing) request.raw.socket.destroySoon();
+		done();
+	});
 	// 所有路由都按 @sfly/schema 的 HTTP 契约注册（ADR 0007）：不在契约里的路由、没注册的接口都让启动失败。
 	guardHttpContract(app, httpContract);
 	// 每个响应都带控制面时间，页面据此修正浏览器时间（ADR 0018）；SSE 另有心跳事件。
