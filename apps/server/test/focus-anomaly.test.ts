@@ -191,6 +191,41 @@ describe("关注项的异常", () => {
 		expect(await anomaly(runId)).toBeNull();
 	});
 
+	it("没有新数据另给 stale_since，和报哪一种异常无关：先打 WARN 再不上报时异常是 log，stale_since 照样是最后一个点的时间", async () => {
+		await start();
+		const runId = await trigger([{ node_id: "load", chart: "延迟" }]);
+		const task = await agent.nextAssign();
+		await p99(task, range(0, 90, 10));
+		setClock(100_000);
+		await log(task, 1, LogLevel.WARN, "慢");
+		expect(await item(runId)).toMatchObject({ anomaly: { kind: "log" }, stale_since: null });
+
+		setClock(150_001);
+		expect(await item(runId)).toMatchObject({
+			anomaly: { kind: "log" },
+			last_at: iso(90_000),
+			stale_since: iso(90_000),
+		});
+
+		await p99(task, [150]);
+		expect(await item(runId)).toMatchObject({ anomaly: { kind: "log" }, stale_since: null });
+	});
+
+	it("stale_since：一个点都没有时从开始执行算起；准备中、已结束时为 null", async () => {
+		await start();
+		const runId = await trigger([{ node_id: "load", chart: "延迟" }]);
+		const task = await agent.nextAssign({ start: false });
+		setClock(10 * MIN);
+		expect((await item(runId)).stale_since).toBeNull();
+
+		await agent.started(task);
+		setClock(10 * MIN + 30_001);
+		expect((await item(runId)).stale_since).toBe(iso(10 * MIN));
+
+		await agent.succeed(task);
+		expect((await item(runId)).stale_since).toBeNull();
+	});
+
 	it("stale：6 倍采样间隔不到 30 秒时按 30 秒判断；点不够两个时没有采样间隔，也按 30 秒", async () => {
 		await start();
 		const runId = await trigger([
@@ -355,6 +390,7 @@ describe("关注项的异常", () => {
 			["延迟", null, "stale"],
 			["吞吐", "chart_missing", null],
 		]);
+		expect((await focus(runId)).items.map((i) => i.stale_since)).toEqual([iso(0), null]);
 		await log(task, 1, LogLevel.WARN, "慢");
 		expect(await kinds()).toEqual([
 			["吞吐", "chart_missing", "log"],
