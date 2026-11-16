@@ -26,6 +26,7 @@ from action_nodes import (
     many_names,
     nesting,
     outcomes,
+    outlived,
     summary_while_running,
     truncation,
     wait_in_action,
@@ -177,6 +178,18 @@ def test_asyncio_tasks_nest_automatically_and_new_threads_start_at_the_top() -> 
     assert named["线程里"].fields == {"线程": "t"}
     [attached] = [a for a in result.actions if a.name == "线程里指定了父动作"]
     assert attached.parent == named["保持"].id and attached.depth == 1
+
+
+def test_a_task_that_outlives_its_with_does_not_nest_under_the_ended_action() -> None:
+    result = run_node(outlived)
+
+    assert result.status == "success", result.error
+    named = by_name(result)
+    # with 里起的任务复制了上下文；内层结束之后开始的动作挂到还没结束的外层下，外层也结束之后就在最外层。
+    assert named["内层结束之后"].parent == named["外层"].id
+    assert named["内层结束之后"].depth == 1
+    assert named["外层结束之后"].parent is None
+    assert named["外层结束之后"].depth == 0
 
 
 def by_name_unique(result: Execution, names: list[str]) -> dict[str, ActionRecord]:

@@ -95,6 +95,30 @@ def concurrency(ctx: Context) -> None:
 
 
 @node(outputs=[])
+def outlived(ctx: Context) -> None:
+    """with 里起的 asyncio 任务比 with 活得久：之后开始的动作挂到最内层、还没结束的动作下。"""
+
+    async def later(ready: asyncio.Event, name: str) -> None:
+        await ready.wait()
+        with ctx.action(name):
+            pass
+
+    async def main() -> None:
+        inner_done = asyncio.Event()
+        outer_done = asyncio.Event()
+        with ctx.action("外层"):
+            with ctx.action("内层"):
+                first = asyncio.create_task(later(inner_done, "内层结束之后"))
+                second = asyncio.create_task(later(outer_done, "外层结束之后"))
+            inner_done.set()
+            await first
+        outer_done.set()
+        await second
+
+    asyncio.run(main())
+
+
+@node(outputs=[])
 def annotate(ctx: Context) -> None:
     """`note` 补充字段、与开始时的字段合计不超过 8 个、同名覆盖。"""
     with ctx.action("下单", 订单="1001", 价格="9.9") as a:
