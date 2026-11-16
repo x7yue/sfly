@@ -3,9 +3,9 @@ import {
 	type DashboardEndedRun,
 	type DashboardRunFailure,
 	type DashboardView,
-	failuresInOrder,
 	isOnAgentStatus,
 	type RunFocusItem,
+	runViewFailures,
 } from "@sfly/schema";
 import { and, count, desc, eq, gt, gte, isNotNull, lte } from "drizzle-orm";
 import type { AgentHub } from "../agents/agent-hub.js";
@@ -158,12 +158,12 @@ async function failedSubflowCount(db: Db, from: Date, to: Date): Promise<number>
 }
 
 /**
- * 失败的运行最先出问题的地方：第一个失败的节点（@sfly/schema 的 `failuresInOrder`，运行监控的页头、运行记录、运行通知
+ * 失败的运行最先出问题的地方：第一个失败的节点（@sfly/schema 的 `runViewFailures`，运行监控的页头、运行记录、运行通知
  * 用同一份顺序）；之后失败的 always 清理节点不算。错误信息取自运行视图，其中的 secret 值已打码。
  * 链失败就一定有节点最终失败（引擎按同一个条件判断），找不到时是数据不完整，返回 null。
  */
 function firstFailure(view: RunView): DashboardRunFailure | null {
-	const [first] = failuresInOrder(view.chains, lastEndedAt);
+	const [first] = runViewFailures(view.chains);
 	if (!first) return null;
 	const { chain, node } = first;
 	const attempt = node.attempts.at(-1);
@@ -178,12 +178,6 @@ function firstFailure(view: RunView): DashboardRunFailure | null {
 		error: attempt?.error ?? null,
 	};
 }
-
-/** 节点最后一次尝试的结束时间（毫秒）；没有时为 null。 */
-const lastEndedAt = (node: RunView["chains"][number]["nodes"][number]) => {
-	const ended = node.attempts.at(-1)?.ended_at;
-	return ended ? Date.parse(ended) : null;
-};
 
 /**
  * 失败的运行在结束时的关注项读数：场景现在的关注项（`resolveRunFocus`，和 `GET /runs/:id/focus?points=0` 同一份规则）的

@@ -153,6 +153,7 @@ export class TaskActions {
 			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
 			.where(eq(tasks.id, taskId));
 		// 任务已经不在执行时不再更新（和明细一样，之后才到的只可能是断线补发）：摘要停在任务结束前的最后一份。
+		// 这里先看一眼省掉打码，写入前在事务里再确认一次。
 		if (!task || task.agentName !== agentName || task.purgedAt !== null || !isDoing(task.status))
 			return;
 		const { summary, current } = actionSummaryView(
@@ -160,13 +161,24 @@ export class TaskActions {
 			controlPlaneTime,
 			await this.deps.logs.runSecrets(task.runId),
 		);
-		await this.deps.db
-			.insert(taskActionSummaries)
-			.values({ taskId, summary, currentAction: current })
-			.onConflictDoUpdate({
-				target: taskActionSummaries.taskId,
-				set: { summary, currentAction: current },
-			});
+		// 和明细一样在事务里锁住任务行再确认还在执行：和结束任务的写入互斥，任务结束之后不会再写进一份。
+		const stored = await this.deps.db.transaction(async (tx) => {
+			const [locked] = await tx
+				.select({ status: tasks.status })
+				.from(tasks)
+				.where(eq(tasks.id, taskId))
+				.for("update");
+			if (!locked || !isDoing(locked.status)) return false;
+			await tx
+				.insert(taskActionSummaries)
+				.values({ taskId, summary, currentAction: current })
+				.onConflictDoUpdate({
+					target: taskActionSummaries.taskId,
+					set: { summary, currentAction: current },
+				});
+			return true;
+		});
+		if (!stored) return;
 		this.#published.publish(taskId, { kind: "summary", summary });
 		if (!sameCurrentAction(task.current, current)) {
 			this.deps.runChanges.publish(task.runId, task.runId);
@@ -426,9 +438,11 @@ export class TaskActions {
 		const unsubscribe = this.#published.subscribe(taskId, (event) =>
 			serial(() => {
 				if (!state) return;
-				if (event.kind === "summary" || event.kind === "capped") {
-					if (event.kind === "summary") summary = event.summary;
-					else actionCapped = true;
+				if (event.kind === "summary") {
+					summary = event.summary;
+					sendSummary(state.status);
+				} else if (event.kind === "capped") {
+					actionCapped = true;
 					sendSummary(state.status);
 				} else if (!expired && event.rev > sent) {
 					sent = event.rev;

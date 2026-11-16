@@ -1,3 +1,5 @@
+import type { ChainRunView } from "./http/runs.js";
+
 /**
  * 运行里最终失败的节点，按失败的先后（GLOSSARY「第一个失败的节点」）：节点状态是失败（最后一次尝试失败）的节点，
  * 最后一次尝试结束得早的在前；同一时刻结束的按链实例的顺序（`chains` 的顺序：层级、开始时间、ID，与运行视图相同），
@@ -24,3 +26,10 @@ export function failuresInOrder<
 		.sort((a, b) => (a.at === b.at ? 0 : a.at - b.at))
 		.map(({ chain, node }) => ({ chain, node }));
 }
+
+/** 运行视图里最终失败的节点，按失败的先后（{@link failuresInOrder}，结束时间取节点最后一次尝试的 `ended_at`）。 */
+export const runViewFailures = (chains: readonly ChainRunView[]) =>
+	failuresInOrder(chains, (node) => {
+		const ended = node.attempts.at(-1)?.ended_at;
+		return ended ? Date.parse(ended) : null;
+	});

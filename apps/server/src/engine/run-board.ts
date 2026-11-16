@@ -1,5 +1,6 @@
 import { nodeNameBeforeId, subflowName } from "@sfly/orchestration";
 import {
+	failuresInOrder,
 	isActiveStatus,
 	type NodeStatus,
 	type OrchestrationDocument,
@@ -220,3 +221,10 @@ export function activeNodesOf(chains: readonly BoardChain[]): RunListActiveNode[
 		}),
 	);
 }
+
+/**
+ * 运行板上最终失败的节点，按失败的先后（@sfly/schema 的 `failuresInOrder`，结束时间取节点最后一次尝试的结束时间）：
+ * 第一项是「第一个失败的节点」。运行列表和运行通知用它。
+ */
+export const boardFailures = (chains: readonly BoardChain[]) =>
+	failuresInOrder(chains, (node) => node.attempts.at(-1)?.endedAt?.getTime() ?? null);

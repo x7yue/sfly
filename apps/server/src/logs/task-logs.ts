@@ -2,7 +2,7 @@ import { appendFile, mkdir, open, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { type AgentMessage, type LogBatch, LogLevel, LogSource, type Progress } from "@sfly/proto";
 import type { OrchestrationDocument, TaskProgressView } from "@sfly/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { recordableAgentTimeMs } from "../agents/agent-clock.js";
 import type { AgentConnection } from "../agents/agent-hub.js";
 import type { Clock } from "../clock.js";
@@ -534,7 +534,10 @@ export class TaskLogs {
 			.from(runs)
 			.innerJoin(orchestrationVersions, eq(orchestrationVersions.id, runs.orchestrationVersionId))
 			.where(eq(runs.id, runId));
-		return row ? runSecretValues(this.deps.db, runId, row.document) : [];
+		if (!row) return [];
+		return (
+			(await runSecretValues(this.deps.db, [{ runId, document: row.document }])).get(runId) ?? []
+		);
 	}
 
 	async #load(taskId: string): Promise<TaskState | undefined> {
@@ -606,17 +609,37 @@ function formatBytes(n: number): string {
 }
 
 /**
- * 一次运行此刻的全部 secret 值（{@link secretValues}）：`document` 是运行绑定的版本，链实例可能在运行期间新增，所以每次现查。
- * `db` 可以是事务（运行通知读关注项时）。写日志、动作时打码（{@link TaskLogs.runSecrets}）和关注项的异常原因都用它。
+ * 这些运行此刻的全部 secret 值（{@link secretValues}），按运行 ID：`document` 是运行绑定的版本，链实例可能在运行期间新增，
+ * 所以每次现查，整批一条查询。`db` 可以是事务（运行通知读关注项时）。写日志、动作时打码（{@link TaskLogs.runSecrets}）、
+ * 关注项的异常原因、Agent 列表的进度和正在做的动作都用它，和运行视图同一个算法。
  */
 export async function runSecretValues(
 	db: Db | Tx,
-	runId: string,
-	document: OrchestrationDocument,
-): Promise<string[]> {
+	items: ReadonlyArray<{ runId: string; document: OrchestrationDocument }>,
+): Promise<Map<string, string[]>> {
+	const secrets = new Map<string, string[]>();
+	if (items.length === 0) return secrets;
 	const chains = await db
-		.select({ chainId: chainInstances.chainId, params: chainInstances.params })
+		.select({
+			runId: chainInstances.runId,
+			chainId: chainInstances.chainId,
+			params: chainInstances.params,
+		})
 		.from(chainInstances)
-		.where(eq(chainInstances.runId, runId));
-	return secretValues(document, chains);
+		.where(
+			inArray(
+				chainInstances.runId,
+				items.map((r) => r.runId),
+			),
+		);
+	for (const { runId, document } of items) {
+		secrets.set(
+			runId,
+			secretValues(
+				document,
+				chains.filter((c) => c.runId === runId),
+			),
+		);
+	}
+	return secrets;
 }

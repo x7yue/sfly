@@ -4,7 +4,7 @@ import type { ComponentProps, ComponentType } from "react";
 import { FOCUS } from "#/lib/copy";
 import { Truncate } from "@/components/ui/truncate";
 import { AnomalyMark } from "./AnomalyNote";
-import { FocusValue } from "./FocusValue";
+import { FocusValue, isStaleValue } from "./FocusValue";
 import {
 	anomalyText,
 	focusItemTitle,
@@ -35,8 +35,6 @@ interface Look {
 	Foot: ComponentType<CellProps> | null;
 }
 
-/** 没有新数据（`stale_since`，和报哪一种异常无关）：值退成次要文字色，和 {@link FocusValue} 一样。 */
-const isStale = (item: RunFocusItem) => item.stale_since !== null;
 
 /** 画布节点卡片的底部：行高 20px，字号随画布的语义缩放（容器给）。 */
 const CARD: Look = {
@@ -51,7 +49,7 @@ const CARD: Look = {
 	Value: ({ item }) => (
 		<>
 			<span
-				className={cn("ml-auto flex-none font-mono", isStale(item) ? "text-fg-2" : "text-fg-1")}
+				className={cn("ml-auto flex-none font-mono", isStaleValue(item) ? "text-fg-2" : "text-fg-1")}
 			>
 				{focusValueText(item)}
 			</span>

@@ -4,7 +4,6 @@
  */
 import { chainLabel, FEISHU_BODY_LIMIT_LABEL, nameWithId } from "@sfly/orchestration";
 import {
-	failuresInOrder,
 	focusChartMissing,
 	focusLatestSeriesName,
 	focusValueText,
@@ -14,7 +13,7 @@ import {
 } from "@sfly/schema";
 import { eq } from "drizzle-orm";
 import { orchestrations, type RunStatus, runs } from "../db/schema.js";
-import { loadRunBoards } from "../engine/run-board.js";
+import { boardFailures, loadRunBoards } from "../engine/run-board.js";
 import type { RunRow, Step } from "../engine/step.js";
 import { type RunFocusDeps, resolveRunFocus } from "../focus/run-focus.js";
 import { runListPreset } from "../presets/run-preset.js";
@@ -174,7 +173,7 @@ function runNotificationCard(facts: RunNotificationFacts) {
 }
 
 /**
- * 运行里最终失败的节点，按失败的先后（@sfly/schema 的 `failuresInOrder`：同一时刻的按链实例、再按节点在链上的顺序），
+ * 运行里最终失败的节点，按失败的先后（`boardFailures`：同一时刻的按链实例、再按节点在链上的顺序），
  * 第一项和控制台、运行监控、运行记录的「第一个失败的节点」相同。在写入运行最终状态的事务里读（`step.tx`）。
  */
 async function failedNodes(
@@ -186,15 +185,13 @@ async function failedNodes(
 		{ id: run.id, versionId: run.orchestrationVersionId, document },
 	]);
 	const chains = boards.get(run.id) ?? [];
-	return failuresInOrder(chains, (n) => n.attempts.at(-1)?.endedAt?.getTime() ?? null).map(
-		({ chain, node }) => ({
-			chain: chainLabel(
-				{ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.subflow_name },
-				chain.id,
-			),
-			node: nameWithId(node.node_id, node.display_name),
-		}),
-	);
+	return boardFailures(chains).map(({ chain, node }) => ({
+		chain: chainLabel(
+			{ chain_id: chain.chain_id, subflow: chain.depth > 0, name: chain.subflow_name },
+			chain.id,
+		),
+		node: nameWithId(node.node_id, node.display_name),
+	}));
 }
 
 /**

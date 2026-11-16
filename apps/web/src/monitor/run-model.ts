@@ -2,7 +2,6 @@ import { UNNAMED_SUBFLOW_LABEL } from "@sfly/orchestration";
 import {
 	type AttemptView,
 	type ChainRunView,
-	failuresInOrder,
 	type LogOrigin,
 	type NodeRunView,
 	type OrchestrationDocument,
@@ -10,6 +9,7 @@ import {
 	type ProgressEvent,
 	type RunLogScope,
 	type RunView,
+	runViewFailures,
 	type TaskProgressView,
 } from "@sfly/schema";
 import { type RunNodeName, runNodeName } from "#/components/node-name";
@@ -140,14 +140,16 @@ export function initialSelection(run: RunView, linkedNode?: string): NodeRef | n
 }
 
 /**
- * 运行里最终失败的节点，按失败的先后（@sfly/schema 的 `failuresInOrder`，链实例按运行视图的顺序）：第一项是
+ * 运行里最终失败的节点，按失败的先后（@sfly/schema 的 `runViewFailures`，链实例按运行视图的顺序）：第一项是
  * 「第一个失败的节点」，控制台、运行记录、运行通知用同一份顺序。
  */
 function runFailures(run: RunView) {
-	return failuresInOrder(run.chains, (node) => {
-		const ended = node.attempts.at(-1)?.ended_at;
-		return ended ? Date.parse(ended) : null;
-	}).map(({ chain, node }) => ({ chain, node, chainInstanceId: chain.id, nodeId: node.node_id }));
+	return runViewFailures(run.chains).map(({ chain, node }) => ({
+		chain,
+		node,
+		chainInstanceId: chain.id,
+		nodeId: node.node_id,
+	}));
 }
 
 /** 运行抽屉的摘要要看最近日志的节点：{@link initialSelection} 选中的节点，其次是还在进行的节点（运行抽屉没有「不选」）。 */

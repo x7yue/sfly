@@ -145,7 +145,7 @@ export async function resolveRunFocus(
 						.filter(([id, at]) => isOnAgentStatus(at.node.status) && isPackage(id))
 						.map(([id]) => id),
 				);
-	const secrets = await runSecretValues(db, runId, document);
+	const secrets = (await runSecretValues(db, [{ runId, document }])).get(runId) ?? [];
 	const sources = await sourcesOf(db, document, wanted, placed, secrets);
 
 	const readings = mode === "focus" ? focusReadings(authored, sources) : primaryReadings(sources);

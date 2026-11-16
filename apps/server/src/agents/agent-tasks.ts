@@ -13,8 +13,7 @@ import {
 } from "../db/schema.js";
 import { nodeNameIn, subflowNameOf } from "../engine/run-board.js";
 import type { Tx } from "../engine/step.js";
-import { secretValues } from "../logs/secrets.js";
-import { taskProgressView } from "../logs/task-logs.js";
+import { runSecretValues, taskProgressView } from "../logs/task-logs.js";
 
 /** 占着槽位或排队等 Agent 的任务视图，连同它所属的 Agent（任务都已指定 Agent）。 */
 export interface AgentTasks {
@@ -71,11 +70,14 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 	);
 
 	// 占着槽位的任务的进度说明和正在做的动作按运行此刻的 secret 值打码（和运行视图同一个口径）。
-	const secretsOf = await runSecretsOf(
-		db,
-		rows.filter((r) => r.status !== "queued"),
-		documents,
+	const occupied = new Map(
+		rows.filter((r) => r.status !== "queued").map((r) => [r.runId, documents.get(r.versionId)]),
 	);
+	const secrets = await runSecretValues(
+		db,
+		[...occupied].flatMap(([runId, document]) => (document ? [{ runId, document }] : [])),
+	);
+	const secretsOf = (runId: string) => secrets.get(runId) ?? [];
 
 	/** 没有 Agent（不会出现）或版本文档（外键保证有）的任务不列。 */
 	const identity = (row: (typeof rows)[number]) => {
@@ -129,32 +131,4 @@ export async function loadAgentTasks(db: Db | Tx, where: SQL | undefined): Promi
 			return [{ agent: found.agent, view }];
 		}),
 	};
-}
-
-/**
- * 这些任务所在的运行此刻的 secret 值（{@link secretValues}，和运行视图、日志同一个算法）：链实例按运行整批读一次。
- * 返回按运行 ID 取的函数。
- */
-async function runSecretsOf(
-	db: Db | Tx,
-	rows: ReadonlyArray<{ runId: string; versionId: string }>,
-	documents: ReadonlyMap<string, OrchestrationDocument>,
-): Promise<(runId: string) => string[]> {
-	const versionOf = new Map(rows.map((r) => [r.runId, r.versionId]));
-	if (versionOf.size === 0) return () => [];
-	const chains = await db
-		.select({
-			runId: chainInstances.runId,
-			chainId: chainInstances.chainId,
-			params: chainInstances.params,
-		})
-		.from(chainInstances)
-		.where(inArray(chainInstances.runId, [...versionOf.keys()]));
-	const secrets = new Map<string, string[]>();
-	for (const [runId, versionId] of versionOf) {
-		const document = documents.get(versionId);
-		const own = chains.filter((c) => c.runId === runId);
-		secrets.set(runId, document ? secretValues(document, own) : []);
-	}
-	return (runId) => secrets.get(runId) ?? [];
 }
