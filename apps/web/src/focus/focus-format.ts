@@ -1,7 +1,12 @@
-import { focusLatestSeriesName, focusValueText, type RunFocusItem } from "@sfly/schema";
+import {
+	focusLatestSeriesName,
+	focusValueText,
+	type RunFocus,
+	type RunFocusItem,
+} from "@sfly/schema";
 import { runNodeName } from "#/components/node-name";
 import { nodeStatusView } from "#/components/status";
-import { FINAL_VALUE_LABEL, FOCUS, LOG_LEVEL_LABEL, noDataLabel } from "#/lib/copy";
+import { FINAL_VALUE_LABEL, FOCUS, LOG_LEVEL_LABEL, noDataLabel, TERM } from "#/lib/copy";
 import { formatClock, formatDuration } from "#/lib/format";
 
 /** 距离某一刻多久：`2s`、`2m 10s`、`1h 02m`（秒取整；一分钟以内不写小数）。 */
@@ -9,6 +14,15 @@ export function formatAgo(ms: number): string {
 	const seconds = Math.max(0, Math.floor(ms / 1000));
 	return seconds < 60 ? `${seconds}s` : formatDuration(seconds * 1000);
 }
+
+/**
+ * 一项在紧凑处（Agent 槽位格、画布卡片可访问名称里的主指标）的名称：主指标前面写明是主指标（关注项的名称是作者起的
+ * 或图表标题，没有这个问题）。
+ */
+export const focusItemTitle = (
+	item: Pick<RunFocusItem, "title">,
+	mode: RunFocus["mode"],
+): string => (mode === "primary" ? `${TERM.primaryMetric} ${item.title}` : item.title);
 
 /** 来源节点：「显示名称（节点 ID）」，没有显示名称时只写节点 ID（docs/SEMANTICS.md §1.4）。 */
 export const sourceNodeName = (item: Pick<RunFocusItem, "node_id" | "display_name">): string =>

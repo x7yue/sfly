@@ -36,3 +36,16 @@ export function nodeFocusItems<T extends Pick<RunFocusItem, "node_id">>(
 ): T[] {
 	return focus?.mode === "focus" ? focus.items.filter((item) => item.node_id === nodeId) : [];
 }
+
+/**
+ * 场景没设关注项时，读数里这个节点的主指标（只有准备中、执行中的节点有）；设了关注项时没有。异常和关注项的一样由控制面判断，
+ * 画布卡片据此在主指标旁画三角。
+ */
+export function nodePrimaryItem<T extends Pick<RunFocusItem, "node_id">>(
+	focus: { mode: RunFocus["mode"]; items: readonly T[] } | undefined,
+	nodeId: string,
+): T | undefined {
+	return focus?.mode === "primary"
+		? focus.items.find((item) => item.node_id === nodeId)
+		: undefined;
+}

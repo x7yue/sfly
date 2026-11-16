@@ -38,7 +38,10 @@ test("切换到运行状态：叠加最近一次运行的节点状态，进入�
 	await expect(nodeCard(page, "fetch")).toHaveAccessibleName("节点 fetch，HTTP 检查 成功");
 	await expect(nodeCard(page, "verify")).toHaveAttribute("data-run", "running");
 	await expect(nodeCard(page, "verify")).toContainText("执行中");
-	await expect(nodeCard(page, "verify")).toHaveAccessibleName(/^节点 verify，.+ 执行中$/);
+	// 第 2 次尝试的重试是异常：场景没设关注项时，主指标的异常也写进名称。
+	await expect(nodeCard(page, "verify")).toHaveAccessibleName(
+		/^节点 verify，.+ 执行中 1 项需要注意：主指标 level 重试（尝试 2）· \d\d:\d\d:\d\d$/,
+	);
 	await expect(nodeCard(page, "cleanup")).toHaveAttribute("data-run", "pending");
 	await expect(edge(page, "spawn", "verify")).toHaveAttribute("data-run", "live");
 	await expect(edge(page, "fetch", "spawn")).not.toHaveAttribute("data-run");
