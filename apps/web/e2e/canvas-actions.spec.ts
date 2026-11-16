@@ -99,7 +99,7 @@ test("检查器：正在做按层级缩进，动作区有每种名称的计数�
 	const fails = area.getByRole("list", { name: "最近的失败" });
 	await expect(fails.getByRole("listitem")).toHaveCount(5);
 	await expect(area.getByRole("heading", { name: /最近的失败/ })).toContainText("17");
-	await expect(area).toContainText("共 17 个，只列出最近 5 个");
+	await expect(area).toContainText("还有 12 个");
 	const first = fails.getByRole("listitem").nth(0);
 	await expect(first).toContainText(authored({ ...orderFields(20), 订单号: "P-1284808" }));
 	await expect(first).toContainText("3ms");

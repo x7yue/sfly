@@ -10,7 +10,7 @@ import { DocPageLink } from "#/components/doc-page-link";
 import { Elapsed } from "#/components/elapsed";
 import { SectionHeading } from "#/components/page";
 import { StatusDot } from "#/components/status";
-import { attemptLabel, DOC_PAGE, NODE_ACTIONS, TERM } from "#/lib/copy";
+import { attemptLabel, DOC_PAGE, moreLabel, NODE_ACTIONS, TERM } from "#/lib/copy";
 import {
 	formatClock,
 	formatClockMs,
@@ -187,9 +187,7 @@ export function ActionArea({
 						))}
 					</ul>
 					{failed > failures.length && (
-						<p className="m-0 mt-1 text-xs text-fg-3">
-							共 {formatInteger(failed)} 个，只列出最近 {failures.length} 个
-						</p>
+						<p className="m-0 mt-1 text-xs text-fg-3">{moreLabel(failed - failures.length)}</p>
 					)}
 				</>
 			)}
