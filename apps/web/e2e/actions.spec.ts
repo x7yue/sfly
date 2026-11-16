@@ -110,6 +110,15 @@ test("失败带完整的原因；子动作按层级缩进，最多 3 层；只�
 	await expect(table.locator('tr[data-count-only="下单"]')).toHaveText(
 		"08:00:10 至今的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败",
 	);
+
+	// 显示 Agent 时间时只有起点的 Agent 时间，没有结束的 Agent 时间：写「起」，不写「至」。
+	await panel(page)
+		.getByRole("group", { name: "表格里的时间" })
+		.getByRole("button", { name: "Agent 时间" })
+		.click();
+	await expect(table.locator('tr[data-count-only="下单"]')).toHaveText(
+		/^\d\d:\d\d:\d\d 起的 796 个「下单」只计数，没有明细（每种名称最多记录 5 万个，失败的动作仍有明细） 只看失败$/,
+	);
 });
 
 test("往下滚动读更早的明细；一次只渲染看得见的那些行", async ({

@@ -345,7 +345,9 @@ test("时间一列：Tab 只停在一个开始时间上，方向键、Home、End
 	const landed = page.locator("[data-locate]:focus");
 	await expect(landed).toBeInViewport();
 	// 为了看得见，浏览器最多把它滚进视口（表头盖住的那一截），视口不会被拉走。
-	expect(Math.abs((await table.evaluate((el) => el.scrollTop)) - 600)).toBeLessThan(60);
+	await expect
+		.poll(async () => Math.abs((await table.evaluate((el) => el.scrollTop)) - 600))
+		.toBeLessThan(60);
 });
 
 // 下面用一个 Agent 时间比控制面快 3 小时的节点：ping 执行了 10 秒，记了动作和几行日志。
