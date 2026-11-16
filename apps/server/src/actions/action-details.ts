@@ -152,8 +152,11 @@ export interface DroppedDetails {
 }
 
 export interface BatchPlan {
-	/** 要插入的行（开始、标记）：同一批里结束了的动作已经带上结束；`late` 是补发的开始。 */
-	inserts: Array<{ row: StoredDetail; late: boolean }>;
+	/**
+	 * 要插入的行（开始、标记）：同一批里结束了的动作已经带上结束，`end` 是那个结束（库里已经有这一行、插入被忽略时，
+	 * 改按 `end` 给已有的行补上结束）；`late` 是补发的开始。
+	 */
+	inserts: Array<{ row: StoredDetail; late: boolean; end?: DetailEnd }>;
 	ends: DetailEnd[];
 	/** 名称 → 控制面兜底丢弃的明细。 */
 	dropped: Map<string, DroppedDetails>;
@@ -162,7 +165,7 @@ export interface BatchPlan {
 /**
  * 按到达的先后排一批事件（docs/ARCHITECTURE.md §6.3「动作明细」）：开始和标记在合计已满，或者（不是补发的且）这个名称
  * 已满时丢弃；结束只对已有的行生效，所以被丢弃的开始，它的结束没有对象。同一批里开始又结束的动作直接是完整的一行。
- * 同一个 ID 在这一批里再出现时忽略（与库里已有的重复由插入时忽略）。
+ * 同一个 ID 在这一批里再出现时忽略（与库里已有的重复由插入时忽略，它在这一批里的结束改补到已有的行上，见 `end`）。
  * `counts` 是写入这一批之前任务已存的明细条数和这一批涉及的名称已存的个数（不含补发的）。
  */
 export function planBatch(
@@ -177,21 +180,31 @@ export function planBatch(
 	/** 这一批里出现过开始或标记的 ID（存下的、丢弃的都算）。 */
 	const begun = new Set<number>();
 	/** 这一批里开始、还没结束的动作。 */
-	const open = new Map<number, StoredDetail>();
+	const open = new Map<number, BatchPlan["inserts"][number]>();
 	const ended = new Set<number>();
 	for (const e of events) {
 		if (e.kind === "end") {
 			if (ended.has(e.id)) continue;
 			ended.add(e.id);
-			const row = open.get(e.id);
-			if (row) {
+			const { id, at, agentAt, mono, result, reason } = e;
+			const end: DetailEnd = {
+				id,
+				at,
+				agentAt,
+				mono,
+				result,
+				reason,
+				noted: Object.keys(e.fields).length > 0 ? e.fields : null,
+			};
+			const insert = open.get(e.id);
+			if (insert) {
+				const { row } = insert;
 				Object.assign(row, endOf(row, e), {
 					fields: mergeFields(row.fields, Object.entries(e.fields)),
 				});
+				insert.end = end;
 			} else if (!begun.has(e.id)) {
-				const { id, at, agentAt, mono, result, reason } = e;
-				const noted = Object.keys(e.fields).length > 0 ? e.fields : null;
-				plan.ends.push({ id, at, agentAt, mono, result, reason, noted });
+				plan.ends.push(end);
 			}
 			continue;
 		}
@@ -228,8 +241,9 @@ export function planBatch(
 			reason: null,
 			rev,
 		};
-		plan.inserts.push({ row, late: e.late });
-		if (e.kind === "action") open.set(e.id, row);
+		const insert = { row, late: e.late };
+		plan.inserts.push(insert);
+		if (e.kind === "action") open.set(e.id, insert);
 	}
 	return plan;
 }
@@ -266,8 +280,9 @@ export function taskEndOf(task: {
 
 /**
  * 存下的一行 → 接口里的明细。补充的字段覆盖到开始时的字段上。任务已经结束（`end` 不为 null）时，还没结束的动作
- * 记为未结束：结束时间取任务的结束时间，Agent 时间按任务的时钟偏差折算，耗时按控制面时间算。所以之后才到的结束
- * 照样记下真实的结果，任务怎么结束（成功、失败、取消、`agent_lost`）都一样。
+ * 记为未结束：结束时间取任务的结束时间，Agent 时间按任务的时钟偏差折算，耗时按控制面时间算。任务结束以后不再写入
+ * 明细（TaskActions 整批丢弃之后才到的），所以未结束定格在任务结束的那一刻，任务怎么结束（成功、失败、取消、
+ * `agent_lost`）都一样。
  */
 export function detailView(row: StoredDetail, end: TaskEnd | null): ActionDetailView {
 	const base = {

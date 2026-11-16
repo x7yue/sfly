@@ -239,21 +239,11 @@ describe("动作的实时推送", () => {
 		expect(summaryOf(await late.next("summary"))).toMatchObject({ total: 1, running: [] });
 		expect(chunkOf(await late.next("actions")).actions).toEqual([unfinished]);
 
-		// 之后才到的结束照样推送真实的结果。
+		// 之后才到的结束（断线补发）不再写：未结束定格在任务结束的那一刻，修订号不变。
 		agent.actions(task, [agent.actionEnd(1, "success", T0 + 9_000)]);
-		for (const s of [sse, late]) {
-			const next = await s.next("actions");
-			expect(next.id).toBe("2");
-			expect(chunkOf(next).actions).toEqual([
-				{
-					...unfinished,
-					result: "success",
-					ended_at: iso(T0 + 9_000),
-					agent_ended_at: iso(T0 + 9_000),
-					duration_ms: 8_000,
-				},
-			]);
-		}
+		await agent.sync();
+		const res = await cp.fetch(`/tasks/${task.taskId}/actions`);
+		expect(await res.json()).toMatchObject({ actions: [unfinished], rev: 1 });
 	});
 
 	it("连上时任务还没开始执行：之后开始、结束时同样推送记为未结束的明细", async () => {

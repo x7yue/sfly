@@ -34,6 +34,7 @@ import {
 } from "./action-details.js";
 import {
 	actionSummaryView,
+	isDoing,
 	parseActionSummary,
 	sameCurrentAction,
 	summaryOfTask,
@@ -134,6 +135,7 @@ export class TaskActions {
 			.select({
 				runId: tasks.runId,
 				agentName: tasks.agentName,
+				status: tasks.status,
 				purgedAt: runs.purgedAt,
 				current: taskActionSummaries.currentAction,
 			})
@@ -141,7 +143,9 @@ export class TaskActions {
 			.innerJoin(runs, eq(runs.id, tasks.runId))
 			.leftJoin(taskActionSummaries, eq(taskActionSummaries.taskId, tasks.id))
 			.where(eq(tasks.id, taskId));
-		if (!task || task.agentName !== agentName || task.purgedAt !== null) return;
+		// 任务已经不在执行时不再更新（和明细一样，之后才到的只可能是断线补发）：摘要停在任务结束前的最后一份。
+		if (!task || task.agentName !== agentName || task.purgedAt !== null || !isDoing(task.status))
+			return;
 		const { summary, current } = actionSummaryView(
 			event,
 			controlPlaneTime,
@@ -163,7 +167,7 @@ export class TaskActions {
 	/**
 	 * 写入一批明细：读出任务已存的条数和这一批涉及的名称已存的个数，排好（{@link planBatch}），在一个事务里插入新的行、
 	 * 补上更早的行的结束、更新计数和修订号。重复的明细被忽略，计数按真正插入的算。提交以后发布这一批的明细；
-	 * 第一次因为兜底上限丢弃明细时在任务日志里写一行警告。
+	 * 第一次因为兜底上限丢弃明细时在任务日志里写一行警告。任务已经不在执行时整批丢弃（规格 #345：未结束定格在任务结束的那一刻）。
 	 */
 	async #storeBatch(
 		agentName: string,
@@ -210,9 +214,20 @@ export class TaskActions {
 		});
 		if (plan.inserts.length + plan.ends.length + plan.dropped.size === 0) return;
 		const capping = plan.dropped.size > 0 && !task.capped;
-		const written = await db.transaction(async (tx) => {
+		const written = await db.transaction(async (tx): Promise<StoredDetail[] | undefined> => {
+			// 任务已经不在执行（成功、失败、取消、agent_lost）：还没结束的动作定格为未结束（detailView），这一批不再写。
+			// Agent 在结果之前发完明细（ADR 0015），之后才到的只可能是断线补发。锁住任务行，和结束任务的写入互斥。
+			const [locked] = await tx
+				.select({ status: tasks.status })
+				.from(tasks)
+				.where(eq(tasks.id, taskId))
+				.for("update");
+			if (!locked || !isDoing(locked.status)) return undefined;
 			const inserted = await insertDetails(tx, plan.inserts);
-			const ended = await endDetails(tx, taskId, rev, plan.ends);
+			// 库里已经有的动作在这一批里重复开始又结束：插入被忽略，结束补到已有的行上。
+			const kept = new Set(inserted);
+			const repeated = plan.inserts.flatMap((i) => (!kept.has(i) && i.end ? [i.end] : []));
+			const ended = await endDetails(tx, taskId, rev, [...plan.ends, ...repeated]);
 			await countNames(tx, taskId, inserted, plan.dropped);
 			const changed = inserted.length + ended.length > 0;
 			if (changed || capping) {
@@ -227,6 +242,7 @@ export class TaskActions {
 			}
 			return [...inserted.map((i) => i.row), ...ended];
 		});
+		if (written === undefined) return;
 		if (written.length > 0)
 			this.#published.publish(taskId, { kind: "actions", rev, rows: written });
 		if (capping) await this.deps.logs.appendSystem(taskId, "warn", CAPPED_WARNING);
