@@ -1,10 +1,9 @@
-import type { FocusSeries, RunFocusItem } from "@sfly/schema";
+import { type FocusSeries, focusSeriesName, type RunFocusItem } from "@sfly/schema";
 import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { LIST_LABEL } from "#/lib/copy";
 import type { ShownPick } from "#/monitor/charts";
 import { seriesColor, seriesDash } from "#/monitor/MetricChart";
 import { PLOT_MARGIN, type PlotWindow, plotChart, shownSeries } from "./focus-chart";
-import { focusSeriesName } from "./focus-format";
 
 /** 元素的实际宽度（px）：量一次，之后随容器尺寸变化更新；还没量到时为 0。 */
 function useElementWidth<E extends HTMLElement>() {

@@ -1,8 +1,8 @@
-import type { RunFocusItem } from "@sfly/schema";
+import { focusValueText, type RunFocusItem } from "@sfly/schema";
 import { cn } from "cn";
 import { EyeIcon } from "lucide-react";
 import { AnomalyMark } from "#/focus/AnomalyNote";
-import { anomalyText, readingLabel, valueText } from "#/focus/focus-format";
+import { anomalyText, readingLabel } from "#/focus/focus-format";
 import type { FocusPreview } from "#/focus/focus-preview";
 import { FOCUS } from "#/lib/copy";
 import type { CardFocus } from "./context";
@@ -83,7 +83,7 @@ export function FocusRows({
 							item.anomaly?.kind === "stale" ? "text-fg-2" : "text-fg-1",
 						)}
 					>
-						{valueText(item)}
+						{focusValueText(item)}
 					</span>
 					{item.unit && <span className="flex-none text-fg-3">{item.unit}</span>}
 				</div>

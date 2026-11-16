@@ -7,6 +7,7 @@ import {
 	type MetricIncrement,
 	type MetricSeries,
 	seriesKey,
+	seriesName,
 	sortedLabels,
 } from "@sfly/schema";
 import { formatFullDateTime, formatMetric, TIME_NOT_RECORDED } from "#/lib/format";
@@ -146,22 +147,6 @@ export function appendIncrement(series: MetricSeries, increment: MetricIncrement
 		to: lastTimes.at(-1) ?? series.to,
 		series: entries.map(([, s]) => s),
 	};
-}
-
-/**
- * 图例里一个序列的名字（#78）：不带标签时是指标名；带标签时是标签值以「 · 」连接（按声明的标签键的顺序，
- * 没有声明时按键名），图表引用多个指标时前面再加上指标名（例如 `read_bytes · sda`）。
- */
-export function seriesName(
-	name: string,
-	labels: Readonly<Record<string, string>>,
-	keys: readonly string[] | undefined,
-	multiMetric: boolean,
-): string {
-	const order = keys?.length ? keys : Object.keys(labels).sort();
-	const values = order.flatMap((k) => labels[k] ?? []);
-	if (values.length === 0) return name;
-	return (multiMetric ? [name, ...values] : values).join(" · ");
 }
 
 /**

@@ -78,6 +78,7 @@ export async function startTestControlPlane(
 		| "pypiMirror"
 		| "githubReleaseMirror"
 		| "migrationsDir"
+		| "logger"
 	> = {},
 ): Promise<TestControlPlane> {
 	let migrationsDir = options.migrationsDir;
@@ -112,6 +113,7 @@ export async function startTestControlPlane(
 			pypiMirror: options.pypiMirror,
 			githubReleaseMirror: options.githubReleaseMirror,
 			migrationsDir,
+			logger: options.logger,
 			// 保留期清理也调快（只按注入的时钟判断是否到期）。
 			retentionSweepIntervalMs: 20,
 			// 定时 / Sleep 节点的定时器扫描（#14）同样调快。

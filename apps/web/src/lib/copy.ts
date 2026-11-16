@@ -1,10 +1,11 @@
 import { MAIN_CHAIN_LABEL, SUBFLOW_LABEL } from "@sfly/orchestration";
-import type {
-	ActionResult,
-	LogLineView,
-	NodeStatus,
-	RunNotificationState,
-	RunStatus,
+import {
+	type ActionResult,
+	focusChartMissing,
+	type LogLineView,
+	type NodeStatus,
+	type RunNotificationState,
+	type RunStatus,
 } from "@sfly/schema";
 import { NODE_STATUS, notRunNote } from "#/lib/node-status";
 
@@ -81,8 +82,8 @@ const STALE_HINT = "可能是节点卡住了，或者 Agent 的指标上报中�
 export const FOCUS = {
 	/** 名额里注明其中有几项已经失效（失效的项也占名额）。 */
 	staleNote: (stale: number) => `（含 ${stale} 项已失效的）`,
-	/** 关注项失效的一种原因：节点包的这个版本没有声明这张图表（规格 #344 的写法，别处写这句都引用它）。 */
-	chartMissing: (chart: string) => `这个版本的节点没有图表 ${chart}`,
+	/** 关注项失效的一种原因：节点包的这个版本没有声明这张图表。句子来自 `@sfly/schema` 的 `focusChartMissing`。 */
+	chartMissing: focusChartMissing,
 	/** 关注项不属于场景版本：节点检查器的图表列表和「关注项」页都要说明这一点。 */
 	notVersioned: `${TERM.focusItem}属于${INSPECTOR_PAGE.sceneSettings}，不属于场景版本：改动立即生效，不产生新版本。`,
 	/** 有异常的关注项的统称：概览里列出它们的那一段的标题，读数和图表的可访问名称里异常原因的前缀。 */

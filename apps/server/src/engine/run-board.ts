@@ -10,6 +10,7 @@ import { asc, inArray } from "drizzle-orm";
 import type { Db } from "../db/database.js";
 import { type ChainStatus, chainInstances, type TaskProgress, tasks } from "../db/schema.js";
 import { planRun } from "./chain.js";
+import type { Tx } from "./step.js";
 
 /**
  * 节点状态的取法（运行视图 getRunView、运行列表、控制台共用）：一个链实例上一个节点的所有任务行
@@ -86,7 +87,7 @@ export interface BoardChain {
  * 每个链实例只列出它那条链（主链或子流程）上的节点，同一版本的文档只规划一次。
  */
 export async function loadRunBoards(
-	db: Db,
+	db: Db | Tx,
 	items: ReadonlyArray<{ id: string; versionId: string; document: OrchestrationDocument }>,
 ): Promise<Map<string, BoardChain[]>> {
 	const boards = new Map<string, BoardChain[]>(items.map((r) => [r.id, []]));
